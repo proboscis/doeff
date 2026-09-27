@@ -1,5 +1,5 @@
 {
- "about": "意味の規則の較正の見張り — jev-lint の labels.json の札で、際どくない正例と反例(agora-controllers 379ebcdd の定義の写し)。正例は p >= 0.8、反例は p <= 0.2 に入るはず(試作の 4 回の実測: 正例 0.91〜0.97・反例 0.03〜0.06)。 DOEFF204 の 2 例は合成(operator の例 — client を欄に持つ窓口と、Point2D の値の class)。比べるのは external-world の確率。",
+ "about": "意味の規則の較正の見張り — jev-lint の labels.json の札で、際どくない正例と反例(agora-controllers 379ebcdd の定義の写し)。正例は p >= 0.8、反例は p <= 0.2 に入るはず(試作の 4 回の実測: 正例 0.91〜0.97・反例 0.03〜0.06)。 DOEFF204 の 2 例は合成(operator の例 — client を欄に持つ窓口と、Point2D の値の class)。比べるのは external-world の確率。 DOEFF205 の 2 例は agora-controllers 068dee21 の写し(正例 = 形の検めと判断が混ざった decide-tag・反例 = 型のある盤の上の純粋な判断 card-tags-of)。比べるのは mixed の確率。",
  "items": [
   {
    "rule": "DOEFF201",
@@ -68,6 +68,26 @@
     "y: float"
    ],
    "source": "(defclass [(dataclass :frozen True)] Point2D []\n  \"平面の点。\"\n  (#^ float x)\n  (#^ float y)\n\n  (defn #^ float norm [self]\n    (math.sqrt (+ (* self.x self.x) (* self.y self.y))))\n\n  (defn #^ Point2D add [self #^ Point2D other]\n    (Point2D (+ self.x other.x) (+ self.y other.y))))"
+  },
+  {
+   "rule": "DOEFF205",
+   "id": "controllers/kanban/core/tag_judgment.hy::decide-tag",
+   "expect": true,
+   "name": "decide-tag",
+   "kind": "defk",
+   "path": "controllers/kanban/core/tag_judgment.hy",
+   "layer": "core",
+   "source": "(defk decide-tag [intent board settings]\n  {:pre [(: intent BoardIntent) (: board Board) (: settings BoardWriteSettings)]\n   :post [(: % WritePlan)]\n   :tags {:context \"kanban\" :role \"judgment\"}}\n  \"kanban-tag: 付け先の札を足し外しする(頭の註の規則と断りの順)。\"\n  (val payload intent.payload)\n  (val subject (.get payload \"subject\"))\n  (when (not (and (isinstance subject str) (!= subject \"\")))\n    (<- bad-subject WritePlan (rejected (+ REJECT-PAYLOAD-INVALID \": subject\")))\n    (return bad-subject))\n  (<- by (| str None) (named-by (.get payload \"by\") intent.by))\n  (when (is by None)\n    (<- bad-by WritePlan (rejected (+ REJECT-BY-NOT-ALLOWED \": \" (repr (.get payload \"by\")))))\n    (return bad-by))\n  (<- known bool (subject-on-board board subject))\n  (when (not known)\n    (<- unknown WritePlan (rejected (+ REJECT-SUBJECT-UNKNOWN \": \" subject)))\n    (return unknown))\n  (<- add (| list None) (tag-list payload \"add\"))\n  (<- remove (| list None) (tag-list payload \"remove\"))\n  (when (or (is add None) (is remove None))\n    (<- bad-lists WritePlan (rejected (+ REJECT-PAYLOAD-INVALID \": add / remove\")))\n    (return bad-lists))\n  (when (and (not add) (not remove))\n    (<- empty WritePlan (rejected (+ REJECT-PAYLOAD-INVALID \": add も remove も無い\")))\n    (return empty))\n  (<- add-said (| TagsAccepted Refusal) (tags-verdict add by True))\n  (match add-said\n    (Refusal) (do (<- add-refused WritePlan (rejected (+ add-said.reason \": \" add-said.detail)))\n                  (return add-refused))\n    (TagsAccepted) None)\n  (<- remove-said (| TagsAccepted Refusal) (tags-verdict remove by False))\n  (match remove-said\n    (Refusal) (do (<- remove-refused WritePlan (rejected (+ remove-said.reason \": \" remove-said.detail)))\n                  (return remove-refused))\n    (TagsAccepted) None)\n  (val adding add-said.words)\n  (val removing remove-said.words)\n  (val both (lfor word adding :if (in word removing) word))\n  (when both\n    (<- overlap WritePlan (rejected (+ REJECT-PAYLOAD-INVALID \": 同じ札が add と remove の両方に在る: \" (.join \", \" both))))\n    (return overlap))\n  (<- live tuple (live-tags-of board.tags subject))\n  (var writes #())\n  (for [word adding]\n    (when (not (any (gfor row live (= row.tag word))))\n      (<- row-id str (request-row-id TAG-ID-PREFIX intent.request-id (+ subject \"|\" word)))\n      (:= writes (+ writes #((AttachTag :namespace settings.namespace :row-id row-id :subject subject :tag word :by by))))))\n  ;; 外す札は同じ綴りの生きた行を全部閉じる(旧 daemon の族の行と 1 札 1 行の形が同じ札を 2 本持つ拍もある — 旧い _live-tags と同じ)。\n  (for [word removing]\n    (for [row live]\n      (when (= row.tag word)\n        (:= writes (+ writes #((CloseTag :namespace settings.namespace :row-id row.row-id :version row.version)))))))\n  (if writes\n      (WritePlan :writes writes :outcome None)\n      (WritePlan :writes #() :outcome (TagDone :added adding :removed removing))))"
+  },
+  {
+   "rule": "DOEFF205",
+   "id": "controllers/core/kanban_read_judgment.hy::card-tags-of",
+   "expect": false,
+   "name": "card-tags-of",
+   "kind": "defk",
+   "path": "controllers/core/kanban_read_judgment.hy",
+   "layer": "core",
+   "source": "(defk card-tags-of [board key]\n  {:tags {:context \"kanban\" :role \"judgment\"} :pre [(: board Board) (: key str)] :post [(: % (| CardTags CardMissing))]}\n  \"card 1 枚の札(頭の註)— 札の付け外しの土台と `ai tell --card` の作業場の導出が読むため。無い card を「札が 0 枚の card」と読ませない。\"\n  (when (not (any (gfor card board.cards (= card.key key))))\n    (return (CardMissing :key key)))\n  (val ordered (tuple (sorted board.tags :key (fn [tag] tag.key))))\n  (<- live tuple (live-tags-of ordered key))\n  (CardTags :card key\n            :rows (tuple (gfor tag ordered :if (= tag.subject key)\n                               (CardTag :key tag.key :tag tag.tag :removed tag.removed :by tag.by)))\n            :live (tuple (gfor tag live tag.tag))))"
   }
  ]
 }

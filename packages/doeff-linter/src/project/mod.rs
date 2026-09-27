@@ -13,6 +13,7 @@ pub mod names;
 pub mod registry;
 pub mod rule;
 pub mod semantic;
+pub mod smells;
 pub mod settings;
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
@@ -166,7 +167,7 @@ pub fn run_with(root: &Path, settings: &ProjectSettings, enabled: &BTreeSet<Proj
         Target::Whole => {
             let layer_files = settings.layers.as_ref().map(|layers| collect_layer_files(root, layers)).unwrap_or_default();
             semantic_files = layer_files.iter().map(|f| (f.clone(), None)).collect();
-            let wants_plain = settings.semantic.as_ref().is_some_and(|s| s.plain_callable.is_some() || s.class_role.is_some());
+            let wants_plain = settings.semantic.as_ref().is_some_and(|s| s.plain_callable.is_some() || s.class_role.is_some() || s.mixed_concerns.is_some());
             plain_files = match (&settings.definitions, wants_plain) {
                 (Some(definitions), true) => hy_index::collect_hy_files(root)
                     .into_iter()
@@ -210,6 +211,7 @@ pub fn run_with(root: &Path, settings: &ProjectSettings, enabled: &BTreeSet<Proj
             }
             if let Some(definitions) = &settings.definitions {
                 if wants_definitions(enabled) {
+                    let failure = failure_types_for(root, enabled, &definitions.tags);
                     let files: Vec<SourceFile> = hy_index::collect_hy_files(root)
                         .into_iter()
                         .filter_map(|path| {
@@ -222,7 +224,11 @@ pub fn run_with(root: &Path, settings: &ProjectSettings, enabled: &BTreeSet<Proj
                         .par_iter()
                         .map(|file| {
                             std::fs::read_to_string(&file.path)
-                                .map(|source| judge_definitions(file, &source, definitions, enabled, plain_callable_reasons(settings), hy.get(&file.rel)))
+                                .map(|source| {
+                                    let mut found = judge_definitions(file, &source, definitions, enabled, plain_callable_reasons(settings), hy.get(&file.rel));
+                                    found.extend(judge_smells(file, &source, settings, definitions, enabled, &failure));
+                                    found
+                                })
                                 .map_err(|error| format!("{}: 読めない: {}", file.rel, error))
                         })
                         .collect();
@@ -319,6 +325,7 @@ pub fn run_with(root: &Path, settings: &ProjectSettings, enabled: &BTreeSet<Proj
                 {
                     let file = SourceFile { rel: rel.clone(), path: path.clone(), language: Language::Hy };
                     drafts.extend(judge_definitions(&file, source, definitions, enabled, plain_callable_reasons(settings), hy_file.as_ref()));
+                    drafts.extend(judge_smells(&file, source, settings, definitions, enabled, &failure_types_for(root, enabled, &definitions.tags)));
                 }
             }
             if let (Some(architecture), Some(rel), Some(language)) = (&settings.architecture, &rel, language_of(&path)) {
@@ -338,7 +345,13 @@ pub fn run_with(root: &Path, settings: &ProjectSettings, enabled: &BTreeSet<Proj
         }
     }
     if let (Some(semantic), Some(layers)) = (&settings.semantic, &settings.layers) {
-        let wanted = [ProjectRule::SemanticBusinessDecision, ProjectRule::SemanticTransportKnowledge, ProjectRule::SemanticPlainCallable, ProjectRule::SemanticClassRole]
+        let wanted = [
+            ProjectRule::SemanticBusinessDecision,
+            ProjectRule::SemanticTransportKnowledge,
+            ProjectRule::SemanticPlainCallable,
+            ProjectRule::SemanticClassRole,
+            ProjectRule::SemanticMixedConcerns,
+        ]
             .iter()
             .any(|r| enabled.contains(r));
         if wanted {
@@ -1408,6 +1421,7 @@ fn semantic_rule(question: semantic::SemanticQuestion) -> ProjectRule {
         semantic::SemanticQuestion::TransportKnowledge => ProjectRule::SemanticTransportKnowledge,
         semantic::SemanticQuestion::PlainCallable => ProjectRule::SemanticPlainCallable,
         semantic::SemanticQuestion::ClassRole => ProjectRule::SemanticClassRole,
+        semantic::SemanticQuestion::MixedConcerns => ProjectRule::SemanticMixedConcerns,
     }
 }
 
@@ -1574,6 +1588,47 @@ fn judge_semantic(
             }
         }
     }
+    // DOEFF205: 役が judgment / program の定義(定義の :tags か module の頭のタグ)に、形の検めと判断が混ざっているかを問う。
+    if let (Some(mixed), Some(reading)) = (&settings.mixed_concerns, &plain.tags) {
+        if enabled.contains(&ProjectRule::SemanticMixedConcerns) {
+            let spec = &layers.layers[mixed.layer.0];
+            for (file, source) in &plain.files {
+                let text = match source {
+                    Some(text) => text.clone(),
+                    None => match std::fs::read_to_string(&file.path) {
+                        Ok(text) => text,
+                        Err(error) => {
+                            errors.push(format!("{}: 読めない: {}", file.rel, error));
+                            continue;
+                        }
+                    },
+                };
+                let module_role = read_facts(Language::Hy, &text, &module_of(&file.rel), reading).module_tags.and_then(|t| t.role);
+                let index = hy_index::index_source(root, &file.path, &text);
+                for definition in index.definitions.iter().filter(|d| d.container.is_none() && is_judgment_kind(d.kind)) {
+                    let role = definition.tags.as_ref().and_then(|t| t.get("role").cloned()).or_else(|| module_role.clone());
+                    if !role.is_some_and(|r| mixed.roles.contains(&r)) {
+                        continue;
+                    }
+                    let start = crate::position::offset_of(&text, definition.full_range.start);
+                    let end = crate::position::offset_of(&text, definition.full_range.end);
+                    items.push(semantic::mixed_item(
+                        settings,
+                        &model,
+                        &file.rel,
+                        &file.path,
+                        &definition.name,
+                        definition.kind.as_str(),
+                        definition.range,
+                        text.get(start..end).unwrap_or(""),
+                        mixed.layer,
+                        &spec.name,
+                        &spec.description,
+                    ));
+                }
+            }
+        }
+    }
     // 較正の見張りの例(同梱の正例と反例)を、その問いを当てる最初の層の説明で組む。
     let calibration: Vec<(semantic::SemanticItem, bool)> = semantic::calibration_examples()
         .into_iter()
@@ -1587,6 +1642,25 @@ fn judge_semantic(
             let question = match rule {
                 ProjectRule::SemanticBusinessDecision => semantic::SemanticQuestion::BusinessDecision,
                 ProjectRule::SemanticTransportKnowledge => semantic::SemanticQuestion::TransportKnowledge,
+                ProjectRule::SemanticMixedConcerns => {
+                    let mixed = settings.mixed_concerns.as_ref()?;
+                    let spec = &layers.layers[mixed.layer.0];
+                    let kind: &'static str = SEMANTIC_KIND_NAMES.iter().find(|k| **k == example.kind).copied().unwrap_or("defk");
+                    let item = semantic::mixed_item(
+                        settings,
+                        &model,
+                        &example.path,
+                        Path::new(&example.path),
+                        &example.name,
+                        kind,
+                        range,
+                        &example.source,
+                        mixed.layer,
+                        &spec.name,
+                        &spec.description,
+                    );
+                    return Some((item, example.expect));
+                }
                 ProjectRule::SemanticClassRole => {
                     settings.class_role?;
                     let item = semantic::class_item(settings, &model, &example.path, Path::new(&example.path), &example.name, range, &example.source, &example.fields);
@@ -1611,6 +1685,22 @@ fn judge_semantic(
         .into_iter()
         .filter_map(|(item, answer)| {
             let probability = answer.probability;
+            if item.question == semantic::SemanticQuestion::MixedConcerns {
+                let chosen = answer.choice.clone().unwrap_or_else(|| "neither".to_string());
+                let base = settings.mixed_concerns_severity(&chosen, probability)?;
+                let layer = settings.mixed_concerns.as_ref().map(|m| layers.layers[m.layer.0].name.clone()).unwrap_or_default();
+                return Some(Draft {
+                    rule: ProjectRule::SemanticMixedConcerns,
+                    layer: None,
+                    rel: item.rel.clone(),
+                    path: item.path.clone(),
+                    range: item.range,
+                    message: format!("{} の {} は Jev の判定で形の検めと判断が混ざっている(p={:.2})", item.rel, item.name, probability),
+                    detail: Some(hy_mangle(&item.name)),
+                    base,
+                    explain: Explain::MixedConcerns { name: item.name.clone(), kind: item.kind, probability, layer },
+                });
+            }
             if item.question == semantic::SemanticQuestion::ClassRole {
                 let chosen = answer.choice.clone().unwrap_or_else(|| "other".to_string());
                 let base = settings.class_role_severity(&chosen, probability)?;
@@ -1708,6 +1798,9 @@ fn judge_semantic(
 
 /// 定義の書き方の規則のどれかが有効か。
 fn wants_definitions(enabled: &BTreeSet<ProjectRule>) -> bool {
+    if enabled.iter().any(|rule| rule.is_smell()) {
+        return true;
+    }
     [ProjectRule::DefnForbidden, ProjectRule::DeffNeedsReason, ProjectRule::DefinitionTagsRequired, ProjectRule::TestIsDeftest, ProjectRule::ClassWithBehaviour]
         .iter()
         .any(|rule| enabled.contains(rule))
@@ -1902,6 +1995,94 @@ fn line_and_previous(source: &str, offset: usize) -> (String, String) {
         before[before.rfind('\n').map(|at| at + 1).unwrap_or(0)..].to_string()
     };
     (source[line_start..line_end].to_string(), previous)
+}
+
+/// DOEFF122 の失敗の型の宣言を repo の Hy の file から集める(規則が有効な時だけ — 無ければ空)。`:failure` / `:absent` の綴りを
+/// 含む file だけを読み、宣言の型は file の import と module で module まで含めた名に解く。読めない file は飛ばす。
+fn failure_types_for(root: &Path, enabled: &BTreeSet<ProjectRule>, reading: &settings::TagReading) -> smells::FailureTypes {
+    let mut all = smells::FailureTypes::default();
+    if !enabled.contains(&ProjectRule::FailureRethrow) {
+        return all;
+    }
+    for path in hy_index::collect_hy_files(root) {
+        let Some(rel) = relative_path(root, &path) else { continue };
+        let Ok(source) = std::fs::read_to_string(&path) else { continue };
+        if !(source.contains(":failure") || source.contains(":absent")) {
+            continue;
+        }
+        let module = module_of(&rel);
+        let facts = read_facts(Language::Hy, &source, &module, reading);
+        all.extend(smells::failure_types_in(&source, smells::Scope { module: &module, bindings: &facts.bindings }));
+    }
+    all
+}
+
+/// DOEFF121 の問いを当てる定義の種類(関数と handler)。
+fn is_judgment_kind(kind: DefinitionKind) -> bool {
+    matches!(kind, DefinitionKind::Defk | DefinitionKind::Deff | DefinitionKind::Defn | DefinitionKind::DefnAsync | DefinitionKind::Defp | DefinitionKind::Defpp)
+}
+
+/// DOEFF121〜125: 業務の Hy の file の臭いを判じる(重さの既定は warning — Absent / Raise が本線に入ったので info から上げた(ADR-DOE-HY-007 R8)。
+/// 設定の rules.<ID>.severity で info に下げられる。登録簿に載った warning は info)。
+fn judge_smells(
+    file: &SourceFile,
+    source: &str,
+    settings: &ProjectSettings,
+    definitions: &settings::DefinitionSettings,
+    enabled: &BTreeSet<ProjectRule>,
+    failure: &smells::FailureTypes,
+) -> Vec<Draft> {
+    if !is_definition_file(&file.rel, definitions) || !enabled.iter().any(|rule| rule.is_smell()) {
+        return Vec::new();
+    }
+    // DOEFF121 は判断の層(smells.shape_check_layers)の file だけ — 層は path の置き場所か、層が先の dir ならタグから推す。
+    let shape_checks = enabled.contains(&ProjectRule::ShapeCheckInJudgment)
+        && match (&settings.smells, &settings.layers) {
+            (Some(smell), Some(layers)) => classify_layer_file(&file.rel, layers)
+                .or_else(|| infer_layer_site(&file.rel, source, layers))
+                .is_some_and(|(site, _)| smell.shape_check_layers.contains(&site.layer)),
+            _ => false,
+        };
+    let lines = LineIndex::new(source);
+    let module = module_of(&file.rel);
+    let facts = read_facts(Language::Hy, source, &module, &definitions.tags);
+    smells::smells_in(source, smells::Scope { module: &module, bindings: &facts.bindings }, failure, shape_checks)
+        .into_iter()
+        .filter_map(|smell| {
+            let rule = match smell.kind {
+                smells::SmellKind::ShapeCheck { .. } => ProjectRule::ShapeCheckInJudgment,
+                smells::SmellKind::FailureRethrow { .. } => ProjectRule::FailureRethrow,
+                smells::SmellKind::BindThenReturn { .. } => ProjectRule::BindThenReturn,
+                smells::SmellKind::FieldsJoined { .. } => ProjectRule::FieldsJoinedIntoText,
+                smells::SmellKind::RebuiltAccumulator { .. } => ProjectRule::RebuiltAccumulator,
+            };
+            if !enabled.contains(&rule) {
+                return None;
+            }
+            let message = match &smell.kind {
+                smells::SmellKind::ShapeCheck { field, .. } => format!("{} の {} が欄 \"{}\" の形を isinstance で検める", file.rel, smell.definition, field),
+                smells::SmellKind::FailureRethrow { failure_type, subject } => {
+                    format!("{} の {} が失敗 {}({})を return し直す", file.rel, smell.definition, failure_type, subject)
+                }
+                smells::SmellKind::BindThenReturn { name } => format!("{} の {} が {} を束ねてすぐ返す", file.rel, smell.definition, name),
+                smells::SmellKind::FieldsJoined { value, fields } => {
+                    format!("{} の {} が {} の欄 {} を文字列につなぐ", file.rel, smell.definition, value, fields.join("・"))
+                }
+                smells::SmellKind::RebuiltAccumulator { name } => format!("{} の {} がループの中で {} を作り直す", file.rel, smell.definition, name),
+            };
+            Some(Draft {
+                rule,
+                layer: None,
+                rel: file.rel.clone(),
+                path: file.path.clone(),
+                range: lines.range(smell.span.start, smell.span.end),
+                message,
+                detail: Some(smell.detail()),
+                base: Severity::Warning,
+                explain: Explain::Smell { smell },
+            })
+        })
+        .collect()
 }
 
 /// DOEFF110〜112: file の定義の書き方を判じる(defn の禁止・deff の理由の註・定義のタグ必須)。
@@ -2276,10 +2457,11 @@ fn finish(drafts: Vec<Draft>, settings: &ProjectSettings, registry: &Registry) -
                 None => format!("{}::{}", draft.rel, segment),
             };
             let registered = registry.keys.contains(&key);
+            let base = settings.severity.get(&draft.rule).copied().unwrap_or(draft.base);
             let severity = if settings.registry.reconciling.contains(&draft.rule) {
                 Severity::Info
             } else {
-                match (registered, draft.base) {
+                match (registered, base) {
                     (true, Severity::Error) => settings.registered_severity.get(&draft.rule).copied().unwrap_or(Severity::Warning),
                     // 登録簿に載った warning(移行の間の旧い形など)は info に下げる。
                     (true, Severity::Warning) => Severity::Info,
@@ -2290,6 +2472,7 @@ fn finish(drafts: Vec<Draft>, settings: &ProjectSettings, registry: &Registry) -
                 Explain::Semantic { probability, .. } => Some(*probability),
                 Explain::PlainCallableDoubt { chosen_probability, .. } => Some(*chosen_probability),
                 Explain::ClassRoleDoubt { probability, .. } => Some(*probability),
+                Explain::MixedConcerns { probability, .. } => Some(*probability),
                 _ => None,
             };
             Finding {

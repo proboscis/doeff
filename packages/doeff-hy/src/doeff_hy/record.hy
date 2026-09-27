@@ -51,13 +51,17 @@
 ;;;      :check [(CHAT-ID-PATTERN.fullmatch value)]}
 ;;;     (#^ str value))
 ;;;
-;;; - 頭の辞書は名前(と docstring)の直後に 1 つ。受ける鍵は :tags と :check だけ(他の鍵は展開の誤り)。
+;;; - 頭の辞書は名前(と docstring)の直後に 1 つ。受ける鍵は :tags・:check・:failure だけ(他の鍵は展開の誤り)。
 ;;; - :tags は defk / deff と同じ契約({:context "…" :role "…"}・役は declarations.ROLES)。
 ;;;   class の属性 `__doeff_tags__`(DefinitionTags)に残す。
 ;;; - :check は真偽の式の list。各式は欄の名前で欄を参照し、作る時に書いた順に評価する。
 ;;;   偽なら ValueError「ChatId の欄 value が検め (CHAT-ID-PATTERN.fullmatch value) で落ちた: value='x'」。
 ;;;   欄を 1 つも参照しない式・型の (: 欄 型)(型は欄の注記で書く)は展開の誤り。
 ;;;   式の綴りの列を class の属性 `__doeff_checks__` に残す。
+;;; - :failure True は「この型は失敗の値」の印(値は字面の True / False だけ)。class の属性 `__doeff_failure__` に残し、
+;;;   doeff-linter が実行せずに読む(手書きの失敗の再送出 DOEFF122 が、match の腕の型を失敗の型と知るため — 型の名から
+;;;   推し量らない。ADR-DOE-HY-007 R9)。effect の答えの失敗は defeffect の :failure / :absent で宣言する(ADR-DOE-CORE-EFFECTS-003
+;;;   R5)— こちらは effect の答えでない値(検めの関数が返す断りなど)のための印。
 ;;;
 ;;; 検めに使う述語の置き場(設計の要): __post_init__ は Program を実行できないので、
 ;;; :check から defk は呼べない(呼ぶと Program が返り、真に見えて黙って通る — だから
@@ -190,9 +194,12 @@
   (setv header (get rest 0)
         fields (cut rest 1 None)
         where (+ "defrecord " (str name)))
-  (refuse-unknown-keys header #(":tags" ":check") where)
+  (refuse-unknown-keys header #(":tags" ":check" ":failure") where)
   (setv checks (declared-value header ":check")
-        tags (declared-value header ":tags"))
+        tags (declared-value header ":tags")
+        failure (declared-value header ":failure"))
+  (when (and (is-not failure None) (not (and (isinstance failure Symbol) (in (str failure) #("True" "False")))))
+    (raise (SyntaxError (.format "{}: :failure は字面の True か False(失敗の型の印): {}" where (hy.repr failure)))))
   (when (and (is-not checks None) (not (isinstance checks List)))
     (raise (SyntaxError (.format "{}: :check は検めの式の list([(pred 欄) …] の形): {}" where (hy.repr checks)))))
   (setv annotated (fn [form] (when (and (isinstance form Expression) (>= (len form) 2)
@@ -251,7 +258,8 @@
        ~@fields
        ~@post-init)
      (setattr ~name "__doeff_tags__" ~(tags-form tags where))
-     (setattr ~name "__doeff_checks__" #(~@(lfor c (or checks []) (String (.lstrip (hy.repr c) "'")))))))
+     (setattr ~name "__doeff_checks__" #(~@(lfor c (or checks []) (String (.lstrip (hy.repr c) "'")))))
+     (setattr ~name "__doeff_failure__" ~(if (and (is-not failure None) (= (str failure) "True")) 'True 'False))))
 
 
 (deff require-check [#^ str record #^ tuple fields #^ str check #^ bool passed #^ dict values]  ; defk にできない: defrecord の展開が dataclass の __post_init__ から呼ぶ(Program を実行できない所)

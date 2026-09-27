@@ -214,6 +214,10 @@ pub enum Explain {
     TestNotDeftest { name: String, head: String },
     /// DOEFF119: 業務の code の defclass(外の世界に触る / 変わる状態を持つ / 欄だけ)。
     ClassShape { name: String, shape: ClassShapeFacts, verdict: ClassVerdict },
+    /// DOEFF121〜125: 臭いの規則(形の照らし)。
+    Smell { smell: super::smells::Smell },
+    /// DOEFF205: Jev が、判断の定義に形の検めと業務の判断が混ざっていると見た。
+    MixedConcerns { name: String, kind: &'static str, probability: f64, layer: String },
     /// DOEFF204: Jev が、処理を持つ method のある class を外の世界の窓口か状態を持つ物と見た。
     ClassRoleDoubt { name: String, chosen: String, probability: f64, fields: Vec<String> },
     /// DOEFF120: 許されない module が JsonValue を使う。
@@ -393,6 +397,14 @@ impl<'a> Narrator<'a> {
                     ),
                 }
             }
+            Explain::Smell { smell } => smell_text(smell),
+            Explain::MixedConcerns { name, kind, probability, layer } => (
+                format!("定義 {}({})", name, kind),
+                format!(
+                    "Jev の判定 p={:.2}: 入力の形の検め(辞書の鍵を読む・isinstance・空の検め)と業務の判断が 1 つの定義に混ざっている見込み。層 {} の定義は型のある値を受けて判断だけをする — 形を検める所が判断の中に散ると、何が入力の形の違いで何が業務の断りかを型で分けられない。(意味の判定 — 外れなら登録簿に載せる)",
+                    probability, layer
+                ),
+            ),
             Explain::ClassRoleDoubt { name, chosen, probability, fields } => (
                 format!(
                     "定義 {}(defclass・欄 {})",
@@ -582,6 +594,17 @@ impl<'a> Narrator<'a> {
             }
             Explain::ClassShape { verdict: ClassVerdict::ExternalWorld { .. }, .. } => Some(WORLD_FIX.to_string()),
             Explain::ClassShape { verdict: ClassVerdict::Stateful { .. }, .. } => Some(STATE_FIX.to_string()),
+            Explain::Smell { smell } => Some(
+                match &smell.kind {
+                    super::smells::SmellKind::ShapeCheck { .. } => "形の検めは protocol の境目で defwire の型に parse し(形が合わなければ解く所で失敗)、この定義は型のある値を受けて判断だけをする",
+                    super::smells::SmellKind::FailureRethrow { .. } => "失敗は (<- (Raise 失敗の値)) で出し(呼び手へ手で return し直さない)、受けて写す所だけ呼ぶ側で (on-raise 本文 (Refusal r) 写し先) と受ける(ADR-DOE-CORE-EFFECTS-003 R3・R7)",
+                    super::smells::SmellKind::BindThenReturn { .. } => "(return (! (f …))) と 1 つにするか、失敗なら (<- (Raise …)) で出す",
+                    super::smells::SmellKind::FieldsJoined { .. } => "型のある値のまま渡す(欄を文字列に潰さない)— 文にするのは人に見せる境目の 1 か所だけ",
+                    super::smells::SmellKind::RebuiltAccumulator { .. } => "蓄えは内包表記(lfor)で 1 度に作る — ループの中で (+ xs #(…)) の作り直しを重ねない",
+                }
+                .to_string(),
+            ),
+            Explain::MixedConcerns { .. } => Some("形の検めは protocol の境目で defwire の型に parse し(形が合わなければ解く所で失敗)、この定義は型のある値を受けて判断だけをする".to_string()),
             Explain::ClassRoleDoubt { chosen, .. } if chosen == "external-world" => Some(WORLD_FIX.to_string()),
             Explain::ClassRoleDoubt { .. } => Some(STATE_FIX.to_string()),
             Explain::ClassShape { verdict: ClassVerdict::DataOnly, .. } => Some("defrecord にする(:tags で文脈と役・:check で値の検め)".to_string()),
@@ -795,6 +818,33 @@ impl<'a> Narrator<'a> {
             (Some(_), None) => "文脈(context)を名乗らないと、どの業務の定義かをタグで引けない。:context も書く。".to_string(),
             (Some(_), Some(_)) => format!("タグは層 {} の決まりに合っている。", self.name(placement.layer)),
         }
+    }
+}
+
+/// 臭い 1 件の subject と reason(DOEFF121〜125)。
+fn smell_text(smell: &super::smells::Smell) -> (String, String) {
+    use super::smells::SmellKind;
+    match &smell.kind {
+        SmellKind::ShapeCheck { field, holder } => (
+            format!("定義 {} — {} の欄 \"{}\" を文字列の鍵で読み、isinstance で形を検めている", smell.definition, holder, field),
+            "判断の層に JSON の形の検めが入っている。形を検める所が判断の中に散ると、何が入力の形の違いで何が業務の断りかを型で分けられず、同じ検めが呼ぶ所ごとに写される。形は通信の境目で型のある値に解き、判断は型のある値だけを見る。(知らせ)".to_string(),
+        ),
+        SmellKind::FailureRethrow { failure_type, subject } => (
+            format!("定義 {} — match の腕が失敗の型 {} を受け、{} をそのまま(か包み直して)return している", smell.definition, failure_type, subject),
+            "受けた失敗を 1 段ずつ手で return し直すのは、例外の再送出を手で書いた形。呼ぶ段ごとに同じ腕が要り、1 か所でも写し忘れると失敗が成功の道へ流れる。失敗は Raise で出し、受けて写したい境目だけで on-raise で受ける。(失敗の型は defrecord の :failure True と defeffect の :failure / :absent の宣言から取る)".to_string(),
+        ),
+        SmellKind::BindThenReturn { name } => (
+            format!("定義 {} — (<- {} …) の直後に (return {}) だけが続く", smell.definition, name, name),
+            format!("{} は返すためだけの名で、ほかで使われない。束ねと return を 1 つにすれば名が要らない — 失敗を返しているなら Raise で出す形が正しい。", name),
+        ),
+        SmellKind::FieldsJoined { value, fields } => (
+            format!("定義 {} — {} の欄 {} を 1 本の文字列につないでいる", smell.definition, value, fields.join("・")),
+            "型のある値を文字列に潰すと、受け手は欄を読み直せず(文字列を切り分けるしかない)、欄の意味が型から消える。値のまま渡し、文にするのは人に見せる境目だけにする。".to_string(),
+        ),
+        SmellKind::RebuiltAccumulator { name } => (
+            format!("定義 {} — ループの中で {} を (+ {} …) で毎回作り直している", smell.definition, name, name),
+            "蓄えを毎回作り直すと、長さに比例した写しが繰り返されて 2 乗の手間になり、名の書き換えも増える。内包表記で 1 度に作れば、書き換えも作り直しも要らない。".to_string(),
+        ),
     }
 }
 

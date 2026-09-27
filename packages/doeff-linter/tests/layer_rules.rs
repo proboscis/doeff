@@ -1200,3 +1200,157 @@ fn json_value_is_allowed_only_in_parsers_and_listed_foundation_modules() {
     let allowed: Value = serde_json::from_str(&stdout).unwrap();
     assert!(keys(&allowed, "DOEFF120").is_empty(), "{}", allowed);
 }
+
+/// 臭いの規則(DOEFF121〜125)の repo — 層 core と protocol、定義の規則の母集団、臭いの設定、登録簿。
+fn smell_repo(files: &[(&str, &str)], extra: &str, registry: &str) -> tempfile::TempDir {
+    let dir = tempfile::TempDir::new().unwrap();
+    let config = format!(
+        r#"
+[tool.doeff-linter]
+enable = ["DOEFF121", "DOEFF122", "DOEFF123", "DOEFF124", "DOEFF125"]
+[tool.doeff-linter.layers]
+order = ["core", "protocol"]
+paths = {{ core = "app/core", protocol = "app/protocol" }}
+[tool.doeff-linter.definitions]
+paths = ["app"]
+[tool.doeff-linter.smells]
+shape_check_layers = ["core"]
+[tool.doeff-linter.registry]
+files = ["known.txt"]
+{extra}
+"#
+    );
+    std::fs::write(dir.path().join("pyproject.toml"), config).unwrap();
+    std::fs::write(dir.path().join("known.txt"), registry).unwrap();
+    for (rel, text) in files {
+        let path = dir.path().join(rel);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, text).unwrap();
+    }
+    dir
+}
+
+/// decide-tag(agora-controllers controllers/kanban/core/tag_judgment.hy)を縮めた形 — 5 つの臭いを全部持つ。
+const DECIDE_TAG: &str = r#"(val MODULE-TAGS {:context "kanban" :role "judgment"})
+(import app.core.rules [Refusal TagsAccepted])
+(defk decide-tag [intent board]
+  {:tags {:context "kanban" :role "judgment"}}
+  (val payload intent.payload)
+  (val subject (.get payload "subject"))
+  (when (not (and (isinstance subject str) (!= subject "")))
+    (<- bad-subject WritePlan (rejected "payload-invalid: subject"))
+    (return bad-subject))
+  (<- add-said (| TagsAccepted Refusal) (tags-verdict (.get payload "add")))
+  (match add-said
+    (Refusal) (do (<- add-refused WritePlan (rejected (+ add-said.reason ": " add-said.detail)))
+                  (return add-refused))
+    (TagsAccepted) None)
+  (var writes #())
+  (for [word add-said.words]
+    (:= writes (+ writes #((AttachTag :tag word)))))
+  (WritePlan :writes writes))
+"#;
+
+#[test]
+fn smells_are_found_in_business_code_with_failure_types_from_declarations() {
+    let rules = "(defrecord Refusal \"断り\" {:failure True} #^ str reason #^ str detail)\n(defrecord TagsAccepted #^ tuple words)\n";
+    let files = [("app/core/rules.hy", rules), ("app/core/tag_judgment.hy", DECIDE_TAG), ("app/protocol/tags.hy", DECIDE_TAG)];
+    let dir = smell_repo(&files, "", "");
+    let (code, report) = editor(dir.path());
+    // DOEFF121 は判断の層(core)の file だけ。DOEFF122〜125 は業務の file の全部。
+    assert_eq!(keys(&report, "DOEFF121"), vec!["app/core/tag_judgment.hy::DOEFF121::decide_tag::subject"]);
+    assert_eq!(
+        keys(&report, "DOEFF122"),
+        vec!["app/core/tag_judgment.hy::DOEFF122::decide_tag::add_said", "app/protocol/tags.hy::DOEFF122::decide_tag::add_said"]
+    );
+    assert_eq!(
+        keys(&report, "DOEFF123"),
+        vec![
+            "app/core/tag_judgment.hy::DOEFF123::decide_tag::add_refused",
+            "app/core/tag_judgment.hy::DOEFF123::decide_tag::bad_subject",
+            "app/protocol/tags.hy::DOEFF123::decide_tag::add_refused",
+            "app/protocol/tags.hy::DOEFF123::decide_tag::bad_subject"
+        ]
+    );
+    assert_eq!(keys(&report, "DOEFF124").len(), 2);
+    assert_eq!(keys(&report, "DOEFF125"), vec!["app/core/tag_judgment.hy::DOEFF125::decide_tag::writes", "app/protocol/tags.hy::DOEFF125::decide_tag::writes"]);
+    // 重さの既定は warning(Absent / Raise が本線に入った後 — 終了コード 0)。説明と直し方。
+    assert!(report["violations"].as_array().unwrap().iter().filter(|v| v["rule"].as_str().unwrap().starts_with("DOEFF12")).all(|v| v["severity"] == "warning"));
+    assert_eq!(code, 0);
+    let rethrow = violation(&report, "app/core/tag_judgment.hy::DOEFF122::decide_tag::add_said");
+    assert!(rethrow["explanation"]["subject"].as_str().unwrap().contains("失敗の型 Refusal を受け"), "{}", rethrow["explanation"]["subject"]);
+    assert!(rethrow["hint"].as_str().unwrap().contains("(<- (Raise 失敗の値))"));
+    let shape = violation(&report, "app/core/tag_judgment.hy::DOEFF121::decide_tag::subject");
+    assert!(shape["hint"].as_str().unwrap().contains("defwire"));
+    assert_eq!(shape["range"]["start"]["line"], 5);
+
+    // 失敗の型の宣言が無ければ DOEFF122 は出ない(名前で決め打ちしない)。
+    let plain = "(defrecord Refusal \"断り\" #^ str reason #^ str detail)\n(defrecord TagsAccepted #^ tuple words)\n";
+    let dir = smell_repo(&[("app/core/rules.hy", plain), ("app/core/tag_judgment.hy", DECIDE_TAG)], "", "");
+    let (_, report) = editor(dir.path());
+    assert!(keys(&report, "DOEFF122").is_empty());
+    // defeffect の :failure の宣言も失敗の型になる。
+    let effect = "(import app.core.rules [Refusal TagsAccepted])\n(defeffect Check \"検め\" {:fields [x] :answer (| TagsAccepted Refusal) :failure [Refusal]})\n";
+    let dir = smell_repo(&[("app/core/rules.hy", plain), ("app/core/effects.hy", effect), ("app/core/tag_judgment.hy", DECIDE_TAG)], "", "");
+    let (_, report) = editor(dir.path());
+    assert_eq!(keys(&report, "DOEFF122"), vec!["app/core/tag_judgment.hy::DOEFF122::decide_tag::add_said"]);
+    // 同じ名の型が別の module にあれば、宣言した方だけが失敗の型(webapp の Refusal は宣言が無い)。
+    let webapp = DECIDE_TAG.replace("(import app.core.rules [Refusal TagsAccepted])", "(import app.webapp.model [Refusal TagsAccepted])");
+    let dir = smell_repo(
+        &[("app/core/rules.hy", rules), ("app/webapp/model.hy", plain), ("app/core/tag_judgment.hy", DECIDE_TAG), ("app/core/webapp_tag.hy", &webapp)],
+        "",
+        "",
+    );
+    let (_, report) = editor(dir.path());
+    assert_eq!(keys(&report, "DOEFF122"), vec!["app/core/tag_judgment.hy::DOEFF122::decide_tag::add_said"]);
+
+    // 登録簿に載った分は info、新しい分は warning。設定の severity で info に下げられる。
+    let dir = smell_repo(&files, "", "app/core/tag_judgment.hy::DOEFF125::decide_tag::writes\n");
+    let (code, report) = editor(dir.path());
+    assert_eq!(violation(&report, "app/core/tag_judgment.hy::DOEFF125::decide_tag::writes")["severity"], "info");
+    assert_eq!(violation(&report, "app/protocol/tags.hy::DOEFF125::decide_tag::writes")["severity"], "warning");
+    assert_eq!(code, 0);
+    let lower = "[tool.doeff-linter.rules.DOEFF125]\nseverity = \"info\"\n";
+    let dir = smell_repo(&files, lower, "");
+    let (_, report) = editor(dir.path());
+    assert_eq!(violation(&report, "app/protocol/tags.hy::DOEFF125::decide_tag::writes")["severity"], "info");
+    assert_eq!(violation(&report, "app/protocol/tags.hy::DOEFF124::decide_tag::add_said")["severity"], "warning");
+    // 臭いの規則でない ID と error の重さは設定の誤り。
+    for bad in ["[tool.doeff-linter.rules.DOEFF101]\nseverity = \"warning\"\n", "[tool.doeff-linter.rules.DOEFF121]\nseverity = \"error\"\n"] {
+        let dir = smell_repo(&files, bad, "");
+        let (code, _, stderr) = run(dir.path(), &["--output-format", "editor-json", "--no-log"], None);
+        assert_eq!(code, 2, "{}", stderr);
+    }
+    // 知らない層の名も設定の誤り。
+    let dir = smell_repo(&files, "", "");
+    let text = std::fs::read_to_string(dir.path().join("pyproject.toml")).unwrap().replace("shape_check_layers = [\"core\"]", "shape_check_layers = [\"ghost\"]");
+    std::fs::write(dir.path().join("pyproject.toml"), text).unwrap();
+    let (code, _, stderr) = run(dir.path(), &["--output-format", "editor-json", "--no-log"], None);
+    assert_eq!(code, 2);
+    assert!(stderr.contains("ghost"), "{}", stderr);
+}
+
+#[test]
+fn smells_have_clean_counterparts_and_run_on_a_single_file() {
+    // 型のある値の判断・Raise で出す失敗・内包表記の蓄え・使い回す名 — どれも当たらない。
+    let clean = r#"(defk decide [intent board]
+  {:tags {:context "kanban" :role "judgment"}}
+  (<- said (| TagsAccepted Refusal) (tags-verdict intent.add))
+  (match said
+    (Refusal) (<- (Raise said))
+    (TagsAccepted) None)
+  (<- plan WritePlan (build said))
+  (log plan)
+  (val writes (tuple (lfor word said.words (AttachTag :tag word))))
+  (return plan))
+"#;
+    let rules = "(defrecord Refusal {:failure True} #^ str reason)\n";
+    let dir = smell_repo(&[("app/core/rules.hy", rules), ("app/core/clean.hy", clean)], "", "");
+    let (_, report) = editor(dir.path());
+    assert!(report["violations"].as_array().unwrap().iter().all(|v| !v["rule"].as_str().unwrap().starts_with("DOEFF12")), "{}", report["violations"]);
+    // 1 file の実行(エディタの保存)でも、repo の宣言から失敗の型を読む。
+    let (_, stdout, stderr) = run(dir.path(), &["--output-format", "editor-json", "--no-log", "--stdin", "--path", "app/core/clean.hy"], Some(DECIDE_TAG));
+    let report: Value = serde_json::from_str(&stdout).unwrap_or_else(|e| panic!("{}: {}\n{}", e, stdout, stderr));
+    assert_eq!(keys(&report, "DOEFF122"), vec!["app/core/clean.hy::DOEFF122::decide_tag::add_said"]);
+    assert_eq!(keys(&report, "DOEFF121"), vec!["app/core/clean.hy::DOEFF121::decide_tag::subject"]);
+}

@@ -258,6 +258,21 @@ pub struct DefinitionSettings {
     pub test_paths: Vec<String>,
 }
 
+/// `[tool.doeff-linter.smells]` — 臭いの規則の設定(DOEFF121 を当てる層)。DOEFF122〜125 は定義の規則の母集団に当たる。
+#[derive(Debug, Deserialize, Serialize, Default, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct SmellsSection {
+    /// DOEFF121(文字列の鍵で読んだ欄への isinstance)を当てる層の名(判断の層 — 例 core)。
+    #[serde(default)]
+    pub shape_check_layers: Vec<String>,
+}
+
+/// 臭いの規則の設定(検めた後)。
+#[derive(Debug, Clone, Default)]
+pub struct SmellSettings {
+    pub shape_check_layers: BTreeSet<LayerId>,
+}
+
 /// `[tool.doeff-linter.roles]` — role の閉じた一覧と、層ごとに許す role。
 #[derive(Debug, Deserialize, Serialize, Default, Clone)]
 #[serde(deny_unknown_fields)]
@@ -457,6 +472,10 @@ pub struct ProjectSettings {
     pub definitions: Option<DefinitionSettings>,
     /// 規則ごとの、登録簿に載った破れの重さ(無ければ warning)。
     pub registered_severity: BTreeMap<ProjectRule, crate::models::Severity>,
+    /// 規則ごとの重さの上書き(臭いの規則 DOEFF121〜125 だけ — 既定の info を warning に上げる時)。
+    pub severity: BTreeMap<ProjectRule, crate::models::Severity>,
+    /// 臭いの規則の設定(`[tool.doeff-linter.smells]`・無ければ None)。
+    pub smells: Option<SmellSettings>,
     /// 設定を読んだ file の dir(registry.config_files の基準)。
     pub config_dir: Option<std::path::PathBuf>,
     /// repo の一番上の architecture.hy(service と層の唯一の宣言)。在れば層・role は ここから写す。
@@ -622,6 +641,8 @@ impl ProjectSettings {
                 services,
                 definitions,
                 registered_severity: BTreeMap::new(),
+                severity: BTreeMap::new(),
+                smells: None,
                 config_dir: None,
                 architecture: None,
                 semantic: None,

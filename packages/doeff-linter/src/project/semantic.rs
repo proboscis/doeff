@@ -32,6 +32,8 @@ pub enum SemanticQuestion {
     PlainCallable,
     /// 処理を持つ method のある class が value / external-world / stateful / other のどれか(Choice・DOEFF204)。
     ClassRole,
+    /// 役が judgment / program の定義が、入力の形の検めと業務の判断を混ぜているか(Choice・DOEFF205)。
+    MixedConcerns,
 }
 
 impl SemanticQuestion {
@@ -87,6 +89,19 @@ impl SemanticQuestion {
                 }
             }),
             SemanticQuestion::PlainCallable => Self::plain_callable_wire(&[], &[]),
+            SemanticQuestion::MixedConcerns => json!({
+                "type": "choice",
+                "instructions": {
+                    "question": "What does the definition in `definition.source` do? `layer` describes what code in its layer should know and not know.",
+                    "note": "Shape checking means validating untyped input: reading keys out of dicts or JSON payloads, isinstance checks, and empty or missing checks on those raw values before they can be used. Business judgment means deciding by business rules (who may do what, which outcome, which write). Comparing already-typed values by a business rule is judgment, not shape checking."
+                },
+                "criteria": {
+                    "mixed": "It both checks the shape of untyped input and makes business decisions in the same definition.",
+                    "shape-only": "It only checks or parses the shape of untyped input; it makes no business decision.",
+                    "judgment-only": "It only makes business decisions from typed values; it does not check the shape of untyped input.",
+                    "neither": "None of the above (for example plain data plumbing or formatting)."
+                }
+            }),
             SemanticQuestion::ClassRole => json!({
                 "type": "choice",
                 "instructions": {
@@ -118,6 +133,7 @@ impl SemanticQuestion {
             SemanticQuestion::TransportKnowledge => "通信の手段(URL や query・HTTP の method や status・JSON の wire・SQL・宛先の address)を知っている",
             SemanticQuestion::PlainCallable => "名乗った理由の種類では、素の関数でなければならない理由にならない見込み",
             SemanticQuestion::ClassRole => "処理を持つ method のある class が、外の世界の窓口か状態を持つ物の見込み",
+            SemanticQuestion::MixedConcerns => "判断の定義が、入力の形の検めと業務の判断を混ぜている見込み",
         }
     }
 }
@@ -148,9 +164,35 @@ pub struct SemanticSection {
     pub plain_callable: Option<PlainCallableSection>,
     /// DOEFF204: Jev が external-world / stateful を選んだ確率の閾値(warning_min・info_min)。
     pub class_role: Option<PlainCallableSection>,
+    /// DOEFF205: 問う定義の役・物差しの層・閾値。
+    pub mixed_concerns: Option<MixedConcernsSection>,
     pub workers: Option<usize>,
     pub timeout_seconds: Option<u64>,
     pub source_limit: Option<usize>,
+}
+
+/// `[tool.doeff-linter.semantic] mixed_concerns`(読んだ形)。
+#[derive(Debug, Deserialize, Serialize, Default, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct MixedConcernsSection {
+    /// 問う定義の役(タグの :role — 既定 judgment・program)。
+    #[serde(default)]
+    pub roles: Vec<String>,
+    /// 物差しの層(その層の説明を Jev に渡す — 例 core)。
+    pub layer: String,
+    /// Jev が mixed を選び、その確率がこれ以上で warning(既定 0.7)。
+    pub warning_min: Option<f64>,
+    /// これ以上で info(既定 0.5)。
+    pub info_min: Option<f64>,
+}
+
+/// DOEFF205 の設定(検めた後)。
+#[derive(Debug, Clone)]
+pub struct MixedConcernsSettings {
+    pub roles: BTreeSet<String>,
+    pub layer: LayerId,
+    pub warning_min: f64,
+    pub info_min: f64,
 }
 
 /// `[tool.doeff-linter.semantic] plain_callable`(読んだ形)。
@@ -183,6 +225,7 @@ pub struct QuestionSettings {
 pub struct SemanticSettings {
     pub plain_callable: Option<PlainCallableSettings>,
     pub class_role: Option<PlainCallableSettings>,
+    pub mixed_concerns: Option<MixedConcernsSettings>,
     pub questions: BTreeMap<SemanticQuestion, QuestionSettings>,
     pub workers: usize,
     pub timeout: Duration,
@@ -220,9 +263,26 @@ impl SemanticSettings {
         };
         let plain_callable = thresholds(section.plain_callable.as_ref(), "plain_callable", 0.4, 0.4);
         let class_role = thresholds(section.class_role.as_ref(), "class_role", 0.7, 0.5);
+        let mixed_concerns = section.mixed_concerns.as_ref().and_then(|m| {
+            let layer = find(&m.layer, "semantic.mixed_concerns.layer")?;
+            let settings = MixedConcernsSettings {
+                roles: if m.roles.is_empty() { ["judgment", "program"].iter().map(|r| r.to_string()).collect() } else { m.roles.iter().cloned().collect() },
+                layer,
+                warning_min: m.warning_min.unwrap_or(0.7),
+                info_min: m.info_min.unwrap_or(0.5),
+            };
+            if !(0.0..=1.0).contains(&settings.warning_min) || !(0.0..=1.0).contains(&settings.info_min) || settings.info_min > settings.warning_min {
+                problems.push(format!(
+                    "semantic.mixed_concerns: 閾値は 0〜1 で info_min ≤ warning_min(warning_min = {}・info_min = {})",
+                    settings.warning_min, settings.info_min
+                ));
+            }
+            Some(settings)
+        });
         SemanticSettings {
             plain_callable,
             class_role,
+            mixed_concerns,
             questions,
             workers: section.workers.unwrap_or(8).clamp(1, 32),
             timeout: Duration::from_secs(section.timeout_seconds.unwrap_or(30)),
@@ -249,6 +309,16 @@ impl SemanticSettings {
         match chosen {
             "external-world" | "stateful" if probability >= spec.warning_min => Some(crate::models::Severity::Warning),
             "external-world" | "stateful" if probability >= spec.info_min => Some(crate::models::Severity::Info),
+            _ => None,
+        }
+    }
+
+    /// DOEFF205: Jev が mixed を選んだ確率から重さを決める(ほかの答えは出さない・error にはしない)。
+    pub fn mixed_concerns_severity(&self, chosen: &str, probability: f64) -> Option<crate::models::Severity> {
+        let spec = self.mixed_concerns.as_ref()?;
+        match chosen {
+            "mixed" if probability >= spec.warning_min => Some(crate::models::Severity::Warning),
+            "mixed" if probability >= spec.info_min => Some(crate::models::Severity::Info),
             _ => None,
         }
     }
@@ -428,10 +498,42 @@ pub fn class_item(
     }
 }
 
+/// DOEFF205 の定義 1 つの state と cache の鍵を作る(state = 定義の source(タグを消して切る)と物差しの層の説明)。
+#[allow(clippy::too_many_arguments)]
+pub fn mixed_item(
+    settings: &SemanticSettings,
+    model: &str,
+    rel: &str,
+    path: &Path,
+    name: &str,
+    kind: &'static str,
+    range: doeff_indexer::hy_index::Range,
+    source: &str,
+    layer: LayerId,
+    layer_name: &str,
+    description: &LayerDescription,
+) -> SemanticItem {
+    let stripped = truncate(&strip_tags(source), settings.source_limit);
+    let question = SemanticQuestion::MixedConcerns;
+    let question_json = question.wire();
+    let state = json!({
+        "definition": {"name": name, "kind": kind, "file": rel, "source": stripped},
+        "layer": {"name": layer_name, "summary": description.summary, "knows": description.knows, "does_not_know": description.does_not_know},
+    });
+    let mut hasher = Sha256::new();
+    for part in [model.to_string(), canonical(&question_json), canonical(&state)] {
+        hasher.update(part.as_bytes());
+        hasher.update(b"\n");
+    }
+    let key = hasher.finalize().iter().map(|b| format!("{:02x}", b)).collect();
+    SemanticItem { question, question_json, declared: None, rel: rel.to_string(), path: path.to_path_buf(), name: name.to_string(), kind, range, layer, state, key }
+}
+
 /// 較正の見張りで比べる確率 — Noul は答えの確率、DOEFF204 は external-world の確率(正例 = 窓口・反例 = 値の class)。
 fn calibration_probability(question: SemanticQuestion, answer: &Answer) -> f64 {
     match question {
         SemanticQuestion::ClassRole => answer.probabilities.as_ref().and_then(|p| p.get("external-world").copied()).unwrap_or(0.0),
+        SemanticQuestion::MixedConcerns => answer.probabilities.as_ref().and_then(|p| p.get("mixed").copied()).unwrap_or(0.0),
         SemanticQuestion::BusinessDecision | SemanticQuestion::TransportKnowledge | SemanticQuestion::PlainCallable => answer.probability,
     }
 }
@@ -889,6 +991,7 @@ impl SemanticItem {
             SemanticQuestion::TransportKnowledge => "DOEFF202",
             SemanticQuestion::PlainCallable => "DOEFF203",
             SemanticQuestion::ClassRole => "DOEFF204",
+            SemanticQuestion::MixedConcerns => "DOEFF205",
         }
     }
 }
@@ -914,7 +1017,7 @@ mod tests {
         );
         assert_eq!(parse_answer(r#"{"answers":{"q":{"noul":0.2}},"usage":{"input_tokens":7},"model":"jev-1"}"#).unwrap().probability, 0.2);
         assert!(parse_answer("{}").is_err());
-        assert_eq!(calibration_examples().len(), 6);
+        assert_eq!(calibration_examples().len(), 8);
     }
 
     #[test]
