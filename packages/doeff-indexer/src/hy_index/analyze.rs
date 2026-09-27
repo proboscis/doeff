@@ -9,7 +9,7 @@
 
 use std::collections::HashSet;
 
-use super::model::{Definition, DefinitionKind, Import, Reference};
+use super::model::{Call, Definition, DefinitionKind, Import, Reference};
 use super::position::LineIndex;
 use super::reader::{matching_brace, Form, Node, Prefix, ReadIssue, Reader, Span, StrKind};
 
@@ -39,6 +39,10 @@ const DOEFF_REQUIRED_KEYWORDS: &[&str] = &[
     "merge!",
 ];
 
+/// doeff-hy の束縛の構文の頭。defk / deftest / defhandler の macro が本体の中で読むので、file が
+/// require していなくても構文であり、呼び出しには入れない。
+const BINDING_SYNTAX: &[&str] = &["val", "var", "lazy", "session"];
+
 /// 定数(参照に入れない)。
 const CONSTANTS: &[&str] = &["True", "False", "None", "...", "Ellipsis", "NotImplemented", "Inf", "NaN"];
 
@@ -64,6 +68,7 @@ pub struct FileAnalysis {
     pub definitions: Vec<Definition>,
     pub imports: Vec<Import>,
     pub references: Vec<Reference>,
+    pub calls: Vec<Call>,
     pub errors: Vec<String>,
 }
 
@@ -85,8 +90,11 @@ pub fn analyze(src: &str) -> FileAnalysis {
         lines,
         keywords,
         definitions: Vec::new(),
+        definition_spans: Vec::new(),
         imports: Vec::new(),
         references: Vec::new(),
+        calls: Vec::new(),
+        call_suppression: 0,
     };
     for form in &forms {
         analyzer.visit_top(form);
@@ -98,6 +106,7 @@ pub fn analyze(src: &str) -> FileAnalysis {
         definitions: analyzer.definitions,
         imports: analyzer.imports,
         references: analyzer.references,
+        calls: analyzer.calls,
         errors,
     }
 }
@@ -209,8 +218,13 @@ struct Analyzer<'a> {
     lines: LineIndex<'a>,
     keywords: HashSet<&'static str>,
     definitions: Vec<Definition>,
+    /// definitions と同じ順の、各定義の form 全体の byte の範囲(呼び出しの caller を引くため)。
+    definition_spans: Vec<Span>,
     imports: Vec<Import>,
     references: Vec<Reference>,
+    calls: Vec<Call>,
+    /// 0 より大きい間は呼び出しを積まない(型注釈・match の pattern の中)。
+    call_suppression: u32,
 }
 
 impl<'a> Analyzer<'a> {
@@ -349,6 +363,22 @@ impl<'a> Analyzer<'a> {
         docstring: Option<String>,
         params: Vec<String>,
     ) -> String {
+        self.push_def_with_bases(name, kind, full, container, docstring, params, Vec::new())
+    }
+
+    /// 基底を持つ定義(defclass / defrecord)を 1 つ積み、積んだ名前を返す。form 全体の byte の範囲も
+    /// 控える(呼び出しの caller を引くため)。
+    #[allow(clippy::too_many_arguments)]
+    fn push_def_with_bases(
+        &mut self,
+        name: Span,
+        kind: DefinitionKind,
+        full: Span,
+        container: Option<&str>,
+        docstring: Option<String>,
+        params: Vec<String>,
+        bases: Vec<String>,
+    ) -> String {
         let text = self.text(name).to_string();
         self.definitions.push(Definition {
             mangled: mangle(&text),
@@ -359,8 +389,27 @@ impl<'a> Analyzer<'a> {
             container: container.map(str::to_string),
             docstring,
             params,
+            bases,
         });
+        self.definition_spans.push(full);
         text
+    }
+
+    /// `[Base other.Base :metaclass M]` の基底の記号を書かれたとおりに取る(keyword とその値は除く)。
+    fn base_names(&self, bases: &[Form]) -> Vec<String> {
+        let mut names = Vec::new();
+        let mut index = 0;
+        while index < bases.len() {
+            match bases[index].node {
+                Node::Keyword => index += 2,
+                Node::Symbol => {
+                    names.push(self.text(bases[index].span).to_string());
+                    index += 1;
+                }
+                _ => index += 1,
+            }
+        }
+        names
     }
 
     /// `(defn [decorators]? :tp [T]? #^ Ret? name [params] "doc"? body…)` を読む(defk・deff・defmacro も)。
@@ -383,12 +432,13 @@ impl<'a> Analyzer<'a> {
         let Some(name) = rest.first().and_then(|first| self.def_name(first)) else {
             return;
         };
-        let body = match rest.get(1) {
-            Some(bases) if bases.bracket_items().is_some() => rest.get(2..).unwrap_or_default(),
-            _ => rest.get(1..).unwrap_or_default(),
+        let (bases, body) = match rest.get(1).and_then(Form::bracket_items) {
+            Some(bases) => (self.base_names(bases), rest.get(2..).unwrap_or_default()),
+            None => (Vec::new(), rest.get(1..).unwrap_or_default()),
         };
         let (docstring, members) = self.body_docstring(body);
-        let class_name = self.push_def(name, DefinitionKind::Defclass, form.span, container, docstring, Vec::new());
+        let kind = DefinitionKind::Defclass;
+        let class_name = self.push_def_with_bases(name, kind, form.span, container, docstring, Vec::new(), bases);
         for member in members {
             self.class_member(member, &class_name);
         }
@@ -427,13 +477,19 @@ impl<'a> Analyzer<'a> {
         }
     }
 
-    /// `(defrecord Name "doc"? #^ T field …)` を読む(field は裸・括弧つき・注釈なしの記号のどれでもよい)。
+    /// `(defrecord Name [bases]? "doc"? #^ T field …)` を読む(field は裸・括弧つき・注釈なしの記号のどれでもよい)。
+    /// 今の defrecord の macro は基底を書かない形だけなので、bases はふつう空。
     fn record_def(&mut self, form: &Form, items: &[Form], container: Option<&str>) {
         let Some(name) = items.get(1).and_then(|first| self.def_name(first)) else {
             return;
         };
-        let (docstring, fields) = self.body_docstring(items.get(2..).unwrap_or_default());
-        let record = self.push_def(name, DefinitionKind::Defrecord, form.span, container, docstring, Vec::new());
+        let (bases, rest) = match items.get(2).and_then(Form::bracket_items) {
+            Some(bases) => (self.base_names(bases), items.get(3..).unwrap_or_default()),
+            None => (Vec::new(), items.get(2..).unwrap_or_default()),
+        };
+        let (docstring, fields) = self.body_docstring(rest);
+        let kind = DefinitionKind::Defrecord;
+        let record = self.push_def_with_bases(name, kind, form.span, container, docstring, Vec::new(), bases);
         for field in fields {
             match &field.node {
                 Node::Symbol if !is_operator(self.text(field.span)) => {
@@ -666,7 +722,7 @@ impl<'a> Analyzer<'a> {
                 }
             }
             Node::Str { .. } => {}
-            Node::Seq { items, .. } if form.paren_items().is_some() => self.walk_list(items, quoting),
+            Node::Seq { items, .. } if form.paren_items().is_some() => self.walk_list(items, quoting, false),
             Node::Seq { items, .. } => {
                 for item in items {
                     self.walk(item, quoting);
@@ -685,8 +741,14 @@ impl<'a> Analyzer<'a> {
                 }
             }
             Node::Annotated { annotation, target } => {
-                for part in [annotation, target].into_iter().flatten() {
-                    self.walk(part, quoting);
+                // 型注釈の中の `(of list int)` などは呼び出しではない。
+                if let Some(annotation) = annotation {
+                    self.call_suppression += 1;
+                    self.walk(annotation, quoting);
+                    self.call_suppression -= 1;
+                }
+                if let Some(target) = target {
+                    self.walk(target, quoting);
                 }
             }
             Node::Tagged { inner } => {
@@ -697,8 +759,9 @@ impl<'a> Analyzer<'a> {
         }
     }
 
-    /// `( … )` を歩く。先頭の予約語は参照に入れず、import / quote の形はそれぞれに読む。
-    fn walk_list(&mut self, items: &[Form], quoting: Quoting) {
+    /// `( … )` を歩く。先頭の予約語は参照にも呼び出しにも入れず、import / quote / `<-` / handler の節 /
+    /// `.` / match の形はそれぞれに読む。`performed` = この列が `<-` / `yield` で撃たれている。
+    fn walk_list(&mut self, items: &[Form], quoting: Quoting, performed: bool) {
         if quoting != Quoting::None {
             for item in items {
                 self.walk(item, quoting);
@@ -712,6 +775,7 @@ impl<'a> Analyzer<'a> {
             return;
         };
         let mut rest = &items[1..];
+        let mut performed_index = None;
         match head {
             "import" => self.parse_import(rest, false),
             "require" => self.parse_import(rest, true),
@@ -728,14 +792,167 @@ impl<'a> Analyzer<'a> {
                 return;
             }
             "session" | "lazy" => rest = self.skip_val_var(rest),
+            // (<- (X …)) / (<- name (X …)) / (<- name T (X …)) — 撃たれるのは最後の form。
+            "<-" if (1..=3).contains(&rest.len()) => performed_index = Some(rest.len() - 1),
+            "yield" | "yield-from" if !rest.is_empty() => performed_index = Some(0),
+            "defhandler" => {
+                self.walk_handler_clauses(rest);
+                return;
+            }
+            "handle" if self.is_keyword_head("handle") => {
+                if let Some((body, clauses)) = rest.split_first() {
+                    self.walk(body, Quoting::None);
+                    self.walk_handler_clauses(clauses);
+                }
+                return;
+            }
+            "." => {
+                self.walk_attribute_access(rest);
+                return;
+            }
+            "match" => {
+                if let Some((subject, clauses)) = rest.split_first() {
+                    self.walk(subject, Quoting::None);
+                    self.walk_match_clauses(clauses);
+                }
+                return;
+            }
             _ => {}
         }
         if !self.is_keyword_head(head) {
             self.reference(items[0].span);
+            self.record_call(items[0].span, performed);
         }
-        for item in rest {
-            self.walk(item, Quoting::None);
+        for (index, item) in rest.iter().enumerate() {
+            match item.paren_items() {
+                Some(inner) if performed_index == Some(index) => self.walk_list(inner, Quoting::None, true),
+                _ => self.walk(item, Quoting::None),
+            }
         }
+    }
+
+    /// handler の本体の節を歩く: `(Effect [fields] body…)` の頭は参照だが呼び出しではない。
+    /// それ以外(名前・docstring・引数・`(session …)`)はふつうに歩く。
+    fn walk_handler_clauses(&mut self, clauses: &[Form]) {
+        for clause in clauses {
+            match clause.paren_items() {
+                Some([effect, fields, body @ ..])
+                    if matches!(effect.node, Node::Symbol)
+                        && fields.bracket_items().is_some()
+                        && !self.is_keyword_head(self.text(effect.span)) =>
+                {
+                    self.reference(effect.span);
+                    self.walk(fields, Quoting::None);
+                    for form in body {
+                        self.walk(form, Quoting::None);
+                    }
+                }
+                _ => self.walk(clause, Quoting::None),
+            }
+        }
+    }
+
+    /// `(. obj attr (method args))` を歩く: 属性と method の名前は参照だが呼び出しではない。
+    fn walk_attribute_access(&mut self, rest: &[Form]) {
+        let Some((object, accessors)) = rest.split_first() else {
+            return;
+        };
+        self.walk(object, Quoting::None);
+        for accessor in accessors {
+            match accessor.paren_items() {
+                Some([method, args @ ..]) if matches!(method.node, Node::Symbol) => {
+                    self.reference(method.span);
+                    for arg in args {
+                        self.walk(arg, Quoting::None);
+                    }
+                }
+                _ => self.walk(accessor, Quoting::None),
+            }
+        }
+    }
+
+    /// match の節 `pattern [:as name] [:if guard] result` を歩く。pattern の中の `(Point …)` は
+    /// class の型の照合で呼び出しではないので、呼び出しに入れない(参照には入れる)。
+    fn walk_match_clauses(&mut self, forms: &[Form]) {
+        let mut index = 0;
+        while index < forms.len() {
+            self.walk_without_calls(&forms[index]);
+            index += 1;
+            loop {
+                match forms.get(index) {
+                    Some(keyword) if matches!(keyword.node, Node::Keyword) && self.text(keyword.span) == ":as" => {
+                        if let Some(name) = forms.get(index + 1) {
+                            self.walk_without_calls(name);
+                        }
+                        index += 2;
+                    }
+                    Some(keyword) if matches!(keyword.node, Node::Keyword) && self.text(keyword.span) == ":if" => {
+                        if let Some(guard) = forms.get(index + 1) {
+                            self.walk(guard, Quoting::None);
+                        }
+                        index += 2;
+                    }
+                    _ => break,
+                }
+            }
+            if let Some(result) = forms.get(index) {
+                self.walk(result, Quoting::None);
+            }
+            index += 1;
+        }
+    }
+
+    /// 参照は積むが呼び出しは積まずに form を歩く(型注釈・match の pattern のため)。
+    fn walk_without_calls(&mut self, form: &Form) {
+        self.call_suppression += 1;
+        self.walk(form, Quoting::None);
+        self.call_suppression -= 1;
+    }
+
+    /// 呼び出しの頭の記号を呼び出しとして積む(`.method` の形・演算子・定数は除く)。caller は
+    /// 呼び出しの位置を form 全体の範囲に含む定義のうち最も狭いもの。
+    fn record_call(&mut self, head: Span, performed: bool) {
+        let text = self.text(head);
+        if self.call_suppression > 0
+            || text.is_empty()
+            || text.starts_with('.')
+            || text == "_"
+            || CONSTANTS.contains(&text)
+            || BINDING_SYNTAX.contains(&text)
+            || is_operator(text)
+        {
+            return;
+        }
+        let mut offset = 0;
+        let mut segments = Vec::new();
+        for part in text.split('.') {
+            if !part.is_empty() {
+                segments.push((part, head.start + offset));
+            }
+            offset += part.len() + 1;
+        }
+        let Some(&(callee, start)) = segments.last() else {
+            return;
+        };
+        let qualifier = match segments.len() {
+            0 | 1 => None,
+            count => Some(segments[..count - 1].iter().map(|(part, _)| *part).collect::<Vec<_>>().join(".")),
+        };
+        let caller = self
+            .definition_spans
+            .iter()
+            .enumerate()
+            .filter(|(_, span)| span.start <= start && start < span.end)
+            .min_by_key(|(_, span)| span.end - span.start)
+            .map(|(index, _)| index);
+        self.calls.push(Call {
+            callee: callee.to_string(),
+            mangled: mangle(callee),
+            qualifier,
+            range: self.lines.range(start, start + callee.len()),
+            caller,
+            performed,
+        });
     }
 
     /// f 文字列の `{form}` の中を読んで歩く(`{x:>10}` の書式は名前から外す)。

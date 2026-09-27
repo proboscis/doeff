@@ -346,3 +346,135 @@ fn top_level_wrappers_and_destructuring() {
     }
     assert!(!file.definitions.iter().any(|definition| definition.name == "hidden" || definition.name.contains("attr")));
 }
+
+/// 呼び出しを callee で引く(1 件もなければ検を落とす)。
+fn calls_named<'a>(file: &'a HyFileIndex, callee: &str) -> Vec<&'a Call> {
+    file.calls.iter().filter(|call| call.callee == callee).collect()
+}
+
+/// 定義の名前から definitions の添字を引く。
+fn index_of(file: &HyFileIndex, name: &str) -> usize {
+    file.definitions
+        .iter()
+        .position(|definition| definition.name == name)
+        .unwrap_or_else(|| panic!("定義 {name} が無い"))
+}
+
+#[test]
+fn bases_of_classes_and_records() {
+    let source = "(defclass [(dataclass :frozen True)] PutRow [EffectBase]\n  (#^ str table))\n\
+                  (defclass Dotted [doeff.EffectBase Mixin :metaclass Meta])\n\
+                  (defclass NoBases [] 1)\n\
+                  (defclass Bare)\n\
+                  (defrecord Row #^ str key)\n\
+                  (defrecord WithBase [Base] #^ str key)\n\
+                  (defn f [] 1)\n";
+    let file = index(source);
+    assert_eq!(def(&file, "PutRow").bases, vec!["EffectBase"]);
+    assert_eq!(def(&file, "Dotted").bases, vec!["doeff.EffectBase", "Mixin"]);
+    assert!(def(&file, "NoBases").bases.is_empty());
+    assert!(def(&file, "Bare").bases.is_empty());
+    assert!(def(&file, "Row").bases.is_empty());
+    assert_eq!(def(&file, "WithBase").bases, vec!["Base"]);
+    assert_eq!(def(&file, "key").container.as_deref(), Some("Row"));
+    assert!(def(&file, "f").bases.is_empty());
+    assert!(def(&file, "table").bases.is_empty());
+}
+
+#[test]
+fn call_callers_are_the_innermost_definition() {
+    let source = r#"(require doeff-hy.macros [defk defhandler <-])
+(setup-logging)
+(defk step [state]
+  {:pre [(: state dict)] :post [(: % int)]}
+  (<- row (GetRow (key-of state)))
+  (setv inner (fn [x] (helper x)))
+  (compute row))
+(defhandler writes
+  (session var count (initial-count))
+  (PutRow [table key]
+    (log-write table)
+    (resume key)))
+(defclass Box [] (defn size [self] (len self.items)))
+"#;
+    let file = index(source);
+    assert_eq!(calls_named(&file, "setup-logging")[0].caller, None);
+    let step = Some(index_of(&file, "step"));
+    for callee in ["GetRow", "key-of", "helper", "compute", "isinstance"] {
+        if let Some(call) = calls_named(&file, callee).first() {
+            assert_eq!(call.caller, step, "{callee}");
+        }
+    }
+    assert_eq!(calls_named(&file, "helper")[0].caller, step, "入れ子の fn の中は外側の定義");
+    let clause = file
+        .definitions
+        .iter()
+        .position(|definition| definition.name == "PutRow" && definition.kind == DefinitionKind::EffectClause);
+    assert_eq!(calls_named(&file, "log-write")[0].caller, clause);
+    assert_eq!(calls_named(&file, "initial-count")[0].caller, Some(index_of(&file, "count")));
+    assert_eq!(calls_named(&file, "len")[0].caller, Some(index_of(&file, "size")));
+    // effect 節の頭・予約語・演算子・`(.method obj)` は呼び出しではない。
+    for absent in ["PutRow", "defk", "defhandler", "<-", "fn", "setv", "resume", "session", ":", "defclass", "defn", "require"] {
+        assert!(calls_named(&file, absent).is_empty(), "{absent} が calls に入っている");
+    }
+    for call in &file.calls {
+        assert_eq!(slice(source, call.range), call.callee);
+        if let Some(caller) = call.caller {
+            let full = file.definitions[caller].full_range;
+            assert!(full.start <= call.range.start && call.range.end <= full.end, "{} の caller の範囲の外", call.callee);
+        }
+    }
+}
+
+#[test]
+fn performed_calls() {
+    let source = r#"(require doeff-hy.macros [defk <-])
+(defk run [x]
+  {:pre [] :post []}
+  (<- (Log (fmt x)))
+  (<- a (Ask "k"))
+  (<- b int (Get (key-for x)))
+  (yield (Put "k" 1))
+  (yield-from (sub-program x))
+  (plain-call (Nested x))
+  (.method x)
+  (. x attr (other-method 1))
+  (mod.sub.fn 1)
+  (match x (Point :x px) px _ 0)
+  #^ (of list int) typed)
+"#;
+    let file = index(source);
+    let performed = |callee: &str| calls_named(&file, callee).first().map(|call| call.performed);
+    for callee in ["Log", "Ask", "Get", "Put", "sub-program"] {
+        assert_eq!(performed(callee), Some(true), "{callee}");
+    }
+    for callee in ["fmt", "key-for", "plain-call", "Nested"] {
+        assert_eq!(performed(callee), Some(false), "{callee}");
+    }
+    assert!(calls_named(&file, "method").is_empty());
+    assert!(calls_named(&file, "other-method").is_empty());
+    assert!(calls_named(&file, "Point").is_empty(), "match の pattern は呼び出しではない");
+    assert!(calls_named(&file, "of").is_empty(), "型注釈の中は呼び出しではない");
+    let dotted = &calls_named(&file, "fn")[0];
+    assert_eq!(dotted.qualifier.as_deref(), Some("mod.sub"));
+    assert_eq!(slice(source, dotted.range), "fn");
+    assert_eq!(calls_named(&file, "Log")[0].mangled, "Log");
+    assert_eq!(calls_named(&file, "key-for")[0].mangled, "key_for");
+    // 参照は今までどおり入る。
+    assert!(file.references.iter().any(|reference| reference.name == "method"));
+    assert!(file.references.iter().any(|reference| reference.name == "Point"));
+}
+
+#[test]
+fn calls_survive_broken_sources() {
+    for source in ["(<-", "(<- (", "(yield", "(defhandler h (E [", "(. x (", "(match x (P", "(f (g", "(a.b."] {
+        let file = index(source);
+        for call in &file.calls {
+            if let Some(caller) = call.caller {
+                assert!(caller < file.definitions.len());
+            }
+        }
+    }
+    let file = index("(a.b. 1)\n");
+    assert_eq!(calls_named(&file, "b")[0].qualifier.as_deref(), Some("a"));
+}

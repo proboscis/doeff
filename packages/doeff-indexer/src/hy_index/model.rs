@@ -1,4 +1,4 @@
-//! `hy-index` の出力の型 — 契約 `hy-index-contract.md`(版 1)の JSON の形そのもの。
+//! `hy-index` の出力の型 — 契約 `hy-index-contract.md`(版 1)と `hy-index-contract-v2.md`(版 2 の追加分)の JSON の形そのもの。
 //! JSON への変換は CLI の出力の 1 か所(`main.rs`)だけが行う。
 
 use serde::Serialize;
@@ -6,7 +6,7 @@ use serde::Serialize;
 pub use super::position::{Position, Range};
 
 /// 契約の版。形を変える時は契約と一緒に上げる。
-pub const CONTRACT_VERSION: u32 = 1;
+pub const CONTRACT_VERSION: u32 = 2;
 
 /// `hy-index` の出力の全体。
 #[derive(Debug, Clone, Serialize)]
@@ -24,6 +24,7 @@ pub struct HyFileIndex {
     pub definitions: Vec<Definition>,
     pub imports: Vec<Import>,
     pub references: Vec<Reference>,
+    pub calls: Vec<Call>,
     pub errors: Vec<String>,
 }
 
@@ -38,6 +39,8 @@ pub struct Definition {
     pub container: Option<String>,
     pub docstring: Option<String>,
     pub params: Vec<String>,
+    /// defclass / defrecord の基底の記号(書かれたとおり、dotted も 1 つ)。それ以外の kind は常に空。
+    pub bases: Vec<String>,
 }
 
 /// 定義の種類(契約の kind の一覧ちょうど)。
@@ -151,4 +154,20 @@ pub struct Reference {
     pub mangled: String,
     pub qualifier: Option<String>,
     pub range: Range,
+}
+
+/// 呼び出しの 1 つ(`(` の直後の記号)。effect・handler・defk の間を行き来するためのもの。
+#[derive(Debug, Clone, Serialize)]
+pub struct Call {
+    /// 頭の記号の最後の区切り(書かれたとおり)。
+    pub callee: String,
+    pub mangled: String,
+    /// dotted の前の区切りを `.` で繋いだもの。無ければ null。
+    pub qualifier: Option<String>,
+    /// 頭の記号の最後の区切りの位置。
+    pub range: Range,
+    /// この呼び出しを含む最も内側の定義の、同じ file の `definitions` の添字。top level の式なら null。
+    pub caller: Option<usize>,
+    /// `<-` で撃たれている(または `yield` / `yield-from` の直下)なら true。
+    pub performed: bool,
 }
