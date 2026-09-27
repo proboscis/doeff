@@ -1274,7 +1274,7 @@
   (<- (CoordinatorStarted now))
   (setattr parts.queue "up" True)
   (try
-    (<- (with-handlers (+ (emulated-handlers parts.queue parts.store parts.stop parts.kube {}) [observe-requests])
+    (<- (with-handlers (+ (emulated-handlers parts.queue parts.store parts.stop parts.kube) [observe-requests])
           (run-coordinator state plan.timing plan.naming)))
     "stopped"
     (except [error OSError]

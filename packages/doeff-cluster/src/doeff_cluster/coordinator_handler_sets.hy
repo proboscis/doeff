@@ -3,10 +3,10 @@
 ;;; 環境を知らない。
 ;;;
 ;;;   production-handlers  本番: HTTP の受付(RequestInbox — 別 thread の HTTP server)・追記の log の置き場(WalStore — file と fsync)・
-;;;                        k8s の API(ServiceAccount の token が在る時)・registry の HTTP API・doeff-time の async-time-handler。
+;;;                        k8s の API(ServiceAccount の token が在る時)・doeff-time の async-time-handler。
 ;;;   emulated-handlers    手元のまねた環境(業務の側の模擬環境): 要求は process の中の列(RequestQueue — 模擬の
 ;;;                        worker・client が並べ、返事は promise で受ける)・置き場は memory(MemoryWalStore — 再起動の模擬は同じ
-;;;                        置き場から load-state で読み直す)・k8s と registry は memory の偽物。時計(GetTime / Delay)は組の外側の
+;;;                        置き場から load-state で読み直す)・k8s は memory の偽物。時計(GetTime / Delay)は組の外側の
 ;;;                        仮想の時計(doeff-time の sim-time-handler)が答えるので、この組は時計を持たない。
 ;;;
 ;;; 組は with_handlers に渡す list(外側が先)。選ぶのは composition root(coordinator.main・業務の側の模擬環境)だけ。
@@ -19,7 +19,6 @@
 (import .cluster_model [NextRequests Reply])
 (import .wal_store [WalStore MAX-LOG-BYTES wal-store apply-delta])
 (import .kube_handlers [KubeMemory kube-memory])
-(import .image_handlers [RegistryClient registry-http image-memory])
 (import .coordinator_inbox [RequestInbox StopState http-requests stop-flag])
 
 ;; 列が空の間、NextRequests が列を見直す間隔(秒)。本番の受付は要求が届いた瞬間に起きるので、模擬の遅れはこの間隔まで。
@@ -28,9 +27,7 @@
 
 (defn #^ list production-handlers [#^ RequestInbox inbox #^ WalStore store #^ StopState stop #^ object kube]
   "本番の組(外側が先)。kube = kube-api か kube-unavailable(資格の有無は composition root が決める)。"
-  [(await-handler) (async-time-handler) (stop-flag stop) (wal-store store) (http-requests inbox)
-   ;; image の LABEL(土台の版の追随)は registry の HTTP API を読むだけ。新しい image の時だけ・3 秒で打ち切る。
-   (registry-http (RegistryClient :timeout 3.0)) kube])
+  [(await-handler) (async-time-handler) (stop-flag stop) (wal-store store) (http-requests inbox) kube])
 
 
 ;; --- まねた環境 -------------------------------------------------------------------------------
@@ -84,7 +81,6 @@
   (defn #^ None checkpoint [self] None))
 
 
-(defn #^ list emulated-handlers [#^ RequestQueue queue #^ MemoryWalStore store #^ StopState stop #^ KubeMemory kube #^ dict images]
-  "まねた環境の組(外側が先)。時計は持たない — 外側の仮想の時計(sim-time-handler)が答える。stop = 停止の合図(coordinator_inbox.StopState)。
-   images = image → LABEL の dict(registry の偽物)。"
-  [(stop-flag stop) (wal-store store) (queued-requests queue) (image-memory images) (kube-memory kube)])
+(defn #^ list emulated-handlers [#^ RequestQueue queue #^ MemoryWalStore store #^ StopState stop #^ KubeMemory kube]
+  "まねた環境の組(外側が先)。時計は持たない — 外側の仮想の時計(sim-time-handler)が答える。stop = 停止の合図(coordinator_inbox.StopState)。"
+  [(stop-flag stop) (wal-store store) (queued-requests queue) (kube-memory kube)])
