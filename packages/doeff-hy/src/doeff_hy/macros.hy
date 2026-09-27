@@ -33,25 +33,18 @@
 ;; from nested <- to the enclosing defn scope. See #387.
 (require doeff-hy.handle [defhandler handle with-handler])
 
-(defn _compiling-file-ext []
-  "Return the file extension of the .hy/.hyk/.hyp file being compiled.
-   Walks the call stack to find the Hy source_to_code path argument."
-  (try
-    (for [frame-info (inspect.stack)]
-      ;; Hy's _hy_source_to_code has 'path' as a local variable
-      (setv loc (. frame-info [0] f_locals))
-      (when (in "path" loc)
-        (setv path (get loc "path"))
-        (when (isinstance path str)
-          (setv ext (get (os.path.splitext path) 1))
-          (when (in ext [".hyk" ".hyp"])
-            (return ext)))))
-    (return "")
-    (except [e Exception] (return ""))))
+(defn _compiling-file-ext [compiler]
+  "Return the file extension (.hyk / .hyp, else \"\") of the file the macro is being expanded in.
+   Reads the Hy compiler's filename (the macro's _hy-compiler argument) — the old form walked
+   inspect.stack() on every defk/deff/defp expansion, which reads the source of every frame on
+   the stack and made compiling a large .hy file take minutes (agora-redesign #786)."
+  (setv filename compiler.filename)
+  (setv ext (if (isinstance filename str) (get (os.path.splitext filename) 1) ""))
+  (if (in ext [".hyk" ".hyp"]) ext ""))
 
-(defn _enforce-no-defp-in-hyk [macro-name fn-name]
+(defn _enforce-no-defp-in-hyk [compiler macro-name fn-name]
   "Raise SyntaxError if a defp/defpp macro is used in a .hyk file."
-  (setv ext (_compiling-file-ext))
+  (setv ext (_compiling-file-ext compiler))
   (when (= ext ".hyk")
     (raise (SyntaxError (.format "
 {macro} {name}: cannot define a Program entrypoint in a .hyk file.
@@ -60,9 +53,9 @@
   Move this {macro} to a .hyp file instead.
 " :macro macro-name :name fn-name)))))
 
-(defn _warn-defk-in-hyp [macro-name fn-name]
+(defn _warn-defk-in-hyp [compiler macro-name fn-name]
   "Warn if defk/deff is used in a .hyp file."
-  (setv ext (_compiling-file-ext))
+  (setv ext (_compiling-file-ext compiler))
   (when (= ext ".hyp")
     (import warnings)
     (warnings.warn
@@ -664,7 +657,7 @@ defk {name}: :post type annotation cannot be an empty string.
 ;; deff — defn with :pre/:post contracts
 ;; ---------------------------------------------------------------------------
 
-(defmacro deff [name params #* body]
+(defmacro deff [_hy-compiler name params #* body]
   "Define a function with :pre/:post contracts.
 
    (deff my-fn [x y]
@@ -675,7 +668,7 @@ defk {name}: :post type annotation cannot be an empty string.
    :pre and :post are REQUIRED.
    (: name Type) is shorthand for (isinstance name Type).
    Arbitrary validation expressions are also allowed in the same list."
-  (_warn-defk-in-hyp "deff" name)
+  (_warn-defk-in-hyp _hy-compiler "deff" name)
   (setv #(pre-checks post-checks real-body) (_extract-contracts body))
   (when (is pre-checks None)
     (raise (SyntaxError (.format "
@@ -738,7 +731,7 @@ deff {name}: {{:post [...]}} is required.
       :post [(: % int)]}
      (k1 (! (k2 x)) (! (k3 y))))"
   ;; Warn if defk is used in .hyp file
-  (_warn-defk-in-hyp "defk" name)
+  (_warn-defk-in-hyp _hy-compiler "defk" name)
   ;; Reject handler-like signatures early — these should use defhandler
   (_reject-handler-signature name params)
   (setv #(pre-checks post-checks real-body) (_extract-contracts body))
@@ -1352,10 +1345,10 @@ the effect in the enclosing do-context.
       result)
 " :name name))
 
-(defn _build-defp [macro-name name body * [program-return-mode "reject"]]
+(defn _build-defp [compiler macro-name name body * [program-return-mode "reject"]]
   "Shared implementation for defp/defpp.
    program-return-mode: 'reject' (defp) | 'require' (defpp)"
-  (_enforce-no-defp-in-hyk macro-name name)
+  (_enforce-no-defp-in-hyk compiler macro-name name)
   (setv #(pre-checks post-checks real-body) (_extract-contracts body))
   (when (is-not pre-checks None)
     (raise (SyntaxError (.format "
@@ -1420,7 +1413,7 @@ the effect in the enclosing do-context.
      (setattr ~name "__doeff_name__" ~(str name))
      (setattr ~name "__doeff_module__" __name__)))
 
-(defmacro defp [name #* body]
+(defmacro defp [_hy-compiler name #* body]
   "Define a Program[T] constant. Errors if the return value is itself a Program.
    :post is REQUIRED. Use defpp if Program[Program[T]] is intended.
 
@@ -1429,9 +1422,9 @@ the effect in the enclosing do-context.
      (<- data (load-data))
      (<- result (process data))
      result)"
-  (locate-synthesized (_build-defp "defp" name body)))
+  (locate-synthesized (_build-defp _hy-compiler "defp" name body)))
 
-(defmacro defpp [name #* body]
+(defmacro defpp [_hy-compiler name #* body]
   "Define a Program[Program[T]] constant. Errors if return is NOT a Program.
    :post is REQUIRED.
 
@@ -1439,7 +1432,7 @@ the effect in the enclosing do-context.
      {:post [(inspect.isgenerator %)]}
      (<- config (load-config))
      (build-pipeline config))"
-  (locate-synthesized (_build-defp "defpp" name body :program-return-mode "require")))
+  (locate-synthesized (_build-defp _hy-compiler "defpp" name body :program-return-mode "require")))
 
 
 ;; ---------------------------------------------------------------------------
