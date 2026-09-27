@@ -13,6 +13,9 @@
 ;;;   (<- raw (dump row))                   ; JSON の値へ(送り出す foundation だけ)
 ;;;   (<- schema (json-schema LandingRow))  ; JSON Schema(契約の file と照らす時)
 ;;;
+;;; 形を呼び手が決める任意の JSON(tool の引数と結果・耐久の走行の memo の値)は、JsonValue ではなく OpaqueJson(doeff_hy.json_value)
+;;; で運ぶ — 中を分解する口を持たない名のある型。defwire の欄に書けば解き手が包み・戻す。形を知る読み手は (parse T opaque) で読む。
+;;;
 ;;; 解き方(defwire の展開がこの module の wire-config と wire-shape を呼んで型ごとに 1 度だけ組む):
 ;;;   * 型の検めは厳しい(pydantic の strict・JSON の読み方): 文字列を数にしない・真偽を数にしない・整数は float の欄に入る・
 ;;;     配列は tuple の欄に入る・defenum の欄は値の綴りで読む。
@@ -38,7 +41,7 @@
 (import typing [ClassVar Protocol runtime-checkable])
 (import pydantic [ConfigDict TypeAdapter ValidationError])
 (import doeff_hy.frozen [FrozenMap thaw-json])
-(import doeff_hy.json_value [JsonValue])
+(import doeff_hy.json_value [JsonValue OpaqueJson])
 
 ;; 知らない欄の扱いの綴り(defwire の :unknown の値)→ pydantic の extra。
 (setv UNKNOWN-FIELDS {"reject" "forbid" "ignore" "ignore"})
@@ -111,12 +114,13 @@
 
 
 (defk parse [wire-type raw]
-  {:pre [(: wire-type type) (hasattr wire-type "__doeff_wire__") (: raw (| JsonValue FrozenMap tuple))]
+  {:pre [(: wire-type type) (hasattr wire-type "__doeff_wire__") (: raw (| JsonValue FrozenMap tuple OpaqueJson))]
    :post [(: % (| WireValue Malformed))]
    :tags {:context "wire" :role "judgment"}}
-  "JSON の値(凍らせた JSON — FrozenMap・tuple — も)を defwire の型 wire-type の値へ解いて確かめる。答え = wire-type の値か、
-   形が合わない時は Malformed(どの型の・どの欄が・なぜ)。JSON の読み方で検めるので、配列は tuple の欄に・値の綴りは defenum の欄に入る。"
-  (<- parsed (parse-json wire-type (json.dumps (thaw-json raw) :ensure-ascii False)))
+  "JSON の値(凍らせた JSON — FrozenMap・tuple — と、中を読まずに運んだ OpaqueJson も)を defwire の型 wire-type の値へ解いて
+   確かめる。答え = wire-type の値か、形が合わない時は Malformed(どの型の・どの欄が・なぜ)。JSON の読み方で検めるので、配列は
+   tuple の欄に・値の綴りは defenum の欄に入る。OpaqueJson は形を知る読み手が中を読む唯一の口(json_value.py の OpaqueJson)。"
+  (<- parsed (parse-json wire-type (if (isinstance raw OpaqueJson) raw.text (json.dumps (thaw-json raw) :ensure-ascii False))))
   parsed)
 
 

@@ -12,6 +12,10 @@
 ほかの module(protocol・intent・core …)は、解き手が pydantic と同じ仕組み(TypeAdapter)で一度に形を確かめた、型のある値
 (`defwire` の型・defrecord・frozen の dataclass)だけを見ます。
 
+形を呼び手が決める任意の JSON(tool の呼び出しの引数と結果・耐久の走行の memo の値のように、書き手ごとに形が違い、運ぶ側が
+中を読まない値)は、JsonValue ではなく `doeff_hy.json_value.OpaqueJson` で運びます。中を分解する口を持たない名のある型で、
+`defwire` の欄に書けば解き手が包み・戻し、形を知る読み手は `(parse T opaque)` で型へ解きます。この規則は OpaqueJson を数えません。
+
 出自: agora-redesign #840・operator 2026-09-28 逐語 "and i dont think we should make anyone use that directry instead of actually parsing
 and validating it like pydantic does"。
 
