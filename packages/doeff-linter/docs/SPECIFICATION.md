@@ -65,7 +65,9 @@
      "layer_reason": "path の置き場所で決めた — controllers/core/ の下は層 core(…)。タグの role = program もこの層の役"}
   ],
   "rules": [                                 // 走らせた規則と、針の無い law
-    {"rule": "DOEFF101", "adr": "ADR-…", "statement": "core-imports-only-intent: …", "wired": true}
+    {"rule": "DOEFF101", "adr": "ADR-…", "statement": "core-imports-only-intent: …", "wired": true,
+     "title": "層の向きに逆らう import",      // 短い日本語の名(違反の形)
+     "family": "layer"}                       // 規則の家族(layer・tags・raw・naming・place・definition・class・wire・smell・jev・python・law)
   ],
   "errors": []                               // 読めなかった file・登録簿・目録の理由
 }
@@ -77,6 +79,10 @@
 - `modules[].context`・`role` は module の頭のタグ、無ければ最初の定義のタグ。層の母集団の外の file は `modules` に出ない。
 - `rules`: 有効な規則ごとに、結びつけた law があれば law ごとに 1 件(`statement` = `<law の名>: <law の文>`)、無ければ規則の文で 1 件。
   設定の節が無い層の規則は `wired: false`(違反を出さない)。`rules` の空な law(針の無い law)は `rule` に law の名を入れて `wired: false`。
+  `title` は短い日本語の名(違反の形。針の無い law は「自動の判定がまだ無い決まり」)。`family` は規則の家族
+  (`layer`・`tags`・`raw`・`naming`・`place`・`definition`・`class`・`wire`・`smell`・`jev`・`python`・`law` の閉じた集合。
+  Python の文ごとの規則(DOEFF001〜031・NOQA001・知らない ID)は `python`、針の無い law は `law`)— エディタが規則の一覧を
+  束ねて見せる時に使う。名と家族の判定は linter が持ち、エディタは写しを持たない。
 
 ### 説明の文(explanation・layer_reason)
 

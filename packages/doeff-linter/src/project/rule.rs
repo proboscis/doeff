@@ -1,5 +1,37 @@
 //! 層の規則(repo をまたいで判じる規則)の閉じた一覧。ID・題・文・直し方の既定の 1 行はここだけに書く。
 
+use serde::Serialize;
+
+/// 規則の家族(エディタの一覧で規則を束ねる、閉じた分類)。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum RuleFamily {
+    /// 層の向き・置ける物(DOEFF101〜103)。
+    Layer,
+    /// タグ(:context・role)の宣言と食い違い(DOEFF104・105・113)。
+    Tags,
+    /// 生の副作用(DOEFF106・107)。
+    Raw,
+    /// 名の付け方(DOEFF108)。
+    Naming,
+    /// 置き場所・依存(DOEFF109・114〜117)。
+    Place,
+    /// 定義の書き方(DOEFF110〜112・118)。
+    Definition,
+    /// class(DOEFF119・204)。
+    Class,
+    /// JsonValue と wire(DOEFF120)。
+    Wire,
+    /// 臭い(DOEFF121〜125・205)。
+    Smell,
+    /// Jev(意味の判定・DOEFF201〜203)。
+    Jev,
+    /// Python の文ごとの規則(DOEFF001〜031・NOQA001・知らない ID)。
+    Python,
+    /// 規則を持たない law。
+    Law,
+}
+
 /// 層の規則の種類。Python の文ごとの規則(DOEFF001〜031)と違い、repo の module の一覧と設定を見て判じる。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum ProjectRule {
@@ -188,6 +220,76 @@ impl ProjectRule {
         }
     }
 
+    /// 短い日本語の名(違反の形。エディタの一覧の見出しに使う)。
+    pub fn label(self) -> &'static str {
+        match self {
+            ProjectRule::LayerImportDirection => "層の向きに逆らう import",
+            ProjectRule::LayerForbiddenModule => "層に禁じた module の import",
+            ProjectRule::LayerTypesOnly => "型だけの層に関数がある",
+            ProjectRule::ModuleDeclaresTags => "文脈と役のタグが無い",
+            ProjectRule::RoleMatchesLayer => "層に合わない role",
+            ProjectRule::RawSideEffectDirect => "許されない層で生の副作用",
+            ProjectRule::RawSideEffectVia => "呼んだ先で生の副作用に届く",
+            ProjectRule::EnvironmentName => "業務の名に環境の語",
+            ProjectRule::ServiceBoundary => "別の service の内側を読む",
+            ProjectRule::DefnForbidden => "defn を使っている",
+            ProjectRule::DeffNeedsReason => "deff に理由の註が無い",
+            ProjectRule::DefinitionTagsRequired => "定義の :tags が足りない",
+            ProjectRule::ContextMatchesService => ":context が service と違う",
+            ProjectRule::UndeclaredPlace => "宣言に無い置き場所の module",
+            ProjectRule::UndeclaredDirectory => "宣言に無い dir",
+            ProjectRule::ServiceDependency => "宣言に無い service への依存",
+            ProjectRule::UnusedDependency => "使っていない依存",
+            ProjectRule::TestIsDeftest => "deftest でないテスト",
+            ProjectRule::ClassWithBehaviour => "処理を持つ class",
+            ProjectRule::JsonValueOutsideWire => "送受信の外で JsonValue",
+            ProjectRule::ShapeCheckInJudgment => "判断の層で入力の形を調べる",
+            ProjectRule::FailureRethrow => "失敗を受けて返し直すだけ",
+            ProjectRule::BindThenReturn => "<- の直後に return するだけ",
+            ProjectRule::FieldsJoinedIntoText => "欄をつないで 1 本の文字列にする",
+            ProjectRule::RebuiltAccumulator => "ループの中で蓄えを作り直す",
+            ProjectRule::SemanticBusinessDecision => "翻訳の層で業務の判断(Jev)",
+            ProjectRule::SemanticTransportKnowledge => "判断の層が通信の手段を知る(Jev)",
+            ProjectRule::SemanticPlainCallable => "deff の理由が合わない(Jev)",
+            ProjectRule::SemanticClassRole => "class が外の窓口か状態を持つ(Jev)",
+            ProjectRule::SemanticMixedConcerns => "入力の形の確認と判断が混ざる(Jev)",
+        }
+    }
+
+    /// 規則の家族(エディタの一覧で束ねる分類)。
+    pub fn family(self) -> RuleFamily {
+        match self {
+            ProjectRule::LayerImportDirection | ProjectRule::LayerForbiddenModule | ProjectRule::LayerTypesOnly => {
+                RuleFamily::Layer
+            }
+            ProjectRule::ModuleDeclaresTags | ProjectRule::RoleMatchesLayer | ProjectRule::ContextMatchesService => {
+                RuleFamily::Tags
+            }
+            ProjectRule::RawSideEffectDirect | ProjectRule::RawSideEffectVia => RuleFamily::Raw,
+            ProjectRule::EnvironmentName => RuleFamily::Naming,
+            ProjectRule::ServiceBoundary
+            | ProjectRule::UndeclaredPlace
+            | ProjectRule::UndeclaredDirectory
+            | ProjectRule::ServiceDependency
+            | ProjectRule::UnusedDependency => RuleFamily::Place,
+            ProjectRule::DefnForbidden
+            | ProjectRule::DeffNeedsReason
+            | ProjectRule::DefinitionTagsRequired
+            | ProjectRule::TestIsDeftest => RuleFamily::Definition,
+            ProjectRule::ClassWithBehaviour | ProjectRule::SemanticClassRole => RuleFamily::Class,
+            ProjectRule::JsonValueOutsideWire => RuleFamily::Wire,
+            ProjectRule::ShapeCheckInJudgment
+            | ProjectRule::FailureRethrow
+            | ProjectRule::BindThenReturn
+            | ProjectRule::FieldsJoinedIntoText
+            | ProjectRule::RebuiltAccumulator
+            | ProjectRule::SemanticMixedConcerns => RuleFamily::Smell,
+            ProjectRule::SemanticBusinessDecision | ProjectRule::SemanticTransportKnowledge | ProjectRule::SemanticPlainCallable => {
+                RuleFamily::Jev
+            }
+        }
+    }
+
     /// 題(人が読む短い名)。
     pub fn title(self) -> &'static str {
         match self {
@@ -293,6 +395,61 @@ impl ProjectRule {
             ProjectRule::RebuiltAccumulator => "蓄えは内包表記(lfor)で 1 度に作る — ループの中で (+ xs #(…)) の作り直しを重ねない",
             ProjectRule::SemanticMixedConcerns => "形の検めは protocol の境目で defwire の型に parse し(形が合わなければ解く所で失敗)、この定義は型のある値を受けて判断だけをする(Jev の外れなら登録簿に載せる)",
             ProjectRule::SemanticClassRole => "外の世界の窓口なら土台の handler(資源は (session val …))、状態なら handler の (session var …) 1 か所(Jev の外れなら登録簿に載せる)",
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// DOEFF の ID → 割り当てるべき家族(依頼の表そのもの)。
+    const EXPECTED_FAMILIES: [(&str, RuleFamily); 30] = [
+        ("DOEFF101", RuleFamily::Layer),
+        ("DOEFF102", RuleFamily::Layer),
+        ("DOEFF103", RuleFamily::Layer),
+        ("DOEFF104", RuleFamily::Tags),
+        ("DOEFF105", RuleFamily::Tags),
+        ("DOEFF113", RuleFamily::Tags),
+        ("DOEFF106", RuleFamily::Raw),
+        ("DOEFF107", RuleFamily::Raw),
+        ("DOEFF108", RuleFamily::Naming),
+        ("DOEFF109", RuleFamily::Place),
+        ("DOEFF114", RuleFamily::Place),
+        ("DOEFF115", RuleFamily::Place),
+        ("DOEFF116", RuleFamily::Place),
+        ("DOEFF117", RuleFamily::Place),
+        ("DOEFF110", RuleFamily::Definition),
+        ("DOEFF111", RuleFamily::Definition),
+        ("DOEFF112", RuleFamily::Definition),
+        ("DOEFF118", RuleFamily::Definition),
+        ("DOEFF119", RuleFamily::Class),
+        ("DOEFF204", RuleFamily::Class),
+        ("DOEFF120", RuleFamily::Wire),
+        ("DOEFF121", RuleFamily::Smell),
+        ("DOEFF122", RuleFamily::Smell),
+        ("DOEFF123", RuleFamily::Smell),
+        ("DOEFF124", RuleFamily::Smell),
+        ("DOEFF125", RuleFamily::Smell),
+        ("DOEFF205", RuleFamily::Smell),
+        ("DOEFF201", RuleFamily::Jev),
+        ("DOEFF202", RuleFamily::Jev),
+        ("DOEFF203", RuleFamily::Jev),
+    ];
+
+    #[test]
+    fn every_rule_has_a_non_empty_label() {
+        for rule in ProjectRule::ALL {
+            assert!(!rule.label().is_empty(), "{} の label が空", rule.id());
+        }
+    }
+
+    #[test]
+    fn family_matches_the_assignment_table_for_all_30_rules() {
+        assert_eq!(EXPECTED_FAMILIES.len(), ProjectRule::ALL.len(), "割り当ての表が ALL の数と食い違う");
+        for (id, expected) in EXPECTED_FAMILIES {
+            let rule = ProjectRule::parse(id).unwrap_or_else(|| panic!("{} は ProjectRule に無い", id));
+            assert_eq!(rule.family(), expected, "{} の family が違う", id);
         }
     }
 }
