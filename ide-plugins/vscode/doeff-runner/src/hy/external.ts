@@ -34,7 +34,18 @@ export interface ExternalModuleSource {
 /** 前に取った外の Hy の file の索引を読む面(その file を開いた時の目次・hover 用。workspace の置き場とは別)。 */
 export interface ExternalFileView {
   cachedFile(filePath: string): HyFileIndex | undefined;
+  /** 取った外の Hy の file の索引の全部(effect の判定と handler の数え上げは、ここに入った物までを見る) */
+  cachedFiles(): readonly HyFileIndex[];
+  /** 外の索引が増えた・変わったたびに増える数 */
+  readonly version: number;
 }
+
+/** 外の file を 1 つも持たない面(テストの既定)。 */
+export const NO_EXTERNAL_FILES: ExternalFileView = {
+  cachedFile: () => undefined,
+  cachedFiles: () => [],
+  version: 0
+};
 
 /** 外の module を使わない口(workspace の外を見ない時・テストの既定)。 */
 export const NO_EXTERNAL_MODULES: ExternalModuleSource = {

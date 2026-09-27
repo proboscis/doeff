@@ -60,6 +60,8 @@ export class ExternalModuleCache implements ExternalModuleSource, ExternalFileVi
   private readonly hyFiles = new Map<string, HyFileCache>();
   private readonly indexed = new Map<string, HyFileIndex>();
   private readonly reported = new Set<string>();
+  private readonly listeners = new Set<() => void>();
+  private changes = 0;
 
   constructor(
     private readonly locator: ModuleLocator,
@@ -94,6 +96,22 @@ export class ExternalModuleCache implements ExternalModuleSource, ExternalFileVi
   /** 前に取った外の Hy の file の索引(その file を開いた時の目次用)。workspace の置き場とは別。 */
   cachedFile(filePath: string): HyFileIndex | undefined {
     return this.indexed.get(normalizeKey(filePath));
+  }
+
+  /** 取った外の Hy の file の索引の全部。 */
+  cachedFiles(): readonly HyFileIndex[] {
+    return [...this.indexed.values()];
+  }
+
+  /** 外の索引が変わるたびに増える数。 */
+  get version(): number {
+    return this.changes;
+  }
+
+  /** 外の索引が変わった知らせを購読する(注記・木の更新用)。戻り値で購読をやめる。 */
+  onDidChange(listener: () => void): () => void {
+    this.listeners.add(listener);
+    return () => this.listeners.delete(listener);
   }
 
   /** root の cache を返す(環境の指紋が変わっていれば作り直す)。 */
@@ -194,6 +212,10 @@ export class ExternalModuleCache implements ExternalModuleSource, ExternalFileVi
           return this.reportOnce(reportKey, `外の Hy の file ${origin} が hy-index の結果に出なかった`);
         }
         this.indexed.set(normalizeKey(origin), file);
+        this.changes += 1;
+        for (const listener of this.listeners) {
+          listener();
+        }
         return { tag: 'hy', path: origin, file };
       }
       default: {
