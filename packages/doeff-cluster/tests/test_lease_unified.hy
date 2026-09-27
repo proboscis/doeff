@@ -139,7 +139,7 @@
                                            {"name" "turn-runner" "entry" "m" "args" [] "revision" "r"}]
                                    "tasks" [] "timing" {"fence_ms" 20000}})
         (raise (httpx.ConnectError "coordinator を作り直している"))))
-  (setv link (CoordinatorLink "http://coord" "atlas" {} 10 20000 :transport (httpx.MockTransport handle)
+  (setv link (CoordinatorLink "http://coord" "atlas" #() 10 20000 :transport (httpx.MockTransport handle)
                               :task-dir (str (/ (Path (tempfile.mkdtemp)) "tasks"))))
   (assert (= (len (. (.poll link) jobs)) 2))
   (setv (get up 0) False)
@@ -156,5 +156,5 @@
         (httpx.Response 200 :json board)
         (do (.append posts #(request.url.path (json.loads request.content)))
             (httpx.Response 200 :json {"ok" True "dropped" 1}))))
-  (release-leases (CoordinatorLink "http://coord" "zeus" {} 1 60000 :transport (httpx.MockTransport handle)) "1-old")
+  (release-leases (CoordinatorLink "http://coord" "zeus" #() 1 60000 :transport (httpx.MockTransport handle)) "1-old")
   (assert (= posts [#("/leases/app-writer" {"op" "drop" "token" "zeus/1-old/"})])))
