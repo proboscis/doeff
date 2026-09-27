@@ -339,9 +339,17 @@
 
 ;; --- sim の中の値 ---------------------------------------------------------------------------------------
 
+(defrecord SimOutside
+  "sim の外の世界(本番では job の土台の handler が外の系 — 業務の store・外部の API — と話して答える effect に、sim では系の外側で
+   答える物)。handlers = sim の全部の job と筋書きの外側に置く handler の組(外側が先 — 仮想の時計の内側)・effects = それが答える effect の型
+   (柵が外へ通す — isinstance で数えるので基底の型でよい)。job は effect を通してだけ外の世界を共有する(object を共有しない)。"
+  (#^ list handlers)
+  (#^ tuple effects))
+
+
 (defrecord SimPlan
   "sim の 1 回の走りの筋(sim-cluster が引数から作る)。declaration = 最初の宣言(environ の上書きを重ねた行)・environ = job 名 →
-   上書きの環境変数(Redeclare にも重ねる)。"
+   上書きの環境変数(Redeclare にも重ねる)・passable = 柵が外へ通す effect の型(SIM-PASSABLE と外の世界の effects)。"
   (#^ System system)
   (#^ Declaration declaration)
   (#^ tuple workers)
@@ -350,7 +358,8 @@
   (#^ int start-ms)
   (#^ ClusterTiming timing)
   (#^ ClusterNaming naming)
-  (#^ WorkerPolicy policy))
+  (#^ WorkerPolicy policy)
+  (#^ tuple passable))
 
 
 (defrecord SimParts
@@ -537,9 +546,9 @@
   (Declaration :rows rows :programs declared.programs))
 
 
-(defk sim-plan [system workers environ revision start-ms timing policy]
+(defk sim-plan [system workers environ revision start-ms timing policy outside]
   {:pre [(: system System) (: workers (| tuple None)) (: environ (| dict None)) (: revision str) (: start-ms int)
-         (: timing (| ClusterTiming None)) (: policy (| WorkerPolicy None))]
+         (: timing (| ClusterTiming None)) (: policy (| WorkerPolicy None)) (: outside (| SimOutside None))]
    :post [(: % SimPlan)] :tags {:context "doeff-cluster" :role "judgment"}}
   "sim-cluster の引数を検めて筋にするため(走らせる前に断る — environ の上書きの誤り・名の重なる worker)。"
   (<- fallback tuple (default-workers system))
@@ -549,7 +558,8 @@
     (raise (ValueError (.format "workers は名の重ならない SimWorker の 1 つ以上の tuple: {!r}" chosen))))
   (<- declaration Declaration (declaration-of system revision (or environ {})))
   (SimPlan :system system :declaration declaration :workers chosen :environ (or environ {}) :revision revision
-           :start-ms start-ms :timing (or timing (ClusterTiming)) :naming (ClusterNaming) :policy (or policy (WorkerPolicy))))
+           :start-ms start-ms :timing (or timing (ClusterTiming)) :naming (ClusterNaming) :policy (or policy (WorkerPolicy))
+           :passable (+ SIM-PASSABLE (if (is outside None) #() outside.effects))))
 
 
 (defk parts-of []
@@ -836,7 +846,7 @@
       (raise))))
 
 
-(defhandler fence [#^ int pid]
+(defhandler fence [#^ int pid #^ tuple passable]
   {:tags {:context "doeff-cluster" :role "protocol"}}
   ;; 引数に残す理由: process の中で Spawn した task を、その process の番号で覚える(process の終わりで一緒に取り消す)。柵は宿の答えより
   ;; 外に在り、Program の effect ではない番号を Ask で問えない。
@@ -852,7 +862,7 @@
   (KeepChild []
     (reperform effect))
   (EffectBase []
-    :when (not (isinstance effect SIM-PASSABLE))
+    :when (not (isinstance effect passable))
     (raise (UnhandledEffect (.format "sim の柵: 答えの無い effect {} ({!r}) — 本番の子 process でも答える handler が無い"
                                      (. (type effect) __name__) effect)))))
 
@@ -860,12 +870,13 @@
 (defrecord SimChild
   "sim の子 process 1 つに宿が答える物(宿の答え host-answers の引数)。ctx = 宿の契約の run-context・program-path = Program の path・
    environ = 宣言の :environ(上書きを重ねた物 — 名 → 値)・link = coordinator へ話す口(送り手 = job の名・居る所 = worker)・
-   pid = sim の中の process の番号。"
+   pid = sim の中の process の番号・passable = 柵が外へ通す effect の型(SimPlan.passable)。"
   (#^ RunContext ctx)
   (#^ str program-path)
   (#^ dict environ)
   (#^ SimLink link)
-  (#^ int pid))
+  (#^ int pid)
+  (#^ tuple passable))
 
 
 (defk send-report [child kind payload]
@@ -943,7 +954,7 @@
   "Program を柵と答えの中で走らせ、終わり方を決めるため(本番の job_entry の service / task の入口の終わり方と同じ: service は
    値 = 0・例外 = 1、task は結果を書いて 0。止めの合図 = -15・Crash = 1・worker の死 = -9)。"
   (try
-    (<- value (with-handlers [(fence child.pid) (coordinator-answers child.link) (host-answers child)] program))
+    (<- value (with-handlers [(fence child.pid child.passable) (coordinator-answers child.link) (host-answers child)] program))
     (SimExit :code 0 :result (if once (encode-outcome (TaskSucceeded value)) None))
     (except [TaskCancelledError]
       (<- killed (| SimExit None) (KillOf child.pid))
@@ -1141,7 +1152,8 @@
     ;; 節の中から Spawn する — 新しい task は節の外側の handler(世界・時計)だけを持ち、run-worker の中の handler を持たない。
     (<- program-path str (program-path-of spec.program))
     (val link (SimLink :queue parts.queue :actor spec.name :revision spec.revision :peer worker.name))
-    (val child (SimChild :ctx ctx :program-path program-path :environ (dict spec.environ) :link link :pid pid))
+    (<- plan SimPlan (PlanOf))
+    (val child (SimChild :ctx ctx :program-path program-path :environ (dict spec.environ) :link link :pid pid :passable plan.passable))
     (<- task Task (Spawn (sim-process worker.name spec child (.get truth.programs spec.program))))
     (<- (KeepHandle pid task))
     (resume None))
@@ -1620,16 +1632,20 @@
       (<- (Wait pod)))))
 
 
-(defk sim-cluster [system scenario * [workers None] [environ None] [revision "sim"] [start-ms SIM-START-MS] [timing None] [policy None]]
+(defk sim-cluster [system scenario * [workers None] [environ None] [revision "sim"] [start-ms SIM-START-MS] [timing None] [policy None]
+                  [outside None]]
   {:pre [(: system System) (: scenario (| Program EffectBase)) (: workers (| tuple None)) (: environ (| dict None)) (: revision str) (: start-ms int)
-         (: timing (| ClusterTiming None)) (: policy (| WorkerPolicy None))]
+         (: timing (| ClusterTiming None)) (: policy (| WorkerPolicy None)) (: outside (| SimOutside None))]
    :post [(: % "scenario の答え(型は筋書きごと)")]
    :tags {:context "doeff-cluster" :role "entry"}}
   "系 system(sim の土台で作った System の値)を本物の coordinator と worker の上で走らせ、scenario(検の筋書きの Program — 同じ
    scheduler・同じ仮想の時計で並んで走る)の答えを返す。workers = SimWorker の tuple(既定 = 全 job の needs の和を提供する 1 台)・
    environ = job 名 → 宣言の :environ に重ねる環境変数(宣言に無い名は断る)・revision = 宣言の版・start-ms = 仮想の時計の起点・
-   timing / policy = coordinator と worker の時間の設定(既定 = 本番の既定)。自分で scheduler を持つ(外に scheduler が在っても無くても走る)。"
-  (<- plan SimPlan (sim-plan system workers environ revision start-ms timing policy))
-  (<- answer (scheduled (with-handlers [(sim-time-handler :start-time (datetime-of-epoch-ms start-ms)) (session-store) (sim-world plan)]
+   timing / policy = coordinator と worker の時間の設定(既定 = 本番の既定)・outside = sim の外の世界(SimOutside — 業務の外の系の模擬の
+   handler と、それが答える effect の型。仮想の時計の内側・sim の世界の外側に置き、柵はその型も通す)。自分で scheduler を持つ(外に
+   scheduler が在っても無くても走る)。"
+  (<- plan SimPlan (sim-plan system workers environ revision start-ms timing policy outside))
+  (<- answer (scheduled (with-handlers [(sim-time-handler :start-time (datetime-of-epoch-ms start-ms)) (session-store)
+                                        #* (if (is outside None) [] outside.handlers) (sim-world plan)]
                           (sim-main scenario))))
   answer)
