@@ -29,7 +29,6 @@
 (require doeff-hy.macros [defk defhandler <- val])
 (require doeff-hy.record [defenum defrecord])
 (import dataclasses [dataclass])
-(import collections.abc [Callable])
 (import enum [StrEnum])
 (import json)
 (import doeff [EffectBase])
@@ -192,12 +191,11 @@
 
 ;; --- 渡した材料で答える handler(検と模擬) ------------------------------------------------------
 
-(defn #^ Callable given-runtime-facts [#^ ProcessFacts facts]  ; defk にできない: handler を返す関数(組み立ての値)
-  "渡した材料で ReadRuntimeFacts に答える handler — 問われた module だけを、渡した置き場から答える(無い module は import できない物)。"
-  (defhandler _given
-    (ReadRuntimeFacts [modules]
-      (val by-name (dfor o facts.origins o.module o))
-      (resume (ProcessFacts :declared-json facts.declared-json :key facts.key :root facts.root :marker-json facts.marker-json
-                            :origins (tuple (gfor m modules (.get by-name m (ModuleOrigin :module m :file ""))))
-                            :pid facts.pid))))
-  _given)
+(defhandler given-runtime-facts [facts]  ;; 引数に残す理由: 検と模擬が渡す材料そのもの(Ask で読む設定ではない)
+  "渡した材料 facts(ProcessFacts)で ReadRuntimeFacts に答える handler — 問われた module だけを、渡した置き場から答える
+   (無い module は import できない物)。"
+  (ReadRuntimeFacts [modules]
+    (val by-name (dfor o facts.origins o.module o))
+    (resume (ProcessFacts :declared-json facts.declared-json :key facts.key :root facts.root :marker-json facts.marker-json
+                          :origins (tuple (gfor m modules (.get by-name m (ModuleOrigin :module m :file ""))))
+                          :pid facts.pid))))
