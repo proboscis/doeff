@@ -9,6 +9,9 @@
 ;;;   "and we want to forbid the use of defn and only allow defk, and in inevitable case allow deff, to force the use of tag on definitions"
 ;;;   (R4「台帳が空になったら deff の macro を消す」は取り下げ — deff は避けられない所の逃げ道として残る)
 ;;;
+;;; 追記 = operator 裁定 2026-09-27(同じ会話・逐語は :problem の fact): 設定を読むこと・検の補助・framework と
+;;;   process の入口は deff の理由にしない方向。deff の理由の受け入れは doeff-linter の DOEFF203(Jev)が判じる(R6〜R9)。
+;;;
 ;;; 戻し方: この改訂の commit を revert する(ADR の条・針・台帳の数え方が 2026-08-21 版へ戻る)。
 ;;;
 ;;; 2 語彙の併存は呼び出し規約の分裂(直接呼び vs <- bind)であり、file 内の
@@ -143,7 +146,13 @@
        :evidence "packages/doeff-hy/src/doeff_hy/declarations.hy(CONTRACT-KEYS・TAG-KEYS・ROLES)")
      (fact
        "実測 2026-09-27: doeff repo の packages・docs・tests の .hy に defn / defn/a が 269 file・2,135 定義ある(packages/doeff-hy の macro の実装を含む)。2026-08-21 版の R1 は Python との境界の defn を対象外にしていた。"
-       :evidence "grep -rEc '\\(defn(/a)?\\s' --include='*.hy' packages docs tests")]
+       :evidence "grep -rEc '\\(defn(/a)?\\s' --include='*.hy' packages docs tests")
+     (fact
+       "operator 裁定 2026-09-27(逐語 4 つ): \"yeah reading config, that's exactly where effects like Ask comes in, no excuse\" / \"yeah non-deftest must be forbidden\" / \"process entrypoint,,, of doeff-cluster? i dont think that doeff-cluster should require a non-defk func or something, we need to discuss further around doeff-cluster job api\" / \"about the reason text, we want jev to tell if it's acceptable right?\""
+       :evidence "Claude Code の会話(2026-09-27・agora-redesign #798)— coordinator 経由")
+     (fact
+       "agora-controllers の本線 d99194b4 で『defk にできない』の註は 682 件あり、推定の内訳は 検の補助 166・組み立て 127・その他 112・process の入口 82・同上 81・外の library の callback 71・framework の入口 43。本当に素の callable が要る場面と、呼び手を Program にすれば済む場面(組み立て = handlers-of・検 = deftest)が区別されていなかった。"
+       :evidence "doeff 683dd0e8(wt/hy-reason-kinds・doeff-linter の DOEFF111 / DOEFF203)の commit message")]
   :context
     [(interpretation
        "語彙が 1 つなら呼び出し規約も 1 つで、エージェント書き手が誤る余地が構造的に消える。純粋ロジックは defk の退化形(bind ゼロ)でそのまま書け、handler ゼロの run で回る — deff にしか書けない形は無いので、統一のコストは移行だけで表現力の損失は無い。")
@@ -159,7 +168,11 @@
      (rule R2 "理由の註の無い既存の deff(2026-08-21 時点で 227 定義)は DEFF-ROSTER に凍結する。針は file 単位で 現在数 <= 台帳数 を強制し、台帳外 file の理由の註の無い deff は 0 を強制する — いかなる新設・移設も赤。台帳は『defk にできる物を減らす』向きにだけ動く。")
      (rule R3 "変換(burn-down)は、定義の defk 化と全呼び出し site の <- bind 化と DEFF-ROSTER の該当行の削減を 1 便で一括出荷する。台帳の減少と実削除は常に同期する。")
      (rule R4 "【2026-09-27 取り下げ】旧文: DEFF-ROSTER が空になったら deff macro 本体とその意味論テストを packages/doeff-hy から削除する。改訂後: deff の macro は R1 の逃げ道として残す。DEFF-ROSTER が空になっても macro は消さない(台帳が空 = 理由を名乗らない deff が 0 になった状態)。")
-     (rule R5 "台帳の増額・除外の新設は operator 裁定のみ。針の走査条件(SCAN-SKIP-PARTS・doeff-hy 除外)の変更も同様。")]
+     (rule R5 "台帳の増額・除外の新設は operator 裁定のみ。針の走査条件(SCAN-SKIP-PARTS・doeff-hy 除外)の変更も同様。")
+     (rule R6 "設定・環境(env の値・設定の file)を読むことは deff の理由にならない。読みは Ask などの effect で書き、値は handler が答える(2026-09-27 追記)。")
+     (rule R7 "検(テスト)は deftest だけで書く。pytest の素の test 関数・検の補助の素の関数(値を組む口・fixture の代わり)は禁止し、補助は defk にして deftest の本体から <- で受ける。R1 の『pytest の fixture のような framework の規約』は deff の理由の例から外す(2026-09-27 追記)。")
+     (rule R8 "deff の理由(同じ行の『; defk にできない: <理由>』)は自由な文で書く。受け入れるかは doeff-linter の DOEFF203(Jev)が、その repo の architecture.hy に宣言した受け入れ可の理由と照らして決める。註の有無・形は DOEFF111 が検める(2026-09-27 追記)。")
+     (rule R9 "framework・process の入口(doeff-cluster の job_entry の env の関数など)は deff の理由にしない方向とする。doeff-cluster の job API の議論(agora-redesign #829)が決まるまで、既存の入口の素の関数は登録簿で持ち、新設はしない(2026-09-27 追記)。")]
   :laws
     [(law defk-only-vocabulary
        :statement "for_all hy_file f in repo \\ {packages/doeff-hy}: count_deff(f) <= DEFF-ROSTER.get(f, 0) — 台帳は単調非増加であり、新しい deff は存在できない"
@@ -185,7 +198,21 @@
        :counterexamples
          [(counterexample "契約の辞書に :pre / :post だけを書いた defk — タグから並べる閲覧に現れない")]
        :enforced-by ["doeff-linter DOEFF112"]
-       :wiring "未配線(2026-09-27)— DOEFF112 は doeff-linter に未着地。既存の defk の大半は :tags をまだ持たない")]
+       :wiring "未配線(2026-09-27)— DOEFF112 は doeff-linter に未着地。既存の defk の大半は :tags をまだ持たない")
+     (law deff-reason-is-accepted-by-jev
+       :statement "for_all deff 定義 d: d の理由の註がある ∧ DOEFF203(Jev)が d の理由を architecture.hy の受け入れ可の理由のどれかと判じる。設定・環境の読み・検の補助・組み立ては受け入れ可の理由に入らない"
+       :counterexamples
+         [(counterexample "env の値を読む関数を『; defk にできない: 設定を読むので』の deff で書く — 読みは Ask の effect で書ける(operator 逐語 no excuse)")
+          (counterexample "deftest の値を組む補助を『; defk にできない: 検の補助』の deff で書く — 補助は defk にして deftest から <- で受ける")
+          (counterexample "handler の組を並べる組み立てを deff で書く — 組み立ては defk(handlers-of)で書ける")]
+       :enforced-by ["doeff-linter DOEFF111" "doeff-linter DOEFF203"]
+       :wiring "未配線(2026-09-27)— DOEFF111 の新しい形と DOEFF203 は doeff-linter の wt/hy-reason-kinds にあり本線に未着地")
+     (law checks-are-deftest-only
+       :statement "for_all 検 t: t は deftest で書かれている — 素の test 関数・検の補助の素の関数は 0"
+       :counterexamples
+         [(counterexample "pytest の素の test 関数(def test_… / defn test-…)で doeff の Program を検める")]
+       :enforced-by ["doeff-linter DOEFF118"]
+       :wiring "未配線(2026-09-27)— DOEFF118 は doeff-linter に未着地(番号は coordinator の指定・規則は別の担当が足す)")]
   :enforcement
     [(deftest test-adr-doe-hy-004-deff-ratchet
        ;; 針: 実測 = scan-deff-counts、法 = DEFF-ROSTER との file 単位比較。
