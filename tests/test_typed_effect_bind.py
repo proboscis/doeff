@@ -67,7 +67,7 @@ def _eval(code: str):
 
 # 束ねが yield するのは (open-bind 効果) — 宣言を持つ effect の答えを開く 1 点(ADR-DOE-CORE-EFFECTS-003 R6)。
 # 宣言の無い effect には effect そのものを返す(実行時に同じ物を yield する — docs/adr の冊 003 の検が確かめる)。
-_OPENED_EFF = "(yield (do (import doeff_core_effects.outcomes [open-bind :as _doeff-open-bind]) (_doeff-open-bind (Eff))))"
+_OPENED_EFF = '(yield ((. (__import__ "doeff_core_effects.outcomes" :fromlist #("open_bind")) open_bind) (Eff)))'
 
 
 @pytest.mark.parametrize("code", [

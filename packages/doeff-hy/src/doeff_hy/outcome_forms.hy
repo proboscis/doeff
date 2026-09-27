@@ -84,13 +84,15 @@
 (deff open-form [expr absent]  ; defk にできない: macro の展開の時に呼ぶ関数
   {:pre [(: expr Object) (: absent (| Object None))] :post [(: % Expression)]
    :tags {:context "doeff-hy-outcomes" :role "foundation"}}
-  "束ね 1 つが yield する物の form `(open-bind expr)`(R5・R6)。import を形の中に持つ — defhandler の節・利用者の defn
-   など、どこに書いた `<-` でも名前が解けるように(1 回の束ねで約 0.2µs — 2026-09-28 に測った)。"
-  (if (is absent None)
-      `(do (import doeff_core_effects.outcomes [open-bind :as _doeff-open-bind])
-           (_doeff-open-bind ~expr))
-      `(do (import doeff_core_effects.outcomes [open-bind :as _doeff-open-bind])
-           (_doeff-open-bind ~expr (fn [] ~absent)))))
+  "束ね 1 つが yield する物の form `(open-bind expr)`(R5・R6)。open-bind の引きを形の中に持つ — defhandler の節・利用者の
+   defn など、どこに書いた `<-` / `!` でも名前が解けるように。引きは文を持たない式(`__import__` の値の属性)にする —
+   `!` は式の中のどこにでも書けるので、`(setv (get (! e) 鍵) 値)` のように代入の的の中にも来る。import の文を持つ
+   `(do (import …) …)` では Hy が的を組めずに compile が落ちる(agora-controllers の kanban_services.hy・2026-09-28)。
+   1 回の束ねで約 0.3µs(import の文と同じ桁・hy.I は 4µs — 2026-09-28 に測った)。"
+  (let [open-bind `(. (__import__ "doeff_core_effects.outcomes" :fromlist #("open_bind")) open_bind)]
+    (if (is absent None)
+        `(~open-bind ~expr)
+        `(~open-bind ~expr (fn [] ~absent)))))
 
 
 (deff bind-form [form]  ; defk にできない: macro の展開の時に呼ぶ関数
