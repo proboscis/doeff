@@ -24,10 +24,6 @@
   ;; 割り当ての世代(coordinator の Placement.generation)。process を起こした時の値を子 process へ渡し、readiness と計器の報告に
   ;; 載せる。比べない(compare=False): 世代だけが変わっても process を起こし直さない(起こし直すのは spec の中身が変わった時だけ)。
   (setv #^ (| int None) placement (field :default None :compare False))
-  ;; 土台の commit(2026-09-24)。None = revision の木をそのまま使う。在れば「base の木に、revision の重ねる dir(CodeLayout の
-  ;; overlay-path)を重ねた木」を使う — 業務コードは本番の Deployment と同じ commit、重ねる dir(service の宣言の包み)は
-  ;; 宣言の revision。比べる欄(変われば process を入れ替える)。
-  (setv #^ (| str None) base None)
   ;; 入れ替えの形(2026-09-24)。偽 = 旧を止めてから新を起こす(Recreate)。真 = 新を旧と並べて起こし、coordinator が新の process を
   ;; Ready と数えた(ready-instance がその世代の名になった)後に旧を止める(k8s の RollingUpdate の maxSurge 1・maxUnavailable 0)。
   ;; 名前付きの lease で書きを 1 つに絞る service だけが使う。どちらも比べない欄(値が変わっても process を起こし直さない)。
@@ -56,14 +52,11 @@
 
   (defn __post-init__ [self]
     (when (or (not self.name) (not self.entry) (not self.revision))
-      (raise (ValueError "job には name・entry・revision が必要です")))
-    (when (and self.base (or (in CODE-KEY-SEPARATOR self.base) (in CODE-KEY-SEPARATOR self.revision)))
-      (raise (ValueError (.format "base と revision に {!r} は使えない" CODE-KEY-SEPARATOR))))))
+      (raise (ValueError "job には name・entry・revision が必要です")))))
 
 
 ;; 業務の repo の木の形(2026-09-25 — クラスタの仕組みを業務の repo から切り出した時に、木の形を worker の引数へ出した)。
 ;;   import-roots = 子 process の PYTHONPATH に並べる木の中の dir(前が先)。bytecode の準備(code_prepare)も同じ根で module 名を決める。
-;;   overlay-path = 「<base>~<revision>」の木で、base の木の上に revision の物を重ねる dir。None = 重ねない(重ねる木を求められたら断る)。
 ;;   base-paths = 土台(worker の実行環境)の側の import の路 — 木の根の**後ろ**に並べる機体の絶対 path(2026-09-26)。pod は土台の
 ;;                package を image の venv に焼くので空。host の worker(zeus)は共有の venv に入れない土台の package(例 制御面の SDK)を
 ;;                ここで宣言する。業務の code は常に木の根が先に勝つ(同じ名の module は task の版の物)。子の PYTHONPATH は木の根
@@ -71,7 +64,6 @@
 ;; 定義点はここ 1 つ(worker の CodeStore・ProbeStore・ProcessHost が同じ値を読む。値は worker の composition root が引数から作る)。
 (defclass [(dataclass :frozen True)] CodeLayout []
   (setv #^ tuple import-roots #("."))
-  (setv #^ (| str None) overlay-path None)
   (setv #^ tuple base-paths #())
 
   (defn __post-init__ [self]
@@ -82,9 +74,7 @@
         (raise (ValueError (.format "土台の import の路は機体の絶対 path(`:` と `,` を含まない): {!r}" path)))))
     (for [root self.import-roots]
       (when (or (.startswith root "/") (in ".." (.split root "/")) (in ":" root) (in "," root))
-        (raise (ValueError (.format "import の根は木の中の相対の dir: {!r}" root)))))
-    (when (and self.overlay-path (or (.startswith self.overlay-path "/") (in ".." (.split self.overlay-path "/"))))
-      (raise (ValueError (.format "重ねる dir は木の中の相対の dir: {!r}" self.overlay-path)))))
+        (raise (ValueError (.format "import の根は木の中の相対の dir: {!r}" root))))))
 
   (defn #^ str pythonpath [self #^ str tree]
     "木の中の import の根と土台の import の路を PYTHONPATH の形に(`.` は木そのもの・木の根が先)。"
@@ -94,34 +84,23 @@
     "code_prepare の --import-roots の値。"
     (.join "," self.import-roots)))
 
-(setv CODE-KEY-SEPARATOR "~")
-
 (setv ENV-KEY-PREFIX "env-")
 
 (defn #^ str code-key [#^ JobSpec spec]
-  "展開する木の鍵(cache の dir の名前・完成の印の版)。base が無い・base と revision が同じ commit(版の組 — 2026-09-25)なら
-   revision そのもの(重ねない木)、違えば \"<base>~<revision>\"(base の木に revision の重ねる dir を重ねる)。
+  "展開する木の鍵(cache の dir の名前・完成の印の版)。revision そのもの(1 つの commit の木)。
    実行環境の job は \"env-<キー>\"(worker が宣言から計算した env-key)が root の鍵。"
-  (cond
-    spec.runtime-env (+ ENV-KEY-PREFIX (or spec.env-key (raise (ValueError (+ "実行環境の job に env-key が無い: " spec.name)))))
-    (and spec.base (!= spec.base spec.revision)) (+ spec.base CODE-KEY-SEPARATOR spec.revision)
-    True spec.revision))
-
-(defn #^ tuple split-code-key [#^ str key]
-  "code-key の逆: #(土台の commit  重ねる commit)。重ねない木は #(key key)(木の全体が同じ commit)。"
-  (if (in CODE-KEY-SEPARATOR key)
-      (tuple (.split key CODE-KEY-SEPARATOR 1))
-      #(key key)))
+  (if spec.runtime-env
+      (+ ENV-KEY-PREFIX (or spec.env-key (raise (ValueError (+ "実行環境の job に env-key が無い: " spec.name)))))
+      spec.revision))
 
 
 (defn #^ str spec-hash [#^ JobSpec spec]
   "process を起こす形(name・entry・引数 = 設定を含む・版・once)の指紋。worker が起こした process の世代の一部として子へ渡し、
    coordinator は今の宣言から同じ関数で計算して比べる — 設定だけが変わっても指紋が変わり、前の process の報告は数えない。
-   割り当ての世代(placement)・入れ替えの形(handoff・ready-instance)は含めない(比べない欄)。base は在る時だけ足す(base の無い
-   宣言の指紋は以前と同じ)。environ(子の環境変数)も在る時だけ足す。Program の job の詰めた中身(program)は含めない —
+   割り当ての世代(placement)・入れ替えの形(handoff・ready-instance)は含めない(比べない欄)。environ(子の環境変数)は在る時だけ
+   足す。Program の job の詰めた中身(program)は含めない —
    Program の同一性は args の identity の指紋が運ぶ。定義点はこの 1 つ。"
   (cut (.hexdigest (hashlib.sha256 (.encode (json.dumps (+ [spec.name spec.entry (list spec.args) spec.revision spec.once]
-                                                           (if spec.base [spec.base] [])
                                                            (if spec.runtime-env [spec.runtime-env] [])
                                                            (if spec.environ [(lfor #(k v) spec.environ [k v])] []))
                                                         :ensure-ascii False :separators #("," ":"))

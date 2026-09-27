@@ -8,7 +8,7 @@
 #                      WORKER_EXCLUSIVE(専用の能力 — provides の一部)・NODE_NAME(k8s の downward API の spec.nodeName —
 #                      coordinator が node の label から company-machine などの能力を導く)・WORKER_CAPACITY・
 #                      CODE_REPO_URL = 業務のコードの git の clone 元(空 = 版の木の job を受けない)・CODE_IMPORT_ROOTS = 木の中の
-#                      import の根(`,` で並べる・既定 .)・CODE_OVERLAY_PATH = overlay の口で重ねる dir(既定 空 = 重ねない)・
+#                      import の根(`,` で並べる・既定 .)・
 #                      WORKER_TOOLS = 名乗る道具に足す物(名=版,…)・WORKER_PASS_ENV = job の子へ渡す worker の環境変数の名
 #                      (`,` で並べる — 実行環境の job の子は worker の環境を許可表でしか継がないので、機体の設定の path や URL を名で渡す))
 #   ROLE=drain       … worker の Pod の preStop: coordinator に drain を頼み、この worker の上の job が他へ移るまで
@@ -208,5 +208,5 @@ fi
 exec hy -m doeff_cluster.main --coordinator "$COORDINATOR_URL" --name "$WORKER_NAME" \
   --provides "${WORKER_PROVIDES:-}" --exclusive "${WORKER_EXCLUSIVE:-}" --node "${NODE_NAME:-}" --capacity "${WORKER_CAPACITY:-10}" \
   --repo "$repo" --state-dir "$WORK_DIR/state" --stop-grace 10 \
-  --import-roots "${CODE_IMPORT_ROOTS:-.}" --overlay-path "${CODE_OVERLAY_PATH:-}" \
+  --import-roots "${CODE_IMPORT_ROOTS:-.}" \
   --repo-keys "$repo_keys" --tools "$tools" --pass-env "${WORKER_PASS_ENV:-}"

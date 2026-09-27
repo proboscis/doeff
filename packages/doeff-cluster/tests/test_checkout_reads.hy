@@ -4,6 +4,7 @@
 ;;   - 翻訳を通した読みが checkout の世界と合う(head・URL・汚れ・remote に在るか・送り手の source の根・uv.lock の sha256・無い file)
 ;;   - 反例: 翻訳を誤る形(head を別の checkout から読む・sha256 でない digest)は同じ検め方で赤になる
 ;;   - 組み立て(runtime-env-of-checkouts)が模擬の土台の上で本物と同じ所で断る(汚れ・push していない)
+;;   - 系の宣言の前の検め(checked-declaring-checkout)が版の違い・checkout の外・汚れ・push していない commit を断る
 (require doeff-hy.macros [deftest defk defhandler <- val var])
 (require doeff-hy.record [defrecord])
 (import dataclasses [dataclass])
@@ -15,8 +16,8 @@
 (import doeff_core_effects.memory_file [memory-file-handler])
 (import doeff_core_effects.scripted_process [ProcessScript scripted-process-handler])
 (import doeff_cluster.runtime_env [LocalCheckout ProjectOfCheckout CheckoutState ReadCheckout SenderSourceRoot SENDER-SOURCE-DIR
-                                   runtime-env-of-checkouts checkout-reads checkout-state-at])
-(import doeff_cluster.runtime_env_model [RuntimeEnv RuntimeEnvInvalid InvalidKind])
+                                   runtime-env-of-checkouts checkout-reads checkout-state-at checked-declaring-checkout])
+(import doeff_cluster.runtime_env_model [RepoCheckout RuntimeEnv RuntimeEnvInvalid InvalidKind])
 (import doeff_cluster.env_prepare [FileSha256])
 (import doeff_cluster.checkout_git_script [GitCheckout GitRemote GitRev git-command])
 (import doeff_core_effects.process_effects [ProcessOutcome RunProcess])
@@ -174,3 +175,33 @@
   (assert (= (.strip on-main.stdout) "origin/main"))
   (<- nowhere ProcessOutcome (git-says world #("git" "-C" "/src/hud" "branch" "-r" "--contains" side "--list" "origin/*")))
   (assert (= nowhere.stdout "")))
+
+
+;; --- 系の宣言の前の検め(declare — 2026-09-28・計画 2.2 の E) ------------------------------------------
+
+(defk declaring-kind [checkouts path revision]
+  {:pre [(: checkouts tuple) (: path str) (: revision str)] :post [(: % (| RepoCheckout InvalidKind))]}
+  "系の関数の source の dir path を宣言の版 revision で検めるため(通れば checkout の repo の読み・断られたら断りの種類)。"
+  (try
+    (<- repo RepoCheckout (with_handlers (+ (grounds checkouts) [checkout-reads]) (checked-declaring-checkout path revision)))
+    (except [refused RuntimeEnvInvalid]
+      (return refused.kind)))
+  repo)
+
+
+(deftest test-the-declaring-checkout-must-be-clean-pushed-and-at-the-revision []
+  ;; 系の関数の source の dir(checkout の根の下)を翻訳を通して読む: 汚れておらず push 済みで HEAD = 宣言の版なら通り、その checkout の
+  ;; repo の読みを返す。版の違い・checkout の外・汚れ・push していない commit は、それぞれの種類で断る。
+  (<- clean tuple (world-of False True))
+  (<- passed (| RepoCheckout InvalidKind) (declaring-kind clean "/src/app/pkg" APP-HEAD))
+  (assert (= passed (RepoCheckout :name "system-source" :url APP-URL :commit APP-HEAD)) passed)
+  (<- other (| RepoCheckout InvalidKind) (declaring-kind clean "/src/app/pkg" LIB-HEAD))
+  (assert (= other InvalidKind.REVISION-DIFFERS) other)
+  (<- outside (| RepoCheckout InvalidKind) (declaring-kind clean "/elsewhere/pkg" APP-HEAD))
+  (assert (= outside InvalidKind.NOT-IN-CHECKOUT) outside)
+  (<- dirty-world tuple (world-of True True))
+  (<- dirty (| RepoCheckout InvalidKind) (declaring-kind dirty-world "/src/app/pkg" APP-HEAD))
+  (assert (= dirty InvalidKind.DIRTY-TREE) dirty)
+  (<- unpushed-world tuple (world-of False False))
+  (<- unpushed (| RepoCheckout InvalidKind) (declaring-kind unpushed-world "/src/app/pkg" APP-HEAD))
+  (assert (= unpushed InvalidKind.COMMIT-NOT-ON-REMOTE) unpushed))

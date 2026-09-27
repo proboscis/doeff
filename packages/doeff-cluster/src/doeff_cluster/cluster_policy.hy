@@ -13,7 +13,6 @@
                         capabilities-of component-versions-of task-record-to-json task-record-from-json ACCEPTED-FORMATS format-refusal
                         PLACED-PHASES handoff-watch-from-json])
 (import .semaphore_model [SEMAPHORE-PREFIX lease-op semaphore-write-refusal semaphore-key])
-(import .base_follow_policy [FULL-SHA])
 (import doeff [run])
 (import .runtime_env_model [runtime-env-of-json RuntimeEnvInvalid EnvVar env-key])
 (import .readiness_model [readiness-refusal])
@@ -39,14 +38,6 @@
 
 ;; --- 宣言の読み書き(JSON ⇄ 型) ----------------------------------------------------
 
-(defn #^ str declared-revision [#^ dict item]
-  "宣言 1 行の定義の版(spec.revision)。版の組(2026-09-25): baseFrom を持つ宣言は、overlay が在れば overlay(明示の上書き)、
-   無ければ base と同じ commit(重ねない木)。base をまだ観測していない間は宣言の revision のまま。baseFrom の無い宣言は revision。"
-  (cond
-    (.get item "overlay") (get item "overlay")
-    (and (.get item "baseFrom") (.get item "base")) (get item "base")
-    True (get item "revision")))
-
 (defn #^ (| str None) declared-runtime-env [#^ dict item]
   "宣言 1 行の runtimeEnv(在れば)の正規化した JSON の文字列(JobSpec.runtime-env — 比べる欄)。無ければ None。"
   (setv value (.get item "runtimeEnv"))
@@ -56,7 +47,7 @@
   "宣言 1 行 → worker が起動する形(job_entry の service 入口と詰めた Program の置き場のキー)。宣言の job は Program の job だけ —
    run の無い行(生の entry と args を worker に直に起こさせる形)は理由つきで断る(ADR-DOE-CLUSTER-001 R1・R7 — 移行の期間は置かない)。
    runtimeEnv を持つ宣言は、worker が env の root を準備してその venv で起こす(版は worker が env のキーへ置き換える)。"
-  (setv run (.get item "run") revision (declared-revision item) runtime (declared-runtime-env item))
+  (setv run (.get item "run") revision (get item "revision") runtime (declared-runtime-env item))
   (cond
     (is run None) (raise (ValueError (raw-entry-refusal item)))
     (= (.get run "kind") "service")
@@ -75,6 +66,8 @@
 (setv PROGRAM-SHA (re.compile r"[0-9a-f]{64}"))
 ;; 旧い宣言の run の欄(関数の参照 + 設定 + handler の組の import path — 2026-09-27 より前の形)。
 (setv OLD-RUN-KEYS #("factory" "env" "config"))
+;; image の版を追う係(base-follow — 2026-09-28 に消した)の行の欄: 追う Deployment・追った commit・定義だけを別の commit で重ねる版。
+(val IMAGE-FOLLOW-KEYS #("baseFrom" "base" "overlay"))
 
 
 (deff raw-entry-refusal [#^ dict item]  ; defk にできない: 宣言の読み(coordinator の純粋な判断)が呼ぶ
@@ -98,7 +91,7 @@
 (deff program-row-refusal [#^ dict item]  ; defk にできない: 宣言の読み(coordinator の純粋な判断)が呼ぶ
   {:pre [(: item dict)] :post [(: % (| str None))] :tags {:context "doeff-cluster" :role "judgment"}}
   "Program の job の宣言の行が受けられない理由(受けられれば None)。旧い形(run.factory・run.env・run.config・requires)・
-   baseFrom と overlay(Program を詰めた commit と別の commit で解くことになる — 改訂 1 の E)・置き場のキーの形・identity の欠け・
+   image の版を追う欄(baseFrom・base・overlay — Program を詰めた commit と別の commit で解くことになる — 改訂 1 の E)・置き場のキーの形・identity の欠け・
    environ の名(EnvVar の検め・実行環境の env-vars との重なり — 改訂 1 の G)を検める。"
   (setv run (get item "run")
         old (lfor k OLD-RUN-KEYS :if (in k run) k)
@@ -108,8 +101,9 @@
     old (.format "旧い宣言の形(run の {})は受け付けない — Program の値 1 つで宣言し直す(ADR-DOE-CLUSTER-001 R1・R3b)"
                  (.join "・" old))
     (is-not (.get item "requires") None) "旧い宣言の形(requires)は受け付けない — 要る能力 needs で宣言し直す(R4b)"
-    (or (is-not (.get item "baseFrom") None) (is-not (.get item "overlay") None))
-      "Program の job は baseFrom・overlay を持たない(詰めた commit と別の commit で解くことになる)"
+    (any (gfor k IMAGE-FOLLOW-KEYS (is-not (.get item k) None)))
+      (.format "Program の job は {} を持たない(image の版を追う形 — 詰めた commit と別の commit で解くことになる)"
+               (.join "・" (gfor k IMAGE-FOLLOW-KEYS :if (is-not (.get item k) None) k)))
     (not (and (isinstance (.get run "program") str) (PROGRAM-SHA.fullmatch (get run "program"))))
       (.format "run.program は詰めた Program の置き場のキー(64 桁の sha256): {!r}" (.get run "program"))
     (not (and (isinstance (.get run "identity") dict) (isinstance (.get (get run "identity") "function") str)))
@@ -139,30 +133,16 @@
   (setv replicas (.get item "replicas" 1) readiness (.get item "readiness"))
   (when (not-in replicas #(0 1))
     (raise (ValueError (.format "replicas は 0 か 1(Service は 1 つだけ動かす): {!r}" replicas))))
-  (setv update (.get item "update" "recreate") base-from (.get item "baseFrom"))
+  (setv update (.get item "update" "recreate"))
   (when (not-in update #("recreate" "handoff"))
     (raise (ValueError (.format "update は recreate か handoff: {!r}" update))))
   ;; readiness の形(windowSeconds・入れ替えの期限 handoffTimeoutSeconds)は宣言の側と同じ規則(readiness_model.readiness-refusal)。
   (setv readiness-problem (readiness-refusal readiness update))
   (when (is-not readiness-problem None)
     (raise (ValueError readiness-problem)))
-  (when (and (is-not base-from None)
-             (not (and (isinstance base-from dict) (= (.get base-from "kind") "Deployment")
-                       (isinstance (.get base-from "namespace") str) (isinstance (.get base-from "name") str)
-                       (isinstance (.get base-from "container" "") str))))
-    (raise (ValueError (.format "baseFrom は {{kind: Deployment, namespace, name, container?}}: {!r}" base-from))))
-  (setv overlay (.get item "overlay"))
-  (when (and (is-not overlay None) (not (and (isinstance overlay str) (FULL-SHA.match overlay))))
-    (raise (ValueError (.format "overlay は 40 桁の commit: {!r}" overlay))))
-  (when (and (is-not overlay None) (is base-from None))
-    (raise (ValueError "overlay は baseFrom を持つ Service だけが使う(baseFrom の無い宣言は revision がそのまま定義の版)")))
-  ;; 実行環境の宣言(2026-09-26): commit は宣言の repos が持つので、image の版を追う baseFrom と
-  ;; 木を重ねる overlay とは併用しない(両方あれば断る — どちらの commit で起こすかが 2 つになる)。
   (setv env-refusal (runtime-env-refusal item))
   (when (is-not env-refusal None)
     (raise (ValueError env-refusal)))
-  (when (and (is-not (.get item "runtimeEnv") None) (or (is-not base-from None) (is-not overlay None)))
-    (raise (ValueError "runtimeEnv を持つ宣言は baseFrom と overlay を持たない(commit は宣言の repos が決める)")))
   (ClusterJob (spec-of-declaration item)
               (request-needs item "Service の needs")
               (.get item "pin")
@@ -170,20 +150,15 @@
               replicas
               readiness
               (.get item "owner")
-              update
-              base-from
-              overlay))
+              update))
 
 
 (defn #^ dict job-to-json [#^ ClusterJob job]
   (setv base {"name" job.spec.name "revision" job.spec.revision
               "needs" (list job.needs) "pin" job.pin
               "replicas" job.replicas "readiness" job.readiness "owner" job.owner})
-  ;; 版の追随と入れ替えの欄は、使う宣言にだけ書く(使わない宣言の spec の形・版は以前と同じ)。
+  ;; 入れ替えの欄は、使う宣言にだけ書く(使わない宣言の spec の形・版は以前と同じ)。
   (setv extra (| (if (= job.update "recreate") {} {"update" job.update})
-                 (if (is job.base-from None) {} {"baseFrom" job.base-from})
-                 (if (is job.spec.base None) {} {"base" job.spec.base})
-                 (if (is job.overlay None) {} {"overlay" job.overlay})
                  (if (is job.spec.runtime-env None) {} {"runtimeEnv" (json.loads job.spec.runtime-env)})
                  (if job.spec.environ {"environ" (dict job.spec.environ)} {})))
   ;; 受け付けた job は Program の job だけ(run を持つ — spec-of-declaration)。行は run を運ぶ(entry と args は worker の内部の形)。
@@ -210,7 +185,6 @@
      (if spec.program {"program" spec.program} {})
      (if spec.environ {"environ" (dict spec.environ)} {})
      (if (is spec.placement None) {} {"placement" spec.placement})
-     (if (is spec.base None) {} {"base" spec.base})
      ;; 実行環境の job だけ: 宣言の JSON(worker が env の root を準備し、版を env のキーへ置き換える)。
      (if (is spec.runtime-env None) {} {"runtimeEnv" (json.loads spec.runtime-env)})
      ;; 入れ替え(handoff)の job だけ: 形と、coordinator が Ready と数えている process の世代の名(worker は旧をこの後に止める)。

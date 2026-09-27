@@ -21,7 +21,7 @@
 (import .worker_policy [kept-when-cut-off])
 (import .worker_model [JobSpec CodeState CodeView ProcessView WorldView StopStage ProbeState ProbeView
   DesiredJobs DesiredUnreadable ReadDesired ObserveWorld WorkerStopRequested PublishStatus JobPhase JobStatus EnvDisk WarmEnv
-  PrepareCode PrepareEnv SweepEnvs ForgetProbes StartJob SignalJob ReapJob RetireJob ReleaseLeases ProbeEntry spec-hash split-code-key probe-args probe-refusal CodeLayout
+  PrepareCode PrepareEnv SweepEnvs ForgetProbes StartJob SignalJob ReapJob RetireJob ReleaseLeases ProbeEntry spec-hash probe-args probe-refusal CodeLayout
   ENV-KEY-PREFIX])
 
 (defn #^ tuple env-placement [#^ (| dict None) declared #^ str revision]  ; defk にできない: 宣言の読み(Program の外の I/O の道具)が呼ぶ
@@ -40,7 +40,7 @@
   (setv #(revision runtime key) (env-placement (.get job "runtimeEnv") (get job "revision")))
   (JobSpec (get job "name") (get job "entry") (tuple (.get job "args" [])) revision
            :once (.get job "once" False) :placement (.get job "placement")
-           :base (.get job "base") :handoff (bool (.get job "handoff" False))
+           :handoff (bool (.get job "handoff" False))
            :ready-instance (.get job "readyInstance") :runtime-env runtime :env-key key
            ;; 入れ替えの諦め(coordinator の期限 — 返事の handoff の job だけが持つ・無ければ偽)。
            :handoff-abandoned (bool (.get job "handoffAbandoned" False))
@@ -75,7 +75,7 @@
   "完成品 = cache の直下の、完成の印(code_prepare の MARKER)が検めを通る dir。印の無い・検めの通らない dir は"
   "完成品として公開せず、次にその版を求められた時に脇へ退けて作り直す。"
   "tool = 焼く道具の file(既定は worker 自身のコードの code_prepare.hy。準備する版の木の物は使わない)。"
-  "layout = 業務の repo の木の形(import の根・重ねる dir — worker_model.CodeLayout)。"
+  "layout = 業務の repo の木の形(import の根 — worker_model.CodeLayout)。"
   (defn __init__ [self #^ str repo #^ str cache #^ (| str None) hy-command [tool TOOL] #^ CodeLayout [layout (CodeLayout)]]
     (setv self.repo repo self.cache (Path cache) self.hy-command hy-command self.tool tool self.layout layout
           self.pending {} self.failed {} self.timings {}
@@ -137,14 +137,11 @@
     ;; 焼きの失敗が完成品になった)。git archive は pipe にせず file へ書く(pipe の失敗は最後の tar しか見えない)。
     ;; rename が最後で、その前に印が在ることを確かめるので、final の在る dir は常に完成品。
     ;; 焼く道具そのもの(Hy)の import が timestamp 方式の .pyc を木へ書かないよう、PYTHONDONTWRITEBYTECODE を立てる。
-    ;; revision = worker_model.code-key。「<base>~<重ねる commit>」なら base の木の重ねる dir(layout.overlay-path)を重ねる commit の
-    ;; 物に差し替える(2026-09-24 — 業務コードは本番の commit・service の包みは宣言の commit)。前の木から引き継ぐ時の「変わった file」は、
-    ;; 土台と重ねた dir を別々に比べた和(どちらの木も同じ規則で分けるので、重ねない木どうしなら従来の diff と同じ)。
-    ;; 重ねる dir を持たない layout で重ねる木を求められたら、準備は失敗する(黙って base の木だけにしない)。
+    ;; revision = worker_model.code-key = 1 つの commit(木の全体がその commit — 以前の「<base>~<重ねる commit>」の重ねる木は
+    ;; 2026-09-28 に消した)。前の木から引き継ぐ時の「変わった file」は前の木の名(版)と revision の git diff。前の木の版を
+    ;; この repo で解けない時(以前の重ねる木の名・履歴から消えた commit)は引き継がずに全部を焼く — 引き継ぎは速さのためだけで、
+    ;; 引き継げないことを準備の失敗にしない(set -e は if の条件の失敗を拾わない)。
     (setv repo self.repo
-          #(base overlay) (split-code-key revision)
-          layered (!= base overlay)
-          overlay-path self.layout.overlay-path
           tool (+ f"PYTHONDONTWRITEBYTECODE=1 \"{self.hy-command}\" \"{self.tool}\" \"$T\" --revision \"{revision}\""
                   f" --import-roots \"{(.roots-arg self.layout)}\"")
           prepare (cond
@@ -152,31 +149,24 @@
               (+ f"printf '{{\"format\": {MARKER-FORMAT}, \"revision\": \"%s\", \"bytecode\": false}}\\n' "
                  f"\"{revision}\" > \"$T/{MARKER}\"\n")
             (is previous None) f"{tool}\n"
-            (not overlay-path)
-              (+ f"git -C \"{repo}\" diff --name-only \"{(get (split-code-key previous.name) 0)}\" \"{base}\" > \"$T.changed\"\n"
-                 f"{tool} --from \"{previous}\" --changed \"$T.changed\"\n")
-            True (do (setv #(pbase poverlay) (split-code-key previous.name))
-                     (+ f"git -C \"{repo}\" diff --name-only \"{pbase}\" \"{base}\" -- . ':(exclude){overlay-path}' > \"$T.changed\"\n"
-                        f"git -C \"{repo}\" diff --name-only \"{poverlay}\" \"{overlay}\" -- \"{overlay-path}\" >> \"$T.changed\"\n"
-                        f"{tool} --from \"{previous}\" --changed \"$T.changed\"\n"))))
+            True
+              (+ f"if git -C \"{repo}\" diff --name-only \"{previous.name}\" \"{revision}\" > \"$T.changed\" 2>/dev/null; then\n"
+                 f"  {tool} --from \"{previous}\" --changed \"$T.changed\"\n"
+                 "else\n"
+                 f"  echo \"前の木 {previous.name} の版をこの repo で解けない — 引き継がずに全部を焼く\" >&2\n"
+                 f"  {tool}\n"
+                 "fi\n")))
     (+ "set -eu\n"
        "if [ -n \"$B\" ]; then rm -rf \"$B\"; fi\n"
        "rm -rf \"$T\" \"$T.tar\" \"$T.changed\"\n"
        "mkdir -p \"$T\"\n"
        ;; 手元に無い版なら先に fetch する(Pod の mirror は起動時の版しか持たない)。
-       f"if ! git -C \"{repo}\" cat-file -e \"{base}^{{commit}}\" 2>/dev/null || ! git -C \"{repo}\" cat-file -e \"{overlay}^{{commit}}\" 2>/dev/null; then\n"
+       f"if ! git -C \"{repo}\" cat-file -e \"{revision}^{{commit}}\" 2>/dev/null; then\n"
        f"  git -C \"{repo}\" fetch -q origin '+refs/heads/*:refs/heads/*'\n"
        "fi\n"
-       f"git -C \"{repo}\" archive --format=tar -o \"$T.tar\" \"{base}\"\n"
+       f"git -C \"{repo}\" archive --format=tar -o \"$T.tar\" \"{revision}\"\n"
        "tar -x -C \"$T\" -f \"$T.tar\"\n"
        "rm -f \"$T.tar\"\n"
-       (cond
-         (not layered) ""
-         (not overlay-path) "echo \"重ねる木を求められたが、この worker の layout に重ねる dir が無い\" >&2\nexit 1\n"
-         True (+ f"rm -rf \"$T/{overlay-path}\"\n"
-                 f"git -C \"{repo}\" archive --format=tar -o \"$T.tar\" \"{overlay}\" \"{overlay-path}\"\n"
-                 "tar -x -C \"$T\" -f \"$T.tar\"\n"
-                 "rm -f \"$T.tar\"\n"))
        "cd \"$T\"\n"
        prepare
        f"test -f \"$T/{MARKER}\" || {{ echo \"完成の印が置かれていない\" >&2; exit 1; }}\n"

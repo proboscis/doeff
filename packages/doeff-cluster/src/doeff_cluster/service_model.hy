@@ -24,7 +24,7 @@
 ;;;     revision・versions・environ から作り、詰めた文字列は比べない(改訂 1 の A — cloudpickle の出力は同じ Program でも揺れる)。
 ;;;   - describe = identity から作る表示の 1 行(coordinator は業務の code を持たず Program を解けないので、表示は宣言が運ぶ)。
 ;;; 旧い宣言(:env・:config・:env-config・:requires・関数の参照 + 設定)は受け付けない(operator 2026-09-27)。
-(require doeff-hy.macros [deff val])
+(require doeff-hy.macros [defk deff val])
 (require doeff-hy.record [defrecord])
 (import collections.abc [Callable])
 (import dataclasses [dataclass])
@@ -146,6 +146,21 @@
   {:pre [(: system System) (: name str)] :post [(: % (| Job None))] :tags {:context "doeff-cluster" :role "judgment"}}
   "系の中の名 name の job(無ければ None)。"
   (next (gfor j system.jobs :if (= j.name name) j) None))
+
+
+(defk foundation-needs-refusal [system foundation]
+  {:pre [(: system System) (: foundation Callable)] :post [(: % (| str None))] :tags {:context "doeff-cluster" :role "judgment"}}
+  "土台の関数の頭の :needs(__doeff_needs__)が系の各 job の :needs の一部かを検め、外れた job と足りない能力を並べた理由の文を
+   返すため(外れが無ければ None)— declare が宣言の前に断る(計画 9 節の P・ADR-DOE-CLUSTER-001 R4b。doeff-linter の照合が来るまでは
+   宣言の時点で)。土台が :needs を名乗らなければ検めない。土台が中に並べる handler の :needs は集めない(集めるには handler を作る =
+   実行が要る)— 土台の頭に手で書く決まりで、頭が中の handler の :needs を漏らしていても linter の照合までは見つからない。"
+  (val declared (getattr foundation "__doeff_needs__" None))
+  (val short (if (is declared None) [] (lfor j system.jobs :if (not (<= declared j.needs)) j)))
+  (match short
+    [] None
+    _ (.format "土台 {}:{} の :needs {} が job の :needs に含まれない: {} — 土台の要る能力を job の :needs に書く(土台の :needs ⊆ job の :needs)"
+               (getattr foundation "__module__" "?") (getattr foundation "__qualname__" "?") (sorted declared)
+               (.join "・" (gfor j short (.format "{}(足りない {})" j.name (sorted (- declared j.needs))))))))
 
 
 (defrecord Declaration

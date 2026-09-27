@@ -93,13 +93,12 @@
     (finally (.shutdown server))))
 
 
-;; --- 終わった process の lease を返す(2026-09-24)・image の LABEL を読む -----------------------------------------
+;; --- 終わった process の lease を返す(2026-09-24) -----------------------------------------
 
 (import json)
 (import httpx)
 (import doeff_cluster.handlers [release-leases])
 (import doeff_cluster.semaphore_model [drop-holders])
-(import doeff_cluster.image_handlers [RegistryClient])
 
 (deftest test-release-leases-drops-only-the-finished-process-holders-on-an-old-coordinator
   ;; 盤の semaphore の行から、token が「<worker>/<世代の名>/」で始まる担い手だけを外す(他の process の lease は残す)。
@@ -123,21 +122,3 @@
   (assert (= (get board "semaphore/other" "holders") {"atlas/1-old/ee/1" 77}) "別の worker の同じ名の世代は触らない")
   (assert (= puts ["semaphore/app-writer"]))
   (assert (is (drop-holders {"permits" 1 "holders" {"x/1/a" 1}} "y/") None)))
-
-(deftest test-registry-client-reads-labels-through-an-index
-  (setv seen [])
-  (defn handle [request]
-    (.append seen request.url.path)
-    (cond
-      (.endswith request.url.path "/manifests/20260924-305aac4")
-        (httpx.Response 200 :json {"mediaType" "application/vnd.oci.image.index.v1+json"
-                                   "manifests" [{"digest" "sha256:arm" "platform" {"os" "linux" "architecture" "arm64"}}
-                                                {"digest" "sha256:amd" "platform" {"os" "linux" "architecture" "amd64"}}]})
-      (.endswith request.url.path "/manifests/sha256:amd")
-        (httpx.Response 200 :json {"mediaType" "application/vnd.oci.image.manifest.v1+json" "config" {"digest" "sha256:cfg"}})
-      (.endswith request.url.path "/blobs/sha256:cfg")
-        (httpx.Response 200 :json {"config" {"Labels" {"org.opencontainers.image.revision" "abc"}}})
-      True (httpx.Response 404)))
-  (setv client (RegistryClient :transport (httpx.MockTransport handle)))
-  (assert (= (.labels client "zeus:5000/app:20260924-305aac4") {"org.opencontainers.image.revision" "abc"}))
-  (assert (= (get seen 0) "/v2/app/manifests/20260924-305aac4")))

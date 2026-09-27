@@ -12,7 +12,7 @@
 
 (defclass [(dataclass :frozen True)] ReadDeployment [EffectBase]
   "結果は dict: specReplicas(宣言の台数)・replicas / readyReplicas / availableReplicas / updatedReplicas(status)・
-   generation・observedGeneration・annotations・images(pod template の container の名 → image)。読めなければ KubeUnavailable。"
+   generation・observedGeneration・annotations。読めなければ KubeUnavailable。"
   (#^ str namespace)
   (#^ str name))
 

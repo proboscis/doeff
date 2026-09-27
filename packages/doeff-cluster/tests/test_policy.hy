@@ -125,7 +125,7 @@
 
 ;; --- 入れ替え(handoff・2026-09-24): 新が Ready と数えられてから旧を止める ---------------------------------------
 
-(import doeff_cluster.worker_model [RetireJob ReleaseLeases code-key retired-name])
+(import doeff_cluster.worker_model [RetireJob ReleaseLeases retired-name])
 
 (setv H1 (replace A1 :handoff True)
       H2 (replace A1 :revision "rev2" :handoff True))
@@ -188,12 +188,4 @@
   (assert (= (plan 0 #(A2) (world (proc A1 10 "1-old") :codes #(READY1 READY2)) {} POLICY)
              #((SignalJob "a" 10 StopStage.TERM)))))
 
-(deftest test-layered-code-is-prepared-under-its-own-key
-  ;; base の在る job は「base~revision」の木を使う(業務コード = 本番の commit・包み = 宣言の commit)。
-  (setv L (replace A1 :base "base1"))
-  (assert (= (code-key L) "base1~rev1"))
-  (assert (= (plan 0 #(L) (world :codes #(READY1)) {} POLICY) #((PrepareCode "base1~rev1"))))
-  (setv ready (CodeView "base1~rev1" CodeState.READY "/c/base1~rev1"))
-  (assert (= (plan 0 #(L) (world :codes #(READY1 ready)) {} POLICY) #((StartJob L 1 "/c/base1~rev1"))))
-  ;; base が変われば別の spec(process を入れ替える)。
-  (assert (!= L (replace L :base "base2"))))
+
