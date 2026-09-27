@@ -64,6 +64,21 @@
 
 (setv Retention (| KeepForever KeepFor))
 
+;; 追記の列の保持を数える単位(StreamDecl.retention-group)— 結末が残る間に要求だけが消えると、要求の再送が新しい出来事になり、結末の再送は古い番号を返す。
+(defclass [(dataclass :frozen True)] EachEvent []
+  "出来事ごとに、積んだ刻から保持の秒を数える(既定)。")
+
+(defclass [(dataclass :frozen True)] ByKeySuffix []
+  "冪等キーの区切り separator より後ろが同じ出来事を 1 組にし、組の最後の出来事を積んだ刻から保持の秒を数える — 組の出来事は
+   同時に消える(例: 区切り「:」で request:<id> と settled:<id> を 1 組にすると、結末が残る間は要求も残る)。区切りを含まない冪等キーは
+   キー全体が組の名。"
+  (#^ str separator)
+  (defn #^ None __post_init__ [self]
+    (when (not (and (isinstance self.separator str) self.separator))
+      (raise (ValueError (.format "ByKeySuffix.separator は空でない文字列: {!r}" self.separator))))))
+
+(setv RetentionGroup (| EachEvent ByKeySuffix))
+
 
 ;; --- 表の宣言 ------------------------------------------------------------------------------------------------
 
@@ -163,17 +178,23 @@
 
 (defclass [(dataclass :frozen True)] StreamDecl []
   "追記の列の宣言。writers = 積んでよい書き手の名 / retention = KeepForever | KeepFor(積んでから秒)/
-   size-budget = 本文の JSON の byte の上限(None = 無し)。"
+   size-budget = 本文の JSON の byte の上限(None = 無し)/ retention-group = 保持を数える単位(EachEvent | ByKeySuffix — ByKeySuffix は
+   KeepFor の列だけ)。"
   (#^ str name)
   (#^ tuple writers)
   (setv #^ object retention (KeepForever))
   (setv #^ (| int None) size-budget None)
+  (setv #^ object retention-group (EachEvent))
   (defn #^ None __post_init__ [self]
     (checked-table-name self.name "StreamDecl.name")
     (when (not (and (isinstance self.writers tuple) self.writers (all (gfor n self.writers (and (isinstance n str) n)))))
       (raise (ValueError (.format "StreamDecl.writers は空でない文字列の空でない tuple: {!r}" self.writers))))
     (when (not (isinstance self.retention #(KeepForever KeepFor)))
       (raise (TypeError "StreamDecl.retention は KeepForever | KeepFor")))
+    (when (not (isinstance self.retention-group #(EachEvent ByKeySuffix)))
+      (raise (TypeError "StreamDecl.retention_group は EachEvent | ByKeySuffix")))
+    (when (and (isinstance self.retention-group ByKeySuffix) (not (isinstance self.retention KeepFor)))
+      (raise (ValueError "StreamDecl.retention_group の ByKeySuffix は KeepFor の列だけ(消えない列に組は要らない)")))
     (when (and (is-not self.size-budget None)
                (or (isinstance self.size-budget bool) (not (isinstance self.size-budget int)) (<= self.size-budget 0)))
       (raise (ValueError (.format "StreamDecl.size_budget は正の整数か None: {!r}" self.size-budget))))))

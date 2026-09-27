@@ -16,7 +16,7 @@
 (import doeff [Pure])
 (import doeff_hy.frozen [FrozenMap frozen-json-object])
 (import doeff_time [GetTime])
-(import doeff_records.values [RecordsSchema KeepFor Row Missing Page Written WrittenRows RowChanged RowRemoved Changes Appended
+(import doeff_records.values [RecordsSchema KeepFor ByKeySuffix Row Missing Page Written WrittenRows RowChanged RowRemoved Changes Appended
                               Event Events Reset WatchCursor ListCursor Refused Unreachable RowsConflict RowsRefused])
 (import doeff_records.effects [ReadRow ListRows PutRow PutRows WatchChanges AppendEvent ReadEvents])
 (import doeff_records.faults [AdvanceStoreEpoch])
@@ -29,7 +29,8 @@
                               store-head-statement read-row-statement lock-row-statement list-rows-statement
                               terminal-rows-statement upsert-row-statement delete-row-statement append-change-statement
                               changes-statement advance-epoch-statement forget-changes-statement prune-changes-statement find-event-statement
-                              insert-event-statement read-events-statement expire-events-statement])
+                              insert-event-statement read-events-statement expire-events-statement
+                              expire-event-groups-statement])
 
 (setv DEFAULT-POLL-SECONDS 0.2)
 (setv T (TypeVar "T"))
@@ -171,7 +172,10 @@
         (+= removed 1))))
   (for [#(name decl) (sorted (.items host.schema.streams))]
     (when (isinstance decl.retention KeepFor)
-      (host.execute (expire-events-statement host.prefix name (- now-ms (int (* 1000 decl.retention.seconds)))))))
+      (setv before-at (- now-ms (int (* 1000 decl.retention.seconds))))
+      (host.execute (match decl.retention-group
+                      (ByKeySuffix :separator separator) (expire-event-groups-statement host.prefix name before-at separator)
+                      _ (expire-events-statement host.prefix name before-at)))))
   removed)
 
 

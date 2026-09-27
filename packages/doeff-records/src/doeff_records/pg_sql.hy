@@ -201,3 +201,21 @@
   "積んだ刻が before-at 以下の出来事を捨てる(before-at = 今 − 保持の秒 — admission.event-expired? と同じ境界)。"
   (Statement (.format "DELETE FROM {p}append_rows WHERE ledger = %s AND at <= %s" :p prefix)
              #(stream before-at)))
+
+
+(defn #^ str key-suffix-expression [#^ str alias]
+  "出来事 alias の冪等キーの最初の区切り(引数 3 つ)より後ろ・区切りを含まないキーはキー全体(admission.retention-group-of と同じ組の名)。"
+  (.format "(CASE WHEN strpos(({a}.payload::jsonb) ->> 'idempotencyKey', %s) > 0
+                 THEN substr(({a}.payload::jsonb) ->> 'idempotencyKey',
+                             strpos(({a}.payload::jsonb) ->> 'idempotencyKey', %s) + length(%s))
+                 ELSE ({a}.payload::jsonb) ->> 'idempotencyKey' END)" :a alias))
+
+
+(defn #^ Statement expire-event-groups-statement [#^ str prefix #^ str stream #^ int before-at #^ str separator]
+  "組で数える列(ByKeySuffix)の刈り: 組の出来事が全部 before-at 以下に積まれた組を捨てる(= 組の最後の出来事から保持の秒 —
+   admission.event-expired? と retention-group-of と同じ境界)。"
+  (Statement (.format "DELETE FROM {p}append_rows AS old WHERE old.ledger = %s AND old.at <= %s AND NOT EXISTS (
+                         SELECT 1 FROM {p}append_rows AS young
+                          WHERE young.ledger = old.ledger AND young.at > %s AND {young} = {old})"
+                      :p prefix :young (key-suffix-expression "young") :old (key-suffix-expression "old"))
+             #(stream before-at before-at separator separator separator separator separator separator)))

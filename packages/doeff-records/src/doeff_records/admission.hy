@@ -9,7 +9,7 @@
 (import json)
 (import collections.abc [Mapping])
 (import doeff_hy.frozen [FrozenMap frozen-json-object thaw-json])
-(import doeff_records.values [RecordsSchema TableDecl StreamDecl KeepFor Row Missing Conflict Refused NotIndexed Event
+(import doeff_records.values [RecordsSchema TableDecl StreamDecl KeepFor ByKeySuffix Row Missing Conflict Refused NotIndexed Event
                               ExpectAbsent ExpectVersion ExpectAny RowsConflict RowsRefused])
 
 
@@ -211,7 +211,18 @@
 
 
 (defn #^ bool event-expired? [#^ StreamDecl decl #^ int at-ms #^ int now-ms]
+  "保持の期限を過ぎた出来事か。at-ms = 保持を数え始める刻(組で数える列では組の最後の出来事の刻 — retention-group-of)。"
   (and (isinstance decl.retention KeepFor) (>= now-ms (+ at-ms (int (* 1000 decl.retention.seconds))))))
+
+
+(defn #^ (| str None) retention-group-of [#^ StreamDecl decl #^ str idempotency-key]
+  "出来事の保持の組の名(None = 出来事ごとに数える)。ByKeySuffix は冪等キーの最初の区切りより後ろ・区切りを含まないキーはキー全体。"
+  (match decl.retention-group
+    (ByKeySuffix :separator separator)
+      (if (in separator idempotency-key)
+          (get (.split idempotency-key separator 1) 1)
+          idempotency-key)
+    _ None))
 
 
 ;; --- 索引と頁 --------------------------------------------------------------------------------------------

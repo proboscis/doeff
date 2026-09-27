@@ -14,7 +14,7 @@
 (import doeff_hy.frozen [FrozenMap])
 (import doeff_core_effects.scheduler [Spawn Wait])
 (import doeff_time [Delay GetTime])
-(import doeff_records.values [FieldDecl TableDecl StreamDecl RecordsSchema KeepFor KeepForever ExpectAbsent ExpectVersion ExpectAny
+(import doeff_records.values [FieldDecl TableDecl StreamDecl RecordsSchema KeepFor KeepForever ByKeySuffix ExpectAbsent ExpectVersion ExpectAny
                               WatchCursor ListCursor Row Missing Page Written WrittenRows Conflict Refused NotIndexed Reset
                               Changes RowChanged RowRemoved Appended Events RowsConflict RowsRefused])
 (import doeff_records.effects [ReadRow ListRows PutRow PutRows RowWrite WatchChanges AppendEvent ReadEvents])
@@ -24,7 +24,7 @@
 
 ;; OVERSEER = operator の主体(宣言の operators に入る唯一の書き手)— 法の中で operator の宣言の欄 grant を書ける。
 (setv MAKER "maker" PAINTER "painter" CLOSER "closer" STRANGER "stranger" OVERSEER "overseer")
-(setv TICKET-KEEP-SECONDS 60)
+(setv TICKET-KEEP-SECONDS 60 PAIR-KEEP-SECONDS 60)
 
 (setv LAW-SCHEMA
   (RecordsSchema
@@ -48,7 +48,10 @@
                                              (FieldDecl "rule" #(OVERSEER) :founders #(MAKER))
                                              (FieldDecl "note" #(OVERSEER)))
                                    :operator-paths #("rule" "note"))})
-    :streams (FrozenMap {"journal" (StreamDecl :name "journal" :writers #(MAKER) :size-budget 200)})
+    ;; pairs = 保持の組(ByKeySuffix「:」)の列 — 法 12。
+    :streams (FrozenMap {"journal" (StreamDecl :name "journal" :writers #(MAKER) :size-budget 200)
+                         "pairs" (StreamDecl :name "pairs" :writers #(MAKER) :retention (KeepFor PAIR-KEEP-SECONDS)
+                                             :retention-group (ByKeySuffix ":"))})
     :operators #(OVERSEER)))
 
 
@@ -513,6 +516,39 @@
   (+ [start seed batch stale refused first-conflict stranger read-p1 read-p2 read-p9] answers))
 
 
+;; --- 法 12: 組で数える列の出来事は組の最後の出来事から数えて同時に消える -----------------------------------------------------
+
+(defk law-grouped-events-expire-together [harness]
+  {:pre [(: harness LawHarness)] :post [(: % list)]}
+  "保持の組(ByKeySuffix)の法: 組の後の出来事が残る間は前の出来事も残り(同じ本文の再送は前の番号)、組の最後の出来事から保持の秒で
+   組ごと消える。区切りを含まないキーと、後の出来事の無い組は、出来事ごとに消える。"
+  (val law "組で数える列の出来事は組の最後の出来事から数えて同時に消える")
+  (<- ask-a (as-writer harness MAKER (AppendEvent "pairs" "ask:a" {"n" 1})))
+  (<- ask-b (as-writer harness MAKER (AppendEvent "pairs" "ask:b" {"n" 2})))
+  (<- solo (as-writer harness MAKER (AppendEvent "pairs" "solo" {"n" 3})))
+  (<- (Delay 30))
+  (<- done-a (as-writer harness MAKER (AppendEvent "pairs" "done:a" {"n" 4})))
+  (<- (Delay (+ (- PAIR-KEEP-SECONDS 30) 1)))
+  ;; 積んでから保持の秒を過ぎた: 組 a は後の出来事(done:a)が残るので ask:a も残る。組 b と solo は消えた。
+  (<- read (as-writer harness MAKER (ReadEvents "pairs")))
+  (require-law (and (isinstance read Events) (= (lfor e read.items e.idempotency-key) ["ask:a" "done:a"])) law
+               (.format "組の後の出来事が残る間に前の出来事が消えた・組の無い出来事が残る: {!r}" read))
+  (<- again-a (as-writer harness MAKER (AppendEvent "pairs" "ask:a" {"n" 1})))
+  (require-law (= again-a ask-a) law (.format "組が残る間の再送が前の番号でない: {!r} {!r}" again-a ask-a))
+  (<- fresh-b (as-writer harness MAKER (AppendEvent "pairs" "ask:b" {"n" 2})))
+  (require-law (and (isinstance fresh-b Appended) (> fresh-b.sequence done-a.sequence)) law
+               (.format "消えた組の再送が新しい出来事でない: {!r}" fresh-b))
+  (<- (Delay 30))
+  ;; 組 a の最後の出来事(done:a)から保持の秒を過ぎた: 組ごと消えた。
+  (<- later (as-writer harness MAKER (ReadEvents "pairs")))
+  (require-law (and (isinstance later Events) (= (lfor e later.items e.idempotency-key) ["ask:b"])) law
+               (.format "組の最後の出来事から保持の秒を過ぎた組が残る: {!r}" later))
+  (<- fresh-a (as-writer harness MAKER (AppendEvent "pairs" "ask:a" {"n" 1})))
+  (require-law (and (isinstance fresh-a Appended) (> fresh-a.sequence fresh-b.sequence)) law
+               (.format "消えた組の再送が新しい出来事でない: {!r}" fresh-a))
+  [ask-a ask-b solo done-a read again-a fresh-b later fresh-a])
+
+
 ;; 全部の法(名 → 法)。SHARED-LAWS = 時間を進めない法(仮想の時計を持たない組でも回せる・答えの比べに使う)。
 ;; law-put-rows-is-all-or-nothing は SHARED-LAWS に入れない — SHARED-LAWS は前からの 6 つの effect だけで回る法の名簿で、
 ;; PutRows を答えない handler の組(呼び手の系の写しの handler など)もこの名簿で答えを比べている。
@@ -528,7 +564,8 @@
             "watch-waits-for-a-change" law-watch-waits-for-a-change
             "none-removes-a-field" law-none-removes-a-field
             "maintenance-prunes-and-sweeps" law-maintenance-prunes-and-sweeps
-            "put-rows-is-all-or-nothing" law-put-rows-is-all-or-nothing})
+            "put-rows-is-all-or-nothing" law-put-rows-is-all-or-nothing
+            "grouped-events-expire-together" law-grouped-events-expire-together})
 (setv SHARED-LAWS #("stale-put-conflicts" "committed-changes-appear-once-in-order" "epoch-change-resets"
                     "undeclared-writes-are-refused" "operator-paths-need-an-operator" "founders-write-only-at-birth"
                     "indexed-list-equals-filtered-scan" "append-is-idempotent" "none-removes-a-field"))

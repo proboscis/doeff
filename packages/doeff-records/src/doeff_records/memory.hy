@@ -23,7 +23,7 @@
 (import doeff_records.faults [AdvanceStoreEpoch])
 (import doeff_records.maintenance [SweepExpired PruneChanges Swept Pruned])
 (import doeff_records.admission [Admitted AppendNew AppendReplay judge-expect judge-put judge-put-rows judge-append row-expired?
-                                 event-expired? where-refusal row-matches? listed-row key-text next-watch-sequence
+                                 event-expired? retention-group-of where-refusal row-matches? listed-row key-text next-watch-sequence
                                  epoch-ms])
 
 (setv DEFAULT-POLL-SECONDS 0.05)
@@ -93,8 +93,16 @@
       (.append store.changes (RowRemoved name stored.row.key store.head))))
   (when (not (any (gfor s (.values store.schema.streams) (isinstance s.retention KeepFor))))
     (return removed))
+  ;; 組で数える列(ByKeySuffix)は、組の最後の出来事を積んだ刻から数える — 組の出来事は同時に消える。
+  (setv group-at {})
+  (for [event store.events]
+    (setv group (retention-group-of (store.schema.stream event.stream) event.idempotency-key))
+    (when (is-not group None)
+      (setv (get group-at #(event.stream group)) (max event.at (.get group-at #(event.stream group) event.at)))))
   (setv expired (lfor event store.events
-                      :if (event-expired? (store.schema.stream event.stream) event.at now-ms)
+                      :setv decl (store.schema.stream event.stream)
+                      :setv group (retention-group-of decl event.idempotency-key)
+                      :if (event-expired? decl (if (is group None) event.at (get group-at #(event.stream group))) now-ms)
                       event))
   (when (not expired)
     (return removed))
