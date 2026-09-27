@@ -1,13 +1,18 @@
 ;; 実 I/O の handler の失敗経路。失敗の報告を組み立てる所で worker ごと落ちないこと。
-(require doeff-hy.macros [deftest])
+(require doeff-hy.macros [deftest val])
 (import time)
+(import httpx)
 (import doeff_cluster.worker_model [DesiredJobs DesiredUnreadable])
-(import doeff_cluster.handlers [parse-desired CoordinatorLink])
+(import doeff_cluster.handlers [CoordinatorLink])
 
 (deftest test-broken-declaration-is-reported-not-raised
-  (setv result (parse-desired "{"))
-  (assert (isinstance result DesiredUnreadable))
-  (assert (in "JSONDecodeError" result.reason)))
+  ;; worker が job を受けるのは coordinator の返事からだけ(宣言の file を直に読む口は無い)。読めない返事は例外を上げず「読めない」に
+  ;; なる(fence の前は直前の宣言を続ける)。
+  (val link (CoordinatorLink "http://coord" "w" #() 1 60000
+                             :transport (httpx.MockTransport (fn [request] (httpx.Response 200 :text "{")))))
+  (val result (.poll link))
+  (assert (isinstance result DesiredUnreadable) result)
+  (assert (in "JSONDecodeError" result.reason) result.reason))
 
 (deftest test-unreachable-coordinator-is-unreadable-then-fences
   ;; 閉じた port へ向ける。fence 前は「読めない」(直前の宣言を続ける)、fence を超えたら空(全部止める)。
@@ -24,19 +29,26 @@
 (import doeff_cluster.code_prepare [module-name carry-pairs compile-plan cache-rel])
 
 (deftest test-task-files-are-written-reported-and-cleaned [tmp-path]
-  (setv link (CoordinatorLink "http://127.0.0.1:9" "w" #() 1 60000 :task-dir (str tmp-path)))
-  (setv task {"id" "t7" "env" "m:e" "revision" "r" "versions" {"b" "2" "a" "1"} "blob" "QkxPQg=="})
-  (setv #(spec) (.accept-tasks link [task]))
-  ;; 名前と引数は task の id と版で決まる(毎拍同じ形 = 起動し直さない)
-  (assert (= spec (task-spec task tmp-path)))
+  (val tasks (/ tmp-path "tasks"))
+  (val link (CoordinatorLink "http://127.0.0.1:9" "w" #() 1 60000 :task-dir (str tasks)))
+  (val sha (* "d" 64))
+  (val task {"id" "t7" "revision" "r" "versions" {"b" "2" "a" "1"} "program" sha})
+  (val specs (.accept-tasks link [task]))
+  (val spec (get specs 0))
+  ;; 名前と引数は task の id で決まる(毎拍同じ形 = 起動し直さない)。詰めた Program は置き場のキーで持つ(引数に載せない)。
+  (assert (= spec (task-spec task tasks)))
   (assert spec.once)
-  (assert (= (.read-text (/ tmp-path "t7.blob")) "QkxPQg=="))
-  (.write-text (/ tmp-path "t7.result") "RESULT")
-  (setv #(row) (.report link #((JobStatus "task/t7" JobPhase.FINISHED "r" None None 1))))
-  (assert (= (get row "result") "RESULT"))
-  ;; 宣言から外れた task の file は消す
+  (assert (= spec.program sha) spec)
+  (assert (= spec.args #("task" "--result" (str (/ tasks "t7.result")))) spec.args)
+  ;; 本文に Program は無い — 置き場のキーの印だけを残す(返事から外れた task の cache を消すため)。
+  (assert (= (.read-text (/ tasks "t7.program")) sha))
+  (.write-text (/ tasks "t7.result") "RESULT")
+  (val rows (.report link #((JobStatus "task/t7" JobPhase.FINISHED "r" None None 1))))
+  (assert (= (get rows 0 "result") "RESULT"))
+  ;; 宣言から外れた task の file は消す(結果は accept-tasks・印は accept-programs)
   (.accept-tasks link [])
-  (assert (= (list (.iterdir tmp-path)) [])))
+  (.accept-programs link #())
+  (assert (= (list (.iterdir tasks)) [])))
 
 (deftest test-code-prepare-plans-are-pure
   (assert (= (module-name "app/wrap/__init__.py") "app.wrap"))

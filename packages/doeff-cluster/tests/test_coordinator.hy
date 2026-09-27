@@ -10,7 +10,8 @@
 (import tests.clock_fixtures [clock-ms])
 (import doeff_cluster.cluster_model [ClusterTiming ClusterNaming ClusterState Request NextRequests Reply Persist CoordinatorStopRequested])
 (import doeff_cluster.cluster_policy [reconcile state-to-json state-from-json job-from-json identity-hash])
-(import tests.program_rows [SAMPLE-RUN SAMPLE-PROGRAM])
+(import tests.program_rows [SAMPLE-RUN SAMPLE-PROGRAM SAMPLE-TASK-PROGRAM program-placed])
+(import doeff [run])
 (import doeff_cluster.api_policy [respond])
 (import doeff_cluster.coordinator [run-coordinator])
 (import doeff_cluster.wal_store [WalStore])
@@ -30,7 +31,7 @@
   ;; 作り直した coordinator へ最初に名乗った worker に全 job が寄らないこと(実測 2026-09-23 の欠陥)。
   (setv #(s _ _) (beat (ClusterState) "a" 0))
   (setv #(s _ _) (beat s "b" 0))
-  (setv #(s _ _) (respond s (req "PUT" "/jobs" {"jobs" (lfor i (range 4) {"name" f"s{i}" "entry" "m" "args" [] "revision" "r" "needs" ["net"]})}) 0 T))
+  (setv #(s _ _) (respond s (req "PUT" "/jobs" {"jobs" (lfor i (range 4) {"name" f"s{i}" "run" SAMPLE-RUN "revision" "r" "needs" ["net"]})}) 0 T))
   (setv before (dfor #(k v) (.items s.placements) k v.worker))
   (assert (= (set (.values before)) #{"a" "b"}))
   (setv second (state-from-json (state-to-json s) 5000))
@@ -61,7 +62,9 @@
 
 
 (defn submit [state now [versions V] [lease 15.0]]
-  (setv #(state _ body) (respond state (req "POST" "/tasks" {"blob" "B" "versions" versions "revision" "r"
+  ;; 詰めた Program を置き場に(送り手の版 versions と一緒に)置いてから、task の本文は置き場のキーだけを運ぶ。
+  (setv #(state sha) (run (program-placed state versions :now now)))
+  (setv #(state _ body) (respond state (req "POST" "/tasks" {"program" sha "revision" "r"
                                                               "needs" ["net"] "name" "n" "leaseSeconds" lease}) now T))
   #(state (get body "task")))
 
@@ -71,7 +74,9 @@
   (setv #(s id) (submit s 100))
   (setv #(s _ body) (beat s "w" 200))
   (assert (= (lfor t (get body "tasks") (get t "id")) [id]))
-  (assert (= (get body "tasks" 0 "blob") "B"))
+  ;; 返事は詰めた Program を運ばず、置き場のキーだけ(worker が /programs/<sha> から取る)。
+  (assert (= (get body "tasks" 0 "program") SAMPLE-TASK-PROGRAM))
+  (assert (not-in "blob" (get body "tasks" 0)))
   ;; worker が終わったと報告する(結果の blob を添えて)
   (setv #(s _ body) (beat s "w" 300 [{"name" (+ "task/" id) "phase" "finished" "result" "R" "detail" ""}]))
   (assert (= (get body "tasks") [])) ; 終わった task はもう送らない = worker は file を片付ける
@@ -143,7 +148,7 @@
 
 (deftest test-coordinator-loop-answers-after-persisting
   (setv script (Script [(req "POST" "/heartbeat" {"name" "w" "provides" ["net"] "capacity" 10 "versions" V})
-                        (req "PUT" "/jobs" {"jobs" [{"name" "a" "entry" "m" "args" [] "revision" "r" "needs" ["net"]}]})
+                        (req "PUT" "/jobs" {"jobs" [{"name" "a" "run" SAMPLE-RUN "revision" "r" "needs" ["net"]}]})
                         (req "PUT" "/board/k" {"value" 1})
                         (req "GET" "/nothing")]))
   (<- final ClusterState ((scripted script) (run-coordinator (ClusterState) T (ClusterNaming))))
@@ -230,7 +235,7 @@
   (import doeff_cluster.durable_kv [durable-kv state-from-kv])
   (setv d (tempfile.mkdtemp) store (WalStore d))
   (.load store)
-  (setv script (Script [(req "POST" "/resources/Service" {"name" "a" "spec" {"revision" "r" "needs" ["net"] "entry" "m" "args" []}})
+  (setv script (Script [(req "POST" "/resources/Service" {"name" "a" "spec" {"revision" "r" "needs" ["net"] "run" SAMPLE-RUN}})
                         (req "PUT" "/board/k" {"value" 1})]))
   (<- final ClusterState ((sim-time-handler :clock script.clock) ((no-persist-script script) ((wal-store store) (run-coordinator (ClusterState) T (ClusterNaming))))))
   (setv back (state-from-kv (.load (WalStore d)) 99999))
@@ -247,7 +252,7 @@
   (.load store)
   (.persist store {"counter" {"nextTask" 1 "revision" 2 "auditSeq" 0}
                    "service/a" {"name" "a" "revision" "r" "needs" ["net"] "pin" None "replicas" 1 "readiness" None
-                                "owner" None "entry" "m" "args" []}
+                                "owner" None "run" SAMPLE-RUN}
                    (+ LEGACY-PLACEMENT "a") {"job" "a" "worker" "zeus" "generation" 3 "since_ms" 100}})
   (.close store.handle)
   store)
