@@ -24,6 +24,8 @@
 | 1 | error の違反がある(登録簿に無い新しい破れ) |
 | 2 | 引数の誤り・設定が読めない・設定の名前の食い違い(理由は stderr) |
 
+`--modified`(text・json)の時は、層の規則の違反も変更した file の物だけを出す。
+
 登録簿に載った既知の破れ(warning)と照合中の規則の違反(info)では 1 にしない。CI や agent の hook で「新しい破れだけを止める」
 ためである(この決定は戻せる。戻すなら `EditorReport::has_errors` を違反の有無に替える)。
 
@@ -59,7 +61,7 @@
 
 - 位置は 0 始まりの行と UTF-16 の code unit の列(VS Code の Position と同じ)。日本語や絵文字を含む行でも列は UTF-16 で数える。
 - 行だけの規則(DOEFF001〜031)は、違反の文の頭から行末までを範囲にする。
-- `path` は全体の実行では `root` と repo の根からの path をつないだ物、`--stdin` の実行では `--path` に渡した path を絶対にした物。
+- `path` は正規化した絶対の path(symlink と `..` を解いた物)。repo の根の中の file は、全体の実行でも `--stdin` の実行でも `root` と repo の根からの path をつないだ物になり、エディタは同じ path で結果を差し替えられる。path の引数で絞る時も同じ正規化で比べる。
 - `modules[].context`・`role` は module の頭のタグ、無ければ最初の定義のタグ。層の母集団の外の file は `modules` に出ない。
 - `rules`: 有効な規則ごとに、結びつけた law があれば law ごとに 1 件(`statement` = `<law の名>: <law の文>`)、無ければ規則の文で 1 件。
   設定の節が無い層の規則は `wired: false`(違反を出さない)。`rules` の空な law(針の無い law)は `rule` に law の名を入れて `wired: false`。
@@ -68,7 +70,7 @@
 
 節ごとの欄は README の「層の規則」の例のとおり。読む時に次を検め、1 つでも食い違えば終了コード 2 と理由の列を出す:
 順に 2 度出る層・`order` に無い層の名(`paths`・`allow_imports` の鍵と値・`forbid_modules`・`types_only`・`roles.by_layer`・
-`raw_side_effects.allowed_layers`・`laws[].layers`)・`roles.names` に無い role・層の規則でない `registry.reconciling`・知らない欄。
+`raw_side_effects.allowed_layers`・`laws[].layers`)・`roles.names` に無い role・層の規則でない `registry.reconciling`・doeff-linter に無い `laws[].rules` の ID・層を問わない規則(DOEFF108)だけの law の `layers`・空か `.` か絶対 path か `..` を含む層の置き場・入れ子の層の置き場・`layers` の無い `roles` と `tags`・`[tool.doeff-linter]` の直下と各節の知らない欄。
 
 | 節 | 欄 | 既定 |
 |---|---|---|

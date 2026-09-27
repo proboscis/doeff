@@ -186,6 +186,12 @@ pub fn load_config(path: Option<&Path>) -> Option<Config> {
     Some(config)
 }
 
+/// `[tool.doeff-linter]` の直下に書ける欄の名(Config の欄と同じ綴り)。
+const KNOWN_KEYS: &[&str] = &[
+    "enable", "disable", "exclude", "rules", "git", "log_file", "layers", "tags", "roles", "environment_names", "raw_side_effects",
+    "laws", "registry",
+];
+
 /// 見つけた設定 file と、その中の `[tool.doeff-linter]` の節。
 #[derive(Debug, Clone)]
 pub struct LoadedConfig {
@@ -203,6 +209,18 @@ pub fn load_config_file(path: &Path) -> Result<Config, String> {
         Some(section) => section.clone(),
         None => value,
     };
+    // 節の名の書き違い([tool.doeff-linter.layer] など)で規則が黙って止まらないよう、直下の鍵を既知の名と照らす。
+    if let Some(table) = section.as_table() {
+        let unknown: Vec<&str> = table.keys().map(String::as_str).filter(|key| !KNOWN_KEYS.contains(key)).collect();
+        if !unknown.is_empty() {
+            return Err(format!(
+                "{} の [tool.doeff-linter] に知らない欄がある: {}(使える欄: {})",
+                path.display(),
+                unknown.join(", "),
+                KNOWN_KEYS.join(", ")
+            ));
+        }
+    }
     section.try_into().map_err(|e: toml::de::Error| format!("{} の [tool.doeff-linter] を読めない: {}", path.display(), e))
 }
 

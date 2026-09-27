@@ -132,14 +132,18 @@ pub fn run(root: &Path, settings: &ProjectSettings, enabled: &BTreeSet<ProjectRu
             if let Some(env) = &settings.environment {
                 if enabled.contains(&ProjectRule::EnvironmentName) {
                     for file in &env_files {
-                        let source = std::fs::read_to_string(&file.path).unwrap_or_default();
-                        drafts.extend(judge_environment_names(file, &source, env, hy.get(&file.rel)));
+                        match std::fs::read_to_string(&file.path) {
+                            Ok(source) => drafts.extend(judge_environment_names(file, &source, env, hy.get(&file.rel))),
+                            Err(error) => report.errors.push(format!("{}: 読めない: {}", file.rel, error)),
+                        }
                     }
                 }
             }
         }
         Target::Single { path, source } => {
             let rel = relative_path(root, &path);
+            // 根の中の file は、全体の実行と同じく「根 + 根からの path」を出す(エディタが結果を差し替える鍵を揃えるため)。
+            let path = rel.as_ref().map(|r| root.join(r)).unwrap_or(path);
             let hy_file = match (language_of(&path), wants_raw || enabled.contains(&ProjectRule::EnvironmentName)) {
                 (Some(Language::Hy), true) => hy_index::index_stdin_source(root, &path, source, &raw).files.into_iter().next(),
                 _ => None,

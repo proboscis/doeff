@@ -267,6 +267,15 @@ impl ProjectSettings {
     pub fn validate(sections: &ProjectSections) -> Result<ProjectSettings, Vec<String>> {
         let mut problems = Vec::new();
         let layers = sections.layers.map(|layers| validate_layers(layers, sections.tags, sections.roles, &mut problems));
+        if sections.layers.is_none() {
+            if sections.roles.is_some() {
+                problems.push("roles: 層(layers)が無いと role の規則を当てられない".to_string());
+            }
+            if sections.tags.is_some() {
+                problems.push("tags: 層(layers)が無いとタグを読む module が無い".to_string());
+            }
+        }
+        let python_ids: BTreeSet<String> = crate::rules::get_all_rules().iter().map(|r| r.rule_id().to_string()).collect();
         let layer_names: Vec<String> = layers.as_ref().map(|l| l.layers.iter().map(|s| s.name.clone()).collect()).unwrap_or_default();
         let find_layer = |name: &str, what: &str, problems: &mut Vec<String>| -> Option<LayerId> {
             let found = layer_names.iter().position(|n| n == name).map(LayerId);
@@ -306,9 +315,13 @@ impl ProjectSettings {
                 rules: law
                     .rules
                     .iter()
-                    .map(|id| match ProjectRule::parse(id) {
-                        Some(rule) => ProjectRuleOrExternal::Project(rule),
-                        None => ProjectRuleOrExternal::External(id.to_uppercase()),
+                    .filter_map(|id| match ProjectRule::parse(id) {
+                        Some(rule) => Some(ProjectRuleOrExternal::Project(rule)),
+                        None if python_ids.contains(&id.to_uppercase()) => Some(ProjectRuleOrExternal::External(id.to_uppercase())),
+                        None => {
+                            problems.push(format!("laws.{}.rules: 規則 {} は doeff-linter に無い", law.name, id));
+                            None
+                        }
                     })
                     .collect(),
                 layers: law
@@ -336,6 +349,12 @@ impl ProjectSettings {
                     .collect(),
             })
             .unwrap_or_default();
+        for law in sections.laws.iter().filter(|law| !law.layers.is_empty()) {
+            let layered = law.rules.iter().any(|id| ProjectRule::parse(id).is_some_and(|rule| rule.is_layered()));
+            if !layered {
+                problems.push(format!("laws.{}.layers: この law の規則は層を問わないので、layers を書くと一度も当たらない", law.name));
+            }
+        }
         if problems.is_empty() {
             Ok(ProjectSettings { layers, environment, raw, laws, registry })
         } else {
@@ -391,7 +410,13 @@ fn validate_layers(
         .iter()
         .map(|name| {
             let dir = match section.paths.get(name) {
-                Some(dir) => normalize_dir(dir),
+                Some(dir) => {
+                    let normalized = normalize_dir(dir);
+                    if normalized.is_empty() || normalized == "." || normalized.starts_with('/') || normalized.split('/').any(|part| part == "..") {
+                        problems.push(format!("layers.paths.{}: 置き場 {:?} は repo の根の下の dir でない(空・`.`・絶対 path・`..` は使えない)", name, dir));
+                    }
+                    normalized
+                }
                 None => {
                     problems.push(format!("layers.paths: 層 {} の置き場が無い", name));
                     String::new()
@@ -427,6 +452,14 @@ fn validate_layers(
             }
         })
         .collect();
+    let dirs: Vec<(&String, String)> = section.paths.iter().map(|(name, dir)| (name, normalize_dir(dir))).collect();
+    for (a, dir_a) in &dirs {
+        for (b, dir_b) in &dirs {
+            if a != b && !dir_a.is_empty() && dir_b.starts_with(&format!("{}/", dir_a)) {
+                problems.push(format!("layers.paths: 層 {} の置き場が層 {} の置き場の中にある(入れ子の置き場はどちらの層か決まらない)", b, a));
+            }
+        }
+    }
     let tags = tags.cloned().unwrap_or_default();
     LayerSettings {
         layers,
@@ -498,6 +531,20 @@ reconciling = ["DOEFF104"]
     }
 
     #[test]
+    fn rejects_empty_absolute_and_nested_layer_dirs() {
+        let problems = validate(
+            "[layers]\norder = [\"a\", \"b\", \"c\", \"d\"]\npaths = { a = \"./\", b = \"/abs\", c = \"app\", d = \"app/inner\" }\n[roles]\n",
+        )
+        .unwrap_err()
+        .join("\n");
+        assert!(problems.contains("layers.paths.a"), "{}", problems);
+        assert!(problems.contains("layers.paths.b"), "{}", problems);
+        assert!(problems.contains("入れ子"), "{}", problems);
+        let without_layers = validate("[roles]\nnames = []\n").unwrap_err().join("\n");
+        assert!(without_layers.contains("roles"), "{}", without_layers);
+    }
+
+    #[test]
     fn reports_every_name_mismatch() {
         let problems = validate(
             r#"
@@ -512,11 +559,18 @@ names = ["judgment"]
 core = ["translation"]
 [registry]
 reconciling = ["DOEFF999"]
+[[laws]]
+name = "typo"
+rules = ["DOEFF1O1"]
+[[laws]]
+name = "env-by-layer"
+rules = ["DOEFF108"]
+layers = ["core"]
 "#,
         )
         .unwrap_err();
         let text = problems.join("\n");
-        for needle in ["2 度", "ghost", "nowhere", "translation", "DOEFF999"] {
+        for needle in ["2 度", "ghost", "nowhere", "translation", "DOEFF999", "DOEFF1O1", "env-by-layer"] {
             assert!(text.contains(needle), "{} が無い: {}", needle, text);
         }
     }
