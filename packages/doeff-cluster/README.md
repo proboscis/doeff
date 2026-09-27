@@ -222,6 +222,9 @@ worker は業務の repo の commit を 1 つ展開して子 process の cwd に
   許可表(`host_contract.SIM-PASSABLE` — scheduler と時計の effect)の外の effect は、Program と実行先のどちらも答えなければ本番の子と
   同じ `UnhandledEffect` で落とします(テストの handler が本番に無い答えを黙って返さない)。
 - `environ` は job ごとに宣言の `:environ` を上書きします(宣言に無い名は断ります)。
+- `outside`(`SimOutside :handlers [...] :effects #(...)`)= sim の外の世界。本番では job の土台の handler が外の系(業務の store・外部の
+  API)へ話して答える effect に、sim では系の外側に置いた模擬の handler が答えます。柵は `effects` に載った型(基底の型でよい)も外へ
+  通します。job は外の世界を effect を通してだけ共有します(object を共有しない)。
 - 筋書き(scenario)の中で使う effect: `Crash`・`Redeclare`・`ReportsOf`・`ReadinessOf`・`ProcessesOf`・`SharedRows`・`ReadCoordinator`・
   `StopCoordinator`・`CrashCoordinator`・`CoordinatorRuns`・`KillWorker`・`StopWorker`・`StartWorker`・`CutWorker`・`DrainWorker`・
   `PreparationsOf`・`ClientLink`。時間を進めるのは scenario の `Delay` です。
