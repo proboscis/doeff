@@ -673,7 +673,7 @@
       "paths": [
         "packages/doeff-records/src/doeff_records/faults.hy"
       ],
-      "responsibility": "検の口の effect(置き場の版を進める AdvanceStoreEpoch — 公開 effect ではない)",
+      "responsibility": "検の口の effect(置き場の版を進める AdvanceStoreEpoch・置き場に届かない状態を起こす SetStoreOutage — 公開 effect ではない)",
       "layer": "effects",
       "public": [
         "packages/doeff-records/src/doeff_records/faults.hy"
