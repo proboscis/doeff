@@ -426,5 +426,6 @@
 
 ;; --- 業務コードの effect ------------------------------------------------------------------------------
 ;; 業務の effect の型は、業務の側の module が import の時に register で足す(この package は業務の型を知らない)。
-;; 記録の係(job_entry)と再生の入口(replay_main)は Service の宣言の env の module を import してから記録・再生を始めるので、
-;; env の module(か、それが import する module)で登録すれば、記録と再生の両方に届く。登録の無い型は UnrecordableEffect。
+;; 記録係と再生係は job の Program の中の境目に在り(record_handlers.boundary-recorder — ADR-DOE-CLUSTER-001 R5)、子の入口(job_entry)と
+;; 再生の道具(replay_main)は詰めた Program を解く時に、Program が参照する業務の module を import する。その module(か、それが import
+;; する module)で登録すれば、記録と再生の両方に届く。登録の無い型は UnrecordableEffect。
