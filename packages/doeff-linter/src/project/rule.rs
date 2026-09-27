@@ -39,17 +39,21 @@ pub enum ProjectRule {
     UnusedDependency,
     /// DOEFF118: 検の置き場の検の関数は deftest だけで書く(名が test_ の defn・deff・defk・fn の束縛を置かない)。
     TestIsDeftest,
+    /// DOEFF119: 処理を持つ method のある defclass を業務の code に書かない(欄だけの class は defrecord を勧める info)。
+    ClassWithBehaviour,
     /// DOEFF201(意味・Jev): 翻訳の層の定義が業務の判断をしている。
     SemanticBusinessDecision,
     /// DOEFF202(意味・Jev): 判断の層の定義が通信の手段を知っている。
     SemanticTransportKnowledge,
     /// DOEFF203(意味・Jev): deff が名乗った素の関数の理由の種類が、コードに当たらない見込み。
     SemanticPlainCallable,
+    /// DOEFF204(意味・Jev): 処理を持つ method のある class が、外の世界の窓口か状態を持つ物の見込み。
+    SemanticClassRole,
 }
 
 impl ProjectRule {
     /// 全部の層の規則(出力の一覧と `ALL` の展開のため)。
-    pub const ALL: [ProjectRule; 21] = [
+    pub const ALL: [ProjectRule; 23] = [
         ProjectRule::LayerImportDirection,
         ProjectRule::LayerForbiddenModule,
         ProjectRule::LayerTypesOnly,
@@ -68,9 +72,11 @@ impl ProjectRule {
         ProjectRule::ServiceDependency,
         ProjectRule::UnusedDependency,
         ProjectRule::TestIsDeftest,
+        ProjectRule::ClassWithBehaviour,
         ProjectRule::SemanticBusinessDecision,
         ProjectRule::SemanticTransportKnowledge,
         ProjectRule::SemanticPlainCallable,
+        ProjectRule::SemanticClassRole,
     ];
 
     /// 規則の ID。
@@ -94,9 +100,11 @@ impl ProjectRule {
             ProjectRule::ServiceDependency => "DOEFF116",
             ProjectRule::UnusedDependency => "DOEFF117",
             ProjectRule::TestIsDeftest => "DOEFF118",
+            ProjectRule::ClassWithBehaviour => "DOEFF119",
             ProjectRule::SemanticBusinessDecision => "DOEFF201",
             ProjectRule::SemanticTransportKnowledge => "DOEFF202",
             ProjectRule::SemanticPlainCallable => "DOEFF203",
+            ProjectRule::SemanticClassRole => "DOEFF204",
         }
     }
 
@@ -127,7 +135,9 @@ impl ProjectRule {
             | ProjectRule::DeffNeedsReason
             | ProjectRule::DefinitionTagsRequired
             | ProjectRule::TestIsDeftest
-            | ProjectRule::SemanticPlainCallable => false,
+            | ProjectRule::ClassWithBehaviour
+            | ProjectRule::SemanticPlainCallable
+            | ProjectRule::SemanticClassRole => false,
         }
     }
 
@@ -152,9 +162,11 @@ impl ProjectRule {
             ProjectRule::ServiceDependency => "Service Dependency",
             ProjectRule::UnusedDependency => "Unused Dependency",
             ProjectRule::TestIsDeftest => "Tests Are deftest",
+            ProjectRule::ClassWithBehaviour => "Class Touches The World Or Holds State",
             ProjectRule::SemanticBusinessDecision => "Business Decision In Translation (Jev)",
             ProjectRule::SemanticTransportKnowledge => "Transport Knowledge In Core (Jev)",
             ProjectRule::SemanticPlainCallable => "Plain Callable Reason (Jev)",
+            ProjectRule::SemanticClassRole => "Class Role (Jev)",
         }
     }
 
@@ -179,9 +191,11 @@ impl ProjectRule {
             ProjectRule::ServiceDependency => "service A が読んでよいのは、A の :depends-on に在る service の open-layers(intent)と shared だけ",
             ProjectRule::UnusedDependency => "宣言した依存(:depends-on)を、その service のどの module も読んでいない(知らせ)",
             ProjectRule::TestIsDeftest => "検の置き場(設定の test_paths)の検は deftest で書く — 名が test- / test_ で始まる defn・deff・defk・fn の束縛を置かない",
+            ProjectRule::ClassWithBehaviour => "業務の code の defclass は値の class だけ — method か欄の初期値が生の副作用に触る class(error)と、method が self の欄を書き換える class(warning)を書かない。欄だけの class は defrecord を勧める(info)。例外・Enum・Protocol・外の library の基底を継ぐ class は許す。名前では判じない",
             ProjectRule::SemanticBusinessDecision => "翻訳の層の定義は、要求を相手の話し方へ言い換えるだけで、業務の判断をしない(Jev の判定・warning か info)",
             ProjectRule::SemanticTransportKnowledge => "判断の層の定義は、通信の手段(URL・HTTP・JSON の wire・SQL)を知らない(Jev の判定・warning か info)",
             ProjectRule::SemanticPlainCallable => "deff の理由の註の文は、architecture.hy が受け入れる理由(外の library が素の関数を呼ぶ等)に当たる(Jev の判定・warning か info)",
+            ProjectRule::SemanticClassRole => "DOEFF119 が何も出さない、処理を持つ method のある class は値の class(欄から計算するだけ)である(Jev の判定 — 外の世界の窓口か状態を持つ物なら warning か info)",
         }
     }
 
@@ -206,9 +220,11 @@ impl ProjectRule {
             ProjectRule::ServiceDependency => "依存先を :depends-on に足し、依存先の intent を出して頼む(判断や翻訳の module を直に読まない)",
             ProjectRule::UnusedDependency => "使っていない依存を :depends-on から外す",
             ProjectRule::TestIsDeftest => "deftest にする(検の値を組む補助は defk にして deftest の中で `(<- …)` で呼ぶ)",
+            ProjectRule::ClassWithBehaviour => "外の世界の窓口は土台の handler にする — 資源(接続・client・file の手)は defhandler の直下の (session val …) に持ち、ListRows・PutRow などの effect に答える(模擬なら模擬の土台の handler)。状態なら 値は defrecord(不変)、振る舞いは新しい値を返す純粋な関数、状態は world などの handler の (session var …) 1 か所に置き、変化は effect で流す。速さのために書き換えが要る時も書き換えは handler の中だけ",
             ProjectRule::SemanticBusinessDecision => "業務の判断は core の judgment へ移し、翻訳の handler はその答えを使うだけにする(Jev の外れなら登録簿に載せる)",
             ProjectRule::SemanticTransportKnowledge => "通信の手段は protocol の翻訳の handler へ移し、core は intent を出すだけにする(Jev の外れなら登録簿に載せる)",
             ProjectRule::SemanticPlainCallable => "種類が当たらないなら defk にする — 組み立て(handler の並び)なら `(defk handlers-of [foundation])` に・テストなら deftest に・値を組む補助なら defk にして `(<- …)` で呼ぶ(Jev の外れなら登録簿に載せる)",
+            ProjectRule::SemanticClassRole => "外の世界の窓口なら土台の handler(資源は (session val …))、状態なら handler の (session var …) 1 か所(Jev の外れなら登録簿に載せる)",
         }
     }
 }

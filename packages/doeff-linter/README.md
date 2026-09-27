@@ -96,6 +96,7 @@ skip_test_functions = true
 | DOEFF111 | deff Needs A Reason | deff には `; defk にできない: <理由>` の註を付ける |
 | DOEFF112 | Definition Tags Required | defk・deff・defp・defhandler・defeffect は :tags で必須の鍵を名乗る |
 | DOEFF113 | Context Matches Service | タグの :context と置き場の service が食い違う(info) |
+| DOEFF119 | Class Touches The World Or Holds State | 外の世界に触る class は error・self を書き換える class は warning・欄だけの class は defrecord を勧める info |
 | DOEFF118 | Tests Are deftest | 検の置き場の検は deftest で書く(名が test の defn・deff・defk・fn の束縛を置かない) |
 
 ## 層の規則(Hy と Python)
@@ -235,6 +236,13 @@ deff には `; defk にできない: <自由な理由>` を書きます。決定
 理由を受け入れるかは Jev(DOEFF203)が、architecture.hy の `:plain-callable-reasons`(受け入れる理由)と
 `:rejected-plain-callable-reasons`(受け入れない型と直し方)から選んで決めます。検の置き場(`definitions.test_paths`)では検は deftest だけ(DOEFF118)。
 詳しくは [docs/SPECIFICATION.md](docs/SPECIFICATION.md) の 11 節。
+
+### class の中身(DOEFF119・DOEFF204)
+
+defclass は名前ではなく中身で分けます。method か欄の初期値が生の副作用に触る class は error(土台の handler へ)、method が self の欄を
+書き換える class は warning(状態は handler の `(session var …)` へ)、欄だけの class は defrecord を勧める info。例外・Enum・Protocol・
+外の library の基底を継ぐ class は出しません。どれにも当たらない、処理を持つ method のある class だけを Jev(DOEFF204)に
+value / external-world / stateful / other で問います。詳しくは [docs/SPECIFICATION.md](docs/SPECIFICATION.md) の 12 節。
 
 ## エディタ向けの出力(editor-json)
 

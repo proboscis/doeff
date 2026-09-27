@@ -136,6 +136,7 @@
 | DOEFF109 | service を持つ file(置き場の `*` に当たった物)の層が `services.guarded_layers` に在り、import の先が別の service の守る層の module なら破れ。先が共有の置き場・`open_layers` の層・例外の組なら許す | import の先の綴り | 最初の import の記号 |
 | DOEFF110 | Hy の `defn` / `defn/a` の定義(decorator つきも)。`do` の中も最上位として見る。`eval-and-compile` / `eval-when-compile` の中は外 | 定義の名 | 定義の名 |
 | DOEFF111 | `deff` の定義の行か直前の行の註(`;` の後)に `definitions.deff_reason_marker` が無い、または理由が空・「同上」とその変形 | 定義の名 | 定義の名 |
+| DOEFF119 | 業務の Hy の file の defclass を中身の証拠で分ける(12 節) | class の名 | class の名 |
 | DOEFF118 | `definitions.test_paths` に当たる file の、名が `test_` で始まる defn・defn/a・deff・defk・fn の束縛 | 定義の名 | 定義の名 |
 | DOEFF112 | `tags.require_on` の頭の定義の :tags(defeffect は辞書の :tags)に `tags.required` の鍵(空でない文字列)が無い。`module_default` なら module の頭のタグの鍵で補う | 定義の名 | 定義の名 |
 | DOEFF113 | service を持つ file のタグの :context が service の名と違う(`-` と `_` は同じに見る・共有の置き場は見ない)。info | 食い違う :context | タグの辞書 |
@@ -298,3 +299,23 @@ architecture.hy の `defarchitecture` に、受け入れる理由と受け入れ
   に当たる Hy の file で、mangle した名が `test_` で始まる `defn`・`defn/a`・`deff`・`defk` と `(setv 名 (fn …))` / `(val 名 (fn …))` は error。鍵は
   `<path>::DOEFF118::<名>`。登録簿に載れば `registered_severity`。
 
+## 12. class の中身 — DOEFF119・DOEFF204
+
+operator 2026-09-27(逐語 "well, a class like Point2D/Point3D could be a class right? but clients and stores... they are completely suited for
+handlers/effects.." / "such distinction could be passed to jev?")。名前では判じず、中身の証拠で分ける。母集団は `definitions` の業務の Hy の file。
+
+- **許す(出さない)**: 基底に例外・Enum・Protocol(名の終わりが Error・Exception・Warning・Enum・Flag・Protocol・NamedTuple・TypedDict)か、
+  repo の外の module の class(import の束縛の module の先頭の段が repo の根に無い・束縛の無い裸の名は組み込み)を持つ class。
+- **DOEFF119 error — 外の世界に触る**: class の中の定義(method・欄の初期値)か class の式そのものに、hy-index 版 3 の生の副作用の強い証拠
+  (raw.direct か raw.via — DOEFF106 と同じ目録)がある。`__init__` で欄に置く資源(`(setv self.http (httpx.Client))`)もここに入る。
+  直し方 = 土台の handler(資源は defhandler の直下の `(session val …)`、ListRows・PutRow などの effect に答える)。
+- **DOEFF119 warning — 変わる状態を持つ**: `__init__`・`__post_init__`・`__new__` の外の method が self の欄を書き換える(`setv`/`setx` の的が
+  `self.x`・`(get self.x k)`・`(. self x)`、`+=` など、`del`、`setattr self`、`(.append self.x …)` などの変える method)。直し方 =「値は defrecord(不変)、
+  振る舞いは新しい値を返す純粋な関数、状態は world などの handler の (session var …) 1 か所に置き、変化は effect で流す。速さのために書き換えが要る時も
+  書き換えは handler の中だけ」。
+- **DOEFF119 info — 欄だけ**: dunder 以外に処理を持つ method が無い(`__post_init__` の検めだけも)。直し方 = defrecord(:tags・:check)。
+- 経由の証拠(raw.via)は全体の実行だけが計算する。1 file の実行(エディタの保存)は直接の証拠だけで判じる。
+- **DOEFF204(Jev・Choice・warning か info だけ)**: DOEFF119 が何も出さず、dunder 以外に処理を持つ method のある class だけを問う。state = class の
+  source(タグを消して `source_limit` で切る)と欄の宣言(`名: 型`)。選択肢 = value / external-world / stateful / other(問いの文は
+  `src/project/semantic.rs` の `ClassRole` の 1 か所)。external-world か stateful を `semantic.class_role.warning_min`(既定 0.7)以上で warning、
+  `info_min`(既定 0.5)以上で info。較正の見張りは合成の 2 例(client を欄に持つ窓口・Point2D)の external-world の確率を比べる。
