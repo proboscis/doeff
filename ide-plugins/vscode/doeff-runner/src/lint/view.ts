@@ -3,6 +3,7 @@
 
 import * as path from 'path';
 import type { LintModule, LintRange, LintRule, LintSeverity, LintViolation } from './contract';
+import { violationExplanationLines } from './layers';
 
 /** 波線 1 本の中身。 */
 export interface LintDiagnostic {
@@ -15,12 +16,10 @@ export interface LintDiagnostic {
   readonly code: string;
 }
 
-/** 違反を波線の中身にする(重さは契約のまま)。 */
+/** 違反を波線の中身にする(重さも文も linter の出力のまま)。 */
 export function diagnosticOf(violation: LintViolation): LintDiagnostic {
-  const lines = [violation.message];
-  if (violation.hint !== null) {
-    lines.push(`直し方: ${violation.hint}`);
-  }
+  // 文は linter の出力だけから作る(これは何か・なぜ違反か・law の :statement・直し方)
+  const lines = [violation.message, ...violationExplanationLines(violation)];
   const law = violation.law === null ? '' : ` · law ${violation.law}`;
   const adr = violation.adr === null ? '' : ` · ${violation.adr}`;
   const registered = violation.registered ? '(登録簿に載った既知の破れ)' : '';

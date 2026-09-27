@@ -36,6 +36,27 @@ export interface LintViolation {
   readonly key: string | null;
   /** 登録簿に載っている既知の破れか */
   readonly registered: boolean;
+  /** これは何か・なぜ違反か・law の :statement(更新 3。古い linter の出力には無く null) */
+  readonly explanation: LintExplanation | null;
+}
+
+/** 違反の説明(更新 3)— 文は linter が作る。 */
+export interface LintExplanation {
+  /** これは何か(例: この file は層 core — path が controllers/core/ の下) */
+  readonly subject: string;
+  /** なぜ違反か */
+  readonly reason: string;
+  /** ADR の law の :statement の逐語(無ければ null) */
+  readonly lawStatement: string | null;
+}
+
+/** 層 1 つの説明(更新 3)— 中身は repo ごとの linter の設定から。設定に無い欄は null。 */
+export interface LintLayer {
+  readonly name: string;
+  readonly summary: string | null;
+  readonly knows: string | null;
+  readonly doesNotKnow: string | null;
+  readonly question: string | null;
 }
 
 /** 地図の材料 — module(file)ごとの層・文脈・役割と違反の数(linter の要約)。 */
@@ -46,6 +67,8 @@ export interface LintModule {
   readonly context: string | null;
   readonly role: string | null;
   readonly violations: number;
+  /** その file の層を何で決めたか(更新 3。古い linter の出力には無く null) */
+  readonly layerReason: string | null;
 }
 
 /** 走らせた規則の一覧の 1 件(何を見ているか・何を見ていないか)。 */
@@ -64,6 +87,8 @@ export interface LintReport {
   readonly violations: readonly LintViolation[];
   readonly modules: readonly LintModule[];
   readonly rules: readonly LintRule[];
+  /** 層の説明(更新 3。古い linter の出力には無く []。並びは linter の層の順) */
+  readonly layers: readonly LintLayer[];
   /** linter 自身が読めなかった file など */
   readonly errors: readonly string[];
 }
@@ -165,6 +190,44 @@ function severity(obj: JsonObject, where: string): LintSeverity {
   return found;
 }
 
+/** 更新 3 で足した欄を読む — 無ければ null(古い linter)、在れば検める。 */
+function optional<T>(obj: JsonObject, key: string, where: string, read: (value: unknown, at: string) => T): T | null {
+  if (!Object.prototype.hasOwnProperty.call(obj, key) || obj[key] === null) {
+    return null;
+  }
+  return read(obj[key], `${where}.${key}`);
+}
+
+/** 文字列か null の値を検める。 */
+function textOrNull(value: unknown, where: string): string | null {
+  if (value !== null && typeof value !== 'string') {
+    throw new LintContractViolation(`${where}: 文字列でも null でもない`);
+  }
+  return value;
+}
+
+/** 違反の説明を検める。 */
+function explanation(value: unknown, where: string): LintExplanation {
+  const obj = asObject(value, where);
+  return {
+    subject: str(obj, 'subject', where),
+    reason: str(obj, 'reason', where),
+    lawStatement: strOrNull(obj, 'law_statement', where)
+  };
+}
+
+/** 層の説明 1 件を検める。 */
+function lintLayer(value: unknown, where: string): LintLayer {
+  const obj = asObject(value, where);
+  return {
+    name: str(obj, 'name', where),
+    summary: strOrNull(obj, 'summary', where),
+    knows: strOrNull(obj, 'knows', where),
+    doesNotKnow: strOrNull(obj, 'does_not_know', where),
+    question: strOrNull(obj, 'question', where)
+  };
+}
+
 /** 違反 1 件を検める。 */
 function violation(value: unknown, where: string): LintViolation {
   const obj = asObject(value, where);
@@ -178,7 +241,8 @@ function violation(value: unknown, where: string): LintViolation {
     message: str(obj, 'message', where),
     hint: strOrNull(obj, 'hint', where),
     key: strOrNull(obj, 'key', where),
-    registered: bool(obj, 'registered', where)
+    registered: bool(obj, 'registered', where),
+    explanation: optional(obj, 'explanation', where, explanation)
   };
 }
 
@@ -190,7 +254,8 @@ function lintModule(value: unknown, where: string): LintModule {
     layer: strOrNull(obj, 'layer', where),
     context: strOrNull(obj, 'context', where),
     role: strOrNull(obj, 'role', where),
-    violations: nat(obj, 'violations', where)
+    violations: nat(obj, 'violations', where),
+    layerReason: optional(obj, 'layer_reason', where, textOrNull)
   };
 }
 
@@ -235,6 +300,7 @@ export function parseLintJson(stdout: string): LintParseResult {
         violations: list(obj, 'violations', '$', violation),
         modules: list(obj, 'modules', '$', lintModule),
         rules: list(obj, 'rules', '$', lintRule),
+        layers: Object.prototype.hasOwnProperty.call(obj, 'layers') ? list(obj, 'layers', '$', lintLayer) : [],
         errors: list(obj, 'errors', '$', text)
       }
     };

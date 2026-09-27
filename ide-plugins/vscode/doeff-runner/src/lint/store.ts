@@ -2,7 +2,7 @@
 // 差し替える。表示(波線・パネル・地図)はすべてここから読む。外の世界には触らない。
 
 import * as path from 'path';
-import type { LintModule, LintReport, LintRule, LintViolation } from './contract';
+import type { LintLayer, LintModule, LintReport, LintRule, LintViolation } from './contract';
 
 /** root 1 つの状態 — 直前の全体の結果と、file ごとの差し替え。 */
 interface RootState {
@@ -90,6 +90,31 @@ export class LintStore {
       }
     }
     return [...byId.values()];
+  }
+
+  /** linter が出した層の説明(root をまたいで層の名前で重ねない・linter の順)。 */
+  layers(): LintLayer[] {
+    const byName = new Map<string, LintLayer>();
+    for (const state of this.roots.values()) {
+      for (const layer of state.report.layers) {
+        if (!byName.has(layer.name)) {
+          byName.set(layer.name, layer);
+        }
+      }
+    }
+    return [...byName.values()];
+  }
+
+  /** file の module の要約(linter の結果に無ければ undefined)。 */
+  moduleFor(filePath: string): LintModule | undefined {
+    const wanted = key(filePath);
+    return this.modules().find((m) => key(m.module.path) === wanted)?.module;
+  }
+
+  /** file の今の違反。 */
+  violationsIn(filePath: string): LintViolation[] {
+    const wanted = key(filePath);
+    return this.violations().filter((v) => key(v.path) === wanted);
   }
 
   /** linter 自身が読めなかった file などの理由。 */

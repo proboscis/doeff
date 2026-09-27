@@ -3,6 +3,7 @@
 
 import * as vscode from 'vscode';
 import { LintDecorations } from './decorations';
+import { LayerFileDecorations, LayerHover, LayerStatusBar, showLayerTable } from './layerViews';
 import { LintMapTree, LintViolationsTree } from './panel';
 import { ChildProcessLinter } from './runner';
 import { LintService } from './service';
@@ -56,6 +57,18 @@ export function registerLint(context: vscode.ExtensionContext, output: vscode.Ou
     })
   );
   context.subscriptions.push(decorations);
+  // 層を見分ける表示(エクスプローラーの印・ステータスバー・タグと違反の hover)— 文は linter の出力から
+  const layerDecorations = new LayerFileDecorations(store);
+  context.subscriptions.push(
+    layerDecorations,
+    vscode.window.registerFileDecorationProvider(layerDecorations),
+    new LayerStatusBar(store),
+    vscode.languages.registerHoverProvider(
+      [{ language: 'hy', scheme: 'file' }, { language: 'python', scheme: 'file' }, { pattern: '**/*.{hy,hyk,hyp}', scheme: 'file' }],
+      new LayerHover(store)
+    ),
+    vscode.commands.registerCommand('doeff-runner.lint.showLayers', () => showLayerTable(store))
+  );
   decorations.start();
   service.start();
 }
