@@ -163,6 +163,20 @@
   #(ga gb gc gd ge))
 
 
+(defk bang-in-assignment-target [box]
+  {:pre [(: box dict)] :post [(: % dict)]
+   :tags {:context "outcomes-test" :role "program"}}
+  "! を代入の的の中に書く(`(setv (get (! e) 鍵) 値)`)— 束ねの形が文を持たない式であることを見るため(import の文を
+   持つ形では Hy が的を組めずに、この file の compile が落ちる)。"
+  (setv (get (! (Echo box)) "k") "v")
+  box)
+
+
+(deftest test-bang-is-an-expression-in-an-assignment-target
+  (<- got (echo-handler (bang-in-assignment-target {})))
+  (assert (= got {"k" "v"}) got))
+
+
 (deftest test-undeclared-bind-is-unchanged
   ;; (c) 宣言の無い effect の <- は今までと同じ物を yield し、答えを変えずに束ねる
   (val effect (PlainRead "a"))
