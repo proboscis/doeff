@@ -11,21 +11,25 @@
 ;;; 定義の属性:
 ;;;   __doeff_effects__  effect の型の tuple(:effects が無ければ None = 宣言していない)
 ;;;   __doeff_tags__     DefinitionTags(:tags が無ければ None)
+;;;   __doeff_needs__    要る能力の名の frozenset(:needs が無ければ None — ADR-DOE-CLUSTER-001 R4b)
+;;;
+;;; :needs #{"pg-network" "claude-cli"} = その定義(主に土台の handler と、それを並べる Program)が実行先に求める能力の名。
+;;; 置き場所の名(kind=k3s・role=…・機体の名)ではなく能力を書く。値は文字列の literal の集合 #{…} だけ(静的に読めるように)。
 ;;;
 ;;; 変換の時に検める(macro の展開の中): 知らない鍵・:effects が名の list でない・:tags の鍵が :context と :role ちょうどでない・
 ;;; 値が文字列の literal でない・役が ROLES の外。どれも SyntaxError で、書いた file と定義の名を名指す。
 (import dataclasses [dataclass])
 (import hy)
-(import hy.models [Dict List Symbol String Keyword])
+(import hy.models [Dict List Set Symbol String Keyword])
 
 ;; 役の閉じた一覧(agora-redesign #780 の層の確定 — operator 2026-09-27 逐語 "core->intent->protocol"):
 ;; core の type・judgment・program / intent(core が外へ求める事の型 — defeffect)/ protocol(intent を相手の話し方へ訳す handler)/
 ;; foundation(汎用の I/O)/ entry(組み立て)。前の一覧の effect は intent に、translation は protocol に置き換わった。
 (setv ROLES #("type" "judgment" "program" "intent" "protocol" "foundation" "entry"))
 ;; 契約の辞書が受ける鍵。
-(setv CONTRACT-KEYS #(":pre" ":post" ":effects" ":tags"))
+(setv CONTRACT-KEYS #(":pre" ":post" ":effects" ":tags" ":needs"))
 ;; 頭の辞書に :pre / :post を持たない定義(defhandler)が受ける鍵。
-(setv DECLARATION-KEYS #(":effects" ":tags"))
+(setv DECLARATION-KEYS #(":effects" ":tags" ":needs"))
 (setv TAG-KEYS #(":context" ":role"))
 
 
@@ -158,10 +162,30 @@
      (setattr ~name "__doeff_defeffect__" True)))
 
 
+(defn needs-names [form #^ str where]  ; defk にできない: macro の展開の時に呼ぶ関数(defsystem も読む)
+  "`:needs` の値の form を変換の時に検め、能力の名の整列した list を返す。形は文字列の literal の集合 #{\"a\" \"b\"} だけ
+   (名・式・空の文字列は断る — linter が実行せずに読めるように)。"
+  (when (not (isinstance form Set))
+    (raise (SyntaxError (.format "{}: :needs は能力の名の文字列の集合 #{{\"pg-network\" …}}: {}" where (hy.repr form)))))
+  (for [item form]
+    (when (not (and (isinstance item String) (str item)))
+      (raise (SyntaxError (.format "{}: :needs の要素は空でない文字列の literal: {}" where (hy.repr item))))))
+  (sorted (sfor item form (str item))))
+
+
+(defn needs-form [form #^ str where]  ; defk にできない: macro の展開の時に呼ぶ関数
+  "`:needs` の値の form → 実行時に frozenset を作る form(無ければ None の form)。"
+  (if (is form None)
+      'None
+      `(frozenset [~@(lfor n (needs-names form where) (String n))])))
+
+
 (defn declaration-setters [name contract #^ str where]  ; defk にできない: macro の展開の時に呼ぶ関数
-  "定義 name の属性 __doeff_effects__ / __doeff_tags__ を置く form の list(contract = 頭の辞書か None)。"
+  "定義 name の属性 __doeff_effects__ / __doeff_tags__ / __doeff_needs__ を置く form の list(contract = 頭の辞書か None)。"
   (setv effects (if (is contract None) None (declared-value contract ":effects"))
-        tags (if (is contract None) None (declared-value contract ":tags")))
+        tags (if (is contract None) None (declared-value contract ":tags"))
+        needs (if (is contract None) None (declared-value contract ":needs")))
   [`(import doeff_hy.declarations)
    `(setattr ~name "__doeff_effects__" ~(effects-form effects where))
-   `(setattr ~name "__doeff_tags__" ~(tags-form tags where))])
+   `(setattr ~name "__doeff_tags__" ~(tags-form tags where))
+   `(setattr ~name "__doeff_needs__" ~(needs-form needs where))])

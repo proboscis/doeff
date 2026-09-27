@@ -1,0 +1,141 @@
+;;; defsystem の形の読みと展開(macro は macros.hy の defsystem — ここは展開の時に呼ぶ関数だけを置く)。
+;;;
+;;;   (defsystem agora-land [foundation]
+;;;     "着地の報せの系"
+;;;     (land-notice (land-notice foundation)
+;;;       :needs #{"pg-network"} :readiness {"windowSeconds" 30} :update "handoff" :environ {"POLL" "5.0"}))
+;;;
+;;; 系 = 土台(handler の組を返す module の最上位の関数)を引数に受け、名前 → Program と約束(needs・readiness・update・environ・
+;;; base-from)の組を返す関数。job の Program は doeff-cluster の job API が受ける値 1 つ(ADR-DOE-CLUSTER-001 R1)。
+;;;
+;;; 形は静的に決まる物だけを受ける(doeff-linter が実行せずに読めるように — ADR-DOE-CLUSTER-001 R4b):
+;;;   job の行 = (名の記号 (関数の記号 引数…) :鍵 値 …)。引数は系の引数の記号か literal(文字列・数・keyword・True/False/None と、
+;;;   それを入れた list と dict)。:needs は文字列の集合の literal、:readiness は文字列の鍵と数の dict、:environ と :base-from は
+;;;   文字列の鍵と文字列の値の dict、:update は "recreate" か "handoff"。外れれば展開の時の SyntaxError。
+;;; 値の意味(readiness の窓の形・environ の名の衝突など)は doeff-cluster の service_model.system-of が呼ばれた時に検める。
+(import hy)
+(import hy.models [Dict Expression Float Integer Keyword List Set String Symbol])
+(import doeff-hy.declarations [needs-names])
+
+(setv JOB-KEYS #(":needs" ":readiness" ":update" ":environ" ":base-from"))
+(setv UPDATE-FORMS #("recreate" "handoff"))
+(setv CONSTANT-SYMBOLS #("True" "False" "None"))
+
+
+(defn literal? [form]  ; defk にできない: macro の展開の時に呼ぶ関数
+  "Program の引数に置ける literal か(静的に値が決まる form だけを通すため)。"
+  (cond
+    (isinstance form #(String Integer Float Keyword)) True
+    (isinstance form Symbol) (in (str form) CONSTANT-SYMBOLS)
+    (isinstance form #(List Dict)) (all (gfor item form (literal? item)))
+    True False))
+
+
+(defn string-dict [form #^ str where #^ str key value-types #^ str value-word]  ; defk にできない: macro の展開の時に呼ぶ関数
+  "文字列の鍵の dict の literal を検め、鍵と値の form の組の list を返す(:readiness・:environ・:base-from の共通の読み)。"
+  (when (not (isinstance form Dict))
+    (raise (SyntaxError (.format "{}: {} は文字列の鍵の dict の literal: {}" where key (hy.repr form)))))
+  (setv pairs (list (zip (cut form None None 2) (cut form 1 None 2))))
+  (for [#(k v) pairs]
+    (when (not (isinstance k String))
+      (raise (SyntaxError (.format "{}: {} の鍵は文字列の literal: {}" where key (hy.repr k)))))
+    (when (not (isinstance v value-types))
+      (raise (SyntaxError (.format "{}: {} の値は{}の literal: {}" where key value-word (hy.repr v))))))
+  pairs)
+
+
+(defn static-value [form]  ; defk にできない: macro の展開の時に呼ぶ関数
+  "literal の form → 静的な記述(__doeff_system__)に載せる Python の値。"
+  (cond
+    (isinstance form String) (str form)
+    (isinstance form Integer) (int form)
+    (isinstance form Float) (float form)
+    True (hy.repr form)))
+
+
+(defn read-job [row #^ list params #^ str system]  ; defk にできない: macro の展開の時に呼ぶ関数
+  "job の行 1 つを検め、#(名 Program の form 鍵 → 値の form の dict 静的な記述) を返す。"
+  (when (not (and (isinstance row Expression) (>= (len row) 2) (isinstance (get row 0) Symbol)))
+    (raise (SyntaxError (.format "defsystem {}: job の行は (名 (関数 引数…) :鍵 値 …): {}" system (hy.repr row)))))
+  (setv name (str (get row 0))
+        where (.format "defsystem {} の job {}" system name)
+        program (get row 1)
+        options (list (cut row 2 None)))
+  (when (not (and (isinstance program Expression) (>= (len program) 1) (isinstance (get program 0) Symbol)))
+    (raise (SyntaxError (.format "{}: Program は (関数の記号 引数…) の呼び出しで書く: {}" where (hy.repr program)))))
+  (for [arg (cut program 1 None)]
+    (when (not (or (and (isinstance arg Symbol) (in (str arg) params)) (literal? arg)))
+      (raise (SyntaxError (.format "{}: Program の引数は系の引数 {} か literal: {}" where (or params "(無し)") (hy.repr arg))))))
+  (when (% (len options) 2)
+    (raise (SyntaxError (.format "{}: :鍵 値 の組が揃っていない: {}" where (hy.repr row)))))
+  (setv values {} static {"name" name "function" (str (get program 0))})
+  (for [#(k v) (zip (cut options None None 2) (cut options 1 None 2))]
+    (setv key (str k))
+    (when (not (and (isinstance k Keyword) (in key JOB-KEYS)))
+      (raise (SyntaxError (.format "{}: 鍵 {} は受けない — 受ける鍵は {}" where (hy.repr k) (.join " " JOB-KEYS)))))
+    (when (in key values)
+      (raise (SyntaxError (.format "{}: 鍵 {} が 2 回ある" where key))))
+    (match key
+      ":needs"
+        (do (setv names (needs-names v where))
+            (setv (get values key) `(frozenset [~@(lfor n names (String n))])
+                  (get static "needs") names))
+      ":update"
+        (do (when (not (and (isinstance v String) (in (str v) UPDATE-FORMS)))
+              (raise (SyntaxError (.format "{}: :update は {} のどれか: {}" where (.join " / " UPDATE-FORMS) (hy.repr v)))))
+            (setv (get values key) v (get static "update") (str v)))
+      ":readiness"
+        (do (setv pairs (string-dict v where key #(Integer Float) "数"))
+            (setv (get values key) v (get static "readiness") (dfor #(a b) pairs (str a) (static-value b))))
+      _
+        (do (setv pairs (string-dict v where key String "文字列"))
+            (setv (get values key) v
+                  (get static (cut key 1 None)) (dfor #(a b) pairs (str a) (str b))))))
+  #(name program values static))
+
+
+(defn call-shape-form [program]  ; defk にできない: macro の展開の時に呼ぶ関数
+  "Program の呼び出し (関数 引数… :鍵 値 …) → 実行時に CallShape(関数・位置の引数・名の引数の値)を作る form。
+   defk の呼び出しの結果からは引数を読めないので、宣言の表示(describe)と土台の置き方の検めのために形を残す。"
+  (setv positional [] named [] rest (list (cut program 1 None)))
+  (while rest
+    (setv head (.pop rest 0))
+    (if (and (isinstance head Keyword) rest)
+        (.extend named [(String (hy.mangle (cut (str head) 1 None))) (.pop rest 0)])
+        (.append positional head)))
+  `(doeff_cluster.service_model.CallShape ~(get program 0) [~@positional] {~@named}))
+
+
+(defn defsystem-form [name params body]  ; defk にできない: macro の展開の時に呼ぶ関数
+  "defsystem の展開: 土台を受けて doeff_cluster.service_model.system-of を呼ぶ関数と、静的な記述 __doeff_system__・
+   __doeff_tags__(役 entry)を置く form を作るため。"
+  (setv system (str name))
+  (when (not (and (isinstance params List) (all (gfor p params (isinstance p Symbol)))))
+    (raise (SyntaxError (.format "defsystem {}: 引数は記号の list([foundation] の形): {}" system (hy.repr params)))))
+  (setv param-names (lfor p params (str p))
+        rows (list body)
+        doc None)
+  (when (and rows (isinstance (get rows 0) String))
+    (setv doc (get rows 0) rows (cut rows 1 None)))
+  (when (not rows)
+    (raise (SyntaxError (.format "defsystem {}: job の行が 1 つも無い" system))))
+  (setv jobs (lfor row rows (read-job row param-names system))
+        names (lfor j jobs (get j 0)))
+  (for [n names]
+    (when (> (.count names n) 1)
+      (raise (SyntaxError (.format "defsystem {}: job の名 {} が 2 回ある" system n)))))
+  (setv job-forms
+        (lfor #(job-name program values _) jobs
+              `(doeff_cluster.service_model.job
+                 ~(String job-name) ~program
+                 :call ~(call-shape-form program)
+                 ~@(sum (lfor #(k v) (.items values) [(Keyword (hy.mangle (cut k 1 None))) v]) []))))
+  (setv static {"name" system "params" param-names "jobs" (lfor j jobs (get j 3))})
+  `(do
+     (import doeff_cluster.service_model)
+     (import doeff_hy.declarations)
+     (defn ~name [~@params]
+       ~@(if (is doc None) [] [doc])
+       (doeff_cluster.service_model.system-of ~(String system) #(~@job-forms)))
+     (setattr ~name "__doeff_system__" ~(hy.models.as-model static))
+     (setattr ~name "__doeff_tags__" (doeff_hy.declarations.DefinitionTags :context ~(String system) :role "entry"))))
