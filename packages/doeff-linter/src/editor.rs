@@ -101,10 +101,19 @@ pub struct EditorRule {
     pub family: RuleFamily,
 }
 
+/// この出力を作った binary(版と、組んだ doeff の commit — 置き場の binary が古いかを外から見分けるため・agora-redesign #848)。
+#[derive(Debug, Clone, Serialize)]
+pub struct EditorLinter {
+    pub version: String,
+    pub commit: String,
+}
+
 /// 出力の全体。
 #[derive(Debug, Clone, Serialize)]
 pub struct EditorReport {
     pub version: u32,
+    /// 出力を作った binary(契約の版 1 への追加の欄 — 拡張の読み込みは知らない一番上の欄を読み飛ばす)。
+    pub linter: EditorLinter,
     pub root: String,
     /// 層の順(外の世界から遠い順)と説明。
     pub layers: Vec<EditorLayer>,
@@ -229,6 +238,7 @@ pub fn build(input: &EditorInput) -> EditorReport {
         .collect();
     EditorReport {
         version: EDITOR_CONTRACT_VERSION,
+        linter: EditorLinter { version: env!("CARGO_PKG_VERSION").to_string(), commit: crate::BUILD_COMMIT.to_string() },
         root: input.root.to_string_lossy().into_owned(),
         layers: layer_list(input.settings),
         architecture: input.settings.architecture.clone(),

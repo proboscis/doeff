@@ -24,7 +24,18 @@
 |---|---|
 | 0 | error の違反が無い(warning と info はあってもよい) |
 | 1 | error の違反がある(登録簿に無い新しい破れ) |
-| 2 | 引数の誤り・設定が読めない・設定の名前の食い違い(理由は stderr) |
+| 2 | 引数の誤り・設定が読めない・設定の名前の食い違い・型の違う値(理由は stderr) |
+
+設定(pyproject の `[tool.doeff-linter]` のどの段でも・architecture.hy)に**この binary の知らない鍵**か、この binary に無い形の正しい
+規則の ID(`DOEFF` と 3 桁)がある時は、終了コード 2 で止めない。その鍵(参照)だけを読まずに残りの規則を走らせ、設定の file のその行に
+warning の違反 **DOEFF100**(設定の知らない鍵)を出す(agora-redesign #848)。設定は binary より先に進むことがあり(新しい鍵を書いた後、
+置き場の binary が本線から組み直されるまでの間)、そこで全体を止めるとエディタの違反の欄が空になり hook も黙るため。書き違いも同じ形で
+見える。DOEFF100 は `enable` の一覧に無くても出し、`disable` に名指した時だけ止まる。知っている鍵の正本は設定の struct の定義
+(`serde_ignored` が定義に無い鍵を path つきで集める — 鍵の表を手で持たない)。
+
+`--version` は組んだ doeff の commit を名乗る(`doeff-linter 0.2.0 (doeff <commit>)`)。commit は組み立ての env
+`DOEFF_LINTER_BUILD_COMMIT`(自動の組み直しが渡す)か、手で組んだ時の git の HEAD(linter か indexer の dir に commit していない変更が
+在れば `+dirty`)。
 
 `--modified`(text・json)の時は、層の規則の違反も変更した file の物だけを出す。
 
@@ -36,6 +47,7 @@
 ```jsonc
 {
   "version": 1,
+  "linter": {"version": "0.2.0", "commit": "<sha>"},  // この出力を作った binary と組んだ doeff の commit(版 1 への追加の欄)
   "root": "/abs/repo",                       // 正規化した repo の根
   "layers": [                                // 層の順(外の世界から遠い順)と説明 — 設定 layers.describe から(無い欄は null)
     {"name": "core", "summary": "業務の判断と Program", "knows": "…", "does_not_know": "…", "question": "迷った時の問い"}
