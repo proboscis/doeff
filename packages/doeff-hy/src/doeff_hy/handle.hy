@@ -434,18 +434,18 @@
 
 (defn _expand-handler-binds [forms [owner "handler clause"]]
   "Expand <- and ! in handler clause body.
-   (<- name expr) → (setv name (yield expr))  — delegate to outer handler
+   (<- name expr) → (setv name (yield (open-bind expr)))  — delegate to outer handler
    (<- name Type expr) → same + isinstance assert (macros.hy _bind-yield —
    the single definition point shared with <- / do! / defp / deftest / for/do)
    (! expr) → (yield expr) in place [ADR-DOE-HY-003]"
-  (import doeff-hy.macros [_is-bind _bind-parts _bind-yield _expand-bangs])
+  (import doeff-hy.macros [_is-bind _expand-bangs])
+  (import doeff-hy.outcome-forms [bind-form :as _bind-form])
 
   (setv expanded [])
   (for [form forms]
     (setv rewritten (_expand-bangs form owner))
     (if (_is-bind rewritten)
-        (let [#(nm tp expr) (_bind-parts rewritten)]
-          (.append expanded (_bind-yield nm tp expr)))
+        (.append expanded (_bind-form rewritten))
         (.append expanded rewritten)))
   expanded)
 

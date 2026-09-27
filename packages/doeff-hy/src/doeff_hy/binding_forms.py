@@ -870,14 +870,23 @@ class _Walker:
         return _Walked(self._rebuild(node, out), state)
 
     def _effect_bind(self, node: Expression, where: _Where, state: frozenset[str]) -> _Walked:
-        """(<- x 効果) を val と同じ一度だけの束縛として数える。"""
+        """(<- x 効果) を val と同じ一度だけの束縛として数える。末尾の `:absent 失敗`(ADR-DOE-CORE-EFFECTS-003 R6)は
+        束縛の名ではないので分ける。失敗は不在の時にだけ関数の中で評価する値の式なので、関数の中として歩く。"""
         parts = list(node[1:])
+        suffix: list[Object] = []
+        if len(parts) >= 3 and isinstance(parts[-2], Keyword) and str(parts[-2]) == ":absent":
+            suffix, parts = parts[-2:], parts[:-2]
         if len(parts) >= 2 and isinstance(parts[0], Symbol):
             rest, state = self._sequence(parts[1:], where, state)
             state = self._bind(parts[0], where, state, counted=True)
-            return _Walked(self._rebuild(node, [node[0], parts[0], *rest]), state)
-        rest, state = self._sequence(parts, where, state)
-        return _Walked(self._rebuild(node, [node[0], *rest]), state)
+            head = [node[0], parts[0], *rest]
+        else:
+            rest, state = self._sequence(parts, where, state)
+            head = [node[0], *rest]
+        if suffix:
+            failure, _ = self.walk(suffix[1], _Where(Scope.FN, "<- の :absent"), state)
+            suffix = [suffix[0], failure]
+        return _Walked(self._rebuild(node, [*head, *suffix]), state)
 
     def _branch(self, node: Expression, head: str, where: _Where, state: frozenset[str]) -> _Walked:
         """分岐: 枝どうしは互いに排他なので、各枝は分岐の前の状態から歩き、後は和を取る。"""

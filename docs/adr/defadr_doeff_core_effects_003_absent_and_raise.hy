@@ -4,9 +4,9 @@
 ;;; 不在と失敗への変換は呼び手の側の <- が defeffect の宣言に従って行う。関数が出す effect は手で書かずに推論する。
 ;;;
 ;;; 出自 = operator との議論 2026-09-27 夜(f143ee92 の席・逐語は :problem の fact)。同じ夜に operator が案を採った
-;;; (逐語 "lets go with it" — :problem の fact)。状態は決定。実装は段階 1〜5(R16)で進め、この版で段階 1 を実装した:
+;;; (逐語 "lets go with it" — :problem の fact)。状態は決定。実装は段階 1〜5(R16)で進め、この版で段階 1 と段階 2 を実装した:
 ;;;   段階 1 = Absent / Raise の effect・境目の handler・defhandler の終わる節 (finish) と節の終わり方の検め(R15)
-;;;   段階 2(次の版)= defeffect の答えの宣言(:absent / :failure / :value)と、<- / ! の変換(:absent・Result / Option の値を開く形を含む)
+;;;   段階 2 = defeffect の答えの宣言(:absent / :failure / :value)と、<- / ! の変換(:absent・Result / Option の値を開く形を含む)
 ;;; 段階 3(doeff-records の effect に宣言を付ける)と段階 5(agora の呼び手の書き換え)は同じ版で effect ごとに切り替える
 ;;; — 手順は R14。
 ;;;
@@ -20,8 +20,9 @@
 ;;; 3 つ目にした。<- の変換と defeffect の宣言と defhandler の終わる節は doeff-hy、effect の推論は doeff-effect-analyzer、規則は
 ;;; doeff-linter の仕事で、:scope に並べる。
 ;;;
-;;; 戻し方: 段階 1 の commit を revert すると Absent / Raise・境目の handler・finish が消え、defhandler の節の検めは提案の前の形に戻る
-;;; (Absent / Raise を使う呼び手はまだ無いので、既存の呼び手の振る舞いは変わらない)。
+;;; 戻し方: 段階 2 の commit を revert すると <- は今までの (yield e) に戻り、defeffect の :absent / :failure / :value は知らない鍵になる。
+;;; 段階 1 の commit を revert すると Absent / Raise・境目の handler・finish が消え、defhandler の節の検めは提案の前の形に戻る。
+;;; 宣言を持つ effect はまだ無い(段階 3 の前)ので、どちらの revert も既存の呼び手の振る舞いを変えない。
 ;;;
 ;;; ---------------------------------------------------------------------------
 ;;; 書き方の例(operator の逐語 5 への答え — 段階 3 の後の形。revise-input は agora-controllers の関数)
@@ -47,7 +48,7 @@
 ;;;       (BodyConflict) (WriteConflict :detail written.detail)
 ;;;       (BodyUnreachable) (WriteUnreachable :detail written.detail)))
 ;;;
-;;; After — 段階 2 の後の形(成功の道だけを書き、失敗は 1 か所の on-raise で業務の答えの型へ畳む。:absent と宣言に従う開きは段階 2):
+;;; After — 段階 1・2 で実装した形(成功の道だけを書き、失敗は 1 か所の on-raise で業務の答えの型へ畳む):
 ;;;
 ;;;   (defk revise-input [revise]
 ;;;     {:pre [(: revise InputRevise)] :post [(: % (| WriteLanded WriteConflict WriteUnreachable))]
@@ -113,7 +114,7 @@
 (import doeff-core-effects.handlers [try-handler])
 (import doeff-core-effects.effects [Absent Raise Resumption resumption-of])
 (import doeff-core-effects.effects [Raise :as ProbeAliasedRaise])  ; R15 の反例: 名前では Raise と分からない別名
-(import doeff-core-effects.outcomes [maybe result RaiseCase])
+(import doeff-core-effects.outcomes [maybe result open-bind RaiseCase Outcomes])
 (import doeff-records.values [ReadRowAnswer Row Missing Unreachable])
 (import doeff-traverse.effects [Fail])
 (import doeff-traverse.handlers [normalize-to-none])
@@ -222,11 +223,60 @@
 ;; 段階 1・2 の probe — 実装した Absent / Raise・境目の handler・<- の変換・handler の節の終わり方
 ;; ---------------------------------------------------------------------------
 
+(defrecord ProbeFound
+  #^ str value)
+
+(defrecord ProbeGone
+  #^ str key)
+
 (defrecord ProbeDown
   #^ str detail)
 
 (defrecord ProbeConflict
   #^ str detail)
+
+(defeffect ProbeDeclaredRead
+  "答えを 成功(ProbeFound)・不在(ProbeGone)・失敗(ProbeDown)に分けて宣言した読み(R5)。"
+  {:fields [(: key str)]
+   :answer (| ProbeFound ProbeGone ProbeDown)
+   :absent [ProbeGone]
+   :failure [ProbeDown]
+   :tags {:context "doeff-core-effects-adr" :role "intent"}})
+
+(defeffect ProbePlainRead
+  "宣言の無い読み(答えの型は同じ union)— <- は答えをそのまま束ねる。"
+  {:fields [(: key str)]
+   :answer (| ProbeFound ProbeGone ProbeDown)
+   :tags {:context "doeff-core-effects-adr" :role "intent"}})
+
+(val PROBE-TABLE {"a" (ProbeFound :value "A") "down" (ProbeDown :detail "網が落ちた")})
+
+(defhandler probe-rows
+  "PROBE-TABLE から読みに値で答える土台の handler(不在も失敗も答えの値 — R4)。"
+  {:tags {:context "doeff-core-effects-adr" :role "foundation"}}
+  (ProbeDeclaredRead [key] (resume (.get PROBE-TABLE key (ProbeGone :key key))))
+  (ProbePlainRead [key] (resume (.get PROBE-TABLE key (ProbeGone :key key)))))
+
+(defk probe-read-value [key]
+  {:pre [(: key str)] :post [(: % str)]
+   :tags {:context "doeff-core-effects-adr" :role "program"}}
+  "宣言を持つ読みを 1 つ束ねる — x は成功の型だけ(不在と失敗は Absent / Raise として逃げる)。"
+  (<- found (ProbeDeclaredRead key))
+  found.value)
+
+(defk probe-read-plain [key]
+  {:pre [(: key str)] :post [(: % (| ProbeFound ProbeGone ProbeDown))]
+   :tags {:context "doeff-core-effects-adr" :role "program"}}
+  "宣言の無い読みを 1 つ束ねる — 答えをそのまま返す。"
+  (<- answer (ProbePlainRead key))
+  answer)
+
+(defk probe-read-or-conflict [key]
+  {:pre [(: key str)] :post [(: % str)]
+   :tags {:context "doeff-core-effects-adr" :role "program"}}
+  "(e) この束ねの中で出た不在(奥の defk の中の物も)を ProbeConflict の失敗として投げる(<- の :absent)。"
+  (<- value (probe-read-value key) :absent (ProbeConflict :detail (+ key " の行が無い")))
+  value)
 
 (defk probe-absent-then-note [seen]
   {:pre [(: seen list)] :post [(: % int)]
@@ -258,11 +308,18 @@
     (<- (Raise (ProbeConflict :detail "handler の節の中で出した")))
     (resume "来ない")))
 
-(defk probe-deep-default []
-  {:pre [] :post [(: % str)]
+(defk probe-direct-default [key]
+  {:pre [(: key str)] :post [(: % str)]
+   :tags {:context "doeff-core-effects-adr" :role "program"}}
+  "absent-as の字面の中の <- の不在は既定値で再開し、続きが走る(R8)。"
+  (<- value (absent-as (ProbeFound :value "既定") (do! (<- found (ProbeDeclaredRead key)) (+ "続いた: " found.value))))
+  value)
+
+(defk probe-deep-default [key]
+  {:pre [(: key str)] :post [(: % str)]
    :tags {:context "doeff-core-effects-adr" :role "program"}}
   "呼んだ defk の奥の不在は再開せず、既定値でスコープを終える(R8)。"
-  (<- value (absent-as "既定" (do! (<- n (probe-absent-then-note [])) (+ "続いた: " (str n)))))
+  (<- value (absent-as "既定" (do! (<- got (probe-read-value key)) (+ "続いた: " got))))
   value)
 
 (defk probe-written-absent-default []
@@ -358,7 +415,7 @@
        "doeff には既に Fail という名の effect がある(doeff-traverse)。意味は『失敗の知らせ』で、handler が続きを代わりの値で再開できる — normalize_to_none は Fail を None で再開し、fail_handler は例外として投げ直す。try_call は Python の関数の例外を Fail にする。Traverse は 1 件ごとの失敗の扱いを handler に任せ、sequential は Traverse の中の未処理の Fail をその 1 件の失敗にする。"
        :evidence "packages/doeff-traverse/doeff_traverse/effects.py:20-38(Fail)・:40-51(Traverse — Handler decides … error strategy per item)・handlers.py:18-27(sequential)・:502-517(fail_handler)・:520-533(normalize_to_none)・helpers.py:9-22(try_call)")
      (fact
-       "提案の時点(2026-09-27)の defeffect の頭の辞書が受けるキーは :fields・:answer・:tags・:pre で、答えは :answer の 1 つの型(union でよい)として __doeff_answer__ に残るだけだった — union のどの型が成功・不在・失敗かを宣言する場所は無い(段階 2 で :absent / :failure / :value を足す — R5)。doeff-records の effect は defeffect でなく素の defclass で書かれている。"
+       "提案の時点(2026-09-27)の defeffect の頭の辞書が受けるキーは :fields・:answer・:tags・:pre で、答えは :answer の 1 つの型(union でよい)として __doeff_answer__ に残るだけだった — union のどの型が成功・不在・失敗かを宣言する場所は無かった(段階 2 で :absent / :failure / :value を足した — R5)。doeff-records の effect は defeffect でなく素の defclass で書かれている。"
        :evidence "packages/doeff-hy/src/doeff_hy/declarations.hy(EFFECT-KEYS・defeffect-form)・packages/doeff-records/src/doeff_records/effects.hy:39")
      (fact
        "handler の節の中で出した effect は、その handler より外側の handler へ行き、本文とその handler の間に置いた受け手を飛び越える — この ADR のテスト effect-performed-in-a-handler-skips-the-callers-scope(提案の時点の probe)と raise-in-a-handler-clause-skips-the-bodys-result(実装した Raise と result)で確かめた。"
@@ -379,8 +436,8 @@
        "code-quality の方針は、未知の値を空文字・成功・既定の状態へ黙って変換しないことを求める。"
        :evidence "~/repos/code-quality/docs/policy.md:24-25")
      (fact
-       "段階 1 の実装の時点(2026-09-28)の実測: 今の VM は Ok / Err / Some / Nothing を yield すると誤り(expected DoExpr or EffectBase)にする — 段階 2 で <- が値を開く形は、今まで誤りだった道だけに効く。doeff の handler を持つ 115 file はすべて新しい節の検め(R15)を通り、agora-controllers の本線では 1 か所(controllers/protocol/webapp_reception.hy の AwaitRequest の節 — 型で場合を全部並べた match に最後の _ が無い)が断られる(doeff を上げる時に `_ (raise …)` の 1 行を足す)。"
-       :evidence "uv run python で yield Ok(1) を出した VM の誤り(2026-09-28)・doeff の全 .hy と agora-controllers origin/main の全 .hy を hy_compile だけで展開した走査(2026-09-28)")]
+       "段階 1・2 の実装の時点(2026-09-28)の実測: 今の VM は Ok / Err / Some / Nothing を yield すると誤り(expected DoExpr or EffectBase)にする — <- が値を開く形は、今まで誤りだった道だけに効く。<- の展開に足した open-bind の呼び出し(展開の中の import を含む)は 1 回の束ねで約 0.2µs。doeff の handler を持つ 115 file はすべて新しい節の検め(R15)を通り、agora-controllers の本線では 1 か所(controllers/protocol/webapp_reception.hy の AwaitRequest の節 — 型で場合を全部並べた match に最後の _ が無い)が断られる(doeff を上げる時に `_ (raise …)` の 1 行を足す)。"
+       :evidence "uv run python で yield Ok(1) を撃った VM の誤り・timeit(2026-09-28)・doeff の全 .hy と agora-controllers origin/main の全 .hy を hy_compile だけで展開した走査(2026-09-28)")]
   :context
     [(interpretation
        "文献では、中身を持たない失敗を Maybe の側に、理由を持つ失敗を Result(Either)の側に置く。Haskell の MonadFail の fail(説明の文を受けるが Maybe では捨てて Nothing にする)と Alternative の empty が前者、Plotkin と Pretnar の例外の raise・Koka の throw・Haskell の throwError が後者。operator の問い『Maybe の文脈で Fail に当たる物は何か』の答えは、文献では fail / empty がまさに Maybe の側で、Result の側は raise / throw と呼ぶ、となる。この ADR は紛れを避けて、Maybe の側を Absent、Result の側を Raise と呼び、どちらにも Fail の名を使わない(doeff-traverse の Fail は再開できる別の意味を既に持つ)。")
@@ -405,7 +462,7 @@
      (interpretation
        "effect は『積み重なるもう 1 本のデータの口』(逐語 9)。4 種類の失敗は、本文の中では effect として外へ流れ、境目で値に戻る — 外の世界との境目(handler の答え・記録)では答えの値、呼び手が『何かしたい』境目(maybe・result・on-raise・absent-as)でも値。だから handler と記録の形は変えず(値で答える)、変わるのは本文の中の受け取り方(<- の開き)と、宣言(defeffect の :absent / :failure / :value)だけになる。doeff-records の handler を変えない理由も同じ: handler の節で Raise を出すと呼び手のスコープを飛び越える(R4)。")
      (interpretation
-       "段階 1・2 の実装で決める戻せる決定(2026-09-28・この実装の担当が推奨どおり決めた — 戻し方は各項の後ろ。(3) の後半・(4)・(5) は段階 2 で入る):\n(1) maybe・result は Program を受ける関数(doeff_core_effects.outcomes)で、on-raise・absent-as は Program の式 1 つを受ける macro — 複数の行は do! で包む(handle・Try と同じ形。ADR の (maybe (<- (ReadRow …))) は (maybe (ReadRow …)) と書く)。戻し方: 本文の form を並べて受ける macro を足す。\n(2) handler の終わる節の名は (finish 値)、普通の effect を打ち切る理由は節の鍵 :finish-reason \"理由\"(Hy の reader は註を捨てるので、macro が読める鍵にした)。戻し方: 名と鍵を差し替える。\n(3) Raise の理由に Python の例外を置けない(Raise を作る時に TypeError)。<- が Err(Python の例外) を開く時は、Raise にせず例外のまま上げる(Try が畳んだ実装の誤りを業務の失敗に化けさせない — R11)。戻し方: effects.py の検めと outcomes.py の _open_value の 1 枝を消す。\n(4) <- の :absent <失敗> の失敗は、不在の時にだけ評価する値の式(効果は使えない — 展開の時に断る)。戻し方: open-bind に値を渡す形へ戻す。\n(5) <- と ! の展開は、束ねごとに doeff_core_effects.outcomes.open-bind を呼ぶ(import を展開の中に持つ — どこに書いた <- でも名前が解ける・1 回で約 0.2µs)。宣言の無い effect と Program には受け取った物そのものを返すので、yield する物・束ねる答え・例外は今までと同じ。展開の字面は変わる(tests/test_typed_effect_bind.py の形を直した)。戻し方: 段階 2 の commit の revert。\n(6) 効果の再開の扱いは effect の型の属性 __doeff_resumption__(Resumption)。宣言と節の照合は、名前で分かる物は展開の時、分からない物は handler を初めて本文に被せた時(定義の時にすると、handler より後に定義した effect の型を引けない)。戻し方: clause_endings.check-clause-endings-once の呼び出しを消す。\n(7) 節の終わりの検めを厳しくした: cond は最後が True、match は最後が番の無い _(名前 1 つの capture)、try は except の本体も終わること、入れ子の関数・内包表記の中の resume は数えない。戻し方: handle.hy の _terminates の枝を戻す。\n(8) 段階 4 の中身(この ADR の R16 の段階 4)は、段階 3 と 5 を同時に切り替える前に要る道具(古い分岐を拾う doeff-linter の規則・R13 の推論・Rust の analyzer の :absent の読み)と解した — coordinator の依頼に段階 4 の定義が無かったため。戻し方: R16 の段階 4 の文を差し替える。")]
+       "段階 1・2 の実装で決めた戻せる決定(2026-09-28・この実装の担当が推奨どおり決めた — 戻し方は各項の後ろ):\n(1) maybe・result は Program を受ける関数(doeff_core_effects.outcomes)で、on-raise・absent-as は Program の式 1 つを受ける macro — 複数の行は do! で包む(handle・Try と同じ形。ADR の (maybe (<- (ReadRow …))) は (maybe (ReadRow …)) と書く)。戻し方: 本文の form を並べて受ける macro を足す。\n(2) handler の終わる節の名は (finish 値)、普通の effect を打ち切る理由は節の鍵 :finish-reason \"理由\"(Hy の reader は註を捨てるので、macro が読める鍵にした)。戻し方: 名と鍵を差し替える。\n(3) Raise の理由に Python の例外を置けない(Raise を作る時に TypeError)。<- が Err(Python の例外) を開く時は、Raise にせず例外のまま上げる(Try が畳んだ実装の誤りを業務の失敗に化けさせない — R11)。戻し方: effects.py の検めと outcomes.py の _open_value の 1 枝を消す。\n(4) <- の :absent <失敗> の失敗は、不在の時にだけ評価する値の式(効果は使えない — 展開の時に断る)。戻し方: open-bind に値を渡す形へ戻す。\n(5) <- と ! の展開は、束ねごとに doeff_core_effects.outcomes.open-bind を呼ぶ(import を展開の中に持つ — どこに書いた <- でも名前が解ける・1 回で約 0.2µs)。宣言の無い effect と Program には受け取った物そのものを返すので、yield する物・束ねる答え・例外は今までと同じ。展開の字面は変わる(tests/test_typed_effect_bind.py の形を直した)。戻し方: 段階 2 の commit の revert。\n(6) 効果の再開の扱いは effect の型の属性 __doeff_resumption__(Resumption)。宣言と節の照合は、名前で分かる物は展開の時、分からない物は handler を初めて本文に被せた時(定義の時にすると、handler より後に定義した effect の型を引けない)。戻し方: clause_endings.check-clause-endings-once の呼び出しを消す。\n(7) 節の終わりの検めを厳しくした: cond は最後が True、match は最後が番の無い _(名前 1 つの capture)、try は except の本体も終わること、入れ子の関数・内包表記の中の resume は数えない。戻し方: handle.hy の _terminates の枝を戻す。\n(8) 段階 4 の中身(この ADR の R16 の段階 4)は、段階 3 と 5 を同時に切り替える前に要る道具(古い分岐を拾う doeff-linter の規則・R13 の推論・Rust の analyzer の :absent の読み)と解した — coordinator の依頼に段階 4 の定義が無かったため。戻し方: R16 の段階 4 の文を差し替える。")]
   :decision
     [(rule R1 "不在と失敗を、意味で分けた 2 つの effect にする。Absent(想定内の不在・Maybe の側)は中身を持たず、記録と調べ物のための説明の文だけを添える。Raise(e)(失敗・Result の側)は理由 e を持つ(理由に Python の例外は置けない — R11)。2 つの間に継承の関係を作らない(isinstance で互いに捕まらない)。境目の handler のうち maybe・result・on-raise と組み立ての方針の handler は、答えを返さず続きを捨てる。続きを再開してよいのは R8 の absent-as だけ。文献の fail / empty(Maybe の側)と raise / throw(Result の側)に当たる。失敗の側を Fail と呼ばない — 文献では Maybe の側の名であり、doeff-traverse の Fail(再開できる失敗の知らせ)とも紛れる。置き場は Try と同じ doeff-core-effects(doeff_core_effects.effects の Absent・Raise、doeff_core_effects.outcomes の境目の handler)。")
      (rule R2 "Absent・Raise の受け取り方は、外側のスコープの境目の handler が決める。(maybe body) は Absent を Nothing に、成功を Some に写す。(result body) は Raise(e) を Err(e) に、成功を Ok に写す。組み合わせの型は入れ子の順で選ぶ: (result (maybe …)) は Result の中に Maybe(Ok(Some v)・Ok(Nothing)・Err(e))、(maybe (result …)) は Maybe の中に Result(Some(Ok v)・Some(Err e)・Nothing)。組み立ての方針の handler(1 件を飛ばして記録する・全体を止める)も Raise を受けてよい — 飛ばすのは受けたスコープ 1 つ分で、続きは戻らない。受け手の無い Absent / Raise は、ほかの effect と同じく未処理の effect として止まる(黙って Nothing や None にしない)。runner・env の組は境目の handler を既定で置かない(ADR-DOE-CLUSTER-001 R2)。")
@@ -446,24 +503,27 @@
          [(counterexample "呼び手の handler で答えの型を切り替える — ある呼び手では Row、別の呼び手では Row | Missing | Unreachable が x に入り、中の (. row value) が壊れる")
           (counterexample "『成功だけを見る』範囲を宣言する構文(success-only)を足す — 範囲の内と外で同じ行の型が変わり、書き方が 2 つ並ぶ")
           (counterexample ":absent の受け手を呼び手のスコープの外(組み立ての根)に置く — 別の束ねの不在まで同じ失敗に写り、どの行の不在かが消える")]
-       :enforced-by []
-       :wiring "未配線(2026-09-28)— <- の変換と :absent は段階 2")
+       :enforced-by ["test-adr-doe-core-effects-003-a-bind-has-one-meaning"
+                     "test-adr-doe-core-effects-003-absent-option-maps-one-bind"]
+       :wiring "配線済み(2026-09-28)— 同じ束ねの行が maybe・result・on-raise のどの下でも成功の型を束ねることと、:absent の写しを検が確かめる")
      (law handlers-answer-with-values
        :statement "for_all effect E に答える handler h: h の節は Absent / Raise を出さず、E の答えの値で答える ∧ 不在と失敗への変換は呼び手の本文の <- が行う"
        :counterexamples
          [(counterexample "ReadRow に答える土台の handler が、行が無い時に (<- (Absent 行が無い)) を出す — Absent は土台の handler より外へ行き、呼び手の maybe を飛び越えて未処理になる(または無関係の外の受け手に捕まる)")
           (counterexample "翻訳の handler が節の中で業務の Program を走らせ、その Program の Raise を閉じずに返す — 同じく呼び手の result を飛び越える")
           (counterexample "記録係が Raise を書き留める形にする — 答えの値が記録に残らず、再生で同じ変換を通れない")]
-       :enforced-by ["test-adr-doe-core-effects-003-raise-in-a-handler-clause-skips-the-bodys-result"]
-       :wiring "一部配線(2026-09-28)— 検は、handler の節で出した Raise が本文の result を飛び越えること(落とし穴の実演)を確かめる。<- が呼び手の本文で答えを開く形は段階 2、handler の節が Absent / Raise を出さないことを見る doeff-linter の規則は候補で番号は未定(段階 4)")
+       :enforced-by ["test-adr-doe-core-effects-003-raise-in-a-handler-clause-skips-the-bodys-result"
+                     "test-adr-doe-core-effects-003-declared-bind-opens-the-answer"]
+       :wiring "一部配線(2026-09-28)— 検は、handler の節で出した Raise が本文の result を飛び越えること(落とし穴の実演)と、<- が呼び手の本文で答えを開くことを確かめる。handler の節が Absent / Raise を出さないことを見る doeff-linter の規則は候補で番号は未定(段階 4)")
      (law outcomes-are-declared-on-the-effect
        :statement "for_all effect の型 E, 答えの型 t ∈ answer(E): t が成功・不在・失敗・値のどれかは E の宣言(defeffect)から読める ∧ <- の変換はその宣言だけに従う(型の名を読まない)∧ 宣言の無い E の <- は yield する物も束ねる答えも変えない"
        :counterexamples
          [(counterexample "型の名に Missing・NotFound が含まれたら不在と推し量る — 名前を変えると意味が変わり、失敗の名を持つ新しい型は見落とす")
           (counterexample "PutRow の Conflict を一律に失敗と決める — CAS の繰り返しで普通に扱う答えまで Raise になり、呼び手が毎回 on-raise で値へ戻す")
           (counterexample "宣言の無い effect の答えの Missing も <- が Absent にする — 段階 3 の前に既存の呼び手の振る舞いが黙って変わる")]
-       :enforced-by []
-       :wiring "未配線(2026-09-28)— defeffect の答えの宣言は段階 2")
+       :enforced-by ["test-adr-doe-core-effects-003-declared-bind-opens-the-answer"
+                     "test-adr-doe-core-effects-003-undeclared-bind-is-unchanged"]
+       :wiring "配線済み(2026-09-28)— 宣言(Outcomes)・宣言に従う開き・宣言の無い effect の <- が同じ物を yield して同じ答えを束ねることを検が確かめる")
      (law on-raise-has-no-catch-all
        :statement "for_all on-raise o: o のパターンはどれも失敗の型のパターン(型を問わない形・_・Exception を含まない)∧ o は Python の例外を受けない ∧ パターンに合わない Raise は o の外へ渡る"
        :counterexamples
@@ -477,8 +537,8 @@
          [(counterexample "土台の handler が Absent を受けたら空文字で再開する — 呼び手の知らない所で不在が値に化ける(doeff-traverse の normalize_to_none と同じ形)")
           (counterexample "(absent-as 0 …) が、呼んだ defk の奥の (<- row (ReadRow …)) で出た Absent を 0 で再開する — 奥の行が Row の代わりに 0 を受ける")
           (counterexample "(absent-as 0 …) が、コードに直に書いた (<- (Absent 説明)) を 0 で再開する — 不在を前提にしない続きが走る")]
-       :enforced-by ["test-adr-doe-core-effects-003-absent-as-ends-the-scope-with-the-default"]
-       :wiring "一部配線(2026-09-28)— 奥の不在と直に書いた Absent では既定値でスコープを終えることを検が確かめる。字面の中の <- の再開は段階 2。Absent を再開できるのが absent-as だけであることは R15 の節の検めが守る。明示でない既定値の再開を見つける linter の規則は未定")
+       :enforced-by ["test-adr-doe-core-effects-003-absent-as-resumes-only-direct-binds"]
+       :wiring "一部配線(2026-09-28)— 字面の中の <- だけを再開し、奥の不在と直に書いた Absent ではスコープを終えることを検が確かめる。Absent を再開できるのが absent-as だけであることは R15 の節の検めと開く側の RuntimeError が守る。明示でない既定値の再開を見つける linter の規則は未定")
      (law handler-clauses-end-explicitly
        :statement "for_all defhandler / handle の節 c: c のすべての道が resume・transfer・finish・reperform・raise のどれかで終わる(展開の時)∧ c の終わり方が c の effect の Resumption に反しない(Raise・Absent を resume しない・普通の effect の finish には理由がある — 展開の時か、handler を初めて本文に被せた時)∧ c が実行の時に resume も finish もせずに抜けたら誤り(黙ってスコープを終えない)"
        :counterexamples
@@ -591,10 +651,12 @@
        ;; — R1 が失敗の側を Fail と呼ばない理由で、R8 が既定値の再開を明示の handler に限る理由でもある。
        (assert (= (run (normalize-to-none (probe-fails-then-continues))) #("続いた" None))))
      (deftest test-adr-doe-core-effects-003-declarations-carry-one-answer-and-optional-effects
-       ;; 事実: defeffect は :answer の 1 つの型だけを持ち(成功・不在・失敗の区分は段階 2 — R5)、
-       ;; defk の :effects は任意で、書けば __doeff_effects__ に残り、書かなければ None(R13)。
+       ;; 事実: defeffect は :answer の型を持ち、答えの分け方(:absent / :failure / :value)は任意 — 書かなければ
+       ;; __doeff_outcomes__ は無い(R5)。defk の :effects は任意で、書けば __doeff_effects__ に残り、書かなければ None(R13)。
        (assert (in ":answer" EFFECT-KEYS))
+       (assert (all (gfor key [":absent" ":failure" ":value"] (in key EFFECT-KEYS))))
        (assert (is (. ProbeAbsent __doeff_answer__) Never))
+       (assert (is (getattr ProbeAbsent "__doeff_outcomes__" None) None))
        (assert (= (. probe-declared-effects __doeff_effects__) #(ProbeAbsent)))
        (assert (is (. probe-reads-then-continues __doeff_effects__) None)))
      (deftest test-adr-doe-core-effects-003-absent-and-raise-are-distinct
@@ -629,6 +691,35 @@
        ;; (内側の result が受けていれば Ok(Err …) になるはず)。
        (val answer (run (result (probe-raising-read-handler (result (probe-reads-a-row))))))
        (assert (= (repr answer) "Err(ProbeConflict(detail='handler の節の中で出した'))") answer))
+     (deftest test-adr-doe-core-effects-003-declared-bind-opens-the-answer
+       ;; R5・R6: 宣言を持つ effect の <- は成功を束ね、不在を Absent に、失敗を Raise(答え) に変えて呼び手のスコープで出す。
+       (assert (isinstance ProbeDeclaredRead.__doeff_outcomes__ Outcomes))
+       (assert (= (run (probe-rows (maybe (probe-read-value "a")))) (Some "A")))
+       (assert (is (run (probe-rows (maybe (probe-read-value "zz")))) Nothing))
+       (assert (= (repr (run (probe-rows (result (probe-read-value "down"))))) "Err(ProbeDown(detail='網が落ちた'))"))
+       (assert (is (run (probe-rows (maybe (ProbeDeclaredRead "zz")))) Nothing) "maybe に宣言を持つ effect をそのまま渡しても開く"))
+     (deftest test-adr-doe-core-effects-003-undeclared-bind-is-unchanged
+       ;; (c) R5: 宣言の無い effect の <- は、yield する物も束ねる答えも今までと同じ(不在・失敗の値もそのまま束ね、外へ何も出さない)。
+       (val effect (ProbePlainRead "zz"))
+       (assert (is (open-bind effect) effect) "宣言の無い effect は同じ物を yield する")
+       (val program (probe-read-plain "zz"))
+       (assert (is (open-bind program) program) "Program も同じ物を yield する")
+       (assert (= (run (probe-rows (probe-read-plain "zz"))) (ProbeGone :key "zz")) "不在の値をそのまま束ねる")
+       (assert (= (run (probe-rows (probe-read-plain "down"))) (ProbeDown :detail "網が落ちた")) "失敗の値をそのまま束ねる"))
+     (deftest test-adr-doe-core-effects-003-a-bind-has-one-meaning
+       ;; R3: 同じ束ねの行(probe-read-value の <-)は、呼び手の maybe・result・on-raise のどの下でも成功の型を束ねる。
+       (val under-maybe (run (probe-rows (maybe (probe-read-value "a")))))
+       (val under-result (run (probe-rows (result (probe-read-value "a")))))
+       (val under-on-raise (run (probe-rows (on-raise (probe-read-value "a") (ProbeDown :detail d) d))))
+       (assert (= #(under-maybe (repr under-result) under-on-raise) #((Some "A") "Ok('A')" "A"))
+               #(under-maybe under-result under-on-raise)))
+     (deftest test-adr-doe-core-effects-003-absent-option-maps-one-bind
+       ;; (e) R6: <- の :absent は、その束ねの中の不在(呼んだ defk の奥の物も)を Raise(失敗) に写す。失敗はそのまま。
+       (assert (= (repr (run (probe-rows (result (probe-read-or-conflict "zz")))))
+                  "Err(ProbeConflict(detail='zz の行が無い'))"))
+       (assert (= (repr (run (probe-rows (result (probe-read-or-conflict "down")))))
+                  "Err(ProbeDown(detail='網が落ちた'))"))
+       (assert (= (repr (run (probe-rows (result (probe-read-or-conflict "a"))))) "Ok('A')")))
      (deftest test-adr-doe-core-effects-003-on-raise-refuses-python-exceptions-and-catch-all
        ;; (d) R7: on-raise は Python の例外を受けない・何でも受けるパターンは展開の時に断る・例外の型を名指す受けは作る時に断る。
        (with [(pytest.raises ValueError :match "boom")]
@@ -639,10 +730,13 @@
        (with [(pytest.raises TypeError)]
          (RaiseCase #(ValueError) (fn [r] (Some r))))
        (assert (= (run (on-raise (probe-raise-then-note []) (ProbeDown :detail d) d)) "届かない") "合う型の Raise は写す"))
-     (deftest test-adr-doe-core-effects-003-absent-as-ends-the-scope-with-the-default
-       ;; R8(段階 1): absent-as は、呼んだ defk の奥の不在と直に書いた Absent では再開せず、既定値でスコープを終える。
-       (val deep (run (probe-deep-default)))
+     (deftest test-adr-doe-core-effects-003-absent-as-resumes-only-direct-binds
+       ;; R8: absent-as は字面の中の <- の不在だけを既定値で再開し、奥の不在と直に書いた Absent では既定値でスコープを終える。
+       (val direct (run (probe-rows (probe-direct-default "zz"))))
+       (val deep (run (probe-rows (probe-deep-default "zz"))))
        (val written (run (probe-written-absent-default)))
-       (assert (= #(deep written) #("既定" "既定")) #(deep written)))]
+       (val present (run (probe-rows (probe-direct-default "a"))))
+       (assert (= #(direct deep written present) #("続いた: 既定" "既定" "既定" "続いた: A"))
+               #(direct deep written present)))]
   :plans ["agora-redesign #836"
           "段階 3 と段階 5 の切り替えの手順 = この ADR の R14(effect ごとに同じ版で切り替える)"])

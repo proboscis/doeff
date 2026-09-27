@@ -92,7 +92,38 @@
 
 
 ;; defeffect の頭の辞書が受ける鍵(:answer と :tags は必須・:fields は無ければ欄なし・:pre は作る時の検め)。
-(setv EFFECT-KEYS #(":fields" ":answer" ":tags" ":pre"))
+;; :absent / :failure / :value は答えの型の分け方(ADR-DOE-CORE-EFFECTS-003 R5 — どれも任意・:answer の union の要素の list)。
+(setv EFFECT-KEYS #(":fields" ":answer" ":tags" ":pre" ":absent" ":failure" ":value"))
+;; 答えの分け方の鍵。<- は :absent の答えを Absent に、:failure の答えを Raise(答え) に変えて呼び手のスコープで出す。
+;; :value は業務で普通に扱う答え(失敗と宣言しない印)、どれにも書かない要素は成功。
+(setv OUTCOME-KEYS #(":absent" ":failure" ":value"))
+
+
+(defn outcome-type-forms [contract answer #^ str where]  ; defk にできない: macro の展開の時に呼ぶ関数(deff は doeff_hy.macros が定義し、macros.hy がこの module を import するので require できない)
+  "defeffect の :absent / :failure / :value を検め、鍵ごとの型の form の list にするため(書かなければ空)。
+   要素は型の名か None。:answer が union の form (| A B …) か名前 1 つなら、要素がその中に在ることと、鍵どうしで重ならないことを
+   展開の時に断る(それ以外の :answer は定義の時に Outcomes.declare が断る)。"
+  (setv members (cond
+                  (and (isinstance answer hy.models.Expression) (> (len answer) 0) (= (str (get answer 0)) "|"))
+                    (lfor m (cut answer 1 None) (hy.repr m))
+                  (isinstance answer Symbol) [(hy.repr answer)]
+                  True None)
+        seen {}
+        out {})
+  (for [key OUTCOME-KEYS]
+    (setv form (declared-value contract key))
+    (when (and (is-not form None) (not (isinstance form List)))
+      (raise (SyntaxError (.format "{}: {} は :answer の要素の list([Missing] の形): {}" where key (hy.repr form)))))
+    (for [item (or form [])]
+      (when (not (isinstance item Symbol))
+        (raise (SyntaxError (.format "{}: {} の要素は型の名か None: {}" where key (hy.repr item)))))
+      (when (and (is-not members None) (not-in (hy.repr item) members))
+        (raise (SyntaxError (.format "{}: {} の {} は :answer {} の要素ではない" where key (str item) (hy.repr answer)))))
+      (when (in (str item) seen)
+        (raise (SyntaxError (.format "{}: {} が {} と {} の両方にある" where (str item) (get seen (str item)) key))))
+      (setv (get seen (str item)) key))
+    (setv (get out key) (list (or form []))))
+  out)
 
 
 (defn effect-field-forms [form #^ str where]  ; defk にできない: macro の展開の時に呼ぶ関数
@@ -138,6 +169,18 @@
   (setv #(fields names) (effect-field-forms (declared-value contract ":fields") where))
   (when (and pre-code (not names))
     (raise (SyntaxError (.format "{}: :pre は欄を検めるので、:fields の無い effect には書けない" where))))
+  ;; 答えの分け方(R5)— 1 つでも書けば __doeff_outcomes__ を置く(書かなければ置かない = <- は答えを変換しない)。
+  (setv outcome-types (outcome-type-forms contract answer where))
+  (setv outcomes
+    (if (any (.values outcome-types))
+        [`(import doeff_core_effects.outcomes)
+         `(setattr ~name "__doeff_outcomes__"
+                   (doeff_core_effects.outcomes.Outcomes.declare
+                     ~(str name) ~answer
+                     #(~@(get outcome-types ":absent"))
+                     #(~@(get outcome-types ":failure"))
+                     #(~@(get outcome-types ":value"))))]
+        []))
   (setv post-init
     (if pre-code
         [`(defn __post-init__ [self]
@@ -155,7 +198,8 @@
        ~@post-init)
      (setattr ~name "__doeff_answer__" ~answer)
      (setattr ~name "__doeff_tags__" ~(tags-form tags where))
-     (setattr ~name "__doeff_defeffect__" True)))
+     (setattr ~name "__doeff_defeffect__" True)
+     ~@outcomes))
 
 
 (defn declaration-setters [name contract #^ str where]  ; defk にできない: macro の展開の時に呼ぶ関数

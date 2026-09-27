@@ -1,0 +1,301 @@
+;;; 答えの宣言と <- の変換(ADR-DOE-CORE-EFFECTS-003 段 2 — defeffect の :absent / :failure / :value と
+;;; doeff_core_effects.outcomes.open-bind)。
+;;;
+;;;   * 宣言を持つ effect の <- は、成功と値を束ね、不在を Absent に、失敗を Raise(答え) に変えて呼び手のスコープで出す
+;;;   * 同じ束ねの行は、呼び手が置いた境目の handler で意味を変えない(x はいつも成功の型)
+;;;   * 宣言の無い effect の <- は今までと同じ物を yield し、同じ答えを束ねる(Missing も None も Nothing もそのまま)
+;;;   * <- の :absent <失敗> は、その束ねの中で出た不在(直にも奥にも)を Raise(失敗) にし、失敗は不在の時にだけ作る
+;;;   * <- は Result / Maybe の値を開く(Err の中の Python の例外は例外のまま)
+;;;   * absent-as は字面の中の <- の不在だけを既定値で再開し、奥の不在と直に書いた Absent では既定値でスコープを終える
+;;;   * Absent / Raise を再開する handler は誤りになる(黙って続かない)
+
+(require doeff-hy.macros [deftest defk deff defeffect defhandler <- val do! on-raise absent-as])
+
+(import dataclasses [dataclass])
+(import hy)
+(import pytest)
+(import doeff [run EffectBase DoExpr K])
+(import doeff.program [Resume Pass])
+(import doeff.result [Nothing Some])
+(import doeff_vm [Err Ok WithHandler])
+(import doeff_core_effects.effects [Absent Raise])
+(import doeff_core_effects.outcomes [maybe result open-bind Outcomes])
+
+
+(defclass [(dataclass :frozen True)] Row []
+  "読めた行(検のための成功の答え)。"
+  #^ str value)
+
+(defclass [(dataclass :frozen True)] Missing []
+  "行が無い(検のための不在の答え)。"
+  #^ str key)
+
+(defclass [(dataclass :frozen True)] Unreachable []
+  "置き場に届かない(検のための失敗の答え)。"
+  #^ str detail)
+
+(defclass [(dataclass :frozen True)] Stale []
+  "版の負け(業務で普通に扱う答え — :value)。"
+  #^ int version)
+
+(defclass [(dataclass :frozen True)] Conflict []
+  "呼び手が :absent で投げる失敗。"
+  #^ str detail)
+
+
+(defeffect ReadRow
+  "答えを 成功・不在・失敗・値 に分けて宣言した読み。"
+  {:fields [(: key str)]
+   :answer (| Row Missing Unreachable Stale)
+   :absent [Missing]
+   :failure [Unreachable]
+   :value [Stale]
+   :tags {:context "outcomes-test" :role "intent"}})
+
+(defeffect PlainRead
+  "宣言の無い読み(答えの型は同じ union)。"
+  {:fields [(: key str)]
+   :answer (| Row Missing Unreachable None)
+   :tags {:context "outcomes-test" :role "intent"}})
+
+
+(val TABLE {"a" (Row "A") "down" (Unreachable "網が落ちた") "old" (Stale 3) "none" None})
+
+
+(defhandler table-rows
+  "表 TABLE から ReadRow と PlainRead に値で答える土台の handler(不在も失敗も答えの値)。"
+  {:tags {:context "outcomes-test" :role "foundation"}}
+  (ReadRow [key] (resume (.get TABLE key (Missing key))))
+  (PlainRead [key] (resume (.get TABLE key (Missing key)))))
+
+
+(defk read-value [key]
+  {:pre [(: key str)] :post [(: % (| str Stale))]
+   :tags {:context "outcomes-test" :role "program"}}
+  "宣言を持つ ReadRow を 1 つ束ねる — x は成功の型か値の型だけ。"
+  (<- row (ReadRow key))
+  (if (isinstance row Row) row.value row))
+
+
+(defk read-value-bang [key]
+  {:pre [(: key str)] :post [(: % str)]
+   :tags {:context "outcomes-test" :role "program"}}
+  "! も <- と同じく開く。"
+  (+ "got " (. (! (ReadRow key)) value)))
+
+
+(deftest test-declaration-splits-the-answer
+  (val outcomes ReadRow.__doeff_outcomes__)
+  (assert (isinstance outcomes Outcomes))
+  (assert (= #(outcomes.success outcomes.absent outcomes.failure outcomes.value)
+             #(#(Row) #(Missing) #(Unreachable) #(Stale)))
+          outcomes)
+  (assert (is (getattr PlainRead "__doeff_outcomes__" None) None) "宣言しなければ置かない"))
+
+
+(deff expansion-refusal [source]
+  {:pre [(: source str)] :post [(: % str)]
+   :tags {:context "outcomes-test" :role "judgment"}}
+  "source を展開した時の誤りの文(通れば空の文字列)— 展開の時に断る macro の規則を検で見るため。"
+  (try
+    (hy.eval (hy.read-many source))
+    (return "")
+    (except [e hy.errors.HyMacroExpansionError]
+      (return (str e)))))
+
+
+(deftest test-declaration-refuses-types-outside-the-answer
+  (val head "(require doeff-hy.macros [defeffect]) (defeffect Bad {:answer (| Row Missing) :tags {:context \"t\" :role \"intent\"} ")
+  (assert (in "要素ではない" (expansion-refusal (+ head ":absent [Unreachable]})"))))
+  (assert (in "両方にある" (expansion-refusal (+ head ":absent [Missing] :failure [Missing]})"))))
+  (assert (in "list" (expansion-refusal (+ head ":absent Missing})")))))
+
+
+(deftest test-declared-bind-opens-the-answer
+  (<- found (table-rows (maybe (read-value "a"))))
+  (<- absent (table-rows (maybe (read-value "zz"))))
+  (<- failed (table-rows (result (read-value "down"))))
+  (<- stale (table-rows (read-value "old")))
+  (assert (= found (Some "A")) found)
+  (assert (is absent Nothing) absent)
+  (assert (= (repr failed) "Err(Unreachable(detail='網が落ちた'))") failed)
+  (assert (= stale (Stale 3)) "値と宣言した答えは束ねる(失敗にしない)")
+  (<- banged (table-rows (maybe (read-value-bang "a"))))
+  (<- banged-absent (table-rows (maybe (read-value-bang "zz"))))
+  (assert (= #(banged banged-absent) #((Some "got A") Nothing)) #(banged banged-absent)))
+
+
+(deftest test-a-bind-has-one-meaning-under-any-caller
+  ;; 同じ read-value の行は、呼び手の maybe / result / on-raise のどれの下でも x = 成功の型(R3・law a-bind-has-one-meaning)
+  (<- under-maybe (table-rows (maybe (read-value "a"))))
+  (<- under-result (table-rows (result (read-value "a"))))
+  (<- under-on-raise (table-rows (on-raise (read-value "a") (Unreachable d) d)))
+  (assert (= #(under-maybe (repr under-result) under-on-raise) #((Some "A") "Ok('A')" "A"))
+          #(under-maybe under-result under-on-raise)))
+
+
+(defk read-plain [key]
+  {:pre [(: key str)] :post [(: % (| Row Missing Unreachable (type None)))]
+   :tags {:context "outcomes-test" :role "program"}}
+  "宣言の無い PlainRead を束ねる — 答えをそのまま返す。"
+  (<- row (PlainRead key))
+  row)
+
+
+(defclass [(dataclass :frozen True)] Echo [EffectBase]
+  "宣言の無い(defclass の)effect — 渡した値そのものを答えにもらう。"
+  #^ object value)
+
+(defhandler echo-handler
+  "Echo にその値で答える。"
+  {:tags {:context "outcomes-test" :role "foundation"}}
+  (Echo [value] (resume value)))
+
+(defk bind-each [a b c d e]
+  {:pre [(: a Missing) (: b (type None)) (: c (type Nothing)) (: d Err) (: e Unreachable)] :post [(: % tuple)]
+   :tags {:context "outcomes-test" :role "program"}}
+  "宣言の無い effect の答えの値(Missing・None・Nothing・Err・Unreachable)を 1 つずつ束ねる — 変換されずに同じ物が返る。"
+  (<- ga (Echo a))
+  (<- gb (Echo b))
+  (<- gc (Echo c))
+  (<- gd (Echo d))
+  (<- ge (Echo e))
+  #(ga gb gc gd ge))
+
+
+(deftest test-undeclared-bind-is-unchanged
+  ;; (c) 宣言の無い effect の <- は今までと同じ物を yield し、答えを変えずに束ねる
+  (val effect (PlainRead "a"))
+  (assert (is (open-bind effect) effect) "宣言の無い effect は同じ物を yield する")
+  (val program (read-plain "a"))
+  (assert (is (open-bind program) program) "Program も同じ物を yield する")
+  (val answers #((Missing "zz") None Nothing (Err "e") (Unreachable "u")))
+  (<- got (echo-handler (bind-each #* answers)))
+  (assert (all (gfor #(bound given) (zip got answers :strict True) (is bound given))) "答えは同じ物のまま束ねる")
+  ;; PlainRead の Missing / Unreachable / None も変換されない(外に Absent / Raise を出さない — 受け手が無くても止まらない)
+  (<- plain-missing (table-rows (read-plain "zz")))
+  (<- plain-down (table-rows (read-plain "down")))
+  (<- plain-none (table-rows (read-plain "none")))
+  (assert (= #(plain-missing plain-down plain-none) #((Missing "zz") (Unreachable "網が落ちた") None))
+          #(plain-missing plain-down plain-none)))
+
+
+(val FAILURES-BUILT [])
+
+(deff conflict-for [key]
+  {:pre [(: key str)] :post [(: % Conflict)]
+   :tags {:context "outcomes-test" :role "judgment"}}
+  "作った数を記す失敗の値(:absent の失敗が不在の時にだけ作られることを見るため)。"
+  (.append FAILURES-BUILT key)
+  (Conflict (+ key " の行が無い")))
+
+(defk deep-read [key]
+  {:pre [(: key str)] :post [(: % (| str Stale))]
+   :tags {:context "outcomes-test" :role "program"}}
+  "奥で不在を出す defk(read-value を呼ぶだけ)。"
+  (<- v (read-value key))
+  v)
+
+(defk read-or-conflict [key]
+  {:pre [(: key str)] :post [(: % (| str Stale))]
+   :tags {:context "outcomes-test" :role "program"}}
+  "(e) :absent で、この束ねの不在(奥の defk の中で出た物も)を Conflict の失敗として投げる。"
+  (<- v (deep-read key) :absent (conflict-for key))
+  v)
+
+(defk nothing-or-conflict []
+  {:pre [] :post [(: % str)]
+   :tags {:context "outcomes-test" :role "program"}}
+  "Maybe の値 Nothing を :absent つきで開く。"
+  (<- v Nothing :absent (conflict-for "nothing"))
+  v)
+
+
+(deftest test-absent-option-maps-this-bind-to-a-failure
+  (.clear FAILURES-BUILT)
+  (<- found (table-rows (result (read-or-conflict "a"))))
+  (assert (= (repr found) "Ok('A')") found)
+  (assert (= FAILURES-BUILT []) "成功の時は失敗の値を作らない")
+  (<- mapped (table-rows (result (read-or-conflict "zz"))))
+  (assert (= (repr mapped) "Err(Conflict(detail='zz の行が無い'))") mapped)
+  (<- down (table-rows (result (read-or-conflict "down"))))
+  (assert (= (repr down) "Err(Unreachable(detail='網が落ちた'))") "失敗はそのまま(:absent は不在だけを写す)")
+  (<- from-nothing (result (nothing-or-conflict)))
+  (assert (= (repr from-nothing) "Err(Conflict(detail='nothing の行が無い'))") from-nothing)
+  (assert (in "値の式" (expansion-refusal "(require doeff-hy.macros [<-]) (<- x (f) :absent (! (g)))")))
+  (assert (in "知らない鍵" (expansion-refusal "(require doeff-hy.macros [<-]) (<- x (f) :absnt 1)"))))
+
+
+(defk open-value [value]
+  {:pre [(: value (| Ok Err Some (type Nothing)))] :post [(: % int)]
+   :tags {:context "outcomes-test" :role "program"}}
+  "Result / Maybe の値を <- で開く。"
+  (<- x value)
+  (+ x 1))
+
+
+(deftest test-bind-opens-result-and-option-values
+  (<- from-ok (result (open-value (Ok 1))))
+  (<- from-err (result (open-value (Err "理由"))))
+  (<- from-some (maybe (open-value (Some 2))))
+  (<- from-nothing (maybe (open-value Nothing)))
+  (assert (= (repr #(from-ok from-err from-some from-nothing)) "(Ok(2), Err('理由'), Some(3), Nothing)")
+          #(from-ok from-err from-some from-nothing))
+  ;; Err の中の Python の例外(Try が畳んだ実装の誤り)は Raise にせず例外のまま上げる(R11)
+  (with [(pytest.raises ValueError :match "実装")]
+    (run (result (open-value (Err (ValueError "実装の誤り")))))))
+
+
+(defk direct-default [key]
+  {:pre [(: key str)] :post [(: % str)]
+   :tags {:context "outcomes-test" :role "program"}}
+  "字面の中の <- の不在は既定値で再開し、続きが走る。"
+  (<- v (absent-as (Row "既定") (do! (<- row (ReadRow key)) (+ "続いた: " row.value))))
+  v)
+
+(defk deep-default [key]
+  {:pre [(: key str)] :post [(: % str)]
+   :tags {:context "outcomes-test" :role "program"}}
+  "呼んだ defk の奥の不在は再開せず、既定値でスコープを終える。"
+  (<- v (absent-as "既定" (do! (<- got (read-value key)) (+ "続いた: " got))))
+  v)
+
+(defk written-absent-default []
+  {:pre [] :post [(: % str)]
+   :tags {:context "outcomes-test" :role "program"}}
+  "直に書いた (<- (Absent …)) は再開せず、既定値でスコープを終える。"
+  (<- v (absent-as "既定" (do! (<- (Absent "書いた不在")) "続いた")))
+  v)
+
+
+(deftest test-absent-as-resumes-only-direct-binds
+  (<- direct (table-rows (direct-default "zz")))
+  (<- deep (table-rows (deep-default "zz")))
+  (<- written (written-absent-default))
+  (<- present (table-rows (direct-default "a")))
+  (assert (= #(direct deep written present) #("続いた: 既定" "既定" "既定" "続いた: A"))
+          #(direct deep written present)))
+
+
+(deff resume-anything [effect k]  ; defk にできない: defk は引数 (effect k) を handler と読んで断り、defhandler は Raise / Absent の再開を断る — 規則に反する handler の反例は素の handler 関数でしか書けない
+  {:pre [(: effect EffectBase) (: k K)] :post [(: % DoExpr)]
+   :tags {:context "outcomes-test" :role "foundation"}}
+  "Raise / Absent を再開してしまう handler(規則に反する反例)— 開く側がそれを誤りにすることを見るため。"
+  (if (isinstance effect #(Raise Absent))
+      (Resume k "続けてしまった")
+      (Pass effect k)))
+
+
+(defk raises-then-continues []
+  {:pre [] :post [(: % str)]
+   :tags {:context "outcomes-test" :role "program"}}
+  "Raise を出す(再開されたら誤り)。"
+  (<- (Raise (Conflict "c")))
+  "続いた")
+
+
+(deftest test-resuming-raise-or-absent-is-an-error
+  (with [(pytest.raises RuntimeError :match "Raise が再開された")]
+    (run (WithHandler resume-anything (raises-then-continues))))
+  (with [(pytest.raises RuntimeError :match "Absent が再開された")]
+    (run (WithHandler resume-anything (table-rows (read-value "zz"))))))

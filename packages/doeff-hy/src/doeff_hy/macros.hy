@@ -677,7 +677,20 @@ defk {name}: :post type annotation cannot be an empty string.
       :tags   {:context \"agent-task\" :role \"intent\"}})
 
    :answer (the type a handler resumes with) and :tags are required; :fields may be omitted.
-   The class carries __doeff_answer__, __doeff_tags__ and __doeff_defeffect__ = True."
+   The class carries __doeff_answer__, __doeff_tags__ and __doeff_defeffect__ = True.
+
+   The answer's members may be split by meaning (ADR-DOE-CORE-EFFECTS-003 R5 — all optional):
+
+   (defeffect ReadRow
+     {:fields [(: table str) (: key tuple)]
+      :answer (| Row Missing Unreachable)
+      :absent [Missing]          ; <- performs Absent instead of binding it
+      :failure [Unreachable]     ; <- performs Raise(answer) instead of binding it
+      :tags {:context \"records\" :role \"intent\"}})
+
+   :value [Conflict] marks an answer handled as an ordinary value (not a failure); members
+   in none of the lists are the success. Writing any of them sets __doeff_outcomes__
+   (doeff_core_effects.outcomes.Outcomes); an effect without them binds its answer as-is."
   (setv docstring None contract None forms (list rest))
   (when (and forms (isinstance (get forms 0) hy.models.String))
     (setv docstring (get forms 0) forms (cut forms 1 None)))
@@ -889,6 +902,7 @@ defk {name}: {{:post [...]}} is required.
       :post [(: % dict)]}
      (<- resp (http-get url))
      (.json resp))"
+  (import doeff-hy.outcome-forms [bind-form :as _bind-form])
   (setv #(pre-checks post-checks real-forms) (_extract-contracts forms #(":pre" ":post") "do!"))
   ;; Expand bangs in each form — in-place (yield ...) rewrite [ADR-DOE-HY-003]
   (setv expanded-forms (lfor form real-forms (_expand-bangs form "do!")))
@@ -899,8 +913,7 @@ defk {name}: {{:post [...]}} is required.
                        ;; Plain statement — ADR-DOE-HY-001 guard(式形のみラップ)
                        (_wrap-statement-guard (get bind 1) "do!")
                        ;; Effect binding — yield (typed bind keeps its isinstance)
-                       (let [#(name tp expr) (_bind-parts bind)]
-                         (_bind-yield name tp expr)))))
+                       (_bind-form bind))))
   (locate-synthesized (if post-checks
       (let [post-asserts (_contract-code post-checks "do!" "post-condition" True)]
         `(do ~(_helper-imports)
@@ -935,12 +948,8 @@ defk {name}: {{:post [...]}} is required.
    The expansion is `_bind-yield` — the same definition point the body
    expanders (do! / defp / deftest / for/do / defhandler) use, so a typed bind
    carries the isinstance guarantee wherever it is written."
-  (setv parts (_bind-parts #('<- #* args)))
-  (when (is parts None)
-    (raise (SyntaxError (+ "<-: expected (<- expr) / (<- name expr) / (<- name Type expr), got "
-                           (str (len args)) " arguments"))))
-  (setv #(name tp expr) parts)
-  (locate-synthesized (_bind-yield name tp expr)))
+  (import doeff-hy.outcome-forms [bind-form :as _bind-form])
+  (locate-synthesized (_bind-form (hy.models.Expression ['<- #* args]))))
 
 
 ;; ---------------------------------------------------------------------------
@@ -967,11 +976,11 @@ defk {name}: {{:post [...]}} is required.
 (defmacro absent-as [default program]
   "(absent-as 既定値 本文) — 本文の中の Absent を既定値に畳む。
 
-   Absent を再開せず、既定値で absent-as のスコープを終える(奥の行に別の型の値を渡さない・不在を前提にしない続きを
-   走らせない)。字面の中の <- の不在を既定値で再開する形は、<- が宣言を持つ effect の答えを開く段階 2 で足す。
-   [ADR-DOE-CORE-EFFECTS-003 R8]
+   本文が (do! …) なら、その字面の中に直に書いた <- / ! が値の代わりに出した不在は既定値で**再開**する(その束ねが既定値を
+   受けて続く)。呼んだ defk の奥の不在と、直に書いた (<- (Absent …)) は再開せず、既定値で absent-as のスコープを終える
+   (奥の行に別の型の値を渡さない・不在を前提にしない続きを走らせない)。 [ADR-DOE-CORE-EFFECTS-003 R8]
 
-   (<- n (absent-as 0 (count-rows \"k\")))   ; 不在なら n = 0"
+   (<- n (absent-as 0 (do! (<- row (ReadCount \"k\")) (+ row 1))))   ; 不在なら row = 0 で続き、n = 1"
   (import doeff-hy.outcome-forms [absent-as-form])
   (locate-synthesized (absent-as-form default program)))
 
@@ -1003,26 +1012,34 @@ defk {name}: {{:post [...]}} is required.
   (get expr 1))
 
 (defn _bind-parts [form]
-  "Extract (name, Type, expr) from a (<- ...) form.
+  "Extract (name, Type, expr) from a (<- ...) form (a trailing `:absent 失敗` is set aside — see `_split-absent`).
      (<- expr)           → (None, None, expr)
      (<- name expr)      → (name, None, expr)
      (<- name Type expr) → (name, Type, expr)"
+  (import doeff-hy.outcome-forms [split-absent])
+  (setv core (. (split-absent form) core))
   (cond
-    (= (len form) 2) #(None None (get form 1))
-    (= (len form) 3) #((get form 1) None (get form 2))
-    (= (len form) 4) #((get form 1) (get form 2) (get form 3))))
+    (= (len core) 2) #(None None (get core 1))
+    (= (len core) 3) #((get core 1) None (get core 2))
+    (= (len core) 4) #((get core 1) (get core 2) (get core 3))))
 
-(defn _bind-yield [name tp expr]
+(defn _bind-yield [name tp expr [absent None]]
   "Single definition point for the yield form of an effect binding.
    Used by the <- macro AND by every body expander that pre-parses <- forms
    (do! / defp / deftest / for/do / traverse / defhandler clauses), so the type contract of a
    4-element bind is honored at runtime wherever it is written — the shared
    quality checker (dotfiles agent/quality/hy_dsl.py effect_bind) projects the
    same isinstance and relies on this guarantee existing.
-     (<- expr)           → (yield expr)
-     (<- name expr)      → (setv name (yield expr))
-     (<- name Type expr) → (do (setv name (yield expr))
-                               (assert (isinstance name Type) \"expected Type, got <actual>\"))"
+     (<- expr)           → (yield (open-bind expr))
+     (<- name expr)      → (setv name (yield (open-bind expr)))
+     (<- name Type expr) → (do (setv name (yield (open-bind expr)))
+                               (assert (isinstance name Type) \"expected Type, got <actual>\"))
+     (<- … :absent F)    → open-bind の受け手が、その束ねの中で出た Absent を Raise(F) に変える
+   open-bind(doeff_core_effects.outcomes)は宣言を持つ effect の不在・失敗の答えを Absent / Raise に変えて呼び手の
+   スコープで出し、Result / Maybe の値を開く。宣言の無い effect と Program は受け取った物をそのまま返す
+   (ADR-DOE-CORE-EFFECTS-003 R5・R6)。"
+  (import doeff-hy.outcome-forms [open-form])
+  (setv performed (open-form expr absent))
   (cond
     ;; 型検査のための展開(doeff_hy/static_view.py): x の型 = expr の答えの型。
     ;; Python の `@effectful` の `x = perform(e)`(docs/24-effectful-perform.md)と同じ形で、
@@ -1042,10 +1059,10 @@ defk {name}: {{:post [...]}} is required.
           (or (is source None) (not (isinstance name hy.models.Symbol)))
             `(setv ~name ~bound)
           True `(setv (annotate ~name ~(hy.models.String source)) ~bound)))
-    (is name None) `(yield ~expr)
-    (is tp None) `(setv ~name (yield ~expr))
+    (is name None) `(yield ~performed)
+    (is tp None) `(setv ~name (yield ~performed))
     True `(do
-            (setv ~name (yield ~expr))
+            (setv ~name (yield ~performed))
             (assert (isinstance ~name ~(_runtime-type tp))
                     (+ ~(+ "expected " (str tp) ", got ") (. (type ~name) __name__))))))
 
@@ -1103,6 +1120,7 @@ defk {name}: {{:post [...]}} is required.
    Finds Iterate/From bindings and nests Traverse effects.
    Recognizes (When pred) as a guard — emits Skip when falsy.
    Non-Iterate bindings become yield expressions inside the inner defk."
+  (import doeff-hy.outcome-forms [bind-form :as _bind-form])
   (if (not bindings)
       body-expr
       (let [bind (get bindings 0)
@@ -1141,7 +1159,7 @@ defk {name}: {{:post [...]}} is required.
                            ~items)))
                   ;; Non-Iterate: regular bind (typed bind keeps its isinstance)
                   (let [inner (_gen-traverse-body rest body-expr)]
-                    `(do ~(_bind-yield name tp expr) ~inner))))))))
+                    `(do ~(_bind-form bind) ~inner))))))))
 
 (defmacro traverse [#* forms]
   "Applicative traverse — batch processing with handler-injected strategy.
@@ -1313,7 +1331,12 @@ the effect in the enclosing do-context.
                      (if (= kind "comprehension")
                          (_bang-comprehension-msg owner head node)
                          (_bang-nested-fn-msg owner head node)))))
-          `(yield ~(walk (get node 1) ctx)))
+          ;; 実行時は <- と同じ open-bind を通す(宣言を持つ effect の不在・失敗を Absent / Raise に変え、
+          ;; Result / Maybe の値を開く — ADR-DOE-CORE-EFFECTS-003 R6)。型検査のための展開は今までの形。
+          (if (_static-view?)
+              `(yield ~(walk (get node 1) ctx))
+              (do (import doeff-hy.outcome-forms [open-form])
+                  `(yield ~(open-form (walk (get node 1) ctx) None)))))
 
       (isinstance node hy.models.Expression)
         (do
@@ -1432,6 +1455,7 @@ the effect in the enclosing do-context.
   "Shared implementation for defp/defpp.
    program-return-mode: 'reject' (defp) | 'require' (defpp)"
   (_enforce-no-defp-in-hyk compiler macro-name name)
+  (import doeff-hy.outcome-forms [bind-form :as _bind-form])
   (setv #(pre-checks post-checks real-body) (_extract-contracts body CONTRACT-KEYS (+ macro-name " " (str name))))
   (when (is-not pre-checks None)
     (raise (SyntaxError (.format "
@@ -1477,8 +1501,7 @@ the effect in the enclosing do-context.
                        ;; Plain statement — ADR-DOE-HY-001 guard(式形のみラップ)
                        (_wrap-statement-guard (get bind 1) (str name))
                        ;; Effect binding — yield (typed bind keeps its isinstance)
-                       (let [#(bname tp expr) (_bind-parts bind)]
-                         (_bind-yield bname tp expr)))))
+                       (_bind-form bind))))
   (setv post-asserts (lfor check post-checks
                        (_expand-check check name "post-condition")))
   `(do
@@ -1604,6 +1627,7 @@ the effect in the enclosing do-context.
 
    Expansion: generates def test_*(doeff_interpreter, ...fixtures...)
    that creates a DoExpr program and passes it to the interpreter."
+  (import doeff-hy.outcome-forms [bind-form :as _bind-form])
   ;; Parse optional params list and body
   (setv fixture-params []
         body args)
@@ -1631,8 +1655,7 @@ the effect in the enclosing do-context.
       ;; (<- name expr) → (setv name (yield expr));
       ;; (<- name Type expr) → same + isinstance assert (see _bind-yield)
       (and (_is-bind form) (is-not (_bind-parts form) None))
-      (let [#(bname tp expr) (_bind-parts form)]
-        (.append gen-body (_bind-yield bname tp expr)))
+      (.append gen-body (_bind-form form))
       ;; Everything else — ADR-DOE-HY-001 guard(式形のみラップ、文はそのまま)
       True
       (.append gen-body (_wrap-statement-guard form (str name)))))

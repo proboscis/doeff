@@ -152,7 +152,8 @@ def test_static_view_does_not_leak_into_the_runtime_expansion() -> None:
         static = expand()
     assert "_doeff_perform" not in runtime
     assert "static_types" not in runtime
-    assert "y = (yield g(x))" in runtime
+    # 束ねは open-bind を通して yield する(ADR-DOE-CORE-EFFECTS-003 R6 — 宣言の無い effect には effect そのものを返す)
+    assert "y = (yield _doeff_open_bind(g(x)))" in runtime
     # 型検査のための展開は Python の @effectful と同じ `x = perform(e)` の形(yield を出さない)
     assert "y: 'int' = _doeff_perform(g(x))" in static
     assert "yield" not in static

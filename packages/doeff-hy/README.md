@@ -74,6 +74,13 @@ the places that want to *do* something about absence or failure fold them into v
 and the `on-raise` / `absent-as` macros. The nesting order picks the shape:
 `(result (maybe b))` is `Ok(Some v)` / `Ok(Nothing)` / `Err(e)`.
 
+`defeffect` may split its answer by meaning — `:absent [Missing] :failure [Unreachable]
+:value [Conflict]`; the rest is success. For such an effect `(<- x (ReadRow …))` binds only the
+success and performs `Absent` / `Raise(answer)` in the caller's scope instead; `:absent F` at
+the end of a bind turns an absence inside that bind into `Raise(F)`. `<-` also opens
+`Ok` / `Err` / `Some` / `Nothing` values. An effect without the declaration binds exactly as
+before (the bind yields the same object).
+
 A `defhandler` clause may end its scope without resuming with `(finish value)`. Every path
 of a clause must end with resume / transfer / finish / reperform / raise; `Raise` and `Absent`
 clauses never resume; finishing an ordinary effect needs `:finish-reason "…"`.

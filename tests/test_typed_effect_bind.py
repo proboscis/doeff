@@ -65,6 +65,11 @@ def _eval(code: str):
 # Expansion shape — one definition point, every expander
 # ---------------------------------------------------------------------------
 
+# 束ねが yield するのは (open-bind 効果) — 宣言を持つ effect の答えを開く 1 点(ADR-DOE-CORE-EFFECTS-003 R6)。
+# 宣言の無い effect には effect そのものを返す(実行時に同じ物を yield する — docs/adr の冊 003 の検が確かめる)。
+_OPENED_EFF = "(yield (do (import doeff_core_effects.outcomes [open-bind :as _doeff-open-bind]) (_doeff-open-bind (Eff))))"
+
+
 @pytest.mark.parametrize("code", [
     "(<- x str (Eff))",
     "(do! (<- x str (Eff)) x)",
@@ -76,7 +81,7 @@ def _eval(code: str):
 ], ids=["<-", "do!", "defp", "deftest", "for/do", "traverse", "defhandler"])
 def test_four_element_bind_emits_isinstance_everywhere(code):
     expanded = _expand(code)
-    assert "(setv x (yield (Eff)))" in expanded, expanded
+    assert "(setv x " + _OPENED_EFF + ")" in expanded, expanded
     assert "(assert (isinstance x str)" in expanded, expanded
 
 
@@ -90,7 +95,7 @@ def test_four_element_bind_emits_isinstance_everywhere(code):
 ], ids=["<-", "do!", "defp", "deftest", "for/do", "defhandler"])
 def test_two_and_three_element_binds_stay_unchecked(code):
     expanded = _expand(code)
-    assert "(yield (Eff))" in expanded, expanded
+    assert _OPENED_EFF in expanded, expanded
     # :post の (: % str) は isinstance を出すので、束縛名 x の検査だけを見る
     assert "(isinstance x" not in expanded, expanded
 
