@@ -2,7 +2,7 @@
 ;;; 起こさず、argv[0] の名(basename)ごとの台本(ScriptedCommand)で答える。台本は Program で、file system の effect(file_effects.hy)で置き場を
 ;;; 読み書きしてよい(外側の file の答え手 — 多くは memory-file-handler — が受ける)。業務を知らない: 台本の中身は呼び手が渡す。
 ;;;
-;;;   RunProcess        名の無い命令・無い cwd は started False(exit-code 127)— 本物の subprocess と同じ所で起こせない。output-path は
+;;;   RunProcess        env-mode EXTEND は ProcessScript の env を継いで足した全部を台本に渡す。名の無い命令・無い cwd は started False(exit-code 127)— 本物の subprocess と同じ所で起こせない。output-path は
 ;;;                     台本の出力をその file の末尾へ足す。timeout は台本に任せる(台本が timed-out の答えを返してよい)。
 ;;;   ExecutableAt      argv[0] の名が台本に在れば True。
 ;;;   ReadEnvironment   ProcessScript の env から。
@@ -14,7 +14,7 @@
 (import posixpath)
 (import collections.abc [Callable])
 (import dataclasses [dataclass])
-(import doeff_core_effects.process_effects [EnvEntry ProcessOutcome RunProcess ExecutableAt ReadEnvironment WorkingDirectory])
+(import doeff_core_effects.process_effects [EnvEntry EnvMode ProcessOutcome RunProcess ExecutableAt ReadEnvironment WorkingDirectory])
 (import doeff_core_effects.file_effects [PathKind PathStat StatPath MakeDirectory AppendText FileFailed])
 
 (val NOT-STARTED-CODE 127)
@@ -41,6 +41,17 @@
   (ProcessOutcome :exit-code NOT-STARTED-CODE :stdout "" :stderr "" :started False :start-error detail))
 
 
+(defk scripted-child-env [inherited env env-mode]
+  {:pre [(: inherited tuple) (: env (| tuple None)) (: env-mode EnvMode)] :post [(: % (| tuple None))]}
+  "台本に渡す子の環境を作るため: None と REPLACE は渡された env のまま(前からの振る舞い)、EXTEND は台本の世界の環境 inherited に env を
+   足した全部(同じ名は env が勝つ — 本物の subprocess-handler の child-environment と同じ規則)。"
+  (match #(env env-mode)
+    #(None _) None
+    #(_ EnvMode.EXTEND) (do (val added (sfor e env e.name))
+                            (+ (tuple (gfor e inherited :if (not-in e.name added) e)) env))
+    _ env))
+
+
 (defk run-scripted [commands request]
   {:pre [(: commands tuple) (: request RunProcess)] :post [(: % ProcessOutcome)]}
   "命令 1 つを台本で走らせるため(名の無い命令・無い cwd は起こせない形)。台本から別の命令を走らせる時もこれを呼ぶ。"
@@ -61,8 +72,10 @@
 (defhandler scripted-process-handler [#^ ProcessScript script]
   ;; 引数に残す理由: 台本の表と環境は筋書きごとに違う値(設定ではなく模擬の世界そのもの)。
   (session var jobs 0)
-  (RunProcess [argv stdin timeout cwd env output-path]
-    (<- outcome ProcessOutcome (run-scripted script.commands (RunProcess :argv argv :stdin stdin :timeout timeout :cwd cwd :env env
+  (RunProcess [argv stdin timeout cwd env env-mode output-path]
+    ;; 台本が見る env は子の環境変数の全部にそろえる(EXTEND は台本の世界の環境 script.env を継いで足す — 本物の subprocess-handler と同じ)。
+    (<- child-env (| tuple None) (scripted-child-env script.env env env-mode))
+    (<- outcome ProcessOutcome (run-scripted script.commands (RunProcess :argv argv :stdin stdin :timeout timeout :cwd cwd :env child-env
                                                                           :output-path output-path)))
     (when (is-not output-path None)
       (<- (AppendText output-path (+ outcome.stdout outcome.stderr))))

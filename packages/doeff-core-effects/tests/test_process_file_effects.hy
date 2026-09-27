@@ -13,7 +13,7 @@
 (import doeff [run with_handlers])
 (import doeff_core_effects.handlers [state])
 (import doeff_core_effects.scheduler [scheduled])
-(import doeff_core_effects.process_effects [EnvEntry ProcessOutcome RunProcess ExecutableAt ReadEnvironment WorkingDirectory])
+(import doeff_core_effects.process_effects [EnvEntry EnvMode ProcessOutcome RunProcess ExecutableAt ReadEnvironment WorkingDirectory])
 (import doeff_core_effects.file_effects [PathKind FileFailed PathStat DirEntry LockHeld MemoryFile MemoryFiles ReadMemoryFiles StatPath
                                          ReadText ReadBytes WriteText WriteBytes AppendText MakeDirectory ListDirectory WalkTree CopyFile
                                          CopyTree RenamePath RemoveTree AcquireLock ReleaseLock])
@@ -55,6 +55,47 @@
                #((EnvEntry :name "DOEFF_PROCESS_PRESENT" :value "在る"))))
     (finally (del (get os.environ "DOEFF_PROCESS_PRESENT"))))
   (assert (= (on [subprocess-handler] (WorkingDirectory)) (os.getcwd))))
+
+
+;; 子の環境の 3 形(agora-redesign #822): None = 全部継ぐ・REPLACE(既定)= 渡した組が全部・EXTEND = 継いで足す(同じ名は足した方が勝つ)。
+(val ENV-PROBE #("/bin/sh" "-c" "printf '%s|%s|%s' \"$DOEFF_INHERITED\" \"$DOEFF_SHADOWED\" \"$DOEFF_ADDED\""))
+(val ENV-GIVEN #((EnvEntry :name "DOEFF_SHADOWED" :value "足した") (EnvEntry :name "DOEFF_ADDED" :value "足した")))
+
+
+(defn test-run-process-replaces-the-environment-by-default []
+  ;; 既定は前からの振る舞い(渡した組が子の環境の全部)のまま — 既存の使い手を壊さない。
+  (assert (= (. (RunProcess :argv #("x") :env ENV-GIVEN) env-mode) EnvMode.REPLACE)))
+
+
+(defn test-subprocess-extends-the-inherited-environment []
+  (setv (get os.environ "DOEFF_INHERITED") "継いだ")
+  (setv (get os.environ "DOEFF_SHADOWED") "親")
+  (try
+    (setv extended (on [subprocess-handler] (RunProcess :argv ENV-PROBE :env ENV-GIVEN :env-mode EnvMode.EXTEND)))
+    (assert (= extended.stdout "継いだ|足した|足した") extended)
+    (setv replaced (on [subprocess-handler] (RunProcess :argv ENV-PROBE :env ENV-GIVEN)))
+    (assert (= replaced.stdout "|足した|足した") replaced)
+    (setv inherited (on [subprocess-handler] (RunProcess :argv ENV-PROBE)))
+    (assert (= inherited.stdout "継いだ|親|") inherited)
+    (finally (del (get os.environ "DOEFF_INHERITED"))
+             (del (get os.environ "DOEFF_SHADOWED")))))
+
+
+(defn test-scripted-process-extends-the-script-environment []
+  ;; 台本が受ける env は子の環境の全部(EXTEND は ProcessScript の env を継いで足す — 本物と同じ規則)。
+  (defk shown-env [commands request]
+    {:pre [(: commands tuple) (: request RunProcess)] :post [(: % ProcessOutcome)]}
+    "台本が受けた env を名=値で並べて答えるため(継いだ・足した・勝った名を検が読む)。"
+    (ProcessOutcome :exit-code 0 :stderr ""
+                    :stdout (if (is request.env None) "None" (.join "," (gfor e request.env (.format "{}={}" e.name e.value))))))
+  (setv script (ProcessScript :commands #((ScriptedCommand :name "show" :run shown-env))
+                              :env #((EnvEntry :name "DOEFF_INHERITED" :value "継いだ") (EnvEntry :name "DOEFF_SHADOWED" :value "親"))))
+  (defn scripted [request]
+    (on [(state) (memory-file-handler (MemoryFiles)) (scripted-process-handler script)] request))
+  (assert (= (. (scripted (RunProcess :argv #("show") :env ENV-GIVEN :env-mode EnvMode.EXTEND)) stdout)
+             "DOEFF_INHERITED=継いだ,DOEFF_SHADOWED=足した,DOEFF_ADDED=足した"))
+  (assert (= (. (scripted (RunProcess :argv #("show") :env ENV-GIVEN)) stdout) "DOEFF_SHADOWED=足した,DOEFF_ADDED=足した"))
+  (assert (= (. (scripted (RunProcess :argv #("show"))) stdout) "None")))
 
 
 (defn test-doeff-agents-re-exports-the-same-process-types []

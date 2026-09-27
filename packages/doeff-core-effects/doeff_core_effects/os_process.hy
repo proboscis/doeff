@@ -3,7 +3,7 @@
 (require doeff-hy.macros [defhandler defk <- val])
 (import os)
 (import subprocess)
-(import doeff_core_effects.process_effects [EnvEntry ProcessOutcome RunProcess ExecutableAt ReadEnvironment WorkingDirectory])
+(import doeff_core_effects.process_effects [EnvEntry EnvMode ProcessOutcome RunProcess ExecutableAt ReadEnvironment WorkingDirectory])
 
 ;; 時間切れの時の exit-code(coreutils の timeout と同じ)と、起こせない時の exit-code(shell と同じ)。
 (val TIMED-OUT-CODE 124)
@@ -29,12 +29,24 @@
   None)
 
 
-(defk run-subprocess [argv stdin timeout cwd env output-path]
+(defk child-environment [env env-mode]
+  {:pre [(: env (| tuple None)) (: env-mode EnvMode)] :post [(: % (| dict None))]}
+  "子の環境変数の全部を subprocess へ渡す形にするため(None = 呼び手の環境を継ぐ・REPLACE = tuple が全部・EXTEND = os.environ に tuple を
+   足す — 同じ名は tuple が勝つ)。"
+  (val given (if (is env None) None (dfor e env e.name e.value)))
+  (match #(given env-mode)
+    #(None _) None
+    #(_ EnvMode.EXTEND) (| (dict os.environ) given)
+    _ given))
+
+
+(defk run-subprocess [argv stdin timeout cwd env env-mode output-path]
   {:pre [(: argv tuple) (: stdin (| str None)) (: timeout (| int float None)) (: cwd (| str None)) (: env (| tuple None))
-         (: output-path (| str None))]
+         (: env-mode EnvMode) (: output-path (| str None))]
    :post [(: % ProcessOutcome)]}
-  "子 process を 1 回走らせて ProcessOutcome にするため(env = None は呼び手の環境を継ぐ・EnvEntry の tuple は子の環境変数の全部)。
+  "子 process を 1 回走らせて ProcessOutcome にするため(env と env-mode の読み方は child-environment)。
    exit-code は returncode を丸めない。時間切れと起こせない形は値で返す(process_effects.hy の頭の註)。"
+  (<- child-env (| dict None) (child-environment env env-mode))
   (var outcome None)
   (try
     (val done (subprocess.run (list argv)
@@ -44,7 +56,7 @@
                                :encoding "utf-8"
                                :timeout timeout
                                :cwd cwd
-                               :env (if (is env None) None (dfor e env e.name e.value))
+                               :env child-env
                                :check False))
     (:= outcome (ProcessOutcome :exit-code done.returncode :stdout (or done.stdout "") :stderr (or done.stderr "")))
     (except [error subprocess.TimeoutExpired]
@@ -59,8 +71,8 @@
 
 (defhandler subprocess-handler
   ;; 本物の子 process と自分の process の環境(頭の註)。
-  (RunProcess [argv stdin timeout cwd env output-path]
-    (<- outcome (run-subprocess argv stdin timeout cwd env output-path))
+  (RunProcess [argv stdin timeout cwd env env-mode output-path]
+    (<- outcome (run-subprocess argv stdin timeout cwd env env-mode output-path))
     (resume outcome))
   (ExecutableAt [path]
     (resume (and (os.path.exists path) (os.access path os.X-OK))))

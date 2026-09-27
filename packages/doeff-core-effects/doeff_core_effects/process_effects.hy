@@ -5,8 +5,12 @@
 ;;;
 ;;; RunProcess・ExecutableAt・ProcessOutcome は doeff-agents の io_effects から移した(定義は 1 つ — io_effects は同じ型を re-export する)。移す時に
 ;;; 足した欄は全部既定値つきで、今の使い手の振る舞いは変わらない:
-;;;   RunProcess の env(None = 呼び手の環境を継ぐ・EnvEntry の tuple = 子の環境変数の全部)・output-path(None = 追記しない・path = 子の出力を
+;;;   RunProcess の env(None = 呼び手の環境を継ぐ・EnvEntry の tuple = env-mode の通り)・output-path(None = 追記しない・path = 子の出力を
 ;;;   その file の末尾へ足す — 答えの stdout / stderr も持つ)。
+;;;   RunProcess の env-mode(agora-redesign #822)= env の tuple の扱いの閉じた型 EnvMode:
+;;;     REPLACE(既定)  tuple が子の環境変数の全部(前からの振る舞い)
+;;;     EXTEND         呼び手の環境を継いだ上で tuple を足す(同じ名は tuple が勝つ)
+;;;   env が None の時は env-mode を読まない(呼び手の環境を全部継ぐ)。
 ;;;   ProcessOutcome の started(False = 起こせなかった — OSError を値で)・start-error(その理由)。exit-code は子の returncode を丸めずに
 ;;;   持つ(負の値 = signal・137 など)。時間切れは timed-out True(exit-code 124)、起こせない時は exit-code 127。
 ;;;
@@ -14,9 +18,14 @@
 ;;;   ExecutableAt      その path に実行できる file が在るか。答え = bool。
 ;;;   ReadEnvironment   自分の process の環境変数のうち names の分。答え = 在る分だけの EnvEntry の tuple(names の順)。
 ;;;   WorkingDirectory  自分の process の作業 dir(絶対 path)。
-(require doeff-hy.record [defrecord])
+(require doeff-hy.record [defrecord defenum])
 (import dataclasses [dataclass])
+(import enum [StrEnum])
 (import doeff [EffectBase])
+
+
+;; RunProcess の env の tuple の扱い(頭の註): REPLACE = 子の環境変数の全部・EXTEND = 呼び手の環境を継いで足す。
+(defenum EnvMode REPLACE EXTEND)
 
 
 (defrecord EnvEntry
@@ -49,6 +58,8 @@
   (setv cwd None)
   #^ (| tuple None) env
   (setv env None)
+  #^ EnvMode env-mode
+  (setv env-mode EnvMode.REPLACE)
   #^ (| str None) output-path
   (setv output-path None))
 

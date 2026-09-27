@@ -1,4 +1,6 @@
-;; 送り手の宣言の組み立て(runtime_env の runtime-env-of-checkouts)の検 — 手元の bare repo と clone(本物の git)。
+;; 送り手の宣言の組み立て(runtime_env の runtime-env-of-checkouts)の検 — 手元の bare repo と clone(本物の git)を、翻訳の handler
+;; checkout-reads + 本物の土台(subprocess-handler・os-file-handler)で読む。模擬の土台(台本の git と memory の置き場)で読む検は
+;; test_checkout_reads.hy。
 ;;
 ;; worker が取れない commit を送る前に断る: commit していない変更(dirty-tree)・push していない commit(commit-not-on-remote)・
 ;; 送り手自身の source が宣言の commit と違う(sender-source-differs)。通る時は uv.lock の sha256 を checkout から計算する。
@@ -9,7 +11,9 @@
 (import pytest)
 (import doeff [Program])
 (import doeff_cluster.runtime_env_model [RuntimeEnv RuntimeEnvInvalid InvalidKind])
-(import doeff_cluster.runtime_env [LocalCheckout ProjectOfCheckout SenderSourceRoot runtime-env-of-checkouts local-checkouts])
+(import doeff_cluster.runtime_env [LocalCheckout ProjectOfCheckout SenderSourceRoot runtime-env-of-checkouts checkout-reads])
+(import doeff_core_effects.os_process [subprocess-handler])
+(import doeff_core_effects.os_file [os-file-handler])
 
 (setv LOCK "httpx==0.28.1\n")
 
@@ -42,12 +46,14 @@
   {:pre [(: work Path) (: sender-root (| str None)) (: sender-repo (| str None))] :post [(: % RuntimeEnv)]}
   "work の checkout 1 つから宣言を組み立てる(送り手の source の根は sender-root だと答える)。"
   (<- env RuntimeEnv
-      (local-checkouts
-        (handle (runtime-env-of-checkouts #((LocalCheckout :name "app" :path (str work)))
-                                          (ProjectOfCheckout :repo "app" :path "." :python "3.14")
-                                          #("app/.")
-                                          :sender-repo sender-repo)
-          (SenderSourceRoot [] (resume sender-root)))))
+      (subprocess-handler
+        (os-file-handler
+          (checkout-reads
+            (handle (runtime-env-of-checkouts #((LocalCheckout :name "app" :path (str work)))
+                                              (ProjectOfCheckout :repo "app" :path "." :python "3.14")
+                                              #("app/.")
+                                              :sender-repo sender-repo)
+              (SenderSourceRoot [] (resume sender-root)))))))
   env)
 
 
@@ -101,3 +107,4 @@
   (assert (= kind InvalidKind.SENDER-SOURCE-DIFFERS))
   (<- outside InvalidKind (refusal-of work None "app"))
   (assert (= outside InvalidKind.SENDER-SOURCE-DIFFERS)))
+
