@@ -118,6 +118,10 @@ impl Config {
             }
         };
         settings.architecture = architecture;
+        // 宣言した置き場所の外の module(層が先の dir など)は、:role のタグから層を推して層の規則をかける。
+        if let (Some(arch), Some(layers)) = (&settings.architecture, settings.layers.as_mut()) {
+            layers.infer_root = Some(crate::project::settings::normalize_dir(&arch.root));
+        }
         if let Some(section) = &self.semantic {
             let names: Vec<String> = settings.layers.as_ref().map(|l| l.layers.iter().map(|s| s.name.clone()).collect()).unwrap_or_default();
             let mut unknown = Vec::new();

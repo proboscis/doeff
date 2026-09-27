@@ -18,6 +18,8 @@ pub struct Placement {
     pub service: Option<String>,
     /// 実効のタグの role(重なりを除き、出てきた順)。
     pub roles: Vec<String>,
+    /// 層を path ではなくタグの role から推したか(宣言した置き場所の外の module)。
+    pub by_tags: bool,
 }
 
 /// 語の後に助詞を付ける(英数字で終わる語は空白を挟む — 「core が」「層 core(業務)は」)。助詞が空なら語だけ。
@@ -46,6 +48,8 @@ pub enum PlaceProblem {
     DirectlyUnderRoot,
     /// service(か shared)の dir の直下の file — 層の dir の中に無い。
     DirectlyUnderService { service: String },
+    /// 宣言に無い dir(層が先の dir・旧い機能の dir・service の中の宣言に無い層)の中の file。
+    InUndeclaredDirectory { dir: String },
 }
 
 /// 宣言に無い dir の種類(DOEFF115)。
@@ -142,7 +146,7 @@ pub enum Explain {
     /// DOEFF112: 定義の :tags に必須の鍵が無い。
     DefinitionTagsMissing { name: String, head: String, missing: Vec<String>, has_tags: bool, module_default: bool },
     /// DOEFF114: 宣言されていない置き場所の file。
-    UndeclaredPlace { rel: String, problem: PlaceProblem, root: String },
+    UndeclaredPlace { rel: String, problem: PlaceProblem, root: String, destination: String },
     /// DOEFF115: 宣言に無い dir。
     UndeclaredDirectory { dir: String, problem: DirectoryProblem },
     /// DOEFF116: service の依存の宣言に反する import。
@@ -411,22 +415,23 @@ impl<'a> Narrator<'a> {
                     }
                 ),
             ),
-            Explain::UndeclaredPlace { rel, problem, root } => (
+            Explain::UndeclaredPlace { rel, problem, root, .. } => (
                 match problem {
                     PlaceProblem::DirectlyUnderRoot => format!("module {} — root {}/ の直下に在り、どの service の層にも入っていない", rel, root),
                     PlaceProblem::DirectlyUnderService { service } => {
                         format!("module {} — service {} の dir の直下に在り、層の dir(core・intent …)に入っていない", rel, service)
                     }
+                    PlaceProblem::InUndeclaredDirectory { dir } => format!("module {} — dir {} は architecture.hy に宣言した置き場所ではない", rel, dir),
                 },
                 format!(
-                    "architecture.hy が宣言した置き場所({}/<service>/<層>/・shared・foundation・legacy)のどれでもないので、どの service の何の層か分からない — 層の規則にも閲覧にも乗らない。architecture.hy に宣言するか、宣言した置き場所へ移す。",
+                    "コードは service → 層 の dir({}/<service>/<層>/)か shared・foundation に置く。層が先の dir(core・protocol …)も旧い機能の dir も宣言の外 — どの service の何の層かが置き場所から分からず、層の規則も閲覧も置き場所で決められない。既存の分は登録簿で受けるが、エディタでは常に見える。",
                     root
                 ),
             ),
             Explain::UndeclaredDirectory { dir, problem } => match problem {
                 DirectoryProblem::ServiceNotDeclared { dir: name, services } => (
                     format!("dir {} — service {} は architecture.hy に宣言されていない(宣言した service = {})", dir, name, if services.is_empty() { "無し".to_string() } else { services.join("・") }),
-                    "宣言に無い service の dir は、何の仕事で何に依存するかが分からない。defservice で宣言するか、legacy に入れて移行を待つか、宣言した service の dir へ移す。".to_string(),
+                    "宣言に無い service の dir は、何の仕事で何に依存するかが分からない。defservice で宣言するか、中の module を宣言した service の層の dir へ移す。".to_string(),
                 ),
                 DirectoryProblem::LayerNotDeclared { service, layer, declared } => (
                     format!("dir {} — service {} の中の {} は、その service の宣言した層({})に無い", dir, service, layer, declared.join("・")),
@@ -525,6 +530,7 @@ impl<'a> Narrator<'a> {
             Explain::ClassRoleDoubt { chosen, .. } if chosen == "external-world" => Some(WORLD_FIX.to_string()),
             Explain::ClassRoleDoubt { .. } => Some(STATE_FIX.to_string()),
             Explain::ClassShape { verdict: ClassVerdict::DataOnly, .. } => Some("defrecord にする(:tags で文脈と役・:check で値の検め)".to_string()),
+            Explain::UndeclaredPlace { destination, .. } => Some(format!("{} へ移す(service は :context のタグ、層は今の置き場所か :role のタグから推した案)", destination)),
             Explain::PlainCallableDoubt { chosen_accepted: false, fix: Some(fix), .. } => Some(fix.clone()),
             Explain::PlainCallableDoubt { .. } => Some(format!("defk にできないかを確かめる — {}", PROGRAM_WAYS)),
             Explain::DeffWithoutReason { problem: DeffReasonProblem::Missing, .. } => {
@@ -539,6 +545,14 @@ impl<'a> Narrator<'a> {
 
     /// module の層を何で決めたか(path の置き場所・タグ・両方の食い違い)。
     pub fn layer_reason(&self, placement: &Placement) -> String {
+        if placement.by_tags {
+            return format!(
+                "タグで決めた — {}/ は architecture.hy の宣言した置き場所ではないので、タグの role = {} から{}と推した",
+                placement.dir,
+                placement.roles.join("・"),
+                lead(&self.site_phrase(placement))
+            );
+        }
         let base = format!("path の置き場所で決めた — {}/ の下は{}", placement.dir, lead(&self.site_phrase(placement)));
         if placement.roles.is_empty() {
             return format!("{}(タグで役を名乗っていない)", base);
@@ -757,6 +771,7 @@ mod tests {
                 ),
                 spec("foundation", "app/foundation", &["foundation", "translation"], LayerDescription::default()),
             ],
+            infer_root: None,
             role_descriptions: [("translation".to_string(), "翻訳の handler".to_string())].into_iter().collect::<BTreeMap<_, _>>(),
             exclude: BTreeSet::new(),
             extensions: BTreeSet::new(),
@@ -778,7 +793,7 @@ mod tests {
     fn role_mismatch_names_both_the_path_and_the_tag() {
         let settings = layers();
         let narrator = Narrator { layers: Some(&settings), raw: None };
-        let placement = Placement { layer: LayerId(0), dir: "app/core".into(), service: None, roles: vec!["translation".into()] };
+        let placement = Placement { layer: LayerId(0), dir: "app/core".into(), service: None, roles: vec!["translation".into()], by_tags: false };
         let explain = Explain::RoleMismatch { placement: placement.clone(), role: Some("translation".into()), context: Some("peer".into()) };
         let law = LawSpec { name: "role-law".into(), adr: None, statement: "role は層に合う".into(), rules: Vec::new(), layers: BTreeSet::new() };
         let out = narrator.explain(&explain, Some(&law));
@@ -801,7 +816,7 @@ mod tests {
     fn import_direction_uses_descriptions_and_falls_back_without_them() {
         let settings = layers();
         let narrator = Narrator { layers: Some(&settings), raw: None };
-        let placement = Placement { layer: LayerId(0), dir: "app/core".into(), service: None, roles: vec!["judgment".into()] };
+        let placement = Placement { layer: LayerId(0), dir: "app/core".into(), service: None, roles: vec!["judgment".into()], by_tags: false };
         let out = narrator.explain(
             &Explain::ImportDirection { placement, target: "app.foundation.io.send".into(), target_layer: LayerId(1), target_dir: "app/foundation".into() },
             None,
@@ -813,7 +828,7 @@ mod tests {
             "層 core(業務の判断)は外の世界から最も遠い層で、業務の判断を知り、通信の手段は知らない。core が import してよいのは 層 core だけ。import 先の層 foundation は外の世界に最も近い層なので、core から読むと、core が層 foundation の持つ物に触れる(模擬で handler を差し替えても、その所だけ本物に触る)。"
         );
         assert_eq!(out.law_statement, None);
-        let untagged = Placement { layer: LayerId(1), dir: "app/foundation".into(), service: None, roles: Vec::new() };
+        let untagged = Placement { layer: LayerId(1), dir: "app/foundation".into(), service: None, roles: Vec::new(), by_tags: false };
         assert_eq!(narrator.layer_reason(&untagged), "path の置き場所で決めた — app/foundation/ の下は層 foundation(タグで役を名乗っていない)");
     }
 }

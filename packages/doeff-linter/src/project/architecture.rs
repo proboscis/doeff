@@ -12,7 +12,7 @@
 //!   :open-layers [intent]            ; 別の service から読んでよい層(Tach の interfaces に当たる)
 //!   :roles {:judgment "業務の判断をする純粋な関数" …}
 //!   :exclude ["tests" "__pycache__" "conftest.py"]
-//!   :legacy ["controllers/agora_sim" (legacy "controllers/core" :layer core)])
+//!   :shared "shared")
 //! (defservice land-notice "着地の報せ" {:depends-on [messaging] :layers [core intent protocol entry]})
 //! ```
 //! 読めない形(知らない鍵・重複した service・存在しない層の名)は、file の中の位置つきの理由の列で返す(設定の誤り)。
@@ -59,13 +59,6 @@ pub struct ArchService {
     pub range: doeff_indexer::hy_index::Range,
 }
 
-/// 移行の途中の置き場 1 つ(まだ service → 層 に並んでいない dir)。層を添えれば、層の規則はその層として判じる。
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-pub struct LegacyPlace {
-    pub dir: String,
-    pub layer: Option<String>,
-}
-
 /// 素の関数(deff)を許す理由の種類 1 つ(`(reason 名 "説明")`)。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct ReasonKind {
@@ -84,7 +77,6 @@ pub struct Architecture {
     pub shared: Option<String>,
     pub foundation: Option<String>,
     pub open_layers: Vec<String>,
-    pub legacy: Vec<LegacyPlace>,
     pub services: Vec<ArchService>,
     /// 素の関数を許す理由の種類の閉じた一覧(DOEFF203 の受け入れる答え)。
     pub plain_callable_reasons: Vec<ReasonKind>,
@@ -173,7 +165,6 @@ impl Architecture {
                 } else {
                     places.push(format!("{}/*/{}", root, layer.name));
                 }
-                places.extend(self.legacy.iter().filter(|l| l.layer.as_deref() == Some(layer.name.as_str())).map(|l| l.dir.clone()));
                 (layer.name.clone(), PathPatterns::Many(places))
             })
             .collect();
@@ -331,7 +322,6 @@ impl<'a> Parser<'a> {
             shared: None,
             foundation: None,
             open_layers: Vec::new(),
-            legacy: Vec::new(),
             services: Vec::new(),
             plain_callable_reasons: Vec::new(),
             rejected_plain_callable_reasons: Vec::new(),
@@ -384,36 +374,12 @@ impl<'a> Parser<'a> {
                     }
                     None => self.problem(value, ":roles は {:role \"説明\" …} の辞書"),
                 },
-                ":legacy" => {
-                    let entries = self.bracket(value).unwrap_or_else(|| {
-                        self.problem(value, ":legacy は置き場の列");
-                        Vec::new()
-                    });
-                    for entry in entries {
-                        if let Some(dir) = self.string(entry) {
-                            arch.legacy.push(LegacyPlace { dir: normalize_dir(&dir), layer: None });
-                            continue;
-                        }
-                        match self.paren(entry) {
-                            Some(parts) if parts.first().and_then(|h| self.symbol(h)) == Some("legacy") => {
-                                let dir = parts.get(1).and_then(|f| self.string(f));
-                                let rest: Vec<&Form> = parts.iter().skip(2).copied().collect();
-                                let mut layer = None;
-                                for (k, v) in self.pairs(&rest) {
-                                    match self.text(k) {
-                                        ":layer" => layer = self.name(v),
-                                        other => self.problem(k, &format!("legacy の知らない鍵 {}(:layer だけ)", other)),
-                                    }
-                                }
-                                match dir {
-                                    Some(dir) => arch.legacy.push(LegacyPlace { dir: normalize_dir(&dir), layer }),
-                                    None => self.problem(entry, "(legacy \"dir\" :layer 層) の dir が無い"),
-                                }
-                            }
-                            _ => self.problem(entry, ":legacy の要素は \"dir\" か (legacy \"dir\" :layer 層)"),
-                        }
-                    }
-                }
+                // :legacy は廃止(operator 2026-09-27 逐語 "we dont want 'legacy' stuff. we want anything all flagged")— 宣言の外の module は
+                // 全部 DOEFF114・115 で出し、既存の分は登録簿で受ける。
+                ":legacy" => self.problem(
+                    key,
+                    ":legacy は廃止した — 宣言の外の置き場所の module は全部 DOEFF114・115 で出す。既存の分は登録簿(registry)に載せる",
+                ),
                 other => self.problem(key, &format!("defarchitecture の知らない鍵 {}", other)),
             }
         }
@@ -559,13 +525,6 @@ impl<'a> Parser<'a> {
                 push(&mut self.problems, format!(":open-layers の {} は :layers に無い", open));
             }
         }
-        for legacy in &arch.legacy {
-            if let Some(layer) = &legacy.layer {
-                if !layers.contains(layer.as_str()) {
-                    push(&mut self.problems, format!("legacy {} の :layer {} は :layers に無い", legacy.dir, layer));
-                }
-            }
-        }
         for service in &arch.services {
             for layer in &service.layers {
                 if !layers.contains(layer.as_str()) {
@@ -596,8 +555,7 @@ mod tests {
            (layer foundation)]
   :shared "shared"
   :foundation foundation
-  :roles {:judgment "業務の判断"}
-  :legacy ["app/old" (legacy "app/core" :layer core)])
+  :roles {:judgment "業務の判断"})
 (defservice billing "請求" {:depends-on [custody] :layers [core intent]})
 (defservice custody {:layers [core intent]})
 "#;
@@ -610,7 +568,7 @@ mod tests {
         assert_eq!(arch.services[0].depends_on, vec!["custody"]);
         assert_eq!(arch.services[0].description.as_deref(), Some("請求"));
         let section = arch.layers_section();
-        assert_eq!(section.paths["core"], PathPatterns::Many(vec!["app/*/core".into(), "app/core".into()]));
+        assert_eq!(section.paths["core"], PathPatterns::Many(vec!["app/*/core".into()]));
         assert_eq!(section.paths["foundation"], PathPatterns::Many(vec!["app/foundation".into()]));
         assert_eq!(section.types_only, vec!["intent"]);
         assert_eq!(arch.roles_section().describe["judgment"], "業務の判断");
@@ -618,12 +576,12 @@ mod tests {
 
     #[test]
     fn misreadings_are_errors_with_positions() {
-        let bad = r#"(defarchitecture s :root "app" :layers [(layer core :colour "x")] :nonsense 1)
+        let bad = r#"(defarchitecture s :root "app" :layers [(layer core :colour "x")] :nonsense 1 :legacy ["app/old"])
 (defservice a {:layers [ghost] :uses [b]})
 (defservice a {})
 "#;
         let problems = Architecture::parse(bad, Path::new("architecture.hy")).unwrap_err().join("\n");
-        for needle in ["architecture.hy:1:", "layer の知らない鍵 :colour", "知らない鍵 :nonsense", "知らない鍵 :uses", "ghost", "service a が 2 度"] {
+        for needle in ["architecture.hy:1:", ":legacy は廃止した", "layer の知らない鍵 :colour", "知らない鍵 :nonsense", "知らない鍵 :uses", "ghost", "service a が 2 度"] {
             assert!(problems.contains(needle), "{} が無い:\n{}", needle, problems);
         }
     }

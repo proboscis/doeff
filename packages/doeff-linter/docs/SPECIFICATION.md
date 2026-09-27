@@ -198,21 +198,25 @@ law の対応だけを残す。無ければ TOML の設定で今どおり動く�
   :roles {:judgment "業務の判断をする純粋な関数" …}   ; role の説明
   :exclude ["tests" "__pycache__" "conftest.py"]    ; 既定のまま
   :extensions ["hy" "py"]                           ; 既定 hy・hyk・hyp・py
-  :legacy ["controllers/agora_sim" (legacy "controllers/core" :layer core)])  ; 移行の途中の置き場(縮める向きだけ)
+  :shared "shared")  ; :legacy は廃止(書くと設定の誤り — 宣言の外の module は全部 DOEFF114・115、既存の分は登録簿)
 (defservice land-notice "着地の報せ" {:depends-on [messaging] :layers [core intent protocol entry]})
 ```
 
-- 層の置き場は `root/*/<層>`(service と shared)と、foundation の層は `root/<foundation>`、`(legacy "dir" :layer 層)` の dir。
+- 層の置き場は `root/*/<層>`(service と shared)と、foundation の層は `root/<foundation>`。
+- 宣言の外でも、root の下の段に層の名がある dir(層が先の dir — `controllers/core/…`)の module は、:role のタグから層を推して層の規則をかける
+  (role を許す層が 1 つならその層・2 つ以上なら path の段の層・推せなければ path の段の層に置いてタグの規則 DOEFF104・105 が理由を出す)。
+  module の `layer_reason` は「タグで決めた — …」。旧い機能の dir(層の名の段が無い)は層の規則の母集団に入らない。
+- operator 2026-09-27 逐語 "we dont want 'legacy' stuff. we want anything all flagged" — `:legacy` は廃止。
 - service の dir は名の `-` を `_` にした物(`land-notice` → `controllers/land_notice/`)。`{:dir "…"}` で変えられる。
 - 読み違い(知らない鍵・重複した service や層・存在しない層や service の名・:foundation の層が無い)は `architecture.hy:行:列: 理由` の形で
   設定の誤り(終了コード 2)。
 - editor-json の最上位に `architecture`(name・root・layers(name・summary・knows・does_not_know・question・roles)・shared・foundation・
-  open_layers・legacy・services(name・dir・description・depends_on・layers))。無ければ null。
+  open_layers・services(name・dir・description・depends_on・layers))。無ければ null。
 
 | 規則 | 判じ方 | 鍵の細目 | 位置 |
 |---|---|---|---|
-| DOEFF114 | root の下の module が、宣言した service の宣言した層・shared の層・foundation・legacy のどれにも入らない(root の直下、service の dir の直下)。`__init__` は外 | なし | file の頭 |
-| DOEFF115 | root の直下の dir が宣言した service・shared・foundation・legacy でない / service の中の dir が宣言した層でない。dir ごとに 1 件(鍵の path は dir) | なし | dir の最初の file の頭 |
+| DOEFF114 | root の下の module が、宣言した service の宣言した層・shared の層・foundation のどれにも入らない(root の直下・service の dir の直下・宣言に無い dir の中 — 層が先の dir も旧い機能の dir も例外なし)。file ごとに 1 件。hint に移し先の案(`<root>/<:context のタグ>/<path の段の層か :role のタグの層>/<名>`)。`__init__` は外 | なし | file の頭 |
+| DOEFF115 | root の直下の dir が宣言した service・shared・foundation でない / service の中の dir が宣言した層でない。dir ごとに 1 件(鍵の path は dir) | なし | dir の最初の file の頭 |
 | DOEFF116 | service A の module が service B の module を import した時、B が A の :depends-on に無い、または読む先が B の :open-layers の層でない。shared と foundation は service ではないので見ない。宣言の DOEFF109 はこれに置き換わる(architecture.hy の在る repo では DOEFF109 の設定を置けない) | import の先 | import の記号 |
 | DOEFF117 | 宣言した依存(A の :depends-on の B)を、A のどの module も読んでいない。info。全体の実行だけ | `A>B` | architecture.hy の defservice の名 |
 | DOEFF113 | 宣言した service の中の :context の食い違いは warning に上がる | | |

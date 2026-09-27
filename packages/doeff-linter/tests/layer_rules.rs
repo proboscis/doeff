@@ -758,8 +758,7 @@ fn architecture_repo(files: &[(&str, String)], toml_extra: &str) -> tempfile::Te
            (layer intent :summary "要求の型" :roles [intent type] :imports [intent] :types-only True)
            (layer foundation :summary "汎用の I/O" :roles [foundation] :imports [foundation])]
   :shared "shared"
-  :foundation foundation
-  :legacy ["app/old" (legacy "app/core" :layer core)])
+  :foundation foundation)
 (defservice billing "請求" {:depends-on [custody ledger] :layers [core intent]})
 (defservice custody "預かり所" {:layers [core intent]})
 (defservice ledger "台帳" {:layers [core intent]})
@@ -800,10 +799,25 @@ fn architecture_declares_services_layers_and_dependencies() {
     let dir = architecture_repo(&files, "");
     let (code, report) = editor(dir.path());
     assert_eq!(code, 1, "{}", report);
-    // DOEFF114: root の直下と service の dir の直下の file。
-    assert_eq!(keys(&report, "DOEFF114"), vec!["app/billing/helpers.hy::DOEFF114", "app/top.hy::DOEFF114"]);
+    // DOEFF114: 宣言の外の module は全部(root の直下・service の dir の直下・宣言に無い dir の中 — 層が先の dir も旧い dir も例外なし)。
+    assert_eq!(
+        keys(&report, "DOEFF114"),
+        vec![
+            "app/billing/helpers.hy::DOEFF114",
+            "app/billing/scripts/tool.hy::DOEFF114",
+            "app/billing/scripts/tool2.hy::DOEFF114",
+            "app/core/legacy_core.hy::DOEFF114",
+            "app/mystery/core/x.hy::DOEFF114",
+            "app/old/anything.hy::DOEFF114",
+            "app/top.hy::DOEFF114"
+        ]
+    );
     // DOEFF115: 宣言に無い service の dir と、service の中の宣言に無い層の dir(dir ごとに 1 件)。
-    assert_eq!(keys(&report, "DOEFF115"), vec!["app/billing/scripts::DOEFF115", "app/mystery::DOEFF115"]);
+    assert_eq!(keys(&report, "DOEFF115"), vec!["app/billing/scripts::DOEFF115", "app/core::DOEFF115", "app/mystery::DOEFF115", "app/old::DOEFF115"]);
+    // 移し先の案: service は :context のタグ、層は今の path の段の層の名(層が先の dir)か :role のタグ。
+    assert_eq!(violation(&report, "app/core/legacy_core.hy::DOEFF114")["hint"], "app/kanban/core/legacy_core.hy へ移す(service は :context のタグ、層は今の置き場所か :role のタグから推した案)");
+    assert!(violation(&report, "app/billing/scripts/tool.hy::DOEFF114")["hint"].as_str().unwrap().starts_with("app/billing/core/tool.hy へ移す"));
+    assert!(violation(&report, "app/old/anything.hy::DOEFF114")["hint"].as_str().unwrap().starts_with("app/<service>/<層>/anything.hy へ移す"));
     let undeclared = explanation(&report, "app/mystery::DOEFF115");
     assert!(undeclared["subject"].as_str().unwrap().contains("service mystery は architecture.hy に宣言されていない"), "{}", undeclared["subject"]);
     // DOEFF116: 依存先の intent 以外を読む・:depends-on に無い service を読む。shared と foundation は service ではない。
@@ -819,8 +833,21 @@ fn architecture_declares_services_layers_and_dependencies() {
     assert!(unused["path"].as_str().unwrap().ends_with("architecture.hy"));
     // DOEFF113: 宣言した service の中の :context の食い違いは warning。
     assert_eq!(violation(&report, "app/billing/core/wrong_context.hy::DOEFF113::custody")["severity"], "warning");
-    // legacy に :layer を添えた置き場は、層の規則を今どおり受ける(core から foundation を読むと DOEFF101)。
+    // 宣言の外の module は :role のタグから層を推して層の規則を受ける(role judgment → core・core から foundation を読むと DOEFF101)。
     assert_eq!(keys(&report, "DOEFF101"), vec!["app/core/legacy_core.hy::DOEFF101::app.foundation.io.send"]);
+    let module = report["modules"].as_array().unwrap().iter().find(|m| m["path"].as_str().unwrap().ends_with("app/core/legacy_core.hy")).unwrap();
+    assert!(module["layer_reason"].as_str().unwrap().starts_with("タグで決めた — app/core/ は architecture.hy の宣言した置き場所ではない"), "{}", module["layer_reason"]);
+    // 既存の分は登録簿に載せても、registered_severity = warning なら黄で見え続ける。
+    let dir = architecture_repo(&files, "[tool.doeff-linter.registry]\nfiles = [\"known.txt\"]\n[tool.doeff-linter.rules.DOEFF114]\nregistered_severity = \"warning\"\n");
+    std::fs::write(dir.path().join("known.txt"), "app/old/anything.hy::DOEFF114\n").unwrap();
+    let (_, report) = editor(dir.path());
+    assert_eq!(violation(&report, "app/old/anything.hy::DOEFF114")["severity"], "warning");
+    assert_eq!(violation(&report, "app/top.hy::DOEFF114")["severity"], "error");
+    // :legacy は廃止 — 書くと設定の誤り。
+    std::fs::write(dir.path().join("architecture.hy"), "(defarchitecture s :root \"app\" :layers [(layer core)] :legacy [\"app/old\"])\n").unwrap();
+    let (code, _, stderr) = run(dir.path(), &["--output-format", "editor-json", "--no-log"], None);
+    assert_eq!(code, 2);
+    assert!(stderr.contains(":legacy は廃止した"), "{}", stderr);
     // editor-json の architecture(service の一覧と層の宣言)。
     let architecture = &report["architecture"];
     assert_eq!(architecture["name"], "sample");
