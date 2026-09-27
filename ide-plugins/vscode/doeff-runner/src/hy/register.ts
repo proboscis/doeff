@@ -1,10 +1,12 @@
 // Hy の行き来の機能の composition root — store・索引の handler・Python の source の handler・provider・
 // ナビゲーションパネルを組み、VS Code に登録する。extension.ts の activate からこの 1 関数だけを呼ぶ。
 
+import * as fs from 'fs';
+import * as path from 'path';
 import * as vscode from 'vscode';
 import type { Resolve } from './callGraph';
 import { HyCallHierarchyProvider, HyEffectCodeLensProvider } from './effectProviders';
-import { EffectGraphSource, PROGRAM_KINDS } from './effects';
+import { EffectGraphSource } from './effects';
 import { ChildProcessHyIndexer, type LocateIndexer } from './indexer';
 import { HY_EXCLUDE_GLOB, HyIndexService, isHyPath } from './indexService';
 import { ExternalModuleCache } from './externalCache';
@@ -12,9 +14,7 @@ import { HyNavTreeProvider, NAV_VIEWS, nodeDefinition } from './navPanel';
 import type { NavNode } from './navTree';
 import { HyNavigationProvider, toRange } from './providers';
 import { FsPythonModuleSource } from './pythonSource';
-import { DEFAULT_RAW_CATALOG, mergeRawCatalog, type RawCatalogEntry } from './rawCatalog';
 import { RawEffectSource } from './rawEffects';
-import { rawProgramDiagnostics } from './rawView';
 import { resolveDefinition } from './resolve';
 import { HyIndexStore } from './store';
 import { FS_CHANGE_STAMPS, UvModuleLocator } from './uvLocator';
@@ -29,14 +29,19 @@ const VIEW_REFRESH_DEBOUNCE_MS = 400;
 /** 設定の節の名前(既存の doeff-runner の設定と同じ接頭辞)。 */
 const CONFIG_SECTION = 'doeff-runner.hy';
 
-/** 設定の目録の追加を読み、既定の目録に足す(読めない値は Output に理由を出す)。 */
-function readRawCatalog(log: vscode.OutputChannel): readonly RawCatalogEntry[] {
+/**
+ * 設定 rawSideEffects(生の副作用の目録の追加)を、hy-index に --raw-catalog-extra で渡す JSON の file に書く。
+ * 目録と照合は hy-index が持つので、拡張は設定を写すだけ。設定が空なら file を使わない(undefined)。
+ */
+function writeRawCatalogExtra(storageDir: string): string | undefined {
   const extra: unknown = vscode.workspace.getConfiguration(CONFIG_SECTION).get('rawSideEffects');
-  const merged = mergeRawCatalog(DEFAULT_RAW_CATALOG, extra);
-  for (const problem of merged.problems) {
-    log.appendLine(`[hy] ${problem}`);
+  if (extra === undefined || extra === null || (typeof extra === 'object' && Object.keys(extra).length === 0)) {
+    return undefined;
   }
-  return merged.catalog;
+  fs.mkdirSync(storageDir, { recursive: true });
+  const file = path.join(storageDir, 'raw-catalog-extra.json');
+  fs.writeFileSync(file, JSON.stringify(extra));
+  return file;
 }
 
 /** Hy の機能が拡張から受け取る物 — binary の探し方と Output channel。 */
@@ -70,7 +75,9 @@ async function revealNode(node: NavNode | undefined): Promise<vscode.TextEditor 
 /** Hy の定義へ移動・参照・目次・記号の検索・hover・実装・呼び出し階層・注記・パネルを登録し、索引の保持を始める。 */
 export function registerHyNavigation(context: vscode.ExtensionContext, deps: HyNavigationDeps): void {
   const store = new HyIndexStore();
-  const indexer = new ChildProcessHyIndexer(deps.locateIndexer, INDEXER_TIMEOUT_MS);
+  // 生の副作用の目録の追加は hy-index に file で渡す(読めない値の理由は hy-index が raw_catalog_problems で返す)
+  let rawCatalogExtra = writeRawCatalogExtra(context.globalStorageUri.fsPath);
+  const indexer = new ChildProcessHyIndexer(deps.locateIndexer, INDEXER_TIMEOUT_MS, () => rawCatalogExtra);
   const python = new FsPythonModuleSource(
     () => (vscode.workspace.workspaceFolders ?? []).map((folder) => folder.uri.fsPath),
     async (relativePath) =>
@@ -95,31 +102,11 @@ export function registerHyNavigation(context: vscode.ExtensionContext, deps: HyN
     }
     return resolution;
   };
-  // 生の副作用の目録は設定が変わった時だけ読み直す(判定の係は目録か表が変わった時だけ作り直す)
-  let catalog = readRawCatalog(deps.output);
-  const raw = new RawEffectSource(graphs, () => catalog, resolve);
+  const raw = new RawEffectSource(graphs);
   const provider = new HyNavigationProvider(store, python, external, graphs, raw, deps.output);
   const hierarchy = new HyCallHierarchyProvider(graphs, resolve);
   const lenses = new HyEffectCodeLensProvider(graphs, resolve, raw);
   const trees = NAV_VIEWS.map((v) => ({ ...v, provider: new HyNavTreeProvider(v.view, graphs, resolve, raw, activeHyFile) }));
-  const diagnostics = vscode.languages.createDiagnosticCollection('doeff-hy-raw-side-effects');
-  // 直接 生に触る defk / deff / defp を問題の一覧へ(設定で入り切り・既定は切)
-  const updateDiagnostics = (): void => {
-    diagnostics.clear();
-    if (vscode.workspace.getConfiguration(CONFIG_SECTION).get<boolean>('rawSideEffectDiagnostics') !== true) {
-      return;
-    }
-    const index = raw.current();
-    const byPath = new Map<string, vscode.Diagnostic[]>();
-    for (const d of rawProgramDiagnostics(graphs.current().definitionsOfKind(PROGRAM_KINDS, false), (ref) => index.direct(ref))) {
-      const diagnostic = new vscode.Diagnostic(toRange(d.range), d.message, vscode.DiagnosticSeverity.Warning);
-      diagnostic.source = 'doeff-hy';
-      byPath.set(d.path, [...(byPath.get(d.path) ?? []), diagnostic]);
-    }
-    for (const [filePath, list] of byPath) {
-      diagnostics.set(vscode.Uri.file(filePath), list);
-    }
-  };
   const selector: vscode.DocumentSelector = [
     { language: 'hy', scheme: 'file' },
     { pattern: '**/*.{hy,hyk,hyp}', scheme: 'file' }
@@ -137,7 +124,6 @@ export function registerHyNavigation(context: vscode.ExtensionContext, deps: HyN
       for (const tree of trees) {
         tree.provider.refresh();
       }
-      updateDiagnostics();
     }, VIEW_REFRESH_DEBOUNCE_MS);
   };
   const unsubscribeStore = store.onDidChange(scheduleRefresh);
@@ -147,13 +133,11 @@ export function registerHyNavigation(context: vscode.ExtensionContext, deps: HyN
   context.subscriptions.push(
     service,
     lenses,
-    diagnostics,
     vscode.workspace.onDidChangeConfiguration((event) => {
       if (event.affectsConfiguration(`${CONFIG_SECTION}.rawSideEffects`)) {
-        catalog = readRawCatalog(deps.output);
-      }
-      if (event.affectsConfiguration(CONFIG_SECTION)) {
-        scheduleRefresh();
+        // 目録が変わったので、全体の索引を取り直す(証拠は hy-index が目録から作る)
+        rawCatalogExtra = writeRawCatalogExtra(context.globalStorageUri.fsPath);
+        service.reindexAll();
       }
     }),
     vscode.commands.registerCommand('doeff-runner.hy.toggleRawOnly', async () => {
@@ -223,6 +207,5 @@ export function registerHyNavigation(context: vscode.ExtensionContext, deps: HyN
       );
     }
   }
-  updateDiagnostics();
   service.start();
 }

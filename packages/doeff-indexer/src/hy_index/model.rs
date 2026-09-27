@@ -1,12 +1,13 @@
-//! `hy-index` の出力の型 — 契約 `hy-index-contract.md`(版 1)と `hy-index-contract-v2.md`(版 2 の追加分)の JSON の形そのもの。
+//! `hy-index` の出力の型 — 契約 `hy-index-contract.md`(版 1)・`hy-index-contract-v2.md`(版 2)・`hy-index-contract-v3.md`(版 3 = 生の副作用の証拠)の JSON の形そのもの。
 //! JSON への変換は CLI の出力の 1 か所(`main.rs`)だけが行う。
 
 use serde::Serialize;
 
 pub use super::position::{Position, Range};
+pub use super::raw_catalog::RawCategory;
 
 /// 契約の版。形を変える時は契約と一緒に上げる。
-pub const CONTRACT_VERSION: u32 = 2;
+pub const CONTRACT_VERSION: u32 = 3;
 
 /// `hy-index` の出力の全体。
 #[derive(Debug, Clone, Serialize)]
@@ -14,7 +15,77 @@ pub struct HyIndex {
     pub version: u32,
     pub root: String,
     pub files: Vec<HyFileIndex>,
+    /// 経由の証拠を計算したか(`--root` の全体の実行だけが計算する。1 file や `--file` の実行は "not-computed")。
+    pub raw_via: RawViaScope,
+    /// `--raw-catalog-extra` の中で読めなかった値の理由。
+    pub raw_catalog_problems: Vec<String>,
 }
+
+/// 経由の証拠の計算の範囲。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub enum RawViaScope {
+    #[serde(rename = "computed")]
+    Computed,
+    #[serde(rename = "not-computed")]
+    NotComputed,
+}
+
+/// 証拠の強さ — 強い = import を通した名前・組み込み、弱い = method 名だけ。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub enum RawStrength {
+    #[serde(rename = "strong")]
+    Strong,
+    #[serde(rename = "weak")]
+    Weak,
+}
+
+/// 何で見つけたか。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub enum RawEvidenceKind {
+    #[serde(rename = "name")]
+    Name,
+    #[serde(rename = "builtin")]
+    Builtin,
+    #[serde(rename = "method")]
+    Method,
+}
+
+/// 生の副作用の証拠 1 件(参照 1 つの位置)。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct RawEvidence {
+    pub category: RawCategory,
+    /// import を通した完全な名前(`httpx.post`)か、組み込み・method(`.read_text`)の名前。
+    pub name: String,
+    pub kind: RawEvidenceKind,
+    pub strength: RawStrength,
+    /// 証拠の在る file(直接なら定義と同じ file)。
+    pub path: String,
+    pub range: Range,
+}
+
+/// 経路の 1 段 — 呼んだ定義。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct RawStep {
+    pub path: String,
+    /// その file の `definitions` の添字。
+    pub index: usize,
+    pub name: String,
+}
+
+/// 呼ぶ定義を通した証拠。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct RawVia {
+    pub through: Vec<RawStep>,
+    pub evidence: RawEvidence,
+}
+
+/// 定義 1 つの判定。
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+pub struct RawMark {
+    pub direct: Vec<RawEvidence>,
+    pub via: Vec<RawVia>,
+}
+
 
 /// 1 つの file の索引。
 #[derive(Debug, Clone, Serialize)]
@@ -41,6 +112,8 @@ pub struct Definition {
     pub params: Vec<String>,
     /// defclass / defrecord の基底の記号(書かれたとおり、dotted も 1 つ)。それ以外の kind は常に空。
     pub bases: Vec<String>,
+    /// 生の副作用の証拠(版 3 — 規則の判定ではなく事実。判定の正本は linter)。
+    pub raw: RawMark,
 }
 
 /// 定義の種類(契約の kind の一覧ちょうど)。

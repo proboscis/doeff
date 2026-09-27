@@ -404,12 +404,7 @@
               "type": "string"
             }
           },
-          "markdownDescription": "Hy の handler の「生の副作用」の目録に足す名前(分類 → 名前の配列)。分類は http / async / time / random / file / process / env / network / db / thread。名前は dotted の名前(`mylib.http` は `mylib.http.get` も拾う・末尾 `*` 可)、`.name` は method 名(弱い根拠)、`builtin:name` は組み込み。"
-        },
-        "doeff-runner.hy.rawSideEffectDiagnostics": {
-          "type": "boolean",
-          "default": false,
-          "markdownDescription": "生の副作用に直接触る defk / deff / defp を問題の一覧に警告として出す(業務の Program は effect で出し、実 I/O は handler に置く決まりの違反の候補)。"
+          "markdownDescription": "生の副作用の目録(doeff-indexer の同梱の data)に足す名前(分類 → 名前の配列)。hy-index に `--raw-catalog-extra` で渡し、証拠は hy-index が集める。分類は http / async / time / random / file / process / env / network / db / thread。名前は dotted の名前(`mylib.http` は `mylib.http.get` も拾う・末尾 `*` 可)、`.name` は method 名(弱い根拠)、`builtin:name` は組み込み。読めない値の理由は Output に出る。"
         }
       }
     },

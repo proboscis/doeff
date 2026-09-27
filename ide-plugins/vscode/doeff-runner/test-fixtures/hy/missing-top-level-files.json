@@ -1,1 +1,6 @@
-{"version": 2, "root": "/ws"}
+{
+ "version": 3,
+ "root": "/ws",
+ "raw_via": "computed",
+ "raw_catalog_problems": []
+}

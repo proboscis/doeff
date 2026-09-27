@@ -1,8 +1,8 @@
-// 生の副作用の印の中身 — パネルの印・コード上の注記の見出し・hover の行・問題の一覧の警告を、判定の結果から作る純粋な関数。
-// 主役は handler(defhandler と effect の節)。defk / deff / defp は直接触る時だけ印を付ける(決まりの違反の候補)。
+// 生の副作用の印の中身 — パネルの印・コード上の注記の見出し・hover の行を、hy-index が出す証拠(事実)から作る純粋な関数。
+// 事実の表示(ナビゲーションの情報)であって違反の表示ではない。違反は linter が正本で、その表示は lint の側が持つ。
+// handler(defhandler と effect の節)は直接も経由も、defk / deff / defp は直接の証拠だけを出す。
 
 import type { HyDefinitionKind, HyRange } from './contract';
-import type { DefRef } from './effects';
 import { PROGRAM_KINDS } from './effects';
 import { summarize, summaryText, type RawEvidence, type RawMark } from './rawEffects';
 
@@ -49,7 +49,7 @@ export function rawLensTitle(mark: RawMark, role: RawRole): string | undefined {
   if (mark.direct.length > 0) {
     return role === 'handler'
       ? `⚡ 生の副作用: ${firstPerCategory(mark.direct)}`
-      : `⚠ 生の副作用に直接触っています: ${firstPerCategory(mark.direct)}(業務の Program は effect で出す決まり)`;
+      : `⚡ 生の副作用に直接触る: ${firstPerCategory(mark.direct)}`;
   }
   if (role === 'handler' && mark.via.length > 0) {
     const first = mark.via[0];
@@ -88,32 +88,4 @@ export function rawHoverLines(mark: RawMark, role: RawRole, limit: number): stri
   const shown = lines.slice(0, limit);
   const rest = lines.length - shown.length;
   return ['**生の副作用**', ...shown, ...(rest > 0 ? [`- 他 ${rest} 件`] : [])];
-}
-
-/** 問題の一覧に出す警告 1 件。 */
-export interface RawDiagnostic {
-  readonly path: string;
-  readonly range: HyRange;
-  readonly message: string;
-}
-
-/** 直接 生に触る defk / deff / defp の証拠ごとに警告を作る(handler は対象外 — 実 I/O の置き場なので)。 */
-export function rawProgramDiagnostics(programs: readonly DefRef[], directOf: (ref: DefRef) => readonly RawEvidence[]): RawDiagnostic[] {
-  const found: RawDiagnostic[] = [];
-  for (const ref of programs) {
-    if (rawRoleOf(ref.definition.kind) !== 'program') {
-      continue;
-    }
-    for (const e of directOf(ref)) {
-      found.push({
-        path: e.path,
-        range: e.range,
-        message:
-          `${ref.definition.kind} ${ref.definition.name} が生の副作用(${e.category}: ${e.name}` +
-          `${e.strength === 'weak' ? '・method 名だけの弱い根拠' : ''})に直接触っています。` +
-          `業務の Program は effect で出し、実 I/O は handler の中に置く決まりです。`
-      });
-    }
-  }
-  return found;
 }

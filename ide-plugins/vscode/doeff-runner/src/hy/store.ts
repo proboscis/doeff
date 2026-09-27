@@ -28,6 +28,34 @@ export interface NamedDefinition {
   readonly definition: HyDefinition;
 }
 
+/** 定義を file の版をまたいで同一視するキー(kind・入れ物・名前 — 同じキーが複数あれば順に対応させる)。 */
+function definitionKey(definition: HyDefinition): string {
+  return `${definition.kind}|${definition.container ?? ''}|${definition.name}`;
+}
+
+/**
+ * 部分の実行(1 file・--file)の結果に、直前の全体の実行の経由の証拠(file をまたぐ事実)を引き継ぐ。
+ * 直接の証拠は新しい結果のまま使う。引き継いだ経由の証拠は次の全体の実行まで古いことがある。
+ */
+export function carryOverCrossFile(previous: HyFileIndex | undefined, next: HyFileIndex): HyFileIndex {
+  if (previous === undefined) {
+    return next;
+  }
+  const byKey = new Map<string, HyDefinition[]>();
+  for (const definition of previous.definitions) {
+    const key = definitionKey(definition);
+    byKey.set(key, [...(byKey.get(key) ?? []), definition]);
+  }
+  const definitions = next.definitions.map((definition) => {
+    const earlier = byKey.get(definitionKey(definition))?.shift();
+    if (earlier === undefined || definition.raw.via.length > 0) {
+      return definition;
+    }
+    return { ...definition, raw: { direct: definition.raw.direct, via: earlier.raw.via } };
+  });
+  return { ...next, definitions };
+}
+
 /** path の比べ方を 1 つに決める(区切り・`..` の揺れを消す)。 */
 export function normalizeKey(filePath: string): string {
   return path.normalize(filePath);
@@ -106,7 +134,9 @@ export class HyIndexStore implements HyIndexView {
   /** 何 file かの索引を足す・差し替える。 */
   upsert(root: string, files: readonly HyFileIndex[]): void {
     for (const file of files) {
-      this.files.set(normalizeKey(file.path), { root, file });
+      const key = normalizeKey(file.path);
+      // 部分の実行は file をまたぐ経由の証拠を持たないので、直前の全体の結果を引き継ぐ
+      this.files.set(key, { root, file: carryOverCrossFile(this.files.get(key)?.file, file) });
     }
     this.emit();
   }

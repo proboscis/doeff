@@ -59,28 +59,29 @@ The extension bundles `doeff-indexer` binaries for common platforms (macOS, Linu
 - **コード上の注記**: effect のクラスの上に「handler N 個」「撃つ場所 M 箇所」、defhandler の上に「扱う effect: …」、defk / deff / defp の上に「撃つ effect N 個」「呼び出し元 M 箇所」を出します。押すと 1 件なら直接移動し、複数なら peek で一覧を出します。
 - **ナビゲーションパネル**(activity bar の「doeff Hy」): Effects(module ごとの effect → Handlers と Performed by)、Handlers(handler → 扱う節 → 同じ effect の他の handler)、Programs(defk / deff / defp → Performs・Calls・Called by。effect からは Handlers へ降りられます)、Current file(今開いている file の分だけ)。項目を押すとその位置へ移動し、右クリックで「参照を表示」「呼び出し階層を表示」を選べます。view の上に絞り込みと更新のボタンがあります。子は展開した時に作り、既に開いた経路に戻る項目は「循環」として止めます。
 
-### 生の副作用に触る handler の印
+### 生の副作用に触る handler の印(事実の表示)
 
-http・asyncio・時刻・乱数・file・process・環境変数・network・db・thread に直接触る定義に印を付けます。handler(defhandler と effect の節)を見分けるための機能で、同じ effect を実際の I/O で扱う本番の handler と、純粋な模擬の handler を並べて区別できます。
+http・asyncio・時刻・乱数・file・process・環境変数・network・db・thread に直接触る定義に印を付けます。handler(defhandler と effect の節)を見分けるための機能です。同じ effect を実際の I/O で扱う本番の handler と、純粋な模擬の handler を並べて区別できます。
 
-- **判定**: 索引の imports・references・calls と定義の範囲だけから決めます(実行はしません)。参照を import で完全な名前に直して(`(import subprocess :as sp)` の `sp.run` は `subprocess.run`、`(import asyncio [sleep])` の `sleep` は `asyncio.sleep`)、目録と比べます。
+- **証拠を集めるのは doeff-indexer(`hy-index`・契約 版 3 の `raw`)** です。目録は doeff-indexer に同梱の `packages/doeff-indexer/data/raw_side_effects.json` の 1 か所にあり、拡張は証拠を表示するだけで目録を持ちません。
+- これは事実の表示で、規則の違反の表示ではありません。何が違反かの判定の正本は linter です。
+- **証拠の集め方**(hy-index の中): 索引の imports・references・calls と定義の範囲だけを使います(実行はしません)。参照を import で完全な名前に直して(`(import subprocess :as sp)` の `sp.run` は `subprocess.run`)、目録と比べます。
   - 強い根拠: import を通した名前と、呼び出しの頭の組み込み `open`。
-  - 弱い根拠(印に「?」): method 名だけの一致(`(.read-text p)` など)。pathlib の method は、file が pathlib を import しているか、定義の中で参照している時だけ数えます。
+  - 弱い根拠(印に「?」): method 名だけの一致(`(.read-text p)` など)。pathlib の method は、pathlib が見える時だけ数えます。
   - 数えない物: 例外の型(`httpx.ReadTimeout` など)と、純粋な module(`urllib.parse` など)。
-- **経由**: 定義が呼ぶ workspace の中の定義(同じ file か import で決まった物)が生に触るなら、「経由で触る」とします。経路つきで深さ 4 まで辿り、循環は止めます。
+- **経由**: 呼ぶ定義(同じ file か import で決まった物)が生に触るなら「経由で触る」とします。経路つきで深さ 4 まで辿ります。file をまたぐので、起動時の全体の索引で計算します。編集中の file には、直前の全体の結果を引き継ぎます。
 - **印の出し方**:
   - Handlers パネル: 直接触る handler と節は `$(zap)` と「生: http, time」、経由だけなら `$(debug-stackframe)` と「経由: time」。Effects パネルの handler の節にも同じ印が付きます。view の上の `$(zap)` で「生の副作用に触る handler だけ表示」を切り替えます。
-  - コード上の注記: defhandler と effect の節の上に「⚡ 生の副作用: http(httpx.post・42 行)」(経由だけなら「↳ 経由で生の副作用: …」)。押すと証拠の位置の一覧です。
+  - コード上の注記: defhandler と effect の節の上に「⚡ 生の副作用: http(httpx.post・42 行)」(経由だけなら「↳ 経由で生の副作用: …」)。押すと証拠の位置の一覧です。defk / deff / defp は直接の証拠だけを「⚡ 生の副作用に直接触る: …」と出します。
   - hover: 証拠の一覧(分類・名前・行・直接か経由か、経由なら経路)。
-  - defk / deff / defp が直接触る時: Programs パネルに `$(warning)`、注記に「⚠ 生の副作用に直接触っています」。業務の Program は生の I/O を effect で出し、実 I/O は handler の中に置く決まりなので、違反の候補です。
-- **設定**:
-  - `doeff-runner.hy.rawSideEffects`: 目録に足す名前(分類 → 名前の配列)。dotted の名前、`.name` は method 名、`builtin:name` は組み込みです。
-  - `doeff-runner.hy.rawSideEffectDiagnostics`: 直接触る defk / deff / defp を問題の一覧に警告として出します(既定は切)。
+- **設定** `doeff-runner.hy.rawSideEffects`: 目録に足す名前(分類 → 名前の配列)です。hy-index に `--raw-catalog-extra` で渡します。
+  - 名前の書き方: dotted の名前、`.name` は method 名、`builtin:name` は組み込み。
+  - 読めない値の理由は Output に出ます。
 - **見逃す形**: handler の引数で渡された client や関数(`[client]`・`[#^ Callable jev]`)の上の method 呼び出しは、型の注釈(`#^ httpx.Client client`)が無いと見分けられません。
 
 ### 索引の取り方
 
-- 索引は `doeff-indexer hy-index` が出す JSON(版 2。版 2 だけを受け付けます)です。起動時に Hy の file を持つ workspace の folder ごとに `hy-index --root <folder>` を背景で実行し、編集中は 0.5 秒待ってから `--stdin --path <file>` でその file だけを取り直します。file の作成・削除・改名も反映します。
+- 索引は `doeff-indexer hy-index` が出す JSON(版 3。版 3 だけを受け付けます)です。起動時に Hy の file を持つ workspace の folder ごとに `hy-index --root <folder>` を背景で実行し、編集中は 0.5 秒待ってから `--stdin --path <file>` でその file だけを取り直します。file の作成・削除・改名も反映します。
 - `doeff-indexer` は上の「Binary Discovery Order」と同じ順で探します。見つかった binary が `hy-index` を知らない古い版なら、1 度だけ通知を出して Hy の機能を止めます(Python 向けの機能はそのまま動きます)。
 - 子 process は同時に 1 つだけ走らせます。失敗・契約に合わない出力・file ごとの読み取りの問題は Output の `doeff-runner` に理由つきで出ます。
 

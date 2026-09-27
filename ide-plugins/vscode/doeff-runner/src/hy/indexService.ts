@@ -100,6 +100,13 @@ export class HyIndexService implements vscode.Disposable {
     }
   }
 
+  /** 全 folder の root 全体の索引を取り直す(目録の設定が変わった時)。 */
+  reindexAll(): void {
+    for (const folder of vscode.workspace.workspaceFolders ?? []) {
+      void this.indexFolderIfHy(folder);
+    }
+  }
+
   /** folder に Hy の file が 1 つでもあれば、root 全体の索引を取る(Python だけの workspace では走らせない)。 */
   private async indexFolderIfHy(folder: vscode.WorkspaceFolder): Promise<void> {
     const any = await vscode.workspace.findFiles(
@@ -234,6 +241,9 @@ export class HyIndexService implements vscode.Disposable {
         const unreachable: never = outcome;
         throw new Error(`網羅されていない結果: ${JSON.stringify(unreachable)}`);
       }
+    }
+    for (const problem of outcome.document.rawCatalogProblems) {
+      this.log.appendLine(`[hy-index] 生の副作用の目録の追加を読めない: ${problem}`);
     }
     for (const rejected of outcome.rejected) {
       this.log.appendLine(`[hy-index] 契約に合わない file を捨てた ${rejected.path ?? '(path 不明)'}: ${rejected.reason}`);

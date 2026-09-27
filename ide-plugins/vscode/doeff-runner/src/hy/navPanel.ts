@@ -255,7 +255,7 @@ export class HyNavTreeProvider implements vscode.TreeDataProvider<NavNode>, vsco
     this.changed.dispose();
   }
 
-  /** 節の表示 — handler・節・プログラムには生の副作用の印(直接 = zap、経由 = 呼び出しの印、プログラム = 警告)を付ける。 */
+  /** 節の表示 — handler・節・プログラムには生の副作用の印(直接 = zap、経由 = 呼び出しの印)を付ける。 */
   async getTreeItem(node: NavNode): Promise<vscode.TreeItem> {
     const item = toTreeItem(node);
     const ref = node.tag === 'effect' ? undefined : nodeDefinition(node);
@@ -267,7 +267,8 @@ export class HyNavTreeProvider implements vscode.TreeDataProvider<NavNode>, vsco
     if (badge === undefined) {
       return item;
     }
-    const icon = badge.tag === 'via' ? 'debug-stackframe' : role === 'program' ? 'warning' : 'zap';
+    // 事実の印(直接 = zap、経由 = 呼び出しの印)。違反の表示は linter の側が持つ
+    const icon = badge.tag === 'via' ? 'debug-stackframe' : 'zap';
     item.iconPath = new vscode.ThemeIcon(icon);
     item.description = `${badge.text} · ${typeof item.description === 'string' ? item.description : ''}`;
     return item;
