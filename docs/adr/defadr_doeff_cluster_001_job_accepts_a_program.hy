@@ -4,7 +4,11 @@
 ;;;
 ;;; 出自 = operator 裁定 2026-09-27(Claude Code の会話・agora-redesign #829・逐語は :problem の fact)。
 ;;;
-;;; 戻し方: この ADR を足した commit を revert する(ADR の file 1 つと enforcement 台帳の数が消える)。
+;;; 改訂 2026-09-27(agora-redesign #829): R5 の記録係を「未決」から決定へ書き換えた — 記録と再生は Program の中の
+;;; with-handlers に置く handler で、runner は差し込まない(逐語は :problem の fact)。
+;;;
+;;; 戻し方: この ADR を足した commit を revert する(ADR の file 1 つと enforcement 台帳の数が消える)。R5 の改訂だけを
+;;; 戻すなら、その改訂の commit を revert する(R5 が「未決」の文へ、law runner-inserts-no-recorder が消える)。
 
 (require doeff-adr.macros [defadr rule law])
 (import doeff-adr.macros [fact interpretation counterexample])
@@ -20,13 +24,13 @@
 ;; 減らした便は同じ便で台帳を削る(削り忘れも赤)。
 ;;   scheduled       — scheduler の handler を runner が包む(service と task で 1 つずつ)
 ;;   env-handlers    — env の関数(import path)が組んだ handler の組を runner が包む(service と task で 1 つずつ)
-;;   recording-layer — effect の記録係を runner が足す(service だけ・扱いは未決 — R5)
+;;   recording-layer — effect の記録係を runner が足す(service だけ・R5 の決定で Program の中の handler へ移して 0 にする)
 ;; ---------------------------------------------------------------------------
 
 (val RUNNER-HANDLER-ROSTER
   {"scheduled" 2
    "env-handlers" 2
-   "recording-layer" 1})
+   "recording-layer" 1})  ; R5 の決定で 0 へ向ける(law runner-inserts-no-recorder)
 
 (val JOB-ENTRY "packages/doeff-cluster/src/doeff_cluster/job_entry.hy")
 
@@ -55,7 +59,13 @@
        :evidence "packages/doeff-cluster/src/doeff_cluster/job_entry.hy(run-service・task-outcome・env-handlers・recording-layer)")
      (fact
        "service の宣言は :env(env の関数の import path)・:config(本体の引数)・:env-config(env だけが読む設定)を持ち、coordinator へは 2 つを重ねた平たい run.config が渡る。"
-       :evidence "packages/doeff-cluster/src/doeff_cluster/service_model.hy(ServiceDef の env・config・env-config)")]
+       :evidence "packages/doeff-cluster/src/doeff_cluster/service_model.hy(ServiceDef の env・config・env-config)")
+     (fact
+       "operator 裁定 2026-09-27(記録係・逐語 2 つ): \"hmm, it maybe useful, but would it be handler matter, or vm instrument? does algebraic effect handlers support such uses in general?\" / \"then why are we not using handler to do what you want?\""
+       :evidence "Claude Code の会話(2026-09-27・agora-redesign #829)— coordinator 経由")
+     (fact
+       "今の記録係は job_entry の recording-layer が、run.config の record 欄を見て env の handler の一番内側に足す(recording-handler・record_handlers.hy)。記録係は effect を外へ撃ち直して答えを書き留め、継続を再開する『間に入る handler』の形をしている。"
+       :evidence "packages/doeff-cluster/src/doeff_cluster/job_entry.hy(recording-layer)・packages/doeff-cluster/src/doeff_cluster/record_handlers.hy")]
   :context
     [(interpretation
        "doeff の handler は動的な scope の式であり、Program の外に「handler の組」を別の値として持つと、同じ Program が実行器ごとに違う意味になる。handler を Program の中の with-handlers に置けば、job の意味は Program の値だけで決まり、手元の run・模擬・cluster の実行が同じ値を同じ意味で走らせる。")
@@ -68,7 +78,7 @@
      (rule R2 "実行器 job_entry は既定の handler を 1 つも足さない。今の scheduled の包みと env の関数(--env)の包みも外す。")
      (rule R3 "service と task は同じ API(Program の値 1 つ)で起こす。service だけの --factory・--config の入口はやめる。")
      (rule R4 "service の宣言の :env・:config・:env-config をやめる。設定は Program の中の Ask と、それに答える os.environ を読む handler(Program の側で並べる)で読む。宣言が process へ渡す環境変数は、宣言の値として持つ。")
-     (rule R5 "記録係(recording-handler・job_entry の recording-layer)の扱いは未決(operator と議論中 — 案 A = Program の側で包む・案 B = 実行器の観測の口)。決まるまで今の記録係は RUNNER-HANDLER-ROSTER に数えて残し、新しく足さない。")
+     (rule R5 "記録と再生は handler で行う(2026-09-27 決定 — 旧文『未決・案 A = Program の側で包む / 案 B = 実行器の観測の口』を置き換える)。形は今の effect-recorder と同じ間に入る handler: 記録は effect を外へ撃ち直して答えを書き留め、継続を再開する。再生は同じ場所で記録から答える。置き場は Program の中の with-handlers で、翻訳の handler と土台の handler の間(外の世界との境目 — 汎用の effect だけを記録する)。記録か再生かは置く handler で選び、どちらを置くかは Ask と os.environ を読む handler で決める。runner は記録係を差し込まない(今の recording-layer と run.config の record 欄をやめる)。WithObserve(見るだけで答えを見ない)はこの用途に使わず、tracing・ログの用途に限る。")
      (rule R6 "移行の間、runner が足している handler の呼び出しは RUNNER-HANDLER-ROSTER の数を超えない(新設は赤)。減らした便は同じ便で台帳を削る。")]
   :laws
     [(law job-entry-adds-no-handler
@@ -84,7 +94,15 @@
          [(counterexample "service は --factory と --config、task は --blob で起こす — 同じ job なのに入口が 2 つある(2026-09-27 の本線の形)")
           (counterexample "service の宣言に :env-config を書いて設定を渡す — 設定は Program の中の Ask と os.environ を読む handler で読める")]
        :enforced-by []
-       :wiring "未配線(2026-09-27)— 機械で検める針は無い。入口を 1 つにする便(agora-redesign #829)で検を足す")]
+       :wiring "未配線(2026-09-27)— 機械で検める針は無い。入口を 1 つにする便(agora-redesign #829)で検を足す")
+     (law runner-inserts-no-recorder
+       :statement "for_all job j: j の effect の記録・再生の handler は j の Program の中の with-handlers(翻訳の handler と土台の handler の間)に在り、runner(job_entry)は記録係を差し込まない — RUNNER-HANDLER-ROSTER の recording-layer は 0"
+       :counterexamples
+         [(counterexample "job_entry が run.config の record 欄を見て、env の handler の一番内側に recording-handler を足す(2026-09-27 の本線の形)— 記録の有無が Program から読めない")
+          (counterexample "記録に WithObserve を使う — 見るだけで答えを見ないので、再生に要る答えが残らない(WithObserve は tracing・ログの用途に限る)")
+          (counterexample "記録係を土台の handler の外側に置く — 翻訳の前の業務の effect まで記録し、外の世界との境目の汎用の effect だけを記録する形にならない")]
+       :enforced-by ["test-adr-doe-cluster-001-runner-handler-ratchet"]
+       :wiring "未配線(2026-09-27)— 針は recording-layer の呼び出しを台帳の 1 から増やさないだけ。記録係を Program の中へ移す便(agora-redesign #829)が台帳の recording-layer を 0 に削った時に配線される")]
   :enforcement
     [(deftest test-adr-doe-cluster-001-runner-handler-ratchet
        ;; 針: job_entry が Program の外から handler を足す呼び出しは台帳を超えない(新設は赤)・台帳の削り忘れも赤。
