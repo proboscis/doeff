@@ -10,10 +10,15 @@
    yield HttpRequest(method=\"GET\", url=\"https://...\") -> HttpResponse
 
    failures-as-values = True asks the handler to answer HttpFailed (instead of raising the transport's exception) when no
-   response ever arrived — so a caller can read the failure as a value without importing the transport library."
+   response ever arrived — so a caller can read the failure as a value without importing the transport library.
+
+   log-each-request = True asks the handler to slog one \"http_request\" line per attempt (method, url, status, elapsed).
+   Off by default: a caller that polls (a node agent that PATCHes every minute) should not add a log line per request.
+   Added for agora-redesign #823 (item 2)."
 
   (defn __init__ [self method url * [headers None] [params None] [body None]
-                  [timeout-seconds 30.0] [max-retries 3] [follow-redirects True] [failures-as-values False]]
+                  [timeout-seconds 30.0] [max-retries 3] [follow-redirects True] [failures-as-values False]
+                  [log-each-request False]]
     (.__init__ (super))
     (setv normalized-method (.upper method))
     (when (not-in normalized-method _HTTP-METHODS)
@@ -29,7 +34,8 @@
           self.timeout-seconds timeout-seconds
           self.max-retries max-retries
           self.follow-redirects follow-redirects
-          self.failures-as-values failures-as-values))
+          self.failures-as-values failures-as-values
+          self.log-each-request log-each-request))
 
   (defn __repr__ [self]
     (+ "HttpRequest(" self.method " " (repr self.url) ")")))

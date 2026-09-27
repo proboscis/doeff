@@ -12,6 +12,7 @@ class HttpRequest(EffectBase):
     max_retries: int
     follow_redirects: bool
     failures_as_values: bool
+    log_each_request: bool
 
     def __init__(
         self,
@@ -25,6 +26,7 @@ class HttpRequest(EffectBase):
         max_retries: int = ...,
         follow_redirects: bool = ...,
         failures_as_values: bool = ...,
+        log_each_request: bool = ...,
     ) -> None: ...
 
     def __repr__(self) -> str: ...

@@ -37,6 +37,12 @@ def test_http_production_handler_get_slog_and_close_client() -> None:
     )
 
 
+def test_http_production_handler_logs_no_line_per_request_by_default() -> None:
+    http_request_deftest.test_http_production_handler_logs_no_line_per_request_by_default(
+        _deftest_interpreter
+    )
+
+
 def test_http_production_handler_post_json_body() -> None:
     http_request_deftest.test_http_production_handler_post_json_body(_deftest_interpreter)
 

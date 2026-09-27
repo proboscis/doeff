@@ -87,13 +87,14 @@
   (do!
     (try
       (<- response (_perform-request-once client request))
-      (<- (slog "http_request"
-                :method request.method
-                :url request.url
-                :status response.status
-                :final-url response.url
-                :elapsed-seconds response.elapsed-seconds
-                :attempt (+ attempt-index 1)))
+      (when request.log-each-request
+        (<- (slog "http_request"
+                  :method request.method
+                  :url request.url
+                  :status response.status
+                  :final-url response.url
+                  :elapsed-seconds response.elapsed-seconds
+                  :attempt (+ attempt-index 1))))
       (if (and (>= response.status 500) (< attempt-index request.max-retries))
           (do
             (<- (Await (sleep (_retry-delay-seconds attempt-index))))

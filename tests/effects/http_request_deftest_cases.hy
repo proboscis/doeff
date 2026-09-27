@@ -74,7 +74,7 @@
                 (<- inner-pair
                     (Listen (do!
                               (<- resp (HttpRequest "GET" "https://example.test/start"
-                                         :params {"a" "1"}))
+                                         :params {"a" "1"} :log-each-request True))
                               resp)
                             :types #(SlogEffect)))
                 inner-pair))))))
@@ -103,6 +103,30 @@
               "elapsed_seconds" 0.2
               "attempt" 1}))
   (assert (= client.close-calls 1)))
+
+
+(deftest test-http-production-handler-logs-no-line-per-request-by-default
+  ;; agora-redesign #823 項目 2: 要求ごとの slog は opt-in(log-each-request)— 毎分撃つ呼び手の log を要求ごとに増やさない。
+  (val client (FakeAsyncClient
+                [(make-response 200 {} b"ok" "ok" "https://example.test/start" 0.2)]))
+  (<- pair
+      (slog-handler
+        (listen-handler
+          ((await-handler)
+            ((http-production-handler :client-factory (fn [] client)
+                                      :sleep noop-sleep)
+              (do!
+                (<- inner-pair
+                    (Listen (do!
+                              (<- resp (HttpRequest "PATCH" "https://example.test/start"))
+                              resp)
+                            :types #(SlogEffect)))
+                inner-pair))))))
+  (val response (get pair 0))
+  (val entries (get pair 1))
+  (assert (= (. response status) 200))
+  (assert (= (len entries) 0) entries)
+  (assert (= (. (HttpRequest "GET" "https://example.test/") log-each-request) False)))
 
 
 (deftest test-http-production-handler-post-json-body

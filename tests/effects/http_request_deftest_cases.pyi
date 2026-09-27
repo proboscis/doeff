@@ -21,6 +21,11 @@ def test_http_production_handler_get_slog_and_close_client(
 ) -> None: ...
 
 
+def test_http_production_handler_logs_no_line_per_request_by_default(
+    doeff_interpreter: DeftestInterpreter,
+) -> None: ...
+
+
 def test_http_production_handler_post_json_body(
     doeff_interpreter: DeftestInterpreter,
 ) -> None: ...
