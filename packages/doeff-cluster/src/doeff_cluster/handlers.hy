@@ -1,8 +1,8 @@
 ;; worker の実 I/O。宣言の file・コードの展開(git archive)・子 process・状態の file・停止信号。
 ;; どれもループを塞がない: 展開と子 process は Popen で起動し、結果は ObserveWorld で観測する。
-(require doeff-hy.macros [defhandler <-])
+(require doeff-hy.macros [defhandler deff <-])
 (require doeff-hy.record [defrecord])
-(import json os re shutil signal subprocess sys tempfile time uuid)
+(import hashlib json os re shutil signal subprocess sys tempfile time uuid)
 (import enum [Enum])
 (import typing [IO])
 (import dataclasses [dataclass replace])
@@ -12,6 +12,7 @@
 (import .code_prepare [MARKER MARKER-FORMAT marker-problem scan])
 (import doeff [run])
 (import .cluster_model [PROTOCOL-FORMAT])
+(import .host_contract [HOST-CONTRACT])
 (import .runtime_env_model [runtime-env-of-json env-key current-platform EnvFailure EnvFailureKind])
 (import .env_prepare [ENV-MARKER])
 (import .env_upkeep [RootInfo PrepareLimits sweep-choice prepare-overdue env-capacity SWEEP-FLOOR-RATIO WHEEL-UNUSED-SECONDS])
@@ -19,7 +20,7 @@
 (import .worker_policy [kept-when-cut-off])
 (import .worker_model [JobSpec CodeState CodeView ProcessView WorldView StopStage ProbeState ProbeView
   DesiredJobs DesiredUnreadable ReadDesired ObserveWorld WorkerStopRequested PublishStatus JobPhase EnvDisk WarmEnv
-  PrepareCode PrepareEnv SweepEnvs ForgetProbes StartJob SignalJob ReapJob RetireJob ReleaseLeases ProbeEntry spec-hash split-code-key probe-args CodeLayout
+  PrepareCode PrepareEnv SweepEnvs ForgetProbes StartJob SignalJob ReapJob RetireJob ReleaseLeases ProbeEntry spec-hash split-code-key probe-args probe-refusal CodeLayout
   ENV-KEY-PREFIX])
 
 (defn #^ tuple env-placement [#^ (| dict None) declared #^ str revision]  ; defk にできない: 宣言の読み(Program の外の I/O の道具)が呼ぶ
@@ -40,7 +41,16 @@
            :base (.get job "base") :handoff (bool (.get job "handoff" False))
            :ready-instance (.get job "readyInstance") :runtime-env runtime :env-key key
            ;; 入れ替えの諦め(coordinator の期限 — 返事の handoff の job だけが持つ・無ければ偽)。
-           :handoff-abandoned (bool (.get job "handoffAbandoned" False))))
+           :handoff-abandoned (bool (.get job "handoffAbandoned" False))
+           ;; Program の job(改訂 1 の F・G): 詰めた Program の置き場のキーと、子の環境変数。
+           :program (.get job "program")
+           :environ (tuple (sorted (.items (.get job "environ" {}))))))
+
+
+(deff program-file [#^ Path program-dir #^ str sha]  ; defk にできない: worker の I/O の道具(CoordinatorLink・ProcessHost)が呼ぶ純粋な読み
+  {:pre [(: program-dir Path) (: sha str)] :post [(: % Path)] :tags {:context "doeff-cluster" :role "judgment"}}
+  "詰めた Program の置き場のキー → この worker の cache の file(CoordinatorLink が取って書き、ProcessHost が子へ渡す — 定義点は 1 つ)。"
+  (/ program-dir (+ sha ".json")))
 
 
 (defn #^ (| DesiredJobs DesiredUnreadable) parse-desired [#^ str text]
@@ -512,9 +522,8 @@
 
 
 (defn #^ list probe-targets [#^ JobSpec spec]
-  "検める import path の列: 入口の module(spec.entry)と、probe-args の factory と env(空は除く)。"
-  (setv args (list (probe-args spec)))
-  (+ [spec.entry] (lfor flag ["--factory" "--env"] :if (in flag args) :setv v (get args (+ (.index args flag) 1)) :if v v)))
+  "検める import path の列: 入口の module(spec.entry)だけ(Program の job は関数の参照を持たない — 版と復元は起こした子が検める)。"
+  [spec.entry])
 
 
 (defn #^ tuple probe-launches [#^ list waiting #^ frozenset busy]  ; defk にできない: ProbeStore(Program の外の I/O の道具)が呼ぶ純粋な判断
@@ -644,6 +653,12 @@
     (when (and (is-not prior None) (= prior.state ProbeState.FAILED))
       (setv (get self.last-failure key) prior.detail))
     (setv (get self.attempts key) (+ (.get self.attempts key 0) 1))
+    ;; 旧い形の service の spec は process を起こさずに失敗とする(理由つき — 計画 2.8 の入口 15)。
+    (setv refusal (probe-refusal action.spec))
+    (when (is-not refusal None)
+      (setv now-ms (int (* (time.time) 1000)))
+      (setv (get self.done key) (.view self action.spec ProbeState.FAILED now-ms :detail refusal :failed-ms now-ms))
+      (return))
     ;; 直前が時間切れの spec は単独の束(鍵の 3 つ目 = spec-hash)。
     (setv solo (in key self.timed-out))
     (.discard self.timed-out key)
@@ -737,7 +752,9 @@
                   #^ str [uv "uv"] #^ (| str None) [jobs-dir None]]
     (setv self.log-dir (Path log-dir) self.hy-command hy-command self.table {} self.extra-env (or extra-env {})
           self.layout layout self.uv uv
-          self.jobs-dir (if jobs-dir (Path jobs-dir) (/ (. (Path log-dir) parent) "jobs"))))
+          self.jobs-dir (if jobs-dir (Path jobs-dir) (/ (. (Path log-dir) parent) "jobs"))
+          ;; 詰めた Program の cache(CoordinatorLink が /programs/<sha> から取って書く — 既定は同じ state dir の programs)。
+          self.program-dir (/ (. (Path log-dir) parent) "programs")))
 
   (defn #^ Path work-dir [self #^ str name]
     "実行環境の job の子の cwd(job の名ごとの空の dir)。"
@@ -751,7 +768,12 @@
                       "DOEFF_WORKER_INSTANCE" instance
                       "DOEFF_WORKER_SPEC_HASH" (spec-hash spec)
                       "DOEFF_WORKER_PLACEMENT" (if (is spec.placement None) "" (str spec.placement))
-                      "DOEFF_WORKER_PID" (str (os.getpid))})
+                      "DOEFF_WORKER_PID" (str (os.getpid))}
+          ;; Program の job(改訂 1 の F・H): 詰めた Program の file を引数と環境変数(宿の契約 HOST-CONTRACT)で渡す。
+          program-args (if spec.program #("--program" (str (program-file self.program-dir spec.program))) #())
+          environ (dict spec.environ))
+    (when spec.program
+      (setv (get worker-env HOST-CONTRACT.program-env) (str (program-file self.program-dir spec.program))))
     (if spec.runtime-env
         (do (setv declared (json.loads spec.runtime-env)
                   work (self.work-dir spec.name))
@@ -760,15 +782,15 @@
             (when (.exists work) (shutil.rmtree work))
             (.mkdir work :parents True)
             #([sys.executable "-m" "doeff_cluster.shim" "10" "--" self.uv "run" "--no-sync" "--frozen"
-               "--project" (env-project-dir code-path declared) "hy" "-m" spec.entry #* spec.args]
+               "--project" (env-project-dir code-path declared) "hy" "-m" spec.entry #* spec.args #* program-args]
               (str work)
               (child-environment (dict os.environ) self.extra-env
-                                 (dfor v (.get declared "envVars" []) (get v "name") (get v "value"))
+                                 (| (dfor v (.get declared "envVars" []) (get v "name") (get v "value")) environ)
                                  (| worker-env {"DOEFF_RUNTIME_ENV" spec.runtime-env
                                                 "DOEFF_RUNTIME_ENV_KEY" spec.env-key}))))
-        #([sys.executable "-m" "doeff_cluster.shim" "10" "--" self.hy-command "-m" spec.entry #* spec.args]
+        #([sys.executable "-m" "doeff_cluster.shim" "10" "--" self.hy-command "-m" spec.entry #* spec.args #* program-args]
           code-path
-          (| (dict os.environ) self.extra-env {"PYTHONPATH" (.pythonpath self.layout code-path)} worker-env))))
+          (| (dict os.environ) self.extra-env environ {"PYTHONPATH" (.pythonpath self.layout code-path)} worker-env))))
 
   (defn start [self #^ StartJob action]
     (setv spec action.spec)
@@ -871,7 +893,7 @@
   (setv #(revision runtime key) (env-placement (.get task "runtimeEnv") (get task "revision")))
   (JobSpec (+ "task/" id) JOB-ENTRY
            #("task" "--blob" (str (/ task-dir f"{id}.blob")) "--result" (str (/ task-dir f"{id}.result"))
-             "--env" (get task "env") "--versions" (json.dumps (get task "versions") :sort-keys True))
+             "--versions" (json.dumps (get task "versions") :sort-keys True))
            revision :once True :detached (bool (.get task "detached" False)) :runtime-env runtime :env-key key))
 
 
@@ -893,6 +915,8 @@
           ;; 自己停止を数える last-ok は宛先と無関係にこの link が持つので、宛先を替えても途絶の数え方は続く。
           self.endpoint (CoordinatorEndpoint url REPLY-SECONDS 0 :transport transport :actor name)
           self.task-dir (Path (or task-dir "tasks")) self.versions (or versions {})
+          ;; 詰めた Program の cache(/programs/<sha> から取る — ProcessHost と同じ state dir の programs・改訂 1 の F)。
+          self.program-dir (/ (. (Path (or task-dir "tasks")) parent) "programs")
           ;; 起動した時点を最後の連絡とみなす: 一度も届かない worker は fence の後に何も動かさない。
           self.last-ok (time.monotonic)
           ;; 最後に受け取った job と task の宣言(途絶の間も動かす書き手と切り離した task を選ぶ — worker_policy.kept-when-cut-off)。
@@ -930,6 +954,25 @@
     (setv self.task-echo (dfor task tasks :if (.get task "detached")
                                (get task "id") (dfor #(k v) (.items task) :if (!= k "blob") k v)))
     (tuple (gfor task tasks (task-spec task self.task-dir))))
+
+  (defn #^ None accept-programs [self #^ tuple jobs]
+    "宣言の Program の job のうち、cache に無い詰めた Program を coordinator の /programs/<sha> から取って書く(改訂 1 の F)。
+     中身の sha256 がキーと合わない物は書かない。取れなければ書かずに次の拍で試し直す(子は file が無いので起動の時に理由つきで落ちる)。"
+    (.mkdir self.program-dir :parents True :exist-ok True)
+    (for [sha (sorted (sfor j jobs :if j.program j.program))]
+      (setv path (program-file self.program-dir sha))
+      (when (not (.exists path))
+        (try
+          (setv response (.request self.endpoint "GET" (+ "/programs/" sha)))
+          (.raise-for-status response)
+          (setv body (.json response))
+          (when (!= (.hexdigest (hashlib.sha256 (.encode (get body "blob") "ascii"))) sha)
+            (raise (ValueError (+ "中身の sha256 がキーと合わない: " sha))))
+          (setv tmp (Path (+ (str path) ".tmp")))
+          (.write-text tmp (json.dumps {"blob" (get body "blob") "versions" (.get body "versions" {})}) :encoding "utf-8")
+          (os.replace tmp path)
+          (except [error Exception]
+            (print (.format "worker: Program {} を取れない: {!r}" sha error) :file sys.stderr :flush True))))))
 
   (defn #^ dict env-body [self]
     "heartbeat に足す root の名乗り(実行環境を扱う worker だけ): platform・準備済み / 準備中 / 失敗の root・disk の条件。"
@@ -981,6 +1024,7 @@
       (when (and timing (in "fence_ms" timing))
         (setv self.fence-ms (int (get timing "fence_ms"))))
       (setv self.last-jobs (tuple (gfor job (get body "jobs") (declared-job-spec job))))
+      (.accept-programs self self.last-jobs)
       (setv self.last-tasks (.accept-tasks self (.get body "tasks" [])))
       (setv self.last-warm (.accept-warm self (.get body "warm" [])))
       (DesiredJobs (+ self.last-jobs self.last-tasks) :warm self.last-warm)

@@ -36,25 +36,30 @@
 (val RAN [])
 
 
-(defk add-base [n]
-  {:pre [(: n int)] :post [(: % int)]}
-  "送る Program: 実行先の base に n を足して返す(走った印を残す)。"
+(defk add-base-body [n]
+  {:pre [(: n int)] :post [(: % int)] :tags {:context "doeff-cluster-test" :role "entry"}}
   (<- base int (Ask "base"))
   (.append RAN n)
   (+ base n))
 
+(defk add-base [n]
+  {:pre [(: n int)] :post [(: % int)] :tags {:context "doeff-cluster-test" :role "entry"}}
+  "送る Program: 自分で並べた reader の base に n を足して返す(走った印を残す — 実行先は handler を足さない)。"
+  (<- total int (with-handlers [(reader {"base" 100})] (add-base-body n)))
+  total)
+
 
 (defk run-sim [world program]
   {:pre [(: world EnvWorld) (: program Program)] :post [(: % bool)]}
-  "筋書きを速い模擬の組(状態・仮想の時計・env-world・実行先の reader)の下で走らせる。"
-  (<- ok bool ((state) ((sim-time-handler :clock (SimClock)) (with-handlers (env-world world) ((reader {"base" 100}) program)))))
+  "筋書きを速い模擬の組(状態・仮想の時計・env-world)の下で走らせる(送る Program の reader は Program が自分で並べる)。"
+  (<- ok bool ((state) ((sim-time-handler :clock (SimClock)) (with-handlers (env-world world) program))))
   ok)
 
 
 (defk send-and-wait [store key n]
   {:pre [(: store DetachedLocalStore) (: key str) (: n int)] :post [(: % DetachedAwaited)]}
   "store の送り手の env で 1 本送り、答えを待つ。"
-  (<- ((detached-local store) (SubmitDetached (add-base n) :env "tests.fixtures.envs:plain_env" :needs (frozenset ["local"]) :key key)))
+  (<- ((detached-local store) (SubmitDetached (add-base n) :needs (frozenset ["local"]) :key key)))
   (<- outcome ((detached-local store) (AwaitDetached key)))
   outcome)
 
@@ -97,8 +102,8 @@
   "筋書き 6: 同じ env の task を 2 本同時に送る → 準備は 1 本・2 本とも走る。"
   (<- env RuntimeEnv (env-of "app-1" "lib-1" LOCK))
   (val store (DetachedLocalStore :runtime-env env))
-  (<- ((detached-local store) (SubmitDetached (add-base 1) :env "tests.fixtures.envs:plain_env" :needs (frozenset ["local"]) :key "a")))
-  (<- ((detached-local store) (SubmitDetached (add-base 2) :env "tests.fixtures.envs:plain_env" :needs (frozenset ["local"]) :key "b")))
+  (<- ((detached-local store) (SubmitDetached (add-base 1) :needs (frozenset ["local"]) :key "a")))
+  (<- ((detached-local store) (SubmitDetached (add-base 2) :needs (frozenset ["local"]) :key "b")))
   (<- a ((detached-local store) (AwaitDetached "a")))
   (<- b ((detached-local store) (AwaitDetached "b")))
   (<- log EnvWorldLog (read-world-log))
@@ -158,7 +163,7 @@
   {:pre [(: env RuntimeEnv)] :post [(: % TaskRecord)]}
   "env を持つ待ちの task 1 本(送り手の版は worker と違う)。"
   (<- declared dict (runtime-env->json env))
-  (TaskRecord "t1" "" "tests.fixtures.envs:plain_env" "blob" "" #((ComponentVersion "doeff" "old")) #("net") 60000 60000 0
+  (TaskRecord "t1" "" "blob" "" #((ComponentVersion "doeff" "old")) #("net") 60000 60000 0
               :runtime-env declared))
 
 
@@ -199,7 +204,7 @@
 (deftest test-a-bad-declaration-or-format-is-refused-with-400
   (<- env RuntimeEnv (env-of "app-1" "lib-1" LOCK))
   (<- declared dict (runtime-env->json env))
-  (val base {"env" "e" "blob" "b" "revision" "" "versions" {} "needs" ["net"] "leaseSeconds" 10})
+  (val base {"blob" "b" "revision" "" "versions" {} "needs" ["net"] "leaseSeconds" 10})
   (val broken (| declared {"repos" [{"name" "app" "url" APP-URL "commit" "main"}]}))
   (for [body [(| base {"runtimeEnv" broken}) (| base {"format" 99})]]
     (assert (= (get (submit-task (ClusterState) body 0) 1) 400) body)
@@ -214,7 +219,7 @@
 (deftest test-the-worker-prepares-an-env-root-and-reports-its-failure
   (<- env RuntimeEnv (env-of "app-1" "lib-1" LOCK))
   (<- declared dict (runtime-env->json env))
-  (val spec (task-spec {"id" "t1" "env" "tests.fixtures.envs:plain_env" "revision" "" "versions" {} "blob" "b"
+  (val spec (task-spec {"id" "t1" "revision" "" "versions" {} "blob" "b"
                         "runtimeEnv" declared}
                        (. (__import__ "pathlib") (Path "/tmp/tasks"))))
   (<- key str (env-key env (current-platform)))
