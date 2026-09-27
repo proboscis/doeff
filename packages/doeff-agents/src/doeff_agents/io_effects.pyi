@@ -6,13 +6,9 @@ defk は呼ぶと Program を返す — 呼び手は `yield`(@do)か `<-`(Hy)で
 from dataclasses import dataclass
 
 from doeff import EffectBase, Program
-
-@dataclass(frozen=True, kw_only=True)
-class ProcessOutcome:
-    exit_code: int
-    stdout: str
-    stderr: str
-    timed_out: bool = False
+from doeff_core_effects.process_effects import ExecutableAt as ExecutableAt
+from doeff_core_effects.process_effects import ProcessOutcome as ProcessOutcome
+from doeff_core_effects.process_effects import RunProcess as RunProcess
 
 @dataclass(frozen=True, kw_only=True)
 class WhichExecutable(EffectBase):
@@ -71,13 +67,6 @@ class ListDir(EffectBase):
     pattern: str = "*"
 
 @dataclass(frozen=True, kw_only=True)
-class RunProcess(EffectBase):
-    argv: tuple[str, ...]
-    stdin: str | None = None
-    timeout: float | None = None
-    cwd: str | None = None
-
-@dataclass(frozen=True, kw_only=True)
 class SpawnDetached(EffectBase):
     argv: tuple[str, ...]
     log_path: str
@@ -93,10 +82,6 @@ class UnixLineRequest(EffectBase):
 class UnixConnectProbe(EffectBase):
     socket_path: str
     timeout: float
-
-@dataclass(frozen=True, kw_only=True)
-class ExecutableAt(EffectBase):
-    path: str
 
 @dataclass(frozen=True, kw_only=True)
 class MonotonicTime(EffectBase): ...
