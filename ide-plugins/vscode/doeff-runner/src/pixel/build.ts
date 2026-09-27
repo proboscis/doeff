@@ -1,14 +1,14 @@
 // 元の定義(glyphs.json)から生成物の全部を作る純粋な関数 — icon の全部(語の icon + service の旗)・SVG・PNG・拡張の
-// icon(128×128 の色つき)・activity bar の輪郭(24×24 の単色)。file に書くか食い違いを検めるかは生成の script が決める。
+// icon(128×128 の色つき)・activity bar の輪郭(48×48 の点を 24 css px で出す単色)。file に書くか食い違いを検めるかは生成の script が決める。
 
 import { chooseFlag, flagCollisions, flagGlyph, type FlagChoice, type FlagCollision } from './flags';
-import { composeGlyphs, SIZES, type Glyph, type GlyphSet } from './glyphs';
+import { composeGlyphs, DENSITY, LARGE, SIZES, type Glyph, type GlyphSet, type GlyphSize } from './glyphs';
 import { colorSvg, monoSvg, png } from './render';
 
 /** pixel art の icon の置き場(拡張の root からの相対)。 */
 export const PIXEL_DIR = 'resources/pixel';
-/** PNG の拡大の倍率(16×16 → 64×64、8×8 → 32×32)。整数倍なので縮めて表示してもぼけない。 */
-export const PNG_SCALE = 4;
+/** PNG の拡大の倍率(32×32 → 64×64、16×16 → 32×32)。整数倍なので縮めて表示してもぼけない。 */
+export const PNG_SCALE = 2;
 
 /** icon の全部 — 語の icon の後に service の旗(元の定義に並べた順)。 */
 export function allGlyphs(set: GlyphSet): Glyph[] {
@@ -28,12 +28,12 @@ export function flagReport(set: GlyphSet): FlagReport {
 }
 
 /** icon の SVG の置き場(拡張の root からの相対)。 */
-export function svgPath(name: string, size: 16 | 8): string {
+export function svgPath(name: string, size: GlyphSize): string {
   return `${PIXEL_DIR}/svg/${size}/${name}.svg`;
 }
 
 /** icon の PNG の置き場(拡張の root からの相対)。 */
-export function pngPath(name: string, size: 16 | 8): string {
+export function pngPath(name: string, size: GlyphSize): string {
   return `${PIXEL_DIR}/png/${size}/${name}.png`;
 }
 
@@ -46,7 +46,7 @@ export function extensionGlyph(set: GlyphSet, glyphs: readonly Glyph[]): Glyph {
   return glyph;
 }
 
-/** activity bar の輪郭(24×24 の単色)の点。 */
+/** activity bar の輪郭(48×48 の単色)の点。 */
 export function activityBarMono(set: GlyphSet): boolean[][] {
   return set.extension.activityBar.map((row) => [...row].map((ch) => ch === '#'));
 }
@@ -60,13 +60,13 @@ export function assetFiles(set: GlyphSet): Map<string, string | Buffer> {
   const files = new Map<string, string | Buffer>();
   for (const glyph of glyphs) {
     for (const size of SIZES) {
-      files.set(svgPath(glyph.name, size), colorSvg(glyph.pixels[size], undefined, glyph.summary));
+      files.set(svgPath(glyph.name, size), colorSvg(glyph.pixels[size], size / DENSITY, glyph.summary));
       files.set(pngPath(glyph.name, size), png(glyph.pixels[size], PNG_SCALE));
     }
   }
   const doe = extensionGlyph(set, glyphs);
-  files.set('icon.png', png(doe.pixels[16], set.extension.scale));
-  files.set('icon.svg', colorSvg(doe.pixels[16], 16 * set.extension.scale, doe.summary));
-  files.set(`${PIXEL_DIR}/activitybar.svg`, monoSvg(activityBarMono(set)));
+  files.set('icon.png', png(doe.pixels[LARGE], set.extension.scale));
+  files.set('icon.svg', colorSvg(doe.pixels[LARGE], LARGE * set.extension.scale, doe.summary));
+  files.set(`${PIXEL_DIR}/activitybar.svg`, monoSvg(activityBarMono(set), set.extension.activityBar.length / DENSITY));
   return files;
 }

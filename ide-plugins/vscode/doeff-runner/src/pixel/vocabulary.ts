@@ -7,7 +7,7 @@ import { isHyDefinitionKind, type HyDefinition, type HyDefinitionKind } from '..
 import type { LintModule, LintRuleFamily, LintSeverity, LintViolation } from '../lint/contract';
 import { worstSeverity } from '../lint/view';
 import { chooseFlag, flagPixels } from './flags';
-import { composeTinted, overlayBadge, type ColorIndex, type GlyphSet, type Pixels } from './glyphs';
+import { composeTinted, LARGE, overlayBadge, SMALL, type ColorIndex, type GlyphSet, type Pixels } from './glyphs';
 
 /** linter の印の icon(閉じた集合)。 */
 export const MARK_GLYPHS = ['lint-error', 'lint-warning', 'lint-info', 'lint-registered', 'jev', 'jev-unjudged'] as const;
@@ -160,7 +160,7 @@ export function litKey(icon: LitIcon): string {
 }
 
 /**
- * 灯を灯した 16×16 の格子 — sprite の `L` の点を重さの色にし(重さが無ければ消えた灯の色)、service の旗があれば右下に
+ * 灯を灯した大きい sprite(32×32)の格子 — sprite の `L` の点を重さの色にし(重さが無ければ消えた灯の色)、service の旗があれば右下に
  * 重ねる。service の旗(`service-<名>`)は旗の決まりから作る。知らない名前は undefined。拡張と見本の HTML が同じ関数で作る。
  */
 export function litPixels(set: GlyphSet, icon: LitIcon): Pixels | undefined {
@@ -169,16 +169,16 @@ export function litPixels(set: GlyphSet, icon: LitIcon): Pixels | undefined {
   if (base === undefined || icon.flag === null) {
     return base;
   }
-  const flag = icon.flag.startsWith('service-') ? flagPixels(set, chooseFlag(set, icon.flag.slice('service-'.length)), 8) : composeTinted(set, icon.flag, {})?.[8];
+  const flag = icon.flag.startsWith('service-') ? flagPixels(set, chooseFlag(set, icon.flag.slice('service-'.length)), SMALL) : composeTinted(set, icon.flag, {})?.[SMALL];
   return flag === undefined ? base : overlayBadge(base, flag);
 }
 
-/** sprite 1 つの 16×16(灯の色の上書きつき。service の旗も同じ口で)。 */
+/** sprite 1 つの大きい格子(灯の色の上書きつき。service の旗も同じ口で)。 */
 function spritePixels(set: GlyphSet, name: string, lamp: ColorIndex | undefined): Pixels | undefined {
   if (name.startsWith('service-')) {
-    return flagPixels(set, chooseFlag(set, name.slice('service-'.length)), 16, lamp);
+    return flagPixels(set, chooseFlag(set, name.slice('service-'.length)), LARGE, lamp);
   }
-  return composeTinted(set, name, lamp === undefined ? {} : { L: lamp })?.[16];
+  return composeTinted(set, name, lamp === undefined ? {} : { L: lamp })?.[LARGE];
 }
 
 /** 印の強さの順(小さいほど先に目に入れたい)— 火 → 旗 → ふくろう → 足場 → 青い旗 → 霧。 */

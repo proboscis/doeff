@@ -7,17 +7,17 @@ import * as path from 'path';
 import * as vscode from 'vscode';
 import { allGlyphs, PIXEL_DIR, svgPath } from './build';
 import { flagGlyph } from './flags';
-import { parseGlyphSet, type Glyph, type GlyphSet } from './glyphs';
+import { DENSITY, LARGE, parseGlyphSet, SMALL, type Glyph, type GlyphSet } from './glyphs';
 import { colorSvg, dataUri, png } from './render';
 import { litKey, litPixels, type LitIcon } from './vocabulary';
 
 /** 木・gutter・hover が icon を引く口(fake に差し替えられるよう interface にする)。 */
 export interface IconSource {
-  /** 16×16 の icon(知らない名前は undefined — 呼ぶ側が codicon に戻る) */
+  /** 大きい sprite(32×32 の点を 16 css px で)の icon(知らない名前は undefined — 呼ぶ側が codicon に戻る) */
   icon(name: string): vscode.Uri | undefined;
-  /** 灯を違反の重さの色に灯した 16×16 の sprite(層の gutter は右下に service の旗)。知らない名前は undefined */
+  /** 灯を違反の重さの色に灯した大きい sprite(層の gutter は右下に service の旗)。知らない名前は undefined */
   lit(icon: LitIcon): vscode.Uri | undefined;
-  /** 文字の中に入れる 8×8 の画を css の大きさ px で(文字の置き換え。知らない名前は undefined) */
+  /** 文字の中に入れる小さい sprite(16×16)を css の大きさ px で(文字の置き換え。知らない名前は undefined) */
   inline(name: string, px: number): vscode.Uri | undefined;
   /** hover の Markdown に置く `<img>`(css の大きさ px。知らない名前は空文字) */
   hoverImage(name: string, cssPx: number): string;
@@ -71,14 +71,14 @@ export class PixelIcons implements IconSource {
     return made;
   }
 
-  /** 16×16 の icon — 生成済みの SVG の file、無ければ(知らない service の旗)data URI。 */
+  /** 大きい sprite の icon — 生成済みの SVG の file、無ければ(知らない service の旗)data URI。 */
   icon(name: string): vscode.Uri | undefined {
     const glyph = this.glyph(name);
     if (glyph === undefined) {
       return undefined;
     }
-    const file = path.join(this.extensionPath, svgPath(name, 16));
-    return fs.existsSync(file) ? vscode.Uri.file(file) : vscode.Uri.parse(dataUri('image/svg+xml', colorSvg(glyph.pixels[16])));
+    const file = path.join(this.extensionPath, svgPath(name, LARGE));
+    return fs.existsSync(file) ? vscode.Uri.file(file) : vscode.Uri.parse(dataUri('image/svg+xml', colorSvg(glyph.pixels[LARGE], LARGE / DENSITY)));
   }
 
   /** 灯を灯した sprite(同じ組は使い回す)。 */
@@ -88,24 +88,24 @@ export class PixelIcons implements IconSource {
       return this.composites.get(key);
     }
     const pixels = this.set === undefined ? undefined : litPixels(this.set, icon);
-    const uri = pixels === undefined ? undefined : vscode.Uri.parse(dataUri('image/svg+xml', colorSvg(pixels)));
+    const uri = pixels === undefined ? undefined : vscode.Uri.parse(dataUri('image/svg+xml', colorSvg(pixels, LARGE / DENSITY)));
     this.composites.set(key, uri);
     return uri;
   }
 
-  /** 文字の中に入れる 8×8 の画(同じ名前と大きさは使い回す)。 */
+  /** 文字の中に入れる小さい sprite(同じ名前と大きさは使い回す)。 */
   inline(name: string, px: number): vscode.Uri | undefined {
     const key = `inline:${name}@${px}`;
     if (this.composites.has(key)) {
       return this.composites.get(key);
     }
     const glyph = this.glyph(name);
-    const uri = glyph === undefined ? undefined : vscode.Uri.parse(dataUri('image/svg+xml', colorSvg(glyph.pixels[8], px)));
+    const uri = glyph === undefined ? undefined : vscode.Uri.parse(dataUri('image/svg+xml', colorSvg(glyph.pixels[SMALL], px)));
     this.composites.set(key, uri);
     return uri;
   }
 
-  /** hover の `<img>` — 4 倍の PNG を css の大きさで出す(整数倍なので縮めてもぼけない)。 */
+  /** hover の `<img>` — 大きい sprite の 2 倍の PNG(64×64)を css の大きさで出す(整数倍なので縮めてもぼけない)。 */
   hoverImage(name: string, cssPx: number): string {
     const key = `${name}@${cssPx}`;
     const cached = this.images.get(key);
@@ -116,7 +116,7 @@ export class PixelIcons implements IconSource {
     const html =
       glyph === undefined
         ? ''
-        : `<img src="${dataUri('image/png', png(glyph.pixels[16], 4))}" width="${cssPx}" height="${cssPx}" alt="${name}">`;
+        : `<img src="${dataUri('image/png', png(glyph.pixels[LARGE], 2))}" width="${cssPx}" height="${cssPx}" alt="${name}">`;
     this.images.set(key, html);
     return html;
   }

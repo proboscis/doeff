@@ -3,7 +3,7 @@
 // 語ごとの色の差し替え、`L` = 物に付いた小さな灯 — 消えている時は元の定義の lamp の色、違反の重さで灯す)。VS Code には触らない(生成の script・拡張の実行時・検の 3 か所が同じ関数を使う)。
 
 /** 元の定義の版。 */
-export const GLYPHS_VERSION = 1;
+export const GLYPHS_VERSION = 2;
 
 /** PICO-8 の 16 色(番号の順)。これ以外の色は使わない。 */
 export const PICO8 = [
@@ -41,9 +41,23 @@ export type ColorIndex = number;
 /** 重ね合わせた後の格子 — 行ごとの点(null = 透明)。 */
 export type Pixels = ReadonlyArray<ReadonlyArray<ColorIndex | null>>;
 
-/** icon の 2 つの大きさ。 */
-export const SIZES = [16, 8] as const;
+/**
+ * icon の 2 つの大きさ(点の数)— 大きい sprite(木・gutter・hover・字体)と小さい sprite(右下の印・文字の中の画)。
+ * 版 2 で縦横とも 2 倍の点で描き直した(拡大ではなく、増えた点を陰影・縁の光・小さな部品に使う)。
+ */
+export const SIZES = [32, 16] as const;
 export type GlyphSize = (typeof SIZES)[number];
+/** 大きい sprite の点の数。 */
+export const LARGE: GlyphSize = 32;
+/** 小さい sprite の点の数。 */
+export const SMALL: GlyphSize = 16;
+/**
+ * 1 css px に並ぶ点の数(縦横それぞれ)— 画面に出す大きさは版 1 のまま(大きい sprite は 16 css px・小さい sprite は
+ * 8 css px)にし、点の密度だけを上げる。Retina の画面では 1 点がちょうど 1 画素になる。
+ */
+export const DENSITY = 2;
+/** activity bar の単色の輪郭の点の数(24 css px に DENSITY 倍)。 */
+export const ACTIVITY_BAR_SIZE = 24 * DENSITY;
 
 /** 色の差し替えの名前(枠の `A` / `B` と、物に付いた灯の `L`)。 */
 export const TINT_SLOTS = ['A', 'B', 'L'] as const;
@@ -81,7 +95,7 @@ export interface GlyphSource {
   readonly grids: Readonly<Record<GlyphSize, readonly string[]>>;
   /** 別の icon の絵を使う時のその名前(同じ語は同じ絵 — 絵を写さずに枠だけ変える)。自分で描いた絵は null */
   readonly picture: string | null;
-  /** 字体(単色)の格子 — 無ければ 16×16 の黒(色 0)の点から作る */
+  /** 字体(単色)の格子 — 無ければ大きい sprite の黒と紺(輪郭の色)の点から作る */
   readonly mono: readonly string[] | null;
 }
 
@@ -109,7 +123,7 @@ export interface ServiceFlags {
   readonly services: readonly string[];
 }
 
-/** 拡張の icon — 色つきの icon の名前と、activity bar の単色の輪郭(24×24)。 */
+/** 拡張の icon — 色つきの icon の名前と、activity bar の単色の輪郭(48×48 の点を 24 css px で出す)。 */
 export interface ExtensionIcon {
   readonly glyph: string;
   readonly scale: number;
@@ -227,15 +241,15 @@ const PATTERN_CHARS = '.AB';
 /** 単色の格子の文字(`#` = 点)。 */
 const MONO_CHARS = '.#';
 
-/** 2 つの大きさ(px16・px8)の格子を検める。 */
+/** 2 つの大きさ(px32・px16)の格子を検める。 */
 function gridsOf(
   value: JsonObject,
   allowed: string,
   where: string
 ): Readonly<Record<GlyphSize, readonly string[]>> {
   return {
-    16: gridOf(value.px16, 16, allowed, `${where}.px16`),
-    8: gridOf(value.px8, 8, allowed, `${where}.px8`)
+    32: gridOf(value.px32, 32, allowed, `${where}.px32`),
+    16: gridOf(value.px16, 16, allowed, `${where}.px16`)
   };
 }
 
@@ -259,14 +273,14 @@ function familyOf(value: unknown, where: string): Family {
   return { name: text(r, 'name', where), label: text(r, 'label', where), summary: text(r, 'summary', where), frame: frameOf(r.frame, `${where}.frame`) };
 }
 
-/** icon 1 つを検める — 絵は px16・px8 の格子か、`picture`(別の icon の名前)のどちらか一方。 */
+/** icon 1 つを検める — 絵は px32・px16 の格子か、`picture`(別の icon の名前)のどちらか一方。 */
 function glyphOf(value: unknown, where: string): RawGlyph {
   const r = record(value, where);
   const name = text(r, 'name', where);
   const at = `${where}(${name})`;
-  const hasGrids = r.px16 !== undefined || r.px8 !== undefined;
+  const hasGrids = r.px32 !== undefined || r.px16 !== undefined;
   if (hasGrids && r.picture !== undefined) {
-    fail(`${at}: 絵の格子(px16・px8)と picture を両方は書かない`);
+    fail(`${at}: 絵の格子(px32・px16)と picture を両方は書かない`);
   }
   return {
     name,
@@ -274,7 +288,7 @@ function glyphOf(value: unknown, where: string): RawGlyph {
     summary: text(r, 'summary', at),
     tint: tintOf(r.tint, `${at}.tint`),
     drawing: r.picture === undefined ? { tag: 'grids', grids: gridsOf(r, PICTURE_CHARS, at) } : { tag: 'picture', name: text(r, 'picture', at) },
-    mono: r.mono === undefined ? null : gridOf(r.mono, 16, MONO_CHARS, `${at}.mono`)
+    mono: r.mono === undefined ? null : gridOf(r.mono, LARGE, MONO_CHARS, `${at}.mono`)
   };
 }
 
@@ -348,7 +362,7 @@ function extensionOf(value: unknown, where: string): ExtensionIcon {
   if (typeof scale !== 'number' || !Number.isInteger(scale) || scale < 1) {
     fail(`${where}.scale: 1 以上の整数ではない`);
   }
-  return { glyph: text(r, 'glyph', where), scale, activityBar: gridOf(r.activityBar, 24, MONO_CHARS, `${where}.activityBar`) };
+  return { glyph: text(r, 'glyph', where), scale, activityBar: gridOf(r.activityBar, ACTIVITY_BAR_SIZE, MONO_CHARS, `${where}.activityBar`) };
 }
 
 /** 絵が枠の中の地(`:`)の外に点を置いていないかを確かめる(家族の文法 — 枠は家族、中は語)。 */
@@ -495,16 +509,16 @@ export interface Glyph {
   readonly family: string;
   readonly summary: string;
   readonly pixels: Readonly<Record<GlyphSize, Pixels>>;
-  /** 字体の単色の点(16×16) */
+  /** 字体の単色の点(大きい sprite と同じ 32×32) */
   readonly mono: ReadonlyArray<ReadonlyArray<boolean>>;
 }
 
-/** 単色の点 — 明示の格子か、16×16 の輪郭の色(黒と紺)の点。 */
-function monoOf(source: GlyphSource, pixels16: Pixels): boolean[][] {
+/** 単色の点 — 明示の格子か、大きい sprite の輪郭の色(黒と紺)の点。 */
+function monoOf(source: GlyphSource, large: Pixels): boolean[][] {
   if (source.mono !== null) {
     return source.mono.map((row) => [...row].map((ch) => ch === '#'));
   }
-  return pixels16.map((row) => row.map((c) => c !== null && OUTLINE_COLORS.includes(c)));
+  return large.map((row) => row.map((c) => c !== null && OUTLINE_COLORS.includes(c)));
 }
 
 /**
@@ -518,7 +532,7 @@ export function composeTinted(set: GlyphSet, name: string, override: Tint): Read
   }
   const frame = set.families.find((f) => f.name === source.family)?.frame ?? null;
   const tint = { L: set.lamp, ...source.tint, ...override };
-  return { 16: composePixels(frame, source.grids[16], tint, 16), 8: composePixels(frame, source.grids[8], tint, 8) };
+  return { 32: composePixels(frame, source.grids[32], tint, 32), 16: composePixels(frame, source.grids[16], tint, 16) };
 }
 
 /** 元の定義の icon を全部重ね合わせる(service の旗は flags.ts が足す)。 */
@@ -527,33 +541,33 @@ export function composeGlyphs(set: GlyphSet): Glyph[] {
   return set.glyphs.map((source) => {
     const frame = families.get(source.family)?.frame ?? null;
     const tint = { L: set.lamp, ...source.tint };
-    const pixels16 = composePixels(frame, source.grids[16], tint, 16);
+    const large = composePixels(frame, source.grids[32], tint, 32);
     return {
       name: source.name,
       family: source.family,
       summary: source.summary,
-      pixels: { 16: pixels16, 8: composePixels(frame, source.grids[8], tint, 8) },
-      mono: monoOf(source, pixels16)
+      pixels: { 32: large, 16: composePixels(frame, source.grids[16], tint, 16) },
+      mono: monoOf(source, large)
     };
   });
 }
 
 /**
- * 16×16 の土台の右下に 8×8 の印を重ねる(gutter と木で「種類の icon + 状態の印」を 1 つの画にするため)。
- * 印の点の周りの透明な点には黒(色 0)の縁を 1 点足して、土台の絵と混ざらないようにする。土台が無ければ印だけ。
+ * 大きい sprite(32×32)の右下に小さい sprite(16×16)の印を重ねる(gutter と木で「種類の icon + 状態の印」を 1 つの画に
+ * するため)。印の点の周りの透明な点には黒(色 0)の縁を 1 点足して、土台の絵と混ざらないようにする。土台が無ければ印だけ。
  */
 export function overlayBadge(base: Pixels | null, badge: Pixels | null): Pixels {
-  const grid: Array<Array<ColorIndex | null>> = Array.from({ length: 16 }, (_, y) =>
-    Array.from({ length: 16 }, (_, x) => (base === null ? null : base[y][x]))
+  const grid: Array<Array<ColorIndex | null>> = Array.from({ length: LARGE }, (_, y) =>
+    Array.from({ length: LARGE }, (_, x) => (base === null ? null : base[y][x]))
   );
   if (badge === null) {
     return grid;
   }
-  const at = (x: number, y: number): ColorIndex | null => (x >= 0 && x < 8 && y >= 0 && y < 8 ? badge[y][x] : null);
-  for (let y = -1; y < 8; y++) {
-    for (let x = -1; x < 8; x++) {
-      const gx = 8 + x;
-      const gy = 8 + y;
+  const at = (x: number, y: number): ColorIndex | null => (x >= 0 && x < SMALL && y >= 0 && y < SMALL ? badge[y][x] : null);
+  for (let y = -1; y < SMALL; y++) {
+    for (let x = -1; x < SMALL; x++) {
+      const gx = LARGE - SMALL + x;
+      const gy = LARGE - SMALL + y;
       const own = at(x, y);
       if (own !== null) {
         grid[gy][gx] = own;
