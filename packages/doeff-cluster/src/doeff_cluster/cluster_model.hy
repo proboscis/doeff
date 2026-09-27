@@ -88,22 +88,16 @@
   (#^ JobSpec spec)
   (setv #^ tuple needs #())           ; 要る能力の名(名の順 — capabilities-of)。置く worker は needs ⊆ provides
   (setv #^ (| str None) pin None)     ; この worker にだけ置く
-  (setv #^ (| dict None) run None)    ; 宣言の元の形(service の関数の参照・env・設定)。表示と保存のため
+  (setv #^ (| dict None) run None)    ; 宣言の run(詰めた Program の置き場のキー・identity・版・describe)。表示と保存のため
   ;; --- Service の資源としての欄(2026-09-24) ---
   (setv #^ int replicas 1)            ; 0 = 宣言は残すが置かない(Rollout が旧を止める・新を起こす口)。1 = 置いて動かし続ける
   (setv #^ (| dict None) readiness None) ; {"windowSeconds": n} = ReportReady の「準備できた」が直近 n 秒以内にある時だけ Ready
   (setv #^ (| str None) owner None)   ; 宣言の所有者(依頼の主体の id・作業係の名)。消せるのは所有者か明示の force の delete だけ
-  ;; --- 版の追随と入れ替え(2026-09-24) ---
+  ;; --- 入れ替え(2026-09-24) ---
   ;; 入れ替えの形: "recreate"(旧を止めてから新 — 既定)か "handoff"(新が Ready と数えられてから旧を止める — worker_model.JobSpec)。
-  (setv #^ str update "recreate")
-  ;; 土台の commit(spec.base)をどこから追うか: {"kind" "Deployment" "namespace" "name" "container"?}。在れば coordinator が
-  ;; その Deployment の pod template の image(配備の流れが apply で決めた版)の LABEL(ClusterNaming の revision-label)を読み、
-  ;; spec.base をその commit へ進める(送り手 base-follow)。spec.base はこの係だけが書く欄(Rollout にとっての replicas と同じ)。
-  (setv #^ (| dict None) base-from None)
-  ;; 定義の版の明示の上書き(2026-09-25・40 桁の commit)。baseFrom を持つ Service の版の組(業務コード・定義(worker の重ねる dir)・
-  ;; 実行環境)は Deployment の image の commit 1 つが正本で、spec.revision は spec.base と同じ commit を追う(重ねない木)。
-  ;; overlay が在る時だけ spec.revision = overlay(「base の木 + overlay の commit の重ねる dir」— 以前の重ねる形)。
-  (setv #^ (| str None) overlay None))
+  ;; 版は宣言の revision ただ 1 つ(Program を詰めた commit — 以前の image の版を追う baseFrom と、定義だけを別の commit で重ねる
+  ;; overlay は消した。持つ行は宣言の口と読み直しで断る — cluster_policy.program-row-refusal)。
+  (setv #^ str update "recreate"))
 
 
 (defenum GenerationOrder CURRENT OLDER NEWER)
@@ -254,42 +248,39 @@
 
 
 (defclass [(dataclass :frozen True)] ClusterNaming []
-  "クラスタが外の系(k8s の Deployment・image の registry)と取り交わす名。どれも配備する側(composition root の引数)が決める。
+  "クラスタが外の系(k8s の Deployment・Node)と取り交わす名。どれも配備する側(composition root の引数)が決める。
    owner-annotation = Rollout が台数を持つ Deployment に付ける annotation の鍵。
    owner-scope      = その値の頭に付ける、このクラスタの名(「<scope>/Rollout/<名> replicas=<n>」)。
-   revision-label   = 土台の版の追随(base_follow_policy)が読む image の LABEL(40 桁の commit)。
-   version-labels   = 版と一緒に写しておく LABEL の組 #(#(鍵 LABEL) …)。Service の status.base に鍵の名で並ぶ(比べない・表示だけ)。
    node-capabilities = node の label から導く能力 #(#(label の鍵 値 能力の名) …)(ADR-DOE-CLUSTER-001 R4b・改訂 1 の I)。ここに在る能力は
                       worker が自分で名乗っても受けない — coordinator が worker の置かれた node の label を読んで足す(会社の機体の境界を
                       worker の自己申告に任せない)。既定 = company-machine を label doeff.dev/company-machine=true から。"
   (setv #^ str owner-annotation "doeff-cluster/replicas-owned-by")
   (setv #^ str owner-scope "doeff-cluster")
-  (setv #^ str revision-label "org.opencontainers.image.revision")
-  (setv #^ tuple version-labels #())
-  (setv #^ tuple node-capabilities #(#("doeff.dev/company-machine" "true" "company-machine")))
+  (setv #^ tuple node-capabilities #(#("doeff.dev/company-machine" "true" "company-machine"))))
 
-  (defn __post-init__ [self]
-    (when (in "revision" (gfor pair self.version-labels (get pair 0)))
-      (raise (ValueError "version-labels の鍵に revision は使えない(版そのものの鍵)")))))
+
+;; image の版を追う係(base-follow)が読んでいた naming の欄(image の LABEL の名)。係は消した(Program の job は宣言した commit でだけ
+;; 解く — 計画 2.2 の E)ので、書かれていれば黙って捨てず、理由つきで断る(coordinator は起動しない)。
+(val RETIRED-NAMING-FIELDS (frozenset #("revisionLabel" "versionLabels")))
 
 
 (defn #^ ClusterNaming naming-from-json [#^ str text]
-  "coordinator の引数(JSON)→ ClusterNaming。欄は ownerAnnotation・ownerScope・revisionLabel・versionLabels({鍵: LABEL})・
-   nodeCapabilities([{\"label\" \"value\" \"capability\"} …])。
-   書かなかった欄は既定のまま。"
+  "coordinator の引数(JSON)→ ClusterNaming。欄は ownerAnnotation・ownerScope・nodeCapabilities([{\"label\" \"value\" \"capability\"} …])。
+   書かなかった欄は既定のまま。消した欄(RETIRED-NAMING-FIELDS)と知らない欄は断る。"
   (import json)
   (setv data (json.loads text))
   (when (not (isinstance data dict))
     (raise (ValueError "naming は JSON の object")))
-  (setv known #{"ownerAnnotation" "ownerScope" "revisionLabel" "versionLabels" "nodeCapabilities"})
+  (when (& (set data) RETIRED-NAMING-FIELDS)
+    (raise (ValueError (.format "naming の {} は受け付けない — image の版を追う係は消した(Program の job は宣言した commit でだけ解く)"
+                                (sorted (& (set data) RETIRED-NAMING-FIELDS))))))
+  (setv known #{"ownerAnnotation" "ownerScope" "nodeCapabilities"})
   (setv unknown (sorted (gfor k data :if (not-in k known) k)))
   (when unknown
     (raise (ValueError (+ "naming の知らない欄: " (.join ", " unknown)))))
   (setv base (ClusterNaming))
   (ClusterNaming :owner-annotation (.get data "ownerAnnotation" base.owner-annotation)
                  :owner-scope (.get data "ownerScope" base.owner-scope)
-                 :revision-label (.get data "revisionLabel" base.revision-label)
-                 :version-labels (tuple (gfor #(k v) (.items (.get data "versionLabels" {})) #(k v)))
                  :node-capabilities (if (in "nodeCapabilities" data)
                                         (tuple (gfor row (get data "nodeCapabilities")
                                                      #((get row "label") (get row "value") (get row "capability"))))
@@ -427,8 +418,6 @@
   ;; Service の名 → 直近の ReportMetrics の報告(同じ形・ready と reason の代わりに metrics)。GET /metrics が今の process の分だけ出す
   (setv #^ dict metrics (field :default-factory dict))
   (setv #^ dict deployments (field :default-factory dict)) ; "ns/名" → k8s の Deployment の最後の観測
-  ;; image(「registry/名:tag」)→ LABEL から読んだ版 {"revision" <version-labels の鍵>… "at"} か {"error" "at"}(版の追随の cache)
-  (setv #^ dict images (field :default-factory dict))
   ;; node の名 → その node の label の最後の観測 {"labels" {…} "at" ms} か {"error" "at"}(能力の導出の cache・保存しない)
   (setv #^ dict nodes (field :default-factory dict))
   ;; node の label から導く能力の名(ClusterNaming の node-capabilities の能力 — coordinator の起動で入れる・保存しない)。

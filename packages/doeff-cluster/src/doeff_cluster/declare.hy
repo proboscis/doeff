@@ -4,19 +4,32 @@
 ;;;       [--only 'job,…'] [--apply URL --actor <送り手>] [--replicas 0|1]
 ;;;
 ;;; 系の関数に土台の関数を渡して System の値を作り、job ごとに Program を詰める(service_model.system-declaration)。
+;;; 宣言の前に 2 つを検め、外れれば理由つきで終了 2(argparse の error と同じ — 計画 2.2 の E・9 節の P):
+;;;   - 系の関数の module の在る git の checkout が汚れておらず push 済みで、HEAD が --revision と同じ commit(詰める Program が参照する
+;;;     code と、実行先が --revision で展開する code を一致させる — runtime_env.checked-declaring-checkout。checkout の読みは effect で、
+;;;     答えるのは runtime_env の翻訳の handler checkout-reads と汎用の子 process の handler)
+;;;   - 土台の関数の頭の :needs(__doeff_needs__)が各 job の :needs の一部(service_model.foundation-needs-refusal。土台が :needs を
+;;;     名乗らなければ検めない)
 ;;; 付けなければ宣言の行(と job ごとの describe = 呼んだ関数と引数)を印字するだけ。
 ;;; --apply を付けると、先に詰めた Program を PUT /programs/<sha> で置き(改訂 1 の F)、次に Service ごとに資源の口で書く:
 ;;;   無ければ POST /resources/Service で作る(所有者 = --actor)。在れば GET で読んだ resourceVersion を付けて PUT する
 ;;;   (読んでから書くまでに誰かが書いていれば 409 で止まる — 他の作業係の変更を消さない)。所有者と replicas はいまの値を保つ
 ;;;   (replicas は Rollout が持つ。--replicas を付けた時だけ変える)。一覧に無い Service には触らない。
 ;;; 旧い引数(--config・--pin)と、System の値を直に指す旧い形は受け付けない。
-(require doeff-hy.macros [deff])
+(require doeff-hy.macros [defk deff <- val])
 (import argparse)
+(import collections.abc [Callable])
 (import importlib)
 (import json)
+(import os)
 (import sys)
 (import urllib.parse [quote :as url-quote])
-(import .service_model [resolve system-declaration System Declaration])
+(import doeff [run with_handlers])
+(import doeff_core_effects.os_process [subprocess-handler])
+(import doeff_core_effects.scheduler [scheduled])
+(import .runtime_env [checkout-reads checked-declaring-checkout])
+(import .runtime_env_model [RepoCheckout RuntimeEnvInvalid])
+(import .service_model [resolve system-declaration foundation-needs-refusal System Declaration])
 
 
 (defn #^ dict spec-for-update [#^ dict row #^ dict current [replicas None]]  ; defk にできない: CLI の入口(Program の外)が呼ぶ純粋な判断
@@ -34,6 +47,22 @@
   {"name" (get row "name")
    "spec" (| (dfor #(k v) (.items row) :if (!= k "name") k v)
              {"replicas" (if (is replicas None) 1 replicas)})})
+
+
+(defk declaring-refusal [build foundation system revision]
+  {:pre [(: build Callable) (: foundation Callable) (: system System) (: revision str)] :post [(: % (| str None))]
+   :tags {:context "doeff-cluster" :role "judgment"}}
+  "宣言してよいかを検めて、断る理由の文を返すため(よければ None — 頭の註の 2 つ)。build = 系の関数(その module の file の在る
+   checkout を読む)・foundation = 土台の関数・system = build に foundation を渡した系。"
+  (<- needs (| str None) (foundation-needs-refusal system foundation))
+  (val source (getattr (importlib.import-module build.__module__) "__file__" None))
+  (match #(needs source)
+    #(None None) (.format "系の関数 {}:{} の module に file が無い(宣言の版と同じ code かを確かめられない)" build.__module__ build.__qualname__)
+    #(None file) (try
+                   (<- _ RepoCheckout (checked-declaring-checkout (os.path.dirname (os.path.abspath file)) revision))
+                   None
+                   (except [error RuntimeEnvInvalid] (str error)))
+    #(reason _) reason))
 
 
 (defn apply-declaration [#^ str url #^ Declaration declaration #^ str actor [replicas None]]  ; defk にできない: CLI の入口の HTTP の I/O
@@ -86,8 +115,13 @@
   (when (and attr (isinstance (getattr (importlib.import-module module) attr None) System))
     (.error parser "系の値ではなく、defsystem の関数(土台を受けて系を返す)を指す"))
   (setv build (resolve args.system))
-  (setv system (build (resolve args.foundation))
-        only (sfor n (.split args.only ",") :if n n)
+  (setv system (build (resolve args.foundation)))
+  ;; 宣言の前の検め(頭の註)。checkout の読みの effect は汎用の子 process(git)へ訳して本物の git で答える。
+  (match (run (scheduled (with_handlers [subprocess-handler checkout-reads]
+                           (declaring-refusal build (resolve args.foundation) system args.revision))))
+    None None
+    reason (.error parser reason))
+  (setv only (sfor n (.split args.only ",") :if n n)
         declaration (system-declaration system args.revision)
         rows (lfor row declaration.rows :if (or (not only) (in (get row "name") only)) row)
         declaration (Declaration :rows rows
