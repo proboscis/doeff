@@ -7,7 +7,7 @@
 ;;;   GET    /metrics                                今動いている process の計器(Prometheus の text・label service・worker)
 ;;;   GET    /events                                 出来事の記録(誰が・いつ・何を・前後の版)
 ;;;   PUT    /jobs          旧い口。資源ごとの compare-and-set に写す(一覧に無い Service は消さない)
-;;;   POST   /heartbeat     worker の生存と状態 {name, labels, capacity, versions, statuses} → {"jobs": […], "tasks": […], "timing": …}
+;;;   POST   /heartbeat     worker の生存と状態 {name, provides, exclusive, capacity, versions, statuses} → {"jobs": […], "tasks": […], "timing": …}
 ;;;   GET    /state         宣言・worker・割り当て・task・各 worker の最新の状態・直近の出来事
 ;;;   GET    /board?prefix=[&withVersions=1]   盤の行(鍵が prefix で始まる物)
 ;;;   PUT    /board/<鍵>     {"value": …, "expect"?: …, "expectVersion"?: …} compare-and-set。合わなければ 409
@@ -35,13 +35,13 @@
 (import doeff_core_effects.scheduler [scheduled])
 (import doeff_cluster.clock [now-epoch-ms])
 (import .cluster_model [ClusterState ClusterTiming ClusterNaming naming-from-json NextRequests Reply Persist CoordinatorStopRequested])
-(import .cluster_policy [state-from-json fresh-task-prefix])
+(import .cluster_policy [state-from-json fresh-task-prefix nodes-to-read with-derived-capabilities])
 (import .durable_kv [durable-kv kv-delta full-kv state-from-kv legacy-key-moves resume-writes])
 (import .wal_store [WalStore wal-store])
 (import .api_policy [respond tick plan-rollouts deployments-to-observe scale-service record-action mark-alive resume-after-downtime
                      ROLLOUT-ACTOR])
 (import .resource_policy [stamp adopt-legacy])
-(import .kube_model [ReadDeployment ScaleDeployment AnnotateDeployment KubeUnavailable])
+(import .kube_model [ReadDeployment ScaleDeployment AnnotateDeployment ReadNodeLabels KubeUnavailable])
 (import .kube_handlers [kube-api kube-unavailable KubeClient])
 (import .image_model [ReadImageLabels ImageUnavailable])
 (import .base_follow_policy [due-deployments images-to-resolve image-entry follow-bases BASE-FOLLOW-ACTOR])
@@ -76,6 +76,15 @@
       (except [error ImageUnavailable]
         (setv (get images image) {"error" (str error) "at" now}))))
   (setv with-images (replace before :images images))
+  ;; 1c. 能力の導出(改訂 1 の I): worker の置かれた node の label を読み(古い観測だけ)、node-capabilities の表から derived を作り直す。
+  (setv nodes (dict with-images.nodes))
+  (for [node (nodes-to-read with-images now)]
+    (try
+      (<- labels dict (ReadNodeLabels node))
+      (setv (get nodes node) {"labels" labels "at" now})
+      (except [error KubeUnavailable]
+        (setv (get nodes node) {"error" (str error) "at" now}))))
+  (setv with-images (with-derived-capabilities (replace with-images :nodes nodes) naming.node-capabilities))
   (setv before (stamp with-images (follow-bases with-images now) BASE-FOLLOW-ACTOR now timing))
   ;; 2. 純粋な判断で段を進め、action を出す。
   (setv #(planned actions) (plan-rollouts before now timing naming))
@@ -129,7 +138,9 @@
 
 (defk run-coordinator [state timing naming]
   {:pre [(: state ClusterState) (: timing ClusterTiming) (: naming ClusterNaming)] :post [(: % ClusterState)]}
-  ;; naming = 外の系と取り交わす名(Rollout の annotation・image の LABEL)。composition root(main・模擬環境)が渡す。
+  ;; naming = 外の系と取り交わす名(Rollout の annotation・image の LABEL・node の label から導く能力)。composition root(main・模擬環境)が渡す。
+  ;; node の label から導く能力の名は、worker の自己申告として受けない(register-heartbeat が provides から外す — 改訂 1 の I)。
+  (setv state (replace state :derivable (frozenset (gfor row naming.node-capabilities (get row 2)))))
   (while True
     (<- stopping bool (CoordinatorStopRequested))
     (when stopping (return state))

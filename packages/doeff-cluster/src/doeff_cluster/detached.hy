@@ -1,12 +1,12 @@
 ;;; 切り離した task の 2 つの handler(effect は detached_model.hy)。業務のコードは同じまま、composition root がどちらを被せるかで
 ;;; 「手元の 1 process で系全体を模擬する」と「本番でクラスタに分散する」を切り替える。どちらも同じ契約:
-;;;   - key で冪等に送る(同じ key がまだ在れば created = False・env / name / requires が違えば DetachedRefused)
+;;;   - key で冪等に送る(同じ key がまだ在れば created = False・env / name / needs が違えば DetachedRefused)
 ;;;   - 呼び手が消えても(await が取り消されても)task は続く・後から同じ key で待てる
 ;;;   - 終わった結果は解放か保持の期限まで持つ・終わった後の取り消しは False で結果はそのまま
 ;;;   - 担い手の死 = DetachedLost(走らせ直さない)・結果の後の担い手の死では結果は変わらない
 ;;;   - 版の不一致 = DetachedVersionMismatch
-;;;   - 置き先 = 生きていて drain でない、label の合う担い手。合う担い手が全部 drain 中なら待つ・合う担い手が居なければ
-;;;     DetachedUnrunnable(本物の coordinator の place-tasks と同じ規則 — fake は同じ述語 labels-satisfy / tolerates を使う)
+;;;   - 置き先 = 生きていて drain でない、能力の合う担い手(needs ⊆ provides・専用の能力)。合う担い手が全部 drain 中なら待つ・合う担い手が居なければ
+;;;     DetachedUnrunnable(本物の coordinator の place-tasks と同じ規則 — fake は同じ述語 placeable を使う)
 ;;;   - 担い手の名簿(ReadRunners)= coordinator の名簿の生存と drain
 (require doeff-hy.macros [defhandler defk <- val var])
 (require doeff-hy.record [defrecord])
@@ -23,9 +23,8 @@
 (import .cluster_model [PROTOCOL-FORMAT WorkerInfo])
 (import .runtime_env_model [RuntimeEnv EnvFailure runtime-env->json env-key current-platform])
 (import .env_prepare [PrepareRequest KnownRoot EnvReady prepare-env])
-(import .cluster_policy [ENV-RETRIES labels-satisfy tolerates])
+(import .cluster_policy [ENV-RETRIES placeable])
 (import .remote_model [encode-program current-versions version-mismatch failed-from])
-(import .cluster_model [Requirement])
 (import .warm_model [WarmRuntimeEnv ReadWarmState WarmState WarmFailure warm-key warm-state-of-json])
 (import doeff_time [GetMonotonic])
 (import .detached_model [SubmitDetached AwaitDetached CancelDetached ReleaseDetached ReadRunners SimulateRunnerLoss
@@ -39,8 +38,10 @@
 
 ;; --- handler A: 同じ VM の scheduler の task として走らせる(fake・模擬環境) -------------------------
 
-;; 担い手を名指さずに作った置き場の、ただ 1 つの担い手(label を持たない — どの task も置ける)。
+;; 担い手を名指さずに作った置き場の、ただ 1 つの担い手(能力 local を提供する)。
 (val DEFAULT-RUNNER "local")
+;; その担い手が提供する能力(置き場を名指しの担い手なしで作った時 — 検と模擬は needs にこの名を書く)。
+(val DEFAULT-RUNNER-PROVIDES #("local"))
 
 ;; 真実の記録の op(fake の側が見た事実 — 呼び手の信念ではない)。
 (val EVENT-SUBMITTED "submitted")     ; 送りを受けた(置き先はまだ)
@@ -60,18 +61,18 @@
 
 
 (defclass LocalRunner []
-  "fake の担い手 1 つ(置き場の中の状態 — この handler だけが書き換える)。labels = label の (名 値) の組の tuple(名の順)。"
-  (defn __init__ [self #^ str name #^ tuple labels #^ bool live #^ bool draining]
-    (setv self.name name self.labels labels self.live live self.draining draining)))
+  "fake の担い手 1 つ(置き場の中の状態 — この handler だけが書き換える)。provides / exclusive = 提供する能力・専用の能力の名の tuple(名の順)。"
+  (defn __init__ [self #^ str name #^ tuple provides #^ tuple exclusive #^ bool live #^ bool draining]
+    (setv self.name name self.provides provides self.exclusive exclusive self.live live self.draining draining)))
 
 
 (defclass LocalRecord []
   "fake の task 1 本。outcome = 終わりの答え(まだなら None)。handle = scheduler の task(走らせ始めるまで None)。
    runner = 置いた担い手の名(置く前 = queued は None)。
    runtime-env = 送った時の実行環境の宣言(None = 今の commit だけの task)・root = 走らせた env の root(準備の後に在る)。"
-  (defn __init__ [self #^ str key #^ str env #^ str name #^ (get tuple #(Requirement ...)) requires #^ Program program
+  (defn __init__ [self #^ str key #^ str env #^ str name #^ tuple needs #^ Program program
                   #^ (| RuntimeEnv None) [runtime-env None]]
-    (setv self.key key self.env env self.name name self.requires requires self.program program self.runtime-env runtime-env)
+    (setv self.key key self.env env self.name name self.needs needs self.program program self.runtime-env runtime-env)
     (setv #^ (| str None) self.runner None)
     (setv #^ (| str None) self.root None)
     ;; 通った phase の列(preparing = 走る前に env の root を準備した — 冷たい起動・running = Program が走り出した)。
@@ -82,13 +83,13 @@
 
 (defclass DetachedLocalStore []
   "fake の置き場(key → LocalRecord)。runner-versions = 模擬の担い手の版(None = 送り手と同じ。違えば版の不一致を返す)。
-   runners = 担い手の名簿の初めの行(RunnerFact の tuple — None = label の無い担い手 DEFAULT-RUNNER が 1 つ)。
+   runners = 担い手の名簿の初めの行(RunnerFact の tuple — None = 能力 local を提供する担い手 DEFAULT-RUNNER が 1 つ)。
    runs = 走らせ始めた回数(冪等の検に使う)・events = 真実の記録(DetachedEvent の列 — 模擬の判定が読む)・
    cut-until = coordinator に届かない期限(epoch ミリ秒)。
    runtime-env = 送り手の実行環境の宣言(在れば、task を走らせる前に env の root を準備する — 準備の I/O は外側の handler、速い模擬
    では env_world の模擬の世界)。envs = env のキー → 準備中の scheduler の task か答え(同じキーの準備は 1 本)・known = 完成した root・
    prepares = 準備を起こした回数。
-   warms = 温める表(行のキー → #(宣言 requires 期限の仮想の秒))・cold-starts = 準備の済んでいない env の task を走らせた回数(冷たい起動 —
+   warms = 温める表(行のキー → #(宣言 needs 期限の仮想の秒))・cold-starts = 準備の済んでいない env の task を走らせた回数(冷たい起動 —
    本物の coordinator の計器 doeff_worker_env_cold_start_total と同じ意味)。"
   (defn __init__ [self [runner-versions None] #^ (| RuntimeEnv None) [runtime-env None] #^ str [state-root "/state/roots"]
                   #^ int [min-free-bytes 0] #^ (| tuple None) [runners None]]
@@ -96,8 +97,9 @@
           self.runtime-env runtime-env self.state-root state-root self.min-free-bytes min-free-bytes
           self.envs {} self.known [] self.prepares 0 self.warms {} self.cold-starts 0)
     (setv self.runners (if (is runners None)
-                           {DEFAULT-RUNNER (LocalRunner DEFAULT-RUNNER #() True False)}
-                           (dfor fact runners fact.name (LocalRunner fact.name (tuple (sorted fact.labels)) fact.live fact.draining)))))
+                           {DEFAULT-RUNNER (LocalRunner DEFAULT-RUNNER DEFAULT-RUNNER-PROVIDES #() True False)}
+                           (dfor fact runners fact.name (LocalRunner fact.name (tuple (sorted fact.provides)) (tuple (sorted fact.exclusive))
+                                                                   fact.live fact.draining)))))
 
   (defn #^ list open-records [self]
     (lfor r (.values self.records) :if (is r.outcome None) r))
@@ -108,13 +110,13 @@
 
 
 (defn #^ WorkerInfo worker-of [#^ LocalRunner runner]
-  "担い手 → 本物の coordinator の判断が読む worker の形(label の照合を同じ述語で行うため)。"
-  (WorkerInfo runner.name runner.labels 1 0))
+  "担い手 → 本物の coordinator の判断が読む worker の形(能力の照合を同じ述語で行うため)。"
+  (WorkerInfo runner.name runner.provides 1 0 :exclusive runner.exclusive))
 
 
 (defn #^ (get tuple #(RunnerFact ...)) runner-facts [#^ DetachedLocalStore store]
   "名簿の断面(名の順)。"
-  (tuple (gfor #(name r) (sorted (.items store.runners)) (RunnerFact :name name :labels r.labels :live r.live :draining r.draining))))
+  (tuple (gfor #(name r) (sorted (.items store.runners)) (RunnerFact :name name :provides r.provides :exclusive r.exclusive :live r.live :draining r.draining))))
 
 
 (defk note [store key op runner]
@@ -219,13 +221,13 @@
   "待っている task 1 本の置き先を決める(本物の place-tasks の規則): 生きていて drain でない合う担い手のうち負荷の少ない方(同じなら名の順)
    に置く・合う担い手が全部 drain 中なら待つ・合う担い手が居なければ DetachedUnrunnable。"
   (val able (lfor r (.values store.runners)
-                  :if (and r.live (labels-satisfy record.requires (worker-of r)) (tolerates record.requires (worker-of r)))
+                  :if (and r.live (placeable record.needs (worker-of r)))
                   r))
   (val free (sorted (lfor r able :if (not r.draining) r) :key (fn [r] #((len (.running-on store r.name)) r.name))))
   (cond
     free (<- (start-on store record (get free 0)))
     (not able) (<- (finish-local store record.key
-                                 (DetachedUnrunnable (.format "置ける担い手が無い(求める label {})" (dict record.requires))))))
+                                 (DetachedUnrunnable (.format "置ける担い手が無い(要る能力 {})" (list record.needs))))))
   None)
 
 
@@ -263,17 +265,17 @@
     (:= waited (+ waited poll-seconds))))
 
 
-(defn #^ None refuse-conflict [#^ LocalRecord record #^ str env #^ str name #^ (get tuple #(Requirement ...)) requires]
-  (when (!= #(record.env record.name record.requires) #(env name (tuple (sorted requires))))
+(defn #^ None refuse-conflict [#^ LocalRecord record #^ str env #^ str name #^ tuple needs]
+  (when (!= #(record.env record.name record.needs) #(env name (tuple (sorted needs))))
     (raise (DetachedRefused 409 (.format "key {} は別の仕事(env {}・name {!r})に使われている" record.key record.env record.name)))))
 
 
-(defk submit-local [store program env key requires name]
-  {:pre [(: store DetachedLocalStore) (: program Program) (: env str) (: key str) (: requires tuple) (: name str)] :post [(: % DetachedSubmitted)]}
+(defk submit-local [store program env key needs name]
+  {:pre [(: store DetachedLocalStore) (: program Program) (: env str) (: key str) (: needs tuple) (: name str)] :post [(: % DetachedSubmitted)]}
   ;; 同じ key がまだ在れば何も作らない。送れない値は本物と同じく送り手で断る(UnsendableProgram)。
   (when (in key store.records) (return (DetachedSubmitted key False)))
   (encode-program program)
-  (val record (LocalRecord key env name (tuple (sorted requires)) program :runtime-env store.runtime-env))
+  (val record (LocalRecord key env name (tuple (sorted needs)) program :runtime-env store.runtime-env))
   (setv (get store.records key) record)
   (val mismatch (if (is store.runner-versions None) None (version-mismatch (current-versions) store.runner-versions)))
   (<- (note store key EVENT-SUBMITTED None))
@@ -283,24 +285,24 @@
   (DetachedSubmitted key True))
 
 
-(defk warm-runners [store requires]
-  {:pre [(: store DetachedLocalStore) (: requires tuple)] :post [(: % tuple)]}
-  "温める表の行に数える担い手の名(名の順): 生きていて drain 中でなく、行の requires に合う担い手 — 本物の coordinator の warm-view と同じ
-   規則(置き先の選び方 place-local と同じ述語 labels-satisfy / tolerates)。合う担い手が居なければ空(その行は温まらない)。"
+(defk warm-runners [store needs]
+  {:pre [(: store DetachedLocalStore) (: needs tuple)] :post [(: % tuple)]}
+  "温める表の行に数える担い手の名(名の順): 生きていて drain 中でなく、行の needs に合う担い手 — 本物の coordinator の warm-view と同じ
+   規則(置き先の選び方 place-local と同じ述語 placeable)。合う担い手が居なければ空(その行は温まらない)。"
   (tuple (sorted (gfor r (.values store.runners)
-                       :if (and r.live (not r.draining) (labels-satisfy requires (worker-of r)) (tolerates requires (worker-of r)))
+                       :if (and r.live (not r.draining) (placeable needs (worker-of r)))
                        r.name))))
 
 
 (defk local-warm-state [store key]
   {:pre [(: store DetachedLocalStore) (: key str)] :post [(: % WarmState)]}
-  "模擬の温める表の行の今の姿。本物の coordinator の warm-view と同じ形で答えるため: 準備済み / 準備中 / 失敗を、行の requires に合う
+  "模擬の温める表の行の今の姿。本物の coordinator の warm-view と同じ形で答えるため: 準備済み / 準備中 / 失敗を、行の needs に合う
    生きた drain 中でない担い手ごとに数える(模擬の root は同じ VM に 1 つなので、合う担い手は皆同じ root の状態を名乗る)。"
   (setv row (.get store.warms key))
   (if (is row None)
       (WarmState :key key :ready #() :preparing #() :failed #() :until-ms 0)
-      (do (setv #(env requires until) row)
-          (<- names tuple (warm-runners store requires))
+      (do (setv #(env needs until) row)
+          (<- names tuple (warm-runners store needs))
           (<- env-id str (env-key env (current-platform)))
           (setv entry (.get store.envs env-id) until-ms (int (* 1000 until)))
           (cond
@@ -312,28 +314,28 @@
             True (WarmState :key key :ready #() :preparing names :failed #() :until-ms until-ms)))))
 
 
-(defk warm-local [store env requires ttl-seconds]
-  {:pre [(: store DetachedLocalStore) (: env RuntimeEnv) (: requires tuple) (: ttl-seconds float)] :post [(: % WarmState)]}
+(defk warm-local [store env needs ttl-seconds]
+  {:pre [(: store DetachedLocalStore) (: env RuntimeEnv) (: needs tuple) (: ttl-seconds float)] :post [(: % WarmState)]}
   "模擬の先読み: 表に行を書き、env の root の準備を別の task で起こす(送り手を待たせない)。同じ行の頼み直しは期限だけ延ばす。"
-  (<- key str (warm-key env requires))
+  (<- key str (warm-key env needs))
   (<- now float (GetMonotonic))
-  (setv (get store.warms key) #(env requires (+ now ttl-seconds)))
+  (setv (get store.warms key) #(env needs (+ now ttl-seconds)))
   (<- env-id str (env-key env (current-platform)))
   (when (not-in env-id store.envs)
     (<- (Spawn (prepared-env store env) :daemon True)))
   (<- answer WarmState (local-warm-state store key))
   answer)
 
-(defk submit-reachable [store program env key requires name now]
-  {:pre [(: store DetachedLocalStore) (: program Program) (: env str) (: key str) (: requires tuple) (: name str) (: now int)]
+(defk submit-reachable [store program env key needs name now]
+  {:pre [(: store DetachedLocalStore) (: program Program) (: env str) (: key str) (: needs tuple) (: name str) (: now int)]
    :post [(: % DetachedSubmitAnswer)]}
   "送る(coordinator に届く時だけ — 途絶の間は DetachedUnreachable)。同じ key の別の仕事は断る。"
   (when (< now store.cut-until)
     (return (DetachedUnreachable :detail "coordinator に届かない(模擬の途絶)")))
   (val existing (.get store.records key))
   (when (is-not existing None)
-    (refuse-conflict existing env name requires))
-  (<- submitted (submit-local store program env key requires name))
+    (refuse-conflict existing env name needs))
+  (<- submitted (submit-local store program env key needs name))
   submitted)
 
 
@@ -354,16 +356,16 @@
 
 (defhandler detached-local [#^ DetachedLocalStore store [poll-seconds 0.1]]
   ;; 引数に残す理由: store は模擬の担い手の置き場そのもの(検の筋書きが中を読む)で、設定ではない。
-  (WarmRuntimeEnv [env requires ttl-seconds holder]
-    (<- state (warm-local store env requires (float ttl-seconds)))
+  (WarmRuntimeEnv [env needs ttl-seconds holder]
+    (<- state (warm-local store env (tuple (sorted needs)) (float ttl-seconds)))
     (resume state))
   (ReadWarmState [key]
     (<- state (local-warm-state store key))
     (resume state))
-  (SubmitDetached [program env key requires name lease-seconds retain-seconds]
+  (SubmitDetached [program env key needs name lease-seconds retain-seconds]
     ;; 途絶の間の送りは届かない(本物の client と同じ値で答える — 送れたかは分からないが、key で冪等なので呼び手が送り直す)。
     (<- at datetime (GetTime))
-    (<- answer (submit-reachable store program env key requires name (epoch-ms-of at)))
+    (<- answer (submit-reachable store program env key (tuple (sorted needs)) name (epoch-ms-of at)))
     (resume answer))
   (AwaitDetached [key timeout-seconds]
     (<- outcome (await-local store key timeout-seconds poll-seconds))
@@ -434,10 +436,10 @@
     (.raise-for-status response)
     (.json response))
 
-  (defn #^ dict submit [self #^ str key #^ str blob #^ str env #^ (get tuple #(Requirement ...)) requires #^ str name
+  (defn #^ dict submit [self #^ str key #^ str blob #^ str env #^ tuple needs #^ str name
                         #^ float lease-seconds
                         #^ float retain-seconds]
-    (setv body (| {"env" env "blob" blob "versions" (current-versions) "revision" self.revision "requires" (dict requires)
+    (setv body (| {"env" env "blob" blob "versions" (current-versions) "revision" self.revision "needs" (sorted needs)
                    "name" name "leaseSeconds" lease-seconds "retainSeconds" retain-seconds "format" PROTOCOL-FORMAT}
                   (if (is self.runtime-env None) {} {"runtimeEnv" (run-program (runtime-env->json self.runtime-env))})))
     (.answer self (.resend self (fn [] (.request self.endpoint "PUT" (.path self key) :json body)))))
@@ -468,9 +470,9 @@
 
 
 (defn #^ (get tuple #(RunnerFact ...)) runner-facts-of-view [#^ dict workers]
-  "純粋: coordinator の GET /state の workers(名 → {labels live draining …})→ 名簿の断面(名の順)。"
+  "純粋: coordinator の GET /state の workers(名 → {provides exclusive live draining …})→ 名簿の断面(名の順)。"
   (tuple (gfor #(name w) (sorted (.items workers))
-               (RunnerFact :name name :labels (tuple (sorted (.items (get w "labels")))) :live (bool (get w "live"))
+               (RunnerFact :name name :provides (tuple (sorted (.get w "provides" []))) :exclusive (tuple (sorted (.get w "exclusive" []))) :live (bool (get w "live"))
                            :draining (bool (get w "draining"))))))
 
 
@@ -499,10 +501,10 @@
 
 
 (defhandler detached-cluster [#^ DetachedClient client [poll-seconds 1.0]]
-  (SubmitDetached [program env key requires name lease-seconds retain-seconds]
+  (SubmitDetached [program env key needs name lease-seconds retain-seconds]
     ;; 送れない値は送る前に断る(encode-program が UnsendableProgram を投げ、呼び手へ届く)。
     (setv blob (encode-program program))
-    (resume (try (DetachedSubmitted key (get (.submit client key blob env requires name (float lease-seconds) (float retain-seconds)) "created"))
+    (resume (try (DetachedSubmitted key (get (.submit client key blob env needs name (float lease-seconds) (float retain-seconds)) "created"))
                  (except [error httpx.TransportError]
                    (DetachedUnreachable :detail (.format "coordinator に届かない(送れたかは分からない — key で冪等): {}" error))))))
   (AwaitDetached [key timeout-seconds]
@@ -520,9 +522,9 @@
   (defn __init__ [self #^ str url [timeout REPLY-SECONDS] [transport None] #^ str [actor ""]]
     (setv self.endpoint (CoordinatorEndpoint url timeout 4 :transport transport :actor (or actor None))))
 
-  (defn #^ WarmState write [self #^ RuntimeEnv env #^ tuple requires #^ float ttl-seconds #^ str holder]
+  (defn #^ WarmState write [self #^ RuntimeEnv env #^ frozenset needs #^ float ttl-seconds #^ str holder]
     "行を書いて今の姿を読む。"
-    (setv body {"runtimeEnv" (run-program (runtime-env->json env)) "requires" (dict requires) "ttlSeconds" ttl-seconds
+    (setv body {"runtimeEnv" (run-program (runtime-env->json env)) "needs" (sorted needs) "ttlSeconds" ttl-seconds
                 "holder" holder "format" PROTOCOL-FORMAT}
           response (send-idempotent (fn [] (.request self.endpoint "POST" "/warm" :json body))))
     (when (= response.status-code 400)
@@ -541,7 +543,7 @@
 
 (defhandler warm-cluster [#^ WarmClient client]
   ;; 引数に残す理由: client は coordinator への接続(I/O の資源)で、composition root が url から 1 つ作る。
-  (WarmRuntimeEnv [env requires ttl-seconds holder]
-    (resume (.write client env requires (float ttl-seconds) holder)))
+  (WarmRuntimeEnv [env needs ttl-seconds holder]
+    (resume (.write client env needs (float ttl-seconds) holder)))
   (ReadWarmState [key]
     (resume (.read client key))))

@@ -13,7 +13,7 @@
 ;;;   2026-09-24 に足した(書き手の alert の材料 — deploy/monitoring/prometheus-rules-doeff-worker-writers.yml): doeff_worker_service_spec_replicas{service}・
 ;;;   doeff_worker_service_ready_replicas{service}(仕事をしている Ready だけ)・doeff_worker_service_standby{service}(lease を待つ待機の Ready)・
 ;;;   doeff_worker_service_unplaced{service}・doeff_worker_service_last_metrics_age_seconds{service}(どの process の物でも最新の計器の報告の古さ)・
-;;;   doeff_worker_worker_heartbeat_age_seconds{worker,kind}(worker ごとの最後の heartbeat の古さ — coordinator 自身の alert の材料)。
+;;;   doeff_worker_worker_heartbeat_age_seconds{worker}(worker ごとの最後の heartbeat の古さ — coordinator 自身の alert の材料)。
 (import dataclasses [replace])
 (import math)
 (import .cluster_model [ClusterState ClusterTiming PLACED-PHASES])
@@ -143,11 +143,11 @@
       (add-sample families "doeff_worker_service_last_metrics_age_seconds" "gauge"
                   "doeff_worker_service_last_metrics_age_seconds" labels age)))
   ;; worker ごとの最後の heartbeat の古さ(2026-09-24・coordinator 自身の alert の材料)。heartbeat は worker から coordinator への唯一の
-  ;; 連絡なので、「coordinator がこの worker の heartbeat を受けていない」=「worker から見て coordinator に届かない」。label kind は
-  ;; worker の label の kind(k3s / mac)。忘れた worker(DELETE /resources/Worker)は出さない。
+  ;; 連絡なので、「coordinator がこの worker の heartbeat を受けていない」=「worker から見て coordinator に届かない」。label は
+  ;; worker の名だけ(以前の kind は worker の label から写していた — 能力の名乗りに置き換えた 2026-09-27 に外した)。忘れた worker(DELETE /resources/Worker)は出さない。
   (for [w (sorted (.values state.workers) :key (fn [w] w.name))]
     (add-sample families "doeff_worker_worker_heartbeat_age_seconds" "gauge" "doeff_worker_worker_heartbeat_age_seconds"
-                {"worker" w.name "kind" (.get (dict w.labels) "kind" "")}
+                {"worker" w.name}
                 (/ (max 0 (- now w.last-seen-ms)) 1000.0)))
   ;; 盤の容量(2026-09-25): 行の数・値の合計と、その上限(cluster_policy の BOARD-MAX-*)。alert は合計が上限の 8 割を越えた時。
   (setv usage (board-usage state))
