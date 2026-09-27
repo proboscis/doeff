@@ -42,7 +42,8 @@ The extension bundles `doeff-indexer` binaries for common platforms (macOS, Linu
   1. 同じ file の定義(`Color.RED` のような入れ物の member も)
   2. その file の import(名前・`:as` の別名・module の別名 + dotted の `alias.fn`・相対 import)から決めた module の Hy の定義
   3. import 先が Python の module(索引に無い物)なら、workspace の中の `a/b.py` か `a/b/__init__.py`(root 直下 → `src/` → workspace 全体)の `def` / `class` / `name =` の行
-  4. どれでも見つからなければ workspace 全体の同名の定義を全部
+  4. それでも無い module(uv の git / path 依存の package など workspace の外の物)は、workspace の Python 環境に `uv run --no-sync --project <workspace の root> python -c …` で置き場所を聞きます(`hy` が入っていれば `.hy` の module も引けます)。`.hy` ならその 1 file を `hy-index --file` で索引して定義へ、`.py` なら 3 と同じ探し方で飛びます。聞いた結果は workspace の root ごとに持ち、`uv.lock` か `pyproject.toml` が変わると聞き直します。外の file の索引は別に持ち、workspace の記号の検索と参照の一覧には混ぜません。uv が無い・時間切れ等は Output に理由を出して、この段を飛ばします。
+  5. どれでも見つからなければ workspace 全体の同名の定義を全部
 - **参照の一覧**(Shift+F12): 全 file の参照と定義から同じ名前の位置を集めます。定義の module が 1 つに定まる時は、import と dotted の修飾で別の module の同名を除き、修飾を解けない参照(`self.x` など)は名前だけで数えます。
 - **ファイルの目次**(Outline・パンくず): 定義を入れ物で入れ子にします(class の method と field、enum の member、handler の effect 節)。横に kind と引数を出します。
 - **workspace の記号の検索**(Cmd/Ctrl+T): 全 file の定義を名前で絞ります。

@@ -1,9 +1,10 @@
-// 「どの定義に飛ぶか」「どこが参照か」を決める解決の論理。索引の読む面と Python の source の口だけを受け取り、
+// 「どの定義に飛ぶか」「どこが参照か」を決める解決の論理。索引の読む面と Python の source・workspace の外の module の口だけを受け取り、
 // VS Code にも子 process にも触らない(テストは fixture の索引と一時 dir の .py で撃つ)。
 
 import * as path from 'path';
 import type { HyDefinition, HyFileIndex, HyImport, HyRange } from './contract';
 import { mangle, mangleDotted } from './mangle';
+import type { ExternalModuleSource } from './external';
 import { findPythonDefinitions, type PythonModuleSource } from './python';
 import type { HyIndexView, HyStoreEntry } from './store';
 
@@ -19,8 +20,15 @@ export type DefinitionTarget =
     }
   | { readonly tag: 'python-module'; readonly path: string; readonly module: string };
 
-/** どの段で見つけたか(a 同じ file・b import 先の Hy・c import 先の Python・d workspace 全体)。 */
-export type ResolutionTier = 'same-file' | 'import-hy' | 'import-python' | 'workspace' | 'module-only' | 'none';
+/** どの段で見つけたか(a 同じ file・b import 先の Hy・c import 先の Python・c' workspace の外・d workspace 全体)。 */
+export type ResolutionTier =
+  | 'same-file'
+  | 'import-hy'
+  | 'import-python'
+  | 'import-external'
+  | 'workspace'
+  | 'module-only'
+  | 'none';
 
 export interface DefinitionResolution {
   readonly tier: ResolutionTier;
@@ -125,14 +133,83 @@ function hyDefinitionsInModule(
   const targets: DefinitionTarget[] = [];
   for (const entry of index.byModule(module)) {
     for (const def of entry.file.definitions) {
-      const containerMatches =
-        container === null ? def.container === null : def.container !== null && mangle(def.container) === container;
-      if (def.mangled === symbol && containerMatches) {
+      if (isMember(def, symbol, container)) {
         targets.push(hyTarget(entry, def));
       }
     }
   }
   return targets;
+}
+
+/** 定義が「入れ物 container(null は top level)の中の名前 symbol」かを見る。 */
+function isMember(def: HyDefinition, symbol: string, container: string | null): boolean {
+  const containerMatches =
+    container === null ? def.container === null : def.container !== null && mangle(def.container) === container;
+  return def.mangled === symbol && containerMatches;
+}
+
+/** 解決の途中の 1 段の答え — 定義・(名前は無いが見つかった)module の file・報告すべき問題。 */
+interface StepTargets {
+  readonly definitions: DefinitionTarget[];
+  readonly modules: DefinitionTarget[];
+  readonly problems: string[];
+}
+
+/**
+ * c'. workspace の外(uv の git / path 依存の package 等)の module を口に聞く。
+ * Hy なら取った 1 file の索引の定義、Python なら Python の名前探しで行き先を作る。
+ */
+async function externalTargets(
+  external: ExternalModuleSource,
+  source: PythonModuleSource,
+  index: HyIndexView,
+  current: HyStoreEntry,
+  binding: ImportBinding
+): Promise<StepTargets> {
+  const prefetch = current.file.imports
+    .map((imp) => absoluteModule(current.file, imp.module))
+    .filter((module) => index.byModule(module).length === 0);
+  const result = await external.lookup({ root: current.root, module: binding.module, prefetch });
+  switch (result.tag) {
+    case 'hy': {
+      const moduleTarget: DefinitionTarget = { tag: 'hy-module', path: result.path, module: result.file.module };
+      if (binding.symbol === null) {
+        return { definitions: [moduleTarget], modules: [], problems: [] };
+      }
+      const symbol = binding.symbol;
+      const definitions = result.file.definitions
+        .filter((def) => isMember(def, symbol, binding.container))
+        .map((definition): DefinitionTarget => ({
+          tag: 'hy-definition',
+          path: result.path,
+          module: result.file.module,
+          definition
+        }));
+      return { definitions, modules: [moduleTarget], problems: [] };
+    }
+    case 'python':
+      if (binding.container !== null) {
+        // Python の class の中の member までは追わない
+        return { definitions: [], modules: [], problems: [] };
+      }
+      if (binding.symbol === null) {
+        return {
+          definitions: [{ tag: 'python-module', path: result.path, module: binding.module }],
+          modules: [],
+          problems: []
+        };
+      }
+      return pythonTargetsIn(source, [result.path], binding.module, binding.symbol);
+    case 'unavailable':
+      return { definitions: [], modules: [], problems: [result.reason] };
+    case 'not-found':
+    case 'skipped':
+      return { definitions: [], modules: [], problems: [] };
+    default: {
+      const unreachable: never = result;
+      throw new Error(`網羅されていない答え: ${JSON.stringify(unreachable)}`);
+    }
+  }
 }
 
 /** 索引の 1 件と定義から行き先を作る。 */
@@ -145,12 +222,17 @@ async function pythonTargets(
   source: PythonModuleSource,
   module: string,
   symbol: string | null
-): Promise<{
-  readonly definitions: DefinitionTarget[];
-  readonly modules: DefinitionTarget[];
-  readonly problems: string[];
-}> {
-  const files = await source.findModuleFiles(module);
+): Promise<StepTargets> {
+  return pythonTargetsIn(source, await source.findModuleFiles(module), module, symbol);
+}
+
+/** 場所の分かった Python の module の file の中から名前を探す(workspace の中と外で共用)。 */
+async function pythonTargetsIn(
+  source: PythonModuleSource,
+  files: readonly string[],
+  module: string,
+  symbol: string | null
+): Promise<StepTargets> {
   const definitions: DefinitionTarget[] = [];
   const modules: DefinitionTarget[] = files.map((file) => ({ tag: 'python-module', path: file, module }));
   const problems: string[] = [];
@@ -195,11 +277,13 @@ function resolution(
 
 /**
  * 定義へ移動の解決。順は a 同じ file → b import 先の Hy の module → c import 先の Python の module →
- * d workspace 全体の同名の定義(最後に、名前は無くても module の file だけ見つかった時はその file)。
+ * c' workspace の外の module(Python 環境に聞く)→ d workspace 全体の同名の定義
+ * (最後に、名前は無くても module の file だけ見つかった時はその file)。
  */
 export async function resolveDefinition(
   index: HyIndexView,
   source: PythonModuleSource,
+  external: ExternalModuleSource,
   query: SymbolQuery
 ): Promise<DefinitionResolution> {
   const mangled = mangle(query.name);
@@ -245,19 +329,28 @@ export async function resolveDefinition(
         }
         continue;
       }
-      if (binding.container !== null) {
-        // 入れ物の member は Python の class の中まで追わない(workspace 全体の段へ回す)
-        continue;
+      if (binding.container === null) {
+        // 入れ物の member は workspace の Python の class の中まで追わない
+        const py = await pythonTargets(source, binding.module, binding.symbol);
+        problems.push(...py.problems);
+        if (py.definitions.length > 0) {
+          return resolution('import-python', py.definitions, problems);
+        }
+        if (binding.symbol === null && py.modules.length > 0) {
+          return resolution('import-python', py.modules, problems);
+        }
+        if (py.modules.length > 0) {
+          moduleOnly.push(...py.modules);
+          continue;
+        }
       }
-      const py = await pythonTargets(source, binding.module, binding.symbol);
-      problems.push(...py.problems);
-      if (py.definitions.length > 0) {
-        return resolution('import-python', py.definitions, problems);
+      // c'. workspace の索引にも workspace の中の .py にも無い module は、workspace の Python 環境に聞く
+      const outside = await externalTargets(external, source, index, current, binding);
+      problems.push(...outside.problems);
+      if (outside.definitions.length > 0) {
+        return resolution('import-external', outside.definitions, problems);
       }
-      if (binding.symbol === null && py.modules.length > 0) {
-        return resolution('import-python', py.modules, problems);
-      }
-      moduleOnly.push(...py.modules);
+      moduleOnly.push(...outside.modules);
     }
   }
 

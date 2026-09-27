@@ -482,6 +482,54 @@
       }
      },
      "is_require": false
+    },
+    {
+     "module": "doeff_records.memory",
+     "name": "MemoryStore",
+     "alias": null,
+     "range": {
+      "start": {
+       "line": 53,
+       "character": 30
+      },
+      "end": {
+       "line": 53,
+       "character": 41
+      }
+     },
+     "is_require": false
+    },
+    {
+     "module": "doeff_records.memory",
+     "name": null,
+     "alias": "mem",
+     "range": {
+      "start": {
+       "line": 54,
+       "character": 33
+      },
+      "end": {
+       "line": 54,
+       "character": 36
+      }
+     },
+     "is_require": false
+    },
+    {
+     "module": "outside_py.tools",
+     "name": "shout",
+     "alias": null,
+     "range": {
+      "start": {
+       "line": 55,
+       "character": 26
+      },
+      "end": {
+       "line": 55,
+       "character": 31
+      }
+     },
+     "is_require": false
     }
    ],
    "references": [
