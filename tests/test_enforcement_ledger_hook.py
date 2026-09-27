@@ -189,6 +189,30 @@ def test_staged_mode_still_blocks_the_commits_own_unrecorded_change_on_drifted_h
     _git(repo, "add", "-A")  # 台帳は動かさない
     proc = _run_checker(repo, f"--root={repo}", "--staged")
     assert proc.returncode == 1, "この commit 自身の記帳漏れを HEAD のずれに紛れて通した"
+    # 赤の申告は「この commit の分」と「HEAD に既に在った分」を分けて名指す — 分けないと、
+    # 読み手は本線のずれのせいと取って --no-verify で外す(2026-09-28 b32941c3 がこの形で
+    # law 1 本を台帳に載せずに本線へ入れた)。
+    own, _, inherited = proc.stderr.partition("HEAD に既に在ったずれ")
+    assert "この commit 自身の増減" in own, f"赤の出所がこの commit だと言わない: {proc.stderr}"
+    assert "ADR-FIXTURE-001 added-here" in own, f"この commit の記帳漏れを名指さない: {proc.stderr}"
+    assert "ADR-FIXTURE-001 fixture-2" not in own, f"HEAD のずれをこの commit の分に混ぜた: {proc.stderr}"
+    assert "ADR-FIXTURE-001 fixture-2" in inherited, f"HEAD のずれを参考に出さない: {proc.stderr}"
+
+
+def test_staged_mode_on_clean_head_names_only_the_commits_own_change(tmp_path: Path) -> None:
+    # 本線が一致している時の赤は、この commit の記帳漏れだけを名指し、HEAD のずれの節を出さない。
+    _write_fixture_tree(tmp_path, laws=2, ledger_laws=2)
+    _git(tmp_path, "init", "-q")
+    _git(tmp_path, "add", "-A")
+    _git(tmp_path, "commit", "-q", "-m", "clean", "--no-verify")
+    (tmp_path / "docs" / "adr" / ADR).write_text(
+        _adr_text(["fixture-0", "fixture-1", "added-here"]), encoding="utf-8"
+    )
+    _git(tmp_path, "add", "-A")
+    proc = _run_checker(tmp_path, f"--root={tmp_path}", "--staged")
+    assert proc.returncode == 1, "この commit の記帳漏れを通した"
+    assert "ADR-FIXTURE-001 added-here" in proc.stderr, proc.stderr
+    assert "HEAD に既に在ったずれ" not in proc.stderr, f"一致している HEAD をずれと言った: {proc.stderr}"
 
 
 def test_parallel_additions_merge_into_a_consistent_ledger(tmp_path: Path) -> None:
