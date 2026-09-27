@@ -794,7 +794,8 @@ impl<'a> Analyzer<'a> {
             "session" | "lazy" => rest = self.skip_val_var(rest),
             // (<- (X …)) / (<- name (X …)) / (<- name T (X …)) — 撃たれるのは最後の form。
             "<-" if (1..=3).contains(&rest.len()) => performed_index = Some(rest.len() - 1),
-            "yield" | "yield-from" if !rest.is_empty() => performed_index = Some(0),
+            // `(! (X …))` は doeff-hy の引数の位置での effect の bind(ADR-DOE-HY-003)で、`<-` と同じく撃つ形。
+            "yield" | "yield-from" | "!" if !rest.is_empty() => performed_index = Some(0),
             "defhandler" => {
                 self.walk_handler_clauses(rest);
                 return;

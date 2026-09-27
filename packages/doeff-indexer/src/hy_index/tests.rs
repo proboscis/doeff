@@ -466,6 +466,18 @@ fn performed_calls() {
 }
 
 #[test]
+fn bang_performs_its_direct_call() {
+    let source = "(defk run [x] {:pre [] :post []} (f (! (X (g a)))) (h (! x)))\n";
+    let file = index(source);
+    assert!(calls_named(&file, "X")[0].performed);
+    for callee in ["f", "g", "h"] {
+        assert!(!calls_named(&file, callee)[0].performed, "{callee}");
+    }
+    assert!(calls_named(&file, "!").is_empty());
+    assert!(calls_named(&file, "x").is_empty(), "(! x) の記号だけの形は呼び出しではない");
+}
+
+#[test]
 fn calls_survive_broken_sources() {
     for source in ["(<-", "(<- (", "(yield", "(defhandler h (E [", "(. x (", "(match x (P", "(f (g", "(a.b."] {
         let file = index(source);

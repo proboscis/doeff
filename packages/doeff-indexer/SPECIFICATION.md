@@ -442,14 +442,13 @@ doeff-indexer hy-index --root <dir> --stdin --path <path>  # 保存前の内容�
 - `calls`(版 2): `(` の直後の記号が、予約語・演算子・定数でないものを 1 件ずつ入れる(関数の呼び出し・class の生成・effect の生成)。引数の中の入れ子の呼び出しも入れる。
   - `callee` は頭の記号の最後の区切り、`qualifier` はその前の区切り(`mod.sub.fn` なら `"mod.sub"`)、`range` は最後の区切りの位置。
   - `caller` は、呼び出しの位置を `full_range` に含む定義のうち最も狭いものの添字(同じ file の `definitions` の添字)。含む定義が無ければ(top level の式)`null`。effect 節の本体の中はその `effect-clause`、`(fn …)` や `let` の中の局所の関数の中は外側の定義になる。`(setv x (f))` の `f` は `x` の `variable` が caller。
-  - `performed` は `(<- (X …))`・`(<- name (X …))`・`(<- name T (X …))` の X と、`yield` / `yield-from` の直下の呼び出しで true。その中の引数の入れ子の呼び出しは false。
+  - `performed` は `(<- (X …))`・`(<- name (X …))`・`(<- name T (X …))` の X と、`yield` / `yield-from` / `!`(doeff-hy の引数の位置での effect の bind、`(! (X …))`)の直下の呼び出しで true。`(! x)` のような記号だけの形は呼び出しではない。その中の引数の入れ子の呼び出しは false。
   - 入れないもの: 予約語(require した普通の語の macro を含む)、doeff-hy の束縛の構文の頭(`val` / `var` / `lazy` / `session`。defk などの macro が読むので require が無くても構文)、`(.method obj)`、`(. obj (method …))` の method、defhandler / `handle` の effect 節の頭(`(PutRow [table key] …)` の `PutRow`)、型注釈の中(`#^ (of list int) x`)、match の pattern の中(`(Point :x px)`)、quote の中。これらの記号は `references` には今までどおり入る。
 
 ### 既知の制限
 
 - mangle は契約の単純な形(`-` → `_`)だけで、Hy の `?`・`!` などの記号の変換(`hyx_…`)はしない。
 - `(when …)` など条件の中の定義、`defdomain` など上の一覧に無い定義の形は `definitions` に入れない(参照には入る)。その中の呼び出しの `caller` は外側の定義か `null` になる。
-- `(! (X …))`(doeff-hy の bang による実行)は `performed` を true にしない(版 2 の契約が `<-` と `yield` / `yield-from` だけを決めているため)。
 - `->` / `->>` の中の `(f a)` は書かれた形の頭を呼び出しとして入れる(展開後の引数の並びは見ない)。
 - f 文字列の `{x:>10}` の書式は `:` の前までを名前とみなす。`{x !r}` のように空白で区切る Hy の書き方は正しく読める。
 
