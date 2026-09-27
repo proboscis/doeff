@@ -125,10 +125,16 @@
   (frozen-json-object (dfor #(name v) (.items (| merged born-state)) :if (is-not v None) name v) "確定する行の値"))
 
 
-(defn #^ (| Refused None) writer-refusal [#^ TableDecl decl #^ str writer #^ tuple changed]
+(defn #^ bool founding? [#^ TableDecl decl #^ str writer #^ (| Row None) current #^ str name]
+  "この書きが欄 name の誕生の書き手の書きか: 行がまだ無く(current = None)、書き手が欄の founders に居る。"
+  (and (is current None) (in writer (decl.founders-of name))))
+
+
+(defn #^ (| Refused None) writer-refusal [#^ TableDecl decl #^ str writer #^ (| Row None) current #^ tuple changed]
+  "変わる欄ごとに書き手を照らす: 欄の writers か、行の誕生の書きなら欄の founders(founding?)。"
   (for [name changed]
     (setv writers (decl.writers-of name))
-    (when (not-in writer writers)
+    (when (not (or (in writer writers) (founding? decl writer current name)))
       (return (Refused (.format "表 {} の欄 {} を書いてよいのは {!r} で、{!r} はその中に無い"
                                 decl.name name writers writer)))))
   None)
@@ -142,11 +148,12 @@
       (Refused (.format "表 {} の状態の語 {!r} は宣言 {!r} の外" decl.name word decl.states))))
 
 
-(defn #^ (| Refused None) operator-refusal [#^ TableDecl decl #^ str writer #^ tuple changed #^ tuple operators] ; defk にできない: handler(memory・PG・写し)が同期に呼ぶ judge-put の 1 段(この file の判断はすべて純関数の defn)
+(defn #^ (| Refused None) operator-refusal [#^ TableDecl decl #^ str writer #^ (| Row None) current #^ tuple changed #^ tuple operators] ; defk にできない: handler(memory・PG・写し)が同期に呼ぶ judge-put の 1 段(この file の判断はすべて純関数の defn)
   "operator の宣言の欄を agent が書かないようにする: 変わる欄に operator-paths の欄があれば、書き手が operator の主体の一覧
    (RecordsSchema.operators)に入っていること。書き手の名は handler を組む時に身元から入る値で、effect の引数には無い —
-   agent が operator を名乗る口は無い。"
-  (setv guarded (tuple (gfor name changed :if (in name decl.operator-paths) name)))
+   agent が operator を名乗る口は無い。例外は行の誕生の書きの founders(founding?)だけ — 宣言がその書き手に既定の行を生むことを
+   許した欄で、生まれた後の行の書きには効かない。"
+  (setv guarded (tuple (gfor name changed :if (and (in name decl.operator-paths) (not (founding? decl writer current name))) name)))
   (if (and guarded (not-in writer operators))
       (Refused (.format "表 {} の欄 {!r} は operator の宣言の欄で、書いてよいのは operator の主体 {!r} だけ({!r} はその中に無い)"
                         decl.name guarded operators writer))
@@ -169,9 +176,9 @@
   (when shape (return shape))
   (setv changed (changed-fields decl current diff)
         value (landed-value decl current key diff))
-  (or (writer-refusal decl writer changed)
+  (or (writer-refusal decl writer current changed)
       (state-refusal decl value)
-      (operator-refusal decl writer changed operators)
+      (operator-refusal decl writer current changed operators)
       (size-refusal decl value)
       (Admitted value)))
 

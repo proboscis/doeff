@@ -12,7 +12,7 @@
 (import doeff_records.memory [MemoryStore memory-records-handler])
 (import doeff_records.laws [LAW-SCHEMA LawHarness LawBroken law-stale-put-conflicts law-committed-changes-appear-once-in-order
                             law-epoch-change-resets law-undeclared-writes-are-refused law-operator-paths-need-an-operator
-                            law-transient-rows-expire
+                            law-founders-write-only-at-birth law-transient-rows-expire
                             law-indexed-list-equals-filtered-scan law-append-is-idempotent law-none-removes-a-field
                             law-maintenance-prunes-and-sweeps law-put-rows-is-all-or-nothing])
 (import doeff_records.maintenance [PruneChanges Pruned])
@@ -109,6 +109,18 @@
                    (broken-harness (MemoryStore (dataclasses.replace LAW-SCHEMA :operators #("overseer" "maker"))) None)))
   ;; 誰の書きも operator の主体として通す handler(身元を operator にすり替える)。
   (assert (breaks? law-operator-paths-need-an-operator (broken-harness (MemoryStore LAW-SCHEMA) None (fn [_] "overseer"))))
+  ;; 誕生の書き手を知らない置き場(founders を読まない)— 据え付けの係が既定の行を生めない。
+  (setv charters (get LAW-SCHEMA.tables "charters")
+        unfounded (dataclasses.replace charters :fields (tuple (gfor f charters.fields (dataclasses.replace f :founders #())))))
+  (assert (breaks? law-founders-write-only-at-birth
+                   (broken-harness (MemoryStore (dataclasses.replace LAW-SCHEMA :tables (| (dict LAW-SCHEMA.tables) {"charters" unfounded})))
+                                   None)))
+  ;; 誕生の後も founders を書き手として扱う置き場(誕生の書き手を欄の書き手かつ operator の主体に上げた宣言)— 生まれた行を書き換えられる。
+  (setv promoted (dataclasses.replace charters :fields (tuple (gfor f charters.fields (dataclasses.replace f :writers (+ f.writers f.founders))))))
+  (assert (breaks? law-founders-write-only-at-birth
+                   (broken-harness (MemoryStore (dataclasses.replace LAW-SCHEMA :tables (| (dict LAW-SCHEMA.tables) {"charters" promoted})
+                                                                     :operators #("overseer" "maker")))
+                                   None)))
   ;; 時計の進まない handler(保持の期限が来ない)— memory の handler の GetTime だけを止め、法の Delay は仮想の時計が進める。
   (setv store (MemoryStore LAW-SCHEMA))
   (assert (breaks? law-transient-rows-expire

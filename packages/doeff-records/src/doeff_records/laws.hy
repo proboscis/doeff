@@ -40,7 +40,14 @@
                                             (FieldDecl "state" #(MAKER)) (FieldDecl "owner" #(MAKER)))
                                   :indexes #("owner")
                                   :states #("open" "done") :terminal #("done") :initial "open"
-                                  :retention (KeepFor TICKET-KEEP-SECONDS))})
+                                  :retention (KeepFor TICKET-KEEP-SECONDS))
+             ;; 誕生の書き手(FieldDecl.founders): maker は行が無い時だけ name と rule を書いて行を生める。生まれた行の rule・note は
+             ;; operator の宣言の欄で、書けるのは operator の主体 overseer だけ(法 4c)。
+             "charters" (TableDecl :name "charters" :key-fields #("name")
+                                   :fields #((FieldDecl "name" #(OVERSEER) :founders #(MAKER))
+                                             (FieldDecl "rule" #(OVERSEER) :founders #(MAKER))
+                                             (FieldDecl "note" #(OVERSEER)))
+                                   :operator-paths #("rule" "note"))})
     :streams (FrozenMap {"journal" (StreamDecl :name "journal" :writers #(MAKER) :size-budget 200)})
     :operators #(OVERSEER)))
 
@@ -241,6 +248,32 @@
   (require-law (= final (Row #("p5") (FrozenMap {"id" "p5" "label" "b" "state" "open" "grant" "yes"}) 3)) law
                (.format "断った書きが行を変えた: {!r}" final))
   (+ [born] refusals [granted overreach labeled final]))
+
+
+;; --- 法 4c: 誕生の書き手(founders)は行が無い時だけ書け、生まれた行は書き換えられない ------------------------------
+
+(defk law-founders-write-only-at-birth [#^ LawHarness harness]
+  {:pre [(: harness LawHarness)] :post [(: % list)]}
+  "欄の founders を、どの置き場の組でも同じに確かめるための法: 誕生の書き手でない者は行を生めない・誕生の書き手でも founders に
+   居ない欄を添えた誕生は断る・誕生の書き手は行が無い時だけ既定の行を生める(operator の宣言の欄でも)・生まれた行の欄は誕生の
+   書き手には書けず、operator の主体だけが書ける・生まれた後の誕生の書き(ExpectAbsent)は Conflict。"
+  (setv law "誕生の書き手は行が無い時だけ書け、生まれた行は書き換えられない")
+  (<- stranger (as-writer harness STRANGER (PutRow "charters" #("c1") (FrozenMap {"rule" "r0"}) (ExpectAbsent))))
+  (require-law (isinstance stranger Refused) law (.format "誕生の書き手でない者が行を生んだ: {!r}" stranger))
+  (<- beyond (as-writer harness MAKER (PutRow "charters" #("c1") (FrozenMap {"rule" "r0" "note" "n"}) (ExpectAbsent))))
+  (require-law (isinstance beyond Refused) law (.format "founders に居ない欄 note を添えた誕生が通った: {!r}" beyond))
+  (<- born (as-writer harness MAKER (PutRow "charters" #("c1") (FrozenMap {"rule" "r0"}) (ExpectAbsent))))
+  (require-law (and (isinstance born Written) (= born.version 1)) law (.format "誕生の書き手が既定の行を生めない: {!r}" born))
+  (<- rewrite (as-writer harness MAKER (PutRow "charters" #("c1") (FrozenMap {"rule" "r1"}) (ExpectVersion 1))))
+  (require-law (isinstance rewrite Refused) law (.format "誕生の書き手が生まれた行を書き換えた: {!r}" rewrite))
+  (<- again (as-writer harness MAKER (PutRow "charters" #("c1") (FrozenMap {"rule" "r2"}) (ExpectAbsent))))
+  (require-law (isinstance again Conflict) law (.format "生まれた後の誕生の書きが Conflict でない: {!r}" again))
+  (<- declared (as-writer harness OVERSEER (PutRow "charters" #("c1") (FrozenMap {"rule" "r1" "note" "n"}) (ExpectVersion 1))))
+  (require-law (and (isinstance declared Written) (= declared.version 2)) law (.format "operator の主体が生まれた行を書けない: {!r}" declared))
+  (<- final (as-writer harness MAKER (ReadRow "charters" #("c1"))))
+  (require-law (= final (Row #("c1") (FrozenMap {"name" "c1" "rule" "r1" "note" "n"}) 2)) law
+               (.format "断った書きが行を変えた: {!r}" final))
+  [stranger beyond born rewrite again declared final])
 
 
 ;; --- 法 5: transient の行は期限で消え、record の行は消えない ------------------------------------------------
@@ -488,6 +521,7 @@
             "epoch-change-resets" law-epoch-change-resets
             "undeclared-writes-are-refused" law-undeclared-writes-are-refused
             "operator-paths-need-an-operator" law-operator-paths-need-an-operator
+            "founders-write-only-at-birth" law-founders-write-only-at-birth
             "transient-rows-expire" law-transient-rows-expire
             "indexed-list-equals-filtered-scan" law-indexed-list-equals-filtered-scan
             "append-is-idempotent" law-append-is-idempotent
@@ -496,5 +530,5 @@
             "maintenance-prunes-and-sweeps" law-maintenance-prunes-and-sweeps
             "put-rows-is-all-or-nothing" law-put-rows-is-all-or-nothing})
 (setv SHARED-LAWS #("stale-put-conflicts" "committed-changes-appear-once-in-order" "epoch-change-resets"
-                    "undeclared-writes-are-refused" "operator-paths-need-an-operator" "indexed-list-equals-filtered-scan" "append-is-idempotent"
-                    "none-removes-a-field"))
+                    "undeclared-writes-are-refused" "operator-paths-need-an-operator" "founders-write-only-at-birth"
+                    "indexed-list-equals-filtered-scan" "append-is-idempotent" "none-removes-a-field"))

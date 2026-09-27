@@ -68,13 +68,19 @@
 ;; --- 表の宣言 ------------------------------------------------------------------------------------------------
 
 (defclass [(dataclass :frozen True)] FieldDecl []
-  "表の欄 1 つの宣言: name = 欄の名 / writers = その欄を書いてよい書き手の名(空でない文字列の空でない tuple)。"
+  "表の欄 1 つの宣言: name = 欄の名 / writers = その欄を書いてよい書き手の名(空でない文字列の空でない tuple)/
+   founders = 行の誕生の書き(行がまだ無い時)に限ってその欄を書いてよい書き手(空でない文字列の tuple・既定 = 無し)。
+   生まれた後の行のその欄は writers だけが書く — 据え付けの係が既定の行を生むことだけを許し、在る行は書き換えさせない形
+   (operator の宣言の欄でも、誕生の書きの founders は operator の主体を要さない — admission.hy の writer-refusal・operator-refusal)。"
   (#^ str name)
   (#^ tuple writers)
+  (setv #^ tuple founders #())
   (defn #^ None __post_init__ [self]
     (checked-field-name self.name "FieldDecl.name")
     (when (not (and (isinstance self.writers tuple) self.writers (all (gfor n self.writers (and (isinstance n str) n)))))
-      (raise (ValueError (.format "FieldDecl.writers[{!r}] は空でない文字列の空でない tuple: {!r}" self.name self.writers))))))
+      (raise (ValueError (.format "FieldDecl.writers[{!r}] は空でない文字列の空でない tuple: {!r}" self.name self.writers))))
+    (when (not (and (isinstance self.founders tuple) (all (gfor n self.founders (and (isinstance n str) n)))))
+      (raise (ValueError (.format "FieldDecl.founders[{!r}] は空でない文字列の tuple: {!r}" self.name self.founders))))))
 
 
 (defclass [(dataclass :frozen True)] TableDecl []
@@ -146,6 +152,12 @@
     "欄 name を書いてよい書き手の名(宣言の外の欄は UndeclaredField)。"
     (for [f self.fields]
       (when (= f.name name) (return f.writers)))
+    (raise (UndeclaredField (.format "表 {} の宣言の外の欄: {!r}" self.name name))))
+
+  (defn #^ tuple founders-of [self #^ str name]
+    "欄 name を行の誕生の書きに限って書いてよい書き手の名(FieldDecl.founders・宣言の外の欄は UndeclaredField)。"
+    (for [f self.fields]
+      (when (= f.name name) (return f.founders)))
     (raise (UndeclaredField (.format "表 {} の宣言の外の欄: {!r}" self.name name)))))
 
 

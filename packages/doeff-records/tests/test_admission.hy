@@ -93,6 +93,24 @@
   (assert (RecordsSchema :tables {"parts" parts} :operators #("overseer"))))
 
 
+(deftest test-founders-write-a-field-only-when-the-row-is-born
+  ;; 誕生の書き手(FieldDecl.founders): 行が無い時だけ欄を書け(operator の宣言の欄でも operator の主体を要さない)、在る行には効かない。
+  (setv charters (LAW-SCHEMA.table "charters")
+        row (Row #("c1") {"name" "c1" "rule" "r0"} 1))
+  (assert (isinstance (judge-put charters "maker" None #("c1") {"rule" "r0"} :operators LAW-SCHEMA.operators) Admitted))
+  (setv beyond (judge-put charters "maker" None #("c1") {"rule" "r0" "note" "n"} :operators LAW-SCHEMA.operators))
+  (assert (and (isinstance beyond Refused) (in "note" beyond.reason)) beyond)
+  (assert (isinstance (judge-put charters "stranger" None #("c1") {"rule" "r0"} :operators LAW-SCHEMA.operators) Refused))
+  (setv rewrite (judge-put charters "maker" row #("c1") {"rule" "r1"} :operators LAW-SCHEMA.operators))
+  (assert (and (isinstance rewrite Refused) (in "rule" rewrite.reason)) rewrite)
+  ;; 同じ値の書き直しは変わる欄が無いので断らない(据え付けの撃ち直し)・operator の主体は在る行を書ける。
+  (assert (isinstance (judge-put charters "maker" row #("c1") {"rule" "r0"} :operators LAW-SCHEMA.operators) Admitted))
+  (assert (isinstance (judge-put charters "overseer" row #("c1") {"rule" "r1"} :operators LAW-SCHEMA.operators) Admitted))
+  ;; founders の綴りの外は宣言の時に止める。
+  (for [founders [#("") ["maker"] #(1)]]
+    (assert (refuses? (fn [] (FieldDecl "x" #("w") :founders founders)) #(ValueError TypeError)) founders)))
+
+
 (deftest test-only-terminal-rows-of-keep-for-tables-expire
   (setv tickets (LAW-SCHEMA.table "tickets") parts (LAW-SCHEMA.table "parts"))
   (assert (row-expired? tickets {"state" "done"} 0 60000))
