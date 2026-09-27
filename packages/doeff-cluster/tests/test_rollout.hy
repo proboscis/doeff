@@ -48,7 +48,7 @@
     (setv self.state (ClusterState :started-ms (- self.now 60000)))
     (setv self.state (self.call "POST" "/resources/Service"
                                 {"name" "writer-a"
-                                 "spec" {"revision" "r1" "requires" {} "entry" "m" "args" [] "replicas" 0
+                                 "spec" {"revision" "r1" "needs" ["net"] "entry" "m" "args" [] "replicas" 0
                                          "readiness" {"windowSeconds" window}}})))
 
   (defn call [self method path [body None] [actor "c-test"]]
@@ -92,7 +92,7 @@
                              "specHash" (spec-hash spec) "placement" spec.placement}])
                        []))
     (setv #(state _ reply) (respond self.state (Request "POST" "/heartbeat" {}
-                                                        {"name" "atlas" "labels" {} "capacity" 10 "versions" V
+                                                        {"name" "atlas" "provides" ["net"] "capacity" 10 "versions" V
                                                          "statuses" statuses}) self.now T))
     (setv self.state state)
     (setv want (next (gfor j (get reply "jobs") :if (= (get j "name") "writer-a")
@@ -322,7 +322,7 @@
   ;; 止めた dry-run の process の Ready の報告は window(120 秒)の中に残っているが、数えてはならない — 本番(旧)を止めるのは
   ;; 新しい process が最初の報告をした後。
   (setv sim (Sim :window 120 :first-report-ms 20000))
-  (setv spec {"revision" "r1" "requires" {} "entry" "m" "args" [] "replicas" 1 "readiness" {"windowSeconds" 120}})
+  (setv spec {"revision" "r1" "needs" ["net"] "entry" "m" "args" [] "replicas" 1 "readiness" {"windowSeconds" 120}})
   ;; dry-run の書き手を動かし、Ready の報告を出させる
   (sim.call "PUT" "/resources/Service/writer-a" {"spec" spec "resourceVersion" (get sim.state.meta "Service/writer-a" "resourceVersion")})
   (for [_ (range 30)] (sim.step))

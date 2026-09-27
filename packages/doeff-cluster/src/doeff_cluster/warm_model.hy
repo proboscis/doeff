@@ -2,14 +2,14 @@
 ;;;
 ;;; 送り手(常駐の service 等)は、task を送る前に自分の実行環境を温めるよう頼む:
 ;;;
-;;;   (<- state WarmAnswer (WarmRuntimeEnv env requires 600.0 "svc-a@<版>"))
+;;;   (<- state WarmAnswer (WarmRuntimeEnv env (frozenset ["gpu"]) 600.0 "svc-a@<版>"))
 ;;;   (<- again WarmAnswer (ReadWarmState state.key))
-;;;   (> (len again.ready) 0)    ; requires の合う・生きていて drain 中でない worker の 1 台以上で準備済み
+;;;   (> (len again.ready) 0)    ; needs の合う・生きていて drain 中でない worker の 1 台以上で準備済み
 ;;;
 ;;; 答えは WarmAnswer = WarmState か WarmUnreachable(coordinator の /warm に届かなかった — 接続の失敗・5xx。2026-09-28)。
 ;;; 届かないは「温まっていない」と同じに読む値で、呼び手は例外で落ちずに次の拍で頼み直す。
 ;;;
-;;; coordinator は温める表(行 = 宣言と requires の組)を持ち、label の合う worker の heartbeat の返事に載せる。worker は job の準備より
+;;; coordinator は温める表(行 = 宣言と needs の組)を持ち、能力の合う worker の heartbeat の返事に載せる。worker は job の準備より
 ;;; 低い優先度で root を準備し、準備済みのキーを heartbeat で名乗る。準備の時間を task の待ちに入れないため(TI3 との関係は設計 節 3.2)。
 ;;; 使い方(いつ温め、いつ Ready を出すか)は送り手の方針で、ここは仕組みだけ。
 ;;;
@@ -21,7 +21,7 @@
 (import json)
 (import doeff [EffectBase])
 (import .runtime_env_model [RuntimeEnv env-key])
-(import .cluster_model [Requirement])
+(import .cluster_model [effect-needs-problem])
 
 (val WARM-KEY-LENGTH 24)
 
@@ -35,7 +35,7 @@
 
 
 (defrecord WarmState
-  "温める表の行 1 つの今の姿。key = 行のキー(宣言と requires の組)・ready / preparing = 行の requires(label・専用の印・宣言の道具)に
+  "温める表の行 1 つの今の姿。key = 行のキー(宣言と needs の組)・ready / preparing = 行の needs(能力・専用の能力・宣言の道具)に
    合い、生きていて drain 中でない worker のうち準備済み / 準備中の worker の名・failed = 準備に失敗した worker(WarmFailure)・
    until-ms = 行の期限(coordinator の時計の epoch ミリ秒)。"
   (#^ str key)
@@ -56,13 +56,17 @@
 
 
 (defclass [(dataclass :frozen True)] WarmRuntimeEnv [EffectBase]
-  "env を requires の合う worker で温めるよう頼む(同じ env と requires の組は同じ行 — 頼み直すと期限だけ延びる)。
+  "env を needs の合う worker で温めるよう頼む(needs = 要る能力の名の frozenset・同じ env と needs の組は同じ行 — 頼み直すと期限だけ延びる)。
    ttl-seconds = 行の期限(過ぎた行は配らず・掃除の固定からも外れる)・holder = 頼んだ主体(記録と表示だけ)。
    答え = WarmAnswer(WarmState か、coordinator に届かなかった WarmUnreachable)。"
   (#^ RuntimeEnv env)
-  (#^ tuple requires)
+  (#^ frozenset needs)
   (#^ float ttl-seconds)
-  (#^ str holder))
+  (#^ str holder)
+  (defn __post-init__ [self]
+    "needs を作る時に検める(空・旧い形を断る — cluster_model.effect-needs-problem)。"
+    (setv problem (effect-needs-problem self.needs))
+    (when problem (raise (TypeError (+ "WarmRuntimeEnv.needs: " problem))))))
 
 
 (defclass [(dataclass :frozen True)] ReadWarmState [EffectBase]
@@ -71,13 +75,12 @@
   (#^ str key))
 
 
-(defk warm-key [env requires]
-  {:pre [(: env RuntimeEnv) (: requires tuple)] :post [(: % str) (= (len %) WARM-KEY-LENGTH)]}
-  "温める表の行のキー(定義点はここ 1 つ)= 宣言のキー(platform を含まない)と requires の組の sha256 の頭 24 桁。
+(defk warm-key [env needs]
+  {:pre [(: env RuntimeEnv) (: needs tuple)] :post [(: % str) (= (len %) WARM-KEY-LENGTH)]}
+  "温める表の行のキー(定義点はここ 1 つ)= 宣言のキー(platform を含まない)と needs の組の sha256 の頭 24 桁。
    worker の root のキーは platform を含むので別の物(coordinator は worker の platform ごとに root のキーを計算して照らす)。"
   (<- declared str (env-key env ""))
-  (val labels (sorted (gfor r requires [r.label r.value])))
-  (val text (json.dumps {"env" declared "requires" labels} :sort-keys True :separators #("," ":")))
+  (val text (json.dumps {"env" declared "needs" (sorted needs)} :sort-keys True :separators #("," ":")))
   (cut (.hexdigest (hashlib.sha256 (.encode text "utf-8"))) 0 WARM-KEY-LENGTH))
 
 

@@ -38,16 +38,16 @@
 
 
 (deftest test-inline-handler-runs-the-program-under-the-outer-handlers
-  (<- a int (with-handlers [(reader {"base" 1}) (remote-inline)] (RemoteJob (add-base 3) :env "x")))
+  (<- a int (with-handlers [(reader {"base" 1}) (remote-inline)] (RemoteJob (add-base 3) :env "x" :needs (frozenset ["net"]))))
   (assert (= a 4))
-  (<- b str (with-handlers [(reader {"base" 1}) (remote-inline)] (RemoteJob ((make-counter "card")) :env "x")))
+  (<- b str (with-handlers [(reader {"base" 1}) (remote-inline)] (RemoteJob ((make-counter "card")) :env "x" :needs (frozenset ["net"]))))
   (assert (= b "card-1")))
 
 
 (deftest test-inline-handler-returns-the-program-exception-to-the-caller
   (setv caught None)
   (try
-    (<- (with-handlers [(reader {"base" 1}) (remote-inline)] (RemoteJob (boom) :env "x")))
+    (<- (with-handlers [(reader {"base" 1}) (remote-inline)] (RemoteJob (boom) :env "x" :needs (frozenset ["net"]))))
     (except [error ValueError] (setv caught error)))
   (assert (= (str caught) "業務の失敗 base=1")))
 
