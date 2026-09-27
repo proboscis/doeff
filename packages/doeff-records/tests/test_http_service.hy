@@ -13,7 +13,7 @@
 (import doeff_records.laws [LAW-SCHEMA])
 (import doeff_records.memory [MemoryStore memory-records-handler])
 (import doeff_records.http_server [RecordsServerConfig start-records-server])
-(import doeff_records.http_client [RecordsEndpoint http-records-handler])
+(import doeff_records.http_client [RecordsEndpoint http-records-handler http-table-records-handler])
 (import tests.interpreters [LAW-TOKENS law-roster sim-runner])
 
 
@@ -194,3 +194,28 @@
                                              (ReadRow "parts" #("p1"))))))
   (assert (isinstance answer Unreachable) (repr answer))
   (assert (in "記録の service に届かない" answer.detail) (repr answer)))
+
+
+(deftest test-a-table-scoped-client-answers-its-tables-and-passes-the-rest-to-the-outer-service
+  ;; 記録が表ごとに 2 つの service に在る時: 内側の http-table-records-handler は自分の表(parts)だけを自分の口へ撃ち、他の表(tickets)の
+  ;; 読み書きは外側の http-records-handler(もう 1 つの口)へ渡す。束の書きは表が全部自分の表の時だけ答える。
+  (val parts-store (MemoryStore LAW-SCHEMA))
+  (val tickets-store (MemoryStore LAW-SCHEMA))
+  (setv #(parts-server clock) (open-service (memory-lease parts-store)))
+  (setv #(tickets-server _) (open-service (memory-lease tickets-store)))
+  (val maker (get LAW-TOKENS "maker"))
+  (try
+    (defn both [program]
+      (run (scheduled (with_handlers [(sim-time-handler :clock clock)
+                                      (http-records-handler (RecordsEndpoint tickets-server.url maker))
+                                      (http-table-records-handler (RecordsEndpoint parts-server.url maker) (frozenset ["parts"]))]
+                                     program))))
+    (assert (isinstance (both (PutRow "parts" #("p1") {"label" "a"} (ExpectAbsent))) Written))
+    (assert (isinstance (both (PutRow "tickets" #("g" "t1") {"state" "open"} (ExpectAbsent))) Written))
+    (assert (isinstance (both (PutRows #((RowWrite "parts" #("p2") {"label" "b"} (ExpectAbsent))))) WrittenRows))
+    ;; 各行は自分の表の口の置き場にだけ在る。
+    (assert (= (run-as parts-server clock maker (ReadRow "tickets" #("g" "t1"))) (Missing)))
+    (assert (= (run-as tickets-server clock maker (ReadRow "parts" #("p1"))) (Missing)))
+    (assert (!= (run-as parts-server clock maker (ReadRow "parts" #("p2"))) (Missing)))
+    (assert (!= (both (ReadRow "tickets" #("g" "t1"))) (Missing)))
+    (finally (.close parts-server) (.close tickets-server))))
