@@ -77,7 +77,7 @@
   (assert (= (get env HOST-CONTRACT.program-env) file) env)
   (assert (= (get env "POLL") "5.0") env)
   (assert (= cwd (str tmp-path)))
-  ;; 置き場のキーの無い job(素の entry・task)には足さない。
+  ;; 置き場のキーを持たない worker の内部の JobSpec には足さない(宣言の job も task も置き場のキーを持つ — task は test_task_programs.hy)。
   (<- bare (service-spec "bare" None))
   (val bare-launched (.launch host bare (str tmp-path) "1-1" 1))
   (val bare-argv (get bare-launched 0))

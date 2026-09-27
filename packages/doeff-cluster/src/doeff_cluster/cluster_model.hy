@@ -315,10 +315,13 @@
   "task 1 本。phase = queued | preparing | assigned | finished | code-failed | failed(切り離した task は + version-mismatch | lost | cancelled)。
    preparing = 実行環境の task を、その env を準備済みでない worker に置いた(worker が準備してから走る・冷たい起動)。worker が準備済みを
    名乗った拍に assigned へ進む。担い手の数・送る task・報告の吸い上げでは assigned と同じに扱う(PLACED-PHASES)。
-   result = worker が返した結果の blob(TaskSucceeded / TaskFailed の cloudpickle)。finished で None なら結果なし。"
+   result = worker が返した結果の blob(TaskSucceeded / TaskFailed の cloudpickle)。finished で None なら結果なし。
+   program = 詰めた Program の置き場のキー(sha256 — 本体は /programs/<sha>。service の宣言の行と同じ運び方 — ADR-DOE-CLUSTER-001 R3b)。
+   行が在る間(終わって結果を保持している間も)置き場の Program を参照し続ける(program_policy.program-refs)。None = 2026-09-27 より前の
+   形で読んだ終わった行(Program を持たない)。"
   (#^ str id)
   (#^ str name)
-  (#^ str blob)
+  (#^ (| str None) program)
   (#^ str revision)
   (#^ (get tuple #(ComponentVersion ...)) versions)   ; 送り手の版(名の順)
   (#^ tuple needs)                    ; 要る能力の名(名の順)
@@ -367,18 +370,30 @@
 
 (defn #^ TaskRecord task-record-from-json [#^ dict data]
   "保存の JSON の形 → TaskRecord(task-record-to-json の逆)。
-   旧い形(2026-09-27 より前の coordinator が書いた requires の object)の行は読み直しで coordinator を落とさず、まだ終わっていない行を
-   failed(理由つき)にする — 旧い宣言の形は受け付けない(operator 2026-09-27)。空の requires は needs 無しと同じ。"
+   旧い形の行は読み直しで coordinator を落とさず、まだ終わっていない行を failed(理由つき)にする — 旧い形は受け付けない
+   (operator 2026-09-27)。旧い形 = requires の object(needs の前)・詰めた Program を行に持つ blob(置き場 /programs の前 —
+   Program は捨てる。終わった行は Program 無し = program None で読む)。空の requires は needs 無しと同じ。"
   (setv old (.get data "requires")
-        body (dfor #(k v) (.items data) :if (!= k "requires") k v)
-        refused (and old (not-in (.get body "phase" "queued") ENDED-PHASES)))
-  (TaskRecord #** (| body {"versions" (component-versions-of (get body "versions"))
-                           "needs" (capabilities-of (.get body "needs" []) "task の needs")
-                           "avoid" (tuple (.get body "avoid" []))}
-                     (if refused
-                         {"phase" "failed"
-                          "detail" (.format "旧い形の task(requires {})は受け付けない — 新しい形(needs)で送り直す" old)}
+        body (dfor #(k v) (.items data) :if (not-in k #("requires" "blob")) k v)
+        unended (not-in (.get body "phase" "queued") ENDED-PHASES)
+        reason (old-task-row-reason old (in "blob" data)))
+  (TaskRecord #** (| {"program" None}
+                     body
+                     {"versions" (component-versions-of (get body "versions"))
+                      "needs" (capabilities-of (.get body "needs" []) "task の needs")
+                      "avoid" (tuple (.get body "avoid" []))}
+                     (if (and reason unended)
+                         {"phase" "failed" "detail" reason}
                          {}))))
+
+
+(deff old-task-row-reason [#^ (| dict list None) old #^ bool has-blob]  ; defk にできない: 保存の読み直し(Program の外)が呼ぶ純粋な判断
+  {:pre [(: old (| dict list None)) (: has-blob bool)] :post [(: % (| str None))] :tags {:context "doeff-cluster" :role "judgment"}}
+  "保存の task の行が旧い形なら、まだ終わっていない行を failed にする理由の文(新しい形なら None)。old = 行の requires の値。"
+  (cond
+    old (.format "旧い形の task(requires {})は受け付けない — 新しい形(needs)で送り直す" old)
+    has-blob "旧い形の task(詰めた Program を行に持つ blob)は受け付けない — Program を /programs に置き、その sha で送り直す"
+    True None))
 
 
 (defclass [(dataclass :frozen True)] ClusterState []

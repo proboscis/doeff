@@ -4,7 +4,8 @@
 ;;   handler を 1 つも足さない: 自分で handler を並べた Program は走り、並べない Program の effect は答えが無く 0 以外で終わる。
 ;; - 版の食い違いは最初の段で確かめる: この検の process(= declare と同じ venv)で詰めた Program を子が解ける。versions を書き換えた file・
 ;;   file の無い時は解かずに理由つきで止まる(service は 3・probe は 1)。
-;; - 旧い引数(--factory・--env・--config — 計画 2.8 の入口 13)は argparse の error。旧い再生の入口(入口 14)は理由つきで止まる。
+;; - 旧い引数(--factory・--env・--config — 計画 2.8 の入口 13・task の --blob・--versions)は argparse の error。旧い再生の入口(入口 14)は
+;;   理由つきで止まる。task の入口の検(同じ Program の file を読む)は test_remote.hy。
 (require doeff-hy.macros [deftest defk <- val])
 (import json)
 (import os)
@@ -91,9 +92,16 @@
   (<- extra (entry "doeff_cluster.job_entry" "service" "--identity" (* "0" 16) "--program" "p.json" "--env" "m:e"))
   (assert (= extra.returncode 2) extra.stderr)
   (assert (in "unrecognized arguments: --env m:e" extra.stderr) extra.stderr)
-  (<- task (entry "doeff_cluster.job_entry" "task" "--blob" "b" "--result" "r" "--env" "m:e"))
+  (<- task (entry "doeff_cluster.job_entry" "task" "--program" "p.json" "--result" "r" "--env" "m:e"))
   (assert (= task.returncode 2) task.stderr)
-  (assert (in "unrecognized arguments: --env m:e" task.stderr) task.stderr))
+  (assert (in "unrecognized arguments: --env m:e" task.stderr) task.stderr)
+  ;; task の旧い入口(詰めた Program を --blob の file で・版を --versions で渡す形)も無い — service と同じ --program の file 1 つ(R3b)。
+  (<- blob (entry "doeff_cluster.job_entry" "task" "--program" "p.json" "--result" "r" "--blob" "b" "--versions" "{}"))
+  (assert (= blob.returncode 2) blob.stderr)
+  (assert (in "unrecognized arguments: --blob b --versions {}" blob.stderr) blob.stderr)
+  (<- bare (entry "doeff_cluster.job_entry" "task" "--blob" "b" "--result" "r"))
+  (assert (= bare.returncode 2) bare.stderr)
+  (assert (in "--program" bare.stderr) bare.stderr))
 
 
 (deftest test-the-old-replay-entry-stops-with-its-reason

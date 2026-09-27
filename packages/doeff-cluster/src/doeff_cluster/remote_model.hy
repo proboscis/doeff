@@ -16,6 +16,9 @@
 ;;; 落として worker が子 process を止める。
 ;;;
 ;;; cloudpickle は長期保存の形式ではない。blob には必ず commit と Python / doeff の版を添え、受け側は版が違えば復元せずに断る。
+;;; 詰めた Program は task の本文に載せず、coordinator の置き場 /programs/<sha>(program-sha)に版と一緒に先に置き、本文は sha だけを運ぶ
+;;; (service の宣言と同じ運び方 — ADR-DOE-CLUSTER-001 R3b)。
+(require doeff-hy.macros [deff])
 (import base64)
 (import collections)
 (import io)
@@ -178,6 +181,13 @@
 
 (defn decode-program [#^ str blob]
   (cloudpickle.loads (base64.b64decode blob)))
+
+
+(deff program-sha [#^ str blob]  ; defk にできない: 送り手(declare・task の client)・coordinator の置き場・worker の cache が Program の外で呼ぶ
+  {:pre [(: blob str)] :post [(: % str) (= (len %) 64)] :tags {:context "doeff-cluster" :role "judgment"}}
+  "詰めた Program の置き場のキー(中身の sha256 の 16 進 64 桁)。/programs/<sha> の鍵・宣言の行と task の本文の program・worker の
+   cache の file の名はどれもこの値(定義点はここ 1 つ — ADR-DOE-CLUSTER-001 R3b・改訂 1 の F)。"
+  (.hexdigest (hashlib.sha256 (.encode blob "ascii"))))
 
 
 (defn #^ TaskFailed failed-from [#^ BaseException error]

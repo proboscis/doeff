@@ -32,7 +32,7 @@
   (assert (probed-job S1))
   (assert (= (probe-args S1) #("probe")))
   (assert (not (probed-job (JobSpec "a" "jobs.a" #() "rev1"))))
-  (assert (not (probed-job (JobSpec "task/1" JOB-ENTRY #("task" "--blob" "b") "rev1" :once True)))))
+  (assert (not (probed-job (JobSpec "task/1" JOB-ENTRY #("task" "--result" "r") "rev1" :once True)))))
 
 
 (deftest test-a-service-starts-only-after-the-probe-passes
@@ -389,7 +389,7 @@
   (assert (in "置き場のキー" keyless) keyless)
   ;; 新しい形の service・task・素の entry は断らない。
   (assert (is (probe-refusal S1) None))
-  (assert (is (probe-refusal (JobSpec "task/1" JOB-ENTRY #("task" "--blob" "b") "rev1" :once True)) None))
+  (assert (is (probe-refusal (JobSpec "task/1" JOB-ENTRY #("task" "--result" "r") "rev1" :once True)) None))
   (assert (is (probe-refusal (JobSpec "a" "jobs.a" #() "rev1")) None)))
 
 

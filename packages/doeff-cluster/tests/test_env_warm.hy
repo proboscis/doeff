@@ -34,6 +34,7 @@
 (import doeff_cluster.code_prepare [cpu-limit-of import-closure])
 (import tests.env_fixtures [LOCK env-of base-world])
 (import tests.detached_rig [MemoryCoordinator])
+(import tests.program_rows [SAMPLE-TASK-PROGRAM program-placed])
 
 ;; Program が走り出した仮想の時刻(送ってからの待ちを測る)。
 (val STARTS [])
@@ -189,7 +190,7 @@
 
 
 (defn #^ TaskRecord env-task [#^ str id #^ dict declared [needs #("net")]]
-  (TaskRecord id "" "blob" "" #() needs 60000 60000 0 :runtime-env declared))
+  (TaskRecord id "" SAMPLE-TASK-PROGRAM "" #() needs 60000 60000 0 :runtime-env declared))
 
 
 (deftest test-warm-table-is-written-read-and-handed-to-matching-workers
@@ -305,10 +306,12 @@
 
 (deftest test-cold-starts-are-counted-in-the-metrics
   (<- declared dict (declared-of "app-1"))
-  (val coordinator-state (ClusterState :workers {"w1" (worker-of "w1" #("net") 0)} :tasks {"t1" (env-task "t1" declared)} :next-task 2))
-  (val submitted (respond coordinator-state (Request "POST" "/tasks" {}
-                                                     {"blob" "b" "revision" "" "versions" {} "needs" ["net"] "leaseSeconds" 60
-                                                      "runtimeEnv" declared})
+  (<- placed tuple (program-placed (ClusterState :workers {"w1" (worker-of "w1" #("net") 0)} :tasks {"t1" (env-task "t1" declared)}
+                                                 :next-task 2)
+                                   {} :now 10))
+  (val submitted (respond (get placed 0) (Request "POST" "/tasks" {}
+                                                  {"program" (get placed 1) "revision" "" "needs" ["net"] "leaseSeconds" 60
+                                                   "runtimeEnv" declared})
                           10 TIMING))
   (assert (in "doeff_worker_env_cold_start_total 2" (metrics-text (get submitted 0) 10 TIMING))
           "冷たい起動(準備済みの worker が無い置き先)を数える"))
@@ -339,7 +342,7 @@
 
 (deftest test-the-worker-warms-after-its-jobs-and-retries-a-failed-warm-later
   (<- job-declared dict (declared-of "app-1"))
-  (val spec (task-spec {"id" "t1" "revision" "" "versions" {} "blob" "b" "runtimeEnv" job-declared}
+  (val spec (task-spec {"id" "t1" "revision" "" "versions" {} "program" SAMPLE-TASK-PROGRAM "runtimeEnv" job-declared}
                        (. (__import__ "pathlib") (Path "/tmp/tasks"))))
   (<- warm WarmEnv (warm-env-of "app-2"))
   (val policy (WorkerPolicy))
@@ -356,7 +359,7 @@
 
 (deftest test-the-worker-pins-running-desired-warm-and-preparing-roots-for-the-sweep
   (<- job-declared dict (declared-of "app-1"))
-  (val spec (task-spec {"id" "t1" "revision" "" "versions" {} "blob" "b" "runtimeEnv" job-declared}
+  (val spec (task-spec {"id" "t1" "revision" "" "versions" {} "program" SAMPLE-TASK-PROGRAM "runtimeEnv" job-declared}
                        (. (__import__ "pathlib") (Path "/tmp/tasks"))))
   (<- warm WarmEnv (warm-env-of "app-2"))
   (val world (WorldView #((CodeView "env-preparing" CodeState.PREPARING)) #() #()
