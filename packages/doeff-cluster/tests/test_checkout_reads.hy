@@ -18,7 +18,8 @@
                                    runtime-env-of-checkouts checkout-reads checkout-state-at])
 (import doeff_cluster.runtime_env_model [RuntimeEnv RuntimeEnvInvalid InvalidKind])
 (import doeff_cluster.env_prepare [FileSha256])
-(import doeff_cluster.checkout_git_script [GitCheckout GitRemote git-command])
+(import doeff_cluster.checkout_git_script [GitCheckout GitRemote GitRev git-command])
+(import doeff_core_effects.process_effects [ProcessOutcome RunProcess])
 
 (val LOCK "httpx==0.28.1\n")
 (val APP-HEAD (* "a" 40))
@@ -141,3 +142,35 @@
   (<- unpushed-world tuple (world-of False False))
   (<- unpushed (| RuntimeEnv InvalidKind) (build unpushed-world))
   (assert (= unpushed InvalidKind.COMMIT-NOT-ON-REMOTE) unpushed))
+
+
+(defk git-says [checkouts argv]
+  {:pre [(: checkouts tuple) (: argv tuple)] :post [(: % ProcessOutcome)]}
+  "台本の git に問い 1 つを出して答えを読むため(名指しの rev の解きの検)。"
+  (<- outcome ProcessOutcome (with_handlers [(state) (scripted-process-handler (ProcessScript :commands #((git-command checkouts))))]
+                                            (RunProcess :argv argv)))
+  outcome)
+
+
+(deftest test-named-revs-resolve-to-commits-and-carry-their-own-remote-branches []
+  ;; rev-parse --verify --quiet <rev>^{commit}: HEAD・head の sha・revs の名は sha へ、知らない rev は exit 1 で出力なし(本物の --quiet と同じ)。
+  ;; branch -r --contains は head なら checkout の pushed、revs の sha ならその rev の pushed。
+  (val head (* "a" 40))
+  (val side (* "b" 40))
+  (val world #((GitCheckout :path "/src/hud" :head head :pushed #("origin/main")
+                            :revs #((GitRev :name "main" :sha head :pushed #("origin/main"))
+                                    (GitRev :name "local-only" :sha side)))))
+  (<- by-name ProcessOutcome (git-says world #("git" "-C" "/src/hud" "rev-parse" "--verify" "--quiet" "main^{commit}")))
+  (assert (= (.strip by-name.stdout) head))
+  (<- by-head ProcessOutcome (git-says world #("git" "-C" "/src/hud" "rev-parse" "--verify" "--quiet" "HEAD^{commit}")))
+  (assert (= (.strip by-head.stdout) head))
+  (<- unknown ProcessOutcome (git-says world #("git" "-C" "/src/hud" "rev-parse" "--verify" "--quiet" "feature^{commit}")))
+  (assert (= #(unknown.exit-code unknown.stdout unknown.stderr) #(1 "" "")))
+  (<- unpeeled ProcessOutcome (git-says world #("git" "-C" "/src/hud" "rev-parse" "--verify" "--quiet" "main")))
+  (assert (= (.strip unpeeled.stdout) head))
+  (<- side-sha ProcessOutcome (git-says world #("git" "-C" "/src/hud" "rev-parse" "--verify" "--quiet" "local-only^{commit}")))
+  (assert (= (.strip side-sha.stdout) side))
+  (<- on-main ProcessOutcome (git-says world #("git" "-C" "/src/hud" "branch" "-r" "--contains" head "--list" "origin/*")))
+  (assert (= (.strip on-main.stdout) "origin/main"))
+  (<- nowhere ProcessOutcome (git-says world #("git" "-C" "/src/hud" "branch" "-r" "--contains" side "--list" "origin/*")))
+  (assert (= nowhere.stdout "")))

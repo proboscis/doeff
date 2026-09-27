@@ -11,7 +11,10 @@
 (import os)
 (import subprocess)
 (import pathlib [Path])
-(import unittest.mock [patch])
+(import doeff [with-handlers])
+(import doeff_core_effects.handlers [state])
+(import doeff_core_effects.process_effects [EnvEntry])
+(import doeff_core_effects.scripted_process [ProcessScript scripted-process-handler])
 (import doeff_cluster.env_handlers [git-environment])
 
 (val BOOT-SH (str (/ (. (Path __file__) (resolve) parent parent) "deploy" "boot.sh")))
@@ -77,13 +80,20 @@
   (assert (in "鍵" done.stderr) done.stderr))
 
 
+(defk added-by [worker-env]
+  {:pre [(: worker-env tuple)] :post [(: % dict)]}
+  "worker の環境が worker-env の時に、git の子へ足す変数を名 → 値で読むため(土台 = 台本の子 process の答え手 — 親の環境は worker-env)。"
+  (<- entries tuple (with-handlers [(state) (scripted-process-handler (ProcessScript :commands #() :env worker-env))]
+                                   (git-environment "/keys/key-a")))
+  (dfor e entries e.name e.value))
+
+
 (deftest test-the-allowlist-key-extends-the-worker-ssh-command
   ;; 起動の script が書いた ssh -F を保ったまま鍵を足す(置き換えると Host の別名が解けない)。
-  (with [_ (patch.dict os.environ {"GIT_SSH_COMMAND" "ssh -F /x/ssh_config"})]
-    (<- env dict (git-environment "/keys/key-a")))
+  (<- env dict (added-by #((EnvEntry :name "GIT_SSH_COMMAND" :value "ssh -F /x/ssh_config"))))
   (assert (.startswith (get env "GIT_SSH_COMMAND") "ssh -F /x/ssh_config -i /keys/key-a ") env)
-  ;; 命令が無い機体は今までどおり ssh から。
-  (with [_ (patch.dict os.environ {} :clear False)]
-    (.pop os.environ "GIT_SSH_COMMAND" None)
-    (<- plain dict (git-environment "/keys/key-a")))
-  (assert (.startswith (get plain "GIT_SSH_COMMAND") "ssh -i /keys/key-a ") plain))
+  (assert (= (get env "GIT_TERMINAL_PROMPT") "0") env)
+  ;; 命令が無い機体は今までどおり ssh から。足すのは 2 つだけ(親の環境は RunProcess の env-mode EXTEND が継ぐ)。
+  (<- plain dict (added-by #()))
+  (assert (.startswith (get plain "GIT_SSH_COMMAND") "ssh -i /keys/key-a ") plain)
+  (assert (= (sorted plain) ["GIT_SSH_COMMAND" "GIT_TERMINAL_PROMPT"]) plain))

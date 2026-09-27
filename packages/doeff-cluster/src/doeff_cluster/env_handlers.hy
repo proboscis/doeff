@@ -12,6 +12,8 @@
 ;;;   runtime-env.code-prepare  bytecode を作る道具(worker 自身の code の code_prepare.hy)の path
 ;;;   runtime-env.uv            uv の命令(既定 "uv" — PATH で引く)
 ;;;
+;;; git は doeff の汎用の子 process の effect(RunProcess)で起こし、答えるのは入口の組の subprocess-handler。子の環境は env-mode EXTEND
+;;; (親を継いで足す)で、足すのは git-environment の 2 つだけ(2026-09-27)。uv と file の I/O はまだこの handler が直に行う。
 ;;; uv の cache と Python は worker の state dir の下で共有する(UV_CACHE_DIR・UV_PYTHON_INSTALL_DIR)。uv 自身が process の間の錠を持つ。
 ;;; mirror は URL ごと、native の wheel はキーごとに file の錠(fcntl)で排他にする。
 (require doeff-hy.macros [defk defhandler <- val var])
@@ -33,6 +35,8 @@
 (import doeff [run with-handlers])
 (import doeff_core_effects.effects [Ask])
 (import doeff_core_effects.handlers [reader state])
+(import doeff_core_effects.process_effects [EnvEntry EnvMode ProcessOutcome ReadEnvironment RunProcess])
+(import doeff_core_effects.os_process [subprocess-handler])
 (import doeff_time [sync-time-handler])
 (import .runtime_env_model [EnvFailure EnvFailureKind RuntimeEnv runtime-env-of-json])
 (import .env_prepare [StageStarted PrepareNote DiskFree EnsureMirror FetchCommit MaterializeTree FileSha256 TreeHash EnsureNativeWheel SyncProject
@@ -119,16 +123,24 @@
 
 
 (defk git-environment [key-file]
-  {:pre [(: key-file str)] :post [(: % dict)]}
-  "git を起こす環境変数(許可表の deploy key を使い、対話の問いを出さない)。
-   worker が ssh の命令を持っていれば(起動の script が url ごとの Host の別名を書いた `ssh -F <設定>`)、鍵をそれに足す —
-   置き換えると別名が解けなくなる。"
-  (val ssh (.get os.environ "GIT_SSH_COMMAND" "ssh"))
-  (| (dict os.environ)
-     {"GIT_TERMINAL_PROMPT" "0"}
+  {:pre [(: key-file str)] :post [(: % tuple)]}
+  "remote に触る git の子の環境へ足す変数を作るため(許可表の deploy key を使い、対話の問いを出さない — 親の環境は RunProcess の
+   env-mode EXTEND が継ぐ)。worker が ssh の命令を持っていれば(起動の script が url ごとの Host の別名を書いた `ssh -F <設定>`)、
+   鍵をそれに足す — 置き換えると別名が解けなくなる。"
+  (<- seen tuple (ReadEnvironment #("GIT_SSH_COMMAND")))
+  (val ssh (if seen (. (get seen 0) value) "ssh"))
+  (+ #((EnvEntry :name "GIT_TERMINAL_PROMPT" :value "0"))
      (if key-file
-         {"GIT_SSH_COMMAND" (.format "{} -i {} -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new -o BatchMode=yes" ssh key-file)}
-         {})))
+         #((EnvEntry :name "GIT_SSH_COMMAND"
+                     :value (.format "{} -i {} -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new -o BatchMode=yes" ssh key-file)))
+         #())))
+
+
+(defk git [args env]
+  {:pre [(: args tuple) (: env (| tuple None))] :post [(: % CommandResult)]}
+  "git を 1 回起こして結果を読むため(env = 親の環境に足す変数 — None なら親の環境のまま)。"
+  (<- outcome ProcessOutcome (RunProcess :argv (+ #("git") args) :env env :env-mode EnvMode.EXTEND))
+  (CommandResult :code outcome.exit-code :stdout outcome.stdout :stderr (+ outcome.stderr outcome.start-error)))
 
 
 (defk copy-tree [source dest]
@@ -152,13 +164,13 @@
 
 
 (defk mirror-of [url mirror env]
-  {:pre [(: url str) (: mirror Path) (: env dict)] :post [(: % (| MirrorReady EnvFailure))]}
+  {:pre [(: url str) (: mirror Path) (: env tuple)] :post [(: % (| MirrorReady EnvFailure))]}
   "url の bare mirror を用意する(在ればそのまま・無ければ clone して置き換える)。clone できなければ一時の repo-unreachable。"
   (if (.exists mirror)
       (MirrorReady :path (str mirror))
       (do (.mkdir mirror.parent :parents True :exist-ok True)
           (val tmp (+ (str mirror) ".tmp"))
-          (<- cloned CommandResult (command ["git" "clone" "--bare" "--quiet" url tmp] None env))
+          (<- cloned CommandResult (git #("clone" "--bare" "--quiet" url tmp) env))
           (if (= cloned.code 0)
               (do (os.replace tmp mirror)
                   (MirrorReady :path (str mirror)))
@@ -256,22 +268,22 @@
         (resume (EnvFailure :kind EnvFailureKind.REPO-DENIED :retryable False
                             :detail (.format "worker の許可表に無い URL: {}" url)))
         (do (<- name str (digest16 url))
-            (<- env dict (git-environment (get repo-keys url)))
+            (<- env tuple (git-environment (get repo-keys url)))
             (with [_ (file-lock (/ (Path state-dir) "locks" (+ "mirror-" name)))]
               (<- answer (| MirrorReady EnvFailure)
                   (mirror-of url (/ (Path state-dir) "mirrors" (+ name ".git")) env)))
             (resume answer))))
 
   (FetchCommit [mirror commit]
-    (<- first CommandResult (command ["git" "-C" mirror "cat-file" "-e" (+ commit "^{commit}")] None None))
+    (<- first CommandResult (git #("-C" mirror "cat-file" "-e" (+ commit "^{commit}")) None))
     (if (= first.code 0)
         (resume FetchState.PRESENT)
-        (do (<- url-read CommandResult (command ["git" "-C" mirror "config" "--get" "remote.origin.url"] None None))
+        (do (<- url-read CommandResult (git #("-C" mirror "config" "--get" "remote.origin.url") None))
             (val url (.strip url-read.stdout))
-            (<- env dict (git-environment (.get repo-keys url "")))
-            (<- by-sha CommandResult (command ["git" "-C" mirror "fetch" "--quiet" "origin" commit] None env))
-            (<- all-heads CommandResult (command ["git" "-C" mirror "fetch" "--quiet" "origin" "+refs/heads/*:refs/heads/*"] None env))
-            (<- again CommandResult (command ["git" "-C" mirror "cat-file" "-e" (+ commit "^{commit}")] None None))
+            (<- env tuple (git-environment (.get repo-keys url "")))
+            (<- by-sha CommandResult (git #("-C" mirror "fetch" "--quiet" "origin" commit) env))
+            (<- all-heads CommandResult (git #("-C" mirror "fetch" "--quiet" "origin" "+refs/heads/*:refs/heads/*") env))
+            (<- again CommandResult (git #("-C" mirror "cat-file" "-e" (+ commit "^{commit}")) None))
             (<- detail str (tail-of all-heads))
             (cond
               (= again.code 0) (resume FetchState.FETCHED)
@@ -285,7 +297,7 @@
     (if (is-not reuse None)
         (<- (copy-tree reuse dest))
         (do (val archive (+ dest ".tar"))
-            (<- packed CommandResult (command ["git" "-C" mirror "archive" "--format=tar" "-o" archive commit] None None))
+            (<- packed CommandResult (git #("-C" mirror "archive" "--format=tar" "-o" archive commit) None))
             (when (!= packed.code 0)
               (raise (RuntimeError (.format "git archive {} に失敗: {}" commit packed.stderr))))
             (with [t (tarfile.open archive)] (.extractall t dest :filter "data"))
@@ -297,7 +309,7 @@
     (resume (if (.is-file p) (.hexdigest (hashlib.sha256 (.read-bytes p))) None)))
 
   (TreeHash [mirror commit path]
-    (<- result CommandResult (command ["git" "-C" mirror "rev-parse" (.format "{}:{}" commit path)] None None))
+    (<- result CommandResult (git #("-C" mirror "rev-parse" (.format "{}:{}" commit path)) None))
     (when (!= result.code 0)
       (raise (RuntimeError (.format "{} の {} の tree hash を読めない: {}" commit path result.stderr))))
     (resume (.strip result.stdout)))
@@ -431,7 +443,7 @@
                   "runtime-env.code-prepare" args.code-prepare "runtime-env.uv" args.uv
                   "runtime-env.progress" args.progress})
   (setv request (run (request-of-json (json.loads (.read-text (Path args.request) :encoding "utf-8")))))
-  (setv answer (run (with-handlers [(state) (sync-time-handler) (reader settings) local-env] (prepare-env request))))
+  (setv answer (run (with-handlers [(state) (sync-time-handler) (reader settings) subprocess-handler local-env] (prepare-env request))))
   (setv content (run (answer-json answer)))
   (setv tmp (Path (+ args.result ".tmp")))
   (.write-text tmp (json.dumps content :ensure-ascii False) :encoding "utf-8")
