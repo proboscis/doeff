@@ -25,6 +25,7 @@
 
 (import os.path)
 (import inspect)
+(import doeff-hy.declarations [CONTRACT-KEYS refuse-unknown-keys declaration-setters])
 (import doeff-hy.positions [locate-synthesized])
 
 ;; Re-export handle macros so users only need one require line.
@@ -68,15 +69,9 @@
 ;; Internal: contract extraction
 ;; ---------------------------------------------------------------------------
 
-(defn _extract-contracts [body]
-  "Parse optional {:pre [...] :post [...]} from front of body forms.
-   Skips leading docstring if present.
-   Returns #(pre-checks post-checks real-body).
-   pre-checks/post-checks are None if not specified, [] if specified but empty."
-  (setv pre-checks None
-        post-checks None
-        real-body body)
-  ;; Find the contract dict — may be body[0] or body[1] (after docstring)
+(defn _find-contract [body]
+  "Find the optional contract dict at the front of body forms (body[0], or body[1] after a docstring).
+   Returns #(contract-or-None body-without-contract) — the definition macros read :effects / :tags from it."
   (setv contract-idx None)
   (for [#(i form) (enumerate body)]
     (when (isinstance form hy.models.Dict)
@@ -85,9 +80,22 @@
     ;; Skip string literals (docstrings) at the start
     (when (not (isinstance form hy.models.String))
       (break)))
-  (when (is-not contract-idx None)
-    (setv contract (get body contract-idx)
-          real-body (+ (cut body 0 contract-idx) (cut body (+ contract-idx 1) None)))
+  (if (is contract-idx None)
+      #(None body)
+      #((get body contract-idx) (+ (cut body 0 contract-idx) (cut body (+ contract-idx 1) None)))))
+
+(defn _extract-contracts [body [allowed CONTRACT-KEYS] [where "contract"]]
+  "Parse optional {:pre [...] :post [...]} from front of body forms.
+   Skips leading docstring if present.
+   Returns #(pre-checks post-checks real-body).
+   pre-checks/post-checks are None if not specified, [] if specified but empty.
+   Keys outside `allowed` are refused (SyntaxError) instead of silently dropped (agora-redesign #800) —
+   definitions accept :effects / :tags as well (doeff_hy.declarations)."
+  (setv pre-checks None
+        post-checks None)
+  (setv #(contract real-body) (_find-contract body))
+  (when (is-not contract None)
+    (refuse-unknown-keys contract allowed where)
     (for [#(k v) (zip (cut contract None None 2) (cut contract 1 None 2))]
       (when (= (str k) ":pre")
         (setv pre-checks (list v)))
@@ -669,7 +677,7 @@ defk {name}: :post type annotation cannot be an empty string.
    (: name Type) is shorthand for (isinstance name Type).
    Arbitrary validation expressions are also allowed in the same list."
   (_warn-defk-in-hyp _hy-compiler "deff" name)
-  (setv #(pre-checks post-checks real-body) (_extract-contracts body))
+  (setv #(pre-checks post-checks real-body) (_extract-contracts body CONTRACT-KEYS (+ "deff " (str name))))
   (when (is pre-checks None)
     (raise (SyntaxError (.format "
 deff {name}: {{:pre [...]}} is required.
@@ -702,7 +710,8 @@ deff {name}: {{:post [...]}} is required.
   (_validate-pre-type-checks name params pre-checks)
   (_validate-post-type-check name post-checks)
   (locate-synthesized
-    (_build-fn-with-contracts [] name params pre-checks post-checks real-body)))
+    `(do ~(_build-fn-with-contracts [] name params pre-checks post-checks real-body)
+         ~@(declaration-setters name (get (_find-contract body) 0) (+ "deff " (str name))))))
 
 
 ;; ---------------------------------------------------------------------------
@@ -734,7 +743,7 @@ deff {name}: {{:post [...]}} is required.
   (_warn-defk-in-hyp _hy-compiler "defk" name)
   ;; Reject handler-like signatures early — these should use defhandler
   (_reject-handler-signature name params)
-  (setv #(pre-checks post-checks real-body) (_extract-contracts body))
+  (setv #(pre-checks post-checks real-body) (_extract-contracts body CONTRACT-KEYS (+ "defk " (str name))))
   (when (is pre-checks None)
     (raise (SyntaxError (.format "
 defk {name}: {{:pre [...]}} is required.
@@ -785,7 +794,8 @@ defk {name}: {{:post [...]}} is required.
      (_install-guard-globals ~name)
      (setattr ~name "__doeff_body__" '~written-body)
      (setattr ~name "__doeff_args__" '~params)
-     (setattr ~name "__doeff_name__" ~(str name)))))
+     (setattr ~name "__doeff_name__" ~(str name))
+     ~@(declaration-setters name (get (_find-contract body) 0) (+ "defk " (str name))))))
 
 
 ;; ---------------------------------------------------------------------------
@@ -840,7 +850,7 @@ defk {name}: {{:post [...]}} is required.
       :post [(: % dict)]}
      (<- resp (http-get url))
      (.json resp))"
-  (setv #(pre-checks post-checks real-forms) (_extract-contracts forms))
+  (setv #(pre-checks post-checks real-forms) (_extract-contracts forms #(":pre" ":post") "do!"))
   ;; Expand bangs in each form — in-place (yield ...) rewrite [ADR-DOE-HY-003]
   (setv expanded-forms (lfor form real-forms (_expand-bangs form "do!")))
   (setv #(bindings body-expr) (_parse-do-body expanded-forms "do!"))
@@ -1349,7 +1359,7 @@ the effect in the enclosing do-context.
   "Shared implementation for defp/defpp.
    program-return-mode: 'reject' (defp) | 'require' (defpp)"
   (_enforce-no-defp-in-hyk compiler macro-name name)
-  (setv #(pre-checks post-checks real-body) (_extract-contracts body))
+  (setv #(pre-checks post-checks real-body) (_extract-contracts body CONTRACT-KEYS (+ macro-name " " (str name))))
   (when (is-not pre-checks None)
     (raise (SyntaxError (.format "
 {macro} {name}: :pre is not allowed — {macro} has no parameters.
@@ -1411,7 +1421,8 @@ the effect in the enclosing do-context.
      ;; Preserve S-expr body directly on Program value (DoExpr has __dict__ via pyclass(dict))
      (setattr ~name "__doeff_body__" '~real-body)
      (setattr ~name "__doeff_name__" ~(str name))
-     (setattr ~name "__doeff_module__" __name__)))
+     (setattr ~name "__doeff_module__" __name__)
+     ~@(declaration-setters name (get (_find-contract body) 0) (+ macro-name " " (str name)))))
 
 (defmacro defp [_hy-compiler name #* body]
   "Define a Program[T] constant. Errors if the return value is itself a Program.

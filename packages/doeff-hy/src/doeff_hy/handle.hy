@@ -36,6 +36,8 @@
 
 (import hy.models [Expression Symbol List Keyword Sequence String])
 (import doeff-hy.positions [locate-synthesized])
+(import doeff-hy.declarations [DECLARATION-KEYS refuse-unknown-keys declaration-setters])
+(import hy.models [Dict])
 (import doeff-hy.static-view [static-view-enabled report-findings])
 (import doeff-hy.binding-forms [parse-declaration Timing Mutability SessionName BodyKind
                                 legacy-session-finding legacy-session-message])
@@ -637,6 +639,15 @@
     (setv docstring (get clauses 0))
     (setv clauses (cut clauses 1 None)))
 
+  ;; Optional declaration dict {:effects [...] :tags {:context … :role …}} (agora-redesign #800 — doeff_hy.declarations).
+  ;; A handler has no :pre / :post, so only :effects and :tags are accepted.
+  (setv declarations None)
+  (when (and (> (len clauses) 0) (isinstance (get clauses 0) Dict))
+    (setv declarations (get clauses 0))
+    (setv clauses (cut clauses 1 None))
+    (refuse-unknown-keys declarations DECLARATION-KEYS (+ "defhandler " (str name))))
+  (setv declared (declaration-setters name declarations (+ "defhandler " (str name))))
+
   ;; Separate lazy defs from effect clauses
   (setv #(lazy-defs effect-clauses) (_extract-lazy-clauses clauses name))
 
@@ -681,7 +692,8 @@
                     __doeff-handler-data__)
               __doeff-handler-fn__)))
          (setattr ~name "__doeff_body__" ~quoted-body)
-         (setattr ~name "__doeff_name__" ~(str name)))
+         (setattr ~name "__doeff_name__" ~(str name))
+         ~@declared)
       `(do
          ~(_do-import)
          (import doeff [Resume Transfer Pass])
@@ -699,4 +711,5 @@
            __doeff-handler-fn__)
          (setattr ~name "__doc__" ~docstring)
          (setattr ~name "__doeff_body__" ~quoted-body)
-         (setattr ~name "__doeff_name__" ~(str name))))))
+         (setattr ~name "__doeff_name__" ~(str name))
+         ~@declared))))
