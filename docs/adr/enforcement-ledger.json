@@ -434,6 +434,7 @@
     "ADR-DOE-HY-006 session-values-flow-through-state-effects",
     "ADR-DOE-HY-007 accumulators-are-not-rebuilt-in-loops",
     "ADR-DOE-HY-007 binds-are-not-returned-straight-away",
+    "ADR-DOE-HY-007 defk-answers-are-not-used-bare",
     "ADR-DOE-HY-007 failures-are-raised-not-returned",
     "ADR-DOE-HY-007 json-is-parsed-into-declared-types",
     "ADR-DOE-HY-007 judgment-does-not-check-json-shape",

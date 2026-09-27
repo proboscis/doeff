@@ -374,17 +374,42 @@ def staged_ledger(root: Path) -> dict[str, list[str]]:
     return ledger_from_text(_git(root, "show", f":{LEDGER_PATH}"))
 
 
-def head_drift_matches(root: Path, actual: dict, ledger: dict) -> bool:
-    """この commit の増減(HEAD → index)が台帳の増減にそのまま写っているか。
+@dataclass(frozen=True)
+class HeadSnapshot:
+    """HEAD の断面 — 木の一覧と台帳。"""
 
-    HEAD が無い・HEAD の台帳が旧い形・HEAD の ADR が読めない時は判じられないので False(= 絶対一致を求める)。
-    """
+    actual: dict
+    ledger: dict
+
+
+def head_snapshot(root: Path) -> HeadSnapshot | None:
+    """HEAD の断面。HEAD が無い・HEAD の台帳が旧い形・HEAD の ADR が読めない時は None(判じられない)。"""
     try:
-        head_actual = _revision_inventory(root, "HEAD")
-        head_ledger = ledger_from_text(_git(root, "show", f"HEAD:{LEDGER_PATH}"))
+        return HeadSnapshot(
+            _revision_inventory(root, "HEAD"),
+            ledger_from_text(_git(root, "show", f"HEAD:{LEDGER_PATH}")),
+        )
     except (RuntimeError, ValueError):
-        return False
-    return difference(head_actual, actual) == difference(head_ledger, ledger)
+        return None
+
+
+def unrecorded_own_change(head: HeadSnapshot, actual: dict, ledger: dict) -> dict[str, Change]:
+    """この commit の増減(HEAD → index)のうち、台帳の増減に写っていない分。
+
+    鍵ごとに (木の増減) − (台帳の増減) を符号つきで数え、正 = 木に足したのに台帳に無い、
+    負 = 台帳に残る / 台帳だけ動いた。空ならこの commit の増減は台帳にそのまま写っている。
+    """
+    changes = {}
+    for key in sorted(set(actual) | set(ledger) | set(head.actual) | set(head.ledger)):
+        signed = Counter(actual.get(key, []))
+        signed.subtract(head.actual.get(key, []))
+        signed.subtract(ledger.get(key, []))
+        signed.update(head.ledger.get(key, []))
+        added = sorted(name for name, n in signed.items() if n > 0 for _ in range(n))
+        removed = sorted(name for name, n in signed.items() if n < 0 for _ in range(-n))
+        if added or removed:
+            changes[key] = Change(added, removed)
+    return changes
 
 
 # ---------------------------------------------------------------------------
@@ -456,7 +481,20 @@ def check_staged(root: Path) -> int:
     except ValueError as error:
         return _unreadable_ledger(root, error)
     drift = difference(ledger, actual)
-    if drift and head_drift_matches(root, actual, ledger):
+    if not drift:
+        return 0
+    head = head_snapshot(root)
+    if head is None:
+        print(_mismatch_message("staged 断面", drift, root), file=sys.stderr)
+        return 1
+    own = unrecorded_own_change(head, actual, ledger)
+    inherited = difference(head.ledger, head.actual)
+    inherited_note = (
+        f"\n  (参考)HEAD に既に在ったずれ — この commit の責任ではない:\n{describe(inherited)}"
+        if inherited
+        else ""
+    )
+    if not own:
         # この commit の増減は台帳に写っている。残るずれは HEAD に既に在ったもの。
         print(
             "enforcement 台帳: この commit の増減は台帳に写っている(通す)。ただし HEAD に既に在った"
@@ -465,9 +503,16 @@ def check_staged(root: Path) -> int:
             file=sys.stderr,
         )
         return 0
-    if drift:
-        print(_mismatch_message("staged 断面", drift, root), file=sys.stderr)
-    return 1 if drift else 0
+    # 赤はこの commit 自身の増減だけから出る(HEAD のずれでは赤にならない — R9)。「本線が前から
+    # ずれているから」と --no-verify で外すと、ずれを本線へ持ち込む側になる(2026-09-28 b32941c3)。
+    print(
+        "enforcement 台帳: この commit が動かした enforcement が台帳に写っていない — ADR-DOE-ENFORCE-001 R5 / R9。\n"
+        "この赤は HEAD(本線)のずれではなく、この commit 自身の増減から出ている。--no-verify で外さず、"
+        "`make enforcement-ledger` で台帳を作り直して stage する。\n"
+        f"  この commit の増減のうち台帳に無い分:\n{describe(own)}{inherited_note}\n{_repair_hint(root)}",
+        file=sys.stderr,
+    )
+    return 1
 
 
 def write_ledger(root: Path) -> int:
