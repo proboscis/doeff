@@ -9,6 +9,11 @@
 ;;; (defn / deff / defk)の語彙と、理由の註の無い deff の台帳を持つ冊で、型と class の定義は別の軸 — 同じ冊に混ぜると
 ;;; 台帳・針・law が 2 つの軸にまたがる。この冊は HY-004(関数)・HY-005 R5(macro は doeff-hy にだけ置く)と組になる。
 ;;;
+;;; 追記(2026-09-28・operator 逐語 "lets add them"): 臭いの規則(doeff-linter DOEFF121〜125・Jev の DOEFF205)と、失敗の型の印
+;;; (defrecord の :failure True)を R9・R10(と Jev の R11)として足した。置き場の判断: ADR-DOE-CORE-EFFECTS-003(Absent / Raise)は同じ日に
+;;; 別の便(wt/absent-raise-impl)が大きく書き換えている最中で、同じ file に条を足すと着地で衝突する。臭いの規則は「道具が読む
+;;; 宣言(def*)で書く」この冊の R1 の続き — 失敗の型の印は defrecord の頭の辞書に置く宣言で、linter が実行せずに読む。
+;;;
 ;;; 戻し方: この ADR を足した commit を revert する(ADR の file 1 つが消える。DOEFF119 と defrecord の :tags / :check は
 ;;; 別の便の実装なので、それぞれの commit を別に戻す)。
 
@@ -41,7 +46,8 @@
           "packages/doeff-hy/src/doeff_hy/record.hy"
           "packages/doeff-hy/src/doeff_hy/wire.hy"
           "packages/doeff-hy/src/doeff_hy/json_value.py"
-          "packages/doeff-linter"]
+          "packages/doeff-linter"
+          "packages/doeff-linter/src/project/smells.rs"]
   :problem
     [(fact
        "operator 裁定 2026-09-27(逐語 2 つ): \"and i wonder, if we should keep preferring def* macros  instead of making classes.\" / \"perfect, lets go with def*\""
@@ -58,6 +64,12 @@
      (fact
        "defrecord は doeff-hy が所有する template macro で、欄の名前と型を宣言した凍結の dataclass を 1 行で建てる。今は :tags と :check の節を持たない — 検めを要する型は素の defclass と __post_init__ で書かれている。"
        :evidence "packages/doeff-hy/src/doeff_hy/record.hy(defrecord)・ADR-DOE-HY-005 R4")
+     (fact
+       "operator の決定 2026-09-28 未明(逐語): \"lets add them\" — 臭いを拾う規則を doeff-linter に足す。題材は agora-controllers の controllers/kanban/core/tag_judgment.hy の decide-tag で、決定の時点の linter はこの file に何も出していなかった。"
+       :evidence "Claude Code の会話(2026-09-28・agora-redesign #798)— coordinator 経由")
+     (fact
+       "decide-tag(agora-controllers 068dee21)の形: core の判断の中で (.get payload \"subject\") を (isinstance subject str) で検める / (match said (Refusal) (do (<- refused … (rejected (+ said.reason \": \" said.detail))) (return refused))) で受けた断りを包み直して返す / (<- bad-subject WritePlan …) の直後に (return bad-subject) / for の中で (:= writes (+ writes #(…)))。本線 0a528aa1 に当てると DOEFF121 78・122 9(Refusal に印を付けた後)・123 112・124 168・125 30。"
+       :evidence "doeff-linter wt/hy-smells の editor-json(agora-controllers wt/hy-smells)")
      (fact
        "defk / deff / defp / defhandler / defeffect の頭の辞書は :tags を受け、定義の属性に残す(agora-redesign #800)。素の defclass にはタグの置き場が無く、タグから定義を並べる閲覧に現れない。"
        :evidence "packages/doeff-hy/src/doeff_hy/declarations.hy")
@@ -89,6 +101,9 @@
      (rule R5 "許す class: 値の class(欄が変わらず、method は欄から計算するだけ — Point2D・Point3D)・例外・Enum・Protocol・外の library の基底を継ぐ物。理由の註は要らない。判定は名前でなく中身の証拠(method の中の生の副作用・資源の欄・self の書き換え)で、正本は doeff-linter の DOEFF119。DOEFF119 と defrecord の :tags / :check が着地するまで、この冊の law は未配線。")
      (rule R7 "区分の表: 純粋なデータ(AST・数値・Point2D)= defrecord(純粋な method は可)/ global な service(client・store)= 土台の handler と effect / 状態を持つ entity(ゲームのキャラクターなど)= 値(defrecord)+ 純粋な関数 + world の handler の session var。")
      (rule R8 "JSON の境目の型は defwire で宣言する(doeff-hy の record.hy・operator の決定 2026-09-28 \"A\")。書き方は defrecord と同じ欄の形に、頭の辞書 {:names :camel|:snake|:kebab|{欄 \"wire の名\" …} :unknown :reject|:ignore :tags … :check […]} を必ず置く(:names は必須 — wire の欄の名の写しを黙って決めない・明示の辞書は欄を全部名指す・:unknown の既定は :reject)。展開は defrecord をそのまま使い(凍結・キーワード引数だけ・:tags・:check)、型の __pydantic_config__ と __doeff_wire__(WireShape — 欄の名の写し・知らない欄の扱い・TypeAdapter)を置く。解き手は doeff_hy.wire の parse(JSON の値・凍らせた JSON)・parse-json(JSON の文字列)・dump・dump-json・json-schema の 1 か所で、型の検めは厳しい(文字列を数にしない・真偽を数にしない・配列は tuple の欄に・defenum の欄は値の綴り)。形の違う JSON の答えは Malformed(どの型の・どの欄が・なぜ — 5 つ目の失敗の種類・ADR-DOE-CORE-EFFECTS-003 R17)。Absent / Raise の段階 2 が本線に入るまで parse は Malformed を値で返し(答えの型 = (| T Malformed))、段階 3 の切り替えで Raise(Malformed) に寄せる。JSON の値(JsonValue — 唯一の定義は doeff_hy.json_value)に触ってよいのは、doeff_hy.wire と、送受信そのものを行う foundation の module だけ(doeff-linter DOEFF120 — 既存の分は使う repo の登録簿)。入れ子の欄の型も defwire の型にする。戻し方: defwire を defrecord と手書きの TypeAdapter に展開し直す(使う側の parse / dump の書き方はそのまま)。この条は 2026-09-28 に #840 の担当が足した。")
+     (rule R9 "臭いの規則(doeff-linter・決定的・重さの既定は warning): DOEFF121 = 判断の層(設定 smells.shape_check_layers)の定義が文字列の鍵の (.get x \"欄\") とその欄への isinstance で入力の形を検める(直し方 = protocol の境目で defwire の型に parse)/ DOEFF122 = match の腕が失敗の型を受け、受けた値かそれを包み直した値を return するだけ(手書きの例外の再送出 — 直し方 = (<- (Raise …)) と呼ぶ側の on-raise。成功の早い抜けは拾わない)/ DOEFF123 = (<- x T (f …)) の直後の (return x) で x を他で使わない(直し方 = (return (! (f …))) か Raise)/ DOEFF124 = 同じ値の 2 つ以上の欄を + か f 文字列で 1 本の文字列につなぐ / DOEFF125 = for / while の中の (:= xs (+ xs #(…)))(直し方 = 内包表記)。JsonValue・dict の型の注記は DOEFF120(agora-redesign #840)の持ち分で重ねない。重さは初め info とし、Absent / Raise の段 1・2 が doeff の本線に入ったら warning に上げると決めていた — 2026-09-28 に入った(cf6ef9db)ので既定を warning にした。repo の設定 [tool.doeff-linter.rules.<ID>] severity で info に下げられる(error にはしない)。登録簿に載った既存の当たりは info。")
+     (rule R10 "失敗の型は名前で決め打ちせず、宣言から取る: (a) defeffect の :failure / :absent に挙げた型(ADR-DOE-CORE-EFFECTS-003 R5)、(b) defrecord の頭の辞書の :failure True(effect の答えでない失敗の値 — 検めの関数が返す断りなど)。印は defrecord が class の属性 __doeff_failure__ に残し、doeff-linter は実行せずに読む。型は file の import と定義の場所で module まで解くので、同じ名の型が別の module にあっても宣言した方だけが失敗の型になる。印の形の選び方(2026-09-28・f143ee92 の席が決めた戻せる決定): defeffect の :failure は型の列だが、defrecord の :failure は字面の True / False — 型そのものの性質だから。Absent / Raise の作業(doeff-hy の macros.hy・handle.hy)と同じ file を触らないよう、印は record.hy の defrecord にだけ置いた。戻し方: 頭の辞書の受ける鍵から :failure を外し、DOEFF122 を defeffect の宣言だけで判じる形に戻す。")
+     (rule R11 "Jev の規則 DOEFF205: 役が judgment / program の定義(定義の :tags か module の頭のタグ)に、入力の形の検めと業務の判断が混ざっているかを、混ざっている / 形の検めだけ / 判断だけ / どれでもない から Jev に選ばせる。物差しは repo の architecture.hy の層(設定 semantic.mixed_concerns.layer — agora は core)の説明。重さは warning まで(error にしない)。較正の正例 = decide-tag、反例 = 形の検めの無い純粋な判断(card-tags-of)。撃つのは --semantic / --semantic-all の時だけで、保存ごとの実行は cache を読むだけ(未判定は合格に数えない)。")
      (rule R6 "改訂の記録(2026-09-27):初版の『振る舞いを持つ class を作らない・外の library が class を要求する所だけ理由の註つきの逃げ道』は、operator の的の絞り込み 2 つで R3〜R5 に置き換えた。戻し方: 的を広げ直すなら、この改訂の commit を revert する(初版の R2〜R5 と law へ戻る)。")]
   :laws
     [(law world-touching-classes-become-foundation-handlers
@@ -119,7 +134,43 @@
           (counterexample "core の判断の関数が (: value JsonValue) を受けて素の dict を返す — 型のある値に解かずに内側へ運ぶ")
           (counterexample "{\"landedAt\": \"3\"} を int の欄に黙って 3 として入れる — 型の違いを業務の失敗(Malformed)にせず飲み込む")]
        :enforced-by ["doeff-linter DOEFF120" "packages/doeff-hy/tests/defwire_deftests.hy"]
-       :wiring "一部配線(2026-09-28)— parse と dump の往復・型違いの Malformed は defwire_deftests.hy が確かめる。DOEFF120 は doeff-linter の別の便(agora-redesign #840)")]
+       :wiring "一部配線(2026-09-28)— parse と dump の往復・型違いの Malformed は defwire_deftests.hy が確かめる。DOEFF120 は doeff-linter の別の便(agora-redesign #840)")
+     (law judgment-does-not-check-json-shape
+       :statement "for_all 定義 d ∈ 判断の層: d の中に、文字列の鍵で読んだ欄 (.get x \"欄\") への isinstance が無い — 入力の形は通信の境目で型のある値に解く"
+       :counterexamples
+         [(counterexample "(val subject (.get payload \"subject\")) (when (not (isinstance subject str)) …) — core の判断が JSON の形を検めている")]
+       :enforced-by ["doeff-linter DOEFF121"]
+       :wiring "配線(2026-09-28)— doeff-linter DOEFF121(wt/hy-smells)")
+     (law failures-are-raised-not-returned
+       :statement "for_all match の腕 a: a の型が宣言した失敗の型 ⇒ a の本体は受けた値(か、それから作った値)を return するだけではない — 失敗は Raise で出し、受ける所は on-raise"
+       :counterexamples
+         [(counterexample "(match said (Refusal) (do (<- refused Plan (rejected (+ said.reason \": \" said.detail))) (return refused)) (TagsAccepted) None) — 手書きの再送出")]
+       :enforced-by ["doeff-linter DOEFF122"]
+       :wiring "配線(2026-09-28)— doeff-linter DOEFF122(wt/hy-smells)。失敗の型は宣言(defrecord :failure True・defeffect :failure / :absent)から")
+     (law binds-are-not-returned-straight-away
+       :statement "for_all (<- x T (f …)) の直後の (return x): x が定義の中で他に使われる"
+       :counterexamples
+         [(counterexample "(<- bad-subject WritePlan (rejected …)) (return bad-subject) — 名は返すためだけ")]
+       :enforced-by ["doeff-linter DOEFF123"]
+       :wiring "配線(2026-09-28)— doeff-linter DOEFF123(wt/hy-smells)")
+     (law typed-values-are-not-flattened-into-text
+       :statement "for_all + か f 文字列 e: e が同じ値の 2 つ以上の欄を文字列と一緒につながない"
+       :counterexamples
+         [(counterexample "(+ said.reason \": \" said.detail) — 型のある断りを 1 本の文字列に潰す")]
+       :enforced-by ["doeff-linter DOEFF124"]
+       :wiring "配線(2026-09-28)— doeff-linter DOEFF124(wt/hy-smells)")
+     (law accumulators-are-not-rebuilt-in-loops
+       :statement "for_all for / while の本体: (:= xs (+ xs #(…))) / (setv xs (+ xs […])) が無い — 蓄えは内包表記で 1 度に作る"
+       :counterexamples
+         [(counterexample "(for [word adding] (:= writes (+ writes #((AttachTag …))))) — 毎回作り直す蓄え")]
+       :enforced-by ["doeff-linter DOEFF125"]
+       :wiring "配線(2026-09-28)— doeff-linter DOEFF125(wt/hy-smells)")
+     (law judgments-do-not-mix-shape-checks
+       :statement "for_all 定義 d(役 judgment / program): d は入力の形の検めと業務の判断を混ぜない(Jev の判定・warning まで)"
+       :counterexamples
+         [(counterexample "decide-tag — 形の検め(subject の型・add / remove の形)と札の付け外しの判断が 1 つの defk に並ぶ")]
+       :enforced-by ["doeff-linter DOEFF205"]
+       :wiring "配線(2026-09-28)— doeff-linter DOEFF205(wt/hy-smells・Jev の cache を読む)")]
   :enforcement
     [(deftest test-adr-doe-hy-007-values-are-made-by-calling-a-defrecord-type
        ;; 実演: データの型は defrecord の 1 行で建ち、値はその型を呼んで作る(凍結 — 書き換えは断られる)。

@@ -2022,7 +2022,7 @@ fn is_judgment_kind(kind: DefinitionKind) -> bool {
     matches!(kind, DefinitionKind::Defk | DefinitionKind::Deff | DefinitionKind::Defn | DefinitionKind::DefnAsync | DefinitionKind::Defp | DefinitionKind::Defpp)
 }
 
-/// DOEFF121〜125: 業務の Hy の file の臭いを判じる(重さの既定は warning — Absent / Raise が本線に入ったので info から上げた(ADR-DOE-HY-007 R8)。
+/// DOEFF121〜125: 業務の Hy の file の臭いを判じる(重さの既定は warning — Absent / Raise が本線に入ったので info から上げた(ADR-DOE-HY-007 R9)。
 /// 設定の rules.<ID>.severity で info に下げられる。登録簿に載った warning は info)。
 fn judge_smells(
     file: &SourceFile,
