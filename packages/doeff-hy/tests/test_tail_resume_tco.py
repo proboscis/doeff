@@ -77,13 +77,16 @@ class TestTailResumeTCO:
         assert not _body_contains(body, "Resume"), f"unexpected Resume in: {body}"
 
     def test_cond_all_branches_tail_resume(self):
-        """(MyEffect [x] (cond (p1 x) (resume a) (p2 x) (resume b))) → both Transfer"""
+        """(MyEffect [x] (cond (p1 x) (resume a) True (resume b))) → both Transfer
+
+        A cond clause ends with a True branch — a cond whose tests can all be false falls
+        through without resuming, which defhandler refuses (ADR-DOE-CORE-EFFECTS-003 R15)."""
         clause = _clause(
             _sym("MyEffect"), _list(_sym("x")),
             _expr(
                 _sym("cond"),
                 _expr(_sym("p1"), _sym("x")), _expr(_sym("resume"), _sym("a")),
-                _expr(_sym("p2"), _sym("x")), _expr(_sym("resume"), _sym("b")),
+                _sym("True"), _expr(_sym("resume"), _sym("b")),
             ),
         )
         _etype, body = _build_clause(clause)

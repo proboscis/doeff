@@ -5,7 +5,9 @@ Handlers (reader, state, writer) handle them.
 """
 
 from collections.abc import Awaitable
-from typing import TYPE_CHECKING, Any, Generic, TypeVar
+from dataclasses import dataclass
+from enum import Enum
+from typing import TYPE_CHECKING, Any, ClassVar, Generic, Never, TypeVar
 
 from doeff_vm import EffectBase
 
@@ -122,6 +124,70 @@ class Try(EffectBase["Ok[_T] | Err"], Generic[_T]):
 
     def __repr__(self):
         return f"Try({self.program!r})"
+
+
+class Resumption(Enum):
+    """How a handler clause may end for an effect type (ADR-DOE-CORE-EFFECTS-003 R15).
+
+    An effect type declares it with the class attribute ``__doeff_resumption__``; a type that
+    does not declare it is ``REQUIRED``. ``defhandler`` checks every clause against it when the
+    handler is defined (and by name at macro expansion for ``Raise`` / ``Absent``).
+    """
+
+    REQUIRED = "required"  # an ordinary effect: the clause resumes (finish only with a stated reason)
+    ABSENT_AS_ONLY = "absent-as-only"  # Absent: only absent-as resumes it; other handlers finish or reperform
+    NEVER = "never"  # Raise: nobody resumes it — "failed, but went on as if it succeeded"
+
+
+def resumption_of(effect_type: type) -> Resumption:
+    """The resumption declared by ``effect_type`` (``REQUIRED`` when it declares none)."""
+    declared = getattr(effect_type, "__doeff_resumption__", Resumption.REQUIRED)
+    if not isinstance(declared, Resumption):
+        raise TypeError(
+            f"{effect_type.__name__}.__doeff_resumption__ must be a Resumption, got {declared!r}"
+        )
+    return declared
+
+
+@dataclass(frozen=True)
+class Absent(EffectBase[Never]):
+    """An expected absence — the Maybe side (ADR-DOE-CORE-EFFECTS-003 R1).
+
+    Carries no value, only ``why`` (a sentence for records and debugging). Handlers do not
+    resume it: ``maybe`` finishes its scope with ``Nothing`` and ``absent-as`` finishes it with
+    its default. The one exception is ``absent-as`` resuming an Absent that a ``<-`` written
+    directly inside it produced (R8). Not related to ``Raise`` by inheritance.
+    """
+
+    why: str
+    __doeff_resumption__: ClassVar[Resumption] = Resumption.ABSENT_AS_ONLY
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.why, str) or not self.why:
+            raise TypeError(f"Absent.why must be a non-empty str, got {self.why!r}")
+
+
+_E = TypeVar("_E")
+
+
+@dataclass(frozen=True)
+class Raise(EffectBase[Never], Generic[_E]):
+    """An expected failure with its reason — the Result side (ADR-DOE-CORE-EFFECTS-003 R1).
+
+    Nobody resumes it: ``result`` finishes its scope with ``Err(reason)``, ``on-raise`` with the
+    business answer its pattern maps the reason to. The reason is a value, never a Python
+    exception — exceptions stay implementation errors (R11), and ``Try`` keeps folding those.
+    """
+
+    reason: _E
+    __doeff_resumption__: ClassVar[Resumption] = Resumption.NEVER
+
+    def __post_init__(self) -> None:
+        if isinstance(self.reason, BaseException):
+            raise TypeError(
+                "Raise の理由に Python の例外は置けない — 例外は実装の誤りのまま上げ、想定内の失敗は"
+                f"値で表す(ADR-DOE-CORE-EFFECTS-003 R11): {self.reason!r}"
+            )
 
 
 class WriterTellEffect(EffectBase[None]):
