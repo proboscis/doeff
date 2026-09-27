@@ -122,3 +122,33 @@
   (ReadEvents [stream after limit]
     (<- answer (call-service endpoint effect))
     (resume answer)))
+
+
+(defhandler http-table-records-handler [#^ RecordsEndpoint endpoint #^ frozenset served]
+  ;; 引数に残す理由: 同じ handler を置き場ごとに別の口と表で 1 つの組に重ねる(Ask では区別できない)。
+  ;; 表 served の読み書きだけに答える http-records-handler(他の表と追記の列は外側の handler へ渡す)— 記録が表ごとに別の service に
+  ;; 在る時(例: 着地の列の台帳と agora の記録)、置き場ごとの handler を値の列を持たずに重ねるため(内側に表で絞った handler・外側に
+  ;; 残りの表の handler)。handler の列を値で持って中で並べ直す振り分けは、組み立てを実行せずに読む道具(doeff-effect-analyzer)が
+  ;; 読めない — この形は並びが呼び出しの字面に在るので読める。束の書き(PutRows)と待ち(WatchChanges)は、束の表が全部 served の中の時
+  ;; だけ答える(置き場をまたぐ束は 1 つの置き場では書けない — 外側で断られる)。
+  (ReadRow [table key]
+    :when (in table served)
+    (<- answer (call-service endpoint effect))
+    (resume answer))
+  (ListRows [table where fields cursor limit]
+    :when (in table served)
+    (<- answer (call-service endpoint effect))
+    (resume answer))
+  (PutRow [table key value expect]
+    :when (in table served)
+    (<- answer (call-service endpoint effect))
+    (resume answer))
+  (PutRows [writes]
+    :when (and writes (all (gfor w writes (in w.table served))))
+    (<- answer (call-service endpoint effect))
+    (resume answer))
+  (WatchChanges [tables cursor timeout limit]
+    :when (and tables (all (gfor t tables (in t served))))
+    (setv once (WatchChanges tables cursor :timeout 0.0 :limit limit))
+    (<- answer (wait-for-changes (fn [now-ms] (call-service endpoint once)) endpoint.poll-seconds timeout))
+    (resume answer)))
