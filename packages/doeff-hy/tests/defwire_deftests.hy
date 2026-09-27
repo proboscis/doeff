@@ -13,6 +13,7 @@
 (import pytest)
 (import doeff_hy.declarations [DefinitionTags])
 (import doeff_hy.frozen [freeze-json])
+(import doeff_hy.json_value [OpaqueJson])
 (import doeff_hy.wire [parse parse-json dump dump-json json-schema Malformed MalformedField WireShape])
 
 
@@ -195,3 +196,39 @@
   (assert (in "wire の名を作れない" unnamable))
   (<- fine (refused "(defwire A {:names :camel} #^ str a)"))
   (assert (is fine None)))
+
+
+(defwire ToolCall
+  "形を呼び手が決める任意の JSON の欄(OpaqueJson)を持つ行"
+  {:names :camel :unknown :reject}
+  (#^ str tool-name)
+  (#^ OpaqueJson input)
+  (setv #^ (| OpaqueJson None) output None))
+
+(defwire ToolArgs
+  "OpaqueJson の中を、形を知る読み手が解く型"
+  {:names :camel :unknown :ignore}
+  (#^ str path))
+
+
+(deftest test-opaque-json-is-carried-unread-and-parsed-by-a-reader-that-knows-the-shape
+  {:tags {:context "wire" :role "judgment"}}
+  ;; defwire の欄に書いた OpaqueJson は任意の JSON を包み、dump は元の JSON の値へ戻す(往復する)。
+  (val raw {"toolName" "Read" "input" {"path" "/a" "n" [1 {"x" None}]} "output" "ok"})
+  (<- call (parse ToolCall raw))
+  (assert (= call.input (OpaqueJson.of {"path" "/a" "n" [1 {"x" None}]})))
+  (assert (= call.input.text "{\"path\":\"/a\",\"n\":[1,{\"x\":null}]}"))
+  (assert (= call.input.encoded-size (len (.encode call.input.text "utf-8"))))
+  (<- back (dump call))
+  (assert (= back raw))
+  ;; 形を知る読み手は parse で中を型へ解く — 形が違えば Malformed。
+  (<- args (parse ToolArgs call.input))
+  (assert (= args (ToolArgs :path "/a")))
+  (<- wrong (parse ToolArgs call.output))
+  (assert (isinstance wrong Malformed))
+  ;; 等しさは最小の直列化の文字列の等しさ・凍らせた JSON からも同じ値・読めない文字列は断る。
+  (assert (= (OpaqueJson.of (freeze-json {"a" [1 2]})) (OpaqueJson.from-text "{ \"a\" : [1, 2] }")))
+  (with [(pytest.raises ValueError)]
+    (OpaqueJson "{bad"))
+  (with [(pytest.raises FrozenInstanceError)]
+    (setattr call.input "text" "1")))
