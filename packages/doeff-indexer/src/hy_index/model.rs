@@ -232,6 +232,11 @@ pub struct Reference {
     pub mangled: String,
     pub qualifier: Option<String>,
     pub range: Range,
+    /// 値の上の属性・method の名前として書かれた(`(.m x)` の `m`・`x.m` の `m`・`(. obj m)` / `(. obj (m …))` の `m`)。
+    /// false は名前の引き(局所の束縛・定義・import・組み込み)。生の副作用の method の証拠はこの区切りだけから取る —
+    /// 局所の束縛の名 `stat` を `.stat` と読まないため(agora-redesign #798)。索引の JSON の契約(版 1)には出さない。
+    #[serde(skip)]
+    pub member: bool,
 }
 
 /// 呼び出しの 1 つ(`(` の直後の記号)。effect・handler・defk の間を行き来するためのもの。

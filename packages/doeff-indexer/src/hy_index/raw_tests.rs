@@ -70,6 +70,35 @@ const CLOCK: &str = r#"(import time)
 (defk reads-clock [] (<- (GetTime)))
 "#;
 
+/// 局所の束縛の名が method の名(`stat`・`read-text`)と同じでも証拠にしない反例(agora-redesign #798 — agora-controllers の
+/// daily_verify_translate.hy の kind-at で `(<- stat (StatPath …))` の `stat` が `.stat` の弱い証拠になっていた)。method の名は
+/// `(.m x)` の頭・`x.m` の属性・`(. obj m)` / `(. obj (m …))` の属性にある時だけ method の証拠。
+const MEMBERS: &str = r#"(import pathlib [PurePosixPath])
+(import doeff_core_effects.file_effects [StatPath])
+(require doeff-hy.macros [defk <- val var])
+
+(defk kind-at [path]
+  (<- stat (StatPath (str path)))
+  (match stat
+    _ stat.kind))
+
+(defk local-names [read-text]
+  (val iterdir 1)
+  (var glob 2)
+  (setv rglob 3)
+  (for [stat [iterdir glob rglob]] stat)
+  (let [unlink 4] unlink)
+  read-text)
+
+(defk method-head [path] (.stat path))
+
+(defk attribute-of-local [path] (path.stat))
+
+(defk attribute-access [path] (. path (stat)))
+
+(defk bare-attribute-access [path] (. path stat))
+"#;
+
 /// 3 つの file を索引し、目録(既定か、追加つき)で全体の証拠を集める。
 fn judged(extra: Option<serde_json::Value>) -> Vec<HyFileIndex> {
     let root = Path::new("/r");
@@ -77,6 +106,7 @@ fn judged(extra: Option<serde_json::Value>) -> Vec<HyFileIndex> {
         index_source(root, Path::new("/r/pkg/io_handlers.hy"), IO),
         index_source(root, Path::new("/r/pkg/plain_open.hy"), PLAIN_OPEN),
         index_source(root, Path::new("/r/pkg/clock.hy"), CLOCK),
+        index_source(root, Path::new("/r/pkg/members.hy"), MEMBERS),
     ];
     let bundled = RawCatalog::bundled().expect("同梱の目録が読める");
     let catalog = match extra {
@@ -145,6 +175,25 @@ fn builtin_open_counts_only_at_call_head_and_pathlib_methods_are_weak() {
     let files = judged(None);
     assert_eq!(direct(&files, "ReadIt"), vec!["file .read_text?", "file open"]);
     assert!(direct(&files, "uses-open-var").is_empty(), "局所の変数 open は数えない");
+}
+
+#[test]
+fn local_binding_names_are_not_method_evidence() {
+    let files = judged(None);
+    assert!(direct(&files, "kind-at").is_empty(), "局所の束縛 stat(<- の名・match の主語・stat.kind の頭)は .stat の証拠でない");
+    assert!(
+        direct(&files, "local-names").is_empty(),
+        "引数・val・var・setv・for・let の名(read-text・iterdir・glob・rglob・stat・unlink)は method の証拠でない"
+    );
+}
+
+#[test]
+fn method_heads_and_attributes_stay_weak_method_evidence() {
+    let files = judged(None);
+    assert_eq!(direct(&files, "method-head"), vec!["file .stat?"]);
+    assert_eq!(direct(&files, "attribute-of-local"), vec!["file .stat?"]);
+    assert_eq!(direct(&files, "attribute-access"), vec!["file .stat?"]);
+    assert_eq!(direct(&files, "bare-attribute-access"), vec!["file .stat?"]);
 }
 
 #[test]

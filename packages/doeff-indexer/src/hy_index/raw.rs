@@ -6,7 +6,9 @@
 //! - 参照は dotted の終端の区切りだけを数え、file の import で完全な名前に直して目録と比べる。
 //! - 例外の型(名前の終わりが Error / Exception / Timeout / Warning)と ignored の名前は数えない。
 //! - 組み込みは import されていない修飾の無い名前を、呼び出しの頭の位置でだけ数える(局所の変数 `open` を拾わない)。
-//! - method 名は弱い証拠で、context の module が file の import か定義の中の参照に見える時だけ数える。
+//! - method 名は弱い証拠で、context の module が file の import か定義の中の参照に見える時だけ数える。数えるのは値の上の
+//!   属性・method として書かれた区切り(`(.m x)`・`x.m`・`(. x m)`)だけで、名前の引き(局所の束縛・引数・定義の名)は
+//!   method の名と同じ綴りでも数えない(agora-redesign #798)。
 //! - 経由は、同じ file か import で行き先が決まった呼び出しだけを、深さ 4 まで辿る(循環は止め、同じ証拠は 1 度)。
 
 use std::collections::{HashMap, HashSet};
@@ -163,10 +165,12 @@ fn chain_of(reference: &Reference) -> String {
 enum Expanded {
     /// import を通した名前(`time.sleep`)
     Import(String),
-    /// import されていない修飾の無い名前(組み込みか、外で決まる名前)
+    /// import されていない修飾の無い名前の引き(組み込みか、外で決まる名前か、局所の束縛の名)
     Unbound(String),
-    /// 局所の値の上の属性や、file の中の定義の名前
+    /// file の中の定義の名前の引き
     Local(String),
+    /// import で決まらない値の上の属性・method の名前(`(.stat p)`・`p.stat`・`(. p stat)`)— method の証拠はここだけ
+    Member(String),
 }
 
 /// 参照を file の import で完全な名前に直す(最も長く一致する import を使う・先に見つけた同じ長さの物が勝つ)。
@@ -190,10 +194,12 @@ fn expand(imports: &[CompiledImport], reference: &Reference, local_names: &HashS
         return Expanded::Import(full);
     }
     let name = match_name(&reference.name);
-    if reference.qualifier.is_none() && !local_names.contains(&name) {
-        Expanded::Unbound(name)
-    } else {
+    if reference.member {
+        Expanded::Member(name)
+    } else if local_names.contains(&name) {
         Expanded::Local(name)
+    } else {
+        Expanded::Unbound(name)
     }
 }
 
@@ -288,15 +294,11 @@ fn match_entry(
     match expanded {
         Expanded::Import(full) => (!skip_import && entry.patterns.iter().any(|p| p.matches(full)))
             .then(|| (evidence(full.clone(), RawEvidenceKind::Name, RawStrength::Strong), None)),
-        Expanded::Unbound(name) => {
-            if at_call_head && entry.builtins.iter().any(|b| b == name) {
-                return Some((evidence(name.clone(), RawEvidenceKind::Builtin, RawStrength::Strong), None));
-            }
-            method_match(entry, name).map(|context| {
-                (evidence(format!(".{}", name), RawEvidenceKind::Method, RawStrength::Weak), Some(context))
-            })
-        }
-        Expanded::Local(name) => method_match(entry, name).map(|context| {
+        // 名前の引きは method の証拠にしない(局所の束縛の名 stat は .stat ではない — agora-redesign #798)。
+        Expanded::Unbound(name) => (at_call_head && entry.builtins.iter().any(|b| b == name))
+            .then(|| (evidence(name.clone(), RawEvidenceKind::Builtin, RawStrength::Strong), None)),
+        Expanded::Local(_) => None,
+        Expanded::Member(name) => method_match(entry, name).map(|context| {
             (evidence(format!(".{}", name), RawEvidenceKind::Method, RawStrength::Weak), Some(context))
         }),
     }
