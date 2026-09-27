@@ -280,6 +280,9 @@ struct PromiseEntry {
     status: Status,
     result: Option<Py<PyAny>>,
     external: bool,
+    /// A clock wait's `time.monotonic()` wake instant
+    /// (`CreateExternalPromise.deadline`, #765); `None` = open-ended.
+    deadline: Option<f64>,
     cancel_callbacks: Option<Vec<Py<PyAny>>>,
 }
 
@@ -1194,6 +1197,7 @@ impl Locked<'_> {
                 status: Status::Pending,
                 result: None,
                 external,
+                deadline: None,
                 cancel_callbacks: None,
             },
         );
@@ -1253,6 +1257,9 @@ impl Locked<'_> {
                 return self.settle_external(py, settle, pid, value);
             }
             waited += interval;
+            if self.clock_wait_keeps_schedule(py, interval)? {
+                continue;
+            }
             let parked = self.live_parked_waiter_summary(true);
             let blocked = self.live_semaphore_waiters();
             let parked_obj: Py<PyAny> = if parked.is_empty() {
@@ -1276,6 +1283,24 @@ impl Locked<'_> {
                 ),
             )?;
         }
+    }
+
+    /// True while a pending clock wait (an external promise with a
+    /// `deadline`) is due to wake the scheduler and none is overdue by more
+    /// than `grace` — the block is then a known sleep, not a stall (#765).
+    /// The deadline is on Python's `time.monotonic()` clock.
+    fn clock_wait_keeps_schedule(&self, py: Python<'_>, grace: f64) -> PyResult<bool> {
+        let deadlines: Vec<f64> = self
+            .promises
+            .values()
+            .filter(|p| p.status == Status::Pending)
+            .filter_map(|p| p.deadline)
+            .collect();
+        if deadlines.is_empty() {
+            return Ok(false);
+        }
+        let now: f64 = py.import("time")?.getattr("monotonic")?.call0()?.extract()?;
+        Ok(deadlines.iter().all(|deadline| now <= deadline + grace))
     }
 
     fn keys_parked_by(&self, tid: Tid) -> Vec<WKey> {
@@ -1994,6 +2019,10 @@ impl Locked<'_> {
             Kind::FailPromise => self.on_settle_promise(py, current, effect, k, false),
             Kind::CreateExternalPromise => {
                 let pid = self.alloc_promise(py, true);
+                let deadline: Option<f64> = effect.getattr(pyo3::intern!(py, "deadline"))?.extract()?;
+                if let Some(promise) = self.promises.get_mut(&pid) {
+                    promise.deadline = deadline;
+                }
                 let kwargs = PyDict::new(py);
                 kwargs.set_item("_register", self.core.registrar(py)?)?;
                 kwargs.set_item("_bind_cancel", self.core.cancel_binder(py)?)?;
