@@ -21,6 +21,13 @@
 ;;;   * defrecord の :check は値を作る時に走り、落ちたら Malformed になる。
 ;;;   * 入れ子の欄の型も defwire の型にする(素の defrecord は自分の wire の形を持たないので、欄の名の写しと厳しさが効かない)。
 ;;;
+;;; 書き方(dump / dump-json): 既定値の在る欄は「省ける欄」(JSON Schema でも required に入らない)。値が既定値と同じ欄は書かない
+;;; (入れ子の defwire の型の欄も同じ)— `(setv #^ (| str None) x None)` の None は「欄が無い」で、null を書かない。読み(parse)は
+;;; 無い欄を既定値で埋めるので、dump と parse は往復する。既定値の無い欄は None でも書く(null)。
+;;; 表の行の全体の像のように「書かない欄 = 消す」が要る書き手は、型の欄の wire の名を全部 None で並べた上に dump を重ねる
+;;; (欄の wire の名は型の __doeff_wire__ の names)。出自 = agora-redesign #840(画面の設定の行の入れ子の agent の宣言 — 契約は
+;;; 任意の欄を null でなく欄の無いことで表す)。
+;;;
 ;;; 形の違う JSON の答え = Malformed(5 つ目の失敗の種類 — 外の世界が約束と違う物を返した。相手の版の食い違いは運用で起きうる
 ;;; ので、実装の誤りの例外ではなく業務の失敗として扱う)。Absent / Raise の段階 2 が本線に入るまでは parse は Malformed を値で
 ;;; 返し(答えの型 = (| T Malformed))、段階 3 の切り替えで Raise(Malformed) に寄せる(ADR-DOE-HY-007 R8・ADR-DOE-CORE-EFFECTS-003 R17)。
@@ -129,16 +136,17 @@
   {:pre [(: value WireValue)]
    :post [(: % JsonValue)]
    :tags {:context "wire" :role "judgment"}}
-  "defwire の型の値を JSON の値へ(欄は wire の名・tuple は配列・defenum は値の綴り)。送り出す foundation だけが呼ぶ。"
-  (.dump-python (. (type value) __doeff_wire__ adapter) value :mode "json" :by-alias True))
+  "defwire の型の値を JSON の値へ(欄は wire の名・tuple は配列・defenum は値の綴り・既定値と同じ欄は書かない — 入れ子の型の欄も)。
+   送り出す foundation だけが呼ぶ。"
+  (.dump-python (. (type value) __doeff_wire__ adapter) value :mode "json" :by-alias True :exclude-defaults True))
 
 
 (defk dump-json [value]
   {:pre [(: value WireValue)]
    :post [(: % str)]
    :tags {:context "wire" :role "judgment"}}
-  "defwire の型の値を JSON の文字列へ(dump と同じ形)。"
-  (.decode (.dump-json (. (type value) __doeff_wire__ adapter) value :by-alias True) "utf-8"))
+  "defwire の型の値を JSON の文字列へ(dump と同じ形 — 既定値と同じ欄は書かない)。"
+  (.decode (.dump-json (. (type value) __doeff_wire__ adapter) value :by-alias True :exclude-defaults True) "utf-8"))
 
 
 (defk json-schema [wire-type]
