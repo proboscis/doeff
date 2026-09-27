@@ -39,7 +39,8 @@
 
 
 (defn #^ tuple schema-statements [#^ str prefix #^ RecordsSchema schema]
-  "表を用意する文の列(何度流しても同じ — IF NOT EXISTS / ON CONFLICT DO NOTHING)。"
+  "表を用意する文の列(何度流しても同じ — IF NOT EXISTS / ON CONFLICT DO NOTHING)。流すのは pg.prepare-records-store だけ
+   (移行の lock の transaction の中で・process ごとに 1 度)。"
   (setv p prefix
         fields (sorted (sfor decl (.values schema.tables) name decl.indexes name)))
   (tuple
@@ -75,6 +76,12 @@
 (defn #^ Statement lock-statement [#^ str prefix]
   "置き場の書きの lock(transaction の終わりで自動で外れる)。"
   (Statement "SELECT pg_advisory_xact_lock(hashtext(%s))" #((+ prefix "records-writer"))))
+
+
+(defn #^ Statement migrate-lock-statement [#^ str prefix]
+  "表の用意(移行)の lock(transaction の終わりで自動で外れる)。同じ置き場を同時に用意する別の接続・別の process を 1 本ずつにする:
+   IF NOT EXISTS は同時の CREATE の競り合いを防がない(2 本とも「無い」を見て作り、遅れた方が catalog の一意の索引で UniqueViolation)。"
+  (Statement "SELECT pg_advisory_xact_lock(hashtext(%s))" #((+ prefix "records-migrate"))))
 
 
 (defn #^ Statement store-head-statement [#^ str prefix]

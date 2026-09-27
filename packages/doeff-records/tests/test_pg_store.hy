@@ -12,8 +12,8 @@
 (import doeff_records.values [ExpectAbsent Written Conflict Row Unreachable Missing WrittenRows])
 (import doeff_records.effects [PutRow PutRows RowWrite ReadRow ListRows])
 (import doeff_records.laws [LAW-SCHEMA MAKER])
-(import doeff_records.pg [PgRecordsHost pg-records-handler drop-records-tables])
-(import tests.interpreters [PG-DSN-VARIABLE open-postgres pg-errors])
+(import doeff_records.pg [PgRecordsHost pg-records-handler drop-records-tables prepare-records-store])
+(import tests.interpreters [PG-DSN-VARIABLE open-postgres pg-errors prepared-host])
 
 (setv PG-DSN (.get os.environ PG-DSN-VARIABLE))
 
@@ -29,7 +29,7 @@
   "反例の host: 置き場の書きの lock を流さず、行の読み(FOR UPDATE)の後で 2 本の書きを揃える(両方が「行が無い」を読んでから書く)。"
   (defn __init__ [self connection schema barrier * prefix]
     (setv self.barrier barrier)
-    (.__init__ (super) connection schema :unreachable-errors (pg-errors) :prefix prefix))
+    (.__init__ (super) connection (prepare-records-store connection schema prefix) :unreachable-errors (pg-errors)))
   (defn execute [self statement]
     (when (.startswith statement.text "SELECT pg_advisory_xact_lock")
       (return None))
@@ -60,7 +60,7 @@
   ;; 行が無い時の期待は、無い行に鍵が掛からない(READ COMMITTED に述語の鍵は無い)ので、置き場の lock が無いと 2 つとも通る。
   (setv prefix (fresh-prefix)
         connections [(open-postgres) (open-postgres)]
-        hosts (lfor c connections (PgRecordsHost c LAW-SCHEMA :unreachable-errors (pg-errors) :prefix prefix))
+        hosts (lfor c connections (prepared-host c prefix))
         answers {})
   (try
     (for [round (range 20)]
@@ -91,13 +91,13 @@
 (deftest test-rows-and-numbers-survive-reconnect
   {:skip-if (not PG-DSN) :skip-reason "DOEFF_RECORDS_TEST_PG_DSN が無い(PostgreSQL の検は走っていない)"}
   (setv prefix (fresh-prefix) first (open-postgres))
-  (setv host (PgRecordsHost first LAW-SCHEMA :unreachable-errors (pg-errors) :prefix prefix))
+  (setv host (prepared-host first prefix))
   (setv written (run-on host (PutRow "parts" #("p1") {"label" "a"} (ExpectAbsent))))
   (setv page (run-on host (ListRows "parts")))
   (.close first)
   (setv second (open-postgres))
   ;; 2 度目の host は同じ表をもう一度用意する(IF NOT EXISTS / ON CONFLICT DO NOTHING で何も壊さない — 版と番号が続く)。
-  (setv again (PgRecordsHost second LAW-SCHEMA :unreachable-errors (pg-errors) :prefix prefix))
+  (setv again (prepared-host second prefix))
   (try
     (assert (= (run-on again (ReadRow "parts" #("p1"))) (Row #("p1") written.value 1)))
     (setv later (run-on again (ListRows "parts")))
@@ -110,7 +110,7 @@
 (deftest test-a-lost-connection-answers-unreachable
   {:skip-if (not PG-DSN) :skip-reason "DOEFF_RECORDS_TEST_PG_DSN が無い(PostgreSQL の検は走っていない)"}
   (setv prefix (fresh-prefix) connection (open-postgres))
-  (setv host (PgRecordsHost connection LAW-SCHEMA :unreachable-errors (pg-errors) :prefix prefix))
+  (setv host (prepared-host connection prefix))
   (drop-records-tables host)
   (.close connection)
   (setv answer (run-on host (ReadRow "parts" #("p1"))))
@@ -124,7 +124,7 @@
    (PutRows の束が 1 transaction の中で戻ることの検のため)。"
   (defn __init__ [self connection schema * prefix fail-at]
     (setv self.fail-at fail-at self.upserts 0)
-    (.__init__ (super) connection schema :unreachable-errors (pg-errors) :prefix prefix))
+    (.__init__ (super) connection (prepare-records-store connection schema prefix) :unreachable-errors (pg-errors)))
   (defn execute [self statement]
     (when (.startswith (.lstrip statement.text) (.format "INSERT INTO {}state_rows" self.prefix))
       (+= self.upserts 1)
@@ -160,7 +160,7 @@
   (setv connection (psycopg.connect (get os.environ PG-DSN-VARIABLE)))
   (try
     (try
-      (PgRecordsHost connection LAW-SCHEMA :unreachable-errors (pg-errors) :prefix (fresh-prefix))
+      (prepare-records-store connection LAW-SCHEMA (fresh-prefix))
       (assert False "自動 commit でない接続を受けた")
       (except [ValueError] None))
     (finally (.close connection))))
