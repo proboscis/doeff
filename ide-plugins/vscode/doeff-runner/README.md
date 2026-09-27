@@ -121,6 +121,31 @@ http・asyncio・時刻・乱数・file・process・環境変数・network・db�
 - `doeff-indexer` は上の「Binary Discovery Order」と同じ順で探します。見つかった binary が `hy-index` を知らない古い版なら、1 度だけ通知を出して Hy の機能を止めます(Python 向けの機能はそのまま動きます)。
 - 子 process は同時に 1 つだけ走らせます。失敗・契約に合わない出力・file ごとの読み取りの問題は Output の `doeff-runner` に理由つきで出ます。
 
+## pixel art の icon
+
+doeff の語(`defk`・`<-`・`Absent` など)・層・linter の印・service を、同じ絵で見分けるための icon の組です。
+
+- **元の定義は `resources/pixel/glyphs.json` の 1 か所**です。icon ごとに名前・家族・一言の説明と、16×16 と 8×8 の点の格子(1 文字 = 1 点)を持ちます。
+  - 文字の意味: `.` は透明、`0`〜`f` は PICO-8 の 16 色の番号、`A` / `B` は家族や語ごとに差し替える色です。
+  - 色は PICO-8 の 16 色だけを使います。
+- **文法**: 家族ごとに枠の形が決まり、中の絵が語を表します。絵は枠の中の地(`:`)の外に点を置けません(読み込みの時に断ります)。
+
+  | 家族 | 枠 | 語 |
+  |---|---|---|
+  | 宣言 | 判子の枠 | defk・defhandler・defeffect・defrecord・defwire・defsystem・deftest・law・契約(`:pre` / `:post`) |
+  | 値と流れ | 丸 | Program・`<-`・resume・finish・Ask |
+  | 失敗の語彙 | 赤い六角 | Absent・Raise・Unreachable・Refused・Conflict・Malformed |
+  | 層 | 床のタイル(色違い) | core・intent・protocol・foundation・entry |
+  | linter の印 | 枠なし | error(火)・warning(黄色の旗)・info(青い旗)・登録済み(足場)・Jev の未判定(霧)・Jev(ふくろう) |
+  | service | 同じ形の旗 | 色 2 つと模様を service の名前の hash から選ぶ |
+  | 拡張 | 枠なし | doe(手紙をくわえた雌鹿)と、状態バー用の doe の表情 |
+
+- **service の旗**: `serviceFlags.services` に並べた service の間で、同じ模様・同じ色の組が 0 組であることを生成の時に検算します。重なったら `serviceFlags.salt` を変えます。2 色は明るさの差が `minContrast` 以上の組だけから選びます。並べていない service の名前でも、拡張は同じ関数で同じ旗を作ります。
+- **生成物**(元の定義から作り、commit します): `resources/pixel/svg/{16,8}/<名前>.svg`、`resources/pixel/png/{16,8}/<名前>.png`(4 倍)、icon 字体 `resources/pixel/doeff-icons.woff`、`package.json` の `contributes.icons`(`$(doeff-<名前>)` で書けます)、拡張の icon `icon.png`(128×128)と `icon.svg`、activity bar の単色の輪郭 `resources/pixel/activitybar.svg`(24×24)。
+  - 生成物は手で書き換えません。`glyphs.json` を直して `npm run pixel` を実行します。
+  - `npm run pixel:check` は、commit した生成物が元の定義と食い違えば終了コード 1 を返します。単体テストも同じ食い違いを赤にします。
+  - `npm run pixel:preview` は、全 icon を 16×16・8×8・拡大で並べた見本の HTML を `out/pixel/preview.html` に書きます。
+
 ## Agentic Workflows
 
 The extension integrates with `doeff-agentic` CLI for monitoring and managing agent-based workflows.

@@ -12,3 +12,4 @@ node_modules/**
 !node_modules/@types/**
 scripts/**
 test-fixtures/**
+out/pixel/preview.html

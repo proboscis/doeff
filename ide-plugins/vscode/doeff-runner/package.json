@@ -89,7 +89,7 @@
         {
           "id": "doeff-hy",
           "title": "doeff Hy",
-          "icon": "$(symbol-event)"
+          "icon": "resources/pixel/activitybar.svg"
         }
       ]
     },
@@ -822,6 +822,372 @@
           "when": "false"
         }
       ]
+    },
+    "icons": {
+      "doeff-defk": {
+        "description": "defk — Program(巻物)を作る関数の宣言",
+        "default": {
+          "fontPath": "resources/pixel/doeff-icons.woff",
+          "fontCharacter": "\\E000"
+        }
+      },
+      "doeff-defhandler": {
+        "description": "defhandler — effect を受け止めて処理する関所(番小屋と遮断の棒)",
+        "default": {
+          "fontPath": "resources/pixel/doeff-icons.woff",
+          "fontCharacter": "\\E001"
+        }
+      },
+      "doeff-defeffect": {
+        "description": "defeffect — effect(頼みごとを書いた手紙)の宣言",
+        "default": {
+          "fontPath": "resources/pixel/doeff-icons.woff",
+          "fontCharacter": "\\E002"
+        }
+      },
+      "doeff-defrecord": {
+        "description": "defrecord — 値を入れる木箱(データの型)の宣言",
+        "default": {
+          "fontPath": "resources/pixel/doeff-icons.woff",
+          "fontCharacter": "\\E003"
+        }
+      },
+      "doeff-defwire": {
+        "description": "defwire — 外とつなぐ差し込み口のついた木箱の宣言",
+        "default": {
+          "fontPath": "resources/pixel/doeff-icons.woff",
+          "fontCharacter": "\\E004"
+        }
+      },
+      "doeff-defsystem": {
+        "description": "defsystem — service と部品の配置を描いた地図の宣言",
+        "default": {
+          "fontPath": "resources/pixel/doeff-icons.woff",
+          "fontCharacter": "\\E005"
+        }
+      },
+      "doeff-deftest": {
+        "description": "deftest — 虫眼鏡で確かめるテストの宣言",
+        "default": {
+          "fontPath": "resources/pixel/doeff-icons.woff",
+          "fontCharacter": "\\E006"
+        }
+      },
+      "doeff-law": {
+        "description": "law — ADR の決まり(天秤)",
+        "default": {
+          "fontPath": "resources/pixel/doeff-icons.woff",
+          "fontCharacter": "\\E007"
+        }
+      },
+      "doeff-contract": {
+        "description": ":pre / :post — 定義の契約(前提と約束を書いた証文)",
+        "default": {
+          "fontPath": "resources/pixel/doeff-icons.woff",
+          "fontCharacter": "\\E008"
+        }
+      },
+      "doeff-program": {
+        "description": "Program — まだ実行していない処理を書いた巻物",
+        "default": {
+          "fontPath": "resources/pixel/doeff-icons.woff",
+          "fontCharacter": "\\E009"
+        }
+      },
+      "doeff-bind": {
+        "description": "<- — Program の結果を受け口で受け取り、名前に束ねる",
+        "default": {
+          "fontPath": "resources/pixel/doeff-icons.woff",
+          "fontCharacter": "\\E00A"
+        }
+      },
+      "doeff-resume": {
+        "description": "resume — handler が値を渡して、止めた所へ戻す",
+        "default": {
+          "fontPath": "resources/pixel/doeff-icons.woff",
+          "fontCharacter": "\\E00B"
+        }
+      },
+      "doeff-finish": {
+        "description": "finish — handler がここで処理を終える(閉じた門)",
+        "default": {
+          "fontPath": "resources/pixel/doeff-icons.woff",
+          "fontCharacter": "\\E00C"
+        }
+      },
+      "doeff-ask": {
+        "description": "Ask — 環境に値を問う(問いの吹き出し)",
+        "default": {
+          "fontPath": "resources/pixel/doeff-icons.woff",
+          "fontCharacter": "\\E00D"
+        }
+      },
+      "doeff-absent": {
+        "description": "Absent — 値が無い(点線の空き箱)",
+        "default": {
+          "fontPath": "resources/pixel/doeff-icons.woff",
+          "fontCharacter": "\\E00E"
+        }
+      },
+      "doeff-raise": {
+        "description": "Raise — 失敗を知らせる信号旗を揚げる",
+        "default": {
+          "fontPath": "resources/pixel/doeff-icons.woff",
+          "fontCharacter": "\\E00F"
+        }
+      },
+      "doeff-unreachable": {
+        "description": "Unreachable — 相手に届かない(切れた橋)",
+        "default": {
+          "fontPath": "resources/pixel/doeff-icons.woff",
+          "fontCharacter": "\\E010"
+        }
+      },
+      "doeff-refused": {
+        "description": "Refused — 相手が断った(手のひら)",
+        "default": {
+          "fontPath": "resources/pixel/doeff-icons.woff",
+          "fontCharacter": "\\E011"
+        }
+      },
+      "doeff-conflict": {
+        "description": "Conflict — 同じ物を 2 者が同時に取り合った",
+        "default": {
+          "fontPath": "resources/pixel/doeff-icons.woff",
+          "fontCharacter": "\\E012"
+        }
+      },
+      "doeff-malformed": {
+        "description": "Malformed — 形が崩れていて読めない(くしゃくしゃの紙)",
+        "default": {
+          "fontPath": "resources/pixel/doeff-icons.woff",
+          "fontCharacter": "\\E013"
+        }
+      },
+      "doeff-layer-core": {
+        "description": "core — 業務の判断を置く家",
+        "default": {
+          "fontPath": "resources/pixel/doeff-icons.woff",
+          "fontCharacter": "\\E014"
+        }
+      },
+      "doeff-layer-intent": {
+        "description": "intent — 何をしたいかを掲げる立て札(公開の契約)",
+        "default": {
+          "fontPath": "resources/pixel/doeff-icons.woff",
+          "fontCharacter": "\\E015"
+        }
+      },
+      "doeff-layer-protocol": {
+        "description": "protocol — 相手の話し方へ訳す 2 つの吹き出し",
+        "default": {
+          "fontPath": "resources/pixel/doeff-icons.woff",
+          "fontCharacter": "\\E016"
+        }
+      },
+      "doeff-layer-foundation": {
+        "description": "foundation — 外の世界とつなぐ港(実際の I/O)",
+        "default": {
+          "fontPath": "resources/pixel/doeff-icons.woff",
+          "fontCharacter": "\\E017"
+        }
+      },
+      "doeff-layer-entry": {
+        "description": "entry — 外から入る門(組み立ての入口)",
+        "default": {
+          "fontPath": "resources/pixel/doeff-icons.woff",
+          "fontCharacter": "\\E018"
+        }
+      },
+      "doeff-lint-error": {
+        "description": "error — 新しい違反(火)",
+        "default": {
+          "fontPath": "resources/pixel/doeff-icons.woff",
+          "fontCharacter": "\\E019"
+        }
+      },
+      "doeff-lint-warning": {
+        "description": "warning — 違反の警告(黄色の旗)",
+        "default": {
+          "fontPath": "resources/pixel/doeff-icons.woff",
+          "fontCharacter": "\\E01A"
+        }
+      },
+      "doeff-lint-info": {
+        "description": "info — 知らせ(青い旗)",
+        "default": {
+          "fontPath": "resources/pixel/doeff-icons.woff",
+          "fontCharacter": "\\E01B"
+        }
+      },
+      "doeff-lint-registered": {
+        "description": "登録済み — 登録簿に載った既知の違反(工事中の足場)",
+        "default": {
+          "fontPath": "resources/pixel/doeff-icons.woff",
+          "fontCharacter": "\\E01C"
+        }
+      },
+      "doeff-jev-unjudged": {
+        "description": "Jev の未判定 — Jev がまだ判定していない(霧)",
+        "default": {
+          "fontPath": "resources/pixel/doeff-icons.woff",
+          "fontCharacter": "\\E01D"
+        }
+      },
+      "doeff-jev": {
+        "description": "Jev — Jev の意味の判定(ふくろう)",
+        "default": {
+          "fontPath": "resources/pixel/doeff-icons.woff",
+          "fontCharacter": "\\E01E"
+        }
+      },
+      "doeff-doe": {
+        "description": "doeff runner — 封蝋つきの手紙(effect)をくわえた雌鹿",
+        "default": {
+          "fontPath": "resources/pixel/doeff-icons.woff",
+          "fontCharacter": "\\E01F"
+        }
+      },
+      "doeff-doe-calm": {
+        "description": "違反なし — 落ち着いた doe",
+        "default": {
+          "fontPath": "resources/pixel/doeff-icons.woff",
+          "fontCharacter": "\\E020"
+        }
+      },
+      "doeff-doe-worried": {
+        "description": "警告あり — 困った doe",
+        "default": {
+          "fontPath": "resources/pixel/doeff-icons.woff",
+          "fontCharacter": "\\E021"
+        }
+      },
+      "doeff-doe-surprised": {
+        "description": "error あり — 驚いた doe",
+        "default": {
+          "fontPath": "resources/pixel/doeff-icons.woff",
+          "fontCharacter": "\\E022"
+        }
+      },
+      "doeff-service-tick": {
+        "description": "service tick の旗",
+        "default": {
+          "fontPath": "resources/pixel/doeff-icons.woff",
+          "fontCharacter": "\\E023"
+        }
+      },
+      "doeff-service-webapp": {
+        "description": "service webapp の旗",
+        "default": {
+          "fontPath": "resources/pixel/doeff-icons.woff",
+          "fontCharacter": "\\E024"
+        }
+      },
+      "doeff-service-daily-verify": {
+        "description": "service daily-verify の旗",
+        "default": {
+          "fontPath": "resources/pixel/doeff-icons.woff",
+          "fontCharacter": "\\E025"
+        }
+      },
+      "doeff-service-chat": {
+        "description": "service chat の旗",
+        "default": {
+          "fontPath": "resources/pixel/doeff-icons.woff",
+          "fontCharacter": "\\E026"
+        }
+      },
+      "doeff-service-nodeboot": {
+        "description": "service nodeboot の旗",
+        "default": {
+          "fontPath": "resources/pixel/doeff-icons.woff",
+          "fontCharacter": "\\E027"
+        }
+      },
+      "doeff-service-agent-task": {
+        "description": "service agent-task の旗",
+        "default": {
+          "fontPath": "resources/pixel/doeff-icons.woff",
+          "fontCharacter": "\\E028"
+        }
+      },
+      "doeff-service-scheduling": {
+        "description": "service scheduling の旗",
+        "default": {
+          "fontPath": "resources/pixel/doeff-icons.woff",
+          "fontCharacter": "\\E029"
+        }
+      },
+      "doeff-service-agent-catalog": {
+        "description": "service agent-catalog の旗",
+        "default": {
+          "fontPath": "resources/pixel/doeff-icons.woff",
+          "fontCharacter": "\\E02A"
+        }
+      },
+      "doeff-service-screen": {
+        "description": "service screen の旗",
+        "default": {
+          "fontPath": "resources/pixel/doeff-icons.woff",
+          "fontCharacter": "\\E02B"
+        }
+      },
+      "doeff-service-classifier": {
+        "description": "service classifier の旗",
+        "default": {
+          "fontPath": "resources/pixel/doeff-icons.woff",
+          "fontCharacter": "\\E02C"
+        }
+      },
+      "doeff-service-land-notice": {
+        "description": "service land-notice の旗",
+        "default": {
+          "fontPath": "resources/pixel/doeff-icons.woff",
+          "fontCharacter": "\\E02D"
+        }
+      },
+      "doeff-service-messaging": {
+        "description": "service messaging の旗",
+        "default": {
+          "fontPath": "resources/pixel/doeff-icons.woff",
+          "fontCharacter": "\\E02E"
+        }
+      },
+      "doeff-service-turn": {
+        "description": "service turn の旗",
+        "default": {
+          "fontPath": "resources/pixel/doeff-icons.woff",
+          "fontCharacter": "\\E02F"
+        }
+      },
+      "doeff-service-kanban": {
+        "description": "service kanban の旗",
+        "default": {
+          "fontPath": "resources/pixel/doeff-icons.woff",
+          "fontCharacter": "\\E030"
+        }
+      },
+      "doeff-service-durable": {
+        "description": "service durable の旗",
+        "default": {
+          "fontPath": "resources/pixel/doeff-icons.woff",
+          "fontCharacter": "\\E031"
+        }
+      },
+      "doeff-service-runtime-env": {
+        "description": "service runtime-env の旗",
+        "default": {
+          "fontPath": "resources/pixel/doeff-icons.woff",
+          "fontCharacter": "\\E032"
+        }
+      },
+      "doeff-service-custody": {
+        "description": "service custody の旗",
+        "default": {
+          "fontPath": "resources/pixel/doeff-icons.woff",
+          "fontCharacter": "\\E033"
+        }
+      }
     }
   },
   "scripts": {
@@ -831,7 +1197,10 @@
     "pretest": "npm run compile && npm run lint",
     "lint": "eslint src --ext ts",
     "test": "vscode-test",
-    "test:unit": "npm run compile && node scripts/run-unit-tests.js"
+    "test:unit": "npm run compile && node scripts/run-unit-tests.js",
+    "pixel": "npm run compile && node scripts/build-pixel.js",
+    "pixel:check": "npm run compile && node scripts/build-pixel.js --check",
+    "pixel:preview": "npm run compile && node scripts/build-pixel.js --preview out/pixel/preview.html"
   },
   "devDependencies": {
     "@types/mocha": "^10.0.7",
@@ -842,6 +1211,8 @@
     "@vscode/test-cli": "^0.0.9",
     "@vscode/test-electron": "^2.4.0",
     "eslint": "^8.57.0",
+    "svg2ttf": "^6.1.0",
+    "ttf2woff": "^3.0.0",
     "typescript": "^5.4.5"
   }
 }
