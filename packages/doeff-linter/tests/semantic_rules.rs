@@ -39,6 +39,18 @@ fn fake_jev(drifted: bool) -> FakeJev {
             counter.fetch_add(1, Ordering::SeqCst);
             let body: Value = serde_json::from_slice(&body).unwrap();
             let source = body["state"]["definition"]["source"].as_str().unwrap_or("");
+            if body["questions"]["q"]["type"] == "choice" {
+                // DOEFF203: sorted の key を渡す定義は library-callback、handler の並びを組む定義は none を選ぶ。
+                let (choice, probabilities) = if source.contains("sorted") {
+                    ("library-callback", serde_json::json!({"library-callback": 0.9, "process-entry": 0.02, "none": 0.08}))
+                } else {
+                    ("none", serde_json::json!({"library-callback": 0.1, "process-entry": 0.05, "none": 0.85}))
+                };
+                counter.fetch_add(1, Ordering::SeqCst);
+                let answer = serde_json::json!({"answers": {"q": {"type": "choice", "choice": choice, "probabilities": probabilities}}, "usage": {"input_tokens": 50}, "model": "jev-test-1"}).to_string();
+                let _ = write!(stream, "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{}", answer.len(), answer);
+                continue;
+            }
             let name = body["state"]["definition"]["name"].as_str().unwrap_or("");
             assert_eq!(body["model"], "jev-test", "direct の形は model を本文に入れる");
             assert_eq!(body["questions"]["q"]["type"], "noul");
@@ -196,4 +208,37 @@ fn semantic_severity_cannot_be_error_and_thresholds_are_checked() {
         .unwrap();
     assert_eq!(output.status.code(), Some(2));
     assert!(String::from_utf8_lossy(&output.stderr).contains("info ≤ warning"));
+}
+
+#[test]
+fn plain_callable_reason_is_checked_against_the_code() {
+    let dir = tempfile::TempDir::new().unwrap();
+    std::fs::write(
+        dir.path().join("architecture.hy"),
+        r#"(defarchitecture s :root "app" :layers [(layer core)]
+  :plain-callable-reasons [(reason library-callback "外の library が素の関数として呼ぶ") (reason process-entry "process の入口")])
+"#,
+    )
+    .unwrap();
+    std::fs::write(
+        dir.path().join("pyproject.toml"),
+        "[tool.doeff-linter]\nenable = [\"DOEFF203\"]\n[tool.doeff-linter.definitions]\n[tool.doeff-linter.semantic]\nplain_callable = { info_below = 0.3 }\n",
+    )
+    .unwrap();
+    std::fs::create_dir_all(dir.path().join("app/core")).unwrap();
+    std::fs::write(
+        dir.path().join("app/core/x.hy"),
+        "(deff by-key [row] (sorted rows :key row))  ; defk にできない(library-callback): sorted の key\n(deff handlers [f] [f])  ; defk にできない(library-callback): handler の組を組む\n(deff legacy [f] f)  ; defk にできない: 旧い形は問わない\n",
+    )
+    .unwrap();
+    let jev = fake_jev(false);
+    let (_, report, stderr) = run(dir.path(), &jev.url, &["--semantic-all"]);
+    // 種類を名乗った deff 2 つだけを問う(旧い形は問わない・Noul の較正の例も撃たない)。
+    assert_eq!(report["semantic"]["asked"], 2, "{} {}", report["semantic"], stderr);
+    let doubts: Vec<&Value> = report["violations"].as_array().unwrap().iter().filter(|v| v["rule"] == "DOEFF203").collect();
+    assert_eq!(doubts.len(), 1);
+    assert_eq!(doubts[0]["severity"], "info");
+    assert_eq!(doubts[0]["source"], "jev");
+    assert_eq!(doubts[0]["probability"], 0.1);
+    assert!(doubts[0]["explanation"]["reason"].as_str().unwrap().contains("Jev が選んだのは none(p=0.85)"), "{}", doubts[0]["explanation"]["reason"]);
 }

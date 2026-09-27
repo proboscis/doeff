@@ -695,7 +695,7 @@ fn defn_is_forbidden_deff_needs_a_reason_and_definitions_carry_tags() {
     let defn = explanation(&report, "app/billing/logic.hy::DOEFF110::helper");
     assert_eq!(defn["subject"], "定義 helper(defn)");
     assert!(defn["reason"].as_str().unwrap().starts_with("defn は契約の辞書を持てず、:tags を書けない"));
-    assert!(violation(&report, "app/billing/logic.hy::DOEFF110::helper")["hint"].as_str().unwrap().contains("; defk にできない: <理由>"));
+    assert!(violation(&report, "app/billing/logic.hy::DOEFF110::helper")["hint"].as_str().unwrap().starts_with("defk にする(素の関数でなければならない理由が種類に当たらない)"));
     let half = explanation(&report, "app/billing/logic.hy::DOEFF112::half");
     assert_eq!(half["subject"], "定義 half(defk)の :tags に role が無い");
     let untagged = explanation(&report, "app/billing/logic.hy::DOEFF112::untagged");
@@ -846,4 +846,59 @@ fn architecture_misreadings_and_double_declarations_are_config_errors() {
     // architecture.hy が無い repo は今どおり(editor-json の architecture は null)。
     let (_, report) = editor(repo(&[], "").path());
     assert_eq!(report["architecture"], Value::Null);
+}
+
+/// 理由の種類を宣言した architecture.hy と定義の規則の repo。
+fn reason_repo(source: &str, registry: &str) -> tempfile::TempDir {
+    let dir = tempfile::TempDir::new().unwrap();
+    std::fs::write(
+        dir.path().join("architecture.hy"),
+        r#"(defarchitecture s :root "app" :layers [(layer core)]
+  :plain-callable-reasons [(reason library-callback "外の library が素の関数として呼ぶ(sorted の key・dataclass の hook)")
+                           (reason process-entry "process の入口の main")])
+"#,
+    )
+    .unwrap();
+    std::fs::write(
+        dir.path().join("pyproject.toml"),
+        "[tool.doeff-linter]\nenable = [\"DOEFF110\", \"DOEFF111\"]\n[tool.doeff-linter.definitions]\n[tool.doeff-linter.registry]\nfiles = [\"known.txt\"]\n",
+    )
+    .unwrap();
+    std::fs::write(dir.path().join("known.txt"), registry).unwrap();
+    std::fs::create_dir_all(dir.path().join("app/core")).unwrap();
+    std::fs::write(dir.path().join("app/core/x.hy"), source).unwrap();
+    dir
+}
+
+#[test]
+fn deff_reasons_name_a_declared_kind_with_a_specific_detail() {
+    let source = r#"(deff by-key [row] (get row "k"))  ; defk にできない(library-callback): sorted の key が素の関数で呼ぶ
+(deff same [row] row)  ; defk にできない(library-callback): 同上
+(deff empty [row] row)  ; defk にできない(library-callback):
+(deff odd [row] row)  ; defk にできない(handler-assembly): handler の組を組む
+(deff old-form [row] row)  ; defk にできない: 入口の実行の 1 回
+(deff registered-old [row] row)  ; defk にできない: 同上
+(defn main [] 1)  ; defk にできない(process-entry): argparse の入口
+(defn helper [] 1)
+"#;
+    let dir = reason_repo(source, "app/core/x.hy::DOEFF111::registered_old\n");
+    let (_, report) = editor(dir.path());
+    assert_eq!(
+        keys(&report, "DOEFF111"),
+        vec!["app/core/x.hy::DOEFF111::empty", "app/core/x.hy::DOEFF111::odd", "app/core/x.hy::DOEFF111::old_form", "app/core/x.hy::DOEFF111::registered_old", "app/core/x.hy::DOEFF111::same"]
+    );
+    // 一覧に無い種類・空の詳細・「同上」は error、種類の無い旧い形は warning(登録簿に載れば info)。
+    assert_eq!(violation(&report, "app/core/x.hy::DOEFF111::odd")["severity"], "error");
+    assert_eq!(violation(&report, "app/core/x.hy::DOEFF111::same")["severity"], "error");
+    assert_eq!(violation(&report, "app/core/x.hy::DOEFF111::empty")["severity"], "error");
+    assert_eq!(violation(&report, "app/core/x.hy::DOEFF111::old_form")["severity"], "warning");
+    assert_eq!(violation(&report, "app/core/x.hy::DOEFF111::registered_old")["severity"], "info");
+    let same = violation(&report, "app/core/x.hy::DOEFF111::same");
+    assert!(same["explanation"]["reason"].as_str().unwrap().contains("種類 library-callback = 外の library が素の関数として呼ぶ"), "{}", same["explanation"]["reason"]);
+    assert!(same["hint"].as_str().unwrap().contains("「同上」は使わない"));
+    let odd = violation(&report, "app/core/x.hy::DOEFF111::odd");
+    assert!(odd["hint"].as_str().unwrap().contains("(defk handlers-of [foundation])"), "{}", odd["hint"]);
+    // defn: 同じ行の註が種類に当たれば「deff にする」、当たらなければ「defk にする」。
+    assert!(violation(&report, "app/core/x.hy::DOEFF110::main")["hint"].as_str().unwrap().starts_with("deff にする(種類 process-entry"));
+    assert!(violation(&report, "app/core/x.hy::DOEFF110::helper")["hint"].as_str().unwrap().starts_with("defk にする"));
 }

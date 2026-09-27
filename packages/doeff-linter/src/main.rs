@@ -191,6 +191,7 @@ impl Setup {
                 ProjectRule::ServiceBoundary => self.settings.services.is_some(),
                 ProjectRule::ContextMatchesService => self.settings.services.is_some() || self.settings.architecture.is_some(),
                 ProjectRule::SemanticBusinessDecision | ProjectRule::SemanticTransportKnowledge => self.settings.semantic.is_some(),
+                ProjectRule::SemanticPlainCallable => self.settings.semantic.as_ref().is_some_and(|s| s.plain_callable.is_some()),
                 ProjectRule::UndeclaredPlace
                 | ProjectRule::UndeclaredDirectory
                 | ProjectRule::ServiceDependency

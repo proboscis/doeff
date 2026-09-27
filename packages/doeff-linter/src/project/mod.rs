@@ -144,6 +144,7 @@ pub fn run(root: &Path, settings: &ProjectSettings, enabled: &BTreeSet<ProjectRu
 /// 層の規則を走らせる(意味の規則をどう扱うかを選べる — 既定の `run` は cache を読むだけ)。
 pub fn run_with(root: &Path, settings: &ProjectSettings, enabled: &BTreeSet<ProjectRule>, target: Target, semantic_mode: &semantic::SemanticMode) -> ProjectReport {
     let semantic_files: Vec<(LayerFile, Option<String>)>;
+    let plain_files: Vec<(SourceFile, Option<String>)>;
     let mut report = ProjectReport::default();
     let mut registry = Registry::load(root, &settings.registry.dirs, &settings.registry.files);
     if !settings.registry.config_files.is_empty() {
@@ -161,6 +162,16 @@ pub fn run_with(root: &Path, settings: &ProjectSettings, enabled: &BTreeSet<Proj
         Target::Whole => {
             let layer_files = settings.layers.as_ref().map(|layers| collect_layer_files(root, layers)).unwrap_or_default();
             semantic_files = layer_files.iter().map(|f| (f.clone(), None)).collect();
+            plain_files = match (&settings.definitions, settings.semantic.as_ref().and_then(|s| s.plain_callable)) {
+                (Some(definitions), Some(_)) => hy_index::collect_hy_files(root)
+                    .into_iter()
+                    .filter_map(|path| {
+                        let rel = relative_path(root, &path)?;
+                        is_definition_file(&rel, definitions).then_some((SourceFile { rel, path, language: Language::Hy }, None))
+                    })
+                    .collect(),
+                _ => Vec::new(),
+            };
             let env_files = settings.environment.as_ref().map(|env| collect_environment_files(root, env)).unwrap_or_default();
             let hy = whole_hy_index(root, settings, enabled, &raw, &layer_files, &env_files, wants_raw);
             if let Some(layers) = &settings.layers {
@@ -204,7 +215,7 @@ pub fn run_with(root: &Path, settings: &ProjectSettings, enabled: &BTreeSet<Proj
                         .par_iter()
                         .map(|file| {
                             std::fs::read_to_string(&file.path)
-                                .map(|source| judge_definitions(file, &source, definitions, enabled))
+                                .map(|source| judge_definitions(file, &source, definitions, enabled, plain_callable_reasons(settings)))
                                 .map_err(|error| format!("{}: 読めない: {}", file.rel, error))
                         })
                         .collect();
@@ -229,6 +240,12 @@ pub fn run_with(root: &Path, settings: &ProjectSettings, enabled: &BTreeSet<Proj
         }
         Target::Single { path, source } => {
             let rel = relative_path(root, &path);
+            plain_files = match (&settings.definitions, &rel) {
+                (Some(definitions), Some(rel)) if language_of(&path) == Some(Language::Hy) && is_definition_file(rel, definitions) => {
+                    vec![(SourceFile { rel: rel.clone(), path: root.join(rel), language: Language::Hy }, Some(source.to_string()))]
+                }
+                _ => Vec::new(),
+            };
             semantic_files = match (&settings.layers, &rel) {
                 (Some(layers), Some(rel)) => classify_layer_file(rel, layers)
                     .map(|(site, language)| {
@@ -265,7 +282,7 @@ pub fn run_with(root: &Path, settings: &ProjectSettings, enabled: &BTreeSet<Proj
             if let (Some(definitions), Some(rel)) = (&settings.definitions, &rel) {
                 if wants_definitions(enabled) && language_of(&path) == Some(Language::Hy) && is_definition_file(rel, definitions) {
                     let file = SourceFile { rel: rel.clone(), path: path.clone(), language: Language::Hy };
-                    drafts.extend(judge_definitions(&file, source, definitions, enabled));
+                    drafts.extend(judge_definitions(&file, source, definitions, enabled, plain_callable_reasons(settings)));
                 }
             }
             if let (Some(env), Some(rel)) = (&settings.environment, &rel) {
@@ -279,9 +296,14 @@ pub fn run_with(root: &Path, settings: &ProjectSettings, enabled: &BTreeSet<Proj
         }
     }
     if let (Some(semantic), Some(layers)) = (&settings.semantic, &settings.layers) {
-        let wanted = [ProjectRule::SemanticBusinessDecision, ProjectRule::SemanticTransportKnowledge].iter().any(|r| enabled.contains(r));
+        let wanted = [ProjectRule::SemanticBusinessDecision, ProjectRule::SemanticTransportKnowledge, ProjectRule::SemanticPlainCallable].iter().any(|r| enabled.contains(r));
         if wanted {
-            let (found, summary, errors) = judge_semantic(root, semantic, layers, enabled, &semantic_files, semantic_mode);
+            let plain = PlainCallableInput {
+                files: plain_files,
+                reasons: plain_callable_reasons(settings).iter().map(|r| (r.name.clone(), r.description.clone())).collect(),
+                marker: settings.definitions.as_ref().map(|d| d.deff_reason_marker.clone()).unwrap_or_else(|| "defk にできない:".to_string()),
+            };
+            let (found, summary, errors) = judge_semantic(root, semantic, layers, enabled, &semantic_files, semantic_mode, &plain);
             drafts.extend(found);
             report.errors.extend(errors);
             report.semantic = Some(summary);
@@ -1217,11 +1239,20 @@ fn semantic_kind(kind: DefinitionKind) -> bool {
 /// 較正の例の kind の綴りを 'static にするための一覧(semantic_kind と同じ kind)。
 const SEMANTIC_KIND_NAMES: &[&str] = &["defn", "defn/a", "defk", "deff", "defp", "defpp", "defhandler", "defeffect", "defclass", "defrecord", "defenum"];
 
+/// DOEFF203 の入力 — 種類を読む deff の file・architecture.hy の種類の一覧・註の目印。
+#[derive(Default)]
+struct PlainCallableInput {
+    files: Vec<(SourceFile, Option<String>)>,
+    reasons: Vec<(String, String)>,
+    marker: String,
+}
+
 /// 規則と問いの対応。
 fn semantic_rule(question: semantic::SemanticQuestion) -> ProjectRule {
     match question {
         semantic::SemanticQuestion::BusinessDecision => ProjectRule::SemanticBusinessDecision,
         semantic::SemanticQuestion::TransportKnowledge => ProjectRule::SemanticTransportKnowledge,
+        semantic::SemanticQuestion::PlainCallable => ProjectRule::SemanticPlainCallable,
     }
 }
 
@@ -1233,6 +1264,7 @@ fn judge_semantic(
     enabled: &BTreeSet<ProjectRule>,
     files: &[(LayerFile, Option<String>)],
     mode: &semantic::SemanticMode,
+    plain: &PlainCallableInput,
 ) -> (Vec<Draft>, semantic::SemanticSummary, Vec<String>) {
     let target = semantic::target_from_process_environment();
     let model = target.model.clone();
@@ -1303,11 +1335,57 @@ fn judge_semantic(
             }
         }
     }
+    // DOEFF203: 種類を名乗った deff ごとに、種類の一覧 + none から理由を選ばせる。
+    if settings.plain_callable.is_some() && enabled.contains(&ProjectRule::SemanticPlainCallable) && !plain.reasons.is_empty() {
+        for (file, source) in &plain.files {
+            let text = match source {
+                Some(text) => text.clone(),
+                None => match std::fs::read_to_string(&file.path) {
+                    Ok(text) => text,
+                    Err(error) => {
+                        errors.push(format!("{}: 読めない: {}", file.rel, error));
+                        continue;
+                    }
+                },
+            };
+            let index = hy_index::index_source(root, &file.path, &text);
+            for definition in index.definitions.iter().filter(|d| d.container.is_none() && d.kind == DefinitionKind::Deff) {
+                let start = crate::position::offset_of(&text, definition.full_range.start);
+                let (line, previous) = line_and_previous(&text, start);
+                let comment = parse_reason_comment(&line, &plain.marker).or_else(|| {
+                    previous.trim_start().starts_with(';').then(|| parse_reason_comment(&previous, &plain.marker)).flatten()
+                });
+                let Some(ReasonComment { kind: Some(declared), detail }) = comment else { continue };
+                if !plain.reasons.iter().any(|(name, _)| *name == declared) {
+                    continue;
+                }
+                let end = crate::position::offset_of(&text, definition.full_range.end);
+                items.push(semantic::plain_callable_item(
+                    settings,
+                    &model,
+                    &plain.reasons,
+                    &file.rel,
+                    &file.path,
+                    &definition.name,
+                    definition.kind.as_str(),
+                    definition.range,
+                    text.get(start..end).unwrap_or(""),
+                    &declared,
+                    &detail,
+                ));
+            }
+        }
+    }
     // 較正の見張りの例(同梱の正例と反例)を、その問いを当てる最初の層の説明で組む。
     let calibration: Vec<(semantic::SemanticItem, bool)> = semantic::calibration_examples()
         .into_iter()
         .filter_map(|example| {
-            let question = match ProjectRule::parse(&example.rule)? {
+            let rule = ProjectRule::parse(&example.rule)?;
+            // 較正は有効な規則の問いだけ(DOEFF203 だけの実行で DOEFF201・202 の例を撃たない)。
+            if !enabled.contains(&rule) {
+                return None;
+            }
+            let question = match rule {
                 ProjectRule::SemanticBusinessDecision => semantic::SemanticQuestion::BusinessDecision,
                 ProjectRule::SemanticTransportKnowledge => semantic::SemanticQuestion::TransportKnowledge,
                 _ => return None,
@@ -1328,7 +1406,34 @@ fn judge_semantic(
     let drafts = outcome
         .answered
         .into_iter()
-        .filter_map(|(item, probability)| {
+        .filter_map(|(item, answer)| {
+            let probability = answer.probability;
+            if item.question == semantic::SemanticQuestion::PlainCallable {
+                let declared = item.declared.clone().unwrap_or_default();
+                let declared_probability = answer.probabilities.as_ref().and_then(|p| p.get(&declared).copied()).unwrap_or(0.0);
+                let base = settings.plain_callable_severity(declared_probability)?;
+                let description = plain.reasons.iter().find(|(n, _)| *n == declared).map(|(_, d)| d.clone()).unwrap_or_default();
+                let chosen = answer.choice.clone().unwrap_or_default();
+                return Some(Draft {
+                    rule: ProjectRule::SemanticPlainCallable,
+                    layer: None,
+                    rel: item.rel.clone(),
+                    path: item.path.clone(),
+                    range: item.range,
+                    message: format!("{} の deff {} — 名乗った種類 {} は Jev の判定 p={:.2}(Jev の選択 = {})", item.rel, item.name, declared, declared_probability, chosen),
+                    detail: Some(hy_mangle(&item.name)),
+                    base,
+                    explain: Explain::PlainCallableDoubt {
+                        definition: item.name.clone(),
+                        kind: item.kind,
+                        declared,
+                        declared_description: description,
+                        declared_probability,
+                        chosen,
+                        chosen_probability: probability,
+                    },
+                });
+            }
             let base = settings.severity(item.question, probability)?;
             let spec = &layers.layers[item.layer.0];
             let placement = Placement { layer: item.layer, dir: String::new(), service: None, roles: Vec::new() };
@@ -1375,6 +1480,36 @@ fn is_definition_file(rel: &str, definitions: &settings::DefinitionSettings) -> 
         && !rel.split('/').any(|part| definitions.exclude_parts.contains(part))
 }
 
+/// architecture.hy が宣言した、素の関数を許す理由の種類(無ければ空)。
+fn plain_callable_reasons(settings: &ProjectSettings) -> &[architecture::ReasonKind] {
+    settings.architecture.as_ref().map(|a| a.plain_callable_reasons.as_slice()).unwrap_or(&[])
+}
+
+/// 理由の註 `; <目印>(<種類>): <詳細>` を読んだ結果(種類の括弧は半角でも全角でもよい。種類の無い旧い形は kind = None)。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReasonComment {
+    pub kind: Option<String>,
+    pub detail: String,
+}
+
+/// 行の註(`;` の後)から理由の註を読む。目印は設定の deff_reason_marker(末尾の `:` は外して比べる)。
+pub fn parse_reason_comment(line: &str, marker: &str) -> Option<ReasonComment> {
+    let base = marker.trim_end_matches([':', '：']).trim();
+    let (_, comment) = line.split_once(';')?;
+    let at = comment.find(base)?;
+    let rest = comment[at + base.len()..].trim_start();
+    let (kind, rest) = match rest.chars().next() {
+        Some('(') | Some('\u{ff08}') => {
+            let close = rest.find([')', '\u{ff09}'])?;
+            let open_len = rest.chars().next().map(char::len_utf8).unwrap_or(1);
+            (Some(rest[open_len..close].trim().to_string()), &rest[close + rest[close..].chars().next().map(char::len_utf8).unwrap_or(1)..])
+        }
+        _ => (None, rest),
+    };
+    let detail = rest.trim_start().trim_start_matches([':', '\u{ff1a}']).trim().to_string();
+    Some(ReasonComment { kind: kind.filter(|k| !k.is_empty()), detail })
+}
+
 /// 行の頭の byte の位置(offset を含む行と、その前の行)の本文を返す。
 fn line_and_previous(source: &str, offset: usize) -> (String, String) {
     let offset = offset.min(source.len());
@@ -1390,7 +1525,13 @@ fn line_and_previous(source: &str, offset: usize) -> (String, String) {
 }
 
 /// DOEFF110〜112: file の定義の書き方を判じる(defn の禁止・deff の理由の註・定義のタグ必須)。
-fn judge_definitions(file: &SourceFile, source: &str, definitions: &settings::DefinitionSettings, enabled: &BTreeSet<ProjectRule>) -> Vec<Draft> {
+fn judge_definitions(
+    file: &SourceFile,
+    source: &str,
+    definitions: &settings::DefinitionSettings,
+    enabled: &BTreeSet<ProjectRule>,
+    reasons: &[architecture::ReasonKind],
+) -> Vec<Draft> {
     let facts = read_facts(Language::Hy, source, &module_of(&file.rel), &definitions.tags);
     let lines = LineIndex::new(source);
     let reading = &definitions.tags;
@@ -1413,26 +1554,59 @@ fn judge_definitions(file: &SourceFile, source: &str, definitions: &settings::De
     for definition in &facts.definitions {
         let name = definition.name.name.clone();
         let head = definition.head.as_str();
+        let (line, previous) = line_and_previous(source, definition.start);
+        let same_line = parse_reason_comment(&line, &definitions.deff_reason_marker);
+        // 直前の行は、註だけの行の時に限って読む(前の定義の行末の註を取り違えない)。
+        let comment = same_line.clone().or_else(|| {
+            previous.trim_start().starts_with(';').then(|| parse_reason_comment(&previous, &definitions.deff_reason_marker)).flatten()
+        });
+        let declared_kind = same_line
+            .as_ref()
+            .and_then(|c| c.kind.clone())
+            .and_then(|kind| reasons.iter().find(|r| r.name == kind).cloned());
         if enabled.contains(&ProjectRule::DefnForbidden) && matches!(head, "defn" | "defn/a") && !definition.compile_time {
             drafts.push(draft(
                 ProjectRule::DefnForbidden,
                 definition.name.span,
                 format!("{} の {} は {} で書かれている — defk で書く", file.rel, name, head),
                 name.clone(),
-                Explain::DefnForbidden { name: name.clone(), head: head.to_string() },
+                Explain::DefnForbidden { name: name.clone(), head: head.to_string(), declared_kind: declared_kind.clone() },
             ));
         }
         if enabled.contains(&ProjectRule::DeffNeedsReason) && head == "deff" {
-            let (line, previous) = line_and_previous(source, definition.start);
-            let has_reason = [line, previous].iter().any(|text| text.split_once(';').is_some_and(|(_, comment)| comment.contains(&definitions.deff_reason_marker)));
-            if !has_reason {
-                drafts.push(draft(
+            let problem = match (&comment, reasons.is_empty()) {
+                (None, _) => Some(explain::DeffReasonProblem::Missing),
+                (Some(_), true) => None,
+                (Some(ReasonComment { kind: None, .. }), false) => Some(explain::DeffReasonProblem::Legacy),
+                (Some(ReasonComment { kind: Some(kind), detail }), false) => {
+                    if !reasons.iter().any(|r| &r.name == kind) {
+                        Some(explain::DeffReasonProblem::UnknownKind { kind: kind.clone() })
+                    } else if detail.is_empty() || detail.starts_with("同上") {
+                        Some(explain::DeffReasonProblem::NoDetail { kind: kind.clone(), detail: detail.clone() })
+                    } else {
+                        None
+                    }
+                }
+            };
+            if let Some(problem) = problem {
+                let legacy = problem == explain::DeffReasonProblem::Legacy;
+                let mut found = draft(
                     ProjectRule::DeffNeedsReason,
                     definition.name.span,
-                    format!("{} の deff {} に理由の註 `; {} …` が無い", file.rel, name, definitions.deff_reason_marker),
+                    format!("{} の deff {} の理由の註 — {}", file.rel, name, problem.short()),
                     name.clone(),
-                    Explain::DeffWithoutReason { name: name.clone(), marker: definitions.deff_reason_marker.clone() },
-                ));
+                    Explain::DeffWithoutReason {
+                        name: name.clone(),
+                        marker: definitions.deff_reason_marker.clone(),
+                        problem,
+                        kinds: reasons.to_vec(),
+                    },
+                );
+                if legacy {
+                    // 種類の無い旧い形は、移行の間は warning(登録簿に載れば info)。
+                    found.base = Severity::Warning;
+                }
+                drafts.push(found);
             }
         }
         if enabled.contains(&ProjectRule::DefinitionTagsRequired) && reading.require_on.contains(head) {
@@ -1570,11 +1744,14 @@ fn finish(drafts: Vec<Draft>, settings: &ProjectSettings, registry: &Registry) -
             } else {
                 match (registered, draft.base) {
                     (true, Severity::Error) => settings.registered_severity.get(&draft.rule).copied().unwrap_or(Severity::Warning),
+                    // 登録簿に載った warning(移行の間の旧い形など)は info に下げる。
+                    (true, Severity::Warning) => Severity::Info,
                     (_, base) => base,
                 }
             };
             let probability = match &draft.explain {
                 Explain::Semantic { probability, .. } => Some(*probability),
+                Explain::PlainCallableDoubt { declared_probability, .. } => Some(*declared_probability),
                 _ => None,
             };
             Finding {
@@ -1588,7 +1765,7 @@ fn finish(drafts: Vec<Draft>, settings: &ProjectSettings, registry: &Registry) -
                 rel: draft.rel,
                 range: draft.range,
                 message: draft.message,
-                hint: draft.rule.hint().to_string(),
+                hint: narrator.hint(&draft.explain).unwrap_or_else(|| draft.rule.hint().to_string()),
                 key,
                 registered,
                 explanation: narrator.explain(&draft.explain, law),
@@ -1604,5 +1781,25 @@ pub fn enabled_rules(enabled_ids: Option<&[String]>) -> BTreeSet<ProjectRule> {
     match enabled_ids {
         None => ProjectRule::ALL.into_iter().collect(),
         Some(ids) => ids.iter().filter_map(|id| ProjectRule::parse(id)).collect(),
+    }
+}
+
+#[cfg(test)]
+mod reason_comment_tests {
+    use super::*;
+
+    #[test]
+    fn reads_kind_and_detail_in_half_and_full_width() {
+        let marker = "defk にできない:";
+        assert_eq!(
+            parse_reason_comment("(deff k [x] x)  ; defk にできない(library-callback): sorted の key", marker),
+            Some(ReasonComment { kind: Some("library-callback".into()), detail: "sorted の key".into() })
+        );
+        assert_eq!(
+            parse_reason_comment("; defk にできない\u{ff08}process-entry\u{ff09}\u{ff1a}argparse の入口", marker),
+            Some(ReasonComment { kind: Some("process-entry".into()), detail: "argparse の入口".into() })
+        );
+        assert_eq!(parse_reason_comment("; defk にできない: 同上", marker), Some(ReasonComment { kind: None, detail: "同上".into() }));
+        assert_eq!(parse_reason_comment("(deff k [x] x)", marker), None);
     }
 }

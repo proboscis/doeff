@@ -228,6 +228,12 @@ repo の一番上の `architecture.hy` に `defarchitecture`(root・層・shared
 宛先とキーは doeff-jev と同じ決め方(`JEV_*` → `~/.config/jev/client.json` → TypeSafe 直・`TYPESAFE_API_KEY`)。詳しくは
 [docs/SPECIFICATION.md](docs/SPECIFICATION.md) の 10 節。
 
+### 素の関数の理由の種類(DOEFF110・111・203)
+
+architecture.hy の `:plain-callable-reasons` に理由の種類の閉じた一覧を宣言すると、deff の註は `; defk にできない(<種類>): <詳細>` の形で、種類が一覧に在り
+詳細が固有であることを求めます(「同上」は違反)。DOEFF203 は Jev に「本当に素の関数でなければならないか」を種類 + none から選ばせます。
+詳しくは [docs/SPECIFICATION.md](docs/SPECIFICATION.md) の 11 節。
+
 ## エディタ向けの出力(editor-json)
 
 ```bash

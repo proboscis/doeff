@@ -41,11 +41,13 @@ pub enum ProjectRule {
     SemanticBusinessDecision,
     /// DOEFF202(意味・Jev): 判断の層の定義が通信の手段を知っている。
     SemanticTransportKnowledge,
+    /// DOEFF203(意味・Jev): deff が名乗った素の関数の理由の種類が、コードに当たらない見込み。
+    SemanticPlainCallable,
 }
 
 impl ProjectRule {
     /// 全部の層の規則(出力の一覧と `ALL` の展開のため)。
-    pub const ALL: [ProjectRule; 19] = [
+    pub const ALL: [ProjectRule; 20] = [
         ProjectRule::LayerImportDirection,
         ProjectRule::LayerForbiddenModule,
         ProjectRule::LayerTypesOnly,
@@ -65,6 +67,7 @@ impl ProjectRule {
         ProjectRule::UnusedDependency,
         ProjectRule::SemanticBusinessDecision,
         ProjectRule::SemanticTransportKnowledge,
+        ProjectRule::SemanticPlainCallable,
     ];
 
     /// 規則の ID。
@@ -89,6 +92,7 @@ impl ProjectRule {
             ProjectRule::UnusedDependency => "DOEFF117",
             ProjectRule::SemanticBusinessDecision => "DOEFF201",
             ProjectRule::SemanticTransportKnowledge => "DOEFF202",
+            ProjectRule::SemanticPlainCallable => "DOEFF203",
         }
     }
 
@@ -117,7 +121,8 @@ impl ProjectRule {
             ProjectRule::EnvironmentName
             | ProjectRule::DefnForbidden
             | ProjectRule::DeffNeedsReason
-            | ProjectRule::DefinitionTagsRequired => false,
+            | ProjectRule::DefinitionTagsRequired
+            | ProjectRule::SemanticPlainCallable => false,
         }
     }
 
@@ -143,6 +148,7 @@ impl ProjectRule {
             ProjectRule::UnusedDependency => "Unused Dependency",
             ProjectRule::SemanticBusinessDecision => "Business Decision In Translation (Jev)",
             ProjectRule::SemanticTransportKnowledge => "Transport Knowledge In Core (Jev)",
+            ProjectRule::SemanticPlainCallable => "Plain Callable Reason (Jev)",
         }
     }
 
@@ -168,6 +174,7 @@ impl ProjectRule {
             ProjectRule::UnusedDependency => "宣言した依存(:depends-on)を、その service のどの module も読んでいない(知らせ)",
             ProjectRule::SemanticBusinessDecision => "翻訳の層の定義は、要求を相手の話し方へ言い換えるだけで、業務の判断をしない(Jev の判定・warning か info)",
             ProjectRule::SemanticTransportKnowledge => "判断の層の定義は、通信の手段(URL・HTTP・JSON の wire・SQL)を知らない(Jev の判定・warning か info)",
+            ProjectRule::SemanticPlainCallable => "deff が名乗った素の関数の理由の種類は、コードが本当に素の関数でなければならない理由に当たる(Jev の判定・warning か info)",
         }
     }
 
@@ -193,6 +200,7 @@ impl ProjectRule {
             ProjectRule::UnusedDependency => "使っていない依存を :depends-on から外す",
             ProjectRule::SemanticBusinessDecision => "業務の判断は core の judgment へ移し、翻訳の handler はその答えを使うだけにする(Jev の外れなら登録簿に載せる)",
             ProjectRule::SemanticTransportKnowledge => "通信の手段は protocol の翻訳の handler へ移し、core は intent を出すだけにする(Jev の外れなら登録簿に載せる)",
+            ProjectRule::SemanticPlainCallable => "種類が当たらないなら defk にする — 組み立て(handler の並び)なら `(defk handlers-of [foundation])` に・テストなら deftest に・値を組む補助なら defk にして `(<- …)` で呼ぶ(Jev の外れなら登録簿に載せる)",
         }
     }
 }

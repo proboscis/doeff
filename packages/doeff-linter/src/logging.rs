@@ -197,10 +197,14 @@ fn read_source_line(file_path: &str, line_num: usize) -> String {
     }
 }
 
-/// Truncate source line if too long
+/// Truncate source line if too long(byte の長さで切るが、日本語などの多 byte 文字の途中では切らず、手前の文字の境目に寄せる)
 fn truncate_source_line(line: &str, max_len: usize) -> String {
     if line.len() > max_len {
-        format!("{}...", &line[..max_len])
+        let mut end = max_len;
+        while !line.is_char_boundary(end) {
+            end -= 1;
+        }
+        format!("{}...", &line[..end])
     } else {
         line.to_string()
     }
@@ -209,6 +213,16 @@ fn truncate_source_line(line: &str, max_len: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn truncating_a_long_japanese_line_does_not_split_a_character() {
+        // 3 byte の文字が 200 byte の境目をまたぐ長さ(1 + 3 × 100 byte)。
+        let line = format!("a{}", "日".repeat(100));
+        let cut = truncate_source_line(&line, 200);
+        assert!(cut.ends_with("..."));
+        assert_eq!(cut.trim_end_matches("...").len(), 199, "境目の手前(1 + 3 × 66 byte)で切る");
+        assert_eq!(truncate_source_line("短い", 200), "短い");
+    }
     use crate::models::{LintResult, Severity, Violation};
     use tempfile::TempDir;
 

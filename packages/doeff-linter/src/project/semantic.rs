@@ -28,11 +28,33 @@ pub enum SemanticQuestion {
     BusinessDecision,
     /// J3: 定義が通信の手段を知っているか(core の層に当てる)。
     TransportKnowledge,
+    /// deff が本当に素の関数でなければならない理由を、architecture.hy の種類の一覧 + none から選ぶ(Choice)。
+    PlainCallable,
 }
 
 impl SemanticQuestion {
     /// 全部の問い。
     pub const ALL: [SemanticQuestion; 2] = [SemanticQuestion::BusinessDecision, SemanticQuestion::TransportKnowledge];
+
+    /// DOEFF203 の問い(Choice)。criteria は architecture.hy の理由の種類(名 → 説明)と none。問いの文は英語でここ 1 か所。
+    pub fn plain_callable_wire(reasons: &[(String, String)]) -> Value {
+        let mut criteria = serde_json::Map::new();
+        for (name, description) in reasons {
+            criteria.insert(name.clone(), Value::String(description.clone()));
+        }
+        criteria.insert(
+            "none".to_string(),
+            Value::String("None of the reasons applies: the code could be a doeff Program (defk) — for example assembling a list of handlers, a test body, or a helper that builds or projects values; its caller can run it as a Program.".to_string()),
+        );
+        json!({
+            "type": "choice",
+            "instructions": {
+                "question": "Why must the definition in `definition.source` be a plain Python callable instead of a doeff Program (defk)? Choose the reason that actually applies, judged by who calls this code and how.",
+                "note": "A plain callable is justified only when code outside doeff calls it directly with a fixed signature (a library callback, a framework convention, a process entry point, or macro expansion time). `declared_reason` is what the author claimed; judge the code itself and do not simply trust the claim."
+            },
+            "criteria": Value::Object(criteria)
+        })
+    }
 
     /// Jev へ渡す問い(direct の形 — type は noul。gateway の形へは gateway_question で写す)。jev-lint の questions.py の J2・J3 と同じ内容。
     pub fn wire(self) -> Value {
@@ -59,6 +81,7 @@ impl SemanticQuestion {
                     "false": "The code only translates: it builds or reads the wire form, maps failures, or checks shapes."
                 }
             }),
+            SemanticQuestion::PlainCallable => Self::plain_callable_wire(&[]),
             SemanticQuestion::TransportKnowledge => json!({
                 "type": "noul",
                 "instructions": "Does the code in `definition.source` know how communication is carried out: URLs or URL paths and query strings, HTTP methods, status codes or headers, JSON wire field names or JSON encoding and decoding, SQL, or network endpoint addresses?",
@@ -75,6 +98,7 @@ impl SemanticQuestion {
         match self {
             SemanticQuestion::BusinessDecision => "要求の言い換えを越えて、業務の判断(誰に許すか・業務の決まり・宛先・業務の結果)をしている",
             SemanticQuestion::TransportKnowledge => "通信の手段(URL や query・HTTP の method や status・JSON の wire・SQL・宛先の address)を知っている",
+            SemanticQuestion::PlainCallable => "名乗った理由の種類では、素の関数でなければならない理由にならない見込み",
         }
     }
 }
@@ -101,9 +125,28 @@ pub struct SemanticSection {
     pub business_decision: QuestionSection,
     #[serde(default)]
     pub transport_knowledge: QuestionSection,
+    /// DOEFF203: 名乗った種類の確率がこれ未満なら info / warning(warning は書いた時だけ)。
+    pub plain_callable: Option<PlainCallableSection>,
     pub workers: Option<usize>,
     pub timeout_seconds: Option<u64>,
     pub source_limit: Option<usize>,
+}
+
+/// `[tool.doeff-linter.semantic] plain_callable`(読んだ形)。
+#[derive(Debug, Deserialize, Serialize, Default, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct PlainCallableSection {
+    /// 名乗った種類の確率がこれ未満で info(既定 0.3)。
+    pub info_below: Option<f64>,
+    /// 名乗った種類の確率がこれ未満で warning(書いた時だけ・info_below 以下)。
+    pub warning_below: Option<f64>,
+}
+
+/// DOEFF203 の設定(検めた後)。
+#[derive(Debug, Clone, Copy)]
+pub struct PlainCallableSettings {
+    pub info_below: f64,
+    pub warning_below: Option<f64>,
 }
 
 /// 問い 1 つの設定(検めた後)。
@@ -117,6 +160,7 @@ pub struct QuestionSettings {
 /// 意味の規則の設定(検めた後)。
 #[derive(Debug, Clone)]
 pub struct SemanticSettings {
+    pub plain_callable: Option<PlainCallableSettings>,
     pub questions: BTreeMap<SemanticQuestion, QuestionSettings>,
     pub workers: usize,
     pub timeout: Duration,
@@ -143,11 +187,32 @@ impl SemanticSettings {
                 questions.insert(question, QuestionSettings { layers, warning, info });
             }
         }
+        let plain_callable = section.plain_callable.as_ref().map(|p| {
+            let settings = PlainCallableSettings { info_below: p.info_below.unwrap_or(0.3), warning_below: p.warning_below };
+            let bad = !(0.0..=1.0).contains(&settings.info_below) || settings.warning_below.is_some_and(|w| !(0.0..=1.0).contains(&w) || w > settings.info_below);
+            if bad {
+                problems.push(format!("semantic.plain_callable: 閾値は 0〜1 で warning_below ≤ info_below(info_below = {})", settings.info_below));
+            }
+            settings
+        });
         SemanticSettings {
+            plain_callable,
             questions,
             workers: section.workers.unwrap_or(8).clamp(1, 32),
             timeout: Duration::from_secs(section.timeout_seconds.unwrap_or(30)),
             source_limit: section.source_limit.unwrap_or(1800),
+        }
+    }
+
+    /// DOEFF203: 名乗った種類の確率から重さを決める(低いほど重い・閾値より高ければ None)。
+    pub fn plain_callable_severity(&self, declared_probability: f64) -> Option<crate::models::Severity> {
+        let spec = self.plain_callable?;
+        if spec.warning_below.is_some_and(|w| declared_probability < w) {
+            Some(crate::models::Severity::Warning)
+        } else if declared_probability < spec.info_below {
+            Some(crate::models::Severity::Info)
+        } else {
+            None
         }
     }
 
@@ -168,6 +233,10 @@ impl SemanticSettings {
 #[derive(Debug, Clone)]
 pub struct SemanticItem {
     pub question: SemanticQuestion,
+    /// Jev へ渡す問いの JSON(DOEFF203 は理由の種類の一覧を含む)。
+    pub question_json: Value,
+    /// DOEFF203: 名乗った理由の種類(他の問いは None)。
+    pub declared: Option<String>,
     pub rel: String,
     pub path: PathBuf,
     pub name: String,
@@ -237,7 +306,49 @@ pub fn item(
         hasher.update(b"\n");
     }
     let key = hasher.finalize().iter().map(|b| format!("{:02x}", b)).collect();
-    SemanticItem { question, rel: rel.to_string(), path: path.to_path_buf(), name: name.to_string(), kind, range, layer, state, key }
+    SemanticItem { question, question_json: question.wire(), declared: None, rel: rel.to_string(), path: path.to_path_buf(), name: name.to_string(), kind, range, layer, state, key }
+}
+
+/// DOEFF203 の定義 1 つの state と cache の鍵を作る(state = 定義・名乗った種類と詳細。鍵 = sha256(model・問いの JSON・state))。
+#[allow(clippy::too_many_arguments)]
+pub fn plain_callable_item(
+    settings: &SemanticSettings,
+    model: &str,
+    reasons: &[(String, String)],
+    rel: &str,
+    path: &Path,
+    name: &str,
+    kind: &'static str,
+    range: doeff_indexer::hy_index::Range,
+    source: &str,
+    declared: &str,
+    detail: &str,
+) -> SemanticItem {
+    let stripped = truncate(&strip_tags(source), settings.source_limit);
+    let question_json = SemanticQuestion::plain_callable_wire(reasons);
+    let state = json!({
+        "definition": {"name": name, "kind": kind, "file": rel, "source": stripped},
+        "declared_reason": {"kind": declared, "detail": detail},
+    });
+    let mut hasher = Sha256::new();
+    for part in [model.to_string(), canonical(&question_json), canonical(&state)] {
+        hasher.update(part.as_bytes());
+        hasher.update(b"\n");
+    }
+    let key = hasher.finalize().iter().map(|b| format!("{:02x}", b)).collect();
+    SemanticItem {
+        question: SemanticQuestion::PlainCallable,
+        question_json,
+        declared: Some(declared.to_string()),
+        rel: rel.to_string(),
+        path: path.to_path_buf(),
+        name: name.to_string(),
+        kind,
+        range,
+        layer: LayerId(0),
+        state,
+        key,
+    }
 }
 
 /// Jev の答え(確率・gateway が返した費用 USD・入力のトークン)。
@@ -251,6 +362,12 @@ pub struct Answer {
     /// 答えた model の版つきの名(direct の答えの model — 例 jev-1.13.0。gateway は返さない)。
     #[serde(default)]
     pub served_model: Option<String>,
+    /// Choice の答え(選んだ種類)。
+    #[serde(default)]
+    pub choice: Option<String>,
+    /// Choice の種類ごとの確率。
+    #[serde(default)]
+    pub probabilities: Option<BTreeMap<String, f64>>,
 }
 
 /// Jev へ問う口(本物は HTTP・検では偽物)。
@@ -453,11 +570,14 @@ impl Gateway for HttpGateway {
 pub fn parse_answer(text: &str) -> Result<Answer, String> {
     let value: Value = serde_json::from_str(text).map_err(|e| format!("答えが JSON でない: {}", e))?;
     let raw = value.pointer("/answers/q").ok_or_else(|| format!("答えに answers.q が無い: {}", text.chars().take(200).collect::<String>()))?;
-    let probability = raw
-        .get("noul")
-        .or_else(|| raw.get("probability"))
-        .and_then(Value::as_f64)
-        .ok_or_else(|| format!("答えに noul の確率が無い: {}", text.chars().take(200).collect::<String>()))?;
+    let choice = raw.get("choice").and_then(Value::as_str).map(str::to_string);
+    let probabilities: Option<BTreeMap<String, f64>> =
+        raw.get("probabilities").and_then(Value::as_object).map(|m| m.iter().filter_map(|(k, v)| v.as_f64().map(|p| (k.clone(), p))).collect());
+    let probability = match raw.get("noul").or_else(|| raw.get("probability")).and_then(Value::as_f64) {
+        Some(p) => p,
+        None if choice.is_some() => choice.as_ref().and_then(|c| probabilities.as_ref()?.get(c).copied()).unwrap_or(0.0),
+        None => return Err(format!("答えに noul の確率も choice も無い: {}", text.chars().take(200).collect::<String>())),
+    };
     let cost_usd = value
         .pointer("/providerMetadata/gateway/cost")
         .and_then(|c| c.as_str().and_then(|s| s.parse::<f64>().ok()).or_else(|| c.as_f64()))
@@ -465,7 +585,7 @@ pub fn parse_answer(text: &str) -> Result<Answer, String> {
     let usage = value.get("usage");
     let input_tokens = usage.and_then(|u| u.get("input_tokens").or_else(|| u.get("inputTokens"))).and_then(Value::as_u64).unwrap_or(0);
     let served_model = value.get("model").and_then(Value::as_str).map(str::to_string);
-    Ok(Answer { probability, cost_usd, input_tokens, served_model })
+    Ok(Answer { probability, cost_usd, input_tokens, served_model, choice, probabilities })
 }
 
 /// cache の置き場(repo の根の .doeff-linter/semantic-cache/)。
@@ -550,7 +670,7 @@ pub enum SemanticMode {
 
 /// 意味の規則の結果(答えのある定義と、要約・理由)。
 pub struct SemanticOutcome {
-    pub answered: Vec<(SemanticItem, f64)>,
+    pub answered: Vec<(SemanticItem, Answer)>,
     pub summary: SemanticSummary,
     pub errors: Vec<String>,
 }
@@ -631,7 +751,7 @@ pub fn evaluate(
                 .into_par_iter()
                 .map(|item| {
                     if wants_ask(&item) {
-                        let result = gateway.ask(&item.state, &item.question.wire());
+                        let result = gateway.ask(&item.state, &item.question_json);
                         (item, Some(result))
                     } else {
                         let cached = read_cache(root, &item.key).map(Ok);
@@ -659,7 +779,7 @@ pub fn evaluate(
                     }
                 }
                 summary.judged += 1;
-                answered.push((item, answer.probability));
+                answered.push((item, answer));
             }
             Some(Err(reason)) => {
                 summary.asked += 1;
@@ -678,6 +798,7 @@ impl SemanticItem {
         match self.question {
             SemanticQuestion::BusinessDecision => "DOEFF201",
             SemanticQuestion::TransportKnowledge => "DOEFF202",
+            SemanticQuestion::PlainCallable => "DOEFF203",
         }
     }
 }
@@ -699,7 +820,7 @@ mod tests {
         assert_eq!(long.state["definition"]["source"].as_str().unwrap().chars().count(), 1800);
         assert_eq!(
             parse_answer(r#"{"answers":{"q":{"type":"boolean","probability":0.93}},"providerMetadata":{"gateway":{"cost":"0.00006"}},"usage":{"inputTokens":10}}"#).unwrap(),
-            Answer { probability: 0.93, cost_usd: 0.00006, input_tokens: 10, served_model: None }
+            Answer { probability: 0.93, cost_usd: 0.00006, input_tokens: 10, served_model: None, choice: None, probabilities: None }
         );
         assert_eq!(parse_answer(r#"{"answers":{"q":{"noul":0.2}},"usage":{"input_tokens":7},"model":"jev-1"}"#).unwrap().probability, 0.2);
         assert!(parse_answer("{}").is_err());
