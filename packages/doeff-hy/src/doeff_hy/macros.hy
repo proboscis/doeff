@@ -25,7 +25,7 @@
 
 (import os.path)
 (import inspect)
-(import doeff-hy.declarations [CONTRACT-KEYS refuse-unknown-keys declaration-setters defeffect-form])
+(import doeff-hy.declarations [CONTRACT-KEYS refuse-unknown-keys declaration-setters defeffect-form declared-value])
 (import doeff-hy.positions [locate-synthesized])
 
 ;; Re-export handle macros so users only need one require line.
@@ -684,7 +684,19 @@ defk {name}: :post type annotation cannot be an empty string.
     (setv contract (get forms 0) forms (cut forms 1 None)))
   (when (or (is contract None) forms)
     (raise (SyntaxError (.format "defeffect {}: 名前・(docstring)・頭の辞書 {{:fields [...] :answer 型 :tags {{...}}}} の形で書く" (str name)))))
-  (locate-synthesized (defeffect-form name docstring contract (+ "defeffect " (str name)))))
+  (setv where (+ "defeffect " (str name))
+        pre (declared-value contract ":pre"))
+  (when (and (is-not pre None) (not (isinstance pre hy.models.List)))
+    (raise (SyntaxError (.format "{}: :pre は条件の list: {}" where (hy.repr pre)))))
+  ;; 型の (: 名 型) が指せるのは欄だけ(戻り値の % は effect に無い)。
+  (setv field-names (lfor item (or (declared-value contract ":fields") [])
+                          :if (and (isinstance item hy.models.Expression) (> (len item) 1))
+                          (str (get item 1))))
+  (for [check (or pre [])]
+    (when (and (_is-type-check check) (not-in (str (get check 1)) field-names))
+      (raise (SyntaxError (.format "{}: :pre の {} は欄ではない(欄 = {})" where (hy.repr check) (.join " " field-names))))))
+  (locate-synthesized
+    (defeffect-form name docstring contract where (_contract-code pre (str name) ":pre" False))))
 
 
 ;; ---------------------------------------------------------------------------
