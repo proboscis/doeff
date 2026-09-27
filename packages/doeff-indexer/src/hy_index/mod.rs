@@ -1,23 +1,38 @@
 //! Hy の file(`*.hy` / `*.hyk` / `*.hyp`)の索引 — `doeff-indexer hy-index` の本体。
 //!
-//! 定義・import・参照を契約 `hy-index-contract.md`(版 1)と `hy-index-contract-v2.md`(版 2 の追加 = bases・calls)の形で出す。Python の索引
+//! 定義・import・参照を契約 `hy-index-contract.md`(版 1)・`hy-index-contract-v2.md`(版 2 = bases・calls)・`hy-index-contract-v3.md`
+//! (版 3 = 定義ごとの生の副作用の証拠 raw)の形で出す。Python の索引
 //! (`indexer.rs`)とは独立で、互いの挙動を変えない。読めない file・壊れた括弧でも止まらず、
 //! 読めた分を出して `errors` に理由を積む。
 
 mod analyze;
 mod model;
 mod position;
+mod raw;
+pub mod raw_catalog;
 mod reader;
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod raw_tests;
 
 use std::path::{Component, Path, PathBuf};
 
 pub use analyze::mangle;
 pub use model::{
-    Call, Definition, DefinitionKind, HyFileIndex, HyIndex, Import, Position, Range, Reference, CONTRACT_VERSION,
+    Call, Definition, DefinitionKind, HyFileIndex, HyIndex, Import, Position, Range, RawEvidence, RawEvidenceKind, RawMark,
+    RawStep, RawStrength, RawVia, RawViaScope, Reference, CONTRACT_VERSION,
 };
+pub use raw::{annotate as annotate_raw, matches_pattern};
+pub use raw_catalog::{RawCatalog, RawCategory};
+
+/// 生の副作用の判定に使う目録と、利用者の追加の中で読めなかった値の理由。
+#[derive(Debug, Clone)]
+pub struct RawSettings {
+    pub catalog: RawCatalog,
+    pub problems: Vec<String>,
+}
 
 /// 探索で降りない directory の名前(契約の一覧)。
 const SKIPPED_DIRS: &[&str] = &[".venv", "node_modules", "target", ".git", "__pycache__"];
@@ -46,14 +61,26 @@ fn is_hy_file(path: &Path) -> bool {
     path.extension().and_then(|ext| ext.to_str()).is_some_and(|ext| HY_EXTENSIONS.contains(&ext))
 }
 
-/// root 以下の Hy の file を全部索引する。
-pub fn index_root(root: &Path) -> HyIndex {
+/// root 以下の Hy の file を全部索引する。生の副作用の経由の証拠は file をまたぐので、この全体の実行だけが計算する。
+pub fn index_root(root: &Path, raw: &RawSettings) -> HyIndex {
     let files = collect_hy_files(root);
-    index_paths(root, &files)
+    let mut index = read_paths(root, &files);
+    raw::annotate(&mut index.files, &raw.catalog, true);
+    index.raw_via = RawViaScope::Computed;
+    index.raw_catalog_problems = raw.problems.clone();
+    index
 }
 
-/// 指定した file だけを索引する(root は module 名の基準)。file を並列に読む。
-pub fn index_paths(root: &Path, paths: &[PathBuf]) -> HyIndex {
+/// 指定した file だけを索引する(root は module 名の基準)。生の副作用は直接の証拠だけ(経由は計算しない)。
+pub fn index_paths(root: &Path, paths: &[PathBuf], raw: &RawSettings) -> HyIndex {
+    let mut index = read_paths(root, paths);
+    raw::annotate(&mut index.files, &raw.catalog, false);
+    index.raw_catalog_problems = raw.problems.clone();
+    index
+}
+
+/// file を並列に読んで索引する(生の副作用の判定の前の段)。
+fn read_paths(root: &Path, paths: &[PathBuf]) -> HyIndex {
     let workers = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1).max(1);
     let chunk = paths.len().div_ceil(workers).max(1);
     let files = std::thread::scope(|scope| {
@@ -72,15 +99,25 @@ pub fn index_paths(root: &Path, paths: &[PathBuf]) -> HyIndex {
             })
             .collect()
     });
-    HyIndex { version: CONTRACT_VERSION, root: root.to_string_lossy().into_owned(), files }
-}
-
-/// 保存前の内容(stdin から読んだもの)を `path` の file として 1 件索引する。
-pub fn index_stdin_source(root: &Path, path: &Path, source: &str) -> HyIndex {
     HyIndex {
         version: CONTRACT_VERSION,
         root: root.to_string_lossy().into_owned(),
-        files: vec![index_source(root, path, source)],
+        files,
+        raw_via: RawViaScope::NotComputed,
+        raw_catalog_problems: Vec::new(),
+    }
+}
+
+/// 保存前の内容(stdin から読んだもの)を `path` の file として 1 件索引する。生の副作用は直接の証拠だけ。
+pub fn index_stdin_source(root: &Path, path: &Path, source: &str, raw: &RawSettings) -> HyIndex {
+    let mut files = vec![index_source(root, path, source)];
+    raw::annotate(&mut files, &raw.catalog, false);
+    HyIndex {
+        version: CONTRACT_VERSION,
+        root: root.to_string_lossy().into_owned(),
+        files,
+        raw_via: RawViaScope::NotComputed,
+        raw_catalog_problems: raw.problems.clone(),
     }
 }
 

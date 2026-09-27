@@ -1,0 +1,250 @@
+{
+  "_comment": "生の副作用の目録 — 宣言の唯一の場所。hy-index(Rust)が build 時に取り込み(include_str!)、定義ごとの raw(生の副作用の証拠という事実)を出す。規則の判定はしない(判定の正本は agora-controllers の linter)。VS Code の拡張はこの事実を表示するだけで、目録を持たない。pattern は import を通した完全な名前と区切りの境目で前方一致(末尾 * は区切りの中の前方一致)、builtin は import されていない修飾の無い名前を呼び出しの頭の位置でだけ、method は method 名だけの一致で context の module が file の import か定義の中の参照に見える時だけ数える。ignored は pattern に合っても副作用でない名前。",
+  "strength": {
+    "pattern": "strong",
+    "builtin": "strong",
+    "method": "weak"
+  },
+  "categories": [
+    {
+      "category": "http",
+      "patterns": [
+        "httpx",
+        "requests",
+        "urllib.request",
+        "urllib3",
+        "aiohttp",
+        "http.client"
+      ],
+      "builtins": [],
+      "methods": []
+    },
+    {
+      "category": "async",
+      "patterns": [
+        "asyncio"
+      ],
+      "builtins": [],
+      "methods": []
+    },
+    {
+      "category": "time",
+      "patterns": [
+        "time.time",
+        "time.time_ns",
+        "time.sleep",
+        "time.monotonic",
+        "time.perf_counter",
+        "datetime.datetime.now",
+        "datetime.datetime.utcnow",
+        "datetime.datetime.today",
+        "datetime.date.today"
+      ],
+      "builtins": [],
+      "methods": []
+    },
+    {
+      "category": "random",
+      "patterns": [
+        "random",
+        "secrets",
+        "uuid.uuid1",
+        "uuid.uuid4",
+        "os.urandom"
+      ],
+      "builtins": [],
+      "methods": []
+    },
+    {
+      "category": "file",
+      "patterns": [
+        "shutil",
+        "tempfile",
+        "os.remove",
+        "os.unlink",
+        "os.makedirs",
+        "os.mkdir",
+        "os.listdir",
+        "os.walk",
+        "os.rename",
+        "os.replace",
+        "os.scandir",
+        "json.load",
+        "json.dump"
+      ],
+      "builtins": [
+        "open"
+      ],
+      "methods": [
+        {
+          "name": "read_text",
+          "context": [
+            "pathlib"
+          ]
+        },
+        {
+          "name": "write_text",
+          "context": [
+            "pathlib"
+          ]
+        },
+        {
+          "name": "read_bytes",
+          "context": [
+            "pathlib"
+          ]
+        },
+        {
+          "name": "write_bytes",
+          "context": [
+            "pathlib"
+          ]
+        },
+        {
+          "name": "open",
+          "context": [
+            "pathlib"
+          ]
+        },
+        {
+          "name": "mkdir",
+          "context": [
+            "pathlib"
+          ]
+        },
+        {
+          "name": "unlink",
+          "context": [
+            "pathlib"
+          ]
+        },
+        {
+          "name": "rmdir",
+          "context": [
+            "pathlib"
+          ]
+        },
+        {
+          "name": "rename",
+          "context": [
+            "pathlib"
+          ]
+        },
+        {
+          "name": "replace",
+          "context": [
+            "pathlib"
+          ]
+        },
+        {
+          "name": "touch",
+          "context": [
+            "pathlib"
+          ]
+        },
+        {
+          "name": "exists",
+          "context": [
+            "pathlib"
+          ]
+        },
+        {
+          "name": "iterdir",
+          "context": [
+            "pathlib"
+          ]
+        },
+        {
+          "name": "glob",
+          "context": [
+            "pathlib"
+          ]
+        },
+        {
+          "name": "rglob",
+          "context": [
+            "pathlib"
+          ]
+        },
+        {
+          "name": "stat",
+          "context": [
+            "pathlib"
+          ]
+        }
+      ]
+    },
+    {
+      "category": "process",
+      "patterns": [
+        "subprocess",
+        "os.system",
+        "os.kill",
+        "os.fork",
+        "os.exec*",
+        "os.spawn*",
+        "os.popen",
+        "signal"
+      ],
+      "builtins": [],
+      "methods": []
+    },
+    {
+      "category": "env",
+      "patterns": [
+        "os.environ",
+        "os.getenv",
+        "os.putenv"
+      ],
+      "builtins": [],
+      "methods": []
+    },
+    {
+      "category": "network",
+      "patterns": [
+        "socket",
+        "ssl",
+        "websockets"
+      ],
+      "builtins": [],
+      "methods": []
+    },
+    {
+      "category": "db",
+      "patterns": [
+        "sqlite3",
+        "psycopg",
+        "psycopg2",
+        "psycopg_pool",
+        "asyncpg",
+        "redis"
+      ],
+      "builtins": [],
+      "methods": []
+    },
+    {
+      "category": "thread",
+      "patterns": [
+        "threading",
+        "multiprocessing",
+        "concurrent.futures"
+      ],
+      "builtins": [],
+      "methods": []
+    }
+  ],
+  "ignored": [
+    "urllib.parse",
+    "socket.timeout",
+    "socket.gaierror",
+    "socket.herror",
+    "asyncio.iscoroutine",
+    "asyncio.iscoroutinefunction"
+  ],
+  "exception_suffixes": [
+    "Error",
+    "Exception",
+    "Timeout",
+    "Warning"
+  ]
+}

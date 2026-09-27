@@ -1,8 +1,24 @@
-// `doeff-indexer hy-index` の出力 JSON(契約 版 2)の型と、読み込みの唯一の検査。
-// 契約の正本 = experiments/hy-highlighter/hy-index-contract.md(版 1)+ hy-index-contract-v2.md(版 2 の追加)。欄が欠けた・型が違う・版が違う JSON は
+// `doeff-indexer hy-index` の出力 JSON(契約 版 3)の型と、読み込みの唯一の検査。
+// 契約の正本 = experiments/hy-highlighter/hy-index-contract.md(版 1)+ -v2.md(版 2)+ -v3.md(版 3 = 生の副作用の判定)。欄が欠けた・型が違う・版が違う JSON は
 // 理由つきで捨て、既定値で埋めない。
 
-export const HY_INDEX_CONTRACT_VERSION = 2;
+export const HY_INDEX_CONTRACT_VERSION = 3;
+
+/** 生の副作用の分類(契約の閉じた集合 — 判定と目録は hy-index が持ち、拡張は読むだけ)。 */
+export const RAW_CATEGORIES = ['http', 'async', 'time', 'random', 'file', 'process', 'env', 'network', 'db', 'thread'] as const;
+export type RawCategory = (typeof RAW_CATEGORIES)[number];
+
+/** 証拠の見つけ方。 */
+export const RAW_EVIDENCE_KINDS = ['name', 'builtin', 'method'] as const;
+export type RawEvidenceKind = (typeof RAW_EVIDENCE_KINDS)[number];
+
+/** 証拠の強さ。 */
+export const RAW_STRENGTHS = ['strong', 'weak'] as const;
+export type RawStrength = (typeof RAW_STRENGTHS)[number];
+
+/** 経由の証拠を計算したか。 */
+export const RAW_VIA_SCOPES = ['computed', 'not-computed'] as const;
+export type RawViaScope = (typeof RAW_VIA_SCOPES)[number];
 
 /** 契約の kind の一覧(閉じた集合)。足す時は契約と同時に直す。 */
 export const HY_DEFINITION_KINDS = [
@@ -60,6 +76,37 @@ export interface HyDefinition {
   readonly params: readonly string[];
   /** defclass / defrecord の基底の記号(書かれたとおり、dotted も 1 つの文字列)。他の kind は常に [] */
   readonly bases: readonly string[];
+  /** 生の副作用の証拠(版 3 — 事実であって規則の判定ではない。判定の正本は linter) */
+  readonly raw: HyRawMark;
+}
+
+/** 生の副作用の証拠 1 件。 */
+export interface HyRawEvidence {
+  readonly category: RawCategory;
+  readonly name: string;
+  readonly kind: RawEvidenceKind;
+  readonly strength: RawStrength;
+  readonly path: string;
+  readonly range: HyRange;
+}
+
+/** 経路の 1 段(呼んだ定義)。 */
+export interface HyRawStep {
+  readonly path: string;
+  readonly index: number;
+  readonly name: string;
+}
+
+/** 呼ぶ定義を通した証拠。 */
+export interface HyRawVia {
+  readonly through: readonly HyRawStep[];
+  readonly evidence: HyRawEvidence;
+}
+
+/** 定義 1 つの証拠。 */
+export interface HyRawMark {
+  readonly direct: readonly HyRawEvidence[];
+  readonly via: readonly HyRawVia[];
 }
 
 /** 呼び出し 1 件(版 2)— `(` の直後の記号。effect の生成も関数の呼び出しもここに入る。 */
@@ -104,6 +151,8 @@ export interface HyIndexDocument {
   readonly version: number;
   readonly root: string;
   readonly files: readonly HyFileIndex[];
+  readonly rawVia: RawViaScope;
+  readonly rawCatalogProblems: readonly string[];
 }
 
 /** 捨てた file の path(読めた時)と理由。 */
@@ -218,6 +267,61 @@ function strArray(obj: JsonObject, key: string, where: string): string[] {
   });
 }
 
+/** 閉じた集合の文字列の欄を検める。 */
+function oneOf<T extends string>(parent: JsonObject, key: string, where: string, allowed: readonly T[]): T {
+  const value = str(parent, key, where);
+  const found = allowed.find((a) => a === value);
+  if (found === undefined) {
+    throw new ContractViolation(`${where}.${key}: 契約に無い値 "${value}"`);
+  }
+  return found;
+}
+
+/** 0 以上の整数の値を検める(配列の添字)。 */
+function index(parent: JsonObject, key: string, where: string): number {
+  return nat(parent, key, where);
+}
+
+/** 証拠 1 件を検める。 */
+function parseEvidence(value: unknown, where: string): HyRawEvidence {
+  if (!isObject(value)) {
+    throw new ContractViolation(`${where}: object でない`);
+  }
+  return {
+    category: oneOf(value, 'category', where, RAW_CATEGORIES),
+    name: str(value, 'name', where),
+    kind: oneOf(value, 'kind', where, RAW_EVIDENCE_KINDS),
+    strength: oneOf(value, 'strength', where, RAW_STRENGTHS),
+    path: str(value, 'path', where),
+    range: parseRange(value, 'range', where)
+  };
+}
+
+/** 定義の raw の欄を検める。 */
+function parseRawMark(parent: JsonObject, where: string): HyRawMark {
+  const raw = obj(parent, 'raw', where);
+  const at = `${where}.raw`;
+  return {
+    direct: arr(raw, 'direct', at).map((e, i) => parseEvidence(e, `${at}.direct[${i}]`)),
+    via: arr(raw, 'via', at).map((v, i) => {
+      const w = `${at}.via[${i}]`;
+      if (!isObject(v)) {
+        throw new ContractViolation(`${w}: object でない`);
+      }
+      return {
+        through: arr(v, 'through', w).map((step, j) => {
+          const sw = `${w}.through[${j}]`;
+          if (!isObject(step)) {
+            throw new ContractViolation(`${sw}: object でない`);
+          }
+          return { path: str(step, 'path', sw), index: index(step, 'index', sw), name: str(step, 'name', sw) };
+        }),
+        evidence: parseEvidence(field(v, 'evidence', w), `${w}.evidence`)
+      };
+    })
+  };
+}
+
 /** 定義 1 件を検める。 */
 function parseDefinition(value: unknown, where: string): HyDefinition {
   if (!isObject(value)) {
@@ -241,7 +345,8 @@ function parseDefinition(value: unknown, where: string): HyDefinition {
     container: strOrNull(value, 'container', where),
     docstring: strOrNull(value, 'docstring', where),
     params,
-    bases
+    bases,
+    raw: parseRawMark(value, where)
   };
 }
 
@@ -363,7 +468,14 @@ export function parseHyIndexJson(text: string): HyIndexParseResult {
         throw error;
       }
     });
-    return { tag: 'ok', document: { version, root, files }, rejected };
+    const rawVia = oneOf(raw, 'raw_via', '$', RAW_VIA_SCOPES);
+    const rawCatalogProblems = arr(raw, 'raw_catalog_problems', '$').map((p, i) => {
+      if (typeof p !== 'string') {
+        throw new ContractViolation(`$.raw_catalog_problems[${i}]: 文字列でない`);
+      }
+      return p;
+    });
+    return { tag: 'ok', document: { version, root, files, rawVia, rawCatalogProblems }, rejected };
   } catch (error) {
     if (error instanceof ContractViolation) {
       return { tag: 'rejected', reason: error.message };

@@ -113,7 +113,7 @@ enum Commands {
         program: String,
     },
 
-    /// Index Hy files (*.hy / *.hyk / *.hyp): definitions, imports and references (hy-index contract v1)
+    /// Index Hy files (*.hy / *.hyk / *.hyp): definitions, imports, references, calls and raw side effects (hy-index contract v3)
     HyIndex {
         /// Index only these files (relative paths are resolved against --root, which also names modules)
         #[arg(long, num_args = 1.., conflicts_with = "stdin")]
@@ -126,6 +126,10 @@ enum Commands {
         /// Path of the file whose content is given on stdin
         #[arg(long, requires = "stdin")]
         path: Option<PathBuf>,
+
+        /// JSON file adding names to the raw side-effect catalog (category -> array of names; `.name` = method, `builtin:name` = builtin)
+        #[arg(long)]
+        raw_catalog_extra: Option<PathBuf>,
     },
 }
 
@@ -252,8 +256,16 @@ fn main() -> Result<()> {
 
     let cli = Cli::parse();
     // hy-index は Python の索引を作らない(Python の索引とは独立の経路)。
-    if let Some(Commands::HyIndex { file, stdin, path }) = &cli.command {
-        return run_hy_index(&cli.root, file, *stdin, path.as_deref(), cli.output.as_deref(), cli.pretty);
+    if let Some(Commands::HyIndex { file, stdin, path, raw_catalog_extra }) = &cli.command {
+        return run_hy_index(
+            &cli.root,
+            file,
+            *stdin,
+            path.as_deref(),
+            raw_catalog_extra.as_deref(),
+            cli.output.as_deref(),
+            cli.pretty,
+        );
     }
     let mut index = build_index(&cli.root)?;
 
@@ -419,12 +431,40 @@ fn main() -> Result<()> {
     Ok(())
 }
 
-/// `hy-index` を走らせ、契約の JSON を 1 つ出す。root が directory でない時だけ終了コード 2。
+/// 同梱の目録に `--raw-catalog-extra` の追加を足す。file が読めない・JSON でない時は引数の誤り(終了コード 2)。
+fn raw_settings(extra: Option<&Path>) -> hy_index::RawSettings {
+    let bundled = match hy_index::RawCatalog::bundled() {
+        Ok(catalog) => catalog,
+        Err(reason) => {
+            eprintln!("hy-index: {}", reason);
+            std::process::exit(2);
+        }
+    };
+    let Some(extra_path) = extra else {
+        return hy_index::RawSettings { catalog: bundled, problems: Vec::new() };
+    };
+    let value = fs::read_to_string(extra_path)
+        .map_err(|error| error.to_string())
+        .and_then(|text| serde_json::from_str::<serde_json::Value>(&text).map_err(|error| error.to_string()));
+    match value {
+        Ok(value) => {
+            let (catalog, problems) = bundled.with_extra(&value);
+            hy_index::RawSettings { catalog, problems }
+        }
+        Err(reason) => {
+            eprintln!("hy-index: --raw-catalog-extra を読めない ({}): {}", extra_path.display(), reason);
+            std::process::exit(2);
+        }
+    }
+}
+
+/// `hy-index` を走らせ、契約の JSON を 1 つ出す。root が directory でない時と目録の追加が読めない時だけ終了コード 2。
 fn run_hy_index(
     root: &Path,
     files: &[PathBuf],
     stdin: bool,
     stdin_path: Option<&Path>,
+    raw_catalog_extra: Option<&Path>,
     output: Option<&Path>,
     pretty: bool,
 ) -> Result<()> {
@@ -433,13 +473,14 @@ fn run_hy_index(
         eprintln!("hy-index: --root が directory ではない: {}", root.display());
         std::process::exit(2);
     }
+    let raw = raw_settings(raw_catalog_extra);
     let resolve = |path: &Path| if path.is_absolute() { path.to_path_buf() } else { root.join(path) };
     let index = match (stdin, stdin_path) {
         (true, Some(path)) => {
             let mut bytes = Vec::new();
             std::io::Read::read_to_end(&mut std::io::stdin(), &mut bytes)?;
             let source = String::from_utf8_lossy(&bytes);
-            let mut index = hy_index::index_stdin_source(&root, &resolve(path), &source);
+            let mut index = hy_index::index_stdin_source(&root, &resolve(path), &source, &raw);
             if std::str::from_utf8(&bytes).is_err() {
                 for file in &mut index.files {
                     file.errors.insert(0, "UTF-8 として読めない byte を U+FFFD に置き換えて読んだ".to_string());
@@ -453,9 +494,9 @@ fn run_hy_index(
         }
         (false, _) if !files.is_empty() => {
             let paths: Vec<PathBuf> = files.iter().map(|path| resolve(path)).collect();
-            hy_index::index_paths(&root, &paths)
+            hy_index::index_paths(&root, &paths, &raw)
         }
-        (false, _) => hy_index::index_root(&root),
+        (false, _) => hy_index::index_root(&root, &raw),
     };
     let json = if pretty { serde_json::to_string_pretty(&index)? } else { serde_json::to_string(&index)? };
     match output {

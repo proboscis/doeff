@@ -52,7 +52,8 @@ fn stdin_content_is_indexed_as_the_given_path() {
     );
     assert_eq!(code, 0);
     let json: Value = serde_json::from_str(&stdout).expect("json");
-    assert_eq!(json["version"], 2);
+    assert_eq!(json["version"], 3);
+    assert_eq!(json["raw_via"], "not-computed", "1 file の実行は経由を計算しない");
     let files = json["files"].as_array().expect("files");
     assert_eq!(files.len(), 1);
     let file = &files[0];
@@ -106,4 +107,38 @@ fn argument_errors_exit_with_2() {
     assert_eq!(run(&["hy-index", "--root", &root_text, "--path", "x.hy"], "").0, 2);
     let missing_root = temp.path().join("no-such-dir");
     assert_eq!(run(&["hy-index", "--root", &missing_root.to_string_lossy()], "").0, 2);
+}
+
+#[test]
+fn root_run_computes_raw_and_extra_catalog_is_read_from_a_file() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let root = temp.path();
+    write_file(
+        &root.join("pkg/io.hy"),
+        "(import httpx)\n(import mylib)\n(defhandler web []\n  (Fetch [u] (resume (httpx.get u))))\n(defk core [] (<- (Fetch \"u\")) (mylib.ping))\n",
+    );
+    write_file(&root.join("extra.json"), "{\"network\": [\"mylib\"], \"nope\": [\"x\"]}");
+    let root_text = root.to_string_lossy();
+    let extra = root.join("extra.json");
+    let extra_text = extra.to_string_lossy();
+    let (code, stdout) = run(&["hy-index", "--root", &root_text, "--raw-catalog-extra", &extra_text], "");
+    assert_eq!(code, 0);
+    let json: Value = serde_json::from_str(&stdout).expect("json");
+    assert_eq!(json["raw_via"], "computed");
+    assert_eq!(json["raw_catalog_problems"].as_array().expect("problems").len(), 1);
+    let file = file_entry(&json, "pkg/io.hy");
+    let core = file["definitions"].as_array().expect("definitions").iter().find(|d| d["name"] == "core").expect("core");
+    assert_eq!(core["raw"]["direct"][0]["name"], "mylib.ping");
+    assert_eq!(core["raw"]["direct"][0]["category"], "network");
+    let web = file["definitions"].as_array().expect("definitions").iter().find(|d| d["name"] == "web").expect("web");
+    assert_eq!(web["raw"]["direct"][0]["name"], "httpx.get");
+    assert!(core.get("tier").is_none(), "規則の判定(tier)は出さない — 判定の正本は linter");
+}
+
+#[test]
+fn unreadable_extra_catalog_is_an_argument_error() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let root_text = temp.path().to_string_lossy();
+    let (code, _) = run(&["hy-index", "--root", &root_text, "--raw-catalog-extra", "/no/such/extra.json"], "");
+    assert_eq!(code, 2);
 }

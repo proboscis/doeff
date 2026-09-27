@@ -21,15 +21,16 @@ export interface HyIndexer {
   index(request: HyIndexRequest): Promise<HyIndexOutcome>;
 }
 
-/** 依頼を hy-index の引数に写す(契約の「呼び出し」節のとおり)。 */
-export function hyIndexArgs(request: HyIndexRequest): string[] {
+/** 依頼を hy-index の引数に写す(契約の「呼び出し」節のとおり。目録の追加の file があれば添える)。 */
+export function hyIndexArgs(request: HyIndexRequest, rawCatalogExtra: string | undefined): string[] {
+  const extra = rawCatalogExtra === undefined ? [] : ['--raw-catalog-extra', rawCatalogExtra];
   switch (request.tag) {
     case 'root':
-      return ['hy-index', '--root', request.root];
+      return ['hy-index', '--root', request.root, ...extra];
     case 'files':
-      return ['hy-index', '--root', request.root, '--file', ...request.files];
+      return ['hy-index', '--root', request.root, ...extra, '--file', ...request.files];
     case 'stdin':
-      return ['hy-index', '--root', request.root, '--stdin', '--path', request.path];
+      return ['hy-index', '--root', request.root, ...extra, '--stdin', '--path', request.path];
     default: {
       const unreachable: never = request;
       throw new Error(`網羅されていない依頼: ${JSON.stringify(unreachable)}`);
@@ -49,7 +50,9 @@ export class ChildProcessHyIndexer implements HyIndexer {
 
   constructor(
     private readonly locate: LocateIndexer,
-    private readonly timeoutMs: number
+    private readonly timeoutMs: number,
+    /** 生の副作用の目録の追加(利用者の設定)を書いた JSON の file(無ければ undefined) */
+    private readonly rawCatalogExtra: () => string | undefined
   ) {}
 
   /** 依頼を列に積み、前の子 process が終わってから走らせる。 */
@@ -96,7 +99,7 @@ export class ChildProcessHyIndexer implements HyIndexer {
       };
     }
     const stdin = request.tag === 'stdin' ? request.text : undefined;
-    const result = await runProcess(binary.path, hyIndexArgs(request), request.root, stdin, this.timeoutMs);
+    const result = await runProcess(binary.path, hyIndexArgs(request, this.rawCatalogExtra()), request.root, stdin, this.timeoutMs);
     if (result.tag === 'error') {
       return { tag: 'failed', reason: result.reason };
     }

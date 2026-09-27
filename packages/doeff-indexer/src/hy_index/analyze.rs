@@ -9,7 +9,7 @@
 
 use std::collections::HashSet;
 
-use super::model::{Call, Definition, DefinitionKind, Import, Reference};
+use super::model::{Call, Definition, DefinitionKind, Import, RawMark, Reference};
 use super::position::LineIndex;
 use super::reader::{matching_brace, Form, Node, Prefix, ReadIssue, Reader, Span, StrKind};
 
@@ -390,6 +390,8 @@ impl<'a> Analyzer<'a> {
             docstring,
             params,
             bases,
+            // 生の副作用の証拠は file をまたぐので、全 file の解析の後に raw.rs が埋める
+            raw: RawMark::default(),
         });
         self.definition_spans.push(full);
         text

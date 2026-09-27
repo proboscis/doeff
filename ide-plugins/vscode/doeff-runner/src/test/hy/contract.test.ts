@@ -7,7 +7,7 @@ import { loadDocument, readFixture } from './fixtures';
 suite('Hy 索引の契約の読み込み', () => {
   test('契約どおりの fixture は全 file が読める', () => {
     const document = loadDocument('workspace.json');
-    assert.strictEqual(document.version, 2);
+    assert.strictEqual(document.version, 3);
     assert.strictEqual(document.files.length, 11);
     const app = document.files.find((f) => f.module === 'pkg.app');
     assert.ok(app);
@@ -26,7 +26,7 @@ suite('Hy 索引の契約の読み込み', () => {
     });
   });
 
-  test('版 1 の JSON は全体を理由つきで捨てる(版 2 だけを受け付ける)', () => {
+  test('版 1 の JSON は全体を理由つきで捨てる(版 3 だけを受け付ける)', () => {
     const parsed = parseHyIndexJson(readFixture('bad-version.json'));
     assert.strictEqual(parsed.tag, 'rejected');
     assert.match(parsed.tag === 'rejected' ? parsed.reason : '', /版が違う/);
