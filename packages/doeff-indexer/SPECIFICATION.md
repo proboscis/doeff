@@ -385,7 +385,7 @@ All `find-*` commands:
 
 ## Hy Index (`hy-index`)
 
-Hy の file(`*.hy` / `*.hyk` / `*.hyp`)の定義・import・参照を JSON で出す。エディタの定義への移動・参照の検索・目次のためのもの。Python の索引(上の各コマンド)とは独立していて、Python の索引は作らない。実装は `src/hy_index/`。
+Hy の file(`*.hy` / `*.hyk` / `*.hyp`)の定義・import・参照・呼び出しを JSON で出す。エディタの定義への移動・参照の検索・目次、effect・handler・defk の間の行き来のためのもの。Python の索引(上の各コマンド)とは独立していて、Python の索引は作らない。実装は `src/hy_index/`。
 
 ### 使い方
 
@@ -399,11 +399,11 @@ doeff-indexer hy-index --root <dir> --stdin --path <path>  # 保存前の内容�
 - `--file` と `--path` の相対 path は `--root` を基準に解く。`--output` と `--pretty` は他のコマンドと同じ。
 - 読めない file・閉じていない括弧でも止まらない。読めた分を出し、その file の `errors` に理由(`行:列: …`、1 始まり)を積む。終了コードは 0。引数の誤り(`--stdin` に `--path` が無い・`--root` が directory でない等)だけ 2。
 
-### 出力の形(契約の版 1)
+### 出力の形(契約の版 2)
 
 ```jsonc
 {
-  "version": 1,
+  "version": 2,
   "root": "/abs/root",
   "files": [{
     "path": "/abs/root/pkg/mod.hy",
@@ -416,10 +416,12 @@ doeff-indexer hy-index --root <dir> --stdin --path <path>  # 保存前の内容�
       "full_range": {…},            // form 全体
       "container": null,            // 入れ物の定義の名前(method・field・enum-member・effect-clause・入れ子の law 等)
       "docstring": "…",             // 無ければ null
-      "params": ["jev-script", "store"]
+      "params": ["jev-script", "store"],
+      "bases": []                   // defclass / defrecord の基底の記号(書かれたとおり、dotted も 1 つ)。他の kind は常に []
     }],
     "imports": [{"module": "doeff_records.memory", "name": "MemoryStore", "alias": null, "range": {…}, "is_require": false}],
     "references": [{"name": "c", "mangled": "c", "qualifier": "a.b", "range": {…}}],
+    "calls": [{"callee": "PutRow", "mangled": "PutRow", "qualifier": null, "range": {…}, "caller": 12, "performed": true}],
     "errors": []
   }]
 }
@@ -436,11 +438,19 @@ doeff-indexer hy-index --root <dir> --stdin --path <path>  # 保存前の内容�
 - docstring: 関数の形は引数の後(defk / deff の `{:pre … :post …}` の後でもよい)の文字列で、後に form が続く時だけ。class・record・enum は body の先頭の文字列。defhandler は名前の後か引数の後。`law` は `:statement`、`defadr` は `:title`、`defmcp-tool` は説明の文字列。字下げは Python の `inspect.cleandoc` と同じく揃える。
 - `imports`: `(import m)`・`(import m :as a)`・`(import m [x y :as z])`・`(import m *)`・`(require m [names])`・`(require m :macros [..] :readers [..])`。range は alias → name → module の順で在るものを指す。関数の中の import も入れる。
 - `references`: すべての記号の出現を `.` で区切って 1 件ずつ入れる(`a.b.c` は a・b・c、c の qualifier は `"a.b"`)。入れないもの: 先頭に置かれた予約語(Hy の special form と doeff-hy の macro。`val` 等の普通の語の macro は file が require した時だけ予約語)・演算子・定数(`True` / `False` / `None` 等)・`_`・keyword(`:key`)・文字列の中身・註・`#_` で読み捨てた form・quote の中(quasiquote の中の `~x` は入れる)。f 文字列の `{…}` の中の記号は入れる。
+- `bases`(版 2): defclass の `[…]` の中の記号だけを書かれたとおりに入れる(`:metaclass M` のような keyword とその値、`(get Generic T)` のような式は入れない)。defrecord は今の macro が基底を書かない形なので、ふつう `[]`。
+- `calls`(版 2): `(` の直後の記号が、予約語・演算子・定数でないものを 1 件ずつ入れる(関数の呼び出し・class の生成・effect の生成)。引数の中の入れ子の呼び出しも入れる。
+  - `callee` は頭の記号の最後の区切り、`qualifier` はその前の区切り(`mod.sub.fn` なら `"mod.sub"`)、`range` は最後の区切りの位置。
+  - `caller` は、呼び出しの位置を `full_range` に含む定義のうち最も狭いものの添字(同じ file の `definitions` の添字)。含む定義が無ければ(top level の式)`null`。effect 節の本体の中はその `effect-clause`、`(fn …)` や `let` の中の局所の関数の中は外側の定義になる。`(setv x (f))` の `f` は `x` の `variable` が caller。
+  - `performed` は `(<- (X …))`・`(<- name (X …))`・`(<- name T (X …))` の X と、`yield` / `yield-from` の直下の呼び出しで true。その中の引数の入れ子の呼び出しは false。
+  - 入れないもの: 予約語(require した普通の語の macro を含む)、doeff-hy の束縛の構文の頭(`val` / `var` / `lazy` / `session`。defk などの macro が読むので require が無くても構文)、`(.method obj)`、`(. obj (method …))` の method、defhandler / `handle` の effect 節の頭(`(PutRow [table key] …)` の `PutRow`)、型注釈の中(`#^ (of list int) x`)、match の pattern の中(`(Point :x px)`)、quote の中。これらの記号は `references` には今までどおり入る。
 
 ### 既知の制限
 
 - mangle は契約の単純な形(`-` → `_`)だけで、Hy の `?`・`!` などの記号の変換(`hyx_…`)はしない。
-- `(when …)` など条件の中の定義、`defdomain` など上の一覧に無い定義の形は `definitions` に入れない(参照には入る)。
+- `(when …)` など条件の中の定義、`defdomain` など上の一覧に無い定義の形は `definitions` に入れない(参照には入る)。その中の呼び出しの `caller` は外側の定義か `null` になる。
+- `(! (X …))`(doeff-hy の bang による実行)は `performed` を true にしない(版 2 の契約が `<-` と `yield` / `yield-from` だけを決めているため)。
+- `->` / `->>` の中の `(f a)` は書かれた形の頭を呼び出しとして入れる(展開後の引数の並びは見ない)。
 - f 文字列の `{x:>10}` の書式は `:` の前までを名前とみなす。`{x !r}` のように空白で区切る Hy の書き方は正しく読める。
 
 ## Type Filtering Rules
