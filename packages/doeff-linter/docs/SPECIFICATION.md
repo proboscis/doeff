@@ -279,7 +279,7 @@ source_limit = 1800
 # Jev の呼び出しを覚える代理(doeff の packages/doeff-jev-proxy)— 無ければ使わない
 proxy_url = "http://jev-proxy.example:8878/v1/systemone"
 proxy_token_file = "~/.config/jev/proxy-token"   # 既定
-proxy_peek_timeout_ms = 1500                     # 既定(覚えている時だけの問いの全部を合わせた上限)
+proxy_peek_timeout_ms = 5000                     # 既定(覚えている時だけの問いの束を全部合わせた上限)
 ```
 
 **Jev の呼び出しを覚える代理**: 本文(state・問い・model)を正規化した sha256 で答えを覚え、初めての鍵だけを本物の Jev に渡す server
@@ -287,8 +287,13 @@ proxy_peek_timeout_ms = 1500                     # 既定(覚えている時だ�
 
 - 宛先は repo ごとの設定 `proxy_url` で向ける(機体全体の環境変数にはしない — 向けない repo は今までどおり)。環境変数 `JEV_BASE_URL` が在ればそちらが勝つ。
 - 代理へは代理の token(`proxy_token_file` の中身)だけを送る。TypeSafe のキーは送らない。token の file が無ければ撃たない(キーが無いのと同じ理由を出す)。
-- 全体の実行・hook は、手元の cache に無い定義を見出し `Cache-Control: only-if-cached`(覚えている時だけ答える・無ければ 504 で本物の Jev を呼ばない)で問い、
-  返った答え(見出し `x-jev-proxy: hit` の物だけ)を手元の cache に書く。代理に届かない・時間切れの時は、残りを問わず手元の cache だけで動く。
+- 全体の実行・hook は、手元の cache に無い読める定義を、代理の鍵の束で「覚えている時だけ」問う(`POST <proxy_url>/peek`・本文
+  `{"keys": [鍵 …]}`・1,000 個ずつの束を並べて撃つ — 定義 1 つずつ撃たず、本文も送らない。代理は覚えている答えだけを
+  `{"answers": {鍵: 答え}}` で返し、本物の Jev を呼ばない)。返った答えを手元の cache に書く。代理に届かない・時間切れの時は、残りの束を撃たず
+  手元の cache だけで動く。
+- 代理の鍵 = sha256(`jev-proxy-key-1` + 改行 + 本文を決まった綴りにした物 — object の鍵を符号位置の順に並べ・区切りの空白なし・文字は UTF-8 のまま)。
+  代理(`key.hy` の `normalize-request`)と linter(`semantic.rs` の `proxy_key`)が同じ鍵を作ることは、代理の見本
+  `packages/doeff-jev-proxy/tests/key_contract.json` を両方の検が読んで確かめる(小数は綴りが言語で違うので見本に入れない — linter の本文は小数を持たない)。
 - 較正の見張りの問いは `Cache-Control: no-cache`(覚えを使わない — model の中身が変わったことを代理の覚えが隠さないため)。
 
 editor-json: violation の `source`(`linter` = 決定的な規則・`jev` = 意味の判定)と `probability`(Jev の違反だけ)、最上位の `semantic`
