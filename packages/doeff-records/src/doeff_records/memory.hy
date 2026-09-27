@@ -24,7 +24,7 @@
 (import doeff_records.maintenance [SweepExpired PruneChanges Swept Pruned])
 (import doeff_records.admission [Admitted AppendNew AppendReplay judge-expect judge-put judge-put-rows judge-append row-expired?
                                  event-expired? retention-group-of where-refusal row-matches? listed-row key-text next-watch-sequence
-                                 epoch-ms])
+                                 epoch-ms terminal-row?])
 
 (setv DEFAULT-POLL-SECONDS 0.05)
 
@@ -51,7 +51,9 @@
           self.changed-at {}
           self.event-head 0
           self.events []
-          self.by-idempotency {}))
+          self.by-idempotency {}
+          ;; 保持の期限で何かが消え得る最も早い刻(epoch ミリ秒・None = 消え得る物が無い)— purge-expired はこの刻より前なら走査しない。
+          self.purge-due-ms None))
   ;; 錠は置き場の中身ではなく、この process の thread の間の取り決め — pickle と copy は錠を除いた中身だけを運び、戻した側で新しい錠を
   ;; 作る(置き場を含む値を pickle する使い手 — worker の結果の file・coordinator の状態 — を錠の導入で壊さないため)。
   (defn #^ dict __getstate__ [self]
@@ -60,6 +62,9 @@
   (defn #^ None __setstate__ [self #^ dict state]
     "pickle / copy から戻す時に中身を入れ、新しい錠を作るため。"
     (.update self.__dict__ state)
+    ;; 消え得る刻を持つ前に pickle した置き場は、次の操作で 1 度走査して刻を数え直す(0 = もう来ている)。
+    (when (not-in "purge_due_ms" state)
+      (setv self.purge-due-ms 0))
     (setv self.lock (threading.RLock))))
 
 
@@ -76,8 +81,55 @@
   (with [store.lock] (purge-expired-locked store now-ms)))
 
 
+(defn #^ int keep-ms [#^ KeepFor retention]
+  "保持の秒をミリ秒へ(row-expired? / event-expired? と同じ丸め)。"
+  (int (* 1000 retention.seconds)))
+
+
+(defn #^ None note-purge-due [#^ MemoryStore store #^ int due-ms]  ; defk にできない: 錠の内で同期に呼ぶ置き場の書き
+  "行か出来事を書いた時、それが消え得る刻で置き場の purge-due-ms を早める(遅くはしない — 下限のまま正しい)。"
+  (when (or (is store.purge-due-ms None) (< due-ms store.purge-due-ms))
+    (setv store.purge-due-ms due-ms)))
+
+
+(defn #^ dict event-group-at [#^ MemoryStore store]  ; defk にできない: 錠の内で同期に読む置き場の走査
+  "組で数える列(ByKeySuffix)の組ごとの、組の最後の出来事を積んだ刻(#(列 組) → epoch ミリ秒)。"
+  (setv group-at {})
+  (for [event store.events]
+    (setv group (retention-group-of (store.schema.stream event.stream) event.idempotency-key))
+    (when (is-not group None)
+      (setv (get group-at #(event.stream group)) (max event.at (.get group-at #(event.stream group) event.at)))))
+  group-at)
+
+
+(defn #^ (| int None) next-purge-due [#^ MemoryStore store]  ; defk にできない: 錠の内で同期に読む置き場の走査
+  "残っている行と出来事のうち、最も早く消える物の刻(row-expired? / event-expired? が真になる最初の刻)。無ければ None。
+   終端でない行は数えない — 終端になる書きの時に note-purge-due が刻を足す。"
+  (setv dues [])
+  (for [#(name decl) (.items store.schema.tables) :if (isinstance decl.retention KeepFor)]
+    (for [stored (.values (get store.rows name)) :if (terminal-row? decl stored.row.value)]
+      (.append dues (+ stored.updated-ms (keep-ms decl.retention)))))
+  (setv group-at (event-group-at store))
+  (for [event store.events]
+    (setv decl (store.schema.stream event.stream))
+    (when (isinstance decl.retention KeepFor)
+      (setv group (retention-group-of decl event.idempotency-key))
+      (.append dues (+ (if (is group None) event.at (get group-at #(event.stream group))) (keep-ms decl.retention)))))
+  (min dues :default None))
+
+
 (defn #^ int purge-expired-locked [#^ MemoryStore store #^ int now-ms]  ; defk にできない: purge-expired が錠の内で同期に呼ぶ置き場の書き
-  "purge-expired の中身(呼び手が錠を持つ)。期限切れの出来事が 1 つも無ければ列を差し替えない。"
+  "purge-expired の中身(呼び手が錠を持つ)。消え得る刻(purge-due-ms)より前なら走査しない — 操作ごとに全部の行と出来事を読み直すと、
+   出来事の数の 2 乗で遅くなる(2026-09-27 の実測: 出来事 1 万の筋書き 1 つが 5 分を越えた・agora-redesign #786)。走査した後は刻を数え直す。"
+  (when (or (is store.purge-due-ms None) (< now-ms store.purge-due-ms))
+    (return 0))
+  (setv removed (purge-expired-scan store now-ms))
+  (setv store.purge-due-ms (next-purge-due store))
+  removed)
+
+
+(defn #^ int purge-expired-scan [#^ MemoryStore store #^ int now-ms]  ; defk にできない: purge-expired-locked が錠の内で同期に呼ぶ置き場の書き
+  "期限を過ぎた行と出来事を全部消す走査。期限切れの出来事が 1 つも無ければ列を差し替えない。"
   (setv removed 0)
   ;; 期限を持つ(KeepFor の)表と列だけを走査する — 期限の無い置き場で操作ごとに全部の行と出来事を読み直すと、出来事の数の 2 乗で
   ;; 遅くなる(2026-09-26 の実測: 出来事 1 万で 1 筋書きが 1 分を越えた)。
@@ -94,11 +146,7 @@
   (when (not (any (gfor s (.values store.schema.streams) (isinstance s.retention KeepFor))))
     (return removed))
   ;; 組で数える列(ByKeySuffix)は、組の最後の出来事を積んだ刻から数える — 組の出来事は同時に消える。
-  (setv group-at {})
-  (for [event store.events]
-    (setv group (retention-group-of (store.schema.stream event.stream) event.idempotency-key))
-    (when (is-not group None)
-      (setv (get group-at #(event.stream group)) (max event.at (.get group-at #(event.stream group) event.at)))))
+  (setv group-at (event-group-at store))
   (setv expired (lfor event store.events
                       :setv decl (store.schema.stream event.stream)
                       :setv group (retention-group-of decl event.idempotency-key)
@@ -154,6 +202,9 @@
   (+= store.head 1)
   (setv (get store.changed-at store.head) now-ms)
   (.append store.changes (RowChanged table key version value store.head now-ms))
+  (setv decl (store.schema.table table))
+  (when (and (isinstance decl.retention KeepFor) (terminal-row? decl value))
+    (note-purge-due store (+ now-ms (keep-ms decl.retention))))
   (Written version value))
 
 
@@ -203,6 +254,8 @@
              (setv event (Event ask.stream store.event-head ask.idempotency-key ask.body writer now-ms))
              (.append store.events event)
              (setv (get store.by-idempotency slot) event)
+             (when (isinstance decl.retention KeepFor)
+               (note-purge-due store (+ now-ms (keep-ms decl.retention))))
              (Appended event.sequence))))
 
 
