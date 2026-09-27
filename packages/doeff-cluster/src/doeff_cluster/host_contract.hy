@@ -11,11 +11,21 @@
 ;;; host-reader は session val を使うので、その外側に状態の handler(doeff_core_effects.handlers の state)が要る — 土台の組の中で
 ;;; host-reader より外に置く。
 ;;; sim の偽の宿は同じ鍵に同じ型で答える。job_entry の文書・host-reader・sim の宿は、この値を参照する(写しを作らない)。
+;;;
+;;; SIM-PASSABLE = sim の偽の宿の柵(local.hy の fence)が Program の外へ通す effect の型の表(改訂 1 の B)。本番の子 process では
+;;; Program の土台が scheduler と時計を含むが、sim の土台は含まない(含めると service の中に 2 つ目の scheduler ができ、Delay が外の
+;;; scheduler を塞ぐ)ので、この 2 種類だけは sim の外側(scheduler・doeff-time の sim-time-handler)が答える。表の外の effect は、
+;;; Program と宿の答え(HOST-CONTRACT の 3 つとクラスタの約束の effect)のどちらも答えなければ、本番の子と同じ未処理の例外
+;;; (doeff.UnhandledEffect)で process を落とす — sim の外側(検の handler・sim の世界)が本番には無い答えを黙って返さないため。
+;;; 時計のうち SetTime(仮想の時計を系ごと動かす)と ScheduleAt(時計の handler が外側で Spawn する = 柵の外で走る)は通さない。
 (require doeff-hy.macros [defhandler val])
 (require doeff-hy.record [defrecord])
 (import dataclasses [dataclass])
 (import os)
 (import doeff_core_effects.effects [Ask])
+(import doeff_core_effects.scheduler [Spawn TaskCompleted Gather Wait Race Cancel CreatePromise CompletePromise FailPromise
+                                      CreateExternalPromise CreateSemaphore AcquireSemaphore ReleaseSemaphore])
+(import doeff_time [DelayEffect GetTimeEffect GetMonotonicEffect WaitUntilEffect])
 (import .job_context [RunContext context-from-env])
 
 
@@ -29,6 +39,12 @@
 (val HOST-CONTRACT (HostContract :run-context-key "doeff.cluster.run-context"
                                  :program-key "doeff.cluster.program"
                                  :program-env "DOEFF_WORKER_PROGRAM"))
+
+
+;; sim の柵が外へ通す effect の型(頭の註)。scheduler の effect と doeff-time の時計の effect だけ。
+(val SIM-PASSABLE #(Spawn TaskCompleted Gather Wait Race Cancel CreatePromise CompletePromise FailPromise CreateExternalPromise
+                    CreateSemaphore AcquireSemaphore ReleaseSemaphore
+                    DelayEffect GetTimeEffect GetMonotonicEffect WaitUntilEffect))
 
 
 (defhandler host-reader
