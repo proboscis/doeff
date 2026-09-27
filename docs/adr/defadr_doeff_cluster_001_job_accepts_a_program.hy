@@ -5,7 +5,9 @@
 ;;; 出自 = operator 裁定 2026-09-27(Claude Code の会話・agora-redesign #829・逐語は :problem の fact)。
 ;;;
 ;;; 改訂 2026-09-27(agora-redesign #829): R5 の記録係を「未決」から決定へ書き換えた — 記録と再生は Program の中の
-;;; with-handlers に置く handler で、runner は差し込まない(逐語は :problem の fact)。
+;;; with-handlers に置く handler で、runner は差し込まない(逐語は :problem の fact)。同じ日に R5b を足した — 記録係より
+;;; 内側の handler は決定的でなければならない(記録係に届かない effect は再生で同じ計算が答え直す)。同じ日に R3b を足した —
+;;; 宣言の中の Program の値は task と同じく詰めた文字列(encode-program / decode-program)で運ぶ。
 ;;;
 ;;; 戻し方: この ADR を足した commit を revert する(ADR の file 1 つと enforcement 台帳の数が消える)。R5 の改訂だけを
 ;;; 戻すなら、その改訂の commit を revert する(R5 が「未決」の文へ、law runner-inserts-no-recorder が消える)。
@@ -65,20 +67,33 @@
        :evidence "Claude Code の会話(2026-09-27・agora-redesign #829)— coordinator 経由")
      (fact
        "今の記録係は job_entry の recording-layer が、run.config の record 欄を見て env の handler の一番内側に足す(recording-handler・record_handlers.hy)。記録係は effect を外へ撃ち直して答えを書き留め、継続を再開する『間に入る handler』の形をしている。"
-       :evidence "packages/doeff-cluster/src/doeff_cluster/job_entry.hy(recording-layer)・packages/doeff-cluster/src/doeff_cluster/record_handlers.hy")]
+       :evidence "packages/doeff-cluster/src/doeff_cluster/job_entry.hy(recording-layer)・packages/doeff-cluster/src/doeff_cluster/record_handlers.hy")
+     (fact
+       "operator の問い 2026-09-27(逐語): \"well, but the thing is that if the effect is handled before arrivint to such recorder, the recorder can't have any idea about it. so how do people resolve this with handler?\""
+       :evidence "Claude Code の会話(2026-09-27・agora-redesign #829)— coordinator 経由")
+     (fact
+       "task は Program の値を encode-program で詰めた文字列(--blob の file)で運び、実行先が decode-program で解く。service は関数の参照(module:attr)と本体の引数の JSON(:config)で運び、実行先が関数を呼んで Program を作る — 同じ job なのに運び方が 2 つある。"
+       :evidence "packages/doeff-cluster/src/doeff_cluster/remote_model.hy(encode-program・decode-program)・job_entry.hy(run-service・task-outcome)")
+     (fact
+       "再生が記録と食い違った時、今の再生の handler は ReplayDiverged を上げて止まる(再生の分岐)。"
+       :evidence "packages/doeff-cluster/src/doeff_cluster/record_model.hy(ReplayDiverged)・record_handlers.hy・replay_main.hy")]
   :context
     [(interpretation
        "doeff の handler は動的な scope の式であり、Program の外に「handler の組」を別の値として持つと、同じ Program が実行器ごとに違う意味になる。handler を Program の中の with-handlers に置けば、job の意味は Program の値だけで決まり、手元の run・模擬・cluster の実行が同じ値を同じ意味で走らせる。")
      (interpretation
        "runner の既定の handler(scheduler・env の組)は、Program が自分で並べるべき物を実行器が暗黙に足している形で、どれが効いているかが Program から読めない。既定を 0 にすれば、足りない handler は Program の中で未処理の effect として表に出る。")
      (interpretation
-       "設定を宣言の欄(:config・:env-config)で渡す形は、設定を読む専用の口を job API に増やす。設定の読みは Ask の effect と、それに答える os.environ を読む handler で書けるので、service だけ別の API を持つ理由は無い。process へ渡す環境変数そのものは、宣言の値(どの process に何を渡すか)として残す。")]
+       "設定を宣言の欄(:config・:env-config)で渡す形は、設定を読む専用の口を job API に増やす。設定の読みは Ask の effect と、それに答える os.environ を読む handler で書けるので、service だけ別の API を持つ理由は無い。process へ渡す環境変数そのものは、宣言の値(どの process に何を渡すか)として残す。")
+     (interpretation
+       "記録係より内側(Program 側)で答えられた effect は記録係に届かない。それでも再生が成り立つのは、内側の handler が決定的な場合だけ — 同じ入力(記録係が境目で記録した答え)から同じ計算で同じ答えを出し直せるからである。これは Temporal の『決定的なワークフロー + activity の結果の記録』、rr の『非決定の入力だけを記録する』と同じ考え方で、非決定(時計・乱数・I/O)をすべて境目の外(土台の handler)へ押し出せば、境目の記録だけで全体を再生できる。")]
   :decision
     [(rule R1 "doeff-cluster の job が受け取るのは Program の値 1 つ(defk の関数を呼んだ結果)だけ。Program と handler の組を別々に受け取らない。handler は Program の中の with-handlers で与える。")
      (rule R2 "実行器 job_entry は既定の handler を 1 つも足さない。今の scheduled の包みと env の関数(--env)の包みも外す。")
      (rule R3 "service と task は同じ API(Program の値 1 つ)で起こす。service だけの --factory・--config の入口はやめる。")
+     (rule R3b "宣言の中の Program の値は、task と同じく詰めた文字列(encode-program / decode-program)で運ぶ。service と task で運び方を分けない(operator 逐語 \"i dont find any reason to have different api for services\")。読みやすさは declare の表示で補う — 詰めた Program を解いて、呼んだ関数の名と引数を印字する。handler の値は宣言に入れず、defk の本体の中(with-handlers)で作る。決めた経緯は agora-redesign #829 の決定のコメント。戻し方: 関数の参照(module:attr)+ 引数の JSON を宣言に持ち、runner がその場で呼んで Program を作る形へ戻す(2026-09-27 追加)。")
      (rule R4 "service の宣言の :env・:config・:env-config をやめる。設定は Program の中の Ask と、それに答える os.environ を読む handler(Program の側で並べる)で読む。宣言が process へ渡す環境変数は、宣言の値として持つ。")
      (rule R5 "記録と再生は handler で行う(2026-09-27 決定 — 旧文『未決・案 A = Program の側で包む / 案 B = 実行器の観測の口』を置き換える)。形は今の effect-recorder と同じ間に入る handler: 記録は effect を外へ撃ち直して答えを書き留め、継続を再開する。再生は同じ場所で記録から答える。置き場は Program の中の with-handlers で、翻訳の handler と土台の handler の間(外の世界との境目 — 汎用の effect だけを記録する)。記録か再生かは置く handler で選び、どちらを置くかは Ask と os.environ を読む handler で決める。runner は記録係を差し込まない(今の recording-layer と run.config の record 欄をやめる)。WithObserve(見るだけで答えを見ない)はこの用途に使わず、tracing・ログの用途に限る。")
+     (rule R5b "記録係より内側(Program 側 — 業務の handler・翻訳の handler)の handler は決定的でなければならない。時計・乱数・I/O を自分で読まず、汎用の effect にして記録係の下の土台の handler で答えさせる。これで記録係に届かない effect は再生でも同じ計算で答え直され、境目の記録だけで再生が成り立つ。守りは doeff-linter の DOEFF106(生の副作用に直に触る定義は土台の層にだけ置く)で、破れは再生の分岐(ReplayDiverged)として出る。scheduler の並行の順番(どの task が先に進むか)は再生で決定的にならないので、live の扱い(順番の突き合わせ)で扱う(2026-09-27 追加)。")
      (rule R6 "移行の間、runner が足している handler の呼び出しは RUNNER-HANDLER-ROSTER の数を超えない(新設は赤)。減らした便は同じ便で台帳を削る。")]
   :laws
     [(law job-entry-adds-no-handler
@@ -102,7 +117,15 @@
           (counterexample "記録に WithObserve を使う — 見るだけで答えを見ないので、再生に要る答えが残らない(WithObserve は tracing・ログの用途に限る)")
           (counterexample "記録係を土台の handler の外側に置く — 翻訳の前の業務の effect まで記録し、外の世界との境目の汎用の effect だけを記録する形にならない")]
        :enforced-by ["test-adr-doe-cluster-001-runner-handler-ratchet"]
-       :wiring "未配線(2026-09-27)— 針は recording-layer の呼び出しを台帳の 1 から増やさないだけ。記録係を Program の中へ移す便(agora-redesign #829)が台帳の recording-layer を 0 に削った時に配線される")]
+       :wiring "未配線(2026-09-27)— 針は recording-layer の呼び出しを台帳の 1 から増やさないだけ。記録係を Program の中へ移す便(agora-redesign #829)が台帳の recording-layer を 0 に削った時に配線される")
+     (law handlers-inside-the-recorder-are-deterministic
+       :statement "for_all 記録係より内側の handler h: h は時計・乱数・I/O を直に読まない(非決定の入力は汎用の effect として記録係の下の土台の handler が答える)— よって for_all 記録 r: r を再生した計算は、記録係に届かない effect についても記録の時と同じ答えを出し、ReplayDiverged を上げない(scheduler の並行の順番は live の扱いの突き合わせの外)"
+       :counterexamples
+         [(counterexample "翻訳の handler が time.time() を直に読んで答えを作る — 記録係に届かないので記録に残らず、再生で別の時刻になり分岐する")
+          (counterexample "業務の handler が random で抽選する — 再生で別の値になり、以降の effect の列が記録と食い違う(ReplayDiverged)")
+          (counterexample "Program 側の handler が file を直に読む — 再生の時の file の中身が記録の時と違えば答えが変わる")]
+       :enforced-by ["doeff-linter DOEFF106"]
+       :wiring "未配線(2026-09-27)— DOEFF106 は doeff-linter に未着地(wt/hy-lint-visibility ほか)。破れは実行時に再生の分岐(ReplayDiverged)として出るが、それは事後の検出で針ではない")]
   :enforcement
     [(deftest test-adr-doe-cluster-001-runner-handler-ratchet
        ;; 針: job_entry が Program の外から handler を足す呼び出しは台帳を超えない(新設は赤)・台帳の削り忘れも赤。
