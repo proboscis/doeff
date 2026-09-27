@@ -66,6 +66,13 @@ pub struct LegacyPlace {
     pub layer: Option<String>,
 }
 
+/// 素の関数(deff)を許す理由の種類 1 つ(`(reason 名 "説明")`)。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct ReasonKind {
+    pub name: String,
+    pub description: String,
+}
+
 /// architecture.hy の全体。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct Architecture {
@@ -77,6 +84,8 @@ pub struct Architecture {
     pub open_layers: Vec<String>,
     pub legacy: Vec<LegacyPlace>,
     pub services: Vec<ArchService>,
+    /// 素の関数を許す理由の種類の閉じた一覧(DOEFF111・DOEFF203)。
+    pub plain_callable_reasons: Vec<ReasonKind>,
     #[serde(skip)]
     pub role_descriptions: BTreeMap<String, String>,
     #[serde(skip)]
@@ -317,15 +326,17 @@ impl<'a> Parser<'a> {
             layers: Vec::new(),
             shared: None,
             foundation: None,
-            open_layers: vec!["intent".to_string()],
+            open_layers: Vec::new(),
             legacy: Vec::new(),
             services: Vec::new(),
+            plain_callable_reasons: Vec::new(),
             role_descriptions: BTreeMap::new(),
             exclude: vec!["tests".into(), "__pycache__".into(), "conftest.py".into()],
             extensions: None,
             path: path.to_path_buf(),
         };
         let rest: Vec<&Form> = items.iter().skip(2).copied().collect();
+        let mut open_given = false;
         for (key, value) in self.pairs(&rest) {
             match self.text(key) {
                 ":root" => arch.root = self.required_string(value, ":root").unwrap_or_default(),
@@ -345,9 +356,29 @@ impl<'a> Parser<'a> {
                 }
                 ":shared" => arch.shared = self.required_string(value, ":shared"),
                 ":foundation" => arch.foundation = self.name(value),
-                ":open-layers" => arch.open_layers = self.names(value, ":open-layers"),
+                ":open-layers" => {
+                    arch.open_layers = self.names(value, ":open-layers");
+                    open_given = true;
+                }
                 ":exclude" => arch.exclude = self.names(value, ":exclude"),
                 ":extensions" => arch.extensions = Some(self.names(value, ":extensions")),
+                ":plain-callable-reasons" => {
+                    let entries = self.bracket(value).unwrap_or_else(|| {
+                        self.problem(value, ":plain-callable-reasons は (reason 名 \"説明\") の列");
+                        Vec::new()
+                    });
+                    for entry in entries {
+                        let parts = self.paren(entry).filter(|p| p.first().and_then(|h| self.symbol(h)) == Some("reason"));
+                        let reason = parts.and_then(|p| Some(ReasonKind { name: self.name(p.get(1)?)?, description: self.string(p.get(2)?)? }));
+                        match reason {
+                            Some(reason) if arch.plain_callable_reasons.iter().any(|r| r.name == reason.name) => {
+                                self.problem(entry, &format!("理由の種類 {} が 2 度宣言されている", reason.name))
+                            }
+                            Some(reason) => arch.plain_callable_reasons.push(reason),
+                            None => self.problem(entry, ":plain-callable-reasons の要素は (reason 名 \"説明\")"),
+                        }
+                    }
+                }
                 ":roles" => match self.brace(value) {
                     Some(entries) => {
                         for (role, text) in self.pairs(&entries) {
@@ -393,6 +424,10 @@ impl<'a> Parser<'a> {
                 }
                 other => self.problem(key, &format!("defarchitecture の知らない鍵 {}", other)),
             }
+        }
+        // :open-layers を書かなければ、層 intent が在る時だけ intent を開く(既定)。
+        if !open_given && arch.layers.iter().any(|l| l.name == "intent") {
+            arch.open_layers = vec!["intent".to_string()];
         }
         if arch.root.is_empty() {
             self.problem(form, "defarchitecture に :root が無い");
