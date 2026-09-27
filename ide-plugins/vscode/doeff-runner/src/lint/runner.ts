@@ -6,12 +6,21 @@ import * as path from 'path';
 import { runProcess } from '../hy/childProcess';
 import { parseLintJson, type LintReport } from './contract';
 
-/** linter への依頼 — repo 全体か、保存前の内容(stdin)の 1 file。 */
+/** linter への依頼 — repo 全体か、保存前の内容(stdin)の 1 file か、Jev の判定(SemanticRequest)。 */
 export type LintRequest =
   | { readonly tag: 'root'; readonly root: string }
   | { readonly tag: 'stdin'; readonly root: string; readonly path: string; readonly text: string }
-  /** 保存した file の未判定の定義を Jev に問う(doeff-linter の --semantic・disk の内容を読む) */
-  | { readonly tag: 'semantic'; readonly root: string; readonly path: string };
+  | SemanticRequest;
+
+/**
+ * Jev の判定の依頼。どちらも問うた時の document の版(version)を持ち、答えが返った時に版が進んでいれば古い答えとして捨てる。
+ * - semantic: 保存した file の定義を Jev に問う(doeff-linter の --semantic・disk の内容を読む)
+ * - semantic-change: 編集中に打つのが止まった時の中身(stdin)のうち、中身の変わった定義だけを Jev に問う(--semantic --semantic-changed。
+ *   書きかけで読めない定義は linter が問わない)
+ */
+export type SemanticRequest =
+  | { readonly tag: 'semantic'; readonly root: string; readonly path: string; readonly version: number }
+  | { readonly tag: 'semantic-change'; readonly root: string; readonly path: string; readonly text: string; readonly version: number };
 
 /** linter の結果 — 読めた・止めてある(設定で無効)・失敗した(理由)。 */
 export type LintOutcome =
@@ -57,7 +66,8 @@ export function splitCommand(command: string): string[] {
   return parts;
 }
 
-/** 依頼を linter の引数に写す(契約の「呼び出し」節のとおり — 全体は引数なし、1 file は --stdin --path、Jev は --semantic <file>)。 */
+/** 依頼を linter の引数に写す(契約の「呼び出し」節のとおり — 全体は引数なし、1 file は --stdin --path、Jev は --semantic <file>、
+ * 編集中の Jev は --stdin --path <file> --semantic --semantic-changed)。 */
 export function lintArgs(base: readonly string[], request: LintRequest): string[] {
   switch (request.tag) {
     case 'root':
@@ -66,6 +76,8 @@ export function lintArgs(base: readonly string[], request: LintRequest): string[
       return [...base, '--stdin', '--path', request.path];
     case 'semantic':
       return [...base, '--semantic', request.path];
+    case 'semantic-change':
+      return [...base, '--stdin', '--path', request.path, '--semantic', '--semantic-changed'];
     default: {
       const unreachable: never = request;
       throw new Error(`網羅されていない依頼: ${JSON.stringify(unreachable)}`);
@@ -113,7 +125,7 @@ export class ChildProcessLinter implements Linter {
       return { tag: 'disabled' };
     }
     const args = lintArgs(command.slice(1), request);
-    const stdin = request.tag === 'stdin' ? request.text : undefined;
+    const stdin = request.tag === 'stdin' || request.tag === 'semantic-change' ? request.text : undefined;
     for (const binary of binaryCandidates(head)) {
       const result = await runProcess(binary, args, request.root, stdin, this.timeoutMs);
       if (result.tag === 'error') {

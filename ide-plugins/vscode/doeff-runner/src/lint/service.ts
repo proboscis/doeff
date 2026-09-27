@@ -1,10 +1,11 @@
 // linter の結果を保つ係 — 起動時と workspace の変化で全体を、保存と編集(debounce)でその file を linter に聞き、
-// 結果を置き場へ入れて波線(Diagnostics)を出し直す。判定はしない(linter の出力を写すだけ)。
+// 結果を置き場へ入れて波線(Diagnostics)を出し直す。判定はしない(linter の出力を写すだけ)。Jev の判定(保存した時と、編集中に
+// 打つのが止まった時)は SemanticJudge に渡す。
 
 import * as vscode from 'vscode';
 import type { LintSeverity } from './contract';
 import type { Linter, LintOutcome, LintRequest } from './runner';
-import { isMissingJevKey, LatestPerKeyQueue, MISSING_KEY_MESSAGE, type SemanticState } from './semantic';
+import { SemanticJudge, SYSTEM_CLOCK, type OpenDocument, type SemanticState, type SemanticTriggers } from './semantic';
 import type { LintStore } from './store';
 import { diagnosticsByPath, displayRange } from './view';
 
@@ -39,31 +40,48 @@ function isLintedDocument(document: vscode.TextDocument): boolean {
   );
 }
 
-/** 保存した時の Jev の判定に要る物 — 別の子 process の口(時間切れ 30 秒)・入り切りの設定・状態の知らせ・通知。 */
-export interface SemanticOnSave {
+/** Jev の判定に要る物 — 別の子 process の口(時間切れ 30 秒)・入り切りの設定・状態の知らせ・通知。 */
+export interface SemanticWiring {
   readonly linter: Linter;
-  readonly enabled: () => boolean;
+  readonly triggers: () => SemanticTriggers;
   readonly onState: (state: SemanticState) => void;
   readonly notify: (message: string) => void;
 }
 
-/** linter の結果を保ち、波線を出す係。保存した時は、決定的な実行の後に Jev の判定を背景で 1 本走らせる。 */
+/** 開いている document の今の中身と版(閉じた・workspace の外なら undefined)。 */
+function openDocument(filePath: string): OpenDocument | undefined {
+  const document = vscode.workspace.textDocuments.find((d) => !d.isClosed && d.uri.scheme === 'file' && d.uri.fsPath === filePath);
+  const root = document === undefined ? undefined : vscode.workspace.getWorkspaceFolder(document.uri)?.uri.fsPath;
+  return document === undefined || root === undefined ? undefined : { root, text: document.getText(), version: document.version };
+}
+
+/**
+ * linter の結果を保ち、波線を出す係。保存した時は決定的な実行の後に、編集中は打つのが止まった時に、Jev の判定を背景で 1 本走らせる
+ * (SemanticJudge)。
+ */
 export class LintService implements vscode.Disposable {
   private readonly disposables: vscode.Disposable[] = [];
   private readonly debounces = new Map<string, NodeJS.Timeout>();
   private readonly lastFailure = new Map<string, string>();
-  private readonly semanticQueue: LatestPerKeyQueue<LintRequest>;
-  /** Jev のキーが無いと分かった session では問わない */
-  private jevStopped = false;
+  private readonly judge: SemanticJudge;
 
   constructor(
     private readonly store: LintStore,
     private readonly linter: Linter,
     private readonly log: LintLog,
     private readonly diagnostics: vscode.DiagnosticCollection,
-    private readonly semantic: SemanticOnSave
+    semantic: SemanticWiring
   ) {
-    this.semanticQueue = new LatestPerKeyQueue((_key, request) => this.runSemantic(request));
+    this.judge = new SemanticJudge({
+      linter: semantic.linter,
+      clock: SYSTEM_CLOCK,
+      triggers: semantic.triggers,
+      document: openDocument,
+      deliver: (request, report) => this.apply(request, { tag: 'ok', report }),
+      log: (line) => this.log.appendLine(line),
+      onState: semantic.onState,
+      notify: semantic.notify
+    });
   }
 
   /** event の購読を始め、各 folder の全体を linter に聞く。 */
@@ -79,6 +97,7 @@ export class LintService implements vscode.Disposable {
       vscode.workspace.onDidChangeTextDocument((event) => {
         if (event.contentChanges.length > 0 && isLintedDocument(event.document)) {
           this.scheduleDocument(event.document, EDIT_DEBOUNCE_MS);
+          this.judge.edited(event.document.uri.fsPath);
         }
       }),
       vscode.workspace.onDidChangeWorkspaceFolders((event) => {
@@ -106,6 +125,7 @@ export class LintService implements vscode.Disposable {
       clearTimeout(timer);
     }
     this.debounces.clear();
+    this.judge.dispose();
     for (const d of this.disposables) {
       d.dispose();
     }
@@ -133,57 +153,14 @@ export class LintService implements vscode.Disposable {
           return;
         }
         const request: LintRequest = { tag: 'stdin', root, path: document.uri.fsPath, text: document.getText() };
+        const version = document.version;
         void this.linter.lint(request).then((outcome) => {
           this.apply(request, outcome);
           if (saved) {
-            this.queueSemantic(root, document.uri.fsPath);
+            this.judge.saved(root, document.uri.fsPath, version);
           }
         });
       }, delayMs)
-    );
-  }
-
-  /** 保存した file の Jev の判定を積む(設定が切・キーが無いと分かった session では積まない)。 */
-  private queueSemantic(root: string, filePath: string): void {
-    if (this.jevStopped || !this.semantic.enabled()) {
-      return;
-    }
-    this.semanticQueue.enqueue(filePath, { tag: 'semantic', root, path: filePath });
-    this.semantic.onState({ tag: 'running', path: this.semanticQueue.active ?? filePath, waiting: this.semanticQueue.waiting });
-  }
-
-  /** Jev の判定を 1 本走らせ、その file の結果を差し替え、状態を知らせる。 */
-  private async runSemantic(request: LintRequest): Promise<void> {
-    if (this.jevStopped) {
-      return;
-    }
-    this.semantic.onState({ tag: 'running', path: request.tag === 'root' ? request.root : request.path, waiting: this.semanticQueue.waiting });
-    const outcome = await this.semantic.linter.lint(request);
-    switch (outcome.tag) {
-      case 'disabled':
-        this.semantic.onState({ tag: 'idle' });
-        return;
-      case 'failed':
-        this.log.appendLine(`[lint] Jev の判定に失敗: ${outcome.reason}`);
-        this.semantic.onState({ tag: 'failed', reason: outcome.reason });
-        return;
-      case 'ok':
-        break;
-      default: {
-        const unreachable: never = outcome;
-        throw new Error(`網羅されていない結果: ${JSON.stringify(unreachable)}`);
-      }
-    }
-    this.apply(request, outcome);
-    if (isMissingJevKey(outcome.report.errors)) {
-      this.jevStopped = true;
-      this.semantic.notify(MISSING_KEY_MESSAGE);
-      this.semantic.onState({ tag: 'no-key' });
-      return;
-    }
-    const summary = outcome.report.semantic;
-    this.semantic.onState(
-      summary === null ? { tag: 'failed', reason: 'linter が意味の規則の要約(semantic)を出さない — 設定か版を確かめる' } : { tag: 'done', summary }
     );
   }
 
@@ -218,6 +195,7 @@ export class LintService implements vscode.Disposable {
         return;
       case 'stdin':
       case 'semantic':
+      case 'semantic-change':
         this.store.replaceFile(request.root, request.path, outcome.report);
         return;
       default: {

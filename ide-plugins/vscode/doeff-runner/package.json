@@ -523,7 +523,19 @@
         "doeff-runner.hy.semanticOnSave": {
           "type": "boolean",
           "default": true,
-          "markdownDescription": "保存した時に、そのファイルの未判定の定義だけを Jev に問う(doeff-linter の `--semantic <file>` を決定的な実行の後に背景で 1 本・時間切れ 30 秒)。編集中の再判定では問わない。Jev のキーが無ければ一度だけ知らせて、その session では問わない。"
+          "markdownDescription": "保存した時に、そのファイルの定義を Jev に問う(doeff-linter の `--semantic <file>` を決定的な実行の後に背景で 1 本・時間切れ 30 秒)。編集中は `doeff-runner.hy.semanticOnChange`。Jev のキーが無ければ一度だけ知らせて、その session では問わない。repo の pyproject に `[tool.doeff-linter.semantic] proxy_url` があれば、Jev の呼び出しを覚える代理を経由する(同じ定義はどの機体・worktree からも 2 回目は Jev を呼ばない)。"
+        },
+        "doeff-runner.hy.semanticOnChange": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "編集中(保存前)も、打つのが止まったら(`doeff-runner.hy.semanticOnChangeDelaySeconds`・既定 2 秒)その時の中身で、構文として読めて中身が変わった定義だけを Jev に問う(doeff-linter の `--stdin --path <file> --semantic --semantic-changed`)。書きかけで読めない定義は問わない。問うている間にまた打ったら、その答えは捨てて最新の中身の答えだけを出す。切ると保存した時だけ問う。"
+        },
+        "doeff-runner.hy.semanticOnChangeDelaySeconds": {
+          "type": "number",
+          "default": 2,
+          "minimum": 0.5,
+          "maximum": 60,
+          "markdownDescription": "`doeff-runner.hy.semanticOnChange` の、打つのが止まってから Jev に問うまでの秒(0.5〜60)。"
         }
       }
     },
