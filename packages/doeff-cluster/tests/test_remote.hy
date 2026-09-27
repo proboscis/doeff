@@ -14,6 +14,8 @@
 (import doeff_cluster.remote_model [RemoteJob UnsendableProgram VersionMismatch RemoteJobFailed
                                           TaskSucceeded TaskFailed encode-program decode-program decode-outcome
                                           current-versions version-mismatch])
+(import doeff_cluster.remote_model [program-sha])
+(import doeff_cluster.handlers [write-program-file])
 (import doeff_cluster.remote [remote-inline])
 (import tests.fixtures.services [self-contained-program holding-program bare-program])
 (import tests.fixtures.entry_programs [answer-base based-add counter-program boom-program])
@@ -94,13 +96,13 @@
 (defk run-task-in-child [tmp-path program versions]
   {:pre [(: tmp-path Path) (: program DoExpr) (: versions dict)] :post [(: % (| TaskSucceeded TaskFailed))]
    :tags {:context "doeff-cluster-test" :role "entry"}}
-  "job_entry task を worker と同じ形(--blob --result --versions — --env は無い)で起こし、結果の file を読む。"
-  (val blob (/ tmp-path "task.blob"))
+  "job_entry task を worker と同じ形(--result と、置き場から取った Program の cache の file の --program — --blob・--versions・--env は
+   無い)で起こし、結果の file を読む。versions = 詰めた送り手の版(file の中に Program と一緒に置く — service と同じ形)。"
+  (val blob (encode-program program))
+  (val program-path (write-program-file (/ tmp-path "programs") (program-sha blob) blob versions))
   (val result (/ tmp-path "task.result"))
-  (.write-text blob (encode-program program))
   (val env (| (dict os.environ) {"PYTHONPATH" (str ROOT) "DOEFF_WORKER_NAME" "child" "DOEFF_WORKER_JOB" "t"}))
-  (val done (subprocess.run [HY "-m" "doeff_cluster.job_entry" "task" "--blob" (str blob) "--result" (str result)
-                             "--versions" (json.dumps versions)]
+  (val done (subprocess.run [HY "-m" "doeff_cluster.job_entry" "task" "--result" (str result) "--program" (str program-path)]
                             :cwd (str ROOT) :env env :capture-output True :text True :timeout 120))
   (assert (= done.returncode 0) done.stderr)
   (decode-outcome (.read-text result)))
@@ -134,3 +136,18 @@
   (assert (isinstance outcome TaskFailed))
   (assert (= outcome.kind "VersionMismatch"))
   (assert (in "python: 送り手 3.9.6" outcome.message)))
+
+
+(deftest test-child-process-writes-a-failure-when-the-program-file-is-missing [tmp-path]
+  ;; worker が置き場から Program を取れていない(cache の file が無い)時も、task の入口は結果の file に失敗を書いて 0 で終わる
+  ;; (結果を書かずに終わった = lost と取り違えない)。
+  (val result (/ tmp-path "task.result"))
+  (val env (| (dict os.environ) {"PYTHONPATH" (str ROOT) "DOEFF_WORKER_NAME" "child" "DOEFF_WORKER_JOB" "t"}))
+  (val done (subprocess.run [HY "-m" "doeff_cluster.job_entry" "task" "--result" (str result)
+                             "--program" (str (/ tmp-path "programs" "absent.json"))]
+                            :cwd (str ROOT) :env env :capture-output True :text True :timeout 120))
+  (assert (= done.returncode 0) done.stderr)
+  (val outcome (decode-outcome (.read-text result)))
+  (assert (isinstance outcome TaskFailed) outcome)
+  (assert (= outcome.kind "RemoteJobFailed") outcome)
+  (assert (in "Program の file" outcome.message) outcome.message))
