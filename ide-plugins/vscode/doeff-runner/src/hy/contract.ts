@@ -1,8 +1,8 @@
-// `doeff-indexer hy-index` の出力 JSON(契約 版 1)の型と、読み込みの唯一の検査。
-// 契約の正本 = experiments/hy-highlighter/hy-index-contract.md。欄が欠けた・型が違う・版が違う JSON は
+// `doeff-indexer hy-index` の出力 JSON(契約 版 2)の型と、読み込みの唯一の検査。
+// 契約の正本 = experiments/hy-highlighter/hy-index-contract.md(版 1)+ hy-index-contract-v2.md(版 2 の追加)。欄が欠けた・型が違う・版が違う JSON は
 // 理由つきで捨て、既定値で埋めない。
 
-export const HY_INDEX_CONTRACT_VERSION = 1;
+export const HY_INDEX_CONTRACT_VERSION = 2;
 
 /** 契約の kind の一覧(閉じた集合)。足す時は契約と同時に直す。 */
 export const HY_DEFINITION_KINDS = [
@@ -58,6 +58,21 @@ export interface HyDefinition {
   readonly container: string | null;
   readonly docstring: string | null;
   readonly params: readonly string[];
+  /** defclass / defrecord の基底の記号(書かれたとおり、dotted も 1 つの文字列)。他の kind は常に [] */
+  readonly bases: readonly string[];
+}
+
+/** 呼び出し 1 件(版 2)— `(` の直後の記号。effect の生成も関数の呼び出しもここに入る。 */
+export interface HyCall {
+  /** 呼び出しの頭の記号の最後の区切り(書かれたとおり) */
+  readonly callee: string;
+  readonly mangled: string;
+  readonly qualifier: string | null;
+  readonly range: HyRange;
+  /** この呼び出しを含む最も内側の定義の、同じ file の definitions の添字。top level の式なら null */
+  readonly caller: number | null;
+  /** `<-` / yield / yield-from で撃たれている */
+  readonly performed: boolean;
 }
 
 export interface HyImport {
@@ -81,6 +96,7 @@ export interface HyFileIndex {
   readonly definitions: readonly HyDefinition[];
   readonly imports: readonly HyImport[];
   readonly references: readonly HyReference[];
+  readonly calls: readonly HyCall[];
   readonly errors: readonly string[];
 }
 
@@ -192,6 +208,16 @@ export function isHyDefinitionKind(value: string): value is HyDefinitionKind {
   return (HY_DEFINITION_KINDS as readonly string[]).includes(value);
 }
 
+/** 文字列の配列の欄を検める。 */
+function strArray(obj: JsonObject, key: string, where: string): string[] {
+  return arr(obj, key, where).map((item, i) => {
+    if (typeof item !== 'string') {
+      throw new ContractViolation(`${where}.${key}[${i}]: 文字列でない`);
+    }
+    return item;
+  });
+}
+
 /** 定義 1 件を検める。 */
 function parseDefinition(value: unknown, where: string): HyDefinition {
   if (!isObject(value)) {
@@ -201,12 +227,11 @@ function parseDefinition(value: unknown, where: string): HyDefinition {
   if (!isHyDefinitionKind(kind)) {
     throw new ContractViolation(`${where}.kind: 契約に無い kind "${kind}"`);
   }
-  const params = arr(value, 'params', where).map((param, i) => {
-    if (typeof param !== 'string') {
-      throw new ContractViolation(`${where}.params[${i}]: 文字列でない`);
-    }
-    return param;
-  });
+  const params = strArray(value, 'params', where);
+  const bases = strArray(value, 'bases', where);
+  if (bases.length > 0 && kind !== 'defclass' && kind !== 'defrecord') {
+    throw new ContractViolation(`${where}.bases: ${kind} は基底を持たない`);
+  }
   return {
     name: str(value, 'name', where),
     mangled: str(value, 'mangled', where),
@@ -215,7 +240,32 @@ function parseDefinition(value: unknown, where: string): HyDefinition {
     fullRange: parseRange(value, 'full_range', where),
     container: strOrNull(value, 'container', where),
     docstring: strOrNull(value, 'docstring', where),
-    params
+    params,
+    bases
+  };
+}
+
+/** 呼び出し 1 件を検める(caller は同じ file の definitions の添字の範囲に入ること)。 */
+function parseCall(value: unknown, where: string, definitionCount: number): HyCall {
+  if (!isObject(value)) {
+    throw new ContractViolation(`${where}: object でない`);
+  }
+  const rawCaller = field(value, 'caller', where);
+  let caller: number | null;
+  if (rawCaller === null) {
+    caller = null;
+  } else if (typeof rawCaller === 'number' && Number.isInteger(rawCaller) && rawCaller >= 0 && rawCaller < definitionCount) {
+    caller = rawCaller;
+  } else {
+    throw new ContractViolation(`${where}.caller: definitions の添字でない(${JSON.stringify(rawCaller)})`);
+  }
+  return {
+    callee: str(value, 'callee', where),
+    mangled: str(value, 'mangled', where),
+    qualifier: strOrNull(value, 'qualifier', where),
+    range: parseRange(value, 'range', where),
+    caller,
+    performed: bool(value, 'performed', where)
   };
 }
 
@@ -254,16 +304,18 @@ function parseFile(value: JsonObject, where: string): HyFileIndex {
     }
     return e;
   });
+  const definitions = arr(value, 'definitions', where).map((d, i) =>
+    parseDefinition(d, `${where}.definitions[${i}]`)
+  );
   return {
     path: str(value, 'path', where),
     module: str(value, 'module', where),
-    definitions: arr(value, 'definitions', where).map((d, i) =>
-      parseDefinition(d, `${where}.definitions[${i}]`)
-    ),
+    definitions,
     imports: arr(value, 'imports', where).map((d, i) => parseImport(d, `${where}.imports[${i}]`)),
     references: arr(value, 'references', where).map((d, i) =>
       parseReference(d, `${where}.references[${i}]`)
     ),
+    calls: arr(value, 'calls', where).map((d, i) => parseCall(d, `${where}.calls[${i}]`, definitions.length)),
     errors
   };
 }

@@ -54,7 +54,11 @@
     "onView:doeff-programs",
     "onView:doeff-programs-all",
     "onView:doeff-playlists",
-    "onView:doeff-workflows"
+    "onView:doeff-workflows",
+    "onView:doeff-hy-effects",
+    "onView:doeff-hy-handlers",
+    "onView:doeff-hy-programs",
+    "onView:doeff-hy-current-file"
   ],
   "main": "./out/extension.js",
   "contributes": {
@@ -78,6 +82,11 @@
           "id": "doeff-explorer",
           "title": "doeff",
           "icon": "$(symbol-method)"
+        },
+        {
+          "id": "doeff-hy",
+          "title": "doeff Hy",
+          "icon": "$(symbol-event)"
         }
       ]
     },
@@ -98,6 +107,24 @@
         {
           "id": "doeff-workflows",
           "name": "Workflows"
+        }
+      ],
+      "doeff-hy": [
+        {
+          "id": "doeff-hy-effects",
+          "name": "Effects"
+        },
+        {
+          "id": "doeff-hy-handlers",
+          "name": "Handlers"
+        },
+        {
+          "id": "doeff-hy-programs",
+          "name": "Programs"
+        },
+        {
+          "id": "doeff-hy-current-file",
+          "name": "Current file"
         }
       ]
     },
@@ -286,6 +313,39 @@
         "command": "doeff-runner.refreshWorkflows",
         "title": "Refresh Workflows",
         "icon": "$(refresh)"
+      },
+      {
+        "command": "doeff-runner.hy.refreshNavigation",
+        "title": "Refresh",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "doeff-runner.hy.showReferences",
+        "title": "参照を表示"
+      },
+      {
+        "command": "doeff-runner.hy.showCallHierarchy",
+        "title": "呼び出し階層を表示"
+      },
+      {
+        "command": "doeff-runner.hy.filter.effects",
+        "title": "Effects を絞り込む",
+        "icon": "$(filter)"
+      },
+      {
+        "command": "doeff-runner.hy.filter.handlers",
+        "title": "Handlers を絞り込む",
+        "icon": "$(filter)"
+      },
+      {
+        "command": "doeff-runner.hy.filter.programs",
+        "title": "Programs を絞り込む",
+        "icon": "$(filter)"
+      },
+      {
+        "command": "doeff-runner.hy.filter.current-file",
+        "title": "Current file を絞り込む",
+        "icon": "$(filter)"
       }
     ],
     "configuration": {
@@ -403,6 +463,46 @@
           "command": "doeff-runner.refreshWorkflows",
           "when": "view == doeff-workflows",
           "group": "navigation@0"
+        },
+        {
+          "command": "doeff-runner.hy.filter.effects",
+          "when": "view == doeff-hy-effects",
+          "group": "navigation@0"
+        },
+        {
+          "command": "doeff-runner.hy.refreshNavigation",
+          "when": "view == doeff-hy-effects",
+          "group": "navigation@1"
+        },
+        {
+          "command": "doeff-runner.hy.filter.handlers",
+          "when": "view == doeff-hy-handlers",
+          "group": "navigation@0"
+        },
+        {
+          "command": "doeff-runner.hy.refreshNavigation",
+          "when": "view == doeff-hy-handlers",
+          "group": "navigation@1"
+        },
+        {
+          "command": "doeff-runner.hy.filter.programs",
+          "when": "view == doeff-hy-programs",
+          "group": "navigation@0"
+        },
+        {
+          "command": "doeff-runner.hy.refreshNavigation",
+          "when": "view == doeff-hy-programs",
+          "group": "navigation@1"
+        },
+        {
+          "command": "doeff-runner.hy.filter.current-file",
+          "when": "view == doeff-hy-current-file",
+          "group": "navigation@0"
+        },
+        {
+          "command": "doeff-runner.hy.refreshNavigation",
+          "when": "view == doeff-hy-current-file",
+          "group": "navigation@1"
         }
       ],
       "view/item/context": [
@@ -515,6 +615,26 @@
           "command": "doeff-runner.attachWorkflow",
           "when": "view == doeff-workflows && viewItem == agent",
           "group": "inline@0"
+        },
+        {
+          "command": "doeff-runner.hy.showReferences",
+          "when": "view =~ /^doeff-hy-/ && viewItem == hyDefinition",
+          "group": "navigation@0"
+        },
+        {
+          "command": "doeff-runner.hy.showCallHierarchy",
+          "when": "view =~ /^doeff-hy-/ && viewItem == hyDefinition",
+          "group": "navigation@1"
+        }
+      ],
+      "commandPalette": [
+        {
+          "command": "doeff-runner.hy.showReferences",
+          "when": "false"
+        },
+        {
+          "command": "doeff-runner.hy.showCallHierarchy",
+          "when": "false"
         }
       ]
     }

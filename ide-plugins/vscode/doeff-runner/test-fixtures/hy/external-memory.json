@@ -1,5 +1,5 @@
 {
- "version": 1,
+ "version": 2,
  "root": "/deps/src",
  "files": [
   {
@@ -32,7 +32,8 @@
      },
      "container": null,
      "docstring": "記録の memory の置き場",
-     "params": []
+     "params": [],
+     "bases": []
     },
     {
      "name": "put-row",
@@ -63,7 +64,8 @@
      "params": [
       "self",
       "row"
-     ]
+     ],
+     "bases": []
     },
     {
      "name": "make-store",
@@ -91,11 +93,13 @@
      },
      "container": null,
      "docstring": null,
-     "params": []
+     "params": [],
+     "bases": []
     }
    ],
    "imports": [],
    "references": [],
+   "calls": [],
    "errors": []
   }
  ]

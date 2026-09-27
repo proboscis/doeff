@@ -47,11 +47,21 @@ The extension bundles `doeff-indexer` binaries for common platforms (macOS, Linu
 - **参照の一覧**(Shift+F12): 全 file の参照と定義から同じ名前の位置を集めます。定義の module が 1 つに定まる時は、import と dotted の修飾で別の module の同名を除き、修飾を解けない参照(`self.x` など)は名前だけで数えます。
 - **ファイルの目次**(Outline・パンくず): 定義を入れ物で入れ子にします(class の method と field、enum の member、handler の effect 節)。横に kind と引数を出します。
 - **workspace の記号の検索**(Cmd/Ctrl+T): 全 file の定義を名前で絞ります。
-- **hover**: 定義の kind・引数・module・docstring を出します。
+- **hover**: 定義の kind・引数・module・docstring を出します。effect には扱う handler の数、defk / deff / defp には中で撃つ effect、handler には扱う effect を足します。
+
+### effect・handler・defk を行き来する
+
+名前が effect であるとは、`defclass` / `defrecord` の基底に `EffectBase`(`doeff.EffectBase` のような dotted も最後の区切りで比べます)か effect のクラスがある(推移的に)か、どこかの `defhandler` にその名前の節があることです。workspace の外の package の effect は、定義へ移動で一度開いて索引を取った物まで数えます。
+
+- **Cmd+クリック**: effect の名前の上では、クラスの定義とその effect を扱う全 handler の節を返します(複数なら peek で選べます)。普通の関数・defk は今までどおりです。
+- **実装へ移動**(Cmd+F12): effect の名前の上(クラスの定義・`(PutRow …)` の呼び出し・import・handler の節の頭)ではその effect を扱う全 handler の節へ、handler の名前の上ではその handler の節の一覧へ移動します。
+- **呼び出し階層**(Shift+Alt+H): defk / deff / defp / defn / defhandler / effect の節 / effect のクラスが項目です。出ていく呼び出しは行き先ごとにまとめ、effect の生成には「effect」と出します。effect のクラスから出ていくと、その effect を扱う handler の節へ降ります。入ってくる呼び出しは、名前で絞ってから定義へ移動と同じ解決で行き先を確かめます。handler の節へは、その effect を撃つ場所から入ってきます。
+- **コード上の注記**: effect のクラスの上に「handler N 個」「撃つ場所 M 箇所」、defhandler の上に「扱う effect: …」、defk / deff / defp の上に「撃つ effect N 個」「呼び出し元 M 箇所」を出します。押すと 1 件なら直接移動し、複数なら peek で一覧を出します。
+- **ナビゲーションパネル**(activity bar の「doeff Hy」): Effects(module ごとの effect → Handlers と Performed by)、Handlers(handler → 扱う節 → 同じ effect の他の handler)、Programs(defk / deff / defp → Performs・Calls・Called by。effect からは Handlers へ降りられます)、Current file(今開いている file の分だけ)。項目を押すとその位置へ移動し、右クリックで「参照を表示」「呼び出し階層を表示」を選べます。view の上に絞り込みと更新のボタンがあります。子は展開した時に作り、既に開いた経路に戻る項目は「循環」として止めます。
 
 ### 索引の取り方
 
-- 索引は `doeff-indexer hy-index` が出す JSON(版 1)です。起動時に Hy の file を持つ workspace の folder ごとに `hy-index --root <folder>` を背景で実行し、編集中は 0.5 秒待ってから `--stdin --path <file>` でその file だけを取り直します。file の作成・削除・改名も反映します。
+- 索引は `doeff-indexer hy-index` が出す JSON(版 2。版 2 だけを受け付けます)です。起動時に Hy の file を持つ workspace の folder ごとに `hy-index --root <folder>` を背景で実行し、編集中は 0.5 秒待ってから `--stdin --path <file>` でその file だけを取り直します。file の作成・削除・改名も反映します。
 - `doeff-indexer` は上の「Binary Discovery Order」と同じ順で探します。見つかった binary が `hy-index` を知らない古い版なら、1 度だけ通知を出して Hy の機能を止めます(Python 向けの機能はそのまま動きます)。
 - 子 process は同時に 1 つだけ走らせます。失敗・契約に合わない出力・file ごとの読み取りの問題は Output の `doeff-runner` に理由つきで出ます。
 

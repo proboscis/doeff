@@ -1,5 +1,5 @@
 {
-  "version": 1,
+  "version": 2,
   "root": "/ws",
   "files": [
     {
@@ -7,6 +7,7 @@
       "definitions": [],
       "imports": [],
       "references": [],
+      "calls": [],
       "errors": []
     },
     {
@@ -21,11 +22,13 @@
           "full_range": {"start": {"line": 0, "character": 0}, "end": {"line": 0, "character": 9}},
           "container": null,
           "docstring": null,
-          "params": []
+          "params": [],
+          "bases": []
         }
       ],
       "imports": [],
       "references": [],
+      "calls": [],
       "errors": []
     },
     {
@@ -36,6 +39,7 @@
         {"module": "a", "name": null, "alias": null, "range": {"start": {"line": 0, "character": 8}, "end": {"line": 0, "character": 9}}}
       ],
       "references": [],
+      "calls": [],
       "errors": []
     },
     {
@@ -46,6 +50,67 @@
       "references": [
         {"name": "a", "mangled": "a", "qualifier": null, "range": {"start": {"line": -1, "character": 0}, "end": {"line": 0, "character": 1}}}
       ],
+      "calls": [],
+      "errors": []
+    },
+    {
+      "path": "/ws/missing_bases.hy",
+      "module": "missing_bases",
+      "definitions": [
+        {
+          "name": "f",
+          "mangled": "f",
+          "kind": "defn",
+          "range": {"start": {"line": 0, "character": 6}, "end": {"line": 0, "character": 7}},
+          "full_range": {"start": {"line": 0, "character": 0}, "end": {"line": 0, "character": 9}},
+          "container": null,
+          "docstring": null,
+          "params": []
+        }
+      ],
+      "imports": [],
+      "references": [],
+      "calls": [],
+      "errors": []
+    },
+    {
+      "path": "/ws/bases_on_defn.hy",
+      "module": "bases_on_defn",
+      "definitions": [
+        {
+          "name": "f",
+          "mangled": "f",
+          "kind": "defn",
+          "range": {"start": {"line": 0, "character": 6}, "end": {"line": 0, "character": 7}},
+          "full_range": {"start": {"line": 0, "character": 0}, "end": {"line": 0, "character": 9}},
+          "container": null,
+          "docstring": null,
+          "params": [],
+          "bases": ["EffectBase"]
+        }
+      ],
+      "imports": [],
+      "references": [],
+      "calls": [],
+      "errors": []
+    },
+    {
+      "path": "/ws/caller_out_of_range.hy",
+      "module": "caller_out_of_range",
+      "definitions": [],
+      "imports": [],
+      "references": [],
+      "calls": [
+        {"callee": "g", "mangled": "g", "qualifier": null, "range": {"start": {"line": 0, "character": 1}, "end": {"line": 0, "character": 2}}, "caller": 0, "performed": false}
+      ],
+      "errors": []
+    },
+    {
+      "path": "/ws/missing_calls.hy",
+      "module": "missing_calls",
+      "definitions": [],
+      "imports": [],
+      "references": [],
       "errors": []
     },
     {
@@ -54,6 +119,7 @@
       "definitions": [],
       "imports": [],
       "references": [],
+      "calls": [],
       "errors": ["3 行目: 括弧が閉じていない"]
     }
   ]
