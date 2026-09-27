@@ -1,10 +1,16 @@
-;;; RemoteJob の 2 つの handler。業務のコードは同じまま、composition root がどちらを被せるかで
-;;; 「手元の 1 process で系全体をテストする」と「本番でクラスタに分散する」を切り替える。
-(require doeff-hy.macros [defhandler defk <-])
+;;; RemoteJob の本番の handler(remote-cluster — coordinator へ出し、worker の子 process で走らせる)。
+;;;
+;;; 手元で RemoteJob を確かめるのは sim-cluster(local.hy)だけ: 偽の宿が task の Program を別の process(別のスコープ)として走らせ、
+;;; 呼び手の handler を継がない。以前ここに在った remote-inline(同じ VM で Spawn して待ち、呼び手の外側の handler をそのまま継ぐ)は、
+;;; task の Program が自分の handler を全部持つ約束(ADR-DOE-CLUSTER-001 R1・R2)の下では足りない handler を呼び手が黙って補うので消した
+;;; (段 5)。
+;;;
+;;; task の本文の形(task-submit-body)と問い合わせの答えの読み(outcome-of・settled-value)は、この handler と sim-cluster の偽の宿が
+;;; 同じ関数を使う(本文を写さない)。
+(require doeff-hy.macros [defhandler defk deff <- val])
 (import json)
 (import time)
 (import .coordinator_http [CoordinatorEndpoint send-idempotent put-program REPLY-SECONDS IDEMPOTENT-DEADLINE-SECONDS])
-(import doeff_core_effects.scheduler [Spawn Wait])
 (import doeff_time [Delay])
 (import doeff [run])
 (import .cluster_model [PROTOCOL-FORMAT])
@@ -13,16 +19,17 @@
                        encode-program decode-outcome current-versions])
 
 
-;; --- handler A: 同じ VM の中で Spawn して待つ(テスト用) --------------------------------------
-;; 外側の handler(テストの fake)をそのまま継承する。Program の例外は Wait が再送出し、呼び手の yield 点へ届く。
-(defhandler remote-inline []
-  (RemoteJob [program needs name]
-    (<- task (Spawn program))
-    (<- result (Wait task))
-    (resume result)))
+(deff task-submit-body [#^ str sha #^ str revision #^ frozenset needs #^ str name #^ float lease-seconds
+                        #^ (| RuntimeEnv None) runtime-env]  ; defk にできない: 本番の client(Program の外の I/O の道具)と sim の宿が同じ形を作る純粋な判断
+  {:pre [(: sha str) (: revision str) (: needs frozenset) (: name str) (: lease-seconds float)] :post [(: % dict)]
+   :tags {:context "doeff-cluster" :role "protocol"}}
+  "POST /tasks の本文を作るため(本番の TaskClient と sim の宿で同じ形)。詰めた Program は先に PUT /programs/<sha> で置き、本文は
+   sha だけを運ぶ(service の宣言と同じ運び方 — ADR-DOE-CLUSTER-001 R3b)。"
+  (| {"program" sha "revision" revision
+      "needs" (sorted needs) "name" name "leaseSeconds" lease-seconds "format" PROTOCOL-FORMAT}
+     (if (is runtime-env None) {} {"runtimeEnv" (run (runtime-env->json runtime-env))})))
 
 
-;; --- handler B: coordinator へ出し、worker の子 process で走らせる ------------------------------
 (defclass TaskClient []
   "coordinator の /tasks との連絡(I/O)。revision = 送り手の commit(受け側はこの版のコードを準備してから復元する)。
    runtime-env = 実行環境の宣言(在れば worker は env の root を準備して、その中の子 process で走らせる — revision は使わない)。"
@@ -35,9 +42,7 @@
     (setv #(sha put) (put-program self.endpoint blob versions IDEMPOTENT-DEADLINE-SECONDS))
     (.raise-for-status put)
     (setv response (.request self.endpoint "POST" "/tasks"
-      :json (| {"program" sha "revision" self.revision
-                "needs" (sorted needs) "name" name "leaseSeconds" lease-seconds "format" PROTOCOL-FORMAT}
-               (if (is self.runtime-env None) {} {"runtimeEnv" (run (runtime-env->json self.runtime-env))}))))
+      :json (task-submit-body sha self.revision needs name lease-seconds self.runtime-env)))
     (.raise-for-status response)
     (get (.json response) "task"))
 
@@ -72,6 +77,17 @@
     True None))
 
 
+(deff settled-value [outcome]  ; defk にできない: 本番の handler と sim の宿の節が、結果を呼び手への答えか例外に変える純粋な判断
+  {:pre [(: outcome (| TaskSucceeded TaskFailed))] :post [(: % "task の Program の戻り値(型は Program ごと)")]
+   :tags {:context "doeff-cluster" :role "protocol"}}
+  "task の結果を、呼び手の RemoteJob の答え(戻り値)か、呼び手へ届ける例外(Program が投げた例外そのもの — 詰められない例外なら
+   RemoteJobFailed)にするため。"
+  (match outcome
+    (TaskSucceeded :value value) value
+    (TaskFailed) (raise (or outcome.error
+                            (RemoteJobFailed (.format "{}: {}\n{}" outcome.kind outcome.message outcome.traceback))))))
+
+
 (defk wait-outcome [client task poll-seconds]
   {:pre [(: client TaskClient) (: task str) (: poll-seconds float)] :post [(: % (| TaskSucceeded TaskFailed))]}
   ;; 終わるまで問い合わせる。眠りは Delay(外側の doeff-time の handler)なので同じ VM の他の task を塞がない。
@@ -80,7 +96,7 @@
   (try
     (while True
       (<- (Delay poll-seconds))
-      (setv outcome (outcome-of (.poll client task) task client.revision))
+      (val outcome (outcome-of (.poll client task) task client.revision))
       (when (is-not outcome None) (return outcome)))
     (finally
       (.drop client task))))
@@ -89,10 +105,7 @@
 (defhandler remote-cluster [#^ TaskClient client [poll-seconds 1.0] [lease-seconds 15.0]]
   (RemoteJob [program needs name]
     ;; 送れない値は送る前に断る(encode-program が UnsendableProgram を投げ、呼び手へ届く)。
-    (setv blob (encode-program program))
-    (setv task (.submit client blob needs (current-versions) name lease-seconds))
+    (val blob (encode-program program))
+    (val task (.submit client blob needs (current-versions) name lease-seconds))
     (<- outcome (wait-outcome client task poll-seconds))
-    (if (isinstance outcome TaskSucceeded)
-        (resume outcome.value)
-        (raise (or outcome.error
-                   (RemoteJobFailed (.format "{}: {}\n{}" outcome.kind outcome.message outcome.traceback)))))))
+    (resume (settled-value outcome))))

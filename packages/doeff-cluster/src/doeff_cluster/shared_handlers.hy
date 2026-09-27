@@ -1,11 +1,38 @@
 ;;; 共有の保存の handler 2 つ。shared-memory = 同じ process の dict(テストの fake)・shared-http = coordinator の /board(クラスタ)。
 ;;; HTTP の client はこの module の中に閉じる(業務コードは ReadShared / WriteShared しか知らない)。
-(require doeff-hy.macros [defhandler <-])
+;;; 要求の形(board-read-request・board-write-request・lease-request)は、この client と手元の sim-cluster の偽の宿(local.hy)が
+;;; 同じ関数で作る(本文を写さない)。
+(require doeff-hy.macros [defhandler deff <-])
 (import urllib.parse [quote :as url-quote])
 (import doeff_cluster.clock [now-epoch-ms])
-(import .shared_model [ReadShared WriteShared ANY cas-allows])
+(import .shared_model [ReadShared WriteShared ANY _Any JsonValue cas-allows])
 (import .semaphore_model [LeaseOp lease-op semaphore-key])
 (import .coordinator_http [CoordinatorEndpoint send-idempotent REPLY-SECONDS])
+
+
+(deff board-read-request [#^ str prefix]  ; defk にできない: 本番の client(Program の外の I/O の道具)と sim の宿が同じ形を作る純粋な判断
+  {:pre [(: prefix str)] :post [(: % tuple) (= (len %) 4)] :tags {:context "doeff-cluster" :role "protocol"}}
+  "ReadShared を coordinator の盤の読みの要求 #(method path query 本文) にするため(本番の SharedClient と sim の宿で同じ形)。"
+  #("GET" "/board" {"prefix" prefix} None))
+
+
+(deff board-write-request [#^ str key value expect #^ (| int float None) ttl-seconds]  ; defk にできない: 本番の client と sim の宿が同じ形を作る純粋な判断
+  {:pre [(: key str) (: value JsonValue) (: expect (| JsonValue _Any))
+         (: ttl-seconds (| int float None))]
+   :post [(: % tuple) (= (len %) 4)] :tags {:context "doeff-cluster" :role "protocol"}}
+  "WriteShared を盤の compare-and-set の要求 #(method path query 本文) にするため。expect の 3 値を JSON で運ぶ: 欄が無い = 無条件・
+   null = 行が無い時だけ・値 = その値の時だけ。答えの読みは 409 = 偽(合わなかった)・300 未満 = 真。"
+  #("PUT" (+ "/board/" key) {}
+    (| {"value" value}
+       (if (is expect ANY) {} {"expect" expect})
+       (if (is ttl-seconds None) {} {"ttlSeconds" ttl-seconds}))))
+
+
+(deff lease-request [#^ str name #^ str op #^ str token #^ int permits #^ int ttl-ms]  ; defk にできない: 本番の client と sim の宿が同じ形を作る純粋な判断
+  {:pre [(: name str) (: op str) (: token str) (: permits int) (: ttl-ms int)] :post [(: % tuple) (= (len %) 4)]
+   :tags {:context "doeff-cluster" :role "protocol"}}
+  "LeaseOp を coordinator の lease の口の要求 #(method path query 本文) にするため(本番の SharedClient と sim の宿で同じ形)。"
+  #("POST" (+ "/leases/" (url-quote name :safe "")) {} {"op" op "token" token "permits" permits "ttlMs" ttl-ms}))
 
 
 (defhandler shared-memory [#^ dict store]
@@ -34,25 +61,22 @@
 
   (defn #^ dict read [self #^ str prefix]
     ;; 読みは何度送っても同じなので、tailnet の数秒の途絶は期限まで送り直して越える(1 回の失敗で service を落とさない)。
-    (setv response (send-idempotent (fn [] (.request self.endpoint "GET" "/board" :params {"prefix" prefix}))))
+    (setv #(method path query _) (board-read-request prefix))
+    (setv response (send-idempotent (fn [] (.request self.endpoint method path :params query))))
     (.raise-for-status response)
     (.json response))
 
-  (defn #^ bool write [self #^ str key #^ object value #^ object expect #^ (| int float None) [ttl-seconds None]]
-    ;; expect の 3 値を JSON で運ぶ: 欄が無い = 無条件・null = 行が無い時だけ・値 = その値の時だけ。
-    (setv body {"value" value})
-    (when (is-not expect ANY) (setv (get body "expect") expect))
-    (when (is-not ttl-seconds None) (setv (get body "ttlSeconds") ttl-seconds))
-    (setv response (.request self.endpoint "PUT" (+ "/board/" key) :json body))
+  (defn #^ bool write [self #^ str key #^ JsonValue value #^ (| JsonValue _Any) expect #^ (| int float None) [ttl-seconds None]]
+    (setv #(method path _ body) (board-write-request key value expect ttl-seconds))
+    (setv response (.request self.endpoint method path :json body))
     (when (= response.status-code 409) (return False))
     (.raise-for-status response)
     True)
 
   (defn #^ dict lease [self #^ str name #^ str op #^ str token #^ int permits #^ int ttl-ms]
     ;; claim と renew は同じ token で何度送っても同じ意味なので、途中で切れても期限まで送り直す。release・drop は 1 回だけ。
-    (setv body {"op" op "token" token "permits" permits "ttlMs" ttl-ms}
-          path (+ "/leases/" (url-quote name :safe ""))
-          send (fn [] (.request self.endpoint "POST" path :json body))
+    (setv #(method path _ body) (lease-request name op token permits ttl-ms)
+          send (fn [] (.request self.endpoint method path :json body))
           response (if (in op #("claim" "renew")) (send-idempotent send) (send)))
     (.raise-for-status response)
     (.json response)))
