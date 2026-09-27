@@ -418,6 +418,7 @@ doeff-indexer hy-index --root <dir> --stdin --path <path>  # 保存前の内容�
       "docstring": "…",             // 無ければ null
       "params": ["jev-script", "store"],
       "bases": []                   // defclass / defrecord の基底の記号(書かれたとおり、dotted も 1 つ)。他の kind は常に []
+      // "checks": ["(>= start 0)"] // defrecord の頭の辞書の :check の式(書かれたとおり・書いた順)。頭の辞書を持つ defrecord だけが持ち、他は欄ごと出さない(版 3 への追加)
     }],
     "imports": [{"module": "doeff_records.memory", "name": "MemoryStore", "alias": null, "range": {…}, "is_require": false}],
     "references": [{"name": "c", "mangled": "c", "qualifier": "a.b", "range": {…}}],
@@ -439,6 +440,7 @@ doeff-indexer hy-index --root <dir> --stdin --path <path>  # 保存前の内容�
 - `imports`: `(import m)`・`(import m :as a)`・`(import m [x y :as z])`・`(import m *)`・`(require m [names])`・`(require m :macros [..] :readers [..])`。range は alias → name → module の順で在るものを指す。関数の中の import も入れる。
 - `references`: すべての記号の出現を `.` で区切って 1 件ずつ入れる(`a.b.c` は a・b・c、c の qualifier は `"a.b"`)。入れないもの: 先頭に置かれた予約語(Hy の special form と doeff-hy の macro。`val` 等の普通の語の macro は file が require した時だけ予約語)・演算子・定数(`True` / `False` / `None` 等)・`_`・keyword(`:key`)・文字列の中身・註・`#_` で読み捨てた form・quote の中(quasiquote の中の `~x` は入れる)。f 文字列の `{…}` の中の記号は入れる。
 - `bases`(版 2): defclass の `[…]` の中の記号だけを書かれたとおりに入れる(`:metaclass M` のような keyword とその値、`(get Generic T)` のような式は入れない)。defrecord は今の macro が基底を書かない形なので、ふつう `[]`。
+- `checks`(版 3 への追加): `(defrecord Name "doc"? {:tags {…} :check […]} 欄 …)` の頭の辞書の `:check` の各式を書かれたとおりの綴りで書いた順に入れる。頭の辞書を持つ defrecord は `:check` が無ければ `[]`、頭の辞書の無い defrecord と他の kind は欄ごと出さない。頭の辞書の `:tags` は defk / defeffect と同じく `tags` に入る。頭の辞書は欄ではない(欄は辞書の後ろから読む)。
 - `calls`(版 2): `(` の直後の記号が、予約語・演算子・定数でないものを 1 件ずつ入れる(関数の呼び出し・class の生成・effect の生成)。引数の中の入れ子の呼び出しも入れる。
   - `callee` は頭の記号の最後の区切り、`qualifier` はその前の区切り(`mod.sub.fn` なら `"mod.sub"`)、`range` は最後の区切りの位置。
   - `caller` は、呼び出しの位置を `full_range` に含む定義のうち最も狭いものの添字(同じ file の `definitions` の添字)。含む定義が無ければ(top level の式)`null`。effect 節の本体の中はその `effect-clause`、`(fn …)` や `let` の中の局所の関数の中は外側の定義になる。`(setv x (f))` の `f` は `x` の `variable` が caller。
