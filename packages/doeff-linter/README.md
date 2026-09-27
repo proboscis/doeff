@@ -201,6 +201,17 @@ required = ["context", "role"]      # DOEFF112 の必須の鍵
 module_default = true               # module の頭の MODULE-TAGS で補えるか
 ```
 
+登録簿に載った破れの重さは規則ごとに決められます(既定 warning・新しい破れは常に error)。設定と一緒に持ち運ぶ登録簿は
+`config_files`(設定 file の dir からの相対)に書きます。
+
+```toml
+[tool.doeff-linter.rules.DOEFF110]
+registered_severity = "info"
+
+[tool.doeff-linter.registry]
+config_files = ["definition-breaches.txt"]
+```
+
 `eval-and-compile` / `eval-when-compile` の中の defn(マクロの展開の時の関数)は DOEFF110 の外です。既存の破れは登録簿
 (`registry.files` の 1 行 1 鍵・鍵 = `<path>::<規則>::<定義の名>`)に載せると warning になり、新しい破れだけが error になります。
 

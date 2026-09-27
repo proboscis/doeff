@@ -209,11 +209,13 @@ fn prepare(args: &Args) -> Result<Setup, String> {
         _ => cwd.clone(),
     };
     let root = root.canonicalize().map_err(|e| format!("repo の根 {} を読めない: {}", root.display(), e))?;
+    let config_dir = loaded.as_ref().and_then(|l| l.path.canonicalize().ok()).and_then(|p| p.parent().map(Path::to_path_buf));
     let config = loaded.map(|l| l.config);
-    let settings = match &config {
+    let mut settings = match &config {
         Some(config) => config.project_settings().map_err(|problems| format!("設定の誤り:\n  {}", problems.join("\n  ")))?,
         None => ProjectSettings::default(),
     };
+    settings.config_dir = config_dir;
     let (enabled_rules, exclude_patterns) = config::merge_config(config.as_ref(), &args.enable, &args.disable, &args.exclude);
     Ok(Setup { config, root, enabled_rules, exclude_patterns, settings })
 }

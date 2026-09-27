@@ -328,6 +328,9 @@ pub struct RegistrySection {
     /// 照合中の規則の ID(違反は info に下げる。registered は登録簿どおり)。
     #[serde(default)]
     pub reconciling: Vec<String>,
+    /// 1 行 1 鍵の file で、設定 file の dir からの相対で読む物(設定と登録簿を一緒に置いて持ち運ぶ)。
+    #[serde(default)]
+    pub config_files: Vec<String>,
 }
 
 /// 設定の中の層の番号(`order` の添字)。
@@ -430,6 +433,7 @@ pub struct RegistrySpec {
     pub dirs: Vec<String>,
     pub files: Vec<String>,
     pub reconciling: BTreeSet<ProjectRule>,
+    pub config_files: Vec<String>,
 }
 
 /// 層の規則の設定の全部(検めた後)。節が無い規則は None で、その規則は何も出さない。
@@ -440,6 +444,10 @@ pub struct ProjectSettings {
     pub raw: Option<RawSettingsSpec>,
     pub services: Option<ServiceSettings>,
     pub definitions: Option<DefinitionSettings>,
+    /// 規則ごとの、登録簿に載った破れの重さ(無ければ warning)。
+    pub registered_severity: BTreeMap<ProjectRule, crate::models::Severity>,
+    /// 設定を読んだ file の dir(registry.base = "config" の基準)。
+    pub config_dir: Option<std::path::PathBuf>,
     pub laws: Vec<LawSpec>,
     pub registry: RegistrySpec,
 }
@@ -555,6 +563,7 @@ impl ProjectSettings {
             .map(|registry| RegistrySpec {
                 dirs: registry.dirs.clone(),
                 files: registry.files.clone(),
+                config_files: registry.config_files.clone(),
                 reconciling: registry
                     .reconciling
                     .iter()
@@ -590,7 +599,17 @@ impl ProjectSettings {
             }
         }
         if problems.is_empty() {
-            Ok(ProjectSettings { layers, environment, raw, services, definitions, laws, registry })
+            Ok(ProjectSettings {
+                layers,
+                environment,
+                raw,
+                services,
+                definitions,
+                registered_severity: BTreeMap::new(),
+                config_dir: None,
+                laws,
+                registry,
+            })
         } else {
             Err(problems)
         }

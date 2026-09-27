@@ -6,6 +6,8 @@ use crate::project::settings::{
     EnvironmentNamesSection, LawEntry, LayersSection, ProjectSections, ProjectSettings, RawSideEffectsSection, RegistrySection,
     RolesSection, ServicesSection, TagsSection, DefinitionsSection,
 };
+use crate::models::Severity;
+use crate::project::rule::ProjectRule;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -78,6 +80,35 @@ pub struct Config {
 impl Config {
     /// 層の規則の節を検めて、規則が読む形にする(名前の食い違いは理由の文の列)。
     pub fn project_settings(&self) -> Result<ProjectSettings, Vec<String>> {
+        let mut problems = Vec::new();
+        let mut registered_severity = std::collections::BTreeMap::new();
+        for (id, rule) in &self.rules {
+            let Some(text) = &rule.registered_severity else { continue };
+            let severity = match text.as_str() {
+                "error" => Some(Severity::Error),
+                "warning" => Some(Severity::Warning),
+                "info" => Some(Severity::Info),
+                _ => None,
+            };
+            match (ProjectRule::parse(id), severity) {
+                (Some(rule), Some(severity)) => {
+                    registered_severity.insert(rule, severity);
+                }
+                (None, _) => problems.push(format!("rules.{}.registered_severity: 層の規則(DOEFF101〜113)の ID ではない", id)),
+                (_, None) => problems.push(format!("rules.{}.registered_severity: {:?} は error・warning・info のどれでもない", id, text)),
+            }
+        }
+        let mut settings = match self.validate_sections() {
+            Ok(settings) if problems.is_empty() => settings,
+            Ok(_) => return Err(problems),
+            Err(more) => return Err(problems.into_iter().chain(more).collect()),
+        };
+        settings.registered_severity = registered_severity;
+        Ok(settings)
+    }
+
+    /// 層の規則の節を検める(規則ごとの設定の前の部分)。
+    fn validate_sections(&self) -> Result<ProjectSettings, Vec<String>> {
         ProjectSettings::validate(&ProjectSections {
             layers: self.layers.as_ref(),
             tags: self.tags.as_ref(),
@@ -127,6 +158,9 @@ pub struct RuleConfig {
 
     /// DOEFF009: Skip test functions (starting with test_)
     pub skip_test_functions: Option<bool>,
+
+    /// 層の規則(DOEFF101〜113): 登録簿に載った破れの重さ(error・warning・info。既定 warning)
+    pub registered_severity: Option<String>,
 }
 
 /// Find pyproject.toml file starting from a path and walking up

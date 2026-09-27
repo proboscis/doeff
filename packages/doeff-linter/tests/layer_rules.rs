@@ -713,3 +713,37 @@ fn defn_is_forbidden_deff_needs_a_reason_and_definitions_carry_tags() {
     assert_eq!(violation(&report, "app/a.hy::DOEFF112::untagged")["registered"], true);
     assert_eq!(code, 0);
 }
+
+#[test]
+fn registered_severity_per_rule_and_registry_relative_to_the_config_file() {
+    let source = "(defn old [x] x)\n(defn new-one [x] x)\n";
+    // 設定 file と登録簿を repo の外の同じ dir に置き、registry.config_files で設定 file からの相対で読む。
+    let dir = definition_repo(&[("app/a.hy", source)], "");
+    std::fs::remove_file(dir.path().join("pyproject.toml")).unwrap();
+    let outside = tempfile::TempDir::new().unwrap();
+    std::fs::write(outside.path().join("known.txt"), "app/a.hy::DOEFF110::old\n").unwrap();
+    let config = r#"
+[tool.doeff-linter]
+enable = ["DOEFF110"]
+[tool.doeff-linter.definitions]
+[tool.doeff-linter.registry]
+config_files = ["known.txt"]
+[tool.doeff-linter.rules.DOEFF110]
+registered_severity = "info"
+"#;
+    let config_path = outside.path().join("lint.toml");
+    std::fs::write(&config_path, config).unwrap();
+    let args = ["--output-format", "editor-json", "--no-log", "--config", config_path.to_str().unwrap(), "--root", dir.path().to_str().unwrap()];
+    let (code, stdout, stderr) = run(dir.path(), &args, None);
+    let report: Value = serde_json::from_str(&stdout).unwrap_or_else(|e| panic!("{}: {}", e, stderr));
+    // 登録簿に載った破れは設定の重さ(info)、載っていない破れは今どおり error。
+    assert_eq!(violation(&report, "app/a.hy::DOEFF110::old")["severity"], "info");
+    assert_eq!(violation(&report, "app/a.hy::DOEFF110::old")["registered"], true);
+    assert_eq!(violation(&report, "app/a.hy::DOEFF110::new_one")["severity"], "error");
+    assert_eq!(code, 1);
+    // 知らない重さは設定の誤り。
+    std::fs::write(&config_path, config.replace("\"info\"", "\"loud\"")).unwrap();
+    let (code, _, stderr) = run(dir.path(), &args, None);
+    assert_eq!(code, 2);
+    assert!(stderr.contains("registered_severity"), "{}", stderr);
+}

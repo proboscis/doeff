@@ -121,7 +121,13 @@ struct ModuleSite {
 /// 層の規則を走らせる。root は正規化した repo の根、enabled は有効な規則。
 pub fn run(root: &Path, settings: &ProjectSettings, enabled: &BTreeSet<ProjectRule>, target: Target) -> ProjectReport {
     let mut report = ProjectReport::default();
-    let registry = Registry::load(root, &settings.registry.dirs, &settings.registry.files);
+    let mut registry = Registry::load(root, &settings.registry.dirs, &settings.registry.files);
+    if !settings.registry.config_files.is_empty() {
+        let base = settings.config_dir.clone().unwrap_or_else(|| root.to_path_buf());
+        let extra = Registry::load(&base, &[], &settings.registry.config_files);
+        registry.keys.extend(extra.keys);
+        registry.problems.extend(extra.problems);
+    }
     report.errors.extend(registry.problems.iter().cloned());
     let raw = raw_settings(root, settings, &mut report.errors);
     let wants_raw = enabled.contains(&ProjectRule::RawSideEffectDirect) || enabled.contains(&ProjectRule::RawSideEffectVia);
@@ -1077,7 +1083,7 @@ fn finish(drafts: Vec<Draft>, settings: &ProjectSettings, registry: &Registry) -
                 Severity::Info
             } else {
                 match (registered, draft.base) {
-                    (true, Severity::Error) => Severity::Warning,
+                    (true, Severity::Error) => settings.registered_severity.get(&draft.rule).copied().unwrap_or(Severity::Warning),
                     (_, base) => base,
                 }
             };

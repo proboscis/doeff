@@ -103,7 +103,8 @@
 | `raw_side_effects` | `allowed_layers`・`catalog_extra`(hy-index の `--raw-catalog-extra` と同じ形の JSON) | — |
 | `environment_names` | `words`・`paths`・`exclude`・`exclude_parts`・`extensions`・`assembly_files` | extensions = hy・hyk・hyp・py |
 | `laws`(配列) | `name`・`adr`・`statement`・`rules`・`layers` | layers が空なら全部の層 |
-| `registry` | `dirs`(1 鍵 1 file の dir)・`files`(1 行 1 鍵)・`reconciling` | — |
+| `registry` | `dirs`(1 鍵 1 file の dir)・`files`(1 行 1 鍵)・`config_files`(1 行 1 鍵・設定 file の dir からの相対)・`reconciling` | dirs と files は repo の根から |
+| `rules.<ID>` | `registered_severity`(登録簿に載った破れの重さ: error・warning・info) | warning |
 
 `enable`・`disable` は Python の規則と層の規則の両方に効く(`ALL` は両方を含む)。
 
