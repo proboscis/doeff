@@ -1,6 +1,6 @@
 # Jev の呼び出しを覚える代理(doeff-jev-proxy)の image。
 # 土台(BASE)= doeff の venv を持つ業務の image(PATH に hy・venv に doeff・doeff-hy・doeff-core-effects・doeff-jev・doeff-records・
-# httpx が入っている物 — agora-controllers の image が該当)。ここで足すのは、この package の source と検だけ(build も install も
+# httpx が入っている物 — doeff を依存に持つ業務の repo の image)。ここで足すのは、この package の source と検だけ(build も install も
 # しない — PYTHONPATH に載せる)。doeff-cluster の deploy/Dockerfile と同じ形。
 #   git archive HEAD packages/doeff-jev-proxy | docker build --build-arg BASE=<業務の image> -t <名> \
 #       -f packages/doeff-jev-proxy/deploy/Dockerfile -
