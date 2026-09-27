@@ -1,10 +1,10 @@
 ;;; task(呼んだ側に寿命が縛られる短い仕事)の effect と、送る形・戻す形。
 ;;;
-;;;   (<- result (RemoteJob (summarize conv rows) :env "myapp.envs:board_env"))
+;;;   (<- result (RemoteJob (summarize foundation rows) :needs (frozenset ["net"])))
 ;;;
-;;; RemoteJob は「未実行の Program を、名前で指した handler の組の下で走らせ、戻り値(または例外)を返す」効果。
-;;; handler そのものも I/O の資源も送らない。送るのは cloudpickle した Program の値・env の名前(import path)・
-;;; 送り手の commit と版の識別だけ。
+;;; RemoteJob は「未実行の Program を走らせ、戻り値(または例外)を返す」効果。Program は自分の handler を中の with-handlers で並べる
+;;; (ADR-DOE-CLUSTER-001 R1・R2 — 実行先は handler を足さない)。handler の値も I/O の資源も送らない(送れば UnsendableProgram)。
+;;; 送るのは cloudpickle した Program の値・要る能力・送り手の commit と版の識別だけ。
 ;;;
 ;;; 2 つの handler(remote.hy):
 ;;;   remote-inline  … 同じ VM で Spawn して待つ(テスト用。外側の handler をそのまま継承する)
@@ -32,10 +32,9 @@
 
 
 (defclass [(dataclass :frozen True)] RemoteJob [EffectBase]
-  "program = 未実行の Program(値)・env = 実行先で組む handler の組の import path・needs = 要る能力の名の frozenset(置く worker は needs ⊆ provides)。
+  "program = 未実行の Program(値 — handler は Program の中の with-handlers で並べる・ADR-DOE-CLUSTER-001 R1・R2)・needs = 要る能力の名の frozenset(置く worker は needs ⊆ provides)。
    結果 = Program の戻り値。Program が投げた例外はそのまま呼び手へ届く。"
   (#^ object program)
-  (#^ str env)
   (setv #^ frozenset needs (frozenset))
   (setv #^ str name "")
   (defn __post-init__ [self]
@@ -138,11 +137,21 @@
 
 
 (defclass StrictPickler [cloudpickle.CloudPickler]
-  "cloudpickle の既定から、file を運ぶ規則だけを外した pickler。file は送り手で断る(意味が黙って変わるため)。"
+  "cloudpickle の既定から、file を運ぶ規則だけを外した pickler。file は送り手で断る(意味が黙って変わるため)。
+   handler の値(doeff.program.handler が作る物 — 印 __doeff_handler_data__)も断る(ADR-DOE-CLUSTER-001 R3b・改訂 1 の D):
+   handler は job の Program の中(defk の本体)で関数を呼んで作り、値として宣言や task に詰めない。送り手(declare・RemoteJob・
+   SubmitDetached)はどれもここを通る。"
   (setv dispatch-table
     (collections.ChainMap
       (dfor t #(io.TextIOWrapper io.BufferedReader io.BufferedWriter io.BufferedRandom io.FileIO) t _refuse-file)
-      cloudpickle.CloudPickler.dispatch-table)))
+      cloudpickle.CloudPickler.dispatch-table))
+
+  (defn reducer-override [self obj]  ; defk にできない: pickle の library が呼ぶ callback
+    "handler の値に当たったら断り、それ以外は cloudpickle の規則に任せる。"
+    (when (and (callable obj) (not (isinstance obj type)) (hasattr obj "__doeff_handler_data__"))
+      (raise (TypeError (.format "handler の値 {} を捕まえている — handler は Program の本体の中で関数を呼んで作る(値として詰めない)"
+                                 (getattr obj "__qualname__" (repr obj))))))
+    (.reducer-override (super) obj)))
 
 
 (defn #^ bytes _dumps [program]

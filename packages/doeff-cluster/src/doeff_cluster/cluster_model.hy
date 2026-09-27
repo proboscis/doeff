@@ -167,6 +167,15 @@
   (#^ str holder))
 
 
+(defrecord RefusedJob
+  "受け付けない Service の行(2026-09-27・改訂 1 の C)。旧い宣言の形の行を読み直した時と、読めない行を、coordinator を落とさずに
+   持っておく: name = Service の名・row = 元の行(保存と表示のため JSON のまま)・reason = 理由。置き先・Rollout・drain・計器は
+   ClusterState.jobs(受け付けた job)だけを見て、これは見ない。PUT で新しい形に書き直せば jobs へ移る。"
+  (#^ str name)
+  (#^ dict row)
+  (#^ str reason))
+
+
 (defclass [(dataclass :frozen True)] Placement []
   "置き先 = job をどの worker に置いたか(配置)。依頼(Request)とは別の物。2026-09-25 に改名(永続化の鍵は durable_kv.hy)。"
   (#^ str job)
@@ -309,7 +318,6 @@
    result = worker が返した結果の blob(TaskSucceeded / TaskFailed の cloudpickle)。finished で None なら結果なし。"
   (#^ str id)
   (#^ str name)
-  (#^ str env)
   (#^ str blob)
   (#^ str revision)
   (#^ (get tuple #(ComponentVersion ...)) versions)   ; 送り手の版(名の順)
@@ -411,6 +419,10 @@
   ;; node の label から導く能力の名(ClusterNaming の node-capabilities の能力 — coordinator の起動で入れる・保存しない)。
   ;; worker の heartbeat の provides にこの名が在っても受けない(自己申告を断る — 改訂 1 の I)。
   (setv #^ frozenset derivable (frozenset))
+  ;; 受け付けない Service の行(名 → RefusedJob — 改訂 1 の C)。保存する(元の行のまま)— 読み直しても同じ理由で受け付けない。
+  (setv #^ dict refused (field :default-factory dict))
+  ;; 詰めた Program の置き場(sha → {"blob" "versions" "putMs"} — program_policy・改訂 1 の F)。保存する。
+  (setv #^ dict programs (field :default-factory dict))
   (setv #^ int started-ms 0)                            ; この coordinator の process が状態を読んだ時刻(観測が揃うまでの猶予)
   (setv #^ int rollout-tick-ms 0)                       ; Rollout を最後に調停した時刻
   ;; coordinator が生きていた最後の時刻(ALIVE-MARK-MS ごとに耐久の鍵 counter へ書く)。起動の時に「止まっていた長さ」を測り、

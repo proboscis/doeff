@@ -1,6 +1,6 @@
 ;;; 切り離した task の HTTP の口の純粋な判断(2026-09-25・effect は detached_model.hy)。I/O はしない。
 ;;;
-;;;   PUT    /detached/<key>          送る(job id = key で冪等)。{env blob versions revision needs name leaseSeconds retainSeconds}
+;;;   PUT    /detached/<key>          送る(job id = key で冪等)。{blob versions revision needs name leaseSeconds retainSeconds}
 ;;;                                   → {"key" "task" "created" "phase"}。同じ key が在れば何も作らず created = false
 ;;;   GET    /detached/<key>          読む(lease に触らない)→ {"key" "phase" "detail" "result" "worker"}。知らない key は phase = unknown
 ;;;                                   (coordinator が起きた直後の猶予の内は 503・phase = warming — detached-read)
@@ -12,7 +12,7 @@
 (import dataclasses [replace])
 (import typing [NamedTuple])
 (import .cluster_model [ClusterState ClusterTiming TaskRecord component-versions-of format-refusal])
-(import .cluster_policy [DETACHED-TERMINAL TASK-MAX-OPEN end-detached runtime-env-refusal task-id needs-refusal request-needs])
+(import .cluster_policy [DETACHED-TERMINAL TASK-MAX-OPEN end-detached runtime-env-refusal task-id task-body-refusal request-needs])
 (import .detached_model [DETACHED-DEFAULT-LEASE-SECONDS DETACHED-DEFAULT-RETAIN-SECONDS OPEN-PHASES WARMING-PHASE])
 
 (setv DETACHED-MAX-LEASE-SECONDS 3600)
@@ -50,12 +50,12 @@
 
 
 (defn #^ Reply submit-detached [#^ ClusterState state #^ str key #^ dict body #^ int now]
-  "PUT /detached/<key>: 同じ key の行が在ればそれを返す(created = false)。env・name・needs が違えば 409(同じ job id を別の
+  "PUT /detached/<key>: 同じ key の行が在ればそれを返す(created = false)。name・needs が違えば 409(同じ job id を別の
    仕事に使った呼び手の誤り)。無ければ待ちの行を作る。"
   (setv lease (.get body "leaseSeconds" DETACHED-DEFAULT-LEASE-SECONDS)
         retain (.get body "retainSeconds" DETACHED-DEFAULT-RETAIN-SECONDS)
         refusal (or (format-refusal body)
-                    (needs-refusal body)
+                    (task-body-refusal body)
                     (runtime-env-refusal body)
                     (key-refusal key)
                     (seconds-refusal "leaseSeconds" lease DETACHED-MAX-LEASE-SECONDS)
@@ -65,11 +65,11 @@
         existing (task-by-key state key))
   (when (is-not existing None)
     (return
-      (if (= #(existing.env existing.name existing.needs existing.runtime-env)
-             #((get body "env") (.get body "name" "") needs (.get body "runtimeEnv")))
+      (if (= #(existing.name existing.needs existing.runtime-env)
+             #((.get body "name" "") needs (.get body "runtimeEnv")))
           (Reply state 200 {"key" key "task" existing.id "created" False "phase" existing.phase})
-          (Reply state 409 {"error" (.format "key {} は別の仕事(env {}・name {!r}・needs {})に使われている"
-                                        key existing.env existing.name (list existing.needs))}))))
+          (Reply state 409 {"error" (.format "key {} は別の仕事(name {!r}・needs {})に使われている"
+                                        key existing.name (list existing.needs))}))))
   (setv open-count (len (lfor t (.values state.tasks) :if (in t.phase OPEN-PHASES) t))
         detached-count (len (lfor t (.values state.tasks) :if t.detached t)))
   (when (>= open-count TASK-MAX-OPEN)
@@ -79,7 +79,7 @@
                                           DETACHED-MAX-RECORDS)})))
   (setv id (task-id state)
         lease-ms (int (* 1000 lease))
-        task (TaskRecord id (.get body "name" "") (get body "env") (get body "blob") (get body "revision")
+        task (TaskRecord id (.get body "name" "") (get body "blob") (get body "revision")
                          (component-versions-of (.get body "versions" {}))
                          needs lease-ms (+ now lease-ms) now
                          :detached True :key key :retain-ms (int (* 1000 retain))
