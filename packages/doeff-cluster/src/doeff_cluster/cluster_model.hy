@@ -14,7 +14,7 @@
 ;;; 版と記録は「前の状態と後の状態の差」から 1 か所(resource_policy.stamp)で付けるので、どの経路の変化も漏れない。
 (require doeff-hy.macros [deff val])
 (require doeff-hy.record [defenum defrecord])
-(import dataclasses [dataclass field asdict])
+(import dataclasses [dataclass field asdict fields])
 (import enum [StrEnum])
 (import re)
 (import typing [NamedTuple])
@@ -362,12 +362,14 @@
 (defn #^ TaskRecord task-record-from-json [#^ dict data]
   "保存の JSON の形 → TaskRecord(task-record-to-json の逆)。
    旧い形の行は読み直しで coordinator を落とさず、まだ終わっていない行を failed(理由つき)にする — 旧い形は受け付けない
-   (operator 2026-09-27)。旧い形 = requires の object(needs の前)・詰めた Program を行に持つ blob(置き場 /programs の前 —
-   Program は捨てる。終わった行は Program 無し = program None で読む)。空の requires は needs 無しと同じ。"
-  (setv old (.get data "requires")
-        body (dfor #(k v) (.items data) :if (not-in k #("requires" "blob")) k v)
+   (operator 2026-09-27)。旧い形 = TaskRecord に無い欄を持つ行(今の TaskRecord の欄の集合 1 つで判じる — 消した欄を 1 つずつ数えると、
+   数え漏れた欄 1 つで読み直しが TypeError になり coordinator が起きない。実弾 2026-09-28 の予行: 3880944e の行の env)。
+   無い欄は捨てて読む(終わった行は Program 無し = program None で読む)。空の requires は needs 無しと同じ。"
+  (setv known (sfor f (fields TaskRecord) f.name)
+        extra (sorted (gfor k data :if (not-in k known) k))
+        body (dfor #(k v) (.items data) :if (in k known) k v)
         unended (not-in (.get body "phase" "queued") ENDED-PHASES)
-        reason (old-task-row-reason old (in "blob" data)))
+        reason (old-task-row-reason (.get data "requires") extra))
   (TaskRecord #** (| {"program" None}
                      body
                      {"versions" (component-versions-of (get body "versions"))
@@ -378,12 +380,15 @@
                          {}))))
 
 
-(deff old-task-row-reason [#^ (| dict list None) old #^ bool has-blob]  ; defk にできない: 保存の読み直し(Program の外)が呼ぶ純粋な判断
-  {:pre [(: old (| dict list None)) (: has-blob bool)] :post [(: % (| str None))] :tags {:context "doeff-cluster" :role "judgment"}}
-  "保存の task の行が旧い形なら、まだ終わっていない行を failed にする理由の文(新しい形なら None)。old = 行の requires の値。"
+(deff old-task-row-reason [#^ (| dict list None) old #^ list extra]  ; defk にできない: 保存の読み直し(Program の外)が呼ぶ純粋な判断
+  {:pre [(: old (| dict list None)) (: extra list)] :post [(: % (| str None))] :tags {:context "doeff-cluster" :role "judgment"}}
+  "保存の task の行が旧い形なら、まだ終わっていない行を failed にする理由の文(新しい形なら None)。old = 行の requires の値・
+   extra = 今の TaskRecord に無い欄の名(requires・blob・env ほか)。"
   (cond
     old (.format "旧い形の task(requires {})は受け付けない — 新しい形(needs)で送り直す" old)
-    has-blob "旧い形の task(詰めた Program を行に持つ blob)は受け付けない — Program を /programs に置き、その sha で送り直す"
+    (in "blob" extra) "旧い形の task(詰めた Program を行に持つ blob)は受け付けない — Program を /programs に置き、その sha で送り直す"
+    (in "env" extra) "旧い形の task(handler の組の import path env)は受け付けない — task の Program が自分の土台で本体を包み、needs で送り直す"
+    extra (.format "旧い形の task(今の形に無い欄 {})は受け付けない — 新しい形で送り直す" extra)
     True None))
 
 
