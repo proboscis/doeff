@@ -8,8 +8,8 @@
 //! 定義の場所で module まで解き(`smells::Scope`)、defk の集合と比べる。追えない呼び(引数で受けた関数・method)は拾わない。
 //!
 //! 拾うのは、呼びの答えを値として使う所だけ(Program が値の代わりに流れて静かに間違う所): 比べ・演算・真偽の組み合わせ
-//! (`=`・`+`・`in`・`not`・`and` …)、答えを読む組み込みの関数(`len`・`str`・`get`・`sorted`・`isinstance` …)、method の的
-//! (`(.get (f …) "欄")`)と属性(`(. (f …) 欄)`)、条件(`if`・`when`・`while` の頭・`cond` の条件)、繰り返しの元(`for` の束ねと
+//! (`=`・`+`・`in`・`not`・`and` …)、答えを読む組み込みの関数(`len`・`str`・`get`・`sorted`・`isinstance` …)、method の的と引数
+//! (`(.get (f …) "欄")`・`(.append out (f …))`)と属性(`(. (f …) 欄)`)、条件(`if`・`when`・`while` の頭・`cond` の条件)、繰り返しの元(`for` の束ねと
 //! 内包表記の元)、record の欄(頭が大文字の型を作る呼び — doeff の package の effect は除く)。その位置の中の `if`・`when`・`cond`・
 //! `do`・`let` の枝も答えとして使う所のまま。
 //! 拾わない: `(<- …)` の右辺・`(! …)`・`(return …)`、Program を受ける呼びの引数(repo の関数に渡す形も — Program を受けて走らせる
@@ -208,7 +208,8 @@ impl Walker<'_> {
             let child_value = match head {
                 Some(h) if VALUE_HEADS.contains(&h) => true,
                 Some(".") => index == 1,
-                Some(h) if h.starts_with('.') && h.len() > 1 => index == 1,
+                // method の的も引数も答えとして使う所(`(.get (f …) "欄")`・`(.append out (f …))`)。
+                Some(h) if h.starts_with('.') && h.len() > 1 => true,
                 Some("if" | "when" | "unless" | "while") if index == 1 => true,
                 Some("cond") => index % 2 == 1 || value,
                 Some(h) if BRANCHING_FORMS.contains(&h) => value,
@@ -262,6 +263,7 @@ mod tests {
     fn bare_calls_are_found_where_the_answer_is_used_as_a_value() {
         let source = r#"(deff text-at [ref] (.get (fetch ref) "text"))
 (defn count-rows [] (len (load "a")))
+(deff collect [out ref] (.append out (fetch ref)))
 (defk checks [ref]
   (when (fetch ref) (return 1))
   (val same (= (fetch ref) ref))
@@ -272,7 +274,7 @@ mod tests {
   (val xs (lfor y (fetch ref) y))
   (return (+ 1 (if same (fetch 1) 2))))
 (val MODULE-LEVEL (str (fetch 0)))"#;
-        assert_eq!(found(source, &[("load", "lib")]), vec!["text_at::fetch", "count_rows::load", "checks::fetch", "checks::load", "<m>::fetch"]);
+        assert_eq!(found(source, &[("load", "lib")]), vec!["text_at::fetch", "count_rows::load", "collect::fetch", "checks::fetch", "checks::load", "<m>::fetch"]);
     }
 
     #[test]

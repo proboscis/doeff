@@ -144,6 +144,19 @@ impl ModuleFacts {
     }
 }
 
+/// Hy の source の import の束縛(名 → module)だけを読む。
+pub fn hy_bindings(source: &str, module: &str) -> std::collections::BTreeMap<String, String> {
+    // repo の全部の file の呼びの頭を解く時(DOEFF126 の引数の追い)に、タグや定義を読まずに import の束縛だけを安く取るため。
+    let mut reader = Reader::new(source, 0, source.len());
+    let forms = reader.read_all();
+    let hy = HySource { src: source };
+    let mut bindings = std::collections::BTreeMap::new();
+    for form in &forms {
+        hy.collect_bindings(form, module, &mut bindings);
+    }
+    bindings
+}
+
 /// source を言語ごとの読み方で読む。module は相対 import を解く基準の綴り。
 pub fn read_facts(language: Language, source: &str, module: &str, reading: &TagReading) -> ModuleFacts {
     match language {

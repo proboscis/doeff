@@ -435,7 +435,7 @@ coordinator の決定 2026-09-28(戻せる・agora-redesign #798 に記録)。�
   `<module>.<名>` で集める。呼びの頭は file の import と定義の場所で module まで解いて比べる(`smells::Scope` と同じ)。追えない呼び
   (引数で受けた関数・method)は拾わない。
 - **拾う所**(答えを値として使う所): 比べ・演算・真偽の組み合わせ(`=`・`+`・`in`・`not`・`and` …)と答えを読む組み込みの関数
-  (`len`・`str`・`get`・`sorted`・`isinstance` …)の引数、method の的(`(.get (f …) "欄")`)と属性(`(. (f …) 欄)`)、条件(`if`・`when`・
+  (`len`・`str`・`get`・`sorted`・`isinstance` …)の引数、method の的と引数(`(.get (f …) "欄")`・`(.append out (f …))`)と属性(`(. (f …) 欄)`)、条件(`if`・`when`・
   `unless`・`while` の頭・`cond` の条件)、繰り返しの元(`for` の束ねの元・内包表記の元)、record の欄(頭が大文字の型を作る呼びの引数 —
   doeff の package の型と、effect として出す位置 `(<- (T …))`・`(! (T …))` の型は除く)。その位置の中の `if`・`when`・`cond`・`do`・`let`
   の枝も同じ。
@@ -445,4 +445,11 @@ coordinator の決定 2026-09-28(戻せる・agora-redesign #798 に記録)。�
   絞った(本線 1 件)。
 - **重さ**: error(静かな誤りなので)。登録簿に載れば `registered_severity`(既定 warning)。母集団は `definitions` の業務の file と検の置き場。
 - **鍵**: `<path>::DOEFF126::<定義>::<呼んだ defk>`(定義の外は `<module>`)。位置は呼びの式。
+- **引数で受けた関数の素の呼び**(2 つ目の形): repo の全部の呼び `(g … 引数 …)` のうち、引数が repo の defk の名か `(fnk …)` の物を
+  集め(位置の引数は何番目か・keyword の引数は名)、呼び先 g の最上位の定義(defk・deff・defn・defn/a)の引数の並びでその名を引く。g の
+  本体の中でその名を頭にした呼び `(名 …)` が Program として渡す所(`(<- …)` の右辺・`(! …)`・`(return …)`・`(yield …)`・Program を
+  受ける呼びの引数)の外に在れば、呼び先のその呼びを違反にする(名への束ね `(setv v (名 …))` も — 呼び手が defk を渡すので Program が
+  束なる)。鍵 `<path>::DOEFF126::<定義>::<引数>`、説明に渡した所と渡した物。事実: agora L1550 の `rows-by-text` の `field-of`。
+- **拾えない範囲**(ADR-DOE-HY-007 R14): 呼び手が defk を変数や欄に入れてから渡す形・partial などで包んで渡す形、呼び先がその引数を
+  さらに別の関数へ渡してそこで素で呼ぶ形(1 段だけ追う)、呼び先が method・入れ子の関数・名で引けない物、repo の外の呼び手。
 

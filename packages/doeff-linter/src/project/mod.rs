@@ -10,6 +10,7 @@ pub mod architecture;
 pub mod explain;
 pub mod facts;
 pub mod names;
+pub mod param_calls;
 pub mod registry;
 pub mod notice;
 pub mod rule;
@@ -215,6 +216,7 @@ pub fn run_with(root: &Path, settings: &ProjectSettings, enabled: &BTreeSet<Proj
                 if wants_definitions(enabled) {
                     let failure = failure_types_for(root, enabled, &definitions.tags);
                     let defks = defk_names_for(root, enabled);
+                    let program_params = program_params_for(root, enabled, &defks);
                     let files: Vec<SourceFile> = hy_index::collect_hy_files(root)
                         .into_iter()
                         .filter_map(|path| {
@@ -230,7 +232,7 @@ pub fn run_with(root: &Path, settings: &ProjectSettings, enabled: &BTreeSet<Proj
                                 .map(|source| {
                                     let mut found = judge_definitions(file, &source, definitions, enabled, plain_callable_reasons(settings), hy.get(&file.rel));
                                     found.extend(judge_smells(file, &source, settings, definitions, enabled, &failure));
-                                    found.extend(judge_bare_calls(file, &source, definitions, enabled, &defks));
+                                    found.extend(judge_bare_calls(file, &source, definitions, enabled, &defks, &program_params));
                                     found
                                 })
                                 .map_err(|error| format!("{}: 読めない: {}", file.rel, error))
@@ -330,7 +332,9 @@ pub fn run_with(root: &Path, settings: &ProjectSettings, enabled: &BTreeSet<Proj
                     let file = SourceFile { rel: rel.clone(), path: path.clone(), language: Language::Hy };
                     drafts.extend(judge_definitions(&file, source, definitions, enabled, plain_callable_reasons(settings), hy_file.as_ref()));
                     drafts.extend(judge_smells(&file, source, settings, definitions, enabled, &failure_types_for(root, enabled, &definitions.tags)));
-                    drafts.extend(judge_bare_calls(&file, source, definitions, enabled, &defk_names_for(root, enabled)));
+                    let defks = defk_names_for(root, enabled);
+                    let program_params = program_params_for(root, enabled, &defks);
+                    drafts.extend(judge_bare_calls(&file, source, definitions, enabled, &defks, &program_params));
                 }
             }
             if let (Some(architecture), Some(rel), Some(language)) = (&settings.architecture, &rel, language_of(&path)) {
@@ -2047,12 +2051,17 @@ fn defk_names_for(root: &Path, enabled: &BTreeSet<ProjectRule>) -> bare_calls::D
     if !enabled.contains(&ProjectRule::DefkCalledBare) {
         return all;
     }
-    for path in hy_index::collect_hy_files(root) {
-        let Some(rel) = relative_path(root, &path) else { continue };
-        let Ok(source) = std::fs::read_to_string(&path) else { continue };
-        if source.contains("(defk") {
-            all.extend(bare_calls::defk_names_in(&source, &module_of(&rel)));
-        }
+    // file ごとに並べて読む(保存ごとの 1 file の実行でも repo 全体を読むので)。
+    let found: Vec<bare_calls::DefkNames> = hy_index::collect_hy_files(root)
+        .par_iter()
+        .filter_map(|path| {
+            let rel = relative_path(root, path)?;
+            let source = std::fs::read_to_string(path).ok()?;
+            source.contains("(defk").then(|| bare_calls::defk_names_in(&source, &module_of(&rel)))
+        })
+        .collect();
+    for names in found {
+        all.extend(names);
     }
     all
 }
@@ -2064,6 +2073,7 @@ fn judge_bare_calls(
     definitions: &settings::DefinitionSettings,
     enabled: &BTreeSet<ProjectRule>,
     defks: &bare_calls::DefkNames,
+    program_params: &param_calls::ProgramParams,
 ) -> Vec<Draft> {
     let in_population = is_definition_file(&file.rel, definitions) || is_test_file(&file.rel, definitions);
     if !enabled.contains(&ProjectRule::DefkCalledBare) || !in_population || defks.is_empty() {
@@ -2072,7 +2082,8 @@ fn judge_bare_calls(
     let lines = LineIndex::new(source);
     let module = module_of(&file.rel);
     let facts = read_facts(Language::Hy, source, &module, &definitions.tags);
-    bare_calls::bare_calls_in(source, smells::Scope { module: &module, bindings: &facts.bindings }, defks)
+    let scope = smells::Scope { module: &module, bindings: &facts.bindings };
+    let mut drafts: Vec<Draft> = bare_calls::bare_calls_in(source, scope, defks)
         .into_iter()
         .map(|call| Draft {
             rule: ProjectRule::DefkCalledBare,
@@ -2085,7 +2096,52 @@ fn judge_bare_calls(
             base: Severity::Error,
             explain: Explain::BareDefkCall { call },
         })
-        .collect()
+        .collect();
+    // 引数で受けた関数を素で呼ぶ形 — 呼び手がその引数に defk か fnk を渡している時だけ。
+    drafts.extend(param_calls::param_calls_in(source, scope, defks, program_params).into_iter().map(|call| Draft {
+        rule: ProjectRule::DefkCalledBare,
+        layer: None,
+        rel: file.rel.clone(),
+        path: file.path.clone(),
+        range: lines.range(call.span.start, call.span.end),
+        message: format!(
+            "{} の {} が引数 {} を素で呼ぶ — 呼び手({})が {} を渡すので、答えではなく Program が返る",
+            file.rel, call.definition, call.param, call.caller, call.passed
+        ),
+        detail: Some(call.detail()),
+        base: Severity::Error,
+        explain: Explain::ParamCalledBare { call },
+    }));
+    drafts
+}
+
+/// DOEFF126 の 2 つ目の形の材料 — repo の全部の呼びのうち、引数に defk か fnk を渡している物(規則が有効な時だけ)。
+fn program_params_for(
+    root: &Path,
+    enabled: &BTreeSet<ProjectRule>,
+    defks: &bare_calls::DefkNames,
+) -> param_calls::ProgramParams {
+    let mut params = param_calls::ProgramParams::default();
+    if !enabled.contains(&ProjectRule::DefkCalledBare) || defks.is_empty() {
+        return params;
+    }
+    // file ごとに並べて読み、最後に束ねる。
+    let found: Vec<param_calls::ProgramParams> = hy_index::collect_hy_files(root)
+        .par_iter()
+        .filter_map(|path| {
+            let rel = relative_path(root, path)?;
+            let source = std::fs::read_to_string(path).ok()?;
+            let module = module_of(&rel);
+            let bindings = facts::hy_bindings(&source, &module);
+            let mut one = param_calls::ProgramParams::default();
+            one.collect(&source, &rel, smells::Scope { module: &module, bindings: &bindings }, defks);
+            Some(one)
+        })
+        .collect();
+    for one in found {
+        params.merge(one);
+    }
+    params
 }
 
 /// DOEFF121 の問いを当てる定義の種類(関数と handler)。
