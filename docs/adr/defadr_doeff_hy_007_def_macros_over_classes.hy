@@ -1,8 +1,9 @@
-;;; Executable ADR: 名を持ち道具が読む宣言は def* で書き、class を作らない — データの型は defrecord、
-;;; 振る舞いは defk / defhandler、外の library が class を要求する所だけ理由の註つきの逃げ道。
+;;; Executable ADR: 名を持ち道具が読む宣言は def* で書く。外の世界に触る class(client・store)と状態の変わる class
+;;; (模擬の store・キャッシュ)は作らず、土台の handler と session val / var に置く。値の class(Point2D)は許す。
 ;;;
 ;;; 出自 = operator 裁定 2026-09-27(Claude Code の会話・agora-redesign #798・逐語は :problem の fact)。
-;;; coordinator の提案を operator が "perfect, lets go with def*" で採った。
+;;; coordinator の提案を operator が "perfect, lets go with def*" で採り、同じ日に的を 2 度絞った(class 全般 → 処理を持つ class →
+;;; 外の世界に触る class と状態の変わる class。値の class は許す)。判定は名前でなく中身の証拠で、理由の註は要らない。
 ;;;
 ;;; 置き場の判断: ADR-DOE-HY-004(関数の語彙は defk のみ)の続きに足さず、新しい冊にした。HY-004 は関数の定義
 ;;; (defn / deff / defk)の語彙と、理由の註の無い deff の台帳を持つ冊で、型と class の定義は別の軸 — 同じ冊に混ぜると
@@ -26,7 +27,7 @@
 
 
 (defadr ADR-DOE-HY-007
-  :title "名を持ち道具(linter・索引・エディタ・型検査)が読む宣言は def*(doeff-hy に置き、読み方の規則つき)で書く。データの型は defrecord(:tags と :check の節を持つ)、振る舞いは defk / defhandler で書き、振る舞いを持つ class は作らない。実行時の値は defrecord の型を呼んで作る。外の library が class を要求する所だけ、deff と同じく理由の註つきの逃げ道"
+  :title "名を持ち道具(linter・索引・エディタ・型検査)が読む宣言は def*(doeff-hy に置き、読み方の規則つき)で書く。外の世界に触る class(method に生の副作用・資源を欄に持つ — client・store)は土台の handler(資源は session val)に、状態の変わる class(method が self を書き換える — 模擬の store・キャッシュ)は handler の session var に置き換える。値の class(欄が変わらず method は欄から計算するだけ — Point2D)・例外・Enum・Protocol・外の基底を継ぐ物は許す。欄だけの型は defrecord を勧める。判定は名前でなく中身の証拠(doeff-linter DOEFF119・理由の註は要らない)"
   :status "accepted"
   :scope ["docs/adr/defadr_doeff_hy_007_def_macros_over_classes.hy"
           "packages/doeff-hy/src/doeff_hy/record.hy"
@@ -34,6 +35,12 @@
   :problem
     [(fact
        "operator 裁定 2026-09-27(逐語 2 つ): \"and i wonder, if we should keep preferring def* macros  instead of making classes.\" / \"perfect, lets go with def*\""
+       :evidence "Claude Code の会話(2026-09-27・agora-redesign #798)— coordinator 経由")
+     (fact
+       "operator 裁定 2026-09-27(的の絞り込み・逐語 2 つ): \"well, use of defclass maybe okay,,, but i dont really see the reason to use them in doeff+hy code, like **client or something like that\" / \"well, a class like Point2D/Point3D could be a class right? but clients and stores... they are completely suited for handlers/effects..\""
+       :evidence "Claude Code の会話(2026-09-27・agora-redesign #798)— coordinator 経由")
+     (fact
+       "operator の問い 2026-09-27(逐語): \"yeah pure data like AST/numerics are good for data classes. global services are always handler/effects, then what about stateful objects like game entity,, like a character?\""
        :evidence "Claude Code の会話(2026-09-27・agora-redesign #798)— coordinator 経由")
      (fact
        "実測: agora-controllers に defclass 848・defrecord 338(coordinator の計測・2026-09-27)。同じ日のこの席の数え(git grep の出現数・origin/main 380ae943)は defclass 819・defrecord 414。doeff(origin/main 772a4405)は defclass 614・defrecord 98。"
@@ -48,27 +55,39 @@
     [(interpretation
        "def* の宣言は、名前・欄・契約・タグを macro の形で固定するので、linter・索引・エディタ・型検査が読み方の規則(HY-005 R5 の投影)1 つで読める。素の class は method の中に何でも書けるので、道具はそれが値の型なのか振る舞いなのかを読み分けられない。")
      (interpretation
-       "振る舞いを class の method に置くと、effect を出せない層(HY-004 が defn を禁じたのと同じ理由)が生まれ、handler で差し替えられない。振る舞いを defk / defhandler に置けば、値の型(defrecord)と計算(defk)と解釈(defhandler)が別々の宣言になる。")
+       "client・store のように外の世界に触る method は effect を通らないので、handler の差し替え(模擬)・記録と再生・層の規則(生の副作用は土台だけ)が効かず、生の副作用が土台の外に漏れる。接続や資源は土台の handler が (session val …) で持ち、状態は handler の (session var …) で持てば、どちらも effect の向こうに入る。")
+     (interpretation
+       "値の class(Point2D・Point3D — 欄が変わらず、method は欄から計算するだけ)は外の世界にも変わる状態にも触らないので、上の害が無く許す。線は名前ではなく中身 — method の中に生の副作用があるか、資源を欄に持つか、self を書き換えるか — で引く。")
      (interpretation
        "dataclass の __post_init__ で書いていた検めは、defrecord の :check の節へ移す — 検めが型の宣言の一部として道具から読める。")]
   :decision
     [(rule R1 "名を持ち道具(linter・索引・エディタ・型検査)が読む宣言は def* で書く。def* の macro は doeff-hy に置き、読み方の規則(投影)を同じ便で持つ(ADR-DOE-HY-005 R4・R5)。")
-     (rule R2 "データの型は defrecord で書く。defrecord は :tags({:context … :role …})と :check(値を作る時の検め)の節を持つ。dataclass の __post_init__ に書いていた検めは :check へ移す。")
-     (rule R3 "振る舞いを持つ class(method の中に処理を書く class)は作らない。振る舞いは defk(計算)と defhandler(effect の解釈)に置く。実行時の値は defrecord の型を呼んで作る。")
-     (rule R4 "外の library が class を要求する所(基底 class を継ぐことが library の規約の所)だけ、素の defclass を逃げ道として許す。同じ行に『; defrecord にできない: <理由>』を書く(deff の逃げ道と同じ形 — ADR-DOE-HY-004 R1)。")
-     (rule R5 "判定の正本は doeff-linter の DOEFF119(素の defclass を違反にする・既存分は登録簿で持ち、縮める向きにだけ動く)。DOEFF119 と defrecord の :tags / :check が着地するまで、この冊の law は未配線。")]
+     (rule R2 "欄だけの型は defrecord で書くことを勧める(情報)。defrecord は :tags({:context … :role …})と :check(値を作る時の検め)の節を持つ。dataclass の __post_init__ に書いていた検めは :check へ移す。")
+     (rule R3 "外の世界に触る class(method に生の副作用がある・資源〔接続・file・socket〕を欄に持つ — client・store・手順を包む物。例 PgStore・Client)は作らない。土台の handler に置き換え、資源は (session val …) で持つ。")
+     (rule R4 "状態の変わる class(method が self を書き換える — 模擬の store・キャッシュ・ゲームのキャラクターのような entity。例 FakeRecordStore)は作らない(警告)。状態を持つ entity は、値を defrecord(不変)・振る舞いを新しい値を返す純粋な関数(defk)・状態を world の handler の (session var …) 1 か所に置き、変化は effect(例 GetCharacter・UpdateCharacter)で流す。理由: self を書き換えると変化が effect を通らず、模擬・記録と再生・並行が効かない。速さのために書き換えが要る時(大量の entity・numpy の配列・ECS)も、書き換えは handler の中だけで行う。")
+     (rule R5 "許す class: 値の class(欄が変わらず、method は欄から計算するだけ — Point2D・Point3D)・例外・Enum・Protocol・外の library の基底を継ぐ物。理由の註は要らない。判定は名前でなく中身の証拠(method の中の生の副作用・資源の欄・self の書き換え)で、正本は doeff-linter の DOEFF119。DOEFF119 と defrecord の :tags / :check が着地するまで、この冊の law は未配線。")
+     (rule R7 "区分の表: 純粋なデータ(AST・数値・Point2D)= defrecord(純粋な method は可)/ global な service(client・store)= 土台の handler と effect / 状態を持つ entity(ゲームのキャラクターなど)= 値(defrecord)+ 純粋な関数 + world の handler の session var。")
+     (rule R6 "改訂の記録(2026-09-27): 初版の『振る舞いを持つ class を作らない・外の library が class を要求する所だけ理由の註つきの逃げ道』は、operator の的の絞り込み 2 つで R3〜R5 に置き換えた。戻し方: 的を広げ直すなら、この改訂の commit を revert する(初版の R2〜R5 と law へ戻る)。")]
   :laws
-    [(law declarations-are-def-macros
-       :statement "for_all 型の定義 t(Hy): t は defrecord(または defenum・defeffect などの def*)で書かれている ∨ t は登録簿 DOEFF119 に載った既存の defclass ∨ t の行に『defrecord にできない』の理由の註がある(外の library の基底を継ぐ)"
+    [(law world-touching-classes-become-foundation-handlers
+       :statement "for_all class c(Hy・例外・Enum・Protocol・外の基底を継ぐ物を除く): c の method に生の副作用が無く、c の欄に資源(接続・file・socket)が無い — 外の世界に触る物は土台の handler で、資源は session val"
        :counterexamples
-         [(counterexample "(defclass [(dataclass :frozen True)] BudgetRow [] …) を新しく書く — defrecord で 1 行に書け、:tags を持てる")
-          (counterexample "__post_init__ で欄を検める dataclass — 検めは defrecord の :check に書ける")]
+         [(counterexample "(defclass PgStore [] (defn put [self row] (with [c (psycopg.connect self.dsn)] …))) — 書きが effect を通らず、模擬へ差し替えも記録と再生もできない")
+          (counterexample "(defclass BudgetClient [] (defn spend [self n] (requests.post self.url …))) — client は effect と土台の handler にする")]
        :enforced-by ["doeff-linter DOEFF119"]
-       :wiring "未配線(2026-09-27)— DOEFF119 は doeff-linter に未着地。defrecord の :tags / :check も未実装")
-     (law no-behavior-in-classes
-       :statement "for_all class c(Hy・逃げ道を除く): c は method の中に処理を持たない — 振る舞いは defk / defhandler に在る"
+       :wiring "未配線(2026-09-27)— DOEFF119 は doeff-linter に未着地")
+     (law state-changing-classes-become-session-var
+       :statement "for_all class c(Hy・上と同じ除外): c の method は self を書き換えない — 変わる状態は handler の session var"
        :counterexamples
-         [(counterexample "(defclass BudgetClient [] (defn spend [self n] …)) — 振る舞いが effect を出せない method に閉じ、handler で差し替えられない(client は effect と handler にする)")]
+         [(counterexample "(defclass FakeRecordStore [] (defn put [self row] (.append self.rows row))) — 模擬の store の状態が handler の外に在り、handler の差し替えで入れ替わらない")
+          (counterexample "キャッシュの class が (setv (get self.entries key) v) で覚える — 状態は (session var …) で持つ")
+          (counterexample "(defclass Character [] (defn take-damage [self n] (-= self.hp n))) — キャラクターの変化が effect を通らず、記録と再生・並行が効かない。値は defrecord、take-damage は新しい値を返す関数、状態は world の handler の session var に置き、UpdateCharacter で流す")]
+       :enforced-by ["doeff-linter DOEFF119"]
+       :wiring "未配線(2026-09-27)— DOEFF119 は doeff-linter に未着地(この law は警告)")
+     (law value-classes-are-allowed
+       :statement "for_all class c: c の欄が変わらず、c の method が欄から計算するだけ ⇒ c は DOEFF119 の違反ではない(Point2D・Point3D)"
+       :counterexamples
+         [(counterexample "Point2D に norm の method があるだけで違反にする — 名前や method の有無で判定すると、害の無い値の class まで断る")]
        :enforced-by ["doeff-linter DOEFF119"]
        :wiring "未配線(2026-09-27)— DOEFF119 は doeff-linter に未着地")]
   :enforcement
