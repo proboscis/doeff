@@ -234,6 +234,24 @@ pub fn run_with(root: &Path, settings: &ProjectSettings, enabled: &BTreeSet<Proj
                     }
                 }
             }
+            if let Some(architecture) = &settings.architecture {
+                if enabled.contains(&ProjectRule::JsonValueOutsideWire) {
+                    let judged: Vec<Result<Option<Draft>, String>> = collect_json_value_files(root)
+                        .par_iter()
+                        .map(|file| {
+                            std::fs::read_to_string(&file.path)
+                                .map(|source| judge_json_value(file, &source, architecture, settings.layers.as_ref()))
+                                .map_err(|error| format!("{}: 読めない: {}", file.rel, error))
+                        })
+                        .collect();
+                    for result in judged {
+                        match result {
+                            Ok(found) => drafts.extend(found),
+                            Err(error) => report.errors.push(error),
+                        }
+                    }
+                }
+            }
             if let Some(env) = &settings.environment {
                 if enabled.contains(&ProjectRule::EnvironmentName) {
                     for file in &env_files {
@@ -301,6 +319,12 @@ pub fn run_with(root: &Path, settings: &ProjectSettings, enabled: &BTreeSet<Proj
                 {
                     let file = SourceFile { rel: rel.clone(), path: path.clone(), language: Language::Hy };
                     drafts.extend(judge_definitions(&file, source, definitions, enabled, plain_callable_reasons(settings), hy_file.as_ref()));
+                }
+            }
+            if let (Some(architecture), Some(rel), Some(language)) = (&settings.architecture, &rel, language_of(&path)) {
+                if enabled.contains(&ProjectRule::JsonValueOutsideWire) && is_json_value_file(rel) {
+                    let file = SourceFile { rel: rel.clone(), path: path.clone(), language };
+                    drafts.extend(judge_json_value(&file, source, architecture, settings.layers.as_ref()));
                 }
             }
             if let (Some(env), Some(rel)) = (&settings.environment, &rel) {
@@ -2014,6 +2038,135 @@ fn judge_definitions(
         }
     }
     drafts
+}
+
+// --- JsonValue の使い場所(DOEFF120)---------------------------------------------------
+
+/// DOEFF120 が数える名 — 素の dict・list・str … を名で包んだだけの型(JsonObject = dict[str, JsonValue] も同じ逃げ道)。
+const JSON_VALUE_NAMES: &[&str] = &["JsonValue", "JSONValue", "JsonObject", "JSONObject"];
+
+/// どの repo でも JsonValue を使ってよい汎用の解き手の module(doeff-hy の defwire の実行時・doeff-records の wire)。
+/// module の綴りの末尾の段で照らす(doeff の repo の `packages/doeff-hy/src/doeff_hy/wire.hy` = `packages.doeff-hy.src.doeff_hy.wire` も当たる)。
+const BUILTIN_WIRE_MODULES: &[&str] = &["doeff_hy.wire", "doeff_records.wire"];
+
+/// DOEFF120 の母集団で降りない dir(`.` で始まる隠し dir も降りない — `.venv`・`.git`・`.worktrees` …)。
+const JSON_VALUE_SKIPPED_DIRS: &[&str] = &["node_modules", "target", "__pycache__", "venv", "site-packages"];
+
+/// DOEFF120 の許しの判定(閉じた集合)。
+enum JsonValueAllowance {
+    /// JsonValue を使ってよい。
+    Allowed,
+    /// 使えない(訳は説明に出す)。
+    Refused(explain::JsonValueRefusal),
+}
+
+/// DOEFF120 の許しの方針 — module が JsonValue を使ってよいかを、この 1 か所だけで決める。
+///
+/// 方針は差し替えられる形にしてある: 許す場所の決め方を変える時(例: defwire の macro が生む解き手の中だけを許す形へ移る時)は、
+/// この関数の中身だけを替える。呼び手(母集団・名の数え方・鍵・説明の形)は変わらない。
+///
+/// 今の方針(agora-redesign #840・operator 2026-09-28「JsonValue に触ってよいのは、汎用の解き手と、送受信そのものを行う foundation だけ」):
+/// 1. 組み込みの汎用の解き手(`BUILTIN_WIRE_MODULES`)は許す。
+/// 2. architecture.hy の `:wire-modules` の pattern に当たり、かつ foundation の層(`:foundation` の層の置き場)に在る module は許す。
+/// 3. `:wire-modules` に当たっても foundation の外なら許さない(訳を説明に出す)。当たらなければ許さない。
+fn json_value_allowance(rel: &str, module: &str, architecture: &architecture::Architecture, layers: Option<&LayerSettings>) -> JsonValueAllowance {
+    if BUILTIN_WIRE_MODULES.iter().any(|parser| module == *parser || module.ends_with(&format!(".{}", parser))) {
+        return JsonValueAllowance::Allowed;
+    }
+    let Some(pattern) = architecture.wire_modules.iter().find(|pattern| module_pattern_matches(pattern, module)) else {
+        return JsonValueAllowance::Refused(explain::JsonValueRefusal::NotListed);
+    };
+    let in_foundation = match (&architecture.foundation, layers) {
+        (Some(foundation), Some(layers)) => classify_layer_file(rel, layers).is_some_and(|(site, _)| layers.layers[site.layer.0].name == *foundation),
+        _ => false,
+    };
+    match in_foundation {
+        true => JsonValueAllowance::Allowed,
+        false => JsonValueAllowance::Refused(explain::JsonValueRefusal::ListedOutsideFoundation {
+            pattern: pattern.clone(),
+            foundation_dir: architecture.foundation.as_ref().map(|f| format!("{}/{}", settings::normalize_dir(&architecture.root), f)),
+        }),
+    }
+}
+
+/// module の綴りの pattern の照合(`.` 区切り — `*` は段の中の任意の綴り・`**` は 0 個以上の段。test_paths の glob と同じ照らし方)。
+fn module_pattern_matches(pattern: &str, module: &str) -> bool {
+    let pattern: Vec<&str> = pattern.split('.').collect();
+    let module: Vec<&str> = module.split('.').collect();
+    segments_match(&pattern, &module)
+}
+
+/// DOEFF120 の母集団の file か — Hy か Python で、隠し dir と `JSON_VALUE_SKIPPED_DIRS` の下でない。
+fn is_json_value_file(rel: &str) -> bool {
+    let parts: Vec<&str> = rel.split('/').collect();
+    let dirs = &parts[..parts.len().saturating_sub(1)];
+    language_of(Path::new(rel)).is_some() && !dirs.iter().any(|dir| dir.starts_with('.') || JSON_VALUE_SKIPPED_DIRS.contains(dir))
+}
+
+/// DOEFF120 の母集団(repo の Hy と Python の file の全部・path の順)。
+fn collect_json_value_files(root: &Path) -> Vec<SourceFile> {
+    let walker = WalkDir::new(root).follow_links(false).into_iter().filter_entry(|entry| {
+        let name = entry.file_name().to_string_lossy();
+        entry.depth() == 0 || !entry.file_type().is_dir() || !(name.starts_with('.') || JSON_VALUE_SKIPPED_DIRS.contains(&name.as_ref()))
+    });
+    let mut files: Vec<SourceFile> = walker
+        .filter_map(Result::ok)
+        .filter(|entry| entry.file_type().is_file())
+        .filter_map(|entry| {
+            let path = entry.into_path();
+            let rel = relative_path(root, &path)?;
+            let language = language_of(&path)?;
+            is_json_value_file(&rel).then_some(SourceFile { rel, path, language })
+        })
+        .collect();
+    files.sort_by(|a, b| a.rel.cmp(&b.rel));
+    files
+}
+
+/// DOEFF120: module 1 つの JsonValue の使用を数え、許されない module なら 1 件出す(位置は最初の使用・数とほかの行は説明に)。
+fn judge_json_value(file: &SourceFile, source: &str, architecture: &architecture::Architecture, layers: Option<&LayerSettings>) -> Option<Draft> {
+    if !JSON_VALUE_NAMES.iter().any(|name| source.contains(name)) {
+        return None;
+    }
+    let module = module_of(&file.rel);
+    let refusal = match json_value_allowance(&file.rel, &module, architecture, layers) {
+        JsonValueAllowance::Allowed => return None,
+        JsonValueAllowance::Refused(refusal) => refusal,
+    };
+    let found = facts::name_occurrences(file.language, source, JSON_VALUE_NAMES);
+    let first = *found.first()?;
+    let lines = LineIndex::new(source);
+    let line_of = |span: &ByteSpan| lines.range(span.start, span.end).start.line as usize + 1;
+    let first_line = line_of(&first);
+    let mut names: Vec<String> = Vec::new();
+    let mut other_lines: Vec<usize> = Vec::new();
+    for span in &found {
+        let name = source.get(span.start..span.end).unwrap_or("").to_string();
+        if !names.contains(&name) {
+            names.push(name);
+        }
+        let line = line_of(span);
+        if line != first_line && !other_lines.contains(&line) {
+            other_lines.push(line);
+        }
+    }
+    let uses = explain::JsonValueUses { names: names.clone(), count: found.len(), first_line, other_lines };
+    Some(Draft {
+        rule: ProjectRule::JsonValueOutsideWire,
+        layer: None,
+        rel: file.rel.clone(),
+        path: file.path.clone(),
+        range: lines.range(first.start, first.end),
+        message: format!(
+            "{} が {} を {} か所で使う — JsonValue に触ってよいのは汎用の解き手と :wire-modules に挙げた foundation の送受信の module だけ",
+            file.rel,
+            names.join("・"),
+            uses.count
+        ),
+        detail: None,
+        base: Severity::Error,
+        explain: Explain::JsonValueUse { module, uses, refusal },
+    })
 }
 
 // --- 環境の語(DOEFF108)---------------------------------------------------------------

@@ -137,6 +137,7 @@
 | DOEFF110 | Hy の `defn` / `defn/a` の定義(decorator つきも)。`do` の中も最上位として見る。`eval-and-compile` / `eval-when-compile` の中は外 | 定義の名 | 定義の名 |
 | DOEFF111 | `deff` の定義の行か直前の行の註(`;` の後)に `definitions.deff_reason_marker` が無い、または理由が空・「同上」とその変形 | 定義の名 | 定義の名 |
 | DOEFF119 | 業務の Hy の file の defclass を中身の証拠で分ける(12 節) | class の名 | class の名 |
+| DOEFF120 | architecture.hy の在る repo の Hy と Python の module が JsonValue・JSONValue・JsonObject・JSONObject を使い、許された module(汎用の解き手・`:wire-modules` に挙げた foundation の module)でない(13 節)。module ごとに 1 件 | なし | 最初の使用 |
 | DOEFF118 | `definitions.test_paths` に当たる file の、名が `test_` で始まる defn・defn/a・deff・defk・fn の束縛 | 定義の名 | 定義の名 |
 | DOEFF112 | `tags.require_on` の頭の定義の :tags(defeffect は辞書の :tags)に `tags.required` の鍵(空でない文字列)が無い。`module_default` なら module の頭のタグの鍵で補う | 定義の名 | 定義の名 |
 | DOEFF113 | service を持つ file のタグの :context が service の名と違う(`-` と `_` は同じに見る・共有の置き場は見ない)。info | 食い違う :context | タグの辞書 |
@@ -196,6 +197,7 @@ law の対応だけを残す。無ければ TOML の設定で今どおり動く�
   :foundation foundation                      ; root/foundation/ — service の外の層(同じ名の layer が要る)
   :open-layers [intent]                       ; 別の service から読んでよい層(既定 intent)
   :roles {:judgment "業務の判断をする純粋な関数" …}   ; role の説明
+  :wire-modules ["controllers.foundation.records_client"]  ; JSON の送受信そのものを行う foundation の module(DOEFF120・13 節)
   :exclude ["tests" "__pycache__" "conftest.py"]    ; 既定のまま
   :extensions ["hy" "py"]                           ; 既定 hy・hyk・hyp・py
   :shared "shared")  ; :legacy は廃止(書くと設定の誤り — 宣言の外の module は全部 DOEFF114・115、既存の分は登録簿)
@@ -323,3 +325,24 @@ handlers/effects.." / "such distinction could be passed to jev?")。名前では
   source(タグを消して `source_limit` で切る)と欄の宣言(`名: 型`)。選択肢 = value / external-world / stateful / other(問いの文は
   `src/project/semantic.rs` の `ClassRole` の 1 か所)。external-world か stateful を `semantic.class_role.warning_min`(既定 0.7)以上で warning、
   `info_min`(既定 0.5)以上で info。較正の見張りは合成の 2 例(client を欄に持つ窓口・Point2D)の external-world の確率を比べる。
+
+## 13. JsonValue の使い場所 — DOEFF120
+
+agora-redesign #840・operator 2026-09-28(逐語 "and i dont think we should make anyone use that directry instead of actually parsing and
+validating it like pydantic does")。JsonValue(素の `dict | list | str | int | float | bool | None` を名で包んだだけの型)に触ってよいのは、
+汎用の解き手と、送受信そのものを行う foundation の module だけ。ほかの module は型のある値だけを見る。例と設定は [rules/DOEFF120.md](rules/DOEFF120.md)。
+
+- **有効になる条件**: architecture.hy が在る(`project_wired` は architecture の有無)。
+- **母集団**: repo の Hy(hy・hyk・hyp)と Python(py)の file の全部。`.` で始まる隠し dir と `node_modules`・`target`・`__pycache__`・`venv`・
+  `site-packages` は降りない。4 つの名のどれも本文に無い file は読まない。
+- **数える物**: Hy は読み取り器の記号で、最後の `.` の段が `JsonValue`・`JSONValue`・`JsonObject`・`JSONObject` の物(import・定義・注釈・契約・
+  tuple の中・quote の中)。文字列・註・docstring・`#_` の form は数えない。Python は字句の名(名前・属性の名・import の名)と、注釈(引数・
+  戻り値・`x: T`)と型の別名(`X: TypeAlias = …` の値・`type X = …`)の文字列の中の語(前後が識別子の文字でない物)。docstring・註・f 文字列は数えない。
+- **許す module**(`json_value_allowance` — 方針はこの関数 1 つだけにあり、差し替えられる):
+  1. module の綴り(repo の根からの path の拡張子を外し `/` を `.` にした物)が `doeff_hy.wire`・`doeff_records.wire` か、`.` + それで終わる。
+  2. architecture.hy の `:wire-modules` の pattern(`.` 区切り・`*` は段の中の任意の綴り・`**` は 0 個以上の段)に当たり、かつ層の置き場で
+     `:foundation` の層に入る。当たっても foundation の外なら許さない(説明に訳)。
+- **違反**: module ごとに 1 件・error。鍵 `<path>::DOEFF120`(細目なし)。位置は最初の使用の名。説明の主体に使った名・数・最初の行・ほかの行
+  (20 行まで・残りは数)。登録簿に載れば `registered_severity`。
+- **設定の誤り**: `:wire-modules` の要素が module の綴りでない(`/` を含む・空の段・段の中の `**`)・同じ綴りの 2 度書き・`:foundation` の無い宣言。
+- **戻し方**: 規則を外す(型に起こした値はそのままで害は無い)。

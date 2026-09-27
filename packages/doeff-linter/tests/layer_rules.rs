@@ -1073,3 +1073,112 @@ fn classes_are_judged_by_what_their_methods_touch_not_by_name() {
     assert!(violation(&report, "app/core/shapes.hy::DOEFF119::Row")["hint"].as_str().unwrap().starts_with("defrecord にする"));
     assert_eq!(violation(&report, "app/core/shapes.hy::DOEFF119::Known")["registered"], true);
 }
+
+/// DOEFF120 の repo — architecture.hy(foundation と :wire-modules つき)・DOEFF120 だけを入れた TOML・既知の破れの登録簿。
+fn json_value_repo(files: &[(&str, &str)], registry: &str) -> tempfile::TempDir {
+    let dir = tempfile::TempDir::new().unwrap();
+    std::fs::write(
+        dir.path().join("architecture.hy"),
+        r#"(defarchitecture sample
+  :root "app"
+  :layers [(layer core :roles [judgment type])
+           (layer intent :roles [intent type])
+           (layer protocol :roles [translation])
+           (layer foundation :roles [foundation])]
+  :foundation foundation
+  :wire-modules ["app.foundation.records_client" app.billing.protocol.wire_*])
+(defservice billing "請求" {:layers [core intent protocol]})
+"#,
+    )
+    .unwrap();
+    std::fs::write(
+        dir.path().join("pyproject.toml"),
+        "[tool.doeff-linter]\nenable = [\"DOEFF120\"]\n[tool.doeff-linter.registry]\nfiles = [\"known.txt\"]\n[tool.doeff-linter.rules.DOEFF120]\nregistered_severity = \"info\"\n",
+    )
+    .unwrap();
+    std::fs::write(dir.path().join("known.txt"), registry).unwrap();
+    for (rel, text) in files {
+        let path = dir.path().join(rel);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, text).unwrap();
+    }
+    dir
+}
+
+#[test]
+fn json_value_is_allowed_only_in_parsers_and_listed_foundation_modules() {
+    let files = [
+        // core の Hy — import と注釈(#^)。docstring の語は数えない。
+        (
+            "app/billing/core/decide.hy",
+            "(import doeff_hy.wire [JsonValue])\n(defk decide [#^ JsonValue payload] {:pre [] :post []}\n  \"JsonValue を受けて決める\"\n  (get payload \"k\"))\n",
+        ),
+        // 型の別名の文字列の中の語も数える(名 1 つ + 文字列の中の語 2 つ = 3 か所・どれも 3 行目)。
+        (
+            "app/billing/protocol/shape.py",
+            "from typing import TypeAlias\n\nJsonValue: TypeAlias = \"dict[str, JsonValue] | list[JsonValue] | str | int | float | bool | None\"\n",
+        ),
+        // JsonObject(dict[str, JsonValue])も同じ逃げ道 — 文字列の注釈と、Hy の #( … ) の中。
+        ("app/billing/core/obj.py", "def read(payload: \"JsonObject\") -> int:\n    return 1\n"),
+        ("app/billing/intent/body.hy", "(setv Body (get dict #(str JsonObject)))\n"),
+        // 文字列・註・docstring だけの言及は数えない。
+        ("app/billing/core/doc_only.hy", ";; JsonValue は使わない\n(defk f [x] \"JsonValue ではなく型のある値を受ける\" x)\n"),
+        ("app/billing/core/doc_only.py", "\"\"\"JsonValue の話だけ。\"\"\"\n# JsonValue\ndef f(x: int) -> int:\n    \"\"\"JsonObject とは書かない\"\"\"\n    return x\n"),
+        // :wire-modules に在り foundation の層に在る → 許す。foundation でも :wire-modules に無ければ許さない。
+        ("app/foundation/records_client.hy", "(import doeff_hy.wire [JsonValue])\n(defk send [#^ JsonValue body] body)\n"),
+        ("app/foundation/other.py", "from doeff_hy.wire import JsonValue\n"),
+        // :wire-modules の pattern に当たるが foundation の外 → 許さない(訳を説明に出す)。
+        ("app/billing/protocol/wire_codec.hy", "(import doeff_hy.wire [JsonValue])\n"),
+        // 組み込みの汎用の解き手(module の綴りの末尾が doeff_records.wire)は、どこに置かれても許す。
+        ("vendor/doeff_records/wire.hy", "(setv JsonValue object)\n"),
+        // 隠し dir の下は母集団の外。
+        (".venv/lib/x.py", "JsonValue = dict\n"),
+        // 登録簿に載った既知の分は registered_severity(この設定では info)。
+        ("app/billing/core/known.hy", "(setv x (: payload JsonValue))\n"),
+    ];
+    let dir = json_value_repo(&files, "app/billing/core/known.hy::DOEFF120\n");
+    let (code, report) = editor(dir.path());
+    assert_eq!(code, 1, "{}", report);
+    assert_eq!(
+        keys(&report, "DOEFF120"),
+        vec![
+            "app/billing/core/decide.hy::DOEFF120",
+            "app/billing/core/known.hy::DOEFF120",
+            "app/billing/core/obj.py::DOEFF120",
+            "app/billing/intent/body.hy::DOEFF120",
+            "app/billing/protocol/shape.py::DOEFF120",
+            "app/billing/protocol/wire_codec.hy::DOEFF120",
+            "app/foundation/other.py::DOEFF120",
+        ]
+    );
+    // module ごとに 1 件・位置は最初の使用・数とほかの行は説明に。
+    let decide = violation(&report, "app/billing/core/decide.hy::DOEFF120");
+    assert_eq!(decide["severity"], "error");
+    assert_eq!(decide["range"]["start"], serde_json::json!({"line": 0, "character": 23}));
+    assert_eq!(decide["explanation"]["subject"], "module app.billing.core.decide — JsonValue を 2 か所で使う(最初 1 行目・ほかに 2 行目)");
+    assert!(decide["explanation"]["reason"].as_str().unwrap().ends_with("この module は :wire-modules に無い。"), "{}", decide["explanation"]["reason"]);
+    assert!(decide["hint"].as_str().unwrap().starts_with("JSON の形を defwire で型に起こし"), "{}", decide["hint"]);
+    let shape = violation(&report, "app/billing/protocol/shape.py::DOEFF120");
+    assert_eq!(shape["severity"], "error");
+    assert_eq!(shape["explanation"]["subject"], "module app.billing.protocol.shape — JsonValue を 3 か所で使う(すべて 3 行目)");
+    assert_eq!(violation(&report, "app/billing/core/obj.py::DOEFF120")["explanation"]["subject"], "module app.billing.core.obj — JsonObject を 1 か所で使う(1 行目)");
+    let listed = violation(&report, "app/billing/protocol/wire_codec.hy::DOEFF120");
+    assert_eq!(listed["severity"], "error");
+    assert!(
+        listed["explanation"]["reason"].as_str().unwrap().contains(":wire-modules の app.billing.protocol.wire_* に当たるが、foundation の層(app/foundation/)に無いので許さない"),
+        "{}",
+        listed["explanation"]["reason"]
+    );
+    assert!(listed["hint"].as_str().unwrap().starts_with("送受信そのものを app/foundation/ の module へ移して"), "{}", listed["hint"]);
+    let known = violation(&report, "app/billing/core/known.hy::DOEFF120");
+    assert_eq!(known["severity"], "info");
+    assert_eq!(known["registered"], true);
+
+    // 保存前の 1 file(stdin)も同じ判定。許された module は何も出さない。
+    let (_, stdout, stderr) = run(dir.path(), &["--output-format", "editor-json", "--no-log", "--stdin", "--path", "app/billing/core/decide.hy"], Some(files[0].1));
+    let single: Value = serde_json::from_str(&stdout).unwrap_or_else(|e| panic!("{}: {}", e, stderr));
+    assert_eq!(keys(&single, "DOEFF120"), vec!["app/billing/core/decide.hy::DOEFF120"]);
+    let (_, stdout, _) = run(dir.path(), &["--output-format", "editor-json", "--no-log", "--stdin", "--path", "app/foundation/records_client.hy"], Some(files[6].1));
+    let allowed: Value = serde_json::from_str(&stdout).unwrap();
+    assert!(keys(&allowed, "DOEFF120").is_empty(), "{}", allowed);
+}
