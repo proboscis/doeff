@@ -383,6 +383,8 @@ pub struct LayerSettings {
     pub exclude: BTreeSet<String>,
     pub extensions: BTreeSet<String>,
     pub tags: TagReading,
+    /// architecture.hy の root(在れば、宣言した置き場所の外の module の層を :role のタグから推す)。
+    pub infer_root: Option<String>,
 }
 
 /// 環境の語の設定(検めた後)。
@@ -766,6 +768,7 @@ fn validate_layers(
         exclude: section.exclude.iter().cloned().collect(),
         extensions: section.extensions.as_ref().map(|e| e.iter().cloned().collect()).unwrap_or_else(default_extensions),
         tags: tag_reading(tags, section.function_definers.as_ref()),
+        infer_root: None,
     }
 }
 

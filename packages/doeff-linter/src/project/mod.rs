@@ -134,6 +134,8 @@ struct ModuleSite {
     layer: LayerId,
     dir: String,
     service: Option<String>,
+    /// 層を path ではなくタグの role から推したか(architecture.hy の宣言した置き場所の外の module)。
+    by_tags: bool,
 }
 
 /// 層の規則を走らせる。root は正規化した repo の根、enabled は有効な規則。
@@ -203,7 +205,7 @@ pub fn run_with(root: &Path, settings: &ProjectSettings, enabled: &BTreeSet<Proj
             if let (Some(architecture), Some(layers)) = (&settings.architecture, &settings.layers) {
                 if enabled.contains(&ProjectRule::UndeclaredPlace) || enabled.contains(&ProjectRule::UndeclaredDirectory) {
                     let files = collect_architecture_files(root, architecture, layers);
-                    drafts.extend(judge_places(root, architecture, &files, enabled, PlaceScope::Whole));
+                    drafts.extend(judge_places(root, architecture, layers, &files, enabled, PlaceScope::Whole, None));
                 }
             }
             if let Some(definitions) = &settings.definitions {
@@ -253,6 +255,7 @@ pub fn run_with(root: &Path, settings: &ProjectSettings, enabled: &BTreeSet<Proj
             };
             semantic_files = match (&settings.layers, &rel) {
                 (Some(layers), Some(rel)) => classify_layer_file(rel, layers)
+                    .or_else(|| infer_layer_site(rel, source, layers))
                     .map(|(site, language)| {
                         let file = LayerFile { file: SourceFile { rel: rel.clone(), path: root.join(rel), language }, module: module_of(rel), site };
                         vec![(file, Some(source.to_string()))]
@@ -274,7 +277,7 @@ pub fn run_with(root: &Path, settings: &ProjectSettings, enabled: &BTreeSet<Proj
                 indexes.insert(rel.clone(), index.clone());
             }
             if let (Some(layers), Some(rel)) = (&settings.layers, &rel) {
-                if let Some((site, language)) = classify_layer_file(rel, layers) {
+                if let Some((site, language)) = classify_layer_file(rel, layers).or_else(|| infer_layer_site(rel, source, layers)) {
                     let file = LayerFile { file: SourceFile { rel: rel.clone(), path: path.clone(), language }, module: module_of(rel), site };
                     let mut layer_files = collect_layer_files(root, layers);
                     layer_files.push(file.clone());
@@ -288,7 +291,7 @@ pub fn run_with(root: &Path, settings: &ProjectSettings, enabled: &BTreeSet<Proj
             if let (Some(architecture), Some(layers), Some(rel)) = (&settings.architecture, &settings.layers, &rel) {
                 if is_architecture_file(rel, architecture, layers) {
                     let file = SourceFile { rel: rel.clone(), path: path.clone(), language: language_of(&path).unwrap_or(Language::Hy) };
-                    drafts.extend(judge_places(root, architecture, &[file], enabled, PlaceScope::Single));
+                    drafts.extend(judge_places(root, architecture, layers, &[file], enabled, PlaceScope::Single, Some(source)));
                 }
             }
             if let (Some(definitions), Some(rel)) = (&settings.definitions, &rel) {
@@ -450,12 +453,43 @@ fn classify_layer_file(rel: &str, layers: &LayerSettings) -> Option<(ModuleSite,
         for place in &layer.places {
             if let Some(found) = place.matches(rel) {
                 if best.as_ref().is_none_or(|(depth, _)| place.depth() > *depth) {
-                    best = Some((place.depth(), ModuleSite { layer: LayerId(index), dir: found.dir, service: found.service }));
+                    best = Some((place.depth(), ModuleSite { layer: LayerId(index), dir: found.dir, service: found.service, by_tags: false }));
                 }
             }
         }
     }
     best.map(|(_, site)| (site, language))
+}
+
+/// 宣言した置き場所の外(architecture.hy の root の下)の module の層を、:role のタグから推す。role を許す層が 1 つならその層、
+/// 2 つ以上なら path の段に同じ名の層(層が先の dir)があればそれ。推せなければ None(層の規則の母集団に入らない)。
+fn infer_layer_site(rel: &str, source: &str, layers: &LayerSettings) -> Option<(ModuleSite, Language)> {
+    let infer_root = layers.infer_root.as_ref()?;
+    let language = language_of(Path::new(rel))?;
+    let extension = Path::new(rel).extension()?.to_str()?;
+    if !rel.starts_with(&format!("{}/", infer_root)) || !layers.extensions.contains(extension) || rel.split('/').any(|part| layers.exclude.contains(part)) {
+        return None;
+    }
+    // 推すのは層が先の dir(root の下の段に層の名がある — controllers/core/… など)の module だけ。旧い機能の dir は層の規則の母集団に入れない
+    // (前から入っていなかった物を増やさない)。
+    let parts: Vec<&str> = rel.split('/').collect();
+    let dirs = &parts[..parts.len().saturating_sub(1)];
+    let by_path = (0..layers.layers.len()).map(LayerId).find(|id| dirs.contains(&layers.layers[id.0].name.as_str()))?;
+    let facts = read_facts(language, source, &module_of(rel), &layers.tags);
+    let roles: Vec<String> = facts.tag_sets().iter().filter_map(|t| t.role.clone()).filter(|r| !r.is_empty()).collect();
+    let candidates: Vec<LayerId> = (0..layers.layers.len())
+        .map(LayerId)
+        .filter(|id| !roles.is_empty() && roles.iter().all(|role| layers.layers[id.0].roles.as_ref().is_some_and(|allowed| allowed.contains(role))))
+        .collect();
+    let dir = rel.rsplit_once('/').map(|(d, _)| d.to_string()).unwrap_or_default();
+    // role を許す層が 1 つならその層、2 つ以上なら path の段の層を選ぶ。タグで推せない(role が無い・どの層の役でもない)物は path の段の層に置き、
+    // タグの規則(DOEFF104・105)がその理由を出す。
+    let (layer, by_tags) = match candidates.as_slice() {
+        [only] => (*only, true),
+        [] => (by_path, false),
+        many => (many.iter().copied().find(|id| *id == by_path).unwrap_or(many[0]), true),
+    };
+    Some((ModuleSite { layer, dir, service: None, by_tags }, language))
 }
 
 /// 層の置き場の下の module を全部集める(層の順、層の中は path の順)。
@@ -469,6 +503,19 @@ fn collect_layer_files(root: &Path, layers: &LayerSettings) -> Vec<LayerFile> {
                 continue;
             }
             if let Some((site, language)) = classify_layer_file(&rel, layers) {
+                found.insert(rel.clone(), LayerFile { module: module_of(&rel), site, file: SourceFile { rel, path, language } });
+            }
+        }
+    }
+    // 宣言した置き場所の外の module は、タグの role から層を推して母集団に入れる(置き場所の違反は DOEFF114・115 が別に出す)。
+    if let Some(infer_root) = &layers.infer_root {
+        for path in walk_files(&root.join(infer_root)) {
+            let Some(rel) = relative_path(root, &path) else { continue };
+            if found.contains_key(&rel) || language_of(&path).is_none() {
+                continue;
+            }
+            let Ok(source) = std::fs::read_to_string(&path) else { continue };
+            if let Some((site, language)) = infer_layer_site(&rel, &source, layers) {
                 found.insert(rel.clone(), LayerFile { module: module_of(&rel), site, file: SourceFile { rel, path, language } });
             }
         }
@@ -518,7 +565,7 @@ fn judge_layer_file(
             roles.push(role);
         }
     }
-    let placement = Placement { layer: file.site.layer, dir: file.site.dir.clone(), service: file.site.service.clone(), roles };
+    let placement = Placement { layer: file.site.layer, dir: file.site.dir.clone(), service: file.site.service.clone(), roles, by_tags: file.site.by_tags };
     let contexts: Vec<String> = facts.tag_sets().into_iter().filter_map(|t| t.context.clone()).filter(|c| !c.is_empty()).collect();
     let narrator = Narrator { layers: Some(layers), raw: settings.raw.as_ref() };
     let layer_reason = narrator.layer_reason(&placement);
@@ -1116,9 +1163,6 @@ enum PlaceVerdict {
 /// file 1 つを宣言に照らす。
 fn place_verdict(rel: &str, architecture: &architecture::Architecture) -> PlaceVerdict {
     let root = settings::normalize_dir(&architecture.root);
-    if architecture.legacy.iter().any(|l| rel == l.dir || rel.starts_with(&format!("{}/", l.dir))) {
-        return PlaceVerdict::Declared;
-    }
     let rest = rel.strip_prefix(&format!("{}/", root)).unwrap_or(rel);
     // package の印(`__init__.py`・`__init__.hy`)は置き場の module ではない。
     if Path::new(rel).file_stem().is_some_and(|stem| stem == "__init__") {
@@ -1159,9 +1203,54 @@ fn place_verdict(rel: &str, architecture: &architecture::Architecture) -> PlaceV
 }
 
 /// DOEFF114・115: root の下の module を architecture.hy の宣言に照らす。115 は全体では dir ごとに最初の file に 1 度だけ出す。
-fn judge_places(root: &Path, architecture: &architecture::Architecture, files: &[SourceFile], enabled: &BTreeSet<ProjectRule>, scope: PlaceScope) -> Vec<Draft> {
+fn judge_places(
+    root: &Path,
+    architecture: &architecture::Architecture,
+    layers: &LayerSettings,
+    files: &[SourceFile],
+    enabled: &BTreeSet<ProjectRule>,
+    scope: PlaceScope,
+    single_source: Option<&str>,
+) -> Vec<Draft> {
     let _ = root;
     let mut drafts = Vec::new();
+    // 移し先の案: service は :context のタグ(`-` は `_`)、層は今の path の段の層の名か :role のタグから推した層。
+    let destination = |file: &SourceFile| -> String {
+        let source = match single_source {
+            Some(text) => Some(text.to_string()),
+            None => std::fs::read_to_string(&file.path).ok(),
+        }
+        .unwrap_or_default();
+        let facts = read_facts(file.language, &source, &module_of(&file.rel), &layers.tags);
+        let service = facts
+            .tag_sets()
+            .iter()
+            .find_map(|t| t.context.clone().filter(|c| !c.is_empty()))
+            .map(|c| c.replace('-', "_"))
+            .unwrap_or_else(|| "<service>".to_string());
+        let parts: Vec<&str> = file.rel.split('/').collect();
+        let by_path = layers.layers.iter().find(|l| parts[..parts.len().saturating_sub(1)].contains(&l.name.as_str())).map(|l| l.name.clone());
+        // path の段に層の名が無ければ、:role のタグをすべて許す層がちょうど 1 つの時にその層。
+        let roles: Vec<String> = facts.tag_sets().iter().filter_map(|t| t.role.clone()).filter(|r| !r.is_empty()).collect();
+        let by_roles = || {
+            let fitting: Vec<&settings::LayerSpec> = layers
+                .layers
+                .iter()
+                .filter(|l| !roles.is_empty() && roles.iter().all(|role| l.roles.as_ref().is_some_and(|allowed| allowed.contains(role))))
+                .collect();
+            match fitting.as_slice() {
+                [only] => Some(only.name.clone()),
+                _ => None,
+            }
+        };
+        let layer = by_path.or_else(by_roles).unwrap_or_else(|| "<層>".to_string());
+        let name = parts.last().copied().unwrap_or("");
+        let root_dir = settings::normalize_dir(&architecture.root);
+        match architecture.foundation.as_deref() == Some(layer.as_str()) {
+            true => format!("{}/{}/{}", root_dir, layer, name),
+            false => format!("{}/{}/{}/{}", root_dir, service, layer, name),
+        }
+    };
     let mut reported_dirs = BTreeSet::new();
     for file in files {
         let draft = |rule: ProjectRule, range: Range, message: String, detail: Option<String>, explain: Explain, rel: String| Draft {
@@ -1184,12 +1273,28 @@ fn judge_places(root: &Path, architecture: &architecture::Architecture, files: &
                         zero_range(),
                         format!("{} は宣言されていない置き場所に在る", file.rel),
                         None,
-                        Explain::UndeclaredPlace { rel: file.rel.clone(), problem, root: architecture.root.clone() },
+                        Explain::UndeclaredPlace { rel: file.rel.clone(), problem, root: architecture.root.clone(), destination: destination(file) },
                         file.rel.clone(),
                     ));
                 }
             }
             PlaceVerdict::UndeclaredDirectory { dir, problem } => {
+                // 宣言の外の dir の module も file ごとに出す(エディタで file ごとに見え、移し先の案が file ごとに付く)。
+                if enabled.contains(&ProjectRule::UndeclaredPlace) {
+                    drafts.push(draft(
+                        ProjectRule::UndeclaredPlace,
+                        zero_range(),
+                        format!("{} は宣言されていない置き場所に在る", file.rel),
+                        None,
+                        Explain::UndeclaredPlace {
+                            rel: file.rel.clone(),
+                            problem: explain::PlaceProblem::InUndeclaredDirectory { dir: dir.clone() },
+                            root: architecture.root.clone(),
+                            destination: destination(file),
+                        },
+                        file.rel.clone(),
+                    ));
+                }
                 let first_in_dir = scope == PlaceScope::Single || reported_dirs.insert(dir.clone());
                 if enabled.contains(&ProjectRule::UndeclaredDirectory) && first_in_dir {
                     drafts.push(draft(
@@ -1540,10 +1645,16 @@ fn judge_semantic(
             }
             let base = settings.severity(item.question, probability)?;
             let spec = &layers.layers[item.layer.0];
-            let placement = Placement { layer: item.layer, dir: String::new(), service: None, roles: Vec::new() };
+            let placement = Placement { layer: item.layer, dir: String::new(), service: None, roles: Vec::new(), by_tags: false };
             let file_layer = files.iter().find(|(f, _)| f.file.rel == item.rel).map(|(f, _)| f.site.clone());
             let placement = match file_layer {
-                Some(site) => Placement { layer: site.layer, dir: site.dir, service: site.service, roles: roles_of.get(&item.rel).cloned().unwrap_or_default() },
+                Some(site) => Placement {
+                    layer: site.layer,
+                    dir: site.dir,
+                    service: site.service,
+                    roles: roles_of.get(&item.rel).cloned().unwrap_or_default(),
+                    by_tags: site.by_tags,
+                },
                 None => placement,
             };
             Some(Draft {
