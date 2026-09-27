@@ -1,0 +1,57 @@
+{
+ "version": 1,
+ "root": "/repo",
+ "violations": [
+  {
+   "rule": "DOEFF201",
+   "law": "core-imports-only-intent",
+   "adr": "ADR-CONTROLLERS-CHOOSE-ENVIRONMENT-BY-HANDLER-SET",
+   "severity": "warning",
+   "path": "/repo/controllers/kanban/core/goal.hy",
+   "range": {
+    "start": {
+     "line": 3,
+     "character": 0
+    },
+    "end": {
+     "line": 3,
+     "character": 30
+    }
+   },
+   "message": "層 core が層 protocol の controllers.kanban.protocol.wire を import している",
+   "hint": null,
+   "key": "controllers/kanban/core/goal.hy::core-imports-only-intent::controllers.kanban.protocol.wire",
+   "registered": true
+  }
+ ],
+ "modules": [
+  {
+   "path": "/repo/controllers/kanban/core/goal.hy",
+   "layer": "core",
+   "context": "kanban",
+   "role": "program",
+   "violations": 1
+  }
+ ],
+ "rules": [
+  {
+   "rule": "DOEFF201",
+   "adr": "ADR-CONTROLLERS-CHOOSE-ENVIRONMENT-BY-HANDLER-SET",
+   "statement": "core は intent だけを import する",
+   "wired": true
+  },
+  {
+   "rule": "DOEFF299",
+   "adr": "ADR-CONTROLLERS-CHOOSE-ENVIRONMENT-BY-HANDLER-SET",
+   "statement": "entry だけが handler の組を選ぶ",
+   "wired": false
+  },
+  {
+   "rule": "DOEFF101",
+   "adr": null,
+   "statement": "setv を再代入しない",
+   "wired": true
+  }
+ ],
+ "errors": []
+}
