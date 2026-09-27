@@ -1,7 +1,7 @@
 ;;; doeff-hy standard macros — effect composition for doeff.
 ;;;
 ;;; Usage:
-;;;   (require doeff-hy.macros [do! defk deff fnk <- ! <-> set! defp defpp deftest
+;;;   (require doeff-hy.macros [do! defk deff fnk <- ! <-> set! defp defpp deftest defsystem
 ;;;                             defpipeline traverse for/do
 ;;;                             defhandler handle with-handler defmcp-tool
 ;;;                             on-raise absent-as   ; 不在と失敗の境目(ADR-DOE-CORE-EFFECTS-003)
@@ -1717,6 +1717,23 @@ the effect in the enclosing do-context.
        (defn ~name [~@fn-params] ~fn-body)
        (_install-guard-globals ~name {"_doeff_do" _doeff_do})))))
 
+
+;; ---------------------------------------------------------------------------
+;; defsystem — doeff-cluster の系の宣言(ADR-DOE-CLUSTER-001・形の読みは system_form.hy)
+;; ---------------------------------------------------------------------------
+
+(defmacro defsystem [name params #* body]
+  "系を宣言する: 土台を引数に受け、名前 → Program と約束の組(doeff_cluster.service_model.System)を返す関数を定義する。
+
+   (defsystem agora-land [foundation]
+     \"着地の報せの系\"
+     (land-notice (land-notice foundation)
+       :needs #{\"pg-network\"} :readiness {\"windowSeconds\" 30} :update \"handoff\" :environ {\"POLL\" \"5.0\"}))
+
+   形は静的に決まる物だけを受け、外れれば展開の時に SyntaxError(doeff-linter が実行せずに読めるように)。
+   関数には静的な記述 __doeff_system__(名・引数・job ごとの関数の名と約束)が付く。"
+  (import doeff-hy.system-form [defsystem-form])
+  (defsystem-form name params body))
 
 ;; ---------------------------------------------------------------------------
 ;; defpipeline — named-stage pipeline composition
