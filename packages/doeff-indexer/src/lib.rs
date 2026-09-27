@@ -1,4 +1,5 @@
 pub mod deps;
+pub mod hy_index;
 pub mod indexer;
 
 #[cfg(feature = "python")]
