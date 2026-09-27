@@ -4,7 +4,7 @@
 ;;; 同じ worker の中の版の入れ替え(handoff — worker_policy.handoff-actions / retired-actions)と同じ形を worker をまたいで行う:
 ;;;
 ;;;   1. drain を頼まれた worker(POST /workers/<名>/drain)には、新しい置き先(job・task)を割り当てない(cluster_policy.place-jobs)。
-;;;   2. その上の入れ替え(update: handoff)の Service を、条件(requires)を満たす別の生きた worker へ**並べて**置く(surge・1 つだけ)。
+;;;   2. その上の入れ替え(update: handoff)の Service を、能力(needs)の合う別の生きた worker へ**並べて**置く(surge・1 つだけ)。
 ;;;      並べた先の worker は新しい process を起こし、lease を旧が持つ間は standby で待ち、準備できたを報告する。
 ;;;   3. coordinator が並べた先の process を Ready と数えたら(standby の Ready でよい — 同じ worker の中の入れ替えと同じ判定)、
 ;;;      置き先(placements)を並べた先へ付け替える。旧い担い手は次の heartbeat で宣言から外れた job を止め、lease を返す
@@ -155,8 +155,8 @@
     (when (and (is-not job None) (not-in n moving)
                (is (move-target now state job name timing draining load) None))
       (setv (get blocked n)
-            (.format "移す先が無い(求める label {}・固定 {}。生きていて drain 中でなく空きの在る別の worker が無い)— 旧を止めずに待つ"
-                     (dict job.requires) job.pin))))
+            (.format "移す先が無い(要る能力 {}・固定 {}。生きていて drain 中でなく空きの在る別の worker が無い)— 旧を止めずに待つ"
+                     (list job.needs) job.pin))))
   {"worker" name "sinceMs" d.since-ms "untilMs" d.until-ms "boot" d.boot "actor" d.actor
    "phase" (cond (not remaining) "Drained" (and blocked (not moving)) "Blocked" True "Draining")
    "drained" (not remaining)
@@ -173,7 +173,7 @@
   (when (is w None) (refuse 404 (+ "知らない worker: " name)))
   (setv drain (drain-view state name now timing)
         live (alive now w timing.lease-ms))
-  {"name" name "alive" live "silentMs" (- now w.last-seen-ms) "boot" w.boot "labels" (dict w.labels)
+  {"name" name "alive" live "silentMs" (- now w.last-seen-ms) "boot" w.boot "provides" (list w.provides) "exclusive" (list w.exclusive)
    "draining" (is-not drain None) "drain" drain
    "ready" (and live (is drain None))})
 
@@ -186,7 +186,7 @@
         remaining (sorted (gfor t (.values state.tasks)
                                 :if (and t.detached (in t.phase #("assigned" "preparing")) (= t.worker name) (= t.boot boot))
                                 (+ "task/" t.id))))
-  {"name" name "alive" (alive now w timing.lease-ms) "silentMs" (- now w.last-seen-ms) "boot" w.boot "labels" (dict w.labels)
+  {"name" name "alive" (alive now w timing.lease-ms) "silentMs" (- now w.last-seen-ms) "boot" w.boot "provides" (list w.provides) "exclusive" (list w.exclusive)
    "draining" True "superseded" True
    "drain" {"worker" name "boot" boot "superseded" True
             "phase" (if remaining "Draining" "Drained") "drained" (not remaining) "remaining" remaining

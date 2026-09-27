@@ -1,7 +1,7 @@
 ;;; 切り離した task(呼び手と寿命を切り離した task)の effect と、答えの型(2026-09-25)。
 ;;;
 ;;;   (<- submitted (SubmitDetached (summarize rows) :env "myapp.envs:board_env" :key job-id
-;;;                                 :requires #((Requirement "kind" "k3s"))))
+;;;                                 :needs (frozenset ["gpu"])))
 ;;;   ... 呼び手の process が消えてもよい ...
 ;;;   (<- outcome (AwaitDetached job-id))          ; 別の process からでも、同じ key で待てる
 ;;;
@@ -20,7 +20,7 @@
 (import dataclasses [dataclass])
 (import doeff [EffectBase Program])
 (import .remote_model [TaskSucceeded TaskFailed decode-outcome])
-(import .cluster_model [Requirement])
+(import .cluster_model [capability-refusal])
 
 (setv DETACHED-DEFAULT-LEASE-SECONDS 60.0)       ; 担い手の worker が沈黙してから消失とみなすまで
 (setv DETACHED-DEFAULT-RETAIN-SECONDS 86400.0)   ; 終わった後に結果を持っておく長さ
@@ -30,19 +30,23 @@
 
 (defclass [(dataclass :frozen True)] SubmitDetached [EffectBase]
   "program = 未実行の Program(値)・env = 実行先で組む handler の組の import path・key = 呼び手の決めた job id(冪等の単位)・
-   requires = 実行先の条件(Requirement の tuple — worker の label の名と値)・lease-seconds = 担い手の worker が沈黙してから消失とみなすまで・retain-seconds = 結果の保持。
+   needs = 要る能力の名の frozenset(置く worker は needs ⊆ provides — ADR-DOE-CLUSTER-001 R4b)・lease-seconds = 担い手の worker が沈黙してから消失とみなすまで・retain-seconds = 結果の保持。
    答え = DetachedSubmitted か DetachedUnreachable(coordinator に届かなかった — 送れたかは分からない。key で冪等なので送り直してよい)。
    同じ key がまだ在れば何も作らない(created = False)。"
   (#^ Program program)
   (#^ str env)
   (#^ str key)
-  (setv #^ (get tuple #(Requirement ...)) requires #())
+  (setv #^ frozenset needs (frozenset))
   (setv #^ str name "")
   (setv #^ float lease-seconds DETACHED-DEFAULT-LEASE-SECONDS)
   (setv #^ float retain-seconds DETACHED-DEFAULT-RETAIN-SECONDS)
   (defn __post-init__ [self]
-    (when (not (and (isinstance self.requires tuple) (all (gfor item self.requires (isinstance item Requirement)))))
-      (raise (TypeError (.format "SubmitDetached.requires は Requirement の tuple: {!r}" self.requires))))))
+    "needs が能力の名の frozenset であることを作る時に検める(旧い Requirement の tuple を黙って受けない)。"
+    (when (not (isinstance self.needs frozenset))
+      (raise (TypeError (.format "SubmitDetached.needs は能力の名の frozenset: {!r}" self.needs))))
+    (for [name self.needs]
+      (setv problem (if (isinstance name str) (capability-refusal name) (.format "能力の名は文字列: {!r}" name)))
+      (when problem (raise (TypeError (+ "SubmitDetached.needs: " problem)))))))
 
 
 (defclass [(dataclass :frozen True)] AwaitDetached [EffectBase]
@@ -160,13 +164,14 @@
 
 
 ;; --- 担い手の名簿 --------------------------------------------------------------------------
-;; RunnerFact = 担い手 1 つ: name = worker の名・labels = label の (名 値) の組の tuple(名の順)・live = coordinator の名簿で
+;; RunnerFact = 担い手 1 つ: name = worker の名・provides / exclusive = 提供する能力・専用の能力の名の tuple(名の順)・live = coordinator の名簿で
 ;;   生きている(heartbeat が lease の内)・draining = 新しい task を受けない。
 ;; RunnersUnreachable = coordinator に届かず名簿を読めなかった(担い手の生死は分からない — 死んだとみなさない)。
 
 (defrecord RunnerFact
   #^ str name
-  #^ (get tuple #((get tuple #(str str)) ...)) labels
+  #^ (get tuple #(str ...)) provides
+  #^ (get tuple #(str ...)) exclusive
   #^ bool live
   #^ bool draining)
 

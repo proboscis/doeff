@@ -27,9 +27,9 @@
 (val JOB-START 2000)
 (val TIMEOUT-SECONDS 30)
 (val WARMING "温まっていない env のキー env-k2・準備の失敗 prepare-timeout")
-(val HANDOFF {"revision" "r1" "requires" {} "entry" "m" "args" [] "replicas" 1
+(val HANDOFF {"revision" "r1" "needs" [] "entry" "m" "args" [] "replicas" 1
               "readiness" {"windowSeconds" 10 "handoffTimeoutSeconds" TIMEOUT-SECONDS} "update" "handoff"})
-(val RECREATE {"revision" "r1" "requires" {} "entry" "m" "args" [] "replicas" 1 "readiness" {"windowSeconds" 10}})
+(val RECREATE {"revision" "r1" "needs" [] "entry" "m" "args" [] "replicas" 1 "readiness" {"windowSeconds" 10}})
 
 
 (defclass Sim []
@@ -83,7 +83,7 @@
     (for [a actions] (self.apply a))
     (setv self.records (records-after self.now self.records actions self.policy))
     (setv rows (lfor s (statuses self.now self.desired (self.world) self.records self.policy) (status-row s)))
-    (setv reply (self.call "POST" "/heartbeat" {"name" "zeus" "labels" {} "capacity" 10 "versions" V "statuses" rows} :actor None))
+    (setv reply (self.call "POST" "/heartbeat" {"name" "zeus" "provides" [] "capacity" 10 "versions" V "statuses" rows} :actor None))
     (.append self.replies (next (gfor j (get reply "jobs") :if (= (get j "name") "writer-a") j) None))
     (setv self.desired (tuple (gfor j (get reply "jobs") (declared-job-spec j)))))
 

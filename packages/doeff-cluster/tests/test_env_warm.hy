@@ -229,7 +229,7 @@
   (assert (= (get (load-of after {}) "w1") 1) "preparing の task も担い手の数に入る")
   (assert (= (lfor t (tasks-for after "w1") (get t "id")) ["t1"]) "preparing の task も worker へ送る")
   ;; worker が準備済みを名乗った拍に assigned へ進む
-  (val hb {"name" "w1" "labels" {} "capacity" 2 "versions" {} "boot" None "platform" "linux-x86_64"
+  (val hb {"name" "w1" "provides" [] "capacity" 2 "versions" {} "boot" None "platform" "linux-x86_64"
            "envs" {"ready" [key] "preparing" [] "failed" []} "envCapacity" "ok"})
   (val promoted (register-heartbeat after hb 20))
   (assert (= (. (get promoted.tasks "t1") phase) "assigned") (get promoted.tasks "t1")))

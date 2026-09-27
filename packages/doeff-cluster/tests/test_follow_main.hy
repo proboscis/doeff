@@ -32,7 +32,7 @@
 (setv SHA1 (* "1" 40) SHA2 (* "2" 40) WRAP "w0")
 (setv IMG1 "zeus:5000/app:20260924-1111111" IMG2 "zeus:5000/app:20260925-2222222")
 (setv JOB-START 2000)
-(setv SERVICE {"revision" WRAP "requires" {} "entry" "m" "args" [] "replicas" 1 "readiness" {"windowSeconds" 10}
+(setv SERVICE {"revision" WRAP "needs" [] "entry" "m" "args" [] "replicas" 1 "readiness" {"windowSeconds" 10}
                "update" "handoff"
                "baseFrom" {"kind" "Deployment" "namespace" "prod" "name" "app-writer" "container" "app-writer"}})
 
@@ -87,7 +87,7 @@
     (for [a actions] (self.apply a))
     (setv self.records (records-after self.now self.records actions self.policy))
     (setv rows (lfor s (statuses self.now self.desired (self.world) self.records self.policy) (status-row s)))
-    (setv reply (self.call "POST" "/heartbeat" {"name" "zeus" "labels" {} "capacity" 10 "versions" V "statuses" rows} :actor None))
+    (setv reply (self.call "POST" "/heartbeat" {"name" "zeus" "provides" [] "capacity" 10 "versions" V "statuses" rows} :actor None))
     (setv self.desired (tuple (gfor j (get reply "jobs")
                                     (JobSpec (get j "name") (get j "entry") (tuple (get j "args")) (get j "revision")
                                              :placement (.get j "placement") :base (.get j "base")

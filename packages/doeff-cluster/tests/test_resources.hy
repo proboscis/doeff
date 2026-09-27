@@ -9,7 +9,7 @@
 
 (setv T (ClusterTiming))
 (setv V {"python" "3.14.0"})
-(setv SPEC {"revision" "r1" "requires" {} "entry" "m" "args" []})
+(setv SPEC {"revision" "r1" "needs" [] "entry" "m" "args" []})
 
 (defn req [method path [body None] [query None] [actor "c-me"]]
   (Request method path (or query {}) body :actor actor :peer "10.0.0.9"))
@@ -18,7 +18,7 @@
   (respond state (req method path body query actor) now T))
 
 (defn beat [state name now [statuses None]]
-  (get (call state "POST" "/heartbeat" {"name" name "labels" {} "capacity" 10 "versions" V "statuses" (or statuses [])}
+  (get (call state "POST" "/heartbeat" {"name" name "provides" [] "capacity" 10 "versions" V "statuses" (or statuses [])}
              :actor None :now now) 0))
 
 (defn rv [state kind name]
@@ -62,7 +62,7 @@
   (assert (= status 400) body)
   (assert (in "X-Actor" (get body "error")))
   ;; 盤と task は旧い client でも通し、送り元の番地で記録する
-  (setv #(s status _) (call s "POST" "/tasks" {"env" "m:e" "blob" "B" "versions" V "revision" "r" "requires" {}} :actor None))
+  (setv #(s status _) (call s "POST" "/tasks" {"env" "m:e" "blob" "B" "versions" V "revision" "r" "needs" []} :actor None))
   (assert (= status 200))
   (assert (= (get (get s.audit -1) "actor") "coordinator"))   ; 置き先の決め(調停)
   (assert (in "anonymous@10.0.0.9" (lfor e s.audit (get e "actor")))))
@@ -106,7 +106,7 @@
 
 
 (deftest test-legacy-state-file-is-adopted-with-versions-and-a-legacy-owner
-  (setv legacy {"jobs" [{"name" "turn-runner" "revision" "r" "requires" {} "pin" None "entry" "m" "args" []}]
+  (setv legacy {"jobs" [{"name" "turn-runner" "revision" "r" "needs" [] "pin" None "entry" "m" "args" []}]
                 "assignments" {} "workers" [] "tasks" [] "nextTask" 1 "board" {"k" 1}}) ; 改名の前の file の形
   (setv s (adopt-legacy (state-from-json legacy 1000) 1000 T))
   (assert (= (. (get s.jobs 0) owner) LEGACY-OWNER))

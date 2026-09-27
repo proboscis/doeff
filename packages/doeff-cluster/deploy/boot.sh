@@ -4,7 +4,8 @@
 # から自分で用意する(自己起動・下)。業務のコードは worker が job ごとに用意する(CODE_REPO_URL の版の木か、実行環境の root)。
 #   ROLE=coordinator … 割り当て係(LISTEN_PORT・状態は $WORK_DIR/coord/state.json・CLUSTER_NAMING = 外の系と取り交わす名の JSON)
 #   ROLE=records     … effect の記録の置き場(LISTEN_PORT・RECORDS_ROOT・RECORDS_RETENTION_DAYS — record_store.hy)
-#   ROLE=worker      … worker(COORDINATOR_URL = URL を `,` で並べると前から順に試す・WORKER_NAME・WORKER_LABELS・WORKER_CAPACITY・
+#   ROLE=worker      … worker(COORDINATOR_URL = URL を `,` で並べると前から順に試す・WORKER_NAME・WORKER_PROVIDES(提供する能力の名 a,b)・
+#                      WORKER_EXCLUSIVE(専用の能力 — provides の一部)・WORKER_CAPACITY・
 #                      CODE_REPO_URL = 業務のコードの git の clone 元(空 = 版の木の job を受けない)・CODE_IMPORT_ROOTS = 木の中の
 #                      import の根(`,` で並べる・既定 .)・CODE_OVERLAY_PATH = overlay の口で重ねる dir(既定 空 = 重ねない)・
 #                      WORKER_TOOLS = 名乗る道具に足す物(名=版,…)・WORKER_PASS_ENV = job の子へ渡す worker の環境変数の名
@@ -198,8 +199,13 @@ echo "boot: 名乗る道具 $tools" >&2
 # この Pod の worker の世代を Pod の中(container の /tmp — node の dir ではない)へ書かせる。readinessProbe が比べる。
 export DOEFF_WORKER_BOOT_FILE="${DOEFF_WORKER_BOOT_FILE:-/tmp/doeff-worker-boot}"
 export DOEFF_WORKER_READY_FILE="${DOEFF_WORKER_READY_FILE:-/tmp/doeff-worker-ready}"
+# 旧い WORKER_LABELS(置き場所の label)は受け付けない — 能力を WORKER_PROVIDES / WORKER_EXCLUSIVE で名乗る(ADR-DOE-CLUSTER-001 R4b)。
+if [ -n "${WORKER_LABELS:-}" ]; then
+  echo "boot: WORKER_LABELS は受け付けない — WORKER_PROVIDES(と WORKER_EXCLUSIVE)で提供する能力を名乗る" >&2
+  exit 2
+fi
 exec hy -m doeff_cluster.main --coordinator "$COORDINATOR_URL" --name "$WORKER_NAME" \
-  --labels "${WORKER_LABELS:-}" --capacity "${WORKER_CAPACITY:-10}" \
+  --provides "${WORKER_PROVIDES:-}" --exclusive "${WORKER_EXCLUSIVE:-}" --capacity "${WORKER_CAPACITY:-10}" \
   --repo "$repo" --state-dir "$WORK_DIR/state" --stop-grace 10 \
   --import-roots "${CODE_IMPORT_ROOTS:-.}" --overlay-path "${CODE_OVERLAY_PATH:-}" \
   --repo-keys "$repo_keys" --tools "$tools" --pass-env "${WORKER_PASS_ENV:-}"

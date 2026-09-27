@@ -32,11 +32,11 @@
 
 
 (defclass [(dataclass :frozen True)] RemoteJob [EffectBase]
-  "program = 未実行の Program(値)・env = 実行先で組む handler の組の import path・requires = 実行先の条件(label)。
+  "program = 未実行の Program(値)・env = 実行先で組む handler の組の import path・needs = 要る能力の名の frozenset(置く worker は needs ⊆ provides)。
    結果 = Program の戻り値。Program が投げた例外はそのまま呼び手へ届く。"
   (#^ object program)
   (#^ str env)
-  (setv #^ tuple requires #())
+  (setv #^ frozenset needs (frozenset))
   (setv #^ str name ""))
 
 

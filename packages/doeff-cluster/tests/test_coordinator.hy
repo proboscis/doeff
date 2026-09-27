@@ -59,7 +59,7 @@
 
 (defn submit [state now [versions V] [lease 15.0]]
   (setv #(state _ body) (respond state (req "POST" "/tasks" {"env" "m:e" "blob" "B" "versions" versions "revision" "r"
-                                                              "requires" {} "name" "n" "leaseSeconds" lease}) now T))
+                                                              "needs" [] "name" "n" "leaseSeconds" lease}) now T))
   #(state (get body "task")))
 
 
@@ -139,7 +139,7 @@
   (fn [program] ((sim-time-handler :clock script.clock) ((scripted-requests script) program))))
 
 (deftest test-coordinator-loop-answers-after-persisting
-  (setv script (Script [(req "POST" "/heartbeat" {"name" "w" "labels" {} "capacity" 10 "versions" V})
+  (setv script (Script [(req "POST" "/heartbeat" {"name" "w" "provides" [] "capacity" 10 "versions" V})
                         (req "PUT" "/jobs" {"jobs" [{"name" "a" "entry" "m" "args" [] "revision" "r"}]})
                         (req "PUT" "/board/k" {"value" 1})
                         (req "GET" "/nothing")]))
@@ -243,7 +243,7 @@
   (setv store (WalStore d))
   (.load store)
   (.persist store {"counter" {"nextTask" 1 "revision" 2 "auditSeq" 0}
-                   "service/a" {"name" "a" "revision" "r" "requires" {} "pin" None "replicas" 1 "readiness" None
+                   "service/a" {"name" "a" "revision" "r" "needs" [] "pin" None "replicas" 1 "readiness" None
                                 "owner" None "entry" "m" "args" []}
                    (+ LEGACY-PLACEMENT "a") {"job" "a" "worker" "zeus" "generation" 3 "since_ms" 100}})
   (.close store.handle)

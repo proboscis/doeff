@@ -436,7 +436,7 @@
                                          (if (is boot-at None) {} {"bootAt" boot-at}))))
 
 (defn put-detached [state key now [lease 10.0] [retain 100.0]]
-  (call state "PUT" (+ "/detached/" key) now {"env" "m:e" "blob" "B" "versions" V "revision" "r" "requires" {}
+  (call state "PUT" (+ "/detached/" key) now {"env" "m:e" "blob" "B" "versions" V "revision" "r" "needs" []
                                               "leaseSeconds" lease "retainSeconds" retain}))
 
 ;; 読みの時刻は coordinator が起きてからの猶予(lease-ms)の後(猶予の内の知らない key は warming — detached_policy.detached-read)。
@@ -631,7 +631,7 @@
   (setv #(s _ reply) (put-detached s "job-amnesia" 0 :lease 10.0 :retain 100.0))
   (setv id (get reply "task"))
   (setv #(s _ body) (beat s "w" 100 :boot-at 1000))
-  (setv link (CoordinatorLink "http://127.0.0.1:9" "w" {} 10 60000 :task-dir (str (/ tmp-path "tasks"))))
+  (setv link (CoordinatorLink "http://127.0.0.1:9" "w" #() 10 60000 :task-dir (str (/ tmp-path "tasks"))))
   (setv #(before) (.accept-tasks link (get body "tasks")))
   (setv rows (.report link #((JobStatus (+ "task/" id) JobPhase.RUNNING "r" "r" 42 1))))
   ;; 置き場を失った coordinator が起きる: 走っている task を同じ行で引き取り、同じ heartbeat の返事に載せる。
@@ -668,7 +668,7 @@
                                                         "leaseSeconds" 10.0 "retainSeconds" 100.0}))
   (setv id (get reply "task"))
   (setv #(s _ body) (beat s "w" 100 :boot-at 1000 :labels labels))
-  (setv link (CoordinatorLink "http://127.0.0.1:9" "w" {} 10 60000 :task-dir (str (/ tmp-path "tasks"))))
+  (setv link (CoordinatorLink "http://127.0.0.1:9" "w" #() 10 60000 :task-dir (str (/ tmp-path "tasks"))))
   (setv #(spec) (.accept-tasks link (get body "tasks")))
   #(s id link spec))
 
@@ -716,7 +716,7 @@
   (setv fresh (load-state (str (/ tmp-path "state.json")) (WalStore (str (/ tmp-path "wal"))) 123456))
   (setv #(fresh _ _) (beat fresh "other" 123500))
   (setv #(fresh _ reply) (call fresh "PUT" "/detached/job-new" (+ 123500 T.lease-ms)
-                               {"env" "m:e" "blob" "NEW" "versions" V "revision" "r" "requires" {} "leaseSeconds" 10.0}))
+                               {"env" "m:e" "blob" "NEW" "versions" V "revision" "r" "needs" [] "leaseSeconds" 10.0}))
   (assert (!= (get reply "task") id) #(reply id))
   (assert (= fresh.task-prefix "t1e240-") fresh.task-prefix)
   ;; 頭は保存と読み直しで戻る(state JSON と durable kv)。
@@ -809,7 +809,7 @@
 (deftest test-remote-job-tasks-keep-their-caller-bound-lifetime
   ;; RemoteJob の task(/tasks)は今までどおり: 呼び手の問い合わせが lease を延ばし、drain は数えず、途絶で止める。
   (setv #(s _ _) (beat (ClusterState) "w" 0))
-  (setv #(s _ body) (call s "POST" "/tasks" 0 {"env" "m:e" "blob" "B" "versions" V "revision" "r" "requires" {}
+  (setv #(s _ body) (call s "POST" "/tasks" 0 {"env" "m:e" "blob" "B" "versions" V "revision" "r" "needs" []
                                                "name" "n" "leaseSeconds" 5.0}))
   (setv id (get body "task"))
   (setv #(s _ body) (beat s "w" 100))
@@ -827,7 +827,7 @@
         plain (JobSpec "plain" "doeff_cluster.job_entry" #() "r"))
   (assert (= (kept-when-cut-off #(detached remote writer plain)) #(detached writer)))
   ;; CoordinatorLink: 途絶が fence を越えたら、最後に受け取った宣言のうち切り離した task を動かし続ける
-  (setv link (CoordinatorLink "http://127.0.0.1:9" "w" {} 1 60000))
+  (setv link (CoordinatorLink "http://127.0.0.1:9" "w" #() 1 60000))
   (setv link.last-tasks #(detached remote) link.fence-ms 0 link.last-ok (- (time.monotonic) 1))
   (assert (= (.poll link) (DesiredJobs #(detached)))))
 

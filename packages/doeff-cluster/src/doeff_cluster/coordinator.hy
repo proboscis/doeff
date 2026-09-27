@@ -7,7 +7,7 @@
 ;;;   GET    /metrics                                今動いている process の計器(Prometheus の text・label service・worker)
 ;;;   GET    /events                                 出来事の記録(誰が・いつ・何を・前後の版)
 ;;;   PUT    /jobs          旧い口。資源ごとの compare-and-set に写す(一覧に無い Service は消さない)
-;;;   POST   /heartbeat     worker の生存と状態 {name, labels, capacity, versions, statuses} → {"jobs": […], "tasks": […], "timing": …}
+;;;   POST   /heartbeat     worker の生存と状態 {name, provides, exclusive, capacity, versions, statuses} → {"jobs": […], "tasks": […], "timing": …}
 ;;;   GET    /state         宣言・worker・割り当て・task・各 worker の最新の状態・直近の出来事
 ;;;   GET    /board?prefix=[&withVersions=1]   盤の行(鍵が prefix で始まる物)
 ;;;   PUT    /board/<鍵>     {"value": …, "expect"?: …, "expectVersion"?: …} compare-and-set。合わなければ 409

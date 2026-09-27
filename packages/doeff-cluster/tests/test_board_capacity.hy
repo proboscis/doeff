@@ -29,7 +29,7 @@
   (assert (= back.board-expiry {"w/process/atlas/7" 61000}))
   ;; 期限の前は残り、過ぎた後の最初の調停(要求の無い拍でも)で消える
   (setv #(s1 _ _) (call s "GET" "/state" None 60000))
-  (setv #(s2 _ _) (call s "POST" "/heartbeat" {"name" "atlas" "labels" {} "capacity" 1 "statuses" []} 61000))
+  (setv #(s2 _ _) (call s "POST" "/heartbeat" {"name" "atlas" "provides" [] "capacity" 1 "statuses" []} 61000))
   (assert (in "w/process/atlas/7" s1.board))
   (assert (not-in "w/process/atlas/7" s2.board))
   (assert (in "w/cycle" s2.board))

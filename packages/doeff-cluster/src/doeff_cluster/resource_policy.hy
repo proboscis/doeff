@@ -200,14 +200,14 @@
                            {}))}))
   (for [w (.values state.workers)]
     (setv (get out (key-of "Worker" w.name))
-          {"spec" {"labels" (dict w.labels) "capacity" w.capacity "versions" (dict w.versions)}
+          {"spec" {"provides" (list w.provides) "exclusive" (list w.exclusive) "capacity" w.capacity "versions" (dict w.versions)}
            ;; drain(2026-09-25)の始まりと頼み手(誰が・いつ空けさせたかを出来事の記録に残す)。期限は頼み直すたびに延びるので入れない。
            "status" (if (in w.name state.drains)
                         {"drain" {"sinceMs" (. (get state.drains w.name) since-ms) "actor" (. (get state.drains w.name) actor)}}
                         {})}))
   (for [t (.values state.tasks)]
     (setv (get out (key-of "Task" t.id))
-          {"spec" (| {"name" t.name "env" t.env "revision" t.revision "requires" (dict t.requires)}
+          {"spec" (| {"name" t.name "env" t.env "revision" t.revision "needs" (list t.needs)}
                      (if t.detached {"key" t.key} {}))
            "status" {"phase" t.phase "worker" t.worker "detail" t.detail}}))
   (for [#(name r) (.items state.rollouts)]

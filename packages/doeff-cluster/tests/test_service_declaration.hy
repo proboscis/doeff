@@ -57,7 +57,7 @@
   (setv #(row) (system-declaration (System "handoff-system" #(handoff)) "rev1"))
   (assert (= row {"name" "tally-handoff"
                   "revision" "rev1"
-                  "requires" {}
+                  "needs" []
                   "run" {"kind" "service"
                          "factory" "tests.fixtures.services:tally_program"
                          "env" "m:e"

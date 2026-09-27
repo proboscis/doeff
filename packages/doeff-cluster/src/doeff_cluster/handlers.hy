@@ -878,11 +878,13 @@
 (defclass CoordinatorLink []
   "coordinator との連絡。heartbeat で生存・版・状態(終わった task の結果を含む)を送り、自分に割り当てられた job と task を受け取る。
    task の blob は task-dir の file に置き、宣言から外れた task の file は消す(この worker が書いた物だけ)。"
-  (defn __init__ [self #^ str url #^ str name #^ dict labels #^ int capacity #^ int fence-ms
-                  [task-dir None] [versions None] [transport None] #^ (| dict None) [tools None] #^ (| EnvStore None) [envs None]]
+  (defn __init__ [self #^ str url #^ str name #^ tuple provides #^ int capacity #^ int fence-ms
+                  [task-dir None] [versions None] [transport None] #^ (| dict None) [tools None] #^ (| EnvStore None) [envs None]
+                  #^ tuple [exclusive #()]]
+    ;; provides / exclusive = この worker が提供する能力・専用の能力の名(名の順 — cluster_model.capabilities-of・ADR-DOE-CLUSTER-001 R4b)。
     ;; tools = この worker が名乗る道具(名 → 版 — 実行環境の宣言の tools と照らして置き先を選ぶ)。
     ;; envs = 実行環境の root の置き場(在れば、準備済み・準備中・失敗の root と disk の条件を heartbeat で名乗り、温める表を受ける)。
-    (setv self.name name self.labels labels self.capacity capacity self.tools (or tools {}) self.envs envs
+    (setv self.name name self.provides provides self.exclusive exclusive self.capacity capacity self.tools (or tools {}) self.envs envs
           self.last-warm #() self.warm-keys {}
           self.fence-ms fence-ms self.statuses []
           ;; 宛先は `,` で並べた物(前ほど優先)。毎拍やり直すので一巡以上は送り直さない(拍を塞がない)・接続は使い回す。
@@ -963,7 +965,7 @@
   (defn poll [self]
     (try
       (setv response (.request self.endpoint "POST" "/heartbeat"
-        :json (| {"name" self.name "labels" self.labels "capacity" self.capacity "versions" self.versions
+        :json (| {"name" self.name "provides" (list self.provides) "exclusive" (list self.exclusive) "capacity" self.capacity "versions" self.versions
                   "statuses" self.statuses "endpoint" self.endpoint.url "boot" self.boot "bootAt" self.boot-at
                   "format" PROTOCOL-FORMAT
                   "tools" self.tools}
