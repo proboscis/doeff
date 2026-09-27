@@ -2,11 +2,20 @@
 ;;;
 ;;; job(常駐の service)は Program の値 1 つ(defk の関数を呼んだ結果 — R1)と、置き場所と入れ替えの約束(needs・readiness・update・
 ;;; environ)を持つ。handler は Program の中(defk の本体の with-handlers)で作り、宣言には入れない(R3b)。系は doeff-hy の defsystem で
-;;; 書き、土台(handler の組を返す module の最上位の関数)を引数に受けて System の値を返す:
+;;; 書き、土台を引数に受けて System の値を返す。土台 = 本体の Program を受け、自分の handler(と scheduler・時計)の下で走らせて答えを
+;;; 返す module の最上位の defk(計画 10.1 — job は自分で scheduled を包まない。本番の土台は scheduler を含み、sim の土台は含まない):
 ;;;
+;;;   (defk production-foundation [body]
+;;;     (<- answer (scheduled (with-handlers [(state) (env-var-ask :prefix "") host-reader (sync-time-handler) …] body)))
+;;;     answer)
+;;;   (defk tally-program [foundation step]
+;;;     (<- total (foundation (tally-body step)))
+;;;     total)
 ;;;   (defsystem lab [foundation]
 ;;;     "見本の系"
 ;;;     (tally (tally-program foundation 2) :needs #{"net"} :environ {"TALLY_BASE" "1"}))
+;;;
+;;; 手元で系を回すのは local.sim-cluster(sim の土台で作った同じ系の値を、本物の coordinator と worker の上で走らせる)。
 ;;;
 ;;; defsystem の展開が呼ぶのは job と system-of(この module)。宣言の行は system-declaration が作る:
 ;;;   - Program は encode-program で詰め、中身の sha256 を鍵に置き場(coordinator の /programs/<sha>)へ別に送る。行は sha だけを持つ

@@ -624,13 +624,12 @@
 ;; with-handlers の list は先が外側なので、記録係を翻訳の handler より先に書く(後に書くと記録係が翻訳より内側に入り、業務の effect を
 ;; 受けてしまう)。
 ;;
-;;   (defk job-program [foundation]
-;;     …
-;;     (<- base list (foundation))
-;;     (with-handlers base
-;;       (do! (<- recorder list (boundary-recorder))       ; off / record / replay を Ask で選ぶ
-;;            (<- translation list (translation-handlers))
-;;            (with-handlers [#* recorder #* translation] (loop)))))
+;;   (defk job-program [foundation]                     ; 土台 = 本体を受けて自分の handler の下で走らせる関数(計画 10.1)
+;;     (<- answer (foundation (do! (<- recorder list (boundary-recorder))       ; off / record / replay を Ask で選ぶ
+;;                                 (<- translation list (translation-handlers))
+;;                                 (<- r (with-handlers [#* recorder #* translation] (loop)))
+;;                                 r)))
+;;     answer)
 ;;
 ;; 記録か再生かは Ask RECORD-MODE-KEY の答え(本番は宣言の :environ を os.environ を読む handler — env_var_ask — が答える)。
 ;;   off    = 記録係を置かない(空の組)

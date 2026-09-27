@@ -6,6 +6,7 @@
 ;;;   WriteShared key value expect [ttl-seconds] → bool。ttl-seconds を付けた行は期限を過ぎると coordinator が消す。expect = ANY なら無条件・None なら「行が無い時だけ」・値なら「今の値がそれと等しい時だけ」
 ;;;                                     (compare-and-set。複数の実行役が同じ行を取り合わないため)
 ;;; 値は JSON にできる物だけ。handler = shared_handlers.hy(shared-memory はテストの dict・shared-http は coordinator の /board)。
+(require doeff-hy.macros [val])
 (import dataclasses [dataclass])
 (import doeff [EffectBase])
 (import doeff_cluster.cluster_policy [board-allows])
@@ -17,6 +18,9 @@
 
 (setv ANY (_Any))
 
+;; 盤の行の値の型(JSON にできる値 — 本番は coordinator の /board へ JSON で運ぶ)。WriteShared と送り手の要求の形が同じ型を使う。
+(val JsonValue (| dict list str int float bool None))
+
 
 (defclass [(dataclass :frozen True)] ReadShared [EffectBase]
   (#^ str prefix))
@@ -24,8 +28,8 @@
 
 (defclass [(dataclass :frozen True)] WriteShared [EffectBase]
   (#^ str key)
-  (#^ object value)
-  (setv #^ object expect ANY)
+  (#^ JsonValue value)
+  (setv #^ (| JsonValue _Any) expect ANY)
   ;; 行の期限(秒)。coordinator は期限を過ぎた行を消す(盤の掃除・2026-09-25)。None = ずっと残す。
   (setv #^ (| int float None) ttl-seconds None))
 
