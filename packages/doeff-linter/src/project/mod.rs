@@ -11,6 +11,7 @@ pub mod explain;
 pub mod facts;
 pub mod names;
 pub mod registry;
+pub mod notice;
 pub mod rule;
 pub mod bare_calls;
 pub mod semantic;
