@@ -32,3 +32,10 @@
   (#^ str namespace)
   (#^ str name)
   (#^ dict annotations))
+
+
+(defclass [(dataclass :frozen True)] ReadNodeLabels [EffectBase]
+  "k8s の Node の label を読む(worker の置かれた node から能力を導くため — ADR-DOE-CLUSTER-001 R4b・改訂 1 の I)。
+   結果は dict(label の鍵 → 値)。読めなければ KubeUnavailable。権限は coordinator の ServiceAccount に nodes の get を与える
+   ClusterRole(配備する側の manifest)。"
+  (#^ str node))

@@ -22,7 +22,7 @@
 (import doeff_cluster.detached [detached-local DetachedLocalStore])
 (import doeff_cluster.warm_model [WarmRuntimeEnv ReadWarmState WarmState warm-key warm-state-of-json])
 (import doeff_cluster.env_upkeep [RootInfo PrepareLimits sweep-choice prepare-overdue env-capacity])
-(import doeff_cluster.cluster_model [ClusterState ClusterTiming TaskRecord WorkerInfo ComponentVersion Requirement Request])
+(import doeff_cluster.cluster_model [ClusterState ClusterTiming TaskRecord WorkerInfo ComponentVersion Request])
 (import doeff_cluster.cluster_policy [place-tasks register-heartbeat heartbeat-reply load-of tasks-for])
 (import doeff_cluster.api_policy [respond])
 (import doeff_cluster.metrics_policy [metrics-text])
@@ -58,7 +58,7 @@
   {:pre [(: store DetachedLocalStore) (: key str) (: n int)] :post [(: % float)]}
   "1 本送って答えを待ち、「送ってから Program が走り出すまで」の仮想の秒を返す。"
   (<- sent float (GetMonotonic))
-  (<- ((detached-local store) (SubmitDetached (timed-add n) :env "tests.fixtures.envs:plain_env" :key key)))
+  (<- ((detached-local store) (SubmitDetached (timed-add n) :env "tests.fixtures.envs:plain_env" :needs (frozenset ["local"]) :key key)))
   (<- outcome ((detached-local store) (AwaitDetached key)))
   (assert (= outcome (DetachedSucceeded (+ 100 n))) outcome)
   (- (get STARTS -1) sent))
@@ -71,8 +71,8 @@
   "送る前に温め、準備済みになってから送る → 待ちは 2 秒以内・冷たい起動 0・phase preparing を通らない。"
   (<- env RuntimeEnv (env-of "app-1" "lib-1" LOCK))
   (val store (DetachedLocalStore :runtime-env env))
-  (<- first WarmState ((detached-local store) (WarmRuntimeEnv env #() 600.0 "tests")))
-  (<- expected str (warm-key env #()))
+  (<- first WarmState ((detached-local store) (WarmRuntimeEnv env (frozenset ["local"]) 600.0 "tests")))
+  (<- expected str (warm-key env #("local")))
   (assert (= first.key expected) first)
   (var current first)
   (while (not current.ready)
@@ -176,32 +176,35 @@
   key)
 
 
-(defn #^ WorkerInfo worker-of [#^ str name #^ tuple labels #^ int seen [ready #()] [capacity "ok"] [load-capacity 2]]
-  (WorkerInfo name labels load-capacity seen #() None #() :platform "linux-x86_64" :env-ready (frozenset ready)
+(defn #^ WorkerInfo worker-of [#^ str name #^ tuple provides #^ int seen [ready #()] [capacity "ok"] [load-capacity 2]]
+  (WorkerInfo name provides load-capacity seen #() None #() :platform "linux-x86_64" :env-ready (frozenset ready)
               :env-capacity capacity))
 
 
-(defn #^ TaskRecord env-task [#^ str id #^ dict declared [requires #()]]
-  (TaskRecord id "" "tests.fixtures.envs:plain_env" "blob" "" #() requires 60000 60000 0 :runtime-env declared))
+(defn #^ TaskRecord env-task [#^ str id #^ dict declared [needs #("net")]]
+  (TaskRecord id "" "tests.fixtures.envs:plain_env" "blob" "" #() needs 60000 60000 0 :runtime-env declared))
 
 
 (deftest test-warm-table-is-written-read-and-handed-to-matching-workers
   (<- declared dict (declared-of "app-1"))
   (<- key-linux str (key-on declared "linux-x86_64"))
-  (val body {"runtimeEnv" declared "requires" {"role" "agent"} "ttlSeconds" 600 "holder" "svc-a"})
+  (val body {"runtimeEnv" declared "needs" ["agent-cli"] "ttlSeconds" 600 "holder" "svc-a"})
   (val written (respond (ClusterState) (Request "POST" "/warm" {} body :actor "svc-a") 1000 TIMING))
   (val after (get written 0))
   (assert (= (get written 1) 200) written)
   (val warmed (warm-state-of-json (get written 2)))
   (assert (= warmed.until-ms 601000) warmed)
   (assert (= #(warmed.ready warmed.preparing) #(#() #())) warmed)
-  ;; label の合う worker の heartbeat の返事にだけ載る(合わない worker・専用の印の worker には載らない)
-  (val hb {"name" "w1" "labels" {"role" "agent"} "capacity" 2 "versions" {} "boot" "b1" "platform" "linux-x86_64"
+  ;; 能力の合う worker の heartbeat の返事にだけ載る(能力の足りない worker・専用の能力を持つ worker には載らない)
+  (val hb {"name" "w1" "provides" ["agent-cli"] "capacity" 2 "versions" {} "boot" "b1" "platform" "linux-x86_64"
            "envs" {"ready" [] "preparing" [key-linux] "failed" []} "envCapacity" "ok"})
   (val s1 (register-heartbeat after hb 2000))
   (assert (= (lfor e (get (heartbeat-reply s1 "w1" TIMING :now 2000) "warm") (get e "runtimeEnv")) [declared]))
-  (val s2 (register-heartbeat s1 (| hb {"name" "w2" "labels" {"role" "other"}}) 2000))
-  (assert (= (get (heartbeat-reply s2 "w2" TIMING :now 2000) "warm") []) "label の合わない worker には配らない")
+  (val s2 (register-heartbeat s1 (| hb {"name" "w2" "provides" ["net"]}) 2000))
+  (assert (= (get (heartbeat-reply s2 "w2" TIMING :now 2000) "warm") []) "能力の足りない worker には配らない")
+  (val with-gpu (register-heartbeat s2 (| hb {"name" "w3" "provides" ["agent-cli" "gpu"] "exclusive" ["gpu"]}) 2000))
+  (assert (= (get (heartbeat-reply with-gpu "w3" TIMING :now 2000) "warm") [])
+          "専用の能力(gpu)を持つ worker には、その能力を要らない行を配らない")
   (assert (= (get (heartbeat-reply s2 "w1" TIMING :now 700000) "warm") []) "期限を過ぎた行は配らない")
   ;; 読む: w1 は準備中 → 準備済みを名乗った後は ready
   (val read-1 (get (respond s2 (Request "GET" (+ "/warm/" warmed.key) {} None) 2000 TIMING) 2))
@@ -218,19 +221,19 @@
   (<- key str (key-on declared "linux-x86_64"))
   (val task (env-task "t1" declared))
   ;; 準備済みの w2 を、名前順で先の w1(空き同じ)より優先する
-  (val warm-state (ClusterState :workers {"w1" (worker-of "w1" #() 0) "w2" (worker-of "w2" #() 0 :ready #(key))}
+  (val warm-state (ClusterState :workers {"w1" (worker-of "w1" #("net") 0) "w2" (worker-of "w2" #("net") 0 :ready #(key))}
                                 :tasks {"t1" task}))
   (val placed (get (place-tasks 10 warm-state {} TIMING) "t1"))
   (assert (= #(placed.phase placed.worker) #("assigned" "w2")) placed)
   ;; 準備済みが無ければ置くが phase は preparing(assigned と分ける)で、冷たい起動を数える
-  (val cold-state (ClusterState :workers {"w1" (worker-of "w1" #() 0)} :tasks {"t1" task}))
+  (val cold-state (ClusterState :workers {"w1" (worker-of "w1" #("net") 0)} :tasks {"t1" task}))
   (val cold (get (place-tasks 10 cold-state {} TIMING) "t1"))
   (assert (= #(cold.phase cold.worker) #("preparing" "w1")) cold)
   (val after (replace cold-state :tasks {"t1" cold}))
   (assert (= (get (load-of after {}) "w1") 1) "preparing の task も担い手の数に入る")
   (assert (= (lfor t (tasks-for after "w1") (get t "id")) ["t1"]) "preparing の task も worker へ送る")
   ;; worker が準備済みを名乗った拍に assigned へ進む
-  (val hb {"name" "w1" "labels" {} "capacity" 2 "versions" {} "boot" None "platform" "linux-x86_64"
+  (val hb {"name" "w1" "provides" ["net"] "capacity" 2 "versions" {} "boot" None "platform" "linux-x86_64"
            "envs" {"ready" [key] "preparing" [] "failed" []} "envCapacity" "ok"})
   (val promoted (register-heartbeat after hb 20))
   (assert (= (. (get promoted.tasks "t1") phase) "assigned") (get promoted.tasks "t1")))
@@ -238,9 +241,9 @@
 
 (deftest test-cold-starts-are-counted-in-the-metrics
   (<- declared dict (declared-of "app-1"))
-  (val coordinator-state (ClusterState :workers {"w1" (worker-of "w1" #() 0)} :tasks {"t1" (env-task "t1" declared)} :next-task 2))
+  (val coordinator-state (ClusterState :workers {"w1" (worker-of "w1" #("net") 0)} :tasks {"t1" (env-task "t1" declared)} :next-task 2))
   (val submitted (respond coordinator-state (Request "POST" "/tasks" {}
-                                                     {"env" "e" "blob" "b" "revision" "" "versions" {} "leaseSeconds" 60
+                                                     {"env" "e" "blob" "b" "revision" "" "versions" {} "needs" ["net"] "leaseSeconds" 60
                                                       "runtimeEnv" declared})
                           10 TIMING))
   (assert (in "doeff_worker_env_cold_start_total 2" (metrics-text (get submitted 0) 10 TIMING))
@@ -251,12 +254,12 @@
   (<- declared dict (declared-of "app-1"))
   (<- key str (key-on declared "linux-x86_64"))
   (val task (env-task "t1" declared))
-  (val two (ClusterState :workers {"w1" (worker-of "w1" #() 0 :capacity "exhausted") "w2" (worker-of "w2" #() 0)}
+  (val two (ClusterState :workers {"w1" (worker-of "w1" #("net") 0 :capacity "exhausted") "w2" (worker-of "w2" #("net") 0)}
                          :tasks {"t1" task}))
   (assert (= (. (get (place-tasks 10 two {} TIMING) "t1") worker) "w2") "空きの尽きた worker を避ける")
-  (val only (ClusterState :workers {"w1" (worker-of "w1" #() 0 :capacity "exhausted")} :tasks {"t1" task}))
+  (val only (ClusterState :workers {"w1" (worker-of "w1" #("net") 0 :capacity "exhausted")} :tasks {"t1" task}))
   (assert (= (. (get (place-tasks 10 only {} TIMING) "t1") phase) "queued") "置ける先が無ければ待つ")
-  (val ready (ClusterState :workers {"w1" (worker-of "w1" #() 0 :capacity "exhausted" :ready #(key))} :tasks {"t1" task}))
+  (val ready (ClusterState :workers {"w1" (worker-of "w1" #("net") 0 :capacity "exhausted" :ready #(key))} :tasks {"t1" task}))
   (assert (= (. (get (place-tasks 10 ready {} TIMING) "t1") worker) "w1") "準備済みの env の task は置いてよい"))
 
 

@@ -1,7 +1,10 @@
 ;;; doeff worker の composition root。宣言(file か coordinator)を読み、job と task を子 process として管理する。
 ;;;
 ;;;   hy -m doeff_cluster.main --desired desired.json --repo . --state-dir DIR
-;;;   hy -m doeff_cluster.main --coordinator URL --name NAME [--labels k=v,…] --repo REPO --state-dir DIR
+;;;   hy -m doeff_cluster.main --coordinator URL --name NAME [--provides a,b] [--exclusive a] --repo REPO --state-dir DIR
+;;;
+;;; --provides = この worker が提供する能力の名(`,` で並べる)・--exclusive = 専用の能力(provides の一部 — このどれかを要る job / task
+;;; だけを受ける)。置き場所の名ではなく能力を名乗る(ADR-DOE-CLUSTER-001 R4b)。旧い --labels は受け付けない。
 (require doeff-hy.macros [defk val])
 (import argparse)
 (import os)
@@ -15,7 +18,7 @@
 (import .handlers [CodeStore EnvStore CoordinatorLink ProcessHost ProbeStore coordinator-desired desired-file local-host
                    status-file status-to-coordinator stop-flag lease-release-coordinator lease-release-none])
 (import .remote_model [current-versions])
-(import .cluster_model [ClusterTiming])
+(import .cluster_model [ClusterTiming capabilities-of])
 (import .worker [run-worker])
 (import .worker_model [WorkerPolicy CodeLayout])
 
@@ -46,7 +49,10 @@
   (.add-argument source "--desired" :help "job の宣言(JSON の file)")
   (.add-argument source "--coordinator" :help "job を割り当てる coordinator の URL。`,` で並べると前から順に試す(Mac は LAN・tailnet の順)")
   (.add-argument parser "--name" :help "coordinator に名乗る worker の名前")
-  (.add-argument parser "--labels" :default "" :help "k=v,k=v")
+  (.add-argument parser "--provides" :default "" :help "提供する能力の名(a,b)")
+  (.add-argument parser "--exclusive" :default "" :help "専用の能力(provides の一部・a,b)— このどれかを要る仕事だけを受ける")
+  (.add-argument parser "--node" :default "" :help "この worker の置かれた k8s の node の名(coordinator が node の label から能力を導く)")
+  (.add-argument parser "--labels" :default None :help "受け付けない(旧い形 — --provides / --exclusive で能力を名乗る)")
   (.add-argument parser "--capacity" :type int :default 10)
   (.add-argument parser "--fence" :type float :default (/ (. (ClusterTiming) fence-ms) 1000)
                  :help "連絡が途絶えて自分の job を止めるまでの秒(最初に coordinator へ届くまで。以後は coordinator の値)")
@@ -68,6 +74,16 @@
   (.add-argument parser "--pass-env" :default ""
                  :help "子 process へ渡す worker の環境変数の名(`,` で並べる — 機体の設定の path や URL。無い名は起動を止める)")
   (setv args (.parse-args parser))
+  ;; 能力の名乗りを起動の時点で検める(旧い --labels・名として受けられない値・provides の外の exclusive は起動しない)。
+  (when (is-not args.labels None)
+    (.error parser "旧い --labels は受け付けない — 置き場所の label ではなく、提供する能力を --provides(専用なら --exclusive)で名乗る"))
+  (try
+    (setv provides (capabilities-of (lfor n (.split args.provides ",") :if n n) "--provides")
+          exclusive (capabilities-of (lfor n (.split args.exclusive ",") :if n n) "--exclusive"))
+    (except [error ValueError]
+      (.error parser (str error))))
+  (when (not (<= (set exclusive) (set provides)))
+    (.error parser (.format "--exclusive {} は --provides {} の一部で名乗る" (list exclusive) (list provides))))
   (setv layout (CodeLayout :import-roots (tuple (gfor r (.split args.import-roots ",") :if r r))
                            :overlay-path (or args.overlay-path None)
                            :base-paths (tuple (gfor p (.split args.base-pythonpath ",") :if p p))))
@@ -93,10 +109,10 @@
   (signal.signal signal.SIGINT on-signal)
   (setv source-handlers
     (if args.coordinator
-        (do (setv link (CoordinatorLink args.coordinator args.name (parse-labels args.labels) args.capacity
+        (do (setv link (CoordinatorLink args.coordinator args.name provides args.capacity
                                         (int (* args.fence 1000))
                                         :task-dir (str (/ state-dir "tasks")) :versions (current-versions)
-                                        :tools (parse-labels args.tools) :envs envs))
+                                        :tools (parse-labels args.tools) :envs envs :exclusive exclusive :node args.node))
             [(coordinator-desired link) (status-to-coordinator link) (lease-release-coordinator link)])
         [(desired-file args.desired) lease-release-none]))
   (setv program (run-worker policy))

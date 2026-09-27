@@ -12,31 +12,71 @@
 ;;; 各資源は resourceVersion(coordinator 全体で単調に増える番号)と generation(spec が変わるたびに増える)を持ち、
 ;;; 書きは資源 1 つずつの compare-and-set。誰が・いつ・何を・前後の版は出来事の記録(audit)に残る。
 ;;; 版と記録は「前の状態と後の状態の差」から 1 か所(resource_policy.stamp)で付けるので、どの経路の変化も漏れない。
+(require doeff-hy.macros [deff val])
 (require doeff-hy.record [defenum defrecord])
 (import dataclasses [dataclass field asdict])
 (import enum [StrEnum])
+(import re)
 (import typing [NamedTuple])
 (import doeff [EffectBase])
 (import .worker_model [JobSpec])
 
 
-;; --- 実行先の条件と版(task・切り離した task・worker が共に使う) -------------------------------------
+;; --- 実行先の能力と版(task・切り離した task・worker が共に使う) -------------------------------------
+;;
+;; 能力(capability — ADR-DOE-CLUSTER-001 R4b・2026-09-27): job と task は「要る能力の名」の集合(needs)を宣言し、worker は「提供する
+;; 能力の名」の集合(provides)をクラスタの設定(起動の引数)で名乗る。coordinator は needs ⊆ provides の worker にだけ置く。
+;; 置き場所の名(kind=k3s・role=…・機体の名)は書かない。worker の exclusive(provides の一部)は「この能力のどれかを needs に持つ
+;; job / task だけを受ける」の印(以前の label `dedicated=<k>=<v>` の置き換え — 会社の機体・人の機体のように、一般の仕事を置かない担い手)。
+;; 能力の名は小文字・数字・`.`・`-` だけ(`k=v` の旧い label の形を名として受けない)。needs と provides は名の順の tuple で持つ。
 
-(defclass Requirement [NamedTuple]
-  "実行先の条件 1 つ: worker の label の名と、その label に要る値(例 = (Requirement \"kind\" \"k3s\"))。"
-  (#^ str label)
-  (#^ str value))
+(val CAPABILITY-PATTERN (re.compile r"[a-z0-9][a-z0-9.-]*"))
+
+
+(deff capability-refusal [name]  ; defk にできない: 宣言・heartbeat・保存の JSON を読む境界(Program の外)が呼ぶ純粋な判断
+  {:pre [(: name str)] :post [(: % (| str None))] :tags {:context "doeff-cluster" :role "judgment"}}
+  "能力の名 1 つが名として受けられない理由(受けられれば None)— 旧い label の形(`kind=k3s`)を黙って名にしないため。"
+  (cond
+    (in "=" name) (.format "能力の名 {!r} は label の形(鍵=値)— 置き場所ではなく要る能力の名を書く(ADR-DOE-CLUSTER-001 R4b)" name)
+    (not (CAPABILITY-PATTERN.fullmatch name)) (.format "能力の名 {!r} は小文字・数字・`.`・`-` だけで書く" name)
+    True None))
+
+
+(deff capabilities-of [value #^ str what]  ; defk にできない: 宣言・heartbeat・保存の JSON を読む境界(Program の外)が呼ぶ
+  {:pre [(: value (| list tuple set frozenset dict str int float bool None)) (: what str)] :post [(: % tuple)] :tags {:context "doeff-cluster" :role "judgment"}}
+  "JSON の能力の名の列(list・tuple・frozenset)→ 名の順の重なりの無い tuple(比べる時に順が揃う)。旧い形(label の object)や
+   名として受けられない値は ValueError(what = 誤りの文の欄の名)。"
+  (when (isinstance value dict)
+    (raise (ValueError (.format "{} が label の object {!r} — 旧い requires / labels の形は受け付けない。能力の名の列で書く(ADR-DOE-CLUSTER-001 R4b)"
+                                what value))))
+  (when (not (isinstance value #(list tuple set frozenset)))
+    (raise (ValueError (.format "{} は能力の名の列: {!r}" what value))))
+  (for [name value]
+    (when (not (isinstance name str))
+      (raise (ValueError (.format "{}: 能力の名は文字列: {!r}" what name))))
+    (setv problem (capability-refusal name))
+    (when (is-not problem None)
+      (raise (ValueError (.format "{}: {}" what problem)))))
+  (tuple (sorted (set value))))
+
+
+(deff effect-needs-problem [needs]  ; defk にできない: effect の構成子(dataclass の __post_init__)が呼ぶ純粋な判断
+  {:pre [(: needs (| frozenset tuple list set dict str None))] :post [(: % (| str None))] :tags {:context "doeff-cluster" :role "judgment"}}
+  "effect(RemoteJob・SubmitDetached・WarmRuntimeEnv)の needs が受けられない理由(受けられれば None)— 3 つの構成子が同じ規則で
+   断るため: 能力の名の空でない frozenset(旧い Requirement の tuple・label の組・空は断る — 改訂 1 の I)。"
+  (cond
+    (not (isinstance needs frozenset)) (.format "needs は能力の名の frozenset: {!r}" needs)
+    (not needs) "needs が空 — 要る能力の名を 1 つ以上書く"
+    True (next (gfor n needs
+                     :setv p (if (isinstance n str) (capability-refusal n) (.format "能力の名は文字列: {!r}" n))
+                     :if p p)
+               None)))
 
 
 (defclass ComponentVersion [NamedTuple]
   "版 1 つ: 部品の名(python・cloudpickle・doeff)とその版の綴り。task を送れる worker を選ぶのに、送り手と worker の組を比べる。"
   (#^ str component)
   (#^ str version))
-
-
-(defn #^ (get tuple #(Requirement ...)) requirements-of [#^ dict labels]
-  "JSON の object(label の名 → 値)→ 名の順の Requirement の tuple(比べる時に順が揃う)。JSON から読む境界で使う。"
-  (tuple (sorted (gfor #(label value) (.items labels) (Requirement label value)))))
 
 
 (defn #^ (get tuple #(ComponentVersion ...)) component-versions-of [#^ dict versions]
@@ -46,7 +86,7 @@
 
 (defclass [(dataclass :frozen True)] ClusterJob []
   (#^ JobSpec spec)
-  (setv #^ tuple requires #())        ; worker の label に要る組(例 = #(#("kind" "k3s")))
+  (setv #^ tuple needs #())           ; 要る能力の名(名の順 — capabilities-of)。置く worker は needs ⊆ provides
   (setv #^ (| str None) pin None)     ; この worker にだけ置く
   (setv #^ (| dict None) run None)    ; 宣言の元の形(service の関数の参照・env・設定)。表示と保存のため
   ;; --- Service の資源としての欄(2026-09-24) ---
@@ -74,7 +114,7 @@
 
 (defclass [(dataclass :frozen True)] WorkerInfo []
   (#^ str name)
-  (#^ tuple labels)
+  (#^ tuple provides)                 ; 提供する能力の名(名の順 — クラスタの設定で名乗る)
   (#^ int capacity)
   (#^ int last-seen-ms)
   (setv #^ (get tuple #(ComponentVersion ...)) versions #())        ; worker の Python / cloudpickle / doeff の版(task を送れる相手を選ぶ)
@@ -99,7 +139,13 @@
   ;; 今の世代の process の起動時刻(epoch ms・heartbeat の bootAt — 2026-09-27)。今の世代と来た世代の両方の起動時刻を知る時は、
   ;; 大きい方を新しい世代とする(cluster_policy.generation-order)。状態を失った coordinator に新しい世代が先に届いても、後から来た
   ;; 古い世代に今の世代を明け渡さない。起動時刻を名乗らない旧い worker・旧い形の置き場は None(初めて見た順へ落とす)。保存する。
-  (setv #^ (| int None) boot-at None))
+  (setv #^ (| int None) boot-at None)
+  ;; 専用の能力(provides の一部・名の順)。空でなければ、このどれかを needs に持つ job / task だけを置く(以前の dedicated の印)。
+  (setv #^ tuple exclusive #())
+  ;; worker の置かれた node の名(heartbeat の node — k8s の downward API。k8s の外の機体は空)と、coordinator がその node の label から
+  ;; 導いた能力(ClusterNaming の node-capabilities — worker の自己申告ではない)。置き先の判断は provides と derived の和を見る。
+  (setv #^ str node "")
+  (setv #^ tuple derived #()))
 
 
 (defclass [(dataclass :frozen True)] EnvFailed []
@@ -111,12 +157,12 @@
 
 
 (defclass [(dataclass :frozen True)] WarmEntry []
-  "温める表の行 1 つ(2026-09-26・WarmRuntimeEnv)。key = 宣言(platform を含まない)と requires の組のキー・runtime-env = 宣言の JSON・
-   requires = 準備してほしい worker の条件・until-ms = 期限(過ぎた行は調停が消す)・holder = 頼んだ主体(記録と表示だけ)。
-   label の合う worker は heartbeat の返事で行を受け取り、job の準備より低い優先度で準備する。行の期限の内は掃除がその root を消さない。"
+  "温める表の行 1 つ(2026-09-26・WarmRuntimeEnv)。key = 宣言(platform を含まない)と needs の組のキー・runtime-env = 宣言の JSON・
+   needs = 準備してほしい worker に要る能力・until-ms = 期限(過ぎた行は調停が消す)・holder = 頼んだ主体(記録と表示だけ)。
+   能力の合う worker は heartbeat の返事で行を受け取り、job の準備より低い優先度で準備する。行の期限の内は掃除がその root を消さない。"
   (#^ str key)
   (#^ dict runtime-env)
-  (#^ tuple requires)
+  (#^ tuple needs)
   (#^ int until-ms)
   (#^ str holder))
 
@@ -203,11 +249,15 @@
    owner-annotation = Rollout が台数を持つ Deployment に付ける annotation の鍵。
    owner-scope      = その値の頭に付ける、このクラスタの名(「<scope>/Rollout/<名> replicas=<n>」)。
    revision-label   = 土台の版の追随(base_follow_policy)が読む image の LABEL(40 桁の commit)。
-   version-labels   = 版と一緒に写しておく LABEL の組 #(#(鍵 LABEL) …)。Service の status.base に鍵の名で並ぶ(比べない・表示だけ)。"
+   version-labels   = 版と一緒に写しておく LABEL の組 #(#(鍵 LABEL) …)。Service の status.base に鍵の名で並ぶ(比べない・表示だけ)。
+   node-capabilities = node の label から導く能力 #(#(label の鍵 値 能力の名) …)(ADR-DOE-CLUSTER-001 R4b・改訂 1 の I)。ここに在る能力は
+                      worker が自分で名乗っても受けない — coordinator が worker の置かれた node の label を読んで足す(会社の機体の境界を
+                      worker の自己申告に任せない)。既定 = company-machine を label doeff.dev/company-machine=true から。"
   (setv #^ str owner-annotation "doeff-cluster/replicas-owned-by")
   (setv #^ str owner-scope "doeff-cluster")
   (setv #^ str revision-label "org.opencontainers.image.revision")
   (setv #^ tuple version-labels #())
+  (setv #^ tuple node-capabilities #(#("doeff.dev/company-machine" "true" "company-machine")))
 
   (defn __post-init__ [self]
     (when (in "revision" (gfor pair self.version-labels (get pair 0)))
@@ -215,13 +265,14 @@
 
 
 (defn #^ ClusterNaming naming-from-json [#^ str text]
-  "coordinator の引数(JSON)→ ClusterNaming。欄は ownerAnnotation・ownerScope・revisionLabel・versionLabels({鍵: LABEL})。
+  "coordinator の引数(JSON)→ ClusterNaming。欄は ownerAnnotation・ownerScope・revisionLabel・versionLabels({鍵: LABEL})・
+   nodeCapabilities([{\"label\" \"value\" \"capability\"} …])。
    書かなかった欄は既定のまま。"
   (import json)
   (setv data (json.loads text))
   (when (not (isinstance data dict))
     (raise (ValueError "naming は JSON の object")))
-  (setv known #{"ownerAnnotation" "ownerScope" "revisionLabel" "versionLabels"})
+  (setv known #{"ownerAnnotation" "ownerScope" "revisionLabel" "versionLabels" "nodeCapabilities"})
   (setv unknown (sorted (gfor k data :if (not-in k known) k)))
   (when unknown
     (raise (ValueError (+ "naming の知らない欄: " (.join ", " unknown)))))
@@ -229,7 +280,11 @@
   (ClusterNaming :owner-annotation (.get data "ownerAnnotation" base.owner-annotation)
                  :owner-scope (.get data "ownerScope" base.owner-scope)
                  :revision-label (.get data "revisionLabel" base.revision-label)
-                 :version-labels (tuple (gfor #(k v) (.items (.get data "versionLabels" {})) #(k v)))))
+                 :version-labels (tuple (gfor #(k v) (.items (.get data "versionLabels" {})) #(k v)))
+                 :node-capabilities (if (in "nodeCapabilities" data)
+                                        (tuple (gfor row (get data "nodeCapabilities")
+                                                     #((get row "label") (get row "value") (get row "capability"))))
+                                        base.node-capabilities)))
 
 
 ;; HTTP の本文(/tasks・/detached・/heartbeat)の形の版(2026-09-26)。送り手・coordinator・worker は別々の版になり得るので、本文に
@@ -258,7 +313,7 @@
   (#^ str blob)
   (#^ str revision)
   (#^ (get tuple #(ComponentVersion ...)) versions)   ; 送り手の版(名の順)
-  (#^ (get tuple #(Requirement ...)) requires)        ; 実行先の条件(label の名の順)
+  (#^ tuple needs)                    ; 要る能力の名(名の順)
   (#^ int lease-ms)
   (#^ int lease-until-ms)
   (#^ int submitted-ms)
@@ -294,15 +349,28 @@
 
 
 (defn #^ dict task-record-to-json [#^ TaskRecord task]
-  "TaskRecord → 保存の JSON の形(版と条件は名 → 値の object)。保存の 2 つの形(state file と durable の KV)はここだけを使う。"
-  (| (asdict task) {"versions" (dict task.versions) "requires" (dict task.requires)}))
+  "TaskRecord → 保存の JSON の形(版は名 → 値の object・needs は名の list)。保存の 2 つの形(state file と durable の KV)はここだけを使う。"
+  (| (asdict task) {"versions" (dict task.versions) "needs" (list task.needs)}))
+
+
+;; 終わった task の phase(旧い形の保存の行を読む時に、まだ終わっていない行だけを断る — task-record-from-json)。
+(setv ENDED-PHASES (frozenset #("finished" "code-failed" "failed" "version-mismatch" "lost" "cancelled" "env-failed")))
 
 
 (defn #^ TaskRecord task-record-from-json [#^ dict data]
-  "保存の JSON の形 → TaskRecord(task-record-to-json の逆)。"
-  (TaskRecord #** (| data {"versions" (component-versions-of (get data "versions"))
-                           "requires" (requirements-of (get data "requires"))
-                           "avoid" (tuple (.get data "avoid" []))})))
+  "保存の JSON の形 → TaskRecord(task-record-to-json の逆)。
+   旧い形(2026-09-27 より前の coordinator が書いた requires の object)の行は読み直しで coordinator を落とさず、まだ終わっていない行を
+   failed(理由つき)にする — 旧い宣言の形は受け付けない(operator 2026-09-27)。空の requires は needs 無しと同じ。"
+  (setv old (.get data "requires")
+        body (dfor #(k v) (.items data) :if (!= k "requires") k v)
+        refused (and old (not-in (.get body "phase" "queued") ENDED-PHASES)))
+  (TaskRecord #** (| body {"versions" (component-versions-of (get body "versions"))
+                           "needs" (capabilities-of (.get body "needs" []) "task の needs")
+                           "avoid" (tuple (.get body "avoid" []))}
+                     (if refused
+                         {"phase" "failed"
+                          "detail" (.format "旧い形の task(requires {})は受け付けない — 新しい形(needs)で送り直す" old)}
+                         {}))))
 
 
 (defclass [(dataclass :frozen True)] ClusterState []
@@ -338,6 +406,11 @@
   (setv #^ dict deployments (field :default-factory dict)) ; "ns/名" → k8s の Deployment の最後の観測
   ;; image(「registry/名:tag」)→ LABEL から読んだ版 {"revision" <version-labels の鍵>… "at"} か {"error" "at"}(版の追随の cache)
   (setv #^ dict images (field :default-factory dict))
+  ;; node の名 → その node の label の最後の観測 {"labels" {…} "at" ms} か {"error" "at"}(能力の導出の cache・保存しない)
+  (setv #^ dict nodes (field :default-factory dict))
+  ;; node の label から導く能力の名(ClusterNaming の node-capabilities の能力 — coordinator の起動で入れる・保存しない)。
+  ;; worker の heartbeat の provides にこの名が在っても受けない(自己申告を断る — 改訂 1 の I)。
+  (setv #^ frozenset derivable (frozenset))
   (setv #^ int started-ms 0)                            ; この coordinator の process が状態を読んだ時刻(観測が揃うまでの猶予)
   (setv #^ int rollout-tick-ms 0)                       ; Rollout を最後に調停した時刻
   ;; coordinator が生きていた最後の時刻(ALIVE-MARK-MS ごとに耐久の鍵 counter へ書く)。起動の時に「止まっていた長さ」を測り、
