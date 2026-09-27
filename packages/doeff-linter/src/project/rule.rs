@@ -37,6 +37,8 @@ pub enum ProjectRule {
     ServiceDependency,
     /// DOEFF117: 宣言したのに使っていない依存(info)。
     UnusedDependency,
+    /// DOEFF118: 検の置き場の検の関数は deftest だけで書く(名が test_ の defn・deff・defk・fn の束縛を置かない)。
+    TestIsDeftest,
     /// DOEFF201(意味・Jev): 翻訳の層の定義が業務の判断をしている。
     SemanticBusinessDecision,
     /// DOEFF202(意味・Jev): 判断の層の定義が通信の手段を知っている。
@@ -47,7 +49,7 @@ pub enum ProjectRule {
 
 impl ProjectRule {
     /// 全部の層の規則(出力の一覧と `ALL` の展開のため)。
-    pub const ALL: [ProjectRule; 20] = [
+    pub const ALL: [ProjectRule; 21] = [
         ProjectRule::LayerImportDirection,
         ProjectRule::LayerForbiddenModule,
         ProjectRule::LayerTypesOnly,
@@ -65,6 +67,7 @@ impl ProjectRule {
         ProjectRule::UndeclaredDirectory,
         ProjectRule::ServiceDependency,
         ProjectRule::UnusedDependency,
+        ProjectRule::TestIsDeftest,
         ProjectRule::SemanticBusinessDecision,
         ProjectRule::SemanticTransportKnowledge,
         ProjectRule::SemanticPlainCallable,
@@ -90,6 +93,7 @@ impl ProjectRule {
             ProjectRule::UndeclaredDirectory => "DOEFF115",
             ProjectRule::ServiceDependency => "DOEFF116",
             ProjectRule::UnusedDependency => "DOEFF117",
+            ProjectRule::TestIsDeftest => "DOEFF118",
             ProjectRule::SemanticBusinessDecision => "DOEFF201",
             ProjectRule::SemanticTransportKnowledge => "DOEFF202",
             ProjectRule::SemanticPlainCallable => "DOEFF203",
@@ -122,6 +126,7 @@ impl ProjectRule {
             | ProjectRule::DefnForbidden
             | ProjectRule::DeffNeedsReason
             | ProjectRule::DefinitionTagsRequired
+            | ProjectRule::TestIsDeftest
             | ProjectRule::SemanticPlainCallable => false,
         }
     }
@@ -146,6 +151,7 @@ impl ProjectRule {
             ProjectRule::UndeclaredDirectory => "Undeclared Directory",
             ProjectRule::ServiceDependency => "Service Dependency",
             ProjectRule::UnusedDependency => "Unused Dependency",
+            ProjectRule::TestIsDeftest => "Tests Are deftest",
             ProjectRule::SemanticBusinessDecision => "Business Decision In Translation (Jev)",
             ProjectRule::SemanticTransportKnowledge => "Transport Knowledge In Core (Jev)",
             ProjectRule::SemanticPlainCallable => "Plain Callable Reason (Jev)",
@@ -172,9 +178,10 @@ impl ProjectRule {
             ProjectRule::UndeclaredDirectory => "root の下の dir は宣言した service か shared・foundation・legacy で、service の中の dir は宣言した層",
             ProjectRule::ServiceDependency => "service A が読んでよいのは、A の :depends-on に在る service の open-layers(intent)と shared だけ",
             ProjectRule::UnusedDependency => "宣言した依存(:depends-on)を、その service のどの module も読んでいない(知らせ)",
+            ProjectRule::TestIsDeftest => "検の置き場(設定の test_paths)の検は deftest で書く — 名が test- / test_ で始まる defn・deff・defk・fn の束縛を置かない",
             ProjectRule::SemanticBusinessDecision => "翻訳の層の定義は、要求を相手の話し方へ言い換えるだけで、業務の判断をしない(Jev の判定・warning か info)",
             ProjectRule::SemanticTransportKnowledge => "判断の層の定義は、通信の手段(URL・HTTP・JSON の wire・SQL)を知らない(Jev の判定・warning か info)",
-            ProjectRule::SemanticPlainCallable => "deff が名乗った素の関数の理由の種類は、コードが本当に素の関数でなければならない理由に当たる(Jev の判定・warning か info)",
+            ProjectRule::SemanticPlainCallable => "deff の理由の註の文は、architecture.hy が受け入れる理由(外の library が素の関数を呼ぶ等)に当たる(Jev の判定・warning か info)",
         }
     }
 
@@ -198,6 +205,7 @@ impl ProjectRule {
             ProjectRule::UndeclaredDirectory => "architecture.hy に defservice か service の :layers を足すか、dir を宣言した置き場所へ移す",
             ProjectRule::ServiceDependency => "依存先を :depends-on に足し、依存先の intent を出して頼む(判断や翻訳の module を直に読まない)",
             ProjectRule::UnusedDependency => "使っていない依存を :depends-on から外す",
+            ProjectRule::TestIsDeftest => "deftest にする(検の値を組む補助は defk にして deftest の中で `(<- …)` で呼ぶ)",
             ProjectRule::SemanticBusinessDecision => "業務の判断は core の judgment へ移し、翻訳の handler はその答えを使うだけにする(Jev の外れなら登録簿に載せる)",
             ProjectRule::SemanticTransportKnowledge => "通信の手段は protocol の翻訳の handler へ移し、core は intent を出すだけにする(Jev の外れなら登録簿に載せる)",
             ProjectRule::SemanticPlainCallable => "種類が当たらないなら defk にする — 組み立て(handler の並び)なら `(defk handlers-of [foundation])` に・テストなら deftest に・値を組む補助なら defk にして `(<- …)` で呼ぶ(Jev の外れなら登録簿に載せる)",

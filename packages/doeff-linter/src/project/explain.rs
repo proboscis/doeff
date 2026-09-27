@@ -62,12 +62,8 @@ pub enum DirectoryProblem {
 pub enum DeffReasonProblem {
     /// 註が無い。
     Missing,
-    /// 種類の無い旧い形(移行の間は warning)。
-    Legacy,
-    /// 種類が一覧に無い。
-    UnknownKind { kind: String },
-    /// 詳細が空か「同上」。
-    NoDetail { kind: String, detail: String },
+    /// 理由が空か「同上」とその変形(その定義に固有の理由になっていない)。
+    NoDetail { detail: String },
 }
 
 impl DeffReasonProblem {
@@ -75,9 +71,8 @@ impl DeffReasonProblem {
     pub fn short(&self) -> String {
         match self {
             DeffReasonProblem::Missing => "理由の註が無い".to_string(),
-            DeffReasonProblem::Legacy => "種類の無い旧い形".to_string(),
-            DeffReasonProblem::UnknownKind { kind } => format!("種類 {} は一覧に無い", kind),
-            DeffReasonProblem::NoDetail { kind, .. } => format!("種類 {} の詳細が空か「同上」", kind),
+            DeffReasonProblem::NoDetail { detail } if detail.is_empty() => "理由が空".to_string(),
+            DeffReasonProblem::NoDetail { detail } => format!("理由が「{}」(この定義に固有の理由でない)", detail),
         }
     }
 }
@@ -153,14 +148,24 @@ pub enum Explain {
         probability: f64,
     },
     /// DOEFF203: 名乗った素の関数の理由の種類が、Jev の判定で当たらない見込み。
+    /// DOEFF118: 検の置き場の、deftest でない検の関数。
+    TestNotDeftest { name: String, head: String },
     PlainCallableDoubt {
         definition: String,
         kind: &'static str,
-        declared: String,
-        declared_description: String,
-        declared_probability: f64,
+        /// 書かれた理由の文。
+        stated: String,
+        /// Jev が選んだ答え(受け入れる理由・受け入れない型・none)と確率。
         chosen: String,
         chosen_probability: f64,
+        /// 選んだ答えが受け入れる理由か。
+        chosen_accepted: bool,
+        /// 選んだ答えの説明(none は None)。
+        chosen_description: Option<String>,
+        /// 受け入れない型の直し方(architecture.hy の :fix)。
+        fix: Option<String>,
+        /// 受け入れない答えの確率の和。
+        rejected_total: f64,
     },
     /// DOEFF113: タグの :context が置き場の service と食い違う。
     ContextMismatch { placement: Placement, contexts: Vec<String> },
@@ -297,6 +302,10 @@ impl<'a> Narrator<'a> {
                     contexts.join("・")
                 ),
             ),
+            Explain::TestNotDeftest { name, head } => (
+                format!("定義 {}({})— 検の置き場の、名が test で始まる関数", name, head),
+                "検は deftest だけで書く。deftest は doeff の Program として走り、handler の組み合わせを明示して検める。素の関数や fn の束縛の検は pytest が Program の外で呼ぶので、effect と handler の差し替えを通らない。".to_string(),
+            ),
             Explain::DefnForbidden { name, head, .. } => (
                 format!("定義 {}({})", name, head),
                 "defn は契約の辞書を持てず、:tags を書けない — タグで層・役・文脈を名乗れないので、閲覧のパネルにも linter の役の規則にも乗らない。defk で書く(素の callable が避けられない時だけ deff)。".to_string(),
@@ -304,27 +313,20 @@ impl<'a> Narrator<'a> {
             Explain::DeffWithoutReason { name, marker, problem, kinds } => {
                 let marker = marker.trim_end_matches([':', '\u{ff1a}']);
                 let list = if kinds.is_empty() {
-                    "(architecture.hy に種類の一覧が無い)".to_string()
+                    String::new()
                 } else {
-                    kinds.iter().map(|k| format!("{}({})", k.name, k.description)).collect::<Vec<_>>().join("・")
+                    format!("受け入れてよい理由は {}。", kinds.iter().map(|k| format!("{}({})", k.name, k.description)).collect::<Vec<_>>().join("・"))
                 };
                 let subject = match problem {
-                    DeffReasonProblem::Missing => format!("定義 {}(deff)— 理由の註 `; {}(<種類>): <詳細>` が定義の行にも直前の行にも無い", name, marker),
-                    DeffReasonProblem::Legacy => format!("定義 {}(deff)— 理由の註に種類が無い旧い形(`; {}(<種類>): <詳細>` にする)", name, marker),
-                    DeffReasonProblem::UnknownKind { kind } => format!("定義 {}(deff)— 理由の種類 {} は architecture.hy の一覧に無い", name, kind),
-                    DeffReasonProblem::NoDetail { kind, detail } => {
-                        format!("定義 {}(deff)— 種類 {} の詳細が{}", name, kind, if detail.is_empty() { "空".to_string() } else { format!("「{}」", detail) })
-                    }
-                };
-                let declared = match problem {
-                    DeffReasonProblem::NoDetail { kind, .. } => kinds.iter().find(|k| &k.name == kind).map(|k| format!("種類 {} = {}。", k.name, k.description)).unwrap_or_default(),
-                    _ => String::new(),
+                    DeffReasonProblem::Missing => format!("定義 {}(deff)— 理由の註 `; {}: <理由>` が定義の行にも直前の行にも無い", name, marker),
+                    DeffReasonProblem::NoDetail { detail } if detail.is_empty() => format!("定義 {}(deff)— 理由の註の理由が空", name),
+                    DeffReasonProblem::NoDetail { detail } => format!("定義 {}(deff)— 理由の註が「{}」で、この定義に固有の理由でない", name, detail),
                 };
                 (
                     subject,
                     format!(
-                        "deff は defk の契約(:pre・:post と effect の検査)を外す逃げ道なので、素の関数でなければならない理由を、決まった種類({})と、この定義に固有の詳細で書く。{}種類に当たらないなら、呼び手を Program にして defk にする。",
-                        list, declared
+                        "deff は defk の契約(:pre・:post と effect の検査)を外す逃げ道なので、なぜ素の関数でなければならないかを、この定義に固有の文で書く(受け入れるかは Jev の DOEFF203 が理由の文と source を見て決める)。{}",
+                        list
                     ),
                 )
             }
@@ -404,16 +406,28 @@ impl<'a> Narrator<'a> {
                     self.character(placement.layer)
                 ),
             ),
-            Explain::PlainCallableDoubt { definition, kind, declared, declared_description, declared_probability, chosen, chosen_probability } => (
-                format!("定義 {}({})— 名乗った理由の種類 {}({})", definition, kind, declared, declared_description),
-                format!(
-                    "Jev の判定 p({})={:.2} — コードを読むと、名乗った種類は素の関数でなければならない理由に当たらない見込み。Jev が選んだのは {}(p={:.2}){}。(これは意味の判定で、当たり外れを測っている途中 — 外れなら登録簿に載せる)",
-                    declared,
-                    declared_probability,
-                    chosen,
-                    chosen_probability,
-                    if chosen == "none" { " — どの種類にも当たらず、呼び手を Program にして defk にできる見込み" } else { "" }
-                ),
+            Explain::PlainCallableDoubt { definition, kind, stated, chosen, chosen_probability, chosen_accepted, chosen_description, fix, rejected_total } => (
+                format!("定義 {}({})— 書かれた理由「{}」", definition, kind, stated),
+                match (chosen_accepted, chosen.as_str()) {
+                    (true, _) => format!(
+                        "Jev の判定: 受け入れる理由 {}({})に近い(p={:.2})が、受け入れない答えの確率の和が {:.2} ある。理由の文をこの定義に固有に書き直すか、defk にできないかを確かめる。(意味の判定 — 外れなら登録簿に載せる)",
+                        chosen,
+                        chosen_description.clone().unwrap_or_default(),
+                        chosen_probability,
+                        rejected_total
+                    ),
+                    (false, "none") => format!(
+                        "Jev の判定 p={:.2}: この理由は受け入れられない — 宣言した受け入れる理由のどれにも当たらず、素の関数でなければならない理由が見えない。呼び手を Program にして defk にできる見込み。(意味の判定 — 外れなら登録簿に載せる)",
+                        chosen_probability
+                    ),
+                    (false, _) => format!(
+                        "Jev の判定 p={:.2}: この理由は受け入れられない — 近い型は {}({})。{}(意味の判定 — 外れなら登録簿に載せる)",
+                        chosen_probability,
+                        chosen,
+                        chosen_description.clone().unwrap_or_default(),
+                        fix.as_ref().map(|f| format!("直し方: {}。", f)).unwrap_or_default()
+                    ),
+                },
             ),
             Explain::EnvironmentName { subject, words } => (
                 match subject {
@@ -435,19 +449,18 @@ impl<'a> Narrator<'a> {
         const PROGRAM_WAYS: &str = "組み立て(handler の並び)なら `(defk handlers-of [foundation])` に・テストなら deftest に・値を組む補助なら defk にして `(<- …)` で呼ぶ";
         match explain {
             Explain::DefnForbidden { declared_kind: Some(kind), .. } => {
-                Some(format!("deff にする(種類 {} — {})。同じ行の註を `; defk にできない({}): <詳細>` の形にして :tags を書く", kind.name, kind.description, kind.name))
+                Some(format!("deff にする(理由 {} — {})。同じ行に `; defk にできない: <誰がどう呼ぶか>` と :tags を書く", kind.name, kind.description))
             }
             Explain::DefnForbidden { declared_kind: None, .. } => {
-                Some(format!("defk にする(素の関数でなければならない理由が種類に当たらない)— {}", PROGRAM_WAYS))
+                Some(format!("defk にする(素の関数でなければならない理由が見当たらない)— {}", PROGRAM_WAYS))
             }
-            Explain::DeffWithoutReason { problem: DeffReasonProblem::UnknownKind { .. } | DeffReasonProblem::Missing, .. } => {
-                Some(format!("種類に当たるなら `; defk にできない(<種類>): <詳細>` を書く。当たらないなら defk にする — {}", PROGRAM_WAYS))
-            }
-            Explain::DeffWithoutReason { problem: DeffReasonProblem::Legacy, .. } => {
-                Some(format!("註を `; defk にできない(<種類>): <詳細>` の形に直す。種類に当たらないなら defk にする — {}", PROGRAM_WAYS))
+            Explain::PlainCallableDoubt { chosen_accepted: false, fix: Some(fix), .. } => Some(fix.clone()),
+            Explain::PlainCallableDoubt { .. } => Some(format!("defk にできないかを確かめる — {}", PROGRAM_WAYS)),
+            Explain::DeffWithoutReason { problem: DeffReasonProblem::Missing, .. } => {
+                Some(format!("素の関数でなければならないなら `; defk にできない: <誰がどう呼ぶか>` を書く。そうでなければ defk にする — {}", PROGRAM_WAYS))
             }
             Explain::DeffWithoutReason { problem: DeffReasonProblem::NoDetail { .. }, .. } => {
-                Some(format!("この定義に固有の詳細(誰が・どう呼ぶか)を書く(「同上」は使わない)。書けないなら defk にする — {}", PROGRAM_WAYS))
+                Some(format!("この定義に固有の理由(誰が・どう呼ぶか)を書く(「同上」は使わない)。書けないなら defk にする — {}", PROGRAM_WAYS))
             }
             _ => None,
         }
