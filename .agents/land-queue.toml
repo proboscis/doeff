@@ -94,6 +94,11 @@ timeout_s = 7200
 # 前提 — route-doeff-semgrep-zeus-181256 起票済み)。
 mode = "focus"
 # focus の恒常部は宣言しない(doeff に横断走査 script なし — 門は力学のみ)。
+# 着地の門 = git の衝突の印の走査ちょうど(agora-redesign #726・2026-09-28 c2-w25)。merge-queue の窓は
+#   focus_paths_runner の宣言が無い区画を開かないので、agora-controllers / herdr-hud と同じ 1 行を置く。
+#   行頭の `<<<<<<< ` / `>>>>>>> ` の一致なし(git grep の rc 1)だけを通し、一致(rc 0)と git の失敗(rc 128)は止める。
+#   「門は力学のみ」は変わらない(テストは足さない)。戻すには この行と下の runner を旧値へ戻す。
+focus_paths_runner = '''git grep -n -E '^(<<<<<<< |>>>>>>> )' -- . && exit 1 || test $? -eq 1'''
 # 方策宣言そのものへの変更だけは常時 full battery(自己参照の fail-closed)
 # ⚠ 2026-08-17 operator 逐語「全量検査を無効にしてくれ」: full_paths を空に —
 # 着地の窓はいかなる path でも全量検査(gate.full)を走らせない。gate.full の
@@ -140,7 +145,11 @@ run_executors = ["landrun-doeff", "landrun-rollout", "machine", "land-runner@ago
 # Secret land-key-doeff(GitHub の deploy key `agora-1-pod (write) land-runner doeff`・herdr-hud
 # deploy の env AGORA_LAND_SSH_KEYS の doeff の項 — 鍵は repo ごとに 1 つ・#71 便 2b)。
 # ⚠ `auto_run = true` は残す(pod の窓と `--machine` の資格の宣言 = 種別の照合)。
-runner = "pod"
+# 2026-09-28 改訂(agora-redesign #726・c2-w25): 窓は merge-queue の Deployment `merge-queue-land`(ns herdr-hud)が回す。
+#   agora-1 の land-api の窓は agora-controllers の本線の宣言(gate.full の鍵 parallel)を読めず、依存先の checkout を
+#   揃えられないまま L515 を保留し続けていた。押す鍵は同じ Secret land-key-doeff(merge-queue の deploy/land が載せる)。
+#   戻し方 = この値を "pod" に戻す(1 行の便)。
+runner = "merge-queue"
 auto_run = true
 urgent_slots = 1
 push = "origin"
