@@ -14,7 +14,6 @@
 (import httpx)
 (import pytest)
 (import doeff [with_handlers Program])
-(import doeff_core_effects.handlers [reader])
 (import doeff_core_effects.scheduler [Spawn Cancel])
 (import doeff_time [Delay SimClock sim-time-handler])
 (import doeff_cluster.remote_model [current-versions])
@@ -23,7 +22,7 @@
                                       DetachedSucceeded DetachedLost DetachedUnrunnable DetachedPending DetachedUnreachable
                                       RunnerFact RunnersUnreachable])
 (import doeff_cluster.detached [detached-local DetachedLocalStore detached-cluster DetachedClient DetachedEvent])
-(import tests.detached_rig [ENV slow-add RigWorker MemoryCoordinator worker-tick worker-loop])
+(import tests.detached_rig [slow-add RigWorker MemoryCoordinator worker-tick worker-loop])
 
 (val RUNNERS #((RunnerFact :name "a" :provides #("x-tool") :exclusive #() :live True :draining False)
                 (RunnerFact :name "b" :provides #("y-tool") :exclusive #() :live True :draining False)))
@@ -47,7 +46,7 @@
 
 (defn #^ RunnersRig fake-runners-rig [#^ Path tmp-path]
   (setv store (DetachedLocalStore :runners RUNNERS))
-  (RunnersRig "fake" [(sim-time-handler :clock (SimClock)) (reader {"base" 100}) (detached-local store :poll-seconds POLL)] {}))
+  (RunnersRig "fake" [(sim-time-handler :clock (SimClock)) (detached-local store :poll-seconds POLL)] {}))
 
 
 (defclass CoordinatorRunners []
@@ -108,7 +107,7 @@
         runners (CoordinatorRunners tmp-path transport)
         operator (httpx.Client :transport transport :base-url "http://coordinator" :headers {"x-actor" "operator"}))
   (for [fact RUNNERS] (.fresh runners fact.name fact.provides fact.exclusive))
-  (RunnersRig "coordinator" [(sim-time-handler :clock clock) (reader {"worker" "child" "base" 100}) (rig-runners runners operator)
+  (RunnersRig "coordinator" [(sim-time-handler :clock clock) (rig-runners runners operator)
                              (detached-cluster (DetachedClient "http://coordinator" "r" :transport transport) :poll-seconds POLL)]
               runners.workers))
 
@@ -143,7 +142,7 @@
   (assert (= (sorted facts) ["a" "b"]) roster)
   (assert (all (gfor f (.values facts) (and f.live (not f.draining)))) roster)
   (assert (= #((. (get facts "a") provides) (. (get facts "a") exclusive)) #(#("x-tool") #())) roster)
-  (<- (SubmitDetached (slow-add SLOW 1) :env ENV :key "k-on-y" :needs ON-Y :lease-seconds LEASE))
+  (<- (SubmitDetached (slow-add SLOW 1) :key "k-on-y" :needs ON-Y :lease-seconds LEASE))
   (<- (Delay (* SLOW 0.3)))
   (<- early (AwaitDetached "k-on-y" :timeout-seconds 0.0))
   (assert (and (isinstance early DetachedPending) (= early.phase "assigned") (= early.runner "b")) early)
@@ -160,8 +159,8 @@
 (defk one-runner-dies []
   {:pre [] :post [(: % bool)]}
   ;; a だけが死ぬ: a の task は消え(走らせ直さない)、b の task は終わる。lease の後の名簿で a は生きていない。
-  (<- (SubmitDetached (slow-add (* SLOW 4) 2) :env ENV :key "k-x" :needs ON-X :lease-seconds LEASE))
-  (<- (SubmitDetached (slow-add (* SLOW 2) 3) :env ENV :key "k-y" :needs ON-Y :lease-seconds LEASE))
+  (<- (SubmitDetached (slow-add (* SLOW 4) 2) :key "k-x" :needs ON-X :lease-seconds LEASE))
+  (<- (SubmitDetached (slow-add (* SLOW 2) 3) :key "k-y" :needs ON-Y :lease-seconds LEASE))
   (<- (Delay (* SLOW 0.3)))
   (<- lost int (SimulateRunnerLoss "a"))
   (assert (= lost 1) lost)
@@ -190,7 +189,7 @@
   (<- (Delay POLL))
   (<- roster (ReadRunners))
   (assert (. (get (by-name roster) "a") draining) roster)
-  (<- (SubmitDetached (slow-add SLOW 4) :env ENV :key "k-drain" :needs ON-X :lease-seconds LEASE))
+  (<- (SubmitDetached (slow-add SLOW 4) :key "k-drain" :needs ON-X :lease-seconds LEASE))
   (<- (Delay (* 4 POLL)))
   (<- waiting (AwaitDetached "k-drain" :timeout-seconds 0.0))
   (assert (and (isinstance waiting DetachedPending) (= waiting.phase "queued")) waiting)
@@ -207,7 +206,7 @@
 
 (defk no-runner-with-the-capability []
   {:pre [] :post [(: % bool)]}
-  (<- (SubmitDetached (slow-add 0.0 5) :env ENV :key "k-z" :needs ON-Z :lease-seconds LEASE))
+  (<- (SubmitDetached (slow-add 0.0 5) :key "k-z" :needs ON-Z :lease-seconds LEASE))
   (<- outcome (AwaitDetached "k-z"))
   (assert (isinstance outcome DetachedUnrunnable) outcome)
   True)
@@ -222,10 +221,10 @@
 
 (deftest test-fake-outage-hides-the-roster-but-keeps-tasks-running [tmp-path]
   (val store (DetachedLocalStore :runners RUNNERS))
-  (val rig (RunnersRig "fake" [(sim-time-handler :clock (SimClock)) (reader {"base" 100}) (detached-local store :poll-seconds POLL)] {}))
+  (val rig (RunnersRig "fake" [(sim-time-handler :clock (SimClock)) (detached-local store :poll-seconds POLL)] {}))
   (defk scenario []
     {:pre [] :post [(: % bool)]}
-    (<- (SubmitDetached (slow-add SLOW 6) :env ENV :key "k-cut" :needs ON-X :lease-seconds LEASE))
+    (<- (SubmitDetached (slow-add SLOW 6) :key "k-cut" :needs ON-X :lease-seconds LEASE))
     (<- (SimulateCoordinatorOutage (* SLOW 2)))
     (<- roster (ReadRunners))
     (assert (isinstance roster RunnersUnreachable) roster)
@@ -233,7 +232,7 @@
     ;; 終わった結果が読める。
     (<- during (AwaitDetached "k-cut" :timeout-seconds (* SLOW 1.5)))
     (assert (isinstance during DetachedUnreachable) during)
-    (<- refused (SubmitDetached (slow-add 0.0 1) :env ENV :key "k-during" :needs ON-X :lease-seconds LEASE))
+    (<- refused (SubmitDetached (slow-add 0.0 1) :key "k-during" :needs ON-X :lease-seconds LEASE))
     (assert (isinstance refused DetachedUnreachable) refused)
     (<- after (AwaitDetached "k-cut"))
     (assert (= after (DetachedSucceeded 106)) after)
@@ -258,7 +257,7 @@
   (val client (DetachedClient "http://coordinator" "r" :transport (httpx.MockTransport cut-off) :deadline-seconds 0.2))
   (defk scenario []
     {:pre [] :post [(: % bool)]}
-    (<- sent (SubmitDetached (slow-add 0.0 1) :env ENV :key "k-cut-real" :needs ON-X))
+    (<- sent (SubmitDetached (slow-add 0.0 1) :key "k-cut-real" :needs ON-X))
     (assert (isinstance sent DetachedUnreachable) sent)
     (<- awaited (AwaitDetached "k-cut-real" :timeout-seconds 1.0))
     (assert (isinstance awaited DetachedUnreachable) awaited)

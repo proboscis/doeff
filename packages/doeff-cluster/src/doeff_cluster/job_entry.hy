@@ -1,79 +1,62 @@
-;;; worker が起動する子 process の入口(service と task)。その commit のコードを展開した木の中で動く。
+;;; worker が起動する子 process の入口(service と task)。その commit のコードを展開した木(か実行環境の root)の中で動く。
 ;;;
-;;;   hy -m doeff_cluster.job_entry service --factory M:f --env M:e --config '{…}'
-;;;   hy -m doeff_cluster.job_entry task --blob PATH --result PATH --env M:e --versions '{…}'
-;;;   hy -m doeff_cluster.job_entry probe --factory M:f --env M:e   (入口の検め — worker が起こす前に撃つ)
+;;;   hy -m doeff_cluster.job_entry service --identity <指紋> --program PATH
+;;;   hy -m doeff_cluster.job_entry task --blob PATH --result PATH --versions '{…}'
+;;;   hy -m doeff_cluster.job_entry probe --program PATH   (入口の検め — 版と復元だけを確かめて走らせない)
 ;;;
-;;; env = handler の組を組み立てる関数の import path。(config ctx) を受けて handler の list(外側が先)を返す。
-;;; task は結果(TaskSucceeded / TaskFailed)を必ず --result の file に書いてから 0 で終わる。
+;;; job が受け取るのは Program の値 1 つだけ(ADR-DOE-CLUSTER-001 R1・R3)。この入口は既定の handler を 1 つも足さない(R2):
+;;; 版を検め、詰めた Program を解き、(run program) するだけ。scheduler・時計・記録係・業務の handler は Program が自分の
+;;; with-handlers で並べる。答えの無い effect はその場で上がり、process は 0 以外で終わる(worker が理由つきで起こし直す)。
+;;; 宿(この入口と worker)が Program に提供するのは host_contract.HOST-CONTRACT の 3 つだけ(run-context・environ・Program の path)。
 ;;;
-;;; 実行環境(runtime env)の task: worker は env の root の venv で `uv run --no-sync --frozen --project <root の project> hy -m
-;;; doeff_cluster.job_entry task …` として起こし、宣言の JSON を DOEFF_RUNTIME_ENV、キーを DOEFF_RUNTIME_ENV_KEY で渡す。この入口は
-;;; root の中の doeff-cluster(送り手の版)なので、worker と子の約束の版は runtime_env_model.CHILD-PROTOCOL(worker が準備の確かめで
-;;; 読む)。
-;;; 0 以外で終わった = 結果を書けなかった(worker はそれを「結果なし」として報告する)。
-(require doeff-hy.macros [defk <-])
+;;; service の Program の file = worker が coordinator の /programs/<sha> から取った JSON {"blob" 詰めた文字列 "versions" 詰めた送り手の版}。
+;;; --identity は宣言の同一性の指紋(spec-hash の材料 — 入口では読まない)。
+;;; task は結果(TaskSucceeded / TaskFailed)を必ず --result の file に書いてから 0 で終わる。0 以外で終わった = 結果を書けなかった。
+;;;
+;;; 実行環境(runtime env)の job: worker は env の root の venv で `uv run --no-sync --frozen --project <root の project> hy -m
+;;; doeff_cluster.job_entry …` として起こし、宣言の JSON を DOEFF_RUNTIME_ENV、キーを DOEFF_RUNTIME_ENV_KEY で渡す。この入口は
+;;; root の中の doeff-cluster(送り手の版)なので、worker と子の約束の版は runtime_env_model.CHILD-PROTOCOL。
 (import argparse)
-(import dataclasses [dataclass])
 (import json)
 (import os)
-(import re)
 (import pathlib [Path])
 (import sys)
-(import doeff [run with_handlers])
-(import doeff_core_effects.scheduler [scheduled])
-(import .service_model [resolve program-arguments settings-left-to-env RECORD-KEY])
+(import doeff [run])
 (import .remote_model [current-versions version-mismatch version-diffs decode-program encode-outcome
                        TaskSucceeded TaskFailed failed-from VersionMismatch RemoteJobFailed])
-(import .runtime_env_model [RuntimeEnv runtime-env-of-json])
 ;; 子の文脈の型と読みは入口でない module に 1 つだけ置く(job_context の頭の註 — ここは import して、今の名を引けるように残す)。
 (import .job_context [RunContext context-from-env runtime-env-of-context])
 
 
-(defn #^ list env-handlers [#^ str env #^ dict config #^ RunContext ctx]
-  (setv build (resolve env))
-  (setv handlers (build config ctx))
-  (when (not (isinstance handlers list))
-    (raise (TypeError (.format "env {} は handler の list を返す必要がある: {}" env (type handlers)))))
-  handlers)
+(defn #^ tuple read-program [#^ str path]  ; defk にできない: process の入口(Program の外)が file を読む
+  "service の Program の file → #(Program 理由)。版が合わない・file が無い・解けない時は Program が None で理由の 1 行。"
+  (try
+    (setv row (json.loads (.read-text (Path path) :encoding "utf-8")))
+    (except [error OSError]
+      (return #(None (.format "Program の file {} を読めない(worker が /programs から取れていない): {}" path error)))))
+  (setv mismatch (version-mismatch (.get row "versions" {}) (current-versions)))
+  (when (is-not mismatch None)
+    (return #(None (+ "版が違うので Program を解かない: " mismatch))))
+  (try
+    #((decode-program (get row "blob")) None)
+    (except [error Exception]
+      #(None (.format "Program を解けない: {}: {}" (. (type error) __name__) error)))))
 
 
-(defn #^ list recording-layer [record #^ dict config #^ RunContext ctx args]
-  "設定の record 欄(effect の記録 — record_handlers.hy)が在れば、env の一番内側に足す記録係を 1 つ返す。無ければ空。"
-  (when (not (isinstance record dict)) (return []))
-  (import doeff_cluster.record_handlers [recording-handler])
-  ;; code のキー: env の task は env のキー(DOEFF_RUNTIME_ENV_KEY — cwd は空の作業 dir で、名は何も言わない)。
-  ;; 版の組: worker は木を「<base>~<重ねる commit>」の名の dir に作って cwd にする(DOEFF_WORKER_REVISION は宣言の revision だけ)。
-  (setv here (. (Path.cwd) name))
-  (setv code-key (cond
-                   ctx.env-key (+ "env-" ctx.env-key)
-                   (re.fullmatch r"[0-9a-f]{40}(~[0-9a-f]{40})?" here) here
-                   True ctx.revision))
-  (setv #(base _ overlay) (.partition code-key "~"))
-  [(recording-handler record ctx.job
-                      {"worker" ctx.worker "pid" (os.getpid) "instance" ctx.instance "attempt" ctx.attempt
-                       "specHash" ctx.spec-hash "placement" ctx.placement "codeKey" code-key
-                       "base" base "revision" (or overlay base)
-                       "factory" args.factory "env" args.env "config" config})])
-
-(defn run-service [args]
-  (setv config (json.loads args.config))
-  ;; record 欄は業務の Program の引数ではなく、組み立て側(記録係を足すか)の設定。本体の引数は program-arguments が本体の引数の名の
-  ;; 設定だけで作る。env には record を除いた全体を渡す(env だけが読む設定を含む)。
-  (setv record (.pop config RECORD-KEY None))
+(defn run-service [args]  ; defk にできない: process の入口(Program の外)
+  "service の入口: Program を解いて、そのまま走らせる(handler を足さない — R2)。"
   (setv ctx (context-from-env))
-  (setv factory (resolve args.factory))
-  (setv program (factory #** (program-arguments factory config)))
-  (print (.format "service: {} を起動({}・commit {}・本体へ渡さない設定 {})" ctx.job args.factory ctx.revision
-                  (settings-left-to-env factory config))
-         :file sys.stderr :flush True)
-  (setv handlers (+ (env-handlers args.env config ctx) (recording-layer record config ctx args)))
-  (setv result (run (scheduled (with-handlers handlers program))))
+  (setv #(program problem) (read-program args.program))
+  (when (is-not problem None)
+    (print (.format "service: {}: {}" ctx.job problem) :file sys.stderr :flush True)
+    (sys.exit 3))
+  (print (.format "service: {} を起動(commit {})" ctx.job ctx.revision) :file sys.stderr :flush True)
+  (setv result (run program))
   (print (.format "service: {} が終わった: {!r}" ctx.job result) :file sys.stderr :flush True))
 
 
-(defn #^ (| TaskSucceeded TaskFailed) task-outcome [args #^ RunContext ctx]
-  ;; 版 → 復元 → 実行の順に、どこで断ったか分かる失敗を返す。
+(defn #^ (| TaskSucceeded TaskFailed) task-outcome [args #^ RunContext ctx]  ; defk にできない: process の入口(Program の外)
+  "task の入口の本体: 版 → 復元 → 実行の順に、どこで断ったか分かる失敗を返す(handler は足さない — R2)。"
   (setv expected (json.loads args.versions) actual (current-versions))
   (setv mismatch (version-mismatch expected actual))
   (when (is-not mismatch None)
@@ -85,33 +68,22 @@
     (except [error Exception]
       (return (failed-from (RemoteJobFailed (.format "Program を復元できない: {}: {}" (. (type error) __name__) error))))))
   (try
-    (setv handlers (env-handlers args.env {} ctx))
-    (TaskSucceeded (run (scheduled (with-handlers handlers program))))
+    (TaskSucceeded (run program))
     (except [error Exception]
       (failed-from error))))
 
 
-(defn #^ (| str None) probe-problem [#^ str factory #^ str env]
-  "入口の検め(2026-09-25): factory と env を service_model.resolve で解けるか(import と属性の在否だけ・呼ばない)。
-   解ければ None、解けなければ理由の 1 行。この module 自身の import(doeff 等の実行環境)は、この関数に届く前に試されている。"
-  (for [#(label path) [#("factory" factory) #("env" env)]]
-    (try
-      (resolve path)
-      (except [error Exception]
-        (return (.format "{} {} を読み込めない: {}: {}" label path (. (type error) __name__)
-                         (.join " " (.split (str error))))))))
-  None)
-
-
-(defn #^ None run-probe [#^ argparse.Namespace args]
-  (setv problem (probe-problem args.factory args.env))
+(defn #^ None run-probe [#^ argparse.Namespace args]  ; defk にできない: process の入口(Program の外)
+  "入口の検め: 版と復元だけを確かめて走らせない(worker が起こす前に、起こせない理由を先に出すため)。"
+  (setv #(program problem) (read-program args.program))
   (when (is-not problem None)
     (print problem :file sys.stderr :flush True)
     (sys.exit 1))
-  (print (.format "probe: {} と {} を読み込めた" args.factory args.env) :file sys.stderr :flush True))
+  (print (.format "probe: {} を解けた" args.program) :file sys.stderr :flush True))
 
 
-(defn run-task [args]
+(defn run-task [args]  ; defk にできない: process の入口(Program の外)
+  "task の入口: 結果を必ず file に書いてから 0 で終わる。"
   (setv ctx (context-from-env))
   (setv outcome (task-outcome args ctx))
   (setv tmp (+ args.result ".tmp"))
@@ -121,21 +93,19 @@
   (print (.format "task: {} → {}" ctx.job (. (type outcome) __name__)) :file sys.stderr :flush True))
 
 
-(defn main []
-  (setv parser (argparse.ArgumentParser :description "doeff worker の子 process の入口"))
+(defn main []  ; defk にできない: process の入口
+  "子 process の入口の引数を読む。旧い引数(--factory・--env・--config)は argparse が知らない引数として断る。"
+  (setv parser (argparse.ArgumentParser :description "doeff worker の子 process の入口(job = Program の値 1 つ)"))
   (setv sub (.add-subparsers parser :dest "kind" :required True))
   (setv service (.add-parser sub "service"))
-  (.add-argument service "--factory" :required True)
-  (.add-argument service "--env" :required True)
-  (.add-argument service "--config" :default "{}")
+  (.add-argument service "--identity" :required True :help "宣言の同一性の指紋(spec-hash の材料・入口では読まない)")
+  (.add-argument service "--program" :required True :help "詰めた Program の file(worker が /programs/<sha> から取った JSON)")
   (setv task (.add-parser sub "task"))
   (.add-argument task "--blob" :required True)
   (.add-argument task "--result" :required True)
-  (.add-argument task "--env" :required True)
   (.add-argument task "--versions" :default "{}")
   (setv probe (.add-parser sub "probe"))
-  (.add-argument probe "--factory" :required True)
-  (.add-argument probe "--env" :required True)
+  (.add-argument probe "--program" :required True)
   (setv args (.parse-args parser))
   (cond
     (= args.kind "service") (run-service args)

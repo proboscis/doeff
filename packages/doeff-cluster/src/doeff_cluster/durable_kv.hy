@@ -20,12 +20,12 @@
 (import dataclasses [asdict replace])
 (import .cluster_model [ClusterState WorkerInfo Placement Drain component-versions-of task-record-to-json
                         task-record-from-json handoff-watch-from-json])
-(import .cluster_policy [job-to-json job-from-json board-changes value-size warm-entry-to-json warm-entry-from-json worker-capabilities-of
+(import .cluster_policy [job-to-json job-from-json read-service-rows board-changes value-size warm-entry-to-json warm-entry-from-json worker-capabilities-of
                          worker-generations-json worker-generations-from-json])
 
 (setv BOARD "board/")
 (setv PLACEMENT "placement/")
-(setv DRAIN "drain/" SURGE "surge/" WARM "warm/")
+(setv DRAIN "drain/" SURGE "surge/" WARM "warm/" PROGRAM "program/")
 (val HANDOFF "handoff/")
 ;; 改名の前の置き先の鍵(値の形は同じ)。起動時に読んで移すだけ。
 (setv LEGACY-PLACEMENT "assignment/") ; 新しく書くのには使わない(語彙の規則の旧い語 — 読みの互換のためだけに残す)
@@ -44,6 +44,7 @@
                          ;; task の id の頭(以前からの "t" は書かない — 以前の形と同じ)。
                          (if (= state.task-prefix "t") {} {"taskPrefix" state.task-prefix}))})
   (for [j state.jobs] (setv (get kv (+ "service/" j.spec.name)) (job-to-json j)))
+  (for [r (.values state.refused)] (setv (get kv (+ "service/" r.name)) r.row))
   (for [#(k a) (.items state.placements)] (setv (get kv (+ PLACEMENT k)) (asdict a)))
   (for [w (.values state.workers)]
     (setv seen (.get state.seen-marks w.name))
@@ -58,6 +59,7 @@
   (for [#(k d) (.items state.drains)] (setv (get kv (+ DRAIN k)) (asdict d)))
   (for [#(k a) (.items state.surges)] (setv (get kv (+ SURGE k)) (asdict a)))
   (for [#(k w) (.items state.warms)] (setv (get kv (+ WARM k)) (warm-entry-to-json w)))
+  (for [#(k p) (.items state.programs)] (setv (get kv (+ PROGRAM k)) p))
   (for [#(k w) (.items state.handoffs)] (setv (get kv (+ HANDOFF k)) (.to-json w)))
   (for [e state.audit] (setv (get kv (.format "audit/{:010d}" (get e "seq"))) e))
   kv)
@@ -93,8 +95,11 @@
   (defn part [prefix] (sorted (gfor #(k v) (.items kv) :if (.startswith k prefix) #((cut k (len prefix) None) v))))
   (setv counter (.get kv "counter" {}))
   (setv alive-ms (.get counter "aliveMs" 0) unknown-seen (if (> alive-ms 0) alive-ms now))
+  ;; 読めない Service の行(旧い宣言の形)は落とさず RefusedJob にする(改訂 1 の C)。
+  (setv #(jobs refused) (read-service-rows (lfor #(_ v) (part "service/") v)))
   (ClusterState
-    :jobs (tuple (gfor #(_ v) (part "service/") (job-from-json v)))
+    :jobs jobs
+    :refused refused
     :placements (dfor #(k v) (+ (part LEGACY-PLACEMENT) (part PLACEMENT)) k (Placement #** v)) ; 後に並ぶ新しい鍵が勝つ
     ;; 旧い形(labels だけ)の worker の行は読まない(cluster_policy.state-from-json と同じ — 次の heartbeat で作り直す)。
     :workers (dfor #(k w) (part "worker/")
@@ -118,6 +123,7 @@
     :drains (dfor #(k v) (part DRAIN) k (Drain #** v))
     :surges (dfor #(k v) (part SURGE) k (Placement #** v))
     :warms (dfor #(k v) (part WARM) :setv entry (warm-entry-from-json v) :if (is-not entry None) k entry)
+    :programs (dfor #(k v) (part PROGRAM) k v)
     :handoffs (dfor #(k v) (part HANDOFF) k (handoff-watch-from-json v))
     :audit (tuple (gfor #(_ e) (part "audit/") e))
     :board (dfor #(k v) (part BOARD) k (get v "value"))

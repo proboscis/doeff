@@ -1,6 +1,6 @@
 ;; 切り離した task の検が共有する組の部品(検の module ではない — 検どうしで import すると pytest の assert の書き換えが .hy の検を
 ;; Python として読もうとするので、共有する物はここに置く)。使い手 = test_detached.hy・test_detached_runners.hy。
-;;   ENV / slow-add          … 送る Program(base = 100 の reader の上で n を足す)
+;;   slow-add                … 送る Program(自分で並べた base = 100 の reader の上で n を足す — 実行先は handler を足さない)
 ;;   RigWorker ほか           … 担い手: 本物の CoordinatorLink で heartbeat を送り、割り当てられた task を同じ VM で走らせる
 ;;   MemoryCoordinator       … 本物の coordinator の判断(api_policy.respond / tick)を httpx.MockTransport の後ろに置く
 (require doeff-hy.macros [defk <-])
@@ -10,6 +10,7 @@
 (import httpx)
 (import doeff [with_handlers])
 (import doeff_core_effects.effects [Ask])
+(import doeff_core_effects.handlers [reader])
 (import doeff_core_effects.scheduler [Spawn Cancel TaskCancelledError])
 (import doeff_time [Delay SimClock])
 (import tests.clock_fixtures [clock-ms])
@@ -17,25 +18,29 @@
 (import doeff_cluster.api_policy [respond tick])
 (import doeff_cluster.handlers [CoordinatorLink])
 (import doeff_cluster.detached [DEFAULT-RUNNER-PROVIDES])
-(import doeff_cluster.job_entry [RunContext env-handlers])
 (import doeff_cluster.worker_model [DesiredJobs JobStatus JobPhase])
 (import doeff_cluster.remote_model [TaskSucceeded decode-program encode-outcome failed-from])
-
-(setv ENV "tests.fixtures.envs:plain_env")                        ; base = 100 の reader
 
 
 ;; --- 送る Program -------------------------------------------------------------------------------
 
-(defk slow-add [seconds n]
-  {:pre [(: seconds float) (: n int)] :post [(: % int)]}
+(defk slow-add-body [seconds n]
+  {:pre [(: seconds float) (: n int)] :post [(: % int)] :tags {:context "doeff-cluster-test" :role "entry"}}
   (<- (Delay seconds))
   (<- base int (Ask "base"))
   (+ base n))
 
+(defk slow-add [seconds n]
+  {:pre [(: seconds float) (: n int)] :post [(: % int)] :tags {:context "doeff-cluster-test" :role "entry"}}
+  "送る Program: 自分の handler(base = 100 の reader)を本体の with-handlers で並べる(ADR-DOE-CLUSTER-001 R2 — 担い手は handler を
+   足さない)。時計(Delay)と scheduler は担い手の外側の模擬の時計が答える(同じ VM の担い手の模擬 — sim の柵の許可表と同じ扱い)。"
+  (<- total int (with-handlers [(reader {"base" 100})] (slow-add-body seconds n)))
+  total)
+
 
 ;; --- 担い手(coordinator の組・served の組が共有する)--------------------------------------------------------
 ;; 本物の CoordinatorLink で heartbeat を送り、割り当てられた task の file(blob)を受け、同じ VM の scheduler の task として
-;; env の handler の組の下で走らせ、結果の file を書いて報告する(子 process の入口 job_entry task と同じ手順 — 子 process そのものは
+;; そのまま走らせ(handler を足さない — Program が自分で並べる)、結果の file を書いて報告する(子 process の入口 job_entry task と同じ手順 — 子 process そのものは
 ;; test_remote.hy が通す)。
 
 (defclass RigWorker []
@@ -49,16 +54,15 @@
 
 
 (defn #^ dict task-args [#^ tuple args]
-  "task の job の引数(\"task\" \"--blob\" P \"--result\" P \"--env\" E \"--versions\" V)→ {欄: 値}。"
+  "task の job の引数(\"task\" \"--blob\" P \"--result\" P \"--versions\" V)→ {欄: 値}。"
   (dfor i (range 1 (len args) 2) (cut (get args i) 2 None) (get args (+ i 1))))
 
 
 (defk run-rig-task [worker name args revision]
   {:pre [(: worker RigWorker) (: name str) (: args dict) (: revision str)] :post [(: % bool)]}
-  (setv program (decode-program (.read-text (Path (get args "blob")) :encoding "ascii"))
-        handlers (env-handlers (get args "env") {} (RunContext "" "w1" revision name)))
+  (setv program (decode-program (.read-text (Path (get args "blob")) :encoding "ascii")))
   (try
-    (<- value (with-handlers handlers program))
+    (<- value program)
     (setv outcome (TaskSucceeded value))
     (except [error TaskCancelledError]
       (raise))

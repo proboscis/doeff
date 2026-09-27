@@ -86,12 +86,12 @@
 
 
 (deftest test-tasks-have-a-lease-cap-and-an-open-count-cap
-  (setv body {"env" "e" "blob" "b" "revision" "r" "needs" ["net"] "leaseSeconds" 7200})
+  (setv body {"blob" "b" "revision" "r" "needs" ["net"] "leaseSeconds" 7200})
   (setv #(_ status _) (call (ClusterState) "POST" "/tasks" body))
   (assert (= status 400))
   ;; 終わっていない task が上限に達した盤(置ける worker はあるが空きが無い = 待っている)
   (setv queued (dfor i (range TASK-MAX-OPEN) (.format "t{}" i)
-                     (TaskRecord (.format "t{}" i) "n" "e" "b" "r" #() #() 60000 999999999 0)))
+                     (TaskRecord (.format "t{}" i) "n" "b" "r" #() #() 60000 999999999 0)))
   (setv s (ClusterState :tasks queued :next-task (+ TASK-MAX-OPEN 1) :workers {"a" (WorkerInfo "a" #("net") 0 1000)}))
   (setv #(_ status reply) (call s "POST" "/tasks" (| body {"leaseSeconds" 60})))
   (assert (= status 429) reply)

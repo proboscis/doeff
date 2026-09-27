@@ -6,6 +6,7 @@
 (import doeff_cluster.worker_model [spec-hash])
 (import doeff_cluster.api_policy [respond])
 (import doeff_cluster.resource_policy [LEGACY-OWNER adopt-legacy])
+(import tests.program_rows [SAMPLE-RUN])
 
 (setv T (ClusterTiming))
 (setv V {"python" "3.14.0"})
@@ -62,7 +63,7 @@
   (assert (= status 400) body)
   (assert (in "X-Actor" (get body "error")))
   ;; 盤と task は旧い client でも通し、送り元の番地で記録する
-  (setv #(s status _) (call s "POST" "/tasks" {"env" "m:e" "blob" "B" "versions" V "revision" "r" "needs" ["net"]} :actor None))
+  (setv #(s status _) (call s "POST" "/tasks" {"blob" "B" "versions" V "revision" "r" "needs" ["net"]} :actor None))
   (assert (= status 200))
   (assert (= (get (get s.audit -1) "actor") "coordinator"))   ; 置き先の決め(調停)
   (assert (in "anonymous@10.0.0.9" (lfor e s.audit (get e "actor")))))
@@ -197,8 +198,9 @@
 (deftest test-a-config-only-change-is-not-ready-until-the-new-process-reports
   ;; 2026-09-24 05:11:12 の実弾の形: 版は同じで設定だけを変えた。止めた前の process の Ready の報告(同じ worker・同じ版)が window に
   ;; 残っていても数えない。新しい process が最初に報告するまで NotReady。
-  (setv dry (| SPEC {"readiness" {"windowSeconds" 120} "run" {"kind" "service" "factory" "m:f" "env" "m:e" "config" {"apply" False}}})
-        wet (| dry {"run" (| (get dry "run") {"config" {"apply" True}})}))
+  ;; 設定は Program の job では宣言の :environ(子の環境変数 — spec-hash に入る)で渡す(ADR-DOE-CLUSTER-001 改訂 1 の G)。
+  (setv dry (| SPEC {"readiness" {"windowSeconds" 120} "run" SAMPLE-RUN "environ" {"APPLY" "0"}})
+        wet (| dry {"environ" {"APPLY" "1"}}))
   (assert (!= (hash-of dry) (hash-of wet)))
   (setv #(s _ _) (call (ClusterState :started-ms -1000000) "POST" "/resources/Service" {"name" "w" "spec" dry} :now 1000))
   (setv s (beat s "atlas" 1000))                                   ; 割り当てを受ける(まだ何も動いていない)

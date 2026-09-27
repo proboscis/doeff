@@ -1,7 +1,6 @@
 ;;; 切り離した task(呼び手と寿命を切り離した task)の effect と、答えの型(2026-09-25)。
 ;;;
-;;;   (<- submitted (SubmitDetached (summarize rows) :env "myapp.envs:board_env" :key job-id
-;;;                                 :needs (frozenset ["gpu"])))
+;;;   (<- submitted (SubmitDetached (summarize foundation rows) :key job-id :needs (frozenset ["gpu"])))
 ;;;   ... 呼び手の process が消えてもよい ...
 ;;;   (<- outcome (AwaitDetached job-id))          ; 別の process からでも、同じ key で待てる
 ;;;
@@ -29,12 +28,11 @@
 ;; --- effect ----------------------------------------------------------------------
 
 (defclass [(dataclass :frozen True)] SubmitDetached [EffectBase]
-  "program = 未実行の Program(値)・env = 実行先で組む handler の組の import path・key = 呼び手の決めた job id(冪等の単位)・
+  "program = 未実行の Program(値 — handler は Program の中の with-handlers で並べる・ADR-DOE-CLUSTER-001 R1・R2)・key = 呼び手の決めた job id(冪等の単位)・
    needs = 要る能力の名の frozenset(置く worker は needs ⊆ provides — ADR-DOE-CLUSTER-001 R4b)・lease-seconds = 担い手の worker が沈黙してから消失とみなすまで・retain-seconds = 結果の保持。
    答え = DetachedSubmitted か DetachedUnreachable(coordinator に届かなかった — 送れたかは分からない。key で冪等なので送り直してよい)。
    同じ key がまだ在れば何も作らない(created = False)。"
   (#^ Program program)
-  (#^ str env)
   (#^ str key)
   (setv #^ frozenset needs (frozenset))
   (setv #^ str name "")

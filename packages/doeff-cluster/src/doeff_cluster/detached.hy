@@ -70,9 +70,9 @@
   "fake の task 1 本。outcome = 終わりの答え(まだなら None)。handle = scheduler の task(走らせ始めるまで None)。
    runner = 置いた担い手の名(置く前 = queued は None)。
    runtime-env = 送った時の実行環境の宣言(None = 今の commit だけの task)・root = 走らせた env の root(準備の後に在る)。"
-  (defn __init__ [self #^ str key #^ str env #^ str name #^ tuple needs #^ Program program
+  (defn __init__ [self #^ str key #^ str name #^ tuple needs #^ Program program
                   #^ (| RuntimeEnv None) [runtime-env None]]
-    (setv self.key key self.env env self.name name self.needs needs self.program program self.runtime-env runtime-env)
+    (setv self.key key self.name name self.needs needs self.program program self.runtime-env runtime-env)
     (setv #^ (| str None) self.runner None)
     (setv #^ (| str None) self.root None)
     ;; 通った phase の列(preparing = 走る前に env の root を準備した — 冷たい起動・running = Program が走り出した)。
@@ -265,17 +265,17 @@
     (:= waited (+ waited poll-seconds))))
 
 
-(defn #^ None refuse-conflict [#^ LocalRecord record #^ str env #^ str name #^ tuple needs]
-  (when (!= #(record.env record.name record.needs) #(env name (tuple (sorted needs))))
-    (raise (DetachedRefused 409 (.format "key {} は別の仕事(env {}・name {!r})に使われている" record.key record.env record.name)))))
+(defn #^ None refuse-conflict [#^ LocalRecord record #^ str name #^ tuple needs]
+  (when (!= #(record.name record.needs) #(name (tuple (sorted needs))))
+    (raise (DetachedRefused 409 (.format "key {} は別の仕事(name {!r}・needs {})に使われている" record.key record.name (list record.needs))))))
 
 
-(defk submit-local [store program env key needs name]
-  {:pre [(: store DetachedLocalStore) (: program Program) (: env str) (: key str) (: needs tuple) (: name str)] :post [(: % DetachedSubmitted)]}
+(defk submit-local [store program key needs name]
+  {:pre [(: store DetachedLocalStore) (: program Program) (: key str) (: needs tuple) (: name str)] :post [(: % DetachedSubmitted)]}
   ;; 同じ key がまだ在れば何も作らない。送れない値は本物と同じく送り手で断る(UnsendableProgram)。
   (when (in key store.records) (return (DetachedSubmitted key False)))
   (encode-program program)
-  (val record (LocalRecord key env name (tuple (sorted needs)) program :runtime-env store.runtime-env))
+  (val record (LocalRecord key name (tuple (sorted needs)) program :runtime-env store.runtime-env))
   (setv (get store.records key) record)
   (val mismatch (if (is store.runner-versions None) None (version-mismatch (current-versions) store.runner-versions)))
   (<- (note store key EVENT-SUBMITTED None))
@@ -326,16 +326,16 @@
   (<- answer WarmState (local-warm-state store key))
   answer)
 
-(defk submit-reachable [store program env key needs name now]
-  {:pre [(: store DetachedLocalStore) (: program Program) (: env str) (: key str) (: needs tuple) (: name str) (: now int)]
+(defk submit-reachable [store program key needs name now]
+  {:pre [(: store DetachedLocalStore) (: program Program) (: key str) (: needs tuple) (: name str) (: now int)]
    :post [(: % DetachedSubmitAnswer)]}
   "送る(coordinator に届く時だけ — 途絶の間は DetachedUnreachable)。同じ key の別の仕事は断る。"
   (when (< now store.cut-until)
     (return (DetachedUnreachable :detail "coordinator に届かない(模擬の途絶)")))
   (val existing (.get store.records key))
   (when (is-not existing None)
-    (refuse-conflict existing env name needs))
-  (<- submitted (submit-local store program env key needs name))
+    (refuse-conflict existing name needs))
+  (<- submitted (submit-local store program key needs name))
   submitted)
 
 
@@ -362,10 +362,10 @@
   (ReadWarmState [key]
     (<- state (local-warm-state store key))
     (resume state))
-  (SubmitDetached [program env key needs name lease-seconds retain-seconds]
+  (SubmitDetached [program key needs name lease-seconds retain-seconds]
     ;; 途絶の間の送りは届かない(本物の client と同じ値で答える — 送れたかは分からないが、key で冪等なので呼び手が送り直す)。
     (<- at datetime (GetTime))
-    (<- answer (submit-reachable store program env key (tuple (sorted needs)) name (epoch-ms-of at)))
+    (<- answer (submit-reachable store program key (tuple (sorted needs)) name (epoch-ms-of at)))
     (resume answer))
   (AwaitDetached [key timeout-seconds]
     (<- outcome (await-local store key timeout-seconds poll-seconds))
@@ -436,10 +436,10 @@
     (.raise-for-status response)
     (.json response))
 
-  (defn #^ dict submit [self #^ str key #^ str blob #^ str env #^ tuple needs #^ str name
+  (defn #^ dict submit [self #^ str key #^ str blob #^ frozenset needs #^ str name
                         #^ float lease-seconds
                         #^ float retain-seconds]
-    (setv body (| {"env" env "blob" blob "versions" (current-versions) "revision" self.revision "needs" (sorted needs)
+    (setv body (| {"blob" blob "versions" (current-versions) "revision" self.revision "needs" (sorted needs)
                    "name" name "leaseSeconds" lease-seconds "retainSeconds" retain-seconds "format" PROTOCOL-FORMAT}
                   (if (is self.runtime-env None) {} {"runtimeEnv" (run-program (runtime-env->json self.runtime-env))})))
     (.answer self (.resend self (fn [] (.request self.endpoint "PUT" (.path self key) :json body)))))
@@ -501,10 +501,10 @@
 
 
 (defhandler detached-cluster [#^ DetachedClient client [poll-seconds 1.0]]
-  (SubmitDetached [program env key needs name lease-seconds retain-seconds]
+  (SubmitDetached [program key needs name lease-seconds retain-seconds]
     ;; 送れない値は送る前に断る(encode-program が UnsendableProgram を投げ、呼び手へ届く)。
     (setv blob (encode-program program))
-    (resume (try (DetachedSubmitted key (get (.submit client key blob env needs name (float lease-seconds) (float retain-seconds)) "created"))
+    (resume (try (DetachedSubmitted key (get (.submit client key blob needs name (float lease-seconds) (float retain-seconds)) "created"))
                  (except [error httpx.TransportError]
                    (DetachedUnreachable :detail (.format "coordinator に届かない(送れたかは分からない — key で冪等): {}" error))))))
   (AwaitDetached [key timeout-seconds]
