@@ -25,6 +25,10 @@ import {
 } from './browse';
 import type { HyIndexStore } from './store';
 import type { LintStore } from '../lint/store';
+import type { TreePixels } from '../lint/panel';
+import { TREE_ICONS_SETTING } from '../pixel/editor';
+import { worstSeverity } from '../lint/view';
+import { axisValueGlyph, kindGlyph } from '../pixel/vocabulary';
 
 /** 保存した見方の設定の名前(workspace の設定に置けば repo で共有できる)。 */
 export const BROWSE_VIEWS_SETTING = 'doeff-runner.hy.browseViews';
@@ -38,7 +42,9 @@ export class BrowseTree implements vscode.TreeDataProvider<BrowseNode>, vscode.D
 
   constructor(
     private readonly hy: HyIndexStore,
-    private readonly lint: LintStore
+    private readonly lint: LintStore,
+    /** 木の pixel art の icon の口(切っている時は undefined — codicon のまま) */
+    private readonly pixels: TreePixels
   ) {}
 
   /** linter の置き場から軸の値を引く口。 */
@@ -88,18 +94,25 @@ export class BrowseTree implements vscode.TreeDataProvider<BrowseNode>, vscode.D
         const item = new vscode.TreeItem(node.value, vscode.TreeItemCollapsibleState.Collapsed);
         const violations = groupViolationCount(node.items, this.context);
         item.description = `${axisLabel(node.axis)} · ${node.items.length} 件${violations > 0 ? ` · 違反 ${violations}` : ''}`;
-        item.iconPath = new vscode.ThemeIcon(violations > 0 ? 'warning' : 'symbol-namespace');
+        const icons = this.pixels();
+        const severity = worstSeverity(node.items.flatMap((i) => violationsOf(i, this.context))) ?? null;
+        const base = axisValueGlyph(node.axis, node.value) ?? null;
+        const pixel = icons === undefined || base === null ? undefined : icons.lit({ glyph: base, severity, flag: null });
+        item.iconPath = pixel ?? new vscode.ThemeIcon(violations > 0 ? 'warning' : 'symbol-namespace');
         return item;
       }
       case 'item': {
         const d = node.item.definition;
         const item = new vscode.TreeItem(d.name, vscode.TreeItemCollapsibleState.None);
-        const violations = violationsOf(node.item, this.context).length;
-        item.description = `${d.kind} · ${itemPlace(node.item)}${violations > 0 ? ` · 違反 ${violations}` : ''}`;
+        const own = violationsOf(node.item, this.context);
+        item.description = `${d.kind} · ${itemPlace(node.item)}${own.length > 0 ? ` · 違反 ${own.length}` : ''}`;
         const r = d.fullRange;
         const selection = new vscode.Range(r.start.line, r.start.character, r.end.line, r.end.character);
         item.command = { title: '開く', command: 'vscode.open', arguments: [vscode.Uri.file(node.item.path), { selection }] };
-        item.iconPath = new vscode.ThemeIcon(violations > 0 ? 'error' : 'symbol-function');
+        const icons = this.pixels();
+        const base = kindGlyph(d.kind) ?? null;
+        const pixel = icons === undefined || base === null ? undefined : icons.lit({ glyph: base, severity: worstSeverity(own) ?? null, flag: null });
+        item.iconPath = pixel ?? new vscode.ThemeIcon(own.length > 0 ? 'error' : 'symbol-function');
         return item;
       }
       case 'message':
@@ -148,9 +161,10 @@ export function registerBrowse(
   context: vscode.ExtensionContext,
   hy: HyIndexStore,
   lint: LintStore,
-  output: vscode.OutputChannel
+  output: vscode.OutputChannel,
+  pixels: TreePixels
 ): void {
-  const tree = new BrowseTree(hy, lint);
+  const tree = new BrowseTree(hy, lint, pixels);
   const view = vscode.window.createTreeView('doeff-hy-browse', { treeDataProvider: tree, showCollapseAll: true });
   // 今の見方を view の説明欄に出す
   const describe = (): void => {
@@ -159,6 +173,14 @@ export function registerBrowse(
   describe();
   const unsubscribeHy = hy.onDidChange(() => tree.refresh());
   const unsubscribeLint = lint.onDidChange(() => tree.refresh());
+  // 木の pixel art の icon の入り切りで出し直す
+  context.subscriptions.push(
+    vscode.workspace.onDidChangeConfiguration((event) => {
+      if (event.affectsConfiguration(TREE_ICONS_SETTING)) {
+        tree.refresh();
+      }
+    })
+  );
   context.subscriptions.push(
     tree,
     view,

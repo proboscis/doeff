@@ -5,7 +5,9 @@
 // 使い方(compile の後):
 //   node scripts/build-pixel.js                 生成物を書く
 //   node scripts/build-pixel.js --check         書いてある生成物が元の定義と食い違えば終了コード 1
-//   node scripts/build-pixel.js --preview out/pixel/preview.html
+//   node scripts/build-pixel.js --preview out/pixel/preview.html [--lint-json <editor-json の file> --lint-source <どこを読んだか>]
+//     --lint-json を渡すと、見本に「違反(linter)」の欄の見本(今の形と直した形)を足す
+//     --compare <前の glyphs.json> を渡すと、前の版と今の版の icon の並べ比べを足す
 const fs = require('fs');
 const path = require('path');
 const svg2ttf = require('svg2ttf');
@@ -16,15 +18,22 @@ const { parseGlyphSet } = require(path.join(ROOT, 'out', 'pixel', 'glyphs.js'));
 const { allGlyphs, assetFiles, flagReport, PIXEL_DIR } = require(path.join(ROOT, 'out', 'pixel', 'build.js'));
 const { svgFont, iconContributions, FONT_PATH } = require(path.join(ROOT, 'out', 'pixel', 'font.js'));
 const { previewHtml } = require(path.join(ROOT, 'out', 'pixel', 'sheet.js'));
+const { parseLintJson } = require(path.join(ROOT, 'out', 'lint', 'contract.js'));
 
 /** 引数を読む(知らない引数は理由を出して止める)。 */
 function parseArgs(argv) {
-  const args = { check: false, preview: null };
+  const args = { check: false, preview: null, lintJson: null, lintSource: null, compare: null };
   for (let i = 0; i < argv.length; i++) {
     if (argv[i] === '--check') {
       args.check = true;
     } else if (argv[i] === '--preview' && i + 1 < argv.length) {
       args.preview = argv[++i];
+    } else if (argv[i] === '--lint-json' && i + 1 < argv.length) {
+      args.lintJson = argv[++i];
+    } else if (argv[i] === '--lint-source' && i + 1 < argv.length) {
+      args.lintSource = argv[++i];
+    } else if (argv[i] === '--compare' && i + 1 < argv.length) {
+      args.compare = argv[++i];
     } else {
       throw new Error(`知らない引数: ${argv[i]}`);
     }
@@ -44,6 +53,32 @@ function packageJsonWith(glyphs) {
   const pkg = JSON.parse(fs.readFileSync(file, 'utf8'));
   pkg.contributes.icons = iconContributions(glyphs);
   return `${JSON.stringify(pkg, null, 2)}\n`;
+}
+
+/** 見本の違反の欄の材料 — --lint-json の editor-json を契約の入口で読む(読めなければ理由を出して止める)。 */
+function previewLint(args) {
+  if (args.lintJson === null) {
+    return null;
+  }
+  const parsed = parseLintJson(fs.readFileSync(path.resolve(args.lintJson), 'utf8'));
+  if (parsed.tag !== 'ok') {
+    console.error(`--lint-json を読めない: ${parsed.reason}`);
+    process.exit(1);
+  }
+  return { report: parsed.report, source: args.lintSource ?? path.basename(args.lintJson) };
+}
+
+/** 見本の並べ比べの材料 — --compare の前の glyphs.json を同じ読み込みの口で読む(読めなければ理由を出して止める)。 */
+function previewCompare(args) {
+  if (args.compare === null) {
+    return null;
+  }
+  const parsed = parseGlyphSet(fs.readFileSync(path.resolve(args.compare), 'utf8'));
+  if (parsed.tag !== 'ok') {
+    console.error(`--compare を読めない: ${parsed.reason}`);
+    process.exit(1);
+  }
+  return { set: parsed.set, glyphs: allGlyphs(parsed.set) };
 }
 
 /** 元の定義を読み、旗の重複を検算してから、生成物を書くか食い違いを検める。 */
@@ -74,7 +109,7 @@ function main() {
   files.set('package.json', packageJsonWith(glyphs));
   if (args.preview !== null) {
     fs.mkdirSync(path.dirname(path.resolve(args.preview)), { recursive: true });
-    fs.writeFileSync(path.resolve(args.preview), previewHtml(set, woff));
+    fs.writeFileSync(path.resolve(args.preview), previewHtml(set, woff, previewLint(args), previewCompare(args)));
     console.log(`見本: ${path.resolve(args.preview)}`);
   }
   const stale = [];

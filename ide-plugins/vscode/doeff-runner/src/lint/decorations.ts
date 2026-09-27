@@ -6,6 +6,7 @@ import * as vscode from 'vscode';
 import type { LintSeverity } from './contract';
 import type { LintStore } from './store';
 import { atLeast, inlineAnnotations, parseMinSeverity } from './view';
+import { GUTTER_SETTING as PIXEL_GUTTER_SETTING } from '../pixel/vocabulary';
 
 /** 行末の文を出すかの設定。 */
 export const INLINE_SETTING = 'doeff-runner.hy.lintInlineMessages';
@@ -35,12 +36,11 @@ function gutterIcon(severity: LintSeverity): vscode.Uri {
   return vscode.Uri.parse(`data:image/svg+xml;base64,${Buffer.from(svg).toString('base64')}`);
 }
 
-/** 重さ 1 つの飾りの型(行末の文は付けるか付けないかで 2 種)。 */
-function decorationType(severity: LintSeverity): vscode.TextEditorDecorationType {
+/** 重さ 1 つの飾りの型(左端の丸を付けるか — pixel art の gutter が出ている file では付けない)。 */
+function decorationType(severity: LintSeverity, withGutter: boolean): vscode.TextEditorDecorationType {
   return vscode.window.createTextEditorDecorationType({
     isWholeLine: true,
-    gutterIconPath: gutterIcon(severity),
-    gutterIconSize: 'contain',
+    ...(withGutter ? { gutterIconPath: gutterIcon(severity), gutterIconSize: 'contain' as const } : {}),
     overviewRulerColor: new vscode.ThemeColor(severityColor(severity)),
     overviewRulerLane: vscode.OverviewRulerLane.Right
   });
@@ -48,10 +48,17 @@ function decorationType(severity: LintSeverity): vscode.TextEditorDecorationType
 
 /** 違反の飾りを見えている editor に出す係。 */
 export class LintDecorations implements vscode.Disposable {
+  /** 左端の丸つき(pixel art の gutter が出ていない file) */
   private readonly types: Readonly<Record<LintSeverity, vscode.TextEditorDecorationType>> = {
-    error: decorationType('error'),
-    warning: decorationType('warning'),
-    info: decorationType('info')
+    error: decorationType('error', true),
+    warning: decorationType('warning', true),
+    info: decorationType('info', true)
+  };
+  /** 左端の丸なし(pixel art の gutter が同じ行に印を出す file) */
+  private readonly plainTypes: Readonly<Record<LintSeverity, vscode.TextEditorDecorationType>> = {
+    error: decorationType('error', false),
+    warning: decorationType('warning', false),
+    info: decorationType('info', false)
   };
   private readonly disposables: vscode.Disposable[] = [];
 
@@ -59,7 +66,9 @@ export class LintDecorations implements vscode.Disposable {
 
   constructor(
     private readonly store: LintStore,
-    private readonly log: { appendLine(line: string): void }
+    private readonly log: { appendLine(line: string): void },
+    /** その file の gutter を pixel art が持つか(持つなら左端の丸を出さない) */
+    private readonly pixelOwnsGutter: (document: vscode.TextDocument) => boolean
   ) {}
 
   /** 置き場・見えている editor・設定の変化で出し直し始める。 */
@@ -69,7 +78,11 @@ export class LintDecorations implements vscode.Disposable {
       { dispose: unsubscribe },
       vscode.window.onDidChangeVisibleTextEditors(() => this.refresh()),
       vscode.workspace.onDidChangeConfiguration((event) => {
-        if (event.affectsConfiguration(INLINE_SETTING) || event.affectsConfiguration(INLINE_MIN_SEVERITY_SETTING)) {
+        if (
+          event.affectsConfiguration(INLINE_SETTING) ||
+          event.affectsConfiguration(INLINE_MIN_SEVERITY_SETTING) ||
+          event.affectsConfiguration(PIXEL_GUTTER_SETTING)
+        ) {
           this.refresh();
         }
       })
@@ -110,8 +123,10 @@ export class LintDecorations implements vscode.Disposable {
         };
         bySeverity[annotation.severity].push(option);
       }
+      const [shown, hidden] = this.pixelOwnsGutter(editor.document) ? [this.plainTypes, this.types] : [this.types, this.plainTypes];
       for (const severity of ['error', 'warning', 'info'] as const) {
-        editor.setDecorations(this.types[severity], bySeverity[severity]);
+        editor.setDecorations(shown[severity], bySeverity[severity]);
+        editor.setDecorations(hidden[severity], []);
       }
     }
   }
@@ -121,7 +136,7 @@ export class LintDecorations implements vscode.Disposable {
     for (const d of this.disposables) {
       d.dispose();
     }
-    for (const type of Object.values(this.types)) {
+    for (const type of [...Object.values(this.types), ...Object.values(this.plainTypes)]) {
       type.dispose();
     }
   }

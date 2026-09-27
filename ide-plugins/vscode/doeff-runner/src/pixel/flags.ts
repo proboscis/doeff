@@ -2,7 +2,7 @@
 // の間で重複(同じ模様・同じ色の組)が 0 であることを検算する。拡張の実行時に知らない service の名前が来ても、同じ関数で
 // 同じ旗を作る(旗の決まりの持ち主はこの 1 か所)。
 
-import { composePixels, lightness, type ColorIndex, type Family, type Glyph, type GlyphSet, type GlyphSize, type Pixels } from './glyphs';
+import { composePixels, lightness, OUTLINE_COLORS, type ColorIndex, type Family, type Glyph, type GlyphSet, type GlyphSize, type Pixels } from './glyphs';
 
 /** 旗 1 つの選び — 模様の番号と色 2 つ。 */
 export interface FlagChoice {
@@ -69,14 +69,14 @@ export function flagGlyphName(service: string): string {
   return `service-${service}`;
 }
 
-/** 選んだ旗の点を作る(枠 = 竿と布の形、模様 = 布の中の A / B)。 */
-export function flagPixels(set: GlyphSet, choice: FlagChoice, size: GlyphSize): Pixels {
+/** 選んだ旗の点を作る(枠 = 竿と布の形、模様 = 布の中の A / B、竿の先の灯 L は lamp の色 — 省けば消えた灯)。 */
+export function flagPixels(set: GlyphSet, choice: FlagChoice, size: GlyphSize, lamp?: ColorIndex): Pixels {
   const family = flagFamily(set);
   const pattern = set.serviceFlags.patterns.find((p) => p.name === choice.pattern);
   if (pattern === undefined) {
     throw new Error(`旗の模様 ${choice.pattern} が無い`);
   }
-  return composePixels(family.frame, pattern.grids[size], { A: choice.primary, B: choice.secondary }, size);
+  return composePixels(family.frame, pattern.grids[size], { A: choice.primary, B: choice.secondary, L: lamp ?? set.lamp }, size);
 }
 
 /** service の旗を icon にする(字体の単色は布の A の色と竿・縁の黒)。 */
@@ -88,6 +88,6 @@ export function flagGlyph(set: GlyphSet, service: string): Glyph {
     family: set.serviceFlags.family,
     summary: `service ${service} の旗`,
     pixels,
-    mono: pixels[16].map((row) => row.map((c) => c === 0 || c === choice.primary))
+    mono: pixels[16].map((row) => row.map((c) => c !== null && (OUTLINE_COLORS.includes(c) || c === choice.primary)))
   };
 }

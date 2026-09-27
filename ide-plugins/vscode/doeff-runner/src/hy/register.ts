@@ -72,8 +72,14 @@ async function revealNode(node: NavNode | undefined): Promise<vscode.TextEditor 
   return editor;
 }
 
-/** (索引の置き場を返す — 「タグで閲覧」が読む)Hy の定義へ移動・参照・目次・記号の検索・hover・実装・呼び出し階層・注記・パネルを登録し、索引の保持を始める。 */
-export function registerHyNavigation(context: vscode.ExtensionContext, deps: HyNavigationDeps): HyIndexStore {
+/** Hy の機能が外へ渡す物 — 索引の置き場と、effect の表(何が effect かの判定の唯一の場所)。 */
+export interface HyNavigation {
+  readonly store: HyIndexStore;
+  readonly effects: EffectGraphSource;
+}
+
+/** (索引の置き場と effect の表を返す — 「タグで閲覧」と文字の置き換えが読む)Hy の定義へ移動・参照・目次・記号の検索・hover・実装・呼び出し階層・注記・パネルを登録し、索引の保持を始める。 */
+export function registerHyNavigation(context: vscode.ExtensionContext, deps: HyNavigationDeps): HyNavigation {
   const store = new HyIndexStore();
   // 生の副作用の目録の追加は hy-index に file で渡す(読めない値の理由は hy-index が raw_catalog_problems で返す)
   let rawCatalogExtra = writeRawCatalogExtra(context.globalStorageUri.fsPath);
@@ -208,5 +214,5 @@ export function registerHyNavigation(context: vscode.ExtensionContext, deps: HyN
     }
   }
   service.start();
-  return store;
+  return { store, effects: graphs };
 }

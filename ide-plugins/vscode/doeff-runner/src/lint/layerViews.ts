@@ -11,6 +11,8 @@ import {
   violationExplanationLines
 } from './layers';
 import type { LintStore } from './store';
+import type { IconSource } from '../pixel/icons';
+import { violationMark } from '../pixel/vocabulary';
 
 /** エクスプローラーの file に層の頭文字と色を付ける(文字 = 層、色 = 違反の有無を優先)。 */
 export class LayerFileDecorations implements vscode.FileDecorationProvider, vscode.Disposable {
@@ -75,7 +77,11 @@ export class LayerStatusBar implements vscode.Disposable {
 
 /** タグ(MODULE-TAGS・:tags・:role)と違反の行の hover — 文はすべて linter の出力から。 */
 export class LayerHover implements vscode.HoverProvider {
-  constructor(private readonly store: LintStore) {}
+  constructor(
+    private readonly store: LintStore,
+    /** 違反の印(火・旗・足場・ふくろう)の画を引く口 */
+    private readonly icons: IconSource
+  ) {}
 
   /** タグの上なら role と層の説明、違反のある行ならその違反の説明を出す。 */
   provideHover(document: vscode.TextDocument, position: vscode.Position): vscode.Hover | undefined {
@@ -86,11 +92,18 @@ export class LayerHover implements vscode.HoverProvider {
     }
     for (const v of this.store.violationsIn(document.uri.fsPath)) {
       if (v.range.start.line <= position.line && position.line <= v.range.end.line) {
-        const head = `**${v.severity} · ${v.rule}${v.law === null ? '' : ` · law ${v.law}`}** — ${v.message}`;
+        const mark = this.icons.hoverImage(violationMark(v), 16);
+        const head = `${mark}${mark === '' ? '' : ' '}**${v.severity} · ${v.rule}${v.law === null ? '' : ` · law ${v.law}`}** — ${v.message}`;
         parts.push([head, ...violationExplanationLines(v).map((l) => `- ${l}`)].join('\n'));
       }
     }
-    return parts.length === 0 ? undefined : new vscode.Hover(new vscode.MarkdownString(parts.join('\n\n---\n\n')));
+    if (parts.length === 0) {
+      return undefined;
+    }
+    const markdown = new vscode.MarkdownString(parts.join('\n\n---\n\n'));
+    // 印の画(data URI の <img>)を出すため。文の中身は linter の出力で、利用者の入力ではない
+    markdown.supportHtml = true;
+    return new vscode.Hover(markdown);
   }
 }
 
