@@ -4,7 +4,9 @@
 import * as vscode from 'vscode';
 import { LintDecorations } from './decorations';
 import { LayerFileDecorations, LayerHover, LayerStatusBar, showLayerTable } from './layerViews';
-import { LintMapTree, LintViolationsTree } from './panel';
+import { LintMapTree, LintViolationsTree, type TreePixels } from './panel';
+import type { IconSource } from '../pixel/icons';
+import { TREE_ICONS_SETTING } from '../pixel/editor';
 import { ChildProcessLinter } from './runner';
 import { pauseDelayMs, semanticStatus } from './semantic';
 import { LintService } from './service';
@@ -29,7 +31,11 @@ function lintCommandFor(root: string): string {
 }
 
 /** (結果の置き場を返す — 「タグで閲覧」が読む)linter の波線・「違反(linter)」・「層の地図(linter)」を登録し、linter に聞き始める。 */
-export function registerLint(context: vscode.ExtensionContext, output: vscode.OutputChannel): LintStore {
+export function registerLint(
+  context: vscode.ExtensionContext,
+  output: vscode.OutputChannel,
+  pixel: { readonly tree: TreePixels; readonly ownsGutter: (document: vscode.TextDocument) => boolean; readonly icons: IconSource }
+): LintStore {
   const store = new LintStore();
   const linter = new ChildProcessLinter(lintCommandFor, LINT_TIMEOUT_MS);
   const diagnostics = vscode.languages.createDiagnosticCollection('doeff-linter');
@@ -67,10 +73,11 @@ export function registerLint(context: vscode.ExtensionContext, output: vscode.Ou
     }
   });
   context.subscriptions.push(jevStatus);
-  const violations = new LintViolationsTree(store);
-  const map = new LintMapTree(store);
-  // 行末の文・行の左端の印・右端のスクロールバーの印(細い info の波線は色付けの上で見えないため)
-  const decorations = new LintDecorations(store, output);
+  const violations = new LintViolationsTree(store, pixel.tree);
+  const map = new LintMapTree(store, pixel.tree);
+  // 行末の文・行の左端の印・右端のスクロールバーの印(細い info の波線は色付けの上で見えないため)。
+  // pixel art の gutter が出ている Hy の file では、左端の丸は出さない(1 行に画は 1 つ)
+  const decorations = new LintDecorations(store, output, pixel.ownsGutter);
   const violationsView = vscode.window.createTreeView('doeff-lint-violations', { treeDataProvider: violations, showCollapseAll: true });
   const mapView = vscode.window.createTreeView('doeff-lint-map', { treeDataProvider: map, showCollapseAll: true });
   // 置き場が変わったら木を出し直す(波線は係が出し直す)
@@ -78,6 +85,14 @@ export function registerLint(context: vscode.ExtensionContext, output: vscode.Ou
     violations.refresh();
     map.refresh();
   });
+  // 木の pixel art の icon の入り切りで出し直す
+  const treeSetting = vscode.workspace.onDidChangeConfiguration((event) => {
+    if (event.affectsConfiguration(TREE_ICONS_SETTING)) {
+      violations.refresh();
+      map.refresh();
+    }
+  });
+  context.subscriptions.push(treeSetting);
   context.subscriptions.push(
     diagnostics,
     service,
@@ -106,7 +121,7 @@ export function registerLint(context: vscode.ExtensionContext, output: vscode.Ou
     new LayerStatusBar(store),
     vscode.languages.registerHoverProvider(
       [{ language: 'hy', scheme: 'file' }, { language: 'python', scheme: 'file' }, { pattern: '**/*.{hy,hyk,hyp}', scheme: 'file' }],
-      new LayerHover(store)
+      new LayerHover(store, pixel.icons)
     ),
     vscode.commands.registerCommand('doeff-runner.lint.showLayers', () => showLayerTable(store))
   );

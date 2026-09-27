@@ -21,7 +21,8 @@ function glyphSet(): GlyphSet {
 
 /** 反例を作るために書き換える欄だけの形(読み込みの検査は parseGlyphSet が持つ — ここは書き換えの道具)。 */
 interface GlyphJson {
-  glyphs: Array<{ name: string; family: string; px16: string[]; px8: string[] }>;
+  families: Array<{ name: string; frame: unknown }>;
+  glyphs: Array<{ name: string; family: string; px16: string[]; px8: string[]; picture?: string }>;
   serviceFlags: { colors: string[]; patterns: Array<{ px16: string[] }> };
 }
 
@@ -45,7 +46,7 @@ suite('pixel art の icon — 元の定義', () => {
     const set = glyphSet();
     assert.deepStrictEqual(
       set.families.map((f) => f.name),
-      ['declaration', 'flow', 'failure', 'layer', 'lint', 'service', 'extension']
+      ['declaration', 'flow', 'failure', 'layer', 'lint', 'rule', 'service', 'extension']
     );
     for (const name of ['defk', 'defhandler', 'defeffect', 'defrecord', 'defwire', 'defsystem', 'deftest', 'program', 'bind', 'resume', 'finish', 'ask', 'absent', 'raise', 'unreachable', 'refused', 'conflict', 'malformed', 'layer-core', 'layer-intent', 'layer-protocol', 'layer-foundation', 'layer-entry', 'lint-error', 'lint-warning', 'lint-registered', 'jev-unjudged', 'jev', 'doe', 'doe-calm', 'doe-surprised']) {
       assert.ok(set.glyphs.some((g) => g.name === name), `${name} が無い`);
@@ -65,13 +66,19 @@ suite('pixel art の icon — 元の定義', () => {
     }
   });
 
-  test('反例 — 枠の中の地の外に絵の点を置くと断る(家族の枠は語が変えない)', () => {
+  test('反例 — 枠のある家族では、枠の中の地の外に絵の点を置くと断る(家族の枠は語が変えない)', () => {
+    // 今の sprite の家族は枠を持たない(2026-09-28 に外した)。枠を戻した家族に、枠の外へ点を置いた絵を入れる
+    const edge = '.'.repeat(16);
+    const inner = `.${':'.repeat(14)}.`;
+    const frame = { fill: '7', px16: [edge, ...Array.from({ length: 14 }, () => inner), edge], px8: ['........', ...Array.from({ length: 6 }, () => '.::::::.'), '........'] };
     assertInvalid(
       mutated((json) => {
+        const family = json.families.find((x) => x.name === 'declaration');
         const defk = json.glyphs.find((g) => g.name === 'defk');
-        if (defk === undefined) {
-          throw new Error('defk が無い');
+        if (family === undefined || defk === undefined) {
+          throw new Error('declaration か defk が無い');
         }
+        family.frame = frame;
         defk.px16[0] = `8${defk.px16[0].slice(1)}`;
       }),
       /枠の中の地の外に点がある/
@@ -104,6 +111,34 @@ suite('pixel art の icon — 元の定義', () => {
       /同じ名前が 2 つある/
     );
     assertInvalid(parseGlyphSet('{'), /JSON/);
+  });
+
+  test('絵の参照 — 規則の家族は既にある絵(木箱・地図・天秤 …)を枠だけ変えて使い、絵を写さない', () => {
+    const set = glyphSet();
+    const cls = set.glyphs.find((g) => g.name === 'rule-class');
+    const record = set.glyphs.find((g) => g.name === 'defrecord');
+    assert.ok(cls !== undefined && record !== undefined);
+    assert.strictEqual(cls.picture, 'defrecord');
+    assert.deepStrictEqual(cls.grids, record.grids);
+    assert.strictEqual(record.picture, null);
+  });
+
+  test('反例 — 絵の参照が知らない名前・参照の参照・格子と参照の両方を断る', () => {
+    const withPicture = (name: string) => (json: GlyphJson): void => {
+      const cls = json.glyphs.find((g) => g.name === 'rule-class');
+      if (cls === undefined) {
+        throw new Error('rule-class が無い');
+      }
+      cls.picture = name;
+    };
+    assertInvalid(mutated(withPicture('nowhere')), /自分で絵を描いた icon ではない: nowhere/);
+    assertInvalid(mutated(withPicture('rule-place')), /自分で絵を描いた icon ではない: rule-place/);
+    assertInvalid(
+      mutated((json) => {
+        json.glyphs[0].picture = 'defrecord';
+      }),
+      /px16・px8\)と picture を両方は書かない/
+    );
   });
 
   test('反例 — 旗の模様が布の形と合わない・見分けられる 2 色目が無い色を断る', () => {

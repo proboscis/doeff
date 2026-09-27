@@ -132,7 +132,9 @@
    "rule": "DOEFF201",
    "adr": "ADR-CONTROLLERS-CHOOSE-ENVIRONMENT-BY-HANDLER-SET",
    "statement": "core は intent だけを import する",
-   "wired": true
+   "wired": true,
+   "title": "層の向きに逆らう import",
+   "family": "layer"
   },
   {
    "rule": "DOEFF299",

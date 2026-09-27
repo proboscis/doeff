@@ -1,6 +1,6 @@
 // pixel art の icon の元の定義(resources/pixel/glyphs.json)の型と、読み込みの唯一の検査、家族の枠と中の絵の重ね合わせ。
 // 色は PICO-8 の 16 色だけ。格子の 1 文字 = 1 点(`.` = 透明、`0`〜`f` = 色の番号、枠の `:` = 中の地、`A` / `B` = 家族や
-// 語ごとの色の差し替え)。VS Code には触らない(生成の script・拡張の実行時・検の 3 か所が同じ関数を使う)。
+// 語ごとの色の差し替え、`L` = 物に付いた小さな灯 — 消えている時は元の定義の lamp の色、違反の重さで灯す)。VS Code には触らない(生成の script・拡張の実行時・検の 3 か所が同じ関数を使う)。
 
 /** 元の定義の版。 */
 export const GLYPHS_VERSION = 1;
@@ -45,8 +45,11 @@ export type Pixels = ReadonlyArray<ReadonlyArray<ColorIndex | null>>;
 export const SIZES = [16, 8] as const;
 export type GlyphSize = (typeof SIZES)[number];
 
-/** 色の差し替えの名前(枠の `A` / `B`)。 */
-export const TINT_SLOTS = ['A', 'B'] as const;
+/** 色の差し替えの名前(枠の `A` / `B` と、物に付いた灯の `L`)。 */
+export const TINT_SLOTS = ['A', 'B', 'L'] as const;
+
+/** 字体(単色)と輪郭に数える色 — 黒(0)と紺(1)。sprite の外周はこのどちらかで縁取る。 */
+export const OUTLINE_COLORS: readonly ColorIndex[] = [0, 1];
 export type TintSlot = (typeof TINT_SLOTS)[number];
 export type Tint = Readonly<Partial<Record<TintSlot, ColorIndex>>>;
 
@@ -67,17 +70,25 @@ export interface Family {
   readonly frame: Frame | null;
 }
 
-/** icon 1 つ(元の定義のまま)。 */
+/** icon 1 つ(元の定義のまま・絵の参照は解いた後)。 */
 export interface GlyphSource {
   readonly name: string;
   readonly family: string;
   /** 語の一言(hover・見本・文書で同じ文) */
   readonly summary: string;
   readonly tint: Tint;
+  /** 中の絵の格子(`picture` で別の icon の絵を使う時は、その icon の格子) */
   readonly grids: Readonly<Record<GlyphSize, readonly string[]>>;
+  /** 別の icon の絵を使う時のその名前(同じ語は同じ絵 — 絵を写さずに枠だけ変える)。自分で描いた絵は null */
+  readonly picture: string | null;
   /** 字体(単色)の格子 — 無ければ 16×16 の黒(色 0)の点から作る */
   readonly mono: readonly string[] | null;
 }
+
+/** 読んだだけの icon — 絵は自分の格子か、別の icon の名前(checkSet の前に解く)。 */
+type RawGlyph = Omit<GlyphSource, 'grids' | 'picture'> & {
+  readonly drawing: { readonly tag: 'grids'; readonly grids: Readonly<Record<GlyphSize, readonly string[]>> } | { readonly tag: 'picture'; readonly name: string };
+};
 
 /** service の旗の模様 1 つ(布の中の `A` / `B`)。 */
 export interface FlagPattern {
@@ -112,6 +123,8 @@ export interface GlyphSet {
   readonly glyphs: readonly GlyphSource[];
   readonly serviceFlags: ServiceFlags;
   readonly extension: ExtensionIcon;
+  /** 消えている灯(`L`)の色 — 灯は違反の重さの色で灯す */
+  readonly lamp: ColorIndex;
 }
 
 /** 読み込みの結果 — 読めたか、理由つきで読めなかったか。 */
@@ -166,7 +179,7 @@ function colorOf(value: unknown, where: string): ColorIndex {
   return COLOR_CHARS.indexOf(value);
 }
 
-/** 文字が色の差し替えの名前(A / B)であるかを見る。 */
+/** 文字が色の差し替えの名前(A / B / L)であるかを見る。 */
 function isTintSlot(value: string): value is TintSlot {
   return (TINT_SLOTS as readonly string[]).includes(value);
 }
@@ -206,9 +219,9 @@ function gridOf(value: unknown, size: number, allowed: string, where: string): r
 }
 
 /** 枠の格子の文字 — 透明・色・中の地・差し替え。 */
-const FRAME_CHARS = `.:${COLOR_CHARS}AB`;
+const FRAME_CHARS = `.:${COLOR_CHARS}ABL`;
 /** 絵の格子の文字 — 透明(枠を見せる)・色・差し替え。 */
-const PICTURE_CHARS = `.${COLOR_CHARS}AB`;
+const PICTURE_CHARS = `.${COLOR_CHARS}ABL`;
 /** 旗の模様の文字。 */
 const PATTERN_CHARS = '.AB';
 /** 単色の格子の文字(`#` = 点)。 */
@@ -246,19 +259,50 @@ function familyOf(value: unknown, where: string): Family {
   return { name: text(r, 'name', where), label: text(r, 'label', where), summary: text(r, 'summary', where), frame: frameOf(r.frame, `${where}.frame`) };
 }
 
-/** icon 1 つを検める。 */
-function glyphOf(value: unknown, where: string): GlyphSource {
+/** icon 1 つを検める — 絵は px16・px8 の格子か、`picture`(別の icon の名前)のどちらか一方。 */
+function glyphOf(value: unknown, where: string): RawGlyph {
   const r = record(value, where);
   const name = text(r, 'name', where);
   const at = `${where}(${name})`;
+  const hasGrids = r.px16 !== undefined || r.px8 !== undefined;
+  if (hasGrids && r.picture !== undefined) {
+    fail(`${at}: 絵の格子(px16・px8)と picture を両方は書かない`);
+  }
   return {
     name,
     family: text(r, 'family', at),
     summary: text(r, 'summary', at),
     tint: tintOf(r.tint, `${at}.tint`),
-    grids: gridsOf(r, PICTURE_CHARS, at),
+    drawing: r.picture === undefined ? { tag: 'grids', grids: gridsOf(r, PICTURE_CHARS, at) } : { tag: 'picture', name: text(r, 'picture', at) },
     mono: r.mono === undefined ? null : gridOf(r.mono, 16, MONO_CHARS, `${at}.mono`)
   };
+}
+
+/** 絵の参照を解く — 参照先は自分で絵を描いた icon だけ(参照の参照は断る・知らない名前も断る)。 */
+function resolvePictures(raw: readonly RawGlyph[]): GlyphSource[] {
+  const drawn = new Map<string, Readonly<Record<GlyphSize, readonly string[]>>>();
+  for (const glyph of raw) {
+    if (glyph.drawing.tag === 'grids') {
+      drawn.set(glyph.name, glyph.drawing.grids);
+    }
+  }
+  return raw.map(({ drawing, ...rest }): GlyphSource => {
+    switch (drawing.tag) {
+      case 'grids':
+        return { ...rest, grids: drawing.grids, picture: null };
+      case 'picture': {
+        const grids = drawn.get(drawing.name);
+        if (grids === undefined) {
+          fail(`glyphs(${rest.name}).picture: 自分で絵を描いた icon ではない: ${drawing.name}`);
+        }
+        return { ...rest, grids, picture: drawing.name };
+      }
+      default: {
+        const unreachable: never = drawing;
+        throw new Error(`網羅されていない絵の形: ${JSON.stringify(unreachable)}`);
+      }
+    }
+  });
 }
 
 /** service の旗の決まり(色・模様・検算する名前)を検める。 */
@@ -315,7 +359,8 @@ function checkInside(glyph: GlyphSource, frame: Frame): void {
     picture.forEach((row, y) => {
       [...row].forEach((ch, x) => {
         if (ch !== '.' && shape[y][x] !== ':') {
-          fail(`glyphs(${glyph.name}).px${size}[${y}][${x}]: 枠の中の地の外に点がある(家族の枠は変えない)`);
+          const borrowed = glyph.picture === null ? '' : `(絵は ${glyph.picture} から)`;
+          fail(`glyphs(${glyph.name}).px${size}[${y}][${x}]: 枠の中の地の外に点がある${borrowed}(家族の枠は変えない)`);
         }
       });
     });
@@ -358,9 +403,9 @@ function checkSet(set: GlyphSet): void {
     if (family.frame !== null) {
       checkInside(glyph, family.frame);
     }
-    // 差し替えの名前を使うなら、語か家族の枠がその色を決めている
+    // 差し替えの名前を使うなら、語か家族の枠がその色を決めている(灯 L は元の定義の lamp が決める)
     for (const size of SIZES) {
-      for (const slot of TINT_SLOTS) {
+      for (const slot of TINT_SLOTS.filter((t) => t !== 'L')) {
         const used = glyph.grids[size].some((row) => row.includes(slot)) || (family.frame?.grids[size].some((row) => row.includes(slot)) ?? false);
         if (used && glyph.tint[slot] === undefined && family.frame?.tint[slot] === undefined) {
           fail(`glyphs(${glyph.name}): 差し替え ${slot} の色が決まっていない`);
@@ -391,9 +436,10 @@ export function parseGlyphSet(source: string): GlyphSetParseResult {
     const set: GlyphSet = {
       version: GLYPHS_VERSION,
       families: list(root, 'families', 'glyphs.json').map((f, i) => familyOf(f, `families[${i}]`)),
-      glyphs: list(root, 'glyphs', 'glyphs.json').map((g, i) => glyphOf(g, `glyphs[${i}]`)),
+      glyphs: resolvePictures(list(root, 'glyphs', 'glyphs.json').map((g, i) => glyphOf(g, `glyphs[${i}]`))),
       serviceFlags: serviceFlagsOf(root.serviceFlags, 'serviceFlags'),
-      extension: extensionOf(root.extension, 'extension')
+      extension: extensionOf(root.extension, 'extension'),
+      lamp: colorOf(root.lamp, 'lamp')
     };
     checkSet(set);
     return { tag: 'ok', set };
@@ -453,12 +499,26 @@ export interface Glyph {
   readonly mono: ReadonlyArray<ReadonlyArray<boolean>>;
 }
 
-/** 単色の点 — 明示の格子か、16×16 の黒(色 0)の点。 */
+/** 単色の点 — 明示の格子か、16×16 の輪郭の色(黒と紺)の点。 */
 function monoOf(source: GlyphSource, pixels16: Pixels): boolean[][] {
   if (source.mono !== null) {
     return source.mono.map((row) => [...row].map((ch) => ch === '#'));
   }
-  return pixels16.map((row) => row.map((c) => c === 0));
+  return pixels16.map((row) => row.map((c) => c !== null && OUTLINE_COLORS.includes(c)));
+}
+
+/**
+ * icon 1 つを差し替えの色を上書きして重ね合わせる(規則の家族の縁を違反の重さの色にするため)。上書きは語と家族の
+ * 既定より先に効く。知らない名前は undefined。
+ */
+export function composeTinted(set: GlyphSet, name: string, override: Tint): Readonly<Record<GlyphSize, Pixels>> | undefined {
+  const source = set.glyphs.find((g) => g.name === name);
+  if (source === undefined) {
+    return undefined;
+  }
+  const frame = set.families.find((f) => f.name === source.family)?.frame ?? null;
+  const tint = { L: set.lamp, ...source.tint, ...override };
+  return { 16: composePixels(frame, source.grids[16], tint, 16), 8: composePixels(frame, source.grids[8], tint, 8) };
 }
 
 /** 元の定義の icon を全部重ね合わせる(service の旗は flags.ts が足す)。 */
@@ -466,13 +526,44 @@ export function composeGlyphs(set: GlyphSet): Glyph[] {
   const families = new Map(set.families.map((f) => [f.name, f]));
   return set.glyphs.map((source) => {
     const frame = families.get(source.family)?.frame ?? null;
-    const pixels16 = composePixels(frame, source.grids[16], source.tint, 16);
+    const tint = { L: set.lamp, ...source.tint };
+    const pixels16 = composePixels(frame, source.grids[16], tint, 16);
     return {
       name: source.name,
       family: source.family,
       summary: source.summary,
-      pixels: { 16: pixels16, 8: composePixels(frame, source.grids[8], source.tint, 8) },
+      pixels: { 16: pixels16, 8: composePixels(frame, source.grids[8], tint, 8) },
       mono: monoOf(source, pixels16)
     };
   });
+}
+
+/**
+ * 16×16 の土台の右下に 8×8 の印を重ねる(gutter と木で「種類の icon + 状態の印」を 1 つの画にするため)。
+ * 印の点の周りの透明な点には黒(色 0)の縁を 1 点足して、土台の絵と混ざらないようにする。土台が無ければ印だけ。
+ */
+export function overlayBadge(base: Pixels | null, badge: Pixels | null): Pixels {
+  const grid: Array<Array<ColorIndex | null>> = Array.from({ length: 16 }, (_, y) =>
+    Array.from({ length: 16 }, (_, x) => (base === null ? null : base[y][x]))
+  );
+  if (badge === null) {
+    return grid;
+  }
+  const at = (x: number, y: number): ColorIndex | null => (x >= 0 && x < 8 && y >= 0 && y < 8 ? badge[y][x] : null);
+  for (let y = -1; y < 8; y++) {
+    for (let x = -1; x < 8; x++) {
+      const gx = 8 + x;
+      const gy = 8 + y;
+      const own = at(x, y);
+      if (own !== null) {
+        grid[gy][gx] = own;
+        continue;
+      }
+      const touches = [[1, 0], [-1, 0], [0, 1], [0, -1]].some(([dx, dy]) => at(x + dx, y + dy) !== null);
+      if (touches && base !== null) {
+        grid[gy][gx] = 0;
+      }
+    }
+  }
+  return grid;
 }

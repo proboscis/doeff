@@ -2,7 +2,7 @@
 // 判定はしない(何が違反かも、地図の層・色も linter の出力のまま)。VS Code には触らない。
 
 import * as path from 'path';
-import type { LintModule, LintRange, LintRule, LintSeverity, LintViolation } from './contract';
+import type { LintModule, LintRange, LintRule, LintRuleFamily, LintSeverity, LintViolation } from './contract';
 import { violationExplanationLines } from './layers';
 
 /** 表の値の並びへ 1 件足す(数千件でも線形に束ねる)。 */
@@ -37,10 +37,42 @@ export function diagnosticOf(violation: LintViolation): LintDiagnostic {
   return { path: violation.path, violation, severity: violation.severity, message: lines.join('\n'), code: violation.rule };
 }
 
+/**
+ * 違反の束の見出しに使う規則の中身 — linter の規則の一覧から引いた短い名・家族・文。linter は 1 つの規則を結びついた
+ * law ごとに並べるので、同じ ID の項目をまとめる(名と家族は規則ごとに 1 つ)。古い linter の出力は名も家族も null。
+ */
+export interface RuleSummary {
+  readonly title: string | null;
+  readonly family: LintRuleFamily | null;
+  /** 規則の文(law が結びついていれば `law の名: law の文`)— 重ならない物を一覧の順に */
+  readonly statements: readonly string[];
+}
+
+/** 規則の一覧を ID ごとの中身にまとめる。 */
+export function ruleSummaries(rules: readonly LintRule[]): Map<string, RuleSummary> {
+  const table = new Map<string, { title: string | null; family: LintRuleFamily | null; statements: string[] }>();
+  for (const rule of rules) {
+    const found = table.get(rule.rule);
+    if (found === undefined) {
+      table.set(rule.rule, { title: rule.title, family: rule.family, statements: [rule.statement] });
+      continue;
+    }
+    found.title = found.title ?? rule.title;
+    found.family = found.family ?? rule.family;
+    if (!found.statements.includes(rule.statement)) {
+      found.statements.push(rule.statement);
+    }
+  }
+  return table;
+}
+
+/** 規則の一覧に無い ID の中身(規則の一覧は全体の実行の後にしか無い — 名と家族は出さない)。 */
+const UNKNOWN_RULE: RuleSummary = { title: null, family: null, statements: [] };
+
 /** パネルの木の節。 */
 export type LintNode =
-  /** 違反を law(無ければ規則の ID)でまとめた束 */
-  | { readonly tag: 'law'; readonly label: string; readonly violations: readonly LintViolation[] }
+  /** 違反を規則の ID でまとめた束(law の名は hover に出す) */
+  | { readonly tag: 'group'; readonly rule: string; readonly summary: RuleSummary; readonly violations: readonly LintViolation[] }
   /** 束の中の file */
   | { readonly tag: 'file'; readonly path: string; readonly label: string; readonly violations: readonly LintViolation[] }
   | { readonly tag: 'violation'; readonly violation: LintViolation }
@@ -64,7 +96,7 @@ export interface MapEntry {
 /** 束の中の違反の数(地図の色は違反の有無だけで決める)。 */
 export function violationCount(node: LintNode): number {
   switch (node.tag) {
-    case 'law':
+    case 'group':
     case 'file':
       return node.violations.length;
     case 'violation':
@@ -84,22 +116,69 @@ export function violationCount(node: LintNode): number {
   }
 }
 
-/** 違反の束の見出し — ADR の law の名があればそれ、無ければ規則の ID。 */
-function groupLabel(violation: LintViolation): string {
-  return violation.law ?? violation.rule;
-}
-
-/** 違反の木の最上段 — law(か規則の ID)ごとの束(名前の順)。違反が無ければ札。 */
-export function violationRoots(violations: readonly LintViolation[]): LintNode[] {
+/**
+ * 違反の木の最上段 — 規則の ID ごとの束(ID の順)。見出しの名と家族は linter の規則の一覧から引く(拡張は写しを
+ * 持たない)。違反が無ければ札。
+ */
+export function violationRoots(violations: readonly LintViolation[], rules: readonly LintRule[]): LintNode[] {
   if (violations.length === 0) {
     return [{ tag: 'message', label: 'linter の違反はありません' }];
   }
-  const byLaw = new Map<string, LintViolation[]>();
+  const byRule = new Map<string, LintViolation[]>();
   for (const violation of violations) {
-    const label = groupLabel(violation);
-    pushTo(byLaw, label, violation);
+    pushTo(byRule, violation.rule, violation);
   }
-  return [...byLaw.keys()].sort().map((label) => ({ tag: 'law', label, violations: byLaw.get(label) ?? [] }));
+  const summaries = ruleSummaries(rules);
+  return [...byRule.keys()].sort().map((rule) => ({
+    tag: 'group',
+    rule,
+    summary: summaries.get(rule) ?? UNKNOWN_RULE,
+    violations: byRule.get(rule) ?? []
+  }));
+}
+
+/** 束の見出し — 規則の ID と短い名(名の無い古い linter の出力は ID だけ)。 */
+export function groupLabel(rule: string, summary: RuleSummary): string {
+  return summary.title === null ? rule : `${rule} ${summary.title}`;
+}
+
+/** 違反の束で最も重い重さ(束の絵の縁の色)。 */
+export function worstSeverity(violations: readonly LintViolation[]): LintSeverity | undefined {
+  let worst: LintSeverity | undefined;
+  for (const v of violations) {
+    if (worst === undefined || SEVERITY_RANK[v.severity] < SEVERITY_RANK[worst]) {
+      worst = v.severity;
+    }
+  }
+  return worst;
+}
+
+/** 束の件数の文 — 件数と、重さが混ざる時はその内訳(例: `335 件(error 3・warning 332)`)。 */
+export function groupDescription(violations: readonly LintViolation[]): string {
+  const counts = (['error', 'warning', 'info'] as const)
+    .map((s) => ({ s, n: violations.filter((v) => v.severity === s).length }))
+    .filter((c) => c.n > 0);
+  const detail = counts.length > 1 ? `(${counts.map((c) => `${c.s} ${c.n}`).join('・')})` : '';
+  return `${violations.length} 件${detail}`;
+}
+
+/** 束の hover の行 — 見出し・件数・結びついた law の名と ADR・規則の文(文はすべて linter の出力から)。 */
+export function groupTooltipLines(rule: string, summary: RuleSummary, violations: readonly LintViolation[]): string[] {
+  const laws = new Map<string, string | null>();
+  for (const v of violations) {
+    if (v.law !== null && !laws.has(v.law)) {
+      laws.set(v.law, v.adr);
+    }
+  }
+  const lines = [`${groupLabel(rule, summary)} — ${groupDescription(violations)}`];
+  for (const [law, adr] of laws) {
+    lines.push(`law: ${law}${adr === null ? '' : `(${adr})`}`);
+  }
+  lines.push(...summary.statements);
+  if (summary.title === null) {
+    lines.push('(この linter の出力には規則の短い名が無い — doeff-linter を新しくすると名が出る)');
+  }
+  return lines;
 }
 
 /** 規則の一覧 — 針のつながった規則が先、つながっていない規則(見ていない物)は後。 */
@@ -185,7 +264,7 @@ function violationsByLine(violations: readonly LintViolation[]): LintNode[] {
 /** 節の子を作る(展開した時に呼ぶ)。 */
 export function lintChildren(node: LintNode): LintNode[] {
   switch (node.tag) {
-    case 'law': {
+    case 'group': {
       const byFile = new Map<string, LintViolation[]>();
       for (const violation of node.violations) {
         pushTo(byFile, violation.path, violation);

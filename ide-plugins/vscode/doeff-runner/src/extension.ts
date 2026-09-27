@@ -21,6 +21,8 @@ import { multiTokenFuzzyMatch } from './search';
 import { registerHyNavigation } from './hy/register';
 import { registerLint } from './lint/register';
 import { registerBrowse } from './hy/browsePanel';
+import { PixelIcons, type IconSource } from './pixel/icons';
+import { pixelOwnsGutter, registerPixelEditor, treeIconsEnabled } from './pixel/editor';
 
 const execFileAsync = promisify(cp.execFile);
 
@@ -2919,11 +2921,17 @@ export function activate(context: vscode.ExtensionContext) {
   extensionContext = context;
 
   // Hy (doeff-hy) navigation: definition / references / outline / workspace symbols / hover.
-  const hyStore = registerHyNavigation(context, { locateIndexer: () => locateIndexer(), output });
+  const hyNavigation = registerHyNavigation(context, { locateIndexer: () => locateIndexer(), output });
+  const hyStore = hyNavigation.store;
+  // pixel art の icon(同梱の resources/pixel/glyphs.json を 1 度読む)— 木・gutter・hover・状態バーが同じ画を使う
+  const pixelIcons = PixelIcons.load(context.extensionPath, output);
+  const treePixels = (): IconSource | undefined => (treeIconsEnabled() ? pixelIcons : undefined);
   // doeff-linter's findings (the linter is the source of truth; the editor only displays them).
-  const lintStore = registerLint(context, output);
+  const lintStore = registerLint(context, output, { tree: treePixels, ownsGutter: pixelOwnsGutter, icons: pixelIcons });
   // Browse definitions by service / layer / tags (display only).
-  registerBrowse(context, hyStore, lintStore, output);
+  registerBrowse(context, hyStore, lintStore, output, treePixels);
+  // エディタの上の pixel art(gutter の種類の icon と状態の印・決まった語の文字の置き換えと hover・状態バーの doe)
+  registerPixelEditor(context, hyStore, hyNavigation.effects, lintStore, pixelIcons, output);
 
   // Create state store for sharing state between TreeView and CodeLens
   const stateStore = new DoeffStateStore(context);

@@ -98,6 +98,10 @@ export interface LintModule {
   readonly layerReason: string | null;
 }
 
+/** 規則の家族(更新 6)— 違反の欄の行の絵を選ぶ閉じた集合。どの規則がどの家族かは linter が決める。 */
+export const LINT_RULE_FAMILIES = ['layer', 'tags', 'raw', 'naming', 'place', 'definition', 'class', 'wire', 'smell', 'jev', 'python', 'law'] as const;
+export type LintRuleFamily = (typeof LINT_RULE_FAMILIES)[number];
+
 /** 走らせた規則の一覧の 1 件(何を見ているか・何を見ていないか)。 */
 export interface LintRule {
   readonly rule: string;
@@ -105,6 +109,10 @@ export interface LintRule {
   readonly statement: string;
   /** 針(判定)がつながっているか。false の規則は違反を出さない */
   readonly wired: boolean;
+  /** 短い日本語の名 — 違反の形で書いた物(例: defn を使っている)。更新 6。古い linter の出力には無く null */
+  readonly title: string | null;
+  /** 規則の家族(更新 6。古い linter の出力には無く null) */
+  readonly family: LintRuleFamily | null;
 }
 
 /** linter の出力の全体。 */
@@ -340,7 +348,9 @@ function lintRule(value: unknown, where: string): LintRule {
     rule: str(obj, 'rule', where),
     adr: strOrNull(obj, 'adr', where),
     statement: str(obj, 'statement', where),
-    wired: bool(obj, 'wired', where)
+    wired: bool(obj, 'wired', where),
+    title: optional(obj, 'title', where, text),
+    family: optional(obj, 'family', where, (v, at) => closed(v, at, LINT_RULE_FAMILIES))
   };
 }
 
