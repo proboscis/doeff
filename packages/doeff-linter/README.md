@@ -98,6 +98,11 @@ skip_test_functions = true
 | DOEFF113 | Context Matches Service | タグの :context と置き場の service が食い違う(info) |
 | DOEFF119 | Class Touches The World Or Holds State | 外の世界に触る class は error・self を書き換える class は warning・欄だけの class は defrecord を勧める info |
 | DOEFF118 | Tests Are deftest | 検の置き場の検は deftest で書く(名が test の defn・deff・defk・fn の束縛を置かない) |
+| DOEFF121 | Shape Check In Judgment | 判断の層の定義が文字列の鍵の `(.get x "欄")` をその欄への isinstance で検める(JSON の形の検めは protocol の defwire へ) |
+| DOEFF122 | Hand-Written Failure Rethrow | match の腕が宣言した失敗の型を受け、受けた値か包み直した値を return するだけ(`(<- (Raise …))` と on-raise へ) |
+| DOEFF123 | Bind Then Return | `(<- x T (f …))` の直後の `(return x)` で x を他で使わない |
+| DOEFF124 | Fields Joined Into Text | 同じ値の 2 つ以上の欄を文字列と一緒に `+` か f 文字列でつなぐ |
+| DOEFF125 | Rebuilt Accumulator | for / while の中の `(:= xs (+ xs #(…)))`(内包表記へ) |
 | DOEFF120 | JsonValue Outside Wire Modules | JsonValue・JsonObject を使ってよいのは汎用の解き手と、architecture.hy の `:wire-modules` に挙げた foundation の送受信の module だけ |
 
 ## 層の規則(Hy と Python)
@@ -252,6 +257,15 @@ value / external-world / stateful / other で問います。詳しくは [docs/S
 ほかの module は解き手が形を確かめた型のある値だけを見ます。module ごとに 1 件(鍵 `<path>::DOEFF120`)。`:wire-modules` に挙げても
 foundation の外なら許さず、説明に訳を書きます。許す場所の決め方は `json_value_allowance` の 1 か所で、差し替えられます。
 詳しくは [docs/rules/DOEFF120.md](docs/rules/DOEFF120.md) と [docs/SPECIFICATION.md](docs/SPECIFICATION.md) の 13 節。
+
+### 臭いの規則(DOEFF121〜125・DOEFF205)
+
+型と effect で書けるのに手で書いた形を拾います(operator 2026-09-28 "lets add them"・題材は agora の decide-tag)。重さの既定は warning
+(`[tool.doeff-linter.rules.<ID>] severity = "info"` で下げられる・error にはしない)。DOEFF121 は `[tool.doeff-linter.smells]
+shape_check_layers` に挙げた判断の層の file だけ、DOEFF122〜125 は `definitions` の母集団の全部に当たります。DOEFF122 の「失敗の型」は
+名前で決め打ちせず、defrecord の頭の辞書の `{:failure True}` と defeffect の `:failure` / `:absent` の宣言から取ります(import で
+module まで解く)。DOEFF205 は役が judgment / program の定義に形の検めと判断が混ざっているかを Jev に問います
+(`[tool.doeff-linter.semantic] mixed_concerns = { layer = "core" }`)。詳しくは [docs/SPECIFICATION.md](docs/SPECIFICATION.md) の 14 節。
 
 ## エディタ向けの出力(editor-json)
 

@@ -41,6 +41,11 @@
   #^ str key
   #^ (| int None) size)
 
+(defrecord Refused
+  "検めの断り — 失敗の値の印つき"
+  {:failure True}
+  #^ str reason)
+
 (defk always-true [x]
   {:pre [(: x str)] :post [(: % bool)]}
   True)
@@ -131,4 +136,14 @@
   (assert (in "欄を 1 つも参照しない" (refused "(defrecord A {:check [(> b 0)]} #^ int a)")))
   (assert (in "欄の注記" (refused "(defrecord A {:check [(: a int)]} #^ int a)")))
   (assert (in ":role" (refused "(defrecord A {:tags {:context \"c\" :role \"nope\"}} #^ int a)")))
-  (assert (in ":context と :role ちょうど" (refused "(defrecord A {:tags {:context \"c\"}} #^ int a)"))))
+  (assert (in ":context と :role ちょうど" (refused "(defrecord A {:tags {:context \"c\"}} #^ int a)")))
+  (assert (in ":failure は字面の True か False" (refused "(defrecord A {:failure 1} #^ int a)"))))
+
+
+(deftest test-failure-mark-is-readable-on-the-class
+  (<- _ (Pure None))
+  ;; :failure True は失敗の型の印 — 属性に残り、値の作り方は変わらない。印の無い頭の辞書は False、頭の辞書の無い形は属性を持たない。
+  (assert (is Refused.__doeff_failure__ True))
+  (assert (= (. (Refused :reason "r") reason) "r"))
+  (assert (is ChatId.__doeff_failure__ False))
+  (assert (not (hasattr Plain "__doeff_failure__"))))

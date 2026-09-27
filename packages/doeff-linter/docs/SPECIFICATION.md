@@ -346,3 +346,39 @@ validating it like pydantic does")。JsonValue(素の `dict | list | str | int |
   (20 行まで・残りは数)。登録簿に載れば `registered_severity`。
 - **設定の誤り**: `:wire-modules` の要素が module の綴りでない(`/` を含む・空の段・段の中の `**`)・同じ綴りの 2 度書き・`:foundation` の無い宣言。
 - **戻し方**: 規則を外す(型に起こした値はそのままで害は無い)。
+
+## 14. 臭いの規則 — DOEFF121〜125・DOEFF205
+
+operator の決定 2026-09-28 未明(逐語 "lets add them")。題材は agora-controllers の controllers/kanban/core/tag_judgment.hy の decide-tag
+(決定の時点の linter はこの file に何も出していなかった)。記録は doeff の ADR-DOE-HY-007 R8〜R10。
+
+設定:
+
+```toml
+[tool.doeff-linter.smells]
+shape_check_layers = ["core"]          # DOEFF121 を当てる層(判断の層)。無ければ DOEFF121 は配線されない
+[tool.doeff-linter.rules.DOEFF124]
+severity = "info"                      # 臭いの規則の重さ(warning・info — 既定 warning・error は選べない)
+[tool.doeff-linter.semantic]
+mixed_concerns = { layer = "core", roles = ["judgment", "program"], warning_min = 0.7, info_min = 0.5 }   # DOEFF205
+```
+
+| 規則 | 当たる形 | 鍵の細目 | 位置 |
+|---|---|---|---|
+| DOEFF121 | 判断の層の file の定義で、`(val|var|setv|setx|:=|<- n (.get x "欄"))` の n か `(.get x "欄")` そのものへの `(isinstance … T)` | `<定義>::<欄>` | `.get` の式 |
+| DOEFF122 | `(match 主 …)` の腕の pattern の頭の型が失敗の型で、腕の本体(`do` なら最後の式)が `(return E)` で、E が主・pattern で束ねた名・`:as` の名、または腕の中でそれらから作った名(`(<- n T X)` など)を参照する | `<定義>::<主の名>`(主が式なら型の名) | pattern |
+| DOEFF123 | 並んだ 2 つの子 `(<- x …)` `(return x)` で、定義の中の x(`x` と `x.欄`)の出現がちょうど 2 | `<定義>::<x>` | `<-` の式 |
+| DOEFF124 | 文字列の引数を含む `(+ …)` の、同じ値 v の欄 `v.a`・`(str v.b)`・`(repr v.c)` が 2 つ以上 / f 文字列の `{v.a}…{v.b}` | `<定義>::<v>` | 式 |
+| DOEFF125 | for / while の中(内包表記は数えない)の `(:=|setv|setx xs (+ xs #(…)))`・`(… xs (+ xs […]))` | `<定義>::<xs>` | 式 |
+
+- 同じ定義の同じ細目は 1 件だけ出す。母集団は `definitions` の業務の Hy の file(検の置き場も含む — 母集団の設定で決める)。
+- **失敗の型**(DOEFF122): repo の Hy の file のうち `:failure` か `:absent` の綴りを含む物を読み、`(defrecord 名 "doc"? {… :failure True …} …)` の名と
+  `(defeffect 名 "doc"? {… :failure [A …] :absent [B …]})` の型を集める。名は file の import(`(import m [T])` → `m.T`・`(import m :as n)` の `n.T` →
+  `m.T`)と定義の場所(束縛の無い裸の名 → その file の module)で module まで解き、腕の型も同じく解いて比べる — 同じ名の型が別の module にあっても、
+  宣言した方だけが失敗の型。宣言が 1 つも無ければ DOEFF122 は何も出さない。
+- **重さ**: 既定は warning(ADR-DOE-HY-007 R8 — Absent / Raise の段 1・2 が本線に入ったので info から上げた)。登録簿に載った warning は info。
+- **DOEFF205**(Jev・Choice・warning か info だけ): 役(定義の :tags の role・無ければ module の頭のタグ)が `roles` の最上位の関数(defk・deff・
+  defn・defp)に、mixed / shape-only / judgment-only / neither から選ばせる。state = 定義の source(タグを消して `source_limit` で切る)と、
+  `layer` の層の説明(summary・knows・does_not_know)。mixed を `warning_min` 以上で warning、`info_min` 以上で info。較正の見張りは
+  decide-tag(正例)と card-tags-of(反例)の mixed の確率を比べる。問いの文は `src/project/semantic.rs` の `MixedConcerns` の 1 か所。
+
