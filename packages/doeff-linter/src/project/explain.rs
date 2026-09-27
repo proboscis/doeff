@@ -65,7 +65,7 @@ pub enum NameSubject {
 }
 
 /// 規則ごとの説明の材料(規則の判定が見た事実だけ)。
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Explain {
     /// DOEFF101: 許されない層の module を import した。
     ImportDirection { placement: Placement, target: String, target_layer: LayerId, target_dir: String },
@@ -119,6 +119,14 @@ pub enum Explain {
     },
     /// DOEFF117: 宣言したのに使っていない依存。
     UnusedDependency { service: String, dependency: String },
+    /// DOEFF201・202: Jev の判定(意味の規則)。
+    Semantic {
+        placement: Placement,
+        definition: String,
+        kind: &'static str,
+        question: super::semantic::SemanticQuestion,
+        probability: f64,
+    },
     /// DOEFF113: タグの :context が置き場の service と食い違う。
     ContextMismatch { placement: Placement, contexts: Vec<String> },
 }
@@ -328,6 +336,15 @@ impl<'a> Narrator<'a> {
             Explain::UnusedDependency { service, dependency } => (
                 format!("service {} の :depends-on の {}", service, dependency),
                 format!("{} のどの module も {} を読んでいない(知らせ)。使っていない依存の宣言は、service の間の向きを実物より多く見せる。要らなければ :depends-on から外す。", service, dependency),
+            ),
+            Explain::Semantic { placement, definition, kind, question, probability } => (
+                format!("定義 {}({}) — {}", definition, kind, self.file_subject(placement)),
+                format!(
+                    "Jev の判定 p={:.2} — {}。{}(これは決定的な規則ではなく意味の判定で、当たり外れを測っている途中 — 外れなら登録簿に載せる)",
+                    probability,
+                    question.meaning(),
+                    self.character(placement.layer)
+                ),
             ),
             Explain::EnvironmentName { subject, words } => (
                 match subject {

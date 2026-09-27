@@ -115,6 +115,14 @@ struct Args {
     /// Disable logging to file
     #[arg(long)]
     no_log: bool,
+
+    /// 意味の規則(DOEFF201・202)で Jev に問う — 対象は path の引数の file、無ければ git で変わった file。これが無い実行は cache を読むだけ
+    #[arg(long)]
+    semantic: bool,
+
+    /// 意味の規則で、設定した層の全部の定義を Jev に問う
+    #[arg(long)]
+    semantic_all: bool,
 }
 
 /// Cursor hook input structure
@@ -182,6 +190,7 @@ impl Setup {
                 ProjectRule::EnvironmentName => self.settings.environment.is_some(),
                 ProjectRule::ServiceBoundary => self.settings.services.is_some(),
                 ProjectRule::ContextMatchesService => self.settings.services.is_some() || self.settings.architecture.is_some(),
+                ProjectRule::SemanticBusinessDecision | ProjectRule::SemanticTransportKnowledge => self.settings.semantic.is_some(),
                 ProjectRule::UndeclaredPlace
                 | ProjectRule::UndeclaredDirectory
                 | ProjectRule::ServiceDependency
@@ -197,6 +206,52 @@ impl Setup {
     fn has_project_rules(&self) -> bool {
         self.settings.layers.is_some() || self.settings.architecture.is_some() || self.settings.environment.is_some() || self.settings.raw.is_some() || self.settings.services.is_some()
             || self.settings.definitions.is_some()
+    }
+}
+
+/// 意味の規則の扱いを引数から決める(--semantic-all = 全部・--semantic = 指定の file か git で変わった file・無ければ cache だけ)。
+fn semantic_mode(args: &Args, root: &Path, stdin_path: Option<&Path>) -> project::semantic::SemanticMode {
+    use project::semantic::SemanticMode;
+    if args.semantic_all {
+        return SemanticMode::AskAll;
+    }
+    if !args.semantic {
+        return SemanticMode::CacheOnly;
+    }
+    let explicit: Vec<PathBuf> = match stdin_path {
+        Some(path) => vec![path.to_path_buf()],
+        None if args.paths.iter().any(|p| p != ".") => args.paths.iter().map(PathBuf::from).collect(),
+        None => git_changed_files(root).into_iter().map(|rel| root.join(rel)).collect(),
+    };
+    let mut targets = BTreeSet::new();
+    for path in explicit {
+        let absolute = editor::normalize_path(&path);
+        if absolute.is_dir() {
+            for entry in walkdir::WalkDir::new(&absolute).into_iter().filter_map(Result::ok).filter(|e| e.file_type().is_file()) {
+                if let Some(rel) = project::relative_path(root, entry.path()) {
+                    targets.insert(rel);
+                }
+            }
+        } else if let Some(rel) = project::relative_path(root, &absolute) {
+            targets.insert(rel);
+        }
+    }
+    SemanticMode::Ask(targets)
+}
+
+/// git で変わった file(追跡していない file を含む・repo の根からの path)。
+fn git_changed_files(root: &Path) -> Vec<String> {
+    let output = Command::new("git").arg("-C").arg(root).args(["status", "--porcelain", "-uall"]).output();
+    match output {
+        Ok(output) if output.status.success() => String::from_utf8_lossy(&output.stdout)
+            .lines()
+            .filter(|line| line.len() > 3)
+            .map(|line| {
+                let file = &line[3..];
+                file.split_once(" -> ").map(|(_, new)| new).unwrap_or(file).to_string()
+            })
+            .collect(),
+        _ => Vec::new(),
     }
 }
 
@@ -336,7 +391,8 @@ fn run_editor(args: &Args) -> ExitCode {
             Vec::new()
         };
         let project_report = if setup.has_project_rules() {
-            project::run(&setup.root, &setup.settings, &project_rules, Target::Single { path: path.clone(), source: &source })
+            let mode = semantic_mode(args, &setup.root, Some(&path));
+            project::run_with(&setup.root, &setup.settings, &project_rules, Target::Single { path: path.clone(), source: &source }, &mode)
         } else {
             ProjectReport::default()
         };
@@ -353,7 +409,7 @@ fn run_editor(args: &Args) -> ExitCode {
             lint_files_parallel(&files, &python_rules)
         };
         let project_report = if setup.has_project_rules() {
-            project::run(&setup.root, &setup.settings, &project_rules, Target::Whole)
+            project::run_with(&setup.root, &setup.settings, &project_rules, Target::Whole, &semantic_mode(args, &setup.root, None))
         } else {
             ProjectReport::default()
         };
@@ -618,9 +674,15 @@ fn run_normal(args: &Args) -> ExitCode {
     // Lint files(層の規則の違反も同じ形で足す)
     let mut results = lint_files_parallel(&files, &all_rules);
     if setup.has_project_rules() {
-        let report = project::run(&setup.root, &setup.settings, &setup.project_rules(), Target::Whole);
+        let report = project::run_with(&setup.root, &setup.settings, &setup.project_rules(), Target::Whole, &semantic_mode(args, &setup.root, None));
         for error in &report.errors {
             eprintln!("doeff-linter: {}", error);
+        }
+        if let Some(semantic) = &report.semantic {
+            eprintln!(
+                "doeff-linter: 意味の規則(Jev {}・{}) — 判定済み {}・未判定 {}・今回撃った {}・入力のトークン {}・較正 {}",
+                semantic.model, semantic.wire, semantic.judged, semantic.unjudged, semantic.asked, semantic.input_tokens, semantic.calibration
+            );
         }
         // --modified の時は、変更した file の違反だけにする(変更していない file の既知の違反で止めない)。
         let only = if args.modified { Some(files.iter().map(|f| editor::normalize_path(f)).collect()) } else { only_paths(&args.paths) };

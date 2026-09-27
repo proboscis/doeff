@@ -221,6 +221,13 @@ repo の一番上の `architecture.hy` に `defarchitecture`(root・層・shared
 書くと、doeff-linter が実行せずに読みます。在れば層・role・service は ここだけに書き、TOML には規則の入り切りと重さと登録簿を残します。
 形と、Tach・import-linter・Nx・Deptrac との対応は [docs/SPECIFICATION.md](docs/SPECIFICATION.md) の 9 節。
 
+### 意味の規則(DOEFF201・202 — Jev)
+
+`--semantic`(指定の file か git で変わった file)と `--semantic-all` の時だけ Jev(TypeSafe)に問い、答えを repo の根の
+`.doeff-linter/semantic-cache/` に残します。普段の実行(エディタ・hook)は cache を読むだけです。重さは warning か info だけ。
+宛先とキーは doeff-jev と同じ決め方(`JEV_*` → `~/.config/jev/client.json` → TypeSafe 直・`TYPESAFE_API_KEY`)。詳しくは
+[docs/SPECIFICATION.md](docs/SPECIFICATION.md) の 10 節。
+
 ## エディタ向けの出力(editor-json)
 
 ```bash

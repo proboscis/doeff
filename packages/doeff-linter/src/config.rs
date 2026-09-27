@@ -80,6 +80,10 @@ pub struct Config {
     /// service と層の宣言 architecture.hy の path(設定 file の dir からの相対)。書かなければ repo の根の architecture.hy を探す。
     #[serde(default)]
     pub architecture: Option<String>,
+
+    /// 意味の規則(DOEFF201・202 — Jev)の層と閾値 — `[tool.doeff-linter.semantic]`
+    #[serde(default)]
+    pub semantic: Option<crate::project::semantic::SemanticSection>,
 }
 
 impl Config {
@@ -114,6 +118,24 @@ impl Config {
             }
         };
         settings.architecture = architecture;
+        if let Some(section) = &self.semantic {
+            let names: Vec<String> = settings.layers.as_ref().map(|l| l.layers.iter().map(|s| s.name.clone()).collect()).unwrap_or_default();
+            let mut unknown = Vec::new();
+            let mut find = |name: &str, what: &str| {
+                let found = names.iter().position(|n| n == name).map(crate::project::settings::LayerId);
+                if found.is_none() {
+                    unknown.push(format!("{}: 層 {} は宣言した層に無い", what, name));
+                }
+                found
+            };
+            let mut problems = Vec::new();
+            let semantic = crate::project::semantic::SemanticSettings::validate(section, &mut find, &mut problems);
+            problems.extend(unknown);
+            if !problems.is_empty() {
+                return Err(problems);
+            }
+            settings.semantic = Some(semantic);
+        }
         Ok(settings)
     }
 
@@ -272,7 +294,7 @@ pub fn load_config(path: Option<&Path>) -> Option<Config> {
 /// `[tool.doeff-linter]` の直下に書ける欄の名(Config の欄と同じ綴り)。
 const KNOWN_KEYS: &[&str] = &[
     "enable", "disable", "exclude", "rules", "git", "log_file", "layers", "tags", "roles", "environment_names", "raw_side_effects",
-    "laws", "registry", "services", "definitions", "architecture",
+    "laws", "registry", "services", "definitions", "architecture", "semantic",
 ];
 
 /// 見つけた設定 file と、その中の `[tool.doeff-linter]` の節。

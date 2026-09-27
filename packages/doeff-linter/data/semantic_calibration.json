@@ -1,0 +1,45 @@
+{
+ "about": "意味の規則の較正の見張り — jev-lint の labels.json の札で、際どくない正例と反例(agora-controllers 379ebcdd の定義の写し)。正例は p >= 0.8、反例は p <= 0.2 に入るはず(試作の 4 回の実測: 正例 0.91〜0.97・反例 0.03〜0.06)。",
+ "items": [
+  {
+   "rule": "DOEFF201",
+   "id": "controllers/protocol/chat_program.hy::may-manage?",
+   "expect": true,
+   "name": "may-manage?",
+   "kind": "defk",
+   "path": "controllers/protocol/chat_program.hy",
+   "layer": "protocol",
+   "source": "(defk may-manage? [by]\n  {:pre [(: by str)] :post [(: % (| bool Unavailable))] :tags {:context \"chat\" :role \"protocol\"}}\n  \"by が参加者を出し入れしてよいか — chat を開ける者と同じ(machine を名乗れる principal か方策の openers)。方策に届かなければ Unavailable。\"\n  (<- as-machine bool (may-act-as by \"machine\"))\n  (when as-machine\n    (return True))\n  (<- policy (| DeliveryPolicy None Unavailable) (read-policy))\n  (match policy\n    (Unavailable) policy\n    None False\n    _ (in by policy.openers)))"
+  },
+  {
+   "rule": "DOEFF201",
+   "id": "controllers/protocol/jev.hy::post-json",
+   "expect": false,
+   "name": "post-json",
+   "kind": "defk",
+   "path": "controllers/protocol/jev.hy",
+   "layer": "protocol",
+   "source": "(defk post-json [url headers body]\n  {:pre [(: url str) (: headers dict) (: body bytes)] :post [(: % dict)]\n   :tags {:context \"classifier\" :role \"protocol\"}}\n  \"1 回の呼び(撃ち直し込み)の答えの JSON を dict で返す — jev-evaluation の節が問いごとに読む元。計器は効果 CountMetric で数える\n   (呼び・撃ち直し・不達の 3 本)。撃ち直しは網と engine の断りにだけ効かせ、答えの読みは輪の外(形の違いを撃ち直しても直らない)。\"\n  (var attempt 0)\n  (var text None)\n  (while (is text None)\n    (:= attempt (+ attempt 1))\n    (<- outcome (post-once url headers body))\n    (val retry (<= attempt MAX-RETRIES))\n    (match outcome\n      (PostAnswered :text answered)\n      (do (<- (CountMetric METRIC-JEV-CALLS))\n          (:= text answered))\n      (PostRefused :status status :detail detail)\n      (if (and (in status RETRY-STATUSES) retry)\n          (<- (wait-before-retry attempt))\n          (<- (give-up (+ \"Jev HTTP \" (str status) \": \" detail))))\n      (PostUnreached :detail detail)\n      (if retry\n          (<- (wait-before-retry attempt))\n          (<- (give-up (+ \"Jev へ届かない: \" detail))))))\n  (var payload None)\n  (try\n    (:= payload (json.loads text))\n    (except [e ValueError]\n      (raise (JevAnswerShape (+ \"Jev の答えが JSON でない: \" (str e))))))\n  (when (not (isinstance payload dict))\n    (raise (JevAnswerShape \"Jev の答えが object でない\")))\n  payload)"
+  },
+  {
+   "rule": "DOEFF202",
+   "id": "controllers/core/peer_translation.hy::classifier-call",
+   "expect": true,
+   "name": "classifier-call",
+   "kind": "defk",
+   "path": "controllers/core/peer_translation.hy",
+   "layer": "core",
+   "source": "(defk classifier-call [ports method route body timeout]\n  {:pre [(: ports PeerPorts) (: method str) (: route str) (: body (| dict None)) (: timeout float)]\n   :post [(: % ClassifierOutcome)]}\n  ;; 係を 1 回読んだ結末(閉じた和 — 口が無い = Unasked〔撃たない〕・期限切れ = TimedOut・届かない = Unreachable〔理由は誤りの逐語〕・\n  ;; 答え = Answered)。method は呼び手の読みの 3 点が名指す(POST は /evaluate と /view/evaluate の 2 つ — 本文が要る読み)。\n  ;; ⚠ 鍵も Jev の URL も持たない(R10 鍵は係だけ — 知るのは係の宛先 1 つ)。\n  (val base ports.classifier-url)\n  (when (is base None)\n    (return (ClassifierUnasked)))\n  (try\n    (<- response HttpResponse (HttpRequest method (+ (.rstrip base \"/\") route)\n                                           :headers (if (is body None) ACCEPT-JSON (| ACCEPT-JSON {\"Content-Type\" \"application/json\"}))\n                                           :body (if (is body None) None (json.dumps body :ensure-ascii False))\n                                           :timeout-seconds timeout :max-retries 0 :follow-redirects False))\n    (except [error TimeoutError]\n      (return (ClassifierTimedOut (str error))))\n    (except [error OSError]\n      (return (ClassifierUnreachable (str error)))))\n  (ClassifierAnswered response.status response.text))"
+  },
+  {
+   "rule": "DOEFF202",
+   "id": "controllers/core/chat_wake.hy::wake",
+   "expect": false,
+   "name": "wake",
+   "kind": "defk",
+   "path": "controllers/core/chat_wake.hy",
+   "layer": "core",
+   "source": "(defk wake [message members policy]\n  {:pre [(: message Message) (: members tuple) (: policy WakePolicy)] :post [(: % tuple)] :tags {:context \"chat\" :role \"judgment\"}}\n  \"投稿 1 通で起こす参加者の列(問い A の 1 点)。members = members-of の答え(今参加している参加者だけ — 参加していない agent は\n   名指されても起こさない)。差出人自身は起こさない(agent が自分の投稿で自分を起こさない)・画面は起こさない(記録を読む)。\n     named-or-primary: 投稿が名指した(mentions)参加者が居ればそれだけ、居なければ主担当 1 つ(pane の chat は pane 1 つ)\n     all-others:       差出人以外の agent と pane の全員\"\n  (val candidates (lfor p members\n                         :if (and (isinstance p #(AgentParticipant PaneParticipant)) (!= p.agent message.sender))\n                         p))\n  (match policy\n    WakePolicy.NAMED-OR-PRIMARY\n    (do (val named (lfor p candidates :if (in p.agent (or message.mentions #())) p))\n        (cond\n          named (tuple named)\n          True (tuple (gfor p candidates :if (or (isinstance p PaneParticipant) p.primary) p))))\n    WakePolicy.ALL-OTHERS (tuple candidates)))"
+  }
+ ]
+}

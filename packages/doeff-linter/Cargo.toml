@@ -30,6 +30,9 @@ once_cell = "1.19"
 chrono = "0.4"
 # Hy の file の事実(定義・import・生の副作用の証拠 raw)と読み取り器 — hy-index の解析を関数として呼ぶ(子 process は使わない)。
 doeff-indexer = { path = "../doeff-indexer", default-features = false }
+# 意味の規則(DOEFF201・202)で Jev(Vercel AI Gateway)へ問う HTTP の口(--semantic の時だけ使う)。
+ureq = { version = "2.10", default-features = false, features = ["tls"] }
+sha2 = "0.10"
 
 [dev-dependencies]
 tempfile = "3.10"
