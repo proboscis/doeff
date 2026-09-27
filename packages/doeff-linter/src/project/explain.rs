@@ -219,6 +219,8 @@ pub enum Explain {
     ClassShape { name: String, shape: ClassShapeFacts, verdict: ClassVerdict },
     /// DOEFF126: defk の定義を素で呼んでいる。
     BareDefkCall { call: super::bare_calls::BareCall },
+    /// DOEFF126: 引数で受けた関数を素で呼んでいる(呼び手が defk か fnk を渡している)。
+    ParamCalledBare { call: super::param_calls::ParamCall },
     /// DOEFF121〜125: 臭いの規則(形の照らし)。
     Smell { smell: super::smells::Smell },
     /// DOEFF205: Jev が、判断の定義に形の検めと業務の判断が混ざっていると見た。
@@ -403,6 +405,16 @@ impl<'a> Narrator<'a> {
                 }
             }
             Explain::Smell { smell } => smell_text(smell),
+            Explain::ParamCalledBare { call } => (
+                format!(
+                    "定義 {}({})が引数 {} を素で呼んでいる — 呼び手 {} がそこに {} を渡す",
+                    call.definition, call.container, call.param, call.caller, call.passed
+                ),
+                format!(
+                    "呼び手が {} に Program を返す関数({})を渡しているので、{} を素で呼ぶと答えではなく Program が返る。その Program は型の誤りで落ちずに値として流れ、答えを使ったつもりの所で静かに間違う(isinstance が常に偽・索引が常に空 …)。(<- x ({} …)) で受ける。",
+                    call.param, call.passed, call.param, call.param
+                ),
+            ),
             Explain::BareDefkCall { call } => (
                 format!("定義 {}({})が defk {} を素で呼んでいる", call.definition, call.container, call.callee),
                 format!(

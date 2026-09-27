@@ -1472,3 +1472,26 @@ fn defk_called_bare_is_an_error_and_program_positions_are_not() {
     let single: Value = serde_json::from_str(&stdout).unwrap_or_else(|e| panic!("{}: {}\n{}", e, stdout, stderr));
     assert_eq!(keys(&single, "DOEFF126"), vec!["app/core/texts.hy::DOEFF126::fresh::latest_by_ref"]);
 }
+
+#[test]
+fn a_function_argument_called_bare_across_files_is_found_at_the_callee() {
+    // 事実(#798・agora L1550): rows-by-text が引数 field-of を素で呼び、呼び手はそこに fnk を渡していた — 索引が常に空になった。
+    let dir = tempfile::TempDir::new().unwrap();
+    std::fs::write(dir.path().join("pyproject.toml"), "[tool.doeff-linter]\nenable = [\"DOEFF126\"]\n[tool.doeff-linter.definitions]\npaths = [\"app\"]\n").unwrap();
+    let files = [
+        ("app/core/index.hy", "(defk payload-of [row] row)\n(defk rows-by-text [rows field-of]\n  (for [row rows] (setv value (field-of row)) (when (isinstance value str) (print value)))\n  rows)\n(defk rows-safe [rows field-of] (<- v (field-of (get rows 0))) (return v))\n"),
+        ("app/core/tags.hy", "(import app.core.index [rows-by-text rows-safe payload-of])\n(defk tag-rows-of [tags] (! (rows-by-text tags (fnk [row] (<- p (payload-of row)) (.get p \"subject\")))))\n(defk calm [tags] (! (rows-safe tags payload-of)))\n(defk plain [tags] (! (rows-by-text tags (fn [row] row))))\n"),
+    ];
+    for (rel, text) in &files {
+        let path = dir.path().join(rel);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, text).unwrap();
+    }
+    let (code, report) = editor(dir.path());
+    // 呼び先 rows-by-text の素の呼びだけが違反(rows-safe は (<- …) で受ける・fn を渡す呼び手は追わない)。
+    assert_eq!(keys(&report, "DOEFF126"), vec!["app/core/index.hy::DOEFF126::rows_by_text::field_of"]);
+    assert_eq!(code, 1);
+    let found = violation(&report, "app/core/index.hy::DOEFF126::rows_by_text::field_of");
+    assert!(found["explanation"]["subject"].as_str().unwrap().contains("呼び手 app/core/tags.hy の tag_rows_of がそこに fnk を渡す"), "{}", found["explanation"]["subject"]);
+    assert_eq!(found["range"]["start"]["line"], 2);
+}

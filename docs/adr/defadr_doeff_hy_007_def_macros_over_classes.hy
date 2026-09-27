@@ -106,6 +106,7 @@
      (rule R11 "Jev の規則 DOEFF205: 役が judgment / program の定義(定義の :tags か module の頭のタグ)に、入力の形の検めと業務の判断が混ざっているかを、混ざっている / 形の検めだけ / 判断だけ / どれでもない から Jev に選ばせる。物差しは repo の architecture.hy の層(設定 semantic.mixed_concerns.layer — agora は core)の説明。重さは warning まで(error にしない)。較正の正例 = decide-tag、反例 = 形の検めの無い純粋な判断(card-tags-of)。撃つのは --semantic / --semantic-all の時だけで、保存ごとの実行は cache を読むだけ(未判定は合格に数えない)。")
      [removed]
      [removed]
+     (rule R14 "DOEFF126 の見落とし 2 つを塞ぐ(coordinator の依頼 2026-09-28): (1) method の引数に渡す形 — (.append out (breach …)) のように defk の答えを method の引数に渡す所も、答えを値として使う所に数える。(2) 引数で受けた関数を素で呼ぶ形 — agora の L1550 で直した rows-by-text が引数 field-of を (setv value (field-of row)) と素で呼び、呼び手はそこに fnk(payload-of を呼ぶ)を渡していた。値は常に Program になり isinstance str が常に偽で索引が常に空だった。拾える範囲: repo の呼びで引数に repo の defk の名か (fnk …) を渡している物を集め、呼び先の最上位の定義の引数の並びでその引数を引き、本体の中でその引数を Program として渡す所の外で呼んでいれば、呼び先のその呼びを違反にする(名への束ねも違反)。拾えない範囲: 呼び手が defk を変数や欄に入れてから渡す形・partial などで包んで渡す形、呼び先がその引数をさらに別の関数へ渡して先で素で呼ぶ形(1 段だけ追う)、呼び先が method・入れ子の関数・名で引けない物、repo の外の呼び手。これらは型(:pre の Callable を Program を返す関数の型へ細かくする)か effect の推論(ADR-DOE-CORE-EFFECTS-003 R13)が持つ(2026-09-28・f143ee92 の席・戻せる — 戻し方: param_calls.rs を外し、method の引数を的だけに戻す)。")
      (rule R6 "改訂の記録(2026-09-27):初版の『振る舞いを持つ class を作らない・外の library が class を要求する所だけ理由の註つきの逃げ道』は、operator の的の絞り込み 2 つで R3〜R5 に置き換えた。戻し方: 的を広げ直すなら、この改訂の commit を revert する(初版の R2〜R5 と law へ戻る)。")]
   :laws
     [(law world-touching-classes-become-foundation-handlers
