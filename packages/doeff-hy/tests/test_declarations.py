@@ -13,7 +13,7 @@ import pytest
 from doeff_hy.declarations import ROLES, DefinitionTags
 
 PRELUDE = """
-(require doeff-hy.macros [defk deff defp do! <-])
+(require doeff-hy.macros [defk deff defp defeffect do! <-])
 (require doeff-hy.handle [defhandler])
 (defclass ReadRow [])
 (defclass PutRow [])
@@ -63,14 +63,14 @@ def test_deff_defp_and_defhandler_keep_declarations_too() -> None:
 (defp answer {:post [(: % int)] :tags {:context "shared" :role "entry"}} 42)
 (defhandler read-rows
   "ReadRow に答える翻訳。"
-  {:effects [PutRow] :tags {:context "kanban" :role "translation"}}
+  {:effects [PutRow] :tags {:context "kanban" :role "protocol"}}
   (ReadRow [] (resume 1)))
 (defhandler bare (ReadRow [] (resume 1)))
 """)
     assert ns["twice"].__doeff_tags__ == DefinitionTags(context="shared", role="judgment")
     assert ns["answer"].__doeff_tags__ == DefinitionTags(context="shared", role="entry")
     assert ns["read_rows"].__doeff_effects__ == (ns["PutRow"],)
-    assert ns["read_rows"].__doeff_tags__ == DefinitionTags(context="kanban", role="translation")
+    assert ns["read_rows"].__doeff_tags__ == DefinitionTags(context="kanban", role="protocol")
     assert ns["bare"].__doeff_tags__ is None
 
 
@@ -93,9 +93,54 @@ def test_a_handler_refuses_pre_and_post_and_do_refuses_declarations() -> None:
 
 
 def test_the_roles_are_the_closed_list_of_the_decision() -> None:
-    # agora-redesign #780 の決定(io-effect は外した)。
-    assert ROLES == ("type", "effect", "judgment", "program", "translation", "foundation", "entry")
-    with pytest.raises(ValueError):
-        DefinitionTags(context="kanban", role="io-effect")
+    # agora-redesign #780 の層の確定(core -> intent -> protocol)。
+    assert ROLES == ("type", "judgment", "program", "intent", "protocol", "foundation", "entry")
+    for retired in ("io-effect", "effect", "translation"):
+        with pytest.raises(ValueError):
+            DefinitionTags(context="kanban", role=retired)
     with pytest.raises(ValueError):
         DefinitionTags(context="", role="program")
+
+
+def test_defeffect_makes_a_frozen_effect_with_its_answer_and_tags() -> None:
+    import dataclasses
+
+    from doeff import EffectBase, run
+    from doeff_core_effects.scheduler import scheduled
+
+    ns = evaluate("""
+(defclass Lease [])
+(defclass Refused [])
+(defeffect BorrowToken
+  "預かり所から access token を借りる。"
+  {:fields [(: profile str) (: purpose str)]
+   :answer (| Lease Refused)
+   :tags {:context "agent-task" :role "intent"}})
+(defeffect Tick {:answer int :tags {:context "shared" :role "intent"}})
+(defhandler lend (BorrowToken [profile purpose] (resume (Lease))))
+(defk borrow [p] {:pre [(: p str)] :post [(: % Lease)] :effects [BorrowToken] :tags {:context "agent-task" :role "program"}}
+  (<- lease (BorrowToken p "run"))
+  lease)
+""")
+    borrow_token = ns["BorrowToken"]
+    effect = borrow_token("p", "run")
+    assert isinstance(effect, EffectBase) and dataclasses.is_dataclass(effect)
+    assert [f.name for f in dataclasses.fields(borrow_token)] == ["profile", "purpose"]
+    with pytest.raises(dataclasses.FrozenInstanceError):  # 反例: frozen なので書けない
+        setattr(effect, "profile", "other")
+    assert borrow_token.__doeff_answer__ == (ns["Lease"] | ns["Refused"])
+    assert borrow_token.__doeff_tags__ == DefinitionTags(context="agent-task", role="intent")
+    assert borrow_token.__doeff_defeffect__ is True
+    assert borrow_token.__doc__.startswith("預かり所から")
+    assert [f.name for f in dataclasses.fields(ns["Tick"])] == []
+    # handler で答えて Program の中から使える。
+    assert isinstance(run(scheduled(ns["lend"](ns["borrow"]("p")))), ns["Lease"])
+
+
+def test_defeffect_requires_the_answer_and_tags_and_closed_keys() -> None:
+    assert ":answer" in refused('(defeffect E {:tags {:context "k" :role "intent"}})')
+    assert ":tags" in refused('(defeffect E {:answer int})')
+    assert ":doc" in refused('(defeffect E {:answer int :tags {:context "k" :role "intent"} :doc "x"})')
+    assert "(: 名 型)" in refused('(defeffect E {:fields [profile] :answer int :tags {:context "k" :role "intent"}})')
+    assert "重複" in refused('(defeffect E {:fields [(: a int) (: a str)] :answer int :tags {:context "k" :role "intent"}})')
+    assert "頭の辞書" in refused('(defeffect E)')

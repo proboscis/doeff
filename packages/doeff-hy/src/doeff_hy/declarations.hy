@@ -15,10 +15,13 @@
 ;;; 変換の時に検める(macro の展開の中): 知らない鍵・:effects が名の list でない・:tags の鍵が :context と :role ちょうどでない・
 ;;; 値が文字列の literal でない・役が ROLES の外。どれも SyntaxError で、書いた file と定義の名を名指す。
 (import dataclasses [dataclass])
+(import hy)
 (import hy.models [Dict List Symbol String Keyword])
 
-;; 役の閉じた一覧(agora-redesign #780 の決定 — io-effect は外した)。
-(setv ROLES #("type" "effect" "judgment" "program" "translation" "foundation" "entry"))
+;; 役の閉じた一覧(agora-redesign #780 の層の確定 — operator 2026-09-27 逐語 "core->intent->protocol"):
+;; core の type・judgment・program / intent(core が外へ求める事の型 — defeffect)/ protocol(intent を相手の話し方へ訳す handler)/
+;; foundation(汎用の I/O)/ entry(組み立て)。前の一覧の effect は intent に、translation は protocol に置き換わった。
+(setv ROLES #("type" "judgment" "program" "intent" "protocol" "foundation" "entry"))
 ;; 契約の辞書が受ける鍵。
 (setv CONTRACT-KEYS #(":pre" ":post" ":effects" ":tags"))
 ;; 頭の辞書に :pre / :post を持たない定義(defhandler)が受ける鍵。
@@ -86,6 +89,52 @@
   (when (not-in (str role) ROLES)
     (raise (SyntaxError (.format "{}: :tags の :role {!r} は {} のどれでもない" where (str role) (.join " / " ROLES)))))
   `(doeff_hy.declarations.DefinitionTags :context ~context :role ~role))
+
+
+;; defeffect の頭の辞書が受ける鍵(:answer と :tags は必須・:fields は無ければ欄なし)。
+(setv EFFECT-KEYS #(":fields" ":answer" ":tags"))
+
+
+(defn effect-field-forms [form #^ str where]  ; defk にできない: macro の展開の時に呼ぶ関数
+  "defeffect の `:fields [(: 名 型) …]` を検め、dataclass の欄の form `(#^ 型 名)` の list にするため(無ければ空の list)。"
+  (when (is form None)
+    (return []))
+  (when (not (isinstance form List))
+    (raise (SyntaxError (.format "{}: :fields は (: 名 型) の list: {}" where (hy.repr form)))))
+  (setv out [] seen (set))
+  (for [item form]
+    (when (not (and (isinstance item hy.models.Expression) (= (len item) 3)
+                    (isinstance (get item 0) Keyword) (= (str (get item 0)) ":")
+                    (isinstance (get item 1) Symbol)))
+      (raise (SyntaxError (.format "{}: :fields の要素は (: 名 型): {}" where (hy.repr item)))))
+    (when (in (str (get item 1)) seen)
+      (raise (SyntaxError (.format "{}: :fields の欄 {} が重複" where (str (get item 1))))))
+    (.add seen (str (get item 1)))
+    (.append out `(#^ ~(get item 2) ~(get item 1))))
+  out)
+
+
+(defn defeffect-form [name docstring #^ Dict contract #^ str where]  ; defk にできない: macro の展開の時に呼ぶ関数
+  "defeffect の展開: EffectBase を継ぐ frozen の dataclass と、属性 __doeff_answer__(handler が resume で返す値の型)・
+   __doeff_tags__・__doeff_defeffect__(defeffect で作った印 — defk の :effects の検めが読む)を置く form を作るため。"
+  (refuse-unknown-keys contract EFFECT-KEYS where)
+  (setv answer (declared-value contract ":answer")
+        tags (declared-value contract ":tags"))
+  (when (is answer None)
+    (raise (SyntaxError (.format "{}: :answer(handler が resume で返す値の型)は必須" where))))
+  (when (is tags None)
+    (raise (SyntaxError (.format "{}: :tags {{:context \"…\" :role \"…\"}} は必須" where))))
+  (setv fields (effect-field-forms (declared-value contract ":fields") where))
+  `(do
+     (import dataclasses [dataclass :as _doeff-dataclass])
+     (import doeff [EffectBase :as _doeff-effect-base])
+     (import doeff_hy.declarations)
+     (defclass [(_doeff-dataclass :frozen True)] ~name [_doeff-effect-base]
+       ~@(if (is docstring None) [] [docstring])
+       ~@fields)
+     (setattr ~name "__doeff_answer__" ~answer)
+     (setattr ~name "__doeff_tags__" ~(tags-form tags where))
+     (setattr ~name "__doeff_defeffect__" True)))
 
 
 (defn declaration-setters [name contract #^ str where]  ; defk にできない: macro の展開の時に呼ぶ関数

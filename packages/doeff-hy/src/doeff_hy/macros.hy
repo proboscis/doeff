@@ -25,7 +25,7 @@
 
 (import os.path)
 (import inspect)
-(import doeff-hy.declarations [CONTRACT-KEYS refuse-unknown-keys declaration-setters])
+(import doeff-hy.declarations [CONTRACT-KEYS refuse-unknown-keys declaration-setters defeffect-form])
 (import doeff-hy.positions [locate-synthesized])
 
 ;; Re-export handle macros so users only need one require line.
@@ -659,6 +659,32 @@ defk {name}: :post type annotation cannot be an empty string.
 (defmacro session [_hy-compiler #* args]
   "(session val …) / (session var …) は defhandler の直下にだけ書ける(ここへ来たら誤りの案内)。"
   (_module-level _hy-compiler "session" args))
+
+
+;; ---------------------------------------------------------------------------
+;; defeffect — an effect type (frozen dataclass on EffectBase) with its answer type and tags
+;; ---------------------------------------------------------------------------
+
+(defmacro defeffect [name #* rest]
+  "Define an effect type: a frozen dataclass inheriting EffectBase (agora-redesign #800 —
+   operator 2026-09-27 \"perhaps we want defeffect as well?\").
+
+   (defeffect BorrowToken
+     \"Borrow an access token from the custody service.\"
+     {:fields [(: profile str) (: purpose str)]
+      :answer (| Lease Refused)
+      :tags   {:context \"agent-task\" :role \"intent\"}})
+
+   :answer (the type a handler resumes with) and :tags are required; :fields may be omitted.
+   The class carries __doeff_answer__, __doeff_tags__ and __doeff_defeffect__ = True."
+  (setv docstring None contract None forms (list rest))
+  (when (and forms (isinstance (get forms 0) hy.models.String))
+    (setv docstring (get forms 0) forms (cut forms 1 None)))
+  (when (and forms (isinstance (get forms 0) hy.models.Dict))
+    (setv contract (get forms 0) forms (cut forms 1 None)))
+  (when (or (is contract None) forms)
+    (raise (SyntaxError (.format "defeffect {}: 名前・(docstring)・頭の辞書 {{:fields [...] :answer 型 :tags {{...}}}} の形で書く" (str name)))))
+  (locate-synthesized (defeffect-form name docstring contract (+ "defeffect " (str name)))))
 
 
 ;; ---------------------------------------------------------------------------
