@@ -1,4 +1,4 @@
-;; 実行環境(runtime env)の丁寧な模擬 — 本物の EnvStore(準備の process = env_handlers の local-env)・手元の bare repo と file:// の URL・
+;; 実行環境(runtime env)の丁寧な模擬 — 本物の EnvStore(準備の process = env_handlers の翻訳 env-translation と本物の答え手)・手元の bare repo と file:// の URL・
 ;; PATH の先頭の fake の uv(tests/fixtures/fake_uv.hy)・本物の ProcessHost(子 process と shim)・実時間。
 ;;
 ;; 筋書き(設計 worker-runtime-env.md 節 5):

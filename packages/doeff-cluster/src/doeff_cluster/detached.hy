@@ -86,7 +86,7 @@
    runs = 走らせ始めた回数(冪等の検に使う)・events = 真実の記録(DetachedEvent の列 — 模擬の判定が読む)・
    cut-until = coordinator に届かない期限(epoch ミリ秒)。
    runtime-env = 送り手の実行環境の宣言(在れば、task を走らせる前に env の root を準備する — 準備の I/O は外側の handler、速い模擬
-   では env_fake の fake-env)。envs = env のキー → 準備中の scheduler の task か答え(同じキーの準備は 1 本)・known = 完成した root・
+   では env_world の模擬の世界)。envs = env のキー → 準備中の scheduler の task か答え(同じキーの準備は 1 本)・known = 完成した root・
    prepares = 準備を起こした回数。
    warms = 温める表(行のキー → #(宣言 requires 期限の仮想の秒))・cold-starts = 準備の済んでいない env の task を走らせた回数(冷たい起動 —
    本物の coordinator の計器 doeff_worker_env_cold_start_total と同じ意味)。"

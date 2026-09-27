@@ -2,10 +2,11 @@
 ;; ない担い手」だけを準備済みに数えること(2026-09-26)。前は担い手の名簿を見ずに常に ready = ("local") と答え、送り手の Ready の方針
 ;; (requires の組ごとに合う worker の 1 台以上で準備済み)を模擬で確かめられなかった — label の合わない組でも Ready になった。
 (require doeff-hy.macros [deftest defk <- val var])
+(import doeff [with-handlers])
 (import doeff_core_effects.handlers [state])
 (import doeff_time [SimClock sim-time-handler Delay])
 (import doeff_cluster.runtime_env_model [RuntimeEnv])
-(import doeff_cluster.env_fake [fake-env FakeEnvWorld])
+(import doeff_cluster.env_world [env-world EnvWorld])
 (import doeff_cluster.detached [detached-local DetachedLocalStore])
 (import doeff_cluster.detached_model [RunnerFact SimulateRunnerDrain])
 (import doeff_cluster.warm_model [WarmRuntimeEnv ReadWarmState WarmState])
@@ -48,6 +49,6 @@
 
 
 (deftest test-the-local-warm-table-counts-only-matching-live-undrained-runners
-  (<- world FakeEnvWorld (base-world))
-  (<- ok bool ((state) ((sim-time-handler :clock (SimClock)) ((fake-env world) (scenario)))))
+  (<- world EnvWorld (base-world))
+  (<- ok bool ((state) ((sim-time-handler :clock (SimClock)) (with-handlers (env-world world) (scenario)))))
   (assert ok))
