@@ -7,7 +7,7 @@ import * as path from 'path';
 import * as vscode from 'vscode';
 import { allGlyphs, PIXEL_DIR, svgPath } from './build';
 import { flagGlyph } from './flags';
-import { DENSITY, LARGE, parseGlyphSet, SMALL, type Glyph, type GlyphSet, type Palette } from './glyphs';
+import { DENSITY, LARGE, parseGlyphSet, SMALL, type Glyph, type GlyphSet, type Palette, type Pixels } from './glyphs';
 import { colorSvg, dataUri, png } from './render';
 import { litKey, litPixels, type LitIcon } from './vocabulary';
 
@@ -75,6 +75,12 @@ export class PixelIcons implements IconSource {
   private drawn(name: string): { readonly glyph: Glyph; readonly palette: Palette } | undefined {
     const glyph = this.glyph(name);
     return glyph === undefined || this.set === undefined ? undefined : { glyph, palette: this.set.palette };
+  }
+
+  /** 大きい sprite の格子と色の組(defk の見出しの SVG に sprite を描き込むため・知らない名前は undefined)。 */
+  sprite(name: string): { readonly pixels: Pixels; readonly palette: Palette } | undefined {
+    const found = this.drawn(name);
+    return found === undefined ? undefined : { pixels: found.glyph.pixels[LARGE], palette: found.palette };
   }
 
   /** 大きい sprite の icon — 生成済みの SVG の file、無ければ(知らない service の旗)data URI。 */

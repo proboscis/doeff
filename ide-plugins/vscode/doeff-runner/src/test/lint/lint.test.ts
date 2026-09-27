@@ -78,9 +78,11 @@ suite('linter の出力の契約の読み込み', () => {
     assert.strictEqual(r.rules[0].family, 'layer');
     assert.strictEqual(r.rules[2].title, null);
     assert.strictEqual(r.rules[2].family, null);
+    // 知らない家族は出力を捨てず、その規則だけ一般の印(null)にして「拡張が古い」の理由に控える(#848)
     const castle = parseLintJson(readFixture('report.json').replace('"family": "layer"', '"family": "castle"'));
-    assert.strictEqual(castle.tag, 'rejected');
-    assert.match(castle.tag === 'rejected' ? castle.reason : '', /rules\[0\]\.family: 契約に無い値 "castle"/);
+    assert.strictEqual(castle.tag, 'ok');
+    assert.strictEqual(castle.tag === 'ok' ? castle.report.rules[0].family : 'x', null);
+    assert.match(castle.tag === 'ok' ? castle.report.unknown.join('\n') : '', /rules\[0\]\.family: 知らない語 "castle"/);
   });
 
   test('版違い・欄の欠け・契約に無い重さ・壊れた JSON は理由つきで捨てる', () => {
@@ -106,7 +108,7 @@ suite('linter の呼び方', () => {
   test('全体は引数なし、編集中の file は --stdin --path', () => {
     const base = ['--output-format', 'editor-json'];
     assert.deepStrictEqual(lintArgs(base, { tag: 'root', root: '/repo' }), base);
-    assert.deepStrictEqual(lintArgs(base, { tag: 'stdin', root: '/repo', path: '/repo/a.hy', text: '(x)' }), [
+    assert.deepStrictEqual(lintArgs(base, { tag: 'stdin', root: '/repo', path: '/repo/a.hy', text: '(x)', version: 1 }), [
       ...base,
       '--stdin',
       '--path',

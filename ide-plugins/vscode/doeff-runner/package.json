@@ -2,7 +2,7 @@
   "name": "doeff-runner",
   "displayName": "doeff runner",
   "description": "Run doeff Programs from VS Code using the doeff-indexer and Python debugger.",
-  "version": "0.6.20",
+  "version": "0.6.21",
   "publisher": "Proboscis",
   "icon": "icon.png",
   "license": "Apache-2.0",
@@ -418,6 +418,10 @@
       {
         "command": "doeff-runner.pixel.chooseReplaceKinds",
         "title": "doeff: icon に置き換える語の種類を選ぶ"
+      },
+      {
+        "command": "doeff-runner.defk.toggleHeader",
+        "title": "doeff: defk の見出し(型・effect・tags)の入り切り"
       }
     ],
     "configuration": {
@@ -629,6 +633,31 @@
             "failure": true
           },
           "markdownDescription": "icon に置き換える語の種類ごとの入り切り(`false` の種類は元の文字のまま)。命令「doeff: icon に置き換える語の種類を選ぶ」でも選べる。"
+        },
+        "doeff-runner.defk.header": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "Hy の file の defk / deff の見出しを出す。頭の行 `(defk 名 [引数]` を見出しにし(名を太字・行に薄い帯と下の線)、契約の辞書 `{:pre … :post … :effects … :tags …}` の所に型の流れ `(X, Y) → Program[effect | B]` と、tags の札・状態の札を描く。読むだけの表示で、file の文字は変えない。材料は doeff-linter の editor-json(契約 版 2)の `signatures`。"
+        },
+        "doeff-runner.defk.bindingTypes": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "束縛の型を名の前に描く: `(<- x T e)` → `T x <- e`・`(val x e)` → `T x = e`・`(var x e)` → `var T x = e`・`(:= x v)` → `x := v`。型が分からない束縛は `?`。カーソルの行は元の文字。材料は editor-json の `bindings`。"
+        },
+        "doeff-runner.defk.revealOnCursor": {
+          "type": "string",
+          "enum": [
+            "definition",
+            "line",
+            "never"
+          ],
+          "default": "definition",
+          "enumDescriptions": [
+            "カーソルがその定義の中にある時は、見出しを消して元の lisp を見せる",
+            "カーソルが見出しの行(頭の行と契約の辞書の行)にある時だけ元の lisp を見せる",
+            "常に見出しのまま"
+          ],
+          "description": "カーソルが入った時に、defk の見出しを元の lisp の文字に戻す範囲"
         }
       }
     },

@@ -2,7 +2,14 @@
 // 差し替える。表示(波線・パネル・地図)はすべてここから読む。外の世界には触らない。
 
 import * as path from 'path';
-import type { LintLayer, LintModule, LintReport, LintRule, LintViolation } from './contract';
+import type { LintBinding, LintLayer, LintModule, LintReport, LintRule, LintSignature, LintViolation } from './contract';
+
+/** 1 file の見出しと束縛(linter に渡した document の版つき — 版が進んだら古い位置なので描かない)。 */
+export interface FileSignatures {
+  readonly version: number;
+  readonly signatures: readonly LintSignature[];
+  readonly bindings: readonly LintBinding[];
+}
 
 /** root 1 つの状態 — 直前の全体の結果と、file ごとの差し替え。 */
 interface RootState {
@@ -26,10 +33,15 @@ export class LintStore {
   private readonly roots = new Map<string, RootState>();
   private readonly listeners = new Set<() => void>();
   private pathTables: PathTables | undefined;
+  /** path → 直前の 1 file の実行の見出しと束縛(契約 版 2) */
+  private readonly signatures = new Map<string, FileSignatures>();
+  /** 結果の出どころ(root か file の path)→ 拡張の知らない語(linter の方が新しい) */
+  private readonly unknownBySource = new Map<string, readonly string[]>();
 
   /** root の全体の実行の結果で置き換える(それまでの file の差し替えは捨てる)。 */
   replaceRoot(root: string, report: LintReport): void {
     this.roots.set(key(root), { report, overrides: new Map() });
+    this.noteUnknown(root, report);
     this.emit();
   }
 
@@ -47,7 +59,44 @@ export class LintStore {
       violations: report.violations.filter((v) => key(v.path) === wanted),
       module: report.modules.find((m) => key(m.path) === wanted)
     });
+    this.noteUnknown(filePath, report);
     this.emit();
+  }
+
+  /** 1 file の実行(stdin)の見出しと束縛を、渡した document の版と組で置く(全体の結果が無い root でも置く)。 */
+  replaceSignatures(filePath: string, version: number, report: LintReport): void {
+    const wanted = key(filePath);
+    this.signatures.set(wanted, {
+      version,
+      signatures: report.signatures.filter((s) => key(s.path) === wanted),
+      bindings: report.bindings.filter((b) => key(b.path) === wanted)
+    });
+    this.noteUnknown(filePath, report);
+    this.emit();
+  }
+
+  /** file の見出しと束縛(まだ聞いていなければ undefined)。 */
+  signaturesFor(filePath: string): FileSignatures | undefined {
+    return this.signatures.get(key(filePath));
+  }
+
+  /** 閉じた file の見出しを捨てる。 */
+  forgetSignatures(filePath: string): void {
+    this.signatures.delete(key(filePath));
+  }
+
+  /** 拡張の知らない語の全部(空なら拡張は linter に追いついている)。 */
+  unknownVocabulary(): string[] {
+    return [...new Set([...this.unknownBySource.values()].flat())];
+  }
+
+  /** 出どころごとの知らない語を置き換える。 */
+  private noteUnknown(source: string, report: LintReport): void {
+    if (report.unknown.length === 0) {
+      this.unknownBySource.delete(key(source));
+    } else {
+      this.unknownBySource.set(key(source), report.unknown);
+    }
   }
 
   /** root の結果を落とす(folder が workspace から外れた時)。 */

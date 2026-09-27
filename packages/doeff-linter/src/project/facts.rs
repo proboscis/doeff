@@ -165,6 +165,16 @@ pub fn read_facts(language: Language, source: &str, module: &str, reading: &TagR
     }
 }
 
+/// Hy の読んだ form から、import の束縛(名 → module の綴り)だけを取り出す(defk の見出しの型を定義へ結ぶため — 他の事実は読まない)。
+pub fn form_bindings(forms: &[Form], source: &str, module: &str) -> std::collections::BTreeMap<String, String> {
+    let hy = HySource { src: source };
+    let mut out = std::collections::BTreeMap::new();
+    for form in forms {
+        hy.collect_bindings(form, module, &mut out);
+    }
+    out
+}
+
 // --- Hy ---------------------------------------------------------------------------------
 
 /// Hy の source を読んでタグ・import・関数の定義を取り出す。

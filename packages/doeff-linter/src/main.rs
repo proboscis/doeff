@@ -464,6 +464,13 @@ fn run_editor(args: &Args) -> ExitCode {
 
     let mut project_report = project_report;
     project_report.findings.extend(setup.notice_findings());
+    // 保存前の Hy の file の見出しと束縛(版 2)— repo の Hy の表の上で、この file だけは stdin の中身で読む。
+    let signatures = stdin_file.as_ref().and_then(|(path, source)| {
+        let is_hy = path.extension().is_some_and(|e| e == "hy" || e == "hyk" || e == "hyp");
+        let rel = project::relative_path(&setup.root, path).filter(|_| is_hy)?;
+        let world = project::signatures::World::build(&setup.root, Some((&rel, source)));
+        Some(project::signatures::file_signatures(&world, &setup.root, &rel, source))
+    });
     let report = editor::build(&EditorInput {
         root: &setup.root,
         python: &python_results,
@@ -474,6 +481,7 @@ fn run_editor(args: &Args) -> ExitCode {
         project_rules: &project_rules,
         project_wired: &project_wired,
         only: only.as_deref(),
+        signatures: signatures.as_ref(),
     });
     match serde_json::to_string(&report) {
         Ok(text) => println!("{}", text),

@@ -9,7 +9,7 @@ import { parseLintJson, type LintReport } from './contract';
 /** linter への依頼 — repo 全体か、保存前の内容(stdin)の 1 file か、Jev の判定(SemanticRequest)。 */
 export type LintRequest =
   | { readonly tag: 'root'; readonly root: string }
-  | { readonly tag: 'stdin'; readonly root: string; readonly path: string; readonly text: string }
+  | { readonly tag: 'stdin'; readonly root: string; readonly path: string; readonly text: string; readonly version: number }
   | SemanticRequest;
 
 /**

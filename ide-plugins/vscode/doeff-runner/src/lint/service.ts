@@ -63,6 +63,7 @@ export class LintService implements vscode.Disposable {
   private readonly disposables: vscode.Disposable[] = [];
   private readonly debounces = new Map<string, NodeJS.Timeout>();
   private readonly lastFailure = new Map<string, string>();
+  private readonly reportedUnknown = new Set<string>();
   private readonly judge: SemanticJudge;
 
   constructor(
@@ -100,6 +101,9 @@ export class LintService implements vscode.Disposable {
           this.judge.edited(event.document.uri.fsPath);
         }
       }),
+      // 開いて見えた Hy の file は、見出しと束縛の型(契約 版 2)を 1 度聞く(編集と保存の時は上の 2 つが聞き直す)
+      vscode.window.onDidChangeVisibleTextEditors((editors) => this.lintUnseen(editors.map((e) => e.document))),
+      vscode.workspace.onDidCloseTextDocument((document) => this.store.forgetSignatures(document.uri.fsPath)),
       vscode.workspace.onDidChangeWorkspaceFolders((event) => {
         for (const removed of event.removed) {
           this.store.removeRoot(removed.uri.fsPath);
@@ -110,6 +114,17 @@ export class LintService implements vscode.Disposable {
       })
     );
     this.lintAll();
+    this.lintUnseen(vscode.window.visibleTextEditors.map((e) => e.document));
+  }
+
+  /** 見出しをまだ聞いていない(か、版が古い)Hy の document を聞く。 */
+  private lintUnseen(documents: readonly vscode.TextDocument[]): void {
+    for (const document of documents) {
+      const seen = this.store.signaturesFor(document.uri.fsPath);
+      if (isLintedDocument(document) && !document.uri.fsPath.endsWith('.py') && seen?.version !== document.version) {
+        this.scheduleDocument(document, 0);
+      }
+    }
   }
 
   /** 全 folder の全体を linter に聞き直す(起動時・再実行のボタン・設定の変更)。 */
@@ -152,8 +167,8 @@ export class LintService implements vscode.Disposable {
         if (root === undefined || document.isClosed) {
           return;
         }
-        const request: LintRequest = { tag: 'stdin', root, path: document.uri.fsPath, text: document.getText() };
         const version = document.version;
+        const request: LintRequest = { tag: 'stdin', root, path: document.uri.fsPath, text: document.getText(), version };
         void this.linter.lint(request).then((outcome) => {
           this.apply(request, outcome);
           if (saved) {
@@ -188,14 +203,26 @@ export class LintService implements vscode.Disposable {
     for (const error of outcome.report.errors) {
       this.log.appendLine(`[lint] linter が読めなかった: ${error}`);
     }
+    for (const unknown of outcome.report.unknown) {
+      if (!this.reportedUnknown.has(unknown)) {
+        this.reportedUnknown.add(unknown);
+        this.log.appendLine(`[lint] 拡張が古い — linter の出力に拡張の知らない語がある(その項目だけ既定の見た目にした): ${unknown}`);
+      }
+    }
     switch (request.tag) {
       case 'root':
         this.store.replaceRoot(request.root, outcome.report);
         this.log.appendLine(`[lint] ${request.root}: 違反 ${outcome.report.violations.length} 件`);
         return;
       case 'stdin':
-      case 'semantic':
+        this.store.replaceFile(request.root, request.path, outcome.report);
+        this.store.replaceSignatures(request.path, request.version, outcome.report);
+        return;
       case 'semantic-change':
+        this.store.replaceFile(request.root, request.path, outcome.report);
+        this.store.replaceSignatures(request.path, request.version, outcome.report);
+        return;
+      case 'semantic':
         this.store.replaceFile(request.root, request.path, outcome.report);
         return;
       default: {

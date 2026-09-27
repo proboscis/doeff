@@ -1,8 +1,14 @@
-// doeff-linter のエディタ向け出力(`--output-format editor-json`・契約 lint-contract-v1.md 版 1)の型と、読み込みの唯一の検査。
+// doeff-linter のエディタ向け出力(`--output-format editor-json`・契約 版 2)の型と、読み込みの唯一の検査。
+// 版 2 = defk / deff の見出し(signatures)と束縛の型(bindings)を足した(agora-redesign #849)。
 // linter が規則の判定の唯一の正本で、拡張はこの JSON を表示するだけ(自分では判定しない)。
 // 版が違う・欄が欠けた・型が違う JSON は理由つきで捨て、既定値で埋めない。
+// ただし閉じた集合のうち linter が先に語を足しうる物(規則の家族・見出しの種類・束縛の形と出どころ・型の式の種類)は、知らない語でも
+// 出力を捨てない — その項目だけ既定の見た目(家族は null = 一般の印・見出しと束縛は描かない・型は読めない式)にして、`unknown` に
+// 「拡張が古い」の理由として控える(agora-redesign #848 — linter が先に進むと違反の欄が全部消えていた)。
 
-export const LINT_CONTRACT_VERSION = 1;
+export const LINT_CONTRACT_VERSION = 2;
+/** 読める版 — 版 1(見出しと束縛の無い古い linter)も読み、見出しと束縛を空とする(linter の置き場が本線に追いつくまでの間、違反の欄を消さないため)。 */
+export const LINT_READABLE_VERSIONS: readonly number[] = [1, 2];
 
 /** 違反の重さ(契約の閉じた集合)。error = 新しい破れ、warning = 登録簿に載った既知の破れ、info。 */
 export const LINT_SEVERITIES = ['error', 'warning', 'info'] as const;
@@ -115,6 +121,78 @@ export interface LintRule {
   readonly family: LintRuleFamily | null;
 }
 
+/** 定義の位置(押して飛ぶ先)。 */
+export interface LintLocation {
+  readonly path: string;
+  readonly range: LintRange;
+}
+
+/** 型の式(版 2 — 閉じた集合)。name の definition は repo の中の定義(組み込みと解けない名は null)。 */
+export type LintTypeRef =
+  | { readonly kind: 'name'; readonly name: string; readonly definition: LintLocation | null }
+  | { readonly kind: 'union'; readonly members: readonly LintTypeRef[] }
+  | { readonly kind: 'apply'; readonly head: LintTypeRef; readonly args: readonly LintTypeRef[] }
+  | { readonly kind: 'unknown'; readonly text: string };
+
+/** effect 1 つ(宣言か推論)。 */
+export interface LintEffectRef {
+  readonly name: string;
+  readonly definition: LintLocation | null;
+  readonly answer: LintTypeRef | null;
+  readonly absent: readonly LintTypeRef[];
+  readonly failure: readonly LintTypeRef[];
+}
+
+/** 見出しを持つ定義の種類。 */
+export const LINT_SIGNATURE_KINDS = ['defk', 'deff'] as const;
+export type LintSignatureKind = (typeof LINT_SIGNATURE_KINDS)[number];
+
+/** defk / deff 1 つの見出し(版 2)。 */
+export interface LintSignature {
+  readonly kind: LintSignatureKind;
+  readonly name: string;
+  readonly path: string;
+  /** 名の範囲 */
+  readonly range: LintRange;
+  readonly fullRange: LintRange;
+  /** 契約の辞書 `{:pre … :post …}` の範囲(無ければ null) */
+  readonly contractRange: LintRange | null;
+  readonly params: readonly { readonly name: string; readonly type: LintTypeRef | null }[];
+  /** `:post` の型(無ければ null)。Maybe の包みは absent */
+  readonly answer: LintTypeRef | null;
+  readonly absent: boolean;
+  readonly raises: readonly LintTypeRef[];
+  /** 宣言(`:effects` が無ければ null)と推論 */
+  readonly declared: readonly LintEffectRef[] | null;
+  readonly inferred: readonly LintEffectRef[];
+  readonly tags: ReadonlyMap<string, string>;
+}
+
+/** 束縛の形。 */
+export const LINT_BINDING_FORMS = ['<-', 'val', 'var', 'setv', ':='] as const;
+export type LintBindingForm = (typeof LINT_BINDING_FORMS)[number];
+
+/** 束縛の型をどこから読んだか(unknown の時は type が null)。 */
+export const LINT_BINDING_ORIGINS = ['annotation', 'effect', 'call', 'literal', 'constructor', 'var', 'unknown'] as const;
+export type LintBindingOrigin = (typeof LINT_BINDING_ORIGINS)[number];
+
+/** 束縛 1 つ(版 2)。 */
+export interface LintBinding {
+  readonly form: LintBindingForm;
+  readonly name: string;
+  readonly path: string;
+  /** 名の範囲 */
+  readonly range: LintRange;
+  readonly formRange: LintRange;
+  readonly headRange: LintRange;
+  readonly annotationRange: LintRange | null;
+  readonly valueRange: LintRange | null;
+  readonly type: LintTypeRef | null;
+  readonly origin: LintBindingOrigin;
+  readonly absent: boolean;
+  readonly raises: readonly LintTypeRef[];
+}
+
 /** linter の出力の全体。 */
 export interface LintReport {
   readonly version: number;
@@ -126,8 +204,14 @@ export interface LintReport {
   readonly layers: readonly LintLayer[];
   /** 意味の規則の要約(更新 5。設定が無い・古い linter なら null) */
   readonly semantic: LintSemantic | null;
+  /** `--stdin` の file の defk / deff の見出し(版 2・全体の実行では空) */
+  readonly signatures: readonly LintSignature[];
+  /** `--stdin` の file の束縛の型(版 2・全体の実行では空) */
+  readonly bindings: readonly LintBinding[];
   /** linter 自身が読めなかった file など */
   readonly errors: readonly string[];
+  /** 拡張の知らない語(linter の方が新しい)— その項目だけ既定の見た目にした理由。空なら無し */
+  readonly unknown: readonly string[];
 }
 
 export type LintParseResult =
@@ -342,7 +426,7 @@ function lintModule(value: unknown, where: string): LintModule {
 }
 
 /** 規則 1 件を検める。 */
-function lintRule(value: unknown, where: string): LintRule {
+function lintRule(value: unknown, where: string, notes: Notes): LintRule {
   const obj = asObject(value, where);
   return {
     rule: str(obj, 'rule', where),
@@ -350,8 +434,145 @@ function lintRule(value: unknown, where: string): LintRule {
     statement: str(obj, 'statement', where),
     wired: bool(obj, 'wired', where),
     title: optional(obj, 'title', where, text),
-    family: optional(obj, 'family', where, (v, at) => closed(v, at, LINT_RULE_FAMILIES))
+    family: optional(obj, 'family', where, (v, at) => lenient(v, at, LINT_RULE_FAMILIES, notes) ?? null)
   };
+}
+
+/** 範囲の値を検める。 */
+function rangeValue(value: unknown, where: string): LintRange {
+  const obj = asObject(value, where);
+  return { start: position(obj, 'start', where), end: position(obj, 'end', where) };
+}
+
+/** 範囲か null の欄を検める(欄そのものは必須)。 */
+function rangeOrNull(obj: JsonObject, key: string, where: string): LintRange | null {
+  const value = field(obj, key, where);
+  return value === null ? null : rangeValue(value, `${where}.${key}`);
+}
+
+/** 定義の位置か null を検める。 */
+function locationOrNull(obj: JsonObject, key: string, where: string): LintLocation | null {
+  const value = field(obj, key, where);
+  if (value === null) {
+    return null;
+  }
+  const loc = asObject(value, `${where}.${key}`);
+  return { path: str(loc, 'path', `${where}.${key}`), range: range(loc, `${where}.${key}`) };
+}
+
+/** 型の式を検める(閉じた集合)。 */
+function typeRef(value: unknown, where: string, notes: Notes): LintTypeRef {
+  const obj = asObject(value, where);
+  const kind = lenient(field(obj, 'kind', where), `${where}.kind`, ['name', 'union', 'apply', 'unknown'] as const, notes);
+  const each = (v: unknown, at: string): LintTypeRef => typeRef(v, at, notes);
+  switch (kind) {
+    case undefined:
+      return { kind: 'unknown', text: '?' };
+    case 'name':
+      return { kind, name: str(obj, 'name', where), definition: locationOrNull(obj, 'definition', where) };
+    case 'union':
+      return { kind, members: list(obj, 'members', where, each) };
+    case 'apply':
+      return { kind, head: typeRef(field(obj, 'head', where), `${where}.head`, notes), args: list(obj, 'args', where, each) };
+    case 'unknown':
+      return { kind, text: str(obj, 'text', where) };
+    default: {
+      const unreachable: never = kind;
+      throw new LintContractViolation(`${where}.kind: 網羅されていない ${JSON.stringify(unreachable)}`);
+    }
+  }
+}
+
+/** 型の式か null の欄を検める(欄そのものは必須)。 */
+function typeOrNull(obj: JsonObject, key: string, where: string, notes: Notes): LintTypeRef | null {
+  const value = field(obj, key, where);
+  return value === null ? null : typeRef(value, `${where}.${key}`, notes);
+}
+
+/** effect の参照を検める。 */
+function effectRef(value: unknown, where: string, notes: Notes): LintEffectRef {
+  const obj = asObject(value, where);
+  const each = (v: unknown, at: string): LintTypeRef => typeRef(v, at, notes);
+  return {
+    name: str(obj, 'name', where),
+    definition: locationOrNull(obj, 'definition', where),
+    answer: typeOrNull(obj, 'answer', where, notes),
+    absent: list(obj, 'absent', where, each),
+    failure: list(obj, 'failure', where, each)
+  };
+}
+
+/** 見出し 1 つを検める(知らない種類の見出しは undefined — 描かない)。 */
+function signature(value: unknown, where: string, notes: Notes): LintSignature | undefined {
+  const obj = asObject(value, where);
+  const kind = lenient(field(obj, 'kind', where), `${where}.kind`, LINT_SIGNATURE_KINDS, notes);
+  if (kind === undefined) {
+    return undefined;
+  }
+  const types = (v: unknown, at: string): LintTypeRef => typeRef(v, at, notes);
+  const effect = (v: unknown, at: string): LintEffectRef => effectRef(v, at, notes);
+  const effects = asObject(field(obj, 'effects', where), `${where}.effects`);
+  const declared = field(effects, 'declared', `${where}.effects`);
+  const tags = asObject(field(obj, 'tags', where), `${where}.tags`);
+  return {
+    kind,
+    name: str(obj, 'name', where),
+    path: str(obj, 'path', where),
+    range: range(obj, where),
+    fullRange: rangeValue(field(obj, 'full_range', where), `${where}.full_range`),
+    contractRange: rangeOrNull(obj, 'contract_range', where),
+    params: list(obj, 'params', where, (v, at) => {
+      const param = asObject(v, at);
+      return { name: str(param, 'name', at), type: typeOrNull(param, 'type', at, notes) };
+    }),
+    answer: typeOrNull(obj, 'answer', where, notes),
+    absent: bool(obj, 'absent', where),
+    raises: list(obj, 'raises', where, types),
+    declared: declared === null ? null : list(effects, 'declared', `${where}.effects`, effect),
+    inferred: list(effects, 'inferred', `${where}.effects`, effect),
+    tags: new Map(Object.keys(tags).map((k) => [k, text(tags[k], `${where}.tags.${k}`)]))
+  };
+}
+
+/** 束縛 1 つを検める(知らない形・出どころの束縛は undefined — 描かない)。 */
+function binding(value: unknown, where: string, notes: Notes): LintBinding | undefined {
+  const obj = asObject(value, where);
+  const form = lenient(field(obj, 'form', where), `${where}.form`, LINT_BINDING_FORMS, notes);
+  const origin = lenient(field(obj, 'origin', where), `${where}.origin`, LINT_BINDING_ORIGINS, notes);
+  if (form === undefined || origin === undefined) {
+    return undefined;
+  }
+  return {
+    form,
+    name: str(obj, 'name', where),
+    path: str(obj, 'path', where),
+    range: range(obj, where),
+    formRange: rangeValue(field(obj, 'form_range', where), `${where}.form_range`),
+    headRange: rangeValue(field(obj, 'head_range', where), `${where}.head_range`),
+    annotationRange: rangeOrNull(obj, 'annotation_range', where),
+    valueRange: rangeOrNull(obj, 'value_range', where),
+    type: typeOrNull(obj, 'type', where, notes),
+    origin,
+    absent: bool(obj, 'absent', where),
+    raises: list(obj, 'raises', where, (v, at) => typeRef(v, at, notes))
+  };
+}
+
+/** 読みの途中で控える、拡張の知らない語。 */
+interface Notes {
+  readonly unknown: string[];
+}
+
+/** 閉じた集合の語を読む — 知らなければ控えて undefined(呼ぶ側が既定の見た目にする)。文字列でない値は契約違反。 */
+function lenient<T extends string>(value: unknown, where: string, allowed: readonly T[], notes: Notes): T | undefined {
+  if (typeof value !== 'string') {
+    throw new LintContractViolation(`${where}: 文字列でない`);
+  }
+  const found = allowed.find((a) => a === value);
+  if (found === undefined) {
+    notes.unknown.push(`${where}: 知らない語 ${JSON.stringify(value)}`);
+  }
+  return found;
 }
 
 /** 文字列 1 つを検める。 */
@@ -373,20 +594,26 @@ export function parseLintJson(stdout: string): LintParseResult {
   try {
     const obj = asObject(raw, '$');
     const version = field(obj, 'version', '$');
-    if (version !== LINT_CONTRACT_VERSION) {
-      return { tag: 'rejected', reason: `契約の版が違う(期待 ${LINT_CONTRACT_VERSION}、実際 ${JSON.stringify(version)})` };
+    if (typeof version !== 'number' || !LINT_READABLE_VERSIONS.includes(version)) {
+      return { tag: 'rejected', reason: `契約の版が違う(期待 ${LINT_READABLE_VERSIONS.join(' か ')}、実際 ${JSON.stringify(version)})` };
     }
+    const hasSignatures = version >= 2;
+    const notes: Notes = { unknown: [] };
+    const present = <T>(items: readonly (T | undefined)[]): T[] => items.filter((i): i is T => i !== undefined);
     return {
       tag: 'ok',
       report: {
-        version: LINT_CONTRACT_VERSION,
+        version,
         root: str(obj, 'root', '$'),
         violations: list(obj, 'violations', '$', violation),
         modules: list(obj, 'modules', '$', lintModule),
-        rules: list(obj, 'rules', '$', lintRule),
+        rules: list(obj, 'rules', '$', (v, at) => lintRule(v, at, notes)),
         layers: Object.prototype.hasOwnProperty.call(obj, 'layers') ? list(obj, 'layers', '$', lintLayer) : [],
         semantic: optional(obj, 'semantic', '$', semanticSummary),
-        errors: list(obj, 'errors', '$', text)
+        signatures: hasSignatures ? present(list(obj, 'signatures', '$', (v, at) => signature(v, at, notes))) : [],
+        bindings: hasSignatures ? present(list(obj, 'bindings', '$', (v, at) => binding(v, at, notes))) : [],
+        errors: list(obj, 'errors', '$', text),
+        unknown: notes.unknown
       }
     };
   } catch (error) {

@@ -73,6 +73,20 @@ export function registerLint(
     }
   });
   context.subscriptions.push(jevStatus);
+  // linter の出力に拡張の知らない語がある(linter の方が新しい)時の知らせ — その項目だけ既定の見た目にして描き続ける(#848)
+  const staleStatus = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 38);
+  staleStatus.text = '$(warning) doeff: 拡張が古い';
+  staleStatus.backgroundColor = new vscode.ThemeColor('statusBarItem.warningBackground');
+  const offStale = store.onDidChange(() => {
+    const unknown = store.unknownVocabulary();
+    if (unknown.length === 0) {
+      staleStatus.hide();
+      return;
+    }
+    staleStatus.tooltip = `linter の出力に、この拡張の知らない語がある(その項目だけ一般の見た目にした)。拡張を入れ直すと直る:\n${unknown.slice(0, 10).join('\n')}`;
+    staleStatus.show();
+  });
+  context.subscriptions.push(staleStatus, { dispose: offStale });
   const violations = new LintViolationsTree(store, pixel.tree);
   const map = new LintMapTree(store, pixel.tree);
   // 行末の文・行の左端の印・右端のスクロールバーの印(細い info の波線は色付けの上で見えないため)。

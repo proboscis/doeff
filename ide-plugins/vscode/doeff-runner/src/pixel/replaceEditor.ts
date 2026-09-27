@@ -21,6 +21,13 @@ import {
   type ReplaceKind
 } from './replace';
 
+/** 他の係が文字を隠している範囲(行と列)。 */
+export interface ExcludedSpan {
+  readonly line: number;
+  readonly start: number;
+  readonly end: number;
+}
+
 /** 置き換えの入り切りの設定(全体)。 */
 export const REPLACE_SETTING = 'doeff-runner.pixel.replaceText';
 /** 置き換えの種類ごとの入り切りの設定。 */
@@ -125,7 +132,9 @@ export class PixelTextReplacer implements vscode.Disposable {
     private readonly cache: ReplacementCache,
     private readonly icons: IconSource,
     private readonly log: { appendLine(line: string): void },
-    onIndexChange: (listener: () => void) => () => void
+    onIndexChange: (listener: () => void) => () => void,
+    /** 他の係(defk の見出し)が文字を隠している範囲 — そこへは画を描かない(隠した文字の上に画が残らないように) */
+    private readonly excluded: (editor: vscode.TextEditor) => readonly ExcludedSpan[] = () => []
   ) {
     this.settings = readSettings(this.log, this.reported);
     const offIndex = onIndexChange(() => this.schedule());
@@ -157,6 +166,11 @@ export class PixelTextReplacer implements vscode.Disposable {
         ? vscode.window.activeTextEditor
         : vscode.window.visibleTextEditors.find((e) => e.document === document);
     return editor !== undefined && isShownAsIcon(replacement, this.settings.enabled, plainLines(editor));
+  }
+
+  /** 見えている editor を全部出し直す(他の係が隠す範囲を変えた時)。 */
+  redraw(): void {
+    this.refreshAll();
   }
 
   /** 少し待ってから見えている editor を全部出し直す(scroll・編集の連打をまとめる)。 */
@@ -212,7 +226,10 @@ export class PixelTextReplacer implements vscode.Disposable {
     const all = isHyDocument(document) && this.settings.enabled.size > 0 ? this.cache.of(document) : [];
     const plain = plainLines(editor);
     const visible = visibleLines(editor);
-    const shown = shownReplacements(all, this.settings.enabled, plain, visible);
+    const excluded = this.excluded(editor);
+    const shown = shownReplacements(all, this.settings.enabled, plain, visible).filter(
+      (r) => !excluded.some((x) => x.line === r.line && x.start < r.end && r.start < x.end)
+    );
     const key = `${document.version}|${shown.map((r) => `${r.line}:${r.start}:${r.end}:${r.glyph}`).join(',')}`;
     if (!force && this.shown.get(editor) === key) {
       return;

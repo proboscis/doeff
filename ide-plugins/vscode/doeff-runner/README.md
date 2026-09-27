@@ -173,6 +173,16 @@ Hy の file の決まった語を、**表示の上でだけ** 小さい sprite(1
 - 置き換えた sprite の上の hover は、置き換える前の文字を一字一句そのまま(畳んだ `:tags` は辞書の全文)コピーできる code block で出し、その下に語の sprite と一言の説明を出します。
 - 入り切り: 設定 `doeff-runner.pixel.replaceText`(全体)・`doeff-runner.pixel.replaceKinds`(種類ごと)、命令「doeff: 決まった語の icon の置き換えを入り切り」「doeff: icon に置き換える語の種類を選ぶ」。何を置き換えるかの決まりは `src/pixel/replace.ts` の 1 か所です。
 
+### defk の見出しと束縛の型
+
+defk / deff の型・effect・tags を、**読むだけの表示**として editor に描きます(file の文字は変えません)。材料は doeff-linter の editor-json の `signatures` と `bindings`(契約 版 2)で、型の読み方は linter の 1 か所にあり、拡張は描くだけです。
+
+- 見出し: 頭の行 `(defk 名 [引数]` の名を太字にし、行に薄い帯と下の線を引きます。契約の辞書 `{:pre … :post … :effects … :tags …}` の 1 行目に型の流れ `(X, Y) → Program[effect | B]` を、2 行目に tags の札(丸い淡い札)と状態の札(宣言 = 推論・違反の数)を描き、辞書の文字は隠します。Maybe は点線の `Maybe[B]`、Raise は赤い印、`:effects` に無いのに推論で起こしている effect は琥珀の点線、宣言だけで起こしていない effect は薄い印です。
+- 束縛: `(<- x T e)` → `T x <- e`・`(val x e)` → `T x = e`・`(var x e)` → `var T x = e`・`(:= x v)` → `x := v`。型が分からない束縛は `?` です。
+- hover に型の流れの文・型と effect の定義へ飛ぶ link・effect の答えの分け方(値 / Absent / Raise)を出します。カーソルが定義に入ると元の lisp を見せます(設定 `doeff-runner.defk.revealOnCursor`)。
+- 入り切り: 設定 `doeff-runner.defk.header`・`doeff-runner.defk.bindingTypes`、命令「doeff: defk の見出し(型・effect・tags)の入り切り」。
+- linter の出力に拡張の知らない語があっても出力は捨てず、その項目だけ一般の見た目にして、状態バーに「doeff: 拡張が古い」を出します。
+
 ## Agentic Workflows
 
 The extension integrates with `doeff-agentic` CLI for monitoring and managing agent-based workflows.
