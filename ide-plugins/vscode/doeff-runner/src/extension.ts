@@ -19,6 +19,7 @@ import {
 } from './playlists';
 import { multiTokenFuzzyMatch } from './search';
 import { registerHyNavigation } from './hy/register';
+import { registerLint } from './lint/register';
 
 const execFileAsync = promisify(cp.execFile);
 
@@ -2918,6 +2919,8 @@ export function activate(context: vscode.ExtensionContext) {
 
   // Hy (doeff-hy) navigation: definition / references / outline / workspace symbols / hover.
   registerHyNavigation(context, { locateIndexer: () => locateIndexer(), output });
+  // doeff-linter's findings (the linter is the source of truth; the editor only displays them).
+  registerLint(context, output);
 
   // Create state store for sharing state between TreeView and CodeLens
   const stateStore = new DoeffStateStore(context);

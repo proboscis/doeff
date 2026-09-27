@@ -59,6 +59,19 @@ The extension bundles `doeff-indexer` binaries for common platforms (macOS, Linu
 - **コード上の注記**: effect のクラスの上に「handler N 個」「撃つ場所 M 箇所」、defhandler の上に「扱う effect: …」、defk / deff / defp の上に「撃つ effect N 個」「呼び出し元 M 箇所」を出します。押すと 1 件なら直接移動し、複数なら peek で一覧を出します。
 - **ナビゲーションパネル**(activity bar の「doeff Hy」): Effects(module ごとの effect → Handlers と Performed by)、Handlers(handler → 扱う節 → 同じ effect の他の handler)、Programs(defk / deff / defp → Performs・Calls・Called by。effect からは Handlers へ降りられます)、Current file(今開いている file の分だけ)。項目を押すとその位置へ移動し、右クリックで「参照を表示」「呼び出し階層を表示」を選べます。view の上に絞り込みと更新のボタンがあります。子は展開した時に作り、既に開いた経路に戻る項目は「循環」として止めます。
 
+### linter の結果(doeff-linter)
+
+規則の判定の正本は linter で、拡張はその出力を表示するだけです(自分では判定しません)。operator の逐語は "linter must be the source of truth and editor must follow that" です。
+
+- **呼び方**: 設定 `doeff-runner.hy.lintCommand`(workspace ごと)。既定は `doeff-linter --output-format editor-json` です。空にすると呼びません。
+  - 起動時と workspace の変化、「再実行」のボタンでは、repo 全体を呼びます(引数なし)。
+  - 保存時と編集の 0.8 秒後には、その file を `--stdin --path <path>` で呼びます。
+  - 子 process は同時に 1 つで、時間切れがあります。終了コード 2 と、契約(`lint-contract-v1`)に合わない出力は、理由を Output に出します。
+- **波線**(問題の一覧): 重さは linter のとおりです(error = 新しい破れ、warning = 登録簿に載った既知の破れ、info)。文には、直し方と、規則の ID・ADR の law の名が付きます。
+- **「違反(linter)」パネル**: law(無ければ規則の ID)→ file → 違反の順に並べます。押すとその位置へ移動します。
+  - 上の `$(law)` で「規則の一覧」に切り替えます。針のつながっていない規則は灰色で、linter がまだ見ていない物です。
+- **「層の地図(linter)」パネル**: linter の `modules` の層(core・intent・protocol・foundation・entry・層の外)→ dir → file の木です。色は違反の有無だけで付けます。
+
 ### 生の副作用に触る handler の印(事実の表示)
 
 http・asyncio・時刻・乱数・file・process・環境変数・network・db・thread に直接触る定義に印を付けます。handler(defhandler と effect の節)を見分けるための機能です。同じ effect を実際の I/O で扱う本番の handler と、純粋な模擬の handler を並べて区別できます。

@@ -58,7 +58,9 @@
     "onView:doeff-hy-effects",
     "onView:doeff-hy-handlers",
     "onView:doeff-hy-programs",
-    "onView:doeff-hy-current-file"
+    "onView:doeff-hy-current-file",
+    "onView:doeff-lint-violations",
+    "onView:doeff-lint-map"
   ],
   "main": "./out/extension.js",
   "contributes": {
@@ -125,6 +127,14 @@
         {
           "id": "doeff-hy-current-file",
           "name": "Current file"
+        },
+        {
+          "id": "doeff-lint-violations",
+          "name": "違反(linter)"
+        },
+        {
+          "id": "doeff-lint-map",
+          "name": "層の地図(linter)"
         }
       ]
     },
@@ -351,6 +361,16 @@
         "command": "doeff-runner.hy.toggleRawOnly",
         "title": "生の副作用に触る handler だけ表示(切り替え)",
         "icon": "$(zap)"
+      },
+      {
+        "command": "doeff-runner.lint.rerun",
+        "title": "linter を再実行",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "doeff-runner.lint.toggleRules",
+        "title": "規則の一覧 / 違反の一覧を切り替える",
+        "icon": "$(law)"
       }
     ],
     "configuration": {
@@ -405,6 +425,12 @@
             }
           },
           "markdownDescription": "生の副作用の目録(doeff-indexer の同梱の data)に足す名前(分類 → 名前の配列)。hy-index に `--raw-catalog-extra` で渡し、証拠は hy-index が集める。分類は http / async / time / random / file / process / env / network / db / thread。名前は dotted の名前(`mylib.http` は `mylib.http.get` も拾う・末尾 `*` 可)、`.name` は method 名(弱い根拠)、`builtin:name` は組み込み。読めない値の理由は Output に出る。"
+        },
+        "doeff-runner.hy.lintCommand": {
+          "type": "string",
+          "default": "doeff-linter --output-format editor-json",
+          "scope": "resource",
+          "markdownDescription": "規則の判定の正本である linter を呼ぶ命令(workspace ごと)。拡張は出力(契約 lint-contract-v1 の JSON)を表示するだけで、自分では判定しない。全体は引数なし、編集中の file は `--stdin --path <path>` を足して呼ぶ。空にすると linter を呼ばない。"
         }
       }
     },
@@ -523,6 +549,21 @@
         {
           "command": "doeff-runner.hy.toggleRawOnly",
           "when": "view == doeff-hy-handlers",
+          "group": "navigation@0"
+        },
+        {
+          "command": "doeff-runner.lint.toggleRules",
+          "when": "view == doeff-lint-violations",
+          "group": "navigation@0"
+        },
+        {
+          "command": "doeff-runner.lint.rerun",
+          "when": "view == doeff-lint-violations",
+          "group": "navigation@1"
+        },
+        {
+          "command": "doeff-runner.lint.rerun",
+          "when": "view == doeff-lint-map",
           "group": "navigation@0"
         }
       ],
