@@ -19,9 +19,9 @@
 (import pytest)
 
 (setv T (ClusterTiming))
-(setv K3S {"kind" "k3s"})
+(setv K3S ["cluster-net"])
 (defn #^ dict service [#^ (| dict None) [extra None]]
-  (| {"revision" "r1" "requires" K3S "readiness" {"windowSeconds" 10} "update" "handoff"
+  (| {"revision" "r1" "needs" K3S "readiness" {"windowSeconds" 10} "update" "handoff"
       "run" {"kind" "service" "factory" "m:f" "env" "m:e" "config" {}}}
      (or extra {})))
 
@@ -51,10 +51,10 @@
     {"name" name "phase" "running" "runningRevision" job.spec.revision "desiredRevision" job.spec.revision
      "instance" (.format "{}-{}-g{}" worker name gen) "specHash" (spec-hash job.spec) "placement" gen "attempts" 1})
 
-  (defn #^ object beat [self #^ str worker #^ (| list None) [running None] #^ dict [labels K3S] #^ (| str None) [boot None]]
+  (defn #^ object beat [self #^ str worker #^ (| list None) [running None] #^ list [provides K3S] #^ (| str None) [boot None]]
     "heartbeat。running = この worker が動かしていると報告する job の名(置かれている物)。"
     (setv (get self.boots worker) (or boot (.get self.boots worker "b1")))
-    (self.call "POST" "/heartbeat" {"name" worker "labels" labels "capacity" 10 "versions" {}
+    (self.call "POST" "/heartbeat" {"name" worker "provides" provides "capacity" 10 "versions" {}
                                     "boot" (get self.boots worker)
                                     "statuses" (lfor n (or running []) (self.row worker n))}
                :actor None))
@@ -156,7 +156,7 @@
   (assert (is (c.surge "w") None))
   (assert (= (get (c.call "GET" "/workers/atlas") "drain" "phase") "Blocked"))
   ;; Mac(kind mac)は条件を満たさないので移す先にならない。
-  (c.beat "newmac" :labels {"kind" "mac"})
+  (c.beat "newmac" :provides ["mac-desk"])
   (c.advance)
   (assert (is (c.surge "w") None))
   (c.call "DELETE" "/workers/zeus/drain" :actor "c-test")
@@ -204,11 +204,11 @@
   (c.call "POST" "/workers/atlas/drain" {} :actor "drain@atlas")
   (c.call "POST" "/resources/Service" {"name" "n" "spec" (service)} :expect 201)
   (assert (= (c.placed "n") "zeus"))
-  (c.call "POST" "/tasks" {"env" "m:e" "blob" "x" "revision" "r1" "versions" {} "requires" K3S} :actor "c-test")
+  (c.call "POST" "/tasks" {"env" "m:e" "blob" "x" "revision" "r1" "versions" {} "needs" K3S} :actor "c-test")
   (assert (= (. (get c.state.tasks "t1") worker) "zeus"))
   ;; drain 中の worker しか置ける先が無い task は失敗にせず待つ。
   (c.call "POST" "/workers/zeus/drain" {} :actor "drain@zeus")
-  (c.call "POST" "/tasks" {"env" "m:e" "blob" "x" "revision" "r1" "versions" {} "requires" K3S} :actor "c-test")
+  (c.call "POST" "/tasks" {"env" "m:e" "blob" "x" "revision" "r1" "versions" {} "needs" K3S} :actor "c-test")
   (assert (= (. (get c.state.tasks "t2") phase) "queued")))
 
 
@@ -264,7 +264,7 @@
     (assert (not (get new-reply "draining")))
     (assert (get (c.call "GET" "/workers/zeus") "ready")))
   ;; 新しい世代には新しい task を置ける。
-  (c.call "POST" "/tasks" {"env" "m:e" "blob" "x" "revision" "r1" "versions" {} "requires" {"kind" "k3s"}}
+  (c.call "POST" "/tasks" {"env" "m:e" "blob" "x" "revision" "r1" "versions" {} "needs" ["cluster-net"]}
           :actor "c-test")
   (assert (= #((. (get c.state.tasks "t1") phase) (. (get c.state.tasks "t1") worker)) #("assigned" "zeus"))))
 
@@ -277,14 +277,14 @@
   (c.call "POST" "/resources/Service" {"name" "w" "spec" (service)} :expect 201)
   (c.call "POST" "/resources/Service" {"name" "r" "spec" (service {"update" "recreate"})} :expect 201)
   (assert (= #((c.placed "w") (c.placed "r")) #("atlas" "atlas")))
-  (c.call "PUT" "/detached/job-own" {"env" "m:e" "blob" "B" "versions" {} "revision" "r" "requires" K3S "leaseSeconds" 60}
+  (c.call "PUT" "/detached/job-own" {"env" "m:e" "blob" "B" "versions" {} "revision" "r" "needs" K3S "leaseSeconds" 60}
           :actor "c-test")
   (c.beat "atlas" ["w" "r"] :boot "old")
   (c.advance 1)
   (c.beat "atlas" :boot "new")
   ;; 退いた後に置かれた入れ替えの job と RemoteJob の task(どちらも名 atlas へ置かれる)。
   (c.call "POST" "/resources/Service" {"name" "w2" "spec" (service)} :expect 201)
-  (c.call "POST" "/tasks" {"env" "m:e" "blob" "x" "revision" "r1" "versions" {} "requires" K3S} :actor "c-test")
+  (c.call "POST" "/tasks" {"env" "m:e" "blob" "x" "revision" "r1" "versions" {} "needs" K3S} :actor "c-test")
   (setv remote (next (gfor t (.values c.state.tasks) :if (not t.detached) t))
         own (next (gfor t (.values c.state.tasks) :if t.detached t)))
   (assert (= #((c.placed "w2") remote.worker own.boot) #("atlas" "atlas" "old")))
@@ -316,7 +316,7 @@
   ;; 退いた世代の preStop は、その世代に置いた切り離した task が終わるまで待つ(走らせ直さない task を途中で殺さない)。
   (setv c (Coord #("zeus")))
   (c.beat "zeus" :boot "old")
-  (c.call "PUT" "/detached/job-24" {"env" "m:e" "blob" "B" "versions" {} "revision" "r" "requires" K3S "leaseSeconds" 60}
+  (c.call "PUT" "/detached/job-24" {"env" "m:e" "blob" "B" "versions" {} "revision" "r" "needs" K3S "leaseSeconds" 60}
           :actor "c-test")
   (setv task (next (gfor t (.values c.state.tasks) :if (= t.key "job-24") t)))
   (assert (= #(task.worker task.boot) #("zeus" "old")))
@@ -328,7 +328,7 @@
   (assert (= (get view "drain" "remaining") [(+ "task/" task.id)]))
   ;; 新しい世代には drain を付けない。
   (assert (not-in "zeus" c.state.drains))
-  (c.call "POST" "/heartbeat" {"name" "zeus" "labels" K3S "capacity" 10 "versions" {} "boot" "old"
+  (c.call "POST" "/heartbeat" {"name" "zeus" "provides" K3S "capacity" 10 "versions" {} "boot" "old"
                                "statuses" [{"name" (+ "task/" task.id) "phase" "finished" "result" "R" "detail" ""}]}
           :actor None)
   (assert (= (. (get c.state.tasks task.id) phase) "finished"))
@@ -457,7 +457,7 @@
   (setv path (/ tmp-path "doeff-worker-boot"))
   (assert (is (read-boot (str path)) None) "起動の前(file が無い)は世代を知らない")
   (.setenv monkeypatch "DOEFF_WORKER_BOOT_FILE" (str path))
-  (setv link (CoordinatorLink "http://127.0.0.1:1" "atlas" {} 1 30000 :task-dir (str (/ tmp-path "tasks"))))
+  (setv link (CoordinatorLink "http://127.0.0.1:1" "atlas" #() 1 30000 :task-dir (str (/ tmp-path "tasks"))))
   (assert (= (read-boot (str path)) link.boot)))
 
 

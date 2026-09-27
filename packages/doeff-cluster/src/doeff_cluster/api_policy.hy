@@ -18,7 +18,7 @@
 ;;;   GET    /workers/<名>                      worker の生存・世代・drain の進み(ready = 生きていて drain 中でない)
 ;;;   POST   /workers/<名>/drain {"ttlSeconds"? "boot"?}  drain を頼む(何度でも同じ意味・期限だけ延びる)。DELETE で取り消す(drain_policy)。
 ;;;                                      boot = 頼み手の process の世代。退いた世代の頼みは今の世代に drain を付けない(2026-09-27)
-;;;   POST   /warm {"runtimeEnv" "requires" "ttlSeconds" "holder"} · GET /warm/<キー>
+;;;   POST   /warm {"runtimeEnv" "needs" "ttlSeconds" "holder"} · GET /warm/<キー>
 ;;;                        実行環境の温める表(2026-09-26 — warm_policy。答えは WarmState)
 ;;;   PUT /detached/<key> · GET /detached/<key> · POST /detached/<key>/cancel · DELETE /detached/<key>
 ;;;                        切り離した task(呼び手と寿命を切り離した task — 送る・読む・取り消す・保持を解く。detached_policy)

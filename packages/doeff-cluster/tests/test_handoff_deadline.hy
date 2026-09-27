@@ -27,9 +27,9 @@
 (val JOB-START 2000)
 (val TIMEOUT-SECONDS 30)
 (val WARMING "温まっていない env のキー env-k2・準備の失敗 prepare-timeout")
-(val HANDOFF {"revision" "r1" "requires" {} "entry" "m" "args" [] "replicas" 1
+(val HANDOFF {"revision" "r1" "needs" ["net"] "entry" "m" "args" [] "replicas" 1
               "readiness" {"windowSeconds" 10 "handoffTimeoutSeconds" TIMEOUT-SECONDS} "update" "handoff"})
-(val RECREATE {"revision" "r1" "requires" {} "entry" "m" "args" [] "replicas" 1 "readiness" {"windowSeconds" 10}})
+(val RECREATE {"revision" "r1" "needs" ["net"] "entry" "m" "args" [] "replicas" 1 "readiness" {"windowSeconds" 10}})
 
 
 (defclass Sim []
@@ -83,7 +83,7 @@
     (for [a actions] (self.apply a))
     (setv self.records (records-after self.now self.records actions self.policy))
     (setv rows (lfor s (statuses self.now self.desired (self.world) self.records self.policy) (status-row s)))
-    (setv reply (self.call "POST" "/heartbeat" {"name" "zeus" "labels" {} "capacity" 10 "versions" V "statuses" rows} :actor None))
+    (setv reply (self.call "POST" "/heartbeat" {"name" "zeus" "provides" ["net"] "capacity" 10 "versions" V "statuses" rows} :actor None))
     (.append self.replies (next (gfor j (get reply "jobs") :if (= (get j "name") "writer-a") j) None))
     (setv self.desired (tuple (gfor j (get reply "jobs") (declared-job-spec j)))))
 
@@ -179,7 +179,7 @@
   (assert (= HANDOFF-TIMEOUT-SECONDS 300))
   (assert (= (handoff-timeout-ms {"windowSeconds" 10}) 300000))
   (assert (= (handoff-timeout-ms {"windowSeconds" 10 "handoffTimeoutSeconds" 45}) 45000))
-  (val declared (service "w" tally-program :env "m:e" :config {"interval" 1.0} :update "handoff"
+  (val declared (service "w" tally-program :env "m:e" :needs (frozenset ["net"]) :config {"interval" 1.0} :update "handoff"
                          :readiness {"windowSeconds" 10 "handoffTimeoutSeconds" 45}))
   (assert (= declared.readiness {"windowSeconds" 10 "handoffTimeoutSeconds" 45}))
   (assert (= (. (job-from-json (| {"name" "w"} HANDOFF)) readiness) {"windowSeconds" 10 "handoffTimeoutSeconds" TIMEOUT-SECONDS}))
@@ -187,12 +187,12 @@
              {"windowSeconds" 10 "handoffTimeoutSeconds" True} {"windowSeconds" 10 "handoffTimeoutSeconds" "300"}
              {"windowSeconds" 10 "handoffTimeoutSecond" 300}]]
     (with [(pytest.raises ValueError)]
-      (service "w" tally-program :env "m:e" :config {"interval" 1.0} :update "handoff" :readiness bad))
+      (service "w" tally-program :env "m:e" :needs (frozenset ["net"]) :config {"interval" 1.0} :update "handoff" :readiness bad))
     (with [(pytest.raises ValueError)]
       (job-from-json (| {"name" "w"} HANDOFF {"readiness" bad}))))
   ;; recreate の Service は期限を持たない(効かない欄を黙って受けない)。
   (with [(pytest.raises ValueError)]
-    (service "w" tally-program :env "m:e" :config {"interval" 1.0} :readiness {"windowSeconds" 10 "handoffTimeoutSeconds" 45}))
+    (service "w" tally-program :env "m:e" :needs (frozenset ["net"]) :config {"interval" 1.0} :readiness {"windowSeconds" 10 "handoffTimeoutSeconds" 45}))
   (with [(pytest.raises ValueError)]
     (job-from-json (| {"name" "w"} RECREATE {"readiness" {"windowSeconds" 10 "handoffTimeoutSeconds" 45}}))))
 
