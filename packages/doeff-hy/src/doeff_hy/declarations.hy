@@ -91,32 +91,43 @@
   `(doeff_hy.declarations.DefinitionTags :context ~context :role ~role))
 
 
-;; defeffect の頭の辞書が受ける鍵(:answer と :tags は必須・:fields は無ければ欄なし)。
-(setv EFFECT-KEYS #(":fields" ":answer" ":tags"))
+;; defeffect の頭の辞書が受ける鍵(:answer と :tags は必須・:fields は無ければ欄なし・:pre は作る時の検め)。
+(setv EFFECT-KEYS #(":fields" ":answer" ":tags" ":pre"))
 
 
 (defn effect-field-forms [form #^ str where]  ; defk にできない: macro の展開の時に呼ぶ関数
-  "defeffect の `:fields [(: 名 型) …]` を検め、dataclass の欄の form `(#^ 型 名)` の list にするため(無ければ空の list)。"
+  "defeffect の `:fields [(: 名 型) (: 名 型 既定値) …]` を検め、dataclass の欄の form の list と欄の名前の list にするため
+   (無ければ両方とも空)。既定値を持つ欄の後ろに既定値の無い欄は置けない(dataclass の順の決まりを展開の時に断る)。"
   (when (is form None)
-    (return []))
+    (return #([] [])))
   (when (not (isinstance form List))
-    (raise (SyntaxError (.format "{}: :fields は (: 名 型) の list: {}" where (hy.repr form)))))
-  (setv out [] seen (set))
+    (raise (SyntaxError (.format "{}: :fields は (: 名 型) か (: 名 型 既定値) の list: {}" where (hy.repr form)))))
+  (setv out [] names [] defaulted None)
   (for [item form]
-    (when (not (and (isinstance item hy.models.Expression) (= (len item) 3)
+    (when (not (and (isinstance item hy.models.Expression) (in (len item) #(3 4))
                     (isinstance (get item 0) Keyword) (= (str (get item 0)) ":")
                     (isinstance (get item 1) Symbol)))
-      (raise (SyntaxError (.format "{}: :fields の要素は (: 名 型): {}" where (hy.repr item)))))
-    (when (in (str (get item 1)) seen)
-      (raise (SyntaxError (.format "{}: :fields の欄 {} が重複" where (str (get item 1))))))
-    (.add seen (str (get item 1)))
-    (.append out `(#^ ~(get item 2) ~(get item 1))))
-  out)
+      (raise (SyntaxError (.format "{}: :fields の要素は (: 名 型) か (: 名 型 既定値): {}" where (hy.repr item)))))
+    (setv field-name (str (get item 1)))
+    (when (in field-name names)
+      (raise (SyntaxError (.format "{}: :fields の欄 {} が重複" where field-name))))
+    (.append names field-name)
+    (cond
+      (= (len item) 4)
+        (do (setv defaulted field-name)
+            (.append out `(setv #^ ~(get item 2) ~(get item 1) ~(get item 3))))
+      (is-not defaulted None)
+        (raise (SyntaxError (.format "{}: :fields の欄 {} は既定値が無いので、既定値を持つ欄 {} より前に置く" where field-name defaulted)))
+      True
+        (.append out `(#^ ~(get item 2) ~(get item 1)))))
+  #(out names))
 
 
-(defn defeffect-form [name docstring #^ Dict contract #^ str where]  ; defk にできない: macro の展開の時に呼ぶ関数
+(defn defeffect-form [name docstring #^ Dict contract #^ str where pre-code]  ; defk にできない: macro の展開の時に呼ぶ関数
   "defeffect の展開: EffectBase を継ぐ frozen の dataclass と、属性 __doeff_answer__(handler が resume で返す値の型)・
-   __doeff_tags__・__doeff_defeffect__(defeffect で作った印 — defk の :effects の検めが読む)を置く form を作るため。"
+   __doeff_tags__・__doeff_defeffect__(defeffect で作った印 — defk の :effects の検めが読む)を置く form を作るため。
+   pre-code = :pre を defk と同じ規則で文にした列(macros.hy の _contract-code が作る)。空でなければ __post_init__ に置き、
+   欄の名前をその場の名前として読めるようにする(閉じた語彙・要素の型の検めを、作る時に断る)。"
   (refuse-unknown-keys contract EFFECT-KEYS where)
   (setv answer (declared-value contract ":answer")
         tags (declared-value contract ":tags"))
@@ -124,14 +135,24 @@
     (raise (SyntaxError (.format "{}: :answer(handler が resume で返す値の型)は必須" where))))
   (when (is tags None)
     (raise (SyntaxError (.format "{}: :tags {{:context \"…\" :role \"…\"}} は必須" where))))
-  (setv fields (effect-field-forms (declared-value contract ":fields") where))
+  (setv #(fields names) (effect-field-forms (declared-value contract ":fields") where))
+  (when (and pre-code (not names))
+    (raise (SyntaxError (.format "{}: :pre は欄を検めるので、:fields の無い effect には書けない" where))))
+  (setv post-init
+    (if pre-code
+        [`(defn __post-init__ [self]
+            ~@(lfor n names `(setv ~(Symbol n) (. self ~(Symbol n))))
+            ~@pre-code
+            None)]
+        []))
   `(do
      (import dataclasses [dataclass :as _doeff-dataclass])
      (import doeff [EffectBase :as _doeff-effect-base])
      (import doeff_hy.declarations)
      (defclass [(_doeff-dataclass :frozen True)] ~name [_doeff-effect-base]
        ~@(if (is docstring None) [] [docstring])
-       ~@fields)
+       ~@fields
+       ~@post-init)
      (setattr ~name "__doeff_answer__" ~answer)
      (setattr ~name "__doeff_tags__" ~(tags-form tags where))
      (setattr ~name "__doeff_defeffect__" True)))

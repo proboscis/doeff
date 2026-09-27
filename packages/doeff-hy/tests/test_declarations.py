@@ -144,3 +144,44 @@ def test_defeffect_requires_the_answer_and_tags_and_closed_keys() -> None:
     assert "(: 名 型)" in refused('(defeffect E {:fields [profile] :answer int :tags {:context "k" :role "intent"}})')
     assert "重複" in refused('(defeffect E {:fields [(: a int) (: a str)] :answer int :tags {:context "k" :role "intent"}})')
     assert "頭の辞書" in refused('(defeffect E)')
+
+
+def test_defeffect_fields_take_defaults_and_pre_checks_on_construction() -> None:
+    """欄の既定値と :pre(agora-redesign #800 — agent_task の StartTurn・DeliverInput・ExportAgentMemory を移すため)。"""
+    import dataclasses
+
+    ns = evaluate("""
+(setv MODES #{"steer" "queue"})
+(defeffect DeliverInput
+  {:fields [(: ref str) (: mode str) (: lease-id (| str None) None)]
+   :pre [(: ref str) (in mode MODES)]
+   :answer str
+   :tags {:context "agent-task" :role "intent"}})
+(defeffect StartTurn
+  {:fields [(: inputs tuple)]
+   :pre [(all (gfor item inputs (isinstance item str)))]
+   :answer str
+   :tags {:context "agent-task" :role "intent"}})
+""")
+    deliver = ns["DeliverInput"]
+    effect = deliver("r1", "steer")
+    assert effect.lease_id is None  # 既定値
+    assert deliver("r1", "queue", "L1").lease_id == "L1"
+    assert [f.name for f in dataclasses.fields(deliver)] == ["ref", "mode", "lease_id"]
+    # 反例: 閉じた語彙の外の値・欄の型の誤り・要素の型の誤りは作る時に断る(黙って通さない)。
+    with pytest.raises(AssertionError, match="DeliverInput: :pre failed"):
+        deliver("r1", "shout")
+    with pytest.raises(AssertionError, match="`ref` expected str"):
+        deliver(1, "steer")
+    ns["StartTurn"](("a", "b"))
+    with pytest.raises(AssertionError, match="StartTurn: :pre failed"):
+        ns["StartTurn"](("a", 2))
+
+
+def test_defeffect_refuses_misplaced_defaults_and_pre() -> None:
+    tags = ':answer int :tags {:context "k" :role "intent"}'
+    assert "既定値を持つ欄" in refused('(defeffect E {:fields [(: a int 0) (: b int)] ' + tags + '})')
+    assert "欄ではない" in refused('(defeffect E {:fields [(: a int)] :pre [(: b int)] ' + tags + '})')
+    assert ":fields の無い" in refused('(defeffect E {:pre [(> 1 0)] ' + tags + '})')
+    assert "条件の list" in refused('(defeffect E {:fields [(: a int)] :pre (> a 0) ' + tags + '})')
+    assert "defk / do!" in refused('(defeffect E {:fields [(: a int)] :pre [(check = a 0 :reason "x")] ' + tags + '})')
