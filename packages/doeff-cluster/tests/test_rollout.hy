@@ -15,6 +15,7 @@
 (import doeff_cluster.coordinator [rollout-tick])
 (import doeff_cluster.kube_handlers [KubeMemory kube-memory])
 (import doeff_cluster.worker_model [JobSpec spec-hash])
+(import tests.program_rows [SAMPLE-RUN program-run])
 
 (setv T (ClusterTiming))
 (setv V {"python" "3.14.0"})
@@ -48,7 +49,7 @@
     (setv self.state (ClusterState :started-ms (- self.now 60000)))
     (setv self.state (self.call "POST" "/resources/Service"
                                 {"name" "writer-a"
-                                 "spec" {"revision" "r1" "needs" ["net"] "entry" "m" "args" [] "replicas" 0
+                                 "spec" {"revision" "r1" "needs" ["net"] "run" SAMPLE-RUN "replicas" 0
                                          "readiness" {"windowSeconds" window}}})))
 
   (defn call [self method path [body None] [actor "c-test"]]
@@ -322,15 +323,16 @@
   ;; 止めた dry-run の process の Ready の報告は window(120 秒)の中に残っているが、数えてはならない — 本番(旧)を止めるのは
   ;; 新しい process が最初の報告をした後。
   (setv sim (Sim :window 120 :first-report-ms 20000))
-  (setv spec {"revision" "r1" "needs" ["net"] "entry" "m" "args" [] "replicas" 1 "readiness" {"windowSeconds" 120}})
+  (setv spec {"revision" "r1" "needs" ["net"] "run" SAMPLE-RUN "replicas" 1 "readiness" {"windowSeconds" 120}})
   ;; dry-run の書き手を動かし、Ready の報告を出させる
   (sim.call "PUT" "/resources/Service/writer-a" {"spec" spec "resourceVersion" (get sim.state.meta "Service/writer-a" "resourceVersion")})
   (for [_ (range 30)] (sim.step))
   (setv dry-instance (get sim.proc "instance"))
   (assert (in dry-instance sim.first-ready) sim.first-ready)
-  ;; 設定だけを変えて(引数 = 設定・版は同じ)止める(05:10:53)
+  ;; 設定だけを変えて(Program の引数 = 同一性だけが変わる・版は同じ)止める(05:10:53)
   (sim.call "PUT" "/resources/Service/writer-a"
-            {"spec" (| spec {"args" ["--apply"] "replicas" 0}) "resourceVersion" (get sim.state.meta "Service/writer-a" "resourceVersion")})
+            {"spec" (| spec {"run" (run (program-run "m:f" "--apply")) "replicas" 0})
+             "resourceVersion" (get sim.state.meta "Service/writer-a" "resourceVersion")})
   (for [_ (range 17)] (sim.step))
   (assert (is sim.proc None) sim.proc)
   ;; Rollout を作る(05:11:10)

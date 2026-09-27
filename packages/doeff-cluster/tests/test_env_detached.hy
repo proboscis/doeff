@@ -31,6 +31,7 @@
 (import doeff_cluster.worker_policy [plan statuses])
 (import doeff_cluster.handlers [task-spec status-row])
 (import tests.env_fixtures [LOCK APP-URL LIB-URL env-of base-world])
+(import tests.program_rows [SAMPLE-TASK-PROGRAM program-placed])
 
 ;; 走った印(Program が走ったかを数える — 準備の失敗では 0 のまま)。
 (val RAN [])
@@ -163,7 +164,7 @@
   {:pre [(: env RuntimeEnv)] :post [(: % TaskRecord)]}
   "env を持つ待ちの task 1 本(送り手の版は worker と違う)。"
   (<- declared dict (runtime-env->json env))
-  (TaskRecord "t1" "" "blob" "" #((ComponentVersion "doeff" "old")) #("net") 60000 60000 0
+  (TaskRecord "t1" "" SAMPLE-TASK-PROGRAM "" #((ComponentVersion "doeff" "old")) #("net") 60000 60000 0
               :runtime-env declared))
 
 
@@ -204,12 +205,14 @@
 (deftest test-a-bad-declaration-or-format-is-refused-with-400
   (<- env RuntimeEnv (env-of "app-1" "lib-1" LOCK))
   (<- declared dict (runtime-env->json env))
-  (val base {"blob" "b" "revision" "" "versions" {} "needs" ["net"] "leaseSeconds" 10})
+  ;; 本文は置き場に置いた詰めた Program のキーを運ぶ(置いた状態 placed で送る — 断りは宣言と形の版だけによる)。
+  (<- placed tuple (program-placed (ClusterState) {}))
+  (val base {"program" (get placed 1) "revision" "" "needs" ["net"] "leaseSeconds" 10})
   (val broken (| declared {"repos" [{"name" "app" "url" APP-URL "commit" "main"}]}))
   (for [body [(| base {"runtimeEnv" broken}) (| base {"format" 99})]]
-    (assert (= (get (submit-task (ClusterState) body 0) 1) 400) body)
-    (assert (= (. (submit-detached (ClusterState) "k" body 0) status) 400) body))
-  (val accepted (submit-task (ClusterState) (| base {"runtimeEnv" declared "format" 1}) 0))
+    (assert (= (get (submit-task (get placed 0) body 0) 1) 400) body)
+    (assert (= (. (submit-detached (get placed 0) "k" body 0) status) 400) body))
+  (val accepted (submit-task (get placed 0) (| base {"runtimeEnv" declared "format" 1}) 0))
   (assert (= (get accepted 1) 200) accepted)
   (assert (= (. (get (. (get accepted 0) tasks) "t1") runtime-env) declared)))
 
@@ -219,7 +222,7 @@
 (deftest test-the-worker-prepares-an-env-root-and-reports-its-failure
   (<- env RuntimeEnv (env-of "app-1" "lib-1" LOCK))
   (<- declared dict (runtime-env->json env))
-  (val spec (task-spec {"id" "t1" "revision" "" "versions" {} "blob" "b"
+  (val spec (task-spec {"id" "t1" "revision" "" "versions" {} "program" SAMPLE-TASK-PROGRAM
                         "runtimeEnv" declared}
                        (. (__import__ "pathlib") (Path "/tmp/tasks"))))
   (<- key str (env-key env (current-platform)))

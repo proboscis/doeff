@@ -3,14 +3,16 @@
 ;;;   PUT /programs/<sha>  {"blob" 詰めた Program の文字列 "versions" 詰めた送り手の版} → 置く(同じキーは同じ中身 — 何度でも同じ意味)
 ;;;   GET /programs/<sha>  → {"blob" "versions"}(無ければ 404)
 ;;;
-;;; 宣言の行(Service)と heartbeat の返事は sha だけを運び、worker が取って cache に置く。Program は大きくなりうるので、宣言の行と
-;;; 毎拍の返事に載せない。キーは中身の sha256(置く時に確かめる)。参照の無くなった Program は、置いてから PROGRAM-GRACE-MS を過ぎたら
-;;; 掃除する(declare は Program を先に置いてから行を書くので、その間に消さない)。
+;;; 宣言の行(Service)・task の本文と行(POST /tasks・PUT /detached)・heartbeat の返事は sha だけを運び、worker が取って cache に置く。
+;;; service と task で運び方を分けない(operator 2026-09-27 "i dont find any reason to have different api for services")。Program は
+;;; 大きくなりうるので、宣言の行と毎拍の返事に載せない。キーは中身の sha256(remote_model.program-sha — 置く時に確かめる)。
+;;; 参照(受け付けた Service の行と task の行 — 終わって結果を保持している task も含む)の無くなった Program は、置いてから
+;;; PROGRAM-GRACE-MS を過ぎたら掃除する(送り手は Program を先に置いてから行を書くので、その間に消さない)。
 (require doeff-hy.macros [deff])
 (import dataclasses [replace])
-(import hashlib)
 (import re)
 (import .cluster_model [ClusterState])
+(import .remote_model [program-sha])
 
 (setv PROGRAM-KEY (re.compile r"[0-9a-f]{64}"))
 (setv PROGRAM-MAX-BYTES (* 4 1024 1024))       ; 詰めた Program 1 つの上限(base64 の文字列の長さ)
@@ -27,7 +29,7 @@
     (not (isinstance blob str)) #(state 400 {"error" "blob は詰めた Program の文字列"})
     (> (len blob) PROGRAM-MAX-BYTES) #(state 413 {"error" (.format "詰めた Program が上限 {} byte を越える" PROGRAM-MAX-BYTES)})
     (not (isinstance versions dict)) #(state 400 {"error" "versions は詰めた送り手の版の object"})
-    (!= (.hexdigest (hashlib.sha256 (.encode blob "ascii"))) sha)
+    (!= (program-sha blob) sha)
       #(state 400 {"error" "blob の sha256 がキーと合わない"})
     True #((replace state :programs (| state.programs {sha {"blob" blob "versions" versions "putMs" now}}))
            200 {"program" sha})))
@@ -38,15 +40,23 @@
   "GET /programs/<sha>: 置いた Program(無ければ 404)。"
   (setv row (.get state.programs sha))
   (if (is row None)
-      #(state 404 {"error" (.format "Program {} は置かれていない(宣言の前に declare が置く)" sha)})
+      #(state 404 {"error" (.format "Program {} は置かれていない(宣言・task の前に送り手が置く)" sha)})
       #(state 200 {"blob" (get row "blob") "versions" (get row "versions")})))
+
+
+(deff program-refs [#^ ClusterState state]  ; defk にできない: coordinator の調停(Program の外の純粋な判断)が呼ぶ
+  {:pre [(: state ClusterState)] :post [(: % frozenset)] :tags {:context "doeff-cluster" :role "judgment"}}
+  "置き場の Program を今参照している物のキーの集合 — 掃除で残す物を決めるため。受け付けた Service の行と、task の行(待ち・走っている・
+   終わって結果を保持している物の全部 — 行が消えるまで参照は続く)。参照の定義点はここ 1 つ。"
+  (frozenset (+ (lfor j state.jobs :if j.spec.program j.spec.program)
+                (lfor t (.values state.tasks) :if t.program t.program))))
 
 
 (deff sweep-programs [#^ ClusterState state #^ int now]  ; defk にできない: coordinator の調停(Program の外の純粋な判断)が呼ぶ
   {:pre [(: state ClusterState) (: now int)] :post [(: % ClusterState)] :tags {:context "doeff-cluster" :role "judgment"}}
-  "受け付けた Service のどれも参照せず、置いてから PROGRAM-GRACE-MS を過ぎた Program を消す。"
-  (setv used (sfor j state.jobs :if j.spec.program j.spec.program)
+  "受け付けた Service と task の行のどれも参照せず、置いてから PROGRAM-GRACE-MS を過ぎた Program を消す。"
+  (let [used (program-refs state)
         kept (dfor #(sha row) (.items state.programs)
                    :if (or (in sha used) (<= (- now (get row "putMs")) PROGRAM-GRACE-MS))
-                   sha row))
-  (if (= (len kept) (len state.programs)) state (replace state :programs kept)))
+                   sha row)]
+    (if (= (len kept) (len state.programs)) state (replace state :programs kept))))

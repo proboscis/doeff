@@ -14,9 +14,11 @@
 ;;;   失敗だけは書きでも送り直す(要求がまだ相手に届いていない。httpx の transport の retries は ConnectError と
 ;;;   ConnectTimeout だけを送り直す)。何度送っても同じ意味の読みは、切れ方を問わず期限まで送り直す(`send-idempotent`)。
 ;;;   自己停止(20 秒)と移し替え(45 秒)の時間は cluster_model の ClusterTiming。
+(require doeff-hy.macros [deff])
 (import time)
 (import httpx)
 (import .cluster_model [ClusterTiming])
+(import .remote_model [program-sha])
 
 ;; 返事を待つ上限(秒)。coordinator は書きを永続化してから返事をする(group commit)ので、返事は fsync の時間だけ遅れる。longhorn の
 ;; volume の実測(2026-09-24): fsync p50 0.1 秒、ただし 30 分に 1 回ほど 10.4 秒の詰まり(その間の返事は最長 13 秒)。上限はそれより
@@ -120,3 +122,14 @@
         (when (> (+ (- (time.monotonic) started) pause-seconds) deadline-seconds)
           (raise))
         (time.sleep pause-seconds)))))
+
+
+(deff put-program [#^ CoordinatorEndpoint endpoint #^ str blob #^ dict versions #^ float deadline-seconds]  ; defk にできない: task の client(TaskClient・DetachedClient)の I/O の道具が Program の外で呼ぶ
+  {:pre [(: endpoint CoordinatorEndpoint) (: blob str) (: versions dict) (: deadline-seconds float)] :post [(: % tuple) (= (len %) 2)]
+   :tags {:context "doeff-cluster" :role "foundation"}}
+  "task を送る前に、詰めた Program を coordinator の置き場 PUT /programs/<sha> に版と一緒に置くため(task の本文は sha だけを運ぶ —
+   service の宣言と同じ運び方・ADR-DOE-CLUSTER-001 R3b)。同じ中身は同じキーの同じ行なので、何度送っても同じ意味 — 通信の失敗は期限まで
+   送り直す。答え = #(sha 返事)(返事の status の読みは呼び手 — 断りの型は client ごとに違う)。"
+  (let [sha (program-sha blob)]
+    #(sha (send-idempotent (fn [] (.request endpoint "PUT" (+ "/programs/" sha) :json {"blob" blob "versions" versions}))
+                           :deadline-seconds deadline-seconds))))

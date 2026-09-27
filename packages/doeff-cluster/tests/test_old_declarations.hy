@@ -1,9 +1,10 @@
 ;;; 旧い宣言の形を断る coordinator 側の入口(ADR-DOE-CLUSTER-001・計画 2.8 の入口 5・6・10 — operator 2026-09-27 「旧い宣言は受け付けない」)。
 ;;;
-;;;   5 = 書きの口(PUT /jobs・POST/PUT /resources/Service)は旧い本文を 400 と理由で断る。
+;;;   5 = 書きの口(PUT /jobs・POST/PUT /resources/Service)は旧い本文を 400 と理由で断る。run の無い生の entry と args の job
+;;;       (Program でない job)も同じ — 移行の期間は置かない(ADR-DOE-CLUSTER-001 R1・R7)。
 ;;;   6 = 読み直し(state file・durable KV)の旧い Service の行は落とさず RefusedJob にし、資源の口に status.refused で出し、
-;;;       新しい形の PUT で受け付けた job に置き換え、DELETE で消せる。保存し直しても元の行のまま残る。
-;;;  10 = worker の起動の旧い --labels は起動しない(理由を stderr に)。
+;;;       新しい形の PUT で受け付けた job に置き換え、DELETE で消せる。保存し直しても元の行のまま残る。生の entry の行も同じ。
+;;;  10 = worker の起動の旧い --labels は起動しない(理由を stderr に)。宣言の file から job を直に起こす旧い --desired も無い。
 (require doeff-hy.macros [deftest defk <- val var])
 (import os)
 (import subprocess)
@@ -21,6 +22,8 @@
 (val ROW {"revision" "r1" "needs" ["net"] "run" SAMPLE-RUN})
 ;; 2026-09-27 より前の coordinator が書いた Service の行(関数の参照 + handler の組の import path + 設定)。
 (val OLD-RUN {"kind" "service" "factory" "m:f" "env" "m:e" "config" {"step" 1}})
+;; run の無い生の entry と args の job(worker に module と引数を直に起こさせる — Program でない job)。
+(val RAW-ENTRY {"revision" "r1" "needs" ["net"] "entry" "m" "args" ["--x" "1"]})
 
 
 (defk call [state method path body now]
@@ -46,6 +49,7 @@
   "#(何の反例か 行 理由に含む語) の列 — どれも新しい形の行から 1 か所だけ崩した物。"
   (<- env-json dict (declared-env-json))
   [#("run の旧い欄" (| ROW {"run" OLD-RUN}) "run の factory・env・config")
+   #("生の entry の job(run が無い)" RAW-ENTRY "生の entry の job")
    #("旧い run と新しい欄の混在" (| ROW {"run" (| SAMPLE-RUN {"config" {}})}) "run の config")
    #("requires" (| ROW {"requires" {"kind" "k3s"}}) "requires")
    #("baseFrom" (| ROW {"baseFrom" {"kind" "Deployment" "namespace" "n" "name" "d"}}) "baseFrom・overlay")
@@ -106,6 +110,32 @@
   True)
 
 
+(defk saved-with-raw-entry-row []
+  {:pre [] :post [(: % dict)] :tags {:context "doeff-cluster-test" :role "entry"}}
+  "受け付けた Service 2 つ(new・raw)を持つ state file の形で、raw の行だけを run の無い生の entry の job へ書き換えた物
+   (生の entry の job を受けていた coordinator が書いた置き場の写し)。"
+  (<- a tuple (call (ClusterState) "POST" "/resources/Service" {"name" "new" "spec" ROW} 1000))
+  (<- b tuple (call (get a 0) "POST" "/resources/Service" {"name" "raw" "spec" ROW} 1000))
+  (val data (state-to-json (get b 0)))
+  (| data {"jobs" (lfor row (get data "jobs")
+                        (if (= (get row "name") "raw")
+                            (| (dfor #(k v) (.items row) :if (!= k "run") k v) {"entry" "m" "args" ["--x" "1"]})
+                            row))}))
+
+
+(deftest test-entry-6-a-raw-entry-service-row-is-read-as-refused-from-the-state-file-and-the-durable-kv
+  ;; 入口 6(生の entry の job): 読み直しは落ちず、生の entry の行を RefusedJob(元の行と理由)にする — worker に直に起こさせない。
+  (<- data dict (saved-with-raw-entry-row))
+  (for [state [(state-from-json data 5000) (state-from-kv (full-kv (state-from-json data 5000)) 5000)]]
+    (assert (= (lfor j state.jobs j.spec.name) ["new"]) state.jobs)
+    (val refused (get state.refused "raw"))
+    (assert (isinstance refused RefusedJob) state.refused)
+    (assert (= (get refused.row "entry") "m") refused.row)
+    (assert (in "生の entry の job" refused.reason) refused.reason)
+    ;; 置き先を持たない(どの worker にも起こさせない)。
+    (assert (not-in "raw" state.placements) state.placements)))
+
+
 (deftest test-entry-6-an-old-service-row-in-the-state-file-is-read-as-refused
   (<- data dict (saved-with-old-row))
   (val state (state-from-json data 5000))
@@ -149,6 +179,16 @@
   (assert (= (get deleted 1) 200) deleted)
   (assert (= (. (get deleted 0) refused) {}))
   (assert (= (lfor j (. (get deleted 0) jobs) j.spec.name) ["new"])))
+
+
+(deftest test-a-worker-has-no-entrance-that-reads-jobs-from-a-declaration-file
+  ;; 宣言の file から生の entry の job を直に起こす旧い口 --desired は無い(worker は coordinator からだけ job を受ける — R1)。
+  (val done (subprocess.run [sys.executable "-m" "hy" "-m" "doeff_cluster.main" "--desired" "desired.json"
+                             "--repo" "." "--state-dir" "/nonexistent"]
+                            :cwd (str PACKAGE-ROOT) :capture-output True :text True :timeout 120))
+  (assert (= done.returncode 2) done.stderr)
+  (assert (in "--coordinator" done.stderr) done.stderr)
+  (assert (or (in "unrecognized arguments: --desired" done.stderr) (in "required: --coordinator" done.stderr)) done.stderr))
 
 
 (deftest test-entry-10-a-worker-started-with-old-labels-does-not-start
