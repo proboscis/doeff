@@ -13,16 +13,31 @@
 ;;;                                     #("app/." "app/vendor")
 ;;;                                     :sender-repo "lib"))
 ;;;
-;;; checkout の読みは effect(ReadCheckout・SenderSourceRoot・FileSha256)。本物の handler は下の local-checkouts(git を呼ぶ)。
-(require doeff-hy.macros [defk defhandler <- val var])
+;;; checkout の読みは effect(ReadCheckout・SenderSourceRoot・FileSha256)。答えるのは下の翻訳の handler checkout-reads 1 つで、doeff の汎用の
+;;; 子 process の effect(RunProcess — git を起こす)と file の effect(StatPath・ReadBytes)へ訳す。I/O を持たない(sha256 は計算だけ)。
+;;; 環境で差し替えるのはその汎用の effect に答える土台の handler だけ(2026-09-27):
+;;;   本物   [subprocess-handler os-file-handler checkout-reads](外側が先)
+;;;   模擬   [(state) (memory-file-handler …) (scripted-process-handler (ProcessScript :commands #((git-command checkouts)))) checkout-reads]
+;;;          — git の台本は checkout_git_script.hy の git-command(checkout の読みに要る git の問いだけに答える)
+;;;
+;;; 訳し方(git は `git -C <path> …` の 1 回ずつ・0 でない終わりは読めない checkout として RuntimeError — 前の本物の check=True と同じ):
+;;;   ReadCheckout      rev-parse HEAD → remote get-url <remote> → status --porcelain --untracked-files=no(空でなければ dirty)→
+;;;                     branch -r --contains <head> --list <remote>/*(空でなければ on-remote — 知識は手元の追跡の ref・最後の fetch による)
+;;;   SenderSourceRoot  SENDER-SOURCE-DIR(この module の dir)で rev-parse --show-toplevel。0 でなければ None(checkout の外)
+;;;   FileSha256        StatPath が file なら ReadBytes の sha256・file でなければ None
+(require doeff-hy.macros [defk defhandler defeffect <- val var])
 (require doeff-hy.record [defrecord])
 (import dataclasses [dataclass])
 (import hashlib)
-(import pathlib [Path])
-(import subprocess)
-(import doeff [EffectBase])
+(import os)
+(import doeff_core_effects.process_effects [ProcessOutcome RunProcess])
+(import doeff_core_effects.file_effects [PathKind PathStat FileFailed StatPath ReadBytes])
 (import .runtime_env_model [RepoCheckout PythonProject EnvVar ToolRequirement RuntimeEnv RuntimeEnvInvalid InvalidKind])
 (import .env_prepare [FileSha256])
+
+;; 送り手自身が動いている source の dir(この module の置き場)。SenderSourceRoot はここで git に checkout の根を聞く — 模擬の git の台本も
+;; この値で「送り手の source がどの checkout に在るか」を書く。
+(val SENDER-SOURCE-DIR (os.path.dirname (os.path.abspath __file__)))
 
 
 ;; --- 入力と答え ---------------------------------------------------------------------------
@@ -54,14 +69,17 @@
 
 ;; --- effect ------------------------------------------------------------------------------
 
-(defclass [(dataclass :frozen True)] ReadCheckout [EffectBase]
+(defeffect ReadCheckout
   "checkout を読む。答え = CheckoutState。"
-  (#^ str path)
-  (#^ str remote))
+  {:fields [(: path str) (: remote str)]
+   :answer CheckoutState
+   :tags {:context "runtime-env" :role "intent"}})
 
 
-(defclass [(dataclass :frozen True)] SenderSourceRoot [EffectBase]
-  "送り手自身が動いている source(このパッケージ)の checkout の根。答え = 絶対 path か None(checkout の外 — 例: wheel で入れた)。")
+(defeffect SenderSourceRoot
+  "送り手自身が動いている source(このパッケージ)の checkout の根。答え = 絶対 path か None(checkout の外 — 例: wheel で入れた)。"
+  {:answer (| str None)
+   :tags {:context "runtime-env" :role "intent"}})
 
 
 ;; --- 組み立て -----------------------------------------------------------------------------
@@ -126,27 +144,55 @@
               :import-roots import-roots :env-vars env-vars :tools tools))
 
 
-;; --- handler(実 I/O) ------------------------------------------------------------------
+;; --- 翻訳の handler(汎用の子 process と file の effect へ訳す) ------------------------------------------
 
 (defk git-output [path args]
   {:pre [(: path str) (: args tuple)] :post [(: % str)]}
-  "checkout の中で git を 1 回呼んで標準出力を返す(送り手の手元を読むため)。"
-  (val done (subprocess.run ["git" "-C" path #* args] :capture-output True :text True :check True))
-  (.strip done.stdout))
+  "checkout の中で git を 1 回走らせて標準出力を読むため(0 でない終わり・起こせない git は読めない checkout — 例外)。"
+  (<- outcome ProcessOutcome (RunProcess :argv (+ #("git" "-C" path) args)))
+  (when (!= outcome.exit-code 0)
+    (raise (RuntimeError (.format "git -C {} {} が exit {}: {}{}" path (.join " " args) outcome.exit-code
+                                  (.strip outcome.stderr) outcome.start-error))))
+  (.strip outcome.stdout))
 
 
-(defhandler local-checkouts
-  ;; 送り手の手元の checkout を git で読む。remote の branch の知識は手元の追跡の ref(最後の fetch)による。
+(defk checkout-state-at [path remote]
+  {:pre [(: path str) (: remote str)] :post [(: % CheckoutState)]}
+  "checkout 1 つの読み(HEAD・remote の URL・汚れ・remote の branch に在るか)を git の 4 問から作るため(頭の註の訳し方)。"
+  (<- head str (git-output path #("rev-parse" "HEAD")))
+  (<- url str (git-output path #("remote" "get-url" remote)))
+  (<- status str (git-output path #("status" "--porcelain" "--untracked-files=no")))
+  (<- containing str (git-output path #("branch" "-r" "--contains" head "--list" (.format "{}/*" remote))))
+  (CheckoutState :head head :url url :dirty (bool status) :on-remote (bool containing)))
+
+
+(defk sender-source-root []
+  {:pre [] :post [(: % (| str None))]}
+  "送り手自身の source が在る checkout の根を git に聞くため(git の外・git を起こせない時は None — 宣言の commit と比べられない)。"
+  (<- outcome ProcessOutcome (RunProcess :argv #("git" "-C" SENDER-SOURCE-DIR "rev-parse" "--show-toplevel")))
+  (if (= outcome.exit-code 0) (.strip outcome.stdout) None))
+
+
+(defk file-sha256 [path]
+  {:pre [(: path str)] :post [(: % (| str None))]}
+  "path の file の中身の sha256 を読むため(file でなければ None・在る file を読めなければ例外 — 前の本物の read_bytes と同じ)。"
+  (<- stat (StatPath path))
+  (if (and (isinstance stat PathStat) (= stat.kind PathKind.FILE))
+      (do (<- content (ReadBytes path))
+          (when (isinstance content FileFailed)
+            (raise (RuntimeError (.format "{} を読めない: {}" content.path content.detail))))
+          (.hexdigest (hashlib.sha256 content)))
+      None))
+
+
+(defhandler checkout-reads
+  ;; 送り手の手元の checkout の読みを、汎用の子 process(git)と file の effect へ訳す(頭の註)。本物と模擬で同じ 1 つ。
   (ReadCheckout [path remote]
-    (<- head str (git-output path #("rev-parse" "HEAD")))
-    (<- url str (git-output path #("remote" "get-url" remote)))
-    (<- status str (git-output path #("status" "--porcelain" "--untracked-files=no")))
-    (<- containing str (git-output path #("branch" "-r" "--contains" head "--list" (.format "{}/*" remote))))
-    (resume (CheckoutState :head head :url url :dirty (bool status) :on-remote (bool containing))))
+    (<- state CheckoutState (checkout-state-at path remote))
+    (resume state))
   (SenderSourceRoot []
-    (val here (. (Path __file__) (resolve) parent))
-    (val done (subprocess.run ["git" "-C" (str here) "rev-parse" "--show-toplevel"] :capture-output True :text True))
-    (resume (if (= done.returncode 0) (.strip done.stdout) None)))
+    (<- root (| str None) (sender-source-root))
+    (resume root))
   (FileSha256 [path]
-    (val p (Path path))
-    (resume (if (.is-file p) (.hexdigest (hashlib.sha256 (.read-bytes p))) None))))
+    (<- digest (| str None) (file-sha256 path))
+    (resume digest)))

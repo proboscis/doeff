@@ -28,7 +28,9 @@
 (import pathlib [Path])
 (import doeff_cluster.runtime_env_model [RepoCheckout NativeWheel PythonProject RuntimeEnv EnvFailureKind
                                          runtime-env->json env-key current-platform])
-(import doeff_cluster.runtime_env [LocalCheckout ProjectOfCheckout runtime-env-of-checkouts local-checkouts])
+(import doeff_cluster.runtime_env [LocalCheckout ProjectOfCheckout runtime-env-of-checkouts checkout-reads])
+(import doeff_core_effects.os_process [subprocess-handler])
+(import doeff_core_effects.os_file [os-file-handler])
 (import doeff_cluster.env_prepare [ENV-MARKER ROOTS-PTH])
 (import doeff_cluster.handlers [EnvStore ProcessHost task-spec])
 (import doeff_cluster.worker_model [CodeState CodeView StartJob ReapJob Outcome WorldView WorkerPolicy PrepareEnv WarmEnv
@@ -48,11 +50,12 @@
   (<- l1 str (push-commit rig.lib {"native/core/lib.rs" "fn a() {}\n" "native/core/Cargo.toml" "[package]\n"} "lib 1"))
   (.insert sys.path 0 (str rig.app))
   ;; 1 宣言(送り手の組み立て — 本物の git の checkout から)→ 準備 → 実行
-  (<- env-1 RuntimeEnv (local-checkouts (runtime-env-of-checkouts #((LocalCheckout :name "app" :path (str rig.app))
-                                                                    (LocalCheckout :name "lib" :path (str rig.lib)))
-                                                                  (ProjectOfCheckout :repo "app" :path "." :python "3.14"
-                                                                                     :native #((NativeWheel :package "lib-native" :repo "lib" :paths #("native/core"))))
-                                                                  #("app/."))))
+  (<- env-1 RuntimeEnv (subprocess-handler (os-file-handler (checkout-reads
+                         (runtime-env-of-checkouts #((LocalCheckout :name "app" :path (str rig.app))
+                                                     (LocalCheckout :name "lib" :path (str rig.lib)))
+                                                   (ProjectOfCheckout :repo "app" :path "." :python "3.14"
+                                                                      :native #((NativeWheel :package "lib-native" :repo "lib" :paths #("native/core"))))
+                                                   #("app/."))))))
   (<- view-1 (prepare rig env-1))
   (assert (= view-1.state CodeState.READY) view-1)
   (<- outcome-1 (run-task rig env-1 "t1"))

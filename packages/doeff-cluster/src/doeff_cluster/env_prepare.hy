@@ -20,7 +20,7 @@
 ;;;
 ;;; 時計は doeff-time の GetMonotonic(各処理ステージの秒をマーカーと答えに載せる)。
 ;;; 各処理ステージの頭で StageStarted を出す(worker は進みの印で先読みの停滞を見分ける — env_upkeep.prepare-overdue)。
-(require doeff-hy.macros [defk <- val var])
+(require doeff-hy.macros [defk defeffect <- val var])
 (require doeff-hy.record [defenum defrecord])
 (import collections.abc [Callable])
 (import dataclasses [dataclass replace])
@@ -170,9 +170,11 @@
   (#^ (| str None) reuse))
 
 
-(defclass [(dataclass :frozen True)] FileSha256 [EffectBase]
-  "file の中身の sha256(16 進)。答え = str か None(file が無い)。"
-  (#^ str path))
+(defeffect FileSha256
+  "file の中身の sha256(16 進)。答え = str か None(file が無い)。準備(処理ステージ 4)と送り手の宣言の組み立て(runtime_env)が出す。"
+  {:fields [(: path str)]
+   :answer (| str None)
+   :tags {:context "runtime-env" :role "intent"}})
 
 
 (defclass [(dataclass :frozen True)] TreeHash [EffectBase]

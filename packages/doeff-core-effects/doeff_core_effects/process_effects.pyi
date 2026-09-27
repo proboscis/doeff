@@ -1,6 +1,11 @@
 from dataclasses import dataclass
+from enum import StrEnum
 
 from doeff import EffectBase
+
+class EnvMode(StrEnum):
+    REPLACE = "replace"
+    EXTEND = "extend"
 
 @dataclass(frozen=True, kw_only=True)
 class EnvEntry:
@@ -23,6 +28,7 @@ class RunProcess(EffectBase):
     timeout: float | None = None
     cwd: str | None = None
     env: tuple[EnvEntry, ...] | None = None
+    env_mode: EnvMode = EnvMode.REPLACE
     output_path: str | None = None
 
 @dataclass(frozen=True, kw_only=True)

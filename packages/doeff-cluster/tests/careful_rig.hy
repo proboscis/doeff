@@ -15,7 +15,7 @@
 (import pathlib [Path])
 (import doeff_cluster.runtime_env_model [RepoCheckout NativeWheel PythonProject RuntimeEnv EnvFailureKind
                                          runtime-env->json env-key current-platform])
-(import doeff_cluster.runtime_env [LocalCheckout ProjectOfCheckout runtime-env-of-checkouts local-checkouts])
+(import doeff_cluster.runtime_env [LocalCheckout ProjectOfCheckout runtime-env-of-checkouts checkout-reads])
 (import doeff_cluster.env_prepare [ENV-MARKER ROOTS-PTH])
 (import doeff_cluster.handlers [EnvStore ProcessHost task-spec])
 (import doeff_cluster.worker_model [CodeState CodeView StartJob ReapJob Outcome WorldView WorkerPolicy PrepareEnv WarmEnv
