@@ -8,6 +8,13 @@
 (import pathlib [Path])
 
 (import doeff_core_effects.effects [Await HttpRequest HttpResponse slog])
+(import doeff_core_effects.http_effects [HttpFailed])
+
+
+(defn _failure-detail [error]
+  "Name why a request never got a response (the transport error's class and text) for HttpFailed."
+  (setv text (str error))
+  (+ (. (type error) __name__) (if text (+ ": " text) "")))
 
 
 (defn _default-client-factory []
@@ -96,7 +103,9 @@
           response)
       (except [e httpx.RequestError]
         (if (= attempt-index request.max-retries)
-            (raise e)
+            (if request.failures-as-values
+                (HttpFailed :url request.url :detail (_failure-detail e))
+                (raise e))
             (do
               (<- (Await (sleep (_retry-delay-seconds attempt-index))))
               (<- next-response

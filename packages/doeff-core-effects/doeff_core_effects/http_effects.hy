@@ -7,10 +7,13 @@
 (defclass HttpRequest [EffectBase]
   "HTTP request effect: dispatch a generic HTTP call.
 
-   yield HttpRequest(method=\"GET\", url=\"https://...\") -> HttpResponse"
+   yield HttpRequest(method=\"GET\", url=\"https://...\") -> HttpResponse
+
+   failures-as-values = True asks the handler to answer HttpFailed (instead of raising the transport's exception) when no
+   response ever arrived — so a caller can read the failure as a value without importing the transport library."
 
   (defn __init__ [self method url * [headers None] [params None] [body None]
-                  [timeout-seconds 30.0] [max-retries 3] [follow-redirects True]]
+                  [timeout-seconds 30.0] [max-retries 3] [follow-redirects True] [failures-as-values False]]
     (.__init__ (super))
     (setv normalized-method (.upper method))
     (when (not-in normalized-method _HTTP-METHODS)
@@ -25,7 +28,8 @@
           self.body body
           self.timeout-seconds timeout-seconds
           self.max-retries max-retries
-          self.follow-redirects follow-redirects))
+          self.follow-redirects follow-redirects
+          self.failures-as-values failures-as-values))
 
   (defn __repr__ [self]
     (+ "HttpRequest(" self.method " " (repr self.url) ")")))
@@ -55,3 +59,18 @@
     (setv self.status status
           self.url url
           self.body-snippet body-snippet)))
+
+
+(defclass HttpFailed []
+  "No response ever arrived (connection refused, timeout, TLS failure …) — answered instead of raising when the request
+   set failures-as-values. Plain data -- not an effect. url = the request's URL; detail = the transport error's class and text."
+
+  (defn __init__ [self * url detail]
+    (setv self.url url
+          self.detail detail))
+
+  (defn __eq__ [self other]
+    (and (isinstance other HttpFailed) (= self.url other.url) (= self.detail other.detail)))
+
+  (defn __repr__ [self]
+    (+ "HttpFailed(" (repr self.url) ", " (repr self.detail) ")")))
