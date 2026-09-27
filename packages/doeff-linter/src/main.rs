@@ -180,7 +180,12 @@ impl Setup {
                 | ProjectRule::RoleMatchesLayer => self.settings.layers.is_some(),
                 ProjectRule::RawSideEffectDirect | ProjectRule::RawSideEffectVia => self.settings.raw.is_some(),
                 ProjectRule::EnvironmentName => self.settings.environment.is_some(),
-                ProjectRule::ServiceBoundary | ProjectRule::ContextMatchesService => self.settings.services.is_some(),
+                ProjectRule::ServiceBoundary => self.settings.services.is_some(),
+                ProjectRule::ContextMatchesService => self.settings.services.is_some() || self.settings.architecture.is_some(),
+                ProjectRule::UndeclaredPlace
+                | ProjectRule::UndeclaredDirectory
+                | ProjectRule::ServiceDependency
+                | ProjectRule::UnusedDependency => self.settings.architecture.is_some(),
                 ProjectRule::DefnForbidden | ProjectRule::DeffNeedsReason | ProjectRule::DefinitionTagsRequired => {
                     self.settings.definitions.is_some()
                 }
@@ -190,7 +195,7 @@ impl Setup {
 
     /// 層の規則の設定が 1 つでも在るか(無ければ層の規則を走らせない)。
     fn has_project_rules(&self) -> bool {
-        self.settings.layers.is_some() || self.settings.environment.is_some() || self.settings.raw.is_some() || self.settings.services.is_some()
+        self.settings.layers.is_some() || self.settings.architecture.is_some() || self.settings.environment.is_some() || self.settings.raw.is_some() || self.settings.services.is_some()
             || self.settings.definitions.is_some()
     }
 }
@@ -211,9 +216,25 @@ fn prepare(args: &Args) -> Result<Setup, String> {
     let root = root.canonicalize().map_err(|e| format!("repo の根 {} を読めない: {}", root.display(), e))?;
     let config_dir = loaded.as_ref().and_then(|l| l.path.canonicalize().ok()).and_then(|p| p.parent().map(Path::to_path_buf));
     let config = loaded.map(|l| l.config);
-    let mut settings = match &config {
-        Some(config) => config.project_settings().map_err(|problems| format!("設定の誤り:\n  {}", problems.join("\n  ")))?,
-        None => ProjectSettings::default(),
+    // service と層の宣言: 設定の architecture(設定 file の dir から)か、repo の根の architecture.hy。
+    let architecture_path = match config.as_ref().and_then(|c| c.architecture.clone()) {
+        Some(path) => Some(config_dir.clone().unwrap_or_else(|| root.clone()).join(path)),
+        None => Some(root.join("architecture.hy")).filter(|p| p.is_file()),
+    };
+    let architecture = match architecture_path {
+        Some(path) => Some(
+            project::architecture::Architecture::load(&path).map_err(|problems| format!("architecture.hy の誤り:\n  {}", problems.join("\n  ")))?,
+        ),
+        None => None,
+    };
+    let mut settings = match (&config, architecture) {
+        (Some(config), architecture) => {
+            config.project_settings_with(architecture).map_err(|problems| format!("設定の誤り:\n  {}", problems.join("\n  ")))?
+        }
+        (None, Some(architecture)) => config::Config::default()
+            .project_settings_with(Some(architecture))
+            .map_err(|problems| format!("設定の誤り:\n  {}", problems.join("\n  ")))?,
+        (None, None) => ProjectSettings::default(),
     };
     settings.config_dir = config_dir;
     let (enabled_rules, exclude_patterns) = config::merge_config(config.as_ref(), &args.enable, &args.disable, &args.exclude);

@@ -215,6 +215,12 @@ config_files = ["definition-breaches.txt"]
 `eval-and-compile` / `eval-when-compile` の中の defn(マクロの展開の時の関数)は DOEFF110 の外です。既存の破れは登録簿
 (`registry.files` の 1 行 1 鍵・鍵 = `<path>::<規則>::<定義の名>`)に載せると warning になり、新しい破れだけが error になります。
 
+### architecture.hy(service と層の唯一の宣言 — DOEFF114〜117)
+
+repo の一番上の `architecture.hy` に `defarchitecture`(root・層・shared・foundation・legacy)と `defservice`(説明・`:depends-on`・`:layers`)を
+書くと、doeff-linter が実行せずに読みます。在れば層・role・service は ここだけに書き、TOML には規則の入り切りと重さと登録簿を残します。
+形と、Tach・import-linter・Nx・Deptrac との対応は [docs/SPECIFICATION.md](docs/SPECIFICATION.md) の 9 節。
+
 ## エディタ向けの出力(editor-json)
 
 ```bash

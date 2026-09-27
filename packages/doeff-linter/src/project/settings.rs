@@ -446,8 +446,10 @@ pub struct ProjectSettings {
     pub definitions: Option<DefinitionSettings>,
     /// 規則ごとの、登録簿に載った破れの重さ(無ければ warning)。
     pub registered_severity: BTreeMap<ProjectRule, crate::models::Severity>,
-    /// 設定を読んだ file の dir(registry.base = "config" の基準)。
+    /// 設定を読んだ file の dir(registry.config_files の基準)。
     pub config_dir: Option<std::path::PathBuf>,
+    /// repo の一番上の architecture.hy(service と層の唯一の宣言)。在れば層・role は ここから写す。
+    pub architecture: Option<super::architecture::Architecture>,
     pub laws: Vec<LawSpec>,
     pub registry: RegistrySpec,
 }
@@ -476,7 +478,7 @@ fn set_of(values: &[&str]) -> BTreeSet<String> {
 }
 
 /// dir の綴りを揃える(`./` と末尾の `/` を外し、区切りを `/` にする)。
-fn normalize_dir(dir: &str) -> String {
+pub fn normalize_dir(dir: &str) -> String {
     let unified = dir.replace('\\', "/");
     let trimmed = unified.trim_start_matches("./").trim_end_matches('/');
     trimmed.to_string()
@@ -607,6 +609,7 @@ impl ProjectSettings {
                 definitions,
                 registered_severity: BTreeMap::new(),
                 config_dir: None,
+                architecture: None,
                 laws,
                 registry,
             })

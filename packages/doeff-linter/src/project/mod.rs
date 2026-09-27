@@ -6,6 +6,7 @@
 //! 流れ: 母集団の file を集める → file ごとに事実を読む(`facts.rs`)→ 規則ごとに違反の下書きを作る →
 //! law と登録簿の鍵を当てて重さを決める(`finish`)。
 
+pub mod architecture;
 pub mod explain;
 pub mod facts;
 pub mod names;
@@ -140,17 +141,30 @@ pub fn run(root: &Path, settings: &ProjectSettings, enabled: &BTreeSet<ProjectRu
             let hy = whole_hy_index(root, settings, enabled, &raw, &layer_files, &env_files, wants_raw);
             if let Some(layers) = &settings.layers {
                 let index = module_index(&layer_files);
-                let judged: Vec<(Vec<Draft>, Option<ModuleSummary>, Vec<String>)> = layer_files
+                let judged: Vec<LayerJudgement> = layer_files
                     .par_iter()
                     .map(|file| match std::fs::read_to_string(&file.file.path) {
                         Ok(source) => judge_layer_file(file, &source, layers, settings, enabled, &index, hy.get(&file.file.rel)),
-                        Err(error) => (Vec::new(), None, vec![format!("{}: 読めない: {}", file.file.rel, error)]),
+                        Err(error) => LayerJudgement { errors: vec![format!("{}: 読めない: {}", file.file.rel, error)], ..LayerJudgement::default() },
                     })
                     .collect();
-                for (found, summary, errors) in judged {
-                    drafts.extend(found);
-                    report.modules.extend(summary);
-                    report.errors.extend(errors);
+                let mut crossings: BTreeSet<(String, String)> = BTreeSet::new();
+                for judged in judged {
+                    drafts.extend(judged.drafts);
+                    report.modules.extend(judged.summary);
+                    report.errors.extend(judged.errors);
+                    crossings.extend(judged.crossings);
+                }
+                if let Some(architecture) = &settings.architecture {
+                    if enabled.contains(&ProjectRule::UnusedDependency) {
+                        drafts.extend(judge_unused_dependencies(root, architecture, &crossings));
+                    }
+                }
+            }
+            if let (Some(architecture), Some(layers)) = (&settings.architecture, &settings.layers) {
+                if enabled.contains(&ProjectRule::UndeclaredPlace) || enabled.contains(&ProjectRule::UndeclaredDirectory) {
+                    let files = collect_architecture_files(root, architecture, layers);
+                    drafts.extend(judge_places(root, architecture, &files, enabled, PlaceScope::Whole));
                 }
             }
             if let Some(definitions) = &settings.definitions {
@@ -203,10 +217,16 @@ pub fn run(root: &Path, settings: &ProjectSettings, enabled: &BTreeSet<ProjectRu
                     let mut layer_files = collect_layer_files(root, layers);
                     layer_files.push(file.clone());
                     let index = module_index(&layer_files);
-                    let (found, summary, errors) = judge_layer_file(&file, source, layers, settings, enabled, &index, hy_file.as_ref());
-                    drafts.extend(found);
-                    report.modules.extend(summary);
-                    report.errors.extend(errors);
+                    let judged = judge_layer_file(&file, source, layers, settings, enabled, &index, hy_file.as_ref());
+                    drafts.extend(judged.drafts);
+                    report.modules.extend(judged.summary);
+                    report.errors.extend(judged.errors);
+                }
+            }
+            if let (Some(architecture), Some(layers), Some(rel)) = (&settings.architecture, &settings.layers, &rel) {
+                if is_architecture_file(rel, architecture, layers) {
+                    let file = SourceFile { rel: rel.clone(), path: path.clone(), language: language_of(&path).unwrap_or(Language::Hy) };
+                    drafts.extend(judge_places(root, architecture, &[file], enabled, PlaceScope::Single));
                 }
             }
             if let (Some(definitions), Some(rel)) = (&settings.definitions, &rel) {
@@ -382,6 +402,16 @@ fn module_index(files: &[LayerFile]) -> HashMap<String, ModuleSite> {
     files.iter().map(|f| (f.module.clone(), f.site.clone())).collect()
 }
 
+/// 層の module 1 つを判じた結果(違反の下書き・地図の 1 行・読めなかった理由・別の service を読んだ組)。
+#[derive(Default)]
+struct LayerJudgement {
+    drafts: Vec<Draft>,
+    summary: Option<ModuleSummary>,
+    errors: Vec<String>,
+    /// (この file の service, import した先の service) — 宣言したのに使っていない依存(DOEFF117)を見るため。
+    crossings: Vec<(String, String)>,
+}
+
 /// 層の module 1 つを判じる(違反の下書き・地図の 1 行・読めなかった理由)。
 fn judge_layer_file(
     file: &LayerFile,
@@ -391,7 +421,7 @@ fn judge_layer_file(
     enabled: &BTreeSet<ProjectRule>,
     index: &HashMap<String, ModuleSite>,
     hy_file: Option<&HyFileIndex>,
-) -> (Vec<Draft>, Option<ModuleSummary>, Vec<String>) {
+) -> LayerJudgement {
     let facts = read_facts(file.file.language, source, &file.module, &layers.tags);
     let errors = facts.errors.iter().map(|e| format!("{}: {}", file.file.rel, e)).collect();
     let lines = LineIndex::new(source);
@@ -423,6 +453,28 @@ fn judge_layer_file(
     if enabled.contains(&ProjectRule::LayerImportDirection) {
         drafts.extend(judge.import_direction(&facts, index));
     }
+    let mut crossings = Vec::new();
+    if let Some(architecture) = &settings.architecture {
+        let (found, crossed) = judge.service_dependencies(&facts, index, architecture, enabled.contains(&ProjectRule::ServiceDependency));
+        drafts.extend(found);
+        crossings = crossed;
+        if enabled.contains(&ProjectRule::ContextMatchesService) {
+            let declared = judge.placement.service.as_deref().is_some_and(|s| architecture.service_by_dir(s).is_some());
+            let shared = settings::ServiceSettings {
+                shared: architecture.shared.iter().cloned().collect(),
+                guarded: BTreeSet::new(),
+                open: BTreeSet::new(),
+                exceptions: BTreeSet::new(),
+                check_context: true,
+            };
+            if let Some(mut draft) = judge.context_matches_service(&facts, &contexts, &shared) {
+                if declared {
+                    draft.base = Severity::Warning;
+                }
+                drafts.push(draft);
+            }
+        }
+    }
     if let Some(services) = &settings.services {
         if enabled.contains(&ProjectRule::ServiceBoundary) {
             drafts.extend(judge.service_boundary(&facts, index, services));
@@ -451,7 +503,7 @@ fn judge_layer_file(
         service: file.site.service.clone(),
         layer_reason: Some(layer_reason),
     };
-    (drafts, Some(summary), errors)
+    LayerJudgement { drafts, summary: Some(summary), errors, crossings }
 }
 
 /// 層の module 1 つの判定に要る物をまとめた道具。
@@ -680,6 +732,70 @@ impl<'a> LayerJudge<'a> {
             .collect()
     }
 
+    /// DOEFF116: service の依存 — この file の service A が別の service B の module を読む時、B は A の :depends-on に在り、
+    /// 読む先は B の open-layers の層(intent)であること。共有の置き場と foundation は service ではないので見ない。
+    /// 別の service を読んだ組は、宣言したのに使っていない依存(DOEFF117)のために返す。
+    fn service_dependencies(
+        &self,
+        facts: &ModuleFacts,
+        index: &HashMap<String, ModuleSite>,
+        architecture: &architecture::Architecture,
+        judge: bool,
+    ) -> (Vec<Draft>, Vec<(String, String)>) {
+        let Some(own_dir) = self.placement.service.as_deref() else { return (Vec::new(), Vec::new()) };
+        if architecture.shared.as_deref() == Some(own_dir) {
+            return (Vec::new(), Vec::new());
+        }
+        let own = architecture.service_by_dir(own_dir);
+        let own_name = own.map(|s| s.name.clone()).unwrap_or_else(|| own_dir.to_string());
+        let mut first: BTreeMap<&str, ByteSpan> = BTreeMap::new();
+        for import in &facts.imports {
+            first.entry(import.target.as_str()).or_insert(import.span);
+        }
+        let mut drafts = Vec::new();
+        let mut crossings = Vec::new();
+        for (target, span) in first {
+            let Some((_, site)) = resolve_target(target, index) else { continue };
+            let Some(other_dir) = site.service.as_deref() else { continue };
+            if other_dir == own_dir || architecture.shared.as_deref() == Some(other_dir) {
+                continue;
+            }
+            let other_name = architecture.service_by_dir(other_dir).map(|s| s.name.clone()).unwrap_or_else(|| other_dir.to_string());
+            crossings.push((own_name.clone(), other_name.clone()));
+            if !judge {
+                continue;
+            }
+            let declared = own.is_some_and(|s| s.depends_on.contains(&other_name));
+            let open = architecture.open_layers.iter().any(|l| *l == self.layer_name(site.layer));
+            if declared && open {
+                continue;
+            }
+            let depends_on = own.map(|s| s.depends_on.clone()).unwrap_or_default();
+            drafts.push(self.draft(
+                ProjectRule::ServiceDependency,
+                self.range(span),
+                if declared {
+                    format!("{}(service {})が依存先 {} の層 {} の {} を読む — 依存先で読めるのは {} だけ", self.file.file.rel, own_name, other_name, self.layer_name(site.layer), target, architecture.open_layers.join("・"))
+                } else {
+                    format!("{}(service {})が :depends-on に無い service {} の {} を読む", self.file.file.rel, own_name, other_name, target)
+                },
+                Some(target.to_string()),
+                Explain::ServiceDependency {
+                    placement: self.placement.clone(),
+                    own: own_name.clone(),
+                    target: target.to_string(),
+                    target_service: other_name,
+                    target_layer: site.layer,
+                    target_dir: site.dir.clone(),
+                    declared,
+                    depends_on,
+                    open_layers: architecture.open_layers.clone(),
+                },
+            ));
+        }
+        (drafts, crossings)
+    }
+
     /// DOEFF113: タグの :context と dir の service が食い違う(info)。名の `-` と `_` は同じに見る。共有の置き場は見ない。
     fn context_matches_service(&self, facts: &ModuleFacts, contexts: &[String], services: &settings::ServiceSettings) -> Option<Draft> {
         let own = self.placement.service.as_deref()?;
@@ -872,6 +988,168 @@ fn resolve_target<'i, 'x>(target: &'i str, index: &'x HashMap<String, ModuleSite
     }
     let (owner, _) = target.rsplit_once('.')?;
     index.get(owner).map(|site| (owner, site))
+}
+
+// --- architecture.hy の置き場(DOEFF114・115)と使っていない依存(DOEFF117)---------------
+
+/// 全体か 1 file か(DOEFF115 の dir の知らせを、全体では dir ごとに 1 度、1 file ではその file に出す)。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PlaceScope {
+    Whole,
+    Single,
+}
+
+/// root の下の module か(拡張子が層の設定に在り、除く区切りを含まない)。
+fn is_architecture_file(rel: &str, architecture: &architecture::Architecture, layers: &LayerSettings) -> bool {
+    let root = settings::normalize_dir(&architecture.root);
+    let extension_ok = Path::new(rel).extension().and_then(|e| e.to_str()).is_some_and(|e| layers.extensions.contains(e));
+    extension_ok && rel.starts_with(&format!("{}/", root)) && !rel.split('/').any(|part| layers.exclude.contains(part))
+}
+
+/// root の下の module を全部集める(path の順)。
+fn collect_architecture_files(root: &Path, architecture: &architecture::Architecture, layers: &LayerSettings) -> Vec<SourceFile> {
+    let mut files: Vec<SourceFile> = walk_files(&root.join(settings::normalize_dir(&architecture.root)))
+        .into_iter()
+        .filter_map(|path| {
+            let rel = relative_path(root, &path)?;
+            let language = language_of(&path)?;
+            is_architecture_file(&rel, architecture, layers).then_some(SourceFile { rel, path, language })
+        })
+        .collect();
+    files.sort_by(|a, b| a.rel.cmp(&b.rel));
+    files
+}
+
+/// file の置き場の宣言との照らし(宣言どおり・宣言されていない置き場所の file・宣言に無い dir)。
+enum PlaceVerdict {
+    Declared,
+    UndeclaredPlace(explain::PlaceProblem),
+    UndeclaredDirectory { dir: String, problem: explain::DirectoryProblem },
+}
+
+/// file 1 つを宣言に照らす。
+fn place_verdict(rel: &str, architecture: &architecture::Architecture) -> PlaceVerdict {
+    let root = settings::normalize_dir(&architecture.root);
+    if architecture.legacy.iter().any(|l| rel == l.dir || rel.starts_with(&format!("{}/", l.dir))) {
+        return PlaceVerdict::Declared;
+    }
+    let rest = rel.strip_prefix(&format!("{}/", root)).unwrap_or(rel);
+    // package の印(`__init__.py`・`__init__.hy`)は置き場の module ではない。
+    if Path::new(rel).file_stem().is_some_and(|stem| stem == "__init__") {
+        return PlaceVerdict::Declared;
+    }
+    let parts: Vec<&str> = rest.split('/').collect();
+    let service_layers: BTreeSet<&str> =
+        architecture.layers.iter().map(|l| l.name.as_str()).filter(|l| architecture.foundation.as_deref() != Some(*l)).collect();
+    match parts.as_slice() {
+        [_file] => PlaceVerdict::UndeclaredPlace(explain::PlaceProblem::DirectlyUnderRoot),
+        [first, ..] if architecture.foundation.as_deref() == Some(*first) => PlaceVerdict::Declared,
+        [first, _file] if architecture.shared.as_deref() == Some(*first) || architecture.service_by_dir(first).is_some() => {
+            PlaceVerdict::UndeclaredPlace(explain::PlaceProblem::DirectlyUnderService { service: first.to_string() })
+        }
+        [first, second, ..] if architecture.shared.as_deref() == Some(*first) => {
+            if service_layers.contains(second) {
+                PlaceVerdict::Declared
+            } else {
+                PlaceVerdict::UndeclaredDirectory {
+                    dir: format!("{}/{}/{}", root, first, second),
+                    problem: explain::DirectoryProblem::LayerNotDeclared { service: first.to_string(), layer: second.to_string(), declared: service_layers.iter().map(|l| l.to_string()).collect() },
+                }
+            }
+        }
+        [first, second, ..] => match architecture.service_by_dir(first) {
+            Some(service) if service.layers.iter().any(|l| l == second) => PlaceVerdict::Declared,
+            Some(service) => PlaceVerdict::UndeclaredDirectory {
+                dir: format!("{}/{}/{}", root, first, second),
+                problem: explain::DirectoryProblem::LayerNotDeclared { service: service.name.clone(), layer: second.to_string(), declared: service.layers.clone() },
+            },
+            None => PlaceVerdict::UndeclaredDirectory {
+                dir: format!("{}/{}", root, first),
+                problem: explain::DirectoryProblem::ServiceNotDeclared { dir: first.to_string(), services: architecture.services.iter().map(|s| s.name.clone()).collect() },
+            },
+        },
+        [] => PlaceVerdict::Declared,
+    }
+}
+
+/// DOEFF114・115: root の下の module を architecture.hy の宣言に照らす。115 は全体では dir ごとに最初の file に 1 度だけ出す。
+fn judge_places(root: &Path, architecture: &architecture::Architecture, files: &[SourceFile], enabled: &BTreeSet<ProjectRule>, scope: PlaceScope) -> Vec<Draft> {
+    let _ = root;
+    let mut drafts = Vec::new();
+    let mut reported_dirs = BTreeSet::new();
+    for file in files {
+        let draft = |rule: ProjectRule, range: Range, message: String, detail: Option<String>, explain: Explain, rel: String| Draft {
+            rule,
+            layer: None,
+            rel,
+            path: file.path.clone(),
+            range,
+            message,
+            detail,
+            base: Severity::Error,
+            explain,
+        };
+        match place_verdict(&file.rel, architecture) {
+            PlaceVerdict::Declared => {}
+            PlaceVerdict::UndeclaredPlace(problem) => {
+                if enabled.contains(&ProjectRule::UndeclaredPlace) {
+                    drafts.push(draft(
+                        ProjectRule::UndeclaredPlace,
+                        zero_range(),
+                        format!("{} は宣言されていない置き場所に在る", file.rel),
+                        None,
+                        Explain::UndeclaredPlace { rel: file.rel.clone(), problem, root: architecture.root.clone() },
+                        file.rel.clone(),
+                    ));
+                }
+            }
+            PlaceVerdict::UndeclaredDirectory { dir, problem } => {
+                let first_in_dir = scope == PlaceScope::Single || reported_dirs.insert(dir.clone());
+                if enabled.contains(&ProjectRule::UndeclaredDirectory) && first_in_dir {
+                    drafts.push(draft(
+                        ProjectRule::UndeclaredDirectory,
+                        zero_range(),
+                        format!("dir {} は architecture.hy に宣言されていない", dir),
+                        None,
+                        Explain::UndeclaredDirectory { dir: dir.clone(), problem },
+                        dir,
+                    ));
+                }
+            }
+        }
+    }
+    drafts
+}
+
+/// file の頭の長さ 0 の範囲(置き場の違反は file まるごとに掛かる)。
+fn zero_range() -> Range {
+    let start = Position { line: 0, character: 0 };
+    Range { start, end: start }
+}
+
+/// DOEFF117(info): 宣言した依存を、その service のどの module も読んでいない。位置は architecture.hy の defservice の名。
+fn judge_unused_dependencies(root: &Path, architecture: &architecture::Architecture, crossings: &BTreeSet<(String, String)>) -> Vec<Draft> {
+    let rel = relative_path(root, &architecture.path).unwrap_or_else(|| architecture.path.to_string_lossy().into_owned());
+    let mut drafts = Vec::new();
+    for service in &architecture.services {
+        for dependency in &service.depends_on {
+            if crossings.contains(&(service.name.clone(), dependency.clone())) {
+                continue;
+            }
+            drafts.push(Draft {
+                rule: ProjectRule::UnusedDependency,
+                layer: None,
+                rel: rel.clone(),
+                path: architecture.path.clone(),
+                range: service.range,
+                message: format!("service {} の :depends-on の {} を、{} のどの module も読んでいない", service.name, dependency, service.name),
+                detail: Some(format!("{}>{}", service.name, dependency)),
+                base: Severity::Info,
+                explain: Explain::UnusedDependency { service: service.name.clone(), dependency: dependency.clone() },
+            });
+        }
+    }
+    drafts
 }
 
 // --- 定義の書き方(DOEFF110〜112)------------------------------------------------------

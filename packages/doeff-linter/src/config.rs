@@ -7,6 +7,7 @@ use crate::project::settings::{
     RolesSection, ServicesSection, TagsSection, DefinitionsSection,
 };
 use crate::models::Severity;
+use crate::project::architecture::Architecture;
 use crate::project::rule::ProjectRule;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -75,11 +76,49 @@ pub struct Config {
     /// 定義の書き方の規則(DOEFF110 defn の禁止・111 deff の理由・112 タグ必須)の母集団 — `[tool.doeff-linter.definitions]`
     #[serde(default)]
     pub definitions: Option<DefinitionsSection>,
+
+    /// service と層の宣言 architecture.hy の path(設定 file の dir からの相対)。書かなければ repo の根の architecture.hy を探す。
+    #[serde(default)]
+    pub architecture: Option<String>,
 }
 
 impl Config {
     /// 層の規則の節を検めて、規則が読む形にする(名前の食い違いは理由の文の列)。
     pub fn project_settings(&self) -> Result<ProjectSettings, Vec<String>> {
+        self.project_settings_with(None)
+    }
+
+    /// 層の規則の設定を作る。architecture.hy が在れば、層・role は そこから写し、TOML の layers・roles・services は置けない
+    /// (宣言を 1 か所にするため)。
+    pub fn project_settings_with(&self, architecture: Option<Architecture>) -> Result<ProjectSettings, Vec<String>> {
+        let mut settings = match &architecture {
+            None => self.project_settings_toml()?,
+            Some(arch) => {
+                let mut clashes = Vec::new();
+                for (name, present) in [("layers", self.layers.is_some()), ("roles", self.roles.is_some()), ("services", self.services.is_some())] {
+                    if present {
+                        clashes.push(format!(
+                            "[tool.doeff-linter.{}] は {} と二重の宣言 — 層・role・service は architecture.hy だけに書く",
+                            name,
+                            arch.path.display()
+                        ));
+                    }
+                }
+                if !clashes.is_empty() {
+                    return Err(clashes);
+                }
+                let mut with_arch = self.clone();
+                with_arch.layers = Some(arch.layers_section());
+                with_arch.roles = Some(arch.roles_section());
+                with_arch.project_settings_toml()?
+            }
+        };
+        settings.architecture = architecture;
+        Ok(settings)
+    }
+
+    /// TOML の節から層の規則の設定を作る(規則ごとの重さも読む)。
+    fn project_settings_toml(&self) -> Result<ProjectSettings, Vec<String>> {
         let mut problems = Vec::new();
         let mut registered_severity = std::collections::BTreeMap::new();
         for (id, rule) in &self.rules {
@@ -233,7 +272,7 @@ pub fn load_config(path: Option<&Path>) -> Option<Config> {
 /// `[tool.doeff-linter]` の直下に書ける欄の名(Config の欄と同じ綴り)。
 const KNOWN_KEYS: &[&str] = &[
     "enable", "disable", "exclude", "rules", "git", "log_file", "layers", "tags", "roles", "environment_names", "raw_side_effects",
-    "laws", "registry", "services", "definitions",
+    "laws", "registry", "services", "definitions", "architecture",
 ];
 
 /// 見つけた設定 file と、その中の `[tool.doeff-linter]` の節。
