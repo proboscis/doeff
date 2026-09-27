@@ -170,10 +170,35 @@
   (#^ dict programs))
 
 
-(deff system-declaration [#^ System system #^ str revision #^ (| RuntimeEnv None) [runtime-env None]]  ; defk にできない: declare の CLI が呼ぶ
-  {:pre [(: system System) (: revision str)] :post [(: % Declaration)] :tags {:context "doeff-cluster" :role "entry"}}
+(deff environ-overlay-refusal [#^ System system #^ dict environ]  ; defk にできない: 宣言の値を作る時(declare の CLI・sim-cluster の宣言)に呼ぶ純粋な判断
+  {:pre [(: system System) (: environ dict)] :post [(: % (| str None))] :tags {:context "doeff-cluster" :role "judgment"}}
+  "job ごとの environ の上書き(job 名 → {名: 文字列})を検め、断る理由の文を返す(無ければ None)。系に無い job・宣言の :environ に
+   無い名・文字列でない値は断る — 上書きは宣言に書いた名の値だけを変え、黙って名を足さない(本番の declare と sim-cluster が同じ規則)。"
+  (setv declared (dfor j system.jobs j.name (sfor v j.environ v.name)))
+  (for [#(name given) (.items environ)]
+    (when (not-in name declared)
+      (return (.format "environ の上書きの job {!r} は系 {} に無い(在るのは {})" name system.name (sorted declared))))
+    (when (not (isinstance given dict))
+      (return (.format "environ の上書き {!r} は名 → 文字列の dict: {!r}" name given)))
+    (setv unknown (sorted (gfor k given :if (not-in k (get declared name)) k)))
+    (when unknown
+      (return (.format "job {} の environ の上書き {} は宣言の :environ に無い名 — 宣言に書いた名だけを上書きする" name unknown)))
+    (setv wrong (sorted (gfor #(k v) (.items given) :if (not (isinstance v str)) k)))
+    (when wrong
+      (return (.format "job {} の environ の上書き {} の値は文字列(本番の環境変数と同じ型)" name wrong))))
+  None)
+
+
+(deff system-declaration [#^ System system #^ str revision #^ (| RuntimeEnv None) [runtime-env None] #^ (| dict None) [environ None]]  ; defk にできない: declare の CLI が呼ぶ
+  {:pre [(: system System) (: revision str) (: environ (| dict None))] :post [(: % Declaration)] :tags {:context "doeff-cluster" :role "entry"}}
   "系 → coordinator へ渡す宣言(改訂 1 の A・F・G)。job ごとに Program を詰めて sha を鍵に programs へ、行は sha と identity・
-   versions・describe・environ を持つ。runtime-env の env-vars と :environ で同じ名が在れば断る(子の環境変数の足し口を 1 つにする)。"
+   versions・describe・environ を持つ。runtime-env の env-vars と :environ で同じ名が在れば断る(子の環境変数の足し口を 1 つにする)。
+   environ = job ごとの environ の上書き(配る先ごとの値 — 口の URL・下限の刻など。宣言の :environ に重ね、規則は environ-overlay-refusal。
+   spec-hash に入るので、上書きを変えると入れ替わる)。"
+  (setv overlay (or environ {})
+        refusal (environ-overlay-refusal system overlay))
+  (when (is-not refusal None)
+    (raise (ValueError refusal)))
   (setv versions (current-versions)
         env-json (if (is runtime-env None) None (run (runtime-env->json runtime-env)))
         declared-vars (if (is runtime-env None) #() (sfor v runtime-env.env-vars v.name))
@@ -193,7 +218,7 @@
                  "needs" (sorted j.needs)
                  "run" {"kind" "service" "program" sha "identity" identity "versions" versions
                         "describe" (describe-identity identity)}
-                 "environ" (dfor v j.environ v.name v.value)}
+                 "environ" (| (dfor v j.environ v.name v.value) (.get overlay j.name {}))}
                 (if j.readiness {"readiness" (dict j.readiness)} {})
                 (if (= j.update "recreate") {} {"update" j.update})
                 (if (is env-json None) {} {"runtimeEnv" env-json}))))
