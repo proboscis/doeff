@@ -8,6 +8,8 @@
 ;;; 版を検め、詰めた Program を解き、(run program) するだけ。scheduler・時計・記録係・業務の handler は Program が自分の
 ;;; with-handlers で並べる。答えの無い effect はその場で上がり、process は 0 以外で終わる(worker が理由つきで起こし直す)。
 ;;; 宿(この入口と worker)が Program に提供するのは host_contract.HOST-CONTRACT の 3 つだけ(run-context・environ・Program の path)。
+;;; 手元の sim-cluster(local.hy)の偽の宿は、この入口と同じく何も足さず、加えて柵(host_contract.SIM-PASSABLE の表の外の effect を
+;;; 本番と同じ未処理の例外にする)で Program を包む — 本番の子で答えの無い effect が sim だけで通ることを防ぐ。
 ;;;
 ;;; Program の file = worker が coordinator の /programs/<sha> から取った JSON {"blob" 詰めた文字列 "versions" 詰めた送り手の版}。
 ;;; service と task は同じ file を同じ read-program で読む(運び方を分けない — R3b)。--identity は service の宣言の同一性の指紋

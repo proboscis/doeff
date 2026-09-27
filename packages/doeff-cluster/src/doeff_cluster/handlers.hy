@@ -20,7 +20,7 @@
 (import .semaphore_model [SEMAPHORE-PREFIX drop-holders])
 (import .worker_policy [kept-when-cut-off])
 (import .worker_model [JobSpec CodeState CodeView ProcessView WorldView StopStage ProbeState ProbeView
-  DesiredJobs DesiredUnreadable ReadDesired ObserveWorld WorkerStopRequested PublishStatus JobPhase EnvDisk WarmEnv
+  DesiredJobs DesiredUnreadable ReadDesired ObserveWorld WorkerStopRequested PublishStatus JobPhase JobStatus EnvDisk WarmEnv
   PrepareCode PrepareEnv SweepEnvs ForgetProbes StartJob SignalJob ReapJob RetireJob ReleaseLeases ProbeEntry spec-hash split-code-key probe-args probe-refusal CodeLayout
   ENV-KEY-PREFIX])
 
@@ -1010,23 +1010,19 @@
 
   (defn #^ list report [self #^ tuple statuses]
     "状態の報告。終わった task には結果の file の中身(無ければ None = 結果なし)を添える。切り離した task には置かれた時の返事の行
-     (blob を除く — 欄 task)を添える。"
-    (lfor s statuses
-      :setv row (status-row s)
-      :setv echo (if (.startswith s.name "task/") (.get self.task-echo (cut s.name 5 None)) None)
-      :setv row (if (is echo None) row (| row {"task" echo}))
-      (if (and (.startswith s.name "task/") (= s.phase JobPhase.FINISHED))
-          (do (setv result (/ self.task-dir (+ (cut s.name 5 None) ".result")))
-              (| row {"result" (if (.exists result) (.read-text result :encoding "ascii") None)}))
-          row)))
+     (blob を除く — 欄 task)を添える(形は status-report — sim の宿と同じ関数)。"
+    (status-report statuses self.task-echo
+                   (dfor s statuses
+                         :if (finished-task-id s)
+                         :setv result (/ self.task-dir (+ (finished-task-id s) ".result"))
+                         (finished-task-id s) (if (.exists result) (.read-text result :encoding "ascii") None))))
 
   (defn poll [self]
     (try
       (setv response (.request self.endpoint "POST" "/heartbeat"
-        :json (| {"name" self.name "provides" (list self.provides) "exclusive" (list self.exclusive) "node" self.node "capacity" self.capacity "versions" self.versions
-                  "statuses" self.statuses "endpoint" self.endpoint.url "boot" self.boot "bootAt" self.boot-at
-                  "format" PROTOCOL-FORMAT
-                  "tools" self.tools}
+        :json (| (heartbeat-body :name self.name :provides self.provides :exclusive self.exclusive :node self.node
+                                 :capacity self.capacity :versions self.versions :statuses self.statuses
+                                 :endpoint self.endpoint.url :boot self.boot :boot-at self.boot-at :tools self.tools)
                  (.env-body self))))
       (.raise-for-status response)
       (setv self.last-ok (time.monotonic))
@@ -1042,13 +1038,51 @@
       (setv self.last-warm (.accept-warm self (.get body "warm" [])))
       (DesiredJobs (+ self.last-jobs self.last-tasks) :warm self.last-warm)
       (except [error Exception]
-        (setv silent-ms (int (* 1000 (- (time.monotonic) self.last-ok))))
-        ;; 連絡が fence を超えて途絶えたら、lease を持たない job と task を止める(coordinator は後で他へ移す)。書き手(入れ替えを
-        ;; 宣言した job)と切り離した task は動かし続ける — 書きは lease の柵だけが守り、切り離した task の lease はこの worker の
-        ;; heartbeat が延ばす(worker_policy.kept-when-cut-off・2026-09-25)。
-        (if (> silent-ms self.fence-ms)
-          (DesiredJobs (kept-when-cut-off (+ self.last-jobs self.last-tasks)) :warm self.last-warm)
-          (DesiredUnreadable f"coordinator に届かない({silent-ms} ms): {(repr error)}"))))))
+        (desired-when-unreachable (int (* 1000 (- (time.monotonic) self.last-ok))) self.fence-ms
+                                  (+ self.last-jobs self.last-tasks) self.last-warm (repr error))))))
+
+
+;; --- heartbeat の形(本番の CoordinatorLink と手元の sim-cluster の偽の宿 local.hy が同じ関数を使う — 本文を写さない)-------------
+
+(deff heartbeat-body [* #^ str name #^ tuple provides #^ tuple exclusive #^ str node #^ int capacity #^ dict versions
+                      #^ list statuses #^ str endpoint #^ str boot #^ int boot-at #^ dict tools]  ; defk にできない: worker の I/O の道具(CoordinatorLink)と sim の宿が同じ形を作る純粋な判断
+  {:pre [(: name str) (: provides tuple) (: capacity int) (: statuses list) (: boot str)] :post [(: % dict)]
+   :tags {:context "doeff-cluster" :role "protocol"}}
+  "POST /heartbeat の本文(生存・能力・版・状態の報告・世代)を作るため。実行環境の root の名乗り(env-body)は本番の worker だけが足す。"
+  {"name" name "provides" (list provides) "exclusive" (list exclusive) "node" node "capacity" capacity "versions" versions
+   "statuses" statuses "endpoint" endpoint "boot" boot "bootAt" boot-at
+   "format" PROTOCOL-FORMAT
+   "tools" tools})
+
+
+(deff finished-task-id [s]  ; defk にできない: worker の I/O の道具(CoordinatorLink)と sim の宿が状態の行を読む純粋な判断
+  {:pre [(: s JobStatus)] :post [(: % (| str None))] :tags {:context "doeff-cluster" :role "judgment"}}
+  "終わった task の状態の行なら task の id(結果を添える相手)、それ以外は None — 結果の file を読む・世界の結果を引く所を 1 つにするため。"
+  (if (and (.startswith s.name "task/") (= s.phase JobPhase.FINISHED)) (cut s.name 5 None) None))
+
+
+(deff status-report [#^ tuple statuses #^ dict task-echo #^ dict results]  ; defk にできない: worker の I/O の道具(CoordinatorLink)と sim の宿が同じ形を作る純粋な判断
+  {:pre [(: statuses tuple) (: task-echo dict) (: results dict)] :post [(: % list)] :tags {:context "doeff-cluster" :role "protocol"}}
+  "状態の行の列を heartbeat の statuses にするため。終わった task には結果(results の task の id → 詰めた結果の文字列 か None =
+   結果なし)を、切り離した task には置かれた時の返事の行(task-echo の id → 行 — 欄 task)を添える。"
+  (lfor s statuses
+    :setv row (status-row s)
+    :setv echo (if (.startswith s.name "task/") (.get task-echo (cut s.name 5 None)) None)
+    :setv row (if (is echo None) row (| row {"task" echo}))
+    :setv done (finished-task-id s)
+    (if (is done None) row (| row {"result" (.get results done)}))))
+
+
+(deff desired-when-unreachable [#^ int silent-ms #^ int fence-ms #^ tuple last #^ tuple warm #^ str reason]  ; defk にできない: worker の I/O の道具(CoordinatorLink)と sim の宿が同じ判断を使う
+  {:pre [(: silent-ms int) (: fence-ms int) (: last tuple) (: warm tuple) (: reason str)] :post [(: % (| DesiredJobs DesiredUnreadable))]
+   :tags {:context "doeff-cluster" :role "judgment"}}
+  "coordinator に届かなかった拍の宣言を決めるため。連絡が fence を超えて途絶えたら、lease を持たない job と task を止める(coordinator は
+   後で他へ移す)。書き手(入れ替えを宣言した job)と切り離した task は動かし続ける — 書きは lease の柵だけが守り、切り離した task の
+   lease はこの worker の heartbeat が延ばす(worker_policy.kept-when-cut-off・2026-09-25)。fence の内なら「読めない」(直前の宣言を
+   使い続ける)。"
+  (if (> silent-ms fence-ms)
+      (DesiredJobs (kept-when-cut-off last) :warm warm)
+      (DesiredUnreadable f"coordinator に届かない({silent-ms} ms): {reason}")))
 
 (defn #^ None write-ready-file [#^ (| str None) path #^ bool draining]
   "readinessProbe が sh で読む file(2026-09-25)へ、heartbeat が届いた拍ごとに「ready」か「draining」を書く(mtime = 最後に届いた時刻)。
