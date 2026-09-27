@@ -20,8 +20,8 @@ function lintCommandFor(root: string): string {
   return typeof value === 'string' ? value : '';
 }
 
-/** linter の波線・「違反(linter)」・「層の地図(linter)」を登録し、linter に聞き始める。 */
-export function registerLint(context: vscode.ExtensionContext, output: vscode.OutputChannel): void {
+/** (結果の置き場を返す — 「タグで閲覧」が読む)linter の波線・「違反(linter)」・「層の地図(linter)」を登録し、linter に聞き始める。 */
+export function registerLint(context: vscode.ExtensionContext, output: vscode.OutputChannel): LintStore {
   const store = new LintStore();
   const linter = new ChildProcessLinter(lintCommandFor, LINT_TIMEOUT_MS);
   const diagnostics = vscode.languages.createDiagnosticCollection('doeff-linter');
@@ -71,4 +71,5 @@ export function registerLint(context: vscode.ExtensionContext, output: vscode.Ou
   );
   decorations.start();
   service.start();
+  return store;
 }

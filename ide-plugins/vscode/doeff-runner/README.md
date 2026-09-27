@@ -72,6 +72,16 @@ The extension bundles `doeff-indexer` binaries for common platforms (macOS, Linu
   - 上の `$(law)` で「規則の一覧」に切り替えます。針のつながっていない規則は灰色で、linter がまだ見ていない物です。
 - **「層の地図(linter)」パネル**: linter の `modules` の層(core・intent・protocol・foundation・entry・層の外)→ dir → file の木です。色は違反の有無だけで付けます。
 
+### タグで閲覧
+
+定義(hy-index の definitions)を軸で並べ替えて見るパネルです。判定はせず、軸の値は hy-index と linter の出力を読むだけです。
+
+- **軸**: service・層(linter の modules)、context・role(定義の `:tags` → 無ければ linter が読んだ module の頭の MODULE-TAGS)、`:tags` に書いた任意の鍵(`:owner` を書けば owner の軸が出る)、kind、生の副作用の分類(hy-index の `raw.direct`)、違反の規則(linter の違反で範囲が定義に入る物)。
+  - 値が無い時は「(不明)」か「なし」です。複数の値を持つ定義(生の副作用の分類など)は、各値の下に出ます。
+- **並べ方**: view の上のボタンで、軸の順を 1〜3 段選びます。各段の項目には件数と違反の数が出ます。末端は定義で、押すとその範囲を選んで移動します。
+- **絞り込み**: 軸 = 値 の条件を AND で足します(値は件数つきで複数選べます)。今の条件は view の説明欄に出ます。解除のボタンもあります。
+- **保存した見方**: 並べ方と絞り込みに名前を付けて、設定 `doeff-runner.hy.browseViews` に保存します(workspace の設定に置けば repo で共有できます)。同梱の見方は「service ▸ 層」「層 ▸ service」「生の副作用 ▸ service」の 3 つです。
+
 ### 層を見分ける表示(linter の layers から)
 
 層とその説明、違反の理由は、すべて linter(doeff-linter の editor-json)が出します。拡張は文を持ちません。

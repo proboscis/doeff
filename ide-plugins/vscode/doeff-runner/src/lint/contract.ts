@@ -64,6 +64,8 @@ export interface LintModule {
   readonly path: string;
   /** 層(core・intent・protocol・foundation・entry …)。層の外なら null */
   readonly layer: string | null;
+  /** service(dir の service の段・更新 3 の後の追加。古い linter の出力には無く null) */
+  readonly service: string | null;
   readonly context: string | null;
   readonly role: string | null;
   readonly violations: number;
@@ -252,6 +254,7 @@ function lintModule(value: unknown, where: string): LintModule {
   return {
     path: str(obj, 'path', where),
     layer: strOrNull(obj, 'layer', where),
+    service: optional(obj, 'service', where, textOrNull),
     context: strOrNull(obj, 'context', where),
     role: strOrNull(obj, 'role', where),
     violations: nat(obj, 'violations', where),
