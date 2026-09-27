@@ -840,6 +840,9 @@ dependencies = [
 http-server = [
     { name = "aiohttp" },
 ]
+postgres = [
+    { name = "psycopg" },
+]
 
 [package.metadata]
 requires-dist = [
@@ -848,8 +851,9 @@ requires-dist = [
     { name = "doeff-hy", editable = "packages/doeff-hy" },
     { name = "frozendict", specifier = ">=2.4.0" },
     { name = "httpx", specifier = ">=0.27.0" },
+    { name = "psycopg", marker = "extra == 'postgres'", specifier = ">=3.1" },
 ]
-provides-extras = ["http-server"]
+provides-extras = ["http-server", "postgres"]
 
 [[package]]
 name = "doeff-docker"
