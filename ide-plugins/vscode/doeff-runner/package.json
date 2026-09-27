@@ -519,6 +519,11 @@
           ],
           "default": "warning",
           "markdownDescription": "linter の違反のうち、行末の短い文と行の左端の印に出す最小の重さ(既定 warning = error と warning だけ)。波線と問題の一覧は全部出す。"
+        },
+        "doeff-runner.hy.semanticOnSave": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "保存した時に、そのファイルの未判定の定義だけを Jev に問う(doeff-linter の `--semantic <file>` を決定的な実行の後に背景で 1 本・時間切れ 30 秒)。編集中の再判定では問わない。Jev のキーが無ければ一度だけ知らせて、その session では問わない。"
         }
       }
     },

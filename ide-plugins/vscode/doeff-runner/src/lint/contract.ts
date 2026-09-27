@@ -38,6 +38,31 @@ export interface LintViolation {
   readonly registered: boolean;
   /** これは何か・なぜ違反か・law の :statement(更新 3。古い linter の出力には無く null) */
   readonly explanation: LintExplanation | null;
+  /** 出どころ(更新 5。古い linter の出力には無く、その時は決定的な規則 = linter とみなす) */
+  readonly source: LintSource;
+  /** Jev の判定の確率(Jev の違反だけ。他は null) */
+  readonly probability: number | null;
+}
+
+/** 違反の出どころ(更新 5)— 決定的な規則か、Jev の意味の判定か。 */
+export const LINT_SOURCES = ['linter', 'jev'] as const;
+export type LintSource = (typeof LINT_SOURCES)[number];
+
+/** 較正の見張りの結果(更新 5)。 */
+export const LINT_CALIBRATIONS = ['not-run', 'ok', 'drifted', 'failed'] as const;
+export type LintCalibration = (typeof LINT_CALIBRATIONS)[number];
+
+/** 意味の規則の要約(更新 5)— unjudged は cache に答えの無い定義の数(未判定 — 合格ではない)。 */
+export interface LintSemantic {
+  readonly model: string;
+  readonly wire: string;
+  readonly judged: number;
+  readonly unjudged: number;
+  readonly asked: number;
+  readonly costUsd: number;
+  readonly inputTokens: number;
+  readonly servedModel: string | null;
+  readonly calibration: LintCalibration;
 }
 
 /** 違反の説明(更新 3)— 文は linter が作る。 */
@@ -91,6 +116,8 @@ export interface LintReport {
   readonly rules: readonly LintRule[];
   /** 層の説明(更新 3。古い linter の出力には無く []。並びは linter の層の順) */
   readonly layers: readonly LintLayer[];
+  /** 意味の規則の要約(更新 5。設定が無い・古い linter なら null) */
+  readonly semantic: LintSemantic | null;
   /** linter 自身が読めなかった file など */
   readonly errors: readonly string[];
 }
@@ -218,6 +245,48 @@ function explanation(value: unknown, where: string): LintExplanation {
   };
 }
 
+/** 閉じた集合の文字列を検める。 */
+function closed<T extends string>(value: unknown, where: string, allowed: readonly T[]): T {
+  const found = allowed.find((a) => a === value);
+  if (found === undefined) {
+    throw new LintContractViolation(`${where}: 契約に無い値 ${JSON.stringify(value)}`);
+  }
+  return found;
+}
+
+/** 確率(0〜1 の数)を検める。 */
+function probability(value: unknown, where: string): number {
+  if (typeof value !== 'number' || !(value >= 0 && value <= 1)) {
+    throw new LintContractViolation(`${where}: 0〜1 の数でない`);
+  }
+  return value;
+}
+
+/** 0 以上の数(費用)を検める。 */
+function nonNegative(obj: JsonObject, key: string, where: string): number {
+  const value = field(obj, key, where);
+  if (typeof value !== 'number' || !(value >= 0)) {
+    throw new LintContractViolation(`${where}.${key}: 0 以上の数でない`);
+  }
+  return value;
+}
+
+/** 意味の規則の要約を検める。 */
+function semanticSummary(value: unknown, where: string): LintSemantic {
+  const obj = asObject(value, where);
+  return {
+    model: str(obj, 'model', where),
+    wire: str(obj, 'wire', where),
+    judged: nat(obj, 'judged', where),
+    unjudged: nat(obj, 'unjudged', where),
+    asked: nat(obj, 'asked', where),
+    costUsd: nonNegative(obj, 'cost_usd', where),
+    inputTokens: nat(obj, 'input_tokens', where),
+    servedModel: strOrNull(obj, 'served_model', where),
+    calibration: closed(field(obj, 'calibration', where), `${where}.calibration`, LINT_CALIBRATIONS)
+  };
+}
+
 /** 層の説明 1 件を検める。 */
 function lintLayer(value: unknown, where: string): LintLayer {
   const obj = asObject(value, where);
@@ -244,7 +313,9 @@ function violation(value: unknown, where: string): LintViolation {
     hint: strOrNull(obj, 'hint', where),
     key: strOrNull(obj, 'key', where),
     registered: bool(obj, 'registered', where),
-    explanation: optional(obj, 'explanation', where, explanation)
+    explanation: optional(obj, 'explanation', where, explanation),
+    source: optional(obj, 'source', where, (v, at) => closed(v, at, LINT_SOURCES)) ?? 'linter',
+    probability: optional(obj, 'probability', where, probability)
   };
 }
 
@@ -304,6 +375,7 @@ export function parseLintJson(stdout: string): LintParseResult {
         modules: list(obj, 'modules', '$', lintModule),
         rules: list(obj, 'rules', '$', lintRule),
         layers: Object.prototype.hasOwnProperty.call(obj, 'layers') ? list(obj, 'layers', '$', lintLayer) : [],
+        semantic: optional(obj, 'semantic', '$', semanticSummary),
         errors: list(obj, 'errors', '$', text)
       }
     };
