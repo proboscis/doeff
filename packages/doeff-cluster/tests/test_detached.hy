@@ -419,6 +419,8 @@
 
 (import doeff_cluster.durable_kv [full-kv state-from-kv])
 (import doeff_cluster.cluster_policy [state-to-json state-from-json])
+(import doeff_cluster.coordinator [load-state])
+(import doeff_cluster.wal_store [WalStore])
 (import doeff_cluster.worker_model [JobSpec])
 (import doeff_cluster.worker_policy [kept-when-cut-off])
 (import doeff_cluster.handlers [task-spec])
@@ -428,8 +430,8 @@
 (defn call [state method path now [body None]]
   (respond state (Request method path {} body :actor "test") now T))
 
-(defn beat [state name now [boot "b1"] [statuses None] [boot-at None]]
-  (call state "POST" "/heartbeat" now (| {"name" name "labels" {} "capacity" 10 "versions" V "boot" boot
+(defn beat [state name now [boot "b1"] [statuses None] [boot-at None] [labels None]]
+  (call state "POST" "/heartbeat" now (| {"name" name "labels" (or labels {}) "capacity" 10 "versions" V "boot" boot
                                           "statuses" (or statuses [])}
                                          (if (is boot-at None) {} {"bootAt" boot-at}))))
 
@@ -437,7 +439,8 @@
   (call state "PUT" (+ "/detached/" key) now {"env" "m:e" "blob" "B" "versions" V "revision" "r" "requires" {}
                                               "leaseSeconds" lease "retainSeconds" retain}))
 
-(defn phase-of [state key] (get (get (call state "GET" (+ "/detached/" key) 0) 2) "phase"))
+;; 読みの時刻は coordinator が起きてからの猶予(lease-ms)の後(猶予の内の知らない key は warming — detached_policy.detached-read)。
+(defn phase-of [state key] (get (get (call state "GET" (+ "/detached/" key) (+ state.started-ms T.lease-ms)) 2) "phase"))
 
 
 (deftest test-detached-task-goes-to-the-worker-with-its-boot-and-a-detached-flag
@@ -655,13 +658,90 @@
   (assert (= (get body "tasks") []) body))
 
 
+;; 直すべき所(構成レビュー 2026-09-27): 起きた直後の読み・requires・終わった報告・id の振り直し・欠けた写し。
+
+(defn #^ tuple placed-echo [#^ Path tmp-path #^ dict [requires None]]
+  "もとの coordinator が task を置き、worker が受けて状態の報告に写しを添えるまで。返り値 #(もとの状態 id 報告を作る link 元の spec)。"
+  (setv labels (or requires {}))
+  (setv #(s _ _) (beat (ClusterState) "w" 0 :boot-at 1000 :labels labels))
+  (setv #(s _ reply) (call s "PUT" "/detached/job-e" 0 {"env" "m:e" "blob" "B" "versions" V "revision" "r" "requires" labels
+                                                        "leaseSeconds" 10.0 "retainSeconds" 100.0}))
+  (setv id (get reply "task"))
+  (setv #(s _ body) (beat s "w" 100 :boot-at 1000 :labels labels))
+  (setv link (CoordinatorLink "http://127.0.0.1:9" "w" {} 10 60000 :task-dir (str (/ tmp-path "tasks"))))
+  (setv #(spec) (.accept-tasks link (get body "tasks")))
+  #(s id link spec))
+
+
+(deftest test-a-just-started-coordinator-does-not-call-a-key-unknown-before-the-workers-report [tmp-path]
+  (setv #(_ id link _) (placed-echo tmp-path))
+  (setv rows (.report link #((JobStatus (+ "task/" id) JobPhase.RUNNING "r" "r" 42 1))))
+  (setv fresh (ClusterState :started-ms 5000))
+  ;; worker の最初の heartbeat より先に呼び手の読みが届く: 知らないと言わない(503・warming)。
+  (setv #(fresh status view) (call fresh "GET" "/detached/job-e" 5000))
+  (assert (= #(status (get view "phase")) #(503 "warming")) #(status view))
+  (setv #(fresh _ _) (beat fresh "w" 5100 :boot-at 1000 :statuses rows))
+  (setv #(fresh status view) (call fresh "GET" "/detached/job-e" 5200))
+  (assert (= #(status (get view "phase") (get view "task")) #(200 "assigned" id)) view)
+  ;; 猶予(lease-ms)を過ぎた後の本当に知らない key は unknown。
+  (setv #(_ status view) (call fresh "GET" "/detached/never" (+ 5000 T.lease-ms)))
+  (assert (= #(status (get view "phase")) #(200 "unknown")) view))
+
+
+(deftest test-an-adopted-task-keeps-its-requirements [tmp-path]
+  (setv #(s id link spec) (placed-echo tmp-path {"kind" "k3s"}))
+  (setv rows (.report link #((JobStatus (+ "task/" id) JobPhase.RUNNING "r" "r" 42 1))))
+  (setv #(fresh _ _) (beat (ClusterState) "w" 5000 :boot-at 1000 :statuses rows :labels {"kind" "k3s"}))
+  (assert (= (. (get fresh.tasks id) requires) (. (get s.tasks id) requires) #((Requirement "kind" "k3s"))))
+  (assert (= (. (get fresh.tasks id) requires) (. (get s.tasks id) requires))))
+
+
+(deftest test-an-empty-coordinator-adopts-a-finished-task-with-its-result [tmp-path]
+  ;; worker は返事に無い task の結果の file を消す — 終わった報告も引き取らないと結果を失い、呼び手は完走した仕事を送り直す。
+  (setv #(_ id link _) (placed-echo tmp-path))
+  (setv #(row) (.report link #((JobStatus (+ "task/" id) JobPhase.FINISHED "r" "r" None 1))))
+  (setv #(fresh _ _) (beat (ClusterState) "w" 5000 :boot-at 1000 :statuses [(| row {"result" "R" "detail" ""})]))
+  (setv #(_ _ view) (call fresh "GET" "/detached/job-e" 5000))
+  (assert (= #((get view "phase") (get view "result")) #("finished" "R")) view)
+  ;; code-failed も同じ(終わりの理由が呼び手に届く)。
+  (setv #(fresh _ _) (beat (ClusterState) "w" 5000 :boot-at 1000
+                           :statuses [(| row {"phase" "code-failed" "detail" "boom"})]))
+  (assert (= (. (get fresh.tasks id) phase) "code-failed")))
+
+
+(deftest test-a-coordinator-that-starts-without-a-store-does-not-reuse-task-ids [tmp-path]
+  ;; 置き場の無いところから起きた coordinator が t1 から振り直すと、worker に残る前の t1 の blob で新しい t1 が走った
+  ;; (accept-tasks は blob が在れば書き直さない)。起動ごとに違う頭を振る。
+  (setv #(_ id link _) (placed-echo tmp-path))
+  (setv fresh (load-state (str (/ tmp-path "state.json")) (WalStore (str (/ tmp-path "wal"))) 123456))
+  (setv #(fresh _ _) (beat fresh "other" 123500))
+  (setv #(fresh _ reply) (call fresh "PUT" "/detached/job-new" (+ 123500 T.lease-ms)
+                               {"env" "m:e" "blob" "NEW" "versions" V "revision" "r" "requires" {} "leaseSeconds" 10.0}))
+  (assert (!= (get reply "task") id) #(reply id))
+  (assert (= fresh.task-prefix "t1e240-") fresh.task-prefix)
+  ;; 頭は保存と読み直しで戻る(state JSON と durable kv)。
+  (assert (= (. (state-from-kv (full-kv fresh) 0) task-prefix) "t1e240-"))
+  (assert (= (. (state-from-json (json.loads (json.dumps (state-to-json fresh))) 0) task-prefix) "t1e240-"))
+  ;; 以前からの置き場(頭の欄が無い)は今までどおり t<番号>。
+  (assert (= (. (state-from-kv (full-kv (ClusterState)) 0) task-prefix) "t")))
+
+
+(deftest test-an-echo-without-env-or-revision-is-not-adopted-and-the-heartbeat-is-answered [tmp-path]
+  (setv #(_ id link _) (placed-echo tmp-path))
+  (setv #(row) (.report link #((JobStatus (+ "task/" id) JobPhase.RUNNING "r" "r" 42 1))))
+  (setv broken (| row {"task" (dfor #(k v) (.items (get row "task")) :if (not-in k #("env" "revision")) k v)}))
+  (setv #(fresh status body) (beat (ClusterState) "w" 5000 :statuses [broken]))
+  (assert (= #(status (get body "tasks")) #(200 [])) #(status body))
+  (assert (not-in id fresh.tasks)))
+
+
 (defk amnesia-scenario [coordinator]
   {:pre [(: coordinator MemoryCoordinator)] :post [(: % bool)]}
   (<- (SubmitDetached (slow-add 3.0 1) :env ENV :key "k-amnesia" :lease-seconds 5.0))
   (<- (Delay 1.0))
-  ;; coordinator が置き場を失って起き直す(task の行も worker の名乗りも無い)。
-  (setv coordinator.state (ClusterState))
-  (<- (Delay 1.0))
+  ;; coordinator が置き場を失って起き直す(task の行も worker の名乗りも無い)。呼び手はすぐ読む — worker の最初の heartbeat より
+  ;; 先に届く読みも「知らない」と答えない(送り直させて並走させない)。
+  (setv coordinator.state (ClusterState :started-ms (clock-ms coordinator.clock)))
   (<- outcome (AwaitDetached "k-amnesia"))
   (assert (= outcome (DetachedSucceeded 101)) outcome)
   True)

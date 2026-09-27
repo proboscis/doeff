@@ -198,6 +198,9 @@
 ;; --- 純粋な換算 ----------------------------------------------------------------------
 
 (setv OPEN-PHASES #("queued" "preparing" "assigned"))
+;; GET /detached/<key> の 503 の phase(2026-09-27 — detached_policy.detached-read): coordinator が起きた直後で、行の無い key を
+;; 知らないと言えない。呼び手は届かないと同じに扱う(DetachedUnreachable・期限の無い待ちは待ち続ける)。
+(setv WARMING-PHASE "warming")
 
 
 (defn #^ DetachedOutcome outcome-from-task-outcome [#^ (| TaskSucceeded TaskFailed) outcome]

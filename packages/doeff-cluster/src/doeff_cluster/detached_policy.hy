@@ -3,6 +3,7 @@
 ;;;   PUT    /detached/<key>          送る(job id = key で冪等)。{env blob versions revision requires name leaseSeconds retainSeconds}
 ;;;                                   → {"key" "task" "created" "phase"}。同じ key が在れば何も作らず created = false
 ;;;   GET    /detached/<key>          読む(lease に触らない)→ {"key" "phase" "detail" "result" "worker"}。知らない key は phase = unknown
+;;;                                   (coordinator が起きた直後の猶予の内は 503・phase = warming — detached-read)
 ;;;   POST   /detached/<key>/cancel   取り消す → {"key" "cancelled" "phase"}(終わっていれば cancelled = false・結果は保持)
 ;;;   DELETE /detached/<key>          終わった task の保持を解く → {"key" "released"}。まだ終わっていなければ 409
 ;;;
@@ -10,9 +11,9 @@
 ;;; renew-detached・absorb-detached-report)。ここは要求 1 件 → Reply(次の状態・status・本文)だけ。
 (import dataclasses [replace])
 (import typing [NamedTuple])
-(import .cluster_model [ClusterState TaskRecord requirements-of component-versions-of format-refusal])
-(import .cluster_policy [DETACHED-TERMINAL TASK-MAX-OPEN end-detached runtime-env-refusal])
-(import .detached_model [DETACHED-DEFAULT-LEASE-SECONDS DETACHED-DEFAULT-RETAIN-SECONDS OPEN-PHASES])
+(import .cluster_model [ClusterState ClusterTiming TaskRecord requirements-of component-versions-of format-refusal])
+(import .cluster_policy [DETACHED-TERMINAL TASK-MAX-OPEN end-detached runtime-env-refusal task-id])
+(import .detached_model [DETACHED-DEFAULT-LEASE-SECONDS DETACHED-DEFAULT-RETAIN-SECONDS OPEN-PHASES WARMING-PHASE])
 
 (setv DETACHED-MAX-LEASE-SECONDS 3600)
 (setv DETACHED-MAX-RETAIN-SECONDS (* 30 24 3600))
@@ -75,7 +76,7 @@
   (when (>= detached-count DETACHED-MAX-RECORDS)
     (return (Reply state 429 {"error" (.format "切り離した task の行(保持中を含む)が上限 {} 本に達している — 終わった物を解放する"
                                           DETACHED-MAX-RECORDS)})))
-  (setv id (.format "t{}" state.next-task)
+  (setv id (task-id state)
         lease-ms (int (* 1000 lease))
         task (TaskRecord id (.get body "name" "") (get body "env") (get body "blob") (get body "revision")
                          (component-versions-of (.get body "versions" {}))
@@ -84,6 +85,18 @@
                          :runtime-env (.get body "runtimeEnv")))
   (Reply (replace state :tasks (| state.tasks {id task}) :next-task (+ state.next-task 1))
          200 {"key" key "task" id "created" True "phase" task.phase}))
+
+
+(defn #^ Reply detached-read [#^ ClusterState state #^ str key #^ int now #^ ClusterTiming timing]
+  "GET /detached/<key> の答え(2026-09-27 — #757)。coordinator が起きてから観測が揃うまで(lease-ms の猶予 — resource_policy の
+   warming と同じ)は、行の無い key を unknown と言わない: 置き場を失った coordinator は、担い手の worker の最初の heartbeat で
+   走っている task を引き取る(cluster_policy.adopt-running-detached)ので、その前の unknown は呼び手に送り直させ、引き取った
+   旧い task と並走させる。猶予の内の行の無い key は 503・phase warming(client は届かないと同じに扱う — DetachedUnreachable)。"
+  (setv view (detached-view state key))
+  (if (and (= (get view "phase") "unknown") (< (- now state.started-ms) timing.lease-ms))
+      (Reply state 503 {"key" key "phase" WARMING-PHASE
+                        "error" "coordinator が起きた直後で、担い手の報告が揃っていない(行の無い key を知らないと言えない)"})
+      (Reply state 200 view)))
 
 
 (defn #^ dict detached-view [#^ ClusterState state #^ str key]

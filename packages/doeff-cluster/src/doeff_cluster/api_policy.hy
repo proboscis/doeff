@@ -36,7 +36,7 @@
 (import .drain_policy [advance-drains request-drain cancel-drain worker-view superseded-worker-view drains-view])
 (import .handoff_policy [watch-handoffs])
 (import .cluster_model [HandoffPhase])
-(import .detached_policy [Reply submit-detached detached-view cancel-detached release-detached])
+(import .detached_policy [Reply submit-detached detached-read cancel-detached release-detached])
 (import .rollout_policy [rollout-step target-key deployment-owners drift-status action-due shift-clocks TERMINAL-PHASES])
 (import .warm_policy [warm-write warm-read])
 
@@ -331,7 +331,7 @@
       (and (= method "PUT") (= head "detached") (= (len parts) 2))
         (detached-reply state (submit-detached state (get parts 1) body now) request now timing)
       (and (= method "GET") (= head "detached") (= (len parts) 2))
-        #(state 200 (detached-view state (get parts 1)))
+        (detached-reply state (detached-read state (get parts 1) now timing) request now timing)
       (and (= method "POST") (= head "detached") (= (len parts) 3) (= (get parts 2) "cancel"))
         (detached-reply state (cancel-detached state (get parts 1) now) request now timing)
       (and (= method "DELETE") (= head "detached") (= (len parts) 2))

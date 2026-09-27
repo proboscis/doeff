@@ -35,7 +35,7 @@
 (import doeff_core_effects.scheduler [scheduled])
 (import doeff_cluster.clock [now-epoch-ms])
 (import .cluster_model [ClusterState ClusterTiming ClusterNaming naming-from-json NextRequests Reply Persist CoordinatorStopRequested])
-(import .cluster_policy [state-from-json])
+(import .cluster_policy [state-from-json fresh-task-prefix])
 (import .durable_kv [durable-kv kv-delta full-kv state-from-kv legacy-key-moves resume-writes])
 (import .wal_store [WalStore wal-store])
 (import .api_policy [respond tick plan-rollouts deployments-to-observe scale-service record-action mark-alive resume-after-downtime
@@ -162,8 +162,9 @@
     (return state))
   (.load store)
   (setv file (Path state-file))
+  ;; 置き場の無いところから起きた: task の id の頭を起動ごとに違う物にする(前の coordinator の id を振り直さない — #757)。
   (when (not (.exists file))
-    (return (ClusterState :started-ms now)))
+    (return (ClusterState :started-ms now :task-prefix (fresh-task-prefix now))))
   (setv data (json.loads (.read-text file :encoding "utf-8")))
   (if (= (.get data "formatVersion") 2)
       (do (setv board {} versions {} d (/ file.parent "board"))
