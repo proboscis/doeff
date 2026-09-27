@@ -57,6 +57,26 @@ pub enum DirectoryProblem {
     LayerNotDeclared { service: String, layer: String, declared: Vec<String> },
 }
 
+/// DOEFF119 が見た class の形(説明の文のため)。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ClassShapeFacts {
+    /// 書かれた基底の綴り(どれも repo の中の class か、無い)。
+    pub bases: Vec<String>,
+    /// dataclass の decorator が付いているか。
+    pub dataclass: bool,
+}
+
+/// DOEFF119 の判定(閉じた集合 — 許す class は違反を作らないのでここに無い)。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ClassVerdict {
+    /// 外の世界に触る(method か欄の初期値に生の副作用の強い証拠がある)— error。証拠は `定義: 名` の綴り。
+    ExternalWorld { evidence: Vec<String> },
+    /// 変わる状態を持つ(method が self の欄を書き換える)— warning。`method: 欄` の綴り。
+    Stateful { mutations: Vec<String> },
+    /// 欄だけ(dunder 以外に処理を持つ method が無い)— defrecord を勧める info。
+    DataOnly,
+}
+
 /// deff の理由の註の問題(DOEFF111)。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DeffReasonProblem {
@@ -150,6 +170,10 @@ pub enum Explain {
     /// DOEFF203: 名乗った素の関数の理由の種類が、Jev の判定で当たらない見込み。
     /// DOEFF118: 検の置き場の、deftest でない検の関数。
     TestNotDeftest { name: String, head: String },
+    /// DOEFF119: 業務の code の defclass(外の世界に触る / 変わる状態を持つ / 欄だけ)。
+    ClassShape { name: String, shape: ClassShapeFacts, verdict: ClassVerdict },
+    /// DOEFF204: Jev が、処理を持つ method のある class を外の世界の窓口か状態を持つ物と見た。
+    ClassRoleDoubt { name: String, chosen: String, probability: f64, fields: Vec<String> },
     PlainCallableDoubt {
         definition: String,
         kind: &'static str,
@@ -302,6 +326,46 @@ impl<'a> Narrator<'a> {
                     contexts.join("・")
                 ),
             ),
+            Explain::ClassShape { name, shape, verdict } => {
+                let mut parts = vec!["defclass".to_string()];
+                if shape.dataclass {
+                    parts.push("dataclass".to_string());
+                }
+                if !shape.bases.is_empty() {
+                    parts.push(format!("基底 {}(repo の中)", shape.bases.join("・")));
+                }
+                match verdict {
+                    ClassVerdict::ExternalWorld { evidence } => (
+                        format!("定義 {}({})— 外の世界に触る class(証拠 {})", name, parts.join("・"), evidence.join("・")),
+                        "method か欄の初期値が生の副作用(http・DB・file・process・時計 …)に触る。外の世界の窓口を class と method で書くと、effect と handler の差し替えを通らないので、模擬で差し替えてもこの class だけ本物に触り、閲覧のパネルにも linter の層の規則にも乗らない。".to_string(),
+                    ),
+                    ClassVerdict::Stateful { mutations } => (
+                        format!("定義 {}({})— 変わる状態を持つ class(書き換え {})", name, parts.join("・"), mutations.join("・")),
+                        "method が self の欄を書き換える。状態が値の中に散ると、どこで何が変わったかを effect と handler の記録で追えず、模擬と本物で同じ流れを確かめられない。".to_string(),
+                    ),
+                    ClassVerdict::DataOnly => (
+                        format!("定義 {}({}・欄だけ)", name, parts.join("・")),
+                        "欄だけの data class は defrecord で書ける。defrecord は :tags で文脈と役を名乗り、:check で値を検める(__post_init__ の検めは :check へ)。(知らせ — 違反ではない)".to_string(),
+                    ),
+                }
+            }
+            Explain::ClassRoleDoubt { name, chosen, probability, fields } => (
+                format!(
+                    "定義 {}(defclass・欄 {})",
+                    name,
+                    if fields.is_empty() { "なし".to_string() } else { fields.join("・") }
+                ),
+                match chosen.as_str() {
+                    "external-world" => format!(
+                        "Jev の判定 p={:.2}: 外の世界の窓口 — 外から渡された client や store を欄に持ち、method で使っている見込み(生の呼び出しが見えなくても)。class の method にすると effect と handler の差し替えを通らない。(意味の判定 — 外れなら登録簿に載せる)",
+                        probability
+                    ),
+                    _ => format!(
+                        "Jev の判定 p={:.2}: 状態を持つ class — method が自分か別の物の状態を変える見込み。状態が値の中に散ると、どこで何が変わったかを effect と handler の記録で追えない。(意味の判定 — 外れなら登録簿に載せる)",
+                        probability
+                    ),
+                },
+            ),
             Explain::TestNotDeftest { name, head } => (
                 format!("定義 {}({})— 検の置き場の、名が test で始まる関数", name, head),
                 "検は deftest だけで書く。deftest は doeff の Program として走り、handler の組み合わせを明示して検める。素の関数や fn の束縛の検は pytest が Program の外で呼ぶので、effect と handler の差し替えを通らない。".to_string(),
@@ -446,6 +510,8 @@ impl<'a> Narrator<'a> {
 
     /// 違反ごとに変わる直し方(無ければ規則の既定の 1 行)。
     pub fn hint(&self, explain: &Explain) -> Option<String> {
+        const WORLD_FIX: &str = "外の世界の窓口は土台の handler にする — 資源(接続・client・file の手)は defhandler の直下の (session val …) に持ち、ListRows・PutRow などの effect に答える(模擬なら模擬の土台の handler)";
+        const STATE_FIX: &str = "値は defrecord(不変)、振る舞いは新しい値を返す純粋な関数、状態は world などの handler の (session var …) 1 か所に置き、変化は effect で流す。速さのために書き換えが要る時も書き換えは handler の中だけ";
         const PROGRAM_WAYS: &str = "組み立て(handler の並び)なら `(defk handlers-of [foundation])` に・テストなら deftest に・値を組む補助なら defk にして `(<- …)` で呼ぶ";
         match explain {
             Explain::DefnForbidden { declared_kind: Some(kind), .. } => {
@@ -454,6 +520,11 @@ impl<'a> Narrator<'a> {
             Explain::DefnForbidden { declared_kind: None, .. } => {
                 Some(format!("defk にする(素の関数でなければならない理由が見当たらない)— {}", PROGRAM_WAYS))
             }
+            Explain::ClassShape { verdict: ClassVerdict::ExternalWorld { .. }, .. } => Some(WORLD_FIX.to_string()),
+            Explain::ClassShape { verdict: ClassVerdict::Stateful { .. }, .. } => Some(STATE_FIX.to_string()),
+            Explain::ClassRoleDoubt { chosen, .. } if chosen == "external-world" => Some(WORLD_FIX.to_string()),
+            Explain::ClassRoleDoubt { .. } => Some(STATE_FIX.to_string()),
+            Explain::ClassShape { verdict: ClassVerdict::DataOnly, .. } => Some("defrecord にする(:tags で文脈と役・:check で値の検め)".to_string()),
             Explain::PlainCallableDoubt { chosen_accepted: false, fix: Some(fix), .. } => Some(fix.clone()),
             Explain::PlainCallableDoubt { .. } => Some(format!("defk にできないかを確かめる — {}", PROGRAM_WAYS)),
             Explain::DeffWithoutReason { problem: DeffReasonProblem::Missing, .. } => {

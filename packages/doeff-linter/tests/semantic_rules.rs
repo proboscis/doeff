@@ -39,6 +39,17 @@ fn fake_jev(drifted: bool) -> FakeJev {
             counter.fetch_add(1, Ordering::SeqCst);
             let body: Value = serde_json::from_slice(&body).unwrap();
             let source = body["state"]["definition"]["source"].as_str().unwrap_or("");
+            if body["questions"]["q"]["criteria"].get("external-world").is_some() {
+                // DOEFF204: client を欄に持つ class は external-world、それ以外は value。較正の合成の例もこの規則で幅に入る。
+                let (choice, probabilities) = if source.contains("client") {
+                    ("external-world", serde_json::json!({"value": 0.05, "external-world": 0.9, "stateful": 0.04, "other": 0.01}))
+                } else {
+                    ("value", serde_json::json!({"value": 0.95, "external-world": 0.02, "stateful": 0.02, "other": 0.01}))
+                };
+                let answer = serde_json::json!({"answers": {"q": {"type": "choice", "choice": choice, "probabilities": probabilities}}, "usage": {"input_tokens": 40}, "model": "jev-test-1"}).to_string();
+                let _ = write!(stream, "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{}", answer.len(), answer);
+                continue;
+            }
             if body["questions"]["q"]["type"] == "choice" {
                 // DOEFF203: sorted の key は library-callback、設定を読む定義は config-read(受け入れない型)、
                 // 検の補助は library-callback を選ぶが受け入れない答えの和が大きい、それ以外は none。
@@ -262,4 +273,38 @@ fn plain_callable_reason_is_accepted_or_rejected_by_jev() {
     let helper = doubt("helper").expect("疑わしい受け入れ");
     assert_eq!(helper["severity"], "info");
     assert!(helper["explanation"]["reason"].as_str().unwrap().contains("受け入れない答えの確率の和が 0.50"), "{}", helper["explanation"]["reason"]);
+}
+
+#[test]
+fn class_role_asks_jev_only_for_classes_the_deterministic_rule_left_alone() {
+    let dir = tempfile::TempDir::new().unwrap();
+    std::fs::write(
+        dir.path().join("pyproject.toml"),
+        "[tool.doeff-linter]\nenable = [\"DOEFF119\", \"DOEFF204\"]\n[tool.doeff-linter.definitions]\npaths = [\"app\"]\n[tool.doeff-linter.layers]\norder = [\"core\"]\npaths = { core = \"app/core\" }\n[tool.doeff-linter.semantic]\nclass_role = { warning_min = 0.7, info_min = 0.5 }\n",
+    )
+    .unwrap();
+    std::fs::create_dir_all(dir.path().join("app/core")).unwrap();
+    std::fs::write(
+        dir.path().join("app/core/x.hy"),
+        concat!(
+            "(import httpx)\n",
+            "(defclass Reader [] (#^ Store client) (defn rows [self t] (.list-rows self.client t)))\n",
+            "(defclass Point [] (#^ float x) (defn twice [self] (* 2 self.x)))\n",
+            "(defclass Raw [] (defn get [self u] (httpx.get u)))\n",
+            "(defclass Plain [] (#^ int n))\n",
+        ),
+    )
+    .unwrap();
+    let jev = fake_jev(false);
+    let (_, report, stderr) = run(dir.path(), &jev.url, &["--semantic-all"]);
+    // 問うのは DOEFF119 が何も出さず処理を持つ method のある Reader と Point だけ(Raw は DOEFF119 の error・Plain は欄だけ)。較正は 2 例。
+    assert_eq!(report["semantic"]["asked"], 4, "{} {}", report["semantic"], stderr);
+    assert_eq!(report["semantic"]["calibration"], "ok");
+    let reader = find(&report, "DOEFF204", "Reader").expect("Reader");
+    assert_eq!(reader["severity"], "warning");
+    assert_eq!(reader["source"], "jev");
+    assert!(reader["explanation"]["subject"].as_str().unwrap().contains("client: Store"), "{}", reader["explanation"]["subject"]);
+    assert!(reader["hint"].as_str().unwrap().contains("(session val …)"));
+    assert!(find(&report, "DOEFF204", "Point").is_none());
+    assert_eq!(find(&report, "DOEFF119", "Raw").expect("Raw")["severity"], "error");
 }

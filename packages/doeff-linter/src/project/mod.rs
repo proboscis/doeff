@@ -145,6 +145,8 @@ pub fn run(root: &Path, settings: &ProjectSettings, enabled: &BTreeSet<ProjectRu
 pub fn run_with(root: &Path, settings: &ProjectSettings, enabled: &BTreeSet<ProjectRule>, target: Target, semantic_mode: &semantic::SemanticMode) -> ProjectReport {
     let semantic_files: Vec<(LayerFile, Option<String>)>;
     let plain_files: Vec<(SourceFile, Option<String>)>;
+    // hy-index の file(生の副作用の証拠つき)— DOEFF119 と、DOEFF119 が何も出さない class だけを問う DOEFF204 が同じ物を読む。
+    let mut indexes: HashMap<String, HyFileIndex> = HashMap::new();
     let mut report = ProjectReport::default();
     let mut registry = Registry::load(root, &settings.registry.dirs, &settings.registry.files);
     if !settings.registry.config_files.is_empty() {
@@ -162,8 +164,9 @@ pub fn run_with(root: &Path, settings: &ProjectSettings, enabled: &BTreeSet<Proj
         Target::Whole => {
             let layer_files = settings.layers.as_ref().map(|layers| collect_layer_files(root, layers)).unwrap_or_default();
             semantic_files = layer_files.iter().map(|f| (f.clone(), None)).collect();
-            plain_files = match (&settings.definitions, settings.semantic.as_ref().and_then(|s| s.plain_callable)) {
-                (Some(definitions), Some(_)) => hy_index::collect_hy_files(root)
+            let wants_plain = settings.semantic.as_ref().is_some_and(|s| s.plain_callable.is_some() || s.class_role.is_some());
+            plain_files = match (&settings.definitions, wants_plain) {
+                (Some(definitions), true) => hy_index::collect_hy_files(root)
                     .into_iter()
                     .filter_map(|path| {
                         let rel = relative_path(root, &path)?;
@@ -173,7 +176,8 @@ pub fn run_with(root: &Path, settings: &ProjectSettings, enabled: &BTreeSet<Proj
                 _ => Vec::new(),
             };
             let env_files = settings.environment.as_ref().map(|env| collect_environment_files(root, env)).unwrap_or_default();
-            let hy = whole_hy_index(root, settings, enabled, &raw, &layer_files, &env_files, wants_raw);
+            indexes = whole_hy_index(root, settings, enabled, &raw, &layer_files, &env_files, wants_raw);
+            let hy = &indexes;
             if let Some(layers) = &settings.layers {
                 let index = module_index(&layer_files);
                 let judged: Vec<LayerJudgement> = layer_files
@@ -216,7 +220,7 @@ pub fn run_with(root: &Path, settings: &ProjectSettings, enabled: &BTreeSet<Proj
                         .par_iter()
                         .map(|file| {
                             std::fs::read_to_string(&file.path)
-                                .map(|source| judge_definitions(file, &source, definitions, enabled, plain_callable_reasons(settings)))
+                                .map(|source| judge_definitions(file, &source, definitions, enabled, plain_callable_reasons(settings), hy.get(&file.rel)))
                                 .map_err(|error| format!("{}: 読めない: {}", file.rel, error))
                         })
                         .collect();
@@ -258,10 +262,17 @@ pub fn run_with(root: &Path, settings: &ProjectSettings, enabled: &BTreeSet<Proj
             };
             // 根の中の file は、全体の実行と同じく「根 + 根からの path」を出す(エディタが結果を差し替える鍵を揃えるため)。
             let path = rel.as_ref().map(|r| root.join(r)).unwrap_or(path);
-            let hy_file = match (language_of(&path), wants_raw || enabled.contains(&ProjectRule::EnvironmentName)) {
+            let wants_index = wants_raw
+                || enabled.contains(&ProjectRule::EnvironmentName)
+                || enabled.contains(&ProjectRule::ClassWithBehaviour)
+                || enabled.contains(&ProjectRule::SemanticClassRole);
+            let hy_file = match (language_of(&path), wants_index) {
                 (Some(Language::Hy), true) => hy_index::index_stdin_source(root, &path, source, &raw).files.into_iter().next(),
                 _ => None,
             };
+            if let (Some(index), Some(rel)) = (&hy_file, &rel) {
+                indexes.insert(rel.clone(), index.clone());
+            }
             if let (Some(layers), Some(rel)) = (&settings.layers, &rel) {
                 if let Some((site, language)) = classify_layer_file(rel, layers) {
                     let file = LayerFile { file: SourceFile { rel: rel.clone(), path: path.clone(), language }, module: module_of(rel), site };
@@ -281,9 +292,12 @@ pub fn run_with(root: &Path, settings: &ProjectSettings, enabled: &BTreeSet<Proj
                 }
             }
             if let (Some(definitions), Some(rel)) = (&settings.definitions, &rel) {
-                if wants_definitions(enabled) && language_of(&path) == Some(Language::Hy) && is_definition_file(rel, definitions) {
+                if wants_definitions(enabled)
+                    && language_of(&path) == Some(Language::Hy)
+                    && (is_definition_file(rel, definitions) || is_test_file(rel, definitions))
+                {
                     let file = SourceFile { rel: rel.clone(), path: path.clone(), language: Language::Hy };
-                    drafts.extend(judge_definitions(&file, source, definitions, enabled, plain_callable_reasons(settings)));
+                    drafts.extend(judge_definitions(&file, source, definitions, enabled, plain_callable_reasons(settings), hy_file.as_ref()));
                 }
             }
             if let (Some(env), Some(rel)) = (&settings.environment, &rel) {
@@ -297,13 +311,17 @@ pub fn run_with(root: &Path, settings: &ProjectSettings, enabled: &BTreeSet<Proj
         }
     }
     if let (Some(semantic), Some(layers)) = (&settings.semantic, &settings.layers) {
-        let wanted = [ProjectRule::SemanticBusinessDecision, ProjectRule::SemanticTransportKnowledge, ProjectRule::SemanticPlainCallable].iter().any(|r| enabled.contains(r));
+        let wanted = [ProjectRule::SemanticBusinessDecision, ProjectRule::SemanticTransportKnowledge, ProjectRule::SemanticPlainCallable, ProjectRule::SemanticClassRole]
+            .iter()
+            .any(|r| enabled.contains(r));
         if wanted {
             let plain = PlainCallableInput {
                 files: plain_files,
                 accepted: plain_callable_reasons(settings).to_vec(),
                 rejected: settings.architecture.as_ref().map(|a| a.rejected_plain_callable_reasons.clone()).unwrap_or_default(),
                 marker: settings.definitions.as_ref().map(|d| d.deff_reason_marker.clone()).unwrap_or_else(|| "defk にできない:".to_string()),
+                tags: settings.definitions.as_ref().map(|d| d.tags.clone()),
+                indexes: &indexes,
             };
             let (found, summary, errors) = judge_semantic(root, semantic, layers, enabled, &semantic_files, semantic_mode, &plain);
             drafts.extend(found);
@@ -359,10 +377,12 @@ fn whole_hy_index(
     wants_raw: bool,
 ) -> HashMap<String, HyFileIndex> {
     let wants_env = enabled.contains(&ProjectRule::EnvironmentName) && settings.environment.is_some();
-    if !(wants_raw && settings.raw.is_some()) && !wants_env {
+    // DOEFF119 は業務の file の class の生の副作用(経由も)を見るので、全体の索引を作る。
+    let wants_classes = (enabled.contains(&ProjectRule::ClassWithBehaviour) || enabled.contains(&ProjectRule::SemanticClassRole)) && settings.definitions.is_some();
+    if !(wants_raw && settings.raw.is_some()) && !wants_env && !wants_classes {
         return HashMap::new();
     }
-    let index = if enabled.contains(&ProjectRule::RawSideEffectVia) && settings.raw.is_some() {
+    let index = if (enabled.contains(&ProjectRule::RawSideEffectVia) && settings.raw.is_some()) || wants_classes {
         hy_index::index_root(root, raw)
     } else {
         let paths: BTreeSet<PathBuf> = layer_files
@@ -1241,13 +1261,15 @@ fn semantic_kind(kind: DefinitionKind) -> bool {
 /// 較正の例の kind の綴りを 'static にするための一覧(semantic_kind と同じ kind)。
 const SEMANTIC_KIND_NAMES: &[&str] = &["defn", "defn/a", "defk", "deff", "defp", "defpp", "defhandler", "defeffect", "defclass", "defrecord", "defenum"];
 
-/// DOEFF203 の入力 — 理由を読む deff の file・architecture.hy の受け入れる理由と受け入れない型(名・説明・直し方)・註の目印。
-#[derive(Default)]
-struct PlainCallableInput {
+/// DOEFF203・204 の入力 — 業務の Hy の file・architecture.hy の受け入れる理由と受け入れない型(名・説明・直し方)・註の目印・
+/// 定義の規則のタグの読み方(class の形を読むため)・hy-index の file(DOEFF119 と同じ証拠で問う class を選ぶため)。
+struct PlainCallableInput<'a> {
     files: Vec<(SourceFile, Option<String>)>,
     accepted: Vec<architecture::ReasonKind>,
     rejected: Vec<architecture::ReasonKind>,
     marker: String,
+    tags: Option<settings::TagReading>,
+    indexes: &'a HashMap<String, HyFileIndex>,
 }
 
 /// 規則と問いの対応。
@@ -1256,6 +1278,7 @@ fn semantic_rule(question: semantic::SemanticQuestion) -> ProjectRule {
         semantic::SemanticQuestion::BusinessDecision => ProjectRule::SemanticBusinessDecision,
         semantic::SemanticQuestion::TransportKnowledge => ProjectRule::SemanticTransportKnowledge,
         semantic::SemanticQuestion::PlainCallable => ProjectRule::SemanticPlainCallable,
+        semantic::SemanticQuestion::ClassRole => ProjectRule::SemanticClassRole,
     }
 }
 
@@ -1267,7 +1290,7 @@ fn judge_semantic(
     enabled: &BTreeSet<ProjectRule>,
     files: &[(LayerFile, Option<String>)],
     mode: &semantic::SemanticMode,
-    plain: &PlainCallableInput,
+    plain: &PlainCallableInput<'_>,
 ) -> (Vec<Draft>, semantic::SemanticSummary, Vec<String>) {
     let target = semantic::target_from_process_environment();
     let model = target.model.clone();
@@ -1383,6 +1406,45 @@ fn judge_semantic(
             }
         }
     }
+    // DOEFF204: DOEFF119 が何も出さず、処理を持つ method のある class だけを、value / external-world / stateful / other から選ばせる。
+    if settings.class_role.is_some() && enabled.contains(&ProjectRule::SemanticClassRole) {
+        if let Some(reading) = &plain.tags {
+            for (file, source) in &plain.files {
+                let text = match source {
+                    Some(text) => text.clone(),
+                    None => match std::fs::read_to_string(&file.path) {
+                        Ok(text) => text,
+                        Err(error) => {
+                            errors.push(format!("{}: 読めない: {}", file.rel, error));
+                            continue;
+                        }
+                    },
+                };
+                let facts = read_facts(Language::Hy, &text, &module_of(&file.rel), reading);
+                if facts.classes.is_empty() {
+                    continue;
+                }
+                let class_root = repo_root_of(file);
+                let local: BTreeSet<&str> = facts.classes.iter().map(|c| c.name.name.as_str()).collect();
+                let lines = LineIndex::new(&text);
+                for class in facts.classes.iter().filter(|c| !c.compile_time) {
+                    if judge_class(class, &facts.bindings, &local, class_root.as_deref(), plain.indexes.get(&file.rel)) != ClassJudgement::AskJev {
+                        continue;
+                    }
+                    items.push(semantic::class_item(
+                        settings,
+                        &model,
+                        &file.rel,
+                        &file.path,
+                        &class.name.name,
+                        lines.range(class.name.span.start, class.name.span.end),
+                        text.get(class.span.start..class.span.end).unwrap_or(""),
+                        &class.fields,
+                    ));
+                }
+            }
+        }
+    }
     // 較正の見張りの例(同梱の正例と反例)を、その問いを当てる最初の層の説明で組む。
     let calibration: Vec<(semantic::SemanticItem, bool)> = semantic::calibration_examples()
         .into_iter()
@@ -1392,15 +1454,20 @@ fn judge_semantic(
             if !enabled.contains(&rule) {
                 return None;
             }
+            let range = Range { start: Position { line: 0, character: 0 }, end: Position { line: 0, character: 0 } };
             let question = match rule {
                 ProjectRule::SemanticBusinessDecision => semantic::SemanticQuestion::BusinessDecision,
                 ProjectRule::SemanticTransportKnowledge => semantic::SemanticQuestion::TransportKnowledge,
+                ProjectRule::SemanticClassRole => {
+                    settings.class_role?;
+                    let item = semantic::class_item(settings, &model, &example.path, Path::new(&example.path), &example.name, range, &example.source, &example.fields);
+                    return Some((item, example.expect));
+                }
                 _ => return None,
             };
             let layer = *settings.questions.get(&question)?.layers.iter().next()?;
             let spec = &layers.layers[layer.0];
             let kind: &'static str = SEMANTIC_KIND_NAMES.iter().find(|k| **k == example.kind).copied().unwrap_or("defn");
-            let range = Range { start: Position { line: 0, character: 0 }, end: Position { line: 0, character: 0 } };
             let item = semantic::item(settings, &model, question, &example.path, Path::new(&example.path), &example.name, kind, range, &example.source, layer, &spec.name, &spec.description);
             Some((item, example.expect))
         })
@@ -1415,6 +1482,27 @@ fn judge_semantic(
         .into_iter()
         .filter_map(|(item, answer)| {
             let probability = answer.probability;
+            if item.question == semantic::SemanticQuestion::ClassRole {
+                let chosen = answer.choice.clone().unwrap_or_else(|| "other".to_string());
+                let base = settings.class_role_severity(&chosen, probability)?;
+                let fields: Vec<String> = item
+                    .state
+                    .pointer("/definition/fields")
+                    .and_then(|v| v.as_array())
+                    .map(|a| a.iter().filter_map(|f| f.as_str().map(str::to_string)).collect())
+                    .unwrap_or_default();
+                return Some(Draft {
+                    rule: ProjectRule::SemanticClassRole,
+                    layer: None,
+                    rel: item.rel.clone(),
+                    path: item.path.clone(),
+                    range: item.range,
+                    message: format!("{} の defclass {} は Jev の判定で {}(p={:.2})", item.rel, item.name, chosen, probability),
+                    detail: Some(hy_mangle(&item.name)),
+                    base,
+                    explain: Explain::ClassRoleDoubt { name: item.name.clone(), chosen, probability, fields },
+                });
+            }
             if item.question == semantic::SemanticQuestion::PlainCallable {
                 let chosen = answer.choice.clone().unwrap_or_else(|| "none".to_string());
                 let accepted_kind = plain.accepted.iter().find(|r| r.name == chosen);
@@ -1485,7 +1573,7 @@ fn judge_semantic(
 
 /// 定義の書き方の規則のどれかが有効か。
 fn wants_definitions(enabled: &BTreeSet<ProjectRule>) -> bool {
-    [ProjectRule::DefnForbidden, ProjectRule::DeffNeedsReason, ProjectRule::DefinitionTagsRequired, ProjectRule::TestIsDeftest]
+    [ProjectRule::DefnForbidden, ProjectRule::DeffNeedsReason, ProjectRule::DefinitionTagsRequired, ProjectRule::TestIsDeftest, ProjectRule::ClassWithBehaviour]
         .iter()
         .any(|rule| enabled.contains(rule))
 }
@@ -1536,6 +1624,104 @@ fn is_definition_file(rel: &str, definitions: &settings::DefinitionSettings) -> 
 /// architecture.hy が宣言した、素の関数を許す理由の種類(無ければ空)。
 fn plain_callable_reasons(settings: &ProjectSettings) -> &[architecture::ReasonKind] {
     settings.architecture.as_ref().map(|a| a.plain_callable_reasons.as_slice()).unwrap_or(&[])
+}
+
+/// file の path と根からの path から repo の根を出す(基底の module が repo の中かを見るため)。
+fn repo_root_of(file: &SourceFile) -> Option<PathBuf> {
+    let depth = file.rel.split('/').count();
+    file.path.ancestors().nth(depth).map(Path::to_path_buf)
+}
+
+/// 例外・Enum・Protocol のような、名で分かる許す基底(repo の中で定めた例外の子も含めるため、名の終わりで見る)。
+fn is_allowed_base_name(base: &str) -> bool {
+    let last = base.rsplit('.').next().unwrap_or(base);
+    ["Error", "Exception", "Warning", "Enum", "Flag", "Protocol", "NamedTuple", "TypedDict"].iter().any(|suffix| last.ends_with(suffix))
+}
+
+/// 基底が repo の外(外の library・組み込み)の class か。束縛の module の先頭の段が repo の根に在れば repo の中。
+fn is_external_base(base: &str, bindings: &BTreeMap<String, String>, local: &BTreeSet<&str>, root: Option<&Path>) -> bool {
+    let head = base.split('.').next().unwrap_or(base);
+    if local.contains(base) {
+        return false;
+    }
+    let module = match bindings.get(base).or_else(|| bindings.get(head)) {
+        Some(module) => module.clone(),
+        // 束縛の無い裸の名は組み込み(Exception・object …)。
+        None if !base.contains('.') => return true,
+        None => base.to_string(),
+    };
+    let top = module.split('.').next().unwrap_or(&module);
+    match root {
+        Some(root) => !(root.join(top).is_dir() || root.join(format!("{}.hy", top)).is_file() || root.join(format!("{}.py", top)).is_file()),
+        None => true,
+    }
+}
+
+/// DOEFF119 の class 1 つの判定(閉じた集合)。
+#[derive(Debug, Clone, PartialEq)]
+enum ClassJudgement {
+    /// 例外・Enum・Protocol・外の library の基底を継ぐ class、または欄だけでも処理を持つ method も無い物 — 何も出さない。
+    Allowed,
+    /// 決定的に分かった区分(外の世界 / 状態 / 欄だけ)。
+    Found(explain::ClassShapeFacts, explain::ClassVerdict),
+    /// 処理を持つ method があるが、証拠も書き換えも見えない — 値の class か窓口かを Jev(DOEFF204)に問う。
+    AskJev,
+}
+
+/// DOEFF119: defclass を中身の証拠で分ける — method か欄の初期値の生の副作用(強い証拠・直接か経由)は外の世界、
+/// __init__ 等の外で self の欄を書き換える method は状態、処理を持つ method が無ければ欄だけ。名前では判じない。
+fn judge_class(
+    class: &facts::ClassFact,
+    bindings: &BTreeMap<String, String>,
+    local: &BTreeSet<&str>,
+    root: Option<&Path>,
+    hy: Option<&HyFileIndex>,
+) -> ClassJudgement {
+    let bases: Vec<String> = class.bases.iter().filter(|b| b.as_str() != "object").cloned().collect();
+    if bases.iter().any(|b| is_allowed_base_name(b) || is_external_base(b, bindings, local, root)) {
+        return ClassJudgement::Allowed;
+    }
+    let dataclass = class.decorators.iter().any(|d| d == "dataclass" || d.ends_with(".dataclass"));
+    let shape = explain::ClassShapeFacts { bases, dataclass };
+    // 生の副作用の証拠 — class の定義そのもの(欄の初期値の式を含む)と、class の中の定義(method・欄)。
+    let own = |d: &&doeff_indexer::hy_index::Definition| {
+        (d.container.is_none() && hy_mangle(&d.name) == class.name.name && d.kind == DefinitionKind::Defclass)
+            || d.container.as_deref().is_some_and(|c| hy_mangle(c) == class.name.name)
+    };
+    let mut evidence: Vec<String> = Vec::new();
+    for definition in hy.map(|f| f.definitions.iter().filter(own).collect::<Vec<_>>()).unwrap_or_default() {
+        let strong = definition
+            .raw
+            .direct
+            .iter()
+            .chain(definition.raw.via.iter().map(|v| &v.evidence))
+            .filter(|e| e.strength == doeff_indexer::hy_index::RawStrength::Strong);
+        for found in strong {
+            let text = format!("{}: {}", definition.name, found.name);
+            if !evidence.contains(&text) {
+                evidence.push(text);
+            }
+        }
+    }
+    if !evidence.is_empty() {
+        evidence.truncate(4);
+        return ClassJudgement::Found(shape, explain::ClassVerdict::ExternalWorld { evidence });
+    }
+    let dunder = |name: &str| name.starts_with("__") && name.ends_with("__");
+    // 作る時(__init__・__post_init__・__new__)に欄を置くのは書き換えに数えない。
+    let mutations: Vec<String> = class
+        .methods
+        .iter()
+        .filter(|m| !matches!(m.name.as_str(), "__init__" | "__post_init__" | "__new__"))
+        .flat_map(|m| m.mutates.iter().map(move |field| format!("{}: self.{}", m.name, field)))
+        .collect();
+    if !mutations.is_empty() {
+        return ClassJudgement::Found(shape, explain::ClassVerdict::Stateful { mutations });
+    }
+    match class.methods.iter().any(|m| m.has_body && !dunder(&m.name)) {
+        false => ClassJudgement::Found(shape, explain::ClassVerdict::DataOnly),
+        true => ClassJudgement::AskJev,
+    }
 }
 
 /// 理由の註 `; <目印>(<種類>): <詳細>` を読んだ結果(種類の括弧は半角でも全角でもよい。種類の無い旧い形は kind = None)。
@@ -1590,6 +1776,7 @@ fn judge_definitions(
     definitions: &settings::DefinitionSettings,
     enabled: &BTreeSet<ProjectRule>,
     reasons: &[architecture::ReasonKind],
+    hy: Option<&HyFileIndex>,
 ) -> Vec<Draft> {
     let facts = read_facts(Language::Hy, source, &module_of(&file.rel), &definitions.tags);
     let lines = LineIndex::new(source);
@@ -1611,6 +1798,29 @@ fn judge_definitions(
     };
     let mut drafts = Vec::new();
     let (in_scope, in_tests) = (is_definition_file(&file.rel, definitions), is_test_file(&file.rel, definitions));
+    if in_scope && enabled.contains(&ProjectRule::ClassWithBehaviour) {
+        let root = repo_root_of(file);
+        let local: BTreeSet<&str> = facts.classes.iter().map(|c| c.name.name.as_str()).collect();
+        for class in facts.classes.iter().filter(|c| !c.compile_time) {
+            let (shape, verdict) = match judge_class(class, &facts.bindings, &local, root.as_deref(), hy) {
+                ClassJudgement::Found(shape, verdict) => (shape, verdict),
+                ClassJudgement::Allowed | ClassJudgement::AskJev => continue,
+            };
+            let name = class.name.name.clone();
+            let (message, base) = match &verdict {
+                explain::ClassVerdict::ExternalWorld { evidence } => {
+                    (format!("{} の defclass {} は外の世界に触る({})— 土台の handler にする", file.rel, name, evidence.join("・")), Severity::Error)
+                }
+                explain::ClassVerdict::Stateful { mutations } => {
+                    (format!("{} の defclass {} は変わる状態を持つ({})— 状態は handler の (session var …) へ", file.rel, name, mutations.join("・")), Severity::Warning)
+                }
+                explain::ClassVerdict::DataOnly => (format!("{} の defclass {} は欄だけ — defrecord にできる", file.rel, name), Severity::Info),
+            };
+            let mut found = draft(ProjectRule::ClassWithBehaviour, class.name.span, message, name.clone(), Explain::ClassShape { name, shape, verdict });
+            found.base = base;
+            drafts.push(found);
+        }
+    }
     for definition in &facts.definitions {
         let name = definition.name.name.clone();
         let head = definition.head.as_str();
@@ -1815,6 +2025,7 @@ fn finish(drafts: Vec<Draft>, settings: &ProjectSettings, registry: &Registry) -
             let probability = match &draft.explain {
                 Explain::Semantic { probability, .. } => Some(*probability),
                 Explain::PlainCallableDoubt { chosen_probability, .. } => Some(*chosen_probability),
+                Explain::ClassRoleDoubt { probability, .. } => Some(*probability),
                 _ => None,
             };
             Finding {

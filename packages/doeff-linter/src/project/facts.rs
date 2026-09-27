@@ -76,6 +76,37 @@ pub struct ModuleFacts {
     pub errors: Vec<String>,
     /// 定義の規則(defn の禁止・deff の理由・タグ必須)が読む定義(Hy だけ・`do` と compile の節の中も)。
     pub definitions: Vec<DefinitionFact>,
+    /// defclass の形(DOEFF119 のため・Hy だけ・`do` と compile の節の中も)。
+    pub classes: Vec<ClassFact>,
+    /// import で束ねた名 → module の綴り(絶対)。`(import m [A :as B])` は B → m、`(import m :as n)` は n → m、`(import m)` は m → m。
+    pub bindings: std::collections::BTreeMap<String, String>,
+}
+
+/// defclass 1 つの形(基底が外の library か・処理を持つ method があるかを判じるため)。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ClassFact {
+    pub name: NamedSpan,
+    /// 書かれたとおりの基底の綴り(keyword とその値は除く)。
+    pub bases: Vec<String>,
+    /// decorator の頭の綴り(`(dataclass :frozen True)` は `dataclass`)。
+    pub decorators: Vec<String>,
+    pub methods: Vec<MethodFact>,
+    /// 欄の宣言(`#^ T x` は `x: T`・注釈の無い `(setv x …)` は `x`)。Jev に渡す材料。
+    pub fields: Vec<String>,
+    /// defclass の form 全体の範囲(Jev に渡す source のため)。
+    pub span: ByteSpan,
+    /// `eval-and-compile` / `eval-when-compile` の中か。
+    pub compile_time: bool,
+}
+
+/// class の body の method 1 つ(名と、本体に処理があるか)。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MethodFact {
+    pub name: String,
+    /// docstring と `...`・`pass`・`None` を除いた本体の式が 1 つ以上あるか。
+    pub has_body: bool,
+    /// method が書き換える self の欄の名(`(setv self.x …)`・`(+= self.x …)`・`(.append self.x …)` など)。
+    pub mutates: Vec<String>,
 }
 
 /// 定義の規則が読む Hy の定義 1 つ。
@@ -136,10 +167,16 @@ fn hy_facts(source: &str, module: &str, reading: &TagReading) -> ModuleFacts {
         imports: Vec::new(),
         functions: Vec::new(),
         definitions: Vec::new(),
+        classes: Vec::new(),
+        bindings: std::collections::BTreeMap::new(),
         errors: if reader.issues.is_empty() { Vec::new() } else { vec![format!("括弧か文字列が閉じていない所が {} か所ある", reader.issues.len())] },
     };
     hy.definitions(&forms, reading, &mut facts);
     hy.definition_facts(&forms, false, reading, &mut facts.definitions);
+    hy.class_facts(&forms.iter().collect::<Vec<_>>(), false, &mut facts.classes);
+    for form in &forms {
+        hy.collect_bindings(form, module, &mut facts.bindings);
+    }
     for form in &forms {
         hy.collect_imports(form, module, &mut facts.imports);
     }
@@ -295,6 +332,229 @@ impl<'a> HySource<'a> {
         }
     }
 
+    /// defclass の形を集める(`do` と `eval-and-compile` / `eval-when-compile` の中も最上位として見る)。
+    fn class_facts(&self, forms: &[&Form], compile_time: bool, out: &mut Vec<ClassFact>) {
+        for form in forms {
+            let Some(items) = paren(form) else { continue };
+            match items.first().and_then(|h| self.symbol(h)) {
+                Some("do") => self.class_facts(&items[1..], compile_time, out),
+                Some("eval-and-compile" | "eval-when-compile") => self.class_facts(&items[1..], true, out),
+                Some("defclass") => {
+                    if let Some(fact) = self.class_fact(&items[1..], span_of(form), compile_time) {
+                        out.push(fact);
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
+    /// `(defclass [decorators]? Name [bases]? "doc"? body…)` の頭を除いた列を読む(名が無ければ None)。
+    fn class_fact(&self, rest: &[&Form], span: ByteSpan, compile_time: bool) -> Option<ClassFact> {
+        let (decorators, rest) = match rest.first() {
+            Some(first) if first.bracket_items().is_some() && rest.len() >= 2 => (self.decorator_heads(first), &rest[1..]),
+            _ => (Vec::new(), rest),
+        };
+        let name = self.defined_name(rest.first()?);
+        let (bases, body) = match rest.get(1).and_then(|f| f.bracket_items()) {
+            Some(bases) => (self.base_names(&live_items(bases)), rest.get(2..).unwrap_or_default()),
+            None => (Vec::new(), rest.get(1..).unwrap_or_default()),
+        };
+        let methods = body.iter().filter_map(|member| self.method_fact(member)).collect();
+        let fields = body.iter().filter_map(|member| self.field_text(member)).collect();
+        Some(ClassFact { name, bases, decorators, methods, fields, span, compile_time })
+    }
+
+    /// class の body の 1 つが欄の宣言なら、`名: 型` の綴りを返す(`#^ T x`・`(#^ T x default)`・`(setv x v)`)。
+    fn field_text(&self, member: &Form) -> Option<String> {
+        let annotated = |form: &Form| match &form.node {
+            Node::Annotated { annotation: Some(annotation), target: Some(target) } => Some(format!("{}: {}", self.text(target), self.text(annotation))),
+            _ => None,
+        };
+        if let Some(text) = annotated(member) {
+            return Some(text);
+        }
+        let items = paren(member)?;
+        match items.first().and_then(|h| self.symbol(h)) {
+            Some("setv") => items.get(1).and_then(|t| self.symbol(t)).map(str::to_string),
+            _ => items.first().and_then(|first| annotated(first)),
+        }
+    }
+
+    /// decorator の列の頭の綴り(記号はそのまま・`(f …)` は f)。
+    fn decorator_heads(&self, list: &Form) -> Vec<String> {
+        let items = list.bracket_items().map(live_items).unwrap_or_default();
+        items
+            .into_iter()
+            .filter_map(|item| match paren(item) {
+                Some(inner) => inner.first().and_then(|h| self.symbol(h)).map(str::to_string),
+                None => self.symbol(item).map(str::to_string),
+            })
+            .collect()
+    }
+
+    /// 基底の列の記号(keyword とその値は除く)。
+    fn base_names(&self, items: &[&Form]) -> Vec<String> {
+        let mut names = Vec::new();
+        let mut index = 0;
+        while index < items.len() {
+            match items[index].node {
+                Node::Keyword => index += 2,
+                _ => {
+                    if let Some(symbol) = self.symbol(items[index]) {
+                        names.push(symbol.to_string());
+                    }
+                    index += 1;
+                }
+            }
+        }
+        names
+    }
+
+    /// class の body の 1 つが method(`(defn [decorators]? name [params] "doc"? body…)` など)なら、名と本体の有無を読む。
+    fn method_fact(&self, member: &Form) -> Option<MethodFact> {
+        let items = paren(member)?;
+        let head = items.first().and_then(|h| self.symbol(h))?;
+        if !matches!(head, "defn" | "defn/a" | "defk" | "deff" | "defp") {
+            return None;
+        }
+        let rest = &items[1..];
+        let rest = match rest.first() {
+            Some(first) if first.bracket_items().is_some() && rest.len() >= 3 => &rest[1..],
+            _ => rest,
+        };
+        let name = self.defined_name(rest.first()?).name;
+        let body: Vec<&&Form> = rest.iter().skip(2).collect();
+        let body: Vec<&&Form> = match body.first() {
+            Some(first) if self.string_value(first).is_some() && body.len() >= 2 => body[1..].to_vec(),
+            Some(first) if self.string_value(first).is_some() => Vec::new(),
+            _ => body,
+        };
+        let has_body = body.iter().any(|form| {
+            // 契約の辞書({:pre …})と、何もしない式(`...`・pass・None)は処理に数えない。
+            !form.is_brace() && !matches!(self.symbol(form), Some("..." | "pass" | "None"))
+        });
+        let mut mutates = Vec::new();
+        for form in &body {
+            self.self_mutations(form, &mut mutates);
+        }
+        Some(MethodFact { name, has_body, mutates })
+    }
+
+    /// 式の中で self の欄を書き換える所を探し、欄の名を積む(状態を持つ class を見分けるため)。
+    fn self_mutations(&self, form: &Form, out: &mut Vec<String>) {
+        /// 呼ぶと中身を書き換える method の名(list・dict・set・deque)。
+        const MUTATORS: &[&str] = &["append", "extend", "insert", "pop", "popleft", "appendleft", "remove", "clear", "update", "add", "discard", "setdefault", "sort", "reverse"];
+        let push = |out: &mut Vec<String>, field: &str| {
+            let field = field.split('.').next().unwrap_or(field).to_string();
+            if !field.is_empty() && !out.contains(&field) {
+                out.push(field);
+            }
+        };
+        // `self.x`・`self.x.y` の欄の名(self 以外なら None)。
+        let self_field = |target: &Form| -> Option<String> {
+            match paren(target) {
+                // `(get self.x k)`・`(. self x)` も self の欄への書き込み。
+                Some(inner) => match inner.first().and_then(|h| self.symbol(h)) {
+                    Some("get") => inner.get(1).and_then(|t| self.symbol(t)).and_then(|t| t.strip_prefix("self.")).map(str::to_string),
+                    Some(".") if inner.get(1).and_then(|t| self.symbol(t)) == Some("self") => inner.get(2).and_then(|t| self.symbol(t)).map(str::to_string),
+                    _ => None,
+                },
+                None => self.symbol(target).and_then(|t| t.strip_prefix("self.")).map(str::to_string),
+            }
+        };
+        let Some(items) = paren(form) else {
+            if let Node::Seq { items: inner, .. } = &form.node {
+                for item in live_items(inner) {
+                    self.self_mutations(item, out);
+                }
+            }
+            return;
+        };
+        match items.first().and_then(|h| self.symbol(h)) {
+            Some("setv" | "setx") => {
+                for pair in items[1..].chunks(2) {
+                    if let Some(field) = self_field(pair[0]) {
+                        push(out, &field);
+                    }
+                }
+            }
+            Some("+=" | "-=" | "*=" | "/=" | "//=" | "%=" | "**=" | "|=" | "&=" | "^=" | "<<=" | ">>=" | "@=" | "del") => {
+                for target in &items[1..] {
+                    if let Some(field) = self_field(target) {
+                        push(out, &field);
+                    }
+                }
+            }
+            Some("setattr") if items.get(1).and_then(|t| self.symbol(t)) == Some("self") => push(out, "setattr"),
+            Some(head) if head.starts_with('.') && MUTATORS.contains(&&head[1..]) => {
+                if let Some(field) = items.get(1).and_then(|t| self_field(t)) {
+                    push(out, &field);
+                }
+            }
+            Some(head) if head.starts_with("self.") && head.rsplit('.').next().is_some_and(|m| MUTATORS.contains(&m)) && head.matches('.').count() >= 2 => {
+                push(out, &head["self.".len()..]);
+            }
+            _ => {}
+        }
+        for item in &items[1..] {
+            self.self_mutations(item, out);
+        }
+    }
+
+    /// import の束縛(名 → module)を集める。`import_targets` と同じ形を読み、`:as` の別名も控える。
+    fn collect_bindings(&self, form: &Form, module: &str, out: &mut std::collections::BTreeMap<String, String>) {
+        let Some(items) = paren(form) else { return };
+        match items.first().and_then(|h| self.symbol(h)) {
+            Some("do" | "eval-and-compile" | "eval-when-compile") => {
+                for item in &items[1..] {
+                    self.collect_bindings(item, module, out);
+                }
+            }
+            Some("import") => {
+                let args = &items[1..];
+                let mut index = 0;
+                while index < args.len() {
+                    let spelled = self.text(args[index]).to_string();
+                    let target = absolute_module(module, &hy_mangle(&spelled));
+                    match args.get(index + 1) {
+                        Some(next) if next.bracket_items().is_some() => {
+                            let names = next.bracket_items().map(live_items).unwrap_or_default();
+                            let mut at = 0;
+                            while at < names.len() {
+                                let name = self.text(names[at]).to_string();
+                                match (names.get(at + 1), names.get(at + 2)) {
+                                    (Some(kw), Some(alias)) if self.keyword(kw) == Some("as") => {
+                                        out.insert(self.text(alias).to_string(), target.clone());
+                                        at += 3;
+                                    }
+                                    _ => {
+                                        if self.keyword(names[at]).is_none() {
+                                            out.insert(name, target.clone());
+                                        }
+                                        at += 1;
+                                    }
+                                }
+                            }
+                            index += 2;
+                        }
+                        Some(next) if self.keyword(next) == Some("as") => {
+                            if let Some(alias) = args.get(index + 2) {
+                                out.insert(self.text(alias).to_string(), target.clone());
+                            }
+                            index += 3;
+                        }
+                        _ => {
+                            out.insert(spelled, target);
+                            index += 1;
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
     /// `definition_facts` の、form の参照の列を受ける形。
     fn definition_facts_refs(&self, forms: &[&Form], compile_time: bool, reading: &TagReading, out: &mut Vec<DefinitionFact>) {
         for form in forms {
@@ -447,6 +707,8 @@ fn python_facts(source: &str, module: &str, reading: &TagReading) -> ModuleFacts
         functions: Vec::new(),
         errors: Vec::new(),
         definitions: Vec::new(),
+        classes: Vec::new(),
+        bindings: std::collections::BTreeMap::new(),
     };
     let body = match parse(source, Mode::Module, "<module>") {
         Ok(Mod::Module(module)) => module.body,

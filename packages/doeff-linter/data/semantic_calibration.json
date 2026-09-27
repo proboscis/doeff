@@ -1,5 +1,5 @@
 {
- "about": "意味の規則の較正の見張り — jev-lint の labels.json の札で、際どくない正例と反例(agora-controllers 379ebcdd の定義の写し)。正例は p >= 0.8、反例は p <= 0.2 に入るはず(試作の 4 回の実測: 正例 0.91〜0.97・反例 0.03〜0.06)。",
+ "about": "意味の規則の較正の見張り — jev-lint の labels.json の札で、際どくない正例と反例(agora-controllers 379ebcdd の定義の写し)。正例は p >= 0.8、反例は p <= 0.2 に入るはず(試作の 4 回の実測: 正例 0.91〜0.97・反例 0.03〜0.06)。 DOEFF204 の 2 例は合成(operator の例 — client を欄に持つ窓口と、Point2D の値の class)。比べるのは external-world の確率。",
  "items": [
   {
    "rule": "DOEFF201",
@@ -40,6 +40,34 @@
    "path": "controllers/core/chat_wake.hy",
    "layer": "core",
    "source": "(defk wake [message members policy]\n  {:pre [(: message Message) (: members tuple) (: policy WakePolicy)] :post [(: % tuple)] :tags {:context \"chat\" :role \"judgment\"}}\n  \"投稿 1 通で起こす参加者の列(問い A の 1 点)。members = members-of の答え(今参加している参加者だけ — 参加していない agent は\n   名指されても起こさない)。差出人自身は起こさない(agent が自分の投稿で自分を起こさない)・画面は起こさない(記録を読む)。\n     named-or-primary: 投稿が名指した(mentions)参加者が居ればそれだけ、居なければ主担当 1 つ(pane の chat は pane 1 つ)\n     all-others:       差出人以外の agent と pane の全員\"\n  (val candidates (lfor p members\n                         :if (and (isinstance p #(AgentParticipant PaneParticipant)) (!= p.agent message.sender))\n                         p))\n  (match policy\n    WakePolicy.NAMED-OR-PRIMARY\n    (do (val named (lfor p candidates :if (in p.agent (or message.mentions #())) p))\n        (cond\n          named (tuple named)\n          True (tuple (gfor p candidates :if (or (isinstance p PaneParticipant) p.primary) p))))\n    WakePolicy.ALL-OTHERS (tuple candidates)))"
+  },
+  {
+   "rule": "DOEFF204",
+   "id": "synthetic::RecordsClient",
+   "expect": true,
+   "name": "RecordsClient",
+   "kind": "defclass",
+   "path": "synthetic/records_client.hy",
+   "layer": "",
+   "fields": [
+    "client: httpx.AsyncClient",
+    "base-url: str"
+   ],
+   "source": "(defclass [(dataclass :frozen True)] RecordsClient []\n  \"記録の service の行を読み書きする口。\"\n  (#^ httpx.AsyncClient client)\n  (#^ str base-url)\n\n  (defn/a list-rows [self #^ str table]\n    (setv response (await (.get self.client f\"{self.base-url}/rows/{table}\")))\n    (.json response))\n\n  (defn/a put-row [self #^ str table #^ dict row]\n    (await (.post self.client f\"{self.base-url}/rows/{table}\" :json row))))"
+  },
+  {
+   "rule": "DOEFF204",
+   "id": "synthetic::Point2D",
+   "expect": false,
+   "name": "Point2D",
+   "kind": "defclass",
+   "path": "synthetic/point.hy",
+   "layer": "",
+   "fields": [
+    "x: float",
+    "y: float"
+   ],
+   "source": "(defclass [(dataclass :frozen True)] Point2D []\n  \"平面の点。\"\n  (#^ float x)\n  (#^ float y)\n\n  (defn #^ float norm [self]\n    (math.sqrt (+ (* self.x self.x) (* self.y self.y))))\n\n  (defn #^ Point2D add [self #^ Point2D other]\n    (Point2D (+ self.x other.x) (+ self.y other.y))))"
   }
  ]
 }

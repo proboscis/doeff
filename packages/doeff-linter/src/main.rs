@@ -200,6 +200,8 @@ impl Setup {
                     self.settings.definitions.is_some()
                 }
                 ProjectRule::TestIsDeftest => self.settings.definitions.as_ref().is_some_and(|d| !d.test_paths.is_empty()),
+                ProjectRule::ClassWithBehaviour => self.settings.definitions.is_some(),
+                ProjectRule::SemanticClassRole => self.settings.semantic.as_ref().is_some_and(|s| s.class_role.is_some()),
             })
             .collect()
     }

@@ -946,3 +946,84 @@ fn tests_are_deftest_only_in_the_configured_test_places() {
     assert!(violation(&report, "app/tests/t.hy::DOEFF118::test_a")["hint"].as_str().unwrap().starts_with("deftest にする"));
     assert_eq!(code, 1);
 }
+
+/// DOEFF119 の repo(定義の規則の母集団 = app・既知の破れの登録簿つき)。
+fn class_repo(files: &[(&str, &str)], registry: &str) -> tempfile::TempDir {
+    let dir = tempfile::TempDir::new().unwrap();
+    std::fs::write(
+        dir.path().join("pyproject.toml"),
+        "[tool.doeff-linter]\nenable = [\"DOEFF119\"]\n[tool.doeff-linter.definitions]\npaths = [\"app\"]\n[tool.doeff-linter.registry]\nfiles = [\"known.txt\"]\n",
+    )
+    .unwrap();
+    std::fs::write(dir.path().join("known.txt"), registry).unwrap();
+    for (rel, text) in files {
+        let path = dir.path().join(rel);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, text).unwrap();
+    }
+    dir
+}
+
+#[test]
+fn classes_are_judged_by_what_their_methods_touch_not_by_name() {
+    let source = r#"(import httpx)
+(import threading)
+(import doeff [EffectBase])
+(import app.base [Local])
+(defclass [(dataclass :frozen True)] Point2D []
+  (#^ float x)
+  (#^ float y)
+  (defn norm [self] (+ (* self.x self.x) (* self.y self.y)))
+  (defn add [self other] (Point2D (+ self.x other.x) (+ self.y other.y))))
+(defclass [(dataclass :frozen True)] Row []
+  (#^ str key)
+  (defn __post_init__ [self] (assert self.key)))
+(defclass Client []
+  (defn __init__ [self] (setv self.http (httpx.Client)))
+  (defn fetch [self url] (.get self.http url)))
+(defclass Poller []
+  (defn __init__ [self] (setv self.lock (threading.Lock))))
+(defclass Counter []
+  (defn __init__ [self] (setv self.n 0 self.seen []))
+  (defn bump [self] (+= self.n 1))
+  (defn note [self x] (.append self.seen x)))
+(defclass Gone [Exception])
+(defclass Put [EffectBase] (defn run [self] (setv self.x 1)))
+(defclass Child [Local] (defn step [self] (setv self.y 2)))
+(defclass Known [] (defn tick [self] (setv self.t 1)))
+"#;
+    let dir = class_repo(&[("app/core/shapes.hy", source), ("app/base.hy", "(defclass Local [])\n")], "app/core/shapes.hy::DOEFF119::Known\n");
+    let (code, report) = editor(dir.path());
+    let found: std::collections::BTreeMap<String, String> = report["violations"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|v| v["rule"] == "DOEFF119" && v["path"].as_str().unwrap().ends_with("shapes.hy"))
+        .map(|v| (v["key"].as_str().unwrap().rsplit("::").next().unwrap().to_string(), v["severity"].as_str().unwrap().to_string()))
+        .collect();
+    // 値の class(Point2D)・例外・外の library の基底(EffectBase)は出ない。欄だけ(Row — __post_init__ の検めだけ)は info。
+    // 生の副作用に触る(Client の method・Poller の欄の初期値)は error、self の欄を書き換える(Counter・repo の中の基底の Child)は warning。
+    let expected: std::collections::BTreeMap<String, String> = [
+        ("Row", "info"),
+        ("Client", "error"),
+        ("Poller", "error"),
+        ("Counter", "warning"),
+        ("Child", "warning"),
+        ("Known", "info"),
+    ]
+    .iter()
+    .map(|(k, v)| (k.to_string(), v.to_string()))
+    .collect();
+    assert_eq!(found, expected);
+    assert_eq!(code, 1);
+    let client = violation(&report, "app/core/shapes.hy::DOEFF119::Client");
+    assert!(client["explanation"]["subject"].as_str().unwrap().contains("外の世界に触る class(証拠 "), "{}", client["explanation"]["subject"]);
+    assert!(client["explanation"]["subject"].as_str().unwrap().contains("httpx.Client"));
+    assert!(client["hint"].as_str().unwrap().contains("(session val …)"));
+    let counter = violation(&report, "app/core/shapes.hy::DOEFF119::Counter");
+    assert!(counter["explanation"]["subject"].as_str().unwrap().contains("bump: self.n"), "{}", counter["explanation"]["subject"]);
+    assert!(counter["explanation"]["subject"].as_str().unwrap().contains("note: self.seen"));
+    assert!(counter["hint"].as_str().unwrap().starts_with("値は defrecord(不変)、振る舞いは新しい値を返す純粋な関数"));
+    assert!(violation(&report, "app/core/shapes.hy::DOEFF119::Row")["hint"].as_str().unwrap().starts_with("defrecord にする"));
+    assert_eq!(violation(&report, "app/core/shapes.hy::DOEFF119::Known")["registered"], true);
+}

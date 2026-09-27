@@ -30,6 +30,8 @@ pub enum SemanticQuestion {
     TransportKnowledge,
     /// deff が本当に素の関数でなければならない理由を、architecture.hy の種類の一覧 + none から選ぶ(Choice)。
     PlainCallable,
+    /// 処理を持つ method のある class が value / external-world / stateful / other のどれか(Choice・DOEFF204)。
+    ClassRole,
 }
 
 impl SemanticQuestion {
@@ -85,6 +87,19 @@ impl SemanticQuestion {
                 }
             }),
             SemanticQuestion::PlainCallable => Self::plain_callable_wire(&[], &[]),
+            SemanticQuestion::ClassRole => json!({
+                "type": "choice",
+                "instructions": {
+                    "question": "What is the class in `definition.source` in a doeff (algebraic effects) Hy code base? `definition.fields` lists its declared fields with their type annotations.",
+                    "note": "Judge by what the methods do with the fields, not by the class name. A class that only receives a client, store, connection or session from outside and calls it in its methods is external-world even when no raw I/O call is visible."
+                },
+                "criteria": {
+                    "value": "A value class: methods only compute new values from its own fields (like Point2D.norm or add); no fields are changed and no outside system is reached.",
+                    "external-world": "A window to the outside world: it holds a client, store, connection, file handle or session (usually passed in from outside) as a field and its methods use it to read or write the outside world.",
+                    "stateful": "It holds changing state: its methods change its own fields or change the state of another object passed to it (append, update, assignment).",
+                    "other": "None of the above (for example a protocol adapter required by a library, or a pure namespace of helpers)."
+                }
+            }),
             SemanticQuestion::TransportKnowledge => json!({
                 "type": "noul",
                 "instructions": "Does the code in `definition.source` know how communication is carried out: URLs or URL paths and query strings, HTTP methods, status codes or headers, JSON wire field names or JSON encoding and decoding, SQL, or network endpoint addresses?",
@@ -102,6 +117,7 @@ impl SemanticQuestion {
             SemanticQuestion::BusinessDecision => "要求の言い換えを越えて、業務の判断(誰に許すか・業務の決まり・宛先・業務の結果)をしている",
             SemanticQuestion::TransportKnowledge => "通信の手段(URL や query・HTTP の method や status・JSON の wire・SQL・宛先の address)を知っている",
             SemanticQuestion::PlainCallable => "名乗った理由の種類では、素の関数でなければならない理由にならない見込み",
+            SemanticQuestion::ClassRole => "処理を持つ method のある class が、外の世界の窓口か状態を持つ物の見込み",
         }
     }
 }
@@ -130,6 +146,8 @@ pub struct SemanticSection {
     pub transport_knowledge: QuestionSection,
     /// DOEFF203: 理由を受け入れるかの閾値(受け入れない答えの確率で warning / info)。
     pub plain_callable: Option<PlainCallableSection>,
+    /// DOEFF204: Jev が external-world / stateful を選んだ確率の閾値(warning_min・info_min)。
+    pub class_role: Option<PlainCallableSection>,
     pub workers: Option<usize>,
     pub timeout_seconds: Option<u64>,
     pub source_limit: Option<usize>,
@@ -164,6 +182,7 @@ pub struct QuestionSettings {
 #[derive(Debug, Clone)]
 pub struct SemanticSettings {
     pub plain_callable: Option<PlainCallableSettings>,
+    pub class_role: Option<PlainCallableSettings>,
     pub questions: BTreeMap<SemanticQuestion, QuestionSettings>,
     pub workers: usize,
     pub timeout: Duration,
@@ -190,15 +209,20 @@ impl SemanticSettings {
                 questions.insert(question, QuestionSettings { layers, warning, info });
             }
         }
-        let plain_callable = section.plain_callable.as_ref().map(|p| {
-            let settings = PlainCallableSettings { warning_min: p.warning_min.unwrap_or(0.4), info_min: p.info_min.unwrap_or(0.4) };
-            if !(0.0..=1.0).contains(&settings.warning_min) || !(0.0..=1.0).contains(&settings.info_min) {
-                problems.push(format!("semantic.plain_callable: 閾値は 0〜1(warning_min = {}・info_min = {})", settings.warning_min, settings.info_min));
-            }
-            settings
-        });
+        let mut thresholds = |section: Option<&PlainCallableSection>, name: &str, warning: f64, info: f64| {
+            section.map(|p| {
+                let settings = PlainCallableSettings { warning_min: p.warning_min.unwrap_or(warning), info_min: p.info_min.unwrap_or(info) };
+                if !(0.0..=1.0).contains(&settings.warning_min) || !(0.0..=1.0).contains(&settings.info_min) {
+                    problems.push(format!("semantic.{}: 閾値は 0〜1(warning_min = {}・info_min = {})", name, settings.warning_min, settings.info_min));
+                }
+                settings
+            })
+        };
+        let plain_callable = thresholds(section.plain_callable.as_ref(), "plain_callable", 0.4, 0.4);
+        let class_role = thresholds(section.class_role.as_ref(), "class_role", 0.7, 0.5);
         SemanticSettings {
             plain_callable,
+            class_role,
             questions,
             workers: section.workers.unwrap_or(8).clamp(1, 32),
             timeout: Duration::from_secs(section.timeout_seconds.unwrap_or(30)),
@@ -215,6 +239,17 @@ impl SemanticSettings {
             false => Some(crate::models::Severity::Info),
             true if rejected_total >= spec.info_min => Some(crate::models::Severity::Info),
             true => None,
+        }
+    }
+
+    /// DOEFF204: Jev が選んだ答えと確率から重さを決める — external-world / stateful を warning_min 以上で warning、info_min 以上で info。
+    /// value と other は出さない。error にはしない。
+    pub fn class_role_severity(&self, chosen: &str, probability: f64) -> Option<crate::models::Severity> {
+        let spec = self.class_role?;
+        match chosen {
+            "external-world" | "stateful" if probability >= spec.warning_min => Some(crate::models::Severity::Warning),
+            "external-world" | "stateful" if probability >= spec.info_min => Some(crate::models::Severity::Info),
+            _ => None,
         }
     }
 
@@ -351,6 +386,53 @@ pub fn plain_callable_item(
         layer: LayerId(0),
         state,
         key,
+    }
+}
+
+/// DOEFF204 の class 1 つの state と cache の鍵を作る(state = class の source(タグを消して切る)と欄の宣言)。
+#[allow(clippy::too_many_arguments)]
+pub fn class_item(
+    settings: &SemanticSettings,
+    model: &str,
+    rel: &str,
+    path: &Path,
+    name: &str,
+    range: doeff_indexer::hy_index::Range,
+    source: &str,
+    fields: &[String],
+) -> SemanticItem {
+    let stripped = truncate(&strip_tags(source), settings.source_limit);
+    let question = SemanticQuestion::ClassRole;
+    let question_json = question.wire();
+    let state = json!({
+        "definition": {"name": name, "kind": "defclass", "file": rel, "source": stripped, "fields": fields},
+    });
+    let mut hasher = Sha256::new();
+    for part in [model.to_string(), canonical(&question_json), canonical(&state)] {
+        hasher.update(part.as_bytes());
+        hasher.update(b"\n");
+    }
+    let key = hasher.finalize().iter().map(|b| format!("{:02x}", b)).collect();
+    SemanticItem {
+        question,
+        question_json,
+        declared: None,
+        rel: rel.to_string(),
+        path: path.to_path_buf(),
+        name: name.to_string(),
+        kind: "defclass",
+        range,
+        layer: LayerId(0),
+        state,
+        key,
+    }
+}
+
+/// 較正の見張りで比べる確率 — Noul は答えの確率、DOEFF204 は external-world の確率(正例 = 窓口・反例 = 値の class)。
+fn calibration_probability(question: SemanticQuestion, answer: &Answer) -> f64 {
+    match question {
+        SemanticQuestion::ClassRole => answer.probabilities.as_ref().and_then(|p| p.get("external-world").copied()).unwrap_or(0.0),
+        SemanticQuestion::BusinessDecision | SemanticQuestion::TransportKnowledge | SemanticQuestion::PlainCallable => answer.probability,
     }
 }
 
@@ -621,6 +703,9 @@ pub struct CalibrationExample {
     pub path: String,
     pub layer: String,
     pub source: String,
+    /// DOEFF204 の例の欄の宣言(`名: 型`)。
+    #[serde(default)]
+    pub fields: Vec<String>,
 }
 
 /// 同梱の較正の例。
@@ -704,7 +789,7 @@ pub fn evaluate(
         match (gateway, &pool) {
             (Some(gateway), Ok(pool)) => {
                 let results: Vec<(bool, Result<Answer, String>)> = pool.install(|| {
-                    calibration.par_iter().map(|(c, expect)| (*expect, gateway.ask(&c.state, &c.question.wire()))).collect()
+                    calibration.par_iter().map(|(c, expect)| (*expect, gateway.ask(&c.state, &c.question_json))).collect()
                 });
                 summary.asked += results.len();
                 let mut drifted = Vec::new();
@@ -716,9 +801,10 @@ pub fn evaluate(
                             if answer.served_model.is_some() {
                                 summary.served_model = answer.served_model.clone();
                             }
-                            let inside = if expect { answer.probability >= CALIBRATION_POSITIVE_MIN } else { answer.probability <= CALIBRATION_NEGATIVE_MAX };
+                            let probability = calibration_probability(example.question, &answer);
+                            let inside = if expect { probability >= CALIBRATION_POSITIVE_MIN } else { probability <= CALIBRATION_NEGATIVE_MAX };
                             if !inside {
-                                drifted.push(format!("{} の {}(期待 {})が p={:.2}", example.question_id(), example.name, if expect { "真" } else { "偽" }, answer.probability));
+                                drifted.push(format!("{} の {}(期待 {})が p={:.2}", example.question_id(), example.name, if expect { "真" } else { "偽" }, probability));
                             }
                         }
                         Err(reason) => {
@@ -802,6 +888,7 @@ impl SemanticItem {
             SemanticQuestion::BusinessDecision => "DOEFF201",
             SemanticQuestion::TransportKnowledge => "DOEFF202",
             SemanticQuestion::PlainCallable => "DOEFF203",
+            SemanticQuestion::ClassRole => "DOEFF204",
         }
     }
 }
@@ -827,7 +914,7 @@ mod tests {
         );
         assert_eq!(parse_answer(r#"{"answers":{"q":{"noul":0.2}},"usage":{"input_tokens":7},"model":"jev-1"}"#).unwrap().probability, 0.2);
         assert!(parse_answer("{}").is_err());
-        assert_eq!(calibration_examples().len(), 4);
+        assert_eq!(calibration_examples().len(), 6);
     }
 
     #[test]
