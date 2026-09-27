@@ -1,6 +1,6 @@
 ;; 宣言の検めと判断の純関数の反例(handler を通さない)。
 (require doeff-hy.macros [deftest])
-(import doeff_records.values [FieldDecl TableDecl StreamDecl RecordsSchema KeepFor Row Missing Conflict Refused NotIndexed UndeclaredTable
+(import doeff_records.values [FieldDecl TableDecl StreamDecl RecordsSchema KeepFor ByKeySuffix EachEvent Row Missing Conflict Refused NotIndexed UndeclaredTable
                               ExpectAbsent ExpectVersion ExpectAny])
 (import doeff_records.effects [PutRow ListRows])
 (import doeff_records.admission [json-equal? key-text judge-expect judge-put where-refusal row-expired?
@@ -29,6 +29,10 @@
     (setv args (| base (dfor #(k v) (.items broken) (.replace k "-" "_") v)))
     (assert (refuses? (fn [] (TableDecl #** args)) #(ValueError TypeError)) broken))
   (assert (refuses? (fn [] (StreamDecl "s" #())) ValueError) "誰も積めない追記の列")
+  (assert (refuses? (fn [] (StreamDecl "s" #("w") :retention-group (ByKeySuffix ":"))) ValueError) "消えない列の保持の組")
+  (assert (refuses? (fn [] (StreamDecl "s" #("w") :retention-group "each")) TypeError) "保持の組の型の外")
+  (assert (refuses? (fn [] (ByKeySuffix "")) ValueError) "空の区切り")
+  (assert (= (. (StreamDecl "s" #("w")) retention-group) (EachEvent)) "既定は出来事ごと")
   (assert (refuses? (fn [] (FieldDecl "x" #())) ValueError) "誰も書けない欄")
   (assert (refuses? (fn [] (LAW-SCHEMA.table "nope")) UndeclaredTable))
   (assert (refuses? (fn [] (PutRow "parts" #("p1") {} "any")) TypeError))

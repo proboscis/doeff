@@ -7,14 +7,15 @@
 (import doeff [run with_handlers])
 (import doeff_core_effects.scheduler [scheduled])
 (import doeff_time [SimClock sim-time-handler GetTimeEffect])
-(import doeff_records.values [ExpectAny Changes Reset Written WrittenRows Conflict RowsConflict RowsRefused])
+(import doeff_records.values [EachEvent ExpectAny Changes Reset Written WrittenRows Conflict RowsConflict RowsRefused])
 (import doeff_records.effects [PutRow PutRows WatchChanges ListRows AppendEvent])
 (import doeff_records.memory [MemoryStore memory-records-handler])
 (import doeff_records.laws [LAW-SCHEMA LawHarness LawBroken law-stale-put-conflicts law-committed-changes-appear-once-in-order
                             law-epoch-change-resets law-undeclared-writes-are-refused law-operator-paths-need-an-operator
                             law-founders-write-only-at-birth law-transient-rows-expire
                             law-indexed-list-equals-filtered-scan law-append-is-idempotent law-none-removes-a-field
-                            law-maintenance-prunes-and-sweeps law-put-rows-is-all-or-nothing])
+                            law-maintenance-prunes-and-sweeps law-put-rows-is-all-or-nothing
+                            law-grouped-events-expire-together])
 (import doeff_records.maintenance [PruneChanges Pruned])
 
 
@@ -125,5 +126,10 @@
   (setv store (MemoryStore LAW-SCHEMA))
   (assert (breaks? law-transient-rows-expire
                    (LawHarness (fn [writer program] (with_handlers [(frozen-clock) (memory-records-handler store writer)] program)))))
+  ;; 出来事ごとに数える置き場(保持の組を読まない)— 組の後の出来事が残るのに前の出来事が消える。
+  (setv ungrouped (dataclasses.replace (get LAW-SCHEMA.streams "pairs") :retention-group (EachEvent)))
+  (assert (breaks? law-grouped-events-expire-together
+                   (broken-harness (MemoryStore (dataclasses.replace LAW-SCHEMA :streams (| (dict LAW-SCHEMA.streams) {"pairs" ungrouped})))
+                                   None)))
   ;; 壊していない handler では同じ法が緑(反例の包みが無ければ通る — 比べの基準)。
   (assert (not (breaks? law-stale-put-conflicts (broken-harness (MemoryStore LAW-SCHEMA) None)))))
