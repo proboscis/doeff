@@ -15,10 +15,11 @@
 (import pathlib [Path])
 (import pytest)
 (import doeff [run])
-(import doeff_cluster.runtime_env_model [RepoCheckout PythonProject RuntimeEnv runtime-env->json env-key current-platform])
-(import doeff_cluster.service_model [service System system-declaration])
+(import dataclasses [replace])
+(import doeff_cluster.runtime_env_model [RepoCheckout PythonProject RuntimeEnv EnvVar runtime-env->json env-key current-platform])
+(import doeff_cluster.service_model [CallShape System job system-of system-declaration])
 (import doeff_cluster.cluster_policy [job-from-json job-to-json spec-json])
-(import doeff_cluster.handlers [declared-job-spec ProbeStore probe-targets])
+(import doeff_cluster.handlers [declared-job-spec ProbeStore probe-targets program-file])
 (import doeff_cluster.job_entry [RunContext runtime-env-of-context])
 (import doeff_cluster.worker_model [JobSpec ProbeEntry ProbeState StartJob ReapJob Outcome CodeState ENV-KEY-PREFIX code-key spec-hash])
 (import tests.careful_rig [Rig make-rig push-commit app-files declare prepare LOCK HY DEADLINE-SECONDS])
@@ -41,21 +42,38 @@
   interval)
 
 
-(defn env [config ctx] [])  ; defk にできない: job_entry が Program の外で呼ぶ組み立ての関数(速い検の宣言の参照先)
+(defk quiet-system [update readiness environ]
+  {:pre [(: update str) (: readiness (| dict None)) (: environ dict)] :post [(: % System)]
+   :tags {:context "doeff-cluster-test" :role "entry"}}
+  "速い検の系(job quiet 1 つ — defsystem の展開と同じ呼び方で作る)。"
+  (system-of "lab" #((job "quiet" (quiet-program 1.0) :call (CallShape :function quiet-program :args [1.0] :kwargs {})
+                          :needs #{"net"} :update update :readiness readiness :environ environ))))
 
 
-(deftest test-the-declaration-carries-the-runtime-env-and-refuses-base-from
-  ;; 宣言の行が runtimeEnv を運ぶ。image の版を追う base-from の service を含む宣言は、commit が 2 つになるので断る。
+(deftest test-the-declaration-carries-the-runtime-env-and-one-source-of-child-env-vars
+  ;; 宣言の行が runtimeEnv を運ぶ。Program の job は image の版を追う base-from を持たない(job に欄が無い・行の baseFrom は coordinator が
+  ;; 断る — 下の検)。子の環境変数の足し口は 1 つ: 実行環境の env-vars と :environ に同じ名が在れば宣言の時点で断る(改訂 1 の G)。
   (<- declared-env RuntimeEnv (sample-env))
-  (val plain (service "quiet" quiet-program :env "tests.test_service_env:env" :needs (frozenset ["net"]) :config {"interval" 1.0}))
-  (val rows (system-declaration (System "lab" #(plain)) "rev-1" :runtime-env declared-env))
+  (<- plain System (quiet-system "recreate" None {}))
+  (val rows (. (system-declaration plain "rev-1" :runtime-env declared-env) rows))
   (<- env-json dict (runtime-env->json declared-env))
   (assert (= (get (get rows 0) "runtimeEnv") env-json) rows)
-  (assert (not-in "runtimeEnv" (get (system-declaration (System "lab" #(plain)) "rev-1") 0)) "env を渡さない宣言は今の形のまま")
-  (val following (service "follow" quiet-program :env "tests.test_service_env:env" :needs (frozenset ["net"]) :config {"interval" 1.0}
-                          :base-from {"kind" "Deployment" "namespace" "n" "name" "d"}))
-  (with [(pytest.raises ValueError)]
-    (system-declaration (System "lab" #(plain following)) "rev-1" :runtime-env declared-env)))
+  (assert (not-in "runtimeEnv" (get (. (system-declaration plain "rev-1") rows) 0)) "env を渡さない宣言は今の形のまま")
+  (with [(pytest.raises TypeError)]
+    (job "follow" (quiet-program 1.0) :call (CallShape :function quiet-program :args [1.0] :kwargs {}) :needs #{"net"}
+         :base-from {"kind" "Deployment" "namespace" "n" "name" "d"}))
+  (val with-vars (replace declared-env :env-vars #((EnvVar :name "POLL" :value "1"))))
+  (<- clashing System (quiet-system "recreate" None {"POLL" "2"}))
+  (with [raised (pytest.raises ValueError)]
+    (system-declaration clashing "rev-1" :runtime-env with-vars))
+  (assert (in "POLL" (str raised.value)))
+  ;; coordinator も同じ重なりを行で断る(declare を通らない行 — 資源の口へ直に書かれた行)。
+  (<- apart System (quiet-system "recreate" None {"POLL" "2"}))
+  (val row (get (. (system-declaration apart "rev-1") rows) 0))
+  (<- vars-json dict (runtime-env->json with-vars))
+  (with [raised (pytest.raises ValueError)]
+    (job-from-json (| row {"runtimeEnv" vars-json})))
+  (assert (in "POLL" (str raised.value))))
 
 
 (deftest test-the-coordinator-carries-the-runtime-env-to-the-worker
@@ -63,10 +81,8 @@
   ;; 読めない宣言は断る。
   (<- declared-env RuntimeEnv (sample-env))
   (<- env-json dict (runtime-env->json declared-env))
-  (val row (get (system-declaration (System "lab" #((service "quiet" quiet-program :env "tests.test_service_env:env" :needs (frozenset ["net"])
-                                                             :config {"interval" 1.0})))
-                                    "rev-1" :runtime-env declared-env)
-                0))
+  (<- plain System (quiet-system "recreate" None {}))
+  (val row (get (. (system-declaration plain "rev-1" :runtime-env declared-env) rows) 0))
   (val job (job-from-json row))
   (assert (= (json.loads job.spec.runtime-env) env-json) job.spec)
   (assert (= (get (job-to-json job) "runtimeEnv") env-json) "coordinator の状態に残る(読み戻しで同じ宣言)")
@@ -103,11 +119,8 @@
   ;; ready-instance)。worker が版を env のキーへ置き換えると両者が食い違い、env の service は Ready と数えられない(2026-09-26 の構成
   ;; レビューで見つけた欠陥)。版と指紋は両側で同じ・root の鍵だけが worker の中の値。
   (<- declared-env RuntimeEnv (sample-env))
-  (val row (get (system-declaration (System "lab" #((service "quiet" quiet-program :env "tests.test_service_env:env" :needs (frozenset ["net"])
-                                                             :config {"interval" 1.0} :update "handoff"
-                                                             :readiness {"windowSeconds" 30})))
-                                    "rev-1" :runtime-env declared-env)
-                0))
+  (<- handoff System (quiet-system "handoff" {"windowSeconds" 30} {"POLL" "5.0"}))
+  (val row (get (. (system-declaration handoff "rev-1" :runtime-env declared-env) rows) 0))
   (val coordinator-spec (. (job-from-json row) spec))
   (val worker-spec (declared-job-spec (spec-json coordinator-spec)))
   (assert (= worker-spec.revision coordinator-spec.revision) #(worker-spec coordinator-spec))
@@ -120,8 +133,8 @@
   ;; 検めると、root に無い module を worker の venv が読めて誤って通る。
   (<- declared-env RuntimeEnv (sample-env))
   (<- env-json dict (runtime-env->json declared-env))
-  (val spec (JobSpec "quiet" "doeff_cluster.job_entry" #("service" "--factory" "app.jobs:program" "--env" "app.jobs:env")
-                     "env-k" :runtime-env (json.dumps env-json :sort-keys True)))
+  (val spec (JobSpec "quiet" "doeff_cluster.job_entry" #("service" "--identity" "0123456789abcdef")
+                     "env-k" :runtime-env (json.dumps env-json :sort-keys True) :program (* "a" 64)))
   ;; probe-dir は既に在る dir(mkdir が何も作らない — argv の形だけを見る)。
   (val probes (ProbeStore "/worker/bin/hy" :uv "/bin/uv" :probe-dir (str tmp-path)))
   (val command (.command probes "/state/roots/env-k" spec.runtime-env (probe-targets spec)))
@@ -129,7 +142,9 @@
   (val cwd (get command 1))
   (val environment (get command 2))
   (assert (= (cut argv 0 6) ["/bin/uv" "run" "--no-sync" "--frozen" "--project" "/state/roots/env-k/app"]) argv)
-  (assert (in "app.jobs:program" argv) argv)
+  ;; Program の job の検めは入口の module の import だけ(詰めた Program の版と復元は起こした子が検める)。
+  (assert (= (probe-targets spec) ["doeff_cluster.job_entry"]))
+  (assert (in "doeff_cluster.job_entry" argv) argv)
   (assert (not-in "/worker/bin/hy" argv) "worker の hy では検めない")
   (assert (not-in "PYTHONPATH" environment) "PYTHONPATH を置かない")
   (assert (= cwd (str probes.probe-dir)) cwd))
@@ -170,9 +185,17 @@
   "service 1 本を宣言から env の root で起こして終わるまで待つ(宣言 → coordinator → heartbeat の返事 → worker の JobSpec → 準備 →
    入口の検め → 子)。答え = service が out に書いた行。"
   (import appservice)
-  (val declared (service "reporter" appservice.report-service :env "appjobs:env" :needs (frozenset ["net"]) :config {"out" (str out)}))
-  (val row (get (system-declaration (System "lab" #(declared)) "rev" :runtime-env env) 0))
+  (val declared (job "reporter" (appservice.report-service (str out))
+                     :call (CallShape :function appservice.report-service :args [(str out)] :kwargs {})
+                     :needs #{"net"}))
+  (val declaration (system-declaration (system-of "lab" #(declared)) "rev" :runtime-env env))
+  (val row (get declaration.rows 0))
   (val spec (declared-job-spec (spec-json (. (job-from-json row) spec))))
+  ;; worker が /programs/<sha> から取って置くのと同じ file(CoordinatorLink.accept-programs の形)を ProcessHost の cache に置く。
+  (val cached (program-file rig.host.program-dir spec.program))
+  (.mkdir cached.parent :parents True :exist-ok True)
+  (.write-text cached (json.dumps {"blob" (get declaration.programs spec.program) "versions" (get row "run" "versions")})
+               :encoding "utf-8")
   (<- view (prepare rig env))
   (assert (= view.state CodeState.READY) view)
   (assert (= (code-key spec) view.revision) "worker の置き場の鍵は準備した root と同じ env のキー")

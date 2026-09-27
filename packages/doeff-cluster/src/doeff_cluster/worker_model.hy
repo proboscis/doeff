@@ -47,6 +47,12 @@
   ;; worker の中だけで決まる値なので比べない欄 — 版(revision)は宣言のまま運び、coordinator が同じ宣言から計算する版と指紋(spec-hash)
   ;; に合わせる(版を env のキーに置き換えると、coordinator は「版が違う」で env の service を Ready と数えない)。
   (setv #^ (| str None) env-key (field :default None :compare False))
+  ;; Program の job(2026-09-27・ADR-DOE-CLUSTER-001・改訂 1 の F): program = 詰めた Program の置き場のキー(sha256 — worker は
+  ;; coordinator の /programs/<sha> から取って子へ file で渡す)。比べない欄 — 同じ Program でも詰めた中身は揺れるので、入れ替えの要否は
+  ;; args に載る identity の指紋で決める(改訂 1 の A)。
+  (setv #^ (| str None) program (field :default None :compare False))
+  ;; 子の環境変数(宣言の :environ・名の順の #(名 値) の tuple — 改訂 1 の G)。比べる欄(変われば入れ替える・spec-hash に入る)。
+  (setv #^ tuple environ #())
 
   (defn __post-init__ [self]
     (when (or (not self.name) (not self.entry) (not self.revision))
@@ -112,10 +118,12 @@
   "process を起こす形(name・entry・引数 = 設定を含む・版・once)の指紋。worker が起こした process の世代の一部として子へ渡し、
    coordinator は今の宣言から同じ関数で計算して比べる — 設定だけが変わっても指紋が変わり、前の process の報告は数えない。
    割り当ての世代(placement)・入れ替えの形(handoff・ready-instance)は含めない(比べない欄)。base は在る時だけ足す(base の無い
-   宣言の指紋は以前と同じ)。定義点はこの 1 つ。"
+   宣言の指紋は以前と同じ)。environ(子の環境変数)も在る時だけ足す。Program の job の詰めた中身(program)は含めない —
+   Program の同一性は args の identity の指紋が運ぶ。定義点はこの 1 つ。"
   (cut (.hexdigest (hashlib.sha256 (.encode (json.dumps (+ [spec.name spec.entry (list spec.args) spec.revision spec.once]
                                                            (if spec.base [spec.base] [])
-                                                           (if spec.runtime-env [spec.runtime-env] []))
+                                                           (if spec.runtime-env [spec.runtime-env] [])
+                                                           (if spec.environ [(lfor #(k v) spec.environ [k v])] []))
                                                         :ensure-ascii False :separators #("," ":"))
                                             "utf-8")))
        0 16))
@@ -191,11 +199,24 @@
 
 
 (defn #^ tuple probe-args [#^ JobSpec spec]
-  "検めの対象の job の入口を検める引数(spec.entry の probe 口へ渡す): #(\"probe\" \"--factory\" M:f \"--env\" M:e)。"
-  (setv args (list spec.args))
-  (defn #^ str value-of [#^ str flag]
-    (if (in flag args) (get args (+ (.index args flag) 1)) ""))
-  #("probe" "--factory" (value-of "--factory") "--env" (value-of "--env")))
+  "検めの対象の job の入口を検める引数(spec.entry の probe 口へ渡す)。Program の job(2026-09-27)は入口の module を import できるか
+   だけを検める — 詰めた Program の版と復元は起こした子が検め、理由つきで落ちる(job_entry.read-program)。"
+  #("probe"))
+
+;; 旧い service の spec の引数(2026-09-27 より前の job_entry service の形 — 関数の参照 + handler の組の import path + 設定)。
+(setv OLD-SERVICE-FLAGS #("--factory" "--env" "--config"))
+
+(defn #^ (| str None) probe-refusal [#^ JobSpec spec]
+  "検めの対象の spec を検める前に断る理由(断らなければ None)。Program の job の service は詰めた Program の置き場のキー(spec.program)を
+   持ち、旧い引数(--factory・--env・--config)を持たない。旧い coordinator の返事の spec は入口の module の import だけなら通ってしまい、
+   子の job_entry が argparse で落ちて起こし直しを繰り返すので、検めの段で理由つきに止める(計画 2.8 の入口 15)。"
+  (setv old (lfor flag OLD-SERVICE-FLAGS :if (in flag spec.args) flag))
+  (cond
+    (not (probed-job spec)) None
+    old (.format "旧い service の spec の引数 {} は受け付けない — Program の job(service --identity と詰めた Program)で宣言し直す"
+                 (.join "・" old))
+    (not spec.program) "service の spec に詰めた Program の置き場のキー(program)が無い — Program の job で宣言し直す"
+    True None))
 
 
 (defclass [(dataclass :frozen True)] EnvDisk []

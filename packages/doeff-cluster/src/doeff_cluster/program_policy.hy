@@ -1,0 +1,52 @@
+;;; coordinator の詰めた Program の置き場(ADR-DOE-CLUSTER-001 R3b・改訂 1 の F — 純粋な判断・I/O はしない)。
+;;;
+;;;   PUT /programs/<sha>  {"blob" 詰めた Program の文字列 "versions" 詰めた送り手の版} → 置く(同じキーは同じ中身 — 何度でも同じ意味)
+;;;   GET /programs/<sha>  → {"blob" "versions"}(無ければ 404)
+;;;
+;;; 宣言の行(Service)と heartbeat の返事は sha だけを運び、worker が取って cache に置く。Program は大きくなりうるので、宣言の行と
+;;; 毎拍の返事に載せない。キーは中身の sha256(置く時に確かめる)。参照の無くなった Program は、置いてから PROGRAM-GRACE-MS を過ぎたら
+;;; 掃除する(declare は Program を先に置いてから行を書くので、その間に消さない)。
+(require doeff-hy.macros [deff])
+(import dataclasses [replace])
+(import hashlib)
+(import re)
+(import .cluster_model [ClusterState])
+
+(setv PROGRAM-KEY (re.compile r"[0-9a-f]{64}"))
+(setv PROGRAM-MAX-BYTES (* 4 1024 1024))       ; 詰めた Program 1 つの上限(base64 の文字列の長さ)
+(setv PROGRAM-GRACE-MS (* 10 60 1000))          ; 参照の無い Program を残す長さ(置いてから)
+
+
+(deff program-write [#^ ClusterState state #^ str sha #^ dict body #^ int now]  ; defk にできない: coordinator の要求の振り分け(Program の外の純粋な判断)が呼ぶ
+  {:pre [(: state ClusterState) (: sha str) (: body dict) (: now int)] :post [(: % tuple) (= (len %) 3)]
+   :tags {:context "doeff-cluster" :role "judgment"}}
+  "PUT /programs/<sha>: 形と中身の sha256 を確かめて置き、#(次の状態 status 本文) を返す。同じキーを置き直すと期限だけ延びる。"
+  (setv blob (.get body "blob") versions (.get body "versions" {}))
+  (cond
+    (not (PROGRAM-KEY.fullmatch sha)) #(state 400 {"error" (.format "キーは 64 桁の sha256: {!r}" sha)})
+    (not (isinstance blob str)) #(state 400 {"error" "blob は詰めた Program の文字列"})
+    (> (len blob) PROGRAM-MAX-BYTES) #(state 413 {"error" (.format "詰めた Program が上限 {} byte を越える" PROGRAM-MAX-BYTES)})
+    (not (isinstance versions dict)) #(state 400 {"error" "versions は詰めた送り手の版の object"})
+    (!= (.hexdigest (hashlib.sha256 (.encode blob "ascii"))) sha)
+      #(state 400 {"error" "blob の sha256 がキーと合わない"})
+    True #((replace state :programs (| state.programs {sha {"blob" blob "versions" versions "putMs" now}}))
+           200 {"program" sha})))
+
+
+(deff program-read [#^ ClusterState state #^ str sha]  ; defk にできない: coordinator の要求の振り分け(Program の外の純粋な判断)が呼ぶ
+  {:pre [(: state ClusterState) (: sha str)] :post [(: % tuple) (= (len %) 3)] :tags {:context "doeff-cluster" :role "judgment"}}
+  "GET /programs/<sha>: 置いた Program(無ければ 404)。"
+  (setv row (.get state.programs sha))
+  (if (is row None)
+      #(state 404 {"error" (.format "Program {} は置かれていない(宣言の前に declare が置く)" sha)})
+      #(state 200 {"blob" (get row "blob") "versions" (get row "versions")})))
+
+
+(deff sweep-programs [#^ ClusterState state #^ int now]  ; defk にできない: coordinator の調停(Program の外の純粋な判断)が呼ぶ
+  {:pre [(: state ClusterState) (: now int)] :post [(: % ClusterState)] :tags {:context "doeff-cluster" :role "judgment"}}
+  "受け付けた Service のどれも参照せず、置いてから PROGRAM-GRACE-MS を過ぎた Program を消す。"
+  (setv used (sfor j state.jobs :if j.spec.program j.spec.program)
+        kept (dfor #(sha row) (.items state.programs)
+                   :if (or (in sha used) (<= (- now (get row "putMs")) PROGRAM-GRACE-MS))
+                   sha row))
+  (if (= (len kept) (len state.programs)) state (replace state :programs kept)))
