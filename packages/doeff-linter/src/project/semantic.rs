@@ -152,7 +152,6 @@ impl SemanticQuestion {
 
 /// `[tool.doeff-linter.semantic]` の問い 1 つの設定(読んだ形)。
 #[derive(Debug, Deserialize, Serialize, Default, Clone)]
-#[serde(deny_unknown_fields)]
 pub struct QuestionSection {
     /// 問いを当てる層の名。
     #[serde(default)]
@@ -161,12 +160,13 @@ pub struct QuestionSection {
     pub warning: Option<f64>,
     /// この確率以上で info。
     pub info: Option<f64>,
+    /// 置けない欄(Jev の判定は error にしない)— 知らない鍵として読み飛ばさず、書かれていれば設定の誤りにするために読む。
+    pub error: Option<f64>,
 }
 
 /// `[tool.doeff-linter.semantic]`(読んだ形)。重さは warning と info だけで、error の欄は無い。宛先・model・キーはここに書かない
 /// (doeff-jev と同じ決め方 — 環境変数 JEV_* と ~/.config/jev/client.json)。例外は Jev の呼び出しを覚える代理の宛先 proxy_url(repo ごとに向ける)。
 #[derive(Debug, Deserialize, Serialize, Default, Clone)]
-#[serde(deny_unknown_fields)]
 pub struct SemanticSection {
     #[serde(default)]
     pub business_decision: QuestionSection,
@@ -191,7 +191,6 @@ pub struct SemanticSection {
 
 /// `[tool.doeff-linter.semantic] mixed_concerns`(読んだ形)。
 #[derive(Debug, Deserialize, Serialize, Default, Clone)]
-#[serde(deny_unknown_fields)]
 pub struct MixedConcernsSection {
     /// 問う定義の役(タグの :role — 既定 judgment・program)。
     #[serde(default)]
@@ -232,7 +231,6 @@ pub const PROXY_KEY_VERSION: &str = "jev-proxy-key-1";
 
 /// `[tool.doeff-linter.semantic] plain_callable`(読んだ形)。
 #[derive(Debug, Deserialize, Serialize, Default, Clone)]
-#[serde(deny_unknown_fields)]
 pub struct PlainCallableSection {
     /// Jev が受け入れない答え(受け入れない型か none)を選び、その確率がこれ以上で warning(既定 0.4)。
     pub warning_min: Option<f64>,
@@ -280,6 +278,9 @@ impl SemanticSettings {
         ] {
             let layers: BTreeSet<LayerId> =
                 part.layers.iter().filter_map(|layer| find(layer, &format!("semantic.{}.layers", name))).collect();
+            if part.error.is_some() {
+                problems.push(format!("semantic.{}.error: Jev の判定の重さは warning と info だけ(error にしない)", name));
+            }
             let warning = part.warning.unwrap_or(warning);
             let info = part.info.unwrap_or(info);
             if !(0.0..=1.0).contains(&warning) || !(0.0..=1.0).contains(&info) || info > warning {

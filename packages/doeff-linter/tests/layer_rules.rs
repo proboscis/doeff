@@ -386,10 +386,21 @@ fn exit_codes_for_arguments_and_broken_config() {
     let (code, report) = editor(dir.path());
     assert_eq!(code, 0, "{}", report);
 
+    // この binary の知らない鍵(設定が binary より新しい・書き違い)は lint 全体を止めず、その鍵だけを読まずに DOEFF100 の warning で
+    // 知らせる(agora-redesign #848 — 以前は終了コード 2 でエディタの違反の欄が空になった)。
+    let newer = repo(&[], "[tool.doeff-linter.raw_side_effects.extra]\n");
+    let (code, stdout, stderr) = run(newer.path(), &["--output-format", "editor-json", "--no-log"], None);
+    assert_eq!(code, 0, "{}", stderr);
+    let report: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    let notices: Vec<&serde_json::Value> = report["violations"].as_array().unwrap().iter().filter(|v| v["rule"] == "DOEFF100").collect();
+    assert_eq!(notices.len(), 1, "{}", stdout);
+    assert_eq!(notices[0]["severity"], "warning");
+    assert!(notices[0]["message"].as_str().unwrap().contains("raw_side_effects.extra"), "{}", stdout);
+    assert!(notices[0]["path"].as_str().unwrap().ends_with("pyproject.toml"));
+    assert!(notices[0]["explanation"]["reason"].as_str().unwrap().contains(doeff_linter::BUILD_COMMIT));
+    assert_eq!(report["linter"]["commit"], doeff_linter::BUILD_COMMIT);
+
     // 設定の名前の食い違いは黙って捨てず終了コード 2。
-    let broken = repo(&[], "[tool.doeff-linter.raw_side_effects.extra]\n");
-    let (code, _, stderr) = run(broken.path(), &["--output-format", "editor-json", "--no-log"], None);
-    assert_eq!(code, 2, "{}", stderr);
     let unknown_layer = tempfile::TempDir::new().unwrap();
     std::fs::write(
         unknown_layer.path().join("pyproject.toml"),

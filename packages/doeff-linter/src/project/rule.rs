@@ -14,7 +14,8 @@ pub enum RuleFamily {
     Raw,
     /// 名の付け方(DOEFF108)。
     Naming,
-    /// 置き場所・依存(DOEFF109・114〜117)。
+    /// 置き場所・依存(DOEFF109・114〜117)と、設定の知らない鍵(DOEFF100 — 置き場所の宣言 architecture.hy と同じ設定の話なので
+    /// この家族に入れる。拡張の家族の一覧は閉じているので、新しい家族を足すと古い拡張が出力を丸ごと捨てる)。
     Place,
     /// 定義の書き方(DOEFF110〜112・118)。
     Definition,
@@ -35,6 +36,9 @@ pub enum RuleFamily {
 /// 層の規則の種類。Python の文ごとの規則(DOEFF001〜031)と違い、repo の module の一覧と設定を見て判じる。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum ProjectRule {
+    /// DOEFF100: 設定(pyproject の [tool.doeff-linter]・architecture.hy)にこの linter の知らない鍵か規則の ID がある
+    /// (その鍵だけを読まずに残りの規則を走らせた知らせ・warning — linter が設定より古いか、書き違い)。
+    UnknownConfigKey,
     /// DOEFF101: 層の import の向き — 許された層の外の module を import しない。
     LayerImportDirection,
     /// DOEFF102: 層ごとに禁じた module(I/O の module など)を直に import しない。
@@ -101,7 +105,8 @@ pub enum ProjectRule {
 
 impl ProjectRule {
     /// 全部の層の規則(出力の一覧と `ALL` の展開のため)。
-    pub const ALL: [ProjectRule; 31] = [
+    pub const ALL: [ProjectRule; 32] = [
+        ProjectRule::UnknownConfigKey,
         ProjectRule::LayerImportDirection,
         ProjectRule::LayerForbiddenModule,
         ProjectRule::LayerTypesOnly,
@@ -138,6 +143,7 @@ impl ProjectRule {
     /// 規則の ID。
     pub fn id(self) -> &'static str {
         match self {
+            ProjectRule::UnknownConfigKey => "DOEFF100",
             ProjectRule::LayerImportDirection => "DOEFF101",
             ProjectRule::LayerForbiddenModule => "DOEFF102",
             ProjectRule::LayerTypesOnly => "DOEFF103",
@@ -205,7 +211,7 @@ impl ProjectRule {
             | ProjectRule::ServiceDependency
             | ProjectRule::SemanticBusinessDecision
             | ProjectRule::SemanticTransportKnowledge => true,
-            ProjectRule::UndeclaredPlace | ProjectRule::UndeclaredDirectory | ProjectRule::UnusedDependency => false,
+            ProjectRule::UnknownConfigKey | ProjectRule::UndeclaredPlace | ProjectRule::UndeclaredDirectory | ProjectRule::UnusedDependency => false,
             ProjectRule::EnvironmentName
             | ProjectRule::DefnForbidden
             | ProjectRule::DeffNeedsReason
@@ -228,6 +234,7 @@ impl ProjectRule {
     /// 短い日本語の名(違反の形。エディタの一覧の見出しに使う)。
     pub fn label(self) -> &'static str {
         match self {
+            ProjectRule::UnknownConfigKey => "設定の知らない鍵",
             ProjectRule::LayerImportDirection => "層の向きに逆らう import",
             ProjectRule::LayerForbiddenModule => "層に禁じた module の import",
             ProjectRule::LayerTypesOnly => "型だけの層に関数がある",
@@ -273,7 +280,8 @@ impl ProjectRule {
             }
             ProjectRule::RawSideEffectDirect | ProjectRule::RawSideEffectVia => RuleFamily::Raw,
             ProjectRule::EnvironmentName => RuleFamily::Naming,
-            ProjectRule::ServiceBoundary
+            ProjectRule::UnknownConfigKey
+            | ProjectRule::ServiceBoundary
             | ProjectRule::UndeclaredPlace
             | ProjectRule::UndeclaredDirectory
             | ProjectRule::ServiceDependency
@@ -300,6 +308,7 @@ impl ProjectRule {
     /// 題(人が読む短い名)。
     pub fn title(self) -> &'static str {
         match self {
+            ProjectRule::UnknownConfigKey => "Unknown Config Key",
             ProjectRule::LayerImportDirection => "Layer Import Direction",
             ProjectRule::LayerForbiddenModule => "Layer Forbidden Module",
             ProjectRule::LayerTypesOnly => "Types-Only Layer",
@@ -337,6 +346,7 @@ impl ProjectRule {
     /// 規則の文(law が結びついていない時に一覧へ出す)。
     pub fn statement(self) -> &'static str {
         match self {
+            ProjectRule::UnknownConfigKey => "設定(pyproject の [tool.doeff-linter]・architecture.hy)の鍵と規則の ID は、この linter が知っている物だけ — 知らない物はその鍵だけを読まずに残りの規則を走らせ、知らせる(linter が設定より古いか、書き違い)",
             ProjectRule::LayerImportDirection => "層の module は、設定で許した層の module だけを import する(repo の外の import は数えない)",
             ProjectRule::LayerForbiddenModule => "層の module は、その層に禁じた module(I/O の module など)を直に import しない",
             ProjectRule::LayerTypesOnly => "型だけの層の module は関数と handler を定めない",
@@ -374,6 +384,7 @@ impl ProjectRule {
     /// 直し方の既定の 1 行。
     pub fn hint(self) -> &'static str {
         match self {
+            ProjectRule::UnknownConfigKey => "linter が古いなら本線からの自動の組み直しを待つ(開発版の置き場は数分以内に置き換わる — 手で組んで差し替えない)。書き違いなら鍵の名を直す",
             ProjectRule::LayerImportDirection => "向きに反する import を外す — 要る値は許された層(intent の型など)へ移すか、effect を出して下の層の handler に答えさせる",
             ProjectRule::LayerForbiddenModule => "I/O は許された層(foundation など)の handler に置き、この層からは effect を出す",
             ProjectRule::LayerTypesOnly => "関数と handler は別の層(core・protocol)へ移し、この層には型だけを置く",
@@ -414,7 +425,8 @@ mod tests {
     use super::*;
 
     /// DOEFF の ID → 割り当てるべき家族(依頼の表そのもの)。
-    const EXPECTED_FAMILIES: [(&str, RuleFamily); 31] = [
+    const EXPECTED_FAMILIES: [(&str, RuleFamily); 32] = [
+        ("DOEFF100", RuleFamily::Place),
         ("DOEFF101", RuleFamily::Layer),
         ("DOEFF102", RuleFamily::Layer),
         ("DOEFF103", RuleFamily::Layer),
@@ -456,7 +468,7 @@ mod tests {
     }
 
     #[test]
-    fn family_matches_the_assignment_table_for_all_31_rules() {
+    fn family_matches_the_assignment_table_for_all_32_rules() {
         assert_eq!(EXPECTED_FAMILIES.len(), ProjectRule::ALL.len(), "割り当ての表が ALL の数と食い違う");
         for (id, expected) in EXPECTED_FAMILIES {
             let rule = ProjectRule::parse(id).unwrap_or_else(|| panic!("{} は ProjectRule に無い", id));

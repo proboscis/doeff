@@ -17,7 +17,9 @@
 //!   :shared "shared")
 //! (defservice land-notice "着地の報せ" {:depends-on [messaging] :layers [core intent protocol entry]})
 //! ```
-//! 読めない形(知らない鍵・重複した service・存在しない層の名)は、file の中の位置つきの理由の列で返す(設定の誤り)。
+//! 読めない形(重複した service・存在しない層の名・廃止した鍵)は、file の中の位置つきの理由の列で返す(設定の誤り)。
+//! この binary の知らない鍵は誤りにせず、その鍵だけを読まずに知らせ(`Architecture::notices` → DOEFF100)として残す
+//! (宣言は binary より先に進むことがある — agora-redesign #848)。
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
@@ -100,6 +102,9 @@ pub struct Architecture {
     /// 読んだ file。
     #[serde(skip)]
     pub path: PathBuf,
+    /// この binary の知らない鍵(読まずに残りを読んだ — DOEFF100 で知らせる)。
+    #[serde(skip)]
+    pub notices: Vec<super::notice::ConfigNotice>,
 }
 
 impl Architecture {
@@ -123,7 +128,7 @@ impl Architecture {
         let mut reader = Reader::new(source, 0, source.len());
         let forms = reader.read_all();
         let lines = LineIndex::new(source);
-        let mut parser = Parser { src: source, lines: &lines, path, problems: Vec::new() };
+        let mut parser = Parser { src: source, lines: &lines, path, problems: Vec::new(), unknown: Vec::new() };
         if !reader.issues.is_empty() {
             parser.problems.push(format!("{}: 括弧か文字列が閉じていない所がある", path.display()));
         }
@@ -156,6 +161,16 @@ impl Architecture {
             return Err(parser.problems);
         };
         architecture.services = services;
+        architecture.notices = parser
+            .unknown
+            .iter()
+            .map(|(offset, key)| super::notice::ConfigNotice {
+                file: path.to_path_buf(),
+                key: key.clone(),
+                kind: super::notice::NoticeKind::Key,
+                range: crate::position::line_range(source, *offset),
+            })
+            .collect();
         parser.check(&architecture);
         if parser.problems.is_empty() {
             Ok(architecture)
@@ -225,12 +240,20 @@ struct Parser<'a> {
     lines: &'a LineIndex<'a>,
     path: &'a Path,
     problems: Vec<String>,
+    /// この binary の知らない鍵(byte の位置と、どの形の鍵か)。
+    unknown: Vec<(usize, String)>,
 }
 
 /// 鍵と値の組の列(`:root "x" :layers [...]`)。
 type Pairs<'f> = Vec<(&'f Form, &'f Form)>;
 
 impl<'a> Parser<'a> {
+    /// この binary の知らない鍵を知らせとして積む(誤りにせず、その鍵の値は読まない)。
+    fn unknown_key(&mut self, key: &Form, owner: &str) {
+        let text = self.text(key).to_string();
+        self.unknown.push((key.span.start, format!("{} {}", owner, text)));
+    }
+
     /// form の位置つきで理由を積む(file:行:列 は 1 始まり)。
     fn problem(&mut self, form: &Form, reason: &str) {
         let at = self.lines.position(form.span.start);
@@ -348,6 +371,7 @@ impl<'a> Parser<'a> {
             exclude: vec!["tests".into(), "__pycache__".into(), "conftest.py".into()],
             extensions: None,
             path: path.to_path_buf(),
+            notices: Vec::new(),
         };
         let rest: Vec<&Form> = items.iter().skip(2).copied().collect();
         let mut open_given = false;
@@ -400,7 +424,7 @@ impl<'a> Parser<'a> {
                     key,
                     ":legacy は廃止した — 宣言の外の置き場所の module は全部 DOEFF114・115 で出す。既存の分は登録簿(registry)に載せる",
                 ),
-                other => self.problem(key, &format!("defarchitecture の知らない鍵 {}", other)),
+                _ => self.unknown_key(key, "defarchitecture"),
             }
         }
         // :open-layers を書かなければ、層 intent が在る時だけ intent を開く(既定)。
@@ -469,7 +493,7 @@ impl<'a> Parser<'a> {
             for (key, text) in self.pairs(&rest) {
                 match self.text(key) {
                     ":fix" => fix = self.string(text),
-                    other => self.problem(key, &format!("reason の知らない鍵 {}(:fix だけ)", other)),
+                    _ => self.unknown_key(key, "reason"),
                 }
             }
             if out.iter().any(|r| r.name == name) {
@@ -519,7 +543,7 @@ impl<'a> Parser<'a> {
                     Some("False" | "false") => layer.types_only = false,
                     _ => self.problem(value, ":types-only は True か False"),
                 },
-                other => self.problem(key, &format!("layer の知らない鍵 {}", other)),
+                _ => self.unknown_key(key, "layer"),
             }
         }
         Some(layer)
@@ -545,7 +569,7 @@ impl<'a> Parser<'a> {
                             ":depends-on" => service.depends_on = self.names(value, ":depends-on"),
                             ":layers" => service.layers = self.names(value, ":layers"),
                             ":dir" => service.dir = self.required_string(value, ":dir").unwrap_or_default(),
-                            other => self.problem(key, &format!("defservice の知らない鍵 {}(:depends-on・:layers・:dir)", other)),
+                            _ => self.unknown_key(key, "defservice"),
                         }
                     }
                 }
@@ -643,9 +667,27 @@ mod tests {
 (defservice a {})
 "#;
         let problems = Architecture::parse(bad, Path::new("architecture.hy")).unwrap_err().join("\n");
-        for needle in ["architecture.hy:1:", ":legacy は廃止した", "layer の知らない鍵 :colour", "知らない鍵 :nonsense", "知らない鍵 :uses", "ghost", "service a が 2 度"] {
+        for needle in ["architecture.hy:1:", ":legacy は廃止した", "ghost", "service a が 2 度"] {
             assert!(problems.contains(needle), "{} が無い:\n{}", needle, problems);
         }
+        assert!(!problems.contains(":colour") && !problems.contains(":nonsense"), "知らない鍵を誤りにした:\n{}", problems);
+    }
+
+    #[test]
+    fn unknown_keys_are_notices_and_the_rest_is_read() {
+        // この binary より新しい宣言(知らない鍵)は誤りにせず、その鍵だけを読まずに知らせる(agora-redesign #848)。
+        let newer = GOOD
+            .replace("(layer foundation)]", "(layer foundation :future-knob [x])]")
+            .replace(":foundation foundation", ":foundation foundation\n  :brand-new-key 1")
+            .replace("{:depends-on [custody] :layers [core intent]}", "{:depends-on [custody] :layers [core intent] :owners [me]}");
+        let arch = Architecture::parse(&newer, Path::new("architecture.hy")).unwrap();
+        assert_eq!(arch.services.len(), 2, "残りの宣言を読んでいない");
+        assert_eq!(arch.services[0].depends_on, vec!["custody"]);
+        let keys: Vec<&str> = arch.notices.iter().map(|n| n.key.as_str()).collect();
+        assert_eq!(keys, vec!["layer :future-knob", "defarchitecture :brand-new-key", "defservice :owners"]);
+        let lines: Vec<u32> = arch.notices.iter().map(|n| n.range.start.line).collect();
+        let expect = |needle: &str| newer.lines().position(|l| l.contains(needle)).unwrap() as u32;
+        assert_eq!(lines, vec![expect(":future-knob"), expect(":brand-new-key"), expect(":owners")]);
     }
 
     #[test]

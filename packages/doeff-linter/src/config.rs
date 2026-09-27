@@ -167,9 +167,19 @@ impl Config {
     /// TOML の節から層の規則の設定を作る(規則ごとの重さも読む)。
     fn project_settings_toml(&self) -> Result<ProjectSettings, Vec<String>> {
         let mut problems = Vec::new();
+        let mut unknown_rules = Vec::new();
         let mut registered_severity = std::collections::BTreeMap::new();
         let mut base_severity = std::collections::BTreeMap::new();
         for (id, rule) in &self.rules {
+            // この binary に無い規則(DOEFF と 3 桁の形)の設定は、誤りにせずその規則の設定だけを読まずに知らせる(DOEFF100)。
+            // Python の文ごとの規則(DOEFF001〜031)の設定もこの表に在るので、層の規則でも Python の規則でもない物だけ。
+            if crate::project::notice::is_rule_id_shape(id)
+                && ProjectRule::parse(id).is_none()
+                && !crate::rules::get_all_rule_ids().contains(&id.to_uppercase())
+            {
+                unknown_rules.push(crate::project::notice::UnknownRuleRef { key: format!("rules.{}", id), id: id.clone() });
+                continue;
+            }
             if let Some(text) = &rule.severity {
                 let parsed = match text.as_str() {
                     "warning" => Some(Severity::Warning),
@@ -206,6 +216,7 @@ impl Config {
         };
         settings.registered_severity = registered_severity;
         settings.severity = base_severity;
+        settings.unknown_rules.extend(unknown_rules);
         Ok(settings)
     }
 
@@ -335,42 +346,39 @@ pub fn load_config(path: Option<&Path>) -> Option<Config> {
     Some(config)
 }
 
-/// `[tool.doeff-linter]` の直下に書ける欄の名(Config の欄と同じ綴り)。
-const KNOWN_KEYS: &[&str] = &[
-    "enable", "disable", "exclude", "rules", "git", "log_file", "layers", "tags", "roles", "environment_names", "raw_side_effects",
-    "laws", "registry", "services", "definitions", "architecture", "semantic", "smells",
-];
-
 /// 見つけた設定 file と、その中の `[tool.doeff-linter]` の節。
 #[derive(Debug, Clone)]
 pub struct LoadedConfig {
     pub config: Config,
     /// 設定を読んだ file。
     pub path: PathBuf,
+    /// 設定の file の本文(知らない規則の ID の位置を後で探すため)。
+    pub text: String,
+    /// この binary の知らない鍵(読まずに残りを読んだ — DOEFF100 で知らせる)。
+    pub notices: Vec<crate::project::notice::ConfigNotice>,
 }
 
 /// 設定 file を読む。`[tool.doeff-linter]` の節を持つ file(pyproject.toml の形)でも、節の中身だけを書いた file でもよい。
 /// 読めない・TOML でない・欄の型が違う時は理由の文を返す(黙って既定値にしない)。
-pub fn load_config_file(path: &Path) -> Result<Config, String> {
+/// この binary の知らない鍵(どの段でも)は誤りにせず、その鍵だけを読まずに知らせの列へ積む(agora-redesign #848 — 設定は binary より
+/// 先に進むことがあり、その間に lint 全体を止めない)。知っている鍵の唯一の正本は Config と各節の struct の定義(`serde_ignored` が
+/// 定義に無い鍵を path つきで集める — 鍵の表を手で持たない)。書き違いも同じ知らせで見える。
+pub fn load_config_file(path: &Path) -> Result<LoadedConfig, String> {
     let content = std::fs::read_to_string(path).map_err(|e| format!("{} を読めない: {}", path.display(), e))?;
     let value: toml::Value = toml::from_str(&content).map_err(|e| format!("{} は TOML として読めない: {}", path.display(), e))?;
     let section = match value.get("tool").and_then(|tool| tool.get("doeff-linter")) {
         Some(section) => section.clone(),
         None => value,
     };
-    // 節の名の書き違い([tool.doeff-linter.layer] など)で規則が黙って止まらないよう、直下の鍵を既知の名と照らす。
-    if let Some(table) = section.as_table() {
-        let unknown: Vec<&str> = table.keys().map(String::as_str).filter(|key| !KNOWN_KEYS.contains(key)).collect();
-        if !unknown.is_empty() {
-            return Err(format!(
-                "{} の [tool.doeff-linter] に知らない欄がある: {}(使える欄: {})",
-                path.display(),
-                unknown.join(", "),
-                KNOWN_KEYS.join(", ")
-            ));
-        }
-    }
-    section.try_into().map_err(|e: toml::de::Error| format!("{} の [tool.doeff-linter] を読めない: {}", path.display(), e))
+    let mut unknown: Vec<String> = Vec::new();
+    // serde_ignored の path は Option の段を `?` と書く(`semantic.?.proxy_url`)— 設定に書く綴り(`semantic.proxy_url`)へ戻す。
+    let spell = |path: &serde_ignored::Path| -> String {
+        path.to_string().split('.').filter(|s| !s.is_empty() && *s != "?").collect::<Vec<_>>().join(".")
+    };
+    let config: Config = serde_ignored::deserialize(section, |key| unknown.push(spell(&key)))
+        .map_err(|e: toml::de::Error| format!("{} の [tool.doeff-linter] を読めない: {}", path.display(), e))?;
+    let notices = unknown.iter().map(|key| crate::project::notice::key_notice(path, &content, key)).collect();
+    Ok(LoadedConfig { config, path: path.to_path_buf(), text: content, notices })
 }
 
 /// 設定を探して読む: explicit(`--config`)があればそれを、無ければ start から上へ `[tool.doeff-linter]` を持つ pyproject.toml を探す。
@@ -383,7 +391,7 @@ pub fn load_config_checked(explicit: Option<&Path>, start: &Path) -> Result<Opti
             None => return Ok(None),
         },
     };
-    load_config_file(&path).map(|config| Some(LoadedConfig { config, path }))
+    load_config_file(&path).map(Some)
 }
 
 // Re-export get_all_rule_ids from rules module
@@ -525,6 +533,32 @@ max_mutable_attributes = 5
         assert_eq!(config.enable, vec!["DOEFF001", "DOEFF002"]);
         assert_eq!(config.exclude, vec!["venv", "build"]);
         assert_eq!(config.rules["DOEFF003"].max_mutable_attributes, Some(5));
+    }
+
+    /// 設定が binary より新しい時(知らない鍵がどの段に在っても)、誤りにせずその鍵だけを読まずに知らせ、残りは読む(agora-redesign #848)。
+    #[test]
+    fn unknown_keys_at_every_depth_are_notices_and_the_rest_is_read() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("pyproject.toml");
+        let content = "[tool.doeff-linter]\nenable = [\"ALL\"]\nfuture_top = 1\n\n[tool.doeff-linter.semantic]\nmystery_knob = 2\n\n[tool.doeff-linter.smells]\nshape_check_layers = []\nnew_smell_knob = true\n";
+        fs::write(&path, content).unwrap();
+        let loaded = load_config_file(&path).expect("知らない鍵で読みを止めた");
+        assert_eq!(loaded.config.enable, vec!["ALL"]);
+        assert!(loaded.config.smells.is_some(), "知らない鍵の在る節を丸ごと捨てた");
+        let found: Vec<(String, u32)> = loaded.notices.iter().map(|n| (n.key.clone(), n.range.start.line)).collect();
+        assert_eq!(
+            found,
+            vec![("future_top".to_string(), 2), ("semantic.mystery_knob".to_string(), 5), ("smells.new_smell_knob".to_string(), 9)]
+        );
+    }
+
+    /// 型の違う値は今までどおり誤り(知らない鍵だけを知らせに回す)。
+    #[test]
+    fn wrong_types_are_still_errors() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("pyproject.toml");
+        fs::write(&path, "[tool.doeff-linter]\nenable = \"ALL\"\n").unwrap();
+        assert!(load_config_file(&path).is_err());
     }
 
     #[test]

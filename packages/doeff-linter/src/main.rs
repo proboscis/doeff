@@ -20,7 +20,7 @@ use std::process::{Command, ExitCode};
 
 #[derive(Parser, Debug)]
 #[command(name = "doeff-linter")]
-#[command(version, about = "A linter for enforcing code quality and immutability patterns")]
+#[command(version = doeff_linter::VERSION_TEXT, about = "A linter for enforcing code quality and immutability patterns")]
 #[command(after_help = r#"SUPPRESSING RULES:
   Use noqa comments to suppress rules on specific lines or entire files.
 
@@ -172,9 +172,17 @@ struct Setup {
     enabled_rules: Option<Vec<String>>,
     exclude_patterns: Vec<String>,
     settings: ProjectSettings,
+    /// 設定の知らない鍵と規則の ID(読まずに残りを読んだ — DOEFF100 で知らせる・agora-redesign #848)。
+    notices: Vec<project::notice::ConfigNotice>,
 }
 
 impl Setup {
+    /// 知らせ(DOEFF100)の違反。`enable` の一覧に載っていなくても出す(一覧は DOEFF100 より古い設定にも在り、そこで黙ると
+    /// 知らない鍵を黙って読み飛ばす形に戻る)。止めるのは `disable` に DOEFF100 を名指した時だけ(prepare が notices を空にする)。
+    fn notice_findings(&self) -> Vec<project::Finding> {
+        project::notice::findings(&self.notices, &self.root)
+    }
+
     /// 有効な層の規則(`enable`・`disable` を当てた後)。
     fn project_rules(&self) -> BTreeSet<ProjectRule> {
         project::enabled_rules(self.enabled_rules.as_deref())
@@ -185,6 +193,7 @@ impl Setup {
         self.project_rules()
             .into_iter()
             .filter(|rule| match rule {
+                ProjectRule::UnknownConfigKey => true,
                 ProjectRule::LayerImportDirection
                 | ProjectRule::LayerForbiddenModule
                 | ProjectRule::LayerTypesOnly
@@ -296,6 +305,8 @@ fn prepare(args: &Args) -> Result<Setup, String> {
     };
     let root = root.canonicalize().map_err(|e| format!("repo の根 {} を読めない: {}", root.display(), e))?;
     let config_dir = loaded.as_ref().and_then(|l| l.path.canonicalize().ok()).and_then(|p| p.parent().map(Path::to_path_buf));
+    let mut notices: Vec<project::notice::ConfigNotice> = loaded.as_ref().map(|l| l.notices.clone()).unwrap_or_default();
+    let config_file = loaded.as_ref().map(|l| (l.path.clone(), l.text.clone()));
     let config = loaded.map(|l| l.config);
     // service と層の宣言: 設定の architecture(設定 file の dir から)か、repo の根の architecture.hy。
     let architecture_path = match config.as_ref().and_then(|c| c.architecture.clone()) {
@@ -308,6 +319,7 @@ fn prepare(args: &Args) -> Result<Setup, String> {
         ),
         None => None,
     };
+    notices.extend(architecture.iter().flat_map(|a| a.notices.iter().cloned()));
     let mut settings = match (&config, architecture) {
         (Some(config), architecture) => {
             config.project_settings_with(architecture).map_err(|problems| format!("設定の誤り:\n  {}", problems.join("\n  ")))?
@@ -318,8 +330,16 @@ fn prepare(args: &Args) -> Result<Setup, String> {
         (None, None) => ProjectSettings::default(),
     };
     settings.config_dir = config_dir;
+    if let Some((path, text)) = &config_file {
+        notices.extend(settings.unknown_rules.iter().map(|unknown| project::notice::rule_notice(path, text, unknown)));
+    }
     let (enabled_rules, exclude_patterns) = config::merge_config(config.as_ref(), &args.enable, &args.disable, &args.exclude);
-    Ok(Setup { config, root, enabled_rules, exclude_patterns, settings })
+    let notice_id = ProjectRule::UnknownConfigKey.id();
+    let silenced = args.disable.iter().chain(config.iter().flat_map(|c| c.disable.iter())).any(|id| id.eq_ignore_ascii_case(notice_id));
+    if silenced {
+        notices.clear();
+    }
+    Ok(Setup { config, root, enabled_rules, exclude_patterns, settings, notices })
 }
 
 /// 違反を出す file を path の引数で絞る時の path の列(既定の "." なら None = 全部)。
@@ -442,6 +462,8 @@ fn run_editor(args: &Args) -> ExitCode {
         (python_results, project_report, None, only_paths(&args.paths))
     };
 
+    let mut project_report = project_report;
+    project_report.findings.extend(setup.notice_findings());
     let report = editor::build(&EditorInput {
         root: &setup.root,
         python: &python_results,
@@ -504,6 +526,7 @@ fn run_as_hook(args: &Args) -> ExitCode {
                 enabled_rules,
                 exclude_patterns,
                 settings: ProjectSettings::default(),
+                notices: Vec::new(),
             }
         }
     };
@@ -520,7 +543,11 @@ fn run_as_hook(args: &Args) -> ExitCode {
     let mut results = lint_files_parallel(&files, &all_rules);
     if setup.has_project_rules() {
         // hook(作業係の停止の見張り)は全体の実行 — 代理が在れば「覚えている時だけ」問う。
-        let report = project::run_with(&setup.root, &setup.settings, &setup.project_rules(), Target::Whole, &project::semantic::SemanticMode::Peek);
+        let mut report = project::run_with(&setup.root, &setup.settings, &setup.project_rules(), Target::Whole, &project::semantic::SemanticMode::Peek);
+        report.findings.extend(setup.notice_findings());
+        results.extend(project_results(&report, only_paths(&paths).as_deref()));
+    } else if !setup.notices.is_empty() {
+        let report = ProjectReport { findings: setup.notice_findings(), ..ProjectReport::default() };
         results.extend(project_results(&report, only_paths(&paths).as_deref()));
     }
 
@@ -701,7 +728,8 @@ fn run_normal(args: &Args) -> ExitCode {
     // Lint files(層の規則の違反も同じ形で足す)
     let mut results = lint_files_parallel(&files, &all_rules);
     if setup.has_project_rules() {
-        let report = project::run_with(&setup.root, &setup.settings, &setup.project_rules(), Target::Whole, &semantic_mode(args, &setup.root, None));
+        let mut report = project::run_with(&setup.root, &setup.settings, &setup.project_rules(), Target::Whole, &semantic_mode(args, &setup.root, None));
+        report.findings.extend(setup.notice_findings());
         for error in &report.errors {
             eprintln!("doeff-linter: {}", error);
         }
@@ -714,6 +742,10 @@ fn run_normal(args: &Args) -> ExitCode {
         // --modified の時は、変更した file の違反だけにする(変更していない file の既知の違反で止めない)。
         let only = if args.modified { Some(files.iter().map(|f| editor::normalize_path(f)).collect()) } else { only_paths(&args.paths) };
         results.extend(project_results(&report, only.as_deref()));
+    } else if !setup.notices.is_empty() {
+        // 層の規則の節が無い設定でも、知らない鍵は知らせる(黙って読み飛ばさない)。
+        let report = ProjectReport { findings: setup.notice_findings(), ..ProjectReport::default() };
+        results.extend(project_results(&report, only_paths(&args.paths).as_deref()));
     }
 
     // Count violations

@@ -11,7 +11,6 @@ use super::rule::ProjectRule;
 
 /// `[tool.doeff-linter.layers]` — 層の順と置き場と、層ごとの import の決まり。
 #[derive(Debug, Deserialize, Serialize, Default, Clone)]
-#[serde(deny_unknown_fields)]
 pub struct LayersSection {
     /// 層の名前(外の世界からの遠さの順)。
     #[serde(default)]
@@ -142,7 +141,6 @@ impl PlacePattern {
 
 /// `[tool.doeff-linter.services]` — service の境界(DOEFF109)と、タグの文脈と service の照らし(DOEFF113)。
 #[derive(Debug, Deserialize, Serialize, Clone)]
-#[serde(deny_unknown_fields)]
 pub struct ServicesSection {
     /// 入り切り(既定 true)。
     #[serde(default = "default_true")]
@@ -166,7 +164,6 @@ pub struct ServicesSection {
 
 /// service の境界の例外 1 件。
 #[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]
-#[serde(deny_unknown_fields)]
 pub struct ServiceException {
     pub from: String,
     pub to: String,
@@ -189,7 +186,6 @@ pub struct ServiceSettings {
 
 /// `[tool.doeff-linter.layers.describe.<層>]` — 層が何か(Rust には書かず、repo ごとの設定が持つ)。
 #[derive(Debug, Deserialize, Serialize, Default, Clone, PartialEq, Eq)]
-#[serde(deny_unknown_fields)]
 pub struct LayerDescription {
     /// 層の要約(例 業務の判断と Program)。
     pub summary: Option<String>,
@@ -203,7 +199,6 @@ pub struct LayerDescription {
 
 /// `[tool.doeff-linter.tags]` — タグの読み方(doeff-hy の綴り。既定のままでよい)。
 #[derive(Debug, Deserialize, Serialize, Default, Clone)]
-#[serde(deny_unknown_fields)]
 pub struct TagsSection {
     /// Hy の module の頭のタグの名(`(val MODULE-TAGS {…})`)。
     pub module_variable_hy: Option<String>,
@@ -229,7 +224,6 @@ pub struct TagsSection {
 
 /// `[tool.doeff-linter.definitions]` — 定義の書き方の規則(DOEFF110 defn の禁止・111 deff の理由・112 タグ必須)の母集団。
 #[derive(Debug, Deserialize, Serialize, Default, Clone)]
-#[serde(deny_unknown_fields)]
 pub struct DefinitionsSection {
     /// 判じる置き場(repo の根からの dir・末尾 `*` は前方一致)。空なら repo の Hy の全部。
     #[serde(default)]
@@ -260,7 +254,6 @@ pub struct DefinitionSettings {
 
 /// `[tool.doeff-linter.smells]` — 臭いの規則の設定(DOEFF121 を当てる層)。DOEFF122〜125 は定義の規則の母集団に当たる。
 #[derive(Debug, Deserialize, Serialize, Default, Clone)]
-#[serde(deny_unknown_fields)]
 pub struct SmellsSection {
     /// DOEFF121(文字列の鍵で読んだ欄への isinstance)を当てる層の名(判断の層 — 例 core)。
     #[serde(default)]
@@ -275,7 +268,6 @@ pub struct SmellSettings {
 
 /// `[tool.doeff-linter.roles]` — role の閉じた一覧と、層ごとに許す role。
 #[derive(Debug, Deserialize, Serialize, Default, Clone)]
-#[serde(deny_unknown_fields)]
 pub struct RolesSection {
     #[serde(default)]
     pub names: Vec<String>,
@@ -288,7 +280,6 @@ pub struct RolesSection {
 
 /// `[tool.doeff-linter.environment_names]` — 業務の名に付けてはいけない環境の語。
 #[derive(Debug, Deserialize, Serialize, Default, Clone)]
-#[serde(deny_unknown_fields)]
 pub struct EnvironmentNamesSection {
     /// 環境の語(名を `-`・`_`・`.` で切った語のどれかが当たれば違反)。
     #[serde(default)]
@@ -312,7 +303,6 @@ pub struct EnvironmentNamesSection {
 
 /// `[tool.doeff-linter.raw_side_effects]` — 生の副作用に直に触ってよい層。
 #[derive(Debug, Deserialize, Serialize, Default, Clone)]
-#[serde(deny_unknown_fields)]
 pub struct RawSideEffectsSection {
     #[serde(default)]
     pub allowed_layers: Vec<String>,
@@ -322,7 +312,6 @@ pub struct RawSideEffectsSection {
 
 /// `[[tool.doeff-linter.laws]]` の 1 件 — ADR の law と、それを判じる規則の対応。
 #[derive(Debug, Deserialize, Serialize, Default, Clone)]
-#[serde(deny_unknown_fields)]
 pub struct LawEntry {
     /// law の名(ADR の綴りのまま)。登録簿の鍵の `<規則>` の欄にも使う。
     pub name: String,
@@ -340,7 +329,6 @@ pub struct LawEntry {
 
 /// `[tool.doeff-linter.registry]` — 既知の破れの登録簿と、照合中の規則。
 #[derive(Debug, Deserialize, Serialize, Default, Clone)]
-#[serde(deny_unknown_fields)]
 pub struct RegistrySection {
     /// 1 鍵 1 file の dir(中の `*.txt` の 1 行目が鍵)。
     #[serde(default)]
@@ -484,6 +472,8 @@ pub struct ProjectSettings {
     pub semantic: Option<super::semantic::SemanticSettings>,
     pub laws: Vec<LawSpec>,
     pub registry: RegistrySpec,
+    /// 設定が参照したが、この binary に無い規則の ID(`DOEFF` と 3 桁の形)— 誤りにせず、その参照だけを読まずに DOEFF100 で知らせる。
+    pub unknown_rules: Vec<super::notice::UnknownRuleRef>,
 }
 
 /// 読んだ節の全部(config.rs の Config が持つ欄の写し)。
@@ -537,6 +527,7 @@ impl ProjectSettings {
             tags: tag_reading(sections.tags, sections.layers.and_then(|l| l.function_definers.as_ref())),
             test_paths: section.test_paths.clone(),
         });
+        let mut unknown_rules: Vec<super::notice::UnknownRuleRef> = Vec::new();
         let python_ids: BTreeSet<String> = crate::rules::get_all_rules().iter().map(|r| r.rule_id().to_string()).collect();
         let layer_names: Vec<String> = layers.as_ref().map(|l| l.layers.iter().map(|s| s.name.clone()).collect()).unwrap_or_default();
         let find_layer = |name: &str, what: &str, problems: &mut Vec<String>| -> Option<LayerId> {
@@ -580,6 +571,10 @@ impl ProjectSettings {
                     .filter_map(|id| match ProjectRule::parse(id) {
                         Some(rule) => Some(ProjectRuleOrExternal::Project(rule)),
                         None if python_ids.contains(&id.to_uppercase()) => Some(ProjectRuleOrExternal::External(id.to_uppercase())),
+                        None if super::notice::is_rule_id_shape(id) => {
+                            unknown_rules.push(super::notice::UnknownRuleRef { key: format!("laws.{}.rules", law.name), id: id.clone() });
+                            None
+                        }
                         None => {
                             problems.push(format!("laws.{}.rules: 規則 {} は doeff-linter に無い", law.name, id));
                             None
@@ -604,7 +599,9 @@ impl ProjectSettings {
                     .iter()
                     .filter_map(|id| {
                         let rule = ProjectRule::parse(id);
-                        if rule.is_none() {
+                        if rule.is_none() && super::notice::is_rule_id_shape(id) {
+                            unknown_rules.push(super::notice::UnknownRuleRef { key: "registry.reconciling".to_string(), id: id.clone() });
+                        } else if rule.is_none() {
                             problems.push(format!("registry.reconciling: 規則 {} は層の規則(DOEFF101〜113)に無い", id));
                         }
                         rule
@@ -628,7 +625,11 @@ impl ProjectSettings {
             }
         });
         for law in sections.laws.iter().filter(|law| !law.layers.is_empty()) {
-            let layered = law.rules.iter().any(|id| ProjectRule::parse(id).is_some_and(|rule| rule.is_layered()));
+            // この binary の知らない規則(DOEFF100 で知らせる)は層を問う規則かを判じられないので、層を問う側に数える。
+            let layered = law.rules.iter().any(|id| match ProjectRule::parse(id) {
+                Some(rule) => rule.is_layered(),
+                None => super::notice::is_rule_id_shape(id) && !python_ids.contains(&id.to_uppercase()),
+            });
             if !layered {
                 problems.push(format!("laws.{}.layers: この law の規則は層を問わないので、layers を書くと一度も当たらない", law.name));
             }
@@ -648,6 +649,7 @@ impl ProjectSettings {
                 semantic: None,
                 laws,
                 registry,
+                unknown_rules,
             })
         } else {
             Err(problems)
@@ -883,9 +885,28 @@ layers = ["core"]
         )
         .unwrap_err();
         let text = problems.join("\n");
-        for needle in ["2 度", "ghost", "nowhere", "translation", "DOEFF999", "DOEFF1O1", "env-by-layer"] {
+        for needle in ["2 度", "ghost", "nowhere", "translation", "DOEFF1O1", "env-by-layer"] {
             assert!(text.contains(needle), "{} が無い: {}", needle, text);
         }
+        // 形の正しい知らない ID(この binary より新しい規則)は誤りにしない — DOEFF100 の知らせに回す(agora-redesign #848)。
+        assert!(!text.contains("DOEFF999"), "新しい規則の ID を誤りにした: {}", text);
+    }
+
+    #[test]
+    fn newer_rule_ids_are_kept_as_unknown_references() {
+        let settings = validate(
+            r#"
+[registry]
+reconciling = ["DOEFF999"]
+[[laws]]
+name = "future"
+rules = ["DOEFF998", "DOEFF110"]
+"#,
+        )
+        .expect("新しい規則の ID で設定を読めなくした");
+        let refs: Vec<(&str, &str)> = settings.unknown_rules.iter().map(|u| (u.key.as_str(), u.id.as_str())).collect();
+        assert_eq!(refs, vec![("laws.future.rules", "DOEFF998"), ("registry.reconciling", "DOEFF999")]);
+        assert_eq!(settings.laws[0].rules, vec![ProjectRuleOrExternal::Project(ProjectRule::DefnForbidden)], "読める参照まで捨てた");
     }
 }
 
