@@ -14,6 +14,8 @@
 ;;;   FollowUpEffect(mode = INJECT)    → ClaudeInjectInput(走っている手番に足す)
 ;;;   InterruptEffect                  → ClaudeInterruptTurn(手番だけを止める。待たせた入力は次の手番で走る)
 ;;;   EventsEffect / AwaitResultEffect / MonitorEffect → ClaudeReadTurnEvents(行を層 3 の出来事と手番の終わりに写す)
+;;;   Completed.usage                  → AgentTurnCompleted.usage(AgentTurnUsage — cache_creation → cache_write・cache_read → cache_read。
+;;;                                      CLI が名乗らない欄は None のまま・4 欄とも無ければ usage = None)
 ;;;   StopEffect / StopSessionEffect / ReleaseSessionEffect → ClaudeCloseSession(待たせた入力は discarded の運命で閉じる)
 ;;;   CaptureEffect / AttachAgentSessionEffect → 画面が無いので AgentCapabilityUnsupportedError
 ;;; この handler が起こしていない session の effect と、CLAUDE 以外の LaunchEffect は外側の handler へ回す。
@@ -32,13 +34,13 @@
   StopEffect StopSessionEffect ReleaseSessionEffect AttachAgentSessionEffect ExportContextEffect
   SessionHandle Observation AwaitOutcome AwaitStatus TurnInputMode InputFateState
   AgentEventPage AgentTextEvent AgentTextDeltaEvent AgentToolUseEvent AgentToolResultEvent AgentInputFateEvent
-  AgentTurnEndEvent AgentTurnCompleted AgentTurnFailed AgentTurnInterrupted AgentTurnLost
+  AgentTurnEndEvent AgentTurnCompleted AgentTurnFailed AgentTurnInterrupted AgentTurnLost AgentTurnUsage
   AgentError AgentLaunchError AgentCapabilityUnsupportedError NoTurnInFlightError ResumeTargetNotFoundError
   SessionAlreadyExistsError SessionNotFoundError])
 (import doeff_claude_code.values [ClaudeHome ClaudeSessionSpec ClaudeTurn TurnInput FreshSession ResumeSession Rebuilt
                                   checked-session-id])
 (import doeff_claude_code.lines [AssistantMessage PartialMessage ToolResult InputFate
-                                 Completed Failed Interrupted BackendLost])
+                                 Completed Failed Interrupted BackendLost Usage])
 (import doeff_claude_code.effects [ClaudeStartTurn ClaudeInjectInput ClaudeInterruptTurn ClaudeReadTurnEvents
                                    ClaudeCloseSession ClaudeSessionStatus ClaudeExportSession
                                    TurnStarted InterruptRequested TurnEventPage SessionExported
@@ -132,11 +134,20 @@
   (lfor #(index build) (enumerate (event-builders-of line.kind line.at))
         (build (+ first-seq index))))
 
+(defn #^ (| AgentTurnUsage None) usage-of [#^ Usage usage]
+  "層 2 の手番の usage → 層 3 の AgentTurnUsage(4 欄とも名乗らなければ None — 0 を発明しない)。"
+  (setv turn-usage (AgentTurnUsage :input-tokens usage.input-tokens
+                                   :output-tokens usage.output-tokens
+                                   :cache-write-tokens usage.cache-creation-input-tokens
+                                   :cache-read-tokens usage.cache-read-input-tokens))
+  (if (= turn-usage (AgentTurnUsage)) None turn-usage))
+
 (defn end-of [end #^ str context-id]
   "層 2 の手番の終わり → 層 3 の手番の終わり(続きの身元 resume-from を載せる)。"
   (cond
     (isinstance end Completed)
-      (AgentTurnCompleted :result-text end.result-text :input-refs end.input-refs :resume-from context-id)
+      (AgentTurnCompleted :result-text end.result-text :input-refs end.input-refs :resume-from context-id
+                          :usage (usage-of end.usage))
     (isinstance end Failed)
       (AgentTurnFailed :detail end.detail :input-refs end.input-refs :resume-from context-id)
     (isinstance end Interrupted)

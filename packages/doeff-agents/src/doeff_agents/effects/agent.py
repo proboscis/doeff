@@ -131,12 +131,31 @@ class InputFateState(Enum):
 
 
 @dataclass(frozen=True, kw_only=True)
+class AgentTurnUsage:
+    """Tokens one turn used, as the agent runtime counted them.
+
+    ``cache_write_tokens`` = tokens written to the prompt cache,
+    ``cache_read_tokens`` = tokens read from it.  A count the runtime did not
+    report is ``None`` (never an invented 0).
+    """
+
+    input_tokens: int | None = None
+    output_tokens: int | None = None
+    cache_write_tokens: int | None = None
+    cache_read_tokens: int | None = None
+
+
+@dataclass(frozen=True, kw_only=True)
 class AgentTurnCompleted:
-    """The turn finished.  ``resume_from`` continues this agent's context."""
+    """The turn finished.  ``resume_from`` continues this agent's context.
+
+    ``usage`` = the tokens the turn used (``None`` when the runtime reports none).
+    """
 
     result_text: str
     input_refs: tuple[str, ...] = ()
     resume_from: str
+    usage: AgentTurnUsage | None = None
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -1253,6 +1272,7 @@ __all__ = [
     "AgentTurnFailed",
     "AgentTurnInterrupted",
     "AgentTurnLost",
+    "AgentTurnUsage",
     "AgentValidationErrorKind",
     "AgentValidationFailure",
     "AttachAgentSession",

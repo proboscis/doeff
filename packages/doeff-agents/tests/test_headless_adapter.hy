@@ -25,7 +25,7 @@
   Launch FollowUp Interrupt Events AwaitResult Monitor Capture Stop ReleaseSession ExportContextEffect
   SessionHandle AgentEventPage AwaitStatus TurnInputMode InputFateState
   AgentTextEvent AgentToolUseEvent AgentInputFateEvent AgentTurnEndEvent
-  AgentTurnCompleted AgentTurnInterrupted AgentTurnLost
+  AgentTurnCompleted AgentTurnInterrupted AgentTurnLost AgentTurnUsage
   AgentCapabilityUnsupportedError NoTurnInFlightError ResumeTargetNotFoundError SessionNotFoundError])
 (import doeff_agents.monitor [SessionStatus])
 ;; 層 2 の handler との対は doeff-agents の組み立ての部品で作る(この検も doeff_claude_code を import しない)。
@@ -404,10 +404,17 @@
 
 
 (deftest test-headless-one-turn-and-resume-fake [tmp-path]
-  (check-one-turn-then-resume (run-on FAKE tmp-path one-turn-then-resume)))
+  (val seen (run-on FAKE tmp-path one-turn-then-resume))
+  (check-one-turn-then-resume seen)
+  ;; 偽の CLI の完了は token の数を 1 つも名乗らない → usage = None(0 を発明しない・agora-redesign #766)。
+  (assert (is (. (get seen "one") end usage) None) (repr (. (get seen "one") end))))
 
 (deftest test-headless-one-turn-and-resume-stub [tmp-path]
-  (check-one-turn-then-resume (run-on STUB tmp-path one-turn-then-resume)))
+  (val seen (run-on STUB tmp-path one-turn-then-resume))
+  (check-one-turn-then-resume seen)
+  ;; 手番の使った token の数は層 2 の result の行の usage から層 3 の終わりへ運ぶ(stub は input 1・output 1 だけを名乗る —
+  ;; 名乗らない cache の欄は None のまま・agora-redesign #766)。
+  (assert (= (. (get seen "one") end usage) (AgentTurnUsage :input-tokens 1 :output-tokens 1)) (repr (. (get seen "one") end))))
 
 (deftest test-headless-one-turn-and-resume-real [tmp-path]
   {:marks ["e2e" "slow"]
