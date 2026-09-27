@@ -3,8 +3,20 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { parseLintJson, type LintReport, type LintSemantic } from '../../lint/contract';
 import { violationExplanationLines } from '../../lint/layers';
-import { lintArgs } from '../../lint/runner';
-import { isMissingJevKey, LatestPerKeyQueue, semanticStatus } from '../../lint/semantic';
+import { lintArgs, type Linter, type LintOutcome, type LintRequest, type SemanticRequest } from '../../lint/runner';
+import {
+  isCurrentAnswer,
+  isMissingJevKey,
+  LatestPerKeyQueue,
+  pauseDelayMs,
+  SemanticJudge,
+  semanticStatus,
+  type Clock,
+  type OpenDocument,
+  type Scheduled,
+  type SemanticState,
+  type SemanticTriggers
+} from '../../lint/semantic';
 import { diagnosticOf } from '../../lint/view';
 
 const FIXTURES = path.join(__dirname, '..', '..', '..', 'test-fixtures', 'lint');
@@ -21,7 +33,7 @@ function report(name: string): LintReport {
 suite('保存した時の Jev の判定', () => {
   test('命令 — 設定の命令に --semantic <保存した file> を足す', () => {
     assert.deepStrictEqual(
-      lintArgs(['--output-format', 'editor-json'], { tag: 'semantic', root: '/repo', path: '/repo/a.hy' }),
+      lintArgs(['--output-format', 'editor-json'], { tag: 'semantic', root: '/repo', path: '/repo/a.hy', version: 1 }),
       ['--output-format', 'editor-json', '--semantic', '/repo/a.hy']
     );
   });
@@ -96,5 +108,175 @@ suite('Jev の違反の読み込みと表示(契約の更新 5)', () => {
     assert.strictEqual(violationExplanationLines(jev)[0], 'Jev の判定(意味の規則・止めはしない) p=0.93');
     assert.ok(diagnosticOf(jev).message.includes('Jev の判定(意味の規則・止めはしない) p=0.93'));
     assert.ok(!violationExplanationLines(report('semantic.json').violations[0]).some((l) => l.startsWith('Jev')));
+  });
+});
+
+/** 偽の時計 — advance で時を進め、期限の来た予約を順に呼ぶ。 */
+class FakeClock implements Clock {
+  private now = 0;
+  private readonly entries: Array<{ at: number; callback: () => void; live: boolean }> = [];
+
+  after(ms: number, callback: () => void): Scheduled {
+    const entry = { at: this.now + ms, callback, live: true };
+    this.entries.push(entry);
+    return {
+      cancel: () => {
+        entry.live = false;
+      }
+    };
+  }
+
+  advance(ms: number): void {
+    const end = this.now + ms;
+    for (;;) {
+      const due = this.entries.filter((e) => e.live && e.at <= end).sort((a, b) => a.at - b.at)[0];
+      if (due === undefined) {
+        break;
+      }
+      due.live = false;
+      this.now = due.at;
+      due.callback();
+    }
+    this.now = end;
+  }
+}
+
+/** 偽の linter の口 — 依頼を覚え、答えは検が resolve で返す(子 process だけを偽物にする)。 */
+class FakeLinter implements Linter {
+  readonly calls: Array<{ readonly request: LintRequest; readonly resolve: (outcome: LintOutcome) => void }> = [];
+
+  lint(request: LintRequest): Promise<LintOutcome> {
+    return new Promise((resolve) => this.calls.push({ request, resolve }));
+  }
+}
+
+/** 列と Promise の続きを流し切る。 */
+const settle = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0));
+
+/** 係と偽の世界(時計・linter・開いている document・置き場へ入った答え)。 */
+function world(triggers: Partial<SemanticTriggers> = {}) {
+  const clock = new FakeClock();
+  const linter = new FakeLinter();
+  const documents = new Map<string, OpenDocument>();
+  const delivered: Array<{ readonly request: SemanticRequest; readonly report: LintReport }> = [];
+  const logs: string[] = [];
+  const states: SemanticState[] = [];
+  const judge = new SemanticJudge({
+    linter,
+    clock,
+    triggers: () => ({ onSave: true, onChange: true, pauseMs: 2000, ...triggers }),
+    document: (p) => documents.get(p),
+    deliver: (request, r) => delivered.push({ request, report: r }),
+    log: (line) => logs.push(line),
+    onState: (state) => states.push(state),
+    notify: () => undefined
+  });
+  /** 打った — document の版を 1 進めて中身を text にし、係に知らせる。 */
+  const type = (p: string, text: string): void => {
+    documents.set(p, { root: '/repo', text, version: (documents.get(p)?.version ?? 0) + 1 });
+    judge.edited(p);
+  };
+  return { clock, linter, documents, delivered, logs, states, judge, type };
+}
+
+const A = '/repo/a.hy';
+
+suite('編集中の Jev の判定(打つのが止まった時)', () => {
+  test('間を置く — 打つのが 2 秒止まるまで問わず、止まったら最新の中身で 1 回だけ問う', () => {
+    const w = world();
+    w.type(A, '(defk f [x] x)');
+    w.clock.advance(1500);
+    w.type(A, '(defk f [x] (+ x');
+    w.clock.advance(1500);
+    w.type(A, '(defk f [x] (+ x 1))');
+    w.clock.advance(1999);
+    assert.strictEqual(w.linter.calls.length, 0, '最後に打ってから 2 秒経つまでは問わない');
+    w.clock.advance(1);
+    assert.strictEqual(w.linter.calls.length, 1);
+    assert.deepStrictEqual(w.linter.calls[0].request, { tag: 'semantic-change', root: '/repo', path: A, text: '(defk f [x] (+ x 1))', version: 3 });
+    // 中身は stdin で渡し、中身の変わった定義だけを問う(書きかけで読めない定義は linter が問わない)
+    assert.deepStrictEqual(lintArgs(['--output-format', 'editor-json'], w.linter.calls[0].request), [
+      '--output-format',
+      'editor-json',
+      '--stdin',
+      '--path',
+      A,
+      '--semantic',
+      '--semantic-changed'
+    ]);
+    w.clock.advance(10_000);
+    assert.strictEqual(w.linter.calls.length, 1, '打たなければ問い直さない');
+  });
+
+  test('古い答えを捨てる — 問うている間に打ったら、その答えは置き場へ入れず、最新の中身の答えだけを出す', async () => {
+    const w = world();
+    w.type(A, '(defk f [x] x)');
+    w.clock.advance(2000);
+    assert.strictEqual(w.linter.calls.length, 1);
+    w.type(A, '(defk f [x] (inc x))');
+    w.linter.calls[0].resolve({ tag: 'ok', report: report('semantic.json') });
+    await settle();
+    assert.strictEqual(w.delivered.length, 0, '版 1 の答えは版 2 の中身には出さない');
+    assert.ok(w.logs.some((l) => l.includes('Jev の答えを捨てた')));
+    w.clock.advance(2000);
+    assert.strictEqual(w.linter.calls.length, 2);
+    w.linter.calls[1].resolve({ tag: 'ok', report: report('semantic.json') });
+    await settle();
+    assert.deepStrictEqual(
+      w.delivered.map((d) => d.request.version),
+      [2]
+    );
+    assert.strictEqual(w.states[w.states.length - 1].tag, 'done');
+  });
+
+  test('走り始めていない古い中身の依頼は、打ったら取り下げる(古い中身を Jev に問わない)', async () => {
+    const w = world();
+    w.type(A, 'v1');
+    w.clock.advance(2000);
+    w.type(A, 'v2');
+    w.clock.advance(2000); // v2 の依頼は v1 が走っている間は待つ
+    w.type(A, 'v3'); // 待っていた v2 を取り下げる
+    w.clock.advance(2000);
+    w.linter.calls[0].resolve({ tag: 'ok', report: report('semantic.json') });
+    await settle();
+    const texts = w.linter.calls.map((c) => (c.request.tag === 'semantic-change' ? c.request.text : c.request.tag));
+    assert.deepStrictEqual(texts, ['v1', 'v3']);
+  });
+
+  test('保存した時は編集中の待ちをやめ、保存した中身を問う。semanticOnChange を切れば編集中は問わない', async () => {
+    const w = world();
+    w.type(A, '(defk f [x] x)');
+    w.clock.advance(500);
+    w.judge.saved('/repo', A, 1);
+    w.clock.advance(5000);
+    assert.deepStrictEqual(
+      w.linter.calls.map((c) => c.request.tag),
+      ['semantic']
+    );
+    const off = world({ onChange: false });
+    off.type(A, '(defk f [x] x)');
+    off.clock.advance(5000);
+    assert.strictEqual(off.linter.calls.length, 0);
+  });
+
+  test('答えが今の中身の物かの見分け — 編集中は版が同じ時だけ、保存は閉じても disk の中身のまま', () => {
+    const change: SemanticRequest = { tag: 'semantic-change', root: '/repo', path: A, text: 'x', version: 4 };
+    const save: SemanticRequest = { tag: 'semantic', root: '/repo', path: A, version: 4 };
+    assert.deepStrictEqual(
+      [isCurrentAnswer(change, 4), isCurrentAnswer(change, 5), isCurrentAnswer(change, undefined)],
+      [true, false, false]
+    );
+    assert.deepStrictEqual([isCurrentAnswer(save, 4), isCurrentAnswer(save, 5), isCurrentAnswer(save, undefined)], [true, false, true]);
+  });
+
+  test('待つ秒の設定 — 無ければ 2 秒・0.5〜60 秒に収める', () => {
+    assert.deepStrictEqual([pauseDelayMs(undefined), pauseDelayMs(2), pauseDelayMs(0.1), pauseDelayMs(600), pauseDelayMs(Number.NaN)], [2000, 2000, 500, 60_000, 2000]);
+  });
+
+  test('何も問わなかった実行(較正 not-run・問うた 0)は警告にしない', () => {
+    const summary = report('semantic.json').semantic;
+    assert.ok(summary);
+    assert.strictEqual(semanticStatus({ tag: 'done', summary: { ...summary, calibration: 'not-run', asked: 0, unjudged: 0 } })?.warning, false);
+    assert.strictEqual(semanticStatus({ tag: 'done', summary: { ...summary, calibration: 'not-run', asked: 2 } })?.warning, true);
   });
 });

@@ -67,6 +67,12 @@ The extension bundles `doeff-indexer` binaries for common platforms (macOS, Linu
   - 起動時と workspace の変化、「再実行」のボタンでは、repo 全体を呼びます(引数なし)。
   - 保存時と編集の 0.8 秒後には、その file を `--stdin --path <path>` で呼びます。
   - 子 process は同時に 1 つで、時間切れがあります。終了コード 2 と、契約(`lint-contract-v1`)に合わない出力は、理由を Output に出します。
+- **Jev の判定**(意味の規則): 決定的な実行とは別の子 process で、同時に 1 本だけ走らせます。
+  - 保存した時(設定 `doeff-runner.hy.semanticOnSave`・既定 on): その file を `--semantic <path>` で呼びます。
+  - 編集中(設定 `doeff-runner.hy.semanticOnChange`・既定 on): 打つのが止まったら(`doeff-runner.hy.semanticOnChangeDelaySeconds`・既定 2 秒)、
+    その時の中身を `--stdin --path <path> --semantic --semantic-changed` で呼びます。問うのは、構文として読めて中身が変わった定義だけです。書きかけで読めない定義は問いません。
+  - 問うている間にまた打つと、その答えは捨てて最新の中身の答えだけを出します。まだ走り始めていない古い中身の依頼は取り下げます。
+  - repo の pyproject に `[tool.doeff-linter.semantic] proxy_url` があれば、Jev の呼び出しを覚える代理を経由します。同じ定義を 2 回目に問う時は、どの機体・worktree からでも Jev を呼びません。
 - **波線**(問題の一覧): 重さは linter のとおりです(error = 新しい破れ、warning = 登録簿に載った既知の破れ、info)。文には、直し方と、規則の ID・ADR の law の名が付きます。
 - **「違反(linter)」パネル**: law(無ければ規則の ID)→ file → 違反の順に並べます。押すとその位置へ移動します。
   - 上の `$(law)` で「規則の一覧」に切り替えます。針のつながっていない規則は灰色で、linter がまだ見ていない物です。

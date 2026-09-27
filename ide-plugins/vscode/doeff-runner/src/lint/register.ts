@@ -6,7 +6,7 @@ import { LintDecorations } from './decorations';
 import { LayerFileDecorations, LayerHover, LayerStatusBar, showLayerTable } from './layerViews';
 import { LintMapTree, LintViolationsTree } from './panel';
 import { ChildProcessLinter } from './runner';
-import { semanticStatus } from './semantic';
+import { pauseDelayMs, semanticStatus } from './semantic';
 import { LintService } from './service';
 import { LintStore } from './store';
 
@@ -14,10 +14,13 @@ import { LintStore } from './store';
 const LINT_COMMAND_SETTING = 'doeff-runner.hy.lintCommand';
 /** linter 1 回の上限。 */
 const LINT_TIMEOUT_MS = 120_000;
-/** 保存した時の Jev の判定 1 回の上限。 */
+/** Jev の判定(保存した時・編集中)1 回の上限。 */
 const SEMANTIC_TIMEOUT_MS = 30_000;
 /** 保存した時に Jev に問うかの設定。 */
 const SEMANTIC_ON_SAVE_SETTING = 'doeff-runner.hy.semanticOnSave';
+/** 編集中に打つのが止まったら Jev に問うかの設定と、止まってから問うまでの秒。 */
+const SEMANTIC_ON_CHANGE_SETTING = 'doeff-runner.hy.semanticOnChange';
+const SEMANTIC_ON_CHANGE_DELAY_SETTING = 'doeff-runner.hy.semanticOnChangeDelaySeconds';
 
 /** workspace の root の設定から linter の命令を読む(空なら無効)。 */
 function lintCommandFor(root: string): string {
@@ -36,7 +39,14 @@ export function registerLint(context: vscode.ExtensionContext, output: vscode.Ou
   let notifiedOnce = false;
   const service = new LintService(store, linter, output, diagnostics, {
     linter: semanticLinter,
-    enabled: () => vscode.workspace.getConfiguration().get<boolean>(SEMANTIC_ON_SAVE_SETTING) !== false,
+    triggers: () => {
+      const config = vscode.workspace.getConfiguration();
+      return {
+        onSave: config.get<boolean>(SEMANTIC_ON_SAVE_SETTING) !== false,
+        onChange: config.get<boolean>(SEMANTIC_ON_CHANGE_SETTING) !== false,
+        pauseMs: pauseDelayMs(config.get<number>(SEMANTIC_ON_CHANGE_DELAY_SETTING))
+      };
+    },
     onState: (state) => {
       const status = semanticStatus(state);
       if (status === undefined) {
