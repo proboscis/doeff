@@ -1,416 +1,128 @@
-;;; 切り離した task の 2 つの handler(effect は detached_model.hy)。業務のコードは同じまま、composition root がどちらを被せるかで
-;;; 「手元の 1 process で系全体を模擬する」と「本番でクラスタに分散する」を切り替える。どちらも同じ契約:
-;;;   - key で冪等に送る(同じ key がまだ在れば created = False・env / name / needs が違えば DetachedRefused)
+;;; 切り離した task の本番の handler(effect は detached_model.hy)。業務のコードは effect だけを知り、composition root が handler を
+;;; 被せる。手元で系全体を確かめる時は、handler を被せずに手元の runner sim-cluster(local.hy)で走らせる — sim の宿が同じ要求の形
+;;; (この module の detached-path・detached-submit-body・detached-refusal・awaited-answer・warm-request-body)で coordinator の口へ送る。
+;;; 契約(本物の coordinator と worker が決める):
+;;;   - key で冪等に送る(同じ key がまだ在れば created = False・name / needs が違えば DetachedRefused)
 ;;;   - 呼び手が消えても(await が取り消されても)task は続く・後から同じ key で待てる
 ;;;   - 終わった結果は解放か保持の期限まで持つ・終わった後の取り消しは False で結果はそのまま
 ;;;   - 担い手の死 = DetachedLost(走らせ直さない)・結果の後の担い手の死では結果は変わらない
 ;;;   - 版の不一致 = DetachedVersionMismatch
 ;;;   - 置き先 = 生きていて drain でない、能力の合う担い手(needs ⊆ provides・専用の能力)。合う担い手が全部 drain 中なら待つ・合う担い手が居なければ
-;;;     DetachedUnrunnable(本物の coordinator の place-tasks と同じ規則 — fake は同じ述語 placeable を使う)
+;;;     DetachedUnrunnable(coordinator の place-tasks)
 ;;;   - 担い手の名簿(ReadRunners)= coordinator の名簿の生存と drain
-(require doeff-hy.macros [defhandler defk <- val var])
-(require doeff-hy.record [defrecord])
-(import dataclasses [dataclass])
-(import datetime [datetime])
+;;;
+;;; 2026-09-28: 同じ VM の scheduler の task で走らせる模擬(detached-local・置き場 DetachedLocalStore・模擬の担い手)を消した。呼び手の
+;;; 外側の handler を継ぎ、Program に足りない handler を黙って補っていた(ADR-DOE-CLUSTER-001 R1・R2 に反する)。模擬の担い手の筋書き
+;;; (担い手の死・drain・戻り・coordinator の途絶)は sim-cluster の検の effect(KillWorker・DrainWorker・StartWorker・StopCoordinator)が持つ。
+(require doeff-hy.macros [defhandler defk deff <- val var])
 (import urllib.parse [quote :as url-quote])
 (import httpx)
-(import doeff_core_effects.scheduler [Spawn Wait Cancel Task TaskCancelledError])
-(import doeff [Program])
-(import doeff_time [Delay GetTime])
-(import .clock [epoch-ms-of])
-(import .coordinator_http [CoordinatorEndpoint send-idempotent put-program REPLY-SECONDS IDEMPOTENT-DEADLINE-SECONDS])
 (import doeff [run :as run-program])
-(import .cluster_model [PROTOCOL-FORMAT WorkerInfo])
-(import .runtime_env_model [RuntimeEnv EnvFailure runtime-env->json env-key current-platform])
-(import .env_prepare [PrepareRequest KnownRoot EnvReady prepare-env])
-(import .cluster_policy [ENV-RETRIES placeable])
-(import .remote_model [encode-program current-versions version-mismatch failed-from])
-(import .warm_model [WarmRuntimeEnv ReadWarmState WarmState WarmUnreachable WarmAnswer WarmFailure warm-key warm-state-of-json])
-(import doeff_time [GetMonotonic])
-(import .detached_model [SubmitDetached AwaitDetached CancelDetached ReleaseDetached ReadRunners SimulateRunnerLoss
-                         SimulateRunnerDrain SimulateRunnerReturn SimulateCoordinatorOutage WARMING-PHASE
-                         DetachedSubmitted DetachedSucceeded DetachedLost DetachedCancelled DetachedVersionMismatch
-                         DetachedEnvUnavailable DetachedUnrunnable
-                         DetachedPending DetachedUnknown DetachedRefused DetachedOutcome DetachedAwaited
-                         RunnerFact RunnersUnreachable RunnersAnswer DetachedUnreachable DetachedSubmitAnswer
-                         outcome-from-task-outcome outcome-of-view])
+(import doeff_time [Delay])
+(import .coordinator_http [CoordinatorEndpoint send-idempotent put-program REPLY-SECONDS IDEMPOTENT-DEADLINE-SECONDS])
+(import .cluster_model [PROTOCOL-FORMAT])
+(import .runtime_env_model [RuntimeEnv runtime-env->json])
+(import .remote_model [encode-program current-versions])
+(import .warm_model [WarmRuntimeEnv ReadWarmState WarmState WarmUnreachable WarmAnswer warm-state-of-json])
+(import .detached_model [SubmitDetached AwaitDetached CancelDetached ReleaseDetached ReadRunners WARMING-PHASE
+                         DetachedSubmitted DetachedPending DetachedRefused DetachedAwaited DetachedUnreachable
+                         RunnerFact RunnersUnreachable RunnersAnswer outcome-of-view])
+
+;; 取り消しに当たる答えの status(本文の error を理由にした DetachedRefused にする)。413 = 詰めた Program が置き場の上限を越える
+;; (PUT /programs — program_policy.PROGRAM-MAX-BYTES)。
+(val REFUSED-STATUSES #(400 409 413 429))
 
 
-;; --- handler A: 同じ VM の scheduler の task として走らせる(fake・模擬環境) -------------------------
+;; --- 要求の形と答えの読み(本番の DetachedClient・WarmClient と sim の宿が同じ関数を使う — 本文を写さない)-----------------------
 
-;; 担い手を名指さずに作った置き場の、ただ 1 つの担い手(能力 local を提供する)。
-(val DEFAULT-RUNNER "local")
-;; その担い手が提供する能力(置き場を名指しの担い手なしで作った時 — 検と模擬は needs にこの名を書く)。
-(val DEFAULT-RUNNER-PROVIDES #("local"))
-
-;; 真実の記録の op(fake の側が見た事実 — 呼び手の信念ではない)。
-(val EVENT-SUBMITTED "submitted")     ; 送りを受けた(置き先はまだ)
-(val EVENT-STARTED "started")         ; 担い手に置いて走らせ始めた
-(val EVENT-SUCCEEDED "succeeded")     ; Program が値を返した
-(val EVENT-FAILED "failed")          ; Program が例外で抜けた・env を準備できなかった・版が合わない
-(val EVENT-LOST "lost")             ; 担い手ごと消えた
-(val EVENT-CANCELLED "cancelled")     ; 取り消した
-(val EVENT-UNRUNNABLE "unrunnable")  ; 置ける担い手が無い
-
-;; DetachedEvent = fake の真実の記録 1 行: at = 仮想の epoch ミリ秒・key・op(EVENT-*)・runner = 置いた担い手(置く前は空)。
-(defrecord DetachedEvent
-  #^ int at
-  #^ str key
-  #^ str op
-  #^ str runner)
+(deff detached-path [#^ str key #^ str suffix]  ; defk にできない: 本番の client(Program の外の I/O の道具)と sim の宿が同じ形を作る純粋な判断
+  {:pre [(: key str) (: suffix str)] :post [(: % str)] :tags {:context "doeff-cluster" :role "protocol"}}
+  "切り離した task の口の path(key は path の 1 節に収まるよう quote する)を作るため。"
+  (+ "/detached/" (url-quote key :safe "") suffix))
 
 
-(defclass LocalRunner []
-  "fake の担い手 1 つ(置き場の中の状態 — この handler だけが書き換える)。provides / exclusive = 提供する能力・専用の能力の名の tuple(名の順)。"
-  (defn __init__ [self #^ str name #^ tuple provides #^ tuple exclusive #^ bool live #^ bool draining]
-    (setv self.name name self.provides provides self.exclusive exclusive self.live live self.draining draining)))
+(deff detached-submit-body [#^ str sha #^ str revision #^ frozenset needs #^ str name #^ float lease-seconds #^ float retain-seconds
+                            #^ (| dict None) runtime-env]  ; defk にできない: 本番の client と sim の宿が同じ形を作る純粋な判断
+  {:pre [(: sha str) (: revision str) (: needs frozenset) (: name str) (: lease-seconds float) (: retain-seconds float)
+         (: runtime-env (| dict None))]
+   :post [(: % dict)] :tags {:context "doeff-cluster" :role "protocol"}}
+  "PUT /detached/<key> の本文を作るため: 詰めた Program は置き場 /programs/<sha> に先に置き、本文は sha だけを運ぶ(ADR-DOE-CLUSTER-001
+   R3b)。runtime-env = 実行環境の宣言の JSON(在れば worker は env の root を準備して、その中で走らせる)。"
+  (| {"program" sha "revision" revision "needs" (sorted needs) "name" name "leaseSeconds" lease-seconds
+      "retainSeconds" retain-seconds "format" PROTOCOL-FORMAT}
+     (if (is runtime-env None) {} {"runtimeEnv" runtime-env})))
 
 
-(defclass LocalRecord []
-  "fake の task 1 本。outcome = 終わりの答え(まだなら None)。handle = scheduler の task(走らせ始めるまで None)。
-   runner = 置いた担い手の名(置く前 = queued は None)。
-   runtime-env = 送った時の実行環境の宣言(None = 今の commit だけの task)・root = 走らせた env の root(準備の後に在る)。"
-  (defn __init__ [self #^ str key #^ str name #^ tuple needs #^ Program program
-                  #^ (| RuntimeEnv None) [runtime-env None]]
-    (setv self.key key self.name name self.needs needs self.program program self.runtime-env runtime-env)
-    (setv #^ (| str None) self.runner None)
-    (setv #^ (| str None) self.root None)
-    ;; 通った phase の列(preparing = 走る前に env の root を準備した — 冷たい起動・running = Program が走り出した)。
-    (setv #^ list self.phases [])
-    (setv #^ (| Task None) self.handle None)
-    (setv #^ (| DetachedOutcome None) self.outcome None)))
+(deff detached-refusal [#^ (| int None) status #^ (| dict None) body]  ; defk にできない: 本番の client と sim の宿が同じ判断で返事を読む
+  {:pre [(: status (| int None)) (: body (| dict None))] :post [(: % (| DetachedRefused None))]
+   :tags {:context "doeff-cluster" :role "judgment"}}
+  "返事が呼び手の誤り(400・409・413・429 — 形の誤り・同じ key の別の仕事・上限越え)なら、呼び手へ投げる DetachedRefused を作るため
+   (それ以外は None)。"
+  (if (in status REFUSED-STATUSES)
+      (DetachedRefused status (str (.get (or body {}) "error" "")))
+      None))
 
 
-(defclass DetachedLocalStore []
-  "fake の置き場(key → LocalRecord)。runner-versions = 模擬の担い手の版(None = 送り手と同じ。違えば版の不一致を返す)。
-   runners = 担い手の名簿の初めの行(RunnerFact の tuple — None = 能力 local を提供する担い手 DEFAULT-RUNNER が 1 つ)。
-   runs = 走らせ始めた回数(冪等の検に使う)・events = 真実の記録(DetachedEvent の列 — 模擬の判定が読む)・
-   cut-until = coordinator に届かない期限(epoch ミリ秒)。
-   runtime-env = 送り手の実行環境の宣言(在れば、task を走らせる前に env の root を準備する — 準備の I/O は外側の handler、速い模擬
-   では env_world の模擬の世界)。envs = env のキー → 準備中の scheduler の task か答え(同じキーの準備は 1 本)・known = 完成した root・
-   prepares = 準備を起こした回数。
-   warms = 温める表(行のキー → #(宣言 needs 期限の仮想の秒))・cold-starts = 準備の済んでいない env の task を走らせた回数(冷たい起動 —
-   本物の coordinator の計器 doeff_worker_env_cold_start_total と同じ意味)。"
-  (defn __init__ [self [runner-versions None] #^ (| RuntimeEnv None) [runtime-env None] #^ str [state-root "/state/roots"]
-                  #^ int [min-free-bytes 0] #^ (| tuple None) [runners None]]
-    (setv self.records {} self.runner-versions runner-versions self.runs 0 self.events [] self.cut-until 0
-          self.runtime-env runtime-env self.state-root state-root self.min-free-bytes min-free-bytes
-          self.envs {} self.known [] self.prepares 0 self.warms {} self.cold-starts 0)
-    (setv self.runners (if (is runners None)
-                           {DEFAULT-RUNNER (LocalRunner DEFAULT-RUNNER DEFAULT-RUNNER-PROVIDES #() True False)}
-                           (dfor fact runners fact.name (LocalRunner fact.name (tuple (sorted fact.provides)) (tuple (sorted fact.exclusive))
-                                                                   fact.live fact.draining)))))
-
-  (defn #^ list open-records [self]
-    (lfor r (.values self.records) :if (is r.outcome None) r))
-
-  (defn #^ list running-on [self #^ str runner]
-    "その担い手に置いて、まだ終わっていない task。"
-    (lfor r (.values self.records) :if (and (is r.outcome None) (= r.runner runner)) r)))
+(deff submit-unreachable [#^ str reason]  ; defk にできない: 本番の client と sim の宿が同じ答えを作る純粋な判断
+  {:pre [(: reason str)] :post [(: % DetachedUnreachable)] :tags {:context "doeff-cluster" :role "judgment"}}
+  "送りが coordinator に届かなかった時の答えを作るため(送れたかは分からない — key で冪等なので呼び手が送り直してよい)。"
+  (DetachedUnreachable :detail (.format "coordinator に届かない(送れたかは分からない — key で冪等): {}" reason)))
 
 
-(defn #^ WorkerInfo worker-of [#^ LocalRunner runner]
-  "担い手 → 本物の coordinator の判断が読む worker の形(能力の照合を同じ述語で行うため)。"
-  (WorkerInfo runner.name runner.provides 1 0 :exclusive runner.exclusive))
-
-
-(defn #^ (get tuple #(RunnerFact ...)) runner-facts [#^ DetachedLocalStore store]
-  "名簿の断面(名の順)。"
-  (tuple (gfor #(name r) (sorted (.items store.runners)) (RunnerFact :name name :provides r.provides :exclusive r.exclusive :live r.live :draining r.draining))))
-
-
-(defk note [store key op runner]
-  {:pre [(: store DetachedLocalStore) (: key str) (: op str) (: runner (| str None))] :post [(: % None)]}
-  "真実の記録に 1 行(時刻は外側の時計)。"
-  (<- at datetime (GetTime))
-  (.append store.events (DetachedEvent :at (epoch-ms-of at) :key key :op op :runner (or runner "")))
-  None)
-
-
-(defk finish-local [store key outcome]
-  {:pre [(: store DetachedLocalStore) (: key str) (: outcome DetachedOutcome)] :post [(: % bool)]}
-  "終わりの答えを置く。既に終わっていれば(取り消し・消失の後)何もしない — 終わりの答えは二度と変わらない。"
-  (val record (.get store.records key))
-  (when (or (is record None) (is-not record.outcome None))
-    (return False))
-  (setv record.outcome outcome)
-  (<- (note store key (match outcome
-                        (DetachedSucceeded) EVENT-SUCCEEDED
-                        (DetachedLost) EVENT-LOST
-                        (DetachedCancelled) EVENT-CANCELLED
-                        (DetachedUnrunnable) EVENT-UNRUNNABLE
-                        _ EVENT-FAILED)
-            record.runner))
-  True)
-
-
-(defk prepared-env [store env]
-  {:pre [(: store DetachedLocalStore) (: env RuntimeEnv)] :post [(: % (| EnvReady EnvFailure))]}
-  "env の root を 1 度だけ準備する(同じキーの準備が走っていればそれを待つ・済んでいれば使い回す — worker の EnvStore と同じ規則)。"
-  (<- env-id str (env-key env (current-platform)))
-  (setv entry (.get store.envs env-id))
+(deff awaited-answer [#^ (| dict None) view #^ str reason #^ str key #^ float waited #^ (| float int None) timeout-seconds]  ; defk にできない: 本番の client と sim の宿が同じ判断で待ちの 1 拍を読む
+  {:pre [(: view (| dict None)) (: reason str) (: key str) (: waited float) (: timeout-seconds (| float int None))]
+   :post [(: % (| DetachedAwaited None))] :tags {:context "doeff-cluster" :role "judgment"}}
+  "待ちの 1 拍の読み(view = GET /detached/<key> の本文・届かなければ None と理由 reason)から、答えるか(DetachedAwaited)・待ち続けるか
+   (None)を決めるため。届かない読みと、起きた直後の coordinator の「まだ分からない」(phase warming)は、期限を決めた待ちなら
+   DetachedUnreachable で返し、期限の無い待ちは届くまで待つ(task の死とみなさない・知らない key と読んで送り直さない)。"
   (cond
-    (isinstance entry EnvReady) entry
-    (isinstance entry Task) (do (<- waited (Wait entry)) waited)
-    True (do (+= store.prepares 1)
-             (<- started (Spawn (prepare-env (PrepareRequest :env env :key env-id :platform (current-platform)
-                                                             :root (.format "{}/{}" store.state-root env-id)
-                                                             :known (tuple store.known)
-                                                             :min-free-bytes store.min-free-bytes))))
-             (setv (get store.envs env-id) started)
-             (<- result (Wait started))
-             (setv (get store.envs env-id) result)
-             (when (isinstance result EnvReady)
-               (.append store.known (KnownRoot :env env :root result.root)))
-             result)))
+    (is view None)
+      (if (is timeout-seconds None) None (DetachedUnreachable :detail (.format "coordinator に届かない: {}" reason)))
+    (= (.get view "phase") WARMING-PHASE)
+      (if (is timeout-seconds None) None (DetachedUnreachable :detail (.format "coordinator に届かない: {}" (.get view "error" ""))))
+    True
+      (let [outcome (outcome-of-view view)]
+        (cond
+          (is-not outcome None) outcome
+          (and (is-not timeout-seconds None) (>= waited timeout-seconds))
+            (DetachedPending key (get view "phase") :runner (or (.get view "worker") ""))
+          True None))))
 
 
-(defk env-for-task [store env]
-  {:pre [(: store DetachedLocalStore) (: env RuntimeEnv)] :post [(: % (| EnvReady EnvFailure))]}
-  "task の env を準備する。一時の失敗は、本物の coordinator が別の worker へ置き直すのと同じ回数(ENV-RETRIES)だけ準備し直す。"
-  (<- first (prepared-env store env))
-  (var result first)
-  (var tries 0)
-  (while (and (isinstance result EnvFailure) result.retryable (< tries ENV-RETRIES))
-    (:= tries (+ tries 1))
-    (<- again (prepared-env store env))
-    (:= result again))
-  result)
+(deff runner-facts-of-view [#^ dict workers]  ; defk にできない: 本番の client と sim の宿が同じ読みを使う純粋な判断
+  {:pre [(: workers dict)] :post [(: % tuple)] :tags {:context "doeff-cluster" :role "judgment"}}
+  "coordinator の GET /state の workers(名 → {provides exclusive live draining …})を名簿の断面(RunnerFact の tuple・名の順)にするため。"
+  (tuple (gfor #(name w) (sorted (.items workers))
+               (RunnerFact :name name :provides (tuple (sorted (.get w "provides" []))) :exclusive (tuple (sorted (.get w "exclusive" [])))
+                           :live (bool (get w "live")) :draining (bool (get w "draining"))))))
 
 
-(defk run-local [store key program]
-  {:pre [(: store DetachedLocalStore) (: key str) (: program Program)] :post [(: % bool)]}
-  ;; 模擬の担い手の上の 1 本。取り消し(Cancel)は投げ直す — 答えは取り消した側(CancelDetached・SimulateRunnerLoss)が置く。
-  ;; 実行環境の task は、先に env の root を準備する(失敗は Program を走らせずに DetachedEnvUnavailable)。
-  (val record (get store.records key))
-  (when (is-not record.runtime-env None)
-    ;; 準備の済んでいない env の task は、走る前に準備を待つ(冷たい起動 — 先読みで避ける)。
-    (<- env-id str (env-key record.runtime-env (current-platform)))
-    (when (not (isinstance (.get store.envs env-id) EnvReady))
-      (.append record.phases "preparing")
-      (+= store.cold-starts 1))
-    (<- ready (env-for-task store record.runtime-env))
-    (when (isinstance ready EnvFailure)
-      (<- (finish-local store key (DetachedEnvUnavailable ready.kind.value ready.detail ready.retryable)))
-      (return False))
-    (setv record.root ready.root))
-  (.append record.phases "running")
-  (try
-    (<- value program)
-    (<- (finish-local store key (DetachedSucceeded value)))
-    (except [error TaskCancelledError]
-      (raise))
-    (except [error Exception]
-      (<- (finish-local store key (outcome-from-task-outcome (failed-from error))))))
-  True)
+(deff runners-unreachable [#^ str reason]  ; defk にできない: 本番の client と sim の宿が同じ答えを作る純粋な判断
+  {:pre [(: reason str)] :post [(: % RunnersUnreachable)] :tags {:context "doeff-cluster" :role "judgment"}}
+  "名簿の読みが coordinator に届かなかった時の答えを作るため。"
+  (RunnersUnreachable :detail (.format "coordinator に届かない: {}" reason)))
 
 
-(defk start-on [store record runner]
-  {:pre [(: store DetachedLocalStore) (: record LocalRecord) (: runner LocalRunner)] :post [(: % None)]}
-  "task を担い手に置いて走らせ始める。"
-  (setv record.runner runner.name)
-  (+= store.runs 1)
-  (<- (note store record.key EVENT-STARTED runner.name))
-  (<- handle (Spawn (run-local store record.key record.program) :daemon True))
-  (setv record.handle handle)
-  None)
+(deff warm-request-body [#^ dict runtime-env #^ frozenset needs #^ float ttl-seconds #^ str holder]  ; defk にできない: 本番の client と sim の宿が同じ形を作る純粋な判断
+  {:pre [(: runtime-env dict) (: needs frozenset) (: ttl-seconds float) (: holder str)] :post [(: % dict)]
+   :tags {:context "doeff-cluster" :role "protocol"}}
+  "POST /warm の本文を作るため(runtime-env = 実行環境の宣言の JSON)。"
+  {"runtimeEnv" runtime-env "needs" (sorted needs) "ttlSeconds" ttl-seconds "holder" holder "format" PROTOCOL-FORMAT})
 
 
-(defk place-local [store record]
-  {:pre [(: store DetachedLocalStore) (: record LocalRecord)] :post [(: % None)]}
-  "待っている task 1 本の置き先を決める(本物の place-tasks の規則): 生きていて drain でない合う担い手のうち負荷の少ない方(同じなら名の順)
-   に置く・合う担い手が全部 drain 中なら待つ・合う担い手が居なければ DetachedUnrunnable。"
-  (val able (lfor r (.values store.runners)
-                  :if (and r.live (placeable record.needs (worker-of r)))
-                  r))
-  (val free (sorted (lfor r able :if (not r.draining) r) :key (fn [r] #((len (.running-on store r.name)) r.name))))
-  (cond
-    free (<- (start-on store record (get free 0)))
-    (not able) (<- (finish-local store record.key
-                                 (DetachedUnrunnable (.format "置ける担い手が無い(要る能力 {})" (list record.needs))))))
-  None)
+(deff warm-path [#^ str key]  ; defk にできない: 本番の client と sim の宿が同じ形を作る純粋な判断
+  {:pre [(: key str)] :post [(: % str)] :tags {:context "doeff-cluster" :role "protocol"}}
+  "温める表の行 key の読みの path を作るため。"
+  (+ "/warm/" (url-quote key :safe "")))
 
 
-(defk place-queued [store]
-  {:pre [(: store DetachedLocalStore)] :post [(: % None)]}
-  "名簿が変わった後に、待っている task を置き直す(置けるなら置き、合う担い手が消えたなら DetachedUnrunnable)。"
-  (for [record (lfor r (.open-records store) :if (is r.runner None) r)]
-    (<- (place-local store record)))
-  None)
+(deff absent-warm-state [#^ str key]  ; defk にできない: 本番の client と sim の宿が同じ答えを作る純粋な判断
+  {:pre [(: key str)] :post [(: % WarmState)] :tags {:context "doeff-cluster" :role "judgment"}}
+  "表に無い行(404 — 期限で消えたか、書かれていない)の答えを作るため: ready も preparing も空・期限 0。"
+  (WarmState :key key :ready #() :preparing #() :failed #() :until-ms 0))
 
 
-(defn #^ (| DetachedAwaited None) local-answer [#^ (| LocalRecord None) record #^ str key #^ bool reachable #^ bool timed-out]
-  "純粋: 待ちの 1 拍の答え(まだ待つなら None)。coordinator に届かない間は終わりを読めない — 待ちの期限を決めた呼び手には
-   DetachedUnreachable(本物の client と同じ値)、期限の無い待ちは届くまで待つ。途絶を task の死とみなさない。"
-  (cond
-    (and reachable (is record None)) (DetachedUnknown key)
-    (and reachable (is-not record None) (is-not record.outcome None)) record.outcome
-    (not timed-out) None
-    (not reachable) (DetachedUnreachable :detail "coordinator に届かない(模擬の途絶)")
-    (is record None) (DetachedUnknown key)
-    (is record.runner None) (DetachedPending key "queued")
-    True (DetachedPending key "assigned" :runner record.runner)))
-
-
-(defk await-local [store key timeout-seconds poll-seconds]
-  {:pre [(: store DetachedLocalStore) (: key str) (: timeout-seconds (| float int None)) (: poll-seconds float)]
-   :post [(: % DetachedAwaited)]}
-  (var waited 0.0)
-  (while True
-    (<- at datetime (GetTime))
-    (val answer (local-answer (.get store.records key) key (>= (epoch-ms-of at) store.cut-until)
-                              (and (is-not timeout-seconds None) (>= waited timeout-seconds))))
-    (when (is-not answer None) (return answer))
-    (<- (Delay poll-seconds))
-    (:= waited (+ waited poll-seconds))))
-
-
-(defn #^ None refuse-conflict [#^ LocalRecord record #^ str name #^ tuple needs]
-  (when (!= #(record.name record.needs) #(name (tuple (sorted needs))))
-    (raise (DetachedRefused 409 (.format "key {} は別の仕事(name {!r}・needs {})に使われている" record.key record.name (list record.needs))))))
-
-
-(defk submit-local [store program key needs name]
-  {:pre [(: store DetachedLocalStore) (: program Program) (: key str) (: needs tuple) (: name str)] :post [(: % DetachedSubmitted)]}
-  ;; 同じ key がまだ在れば何も作らない。送れない値は本物と同じく送り手で断る(UnsendableProgram)。
-  (when (in key store.records) (return (DetachedSubmitted key False)))
-  (encode-program program)
-  (val record (LocalRecord key name (tuple (sorted needs)) program :runtime-env store.runtime-env))
-  (setv (get store.records key) record)
-  (val mismatch (if (is store.runner-versions None) None (version-mismatch (current-versions) store.runner-versions)))
-  (<- (note store key EVENT-SUBMITTED None))
-  (if (is-not mismatch None)
-      (<- (finish-local store key (DetachedVersionMismatch (+ "版と label が合う担い手が無い: " mismatch))))
-      (<- (place-local store record)))
-  (DetachedSubmitted key True))
-
-
-(defk warm-runners [store needs]
-  {:pre [(: store DetachedLocalStore) (: needs tuple)] :post [(: % tuple)]}
-  "温める表の行に数える担い手の名(名の順): 生きていて drain 中でなく、行の needs に合う担い手 — 本物の coordinator の warm-view と同じ
-   規則(置き先の選び方 place-local と同じ述語 placeable)。合う担い手が居なければ空(その行は温まらない)。"
-  (tuple (sorted (gfor r (.values store.runners)
-                       :if (and r.live (not r.draining) (placeable needs (worker-of r)))
-                       r.name))))
-
-
-(defk local-warm-state [store key]
-  {:pre [(: store DetachedLocalStore) (: key str)] :post [(: % WarmState)]}
-  "模擬の温める表の行の今の姿。本物の coordinator の warm-view と同じ形で答えるため: 準備済み / 準備中 / 失敗を、行の needs に合う
-   生きた drain 中でない担い手ごとに数える(模擬の root は同じ VM に 1 つなので、合う担い手は皆同じ root の状態を名乗る)。"
-  (setv row (.get store.warms key))
-  (if (is row None)
-      (WarmState :key key :ready #() :preparing #() :failed #() :until-ms 0)
-      (do (setv #(env needs until) row)
-          (<- names tuple (warm-runners store needs))
-          (<- env-id str (env-key env (current-platform)))
-          (setv entry (.get store.envs env-id) until-ms (int (* 1000 until)))
-          (cond
-            (isinstance entry EnvReady) (WarmState :key key :ready names :preparing #() :failed #() :until-ms until-ms)
-            (isinstance entry EnvFailure)
-              (WarmState :key key :ready #() :preparing #() :until-ms until-ms
-                         :failed (tuple (gfor n names (WarmFailure :worker n :kind entry.kind.value :detail entry.detail
-                                                                   :retryable entry.retryable))))
-            True (WarmState :key key :ready #() :preparing names :failed #() :until-ms until-ms)))))
-
-
-(defk warm-local [store env needs ttl-seconds]
-  {:pre [(: store DetachedLocalStore) (: env RuntimeEnv) (: needs tuple) (: ttl-seconds float)] :post [(: % WarmState)]}
-  "模擬の先読み: 表に行を書き、env の root の準備を別の task で起こす(送り手を待たせない)。同じ行の頼み直しは期限だけ延ばす。"
-  (<- key str (warm-key env needs))
-  (<- now float (GetMonotonic))
-  (setv (get store.warms key) #(env needs (+ now ttl-seconds)))
-  (<- env-id str (env-key env (current-platform)))
-  (when (not-in env-id store.envs)
-    (<- (Spawn (prepared-env store env) :daemon True)))
-  (<- answer WarmState (local-warm-state store key))
-  answer)
-
-(defk submit-reachable [store program key needs name now]
-  {:pre [(: store DetachedLocalStore) (: program Program) (: key str) (: needs tuple) (: name str) (: now int)]
-   :post [(: % DetachedSubmitAnswer)]}
-  "送る(coordinator に届く時だけ — 途絶の間は DetachedUnreachable)。同じ key の別の仕事は断る。"
-  (when (< now store.cut-until)
-    (return (DetachedUnreachable :detail "coordinator に届かない(模擬の途絶)")))
-  (val existing (.get store.records key))
-  (when (is-not existing None)
-    (refuse-conflict existing name needs))
-  (<- submitted (submit-local store program key needs name))
-  submitted)
-
-
-(defk lose-runners [store runner]
-  {:pre [(: store DetachedLocalStore) (: runner (| str None))] :post [(: % int)]}
-  "担い手の死: 走っている task は消え(走らせ直さない)、終わった task の結果はそのまま。runner = None は全部の task(担い手の process の
-   作り直し — 名簿の担い手は生きたまま)・名指した担い手は名簿から抜け(live = False)、その担い手の task だけが消える。"
-  (val lost (if (is runner None) (.open-records store) (.running-on store runner)))
-  (for [record lost]
-    (<- (finish-local store record.key (DetachedLost "模擬の担い手が死んだ(task は走らせ直さない)")))
-    (when (is-not record.handle None)
-      (<- (Cancel record.handle))))
-  (when (and (is-not runner None) (in runner store.runners))
-    (setv (. (get store.runners runner) live) False)
-    (<- (place-queued store)))
-  (len lost))
-
-
-(defhandler detached-local [#^ DetachedLocalStore store [poll-seconds 0.1]]
-  ;; 引数に残す理由: store は模擬の担い手の置き場そのもの(検の筋書きが中を読む)で、設定ではない。
-  (WarmRuntimeEnv [env needs ttl-seconds holder]
-    (<- state (warm-local store env (tuple (sorted needs)) (float ttl-seconds)))
-    (resume state))
-  (ReadWarmState [key]
-    (<- state (local-warm-state store key))
-    (resume state))
-  (SubmitDetached [program key needs name lease-seconds retain-seconds]
-    ;; 途絶の間の送りは届かない(本物の client と同じ値で答える — 送れたかは分からないが、key で冪等なので呼び手が送り直す)。
-    (<- at datetime (GetTime))
-    (<- answer (submit-reachable store program key (tuple (sorted needs)) name (epoch-ms-of at)))
-    (resume answer))
-  (AwaitDetached [key timeout-seconds]
-    (<- outcome (await-local store key timeout-seconds poll-seconds))
-    (resume outcome))
-  (CancelDetached [key]
-    ;; 終わっていない task だけが取り消しの答えを受ける(知らない key・終わった task は False)。
-    (val record (.get store.records key))
-    (<- cancelled bool (finish-local store key (DetachedCancelled)))
-    (when (and cancelled (is-not record None) (is-not record.handle None))
-      (<- (Cancel record.handle)))
-    (resume cancelled))
-  (ReleaseDetached [key]
-    (val record (.get store.records key))
-    (cond
-      (is record None) (resume False)
-      (is record.outcome None) (raise (DetachedRefused 409 (.format "key {} はまだ終わっていない — 先に取り消す" key)))
-      True (do (del (get store.records key))
-               (resume True))))
-  (ReadRunners []
-    (<- at datetime (GetTime))
-    (resume (if (< (epoch-ms-of at) store.cut-until)
-                (RunnersUnreachable :detail "coordinator に届かない(模擬の途絶)")
-                (runner-facts store))))
-  (SimulateRunnerLoss [runner]
-    (<- lost int (lose-runners store runner))
-    (resume lost))
-  (SimulateRunnerDrain [runner]
-    ;; drain: 新しい task を置かない・走っている task は続く(抜けるのは担い手の process が止まった時 = SimulateRunnerLoss — 本物の
-    ;; coordinator も drain した worker を heartbeat が止まるまで名簿に残す)。
-    (setv (. (get store.runners runner) draining) True)
-    (resume (len (.running-on store runner))))
-  (SimulateRunnerReturn [runner]
-    ;; 担い手が戻る(作り直した worker — 生きていて drain でない)。名簿に無い名は label の無い担い手として足す。
-    (if (in runner store.runners)
-        (setv (. (get store.runners runner) live) True (. (get store.runners runner) draining) False)
-        (setv (get store.runners runner) (LocalRunner runner #() True False)))
-    (<- (place-queued store))
-    (resume None))
-  (SimulateCoordinatorOutage [seconds]
-    (<- at datetime (GetTime))
-    (setv store.cut-until (max store.cut-until (+ (epoch-ms-of at) (int (* 1000 seconds)))))
-    (resume None)))
-
-
-;; --- handler B: coordinator の /detached の口へ出し、worker の子 process で走らせる ------------------------
+;; --- handler: coordinator の /detached の口へ出し、worker の子 process で走らせる ------------------------
 
 
 (defclass DetachedClient []
@@ -427,13 +139,9 @@
     "何度送っても同じ意味の要求を、期限まで送り直す(期限を過ぎた通信の失敗は httpx.TransportError のまま投げる)。"
     (send-idempotent send :deadline-seconds self.deadline-seconds))
 
-  (defn #^ str path [self #^ str key #^ str [suffix ""]]
-    (+ "/detached/" (url-quote key :safe "") suffix))
-
   (defn #^ dict answer [self response]
-    ;; 413 = 詰めた Program が置き場の上限を越える(PUT /programs — program_policy.PROGRAM-MAX-BYTES)。
-    (when (in response.status-code #(400 409 413 429))
-      (raise (DetachedRefused response.status-code (.get (.json response) "error" ""))))
+    (setv refusal (detached-refusal response.status-code (if (in response.status-code REFUSED-STATUSES) (.json response) None)))
+    (when refusal (raise refusal))
     (.raise-for-status response)
     (.json response))
 
@@ -444,66 +152,51 @@
      同じ運び方 — ADR-DOE-CLUSTER-001 R3b)。置きも送りも何度送っても同じ意味なので、通信の失敗を越えて送り直す。"
     (setv #(sha put) (put-program self.endpoint blob (current-versions) self.deadline-seconds))
     (.answer self put)
-    (setv body (| {"program" sha "revision" self.revision "needs" (sorted needs)
-                   "name" name "leaseSeconds" lease-seconds "retainSeconds" retain-seconds "format" PROTOCOL-FORMAT}
-                  (if (is self.runtime-env None) {} {"runtimeEnv" (run-program (runtime-env->json self.runtime-env))})))
-    (.answer self (.resend self (fn [] (.request self.endpoint "PUT" (.path self key) :json body)))))
+    (setv body (detached-submit-body sha self.revision needs name lease-seconds retain-seconds
+                                     (if (is self.runtime-env None) None (run-program (runtime-env->json self.runtime-env)))))
+    (.answer self (.resend self (fn [] (.request self.endpoint "PUT" (detached-path key "") :json body)))))
 
   (defn #^ dict read [self #^ str key]
     ;; 503 = coordinator が起きた直後で行の無い key を知らないと言えない(phase warming — detached_policy.detached-read)。本文を返し、
-    ;; 待ちの側(await-cluster)が届かないと同じに扱う。
-    (setv response (.resend self (fn [] (.request self.endpoint "GET" (.path self key)))))
+    ;; 待ちの側(awaited-answer)が届かないと同じに扱う。
+    (setv response (.resend self (fn [] (.request self.endpoint "GET" (detached-path key "")))))
     (if (= response.status-code 503)
         (.json response)
         (.answer self response)))
 
   (defn #^ bool cancel [self #^ str key]
     ;; 取り消しは何度送っても同じ意味(終わりの phase は変わらない)。
-    (get (.answer self (.resend self (fn [] (.request self.endpoint "POST" (.path self key "/cancel"))))) "cancelled"))
+    (get (.answer self (.resend self (fn [] (.request self.endpoint "POST" (detached-path key "/cancel"))))) "cancelled"))
 
   (defn #^ bool release [self #^ str key]
-    (get (.answer self (.resend self (fn [] (.request self.endpoint "DELETE" (.path self key))))) "released"))
+    (get (.answer self (.resend self (fn [] (.request self.endpoint "DELETE" (detached-path key ""))))) "released"))
 
   (defn #^ RunnersAnswer runners [self]
     "担い手の名簿(coordinator の GET /state の workers — live と draining は coordinator の判断)。届かなければ RunnersUnreachable。"
     (try
       (setv response (.resend self (fn [] (.request self.endpoint "GET" "/state"))))
       (except [error httpx.TransportError]
-        (return (RunnersUnreachable :detail (.format "coordinator に届かない: {}" error)))))
+        (return (runners-unreachable (str error)))))
     (.raise-for-status response)
     (runner-facts-of-view (get (.json response) "workers"))))
-
-
-(defn #^ (get tuple #(RunnerFact ...)) runner-facts-of-view [#^ dict workers]
-  "純粋: coordinator の GET /state の workers(名 → {provides exclusive live draining …})→ 名簿の断面(名の順)。"
-  (tuple (gfor #(name w) (sorted (.items workers))
-               (RunnerFact :name name :provides (tuple (sorted (.get w "provides" []))) :exclusive (tuple (sorted (.get w "exclusive" []))) :live (bool (get w "live"))
-                           :draining (bool (get w "draining"))))))
 
 
 (defk await-cluster [client key timeout-seconds poll-seconds]
   {:pre [(: client DetachedClient) (: key str) (: timeout-seconds (| float int None)) (: poll-seconds float)]
    :post [(: % DetachedAwaited)]}
   ;; 終わるまで問い合わせる。問い合わせは lease に触らず、抜けても(呼び手の Cancel・process の消失)何も落とさない。
-  ;; 眠りは Delay(外側の doeff-time の handler)なので同じ VM の他の task を塞がない。
-  ;; coordinator に届かない読みは、期限を決めた待ちなら DetachedUnreachable で返し、期限の無い待ちは届くまで待つ(task の死とみなさない)。
+  ;; 眠りは Delay(外側の doeff-time の handler)なので同じ VM の他の task を塞がない。1 拍の読みは awaited-answer(sim の宿と同じ判断)。
   (var waited 0.0)
-  (while True
-    (setv view (try (.read client key) (except [error httpx.TransportError] error)))
-    ;; 起きた直後の coordinator の「まだ分からない」(phase warming)も届かないと同じ(知らない key と読んで送り直さない)。
-    (when (or (isinstance view httpx.TransportError) (= (.get view "phase") WARMING-PHASE))
-      (when (is-not timeout-seconds None)
-        (return (DetachedUnreachable :detail (.format "coordinator に届かない: {}" (if (isinstance view dict)
-                                                                                       (.get view "error" "")
-                                                                                       view)))))
+  (var answer None)
+  (while (is answer None)
+    (val read (try (.read client key) (except [error httpx.TransportError] error)))
+    (:= answer (if (isinstance read httpx.TransportError)
+                   (awaited-answer None (str read) key waited timeout-seconds)
+                   (awaited-answer read "" key waited timeout-seconds)))
+    (when (is answer None)
       (<- (Delay poll-seconds))
-      (continue))
-    (setv outcome (outcome-of-view view))
-    (when (is-not outcome None) (return outcome))
-    (when (and (is-not timeout-seconds None) (>= waited timeout-seconds)) (return (DetachedPending key (get view "phase") :runner (or (.get view "worker") ""))))
-    (<- (Delay poll-seconds))
-    (:= waited (+ waited poll-seconds))))
-
+      (:= waited (+ waited poll-seconds))))
+  answer)
 
 (defhandler detached-cluster [#^ DetachedClient client [poll-seconds 1.0]]
   (SubmitDetached [program key needs name lease-seconds retain-seconds]
@@ -511,7 +204,7 @@
     (setv blob (encode-program program))
     (resume (try (DetachedSubmitted key (get (.submit client key blob needs name (float lease-seconds) (float retain-seconds)) "created"))
                  (except [error httpx.TransportError]
-                   (DetachedUnreachable :detail (.format "coordinator に届かない(送れたかは分からない — key で冪等): {}" error))))))
+                   (submit-unreachable (str error))))))
   (AwaitDetached [key timeout-seconds]
     (<- outcome (await-cluster client key timeout-seconds poll-seconds))
     (resume outcome))
@@ -539,8 +232,7 @@
 
   (defn #^ WarmAnswer write [self #^ RuntimeEnv env #^ frozenset needs #^ float ttl-seconds #^ str holder]
     "行を書いて今の姿を読む(届かなければ WarmUnreachable)。"
-    (setv body {"runtimeEnv" (run-program (runtime-env->json env)) "needs" (sorted needs) "ttlSeconds" ttl-seconds
-                "holder" holder "format" PROTOCOL-FORMAT})
+    (setv body (warm-request-body (run-program (runtime-env->json env)) needs ttl-seconds holder))
     (try
       (setv response (send-idempotent (fn [] (.request self.endpoint "POST" "/warm" :json body))
                                       :deadline-seconds self.deadline-seconds))
@@ -556,17 +248,16 @@
   (defn #^ WarmAnswer read [self #^ str key]
     "行の今の姿を読む(表に無い行は ready も preparing も空・期限 0 — 届かなければ WarmUnreachable)。"
     (try
-      (setv response (send-idempotent (fn [] (.request self.endpoint "GET" (+ "/warm/" (url-quote key :safe ""))))
+      (setv response (send-idempotent (fn [] (.request self.endpoint "GET" (warm-path key)))
                                       :deadline-seconds self.deadline-seconds))
       (except [error httpx.TransportError]
         (return (WarmUnreachable :detail (.format "coordinator の /warm に接続できない: {}" error)))))
     (cond
-      (= response.status-code 404) (WarmState :key key :ready #() :preparing #() :failed #() :until-ms 0)
+      (= response.status-code 404) (absent-warm-state key)
       (>= response.status-code SERVER-ERROR)
       (WarmUnreachable :detail (.format "coordinator の /warm が {} を返した: {}" response.status-code response.text))
       True (do (.raise-for-status response)
                (warm-state-of-json (.json response))))))
-
 
 (defhandler warm-cluster [#^ WarmClient client]
   ;; 引数に残す理由: client は coordinator への接続(I/O の資源)で、composition root が url から 1 つ作る。

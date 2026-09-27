@@ -14,7 +14,7 @@
 ;;;   失敗だけは書きでも送り直す(要求がまだ相手に届いていない。httpx の transport の retries は ConnectError と
 ;;;   ConnectTimeout だけを送り直す)。何度送っても同じ意味の読みは、切れ方を問わず期限まで送り直す(`send-idempotent`)。
 ;;;   自己停止(20 秒)と移し替え(45 秒)の時間は cluster_model の ClusterTiming。
-(require doeff-hy.macros [deff])
+(require doeff-hy.macros [deff val])
 (import time)
 (import httpx)
 (import .cluster_model [ClusterTiming])
@@ -32,6 +32,8 @@
 ;; ClusterTiming・20 秒)より 5 秒長くする: fence より短い途絶は service も worker も越え、それより長い途絶では worker の方が
 ;; job を止める(読みを先に諦めて service が自分で落ちることはない)。
 (setv IDEMPOTENT-DEADLINE-SECONDS (+ (/ (. (ClusterTiming) fence-ms) 1000) 5.0))
+;; 送り直しの間(秒)。本番の send-idempotent と手元の sim-cluster の宿(local.hy — 仮想の時計で眠る)が同じ値を使う。
+(val RESEND-PAUSE-SECONDS 0.5)
 
 
 (import sys)
@@ -110,7 +112,7 @@
     (raise last)))
 
 
-(defn #^ httpx.Response send-idempotent [send [deadline-seconds IDEMPOTENT-DEADLINE-SECONDS] [pause-seconds 0.5]]
+(defn #^ httpx.Response send-idempotent [send [deadline-seconds IDEMPOTENT-DEADLINE-SECONDS] [pause-seconds RESEND-PAUSE-SECONDS]]
   "何度送っても同じ意味の要求(GET)を、通信の失敗(接続・読み・切断)なら期限まで送り直す。
    書きの要求には使わない: 返事を読む前に切れた書きは、相手に届いたかどうかが分からない。書きの送り直しは
    CoordinatorEndpoint の接続の段(要求がまだ届いていない段)だけに限る。"
