@@ -9,6 +9,7 @@
 ;;; 内側の handler は決定的でなければならない(記録係に届かない effect は再生で同じ計算が答え直す)。同じ日に R3b を足した —
 ;;; 宣言の中の Program の値は task と同じく詰めた文字列(encode-program / decode-program)で運ぶ。同じ日に R4b を足した —
 ;;; Program の宣言が書くのは必要な能力の名前(:needs)だけで、置き場所の名前(kind=k3s・role=agent-exp・機体の名前)は書かない。
+;;; 同じ日に R7 を足した — 旧い宣言を受け付ける移行の期間は置かず、旧い形は宣言の時点で理由つきで断る。
 ;;;
 ;;; 戻し方: この ADR を足した commit を revert する(ADR の file 1 つと enforcement 台帳の数が消える)。R5 の改訂だけを
 ;;; 戻すなら、その改訂の commit を revert する(R5 が「未決」の文へ、law runner-inserts-no-recorder が消える)。
@@ -82,6 +83,9 @@
        "今の置き場所の指定は :requires(鍵と値の組)で、coordinator が worker のラベルと 1 つずつ等しいかを照らす(labels-satisfy)。書かれている値は置き場所の名前で、doeff-cluster の例と検は {\"kind\" \"k3s\"}、agora は {\"role\" \"agent-exp\"}(実験用の namespace の印)。"
        :evidence "packages/doeff-cluster/src/doeff_cluster/cluster_policy.hy(labels-satisfy)・service_model.hy の頭の註(:requires {\"kind\" \"k3s\"})・packages/doeff-cluster/tests/test_detached.hy・agora-controllers controllers/runtime_env/declare.hy と controllers/agora_sim/tests/test_emulated_runtime_env_sender.hy(Requirement \"role\" \"agent-exp\")")
      (fact
+       "operator 裁定 2026-09-27(移行・逐語 2 つ): \"i dont think we want old declarations accepted at all.\" / \"it just makes everything confusing so\""
+       :evidence "Claude Code の会話(2026-09-27・agora-redesign #833)— coordinator 経由")
+     (fact
        "再生が記録と食い違った時、今の再生の handler は ReplayDiverged を上げて止まる(再生の分岐)。"
        :evidence "packages/doeff-cluster/src/doeff_cluster/record_model.hy(ReplayDiverged)・record_handlers.hy・replay_main.hy")]
   :context
@@ -100,6 +104,7 @@
      (rule R3b "宣言の中の Program の値は、task と同じく詰めた文字列(encode-program / decode-program)で運ぶ。service と task で運び方を分けない(operator 逐語 \"i dont find any reason to have different api for services\")。読みやすさは declare の表示で補う — 詰めた Program を解いて、呼んだ関数の名と引数を印字する。handler の値は宣言に入れず、defk の本体の中(with-handlers)で作る。決めた経緯は agora-redesign #829 の決定のコメント。戻し方: 関数の参照(module:attr)+ 引数の JSON を宣言に持ち、runner がその場で呼んで Program を作る形へ戻す(2026-09-27 追加)。")
      (rule R4 "service の宣言の :env・:config・:env-config をやめる。設定は Program の中の Ask と、それに答える os.environ を読む handler(Program の側で並べる)で読む。宣言が process へ渡す環境変数は、宣言の値として持つ。")
      (rule R4b "Program の宣言が書くのは必要な能力の名前(:needs #{\"claude-cli\" \"pg-network\"} など)だけで、置き場所の名前(kind=k3s・role=agent-exp・機体の名前)は書かない。worker が提供する能力はクラスタの設定(コードの外)で名乗り、coordinator は 必要 ⊆ 提供 の worker に置く。土台の handler も自分の要る能力を :needs で名乗り、それが Program の宣言の :needs に含まれていなければ doeff-linter の違反とする。会社の資格を使う土台は \"company-machine\" を名乗り、会社の機体の worker だけがそれを提供する — 会社の資格の境界を置き場所の仕組みが保証する。今の :requires(worker のラベルとの等しさの照合)は :needs に置き換える。戻し方: :needs を :requires(鍵と値の組)へ戻し、labels-satisfy の照合へ戻す(2026-09-27 追加)。")
+     (rule R7 "旧い宣言(service の :env・:config・:env-config・:requires、env の関数、declare の --config)を受け付ける移行の期間は置かない。新しい API(Program の値 1 つ・:needs)だけにし、旧い形は宣言の時点で理由つきで断る(黙って読み替えない)。利用者(agora-controllers)の書き直しは同じ切り替えで行う(agora-redesign #833)。理由: 旧い形と新しい形が並んで通ると、どちらが正しい書き方か、どの宣言がどちらの意味で動いているかが、読み手にも linter にも分からなくなる(operator 逐語 \"it just makes everything confusing so\")。戻し方: 旧い欄を受ける読みを足し戻し、新旧を併存させる(この条を足した commit の revert — 旧い宣言は再び断られなくなるが、新しい API の実装は別の便なので残る)(2026-09-27 追加)。")
      (rule R5 "記録と再生は handler で行う(2026-09-27 決定 — 旧文『未決・案 A = Program の側で包む / 案 B = 実行器の観測の口』を置き換える)。形は今の effect-recorder と同じ間に入る handler: 記録は effect を外へ撃ち直して答えを書き留め、継続を再開する。再生は同じ場所で記録から答える。置き場は Program の中の with-handlers で、翻訳の handler と土台の handler の間(外の世界との境目 — 汎用の effect だけを記録する)。記録か再生かは置く handler で選び、どちらを置くかは Ask と os.environ を読む handler で決める。runner は記録係を差し込まない(今の recording-layer と run.config の record 欄をやめる)。WithObserve(見るだけで答えを見ない)はこの用途に使わず、tracing・ログの用途に限る。")
      (rule R5b "記録係より内側(Program 側 — 業務の handler・翻訳の handler)の handler は決定的でなければならない。時計・乱数・I/O を自分で読まず、汎用の effect にして記録係の下の土台の handler で答えさせる。これで記録係に届かない effect は再生でも同じ計算で答え直され、境目の記録だけで再生が成り立つ。守りは doeff-linter の DOEFF106(生の副作用に直に触る定義は土台の層にだけ置く)で、破れは再生の分岐(ReplayDiverged)として出る。scheduler の並行の順番(どの task が先に進むか)は再生で決定的にならないので、live の扱い(順番の突き合わせ)で扱う(2026-09-27 追加)。")
      (rule R6 "移行の間、runner が足している handler の呼び出しは RUNNER-HANDLER-ROSTER の数を超えない(新設は赤)。減らした便は同じ便で台帳を削る。")]
@@ -134,6 +139,14 @@
           (counterexample "会社の資格を読む土台の handler を並べた Program が :needs に company-machine を書かない — 会社でない機体の worker に置かれ、会社の資格の境界が破れる(linter の違反)")]
        :enforced-by ["doeff-linter(規則の番号は未定)" "coordinator の置き方(needs ⊆ provides)"]
        :wiring "未配線(2026-09-27)— :needs の宣言・土台の handler の :needs の照らし(linter)・coordinator の needs ⊆ provides の置き方はどれも未実装で、今は :requires と labels-satisfy が動いている")
+     (law old-declarations-are-refused
+       :statement "for_all 宣言 d: d が旧い欄(:env・:config・:env-config・:requires)か env の関数か declare の --config を使う ⇒ 宣言の時点で理由の文つきで断られる(新しい API への読み替えも、警告だけで通すことも無い)"
+       :counterexamples
+         [(counterexample "移行の間だけ :requires を :needs に読み替えて通す — 同じ系に新旧の宣言が並び、どちらの意味で置かれたかが宣言から読めない")
+          (counterexample "旧い :env を受けて警告を出すだけにする — 警告は読まれず、旧い形が残り続ける")
+          (counterexample "doeff-cluster だけ先に切り替え、agora-controllers の書き直しを後の便に回す — 本線の利用者が壊れた宣言のまま残る(同じ切り替えで行う)")]
+       :enforced-by ["doeff-cluster の宣言の検め(service・declare — 未実装)"]
+       :wiring "未配線(2026-09-27)— 今の service・declare は旧い欄を受け付ける。新しい API へ切り替える便(agora-redesign #833)で、旧い欄を断る検め(と反例の検)を足す")
      (law handlers-inside-the-recorder-are-deterministic
        :statement "for_all 記録係より内側の handler h: h は時計・乱数・I/O を直に読まない(非決定の入力は汎用の effect として記録係の下の土台の handler が答える)— よって for_all 記録 r: r を再生した計算は、記録係に届かない effect についても記録の時と同じ答えを出し、ReplayDiverged を上げない(scheduler の並行の順番は live の扱いの突き合わせの外)"
        :counterexamples
