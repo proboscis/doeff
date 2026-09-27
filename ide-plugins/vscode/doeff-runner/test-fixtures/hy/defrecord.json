@@ -1,0 +1,314 @@
+{
+ "version": 3,
+ "root": "/ws",
+ "files": [
+  {
+   "path": "/ws/pkg/records.hy",
+   "module": "pkg.records",
+   "definitions": [
+    {
+     "name": "ChatId",
+     "mangled": "ChatId",
+     "kind": "defrecord",
+     "range": {
+      "start": {
+       "line": 0,
+       "character": 11
+      },
+      "end": {
+       "line": 0,
+       "character": 17
+      }
+     },
+     "full_range": {
+      "start": {
+       "line": 0,
+       "character": 0
+      },
+      "end": {
+       "line": 0,
+       "character": 127
+      }
+     },
+     "container": null,
+     "docstring": "chat の id",
+     "params": [],
+     "bases": [],
+     "raw": {
+      "direct": [],
+      "via": []
+     },
+     "tags": {
+      "context": "chat",
+      "role": "type"
+     },
+     "checks": [
+      "(CHAT-ID-PATTERN.fullmatch value)"
+     ]
+    },
+    {
+     "name": "value",
+     "mangled": "value",
+     "kind": "field",
+     "range": {
+      "start": {
+       "line": 0,
+       "character": 120
+      },
+      "end": {
+       "line": 0,
+       "character": 125
+      }
+     },
+     "full_range": {
+      "start": {
+       "line": 0,
+       "character": 112
+      },
+      "end": {
+       "line": 0,
+       "character": 126
+      }
+     },
+     "container": "ChatId",
+     "docstring": null,
+     "params": [],
+     "bases": [],
+     "raw": {
+      "direct": [],
+      "via": []
+     },
+     "tags": null
+    },
+    {
+     "name": "Plain",
+     "mangled": "Plain",
+     "kind": "defrecord",
+     "range": {
+      "start": {
+       "line": 1,
+       "character": 11
+      },
+      "end": {
+       "line": 1,
+       "character": 16
+      }
+     },
+     "full_range": {
+      "start": {
+       "line": 1,
+       "character": 0
+      },
+      "end": {
+       "line": 1,
+       "character": 28
+      }
+     },
+     "container": null,
+     "docstring": null,
+     "params": [],
+     "bases": [],
+     "raw": {
+      "direct": [],
+      "via": []
+     },
+     "tags": null
+    },
+    {
+     "name": "key",
+     "mangled": "key",
+     "kind": "field",
+     "range": {
+      "start": {
+       "line": 1,
+       "character": 24
+      },
+      "end": {
+       "line": 1,
+       "character": 27
+      }
+     },
+     "full_range": {
+      "start": {
+       "line": 1,
+       "character": 17
+      },
+      "end": {
+       "line": 1,
+       "character": 27
+      }
+     },
+     "container": "Plain",
+     "docstring": null,
+     "params": [],
+     "bases": [],
+     "raw": {
+      "direct": [],
+      "via": []
+     },
+     "tags": null
+    }
+   ],
+   "imports": [],
+   "references": [
+    {
+     "name": "ChatId",
+     "mangled": "ChatId",
+     "qualifier": null,
+     "range": {
+      "start": {
+       "line": 0,
+       "character": 11
+      },
+      "end": {
+       "line": 0,
+       "character": 17
+      }
+     }
+    },
+    {
+     "name": "CHAT-ID-PATTERN",
+     "mangled": "CHAT_ID_PATTERN",
+     "qualifier": null,
+     "range": {
+      "start": {
+       "line": 0,
+       "character": 77
+      },
+      "end": {
+       "line": 0,
+       "character": 92
+      }
+     }
+    },
+    {
+     "name": "fullmatch",
+     "mangled": "fullmatch",
+     "qualifier": "CHAT-ID-PATTERN",
+     "range": {
+      "start": {
+       "line": 0,
+       "character": 93
+      },
+      "end": {
+       "line": 0,
+       "character": 102
+      }
+     }
+    },
+    {
+     "name": "value",
+     "mangled": "value",
+     "qualifier": null,
+     "range": {
+      "start": {
+       "line": 0,
+       "character": 103
+      },
+      "end": {
+       "line": 0,
+       "character": 108
+      }
+     }
+    },
+    {
+     "name": "str",
+     "mangled": "str",
+     "qualifier": null,
+     "range": {
+      "start": {
+       "line": 0,
+       "character": 116
+      },
+      "end": {
+       "line": 0,
+       "character": 119
+      }
+     }
+    },
+    {
+     "name": "value",
+     "mangled": "value",
+     "qualifier": null,
+     "range": {
+      "start": {
+       "line": 0,
+       "character": 120
+      },
+      "end": {
+       "line": 0,
+       "character": 125
+      }
+     }
+    },
+    {
+     "name": "Plain",
+     "mangled": "Plain",
+     "qualifier": null,
+     "range": {
+      "start": {
+       "line": 1,
+       "character": 11
+      },
+      "end": {
+       "line": 1,
+       "character": 16
+      }
+     }
+    },
+    {
+     "name": "str",
+     "mangled": "str",
+     "qualifier": null,
+     "range": {
+      "start": {
+       "line": 1,
+       "character": 20
+      },
+      "end": {
+       "line": 1,
+       "character": 23
+      }
+     }
+    },
+    {
+     "name": "key",
+     "mangled": "key",
+     "qualifier": null,
+     "range": {
+      "start": {
+       "line": 1,
+       "character": 24
+      },
+      "end": {
+       "line": 1,
+       "character": 27
+      }
+     }
+    }
+   ],
+   "calls": [
+    {
+     "callee": "fullmatch",
+     "mangled": "fullmatch",
+     "qualifier": "CHAT-ID-PATTERN",
+     "range": {
+      "start": {
+       "line": 0,
+       "character": 93
+      },
+      "end": {
+       "line": 0,
+       "character": 102
+      }
+     },
+     "caller": 0,
+     "performed": false
+    }
+   ],
+   "errors": []
+  }
+ ],
+ "raw_via": "not-computed",
+ "raw_catalog_problems": []
+}

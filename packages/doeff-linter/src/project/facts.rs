@@ -124,7 +124,7 @@ pub struct DefinitionFact {
 }
 
 /// 定義の規則が見る定義の頭。
-const DEFINITION_HEADS: &[&str] = &["defn", "defn/a", "defk", "deff", "defp", "defpp", "defhandler", "defeffect"];
+const DEFINITION_HEADS: &[&str] = &["defn", "defn/a", "defk", "deff", "defp", "defpp", "defhandler", "defeffect", "defrecord"];
 
 impl ModuleFacts {
     /// module の実効のタグの全部(定義の :tags と、タグの無い定義に効く module の頭のタグ)。
@@ -299,8 +299,8 @@ impl<'a> HySource<'a> {
                         Some(first) => *first,
                         None => continue,
                     };
-                    let tags = if head == "defeffect" {
-                        self.effect_tags(&items)
+                    let tags = if head == "defeffect" || reading.record_definers.contains(head) {
+                        self.header_tags(&items)
                     } else if reading.contract_definers.contains(head) {
                         self.contract_tags(&items)
                     } else {
@@ -578,8 +578,8 @@ impl<'a> HySource<'a> {
                 Some(self.contract_tags(&items))
             } else if reading.plain_definers.contains(head) {
                 Some(None)
-            } else if reading.effect_definers.contains(head) {
-                Some(self.effect_tags(&items))
+            } else if reading.effect_definers.contains(head) || reading.record_definers.contains(head) {
+                Some(self.header_tags(&items))
             } else {
                 None
             };
@@ -627,8 +627,9 @@ impl<'a> HySource<'a> {
         self.first_dict_tags(items, 4, |part| self.string_value(part).is_some() || part.bracket_items().is_some())
     }
 
-    /// `(defeffect 名 "doc"? {:fields […] :answer 型 :tags {…}})` の辞書の :tags を読む(名から 2 つ目まで・docstring だけ飛ばす)。
-    fn effect_tags(&self, items: &[&Form]) -> Option<TagSet> {
+    /// 名の後の頭の辞書の :tags を読む(名から 2 つ目まで・docstring だけ飛ばす)— `(defeffect 名 "doc"? {:fields […] :answer 型 :tags {…}})`
+    /// と `(defrecord 名 "doc"? {:tags {…} :check […]} 欄 …)`(頭の辞書の無い defrecord は欄が来るのでタグ無し)。
+    fn header_tags(&self, items: &[&Form]) -> Option<TagSet> {
         self.first_dict_tags(items, 2, |part| self.string_value(part).is_some())
     }
 
@@ -887,20 +888,23 @@ mod tests {
 (defhandler h #_ ignored {:tags {:context "billing" :role "protocol"}} (E [e k] (k 1)))
 (defeffect Charge "請求" {:fields [amount] :answer int :tags {:context "billing" :role "intent"}})
 (defeffect Old :fields [amount] :tags {:context "billing" :role "intent"})
+(defrecord Row "行" {:tags {:context "billing" :role "type"} :check [(> n 0)]} #^ int n)
+(defrecord Bare #^ str key)
 (defn helper [] 1)
 (val MODULE-TAGS {:context "billing" :role "judgment"})
 (defn [do] decorated [x] x)
 "#;
         let facts = read_facts(Language::Hy, src, "app.core.m", &reading());
         let tagged: Vec<(&str, Option<&str>)> = facts.tagged.iter().map(|t| (t.name.name.as_str(), t.tags.role.as_deref())).collect();
-        assert_eq!(tagged, vec![("plan", Some("program")), ("h", Some("protocol")), ("Charge", Some("intent"))]);
+        assert_eq!(tagged, vec![("plan", Some("program")), ("h", Some("protocol")), ("Charge", Some("intent")), ("Row", Some("type"))]);
         // 空の :tags は名乗っていない。#^ の型注釈の後の名を読む。
         let untagged: Vec<&str> = facts.untagged.iter().map(|n| n.name.as_str()).collect();
         // doeff-hy が受けない鍵と値の並びの形(Old)はタグとして読まない(module_tags.hy と同じ)。
-        assert_eq!(untagged[..3], ["typed", "Old", "helper"]);
+        // 頭の辞書の無い defrecord はタグを書いていない定義。
+        assert_eq!(untagged[..4], ["typed", "Old", "Bare", "helper"]);
         assert_eq!(facts.module_tags.as_ref().and_then(|t| t.role.as_deref()), Some("judgment"));
         // module の頭のタグはタグの無い定義に効く。
-        assert_eq!(facts.tag_sets().len(), 4);
+        assert_eq!(facts.tag_sets().len(), 5);
         assert_eq!(facts.functions.len(), 5);
     }
 

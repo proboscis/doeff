@@ -781,6 +781,7 @@ mod tests {
                 contract_definers: BTreeSet::new(),
                 plain_definers: BTreeSet::new(),
                 effect_definers: BTreeSet::new(),
+                record_definers: BTreeSet::new(),
                 function_definers: BTreeSet::new(),
                 required: Vec::new(),
                 module_default: true,

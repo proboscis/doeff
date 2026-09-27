@@ -215,11 +215,15 @@ pub struct TagsSection {
     pub plain_definers: Option<Vec<String>>,
     /// `(名 "doc"? {… :tags {…}})` の形の effect の型の定義の形(既定 defeffect)。
     pub effect_definers: Option<Vec<String>>,
+    /// `(名 "doc"? {:tags {…} :check […]}? 欄 …)` の形の record の型の定義の形(既定 defrecord — doeff-hy の頭の辞書・
+    /// agora-redesign #798)。頭の辞書が在ればその :tags を読み、無ければタグを書いていない定義。
+    pub record_definers: Option<Vec<String>>,
     /// DOEFF112: 定義の :tags に必須の鍵(既定 context・role)。
     pub required: Option<Vec<String>>,
     /// DOEFF112: module の頭のタグで定義のタグを補えるか(既定 true)。
     pub module_default: Option<bool>,
-    /// DOEFF112: タグを必須にする定義の頭(既定 defk・deff・defp・defhandler・defeffect)。
+    /// DOEFF112: タグを必須にする定義の頭(既定 defk・deff・defp・defhandler・defeffect。defrecord は頭の辞書で :tags を
+    /// 書けるので、ここに足せば必須にできる — 既定では足さない: 頭の辞書は省ける形なので)。
     pub require_on: Option<Vec<String>>,
 }
 
@@ -365,6 +369,7 @@ pub struct TagReading {
     pub contract_definers: BTreeSet<String>,
     pub plain_definers: BTreeSet<String>,
     pub effect_definers: BTreeSet<String>,
+    pub record_definers: BTreeSet<String>,
     pub function_definers: BTreeSet<String>,
     /// 定義の :tags に必須の鍵。
     pub required: Vec<String>,
@@ -653,8 +658,9 @@ fn tag_reading(tags: Option<&TagsSection>, function_definers: Option<&Vec<String
             .contract_definers
             .map(|v| v.into_iter().collect())
             .unwrap_or_else(|| set_of(&["defk", "deff", "defp", "defpp", "defhandler"])),
-        plain_definers: tags.plain_definers.map(|v| v.into_iter().collect()).unwrap_or_else(|| set_of(&["defn", "defclass", "defrecord", "defenum"])),
+        plain_definers: tags.plain_definers.map(|v| v.into_iter().collect()).unwrap_or_else(|| set_of(&["defn", "defclass", "defenum"])),
         effect_definers: tags.effect_definers.map(|v| v.into_iter().collect()).unwrap_or_else(|| set_of(&["defeffect"])),
+        record_definers: tags.record_definers.map(|v| v.into_iter().collect()).unwrap_or_else(|| set_of(&["defrecord"])),
         function_definers: function_definers
             .map(|v| v.iter().cloned().collect())
             .unwrap_or_else(|| set_of(&["defk", "deff", "defp", "defpp", "defhandler", "defn"])),
