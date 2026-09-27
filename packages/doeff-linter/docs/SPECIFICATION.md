@@ -97,7 +97,7 @@
 | `layers.allow_imports` | 層 → import してよい層 | 書かない層は制限しない |
 | `layers.forbid_modules` | 層 → 直に import しない module の綴り(前方一致 — `urllib.request` は `urllib.request.urlopen` に当たり `urllib.parse` には当たらない) | なし |
 | `layers` | `types_only`(層の名)・`function_definers` | defk・deff・defp・defpp・defhandler・defn |
-| `tags` | `module_variable_hy`・`module_variable_py`・`contract_definers`・`plain_definers`・`effect_definers` | MODULE-TAGS・MODULE_TAGS・defk deff defp defpp defhandler・defn defclass defrecord defenum・defeffect |
+| `tags` | `module_variable_hy`・`module_variable_py`・`contract_definers`・`plain_definers`・`effect_definers`・`record_definers` | MODULE-TAGS・MODULE_TAGS・defk deff defp defpp defhandler・defn defclass defenum・defeffect・defrecord defwire(頭の辞書の `:tags` を定義のタグとして読む) |
 | `roles` | `names`・`by_layer`・`describe`(role → 説明。一覧から外した古い役も書ける) | by_layer の無い層は DOEFF105 を当てない |
 | `layers.describe.<層>` | `summary`・`knows`・`does_not_know`・`question` | 無ければ説明の欄は null |
 | `raw_side_effects` | `allowed_layers`・`catalog_extra`(hy-index の `--raw-catalog-extra` と同じ形の JSON) | — |

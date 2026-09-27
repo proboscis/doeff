@@ -85,6 +85,51 @@
 ;;;       (setattr ChatId "__doeff_checks__" #("(CHAT-ID-PATTERN.fullmatch value)")))
 ;;;
 ;;; ---------------------------------------------------------------------------
+;;; `defwire` — JSON の境目の型(JSON を解いて確かめる型を 1 つの宣言で建てる)
+;;; ---------------------------------------------------------------------------
+;;;
+;;; 出自 = agora-redesign #840・operator 2026-09-28 "and i dont think we should make anyone use that directry
+;;; instead of actually parsing and validating it like pydantic does" / "hmm, cant we have some def* macro for this?" → "A"。
+;;; 決まりの正本 = ADR-DOE-HY-007 R8。
+;;;
+;;; 何のための足場か: 外から来た JSON を JsonValue(名前を変えた素の dict)のまま運び、読む所ごとに手で分解すると、
+;;; 欄の名の綴り違いも型の違いも使う所まで見えない。defwire は JSON の形を型として宣言し、解き手
+;;; (doeff_hy.wire の parse / dump — pydantic の TypeAdapter)で境目の 1 か所で一度に解いて確かめる。
+;;;
+;;;   (require doeff-hy.record [defwire])
+;;;   (import dataclasses [dataclass])
+;;;   (import doeff_hy.wire [parse dump Malformed])
+;;;
+;;;   (defwire LandingRow
+;;;     "取り込みの台帳の 1 行(記録の service が返す JSON)"
+;;;     {:tags {:context "land-notice" :role "type"} :names :camel :unknown :reject
+;;;      :check [(.startswith lane-id "L")]}
+;;;     (#^ str lane-id)
+;;;     (#^ LandState state)
+;;;     (setv #^ (| int None) landed-at None))
+;;;
+;;;   (<- row (parse LandingRow raw))   ; 答え = LandingRow の値か Malformed(どの型の・どの欄が・なぜ)
+;;;   (<- raw (dump row))               ; JSON の値へ(送り出す foundation だけ)
+;;;
+;;; - 欄の形は defrecord と同じ(`#^ T x`・`(#^ T x)`・既定値は `(setv #^ T x 値)`)。展開は defrecord をそのまま使う
+;;;   (凍結・キーワード引数だけ・:tags・:check)ので、`dataclass` は defrecord と同じく使う側が import する。
+;;; - 頭の辞書は必須。受ける鍵は :names・:unknown・:tags・:check だけ。
+;;;   :names(必須)= wire の欄の名の写し。:camel(lane-id → laneId)・:snake(lane_id)・:kebab(lane-id)・
+;;;     明示の辞書 {lane-id "LANE" …}(欄を全部ちょうど名指す)。区切りは - と _。Python の欄の名では受けない。
+;;;   :unknown = 知らない欄の扱い。:reject(既定 — Malformed)か :ignore(読み捨てる)。
+;;; - 型の検めは厳しい(文字列を数にしない・真偽を数にしない・配列は tuple の欄・defenum の欄は値の綴り)。
+;;;   入れ子の欄の型も defwire の型にする(素の defrecord は wire の形を持たない)。
+;;;
+;;; 展開(上の LandingRow):
+;;;   (do (hy.R.doeff_hy/record.defrecord LandingRow "…" {:tags {…} :check […]} 欄 …)
+;;;       (import doeff_hy.wire)
+;;;       (setattr LandingRow "__pydantic_config__" (doeff_hy.wire.wire-config {"lane_id" "laneId" …} "reject"))
+;;;       (setattr LandingRow "__doeff_wire__" (doeff_hy.wire.wire-shape LandingRow {"lane_id" "laneId" …} "reject")))
+;;;
+;;; 投影の規則: defrecord と同じ形の class に写す(:names と :unknown は型の形を変えない)— 共通の品質検査の
+;;; `quality.hy_record` の同じ便で持つ。hy-index は kind defrecord として読む(doeff-indexer の record_def)。
+;;;
+;;; ---------------------------------------------------------------------------
 ;;; `defenum` — 閉じた値の集合(文字列の Enum)を 1 行で建てる
 ;;; ---------------------------------------------------------------------------
 ;;;
@@ -220,6 +265,98 @@
                                 record (.join "・" fields) check
                                 (.join " " (gfor #(k v) (.items values) (.format "{}={!r}" k v)))))))
   None)
+
+
+;; JSON の境目の型(頭注の「defwire」)。欄の読み方は defrecord と同じ(展開は defrecord をそのまま使う)。
+;; wire の名の計算は展開の時にだけ要るので macro の本体の中に置く(defrecord と同じ理由 — 切り出すと defn になる)。
+(defmacro defwire [name #* forms]
+  (import re)
+  (import hy.models [Dict Expression Keyword List String Symbol])
+  (import doeff_hy.declarations [declared-value refuse-unknown-keys])
+  (when (not (isinstance name Symbol))
+    (raise (SyntaxError (.format "defwire の第 1 引数は型の名前(symbol)ちょうど: {}" (hy.repr name)))))
+  (setv where (+ "defwire " (str name))
+        docstring None
+        rest (list forms))
+  (when (and rest (isinstance (get rest 0) String))
+    (setv docstring (get rest 0)
+          rest (cut rest 1 None)))
+  (when (not (and rest (isinstance (get rest 0) Dict)))
+    (raise (SyntaxError (.format "{}: 名前(と docstring)の直後に頭の辞書 {{:names … :unknown …}} が要る — wire の欄の名の写しを黙って決めない" where))))
+  (setv header (get rest 0)
+        fields (cut rest 1 None))
+  (refuse-unknown-keys header #(":tags" ":check" ":names" ":unknown") where)
+  (setv names-form (declared-value header ":names")
+        unknown-form (declared-value header ":unknown"))
+  (when (is names-form None)
+    (raise (SyntaxError (.format "{}: :names が要る — :camel / :snake / :kebab か {{欄 \"wire の名\" …}}(欄を全部)" where))))
+  (setv unknown (cond
+                  (is unknown-form None) "reject"
+                  (and (isinstance unknown-form Keyword) (in (str unknown-form) #(":reject" ":ignore"))) (cut (str unknown-form) 1 None)
+                  True (raise (SyntaxError (.format "{}: :unknown は :reject か :ignore: {}" where (hy.repr unknown-form))))))
+  ;; 欄の名(defrecord と同じ読み方 — 書いた順)。
+  (setv annotated (fn [form] (when (and (isinstance form Expression) (>= (len form) 2)
+                                         (= (str (get form 0)) "annotate"))
+                               (get form 1)))
+        targets [])
+  (for [form fields]
+    (setv target (cond
+                   (isinstance form Symbol) form
+                   (annotated form) (annotated form)
+                   (and (isinstance form Expression) (= (len form) 1)) (annotated (get form 0))
+                   (and (isinstance form Expression) (>= (len form) 2) (= (str (get form 0)) "setv"))
+                     (annotated (get form 1))
+                   True None))
+    (when (isinstance target Symbol)
+      (.append targets target)))
+  ;; 欄の名 → wire の名。:camel = 2 つ目からの区切りの頭を大文字にしてつなぐ(lane-id → laneId)・:snake = 区切りを _(lane_id)・
+  ;; :kebab = 区切りを -(lane-id)。区切り = - と _。明示の辞書は欄を全部ちょうど名指す(黙って既定の写しへ倒さない)。
+  (setv wire-names {})
+  (cond
+    (isinstance names-form Dict)
+      (do
+        (setv explicit {})
+        (for [#(key value) (zip (cut names-form None None 2) (cut names-form 1 None 2))]
+          (when (not (and (isinstance key Symbol) (isinstance value String) (str value)))
+            (raise (SyntaxError (.format "{}: :names の辞書は {{欄 \"wire の名\" …}}(欄は記号・wire の名は空でない文字列): {} {}"
+                                         where (hy.repr key) (hy.repr value)))))
+          (setv (get explicit (hy.mangle key)) (str value)))
+        (setv declared (lfor t targets (hy.mangle t))
+              missing (lfor n declared :if (not-in n explicit) (hy.unmangle n))
+              extra (lfor n explicit :if (not-in n declared) (hy.unmangle n)))
+        (when missing
+          (raise (SyntaxError (.format "{}: :names の辞書に欄が足りない: {}" where (.join " " missing)))))
+        (when extra
+          (raise (SyntaxError (.format "{}: :names の辞書に知らない欄: {}" where (.join " " extra)))))
+        (for [t targets]
+          (setv (get wire-names (hy.mangle t)) (get explicit (hy.mangle t)))))
+    (and (isinstance names-form Keyword) (in (str names-form) #(":camel" ":snake" ":kebab")))
+      (for [t targets]
+        (when (not (re.fullmatch r"[A-Za-z][A-Za-z0-9_-]*" (str t)))
+          (raise (SyntaxError (.format "{}: 欄 {} の名から wire の名を作れない(英字で始まる [A-Za-z0-9_-] だけ)— :names を辞書で書く" where t))))
+        (setv parts (lfor p (re.split r"[-_]" (str t)) :if p p)
+              (get wire-names (hy.mangle t))
+                (cond
+                  (= (str names-form) ":camel") (+ (get parts 0) (.join "" (lfor p (cut parts 1 None) (+ (.upper (get p 0)) (cut p 1 None)))))
+                  (= (str names-form) ":snake") (.join "_" parts)
+                  True (.join "-" parts))))
+    True
+      (raise (SyntaxError (.format "{}: :names は :camel / :snake / :kebab か {{欄 \"wire の名\" …}}: {}" where (hy.repr names-form)))))
+  (setv seen {})
+  (for [#(field wire) (.items wire-names)]
+    (when (in wire seen)
+      (raise (SyntaxError (.format "{}: 欄 {} と {} が同じ wire の名 {!r} になる" where (hy.unmangle (get seen wire)) (hy.unmangle field) wire))))
+    (setv (get seen wire) field))
+  ;; defrecord へ渡す頭の辞書(:tags と :check だけ — :names と :unknown は wire の形)。
+  (setv record-header (Dict (sum (lfor key #(":tags" ":check")
+                                       :if (is-not (declared-value header key) None)
+                                       [(Keyword (cut key 1 None)) (declared-value header key)])
+                                 [])))
+  `(do
+     (hy.R.doeff_hy/record.defrecord ~name ~@(if (is docstring None) [] [docstring]) ~record-header ~@fields)
+     (import doeff_hy.wire)
+     (setattr ~name "__pydantic_config__" (doeff_hy.wire.wire-config ~(Dict (sum (lfor #(k v) (.items wire-names) [(String k) (String v)]) [])) ~unknown))
+     (setattr ~name "__doeff_wire__" (doeff_hy.wire.wire-shape ~name ~(Dict (sum (lfor #(k v) (.items wire-names) [(String k) (String v)]) [])) ~unknown))))
 
 
 ;; 展開の時に member の名前から値を計算する(template macro の形の外 — 頭注)。

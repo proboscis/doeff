@@ -550,3 +550,26 @@ fn defrecord_header_gives_tags_and_checks() {
     let json = serde_json::to_value(plain).expect("JSON");
     assert!(json.get("checks").is_none());
 }
+
+#[test]
+fn defwire_is_read_as_a_record() {
+    // doeff-hy の defwire(JSON の境目の型 — agora-redesign #840)は defrecord へ展開する。kind・docstring・欄は defrecord と同じに読む。
+    let source = r#"(defwire LandingRow
+  "取り込みの台帳の 1 行"
+  {:tags {:context "land-notice" :role "type"} :names :camel :unknown :reject}
+  (#^ str lane-id)
+  (setv #^ (| int None) landed-at None))
+"#;
+    let file = index(source);
+    let row = def(&file, "LandingRow");
+    assert_eq!(row.kind.as_str(), "defrecord");
+    assert_eq!(row.docstring.as_deref(), Some("取り込みの台帳の 1 行"));
+    assert_eq!(def(&file, "lane-id").container.as_deref(), Some("LandingRow"));
+    assert_eq!(def(&file, "landed-at").container.as_deref(), Some("LandingRow"));
+    // 頭の辞書の :tags は defrecord と同じく定義のタグ・:check が無ければ空の列(:names と :unknown は欄ではない)。
+    let tags = row.tags.as_ref().expect("LandingRow のタグ");
+    assert_eq!(tags.get("context").map(String::as_str), Some("land-notice"));
+    assert_eq!(row.checks.as_ref().map(Vec::len), Some(0));
+    // defwire の頭は呼び出しに入れない(予約語)。
+    assert!(!file.calls.iter().any(|call| call.callee == "defwire"));
+}

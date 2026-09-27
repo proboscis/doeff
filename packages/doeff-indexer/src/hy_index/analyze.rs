@@ -28,7 +28,7 @@ const HY_KEYWORDS: &[&str] = &[
 /// doeff-hy の form のうち、どこに現れても予約語のもの(定義と束縛の構文)。
 const DOEFF_KEYWORDS: &[&str] = &[
     "defk", "deff", "defp", "defpp", "fnk", "do!", "<-", "<->", "for/do", "deftest", "defpipeline",
-    "defmcp-tool", "set!", "defhandler", "defeffect", "resume", "with-handler", "defrecord", "defenum",
+    "defmcp-tool", "set!", "defhandler", "defeffect", "resume", "with-handler", "defrecord", "defwire", "defenum",
     "defworkflow", "defphase", "defadr", "defsemgrep", "law", "lazy-val", "lazy-var",
 ];
 
@@ -288,7 +288,8 @@ impl<'a> Analyzer<'a> {
             "defk" => self.function_def(form, items, DefinitionKind::Defk, container),
             "deff" => self.function_def(form, items, DefinitionKind::Deff, container),
             "defclass" => self.class_def(form, items, container),
-            "defrecord" => self.record_def(form, items, container),
+            // defwire(JSON の境目の型 — doeff-hy の record.hy・agora-redesign #840)は defrecord へ展開するので、同じ読み方・同じ kind。
+            "defrecord" | "defwire" => self.record_def(form, items, container),
             "defenum" => self.enum_def(form, items, container),
             "defhandler" => self.handler_def(form, items, container),
             "defeffect" => self.effect_def(form, items, container),

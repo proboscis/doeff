@@ -21,6 +21,7 @@
     "packages/doeff-hy/src/doeff_hy/typecheck.hy",
     "packages/doeff-hy/src/doeff_hy/record.hy",
     "packages/doeff-hy/src/doeff_hy/json_value.py",
+    "packages/doeff-hy/src/doeff_hy/wire.hy",
     "docs/adr/defadr_doeff_hy_005_typecheck_and_record_fences.hy",
     "packages/doeff-hy/src/doeff_hy/typecheck_handlers.hy",
     "packages/doeff-hy/src/doeff_hy/typecheck_handlers.pyi",
@@ -435,13 +436,30 @@
         "sessionhost-relaymain",
         "sessionhost-store"
       ],
-      "responsibility": "記録の足場の macro(欄の名前と型を宣言した凍結 record を建てる)",
+      "responsibility": "記録の足場の macro(欄の名前と型を宣言した凍結 record を建てる・JSON の境目の型 defwire)",
       "layer": "domain",
       "typed": true,
       "macros": {
         "defrecord": "fixed",
-        "defenum": "fixed"
+        "defenum": "fixed",
+        "defwire": "fixed"
       }
+    },
+    {
+      "name": "doeff-hy-wire",
+      "paths": [
+        "packages/doeff-hy/src/doeff_hy/wire.hy"
+      ],
+      "public": [
+        "packages/doeff-hy/src/doeff_hy/wire.hy"
+      ],
+      "allow": [
+        "doeff-hy-json-value",
+        "doeff-hy-record"
+      ],
+      "responsibility": "defwire の汎用の解き手: JSON の値と型を宣言した値を pydantic の TypeAdapter で行き来する(parse・parse-json・dump・dump-json・json-schema)。形の違う JSON は Malformed(agora-redesign #840)",
+      "layer": "domain",
+      "typed": true
     },
     {
       "name": "adr-hy-005",
