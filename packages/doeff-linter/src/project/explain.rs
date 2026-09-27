@@ -33,6 +33,22 @@ fn particle(word: &str, particle: &str) -> String {
     }
 }
 
+/// DOEFF120 の主体の後半(「 3 か所で使う(最初 2 行目・ほかに 5・9 行目)」)。ほかの行は 20 まで並べ、残りは数だけ書く。
+fn json_value_where(uses: &JsonValueUses) -> String {
+    const SHOWN: usize = 20;
+    let others = match uses.other_lines.len() {
+        0 if uses.count <= 1 => return format!(" 1 か所で使う({} 行目)", uses.first_line),
+        0 => return format!(" {} か所で使う(すべて {} 行目)", uses.count, uses.first_line),
+        n if n > SHOWN => format!(
+            "{}・…(ほか {} 行)",
+            uses.other_lines[..SHOWN].iter().map(usize::to_string).collect::<Vec<_>>().join("・"),
+            n - SHOWN
+        ),
+        _ => uses.other_lines.iter().map(usize::to_string).collect::<Vec<_>>().join("・"),
+    };
+    format!(" {} か所で使う(最初 {} 行目・ほかに {} 行目)", uses.count, uses.first_line, others)
+}
+
 /// 助詞の直後に英数字で始まる語が来る時は空白を挟む(「この file は service billing の…」)。
 fn lead(text: &str) -> String {
     match text.chars().next() {
@@ -79,6 +95,28 @@ pub enum ClassVerdict {
     Stateful { mutations: Vec<String> },
     /// 欄だけ(dunder 以外に処理を持つ method が無い)— defrecord を勧める info。
     DataOnly,
+}
+
+/// DOEFF120 で module に JsonValue を許さなかった訳(閉じた集合 — 許した module は違反を作らないのでここに無い)。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum JsonValueRefusal {
+    /// architecture.hy の :wire-modules のどれにも当たらない(組み込みの解き手でもない)。
+    NotListed,
+    /// :wire-modules の pattern に当たるが、foundation の層に無い(送受信そのものは foundation だけが行う)。
+    ListedOutsideFoundation { pattern: String, foundation_dir: Option<String> },
+}
+
+/// DOEFF120 が数えた JsonValue の使用(module ごと)。行は 1 始まり。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct JsonValueUses {
+    /// 出てきた名(JsonValue・JsonObject …・重なりを除き出てきた順)。
+    pub names: Vec<String>,
+    /// 使った数(import・定義・注釈・文字列の型の中の語を全部)。
+    pub count: usize,
+    /// 最初の使用の行。
+    pub first_line: usize,
+    /// ほかの使用の行(重なりを除く・最初の行は含めない)。
+    pub other_lines: Vec<usize>,
 }
 
 /// deff の理由の註の問題(DOEFF111)。
@@ -178,6 +216,8 @@ pub enum Explain {
     ClassShape { name: String, shape: ClassShapeFacts, verdict: ClassVerdict },
     /// DOEFF204: Jev が、処理を持つ method のある class を外の世界の窓口か状態を持つ物と見た。
     ClassRoleDoubt { name: String, chosen: String, probability: f64, fields: Vec<String> },
+    /// DOEFF120: 許されない module が JsonValue を使う。
+    JsonValueUse { module: String, uses: JsonValueUses, refusal: JsonValueRefusal },
     PlainCallableDoubt {
         definition: String,
         kind: &'static str,
@@ -370,6 +410,21 @@ impl<'a> Narrator<'a> {
                     ),
                 },
             ),
+            Explain::JsonValueUse { module, uses, refusal } => (
+                format!("module {} — {} を{}", module, uses.names.join("・"), json_value_where(uses)),
+                format!(
+                    "JsonValue は素の dict・list・str … を名で包んだだけの型で、中の形を何も約束しない。使う側が手で分解して読むと、形の食い違いが読む所ごとに違う形で漏れる。JSON に触ってよいのは、defwire が生む汎用の解き手(doeff_hy.wire・doeff_records.wire)と、architecture.hy の :wire-modules に挙げた foundation の層の送受信の module だけで、ほかの module(protocol・intent・core …)は、解き手が一度に形を確かめた型のある値だけを見る。{}",
+                    match refusal {
+                        JsonValueRefusal::NotListed => "この module は :wire-modules に無い。".to_string(),
+                        JsonValueRefusal::ListedOutsideFoundation { pattern, foundation_dir: Some(dir) } => {
+                            format!("この module は :wire-modules の {} に当たるが、foundation の層({}/)に無いので許さない — 送受信そのものは foundation だけが行う。", pattern, dir)
+                        }
+                        JsonValueRefusal::ListedOutsideFoundation { pattern, foundation_dir: None } => {
+                            format!("この module は :wire-modules の {} に当たるが、architecture.hy に foundation の層が無いので許さない。", pattern)
+                        }
+                    }
+                ),
+            ),
             Explain::TestNotDeftest { name, head } => (
                 format!("定義 {}({})— 検の置き場の、名が test で始まる関数", name, head),
                 "検は deftest だけで書く。deftest は doeff の Program として走り、handler の組み合わせを明示して検める。素の関数や fn の束縛の検は pytest が Program の外で呼ぶので、effect と handler の差し替えを通らない。".to_string(),
@@ -531,6 +586,10 @@ impl<'a> Narrator<'a> {
             Explain::ClassRoleDoubt { .. } => Some(STATE_FIX.to_string()),
             Explain::ClassShape { verdict: ClassVerdict::DataOnly, .. } => Some("defrecord にする(:tags で文脈と役・:check で値の検め)".to_string()),
             Explain::UndeclaredPlace { destination, .. } => Some(format!("{} へ移す(service は :context のタグ、層は今の置き場所か :role のタグから推した案)", destination)),
+            Explain::JsonValueUse { refusal: JsonValueRefusal::ListedOutsideFoundation { pattern, foundation_dir: Some(dir) }, .. } => Some(format!(
+                "送受信そのものを {}/ の module へ移して :wire-modules はそこを指すか、{} を :wire-modules から外し、この module は defwire の型のある値を使う",
+                dir, pattern
+            )),
             Explain::PlainCallableDoubt { chosen_accepted: false, fix: Some(fix), .. } => Some(fix.clone()),
             Explain::PlainCallableDoubt { .. } => Some(format!("defk にできないかを確かめる — {}", PROGRAM_WAYS)),
             Explain::DeffWithoutReason { problem: DeffReasonProblem::Missing, .. } => {

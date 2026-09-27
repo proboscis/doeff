@@ -41,6 +41,8 @@ pub enum ProjectRule {
     TestIsDeftest,
     /// DOEFF119: 処理を持つ method のある defclass を業務の code に書かない(欄だけの class は defrecord を勧める info)。
     ClassWithBehaviour,
+    /// DOEFF120: JsonValue(素の dict を名で包んだだけの型)を、汎用の解き手と :wire-modules に挙げた foundation の送受信の module の外で使わない。
+    JsonValueOutsideWire,
     /// DOEFF201(意味・Jev): 翻訳の層の定義が業務の判断をしている。
     SemanticBusinessDecision,
     /// DOEFF202(意味・Jev): 判断の層の定義が通信の手段を知っている。
@@ -53,7 +55,7 @@ pub enum ProjectRule {
 
 impl ProjectRule {
     /// 全部の層の規則(出力の一覧と `ALL` の展開のため)。
-    pub const ALL: [ProjectRule; 23] = [
+    pub const ALL: [ProjectRule; 24] = [
         ProjectRule::LayerImportDirection,
         ProjectRule::LayerForbiddenModule,
         ProjectRule::LayerTypesOnly,
@@ -73,6 +75,7 @@ impl ProjectRule {
         ProjectRule::UnusedDependency,
         ProjectRule::TestIsDeftest,
         ProjectRule::ClassWithBehaviour,
+        ProjectRule::JsonValueOutsideWire,
         ProjectRule::SemanticBusinessDecision,
         ProjectRule::SemanticTransportKnowledge,
         ProjectRule::SemanticPlainCallable,
@@ -101,6 +104,7 @@ impl ProjectRule {
             ProjectRule::UnusedDependency => "DOEFF117",
             ProjectRule::TestIsDeftest => "DOEFF118",
             ProjectRule::ClassWithBehaviour => "DOEFF119",
+            ProjectRule::JsonValueOutsideWire => "DOEFF120",
             ProjectRule::SemanticBusinessDecision => "DOEFF201",
             ProjectRule::SemanticTransportKnowledge => "DOEFF202",
             ProjectRule::SemanticPlainCallable => "DOEFF203",
@@ -136,6 +140,7 @@ impl ProjectRule {
             | ProjectRule::DefinitionTagsRequired
             | ProjectRule::TestIsDeftest
             | ProjectRule::ClassWithBehaviour
+            | ProjectRule::JsonValueOutsideWire
             | ProjectRule::SemanticPlainCallable
             | ProjectRule::SemanticClassRole => false,
         }
@@ -163,6 +168,7 @@ impl ProjectRule {
             ProjectRule::UnusedDependency => "Unused Dependency",
             ProjectRule::TestIsDeftest => "Tests Are deftest",
             ProjectRule::ClassWithBehaviour => "Class Touches The World Or Holds State",
+            ProjectRule::JsonValueOutsideWire => "JsonValue Outside Wire Modules",
             ProjectRule::SemanticBusinessDecision => "Business Decision In Translation (Jev)",
             ProjectRule::SemanticTransportKnowledge => "Transport Knowledge In Core (Jev)",
             ProjectRule::SemanticPlainCallable => "Plain Callable Reason (Jev)",
@@ -192,6 +198,7 @@ impl ProjectRule {
             ProjectRule::UnusedDependency => "宣言した依存(:depends-on)を、その service のどの module も読んでいない(知らせ)",
             ProjectRule::TestIsDeftest => "検の置き場(設定の test_paths)の検は deftest で書く — 名が test- / test_ で始まる defn・deff・defk・fn の束縛を置かない",
             ProjectRule::ClassWithBehaviour => "業務の code の defclass は値の class だけ — method か欄の初期値が生の副作用に触る class(error)と、method が self の欄を書き換える class(warning)を書かない。欄だけの class は defrecord を勧める(info)。例外・Enum・Protocol・外の library の基底を継ぐ class は許す。名前では判じない",
+            ProjectRule::JsonValueOutsideWire => "JsonValue・JSONValue・JsonObject・JSONObject(素の dict・list・str … を名で包んだだけの型)を使ってよいのは、汎用の解き手(doeff_hy.wire・doeff_records.wire)と、architecture.hy の :wire-modules に挙げた foundation の層の送受信の module だけ。ほかの module(protocol・intent・core …)は、解き手が形を確かめた型のある値だけを見る",
             ProjectRule::SemanticBusinessDecision => "翻訳の層の定義は、要求を相手の話し方へ言い換えるだけで、業務の判断をしない(Jev の判定・warning か info)",
             ProjectRule::SemanticTransportKnowledge => "判断の層の定義は、通信の手段(URL・HTTP・JSON の wire・SQL)を知らない(Jev の判定・warning か info)",
             ProjectRule::SemanticPlainCallable => "deff の理由の註の文は、architecture.hy が受け入れる理由(外の library が素の関数を呼ぶ等)に当たる(Jev の判定・warning か info)",
@@ -221,6 +228,7 @@ impl ProjectRule {
             ProjectRule::UnusedDependency => "使っていない依存を :depends-on から外す",
             ProjectRule::TestIsDeftest => "deftest にする(検の値を組む補助は defk にして deftest の中で `(<- …)` で呼ぶ)",
             ProjectRule::ClassWithBehaviour => "外の世界の窓口は土台の handler にする — 資源(接続・client・file の手)は defhandler の直下の (session val …) に持ち、ListRows・PutRow などの effect に答える(模擬なら模擬の土台の handler)。状態なら 値は defrecord(不変)、振る舞いは新しい値を返す純粋な関数、状態は world などの handler の (session var …) 1 か所に置き、変化は effect で流す。速さのために書き換えが要る時も書き換えは handler の中だけ",
+            ProjectRule::JsonValueOutsideWire => "JSON の形を defwire で型に起こし、送受信の foundation の module が parse した型のある値を渡す(JsonValue を手で分解して読む関数は書かない)。送受信そのものを行う foundation の module なら architecture.hy の :wire-modules に挙げる",
             ProjectRule::SemanticBusinessDecision => "業務の判断は core の judgment へ移し、翻訳の handler はその答えを使うだけにする(Jev の外れなら登録簿に載せる)",
             ProjectRule::SemanticTransportKnowledge => "通信の手段は protocol の翻訳の handler へ移し、core は intent を出すだけにする(Jev の外れなら登録簿に載せる)",
             ProjectRule::SemanticPlainCallable => "種類が当たらないなら defk にする — 組み立て(handler の並び)なら `(defk handlers-of [foundation])` に・テストなら deftest に・値を組む補助なら defk にして `(<- …)` で呼ぶ(Jev の外れなら登録簿に載せる)",

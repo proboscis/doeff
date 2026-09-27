@@ -11,6 +11,7 @@
 //!   :foundation "foundation"         ; service の外の層(root/foundation/)— :layers に同じ名の layer が要る
 //!   :open-layers [intent]            ; 別の service から読んでよい層(Tach の interfaces に当たる)
 //!   :roles {:judgment "業務の判断をする純粋な関数" …}
+//!   :wire-modules ["controllers.foundation.record_client"]  ; JSON の送受信そのものを行う foundation の module(DOEFF120 が JsonValue を許す)
 //!   :exclude ["tests" "__pycache__" "conftest.py"]
 //!   :shared "shared")
 //! (defservice land-notice "着地の報せ" {:depends-on [messaging] :layers [core intent protocol entry]})
@@ -82,6 +83,9 @@ pub struct Architecture {
     pub plain_callable_reasons: Vec<ReasonKind>,
     /// 受け入れない理由の型と直し方(DOEFF203 の受け入れない答え — 設定の読み込み・検の補助・組み立て …)。
     pub rejected_plain_callable_reasons: Vec<ReasonKind>,
+    /// JSON の送受信そのものを行う module の綴りの pattern(`.` 区切りの module の綴り・`*` は段の中の任意の綴り・`**` は 0 個以上の段)。
+    /// DOEFF120 は、ここに当たり、かつ foundation の層に在る module にだけ JsonValue を許す。
+    pub wire_modules: Vec<String>,
     #[serde(skip)]
     pub role_descriptions: BTreeMap<String, String>,
     #[serde(skip)]
@@ -325,6 +329,7 @@ impl<'a> Parser<'a> {
             services: Vec::new(),
             plain_callable_reasons: Vec::new(),
             rejected_plain_callable_reasons: Vec::new(),
+            wire_modules: Vec::new(),
             role_descriptions: BTreeMap::new(),
             exclude: vec!["tests".into(), "__pycache__".into(), "conftest.py".into()],
             extensions: None,
@@ -361,6 +366,7 @@ impl<'a> Parser<'a> {
                 ":rejected-plain-callable-reasons" => {
                     arch.rejected_plain_callable_reasons = self.reasons(value, ":rejected-plain-callable-reasons")
                 }
+                ":wire-modules" => arch.wire_modules = self.module_patterns(value, ":wire-modules"),
                 ":roles" => match self.brace(value) {
                     Some(entries) => {
                         for (role, text) in self.pairs(&entries) {
@@ -394,6 +400,37 @@ impl<'a> Parser<'a> {
             self.problem(form, "defarchitecture に :layers が無い");
         }
         Some(arch)
+    }
+
+    /// module の綴りの pattern の列(`["controllers.foundation.record_client" "controllers.foundation.http.*"]`)を読む。
+    /// `.` 区切りの module の綴りで、段は空にできない。path(`/`)と、段の中に `**` を混ぜた綴りは理由を積む。
+    fn module_patterns(&mut self, value: &Form, what: &str) -> Vec<String> {
+        let Some(items) = self.bracket(value) else {
+            self.problem(value, &format!("{} は module の綴りの列 [\"a.b.c\" …]", what));
+            return Vec::new();
+        };
+        let mut out = Vec::new();
+        for item in items {
+            let Some(pattern) = self.name(item) else {
+                self.problem(item, &format!("{} の要素は module の綴り(記号か文字列)", what));
+                continue;
+            };
+            let well_formed = !pattern.contains('/')
+                && pattern.split('.').all(|segment| !segment.is_empty() && (segment == "**" || !segment.contains("**")));
+            if !well_formed {
+                self.problem(
+                    item,
+                    &format!("{} の {} は module の綴り(`.` 区切り・`*` は段の中の任意の綴り・`**` は 0 個以上の段)で書く — path の `/` と空の段は使えない", what, pattern),
+                );
+                continue;
+            }
+            if out.contains(&pattern) {
+                self.problem(item, &format!("{} の {} が 2 度書かれている", what, pattern));
+                continue;
+            }
+            out.push(pattern);
+        }
+        out
     }
 
     /// 理由の列 `[(reason 名 "説明" :fix "直し方"?) …]` を読む(同じ名が 2 度あれば理由を積む)。
@@ -525,6 +562,10 @@ impl<'a> Parser<'a> {
                 push(&mut self.problems, format!(":open-layers の {} は :layers に無い", open));
             }
         }
+        // 送受信の module は foundation の層にだけ許す(DOEFF120)— foundation の無い宣言に :wire-modules を書いても何も許さないので誤り。
+        if !arch.wire_modules.is_empty() && arch.foundation.is_none() {
+            push(&mut self.problems, ":wire-modules を書くには :foundation が要る(JsonValue を許す送受信の module は foundation の層にだけ置く)".to_string());
+        }
         for service in &arch.services {
             for layer in &service.layers {
                 if !layers.contains(layer.as_str()) {
@@ -582,6 +623,18 @@ mod tests {
 "#;
         let problems = Architecture::parse(bad, Path::new("architecture.hy")).unwrap_err().join("\n");
         for needle in ["architecture.hy:1:", ":legacy は廃止した", "layer の知らない鍵 :colour", "知らない鍵 :nonsense", "知らない鍵 :uses", "ghost", "service a が 2 度"] {
+            assert!(problems.contains(needle), "{} が無い:\n{}", needle, problems);
+        }
+    }
+
+    #[test]
+    fn wire_modules_are_dotted_module_patterns_and_need_a_foundation() {
+        let good = GOOD.replace(":foundation foundation", ":foundation foundation :wire-modules [\"app.foundation.records_client\" app.foundation.http.*]");
+        let arch = Architecture::parse(&good, Path::new("architecture.hy")).unwrap();
+        assert_eq!(arch.wire_modules, vec!["app.foundation.records_client", "app.foundation.http.*"]);
+        let bad = r#"(defarchitecture s :root "app" :layers [(layer core)] :wire-modules ["app/foundation/x.hy" "a..b" "a.x**" "ok.one" "ok.one"])"#;
+        let problems = Architecture::parse(bad, Path::new("architecture.hy")).unwrap_err().join("\n");
+        for needle in ["app/foundation/x.hy は module の綴り", "a..b は module の綴り", "a.x** は module の綴り", "ok.one が 2 度", ":wire-modules を書くには :foundation が要る"] {
             assert!(problems.contains(needle), "{} が無い:\n{}", needle, problems);
         }
     }
