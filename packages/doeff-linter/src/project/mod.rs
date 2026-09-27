@@ -1435,12 +1435,17 @@ fn judge_semantic(
     mode: &semantic::SemanticMode,
     plain: &PlainCallableInput<'_>,
 ) -> (Vec<Draft>, semantic::SemanticSummary, Vec<String>) {
-    let target = semantic::target_from_process_environment();
+    let target = semantic::target_for_repo(settings.proxy.as_ref());
     let model = target.model.clone();
     let wire = format!("{:?}({})", target.wire, target.source).to_lowercase();
     let mut errors = Vec::new();
     let gateway: Option<semantic::HttpGateway> = match mode {
         semantic::SemanticMode::CacheOnly => None,
+        // 覚えている時だけの問いは代理にだけ撃つ(代理でない宛先では cache だけ — 本物の Jev を呼ばない)。token が無ければ黙って cache だけ。
+        semantic::SemanticMode::Peek => match (target.proxy, settings.proxy.as_ref()) {
+            (true, Some(proxy)) => semantic::HttpGateway::new(target, proxy.peek_timeout).ok(),
+            _ => None,
+        },
         _ => match semantic::HttpGateway::new(target, settings.timeout) {
             Ok(gateway) => Some(gateway),
             Err(reason) => {

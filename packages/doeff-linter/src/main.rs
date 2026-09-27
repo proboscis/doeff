@@ -123,6 +123,10 @@ struct Args {
     /// 意味の規則で、設定した層の全部の定義を Jev に問う
     #[arg(long)]
     semantic_all: bool,
+
+    /// 意味の規則で、対象の file(--semantic と同じ選び方)のうち手元の cache に答えの無い定義(中身が変わった定義)だけを Jev に問う
+    #[arg(long)]
+    semantic_changed: bool,
 }
 
 /// Cursor hook input structure
@@ -221,14 +225,19 @@ impl Setup {
     }
 }
 
-/// 意味の規則の扱いを引数から決める(--semantic-all = 全部・--semantic = 指定の file か git で変わった file・無ければ cache だけ)。
+/// 意味の規則の扱いを引数から決める(--semantic-all = 全部・--semantic = 指定の file か git で変わった file・--semantic-changed = その
+/// うち答えの無い定義だけ・どれも無ければ cache だけ)。問わない実行のうち全体の実行(hook を含む)は、代理が在れば「覚えている時だけ」
+/// 問う(Peek)。編集中の 1 file(--stdin)は cache だけ(エディタは保存と打つのが止まった時に --semantic で新しく問う)。
 fn semantic_mode(args: &Args, root: &Path, stdin_path: Option<&Path>) -> project::semantic::SemanticMode {
     use project::semantic::SemanticMode;
     if args.semantic_all {
         return SemanticMode::AskAll;
     }
-    if !args.semantic {
-        return SemanticMode::CacheOnly;
+    if !args.semantic && !args.semantic_changed {
+        return match stdin_path {
+            Some(_) => SemanticMode::CacheOnly,
+            None => SemanticMode::Peek,
+        };
     }
     let explicit: Vec<PathBuf> = match stdin_path {
         Some(path) => vec![path.to_path_buf()],
@@ -248,7 +257,11 @@ fn semantic_mode(args: &Args, root: &Path, stdin_path: Option<&Path>) -> project
             targets.insert(rel);
         }
     }
-    SemanticMode::Ask(targets)
+    if args.semantic_changed {
+        SemanticMode::AskChanged(targets)
+    } else {
+        SemanticMode::Ask(targets)
+    }
 }
 
 /// git で変わった file(追跡していない file を含む・repo の根からの path)。
@@ -505,7 +518,8 @@ fn run_as_hook(args: &Args) -> ExitCode {
     // Lint files(層の規則の違反も同じ形で足す)
     let mut results = lint_files_parallel(&files, &all_rules);
     if setup.has_project_rules() {
-        let report = project::run(&setup.root, &setup.settings, &setup.project_rules(), Target::Whole);
+        // hook(作業係の停止の見張り)は全体の実行 — 代理が在れば「覚えている時だけ」問う。
+        let report = project::run_with(&setup.root, &setup.settings, &setup.project_rules(), Target::Whole, &project::semantic::SemanticMode::Peek);
         results.extend(project_results(&report, only_paths(&paths).as_deref()));
     }
 
@@ -692,8 +706,8 @@ fn run_normal(args: &Args) -> ExitCode {
         }
         if let Some(semantic) = &report.semantic {
             eprintln!(
-                "doeff-linter: 意味の規則(Jev {}・{}) — 判定済み {}・未判定 {}・今回撃った {}・入力のトークン {}・較正 {}",
-                semantic.model, semantic.wire, semantic.judged, semantic.unjudged, semantic.asked, semantic.input_tokens, semantic.calibration
+                "doeff-linter: 意味の規則(Jev {}・{}) — 判定済み {}・未判定 {}・今回撃った {}・代理の覚えから {}・入力のトークン {}・較正 {}",
+                semantic.model, semantic.wire, semantic.judged, semantic.unjudged, semantic.asked, semantic.peeked, semantic.input_tokens, semantic.calibration
             );
         }
         // --modified の時は、変更した file の違反だけにする(変更していない file の既知の違反で止めない)。
