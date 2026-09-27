@@ -14,7 +14,8 @@
 ;;; 再生は、問いと答えの出来事の番号の順に task を並べる: 番号がまだ来ていない task は promise を待って止まり(仮想の時計の
 ;;; handler と同じく scheduler の effect で待つ)、番号が進むとその番号の持ち主を起こす。他の task が全部止まった時だけ動く係
 ;;; (低優先度の daemon)が、それでも番号が進まない = 記録の問いを誰も出さない、を分岐として止める。
-(require doeff-hy.macros [defhandler defk <-])
+(require doeff-hy.macros [defhandler defk <- val])
+(import atexit)
 (import json)
 (import os)
 (import sys)
@@ -30,6 +31,10 @@
                                          encode-value encode-error decode-value decode-error canonical intern-json
                                          codec-of mode-of args-of subject-of])
 (import doeff_cluster.record_model [ROOT ReplayFinished ReplayDiverged match-step diff-row summarize])
+(import doeff_core_effects.effects [Ask])
+(import doeff_cluster.host_contract [HOST-CONTRACT])
+(import doeff_cluster.job_context [RunContext])
+(import doeff_cluster.remote_model [current-versions])
 
 
 ;; --- task の名(記録と再生で共通) ---------------------------------------------------------------
@@ -230,6 +235,13 @@
     (when (is-not self.held None)
       (setv #(chunk line) self.held self.held None)
       (.write self.sink chunk line)))
+
+  (defn #^ None close [self]
+    "process の終わり: 手元に持っている問いを書き、置き場に貯めた行を送る。置き場の口(BufferedSink)は flush-seconds か max-lines に
+     達した write の時にしか送らないので、これが無いと短い job の記録は 1 行も届かず、長く動く process も終わる直前の行を失う
+     (recording-handler が process の終わりの処理 atexit に登録する)。届かなければ置き場の口が理由を出して捨てる(業務は止めない)。"
+    (.release-held self)
+    (.flush self.sink))
 
   (defn #^ None emit [self #^ dict line #^ bool [numbered True]]
     "行を書く(持っている問いがあれば先に書く)。"
@@ -585,7 +597,8 @@
            (or instance (str (os.getpid)))))
 
 (defn recording-handler [#^ dict record #^ str service #^ dict header]
-  "service の設定の record 欄 → env の一番内側に足す記録係。record = {\"otlp\": collector の URL(か \"store\": 旧い置き場の URL)・
+  "記録の置き場の設定 record → 記録係(境目の記録係 boundary-recorder の record の枝と、cluster の外の process が使う)。
+   record = {\"otlp\": collector の URL(か \"store\": 旧い置き場の URL)・
    \"chunkSeconds\"・\"flushSeconds\"}。
    header = run の行に載せる欄(版・設定・process の世代 …)。置き場に届かなくても業務は止めない(HttpSink の説明)。"
   (setv started (int (* 1000 (time.time))))
@@ -598,5 +611,62 @@
   (setv log (EffectLog sink (| header {"service" service "run" run})
                        :chunk-seconds (float (.get record "chunkSeconds" 3600.0))
                        :wall-ms (fn [] (int (* 1000 (time.time))))))
+  ;; process の終わりに残りの行を送る(EffectLog.close の説明)。
+  (atexit.register log.close)
   (print (.format "recorder: {} の effect を記録します(run {}・置き場 {})" service run (or (.get record "otlp") (.get record "store"))) :file sys.stderr :flush True)
   (effect-recorder log))
+
+
+;; --- 境目の記録係(ADR-DOE-CLUSTER-001 R5・R5b)----------------------------------------------------------
+;;
+;; 記録と再生は job の Program の中の with-handlers に置く(runner は記録係を差し込まない)。置き場は翻訳の handler と土台の handler の
+;; 間(外の世界との境目 — 汎用の effect だけを記録する)。記録係より内側の handler は決定的でなければならない(R5b)。
+;; with-handlers の list は先が外側なので、記録係を翻訳の handler より先に書く(後に書くと記録係が翻訳より内側に入り、業務の effect を
+;; 受けてしまう)。
+;;
+;;   (defk job-program [foundation]
+;;     …
+;;     (<- base list (foundation))
+;;     (with-handlers base
+;;       (do! (<- recorder list (boundary-recorder))       ; off / record / replay を Ask で選ぶ
+;;            (<- translation list (translation-handlers))
+;;            (with-handlers [#* recorder #* translation] (loop)))))
+;;
+;; 記録か再生かは Ask RECORD-MODE-KEY の答え(本番は宣言の :environ を os.environ を読む handler — env_var_ask — が答える)。
+;;   off    = 記録係を置かない(空の組)
+;;   record = effect-recorder。置き場は Ask RECORD-OTLP-KEY(OpenTelemetry の collector の URL)。header は宿の契約(HOST-CONTRACT)の
+;;            run-context と Program の path(置き場のキー = file の名)と版。
+;;   replay = effect-replayer。状態(ReplayState)は Ask REPLAY-STATE-KEY の答え — 再生の道具(replay_main)が Program の外から答え、
+;;            終わった後に同じ状態から再生の報告を作る。本番の宿はこの鍵に答えないので、本番で replay を選ぶと答えの無い effect で落ちる。
+
+(val RECORD-MODE-KEY "EFFECT_RECORD_MODE")
+(val RECORD-OTLP-KEY "EFFECT_RECORD_OTLP")
+(val REPLAY-STATE-KEY "doeff.record.replay-state")
+(val RECORD-MODES #("off" "record" "replay"))
+
+
+(defk recording-header [ctx program-path]
+  {:pre [(: ctx RunContext) (: program-path str)] :post [(: % dict)] :tags {:context "doeff-cluster" :role "judgment"}}
+  "記録の run の行に載せる欄 — 宿の契約の run-context(世代)と Program の置き場のキー(path の file の名)と版。再生の道具は
+   program のキーで同じ Program を /programs から取り直せる(R3b — 記録は Program の中身を持たない)。"
+  (val name (.rsplit program-path "/" 1))
+  (val sha (if program-path (.removesuffix (get name -1) ".json") ""))
+  {"worker" ctx.worker "instance" ctx.instance "attempt" ctx.attempt "specHash" ctx.spec-hash "placement" ctx.placement
+   "revision" ctx.revision "program" sha "versions" (current-versions)})
+
+
+(defk boundary-recorder []
+  {:pre [] :post [(: % list)] :tags {:context "doeff-cluster" :role "foundation"}}
+  "境目の記録係の組(0 か 1 つ)を作る — Ask RECORD-MODE-KEY で off / record / replay を選ぶ。業務の Program が翻訳の handler と
+   土台の handler の間に並べる(ADR-DOE-CLUSTER-001 R5)。"
+  (<- mode str (Ask RECORD-MODE-KEY))
+  (match mode
+    "off" []
+    "record" (do (<- url str (Ask RECORD-OTLP-KEY))
+                 (<- ctx RunContext (Ask HOST-CONTRACT.run-context-key))
+                 (<- program-path str (Ask HOST-CONTRACT.program-key))
+                 (<- header dict (recording-header ctx program-path))
+                 [(recording-handler {"otlp" url} ctx.job header)])
+    "replay" (do (<- state ReplayState (Ask REPLAY-STATE-KEY))
+                 [(effect-replayer state)])
+    _ (raise (ValueError (.format "{} は {} のどれか: {!r}" RECORD-MODE-KEY (list RECORD-MODES) mode)))))
