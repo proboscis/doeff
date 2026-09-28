@@ -1,5 +1,5 @@
 {
-  "version": 5,
+  "version": 6,
   "root": "/repo",
   "files": [
     {
@@ -44,7 +44,8 @@
           "param_types": [],
           "answer_type": null,
           "contracts": [],
-          "handles": null
+          "handles": null,
+          "decorators": []
         },
         {
           "name": "Row",
@@ -109,7 +110,8 @@
           ],
           "answer_type": null,
           "contracts": [],
-          "handles": null
+          "handles": null,
+          "decorators": []
         },
         {
           "name": "key",
@@ -149,7 +151,8 @@
           "param_types": [],
           "answer_type": null,
           "contracts": [],
-          "handles": null
+          "handles": null,
+          "decorators": []
         },
         {
           "name": "text",
@@ -189,7 +192,8 @@
           "param_types": [],
           "answer_type": null,
           "contracts": [],
-          "handles": null
+          "handles": null,
+          "decorators": []
         },
         {
           "name": "fetch-row",
@@ -261,7 +265,8 @@
             ]
           },
           "contracts": [],
-          "handles": null
+          "handles": null,
+          "decorators": []
         },
         {
           "name": "row-text",
@@ -327,7 +332,8 @@
             ]
           },
           "contracts": [],
-          "handles": null
+          "handles": null,
+          "decorators": []
         },
         {
           "name": "shout",
@@ -399,7 +405,8 @@
             ]
           },
           "contracts": [],
-          "handles": null
+          "handles": null,
+          "decorators": []
         },
         {
           "name": "test-row-text-is-the-text",
@@ -439,7 +446,8 @@
           "param_types": [],
           "answer_type": null,
           "contracts": [],
-          "handles": null
+          "handles": null,
+          "decorators": []
         },
         {
           "name": "describe-row",
@@ -552,7 +560,8 @@
             ]
           },
           "contracts": [],
-          "handles": null
+          "handles": null,
+          "decorators": []
         }
       ],
       "imports": [
@@ -1868,7 +1877,8 @@
             ]
           },
           "contracts": [],
-          "handles": null
+          "handles": null,
+          "decorators": []
         },
         {
           "name": "ping",
@@ -1934,7 +1944,8 @@
             ]
           },
           "contracts": [],
-          "handles": null
+          "handles": null,
+          "decorators": []
         },
         {
           "name": "pong",
@@ -2000,7 +2011,8 @@
             ]
           },
           "contracts": [],
-          "handles": null
+          "handles": null,
+          "decorators": []
         },
         {
           "name": "test-show-both-joins",
@@ -2040,7 +2052,8 @@
           "param_types": [],
           "answer_type": null,
           "contracts": [],
-          "handles": null
+          "handles": null,
+          "decorators": []
         }
       ],
       "imports": [

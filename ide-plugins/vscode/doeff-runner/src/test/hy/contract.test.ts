@@ -7,7 +7,7 @@ import { loadDocument, readFixture } from './fixtures';
 suite('Hy 索引の契約の読み込み', () => {
   test('契約どおりの fixture は全 file が読める', () => {
     const document = loadDocument('workspace.json');
-    assert.strictEqual(document.version, 5);
+    assert.strictEqual(document.version, 6);
     assert.strictEqual(document.files.length, 11);
     const app = document.files.find((f) => f.module === 'pkg.app');
     assert.ok(app);
@@ -67,7 +67,7 @@ suite('Hy 索引の契約の読み込み', () => {
   test('版 5 の欄(effects・param_types・answer_type・contracts)を読む', () => {
     const parsed = parseHyIndexJson(
       JSON.stringify({
-        version: 5,
+        version: 6,
         root: '/ws',
         raw_via: 'not-computed',
         raw_catalog_problems: [],
@@ -93,7 +93,8 @@ suite('Hy 索引の契約の読み込み', () => {
                 param_types: [{ name: 'request', type: { text: 'InputRequest', names: [{ name: 'InputRequest', target: 'types.InputRequest' }] } }],
                 answer_type: { text: '(| Judgment None)', names: [{ name: 'Judgment', target: null }, { name: 'None', target: null }] },
                 contracts: [{ side: 'pre', text: '(> budget 0)' }],
-                handles: null
+                handles: null,
+                decorators: ['dataclass :frozen True']
               }
             ],
             imports: [],
@@ -114,9 +115,10 @@ suite('Hy 索引の契約の読み込み', () => {
     assert.strictEqual(def.paramTypes[0].type.names[0].target, 'types.InputRequest');
     assert.strictEqual(def.answerType?.text, '(| Judgment None)');
     assert.deepStrictEqual(def.contracts, [{ side: 'pre', text: '(> budget 0)' }]);
+    assert.deepStrictEqual(def.decorators, ['dataclass :frozen True']);
   });
 
-  test('版 1 の JSON は全体を理由つきで捨てる(版 5 だけを受け付ける)', () => {
+  test('版 1 の JSON は全体を理由つきで捨てる(版 6 だけを受け付ける)', () => {
     const parsed = parseHyIndexJson(readFixture('bad-version.json'));
     assert.strictEqual(parsed.tag, 'rejected');
     assert.match(parsed.tag === 'rejected' ? parsed.reason : '', /版が違う/);
@@ -146,7 +148,7 @@ suite('Hy 索引の契約の読み込み', () => {
     );
     assert.deepStrictEqual(parsed.document.files[0].errors, ['3 行目: 括弧が閉じていない']);
     const reasons = new Map(parsed.rejected.map((r) => [r.path, r.reason]));
-    assert.strictEqual(parsed.rejected.length, 13);
+    assert.strictEqual(parsed.rejected.length, 15);
     assert.match(reasons.get('/ws/no_module.hy') ?? '', /"module" が無い/);
     assert.match(reasons.get('/ws/unknown_kind.hy') ?? '', /契約に無い kind "defwhatever"/);
     assert.match(reasons.get('/ws/missing_is_require.hy') ?? '', /"is_require" が無い/);
@@ -160,6 +162,8 @@ suite('Hy 索引の契約の読み込み', () => {
     assert.match(reasons.get('/ws/missing_effects.hy') ?? '', /"effects" が無い/);
     assert.match(reasons.get('/ws/handles_on_defn.hy') ?? '', /defn は effect を解かない/);
     assert.match(reasons.get('/ws/bad_contract_side.hy') ?? '', /契約に無い値 "during"/);
+    assert.match(reasons.get('/ws/missing_decorators.hy') ?? '', /"decorators" が無い/);
+    assert.match(reasons.get('/ws/decorator_not_string.hy') ?? '', /decorators\[0\]: 文字列でない/);
   });
 });
 

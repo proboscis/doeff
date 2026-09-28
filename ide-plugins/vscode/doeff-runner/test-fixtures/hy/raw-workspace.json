@@ -1,5 +1,5 @@
 {
- "version": 5,
+ "version": 6,
  "root": "/raw",
  "files": [
   {
@@ -61,7 +61,8 @@
      "param_types": [],
      "answer_type": null,
      "contracts": [],
-     "handles": null
+     "handles": null,
+     "decorators": []
     },
     {
      "name": "Fetch",
@@ -123,7 +124,8 @@
      "handles": {
       "name": "Fetch",
       "target": null
-     }
+     },
+     "decorators": []
     },
     {
      "name": "clock-handler",
@@ -197,7 +199,8 @@
      "param_types": [],
      "answer_type": null,
      "contracts": [],
-     "handles": null
+     "handles": null,
+     "decorators": []
     },
     {
      "name": "Now",
@@ -274,7 +277,8 @@
      "handles": {
       "name": "Now",
       "target": null
-     }
+     },
+     "decorators": []
     },
     {
      "name": "file-handler",
@@ -348,7 +352,8 @@
      "param_types": [],
      "answer_type": null,
      "contracts": [],
-     "handles": null
+     "handles": null,
+     "decorators": []
     },
     {
      "name": "ReadIt",
@@ -427,7 +432,8 @@
      "handles": {
       "name": "ReadIt",
       "target": null
-     }
+     },
+     "decorators": []
     },
     {
      "name": "slow-helper",
@@ -484,7 +490,8 @@
      "param_types": [],
      "answer_type": null,
      "contracts": [],
-     "handles": null
+     "handles": null,
+     "decorators": []
     },
     {
      "name": "via-handler",
@@ -550,7 +557,8 @@
      "param_types": [],
      "answer_type": null,
      "contracts": [],
-     "handles": null
+     "handles": null,
+     "decorators": []
     },
     {
      "name": "Tick",
@@ -619,7 +627,8 @@
      "handles": {
       "name": "Tick",
       "target": null
-     }
+     },
+     "decorators": []
     },
     {
      "name": "loop-a",
@@ -685,7 +694,8 @@
      "param_types": [],
      "answer_type": null,
      "contracts": [],
-     "handles": null
+     "handles": null,
+     "decorators": []
     },
     {
      "name": "loop-b",
@@ -742,7 +752,8 @@
      "param_types": [],
      "answer_type": null,
      "contracts": [],
-     "handles": null
+     "handles": null,
+     "decorators": []
     },
     {
      "name": "bad-program",
@@ -799,7 +810,8 @@
      "param_types": [],
      "answer_type": null,
      "contracts": [],
-     "handles": null
+     "handles": null,
+     "decorators": []
     },
     {
      "name": "performs-external",
@@ -838,7 +850,8 @@
      "param_types": [],
      "answer_type": null,
      "contracts": [],
-     "handles": null
+     "handles": null,
+     "decorators": []
     },
     {
      "name": "performs-domain",
@@ -877,7 +890,8 @@
      "param_types": [],
      "answer_type": null,
      "contracts": [],
-     "handles": null
+     "handles": null,
+     "decorators": []
     },
     {
      "name": "custom-program",
@@ -918,7 +932,8 @@
      "param_types": [],
      "answer_type": null,
      "contracts": [],
-     "handles": null
+     "handles": null,
+     "decorators": []
     },
     {
      "name": "d1",
@@ -999,7 +1014,8 @@
      "param_types": [],
      "answer_type": null,
      "contracts": [],
-     "handles": null
+     "handles": null,
+     "decorators": []
     },
     {
      "name": "d2",
@@ -1116,7 +1132,8 @@
      "param_types": [],
      "answer_type": null,
      "contracts": [],
-     "handles": null
+     "handles": null,
+     "decorators": []
     },
     {
      "name": "d3",
@@ -1223,7 +1240,8 @@
      "param_types": [],
      "answer_type": null,
      "contracts": [],
-     "handles": null
+     "handles": null,
+     "decorators": []
     },
     {
      "name": "d4",
@@ -1320,7 +1338,8 @@
      "param_types": [],
      "answer_type": null,
      "contracts": [],
-     "handles": null
+     "handles": null,
+     "decorators": []
     },
     {
      "name": "d5",
@@ -1404,7 +1423,8 @@
      "param_types": [],
      "answer_type": null,
      "contracts": [],
-     "handles": null
+     "handles": null,
+     "decorators": []
     },
     {
      "name": "d6",
@@ -1461,7 +1481,8 @@
      "param_types": [],
      "answer_type": null,
      "contracts": [],
-     "handles": null
+     "handles": null,
+     "decorators": []
     },
     {
      "name": "memory-handler",
@@ -1502,7 +1523,8 @@
      "param_types": [],
      "answer_type": null,
      "contracts": [],
-     "handles": null
+     "handles": null,
+     "decorators": []
     },
     {
      "name": "Store",
@@ -1547,7 +1569,8 @@
      "handles": {
       "name": "Store",
       "target": null
-     }
+     },
+     "decorators": []
     }
    ],
    "imports": [
@@ -3489,7 +3512,8 @@
      "param_types": [],
      "answer_type": null,
      "contracts": [],
-     "handles": null
+     "handles": null,
+     "decorators": []
     }
    ],
    "imports": [],

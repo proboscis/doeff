@@ -52,7 +52,7 @@ fn stdin_content_is_indexed_as_the_given_path() {
     );
     assert_eq!(code, 0);
     let json: Value = serde_json::from_str(&stdout).expect("json");
-    assert_eq!(json["version"], 5);
+    assert_eq!(json["version"], 6);
     assert_eq!(json["raw_via"], "not-computed", "1 file の実行は経由を計算しない");
     let files = json["files"].as_array().expect("files");
     assert_eq!(files.len(), 1);

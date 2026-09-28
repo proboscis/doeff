@@ -399,13 +399,13 @@ doeff-indexer hy-index --root <dir> --stdin --path <path>  # 保存前の内容�
 - `--file` と `--path` の相対 path は `--root` を基準に解く。`--output` と `--pretty` は他のコマンドと同じ。
 - 読めない file・閉じていない括弧でも止まらない。読めた分を出し、その file の `errors` に理由(`行:列: …`、1 始まり)を積む。終了コードは 0。引数の誤り(`--stdin` に `--path` が無い・`--root` が directory でない等)だけ 2。
 
-### 出力の形(契約の版 5)
+### 出力の形(契約の版 6)
 
-版 3 で足した生の副作用の証拠(`raw`・`raw_via`・`raw_catalog_problems`)と定義のタグ(`tags`)は `experiments/hy-highlighter/hy-index-contract-v3.md` にある。版 4 で足した完全修飾名(`qualified_name`・`target`)と、版 5 で足した宣言した effect・型・契約(`effects`・`param_types`・`answer_type`・`contracts`・`handles`)はこの節が正本。
+版 3 で足した生の副作用の証拠(`raw`・`raw_via`・`raw_catalog_problems`)と定義のタグ(`tags`)は `experiments/hy-highlighter/hy-index-contract-v3.md` にある。版 4 で足した完全修飾名(`qualified_name`・`target`)と、版 5 で足した宣言した effect・型・契約(`effects`・`param_types`・`answer_type`・`contracts`・`handles`)と、版 6 で足した定義の decorator(`decorators`)はこの節が正本。
 
 ```jsonc
 {
-  "version": 5,
+  "version": 6,
   "root": "/abs/root",
   "files": [{
     "path": "/abs/root/pkg/mod.hy",
@@ -426,7 +426,8 @@ doeff-indexer hy-index --root <dir> --stdin --path <path>  # 保存前の内容�
       "param_types": [{"name": "request", "type": {"text": "InputRequest", "names": [{"name": "InputRequest", "target": "pkg.types.InputRequest"}]}}],
       "answer_type": {"text": "(| Judgment None)", "names": [{"name": "Judgment", "target": "pkg.types.Judgment"}, {"name": "None", "target": null}]},
       "contracts": [{"side": "pre", "text": "(> budget 0)"}],          // 型でない契約の述語(版 5)
-      "handles": null                                                    // effect 節だけ: 解く effect {"name", "target"}(版 5)
+      "handles": null,                                                   // effect 節だけ: 解く effect {"name", "target"}(版 5)
+      "decorators": ["dataclass :frozen True"]                           // 定義の decorator の綴り(版 6)。無ければ []
     }],
     "imports": [{"module": "doeff_records.memory", "name": "MemoryStore", "alias": null, "range": {…}, "is_require": false}],
     "references": [{"name": "c", "mangled": "c", "qualifier": "a.b", "range": {…}}],
@@ -464,11 +465,12 @@ doeff-indexer hy-index --root <dir> --stdin --path <path>  # 保存前の内容�
   - 生の副作用の経由の証拠(`raw.via`)も、呼び出しの行き先をこの `target` と `qualified_name` の一致で引く(名前の解決は `src/hy_index/qualify.rs` の 1 か所)。
   - 版 5 の欄(宣言した effect・型・契約)は、書かれた事実と名前の解決だけを持つ。型の意味の読み方(Union・Maybe・Raise・effect の `:answer` / `:absent` / `:failure`)と**推論した effect** は doeff-linter の editor-json の `signatures` が正本(推論は repo 全体の不動点で、1 file の実行では出せないため・DOEFF127 が `:effects` の宣言と推論の一致を検める)。
     - `effects`: 契約の辞書を持つ定義(defk・deff・defp・defpp・defhandler)の `:effects [E …]` の名を書いた順に。`:effects` が無ければ null、`[]` は「起こさない」の宣言。他の kind は null。
-    - `param_types`: 契約の辞書の `:pre` の `(: 引数 型)`(引数の名に当たる物だけ・引数の順・同じ引数は最初の 1 つ)、defeffect の `:fields` の `(: 欄 型)`、defrecord / defwire の欄の `#^ 型`(fields.rs の読み方)。型を書いていない引数は入れない。
+    - `param_types`: 契約の辞書の `:pre` の `(: 引数 型)`(引数の名に当たる物だけ・引数の順・同じ引数は最初の 1 つ)、defeffect の `:fields` の `(: 欄 型)`、defrecord / defwire と defclass(版 6 から)の欄の `#^ 型`(どれも fields.rs の読み方 — 括弧つき・裸・`(setv #^ T x v)`)。型を書いていない引数・欄は入れない(欄の定義 kind `field` は今までどおり)。
     - `answer_type`: `:post` の `(: % 型)`、無ければ名の `#^ 型`(defn / defk / deff)。defeffect は `:answer`。無ければ null。
     - `contracts`: `:pre` / `:post` の述語のうち上の型の注記にならなかった物(`(> budget 0)`・引数でない名への `(: self.x T)`・同じ引数の 2 つ目の注記)を書かれたとおりに。`side` は `pre` / `post`。
     - 型の注記は `{"text": 書かれた綴り, "names": [...]}`。`names` は注記の中の記号を書いた順に 1 度ずつ(構文の `|`・`of`・`get`・演算子・keyword・文字列・数は除く)。
     - `handles`: kind が `effect-clause` の定義だけが `{"name": 節の頭の綴り, "target": effect の完全修飾名}` を持ち、他は null。
+  - `decorators`(版 6): `(defclass [d …] Name …)`・`(defn [d …] name …)`(defn/a・defmacro・defk・deff・class の中の method も)の `[…]` の各要素を書いた順に。綴りは書かれたとおりで、呼びの形は外側の括弧を外し(`[(dataclass :frozen True)]` → `"dataclass :frozen True"`・`[dataclass]` → `"dataclass"`)、文字列の外の空白の連なり(改行を含む)は 1 つに詰める(文字列の中はそのまま)。`#_` で読み捨てた要素は入れない。decorator の無い定義と、decorator を書けない kind は `[]`。
     - 名の `target` は呼び出しの `target` と同じ名前の解決(同じ file の定義 → `require` 以外の import → null)。Python の effect(`doeff_core_effects.…`)も完全修飾名になる。
     - 逆引き(その effect を解く handler・その型を受ける / 返す定義・その effect を使う定義)は索引に持たず、読む側が `target` と `qualified_name` の一致を逆に引く(U7 の呼び手と同じ理由 — 1 file の実行で差し替えた file の分が、他の file の逆引きに正しく効くため)。解く handler = `handles.target` が一致する effect 節の `container` の定義。
   - 入れないもの: 予約語(require した普通の語の macro を含む)、doeff-hy の束縛の構文の頭(`val` / `var` / `lazy` / `session`。defk などの macro が読むので require が無くても構文)、`(.method obj)`、`(. obj (method …))` の method、defhandler / `handle` の effect 節の頭(`(PutRow [table key] …)` の `PutRow`)、型注釈の中(`#^ (of list int) x`)、match の pattern の中(`(Point :x px)`)、quote の中。これらの記号は `references` には今までどおり入る。

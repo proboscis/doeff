@@ -1,5 +1,5 @@
 {
- "version": 5,
+ "version": 6,
  "root": "/ws",
  "files": [
   {
@@ -51,7 +51,8 @@
      "param_types": [],
      "answer_type": null,
      "contracts": [],
-     "handles": null
+     "handles": null,
+     "decorators": []
     }
    ],
    "imports": [],
@@ -149,7 +150,8 @@
      "param_types": [],
      "answer_type": null,
      "contracts": [],
-     "handles": null
+     "handles": null,
+     "decorators": []
     }
    ],
    "imports": [],
@@ -200,7 +202,8 @@
      "param_types": [],
      "answer_type": null,
      "contracts": [],
-     "handles": null
+     "handles": null,
+     "decorators": []
     }
    ],
    "imports": [],
@@ -328,7 +331,8 @@
      "param_types": [],
      "answer_type": null,
      "contracts": [],
-     "handles": null
+     "handles": null,
+     "decorators": []
     }
    ],
    "imports": [],
@@ -395,7 +399,8 @@
      "param_types": [],
      "answer_type": null,
      "contracts": [],
-     "handles": null
+     "handles": null,
+     "decorators": []
     }
    ],
    "imports": [],
@@ -448,7 +453,8 @@
      "handles": {
       "name": "X",
       "target": null
-     }
+     },
+     "decorators": []
     }
    ],
    "imports": [],
@@ -503,7 +509,111 @@
        "text": "(> x 0)"
       }
      ],
+     "handles": null,
+     "decorators": []
+    }
+   ],
+   "imports": [],
+   "references": [],
+   "calls": [],
+   "errors": []
+  },
+  {
+   "path": "/ws/missing_decorators.hy",
+   "module": "missing_decorators",
+   "definitions": [
+    {
+     "name": "f",
+     "mangled": "f",
+     "qualified_name": "missing_decorators.f",
+     "kind": "defn",
+     "range": {
+      "start": {
+       "line": 0,
+       "character": 6
+      },
+      "end": {
+       "line": 0,
+       "character": 7
+      }
+     },
+     "full_range": {
+      "start": {
+       "line": 0,
+       "character": 0
+      },
+      "end": {
+       "line": 0,
+       "character": 12
+      }
+     },
+     "container": null,
+     "docstring": null,
+     "params": [],
+     "bases": [],
+     "raw": {
+      "direct": [],
+      "via": []
+     },
+     "tags": null,
+     "effects": null,
+     "param_types": [],
+     "answer_type": null,
+     "contracts": [],
      "handles": null
+    }
+   ],
+   "imports": [],
+   "references": [],
+   "calls": [],
+   "errors": []
+  },
+  {
+   "path": "/ws/decorator_not_string.hy",
+   "module": "decorator_not_string",
+   "definitions": [
+    {
+     "name": "f",
+     "mangled": "f",
+     "qualified_name": "decorator_not_string.f",
+     "kind": "defn",
+     "range": {
+      "start": {
+       "line": 0,
+       "character": 6
+      },
+      "end": {
+       "line": 0,
+       "character": 7
+      }
+     },
+     "full_range": {
+      "start": {
+       "line": 0,
+       "character": 0
+      },
+      "end": {
+       "line": 0,
+       "character": 12
+      }
+     },
+     "container": null,
+     "docstring": null,
+     "params": [],
+     "bases": [],
+     "raw": {
+      "direct": [],
+      "via": []
+     },
+     "tags": null,
+     "effects": null,
+     "param_types": [],
+     "answer_type": null,
+     "contracts": [],
+     "handles": null,
+     "decorators": [
+      42
+     ]
     }
    ],
    "imports": [],

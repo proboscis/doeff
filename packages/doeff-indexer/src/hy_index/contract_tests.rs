@@ -155,3 +155,66 @@ fn effect_clauses_name_the_effect_they_handle() {
         .collect();
     assert_eq!(handler_of_settle, vec!["store"]);
 }
+
+/// 定義の引数の型を (名, 型の綴り) の列にする。
+fn typed(definition: &Definition) -> Vec<(&str, &str)> {
+    definition.param_types.iter().map(|p| (p.name.as_str(), p.type_note.text.as_str())).collect()
+}
+
+const CLASSES: &str = r#"(import dataclasses [dataclass field])
+
+(defclass [(dataclass :frozen True)] PlacedVersion []
+  "置いた版。"
+  (#^ str ref)
+  (#^ (| str None) request-id)
+  #^ int count
+  (setv #^ bool ok True)
+  (setv plain 1)
+  (defn [staticmethod] make [] 1))
+
+(defclass [dataclass
+           (field   :default   "a  b"
+                    :repr False)] Wide [] #^ str x)
+
+(defclass Plain [Base] "素の class。" (defn run [self] 1))
+
+(defn [functools.cache] cached [x] x)
+(defn undecorated [x] x)
+(defrecord Row #^ str key)
+"#;
+
+#[test]
+fn defclass_field_annotations_are_param_types_like_defrecord() {
+    let file = index(CLASSES);
+    assert_eq!(
+        typed(def(&file, "PlacedVersion", "defclass")),
+        vec![("ref", "str"), ("request-id", "(| str None)"), ("count", "int"), ("ok", "bool")],
+        "括弧つき・裸・setv の注記の欄を書いた順に。注記の無い setv は型なし(欄の名だけ)"
+    );
+    let fields: Vec<&str> = file
+        .definitions
+        .iter()
+        .filter(|d| d.container.as_deref() == Some("PlacedVersion") && d.kind.as_str() == "field")
+        .map(|d| d.name.as_str())
+        .collect();
+    assert_eq!(fields, vec!["ref", "request-id", "count", "ok", "plain"], "欄の定義は今までどおり");
+    let request_id = &def(&file, "PlacedVersion", "defclass").param_types[1].type_note;
+    assert_eq!(refs(&request_id.names), vec![("str", None), ("None", None)]);
+    assert!(def(&file, "Plain", "defclass").param_types.is_empty());
+}
+
+#[test]
+fn decorators_are_written_spellings_without_outer_parens() {
+    let file = index(CLASSES);
+    assert_eq!(def(&file, "PlacedVersion", "defclass").decorators, vec!["dataclass :frozen True"]);
+    assert_eq!(
+        def(&file, "Wide", "defclass").decorators,
+        vec!["dataclass", r#"field :default "a  b" :repr False"#],
+        "文字列の外の空白の連なり(改行を含む)は 1 つに詰め、文字列の中はそのまま"
+    );
+    assert_eq!(def(&file, "make", "method").decorators, vec!["staticmethod"], "method の decorator も積む");
+    assert_eq!(def(&file, "cached", "defn").decorators, vec!["functools.cache"]);
+    for (name, kind) in [("Plain", "defclass"), ("undecorated", "defn"), ("Row", "defrecord"), ("run", "method")] {
+        assert!(def(&file, name, kind).decorators.is_empty(), "{kind} {name} は decorator なし = 空の列");
+    }
+}

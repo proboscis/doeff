@@ -1,10 +1,10 @@
-// `doeff-indexer hy-index` の出力 JSON(契約 版 5)の型と、読み込みの唯一の検査。
+// `doeff-indexer hy-index` の出力 JSON(契約 版 6)の型と、読み込みの唯一の検査。
 // 契約の正本 = experiments/hy-highlighter/hy-index-contract.md(版 1)+ -v2.md(版 2)+ -v3.md(版 3 = 生の副作用の判定)
 // + doeff-indexer の SPECIFICATION.md の Hy Index の節(版 4 = 完全修飾名 qualified_name・呼び出しの target、
-// 版 5 = 宣言した effect・引数と答えの型・型でない契約・effect 節の解く effect)。欄が欠けた・型が違う・版が違う JSON は
+// 版 5 = 宣言した effect・引数と答えの型・型でない契約・effect 節の解く effect、版 6 = 定義の decorator)。欄が欠けた・型が違う・版が違う JSON は
 // 理由つきで捨て、既定値で埋めない。
 
-export const HY_INDEX_CONTRACT_VERSION = 5;
+export const HY_INDEX_CONTRACT_VERSION = 6;
 
 /** 契約の述語の側(閉じた集合)。 */
 export const HY_CONTRACT_SIDES = ['pre', 'post'] as const;
@@ -104,6 +104,9 @@ export interface HyDefinition {
   /** effect 節が解く effect(版 5)— kind が effect-clause の定義だけが持ち、他は null。解く handler はこの target が一致する
    * effect 節の container(逆引きは索引に持たず、読む側が引く) */
   readonly handles: HyNameRef | null;
+  /** 定義の decorator(版 6)— `[…]` の各要素の書かれた綴り(呼びの形は外側の括弧を外す・文字列の外の空白は 1 つに詰める)。
+   * decorator の無い定義は [] */
+  readonly decorators: readonly string[];
 }
 
 /** 書かれた名と、その完全修飾名(版 5 — 呼び出しの target と同じ名前の解決。解けなければ null)。 */
@@ -408,7 +411,8 @@ function parseDefinition(value: unknown, where: string): HyDefinition {
     paramTypes: arr(value, 'param_types', where).map((p, i) => parseParamType(p, `${where}.param_types[${i}]`)),
     answerType: parseAnswerType(value, where),
     contracts: arr(value, 'contracts', where).map((c, i) => parseContractClause(c, `${where}.contracts[${i}]`)),
-    handles: parseHandles(value, kind, where)
+    handles: parseHandles(value, kind, where),
+    decorators: strArray(value, 'decorators', where)
   };
 }
 

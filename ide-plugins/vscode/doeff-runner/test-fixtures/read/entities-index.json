@@ -1,5 +1,5 @@
 {
-  "version": 5,
+  "version": 6,
   "root": "/repo",
   "files": [
     {
@@ -69,7 +69,8 @@
           ],
           "answer_type": null,
           "contracts": [],
-          "handles": null
+          "handles": null,
+          "decorators": []
         },
         {
           "name": "key",
@@ -109,7 +110,8 @@
           "param_types": [],
           "answer_type": null,
           "contracts": [],
-          "handles": null
+          "handles": null,
+          "decorators": []
         },
         {
           "name": "size",
@@ -149,7 +151,8 @@
           "param_types": [],
           "answer_type": null,
           "contracts": [],
-          "handles": null
+          "handles": null,
+          "decorators": []
         },
         {
           "name": "Tone",
@@ -189,7 +192,8 @@
           "param_types": [],
           "answer_type": null,
           "contracts": [],
-          "handles": null
+          "handles": null,
+          "decorators": []
         },
         {
           "name": "LOUD",
@@ -229,7 +233,8 @@
           "param_types": [],
           "answer_type": null,
           "contracts": [],
-          "handles": null
+          "handles": null,
+          "decorators": []
         },
         {
           "name": "QUIET",
@@ -269,7 +274,8 @@
           "param_types": [],
           "answer_type": null,
           "contracts": [],
-          "handles": null
+          "handles": null,
+          "decorators": []
         },
         {
           "name": "ReadSlot",
@@ -339,7 +345,8 @@
             ]
           },
           "contracts": [],
-          "handles": null
+          "handles": null,
+          "decorators": []
         },
         {
           "name": "slot-store",
@@ -387,7 +394,8 @@
           "param_types": [],
           "answer_type": null,
           "contracts": [],
-          "handles": null
+          "handles": null,
+          "decorators": []
         },
         {
           "name": "ReadSlot",
@@ -432,7 +440,8 @@
           "handles": {
             "name": "ReadSlot",
             "target": "pkg.entities.ReadSlot"
-          }
+          },
+          "decorators": []
         },
         {
           "name": "slot-size",
@@ -521,7 +530,8 @@
               "text": "(> limit 0)"
             }
           ],
-          "handles": null
+          "handles": null,
+          "decorators": []
         }
       ],
       "imports": [
