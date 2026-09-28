@@ -15,8 +15,9 @@ from doeff_hy.declarations import ROLES, DefinitionTags
 PRELUDE = """
 (require doeff-hy.macros [defk deff defp defeffect do! <-])
 (require doeff-hy.handle [defhandler])
-(defclass ReadRow [])
-(defclass PutRow [])
+(import doeff [EffectBase])
+(defclass ReadRow [EffectBase])
+(defclass PutRow [EffectBase])
 """
 
 
@@ -85,6 +86,26 @@ def test_the_tags_are_checked_when_compiling() -> None:
     assert ":role" in refused('(defk f [x] {:pre [(: x int)] :post [(: % int)] :tags {:context "k"}} x)')
     assert "文字列" in refused('(defk f [x] {:pre [(: x int)] :post [(: % int)] :tags {:context k :role "program"}} x)')
     assert ":effects" in refused('(defk f [x] {:pre [(: x int)] :post [(: % int)] :effects ReadRow} x)')
+
+
+def test_effects_must_name_effect_types_or_effect_makers() -> None:
+    # #800: 前は :effects が名の list であることしか検めず、関数や effect でない class を書いても黙って通した(反例)。
+    # 定義の時(module を読む時)に、書けない名と理由を名指して断る。
+    assert "EffectBase を継がない class" in refused("(defclass Row [])\n(defk f [x] {:pre [(: x int)] :post [(: % int)] :effects [Row]} x)")
+    message = refused("(defn helper [] 1)\n(defk f [x] {:pre [(: x int)] :post [(: % int)] :effects [helper]} x)")
+    assert "defk f" in message and "答えの注釈が effect の型でない関数" in message
+    assert "型でも関数でもない値" in refused("(setv LIMIT 3)\n(defk f [x] {:pre [(: x int)] :post [(: % int)] :effects [LIMIT]} x)")
+    assert "EffectBase を継がない class" in refused("(defclass Row [])\n(defhandler h {:effects [Row]} (ReadRow [] (resume 1)))")
+
+
+def test_effects_accept_functions_that_make_effects() -> None:
+    # doeff_time の GetTime・Delay や doeff の Tell は effect を作る関数(答えの注釈が effect の型)— agora の宣言に在る形。
+    ns = evaluate("""
+(import doeff_time [GetTime Delay])
+(import doeff [Tell])
+(defk waits [x] {:pre [(: x int)] :post [(: % int)] :effects [GetTime Delay Tell ReadRow]} x)
+""")
+    assert ns["waits"].__doeff_effects__ == (ns["GetTime"], ns["Delay"], ns["Tell"], ns["ReadRow"])
 
 
 def test_a_handler_refuses_pre_and_post_and_do_refuses_declarations() -> None:
