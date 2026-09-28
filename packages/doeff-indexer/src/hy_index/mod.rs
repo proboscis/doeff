@@ -1,7 +1,7 @@
 //! Hy の file(`*.hy` / `*.hyk` / `*.hyp`)の索引 — `doeff-indexer hy-index` の本体。
 //!
 //! 定義・import・参照を契約 `hy-index-contract.md`(版 1)・`hy-index-contract-v2.md`(版 2 = bases・calls)・`hy-index-contract-v3.md`
-//! (版 3 = 定義ごとの生の副作用の証拠 raw)の形で出す。Python の索引
+//! (版 3 = 定義ごとの生の副作用の証拠 raw)・版 4(完全修飾名 = qualified_name・呼び出しの target)の形で出す。Python の索引
 //! (`indexer.rs`)とは独立で、互いの挙動を変えない。読めない file・壊れた括弧でも止まらず、
 //! 読めた分を出して `errors` に理由を積む。
 
@@ -9,6 +9,7 @@ mod analyze;
 pub mod fields;
 mod model;
 mod position;
+mod qualify;
 mod raw;
 pub mod raw_catalog;
 /// Hy の読み取り器(form の木)。doeff-linter が同じ読み取りで `:tags` の辞書と import の式を読むために公開する。
@@ -18,6 +19,8 @@ pub mod reader;
 mod tests;
 #[cfg(test)]
 mod raw_tests;
+#[cfg(test)]
+mod qualify_tests;
 
 use std::path::{Component, Path, PathBuf};
 
@@ -143,7 +146,7 @@ pub fn index_file(root: &Path, path: &Path) -> HyFileIndex {
 /// source を `path` の file として索引する。
 pub fn index_source(root: &Path, path: &Path, source: &str) -> HyFileIndex {
     let analysis = analyze::analyze(source);
-    HyFileIndex {
+    let mut file = HyFileIndex {
         path: path.to_string_lossy().into_owned(),
         module: module_name(root, path),
         definitions: analysis.definitions,
@@ -151,7 +154,9 @@ pub fn index_source(root: &Path, path: &Path, source: &str) -> HyFileIndex {
         references: analysis.references,
         calls: analysis.calls,
         errors: analysis.errors,
-    }
+    };
+    qualify::link(&mut file);
+    file
 }
 
 /// 読めなかった file の索引(中身は空、`errors` に理由)。

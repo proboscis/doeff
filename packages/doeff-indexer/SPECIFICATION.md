@@ -399,11 +399,13 @@ doeff-indexer hy-index --root <dir> --stdin --path <path>  # 保存前の内容�
 - `--file` と `--path` の相対 path は `--root` を基準に解く。`--output` と `--pretty` は他のコマンドと同じ。
 - 読めない file・閉じていない括弧でも止まらない。読めた分を出し、その file の `errors` に理由(`行:列: …`、1 始まり)を積む。終了コードは 0。引数の誤り(`--stdin` に `--path` が無い・`--root` が directory でない等)だけ 2。
 
-### 出力の形(契約の版 2)
+### 出力の形(契約の版 4)
+
+版 3 で足した生の副作用の証拠(`raw`・`raw_via`・`raw_catalog_problems`)と定義のタグ(`tags`)は `experiments/hy-highlighter/hy-index-contract-v3.md` にある。版 4 で足した完全修飾名(`qualified_name`・`target`)はこの節が正本。
 
 ```jsonc
 {
-  "version": 2,
+  "version": 4,
   "root": "/abs/root",
   "files": [{
     "path": "/abs/root/pkg/mod.hy",
@@ -411,6 +413,7 @@ doeff-indexer hy-index --root <dir> --stdin --path <path>  # 保存前の内容�
     "definitions": [{
       "name": "classifier-peers",   // 書かれたとおりの綴り
       "mangled": "classifier_peers",// - を _ に(先頭の - は残す)
+      "qualified_name": "pkg.mod.classifier_peers", // 完全修飾名(版 4)= module + 入れ物(在れば)+ 名。どの区切りも mangle した綴り
       "kind": "defn",
       "range": {…},                 // 名前の位置
       "full_range": {…},            // form 全体
@@ -422,7 +425,8 @@ doeff-indexer hy-index --root <dir> --stdin --path <path>  # 保存前の内容�
     }],
     "imports": [{"module": "doeff_records.memory", "name": "MemoryStore", "alias": null, "range": {…}, "is_require": false}],
     "references": [{"name": "c", "mangled": "c", "qualifier": "a.b", "range": {…}}],
-    "calls": [{"callee": "PutRow", "mangled": "PutRow", "qualifier": null, "range": {…}, "caller": 12, "performed": true}],
+    "calls": [{"callee": "PutRow", "mangled": "PutRow", "qualifier": null, "range": {…}, "caller": 12, "performed": true,
+               "target": "pkg.effects.PutRow"}],  // target(版 4)= 呼び先の完全修飾名。解決できなければ null
     "errors": []
   }]
 }
@@ -445,6 +449,14 @@ doeff-indexer hy-index --root <dir> --stdin --path <path>  # 保存前の内容�
   - `callee` は頭の記号の最後の区切り、`qualifier` はその前の区切り(`mod.sub.fn` なら `"mod.sub"`)、`range` は最後の区切りの位置。
   - `caller` は、呼び出しの位置を `full_range` に含む定義のうち最も狭いものの添字(同じ file の `definitions` の添字)。含む定義が無ければ(top level の式)`null`。effect 節の本体の中はその `effect-clause`、`(fn …)` や `let` の中の局所の関数の中は外側の定義になる。`(setv x (f))` の `f` は `x` の `variable` が caller。
   - `performed` は `(<- (X …))`・`(<- name (X …))`・`(<- name T (X …))` の X と、`yield` / `yield-from` / `!`(doeff-hy の引数の位置での effect の bind、`(! (X …))`)の直下の呼び出しで true。`(! x)` のような記号だけの形は呼び出しではない。その中の引数の入れ子の呼び出しは false。
+  - `target`(版 4): 呼び先の完全修飾名。その file の中身(module・definitions・imports)だけで決める名前の解決の結果で、他の file を見ない。だから `--root`・`--file`・`--stdin` のどの実行でも同じ値になる。解決の順:
+    1. 同じ file の定義 — 修飾の無い名前は top level の定義(`container` が null)、`q.name` は入れ物 q の中の定義(`Store.put` → `pkg.mod.Store.put`)。
+    2. file の import(`require` は除く — macro は呼び先の定義にしない)。最初に束ねた import を使い、相対 import は書いた file の package を基準に直す。`(import m [x :as y])` の `(y)` は `m.x`、`(import m)` の `(m.sub.f)` は `m.sub.f`、`(import pkg [sub])` の `(sub.f)` と `(import m [C])` の `(C.f)` はどちらも `pkg.sub.f` / `m.C.f` の形。
+    3. どれでもない(組み込み・局所の束縛・引数・module そのものを呼ぶ形)は null。
+  - `target` は Hy の定義とは限らない(`json.dumps` のような Python の名前もその完全修飾名になる)。索引の `qualified_name` に一致すれば Hy の定義。`qualified_name` は同じ file の同名の再定義で重なり得るので、一致は複数として扱う。
+  - 呼び手の逆引き(ある定義を呼ぶ定義・deftest の一覧)は索引に持たない。読む側が `target` と `qualified_name` の一致を逆に引く(1 file の実行 `--stdin` で差し替えた file の呼び出しも、他の file の逆引きに正しく効くため)。
+  - 呼び出しは `caller` の定義(最も内側)にだけ割り当てる。外側の定義(defclass・defhandler・defadr 等)の呼び出しは、`full_range` に含まれる入れ子の定義の分を読む側が足す。
+  - 生の副作用の経由の証拠(`raw.via`)も、呼び出しの行き先をこの `target` と `qualified_name` の一致で引く(名前の解決は `src/hy_index/qualify.rs` の 1 か所)。
   - 入れないもの: 予約語(require した普通の語の macro を含む)、doeff-hy の束縛の構文の頭(`val` / `var` / `lazy` / `session`。defk などの macro が読むので require が無くても構文)、`(.method obj)`、`(. obj (method …))` の method、defhandler / `handle` の effect 節の頭(`(PutRow [table key] …)` の `PutRow`)、型注釈の中(`#^ (of list int) x`)、match の pattern の中(`(Point :x px)`)、quote の中。これらの記号は `references` には今までどおり入る。
 
 ### 既知の制限

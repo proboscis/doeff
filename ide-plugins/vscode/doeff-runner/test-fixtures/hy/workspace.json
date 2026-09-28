@@ -1,5 +1,5 @@
 {
- "version": 3,
+ "version": 4,
  "root": "/ws",
  "files": [
   {
@@ -9,6 +9,7 @@
     {
      "name": "run-app",
      "mangled": "run_app",
+     "qualified_name": "pkg.app.run_app",
      "kind": "defn",
      "range": {
       "start": {
@@ -44,6 +45,7 @@
     {
      "name": "helper",
      "mangled": "helper",
+     "qualified_name": "pkg.app.helper",
      "kind": "defn",
      "range": {
       "start": {
@@ -77,6 +79,7 @@
     {
      "name": "Store",
      "mangled": "Store",
+     "qualified_name": "pkg.app.Store",
      "kind": "defclass",
      "range": {
       "start": {
@@ -110,6 +113,7 @@
     {
      "name": "path",
      "mangled": "path",
+     "qualified_name": "pkg.app.Store.path",
      "kind": "field",
      "range": {
       "start": {
@@ -143,6 +147,7 @@
     {
      "name": "save",
      "mangled": "save",
+     "qualified_name": "pkg.app.Store.save",
      "kind": "method",
      "range": {
       "start": {
@@ -179,6 +184,7 @@
     {
      "name": "Color",
      "mangled": "Color",
+     "qualified_name": "pkg.app.Color",
      "kind": "defenum",
      "range": {
       "start": {
@@ -212,6 +218,7 @@
     {
      "name": "RED",
      "mangled": "RED",
+     "qualified_name": "pkg.app.Color.RED",
      "kind": "enum-member",
      "range": {
       "start": {
@@ -245,6 +252,7 @@
     {
      "name": "app-handler",
      "mangled": "app_handler",
+     "qualified_name": "pkg.app.app_handler",
      "kind": "defhandler",
      "range": {
       "start": {
@@ -278,6 +286,7 @@
     {
      "name": "Ask",
      "mangled": "Ask",
+     "qualified_name": "pkg.app.app_handler.Ask",
      "kind": "effect-clause",
      "range": {
       "start": {
@@ -313,6 +322,7 @@
     {
      "name": "test-run-app",
      "mangled": "test_run_app",
+     "qualified_name": "pkg.app.test_run_app",
      "kind": "deftest",
      "range": {
       "start": {
@@ -346,6 +356,7 @@
     {
      "name": "orphan",
      "mangled": "orphan",
+     "qualified_name": "pkg.app.Missing.orphan",
      "kind": "method",
      "range": {
       "start": {
@@ -854,6 +865,7 @@
     {
      "name": "format-name",
      "mangled": "format_name",
+     "qualified_name": "pkg.util.format_name",
      "kind": "defk",
      "range": {
       "start": {
@@ -889,6 +901,7 @@
     {
      "name": "parse-it",
      "mangled": "parse_it",
+     "qualified_name": "pkg.util.parse_it",
      "kind": "defn",
      "range": {
       "start": {
@@ -965,6 +978,7 @@
     {
      "name": "lib-fn",
      "mangled": "lib_fn",
+     "qualified_name": "pkg.lib.lib_fn",
      "kind": "defn",
      "range": {
       "start": {
@@ -1024,6 +1038,7 @@
     {
      "name": "Record",
      "mangled": "Record",
+     "qualified_name": "pkg.models.Record",
      "kind": "defrecord",
      "range": {
       "start": {
@@ -1057,6 +1072,7 @@
     {
      "name": "name",
      "mangled": "name",
+     "qualified_name": "pkg.models.Record.name",
      "kind": "field",
      "range": {
       "start": {
@@ -1100,6 +1116,7 @@
     {
      "name": "sib-fn",
      "mangled": "sib_fn",
+     "qualified_name": "pkg.sibling.sib_fn",
      "kind": "defn",
      "range": {
       "start": {
@@ -1143,6 +1160,7 @@
     {
      "name": "VERSION",
      "mangled": "VERSION",
+     "qualified_name": "pkg.VERSION",
      "kind": "variable",
      "range": {
       "start": {
@@ -1186,6 +1204,7 @@
     {
      "name": "helper",
      "mangled": "helper",
+     "qualified_name": "other.dup.helper",
      "kind": "defn",
      "range": {
       "start": {
@@ -1219,6 +1238,7 @@
     {
      "name": "format-name",
      "mangled": "format_name",
+     "qualified_name": "other.dup.format_name",
      "kind": "defn",
      "range": {
       "start": {
@@ -1405,6 +1425,7 @@
     {
      "name": "PutRow",
      "mangled": "PutRow",
+     "qualified_name": "pkg.effects.PutRow",
      "kind": "defclass",
      "range": {
       "start": {
@@ -1440,6 +1461,7 @@
     {
      "name": "GetRow",
      "mangled": "GetRow",
+     "qualified_name": "pkg.effects.GetRow",
      "kind": "defclass",
      "range": {
       "start": {
@@ -1475,6 +1497,7 @@
     {
      "name": "SpecialPut",
      "mangled": "SpecialPut",
+     "qualified_name": "pkg.effects.SpecialPut",
      "kind": "defclass",
      "range": {
       "start": {
@@ -1510,6 +1533,7 @@
     {
      "name": "Plain",
      "mangled": "Plain",
+     "qualified_name": "pkg.effects.Plain",
      "kind": "defclass",
      "range": {
       "start": {
@@ -1545,6 +1569,7 @@
     {
      "name": "save-row",
      "mangled": "save_row",
+     "qualified_name": "pkg.effects.save_row",
      "kind": "defk",
      "range": {
       "start": {
@@ -1580,6 +1605,7 @@
     {
      "name": "helper-fn",
      "mangled": "helper_fn",
+     "qualified_name": "pkg.effects.helper_fn",
      "kind": "defn",
      "range": {
       "start": {
@@ -1615,6 +1641,7 @@
     {
      "name": "memory-handler",
      "mangled": "memory_handler",
+     "qualified_name": "pkg.effects.memory_handler",
      "kind": "defhandler",
      "range": {
       "start": {
@@ -1648,6 +1675,7 @@
     {
      "name": "PutRow",
      "mangled": "PutRow",
+     "qualified_name": "pkg.effects.memory_handler.PutRow",
      "kind": "effect-clause",
      "range": {
       "start": {
@@ -1683,6 +1711,7 @@
     {
      "name": "GetRow",
      "mangled": "GetRow",
+     "qualified_name": "pkg.effects.memory_handler.GetRow",
      "kind": "effect-clause",
      "range": {
       "start": {
@@ -1718,6 +1747,7 @@
     {
      "name": "load-row",
      "mangled": "load_row",
+     "qualified_name": "pkg.effects.load_row",
      "kind": "deff",
      "range": {
       "start": {
@@ -1769,7 +1799,8 @@
       }
      },
      "caller": 4,
-     "performed": true
+     "performed": true,
+     "target": "pkg.effects.PutRow"
     },
     {
      "callee": "helper-fn",
@@ -1786,7 +1817,8 @@
       }
      },
      "caller": 4,
-     "performed": false
+     "performed": false,
+     "target": "pkg.effects.helper_fn"
     },
     {
      "callee": "GetRow",
@@ -1803,7 +1835,8 @@
       }
      },
      "caller": 4,
-     "performed": false
+     "performed": false,
+     "target": "pkg.effects.GetRow"
     },
     {
      "callee": "Plain",
@@ -1820,7 +1853,8 @@
       }
      },
      "caller": 4,
-     "performed": false
+     "performed": false,
+     "target": "pkg.effects.Plain"
     },
     {
      "callee": "resume",
@@ -1837,7 +1871,8 @@
       }
      },
      "caller": 7,
-     "performed": false
+     "performed": false,
+     "target": null
     },
     {
      "callee": "helper-fn",
@@ -1854,7 +1889,8 @@
       }
      },
      "caller": 8,
-     "performed": false
+     "performed": false,
+     "target": "pkg.effects.helper_fn"
     },
     {
      "callee": "GetRow",
@@ -1871,7 +1907,8 @@
       }
      },
      "caller": 9,
-     "performed": true
+     "performed": true,
+     "target": "pkg.effects.GetRow"
     },
     {
      "callee": "PutRow",
@@ -1888,7 +1925,8 @@
       }
      },
      "caller": 9,
-     "performed": true
+     "performed": true,
+     "target": "pkg.effects.PutRow"
     },
     {
      "callee": "save-row",
@@ -1905,7 +1943,8 @@
       }
      },
      "caller": null,
-     "performed": false
+     "performed": false,
+     "target": "pkg.effects.save_row"
     }
    ],
    "errors": []
@@ -1917,6 +1956,7 @@
     {
      "name": "logging-handler",
      "mangled": "logging_handler",
+     "qualified_name": "pkg.logging_handler.logging_handler",
      "kind": "defhandler",
      "range": {
       "start": {
@@ -1950,6 +1990,7 @@
     {
      "name": "PutRow",
      "mangled": "PutRow",
+     "qualified_name": "pkg.logging_handler.logging_handler.PutRow",
      "kind": "effect-clause",
      "range": {
       "start": {
@@ -1985,6 +2026,7 @@
     {
      "name": "Tell",
      "mangled": "Tell",
+     "qualified_name": "pkg.logging_handler.logging_handler.Tell",
      "kind": "effect-clause",
      "range": {
       "start": {
@@ -2020,6 +2062,7 @@
     {
      "name": "announce",
      "mangled": "announce",
+     "qualified_name": "pkg.logging_handler.announce",
      "kind": "defk",
      "range": {
       "start": {
@@ -2102,7 +2145,8 @@
       }
      },
      "caller": 3,
-     "performed": true
+     "performed": true,
+     "target": null
     },
     {
      "callee": "save-row",
@@ -2119,7 +2163,8 @@
       }
      },
      "caller": 3,
-     "performed": false
+     "performed": false,
+     "target": "pkg.effects.save_row"
     },
     {
      "callee": "SpecialPut",
@@ -2136,7 +2181,8 @@
       }
      },
      "caller": 3,
-     "performed": true
+     "performed": true,
+     "target": null
     },
     {
      "callee": "print",
@@ -2153,7 +2199,8 @@
       }
      },
      "caller": 1,
-     "performed": false
+     "performed": false,
+     "target": null
     },
     {
      "callee": "Emit",
@@ -2170,7 +2217,8 @@
       }
      },
      "caller": 3,
-     "performed": true
+     "performed": true,
+     "target": null
     }
    ],
    "errors": []

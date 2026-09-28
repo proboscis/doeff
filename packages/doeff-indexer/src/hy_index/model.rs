@@ -1,4 +1,5 @@
-//! `hy-index` の出力の型 — 契約 `hy-index-contract.md`(版 1)・`hy-index-contract-v2.md`(版 2)・`hy-index-contract-v3.md`(版 3 = 生の副作用の証拠)の JSON の形そのもの。
+//! `hy-index` の出力の型 — 契約 `hy-index-contract.md`(版 1)・`hy-index-contract-v2.md`(版 2)・`hy-index-contract-v3.md`(版 3 = 生の副作用の証拠)
+//! と版 4(完全修飾名 = 定義の `qualified_name`・呼び出しの `target` — SPECIFICATION.md の Hy Index の節)の JSON の形そのもの。
 //! JSON への変換は CLI の出力の 1 か所(`main.rs`)だけが行う。
 
 use serde::Serialize;
@@ -7,7 +8,7 @@ pub use super::position::{Position, Range};
 pub use super::raw_catalog::RawCategory;
 
 /// 契約の版。形を変える時は契約と一緒に上げる。
-pub const CONTRACT_VERSION: u32 = 3;
+pub const CONTRACT_VERSION: u32 = 4;
 
 /// `hy-index` の出力の全体。
 #[derive(Debug, Clone, Serialize)]
@@ -104,6 +105,9 @@ pub struct HyFileIndex {
 pub struct Definition {
     pub name: String,
     pub mangled: String,
+    /// 完全修飾名 — module + 入れ物(在れば)+ 名、どの区切りも mangle した綴り(版 4)。呼び出しの `target` と
+    /// 文字列で一致させて呼び先・呼び手を引く鍵。module は file の索引が決めるので `qualify::link` が埋める。
+    pub qualified_name: String,
     pub kind: DefinitionKind,
     pub range: Range,
     pub full_range: Range,
@@ -257,4 +261,8 @@ pub struct Call {
     pub caller: Option<usize>,
     /// `<-` で撃たれている(または `yield` / `yield-from` の直下)なら true。
     pub performed: bool,
+    /// 呼び先の完全修飾名(版 4)— この file の定義と import だけで決める名前の解決の結果(`qualify.rs`)。
+    /// 解決できない(組み込み・special form・局所の束縛・引数・値の上の属性・module そのもの)なら null。
+    /// Hy の定義とは限らない — 索引の `qualified_name` に一致すれば Hy の定義。
+    pub target: Option<String>,
 }

@@ -1,5 +1,5 @@
 {
- "version": 3,
+ "version": 4,
  "root": "/ws",
  "files": [
   {
@@ -9,6 +9,7 @@
     {
      "name": "BorrowToken",
      "mangled": "BorrowToken",
+     "qualified_name": "pkg.intent.BorrowToken",
      "kind": "defeffect",
      "range": {
       "start": {
@@ -51,6 +52,7 @@
     {
      "name": "borrow",
      "mangled": "borrow",
+     "qualified_name": "pkg.intent.borrow",
      "kind": "defk",
      "range": {
       "start": {
@@ -257,7 +259,8 @@
       }
      },
      "caller": 1,
-     "performed": true
+     "performed": true,
+     "target": "pkg.intent.BorrowToken"
     }
    ],
    "errors": []

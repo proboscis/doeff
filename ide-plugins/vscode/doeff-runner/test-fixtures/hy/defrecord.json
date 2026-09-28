@@ -1,5 +1,5 @@
 {
- "version": 3,
+ "version": 4,
  "root": "/ws",
  "files": [
   {
@@ -9,6 +9,7 @@
     {
      "name": "ChatId",
      "mangled": "ChatId",
+     "qualified_name": "pkg.records.ChatId",
      "kind": "defrecord",
      "range": {
       "start": {
@@ -49,6 +50,7 @@
     {
      "name": "value",
      "mangled": "value",
+     "qualified_name": "pkg.records.ChatId.value",
      "kind": "field",
      "range": {
       "start": {
@@ -83,6 +85,7 @@
     {
      "name": "Plain",
      "mangled": "Plain",
+     "qualified_name": "pkg.records.Plain",
      "kind": "defrecord",
      "range": {
       "start": {
@@ -117,6 +120,7 @@
     {
      "name": "key",
      "mangled": "key",
+     "qualified_name": "pkg.records.Plain.key",
      "kind": "field",
      "range": {
       "start": {
@@ -303,7 +307,8 @@
       }
      },
      "caller": 0,
-     "performed": false
+     "performed": false,
+     "target": null
     }
    ],
    "errors": []

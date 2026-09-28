@@ -1,5 +1,5 @@
 {
- "version": 3,
+ "version": 4,
  "root": "/raw",
  "files": [
   {
@@ -9,6 +9,7 @@
     {
      "name": "http-handler",
      "mangled": "http_handler",
+     "qualified_name": "pkg.io_handlers.http_handler",
      "kind": "defhandler",
      "range": {
       "start": {
@@ -60,6 +61,7 @@
     {
      "name": "Fetch",
      "mangled": "Fetch",
+     "qualified_name": "pkg.io_handlers.http_handler.Fetch",
      "kind": "effect-clause",
      "range": {
       "start": {
@@ -113,6 +115,7 @@
     {
      "name": "clock-handler",
      "mangled": "clock_handler",
+     "qualified_name": "pkg.io_handlers.clock_handler",
      "kind": "defhandler",
      "range": {
       "start": {
@@ -181,6 +184,7 @@
     {
      "name": "Now",
      "mangled": "Now",
+     "qualified_name": "pkg.io_handlers.clock_handler.Now",
      "kind": "effect-clause",
      "range": {
       "start": {
@@ -249,6 +253,7 @@
     {
      "name": "file-handler",
      "mangled": "file_handler",
+     "qualified_name": "pkg.io_handlers.file_handler",
      "kind": "defhandler",
      "range": {
       "start": {
@@ -317,6 +322,7 @@
     {
      "name": "ReadIt",
      "mangled": "ReadIt",
+     "qualified_name": "pkg.io_handlers.file_handler.ReadIt",
      "kind": "effect-clause",
      "range": {
       "start": {
@@ -387,6 +393,7 @@
     {
      "name": "slow-helper",
      "mangled": "slow_helper",
+     "qualified_name": "pkg.io_handlers.slow_helper",
      "kind": "defn",
      "range": {
       "start": {
@@ -438,6 +445,7 @@
     {
      "name": "via-handler",
      "mangled": "via_handler",
+     "qualified_name": "pkg.io_handlers.via_handler",
      "kind": "defhandler",
      "range": {
       "start": {
@@ -498,6 +506,7 @@
     {
      "name": "Tick",
      "mangled": "Tick",
+     "qualified_name": "pkg.io_handlers.via_handler.Tick",
      "kind": "effect-clause",
      "range": {
       "start": {
@@ -558,6 +567,7 @@
     {
      "name": "loop-a",
      "mangled": "loop_a",
+     "qualified_name": "pkg.io_handlers.loop_a",
      "kind": "defn",
      "range": {
       "start": {
@@ -618,6 +628,7 @@
     {
      "name": "loop-b",
      "mangled": "loop_b",
+     "qualified_name": "pkg.io_handlers.loop_b",
      "kind": "defn",
      "range": {
       "start": {
@@ -669,6 +680,7 @@
     {
      "name": "bad-program",
      "mangled": "bad_program",
+     "qualified_name": "pkg.io_handlers.bad_program",
      "kind": "defk",
      "range": {
       "start": {
@@ -720,6 +732,7 @@
     {
      "name": "performs-external",
      "mangled": "performs_external",
+     "qualified_name": "pkg.io_handlers.performs_external",
      "kind": "defk",
      "range": {
       "start": {
@@ -753,6 +766,7 @@
     {
      "name": "performs-domain",
      "mangled": "performs_domain",
+     "qualified_name": "pkg.io_handlers.performs_domain",
      "kind": "defk",
      "range": {
       "start": {
@@ -786,6 +800,7 @@
     {
      "name": "custom-program",
      "mangled": "custom_program",
+     "qualified_name": "pkg.io_handlers.custom_program",
      "kind": "defk",
      "range": {
       "start": {
@@ -821,6 +836,7 @@
     {
      "name": "d1",
      "mangled": "d1",
+     "qualified_name": "pkg.io_handlers.d1",
      "kind": "defn",
      "range": {
       "start": {
@@ -896,6 +912,7 @@
     {
      "name": "d2",
      "mangled": "d2",
+     "qualified_name": "pkg.io_handlers.d2",
      "kind": "defn",
      "range": {
       "start": {
@@ -1007,6 +1024,7 @@
     {
      "name": "d3",
      "mangled": "d3",
+     "qualified_name": "pkg.io_handlers.d3",
      "kind": "defn",
      "range": {
       "start": {
@@ -1108,6 +1126,7 @@
     {
      "name": "d4",
      "mangled": "d4",
+     "qualified_name": "pkg.io_handlers.d4",
      "kind": "defn",
      "range": {
       "start": {
@@ -1199,6 +1218,7 @@
     {
      "name": "d5",
      "mangled": "d5",
+     "qualified_name": "pkg.io_handlers.d5",
      "kind": "defn",
      "range": {
       "start": {
@@ -1277,6 +1297,7 @@
     {
      "name": "d6",
      "mangled": "d6",
+     "qualified_name": "pkg.io_handlers.d6",
      "kind": "defn",
      "range": {
       "start": {
@@ -1328,6 +1349,7 @@
     {
      "name": "memory-handler",
      "mangled": "memory_handler",
+     "qualified_name": "pkg.io_handlers.memory_handler",
      "kind": "defhandler",
      "range": {
       "start": {
@@ -1363,6 +1385,7 @@
     {
      "name": "Store",
      "mangled": "Store",
+     "qualified_name": "pkg.io_handlers.memory_handler.Store",
      "kind": "effect-clause",
      "range": {
       "start": {
@@ -2929,7 +2952,8 @@
       }
      },
      "caller": 1,
-     "performed": false
+     "performed": false,
+     "target": "httpx.post"
     },
     {
      "callee": "monotonic",
@@ -2946,7 +2970,8 @@
       }
      },
      "caller": 3,
-     "performed": false
+     "performed": false,
+     "target": "time.monotonic"
     },
     {
      "callee": "now",
@@ -2963,7 +2988,8 @@
       }
      },
      "caller": 3,
-     "performed": false
+     "performed": false,
+     "target": "datetime.datetime.now"
     },
     {
      "callee": "open",
@@ -2980,7 +3006,8 @@
       }
      },
      "caller": 5,
-     "performed": false
+     "performed": false,
+     "target": null
     },
     {
      "callee": "sleep",
@@ -2997,7 +3024,8 @@
       }
      },
      "caller": 6,
-     "performed": false
+     "performed": false,
+     "target": "asyncio.sleep"
     },
     {
      "callee": "slow-helper",
@@ -3014,7 +3042,8 @@
       }
      },
      "caller": 8,
-     "performed": false
+     "performed": false,
+     "target": "pkg.io_handlers.slow_helper"
     },
     {
      "callee": "loop-b",
@@ -3031,7 +3060,8 @@
       }
      },
      "caller": 9,
-     "performed": false
+     "performed": false,
+     "target": "pkg.io_handlers.loop_b"
     },
     {
      "callee": "loop-a",
@@ -3048,7 +3078,8 @@
       }
      },
      "caller": 10,
-     "performed": false
+     "performed": false,
+     "target": "pkg.io_handlers.loop_a"
     },
     {
      "callee": "run",
@@ -3065,7 +3096,8 @@
       }
      },
      "caller": 10,
-     "performed": false
+     "performed": false,
+     "target": "subprocess.run"
     },
     {
      "callee": "get",
@@ -3082,7 +3114,8 @@
       }
      },
      "caller": 11,
-     "performed": false
+     "performed": false,
+     "target": "os.environ.get"
     },
     {
      "callee": "Fetch",
@@ -3099,7 +3132,8 @@
       }
      },
      "caller": 12,
-     "performed": true
+     "performed": true,
+     "target": null
     },
     {
      "callee": "Store",
@@ -3116,7 +3150,8 @@
       }
      },
      "caller": 13,
-     "performed": true
+     "performed": true,
+     "target": null
     },
     {
      "callee": "get",
@@ -3133,7 +3168,8 @@
       }
      },
      "caller": 14,
-     "performed": false
+     "performed": false,
+     "target": "my_http_lib.get"
     },
     {
      "callee": "d2",
@@ -3150,7 +3186,8 @@
       }
      },
      "caller": 15,
-     "performed": false
+     "performed": false,
+     "target": "pkg.io_handlers.d2"
     },
     {
      "callee": "d3",
@@ -3167,7 +3204,8 @@
       }
      },
      "caller": 16,
-     "performed": false
+     "performed": false,
+     "target": "pkg.io_handlers.d3"
     },
     {
      "callee": "d4",
@@ -3184,7 +3222,8 @@
       }
      },
      "caller": 17,
-     "performed": false
+     "performed": false,
+     "target": "pkg.io_handlers.d4"
     },
     {
      "callee": "d5",
@@ -3201,7 +3240,8 @@
       }
      },
      "caller": 18,
-     "performed": false
+     "performed": false,
+     "target": "pkg.io_handlers.d5"
     },
     {
      "callee": "d6",
@@ -3218,7 +3258,8 @@
       }
      },
      "caller": 19,
-     "performed": false
+     "performed": false,
+     "target": "pkg.io_handlers.d6"
     },
     {
      "callee": "random",
@@ -3235,7 +3276,8 @@
       }
      },
      "caller": 19,
-     "performed": false
+     "performed": false,
+     "target": "random.random"
     },
     {
      "callee": "uuid4",
@@ -3252,7 +3294,8 @@
       }
      },
      "caller": 20,
-     "performed": false
+     "performed": false,
+     "target": "uuid.uuid4"
     },
     {
      "callee": "assoc",
@@ -3269,7 +3312,8 @@
       }
      },
      "caller": 22,
-     "performed": false
+     "performed": false,
+     "target": null
     }
    ],
    "errors": []
@@ -3281,6 +3325,7 @@
     {
      "name": "uses-open-var",
      "mangled": "uses_open_var",
+     "qualified_name": "pkg.plain_open.uses_open_var",
      "kind": "defk",
      "range": {
       "start": {
