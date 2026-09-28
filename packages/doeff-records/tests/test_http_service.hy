@@ -1,19 +1,21 @@
-;; 記録の service の HTTP の口: 身元(名簿に無い token の書きは Refused で何も変えない)・断りの status と本文・宣言に無い表・
-;; 置き場に届かない時の 503。置き場は memory(仮想の時計)— PostgreSQL の上の口は test_laws / test_parity の http-pg が確かめる。
-(require doeff-hy.macros [deftest defhandler defk val])
+;; 記録の service の HTTP の口: 身元(名簿に無い token は読み書きを問わず client が RecordsUnauthorized を上げ、何も変えない)・
+;; 断りの status と本文・宣言に無い表・置き場に届かない時の 503。置き場は memory(仮想の時計)— PostgreSQL の上の口は test_laws / test_parity の http-pg が確かめる。
+(require doeff-hy.macros [deftest defhandler defk deff val var])
 (import contextlib [contextmanager])
+(import http.server [BaseHTTPRequestHandler ThreadingHTTPServer])
 (import json)
+(import threading)
 (import urllib.error [HTTPError])
 (import urllib.request [Request urlopen])
-(import doeff [run with_handlers])
+(import doeff [EffectBase run with_handlers])
 (import doeff_core_effects.scheduler [scheduled])
 (import doeff_time [SimClock sim-time-handler])
-(import doeff_records.values [ExpectAbsent ExpectAny Missing Refused Unreachable UndeclaredTable Written Events WrittenRows RowsRefused])
+(import doeff_records.values [ExpectAbsent ExpectAny Missing Unreachable UndeclaredTable Written WrittenRows WatchCursor])
 (import doeff_records.effects [ReadRow ListRows PutRow PutRows RowWrite WatchChanges AppendEvent ReadEvents])
 (import doeff_records.laws [LAW-SCHEMA])
 (import doeff_records.memory [MemoryStore memory-records-handler])
-(import doeff_records.http_server [RecordsServerConfig start-records-server])
-(import doeff_records.http_client [RecordsEndpoint http-records-handler])
+(import doeff_records.http_server [RecordsServerConfig RunningServer start-records-server])
+(import doeff_records.http_client [RecordsEndpoint RecordsUnauthorized http-records-handler])
 (import tests.interpreters [LAW-TOKENS law-roster sim-runner])
 
 
@@ -48,17 +50,43 @@
     (except [error HTTPError] #(error.code (json.loads (.read error))))))
 
 
-(deftest test-a-write-by-a-token-outside-the-roster-is-refused-and-changes-nothing
-  (setv store (MemoryStore LAW-SCHEMA)
-        #(server clock) (open-service (memory-lease store)))
+(defk identity-refusal-of [server clock token program]
+  {:pre [(: server RunningServer) (: clock SimClock) (: token str) (: program EffectBase)] :post [(: % str)]
+   :tags {:context "records" :role "foundation"}}
+  "token の身元の client で program を走らせ、client の handler が RecordsUnauthorized を上げたことを確かめて、その文を返す
+   (答えの値を返せば赤 — 身元の断りを Unreachable や Refused の値に写す client を通さない)。"
+  (var answer None)
   (try
-    (setv put (run-as server clock "not-in-roster" (PutRow "parts" #("p1") {"label" "a"} (ExpectAbsent)))
-          append (run-as server clock "not-in-roster" (AppendEvent "journal" "k1" {"n" 1}))
-          read (run-as server clock "not-in-roster" (ReadRow "parts" #("p1"))))
-    (assert (isinstance put Refused) (repr put))
-    (assert (isinstance append Refused) (repr append))
-    (assert (isinstance read Unreachable) (repr read))
-    (setv maker (get LAW-TOKENS "maker"))
+    (:= answer (run-as server clock token program))
+    (except [error RecordsUnauthorized]
+      (return (str error))))
+  (raise (AssertionError (.format "身元の断りが答えの値になった: {!r}" answer))))
+
+
+(deftest test-a-token-outside-the-roster-raises-on-every-operation-and-changes-nothing
+  ;; 名簿に無い token は組み立ての誤り: 読みも書きも答えの値(Unreachable・Refused)にせず RecordsUnauthorized を上げる。読みを
+  ;; Unreachable に写していた時は、読み手が時間で晴れる届かなさと区別できず、token を誤った呼び手が読みを撃ち直し続けた。
+  ;; 文は口・status・操作を名指し、token そのものは写さない。1 行も書かない。
+  (val store (MemoryStore LAW-SCHEMA))
+  (val opened (open-service (memory-lease store)))
+  (val server (get opened 0))
+  (val clock (get opened 1))
+  (val maker (get LAW-TOKENS "maker"))
+  (val stranger "not-in-roster")
+  (try
+    (for [#(operation program) [#("read-row" (ReadRow "parts" #("p1")))
+                                 #("list-rows" (ListRows "parts"))
+                                 #("watch-changes" (WatchChanges #("parts") (WatchCursor 0 0) :timeout 0.0))
+                                 #("read-events" (ReadEvents "journal"))
+                                 #("put-row" (PutRow "parts" #("p1") {"label" "a"} (ExpectAbsent)))
+                                 #("append-event" (AppendEvent "journal" "k1" {"n" 1}))
+                                 #("put-rows" (PutRows #((RowWrite "parts" #("p1") {"label" "a"} (ExpectAbsent)))))]]
+      (val said (! (identity-refusal-of server clock stranger program)))
+      (assert (in (+ "(401 " operation ")") said) said)
+      (assert (in server.url said) said)
+      (assert (in "名簿に無い token" said) said)
+      (assert (not-in stranger said) said))
+    ;; 何も変えていない(名簿に在る書き手が読むと行も出来事も無い)。
     (assert (= (run-as server clock maker (ReadRow "parts" #("p1"))) (Missing)))
     (assert (= (. (run-as server clock maker (ReadEvents "journal")) items) #()))
     ;; 名簿に在る書き手の同じ書きは通る(断ったのは身元で、書きの形ではない)。
@@ -72,9 +100,8 @@
   #((get reply 0) (.get (get reply 1) "error")))
 
 
-(deftest test-a-put-rows-by-a-token-outside-the-roster-is-refused-at-the-first-row-and-changes-nothing
-  ;; 名簿に無い呼び手の束: 口は 401 で断り、client の handler は束の最初の行の RowsRefused にする(memory の handler で書き手でない呼び手の
-  ;; 束が最初の行で断られるのと同じ形)。1 行も書かない。
+(deftest test-a-put-rows-by-a-token-outside-the-roster-raises-and-writes-no-row
+  ;; 名簿に無い呼び手の束: 口は 401 unauthorized で断り(口の契約は変えない)、client の handler は RecordsUnauthorized を上げる。1 行も書かない。
   (val store (MemoryStore LAW-SCHEMA))
   (val opened (open-service (memory-lease store)))
   (val server (get opened 0))
@@ -82,8 +109,8 @@
   (val writes #((RowWrite "parts" #("p1") {"label" "a"} (ExpectAbsent)) (RowWrite "parts" #("p2") {"label" "b"} (ExpectAbsent))))
   (val maker (get LAW-TOKENS "maker"))
   (try
-    (val answer (run-as server clock "not-in-roster" (PutRows writes)))
-    (assert (and (isinstance answer RowsRefused) (= #(answer.index answer.table answer.key) #(0 "parts" #("p1")))) (repr answer))
+    (val said (! (identity-refusal-of server clock "not-in-roster" (PutRows writes))))
+    (assert (in "(401 put-rows)" said) said)
     (assert (= (run-as server clock maker (ReadRow "parts" #("p1"))) (Missing)))
     (assert (= (run-as server clock maker (ReadRow "parts" #("p2"))) (Missing)))
     (val refused (raw server "POST" "/v1/records/put-rows"
@@ -93,6 +120,62 @@
     ;; 名簿に在る書き手の同じ束は通る(断ったのは身元で、束の形ではない)。
     (assert (isinstance (run-as server clock maker (PutRows writes)) WrittenRows))
     (finally (.close server))))
+
+
+(defclass FrontRefusal [BaseHTTPRequestHandler]
+  "記録の service の前に立つ口の代役: どの要求にも server.status と本文 server.payload で答える(前に立つ口の身元の断りの本文は、
+   記録の service の JSON の断りとは限らない)。"
+  (deff do-POST [self]  ; defk にできない: http.server が要求ごとの thread で呼ぶ素の method
+    {:pre [(: self FrontRefusal)] :post [(: % None)] :tags {:context "records" :role "foundation"}}
+    (.read self.rfile (int (.get self.headers "Content-Length" "0")))
+    (.send-response self self.server.status)
+    (.send-header self "Content-Type" "text/html")
+    (.send-header self "Content-Length" (str (len self.server.payload)))
+    (.end-headers self)
+    (.write self.wfile self.server.payload)
+    None)
+  (deff log-message [self #* args]  ; defk にできない: http.server が要求ごとに呼ぶ log の口(検の出力を要求の行で埋めない)
+    {:pre [(: self FrontRefusal) (: args tuple)] :post [(: % None)] :tags {:context "records" :role "foundation"}}
+    None))
+
+
+(defk front-refusal-server [status payload]
+  {:pre [(: status int) (: payload bytes)] :post [(: % ThreadingHTTPServer)] :tags {:context "records" :role "foundation"}}
+  "前に立つ口の代役(127.0.0.1 の空き port)を立てるため: どの要求にも status と HTML の本文 payload で答える。"
+  (val server (ThreadingHTTPServer #("127.0.0.1" 0) FrontRefusal))
+  (setv server.status status server.payload payload)
+  (.start (threading.Thread :target server.serve-forever :daemon True))
+  server)
+
+
+(deftest test-an-identity-refusal-with-a-non-json-body-raises-by-status
+  ;; 前に立つ口の 401 / 403 は本文が HTML でも status で身元の断りと読む(本文を JSON として読んで WireError にしない)。
+  ;; 送り方を問わない(BlockingTransport・EffectTransport)。理由は本文の頭だけを写す。
+  (import doeff_core_effects.handlers [await-handler])
+  (import doeff_core_effects.http_handlers [http-production-handler])
+  (import doeff_records.http_client [EffectTransport])
+  (val page (+ b"<html><body>" (* b"x" 2000) b"</body></html>"))
+  (for [status [401 403]]
+    (val server (! (front-refusal-server status page)))
+    (val url (+ "http://127.0.0.1:" (str (get server.server-address 1))))
+    (try
+      (for [transport [None (EffectTransport)]]
+        (val endpoint (if (is transport None)
+                          (RecordsEndpoint url "t" :request-timeout 5.0)
+                          (RecordsEndpoint url "t" :request-timeout 5.0 :transport transport)))
+        (var said None)
+        (try
+          (run (scheduled (with_handlers [(await-handler) (http-production-handler) (sim-time-handler :clock (SimClock))
+                                          (http-records-handler endpoint)]
+                                         (ReadRow "parts" #("p1")))))
+          (except [error RecordsUnauthorized]
+            (:= said (str error))))
+        (assert (is-not said None) (.format "{} の前の口の断りが答えの値になった({!r})" status transport))
+        (assert (in (.format "({} read-row)" status) said) said)
+        (assert (in "<html>" said) said)
+        (assert (< (len said) 1000) said))
+      (finally (.shutdown server) (.server-close server)))))
+
 
 
 (deftest test-put-rows-refusals-carry-the-contract-status
@@ -170,6 +253,8 @@
   (try
     (setv #(status body) (raw server "POST" "/v1/records/read-row" :body {"table" "parts" "key" ["p1"]} :token maker))
     (assert (and (= status 503) (= (get body "error") "store-unavailable")) (repr body))
+    ;; 読みの 503 も今までどおり Unreachable の値(時間で晴れる届かなさ — 身元の断りとは別の答え)。
+    (assert (= (run-as server clock maker (ReadRow "parts" #("p1"))) (Unreachable "置き場が落ちている(検の代役)")))
     (assert (= (run-as server clock maker (PutRow "parts" #("p1") {"label" "a"} (ExpectAbsent)))
                (Unreachable "置き場が落ちている(検の代役)")))
     (finally (.close server))))
