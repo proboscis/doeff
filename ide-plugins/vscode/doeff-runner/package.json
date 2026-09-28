@@ -62,7 +62,9 @@
     "onView:doeff-hy-current-file",
     "onView:doeff-lint-violations",
     "onView:doeff-lint-map",
-    "onView:doeff-hy-browse"
+    "onView:doeff-hy-browse",
+    "onCustomEditor:doeff-runner.readingPlane",
+    "onCommand:doeff-runner.read.open"
   ],
   "main": "./out/extension.js",
   "contributes": {
@@ -410,6 +412,12 @@
         "icon": "$(layers)"
       },
       {
+        "command": "doeff-runner.read.open",
+        "title": "定義を読む面で開く",
+        "category": "doeff",
+        "icon": "$(book)"
+      },
+      {
         "command": "doeff-runner.browse.pickView",
         "title": "保存した見方を選ぶ",
         "icon": "$(bookmark)"
@@ -518,6 +526,11 @@
           "type": "boolean",
           "default": true,
           "markdownDescription": "linter の違反のある行の末尾に、重さごとの色で短い文(● 規則 文)を出す。行の左端の印と右端のスクロールバーの印は常に出す。"
+        },
+        "doeff-runner.hy.readingPlane.enabled": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "定義を読む面(webview)を使う。定義 1 つを 1 枚のカードにし、kind と `:tags` の軸で絞る。切ると今の装飾と「タグで閲覧」だけになる(agora-redesign #910)。"
         },
         "doeff-runner.hy.browseViews": {
           "type": "array",
@@ -697,7 +710,26 @@
         }
       }
     },
+    "customEditors": [
+      {
+        "viewType": "doeff-runner.readingPlane",
+        "displayName": "定義を読む面(doeff)",
+        "selector": [
+          {
+            "filenamePattern": "*.hy"
+          }
+        ],
+        "priority": "option"
+      }
+    ],
     "menus": {
+      "editor/title": [
+        {
+          "command": "doeff-runner.read.open",
+          "when": "resourceExtname == .hy && config.doeff-runner.hy.readingPlane.enabled && activeCustomEditorId != doeff-runner.readingPlane",
+          "group": "navigation"
+        }
+      ],
       "view/title": [
         {
           "command": "doeff-runner.toggleDebugMode",

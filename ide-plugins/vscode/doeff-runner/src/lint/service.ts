@@ -117,6 +117,14 @@ export class LintService implements vscode.Disposable {
     this.lintUnseen(vscode.window.visibleTextEditors.map((e) => e.document));
   }
 
+  /**
+   * text editor に出ていない document の見出しと束縛を聞く — 定義を読む面(webview)で開いた file は visible な text editor に
+   * 数えられないので、面が開いた時にここを呼んで型と effect の材料を取らせる(agora-redesign #910)。
+   */
+  watch(document: vscode.TextDocument): void {
+    this.lintUnseen([document]);
+  }
+
   /** 見出しをまだ聞いていない(か、版が古い)Hy の document を聞く。 */
   private lintUnseen(documents: readonly vscode.TextDocument[]): void {
     for (const document of documents) {

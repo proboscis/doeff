@@ -20,6 +20,7 @@ import {
 import { multiTokenFuzzyMatch } from './search';
 import { registerHyNavigation } from './hy/register';
 import { registerLint } from './lint/register';
+import { registerReadingPlane } from './read/panel';
 import { registerBrowse } from './hy/browsePanel';
 import { registerDefkView } from './defk/view';
 import { registerCallSyntaxView } from './defk/callView';
@@ -2929,9 +2930,12 @@ export function activate(context: vscode.ExtensionContext) {
   const pixelIcons = PixelIcons.load(context.extensionPath, output);
   const treePixels = (): IconSource | undefined => (treeIconsEnabled() ? pixelIcons : undefined);
   // doeff-linter's findings (the linter is the source of truth; the editor only displays them).
-  const lintStore = registerLint(context, output, { tree: treePixels, ownsGutter: pixelOwnsGutter, icons: pixelIcons });
+  const lint = registerLint(context, output, { tree: treePixels, ownsGutter: pixelOwnsGutter, icons: pixelIcons });
+  const lintStore = lint.store;
   // Browse definitions by service / layer / tags (display only).
   registerBrowse(context, hyStore, hyNavigation.status, lintStore, output, treePixels);
+  // 定義を読む面(webview)— 定義 1 つを 1 枚のカードにし、kind と :tags の軸で絞る。定義の一覧は hy-index だけから(agora-redesign #910)
+  registerReadingPlane(context, hyStore, hyNavigation.status, lintStore, pixelIcons, lint.watch);
   // エディタの上の pixel art(gutter の種類の icon と状態の印・決まった語の文字の置き換えと hover・状態バーの doe)
   // defk の見出し(型の流れ・effect・tags)と束縛の型 — linter の editor-json 版 2 を読むだけの表示(agora-redesign #849)
   const defkView = registerDefkView(context, lintStore, (name) => pixelIcons.sprite(name), output);

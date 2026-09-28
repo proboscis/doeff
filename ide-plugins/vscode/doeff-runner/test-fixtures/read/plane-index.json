@@ -1,0 +1,1209 @@
+{
+  "version": 4,
+  "root": "/repo",
+  "files": [
+    {
+      "path": "/repo/pkg/plane.hy",
+      "module": "pkg.plane",
+      "definitions": [
+        {
+          "name": "LIMIT",
+          "mangled": "LIMIT",
+          "qualified_name": "pkg.plane.LIMIT",
+          "kind": "variable",
+          "range": {
+            "start": {
+              "line": 3,
+              "character": 5
+            },
+            "end": {
+              "line": 3,
+              "character": 10
+            }
+          },
+          "full_range": {
+            "start": {
+              "line": 3,
+              "character": 0
+            },
+            "end": {
+              "line": 3,
+              "character": 13
+            }
+          },
+          "container": null,
+          "docstring": null,
+          "params": [],
+          "bases": [],
+          "raw": {
+            "direct": [],
+            "via": []
+          },
+          "tags": null
+        },
+        {
+          "name": "Row",
+          "mangled": "Row",
+          "qualified_name": "pkg.plane.Row",
+          "kind": "defrecord",
+          "range": {
+            "start": {
+              "line": 6,
+              "character": 11
+            },
+            "end": {
+              "line": 6,
+              "character": 14
+            }
+          },
+          "full_range": {
+            "start": {
+              "line": 6,
+              "character": 0
+            },
+            "end": {
+              "line": 9,
+              "character": 16
+            }
+          },
+          "container": null,
+          "docstring": "読んだ 1 行。",
+          "params": [],
+          "bases": [],
+          "raw": {
+            "direct": [],
+            "via": []
+          },
+          "tags": null
+        },
+        {
+          "name": "key",
+          "mangled": "key",
+          "qualified_name": "pkg.plane.Row.key",
+          "kind": "field",
+          "range": {
+            "start": {
+              "line": 8,
+              "character": 10
+            },
+            "end": {
+              "line": 8,
+              "character": 13
+            }
+          },
+          "full_range": {
+            "start": {
+              "line": 8,
+              "character": 2
+            },
+            "end": {
+              "line": 8,
+              "character": 14
+            }
+          },
+          "container": "Row",
+          "docstring": null,
+          "params": [],
+          "bases": [],
+          "raw": {
+            "direct": [],
+            "via": []
+          },
+          "tags": null
+        },
+        {
+          "name": "text",
+          "mangled": "text",
+          "qualified_name": "pkg.plane.Row.text",
+          "kind": "field",
+          "range": {
+            "start": {
+              "line": 9,
+              "character": 10
+            },
+            "end": {
+              "line": 9,
+              "character": 14
+            }
+          },
+          "full_range": {
+            "start": {
+              "line": 9,
+              "character": 2
+            },
+            "end": {
+              "line": 9,
+              "character": 15
+            }
+          },
+          "container": "Row",
+          "docstring": null,
+          "params": [],
+          "bases": [],
+          "raw": {
+            "direct": [],
+            "via": []
+          },
+          "tags": null
+        },
+        {
+          "name": "fetch-row",
+          "mangled": "fetch_row",
+          "qualified_name": "pkg.plane.fetch_row",
+          "kind": "defk",
+          "range": {
+            "start": {
+              "line": 12,
+              "character": 6
+            },
+            "end": {
+              "line": 12,
+              "character": 15
+            }
+          },
+          "full_range": {
+            "start": {
+              "line": 12,
+              "character": 0
+            },
+            "end": {
+              "line": 17,
+              "character": 6
+            }
+          },
+          "container": null,
+          "docstring": "鍵の行を読むため。",
+          "params": [
+            "key"
+          ],
+          "bases": [],
+          "raw": {
+            "direct": [],
+            "via": []
+          },
+          "tags": {
+            "context": "messaging",
+            "owner": "input",
+            "role": "program"
+          }
+        },
+        {
+          "name": "row-text",
+          "mangled": "row_text",
+          "qualified_name": "pkg.plane.row_text",
+          "kind": "deff",
+          "range": {
+            "start": {
+              "line": 20,
+              "character": 6
+            },
+            "end": {
+              "line": 20,
+              "character": 14
+            }
+          },
+          "full_range": {
+            "start": {
+              "line": 20,
+              "character": 0
+            },
+            "end": {
+              "line": 23,
+              "character": 11
+            }
+          },
+          "container": null,
+          "docstring": "行の文字を返すため。",
+          "params": [
+            "row"
+          ],
+          "bases": [],
+          "raw": {
+            "direct": [],
+            "via": []
+          },
+          "tags": {
+            "context": "messaging",
+            "role": "judgment"
+          }
+        },
+        {
+          "name": "shout",
+          "mangled": "shout",
+          "qualified_name": "pkg.plane.shout",
+          "kind": "defk",
+          "range": {
+            "start": {
+              "line": 26,
+              "character": 6
+            },
+            "end": {
+              "line": 26,
+              "character": 11
+            }
+          },
+          "full_range": {
+            "start": {
+              "line": 26,
+              "character": 0
+            },
+            "end": {
+              "line": 31,
+              "character": 26
+            }
+          },
+          "container": null,
+          "docstring": "行を大きな字で見せるため。",
+          "params": [
+            "key"
+          ],
+          "bases": [],
+          "raw": {
+            "direct": [],
+            "via": []
+          },
+          "tags": {
+            "context": "screen",
+            "owner": "screen",
+            "role": "judgment"
+          }
+        },
+        {
+          "name": "test-row-text-is-the-text",
+          "mangled": "test_row_text_is_the_text",
+          "qualified_name": "pkg.plane.test_row_text_is_the_text",
+          "kind": "deftest",
+          "range": {
+            "start": {
+              "line": 34,
+              "character": 9
+            },
+            "end": {
+              "line": 34,
+              "character": 34
+            }
+          },
+          "full_range": {
+            "start": {
+              "line": 34,
+              "character": 0
+            },
+            "end": {
+              "line": 35,
+              "character": 55
+            }
+          },
+          "container": null,
+          "docstring": null,
+          "params": [],
+          "bases": [],
+          "raw": {
+            "direct": [],
+            "via": []
+          },
+          "tags": null
+        }
+      ],
+      "imports": [
+        {
+          "module": "doeff-hy.macros",
+          "name": "defk",
+          "alias": null,
+          "range": {
+            "start": {
+              "line": 1,
+              "character": 26
+            },
+            "end": {
+              "line": 1,
+              "character": 30
+            }
+          },
+          "is_require": true
+        },
+        {
+          "module": "doeff-hy.macros",
+          "name": "deff",
+          "alias": null,
+          "range": {
+            "start": {
+              "line": 1,
+              "character": 31
+            },
+            "end": {
+              "line": 1,
+              "character": 35
+            }
+          },
+          "is_require": true
+        },
+        {
+          "module": "doeff-hy.macros",
+          "name": "defrecord",
+          "alias": null,
+          "range": {
+            "start": {
+              "line": 1,
+              "character": 36
+            },
+            "end": {
+              "line": 1,
+              "character": 45
+            }
+          },
+          "is_require": true
+        },
+        {
+          "module": "doeff-hy.macros",
+          "name": "deftest",
+          "alias": null,
+          "range": {
+            "start": {
+              "line": 1,
+              "character": 46
+            },
+            "end": {
+              "line": 1,
+              "character": 53
+            }
+          },
+          "is_require": true
+        },
+        {
+          "module": "doeff-hy.macros",
+          "name": "<-",
+          "alias": null,
+          "range": {
+            "start": {
+              "line": 1,
+              "character": 54
+            },
+            "end": {
+              "line": 1,
+              "character": 56
+            }
+          },
+          "is_require": true
+        },
+        {
+          "module": "doeff-hy.macros",
+          "name": "val",
+          "alias": null,
+          "range": {
+            "start": {
+              "line": 1,
+              "character": 57
+            },
+            "end": {
+              "line": 1,
+              "character": 60
+            }
+          },
+          "is_require": true
+        }
+      ],
+      "references": [
+        {
+          "name": "doeff-hy",
+          "mangled": "doeff_hy",
+          "qualifier": null,
+          "range": {
+            "start": {
+              "line": 1,
+              "character": 9
+            },
+            "end": {
+              "line": 1,
+              "character": 17
+            }
+          }
+        },
+        {
+          "name": "macros",
+          "mangled": "macros",
+          "qualifier": "doeff-hy",
+          "range": {
+            "start": {
+              "line": 1,
+              "character": 18
+            },
+            "end": {
+              "line": 1,
+              "character": 24
+            }
+          }
+        },
+        {
+          "name": "defk",
+          "mangled": "defk",
+          "qualifier": null,
+          "range": {
+            "start": {
+              "line": 1,
+              "character": 26
+            },
+            "end": {
+              "line": 1,
+              "character": 30
+            }
+          }
+        },
+        {
+          "name": "deff",
+          "mangled": "deff",
+          "qualifier": null,
+          "range": {
+            "start": {
+              "line": 1,
+              "character": 31
+            },
+            "end": {
+              "line": 1,
+              "character": 35
+            }
+          }
+        },
+        {
+          "name": "defrecord",
+          "mangled": "defrecord",
+          "qualifier": null,
+          "range": {
+            "start": {
+              "line": 1,
+              "character": 36
+            },
+            "end": {
+              "line": 1,
+              "character": 45
+            }
+          }
+        },
+        {
+          "name": "deftest",
+          "mangled": "deftest",
+          "qualifier": null,
+          "range": {
+            "start": {
+              "line": 1,
+              "character": 46
+            },
+            "end": {
+              "line": 1,
+              "character": 53
+            }
+          }
+        },
+        {
+          "name": "val",
+          "mangled": "val",
+          "qualifier": null,
+          "range": {
+            "start": {
+              "line": 1,
+              "character": 57
+            },
+            "end": {
+              "line": 1,
+              "character": 60
+            }
+          }
+        },
+        {
+          "name": "LIMIT",
+          "mangled": "LIMIT",
+          "qualifier": null,
+          "range": {
+            "start": {
+              "line": 3,
+              "character": 5
+            },
+            "end": {
+              "line": 3,
+              "character": 10
+            }
+          }
+        },
+        {
+          "name": "Row",
+          "mangled": "Row",
+          "qualifier": null,
+          "range": {
+            "start": {
+              "line": 6,
+              "character": 11
+            },
+            "end": {
+              "line": 6,
+              "character": 14
+            }
+          }
+        },
+        {
+          "name": "str",
+          "mangled": "str",
+          "qualifier": null,
+          "range": {
+            "start": {
+              "line": 8,
+              "character": 6
+            },
+            "end": {
+              "line": 8,
+              "character": 9
+            }
+          }
+        },
+        {
+          "name": "key",
+          "mangled": "key",
+          "qualifier": null,
+          "range": {
+            "start": {
+              "line": 8,
+              "character": 10
+            },
+            "end": {
+              "line": 8,
+              "character": 13
+            }
+          }
+        },
+        {
+          "name": "str",
+          "mangled": "str",
+          "qualifier": null,
+          "range": {
+            "start": {
+              "line": 9,
+              "character": 6
+            },
+            "end": {
+              "line": 9,
+              "character": 9
+            }
+          }
+        },
+        {
+          "name": "text",
+          "mangled": "text",
+          "qualifier": null,
+          "range": {
+            "start": {
+              "line": 9,
+              "character": 10
+            },
+            "end": {
+              "line": 9,
+              "character": 14
+            }
+          }
+        },
+        {
+          "name": "fetch-row",
+          "mangled": "fetch_row",
+          "qualifier": null,
+          "range": {
+            "start": {
+              "line": 12,
+              "character": 6
+            },
+            "end": {
+              "line": 12,
+              "character": 15
+            }
+          }
+        },
+        {
+          "name": "key",
+          "mangled": "key",
+          "qualifier": null,
+          "range": {
+            "start": {
+              "line": 12,
+              "character": 17
+            },
+            "end": {
+              "line": 12,
+              "character": 20
+            }
+          }
+        },
+        {
+          "name": "key",
+          "mangled": "key",
+          "qualifier": null,
+          "range": {
+            "start": {
+              "line": 13,
+              "character": 12
+            },
+            "end": {
+              "line": 13,
+              "character": 15
+            }
+          }
+        },
+        {
+          "name": "str",
+          "mangled": "str",
+          "qualifier": null,
+          "range": {
+            "start": {
+              "line": 13,
+              "character": 16
+            },
+            "end": {
+              "line": 13,
+              "character": 19
+            }
+          }
+        },
+        {
+          "name": "Row",
+          "mangled": "Row",
+          "qualifier": null,
+          "range": {
+            "start": {
+              "line": 13,
+              "character": 34
+            },
+            "end": {
+              "line": 13,
+              "character": 37
+            }
+          }
+        },
+        {
+          "name": "ReadInput",
+          "mangled": "ReadInput",
+          "qualifier": null,
+          "range": {
+            "start": {
+              "line": 14,
+              "character": 13
+            },
+            "end": {
+              "line": 14,
+              "character": 22
+            }
+          }
+        },
+        {
+          "name": "row",
+          "mangled": "row",
+          "qualifier": null,
+          "range": {
+            "start": {
+              "line": 16,
+              "character": 6
+            },
+            "end": {
+              "line": 16,
+              "character": 9
+            }
+          }
+        },
+        {
+          "name": "Row",
+          "mangled": "Row",
+          "qualifier": null,
+          "range": {
+            "start": {
+              "line": 16,
+              "character": 10
+            },
+            "end": {
+              "line": 16,
+              "character": 13
+            }
+          }
+        },
+        {
+          "name": "ReadInput",
+          "mangled": "ReadInput",
+          "qualifier": null,
+          "range": {
+            "start": {
+              "line": 16,
+              "character": 15
+            },
+            "end": {
+              "line": 16,
+              "character": 24
+            }
+          }
+        },
+        {
+          "name": "key",
+          "mangled": "key",
+          "qualifier": null,
+          "range": {
+            "start": {
+              "line": 16,
+              "character": 25
+            },
+            "end": {
+              "line": 16,
+              "character": 28
+            }
+          }
+        },
+        {
+          "name": "row",
+          "mangled": "row",
+          "qualifier": null,
+          "range": {
+            "start": {
+              "line": 17,
+              "character": 2
+            },
+            "end": {
+              "line": 17,
+              "character": 5
+            }
+          }
+        },
+        {
+          "name": "row-text",
+          "mangled": "row_text",
+          "qualifier": null,
+          "range": {
+            "start": {
+              "line": 20,
+              "character": 6
+            },
+            "end": {
+              "line": 20,
+              "character": 14
+            }
+          }
+        },
+        {
+          "name": "row",
+          "mangled": "row",
+          "qualifier": null,
+          "range": {
+            "start": {
+              "line": 20,
+              "character": 16
+            },
+            "end": {
+              "line": 20,
+              "character": 19
+            }
+          }
+        },
+        {
+          "name": "row",
+          "mangled": "row",
+          "qualifier": null,
+          "range": {
+            "start": {
+              "line": 21,
+              "character": 12
+            },
+            "end": {
+              "line": 21,
+              "character": 15
+            }
+          }
+        },
+        {
+          "name": "Row",
+          "mangled": "Row",
+          "qualifier": null,
+          "range": {
+            "start": {
+              "line": 21,
+              "character": 16
+            },
+            "end": {
+              "line": 21,
+              "character": 19
+            }
+          }
+        },
+        {
+          "name": "str",
+          "mangled": "str",
+          "qualifier": null,
+          "range": {
+            "start": {
+              "line": 21,
+              "character": 34
+            },
+            "end": {
+              "line": 21,
+              "character": 37
+            }
+          }
+        },
+        {
+          "name": "row",
+          "mangled": "row",
+          "qualifier": null,
+          "range": {
+            "start": {
+              "line": 23,
+              "character": 2
+            },
+            "end": {
+              "line": 23,
+              "character": 5
+            }
+          }
+        },
+        {
+          "name": "text",
+          "mangled": "text",
+          "qualifier": "row",
+          "range": {
+            "start": {
+              "line": 23,
+              "character": 6
+            },
+            "end": {
+              "line": 23,
+              "character": 10
+            }
+          }
+        },
+        {
+          "name": "shout",
+          "mangled": "shout",
+          "qualifier": null,
+          "range": {
+            "start": {
+              "line": 26,
+              "character": 6
+            },
+            "end": {
+              "line": 26,
+              "character": 11
+            }
+          }
+        },
+        {
+          "name": "key",
+          "mangled": "key",
+          "qualifier": null,
+          "range": {
+            "start": {
+              "line": 26,
+              "character": 13
+            },
+            "end": {
+              "line": 26,
+              "character": 16
+            }
+          }
+        },
+        {
+          "name": "key",
+          "mangled": "key",
+          "qualifier": null,
+          "range": {
+            "start": {
+              "line": 27,
+              "character": 12
+            },
+            "end": {
+              "line": 27,
+              "character": 15
+            }
+          }
+        },
+        {
+          "name": "str",
+          "mangled": "str",
+          "qualifier": null,
+          "range": {
+            "start": {
+              "line": 27,
+              "character": 16
+            },
+            "end": {
+              "line": 27,
+              "character": 19
+            }
+          }
+        },
+        {
+          "name": "str",
+          "mangled": "str",
+          "qualifier": null,
+          "range": {
+            "start": {
+              "line": 27,
+              "character": 34
+            },
+            "end": {
+              "line": 27,
+              "character": 37
+            }
+          }
+        },
+        {
+          "name": "ReadInput",
+          "mangled": "ReadInput",
+          "qualifier": null,
+          "range": {
+            "start": {
+              "line": 28,
+              "character": 13
+            },
+            "end": {
+              "line": 28,
+              "character": 22
+            }
+          }
+        },
+        {
+          "name": "row",
+          "mangled": "row",
+          "qualifier": null,
+          "range": {
+            "start": {
+              "line": 30,
+              "character": 6
+            },
+            "end": {
+              "line": 30,
+              "character": 9
+            }
+          }
+        },
+        {
+          "name": "Row",
+          "mangled": "Row",
+          "qualifier": null,
+          "range": {
+            "start": {
+              "line": 30,
+              "character": 10
+            },
+            "end": {
+              "line": 30,
+              "character": 13
+            }
+          }
+        },
+        {
+          "name": "fetch-row",
+          "mangled": "fetch_row",
+          "qualifier": null,
+          "range": {
+            "start": {
+              "line": 30,
+              "character": 15
+            },
+            "end": {
+              "line": 30,
+              "character": 24
+            }
+          }
+        },
+        {
+          "name": "key",
+          "mangled": "key",
+          "qualifier": null,
+          "range": {
+            "start": {
+              "line": 30,
+              "character": 25
+            },
+            "end": {
+              "line": 30,
+              "character": 28
+            }
+          }
+        },
+        {
+          "name": "upper",
+          "mangled": "upper",
+          "qualifier": null,
+          "range": {
+            "start": {
+              "line": 31,
+              "character": 4
+            },
+            "end": {
+              "line": 31,
+              "character": 9
+            }
+          }
+        },
+        {
+          "name": "row-text",
+          "mangled": "row_text",
+          "qualifier": null,
+          "range": {
+            "start": {
+              "line": 31,
+              "character": 11
+            },
+            "end": {
+              "line": 31,
+              "character": 19
+            }
+          }
+        },
+        {
+          "name": "row",
+          "mangled": "row",
+          "qualifier": null,
+          "range": {
+            "start": {
+              "line": 31,
+              "character": 20
+            },
+            "end": {
+              "line": 31,
+              "character": 23
+            }
+          }
+        },
+        {
+          "name": "test-row-text-is-the-text",
+          "mangled": "test_row_text_is_the_text",
+          "qualifier": null,
+          "range": {
+            "start": {
+              "line": 34,
+              "character": 9
+            },
+            "end": {
+              "line": 34,
+              "character": 34
+            }
+          }
+        },
+        {
+          "name": "row-text",
+          "mangled": "row_text",
+          "qualifier": null,
+          "range": {
+            "start": {
+              "line": 35,
+              "character": 14
+            },
+            "end": {
+              "line": 35,
+              "character": 22
+            }
+          }
+        },
+        {
+          "name": "Row",
+          "mangled": "Row",
+          "qualifier": null,
+          "range": {
+            "start": {
+              "line": 35,
+              "character": 24
+            },
+            "end": {
+              "line": 35,
+              "character": 27
+            }
+          }
+        }
+      ],
+      "calls": [
+        {
+          "callee": "ReadInput",
+          "mangled": "ReadInput",
+          "qualifier": null,
+          "range": {
+            "start": {
+              "line": 16,
+              "character": 15
+            },
+            "end": {
+              "line": 16,
+              "character": 24
+            }
+          },
+          "caller": 4,
+          "performed": true,
+          "target": null
+        },
+        {
+          "callee": "fetch-row",
+          "mangled": "fetch_row",
+          "qualifier": null,
+          "range": {
+            "start": {
+              "line": 30,
+              "character": 15
+            },
+            "end": {
+              "line": 30,
+              "character": 24
+            }
+          },
+          "caller": 6,
+          "performed": true,
+          "target": "pkg.plane.fetch_row"
+        },
+        {
+          "callee": "row-text",
+          "mangled": "row_text",
+          "qualifier": null,
+          "range": {
+            "start": {
+              "line": 31,
+              "character": 11
+            },
+            "end": {
+              "line": 31,
+              "character": 19
+            }
+          },
+          "caller": 6,
+          "performed": false,
+          "target": "pkg.plane.row_text"
+        },
+        {
+          "callee": "row-text",
+          "mangled": "row_text",
+          "qualifier": null,
+          "range": {
+            "start": {
+              "line": 35,
+              "character": 14
+            },
+            "end": {
+              "line": 35,
+              "character": 22
+            }
+          },
+          "caller": 7,
+          "performed": false,
+          "target": "pkg.plane.row_text"
+        },
+        {
+          "callee": "Row",
+          "mangled": "Row",
+          "qualifier": null,
+          "range": {
+            "start": {
+              "line": 35,
+              "character": 24
+            },
+            "end": {
+              "line": 35,
+              "character": 27
+            }
+          },
+          "caller": 7,
+          "performed": false,
+          "target": "pkg.plane.Row"
+        }
+      ],
+      "errors": []
+    }
+  ],
+  "raw_via": "not-computed",
+  "raw_catalog_problems": []
+}

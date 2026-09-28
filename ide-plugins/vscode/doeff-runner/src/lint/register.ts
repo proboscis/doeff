@@ -42,12 +42,19 @@ function lintCommandFor(root: string): string {
   return typeof value === 'string' ? value : '';
 }
 
-/** (結果の置き場を返す — 「タグで閲覧」が読む)linter の波線・「違反(linter)」・「層の地図(linter)」を登録し、linter に聞き始める。 */
+/** registerLint が返す口 — 結果の置き場と、text editor に出ていない document を linter に聞かせる口。 */
+export interface LintRegistration {
+  readonly store: LintStore;
+  /** 定義を読む面で開いた document の見出しと束縛を聞かせる(agora-redesign #910) */
+  readonly watch: (document: vscode.TextDocument) => void;
+}
+
+/** (結果の置き場を返す — 「タグで閲覧」と定義を読む面が読む)linter の波線・「違反(linter)」・「層の地図(linter)」を登録し、linter に聞き始める。 */
 export function registerLint(
   context: vscode.ExtensionContext,
   output: vscode.OutputChannel,
   pixel: { readonly tree: TreePixels; readonly ownsGutter: (document: vscode.TextDocument) => boolean; readonly icons: IconSource }
-): LintStore {
+): LintRegistration {
   const store = new LintStore();
   const linter = new ChildProcessLinter(lintCommandFor, LINT_TIMEOUT_MS);
   const diagnostics = vscode.languages.createDiagnosticCollection('doeff-linter');
@@ -187,5 +194,5 @@ export function registerLint(
   );
   decorations.start();
   service.start();
-  return store;
+  return { store, watch: (document) => service.watch(document) };
 }
