@@ -2,9 +2,9 @@
 ;;; 載った型だけを外へ通す(載っていなければ本番の子と同じ未処理で落ちる)。
 (require doeff-hy.macros [deftest defk <- val])
 (import doeff_time [Delay])
-(import doeff_cluster.local [sim-cluster SimOutside ProcessOutside ProcessesOf])
+(import doeff_cluster.local [sim-cluster SimOutside SimWorker ProcessOutside ProcessesOf KillWorker])
 (import tests.fixtures.envs [sim-foundation])
-(import tests.fixtures.outside_programs [shared-store memory-store signed-puts StorePut StoreGet])
+(import tests.fixtures.outside_programs [shared-store last-words memory-store signed-puts StorePut StoreGet])
 
 
 (defk wait-seconds [seconds]
@@ -60,3 +60,25 @@
                                                                            (ProcessOutside :handlers #()))))))
   (assert (>= (.get rows "count" 0) 10) rows)
   (assert (any (gfor p processes (and (is-not p.exit-code None) (!= p.exit-code 0) (in "StoreGet" p.detail)))) processes))
+
+
+(defk kill-the-speaker [worker]
+  {:pre [(: worker str)] :post [(: % tuple)] :tags {:context "doeff-cluster-test" :role "program"}}
+  "10 秒待って worker を殺し、さらに 10 秒待って speaker の process を読む。"
+  (<- (Delay 10.0))
+  (<- (KillWorker worker))
+  (<- (Delay 10.0))
+  (<- processes tuple (ProcessesOf "speaker"))
+  processes)
+
+
+(deftest test-a-process-killed-with-its-worker-reaches-nothing-while-it-unwinds
+  ;; 本物の機体の死では、落ちた process の後始末から何も届かない。sim でも、殺された process の取り消しの巻き戻しの中の effect
+  ;; (finally の StorePut)は外の世界に届かない(dead-process-gate)。
+  (val rows {})
+  (<- processes tuple (sim-cluster (last-words sim-foundation) (kill-the-speaker "w1")
+                                   :workers #((SimWorker :name "w1" :provides (frozenset ["cluster-net"])))
+                                   :outside (SimOutside :handlers [(memory-store rows)] :effects #(StorePut StoreGet))))
+  (assert (>= (.get rows "count" 0) 5) rows)
+  (assert (not-in "last-words" rows) rows)
+  (assert (any (gfor p processes (= p.exit-code -9))) processes))
