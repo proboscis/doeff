@@ -714,7 +714,7 @@ class _Scope:
         value = self.local_values.get(name)
         if not isinstance(value, ast.Call):
             return UNBOUND
-        if any(isinstance(n, ast.Name) and n.id == name for n in ast.walk(value.func)):
+        if _mentions(value.func, name):
             return UNBOUND
         cls = self.resolve(value.func)
         if (
@@ -725,6 +725,11 @@ class _Scope:
         ):
             return _Instance(cls)
         return UNBOUND
+
+
+def _mentions(expr: ast.AST, name: str) -> bool:
+    """Whether ``expr`` reads the name ``name`` anywhere inside it."""
+    return any(isinstance(node, ast.Name) and node.id == name for node in ast.walk(expr))
 
 
 def _builtins_of(module: types.ModuleType) -> dict[str, Any]:
@@ -883,7 +888,16 @@ def _scope_of(
             functions.setdefault(node.name, []).append(node)
     # A local bound exactly once can be followed through what it was bound to.
     values = {name: exprs[0] for name, exprs in assigned.items() if len(exprs) == 1}
-    local_calls = {name: value for name, value in values.items() if isinstance(value, ast.Call)}
+    # A call that reads the name it is bound to (``state = replace(state, ...)``) is not
+    # the value of that name inside the call: following it would read the call as its
+    # own argument without end.  The name still holds the call after the assignment,
+    # but where it came from is the earlier value, so it is not followed (as
+    # ``_local_instance`` refuses ``x = x.method()``).
+    local_calls = {
+        name: value
+        for name, value in values.items()
+        if isinstance(value, ast.Call) and not _mentions(value, name)
+    }
     local_functions = {name: nodes[0] for name, nodes in functions.items() if len(nodes) == 1}
     # A parameter rebound in the body no longer holds what the caller passed.
     own_bound = bound.without(frozenset(assigned))
