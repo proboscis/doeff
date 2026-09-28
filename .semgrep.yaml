@@ -5273,3 +5273,57 @@ rules:
           - pattern-not-inside: os.get_exec_path(dict($ENV))
           - pattern-not-inside: os.get_exec_path($ENV)
           - pattern-not-inside: driver_path_in($WORD, $ENV)
+
+  # ---------------------------------------------------------------------------
+  # ADR-DOE-RUNNER-001: doeff-runner の読む面(src/read/)は索引だけを読み、書き換えない
+  # ---------------------------------------------------------------------------
+  - id: doeff-runner-reading-plane-reads-only-the-index
+    languages: [typescript]
+    severity: ERROR
+    message: >
+      ADR-DOE-RUNNER-001 R2(law reading-plane-reads-only-the-index): 読む面
+      (ide-plugins/vscode/doeff-runner/src/read/)は file を自分で読まない。定義の一覧・
+      軸の属性・位置は hy-index(doeff-indexer)の置き場から、型・effect・本体の行は
+      doeff-linter の editor-json から受け取る。fs / node:fs / child_process の import と
+      vscode.workspace.findFiles・vscode.workspace.fs は面の外(hy/・lint/ の読み手)に置く
+      (agora-redesign #910 V8・v1 制約 5)。
+    paths:
+      include:
+        - "**/doeff-runner/src/read/**"
+    pattern-either:
+      - patterns:
+          - pattern-either:
+              - pattern: import $X from "$MOD"
+              - pattern: import * as $X from "$MOD"
+              - pattern: import {...} from "$MOD"
+              - pattern: import "$MOD"
+              - pattern: require("$MOD")
+              - pattern: import("$MOD")
+          - metavariable-regex:
+              metavariable: $MOD
+              regex: ^(node:)?(fs|fs/promises|child_process)$
+      - pattern: vscode.workspace.findFiles(...)
+      - pattern: workspace.findFiles(...)
+      - pattern: vscode.workspace.fs
+      - pattern: workspace.fs
+
+  - id: doeff-runner-reading-plane-is-read-only
+    languages: [typescript]
+    severity: ERROR
+    message: >
+      ADR-DOE-RUNNER-001 R3(law reading-plane-is-read-only): 読む面
+      (ide-plugins/vscode/doeff-runner/src/read/)は document を書き換えない — 編集の機能は
+      作らない(operator 2026-09-28 "I will never edit the source manually")。
+      WorkspaceEdit・applyEdit・TextEditor.edit・document の save を面に置かない。source を
+      直したい時は `open in editor` で editor を開く(agora-redesign #910 V9・v1 R2)。
+    paths:
+      include:
+        - "**/doeff-runner/src/read/**"
+    pattern-either:
+      - pattern: new vscode.WorkspaceEdit(...)
+      - pattern: new WorkspaceEdit(...)
+      - pattern: $WS.applyEdit(...)
+      - pattern: $EDITOR.edit(...)
+      - pattern: $DOC.save()
+      - pattern: vscode.workspace.saveAll(...)
+      - pattern: workspace.saveAll(...)
