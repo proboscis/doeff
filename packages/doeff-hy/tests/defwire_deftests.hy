@@ -36,6 +36,7 @@
   (setv #^ float ratio 0.0)
   (setv #^ (get tuple #(Note ...)) notes #()))
 
+(defwire GroupedRow {:names :camel} #^ str lane-id (setv #^ int landed-at 0 #^ (| str None) note None))
 (defwire SnakeRow {:names :snake} (#^ str lane-id))
 (defwire KebabRow {:names :kebab} (#^ str lane-id))
 (defwire ExplicitRow {:names {lane-id "LANE" size "n"}} (#^ str lane-id) (#^ int size))
@@ -232,3 +233,12 @@
     (OpaqueJson "{bad"))
   (with [(pytest.raises FrozenInstanceError)]
     (setattr call.input "text" "1")))
+
+
+(deftest test-grouped-setv-fields-get-wire-names
+  {:tags {:context "wire" :role "judgment"}}
+  ;; 1 つの setv に並べた欄も組ごとに wire の名を持つ(前は最初の組だけで、:names :camel の写しから note が落ちた)。
+  (assert (= GroupedRow.__doeff_wire__.names {"lane_id" "laneId" "landed_at" "landedAt" "note" "note"}))
+  (<- row (parse GroupedRow {"laneId" "L1" "landedAt" 3 "note" "x"}))
+  (assert (= #(row.landed-at row.note) #(3 "x"))))
+
