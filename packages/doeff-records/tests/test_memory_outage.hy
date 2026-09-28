@@ -9,7 +9,7 @@
 (import doeff_time [SimClock sim-time-handler])
 (import doeff_hy.frozen [FrozenMap])
 (import doeff_records.values [ExpectAbsent Written Missing Unreachable Appended WatchCursor])
-(import doeff_records.effects [ReadRow ListRows PutRow PutRows RowWrite WatchChanges AppendEvent ReadEvents])
+(import doeff_records.effects [ReadRow ListRows PutRow PutRows RowWrite WatchChanges WatchEvents AppendEvent ReadEvents])
 (import doeff_records.faults [SetStoreOutage])
 (import doeff_records.memory [MemoryStore memory-records-handler])
 (import doeff_records.laws [LAW-SCHEMA MAKER])
@@ -47,6 +47,8 @@
   (in-store store (SetStoreOutage DETAIL))
   (val answers (in-store store (every-public-effect)))
   (assert (= answers (tuple (gfor _ answers (Unreachable DETAIL)))) answers)
+  ;; 列の待ち WatchEvents(公開 effect の外)も届かない間は Unreachable を待たずに答える。
+  (assert (= (in-store store (WatchEvents "journal" :timeout 30.0)) (Unreachable DETAIL)))
   (assert (= store.head 0) "届かない間の書きが変更の列に積まれた")
   (assert (= store.events []) "届かない間の追記が列に積まれた")
   ;; 戻すと今までどおり — 届かない間の書きは残っていない。

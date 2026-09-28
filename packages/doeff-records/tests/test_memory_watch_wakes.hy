@@ -3,6 +3,7 @@
 ;; 出自 = 使い手の模擬の検の実行時間の約 4 割が、仮想の時計の 0.05 秒ごとの読み直し(1 回の走行で
 ;; 約 19 万回)だった。確かめること: 読み直さない・同期の書き(handler の外から置き場を直に書く)と別の thread の書きでも起きる・
 ;; 待っている間に保持の期限が来た行の消えが timeout を待たずに届く。
+;; 列の待ち WatchEvents も同じ呼び鈴で起き、呼び鈴は待つ名ごと — 行の書きは表の待ち手だけ・追記は列の待ち手だけを起こす(出自の issue は #1019)。
 (require doeff-hy.macros [defk <- val])
 (import threading)
 (import time)
@@ -11,11 +12,12 @@
 (import doeff_core_effects.scheduler [scheduled Spawn Wait Cancel Task TaskCancelledError CreateExternalPromise PRIORITY-IDLE])
 (import doeff_time [SimClock sim-time-handler sync-time-handler Delay GetTime])
 (import doeff_hy.frozen [FrozenMap])
-(import doeff_records.values [Changes Reset RowChanged RowRemoved WatchCursor ExpectAbsent ExpectVersion Written])
-(import doeff_records.effects [PutRow ListRows WatchChanges])
+(import doeff_records.values [Changes Reset RowChanged RowRemoved WatchCursor ExpectAbsent ExpectVersion Written EventsMoved EventsQuiet])
+(import doeff_records.effects [PutRow ListRows WatchChanges WatchEvents AppendEvent])
+(import doeff_records.maintenance [PruneChanges Pruned])
 (import doeff_records.admission [epoch-ms])
 (import doeff_records.memory :as memory)
-(import doeff_records.memory [MemoryStore memory-records-handler memory-put-row])
+(import doeff_records.memory [MemoryStore memory-records-handler memory-put-row memory-append])
 (import doeff_records.laws [LAW-SCHEMA MAKER TICKET-KEEP-SECONDS])
 
 (val EPOCH (datetime 1970 1 1 :tzinfo timezone.utc))
@@ -195,14 +197,6 @@
   answer)
 
 
-(defk write-parts-later [seconds]
-  {:pre [(: seconds float)] :post [(: % Written)]}
-  "seconds 秒後に parts へ 1 行書く(書きは全部の待ち手の呼び鈴を鳴らす)。"
-  (<- (Delay seconds))
-  (<- written (PutRow "parts" #("race") (FrozenMap {"label" "r"}) (ExpectAbsent)))
-  written)
-
-
 (defk cancelled-at [task]
   {:pre [(: task Task)] :post [(: % float)]}
   "task を取り消し、取り消しが届いて task が終わった刻の秒を返す(取り消しは TaskCancelledError で届く)。"
@@ -218,32 +212,126 @@
 
 (defk cancel-when-the-same-write-rings [store watcher]
   {:pre [(: store MemoryStore) (: watcher Task)] :post [(: % float)]}
-  "待ち手 watcher の後ろに自分の呼び鈴を掛け、同じ書きで起きた刻に watcher を取り消す(同じ書きで起きた別の task — 複数の表の
+  "待ち手 watcher の後ろに自分の呼び鈴を掛け、同じ鳴らしで起きた刻に watcher を取り消す(同じ鳴らしで起きた別の task — 複数の表の
    待ちを Race した使い手の、負けた側の片付け — が、起きている最中の待ち手を取り消す形)。答え = watcher が終わった刻の秒。"
   (<- bell (CreateExternalPromise))
   (with [store.lock]
-    (setv (get store.bells bell) None))
+    (setv (get store.bells bell) (frozenset [#("table" "parts")])))
   (<- (Wait bell.future :priority PRIORITY-IDLE))
   (<- ended (cancelled-at watcher))
   ended)
 
 
+(defk prune-later [seconds]
+  {:pre [(: seconds float)] :post [(: % Pruned)]}
+  "seconds 秒後に 1 秒より古い変更を刈る(床が上がる — 待つ名を問わず全部の待ち手の呼び鈴を鳴らす)。"
+  (<- (Delay seconds))
+  (<- pruned (PruneChanges 1.0))
+  pruned)
+
+
 (defk cancel-a-waiter-woken-by-another-table [store]
   {:pre [(: store MemoryStore)] :post [(: % float)]}
-  "charters を待つ待ち手を掛け、5 秒後の parts の書き(charters の待ち手の呼び鈴も鳴らす)で起きた刻に取り消す。答え = 待ち手が終わった刻の秒。"
+  "parts に 1 行書いてから charters を待つ待ち手を掛け、5 秒後の変更の刈り(全部の待ち手の呼び鈴を鳴らす)で起きた刻に取り消す。
+   答え = 待ち手が終わった刻の秒。"
+  (<- (PutRow "parts" #("old") (FrozenMap {"label" "o"}) (ExpectAbsent)))
   (<- watcher (Spawn (watch-table-long "charters")))
   (<- (Delay 1.0))
   (<- canceller (Spawn (cancel-when-the-same-write-rings store watcher)))
-  (<- writer (Spawn (write-parts-later 4.0)))
+  (<- pruner (Spawn (prune-later 4.0)))
   (<- ended (Wait canceller))
-  (<- (Wait writer))
+  (<- (Wait pruner))
   ended)
 
 
 (defn test-a-waiter-woken-by-a-write-to-another-table-still-takes-its-cancel []  ; defk にできない: 検の入口で Program を run する
-  ;; parts の書きは charters の待ち手の呼び鈴も鳴らす(待ち手は起きて走査し、自分の表に変更が無ければ掛け直す)。起きている最中に届いた
-  ;; 取り消しを待ち手が飲み込むと、待ち手は掛け直して timeout(30 秒)まで生き、取り消した側もそこまで止まる — 使い手の模擬で、複数の表の
-  ;; 待ちを Race した係が負けた側の取り消しで 4 秒の書きの後 31 秒まで止まった。取り消しは書きの刻(5 秒)に効く。
+  ;; 変更の刈り(床が上がる)は charters の待ち手の呼び鈴も鳴らす(待ち手は起きて走査し、自分の表に変更が無ければ掛け直す — 呼び鈴を
+  ;; 名ごとにした後、自分の表の外の鳴らしで起きるのは版の更新と変更の刈りだけ)。起きている最中に届いた取り消しを待ち手が飲み込むと、
+  ;; 待ち手は掛け直して timeout(30 秒)まで生き、取り消した側もそこまで止まる — 使い手の模擬で、複数の表の待ちを Race した係が
+  ;; 負けた側の取り消しで 4 秒の書きの後 31 秒まで止まった。取り消しは鳴らしの刻(5 秒)に効く。
   (setv store (MemoryStore LAW-SCHEMA))
   (setv ended (run-on store (cancel-a-waiter-woken-by-another-table store)))
   (assert (= ended 5.0) ended))
+
+
+;; --- 名ごとの呼び鈴と列の待ち(出自の issue は #1019)--------------------------------------------------------
+
+(defn count-events-scans [monkeypatch]  ; defk にできない: pytest の monkeypatch で module の関数を包む(Program の外)
+  "memory-events-scan を包み、呼ばれた回数を数える箱(list の長さ)を返すため。"
+  (setv calls [] original memory.memory-events-scan)
+  (defn counted [store ask]
+    (.append calls ask)
+    (original store ask))
+  (.setattr monkeypatch memory "memory_events_scan" counted)
+  calls)
+
+
+(defk note-when-done [name program woke]
+  {:pre [(: name str) (: program (| WatchChanges WatchEvents)) (: woke list)] :post [(: % None)]}
+  "program(待ち 1 つ)を撃ち、終わった刻の秒と答えを名と一緒に woke へ積むため(起きた刻を待ち手ごとに見る)。"
+  (<- answer program)
+  (<- at (seconds-now))
+  (.append woke #(name at answer))
+  None)
+
+
+(defk write-then-append []
+  {:pre [] :post [(: % list)]}
+  "表 parts・表 charters・列 journal の待ち手を掛け、5 秒後に parts へ 1 行書き、10 秒後に journal へ 1 つ積む。
+   答え = #(名 起きた刻の秒 答え)の起きた順の list。"
+  (<- start (ListRows "parts"))
+  (val cursor (WatchCursor start.epoch start.sequence))
+  (val woke [])
+  (<- parts (Spawn (note-when-done "parts" (WatchChanges #("parts") cursor :timeout LONG-WAIT) woke)))
+  (<- charters (Spawn (note-when-done "charters" (WatchChanges #("charters") cursor :timeout LONG-WAIT) woke)))
+  (<- journal (Spawn (note-when-done "journal" (WatchEvents "journal" :after 0 :timeout LONG-WAIT) woke)))
+  (<- (Delay 5.0))
+  (<- (PutRow "parts" #("row") (FrozenMap {"label" "r"}) (ExpectAbsent)))
+  (<- (Delay 5.0))
+  (<- (AppendEvent "journal" "k1" {"n" 1}))
+  (for [task [parts charters journal]]
+    (<- (Wait task)))
+  woke)
+
+
+(defn test-a-write-wakes-only-the-waiters-of-its-name [monkeypatch]  ; defk にできない: pytest の fixture を受ける検
+  ;; 行の書きは表の待ち手だけを・追記は列の待ち手だけを起こす。charters の待ち手はどちらでも起きず、timeout の刻に空の Changes で返る
+  ;; (走査は掛けた時の 2 回と timeout の 1 回だけ — 起こされていれば走査が増える)。列の待ち手は 5 秒の行の書きでは走査しない。
+  (setv watch-scans (count-scans monkeypatch)
+        events-scans (count-events-scans monkeypatch))
+  (setv woke (run-on (MemoryStore LAW-SCHEMA) (write-then-append)))
+  (setv by-name (dfor #(name at answer) woke name #(at answer)))
+  (assert (= (lfor #(name at answer) woke name) ["parts" "journal" "charters"]) woke)
+  (assert (and (= (get by-name "parts" 0) 5.0) (isinstance (get by-name "parts" 1) Changes)) by-name)
+  (assert (= (get by-name "journal") #(10.0 (EventsMoved))) by-name)
+  (assert (and (= (get by-name "charters" 0) LONG-WAIT) (= (. (get by-name "charters" 1) items) #())) by-name)
+  (assert (= (len (lfor ask watch-scans :if (= ask.tables #("charters")) ask)) 3) watch-scans)
+  (assert (= (len events-scans) 3) events-scans))
+
+
+(defk wait-for-events-long []
+  {:pre [] :post [(: % (| EventsMoved EventsQuiet))]}
+  "列 journal の今の頭(0)から LONG-WAIT 秒待つ。"
+  (<- answer (WatchEvents "journal" :after 0 :timeout LONG-WAIT))
+  answer)
+
+
+(defn test-an-append-from-another-thread-wakes-a-stream-waiter-on-the-wall-clock []  ; defk にできない: 2 つの thread で置き場を共有する検
+  ;; 実の時計で列を待つ thread を、別の thread の直の追記が起こす(timeout の 30 秒を待たない)。
+  (setv store (MemoryStore LAW-SCHEMA)
+        box []
+        watcher (threading.Thread :target (fn [] (.append box (run (scheduled (with_handlers [(sync-time-handler) (memory-records-handler store MAKER)]
+                                                                                                 (wait-for-events-long))))))
+                                  :daemon True)
+        started (time.monotonic))
+  (.start watcher)
+  (while (not store.bells)
+    (when (> (- (time.monotonic) started) 10)
+      (raise (AssertionError "待ち手が呼び鈴を掛けない")))
+    (time.sleep 0.01))
+  (memory-append store MAKER (AppendEvent "journal" "from-thread" {"n" 1}) (epoch-ms (datetime.now timezone.utc)))
+  (.join watcher 10)
+  (assert (not (.is-alive watcher)) "待ち手が起きない")
+  (assert (< (- (time.monotonic) started) 10) (- (time.monotonic) started))
+  (assert (= box [(EventsMoved)]) box)
+  (assert (= store.bells {}) store.bells))
