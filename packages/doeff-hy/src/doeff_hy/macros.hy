@@ -528,6 +528,14 @@ defk {name}: :post type annotation cannot be an empty string.
          (import doeff-hy.macros [_install-guard-globals _guard-performed
                                   _guard-statement-value _doeff-check-program-return]))))
 
+(defn _quoted-forms [forms]
+  "`__doeff_body__` に置く本体の式: 本体を `hy.repr` した 1 本の文字列を持つ `QuotedForms`(読まれた時に model へ戻す)。
+   本体を quote で埋め込むと、Hy は import のたびに model の木を組み立てる code へ compile し、.pyc の無い compile の時間の
+   半分がそこに消えた(2026-09-28 の実測 — doeff_hy/quoted_forms.py の頭の註)。"
+  `(do
+     (import doeff-hy.quoted-forms [QuotedForms :as _doeff-QuotedForms])
+     (_doeff-QuotedForms ~(hy.models.String (hy.repr (hy.models.List forms))))))
+
 (defn _result-symbol [origin]
   "本体の結果を指す `_contract_result`。位置は最後の式から取る(`return` と戻り値の型の
    赤が、defk の頭ではなく最後の式を指すように)。"
@@ -845,8 +853,8 @@ defk {name}: {{:post [...]}} is required.
      ~(_helper-imports)
      ~fn-form
      (_install-guard-globals ~name)
-     (setattr ~name "__doeff_body__" '~written-body)
-     (setattr ~name "__doeff_args__" '~params)
+     (setattr ~name "__doeff_body__" ~(_quoted-forms written-body))
+     (setattr ~name "__doeff_args__" ~(_quoted-forms params))
      (setattr ~name "__doeff_name__" ~(str name))
      ~@(declaration-setters name (get (_find-contract body) 0) (+ "defk " (str name))))))
 
@@ -1517,7 +1525,7 @@ the effect in the enclosing do-context.
               ~@post-asserts)
             (return ~(_result-symbol body-expr)))))))
      ;; Preserve S-expr body directly on Program value (DoExpr has __dict__ via pyclass(dict))
-     (setattr ~name "__doeff_body__" '~real-body)
+     (setattr ~name "__doeff_body__" ~(_quoted-forms real-body))
      (setattr ~name "__doeff_name__" ~(str name))
      (setattr ~name "__doeff_module__" __name__)
      ~@(declaration-setters name (get (_find-contract body) 0) (+ macro-name " " (str name)))))

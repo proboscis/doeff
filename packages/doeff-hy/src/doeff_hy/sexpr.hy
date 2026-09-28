@@ -8,6 +8,7 @@
 ;;;                           assert-handlers classify-call])
 
 (import hy.models)
+(import doeff-hy.quoted-forms [QuotedForms])
 
 
 ;; ---------------------------------------------------------------------------
@@ -16,12 +17,15 @@
 
 (defn body-of [kleisli]
   "Get the preserved S-expr body of a defk function.
-   Returns None if the function has no __doeff_body__ (e.g. plain Python function)."
-  (getattr kleisli "__doeff_body__" None))
+   Returns None if the function has no __doeff_body__ (e.g. plain Python function).
+   The body is carried as a QuotedForms (a hy.repr string read back on first access); this returns its model list."
+  (setv body (getattr kleisli "__doeff_body__" None))
+  (if (isinstance body QuotedForms) (.forms body) body))
 
 (defn args-of [kleisli]
-  "Get the parameter list of a defk function as an S-expr."
-  (getattr kleisli "__doeff_args__" None))
+  "Get the parameter list of a defk function as an S-expr (carried as a QuotedForms like the body)."
+  (setv params (getattr kleisli "__doeff_args__" None))
+  (if (isinstance params QuotedForms) (.forms params) params))
 
 (defn name-of [kleisli]
   "Get the original name of a defk function."
