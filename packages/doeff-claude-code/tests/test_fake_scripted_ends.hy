@@ -3,7 +3,8 @@
 ;;; 家を空にした形・process の作り直しを fake で起こすための口。本物の CLI に同じ振る舞いを起こす宣言は無いので、fake の世界を
 ;;; この file の中で組む(3 つの解釈器で同じ筋書きを走らせる test_scenarios.hy とは別)。
 (require doeff-hy.macros [deftest defk <- val])
-(import doeff [with_handlers Program EffectBase])
+(import doeff [with_handlers Program EffectBase Ask])
+(import doeff_core_effects.handlers [reader])
 (import doeff_time [SimClock sim-time-handler GetMonotonic])
 (import doeff_claude_code.values [ClaudeHome ClaudeSessionSpec FreshSession ResumeSession Rebuilt])
 (import doeff_claude_code.lines [AssistantMessage Completed Failed BackendLost Usage])
@@ -132,6 +133,34 @@
   (assert (isinstance status.transcript TranscriptAbsent) (repr status))
   (assert (isinstance refused SessionNotFound) (repr refused))
   (assert (isinstance done.end Completed) (repr done.end)))
+
+(defk effectful-reply [text memory]
+  {:pre [(: text str) (: memory tuple)] :post [(: % FakeReply)]}
+  "効果を出す筋書きの返事(respond の形): 返事の本文を外側の環境(Ask)から読む — 上の層の相手役が、いま始めている手番を
+   自分の handler の状態から効果で読むのと同じ形。"
+  (<- prefix str (Ask "reply-prefix"))
+  (FakeReply (+ prefix text) :tool-seconds 1.0))
+
+(deftest test-an-effectful-respond-answers-the-turn
+  ;; respond(本文 記憶 → FakeReply の Program)の返事: 返事を作る時に出した効果は fake の handler の外側が答え、その答えで手番が終わる。
+  (<- record TurnRecord (with_handlers [(reader {"reply-prefix" "from-effect: "})]
+                          (on-fake (FakeClaudeWorld :respond effectful-reply) (run-one "hello"))))
+  (assert (isinstance record.end Completed) (repr record.end))
+  (assert (= record.end.result-text "from-effect: hello") (repr record.end)))
+
+(deftest test-a-restarted-world-keeps-the-effectful-respond
+  ;; process を作り直した世界も同じ respond で答える。
+  (val restarted (.restarted (FakeClaudeWorld :respond effectful-reply)))
+  (<- record TurnRecord (with_handlers [(reader {"reply-prefix" "again: "})] (on-fake restarted (run-one "hello"))))
+  (assert (= record.end.result-text "again: hello") (repr record.end)))
+
+(deftest test-a-world-takes-exactly-one-of-responder-and-respond
+  ;; 返事の作り方はちょうど 1 つ(同期の responder か、効果を出せる respond)。
+  (for [make [(fn [] (FakeClaudeWorld)) (fn [] (FakeClaudeWorld scripted-reply :respond effectful-reply))]]
+    (try
+      (make)
+      (assert False "返事の作り方が 0 か 2 つの世界を受けた")
+      (except [ValueError] None))))
 
 (deftest test-a-restarted-world-shares-the-home-but-not-the-process
   ;; process の作り直し: 新しい世界は同じ家の transcript を見る(続きを開ける)が、前の process で走っている手番は知らない

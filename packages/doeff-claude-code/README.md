@@ -30,7 +30,9 @@
   `command` = 実行ファイルと前置きの引数(例 `#("claude")`)、`clock` = 行の時刻を刻む関数(`doeff_claude_code.clock.clock-of` に
   doeff-time の時間の handler を渡して作る)。手番ごとに process を起こし、手番の終わりの行で降ろす。
 - `doeff_claude_code.fake.fake-claude-code-handler(world)` — fake。`FakeClaudeWorld(responder)` の筋書き(入力の本文 → `FakeReply`)
-  で同じ effect に memory の上で答える。doeff-time の時計で進むので、仮想の時計の下では一瞬で終わる。
+  で同じ effect に memory の上で答える。doeff-time の時計で進むので、仮想の時計の下では一瞬で終わる。返事を作る時に効果を出したい
+  筋書きは `FakeClaudeWorld(respond=<kleisli>)`(入力の本文 → `FakeReply` の Program — 効果は fake の handler の外側が答える)。
+  `responder` と `respond` はちょうど 1 つ。
 
 どちらの handler も外側に doeff-time の時間の handler(本番 = `sync-time-handler`・模擬 = `sim-time-handler`)と doeff の scheduler を要る。
 

@@ -94,9 +94,15 @@
 
 
 (defclass FakeClaudeWorld []
-  "fake の世界: 家ごとの transcript(入力の列)と会話の状態。responder = (本文 記憶) → FakeReply。"
-  (defn __init__ [self responder]
+  "fake の世界: 家ごとの transcript(入力の列)と会話の状態。返事の作り方はちょうど 1 つ:
+   responder = (本文 記憶) → FakeReply の同期の関数(効果を出さない筋書き)・
+   respond = (本文 記憶) → FakeReply の Program の kleisli(defk — 返事を作る時に効果を出してよい。効果は fake の handler の外側が
+   答える。上の層の相手役が、いま始めている手番を自分の handler の状態から効果で読むため)。"
+  (defn __init__ [self [responder None] * [respond None]]
+    (when (= (is responder None) (is respond None))
+      (raise (ValueError "FakeClaudeWorld は responder(同期)と respond(kleisli)のちょうど 1 つを受ける")))
     (setv self.responder responder
+          self.respond respond
           self.transcripts {}
           self.activity {}
           self.sessions {}))
@@ -104,12 +110,21 @@
   (defn restarted [self]
     "同じ家の上で process を作り直した世界: transcript と activity(家の中身)は同じ物を共有し、会話(process の中の状態)は空。
      前の世界の走っている手番は前の世界で走り続ける(子 process は上の層の process の作り直しで止まらない)。"
-    (setv world (FakeClaudeWorld self.responder))
+    (setv world (FakeClaudeWorld self.responder :respond self.respond))
     (setv world.transcripts self.transcripts world.activity self.activity)
     world)
 
   (defn transcript-key [self home #^ str cwd #^ str session-id]
     #(home.config-dir cwd session-id)))
+
+
+(defk reply-of [#^ FakeClaudeWorld world #^ str text #^ tuple memory]
+  {:pre [(: world FakeClaudeWorld) (: text str) (: memory tuple)] :post [(: % FakeReply)]}
+  "筋書きの返事を 1 つ作る(返事を作る所はここ 1 つ): respond が在れば、その Program を走らせた答え・無ければ同期の responder の答え。"
+  (if (is world.respond None)
+      (world.responder text memory)
+      (do (<- reply FakeReply (world.respond text memory))
+          reply)))
 
 
 ;; --- 行を出す ------------------------------------------------------------------------------------
@@ -140,7 +155,8 @@
     (when (= injection.fate "queued")
       (setv (get turn.injections index) (replace injection :fate "started"))
       (<- (emit session turn (InputFate injection.ref "started")))
-      (.append extra (. (world.responder injection.text memory) text))))
+      (<- extra-reply FakeReply (reply-of world injection.text memory))
+      (.append extra extra-reply.text)))
   (setv text (.join " " (+ [turn.reply.text] extra)))
   (<- (emit-all session turn [(AssistantMessage :text text)
                               (TurnResult "success" False :terminal-reason "completed" :usage turn.reply.usage)]))
@@ -262,7 +278,8 @@
   (.append (get world.transcripts key) input.text)
   (<- now-time (GetTime))
   (setv (get world.activity key) (.timestamp now-time))
-  (<- turn (begin-fake-turn world session (world.responder input.text memory) #(input.ref) True))
+  (<- reply FakeReply (reply-of world input.text memory))
+  (<- turn (begin-fake-turn world session reply #(input.ref) True))
   (TurnStarted (ClaudeTurn session-id turn.seq) session-id))
 
 (defn running-turn-of [#^ FakeClaudeWorld world #^ ClaudeTurn turn]
@@ -291,7 +308,7 @@
       (do
         (<- (emit session turn (TurnResult "error_during_execution" True :terminal-reason "aborted_tools")))
         (setv memory (tuple (get world.transcripts (.transcript-key world session.home session.cwd session.session-id))))
-        (setv reply (world.responder (.join "\n" (lfor injection survivors injection.text)) memory))
+        (<- reply FakeReply (reply-of world (.join "\n" (lfor injection survivors injection.text)) memory))
         (<- next-turn (begin-fake-turn world session (FakeReply reply.text) (tuple (lfor injection survivors injection.ref)) False))
         (<- (finish session turn (Interrupted :surviving-refs (tuple next-turn.refs)
                                               :continued-by (ClaudeTurn session.session-id next-turn.seq)))))
