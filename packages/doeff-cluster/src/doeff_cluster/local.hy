@@ -112,7 +112,7 @@
                        current-versions])
 (import .report_client [report-request])
 (import .runtime_env_model [RuntimeEnv EnvFailure runtime-env->json current-platform])
-(import .semaphore_model [LeaseOp SEMAPHORE-PREFIX drop-holders])
+(import .semaphore_model [LeaseOp SEMAPHORE-PREFIX drop-holders lease-holder holder-tokens-prefix])
 (import .service_model [System Declaration system-declaration])
 (import .shared_handlers [board-read-request board-write-request lease-request])
 (import .shared_model [ReadShared WriteShared])
@@ -1103,11 +1103,12 @@
                                         (unreached-reason answer))))))
 
 
-(defk release-leases [link worker instance]
-  {:pre [(: link SimLink) (: worker str) (: instance str)] :post [(: % int)] :tags {:context "doeff-cluster" :role "protocol"}}
-  "終わった process(世代の名 instance)が持っていた lease を返すため(本番の handlers.release-leases と同じ要求 — token の頭
-   「<worker>/<世代の名>/」の担い手を POST /leases/<名> の drop で外す)。答え = 返した数。届かなければ期限で切れる。"
-  (val prefix (.format "{}/{}/" worker instance))
+(defk release-leases [link job instance]
+  {:pre [(: link SimLink) (: job str) (: instance str)] :post [(: % int)] :tags {:context "doeff-cluster" :role "protocol"}}
+  "終わった process(job の名 job・世代の名 instance)が持っていた lease を返すため(本番の handlers.release-leases と同じ要求 — 子が
+   名乗った担い手と同じ定義の token の頭 <job>/<世代の名>/ の担い手を POST /leases/<名> の drop で外す)。答え = 返した数。届かなければ
+   期限で切れる。"
+  (val prefix (holder-tokens-prefix (lease-holder job instance)))
   (<- rows tuple (send-shaped link (board-read-request SEMAPHORE-PREFIX)))
   (var dropped 0)
   (when (= (get rows 0) 200)
@@ -1222,11 +1223,11 @@
                       (replace truth :processes (tuple (gfor p truth.processes
                                                              (if (= p.pid pid) (replace p :name new-name :retired-from name) p))))))
     (resume None))
-  (ReleaseLeases [instance]
+  (ReleaseLeases [job instance]
     (<- (live-truth worker.name boot))
     (<- parts SimParts (PartsOf))
     (<- plan SimPlan (PlanOf))
-    (<- (release-leases (SimLink :queue parts.queue :actor worker.name :revision plan.revision :peer worker.name) worker.name instance))
+    (<- (release-leases (SimLink :queue parts.queue :actor worker.name :revision plan.revision :peer worker.name) job instance))
     (resume None))
   (PublishStatus [statuses note]
     (<- truth HostTruth (live-truth worker.name boot))
