@@ -756,3 +756,14 @@ def test_a_builder_is_read_on_every_path_it_can_return(pkg: str) -> None:
     napping = analyze_program(f"{pkg}.programs:napping")
     env = analyze_env(f"{pkg}.runtimes:early_return_handlers", bindings={"flag": True})
     assert not check_coverage(napping, env).complete
+
+
+def test_a_do_block_written_as_an_expression_is_read(pkg: str) -> None:
+    # (do! …) written where a Program goes expands to _install_guard_globals(
+    # _doeff_do(<local def>))(): its body runs there.  It used to be an unfollowed place.
+    inline = analyze_program(f"{pkg}.outcomes:defaulted_inline")
+
+    assert _types(inline.effect_types) == {"Tick", "Ping"}
+    assert inline.residual.unresolved == ()
+    [scope] = inline.handled
+    assert {"Tick", "Ping", "Absent"} <= _types(scope.program.effect_types)

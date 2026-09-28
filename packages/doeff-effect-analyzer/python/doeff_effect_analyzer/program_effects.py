@@ -1130,6 +1130,34 @@ def _opening(expr: ast.expr, scope: _Scope) -> _Opening | None:
     return _Opening(inner.operand, absent if inner.absent is None else inner.absent)
 
 
+def _guard_globals_function() -> Any:
+    """``doeff_hy.macros._install_guard_globals`` — returns the function it is given."""
+    return importlib.import_module("doeff_hy.macros")._install_guard_globals
+
+
+def _do_block(call: ast.Call, scope: _Scope) -> FunctionNode | None:
+    """The body of ``(do! …)`` written as an expression, or None: the expansion
+    ``_install_guard_globals(_doeff_do(<local def or lambda>))()`` runs that body there."""
+    if call.args or call.keywords or not isinstance(call.func, ast.Call):
+        return None
+    wrapped = call.func
+    if (
+        len(wrapped.args) == 1
+        and isinstance(wrapped.args[0], ast.Call)
+        and scope.resolve(wrapped.func) is _guard_globals_function()
+    ):
+        wrapped = wrapped.args[0]
+    if len(wrapped.args) != 1 or scope.resolve(wrapped.func) is not _do_decorator():
+        return None
+    match wrapped.args[0]:
+        case ast.Lambda() as node:
+            return node
+        case ast.Name(id=name) if scope.resolve(wrapped.args[0]) is UNBOUND:
+            return scope.local_functions.get(name)
+        case _:
+            return None
+
+
 def _bound_operand(expr: ast.expr, scope: _Scope) -> ast.expr:
     """What a yielded ``expr`` runs: the ``e`` inside doeff-hy's bind wrappers, anything
     else → itself.  open_bind performs ``e`` itself — an undeclared effect or a Program
@@ -1284,6 +1312,12 @@ class _Reader:
                 ("yielded a value that is not a call", ast.unparse(expr), location)
             )
             return
+        self._performed_call(call, scope, filename, facts, location)
+
+    def _performed_call(
+        self, call: ast.Call, scope: _Scope, filename: str, facts: _Facts, location: Location
+    ) -> None:
+        """A yielded call: a bind, an install, a ``(do! …)`` block, an effect, a Program call."""
         opening = _opening(call, scope)
         if opening is not None:
             self._opened(opening, scope, filename, facts, location)
@@ -1292,6 +1326,11 @@ class _Reader:
         if form is not None:
             handlers = _read_install(form, scope, filename)
             self._handled(handlers, form.body, scope, filename, facts, location)
+            return
+        block = _do_block(call, scope)
+        if block is not None:
+            inner = _scope_of(block, scope.module, parent=scope)
+            self.collect(_body_nodes(block), inner, filename, facts, generator=True)
             return
         target = scope.resolve(call.func)
         if target is UNBOUND:
