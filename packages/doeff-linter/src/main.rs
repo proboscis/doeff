@@ -501,12 +501,22 @@ fn run_fix(argv: &[String]) -> ExitCode {
     }
 }
 
+/// 1 file の実行の thread の上限(下の main の註)。
+const SINGLE_FILE_THREADS: usize = 4;
+
 fn main() -> ExitCode {
     let argv: Vec<String> = std::env::args().collect();
     if argv.get(1).map(String::as_str) == Some("fix") {
         return run_fix(&argv);
     }
     let args = Args::parse();
+
+    // 1 file の実行(--stdin・書き込み直後の hook と editor)は小さな仕事の並びなので、thread を増やしても速くならず、thread の
+    // 待ち合わせの CPU だけが増える(#1033 の実測・36 core の機体: 36 本で CPU 0.45 秒 / 4 本で 0.30 秒・壁時計は同じ 0.27 秒)。
+    // RAYON_NUM_THREADS が明示されていればそれに従う。
+    if args.stdin && std::env::var_os("RAYON_NUM_THREADS").is_none() {
+        let _ = rayon::ThreadPoolBuilder::new().num_threads(SINGLE_FILE_THREADS).build_global();
+    }
 
     if args.hook {
         return run_as_hook(&args);
