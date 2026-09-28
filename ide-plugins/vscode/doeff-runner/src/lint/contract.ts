@@ -307,6 +307,8 @@ export interface LintBodyLine {
   readonly line: number;
   /** 字下げの段 */
   readonly depth: number;
+  /** 段の字下げの後ろに足す空白の数(描く字 = "  " × depth + " " × pad + segments) */
+  readonly pad: number;
   readonly segments: readonly LintBodySegment[];
   /** この行が描く束縛の番号(同じ report の bindings の中の位置 — 知らない語で落とした束縛を指していれば null) */
   readonly binding: number | null;
@@ -774,6 +776,14 @@ function body(value: unknown, where: string, notes: Notes, bindingIndex: readonl
       return {
         line: nat(line, 'line', at),
         depth: nat(line, 'depth', at),
+        // pad は U3 で足した欄 — 無い(U2 の linter)なら 0
+        pad:
+          optional(line, 'pad', at, (v, vat) => {
+            if (typeof v !== 'number' || !Number.isInteger(v) || v < 0) {
+              throw new LintContractViolation(`${vat}: 0 以上の整数でない`);
+            }
+            return v;
+          }) ?? 0,
         segments: list(line, 'segments', at, (s, sat) => {
           const segment = asObject(s, sat);
           return {
