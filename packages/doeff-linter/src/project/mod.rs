@@ -222,6 +222,7 @@ pub fn run_with(root: &Path, settings: &ProjectSettings, enabled: &BTreeSet<Proj
             let env_files = settings.environment.as_ref().map(|env| collect_environment_files(root, env)).unwrap_or_default();
             indexes = whole_hy_index(root, settings, enabled, &raw, &layer_files, &env_files, wants_raw);
             let hy = &indexes;
+            let effect_world = effect_world_for(root, settings, enabled, None);
             if let Some(layers) = &settings.layers {
                 let index = module_index(&layer_files);
                 let judged: Vec<LayerJudgement> = layer_files
@@ -237,6 +238,25 @@ pub fn run_with(root: &Path, settings: &ProjectSettings, enabled: &BTreeSet<Proj
                     report.modules.extend(judged.summary);
                     report.errors.extend(judged.errors);
                     crossings.extend(judged.crossings);
+                }
+                if let (Some(translation), Some(world)) = (&settings.translation, &effect_world) {
+                    if enabled.contains(&ProjectRule::TranslationEmitsIntent) {
+                        let judged: Vec<Result<Vec<Draft>, String>> = layer_files
+                            .par_iter()
+                            .filter(|file| is_translation_file(file, translation))
+                            .map(|file| {
+                                std::fs::read_to_string(&file.file.path)
+                                    .map(|source| judge_translation_intents(file, &source, layers, translation, &index, world))
+                                    .map_err(|error| format!("{}: 読めない: {}", file.file.rel, error))
+                            })
+                            .collect();
+                        for result in judged {
+                            match result {
+                                Ok(found) => drafts.extend(found),
+                                Err(error) => report.errors.push(error),
+                            }
+                        }
+                    }
                 }
                 if let Some(architecture) = &settings.architecture {
                     if enabled.contains(&ProjectRule::UnusedDependency) {
@@ -255,7 +275,6 @@ pub fn run_with(root: &Path, settings: &ProjectSettings, enabled: &BTreeSet<Proj
                     let failure = failure_types_for(root, enabled, &definitions.tags);
                     let defks = defk_names_for(root, enabled);
                     let program_params = program_params_for(root, enabled, &defks);
-                    let effect_world = effect_world_for(root, enabled, None);
                     let files: Vec<SourceFile> = hy_index::collect_hy_files(root)
                         .into_iter()
                         .filter_map(|path| {
@@ -351,6 +370,7 @@ pub fn run_with(root: &Path, settings: &ProjectSettings, enabled: &BTreeSet<Proj
             if let (Some(index), Some(rel)) = (&hy_file, &rel) {
                 indexes.insert(rel.clone(), index.clone());
             }
+            let effect_world = rel.as_ref().and_then(|rel| effect_world_for(root, settings, enabled, Some((rel.as_str(), source))));
             if let (Some(layers), Some(rel)) = (&settings.layers, &rel) {
                 if let Some((site, language)) = classify_layer_file(rel, layers).or_else(|| infer_layer_site(rel, source, layers)) {
                     let file = LayerFile { file: SourceFile { rel: rel.clone(), path: path.clone(), language }, module: module_of(rel), site };
@@ -359,6 +379,11 @@ pub fn run_with(root: &Path, settings: &ProjectSettings, enabled: &BTreeSet<Proj
                     let index = module_index(&layer_files);
                     let judged = judge_layer_file(&file, source, layers, settings, enabled, &index, hy_file.as_ref());
                     drafts.extend(judged.drafts);
+                    if let (Some(translation), Some(world)) = (&settings.translation, &effect_world) {
+                        if enabled.contains(&ProjectRule::TranslationEmitsIntent) && is_translation_file(&file, translation) {
+                            drafts.extend(judge_translation_intents(&file, source, layers, translation, &index, world));
+                        }
+                    }
                     report.modules.extend(judged.summary);
                     report.errors.extend(judged.errors);
                 }
@@ -380,7 +405,6 @@ pub fn run_with(root: &Path, settings: &ProjectSettings, enabled: &BTreeSet<Proj
                     let defks = defk_names_for(root, enabled);
                     let program_params = program_params_for(root, enabled, &defks);
                     drafts.extend(judge_bare_calls(&file, source, definitions, enabled, &defks, &program_params));
-                    let effect_world = effect_world_for(root, enabled, Some((rel.as_str(), source)));
                     if enabled.contains(&ProjectRule::EffectsDisagreeWithInference) {
                         drafts.extend(judge_effect_mismatches(&file, source, definitions, effect_world.as_ref()));
                     }
@@ -2162,11 +2186,70 @@ fn defk_names_for(root: &Path, enabled: &BTreeSet<ProjectRule>) -> bare_calls::D
     all
 }
 
-/// DOEFF127・129 の表(repo の Hy の file 全部の型・effect・defk と推論)— どちらかの規則が有効な時だけ 1 度作る。1 file の実行はその file を
+/// DOEFF127・129・130 の表(repo の Hy の file 全部の型・effect・defk と推論)— どれかの規則が有効な時だけ 1 度作る。1 file の実行はその file を
 /// stdin の中身で読む。推論の読み方は defk の見出し(editor-json の signatures)と同じ `signatures::World` の 1 か所。
-fn effect_world_for(root: &Path, enabled: &BTreeSet<ProjectRule>, overlay: Option<(&str, &str)>) -> Option<signatures::World> {
-    (enabled.contains(&ProjectRule::EffectsDisagreeWithInference) || enabled.contains(&ProjectRule::JudgmentPerformsEffect))
-        .then(|| signatures::World::build(root, overlay))
+fn effect_world_for(root: &Path, settings: &ProjectSettings, enabled: &BTreeSet<ProjectRule>, overlay: Option<(&str, &str)>) -> Option<signatures::World> {
+    let definitions = settings.definitions.is_some()
+        && (enabled.contains(&ProjectRule::EffectsDisagreeWithInference) || enabled.contains(&ProjectRule::JudgmentPerformsEffect));
+    let translation = settings.translation.is_some() && settings.layers.is_some() && enabled.contains(&ProjectRule::TranslationEmitsIntent);
+    (definitions || translation).then(|| signatures::World::build(root, overlay))
+}
+
+/// DOEFF130 の母集団 — 翻訳の層(設定の handler_layers)の Hy の module。
+fn is_translation_file(file: &LayerFile, translation: &settings::TranslationSettings) -> bool {
+    file.file.language == Language::Hy && translation.handler_layers.contains(&file.site.layer)
+}
+
+/// DOEFF130: 翻訳の層の handler が業務の intent を出す所を判じる(error — 責務の境界の違反)。業務の intent = 撃った呼びの頭が、
+/// 設定の intent_layers の module の大文字の名(型)。撃った呼びの頭が repo の defk なら、その先を max_depth 段まで辿る —
+/// 定義の本文の名だけでは、import した関数を経由した intent がすり抜ける(agora-redesign #956・#942 の独立レビュー)。
+fn judge_translation_intents(
+    file: &LayerFile,
+    source: &str,
+    layers: &LayerSettings,
+    translation: &settings::TranslationSettings,
+    index: &HashMap<String, ModuleSite>,
+    world: &signatures::World,
+) -> Vec<Draft> {
+    let intent_layer_of = |qualified: &str| -> Option<LayerId> {
+        let (module, name) = qualified.rsplit_once('.')?;
+        // 型の名(頭が大文字)だけ — intent の層は型だけを置く
+        if !name.starts_with(|c: char| c.is_ascii_uppercase()) {
+            return None;
+        }
+        let site = index.get(module).or_else(|| index.get(&format!("{}.__init__", module)))?;
+        translation.intent_layers.contains(&site.layer).then_some(site.layer)
+    };
+    let is_intent = |qualified: &str| intent_layer_of(qualified).is_some();
+    let lines = LineIndex::new(source);
+    let handler_layer = &layers.layers[file.site.layer.0].name;
+    signatures::translation_intents(world, &file.file.rel, source, &is_intent, translation.max_depth)
+        .into_iter()
+        .map(|intent| {
+            let intent_layer = intent_layer_of(&intent.qualified).map(|id| layers.layers[id.0].name.clone()).unwrap_or_default();
+            let message = match intent.via() {
+                Some(via) => format!(
+                    "{} の handler {}(層 {})が {} を経由して、層 {} の業務の intent {} を出す — 翻訳の handler は doeff の汎用の effect だけを出す",
+                    file.file.rel, intent.handler, handler_layer, via, intent_layer, intent.effect()
+                ),
+                None => format!(
+                    "{} の handler {}(層 {})が層 {} の業務の intent {} を出す — 翻訳の handler は doeff の汎用の effect だけを出す",
+                    file.file.rel, intent.handler, handler_layer, intent_layer, intent.effect()
+                ),
+            };
+            Draft {
+                rule: ProjectRule::TranslationEmitsIntent,
+                layer: Some(file.site.layer),
+                rel: file.file.rel.clone(),
+                path: file.file.path.clone(),
+                range: lines.range(intent.start, intent.end),
+                message,
+                detail: Some(format!("{}::{}", hy_mangle(&intent.handler), intent.qualified)),
+                base: Severity::Error,
+                explain: Explain::TranslationIntent { intent, handler_layer: handler_layer.clone(), intent_layer },
+            }
+        })
+        .collect()
 }
 
 /// DOEFF127: 業務の Hy の file の defk のうち `:effects` を宣言した物で、宣言と推論が合わない所を判じる。違反の場所 = 宣言に無い

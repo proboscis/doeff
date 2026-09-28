@@ -1721,3 +1721,163 @@ fn verification_environment_is_a_declared_non_service_place() {
     assert_eq!(code, 2, "{}", stderr);
     assert!(stderr.contains(":verification-environment billing は宣言した service の dir と同じ名にできない"), "{}", stderr);
 }
+
+/// DOEFF130 の repo — 層 core・intent・protocol の service 2 つ(kanban は shared に依存)と、pyproject.toml(`toml_extra` を末尾に足す)。
+fn translation_repo(files: &[(&str, &str)], toml_extra: &str) -> tempfile::TempDir {
+    let dir = tempfile::TempDir::new().unwrap();
+    std::fs::write(
+        dir.path().join("architecture.hy"),
+        r#"(defarchitecture sample
+  :root "app"
+  :layers [(layer core :roles [judgment program type])
+           (layer intent :roles [intent type])
+           (layer protocol :roles [protocol])])
+(defservice kanban "盤" {:depends-on [shared] :layers [core intent protocol]})
+(defservice shared "共有" {:layers [core]})
+"#,
+    )
+    .unwrap();
+    std::fs::write(
+        dir.path().join("pyproject.toml"),
+        format!(
+            "[tool.doeff-linter]\nenable = [\"DOEFF130\"]\n\n[[tool.doeff-linter.laws]]\nname = \"translation-targets-only-generic-foundation-effects\"\nadr = \"ADR-TEST\"\nrules = [\"DOEFF130\"]\nlayers = [\"protocol\"]\nstatement = \"protocol の handler は doeff の汎用の effect だけを出す\"\n{}",
+            toml_extra
+        ),
+    )
+    .unwrap();
+    for (rel, text) in files {
+        let path = dir.path().join(rel);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, text).unwrap();
+    }
+    dir
+}
+
+/// DOEFF130 の file の組 — 業務の intent 2 つ(defclass と defeffect)・shared の core の判断(intent を出す物・輪になる物)・kanban の protocol の handler。
+const TRANSLATION_FILES: [(&str, &str); 4] = [
+    (
+        "app/kanban/intent/board.hy",
+        "(defclass ReadBoard [])\n(defeffect CreateCard \"card を作る\" {:fields [(: title str)]})\n",
+    ),
+    (
+        // #955 が申し送る反例の形: shared の core の関数が ReadBoard(intent)を出し、protocol の handler がそれを import して呼ぶ。
+        "app/shared/core/board_view.hy",
+        "(import app.kanban.intent.board [ReadBoard])\n(defk view [c] (<- b (ReadBoard)) b)\n(defk deep [c] (<- v (view c)) v)\n(defk ping [n] (<- x (pong n)) x)\n(defk pong [n] (<- x (ping n)) x)\n",
+    ),
+    (
+        // 業務の流れ(層 core の program)が intent を出すのは正しい — protocol の外なので当たらない。
+        "app/kanban/core/flow.hy",
+        "(import app.kanban.intent.board [CreateCard])\n(defk open-card [t] (<- c (CreateCard t)) c)\n",
+    ),
+    (
+        "app/kanban/protocol/reads.hy",
+        r#"(import doeff_http [HttpRequest])
+(import doeff_records.effects [PutRow])
+(import app.kanban.intent.board [CreateCard ReadBoard])
+(import app.shared.core.board_view [view deep ping])
+
+;; 正例: 受けた intent を doeff の汎用の effect(HttpRequest・記録の書き)へ出し直すだけ。
+(defk put-card [t] (<- r (PutRow "cards" t)) r)
+(defhandler http-reads
+  (ReadBoard []
+    (<- r (HttpRequest "https://example.invalid/board"))
+    (resume r))
+  (CreateCard [t]
+    (<- r (put-card t))
+    (resume r)))
+
+;; 反例: import した shared の core の関数を経由して ReadBoard を出す(本文の名だけでは見えない)。
+(defhandler board-reads
+  (Lookup [c]
+    (<- b (view c))
+    (resume b)))
+
+;; 反例: 2 段の経由。
+(defhandler deep-reads
+  (Deep [c]
+    (<- b (deep c))
+    (resume b)))
+
+;; 反例: 本体で直に intent を出す。
+(defhandler card-writes
+  (NewCard [t]
+    (<- x (CreateCard t))
+    (resume x)))
+
+;; 反例: [effect k] を受ける関数の handler。
+(defk raw-handler [effect k]
+  (<- (CreateCard "x"))
+  (k effect))
+
+;; 輪になる呼び(ping ↔ pong)でも止まり、intent に届かなければ当たらない。
+(defhandler loops
+  (Spin [n]
+    (<- x (ping n))
+    (resume x)))
+"#,
+    ),
+];
+
+#[test]
+fn a_translation_handler_that_emits_a_business_intent_is_an_error() {
+    // agora-redesign #956(#942 の決定 2): 層 protocol の handler は doeff の汎用の effect だけを出し、層 intent の型(業務の intent)を出さない。
+    // 推論は import した defk の先まで辿る — 本体の名だけの判定(DOEFF201・check_business_fakes.hy)がすり抜ける形を塞ぐ。
+    let dir = translation_repo(&TRANSLATION_FILES, "");
+    let (code, report) = editor(dir.path());
+    assert_eq!(
+        keys(&report, "DOEFF130"),
+        vec![
+            "app/kanban/protocol/reads.hy::translation-targets-only-generic-foundation-effects::board_reads::app.kanban.intent.board.ReadBoard",
+            "app/kanban/protocol/reads.hy::translation-targets-only-generic-foundation-effects::card_writes::app.kanban.intent.board.CreateCard",
+            "app/kanban/protocol/reads.hy::translation-targets-only-generic-foundation-effects::deep_reads::app.kanban.intent.board.ReadBoard",
+            "app/kanban/protocol/reads.hy::translation-targets-only-generic-foundation-effects::raw_handler::app.kanban.intent.board.CreateCard",
+        ]
+    );
+    assert_eq!(code, 1);
+    let via = violation(&report, "app/kanban/protocol/reads.hy::translation-targets-only-generic-foundation-effects::board_reads::app.kanban.intent.board.ReadBoard");
+    assert_eq!(via["severity"], "error");
+    // 場所 = handler の本体の、intent に至る最初の呼び((view c) の view — 0 始まりの 18 行目)。
+    assert_eq!(via["range"]["start"]["line"], 18);
+    assert!(via["message"].as_str().unwrap().contains("handler board-reads(層 protocol)が view を経由して、層 intent の業務の intent ReadBoard を出す"), "{}", via["message"]);
+    assert_eq!(via["explanation"]["subject"], "handler board-reads(層 protocol)が view を経由して、層 intent の intent ReadBoard を出している");
+    assert_eq!(via["explanation"]["law_statement"], "protocol の handler は doeff の汎用の effect だけを出す");
+    let deep = violation(&report, "app/kanban/protocol/reads.hy::translation-targets-only-generic-foundation-effects::deep_reads::app.kanban.intent.board.ReadBoard");
+    assert!(deep["message"].as_str().unwrap().contains("deep → view を経由して"), "{}", deep["message"]);
+    let direct = violation(&report, "app/kanban/protocol/reads.hy::translation-targets-only-generic-foundation-effects::card_writes::app.kanban.intent.board.CreateCard");
+    assert!(direct["message"].as_str().unwrap().contains("handler card-writes(層 protocol)が層 intent の業務の intent CreateCard を出す"), "{}", direct["message"]);
+
+    // 保存前の 1 file の実行(エディタ)でも同じ 4 件。
+    let source = TRANSLATION_FILES[3].1;
+    let (_, stdout, stderr) = run(dir.path(), &["--output-format", "editor-json", "--no-log", "--stdin", "--path", "app/kanban/protocol/reads.hy"], Some(source));
+    let single: Value = serde_json::from_str(&stdout).unwrap_or_else(|e| panic!("{}: {}\n{}", e, stdout, stderr));
+    assert_eq!(keys(&single, "DOEFF130"), keys(&report, "DOEFF130"));
+}
+
+#[test]
+fn translation_effects_depth_and_layers_are_configured() {
+    // 辿る段の上限は設定 — 0 なら handler の本体で直に出す intent だけ。
+    let dir = translation_repo(&TRANSLATION_FILES, "\n[tool.doeff-linter.translation_effects]\nmax_depth = 1\n");
+    let (_, report) = editor(dir.path());
+    assert_eq!(
+        keys(&report, "DOEFF130"),
+        vec![
+            "app/kanban/protocol/reads.hy::translation-targets-only-generic-foundation-effects::board_reads::app.kanban.intent.board.ReadBoard",
+            "app/kanban/protocol/reads.hy::translation-targets-only-generic-foundation-effects::card_writes::app.kanban.intent.board.CreateCard",
+            "app/kanban/protocol/reads.hy::translation-targets-only-generic-foundation-effects::raw_handler::app.kanban.intent.board.CreateCard",
+        ]
+    );
+    let dir = translation_repo(&TRANSLATION_FILES, "\n[tool.doeff-linter.translation_effects]\nmax_depth = 0\n");
+    let (_, report) = editor(dir.path());
+    assert_eq!(
+        keys(&report, "DOEFF130"),
+        vec![
+            "app/kanban/protocol/reads.hy::translation-targets-only-generic-foundation-effects::card_writes::app.kanban.intent.board.CreateCard",
+            "app/kanban/protocol/reads.hy::translation-targets-only-generic-foundation-effects::raw_handler::app.kanban.intent.board.CreateCard",
+        ]
+    );
+    // 節に書いた層の名が無ければ設定の誤り(黙って当たらなくならない)。
+    let dir = translation_repo(&TRANSLATION_FILES, "\n[tool.doeff-linter.translation_effects]\nhandler_layers = [\"ghost\"]\n");
+    let (code, _, stderr) = run(dir.path(), &["--output-format", "editor-json", "--no-log"], None);
+    assert_eq!(code, 2, "{}", stderr);
+    assert!(stderr.contains("translation_effects.handler_layers: 層 ghost は宣言した層に無い"), "{}", stderr);
+}

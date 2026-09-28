@@ -266,6 +266,51 @@ pub struct SmellSettings {
     pub shape_check_layers: BTreeSet<LayerId>,
 }
 
+/// `[tool.doeff-linter.translation_effects]` — DOEFF130(翻訳の handler が業務の intent を出す)の設定。節が無ければ既定
+/// (層 protocol の handler・層 intent の型・8 段)で、その名の層が在る時だけ当たる。
+#[derive(Debug, Deserialize, Serialize, Clone)]
+pub struct TranslationEffectsSection {
+    /// handler を判じる層(翻訳の層 — 例 protocol)。
+    #[serde(default = "default_translation_handler_layers")]
+    pub handler_layers: Vec<String>,
+    /// 業務の intent を置く層(この層の module の型を撃てば違反 — 例 intent)。
+    #[serde(default = "default_translation_intent_layers")]
+    pub intent_layers: Vec<String>,
+    /// handler の撃った呼びから辿る defk の段の上限(0 なら handler の本体で直に撃つ intent だけ)。
+    #[serde(default = "default_translation_max_depth")]
+    pub max_depth: usize,
+}
+
+impl Default for TranslationEffectsSection {
+    fn default() -> Self {
+        TranslationEffectsSection {
+            handler_layers: default_translation_handler_layers(),
+            intent_layers: default_translation_intent_layers(),
+            max_depth: default_translation_max_depth(),
+        }
+    }
+}
+
+fn default_translation_handler_layers() -> Vec<String> {
+    vec!["protocol".to_string()]
+}
+
+fn default_translation_intent_layers() -> Vec<String> {
+    vec!["intent".to_string()]
+}
+
+fn default_translation_max_depth() -> usize {
+    8
+}
+
+/// DOEFF130 の設定(検めた後)。
+#[derive(Debug, Clone)]
+pub struct TranslationSettings {
+    pub handler_layers: BTreeSet<LayerId>,
+    pub intent_layers: BTreeSet<LayerId>,
+    pub max_depth: usize,
+}
+
 /// `[tool.doeff-linter.roles]` — role の閉じた一覧と、層ごとに許す role。
 #[derive(Debug, Deserialize, Serialize, Default, Clone)]
 pub struct RolesSection {
@@ -499,6 +544,8 @@ pub struct ProjectSettings {
     pub level: BTreeMap<String, RuleLevel>,
     /// 臭いの規則の設定(`[tool.doeff-linter.smells]`・無ければ None)。
     pub smells: Option<SmellSettings>,
+    /// DOEFF130 の設定(handler の層と intent の層が両方とも宣言した層に在る時だけ Some)。
+    pub translation: Option<TranslationSettings>,
     /// 設定を読んだ file の dir(registry.config_files の基準)。
     pub config_dir: Option<std::path::PathBuf>,
     /// repo の一番上の architecture.hy(service と層の唯一の宣言)。在れば層・role は ここから写す。
@@ -680,6 +727,7 @@ impl ProjectSettings {
                 severity: BTreeMap::new(),
                 level: BTreeMap::new(),
                 smells: None,
+                translation: None,
                 config_dir: None,
                 architecture: None,
                 semantic: None,

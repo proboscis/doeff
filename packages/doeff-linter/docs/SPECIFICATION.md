@@ -134,6 +134,7 @@ warning の違反 **DOEFF100**(設定の知らない鍵)を出す(agora-redesign
 | `raw_side_effects` | `allowed_layers`・`catalog_extra`(hy-index の `--raw-catalog-extra` と同じ形の JSON) | — |
 | `environment_names` | `words`・`paths`・`exclude`・`exclude_parts`・`extensions`・`assembly_files` | extensions = hy・hyk・hyp・py |
 | `laws`(配列) | `name`・`adr`・`statement`・`rules`・`layers` | layers が空なら全部の層 |
+| `translation_effects` | `handler_layers`・`intent_layers`・`max_depth`(DOEFF130 — 21 節) | protocol・intent・8 |
 | `registry` | `dirs`(1 鍵 1 file の dir)・`files`(1 行 1 鍵)・`config_files`(1 行 1 鍵・設定 file の dir からの相対)・`reconciling` | dirs と files は repo の根から |
 | `rules.<ID>` | `registered_severity`(登録簿に載った破れの重さ: error・warning・info) | warning |
 | `rules.<ID>` | `level`(規則の重大さ: critical・major・minor・info。どの規則でも書ける。登録簿で下げない — エディタが「手つかずの critical」を数える軸) | 規則そのものの重さから(error = major・warning = minor・info = info) |
@@ -601,6 +602,34 @@ handler の組が要り、同じ入力で同じ答えになることを値だけ
 - **作らなかった側**: 役 program が土台の effect を直に起こすことは判じない。agora の本線で測ると当たりの大半が doeff の時計と並行の effect
   (GetTime・Delay・Spawn など)と層に置く前の旧い dir の effect で、operator の形の決め(#780「Program は高い段の effect を出してよい」)も
   直に出すことを禁じていない。program に許す effect を repo の設定で名指す形が決まったら足す(#800 の記録)。
+
+
+## 21. 翻訳の handler が業務の intent を出す — DOEFF130
+
+agora-redesign #956(#942 の決定 2 — 責務の境界の規則)。翻訳の層(protocol)の handler は、受けた intent を doeff の汎用の effect
+(HttpRequest・doeff-records の読み書き・時計・file・process・Ask …)へ出し直すだけで、業務の intent(層 intent の型)を出さない。
+業務の intent を出すと、翻訳の handler が業務の判断と流れを抱え込む。
+
+- **対象**: 設定の `translation_effects.handler_layers` の層(既定 protocol)の Hy の module の、最上位の handler — `(defhandler 名 …)` と、
+  引数がちょうど `[effect k]` の `defk`・`deff`・`defn`。母集団は層の母集団(4 節)。handler でない defk は対象にしない(handler から
+  呼ばれれば、その先として辿られる)。
+- **業務の intent**: 実行する呼びの頭を module まで解いた名が、`translation_effects.intent_layers` の層(既定 intent)の module の、
+  頭が大文字の名(型)であること。`defeffect` でも `defclass` でもよい(層 intent は型だけを置く — 型を実行すれば intent を出している)。
+  module は層の母集団の索引で解く(package の `__init__` も)。
+- **推論**: handler の本体で実行する呼び(`(<- …)`・`(! …)` — 18 節と同じ `signatures::World` の読み)を順に見て、頭が業務の intent なら
+  当たり、頭が repo の defk ならその defk の実行する呼びへ進む(import した defk の先も)。進む defk の数の上限は
+  `translation_effects.max_depth`(既定 8・0 なら handler の本体で直に出す intent だけ)。同じ handler の中で同じ defk は 1 度だけ見る
+  (呼びの輪で止まる)。追えない呼び(repo の外の関数・deff・method)の先は数えない。
+  - 定義の本体の名だけで判じる検査(DOEFF201・agora の `check_business_fakes.hy`)は、handler が import した関数を経由して intent を
+    出す形をすり抜ける。この規則はその穴を塞ぐために defk の先まで辿る(#942 の独立レビュー)。
+- **場所**: handler の本体の、その intent に至る最初の呼びの頭。文に handler・層・経由した defk の道(`a → b`)・intent を書く。
+  handler ごと・intent ごとに 1 件。
+- **重さ**: error(決まった規則 — handler の本体と repo の定義だけで判じる)。重大さの宣言(`rules.DOEFF130.level`)は使う側の設定で書く
+  (agora は critical — #957)。
+- **鍵**: `<path>::<law か DOEFF130>::<handler>::<intent>`(handler は mangle した綴り、intent は module まで含めた名)。
+- **設定**: 節 `[tool.doeff-linter.translation_effects]` を書かなければ既定(protocol・intent・8)で、その名の層が両方とも在る時だけ当たる。
+  節を書いたのに層の名が無ければ設定の誤り(終了コード 2)。
+- **作らなかった側**: repo で定義した土台(foundation)の effect は判じない(土台は汎用の effect の置き場)。Python の handler は読まない。
 
 
 ## 16. 読めない Hy の file — DOEFF128

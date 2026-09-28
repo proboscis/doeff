@@ -88,6 +88,10 @@ pub struct Config {
     /// 臭いの規則(DOEFF121〜125)の設定 — `[tool.doeff-linter.smells]`
     #[serde(default)]
     pub smells: Option<crate::project::settings::SmellsSection>,
+
+    /// 翻訳の handler が出す effect の規則(DOEFF130)の設定 — `[tool.doeff-linter.translation_effects]`
+    #[serde(default)]
+    pub translation_effects: Option<crate::project::settings::TranslationEffectsSection>,
 }
 
 impl Config {
@@ -142,6 +146,33 @@ impl Config {
                 return Err(unknown);
             }
             settings.smells = Some(crate::project::settings::SmellSettings { shape_check_layers: layers });
+        }
+        // DOEFF130 — 節を書いたなら層の名の誤りは設定の誤り。書かなければ既定の層(protocol・intent)が両方在る時だけ当たる。
+        {
+            let names: Vec<String> = settings.layers.as_ref().map(|l| l.layers.iter().map(|s| s.name.clone()).collect()).unwrap_or_default();
+            let explicit = self.translation_effects.is_some();
+            let section = self.translation_effects.clone().unwrap_or_default();
+            let mut unknown = Vec::new();
+            let mut resolve = |list: &[String], key: &str| -> std::collections::BTreeSet<crate::project::settings::LayerId> {
+                let mut found = std::collections::BTreeSet::new();
+                for name in list {
+                    match names.iter().position(|n| n == name) {
+                        Some(index) => {
+                            found.insert(crate::project::settings::LayerId(index));
+                        }
+                        None => unknown.push(format!("translation_effects.{}: 層 {} は宣言した層に無い", key, name)),
+                    }
+                }
+                found
+            };
+            let handler_layers = resolve(&section.handler_layers, "handler_layers");
+            let intent_layers = resolve(&section.intent_layers, "intent_layers");
+            if explicit && !unknown.is_empty() {
+                return Err(unknown);
+            }
+            if unknown.is_empty() && !handler_layers.is_empty() && !intent_layers.is_empty() {
+                settings.translation = Some(crate::project::settings::TranslationSettings { handler_layers, intent_layers, max_depth: section.max_depth });
+            }
         }
         if let Some(section) = &self.semantic {
             let names: Vec<String> = settings.layers.as_ref().map(|l| l.layers.iter().map(|s| s.name.clone()).collect()).unwrap_or_default();
