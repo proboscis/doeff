@@ -193,6 +193,45 @@ export interface LintBinding {
   readonly raises: readonly LintTypeRef[];
 }
 
+/** 呼びの表示の置き換えの種類(閉じた集合 — 描き方は edit だけで決まるので、知らない種類も描く)。 */
+export const LINT_REWRITE_KINDS = ['call', 'method', 'infix', 'prefix', 'perform', 'bind', 'subscript', 'attribute'] as const;
+export type LintRewriteKind = (typeof LINT_REWRITE_KINDS)[number];
+
+/** 置き換えた式の部品(呼びの頭)の種類。 */
+export const LINT_REWRITE_ROLES = ['effect', 'defk', 'deff', 'type', 'function', 'builtin', 'local', 'method'] as const;
+export type LintRewriteRole = (typeof LINT_REWRITE_ROLES)[number];
+
+/** 元の文字の範囲を隠して text を見せる(範囲が空なら挿すだけ)。effect があれば text の前に装置の絵。 */
+export interface LintRewriteEdit {
+  readonly range: LintRange;
+  readonly text: string;
+  readonly effect: string | null;
+}
+
+/** 部品 1 つ(hover の型と定義への link)。 */
+export interface LintRewritePart {
+  readonly range: LintRange;
+  readonly name: string;
+  /** 知らない種類は null */
+  readonly role: LintRewriteRole | null;
+  readonly definition: LintLocation | null;
+  readonly answer: LintTypeRef | null;
+}
+
+/** 呼びを `f(a, b)` の形で見せる置き換え 1 つ(括弧の組 1 つ — 版 2 への欄の追加・agora-redesign #849)。 */
+export interface LintRewrite {
+  /** 知らない種類は null(edit だけで描ける) */
+  readonly kind: LintRewriteKind | null;
+  readonly path: string;
+  readonly range: LintRange;
+  readonly original: string;
+  readonly text: string;
+  readonly edits: readonly LintRewriteEdit[];
+  readonly parts: readonly LintRewritePart[];
+  /** 外側の置き換えの番号(同じ出力の rewrites の中の位置) */
+  readonly parent: number | null;
+}
+
 /** linter の出力の全体。 */
 export interface LintReport {
   readonly version: number;
@@ -208,6 +247,8 @@ export interface LintReport {
   readonly signatures: readonly LintSignature[];
   /** `--stdin` の file の束縛の型(版 2・全体の実行では空) */
   readonly bindings: readonly LintBinding[];
+  /** `--stdin` の file の呼びの表示の置き換え(版 2 への欄の追加 — 古い linter の出力には無く []) */
+  readonly rewrites: readonly LintRewrite[];
   /** linter 自身が読めなかった file など */
   readonly errors: readonly string[];
   /** 拡張の知らない語(linter の方が新しい)— その項目だけ既定の見た目にした理由。空なら無し */
@@ -558,6 +599,38 @@ function binding(value: unknown, where: string, notes: Notes): LintBinding | und
   };
 }
 
+/** 呼びの表示の置き換え 1 つを検める。 */
+function rewrite(value: unknown, where: string, notes: Notes): LintRewrite {
+  const obj = asObject(value, where);
+  const kindValue = field(obj, 'kind', where);
+  const parent = field(obj, 'parent', where);
+  if (parent !== null && (typeof parent !== 'number' || !Number.isInteger(parent) || parent < 0)) {
+    throw new LintContractViolation(`${where}.parent: 0 以上の整数でも null でもない`);
+  }
+  return {
+    kind: lenient(kindValue, `${where}.kind`, LINT_REWRITE_KINDS, notes) ?? null,
+    path: str(obj, 'path', where),
+    range: range(obj, where),
+    original: str(obj, 'original', where),
+    text: str(obj, 'text', where),
+    edits: list(obj, 'edits', where, (v, at) => {
+      const edit = asObject(v, at);
+      return { range: range(edit, at), text: str(edit, 'text', at), effect: strOrNull(edit, 'effect', at) };
+    }),
+    parts: list(obj, 'parts', where, (v, at) => {
+      const part = asObject(v, at);
+      return {
+        range: range(part, at),
+        name: str(part, 'name', at),
+        role: lenient(field(part, 'role', at), `${at}.role`, LINT_REWRITE_ROLES, notes) ?? null,
+        definition: locationOrNull(part, 'definition', at),
+        answer: typeOrNull(part, 'answer', at, notes)
+      };
+    }),
+    parent
+  };
+}
+
 /** 読みの途中で控える、拡張の知らない語。 */
 interface Notes {
   readonly unknown: string[];
@@ -612,6 +685,7 @@ export function parseLintJson(stdout: string): LintParseResult {
         semantic: optional(obj, 'semantic', '$', semanticSummary),
         signatures: hasSignatures ? present(list(obj, 'signatures', '$', (v, at) => signature(v, at, notes))) : [],
         bindings: hasSignatures ? present(list(obj, 'bindings', '$', (v, at) => binding(v, at, notes))) : [],
+        rewrites: Object.prototype.hasOwnProperty.call(obj, 'rewrites') ? list(obj, 'rewrites', '$', (v, at) => rewrite(v, at, notes)) : [],
         errors: list(obj, 'errors', '$', text),
         unknown: notes.unknown
       }

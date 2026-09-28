@@ -22,6 +22,7 @@ import { registerHyNavigation } from './hy/register';
 import { registerLint } from './lint/register';
 import { registerBrowse } from './hy/browsePanel';
 import { registerDefkView } from './defk/view';
+import { registerCallSyntaxView } from './defk/callView';
 import { PixelIcons, type IconSource } from './pixel/icons';
 import { pixelOwnsGutter, registerPixelEditor, treeIconsEnabled } from './pixel/editor';
 
@@ -2934,7 +2935,19 @@ export function activate(context: vscode.ExtensionContext) {
   // エディタの上の pixel art(gutter の種類の icon と状態の印・決まった語の文字の置き換えと hover・状態バーの doe)
   // defk の見出し(型の流れ・effect・tags)と束縛の型 — linter の editor-json 版 2 を読むだけの表示(agora-redesign #849)
   const defkView = registerDefkView(context, lintStore, (name) => pixelIcons.sprite(name), output);
-  registerPixelEditor(context, hyStore, hyNavigation.effects, lintStore, pixelIcons, output, defkView);
+  // 定義の本体の呼びを f(a, b) の形で見せる — editor-json の rewrites を読むだけの表示(agora-redesign #849)
+  const callView = registerCallSyntaxView(context, lintStore, (name, px) => pixelIcons.inline(name, px));
+  registerPixelEditor(context, hyStore, hyNavigation.effects, lintStore, pixelIcons, output, {
+    hiddenSpans: (editor) => [...defkView.hiddenSpans(editor), ...callView.hiddenSpans(editor)],
+    onDidRedraw: (listener) => {
+      const offDefk = defkView.onDidRedraw(listener);
+      const offCalls = callView.onDidRedraw(listener);
+      return () => {
+        offDefk();
+        offCalls();
+      };
+    }
+  });
 
   // Create state store for sharing state between TreeView and CodeLens
   const stateStore = new DoeffStateStore(context);

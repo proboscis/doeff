@@ -2,13 +2,15 @@
 // 差し替える。表示(波線・パネル・地図)はすべてここから読む。外の世界には触らない。
 
 import * as path from 'path';
-import type { LintBinding, LintLayer, LintModule, LintReport, LintRule, LintSignature, LintViolation } from './contract';
+import type { LintBinding, LintLayer, LintModule, LintReport, LintRewrite, LintRule, LintSignature, LintViolation } from './contract';
 
 /** 1 file の見出しと束縛(linter に渡した document の版つき — 版が進んだら古い位置なので描かない)。 */
 export interface FileSignatures {
   readonly version: number;
   readonly signatures: readonly LintSignature[];
   readonly bindings: readonly LintBinding[];
+  /** 呼びを `f(a, b)` の形で見せる置き換え(parent は この列の中の番号) */
+  readonly rewrites: readonly LintRewrite[];
 }
 
 /** root 1 つの状態 — 直前の全体の結果と、file ごとの差し替え。 */
@@ -69,7 +71,8 @@ export class LintStore {
     this.signatures.set(wanted, {
       version,
       signatures: report.signatures.filter((s) => key(s.path) === wanted),
-      bindings: report.bindings.filter((b) => key(b.path) === wanted)
+      bindings: report.bindings.filter((b) => key(b.path) === wanted),
+      rewrites: report.rewrites.every((r) => key(r.path) === wanted) ? report.rewrites : []
     });
     this.noteUnknown(filePath, report);
     this.emit();

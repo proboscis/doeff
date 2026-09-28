@@ -179,6 +179,8 @@ pub struct Binding {
 pub struct FileSignatures {
     pub signatures: Vec<Signature>,
     pub bindings: Vec<Binding>,
+    /// 定義の本体の呼びを `f(a, b)` の形で見せる表示の置き換え(`call_view.rs`)。
+    pub rewrites: Vec<super::call_view::Rewrite>,
 }
 
 // --- repo の表 ---------------------------------------------------------------------------
@@ -212,8 +214,8 @@ impl TypeSyntax {
 
 /// defeffect 1 つ。
 #[derive(Debug, Clone)]
-struct EffectFacts {
-    location: Location,
+pub(super) struct EffectFacts {
+    pub(super) location: Location,
     answer: Option<TypeSyntax>,
     absent: Vec<TypeSyntax>,
     failure: Vec<TypeSyntax>,
@@ -234,8 +236,10 @@ struct Site {
 
 /// defk / deff 1 つ(推論の材料)。
 #[derive(Debug, Clone)]
-struct DefinitionFacts {
-    kind: SignatureKind,
+pub(super) struct DefinitionFacts {
+    pub(super) kind: SignatureKind,
+    /// 名の位置(表示の置き換えの部品が押して飛ぶ先)。
+    pub(super) location: Location,
     answer: Option<TypeSyntax>,
     sites: Vec<Site>,
 }
@@ -252,9 +256,9 @@ struct Summary {
 /// repo の Hy の file 全部から集めた、型・effect・defk の表と、defk の推論。
 #[derive(Debug, Default)]
 pub struct World {
-    types: HashMap<String, Location>,
-    effects: HashMap<String, EffectFacts>,
-    definitions: HashMap<String, DefinitionFacts>,
+    pub(super) types: HashMap<String, Location>,
+    pub(super) effects: HashMap<String, EffectFacts>,
+    pub(super) definitions: HashMap<String, DefinitionFacts>,
     summaries: HashMap<String, Summary>,
 }
 
@@ -332,7 +336,7 @@ impl World {
 
     /// 撃った呼びの頭が repo の外の effect と見なせるか(頭が大文字で、repo の型でも定義でもない — 撃つ大文字の呼びは effect を作る呼び)。
     /// 宣言した `:effects [Delay]` を推論も拾えるようにするため(拾えないと「宣言だけ」の食い違いに見える)。
-    fn is_foreign_effect(&self, callee: &str) -> bool {
+    pub(super) fn is_foreign_effect(&self, callee: &str) -> bool {
         last_segment(callee).starts_with(|c: char| c.is_ascii_uppercase())
             && !self.types.contains_key(callee)
             && !self.definitions.contains_key(callee)
@@ -388,6 +392,11 @@ impl World {
         out
     }
 
+    /// defk / deff の答えの型(`:post` の型か名の注記。書いていなければ None)。
+    pub(super) fn answer_of(&self, qualified: &str) -> Option<TypeRef> {
+        self.definitions.get(qualified)?.answer.as_ref().map(|a| self.resolve(a))
+    }
+
     /// 解く前の型を契約の型にする(repo の定義に当たれば位置を添える)。
     fn resolve(&self, syntax: &TypeSyntax) -> TypeRef {
         match syntax {
@@ -435,7 +444,7 @@ impl World {
     }
 
     /// effect の値の答え(`:answer` の要素から `:absent` と `:failure` を除いた物 — 1 つなら名、複数なら和)。
-    fn effect_value(&self, effect: &EffectFacts) -> Option<TypeRef> {
+    pub(super) fn effect_value(&self, effect: &EffectFacts) -> Option<TypeRef> {
         let answer = effect.answer.as_ref()?;
         let excluded: BTreeSet<&str> = effect
             .absent
@@ -474,11 +483,11 @@ fn last_segment(qualified: &str) -> &str {
 // --- 読み ---------------------------------------------------------------------------------
 
 /// 1 file を読む道具(source・行の表・名の解き方)。
-struct FileReader<'a> {
-    hy: Hy<'a>,
-    lines: LineIndex<'a>,
-    scope: Scope<'a>,
-    path: String,
+pub(super) struct FileReader<'a> {
+    pub(super) hy: Hy<'a>,
+    pub(super) lines: LineIndex<'a>,
+    pub(super) scope: Scope<'a>,
+    pub(super) path: String,
 }
 
 impl<'a> FileReader<'a> {
@@ -583,7 +592,7 @@ impl<'a> FileReader<'a> {
 }
 
 /// 最上位の定義(`do` と `eval-and-compile` の中も)の form。
-fn top_definitions<'f>(hy: &Hy, forms: &'f [Form]) -> Vec<&'f Form> {
+pub(super) fn top_definitions<'f>(hy: &Hy, forms: &'f [Form]) -> Vec<&'f Form> {
     let mut out = Vec::new();
     let mut pending: Vec<&Form> = forms.iter().rev().collect();
     while let Some(form) = pending.pop() {
@@ -608,17 +617,17 @@ fn definition_name(form: &Form) -> (Option<&Form>, Option<&Form>) {
 }
 
 /// defk / deff の形を読んだ物。
-struct DefinitionShape<'f> {
-    kind: SignatureKind,
-    name: &'f Form,
+pub(super) struct DefinitionShape<'f> {
+    pub(super) kind: SignatureKind,
+    pub(super) name: &'f Form,
     name_annotation: Option<&'f Form>,
-    params: Option<&'f Form>,
-    contract: Option<&'f Form>,
-    body: Vec<&'f Form>,
+    pub(super) params: Option<&'f Form>,
+    pub(super) contract: Option<&'f Form>,
+    pub(super) body: Vec<&'f Form>,
 }
 
 /// `(defk 名 [引数] {契約}? "doc"? 本体…)` を読む(契約は doc の前でも後でもよい)。
-fn definition_shape<'f>(hy: &Hy, form: &'f Form) -> Option<DefinitionShape<'f>> {
+pub(super) fn definition_shape<'f>(hy: &Hy, form: &'f Form) -> Option<DefinitionShape<'f>> {
     let items = live(form)?;
     let kind = match items.first().and_then(|h| hy.symbol(h))? {
         "defk" => SignatureKind::Defk,
@@ -719,6 +728,7 @@ fn file_facts(root: &Path, rel: &str, source: &str) -> FileFacts {
                 qualified,
                 DefinitionFacts {
                     kind: shape.kind,
+                    location: reader.location(shape.name),
                     answer,
                     sites,
                 },
@@ -944,6 +954,7 @@ pub fn file_signatures(world: &World, root: &Path, rel: &str, source: &str) -> F
             &mut out.bindings,
         );
     }
+    out.rewrites = super::call_view::file_rewrites(world, &reader, &forms);
     out
 }
 

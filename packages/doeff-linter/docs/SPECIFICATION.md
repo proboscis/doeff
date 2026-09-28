@@ -97,6 +97,7 @@ warning の違反 **DOEFF100**(設定の知らない鍵)を出す(agora-redesign
   束ねて見せる時に使う。名と家族の判定は linter が持ち、エディタは写しを持たない。
 
 - `signatures`・`bindings`(版 2): `--stdin` の Hy の file の defk / deff の見出しと束縛の型。全体の実行では空の列。形と読み方は 16 節。
+- `rewrites`(版 2 への欄の追加): `--stdin` の Hy の file の、定義の本体の呼びを `f(a, b)` の形で見せる表示の置き換え。全体の実行では空の列。17 節。
 
 ### 説明の文(explanation・layer_reason)
 
@@ -513,3 +514,39 @@ coordinator の決定 2026-09-28(戻せる・agora-redesign #798 に記録)。�
   (比べ・組み込みの関数・method の的と引数・`名.method` の呼び・属性・条件・繰り返しの元)に出れば、束ねた呼びを違反にする。
   Program として渡す・返す形は拾わない。同じ名を `(<- 名 …)` でも束ねる定義はその名を追わない。束ねた名を別の定義へ渡す形・
   入れ物に入れて取り出す形は拾えない(ADR-DOE-HY-007 R14)。
+
+## 17. 呼びを `f(a, b)` の形で見せる表示の置き換え — editor-json の `rewrites`(agora-redesign #849)
+
+エディタが defk / deff の本体の呼びを Python に近い形で**見せるだけ**の材料(operator 2026-09-28 "also, maybe we could make the func
+call look like f(a,b) instead of (f a b)?"・式の途中の effect は `!` の印を残す案 A "lets try A")。source の Hy は変えない。式の形を
+読むのは `src/project/call_view.rs` の 1 か所で、エディタは Hy を読み直さずに描く。版 2 への欄の追加(古いエディタは読み飛ばす)。
+`--stdin --path <file>` の時だけその file の分を出す(全体の実行では空)。
+
+```jsonc
+"rewrites": [{
+  "kind": "call",                 // call | method | infix | prefix | perform | bind | subscript | attribute
+  "path": "/abs/core/flow.hy",
+  "range": {…},                   // 元の式全体(括弧を含む)
+  "original": "(f a :k v)",       // 元の lisp(一字一句)
+  "text": "f(a, k=v)",            // 中の置き換えも当てた表示(改行と字下げは元のまま)
+  "edits": [{"range": {…}, "text": "(", "effect": null}],   // 元の文字の範囲(空なら挿すだけ)を隠して text を見せる。effect = 装置の絵の effect の名
+  "parts": [{"range": {…}, "name": "f", "role": "defk",      // effect | defk | deff | type | function | builtin | local | method
+             "definition": {"path", "range"} | null, "answer": TypeRef | null}],
+  "parent": 3 | null              // 外側の置き換えの番号(外を元の lisp で見せる時は中も元の lisp)
+}]
+```
+
+| lisp | 表示 |
+|---|---|
+| `(f a b)`・`(f a :key v)`・`(f #* xs)` | `f(a, b)`・`f(a, key=v)`・`f(*xs)` |
+| `(.get row "k")`・`(get row "k")`・`(. row id)` | `row.get("k")`・`row["k"]`・`row.id` |
+| `(+ a b)`・`(= a b)`・`(is-not x None)`・`(not x)` | `a + b`・`a == b`・`x is not None`・`not x`(Python の優先順位で、変わる所だけ括弧) |
+| `(! (f a))` | `!f(a)`(撃つ呼びが effect なら `!` の edit に effect の名) |
+| `(<- (f a))`(名の無い `<-`) | `<- f(a)` |
+| `(Effect a)` | `Effect(a)`(`(` の edit に effect の名。`!` の中では `!` が持つ) |
+
+- **呼びと読む頭**: import した名・repo の定義(defk・deff・型・defeffect)・この file の最上位の定義・Python の組み込み・定義の中の
+  局所の名(引数と束縛)・`a.b` の形の名。`require` で入る macro と、制御の形(`when`・`if`・`match`・`for` …)・知らない頭は lisp のまま
+  (中の呼びだけ置き換える)。lisp の形の中の演算は括弧を残す(`(when (a and b) …)`)。
+- **字下げ**: 作り直さない。引数が次の行へ続く所は前の引数の後ろに `,` を挿すだけ。頭と最初の項が別の行の演算・method は lisp のまま。
+- 名の束縛(`(<- x T e)`・`val` …)は 16 節の `bindings` が描き、ここは値の式だけを置き換える。quote の中は読まない。
