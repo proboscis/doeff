@@ -245,7 +245,10 @@
 
 (defn #^ ClusterState stamp [#^ ClusterState before #^ ClusterState after #^ str actor #^ int now #^ ClusterTiming timing]
   "before → after の差を資源ごとに版へ写す。変わった資源の resourceVersion を coordinator 全体の番号で進め、spec が変われば
-   generation も進め、出来事を 1 件記録する。版の欄の無い資源(旧い形の file から読んだ物)は adopt として版を振る。"
+   generation も進め、出来事を 1 件記録する。版の欄の無い資源(旧い形の file から読んだ物)は adopt として版を振る。
+   作成か否かは before の行の有無で決める(版の記録の有無ではない): before に行が無い資源は、版の記録が残っていても create とし、
+   記録を generation 1 から始める。読み直しは読めない旧い形の行(labels だけの worker)を捨て、その版の記録 meta/<種類>/<名> を
+   置き場に残す — 以前は同じ名の資源を書くたびに TypeError になり、新しい形の worker が名乗れなかった(2026-09-29・agora-redesign #1005)。"
   (when (is before after) (return after))
   (setv b (snapshot before now timing) a (snapshot after now timing)
         meta (dict after.meta) audit (list after.audit) rev after.revision seq after.audit-seq)
@@ -260,7 +263,7 @@
         (do (.pop meta key None)
             (setv verb "delete" from (if current (get current "resourceVersion") None) to None
                   generation (if current (get current "generation") None)))
-      (is current None)
+      (or (is old None) (is current None))
         (do (setv verb (if (is old None) "create" "adopt") from None to rev generation 1)
             (setv (get meta key) {"resourceVersion" rev "generation" 1 "createdBy" actor "createdMs" now
                                   "updatedBy" actor "updatedMs" now}))

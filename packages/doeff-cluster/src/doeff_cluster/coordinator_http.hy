@@ -54,6 +54,16 @@
   (.decode (.encode actor "ascii" "replace") "ascii"))
 
 
+(defclass CoordinatorRefused [Exception]
+  "coordinator が要求を断った(4xx・5xx)。status と coordinator の返した本文(先頭 500 字)を持つ。httpx の raise-for-status の例外は
+   本文を持たず、断りの理由(coordinator の {\"error\": …})が worker の log と状態の note に出なかった(2026-09-29・agora-redesign #1005)。"
+  (defn __init__ [self #^ int status #^ str body]
+    (.__init__ (super) status body)
+    (setv self.status status self.body body))
+  (defn #^ str __repr__ [self]
+    (.format "coordinator が断った({}): {}" self.status self.body)))
+
+
 (defn #^ tuple parse-urls [#^ str spec]
   "宛先の指定 = URL を `,` で並べた文字列。前ほど優先(Mac なら LAN の宛先・tailnet の宛先の順)。"
   (setv urls (tuple (gfor u (.split spec ",") :if (.strip u) (.rstrip (.strip u) "/"))))
@@ -109,7 +119,13 @@
           (return response)
           (except [error CONNECT-FAILURES]
             (setv last error)))))
-    (raise last)))
+    (raise last))
+
+  (defn #^ httpx.Response accepted [self #^ httpx.Response response]
+    "返事が断り(4xx・5xx)なら CoordinatorRefused(status と本文)を投げ、そうでなければ返事をそのまま返す。"
+    (when (>= response.status-code 400)
+      (raise (CoordinatorRefused response.status-code (cut response.text 0 500))))
+    response))
 
 
 (defn #^ httpx.Response send-idempotent [send [deadline-seconds IDEMPOTENT-DEADLINE-SECONDS] [pause-seconds RESEND-PAUSE-SECONDS]]

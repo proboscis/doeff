@@ -920,7 +920,9 @@
           self.boot-at (int (* (time.time) 1000))
           ;; 切り離した task の id → 置かれた時の返事の行(blob を除く)。状態の報告に写して添え、状態を失った coordinator が
           ;; 走っている task を引き取れるようにする(cluster_policy.adopt-running-detached・2026-09-27)。
-          self.task-echo {})
+          self.task-echo {}
+          ;; 最後に stderr へ出した heartbeat の結果(None = まだ出していない・"" = 名乗れた・それ以外 = 名乗れない理由)— tell。
+          self.told None)
     ;; 世代を Pod の中の file へ書く(DOEFF_WORKER_BOOT_FILE)— readinessProbe が「coordinator の見る worker がこの Pod の物か」を
     ;; 比べる(drain_client.ready-of)。同じ node の前の Pod と名が同じなので、名だけでは見分けられない。
     (setv boot-file (os.environ.get "DOEFF_WORKER_BOOT_FILE"))
@@ -1003,14 +1005,21 @@
                          :setv result (/ self.task-dir (+ (finished-task-id s) ".result"))
                          (finished-task-id s) (if (.exists result) (.read-text result :encoding "ascii") None))))
 
+  (defn #^ None tell [self #^ str outcome #^ str line]
+    "heartbeat の結果の変わり目(初めて名乗れた・名乗れない理由が変わった・戻った)だけを stderr へ 1 行出すため。同じ結果の繰り返しは
+     出さない。以前は断りも途絶も黙っていて、13 回目の本番の切り替えでは coordinator が heartbeat を 400 で断り続けたのに、worker の
+     log は「起動します」の後に 32 分何も出さなかった(fence を越えると状態の file の note も空になる — 2026-09-29・agora-redesign #1005)。"
+    (when (!= outcome self.told)
+      (setv self.told outcome)
+      (print line :file sys.stderr :flush True)))
+
   (defn poll [self]
     (try
-      (setv response (.request self.endpoint "POST" "/heartbeat"
+      (setv response (.accepted self.endpoint (.request self.endpoint "POST" "/heartbeat"
         :json (| (heartbeat-body :name self.name :provides self.provides :exclusive self.exclusive :node self.node
                                  :capacity self.capacity :versions self.versions :statuses self.statuses
                                  :endpoint self.endpoint.url :boot self.boot :boot-at self.boot-at :tools self.tools)
-                 (.env-body self))))
-      (.raise-for-status response)
+                 (.env-body self)))))
       (setv self.last-ok (time.monotonic))
       (setv body (.json response))
       (write-ready-file (os.environ.get "DOEFF_WORKER_READY_FILE") (bool (.get body "draining" False)))
@@ -1022,8 +1031,11 @@
       (setv self.last-tasks (.accept-tasks self (.get body "tasks" [])))
       (.accept-programs self (+ self.last-jobs self.last-tasks))
       (setv self.last-warm (.accept-warm self (.get body "warm" [])))
+      ;; 返事を読み終えてから出す(返事の読みが毎回落ちる時に、名乗れた・名乗れないの 2 行を拍ごとに繰り返さない)。
+      (.tell self "" (.format "worker: coordinator {} に名乗りました" self.endpoint.url))
       (DesiredJobs (+ self.last-jobs self.last-tasks) :warm self.last-warm)
       (except [error Exception]
+        (.tell self (repr error) (+ "worker: coordinator に名乗れない: " (repr error)))
         (desired-when-unreachable (int (* 1000 (- (time.monotonic) self.last-ok))) self.fence-ms
                                   (+ self.last-jobs self.last-tasks) self.last-warm (repr error))))))
 
