@@ -15,7 +15,7 @@
 //! 拾わない: `(<- …)` の右辺・`(! …)`・`(return …)`、Program を受ける呼びの引数(repo の関数に渡す形も — Program を受けて走らせる
 //! 関数(run-on など)かもしれず、追えない)、名への束ね(後で Program として渡すかもしれない)。
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use doeff_indexer::hy_index::reader::{Delim, Form, Node, Reader};
 
@@ -109,8 +109,11 @@ impl BareCall {
 const VALUE_HEADS: &[&str] = &[
     "=", "!=", "<", ">", "<=", ">=", "+", "-", "*", "/", "//", "%", "**", "in", "not-in", "not", "and", "or", "is", "is-not", "len", "str",
     "int", "float", "bool", "tuple", "list", "dict", "set", "frozenset", "sorted", "reversed", "any", "all", "sum", "min", "max", "repr",
-    "get", "isinstance", "print", "enumerate", "zip", "iter", "next", "hash", "format", "abs", "round",
+    "get", "isinstance", "print", "enumerate", "zip", "iter", "next", "hash", "format", "abs", "round", "assert",
 ];
+
+/// 名に束ねる形(`(setv 名 式 …)` の組・`(val 名 式)`・`(var 名 式)`・`(:= 名 式)`)— 素の呼びを名に束ねて後で答えとして使う形を追うため。
+const PLAIN_BINDING_HEADS: &[&str] = &["setv", "setx", "val", "var", ":="];
 
 /// 答えとして使う位置を中の枝へ受け継ぐ形(条件の式は別に答えとして使う所)。
 const BRANCHING_FORMS: &[&str] = &["if", "when", "unless", "cond", "do", "let"];
@@ -164,12 +167,17 @@ impl Walker<'_> {
                         _ => self.hy.text(f),
                     })
                     .unwrap_or("");
-                let context = Context { definition: hy_mangle(name), container: h.to_string() };
+                let context = Context { definition: hy_mangle(name), container: h.to_string(), bound: self.bare_bindings(form) };
                 for child in items.into_iter().skip(1) {
                     self.walk(child, false, &context, out);
                 }
             }
-            _ => self.walk(form, false, &Context { definition: format!("<{}>", self.scope.module), container: "module".to_string() }, out),
+            _ => self.walk(
+                form,
+                false,
+                &Context { definition: format!("<{}>", self.scope.module), container: "module".to_string(), bound: BTreeMap::new() },
+                out,
+            ),
         }
     }
 
@@ -182,6 +190,14 @@ impl Walker<'_> {
     fn walk_at(&self, form: &Form, value: bool, yielded: bool, context: &Context, out: &mut Vec<BareCall>) {
         match &form.node {
             Node::Seq { delim: Delim::Paren, .. } => self.call(form, value, yielded, context, out),
+            // defk の素の呼びを束ねた名(`all`・`all.x`)を答えとして使う所 — 束ねた呼びを違反にする。
+            Node::Symbol if value => {
+                let text = self.hy.text(form);
+                let name = text.split('.').next().unwrap_or(text);
+                if let Some((callee, span)) = context.bound.get(name) {
+                    out.push(BareCall { definition: context.definition.clone(), container: context.container.clone(), callee: callee.clone(), span: *span });
+                }
+            }
             _ => {
                 for child in children(form) {
                     self.walk(child, false, context, out);
@@ -196,6 +212,10 @@ impl Walker<'_> {
         let head = items.first().and_then(|h| self.hy.head_text(h));
         let qualified = head.filter(|h| !h.starts_with(':')).map(|h| self.scope.qualify(h));
         let is_defk = qualified.as_deref().is_some_and(|q| self.defks.contains(q));
+        // `(all.get k)` — 束ねた名の method を呼ぶのも、その名を答えとして使う所。
+        if let Some((callee, span)) = head.and_then(|h| h.split_once('.')).and_then(|(name, _)| context.bound.get(name)) {
+            out.push(BareCall { definition: context.definition.clone(), container: context.container.clone(), callee: callee.clone(), span: *span });
+        }
         if let (true, true, Some(callee)) = (is_defk, value, head) {
             out.push(BareCall { definition: context.definition.clone(), container: context.container.clone(), callee: callee.to_string(), span: span_of(form) });
         }
@@ -233,10 +253,53 @@ impl Walker<'_> {
     }
 }
 
-/// 下っている所の定義(鍵と説明のため)。
+/// 下っている所の定義(鍵と説明のため)と、その定義の中で defk の素の呼びを束ねた名(名 → 呼んだ defk・束ねた呼びの範囲)。
 struct Context {
     definition: String,
     container: String,
+    bound: BTreeMap<String, (String, ByteSpan)>,
+}
+
+impl Walker<'_> {
+    /// 定義の中で、defk の素の呼びを `setv`・`val`・`var`・`:=`・`let` で名に束ねた所を集める。同じ名を `(<- 名 …)` でも束ねる定義では
+    /// その名を追わない(どちらの値か決まらない)。追うのは 1 つの定義の中だけ。
+    fn bare_bindings(&self, definition: &Form) -> BTreeMap<String, (String, ByteSpan)> {
+        let mut bound = BTreeMap::new();
+        let mut effect_bound = BTreeSet::new();
+        let mut pending = vec![definition];
+        while let Some(form) = pending.pop() {
+            if let Some(items) = live(form) {
+                let head = items.first().and_then(|h| self.hy.head_text(h));
+                let pairs: Vec<(&Form, &Form)> = match head {
+                    Some(h) if PLAIN_BINDING_HEADS.contains(&h) => items[1..].chunks(2).filter_map(|p| Some((*p.first()?, *p.get(1)?))).collect(),
+                    Some("let") => items
+                        .get(1)
+                        .and_then(|b| b.bracket_items())
+                        .map(super::smells::live_items)
+                        .unwrap_or_default()
+                        .chunks(2)
+                        .filter_map(|p| Some((*p.first()?, *p.get(1)?)))
+                        .collect(),
+                    Some("<-") => {
+                        if let Some(name) = items.get(1).and_then(|t| self.hy.symbol(t)) {
+                            effect_bound.insert(name.to_string());
+                        }
+                        Vec::new()
+                    }
+                    _ => Vec::new(),
+                };
+                for (target, value) in pairs {
+                    let (Some(name), Some(callee)) = (self.hy.symbol(target), self.hy.head(value)) else { continue };
+                    if self.defks.contains(&self.scope.qualify(callee)) {
+                        bound.entry(name.to_string()).or_insert((callee.to_string(), span_of(value)));
+                    }
+                }
+            }
+            pending.extend(children(form));
+        }
+        bound.retain(|name, _| !effect_bound.contains(name));
+        bound
+    }
 }
 
 #[cfg(test)]
@@ -296,4 +359,26 @@ mod tests {
         let bindings = [("run", "doeff"), ("with_handlers", "doeff"), ("Gather", "doeff"), ("Spawn", "doeff"), ("load", "lib")];
         assert!(found(source, &bindings).is_empty(), "{:?}", found(source, &bindings));
     }
+
+    #[test]
+    fn bound_bare_calls_used_as_values_and_assert_messages_are_found() {
+        // agora の incident_placement.hy(直す前 9e2574a6^)の形: (.items (histories run)) は method の的、
+        // (setv … all (histories run)) の後の (get all job) は束ねた名を答えとして使う所。assert の文 (describe …) も答えとして使う。
+        let source = r#"(deff turn-survives-roll [run]
+  (for [[job history] (.items (fetch run))] (print job)))
+(deff waits-of-run [run]
+  (setv out [] all (fetch run))
+  (for [job (.keys all)] (.append out (get all job)))
+  out)
+(deff via-let [run] (let [rows (fetch run)] (len rows)))
+(deftest test-laws (assert (in "TI1" laws) (fetch out.breaches)))
+(defk fine [run]
+  (setv program (fetch run))
+  (<- got (run-on program))
+  (val later (fetch run))
+  (return later))
+(defk rebound [run] (setv x (fetch run)) (<- x (fetch run)) (len x))"#;
+        assert_eq!(found(source, &[]), vec!["turn_survives_roll::fetch", "waits_of_run::fetch", "via_let::fetch", "test_laws::fetch"]);
+    }
 }
+
