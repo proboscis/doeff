@@ -335,12 +335,47 @@ fn editor_json_shape_rules_and_python_rule_ranges() {
         "",
     );
     let (code, report) = editor(dir.path());
-    assert_eq!(report["version"], 1);
+    // 版 2(#849・8f7b7201)で defk / deff の見出し signatures と束縛の型 bindings を足した。全体の実行では両方とも空の列。
+    assert_eq!(report["version"], 2);
     assert!(report["root"].as_str().unwrap().starts_with('/'));
     assert_eq!(report["errors"], serde_json::json!([]));
-    for field in ["violations", "modules", "rules", "errors"] {
+    for field in ["violations", "modules", "rules", "errors", "signatures", "bindings"] {
         assert!(report[field].is_array(), "{}", field);
     }
+    assert_eq!(report["signatures"], serde_json::json!([]));
+    assert_eq!(report["bindings"], serde_json::json!([]));
+    // 保存前の 1 file の実行(stdin)では、その Hy の file の見出しと束縛の型が欄ごとに出る。
+    let plan = "(defk plan [x]\n  {:pre [(: x int)] :post [(: % str)] :tags {:context \"billing\" :role \"judgment\"}}\n  (<- s str (render x))\n  (val n 1)\n  s)\n(defk render [x] {:pre [(: x int)] :post [(: % str)]} (str x))\n";
+    std::fs::write(dir.path().join("app/core/plan.hy"), plan).unwrap();
+    let (_, stdout, stderr) = run(dir.path(), &["--output-format", "editor-json", "--no-log", "--stdin", "--path", "app/core/plan.hy"], Some(plan));
+    let single: Value = serde_json::from_str(&stdout).unwrap_or_else(|e| panic!("{}: {}\n{}", e, stdout, stderr));
+    assert_eq!(single["version"], 2);
+    let signature = single["signatures"].as_array().unwrap().iter().find(|s| s["name"] == "plan").expect("plan の見出し");
+    assert_eq!(signature["kind"], "defk");
+    assert!(signature["path"].as_str().unwrap().ends_with("app/core/plan.hy"));
+    assert_eq!(signature["range"]["start"], serde_json::json!({"line": 0, "character": 6}));
+    assert_eq!(signature["full_range"]["start"]["line"], 0);
+    assert_eq!(signature["contract_range"]["start"]["line"], 1);
+    assert_eq!(signature["params"], serde_json::json!([{"name": "x", "type": {"kind": "name", "name": "int", "definition": null}}]));
+    assert_eq!(signature["answer"], serde_json::json!({"kind": "name", "name": "str", "definition": null}));
+    assert_eq!(signature["absent"], false);
+    assert_eq!(signature["raises"], serde_json::json!([]));
+    assert!(signature["effects"]["declared"].is_null() && signature["effects"]["inferred"].is_array());
+    assert_eq!(signature["tags"], serde_json::json!({"context": "billing", "role": "judgment"}));
+    let bindings = single["bindings"].as_array().unwrap();
+    let bound = bindings.iter().find(|b| b["name"] == "s").expect("s の束縛");
+    assert_eq!(bound["form"], "<-");
+    assert_eq!(bound["origin"], "annotation");
+    assert_eq!(bound["type"]["name"], "str");
+    assert_eq!(bound["range"]["start"], serde_json::json!({"line": 2, "character": 6}));
+    for field in ["form_range", "head_range", "annotation_range", "value_range"] {
+        assert!(bound[field]["start"]["line"].is_number(), "{}", field);
+    }
+    assert_eq!(bound["absent"], false);
+    assert_eq!(bound["raises"], serde_json::json!([]));
+    let plain = bindings.iter().find(|b| b["name"] == "n").expect("n の束縛");
+    assert_eq!(plain["form"], "val");
+    assert!(plain["annotation_range"].is_null());
     // 既存の Python の規則(DOEFF016)も行の範囲と law つきで出る。
     let relative = report["violations"].as_array().unwrap().iter().find(|v| v["rule"] == "DOEFF016").expect("DOEFF016");
     assert_eq!(relative["law"], "absolute-imports");
