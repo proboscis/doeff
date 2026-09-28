@@ -12,6 +12,7 @@ import {
   headerRevealed,
   multiBindingForms,
   parseRevealMode,
+  linesWithUnshownKeys,
   signatureText,
   splitAtPieces,
   targetsAt,
@@ -162,7 +163,7 @@ suite('defk の見出し — 契約 版 2 の読み込み', () => {
 });
 
 suite('defk の見出し — 描く場所と部品', () => {
-  test('map が先(3 行): 1 行目に型の行・2 行目に effect の行を描き、描く物の無い残りの行は隠さずに淡く見せる', () => {
+  test('map が先(4 行): 1 行目に型の行・2 行目に effect の行を描き、見出しに出した鍵だけの残りの行は行ごと隠す', () => {
     const plan = headerPlan(report().signatures[0], lines(FLOW_SOURCE));
     assert.ok(plan !== undefined);
     assert.strictEqual(plan.headLine, 2);
@@ -182,12 +183,8 @@ suite('defk の見出し — 描く場所と部品', () => {
         [4, 9, 'raise', 'Unreadable']
       ]
     );
-    assert.deepStrictEqual(
-      plan.dimmed.map((d) => d.line),
-      [5, 6],
-      '隠したのに何も描かない行を作らない'
-    );
-    assert.ok(plan.hidden.every((h) => h.line === 3 || h.line === 4));
+    assert.deepStrictEqual(plan.dimmed, [], ':post と :effects は見出しに出したので淡くも見せない');
+    assert.deepStrictEqual([...new Set(plan.hidden.map((h) => h.line))], [3, 4, 5, 6]);
     assert.deepStrictEqual(plan.tagsAt, { line: 2, character: 18 });
   });
 
@@ -234,11 +231,33 @@ suite('defk の見出し — 描く場所と部品', () => {
       ['effect なし'],
       '2 行目は effect の行(起こさないことも書く)'
     );
+    assert.deepStrictEqual(plan.dimmed, [], ':tags の行は名の行の tags の札と重複するので行ごと隠す');
+    assert.deepStrictEqual([...new Set(plan.hidden.map((h) => h.line))], [2, 3, 4], 'docstring の行は隠さない');
+  });
+
+  test('見出しに出していない鍵(:doc など)が在る辞書の行だけ淡く見せる — 入れ子の keyword と文字列の中の : は鍵に数えない', () => {
+    const source = SIM_PART_SOURCE.replace('   :post [(: % dict)]', '   :post [(: % dict)] :doc "a :b"');
+    const sig = simPart(source);
+    const unshown = linesWithUnshownKeys({ start: { line: 2, character: 2 }, end: { line: 4, character: 44 } }, lines(source));
+    assert.deepStrictEqual([...unshown], [3], ':doc の行だけ(:context・:role・文字列の中の :b は数えない)');
+    const threeKeys = ['(defk f [x]', '  {:pre [(: x int)]', '   :post [(: % int)]', '   :doc "説明"', '   :tags {:context "c" :role "judgment"}}', '  x)', ''].join('\n');
+    const f: LintSignature = {
+      ...sig,
+      name: 'f',
+      params: [{ name: 'x', type: { kind: 'name', name: 'int', definition: null } }],
+      answer: { kind: 'name', name: 'int', definition: null },
+      range: { start: { line: 0, character: 6 }, end: { line: 0, character: 7 } },
+      fullRange: { start: { line: 0, character: 0 }, end: { line: 5, character: 4 } },
+      contractRange: { start: { line: 1, character: 2 }, end: { line: 4, character: 41 } }
+    };
+    const fPlan = headerPlan(f, lines(threeKeys));
+    assert.ok(fPlan !== undefined);
     assert.deepStrictEqual(
-      plan.dimmed.map((d) => d.line),
-      [4]
+      fPlan.dimmed.map((d) => d.line),
+      [3],
+      ':doc の行だけ淡く見せ、:post と :tags の行は隠す'
     );
-    assert.ok(plan.hidden.every((h) => h.line === 2 || h.line === 3), 'docstring の行は隠さない');
+    assert.deepStrictEqual([...new Set(fPlan.hidden.map((h) => h.line))], [1, 2, 4]);
   });
 
   test('追えない呼びを撃つ defk は、推論が空でも「effect なし」と描かない', () => {

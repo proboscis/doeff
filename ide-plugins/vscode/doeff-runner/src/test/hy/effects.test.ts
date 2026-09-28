@@ -168,7 +168,7 @@ suite('effect の行き来 — クリック・実装へ移動・注記・hover',
       'GetRow: 撃つ場所 2 箇所',
       'SpecialPut: handler 0 個',
       'SpecialPut: 撃つ場所 1 箇所',
-      'save-row: 撃つ effect 2 個',
+      // defk は見出しの effect の行が撃つ effect を出すので、注記は呼び出し元だけ(deff の load-row は今までどおり)
       'save-row: 呼び出し元 3 箇所',
       'memory-handler: 扱う effect: PutRow, GetRow',
       'load-row: 撃つ effect 2 個',

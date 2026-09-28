@@ -297,23 +297,72 @@ export function headerPlan(signature: LintSignature, lines: LineSource): HeaderP
     // 描く場所が無い — 辞書は隠さない(隠したのに何も描かない行を作らない)
     return { headLine, name, hidden: [], dimmed: [], pieces: [], tagsAt, fallback: fallbackText(), lines: whole };
   }
-  // 型の行は辞書の 1 行目、effect の行は 2 行目(無ければ型の行の後ろへ続ける)。描く物の無い辞書の行は隠さずに淡く見せる
+  // 型の行は辞書の 1 行目、effect の行は 2 行目(無ければ型の行の後ろへ続ける)。残りの行は、見出しに出した鍵
+  // (:tags・:pre・:post・:effects)だけの行なら行ごと隠し、見出しに出していない鍵が在る行だけ淡く見せる
+  // (coordinator の決定 2026-09-28 — :tags の行が名の行の tags の札と重複していた)
   const twoRows = effects.length > 0 && second !== undefined && anchorsIn(second, lines.lineText(second.line)).length > 0;
   const firstText = lines.lineText(first.line);
   const pieces = twoRows
     ? [...place(types, first, firstText), ...place(effects, second, lines.lineText(second.line))]
     : place([...types, ...effects], first, firstText);
   const used = twoRows ? 2 : 1;
+  const unshown = linesWithUnshownKeys(contract, lines);
+  const rest = spans.slice(used);
   return {
     headLine,
     name,
-    hidden: splitAtPieces(spans.slice(0, used), pieces),
-    dimmed: spans.slice(used),
+    hidden: [...splitAtPieces(spans.slice(0, used), pieces), ...rest.filter((s) => !unshown.has(s.line))],
+    dimmed: rest.filter((s) => unshown.has(s.line)),
     pieces,
     tagsAt,
     fallback: undefined,
     lines: whole
   };
+}
+
+/** 見出しに出す契約の辞書の鍵(型の行・effect の行・tags の札)。 */
+const SHOWN_KEYS = new Set([':tags', ':pre', ':post', ':effects']);
+
+/**
+ * 契約の辞書の中で、見出しに出していない鍵(最上位の鍵のうち SHOWN_KEYS に無い物)が書かれた行 — その行は隠さずに淡く見せるため。
+ * 文字列と註の中は読まず、入れ子の括弧の中の keyword(`:context` など)は鍵に数えない。
+ */
+export function linesWithUnshownKeys(contract: LintRange, lines: LineSource): Set<number> {
+  const found = new Set<number>();
+  let depth = 0;
+  let inString = false;
+  for (let line = contract.start.line; line <= contract.end.line; line++) {
+    const text = lines.lineText(line);
+    const from = line === contract.start.line ? contract.start.character : 0;
+    const to = line === contract.end.line ? contract.end.character : text.length;
+    for (let c = from; c < to; c++) {
+      const ch = text[c];
+      if (inString) {
+        if (ch === '\\') {
+          c++;
+        } else if (ch === '"') {
+          inString = false;
+        }
+        continue;
+      }
+      if (ch === '"') {
+        inString = true;
+      } else if (ch === ';') {
+        break;
+      } else if ('([{'.includes(ch)) {
+        depth++;
+      } else if (')]}'.includes(ch)) {
+        depth--;
+      } else if (ch === ':' && depth === 1 && (c === 0 || /[\s{]/.test(text[c - 1]))) {
+        const key = /^:[^\s()[\]{}"]+/.exec(text.slice(c))?.[0] ?? ':';
+        if (!SHOWN_KEYS.has(key)) {
+          found.add(line);
+        }
+        c += key.length - 1;
+      }
+    }
+  }
+  return found;
 }
 
 /**

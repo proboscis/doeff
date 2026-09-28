@@ -96,13 +96,17 @@ export function lensSpecs(graph: EffectGraph, filePath: string): LensSpec[] {
     } else if (kind === 'defhandler') {
       specs.push({ tag: 'handler-effects', ref, clauses: graph.handlerClauses(ref) });
     } else if (PROGRAM_KINDS.includes(kind)) {
-      const performed = graph.performedEffects(ref);
-      specs.push({
-        tag: 'program-performs',
-        ref,
-        sites: performed.flatMap((p) => p.sites),
-        effects: performed.map((p) => p.name)
-      });
+      // defk は見出しの effect の行が撃つ effect を出すので、注記は呼び出し元だけにする(同じ情報を 2 か所に出さない —
+      // coordinator の決定 2026-09-28・agora-redesign #849)。他の定義(defp など)は今までどおり
+      if (kind !== 'defk') {
+        const performed = graph.performedEffects(ref);
+        specs.push({
+          tag: 'program-performs',
+          ref,
+          sites: performed.flatMap((p) => p.sites),
+          effects: performed.map((p) => p.name)
+        });
+      }
       specs.push({ tag: 'program-callers', ref });
     }
   }
