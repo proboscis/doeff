@@ -223,6 +223,8 @@ pub enum Explain {
     ParamCalledBare { call: super::param_calls::ParamCall },
     /// DOEFF127: defk の `:effects` の宣言が推論と合わない。
     EffectMismatch { mismatch: super::signatures::EffectMismatch },
+    /// DOEFF129: 役 judgment の defk が effect を起こす。
+    JudgmentEffect { effect: super::signatures::JudgmentEffect },
     /// DOEFF121〜125: 臭いの規則(形の照らし)。
     Smell { smell: super::smells::Smell },
     /// DOEFF205: Jev が、判断の定義に形の検めと業務の判断が混ざっていると見た。
@@ -436,6 +438,16 @@ impl<'a> Narrator<'a> {
                     ),
                 ),
             },
+            Explain::JudgmentEffect { effect } => (
+                match &effect.via {
+                    Some(via) => format!("defk {}(役 judgment)が {} を経由して effect {} を起こしている", effect.definition, via, effect.effect()),
+                    None => format!("defk {}(役 judgment)が effect {} を撃っている", effect.definition, effect.effect()),
+                },
+                format!(
+                    "役 judgment は値から値を決める純粋な判断で、effect を起こさない。{} を起こすと、判断を検めるのに handler の組が要り、同じ入力で同じ答えになることを値だけで確かめられない。effect を出す部分は呼び手の program に置き、判断はその答えの値を引数で受ける。",
+                    effect.effect()
+                ),
+            ),
             Explain::BareDefkCall { call } => (
                 format!("定義 {}({})が defk {} を素で呼んでいる", call.definition, call.container, call.callee),
                 format!(

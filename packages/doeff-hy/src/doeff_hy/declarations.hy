@@ -88,7 +88,35 @@
         (for [item form]
           (when (not (isinstance item Symbol))
             (raise (SyntaxError (.format "{}: :effects の要素は effect の型の名: {}" where (hy.repr item))))))
-        `(tuple [~@form]))))
+        `(doeff_hy.declarations.effect-types ~where (tuple [~@form])))))
+
+
+(defn #^ (| str None) effect-refusal [item]  ; defk にできない: macro が展開した定義の頭が module の読み込みの時に呼ぶ(Program の外)
+  "item を :effects に書けない理由(書ければ None)。書けるのは effect の型か、effect を作る関数(答えの注釈が effect の型 —
+   doeff_time の GetTime・Delay や doeff の Tell の形)。"
+  (import typing)
+  (import doeff [EffectBase])
+  (setv effect-type? (fn [t] (and (isinstance t type) (issubclass t EffectBase))))
+  (cond
+    (isinstance item type) (if (effect-type? item) None "EffectBase を継がない class")
+    (not (callable item)) "型でも関数でもない値"
+    True (try
+           (if (effect-type? (.get (typing.get-type-hints item) "return"))
+               None
+               "答えの注釈が effect の型でない関数")
+           (except [e #(NameError TypeError)]
+             (.format "答えの注釈を解けない関数({}: {})" (. (type e) __name__) e)))))
+
+
+(defn #^ tuple effect-types [#^ str where #^ tuple items]  ; defk にできない: macro が展開した定義の頭が module の読み込みの時に呼ぶ(Program の外)
+  "`:effects` の値を定義の時に検めて返す — effect の型でも effect を作る関数でもない名(関数・値・effect でない class)を書いた誤りを、
+   定義の名と理由を名指して TypeError で断る(#800 — 前は名の list であることしか検めず、何でも黙って通していた)。"
+  (for [item items]
+    (setv refusal (effect-refusal item))
+    (when (is-not refusal None)
+      (raise (TypeError (.format "{}: :effects の {!r} は書けない({})— EffectBase を継ぐ class か、答えの注釈が EffectBase の型の関数を書く"
+                                 where item refusal)))))
+  items)
 
 
 (defn tags-form [form #^ str where]  ; defk にできない: macro の展開の時に呼ぶ関数

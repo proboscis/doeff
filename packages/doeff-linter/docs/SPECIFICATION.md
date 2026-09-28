@@ -574,6 +574,22 @@ what it is violating"。前は拡張(doeff-runner)が defk の見出しの中で
 - **鍵**: `<path>::DOEFF127::<定義>::<effect>`(effect は module を外した綴り)。
 
 
+## 19. 判断(judgment)が effect を起こす — DOEFF129
+
+agora-redesign #800 の段階 4(役の規則)。役 judgment は値から値を決める純粋な判断で、effect を起こさない。effect を起こす判断は、検めるのに
+handler の組が要り、同じ入力で同じ答えになることを値だけで確かめられない。
+
+- **対象**: `:tags` の `:role` が `"judgment"` の defk(`:effects` を書いていなくても当たる)。母集団は `definitions` の業務の file。
+- **推論**: 18 節と同じ `signatures::World`(1 か所)。本体で撃つ呼びを defk の中まで辿り、repo の defeffect・repo の外の effect(大文字の呼び)を
+  数える。追えない呼び(repo の外の関数・deff・method)の先は数えない — 見えた effect だけで判じ、「起こさない」とは言い切らない。
+- **場所**: その effect に至る最初の撃った呼びの頭(defk を経由するならその defk の名)。文に起こす effect と経由した呼びを書く。
+- **重さ**: warning(戻せる決定・#800)。推論は handler で受けた effect を引かない上からの見積もりなので error にしない。
+- **鍵**: `<path>::DOEFF129::<定義>::<effect>`(effect は module を外した綴り)。
+- **作らなかった側**: 役 program が土台の effect を直に起こすことは判じない。agora の本線で測ると当たりの大半が doeff の時計と並行の effect
+  (GetTime・Delay・Spawn など)と層に置く前の旧い dir の effect で、operator の形の決め(#780「Program は高い段の effect を出してよい」)も
+  直に出すことを禁じていない。program に許す effect を repo の設定で名指す形が決まったら足す(#800 の記録)。
+
+
 ## 16. 読めない Hy の file — DOEFF128
 
 - 読み取り器(doeff-indexer の hy_index::reader)が括弧か文字列の閉じない所を見つけた file は、規則の判定が読めた所までで違反が欠ける。

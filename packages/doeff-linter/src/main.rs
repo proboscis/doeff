@@ -216,6 +216,7 @@ impl Setup {
                 ProjectRule::ClassWithBehaviour => self.settings.definitions.is_some(),
                 ProjectRule::DefkCalledBare => self.settings.definitions.is_some(),
                 ProjectRule::EffectsDisagreeWithInference => self.settings.definitions.is_some(),
+                ProjectRule::JudgmentPerformsEffect => self.settings.definitions.is_some(),
                 ProjectRule::JsonValueOutsideWire => self.settings.architecture.is_some(),
                 ProjectRule::ShapeCheckInJudgment => {
                     self.settings.definitions.is_some() && self.settings.smells.as_ref().is_some_and(|s| !s.shape_check_layers.is_empty())
