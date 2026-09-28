@@ -8,7 +8,7 @@
 (import time)
 (import datetime [datetime timezone])
 (import doeff [run with_handlers])
-(import doeff_core_effects.scheduler [scheduled Spawn Wait])
+(import doeff_core_effects.scheduler [scheduled Spawn Wait Cancel Task TaskCancelledError CreateExternalPromise PRIORITY-IDLE])
 (import doeff_time [SimClock sim-time-handler sync-time-handler Delay GetTime])
 (import doeff_hy.frozen [FrozenMap])
 (import doeff_records.values [Changes Reset RowChanged RowRemoved WatchCursor ExpectAbsent ExpectVersion Written])
@@ -185,3 +185,65 @@
   (setv woke (run-on store (many-waiters-then-write store 16)))
   (assert (= woke (sorted woke)) woke)
   (assert (= (len woke) 16) woke))
+
+
+(defk watch-table-long [table]
+  {:pre [(: table str)] :post [(: % (| Changes Reset))]}
+  "表 table の今の頭から LONG-WAIT 秒待つ。"
+  (<- start (ListRows table))
+  (<- answer (WatchChanges #(table) (WatchCursor start.epoch start.sequence) :timeout LONG-WAIT))
+  answer)
+
+
+(defk write-parts-later [seconds]
+  {:pre [(: seconds float)] :post [(: % Written)]}
+  "seconds 秒後に parts へ 1 行書く(書きは全部の待ち手の呼び鈴を鳴らす)。"
+  (<- (Delay seconds))
+  (<- written (PutRow "parts" #("race") (FrozenMap {"label" "r"}) (ExpectAbsent)))
+  written)
+
+
+(defk cancelled-at [task]
+  {:pre [(: task Task)] :post [(: % float)]}
+  "task を取り消し、取り消しが届いて task が終わった刻の秒を返す(取り消しは TaskCancelledError で届く)。"
+  (<- (Cancel task))
+  (try
+    (<- (Wait task))
+    (raise (AssertionError "取り消した待ち手が答えを返した"))
+    (except [TaskCancelledError]
+      None))
+  (<- at (seconds-now))
+  at)
+
+
+(defk cancel-when-the-same-write-rings [store watcher]
+  {:pre [(: store MemoryStore) (: watcher Task)] :post [(: % float)]}
+  "待ち手 watcher の後ろに自分の呼び鈴を掛け、同じ書きで起きた刻に watcher を取り消す(同じ書きで起きた別の task — 複数の表の
+   待ちを Race した使い手の、負けた側の片付け — が、起きている最中の待ち手を取り消す形)。答え = watcher が終わった刻の秒。"
+  (<- bell (CreateExternalPromise))
+  (with [store.lock]
+    (setv (get store.bells bell) None))
+  (<- (Wait bell.future :priority PRIORITY-IDLE))
+  (<- ended (cancelled-at watcher))
+  ended)
+
+
+(defk cancel-a-waiter-woken-by-another-table [store]
+  {:pre [(: store MemoryStore)] :post [(: % float)]}
+  "charters を待つ待ち手を掛け、5 秒後の parts の書き(charters の待ち手の呼び鈴も鳴らす)で起きた刻に取り消す。答え = 待ち手が終わった刻の秒。"
+  (<- watcher (Spawn (watch-table-long "charters")))
+  (<- (Delay 1.0))
+  (<- canceller (Spawn (cancel-when-the-same-write-rings store watcher)))
+  (<- writer (Spawn (write-parts-later 4.0)))
+  (<- ended (Wait canceller))
+  (<- (Wait writer))
+  ended)
+
+
+(defn test-a-waiter-woken-by-a-write-to-another-table-still-takes-its-cancel []  ; defk にできない: 検の入口で Program を run する
+  ;; parts の書きは charters の待ち手の呼び鈴も鳴らす(待ち手は起きて走査し、自分の表に変更が無ければ掛け直す)。起きている最中に届いた
+  ;; 取り消しを待ち手が飲み込むと、待ち手は掛け直して timeout(30 秒)まで生き、取り消した側もそこまで止まる — 使い手の模擬で、複数の表の
+  ;; 待ちを Race した係が負けた側の取り消しで 4 秒の書きの後 31 秒まで止まった。取り消しは書きの刻(5 秒)に効く。
+  (setv store (MemoryStore LAW-SCHEMA))
+  (setv ended (run-on store (cancel-a-waiter-woken-by-another-table store)))
+  (assert (= ended 5.0) ended))
