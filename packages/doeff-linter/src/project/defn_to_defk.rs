@@ -1663,8 +1663,11 @@ mod tests {
         }
         let text = fx.read("m.hy");
         assert!(text.contains("(+ ys [(! (leaf 1))])") && text.contains("(lfor x xs (leaf x))"), "{}", text);
-        // 手で直す呼びの 1 つ(module の最上位の答えを値として使う所ではない束ね)は DOEFF126 に残らないが、一覧には載っている。
+        // 手で直す呼びの module の最上位の束ねは、書き換えずに残り、DOEFF126 の残りにも出る(定義の外の defk の呼びは位置を問わず素の呼び)。
+        // 内包表記の中の呼び(defk の本体の中・答えを値として使う所ではない)は残りに出ない。
         assert!(text.contains("(setv CONSTANT (leaf 1))"), "{}", text);
+        let residual: Vec<(&str, &str)> = report.residual_bare_calls.iter().map(|r| (r.definition.as_str(), r.callee.as_str())).collect();
+        assert_eq!(residual, vec![("<m>", "leaf")]);
     }
 
     #[test]
