@@ -1280,6 +1280,12 @@ fn place_verdict(rel: &str, architecture: &architecture::Architecture) -> PlaceV
         return PlaceVerdict::Declared;
     }
     let parts: Vec<&str> = rest.split('/').collect();
+    // 模擬の環境の置き場(:verification-environment)の下は宣言どおり — service ではない置き場。
+    if let (Some(place), [first, _, ..]) = (architecture.verification_environment.as_deref(), parts.as_slice()) {
+        if *first == place {
+            return PlaceVerdict::Declared;
+        }
+    }
     let service_layers: BTreeSet<&str> =
         architecture.layers.iter().map(|l| l.name.as_str()).filter(|l| architecture.foundation.as_deref() != Some(*l)).collect();
     match parts.as_slice() {
