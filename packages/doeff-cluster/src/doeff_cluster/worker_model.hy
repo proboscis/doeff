@@ -246,9 +246,13 @@
   (setv #^ (| Outcome None) last-outcome None)
   (setv #^ (| int None) last-exit-code None)
   (setv #^ (| StopProgress None) stopping None)
-  ;; 続けて予期せず終わった回数(backoff を伸ばす)と、最後に起動した時刻(十分長く動いた後の終了は数え直す)。
+  ;; 続けて exit code が 0 でなく終わった回数(失敗の数え方・状態の表示に使う)。exit code 0 の終わりは失敗ではないので 0 に戻す。
   (setv #^ int failures 0)
-  (setv #^ (| int None) last-start-ms None))
+  ;; 最後に起動した時刻(十分長く動いた後の終了は数え直す)。
+  (setv #^ (| int None) last-start-ms None)
+  ;; 停止を求めずに続けて終わった回数(exit code を問わない — 起こし直しの間 backoff を伸ばす)。失敗の数え方とは別に持つ
+  ;; (exit code 0 で終わってすぐ起こし直すサービスも、間を伸ばして起こし直しの連打を避ける — agora-redesign #768)。
+  (setv #^ int unexpected-exits 0))
 
 
 (defclass [(dataclass :frozen True)] WorkerPolicy []

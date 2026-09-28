@@ -104,9 +104,9 @@
   (any (gfor p world.processes (= p.retired-from name))))
 
 (defn #^ int backoff-ms [#^ JobRecord record #^ WorkerPolicy policy]
-  "続けて落ちた回数に応じた、起こし直すまでの間(1 回目 = restart-backoff-ms・以後は倍・上限 restart-backoff-max-ms)。"
+  "続けて予期せず終わった回数(exit code を問わない)に応じた、起こし直すまでの間(1 回目 = restart-backoff-ms・以後は倍・上限 restart-backoff-max-ms)。"
   (min policy.restart-backoff-max-ms
-       (* policy.restart-backoff-ms (** 2 (max 0 (- record.failures 1))))))
+       (* policy.restart-backoff-ms (** 2 (max 0 (- record.unexpected-exits 1))))))
 
 (defn #^ bool in-backoff [#^ int now #^ JobRecord record #^ WorkerPolicy policy]
   (and (is-not record.last-exit-ms None)
@@ -250,13 +250,16 @@
       (replace record :stopping
         (StopProgress (if (is record.stopping None) now record.stopping.requested-ms) action.stage now))
     (isinstance action ReapJob)
-      (replace record :last-exit-ms now :last-outcome action.outcome :last-exit-code action.exit-code
-               :stopping None
-               :failures (cond
-                           (!= action.outcome Outcome.EXITED) 0
-                           (and (is-not record.last-start-ms None)
-                                (>= (- now record.last-start-ms) policy.stable-run-ms)) 1
-                           True (+ record.failures 1)))
+      ;; 数え方は 2 つ(agora-redesign #768): unexpected-exits = 停止を求めずに終わった回数(起こし直しの間を伸ばす・exit code を問わない)、
+      ;; failures = そのうち exit code が 0 でなかった回数(失敗として表示する)。どちらも長く動いた後の終わりは 1 回目に数え直す。
+      (do
+        (setv exited (= action.outcome Outcome.EXITED)
+              stable (and (is-not record.last-start-ms None)
+                          (>= (- now record.last-start-ms) policy.stable-run-ms)))
+        (replace record :last-exit-ms now :last-outcome action.outcome :last-exit-code action.exit-code
+                 :stopping None
+                 :unexpected-exits (cond (not exited) 0 stable 1 True (+ record.unexpected-exits 1))
+                 :failures (cond (or (not exited) (= action.exit-code 0)) 0 stable 1 True (+ record.failures 1))))
     True record))
 
 (defn #^ dict records-after [#^ int now #^ dict records #^ tuple actions [policy (WorkerPolicy)]]

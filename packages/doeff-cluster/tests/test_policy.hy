@@ -1,4 +1,4 @@
-(require doeff-hy.macros [deftest])
+(require doeff-hy.macros [deftest val var])
 
 (import dataclasses [replace])
 (import doeff_cluster.worker_model [JobSpec CodeState CodeView ProcessView WorldView StopStage StopProgress
@@ -121,6 +121,69 @@
   (setv records (records-after now records (plan now #(A1) (world (replace (running A1) :exit-code 1)) records policy) policy))
   (assert (= (. (get records "a") failures) 1))
   (assert (= (plan (+ now 2000) #(A1) (world) records policy) #((StartJob A1 7 "/c/rev1")))))
+
+
+;; --- 終わり方の数え方(agora-redesign #768): exit code 0 は失敗に数えない。起こし直しの間は数え方と別に持つ -----------
+
+(deftest test-task-that-exits-with-code-0-is-not-counted-as-a-failure
+  ;; 1 回だけ走って exit code 0 で終わった task は失敗ではない。記録の failures は 0 で、状態に failures・backoff を出さない。
+  (val task (JobSpec "task/t1" "doeff_cluster.job_entry" #("task") "rev1" :once True))
+  (val start (plan 0 #(task) (world) {} POLICY))
+  (val started (records-after 0 {} start POLICY))
+  (val reap (plan 1000 #(task) (world (replace (running task) :exit-code 0)) started POLICY))
+  (val done (records-after 1000 started reap POLICY))
+  (val record (get done "task/t1"))
+  (assert (= #(record.last-outcome record.last-exit-code record.failures) #(Outcome.EXITED 0 0)) record)
+  (val status (get (statuses 5000 #(task) (world) done POLICY) 0))
+  (assert (= status.phase JobPhase.FINISHED) status)
+  (assert (= status.detail "last=exited code=0") status)
+  (assert (= (plan 5000 #(task) (world) done POLICY) #())))
+
+(deftest test-task-that-exits-with-a-nonzero-code-is-still-counted
+  ;; exit code 1 で終わった task は今までどおり失敗に数え、状態に回数を出す(起こし直しはしない)。
+  (val task (JobSpec "task/t1" "doeff_cluster.job_entry" #("task") "rev1" :once True))
+  (val started (records-after 0 {} (plan 0 #(task) (world) {} POLICY) POLICY))
+  (val reap (plan 1000 #(task) (world (replace (running task) :exit-code 1)) started POLICY))
+  (val done (records-after 1000 started reap POLICY))
+  (assert (= (. (get done "task/t1") failures) 1))
+  (val status (get (statuses 5000 #(task) (world) done POLICY) 0))
+  (assert (= status.phase JobPhase.FINISHED) status)
+  (assert (.startswith status.detail "last=exited code=1 failures=1 ") status)
+  (assert (= (plan 5000 #(task) (world) done POLICY) #())))
+
+(deftest test-service-that-keeps-exiting-with-code-0-keeps-its-growing-backoff
+  ;; exit code 0 で終わったサービスも宣言がある限り起こし直し、続けて短く終わるたびに間を倍にする(今の振る舞いのまま)。
+  ;; ただし失敗には数えない(failures は 0・状態に failures を出さない)。
+  (val policy (replace POLICY :restart-backoff-max-ms 8000 :stable-run-ms 60000))
+  (var records {})
+  (var now 0)
+  (for [wait [2000 4000 8000 8000]]
+    (val start (plan now #(A1) (world) records policy))
+    (assert (= (len start) 1) start)
+    (:= records (records-after now records start policy))
+    (:= now (+ now 1000))
+    (:= records (records-after now records (plan now #(A1) (world (replace (running A1) :exit-code 0)) records policy) policy))
+    (assert (= (plan (+ now wait -1) #(A1) (world) records policy) #()))
+    (val status (get (statuses (+ now wait -1) #(A1) (world) records policy) 0))
+    (assert (= status.phase JobPhase.BACKOFF) status)
+    (assert (= status.detail "last=exited code=0") status)
+    (:= now (+ now wait)))
+  (assert (= (. (get records "a") failures) 0))
+  (assert (= (. (get records "a") attempts) 4))
+  ;; 間が明けたら起こし直す
+  (assert (= (plan now #(A1) (world) records policy) #((StartJob A1 5 "/c/rev1")))))
+
+(deftest test-nonzero-exit-after-code-0-exits-counts-from-one
+  ;; exit code 0 の終わりが続いた後の exit code 1 は、失敗の 1 回目として数える(起こし直しの間は続けて伸ばす)。
+  (val policy (replace POLICY :restart-backoff-max-ms 8000 :stable-run-ms 60000))
+  (val r1 (records-after 0 {} (plan 0 #(A1) (world) {} policy) policy))
+  (val r2 (records-after 1000 r1 (plan 1000 #(A1) (world (replace (running A1) :exit-code 0)) r1 policy) policy))
+  (val r3 (records-after 3000 r2 (plan 3000 #(A1) (world) r2 policy) policy))
+  (val r4 (records-after 4000 r3 (plan 4000 #(A1) (world (replace (running A1) :exit-code 1)) r3 policy) policy))
+  (assert (= (. (get r4 "a") failures) 1))
+  (assert (= (plan 7999 #(A1) (world) r4 policy) #()))
+  (val status (get (statuses 7999 #(A1) (world) r4 policy) 0))
+  (assert (= status.detail "last=exited code=1 failures=1 backoff=4000ms") status))
 
 
 ;; --- 入れ替え(handoff・2026-09-24): 新が Ready と数えられてから旧を止める ---------------------------------------
