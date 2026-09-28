@@ -2,7 +2,7 @@
   "name": "doeff-runner",
   "displayName": "doeff runner",
   "description": "Run doeff Programs from VS Code using the doeff-indexer and Python debugger.",
-  "version": "0.6.33",
+  "version": "0.6.34",
   "publisher": "Proboscis",
   "icon": "icon.png",
   "license": "Apache-2.0",
@@ -65,7 +65,8 @@
     "onView:doeff-hy-browse",
     "onCustomEditor:doeff-runner.readingPlane",
     "onCommand:doeff-runner.read.open",
-    "onCommand:doeff-runner.read.openAll"
+    "onCommand:doeff-runner.read.openAll",
+    "onCommand:doeff-runner.read.revealLocation"
   ],
   "main": "./out/extension.js",
   "contributes": {
@@ -417,6 +418,12 @@
         "title": "定義を読む面で開く",
         "category": "doeff",
         "icon": "$(book)"
+      },
+      {
+        "command": "doeff-runner.read.revealLocation",
+        "title": "定義を読む面で file:line の定義を見る",
+        "category": "doeff",
+        "icon": "$(target)"
       },
       {
         "command": "doeff-runner.read.openAll",

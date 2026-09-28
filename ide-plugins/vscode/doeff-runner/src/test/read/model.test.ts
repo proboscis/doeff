@@ -35,6 +35,7 @@ import {
   type FoldState
 } from '../../read/fold';
 import { LABELS } from '../../read/labels';
+import { locate, parseLocation } from '../../read/locate';
 
 // 材料は test-fixtures/read/plane.hy に hy-index と doeff-linter(editor-json・--stdin --path)を当てた実出力
 // (path だけ /repo に置き換えた)。定義を読む面の受け入れの検査 V1・V2・V3・V10(agora-redesign #910)。
@@ -547,7 +548,7 @@ suite('定義を読む面 — 本体の文字(V6・V11 の一部・U5)', () => {
   test('本体の行は linter の bodies を描く: 行番号 = source の行・val / ⇐ の束縛の行は薄い背景・呼びは f(a)', () => {
     const html = planePage(new Map());
     const fetch = cardHtml(html, 'fetch-row');
-    assert.ok(fetch.includes('<div class="bl bound"><span class="ln">17</span><span class="kw">val</span> <span class="b">Row</span> row <span class="arrow-bind">⇐</span> '));
+    assert.ok(fetch.includes('<div class="bl bound" data-src-line="17"><span class="ln">17</span><span class="kw">val</span> <span class="b">Row</span> row <span class="arrow-bind">⇐</span> '));
     assert.ok(planeLines()[16].includes('(<- row Row (ReadInput key))'));
     const shout = cardHtml(html, 'shout');
     assert.ok(shout.includes('<span class="fn">fetch-row</span>(key)'));
@@ -873,5 +874,31 @@ suite('定義を読む面 — 関係の帯の名と名の検索(U6・U10)', () =
 
   test('検索の欄は今の検索の文字を持って描かれる(頁を描き直しても消えない)', () => {
     assert.ok(planePage(setSearch(new Map(), 'row')).includes('<input id="search" type="search" placeholder="search names" value="row">'));
+  });
+});
+
+suite('定義を読む面 — file:line からカードの該当の行へ(V6・v1 制約 3)', () => {
+  test('位置の文字: path:line・path:line:col・Python の traceback・file://', () => {
+    assert.deepStrictEqual(parseLocation('controllers/messaging/core/conversation_input.hy:85'), { file: 'controllers/messaging/core/conversation_input.hy', line: 85 });
+    assert.deepStrictEqual(parseLocation('  pkg/plane.hy:31:4: DOEFF142 …'), { file: 'pkg/plane.hy', line: 31 });
+    assert.deepStrictEqual(parseLocation('  File "/repo/pkg/plane.hy", line 31, in shout'), { file: '/repo/pkg/plane.hy', line: 31 });
+    assert.deepStrictEqual(parseLocation('file:///repo/pkg/plane.hy:17'), { file: '/repo/pkg/plane.hy', line: 17 });
+    assert.strictEqual(parseLocation('no location here'), undefined);
+  });
+
+  test('その行を含む入れ子でない定義を索引から引く(root から探し、行は 0 始まりで返す)', () => {
+    const defs = (p: string): readonly HyDefinition[] | undefined => (p === FILE ? planeIndex().definitions : undefined);
+    const found = locate(parseLocation('pkg/plane.hy:31'), ['/nope', '/repo'], defs);
+    assert.ok(found.tag === 'found');
+    assert.strictEqual(found.definition.name, 'shout');
+    assert.strictEqual(found.path, FILE);
+    assert.strictEqual(found.line, 30);
+    assert.strictEqual(locate(parseLocation('pkg/plane.hy:2'), ['/repo'], defs).tag, 'no-definition');
+    assert.strictEqual(locate(parseLocation('pkg/other.hy:2'), ['/repo'], defs).tag, 'not-indexed');
+    assert.strictEqual(locate(parseLocation('?'), ['/repo'], defs).tag, 'unreadable');
+  });
+
+  test('本体の行は source の行(1 始まり)の目印を持つ(見せる先の行を光らせるため)', () => {
+    assert.ok(cardHtml(planePage(new Map()), 'shout').includes('<div class="bl bound" data-src-line="31"><span class="ln">31</span>'));
   });
 });

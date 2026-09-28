@@ -26,6 +26,7 @@ import {
   type FoldState
 } from './fold';
 import { LABELS } from './labels';
+import { locate, parseLocation } from './locate';
 import { buildCards, facets, parseAxisKey, SEARCH_KEY, setSearch, toggle, visibleCards, type Card, type Selection } from './model';
 import type { Glyphs } from './html';
 import { lineClasses, renderFacets, renderPage, renderTreePart, summaryText, type PlaneState } from './render';
@@ -171,9 +172,15 @@ export class GraphTable {
 }
 
 /** 面どうしの移動 — 木の節の名から、その定義のカードへ(他の file なら、その file を読む面で開いてから見せる)。 */
+/** 面で見せる先 — 定義と、光らせる source の行(0 始まり・無ければ undefined)。 */
+export interface RevealTarget {
+  readonly qualifiedName: string;
+  readonly line: number | undefined;
+}
+
 class PlaneNavigator {
   private readonly panels = new Map<string, PlanePanel>();
-  private readonly pending = new Map<string, string>();
+  private readonly pending = new Map<string, RevealTarget>();
 
   /** 開いた面を覚える(file の path ごと)。 */
   register(filePath: string, panel: PlanePanel): void {
@@ -188,7 +195,7 @@ class PlaneNavigator {
   }
 
   /** この file の面が開いたら見せる定義(読んだら消す)。 */
-  takePending(filePath: string): string | undefined {
+  takePending(filePath: string): RevealTarget | undefined {
     const key = path.normalize(filePath);
     const found = this.pending.get(key);
     this.pending.delete(key);
@@ -196,12 +203,12 @@ class PlaneNavigator {
   }
 
   /** 他の file の定義を見せる — その file を読む面で開き(開いていれば前に出し)、カードへ。 */
-  revealElsewhere(filePath: string, qualifiedName: string): void {
+  revealElsewhere(filePath: string, target: RevealTarget): void {
     const open = this.panels.get(path.normalize(filePath));
     if (open === undefined) {
-      this.pending.set(path.normalize(filePath), qualifiedName);
+      this.pending.set(path.normalize(filePath), target);
     }
-    void vscode.commands.executeCommand('vscode.openWith', vscode.Uri.file(filePath), READING_PLANE_VIEW_TYPE).then(() => open?.reveal(qualifiedName));
+    void vscode.commands.executeCommand('vscode.openWith', vscode.Uri.file(filePath), READING_PLANE_VIEW_TYPE).then(() => open?.reveal(target));
   }
 }
 
@@ -212,7 +219,7 @@ class PlanePanel implements vscode.Disposable {
   /** 開いている呼び出しの木(無ければ undefined) */
   private tree: TreeQuery | undefined;
   /** 開いたら見せる定義(索引がまだ無い時に待つ) */
-  private revealWanted: string | undefined;
+  private revealWanted: RevealTarget | undefined;
   private cards: readonly Card[] = [];
   private lastHtml = '';
   private timer: NodeJS.Timeout | undefined;
@@ -267,10 +274,10 @@ class PlanePanel implements vscode.Disposable {
   }
 
   /** 定義のカードを見せる(畳んでいれば開き、そこまで送る)。カードがまだ無ければ、次に描いた時に見せる。 */
-  reveal(qualifiedName: string): void {
-    const card = this.cards.find((c) => c.definition.qualifiedName === qualifiedName);
+  reveal(target: RevealTarget): void {
+    const card = this.cards.find((c) => c.definition.qualifiedName === target.qualifiedName);
     if (card === undefined) {
-      this.revealWanted = qualifiedName;
+      this.revealWanted = target;
       return;
     }
     this.revealWanted = undefined;
@@ -278,7 +285,8 @@ class PlanePanel implements vscode.Disposable {
     if (!this.fold.open.has(key)) {
       this.setFold(toggleOpen(this.fold, key));
     }
-    void this.panel.webview.postMessage({ type: 'reveal', id: card.id });
+    // 行があれば本体(か source)のその行を光らせる — 行番号 = source の行(1 始まり)
+    void this.panel.webview.postMessage({ type: 'reveal', id: card.id, line: target.line === undefined ? null : target.line + 1 });
   }
 
   /** 木の今の形(条件が無ければ undefined)。 */
@@ -502,10 +510,11 @@ class PlanePanel implements vscode.Disposable {
         if (found === undefined) {
           return;
         }
+        const target = { qualifiedName: message.qualifiedName, line: undefined };
         if (path.normalize(found.path) === path.normalize(this.document.uri.fsPath)) {
-          this.reveal(message.qualifiedName);
+          this.reveal(target);
         } else {
-          this.navigator.revealElsewhere(found.path, message.qualifiedName);
+          this.navigator.revealElsewhere(found.path, target);
         }
         return;
       }
@@ -582,7 +591,8 @@ export function registerReadingPlane(
   const highlighter = new SourceHighlighter(output);
   const memory = workspaceFoldMemory(context.workspaceState);
   const graphs = new GraphTable(hy);
-  const provider = new ReadingPlaneProvider(hy, status, lint, glyphs, memory, graphs, new PlaneNavigator(), highlighter, watch);
+  const navigator = new PlaneNavigator();
+  const provider = new ReadingPlaneProvider(hy, status, lint, glyphs, memory, graphs, navigator, highlighter, watch);
   context.subscriptions.push(
     highlighter,
     vscode.window.registerCustomEditorProvider(READING_PLANE_VIEW_TYPE, provider, { webviewOptions: { retainContextWhenHidden: true } }),
@@ -597,6 +607,33 @@ export function registerReadingPlane(
         return;
       }
       await vscode.commands.executeCommand('vscode.openWith', uri, READING_PLANE_VIEW_TYPE);
+    }),
+    // file:line(agent の報告・差分・traceback)から、その行を含む定義のカードの該当の行へ(v1 制約 3・#910 V6)
+    vscode.commands.registerCommand('doeff-runner.read.revealLocation', async () => {
+      const editor = vscode.window.activeTextEditor;
+      const typed =
+        editor !== undefined && editor.document.uri.fsPath.endsWith('.hy')
+          ? `${editor.document.uri.fsPath}:${editor.selection.active.line + 1}`
+          : await vscode.window.showInputBox({ title: LABELS.revealLocationTitle, prompt: 'controllers/messaging/core/conversation_input.hy:85' });
+      if (typed === undefined) {
+        return;
+      }
+      const roots = (vscode.workspace.workspaceFolders ?? []).map((f) => f.uri.fsPath);
+      const located = locate(parseLocation(typed), roots, (p) => hy.get(p)?.file.definitions);
+      switch (located.tag) {
+        case 'found':
+          navigator.revealElsewhere(located.path, { qualifiedName: located.definition.qualifiedName, line: located.line });
+          return;
+        case 'unreadable':
+        case 'not-indexed':
+        case 'no-definition':
+          void vscode.window.showInformationMessage(located.message);
+          return;
+        default: {
+          const unreachable: never = located;
+          throw new Error(`網羅されていない答え: ${JSON.stringify(unreachable)}`);
+        }
+      }
     })
   );
   return { glyphs, memory, graphs, highlighter };

@@ -61,6 +61,7 @@ export const LABELS = {
   /** 面の上の行 */
   clearFilter: 'clear filter',
   searchNames: 'search names',
+  revealLocationTitle: 'file:line (from a report, a diff or a traceback)',
   /** repo 全体の面 */
   allDefinitions: 'all definitions',
   stacked: 'stacked',

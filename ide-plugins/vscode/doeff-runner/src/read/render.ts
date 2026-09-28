@@ -226,7 +226,7 @@ function bodyBlock(body: LintBody, glyphs: Glyphs, violations: readonly LintViol
       const marks =
         level === undefined ? '' : `<span class="viol viol-${level}" title="${escapeHtml(here.map((v) => `${v.rule}: ${v.message}`).join('\n'))}">${escapeHtml(here.map((v) => v.rule).join(' '))}</span>`;
       const text = `${'  '.repeat(line.depth)}${' '.repeat(line.pad)}${line.segments.map((s) => renderSegment(s, glyphs)).join('')}`;
-      return `<div class="${bound ? 'bl bound' : 'bl'}"><span class="ln">${line.line + 1}</span>${text}${warning}${marks}</div>`;
+      return `<div class="${bound ? 'bl bound' : 'bl'}" data-src-line="${line.line + 1}"><span class="ln">${line.line + 1}</span>${text}${warning}${marks}</div>`;
     })
     .join('');
   return `<div class="body">${lines}</div>`;
@@ -605,7 +605,8 @@ code{font:12px Menlo,monospace;background:#1b1d21;border:1px solid #3a3f47;borde
 .again{color:#7d858f;font:11px -apple-system,sans-serif}
 .more{color:#7d858f;font:11px -apple-system,sans-serif}
 .tcount{margin-left:auto;color:#8a9099;font:11px -apple-system,sans-serif}
-.card.flash{outline:2px solid #4a76a8}
+.card.flash,.bl.flash{outline:2px solid #4a76a8}
+.bl.flash{background:#2f4a66}
 `;
 
 /**
@@ -709,9 +710,12 @@ window.addEventListener('message', (event) => {
     const card = document.getElementById(message.id);
     if (card !== null) {
       card.hidden = false;
-      card.scrollIntoView({ block: 'center' });
-      card.classList.add('flash');
-      setTimeout(() => card.classList.remove('flash'), 1200);
+      // 行があれば本体のその行へ(本体に無い行 — 頭・契約 — ならカードへ)
+      const row = message.line === null ? null : card.querySelector('[data-src-line="' + message.line + '"]');
+      const target = row === null ? card : row;
+      target.scrollIntoView({ block: 'center' });
+      target.classList.add('flash');
+      setTimeout(() => target.classList.remove('flash'), 1600);
     }
   }
 });
