@@ -11,7 +11,7 @@ import { cardKey, LINE_FIELDS, type FoldState, type LineField } from './fold';
 import { escapeHtml, tagClass, type Glyphs } from './html';
 import { contractRow, declaredEffectChips, entityLineArgs, entityRows, indexSignatureRows, relationBand } from './entity';
 import { LABELS } from './labels';
-import { axisKey, axisTitle, facets, visibleCards, worstLevel, type Card, type Facet, type Selection } from './model';
+import { axisKey, axisTitle, facets, SEARCH_KEY, visibleCards, worstLevel, type Card, type Facet, type Selection } from './model';
 import { relationOf, type CallGraph, type CallTree } from './tree';
 import { renderTree, type TreeRenderContext } from './treeRender';
 
@@ -275,7 +275,7 @@ export function renderCard(card: Card, ctx: CardContext, hidden: boolean): strin
   const relationText = `${LABELS.callers} <b>${relation.callers}</b> · ${LABELS.tests} <b>${relation.tests}</b>`;
   // 帯の callers / callees は木の入口(v7 3 節の入口 a)
   const qn = escapeHtml(d.qualifiedName);
-  const band = relationBand(d, ctx.graph);
+  const band = relationBand(card, ctx.graph);
   const location = `${escapeHtml(card.place)}:${card.firstLine}`;
   const doc = docFirstLine(d.docstring);
   const effects = card.signature === undefined ? declaredEffectChips(d, ctx.glyphs) : effectChips(card.signature, ctx.glyphs);
@@ -397,6 +397,21 @@ export function renderTreePart(
   return part === undefined ? '' : renderTree(part.tree, treeContext(cards, graph, glyphs, part.showTests));
 }
 
+/** 今の名の検索の文字(検索の欄に戻すため)。 */
+function searchOf(state: PlaneState): ReadonlySet<string> {
+  switch (state.tag) {
+    case 'cards':
+    case 'workspace':
+      return state.selection.get(SEARCH_KEY) ?? new Set<string>();
+    case 'message':
+      return new Set<string>();
+    default: {
+      const unreachable: never = state;
+      throw new Error(`網羅されていない状態: ${JSON.stringify(unreachable)}`);
+    }
+  }
+}
+
 /** 頁の全体(左に軸・上に 1 行の切り替え・右に実体のカード)。 */
 export function renderPage(input: PageInput): string {
   const ctx: CardContext = {
@@ -448,7 +463,7 @@ export function renderPage(input: PageInput): string {
 <style>${PAGE_STYLE}</style>
 </head>
 <body class="${lineClasses(input.fold)}">
-<aside class="axes"><div id="axes">${content.axes}</div>${content.picker}<div class="hint">${escapeHtml(LABELS.axesHint)}</div></aside>
+<aside class="axes"><input id="search" type="search" placeholder="${escapeHtml(LABELS.searchNames)}" value="${escapeHtml([...(searchOf(input.state))].join(' '))}"><div id="axes">${content.axes}</div>${content.picker}<div class="hint">${escapeHtml(LABELS.axesHint)}</div></aside>
 <main class="main">
 <div class="crumb"><b>${escapeHtml(input.place)}</b><span id="summary">${escapeHtml(content.summary)}</span><button class="btn" id="clear">${escapeHtml(LABELS.clearFilter)}</button></div>
 ${content.bar}
@@ -559,6 +574,10 @@ code{font:12px Menlo,monospace;background:#1b1d21;border:1px solid #3a3f47;borde
 .message{color:#8a9099;margin-top:24px}
 .rel{background:transparent;border:none;color:#b8bec7;font-size:12px;padding:0;text-decoration:underline dotted #5f6670}
 .rel:hover{color:#dfeeff}
+.relgroup{display:inline-flex;gap:4px;align-items:baseline}
+.tname-sm{background:transparent;border:none;padding:0;font:12px Menlo,monospace;color:#c9ced5;cursor:pointer}
+.tname-sm:hover{color:#f2e6a8;text-decoration:underline}
+#search{width:100%;box-sizing:border-box;margin:0 0 12px;background:#1f2227;color:#d6d8dc;border:1px solid #3a3f47;border-radius:6px;padding:4px 8px;font:12px Menlo,monospace}
 #tree-root{width:100%;background:#1f2227;color:#d6d8dc;border:1px solid #3a3f47;border-radius:6px;padding:3px 6px;font:12px Menlo,monospace}
 .tree{background:#22252a;border:1px solid #33383f;border-radius:10px;margin:0 0 16px;padding:0 0 8px}
 .treebar{display:flex;gap:10px;align-items:center;flex-wrap:wrap;padding:8px 14px;border-bottom:1px solid #33383f;font-size:12.5px;color:#c9ced5}
@@ -623,6 +642,14 @@ document.addEventListener('click', (event) => {
     return;
   }
   vscode.postMessage({ type: 'toggle', axis: target.getAttribute('data-axis'), value: target.getAttribute('data-value') });
+});
+let searchTimer;
+document.addEventListener('input', (event) => {
+  const target = event.target;
+  if (target instanceof HTMLInputElement && target.id === 'search') {
+    clearTimeout(searchTimer);
+    searchTimer = setTimeout(() => vscode.postMessage({ type: 'search', text: target.value }), 150);
+  }
 });
 document.addEventListener('change', (event) => {
   const target = event.target;

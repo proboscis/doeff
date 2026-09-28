@@ -11,6 +11,7 @@ import {
   locationOf,
   NO_VALUE,
   parseAxisKey,
+  setSearch,
   toggle,
   valuesOf,
   visibleCards,
@@ -663,7 +664,8 @@ suite('定義を読む面 — 実体の種類ごとの欄と帯(V13・v2 2.1 節
     const { html, lines } = entitiesPage();
     const card = cardHtml(html, 'ReadSlot');
     assert.ok(card.includes('<div class="sig"><span class="p"><span class="n">key</span><span class="t">str</span></span><span class="arrow">→</span><span class="ret">Slot | None</span></div>'));
-    assert.ok(card.includes('data-tree-dir="callers">used by <b>1</b></button><span>handlers <b>1</b></span>'));
+    assert.ok(card.includes('data-tree-dir="callers">used by <b>1</b></button>: <button class="tname-sm" data-reveal="pkg.entities.slot_size">slot-size</button></span>'));
+    assert.ok(card.includes('<span class="relgroup">handlers <b>1</b>: <button class="tname-sm" data-reveal="pkg.entities.slot_store">slot-store</button></span>'));
     assert.ok(cardHtml(lines, 'ReadSlot').includes('(key: <span class="t">str</span>) → <span class="r">Slot | None</span>'));
   });
 
@@ -671,7 +673,7 @@ suite('定義を読む面 — 実体の種類ごとの欄と帯(V13・v2 2.1 節
     const { html, lines } = entitiesPage();
     const card = cardHtml(html, 'Slot');
     assert.ok(card.includes('<span class="k">fields</span><div><span class="p"><span class="n">key</span><span class="t">str</span></span><span class="p"><span class="n">size</span><span class="t">int</span></span></div>'));
-    assert.ok(card.includes('<span>returned by <b>0</b></span><span>accepted by <b>0</b></span>'));
+    assert.ok(card.includes('<span class="relgroup">returned by <b>0</b></span><span class="relgroup">accepted by <b>0</b></span>'));
     assert.ok(cardHtml(lines, 'Slot').includes('(key: <span class="t">str</span>, size: <span class="t">int</span>)'));
   });
 
@@ -850,5 +852,26 @@ suite('定義を読む面 — repo 全体の入口(U9)', () => {
     assert.ok(open.includes('<span class="k">effects</span><div><span class="eff">ReadSlot</span></div>'));
     assert.ok(open.includes('(key: <span class="t">str</span>, limit: <span class="t">int</span>) → <span class="r">int</span>'));
     assert.ok(open.includes('<span class="f f-effects"><span class="eff">ReadSlot</span></span>'));
+  });
+});
+
+suite('定義を読む面 — 関係の帯の名と名の検索(U6・U10)', () => {
+  test('帯は数(押すと木)と関係の名(押すとそのカードへ)。tests の名と types の数も', () => {
+    const card = cardHtml(planePage(new Map()), 'row-text');
+    assert.ok(card.includes('data-tree-dir="callers">callers <b>2</b></button>: <button class="tname-sm" data-reveal="pkg.plane.shout">shout</button> · <button class="tname-sm" data-reveal="pkg.plane.describe_row">describe-row</button></span>'));
+    assert.ok(card.includes('<span class="relgroup">tests <b>1</b>: <button class="tname-sm" data-reveal="pkg.plane.test_row_text_is_the_text">test-row-text-is-the-text</button></span>'));
+    assert.ok(card.includes('<span class="relgroup" title="Row">types <b>1</b></span>'));
+  });
+
+  test('名の検索は名と完全修飾名の一部(大文字と小文字を分けない)で絞り、軸の積に乗る', () => {
+    const byName = setSearch(new Map(), 'ROW');
+    assert.deepStrictEqual(names(visibleCards(planeCards(), byName)), ['Row', 'fetch-row', 'row-text', 'test-row-text-is-the-text', 'describe-row']);
+    const withKind = toggle(byName, KIND, 'defk');
+    assert.deepStrictEqual(names(visibleCards(planeCards(), withKind)), ['fetch-row', 'describe-row']);
+    assert.strictEqual(setSearch(byName, '  ').size, 0);
+  });
+
+  test('検索の欄は今の検索の文字を持って描かれる(頁を描き直しても消えない)', () => {
+    assert.ok(planePage(setSearch(new Map(), 'row')).includes('<input id="search" type="search" placeholder="search names" value="row">'));
   });
 });

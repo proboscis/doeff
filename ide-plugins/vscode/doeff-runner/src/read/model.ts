@@ -27,7 +27,7 @@ export const HAS_TESTS = LABELS.hasTests;
 export const NO_TESTS = LABELS.noTests;
 
 /** その軸の値を持たない定義の値。 */
-export const NO_VALUE = '(なし)';
+export const NO_VALUE = LABELS.noValue;
 
 /** tags の key のうち先に並べる物(残りは名前の順)。 */
 const LEADING_TAG_KEYS: readonly string[] = ['context', 'role'];
@@ -221,7 +221,7 @@ export function buildCards(input: PlaneInput): Card[] {
   });
 }
 
-/** 値の無い軸は「(なし)」1 つにする。 */
+/** 値の無い軸は NO_VALUE 1 つにする。 */
 function orNone(values: readonly string[]): string[] {
   return values.length === 0 ? [NO_VALUE] : [...values];
 }
@@ -289,10 +289,37 @@ export function toggle(selection: Selection, axis: PlaneAxis, value: string): Se
   return next;
 }
 
+/** 選択の中で名の検索の文字を持つ鍵(軸ではない — 軸の積と同じ絞りに乗せるため同じ表に置く)。 */
+export const SEARCH_KEY = 'search';
+
+/** 名の検索の文字を置く(空なら外す)。 */
+export function setSearch(selection: Selection, text: string): Selection {
+  const next = new Map(selection);
+  const query = text.trim();
+  if (query === '') {
+    next.delete(SEARCH_KEY);
+  } else {
+    next.set(SEARCH_KEY, new Set([query]));
+  }
+  return next;
+}
+
+/** 名が検索の文字を含むか(大文字と小文字を分けない・名と完全修飾名のどちらでも)。 */
+function nameMatches(card: Card, query: string): boolean {
+  const q = query.toLowerCase();
+  return card.definition.name.toLowerCase().includes(q) || card.definition.qualifiedName.toLowerCase().includes(q);
+}
+
 /** カードが選択に合うか(除く軸を渡すと、その軸の選択は見ない — 値ごとの数えに使う)。 */
 function matches(card: Card, selection: Selection, except?: string): boolean {
   for (const [key, values] of selection) {
     if (key === except || values.size === 0) {
+      continue;
+    }
+    if (key === SEARCH_KEY) {
+      if (![...values].every((q) => nameMatches(card, q))) {
+        return false;
+      }
       continue;
     }
     const axis = parseAxisKey(key);
@@ -321,7 +348,7 @@ export interface Facet {
   readonly values: readonly FacetValue[];
 }
 
-/** 値の並べ方 — 多い順、「(なし)」は最後。 */
+/** 値の並べ方 — 多い順、NO_VALUE は最後。 */
 function facetOrder(a: FacetValue, b: FacetValue): number {
   const last = (v: FacetValue): number => (v.value === NO_VALUE ? 1 : 0);
   return last(a) - last(b) || b.count - a.count || a.value.localeCompare(b.value);

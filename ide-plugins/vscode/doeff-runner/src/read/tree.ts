@@ -26,6 +26,8 @@ export interface CallGraph {
   readonly callers: ReadonlyMap<string, readonly string[]>;
   /** effect の完全修飾名 → それを解く effect 節の数(handled by N) */
   readonly handlers: ReadonlyMap<string, number>;
+  /** effect の完全修飾名 → それを解く defhandler の完全修飾名(帯の handlers の名) */
+  readonly handlerDefinitions: ReadonlyMap<string, readonly string[]>;
   /** 型の完全修飾名 → その型を答えに書いた定義(returned by) */
   readonly returnedBy: ReadonlyMap<string, readonly string[]>;
   /** 型の完全修飾名 → その型を引数に書いた定義(accepted by) */
@@ -57,6 +59,7 @@ export function buildCallGraph(files: readonly HyFileIndex[]): CallGraph {
   const definitions = new Map<string, GraphDefinition>();
   const handlers = new Map<string, number>();
   const returnedBy = new Map<string, string[]>();
+  const handlerDefinitions = new Map<string, string[]>();
   const acceptedBy = new Map<string, string[]>();
   for (const file of files) {
     for (const definition of file.definitions) {
@@ -66,6 +69,10 @@ export function buildCallGraph(files: readonly HyFileIndex[]): CallGraph {
       const handled = definition.handles?.target ?? null;
       if (handled !== null) {
         handlers.set(handled, (handlers.get(handled) ?? 0) + 1);
+        const owner = file.definitions.find((d) => d.kind === 'defhandler' && d.name === definition.container);
+        if (owner !== undefined) {
+          push(handlerDefinitions, handled, owner.qualifiedName);
+        }
       }
       // 型の逆引きは関数の見出し(defk など)だけから — 欄の型(defrecord の #^)は「受ける」ではないため
       if (TREE_KINDS.has(definition.kind) && definition.kind !== 'defeffect') {
@@ -102,7 +109,7 @@ export function buildCallGraph(files: readonly HyFileIndex[]): CallGraph {
       }
     }
   }
-  return { definitions, callees, callers, handlers, returnedBy, acceptedBy };
+  return { definitions, callees, callers, handlers, handlerDefinitions, returnedBy, acceptedBy };
 }
 
 /** 位置を含む最上位の定義(位置の順に並べた列を二分探索 — 大きな repo でも呼びごとに全定義を回さないため)。 */
@@ -146,6 +153,11 @@ function isTreeKind(graph: CallGraph, qualifiedName: string): boolean {
   return found !== undefined && TREE_KINDS.has(found.definition.kind);
 }
 
+/** 木の節にする種類の呼び先(帯の callees と木で同じ物を数えるため)。 */
+export function calleesInTree(graph: CallGraph, qualifiedName: string): string[] {
+  return (graph.callees.get(qualifiedName) ?? []).filter((qn) => isTreeKind(graph, qn));
+}
+
 /** 定義の関係の数(カードの帯と 1 行の callers / tests)。 */
 export interface RelationCount {
   /** 呼び手(deftest を除く) */
@@ -159,8 +171,7 @@ export interface RelationCount {
 export function relationOf(graph: CallGraph, qualifiedName: string): RelationCount {
   const callers = graph.callers.get(qualifiedName) ?? [];
   const tests = callers.filter((qn) => graph.definitions.get(qn)?.definition.kind === 'deftest').length;
-  const callees = (graph.callees.get(qualifiedName) ?? []).filter((qn) => isTreeKind(graph, qn));
-  return { callers: callers.length - tests, callees: callees.length, tests };
+  return { callers: callers.length - tests, callees: calleesInTree(graph, qualifiedName).length, tests };
 }
 
 /** 木の節 1 つ。 */

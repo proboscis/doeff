@@ -26,7 +26,7 @@ import {
   type FoldState
 } from './fold';
 import { LABELS } from './labels';
-import { buildCards, facets, parseAxisKey, toggle, visibleCards, type Card, type Selection } from './model';
+import { buildCards, facets, parseAxisKey, SEARCH_KEY, setSearch, toggle, visibleCards, type Card, type Selection } from './model';
 import type { Glyphs } from './html';
 import { lineClasses, renderFacets, renderPage, renderTreePart, summaryText, type PlaneState } from './render';
 import { buildCallGraph, buildCallTree, DEFAULT_TREE_DEPTH, relationOf, type CallGraph, type CallTree, type TreeDirection, type TreeQuery } from './tree';
@@ -50,6 +50,7 @@ export type PlaneMessage =
   | { readonly type: 'clear' }
   | { readonly type: 'open'; readonly line: number; readonly character: number; readonly qualifiedName: string }
   | { readonly type: 'hydrate'; readonly qualifiedName: string; readonly source: boolean }
+  | { readonly type: 'search'; readonly text: string }
   | { readonly type: 'fold'; readonly key: string }
   | { readonly type: 'fold-all' }
   | { readonly type: 'unfold-all' }
@@ -108,6 +109,10 @@ export function readMessage(raw: unknown): PlaneMessage | undefined {
       const character = fields.get('character');
       const qualifiedName = text('qualifiedName') ?? '';
       return typeof line === 'number' && typeof character === 'number' ? { type, line, character, qualifiedName } : undefined;
+    }
+    case 'search': {
+      const query = text('text');
+      return query !== undefined ? { type, text: query } : undefined;
     }
     case 'hydrate': {
       const qualifiedName = text('qualifiedName');
@@ -436,8 +441,15 @@ class PlanePanel implements vscode.Disposable {
         }
         return;
       }
-      case 'clear':
-        this.selection = new Map();
+      case 'clear': {
+        // 名の検索は欄に文字が残るので、軸の選択だけを外す
+        const search = this.selection.get(SEARCH_KEY);
+        this.selection = search === undefined ? new Map() : new Map([[SEARCH_KEY, search]]);
+        this.postFilter();
+        return;
+      }
+      case 'search':
+        this.selection = setSearch(this.selection, message.text);
         this.postFilter();
         return;
       case 'open': {

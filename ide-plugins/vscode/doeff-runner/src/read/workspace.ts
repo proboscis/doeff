@@ -13,7 +13,7 @@ import type { LintStore } from '../lint/store';
 import { cardKey, foldAll, parseLineField, toggleLineField, toggleOpen, unfoldAll, type FoldState } from './fold';
 import type { Glyphs } from './html';
 import { LABELS } from './labels';
-import { buildCards, parseAxisKey, toggle, visibleCards, type Card, type Selection } from './model';
+import { buildCards, parseAxisKey, SEARCH_KEY, setSearch, toggle, visibleCards, type Card, type Selection } from './model';
 import { COMPARE_NONCE, planeEnabled, READING_PLANE_SETTING, readMessage, REDRAW_DELAY_MS, type FoldMemory, type GraphTable, type PlaneMessage, type ReadingPlaneParts } from './panel';
 import { lineClasses, renderCard, renderPage, renderTreePart, renderWorkspaceCards, type CardContext, type WorkspaceState } from './render';
 import { buildCallTree, DEFAULT_TREE_DEPTH, relationOf, type CallTree, type TreeQuery } from './tree';
@@ -261,8 +261,15 @@ export class WorkspacePlane implements vscode.Disposable {
         }
         return;
       }
-      case 'clear':
-        this.selection = new Map();
+      case 'clear': {
+        // 名の検索は欄に文字が残るので、軸の選択だけを外す
+        const search = this.selection.get(SEARCH_KEY);
+        this.selection = search === undefined ? new Map() : new Map([[SEARCH_KEY, search]]);
+        this.postCards(true);
+        return;
+      }
+      case 'search':
+        this.selection = setSearch(this.selection, message.text);
         this.postCards(true);
         return;
       case 'open': {

@@ -60,6 +60,7 @@ export const LABELS = {
   noTests: 'no tests',
   /** 面の上の行 */
   clearFilter: 'clear filter',
+  searchNames: 'search names',
   /** repo 全体の面 */
   allDefinitions: 'all definitions',
   stacked: 'stacked',
@@ -69,6 +70,8 @@ export const LABELS = {
   definitions: 'definitions',
   /** 値が無い・まだ無い時の短い語 */
   none: 'none',
+  /** 軸の値を持たない定義の値(左の欄の札) */
+  noValue: '(none)',
   noArgs: 'no args',
   inferencePartial: 'inference partial',
   waitingForLinter: 'waiting for linter',

@@ -7,7 +7,7 @@ import type { HyDefinition, HyTypeNote } from '../hy/contract';
 import { escapeHtml, type Glyphs } from './html';
 import { LABELS } from './labels';
 import type { Card } from './model';
-import { indexTypeText, relationOf, type CallGraph } from './tree';
+import { calleesInTree, indexTypeText, type CallGraph } from './tree';
 
 /** 欄 1 つの行。 */
 function row(label: string, body: string): string {
@@ -171,35 +171,65 @@ export function entityLineArgs(card: Card): string {
   return d.params.length === 0 ? '' : `<span class="f f-args">(${d.params.map(escapeHtml).join(', ')})</span>`;
 }
 
-/** 帯の数 1 つ(押すと木 — 呼び出しの向きがある物だけ)。 */
-function relationButton(qn: string, direction: 'callers' | 'callees', label: string, count: number): string {
-  return `<button class="rel" data-tree-root="${escapeHtml(qn)}" data-tree-dir="${direction}">${escapeHtml(label)} <b>${count}</b></button>`;
+/** 帯に名を出す数(残りは +N — 全部は木で見る)。 */
+const BAND_NAMES = 3;
+
+/** 関係の名の並び(押すとそのカードへ — 見本 v2 の `callers 2: run-requests · …`)。 */
+function nameList(qualifiedNames: readonly string[], graph: CallGraph): string {
+  if (qualifiedNames.length === 0) {
+    return '';
+  }
+  const shown = qualifiedNames.slice(0, BAND_NAMES).map((qn) => {
+    const name = graph.definitions.get(qn)?.definition.name ?? qn;
+    return `<button class="tname-sm" data-reveal="${escapeHtml(qn)}">${escapeHtml(name)}</button>`;
+  });
+  const more = qualifiedNames.length > BAND_NAMES ? ` · +${qualifiedNames.length - BAND_NAMES}` : '';
+  return `: ${shown.join(' · ')}${more}`;
 }
 
-/** 帯の数 1 つ(押せない物)。 */
-function relationCount(label: string, count: number): string {
-  return `<span>${escapeHtml(label)} <b>${count}</b></span>`;
+/** 帯の関係 1 つ(数を押すと木 — 呼び出しの向きがある物だけ)と、その名。 */
+function relationButton(qn: string, direction: 'callers' | 'callees', label: string, names: readonly string[], graph: CallGraph): string {
+  return `<span class="relgroup"><button class="rel" data-tree-root="${escapeHtml(qn)}" data-tree-dir="${direction}">${escapeHtml(label)} <b>${names.length}</b></button>${nameList(names, graph)}</span>`;
 }
 
-/** 下の帯の関係(v2 2.1 節の表・ラベルは v5 の表)— 実体の種類ごとに出す関係が変わる。 */
-export function relationBand(definition: HyDefinition, graph: CallGraph): string {
+/** 帯の関係 1 つ(数は押せない物)と、その名。 */
+function relationNames(label: string, names: readonly string[], graph: CallGraph): string {
+  return `<span class="relgroup">${escapeHtml(label)} <b>${names.length}</b>${nameList(names, graph)}</span>`;
+}
+
+/**
+ * 下の帯の関係(v2 2.1 節の表・ラベルは v5 の表)— 実体の種類ごとに出す関係が変わる。数を押すと木、名を押すとそのカードへ。
+ * 数と名は木と同じ呼び出しの表から(帯と木で数え方を 1 つにするため)。
+ */
+export function relationBand(card: Card, graph: CallGraph): string {
+  const definition = card.definition;
   const qn = definition.qualifiedName;
-  const r = relationOf(graph, qn);
+  const isTest = (other: string): boolean => graph.definitions.get(other)?.definition.kind === 'deftest';
+  const allCallers = graph.callers.get(qn) ?? [];
+  const callers = allCallers.filter((other) => !isTest(other));
+  const tests = allCallers.filter(isTest);
+  const types = card.facts.types.length === 0 ? '' : `<span class="relgroup" title="${escapeHtml(card.facts.types.join(', '))}">${escapeHtml(LABELS.types)} <b>${card.facts.types.length}</b></span>`;
   switch (definition.kind) {
     case 'defeffect':
-      return relationButton(qn, 'callers', LABELS.usedBy, r.callers) + relationCount(LABELS.handlers, graph.handlers.get(qn) ?? 0);
+      return relationButton(qn, 'callers', LABELS.usedBy, callers, graph) + relationNames(LABELS.handlers, graph.handlerDefinitions.get(qn) ?? [], graph);
     case 'defrecord':
     case 'deftype':
-      return relationCount(LABELS.returnedBy, (graph.returnedBy.get(qn) ?? []).length) + relationCount(LABELS.acceptedBy, (graph.acceptedBy.get(qn) ?? []).length);
+      return relationNames(LABELS.returnedBy, graph.returnedBy.get(qn) ?? [], graph) + relationNames(LABELS.acceptedBy, graph.acceptedBy.get(qn) ?? [], graph);
     case 'defenum':
-      return relationButton(qn, 'callers', LABELS.usedBy, r.callers);
+      return relationButton(qn, 'callers', LABELS.usedBy, callers, graph);
     case 'defhandler':
-      return relationButton(qn, 'callers', LABELS.installedAt, r.callers);
+      return relationButton(qn, 'callers', LABELS.installedAt, callers, graph);
     case 'deftest':
-      return relationButton(qn, 'callees', LABELS.callees, r.callees);
+      return relationButton(qn, 'callees', LABELS.callees, calleesInTree(graph, qn), graph);
     case 'variable':
       return '';
     default:
-      return relationButton(qn, 'callers', LABELS.callers, r.callers) + relationButton(qn, 'callees', LABELS.callees, r.callees) + relationCount(LABELS.tests, r.tests);
+      return (
+        relationButton(qn, 'callers', LABELS.callers, callers, graph) +
+        relationButton(qn, 'callees', LABELS.callees, calleesInTree(graph, qn), graph) +
+        relationNames(LABELS.tests, tests, graph) +
+        types
+      );
   }
 }
+
