@@ -652,6 +652,8 @@ def stack_of(
                 *stack_of(left, scope, filename, depth=deeper),
                 *stack_of(right, scope, filename, depth=deeper),
             ]
+        case ast.IfExp(body=body, orelse=orelse):
+            stack = _one_stack([body, orelse], scope, filename, text, location, depth=deeper)
         case (
             ast.Yield(value=ast.expr() as inner)
             | ast.YieldFrom(value=inner)
@@ -687,31 +689,50 @@ def _env_of(
     if isinstance(located, Unresolved):
         return [_unread(text, located)]
     node, scope, filename = located.node, located.scope, located.filename
-    returned = _returned_list(node)
-    if returned is None:
+    returns = _returned_lists(node)
+    location = _location_of(function)
+    if not returns:
         return [
             _unread(
                 text,
                 Unresolved(
-                    "builder does not return a handler list",
-                    function.__qualname__,
-                    _location_of(function),
+                    "builder does not return a handler list", function.__qualname__, location
                 ),
             )
         ]
-    return stack_of(returned, scope, filename, depth=depth)
+    return _one_stack(returns, scope, filename, text, location, depth=depth)
 
 
-def _returned_list(node: FunctionNode) -> ast.expr | None:
-    """What a builder returns (its last ``return``; a lambda's body)."""
+def _returned_lists(node: FunctionNode) -> list[ast.expr]:
+    """What a builder can return: every ``return`` (a lambda's body)."""
     if isinstance(node, ast.Lambda):
-        return node.body
-    returns = [
+        return [node.body]
+    return [
         child.value
         for child in _body_nodes(node)
         if isinstance(child, ast.Return) and child.value is not None
     ]
-    return returns[-1] if returns else None
+
+
+def _one_stack(
+    paths: Sequence[ast.expr],
+    scope: _Scope,
+    filename: str,
+    text: str,
+    location: Location,
+    *,
+    depth: int,
+) -> list[HandlerEffects]:
+    """The handler list each of ``paths`` (the returns of a builder, the arms of a
+    conditional) denotes, when they all denote the same one.  Which path runs is not
+    known before running, so lists that differ are unread (reading one path alone —
+    the last return — answered for handlers the other paths do not install)."""
+    stacks = [stack_of(path, scope, filename, depth=depth) for path in paths]
+    if len({tuple(handler.name for handler in stack) for stack in stacks}) == 1:
+        return stacks[0]
+    written = " | ".join(ast.unparse(path) for path in paths)
+    reason = "builder returns different handler lists on its paths"
+    return [_unread(text, Unresolved(reason, written, location))]
 
 
 # --------------------------------------------------------------------------- env
@@ -733,10 +754,11 @@ def analyze_env(builder: Any, *, bindings: Mapping[str, Any] | None = None) -> l
     if isinstance(located, Unresolved):
         raise ValueError(f"{function.__qualname__}: {located.reason}: {located.text}")
     node, scope, filename = located.node, located.scope, located.filename
-    returned = _returned_list(node)
-    if returned is None:
+    returns = _returned_lists(node)
+    if not returns:
         raise ValueError(f"{function.__qualname__} does not return a handler list")
-    return stack_of(returned, scope, filename)
+    location = _location_of(function)
+    return _one_stack(returns, scope, filename, function.__qualname__, location, depth=0)
 
 
 # --------------------------------------------------------------------------- coverage
