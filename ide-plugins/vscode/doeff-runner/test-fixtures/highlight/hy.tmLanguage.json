@@ -1,0 +1,224 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "Hy",
+  "scopeName": "source.hy",
+  "fileTypes": [
+    "hy",
+    "hyk",
+    "hyp"
+  ],
+  "patterns": [
+    {
+      "include": "#expression"
+    }
+  ],
+  "repository": {
+    "expression": {
+      "patterns": [
+        {
+          "include": "#comment"
+        },
+        {
+          "include": "#discard"
+        },
+        {
+          "include": "#bracket-string"
+        },
+        {
+          "include": "#string"
+        },
+        {
+          "include": "#definition"
+        },
+        {
+          "include": "#special-form"
+        },
+        {
+          "include": "#reader-macro"
+        },
+        {
+          "include": "#keyword-literal"
+        },
+        {
+          "include": "#constant"
+        },
+        {
+          "include": "#number"
+        },
+        {
+          "include": "#paren"
+        },
+        {
+          "include": "#bracket"
+        },
+        {
+          "include": "#brace"
+        }
+      ]
+    },
+    "comment": {
+      "match": ";.*$",
+      "name": "comment.line.semicolon.hy"
+    },
+    "discard": {
+      "match": "#_",
+      "name": "comment.block.discard.hy"
+    },
+    "bracket-string": {
+      "name": "string.quoted.other.hy",
+      "begin": "#\\[([^\\[\\]\\s]*)\\[",
+      "end": "\\]\\1\\]",
+      "beginCaptures": {
+        "0": {
+          "name": "punctuation.definition.string.begin.hy"
+        }
+      },
+      "endCaptures": {
+        "0": {
+          "name": "punctuation.definition.string.end.hy"
+        }
+      }
+    },
+    "string": {
+      "name": "string.quoted.double.hy",
+      "begin": "(?<![^\\s()\\[\\]{}\";'`~])((?i:fr|rf|br|rb|f|r|b))?(\")",
+      "beginCaptures": {
+        "1": {
+          "name": "storage.type.string.hy"
+        },
+        "2": {
+          "name": "punctuation.definition.string.begin.hy"
+        }
+      },
+      "end": "\"",
+      "endCaptures": {
+        "0": {
+          "name": "punctuation.definition.string.end.hy"
+        }
+      },
+      "patterns": [
+        {
+          "match": "\\\\(?:.|$)",
+          "name": "constant.character.escape.hy"
+        }
+      ]
+    },
+    "definition": {
+      "patterns": [
+        {
+          "match": "(\\()\\s*(defhandler|defmacro|deftest|defn/a|deff|defk|defn|defp)\\s+((?:\\[[^\\[\\]]*\\]\\s+)?(?:#\\^\\s*[^\\s()\\[\\]{}\";#]+\\s+)?)([^\\s()\\[\\]{}\";#'`~][^\\s()\\[\\]{}\";]*)",
+          "captures": {
+            "1": {
+              "name": "punctuation.section.parens.begin.hy"
+            },
+            "2": {
+              "name": "keyword.control.hy"
+            },
+            "3": {
+              "patterns": [
+                {
+                  "include": "#expression"
+                }
+              ]
+            },
+            "4": {
+              "name": "entity.name.function.hy"
+            }
+          }
+        },
+        {
+          "match": "(\\()\\s*(defrecord|defclass|defenum|defadr)\\s+((?:\\[[^\\[\\]]*\\]\\s+)?(?:#\\^\\s*[^\\s()\\[\\]{}\";#]+\\s+)?)([^\\s()\\[\\]{}\";#'`~][^\\s()\\[\\]{}\";]*)",
+          "captures": {
+            "1": {
+              "name": "punctuation.section.parens.begin.hy"
+            },
+            "2": {
+              "name": "keyword.control.hy"
+            },
+            "3": {
+              "patterns": [
+                {
+                  "include": "#expression"
+                }
+              ]
+            },
+            "4": {
+              "name": "entity.name.type.hy"
+            }
+          }
+        }
+      ]
+    },
+    "special-form": {
+      "match": "(\\()\\s*(eval-when-compile|eval-and-compile|unquote-splice|with-handler|defmcp-tool|defpipeline|defworkflow|defhandler|defsemgrep|quasiquote|yield-from|defreader|defrecord|annotate|continue|defclass|defmacro|defphase|nonlocal|defenum|defmain|deftest|deftype|except\\*|finally|require|session|unquote|assert|chainc|defadr|defn/a|except|export|for/do|global|handle|import|is-not|not-in|pragma|resume|return|unless|with/a|await|break|defpp|for/a|match|quote|raise|while|yield|as->|case|cond|deff|defk|defn|defp|dfor|doto|else|fn/a|gfor|lfor|set!|setv|setx|sfor|when|with|->>|<->|and|cut|del|do!|fnk|for|law|let|not|pys|try|val|var|->|<-|do|fn|if|in|is|or|py)(?=[\\s()\\[\\]{}\";]|$)",
+      "captures": {
+        "1": {
+          "name": "punctuation.section.parens.begin.hy"
+        },
+        "2": {
+          "name": "keyword.control.hy"
+        }
+      }
+    },
+    "reader-macro": {
+      "patterns": [
+        {
+          "match": "~@|#\\*\\*|#\\*|#\\^|['`~]|#(?=[({])",
+          "name": "keyword.operator.reader.hy"
+        },
+        {
+          "match": "#[^\\s()\\[\\]{}\";\\[_*^#'`~(][^\\s()\\[\\]{}\";]*",
+          "name": "keyword.operator.reader.hy"
+        }
+      ]
+    },
+    "keyword-literal": {
+      "match": "(?<![^\\s()\\[\\]{}\";'`~]):[^\\s()\\[\\]{}\";]*",
+      "name": "constant.other.keyword.hy"
+    },
+    "constant": {
+      "match": "(?<![^\\s()\\[\\]{}\";'`~])(?:True|False|None|\\.\\.\\.)(?=[\\s()\\[\\]{}\";]|$)",
+      "name": "constant.language.hy"
+    },
+    "number": {
+      "match": "(?<![^\\s()\\[\\]{}\";'`~])[+-]?(?:0[xX][0-9a-fA-F_]+|0[oO][0-7_]+|0[bB][01_]+|(?:\\d[\\d_]*(?:\\.[\\d_]*)?|\\.\\d[\\d_]*)(?:[eE][+-]?\\d[\\d_]*)?(?:[+-][\\d_.]*[jJ]|[jJ])?|Inf|NaN)(?=[\\s()\\[\\]{}\";]|$)",
+      "name": "constant.numeric.hy"
+    },
+    "paren": {
+      "patterns": [
+        {
+          "match": "\\(",
+          "name": "punctuation.section.parens.begin.hy"
+        },
+        {
+          "match": "\\)",
+          "name": "punctuation.section.parens.end.hy"
+        }
+      ]
+    },
+    "bracket": {
+      "patterns": [
+        {
+          "match": "\\[",
+          "name": "punctuation.section.brackets.begin.hy"
+        },
+        {
+          "match": "\\]",
+          "name": "punctuation.section.brackets.end.hy"
+        }
+      ]
+    },
+    "brace": {
+      "patterns": [
+        {
+          "match": "\\{",
+          "name": "punctuation.section.braces.begin.hy"
+        },
+        {
+          "match": "\\}",
+          "name": "punctuation.section.braces.end.hy"
+        }
+      ]
+    }
+  }
+}

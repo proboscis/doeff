@@ -6,6 +6,8 @@
 import * as crypto from 'crypto';
 import * as path from 'path';
 import * as vscode from 'vscode';
+import { SourceHighlighter } from '../hy/highlight/host';
+import type { SourceColoring } from '../hy/highlight/spans';
 import type { HyIndexStatusView } from '../hy/indexService';
 import { emptyIndexLines } from '../hy/indexStatus';
 import type { HyIndexStore } from '../hy/store';
@@ -203,6 +205,10 @@ class PlanePanel implements vscode.Disposable {
   private lastHtml = '';
   private timer: NodeJS.Timeout | undefined;
   private readonly disposables: vscode.Disposable[] = [];
+  /** file 全体の色と、塗った document の版(版が違えば使わない) */
+  private coloring: { readonly version: number; readonly value: SourceColoring } | undefined;
+  /** 塗っている最中の document の版(同じ版を 2 度塗らないため) */
+  private coloringInFlight: number | undefined;
 
   constructor(
     private readonly document: vscode.TextDocument,
@@ -213,7 +219,8 @@ class PlanePanel implements vscode.Disposable {
     private readonly glyphs: Glyphs,
     private readonly memory: FoldMemory,
     private readonly graphs: GraphTable,
-    private readonly navigator: PlaneNavigator
+    private readonly navigator: PlaneNavigator,
+    private readonly highlighter: SourceHighlighter
   ) {
     this.fold = memory.load(document.uri.fsPath);
     this.revealWanted = navigator.takePending(document.uri.fsPath);
@@ -235,6 +242,11 @@ class PlanePanel implements vscode.Disposable {
         if (event.affectsConfiguration(READING_PLANE_SETTING)) {
           this.schedule();
         }
+      }),
+      // theme・token の色の設定・記号ごとの色の設定が変わったら塗り直す(editor と同時に面の色も変わるため)
+      highlighter.onDidChange(() => {
+        this.coloring = undefined;
+        this.schedule();
       }),
       panel.webview.onDidReceiveMessage((raw: unknown) => this.receive(readMessage(raw)))
     );
@@ -328,6 +340,7 @@ class PlanePanel implements vscode.Disposable {
       fold: this.fold,
       graph: this.graphs.graph,
       tree: this.treePart(),
+      coloring: this.currentColoring(),
       cspSource: this.panel.webview.cspSource,
       nonce
     });
@@ -345,6 +358,33 @@ class PlanePanel implements vscode.Disposable {
     if (this.revealWanted !== undefined) {
       this.reveal(this.revealWanted);
     }
+    this.ensureColoring();
+  }
+
+  /** 今の document の版の色(版が違う・まだ塗れていなければ undefined — source は色なしで描く)。 */
+  private currentColoring(): SourceColoring | undefined {
+    return this.coloring !== undefined && this.coloring.version === this.document.version ? this.coloring.value : undefined;
+  }
+
+  /**
+   * 今の document の版の色が無ければ、file 全体を editor と同じ色で塗り、塗れたら描き直す(source の箱が色つきになる)。
+   * 塗っている間に document が変わった結果は捨てる。
+   */
+  private ensureColoring(): void {
+    const version = this.document.version;
+    if (this.currentColoring() !== undefined || this.coloringInFlight === version) {
+      return;
+    }
+    this.coloringInFlight = version;
+    void this.highlighter.highlight(this.document.getText()).then((value) => {
+      if (this.coloringInFlight === version) {
+        this.coloringInFlight = undefined;
+      }
+      if (this.document.version === version) {
+        this.coloring = { version, value };
+        this.schedule();
+      }
+    });
   }
 
   /** 送った変化の入った頁を覚え直す(次の描き直しで同じ頁を作り直さないため)。 */
@@ -475,6 +515,7 @@ class ReadingPlaneProvider implements vscode.CustomTextEditorProvider {
     private readonly memory: FoldMemory,
     private readonly graphs: GraphTable,
     private readonly navigator: PlaneNavigator,
+    private readonly highlighter: SourceHighlighter,
     private readonly watch: (document: vscode.TextDocument) => void
   ) {}
 
@@ -489,7 +530,7 @@ class ReadingPlaneProvider implements vscode.CustomTextEditorProvider {
       return;
     }
     this.watch(document);
-    new PlanePanel(document, panel, this.hy, this.status, this.lint, this.glyphs, this.memory, this.graphs, this.navigator);
+    new PlanePanel(document, panel, this.hy, this.status, this.lint, this.glyphs, this.memory, this.graphs, this.navigator, this.highlighter);
   }
 }
 
@@ -500,12 +541,26 @@ export function registerReadingPlane(
   status: HyIndexStatusView,
   lint: LintStore,
   icons: IconSource,
-  watch: (document: vscode.TextDocument) => void
+  watch: (document: vscode.TextDocument) => void,
+  output: vscode.OutputChannel
 ): void {
   // effect の絵は装飾 A と同じ pixel art を data URI で(webview の CSP は img-src data: だけを許す)
   const glyphs: Glyphs = { effect: (name) => icons.inline(effectGlyph(name), 14)?.toString(true) };
-  const provider = new ReadingPlaneProvider(hy, status, lint, glyphs, workspaceFoldMemory(context.workspaceState), new GraphTable(hy), new PlaneNavigator(), watch);
+  // source の箱の色 — editor の `.hy` と同じ文法・theme・記号ごとの色(agora-redesign #910 U16)
+  const highlighter = new SourceHighlighter(output);
+  const provider = new ReadingPlaneProvider(
+    hy,
+    status,
+    lint,
+    glyphs,
+    workspaceFoldMemory(context.workspaceState),
+    new GraphTable(hy),
+    new PlaneNavigator(),
+    highlighter,
+    watch
+  );
   context.subscriptions.push(
+    highlighter,
     vscode.window.registerCustomEditorProvider(READING_PLANE_VIEW_TYPE, provider, { webviewOptions: { retainContextWhenHidden: true } }),
     vscode.commands.registerCommand('doeff-runner.read.open', async (target?: vscode.Uri) => {
       if (!planeEnabled()) {

@@ -1,0 +1,8 @@
+{
+  // 既定の文字色と、註・文字列(VS Code の theme の file は註と末尾の , を許す)
+  "tokenColors": [
+    { "settings": { "foreground": "#D4D4D4" } },
+    { "scope": "comment", "settings": { "foreground": "#6A9955", "fontStyle": "italic" } },
+    { "scope": ["string"], "settings": { "foreground": "#CE9178" } },
+  ],
+}

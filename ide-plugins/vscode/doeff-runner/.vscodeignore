@@ -10,6 +10,10 @@ vsc-extension-quickstart.md
 **/*.ts
 node_modules/**
 !node_modules/@types/**
+# 読む面の source の色付け(agora-redesign #910 U16)が実行時に読む依存 — どれも下位の依存を持たない
+!node_modules/vscode-textmate/**
+!node_modules/vscode-oniguruma/**
+!node_modules/jsonc-parser/**
 scripts/**
 test-fixtures/**
 out/pixel/preview.html
