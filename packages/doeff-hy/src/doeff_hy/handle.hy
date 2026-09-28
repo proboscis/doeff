@@ -737,8 +737,10 @@
   (setv endings-check
     `(_doeff-check-clause-endings-once __doeff-handler-data__ ~(str name) __doeff-clause-endings__))
 
-  ;; Preserve s-expr body as quoted list of all clauses (including lazy)
-  (setv quoted-body `(quote ~(list clauses)))
+  ;; Preserve s-expr body as a list of all clauses (including lazy) — carried as one hy.repr string and read back
+  ;; on first access (macros._quoted-forms: a quote here compiled into code that rebuilt the model tree on every import).
+  (import doeff-hy.macros [_quoted-forms])
+  (setv quoted-body (_quoted-forms clauses))
 
   ;; Extra imports needed when lazy is used
   (setv lazy-imports
