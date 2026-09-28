@@ -8,6 +8,7 @@
 (import collections.abc [Callable])
 (import dataclasses [dataclass])
 (import json)
+(import sys)
 (import threading)
 (import traceback)
 (import http.server [BaseHTTPRequestHandler ThreadingHTTPServer])
@@ -38,12 +39,23 @@
 
 
 (defn #^ ProxyReply answer-request [#^ ProxyServerConfig config #^ ProxyRequest request]  ; defk にできない: http.server の callback(do_GET / do_POST)から呼ぶ
-  "要求 1 つに答える。実装の誤りは 500 にする(口を落とさない・追跡は標準の誤りへ)。"
+  "要求 1 つに答える。実装の誤りは 500 にする(口を落とさない・追跡は標準の誤りへ)。
+   Exception 以外(BaseException の子 — doeff の VM の panic が Python に出る PanicException など)も 1 行を標準の誤りへ書いて 500 にする:
+   受けなければ要求の thread が黙って落ち、接続は 1 byte も書かれずに切れる(呼び手には Connection reset しか見えない)。
+   KeyboardInterrupt / SystemExit も投げ直さない — 代理を止める道は main の thread の signal(serve の threading.Event)だけで、
+   Python は signal 由来の KeyboardInterrupt を main の thread にしか出さない。要求の thread で投げ直しても process は止まらず
+   (threading は thread の中の SystemExit を黙って捨てる)、接続が黙って切れるだけになる。"
   (try
     (config.runner request)
     (except [error Exception]
       (traceback.print-exc)
-      (plain-failure 500 "internal" (.format "{}: {}" (. (type error) __name__) error)))))
+      (plain-failure 500 "internal" (.format "{}: {}" (. (type error) __name__) error)))
+    (except [error BaseException]
+      (setv reason (.format "{}: {}" (. (type error) __name__) (get (.splitlines (+ (str error) "\n")) 0)))
+      (print (.format "jev-proxy: 要求の処理が Exception 以外で落ちた — 500 で答える: {} {}: {}"
+                      request.method request.path reason)
+             :file sys.stderr :flush True)
+      (plain-failure 500 "internal" reason))))
 
 
 (defn #^ type request-handler-class [#^ ProxyServerConfig config]  ; defk にできない: http.server が要求ごとに作る class を返す

@@ -118,10 +118,11 @@
   (val path (os.path.join (tempfile.mkdtemp :prefix "jev-proxy-test-") "answers.sqlite"))
   (val target (JevTarget :base-url base-url :model "jev-latest" :wire "direct" :api-key SECRET :source "env"))
   (val digest (.hexdigest (hashlib.sha256 (.encode OPERATOR-TOKEN "utf-8"))))
-  (val handlers-for (production-handlers path target 5.0 (Roster (FrozenMap {"operator" digest})) (frozenset ["operator"])
-                                         (Flights :table {} :lock (threading.Lock))))
+  (<- handlers-for (production-handlers path target 5.0 (Roster (FrozenMap {"operator" digest})) (frozenset ["operator"])
+                                        (Flights :table {} :lock (threading.Lock))))
   (run (scheduled (with_handlers (+ [(await_handler) try_handler] (handlers-for)) (PrepareStore))))
-  (proxy-runner handlers-for))
+  (<- runner (proxy-runner handlers-for))
+  runner)
 
 
 (deftest test-production-stack-serves-many-requests-and-names-an-unreachable-jev
