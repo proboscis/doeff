@@ -12,85 +12,85 @@
 
 
 (deftest test-stale-put-conflicts
-  {:interpreters ["memory" "pg" "http-memory" "http-pg"]}
+  {:interpreters ["memory" "pg" "http-memory" "http-effect-memory" "http-pg"]}
   (<- harness (LawSetup))
   (<- transcript (law-stale-put-conflicts harness))
   (assert transcript))
 
 (deftest test-committed-changes-appear-once-in-order
-  {:interpreters ["memory" "pg" "http-memory" "http-pg"]}
+  {:interpreters ["memory" "pg" "http-memory" "http-effect-memory" "http-pg"]}
   (<- harness (LawSetup))
   (<- transcript (law-committed-changes-appear-once-in-order harness))
   (assert transcript))
 
 (deftest test-epoch-change-resets
-  {:interpreters ["memory" "pg" "http-memory" "http-pg"]}
+  {:interpreters ["memory" "pg" "http-memory" "http-effect-memory" "http-pg"]}
   (<- harness (LawSetup))
   (<- transcript (law-epoch-change-resets harness))
   (assert transcript))
 
 (deftest test-undeclared-writes-are-refused
-  {:interpreters ["memory" "pg" "http-memory" "http-pg"]}
+  {:interpreters ["memory" "pg" "http-memory" "http-effect-memory" "http-pg"]}
   (<- harness (LawSetup))
   (<- transcript (law-undeclared-writes-are-refused harness))
   (assert transcript))
 
 (deftest test-transient-rows-expire
-  {:interpreters ["memory" "pg" "http-memory" "http-pg"]}
+  {:interpreters ["memory" "pg" "http-memory" "http-effect-memory" "http-pg"]}
   (<- harness (LawSetup))
   (<- transcript (law-transient-rows-expire harness))
   (assert transcript))
 
 (deftest test-grouped-events-expire-together
-  {:interpreters ["memory" "pg" "http-memory" "http-pg"]}
+  {:interpreters ["memory" "pg" "http-memory" "http-effect-memory" "http-pg"]}
   (<- harness (LawSetup))
   (<- transcript (law-grouped-events-expire-together harness))
   (assert transcript))
 
 (deftest test-indexed-list-equals-filtered-scan
-  {:interpreters ["memory" "pg" "http-memory" "http-pg"]}
+  {:interpreters ["memory" "pg" "http-memory" "http-effect-memory" "http-pg"]}
   (<- harness (LawSetup))
   (<- transcript (law-indexed-list-equals-filtered-scan harness))
   (assert transcript))
 
 (deftest test-append-is-idempotent
-  {:interpreters ["memory" "pg" "http-memory" "http-pg"]}
+  {:interpreters ["memory" "pg" "http-memory" "http-effect-memory" "http-pg"]}
   (<- harness (LawSetup))
   (<- transcript (law-append-is-idempotent harness))
   (assert transcript))
 
 (deftest test-watch-waits-for-a-change
-  {:interpreters ["memory" "pg" "http-memory" "http-pg"]}
+  {:interpreters ["memory" "pg" "http-memory" "http-effect-memory" "http-pg"]}
   (<- harness (LawSetup))
   (<- transcript (law-watch-waits-for-a-change harness))
   (assert transcript))
 
 (deftest test-none-removes-a-field
-  {:interpreters ["memory" "pg" "http-memory" "http-pg"]}
+  {:interpreters ["memory" "pg" "http-memory" "http-effect-memory" "http-pg"]}
   (<- harness (LawSetup))
   (<- transcript (law-none-removes-a-field harness))
   (assert transcript))
 
 (deftest test-maintenance-prunes-and-sweeps
-  {:interpreters ["memory" "pg" "http-memory" "http-pg"]}
+  {:interpreters ["memory" "pg" "http-memory" "http-effect-memory" "http-pg"]}
   (<- harness (LawSetup))
   (<- transcript (law-maintenance-prunes-and-sweeps harness))
   (assert transcript))
 
 (deftest test-operator-paths-need-an-operator
-  {:interpreters ["memory" "pg" "http-memory" "http-pg"]}
+  {:interpreters ["memory" "pg" "http-memory" "http-effect-memory" "http-pg"]}
   (<- harness (LawSetup))
   (<- transcript (law-operator-paths-need-an-operator harness))
   (assert transcript))
 
 (deftest test-founders-write-only-at-birth
-  {:interpreters ["memory" "pg" "http-memory" "http-pg"]}
+  {:interpreters ["memory" "pg" "http-memory" "http-effect-memory" "http-pg"]}
   (<- harness (LawSetup))
   (<- transcript (law-founders-write-only-at-birth harness))
   (assert transcript))
 
 (deftest test-put-rows-is-all-or-nothing
-  {:interpreters ["memory" "pg" "http-memory" "http-pg"]}
+  {:interpreters ["memory" "pg" "http-memory" "http-effect-memory" "http-pg"]}
   (<- harness (LawSetup))
   (<- transcript (law-put-rows-is-all-or-nothing harness))
   (assert transcript))
