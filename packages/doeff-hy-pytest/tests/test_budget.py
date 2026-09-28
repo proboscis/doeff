@@ -180,6 +180,54 @@ def test_fail_mode_fails_the_slow_test_with_time_and_budget(pytester: pytest.Pyt
     result.stdout.fnmatch_lines(["*test_slow.hy::test_slow の実行(call)が CPU *上限 CPU 0.050 秒*"])
 
 
+FAIL_MODE_INI = 'doeff_test_call_budget_seconds = 0.05\ndoeff_test_budget_mode = "fail"\n'
+
+
+def test_checked_vm_build_reports_but_does_not_fail(
+    pytester: pytest.Pytester, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """doeff-vm が検査つきの build の時は、fail の形でも超過を赤にせず、見出しにその旨を出す(上限は検査なしが基準)。"""
+    import doeff_vm
+
+    monkeypatch.setattr(doeff_vm, "invariant_checks_enabled", lambda: True)
+    _project(pytester, FAIL_MODE_INI, {"test_slow": SLOW_CALL})
+    result = pytester.runpytest("-q")
+    result.assert_outcomes(passed=2)
+    result.stdout.fnmatch_lines(
+        [
+            "*doeff-vm は検査つきの build(invariant-checks)— 上限は検査なしの build が基準のため、この走行の超過は判定しない*",
+            "*上限を超えた(報告のみ*test_slow.hy::test_slow(call CPU *",
+        ]
+    )
+
+
+def test_unchecked_vm_build_fails_and_names_the_build(
+    pytester: pytest.Pytester, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import doeff_vm
+
+    monkeypatch.setattr(doeff_vm, "invariant_checks_enabled", lambda: False)
+    _project(pytester, FAIL_MODE_INI, {"test_slow": SLOW_CALL})
+    result = pytester.runpytest("-q")
+    result.assert_outcomes(passed=1, failed=1)
+    result.stdout.fnmatch_lines(
+        ["*doeff-vm は検査なしの build — 上限の基準の build で判定する*", "*上限を超えた(赤*"]
+    )
+
+
+def test_unknown_vm_build_is_named_and_judged_as_configured(
+    pytester: pytest.Pytester, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """build の種類を読めない(古い VM で関数が無い)時は「不明」と出し、判定は設定のまま。"""
+    import doeff_vm
+
+    monkeypatch.delattr(doeff_vm, "invariant_checks_enabled")
+    _project(pytester, FAIL_MODE_INI, {"test_slow": SLOW_CALL})
+    result = pytester.runpytest("-q")
+    result.assert_outcomes(passed=1, failed=1)
+    result.stdout.fnmatch_lines(["*doeff-vm の build の種類は不明(*invariant_checks_enabled が無い*"])
+
+
 def test_registered_test_is_not_failed_and_stale_entries_are_reported(
     pytester: pytest.Pytester,
 ) -> None:
