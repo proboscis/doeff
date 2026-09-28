@@ -14,10 +14,15 @@
 //! `do`・`let` の枝も答えとして使う所のまま。
 //! 拾わない: `(<- …)` の右辺・`(! …)`・`(return …)`、Program を受ける呼びの引数(repo の関数に渡す形も — Program を受けて走らせる
 //! 関数(run-on など)かもしれず、追えない)、名への束ね(後で Program として渡すかもしれない)。
+//!
+//! 定義の外(module の最上位の式 — `(val TABLE [(entry "a" (f …)) …])`・`(setv PAIRS #(…))`)は、位置を問わず答えとして使う所として拾う。
+//! 定義の外には Program を走らせる所が無く、表の行や名に束ねた Program は値の代わりに流れる(実弾 = agora-controllers c6271008a が
+//! scripts/land_focus_gate.hy の最上位の表に defk の tests-of を run 無しで足し、`--all` が起動で落ちた)。ただし `run`・`<-`・`!`・
+//! doeff の package の呼びの中、defk の呼びの引数、関数の本体(`fn`・`fnk`・`defmacro`・`defclass` …)、quote / quasiquote の中は定義の中と同じ判定で下る。
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use doeff_indexer::hy_index::reader::{Delim, Form, Node, Reader};
+use doeff_indexer::hy_index::reader::{Delim, Form, Node, Prefix, Reader};
 
 use super::facts::ByteSpan;
 use super::names::hy_mangle;
@@ -124,6 +129,14 @@ const COMPREHENSIONS: &[&str] = &["lfor", "sfor", "gfor", "dfor"];
 /// 定義の頭(呼びを含む定義の名を取るため)。
 const DEFINITION_HEADS: &[&str] = &["defk", "deff", "defn", "defn/a", "defp", "defpp", "defhandler", "deftest", "defeffect"];
 
+/// 定義の外で、中の Program を受ける形(`run` と effect として出す形)— 中は定義の中と同じ判定で下る。doeff の package の呼びも同じ扱い。
+const MODULE_LEVEL_PROGRAM_HEADS: &[&str] = &["run", "<-", "!", "yield", "yield-from"];
+
+/// 定義の外に書いた関数の本体・macro・class・import — 中は定義の中と同じ判定で下る(呼ばれた時に答えを返す所で、定義の外ではない)。
+const MODULE_LEVEL_BODY_HEADS: &[&str] = &[
+    "fn", "fn/a", "fnk", "defmacro", "defmacro/g!", "defreader", "defclass", "defrecord", "defmain", "import", "require", "quote", "quasiquote",
+];
+
 /// 1 つの source の、答えとして使う所で呼んだ defk を全部拾う(同じ定義の同じ呼び先は最初の 1 件だけ)。
 pub fn bare_calls_in(source: &str, scope: Scope<'_>, defks: &DefkNames) -> Vec<BareCall> {
     let mut reader = Reader::new(source, 0, source.len());
@@ -167,7 +180,8 @@ impl Walker<'_> {
                         _ => self.hy.text(f),
                     })
                     .unwrap_or("");
-                let context = Context { definition: hy_mangle(name), container: h.to_string(), bound: self.bare_bindings(form) };
+                let context =
+                    Context { definition: hy_mangle(name), container: h.to_string(), bound: self.bare_bindings(form), module_level: false };
                 for child in items.into_iter().skip(1) {
                     self.walk(child, false, &context, out);
                 }
@@ -175,7 +189,12 @@ impl Walker<'_> {
             _ => self.walk(
                 form,
                 false,
-                &Context { definition: format!("<{}>", self.scope.module), container: "module".to_string(), bound: BTreeMap::new() },
+                &Context {
+                    definition: format!("<{}>", self.scope.module),
+                    container: "module".to_string(),
+                    bound: BTreeMap::new(),
+                    module_level: true,
+                },
                 out,
             ),
         }
@@ -198,6 +217,13 @@ impl Walker<'_> {
                     out.push(BareCall { definition: context.definition.clone(), container: context.container.clone(), callee: callee.clone(), span: *span });
                 }
             }
+            // 定義の外の quote / quasiquote(`'(f …)`・`` `(f …) ``)と reader の tag の中は呼びではない — 定義の中と同じ判定で下る。
+            Node::Prefixed { prefix: Prefix::Quote | Prefix::Quasiquote, .. } | Node::Tagged { .. } if context.module_level => {
+                let inner = context.inside_definition();
+                for child in children(form) {
+                    self.walk(child, false, &inner, out);
+                }
+            }
             _ => {
                 for child in children(form) {
                     self.walk(child, false, context, out);
@@ -216,10 +242,29 @@ impl Walker<'_> {
         if let Some((callee, span)) = head.and_then(|h| h.split_once('.')).and_then(|(name, _)| context.bound.get(name)) {
             out.push(BareCall { definition: context.definition.clone(), container: context.container.clone(), callee: callee.clone(), span: *span });
         }
-        if let (true, true, Some(callee)) = (is_defk, value, head) {
+        if let (true, true, Some(callee)) = (is_defk, value || context.module_level, head) {
             out.push(BareCall { definition: context.definition.clone(), container: context.container.clone(), callee: callee.to_string(), span: span_of(form) });
         }
         let doeff = qualified.as_deref().is_some_and(|q| q.starts_with("doeff"));
+        // 定義の外で、中が Program を受ける所・関数の本体・defk の呼びの引数(その defk が Program を受けるかもしれない — 呼び自体は積んだ)
+        // なら、中は定義の中と同じ判定で下る。
+        // `run` を値として受け取る呼び(`(map run #((f …) …))`)も、中の Program を走らせる所。
+        let passes_runner =
+            items.iter().skip(1).filter_map(|item| self.hy.symbol(item)).any(|s| s == "run" || self.scope.qualify(s) == "doeff.run");
+        let leaves_module_level = context.module_level
+            && (doeff
+                || is_defk
+                || passes_runner
+                || head.is_some_and(|h| {
+                    MODULE_LEVEL_PROGRAM_HEADS.contains(&h) || MODULE_LEVEL_BODY_HEADS.contains(&h) || DEFINITION_HEADS.contains(&h)
+                }));
+        let inner;
+        let context = if leaves_module_level {
+            inner = context.inside_definition();
+            &inner
+        } else {
+            context
+        };
         // record の欄は答えとして使う所 — ただし effect として出す型(`(<- (AnswerLater :answer (f …)))`)の欄は Program を運ぶことがあるので除く。
         let constructor = head.is_some_and(|h| h.chars().next().is_some_and(|c| c.is_ascii_uppercase())) && !doeff && !is_defk && !yielded;
         let binds = head == Some("<-");
@@ -258,6 +303,17 @@ struct Context {
     definition: String,
     container: String,
     bound: BTreeMap<String, (String, ByteSpan)>,
+    /// 定義の外(module の最上位の式)を下っているか。定義の外には Program を走らせる所が無いので、`run` などの Program を受ける形
+    /// (`MODULE_LEVEL_PROGRAM_HEADS`・doeff の package の呼び)と関数の本体(`MODULE_LEVEL_BODY_HEADS`)と quote の外にある defk の呼びは、
+    /// 位置を問わず答えとして使う所(表の行・`+` の引数・repo の関数の引数・名への束ね)。
+    module_level: bool,
+}
+
+impl Context {
+    /// 定義の外の判定を外した写し(Program を受ける形・関数の本体・quote の中を、定義の中と同じ判定で下るため)。
+    fn inside_definition(&self) -> Context {
+        Context { definition: self.definition.clone(), container: self.container.clone(), bound: self.bound.clone(), module_level: false }
+    }
 }
 
 impl Walker<'_> {
@@ -379,6 +435,36 @@ mod tests {
   (return later))
 (defk rebound [run] (setv x (fetch run)) (<- x (fetch run)) (len x))"#;
         assert_eq!(found(source, &[]), vec!["turn_survives_roll::fetch", "waits_of_run::fetch", "via_let::fetch", "test_laws::fetch"]);
+    }
+
+    #[test]
+    fn bare_calls_inside_module_level_tables_are_found() {
+        // agora-controllers c6271008a の scripts/land_focus_gate.hy を縮めた形: module の最上位の表の行に defk の tests-of を run 無しで足し、
+        // 表に Program が混ざって `--all` が起動で落ちた。表の行の組み立て(`+`・repo の関数 entry の引数)の中でも、定義の外では答えとして使う所。
+        let source = r#"(defn entry [path cmds] [path cmds])
+(setv SIM-TESTS [(run (fetch "sim"))])
+(val TABLE [(entry "a" [(run (fetch "x"))])
+            ["b" (+ [(fetch "y") (run (load "z"))] SIM-TESTS)]])
+(setv PAIRS #((entry "c" (load "w"))))"#;
+        assert_eq!(found(source, &[("load", "lib"), ("run", "doeff")]), vec!["<m>::fetch", "<m>::load"]);
+    }
+
+    #[test]
+    fn module_level_programs_that_are_run_passed_or_quoted_are_not_bare() {
+        // 定義の外でも拾わない: run・doeff の Program を受ける呼び・`<-`・`!` の中、defk を値として渡す所(呼んでいない)、
+        // 関数の本体(fn・fnk・defmacro・defclass の method)、quote / quasiquote の中。
+        let source = r#"(setv ANSWER (run (with_handlers [h] (fetch 1))))
+(setv DIRECT (doeff.run (fetch 2)))
+(setv REGISTRY {"fetch" fetch "load" load})
+(setv LATER (fn [x] (fetch x)))
+(setv LATER-K (fnk [x] (<- got (fetch x)) (return got)))
+(defmacro fetch-all [#* xs] `(lfor x ~xs (fetch x)))
+(defclass Holder [] (defn method [self] (fetch 3)))
+(setv QUOTED '(fetch 4))
+(val REQUESTS (tuple (map run #((fetch 6) (fetch 7)))))
+(when (= __name__ "__main__") (run (fetch 5)))"#;
+        let bindings = [("run", "doeff"), ("with_handlers", "doeff"), ("load", "lib")];
+        assert!(found(source, &bindings).is_empty(), "{:?}", found(source, &bindings));
     }
 }
 
