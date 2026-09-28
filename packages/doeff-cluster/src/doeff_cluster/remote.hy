@@ -20,14 +20,15 @@
 
 
 (deff task-submit-body [#^ str sha #^ str revision #^ frozenset needs #^ str name #^ float lease-seconds
-                        #^ (| RuntimeEnv None) runtime-env]  ; defk にできない: 本番の client(Program の外の I/O の道具)と sim の宿が同じ形を作る純粋な判断
-  {:pre [(: sha str) (: revision str) (: needs frozenset) (: name str) (: lease-seconds float)] :post [(: % dict)]
+                        #^ (| RuntimeEnv None) runtime-env #^ dict environ]  ; defk にできない: 本番の client(Program の外の I/O の道具)と sim の宿が同じ形を作る純粋な判断
+  {:pre [(: sha str) (: revision str) (: needs frozenset) (: name str) (: lease-seconds float) (: environ dict)] :post [(: % dict)]
    :tags {:context "doeff-cluster" :role "protocol"}}
   "POST /tasks の本文を作るため(本番の TaskClient と sim の宿で同じ形)。詰めた Program は先に PUT /programs/<sha> で置き、本文は
-   sha だけを運ぶ(service の宣言と同じ運び方 — ADR-DOE-CLUSTER-001 R3b)。"
+   sha だけを運ぶ(service の宣言と同じ運び方 — ADR-DOE-CLUSTER-001 R3b)。environ = 子の環境変数(RemoteJob.environ — 空なら欄を置かない)。"
   (| {"program" sha "revision" revision
       "needs" (sorted needs) "name" name "leaseSeconds" lease-seconds "format" PROTOCOL-FORMAT}
-     (if (is runtime-env None) {} {"runtimeEnv" (run (runtime-env->json runtime-env))})))
+     (if (is runtime-env None) {} {"runtimeEnv" (run (runtime-env->json runtime-env))})
+     (if environ {"environ" (dict environ)} {})))
 
 
 (defclass TaskClient []
@@ -36,13 +37,13 @@
   (defn __init__ [self #^ str url #^ str revision [timeout REPLY-SECONDS] #^ (| RuntimeEnv None) [runtime-env None]]
     (setv self.revision revision self.runtime-env runtime-env self.endpoint (CoordinatorEndpoint url timeout 4)))
 
-  (defn #^ str submit [self #^ str blob #^ frozenset needs #^ dict versions #^ str name #^ float lease-seconds]
+  (defn #^ str submit [self #^ str blob #^ frozenset needs #^ dict versions #^ str name #^ float lease-seconds #^ (| dict None) [environ None]]
     "task を 1 本出す: 詰めた Program を版と一緒に置き場 /programs/<sha> に先に置き、本文は sha だけを運ぶ(service の宣言と同じ運び方 —
      ADR-DOE-CLUSTER-001 R3b)。答え = coordinator の振った task の id。"
     (setv #(sha put) (put-program self.endpoint blob versions IDEMPOTENT-DEADLINE-SECONDS))
     (.raise-for-status put)
     (setv response (.request self.endpoint "POST" "/tasks"
-      :json (task-submit-body sha self.revision needs name lease-seconds self.runtime-env)))
+      :json (task-submit-body sha self.revision needs name lease-seconds self.runtime-env (or environ {}))))
     (.raise-for-status response)
     (get (.json response) "task"))
 
@@ -103,9 +104,9 @@
 
 
 (defhandler remote-cluster [#^ TaskClient client [poll-seconds 1.0] [lease-seconds 15.0]]
-  (RemoteJob [program needs name]
+  (RemoteJob [program needs name environ]
     ;; 送れない値は送る前に断る(encode-program が UnsendableProgram を投げ、呼び手へ届く)。
     (val blob (encode-program program))
-    (val task (.submit client blob needs (current-versions) name lease-seconds))
+    (val task (.submit client blob needs (current-versions) name lease-seconds environ))
     (<- outcome (wait-outcome client task poll-seconds))
     (resume (settled-value outcome))))

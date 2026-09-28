@@ -11,7 +11,7 @@
 (import .coordinator_http [CoordinatorEndpoint REPLY-SECONDS])
 (import .code_prepare [MARKER MARKER-FORMAT marker-problem scan])
 (import doeff [run])
-(import .cluster_model [PROTOCOL-FORMAT])
+(import .cluster_model [PROTOCOL-FORMAT environ-pairs])
 (import .host_contract [HOST-CONTRACT])
 (import .remote_model [program-sha])
 (import .runtime_env_model [runtime-env-of-json env-key current-platform EnvFailure EnvFailureKind])
@@ -46,7 +46,7 @@
            :handoff-abandoned (bool (.get job "handoffAbandoned" False))
            ;; Program の job(改訂 1 の F・G): 詰めた Program の置き場のキーと、子の環境変数。
            :program (.get job "program")
-           :environ (tuple (sorted (.items (.get job "environ" {}))))))
+           :environ (environ-pairs (.get job "environ" {}))))
 
 
 (deff program-file [#^ Path program-dir #^ str sha]  ; defk にできない: worker の I/O の道具(CoordinatorLink・ProcessHost)が呼ぶ純粋な読み
@@ -882,7 +882,9 @@
   (JobSpec (+ "task/" id) JOB-ENTRY
            #("task" "--result" (str (/ task-dir f"{id}.result")))
            revision :once True :detached (bool (.get task "detached" False)) :runtime-env runtime :env-key key
-           :program (get task "program")))
+           :program (get task "program")
+           ;; 子の環境変数(service の job と同じ欄・同じ路 — ProcessHost.launch が宣言の env-vars の上に重ねる)。
+           :environ (environ-pairs (.get task "environ" {}))))
 
 
 (defclass CoordinatorLink []
