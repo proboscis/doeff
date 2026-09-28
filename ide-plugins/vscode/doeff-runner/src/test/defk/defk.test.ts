@@ -7,16 +7,16 @@ import { bindingHover, headerHover } from '../../defk/hover';
 import {
   bindingPlan,
   bindingRevealed,
-  effectAgreement,
+  headerEffects,
   headerPlan,
   headerRevealed,
   multiBindingForms,
   parseRevealMode,
-  shownEffects,
   signatureText,
+  targetsAt,
   type LineSource
 } from '../../defk/model';
-import { bindingChipSvg, flowSvg, tagsSvg, textWidth, type Metrics } from '../../defk/svg';
+import { effectChipSvg, tagsSvg, textWidth, type Metrics } from '../../defk/svg';
 
 const FIXTURES = path.join(__dirname, '..', '..', '..', 'test-fixtures', 'lint');
 
@@ -123,8 +123,8 @@ suite('defk の見出し — 契約 版 2 の読み込み', () => {
   });
 });
 
-suite('defk の見出し — 描く場所', () => {
-  test('辞書が複数行: 頭の行を見出しに、辞書の 1 行目に型の流れ・2 行目に tags、辞書の文字は全部隠す', () => {
+suite('defk の見出し — 描く場所と部品', () => {
+  test('辞書が複数行: 辞書の文字は全部隠し、1 行目に型の行の部品・2 行目に effect の行の部品を、空白と括弧の上に付ける', () => {
     const plan = headerPlan(report().signatures[0], lines(FLOW_SOURCE));
     assert.ok(plan !== undefined);
     assert.strictEqual(plan.headLine, 2);
@@ -133,25 +133,53 @@ suite('defk の見出し — 描く場所', () => {
       plan.hidden.map((h) => h.line),
       [3, 4, 5, 6]
     );
-    assert.deepStrictEqual(plan.hidden[1], { line: 4, start: 3, end: 30 });
-    assert.deepStrictEqual(plan.flowAt, { line: 3, character: 2, placement: 'before' });
-    assert.deepStrictEqual(plan.tagsAt, { line: 4, character: 3, placement: 'before' });
-    assert.deepStrictEqual(plan.lines, { start: 2, end: 11 });
+    assert.deepStrictEqual(
+      plan.pieces.map((p) => [p.at.line, p.at.character, p.before.kind, 'text' in p.before ? p.before.text : 'name' in p.before ? p.before.name : '', p.after ?? '']),
+      [
+        [3, 2, 'punct', '(', ''],
+        [3, 9, 'type', 'str', ','],
+        [3, 19, 'type', 'int', ') -> Maybe['],
+        [3, 25, 'type', 'Row', ']'],
+        [4, 8, 'label', 'effects', ''],
+        [4, 9, 'effect', 'ReadRow', ''],
+        [4, 19, 'raise', 'Unreadable', '']
+      ]
+    );
+    assert.deepStrictEqual(plan.tagsAt, { line: 2, character: 18 });
+    assert.strictEqual(plan.fallback, undefined);
   });
 
-  test('辞書が 1 行: 型の流れは辞書の所、tags は頭の行の末尾', () => {
-    const source = '(defk f [x]\n  {:pre [(: x int)] :post [(: % int)] :tags {:context "c" :role "judgment"}}\n  x)\n';
+  test('部品は語の文字の上に付けない(Hy の「定義へ移動」がその語を解いて混ざらないように)', () => {
+    const plan = headerPlan(report().signatures[0], lines(FLOW_SOURCE));
+    assert.ok(plan !== undefined);
+    const text = FLOW_SOURCE.split('\n');
+    for (const piece of plan.pieces) {
+      assert.match(text[piece.at.line][piece.at.character], /[\s()[\]{}"'#]/, `${piece.at.line}:${piece.at.character}`);
+      assert.match(text[piece.at.line][piece.at.character - 1], /[\s()[\]{}"'#]/, `直前も語の文字でない ${piece.at.line}:${piece.at.character}`);
+    }
+  });
+
+  test('辞書が 1 行: 型の行の後ろに effect の部品を続ける・部品を付ける文字が足りなければ残りを … に畳む', () => {
+    const source = '(defk f [x]\n  {:pre [(: x int)] :post [(: % int)] :effects [ReadRow]}\n  x)\n';
+    const base = report().signatures[0];
     const sig: LintSignature = {
-      ...report().signatures[0],
+      ...base,
       name: 'f',
+      params: [{ name: 'x', type: { kind: 'name', name: 'int', definition: null } }],
+      absent: false,
+      raises: [],
       range: { start: { line: 0, character: 6 }, end: { line: 0, character: 7 } },
       fullRange: { start: { line: 0, character: 0 }, end: { line: 2, character: 4 } },
       contractRange: { start: { line: 1, character: 2 }, end: { line: 1, character: source.split('\n')[1].length } }
     };
     const plan = headerPlan(sig, lines(source));
     assert.ok(plan !== undefined);
-    assert.deepStrictEqual(plan.flowAt, { line: 1, character: 2, placement: 'before' });
-    assert.deepStrictEqual(plan.tagsAt, { line: 0, character: 11, placement: 'after' });
+    assert.deepStrictEqual(
+      plan.pieces.map((p) => p.before.kind),
+      ['punct', 'type', 'type', 'label', 'effect']
+    );
+    const crowded = headerPlan(sig, lines(source.replace('{:pre [(: x int)] :post [(: % int)] :effects [ReadRow]}', '{:pre:post:effects}')));
+    assert.ok(crowded === undefined || crowded.pieces.length <= 1 || crowded.pieces[crowded.pieces.length - 1].before.kind === 'punct');
   });
 
   test('document と位置が合わない(版の食い違い)時は描かない', () => {
@@ -178,46 +206,51 @@ suite('defk の見出し — 描く場所', () => {
   });
 });
 
-suite('defk の見出し — 型の流れと状態', () => {
-  test('宣言と推論の突き合わせ(宣言だけ・推論だけ・宣言なし)', () => {
+suite('defk の見出し — 定義へ飛ぶ', () => {
+  test('型の名・effect の札・Raise の札・束縛の型の札の位置で定義へ飛び、組み込みの型と区切りと部品の無い位置は飛ばない', () => {
+    const r = report();
+    const header = headerPlan(r.signatures[0], lines(FLOW_SOURCE));
+    const binding = bindingPlan(r.bindings[0], lines(FLOW_SOURCE));
+    assert.ok(header !== undefined && binding !== undefined);
+    const where = (line: number, character: number): string[] | undefined =>
+      targetsAt([header], [binding], { line, character })?.map((l) => `${l.path.split('/').slice(-2).join('/')}:${l.range.start.line}`);
+    assert.deepStrictEqual(where(3, 25), ['intent/rows.hy:0'], '答えの型 Row');
+    assert.deepStrictEqual(where(4, 9), ['intent/rows.hy:3'], 'effect ReadRow');
+    assert.deepStrictEqual(where(4, 19), ['intent/rows.hy:2'], 'Raise Unreadable');
+    assert.deepStrictEqual(where(8, 5), ['intent/rows.hy:0'], '束縛 row の型 Row');
+    assert.deepStrictEqual(where(3, 9), [], '組み込みの str は飛ばない');
+    assert.deepStrictEqual(where(3, 2), [], '区切りの ( は飛ばない');
+    assert.strictEqual(where(3, 3), undefined, '部品の無い位置は他の口に任せる');
+  });
+});
+
+suite('defk の見出し — 型の行と札', () => {
+  test('型の行の文は (X, Y) -> B の 1 つの形(Absent を起こしうる答えは Maybe[B]・Program は書かない)', () => {
+    const sig = report().signatures[0];
+    assert.strictEqual(signatureText(sig), '(str, int) -> Maybe[Row]');
+    assert.strictEqual(signatureText({ ...sig, absent: false }), '(str, int) -> Row');
+  });
+
+  test('effect の一覧は宣言と推論を合わせ、Raise を後ろに(食い違いの印は付けない)', () => {
     const base = report().signatures[0];
     const readRow = base.declared![0];
     const put = { ...readRow, name: 'PutRow' };
-    assert.deepStrictEqual(effectAgreement(base), { tag: 'match' });
-    const off: LintSignature = { ...base, declared: [readRow], inferred: [readRow, put] };
     assert.deepStrictEqual(
-      shownEffects(off).map((e) => [e.effect.name, e.state]),
-      [
-        ['ReadRow', 'both'],
-        ['PutRow', 'undeclared']
-      ]
+      headerEffects({ ...base, declared: [readRow], inferred: [readRow, put] }).map((e) => `${e.kind}:${e.name}`),
+      ['effect:ReadRow', 'effect:PutRow', 'raise:Unreadable']
     );
-    assert.deepStrictEqual(effectAgreement({ ...base, declared: [readRow, put], inferred: [readRow] }), { tag: 'mismatch', count: 1 });
-    assert.deepStrictEqual(effectAgreement({ ...base, declared: null }), { tag: 'undeclared' });
-    assert.strictEqual(shownEffects({ ...base, declared: null })[0].state, 'inferred');
   });
 
-  test('型の流れの文は (X, Y) -> Program[{E, Raise F}, Maybe[B]] の 1 つの形(deff は Program を付けない)', () => {
+  test('SVG: effect の札は editor の文字の大きさ・tags の札は小さい文字・tags が無ければ描かない', () => {
     const sig = report().signatures[0];
-    assert.strictEqual(signatureText(sig), '(str, int) -> Program[{ReadRow, Raise Unreadable}, Maybe[Row]]');
-    assert.strictEqual(signatureText({ ...sig, kind: 'deff', absent: false }), '(str, int) -> Row');
-  });
-
-  test('SVG: 型の札は editor の文字の大きさ・tags は小さい文字・effect が空なら「effect なし」', () => {
-    const sig = report().signatures[0];
-    const flow = flowSvg(sig, METRICS, NO_SPRITES);
-    assert.strictEqual(flow.height, 20, '行の高さを変えない');
-    assert.match(flow.svg, /font-size="13"[^>]*>Row</);
-    assert.match(flow.svg, />Maybe\[</);
-    assert.match(flow.svg, />Raise Unreadable</);
-    assert.match(flow.svg, />ReadRow</);
-    const empty = flowSvg({ ...sig, declared: [], inferred: [], raises: [], absent: false }, METRICS, NO_SPRITES);
-    assert.match(empty.svg, />effect なし</);
-    const tags = tagsSvg(sig.tags, { tag: 'match' }, 0, METRICS, NO_SPRITES);
-    assert.match(tags.svg, /font-size="10"[^>]*>demo</);
-    assert.match(tags.svg, />宣言 = 推論</);
-    assert.match(tags.svg, />違反なし</);
-    assert.match(tagsSvg(sig.tags, { tag: 'mismatch', count: 2 }, 3, METRICS, NO_SPRITES).svg, />違反 3</);
+    const effect = effectChipSvg('effect', 'ReadRow', METRICS, NO_SPRITES);
+    assert.strictEqual(effect.height, 20, '行の高さを変えない');
+    assert.match(effect.svg, /font-size="13"[^>]*>ReadRow</);
+    assert.match(effectChipSvg('raise', 'Unreadable', METRICS, NO_SPRITES).svg, />Raise Unreadable</);
+    const tags = tagsSvg(sig.tags, METRICS, NO_SPRITES);
+    assert.match(tags?.svg ?? '', /font-size="10"[^>]*>demo</);
+    assert.doesNotMatch(tags?.svg ?? '', /宣言|違反/, '状態の札は描かない');
+    assert.strictEqual(tagsSvg(new Map(), METRICS, NO_SPRITES), undefined);
   });
 
   test('文字の幅の見積もり(半角 0.6・全角 1.0 文字分)', () => {
@@ -225,40 +258,46 @@ suite('defk の見出し — 型の流れと状態', () => {
     assert.strictEqual(textWidth('宣言', 10), 20);
   });
 
-  test('hover: 型の流れの文・定義へ飛ぶ link・effect の答えの分け方', () => {
+  test('hover: 型の行の文・引数の名と型・定義へ飛ぶ link・effect の答えの分け方(宣言と推論の状態は出さない)', () => {
     const md = headerHover(report().signatures[0]);
-    assert.match(md, /\(str, int\) -> Program\[\{ReadRow, Raise Unreadable\}, Maybe\[Row\]\]/);
+    assert.match(md, /\(str, int\) -> Maybe\[Row\]/);
+    assert.match(md, /引数: `id` str・`n` int/);
     assert.match(md, /\[`Row`\]\(command:doeff-runner\.defk\.openLocation\?/);
-    assert.match(md, /\| \[`ReadRow`\]\(command:[^|]+\| 宣言 = 推論 \| `Row \| Missing \| Unreadable` \| Missing \| Unreadable \|/);
+    assert.match(md, /\| \[`ReadRow`\]\(command:[^|]+\| `Row \| Missing \| Unreadable` \| Missing \| Unreadable \|/);
+    assert.doesNotMatch(md, /宣言 = 推論/);
   });
 });
 
 suite('束縛の型 — Text x <- …', () => {
-  test('<- は開き括弧と頭と閉じ括弧を隠し、名の前に札・後ろに <-(Maybe と Raise は札に載る)', () => {
+  test('<- は開き括弧と頭・頭と名の間の空白・閉じ括弧を隠し、札は空白の上(押すと型の定義へ)・名の後ろに <-', () => {
     const [bind] = report().bindings;
     const plan = bindingPlan(bind, lines(FLOW_SOURCE));
     assert.ok(plan !== undefined);
     assert.deepStrictEqual(plan.hidden, [
       { line: 8, start: 2, end: 5 },
+      { line: 8, start: 5, end: 6 },
       { line: 8, start: 22, end: 23 }
     ]);
+    assert.deepStrictEqual(plan.chipAt, { line: 8, character: 5 });
     assert.strictEqual(plan.operator, '<-');
     assert.deepStrictEqual(plan.name, { line: 8, start: 6, end: 9 });
-    assert.ok(plan.chip?.tag === 'type' && plan.chip.absent && plan.chip.raises.length === 1);
-    assert.match(bindingChipSvg(plan.chip, undefined, METRICS, NO_SPRITES).svg, /stroke-dasharray/, 'Maybe は点線の札');
+    assert.ok(plan.chip?.tag === 'type' && plan.chip.absent && plan.chip.text === 'Row');
+    assert.strictEqual(plan.targets.length, 1);
   });
 
-  test('var は var の語を添えて =、:= は札なしで :=', () => {
+  test('var は頭の語を残して(var T x = e)開き括弧だけ隠す、:= は札なしで :=', () => {
     const [, declare, assign] = report().bindings;
     const varPlan = bindingPlan(declare, lines(FLOW_SOURCE));
-    assert.strictEqual(varPlan?.prefix, 'var');
+    assert.deepStrictEqual(varPlan?.hidden[0], { line: 9, start: 2, end: 3 });
+    assert.deepStrictEqual(varPlan?.chipAt, { line: 9, character: 6 });
     assert.strictEqual(varPlan?.operator, '=');
     const assignPlan = bindingPlan(assign, lines(FLOW_SOURCE));
     assert.strictEqual(assignPlan?.chip, undefined);
+    assert.strictEqual(assignPlan?.chipAt, undefined);
     assert.strictEqual(assignPlan?.operator, ':=');
   });
 
-  test('注釈つきの <- は注釈も隠す・型が分からなければ ? の札', () => {
+  test('注釈つきの <- は注釈も隠す・型が分からなければ ? の札で飛ばない', () => {
     const source = '  (<- a str (helper id))\n';
     const bind: LintBinding = {
       form: '<-',
@@ -276,9 +315,9 @@ suite('束縛の型 — Text x <- …', () => {
     };
     const plan = bindingPlan(bind, lines(source));
     assert.ok(plan !== undefined);
-    assert.deepStrictEqual(plan.hidden[1], { line: 0, start: 7, end: 11 });
+    assert.deepStrictEqual(plan.hidden[2], { line: 0, start: 7, end: 11 });
     assert.deepStrictEqual(plan.chip, { tag: 'unknown' });
-    assert.match(bindingChipSvg(plan.chip, undefined, METRICS, NO_SPRITES).svg, />\?</);
+    assert.deepStrictEqual(plan.targets, []);
     assert.match(bindingHover(bind), /分からない/);
   });
 

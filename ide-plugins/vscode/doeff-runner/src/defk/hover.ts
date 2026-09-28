@@ -1,7 +1,7 @@
 // defk の見出しと束縛の hover の Markdown を作る純粋な関数(VS Code に触らない)。型と effect の名は定義へ飛ぶ link にする。
 
 import type { LintBinding, LintSignature, LintTypeRef } from '../lint/contract';
-import { namedTypes, shownEffects, signatureText, typeText } from './model';
+import { namedTypes, signatureText, typeText } from './model';
 
 /** 定義へ飛ぶ命令(hover の型と effect の名から呼ぶ)。 */
 export const OPEN_LOCATION_COMMAND = 'doeff-runner.defk.openLocation';
@@ -22,20 +22,24 @@ export function headerHover(signature: LintSignature): string {
   lines.push('```');
   lines.push(signatureText(signature));
   lines.push('```');
+  if (signature.params.length > 0) {
+    lines.push(`引数: ${signature.params.map((p) => `\`${p.name}\` ${p.type === null ? '?' : typeText(p.type)}`).join('・')}`);
+  }
   const types = namedTypes([...signature.params.map((p) => p.type), signature.answer, ...signature.raises]);
   if (types.length > 0) {
-    lines.push(`型: ${types.map(typeLink).join('・')}`);
+    lines.push('', `型: ${types.map(typeLink).join('・')}`);
   }
-  const effects = shownEffects(signature);
+  // 宣言と推論を合わせた一覧(食い違いは linter が違反の場所に出す — ここでは印を付けない)
+  const byName = new Map([...(signature.declared ?? []), ...signature.inferred].map((e) => [e.name, e] as const));
+  const effects = [...byName.values()];
   if (effects.length > 0) {
     lines.push('');
-    lines.push('| effect | 宣言と推論 | 値 | Absent | Raise |');
-    lines.push('|---|---|---|---|---|');
-    const state = { both: '宣言 = 推論', undeclared: '推論だけ(:effects に無い)', unused: '宣言だけ(起こしていない)', inferred: '推論(宣言なし)' } as const;
-    for (const { effect, state: s } of effects) {
+    lines.push('| effect | 値 | Absent | Raise |');
+    lines.push('|---|---|---|---|');
+    for (const effect of effects) {
       const name = typeLink({ kind: 'name', name: effect.name, definition: effect.definition });
       const answer = effect.answer === null ? '?' : `\`${typeText(effect.answer)}\``;
-      lines.push(`| ${name} | ${state[s]} | ${answer} | ${effect.absent.map(typeText).join(' ') || '—'} | ${effect.failure.map(typeText).join(' ') || '—'} |`);
+      lines.push(`| ${name} | ${answer} | ${effect.absent.map(typeText).join(' ') || '—'} | ${effect.failure.map(typeText).join(' ') || '—'} |`);
     }
   }
   if (signature.tags.size > 0) {

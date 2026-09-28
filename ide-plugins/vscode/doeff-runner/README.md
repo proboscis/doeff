@@ -177,9 +177,10 @@ Hy の file の決まった語を、**表示の上でだけ** 小さい sprite(1
 
 defk / deff の型・effect・tags を、**読むだけの表示**として editor に描きます(file の文字は変えません)。材料は doeff-linter の editor-json の `signatures` と `bindings`(契約 版 2)で、型の読み方は linter の 1 か所にあり、拡張は描くだけです。
 
-- 見出し: 頭の行 `(defk 名 [引数]` の名を太字にし、行に薄い帯と下の線を引きます。契約の辞書 `{:pre … :post … :effects … :tags …}` の 1 行目に型の流れ `(X, Y) → Program[effect | B]` を、2 行目に tags の札(丸い淡い札)と状態の札(宣言 = 推論・違反の数)を描き、辞書の文字は隠します。Maybe は点線の `Maybe[B]`、Raise は赤い印、`:effects` に無いのに推論で起こしている effect は琥珀の点線、宣言だけで起こしていない effect は薄い印です。
-- 束縛: `(<- x T e)` → `T x <- e`・`(val x e)` → `T x = e`・`(var x e)` → `var T x = e`・`(:= x v)` → `x := v`。型が分からない束縛は `?` です。
-- hover に型の流れの文・型と effect の定義へ飛ぶ link・effect の答えの分け方(値 / Absent / Raise)を出します。カーソルが定義に入ると元の lisp を見せます(設定 `doeff-runner.defk.revealOnCursor`)。
+- 見出し: 頭の行 `(defk 名 [引数]` の名を太字にし、行に薄い帯と下の線を引き、行の末尾に tags の小さな丸い札を置きます。契約の辞書 `{:pre … :post … :effects … :tags …}` の文字は隠し、1 行目に型の行 `(dict, str) -> JsonAnswer`(Absent を起こしうる答えは `Maybe[B]`・引数の名は hover)を、2 行目に effect の行(装置の絵と名の札・`Raise X` の札)を描きます。linter の知らせ(宣言と推論の食い違いなど)は見出しに出さず、linter が違反の場所に出します。
+- 定義へ飛ぶ: 型の名・effect の札・束縛の型の札を Cmd+クリック(と、その位置の F12)すると、その定義へ飛びます。組み込みの型(`dict`・`str` など)は飛びません。部品は隠した辞書の空白と括弧の上に 1 つずつ付けてあり、押された位置から部品を引きます。
+- 束縛: `(<- x T e)` → `T x <- e`・`(val x e)` → `T x = e`・`(var x e)` → `var T x = e`・`(:= x v)` → `x := v`。型は editor の文字で、型ごとの色と薄い枠で描きます。型が分からない束縛は `?` です。
+- hover に型の行の文・引数の名と型・型と effect の定義へ飛ぶ link・effect の答えの分け方(値 / Absent / Raise)を出します。カーソルが定義に入ると元の lisp を見せます(設定 `doeff-runner.defk.revealOnCursor`)。
 - 入り切り: 設定 `doeff-runner.defk.header`・`doeff-runner.defk.bindingTypes`、命令「doeff: defk の見出し(型・effect・tags)の入り切り」。
 - linter の出力に拡張の知らない語があっても出力は捨てず、その項目だけ一般の見た目にして、状態バーに「doeff: 拡張が古い」を出します。
 

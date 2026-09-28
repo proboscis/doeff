@@ -3,27 +3,29 @@
 // (契約 版 2)で、linter に渡した document の版と今の版が違う間は描かない(位置が古いため)。
 
 import * as vscode from 'vscode';
-import type { LintBinding, LintSignature } from '../lint/contract';
+import type { LintBinding, LintLocation, LintSignature } from '../lint/contract';
 import type { LintStore } from '../lint/store';
 import { dataUri } from '../pixel/render';
 import {
   bindingPlan,
   bindingRevealed,
-  effectAgreement,
   headerPlan,
   headerRevealed,
   multiBindingForms,
   parseRevealMode,
   rangeKey,
+  targetsAt,
+  type At,
   type BindingPlan,
   type HeaderPlan,
   type LineSource,
   type LineSpan,
+  type Piece,
   type RevealMode,
   type Span
 } from './model';
 import { bindingHover, headerHover, OPEN_LOCATION_COMMAND } from './hover';
-import { bindingChipSvg, flowSvg, tagsSvg, type Drawn, type Metrics, type SpritePixels } from './svg';
+import { effectChipSvg, tagsSvg, typeColors, type Drawn, type Metrics, type SpritePixels } from './svg';
 
 /** 見出しを出すかの設定。 */
 export const HEADER_SETTING = 'doeff-runner.defk.header';
@@ -105,9 +107,47 @@ interface DocumentPlans {
   readonly bindings: ReadonlyArray<{ readonly binding: LintBinding; readonly plan: BindingPlan }>;
 }
 
-/** editor 1 つに今描いている物(hover と #841 の置き換えの除外が読む)。 */
+/** editor 1 つに今描いている物(#841 の置き換えの除外と「定義へ移動」が読む)。 */
 interface Shown {
   readonly hidden: readonly Span[];
+  readonly headers: readonly HeaderPlan[];
+  readonly bindings: readonly BindingPlan[];
+}
+
+/** 部品の中身を editor の文字の飾りにする(型の名は型ごとの色と薄い枠・区切りは普通の文字・見出しの語は小さく淡い)。 */
+function textContent(text: string, style: 'type' | 'punct' | 'label', colorKey = ''): vscode.ThemableDecorationAttachmentRenderOptions {
+  switch (style) {
+    case 'type': {
+      const colors = typeColors(colorKey);
+      return {
+        contentText: text,
+        color: colors.text,
+        fontWeight: '600',
+        border: `1px solid ${colors.border}`,
+        // 角の小さい薄い枠と、枠の内側の余白(textDecoration は css の宣言を足す唯一の口)
+        textDecoration: 'none; border-radius: 2px; padding: 0 2px'
+      };
+    }
+    case 'punct':
+      return { contentText: text, color: new vscode.ThemeColor('editor.foreground') };
+    case 'label':
+      return { contentText: text, color: '#8a96a3', margin: '0 0.6em 0 0', textDecoration: 'none; font-size: 0.85em' };
+    default: {
+      const unreachable: never = style;
+      throw new Error(`網羅されていない書き方: ${JSON.stringify(unreachable)}`);
+    }
+  }
+}
+
+/** 位置を VS Code の 1 文字の範囲にする(部品を付ける隠した文字)。 */
+function charRange(at: At): vscode.Range {
+  return new vscode.Range(at.line, at.character, at.line, at.character + 1);
+}
+
+/** 定義の位置を VS Code の場所にする。 */
+function toLocation(location: LintLocation): vscode.Location {
+  const { start, end } = location.range;
+  return new vscode.Location(vscode.Uri.file(location.path), new vscode.Range(start.line, start.character, end.line, end.character));
 }
 
 /** defk の見出しと束縛の型を描く係。 */
@@ -115,8 +155,8 @@ export class DefkView implements vscode.Disposable {
   private readonly hidden: vscode.TextEditorDecorationType;
   private readonly headLine: vscode.TextEditorDecorationType;
   private readonly name: vscode.TextEditorDecorationType;
-  private readonly anchorFirst: vscode.TextEditorDecorationType;
-  private readonly anchorSecond: vscode.TextEditorDecorationType;
+  private readonly piece: vscode.TextEditorDecorationType;
+  private readonly tags: vscode.TextEditorDecorationType;
   private readonly operator: vscode.TextEditorDecorationType;
   private readonly disposables: vscode.Disposable[] = [];
   private readonly reported = new Set<string>();
@@ -141,13 +181,9 @@ export class DefkView implements vscode.Disposable {
       borderStyle: 'solid',
       borderColor: 'rgba(140, 160, 190, 0.35)'
     });
-    this.name = vscode.window.createTextEditorDecorationType({
-      fontWeight: 'bold',
-      dark: { color: '#ffd97a' },
-      light: { color: '#8a5a00' }
-    });
-    this.anchorFirst = vscode.window.createTextEditorDecorationType({});
-    this.anchorSecond = vscode.window.createTextEditorDecorationType({});
+    this.name = vscode.window.createTextEditorDecorationType({ fontWeight: 'bold', dark: { color: '#ffd97a' }, light: { color: '#8a5a00' } });
+    this.piece = vscode.window.createTextEditorDecorationType({});
+    this.tags = vscode.window.createTextEditorDecorationType({});
     this.operator = vscode.window.createTextEditorDecorationType({});
     const offStore = store.onDidChange(() => this.schedule());
     this.disposables.push(
@@ -178,6 +214,16 @@ export class DefkView implements vscode.Disposable {
   /** editor で今文字を隠している範囲(文字の置き換え #841 がそこへ画を描かないため)。 */
   hiddenSpans(editor: vscode.TextEditor): readonly Span[] {
     return this.shown.get(editor)?.hidden ?? [];
+  }
+
+  /** 押された位置の部品(型の名・effect の札・束縛の型の札)の定義の場所 — 部品の無い位置は undefined(他の「定義へ移動」に任せる)。 */
+  definitionsAt(document: vscode.TextDocument, position: vscode.Position): vscode.Location[] | undefined {
+    const editor = vscode.window.visibleTextEditors.find((e) => e.document === document);
+    const drawn = editor === undefined ? undefined : this.shown.get(editor);
+    if (drawn === undefined) {
+      return undefined;
+    }
+    return targetsAt(drawn.headers, drawn.bindings, { line: position.line, character: position.character })?.map(toLocation);
   }
 
   /** 位置にかかる見出しか束縛(hover のため — 描いている物だけ)。 */
@@ -246,6 +292,33 @@ export class DefkView implements vscode.Disposable {
     }
   }
 
+  /** 部品 1 つを飾りにする(型の名と区切りは editor の文字、effect の札は画像)。 */
+  private pieceDecoration(piece: Piece): vscode.DecorationOptions {
+    const content = piece.before;
+    let before: vscode.ThemableDecorationAttachmentRenderOptions;
+    switch (content.kind) {
+      case 'type':
+        before = textContent(content.text, 'type', content.colorKey);
+        break;
+      case 'punct':
+        before = textContent(content.text, 'punct');
+        break;
+      case 'label':
+        before = { ...textContent(content.text, 'label'), margin: '0 0.6em 0 1.2em' };
+        break;
+      case 'effect':
+      case 'raise':
+        before = { ...imageOf(effectChipSvg(content.kind, content.name, this.metrics, this.sprites)), margin: '0 4px 0 0' };
+        break;
+      default: {
+        const unreachable: never = content;
+        throw new Error(`網羅されていない部品: ${JSON.stringify(unreachable)}`);
+      }
+    }
+    const after = piece.after === undefined ? undefined : textContent(piece.after, 'punct');
+    return { range: charRange(piece.at), renderOptions: after === undefined ? { before } : { before, after } };
+  }
+
   /** editor 1 つを描き直す。 */
   private refresh(editor: vscode.TextEditor): void {
     const plans = this.plansFor(editor.document);
@@ -253,41 +326,31 @@ export class DefkView implements vscode.Disposable {
     const hidden: vscode.DecorationOptions[] = [];
     const heads: vscode.Range[] = [];
     const names: vscode.Range[] = [];
-    const first: vscode.DecorationOptions[] = [];
-    const second: vscode.DecorationOptions[] = [];
+    const pieces: vscode.DecorationOptions[] = [];
+    const tags: vscode.DecorationOptions[] = [];
     const operators: vscode.DecorationOptions[] = [];
     const hiddenSpans: Span[] = [];
+    const drawnHeaders: HeaderPlan[] = [];
+    const drawnBindings: BindingPlan[] = [];
     if (plans !== undefined && this.settings.header) {
       for (const { signature, plan } of plans.headers) {
         if (headerRevealed(plan, cursors, this.settings.reveal)) {
           continue;
         }
+        drawnHeaders.push(plan);
         heads.push(new vscode.Range(plan.headLine, 0, plan.headLine, 0));
         names.push(toRange(plan.name));
-        const flow = imageOf(flowSvg(signature, this.metrics, this.sprites));
-        const violations = this.store
-          .violationsIn(editor.document.uri.fsPath)
-          .filter((v) => v.range.start.line >= plan.lines.start && v.range.start.line <= plan.lines.end).length;
-        const tags = imageOf(tagsSvg(signature.tags, effectAgreement(signature), violations, this.metrics, this.sprites));
-        const flowOnHidden = plan.flowAt.placement === 'before';
-        const tagsOnHidden = plan.tagsAt.placement === 'before' && !(plan.tagsAt.line === plan.flowAt.line && plan.tagsAt.character === plan.flowAt.character);
         for (const span of plan.hidden) {
-          const at = (p: { line: number; character: number }): boolean => p.line === span.line && p.character === span.start;
-          const before = flowOnHidden && at(plan.flowAt) ? flow : tagsOnHidden && at(plan.tagsAt) ? tags : undefined;
-          hidden.push(before === undefined ? { range: toRange(span) } : { range: toRange(span), renderOptions: { before } });
+          hidden.push({ range: toRange(span) });
           hiddenSpans.push(span);
         }
-        const endOf = (line: number): vscode.Range => {
-          const length = editor.document.lineAt(line).text.length;
-          return new vscode.Range(line, length, line, length);
-        };
-        if (!flowOnHidden) {
-          first.push({ range: endOf(plan.flowAt.line), renderOptions: { after: { ...flow, margin: '0 0 0 1.2em' } } });
-        }
-        if (!tagsOnHidden) {
-          const lastHidden = plan.hidden[plan.hidden.length - 1];
-          const range = plan.tagsAt.placement === 'before' && lastHidden !== undefined ? toRange({ ...lastHidden, start: lastHidden.end }) : endOf(plan.tagsAt.line);
-          second.push({ range, renderOptions: { after: { ...tags, margin: '0 0 0 1.2em' } } });
+        pieces.push(...plan.pieces.map((p) => this.pieceDecoration(p)));
+        const end = new vscode.Range(plan.tagsAt.line, plan.tagsAt.character, plan.tagsAt.line, plan.tagsAt.character);
+        const drawnTags = tagsSvg(signature.tags, this.metrics, this.sprites);
+        const fallback = plan.fallback === undefined ? undefined : { ...textContent(plan.fallback, 'label'), margin: '0 0 0 1.2em' };
+        if (drawnTags !== undefined || fallback !== undefined) {
+          const after = drawnTags !== undefined ? { ...imageOf(drawnTags), margin: '0 0 0 1.5em' } : fallback;
+          tags.push({ range: end, renderOptions: { after } });
         }
       }
     }
@@ -296,24 +359,28 @@ export class DefkView implements vscode.Disposable {
         if (bindingRevealed(plan, cursors)) {
           continue;
         }
-        plan.hidden.forEach((span, i) => {
-          const chip = i === 0 && plan.chip !== undefined ? imageOf(bindingChipSvg(plan.chip, plan.prefix, this.metrics, this.sprites)) : undefined;
-          hidden.push(chip === undefined ? { range: toRange(span) } : { range: toRange(span), renderOptions: { before: { ...chip, margin: '0 4px 0 0' } } });
+        drawnBindings.push(plan);
+        for (const span of plan.hidden) {
+          hidden.push({ range: toRange(span) });
           hiddenSpans.push(span);
-        });
-        operators.push({
-          range: toRange(plan.name),
-          renderOptions: { after: { contentText: ` ${plan.operator}`, color: '#8fb3d9' } }
-        });
+        }
+        if (plan.chipAt !== undefined && plan.chip !== undefined) {
+          const before =
+            plan.chip.tag === 'unknown'
+              ? { ...textContent('?', 'type', '?'), color: '#8b949e', border: '1px dashed #5a6270' }
+              : textContent(plan.chip.absent ? `Maybe[${plan.chip.text}]` : plan.chip.text, 'type', plan.chip.colorKey);
+          pieces.push({ range: charRange(plan.chipAt), renderOptions: { before: { ...before, margin: '0 0.5em 0 0.3em' } } });
+        }
+        operators.push({ range: toRange(plan.name), renderOptions: { after: { contentText: ` ${plan.operator}`, color: '#8fb3d9' } } });
       }
     }
     editor.setDecorations(this.hidden, hidden);
     editor.setDecorations(this.headLine, heads);
     editor.setDecorations(this.name, names);
-    editor.setDecorations(this.anchorFirst, first);
-    editor.setDecorations(this.anchorSecond, second);
+    editor.setDecorations(this.piece, pieces);
+    editor.setDecorations(this.tags, tags);
     editor.setDecorations(this.operator, operators);
-    this.shown.set(editor, { hidden: hiddenSpans });
+    this.shown.set(editor, { hidden: hiddenSpans, headers: drawnHeaders, bindings: drawnBindings });
     for (const listener of this.listeners) {
       listener();
     }
@@ -327,9 +394,19 @@ export class DefkView implements vscode.Disposable {
     for (const d of this.disposables) {
       d.dispose();
     }
-    for (const type of [this.hidden, this.headLine, this.name, this.anchorFirst, this.anchorSecond, this.operator]) {
+    for (const type of [this.hidden, this.headLine, this.name, this.piece, this.tags, this.operator]) {
       type.dispose();
     }
+  }
+}
+
+/** 見出しと束縛の型の部品の「定義へ移動」(Cmd+クリック・F12)— 部品の無い位置は何も返さない。 */
+export class DefkDefinitions implements vscode.DefinitionProvider {
+  constructor(private readonly view: DefkView) {}
+
+  /** 押された位置の部品の定義を返す(組み込みの型など定義の無い部品は空 — 飛ばない)。 */
+  provideDefinition(document: vscode.TextDocument, position: vscode.Position): vscode.Location[] {
+    return this.view.definitionsAt(document, position) ?? [];
   }
 }
 
@@ -360,6 +437,8 @@ export function registerDefkView(
   context.subscriptions.push(
     view,
     vscode.languages.registerHoverProvider([{ language: 'hy', scheme: 'file' }, { pattern: '**/*.{hy,hyk,hyp}', scheme: 'file' }], new DefkHover(view)),
+    // 見出しの型の名・effect の札・束縛の型の札の上の Cmd+クリックと F12(隠した文字の位置で引く — 元の文字の上の Hy の口と重ならない)
+    vscode.languages.registerDefinitionProvider([{ language: 'hy', scheme: 'file' }, { pattern: '**/*.{hy,hyk,hyp}', scheme: 'file' }], new DefkDefinitions(view)),
     vscode.commands.registerCommand(OPEN_LOCATION_COMMAND, async (path: unknown, line: unknown, character: unknown) => {
       if (typeof path !== 'string' || typeof line !== 'number' || typeof character !== 'number') {
         output.appendLine(`[defk] 定義へ飛ぶ命令の引数が違う: ${JSON.stringify([path, line, character])}`);
