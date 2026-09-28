@@ -573,3 +573,13 @@ what it is violating"。前は拡張(doeff-runner)が defk の見出しの中で
   登録簿に載れば `registered_severity`。
 - **鍵**: `<path>::DOEFF127::<定義>::<effect>`(effect は module を外した綴り)。
 
+
+## 16. 読めない Hy の file — DOEFF128
+
+- 読み取り器(doeff-indexer の hy_index::reader)が括弧か文字列の閉じない所を見つけた file は、規則の判定が読めた所までで違反が欠ける。
+  前は理由の文を全体の `errors` に積むだけで、エディタのその file の違反の欄は空、hook は何も言わなかった(2026-09-28 — agora の
+  controllers/durable/protocol/contract.hy を読み取り器の誤りで読めなかった)。
+- 規則が読む file(層の置き場・定義の規則の母集団・検の置き場・業務の名の母集団)のうち読めない物は、有効な規則の一覧に関わらず、
+  最初の読めない所に error の違反 DOEFF128(鍵 `<path>::DOEFF128`・登録簿の外)として出す。エディタ・hook・text の全部に出る。
+- 読み取り器は f 文字列の置き換えの欄 `{…}` の中を Hy の式として飛ばす(欄の中の文字列・入れ子の f 文字列・括弧で文字列を閉じない
+  — Hy の `hy.read_many` と同じ)。`{{` は字面の `{`。
