@@ -67,7 +67,7 @@ function planeLines(): string[] {
 
 /** 見本のカード(違反は渡した物)。 */
 function planeCards(violations: readonly LintViolation[] = []): Card[] {
-  return buildCards({ definitions: planeIndex().definitions, signatures: planeLint().signatures, violations, lines: planeLines() });
+  return buildCards({ definitions: planeIndex().definitions, signatures: planeLint().signatures, bodies: planeLint().bodies, violations, lines: planeLines() });
 }
 
 /** カードの名の一覧。 */
@@ -526,5 +526,49 @@ suite('定義を読む面 — 呼び出しの依存の木(V19・v7 3 節)', () =
     assert.strictEqual(indexTypeText({ text: 'str', names: [] }), 'str');
     assert.strictEqual(indexTypeText({ text: '(get dict str int)', names: [] }), '(get dict str int)');
     assert.strictEqual(indexTypeText(null), '?');
+  });
+});
+
+suite('定義を読む面 — 本体の文字(V6・V11 の一部・U5)', () => {
+  test('本体の行は linter の bodies を描く: 行番号 = source の行・val / ⇐ の束縛の行は薄い背景・呼びは f(a)', () => {
+    const html = planePage(new Map());
+    const fetch = cardHtml(html, 'fetch-row');
+    assert.ok(fetch.includes('<div class="bl bound"><span class="ln">17</span><span class="kw">val</span> <span class="b">Row</span> row <span class="arrow-bind">⇐</span> '));
+    assert.ok(planeLines()[16].includes('(<- row Row (ReadInput key))'));
+    const shout = cardHtml(html, 'shout');
+    assert.ok(shout.includes('<span class="fn">fetch-row</span>(key)'));
+  });
+
+  test('まだ描けない form(U3 の when など)は推測で描かず、目印つきの lisp のまま(v1 制約 2)', () => {
+    const describe = cardHtml(planePage(new Map()), 'describe-row');
+    assert.ok(describe.includes(`<span class="ln">43</span><span class="lisp" title="${LABELS.lispAsIs}">(when (is row None)</span>`));
+  });
+
+  test('本体を持たない実体(defrecord・最上位の変数)には本体の欄を出さない', () => {
+    const html = planePage(new Map());
+    assert.ok(!cardHtml(html, 'Row').includes('<div class="body">'));
+    assert.ok(!cardHtml(html, 'LIMIT').includes('<div class="body">'));
+  });
+});
+
+suite('定義を読む面 — 違反を本体の行へ(V7・U5)', () => {
+  test('linter の違反は、その source の行を描く本体の行に規則の名で出る(カードの頭の数も残る)', () => {
+    const fetch = planeCards().find((c) => c.definition.name === 'fetch-row');
+    assert.ok(fetch !== undefined);
+    const onLine = { ...violationAt(fetch.definition, 'DOEFF142'), range: { start: { line: 16, character: 2 }, end: { line: 16, character: 30 } } };
+    const cards = planeCards([onLine]);
+    const html = renderPage({
+      place: 'pkg/plane.hy',
+      state: { tag: 'cards', cards, selection: new Map() },
+      glyphs: { effect: () => undefined },
+      fold: unfoldAll(INITIAL_FOLD, cards.map((c) => cardKey(c.definition))),
+      graph: buildCallGraph([planeIndex()]),
+      tree: undefined,
+      cspSource: 'vscode-resource:',
+      nonce: 'n'
+    });
+    const card = cardHtml(html, 'fetch-row');
+    assert.ok(/<span class="ln">17<\/span>.*<span class="viol viol-major" title="DOEFF142: テストの違反">DOEFF142<\/span><\/div>/.test(card));
+    assert.ok(!/<span class="ln">18<\/span>[^\n]*DOEFF142/.test(card.split('<span class="ln">18</span>')[1]?.split('</div>')[0] ?? ''));
   });
 });

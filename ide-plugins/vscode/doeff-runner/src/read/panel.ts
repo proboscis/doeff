@@ -294,6 +294,7 @@ class PlanePanel implements vscode.Disposable {
     this.cards = buildCards({
       definitions: entry.file.definitions,
       signatures: seen !== undefined && seen.version === this.document.version ? seen.signatures : [],
+      bodies: seen !== undefined && seen.version === this.document.version ? seen.bodies : [],
       violations: this.lint.violationsIn(filePath),
       lines: this.document.getText().split(/\r?\n/)
     });

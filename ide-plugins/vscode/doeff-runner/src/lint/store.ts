@@ -2,7 +2,7 @@
 // 差し替える。表示(波線・パネル・地図)はすべてここから読む。外の世界には触らない。
 
 import * as path from 'path';
-import type { LintBinding, LintLayer, LintModule, LintReport, LintRewrite, LintRule, LintSignature, LintViolation } from './contract';
+import type { LintBinding, LintBody, LintLayer, LintModule, LintReport, LintRewrite, LintRule, LintSignature, LintViolation } from './contract';
 
 /** 1 file の見出しと束縛(linter に渡した document の版つき — 版が進んだら古い位置なので描かない)。 */
 export interface FileSignatures {
@@ -11,6 +11,8 @@ export interface FileSignatures {
   readonly bindings: readonly LintBinding[];
   /** 呼びを `f(a, b)` の形で見せる置き換え(parent は この列の中の番号) */
   readonly rewrites: readonly LintRewrite[];
+  /** 定義ごとの本体の文字の行(定義を読む面が描く・agora-redesign #910 U2 / U5) */
+  readonly bodies: readonly LintBody[];
 }
 
 /** root 1 つの状態 — 直前の全体の結果と、file ごとの差し替え。 */
@@ -73,7 +75,8 @@ export class LintStore {
       version,
       signatures: report.signatures,
       bindings: report.bindings,
-      rewrites: report.rewrites
+      rewrites: report.rewrites,
+      bodies: report.bodies
     });
     this.noteUnknown(filePath, report);
     this.emit();

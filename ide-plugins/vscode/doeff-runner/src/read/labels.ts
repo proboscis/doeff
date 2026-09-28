@@ -59,6 +59,8 @@ export const LABELS = {
   waitingForLinter: 'waiting for linter',
   violations: 'violations',
   hySource: 'Hy source (read only)',
+  lispAsIs: 'not drawn yet — shown as written (lisp)',
+  warning: 'warning',
   /** 面の左の欄の下の説明(文) */
   axesHint: 'axes can be entered from any side and intersected. counts come from the index (hy-index). a tag chip on a card also filters by its value.',
   /** 面を出せない理由(文) */

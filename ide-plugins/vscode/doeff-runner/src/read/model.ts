@@ -6,7 +6,7 @@
 // 絞り込み: 同じ軸の中で選んだ値は「どれか」、軸どうしは「全部」(= 定義の集合の積。木ではない)。
 
 import type { HyDefinition, HyRange } from '../hy/contract';
-import type { LintLevel, LintSignature, LintViolation } from '../lint/contract';
+import type { LintBody, LintLevel, LintSignature, LintViolation } from '../lint/contract';
 
 /** 軸 — 定義の kind か、:tags の key 1 つ。 */
 export type PlaneAxis = { readonly tag: 'kind' } | { readonly tag: 'tag'; readonly key: string };
@@ -65,6 +65,8 @@ export interface Card {
   readonly members: readonly HyDefinition[];
   /** defk / deff の見出し(linter がまだ答えていない・版が古い・他の kind は undefined) */
   readonly signature: LintSignature | undefined;
+  /** defk / deff の本体の文字の行(linter の bodies — 無ければ undefined) */
+  readonly body: LintBody | undefined;
   /** 定義の範囲に入る linter の違反 */
   readonly violations: readonly LintViolation[];
   /** 定義の source(書かれたままの lisp) */
@@ -79,6 +81,8 @@ export interface PlaneInput {
   readonly definitions: readonly HyDefinition[];
   /** linter の見出し(無ければ空) */
   readonly signatures: readonly LintSignature[];
+  /** linter の本体の文字の行(無ければ空) */
+  readonly bodies: readonly LintBody[];
   /** linter のその file の違反 */
   readonly violations: readonly LintViolation[];
   /** 開いた document の行 */
@@ -104,11 +108,12 @@ export function sourceOf(range: HyRange, lines: readonly string[]): string {
   return picked.join('\n');
 }
 
-/** 定義の見出しを引く(同じ kind・名・頭の行)。 */
-function signatureOf(definition: HyDefinition, signatures: readonly LintSignature[]): LintSignature | undefined {
-  return signatures.find(
-    (s) => s.kind === definition.kind && s.name === definition.name && s.fullRange.start.line === definition.fullRange.start.line
-  );
+/** linter の定義ごとの出力(見出し・本体)を、索引の定義に対応させる(同じ kind・名・頭の行)。 */
+function sameDefinition<T extends { readonly kind: string; readonly name: string; readonly fullRange: { readonly start: { readonly line: number } } }>(
+  definition: HyDefinition,
+  items: readonly T[]
+): T | undefined {
+  return items.find((s) => s.kind === definition.kind && s.name === definition.name && s.fullRange.start.line === definition.fullRange.start.line);
 }
 
 /** 定義の順(source の位置)。 */
@@ -126,7 +131,8 @@ export function buildCards(input: PlaneInput): Card[] {
         .filter((d) => d.container === definition.name && within(definition.fullRange, d.fullRange.start.line, d.fullRange.start.character))
         .slice()
         .sort(byPosition),
-      signature: signatureOf(definition, input.signatures),
+      signature: sameDefinition(definition, input.signatures),
+      body: sameDefinition(definition, input.bodies),
       violations: input.violations.filter((v) => within(definition.fullRange, v.range.start.line, v.range.start.character)),
       source: sourceOf(definition.fullRange, input.lines),
       firstLine: definition.fullRange.start.line + 1

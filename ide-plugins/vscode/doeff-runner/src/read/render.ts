@@ -5,7 +5,7 @@
 // 本体の文字(val / var の表)は linter の印字が入るまで出さず、元の Hy は実体ごとの source ボタンで開閉する(v3 3 節)。
 
 import type { HyDefinition } from '../hy/contract';
-import type { LintSignature } from '../lint/contract';
+import type { LintBody, LintBodySegment, LintSignature, LintViolation } from '../lint/contract';
 import { answerText, headerEffects, typeText } from '../defk/model';
 import { cardKey, LINE_FIELDS, type FoldState, type LineField } from './fold';
 import { escapeHtml, tagClass, type Glyphs } from './html';
@@ -211,6 +211,73 @@ export interface CardContext {
   readonly graph: CallGraph;
 }
 
+/** 本体の字の役 → 色の class(色は U16 で theme の token の色に寄せる — 今は見本 v3 の色)。 */
+function segmentClass(role: LintBodySegment['role']): string {
+  switch (role) {
+    case 'keyword':
+      return 'kw';
+    case 'type':
+      return 'b';
+    case 'unknown-type':
+      return 'q';
+    case 'bind':
+      return 'arrow-bind';
+    case 'effect':
+      return 'fx';
+    case 'call':
+      return 'fn';
+    case 'lisp':
+      return 'lisp';
+    case 'name':
+    case 'assign':
+    case 'text':
+    case null:
+      return '';
+    default: {
+      const unreachable: never = role;
+      throw new Error(`網羅されていない字の役: ${JSON.stringify(unreachable)}`);
+    }
+  }
+}
+
+/** 字 1 つ(effect は絵を添える)。 */
+function renderSegment(segment: LintBodySegment, glyphs: Glyphs): string {
+  const cls = segmentClass(segment.role);
+  const img = segment.role === 'effect' && segment.effect !== null ? glyphs.effect(segment.effect) : undefined;
+  const glyph = img === undefined ? '' : `<img class="gl" src="${escapeHtml(img)}" alt="">`;
+  const text = escapeHtml(segment.text);
+  return cls === '' ? `${glyph}${text}` : `<span class="${cls}"${segment.role === 'lisp' ? ` title="${escapeHtml(LABELS.lispAsIs)}"` : ''}>${glyph}${text}</span>`;
+}
+
+/**
+ * 本体の文字(v2 2.2 節・v3 2 節 — operator 承認 "yeah val var when match is perfect.")— 行番号 = source の行、字下げ = 段、
+ * effect を通す束縛(⇐)の行は薄い背景、本体の setv は警告の印。組み立ては linter の bodies(読み方の正本は linter)。
+ */
+function bodyBlock(body: LintBody, glyphs: Glyphs, violations: readonly LintViolation[]): string {
+  if (body.lines.length === 0) {
+    return '';
+  }
+  // linter の違反は、その source の行を描く本体の行へ(v1 制約 4 — 問題の欄は source 側のまま)
+  const byLine = new Map<number, LintViolation[]>();
+  for (const v of violations) {
+    byLine.set(v.range.start.line, [...(byLine.get(v.range.start.line) ?? []), v]);
+  }
+  const lines = body.lines
+    .map((line) => {
+      const bound = line.segments.some((s) => s.role === 'bind');
+      const warning =
+        line.warning === null ? '' : `<span class="warn" title="${escapeHtml(line.warning.message)}">⚠ ${escapeHtml(line.warning.kind ?? LABELS.warning)}</span>`;
+      const here = byLine.get(line.line) ?? [];
+      const level = worstLevel(here);
+      const marks =
+        level === undefined ? '' : `<span class="viol viol-${level}" title="${escapeHtml(here.map((v) => `${v.rule}: ${v.message}`).join('\n'))}">${escapeHtml(here.map((v) => v.rule).join(' '))}</span>`;
+      const text = `${'  '.repeat(line.depth)}${line.segments.map((s) => renderSegment(s, glyphs)).join('')}`;
+      return `<div class="${bound ? 'bl bound' : 'bl'}"><span class="ln">${line.line + 1}</span>${text}${warning}${marks}</div>`;
+    })
+    .join('');
+  return `<div class="body">${lines}</div>`;
+}
+
 /** 元の Hy(source の行番号つき・読むだけ)。 */
 function sourceBox(card: Card, fileLabel: string): string {
   const lines = card.source.split('\n');
@@ -262,6 +329,7 @@ export function renderCard(card: Card, ctx: CardContext, hidden: boolean): strin
         ? `<div class="row"><span class="k">${escapeHtml(LABELS.argsReturnType)}</span><span class="none">${escapeHtml(LABELS.waitingForLinter)}</span></div>`
         : attributeRows(card);
   const docBlock = d.docstring === null ? '' : `<div class="doc">${escapeHtml(d.docstring)}</div>`;
+  const body = card.body === undefined ? '' : bodyBlock(card.body, ctx.glyphs, card.violations);
   const level = worstLevel(card.violations);
   const violations =
     level === undefined
@@ -270,7 +338,7 @@ export function renderCard(card: Card, ctx: CardContext, hidden: boolean): strin
   const foot = `<div class="ft">${band}${violations}<span class="loc">${location}</span></div>`;
   const fileLabel = ctx.place.split('/').pop() ?? ctx.place;
   const classes = open ? 'card open' : 'card';
-  return `<section class="${classes}" id="${card.id}" data-key="${escapeHtml(key)}" data-qn="${qn}"${hidden ? ' hidden' : ''}>${head}<div class="line">${line}</div><div class="full">${middle}${docBlock}</div>${sourceBox(card, fileLabel)}<div class="full">${foot}</div></section>`;
+  return `<section class="${classes}" id="${card.id}" data-key="${escapeHtml(key)}" data-qn="${qn}"${hidden ? ' hidden' : ''}>${head}<div class="line">${line}</div><div class="full">${middle}${docBlock}${body}</div>${sourceBox(card, fileLabel)}<div class="full">${foot}</div></section>`;
 }
 
 /** 面の状態 — 索引にその file が無い時・設定で切った時は理由を出す。 */
@@ -441,6 +509,15 @@ button{font:inherit;cursor:pointer}
 .none{color:#7d858f;font-size:12px}
 code{font:12px Menlo,monospace;background:#1b1d21;border:1px solid #3a3f47;border-radius:4px;padding:1px 6px;margin:0 6px 4px 0;display:inline-block}
 .doc{padding:10px 16px;border-top:1px solid #2c3036;color:#c9ced5;font-size:13px;line-height:1.7;white-space:pre-wrap}
+.body{border-top:1px solid #2c3036;padding:10px 16px 12px;font:12.5px/1.7 Menlo,monospace;overflow-x:auto;color:#d6d8dc}
+.body .bl{white-space:pre;min-height:1.7em}
+.body .bl.bound{background:#262a31;border-radius:4px}
+.body .kw{color:#c586c0}.body .b{color:#4ec9b0}.body .fx{color:#8fd3ff}.body .fn{color:#dcdcaa}.body .arrow-bind{color:#8fd3ff}
+.body .q{color:#7d858f;border:1px dashed #555b63;border-radius:3px;padding:0 3px;font-size:11px}
+.body .lisp{color:#b8bec7;border-bottom:1px dashed #6e7681}
+.body .gl{width:13px;height:13px;image-rendering:pixelated;vertical-align:-2px;margin-right:2px}
+.body .warn{margin-left:10px;color:#e6c07b;font:11px -apple-system,sans-serif}
+.body .viol{margin-left:10px;font-family:-apple-system,sans-serif}
 .srcbox{border-top:1px solid #2c3036;background:#15171a}
 .srcbox[hidden]{display:none}
 .srcbox .h{color:#7d858f;font-size:11px;padding:6px 16px 0}
