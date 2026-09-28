@@ -306,6 +306,31 @@ PROGRAMS_HY = """\
 """
 
 
+OUTCOMES_HY = """\
+(require doeff-hy.macros [defk do! <- absent-as])
+(import doeff_core_effects.effects [Absent])
+(import {pkg}.effects [Tick Ping])
+
+(defk missing []
+  {:pre [] :post [(: % int)] :tags {:context "analyzer-test" :role "program"}}
+  (<- (Tick))
+  (<- (Absent "no row"))
+  1)
+
+;; absent-as wraps its body in direct_bind(token, body): the body still runs.
+(defk defaulted []
+  {:pre [] :post [(: % int)] :tags {:context "analyzer-test" :role "program"}}
+  (<- r (absent-as 0 (missing)))
+  r)
+
+;; Each <- written inside the do! is wrapped too: open_bind(direct_bind(token, e)).
+(defk defaulted-inline []
+  {:pre [] :post [(: % int)] :tags {:context "analyzer-test" :role "program"}}
+  (<- r (absent-as 0 (do! (<- (Ping)) (<- n (missing)) n)))
+  r)
+"""
+
+
 @pytest.fixture
 def pkg(make_package) -> str:
     return make_package(
@@ -315,6 +340,7 @@ def pkg(make_package) -> str:
             "runtimes.py": RUNTIMES_PY,
             "envs.hy": ENVS_HY,
             "programs.hy": PROGRAMS_HY,
+            "outcomes.hy": OUTCOMES_HY,
         }
     )
 
@@ -600,3 +626,20 @@ def test_a_lone_resume_handler_closes_the_foundation(pkg: str) -> None:
 
     assert coverage.gaps == ()
     assert coverage.unknown_handlers == ()
+
+
+# --------------------------------------------------------------------------- left after the five
+# Found after the five were closed (agora-redesign #837, 2026-09-28): a reading that
+# drops what it cannot follow answers "closed" for a Program that is not.
+
+
+def test_the_body_of_absent_as_still_runs(pkg: str) -> None:
+    # absent-as answers Absent only; the body's Tick leaves (it used to vanish, and
+    # coverage answered complete).
+    report = analyze_program(f"{pkg}.outcomes:defaulted")
+
+    assert _types(report.effect_types) == {"Tick"}
+    [scope] = report.handled
+    assert _types(scope.program.effect_types) == {"Tick", "Absent"}
+    assert not check_coverage(report, []).complete
+    assert check_coverage(report, [analyze_handler(f"{pkg}.handlers:ticker")]).complete

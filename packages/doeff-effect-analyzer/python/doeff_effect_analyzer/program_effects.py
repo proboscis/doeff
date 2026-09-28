@@ -464,11 +464,6 @@ def _doeff_program_module() -> types.ModuleType:
     return importlib.import_module("doeff.program")
 
 
-def _open_bind_function() -> Any:
-    """``doeff_core_effects.outcomes.open_bind`` — what every ``<-`` / ``!`` bind yields."""
-    return importlib.import_module("doeff_core_effects.outcomes").open_bind
-
-
 def _with_handlers_function() -> Any:
     """``doeff.with_handlers`` — installs a handler list around a Program."""
     return _doeff_program_module().with_handlers
@@ -1081,15 +1076,25 @@ def _argument(call: ast.Call, index: int, keyword: str) -> ast.expr | None:
     return None
 
 
+def _bind_wrappers() -> dict[Any, int]:
+    """The wrappers doeff-hy's binds put around what runs, each with the position of
+    the wrapped ``expr``: ``open_bind(e[, absent])`` (every ``<-`` / ``!``) and
+    ``direct_bind(token, e)`` (``absent-as`` marks its body and the binds written in it)."""
+    outcomes = importlib.import_module("doeff_core_effects.outcomes")
+    return {outcomes.open_bind: 0, outcomes.direct_bind: 1}
+
+
 def _bound_operand(expr: ast.expr, scope: _Scope) -> ast.expr:
-    """What a yielded ``expr`` runs: ``open_bind(e)`` / ``open_bind(e, absent)`` → ``e``
-    (what doeff-hy's ``<-`` / ``!`` yield — ADR-DOE-CORE-EFFECTS-003), anything else →
-    itself.  open_bind performs ``e`` itself — an undeclared effect or a Program passes
-    through unchanged, a declared one is opened after it runs."""
-    if not isinstance(expr, ast.Call) or scope.resolve(expr.func) is not _open_bind_function():
+    """What a yielded ``expr`` runs: the ``e`` inside doeff-hy's bind wrappers
+    (``open_bind(e)`` / ``open_bind(direct_bind(token, e))`` — ADR-DOE-CORE-EFFECTS-003),
+    anything else → itself.  open_bind performs ``e`` itself — an undeclared effect or a
+    Program passes through unchanged, a declared one is opened after it runs — and
+    direct_bind only marks ``e`` for the absent-as around it."""
+    if not isinstance(expr, ast.Call):
         return expr
-    operand = _argument(expr, 0, "expr")
-    return expr if operand is None else operand
+    position = _bind_wrappers().get(scope.resolve(expr.func))
+    operand = None if position is None else _argument(expr, position, "expr")
+    return expr if operand is None else _bound_operand(operand, scope)
 
 
 def _install_form(call: ast.Call, scope: _Scope) -> _InstallForm | None:
