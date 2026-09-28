@@ -54,6 +54,8 @@ export const LABELS = {
   pickRoot: 'pick a root',
   /** 左の軸 */
   axis: 'axis',
+  kind: 'kind',
+  effect: 'effect',
   hasTests: 'has tests',
   noTests: 'no tests',
   /** 面の上の行 */

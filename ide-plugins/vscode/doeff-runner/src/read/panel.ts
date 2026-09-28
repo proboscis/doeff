@@ -26,10 +26,10 @@ import {
   type FoldState
 } from './fold';
 import { LABELS } from './labels';
-import { buildCards, facets, parseAxisKey, toggle, visibleCards, type Card, type Selection } from './model';
+import { buildCards, facets, locationOf, parseAxisKey, toggle, visibleCards, type Card, type Selection } from './model';
 import type { Glyphs } from './html';
 import { lineClasses, renderFacets, renderPage, renderTreePart, summaryText, type PlaneState } from './render';
-import { buildCallGraph, buildCallTree, DEFAULT_TREE_DEPTH, type CallGraph, type CallTree, type TreeDirection, type TreeQuery } from './tree';
+import { buildCallGraph, buildCallTree, DEFAULT_TREE_DEPTH, relationOf, type CallGraph, type CallTree, type TreeDirection, type TreeQuery } from './tree';
 
 /** custom editor の種類の名(package.json の customEditors と同じ)。 */
 export const READING_PLANE_VIEW_TYPE = 'doeff-runner.readingPlane';
@@ -308,7 +308,9 @@ class PlanePanel implements vscode.Disposable {
       signatures: seen !== undefined && seen.version === this.document.version ? seen.signatures : [],
       bodies: seen !== undefined && seen.version === this.document.version ? seen.bodies : [],
       violations: this.lint.violationsIn(filePath),
-      lines: this.document.getText().split(/\r?\n/)
+      lines: this.document.getText().split(/\r?\n/),
+      testsOf: (qn) => relationOf(this.graphs.graph, qn).tests,
+      location: locationOf(path.relative(entry.root, filePath))
     });
     return { tag: 'cards', cards: this.cards, selection: this.selection };
   }

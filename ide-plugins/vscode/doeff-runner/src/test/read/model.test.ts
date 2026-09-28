@@ -8,10 +8,11 @@ import {
   axisKey,
   buildCards,
   facets,
+  locationOf,
   NO_VALUE,
   parseAxisKey,
   toggle,
-  valueOf,
+  valuesOf,
   visibleCards,
   type Card,
   type PlaneAxis,
@@ -67,7 +68,16 @@ function planeLines(): string[] {
 
 /** 見本のカード(違反は渡した物)。 */
 function planeCards(violations: readonly LintViolation[] = []): Card[] {
-  return buildCards({ definitions: planeIndex().definitions, signatures: planeLint().signatures, bodies: planeLint().bodies, violations, lines: planeLines() });
+  const graph = buildCallGraph([planeIndex()]);
+  return buildCards({
+    definitions: planeIndex().definitions,
+    signatures: planeLint().signatures,
+    bodies: planeLint().bodies,
+    violations,
+    lines: planeLines(),
+    testsOf: (qn) => relationOf(graph, qn).tests,
+    location: 'pkg'
+  });
 }
 
 /** カードの名の一覧。 */
@@ -151,7 +161,7 @@ function violationAt(definition: HyDefinition, rule: string): LintViolation {
 
 suite('定義を読む面 — 軸(V2: tag の key を列挙しない)', () => {
   test('軸は kind と、索引の :tags に現れた key の全部(context・role が先、残りは名前の順)', () => {
-    assert.deepStrictEqual(axesOf(planeCards()).map(axisKey), ['kind', 'tag:context', 'tag:role', 'tag:owner']);
+    assert.deepStrictEqual(axesOf(planeCards()).map(axisKey), ['kind', 'tag:context', 'tag:role', 'tag:owner', 'effect', 'type', 'tests', 'location']);
   });
 
   test('索引に新しい key が現れると軸が 1 つ増える(key を固定しない)', () => {
@@ -159,7 +169,7 @@ suite('定義を読む面 — 軸(V2: tag の key を列挙しない)', () => {
     const widened = cards.map((c) =>
       c.definition.name === 'LIMIT' ? { ...c, definition: { ...c.definition, tags: { lifetime: 'session' } } } : c
     );
-    assert.deepStrictEqual(axesOf(widened).map(axisKey), ['kind', 'tag:context', 'tag:role', 'tag:lifetime', 'tag:owner']);
+    assert.deepStrictEqual(axesOf(widened).map(axisKey), ['kind', 'tag:context', 'tag:role', 'tag:lifetime', 'tag:owner', 'effect', 'type', 'tests', 'location']);
     const lifetime: PlaneAxis = { tag: 'tag', key: 'lifetime' };
     assert.deepStrictEqual(names(visibleCards(widened, select([[lifetime, 'session']]))), ['LIMIT']);
   });
@@ -167,8 +177,8 @@ suite('定義を読む面 — 軸(V2: tag の key を列挙しない)', () => {
   test('その key を持たない定義の値は「(なし)」', () => {
     const limit = planeCards().find((c) => c.definition.name === 'LIMIT');
     assert.ok(limit !== undefined);
-    assert.strictEqual(valueOf(limit, OWNER), NO_VALUE);
-    assert.strictEqual(valueOf(limit, KIND), 'variable');
+    assert.deepStrictEqual(valuesOf(limit, OWNER), [NO_VALUE]);
+    assert.deepStrictEqual(valuesOf(limit, KIND), ['variable']);
   });
 
   test('軸の文字は往復する(知らない形は読まない)', () => {
@@ -630,7 +640,9 @@ suite('定義を読む面 — 実体の種類ごとの欄と帯(V13・v2 2.1 節
       signatures: [],
       bodies: [],
       violations: [],
-      lines: fs.readFileSync(path.join(FIXTURES, 'entities.hy'), 'utf8').split(/\r?\n/)
+      lines: fs.readFileSync(path.join(FIXTURES, 'entities.hy'), 'utf8').split(/\r?\n/),
+      testsOf: () => 0,
+      location: 'pkg'
     });
     const page = (fold: FoldState): string =>
       renderPage({
@@ -682,5 +694,59 @@ suite('定義を読む面 — 実体の種類ごとの欄と帯(V13・v2 2.1 節
     const { html } = entitiesPage();
     assert.ok(cardHtml(html, 'slot-size').includes('<span class="k">contract</span><div><code>pre: (&gt; limit 0)</code></div>'));
     assert.ok(!cardHtml(html, 'ReadSlot').includes('<span class="k">contract</span>'));
+  });
+});
+
+suite('定義を読む面 — effect・type・tests・location の軸(V2・V3・U10)', () => {
+  const EFFECT: PlaneAxis = { tag: 'effect' };
+  const TYPE: PlaneAxis = { tag: 'type' };
+  const TESTS: PlaneAxis = { tag: 'tests' };
+  const LOCATION: PlaneAxis = { tag: 'location' };
+
+  test('effect の軸 = 宣言した effect(1 つの定義が複数の値を持てる)', () => {
+    assert.deepStrictEqual(names(visibleCards(planeCards(), select([[EFFECT, 'ReadInput']]))), ['fetch-row', 'shout']);
+  });
+
+  test('type の軸 = 引数と答えに書いた repo の中の型(組み込みの str などは数えない)', () => {
+    assert.deepStrictEqual(names(visibleCards(planeCards(), select([[TYPE, 'Row']]))), ['fetch-row', 'row-text', 'describe-row']);
+  });
+
+  test('tests の軸 = その定義を呼ぶ deftest の有無(呼び出しの表から)', () => {
+    assert.deepStrictEqual(names(visibleCards(planeCards(), select([[TESTS, LABELS.hasTests]]))), ['Row', 'row-text']);
+  });
+
+  test('location の軸 = file の dir の末尾 2 段', () => {
+    assert.deepStrictEqual(valuesOf(planeCards()[0], LOCATION), ['pkg']);
+    assert.strictEqual(locationOf('controllers/messaging/core/conversation_input.hy'), 'messaging/core');
+    assert.strictEqual(locationOf('top.hy'), '.');
+  });
+
+  test('新しい軸も tag の軸と交差する: effect = ReadInput × type = Row → fetch-row', () => {
+    assert.deepStrictEqual(names(visibleCards(planeCards(), select([[EFFECT, 'ReadInput'], [TYPE, 'Row']]))), ['fetch-row']);
+  });
+
+  test('defhandler は解く effect、defeffect は自分の名を effect の軸の値に持つ(その effect を解く handler・その effect 自身へ入れる)', () => {
+    const parsed = parseHyIndexJson(fs.readFileSync(path.join(FIXTURES, 'entities-index.json'), 'utf8'));
+    if (parsed.tag !== 'ok') {
+      assert.fail(parsed.reason);
+    }
+    const cards = buildCards({
+      definitions: parsed.document.files[0].definitions,
+      signatures: [],
+      bodies: [],
+      violations: [],
+      lines: fs.readFileSync(path.join(FIXTURES, 'entities.hy'), 'utf8').split(/\r?\n/),
+      testsOf: () => 0,
+      location: 'pkg'
+    });
+    assert.deepStrictEqual(names(visibleCards(cards, select([[EFFECT, 'ReadSlot']]))), ['ReadSlot', 'slot-store', 'slot-size']);
+  });
+
+  test('左の欄の見出しは axis: effect / type / tests / location(v5 の表)', () => {
+    const html = planePage(new Map());
+    for (const title of ['effect', 'type', 'tests', 'location']) {
+      assert.ok(html.includes(`<h2>axis: ${title}</h2>`), title);
+    }
+    assert.ok(html.includes('data-axis="tests" data-value="has tests">has tests<small>2</small>'));
   });
 });

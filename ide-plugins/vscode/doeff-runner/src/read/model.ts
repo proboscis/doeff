@@ -2,14 +2,29 @@
 // 定義の一覧の正本は hy-index(置き場の 1 file の索引)。面が自分で file を歩いて定義を探すことはしない。
 // 型と effect は linter の editor-json の signature を材料に添えるだけ(読み方の正本は linter)。
 //
-// 軸: kind と、定義の :tags の key ごとに 1 軸(key を列挙しない — 索引に新しい key が現れれば軸が増える)。
+// 軸: kind と、定義の :tags の key ごとに 1 軸(key を列挙しない — 索引に新しい key が現れれば軸が増える)と、effect・type・
+// tests・location(見本 v5 の左の欄)。effect と type は 1 つの定義が複数の値を持つ(その各値の下に数える)。
 // 絞り込み: 同じ軸の中で選んだ値は「どれか」、軸どうしは「全部」(= 定義の集合の積。木ではない)。
 
 import type { HyDefinition, HyRange } from '../hy/contract';
 import type { LintBody, LintLevel, LintSignature, LintViolation } from '../lint/contract';
+import { LABELS } from './labels';
 
-/** 軸 — 定義の kind か、:tags の key 1 つ。 */
-export type PlaneAxis = { readonly tag: 'kind' } | { readonly tag: 'tag'; readonly key: string };
+/** 軸 — 定義の kind・:tags の key 1 つ・使う effect・使う型・テストの有無・置き場。 */
+export type PlaneAxis =
+  | { readonly tag: 'kind' }
+  | { readonly tag: 'tag'; readonly key: string }
+  | { readonly tag: 'effect' }
+  | { readonly tag: 'type' }
+  | { readonly tag: 'tests' }
+  | { readonly tag: 'location' };
+
+/** 決まった軸の見出し(面に出る文字は labels の表から — v5)。 */
+const FIXED_AXIS_TITLES = { kind: LABELS.kind, effect: LABELS.effect, type: LABELS.type, tests: LABELS.tests, location: LABELS.location } as const;
+
+/** tests の軸の値(labels の表から — v5 の has tests / no tests)。 */
+export const HAS_TESTS = LABELS.hasTests;
+export const NO_TESTS = LABELS.noTests;
 
 /** その軸の値を持たない定義の値。 */
 export const NO_VALUE = '(なし)';
@@ -24,6 +39,11 @@ export function axisKey(axis: PlaneAxis): string {
       return 'kind';
     case 'tag':
       return `tag:${axis.key}`;
+    case 'effect':
+    case 'type':
+    case 'tests':
+    case 'location':
+      return axis.tag;
     default: {
       const unreachable: never = axis;
       throw new Error(`網羅されていない軸: ${JSON.stringify(unreachable)}`);
@@ -33,8 +53,15 @@ export function axisKey(axis: PlaneAxis): string {
 
 /** 軸の文字を軸に読む(知らない形は undefined)。 */
 export function parseAxisKey(text: string): PlaneAxis | undefined {
-  if (text === 'kind') {
-    return { tag: 'kind' };
+  switch (text) {
+    case 'kind':
+    case 'effect':
+    case 'type':
+    case 'tests':
+    case 'location':
+      return { tag: text };
+    default:
+      break;
   }
   if (text.startsWith('tag:') && text.length > 4) {
     return { tag: 'tag', key: text.slice(4) };
@@ -45,10 +72,14 @@ export function parseAxisKey(text: string): PlaneAxis | undefined {
 /** 軸の見出し。 */
 export function axisTitle(axis: PlaneAxis): string {
   switch (axis.tag) {
-    case 'kind':
-      return 'kind';
     case 'tag':
       return axis.key;
+    case 'kind':
+    case 'effect':
+    case 'type':
+    case 'tests':
+    case 'location':
+      return FIXED_AXIS_TITLES[axis.tag];
     default: {
       const unreachable: never = axis;
       throw new Error(`網羅されていない軸: ${JSON.stringify(unreachable)}`);
@@ -73,6 +104,20 @@ export interface Card {
   readonly source: string;
   /** source の最初の行(1 始まり) */
   readonly firstLine: number;
+  /** 軸の値のうち索引と呼び出しの表から引く物(effect・type・tests・location) */
+  readonly facts: CardFacts;
+}
+
+/** カードの軸の値のうち、定義だけでは決まらない物。 */
+export interface CardFacts {
+  /** 使う effect(宣言した effect・defhandler は解く effect・defeffect は自分の名) */
+  readonly effects: readonly string[];
+  /** 引数と答えに書いた、repo の中の型の名 */
+  readonly types: readonly string[];
+  /** その定義を呼ぶ deftest がある */
+  readonly tested: boolean;
+  /** 置き場(file の dir — 索引の root から) */
+  readonly location: string;
 }
 
 /** カードを作る材料。 */
@@ -87,6 +132,31 @@ export interface PlaneInput {
   readonly violations: readonly LintViolation[];
   /** 開いた document の行 */
   readonly lines: readonly string[];
+  /** その定義を呼ぶ deftest の数(呼び出しの表から) */
+  readonly testsOf: (qualifiedName: string) => number;
+  /** この file の置き場(dir) */
+  readonly location: string;
+}
+
+/** 重ねずに並べる(書いた順)。 */
+function unique(values: readonly string[]): string[] {
+  return [...new Set(values)];
+}
+
+/** 定義の effect の軸の値(索引の版 5 の宣言・effect 節・defeffect の名)。 */
+function effectsOf(definition: HyDefinition, members: readonly HyDefinition[]): string[] {
+  if (definition.kind === 'defeffect') {
+    return [definition.name];
+  }
+  const declared = (definition.effects ?? []).map((e) => e.name);
+  const handled = members.flatMap((m) => (m.handles === null ? [] : [m.handles.name]));
+  return unique([...declared, ...handled]);
+}
+
+/** 定義の type の軸の値(引数と答えの型の中の、repo の中で解けた名)。 */
+function typesOf(definition: HyDefinition): string[] {
+  const notes = [...definition.paramTypes.map((p) => p.type), ...(definition.answerType === null ? [] : [definition.answerType])];
+  return unique(notes.flatMap((n) => n.names.filter((name) => name.target !== null).map((name) => name.name)));
 }
 
 /** 位置が範囲に入るか。 */
@@ -124,28 +194,50 @@ function byPosition(a: HyDefinition, b: HyDefinition): number {
 /** カードの一覧 — 入れ子でない定義(container の無い物)を source の順に 1 枚ずつ。入れ子の定義はそのカードの部品にする。 */
 export function buildCards(input: PlaneInput): Card[] {
   const top = input.definitions.filter((d) => d.container === null).slice().sort(byPosition);
-  return top.map((definition, i) => ({
+  return top.map((definition, i) => {
+    const members = input.definitions
+      .filter((d) => d.container === definition.name && within(definition.fullRange, d.fullRange.start.line, d.fullRange.start.character))
+      .slice()
+      .sort(byPosition);
+    return {
       id: `d${i}`,
       definition,
-      members: input.definitions
-        .filter((d) => d.container === definition.name && within(definition.fullRange, d.fullRange.start.line, d.fullRange.start.character))
-        .slice()
-        .sort(byPosition),
+      members,
+      facts: {
+        effects: effectsOf(definition, members),
+        types: typesOf(definition),
+        tested: input.testsOf(definition.qualifiedName) > 0,
+        location: input.location
+      },
       signature: sameDefinition(definition, input.signatures),
       body: sameDefinition(definition, input.bodies),
       violations: input.violations.filter((v) => within(definition.fullRange, v.range.start.line, v.range.start.character)),
       source: sourceOf(definition.fullRange, input.lines),
       firstLine: definition.fullRange.start.line + 1
-    }));
+    };
+  });
 }
 
-/** カードのその軸の値。 */
-export function valueOf(card: Card, axis: PlaneAxis): string {
+/** 値の無い軸は「(なし)」1 つにする。 */
+function orNone(values: readonly string[]): string[] {
+  return values.length === 0 ? [NO_VALUE] : [...values];
+}
+
+/** カードのその軸の値(複数の値を持つ軸は全部 — その各値の下に数える)。 */
+export function valuesOf(card: Card, axis: PlaneAxis): string[] {
   switch (axis.tag) {
     case 'kind':
-      return card.definition.kind;
+      return [card.definition.kind];
     case 'tag':
-      return card.definition.tags?.[axis.key] ?? NO_VALUE;
+      return [card.definition.tags?.[axis.key] ?? NO_VALUE];
+    case 'effect':
+      return orNone(card.facts.effects);
+    case 'type':
+      return orNone(card.facts.types);
+    case 'tests':
+      return [card.facts.tested ? HAS_TESTS : NO_TESTS];
+    case 'location':
+      return [card.facts.location];
     default: {
       const unreachable: never = axis;
       throw new Error(`網羅されていない軸: ${JSON.stringify(unreachable)}`);
@@ -153,7 +245,7 @@ export function valueOf(card: Card, axis: PlaneAxis): string {
   }
 }
 
-/** 使える軸 — kind と、カードの :tags に現れた key の全部(context・role を先に、残りは名前の順)。 */
+/** 使える軸 — kind と、カードの :tags に現れた key の全部(context・role を先に、残りは名前の順)と、effect・type・tests・location。 */
 export function axesOf(cards: readonly Card[]): PlaneAxis[] {
   const keys = new Set<string>();
   for (const card of cards) {
@@ -163,7 +255,14 @@ export function axesOf(cards: readonly Card[]): PlaneAxis[] {
   }
   const leading = LEADING_TAG_KEYS.filter((k) => keys.has(k));
   const rest = [...keys].filter((k) => !LEADING_TAG_KEYS.includes(k)).sort();
-  return [{ tag: 'kind' }, ...[...leading, ...rest].map((key): PlaneAxis => ({ tag: 'tag', key }))];
+  return [
+    { tag: 'kind' },
+    ...[...leading, ...rest].map((key): PlaneAxis => ({ tag: 'tag', key })),
+    { tag: 'effect' },
+    { tag: 'type' },
+    { tag: 'tests' },
+    { tag: 'location' }
+  ];
 }
 
 /** 選んだ値 — 軸の文字 → 値の集合(空の集合の軸は絞らない)。 */
@@ -194,7 +293,7 @@ function matches(card: Card, selection: Selection, except?: string): boolean {
       continue;
     }
     const axis = parseAxisKey(key);
-    if (axis === undefined || !values.has(valueOf(card, axis))) {
+    if (axis === undefined || !valuesOf(card, axis).some((v) => values.has(v))) {
       return false;
     }
   }
@@ -235,12 +334,14 @@ export function facets(cards: readonly Card[], selection: Selection): Facet[] {
     const chosen = selection.get(key) ?? new Set<string>();
     const counts = new Map<string, number>();
     for (const card of cards) {
-      const value = valueOf(card, axis);
-      if (!counts.has(value)) {
-        counts.set(value, 0);
-      }
-      if (matches(card, selection, key)) {
-        counts.set(value, (counts.get(value) ?? 0) + 1);
+      const hit = matches(card, selection, key);
+      for (const value of valuesOf(card, axis)) {
+        if (!counts.has(value)) {
+          counts.set(value, 0);
+        }
+        if (hit) {
+          counts.set(value, (counts.get(value) ?? 0) + 1);
+        }
       }
     }
     for (const value of chosen) {
@@ -265,4 +366,10 @@ export function worstLevel(violations: readonly LintViolation[]): LintLevel | un
     }
   }
   return worst;
+}
+
+/** 置き場の軸の値 — file の dir の末尾 2 段(見本 v5 の `messaging/core` の形。root の直下は `.`)。 */
+export function locationOf(relativePath: string): string {
+  const parts = relativePath.split(/[\\/]/).slice(0, -1);
+  return parts.length === 0 ? '.' : parts.slice(-2).join('/');
 }
