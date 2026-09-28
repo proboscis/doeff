@@ -361,6 +361,7 @@ fn editor_json_shape_rules_and_python_rule_ranges() {
     assert_eq!(signature["absent"], false);
     assert_eq!(signature["raises"], serde_json::json!([]));
     assert!(signature["effects"]["declared"].is_null() && signature["effects"]["inferred"].is_array());
+    assert_eq!(signature["effects"]["complete"], true);
     assert_eq!(signature["tags"], serde_json::json!({"context": "billing", "role": "judgment"}));
     let bindings = single["bindings"].as_array().unwrap();
     let bound = bindings.iter().find(|b| b["name"] == "s").expect("s の束縛");

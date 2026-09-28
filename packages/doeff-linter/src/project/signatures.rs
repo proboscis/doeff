@@ -77,6 +77,9 @@ pub struct EffectRef {
 pub struct SignatureEffects {
     pub declared: Option<Vec<EffectRef>>,
     pub inferred: Vec<EffectRef>,
+    /// 推論が追いきれたか — 追えない呼び(repo の外の関数・deff・method)を撃っていれば false で、`inferred` は見えた分だけ。
+    /// エディタが「effect なし」と「推論しきれない」を分けて描くため(版 2 への欄の追加)。
+    pub complete: bool,
 }
 
 /// 引数 1 つ(`:pre` に型が無ければ type は null)。
@@ -1267,7 +1270,7 @@ fn signature_of(
             .iter()
             .map(|(q, spelled)| world.resolve_qualified(q, spelled))
             .collect(),
-        effects: SignatureEffects { declared, inferred },
+        effects: SignatureEffects { declared, inferred, complete: !summary.opaque },
         tags,
     }
 }
@@ -1738,6 +1741,34 @@ mod tests {
         assert!(sig.effects.inferred.is_empty());
         assert_eq!(sig.tags.get("role").map(String::as_str), Some("judgment"));
         assert_eq!(sig.contract_range.unwrap().start.line, 2);
+        assert!(sig.effects.complete, "撃つ呼びが無い defk は推論が追いきれている");
+    }
+
+    #[test]
+    fn docstring_before_contract_and_untrackable_calls_are_read() {
+        // agora-controllers の sim-part(controllers/agora_sim/full_system.hy)と run-emulated-with の形
+        let core = r#"
+(defk sim-part [services handlers]
+  "部品の値。"
+  {:pre [(: services list) (: handlers (| Callable None))]
+   :post [(: % dict)]
+   :tags {:context "turn" :role "judgment"}}
+  {"services" services "handlers" handlers})
+(defk run-emulated-with [agora parts]
+  {:pre [(: agora int) (: parts list)] :post [(: % list)] :tags {:context "turn" :role "entry"}}
+  (<- results list (with_handlers (! (helper parts)) (run agora)))
+  results)
+"#;
+        let got = read(&[("core/sim.hy", core)], "core/sim.hy");
+        let sim = &got.signatures[0];
+        let contract = sim.contract_range.unwrap();
+        assert_eq!((contract.start.line, contract.end.line), (3, 5), "docstring が先でも契約の辞書を見つける");
+        assert_eq!(sim.params[1].type_ref.as_ref().map(name_of).as_deref(), Some("Callable | None"));
+        assert_eq!(sim.tags.get("role").map(String::as_str), Some("judgment"));
+        assert!(sim.effects.complete);
+        let run = &got.signatures[1];
+        assert!(run.effects.inferred.is_empty());
+        assert!(!run.effects.complete, "追えない呼び with_handlers を撃つので、推論が空でも「effect なし」とは言えない");
     }
 
     #[test]
