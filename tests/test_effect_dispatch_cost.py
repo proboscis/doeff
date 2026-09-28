@@ -60,16 +60,17 @@ def test_twice_decorated_handler_keeps_the_outer_wrapper_semantics() -> None:
         yield Pass(effect, k)
 
     inner = do(forward)
-    outer = do(inner)  # the outer "generator function" returns an Expand, not a generator
+    outer = do(inner)  # the outer "generator function" returns a Call, not a generator
 
     @do
     def fallback(effect: Ping, k):
         return (yield Resume(k, "fallback"))
 
     # outer(effect, k) returns inner's program as a value: the handler's result is that
-    # Expand object, exactly as the wrapper path evaluates it.
+    # program object, exactly as the wrapper path evaluates it. An @do call is the single
+    # instruction Call since 48d7d073 (it was an Expand before).
     result = run(with_handlers([fallback, outer], body()))
-    assert type(result).__name__ == "Expand"
+    assert type(result).__name__ == "Call"
 
 
 @pytest.mark.parametrize("module", ["hy", "httpx", "doeff.cli.run_services"])

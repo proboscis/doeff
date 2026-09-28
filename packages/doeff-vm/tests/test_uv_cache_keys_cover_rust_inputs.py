@@ -6,7 +6,7 @@ uv は packages/doeff-vm/pyproject.toml の [tool.uv] cache-keys に載った fi
 controller が古い .so で 35 分落ちた — card acp:kanban-issue:ki-3965aa5188ae)。
 
 入力の母集団は crate 名を書かずに導く: packages/doeff-vm/Cargo.toml の依存表の path = を
-推移的にたどった crate の集合について、git が追跡する Cargo.toml / Cargo.lock / build.rs /
+推移的にたどった crate の集合について、disk の上の Cargo.toml / Cargo.lock / build.rs /
 pyproject.toml と library の *.rs を集める。tests/ benches/ examples/ は Cargo の library
 以外の target の置き場で、maturin が作る cdylib にも path 依存としての build にも入らないので
 母集団から外す。
@@ -17,7 +17,6 @@ from __future__ import annotations
 import os
 import posixpath
 import re
-import subprocess
 from collections.abc import Iterable, Mapping
 from pathlib import Path, PurePosixPath
 from typing import Any
@@ -32,6 +31,8 @@ PACKAGE_PATH = PACKAGE_DIR.relative_to(REPO_ROOT).as_posix()
 BUILD_INPUT_NAMES = frozenset({"Cargo.toml", "Cargo.lock", "build.rs", "pyproject.toml"})
 # Cargo が library 以外の target(結合テスト・bench・例)を自動で探す置き場。
 NON_LIBRARY_TARGET_DIRS = frozenset({"tests", "benches", "examples"})
+# Cargo と maturin の build の出力の置き場(入力ではない)。
+BUILD_OUTPUT_DIRS = frozenset({"target"})
 # build に効く依存表。[dev-dependencies] は library の build に入らない。
 DEPENDENCY_TABLES = ("dependencies", "build-dependencies")
 _UNSUPPORTED_GLOB_CHARS = frozenset("[]{}")
@@ -155,24 +156,34 @@ def input_crate_dirs(root_crate_dir: Path) -> list[Path]:
     return ordered
 
 
-def tracked_build_inputs_by_crate() -> dict[str, list[str]]:
-    """crate(package からの相対 directory)ごとの、git が追跡する build 入力の一覧。"""
-    by_crate: dict[str, list[str]] = {}
-    for crate_dir in input_crate_dirs(PACKAGE_DIR):
-        crate_path = crate_dir.relative_to(REPO_ROOT).as_posix()
-        listed = subprocess.run(
-            ["git", "ls-files", "-z", "--", f"{crate_path}/"],
-            cwd=REPO_ROOT,
-            check=True,
-            capture_output=True,
-            text=True,
-        ).stdout
-        by_crate[Path(os.path.relpath(crate_dir, PACKAGE_DIR)).as_posix()] = sorted(
-            Path(os.path.relpath(REPO_ROOT / tracked, PACKAGE_DIR)).as_posix()
-            for tracked in listed.split("\0")
-            if tracked and is_build_input(PurePosixPath(tracked).relative_to(crate_path).as_posix())
+def source_files_under(crate_dir: Path) -> list[str]:
+    """crate の directory の下の file(crate からの相対 posix path)。build の出力と隠し dir は歩かない。
+
+    git に聞かずに disk を歩く — uv の build が読むのは disk の file で、日次の検証が受け取る木は
+    git の checkout ではない(remote_check は file の名簿だけを運び、.git を持たない — 2026-09-28 の日次 t97 で
+    `git ls-files` が 128 の赤)。
+    """
+    found: list[str] = []
+    for directory, subdirectories, files in os.walk(crate_dir):
+        subdirectories[:] = sorted(
+            name for name in subdirectories if name not in BUILD_OUTPUT_DIRS and not name.startswith(".")
         )
-    return by_crate
+        found.extend(
+            Path(os.path.relpath(Path(directory, name), crate_dir)).as_posix() for name in files
+        )
+    return sorted(found)
+
+
+def tracked_build_inputs_by_crate() -> dict[str, list[str]]:
+    """crate(package からの相対 directory)ごとの build 入力の一覧。"""
+    return {
+        Path(os.path.relpath(crate_dir, PACKAGE_DIR)).as_posix(): sorted(
+            Path(os.path.relpath(crate_dir / in_crate, PACKAGE_DIR)).as_posix()
+            for in_crate in source_files_under(crate_dir)
+            if is_build_input(in_crate)
+        )
+        for crate_dir in input_crate_dirs(PACKAGE_DIR)
+    }
 
 
 def _declared_globs() -> list[str]:

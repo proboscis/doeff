@@ -603,6 +603,8 @@
    process の寿命(2026-09-27): 検めは job の子と同じ shim(doeff_cluster.shim)を新しい process group の先頭にして起こし、束が
    終わったら(通った・失敗した・時間切れ・shim が先に死んだのどれでも)group ごと KILL する(以前は時間切れの時に直の子 = uv だけを
    kill し、孫の hy が孤児として CPU を使い続けた)。worker が消えれば shim が stdin の EOF で group を止める。
+   shim は -B で起こす(2026-09-28・日次 t97 の柵の赤)— shim 自身は worker の install から import される。job の子の env は許可表で
+   しか継がないので PYTHONDONTWRITEBYTECODE が落ち、shim の import が worker の install(検では checkout)へ .pyc を書いていた。
    並べ方(2026-09-27): 同じ木の検めは 1 本ずつ(probe-launches)。start は束に積むだけで、process は observe の頭で起こす —
    同じ拍に来た同じ木の spec は 1 本の process にまとめ、対象ごとの結果の行から、読み込めない理由をその対象を持つ spec にだけ付ける。
    timeout-seconds を越えた束は止め、結果の出た対象は結果どおり・進んでいた対象を持つ spec だけ時間切れの FAILED・残りの spec は
@@ -669,7 +671,7 @@
           targets (list (dict.fromkeys (gfor spec specs target (probe-targets spec) target)))
           #(argv cwd env) (.command self code-path runtime-env targets)
           out (tempfile.TemporaryFile) err (tempfile.TemporaryFile))
-    (setv process (subprocess.Popen [sys.executable "-m" "doeff_cluster.shim" PROBE-STOP-GRACE "--" #* argv]
+    (setv process (subprocess.Popen [sys.executable "-B" "-m" "doeff_cluster.shim" PROBE-STOP-GRACE "--" #* argv]
                                     :cwd cwd :env env :stdin subprocess.PIPE :stdout out :stderr err
                                     :start-new-session True))
     (setv (get self.runs code-path)
@@ -759,14 +761,14 @@
             (.touch (/ (Path code-path) ".last-used"))
             (when (.exists work) (shutil.rmtree work))
             (.mkdir work :parents True)
-            #([sys.executable "-m" "doeff_cluster.shim" "10" "--" self.uv "run" "--no-sync" "--frozen"
+            #([sys.executable "-B" "-m" "doeff_cluster.shim" "10" "--" self.uv "run" "--no-sync" "--frozen"
                "--project" (env-project-dir code-path declared) "hy" "-m" spec.entry #* spec.args]
               (str work)
               (child-environment (dict os.environ) self.extra-env
                                  (dfor v (.get declared "envVars" []) (get v "name") (get v "value"))
                                  (| worker-env {"DOEFF_RUNTIME_ENV" spec.runtime-env
                                                 "DOEFF_RUNTIME_ENV_KEY" spec.env-key}))))
-        #([sys.executable "-m" "doeff_cluster.shim" "10" "--" self.hy-command "-m" spec.entry #* spec.args]
+        #([sys.executable "-B" "-m" "doeff_cluster.shim" "10" "--" self.hy-command "-m" spec.entry #* spec.args]
           code-path
           (| (dict os.environ) self.extra-env {"PYTHONPATH" (.pythonpath self.layout code-path)} worker-env))))
 

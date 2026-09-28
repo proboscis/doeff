@@ -18,6 +18,7 @@ The deftest runtime cases live next to the other deftest tests
 (tests/test_deftest_macro.py::TestDeftestTypedBind).
 """
 
+import re
 import sys
 import types
 
@@ -67,7 +68,12 @@ def _eval(code: str):
 
 # 束ねが yield するのは (open-bind 効果) — 宣言を持つ effect の答えを開く 1 点(ADR-DOE-CORE-EFFECTS-003 R6)。
 # 宣言の無い effect には effect そのものを返す(実行時に同じ物を yield する — docs/adr の冊 003 の検が確かめる)。
-_OPENED_EFF = '(yield ((. (__import__ "doeff_core_effects.outcomes" :fromlist #("open_bind")) open_bind) (Eff)))'
+# open-bind の答えが Pure(効果を出さない @do の呼びをその場で呼んだ答え)ならその値、それ以外は yield(#844・6a45b5e1)。
+_OPENED_EFF = (
+    r'\(if \(is \(\. \(setx (?P<b>_hy_gensym_bound_\d+) \(\. \(setx (?P<m>_hy_gensym_outcomes_\d+) '
+    r'\(__import__ "doeff_core_effects\.outcomes" :fromlist #\("open_bind"\)\)\) \(open_bind \(Eff\)\)\)\) __class__\) '
+    r'(?P=m)\.Pure\) (?P=b)\.value \(yield (?P=b)\)\)'
+)
 
 
 @pytest.mark.parametrize("code", [
@@ -81,7 +87,7 @@ _OPENED_EFF = '(yield ((. (__import__ "doeff_core_effects.outcomes" :fromlist #(
 ], ids=["<-", "do!", "defp", "deftest", "for/do", "traverse", "defhandler"])
 def test_four_element_bind_emits_isinstance_everywhere(code):
     expanded = _expand(code)
-    assert "(setv x " + _OPENED_EFF + ")" in expanded, expanded
+    assert re.search(r"\(setv x " + _OPENED_EFF + r"\)", expanded), expanded
     assert "(assert (isinstance x str)" in expanded, expanded
 
 
@@ -95,7 +101,7 @@ def test_four_element_bind_emits_isinstance_everywhere(code):
 ], ids=["<-", "do!", "defp", "deftest", "for/do", "defhandler"])
 def test_two_and_three_element_binds_stay_unchecked(code):
     expanded = _expand(code)
-    assert _OPENED_EFF in expanded, expanded
+    assert re.search(_OPENED_EFF, expanded), expanded
     # :post の (: % str) は isinstance を出すので、束縛名 x の検査だけを見る
     assert "(isinstance x" not in expanded, expanded
 
