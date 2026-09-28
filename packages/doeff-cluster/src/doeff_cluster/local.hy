@@ -347,7 +347,8 @@
   "sim の外の世界(本番では job の土台の handler が外の系 — 業務の store・外部の API — と話して答える effect に、sim では系の外側で
    答える物)。handlers = sim の全部の job と筋書きの外側に置く handler の組(外側が先 — 仮想の時計の内側)・effects = それが答える effect の型
    (柵が外へ通す — isinstance で数えるので基底の型でよい)。job は effect を通してだけ外の世界を共有する(object を共有しない)。
-   per-process = process ごとの外の handler の組を作る関数 (job の名 worker の名) → handler の list(None = 無し)。宿が process を起こす
+   per-process = process ごとの外の世界を作る関数 (job の名 worker の名) → ProcessOutside(handler と、その process の柵だけが通す型 —
+   None = 無し)。宿が process を起こす
    時に 1 回呼び、柵の外側・sim の世界の内側に並べる — 本番で job ごと・機体ごとに違う外の口(記録の service の身元の token・預かり所の
    借り手・機体の session の置き場)を、共有の外の世界(handlers)の手前で答えるため(agora-redesign #833 の条件「sim-cluster は担い手ごとに
    handler の組を持つ」・#834)。作る handler も effects に載った型にだけ答える(柵がそれ以外を通さない)。"
@@ -947,15 +948,24 @@
     (resume warm)))
 
 
+(defrecord ProcessOutside
+  "process ごとの外の世界(SimOutside.per-process の答え): handlers = その process の柵の外側に並べる handler(外側が先)・effects =
+   その process の柵だけが外へ通す effect の型(isinstance — 基底の型でよい)。共有の外の世界の型(SimOutside.effects)は全 process の
+   柵が通すので、本番で job ごとに持つ口(その job の土台だけが答える effect)はここに置く — 系で 1 つの許しの和にすると、本番の土台が
+   答えない effect を別の job の外の口が sim で黙って答える(構成のレビュー 2026-09-28 の A)。"
+  (#^ tuple handlers)
+  (setv #^ tuple effects #()))
+
+
 (defk process-outside [per-process job worker]
-  {:pre [(: per-process (| Callable None)) (: job str) (: worker str)] :post [(: % list)] :tags {:context "doeff-cluster" :role "judgment"}}
-  "process ごとの外の handler の組を作るため(SimOutside.per-process を job の名と worker の名で呼ぶ — 無ければ空)。関数でない物・
-   list でない答えは断る(黙って外の世界を欠いた process を起こさない)。"
+  {:pre [(: per-process (| Callable None)) (: job str) (: worker str)] :post [(: % ProcessOutside)] :tags {:context "doeff-cluster" :role "judgment"}}
+  "process ごとの外の世界を作るため(SimOutside.per-process を job の名と worker の名で呼ぶ — 無ければ空)。ProcessOutside でない答えは
+   断る(黙って外の世界を欠いた process を起こさない)。"
   (when (is per-process None)
-    (return []))
+    (return (ProcessOutside :handlers #())))
   (val made (per-process job worker))
-  (when (not (isinstance made list))
-    (raise (TypeError (.format "SimOutside の per-process の答えは handler の list(job {} ・worker {}): {!r}" job worker made))))
+  (when (not (isinstance made ProcessOutside))
+    (raise (TypeError (.format "SimOutside の per-process の答えは ProcessOutside(job {} ・worker {}): {!r}" job worker made))))
   made)
 
 
@@ -1163,9 +1173,9 @@
     (<- program-path str (program-path-of spec.program))
     (val link (SimLink :queue parts.queue :actor spec.name :revision spec.revision :peer worker.name))
     (<- plan SimPlan (PlanOf))
-    (<- outside list (process-outside plan.per-process spec.name worker.name))
-    (val child (SimChild :ctx ctx :program-path program-path :environ (dict spec.environ) :link link :pid pid :passable plan.passable
-                         :outside (tuple outside)))
+    (<- outside ProcessOutside (process-outside plan.per-process spec.name worker.name))
+    (val child (SimChild :ctx ctx :program-path program-path :environ (dict spec.environ) :link link :pid pid
+                         :passable (+ plan.passable outside.effects) :outside outside.handlers))
     (<- task Task (Spawn (sim-process worker.name spec child (.get truth.programs spec.program))))
     (<- (KeepHandle pid task))
     (resume None))

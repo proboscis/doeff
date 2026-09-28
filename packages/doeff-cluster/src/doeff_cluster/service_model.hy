@@ -24,7 +24,7 @@
 ;;;     revision・versions・environ から作り、詰めた文字列は比べない(改訂 1 の A — cloudpickle の出力は同じ Program でも揺れる)。
 ;;;   - describe = identity から作る表示の 1 行(coordinator は業務の code を持たず Program を解けないので、表示は宣言が運ぶ)。
 ;;; 旧い宣言(:env・:config・:env-config・:requires・関数の参照 + 設定)は受け付けない(operator 2026-09-27)。
-(require doeff-hy.macros [defk deff val])
+(require doeff-hy.macros [defk deff <- val var])
 (require doeff-hy.record [defrecord])
 (import collections.abc [Callable])
 (import dataclasses [dataclass])
@@ -154,13 +154,34 @@
    返すため(外れが無ければ None)— declare が宣言の前に断る(計画 9 節の P・ADR-DOE-CLUSTER-001 R4b。doeff-linter の照合が来るまでは
    宣言の時点で)。土台が :needs を名乗らなければ検めない。土台が中に並べる handler の :needs は集めない(集めるには handler を作る =
    実行が要る)— 土台の頭に手で書く決まりで、頭が中の handler の :needs を漏らしていても linter の照合までは見つからない。"
-  (val declared (getattr foundation "__doeff_needs__" None))
-  (val short (if (is declared None) [] (lfor j system.jobs :if (not (<= declared j.needs)) j)))
+  ;; 見るのは foundation と、各 job の呼び出しの形(CallShape)の引数に在る関数の全部 — 系が土台を 2 つ以上受ける時(家族ごとの口の
+  ;; 違う土台)も、宣言の道具が土台ごとに検めを手で写さずに済む(構成のレビュー 2026-09-28 の D)。
+  (var short [])
+  (for [j system.jobs]
+    (<- found list (callables-in [#* j.call.args #* (.values j.call.kwargs)]))
+    (val carried (lfor f (+ [foundation] found) :if (is-not (getattr f "__doeff_needs__" None) None) f))
+    (for [f carried]
+      (val missing (- (frozenset f.__doeff_needs__) j.needs))
+      (when missing
+        (.append short (.format "{} の土台 {}:{}(足りない {})" j.name (getattr f "__module__" "?") (getattr f "__qualname__" "?")
+                                (sorted missing))))))
   (match short
     [] None
-    _ (.format "土台 {}:{} の :needs {} が job の :needs に含まれない: {} — 土台の要る能力を job の :needs に書く(土台の :needs ⊆ job の :needs)"
-               (getattr foundation "__module__" "?") (getattr foundation "__qualname__" "?") (sorted declared)
-               (.join "・" (gfor j short (.format "{}(足りない {})" j.name (sorted (- declared j.needs))))))))
+    _ (.format "土台の :needs が job の :needs に含まれない: {} — 土台の要る能力を job の :needs に書く(土台の :needs ⊆ job の :needs)"
+               (.join "・" (sorted (set short))))))
+
+
+(defk callables-in [values]
+  {:pre [(: values list)] :post [(: % list)] :tags {:context "doeff-cluster" :role "judgment"}}
+  "呼び出しの引数の値の中の関数(list と dict の中も)を並べるため — 土台の :needs の検めが、系の引数に渡した土台の全部を見る。"
+  (var found [])
+  (for [v values]
+    (match v
+      (list) (do (<- inner list (callables-in v)) (:= found (+ found inner)))
+      (tuple) (do (<- inner list (callables-in (list v))) (:= found (+ found inner)))
+      (dict) (do (<- inner list (callables-in (list (.values v)))) (:= found (+ found inner)))
+      _ (when (callable v) (:= found (+ found [v])))))
+  found)
 
 
 (defrecord Declaration
