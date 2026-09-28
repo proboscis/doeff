@@ -187,7 +187,8 @@
       (+ #((ReapJob name process.pid
              (if (is record.stopping None) Outcome.EXITED Outcome.STOPPED) process.exit-code))
          ;; 終わった process の lease は、期限を待たずに返す(次の担い手がすぐ取れる)。
-         (if process.instance #((ReleaseLeases process.instance)) #()))
+         ;; 担い手の名は子が名乗った job の名(起こした spec の名 — 退いた process も元の名)と世代の名。
+         (if process.instance #((ReleaseLeases process.spec.name process.instance)) #()))
     (is-not process.retired-from None) (retired-actions now process desired world record policy)
     ;; 諦めた入れ替え: 今の宣言の spec の新の process を止める(止め始めた process は止め終える)。前の宣言の process(まだ退いて
     ;; いない旧)は名から外さず、そのまま動かす — 新を起こさないので並べる理由が無い。

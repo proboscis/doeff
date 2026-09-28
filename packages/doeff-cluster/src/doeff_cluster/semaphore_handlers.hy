@@ -17,7 +17,7 @@
 (import doeff_cluster.clock [now-epoch-ms])
 (import .shared_model [ReadShared WriteShared])
 (import .semaphore_model [CreateNamedSemaphore ClusterSemaphore LeaseLost HeldLease WriteFenced LeaseStanding LeaseOp
-                          STANDBY HELD LOST fence-verdict])
+                          STANDBY HELD LOST fence-verdict holder-tokens-prefix])
 
 
 ;; --- 1 つの VM の中の名前の表 ------------------------------------------------------------------
@@ -47,8 +47,9 @@
           self.ever-held (set)))
 
   (defn #^ str next-token [self]
+    ;; token = <担い手>/<番号>(頭は worker が終わった process の lease を外す時と同じ定義 — semaphore_model の頭の註)。
     (+= self.seq 1)
-    (.format "{}/{}" self.holder self.seq))
+    (+ (holder-tokens-prefix self.holder) (str self.seq)))
 
   (defn #^ int ttl-ms [self] (int (* 1000 self.ttl-seconds)))
 
