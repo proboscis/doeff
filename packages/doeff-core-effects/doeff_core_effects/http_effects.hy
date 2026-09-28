@@ -1,3 +1,6 @@
+(require doeff-hy.record [defrecord defenum])
+(import dataclasses [dataclass])
+(import enum [StrEnum])
 (import doeff_vm [EffectBase])
 
 
@@ -67,16 +70,18 @@
           self.body-snippet body-snippet)))
 
 
-(defclass HttpFailed []
+;; Why no response ever arrived, as a closed set (agora-redesign #850). The HTTP handler maps the transport error's class — never
+;; its name or text — to one of these: TIMED-OUT = a time limit ran out (connecting, reading, writing, or waiting for a pooled
+;; connection) · CONNECT-FAILED = no connection was made (refused, DNS, TLS handshake) · OTHER = the rest (the connection dropped
+;; mid-exchange, a protocol error …).
+(defenum HttpFailureKind TIMED-OUT CONNECT-FAILED OTHER)
+
+
+(defrecord HttpFailed
   "No response ever arrived (connection refused, timeout, TLS failure …) — answered instead of raising when the request
-   set failures-as-values. Plain data -- not an effect. url = the request's URL; detail = the transport error's class and text."
-
-  (defn __init__ [self * url detail]
-    (setv self.url url
-          self.detail detail))
-
-  (defn __eq__ [self other]
-    (and (isinstance other HttpFailed) (= self.url other.url) (= self.detail other.detail)))
-
-  (defn __repr__ [self]
-    (+ "HttpFailed(" (repr self.url) ", " (repr self.detail) ")")))
+   set failures-as-values. Plain data -- not an effect. url = the request's URL; kind = why, as HttpFailureKind (branch on
+   this); detail = the transport error's class and text, for people and logs (do not branch on it). kind has no default:
+   a maker that forgot it must fail, not read as \"not a timeout\"."
+  (#^ str url)
+  (#^ str detail)
+  (#^ HttpFailureKind kind))

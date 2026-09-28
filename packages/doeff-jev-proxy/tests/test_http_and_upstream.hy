@@ -14,7 +14,7 @@
 (import doeff [run with_handlers])
 (import doeff_core_effects [await_handler try_handler])
 (import doeff_core_effects.scheduler [scheduled])
-(import doeff_core_effects.http_effects [HttpRequest HttpResponse HttpFailed])
+(import doeff_core_effects.http_effects [HttpRequest HttpResponse HttpFailed HttpFailureKind])
 (import doeff_jev.target [JevTarget])
 (import doeff_jev_proxy.values [UpstreamReply UpstreamUnreachable])
 (import doeff_hy.frozen [FrozenMap])
@@ -55,7 +55,7 @@
   (assert (= (get request.headers "authorization") (+ "Bearer " SECRET)))
   (assert (= request.body b"{\"questions\":{}}") "本文はそのまま渡す")
   (assert (= request.max-retries 0) "撃ち直しは呼び手の持ち物(代理で重ねない)")
-  (<- failed (ask-through (HttpFailed :url TARGET.base-url :detail "ConnectTimeout: timed out") []))
+  (<- failed (ask-through (HttpFailed :url TARGET.base-url :detail "ConnectTimeout: timed out" :kind HttpFailureKind.TIMED-OUT) []))
   (assert (isinstance failed UpstreamUnreachable))
   (assert (not-in SECRET failed.detail) "届かなかった理由の文にキーを載せない"))
 

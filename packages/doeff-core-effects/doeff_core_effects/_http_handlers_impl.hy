@@ -1,4 +1,4 @@
-(require doeff-hy.macros [<- do!])
+(require doeff-hy.macros [defk <- do!])
 (require doeff-hy.handle [defhandler])
 
 (import hashlib)
@@ -8,13 +8,23 @@
 (import pathlib [Path])
 
 (import doeff_core_effects.effects [Await HttpRequest HttpResponse slog])
-(import doeff_core_effects.http_effects [HttpFailed])
+(import doeff_core_effects.http_effects [HttpFailed HttpFailureKind])
 
 
 (defn _failure-detail [error]
   "Name why a request never got a response (the transport error's class and text) for HttpFailed."
   (setv text (str error))
   (+ (. (type error) __name__) (if text (+ ": " text) "")))
+
+
+(defk _failure-kind [error]
+  {:pre [(: error httpx.RequestError)] :post [(: % HttpFailureKind)] :tags {:context "http" :role "foundation"}}
+  "Name why a request never got a response, as HttpFailureKind, from the transport error's class — never its name or text,
+   so an error whose name ends in Timeout without being one (or whose text says \"timed out\") is not read as a timeout."
+  (match error
+    (httpx.TimeoutException) HttpFailureKind.TIMED-OUT
+    (httpx.ConnectError) HttpFailureKind.CONNECT-FAILED
+    _ HttpFailureKind.OTHER))
 
 
 (defn _default-client-factory []
@@ -105,7 +115,9 @@
       (except [e httpx.RequestError]
         (if (= attempt-index request.max-retries)
             (if request.failures-as-values
-                (HttpFailed :url request.url :detail (_failure-detail e))
+                (do
+                  (<- kind HttpFailureKind (_failure-kind e))
+                  (HttpFailed :url request.url :detail (_failure-detail e) :kind kind))
                 (raise e))
             (do
               (<- (Await (sleep (_retry-delay-seconds attempt-index))))

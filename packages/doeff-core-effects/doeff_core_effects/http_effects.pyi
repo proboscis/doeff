@@ -1,3 +1,5 @@
+from dataclasses import dataclass
+from enum import StrEnum
 from typing import Any
 
 from doeff_vm import EffectBase
@@ -61,8 +63,14 @@ class HttpError(Exception):
     def __init__(self, status: int, url: str, body_snippet: str) -> None: ...
 
 
+class HttpFailureKind(StrEnum):
+    TIMED_OUT = "timed-out"
+    CONNECT_FAILED = "connect-failed"
+    OTHER = "other"
+
+
+@dataclass(frozen=True, kw_only=True)
 class HttpFailed:
     url: str
     detail: str
-
-    def __init__(self, *, url: str, detail: str) -> None: ...
+    kind: HttpFailureKind
