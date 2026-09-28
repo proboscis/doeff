@@ -139,6 +139,19 @@ class Call(Expand[_T_co, _E_co]):
         self, function: DoFunction, args: tuple[Any, ...], kwargs: dict[str, Any]
     ) -> None: ...
 
+class BindOpener:
+    """What ``outcomes.open_bind`` is: a no-``absent`` bind of a ``Call`` whose definition
+    does not yield is called in place (``Pure(answer)``, or ``generator_program(gen)`` for a
+    generator answer); every other bind goes to ``fallback(expr[, absent])``."""
+
+    fallback: _CallableT[..., Any]
+    generator_program: _CallableT[[Generator[Any, Any, Any]], Any]
+    def __init__(
+        self, fallback: _CallableT[..., Any], generator_program: _CallableT[[Generator[Any, Any, Any]], Any]
+    ) -> None: ...
+    def __call__(self, expr: Any, absent: _CallableT[[], Any] | None = None) -> Any: ...
+    def __repr__(self) -> str: ...
+
 class Pass:
     effect: Any
     continuation: K
