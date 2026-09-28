@@ -47,6 +47,27 @@
       (raise (SyntaxError (.format "{}: 頭の辞書の鍵 {} は受けない — 受ける鍵は {}" where (str key) (.join " " allowed)))))))
 
 
+;; defrecord / defwire の欄の読み方の Hy 側の正本(Rust 側の正本は doeff-indexer の hy_index::fields — hy-index と doeff-linter が呼ぶ)。
+;; 2 つの正本が同じ答えを出すことは、同じ入力の表 tests/data/record_field_cases.json を両側の検が読んで確かめる。
+(defn field-targets [forms]  ; defk にできない: macro の展開の時に呼ぶ関数
+  "record の body の form の列から欄の名(記号)を書いた順に返す — 裸の記号 x・#^ T x・(#^ T x)・(setv #^ T1 a v1 #^ T2 b v2 …) の
+   注記つきの的(組ごとに 1 つ)。注記の無い (setv x v) の的は dataclass の欄ではない(class の属性)ので数えない。"
+  (import hy.models [Expression])
+  (setv annotated (fn [form] (when (and (isinstance form Expression) (= (len form) 3)
+                                         (= (str (get form 0)) "annotate") (isinstance (get form 1) Symbol))
+                               (get form 1)))
+        out [])
+  (for [form forms]
+    (cond
+      (isinstance form Symbol) (.append out form)
+      (annotated form) (.append out (annotated form))
+      (and (isinstance form Expression) (= (len form) 1)) (when (annotated (get form 0)) (.append out (annotated (get form 0))))
+      (and (isinstance form Expression) (>= (len form) 2) (= (str (get form 0)) "setv"))
+        (for [target (cut form 1 None 2)]
+          (when (annotated target) (.append out (annotated target))))))
+  out)
+
+
 (defn declared-value [#^ Dict contract #^ str key]  ; defk にできない: macro の展開の時に呼ぶ関数
   "契約の辞書の key の値の form(無ければ None)。"
   (setv found None)

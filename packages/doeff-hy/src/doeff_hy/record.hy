@@ -183,7 +183,7 @@
 ;; `(#^ T x)` = ((annotate x T))・`(setv #^ T x 既定値 #^ U y 既定値 …)`(組ごとに 1 欄)・裸の記号 x。それ以外の form は欄ではない。
 (defmacro defrecord [name #* forms]
   (import hy.models [Dict Expression Keyword List Sequence String Symbol])
-  (import doeff_hy.declarations [declared-value refuse-unknown-keys tags-form])
+  (import doeff_hy.declarations [declared-value field-targets refuse-unknown-keys tags-form])
   (setv docstring None
         rest (list forms))
   (when (and rest (isinstance (get rest 0) String))
@@ -202,22 +202,8 @@
     (raise (SyntaxError (.format "{}: :failure は字面の True か False(失敗の型の印): {}" where (hy.repr failure)))))
   (when (and (is-not checks None) (not (isinstance checks List)))
     (raise (SyntaxError (.format "{}: :check は検めの式の list([(pred 欄) …] の形): {}" where (hy.repr checks)))))
-  (setv annotated (fn [form] (when (and (isinstance form Expression) (>= (len form) 2)
-                                         (= (str (get form 0)) "annotate"))
-                               (get form 1)))
-        names [])
-  (for [form fields]
-    ;; 1 つの setv に組を並べた形 `(setv #^ T1 a v1 #^ T2 b v2)` は、組ごとに欄を 1 つ数える(的は 1・3・5 … 番目)。
-    (setv found (cond
-                  (isinstance form Symbol) [form]
-                  (annotated form) [(annotated form)]
-                  (and (isinstance form Expression) (= (len form) 1)) [(annotated (get form 0))]
-                  (and (isinstance form Expression) (>= (len form) 2) (= (str (get form 0)) "setv"))
-                    (lfor target (cut form 1 None 2) (annotated target))
-                  True []))
-    (for [target found]
-      (when (isinstance target Symbol)
-        (.append names (hy.mangle target)))))
+  ;; 欄の読み方の正本は declarations の field-targets(defwire・hy-index・doeff-linter と揃える)。
+  (setv names (lfor target (field-targets fields) (hy.mangle target)))
   (setv statements []
         bound [])
   (for [check (or checks [])]
@@ -282,7 +268,7 @@
 (defmacro defwire [name #* forms]
   (import re)
   (import hy.models [Dict Expression Keyword List String Symbol])
-  (import doeff_hy.declarations [declared-value refuse-unknown-keys])
+  (import doeff_hy.declarations [declared-value field-targets refuse-unknown-keys])
   (when (not (isinstance name Symbol))
     (raise (SyntaxError (.format "defwire の第 1 引数は型の名前(symbol)ちょうど: {}" (hy.repr name)))))
   (setv where (+ "defwire " (str name))
@@ -305,22 +291,7 @@
                   (and (isinstance unknown-form Keyword) (in (str unknown-form) #(":reject" ":ignore"))) (cut (str unknown-form) 1 None)
                   True (raise (SyntaxError (.format "{}: :unknown は :reject か :ignore: {}" where (hy.repr unknown-form))))))
   ;; 欄の名(defrecord と同じ読み方 — 書いた順)。
-  (setv annotated (fn [form] (when (and (isinstance form Expression) (>= (len form) 2)
-                                         (= (str (get form 0)) "annotate"))
-                               (get form 1)))
-        targets [])
-  (for [form fields]
-    ;; defrecord と同じ — 1 つの setv に並べた組は組ごとに欄を 1 つ数える。
-    (setv found (cond
-                  (isinstance form Symbol) [form]
-                  (annotated form) [(annotated form)]
-                  (and (isinstance form Expression) (= (len form) 1)) [(annotated (get form 0))]
-                  (and (isinstance form Expression) (>= (len form) 2) (= (str (get form 0)) "setv"))
-                    (lfor target (cut form 1 None 2) (annotated target))
-                  True []))
-    (for [target found]
-      (when (isinstance target Symbol)
-        (.append targets target))))
+  (setv targets (field-targets fields))
   ;; 欄の名 → wire の名。:camel = 2 つ目からの区切りの頭を大文字にしてつなぐ(lane-id → laneId)・:snake = 区切りを _(lane_id)・
   ;; :kebab = 区切りを -(lane-id)。区切り = - と _。明示の辞書は欄を全部ちょうど名指す(黙って既定の写しへ倒さない)。
   (setv wire-names {})

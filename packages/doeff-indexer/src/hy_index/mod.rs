@@ -6,6 +6,7 @@
 //! 読めた分を出して `errors` に理由を積む。
 
 mod analyze;
+pub mod fields;
 mod model;
 mod position;
 mod raw;
