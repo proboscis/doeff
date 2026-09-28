@@ -183,7 +183,7 @@
 
 
 (deftest test-a-client-sending-by-the-http-effect-reads-an-unreachable-service-as-a-value
-  ;; agora-redesign #810: 送り方が HttpRequest の effect(EffectTransport)でも、届かない口は Unreachable の値で答える(例外で上げない)—
+  ;; 送り方が HttpRequest の effect(EffectTransport)でも、届かない口は Unreachable の値で答える(例外で上げない)—
   ;; 処理ループと同じ scheduler の task が読む時に、記録の service の不達で task を落とさないため。
   (import doeff_core_effects.handlers [await-handler])
   (import doeff_core_effects.http_handlers [http-production-handler])

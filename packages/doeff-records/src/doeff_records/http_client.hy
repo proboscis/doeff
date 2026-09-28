@@ -15,7 +15,7 @@
 ;;; WatchChanges の待ちは client の側で回す(service へは timeout 0 で撃ち、空なら poll-seconds 眠って撃ち直す — doeff-time の Delay)。
 ;;; 時計は呼び手の時計なので、仮想の時計の下では memory の handler と同じに一瞬で進む。
 ;;;
-;;; 要求の送り方は endpoint の transport が決める(閉じた 2 種・agora-redesign #810):
+;;; 要求の送り方は endpoint の transport が決める(閉じた 2 種):
 ;;;   BlockingTransport(既定)  呼び手の thread で urllib の urlopen を撃つ — 同期の run の中の client(送る間は VM が止まる)
 ;;;   EffectTransport          要求を doeff-core-effects の HttpRequest の effect として出す — 答え手は外側(本番 = 塞がない
 ;;;                            http-production-handler と await-handler)。処理ループと同じ scheduler の task から読む呼び手が、記録の

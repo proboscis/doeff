@@ -31,7 +31,7 @@
 
 
 (deftest test-every-law-gives-the-same-answers-when-the-client-sends-by-the-http-effect
-  ;; agora-redesign #810: 要求の送り方を HttpRequest の effect にした client でも、答えの列は memory と 1 つも違わない。
+  ;; 要求の送り方を HttpRequest の effect にした client でも、答えの列は memory と 1 つも違わない。
   (assert-same-transcripts ["http-effect-memory"]))
 
 
