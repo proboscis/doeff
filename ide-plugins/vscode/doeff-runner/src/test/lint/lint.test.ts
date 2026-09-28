@@ -2,7 +2,7 @@ import * as assert from 'assert';
 import * as fs from 'fs';
 import * as path from 'path';
 import { parseLintJson, type LintReport } from '../../lint/contract';
-import { lintArgs, splitCommand } from '../../lint/runner';
+import { binaryCandidates, lintArgs, splitCommand } from '../../lint/runner';
 import { LintStore } from '../../lint/store';
 import {
   atLeast,
@@ -105,6 +105,18 @@ suite('linter の呼び方', () => {
     assert.deepStrictEqual(splitCommand('doeff-linter --output-format editor-json'), ['doeff-linter', '--output-format', 'editor-json']);
     assert.deepStrictEqual(splitCommand(`uv run "my linter" --json ''`), ['uv', 'run', 'my linter', '--json', '']);
     assert.deepStrictEqual(splitCommand('   '), []);
+  });
+
+  test('素の名の頭は開発版の置き場を PATH より先に試す(書き込み直後の hook と同じ順・agora-redesign #848)・path を名指した頭はそのまま', () => {
+    assert.deepStrictEqual(binaryCandidates('doeff-linter', '/h'), [
+      path.join('/h', '.local', 'share', 'doeff-linter-dev', 'doeff-linter'),
+      'doeff-linter',
+      path.join('/h', '.cargo', 'bin', 'doeff-linter'),
+      path.join('/h', '.local', 'bin', 'doeff-linter'),
+      path.join('/opt/homebrew/bin', 'doeff-linter'),
+      path.join('/usr/local/bin', 'doeff-linter')
+    ]);
+    assert.deepStrictEqual(binaryCandidates('/w/target/release/doeff-linter', '/h'), ['/w/target/release/doeff-linter']);
   });
 
   test('全体は引数なし、編集中の file は --stdin --path', () => {

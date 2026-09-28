@@ -85,13 +85,19 @@ export function lintArgs(base: readonly string[], request: LintRequest): string[
   }
 }
 
-/** 命令の頭(binary)の候補 — PATH に無い時は既知の場所も試す(VS Code を GUI から起動すると PATH が短いことがある)。 */
-function binaryCandidates(head: string): string[] {
+/** 開発版の linter の置き場(home からの相対)。本線の doeff に自動で追いつく置き場で、書くのは dotfiles の追随の係だけ
+ * (agora-redesign #848)。書き込み直後の hook と同じく PATH より先に見る — PATH の `~/.cargo/bin` の手組みの版は
+ * 誰も更新せず、設定の新しい鍵で終了コード 2 になる。 */
+const DEV_LINTER_DIR = ['.local', 'share', 'doeff-linter-dev'];
+
+/** 命令の頭(binary)の候補 — 開発版の置き場 → PATH → 既知の場所(VS Code を GUI から起動すると PATH が短いことがある)。
+ * path を名指した頭はそのまま使う。 */
+export function binaryCandidates(head: string, home: string = os.homedir()): string[] {
   if (head.includes('/') || head.includes('\\')) {
     return [head];
   }
-  const home = os.homedir();
   return [
+    path.join(home, ...DEV_LINTER_DIR, head),
     head,
     path.join(home, '.cargo', 'bin', head),
     path.join(home, '.local', 'bin', head),
