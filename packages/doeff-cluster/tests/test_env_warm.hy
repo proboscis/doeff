@@ -9,7 +9,7 @@
 ;; worker: 温める env を job より後に準備する(PrepareEnv :warm True)・固定の集合を掃除の係へ渡す(SweepEnvs)。
 ;; 準備の期限: 先読みは停滞(処理ステージが進まない)だけ・job の準備は冷たい / 温いで別の期限。
 ;; bytecode: 焼きの並列数は cgroup の CPU の上限・焼く範囲は入口の module の import の閉包。
-(require doeff-hy.macros [deftest defk <- val var])
+(require doeff-hy.macros [deftest defk deff <- val var])
 (import dataclasses [replace])
 (import json)
 (import doeff [Program run with-handlers])
@@ -19,8 +19,9 @@
 (import doeff_cluster.runtime_env_model [RuntimeEnv runtime-env->json runtime-env-of-json env-key current-platform])
 (import doeff_cluster.env_world [env-world EnvWorld EnvWorldLog read-world-log])
 (import doeff_cluster.detached_model [SubmitDetached AwaitDetached DetachedSucceeded])
-(import doeff_cluster.detached [detached-local DetachedLocalStore])
-(import doeff_cluster.warm_model [WarmRuntimeEnv ReadWarmState WarmState warm-key warm-state-of-json])
+(import httpx)
+(import doeff_cluster.detached [detached-local DetachedLocalStore WarmClient warm-cluster])
+(import doeff_cluster.warm_model [WarmRuntimeEnv ReadWarmState WarmState WarmUnreachable WarmAnswer warm-key warm-state-of-json])
 (import doeff_cluster.env_upkeep [RootInfo PrepareLimits sweep-choice prepare-overdue env-capacity])
 (import doeff_cluster.cluster_model [ClusterState ClusterTiming TaskRecord WorkerInfo ComponentVersion Requirement Request])
 (import doeff_cluster.cluster_policy [place-tasks register-heartbeat heartbeat-reply load-of tasks-for])
@@ -32,6 +33,7 @@
 (import doeff_cluster.handlers [task-spec])
 (import doeff_cluster.code_prepare [cpu-limit-of import-closure])
 (import tests.env_fixtures [LOCK env-of base-world])
+(import tests.detached_rig [MemoryCoordinator])
 
 ;; Program が走り出した仮想の時刻(送ってからの待ちを測る)。
 (val STARTS [])
@@ -211,6 +213,63 @@
   (assert (= (. (warm-state-of-json read-2) ready) #("w1")) read-2)
   (val missing (respond s3 (Request "GET" "/warm/000000000000000000000000" {} None) 3000 TIMING))
   (assert (= (get missing 1) 404) missing))
+
+
+;; --- 本物の client(warm-cluster): coordinator に届かない頼みは値で答える(2026-09-28)---------------------------
+
+(deff answers-503 [request]  ; defk にできない: httpx の MockTransport が同期で呼ぶ外の callback
+  {:pre [(: request httpx.Request)] :post [(: % httpx.Response)]}
+  "coordinator の /warm の代役: どの要求にも 503 を返す(作り直しの最中の coordinator の 5xx)。"
+  (httpx.Response 503 :json {"error" "coordinator が作り直しの最中"}))
+
+(deff refuses-connection [request]  ; defk にできない: httpx の MockTransport が同期で呼ぶ外の callback
+  {:pre [(: request httpx.Request)] :post [(: % httpx.Response)]}
+  "coordinator に届かない transport(接続が断られる)。"
+  (raise (httpx.ConnectError "connection refused" :request request)))
+
+(defk warm-and-read [env]
+  {:pre [(: env RuntimeEnv)] :post [(: % tuple)]}
+  "温める頼みと行の読みを 1 回ずつ出し、2 つの答えを返す。"
+  (<- written WarmAnswer (WarmRuntimeEnv env #() 600.0 "tests"))
+  (<- key str (warm-key env #()))
+  (<- read WarmAnswer (ReadWarmState key))
+  #(written read))
+
+(defk warm-through [transport]
+  {:pre [(: transport httpx.MockTransport)] :post [(: % tuple)]}
+  "本物の WarmClient(送り直しの期限を短くした)と warm-cluster の下で、温める頼みと読みを 1 回ずつ出す。"
+  (<- env RuntimeEnv (env-of "app-1" "lib-1" LOCK))
+  (val client (WarmClient "http://coordinator" :transport transport :deadline-seconds 0.2))
+  (<- answers tuple ((warm-cluster client) (warm-and-read env)))
+  answers)
+
+
+(deftest test-the-real-warm-client-answers-a-server-error-as-unreachable
+  ;; 反例 1: coordinator の /warm が 503 を返す → 温める頼みも読みも例外でなく WarmUnreachable(理由に返った状態が残る)。
+  (<- answers tuple (warm-through (httpx.MockTransport answers-503)))
+  (for [answer answers]
+    (assert (isinstance answer WarmUnreachable) answer)
+    (assert (in "503" answer.detail) answer)))
+
+
+(deftest test-the-real-warm-client-answers-a-refused-connection-as-unreachable
+  ;; 反例 2: 接続が断られる(送り直しの期限を過ぎた通信の失敗)→ 温める頼みも読みも WarmUnreachable(理由は接続の失敗)。
+  (<- answers tuple (warm-through (httpx.MockTransport refuses-connection)))
+  (for [answer answers]
+    (assert (isinstance answer WarmUnreachable) answer)
+    (assert (in "接続できない" answer.detail) answer)))
+
+
+(deftest test-the-real-warm-client-still-answers-the-warm-state-when-reachable
+  ;; 届く時の答えは変わらない: 本物の coordinator の判断(MemoryCoordinator)の後ろで、頼みも読みも WarmState(まだ準備中の worker が無い)。
+  (val coordinator (MemoryCoordinator (SimClock)))
+  (<- answers tuple (warm-through (httpx.MockTransport coordinator.handle)))
+  (val written (get answers 0))
+  (val read (get answers 1))
+  (assert (isinstance written WarmState) written)
+  (assert (= read written) #(read written))
+  (assert (= #(written.ready written.preparing) #(#() #())) written)
+  (assert (> written.until-ms 0) written))
 
 
 (deftest test-placement-prefers-a-warm-worker-and-marks-a-cold-start

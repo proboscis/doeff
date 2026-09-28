@@ -26,7 +26,7 @@
 (import .cluster_policy [ENV-RETRIES labels-satisfy tolerates])
 (import .remote_model [encode-program current-versions version-mismatch failed-from])
 (import .cluster_model [Requirement])
-(import .warm_model [WarmRuntimeEnv ReadWarmState WarmState WarmFailure warm-key warm-state-of-json])
+(import .warm_model [WarmRuntimeEnv ReadWarmState WarmState WarmUnreachable WarmAnswer WarmFailure warm-key warm-state-of-json])
 (import doeff_time [GetMonotonic])
 (import .detached_model [SubmitDetached AwaitDetached CancelDetached ReleaseDetached ReadRunners SimulateRunnerLoss
                          SimulateRunnerDrain SimulateRunnerReturn SimulateCoordinatorOutage WARMING-PHASE
@@ -515,32 +515,55 @@
 
 ;; --- 温める表(2026-09-26): coordinator の /warm の口 -------------------------------------------------
 
-(defclass WarmClient []
-  "coordinator の /warm との連絡(I/O)。書きは同じ行への頼み直しが同じ意味なので、通信の失敗を越えて送り直す。"
-  (defn __init__ [self #^ str url [timeout REPLY-SECONDS] [transport None] #^ str [actor ""]]
-    (setv self.endpoint (CoordinatorEndpoint url timeout 4 :transport transport :actor (or actor None))))
+;; coordinator の 5xx の下限(これ以上の状態は coordinator の側の失敗 — 呼び手の誤りではないので「届かない」の値にする)。
+(val SERVER-ERROR 500)
 
-  (defn #^ WarmState write [self #^ RuntimeEnv env #^ tuple requires #^ float ttl-seconds #^ str holder]
-    "行を書いて今の姿を読む。"
+
+(defclass WarmClient []
+  "coordinator の /warm との連絡(I/O)。書きは同じ行への頼み直しが同じ意味なので、通信の失敗を越えて送り直す。
+   送り直しの期限(deadline-seconds)を過ぎた通信の失敗と coordinator の 5xx は、例外でなく WarmUnreachable で答える
+   (2026-09-28 — 拍ごとに温める送り手が coordinator の入れ替えの間に落ちないため)。
+   断り(400)は呼び手の誤りなので DetachedRefused のまま投げる。"
+  (defn __init__ [self #^ str url [timeout REPLY-SECONDS] [transport None] #^ str [actor ""]
+                  #^ float [deadline-seconds IDEMPOTENT-DEADLINE-SECONDS]]
+    ;; deadline-seconds = 通信の失敗を越えて送り直す期限(過ぎたら「届かない」の答え — 検は短くする)。
+    (setv self.deadline-seconds deadline-seconds
+          self.endpoint (CoordinatorEndpoint url timeout 4 :transport transport :actor (or actor None))))
+
+  (defn #^ WarmAnswer write [self #^ RuntimeEnv env #^ tuple requires #^ float ttl-seconds #^ str holder]
+    "行を書いて今の姿を読む(届かなければ WarmUnreachable)。"
     (setv body {"runtimeEnv" (run-program (runtime-env->json env)) "requires" (dict requires) "ttlSeconds" ttl-seconds
-                "holder" holder "format" PROTOCOL-FORMAT}
-          response (send-idempotent (fn [] (.request self.endpoint "POST" "/warm" :json body))))
+                "holder" holder "format" PROTOCOL-FORMAT})
+    (try
+      (setv response (send-idempotent (fn [] (.request self.endpoint "POST" "/warm" :json body))
+                                      :deadline-seconds self.deadline-seconds))
+      (except [error httpx.TransportError]
+        (return (WarmUnreachable :detail (.format "coordinator の /warm に接続できない: {}" error)))))
     (when (= response.status-code 400)
       (raise (DetachedRefused 400 (.get (.json response) "error" ""))))
+    (when (>= response.status-code SERVER-ERROR)
+      (return (WarmUnreachable :detail (.format "coordinator の /warm が {} を返した: {}" response.status-code response.text))))
     (.raise-for-status response)
     (warm-state-of-json (.json response)))
 
-  (defn #^ WarmState read [self #^ str key]
-    "行の今の姿を読む(表に無い行は ready も preparing も空・期限 0)。"
-    (setv response (send-idempotent (fn [] (.request self.endpoint "GET" (+ "/warm/" (url-quote key :safe ""))))))
-    (if (= response.status-code 404)
-        (WarmState :key key :ready #() :preparing #() :failed #() :until-ms 0)
-        (do (.raise-for-status response)
-            (warm-state-of-json (.json response))))))
+  (defn #^ WarmAnswer read [self #^ str key]
+    "行の今の姿を読む(表に無い行は ready も preparing も空・期限 0 — 届かなければ WarmUnreachable)。"
+    (try
+      (setv response (send-idempotent (fn [] (.request self.endpoint "GET" (+ "/warm/" (url-quote key :safe ""))))
+                                      :deadline-seconds self.deadline-seconds))
+      (except [error httpx.TransportError]
+        (return (WarmUnreachable :detail (.format "coordinator の /warm に接続できない: {}" error)))))
+    (cond
+      (= response.status-code 404) (WarmState :key key :ready #() :preparing #() :failed #() :until-ms 0)
+      (>= response.status-code SERVER-ERROR)
+      (WarmUnreachable :detail (.format "coordinator の /warm が {} を返した: {}" response.status-code response.text))
+      True (do (.raise-for-status response)
+               (warm-state-of-json (.json response))))))
 
 
 (defhandler warm-cluster [#^ WarmClient client]
   ;; 引数に残す理由: client は coordinator への接続(I/O の資源)で、composition root が url から 1 つ作る。
+  ;; 答えは WarmAnswer(coordinator に届かなければ WarmUnreachable — 例外で呼び手を落とさない)。
   (WarmRuntimeEnv [env requires ttl-seconds holder]
     (resume (.write client env requires (float ttl-seconds) holder)))
   (ReadWarmState [key]

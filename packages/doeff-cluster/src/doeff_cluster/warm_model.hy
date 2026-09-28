@@ -2,9 +2,12 @@
 ;;;
 ;;; 送り手(常駐の service 等)は、task を送る前に自分の実行環境を温めるよう頼む:
 ;;;
-;;;   (<- state WarmState (WarmRuntimeEnv env requires 600.0 "svc-a@<版>"))
-;;;   (<- again WarmState (ReadWarmState state.key))
+;;;   (<- state WarmAnswer (WarmRuntimeEnv env requires 600.0 "svc-a@<版>"))
+;;;   (<- again WarmAnswer (ReadWarmState state.key))
 ;;;   (> (len again.ready) 0)    ; requires の合う・生きていて drain 中でない worker の 1 台以上で準備済み
+;;;
+;;; 答えは WarmAnswer = WarmState か WarmUnreachable(coordinator の /warm に届かなかった — 接続の失敗・5xx。2026-09-28)。
+;;; 届かないは「温まっていない」と同じに読む値で、呼び手は例外で落ちずに次の拍で頼み直す。
 ;;;
 ;;; coordinator は温める表(行 = 宣言と requires の組)を持ち、label の合う worker の heartbeat の返事に載せる。worker は job の準備より
 ;;; 低い優先度で root を準備し、準備済みのキーを heartbeat で名乗る。準備の時間を task の待ちに入れないため(TI3 との関係は設計 節 3.2)。
@@ -42,9 +45,20 @@
   (#^ int until-ms))
 
 
+(defrecord WarmUnreachable
+  "coordinator の /warm に届かなかった(接続の失敗・coordinator の 5xx — 入れ替えの最中や網の途絶)。温まったかは分からないので、呼び手は
+   温まっていないと同じに読み、次の拍で頼み直す(同じ組の頼み直しは同じ意味)。detail = 失敗の種類(接続の失敗か、返った HTTP の状態)と
+   理由。前例 = 切り離した task の口の DetachedUnreachable(detached_model.hy — 送れなかったを値で返す形)。"
+  (#^ str detail))
+
+;; WarmRuntimeEnv と ReadWarmState の答え: 行の今の姿か、届かなかったか。
+(val WarmAnswer (| WarmState WarmUnreachable))
+
+
 (defclass [(dataclass :frozen True)] WarmRuntimeEnv [EffectBase]
   "env を requires の合う worker で温めるよう頼む(同じ env と requires の組は同じ行 — 頼み直すと期限だけ延びる)。
-   ttl-seconds = 行の期限(過ぎた行は配らず・掃除の固定からも外れる)・holder = 頼んだ主体(記録と表示だけ)。答え = WarmState。"
+   ttl-seconds = 行の期限(過ぎた行は配らず・掃除の固定からも外れる)・holder = 頼んだ主体(記録と表示だけ)。
+   答え = WarmAnswer(WarmState か、coordinator に届かなかった WarmUnreachable)。"
   (#^ RuntimeEnv env)
   (#^ tuple requires)
   (#^ float ttl-seconds)
@@ -52,7 +66,8 @@
 
 
 (defclass [(dataclass :frozen True)] ReadWarmState [EffectBase]
-  "温める表の行 key の今の姿を読む。答え = WarmState(表に無い行は ready も preparing も空・until-ms = 0)。"
+  "温める表の行 key の今の姿を読む。答え = WarmAnswer(WarmState — 表に無い行は ready も preparing も空・until-ms = 0 — か、
+   coordinator に届かなかった WarmUnreachable)。"
   (#^ str key))
 
 
