@@ -41,6 +41,13 @@
   #^ str key
   #^ (| int None) size)
 
+(defrecord Grouped
+  "1 つの setv に既定値つきの欄を並べた形(agora の ProfileFact で見つかった欠陥 — 前は最初の組だけを欄に数え、:check の参照が落ちた)"
+  {:check [(>= used 0) (<= used limit)]}
+  #^ str name
+  (setv #^ int used 0
+        #^ int limit 10))
+
 (defrecord Refused
   "検めの断り — 失敗の値の印つき"
   {:failure True}
@@ -147,3 +154,17 @@
   (assert (= (. (Refused :reason "r") reason) "r"))
   (assert (is ChatId.__doeff_failure__ False))
   (assert (not (hasattr Plain "__doeff_failure__"))))
+
+
+(deftest test-grouped-setv-fields-are-all-checked
+  (<- _ (Pure None))
+  ;; 2 つ目の組の欄 limit も :check の欄として数える(前は「欄を 1 つも参照しない」か、limit を束ねずに落ちた)。
+  (assert (= (. (Grouped :name "a" :used 3 :limit 5) limit) 5))
+  (assert (= (. (Grouped :name "a") limit) 10))
+  (with [caught (pytest.raises ValueError)]
+    (Grouped :name "a" :used 7 :limit 5))
+  (assert (in "Grouped の欄 used・limit が検め (<= used limit) で落ちた" (str caught.value)))
+  ;; 2 つ目の組の欄だけを参照する :check も展開できる。
+  ;; (検の外の module で展開するので、dataclass の名が無い誤りは出てもよい — 欄の読みの誤りが無いことだけを見る)。
+  (assert (not-in "欄を 1 つも参照しない" (or (refused "(defrecord Only {:check [(> b 0)]} (setv #^ int a 1 #^ int b 2))") ""))))
+

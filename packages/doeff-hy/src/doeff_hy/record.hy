@@ -180,7 +180,7 @@
 ;; 展開の時に頭の辞書を読む計算は macro の本体の中にだけ置く(defenum と同じ — 切り出すと
 ;; 展開の時に呼ぶ関数は defk にできず defn になり、quasiquote を持つ defn は型の投影に載らない)。
 ;; 欄の読み方(hy-index の record_def・quality.hy_record と同じ): `#^ T x` = (annotate x T)・
-;; `(#^ T x)` = ((annotate x T))・`(setv #^ T x 既定値)`・裸の記号 x。それ以外の form は欄ではない。
+;; `(#^ T x)` = ((annotate x T))・`(setv #^ T x 既定値 #^ U y 既定値 …)`(組ごとに 1 欄)・裸の記号 x。それ以外の form は欄ではない。
 (defmacro defrecord [name #* forms]
   (import hy.models [Dict Expression Keyword List Sequence String Symbol])
   (import doeff_hy.declarations [declared-value refuse-unknown-keys tags-form])
@@ -207,15 +207,17 @@
                                (get form 1)))
         names [])
   (for [form fields]
-    (setv target (cond
-                   (isinstance form Symbol) form
-                   (annotated form) (annotated form)
-                   (and (isinstance form Expression) (= (len form) 1)) (annotated (get form 0))
-                   (and (isinstance form Expression) (>= (len form) 2) (= (str (get form 0)) "setv"))
-                     (annotated (get form 1))
-                   True None))
-    (when (isinstance target Symbol)
-      (.append names (hy.mangle target))))
+    ;; 1 つの setv に組を並べた形 `(setv #^ T1 a v1 #^ T2 b v2)` は、組ごとに欄を 1 つ数える(的は 1・3・5 … 番目)。
+    (setv found (cond
+                  (isinstance form Symbol) [form]
+                  (annotated form) [(annotated form)]
+                  (and (isinstance form Expression) (= (len form) 1)) [(annotated (get form 0))]
+                  (and (isinstance form Expression) (>= (len form) 2) (= (str (get form 0)) "setv"))
+                    (lfor target (cut form 1 None 2) (annotated target))
+                  True []))
+    (for [target found]
+      (when (isinstance target Symbol)
+        (.append names (hy.mangle target)))))
   (setv statements []
         bound [])
   (for [check (or checks [])]
@@ -308,15 +310,17 @@
                                (get form 1)))
         targets [])
   (for [form fields]
-    (setv target (cond
-                   (isinstance form Symbol) form
-                   (annotated form) (annotated form)
-                   (and (isinstance form Expression) (= (len form) 1)) (annotated (get form 0))
-                   (and (isinstance form Expression) (>= (len form) 2) (= (str (get form 0)) "setv"))
-                     (annotated (get form 1))
-                   True None))
-    (when (isinstance target Symbol)
-      (.append targets target)))
+    ;; defrecord と同じ — 1 つの setv に並べた組は組ごとに欄を 1 つ数える。
+    (setv found (cond
+                  (isinstance form Symbol) [form]
+                  (annotated form) [(annotated form)]
+                  (and (isinstance form Expression) (= (len form) 1)) [(annotated (get form 0))]
+                  (and (isinstance form Expression) (>= (len form) 2) (= (str (get form 0)) "setv"))
+                    (lfor target (cut form 1 None 2) (annotated target))
+                  True []))
+    (for [target found]
+      (when (isinstance target Symbol)
+        (.append targets target))))
   ;; 欄の名 → wire の名。:camel = 2 つ目からの区切りの頭を大文字にしてつなぐ(lane-id → laneId)・:snake = 区切りを _(lane_id)・
   ;; :kebab = 区切りを -(lane-id)。区切り = - と _。明示の辞書は欄を全部ちょうど名指す(黙って既定の写しへ倒さない)。
   (setv wire-names {})
