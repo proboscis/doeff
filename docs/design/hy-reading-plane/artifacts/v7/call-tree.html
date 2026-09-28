@@ -1,0 +1,67 @@
+<!doctype html><html lang="ja" style="background:#1b1d21;color:#d6d8dc"><meta charset="utf-8"><title>呼び出しの依存の木 — 見本</title>
+<style>
+html,body{background:#1b1d21;color:#d6d8dc}
+body{font-family:-apple-system,"Hiragino Sans",sans-serif;margin:22px 28px;max-width:1500px}
+h1{font-size:19px;margin:0 0 6px}
+.note{color:#b8bec7;font-size:13px;line-height:1.7;max-width:1100px;margin-bottom:14px}
+.bar{display:flex;align-items:center;gap:12px;background:#15171a;border:1px solid #2c3036;border-radius:8px;padding:8px 12px;margin:0 0 12px;font-size:12px;color:#b8bec7;flex-wrap:wrap}
+.btn{font-size:11px;border:1px solid #4a76a8;border-radius:5px;padding:2px 8px;color:#bcd8ff;background:#1f2a3a}
+.btn.on{background:#2f4a66;border-color:#6a96c8;color:#fff}
+.sep{color:#3a3f47}
+.tree{background:#22252a;border:1px solid #33383f;border-radius:10px;padding:10px 16px;font-size:12.5px}
+.node{display:flex;align-items:center;gap:8px;padding:3px 0;white-space:nowrap}
+.node .tg{width:14px;color:#8a9099;text-align:center;font-family:Menlo,monospace}
+.kind{font-size:10px;font-weight:700;letter-spacing:.06em;color:#1b1d21;background:#e2c46a;border-radius:4px;padding:1px 5px}
+.kind.eff{background:#8fd3ff}.kind.test{background:#c9a8f0}.kind.py{background:#9aa1aa}
+.nm{font:600 12.5px Menlo,monospace;color:#f2e6a8}
+.sig{font:11.5px Menlo,monospace;color:#8a9099}.sig .t{color:#4ec9b0}.sig .r{color:#9fe3c0}
+.fx{display:inline-flex;gap:5px;font:11.5px Menlo,monospace;color:#8fd3ff}.fx img{width:12px;height:12px;image-rendering:pixelated;vertical-align:-1px;margin-right:2px}
+.chip{font-size:10px;border-radius:12px;padding:1px 7px;background:#3b3220;color:#f0c674;border:1px solid #5a4a25}.chip.role{background:#232f3b;color:#9dd0ff;border-color:#2f4a66}
+.cnt{color:#7d858f;font-size:11px;margin-left:auto}
+.dim{opacity:.45}
+.lvl1{margin-left:22px}.lvl2{margin-left:44px}.lvl3{margin-left:66px}.lvl4{margin-left:88px}
+.root{border-bottom:1px solid #2c3036;margin-bottom:6px;padding-bottom:6px}
+.sum{color:#b8bec7;font-size:12px;padding:4px 0 6px;border-bottom:1px solid #2c3036;margin-bottom:6px}
+.sum b{color:#e6e9ee}
+.two{display:grid;grid-template-columns:1.35fr 1fr;gap:14px}
+h2{font-size:14px;color:#ffd97a;margin:18px 0 6px}
+</style>
+<body style="background:#1b1d21;color:#d6d8dc">
+<h1>呼び出しの依存の木 — 見本(messaging の入力の処理・実物の呼び出し)</h1>
+<div class="note">材料は hy-index 版 4(定義の完全修飾名・呼び先・呼び手の逆引き)。節は v4 の畳んだ 1 行と同じ形で、上の切り替え(型・effect・tags)に従う。名をクリックでカードを面に積み、▸ / ▾ で開閉。同じ実体が 2 度出たら薄く ↺。根の下に「この木の下で使う effect の和」。</div>
+
+<div class="bar"><b style="color:#e6e9ee">call tree</b> 根: <span class="nm">run-requests</span> <span class="sep">|</span> 向き <span class="btn on">callees ↓</span><span class="btn">callers ↑</span> <span class="sep">|</span> 深さ <span class="btn">3</span><span class="btn">+</span> <span class="sep">|</span> <label><input type="checkbox"> tests を出す</label> <span class="sep">|</span> show in line: <label><input type="checkbox" checked> args / return type</label> <label><input type="checkbox" checked> effects</label> <label><input type="checkbox"> tags</label></div>
+
+<div class="two">
+<div class="tree">
+<div class="sum">この木の下で使う effect の和: <span class="fx"><img src="glyph.svg">ReadInput <img src="glyph.svg">WriteInput <img src="glyph.svg">SettleIntake</span> &nbsp;·&nbsp; 節 <b>9</b>(重複 1・循環 0)</div>
+<div class="node root"><span class="tg">▾</span><span class="kind">defk</span><span class="nm">run-requests</span><span class="sig">(requests: <span class="t">list</span>, finished: <span class="t">frozenset</span>) → <span class="r">InputRound</span></span><span class="fx"><img src="glyph.svg">ReadInput <img src="glyph.svg">WriteInput <img src="glyph.svg">SettleIntake</span><span class="cnt">callees 2</span></div>
+<div class="node lvl1"><span class="tg">▸</span><span class="kind">defk</span><span class="nm">target-of</span><span class="sig">(request: <span class="t">InputRequest</span>) → <span class="r">str | None</span></span><span class="cnt">callees 0</span></div>
+<div class="node lvl1"><span class="tg">▾</span><span class="kind">defk</span><span class="nm">run-input-request</span><span class="sig">(request: <span class="t">InputRequest</span>) → <span class="r">RunOutcome</span></span><span class="fx"><img src="glyph.svg">ReadInput <img src="glyph.svg">WriteInput <img src="glyph.svg">SettleIntake</span><span class="cnt">callees 3</span></div>
+<div class="node lvl2"><span class="tg">▾</span><span class="kind">defk</span><span class="nm">outcome-of</span><span class="sig">(request: <span class="t">InputRequest</span>) → <span class="r">InputDone | InputRejected | None</span></span><span class="fx"><img src="glyph.svg">ReadInput <img src="glyph.svg">WriteInput</span><span class="cnt">callees 2</span></div>
+<div class="node lvl3"><span class="tg">▾</span><span class="kind">defk</span><span class="nm">judged</span><span class="sig">(request: <span class="t">InputRequest</span>) → <span class="r">Judgment | None</span></span><span class="fx"><img src="glyph.svg">ReadInput</span><span class="cnt">callees 3</span></div>
+<div class="node lvl4 dim"><span class="tg">↺</span><span class="kind">defk</span><span class="nm">target-of</span><span class="sig">(2 度目 — 上に既出)</span></div>
+<div class="node lvl4"><span class="tg">·</span><span class="kind eff">defeffect</span><span class="nm">ReadInput</span><span class="sig">(id: <span class="t">str</span>) → <span class="r">InputRow | InputAbsent | InputUnreadable</span></span><span class="cnt">handled by 2</span></div>
+<div class="node lvl4"><span class="tg">▸</span><span class="kind">defk</span><span class="nm">judge</span><span class="sig">(request: <span class="t">InputRequest</span>, row: <span class="t">InputRow | None</span>) → <span class="r">Judgment</span></span><span class="cnt">callees 4</span></div>
+<div class="node lvl3"><span class="tg">·</span><span class="kind eff">defeffect</span><span class="nm">WriteInput</span><span class="sig">(write: <span class="t">InputWrite</span>) → <span class="r">WriteAnswer</span></span><span class="cnt">handled by 2</span></div>
+<div class="node lvl2"><span class="tg">▸</span><span class="kind">defk</span><span class="nm">settlement-of</span><span class="sig">(request-id: <span class="t">str</span>, route: <span class="t">str</span>, outcome: <span class="t">InputDone | InputRejected</span>) → <span class="r">IntakeSettlement</span></span><span class="cnt">callees 0</span></div>
+<div class="node lvl2"><span class="tg">·</span><span class="kind eff">defeffect</span><span class="nm">SettleIntake</span><span class="sig">(settlement: <span class="t">IntakeSettlement</span>) → <span class="r">IntakeSettleLanded | IntakeSettleRefused | IntakeUnreachable</span></span><span class="cnt">handled by 2</span></div>
+</div>
+
+<div>
+<h2 style="margin-top:0">callers ↑(根 = judged)</h2>
+<div class="tree">
+<div class="node root"><span class="tg">▾</span><span class="kind">defk</span><span class="nm">judged</span><span class="sig">(request: <span class="t">InputRequest</span>) → <span class="r">Judgment | None</span></span><span class="cnt">callers 1</span></div>
+<div class="node lvl1"><span class="tg">▾</span><span class="kind">defk</span><span class="nm">outcome-of</span><span class="cnt">callers 1</span></div>
+<div class="node lvl2"><span class="tg">▾</span><span class="kind">defk</span><span class="nm">run-input-request</span><span class="cnt">callers 1</span></div>
+<div class="node lvl3"><span class="tg">▾</span><span class="kind">defk</span><span class="nm">run-requests</span><span class="cnt">callers 1</span></div>
+<div class="node lvl4"><span class="tg">▸</span><span class="kind">defk</span><span class="nm">input-round</span><span class="chip">context: messaging</span><span class="chip role">role: entry</span><span class="cnt">callers 1</span></div>
+<div class="node lvl1 dim"><span class="tg">·</span><span class="kind test">deftest</span><span class="nm">test-send-creates-the-pending-row-once…</span><span class="sig">(tests を出す、を入れた時だけ)</span></div>
+</div>
+<h2>決まり(席の既定・戻せる)</h2>
+<div class="note" style="font-size:12.5px">
+向きの既定は callees。深さの既定は 3、+ で 1 段ずつ。節は v4 の 1 行と同じ形(上の切り替えに従う)。同じ実体の 2 度目は薄く ↺ で開かない。deftest の節は既定で隠す。根の下に「木の下で使う effect の和」。入口はカードの帯の callers / callees と、軸の欄の下の call tree。網(graph)の描画は別の版。
+</div>
+</div>
+</div>
+</body></html>

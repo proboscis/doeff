@@ -1,0 +1,44 @@
+{
+  "artifacts": [
+    {
+      "path": "artifacts/v7/design.md",
+      "sha256": "26df97ccb1be9c4489d4978932d7904757b9987b1a57544a6efcd896b8b007c1"
+    },
+    {
+      "path": "artifacts/v7/call-tree.html",
+      "sha256": "b0109f4308a4cb0a052175035318d5eb39047646847cb8831867eb59a8ee3235"
+    }
+  ],
+  "body": {
+    "actor": "user",
+    "authority": "direct",
+    "decision": "design",
+    "outcome": "accepted",
+    "scope_of_agreement": "operator が合意したのは source の highlighting が editor と同じであることと、呼び出しの木があること、および木の見本の形。本体の文字を theme の token の色に寄せること(R19)と、木の既定の細かな数(深さ 3 など)は席の既定で戻せる。網(graph)の描画は決めていない。",
+    "source": "operator の直接の議論 2026-09-29 00:4x〜00:5x(会話 defk-view-discuss・herdr pane w3J:pA)。逐語: \"when showing the source in reading pane, it should have the same semantic highlighting enabled\" / \"it would be great if there's also call dependency tree visualization\" / 木の見本 call-tree.html を見て \"the tree visualization is so good\"",
+    "statement": "v6 の裁定に 2 点を足す。(1) カードの中に開く元の Hy の source は editor と同じ semantic highlighting(同じ字句の分け・同じ theme の色)で描き、色の表を面に別に持たない。(2) 呼び出しの依存の木を面に持つ: 根の実体から callees ↓ / callers ↑ を木で描き、節は v4 の畳んだ 1 行と同じ形、名をクリックでカードを積む。入口はカードの帯の callers / callees と軸の欄の下の call tree。木の見本(向き・深さ 3・↺・tests は既定で隠す・根の下に effect の和)は operator が承認した。v6 までの他の決まりはそのまま。",
+    "subjects": [
+      "design-c6ae8fe5208d"
+    ],
+    "supersedes": [
+      "decision-8e4a61442bd9"
+    ]
+  },
+  "created_at": "2026-09-28T14:52:15.566858+00:00",
+  "id": "decision-ab12b884cefe",
+  "inputs": [
+    {
+      "id": "design-c6ae8fe5208d",
+      "role": "subject",
+      "sha256": "26fd760976222a158ed6509f39d0b7f569237435d06f863d96f4d419c7840c8c"
+    },
+    {
+      "id": "decision-8e4a61442bd9",
+      "role": "basis",
+      "sha256": "77a562c4cc1943c52b533b8ce0fec8607b363b7ce0c9c0659948e09329b0f311"
+    }
+  ],
+  "kind": "decision",
+  "schema_version": 1,
+  "scope": "doeff-hy の code を読む面(VS Code)。単位は file ではなく定義(defk・defrecord・defeffect・defhandler・deftest …)で、Scala 3 の見た目に印字し、tag・effect・呼び出し・型から辿る。source の Hy は編集しない。その先の言語(静的な型・型に載る effect・Python の呼び出し・file に縛られない名前空間)の要件も持つ"
+}
