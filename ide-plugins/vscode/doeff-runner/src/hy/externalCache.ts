@@ -204,6 +204,7 @@ export class ExternalModuleCache implements ExternalModuleSource, ExternalFileVi
     const outcome = await this.indexer.index({ tag: 'files', root, files: [origin] });
     switch (outcome.tag) {
       case 'failed':
+      case 'missing':
       case 'unsupported':
         return this.reportOnce(reportKey, `外の Hy の file ${origin} の索引を取れない: ${outcome.reason}`);
       case 'ok': {

@@ -10,10 +10,11 @@ export type HyIndexRequest =
   | { readonly tag: 'files'; readonly root: string; readonly files: readonly string[] }
   | { readonly tag: 'stdin'; readonly root: string; readonly path: string; readonly text: string };
 
-/** 索引の結果 — 読めた・失敗した(理由)・binary が hy-index を知らない。 */
+/** 索引の結果 — 読めた・失敗した(理由)・binary が見つからない・binary が hy-index を知らない。 */
 export type HyIndexOutcome =
   | { readonly tag: 'ok'; readonly document: HyIndexDocument; readonly rejected: readonly RejectedFile[] }
   | { readonly tag: 'failed'; readonly reason: string }
+  | { readonly tag: 'missing'; readonly reason: string }
   | { readonly tag: 'unsupported'; readonly binary: string; readonly reason: string };
 
 /** 索引を取る口。業務側(indexService)はこの口だけを使う。 */
@@ -62,6 +63,12 @@ export class ChildProcessHyIndexer implements HyIndexer {
     return run;
   }
 
+  /** 探した binary と対応の確認を忘れる(次の依頼で探し直す — 道具を入れた後の作り直しの口)。 */
+  forget(): void {
+    this.binary = undefined;
+    this.support.clear();
+  }
+
   /** binary を 1 度だけ探す(見つからない時の通知が繰り返されないように結果を持つ)。 */
   private findBinary() {
     if (this.binary === undefined) {
@@ -89,7 +96,7 @@ export class ChildProcessHyIndexer implements HyIndexer {
   private async runNow(request: HyIndexRequest): Promise<HyIndexOutcome> {
     const binary = await this.findBinary();
     if (binary.tag === 'missing') {
-      return { tag: 'failed', reason: binary.reason };
+      return { tag: 'missing', reason: binary.reason };
     }
     if (!(await this.supportsHyIndex(binary.path, request.root))) {
       return {

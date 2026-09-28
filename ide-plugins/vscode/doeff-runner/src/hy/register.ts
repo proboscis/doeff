@@ -8,7 +8,8 @@ import type { Resolve } from './callGraph';
 import { HyCallHierarchyProvider, HyEffectCodeLensProvider } from './effectProviders';
 import { EffectGraphSource } from './effects';
 import { ChildProcessHyIndexer, type LocateIndexer } from './indexer';
-import { HY_EXCLUDE_GLOB, HyIndexService, isHyPath } from './indexService';
+import { HY_EXCLUDE_GLOB, HyIndexService, isHyPath, type HyIndexStatusView } from './indexService';
+import { REINDEX_COMMAND, SHOW_OUTPUT_COMMAND } from './indexStatus';
 import { ExternalModuleCache } from './externalCache';
 import { HyNavTreeProvider, NAV_VIEWS, nodeDefinition } from './navPanel';
 import type { NavNode } from './navTree';
@@ -76,6 +77,8 @@ async function revealNode(node: NavNode | undefined): Promise<vscode.TextEditor 
 export interface HyNavigation {
   readonly store: HyIndexStore;
   readonly effects: EffectGraphSource;
+  /** 索引の状態(索引が無い時に、なぜ無いのかを出す) */
+  readonly status: HyIndexStatusView;
 }
 
 /** (索引の置き場と effect の表を返す — 「タグで閲覧」と文字の置き換えが読む)Hy の定義へ移動・参照・目次・記号の検索・hover・実装・呼び出し階層・注記・パネルを登録し、索引の保持を始める。 */
@@ -168,6 +171,12 @@ export function registerHyNavigation(context: vscode.ExtensionContext, deps: HyN
     vscode.window.onDidChangeActiveTextEditor(() => {
       trees.find((t) => t.view === 'current-file')?.provider.refresh();
     }),
+    vscode.commands.registerCommand(REINDEX_COMMAND, () => {
+      // 道具を入れ直した後でも拾えるよう、探した binary を忘れてから全体を取り直す
+      indexer.forget();
+      service.resume();
+    }),
+    vscode.commands.registerCommand(SHOW_OUTPUT_COMMAND, () => deps.output.show(true)),
     vscode.commands.registerCommand('doeff-runner.hy.refreshNavigation', () => {
       for (const tree of trees) {
         tree.provider.refresh();
@@ -214,5 +223,5 @@ export function registerHyNavigation(context: vscode.ExtensionContext, deps: HyN
     }
   }
   service.start();
-  return { store, effects: graphs };
+  return { store, effects: graphs, status: service };
 }
