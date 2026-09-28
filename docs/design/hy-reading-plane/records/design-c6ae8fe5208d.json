@@ -1,0 +1,325 @@
+{
+  "artifacts": [
+    {
+      "path": "artifacts/v7/design.md",
+      "sha256": "26df97ccb1be9c4489d4978932d7904757b9987b1a57544a6efcd896b8b007c1"
+    },
+    {
+      "path": "artifacts/v7/call-tree.html",
+      "sha256": "b0109f4308a4cb0a052175035318d5eb39047646847cb8831867eb59a8ee3235"
+    },
+    {
+      "path": "artifacts/v7/glyph.svg",
+      "sha256": "c8cc0490e553b7cfc2be1e0eba7d342163262a8930e8f15d8d404bcf6af92de8"
+    },
+    {
+      "path": "artifacts/v7/call-tree-render.png",
+      "sha256": "3a59d772fd227522619307ae78d455b07727298d99fa75b3fac94f9a551c7435"
+    }
+  ],
+  "body": {
+    "alternatives": [
+      {
+        "options": [
+          {
+            "benefits": "editor と面が常に同じ見え方。色の表が 1 つ",
+            "costs": "webview へ token の列を渡す口が要る",
+            "name": "editor と同じ tokenizer + theme の変数"
+          },
+          {
+            "benefits": "作る物が少ない",
+            "costs": "editor と食い違う。theme に追随しない。operator の裁定に反する",
+            "name": "面が自前の色の表で塗る"
+          }
+        ],
+        "question": "source の色をどこから取るか",
+        "reason": "operator \"it should have the same semantic highlighting enabled\"",
+        "reconsider_when": "—",
+        "selected": "editor と同じ tokenizer + theme の変数"
+      }
+    ],
+    "change_cases": [
+      {
+        "change": "拡張が semantic token の provider を持つ(今は TextMate の文法だけ)",
+        "expected_elements": [
+          "source-view"
+        ],
+        "id": "C1",
+        "preserve": [
+          "面は editor と同じ tokenizer を呼ぶだけ"
+        ],
+        "priority": "prepare",
+        "protected_contracts": [
+          "K6"
+        ],
+        "provenance": {
+          "kind": "observed",
+          "source": "herdr pane w3J:p2 の題 \"Hy semantic highlighting plugin\"・doeff-runner に provider は未登録(2026-09-29 00:4x 時点)"
+        },
+        "rationale": "main が Hy の semantic highlighting を検討中",
+        "verification": "provider を足しても面の code を変えずに同じ token の列が出る"
+      },
+      {
+        "change": "theme を替える",
+        "expected_elements": [
+          "source-view",
+          "body-printer"
+        ],
+        "id": "C2",
+        "preserve": [
+          "色は theme の変数から引く"
+        ],
+        "priority": "required",
+        "protected_contracts": [
+          "K6"
+        ],
+        "provenance": {
+          "kind": "inherited",
+          "source": "VS Code の theme"
+        },
+        "rationale": "利用者の設定",
+        "verification": "theme を替えると editor と面の色が同時に変わる"
+      }
+    ],
+    "contracts": [
+      {
+        "canonical_source": "ide-plugins/vscode/doeff-runner(実装の issue で決める)",
+        "effects": [],
+        "failures": [
+          "呼び先が索引で解けない呼び(素の Python の関数など)は種類 py の節で出し、開かない"
+        ],
+        "id": "K7",
+        "invariants": [
+          "同じ実体は 1 本の木に 1 度だけ開く",
+          "木は索引だけから組む"
+        ],
+        "operations": [
+          "tree(root, direction, depth) -> 節の木(実体・深さ・重複の印・effect の和)"
+        ],
+        "owner": "call-tree"
+      },
+      {
+        "canonical_source": "ide-plugins/vscode/doeff-runner(実装の issue で決める)",
+        "effects": [],
+        "failures": [
+          "tokenizer が無い時は色なしの文字(嘘の色を付けない)"
+        ],
+        "id": "K6",
+        "invariants": [
+          "同じ入力 → editor と同じ token の列",
+          "色の表を面に持たない"
+        ],
+        "operations": [
+          "tokens(text) -> [(文字, token の種類)]",
+          "color(token の種類) -> theme の変数"
+        ],
+        "owner": "source-view"
+      }
+    ],
+    "elements": [
+      {
+        "depends_on": [
+          "structure-index"
+        ],
+        "hidden_decisions": [
+          "tokenizer は editor の物を呼ぶ(写しを持たない)"
+        ],
+        "id": "source-view",
+        "kind": "internal",
+        "requirement_ids": [
+          "R18"
+        ],
+        "responsibility": "カードの source の欄。索引の位置で切り出した文字を editor と同じ tokenizer に通し、文字 + token の種類で webview へ渡す。色は webview で theme の変数から引く",
+        "state": []
+      },
+      {
+        "depends_on": [
+          "structure-index"
+        ],
+        "hidden_decisions": [
+          "語は keyword・型は type・文字列は string の色"
+        ],
+        "id": "body-printer",
+        "kind": "internal",
+        "requirement_ids": [
+          "R19"
+        ],
+        "responsibility": "v3 のまま + 行の各部分に token の種類を付け、色は theme の変数から引く",
+        "state": []
+      },
+      {
+        "depends_on": [],
+        "hidden_decisions": [],
+        "id": "structure-index",
+        "kind": "internal",
+        "requirement_ids": [
+          "R18",
+          "R20"
+        ],
+        "responsibility": "v1・v3 のまま(source の切り出しの口)+ 呼び先・呼び手の逆引きの口(hy-index 版 4)",
+        "state": []
+      },
+      {
+        "depends_on": [
+          "structure-index",
+          "entity-card"
+        ],
+        "hidden_decisions": [
+          "既定は callees・深さ 3",
+          "deftest は既定で隠す",
+          "網は描かない"
+        ],
+        "id": "call-tree",
+        "kind": "internal",
+        "requirement_ids": [
+          "R20",
+          "R21"
+        ],
+        "responsibility": "呼び出しの木の面。根・向き・深さ・tests の表示・1 行の切り替えを持ち、索引の呼び先 / 呼び手から木を組む。重複と循環は ↺。根の下に effect の和と節の数",
+        "state": [
+          "根",
+          "向き",
+          "深さ",
+          "開閉"
+        ]
+      },
+      {
+        "depends_on": [
+          "structure-index"
+        ],
+        "hidden_decisions": [],
+        "id": "entity-card",
+        "kind": "internal",
+        "requirement_ids": [
+          "R20"
+        ],
+        "responsibility": "v6 のまま + 関係の帯の callers / callees から木へ",
+        "state": []
+      }
+    ],
+    "handoff": {
+      "fixed": [
+        "カードの source は editor と同じ semantic highlighting",
+        "色の表を面に持たない",
+        "呼び出しの依存の木(callees / callers)を面に持つ"
+      ],
+      "free": [
+        "本体の文字の色の寄せ方",
+        "token の列を webview へ渡す口の形",
+        "木の既定(向き・深さ・tests・↺)"
+      ],
+      "next": [
+        "#910 の U1(source ボタン)・U5(本体の文字)・U6(関係の帯)の受け入れ条件に足し、木は新しい作業の単位(U8)にする"
+      ]
+    },
+    "level": "カードの source の欄と本体の文字の色の出所・呼び出しの木の面",
+    "methods": [
+      {
+        "evidence": [
+          "design-f953339f038c の methods"
+        ],
+        "name": "change-cases",
+        "profile": "change-cases-1996-local-v1",
+        "reason": "v2〜v6 の当て方に provider の追加(C1)と theme の変更(C2)を足しただけ",
+        "status": "reused",
+        "steps": []
+      },
+      {
+        "evidence": [],
+        "name": "ddd",
+        "profile": "ddd-evans-2015-local-v1",
+        "reason": "表示の設計",
+        "status": "not_applicable",
+        "steps": []
+      },
+      {
+        "evidence": [],
+        "name": "volatility",
+        "profile": "volatility-righting-software-local-v1",
+        "reason": "change-cases で扱った",
+        "status": "not_applicable",
+        "steps": []
+      },
+      {
+        "evidence": [],
+        "name": "add",
+        "profile": "add-2.0-local-v1",
+        "reason": "要素 3 つ",
+        "status": "not_applicable",
+        "steps": []
+      },
+      {
+        "evidence": [],
+        "name": "saam",
+        "profile": "saam-1996-local-v1",
+        "reason": "alternatives の表で済ませた",
+        "status": "not_applicable",
+        "steps": []
+      },
+      {
+        "evidence": [],
+        "name": "c4",
+        "profile": "c4-web-2026-09-14-local-v1",
+        "reason": "v1 の図で足りる",
+        "status": "not_applicable",
+        "steps": []
+      }
+    ],
+    "open_questions": [
+      "本体の文字を theme の token の色に寄せる(R19)は席の既定。見本の色(#4ec9b0 など)はいまの見本の固定の色で、実装では theme から引く",
+      "木の既定(R21)は席の既定。網(graph)が要るかは使ってから決める"
+    ],
+    "perspective": "proposed",
+    "purpose": "v7: v6(design-4039628561ae)に 2 点を足す。(1) カードの中に開く元の Hy の source は、editor の .hy と同じ字句の分けと同じ theme の色(semantic highlighting)で描き、面の側に色の表を別に持たない。本体の文字も同じ theme の token の色に寄せる(席の既定)。(2) 呼び出しの依存の木: hy-index 版 4 の呼び先・呼び手から、根の実体の callees ↓ / callers ↑ を木で描く(節は v4 の 1 行と同じ形・深さ 3・重複と循環は ↺・根の下に effect の和)。木の見本は operator が承認",
+    "requirements": [
+      {
+        "id": "R18",
+        "kind": "functional",
+        "provenance": {
+          "kind": "user",
+          "source": "operator 2026-09-29 \"when showing the source in reading pane, it should have the same semantic highlighting enabled\""
+        },
+        "statement": "カードの中の source は editor と同じ semantic highlighting(同じ字句の分け・同じ theme の色)で描く。色の表を面に別に持たない"
+      },
+      {
+        "id": "R19",
+        "kind": "quality",
+        "provenance": {
+          "kind": "assumption",
+          "source": "席の既定 2026-09-29(source と本体の色が食い違わないため。戻せる)"
+        },
+        "statement": "本体の文字(val / var・型・呼び・文字列)も editor と同じ theme の token の色に寄せ、面が自前で色を決めるのは editor に無い部品(バッジ・チップ・帯・⇐ の行の背景)だけ"
+      },
+      {
+        "id": "R20",
+        "kind": "functional",
+        "provenance": {
+          "kind": "user",
+          "source": "operator 2026-09-29 \"it would be great if there's also call dependency tree visualization\""
+        },
+        "statement": "呼び出しの依存の木: 根の実体から callees ↓ / callers ↑ を木で描く。材料は hy-index 版 4(完全修飾名・呼び先・呼び手の逆引き)。節は v4 の畳んだ 1 行と同じ形で切り替えに従う。名をクリックでカードを積む。入口はカードの帯の callers / callees と軸の欄の下の call tree"
+      },
+      {
+        "id": "R21",
+        "kind": "constraint",
+        "provenance": {
+          "kind": "assumption",
+          "source": "席の既定 2026-09-29(戻せる)"
+        },
+        "statement": "木の既定: 向きは callees・深さ 3(+ で 1 段ずつ)・同じ実体の 2 度目は薄く ↺ で開かない・deftest の節は既定で隠す・根の下に木の下で使う effect の和と節の数。網(graph)の描画は別の版"
+      }
+    ]
+  },
+  "created_at": "2026-09-28T14:51:40.866906+00:00",
+  "id": "design-c6ae8fe5208d",
+  "inputs": [
+    {
+      "id": "design-4039628561ae",
+      "role": "basis",
+      "sha256": "7e2becc445d56589f8975b2f71fa645ab23e8427b737ce0c758f0aeb45af7529"
+    }
+  ],
+  "kind": "design",
+  "schema_version": 1,
+  "scope": "doeff-hy の code を読む面(VS Code)。単位は file ではなく定義(defk・defrecord・defeffect・defhandler・deftest …)で、Scala 3 の見た目に印字し、tag・effect・呼び出し・型から辿る。source の Hy は編集しない。その先の言語(静的な型・型に載る effect・Python の呼び出し・file に縛られない名前空間)の要件も持つ"
+}
