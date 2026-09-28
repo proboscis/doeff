@@ -157,13 +157,26 @@ def test_static_view_does_not_leak_into_the_runtime_expansion() -> None:
     # 引きは文を持たない式(代入の的の中の ! でも compile できる形 — outcome_forms.open-form)。
     # open-bind の答えが Pure(効果を出さない @do の呼びをその場で呼んだ答え)ならその値、それ以外は yield(#844)。
     # 組み込みの type を名で引かない(呼び手の引数の名 type で壊れた — L562 の後始末)
+    # defk の本体の束ねは、defk が module の globals に置く名 _doeff_outcomes で引く(束ねごとの __import__ を
+    # 撃たない — #844 の案 a)。
     assert re.search(
         r"y = (?P<b>_hy_gensym_bound_\d+)\.value if \((?P=b) := "
-        r"\((?P<m>_hy_gensym_outcomes_\d+) := __import__\('doeff_core_effects\.outcomes', "
-        r"fromlist=\('open_bind',\)\)\)\.open_bind\(g\(x\)\)\)\.__class__ is (?P=m)\.Pure "
+        r"_doeff_outcomes\.open_bind\(g\(x\)\)\)\.__class__ is _doeff_outcomes\.Pure "
         r"else \(yield (?P=b)\)",
         runtime,
     ), runtime
+    assert "__import__" not in runtime
+    # defk の外の <- (名が globals に在ると言えない所)は、今までどおり __import__ で引く。
+    outside = ast.unparse(
+        hy.compiler.hy_compile(
+            hy.read_many("(require doeff-hy.macros [<-])\n(defn h [x] (<- y (g x)) y)"), "__main__"
+        )
+    )
+    assert re.search(
+        r"\((?P<m>_hy_gensym_outcomes_\d+) := __import__\('doeff_core_effects\.outcomes', "
+        r"fromlist=\('open_bind',\)\)\)\.open_bind\(g\(x\)\)\)\.__class__ is (?P=m)\.Pure",
+        outside,
+    ), outside
     # 型検査のための展開は Python の @effectful と同じ `x = perform(e)` の形(yield を出さない)
     assert "y: 'int' = _doeff_perform(g(x))" in static
     assert "yield" not in static

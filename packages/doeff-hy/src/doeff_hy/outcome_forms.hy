@@ -81,8 +81,8 @@
     (SplitBind :core core :absent (when suffix? (get form -1)))))
 
 
-(deff open-form [expr absent]  ; defk にできない: macro の展開の時に呼ぶ関数
-  {:pre [(: expr Object) (: absent (| Object None))] :post [(: % Expression)]
+(deff open-form [expr absent [helpers None]]  ; defk にできない: macro の展開の時に呼ぶ関数
+  {:pre [(: expr Object) (: absent (| Object None)) (: helpers (| Symbol None))] :post [(: % Expression)]
    :tags {:context "doeff-hy-outcomes" :role "foundation"}}
   "束ね 1 つの式(R5・R6): `(open-bind expr)` の答えが `Pure` ならその値、それ以外は yield して VM の答え。
    open-bind は効果を出さない @do の呼び(本体に yield の無い defk など)をその場で呼んで答えの `Pure` を返すので、
@@ -91,10 +91,15 @@
    解けるように。形は文を持たない 1 つの式(条件式と代入式)にする — `!` は式の中のどこにでも書けるので、
    `(setv (get (! e) 鍵) 値)` のように代入の的の中にも来る。import の文を持つ `(do (import …) …)` では Hy が的を組めずに
    compile が落ちる(agora-controllers の kanban_services.hy・2026-09-28)。module の引き(`__import__`)は 1 回の束ねで
-   1 回・約 0.3µs(import の文と同じ桁・hy.I は 4µs — 2026-09-28 に測った)。"
-  (let [module (hy.gensym "outcomes")
+   1 回・約 0.3µs(import の文と同じ桁・hy.I は 4µs — 2026-09-28 に測った)。
+   helpers = module の globals に在る outcomes の module の名(defk の本体の束ね — defk が globals に置く
+   `_doeff_outcomes`・HELPERS-NAME)。在れば `__import__` の代わりにその名で引く(1 回の束ねの `__import__` 約 0.2µs を
+   消す — agora-redesign #844 の案 a)。名が在ると分かっているのは defk の本体だけなので、ほかは None のまま。"
+  (let [module (if (is helpers None) (hy.gensym "outcomes") helpers)
         bound (hy.gensym "bound")
-        imported `(setx ~module (__import__ "doeff_core_effects.outcomes" :fromlist #("open_bind")))
+        imported (if (is helpers None)
+                     `(setx ~module (__import__ "doeff_core_effects.outcomes" :fromlist #("open_bind")))
+                     helpers)
         opened (if (is absent None)
                    `(. ~imported (open_bind ~expr))
                    `(. ~imported (open_bind ~expr (fn [] ~absent))))]
@@ -106,17 +111,17 @@
          (yield ~bound))))
 
 
-(deff bind-form [form]  ; defk にできない: macro の展開の時に呼ぶ関数
-  {:pre [(: form Expression)] :post [(: % Object)]
+(deff bind-form [form [helpers None]]  ; defk にできない: macro の展開の時に呼ぶ関数
+  {:pre [(: form Expression) (: helpers (| Symbol None))] :post [(: % Object)]
    :tags {:context "doeff-hy-outcomes" :role "foundation"}}
-  "(<- …) の form 1 つの展開 — <- の macro と、本体を先に読む macro(do!・defp・deftest・for/do・defhandler の節)が
-   共有する 1 点。分け方は macros.hy の _bind-parts、形は _bind-yield。"
+  "(<- …) の form 1 つの展開 — <- の macro と、本体を先に読む macro(do!・defp・deftest・for/do・defhandler の節・defk)が
+   共有する 1 点。分け方は macros.hy の _bind-parts、形は _bind-yield。helpers は open-form へ渡す(defk の本体だけ)。"
   (import doeff-hy.macros [_bind-parts _bind-yield])
   (let [parts (_bind-parts form)]
     (when (is parts None)
       (raise (SyntaxError (+ "<-: expected (<- expr) / (<- name expr) / (<- name Type expr), optionally followed by "
                              ":absent <失敗>, got " (source-of form)))))
-    (_bind-yield (get parts 0) (get parts 1) (get parts 2) (. (split-absent form) absent))))
+    (_bind-yield (get parts 0) (get parts 1) (get parts 2) (. (split-absent form) absent) helpers)))
 
 
 ;; ---------------------------------------------------------------------------

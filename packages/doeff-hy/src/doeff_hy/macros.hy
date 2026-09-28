@@ -25,6 +25,7 @@
 ;; ---------------------------------------------------------------------------
 
 (import os.path)
+(import importlib)
 (import inspect)
 ;; 実行時の guard(_guard-performed・_guard-statement-value)が defk の呼びごと・文ごとに引く型(#844)
 (import doeff [DoExpr EffectBase])
@@ -464,6 +465,10 @@ defk {name}: :post type annotation cannot be an empty string.
     (raise (TypeError message)))
   False)
 
+;; defk の本体の束ね(<- と !)が open_bind と Pure を引く、module の globals の名 — `__import__` を束ねごとに撃たないため
+;; (1 回 約 0.2µs・agora-redesign #844 の案 a)。値は _install-guard-globals が defk の module の globals に置く。
+(setv HELPERS-NAME (hy.models.Symbol "_doeff_outcomes"))
+
 (defn _install-guard-globals [wrapped [runtime-globals None]]
   "Install generated-function runtime helpers in the defining module globals.
 
@@ -481,6 +486,8 @@ defk {name}: :post type annotation cannot be an empty string.
   (.setdefault globals-dict "_guard_performed" _guard-performed)
   (.setdefault globals-dict "_guard_statement_value" _guard-statement-value)
   (.setdefault globals-dict "_doeff_check_program_return" _doeff-check-program-return)
+  ;; defk の本体の束ねが名で引く outcomes の module(HELPERS-NAME — _expand-bangs の helpers・#844 の案 a)。
+  (.setdefault globals-dict (str HELPERS-NAME) (importlib.import-module "doeff_core_effects.outcomes"))
   (for [#(name value) (.items (or runtime-globals {}))]
     (.setdefault globals-dict name value))
   wrapped)
@@ -847,7 +854,7 @@ defk {name}: {{:post [...]}} is required.
                                      :module (_module-names _hy-compiler)))
   ;; Expand bangs in the real body — in-place (yield ...) rewrite [ADR-DOE-HY-003]
   (setv expanded-forms
-    (lfor form real-body (_expand-bangs form (+ "defk " (str name)))))
+    (lfor form real-body (_expand-bangs form (+ "defk " (str name)) HELPERS-NAME)))
   (setv fn-form (_build-fn-with-contracts ['_doeff_do] name params pre-checks post-checks expanded-forms))
   (locate-synthesized `(do
      ~(_helper-imports)
@@ -1032,7 +1039,7 @@ defk {name}: {{:post [...]}} is required.
     (= (len core) 3) #((get core 1) None (get core 2))
     (= (len core) 4) #((get core 1) (get core 2) (get core 3))))
 
-(defn _bind-yield [name tp expr [absent None]]
+(defn _bind-yield [name tp expr [absent None] [helpers None]]
   "Single definition point for the yield form of an effect binding.
    Used by the <- macro AND by every body expander that pre-parses <- forms
    (do! / defp / deftest / for/do / traverse / defhandler clauses), so the type contract of a
@@ -1049,7 +1056,7 @@ defk {name}: {{:post [...]}} is required.
    スコープで出し、Result / Maybe の値を開く。宣言の無い effect と Program は受け取った物をそのまま返す
    (ADR-DOE-CORE-EFFECTS-003 R5・R6)。"
   (import doeff-hy.outcome-forms [open-form])
-  (setv performed (open-form expr absent))
+  (setv performed (open-form expr absent helpers))
   (cond
     ;; 型検査のための展開(doeff_hy/static_view.py): x の型 = expr の答えの型。
     ;; Python の `@effectful` の `x = perform(e)`(docs/24-effectful-perform.md)と同じ形で、
@@ -1315,7 +1322,7 @@ the effect in the enclosing do-context.
   [ADR-DOE-HY-003]
 " :owner owner :line (_bang-node-line node) :head head :src inner-src))
 
-(defn _expand-bangs [form [owner "do-context"]]
+(defn _expand-bangs [form [owner "do-context"] [helpers None]]
   "Rewrite every (! expr) IN PLACE to (yield expr), preserving the written
    evaluation position: conditionality (if/when/cond), short-circuit (and/or),
    left-to-right order within a statement, exception context (try), and
@@ -1328,7 +1335,13 @@ the effect in the enclosing do-context.
 
    Forms that own their own do-context (for/do, traverse, fnk, do!, handle,
    nested defk/deff/defp/deftest/..., defmacro, quote/quasiquote) are opaque —
-   their own macro expands their bangs (R4)."
+   their own macro expands their bangs (R4).
+
+   helpers = the module-global name of doeff_core_effects.outcomes (defk passes HELPERS-NAME,
+   which it installs in its module's globals): the binds of this body — every (! e) and every
+   (<- …) outside a nested function — reach open_bind by that name instead of `__import__`
+   (agora-redesign #844 — about 0.2µs a bind). Other callers pass None and keep their (<- …)
+   forms for their own expansion."
   (defn walk [node ctx]
     (cond
       (_is-bang node)
@@ -1346,7 +1359,7 @@ the effect in the enclosing do-context.
           (if (_static-view?)
               `(yield ~(walk (get node 1) ctx))
               (do (import doeff-hy.outcome-forms [open-form])
-                  (open-form (walk (get node 1) ctx) None))))
+                  (open-form (walk (get node 1) ctx) None helpers))))
 
       (isinstance node hy.models.Expression)
         (do
@@ -1372,7 +1385,13 @@ the effect in the enclosing do-context.
                     (and (is-not head None) (in head _BANG-FN-HEADS))
                       #("fn" head)
                     True ctx))
-                (hy.models.Expression (lfor child node (walk child new-ctx))))))
+                (setv walked (hy.models.Expression (lfor child node (walk child new-ctx))))
+                ;; defk の本体の (<- …) は、ここで helpers の名で引く形に展開する(入れ子の関数の中は
+                ;; その関数の束ねなので触らない — <- の macro が今までの形に展開する)。
+                (if (and (= head "<-") (is-not helpers None) (is ctx None) (not (_static-view?)))
+                    (do (import doeff-hy.outcome-forms [bind-form])
+                        (bind-form walked helpers))
+                    walked))))
 
       (isinstance node hy.models.FString)
         (hy.models.FString (lfor child node (walk child ctx))
