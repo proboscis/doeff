@@ -6,8 +6,9 @@
 import type { HyDefinition, HyTypeNote } from '../hy/contract';
 import { escapeHtml, type Glyphs } from './html';
 import { LABELS } from './labels';
+import { NAMES_ONLY_PARAMS, TALL_SIGNATURE_CHARS, TALL_SIGNATURE_PARAMS } from './layout';
 import type { Card } from './model';
-import { calleesInTree, indexTypeText, type CallGraph } from './tree';
+import { calleesInTree, indexTypeText, indexUnionMembers, type CallGraph } from './tree';
 
 /** 欄 1 つの行。 */
 function row(label: string, body: string): string {
@@ -26,6 +27,24 @@ function effectChip(name: string, glyphs: Glyphs): string {
   return `<span class="eff">${src === undefined ? '' : `<img src="${escapeHtml(src)}" alt="">`}${escapeHtml(name)}</span>`;
 }
 
+/**
+ * decorator の札の文字(v9 — 型の性質を頭で見せるため): `dataclass :frozen True` は `frozen dataclass`、`dataclass` だけなら
+ * `dataclass`、他は書かれたとおり(索引 版 6 の綴り — 外側の括弧を外し空白を 1 つに詰めた物)。
+ */
+export function decoratorLabel(text: string): string {
+  const [head, ...rest] = text.split(' ');
+  if (head !== 'dataclass' && head !== 'dataclasses.dataclass') {
+    return text;
+  }
+  const options = rest.join(' ');
+  return /(^| ):frozen True( |$)/.test(options) ? 'frozen dataclass' : 'dataclass';
+}
+
+/** 頭の decorator の札(書かれたままの綴りは hover)。 */
+export function decoratorBadges(definition: HyDefinition): string {
+  return definition.decorators.map((d) => `<span class="deco" title="${escapeHtml(d)}">${escapeHtml(decoratorLabel(d))}</span>`).join('');
+}
+
 /** 宣言した effect のチップ(索引 版 5 — 1 行の effects に。linter の見出しが無い時)。 */
 export function declaredEffectChips(definition: HyDefinition, glyphs: Glyphs): string {
   return (definition.effects ?? []).map((e) => effectChip(e.name, glyphs)).join('');
@@ -36,15 +55,53 @@ function membersOf(card: Card, kind: HyDefinition['kind']): HyDefinition[] {
   return card.members.filter((m) => m.kind === kind);
 }
 
-/** 欄の型の並び(欄の型が無い欄は入れ子の定義の名だけ)。 */
+/** 欄 1 つ — 名と型(型を書いていない欄は undefined)。 */
+interface FieldView {
+  readonly name: string;
+  readonly type: HyTypeNote | undefined;
+}
+
+/**
+ * 型の欄を書いた順に並べるため — 入れ子の定義の欄(field)の名に索引の欄の型(param_types)を当て、欄の定義の無い型の欄
+ * (defrecord の欄)は型の順に足す(v9: defclass の `#^ T x` も defrecord と同じ読み手で param_types に載る)。
+ */
+function fieldsOf(card: Card): FieldView[] {
+  const typed = new Map(card.definition.paramTypes.map((p) => [p.name, p.type]));
+  const members = membersOf(card, 'field').map((m) => m.name);
+  const rest = card.definition.paramTypes.map((p) => p.name).filter((name) => !members.includes(name));
+  return [...members, ...rest].map((name) => ({ name, type: typed.get(name) }));
+}
+
+/** 欄のチップの並び(defeffect の引数の欄に使う — 型の欄の縦の表は fieldsRow)。 */
 function fieldChips(card: Card): string {
-  const d = card.definition;
-  if (d.paramTypes.length > 0) {
-    return d.paramTypes.map((p) => nameTypeChip(p.name, p.type)).join('');
-  }
-  return membersOf(card, 'field')
-    .map((m) => nameTypeChip(m.name, undefined))
+  return fieldsOf(card)
+    .map((f) => nameTypeChip(f.name, f.type))
     .join('');
+}
+
+/** 欄が多いか型が長いか(関数の見出しと同じ v6 の閾で、型の欄も縦の表にするため — v9)。 */
+function isTallFields(fields: readonly FieldView[]): boolean {
+  const chars = fields.reduce((n, f) => n + (f.type === undefined ? 0 : indexTypeText(f.type).length), 0);
+  return fields.length >= TALL_SIGNATURE_PARAMS || chars > TALL_SIGNATURE_CHARS;
+}
+
+/** 型の欄(defrecord・deftype・defclass の開いた形)— 短ければ 1 行のチップ、長ければ名と型の縦の表(union は候補ごとのチップ)。 */
+function fieldsRow(card: Card): string {
+  const fields = fieldsOf(card);
+  if (fields.length === 0) {
+    return '';
+  }
+  if (!isTallFields(fields)) {
+    return row(LABELS.fields, fields.map((f) => nameTypeChip(f.name, f.type)).join(''));
+  }
+  const rows = fields
+    .map((f) => {
+      const members = f.type === undefined ? [] : indexUnionMembers(f.type);
+      const chips = members.map((m) => `<span class="${m === 'None' ? 'none' : ''}">${escapeHtml(m)}</span>`).join('<i>|</i>');
+      return `<span class="n">${escapeHtml(f.name)}</span><span class="tc">${chips}</span>`;
+    })
+    .join('');
+  return `<div class="sig2 fields"><div class="lab">${escapeHtml(LABELS.fields)}</div>${rows}</div>`;
 }
 
 /** 型でない契約の欄(全部の実体に共通 — 型の注記は引数と答えの型へ溶けるので、残った述語だけ。無ければ出さない)。 */
@@ -62,9 +119,6 @@ function typedParams(definition: HyDefinition): Array<{ readonly name: string; r
   const names = definition.params.length > 0 ? definition.params : definition.paramTypes.map((p) => p.name);
   return names.map((name) => ({ name, type: typed.get(name) }));
 }
-
-/** 畳んだ 1 行で型を省いて名だけにする引数の数(v6 2.2 節 — render.ts の見出しの 1 行と同じ数)。 */
-const NAMES_ONLY_PARAMS = 4;
 
 /**
  * linter の見出しがまだ無い関数(defk・deff・defn)の欄 — 索引 版 5 の引数と答えの型・宣言した effect で描く
@@ -88,9 +142,14 @@ export function entityRows(card: Card, glyphs: Glyphs): string {
       return `<div class="sig">${fields === '' ? `<span class="none">${escapeHtml(LABELS.noArgs)}</span>` : fields}${answer}</div>`;
     }
     case 'defrecord':
-    case 'deftype': {
-      const fields = fieldChips(card);
-      return fields === '' ? '' : row(LABELS.fields, fields);
+    case 'deftype':
+      return fieldsRow(card);
+    case 'defclass': {
+      // v9: defrecord と同じ欄(型つき・v6 の閾で縦の表)に、ある時だけ基底と method
+      const bases = d.bases.length === 0 ? '' : row(LABELS.bases, d.bases.map((b) => `<span class="p"><span class="t">${escapeHtml(b)}</span></span>`).join(''));
+      const methods = membersOf(card, 'method');
+      const methodRow = methods.length === 0 ? '' : row(LABELS.methods, methods.map((m) => `<span class="p"><span class="n">${escapeHtml(m.name)}</span></span>`).join(''));
+      return fieldsRow(card) + bases + methodRow;
     }
     case 'defenum': {
       const values = membersOf(card, 'enum-member');
@@ -107,7 +166,7 @@ export function entityRows(card: Card, glyphs: Glyphs): string {
       return `${type}${row(LABELS.value, `<span class="lisp" title="${escapeHtml(LABELS.lispAsIs)}">${escapeHtml(first)}</span>`)}`;
     }
     default: {
-      // 他の種類(deftest・defclass・defn など)は引数の名・基底・入れ子の定義
+      // 他の種類(deftest・defn など)は引数の名・基底・入れ子の定義
       const rows: string[] = [];
       if (d.params.length > 0) {
         rows.push(row(LABELS.args, d.params.map((p) => nameTypeChip(p, d.paramTypes.find((t) => t.name === p)?.type)).join('')));
@@ -149,10 +208,15 @@ export function entityLineArgs(card: Card): string {
     }
     case 'defrecord':
     case 'deftype':
-      if (d.paramTypes.length > 0) {
-        return `<span class="f f-args">(${typed(d.paramTypes)})</span>`;
+    case 'defclass': {
+      // 型の欄は数が多くても型を出す(v9 の見本 `(ref: str, text: str, request-id: str | None, …)`)。型の無い欄は名だけ
+      const fields = fieldsOf(card);
+      if (fields.length > 0) {
+        const shown = fields.map((f) => (f.type === undefined ? escapeHtml(f.name) : `${escapeHtml(f.name)}: <span class="t">${escapeHtml(indexTypeText(f.type))}</span>`));
+        return `<span class="f f-args">(${shown.join(', ')})</span>`;
       }
       break;
+    }
     case 'defenum': {
       const values = membersOf(card, 'enum-member').map((m) => escapeHtml(m.name));
       return values.length === 0 ? '' : `<span class="f f-args">${values.join(' | ')}</span>`;
@@ -174,17 +238,55 @@ export function entityLineArgs(card: Card): string {
 /** 帯に名を出す数(残りは +N — 全部は木で見る)。 */
 const BAND_NAMES = 3;
 
-/** 関係の名の並び(押すとそのカードへ — 見本 v2 の `callers 2: run-requests · …`)。 */
+/** used by の欄に 1 つの関係ごとに出す名の数(残りは +N)。 */
+const USED_BY_NAMES = 6;
+
+/**
+ * 関係の名のボタンの並び(押すとそのカードへ)。別の file の同名の定義が並ぶ時は file 名を添える — 名だけでは
+ * `judged · judged` のようにどれか見分けられないため(V11 の実物の画面で見つけた)。
+ */
+function nameButtons(qualifiedNames: readonly string[], graph: CallGraph, limit: number): string {
+  const nameOf = (qn: string): string => graph.definitions.get(qn)?.definition.name ?? qn;
+  const counts = new Map<string, number>();
+  for (const qn of qualifiedNames) {
+    counts.set(nameOf(qn), (counts.get(nameOf(qn)) ?? 0) + 1);
+  }
+  const shown = qualifiedNames.slice(0, limit).map((qn) => {
+    const name = nameOf(qn);
+    const file = graph.definitions.get(qn)?.path.split('/').pop()?.replace(/\.hy$/, '');
+    const qual = (counts.get(name) ?? 0) > 1 && file !== undefined ? `<span class="qual">${escapeHtml(file)}</span>` : '';
+    return `<button class="tname-sm" data-reveal="${escapeHtml(qn)}">${escapeHtml(name)}${qual}</button>`;
+  });
+  const more = qualifiedNames.length > limit ? ` · +${qualifiedNames.length - limit}` : '';
+  return `${shown.join(' · ')}${more}`;
+}
+
+/** 帯の関係の名の並び(見本 v2 の `callers 2: run-requests · …`)。 */
 function nameList(qualifiedNames: readonly string[], graph: CallGraph): string {
-  if (qualifiedNames.length === 0) {
+  return qualifiedNames.length === 0 ? '' : `: ${nameButtons(qualifiedNames, graph, BAND_NAMES)}`;
+}
+
+/**
+ * defclass の used by の欄(v9 — 型の軸と同じ材料をカードの側から見た形): この型を引数に取る定義(arg of)・返す定義(returns)・
+ * 欄に持つ型と effect(field of)・この名を呼んで作る定義(made in — test は帯の tests にあるので除く)。どれも無ければ出さない。
+ */
+export function usedByRow(card: Card, graph: CallGraph): string {
+  const d = card.definition;
+  if (d.kind !== 'defclass') {
     return '';
   }
-  const shown = qualifiedNames.slice(0, BAND_NAMES).map((qn) => {
-    const name = graph.definitions.get(qn)?.definition.name ?? qn;
-    return `<button class="tname-sm" data-reveal="${escapeHtml(qn)}">${escapeHtml(name)}</button>`;
-  });
-  const more = qualifiedNames.length > BAND_NAMES ? ` · +${qualifiedNames.length - BAND_NAMES}` : '';
-  return `: ${shown.join(' · ')}${more}`;
+  const qn = d.qualifiedName;
+  const madeIn = (graph.callers.get(qn) ?? []).filter((other) => graph.definitions.get(other)?.definition.kind !== 'deftest');
+  const groups: ReadonlyArray<readonly [string, readonly string[]]> = [
+    [LABELS.argOf, graph.acceptedBy.get(qn) ?? []],
+    [LABELS.returns, graph.returnedBy.get(qn) ?? []],
+    [LABELS.fieldOf, graph.fieldOf.get(qn) ?? []],
+    [LABELS.madeIn, madeIn]
+  ];
+  const shown = groups
+    .filter(([, names]) => names.length > 0)
+    .map(([label, names]) => `<span class="use"><b>${escapeHtml(label)}</b>${nameButtons(names, graph, USED_BY_NAMES)}</span>`);
+  return shown.length === 0 ? '' : row(LABELS.usedBy, shown.join(''));
 }
 
 /** 帯の関係 1 つ(数を押すと木 — 呼び出しの向きがある物だけ)と、その名。 */

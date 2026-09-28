@@ -9,8 +9,9 @@ import type { LintBody, LintBodySegment, LintSignature, LintViolation } from '..
 import { answerText, headerEffects, typeText } from '../defk/model';
 import { cardKey, LINE_FIELDS, type FoldState, type LineField } from './fold';
 import { escapeHtml, tagClass, type Glyphs } from './html';
-import { contractRow, declaredEffectChips, entityLineArgs, entityRows, indexSignatureRows, relationBand } from './entity';
+import { contractRow, declaredEffectChips, decoratorBadges, entityLineArgs, entityRows, indexSignatureRows, relationBand, usedByRow } from './entity';
 import { LABELS } from './labels';
+import { NAMES_ONLY_PARAMS, TALL_SIGNATURE_CHARS, TALL_SIGNATURE_PARAMS } from './layout';
 import { axisKey, axisTitle, facets, SEARCH_KEY, visibleCards, worstLevel, type Card, type Facet, type Selection } from './model';
 import { relationOf, type CallGraph, type CallTree } from './tree';
 import { renderTree, type TreeRenderContext } from './treeRender';
@@ -69,13 +70,7 @@ export function lineClasses(state: FoldState): string {
     .join(' ');
 }
 
-/** 縦の表に切り替える閾(v6 2.1 節・席の既定で戻せる): 引数の数と、引数と return type の型の文字の合計。 */
-export const TALL_SIGNATURE_PARAMS = 4;
-export const TALL_SIGNATURE_CHARS = 60;
-/** 畳んだ 1 行で型を省いて名だけにする引数の数(v6 2.2 節)。 */
-export const NAMES_ONLY_PARAMS = 4;
-
-/** 引数が多いか型が長い見出しか(1 行のチップでは return type が折り返しに埋もれるので、縦の表で描くため)。 */
+/** 引数が多いか型が長い見出しか(閾は layout.ts — 引数の数と、引数と return type の型の文字の合計)(1 行のチップでは return type が折り返しに埋もれるので、縦の表で描くため)。 */
 export function isTallSignature(signature: LintSignature): boolean {
   const chars = signature.params.reduce((n, p) => n + typeText(p.type).length, 0) + answerText(signature).length;
   return signature.params.length >= TALL_SIGNATURE_PARAMS || chars > TALL_SIGNATURE_CHARS;
@@ -270,7 +265,7 @@ export function renderCard(card: Card, ctx: CardContext, hidden: boolean): strin
   const start = d.fullRange.start;
   const toggle = `<button class="fold" data-fold="${escapeHtml(key)}" title="${escapeHtml(open ? LABELS.fold : LABELS.unfold)}">${open ? '▾' : '▸'}</button>`;
   const buttons = `<span class="srcbar"><button class="btn" data-src="${card.id}">${escapeHtml(LABELS.source)}</button><button class="btn" data-line="${start.line}" data-character="${start.character}">${escapeHtml(LABELS.openInEditor)}</button></span>`;
-  const head = `<div class="hd"><span class="kind k-${escapeHtml(d.kind)}">${escapeHtml(d.kind)}</span><span class="name">${escapeHtml(d.name)}</span>${toggle}${buttons}<span class="chips full-only">${tagChips('chip')}</span></div>`;
+  const head = `<div class="hd"><span class="kind k-${escapeHtml(d.kind)}">${escapeHtml(d.kind)}</span><span class="name">${escapeHtml(d.name)}</span>${decoratorBadges(d)}${toggle}${buttons}<span class="chips full-only">${tagChips('chip')}</span></div>`;
   const relation = relationOf(ctx.graph, d.qualifiedName);
   const relationText = `${LABELS.callers} <b>${relation.callers}</b> · ${LABELS.tests} <b>${relation.tests}</b>`;
   // 帯の callers / callees は木の入口(v7 3 節の入口 a)
@@ -296,6 +291,7 @@ export function renderCard(card: Card, ctx: CardContext, hidden: boolean): strin
         ? indexSignatureRows(d, ctx.glyphs)
         : entityRows(card, ctx.glyphs)) + contractRow(d);
   const docBlock = d.docstring === null ? '' : `<div class="doc">${escapeHtml(d.docstring)}</div>`;
+  const usedBy = usedByRow(card, ctx.graph);
   const body = card.body === undefined ? '' : bodyBlock(card.body, ctx.glyphs, card.violations);
   const level = worstLevel(card.violations);
   const violations =
@@ -307,7 +303,7 @@ export function renderCard(card: Card, ctx: CardContext, hidden: boolean): strin
   // source を持たないカード(repo 全体の面の索引だけのカード)は、開く・source を押すとその file を読み込む(v3 3 節 — 索引の位置から切り出す)
   const lazy = card.source === '' ? ' data-lazy' : '';
   const classes = open ? 'card open' : 'card';
-  return `<section class="${classes}" id="${card.id}" data-key="${escapeHtml(key)}" data-qn="${qn}"${lazy}${hidden ? ' hidden' : ''}>${head}<div class="line">${line}</div><div class="full">${middle}${docBlock}${body}</div>${sourceBox(card, fileLabel, ctx.coloringOf(card))}<div class="full">${foot}</div></section>`;
+  return `<section class="${classes}" id="${card.id}" data-key="${escapeHtml(key)}" data-qn="${qn}"${lazy}${hidden ? ' hidden' : ''}>${head}<div class="line">${line}</div><div class="full">${middle}${docBlock}${usedBy}${body}</div>${sourceBox(card, fileLabel, ctx.coloringOf(card))}<div class="full">${foot}</div></section>`;
 }
 
 /** 面の状態 — 索引にその file が無い時・設定で切った時は理由を出す。 */
@@ -580,6 +576,10 @@ code{font:12px Menlo,monospace;background:#1b1d21;border:1px solid #3a3f47;borde
 .relgroup{display:inline-flex;gap:4px;align-items:baseline}
 .tname-sm{background:transparent;border:none;padding:0;font:12px Menlo,monospace;color:#c9ced5;cursor:pointer}
 .tname-sm:hover{color:#f2e6a8;text-decoration:underline}
+.tname-sm .qual{color:#7d858f;font-size:10.5px;margin-left:4px}
+.use{display:inline-flex;gap:6px;align-items:baseline;margin:0 14px 4px 0}
+.use b{color:#8a9099;font-weight:500}
+.deco{font:10.5px Menlo,monospace;border-radius:4px;padding:1px 6px;border:1px solid #5a4a8a;color:#c3b6ff;background:#2a2440}
 #search{width:100%;box-sizing:border-box;margin:0 0 12px;background:#1f2227;color:#d6d8dc;border:1px solid #3a3f47;border-radius:6px;padding:4px 8px;font:12px Menlo,monospace}
 #tree-root{width:100%;background:#1f2227;color:#d6d8dc;border:1px solid #3a3f47;border-radius:6px;padding:3px 6px;font:12px Menlo,monospace}
 .tree{background:#22252a;border:1px solid #33383f;border-radius:10px;margin:0 0 16px;padding:0 0 8px}

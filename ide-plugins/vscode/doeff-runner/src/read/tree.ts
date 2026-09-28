@@ -32,7 +32,12 @@ export interface CallGraph {
   readonly returnedBy: ReadonlyMap<string, readonly string[]>;
   /** 型の完全修飾名 → その型を引数に書いた定義(accepted by) */
   readonly acceptedBy: ReadonlyMap<string, readonly string[]>;
+  /** 型の完全修飾名 → その型を欄の型に書いた型と effect(field of — v9 の used by) */
+  readonly fieldOf: ReadonlyMap<string, readonly string[]>;
 }
+
+/** 欄を持つ種類(索引の param_types が欄の型 — v9: defclass の `#^ T x` も defrecord と同じ読み手で載る)。 */
+const FIELD_KINDS: ReadonlySet<HyDefinition['kind']> = new Set<HyDefinition['kind']>(['defrecord', 'deftype', 'defclass', 'defeffect']);
 
 /** 位置が範囲に入るか。 */
 function within(range: HyRange, line: number, character: number): boolean {
@@ -61,6 +66,7 @@ export function buildCallGraph(files: readonly HyFileIndex[]): CallGraph {
   const returnedBy = new Map<string, string[]>();
   const handlerDefinitions = new Map<string, string[]>();
   const acceptedBy = new Map<string, string[]>();
+  const fieldOf = new Map<string, string[]>();
   for (const file of files) {
     for (const definition of file.definitions) {
       if (!definitions.has(definition.qualifiedName)) {
@@ -89,6 +95,15 @@ export function buildCallGraph(files: readonly HyFileIndex[]): CallGraph {
           }
         }
       }
+      if (FIELD_KINDS.has(definition.kind)) {
+        for (const field of definition.paramTypes) {
+          for (const name of field.type.names) {
+            if (name.target !== null && name.target !== definition.qualifiedName) {
+              push(fieldOf, name.target, definition.qualifiedName);
+            }
+          }
+        }
+      }
     }
   }
   const callees = new Map<string, string[]>();
@@ -109,7 +124,7 @@ export function buildCallGraph(files: readonly HyFileIndex[]): CallGraph {
       }
     }
   }
-  return { definitions, callees, callers, handlers, handlerDefinitions, returnedBy, acceptedBy };
+  return { definitions, callees, callers, handlers, handlerDefinitions, returnedBy, acceptedBy, fieldOf };
 }
 
 /** 位置を含む最上位の定義(位置の順に並べた列を二分探索 — 大きな repo でも呼びごとに全定義を回さないため)。 */
@@ -259,14 +274,101 @@ export function buildCallTree(graph: CallGraph, query: TreeQuery): CallTree | un
   return { root, direction: query.direction, depth: query.depth, effects, nodes, repeats, cycles };
 }
 
+/** 型の綴りの読み — 名・呼びの形 `( … )`・tuple `#( … )`・list `[ … ]`。 */
+type TypeForm =
+  | { readonly tag: 'atom'; readonly text: string }
+  | { readonly tag: 'call' | 'tuple' | 'list'; readonly items: readonly TypeForm[] };
+
+/** 型の綴りを字の並びに切る(文字列の literal は 1 つの字)。 */
+function typeTokens(text: string): string[] {
+  return text.match(/#\(|[()[\]]|"(?:[^"\\]|\\.)*"|[^\s()[\]"]+/g) ?? [];
+}
+
+/** 字の並びから型の形を 1 つ読む(読めなければ undefined — 書かれたままに戻すため)。 */
+function readTypeForm(tokens: readonly string[], at: number): { readonly form: TypeForm; readonly next: number } | undefined {
+  const token = tokens[at];
+  if (token === undefined || token === ')' || token === ']') {
+    return undefined;
+  }
+  if (token !== '(' && token !== '#(' && token !== '[') {
+    return { form: { tag: 'atom', text: token }, next: at + 1 };
+  }
+  const close = token === '[' ? ']' : ')';
+  const items: TypeForm[] = [];
+  let i = at + 1;
+  while (tokens[i] !== close) {
+    const item = readTypeForm(tokens, i);
+    if (item === undefined) {
+      return undefined;
+    }
+    items.push(item.form);
+    i = item.next;
+  }
+  return { form: { tag: token === '(' ? 'call' : token === '#(' ? 'tuple' : 'list', items }, next: i + 1 };
+}
+
+/** 型の形を Python の型の書き方へ(描けない形なら undefined)。 */
+function typeFormText(form: TypeForm): string | undefined {
+  const all = (items: readonly TypeForm[]): string[] | undefined => {
+    const texts = items.map(typeFormText);
+    return texts.every((t): t is string => t !== undefined) ? texts : undefined;
+  };
+  switch (form.tag) {
+    case 'atom':
+      return form.text;
+    case 'list':
+      return all(form.items)?.join(', ').replace(/^/, '[').concat(']');
+    case 'tuple':
+      return all(form.items)?.join(', ').replace(/^/, '(').concat(')');
+    case 'call': {
+      const [head, ...args] = form.items;
+      if (head?.tag === 'atom' && head.text === '|' && args.length > 0) {
+        return all(args)?.join(' | ');
+      }
+      // (get T X) = T[X]、(get T #(A B)) = T[A, B]。添字が 2 つ以上の (get T A B) は Hy では T[A][B] なので型としては読まない
+      if (head?.tag === 'atom' && head.text === 'get' && args.length === 2) {
+        const base = typeFormText(args[0]);
+        const index = args[1].tag === 'tuple' ? all(args[1].items)?.join(', ') : typeFormText(args[1]);
+        return base === undefined || index === undefined ? undefined : `${base}[${index}]`;
+      }
+      return undefined;
+    }
+    default: {
+      const unreachable: never = form;
+      throw new Error(`網羅されていない型の形: ${JSON.stringify(unreachable)}`);
+    }
+  }
+}
+
 /**
- * 索引の型の綴りを 1 行に出す形 — 名だけの union `(| A B)` は `A | B` に、それ以外は書かれたまま(型の読み方の正本は linter。
- * 木の節は linter の見出しが無い file の定義も出すので、よくある形だけを直す — 決定の記録は #910)。
+ * 索引の型の綴りを 1 行に出す形 — Hy の型の書き方を Python の書き方へ: union `(| A B)` は `A | B`、添字 `(get dict #(str X))` は
+ * `dict[str, X]`、`[A B]` は `[A, B]`。描けない形は書かれたまま(型の読み方の正本は linter。木の節と欄は linter の見出しが無い
+ * 定義も出すので、よくある形だけを直す — 決定の記録は #910)。
  */
 export function indexTypeText(note: HyTypeNote | null): string {
   if (note === null) {
     return '?';
   }
-  const union = /^\(\|\s+([^()[\]{}]+)\)$/.exec(note.text.trim());
-  return union === null ? note.text : union[1].trim().split(/\s+/).join(' | ');
+  const form = typeFormOf(note);
+  const text = form === undefined ? undefined : typeFormText(form);
+  return text ?? note.text;
+}
+
+/** 型の綴り全体を 1 つの形として読む(余りがあれば読めない)。 */
+function typeFormOf(note: HyTypeNote): TypeForm | undefined {
+  const tokens = typeTokens(note.text.trim());
+  const read = readTypeForm(tokens, 0);
+  return read === undefined || read.next !== tokens.length ? undefined : read.form;
+}
+
+/** 型の union の候補ごとの綴り(縦の表で候補ごとのチップにする — union でなければ 1 つ)。 */
+export function indexUnionMembers(note: HyTypeNote): string[] {
+  const form = typeFormOf(note);
+  if (form !== undefined && form.tag === 'call' && form.items[0]?.tag === 'atom' && form.items[0].text === '|') {
+    const members = form.items.slice(1).map(typeFormText);
+    if (members.length > 0 && members.every((m): m is string => m !== undefined)) {
+      return members;
+    }
+  }
+  return [indexTypeText(note)];
 }

@@ -36,6 +36,7 @@ import {
 } from '../../read/fold';
 import { LABELS } from '../../read/labels';
 import { locate, parseLocation } from '../../read/locate';
+import { decoratorLabel } from '../../read/entity';
 
 // 材料は test-fixtures/read/plane.hy に hy-index と doeff-linter(editor-json・--stdin --path)を当てた実出力
 // (path だけ /repo に置き換えた)。定義を読む面の受け入れの検査 V1・V2・V3・V10(agora-redesign #910)。
@@ -536,10 +537,19 @@ suite('定義を読む面 — 呼び出しの依存の木(V19・v7 3 節)', () =
     assert.ok(html.includes('<select id="tree-root"><option value="">pick a root</option>'));
   });
 
-  test('索引の型の綴り: 名だけの union は A | B に、他は書かれたまま', () => {
-    assert.strictEqual(indexTypeText({ text: '(| Row None)', names: [] }), 'Row | None');
-    assert.strictEqual(indexTypeText({ text: 'str', names: [] }), 'str');
-    assert.strictEqual(indexTypeText({ text: '(get dict str int)', names: [] }), '(get dict str int)');
+  test('索引の型の綴り: union は A | B、添字は T[X] / T[A, B]、list は [A, B]。描けない形は書かれたまま', () => {
+    const text = (t: string): string => indexTypeText({ text: t, names: [] });
+    assert.strictEqual(text('(| Row None)'), 'Row | None');
+    assert.strictEqual(text('str'), 'str');
+    // V11 の実物の画面で lisp のまま出ていた形(InputQueue の pending)
+    assert.strictEqual(text('(get dict #(str IntakeRequested))'), 'dict[str, IntakeRequested]');
+    assert.strictEqual(text('(get tuple #(PlacedVersion ...))'), 'tuple[PlacedVersion, ...]');
+    assert.strictEqual(text('(| (get list str) None)'), 'list[str] | None');
+    assert.strictEqual(text('(get Callable #([int str] bool))'), 'Callable[[int, str], bool]');
+    // 添字が 2 つ以上の get(Hy では T[A][B])・型でない呼び・括弧の合わない綴りは書かれたまま
+    assert.strictEqual(text('(get dict str int)'), '(get dict str int)');
+    assert.strictEqual(text('(of dict str int)'), '(of dict str int)');
+    assert.strictEqual(text('(| str'), '(| str');
     assert.strictEqual(indexTypeText(null), '?');
   });
 });
@@ -900,5 +910,87 @@ suite('定義を読む面 — file:line からカードの該当の行へ(V6・v
 
   test('本体の行は source の行(1 始まり)の目印を持つ(見せる先の行を光らせるため)', () => {
     assert.ok(cardHtml(planePage(new Map()), 'shout').includes('<div class="bl bound" data-src-line="31"><span class="ln">31</span>'));
+  });
+});
+
+suite('定義を読む面 — defclass のカード(U17・v9)', () => {
+  /** classes.hy・classes_other.hy に hy-index 版 6 を当てた実出力のカード(linter の見出しは無し)。 */
+  const classesPage = (): { readonly html: string; readonly lines: string } => {
+    const parsed = parseHyIndexJson(fs.readFileSync(path.join(FIXTURES, 'classes-index.json'), 'utf8'));
+    if (parsed.tag !== 'ok') {
+      assert.fail(`defclass の fixture を読めない: ${parsed.reason}`);
+    }
+    const file = parsed.document.files[0];
+    const cards = buildCards({
+      definitions: file.definitions,
+      signatures: [],
+      bodies: [],
+      violations: [],
+      lines: fs.readFileSync(path.join(FIXTURES, 'classes.hy'), 'utf8').split(/\r?\n/),
+      testsOf: () => 0,
+      place: 'pkg/classes.hy'
+    });
+    const page = (fold: FoldState): string =>
+      renderPage({
+        place: 'pkg/classes.hy',
+        state: { tag: 'cards', cards, selection: new Map() },
+        glyphs: { effect: () => undefined },
+        fold,
+        graph: buildCallGraph(parsed.document.files),
+        tree: undefined,
+        coloring: undefined,
+        cspSource: 'vscode-resource:',
+        nonce: 'n'
+      });
+    return { html: page(unfoldAll(INITIAL_FOLD, cards.map((c) => cardKey(c.definition)))), lines: page(INITIAL_FOLD) };
+  };
+
+  test('頭に decorator の札: dataclass :frozen True は frozen dataclass、dataclass だけなら dataclass(書かれたままは hover)', () => {
+    const { lines } = classesPage();
+    assert.ok(cardHtml(lines, 'PlacedVersion').includes('<span class="name">PlacedVersion</span><span class="deco" title="dataclass :frozen True">frozen dataclass</span>'));
+    assert.ok(cardHtml(lines, 'Pair').includes('<span class="name">Pair</span><span class="deco" title="dataclass">dataclass</span>'));
+    assert.ok(!cardHtml(lines, 'InputVersions').includes('class="deco"'));
+    assert.strictEqual(decoratorLabel('dataclasses.dataclass :frozen True :slots True'), 'frozen dataclass');
+    assert.strictEqual(decoratorLabel('functools.total-ordering'), 'functools.total-ordering');
+  });
+
+  test('畳んだ 1 行は defrecord と同じ名: 型の形(欄が多くても型を出す)と doc の 1 行目', () => {
+    const { lines } = classesPage();
+    const placed = cardHtml(lines, 'PlacedVersion');
+    assert.ok(
+      placed.includes(
+        '<span class="f f-args">(ref: <span class="t">str</span>, text: <span class="t">str</span>, request-id: <span class="t">str | None</span>, sent-at: <span class="t">int</span>, at: <span class="t">int</span>)</span>'
+      )
+    );
+    assert.ok(placed.includes('<span class="f f-doc">本文の行の版 1 つ: ref = 入力の id・text = 文。</span>'));
+    // defrecord の欄の型も Python の書き方で(V11 で見つけた lisp のままの型)
+    assert.ok(cardHtml(lines, 'InputVersions').includes('(placed: <span class="t">tuple[PlacedVersion, ...]</span>)'));
+  });
+
+  test('開いた fields は v6 の閾で縦の表(欄 ≥ 4)— union は候補ごとのチップ。短ければ 1 行のチップ', () => {
+    const { html } = classesPage();
+    const placed = cardHtml(html, 'PlacedVersion');
+    assert.ok(placed.includes('<div class="sig2 fields"><div class="lab">fields</div><span class="n">ref</span><span class="tc"><span class="">str</span></span>'));
+    assert.ok(placed.includes('<span class="n">request-id</span><span class="tc"><span class="">str</span><i>|</i><span class="none">None</span></span>'));
+    const pair = cardHtml(html, 'Pair');
+    assert.ok(pair.includes('<span class="k">fields</span><div><span class="p"><span class="n">left</span><span class="t">str</span></span><span class="p"><span class="n">right</span><span class="t">int</span></span></div>'));
+    assert.ok(!pair.includes('sig2'));
+  });
+
+  test('used by: arg of・returns・field of・made in(索引の型と呼び出しから)— 別の file の同名は file 名を添える', () => {
+    const placed = cardHtml(classesPage().html, 'PlacedVersion');
+    const usedBy = placed.split('<span class="k">used by</span>')[1]?.split('</div></div>')[0] ?? '';
+    assert.ok(usedBy.includes('<span class="use"><b>arg of</b><button class="tname-sm" data-reveal="pkg.classes.latest_by_ref">latest-by-ref</button></span>'));
+    assert.ok(
+      usedBy.includes(
+        '<span class="use"><b>returns</b><button class="tname-sm" data-reveal="pkg.classes.latest_by_ref">latest-by-ref</button> · <button class="tname-sm" data-reveal="pkg.classes.placed_version">placed-version<span class="qual">classes</span></button> · <button class="tname-sm" data-reveal="pkg.classes_other.placed_version">placed-version<span class="qual">classes_other</span></button></span>'
+      )
+    );
+    assert.ok(usedBy.includes('<span class="use"><b>field of</b><button class="tname-sm" data-reveal="pkg.classes.InputVersions">InputVersions</button></span>'));
+    assert.ok(usedBy.includes('<span class="use"><b>made in</b><button class="tname-sm" data-reveal="pkg.classes.placed_version">placed-version<span class="qual">classes</span></button>'));
+    // doc の後・帯の前。使われていない型(Pair)には欄を出さない。帯は既定のまま
+    assert.ok(placed.indexOf('<div class="doc">') < placed.indexOf('<span class="k">used by</span>'));
+    assert.ok(!cardHtml(classesPage().html, 'Pair').includes('used by'));
+    assert.ok(placed.includes('data-tree-dir="callers">callers <b>2</b></button>'));
   });
 });

@@ -36,6 +36,11 @@ export const LABELS = {
   returnedBy: 'returned by',
   acceptedBy: 'accepted by',
   installedAt: 'installed at',
+  /** defclass の used by の欄(v9 の見本) */
+  argOf: 'arg of',
+  returns: 'returns',
+  fieldOf: 'field of',
+  madeIn: 'made in',
   callers: 'callers',
   callees: 'callees',
   tests: 'tests',
