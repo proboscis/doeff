@@ -7,10 +7,11 @@ can be applied post-hoc to objects owned by other packages.
 Layer 2 — structure: objects produced by doeff-hy's ``defhandler`` carry
 ``__doeff_body__``, the quoted clause list. The handled set is derived from
 each clause's head symbol (= effect type name). Detection is attribute
-duck-typing on purpose: doeff-domain must NOT import doeff-hy (D1). Lazy-init
-clauses — all three heads defhandler accepts: ``lazy`` / ``lazy-val`` /
-``lazy-var`` — are skipped; ``:when``-guarded clauses count as participation
-declarations, not totality guarantees.
+duck-typing on purpose: doeff-domain must NOT import doeff-hy (D1). Session-value
+clauses — ``(session val …)`` / ``(session var …)`` (ADR-DOE-HY-006) and the
+legacy lazy-init heads ``lazy`` / ``lazy-val`` / ``lazy-var`` — are skipped;
+``:when``-guarded clauses count as participation declarations, not totality
+guarantees.
 
 Name resolution for clause heads: first the attributes of
 ``sys.modules[handler.__module__]``, then a name match against the caller's
@@ -28,9 +29,13 @@ from doeff_domain.registry import DomainCheckError, DomainDefinitionError
 
 HANDLES_ATTRIBUTE = "__doeff_handles__"
 BODY_ATTRIBUTE = "__doeff_body__"
-# defhandler の lazy 初期化節 head 3 種(doeff-hy handle.hy の _is-lazy-clause)。
+# defhandler の節のうち effect を処理しない、session の値の宣言の head
+# (doeff-hy handle.hy の _extract-lazy-clauses)。session = (session val|var 名 式)
+# (ADR-DOE-HY-006)、lazy / lazy-val / lazy-var = 旧い形(_is-lazy-clause)。
 # quoted body は書かれたままの Symbol を保持するが、mangle 済み表記も安全側で含める。
-_LAZY_CLAUSE_HEADS = frozenset({"lazy", "lazy-val", "lazy-var", "lazy_val", "lazy_var"})
+_LAZY_CLAUSE_HEADS = frozenset(
+    {"session", "lazy", "lazy-val", "lazy-var", "lazy_val", "lazy_var"}
+)
 
 
 def handles(*effect_classes: type):

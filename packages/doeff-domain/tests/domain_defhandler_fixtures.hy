@@ -41,6 +41,13 @@
   (FixtureBeta [] (resume token-var)))
 
 
+;; session val / session var 節あり(ADR-DOE-HY-006)— session の値の宣言で、処理宣言ではない
+(defhandler fixture-session-handler
+  (session val token-session (str "fixture-token-session"))
+  (session var count-session 0)
+  (FixtureGamma [] (resume token-session)))
+
+
 ;; :when ガードあり — ガード付き節も「処理に参加する宣言」として数える
 ;; (全域性の保証ではない — ADR-DOE-DOMAIN-001 の意味論)
 (defhandler fixture-guarded-handler [threshold]

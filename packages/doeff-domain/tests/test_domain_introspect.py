@@ -81,6 +81,11 @@ class TestDefhandlerDerivation:
         derived = handled_effects(fixtures.fixture_lazy_var_handler)
         assert derived == frozenset({FixtureBeta})
 
+    def test_session_clause_skipped(self):
+        # session val / session var(lazy の後継の書き方)も処理宣言ではない
+        derived = handled_effects(fixtures.fixture_session_handler)
+        assert derived == frozenset({FixtureGamma})
+
     def test_when_guard_counts_as_participation(self):
         derived = handled_effects(fixtures.fixture_guarded_handler)
         assert derived == frozenset({FixtureAlpha, FixtureDelta})

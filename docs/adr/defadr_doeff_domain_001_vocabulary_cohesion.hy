@@ -150,7 +150,10 @@
        (import doeff_domain [get-domain assert-no-orphan-effects])
        (for [name ["doeff-reader" "doeff-state" "doeff-writer" "doeff-slog"
                    "doeff-error" "doeff-scope" "doeff-listen" "doeff-await"
-                   "doeff-scheduler" "doeff-http" "doeff-memo" "doeff-cache"]]
+                   "doeff-scheduler" "doeff-http" "doeff-memo" "doeff-cache"
+                   "doeff-outcome" "doeff-file" "doeff-http-server" "doeff-sql"
+                   "doeff-process" "doeff-channel" "doeff-compute"
+                   "doeff-stop-signal"]]
          (assert (get-domain name)))
        (assert-no-orphan-effects ["doeff_core_effects"]))
      (defsemgrep domain-001-no-hy-adr-dependency
