@@ -168,3 +168,14 @@
   ;; (検の外の module で展開するので、dataclass の名が無い誤りは出てもよい — 欄の読みの誤りが無いことだけを見る)。
   (assert (not-in "欄を 1 つも参照しない" (or (refused "(defrecord Only {:check [(> b 0)]} (setv #^ int a 1 #^ int b 2))") ""))))
 
+
+
+(deftest test-field-reading-matches-the-shared-case-table
+  (<- _ (Pure None))
+  ;; 欄の読み方の Hy 側の正本 field-targets が、Rust 側の正本(doeff-indexer の hy_index::fields)と同じ表で同じ答えを出す。
+  (import json pathlib [Path])
+  (import doeff_hy.declarations [field-targets])
+  (setv table (json.loads (.read-text (/ (. (Path __file__) parent) "data" "record_field_cases.json") :encoding "utf-8")))
+  (for [case (get table "cases")]
+    (setv got (lfor target (field-targets (hy.read-many (get case "forms"))) (str target)))
+    (assert (= got (get case "names")) (.format "{!r}: {} ≠ {}" (get case "forms") got (get case "names")))))

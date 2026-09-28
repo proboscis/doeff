@@ -531,12 +531,19 @@ impl<'a> Analyzer<'a> {
                 last.checks = Some(checks);
             }
         }
-        for field in fields {
-            match &field.node {
-                Node::Symbol if !is_operator(self.text(field.span)) => {
-                    self.push_def(field.span, DefinitionKind::Field, field.span, Some(&record), None, Vec::new());
+        // 欄の読み方は defrecord / defwire の正本(fields.rs・Hy 側は doeff_hy.declarations/field-targets)に揃える。
+        let members: Vec<&Form> = fields.iter().collect();
+        for target in super::fields::record_field_targets(self.src, &members) {
+            if !is_operator(self.text(target.name)) {
+                self.push_def(target.name, DefinitionKind::Field, target.member, Some(&record), None, Vec::new());
+            }
+        }
+        // 欄でない body の form(method など)は今までどおり class の body として読む。
+        for field in fields.iter().filter(|f| matches!(f.node, Node::Seq { .. })) {
+            if let Some(items) = field.paren_items() {
+                if matches!(self.head(items), Some("defn" | "defn/a" | "defk" | "deff" | "defmacro")) {
+                    self.class_member(field, &record);
                 }
-                _ => self.class_member(field, &record),
             }
         }
     }

@@ -384,24 +384,18 @@ impl<'a> HySource<'a> {
             None => (Vec::new(), rest.get(1..).unwrap_or_default()),
         };
         let methods = body.iter().filter_map(|member| self.method_fact(member)).collect();
-        let fields = body.iter().filter_map(|member| self.field_text(member)).collect();
+        // 欄の読み方は defrecord / defwire の正本(doeff-indexer の hy_index::fields — Hy 側は doeff_hy.declarations/field-targets)。
+        let fields = doeff_indexer::hy_index::fields::record_field_targets(self.src, body)
+            .into_iter()
+            .map(|target| {
+                let name = self.src.get(target.name.start..target.name.end).unwrap_or("");
+                match target.annotation.and_then(|a| self.src.get(a.start..a.end)) {
+                    Some(annotation) => format!("{}: {}", name, annotation),
+                    None => name.to_string(),
+                }
+            })
+            .collect();
         Some(ClassFact { name, bases, decorators, methods, fields, span, compile_time })
-    }
-
-    /// class の body の 1 つが欄の宣言なら、`名: 型` の綴りを返す(`#^ T x`・`(#^ T x default)`・`(setv x v)`)。
-    fn field_text(&self, member: &Form) -> Option<String> {
-        let annotated = |form: &Form| match &form.node {
-            Node::Annotated { annotation: Some(annotation), target: Some(target) } => Some(format!("{}: {}", self.text(target), self.text(annotation))),
-            _ => None,
-        };
-        if let Some(text) = annotated(member) {
-            return Some(text);
-        }
-        let items = paren(member)?;
-        match items.first().and_then(|h| self.symbol(h)) {
-            Some("setv") => items.get(1).and_then(|t| self.symbol(t)).map(str::to_string),
-            _ => items.first().and_then(|first| annotated(first)),
-        }
     }
 
     /// decorator の列の頭の綴り(記号はそのまま・`(f …)` は f)。
@@ -1166,5 +1160,20 @@ mod tests {
         // Python: 名・属性・import の名と、注釈と型の別名の文字列の中の語。docstring・註・f 文字列・語の一部は数えない。
         let py = "\"\"\"JsonValue\"\"\"\nfrom m import JsonValue\n# JsonValue\ndef f(a: \"MyJsonValue\", b: \"list[JsonObject]\") -> \"JsonValue\":\n    return f\"{a} JsonValue\"\nx = m.JsonObject\n";
         assert_eq!(text(py, name_occurrences(Language::Python, py, &names)), vec!["JsonValue", "JsonObject", "JsonValue", "JsonObject"]);
+    }
+
+    #[test]
+    fn class_fields_for_doeff204_match_the_shared_case_table() {
+        // DOEFF204 に渡す class の欄の一覧は、defrecord / defwire と同じ読み手(doeff-indexer の hy_index::fields)で読む。
+        // 同じ表を Hy 側の正本(doeff_hy.declarations/field-targets)の検も読む。
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../doeff-hy/tests/data/record_field_cases.json");
+        let table: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        for case in table["cases"].as_array().unwrap() {
+            let forms = case["forms"].as_str().unwrap();
+            let names: Vec<&str> = case["names"].as_array().unwrap().iter().map(|n| n.as_str().unwrap()).collect();
+            let facts = read_facts(Language::Hy, &format!("(defclass R []\n{})\n", forms), "m", &reading());
+            let got: Vec<String> = facts.classes[0].fields.iter().map(|f| f.split(':').next().unwrap_or("").to_string()).collect();
+            assert_eq!(got, names, "{:?}", forms);
+        }
     }
 }
