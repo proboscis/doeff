@@ -9,6 +9,7 @@
 ;;   検め、外れれば理由つきの終了 2(計画 2.2 の E・9 節の P)。
 ;; - 宣言した Program を実行先の入口(job_entry service)がそのまま走らせる(handler を足さない — Program が自分で並べる)。
 (require doeff-hy.macros [defk deftest <- val])
+(import collections.abc [Callable])
 (import hashlib)
 (import json)
 (import os)
@@ -377,8 +378,8 @@
   (<- done subprocess.CompletedProcess
       (declare-in work "declared_system:pair" "--foundation" "declared_system:wide_foundation" "--revision" head))
   (assert (= done.returncode 2) done.stderr)
-  (assert (in "wide_foundation の :needs" done.stderr) done.stderr)
-  (assert (in "tally(足りない ['gpu'])" done.stderr) done.stderr)
+  (assert (in "の土台 declared_system:wide_foundation(足りない" done.stderr) done.stderr)
+  (assert (in "tally の土台 declared_system:wide_foundation(足りない ['gpu'])" done.stderr) done.stderr)
   (assert (= done.stdout "") done.stdout))
 
 
@@ -399,3 +400,26 @@
                             :env (| (dict os.environ) {"DOEFF_WORKER_JOB" "greeter"})))
   (assert (= done.returncode 0) done.stderr)
   (assert (in "が終わった: 'hi3'" done.stderr) done.stderr))
+
+
+(defk two-foundations-job [foundation other]
+  {:pre [(: foundation Callable) (: other Callable)] :post [(: % int)] :tags {:context "doeff-cluster-test" :role "entry"}}
+  "系が土台を 2 つ受ける見本の job(2 つ目の土台は引数の値として呼び出しの形に載る)。撃たない。"
+  (<- total int (foundation (tally-program other 1)))
+  total)
+
+
+(deftest test-every-foundation-passed-to-a-job-is-checked-against-its-needs
+  ;; 系が土台を 2 つ以上受ける時も、job の呼び出しの形の引数に渡した土台の :needs を全部検める(宣言の道具が土台ごとに手で写さない —
+  ;; agora の手番の層の系は家族ごとの土台を 6 つ受ける)。2 つ目の土台の :needs が job の :needs に無ければ断る。
+  (import tests.fixtures.declared_system [wide-foundation])
+  (val narrow (system-of "two" #((job "tally" (two-foundations-job plain-foundation plain-foundation)
+                                      :call (CallShape :function two-foundations-job :args [plain-foundation plain-foundation] :kwargs {})
+                                      :needs #{"cluster-net"}))))
+  (val wide (system-of "two" #((job "tally" (two-foundations-job plain-foundation wide-foundation)
+                                    :call (CallShape :function two-foundations-job :args [plain-foundation wide-foundation] :kwargs {})
+                                    :needs #{"cluster-net"}))))
+  (<- ok (service-model.foundation-needs-refusal narrow plain-foundation))
+  (assert (is ok None) ok)
+  (<- refused (service-model.foundation-needs-refusal wide plain-foundation))
+  (assert (and refused (in "wide_foundation" refused)) refused))

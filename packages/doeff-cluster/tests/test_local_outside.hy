@@ -2,7 +2,7 @@
 ;;; 載った型だけを外へ通す(載っていなければ本番の子と同じ未処理で落ちる)。
 (require doeff-hy.macros [deftest defk <- val])
 (import doeff_time [Delay])
-(import doeff_cluster.local [sim-cluster SimOutside ProcessesOf])
+(import doeff_cluster.local [sim-cluster SimOutside ProcessOutside ProcessesOf])
 (import tests.fixtures.envs [sim-foundation])
 (import tests.fixtures.outside_programs [shared-store memory-store signed-puts StorePut StoreGet])
 
@@ -42,7 +42,21 @@
   (val rows {})
   (<- answer (sim-cluster (shared-store sim-foundation) (wait-seconds 30.0)
                           :outside (SimOutside :handlers [(memory-store rows)] :effects #(StorePut StoreGet)
-                                               :per-process (fn [job worker] [(signed-puts rows job)]))))
+                                               :per-process (fn [job worker] (ProcessOutside :handlers #((signed-puts rows job)))))))
   (assert (>= (.get rows "writer/count" 0) 10) rows)
   (assert (not-in "count" rows) rows)
   (assert (not-in "reader/seen" rows) rows))
+
+
+(deftest test-an-effect-let-through-for-one-process-is-not-let-through-for-another
+  ;; process ごとの柵の許し: 書き手の process にだけ StorePut・StoreGet を通す(共有の外の世界の型は空)。読み手の process は同じ
+  ;; effect を出しても柵に止められ、本番の子と同じく未処理で落ちる — 別の job の外の口が sim で黙って答えない(構成のレビューの A)。
+  (val rows {})
+  (<- processes tuple (sim-cluster (shared-store sim-foundation) (crashed-processes "reader")
+                                   :outside (SimOutside :handlers [(memory-store rows)] :effects #()
+                                                        :per-process (fn [job worker]
+                                                                       (if (= job "writer")
+                                                                           (ProcessOutside :handlers #() :effects #(StorePut StoreGet))
+                                                                           (ProcessOutside :handlers #()))))))
+  (assert (>= (.get rows "count" 0) 10) rows)
+  (assert (any (gfor p processes (and (is-not p.exit-code None) (!= p.exit-code 0) (in "StoreGet" p.detail)))) processes))
