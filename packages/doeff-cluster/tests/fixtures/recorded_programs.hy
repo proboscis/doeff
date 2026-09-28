@@ -11,9 +11,9 @@
 (import os)
 (import doeff [with-handlers DoExpr EffectBase Program])
 (import doeff_core_effects.effects [Ask])
-(import doeff_core_effects.handlers [state env-var-ask])
+(import doeff_core_effects.handlers [state])
 (import doeff_core_effects.scheduler [scheduled])
-(import doeff_cluster.host_contract [host-reader])
+(import doeff_cluster.host_contract [host-reader environ-reader])
 (import doeff_cluster.shared_model [ReadShared WriteShared])
 (import doeff_cluster.shared_handlers [shared-memory])
 (import doeff_cluster.record_handlers [boundary-recorder])
@@ -72,9 +72,9 @@
 (defk world-foundation [body]
   {:pre [(: body (| Program EffectBase))] :post [(: % "body の答え")] :tags {:context "doeff-cluster-test" :role "foundation"}}
   "見本の土台(外の世界の fake): scheduler と、宿の契約の Ask(host-reader — session の値を使うので外側に state)・environ を読む Ask
-   (接頭辞の無い env-var-ask — 宣言の :environ の EFFECT_RECORD_MODE・EFFECT_RECORD_OTLP・業務の設定に答え、環境に無い鍵は外へ通す)・
-   共有の盤(memory — process ごとに空から始まる)の下で本体を走らせる。"
-  (<- answer (scheduled (with-handlers [(state) host-reader (env-var-ask :prefix "") (shared-memory {})] body)))
+   (本番の土台と同じ (environ-reader) — 宣言の :environ の EFFECT_RECORD_MODE・EFFECT_RECORD_OTLP・業務の設定に字面どおり答え、環境に
+   無い鍵は外へ通す)・共有の盤(memory — process ごとに空から始まる)の下で本体を走らせる。"
+  (<- answer (scheduled (with-handlers [(state) host-reader (environ-reader) (shared-memory {})] body)))
   answer)
 
 

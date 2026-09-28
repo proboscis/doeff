@@ -69,10 +69,10 @@ Program の中の `with-handlers` で並べます(実行先は handler を 1 つ
 (require doeff-hy.macros [defk defsystem <-])
 (import collections.abc [Callable])
 (import doeff [with-handlers DoExpr])
-(import doeff_core_effects.handlers [state env-var-ask])
+(import doeff_core_effects.handlers [state])
 (import doeff_core_effects.scheduler [scheduled])
 (import doeff_time [sync-time-handler])
-(import doeff_cluster.host_contract [host-reader])
+(import doeff_cluster.host_contract [host-reader environ-reader])
 (import doeff_cluster.record_handlers [boundary-recorder])
 
 ;; 本番の土台: scheduler・時計・実行先の読み・環境変数の読み・クラスタに話す handler を並べる。
@@ -80,7 +80,7 @@ Program の中の `with-handlers` で並べます(実行先は handler を 1 つ
   {:pre [(: body DoExpr)] :post [(: % "body の答え")] :needs #{"cluster-net"}
    :tags {:context "myapp" :role "foundation"}}
   "本体を本番の handler の下で走らせる。"
-  (<- answer (scheduled (with-handlers [(state) (env-var-ask :prefix "") host-reader (sync-time-handler) …] body)))
+  (<- answer (scheduled (with-handlers [(state) (environ-reader) host-reader (sync-time-handler) …] body)))
   answer)
 
 ;; job の本体: 翻訳の handler → 記録係 → 土台 の順に自分で並べる(実行先は何も足さない)。
@@ -106,7 +106,10 @@ Program の中の `with-handlers` で並べます(実行先は handler を 1 つ
 - `:needs` は要る能力の名の空でない集合です(小文字・数字・`.`・`-`)。置き場所の名(`kind=k3s` の形の label・機体の名)は書きません。
 - `:readiness` は `{"windowSeconds" n}`(handoff の期限 `handoffTimeoutSeconds` も書ける)、`:update` は `"recreate"`(既定)か
   `"handoff"`、`:environ` は子 process の環境変数(名は `[A-Z][A-Z0-9_]*`・`DOEFF_`・`PYTHON`・`UV_` などの予約は不可・秘密は置かない)。
-  設定は Program の中の `Ask` と、os.environ を読む handler(`env-var-ask`)で読みます。
+  設定は Program の中の `Ask` と、宣言の `:environ` を字面どおり読む handler(`host_contract.environ-reader`)で読みます。
+  `doeff_core_effects` の `env-var-ask` は `{` で始まり `}` で終わる値を `{module.path}` の import として解くので、JSON の object を
+  置いた設定が本番の子でだけ落ちます(sim の実行先は字面どおり返す)— 土台には引数なしの `(environ-reader)`(子の `os.environ` を読む)を並べます。
+  handler の値は Program に詰められないので、土台の `with-handlers` の中でその場で呼んで作ります。
 - 旧い宣言の形(`service`・`:env`・`:config`・`:env-config`・`:requires`・image の版を追う `baseFrom`・定義だけを別の commit で重ねる
   `overlay`)は受け付けません。どの入口でも理由つきで断り、保存に残った旧い行は `status.refused` に理由を出して起動しません。
 
@@ -141,11 +144,12 @@ worker の子 process の入口は `hy -m doeff_cluster.job_entry service|task|p
 | 提供する物 | Program での読み方 |
 |---|---|
 | run-context(coordinator の URL・worker・job・process の世代) | `Ask HOST-CONTRACT.run-context-key`(`"doeff.cluster.run-context"`)→ `job_context.RunContext` |
-| environ(宣言の `:environ`) | 子の環境変数。os.environ を読む handler(`env-var-ask`)で読む |
+| environ(宣言の `:environ`) | 子の環境変数。名の `Ask` に、値を字面どおりの文字列で答える(読みの定義 = `environ-reader` の 1 つ) |
 | Program の path(記録の header に載せる) | `Ask HOST-CONTRACT.program-key`(`"doeff.cluster.program"`) |
 
-本番では土台に並べる `host-reader` が 1 と 3 に答えます(`host-reader` は session の値を使うので、その外側に `(state)` を置きます)。
-`sim-cluster` の偽の実行先は同じキーに同じ型で答えます。
+本番では土台に並べる `host-reader` が 1 と 3 に、`(environ-reader)`(子の `os.environ` の上の読み)が 2 に答えます
+(`host-reader` は session の値を使うので、その外側に `(state)` を置きます)。`sim-cluster` の偽の実行先は同じキーに同じ型で答え、
+environ は同じ `environ-reader` を子の宣言の `:environ` の上に並べて答えます(本番と sim で同じ値 — JSON の object もそのまま)。
 
 ### 宣言する(declare)
 
@@ -329,7 +333,7 @@ worker が無い・コードを準備できない)・`DetachedUnknown`(知らな
 ## effect の記録と再生(backtest)
 
 記録係は job の Program の中に置きます(実行先は差し込みません)。`record_handlers.boundary-recorder` を翻訳の handler と土台の間に
-並べると、`Ask "EFFECT_RECORD_MODE"` の答え(本番は宣言の `:environ` を `env-var-ask` が読む)で選びます:
+並べると、`Ask "EFFECT_RECORD_MODE"` の答え(本番は宣言の `:environ` を `(environ-reader)` が読む)で選びます:
 
 | mode | 置く物 |
 |---|---|

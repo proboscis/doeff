@@ -2,10 +2,10 @@
 (require doeff-hy.macros [defk <- val])
 (import doeff [DoExpr with-handlers])
 (import doeff_core_effects.effects [Ask])
-(import doeff_core_effects.handlers [await-handler state env-var-ask])
+(import doeff_core_effects.handlers [await-handler state])
 (import doeff_core_effects.scheduler [scheduled])
 (import doeff_time [Delay async-time-handler])
-(import doeff_cluster.host_contract [host-reader])
+(import doeff_cluster.host_contract [host-reader environ-reader])
 (import doeff_cluster.cluster_foundation [with-cluster-handlers])
 (import doeff_cluster.readiness_model [ReportReady])
 (import doeff_cluster.shared_model [ReadShared WriteShared])
@@ -14,7 +14,7 @@
 (defk production-foundation [body]
   {:pre [(: body DoExpr)] :post [(: % "body の答え")] :needs #{"cluster-net"} :tags {:context "doeff-cluster-test" :role "foundation"}}
   "本番の形の土台: scheduler・session の置き場・環境変数の読み・宿の読み・実時計の外側に、coordinator に話す組を並べる。"
-  (<- answer (scheduled (with-handlers [(await-handler) (state) (env-var-ask :prefix "") host-reader (async-time-handler)]
+  (<- answer (scheduled (with-handlers [(await-handler) (state) (environ-reader) host-reader (async-time-handler)]
                           (with-cluster-handlers body))))
   answer)
 
