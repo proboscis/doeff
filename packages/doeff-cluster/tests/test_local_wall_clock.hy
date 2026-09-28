@@ -1,4 +1,4 @@
-;; 壁の時計の手元の runner wall-sim-cluster(doeff_cluster.local — agora-redesign #1086・#908)。
+;; 壁の時計の手元の runner wall-sim-cluster(doeff_cluster.local — #1086・#908)。
 ;;
 ;; sim-cluster と同じ本物の coordinator と本物の run-worker(偽の宿)を、仮想の時計ではなく壁の時計(doeff-time の async-time-handler と
 ;; Await の答え手)で回す。検は本物の process の中の実時間で走り、1 本あたり数秒で終わる。
@@ -12,7 +12,7 @@
 (import doeff_cluster.clock [now-epoch-ms])
 (import doeff_cluster.local [wall-sim-cluster])
 (import tests.fixtures.envs [sim-foundation])
-(import tests.fixtures.wall_programs [submitters listeners rows-when-present talk-to-the-listener])
+(import tests.fixtures.wall_programs [wall-io-foundation submitters listeners rows-when-present talk-to-the-listener])
 
 (val LIVE-SECONDS 1.0)   ; 返事の遅れの上限(秒)
 (val TOOL-SECONDS 1.0)   ; listeners の道具の秒(系の宣言と同じ値)
@@ -42,7 +42,8 @@
 
 
 (deftest test-an-outside-thread-talks-with-a-job-over-a-real-socket-on-the-wall-clock
-  (<- heard tuple (wall-sim-cluster (listeners sim-foundation) (talk-to-the-listener "wall/address" 20.0)))
+  ;; 待ち受けを持つ job の土台は Await の答え手と aiohttp の待ち受けを並べる(柵は Await を通さない)。
+  (<- heard tuple (wall-sim-cluster (listeners wall-io-foundation) (talk-to-the-listener "wall/address" 20.0)))
   (assert (= (lfor h heard (get h.body "kind")) ["started" "done"]) heard)
   (val started (get heard 0))
   (val done (get heard 1))

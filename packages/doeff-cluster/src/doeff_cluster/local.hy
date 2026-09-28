@@ -1,7 +1,16 @@
 ;;; 手元の runner sim-cluster — 系(defsystem の関数を sim の土台で呼んだ System の値)を、本物の coordinator と本物の worker の上で、
-;;; 1 process・仮想の時計で走らせる(ADR-DOE-CLUSTER-001・計画 2.6・10.2・段 5・5b)。
+;;; 1 process・仮想の時計で走らせる(ADR-DOE-CLUSTER-001・計画 2.6・10.2・段 5・5b)。同じ物を壁の時計で走らせる入口が wall-sim-cluster。
 ;;;
 ;;;   (<- answer (sim-cluster (lab sim-foundation) (scenario) :workers #((SimWorker :name "w1" :provides #{"net"})) :environ {"tally" {"STEP" "3"}}))
+;;;   (<- answer (wall-sim-cluster (lab sim-foundation) (scenario) :workers #((SimWorker :name "w1" :provides #{"net"}))))
+;;;
+;;; 時計(入口が選ぶ — 内側の仕組みは同じ):
+;;;   sim-cluster       仮想の時計(doeff-time の sim-time-handler・起点 start-ms)。時計は scheduler の中の task が全部止まった時だけ進む
+;;;                     (検は時間の長い筋書きを実時間の一瞬で回せる)。外の thread・本物の socket の相手とは時刻が合わない。
+;;;   wall-sim-cluster  壁の時計(doeff-time の async-time-handler と await-handler — 今の時刻から始まり、Delay は実時間で待つ)。外の
+;;;                     thread の客・本物の待ち受け・実時間の遅れを確かめる検と、手元で系を実時間で回す道具のため(#908・#1086)。
+;;;                     筋書きは Await を出してよい。job の Await は柵を通らないので、本物の I/O を持つ job は本番の土台と同じく自分の土台に
+;;;                     await-handler を並べる(cluster_foundation.hy の見本)か、その I/O を SimOutside の handler に置く。
 ;;;
 ;;; 中身(写しを作らない — 起こし直しの間隔・readiness の窓・handoff の期限・needs ⊆ provides の置き方・lease・fence は本物が決める):
 ;;;   - coordinator の Pod = 本物の run-coordinator を coordinator_handler_sets.emulated-handlers(要求の列 RequestQueue・memory の
@@ -27,7 +36,7 @@
 ;;;     本番では土台の HTTP の handler が coordinator へ送る物で、要求の形は本番の送り手と同じ関数(report_client.report-request・
 ;;;     shared_handlers.board-*-request / lease-request・remote.task-submit-body / outcome-of / settled-value・detached.detached-path /
 ;;;     detached-submit-body / detached-refusal / awaited-answer / warm-request-body)。何度送っても同じ意味の要求(読み・lease の claim と
-;;;     renew・切り離した task の口・温める表)は、本番の send-idempotent と同じ期限と間で、仮想の時計で送り直す。どちらの答えも柵の内側に
+;;;     renew・切り離した task の口・温める表)は、本番の send-idempotent と同じ期限と間で、sim の時計で送り直す。どちらの答えも柵の内側に
 ;;;     在るので世界の effect を出さず、要求の列を値で受けて scheduler と時計の effect だけで coordinator と話す。
 ;;;   - 柵(fence)= host_contract.SIM-PASSABLE(scheduler と doeff-time の時計の effect)だけを外へ通し、それ以外を本番の子と同じ
 ;;;     doeff.UnhandledEffect で Program へ投げ返す — sim の外側(検の handler・sim の世界)が本番には無い答えを黙って返さない。
@@ -55,7 +64,8 @@
 ;;;                             答え = 本番の CoordinatorCall と同じ形 {status body} / {error}。
 ;;;   PreparationsOf 名         worker が起こした準備の列(SimPreparation — コードの版か env-<キー>・先読みか・始まり・終わり・失敗)。
 ;;;   ClientLink                筋書きの送り手の口(SimLink — 置き換えて coordinator-answers を被せれば別の送り手になる)。
-;;; 時間を進めるのは scenario の Delay(doeff-time)。scenario が終われば worker を止め(全 job を止めの手順で回収)、coordinator を止める。
+;;; 仮想の時計の時間を進めるのは scenario の Delay(doeff-time — 壁の時計では実時間で待つ)。scenario が終われば worker を止め(全 job を
+;;; 止めの手順で回収)、coordinator を止める。
 ;;;
 ;;; 本番との既知の差(検めない):
 ;;;   - 1 process なので、import した module の大域の状態は job の間で共有されうる(改訂 1 の Q)。effect 以外の共有は機械で全部は断れない。
@@ -81,10 +91,10 @@
 (import urllib.parse [quote :as url-quote unquote :as url-unquote])
 (import doeff [with-handlers EffectBase UnhandledEffect DoExpr Program])
 (import doeff_core_effects.effects [Ask])
-(import doeff_core_effects.handlers [state :as session-store])
+(import doeff_core_effects.handlers [state :as session-store await-handler])
 (import doeff_core_effects.scheduler [scheduled CreatePromise CompletePromise Wait Spawn Gather Cancel Promise Task
                                       TaskCancelledError])
-(import doeff_time [Delay sim-time-handler])
+(import doeff_time [Delay sim-time-handler async-time-handler])
 (import doeff_cluster.clock [now-epoch-ms datetime-of-epoch-ms])
 (import .cluster_model [ClusterState ClusterTiming ClusterNaming Request NextRequests Reply Persist CoordinatorStopRequested
                         PlainText])
@@ -348,7 +358,7 @@
 
 (defrecord SimOutside
   "sim の外の世界(本番では job の土台の handler が外の系 — 業務の store・外部の API — と話して答える effect に、sim では系の外側で
-   答える物)。handlers = sim の全部の job と筋書きの外側に置く handler の組(外側が先 — 仮想の時計の内側)・effects = それが答える effect の型
+   答える物)。handlers = sim の全部の job と筋書きの外側に置く handler の組(外側が先 — 時計の内側)・effects = それが答える effect の型
    (柵が外へ通す — isinstance で数えるので基底の型でよい)。job は effect を通してだけ外の世界を共有する(object を共有しない)。
    per-process = process ごとの外の世界を作る関数 (job の名 worker の名) → ProcessOutside(handler と、その process の柵だけが通す型 —
    None = 無し)。宿が process を起こす
@@ -666,7 +676,7 @@
   {:pre [(: link SimLink) (: method str) (: path str) (: query dict) (: body (| dict None))]
    :post [(: % tuple)] :tags {:context "doeff-cluster" :role "protocol"}}
   "何度送っても同じ意味の要求を、届かなければ本番の send-idempotent と同じ期限(IDEMPOTENT-DEADLINE-SECONDS)と間(RESEND-PAUSE-SECONDS)で
-   送り直すため(仮想の時計で眠る)。答え = 最後の返事(期限を過ぎても届かなければ接続の失敗)。"
+   送り直すため(sim の時計で眠る)。答え = 最後の返事(期限を過ぎても届かなければ接続の失敗)。"
   (<- started int (now-epoch-ms))
   (var answer #(None {"error" "送っていない"}))
   (var going True)
@@ -1695,6 +1705,20 @@
       (<- (Wait pod)))))
 
 
+(defk sim-under-clock [system scenario workers environ revision timing policy outside]
+  {:pre [(: system System) (: scenario (| Program EffectBase)) (: workers (| tuple None)) (: environ (| dict None)) (: revision str)
+         (: timing (| ClusterTiming None)) (: policy (| WorkerPolicy None)) (: outside (| SimOutside None))]
+   :post [(: % "scenario の答え(型は筋書きごと)")]
+   :tags {:context "doeff-cluster" :role "program"}}
+  "入口(sim-cluster・wall-sim-cluster)が選んだ時計の内側で、時計の今を起点に筋を作り(引数を検めて断る)、session の値の置き場・sim の
+   外の世界・sim の世界を並べて sim-main を走らせるため。時計の違いは入口が並べる handler だけで、ここから内側は同じ。"
+  (<- start-ms int (now-epoch-ms))
+  (<- plan SimPlan (sim-plan system workers environ revision start-ms timing policy outside))
+  (<- answer (with-handlers [(session-store) #* (if (is outside None) [] outside.handlers) (sim-world plan)]
+               (sim-main scenario)))
+  answer)
+
+
 (defk sim-cluster [system scenario * [workers None] [environ None] [revision "sim"] [start-ms SIM-START-MS] [timing None] [policy None]
                   [outside None]]
   {:pre [(: system System) (: scenario (| Program EffectBase)) (: workers (| tuple None)) (: environ (| dict None)) (: revision str) (: start-ms int)
@@ -1705,10 +1729,24 @@
    scheduler・同じ仮想の時計で並んで走る)の答えを返す。workers = SimWorker の tuple(既定 = 全 job の needs の和を提供する 1 台)・
    environ = job 名 → 宣言の :environ に重ねる環境変数(宣言に無い名は断る)・revision = 宣言の版・start-ms = 仮想の時計の起点・
    timing / policy = coordinator と worker の時間の設定(既定 = 本番の既定)・outside = sim の外の世界(SimOutside — 業務の外の系の模擬の
-   handler と、それが答える effect の型。仮想の時計の内側・sim の世界の外側に置き、柵はその型も通す)。自分で scheduler を持つ(外に
-   scheduler が在っても無くても走る)。"
-  (<- plan SimPlan (sim-plan system workers environ revision start-ms timing policy outside))
-  (<- answer (scheduled (with-handlers [(sim-time-handler :start-time (datetime-of-epoch-ms start-ms)) (session-store)
-                                        #* (if (is outside None) [] outside.handlers) (sim-world plan)]
-                          (sim-main scenario))))
+   handler と、それが答える effect の型。時計の内側・sim の世界の外側に置き、柵はその型も通す)。自分で scheduler を持つ(外に
+   scheduler が在っても無くても走る)。壁の時計で回すなら wall-sim-cluster。"
+  (<- answer (scheduled (with-handlers [(sim-time-handler :start-time (datetime-of-epoch-ms start-ms))]
+                          (sim-under-clock system scenario workers environ revision timing policy outside))))
+  answer)
+
+
+(defk wall-sim-cluster [system scenario * [workers None] [environ None] [revision "sim"] [timing None] [policy None] [outside None]]
+  {:pre [(: system System) (: scenario (| Program EffectBase)) (: workers (| tuple None)) (: environ (| dict None)) (: revision str)
+         (: timing (| ClusterTiming None)) (: policy (| WorkerPolicy None)) (: outside (| SimOutside None))]
+   :post [(: % "scenario の答え(型は筋書きごと)")]
+   :tags {:context "doeff-cluster" :role "entry"}}
+  "sim-cluster と同じ系・同じ本物の coordinator と worker・同じ偽の宿と柵を、壁の時計で走らせ、scenario の答えを返す(引数の意味は
+   sim-cluster と同じ — 起点は無く、今の時刻から始まる)。時計 = doeff-time の async-time-handler(Delay は実時間で待つ・GetTime は今の
+   時刻)と、その待ちと Await に答える await-handler(process で共有の event loop — 外の thread と本物の socket の I/O もそこで走る)。
+   筋書きは Await を出してよい(ここの await-handler が答える)。job の Await は柵を通らない(SIM-PASSABLE — 本番の子と同じく土台が
+   await-handler を並べる)ので、本物の待ち受けを持つ job は土台に await-handler を置くか、その I/O を outside の handler に置く
+   (時計の内側なので、ここの await-handler が答える)。自分で scheduler を持つ。"
+  (<- answer (scheduled (with-handlers [(await-handler) (async-time-handler)]
+                          (sim-under-clock system scenario workers environ revision timing policy outside))))
   answer)

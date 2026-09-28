@@ -7,7 +7,8 @@
 ;;;   emulated-handlers    手元のまねた環境(業務の側の模擬環境): 要求は process の中の列(RequestQueue — 模擬の
 ;;;                        worker・client が並べ、返事は promise で受ける)・置き場は memory(MemoryWalStore — 再起動の模擬は同じ
 ;;;                        置き場から load-state で読み直す)・k8s は memory の偽物。時計(GetTime / Delay)は組の外側の
-;;;                        仮想の時計(doeff-time の sim-time-handler)が答えるので、この組は時計を持たない。
+;;;                        sim の時計(doeff-time の仮想の sim-time-handler か、壁の async-time-handler)が答えるので、この組は時計を
+;;;                        持たない。
 ;;;
 ;;; 組は with_handlers に渡す list(外側が先)。選ぶのは composition root(coordinator.main・業務の側の模擬環境)だけ。
 ;;; 本番の受付の handler は coordinator_inbox.hy(coordinator.hy から分けた — この module と coordinator.hy の循環を作らない)。
@@ -82,5 +83,6 @@
 
 
 (defn #^ list emulated-handlers [#^ RequestQueue queue #^ MemoryWalStore store #^ StopState stop #^ KubeMemory kube]
-  "まねた環境の組(外側が先)。時計は持たない — 外側の仮想の時計(sim-time-handler)が答える。stop = 停止の合図(coordinator_inbox.StopState)。"
+  "まねた環境の組(外側が先)。時計は持たない — 外側の sim の時計(sim-time-handler か async-time-handler)が答える。stop = 停止の合図
+   (coordinator_inbox.StopState)。"
   [(stop-flag stop) (wal-store store) (queued-requests queue) (kube-memory kube)])

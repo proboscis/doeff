@@ -32,7 +32,7 @@
 ;; ClusterTiming・20 秒)より 5 秒長くする: fence より短い途絶は service も worker も越え、それより長い途絶では worker の方が
 ;; job を止める(読みを先に諦めて service が自分で落ちることはない)。
 (setv IDEMPOTENT-DEADLINE-SECONDS (+ (/ (. (ClusterTiming) fence-ms) 1000) 5.0))
-;; 送り直しの間(秒)。本番の send-idempotent と手元の sim-cluster の宿(local.hy — 仮想の時計で眠る)が同じ値を使う。
+;; 送り直しの間(秒)。本番の send-idempotent と手元の sim-cluster の宿(local.hy — sim の時計で眠る)が同じ値を使う。
 (val RESEND-PAUSE-SECONDS 0.5)
 
 
