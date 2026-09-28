@@ -7,7 +7,7 @@
 // 絞り込み: 同じ軸の中で選んだ値は「どれか」、軸どうしは「全部」(= 定義の集合の積。木ではない)。
 
 import type { HyDefinition, HyRange } from '../hy/contract';
-import type { LintBody, LintLevel, LintSignature, LintViolation } from '../lint/contract';
+import type { LintBinding, LintBody, LintLevel, LintSignature, LintViolation } from '../lint/contract';
 import { LABELS } from './labels';
 
 /** 軸 — 定義の kind・:tags の key 1 つ・使う effect・使う型・テストの有無・置き場。 */
@@ -100,6 +100,8 @@ export interface Card {
   readonly body: LintBody | undefined;
   /** 定義の範囲に入る linter の違反 */
   readonly violations: readonly LintViolation[];
+  /** 定義の範囲に入る linter の束縛(本体の名の hover に型を出す — v1 2.5 節) */
+  readonly bindings: readonly LintBinding[];
   /** 定義の source(書かれたままの lisp) */
   readonly source: string;
   /** source の最初の行(1 始まり) */
@@ -132,6 +134,8 @@ export interface PlaneInput {
   readonly bodies: readonly LintBody[];
   /** linter のその file の違反 */
   readonly violations: readonly LintViolation[];
+  /** linter のその file の束縛(無ければ空) */
+  readonly bindings: readonly LintBinding[];
   /** 開いた document の行 */
   readonly lines: readonly string[];
   /** その定義を呼ぶ deftest の数(呼び出しの表から) */
@@ -215,6 +219,7 @@ export function buildCards(input: PlaneInput): Card[] {
       signature: sameDefinition(definition, input.signatures),
       body: sameDefinition(definition, input.bodies),
       violations: input.violations.filter((v) => within(definition.fullRange, v.range.start.line, v.range.start.character)),
+      bindings: input.bindings.filter((b) => within(definition.fullRange, b.range.start.line, b.range.start.character)),
       source: sourceOf(definition.fullRange, input.lines),
       firstLine: definition.fullRange.start.line + 1
     };

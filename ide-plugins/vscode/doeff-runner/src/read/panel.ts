@@ -373,6 +373,7 @@ class PlanePanel implements vscode.Disposable {
       definitions: entry.file.definitions,
       signatures: seen !== undefined && seen.version === this.document.version ? seen.signatures : [],
       bodies: seen !== undefined && seen.version === this.document.version ? seen.bodies : [],
+      bindings: seen !== undefined && seen.version === this.document.version ? seen.bindings : [],
       violations: this.lint.violationsIn(filePath),
       lines: this.document.getText().split(/\r?\n/),
       testsOf: (qn) => relationOf(this.graphs.graph, qn).tests,

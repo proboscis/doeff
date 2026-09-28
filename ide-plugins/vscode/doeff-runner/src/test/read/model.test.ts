@@ -37,6 +37,7 @@ import {
 import { LABELS } from '../../read/labels';
 import { locate, parseLocation, violationAction, type ViolationPlace } from '../../read/locate';
 import { decoratorLabel } from '../../read/entity';
+import { effectHover, nameHover, nameScope } from '../../read/hover';
 
 // 材料は test-fixtures/read/plane.hy に hy-index と doeff-linter(editor-json・--stdin --path)を当てた実出力
 // (path だけ /repo に置き換えた)。定義を読む面の受け入れの検査 V1・V2・V3・V10(agora-redesign #910)。
@@ -76,6 +77,7 @@ function planeCards(violations: readonly LintViolation[] = []): Card[] {
     definitions: planeIndex().definitions,
     signatures: planeLint().signatures,
     bodies: planeLint().bodies,
+    bindings: planeLint().bindings,
     violations,
     lines: planeLines(),
     testsOf: (qn) => relationOf(graph, qn).tests,
@@ -558,15 +560,15 @@ suite('定義を読む面 — 本体の文字(V6・V11 の一部・U5)', () => {
   test('本体の行は linter の bodies を描く: 行番号 = source の行・val / ⇐ の束縛の行は薄い背景・呼びは f(a)', () => {
     const html = planePage(new Map());
     const fetch = cardHtml(html, 'fetch-row');
-    assert.ok(fetch.includes('<div class="bl bound" data-src-line="17"><span class="ln">17</span><span class="kw">val</span> <span class="b">Row</span> row <span class="arrow-bind">⇐</span> '));
+    assert.ok(fetch.includes('<div class="bl bound" data-src-line="17"><span class="ln">17</span><span class="kw">val</span> <span class="b">Row</span> <span class="var" title="row: Row\nbound at line 17">row</span> <span class="arrow-bind">⇐</span> '));
     assert.ok(planeLines()[16].includes('(<- row Row (ReadInput key))'));
     const shout = cardHtml(html, 'shout');
-    assert.ok(shout.includes('<span class="fn">fetch-row</span>(key)'));
+    assert.ok(shout.includes('<span class="fn">fetch-row</span>(<span class="var" title="key: str\nargument">key</span>)'));
   });
 
   test('制御の形(U3): when は語 + 字下げの段(linter の bodies の depth)', () => {
     const describe = cardHtml(planePage(new Map()), 'describe-row');
-    assert.ok(describe.includes('<span class="ln">43</span><span class="kw">when</span> row is None'));
+    assert.ok(describe.includes('<span class="ln">43</span><span class="kw">when</span> <span class="var" title="row: Row | None\nargument">row</span> is None'));
     assert.ok(describe.includes('<span class="ln">44</span>  <span class="kw">return</span> None'));
   });
 
@@ -634,7 +636,7 @@ suite('定義を読む面 — 違反を本体の行へ(V7・U5)', () => {
       nonce: 'n'
     });
     const card = cardHtml(html, 'fetch-row');
-    assert.ok(/<span class="ln">17<\/span>.*<span class="viol viol-major" title="DOEFF142: テストの違反">DOEFF142<\/span><\/div>/.test(card));
+    assert.ok(/<span class="ln">17<\/span>[\s\S]*?<span class="viol viol-major" title="DOEFF142: テストの違反">DOEFF142<\/span><\/div>/.test(card));
     assert.ok(!/<span class="ln">18<\/span>[^\n]*DOEFF142/.test(card.split('<span class="ln">18</span>')[1]?.split('</div>')[0] ?? ''));
   });
 });
@@ -651,6 +653,7 @@ suite('定義を読む面 — 実体の種類ごとの欄と帯(V13・v2 2.1 節
       definitions: file.definitions,
       signatures: [],
       bodies: [],
+      bindings: [],
       violations: [],
       lines: fs.readFileSync(path.join(FIXTURES, 'entities.hy'), 'utf8').split(/\r?\n/),
       testsOf: () => 0,
@@ -697,8 +700,8 @@ suite('定義を読む面 — 実体の種類ごとの欄と帯(V13・v2 2.1 節
   test('defhandler: 解く effect(handles)と使う effect。帯は installed at', () => {
     const { html, lines } = entitiesPage();
     const card = cardHtml(html, 'slot-store');
-    assert.ok(card.includes('<span class="k">handles</span><div><span class="eff">ReadSlot</span></div>'));
-    assert.ok(card.includes('<span class="k">effects</span><div><span class="eff">ReadRow</span></div>'));
+    assert.ok(/<span class="k">handles<\/span><div><span class="eff" title="[^"]*">ReadSlot<\/span><\/div>/.test(card));
+    assert.ok(card.includes('<span class="k">effects</span><div><span class="eff" title="ReadRow">ReadRow</span></div>'));
     assert.ok(card.includes('data-tree-dir="callers">installed at <b>0</b></button>'));
     assert.ok(cardHtml(lines, 'slot-store').includes('<span class="f f-args">handles: ReadSlot</span>'));
   });
@@ -747,6 +750,7 @@ suite('定義を読む面 — effect・type・tests・location の軸(V2・V3・
       definitions: parsed.document.files[0].definitions,
       signatures: [],
       bodies: [],
+      bindings: [],
       violations: [],
       lines: fs.readFileSync(path.join(FIXTURES, 'entities.hy'), 'utf8').split(/\r?\n/),
       testsOf: () => 0,
@@ -777,6 +781,7 @@ suite('定義を読む面 — repo 全体の入口(U9)', () => {
         definitions: file.definitions,
         signatures: [],
         bodies: [],
+        bindings: [],
         violations: [],
         lines: [],
         testsOf: (qn) => relationOf(graph, qn).tests,
@@ -850,6 +855,7 @@ suite('定義を読む面 — repo 全体の入口(U9)', () => {
       definitions: parsed.document.files[0].definitions,
       signatures: [],
       bodies: [],
+      bindings: [],
       violations: [],
       lines: [],
       testsOf: () => 0,
@@ -860,9 +866,9 @@ suite('定義を読む面 — repo 全体の入口(U9)', () => {
     assert.ok(size !== undefined);
     const open = renderCard(size, ctxOf(graph, unfoldAll(INITIAL_FOLD, [cardKey(size.definition)])), false);
     assert.ok(open.includes('<div class="sig"><span class="p"><span class="n">key</span><span class="t">str</span></span><span class="p"><span class="n">limit</span><span class="t">int</span></span><span class="arrow">→</span><span class="ret">int</span></div>'));
-    assert.ok(open.includes('<span class="k">effects</span><div><span class="eff">ReadSlot</span></div>'));
+    assert.ok(/<span class="k">effects<\/span><div><span class="eff" title="[^"]*">ReadSlot<\/span><\/div>/.test(open));
     assert.ok(open.includes('(key: <span class="t">str</span>, limit: <span class="t">int</span>) → <span class="r">int</span>'));
-    assert.ok(open.includes('<span class="f f-effects"><span class="eff">ReadSlot</span></span>'));
+    assert.ok(/<span class="f f-effects"><span class="eff" title="[^"]*">ReadSlot<\/span><\/span>/.test(open));
   });
 });
 
@@ -952,6 +958,7 @@ suite('定義を読む面 — defclass のカード(U17・v9)', () => {
       definitions: file.definitions,
       signatures: [],
       bodies: [],
+      bindings: [],
       violations: [],
       lines: fs.readFileSync(path.join(FIXTURES, 'classes.hy'), 'utf8').split(/\r?\n/),
       testsOf: () => 0,
@@ -1019,5 +1026,32 @@ suite('定義を読む面 — defclass のカード(U17・v9)', () => {
     assert.ok(placed.indexOf('<div class="doc">') < placed.indexOf('<span class="k">used by</span>'));
     assert.ok(!cardHtml(classesPage().html, 'Pair').includes('used by'));
     assert.ok(placed.includes('data-tree-dir="callers">callers <b>2</b></button>'));
+  });
+});
+
+suite('定義を読む面 — 束縛の型・effect の絵の hover(v1 2.5 節)', () => {
+  test('本体の名の hover: その行までの最後の束縛の型と束縛した行、束縛でなければ引数の型、どちらでもなければ出さない', () => {
+    const fetch = planeCards().find((c) => c.definition.name === 'fetch-row');
+    assert.ok(fetch !== undefined);
+    const scope = nameScope(fetch.bindings, fetch.signature);
+    assert.strictEqual(nameHover(scope, 'row', 17), 'row: Row\nbound at line 17');
+    assert.strictEqual(nameHover(scope, 'key', 17), 'key: str\nargument');
+    // 束縛より前の行では束縛を見ない(引数でもなければ出さない)
+    assert.strictEqual(nameHover(scope, 'row', 10), undefined);
+    assert.strictEqual(nameHover(scope, 'None', 17), undefined);
+  });
+
+  test('本体の行: 束縛と引数の名だけに hover の印(属性の `.` の先や他の字には付けない)', () => {
+    const fetch = cardHtml(planePage(new Map()), 'fetch-row');
+    assert.ok(fetch.includes('<span class="var" title="row: Row\nbound at line 17">row</span>'));
+    assert.ok(!fetch.includes('<span class="var" title="None'));
+  });
+
+  test('effect の hover: 索引の defeffect が 1 つに決まれば Name(引数: 型) → 答え と説明の 1 行目、決まらなければ名だけ', () => {
+    const parsed = parseHyIndexJson(fs.readFileSync(path.join(FIXTURES, 'entities-index.json'), 'utf8'));
+    assert.ok(parsed.tag === 'ok');
+    const graph = buildCallGraph(parsed.document.files);
+    assert.strictEqual(effectHover('ReadSlot', graph), 'ReadSlot(key: str) → Slot | None\n置き場を鍵で 1 つ読む(答え = 頭の註)。');
+    assert.strictEqual(effectHover('ReadRow', graph), 'ReadRow');
   });
 });

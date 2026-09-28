@@ -34,6 +34,8 @@ export interface CallGraph {
   readonly acceptedBy: ReadonlyMap<string, readonly string[]>;
   /** 型の完全修飾名 → その型を欄の型に書いた型と effect(field of — v9 の used by) */
   readonly fieldOf: ReadonlyMap<string, readonly string[]>;
+  /** effect の名(書かれた短い名)→ その名の defeffect の完全修飾名(effect の絵の hover — 1 つに決まる時だけ中身を出す) */
+  readonly effectsByName: ReadonlyMap<string, readonly string[]>;
 }
 
 /** 欄を持つ種類(索引の param_types が欄の型 — v9: defclass の `#^ T x` も defrecord と同じ読み手で載る)。 */
@@ -67,10 +69,14 @@ export function buildCallGraph(files: readonly HyFileIndex[]): CallGraph {
   const handlerDefinitions = new Map<string, string[]>();
   const acceptedBy = new Map<string, string[]>();
   const fieldOf = new Map<string, string[]>();
+  const effectsByName = new Map<string, string[]>();
   for (const file of files) {
     for (const definition of file.definitions) {
       if (!definitions.has(definition.qualifiedName)) {
         definitions.set(definition.qualifiedName, { definition, path: file.path });
+        if (definition.kind === 'defeffect') {
+          push(effectsByName, definition.name, definition.qualifiedName);
+        }
       }
       const handled = definition.handles?.target ?? null;
       if (handled !== null) {
@@ -124,7 +130,7 @@ export function buildCallGraph(files: readonly HyFileIndex[]): CallGraph {
       }
     }
   }
-  return { definitions, callees, callers, handlers, handlerDefinitions, returnedBy, acceptedBy, fieldOf };
+  return { definitions, callees, callers, handlers, handlerDefinitions, returnedBy, acceptedBy, fieldOf, effectsByName };
 }
 
 /** 位置を含む最上位の定義(位置の順に並べた列を二分探索 — 大きな repo でも呼びごとに全定義を回さないため)。 */

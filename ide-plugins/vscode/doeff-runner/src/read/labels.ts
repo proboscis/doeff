@@ -36,6 +36,9 @@ export const LABELS = {
   returnedBy: 'returned by',
   acceptedBy: 'accepted by',
   installedAt: 'installed at',
+  /** 本体の名の hover(束縛の型・引数の型) */
+  boundAtLine: 'bound at line',
+  argument: 'argument',
   /** defclass の used by の欄(v9 の見本) */
   argOf: 'arg of',
   returns: 'returns',

@@ -4,6 +4,7 @@
 // 最上位の変数 ほか)と、全部の実体に共通の「契約」の欄と下の帯を受け持つ。
 
 import type { HyDefinition, HyTypeNote } from '../hy/contract';
+import { effectHover } from './hover';
 import { escapeHtml, type Glyphs } from './html';
 import { LABELS } from './labels';
 import { NAMES_ONLY_PARAMS, TALL_SIGNATURE_CHARS, TALL_SIGNATURE_PARAMS } from './layout';
@@ -21,10 +22,16 @@ function nameTypeChip(name: string, type: HyTypeNote | undefined): string {
   return `<span class="p"><span class="n">${escapeHtml(name)}</span>${t}</span>`;
 }
 
-/** effect のチップ(絵つき)。 */
-function effectChip(name: string, glyphs: Glyphs): string {
-  const src = glyphs.effect(name);
-  return `<span class="eff">${src === undefined ? '' : `<img src="${escapeHtml(src)}" alt="">`}${escapeHtml(name)}</span>`;
+/** effect のチップを描く材料 — 絵の口と、hover に effect の中身を引く索引の表(render.ts の CardContext がそのまま渡る)。 */
+export interface ChipContext {
+  readonly glyphs: Glyphs;
+  readonly graph: CallGraph;
+}
+
+/** effect のチップ(絵つき・hover に引数と答えと説明の 1 行目)。 */
+function effectChip(name: string, ctx: ChipContext): string {
+  const src = ctx.glyphs.effect(name);
+  return `<span class="eff" title="${escapeHtml(effectHover(name, ctx.graph))}">${src === undefined ? '' : `<img src="${escapeHtml(src)}" alt="">`}${escapeHtml(name)}</span>`;
 }
 
 /**
@@ -46,8 +53,8 @@ export function decoratorBadges(definition: HyDefinition): string {
 }
 
 /** 宣言した effect のチップ(索引 版 5 — 1 行の effects に。linter の見出しが無い時)。 */
-export function declaredEffectChips(definition: HyDefinition, glyphs: Glyphs): string {
-  return (definition.effects ?? []).map((e) => effectChip(e.name, glyphs)).join('');
+export function declaredEffectChips(definition: HyDefinition, ctx: ChipContext): string {
+  return (definition.effects ?? []).map((e) => effectChip(e.name, ctx)).join('');
 }
 
 /** 入れ子の定義のうち指定の種類(書いた順)。 */
@@ -124,16 +131,16 @@ function typedParams(definition: HyDefinition): Array<{ readonly name: string; r
  * linter の見出しがまだ無い関数(defk・deff・defn)の欄 — 索引 版 5 の引数と答えの型・宣言した effect で描く
  * (repo 全体の面では他の file の定義が全部これ。linter の見出しが届けば render.ts が見出しで描き直す)。
  */
-export function indexSignatureRows(definition: HyDefinition, glyphs: Glyphs): string {
+export function indexSignatureRows(definition: HyDefinition, ctx: ChipContext): string {
   const params = typedParams(definition).map((p) => nameTypeChip(p.name, p.type)).join('');
   const answer = definition.answerType === null ? '' : `<span class="arrow">→</span><span class="ret">${escapeHtml(indexTypeText(definition.answerType))}</span>`;
   const sig = `<div class="sig">${params === '' ? `<span class="none">${escapeHtml(LABELS.noArgs)}</span>` : params}${answer}</div>`;
-  const effects = (definition.effects ?? []).map((e) => effectChip(e.name, glyphs)).join('');
+  const effects = (definition.effects ?? []).map((e) => effectChip(e.name, ctx)).join('');
   return sig + (effects === '' ? '' : row(LABELS.effects, effects));
 }
 
 /** 見出しの無い実体の欄(v2 2.1 節の表)。 */
-export function entityRows(card: Card, glyphs: Glyphs): string {
+export function entityRows(card: Card, ctx: ChipContext): string {
   const d = card.definition;
   switch (d.kind) {
     case 'defeffect': {
@@ -156,8 +163,8 @@ export function entityRows(card: Card, glyphs: Glyphs): string {
       return values.length === 0 ? '' : row(LABELS.values, values.map((m) => `<span class="p"><span class="n">${escapeHtml(m.name)}</span></span>`).join(''));
     }
     case 'defhandler': {
-      const handles = membersOf(card, 'effect-clause').map((m) => effectChip(m.handles?.name ?? m.name, glyphs));
-      const uses = (d.effects ?? []).map((e) => effectChip(e.name, glyphs));
+      const handles = membersOf(card, 'effect-clause').map((m) => effectChip(m.handles?.name ?? m.name, ctx));
+      const uses = (d.effects ?? []).map((e) => effectChip(e.name, ctx));
       return [handles.length === 0 ? '' : row(LABELS.handles, handles.join('')), uses.length === 0 ? '' : row(LABELS.effects, uses.join(''))].join('');
     }
     case 'variable': {

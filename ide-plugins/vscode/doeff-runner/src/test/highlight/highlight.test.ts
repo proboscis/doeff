@@ -181,7 +181,7 @@ suite('source の色付け — 読む面の source の箱', () => {
     assert.strictEqual(parsed.tag, 'ok');
     const file = parsed.tag === 'ok' ? parsed.document.files[0] : undefined;
     assert.ok(file !== undefined);
-    const cards = buildCards({ definitions: file.definitions, signatures: [], violations: [], bodies: [], lines: SAMPLE_LINES, testsOf: () => 0, place: 'sample.hy' });
+    const cards = buildCards({ definitions: file.definitions, signatures: [], violations: [], bodies: [], bindings: [], lines: SAMPLE_LINES, testsOf: () => 0, place: 'sample.hy' });
     const tokenizer = await fixtureTokenizer();
     const page = (coloring: Parameters<typeof renderPage>[0]['coloring']): string =>
       renderPage({

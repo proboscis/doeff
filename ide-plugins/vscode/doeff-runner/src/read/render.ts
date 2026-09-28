@@ -8,8 +8,9 @@ import { pieceStyle, sliceHighlight, type Piece, type SourceColoring } from '../
 import type { LintBody, LintBodySegment, LintSignature, LintViolation } from '../lint/contract';
 import { answerText, headerEffects, typeText } from '../defk/model';
 import { cardKey, LINE_FIELDS, type FoldState, type LineField } from './fold';
-import { escapeHtml, tagClass, type Glyphs } from './html';
-import { contractRow, declaredEffectChips, decoratorBadges, entityLineArgs, entityRows, indexSignatureRows, relationBand, usedByRow } from './entity';
+import { docFirstLine, escapeHtml, tagClass, type Glyphs } from './html';
+import { contractRow, declaredEffectChips, decoratorBadges, entityLineArgs, entityRows, indexSignatureRows, relationBand, usedByRow, type ChipContext } from './entity';
+import { effectHover, nameHover, nameScope, type NameScope } from './hover';
 import { LABELS } from './labels';
 import { NAMES_ONLY_PARAMS, TALL_SIGNATURE_CHARS, TALL_SIGNATURE_PARAMS } from './layout';
 import { axisKey, axisTitle, facets, SEARCH_KEY, visibleCards, worstLevel, type Card, type Facet, type Selection } from './model';
@@ -100,23 +101,23 @@ function signatureStrip(signature: LintSignature): string {
   return `<div class="sig">${params === '' ? `<span class="none">${escapeHtml(LABELS.noArgs)}</span>` : params}<span class="arrow">→</span><span class="ret" title="${escapeHtml(LABELS.returnType)}">${escapeHtml(answerText(signature))}</span></div>`;
 }
 
-/** effect のチップ(絵つき・Raise は赤い札)。 */
-function effectChips(signature: LintSignature, glyphs: Glyphs): string {
+/** effect のチップ(絵つき・Raise は赤い札・hover に引数と答えと説明の 1 行目)。 */
+function effectChips(signature: LintSignature, ctx: ChipContext): string {
   return headerEffects(signature)
     .map((e) => {
       if (e.kind === 'raise') {
         return `<span class="eff raise">Raise ${escapeHtml(e.name)}</span>`;
       }
-      const src = glyphs.effect(e.name);
+      const src = ctx.glyphs.effect(e.name);
       const img = src === undefined ? '' : `<img src="${escapeHtml(src)}" alt="">`;
-      return `<span class="eff">${img}${escapeHtml(e.name)}</span>`;
+      return `<span class="eff" title="${escapeHtml(effectHover(e.name, ctx.graph))}">${img}${escapeHtml(e.name)}</span>`;
     })
     .join('');
 }
 
 /** effects の欄(開いたカード)。effect が無ければ欄ごと出さない。 */
-function effectRow(signature: LintSignature, glyphs: Glyphs): string {
-  const chips = effectChips(signature, glyphs);
+function effectRow(signature: LintSignature, ctx: ChipContext): string {
+  const chips = effectChips(signature, ctx);
   const partial = signature.inferenceComplete ? '' : `<span class="none">(${escapeHtml(LABELS.inferencePartial)})</span>`;
   if (chips === '') {
     return signature.inferenceComplete ? '' : `<div class="row"><span class="k">${escapeHtml(LABELS.effects)}</span><div>${partial}</div></div>`;
@@ -138,16 +139,6 @@ function lineArgs(card: Card): string {
     return `<span class="f f-args">(${params}) → ${answer}</span>`;
   }
   return entityLineArgs(card);
-}
-
-/** 説明の 1 行目(先頭の 1 文を省略記号で切る)。 */
-export function docFirstLine(docstring: string | null, limit = 80): string {
-  if (docstring === null) {
-    return '';
-  }
-  const first = docstring.split('\n')[0].trim();
-  const sentence = /^[^。.!?！？]*[。.!?！？]?/.exec(first)?.[0] ?? first;
-  return sentence.length > limit ? `${sentence.slice(0, limit - 1)}…` : sentence;
 }
 
 /** カードを描く材料(カード以外)。 */
@@ -189,20 +180,48 @@ function segmentClass(role: LintBodySegment['role']): string {
   }
 }
 
-/** 字 1 つ(effect は絵を添える)。 */
-function renderSegment(segment: LintBodySegment, glyphs: Glyphs): string {
+/** 本体の字の中の名(Hy の識別子 — `.` の属性は切る)。 */
+const BODY_NAME = /([A-Za-z_][\w\-?!*]*)/;
+
+/** 本体の 1 行を描く材料 — 絵と索引(effect の hover)・定義の名の表(名の hover)・その行(0 始まり)。 */
+interface LineContext {
+  readonly chips: ChipContext;
+  readonly scope: NameScope;
+  readonly line: number;
+}
+
+/**
+ * 名や字の並び(色の無い字)— 束縛か引数の名には、hover に型を出す印を付ける(v1 2.5 節「束縛の型の hover」。その行までの
+ * 最後の束縛の型、束縛でなければ引数の型)。
+ */
+function namedText(text: string, at: LineContext): string {
+  return text
+    .split(BODY_NAME)
+    .map((piece, i) => {
+      const title = i % 2 === 1 ? nameHover(at.scope, piece, at.line) : undefined;
+      return title === undefined ? escapeHtml(piece) : `<span class="var" title="${escapeHtml(title)}">${escapeHtml(piece)}</span>`;
+    })
+    .join('');
+}
+
+/** 字 1 つ(effect は絵を添え、hover に effect の中身。名は hover に型)。 */
+function renderSegment(segment: LintBodySegment, at: LineContext): string {
   const cls = segmentClass(segment.role);
-  const img = segment.role === 'effect' && segment.effect !== null ? glyphs.effect(segment.effect) : undefined;
+  const effect = segment.role === 'effect' ? segment.effect : null;
+  const img = effect === null ? undefined : at.chips.glyphs.effect(effect);
   const glyph = img === undefined ? '' : `<img class="gl" src="${escapeHtml(img)}" alt="">`;
-  const text = escapeHtml(segment.text);
-  return cls === '' ? `${glyph}${text}` : `<span class="${cls}"${segment.role === 'lisp' ? ` title="${escapeHtml(LABELS.lispAsIs)}"` : ''}>${glyph}${text}</span>`;
+  if (cls === '') {
+    return `${glyph}${namedText(segment.text, at)}`;
+  }
+  const title = segment.role === 'lisp' ? LABELS.lispAsIs : effect === null ? undefined : effectHover(effect, at.chips.graph);
+  return `<span class="${cls}"${title === undefined ? '' : ` title="${escapeHtml(title)}"`}>${glyph}${escapeHtml(segment.text)}</span>`;
 }
 
 /**
  * 本体の文字(v2 2.2 節・v3 2 節 — operator 承認 "yeah val var when match is perfect.")— 行番号 = source の行、字下げ = 段、
  * effect を通す束縛(⇐)の行は薄い背景、本体の setv は警告の印。組み立ては linter の bodies(読み方の正本は linter)。
  */
-function bodyBlock(body: LintBody, glyphs: Glyphs, violations: readonly LintViolation[]): string {
+function bodyBlock(body: LintBody, chips: ChipContext, violations: readonly LintViolation[], scope: NameScope): string {
   if (body.lines.length === 0) {
     return '';
   }
@@ -220,7 +239,7 @@ function bodyBlock(body: LintBody, glyphs: Glyphs, violations: readonly LintViol
       const level = worstLevel(here);
       const marks =
         level === undefined ? '' : `<span class="viol viol-${level}" title="${escapeHtml(here.map((v) => `${v.rule}: ${v.message}`).join('\n'))}">${escapeHtml(here.map((v) => v.rule).join(' '))}</span>`;
-      const text = `${'  '.repeat(line.depth)}${' '.repeat(line.pad)}${line.segments.map((s) => renderSegment(s, glyphs)).join('')}`;
+      const text = `${'  '.repeat(line.depth)}${' '.repeat(line.pad)}${line.segments.map((s) => renderSegment(s, { chips, scope, line: line.line })).join('')}`;
       return `<div class="${bound ? 'bl bound' : 'bl'}" data-src-line="${line.line + 1}"><span class="ln">${line.line + 1}</span>${text}${warning}${marks}</div>`;
     })
     .join('');
@@ -274,7 +293,7 @@ export function renderCard(card: Card, ctx: CardContext, hidden: boolean): strin
   const band = relationBand(card, ctx.graph);
   const location = `${escapeHtml(card.place)}:${card.firstLine}`;
   const doc = docFirstLine(d.docstring);
-  const effects = card.signature === undefined ? declaredEffectChips(d, ctx.glyphs) : effectChips(card.signature, ctx.glyphs);
+  const effects = card.signature === undefined ? declaredEffectChips(d, ctx) : effectChips(card.signature, ctx);
   const line = [
     lineArgs(card),
     effects === '' ? '' : `<span class="f f-effects">${effects}</span>`,
@@ -287,13 +306,13 @@ export function renderCard(card: Card, ctx: CardContext, hidden: boolean): strin
   // 契約(型でない述語)は索引から来るので、linter の見出しの有無に関わらず出す
   const middle =
     (card.signature !== undefined
-      ? signatureStrip(card.signature) + effectRow(card.signature, ctx.glyphs)
+      ? signatureStrip(card.signature) + effectRow(card.signature, ctx)
       : typed
-        ? indexSignatureRows(d, ctx.glyphs)
-        : entityRows(card, ctx.glyphs)) + contractRow(d);
+        ? indexSignatureRows(d, ctx)
+        : entityRows(card, ctx)) + contractRow(d);
   const docBlock = d.docstring === null ? '' : `<div class="doc">${escapeHtml(d.docstring)}</div>`;
   const usedBy = usedByRow(card, ctx.graph);
-  const body = card.body === undefined ? '' : bodyBlock(card.body, ctx.glyphs, card.violations);
+  const body = card.body === undefined ? '' : bodyBlock(card.body, ctx, card.violations, nameScope(card.bindings, card.signature));
   const level = worstLevel(card.violations);
   const violations =
     level === undefined
@@ -608,6 +627,8 @@ code{font:12px Menlo,monospace;background:#1b1d21;border:1px solid #3a3f47;borde
 .tcount{margin-left:auto;color:#8a9099;font:11px -apple-system,sans-serif}
 .card.flash,.bl.flash{outline:2px solid #4a76a8}
 .bl.flash{background:#2f4a66}
+.var{cursor:help;border-radius:3px}
+.var:hover{background:#2a3340}
 .srcbox .code div.flash{outline:2px solid #4a76a8;background:#2f4a66}
 `;
 

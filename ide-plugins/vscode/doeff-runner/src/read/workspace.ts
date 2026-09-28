@@ -104,6 +104,7 @@ export class WorkspacePlane implements vscode.Disposable {
         definitions: entry.file.definitions,
         signatures: fresh?.signatures ?? [],
         bodies: fresh?.bodies ?? [],
+        bindings: fresh?.bindings ?? [],
         violations: hydrated === undefined ? [] : this.lint.violationsIn(entry.file.path),
         lines: hydrated === undefined ? [] : hydrated.document.getText().split(/\r?\n/),
         testsOf: (qn) => relationOf(graph, qn).tests,

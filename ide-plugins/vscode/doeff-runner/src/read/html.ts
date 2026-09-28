@@ -24,6 +24,16 @@ export function tagClass(key: string): string {
   return TAG_PALETTE[hash % TAG_PALETTE.length];
 }
 
+/** 説明の 1 行目(先頭の 1 文を省略記号で切る — 畳んだ 1 行と hover に短く出すため)。 */
+export function docFirstLine(docstring: string | null, limit = 80): string {
+  if (docstring === null) {
+    return '';
+  }
+  const first = docstring.split('\n')[0].trim();
+  const sentence = /^[^。.!?！？]*[。.!?！？]?/.exec(first)?.[0] ?? first;
+  return sentence.length > limit ? `${sentence.slice(0, limit - 1)}…` : sentence;
+}
+
 /** 絵の口 — effect の名から pixel art の data URI(#849 の装飾 A と同じ絵。無ければ undefined)。 */
 export interface Glyphs {
   readonly effect: (name: string) => string | undefined;
