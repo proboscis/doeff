@@ -169,7 +169,18 @@ def test_report_mode_warns_and_lists_but_stays_green(pytester: pytest.Pytester) 
     assert "test_fast(call" not in result.stdout.str()
 
 
-def test_fail_mode_fails_the_slow_test_with_time_and_budget(pytester: pytest.Pytester) -> None:
+# 超過を赤にする判定の検は、上限の基準の build(検査なし)に固定する — 日次は make sync の検査つきの build で走り、
+# 8d4ff1bb からそこでは超過を赤にしない(日次 t104 の赤・agora-redesign #857)。子の process で走る検は、plugin が
+# build の種類を読む pytest_configure より前に読まれる conftest で固定する。
+PIN_UNCHECKED_VM_BUILD = "\nimport doeff_vm\n\ndoeff_vm.invariant_checks_enabled = lambda: False\n"
+
+
+def test_fail_mode_fails_the_slow_test_with_time_and_budget(
+    pytester: pytest.Pytester, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import doeff_vm
+
+    monkeypatch.setattr(doeff_vm, "invariant_checks_enabled", lambda: False)
     _project(
         pytester,
         'doeff_test_call_budget_seconds = 0.05\ndoeff_test_budget_mode = "fail"\n',
@@ -261,6 +272,7 @@ def test_collect_budget_subtracts_compilation_but_fails_slow_import(
         'doeff_test_collect_budget_seconds = 0.05\ndoeff_test_budget_mode = "fail"\n',
         {"test_slow_collect": SLOW_COLLECT, "test_slow_compile": SLOW_COMPILE},
     )
+    pytester.makeconftest(CONFTEST + PIN_UNCHECKED_VM_BUILD)
     result = pytester.runpytest_subprocess(
         "-q", "-p", "no:cacheprovider", "--continue-on-collection-errors"
     )
