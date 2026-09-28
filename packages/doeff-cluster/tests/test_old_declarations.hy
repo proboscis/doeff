@@ -210,7 +210,7 @@
   (val base (task-record-to-json (TaskRecord :id "t1" :name "agent-turn" :program None :revision "r1" :versions #() :needs #("agent")
                                              :lease-ms 15000 :lease-until-ms 0 :submitted-ms 1000)))
   (val old (| (dfor #(k v) (.items base) :if (not-in k #("program" "needs")) k v)
-              {"env" "controllers.scheduling.turns.envs:turn_task_env"}))
+              {"env" "app.envs:task_env"}))
   {"task/t1" (| old {"phase" "finished" "result" "done"})
    "task/t2" (| old {"id" "t2" "phase" "queued"})})
 

@@ -411,7 +411,7 @@
 
 (deftest test-every-foundation-passed-to-a-job-is-checked-against-its-needs
   ;; 系が土台を 2 つ以上受ける時も、job の呼び出しの形の引数に渡した土台の :needs を全部検める(宣言の道具が土台ごとに手で写さない —
-  ;; agora の手番の層の系は家族ごとの土台を 6 つ受ける)。2 つ目の土台の :needs が job の :needs に無ければ断る。
+  ;; 業務の系には家族ごとの土台を 6 つ受ける物がある)。2 つ目の土台の :needs が job の :needs に無ければ断る。
   (import tests.fixtures.declared_system [wide-foundation])
   (val narrow (system-of "two" #((job "tally" (two-foundations-job plain-foundation plain-foundation)
                                       :call (CallShape :function two-foundations-job :args [plain-foundation plain-foundation] :kwargs {})
