@@ -114,6 +114,19 @@ def placer(n):
     yield WriteAudit("placed")
     yield Nap(1.0) if n else None
     return len(rows)
+
+
+def bump(state):
+    return helper(state)
+
+
+@do
+def rebound(state):
+    # A parameter rebound once to a call that reads it (state = f(state) — the
+    # dataclasses.replace shape): the call's argument is the parameter, not the call.
+    state = bump(state)
+    yield from bump(state)
+    return state
 """
 
 HANDLERS_HY = """\
@@ -213,6 +226,15 @@ def test_project_defined_effects_are_found_in_a_python_program(pkg: str) -> None
     via = {use.effect.__name__: use.via for use in report.effects}
     assert via["WriteBoard"] == (f"{pkg}.programs.helper",)
     assert report.unresolved == ()
+
+
+def test_a_local_rebound_to_a_call_of_itself_is_not_followed_through_itself(pkg: str) -> None:
+    # Regression (agora-redesign #811 3c): `state = bump(state)` put `state` in the
+    # bound-once table as `bump(state)`, so the argument `state` of that call was read
+    # as the same call again — the reader recursed until RecursionError.
+    report = analyze_program(f"{pkg}.programs:rebound")
+
+    assert _short(report.effect_names) == {"WriteBoard"}
 
 
 def test_hy_service_defined_by_a_user_macro_wrapping_defk(pkg: str) -> None:
