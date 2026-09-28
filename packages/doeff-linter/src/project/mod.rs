@@ -15,6 +15,7 @@ pub mod registry;
 pub mod notice;
 pub mod rule;
 pub mod bare_calls;
+pub mod defn_to_defk;
 pub mod semantic;
 pub mod smells;
 pub mod unreadable;
