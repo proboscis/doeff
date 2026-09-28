@@ -124,6 +124,23 @@
   (WarmState :key key :ready #() :preparing #() :failed #() :until-ms 0))
 
 
+;; coordinator の 5xx の下限(これ以上の状態は coordinator の側の失敗 — 呼び手の誤りではないので「届かない」の値にする)。
+(val SERVER-ERROR 500)
+
+
+(deff warm-unconnected [#^ str reason]  ; defk にできない: 本番の client と sim の宿が同じ答えを作る純粋な判断
+  {:pre [(: reason str)] :post [(: % WarmUnreachable)] :tags {:context "doeff-cluster" :role "judgment"}}
+  "温める表の頼みか読みが送り直しの期限まで coordinator に届かなかった時の答えを作るため(温まったかは分からない — 呼び手は温まって
+   いないと同じに読み、次の拍で頼み直す)。"
+  (WarmUnreachable :detail (.format "coordinator の /warm に接続できない: {}" reason)))
+
+
+(deff warm-server-failure [#^ int status #^ str text]  ; defk にできない: 本番の client と sim の宿が同じ答えを作る純粋な判断
+  {:pre [(: status int) (: text str)] :post [(: % WarmUnreachable)] :tags {:context "doeff-cluster" :role "judgment"}}
+  "coordinator が温める表の口で 5xx(SERVER-ERROR 以上)を返した時の答えを作るため(呼び手の誤りではない — 届かないと同じに読む)。"
+  (WarmUnreachable :detail (.format "coordinator の /warm が {} を返した: {}" status text)))
+
+
 ;; --- handler: coordinator の /detached の口へ出し、worker の子 process で走らせる ------------------------
 
 
@@ -218,9 +235,6 @@
 
 ;; --- 温める表(2026-09-26): coordinator の /warm の口 -------------------------------------------------
 
-;; coordinator の 5xx の下限(これ以上の状態は coordinator の側の失敗 — 呼び手の誤りではないので「届かない」の値にする)。
-(val SERVER-ERROR 500)
-
 
 (defclass WarmClient []
   "coordinator の /warm との連絡(I/O)。書きは同じ行への頼み直しが同じ意味なので、通信の失敗を越えて送り直す。
@@ -240,11 +254,11 @@
       (setv response (send-idempotent (fn [] (.request self.endpoint "POST" "/warm" :json body))
                                       :deadline-seconds self.deadline-seconds))
       (except [error httpx.TransportError]
-        (return (WarmUnreachable :detail (.format "coordinator の /warm に接続できない: {}" error)))))
+        (return (warm-unconnected (str error)))))
     (when (= response.status-code 400)
       (raise (DetachedRefused 400 (.get (.json response) "error" ""))))
     (when (>= response.status-code SERVER-ERROR)
-      (return (WarmUnreachable :detail (.format "coordinator の /warm が {} を返した: {}" response.status-code response.text))))
+      (return (warm-server-failure response.status-code response.text)))
     (.raise-for-status response)
     (warm-state-of-json (.json response)))
 
@@ -254,11 +268,10 @@
       (setv response (send-idempotent (fn [] (.request self.endpoint "GET" (warm-path key)))
                                       :deadline-seconds self.deadline-seconds))
       (except [error httpx.TransportError]
-        (return (WarmUnreachable :detail (.format "coordinator の /warm に接続できない: {}" error)))))
+        (return (warm-unconnected (str error)))))
     (cond
       (= response.status-code 404) (absent-warm-state key)
-      (>= response.status-code SERVER-ERROR)
-      (WarmUnreachable :detail (.format "coordinator の /warm が {} を返した: {}" response.status-code response.text))
+      (>= response.status-code SERVER-ERROR) (warm-server-failure response.status-code response.text)
       True (do (.raise-for-status response)
                (warm-state-of-json (.json response))))))
 
