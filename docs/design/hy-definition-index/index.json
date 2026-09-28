@@ -1,0 +1,13 @@
+{
+  "heads": {
+    "snapshot": "snapshot-6530d0f6c043",
+    "target": "design-5d562dd01e9b"
+  },
+  "records": {
+    "decision-1e0f322e2204": "3923de288e92c2a7f26e6e8da3111b11b51a445dd1f8ac896cacf507c83f2830",
+    "design-5d562dd01e9b": "bf093665f79b5cb783da698b7363fbbfd17e6b67fbca24be4c35d5cf2ffc7903",
+    "snapshot-6530d0f6c043": "c6cf62d2f9d404970cf437aa9cc7d9921d4160d24f3852f12897b280cd53d413"
+  },
+  "schema_version": 1,
+  "scope": "doeff-runner の Hy の定義の一覧(タグで閲覧・目次・移動・参照が読む)の正本と、その索引を作る道具の配り方"
+}

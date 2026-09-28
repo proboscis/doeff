@@ -1,0 +1,52 @@
+{
+  "artifacts": [],
+  "body": {
+    "files": {
+      ".github/workflows/publish-vscode-extension.yml": "ff7b0be1ec70baeba8a908537c88b8ed62f425866cc425c2b806b9164e24d1ca",
+      "ide-plugins/vscode/doeff-runner/package.json": "47658baab8da9c1615e94fc036256deab3d34fee323a0663e8479a0ef95ea7d5",
+      "ide-plugins/vscode/doeff-runner/scripts/bundle-indexer.js": "9c845edd580332344840c2a906fb2ccf38f446eb015af7acab9a492d1e020817",
+      "ide-plugins/vscode/doeff-runner/src/hy/browse.ts": "f7809600fbf09c3bde57c3383b2abd5b66804ee7f73820753ab70efb7bb413ac",
+      "ide-plugins/vscode/doeff-runner/src/hy/browsePanel.ts": "8cd3726fc3ca1369efca43bdf3eb4c8ebf45323e17f00a8af92758171d251939",
+      "ide-plugins/vscode/doeff-runner/src/hy/callGraph.ts": "1991016e956c1e88c22c8e8072cd6ba14676b5a26775f4eaa40892db5d69e9bc",
+      "ide-plugins/vscode/doeff-runner/src/hy/childProcess.ts": "3dc8b39700c83b6c84628c72b7cc5616a67535e26188a7c09514c85266bdd935",
+      "ide-plugins/vscode/doeff-runner/src/hy/contract.ts": "e606fe26c860ceb558916edc18cda4a8a270124325c059cc73d11f9239e59e34",
+      "ide-plugins/vscode/doeff-runner/src/hy/cursor.ts": "ed9aee40090e2f9cda330b20d43f66da172401a91d1f6b5052ad5e4428c0a80a",
+      "ide-plugins/vscode/doeff-runner/src/hy/effectProviders.ts": "bbec959b182d7b9b97144abd2c7bbca803364b50d5dfe9349c6cdfb69d2032ef",
+      "ide-plugins/vscode/doeff-runner/src/hy/effects.ts": "120a8302f9cade26326546feff30dd18148e1db3d37c0030354b13d6b20176cf",
+      "ide-plugins/vscode/doeff-runner/src/hy/external.ts": "8744138b1ab426f88049f9732e7f6275b2583aeb1590cea5769f7d3f612a013f",
+      "ide-plugins/vscode/doeff-runner/src/hy/externalCache.ts": "5d0c6a2dbfb730056bc8e69e0157c527d834fa18e480ad87b2f870d7af5f06d9",
+      "ide-plugins/vscode/doeff-runner/src/hy/hyPaths.ts": "499416a650caa26f21c65edf30a85e8070c674f36df391446be7ed982beeed4f",
+      "ide-plugins/vscode/doeff-runner/src/hy/indexService.ts": "9e343d2736021ced4e8c7f08a7a476471c3972afdfa7973e6b63c7e51b7156cf",
+      "ide-plugins/vscode/doeff-runner/src/hy/indexStatus.ts": "ecf65c44b9007879c30bf4775f50ccaba2cf4449dd62ae00879a0de47134b991",
+      "ide-plugins/vscode/doeff-runner/src/hy/indexer.ts": "ec6dc5ba08e0ef7d97665b6ee2948c62d73a2fbf977521b0b7bc4658a90df82e",
+      "ide-plugins/vscode/doeff-runner/src/hy/mangle.ts": "09735fd7466123dcf7c29071256ed4896de709cc34a48b64f0d049d81f47bd96",
+      "ide-plugins/vscode/doeff-runner/src/hy/navPanel.ts": "369e433ea5dc574a448298ba8b5e525c7394f2b5da0f4e2752311083754bd335",
+      "ide-plugins/vscode/doeff-runner/src/hy/navTree.ts": "3bae07404af6c5be6334d8627ac1d7a8ad2ffb3cefed7e7005f0fe5b909db7ae",
+      "ide-plugins/vscode/doeff-runner/src/hy/navigation.ts": "ca6ba74c107ccbecaab865eb7895b3d6fabb9a29d5f122c4938e0319a0258619",
+      "ide-plugins/vscode/doeff-runner/src/hy/outline.ts": "bd4674b22cb8e056eafc245050b95c10718c7f4571822d09d9b7e0bf36db6586",
+      "ide-plugins/vscode/doeff-runner/src/hy/providers.ts": "a25c096088fe99e5f712bd7c384dea0b074507d0ce8726c1f3ff2db8b2904e4a",
+      "ide-plugins/vscode/doeff-runner/src/hy/python.ts": "7848c6a5ae11a327e07fdac3ee2f8800f467e3225c04b12909387a02b5c271b3",
+      "ide-plugins/vscode/doeff-runner/src/hy/pythonSource.ts": "06e5b37bc9670f54c1892ea07be83bf4d737a0adf85a143187f3c6b723e8cdf7",
+      "ide-plugins/vscode/doeff-runner/src/hy/rawEffects.ts": "10b8f35c14b1936e65030bd8bff66cc5b1d656c74cdb30b5e3dadaa7a6fc5ed0",
+      "ide-plugins/vscode/doeff-runner/src/hy/rawView.ts": "9d35c72694bf140f0dd9c314dc064c2953b16cf229fd36c3018aa1ad9119347b",
+      "ide-plugins/vscode/doeff-runner/src/hy/register.ts": "8c1bc014826f9cfa34e7ee818dbc1d528003e03ab2d15c0ffe5833592427ae4f",
+      "ide-plugins/vscode/doeff-runner/src/hy/resolve.ts": "1a173fe2579bcd37bbbd7af2ed6351e3c4a07faf4c1e6b9302f03609cecaa36d",
+      "ide-plugins/vscode/doeff-runner/src/hy/store.ts": "40ef20c8ad6c75b0e723ff432c8b481dcbf450c01dd22c17447679200840ad7c",
+      "ide-plugins/vscode/doeff-runner/src/hy/uvLocator.ts": "9a67894c444613864ac7453d8e301f7dfd50b69e851a7fbd24c4568c98ef003f"
+    },
+    "include": [
+      "ide-plugins/vscode/doeff-runner/src/hy/*.ts",
+      "ide-plugins/vscode/doeff-runner/scripts/bundle-indexer.js",
+      "ide-plugins/vscode/doeff-runner/package.json",
+      ".github/workflows/publish-vscode-extension.yml"
+    ],
+    "label": "77c82d09 の拡張の Hy の索引まわり(直した後)",
+    "root": "/Users/kento/.worktrees/doeff-wt-hy-browse-index"
+  },
+  "created_at": "2026-09-28T10:54:33.659332+00:00",
+  "id": "snapshot-6530d0f6c043",
+  "inputs": [],
+  "kind": "snapshot",
+  "schema_version": 1,
+  "scope": "doeff-runner の Hy の定義の一覧(タグで閲覧・目次・移動・参照が読む)の正本と、その索引を作る道具の配り方"
+}

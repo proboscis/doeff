@@ -1,0 +1,28 @@
+{
+  "artifacts": [],
+  "body": {
+    "actor": "agent",
+    "authority": "internal",
+    "decision": "design",
+    "outcome": "accepted",
+    "scope_of_agreement": "doeff-runner の Hy の索引まわりの設計(commit 77c82d09)。operator の合意ではない",
+    "source": "coordinator の依頼 2026-09-28(「タグで閲覧」の直し)と CLAUDE.md の two-way door の規則。記録 = proboscis/agora-redesign #849 の comment",
+    "statement": "定義の一覧の正本は hy-index(拡張が同梱の doeff-indexer で自分で作る)とし、linter の editor-json からは作らない。道具は vsix を作る時に同じ checkout から組んで入れ、入れられなければ vsix を作らない。dotfiles の doeff_linter_follow の対象には足さない。戻せる決定なので席が決めた(戻し方は artifacts/v1/design.md の「戻し方」)",
+    "subjects": [
+      "design-5d562dd01e9b"
+    ],
+    "supersedes": []
+  },
+  "created_at": "2026-09-28T10:57:21.727931+00:00",
+  "id": "decision-1e0f322e2204",
+  "inputs": [
+    {
+      "id": "design-5d562dd01e9b",
+      "role": "subject",
+      "sha256": "bf093665f79b5cb783da698b7363fbbfd17e6b67fbca24be4c35d5cf2ffc7903"
+    }
+  ],
+  "kind": "decision",
+  "schema_version": 1,
+  "scope": "doeff-runner の Hy の定義の一覧(タグで閲覧・目次・移動・参照が読む)の正本と、その索引を作る道具の配り方"
+}

@@ -1,0 +1,427 @@
+{
+  "artifacts": [
+    {
+      "path": "artifacts/v1/design.md",
+      "sha256": "661d8c3207ad3d31966d91985d28fa314ae9724b01e53fe09d05072b8c78596b"
+    },
+    {
+      "path": "artifacts/v1/design.html",
+      "sha256": "75a008a2a5f1e1c6e5858c9802b0752c103ee588f8cf88439eb4cdd094bccb46"
+    },
+    {
+      "path": "artifacts/v1/structure.svg",
+      "sha256": "834cb967eeed58d0228e863f5e135901675a73354e2180ebd4bd4114de847455"
+    },
+    {
+      "path": "artifacts/v1/browse-filter-kanban.png",
+      "sha256": "1bae2addb9d413c7866e33d5672b3a42725a6059217fcba9a9810741b3f897d2"
+    }
+  ],
+  "body": {
+    "alternatives": [
+      {
+        "options": [
+          {
+            "benefits": "目次・移動・参照と同じ置き場。全部の kind と範囲。編集中も追う。linter が止まっても一覧は出る",
+            "costs": "同梱の道具を vsix に確実に入れる仕組みが要る",
+            "name": "A. hy-index(拡張が同梱の道具で自分で作る)"
+          },
+          {
+            "benefits": "置き場が減るように見える",
+            "costs": "defk 以外の定義が消える。目次・移動は hy-index を読み続けるので置き場は減らず複製が 2 つになる。linter の設定の不備で一覧も消える。編集中は追わない",
+            "name": "B. linter の editor-json の signatures と tags"
+          }
+        ],
+        "question": "定義の一覧の正本をどこに置くか",
+        "reason": "一覧は構文の事実で、目次・移動と同じ持ち主に置くのが複製を持たない形。linter は判定の持ち主",
+        "reconsider_when": "linter が全 kind の定義と範囲を出し、編集中も追い、目次・移動も同じ出力から読むと決めた時(その時は hy-index を消して 1 つにする)",
+        "selected": "A. hy-index(拡張が同梱の道具で自分で作る)"
+      },
+      {
+        "options": [
+          {
+            "benefits": "拡張と道具の版が同じ commit から来る",
+            "costs": "vsix を入れ直さないと道具も古いまま",
+            "name": "足さない(vsix を作る時に同じ checkout から組む)"
+          },
+          {
+            "benefits": "vsix を入れ直さなくても道具だけ新しくなる",
+            "costs": "拡張の外に 2 つ目の置き場ができ、拡張と道具の版が食い違う",
+            "name": "足す"
+          }
+        ],
+        "question": "同梱の道具を dotfiles の agentcli.doeff_linter_follow の自動の組み直しに足すか",
+        "reason": "道具は vsix の中にあり、拡張と一緒に古くなる。別に古くなる linter とは事情が違う",
+        "reconsider_when": "拡張が同梱の道具をやめ、外の置き場の道具を読む形に替えた時",
+        "selected": "足さない(vsix を作る時に同じ checkout から組む)"
+      }
+    ],
+    "change_cases": [
+      {
+        "change": "linter の editor-json に新しい欄(signatures 等)が増える",
+        "expected_elements": [
+          "lint-store"
+        ],
+        "id": "C1",
+        "preserve": [
+          "定義の一覧は hy-index から作る"
+        ],
+        "priority": "prepare",
+        "protected_contracts": [
+          "hy-index-outcome"
+        ],
+        "provenance": {
+          "kind": "observed",
+          "source": "commit 8f7b7201"
+        },
+        "rationale": "#849 で signatures が入った。今後も増える",
+        "verification": "browsePanel の items() が LintStore を読まないことをコードで確かめた"
+      },
+      {
+        "change": "doeff-indexer の hy-index の出力の版が上がる",
+        "expected_elements": [
+          "bundle-indexer",
+          "indexer"
+        ],
+        "id": "C2",
+        "preserve": [
+          "拡張と道具は同じ commit から作る"
+        ],
+        "priority": "required",
+        "protected_contracts": [
+          "bundle-indexer-contract"
+        ],
+        "provenance": {
+          "kind": "observed",
+          "source": "src/hy/contract.ts"
+        },
+        "rationale": "contract.ts の版 3 への追加のように欄が増える",
+        "verification": "vsix 0.6.25 に同じ checkout から組んだ道具が入ることを unzip で確かめた"
+      },
+      {
+        "change": "利用者の機体に同梱の道具が無い(別の platform・手で作った vsix)",
+        "expected_elements": [
+          "index-service",
+          "index-status"
+        ],
+        "id": "C3",
+        "preserve": [
+          "理由と作り方をパネルに出す",
+          "道具を入れた後に探し直せる"
+        ],
+        "priority": "required",
+        "protected_contracts": [
+          "index-status-contract"
+        ],
+        "provenance": {
+          "kind": "observed",
+          "source": "VS Code の Output の log(doeff-indexer not found)"
+        },
+        "rationale": "0.6.24 の実例",
+        "verification": "単体テスト indexStatus.test.ts"
+      }
+    ],
+    "contracts": [
+      {
+        "canonical_source": "ide-plugins/vscode/doeff-runner/src/hy/indexer.ts",
+        "effects": [
+          "子 process を同時に 1 つだけ実行"
+        ],
+        "failures": [
+          "missing = 道具が見つからない",
+          "unsupported = 道具が hy-index を知らない",
+          "failed = 道具は在るが作れない・出力を読めない"
+        ],
+        "id": "hy-index-outcome",
+        "invariants": [
+          "道具の場所は forget まで 1 度だけ探す"
+        ],
+        "operations": [
+          "index(request) → ok | failed | missing | unsupported",
+          "forget()"
+        ],
+        "owner": "indexer"
+      },
+      {
+        "canonical_source": "ide-plugins/vscode/doeff-runner/src/hy/indexStatus.ts の nextStatus",
+        "effects": [
+          "購読者へ知らせる"
+        ],
+        "failures": [],
+        "id": "index-status-contract",
+        "invariants": [
+          "root 全体の依頼だけが ready・failed を決める",
+          "missing・unsupported はどの依頼でも状態にする"
+        ],
+        "operations": [
+          "status",
+          "onDidChangeStatus",
+          "resume()"
+        ],
+        "owner": "index-service"
+      },
+      {
+        "canonical_source": "ide-plugins/vscode/doeff-runner/scripts/bundle-indexer.js",
+        "effects": [
+          "bin/doeff-indexer-<platform> を一時 file から rename で置く"
+        ],
+        "failures": [
+          "cargo が無い・組めない・hy-index を知らない → 終了コード 1"
+        ],
+        "id": "bundle-indexer-contract",
+        "invariants": [
+          "道具の無い vsix を作らない"
+        ],
+        "operations": [
+          "node scripts/bundle-indexer.js(vscode:prepublish)"
+        ],
+        "owner": "bundle-indexer"
+      }
+    ],
+    "elements": [
+      {
+        "depends_on": [],
+        "hidden_decisions": [
+          "道具の探し方の順(同梱→環境変数→Python 環境→system)"
+        ],
+        "id": "indexer",
+        "kind": "internal",
+        "requirement_ids": [
+          "R2",
+          "R4"
+        ],
+        "responsibility": "同梱の doeff-indexer hy-index を子 process で実行し、結果を ok・failed・missing・unsupported に分ける",
+        "state": [
+          "探した道具の場所(forget で忘れる)"
+        ]
+      },
+      {
+        "depends_on": [
+          "indexer",
+          "hy-store"
+        ],
+        "hidden_decisions": [
+          "debounce の長さ",
+          "除外の dir"
+        ],
+        "id": "index-service",
+        "kind": "internal",
+        "requirement_ids": [
+          "R1",
+          "R2"
+        ],
+        "responsibility": "いつ索引を取るかを決め、結果を置き場へ入れ、索引の状態を持つ",
+        "state": [
+          "HyIndexStatus"
+        ]
+      },
+      {
+        "depends_on": [],
+        "hidden_decisions": [
+          "path の比べ方"
+        ],
+        "id": "hy-store",
+        "kind": "internal",
+        "requirement_ids": [
+          "R3"
+        ],
+        "responsibility": "定義の一覧の唯一の置き場",
+        "state": [
+          "file ごとの HyFileIndex"
+        ]
+      },
+      {
+        "depends_on": [],
+        "hidden_decisions": [
+          "文言"
+        ],
+        "id": "index-status",
+        "kind": "internal",
+        "requirement_ids": [
+          "R2"
+        ],
+        "responsibility": "状態から、無い理由と作り方の文を作る(純粋)",
+        "state": []
+      },
+      {
+        "depends_on": [
+          "hy-store",
+          "lint-store",
+          "index-status"
+        ],
+        "hidden_decisions": [],
+        "id": "browse-panel",
+        "kind": "internal",
+        "requirement_ids": [
+          "R1"
+        ],
+        "responsibility": "タグで閲覧の木を描く。定義は hy-store、軸の値は lint-store から読む",
+        "state": [
+          "今の見方"
+        ]
+      },
+      {
+        "depends_on": [],
+        "hidden_decisions": [],
+        "id": "lint-store",
+        "kind": "external",
+        "requirement_ids": [],
+        "responsibility": "doeff-linter の editor-json(service・層・違反・signatures)",
+        "state": []
+      },
+      {
+        "depends_on": [],
+        "hidden_decisions": [
+          "cargo の引数"
+        ],
+        "id": "bundle-indexer",
+        "kind": "internal",
+        "requirement_ids": [
+          "R4"
+        ],
+        "responsibility": "vsix を作る前に同じ checkout の doeff-indexer を組んで bin/ に置く。置けなければ vsix を作らない",
+        "state": []
+      }
+    ],
+    "handoff": {
+      "fixed": [
+        "定義の一覧は hy-index から作る",
+        "道具の無い vsix を作らない"
+      ],
+      "free": [
+        "空の時の文言",
+        "探し直しの口の置き方"
+      ],
+      "next": [
+        "本線への着地(land queue)"
+      ]
+    },
+    "level": "VS Code 拡張 doeff-runner の中の Hy の索引まわり(module 単位)",
+    "methods": [
+      {
+        "evidence": [],
+        "name": "ddd",
+        "profile": "ddd-evans-2015-local-v1",
+        "reason": "拡張の中の 1 つの小さな境界で、業務の言葉の境界を分ける問いが無い",
+        "status": "not_applicable",
+        "steps": []
+      },
+      {
+        "evidence": [
+          "artifacts/v1/design.md"
+        ],
+        "name": "change-cases",
+        "profile": "change-cases-1996-local-v1",
+        "reason": "一覧の正本の選択が、今後の変更(C1〜C3)でどう効くかを見るため",
+        "status": "performed",
+        "steps": [
+          {
+            "result": "変更 C1〜C3 を観測から挙げた",
+            "step": "1"
+          },
+          {
+            "result": "各変更が触る部品を elements に割り当てた",
+            "step": "2"
+          },
+          {
+            "result": "案 A では C1 が browse-panel に波及しない。案 B では C1 が一覧の形を変える",
+            "step": "3"
+          },
+          {
+            "result": "C2・C3 は bundle-indexer と index-status に閉じる",
+            "step": "4"
+          },
+          {
+            "result": "C2 は vsix の中身、C3 は単体テストで確かめた",
+            "step": "5"
+          }
+        ]
+      },
+      {
+        "evidence": [],
+        "name": "volatility",
+        "profile": "volatility-righting-software-local-v1",
+        "reason": "部品の分け方は既存のまま変えず、正本の置き場の選択だけを扱う",
+        "status": "not_applicable",
+        "steps": []
+      },
+      {
+        "evidence": [],
+        "name": "add",
+        "profile": "add-2.0-local-v1",
+        "reason": "全体の構成を新しく作る依頼ではない",
+        "status": "not_applicable",
+        "steps": []
+      },
+      {
+        "evidence": [],
+        "name": "saam",
+        "profile": "saam-1996-local-v1",
+        "reason": "盲検の反例による検証はしていない",
+        "status": "pending",
+        "steps": []
+      },
+      {
+        "evidence": [],
+        "name": "c4",
+        "profile": "c4-web-2026-09-14-local-v1",
+        "reason": "拡張の中の module 1 層だけで、C4 の階層を分ける必要が無い",
+        "status": "not_applicable",
+        "steps": []
+      }
+    ],
+    "open_questions": [],
+    "perspective": "proposed",
+    "purpose": "doeff-runner の「タグで閲覧」が読む定義の一覧の正本を決め、その索引を作る道具が vsix に必ず入る形にする",
+    "requirements": [
+      {
+        "id": "R1",
+        "kind": "functional",
+        "provenance": {
+          "kind": "user",
+          "source": "operator 2026-09-28 \"also filter by tag feature in doeff panel is not working.\""
+        },
+        "statement": "agora-controllers を開くと「タグで閲覧」で定義をタグ(service・context 等)で絞れる"
+      },
+      {
+        "id": "R2",
+        "kind": "functional",
+        "provenance": {
+          "kind": "user",
+          "source": "coordinator の依頼 2026-09-28 やること 3"
+        },
+        "statement": "索引が無い時、なぜ無いのか(道具が無い・作っていない・読めない)とどうすれば作れるかを出す"
+      },
+      {
+        "id": "R3",
+        "kind": "constraint",
+        "provenance": {
+          "kind": "user",
+          "source": "coordinator の依頼 2026-09-28 やること 2"
+        },
+        "statement": "定義の一覧の正本を 1 つに決め、写しを持たない"
+      },
+      {
+        "id": "R4",
+        "kind": "quality",
+        "provenance": {
+          "kind": "observed",
+          "source": "0.6.24 の vsix に bin/doeff-indexer-darwin-arm64 が無かった(0.6.23 には在った)"
+        },
+        "statement": "拡張の版と索引の道具の版が食い違わない"
+      }
+    ]
+  },
+  "created_at": "2026-09-28T10:57:12.362795+00:00",
+  "id": "design-5d562dd01e9b",
+  "inputs": [
+    {
+      "id": "snapshot-6530d0f6c043",
+      "role": "evidence",
+      "sha256": "c6cf62d2f9d404970cf437aa9cc7d9921d4160d24f3852f12897b280cd53d413"
+    }
+  ],
+  "kind": "design",
+  "schema_version": 1,
+  "scope": "doeff-runner の Hy の定義の一覧(タグで閲覧・目次・移動・参照が読む)の正本と、その索引を作る道具の配り方"
+}
