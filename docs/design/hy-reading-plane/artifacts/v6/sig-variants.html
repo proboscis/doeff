@@ -1,0 +1,119 @@
+<!doctype html><html lang="ja" style="background:#1b1d21;color:#d6d8dc"><meta charset="utf-8"><title>args / return type の見せ方 — 引数が多い・型が長い時</title>
+<style>
+html,body{background:#1b1d21;color:#d6d8dc}
+body{font-family:-apple-system,"Hiragino Sans",sans-serif;margin:22px 28px;max-width:1500px}
+h1{font-size:19px;margin:0 0 6px}
+h2{font-size:15px;color:#ffd97a;margin:30px 0 8px;border-bottom:1px solid #444;padding-bottom:4px}
+h2 small{color:#999;font-weight:normal;font-size:12px;margin-left:8px}
+.note{color:#b8bec7;font-size:13px;line-height:1.7;max-width:1100px}
+.card{background:#22252a;border:1px solid #33383f;border-radius:10px;margin:0 0 10px;max-width:1500px}
+.hd{display:flex;align-items:center;gap:10px;padding:10px 16px;border-bottom:1px solid #33383f}
+.kind{font-size:10.5px;font-weight:700;letter-spacing:.06em;color:#1b1d21;background:#e2c46a;border-radius:4px;padding:2px 6px}
+.name{font:600 17px Menlo,monospace;color:#f2e6a8}
+.btn{font-size:11px;border:1px solid #4a76a8;border-radius:5px;padding:2px 8px;color:#bcd8ff;background:#1f2a3a}
+.chips{margin-left:auto;display:flex;gap:6px}.chip{font-size:11px;border-radius:12px;padding:2px 9px;background:#3b3220;color:#f0c674;border:1px solid #5a4a25}.chip.role{background:#232f3b;color:#9dd0ff;border-color:#2f4a66}
+.mono{font:13px Menlo,monospace}
+.t{color:#4ec9b0}.n{color:#d6d8dc}.r{color:#9fe3c0}.bar{color:#5f6670}.none{color:#7d858f}
+.k{color:#8a9099;font-size:12px}
+/* 案 1: 今(chips が折り返す) */
+.sig1{display:flex;align-items:center;gap:8px;padding:12px 16px;flex-wrap:wrap}
+.p{display:inline-flex;align-items:center;gap:6px;background:#1b1d21;border:1px solid #3a3f47;border-radius:6px;padding:4px 8px}
+.ret{display:inline-flex;align-items:center;gap:6px;background:#1f2a24;border:1px solid #2f5a45;border-radius:6px;padding:4px 10px;color:#9fe3c0}
+.arrow{color:#8a9099;font-size:16px;margin:0 4px}
+/* 案 2・3: 縦の表 */
+.sig2{display:grid;grid-template-columns:max-content minmax(0,1fr);gap:4px 18px;padding:10px 16px;align-items:baseline}
+.sig2 .lab{color:#8a9099;font-size:11px;letter-spacing:.06em;text-transform:uppercase;grid-column:1/3;margin-top:2px}
+.sig2 .lab:first-child{margin-top:0}
+.sig2 .rt{grid-column:1/3;display:grid;grid-template-columns:max-content minmax(0,1fr);gap:4px 18px;background:#1f2a24;border:1px solid #2f5a45;border-radius:6px;padding:6px 10px;margin-top:6px}
+.sig2 .rt .k{color:#7fbf9f}
+.tc{display:inline-flex;gap:4px;flex-wrap:wrap;align-items:center}
+.tc span{background:#1b1d21;border:1px solid #2f4a45;border-radius:4px;padding:1px 6px;color:#4ec9b0}
+.tc span.none{border-style:dashed;color:#7d858f;border-color:#3a3f47}
+.tc i{color:#5f6670;font-style:normal}
+/* 案 4: 2 列の格子 */
+.sig4{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px 12px;padding:10px 16px}
+.sig4 .p{justify-content:flex-start}
+.sig4 .rtrow{grid-column:1/3;display:flex;align-items:center;gap:10px;margin-top:4px}
+/* 折りたたみの 1 行 */
+.line{padding:8px 16px;font:12.5px Menlo,monospace;color:#c9ced5;border-top:1px solid #2c3036}
+.line .names{color:#d6d8dc}
+table.cmp{border-collapse:collapse;font-size:13px;margin-top:8px}
+table.cmp td,table.cmp th{border:1px solid #444;padding:5px 9px;vertical-align:top;text-align:left}
+table.cmp th{background:#2d2d30}
+td.ok{color:#9fdf9f}td.ng{color:#f08c8c}td.mid{color:#e6c07b}
+</style>
+<body style="background:#1b1d21;color:#d6d8dc">
+<h1>args / return type の見せ方 — 引数が多い・型が長い時(view-body の実物で)</h1>
+<div class="note">実物: <code>controllers/screen/runtime/react.hy:182</code> の <code>view-body</code>(引数 6・union が 4 つ・return type も union)。今の形(案 1)は正しいが、チップが 3 行に折り返して return type が最後に埋もれる。下の案 2〜5 は同じ実体を別の形で描いたもの。引数が 2〜3 個で型が短い実体は今の 1 行の形のままでよく、<b>引数が 4 つ以上か型の文字が長い時だけ切り替える</b>のを推奨する。</div>
+
+<h2>案 1 — 今の形(チップが折り返す)<small>比較のため</small></h2>
+<div class="card">
+<div class="hd"><span class="kind">defk</span><span class="name">view-body</span><span class="btn">source</span><span class="btn">open in editor</span><div class="chips"><span class="chip">context: screen</span><span class="chip role">role: judgment</span></div></div>
+<div class="sig1 mono"><span class="p"><span class="n">topic</span><span class="t">QueueTopic | ConversationTopic | StreamTopic</span></span><span class="p"><span class="n">rows</span><span class="t">Rows</span></span><span class="p"><span class="n">cache</span><span class="t">Cache</span></span><span class="p"><span class="n">previous</span><span class="t">QueueSent | ConversationSent | TailSent | None</span></span><span class="p"><span class="n">record</span><span class="t">RecordCache | None</span></span><span class="p"><span class="n">evaluation</span><span class="t">ViewIndexEvaluation</span></span><span class="arrow">→</span><span class="ret">QueueSent | ConversationSent | None</span></div>
+</div>
+
+<h2>案 2 — 縦の表(名の列・型の列)。return type は最後の行に緑の帯で<small>推奨の候補</small></h2>
+<div class="card">
+<div class="hd"><span class="kind">defk</span><span class="name">view-body</span><span class="btn">source</span><span class="btn">open in editor</span><div class="chips"><span class="chip">context: screen</span><span class="chip role">role: judgment</span></div></div>
+<div class="sig2 mono">
+<div class="lab">args</div>
+<span class="n">topic</span><span class="t">QueueTopic <i class="bar">|</i> ConversationTopic <i class="bar">|</i> StreamTopic</span>
+<span class="n">rows</span><span class="t">Rows</span>
+<span class="n">cache</span><span class="t">Cache</span>
+<span class="n">previous</span><span class="t">QueueSent <i class="bar">|</i> ConversationSent <i class="bar">|</i> TailSent <i class="bar">|</i> <span class="none">None</span></span>
+<span class="n">record</span><span class="t">RecordCache <i class="bar">|</i> <span class="none">None</span></span>
+<span class="n">evaluation</span><span class="t">ViewIndexEvaluation</span>
+<div class="rt"><span class="k">return type</span><span class="r">QueueSent <i class="bar">|</i> ConversationSent <i class="bar">|</i> <span class="none">None</span></span></div>
+</div>
+</div>
+
+<h2>案 3 — 縦の表 + union の候補を 1 つずつ小さなチップに(None は破線)<small>推奨</small></h2>
+<div class="card">
+<div class="hd"><span class="kind">defk</span><span class="name">view-body</span><span class="btn">source</span><span class="btn">open in editor</span><div class="chips"><span class="chip">context: screen</span><span class="chip role">role: judgment</span></div></div>
+<div class="sig2 mono">
+<div class="lab">args</div>
+<span class="n">topic</span><span class="tc"><span>QueueTopic</span><i>|</i><span>ConversationTopic</span><i>|</i><span>StreamTopic</span></span>
+<span class="n">rows</span><span class="tc"><span>Rows</span></span>
+<span class="n">cache</span><span class="tc"><span>Cache</span></span>
+<span class="n">previous</span><span class="tc"><span>QueueSent</span><i>|</i><span>ConversationSent</span><i>|</i><span>TailSent</span><i>|</i><span class="none">None</span></span>
+<span class="n">record</span><span class="tc"><span>RecordCache</span><i>|</i><span class="none">None</span></span>
+<span class="n">evaluation</span><span class="tc"><span>ViewIndexEvaluation</span></span>
+<div class="rt"><span class="k">return type</span><span class="tc"><span style="color:#9fe3c0;border-color:#2f5a45">QueueSent</span><i>|</i><span style="color:#9fe3c0;border-color:#2f5a45">ConversationSent</span><i>|</i><span class="none">None</span></span></div>
+</div>
+</div>
+
+<h2>案 4 — 2 列の格子。return type は下の行に分ける<small>今の形の最小の直し</small></h2>
+<div class="card">
+<div class="hd"><span class="kind">defk</span><span class="name">view-body</span><span class="btn">source</span><span class="btn">open in editor</span><div class="chips"><span class="chip">context: screen</span><span class="chip role">role: judgment</span></div></div>
+<div class="sig4 mono">
+<span class="p"><span class="n">topic</span><span class="t">QueueTopic | ConversationTopic | StreamTopic</span></span><span class="p"><span class="n">rows</span><span class="t">Rows</span></span>
+<span class="p"><span class="n">cache</span><span class="t">Cache</span></span><span class="p"><span class="n">previous</span><span class="t">QueueSent | ConversationSent | TailSent | None</span></span>
+<span class="p"><span class="n">record</span><span class="t">RecordCache | None</span></span><span class="p"><span class="n">evaluation</span><span class="t">ViewIndexEvaluation</span></span>
+<div class="rtrow"><span class="k">return type</span><span class="ret">QueueSent | ConversationSent | None</span></div>
+</div>
+</div>
+
+<h2>案 5 — 今の形のまま、return type を必ず行頭の「→」から始める<small>最小の直し</small></h2>
+<div class="card">
+<div class="hd"><span class="kind">defk</span><span class="name">view-body</span><span class="btn">source</span><span class="btn">open in editor</span><div class="chips"><span class="chip">context: screen</span><span class="chip role">role: judgment</span></div></div>
+<div class="sig1 mono"><span class="p"><span class="n">topic</span><span class="t">QueueTopic | ConversationTopic | StreamTopic</span></span><span class="p"><span class="n">rows</span><span class="t">Rows</span></span><span class="p"><span class="n">cache</span><span class="t">Cache</span></span><span class="p"><span class="n">previous</span><span class="t">QueueSent | ConversationSent | TailSent | None</span></span><span class="p"><span class="n">record</span><span class="t">RecordCache | None</span></span><span class="p"><span class="n">evaluation</span><span class="t">ViewIndexEvaluation</span></span></div>
+<div class="sig1 mono" style="padding-top:0"><span class="arrow">→</span><span class="ret">QueueSent | ConversationSent | None</span></div>
+</div>
+
+<h2>畳んだ 1 行の形(引数が 4 つ以上の時)</h2>
+<div class="card">
+<div class="line"><span class="kind">defk</span> <b style="color:#f2e6a8">view-body</b> &nbsp; <span class="names">(topic, rows, cache, previous, record, evaluation)</span> → <span class="r">QueueSent | ConversationSent | None</span> &nbsp; <span class="chip">context: screen</span> <span class="chip role">role: judgment</span></div>
+<div class="line" style="color:#8a9099;font:12px -apple-system,'Hiragino Sans',sans-serif">引数が 4 つ以上なら 1 行では名だけ(型は hover で)。return type は常に出す。3 つ以下なら今のとおり <code>(request: InputRequest) → RunOutcome</code>。</div>
+</div>
+
+<h2>比較</h2>
+<table class="cmp">
+<tr><th>案</th><th>return type の見つけやすさ</th><th>union の読みやすさ</th><th>縦の長さ(view-body)</th><th>引数が 2 つの時</th></tr>
+<tr><td>1 今</td><td class="ng">折り返しの最後に埋もれる</td><td class="mid">1 つのチップに詰まる</td><td>3 行</td><td class="ok">1 行</td></tr>
+<tr><td>2 縦の表</td><td class="ok">最後の行に緑の帯 + ラベル</td><td class="ok">| を薄くして読める</td><td>8 行</td><td class="mid">縦の表は大げさ → 切り替えの閾で今の形を使う</td></tr>
+<tr><td>3 縦の表 + union のチップ</td><td class="ok">同上</td><td class="ok">候補が 1 つずつ見える。None は破線で弱く</td><td>8 行</td><td class="mid">同上</td></tr>
+<tr><td>4 2 列の格子</td><td class="ok">下の行に分かれる</td><td class="mid">1 つのチップに詰まる</td><td>4 行</td><td class="ok">2 列でも短い</td></tr>
+<tr><td>5 → を行頭に</td><td class="mid">行頭にはなるが 3 行目</td><td class="mid">1 つのチップに詰まる</td><td>3〜4 行</td><td class="ok">1 行</td></tr>
+</table>
+<div class="note" style="margin-top:10px"><b>推奨</b>: 案 3(縦の表 + union のチップ)を「引数が 4 つ以上か、型の文字の合計が長い時」に使い、それ以外は今の 1 行の形のまま。畳んだ 1 行は名だけ + return type。</div>
+</body></html>

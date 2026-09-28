@@ -1,0 +1,44 @@
+{
+  "artifacts": [
+    {
+      "path": "artifacts/v6/design.md",
+      "sha256": "1722d8c014e4761272f5b8969ab2392122aa5dc5a014cdfcfaed4b69bc28b940"
+    },
+    {
+      "path": "artifacts/v6/sig-variants.html",
+      "sha256": "3acb7ce6fe175a23cca326c5dbd62ecad072ac4b25c25c3dc039587d3806fa54"
+    }
+  ],
+  "body": {
+    "actor": "user",
+    "authority": "direct",
+    "decision": "design",
+    "outcome": "accepted",
+    "scope_of_agreement": "operator が合意したのは席の推奨(案 3 + 閾での切り替え・畳んだ 1 行は名だけ + return type)。閾の数(引数 ≥ 4・型の文字 > 60)と None の破線は席の既定で戻せる。",
+    "source": "operator の直接の議論 2026-09-29 00:1x〜00:2x(会話 defk-view-discuss・herdr pane w3J:pA)。逐語: \"hmm this is correct but not good to see.\"(実物の view-body のカードの画面つき)→ 席が案 1〜5 の見本を出して案 3 + 閾での切り替えを推奨 → \"as you recommend\"",
+    "statement": "v5 の裁定に 1 点を足す。引数が 4 つ以上、または引数と return type の型の文字の合計が長い実体では、args / return type を縦の表(左に名・右に型・union の候補は 1 つずつ小さなチップ・None は破線・return type は最後の行に緑の帯と return type のラベル)で描く(案 3)。それ以外は v2 の 1 行の形のまま。畳んだ 1 行は引数が 4 つ以上なら名だけ + return type(型は hover)。v5 までの他の決まりはそのまま。",
+    "subjects": [
+      "design-4039628561ae"
+    ],
+    "supersedes": [
+      "decision-ef207b6c19ad"
+    ]
+  },
+  "created_at": "2026-09-28T14:44:10.815835+00:00",
+  "id": "decision-8e4a61442bd9",
+  "inputs": [
+    {
+      "id": "design-4039628561ae",
+      "role": "subject",
+      "sha256": "7e2becc445d56589f8975b2f71fa645ab23e8427b737ce0c758f0aeb45af7529"
+    },
+    {
+      "id": "decision-ef207b6c19ad",
+      "role": "basis",
+      "sha256": "1626994c273e5da9fbcbc7c854ef3f4ff61c2a1aba8cfb3d78837ad906fab0c6"
+    }
+  ],
+  "kind": "decision",
+  "schema_version": 1,
+  "scope": "doeff-hy の code を読む面(VS Code)。単位は file ではなく定義(defk・defrecord・defeffect・defhandler・deftest …)で、Scala 3 の見た目に印字し、tag・effect・呼び出し・型から辿る。source の Hy は編集しない。その先の言語(静的な型・型に載る effect・Python の呼び出し・file に縛られない名前空間)の要件も持つ"
+}

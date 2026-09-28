@@ -1,0 +1,249 @@
+{
+  "artifacts": [
+    {
+      "path": "artifacts/v6/design.md",
+      "sha256": "1722d8c014e4761272f5b8969ab2392122aa5dc5a014cdfcfaed4b69bc28b940"
+    },
+    {
+      "path": "artifacts/v6/sig-variants.html",
+      "sha256": "3acb7ce6fe175a23cca326c5dbd62ecad072ac4b25c25c3dc039587d3806fa54"
+    },
+    {
+      "path": "artifacts/v6/sig-variants-render.png",
+      "sha256": "8381f6ee694e49edc6fb3e64e5792d88601a7cfcaf5ca23671651e406331cb6c"
+    }
+  ],
+  "body": {
+    "alternatives": [
+      {
+        "options": [
+          {
+            "benefits": "短い実体では 1 行で済む",
+            "costs": "折り返して return type が最後に埋もれる。union が 1 つのチップに詰まる",
+            "name": "案 1 今の形(チップが折り返す)"
+          },
+          {
+            "benefits": "return type が最後の行に緑の帯で見つかる",
+            "costs": "union の候補の切れ目が弱い",
+            "name": "案 2 縦の表(union は文字)"
+          },
+          {
+            "benefits": "return type が見つかり、候補が 1 つずつ見える。短い実体は今の形のまま",
+            "costs": "縦に長い(view-body で 8 行)。閾を持つ",
+            "name": "案 3 縦の表 + union の候補をチップに(閾で切り替え)"
+          },
+          {
+            "benefits": "4 行に収まり return type は分かれる",
+            "costs": "union は詰まったまま",
+            "name": "案 4 2 列の格子"
+          },
+          {
+            "benefits": "最小の直し",
+            "costs": "3 行目に埋もれるのは変わらない",
+            "name": "案 5 → を行頭に"
+          }
+        ],
+        "question": "引数が多い・型が長い時の args / return type の形",
+        "reason": "席の推奨を operator が採った(\"as you recommend\")",
+        "reconsider_when": "縦の長さが困る実体が多い時(閾を上げるか案 4 を混ぜる)",
+        "selected": "案 3 縦の表 + union の候補をチップに(閾で切り替え)"
+      }
+    ],
+    "change_cases": [
+      {
+        "change": "閾を変える(引数の数・型の文字数)",
+        "expected_elements": [
+          "entity-card"
+        ],
+        "id": "C1",
+        "preserve": [
+          "閾は数 2 つの設定"
+        ],
+        "priority": "required",
+        "protected_contracts": [
+          "K4"
+        ],
+        "provenance": {
+          "kind": "assumption",
+          "source": "席の既定"
+        },
+        "rationale": "実物の分布を見て調整する",
+        "verification": "閾を変えると境界の実体だけ形が変わる"
+      },
+      {
+        "change": "型の候補のチップから実体のカードへ飛ぶ",
+        "expected_elements": [
+          "entity-card"
+        ],
+        "id": "C2",
+        "preserve": [
+          "チップは索引の実体を指す"
+        ],
+        "priority": "prepare",
+        "protected_contracts": [
+          "K4"
+        ],
+        "provenance": {
+          "kind": "inherited",
+          "source": "v2 design-f953339f038c"
+        },
+        "rationale": "v2 の関係の帯と同じ動き",
+        "verification": "defrecord のチップをクリックすると同じ面にカードが積まれる"
+      }
+    ],
+    "contracts": [
+      {
+        "canonical_source": "ide-plugins/vscode/doeff-runner(実装の issue で決める)",
+        "effects": [],
+        "failures": [
+          "型が分からない引数は ? のチップ(空にしない)"
+        ],
+        "id": "K4",
+        "invariants": [
+          "return type は開いた形でも畳んだ形でも常に出る",
+          "同じ実体は閾だけで形が決まる(手の状態を持たない)"
+        ],
+        "operations": [
+          "render(entity, attributes, folded, fields) -> HTML"
+        ],
+        "owner": "entity-card"
+      }
+    ],
+    "elements": [
+      {
+        "depends_on": [
+          "structure-index"
+        ],
+        "hidden_decisions": [
+          "切り替えは自動で、手の操作は付けない",
+          "None は破線で弱く"
+        ],
+        "id": "entity-card",
+        "kind": "internal",
+        "requirement_ids": [
+          "R16",
+          "R17"
+        ],
+        "responsibility": "v5 のまま + args / return type の欄を閾で 1 行の形と縦の表に切り替える。畳んだ 1 行は閾で名だけにする",
+        "state": [
+          "閾(引数 ≥ 4・型の文字 > 60)"
+        ]
+      },
+      {
+        "depends_on": [],
+        "hidden_decisions": [],
+        "id": "structure-index",
+        "kind": "internal",
+        "requirement_ids": [
+          "R16"
+        ],
+        "responsibility": "v1・v3 のまま(引数の名と型・return type の union の候補は索引の属性)",
+        "state": []
+      }
+    ],
+    "handoff": {
+      "fixed": [
+        "引数が多い・型が長い実体は縦の表(案 3)",
+        "return type は最後の行に緑の帯とラベル",
+        "畳んだ 1 行は引数 4 つ以上で名だけ + return type"
+      ],
+      "free": [
+        "閾の数",
+        "型のチップからの移動の実装"
+      ],
+      "next": [
+        "main が読む面の実装の issue を立てる時、v6 の 2 節を受け入れ条件に足す"
+      ]
+    },
+    "level": "実体のカードの args / return type の欄と、畳んだ 1 行の同じ欄",
+    "methods": [
+      {
+        "evidence": [
+          "design-f953339f038c の methods"
+        ],
+        "name": "change-cases",
+        "profile": "change-cases-1996-local-v1",
+        "reason": "v2〜v5 の当て方に閾の調整(C1)とチップからの移動(C2)を足しただけ",
+        "status": "reused",
+        "steps": []
+      },
+      {
+        "evidence": [],
+        "name": "ddd",
+        "profile": "ddd-evans-2015-local-v1",
+        "reason": "表示の設計",
+        "status": "not_applicable",
+        "steps": []
+      },
+      {
+        "evidence": [],
+        "name": "volatility",
+        "profile": "volatility-righting-software-local-v1",
+        "reason": "change-cases で扱った",
+        "status": "not_applicable",
+        "steps": []
+      },
+      {
+        "evidence": [],
+        "name": "add",
+        "profile": "add-2.0-local-v1",
+        "reason": "要素 2 つ",
+        "status": "not_applicable",
+        "steps": []
+      },
+      {
+        "evidence": [],
+        "name": "saam",
+        "profile": "saam-1996-local-v1",
+        "reason": "alternatives の表で済ませた",
+        "status": "not_applicable",
+        "steps": []
+      },
+      {
+        "evidence": [],
+        "name": "c4",
+        "profile": "c4-web-2026-09-14-local-v1",
+        "reason": "v1 の図で足りる",
+        "status": "not_applicable",
+        "steps": []
+      }
+    ],
+    "open_questions": [
+      "閾の数(引数 ≥ 4・型の文字 > 60)は席の既定。実物の分布で調整する"
+    ],
+    "perspective": "proposed",
+    "purpose": "v6: v5(design-682080043e62)に 1 点を足す。引数が 4 つ以上か型の文字が長い実体では、args / return type を縦の表(名の列・型の列・union の候補は 1 つずつチップ・None は破線・return type は最後の行に緑の帯とラベル)で描く。それ以外は今の 1 行の形。畳んだ 1 行は引数が 4 つ以上なら名だけ + return type",
+    "requirements": [
+      {
+        "id": "R16",
+        "kind": "functional",
+        "provenance": {
+          "kind": "user",
+          "source": "operator 2026-09-29 \"hmm this is correct but not good to see.\"(view-body の画面)→ 席の推奨 → \"as you recommend\"(閾の数は席の既定)"
+        },
+        "statement": "引数が 4 つ以上、または引数と return type の型の文字の合計が 60 字を超える実体では、args / return type を縦の表で描く(案 3)。union の候補は 1 つずつ小さなチップ、None は破線、return type は最後の行に緑の帯と return type のラベル。それ以外は v2 の 1 行の形"
+      },
+      {
+        "id": "R17",
+        "kind": "functional",
+        "provenance": {
+          "kind": "assumption",
+          "source": "席の推奨 2026-09-29(operator \"as you recommend\")"
+        },
+        "statement": "畳んだ 1 行では、引数が 4 つ以上なら名だけを並べ、型は hover で出す。return type は常に出す"
+      }
+    ]
+  },
+  "created_at": "2026-09-28T14:43:34.287077+00:00",
+  "id": "design-4039628561ae",
+  "inputs": [
+    {
+      "id": "design-682080043e62",
+      "role": "basis",
+      "sha256": "87d9b86cf6f80b7a2f4374b8a4e25525a2ae62bbadd5174a1e228bb20dcc97d8"
+    }
+  ],
+  "kind": "design",
+  "schema_version": 1,
+  "scope": "doeff-hy の code を読む面(VS Code)。単位は file ではなく定義(defk・defrecord・defeffect・defhandler・deftest …)で、Scala 3 の見た目に印字し、tag・effect・呼び出し・型から辿る。source の Hy は編集しない。その先の言語(静的な型・型に載る effect・Python の呼び出し・file に縛られない名前空間)の要件も持つ"
+}
