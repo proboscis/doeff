@@ -100,7 +100,16 @@ where
     T: Clone + Send + Sync + Serialize + DeserializeOwned,
     F: Fn(&str, &Path) -> Option<T> + Sync,
 {
-    per_file_at(cache_file(root, kind).as_deref(), &identity(kind), files, compute)
+    per_file_keyed(root, kind, "", files, compute)
+}
+
+/// `per_file` と同じ — ただし事実が file の中身のほかに `key` にも依る時に使う(`key` が変われば全部を作り直す)。
+pub fn per_file_keyed<T, F>(root: &Path, kind: &str, key: &str, files: &[(String, PathBuf)], compute: F) -> Vec<T>
+where
+    T: Clone + Send + Sync + Serialize + DeserializeOwned,
+    F: Fn(&str, &Path) -> Option<T> + Sync,
+{
+    per_file_at(cache_file(root, kind).as_deref(), &format!("{}/{key}", identity(kind)), files, compute)
 }
 
 /// `per_file` の本体 — cache の file の置き場と印を受ける(None = cache を使わない)。

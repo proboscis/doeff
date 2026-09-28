@@ -59,6 +59,17 @@ impl DefkNames {
     pub fn is_empty(&self) -> bool {
         self.names.is_empty()
     }
+
+    /// 集まりの指紋(file ごとの事実の cache の印に使う — この集まりに依る事実は、集まりが変われば作り直す)。
+    pub fn digest(&self) -> String {
+        use sha2::{Digest, Sha256};
+        let mut hasher = Sha256::new();
+        for name in &self.names {
+            hasher.update(name.as_bytes());
+            hasher.update([0u8]);
+        }
+        format!("{:x}", hasher.finalize())
+    }
 }
 
 /// 1 つの source の最上位の defk の名(`<module>.<名>`)。
