@@ -23,14 +23,16 @@
 (import .metrics_handlers [metrics-http])
 (import .shared_handlers [shared-http SharedClient])
 (import .semaphore_handlers [cluster-semaphore SemaphoreSession])
+(import .semaphore_model [lease-holder])
 (import .remote [remote-cluster TaskClient])
 (import .detached [detached-cluster DetachedClient warm-cluster WarmClient])
 
 
 (defk lease-holder-of [ctx]
   {:pre [(: ctx RunContext)] :post [(: % str)] :tags {:context "doeff-cluster" :role "judgment"}}
-  "名前付きの lease の担い手の名 = job と process の世代(cluster で一意 — 同じ job の新旧の世代を分ける)。"
-  (.format "{}/{}" ctx.job (or ctx.instance ctx.worker)))
+  "名前付きの lease の担い手の名 = job と process の世代(cluster で一意 — 同じ job の新旧の世代を分ける)。綴りは worker が終わった
+   process の lease を外す時と同じ定義 semaphore_model.lease-holder。"
+  (lease-holder ctx.job (or ctx.instance ctx.worker)))
 
 
 (defk cluster-handlers []

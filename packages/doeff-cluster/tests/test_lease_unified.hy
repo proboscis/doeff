@@ -149,12 +149,12 @@
   (assert (= (lfor j desired.jobs j.name) ["writer-a"])))
 
 (deftest test-the-worker-returns-a-finished-process-lease-through-the-coordinator
-  (setv board {"semaphore/app-writer" {"permits" 1 "holders" {"zeus/1-old/ab12/1" 99 "zeus/2-new/cd34/1" 88}}}
+  (setv board {"semaphore/app-writer" {"permits" 1 "holders" {"app-writer/1-old/1" 99 "app-writer/2-new/1" 88}}}
         posts [])
   (defn #^ httpx.Response handle [#^ httpx.Request request]
     (if (= request.method "GET")
         (httpx.Response 200 :json board)
         (do (.append posts #(request.url.path (json.loads request.content)))
             (httpx.Response 200 :json {"ok" True "dropped" 1}))))
-  (release-leases (CoordinatorLink "http://coord" "zeus" #() 1 60000 :transport (httpx.MockTransport handle)) "1-old")
-  (assert (= posts [#("/leases/app-writer" {"op" "drop" "token" "zeus/1-old/"})])))
+  (release-leases (CoordinatorLink "http://coord" "zeus" #() 1 60000 :transport (httpx.MockTransport handle)) "app-writer" "1-old")
+  (assert (= posts [#("/leases/app-writer" {"op" "drop" "token" "app-writer/1-old/"})])))

@@ -232,7 +232,8 @@
   (setv dead (replace (proc H1 10 "1-old" :retired-from "a" :name name) :exit-code -15))
   (setv records {name (JobRecord name :stopping (StopProgress 0 StopStage.TERM 0))})
   (setv actions (plan 5 #(H2) (world dead (proc H2 11 "2-new") :codes #(READY1 READY2)) records POLICY))
-  (assert (= actions #((ReapJob name 10 Outcome.STOPPED -15) (ReleaseLeases "1-old"))))
+  ;; 担い手の job の名は子が名乗った名(起こした spec の名 "a" — 退いた後の名ではない)。
+  (assert (= actions #((ReapJob name 10 Outcome.STOPPED -15) (ReleaseLeases "a" "1-old"))))
   (assert (not-in name (records-after 5 records actions)) "退いた process の記憶は回収で捨てる"))
 
 (deftest test-handoff-never-runs-more-than-one-extra-process
