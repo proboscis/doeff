@@ -2392,19 +2392,21 @@ fn program_params_for(
     if !enabled.contains(&ProjectRule::DefkCalledBare) || defks.is_empty() {
         return params;
     }
-    // file ごとに並べて読み、最後に束ねる。
-    let found: Vec<param_calls::ProgramParams> = hy_index::collect_hy_files(root)
-        .par_iter()
-        .filter_map(|path| {
-            let rel = relative_path(root, path)?;
+    // file ごとの結果は、その file の中身と repo 全体の defk の名(defks)で決まる。defks の指紋を印に含めて file ごとに覚え、
+    // defks が変わらない間は変わった file だけ解析し直す(defks が変われば全部を作り直す・#1026)。
+    let files: Vec<(String, PathBuf)> = hy_index::collect_hy_files(root)
+        .into_iter()
+        .filter_map(|path| relative_path(root, &path).map(|rel| (rel, path)))
+        .collect();
+    let found: Vec<param_calls::ProgramParams> =
+        facts_cache::per_file_keyed(root, "program-params", &defks.digest(), &files, |rel, path| {
             let source = std::fs::read_to_string(path).ok()?;
-            let module = module_of(&rel);
+            let module = module_of(rel);
             let bindings = facts::hy_bindings(&source, &module);
             let mut one = param_calls::ProgramParams::default();
-            one.collect(&source, &rel, smells::Scope { module: &module, bindings: &bindings }, defks);
-            Some(one)
-        })
-        .collect();
+            one.collect(&source, rel, smells::Scope { module: &module, bindings: &bindings }, defks);
+            (!one.is_empty()).then_some(one)
+        });
     for one in found {
         params.merge(one);
     }

@@ -24,14 +24,14 @@ use super::names::hy_mangle;
 use super::smells::{children, live, live_items, span_of, Hy, Scope};
 
 /// 引数の位置(位置の引数は何番目か・keyword の引数は mangle した名)。
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize)]
 pub enum Slot {
     Position(usize),
     Keyword(String),
 }
 
 /// 呼び手が引数に Program を返す関数を渡した事実 1 つ。
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct PassedProgram {
     pub slot: Slot,
     /// 渡した物の綴り(defk の名か `fnk`)。
@@ -41,7 +41,7 @@ pub struct PassedProgram {
 }
 
 /// 呼び先(module まで含めた名)ごとの、Program を返す関数を受ける引数。
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 pub struct ProgramParams {
     by_callee: BTreeMap<String, Vec<PassedProgram>>,
 }
