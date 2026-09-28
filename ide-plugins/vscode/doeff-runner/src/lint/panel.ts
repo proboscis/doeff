@@ -21,12 +21,20 @@ import type { LintStore } from './store';
 import { ALL_VIOLATIONS, summaryDescription, summaryLabel, type PanelFilter, type SavedTally } from './severity';
 import type { IconSource } from '../pixel/icons';
 import { layerGlyph, ruleIcon, serviceGlyph, violationMark } from '../pixel/vocabulary';
+import { REVEAL_VIOLATION_COMMAND, type ViolationPlace } from '../read/locate';
 
-/** 違反の位置へ移動し、その範囲を選ぶ命令(空の範囲は行全体)。 */
+/**
+ * 違反の項目を押した時の命令 — その .hy の読む面で、違反の行を含む定義のカードと source の箱の該当の行へ(v10・#910 U18)。
+ * 読む面を切っている時・Hy でない file は、読む面の命令が今までどおり editor で範囲を選んで開く(空の範囲は行全体)。
+ */
 function openViolation(violation: LintViolation): vscode.Command {
   const r = displayRange(violation.range, undefined);
-  const selection = new vscode.Range(r.start.line, r.start.character, r.end.line, r.end.character);
-  return { title: '開く', command: 'vscode.open', arguments: [vscode.Uri.file(violation.path), { selection }] };
+  const place: ViolationPlace = {
+    path: violation.path,
+    start: { line: r.start.line, character: r.start.character },
+    end: { line: r.end.line, character: r.end.character }
+  };
+  return { title: '開く', command: REVEAL_VIOLATION_COMMAND, arguments: [place] };
 }
 
 /** 位置へ移動する命令。 */

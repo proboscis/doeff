@@ -335,6 +335,9 @@ export class WorkspacePlane implements vscode.Disposable {
       case 'reveal':
         await this.pin(message.qualifiedName);
         return;
+      case 'ready':
+        // repo 全体の面の知らせは頁の操作への答えだけ(頁が読み込めた後にしか送らない)なので、溜めずに済む
+        return;
       default: {
         const unreachable: never = message;
         throw new Error(`網羅されていない知らせ: ${JSON.stringify(unreachable)}`);

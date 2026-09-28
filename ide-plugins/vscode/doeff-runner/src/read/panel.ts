@@ -26,7 +26,7 @@ import {
   type FoldState
 } from './fold';
 import { LABELS } from './labels';
-import { locate, parseLocation } from './locate';
+import { locate, parseLocation, REVEAL_VIOLATION_COMMAND, violationAction, type RevealTarget, type ViolationPlace } from './locate';
 import { buildCards, facets, parseAxisKey, SEARCH_KEY, setSearch, toggle, visibleCards, type Card, type Selection } from './model';
 import type { Glyphs } from './html';
 import { lineClasses, renderFacets, renderPage, renderTreePart, summaryText, type PlaneState } from './render';
@@ -61,7 +61,9 @@ export type PlaneMessage =
   | { readonly type: 'tree-more' }
   | { readonly type: 'tree-close' }
   | { readonly type: 'tree-tests' }
-  | { readonly type: 'reveal'; readonly qualifiedName: string };
+  | { readonly type: 'reveal'; readonly qualifiedName: string }
+  /** 頁が読み込めて知らせを受けられる(html を差し替えた後 — それまで送る知らせは溜める) */
+  | { readonly type: 'ready' };
 
 /** 木の向きの文字を読む(知らない値は undefined)。 */
 function parseDirection(value: unknown): TreeDirection | undefined {
@@ -86,6 +88,7 @@ export function readMessage(raw: unknown): PlaneMessage | undefined {
     case 'tree-more':
     case 'tree-close':
     case 'tree-tests':
+    case 'ready':
       return { type };
     case 'tree': {
       const root = text('root');
@@ -171,13 +174,20 @@ export class GraphTable {
   }
 }
 
-/** 面どうしの移動 — 木の節の名から、その定義のカードへ(他の file なら、その file を読む面で開いてから見せる)。 */
-/** 面で見せる先 — 定義と、光らせる source の行(0 始まり・無ければ undefined)。 */
-export interface RevealTarget {
-  readonly qualifiedName: string;
-  readonly line: number | undefined;
+/** 面から webview へ送る知らせ。 */
+type PlaneOutbound =
+  | { readonly type: 'reveal'; readonly id: string; readonly line: number | null; readonly showSource: boolean }
+  | { readonly type: 'top' }
+  | { readonly type: 'tree'; readonly html: string }
+  | { readonly type: 'filter'; readonly axes: string; readonly visible: readonly string[]; readonly summary: string }
+  | { readonly type: 'fold'; readonly open: readonly string[]; readonly line: readonly string[]; readonly lineClasses: string };
+
+/** 頁に描かれない知らせ(見せる先)か — 頁を差し替えても捨てずに、読み込めた頁へ送り直す物。 */
+function isNavigation(message: PlaneOutbound): boolean {
+  return message.type === 'reveal' || message.type === 'top';
 }
 
+/** 面どうしの移動 — 木の節の名から、その定義のカードへ(他の file なら、その file を読む面で開いてから見せる)。 */
 class PlaneNavigator {
   private readonly panels = new Map<string, PlanePanel>();
   private readonly pending = new Map<string, RevealTarget>();
@@ -210,6 +220,12 @@ class PlaneNavigator {
     }
     void vscode.commands.executeCommand('vscode.openWith', vscode.Uri.file(filePath), READING_PLANE_VIEW_TYPE).then(() => open?.reveal(target));
   }
+
+  /** file の面を開いて先頭を見せる(違反の行が定義の外の時 — v10)。 */
+  showTop(filePath: string): void {
+    const open = this.panels.get(path.normalize(filePath));
+    void vscode.commands.executeCommand('vscode.openWith', vscode.Uri.file(filePath), READING_PLANE_VIEW_TYPE).then(() => open?.showTop());
+  }
 }
 
 /** 面 1 枚(開いた document 1 つ)の係 — 選択と畳む状態を持ち、置き場が変わったら描き直す。 */
@@ -224,6 +240,12 @@ class PlanePanel implements vscode.Disposable {
   private lastHtml = '';
   private timer: NodeJS.Timeout | undefined;
   private readonly disposables: vscode.Disposable[] = [];
+  /**
+   * 頁が知らせを受けられるか — html を差し替えると、頁が読み込み直して ready を返すまでに送った知らせは捨てられる(U18 の
+   * 実物の窓で見つけた: 開いた直後の reveal が届かず、source の箱が開かなかった)ので、それまでは queued に溜める
+   */
+  private ready = false;
+  private queued: PlaneOutbound[] = [];
   /** file 全体の色と、塗った document の版(版が違えば使わない) */
   private coloring: { readonly version: number; readonly value: SourceColoring } | undefined;
   /** 塗っている最中の document の版(同じ版を 2 度塗らないため) */
@@ -285,8 +307,32 @@ class PlanePanel implements vscode.Disposable {
     if (!this.fold.open.has(key)) {
       this.setFold(toggleOpen(this.fold, key));
     }
-    // 行があれば本体(か source)のその行を光らせる — 行番号 = source の行(1 始まり)
-    void this.panel.webview.postMessage({ type: 'reveal', id: card.id, line: target.line === undefined ? null : target.line + 1 });
+    // 行があれば本体(か source)のその行を光らせる — 行番号 = source の行(1 始まり)。showSource なら source の箱も開く
+    this.post({ type: 'reveal', id: card.id, line: target.line === undefined ? null : target.line + 1, showSource: target.showSource });
+  }
+
+  /** 面の先頭へ送る(開いている面に、定義の外の行の違反から来た時)。 */
+  showTop(): void {
+    this.post({ type: 'top' });
+  }
+
+  /** 知らせを webview へ送る(頁が読み込み中なら、読み込めた知らせ ready まで溜める)。 */
+  private post(message: PlaneOutbound): void {
+    if (this.ready) {
+      void this.panel.webview.postMessage(message);
+    } else {
+      this.queued.push(message);
+    }
+  }
+
+  /** 頁が読み込めた — 溜めた知らせを送った順に送る。 */
+  private flush(): void {
+    this.ready = true;
+    const queued = this.queued;
+    this.queued = [];
+    for (const message of queued) {
+      void this.panel.webview.postMessage(message);
+    }
   }
 
   /** 木の今の形(条件が無ければ undefined)。 */
@@ -301,7 +347,7 @@ class PlanePanel implements vscode.Disposable {
   /** 木の条件を変え、木の欄だけを webview へ送る。 */
   private setTree(next: TreeQuery | undefined): void {
     this.tree = next;
-    void this.panel.webview.postMessage({ type: 'tree', html: renderTreePart(this.cards, this.graphs.graph, this.glyphs, this.treePart()) });
+    this.post({ type: 'tree', html: renderTreePart(this.cards, this.graphs.graph, this.glyphs, this.treePart()) });
     this.remember();
   }
 
@@ -376,6 +422,9 @@ class PlanePanel implements vscode.Disposable {
       return;
     }
     this.lastHtml = stable;
+    // 新しい頁は今の畳む・選択・木を描くので、溜めた知らせのうち頁に描かれない見せる先だけを残す
+    this.ready = false;
+    this.queued = this.queued.filter(isNavigation);
     this.panel.webview.html = this.page(state, crypto.randomBytes(16).toString('hex'));
     if (this.revealWanted !== undefined) {
       this.reveal(this.revealWanted);
@@ -418,7 +467,7 @@ class PlanePanel implements vscode.Disposable {
   private postFilter(): void {
     const shown = visibleCards(this.cards, this.selection);
     const all = facets(this.cards, this.selection);
-    void this.panel.webview.postMessage({
+    this.post({
       type: 'filter',
       axes: renderFacets(all, Number.POSITIVE_INFINITY),
       visible: shown.map((c) => c.id),
@@ -431,7 +480,7 @@ class PlanePanel implements vscode.Disposable {
   private setFold(next: FoldState): void {
     this.fold = next;
     this.memory.save(this.document.uri.fsPath, next);
-    void this.panel.webview.postMessage({ type: 'fold', open: [...next.open], line: [...next.line], lineClasses: lineClasses(next) });
+    this.post({ type: 'fold', open: [...next.open], line: [...next.line], lineClasses: lineClasses(next) });
     this.remember();
   }
 
@@ -467,6 +516,9 @@ class PlanePanel implements vscode.Disposable {
       }
       case 'hydrate':
         // この面のカードは開いた document から切り出した source を持つので、読み込む物は無い
+        return;
+      case 'ready':
+        this.flush();
         return;
       case 'fold':
         this.setFold(toggleOpen(this.fold, message.key));
@@ -510,7 +562,7 @@ class PlanePanel implements vscode.Disposable {
         if (found === undefined) {
           return;
         }
-        const target = { qualifiedName: message.qualifiedName, line: undefined };
+        const target: RevealTarget = { qualifiedName: message.qualifiedName, line: undefined, showSource: false };
         if (path.normalize(found.path) === path.normalize(this.document.uri.fsPath)) {
           this.reveal(target);
         } else {
@@ -622,7 +674,7 @@ export function registerReadingPlane(
       const located = locate(parseLocation(typed), roots, (p) => hy.get(p)?.file.definitions);
       switch (located.tag) {
         case 'found':
-          navigator.revealElsewhere(located.path, { qualifiedName: located.definition.qualifiedName, line: located.line });
+          navigator.revealElsewhere(located.path, { qualifiedName: located.definition.qualifiedName, line: located.line, showSource: false });
           return;
         case 'unreadable':
         case 'not-indexed':
@@ -631,6 +683,30 @@ export function registerReadingPlane(
           return;
         default: {
           const unreachable: never = located;
+          throw new Error(`網羅されていない答え: ${JSON.stringify(unreachable)}`);
+        }
+      }
+    }),
+    // 違反(linter)の一覧の項目から、その .hy の読む面のカードと source の箱の該当の行へ(v10・#910 U18)
+    vscode.commands.registerCommand(REVEAL_VIOLATION_COMMAND, (place: ViolationPlace) => {
+      const roots = (vscode.workspace.workspaceFolders ?? []).map((f) => f.uri.fsPath);
+      const action = violationAction(place, planeEnabled(), roots, (p) => hy.get(p)?.file.definitions);
+      switch (action.tag) {
+        case 'card':
+          navigator.revealElsewhere(action.path, action.target);
+          return;
+        case 'plane-top':
+          navigator.showTop(action.path);
+          void vscode.window.showInformationMessage(action.message);
+          return;
+        case 'editor': {
+          const { start, end } = action.place;
+          const selection = new vscode.Range(start.line, start.character, end.line, end.character);
+          void vscode.commands.executeCommand('vscode.open', vscode.Uri.file(action.place.path), { selection });
+          return;
+        }
+        default: {
+          const unreachable: never = action;
           throw new Error(`網羅されていない答え: ${JSON.stringify(unreachable)}`);
         }
       }

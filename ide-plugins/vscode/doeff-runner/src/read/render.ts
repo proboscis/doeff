@@ -243,7 +243,8 @@ function sourceBox(card: Card, fileLabel: string, coloring: SourceColoring | und
   const pieces = coloring === undefined ? undefined : sliceHighlight(coloring.lines, coloring.spans, card.definition.fullRange);
   const colored = pieces !== undefined && pieces.length === lines.length ? pieces : undefined;
   const body = (text: string, i: number): string => (colored === undefined ? escapeHtml(text) : colored[i].map(pieceHtml).join(''));
-  const numbered = lines.map((text, i) => `<div><span class="ln">${card.firstLine + i}</span>${body(text, i)}</div>`).join('');
+  // 行の目印 data-hy-line は source の行(1 始まり)— 違反の項目から来た時にその行へ送るため(本体の行の data-src-line とは別の名)
+  const numbered = lines.map((text, i) => `<div data-hy-line="${card.firstLine + i}"><span class="ln">${card.firstLine + i}</span>${body(text, i)}</div>`).join('');
   return `<div class="srcbox" id="src-${card.id}" hidden><div class="h">${escapeHtml(LABELS.hySource)} · ${escapeHtml(fileLabel)}:${card.firstLine}–${last}</div><div class="code">${numbered}</div></div>`;
 }
 
@@ -607,6 +608,7 @@ code{font:12px Menlo,monospace;background:#1b1d21;border:1px solid #3a3f47;borde
 .tcount{margin-left:auto;color:#8a9099;font:11px -apple-system,sans-serif}
 .card.flash,.bl.flash{outline:2px solid #4a76a8}
 .bl.flash{background:#2f4a66}
+.srcbox .code div.flash{outline:2px solid #4a76a8;background:#2f4a66}
 `;
 
 /**
@@ -615,6 +617,25 @@ code{font:12px Menlo,monospace;background:#1b1d21;border:1px solid #3a3f47;borde
  */
 const PAGE_SCRIPT = `
 const vscode = acquireVsCodeApi();
+// 頁を丸ごと描き直しても(source の色が塗れた時・file が変わった時)、読んでいた位置と開いた source の箱を戻すため — webview の
+// state に覚える(state は頁を差し替えても残る)
+const view = vscode.getState() || { scrollY: 0, sources: [] };
+function rememberSource(id, open) {
+  view.sources = view.sources.filter((s) => s !== id).concat(open ? [id] : []);
+  vscode.setState(view);
+}
+for (const id of view.sources) {
+  const box = document.getElementById('src-' + id);
+  const button = document.querySelector('[data-src="' + id + '"]');
+  if (box !== null) { box.hidden = false; }
+  if (button !== null) { button.classList.add('on'); }
+}
+window.scrollTo(0, view.scrollY);
+let scrollTimer;
+window.addEventListener('scroll', () => {
+  clearTimeout(scrollTimer);
+  scrollTimer = setTimeout(() => { view.scrollY = window.scrollY; vscode.setState(view); }, 100);
+});
 document.addEventListener('click', (event) => {
   const target = event.target instanceof Element ? event.target.closest('[data-axis],[data-line],[data-src],[data-fold],[data-tree-root],[data-tree-dir],[data-reveal],[data-node-toggle],#clear,#fold-all,#unfold-all,#tree-more,#tree-close') : null;
   if (target === null) { return; }
@@ -638,7 +659,7 @@ document.addEventListener('click', (event) => {
   if (target.hasAttribute('data-src')) {
     if (card !== null && card.hasAttribute('data-lazy')) { vscode.postMessage({ type: 'hydrate', qualifiedName, source: true }); return; }
     const box = document.getElementById('src-' + target.getAttribute('data-src'));
-    if (box !== null) { box.hidden = !box.hidden; target.classList.toggle('on', !box.hidden); }
+    if (box !== null) { box.hidden = !box.hidden; target.classList.toggle('on', !box.hidden); rememberSource(target.getAttribute('data-src'), !box.hidden); }
     return;
   }
   if (target.hasAttribute('data-line')) {
@@ -695,7 +716,7 @@ window.addEventListener('message', (event) => {
     if (old !== null) {
       old.outerHTML = message.html;
       const box = document.getElementById('src-' + message.id);
-      if (message.showSource && box !== null) { box.hidden = false; }
+      if (message.showSource && box !== null) { box.hidden = false; rememberSource(message.id, true); }
     }
     return;
   }
@@ -706,17 +727,35 @@ window.addEventListener('message', (event) => {
     if (message.scrollTop) { window.scrollTo(0, 0); }
     return;
   }
+  if (message.type === 'top') {
+    window.scrollTo(0, 0);
+    return;
+  }
   if (message.type === 'reveal') {
     const card = document.getElementById(message.id);
     if (card !== null) {
       card.hidden = false;
       // 行があれば本体のその行へ(本体に無い行 — 頭・契約 — ならカードへ)
       const row = message.line === null ? null : card.querySelector('[data-src-line="' + message.line + '"]');
-      const target = row === null ? card : row;
-      target.scrollIntoView({ block: 'center' });
-      target.classList.add('flash');
-      setTimeout(() => target.classList.remove('flash'), 1600);
+      // 違反の項目から来た時は source の箱も開き、source のその行へ送る(違反は source の行の話 — 本体の行も光らせる)
+      const box = message.showSource ? document.getElementById('src-' + message.id) : null;
+      if (box !== null) {
+        box.hidden = false;
+        rememberSource(message.id, true);
+        const button = card.querySelector('[data-src]');
+        if (button !== null) { button.classList.add('on'); }
+      }
+      const srcRow = box === null || message.line === null ? null : box.querySelector('[data-hy-line="' + message.line + '"]');
+      const lit = [row, srcRow].filter((el) => el !== null);
+      const targets = lit.length === 0 ? [card] : lit;
+      (srcRow ?? row ?? card).scrollIntoView({ block: 'center' });
+      for (const target of targets) {
+        target.classList.add('flash');
+        setTimeout(() => target.classList.remove('flash'), 1600);
+      }
     }
   }
 });
+// 知らせを受けられるようになったことを面へ伝える(それまでに面が送った知らせは面が溜めていて、ここで届く)
+vscode.postMessage({ type: 'ready' });
 `;

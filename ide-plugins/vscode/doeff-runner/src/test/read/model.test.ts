@@ -35,7 +35,7 @@ import {
   type FoldState
 } from '../../read/fold';
 import { LABELS } from '../../read/labels';
-import { locate, parseLocation } from '../../read/locate';
+import { locate, parseLocation, violationAction, type ViolationPlace } from '../../read/locate';
 import { decoratorLabel } from '../../read/entity';
 
 // 材料は test-fixtures/read/plane.hy に hy-index と doeff-linter(editor-json・--stdin --path)を当てた実出力
@@ -910,6 +910,33 @@ suite('定義を読む面 — file:line からカードの該当の行へ(V6・v
 
   test('本体の行は source の行(1 始まり)の目印を持つ(見せる先の行を光らせるため)', () => {
     assert.ok(cardHtml(planePage(new Map()), 'shout').includes('<div class="bl bound" data-src-line="31"><span class="ln">31</span>'));
+  });
+});
+
+suite('定義を読む面 — 違反の項目から読む面 + source へ(U18・v10)', () => {
+  const defs = (p: string): readonly HyDefinition[] | undefined => (p === FILE ? planeIndex().definitions : undefined);
+  /** linter の違反の位置(0 始まり)。 */
+  const at = (filePath: string, line: number): ViolationPlace => ({ path: filePath, start: { line, character: 2 }, end: { line, character: 9 } });
+
+  test('違反の行を含む定義のカードへ、行と source の箱を開く印(showSource)つきで', () => {
+    const action = violationAction(at(FILE, 30), true, ['/repo'], defs);
+    assert.deepStrictEqual(action, { tag: 'card', path: FILE, target: { qualifiedName: 'pkg.plane.shout', line: 30, showSource: true } });
+  });
+
+  test('定義の外の行は面の先頭と理由の 1 行', () => {
+    const action = violationAction(at(FILE, 1), true, ['/repo'], defs);
+    assert.strictEqual(action.tag, 'plane-top');
+    assert.ok(action.tag === 'plane-top' && action.path === FILE && action.message.includes('pkg/plane.hy:2'));
+  });
+
+  test('読む面を設定で切っている時・Hy でない file・索引に無い file は今までどおり editor で範囲を選んで開く', () => {
+    assert.deepStrictEqual(violationAction(at(FILE, 30), false, ['/repo'], defs), { tag: 'editor', place: at(FILE, 30) });
+    assert.deepStrictEqual(violationAction(at('/repo/pkg/tool.py', 3), true, ['/repo'], defs), { tag: 'editor', place: at('/repo/pkg/tool.py', 3) });
+    assert.deepStrictEqual(violationAction(at('/repo/pkg/other.hy', 3), true, ['/repo'], defs), { tag: 'editor', place: at('/repo/pkg/other.hy', 3) });
+  });
+
+  test('source の箱の行は source の行(1 始まり)の目印 data-hy-line を持つ(違反の行へ送るため)', () => {
+    assert.ok(cardHtml(planePage(new Map()), 'shout').includes('<div data-hy-line="31"><span class="ln">31</span>'));
   });
 });
 
