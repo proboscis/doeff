@@ -29,7 +29,7 @@ use super::names::hy_mangle;
 use super::smells::{children, live, span_of, Hy, Scope};
 
 /// defk の集合(module まで含めた名・mangle 済み)。
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct DefkNames {
     names: BTreeSet<String>,
 }

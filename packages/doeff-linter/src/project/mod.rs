@@ -8,6 +8,7 @@
 
 pub mod architecture;
 pub mod explain;
+pub mod facts_cache;
 pub mod facts;
 pub mod names;
 pub mod param_calls;
@@ -2172,15 +2173,16 @@ fn defk_names_for(root: &Path, enabled: &BTreeSet<ProjectRule>) -> bare_calls::D
     if !enabled.contains(&ProjectRule::DefkCalledBare) {
         return all;
     }
-    // file ごとに並べて読む(保存ごとの 1 file の実行でも repo 全体を読むので)。
-    let found: Vec<bare_calls::DefkNames> = hy_index::collect_hy_files(root)
-        .par_iter()
-        .filter_map(|path| {
-            let rel = relative_path(root, path)?;
-            let source = std::fs::read_to_string(path).ok()?;
-            source.contains("(defk").then(|| bare_calls::defk_names_in(&source, &module_of(&rel)))
-        })
+    // file ごとの defk の名はその file の中身だけで決まるので、変わった file だけ読み直す(保存ごとの 1 file の実行でも
+    // repo 全体の名が要るため — #1025)。
+    let files: Vec<(String, PathBuf)> = hy_index::collect_hy_files(root)
+        .into_iter()
+        .filter_map(|path| relative_path(root, &path).map(|rel| (rel, path)))
         .collect();
+    let found: Vec<bare_calls::DefkNames> = facts_cache::per_file(root, "defk-names", &files, |rel, path| {
+        let source = std::fs::read_to_string(path).ok()?;
+        source.contains("(defk").then(|| bare_calls::defk_names_in(&source, &module_of(rel)))
+    });
     for names in found {
         all.extend(names);
     }
