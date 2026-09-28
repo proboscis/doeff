@@ -219,7 +219,7 @@ impl PyApply {
 }
 
 /// Expand(expr) — evaluate inner expr to Stream, then run it.
-#[pyclass(name = "Expand", frozen, dict, module = "doeff_vm.doeff_vm")]
+#[pyclass(name = "Expand", frozen, dict, subclass, module = "doeff_vm.doeff_vm")]
 pub struct PyExpand {
     #[pyo3(get)]
     pub expr: Py<PyAny>,
@@ -255,6 +255,128 @@ impl PyExpand {
 
     fn __traverse__(&self, visit: PyVisit<'_>) -> Result<(), PyTraverseError> {
         visit_py_field(&visit, &self.expr)
+    }
+}
+
+/// DoFunction(function, tail_resume_lines) — a `@do` definition: the undecorated
+/// function and the lines of its tail-position resumes. Built once per definition
+/// (`doeff.do.program_factory`) and shared by every `Call` of it.
+#[pyclass(name = "DoFunction", frozen, module = "doeff_vm.doeff_vm")]
+pub struct PyDoFunction {
+    #[pyo3(get)]
+    pub function: Py<PyAny>,
+    pub tail_resume_lines: Vec<u32>,
+}
+
+#[pymethods]
+impl PyDoFunction {
+    #[new]
+    fn new(function: Py<PyAny>, tail_resume_lines: Vec<u32>) -> Self {
+        Self {
+            function,
+            tail_resume_lines,
+        }
+    }
+
+    #[getter]
+    fn tail_resume_lines(&self) -> Vec<u32> {
+        self.tail_resume_lines.clone()
+    }
+
+    fn __repr__(&self, py: Python<'_>) -> PyResult<String> {
+        let f = self.function.bind(py).repr()?;
+        Ok(format!("DoFunction({})", f))
+    }
+
+    fn __reduce__(&self, py: Python<'_>) -> PyResult<(Py<PyAny>, (Py<PyAny>, Vec<u32>))> {
+        let cls = py.get_type::<Self>().into_any().unbind();
+        Ok((
+            cls,
+            (self.function.clone_ref(py), self.tail_resume_lines.clone()),
+        ))
+    }
+
+    fn __traverse__(&self, visit: PyVisit<'_>) -> Result<(), PyTraverseError> {
+        visit_py_field(&visit, &self.function)
+    }
+}
+
+/// Call(function, args, kwargs) — the program a `@do` function returns: call
+/// `function.function(*args, **kwargs)` and run what it returns (a generator
+/// runs as the program's stream; any other value is the program's result).
+///
+/// One node per call, where the wrapper used to build
+/// `Expand(Apply(Pure(Callable(thunk)), []))` — five objects and a Python
+/// closure (agora-redesign #844). It is an `Expand` (the static type of a `@do`
+/// call stays `Expand[T, E]`), and the VM reads it as exactly that DoCtrl shape
+/// (`classify_python_object`), so every evaluation path — handler dispatch
+/// included — is unchanged. Its `expr` is not a program node: read
+/// `function` / `args` / `kwargs`.
+#[pyclass(name = "Call", extends = PyExpand, frozen, module = "doeff_vm.doeff_vm")]
+pub struct PyCall {
+    #[pyo3(get)]
+    pub function: Py<PyDoFunction>,
+    #[pyo3(get)]
+    pub args: Py<pyo3::types::PyTuple>,
+    #[pyo3(get)]
+    pub kwargs: Py<pyo3::types::PyDict>,
+}
+
+#[pymethods]
+impl PyCall {
+    #[new]
+    fn new(
+        py: Python<'_>,
+        function: Py<PyDoFunction>,
+        args: Py<pyo3::types::PyTuple>,
+        kwargs: Py<pyo3::types::PyDict>,
+    ) -> PyClassInitializer<Self> {
+        PyClassInitializer::from(PyExpand { expr: py.None() }).add_subclass(Self {
+            function,
+            args,
+            kwargs,
+        })
+    }
+
+    #[getter]
+    fn expr(&self) -> PyResult<Py<PyAny>> {
+        Err(pyo3::exceptions::PyAttributeError::new_err(
+            "Call has no expr node: read its function / args / kwargs",
+        ))
+    }
+
+    fn __repr__(&self, py: Python<'_>) -> PyResult<String> {
+        let f = self.function.bind(py).get().function.bind(py).repr()?;
+        Ok(format!("Call({})", f))
+    }
+
+    #[allow(clippy::type_complexity)]
+    fn __reduce__(
+        &self,
+        py: Python<'_>,
+    ) -> PyResult<(
+        Py<PyAny>,
+        (
+            Py<PyDoFunction>,
+            Py<pyo3::types::PyTuple>,
+            Py<pyo3::types::PyDict>,
+        ),
+    )> {
+        let cls = py.get_type::<Self>().into_any().unbind();
+        Ok((
+            cls,
+            (
+                self.function.clone_ref(py),
+                self.args.clone_ref(py),
+                self.kwargs.clone_ref(py),
+            ),
+        ))
+    }
+
+    fn __traverse__(&self, visit: PyVisit<'_>) -> Result<(), PyTraverseError> {
+        visit_py_field(&visit, &self.function)?;
+        visit_py_field(&visit, &self.args)?;
+        visit_py_field(&visit, &self.kwargs)
     }
 }
 

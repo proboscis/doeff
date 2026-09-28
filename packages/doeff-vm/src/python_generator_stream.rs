@@ -180,26 +180,85 @@ impl PythonCallable {
         function: &Py<PyAny>,
         args: Bound<'_, pyo3::types::PyTuple>,
     ) -> Result<DoCtrl, doeff_vm_core::VMError> {
-        let result = function.bind(py).call1(args).map_err(|err| {
-            doeff_vm_core::VMError::uncaught_exception(Value::Opaque(PyShared::new(
-                err.value(py).clone().into_any().unbind(),
-            )))
-        })?;
-        // SAFETY: PyGen_Check only reads the object's type.
-        let is_generator = unsafe { pyo3::ffi::PyGen_Check(result.as_ptr()) } != 0;
-        let (generator, lines) = if is_generator {
-            (result, self.tail_resume_lines.clone())
-        } else {
-            // `@do` on a function that does not yield: the stream returns its value.
-            (returning_stream(py, &result)?, Vec::new())
-        };
-        let stream = PythonGeneratorStream::new(PyShared::new(generator.unbind()), lines);
-        let stream = doeff_vm_core::ir_stream::IRStreamRef::new(Box::new(stream));
+        let stream = generator_function_stream(py, function, &args, None, &self.tail_resume_lines)?;
         Ok(DoCtrl::Expand {
-            expr: Box::new(DoCtrl::Pure {
-                value: Value::Stream(stream),
-            }),
+            expr: Box::new(DoCtrl::Pure { value: stream }),
         })
+    }
+}
+
+/// Call a `@do` definition's undecorated function and wrap what it returns as
+/// the program's stream (`Value::Stream`): a generator runs with its
+/// tail-resume lines; any other value is returned by the stream. The one rule
+/// shared by a `@do` handler (`call_generator_function`) and a `Call` node.
+fn generator_function_stream(
+    py: Python<'_>,
+    function: &Py<PyAny>,
+    args: &Bound<'_, pyo3::types::PyTuple>,
+    kwargs: Option<&Bound<'_, pyo3::types::PyDict>>,
+    tail_resume_lines: &[u32],
+) -> Result<Value, doeff_vm_core::VMError> {
+    let result = function.bind(py).call(args, kwargs).map_err(|err| {
+        doeff_vm_core::VMError::uncaught_exception(Value::Opaque(PyShared::new(
+            err.value(py).clone().into_any().unbind(),
+        )))
+    })?;
+    // SAFETY: PyGen_Check only reads the object's type.
+    let is_generator = unsafe { pyo3::ffi::PyGen_Check(result.as_ptr()) } != 0;
+    let (generator, lines) = if is_generator {
+        (result, tail_resume_lines.to_vec())
+    } else {
+        // `@do` on a function that does not yield: the stream returns its value.
+        (returning_stream(py, &result)?, Vec::new())
+    };
+    let stream = PythonGeneratorStream::new(PyShared::new(generator.unbind()), lines);
+    Ok(Value::Stream(doeff_vm_core::ir_stream::IRStreamRef::new(
+        Box::new(stream),
+    )))
+}
+
+/// The VM-side callable a `Call` node becomes: `Apply` calls it and `Expand`
+/// runs the stream it returns — the same evaluation as the
+/// `Expand(Apply(Pure(Callable(thunk)), []))` a `@do` call used to build.
+#[derive(Debug)]
+struct CallThunk {
+    function: Py<crate::do_expr::PyDoFunction>,
+    args: Py<pyo3::types::PyTuple>,
+    kwargs: Py<pyo3::types::PyDict>,
+}
+
+impl doeff_vm_core::value::Callable for CallThunk {
+    fn call(&self, _args: Vec<Value>) -> Result<Value, doeff_vm_core::VMError> {
+        Python::attach(|py| {
+            let definition = self.function.bind(py).get();
+            let kwargs = self.kwargs.bind(py);
+            let kwargs = if kwargs.is_empty() {
+                None
+            } else {
+                Some(kwargs)
+            };
+            generator_function_stream(
+                py,
+                &definition.function,
+                self.args.bind(py),
+                kwargs,
+                &definition.tail_resume_lines,
+            )
+        })
+    }
+
+    fn name(&self) -> Option<String> {
+        Python::attach(|py| {
+            let obj = self.function.bind(py).get().function.bind(py);
+            obj.getattr("__qualname__")
+                .or_else(|_| obj.getattr("__name__"))
+                .ok()
+                .and_then(|n| n.extract::<String>().ok())
+        })
+    }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
     }
 }
 
@@ -789,6 +848,23 @@ pub fn classify_python_object(py: Python<'_>, obj: &Bound<'_, PyAny>) -> Result<
         return Ok(DoCtrl::Apply {
             f: Box::new(f_doctrl),
             args,
+        });
+    }
+    // A `Call` is an `Expand`: read it before the base class.
+    if let Ok(c) = obj.cast::<PyCall>() {
+        let c = c.get();
+        let thunk = CallThunk {
+            function: c.function.clone_ref(py),
+            args: c.args.clone_ref(py),
+            kwargs: c.kwargs.clone_ref(py),
+        };
+        return Ok(DoCtrl::Expand {
+            expr: Box::new(DoCtrl::Apply {
+                f: Box::new(DoCtrl::Pure {
+                    value: Value::Callable(std::sync::Arc::new(thunk)),
+                }),
+                args: Vec::new(),
+            }),
         });
     }
     if let Ok(e) = obj.downcast::<PyExpand>() {

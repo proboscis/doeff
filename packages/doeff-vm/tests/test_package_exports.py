@@ -17,6 +17,8 @@ CURRENT_RUNTIME_SYMBOLS = (
     "Transfer",
     "Apply",
     "Expand",
+    "DoFunction",
+    "Call",
     "Pass",
     "WithHandler",
     "ResumeThrow",

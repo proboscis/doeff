@@ -117,6 +117,24 @@ class Expand(Generic[_T_co, _E_co]):
     def __iter__(self) -> Generator[_E_co, Any, _T_co]: ...
     def __repr__(self) -> str: ...
 
+class DoFunction:
+    """A ``@do`` definition: the undecorated function and its tail-resume lines."""
+
+    function: _CallableT[..., Any]
+    tail_resume_lines: list[int]
+    def __init__(self, function: _CallableT[..., Any], tail_resume_lines: list[int]) -> None: ...
+    def __repr__(self) -> str: ...
+
+class Call(Expand[_T_co, _E_co]):
+    """The program a ``@do`` function returns: call ``function.function(*args, **kwargs)``."""
+
+    function: DoFunction
+    args: tuple[Any, ...]
+    kwargs: dict[str, Any]
+    def __init__(
+        self, function: DoFunction, args: tuple[Any, ...], kwargs: dict[str, Any]
+    ) -> None: ...
+
 class Pass:
     effect: Any
     continuation: K

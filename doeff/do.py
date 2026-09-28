@@ -18,7 +18,7 @@ from functools import wraps
 from textwrap import dedent
 from typing import Any, ParamSpec, TypeVar, overload
 
-from doeff.program import Apply, Expand, Pure
+from doeff.program import Expand
 
 P = ParamSpec("P")
 _E = TypeVar("_E")
@@ -290,30 +290,19 @@ def program_factory(
 ) -> Callable[P, Expand]:
     """The runtime shape shared by ``@do`` and ``@effectful``.
 
-    Calling the result builds ``Expand(Apply(Pure(Callable(thunk)), []))``; the VM calls
-    the thunk, which calls ``fn`` and runs the generator it returns (a non-generator
-    result becomes the program's value).
+    Calling the result builds one ``Call`` node (an ``Expand``) holding the definition and
+    the arguments; the VM calls ``fn`` and runs the generator it returns (a non-generator
+    result becomes the program's value). The definition (``DoFunction``) is built once
+    here, so a call allocates a single node — not the ``Expand(Apply(Pure(Callable(thunk))))``
+    chain and its closure (agora-redesign #844).
     """
-    from doeff_vm import Callable as VMCallable
-    from doeff_vm import IRStream
+    from doeff_vm import Call, DoFunction
 
-    def _make_stream(result):
-        if inspect.isgenerator(result):
-            return IRStream(result, tail_resume_lines)
-
-        def value_gen():
-            if False:
-                yield
-            return result
-
-        return IRStream(value_gen())
+    definition = DoFunction(fn, list(tail_resume_lines))
 
     @wraps(fn)
     def wrapper(*args: P.args, **kwargs: P.kwargs) -> Expand:
-        def thunk():
-            return _make_stream(fn(*args, **kwargs))
-
-        return Expand(Apply(Pure(VMCallable(thunk)), []))
+        return Call(definition, args, kwargs)
 
     # Installed as a handler, the VM calls `fn` directly and runs the generator as
     # the handler's stream (same end state as evaluating the Expand above, without

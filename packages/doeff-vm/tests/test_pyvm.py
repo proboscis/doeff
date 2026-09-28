@@ -53,6 +53,61 @@ def test_simple_pure_program() -> None:
     assert vm.run(simple_program()) == 42
 
 
+def test_do_call_builds_one_call_node() -> None:
+    """A `@do` call is one `Call` node sharing its definition (agora-redesign #844).
+
+    The slow shape: every call built `Expand(Apply(Pure(Callable(thunk)), []))` — five
+    objects and a closure — and the thunk wrapped a non-generator result in a Python
+    generator, so a call to a cheap judgement cost several microseconds.
+    """
+
+    @do
+    def judge(x, *, bias=0):
+        return x + bias > 3
+
+    first = judge(1)
+    second = judge(5, bias=1)
+
+    assert type(first) is doeff_vm.Call
+    assert isinstance(first, doeff_vm.Call)
+    assert isinstance(second, doeff_vm.Call)
+    assert isinstance(first, doeff_vm.Expand)
+    assert first.function is second.function
+    assert first.args == (1,)
+    assert second.kwargs == {"bias": 1}
+    assert run(first) is False
+    assert run(second) is True
+    with pytest.raises(AttributeError, match="function / args / kwargs"):
+        _ = first.expr
+
+
+def test_do_call_runs_generator_value_kwargs_and_raises_like_before() -> None:
+    @do
+    def value_of(x, *, bias=0):
+        return x + bias
+
+    @do
+    def asks(x, *, scale=1):
+        base = yield Ask("base")
+        return (base + x) * scale
+
+    @do
+    def fails(message):
+        raise ValueError(message)
+
+    @do
+    def caller():
+        a = yield value_of(1, bias=2)
+        b = yield asks(3, scale=2)
+        try:
+            yield fails("boom")
+        except ValueError as exc:
+            return (a, b, str(exc))
+        return "unreachable"
+
+    assert run(reader({"base": 10})(caller())) == (3, 26, "boom")
+
+
 def test_apply_resolves_doexpr_args() -> None:
     vm = doeff_vm.PyVM()
     adder = doeff_vm.Callable(lambda left, right: left + right)
