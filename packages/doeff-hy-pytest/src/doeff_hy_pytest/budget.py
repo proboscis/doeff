@@ -28,6 +28,10 @@
 - 登録簿は 1 鍵 1 file(``<鍵の sha256 の先頭 12 字>.txt``・1 行目が鍵・2 行目からが理由で空は不可)。鍵は、実行なら
   pytest の nodeid、収集なら rootdir からの file の path。載った鍵は上限を超えても赤にしない。上限の内に戻った鍵は
   終わりの要約に「消せる」と出す(登録簿は縮める向きだけ — 増えたことを赤にするのは利用側の repo の git の検)。
+- 上限は doeff-vm の検査なしの build(uv の build)を基準にする。``make sync`` の build は invariant-checks つきで VM の
+  1 歩ごとに不変条件を検査し、同じ検が十数倍遅い。session の始めに ``doeff_vm.invariant_checks_enabled()`` を 1 回読み、
+  検査つきなら ``fail`` でも赤にせず報告に留める(基準の違う build で誤った赤を出さない)。終わりの要約の見出しに
+  build の種類を 1 行出す。読めない(import できない・古い VM で関数が無い)時は「不明」と出し、判定は今のまま。
 """
 
 import hashlib
@@ -51,14 +55,66 @@ Mode = Literal["report", "fail"]
 
 
 @dataclass(frozen=True)
+class CheckedVmBuild:
+    """doeff-vm は invariant-checks つきの build(``make sync``)— 上限の基準と違うので超過を判定しない。"""
+
+
+@dataclass(frozen=True)
+class UncheckedVmBuild:
+    """doeff-vm は検査なしの build — 上限の基準の build。"""
+
+
+@dataclass(frozen=True)
+class UnknownVmBuild:
+    """doeff-vm の build の種類を読めなかった(理由つき)— 判定は検査なしの時と同じ。"""
+
+    reason: str
+
+
+VmBuild = CheckedVmBuild | UncheckedVmBuild | UnknownVmBuild
+
+
+def read_vm_build() -> VmBuild:
+    """doeff-vm の build の種類を ``doeff_vm.invariant_checks_enabled()`` で読む(session の始めに 1 回)。"""
+    try:
+        import doeff_vm
+    except ImportError as exc:
+        return UnknownVmBuild(f"doeff_vm を import できない: {exc}")
+    reader = getattr(doeff_vm, "invariant_checks_enabled", None)
+    if reader is None:
+        return UnknownVmBuild("doeff_vm に invariant_checks_enabled が無い(古い VM)")
+    return CheckedVmBuild() if reader() else UncheckedVmBuild()
+
+
+def vm_build_line(build: VmBuild) -> str:
+    """終わりの要約の見出しに出す build の種類の 1 行。"""
+    match build:
+        case CheckedVmBuild():
+            return (
+                "doeff-vm は検査つきの build(invariant-checks)— 上限は検査なしの build が基準のため、"
+                "この走行の超過は判定しない"
+            )
+        case UncheckedVmBuild():
+            return "doeff-vm は検査なしの build — 上限の基準の build で判定する"
+        case UnknownVmBuild(reason=reason):
+            return f"doeff-vm の build の種類は不明({reason})— 判定は設定のまま"
+
+
+@dataclass(frozen=True)
 class Budgets:
-    """設定から読んだ上限(None = その段階は測らない)・超えた時の扱い・登録簿(鍵 → 理由)。"""
+    """設定から読んだ上限(None = その段階は測らない)・超えた時の扱い・登録簿(鍵 → 理由)・doeff-vm の build の種類。"""
 
     call_seconds: float | None
     collect_seconds: float | None
     mode: Mode
     registry: Mapping[str, str]
     registry_dir: str | None
+    vm_build: VmBuild
+
+    @property
+    def fails_over_budget(self) -> bool:
+        """超過を赤にするか — fail の形で、かつ doeff-vm が検査つきの build でない時だけ。"""
+        return self.mode == "fail" and not isinstance(self.vm_build, CheckedVmBuild)
 
 
 @dataclass(frozen=True)
@@ -287,7 +343,7 @@ def pytest_configure(config: pytest.Config) -> None:
     except RegistryError as exc:
         raise pytest.UsageError(str(exc)) from None
     config.stash[_BUDGETS_KEY] = Budgets(
-        call_seconds, collect_seconds, mode, registry, registry_dir
+        call_seconds, collect_seconds, mode, registry, registry_dir, read_vm_build()
     )
     counter = CompileCounter()
     counter.install()
@@ -316,7 +372,7 @@ def _record(config: pytest.Config, verdict: Verdict) -> bool:
     if not isinstance(verdict, OverBudget):
         return False
     budgets = config.stash[_BUDGETS_KEY]
-    if budgets.mode == "fail":
+    if budgets.fails_over_budget:
         return True
     warnings.warn(BudgetWarning(over_budget_message(verdict, budgets.registry_dir)), stacklevel=1)
     return False
@@ -427,7 +483,8 @@ def pytest_terminal_summary(
     if not (over or registered or back_in_budget):
         return
     terminalreporter.section("doeff の検の時間の上限")
-    label = "赤" if budgets.mode == "fail" else "報告のみ"
+    terminalreporter.line(vm_build_line(budgets.vm_build))
+    label = "赤" if budgets.fails_over_budget else "報告のみ"
     for verdict in over:
         m = verdict.measurement
         terminalreporter.line(
