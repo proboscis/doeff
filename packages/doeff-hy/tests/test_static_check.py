@@ -9,6 +9,7 @@ packages/doeff-hy/docs/static-check.md の表にある。
 """
 
 import json
+import re
 import shutil
 from pathlib import Path
 
@@ -153,8 +154,15 @@ def test_static_view_does_not_leak_into_the_runtime_expansion() -> None:
     assert "_doeff_perform" not in runtime
     assert "static_types" not in runtime
     # 束ねは open-bind を通して yield する(ADR-DOE-CORE-EFFECTS-003 R6 — 宣言の無い effect には effect そのものを返す)
-    # 引きは文を持たない式(代入の的の中の ! でも compile できる形 — outcome_forms.open-form)
-    assert "y = (yield __import__('doeff_core_effects.outcomes', fromlist=('open_bind',)).open_bind(g(x)))" in runtime
+    # 引きは文を持たない式(代入の的の中の ! でも compile できる形 — outcome_forms.open-form)。
+    # open-bind の答えが Pure(効果を出さない @do の呼びをその場で呼んだ答え)ならその値、それ以外は yield(#844)
+    assert re.search(
+        r"y = (?P<b>_hy_gensym_bound_\d+)\.value if type\(\((?P=b) := "
+        r"\((?P<m>_hy_gensym_outcomes_\d+) := __import__\('doeff_core_effects\.outcomes', "
+        r"fromlist=\('open_bind',\)\)\)\.open_bind\(g\(x\)\)\)\) is (?P=m)\.Pure "
+        r"else \(yield (?P=b)\)",
+        runtime,
+    ), runtime
     # 型検査のための展開は Python の @effectful と同じ `x = perform(e)` の形(yield を出さない)
     assert "y: 'int' = _doeff_perform(g(x))" in static
     assert "yield" not in static

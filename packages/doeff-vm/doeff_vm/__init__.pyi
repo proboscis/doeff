@@ -118,11 +118,15 @@ class Expand(Generic[_T_co, _E_co]):
     def __repr__(self) -> str: ...
 
 class DoFunction:
-    """A ``@do`` definition: the undecorated function and its tail-resume lines."""
+    """A ``@do`` definition: the undecorated function, its tail-resume lines, and whether
+    its body yields (a call to one that does not performs nothing)."""
 
     function: _CallableT[..., Any]
     tail_resume_lines: list[int]
-    def __init__(self, function: _CallableT[..., Any], tail_resume_lines: list[int]) -> None: ...
+    yields: bool
+    def __init__(
+        self, function: _CallableT[..., Any], tail_resume_lines: list[int], yields: bool
+    ) -> None: ...
     def __repr__(self) -> str: ...
 
 class Call(Expand[_T_co, _E_co]):

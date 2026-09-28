@@ -298,7 +298,7 @@ def program_factory(
     """
     from doeff_vm import Call, DoFunction
 
-    definition = DoFunction(fn, list(tail_resume_lines))
+    definition = DoFunction(fn, list(tail_resume_lines), inspect.isgeneratorfunction(fn))
 
     @wraps(fn)
     def wrapper(*args: P.args, **kwargs: P.kwargs) -> Expand:

@@ -434,7 +434,7 @@
 
 (defn _expand-handler-binds [forms [owner "handler clause"]]
   "Expand <- and ! in handler clause body.
-   (<- name expr) → (setv name (yield (open-bind expr)))  — delegate to outer handler
+   (<- name expr) → (setv name <open-bind の束ね>)  — delegate to outer handler(outcome-forms の open-form)
    (<- name Type expr) → same + isinstance assert (macros.hy _bind-yield —
    the single definition point shared with <- / do! / defp / deftest / for/do)
    (! expr) → (yield expr) in place [ADR-DOE-HY-003]"
