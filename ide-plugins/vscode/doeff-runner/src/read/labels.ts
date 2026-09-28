@@ -33,6 +33,18 @@ export const LABELS = {
   callees: 'callees',
   tests: 'tests',
   types: 'types',
+  /** 呼び出しの依存の木(v7) */
+  callTree: 'call tree',
+  root: 'root',
+  depth: 'depth',
+  close: 'close',
+  treeEffects: 'effects in this tree',
+  nodes: 'nodes',
+  repeats: 'repeats',
+  cycles: 'cycles',
+  seenAbove: 'seen above',
+  cycle: 'cycle',
+  pickRoot: 'pick a root',
   /** 左の軸 */
   axis: 'axis',
   hasTests: 'has tests',

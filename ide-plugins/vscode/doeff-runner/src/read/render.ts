@@ -7,37 +7,12 @@
 import type { HyDefinition } from '../hy/contract';
 import type { LintSignature } from '../lint/contract';
 import { answerText, headerEffects, typeText } from '../defk/model';
-import { cardKey, LINE_FIELDS, type FoldState, type LineField, type RelationCount } from './fold';
+import { cardKey, LINE_FIELDS, type FoldState, type LineField } from './fold';
+import { escapeHtml, tagClass, type Glyphs } from './html';
 import { LABELS } from './labels';
 import { axisKey, axisTitle, facets, visibleCards, worstLevel, type Card, type Facet, type Selection } from './model';
-
-/** HTML の特別な文字を逃がす。 */
-export function escapeHtml(text: string): string {
-  return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
-}
-
-/** tags の key ごとの色(context と role は見本と同じ決まった色、他の key は名前から選ぶ — 同じ key は同じ色に見せるため)。 */
-const TAG_PALETTE: readonly string[] = ['tag-c0', 'tag-c1', 'tag-c2', 'tag-c3', 'tag-c4', 'tag-c5'];
-
-/** tags の key の色の class。 */
-export function tagClass(key: string): string {
-  if (key === 'context') {
-    return 'tag-context';
-  }
-  if (key === 'role') {
-    return 'tag-role';
-  }
-  let hash = 0;
-  for (const ch of key) {
-    hash = (hash * 31 + ch.charCodeAt(0)) >>> 0;
-  }
-  return TAG_PALETTE[hash % TAG_PALETTE.length];
-}
-
-/** 絵の口 — effect の名から pixel art の data URI(#849 の装飾 A と同じ絵。無ければ undefined)。 */
-export interface Glyphs {
-  readonly effect: (name: string) => string | undefined;
-}
+import { relationOf, type CallGraph, type CallTree } from './tree';
+import { renderTree, type TreeRenderContext } from './treeRender';
 
 /** 1 行の切り替えの欄の見出し(labels の表から)。 */
 const LINE_FIELD_LABEL: Readonly<Record<LineField, string>> = {
@@ -232,8 +207,8 @@ export interface CardContext {
   readonly place: string;
   readonly glyphs: Glyphs;
   readonly fold: FoldState;
-  /** 呼び先の完全修飾名 → 呼び手と deftest の数 */
-  readonly relations: ReadonlyMap<string, RelationCount>;
+  /** 索引の全 file の呼び出しの表(関係の数と木の材料) */
+  readonly graph: CallGraph;
 }
 
 /** 元の Hy(source の行番号つき・読むだけ)。 */
@@ -263,8 +238,11 @@ export function renderCard(card: Card, ctx: CardContext, hidden: boolean): strin
   const toggle = `<button class="fold" data-fold="${escapeHtml(key)}" title="${escapeHtml(open ? LABELS.fold : LABELS.unfold)}">${open ? '▾' : '▸'}</button>`;
   const buttons = `<span class="srcbar"><button class="btn" data-src="${card.id}">${escapeHtml(LABELS.source)}</button><button class="btn" data-line="${start.line}" data-character="${start.character}">${escapeHtml(LABELS.openInEditor)}</button></span>`;
   const head = `<div class="hd"><span class="kind k-${escapeHtml(d.kind)}">${escapeHtml(d.kind)}</span><span class="name">${escapeHtml(d.name)}</span>${toggle}${buttons}<span class="chips full-only">${tagChips('chip')}</span></div>`;
-  const relation = ctx.relations.get(d.qualifiedName) ?? { callers: 0, tests: 0 };
+  const relation = relationOf(ctx.graph, d.qualifiedName);
   const relationText = `${LABELS.callers} <b>${relation.callers}</b> · ${LABELS.tests} <b>${relation.tests}</b>`;
+  // 帯の callers / callees は木の入口(v7 3 節の入口 a)
+  const qn = escapeHtml(d.qualifiedName);
+  const band = `<button class="rel" data-tree-root="${qn}" data-tree-dir="callers">${escapeHtml(LABELS.callers)} <b>${relation.callers}</b></button><button class="rel" data-tree-root="${qn}" data-tree-dir="callees">${escapeHtml(LABELS.callees)} <b>${relation.callees}</b></button><span>${escapeHtml(LABELS.tests)} <b>${relation.tests}</b></span>`;
   const location = `${escapeHtml(ctx.place)}:${card.firstLine}`;
   const doc = docFirstLine(d.docstring);
   const effects = card.signature === undefined ? '' : effectChips(card.signature, ctx.glyphs);
@@ -289,10 +267,10 @@ export function renderCard(card: Card, ctx: CardContext, hidden: boolean): strin
     level === undefined
       ? ''
       : `<span class="viol viol-${level}" title="${escapeHtml(card.violations.map((v) => `${v.rule}: ${v.message}`).join('\n'))}">${escapeHtml(LABELS.violations)} ${card.violations.length}</span>`;
-  const foot = `<div class="ft"><span>${relationText}</span>${violations}<span class="loc">${location}</span></div>`;
+  const foot = `<div class="ft">${band}${violations}<span class="loc">${location}</span></div>`;
   const fileLabel = ctx.place.split('/').pop() ?? ctx.place;
   const classes = open ? 'card open' : 'card';
-  return `<section class="${classes}" id="${card.id}" data-key="${escapeHtml(key)}"${hidden ? ' hidden' : ''}>${head}<div class="line">${line}</div><div class="full">${middle}${docBlock}</div>${sourceBox(card, fileLabel)}<div class="full">${foot}</div></section>`;
+  return `<section class="${classes}" id="${card.id}" data-key="${escapeHtml(key)}" data-qn="${qn}"${hidden ? ' hidden' : ''}>${head}<div class="line">${line}</div><div class="full">${middle}${docBlock}</div>${sourceBox(card, fileLabel)}<div class="full">${foot}</div></section>`;
 }
 
 /** 面の状態 — 索引にその file が無い時・設定で切った時は理由を出す。 */
@@ -307,20 +285,46 @@ export interface PageInput {
   readonly state: PlaneState;
   readonly glyphs: Glyphs;
   readonly fold: FoldState;
-  readonly relations: ReadonlyMap<string, RelationCount>;
+  readonly graph: CallGraph;
+  /** 開いている呼び出しの木(無ければ undefined)と、その木で deftest を出すか */
+  readonly tree: { readonly tree: CallTree; readonly showTests: boolean } | undefined;
   /** webview の CSP の出どころ(`webview.cspSource`) */
   readonly cspSource: string;
   /** script に付ける 1 回限りの数 */
   readonly nonce: string;
 }
 
+/** 左の欄の下の call tree の根の選び(v7 3 節の入口 b — この file の定義から選ぶ)。 */
+export function renderTreePicker(cards: readonly Card[], current: string | undefined): string {
+  const options = cards
+    .map((c) => `<option value="${escapeHtml(c.definition.qualifiedName)}"${c.definition.qualifiedName === current ? ' selected' : ''}>${escapeHtml(c.definition.name)}</option>`)
+    .join('');
+  return `<h2>${escapeHtml(LABELS.callTree)}</h2><select id="tree-root"><option value="">${escapeHtml(LABELS.pickRoot)}</option>${options}</select>`;
+}
+
+/** 木を描く材料 — 開いている file の定義は linter の見出しで、他は索引の型の綴りで。 */
+function treeContext(cards: readonly Card[], graph: CallGraph, glyphs: Glyphs, showTests: boolean): TreeRenderContext {
+  const signatures = new Map(cards.flatMap((c) => (c.signature === undefined ? [] : [[c.definition.qualifiedName, c.signature] as const])));
+  return { glyphs, showTests, signatureOf: (qn) => signatures.get(qn), handlersOf: (qn) => graph.handlers.get(qn) ?? 0 };
+}
+
+/** 木の欄の HTML(頁の中と、木を変えた時に webview へ送る分で同じ物を使うため)。木が無ければ空。 */
+export function renderTreePart(
+  cards: readonly Card[],
+  graph: CallGraph,
+  glyphs: Glyphs,
+  part: { readonly tree: CallTree; readonly showTests: boolean } | undefined
+): string {
+  return part === undefined ? '' : renderTree(part.tree, treeContext(cards, graph, glyphs, part.showTests));
+}
+
 /** 頁の全体(左に軸・上に 1 行の切り替え・右に実体のカード)。 */
 export function renderPage(input: PageInput): string {
-  const ctx: CardContext = { place: input.place, glyphs: input.glyphs, fold: input.fold, relations: input.relations };
+  const ctx: CardContext = { place: input.place, glyphs: input.glyphs, fold: input.fold, graph: input.graph };
   const content = (() => {
     switch (input.state.tag) {
       case 'message':
-        return { axes: '', summary: '', bar: '', cards: `<p class="message">${escapeHtml(input.state.text)}</p>` };
+        return { axes: '', summary: '', bar: '', picker: '', tree: '', cards: `<p class="message">${escapeHtml(input.state.text)}</p>` };
       case 'cards': {
         const { cards, selection } = input.state;
         const shown = new Set(visibleCards(cards, selection).map((c) => c.id));
@@ -329,6 +333,8 @@ export function renderPage(input: PageInput): string {
           axes: renderFacets(all),
           summary: summaryText(shown.size, cards.length, all),
           bar: renderLineBar(input.fold),
+          picker: renderTreePicker(cards, input.tree?.tree.root.qualifiedName),
+          tree: renderTreePart(cards, input.graph, input.glyphs, input.tree),
           cards: cards.map((c) => renderCard(c, ctx, !shown.has(c.id))).join('')
         };
       }
@@ -347,10 +353,11 @@ export function renderPage(input: PageInput): string {
 <style>${PAGE_STYLE}</style>
 </head>
 <body class="${lineClasses(input.fold)}">
-<aside class="axes"><div id="axes">${content.axes}</div><div class="hint">${escapeHtml(LABELS.axesHint)}</div></aside>
+<aside class="axes"><div id="axes">${content.axes}</div>${content.picker}<div class="hint">${escapeHtml(LABELS.axesHint)}</div></aside>
 <main class="main">
 <div class="crumb"><b>${escapeHtml(input.place)}</b><span id="summary">${escapeHtml(content.summary)}</span><button class="btn" id="clear">${escapeHtml(LABELS.clearFilter)}</button></div>
 ${content.bar}
+<div id="tree">${content.tree}</div>
 <div id="cards">${content.cards}</div>
 </main>
 <script nonce="${input.nonce}">${PAGE_SCRIPT}</script>
@@ -446,6 +453,33 @@ code{font:12px Menlo,monospace;background:#1b1d21;border:1px solid #3a3f47;borde
 .viol{font-size:11px;border-radius:4px;padding:1px 6px}
 .viol-critical{background:#5a1d1d;color:#ffb0b0}.viol-major{background:#5a3a1d;color:#ffd0a0}.viol-minor{background:#3a3a1d;color:#e6e0a0}.viol-info{background:#1d3a5a;color:#a0c8ff}
 .message{color:#8a9099;margin-top:24px}
+.rel{background:transparent;border:none;color:#b8bec7;font-size:12px;padding:0;text-decoration:underline dotted #5f6670}
+.rel:hover{color:#dfeeff}
+#tree-root{width:100%;background:#1f2227;color:#d6d8dc;border:1px solid #3a3f47;border-radius:6px;padding:3px 6px;font:12px Menlo,monospace}
+.tree{background:#22252a;border:1px solid #33383f;border-radius:10px;margin:0 0 16px;padding:0 0 8px}
+.treebar{display:flex;gap:10px;align-items:center;flex-wrap:wrap;padding:8px 14px;border-bottom:1px solid #33383f;font-size:12.5px;color:#c9ced5}
+.treebar .k,.treesum .k{color:#8a9099;font-size:11.5px}
+.treebar .mono{font-family:Menlo,monospace;color:#f2e6a8}
+.treebar .sep,.treesum .sep{width:1px;height:14px;background:#3a3f47}
+.treebar .depth{border:1px solid #4a76a8;border-radius:4px;padding:0 6px;color:#bcd8ff}
+.treebar label{display:inline-flex;gap:4px;align-items:center}
+.treesum{display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding:6px 14px;border-bottom:1px solid #2c3036;font-size:12px;color:#b8bec7}
+.treesum .eff{margin:0}
+.tnodes,.tnodes ul{list-style:none;margin:0;padding:0}
+.tnodes ul{padding-left:22px}
+.tn.closed > ul{display:none}
+.trow{padding:3px 14px 3px 10px;gap:8px;flex-wrap:nowrap;white-space:nowrap}
+.trow > *{flex:none}
+.trow .f-args{flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis}
+.trow .kind{font-size:10px;padding:1px 5px}
+.tt{width:14px;display:inline-block;text-align:center;color:#8a9099;background:transparent;border:none;padding:0;font-size:11px}
+.tname{background:transparent;border:none;padding:0;font:600 13px Menlo,monospace;color:#f2e6a8;cursor:pointer}
+.tname:hover{text-decoration:underline}
+.again-node .kind,.again-node .tname{opacity:.45}
+.again{color:#7d858f;font:11px -apple-system,sans-serif}
+.more{color:#7d858f;font:11px -apple-system,sans-serif}
+.tcount{margin-left:auto;color:#8a9099;font:11px -apple-system,sans-serif}
+.card.flash{outline:2px solid #4a76a8}
 `;
 
 /**
@@ -455,9 +489,19 @@ code{font:12px Menlo,monospace;background:#1b1d21;border:1px solid #3a3f47;borde
 const PAGE_SCRIPT = `
 const vscode = acquireVsCodeApi();
 document.addEventListener('click', (event) => {
-  const target = event.target instanceof Element ? event.target.closest('[data-axis],[data-line],[data-src],[data-fold],#clear,#fold-all,#unfold-all') : null;
+  const target = event.target instanceof Element ? event.target.closest('[data-axis],[data-line],[data-src],[data-fold],[data-tree-root],[data-tree-dir],[data-reveal],[data-node-toggle],#clear,#fold-all,#unfold-all,#tree-more,#tree-close') : null;
   if (target === null) { return; }
   event.preventDefault();
+  if (target.hasAttribute('data-node-toggle')) {
+    const node = target.closest('.tn');
+    if (node !== null) { const closed = node.classList.toggle('closed'); target.textContent = closed ? '▸' : '▾'; }
+    return;
+  }
+  if (target.hasAttribute('data-tree-root')) { vscode.postMessage({ type: 'tree', root: target.getAttribute('data-tree-root'), direction: target.getAttribute('data-tree-dir') }); return; }
+  if (target.hasAttribute('data-tree-dir')) { vscode.postMessage({ type: 'tree-direction', direction: target.getAttribute('data-tree-dir') }); return; }
+  if (target.id === 'tree-more') { vscode.postMessage({ type: 'tree-more' }); return; }
+  if (target.id === 'tree-close') { vscode.postMessage({ type: 'tree-close' }); return; }
+  if (target.hasAttribute('data-reveal')) { vscode.postMessage({ type: 'reveal', qualifiedName: target.getAttribute('data-reveal') }); return; }
   if (target.id === 'clear') { vscode.postMessage({ type: 'clear' }); return; }
   if (target.id === 'fold-all') { vscode.postMessage({ type: 'fold-all' }); return; }
   if (target.id === 'unfold-all') { vscode.postMessage({ type: 'unfold-all' }); return; }
@@ -478,6 +522,8 @@ document.addEventListener('change', (event) => {
   if (target instanceof HTMLInputElement && target.hasAttribute('data-line-field')) {
     vscode.postMessage({ type: 'line', field: target.getAttribute('data-line-field') });
   }
+  if (target instanceof HTMLInputElement && target.id === 'tree-tests') { vscode.postMessage({ type: 'tree-tests' }); }
+  if (target instanceof HTMLSelectElement && target.id === 'tree-root' && target.value !== '') { vscode.postMessage({ type: 'tree', root: target.value, direction: 'callees' }); }
 });
 window.addEventListener('message', (event) => {
   const message = event.data;
@@ -499,6 +545,21 @@ window.addEventListener('message', (event) => {
     }
     document.body.className = message.lineClasses;
     for (const box of document.querySelectorAll('[data-line-field]')) { box.checked = message.line.includes(box.getAttribute('data-line-field')); }
+    return;
+  }
+  if (message.type === 'tree') {
+    document.getElementById('tree').innerHTML = message.html;
+    if (message.html !== '') { document.getElementById('tree').scrollIntoView({ block: 'start' }); }
+    return;
+  }
+  if (message.type === 'reveal') {
+    const card = document.getElementById(message.id);
+    if (card !== null) {
+      card.hidden = false;
+      card.scrollIntoView({ block: 'center' });
+      card.classList.add('flash');
+      setTimeout(() => card.classList.remove('flash'), 1200);
+    }
   }
 });
 `;

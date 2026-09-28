@@ -17,17 +17,17 @@ import {
   foldAll,
   loadFold,
   parseLineField,
-  relationCounts,
   saveFold,
   toggleLineField,
   toggleOpen,
   unfoldAll,
-  type FoldState,
-  type RelationCount
+  type FoldState
 } from './fold';
 import { LABELS } from './labels';
 import { buildCards, facets, parseAxisKey, toggle, visibleCards, type Card, type Selection } from './model';
-import { lineClasses, renderFacets, renderPage, summaryText, type Glyphs, type PlaneState } from './render';
+import type { Glyphs } from './html';
+import { lineClasses, renderFacets, renderPage, renderTreePart, summaryText, type PlaneState } from './render';
+import { buildCallGraph, buildCallTree, DEFAULT_TREE_DEPTH, type CallGraph, type CallTree, type TreeDirection, type TreeQuery } from './tree';
 
 /** custom editor の種類の名(package.json の customEditors と同じ)。 */
 export const READING_PLANE_VIEW_TYPE = 'doeff-runner.readingPlane';
@@ -50,7 +50,18 @@ type PlaneMessage =
   | { readonly type: 'fold'; readonly key: string }
   | { readonly type: 'fold-all' }
   | { readonly type: 'unfold-all' }
-  | { readonly type: 'line'; readonly field: string };
+  | { readonly type: 'line'; readonly field: string }
+  | { readonly type: 'tree'; readonly root: string; readonly direction: TreeDirection }
+  | { readonly type: 'tree-direction'; readonly direction: TreeDirection }
+  | { readonly type: 'tree-more' }
+  | { readonly type: 'tree-close' }
+  | { readonly type: 'tree-tests' }
+  | { readonly type: 'reveal'; readonly qualifiedName: string };
+
+/** 木の向きの文字を読む(知らない値は undefined)。 */
+function parseDirection(value: unknown): TreeDirection | undefined {
+  return value === 'callees' || value === 'callers' ? value : undefined;
+}
 
 /** webview の知らせを形で確かめて読む(知らない形は undefined)。 */
 function readMessage(raw: unknown): PlaneMessage | undefined {
@@ -67,7 +78,23 @@ function readMessage(raw: unknown): PlaneMessage | undefined {
     case 'clear':
     case 'fold-all':
     case 'unfold-all':
+    case 'tree-more':
+    case 'tree-close':
+    case 'tree-tests':
       return { type };
+    case 'tree': {
+      const root = text('root');
+      const direction = parseDirection(fields.get('direction'));
+      return root !== undefined && direction !== undefined ? { type, root, direction } : undefined;
+    }
+    case 'tree-direction': {
+      const direction = parseDirection(fields.get('direction'));
+      return direction !== undefined ? { type, direction } : undefined;
+    }
+    case 'reveal': {
+      const qualifiedName = text('qualifiedName');
+      return qualifiedName !== undefined ? { type, qualifiedName } : undefined;
+    }
     case 'toggle': {
       const axis = text('axis');
       const value = text('value');
@@ -114,18 +141,53 @@ function workspaceFoldMemory(state: vscode.Memento): FoldMemory {
   };
 }
 
-/** 索引の全 file の呼び出しの逆引き(索引の版が同じ間は作り直さない)。 */
-class RelationTable {
-  private cached: { readonly version: number; readonly table: ReadonlyMap<string, RelationCount> } | undefined;
+/** 索引の全 file の呼び出しの表(索引の版が同じ間は作り直さない — カードの関係の数と木が同じ表を使う)。 */
+class GraphTable {
+  private cached: { readonly version: number; readonly graph: CallGraph } | undefined;
 
   constructor(private readonly hy: HyIndexStore) {}
 
-  /** 呼び先の完全修飾名 → 呼び手と deftest の数(1 行の callers / tests)。 */
-  get table(): ReadonlyMap<string, RelationCount> {
+  /** 今の索引の呼び出しの表。 */
+  get graph(): CallGraph {
     if (this.cached === undefined || this.cached.version !== this.hy.version) {
-      this.cached = { version: this.hy.version, table: relationCounts(this.hy.entries().map((e) => e.file)) };
+      this.cached = { version: this.hy.version, graph: buildCallGraph(this.hy.entries().map((e) => e.file)) };
     }
-    return this.cached.table;
+    return this.cached.graph;
+  }
+}
+
+/** 面どうしの移動 — 木の節の名から、その定義のカードへ(他の file なら、その file を読む面で開いてから見せる)。 */
+class PlaneNavigator {
+  private readonly panels = new Map<string, PlanePanel>();
+  private readonly pending = new Map<string, string>();
+
+  /** 開いた面を覚える(file の path ごと)。 */
+  register(filePath: string, panel: PlanePanel): void {
+    this.panels.set(path.normalize(filePath), panel);
+  }
+
+  /** 閉じた面を忘れる。 */
+  unregister(filePath: string, panel: PlanePanel): void {
+    if (this.panels.get(path.normalize(filePath)) === panel) {
+      this.panels.delete(path.normalize(filePath));
+    }
+  }
+
+  /** この file の面が開いたら見せる定義(読んだら消す)。 */
+  takePending(filePath: string): string | undefined {
+    const key = path.normalize(filePath);
+    const found = this.pending.get(key);
+    this.pending.delete(key);
+    return found;
+  }
+
+  /** 他の file の定義を見せる — その file を読む面で開き(開いていれば前に出し)、カードへ。 */
+  revealElsewhere(filePath: string, qualifiedName: string): void {
+    const open = this.panels.get(path.normalize(filePath));
+    if (open === undefined) {
+      this.pending.set(path.normalize(filePath), qualifiedName);
+    }
+    void vscode.commands.executeCommand('vscode.openWith', vscode.Uri.file(filePath), READING_PLANE_VIEW_TYPE).then(() => open?.reveal(qualifiedName));
   }
 }
 
@@ -133,6 +195,10 @@ class RelationTable {
 class PlanePanel implements vscode.Disposable {
   private selection: Selection = new Map();
   private fold: FoldState;
+  /** 開いている呼び出しの木(無ければ undefined) */
+  private tree: TreeQuery | undefined;
+  /** 開いたら見せる定義(索引がまだ無い時に待つ) */
+  private revealWanted: string | undefined;
   private cards: readonly Card[] = [];
   private lastHtml = '';
   private timer: NodeJS.Timeout | undefined;
@@ -146,9 +212,12 @@ class PlanePanel implements vscode.Disposable {
     private readonly lint: LintStore,
     private readonly glyphs: Glyphs,
     private readonly memory: FoldMemory,
-    private readonly relations: RelationTable
+    private readonly graphs: GraphTable,
+    private readonly navigator: PlaneNavigator
   ) {
     this.fold = memory.load(document.uri.fsPath);
+    this.revealWanted = navigator.takePending(document.uri.fsPath);
+    navigator.register(document.uri.fsPath, this);
     panel.webview.options = { enableScripts: true };
     const offHy = hy.onDidChange(() => this.schedule());
     const offLint = lint.onDidChange(() => this.schedule());
@@ -171,6 +240,37 @@ class PlanePanel implements vscode.Disposable {
     );
     panel.onDidDispose(() => this.dispose());
     this.redraw();
+  }
+
+  /** 定義のカードを見せる(畳んでいれば開き、そこまで送る)。カードがまだ無ければ、次に描いた時に見せる。 */
+  reveal(qualifiedName: string): void {
+    const card = this.cards.find((c) => c.definition.qualifiedName === qualifiedName);
+    if (card === undefined) {
+      this.revealWanted = qualifiedName;
+      return;
+    }
+    this.revealWanted = undefined;
+    const key = cardKey(card.definition);
+    if (!this.fold.open.has(key)) {
+      this.setFold(toggleOpen(this.fold, key));
+    }
+    void this.panel.webview.postMessage({ type: 'reveal', id: card.id });
+  }
+
+  /** 木の今の形(条件が無ければ undefined)。 */
+  private treePart(): { readonly tree: CallTree; readonly showTests: boolean } | undefined {
+    if (this.tree === undefined) {
+      return undefined;
+    }
+    const tree = buildCallTree(this.graphs.graph, this.tree);
+    return tree === undefined ? undefined : { tree, showTests: this.tree.showTests };
+  }
+
+  /** 木の条件を変え、木の欄だけを webview へ送る。 */
+  private setTree(next: TreeQuery | undefined): void {
+    this.tree = next;
+    void this.panel.webview.postMessage({ type: 'tree', html: renderTreePart(this.cards, this.graphs.graph, this.glyphs, this.treePart()) });
+    this.remember();
   }
 
   /** 今の置き場から面の状態を作る(索引にその file が無ければ理由の文)。 */
@@ -225,7 +325,8 @@ class PlanePanel implements vscode.Disposable {
       state,
       glyphs: this.glyphs,
       fold: this.fold,
-      relations: this.relations.table,
+      graph: this.graphs.graph,
+      tree: this.treePart(),
       cspSource: this.panel.webview.cspSource,
       nonce
     });
@@ -240,6 +341,9 @@ class PlanePanel implements vscode.Disposable {
     }
     this.lastHtml = stable;
     this.panel.webview.html = this.page(state, crypto.randomBytes(16).toString('hex'));
+    if (this.revealWanted !== undefined) {
+      this.reveal(this.revealWanted);
+    }
   }
 
   /** 送った変化の入った頁を覚え直す(次の描き直しで同じ頁を作り直さないため)。 */
@@ -307,6 +411,39 @@ class PlanePanel implements vscode.Disposable {
         }
         return;
       }
+      case 'tree':
+        this.setTree({ root: message.root, direction: message.direction, depth: DEFAULT_TREE_DEPTH, showTests: false });
+        return;
+      case 'tree-direction':
+        if (this.tree !== undefined) {
+          this.setTree({ ...this.tree, direction: message.direction });
+        }
+        return;
+      case 'tree-more':
+        if (this.tree !== undefined) {
+          this.setTree({ ...this.tree, depth: this.tree.depth + 1 });
+        }
+        return;
+      case 'tree-tests':
+        if (this.tree !== undefined) {
+          this.setTree({ ...this.tree, showTests: !this.tree.showTests });
+        }
+        return;
+      case 'tree-close':
+        this.setTree(undefined);
+        return;
+      case 'reveal': {
+        const found = this.graphs.graph.definitions.get(message.qualifiedName);
+        if (found === undefined) {
+          return;
+        }
+        if (path.normalize(found.path) === path.normalize(this.document.uri.fsPath)) {
+          this.reveal(message.qualifiedName);
+        } else {
+          this.navigator.revealElsewhere(found.path, message.qualifiedName);
+        }
+        return;
+      }
       default: {
         const unreachable: never = message;
         throw new Error(`網羅されていない知らせ: ${JSON.stringify(unreachable)}`);
@@ -316,6 +453,7 @@ class PlanePanel implements vscode.Disposable {
 
   /** 購読と待ちを止める。 */
   dispose(): void {
+    this.navigator.unregister(this.document.uri.fsPath, this);
     if (this.timer !== undefined) {
       clearTimeout(this.timer);
     }
@@ -334,7 +472,8 @@ class ReadingPlaneProvider implements vscode.CustomTextEditorProvider {
     private readonly lint: LintStore,
     private readonly glyphs: Glyphs,
     private readonly memory: FoldMemory,
-    private readonly relations: RelationTable,
+    private readonly graphs: GraphTable,
+    private readonly navigator: PlaneNavigator,
     private readonly watch: (document: vscode.TextDocument) => void
   ) {}
 
@@ -349,7 +488,7 @@ class ReadingPlaneProvider implements vscode.CustomTextEditorProvider {
       return;
     }
     this.watch(document);
-    new PlanePanel(document, panel, this.hy, this.status, this.lint, this.glyphs, this.memory, this.relations);
+    new PlanePanel(document, panel, this.hy, this.status, this.lint, this.glyphs, this.memory, this.graphs, this.navigator);
   }
 }
 
@@ -364,7 +503,7 @@ export function registerReadingPlane(
 ): void {
   // effect の絵は装飾 A と同じ pixel art を data URI で(webview の CSP は img-src data: だけを許す)
   const glyphs: Glyphs = { effect: (name) => icons.inline(effectGlyph(name), 14)?.toString(true) };
-  const provider = new ReadingPlaneProvider(hy, status, lint, glyphs, workspaceFoldMemory(context.workspaceState), new RelationTable(hy), watch);
+  const provider = new ReadingPlaneProvider(hy, status, lint, glyphs, workspaceFoldMemory(context.workspaceState), new GraphTable(hy), new PlaneNavigator(), watch);
   context.subscriptions.push(
     vscode.window.registerCustomEditorProvider(READING_PLANE_VIEW_TYPE, provider, { webviewOptions: { retainContextWhenHidden: true } }),
     vscode.commands.registerCommand('doeff-runner.read.open', async (target?: vscode.Uri) => {

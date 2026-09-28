@@ -2,7 +2,7 @@
 // to oneline form where i can toggle what to show so i can glance at")。純粋な関数だけ(VS Code に触らない)。
 // 既定: カードは畳む(一目で見渡すため)・1 行に出すのは args / return type・effects・tags。面は VS Code の状態に覚える。
 
-import type { HyDefinition, HyFileIndex } from '../hy/contract';
+import type { HyDefinition } from '../hy/contract';
 
 /** 1 行に出せる欄(v4 の表の順)。 */
 export const LINE_FIELDS = ['args', 'effects', 'tags', 'doc', 'relations', 'location'] as const;
@@ -87,40 +87,4 @@ export function loadFold(saved: unknown): FoldState {
     open: new Set(strings(open)),
     line: Array.isArray(line) ? new Set(strings(line).flatMap((t) => parseLineField(t) ?? [])) : new Set(DEFAULT_LINE_FIELDS)
   };
-}
-
-/** 定義の関係の数(1 行の callers / tests)— 呼び手の定義と、そのうち deftest の数。 */
-export interface RelationCount {
-  readonly callers: number;
-  readonly tests: number;
-}
-
-/**
- * 索引の全 file の呼び出しを呼び先の完全修飾名で逆に引く表(U7 の決定: 逆引きは索引に持たず読む側で作る)。
- * 呼び手 = 呼びを含む一番内側の定義。同じ呼び手からの何度もの呼びは 1 つに数える。
- */
-export function relationCounts(files: readonly HyFileIndex[]): ReadonlyMap<string, RelationCount> {
-  const callers = new Map<string, Set<string>>();
-  const tests = new Map<string, Set<string>>();
-  for (const file of files) {
-    for (const call of file.calls) {
-      if (call.target === null || call.caller === null) {
-        continue;
-      }
-      const caller = file.definitions[call.caller];
-      if (caller === undefined) {
-        continue;
-      }
-      const who = `${file.path}#${call.caller}`;
-      const bucket = caller.kind === 'deftest' ? tests : callers;
-      const seen = bucket.get(call.target) ?? new Set<string>();
-      seen.add(who);
-      bucket.set(call.target, seen);
-    }
-  }
-  const counts = new Map<string, RelationCount>();
-  for (const target of new Set([...callers.keys(), ...tests.keys()])) {
-    counts.set(target, { callers: callers.get(target)?.size ?? 0, tests: tests.get(target)?.size ?? 0 });
-  }
-  return counts;
 }

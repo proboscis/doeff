@@ -17,14 +17,15 @@ import {
   type PlaneAxis,
   type Selection
 } from '../../read/model';
-import { escapeHtml, isTallSignature, renderPage } from '../../read/render';
+import { escapeHtml } from '../../read/html';
+import { isTallSignature, renderPage } from '../../read/render';
+import { buildCallGraph, buildCallTree, DEFAULT_TREE_DEPTH, indexTypeText, relationOf } from '../../read/tree';
 import {
   cardKey,
   DEFAULT_LINE_FIELDS,
   foldAll,
   INITIAL_FOLD,
   loadFold,
-  relationCounts,
   saveFold,
   toggleLineField,
   toggleOpen,
@@ -235,7 +236,8 @@ function planePage(selection: Selection, fold?: FoldState): string {
     state: { tag: 'cards', cards, selection },
     glyphs: { effect: (name) => `data:image/svg+xml;fake,${name}` },
     fold: fold ?? unfoldAll(INITIAL_FOLD, cards.map((c) => cardKey(c.definition))),
-    relations: relationCounts([planeIndex()]),
+    graph: buildCallGraph([planeIndex()]),
+    tree: undefined,
     cspSource: 'vscode-resource:',
     nonce: 'n'
   });
@@ -255,7 +257,8 @@ suite('定義を読む面 — 頁(V10・V12・V13)', () => {
       state: { tag: 'message', text: '定義を読む面は設定で切ってあります' },
       glyphs: { effect: () => undefined },
       fold: INITIAL_FOLD,
-      relations: new Map(),
+      graph: buildCallGraph([]),
+      tree: undefined,
       cspSource: 'vscode-resource:',
       nonce: 'n'
     });
@@ -266,7 +269,7 @@ suite('定義を読む面 — 頁(V10・V12・V13)', () => {
   test('カードは選択に合わない物を隠して全部描き、tags のチップは軸の入口(押すとその値で絞る)', () => {
     const html = planePage(select([[CONTEXT, 'screen']]));
     assert.strictEqual((html.match(/<section class="card[^"]*"/g) ?? []).length, 7);
-    assert.strictEqual((html.match(/<section class="card[^"]*" id="d\d+" data-key="[^"]*" hidden>/g) ?? []).length, 5);
+    assert.strictEqual((html.match(/<section class="card[^"]*" id="d\d+" data-key="[^"]*" data-qn="[^"]*" hidden>/g) ?? []).length, 5);
     assert.ok(html.includes('data-axis="tag:owner" data-value="input"'));
     assert.ok(html.includes(`context = screen → ${LABELS.definitions} 2 / 7`));
   });
@@ -350,9 +353,9 @@ suite('定義を読む面 — 畳む形と切り替え(V14・v4 2 節)', () => {
   test('callers / tests の数は索引の呼び出しを呼び先の完全修飾名で逆に引く(deftest は tests に数える)', () => {
     const rowText = planeCards().find((c) => c.definition.name === 'row-text');
     assert.ok(rowText !== undefined);
-    const count = relationCounts([planeIndex()]).get(rowText.definition.qualifiedName);
-    // row-text を呼ぶのは shout・describe-row(定義)と test-row-text-is-the-text(deftest)
-    assert.deepStrictEqual(count, { callers: 2, tests: 1 });
+    const count = relationOf(buildCallGraph([planeIndex()]), rowText.definition.qualifiedName);
+    // row-text を呼ぶのは shout・describe-row(定義)と test-row-text-is-the-text(deftest)。row-text が呼ぶ Hy の定義は無い
+    assert.deepStrictEqual(count, { callers: 2, callees: 0, tests: 1 });
     const html = planePage(new Map(), toggleLineField(INITIAL_FOLD, 'relations'));
     assert.ok(cardHtml(html, 'row-text').includes('callers <b>2</b> · tests <b>1</b>'));
   });
@@ -421,5 +424,107 @@ suite('定義を読む面 — 長い signature の縦の表(V17・v6 2 節)', ()
     assert.ok(cardHtml(html, 'describe-row').includes('(row, prefix, suffix, width) → <span class="r">str | None</span>'));
     assert.ok(cardHtml(html, 'describe-row').includes('title="row: Row | None\nprefix: str\nsuffix: str\nwidth: int"'));
     assert.ok(cardHtml(html, 'fetch-row').includes('(key: <span class="t">str</span>) → <span class="r">Row</span>'));
+  });
+});
+
+suite('定義を読む面 — 呼び出しの依存の木(V19・v7 3 節)', () => {
+  /** plane.hy と tree.hy の 2 file の索引の実出力(file を跨ぐ呼び・重複・循環・deftest を含む)。 */
+  const graph = (): ReturnType<typeof buildCallGraph> => {
+    const parsed = parseHyIndexJson(fs.readFileSync(path.join(FIXTURES, 'tree-index.json'), 'utf8'));
+    if (parsed.tag !== 'ok') {
+      assert.fail(`木の fixture を読めない: ${parsed.reason}`);
+    }
+    return buildCallGraph(parsed.document.files);
+  };
+  const names = (node: { readonly definition: { readonly name: string }; readonly children: readonly unknown[] }): unknown => ({
+    name: node.definition.name,
+    children: (node.children as Array<typeof node>).map(names)
+  });
+
+  test('callees ↓: 根から呼び先を辿る(file を跨ぐ)。同じ実体の 2 度目は ↺ で開かない。根の下に effect の和と節の数', () => {
+    const tree = buildCallTree(graph(), { root: 'pkg.tree.show_both', direction: 'callees', depth: DEFAULT_TREE_DEPTH, showTests: false });
+    assert.ok(tree !== undefined);
+    assert.deepStrictEqual(names(tree.root), {
+      name: 'show-both',
+      children: [
+        { name: 'shout', children: [{ name: 'fetch-row', children: [] }, { name: 'row-text', children: [] }] },
+        { name: 'describe-row', children: [{ name: 'row-text', children: [] }] }
+      ]
+    });
+    const again = tree.root.children[1].children[0];
+    assert.strictEqual(again.seen, 'repeat');
+    assert.deepStrictEqual(tree.effects, ['ReadInput']);
+    assert.deepStrictEqual([tree.nodes, tree.repeats, tree.cycles], [6, 1, 0]);
+  });
+
+  test('callers ↑: 根を呼ぶ物を辿る。deftest は既定で隠し、切り替えで出す', () => {
+    const hidden = buildCallTree(graph(), { root: 'pkg.plane.row_text', direction: 'callers', depth: DEFAULT_TREE_DEPTH, showTests: false });
+    assert.ok(hidden !== undefined);
+    assert.deepStrictEqual(names(hidden.root), {
+      name: 'row-text',
+      children: [
+        { name: 'shout', children: [{ name: 'show-both', children: [] }] },
+        { name: 'describe-row', children: [{ name: 'show-both', children: [] }] }
+      ]
+    });
+    const shown = buildCallTree(graph(), { root: 'pkg.plane.row_text', direction: 'callers', depth: DEFAULT_TREE_DEPTH, showTests: true });
+    assert.ok(shown !== undefined);
+    assert.ok(shown.root.children.some((c) => c.definition.kind === 'deftest'));
+  });
+
+  test('循環は祖先に同じ実体がある 2 度目(cycle)として開かない', () => {
+    const tree = buildCallTree(graph(), { root: 'pkg.tree.ping', direction: 'callees', depth: DEFAULT_TREE_DEPTH, showTests: false });
+    assert.ok(tree !== undefined);
+    assert.deepStrictEqual(names(tree.root), { name: 'ping', children: [{ name: 'pong', children: [{ name: 'ping', children: [] }] }] });
+    assert.strictEqual(tree.root.children[0].children[0].seen, 'cycle');
+    assert.strictEqual(tree.cycles, 1);
+  });
+
+  test('深さ d = 根から d 段下までの節を開き、その 1 段下は truncated(+ で 1 段ずつ広げる)', () => {
+    const shallow = buildCallTree(graph(), { root: 'pkg.tree.show_both', direction: 'callees', depth: 0, showTests: false });
+    assert.ok(shallow !== undefined);
+    assert.deepStrictEqual(shallow.root.children.map((c) => [c.definition.name, c.truncated, c.children.length]), [
+      ['shout', true, 0],
+      ['describe-row', true, 0]
+    ]);
+    const deeper = buildCallTree(graph(), { root: 'pkg.tree.show_both', direction: 'callees', depth: 1, showTests: false });
+    assert.ok(deeper !== undefined);
+    assert.strictEqual(deeper.root.children[0].children.length, 2);
+  });
+
+  test('木の欄: 向き・深さ・tests の切り替え・節は畳んだ 1 行と同じ部品・2 度目は ↺・名を押すとカードへ', () => {
+    const cards = planeCards();
+    const tree = buildCallTree(graph(), { root: 'pkg.tree.show_both', direction: 'callees', depth: DEFAULT_TREE_DEPTH, showTests: false });
+    assert.ok(tree !== undefined);
+    const html = renderPage({
+      place: 'pkg/plane.hy',
+      state: { tag: 'cards', cards, selection: new Map() },
+      glyphs: { effect: () => undefined },
+      fold: INITIAL_FOLD,
+      graph: graph(),
+      tree: { tree, showTests: false },
+      cspSource: 'vscode-resource:',
+      nonce: 'n'
+    });
+    assert.ok(html.includes('<b>call tree</b><span class="k">root</span><b class="mono">show-both</b>'));
+    assert.ok(html.includes('<button class="btn on" data-tree-dir="callees">callees ↓</button>'));
+    assert.ok(html.includes('<span class="depth">3</span><button class="btn" id="tree-more">+</button>'));
+    assert.ok(html.includes('<input type="checkbox" id="tree-tests">tests'));
+    assert.ok(html.includes('nodes <b>6</b>(repeats 1 · cycles 0)'));
+    assert.ok(html.includes('<button class="tname" data-reveal="pkg.plane.shout">shout</button>'));
+    assert.ok(html.includes('↺ seen above'));
+    // 開いている file の定義(shout)は linter の見出しで、他の file の定義(show-both)は索引の型の綴りで 1 行を描く
+    assert.ok(html.includes('(key: <span class="t">str</span>) → <span class="r">str</span>'));
+    assert.ok(html.includes('(key: <span class="t">str</span>, row: <span class="t">Row</span>) → <span class="r">str</span>'));
+    // 入口: カードの帯の callers / callees と、左の欄の根の選び
+    assert.ok(cardHtml(html, 'row-text').includes('data-tree-root="pkg.plane.row_text" data-tree-dir="callers">callers <b>2</b></button>'));
+    assert.ok(html.includes('<select id="tree-root"><option value="">pick a root</option>'));
+  });
+
+  test('索引の型の綴り: 名だけの union は A | B に、他は書かれたまま', () => {
+    assert.strictEqual(indexTypeText({ text: '(| Row None)', names: [] }), 'Row | None');
+    assert.strictEqual(indexTypeText({ text: 'str', names: [] }), 'str');
+    assert.strictEqual(indexTypeText({ text: '(get dict str int)', names: [] }), '(get dict str int)');
+    assert.strictEqual(indexTypeText(null), '?');
   });
 });
