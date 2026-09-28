@@ -1150,6 +1150,7 @@
     {
      "line": 49,
      "depth": 0,
+     "pad": 0,
      "segments": [
       {
        "text": "val",
@@ -1280,6 +1281,7 @@
     {
      "line": 50,
      "depth": 0,
+     "pad": 0,
      "segments": [
       {
        "text": "var",
@@ -1378,18 +1380,65 @@
     {
      "line": 51,
      "depth": 0,
+     "pad": 0,
      "segments": [
       {
-       "text": "(when (is-not target None)",
-       "role": "lisp",
+       "text": "when",
+       "role": "keyword",
        "range": {
         "start": {
          "line": 51,
-         "character": 2
+         "character": 3
         },
         "end": {
          "line": 51,
-         "character": 28
+         "character": 7
+        }
+       },
+       "effect": null,
+       "definition": null
+      },
+      {
+       "text": " ",
+       "role": "text",
+       "range": null,
+       "effect": null,
+       "definition": null
+      },
+      {
+       "text": "target",
+       "role": "text",
+       "range": {
+        "start": {
+         "line": 51,
+         "character": 16
+        },
+        "end": {
+         "line": 51,
+         "character": 22
+        }
+       },
+       "effect": null,
+       "definition": null
+      },
+      {
+       "text": " is not ",
+       "role": "text",
+       "range": null,
+       "effect": null,
+       "definition": null
+      },
+      {
+       "text": "None",
+       "role": "text",
+       "range": {
+        "start": {
+         "line": 51,
+         "character": 23
+        },
+        "end": {
+         "line": 51,
+         "character": 27
         }
        },
        "effect": null,
@@ -1401,53 +1450,170 @@
     },
     {
      "line": 52,
-     "depth": 0,
+     "depth": 1,
+     "pad": 0,
      "segments": [
       {
-       "text": "  ",
+       "text": "val",
+       "role": "keyword",
+       "range": {
+        "start": {
+         "line": 52,
+         "character": 5
+        },
+        "end": {
+         "line": 52,
+         "character": 7
+        }
+       },
+       "effect": null,
+       "definition": null
+      },
+      {
+       "text": " ",
        "role": "text",
        "range": null,
        "effect": null,
        "definition": null
       },
       {
-       "text": "(<- answer (| InputRow InputAbsent InputUnreadable) (ReadInput target))",
-       "role": "lisp",
+       "text": "InputRow | InputAbsent | InputUnreadable",
+       "role": "type",
        "range": {
         "start": {
          "line": 52,
-         "character": 4
+         "character": 15
         },
         "end": {
          "line": 52,
-         "character": 75
+         "character": 55
+        }
+       },
+       "effect": null,
+       "definition": null
+      },
+      {
+       "text": " ",
+       "role": "text",
+       "range": null,
+       "effect": null,
+       "definition": null
+      },
+      {
+       "text": "answer",
+       "role": "name",
+       "range": {
+        "start": {
+         "line": 52,
+         "character": 8
+        },
+        "end": {
+         "line": 52,
+         "character": 14
+        }
+       },
+       "effect": null,
+       "definition": null
+      },
+      {
+       "text": " ",
+       "role": "text",
+       "range": null,
+       "effect": null,
+       "definition": null
+      },
+      {
+       "text": "⇐",
+       "role": "bind",
+       "range": null,
+       "effect": null,
+       "definition": null
+      },
+      {
+       "text": " ",
+       "role": "text",
+       "range": null,
+       "effect": null,
+       "definition": null
+      },
+      {
+       "text": "ReadInput",
+       "role": "effect",
+       "range": {
+        "start": {
+         "line": 52,
+         "character": 57
+        },
+        "end": {
+         "line": 52,
+         "character": 66
+        }
+       },
+       "effect": "ReadInput",
+       "definition": null
+      },
+      {
+       "text": "(",
+       "role": "text",
+       "range": null,
+       "effect": null,
+       "definition": null
+      },
+      {
+       "text": "target)",
+       "role": "text",
+       "range": {
+        "start": {
+         "line": 52,
+         "character": 67
+        },
+        "end": {
+         "line": 52,
+         "character": 74
         }
        },
        "effect": null,
        "definition": null
       }
      ],
-     "binding": null,
+     "binding": 4,
      "warning": null
     },
     {
      "line": 53,
-     "depth": 0,
+     "depth": 1,
+     "pad": 0,
      "segments": [
       {
-       "text": "  ",
+       "text": "match",
+       "role": "keyword",
+       "range": {
+        "start": {
+         "line": 53,
+         "character": 5
+        },
+        "end": {
+         "line": 53,
+         "character": 10
+        }
+       },
+       "effect": null,
+       "definition": null
+      },
+      {
+       "text": " ",
        "role": "text",
        "range": null,
        "effect": null,
        "definition": null
       },
       {
-       "text": "(match answer",
-       "role": "lisp",
+       "text": "answer",
+       "role": "text",
        "range": {
         "start": {
          "line": 53,
-         "character": 4
+         "character": 11
         },
         "end": {
          "line": 53,
@@ -1463,26 +1629,66 @@
     },
     {
      "line": 54,
-     "depth": 0,
+     "depth": 2,
+     "pad": 0,
      "segments": [
       {
-       "text": "    ",
+       "text": "InputUnreadable",
+       "role": "call",
+       "range": {
+        "start": {
+         "line": 54,
+         "character": 7
+        },
+        "end": {
+         "line": 54,
+         "character": 22
+        }
+       },
+       "effect": null,
+       "definition": null
+      },
+      {
+       "text": " → ",
        "role": "text",
        "range": null,
        "effect": null,
        "definition": null
       },
       {
-       "text": "(InputUnreadable) (return None)",
-       "role": "lisp",
+       "text": "return",
+       "role": "keyword",
        "range": {
         "start": {
          "line": 54,
-         "character": 6
+         "character": 25
         },
         "end": {
          "line": 54,
-         "character": 37
+         "character": 31
+        }
+       },
+       "effect": null,
+       "definition": null
+      },
+      {
+       "text": " ",
+       "role": "text",
+       "range": null,
+       "effect": null,
+       "definition": null
+      },
+      {
+       "text": "None",
+       "role": "text",
+       "range": {
+        "start": {
+         "line": 54,
+         "character": 32
+        },
+        "end": {
+         "line": 54,
+         "character": 36
         }
        },
        "effect": null,
@@ -1494,57 +1700,137 @@
     },
     {
      "line": 55,
-     "depth": 0,
+     "depth": 2,
+     "pad": 0,
      "segments": [
       {
-       "text": "    ",
+       "text": "InputRow",
+       "role": "call",
+       "range": {
+        "start": {
+         "line": 55,
+         "character": 7
+        },
+        "end": {
+         "line": 55,
+         "character": 15
+        }
+       },
+       "effect": null,
+       "definition": null
+      },
+      {
+       "text": "        → ",
        "role": "text",
        "range": null,
        "effect": null,
        "definition": null
       },
       {
-       "text": "(InputRow) (:= row answer)",
-       "role": "lisp",
+       "text": "row",
+       "role": "name",
        "range": {
         "start": {
          "line": 55,
-         "character": 6
+         "character": 21
         },
         "end": {
          "line": 55,
-         "character": 32
+         "character": 24
+        }
+       },
+       "effect": null,
+       "definition": null
+      },
+      {
+       "text": " ",
+       "role": "text",
+       "range": null,
+       "effect": null,
+       "definition": null
+      },
+      {
+       "text": ":=",
+       "role": "assign",
+       "range": {
+        "start": {
+         "line": 55,
+         "character": 18
+        },
+        "end": {
+         "line": 55,
+         "character": 20
+        }
+       },
+       "effect": null,
+       "definition": null
+      },
+      {
+       "text": " ",
+       "role": "text",
+       "range": null,
+       "effect": null,
+       "definition": null
+      },
+      {
+       "text": "answer",
+       "role": "text",
+       "range": {
+        "start": {
+         "line": 55,
+         "character": 25
+        },
+        "end": {
+         "line": 55,
+         "character": 31
         }
        },
        "effect": null,
        "definition": null
       }
      ],
-     "binding": null,
+     "binding": 5,
      "warning": null
     },
     {
      "line": 56,
-     "depth": 0,
+     "depth": 2,
+     "pad": 0,
      "segments": [
       {
-       "text": "    ",
+       "text": "InputAbsent",
+       "role": "call",
+       "range": {
+        "start": {
+         "line": 56,
+         "character": 7
+        },
+        "end": {
+         "line": 56,
+         "character": 18
+        }
+       },
+       "effect": null,
+       "definition": null
+      },
+      {
+       "text": "     → ",
        "role": "text",
        "range": null,
        "effect": null,
        "definition": null
       },
       {
-       "text": "(InputAbsent) None))",
-       "role": "lisp",
+       "text": "None",
+       "role": "text",
        "range": {
         "start": {
          "line": 56,
-         "character": 6
+         "character": 20
         },
         "end": {
          "line": 56,
-         "character": 26
+         "character": 24
         }
        },
        "effect": null,
@@ -1557,6 +1843,7 @@
     {
      "line": 57,
      "depth": 0,
+     "pad": 0,
      "segments": [
       {
        "text": "val",
@@ -1710,6 +1997,7 @@
     {
      "line": 58,
      "depth": 0,
+     "pad": 0,
      "segments": [
       {
        "text": "judgment",
@@ -1761,18 +2049,102 @@
     {
      "line": 65,
      "depth": 0,
+     "pad": 0,
      "segments": [
       {
-       "text": "(for [_ (range ATTEMPTS)]",
-       "role": "lisp",
+       "text": "for",
+       "role": "keyword",
        "range": {
         "start": {
          "line": 65,
-         "character": 2
+         "character": 3
         },
         "end": {
          "line": 65,
-         "character": 27
+         "character": 6
+        }
+       },
+       "effect": null,
+       "definition": null
+      },
+      {
+       "text": " ",
+       "role": "text",
+       "range": null,
+       "effect": null,
+       "definition": null
+      },
+      {
+       "text": "_",
+       "role": "name",
+       "range": {
+        "start": {
+         "line": 65,
+         "character": 8
+        },
+        "end": {
+         "line": 65,
+         "character": 9
+        }
+       },
+       "effect": null,
+       "definition": null
+      },
+      {
+       "text": " ",
+       "role": "text",
+       "range": null,
+       "effect": null,
+       "definition": null
+      },
+      {
+       "text": "in",
+       "role": "keyword",
+       "range": null,
+       "effect": null,
+       "definition": null
+      },
+      {
+       "text": " ",
+       "role": "text",
+       "range": null,
+       "effect": null,
+       "definition": null
+      },
+      {
+       "text": "range",
+       "role": "call",
+       "range": {
+        "start": {
+         "line": 65,
+         "character": 11
+        },
+        "end": {
+         "line": 65,
+         "character": 16
+        }
+       },
+       "effect": null,
+       "definition": null
+      },
+      {
+       "text": "(",
+       "role": "text",
+       "range": null,
+       "effect": null,
+       "definition": null
+      },
+      {
+       "text": "ATTEMPTS)",
+       "role": "text",
+       "range": {
+        "start": {
+         "line": 65,
+         "character": 17
+        },
+        "end": {
+         "line": 65,
+         "character": 26
         }
        },
        "effect": null,
@@ -1784,57 +2156,209 @@
     },
     {
      "line": 66,
-     "depth": 0,
+     "depth": 1,
+     "pad": 0,
      "segments": [
       {
-       "text": "  ",
+       "text": "val",
+       "role": "keyword",
+       "range": {
+        "start": {
+         "line": 66,
+         "character": 5
+        },
+        "end": {
+         "line": 66,
+         "character": 7
+        }
+       },
+       "effect": null,
+       "definition": null
+      },
+      {
+       "text": " ",
        "role": "text",
        "range": null,
        "effect": null,
        "definition": null
       },
       {
-       "text": "(<- judgment (| Judgment None) (judged request))",
-       "role": "lisp",
+       "text": "Judgment | None",
+       "role": "type",
        "range": {
         "start": {
          "line": 66,
-         "character": 4
+         "character": 17
         },
         "end": {
          "line": 66,
-         "character": 52
+         "character": 34
+        }
+       },
+       "effect": null,
+       "definition": null
+      },
+      {
+       "text": " ",
+       "role": "text",
+       "range": null,
+       "effect": null,
+       "definition": null
+      },
+      {
+       "text": "judgment",
+       "role": "name",
+       "range": {
+        "start": {
+         "line": 66,
+         "character": 8
+        },
+        "end": {
+         "line": 66,
+         "character": 16
+        }
+       },
+       "effect": null,
+       "definition": null
+      },
+      {
+       "text": " ",
+       "role": "text",
+       "range": null,
+       "effect": null,
+       "definition": null
+      },
+      {
+       "text": "⇐",
+       "role": "bind",
+       "range": null,
+       "effect": null,
+       "definition": null
+      },
+      {
+       "text": " ",
+       "role": "text",
+       "range": null,
+       "effect": null,
+       "definition": null
+      },
+      {
+       "text": "judged",
+       "role": "call",
+       "range": {
+        "start": {
+         "line": 66,
+         "character": 36
+        },
+        "end": {
+         "line": 66,
+         "character": 42
+        }
+       },
+       "effect": null,
+       "definition": {
+        "path": "/repo/packages/doeff-linter/tests/fixtures/body_view/controllers/messaging/core/conversation_input.hy",
+        "range": {
+         "start": {
+          "line": 45,
+          "character": 6
+         },
+         "end": {
+          "line": 45,
+          "character": 12
+         }
+        }
+       }
+      },
+      {
+       "text": "(",
+       "role": "text",
+       "range": null,
+       "effect": null,
+       "definition": null
+      },
+      {
+       "text": "request)",
+       "role": "text",
+       "range": {
+        "start": {
+         "line": 66,
+         "character": 43
+        },
+        "end": {
+         "line": 66,
+         "character": 51
         }
        },
        "effect": null,
        "definition": null
       }
      ],
-     "binding": null,
+     "binding": 7,
      "warning": null
     },
     {
      "line": 67,
-     "depth": 0,
+     "depth": 1,
+     "pad": 0,
      "segments": [
       {
-       "text": "  ",
+       "text": "when",
+       "role": "keyword",
+       "range": {
+        "start": {
+         "line": 67,
+         "character": 5
+        },
+        "end": {
+         "line": 67,
+         "character": 9
+        }
+       },
+       "effect": null,
+       "definition": null
+      },
+      {
+       "text": " ",
        "role": "text",
        "range": null,
        "effect": null,
        "definition": null
       },
       {
-       "text": "(when (is judgment None)",
-       "role": "lisp",
+       "text": "judgment",
+       "role": "text",
        "range": {
         "start": {
          "line": 67,
-         "character": 4
+         "character": 14
         },
         "end": {
          "line": 67,
-         "character": 28
+         "character": 22
+        }
+       },
+       "effect": null,
+       "definition": null
+      },
+      {
+       "text": " is ",
+       "role": "text",
+       "range": null,
+       "effect": null,
+       "definition": null
+      },
+      {
+       "text": "None",
+       "role": "text",
+       "range": {
+        "start": {
+         "line": 67,
+         "character": 23
+        },
+        "end": {
+         "line": 67,
+         "character": 27
         }
        },
        "effect": null,
@@ -1846,26 +2370,43 @@
     },
     {
      "line": 68,
-     "depth": 0,
+     "depth": 2,
+     "pad": 0,
      "segments": [
       {
-       "text": "    ",
+       "text": "return",
+       "role": "keyword",
+       "range": {
+        "start": {
+         "line": 68,
+         "character": 7
+        },
+        "end": {
+         "line": 68,
+         "character": 13
+        }
+       },
+       "effect": null,
+       "definition": null
+      },
+      {
+       "text": " ",
        "role": "text",
        "range": null,
        "effect": null,
        "definition": null
       },
       {
-       "text": "(return None))",
-       "role": "lisp",
+       "text": "None",
+       "role": "text",
        "range": {
         "start": {
          "line": 68,
-         "character": 6
+         "character": 14
         },
         "end": {
          "line": 68,
-         "character": 20
+         "character": 18
         }
        },
        "effect": null,
@@ -1877,26 +2418,66 @@
     },
     {
      "line": 69,
-     "depth": 0,
+     "depth": 1,
+     "pad": 0,
      "segments": [
       {
-       "text": "  ",
+       "text": "when",
+       "role": "keyword",
+       "range": {
+        "start": {
+         "line": 69,
+         "character": 5
+        },
+        "end": {
+         "line": 69,
+         "character": 9
+        }
+       },
+       "effect": null,
+       "definition": null
+      },
+      {
+       "text": " ",
        "role": "text",
        "range": null,
        "effect": null,
        "definition": null
       },
       {
-       "text": "(when (is judgment.write None)",
-       "role": "lisp",
+       "text": "judgment.write",
+       "role": "text",
        "range": {
         "start": {
          "line": 69,
-         "character": 4
+         "character": 14
         },
         "end": {
          "line": 69,
-         "character": 34
+         "character": 28
+        }
+       },
+       "effect": null,
+       "definition": null
+      },
+      {
+       "text": " is ",
+       "role": "text",
+       "range": null,
+       "effect": null,
+       "definition": null
+      },
+      {
+       "text": "None",
+       "role": "text",
+       "range": {
+        "start": {
+         "line": 69,
+         "character": 29
+        },
+        "end": {
+         "line": 69,
+         "character": 33
         }
        },
        "effect": null,
@@ -1908,26 +2489,43 @@
     },
     {
      "line": 70,
-     "depth": 0,
+     "depth": 2,
+     "pad": 0,
      "segments": [
       {
-       "text": "    ",
+       "text": "return",
+       "role": "keyword",
+       "range": {
+        "start": {
+         "line": 70,
+         "character": 7
+        },
+        "end": {
+         "line": 70,
+         "character": 13
+        }
+       },
+       "effect": null,
+       "definition": null
+      },
+      {
+       "text": " ",
        "role": "text",
        "range": null,
        "effect": null,
        "definition": null
       },
       {
-       "text": "(return judgment.outcome))",
-       "role": "lisp",
+       "text": "judgment.outcome",
+       "role": "text",
        "range": {
         "start": {
          "line": 70,
-         "character": 6
+         "character": 14
         },
         "end": {
          "line": 70,
-         "character": 32
+         "character": 30
         }
        },
        "effect": null,
@@ -1939,53 +2537,170 @@
     },
     {
      "line": 71,
-     "depth": 0,
+     "depth": 1,
+     "pad": 0,
      "segments": [
       {
-       "text": "  ",
+       "text": "val",
+       "role": "keyword",
+       "range": {
+        "start": {
+         "line": 71,
+         "character": 5
+        },
+        "end": {
+         "line": 71,
+         "character": 7
+        }
+       },
+       "effect": null,
+       "definition": null
+      },
+      {
+       "text": " ",
        "role": "text",
        "range": null,
        "effect": null,
        "definition": null
       },
       {
-       "text": "(<- answer (| WriteLanded WriteConflict WriteRefused WriteUnreachable) (WriteInput judgment.write))",
-       "role": "lisp",
+       "text": "WriteLanded | WriteConflict | WriteRefused | WriteUnreachable",
+       "role": "type",
        "range": {
         "start": {
          "line": 71,
-         "character": 4
+         "character": 15
         },
         "end": {
          "line": 71,
-         "character": 103
+         "character": 74
+        }
+       },
+       "effect": null,
+       "definition": null
+      },
+      {
+       "text": " ",
+       "role": "text",
+       "range": null,
+       "effect": null,
+       "definition": null
+      },
+      {
+       "text": "answer",
+       "role": "name",
+       "range": {
+        "start": {
+         "line": 71,
+         "character": 8
+        },
+        "end": {
+         "line": 71,
+         "character": 14
+        }
+       },
+       "effect": null,
+       "definition": null
+      },
+      {
+       "text": " ",
+       "role": "text",
+       "range": null,
+       "effect": null,
+       "definition": null
+      },
+      {
+       "text": "⇐",
+       "role": "bind",
+       "range": null,
+       "effect": null,
+       "definition": null
+      },
+      {
+       "text": " ",
+       "role": "text",
+       "range": null,
+       "effect": null,
+       "definition": null
+      },
+      {
+       "text": "WriteInput",
+       "role": "effect",
+       "range": {
+        "start": {
+         "line": 71,
+         "character": 76
+        },
+        "end": {
+         "line": 71,
+         "character": 86
+        }
+       },
+       "effect": "WriteInput",
+       "definition": null
+      },
+      {
+       "text": "(",
+       "role": "text",
+       "range": null,
+       "effect": null,
+       "definition": null
+      },
+      {
+       "text": "judgment.write)",
+       "role": "text",
+       "range": {
+        "start": {
+         "line": 71,
+         "character": 87
+        },
+        "end": {
+         "line": 71,
+         "character": 102
         }
        },
        "effect": null,
        "definition": null
       }
      ],
-     "binding": null,
+     "binding": 8,
      "warning": null
     },
     {
      "line": 72,
-     "depth": 0,
+     "depth": 1,
+     "pad": 0,
      "segments": [
       {
-       "text": "  ",
+       "text": "match",
+       "role": "keyword",
+       "range": {
+        "start": {
+         "line": 72,
+         "character": 5
+        },
+        "end": {
+         "line": 72,
+         "character": 10
+        }
+       },
+       "effect": null,
+       "definition": null
+      },
+      {
+       "text": " ",
        "role": "text",
        "range": null,
        "effect": null,
        "definition": null
       },
       {
-       "text": "(match answer",
-       "role": "lisp",
+       "text": "answer",
+       "role": "text",
        "range": {
         "start": {
          "line": 72,
-         "character": 4
+         "character": 11
         },
         "end": {
          "line": 72,
@@ -2001,26 +2716,66 @@
     },
     {
      "line": 73,
-     "depth": 0,
+     "depth": 2,
+     "pad": 0,
      "segments": [
       {
-       "text": "    ",
+       "text": "WriteLanded",
+       "role": "call",
+       "range": {
+        "start": {
+         "line": 73,
+         "character": 7
+        },
+        "end": {
+         "line": 73,
+         "character": 18
+        }
+       },
+       "effect": null,
+       "definition": null
+      },
+      {
+       "text": "      → ",
        "role": "text",
        "range": null,
        "effect": null,
        "definition": null
       },
       {
-       "text": "(WriteLanded) (return judgment.outcome)",
-       "role": "lisp",
+       "text": "return",
+       "role": "keyword",
        "range": {
         "start": {
          "line": 73,
-         "character": 6
+         "character": 21
         },
         "end": {
          "line": 73,
-         "character": 45
+         "character": 27
+        }
+       },
+       "effect": null,
+       "definition": null
+      },
+      {
+       "text": " ",
+       "role": "text",
+       "range": null,
+       "effect": null,
+       "definition": null
+      },
+      {
+       "text": "judgment.outcome",
+       "role": "text",
+       "range": {
+        "start": {
+         "line": 73,
+         "character": 28
+        },
+        "end": {
+         "line": 73,
+         "character": 44
         }
        },
        "effect": null,
@@ -2032,26 +2787,158 @@
     },
     {
      "line": 74,
-     "depth": 0,
+     "depth": 2,
+     "pad": 0,
      "segments": [
       {
-       "text": "    ",
+       "text": "WriteRefused",
+       "role": "call",
+       "range": {
+        "start": {
+         "line": 74,
+         "character": 7
+        },
+        "end": {
+         "line": 74,
+         "character": 19
+        }
+       },
+       "effect": null,
+       "definition": null
+      },
+      {
+       "text": "     → ",
        "role": "text",
        "range": null,
        "effect": null,
        "definition": null
       },
       {
-       "text": "(WriteRefused) (return (InputRejected :reason REJECT-WRITER-REFUSED :detail answer.detail))",
-       "role": "lisp",
+       "text": "return",
+       "role": "keyword",
        "range": {
         "start": {
          "line": 74,
-         "character": 6
+         "character": 22
         },
         "end": {
          "line": 74,
-         "character": 97
+         "character": 28
+        }
+       },
+       "effect": null,
+       "definition": null
+      },
+      {
+       "text": " ",
+       "role": "text",
+       "range": null,
+       "effect": null,
+       "definition": null
+      },
+      {
+       "text": "InputRejected",
+       "role": "effect",
+       "range": {
+        "start": {
+         "line": 74,
+         "character": 30
+        },
+        "end": {
+         "line": 74,
+         "character": 43
+        }
+       },
+       "effect": "InputRejected",
+       "definition": null
+      },
+      {
+       "text": "(",
+       "role": "text",
+       "range": null,
+       "effect": null,
+       "definition": null
+      },
+      {
+       "text": "reason",
+       "role": "text",
+       "range": {
+        "start": {
+         "line": 74,
+         "character": 45
+        },
+        "end": {
+         "line": 74,
+         "character": 51
+        }
+       },
+       "effect": null,
+       "definition": null
+      },
+      {
+       "text": "=",
+       "role": "text",
+       "range": null,
+       "effect": null,
+       "definition": null
+      },
+      {
+       "text": "REJECT-WRITER-REFUSED",
+       "role": "text",
+       "range": {
+        "start": {
+         "line": 74,
+         "character": 52
+        },
+        "end": {
+         "line": 74,
+         "character": 73
+        }
+       },
+       "effect": null,
+       "definition": null
+      },
+      {
+       "text": ", ",
+       "role": "text",
+       "range": null,
+       "effect": null,
+       "definition": null
+      },
+      {
+       "text": "detail",
+       "role": "text",
+       "range": {
+        "start": {
+         "line": 74,
+         "character": 75
+        },
+        "end": {
+         "line": 74,
+         "character": 81
+        }
+       },
+       "effect": null,
+       "definition": null
+      },
+      {
+       "text": "=",
+       "role": "text",
+       "range": null,
+       "effect": null,
+       "definition": null
+      },
+      {
+       "text": "answer.detail)",
+       "role": "text",
+       "range": {
+        "start": {
+         "line": 74,
+         "character": 82
+        },
+        "end": {
+         "line": 74,
+         "character": 96
         }
        },
        "effect": null,
@@ -2063,26 +2950,66 @@
     },
     {
      "line": 75,
-     "depth": 0,
+     "depth": 2,
+     "pad": 0,
      "segments": [
       {
-       "text": "    ",
+       "text": "WriteUnreachable",
+       "role": "call",
+       "range": {
+        "start": {
+         "line": 75,
+         "character": 7
+        },
+        "end": {
+         "line": 75,
+         "character": 23
+        }
+       },
+       "effect": null,
+       "definition": null
+      },
+      {
+       "text": " → ",
        "role": "text",
        "range": null,
        "effect": null,
        "definition": null
       },
       {
-       "text": "(WriteUnreachable) (return None)",
-       "role": "lisp",
+       "text": "return",
+       "role": "keyword",
        "range": {
         "start": {
          "line": 75,
-         "character": 6
+         "character": 26
         },
         "end": {
          "line": 75,
-         "character": 38
+         "character": 32
+        }
+       },
+       "effect": null,
+       "definition": null
+      },
+      {
+       "text": " ",
+       "role": "text",
+       "range": null,
+       "effect": null,
+       "definition": null
+      },
+      {
+       "text": "None",
+       "role": "text",
+       "range": {
+        "start": {
+         "line": 75,
+         "character": 33
+        },
+        "end": {
+         "line": 75,
+         "character": 37
         }
        },
        "effect": null,
@@ -2094,26 +3021,43 @@
     },
     {
      "line": 76,
-     "depth": 0,
+     "depth": 2,
+     "pad": 0,
      "segments": [
       {
-       "text": "    ",
+       "text": "WriteConflict",
+       "role": "call",
+       "range": {
+        "start": {
+         "line": 76,
+         "character": 7
+        },
+        "end": {
+         "line": 76,
+         "character": 20
+        }
+       },
+       "effect": null,
+       "definition": null
+      },
+      {
+       "text": "    → ",
        "role": "text",
        "range": null,
        "effect": null,
        "definition": null
       },
       {
-       "text": "(WriteConflict) None))",
-       "role": "lisp",
+       "text": "None",
+       "role": "text",
        "range": {
         "start": {
          "line": 76,
-         "character": 6
+         "character": 22
         },
         "end": {
          "line": 76,
-         "character": 28
+         "character": 26
         }
        },
        "effect": null,
@@ -2126,6 +3070,7 @@
     {
      "line": 77,
      "depth": 0,
+     "pad": 0,
      "segments": [
       {
        "text": "None",
@@ -2177,6 +3122,7 @@
     {
      "line": 84,
      "depth": 0,
+     "pad": 0,
      "segments": [
       {
        "text": "val",
@@ -2319,18 +3265,65 @@
     {
      "line": 85,
      "depth": 0,
+     "pad": 0,
      "segments": [
       {
-       "text": "(when (is outcome None)",
-       "role": "lisp",
+       "text": "when",
+       "role": "keyword",
        "range": {
         "start": {
          "line": 85,
-         "character": 2
+         "character": 3
         },
         "end": {
          "line": 85,
-         "character": 25
+         "character": 7
+        }
+       },
+       "effect": null,
+       "definition": null
+      },
+      {
+       "text": " ",
+       "role": "text",
+       "range": null,
+       "effect": null,
+       "definition": null
+      },
+      {
+       "text": "outcome",
+       "role": "text",
+       "range": {
+        "start": {
+         "line": 85,
+         "character": 12
+        },
+        "end": {
+         "line": 85,
+         "character": 19
+        }
+       },
+       "effect": null,
+       "definition": null
+      },
+      {
+       "text": " is ",
+       "role": "text",
+       "range": null,
+       "effect": null,
+       "definition": null
+      },
+      {
+       "text": "None",
+       "role": "text",
+       "range": {
+        "start": {
+         "line": 85,
+         "character": 20
+        },
+        "end": {
+         "line": 85,
+         "character": 24
         }
        },
        "effect": null,
@@ -2342,26 +3335,43 @@
     },
     {
      "line": 86,
-     "depth": 0,
+     "depth": 1,
+     "pad": 0,
      "segments": [
       {
-       "text": "  ",
+       "text": "return",
+       "role": "keyword",
+       "range": {
+        "start": {
+         "line": 86,
+         "character": 5
+        },
+        "end": {
+         "line": 86,
+         "character": 11
+        }
+       },
+       "effect": null,
+       "definition": null
+      },
+      {
+       "text": " ",
        "role": "text",
        "range": null,
        "effect": null,
        "definition": null
       },
       {
-       "text": "(return RunOutcome.DEFERRED))",
-       "role": "lisp",
+       "text": "RunOutcome.DEFERRED",
+       "role": "text",
        "range": {
         "start": {
          "line": 86,
-         "character": 4
+         "character": 12
         },
         "end": {
          "line": 86,
-         "character": 33
+         "character": 31
         }
        },
        "effect": null,
@@ -2374,6 +3384,7 @@
     {
      "line": 87,
      "depth": 0,
+     "pad": 0,
      "segments": [
       {
        "text": "val",
@@ -2550,6 +3561,7 @@
     {
      "line": 88,
      "depth": 0,
+     "pad": 0,
      "segments": [
       {
        "text": "val",
@@ -2680,14 +3692,38 @@
     {
      "line": 89,
      "depth": 0,
+     "pad": 0,
      "segments": [
       {
-       "text": "(match settled",
-       "role": "lisp",
+       "text": "match",
+       "role": "keyword",
        "range": {
         "start": {
          "line": 89,
-         "character": 2
+         "character": 3
+        },
+        "end": {
+         "line": 89,
+         "character": 8
+        }
+       },
+       "effect": null,
+       "definition": null
+      },
+      {
+       "text": " ",
+       "role": "text",
+       "range": null,
+       "effect": null,
+       "definition": null
+      },
+      {
+       "text": "settled",
+       "role": "text",
+       "range": {
+        "start": {
+         "line": 89,
+         "character": 9
         },
         "end": {
          "line": 89,
@@ -2703,22 +3739,62 @@
     },
     {
      "line": 90,
-     "depth": 0,
+     "depth": 1,
+     "pad": 0,
      "segments": [
       {
-       "text": "  ",
+       "text": "IntakeSettleLanded",
+       "role": "call",
+       "range": {
+        "start": {
+         "line": 90,
+         "character": 5
+        },
+        "end": {
+         "line": 90,
+         "character": 23
+        }
+       },
+       "effect": null,
+       "definition": null
+      },
+      {
+       "text": " → ",
        "role": "text",
        "range": null,
        "effect": null,
        "definition": null
       },
       {
-       "text": "(IntakeSettleLanded) (match outcome",
-       "role": "lisp",
+       "text": "match",
+       "role": "keyword",
        "range": {
         "start": {
          "line": 90,
-         "character": 4
+         "character": 26
+        },
+        "end": {
+         "line": 90,
+         "character": 31
+        }
+       },
+       "effect": null,
+       "definition": null
+      },
+      {
+       "text": " ",
+       "role": "text",
+       "range": null,
+       "effect": null,
+       "definition": null
+      },
+      {
+       "text": "outcome",
+       "role": "text",
+       "range": {
+        "start": {
+         "line": 90,
+         "character": 32
         },
         "end": {
          "line": 90,
@@ -2734,22 +3810,39 @@
     },
     {
      "line": 91,
-     "depth": 0,
+     "depth": 2,
+     "pad": 21,
      "segments": [
       {
-       "text": "                         ",
+       "text": "InputDone",
+       "role": "call",
+       "range": {
+        "start": {
+         "line": 91,
+         "character": 28
+        },
+        "end": {
+         "line": 91,
+         "character": 37
+        }
+       },
+       "effect": null,
+       "definition": null
+      },
+      {
+       "text": "     → ",
        "role": "text",
        "range": null,
        "effect": null,
        "definition": null
       },
       {
-       "text": "(InputDone) RunOutcome.DONE",
-       "role": "lisp",
+       "text": "RunOutcome.DONE",
+       "role": "text",
        "range": {
         "start": {
          "line": 91,
-         "character": 27
+         "character": 39
         },
         "end": {
          "line": 91,
@@ -2765,26 +3858,43 @@
     },
     {
      "line": 92,
-     "depth": 0,
+     "depth": 2,
+     "pad": 21,
      "segments": [
       {
-       "text": "                         ",
+       "text": "InputRejected",
+       "role": "call",
+       "range": {
+        "start": {
+         "line": 92,
+         "character": 28
+        },
+        "end": {
+         "line": 92,
+         "character": 41
+        }
+       },
+       "effect": null,
+       "definition": null
+      },
+      {
+       "text": " → ",
        "role": "text",
        "range": null,
        "effect": null,
        "definition": null
       },
       {
-       "text": "(InputRejected) RunOutcome.REJECTED)",
-       "role": "lisp",
+       "text": "RunOutcome.REJECTED",
+       "role": "text",
        "range": {
         "start": {
          "line": 92,
-         "character": 27
+         "character": 43
         },
         "end": {
          "line": 92,
-         "character": 63
+         "character": 62
         }
        },
        "effect": null,
@@ -2796,18 +3906,12 @@
     },
     {
      "line": 93,
-     "depth": 0,
+     "depth": 1,
+     "pad": 0,
      "segments": [
       {
-       "text": "  ",
+       "text": "_",
        "role": "text",
-       "range": null,
-       "effect": null,
-       "definition": null
-      },
-      {
-       "text": "_ RunOutcome.DEFERRED)",
-       "role": "lisp",
        "range": {
         "start": {
          "line": 93,
@@ -2815,7 +3919,30 @@
         },
         "end": {
          "line": 93,
-         "character": 26
+         "character": 5
+        }
+       },
+       "effect": null,
+       "definition": null
+      },
+      {
+       "text": "                  → ",
+       "role": "text",
+       "range": null,
+       "effect": null,
+       "definition": null
+      },
+      {
+       "text": "RunOutcome.DEFERRED",
+       "role": "text",
+       "range": {
+        "start": {
+         "line": 93,
+         "character": 6
+        },
+        "end": {
+         "line": 93,
+         "character": 25
         }
        },
        "effect": null,

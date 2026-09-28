@@ -24,7 +24,7 @@ function read(text: string): LintReport {
 
 /** 定義の本体を (1 始まりの行, 字下げを付けた字) にする(面と同じつなぎ方)。 */
 function rendered(body: LintBody): [number, string][] {
-  return body.lines.map((l) => [l.line + 1, '  '.repeat(l.depth) + l.segments.map((s) => s.text).join('')]);
+  return body.lines.map((l) => [l.line + 1, '  '.repeat(l.depth) + ' '.repeat(l.pad) + l.segments.map((s) => s.text).join('')]);
 }
 
 function bodyOf(report: LintReport, name: string): LintBody {
@@ -79,9 +79,19 @@ suite('本体の文字(editor-json の bodies)の読み込み', () => {
         ['text', 'None']
       ]
     );
-    // 表に無い form(when は U3 まで)は lisp の役
+    // when / match の字下げと `→` の揃え(腕の中の match の中身は段と pad で match の語の列に揃う)
+    const run2 = rendered(run).filter(([line]) => line >= 90);
+    assert.deepStrictEqual(run2, [
+      [90, 'match settled'],
+      [91, '  IntakeSettleLanded → match outcome'],
+      [92, '                         InputDone     → RunOutcome.DONE'],
+      [93, '                         InputRejected → RunOutcome.REJECTED'],
+      [94, '  _                  → RunOutcome.DEFERRED']
+    ]);
+    const inner = run.lines.find((l) => l.line + 1 === 92);
+    assert.deepStrictEqual([inner?.depth, inner?.pad], [2, 21]);
     const when = bodyOf(r, 'judged').lines.find((l) => l.line + 1 === 52);
-    assert.deepStrictEqual(when?.segments.map((s) => s.role), ['lisp']);
+    assert.deepStrictEqual(when?.segments[0].role, 'keyword');
     assert.deepStrictEqual(r.unknown, []);
   });
 
@@ -124,5 +134,18 @@ suite('本体の文字(editor-json の bodies)の読み込み', () => {
     const r = read(JSON.stringify(raw));
     assert.strictEqual(r.bindings[0].modifier, 'lazy');
     assert.strictEqual(r.bindings[1].modifier, null);
+  });
+});
+
+suite('本体の文字の読み込み — U2 の linter との互換', () => {
+  test('pad の無い行(U2 の linter の出力)は 0 と読み、出力を捨てない', () => {
+    const raw = JSON.parse(fixtureText());
+    for (const b of raw.bodies) {
+      for (const l of b.lines) {
+        delete l.pad;
+      }
+    }
+    const r = read(JSON.stringify(raw));
+    assert.ok(r.bodies.every((b) => b.lines.every((l) => l.pad === 0)));
   });
 });

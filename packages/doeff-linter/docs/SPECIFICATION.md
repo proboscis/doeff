@@ -629,7 +629,8 @@ file の defk / deff の分を出す(全体の実行では空)。
   "range": {…}, "full_range": {…},  // 名の範囲・定義の form 全体(signatures と同じ)
   "lines": [{
     "line": 49,                     // source の行(0 始まり — 面は 1 を足して見せる)。1 つの行に文が 2 つあれば同じ番号が続く
-    "depth": 0,                     // 字下げの段(本体の一番外 = 0)
+    "depth": 0,                     // 字下げの段(本体の一番外 = 0・when / if / match / for の中身で 1 つ深い)
+    "pad": 0,                       // 段の後ろに足す空白(面は "  " × depth + " " × pad の後ろに字を並べる)
     "segments": [                   // 行の字 = text をつないだ物
       {"text": "val", "role": "keyword", "range": {…}, "effect": null, "definition": null},
       {"text": " ", "role": "text", "range": null, "effect": null, "definition": null},
@@ -645,7 +646,7 @@ file の defk / deff の分を出す(全体の実行では空)。
 }]
 ```
 
-- **字の役**(閉じた集合): `keyword`(`val`・`var`・`lazy`・`session`・`setv`・`return`・`resume`)・`type`(束縛の型)・
+- **字の役**(閉じた集合): `keyword`(`val`・`var`・`lazy`・`session`・`setv`・`return`・`resume`・`when`・`if`・`else`・`match`・`for`・`in`)・`type`(束縛の型)・
   `unknown-type`(型が分からない印 `?`)・`name`(束ねる名)・`bind`(`⇐`)・`assign`(`=` と `:=`)・`effect`(effect の値を作る呼びの頭 —
   面が `effect` の名で絵を選ぶ)・`call`(それ以外の呼びの頭)・`text`(引数・演算子・字面・区切り)・`lisp`(表に無い form)。
 - **range**: source から来た字は source の範囲を持ち、区切り・`⇐`・`?` のように source に無い字は null。`keyword` と `type` は綴りが
@@ -666,11 +667,20 @@ file の defk / deff の分を出す(全体の実行では空)。
 | `(f a b)`・`(.m o a)`・`(get d k)`・`(. o a)`・`(f a :k v)`・演算 | 17 節の置き換えと同じ(`f(a, b)`・`o.m(a)`・`d[k]`・`o.a`・`f(a, k=v)`・`a + b`) |
 | `(return v)` / `(resume v)` | `return v` / `resume v` |
 | `(<- x T e :absent F)` | `val T x ⇐ e` の後ろに `:absent F` を `lisp` のまま |
-| 表に無い form(`when`・`match`・`for` … は #910 U3 まで・知らない macro・名が記号でない setv) | 元の lisp のまま(`lisp` の役)。推測で描かない |
+| `(when c …)` | `when c` + 1 つ深い段の中身 |
+| `(if c a b)` / `(if c a)` | `if c` + a、`else` + b(else は if の列に揃え、行の番号は b の行) |
+| `(match v P x P :if g y …)` | `match v` + 腕ごとに `P → x` / `P if g → y`(`→` の前は腕の pattern の最大幅 + 空白 1 つで揃える)。pattern は `(C)` → `C`・`(C a :k p)` → `C(a, k=p)`・`(\| p q)` → `p \| q`・`[p q]` → `[p, q]`・名と字面はそのまま |
+| `(for [x xs] …)` / `(for [[a b] xs] …)` | `for x in xs` / `for a, b in xs` + 1 つ深い段の中身 |
+| `(lfor x xs :if c e)` / `gfor` / `sfor` | `[e for x in xs if c]` / `(e for …)` / `{e for …}`(節の重ねは `for … for …`) |
+| 表に無い form(知らない macro・`do`・`cond`・`unless`・`dfor`・内包の `:setv` / `:do`・名が組でない `for`・腕の欠けた `match`・表に無い pattern・名が記号でない setv) | 元の lisp のまま(`lisp` の役)。推測で描かない |
 
 - **lisp の島**: 式の中で置き換えなかった括弧(知らない頭)は、その括弧だけ元の lisp のまま `lisp` の役で出す(中の呼びも置き換えない)。
 - **複数行**: 式や lisp が次の行へ続く所は新しい行(`line` = その source の行・`depth` は同じ)にし、source の字下げの文の頭からの差を
-  頭の空白の字で持つ。
+  `pad` に足す。
+- **腕の中で始まる塊**: `A → match v` のように `→` の後ろで始まる when / if / match / for の中身は、腕の段 + 1 の段と、塊の語の列に揃える
+  `pad` で持つ(字の数え方は面と同じ — 段 1 つ = 空白 2 つ・字 1 つ = 1 列)。
+- **内包**: 部分(本体・名・元・条件)がそれぞれ 1 行に収まれば、source で複数行でも 1 行に並べる(行の番号は内包の頭の行。後ろの字の
+  range は後ろの source の行を指す)。収まらなければ lisp の島のまま。
 - **本体の頭の文字列**: 後ろに文がある時は説明として出さない(文字列 1 つだけの本体はその文字列が答えなので出す)。
 - 16 節の束縛の読みも同じ変更で直した: `(val x ! e)`(Hy の reader は `!(e)` も `!` と `(e)` の 2 つの要素に読む — ADR-DOE-HY-006 §3)
   の 2 つ組を撃つ値に畳み、`(lazy val x e)`・`(session var x e)` を束縛として読んで `bindings` の欄 `modifier`(`lazy` | `session` | null)
