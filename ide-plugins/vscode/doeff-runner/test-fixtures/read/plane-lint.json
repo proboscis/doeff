@@ -1118,6 +1118,7 @@
     {
      "line": 16,
      "depth": 0,
+     "pad": 0,
      "segments": [
       {
        "text": "val",
@@ -1237,6 +1238,7 @@
     {
      "line": 17,
      "depth": 0,
+     "pad": 0,
      "segments": [
       {
        "text": "row",
@@ -1288,6 +1290,7 @@
     {
      "line": 23,
      "depth": 0,
+     "pad": 0,
      "segments": [
       {
        "text": "row.text",
@@ -1339,6 +1342,7 @@
     {
      "line": 30,
      "depth": 0,
+     "pad": 0,
      "segments": [
       {
        "text": "val",
@@ -1493,6 +1497,7 @@
     {
      "line": 31,
      "depth": 0,
+     "pad": 0,
      "segments": [
       {
        "text": "row-text",
@@ -1602,18 +1607,65 @@
     {
      "line": 42,
      "depth": 0,
+     "pad": 0,
      "segments": [
       {
-       "text": "(when (is row None)",
-       "role": "lisp",
+       "text": "when",
+       "role": "keyword",
        "range": {
         "start": {
          "line": 42,
-         "character": 2
+         "character": 3
         },
         "end": {
          "line": 42,
-         "character": 21
+         "character": 7
+        }
+       },
+       "effect": null,
+       "definition": null
+      },
+      {
+       "text": " ",
+       "role": "text",
+       "range": null,
+       "effect": null,
+       "definition": null
+      },
+      {
+       "text": "row",
+       "role": "text",
+       "range": {
+        "start": {
+         "line": 42,
+         "character": 12
+        },
+        "end": {
+         "line": 42,
+         "character": 15
+        }
+       },
+       "effect": null,
+       "definition": null
+      },
+      {
+       "text": " is ",
+       "role": "text",
+       "range": null,
+       "effect": null,
+       "definition": null
+      },
+      {
+       "text": "None",
+       "role": "text",
+       "range": {
+        "start": {
+         "line": 42,
+         "character": 16
+        },
+        "end": {
+         "line": 42,
+         "character": 20
         }
        },
        "effect": null,
@@ -1625,26 +1677,43 @@
     },
     {
      "line": 43,
-     "depth": 0,
+     "depth": 1,
+     "pad": 0,
      "segments": [
       {
-       "text": "  ",
+       "text": "return",
+       "role": "keyword",
+       "range": {
+        "start": {
+         "line": 43,
+         "character": 5
+        },
+        "end": {
+         "line": 43,
+         "character": 11
+        }
+       },
+       "effect": null,
+       "definition": null
+      },
+      {
+       "text": " ",
        "role": "text",
        "range": null,
        "effect": null,
        "definition": null
       },
       {
-       "text": "(return None))",
-       "role": "lisp",
+       "text": "None",
+       "role": "text",
        "range": {
         "start": {
          "line": 43,
-         "character": 4
+         "character": 12
         },
         "end": {
          "line": 43,
-         "character": 18
+         "character": 16
         }
        },
        "effect": null,
@@ -1657,6 +1726,7 @@
     {
      "line": 44,
      "depth": 0,
+     "pad": 0,
      "segments": [
       {
        "text": "prefix",

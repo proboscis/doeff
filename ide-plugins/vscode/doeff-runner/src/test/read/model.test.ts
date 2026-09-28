@@ -539,9 +539,47 @@ suite('定義を読む面 — 本体の文字(V6・V11 の一部・U5)', () => {
     assert.ok(shout.includes('<span class="fn">fetch-row</span>(key)'));
   });
 
-  test('まだ描けない form(U3 の when など)は推測で描かず、目印つきの lisp のまま(v1 制約 2)', () => {
+  test('制御の形(U3): when は語 + 字下げの段(linter の bodies の depth)', () => {
     const describe = cardHtml(planePage(new Map()), 'describe-row');
-    assert.ok(describe.includes(`<span class="ln">43</span><span class="lisp" title="${LABELS.lispAsIs}">(when (is row None)</span>`));
+    assert.ok(describe.includes('<span class="ln">43</span><span class="kw">when</span> row is None'));
+    assert.ok(describe.includes('<span class="ln">44</span>  <span class="kw">return</span> None'));
+  });
+
+  test('字下げ = "  " × 段 + " " × pad(腕の中の match の中身を match の語の列に揃える行)', () => {
+    const cards = planeCards();
+    const describe = cards.find((c) => c.definition.name === 'describe-row');
+    assert.ok(describe !== undefined && describe.body !== undefined);
+    const padded = { ...describe, body: { ...describe.body, lines: describe.body.lines.map((l, i) => (i === 1 ? { ...l, pad: 3 } : l)) } };
+    const html = renderPage({
+      place: 'pkg/plane.hy',
+      state: { tag: 'cards', cards: cards.map((c) => (c === describe ? padded : c)), selection: new Map() },
+      glyphs: { effect: () => undefined },
+      fold: unfoldAll(INITIAL_FOLD, cards.map((c) => cardKey(c.definition))),
+      graph: buildCallGraph([planeIndex()]),
+      tree: undefined,
+      cspSource: 'vscode-resource:',
+      nonce: 'n'
+    });
+    assert.ok(cardHtml(html, 'describe-row').includes('<span class="ln">44</span>     <span class="kw">return</span> None'));
+  });
+
+  test('表に無い form は推測で描かず、目印つきの lisp のまま(v1 制約 2)', () => {
+    const lisp = { text: '(cond [a b])', role: 'lisp' as const, range: null, effect: null, definition: null };
+    const cards = planeCards();
+    const describe = cards.find((c) => c.definition.name === 'describe-row');
+    assert.ok(describe !== undefined && describe.body !== undefined);
+    const marked = { ...describe, body: { ...describe.body, lines: [{ ...describe.body.lines[0], segments: [lisp] }] } };
+    const html = renderPage({
+      place: 'pkg/plane.hy',
+      state: { tag: 'cards', cards: cards.map((c) => (c === describe ? marked : c)), selection: new Map() },
+      glyphs: { effect: () => undefined },
+      fold: unfoldAll(INITIAL_FOLD, cards.map((c) => cardKey(c.definition))),
+      graph: buildCallGraph([planeIndex()]),
+      tree: undefined,
+      cspSource: 'vscode-resource:',
+      nonce: 'n'
+    });
+    assert.ok(cardHtml(html, 'describe-row').includes(`<span class="lisp" title="${LABELS.lispAsIs}">(cond [a b])</span>`));
   });
 
   test('本体を持たない実体(defrecord・最上位の変数)には本体の欄を出さない', () => {

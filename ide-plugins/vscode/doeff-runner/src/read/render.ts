@@ -271,7 +271,7 @@ function bodyBlock(body: LintBody, glyphs: Glyphs, violations: readonly LintViol
       const level = worstLevel(here);
       const marks =
         level === undefined ? '' : `<span class="viol viol-${level}" title="${escapeHtml(here.map((v) => `${v.rule}: ${v.message}`).join('\n'))}">${escapeHtml(here.map((v) => v.rule).join(' '))}</span>`;
-      const text = `${'  '.repeat(line.depth)}${line.segments.map((s) => renderSegment(s, glyphs)).join('')}`;
+      const text = `${'  '.repeat(line.depth)}${' '.repeat(line.pad)}${line.segments.map((s) => renderSegment(s, glyphs)).join('')}`;
       return `<div class="${bound ? 'bl bound' : 'bl'}"><span class="ln">${line.line + 1}</span>${text}${warning}${marks}</div>`;
     })
     .join('');
