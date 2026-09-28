@@ -34,7 +34,22 @@ export function kindGlyph(kind: HyDefinitionKind): string | undefined {
 }
 
 /** effect の種類の装置の icon(閉じた集合)— defk の見出しと文字の置き換えの印が effect の名の前に出す絵。 */
-export const EFFECT_GLYPHS = ['effect-ask', 'effect-read', 'effect-write', 'effect-settle', 'effect-time', 'effect-raise', 'effect-absent', 'effect-http', 'effect-device'] as const;
+export const EFFECT_GLYPHS = [
+  'effect-ask',
+  'effect-read',
+  'effect-write',
+  'effect-settle',
+  'effect-time',
+  'effect-wait',
+  'effect-launch',
+  'effect-door',
+  'effect-send',
+  'effect-delete',
+  'effect-raise',
+  'effect-absent',
+  'effect-http',
+  'effect-device'
+] as const;
 export type EffectGlyph = (typeof EFFECT_GLYPHS)[number];
 
 /**
@@ -85,17 +100,33 @@ export const EFFECT_GLYPH_TABLE: {
     Declared: 'effect-settle',
     Resolve: 'effect-settle',
     // 時刻 — 時計
-    Sleep: 'effect-time',
-    Wait: 'effect-time',
     Time: 'effect-time',
     Clock: 'effect-time',
-    // 外部との通信(HTTP・socket・送り届け)— 無線の塔
+    // 待つ — 砂時計
+    Sleep: 'effect-wait',
+    Wait: 'effect-wait',
+    // 起動と停止 — 起動のレバー
+    Launch: 'effect-launch',
+    Start: 'effect-launch',
+    Run: 'effect-launch',
+    Stop: 'effect-launch',
+    Interrupt: 'effect-launch',
+    // 開く・閉じる — エアロックの扉
+    Open: 'effect-door',
+    Close: 'effect-door',
+    // 送る — 気送管の筒
+    Send: 'effect-send',
+    Post: 'effect-send',
+    Deliver: 'effect-send',
+    // 消す — 廃棄の口
+    Delete: 'effect-delete',
+    Remove: 'effect-delete',
+    Cancel: 'effect-delete',
+    Drop: 'effect-delete',
+    // 外部との通信(HTTP・socket)— 無線の塔
     Http: 'effect-http',
     Forward: 'effect-http',
-    Post: 'effect-http',
-    Send: 'effect-http',
     Socket: 'effect-http',
-    Deliver: 'effect-http',
     Serve: 'effect-http',
     // 失敗・無い
     Raise: 'effect-raise',
