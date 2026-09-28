@@ -152,7 +152,8 @@
 
 
 (defeffect RepoAllowed
-  "url が worker の許可表(clone してよい URL)に在るか。答え = bool。断る判断(repo-denied)は prepare-env が持つ。"
+  "url が名指す repo が worker の許可表(clone してよい URL)に在るか(綴りが違っても同じ repo なら在る — 取りに行く綴りは表の側)。
+   答え = bool。断る判断(repo-denied)は prepare-env が持つ。"
   {:fields [(: url str)]
    :answer bool
    :tags {:context "runtime-env" :role "intent"}})

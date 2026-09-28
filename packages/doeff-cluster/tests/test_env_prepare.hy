@@ -16,7 +16,7 @@
 (import pathlib [Path])
 (import doeff [Program run with-handlers])
 (import doeff_core_effects.os_file [os-file-handler])
-(import doeff_cluster.env_handlers [editable-dirs])
+(import doeff_cluster.env_handlers [editable-dirs repo-identity])
 (import doeff_core_effects.handlers [state])
 (import doeff_core_effects.scheduler [Spawn Gather])
 (import doeff_time [SimClock sim-time-handler GetMonotonic])
@@ -413,6 +413,61 @@
   ;; 反例: 届く remote に commit が無い時は、恒久の commit-missing のまま。
   (<- ok bool (run-in-world world (fetch-after-mirror-scenario (frozenset) EnvFailureKind.COMMIT-MISSING False)))
   (assert ok))
+
+
+;; --- 宣言の url の綴りと worker の許可表(2026-09-28 の事故 — daily-verify が 10 分落ちた)------------------------------
+;; 送り手の checkout の remote が ssh(git@github.com:o/r.git)でも、許可表が同じ repo を https で持っていれば、同じ repo として受け、
+;; clone は許可表の綴りで行う(表は許可表 1 つ — 宣言の側に綴りの表を持たない)。
+
+(val LIB-HTTPS "https://github.com/o/lib.git")
+
+
+(deftest test-a-git-url-names-its-repo-regardless-of-spelling
+  (for [spelling ["https://github.com/o/lib.git" "https://github.com/o/lib" "https://github.com/o/lib/" "git@github.com:o/lib.git"
+                  "ssh://git@github.com/o/lib.git" "ssh://git@github.com:22/o/lib.git" "https://GitHub.com/o/lib.git"]]
+    (<- identity str (repo-identity spelling))
+    (assert (= identity "github.com/o/lib") (.format "{} → {}" spelling identity)))
+  ;; 反例: 別の owner・別の host・別の名は別の repo。
+  (for [other ["git@github.com:p/lib.git" "https://gitlab.com/o/lib.git" "git@github.com:o/lib2.git"]]
+    (<- identity str (repo-identity other))
+    (assert (!= identity "github.com/o/lib") other)))
+
+
+(defk https-lib-world []
+  {:pre [] :post [(: % EnvWorld)]}
+  "許可表の綴りを https に揃えた世界を作るため(lib の remote を LIB-HTTPS に置き換える — 許可表は世界の remote の url から作られる)。"
+  (<- world EnvWorld (base-world))
+  (replace world :remotes (tuple (gfor r world.remotes (if (= r.url LIB-URL) (replace r :url LIB-HTTPS) r)))))
+
+
+(defk lib-spelled-env [url]
+  {:pre [(: url str)] :post [(: % RuntimeEnv)]}
+  "lib を url の綴りで名指す宣言を作るため(送り手の checkout の remote の綴りがそのまま入った宣言の再現)。"
+  (<- env RuntimeEnv (env-of "app-1" "lib-1" LOCK))
+  (replace env :repos (tuple (gfor r env.repos (if (= r.name "lib") (replace r :url url) r)))))
+
+
+(defk ssh-spelling-scenario [env]
+  {:pre [(: env RuntimeEnv)] :post [(: % bool)]}
+  "ssh の綴りの宣言が準備でき、lib の mirror は許可表の綴り(https)で clone されていることを確かめるため。"
+  (<- ready (prepare env #()))
+  (assert (isinstance ready EnvReady) ready)
+  (<- mirrors dict (files-under "/state/mirrors"))
+  (val urls (sorted (gfor [path text] (.items mirrors) :if (.endswith path "/remote-url") text)))
+  (assert (= urls (sorted [APP-URL LIB-HTTPS])) urls)
+  True)
+
+
+(deftest test-an-ssh-spelling-of-an-allowed-https-repo-is-prepared-with-the-allowed-spelling
+  (<- world EnvWorld (https-lib-world))
+  (<- env RuntimeEnv (lib-spelled-env "git@github.com:o/lib.git"))
+  (<- ok bool (run-in-world world (ssh-spelling-scenario env)))
+  (assert ok)
+  ;; 反例: 許可表から外した repo は、別の綴りで名指しても断る(綴りを変えて許可表を抜けない)。
+  (<- (expect-failure (replace world :denied (frozenset #(LIB-HTTPS))) env EnvFailureKind.REPO-DENIED False))
+  ;; 反例: 別の owner の同じ名の repo は同じ repo ではない。
+  (<- other RuntimeEnv (lib-spelled-env "git@github.com:p/lib.git"))
+  (<- (expect-failure world other EnvFailureKind.REPO-DENIED False)))
 
 
 (deftest test-a-third-party-package-shadowing-a-root-is-refused
