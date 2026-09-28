@@ -85,6 +85,11 @@ HANDLERS_HY = """\
 (defhandler fixed-settings [value]
   {:tags {:context "analyzer-test" :role "foundation"}}
   (Ask [key] (resume value)))
+
+;; The clause runs a Program the factory is given: what it performs cannot be followed.
+(defhandler pinged-by [make]
+  {:tags {:context "analyzer-test" :role "foundation"}}
+  (Ping [] (<- r (make)) (resume r)))
 """
 
 RUNTIMES_PY = """\
@@ -218,7 +223,7 @@ PROGRAMS_HY = """\
 (import doeff_core_effects.scheduler [Spawn Wait])
 (import doeff_time [Delay])
 (import {pkg}.effects [Ping Tick Nap])
-(import {pkg}.handlers [translate ticker nap-clock])
+(import {pkg}.handlers [translate ticker nap-clock pinged-by])
 (import {pkg}.runtimes [table-handler])
 (import {pkg}.envs [production-handlers])
 
@@ -302,6 +307,16 @@ PROGRAMS_HY = """\
 (defk wrapped-job [foundation]
   {:pre [(: foundation Callable)] :post [(: % int)] :tags {:context "analyzer-test" :role "entry"}}
   (<- r (foundation (translated)))
+  r)
+
+(defk pinged [make]
+  {:pre [(: make Callable)] :post [(: % int)] :tags {:context "analyzer-test" :role "program"}}
+  (<- r (with-handlers [(pinged-by make)] (child)))
+  r)
+
+(defk not-pinged [make]
+  {:pre [(: make Callable)] :post [(: % int)] :tags {:context "analyzer-test" :role "program"}}
+  (<- r (with-handlers [(pinged-by make)] (napping)))
   r)
 """
 
@@ -643,3 +658,19 @@ def test_the_body_of_absent_as_still_runs(pkg: str) -> None:
     assert _types(scope.program.effect_types) == {"Tick", "Absent"}
     assert not check_coverage(report, []).complete
     assert check_coverage(report, [analyze_handler(f"{pkg}.handlers:ticker")]).complete
+
+
+def test_what_a_clause_cannot_follow_is_not_closed(pkg: str) -> None:
+    # pinged-by answers Ping by running a Program it was given: whatever that performs
+    # is unseen.  It used to be dropped (neither the handler's reading nor the scope's
+    # residual kept it) and coverage answered complete.
+    report = analyze_program(f"{pkg}.programs:pinged")
+
+    assert report.effect_types == frozenset()
+    [place] = report.residual.unresolved
+    assert place.text == "make"
+    assert place.via[0] == "pinged_by(make)"
+    assert not check_coverage(report, []).complete
+    # A clause that answers nothing here adds nothing to follow.
+    quiet = analyze_program(f"{pkg}.programs:not_pinged")
+    assert quiet.residual.unresolved == ()

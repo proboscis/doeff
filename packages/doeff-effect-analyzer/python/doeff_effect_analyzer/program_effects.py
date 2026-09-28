@@ -52,7 +52,7 @@ import itertools
 import sys
 import types
 from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from enum import Enum
 from pathlib import Path
 from typing import Any
@@ -323,14 +323,16 @@ def pass_through(
     the handlers outside it); a clause keyed on a parent class also handles its
     subclasses (``isinstance`` semantics).  A handler that could not be read
     handles nothing here and is named in ``unknown_handlers``.  The result has one
-    escape per effect class (the first place it was seen); ``inner``'s unresolved
-    places are kept (what a handler's own clauses cannot follow is the handler's
-    reading, not the Program's).
+    escape per effect class (the first place it was seen).  ``inner``'s unresolved
+    places are kept, and so are the places a clause that answers here cannot follow
+    (its ``via`` starts with the handler's name) — what such a place performs goes to
+    the handlers outside, unseen.
     """
     pending: dict[type, Escape] = {}
     for escape in inner.escapes:
         pending.setdefault(escape.effect, escape)
     unknown = [*inner.unknown_handlers, *(h.name for h in handlers if not h.known)]
+    unresolved = list(inner.unresolved)
     for handler in reversed(handlers):
         emitted: dict[type, Escape] = {}
         for effect in list(pending):
@@ -340,13 +342,18 @@ def pass_through(
             del pending[effect]
             performed = clause.emits.residual_with(include)
             unknown.extend(performed.unknown_handlers)
+            unresolved.extend(
+                replace(item, via=(handler.name, *item.via)) for item in performed.unresolved
+            )
             for escape in performed.escapes:
                 emitted.setdefault(
                     escape.effect, Escape(escape.effect, escape.use, escape.by or handler.name)
                 )
         for effect, escape in emitted.items():
             pending.setdefault(effect, escape)
-    return Residual(tuple(pending.values()), tuple(dict.fromkeys(unknown)), inner.unresolved)
+    return Residual(
+        tuple(pending.values()), tuple(dict.fromkeys(unknown)), tuple(dict.fromkeys(unresolved))
+    )
 
 
 def qualified_name(obj: Any) -> str:
