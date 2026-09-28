@@ -350,7 +350,7 @@
    per-process = process ごとの外の世界を作る関数 (job の名 worker の名) → ProcessOutside(handler と、その process の柵だけが通す型 —
    None = 無し)。宿が process を起こす
    時に 1 回呼び、柵の外側・sim の世界の内側に並べる — 本番で job ごと・機体ごとに違う外の口(記録の service の身元の token・預かり所の
-   借り手・機体の session の置き場)を、共有の外の世界(handlers)の手前で答えるため(agora-redesign #833 の条件「sim-cluster は担い手ごとに
+   借り手・機体の session の置き場)を、共有の外の世界(handlers)の手前で答えるため(#833 の条件「sim-cluster は担い手ごとに
    handler の組を持つ」・#834)。作る handler も effects に載った型にだけ答える(柵がそれ以外を通さない)。"
   (#^ list handlers)
   (#^ tuple effects)
