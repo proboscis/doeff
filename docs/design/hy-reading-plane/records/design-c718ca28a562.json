@@ -1,0 +1,575 @@
+{
+  "artifacts": [
+    {
+      "path": "artifacts/v1/design.md",
+      "sha256": "525847ed97e0b8baf35013ec1fb3d15811e0002e28a16532e9e29528829c74c5"
+    },
+    {
+      "path": "artifacts/v1/compare-now-B-D.html",
+      "sha256": "7333844753811267ff94dd2a0d7ce0d0eeb7fa6713ff0b641fc131e7947baa89"
+    },
+    {
+      "path": "artifacts/v1/scala3-kyo.html",
+      "sha256": "bb985627c295d591505aff1e98b571fd32354e5f4555ff6a41bde8d6a64daad3"
+    },
+    {
+      "path": "artifacts/v1/glyph.svg",
+      "sha256": "c8cc0490e553b7cfc2be1e0eba7d342163262a8930e8f15d8d404bcf6af92de8"
+    },
+    {
+      "path": "artifacts/v1/now-0.6.27-body.png",
+      "sha256": "9c8febb29be97493b341ab80370b7b994d914ffc23449b5c7bf6bea72efb923f"
+    },
+    {
+      "path": "artifacts/v1/compare-render.png",
+      "sha256": "0eb56ff50aff1e9eb7495bd2f87a8713d9bc2e62b449df39da6ee636215f8b78"
+    },
+    {
+      "path": "artifacts/v1/scala3-kyo-render.png",
+      "sha256": "3405eb4fd13209765fcb5ffbc148d687595f73c4b1af0b6864988490c6a86605"
+    }
+  ],
+  "body": {
+    "alternatives": [
+      {
+        "options": [
+          {
+            "benefits": "済み。VS Code の機能がそのまま",
+            "costs": "行数を変えられず、閉じ括弧と契約の跡の空行が残る",
+            "name": "A. 今の装飾(同じ editor)"
+          },
+          {
+            "benefits": "頭が def f(x: T): R = の 1 行になる",
+            "costs": "閉じ括弧は残る。畳む状態を VS Code が持つので開くたびに畳み直す手順が要る。D と役目が重なる",
+            "name": "B. 装飾 + 折りたたみ"
+          },
+          {
+            "benefits": "元の行を残したまま足せる",
+            "costs": "提案段階の API。起動に特別な引数が要り配布できない",
+            "name": "C. 行間の差し込み"
+          },
+          {
+            "benefits": "塊を丸ごと描き直せる。閉じ括弧が消え、本体の制御の形も Scala にできる。印字器が将来の言語の印字を兼ねる",
+            "costs": "定義へ飛ぶ・呼び出し元・違反の印を面の中に作り直す。Hy の塊を Scala の形の文に変える変換が要る",
+            "name": "D. 読むための別の面"
+          }
+        ],
+        "question": "defk をどう見せるか",
+        "reason": "operator \"to me D reads far better, than pure lisp\"。塊の置き換え・閉じ括弧の消去・本体の Scala 化は D でしかできない",
+        "reconsider_when": "言語が入って source そのものが Scala の形になった時(読む面は不要になる)",
+        "selected": "D. 読むための別の面"
+      },
+      {
+        "options": [
+          {
+            "benefits": "VS Code の標準。作る物が少ない",
+            "costs": "1 本の木は領域の軸を 1 つしか表せない。変数の scope が file に縛られる",
+            "name": "file と dir の木(今の Explorer と同じ)"
+          },
+          {
+            "benefits": "領域の軸を全部持てる。file は軸の 1 つに降りる。将来の言語の名前空間の形と合う",
+            "costs": "索引に effect・型・呼び出しを寄せる。面の中に移動・検索を作る",
+            "name": "定義を単位に、軸(tag の各 key・effect・呼び出し・型・テスト・置き場)の切り替えと交差"
+          }
+        ],
+        "question": "読む面の単位と入口",
+        "reason": "operator \"a tree structure can never cover the entire axis of domain\" / \"organized across multiple axis of tags rather than a single file structure tree\"",
+        "reconsider_when": "— (operator の裁定)",
+        "selected": "定義を単位に、軸(tag の各 key・effect・呼び出し・型・テスト・置き場)の切り替えと交差"
+      },
+      {
+        "options": [
+          {
+            "benefits": "費用が小さく、すぐ効く。D の印字を読み戻せる形にすれば言語の道は閉じない",
+            "costs": "lisp の source は残る。契約と effect の検査は実行時と linter のまま",
+            "name": "今は D と linter で賄い、言語は要件だけ記録する"
+          },
+          {
+            "benefits": "静的な型・型に載る effect・印なし・file と独立の名前空間",
+            "costs": "front-end が博士論文 1 本分。Hy 10 repo 以上・defadr・linter・拡張・skill の移行。戻せない",
+            "name": "言語(自作)に踏み切る"
+          },
+          {
+            "benefits": "要件を今日ほぼ満たす成熟した組。JVM / Native。package は file と独立",
+            "costs": "行ごとの印(.now)が残る。JVM の周回時間。移行の爆風は自作と同じ",
+            "name": "Scala 3 + Kyo(+ ScalaPy)へ移る"
+          }
+        ],
+        "question": "言語を今作るか",
+        "reason": "operator \"ultimately we want new lang but for now we go with D and linter to cover\"",
+        "reconsider_when": "D と暮らして印字の文法が固まり、候補で controller 1 本を書く実験で agent の精度と周回時間が測れた時",
+        "selected": "今は D と linter で賄い、言語は要件だけ記録する"
+      }
+    ],
+    "change_cases": [
+      {
+        "change": "将来、印字の形をそのまま文法にした言語(parser)を足す",
+        "expected_elements": [
+          "printer"
+        ],
+        "id": "C1",
+        "preserve": [
+          "印字器の出力は決定的で、読み戻すと元の Hy と等しい"
+        ],
+        "priority": "prepare",
+        "protected_contracts": [
+          "K1"
+        ],
+        "provenance": {
+          "kind": "user",
+          "source": "operator 2026-09-28"
+        },
+        "rationale": "operator の到達点 \"ultimately we want new lang\"",
+        "verification": "実物の defk 5 本を印字 → 読み戻し → 元の Hy と一致するテスト"
+      },
+      {
+        "change": "言語が自前の標準の型(Map・Set)を持つと決める",
+        "expected_elements": [
+          "printer"
+        ],
+        "id": "C2",
+        "preserve": [
+          "型の名の写像は印字器の 1 か所"
+        ],
+        "priority": "prepare",
+        "protected_contracts": [
+          "K1"
+        ],
+        "provenance": {
+          "kind": "assumption",
+          "source": "席の分析 2026-09-28(design.md 3.3 節)"
+        },
+        "rationale": "binary の backend を残すなら Python の型を言語の型にできない",
+        "verification": "型の名の表を差し替えるだけで全 defk の印字が変わる"
+      },
+      {
+        "change": "描けない form(新しい macro)が現れる",
+        "expected_elements": [
+          "printer"
+        ],
+        "id": "C3",
+        "preserve": [
+          "嘘の描き方をしない"
+        ],
+        "priority": "required",
+        "protected_contracts": [
+          "K2"
+        ],
+        "provenance": {
+          "kind": "observed",
+          "source": "agora-controllers の defmacro 0・doeff-hy の macros.hy"
+        },
+        "rationale": "doeff-hy の macro は 40 個ほどで現場の自作は 0 だが、doeff-hy 側は増える",
+        "verification": "知らない form を含む定義の印字に目印つきの lisp が残るテスト"
+      },
+      {
+        "change": "tags に新しい key(軸)が足される",
+        "expected_elements": [
+          "structure-index",
+          "view"
+        ],
+        "id": "C4",
+        "preserve": [
+          "索引と面は key を列挙しない"
+        ],
+        "priority": "required",
+        "protected_contracts": [
+          "K3"
+        ],
+        "provenance": {
+          "kind": "user",
+          "source": "operator 2026-09-28 \"multiple axis of tags\""
+        },
+        "rationale": "系は tag の複数の軸で組織する(R8)",
+        "verification": "新しい key を 1 つ足した defk が、code を変えずに新しい軸として面に出るテスト"
+      },
+      {
+        "change": "構造の層が正本になり、file は書き出しに降りる(Unison の形)",
+        "expected_elements": [
+          "structure-index"
+        ],
+        "id": "C5",
+        "preserve": [
+          "読む面は構造の層だけを見る(R9)"
+        ],
+        "priority": "prepare",
+        "protected_contracts": [
+          "K3"
+        ],
+        "provenance": {
+          "kind": "user",
+          "source": "operator 2026-09-28 \"hy lang is just a way to store data\""
+        },
+        "rationale": "将来の言語で名前空間を file から離す時",
+        "verification": "索引の入口を file の走査から別の正本に替えても面が変わらない"
+      },
+      {
+        "change": "読む面を切って今の装飾 A と「タグで閲覧」だけに戻す",
+        "expected_elements": [
+          "view"
+        ],
+        "id": "C6",
+        "preserve": [
+          "装飾 A は読む面と独立に動く"
+        ],
+        "priority": "required",
+        "protected_contracts": [],
+        "provenance": {
+          "kind": "inherited",
+          "source": "CLAUDE.md two-way door の規則"
+        },
+        "rationale": "戻せる決定の戻し方",
+        "verification": "設定 1 つで読む面が出なくなる"
+      }
+    ],
+    "contracts": [
+      {
+        "canonical_source": "ide-plugins/vscode/doeff-runner(実装の置き場は実装の issue で決める)",
+        "effects": [],
+        "failures": [
+          "描けない form は目印つきの lisp で出し、失敗にしない"
+        ],
+        "id": "K1",
+        "invariants": [
+          "parse(print(x)) == x(将来の parser が入った時)",
+          "print は決定的"
+        ],
+        "operations": [
+          "print(definition) -> text",
+          "parse(text) -> definition(将来)"
+        ],
+        "owner": "printer"
+      },
+      {
+        "canonical_source": "同上",
+        "effects": [],
+        "failures": [
+          "表に無い form"
+        ],
+        "id": "K2",
+        "invariants": [
+          "表に無い form は推測で描かない"
+        ],
+        "operations": [
+          "描ける form の表を引く"
+        ],
+        "owner": "printer"
+      },
+      {
+        "canonical_source": "packages/doeff-indexer(docs/design/hy-definition-index の決定)",
+        "effects": [
+          "file の走査(索引の更新の時だけ)"
+        ],
+        "failures": [
+          "索引が古い(file が変わった)"
+        ],
+        "id": "K3",
+        "invariants": [
+          "面は索引だけを読む",
+          "tag の key を列挙しない"
+        ],
+        "operations": [
+          "definitions(axis = value, …) -> 定義の集合",
+          "attributes(definition) -> 属性",
+          "neighbors(definition, relation) -> 定義の集合"
+        ],
+        "owner": "structure-index"
+      }
+    ],
+    "elements": [
+      {
+        "depends_on": [
+          "structure-index"
+        ],
+        "hidden_decisions": [
+          "Python の式の綴りを Scala に寄せない",
+          "None を含む型は Option[T]",
+          "名前は kebab のまま"
+        ],
+        "id": "printer",
+        "kind": "internal",
+        "requirement_ids": [
+          "R1",
+          "R3",
+          "R4",
+          "R7"
+        ],
+        "responsibility": "定義 1 つ(Hy の form の木)を Scala 3 の見た目の文に印字する(決定的・読み戻せる)。型の名の写像と描ける form の表(design.md 2.2)を持つ",
+        "state": [
+          "型の名の表",
+          "描ける form の表"
+        ]
+      },
+      {
+        "depends_on": [
+          "hy-files",
+          "linter-editor-json"
+        ],
+        "hidden_decisions": [
+          "tag の key を固定しない",
+          "effect・型・呼び出しは editor-json と callGraph から索引へ寄せる"
+        ],
+        "id": "structure-index",
+        "kind": "internal",
+        "requirement_ids": [
+          "R8",
+          "R9"
+        ],
+        "responsibility": "構造の層 = 定義 × 属性の索引(hy-index / doeff-indexer)。file を歩いて定義を取り出すのはここだけ。属性 = tags(key ごとに 1 軸)・effect(使う / 解く)・引数と答えの型・呼び出し・テスト・位置",
+        "state": [
+          "定義の一覧",
+          "軸ごとの索引"
+        ]
+      },
+      {
+        "depends_on": [
+          "printer",
+          "structure-index"
+        ],
+        "hidden_decisions": [
+          ".hy を開いた時の既定は読む面",
+          "source は切り替えで開く",
+          "file を跨ぐという概念を面に持たない"
+        ],
+        "id": "view",
+        "kind": "internal",
+        "requirement_ids": [
+          "R1",
+          "R2",
+          "R5",
+          "R8"
+        ],
+        "responsibility": "見る層 = VS Code の読む面(webview)。軸の切り替えと交差 → カードの一覧 → カード(印字の結果)。定義へ飛ぶ・呼び出し元・hover・検索・source へ戻る・位置・linter の知らせ",
+        "state": [
+          "選んだ軸と交差",
+          "積んだカード",
+          "カードの行 ↔ source の行の対応"
+        ]
+      },
+      {
+        "depends_on": [],
+        "hidden_decisions": [],
+        "id": "hy-files",
+        "kind": "external",
+        "requirement_ids": [
+          "R2",
+          "R9"
+        ],
+        "responsibility": "置き場の層 = Hy の file(git・agent が書く正本)。定義の直列化の形式",
+        "state": []
+      },
+      {
+        "depends_on": [
+          "hy-files"
+        ],
+        "hidden_decisions": [],
+        "id": "linter-editor-json",
+        "kind": "external",
+        "requirement_ids": [
+          "R5",
+          "R6"
+        ],
+        "responsibility": "doeff-linter が file ごとに出す signature・束縛の型・呼びの置き換え・違反(既存)。当面は言語の検査の代わり",
+        "state": []
+      }
+    ],
+    "handoff": {
+      "fixed": [
+        "案 D(読む面)にする",
+        "対象は doeff-hy の code 全体",
+        "単位は定義で、入口は軸(tag の各 key・effect・呼び出し・型・テスト・置き場)の切り替えと交差。木は既定の入口にしない",
+        "Hy の file は置き場の層。読む面は構造の層(索引)だけを読む",
+        "source の Hy は編集しない",
+        "印字は読み戻せる形にする",
+        "描けない form は目印つきの lisp のまま",
+        "source の位置と linter の知らせをカードに写す",
+        "言語は今は作らない。要件と候補は design.md 3 節"
+      ],
+      "free": [
+        "読む面の実装の置き場(webview か custom editor か)",
+        "印字器を TypeScript(拡張)に置くか Rust(linter の editor-json)に置くか",
+        "effect・型・呼び出しの属性を索引に寄せる順番",
+        "2.3 節の細目(戻せる)"
+      ],
+      "next": [
+        "main が読む面の実装の issue を立てる(2 節の単位と軸・form の表・制約 5 つを受け入れ条件に)",
+        "言語は別の issue に 3 節の要件と未決を写す(着手しない)"
+      ]
+    },
+    "level": "doeff-runner(VS Code 拡張)・hy-index(doeff-indexer)・doeff-linter の editor-json の間の設計。置き場の層(Hy の file)・構造の層(定義 × 属性)・見る層(読む面)の 3 層",
+    "methods": [
+      {
+        "evidence": [
+          "artifacts/v1/design.md 0・2.1・2.4・3.3 節",
+          "artifacts/v1/compare-now-B-D.html"
+        ],
+        "name": "change-cases",
+        "profile": "change-cases-1996-local-v1",
+        "reason": "D か言語か・木か軸かは「後で何が変わるか」で決まるので、変更の事例で設計を当てた",
+        "status": "performed",
+        "steps": [
+          {
+            "result": "変更の候補: 言語を足す(C1)・標準の型を自前にする(C2)・新しい macro(C3)・tag の新しい key(C4)・構造の層が正本になる(C5)・読む面を切る(C6)",
+            "step": "1"
+          },
+          {
+            "result": "出所: operator の到達点(C1・C5)・backend の分析(C2)・doeff-hy の macro の増加(C3)・複数の軸の tags(C4)・two-way door(C6)",
+            "step": "2"
+          },
+          {
+            "result": "重要度: C3・C4・C6 は required、C1・C2・C5 は prepare",
+            "step": "3"
+          },
+          {
+            "result": "当てた結果: 印字器を読み戻せる形にし、型の名の写像と描ける form の表を 1 か所に置き、索引が tag の key を列挙せず、面が索引だけを読めば、C1〜C6 のどれも 1 要素の中の変更で済む",
+            "step": "4"
+          },
+          {
+            "result": "検証: 印字 → 読み戻しの一致(C1)・表の差し替え(C2)・目印つきの lisp(C3)・新しい key が軸に出る(C4)・索引の入口の差し替え(C5)・設定 1 つ(C6)",
+            "step": "5"
+          }
+        ]
+      },
+      {
+        "evidence": [],
+        "name": "ddd",
+        "profile": "ddd-evans-2015-local-v1",
+        "reason": "業務の領域の語彙ではなく、表示と索引と印字の設計",
+        "status": "not_applicable",
+        "steps": []
+      },
+      {
+        "evidence": [],
+        "name": "volatility",
+        "profile": "volatility-righting-software-local-v1",
+        "reason": "変わりやすさは change-cases で扱った",
+        "status": "not_applicable",
+        "steps": []
+      },
+      {
+        "evidence": [],
+        "name": "add",
+        "profile": "add-2.0-local-v1",
+        "reason": "要素が 5 つで分解の段階は要らない",
+        "status": "not_applicable",
+        "steps": []
+      },
+      {
+        "evidence": [],
+        "name": "saam",
+        "profile": "saam-1996-local-v1",
+        "reason": "案の比較は alternatives の表で済ませた",
+        "status": "not_applicable",
+        "steps": []
+      },
+      {
+        "evidence": [],
+        "name": "c4",
+        "profile": "c4-web-2026-09-14-local-v1",
+        "reason": "3 層の図は design.md 0 節で足りる",
+        "status": "not_applicable",
+        "steps": []
+      }
+    ],
+    "open_questions": [
+      "言語で「行ごとの印なし」を要件に置くか(置くなら Kyo は外れ、Effekt / Flix / Unison / Scala の capability / 自作になる)",
+      "言語の backend を Python + Rust 変換に絞るか(LLVM 直は memory の自作を伴う)",
+      "言語の標準の型を Python の型にするか自前にするか(読む面の型の名に跳ね返る)",
+      "名前空間を file からどこまで離すか(Scala の package 程度か、Unison のように定義を内容で持つか)",
+      "候補で controller 1 本(conversation_input・defk 8 本ほど)を書く実験をいつ行うか(operator はまだ選んでいない)",
+      "読む面の細目(design.md 2.3 節)は席の推奨を既定にした。operator が変えたい所があれば印字器の 1 か所で戻る",
+      "effect・型・呼び出しの属性を索引(hy-index)に寄せる時、editor-json(linter)との分担をどう引くか(hy-definition-index の決定「一覧は索引・判定は linter」を軸の属性にも当てるのが既定)"
+    ],
+    "perspective": "proposed",
+    "purpose": "doeff-hy の code を読む面(案 D)。単位は file ではなく定義で、tag の複数の軸・effect・呼び出し・型から辿り、定義 1 つを Scala 3 の見た目に印字する。Hy の file は定義を置いておく形式で、系の構造は定義 × 属性の面にある。source は編集しない。印字は読み戻せる形にして将来の言語の文法を兼ねる",
+    "requirements": [
+      {
+        "id": "R1",
+        "kind": "functional",
+        "provenance": {
+          "kind": "user",
+          "source": "operator 2026-09-28 \"i want this defk to look like: scala func definition... visually\" / \"perhaps D is the way to go\" / \"to me D reads far better, than pure lisp\""
+        },
+        "statement": "定義(defk ほか 2.2 の表の form)を丸ごと Scala 3 の形で読める。閉じ括弧と契約の map は出ない"
+      },
+      {
+        "id": "R2",
+        "kind": "constraint",
+        "provenance": {
+          "kind": "inherited",
+          "source": "ADR-DOTFILES-027 R-28bb3a77・#849 逐語 6 \"I will never edit the source manually\""
+        },
+        "statement": "source の Hy は 1 文字も変えない。editor は読むためだけ"
+      },
+      {
+        "id": "R3",
+        "kind": "quality",
+        "provenance": {
+          "kind": "assumption",
+          "source": "席の提案 2026-09-28。operator の \"ultimately we want new lang but for now we go with D\" と整合"
+        },
+        "statement": "印字した文を読み戻すと元の Hy と等しい(将来の言語の文法を兼ねる)"
+      },
+      {
+        "id": "R4",
+        "kind": "constraint",
+        "provenance": {
+          "kind": "assumption",
+          "source": "席の提案 2026-09-28(setv を val と描く嘘を防ぐ)"
+        },
+        "statement": "描けない form は推測で描かず lisp のまま目印を付けて出す"
+      },
+      {
+        "id": "R5",
+        "kind": "functional",
+        "provenance": {
+          "kind": "user",
+          "source": "#849 「linter の知らせは違反の場所へ」+ 席の提案(報告・差分・traceback は source の file と行で来る)"
+        },
+        "statement": "source の位置をカードに残し、linter の知らせをカードの該当の行へ写す"
+      },
+      {
+        "id": "R6",
+        "kind": "constraint",
+        "provenance": {
+          "kind": "user",
+          "source": "operator 2026-09-28 \"for now we go with D and linter to cover\""
+        },
+        "statement": "言語の compiler が担うはずの検査(effect の宣言の突合・契約・match の網羅)は当面 doeff-linter が担う"
+      },
+      {
+        "id": "R7",
+        "kind": "functional",
+        "provenance": {
+          "kind": "user",
+          "source": "operator 2026-09-28 \"actually we are not only talking about defk but the whole doeff-hy code reading plane\""
+        },
+        "statement": "対象は defk だけでなく doeff-hy の code 全体(defrecord・defeffect・defhandler・deftest・defwire・defenum・最上位の setv・import・説明の註)"
+      },
+      {
+        "id": "R8",
+        "kind": "constraint",
+        "provenance": {
+          "kind": "user",
+          "source": "operator 2026-09-28 \"I feel it's nonesense to make a scope of variable or anything bound to a file and file structure\" / \"because a tree structure can never cover the entire axis of domain\" / \"the system should be more organized across multiple axis of tags rather than a single file structure tree\""
+        },
+        "statement": "単位は定義で、file と dir の構造に縛らない。入口は木ではなく軸(tag の各 key・effect・呼び出し・型・テスト・置き場)の切り替えと交差。tags は key ごとに 1 軸で軸の数は開いている"
+      },
+      {
+        "id": "R9",
+        "kind": "constraint",
+        "provenance": {
+          "kind": "user",
+          "source": "operator 2026-09-28 \"so hy lang is just a way to store data but we want our doeff-hy to be in different plane as a system structure\""
+        },
+        "statement": "Hy の file は定義を置いておく形式(置き場の層)で、系の構造は定義 × 属性の面(構造の層)にある。読む面は構造の層を見る。面が自分で file を歩かない"
+      }
+    ]
+  },
+  "created_at": "2026-09-28T14:05:39.591660+00:00",
+  "id": "design-c718ca28a562",
+  "inputs": [],
+  "kind": "design",
+  "schema_version": 1,
+  "scope": "doeff-hy の code を読む面(VS Code)。単位は file ではなく定義(defk・defrecord・defeffect・defhandler・deftest …)で、Scala 3 の見た目に印字し、tag・effect・呼び出し・型から辿る。source の Hy は編集しない。その先の言語(静的な型・型に載る effect・Python の呼び出し・file に縛られない名前空間)の要件も持つ"
+}

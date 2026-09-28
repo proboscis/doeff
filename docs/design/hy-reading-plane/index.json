@@ -1,0 +1,13 @@
+{
+  "heads": {
+    "report": "report-22608632ddd9",
+    "target": "design-c718ca28a562"
+  },
+  "records": {
+    "decision-05be5e9de565": "e3c83cf87007a224ca177a3881570476b7ff48589bef10abc9c813bf0c0a20ec",
+    "design-c718ca28a562": "40e0d4c12d0d0d6f11c6cb535a6cac651eb17616c4d606e6b9a5f5568687fc6b",
+    "report-22608632ddd9": "59b55abd6f1796b177852a2672482502c8647e20b0d0481f34061e6ddf8d9b2e"
+  },
+  "schema_version": 1,
+  "scope": "doeff-hy の code を読む面(VS Code)。単位は file ではなく定義(defk・defrecord・defeffect・defhandler・deftest …)で、Scala 3 の見た目に印字し、tag・effect・呼び出し・型から辿る。source の Hy は編集しない。その先の言語(静的な型・型に載る effect・Python の呼び出し・file に縛られない名前空間)の要件も持つ"
+}

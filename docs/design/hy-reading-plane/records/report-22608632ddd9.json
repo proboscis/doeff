@@ -1,0 +1,114 @@
+{
+  "artifacts": [
+    {
+      "path": "artifacts/v1/compare-now-B-D.html",
+      "sha256": "7333844753811267ff94dd2a0d7ce0d0eeb7fa6713ff0b641fc131e7947baa89"
+    },
+    {
+      "path": "artifacts/v1/scala3-kyo.html",
+      "sha256": "bb985627c295d591505aff1e98b571fd32354e5f4555ff6a41bde8d6a64daad3"
+    }
+  ],
+  "body": {
+    "publication": {
+      "reference": null,
+      "status": "local"
+    },
+    "purpose": "discussion",
+    "summary": "operator と doeff-hy の code の見せ方を議論した(2026-09-28 22:1x〜23:1x)。実物の defk 5 本で今の表示・案 B・案 D を並べた見本と、同じ物を Scala 3 + Kyo で書いた見本を出し、D に決まった。範囲は defk から doeff-hy の code 全体へ広がり、単位は file ではなく定義、入口は木ではなく tag の複数の軸、Hy の file は定義を置いておく形式で系の構造は定義 × 属性の面にある、と決まった。到達点は新しい言語(静的な型・型に載る effect・pyo3 級の Python の呼び出し・file と独立の名前空間)だが、今は D と linter で賄う。",
+    "topics": [
+      {
+        "alternatives": [
+          "B は D と役目が重なり、畳む状態を開くたびに戻す手順が要る",
+          "C は提案段階の API で配布できない"
+        ],
+        "impacts": [
+          "読む面の中に定義へ飛ぶ・呼び出し元・違反の印を作り直す",
+          "印字器が要る(今の呼びの置き換え f(a, b) を土台にできる)"
+        ],
+        "needed_from": "user",
+        "question": "defk をどう見せるか(A 今の装飾 / B 折りたたみ / C 行間の差し込み / D 読む面)",
+        "recommendation": "D。頭 1 行・閉じ括弧の消去・本体の Scala 化は D でしかできない。source の editor は A のまま"
+      },
+      {
+        "alternatives": [
+          "file と dir の木(今の Explorer)"
+        ],
+        "impacts": [
+          "索引(hy-index)に effect・型・呼び出しを寄せる",
+          "tag の key を固定しない索引にする",
+          "面の中に移動・検索を作る"
+        ],
+        "needed_from": "user",
+        "question": "読む面の単位と入口",
+        "recommendation": "定義を単位に、軸(tag の各 key・effect・呼び出し・型・テスト・置き場)の切り替えと交差。file の木は軸の 1 つに降りる"
+      },
+      {
+        "alternatives": [
+          "file を正本の構造として扱う(今)"
+        ],
+        "impacts": [
+          "将来の言語で構造の層が正本になり得る(Unison の形)"
+        ],
+        "needed_from": "user",
+        "question": "Hy の file と系の構造の関係",
+        "recommendation": "Hy の file は定義を置いておく形式(置き場の層)。系の構造は定義 × 属性の面(構造の層)。読む面は構造の層だけを読む"
+      },
+      {
+        "alternatives": [
+          "各項目の退けた案は 2.3 節"
+        ],
+        "impacts": [
+          "どれも印字器の 1 か所で戻る"
+        ],
+        "needed_from": "agent",
+        "question": "D の細目(面の出し方・effect の置き場・束縛・式の綴り・None の型・名前・型の名・tags・docstring・本体の区切り)",
+        "recommendation": "design.md 2.3 節の既定(席が選んだ・戻せる)"
+      },
+      {
+        "alternatives": [
+          "言語 → Hy の form → Python(macro が仕事をする・最安)",
+          "言語 → Python の AST(runtime を作り直す)"
+        ],
+        "impacts": [
+          "Hy 907 file(agora-controllers)+ 10 repo 以上の移行",
+          "文法が compiler と Rust の linter の 2 か所に住む"
+        ],
+        "needed_from": "user",
+        "question": "自作の言語(Scala の見た目 → Hy / Python)を作るか",
+        "recommendation": "今は作らない。D を読み戻せる印字にして、言語の parser は後から足せる形にする"
+      },
+      {
+        "alternatives": [
+          "OCaml 5(effect が型に載らない)",
+          "Rust + doeff-vm-core(effect が型に載らない)",
+          "自作(front-end が博士論文 1 本分)"
+        ],
+        "impacts": [
+          "agora-controllers が使う外部の module は 10 個弱で、Python の生態系そのものは要らない(要るのは子 process と HTTP)",
+          "純粋な論理は 56% で型のある言語にそのまま移る"
+        ],
+        "needed_from": "user",
+        "question": "要件(Scala 級の型・型に載る effect・macro・性能・静的・pyo3 級の FFI・runtime と分離して Python にも binary にも・file と独立の名前空間)を満たす既存の物",
+        "recommendation": "成熟した組は Scala 3 + Kyo(+ ScalaPy)の 1 つ。ただし行ごとの印(.now)が残る。印なしは Effekt / Flix / Koka / Unison か Scala の capability(実験段階)で、生態系と Python の呼び出しが弱い。定義を file から一番離しているのは Unison"
+      },
+      {
+        "alternatives": [
+          "for 形(持ち上げが要る — 使わない)"
+        ],
+        "impacts": [
+          "印なしを要件にするなら Kyo は外れる"
+        ],
+        "needed_from": "user",
+        "question": "Kyo は for 構文と行ごとの持ち上げが要るか",
+        "recommendation": "要らない。直接形(defer + .now)で印の数は doeff の <- と同じ。for ループの本体だけ Kyo.foreach か while"
+      }
+    ]
+  },
+  "created_at": "2026-09-28T14:05:24.362376+00:00",
+  "id": "report-22608632ddd9",
+  "inputs": [],
+  "kind": "report",
+  "schema_version": 1,
+  "scope": "doeff-hy の code を読む面(VS Code)。単位は file ではなく定義(defk・defrecord・defeffect・defhandler・deftest …)で、Scala 3 の見た目に印字し、tag・effect・呼び出し・型から辿る。source の Hy は編集しない。その先の言語(静的な型・型に載る effect・Python の呼び出し・file に縛られない名前空間)の要件も持つ"
+}

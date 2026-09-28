@@ -1,0 +1,391 @@
+<!doctype html><html lang="ja" style="background:#1e1e1e;color:#d4d4d4"><meta charset="utf-8"><title>Scala 3 + Kyo (+ ScalaPy) で effect を使うとどう見えるか</title>
+<style>
+html,body{background:#1e1e1e;color:#d4d4d4}
+body{font-family:-apple-system,"Hiragino Sans",sans-serif;margin:24px 28px}
+h1{font-size:21px;margin:0 0 6px}
+h2{font-size:17px;margin:40px 0 8px;color:#ffd97a;border-bottom:1px solid #444;padding-bottom:4px}
+h2 small{color:#999;font-weight:normal;font-size:12px;margin-left:8px}
+h3{font-size:13px;color:#bbb;margin:0 0 6px;font-weight:600}
+.note{color:#bbb;font-size:13.5px;line-height:1.75;max-width:1400px}
+.note b{color:#eee}
+.pair{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.15fr);gap:14px;align-items:start}
+.pane{background:#252526;border-radius:6px;padding:10px 12px;overflow-x:auto}
+.pane.s{background:#1a1d23;border:1px solid #3b5a80}
+.pane.err{background:#2a1e1e;border:1px solid #804040}
+.code{font:12.5px/1.6 Menlo,monospace}
+.code div{min-height:1.6em;white-space:pre}
+.k{color:#c586c0}.f{color:#dcdcaa;font-weight:bold}.t{color:#4ec9b0}.s{color:#ce9178}.c{color:#6a9955}.a{color:#8fb3d9}.e{color:#f08c8c}.hl{background:#3a3f2a}
+table{border-collapse:collapse;font-size:13px;color:#d4d4d4;margin-top:8px}
+td,th{border:1px solid #444;padding:5px 9px;vertical-align:top;text-align:left}
+th{background:#2d2d30;color:#eee}
+td.ok{color:#9fdf9f}td.ng{color:#f08c8c}td.mid{color:#e6c07b}
+code{font-family:Menlo,monospace;font-size:12px;background:#2d2d30;padding:0 3px;border-radius:3px}
+</style>
+<body style="background:#1e1e1e;color:#d4d4d4">
+<h1>Scala 3 + Kyo (+ ScalaPy) で effect を使うとどう見えるか</h1>
+<div class="note">
+左 = 今の Hy(agora-controllers の実物: <code>controllers/messaging/…/conversation_input.hy</code>)。右 = 同じ物を Scala 3 + Kyo で書いた形。
+Kyo の要は <b><code>A &lt; S</code></b>(「A を返す計算で、effect S がまだ解かれていない」)。effect は型の交わり <code>ReadInput &amp; WriteInput</code> で並び、
+handler を当てるたびに型から消え、<code>A &lt; Any</code> になったら <code>.eval</code> で値を取り出せます。doeff の <code>&lt;-</code> は Kyo の直接形(<code>defer { … .now }</code>)に 1 対 1 で写ります。<br>
+⚠ Kyo の名は版で動きます(<code>IO</code> → <code>Sync</code> など)。ここに書いた形は Kyo 0.x の骨で、細部は実験の時に版へ合わせます。
+</div>
+
+<h2>1. effect の定義 <small>defeffect → ArrowEffect</small></h2>
+<div class="pair">
+<div class="pane"><h3>今の Hy(intent/conversation_input.hy:176)</h3><div class="code">
+<div>(<span class="k">defeffect</span> <span class="f">ReadInput</span></div>
+<div>  <span class="s">"入力の行を id で 1 つ読む(答え = 頭の註)。"</span></div>
+<div>  {:fields [(: id str)]</div>
+<div>   :answer (| InputRow InputAbsent InputUnreadable)</div>
+<div>   :tags {:context <span class="s">"messaging"</span> :role <span class="s">"intent"</span>}})</div>
+<div></div>
+<div>(<span class="k">defeffect</span> <span class="f">WriteInput</span></div>
+<div>  <span class="s">"入力の行への書き 1 つ(答え = 頭の註)。"</span></div>
+<div>  {:fields [(: write InputWrite)]</div>
+<div>   :answer WriteAnswer</div>
+<div>   :tags {:context <span class="s">"messaging"</span> :role <span class="s">"intent"</span>}})</div>
+</div></div>
+<div class="pane s"><h3>Scala 3 + Kyo</h3><div class="code">
+<div><span class="k">import</span> kyo.*</div>
+<div></div>
+<div><span class="c">/** ReadInput の答え(Scala 3 の union 型 — Hy の (| …) と同じ形) */</span></div>
+<div><span class="k">type</span> <span class="t">ReadAnswer</span> = InputRow | InputAbsent | InputUnreadable</div>
+<div></div>
+<div><span class="c">/** 入力の行を id で 1 つ読む(答え = 頭の註)。 */</span></div>
+<div><span class="a">@context("messaging") @role("intent")</span></div>
+<div><span class="k">sealed trait</span> <span class="t">ReadInput</span> <span class="k">extends</span> ArrowEffect[Const[String], Const[ReadAnswer]]</div>
+<div><span class="k">object</span> ReadInput:</div>
+<div>  <span class="c">// effect を呼ぶ側の口: 答えは ReadAnswer、型には ReadInput が残る</span></div>
+<div>  <span class="k">def</span> <span class="f">apply</span>(id: String): ReadAnswer &lt; ReadInput =</div>
+<div>    ArrowEffect.suspend[Any](Tag[ReadInput], id)</div>
+<div>  <span class="c">// handler を当てる側の口: f が答えを作り、型から ReadInput が消える</span></div>
+<div>  <span class="k">def</span> <span class="f">run</span>[A, S](f: String =&gt; ReadAnswer &lt; S)(v: A &lt; (ReadInput &amp; S)): A &lt; S =</div>
+<div>    ArrowEffect.handle(Tag[ReadInput], v)([C] =&gt; (id, resume) =&gt; f(id).map(resume))</div>
+<div></div>
+<div><span class="k">sealed trait</span> <span class="t">WriteInput</span> <span class="k">extends</span> ArrowEffect[Const[InputWrite], Const[WriteAnswer]]</div>
+<div><span class="k">object</span> WriteInput:</div>
+<div>  <span class="k">def</span> <span class="f">apply</span>(w: InputWrite): WriteAnswer &lt; WriteInput = ArrowEffect.suspend[Any](Tag[WriteInput], w)</div>
+<div>  <span class="k">def</span> <span class="f">run</span>[A, S](f: InputWrite =&gt; WriteAnswer &lt; S)(v: A &lt; (WriteInput &amp; S)): A &lt; S =</div>
+<div>    ArrowEffect.handle(Tag[WriteInput], v)([C] =&gt; (w, resume) =&gt; f(w).map(resume))</div>
+</div></div>
+</div>
+<div class="note">1 effect につき「呼ぶ口」と「handler を当てる口」を 1 つずつ書きます(doeff-hy の defeffect が macro で生やしている物を手で書く形。macro で同じ 5 行に畳めます)。</div>
+
+<h2>2. record・enum・契約 <small>defrecord → case class、defenum → enum、:pre/:post → 引数と戻りの型</small></h2>
+<div class="pair">
+<div class="pane"><h3>今の Hy</h3><div class="code">
+<div>(<span class="k">defrecord</span> <span class="f">InputRow</span></div>
+<div>  <span class="s">"ReadInput の答え: id = 入力の id・version = 本文の行の版 …"</span></div>
+<div>  (#^ str id)</div>
+<div>  (#^ int version)</div>
+<div>  (#^ InputState state)</div>
+<div>  (#^ (| str None) edit-id)</div>
+<div>  (#^ int edit-count))</div>
+<div></div>
+<div>(<span class="k">defrecord</span> <span class="f">Judgment</span></div>
+<div>  <span class="s">"判断 1 つ = 書き(高々 1 つ・None = 書かない)と結末。"</span></div>
+<div>  (#^ (| InputCreate InputRevise InputWithdraw None) write)</div>
+<div>  (#^ (| InputDone InputRejected) outcome))</div>
+<div></div>
+<div>(<span class="k">defenum</span> <span class="f">RunOutcome</span> DONE REJECTED DEFERRED)</div>
+<div></div>
+<div><span class="c">;; 契約は defk の map で実行時に検査</span></div>
+<div>{:pre [(: request InputRequest)] :post [(: % (| Judgment None))]}</div>
+</div></div>
+<div class="pane s"><h3>Scala 3 + Kyo</h3><div class="code">
+<div><span class="c">/** ReadInput の答え: id = 入力の id・version = 本文の行の版 … */</span></div>
+<div><span class="k">case class</span> <span class="t">InputRow</span>(id: String, version: Int, state: InputState,</div>
+<div>                    editId: Maybe[String], editCount: Int)</div>
+<div></div>
+<div><span class="c">/** 判断 1 つ = 書き(高々 1 つ・Absent = 書かない)と結末。 */</span></div>
+<div><span class="k">case class</span> <span class="t">Judgment</span>(write: Maybe[InputCreate | InputRevise | InputWithdraw],</div>
+<div>                    outcome: InputDone | InputRejected)</div>
+<div></div>
+<div><span class="k">enum</span> <span class="t">RunOutcome</span>:</div>
+<div>  <span class="k">case</span> Done, Rejected, Deferred</div>
+<div></div>
+<div><span class="c">// 契約は型そのもの — 実行時の検査も linter の契約の検査も要らない</span></div>
+<div><span class="k">def</span> <span class="f">judged</span>(request: InputRequest): Maybe[Judgment] &lt; ReadInput</div>
+</div></div>
+</div>
+<div class="note"><code>Maybe</code> は Kyo が持つ型で、値は <code>Present(x)</code> か <code>Absent</code>。doeff の <code>Absent</code> と同じ語です。<code>:pre</code> が型の注釈でない述語(例: 長さ・範囲)なら <code>require</code> か精錬型(Iron)で書きます。</div>
+
+<h2>3. Program <small>defk → def、&lt;- → .now(直接形)</small></h2>
+<div class="pair">
+<div class="pane"><h3>今の Hy(core/conversation_input.hy:46・81)</h3><div class="code">
+<div>(<span class="k">defk</span> <span class="f">judged</span> [request]</div>
+<div>  {:pre [(: request InputRequest)] :post [(: % (| Judgment None))]</div>
+<div>   :effects [ReadInput] :tags {:context <span class="s">"messaging"</span> :role <span class="s">"program"</span>}}</div>
+<div>  <span class="s">"名指した行を読んで判じるため。読めなかった(届かない)= None(この周は見送る)。"</span></div>
+<div>  (&lt;- target (| str None) (target-of request))</div>
+<div>  (<span class="k">var</span> row None)</div>
+<div>  (<span class="k">when</span> (is-not target None)</div>
+<div>    (&lt;- answer (| InputRow InputAbsent InputUnreadable) (ReadInput target))</div>
+<div>    (<span class="k">match</span> answer</div>
+<div>      (InputUnreadable) (<span class="k">return</span> None)</div>
+<div>      (InputRow) (:= row answer)</div>
+<div>      (InputAbsent) None))</div>
+<div>  (&lt;- judgment Judgment (judge request row))</div>
+<div>  judgment)</div>
+<div></div>
+<div></div>
+<div>(<span class="k">defk</span> <span class="f">run-input-request</span> [request]</div>
+<div>  {:pre [(: request InputRequest)] :post [(: % RunOutcome)]</div>
+<div>   :effects [ReadInput WriteInput SettleIntake] :tags {:context <span class="s">"messaging"</span> :role <span class="s">"program"</span>}}</div>
+<div>  <span class="s">"要求 1 つを実体化して結末を積むため。…"</span></div>
+<div>  (&lt;- outcome (| InputDone InputRejected None) (outcome-of request))</div>
+<div>  (<span class="k">when</span> (is outcome None)</div>
+<div>    (<span class="k">return</span> RunOutcome.DEFERRED))</div>
+<div>  (&lt;- settlement IntakeSettlement (settlement-of request.request-id ROUTE-INPUT outcome))</div>
+<div>  (&lt;- settled (| IntakeSettleLanded IntakeSettleRefused IntakeUnreachable) (SettleIntake settlement))</div>
+<div>  (<span class="k">match</span> settled</div>
+<div>    (IntakeSettleLanded) (<span class="k">match</span> outcome</div>
+<div>                           (InputDone) RunOutcome.DONE</div>
+<div>                           (InputRejected) RunOutcome.REJECTED)</div>
+<div>    _ RunOutcome.DEFERRED))</div>
+</div></div>
+<div class="pane s"><h3>Scala 3 + Kyo(直接形)</h3><div class="code">
+<div><span class="c">/** 名指した行を読んで判じるため。読めなかった(届かない)= Absent(この周は見送る)。 */</span></div>
+<div><span class="a">@context("messaging") @role("program")</span></div>
+<div><span class="k">def</span> <span class="f">judged</span>(request: InputRequest): Maybe[Judgment] &lt; ReadInput = <span class="k">defer</span>:</div>
+<div>  targetOf(request) <span class="k">match</span>                                <span class="c">// 純粋(effect 無し)なら印は要らない</span></div>
+<div>    <span class="k">case</span> Absent      =&gt; Present(judge(request, Absent))</div>
+<div>    <span class="k">case</span> Present(id) =&gt;</div>
+<div>      ReadInput(id).<span class="hl">now</span> <span class="k">match</span>                            <span class="c">// ← doeff の (&lt;- answer … (ReadInput id))</span></div>
+<div>        <span class="k">case</span> InputUnreadable(_, _) =&gt; Absent                <span class="c">// この周は見送る</span></div>
+<div>        <span class="k">case</span> r: InputRow           =&gt; Present(judge(request, Present(r)))</div>
+<div>        <span class="k">case</span> InputAbsent(_)        =&gt; Present(judge(request, Absent))</div>
+<div></div>
+<div></div>
+<div><span class="c">/** 要求 1 つを実体化して結末を積むため。… */</span></div>
+<div><span class="a">@context("messaging") @role("program")</span></div>
+<div><span class="k">def</span> <span class="f">runInputRequest</span>(request: InputRequest)</div>
+<div>    : RunOutcome &lt; (ReadInput &amp; WriteInput &amp; SettleIntake) = <span class="k">defer</span>:</div>
+<div>  <span class="k">val</span> outcome = outcomeOf(request).<span class="hl">now</span>                     <span class="c">// : Maybe[InputDone | InputRejected]</span></div>
+<div>  outcome <span class="k">match</span></div>
+<div>    <span class="k">case</span> Absent =&gt; RunOutcome.Deferred</div>
+<div>    <span class="k">case</span> Present(out) =&gt;</div>
+<div>      <span class="k">val</span> settlement = settlementOf(request.requestId, RouteInput, out)</div>
+<div>      SettleIntake(settlement).<span class="hl">now</span> <span class="k">match</span></div>
+<div>        <span class="k">case</span> IntakeSettleLanded() =&gt; out <span class="k">match</span></div>
+<div>          <span class="k">case</span> InputDone(_)        =&gt; RunOutcome.Done</div>
+<div>          <span class="k">case</span> InputRejected(_, _) =&gt; RunOutcome.Rejected</div>
+<div>        <span class="k">case</span> IntakeSettleRefused(_) | IntakeUnreachable(_) =&gt; RunOutcome.Deferred</div>
+</div></div>
+</div>
+<div class="note">
+<b>effect の並びは型に載る</b>: <code>RunOutcome &lt; (ReadInput &amp; WriteInput &amp; SettleIntake)</code>。<code>outcomeOf</code> が使う <code>ReadInput &amp; WriteInput</code> と、この関数が直に使う <code>SettleIntake</code> の和を compiler が推論し、宣言した型より多ければ compile が止まります(下の 6)。
+<code>:effects [ReadInput WriteInput SettleIntake]</code> の手書きと linter の突合が、そのまま型検査になります。<br>
+<b>直接形と for 形</b>: 上は <code>defer { … .now }</code> の直接形。for 形(<code>for { o &lt;- outcomeOf(request); … } yield …</code>)も書けますが、doeff の <code>&lt;-</code> の読みに近いのは直接形です。
+</div>
+
+<h2>3b. 書き方 3 つ — 印の数は doeff の &lt;- と同じ <small>for 構文は要らない</small></h2>
+<div class="note">Kyo は for 構文を要求しません。<code>defer</code>(macro)の中では純粋な式は普通の Scala で、effect を持つ呼びにだけ <code>.now</code> を付けます。
+印の数 = doeff で <code>&lt;-</code> を書く行の数。for 構文(3 列目)を使った時だけ「1 行ごとの持ち上げ」が要り、if・match・早い return が中に入ると入れ子になります。</div>
+<div class="pair" style="grid-template-columns:repeat(3,minmax(0,1fr))">
+<div class="pane"><h3>doeff(&lt;- が 3 つ)</h3><div class="code">
+<div>(<span class="k">defk</span> <span class="f">run-input-request</span> [request]</div>
+<div>  {…}</div>
+<div>  (<span class="hl">&lt;-</span> outcome (| InputDone InputRejected None) (outcome-of request))</div>
+<div>  (<span class="k">when</span> (is outcome None)</div>
+<div>    (<span class="k">return</span> RunOutcome.DEFERRED))</div>
+<div>  (<span class="hl">&lt;-</span> settlement IntakeSettlement (settlement-of …))</div>
+<div>  (<span class="hl">&lt;-</span> settled (| …) (SettleIntake settlement))</div>
+<div>  (<span class="k">match</span> settled</div>
+<div>    (IntakeSettleLanded) (<span class="k">match</span> outcome …)</div>
+<div>    _ RunOutcome.DEFERRED))</div>
+</div></div>
+<div class="pane s"><h3>Kyo 直接形(.now が 2 つ — settlement-of は純粋)</h3><div class="code">
+<div><span class="k">def</span> <span class="f">runInputRequest</span>(request: InputRequest)</div>
+<div>    : RunOutcome &lt; (ReadInput &amp; WriteInput &amp; SettleIntake) = <span class="k">defer</span>:</div>
+<div>  outcomeOf(request).<span class="hl">now</span> <span class="k">match</span></div>
+<div>    <span class="k">case</span> Absent =&gt; RunOutcome.Deferred</div>
+<div>    <span class="k">case</span> Present(out) =&gt;</div>
+<div>      <span class="k">val</span> settlement = settlementOf(request.requestId, RouteInput, out)</div>
+<div>      SettleIntake(settlement).<span class="hl">now</span> <span class="k">match</span></div>
+<div>        <span class="k">case</span> IntakeSettleLanded() =&gt; out <span class="k">match</span> …</div>
+<div>        <span class="k">case</span> _: (IntakeSettleRefused | IntakeUnreachable) =&gt; RunOutcome.Deferred</div>
+</div></div>
+<div class="pane"><h3>Kyo for 形(持ち上げが要る — 使わない)</h3><div class="code">
+<div><span class="k">def</span> <span class="f">runInputRequest</span>(request: InputRequest)</div>
+<div>    : RunOutcome &lt; (ReadInput &amp; WriteInput &amp; SettleIntake) =</div>
+<div>  <span class="k">for</span></div>
+<div>    outcome <span class="hl">&lt;-</span> outcomeOf(request)</div>
+<div>    result  <span class="hl">&lt;-</span> outcome <span class="k">match</span>                       <span class="c">// 分岐ごとに持ち上げ</span></div>
+<div>      <span class="k">case</span> Absent =&gt; Kyo.pure(RunOutcome.Deferred)  <span class="c">// 純粋な枝も包む</span></div>
+<div>      <span class="k">case</span> Present(out) =&gt;</div>
+<div>        <span class="k">val</span> settlement = settlementOf(request.requestId, RouteInput, out)</div>
+<div>        SettleIntake(settlement).map:</div>
+<div>          <span class="k">case</span> IntakeSettleLanded() =&gt; …</div>
+<div>          <span class="k">case</span> _ =&gt; RunOutcome.Deferred</div>
+<div>  <span class="k">yield</span> result</div>
+</div></div>
+</div>
+<div class="note" style="margin-top:8px"><b><code>defer</code> の制約(doeff の generator と同じ所・違う所)</b></div>
+<table>
+<tr><th>書きたい物</th><th>doeff(generator)</th><th>Kyo <code>defer</code></th></tr>
+<tr><td>if / match の中で effect を使う</td><td class="ok">できる</td><td class="ok">できる</td></tr>
+<tr><td>for の本体で effect を使う</td><td class="ok"><code>(for [x xs] (&lt;- …))</code></td><td class="mid"><code>for x &lt;- xs do</code> は lambda になるので不可。<code>Kyo.foreach(xs)(x =&gt; defer …)</code> か <code>while</code> で書く</td></tr>
+<tr><td>内包(lfor・map)の中で effect を使う</td><td class="ng">不可(yield は内包に書けない)</td><td class="ng">不可(lambda の中に .now は書けない)— <code>Kyo.foreach</code> を使う</td></tr>
+<tr><td>途中で return</td><td class="ok"><code>(return v)</code></td><td class="mid">macro の中の非局所 return は避ける(match で値を返す形に — 上の judged はそう直した)</td></tr>
+<tr><td>純粋な呼びに印を付け忘れる</td><td class="mid">effect を返す関数を <code>val</code> で受けると Program の値が変数に入る(実行時に気づく)</td><td class="ok"><code>.now</code> 無しでは <code>A &lt; S</code> のまま型が合わず compile が止まる</td></tr>
+<tr><td>effect を使う行に印を付ける</td><td>要る(<code>&lt;-</code>)</td><td>要る(<code>.now</code>)</td></tr>
+</table>
+<div class="note" style="margin-top:8px">
+<b>印を 1 つも書きたくないなら</b>、それは monad の library では無理で、言語が effect を持つ必要があります。その形は 2 つあります。<br>
+1. Scala 本流の向き: capability(<code>def judged(request: InputRequest)(using ReadInput): Maybe[Judgment]</code>、本体は <code>ReadInput.read(id)</code> と書くだけ)+ capture checking で型に載せる。Scala 3.4+ の実験機能(<code>-language:experimental.captureChecking</code>)で、handler の再開は Loom の継続(JDK 21+)で作る。まだ実験段階。<br>
+2. effect を持つ言語: Effekt(<code>def judged(request: InputRequest): Maybe[Judgment] / {ReadInput}</code>、本体は <code>do ReadInput(id)</code>)・Flix(<code>def judged(request: InputRequest): Maybe[Judgment] \ ReadInput</code>)・Koka(<code>fun judged(request) : readinput maybe&lt;judgment&gt;</code>)。どれも印無しで effect が型に載る。代わりに生態系と Python の呼び出しが弱い(前の返事の表)。
+</div>
+
+<h2>4. handler <small>defhandler → run の入れ子。本番は ScalaPy で Python を呼び、テストは Map で偽る</small></h2>
+<div class="pair">
+<div class="pane"><h3>今の Hy(protocol/conversation_input.hy:132)</h3><div class="code">
+<div>(<span class="k">defhandler</span> <span class="f">conversation-input-store</span></div>
+<div>    {:effects [ReadRow PutRow PlaceInput ReadPlacedInput WithdrawPlacedInput]</div>
+<div>     :tags {:context <span class="s">"messaging"</span> :role <span class="s">"protocol"</span>}}</div>
+<div>  <span class="c">;; 入力の行の読み書きを、置いた入力の本文の表と置いた側の台帳の口で答える。</span></div>
+<div>  (ReadInput [id]</div>
+<div>    (&lt;- answer (| InputRow InputAbsent InputUnreadable) (read-input id))</div>
+<div>    (resume answer))</div>
+<div>  (WriteInput [write]</div>
+<div>    (&lt;- answer (| WriteLanded WriteConflict WriteRefused WriteUnreachable) (write-input write))</div>
+<div>    (resume answer)))</div>
+<div></div>
+<div><span class="c">;; テストの偽物(deftest の中で handler を差し替える)</span></div>
+<div>(<span class="k">defhandler</span> <span class="f">fake-store</span> {:effects []}</div>
+<div>  (ReadInput [id]</div>
+<div>    (resume (.get rows id (InputAbsent :id id)))))</div>
+</div></div>
+<div class="pane s"><h3>Scala 3 + Kyo</h3><div class="code">
+<div><span class="c">/** 本番: ReadInput / WriteInput を、下の層の effect(ReadRow・PutRow …)へ翻訳して答える */</span></div>
+<div><span class="a">@context("messaging") @role("protocol")</span></div>
+<div><span class="k">def</span> <span class="f">conversationInputStore</span>[A, S](v: A &lt; (ReadInput &amp; WriteInput &amp; S))</div>
+<div>    : A &lt; (ReadRow &amp; PutRow &amp; PlaceInput &amp; ReadPlacedInput &amp; WithdrawPlacedInput &amp; S) =</div>
+<div>  WriteInput.run(w =&gt; writeInput(w))(</div>
+<div>    ReadInput.run(id =&gt; readInput(id))(v))          <span class="c">// readInput: String =&gt; ReadAnswer &lt; (ReadRow &amp; ReadPlacedInput)</span></div>
+<div></div>
+<div><span class="c">/** 一番外の層: 行の読み書きを Python(sqlite3 / httpx)で行う。ScalaPy で CPython を呼ぶ */</span></div>
+<div><span class="k">import</span> me.shadaj.scalapy.py</div>
+<div><span class="k">object</span> PyStore:</div>
+<div>  <span class="k">private val</span> sqlite = py.module(<span class="s">"sqlite3"</span>)</div>
+<div>  <span class="k">private val</span> conn   = sqlite.connect(<span class="s">"inputs.db"</span>)</div>
+<div>  <span class="k">def</span> <span class="f">readRow</span>(id: String): RowAnswer =</div>
+<div>    <span class="k">val</span> cur = conn.execute(<span class="s">"select version, state, edit_id, edit_count from inputs where id = ?"</span>, Seq(id).toPythonProxy)</div>
+<div>    <span class="k">val</span> hit = cur.fetchone()</div>
+<div>    <span class="k">if</span> py.Dynamic.global.`None`.equals(hit) <span class="k">then</span> RowAbsent(id)</div>
+<div>    <span class="k">else</span> Row(id, hit.bracketAccess(0).as[Int], InputState.valueOf(hit.bracketAccess(1).as[String]),</div>
+<div>             Maybe.fromOption(hit.bracketAccess(2).as[Option[String]]), hit.bracketAccess(3).as[Int])</div>
+<div></div>
+<div><span class="k">def</span> <span class="f">pyRowStore</span>[A, S](v: A &lt; (ReadRow &amp; S)): A &lt; (Sync &amp; S) =</div>
+<div>  ReadRow.run(id =&gt; Sync.defer(PyStore.readRow(id)))(v)   <span class="c">// Python 呼び出しは Sync の中(副作用の印)</span></div>
+<div></div>
+<div><span class="c">/** テストの偽物: Map で答える。effect が 1 つ消えるだけで、他の層は触らない */</span></div>
+<div><span class="k">def</span> <span class="f">fakeStore</span>[A, S](rows: Map[String, InputRow])(v: A &lt; (ReadInput &amp; S)): A &lt; S =</div>
+<div>  ReadInput.run(id =&gt; rows.get(id).fold[ReadAnswer](InputAbsent(id))(identity))(v)</div>
+</div></div>
+</div>
+<div class="note">
+handler は「<code>A &lt; (E &amp; S)</code> を受けて <code>A &lt; S'</code> を返す関数」で、<b>何を消して何を足すかが型に出ます</b>(<code>conversationInputStore</code> は ReadInput・WriteInput を消し、ReadRow・PutRow … を足す)。
+doeff の「環境の違いは handler の組という値だけで表す」がそのまま成り立ち、しかも組み合わせが足りなければ compile で分かります。
+Python は一番外の handler の中だけに置き(<code>Sync</code> で包む)、Program と中の handler は Python を知りません。ScalaPy の <code>py.Dynamic</code> は動的な値なので、境界で <code>.as[T]</code> により Scala の型へ写します(pyo3 の <code>extract::&lt;T&gt;()</code> と同じ形)。
+</div>
+
+<h2>5. テスト <small>deftest → test。handler を当てて .eval</small></h2>
+<div class="pair">
+<div class="pane"><h3>今の Hy(core/tests/test_conversation_input_judgment.hy の形)</h3><div class="code">
+<div>(<span class="k">deftest</span> <span class="f">test-unreadable-row-defers-the-round</span></div>
+<div>  (<span class="k">with-handler</span> (fake-unreadable)</div>
+<div>    (&lt;- answer (| Judgment None) (judged (requested <span class="s">"input-edit"</span> {…})))</div>
+<div>    (<span class="k">assert</span> (is answer None))))</div>
+<div></div>
+<div>(<span class="k">deftest</span> <span class="f">test-absent-row-still-judges</span></div>
+<div>  (<span class="k">with-handler</span> (fake-store {})</div>
+<div>    (&lt;- answer (| Judgment None) (judged (requested <span class="s">"input-send"</span> {…})))</div>
+<div>    (<span class="k">assert</span> (isinstance answer Judgment))))</div>
+</div></div>
+<div class="pane s"><h3>Scala 3 + Kyo(munit)</h3><div class="code">
+<div><span class="k">class</span> <span class="t">JudgedSpec</span> <span class="k">extends</span> munit.FunSuite:</div>
+<div></div>
+<div>  test(<span class="s">"届かない行は Absent(この周は見送る)"</span>):</div>
+<div>    <span class="k">val</span> p: Maybe[Judgment] &lt; ReadInput = judged(requested(<span class="s">"input-edit"</span>, …))</div>
+<div>    <span class="k">val</span> out = ReadInput.run(id =&gt; InputUnreadable(id, <span class="s">"down"</span>))(p).eval   <span class="c">// handler を当てて ReadInput が消え、.eval で値に</span></div>
+<div>    assertEquals(out, Absent)</div>
+<div></div>
+<div>  test(<span class="s">"行が無くても判じる"</span>):</div>
+<div>    <span class="k">val</span> out = fakeStore(Map.empty)(judged(requested(<span class="s">"input-send"</span>, …))).eval</div>
+<div>    assert(out.isDefined)</div>
+</div></div>
+</div>
+
+<h2>6. compiler が止める誤り <small>今は linter か実行時にしか分からない物</small></h2>
+<div class="pair">
+<div class="pane err"><h3>handler を当て忘れて値を取り出す</h3><div class="code">
+<div><span class="k">val</span> out = judged(request).<span class="e">eval</span></div>
+<div></div>
+<div><span class="e">[error] value eval is not a member of Maybe[Judgment] &lt; ReadInput</span></div>
+<div><span class="e">        (eval は A &lt; Any にしか無い — ReadInput が解かれていない)</span></div>
+</div></div>
+<div class="pane err"><h3>宣言していない effect を使う(:effects の書き漏れ)</h3><div class="code">
+<div><span class="k">def</span> judged(request: InputRequest): Maybe[Judgment] &lt; <span class="e">Any</span> = defer:</div>
+<div>  … ReadInput(id).now …</div>
+<div></div>
+<div><span class="e">[error] Found:    Maybe[Judgment] &lt; ReadInput</span></div>
+<div><span class="e">        Required: Maybe[Judgment] &lt; Any</span></div>
+</div></div>
+<div class="pane err"><h3>答えの union の取りこぼし</h3><div class="code">
+<div>ReadInput(id).now <span class="k">match</span></div>
+<div>  <span class="k">case</span> InputUnreadable(_, _) =&gt; return Absent</div>
+<div>  <span class="k">case</span> r: InputRow =&gt; Present(r)</div>
+<div>  <span class="c">// InputAbsent を書き忘れ</span></div>
+<div></div>
+<div><span class="e">[warn] match may not be exhaustive. It would fail on: InputAbsent(_)</span></div>
+<div><span class="e">       (-Werror で error に)</span></div>
+</div></div>
+<div class="pane err"><h3>handler の組が環境に足りない</h3><div class="code">
+<div><span class="k">val</span> prod = conversationInputStore(runInputRequest(request))</div>
+<div><span class="k">val</span> out  = KyoApp.run(prod)   <span class="c">// ReadRow・PutRow … がまだ残っている</span></div>
+<div></div>
+<div><span class="e">[error] Found:    RunOutcome &lt; (ReadRow &amp; PutRow &amp; PlaceInput &amp; … &amp; SettleIntake)</span></div>
+<div><span class="e">        Required: RunOutcome &lt; (Async &amp; Abort[Throwable])</span></div>
+</div></div>
+</div>
+
+<h2>7. 対応表</h2>
+<table>
+<tr><th>doeff / Hy</th><th>Scala 3 + Kyo</th><th>備考</th></tr>
+<tr><td><code>(defeffect E {:fields … :answer A})</code></td><td><code>sealed trait E extends ArrowEffect[Const[I], Const[A]]</code> + <code>apply</code> / <code>run</code></td><td>macro(Scala 3 の inline / macro)で同じ 5 行に畳める</td></tr>
+<tr><td><code>(defk f [x] {:pre … :post … :effects [E1 E2]} body)</code></td><td><code>def f(x: T): R &lt; (E1 &amp; E2) = defer: body</code></td><td>:pre/:post は引数と戻りの型。:effects は戻りの型の右側</td></tr>
+<tr><td><code>(&lt;- x T (E a))</code></td><td><code>val x: T = E(a).now</code></td><td>直接形。for 形なら <code>x &lt;- E(a)</code></td></tr>
+<tr><td><code>(&lt;- x T (f a))</code>(f が effect を使う)</td><td><code>val x = f(a).now</code></td><td>f の effect が呼び手の型に加わる(推論)</td></tr>
+<tr><td><code>(val x e)</code> / <code>(var x e)</code> / <code>(:= x e)</code></td><td><code>val x = e</code> / <code>var x = e</code> / <code>x = e</code></td><td></td></tr>
+<tr><td><code>(| A B None)</code></td><td><code>Maybe[A | B]</code></td><td>union 型は Scala 3 が持つ。None は Maybe に</td></tr>
+<tr><td><code>(defrecord R … (#^ T a))</code></td><td><code>case class R(a: T)</code></td><td>JSON は <code>derives</code>(upickle / circe)</td></tr>
+<tr><td><code>(defenum E A B)</code></td><td><code>enum E: case A, B</code></td><td></td></tr>
+<tr><td><code>(defhandler H {:effects […]} (E [a] … (resume v)))</code></td><td><code>def H[A, S](v: A &lt; (E &amp; S)): A &lt; (E' &amp; S) = E.run(a =&gt; …)(v)</code></td><td>消す effect と足す effect が型に出る</td></tr>
+<tr><td><code>(with-handler (H) prog)</code></td><td><code>H(prog)</code></td><td>関数の適用そのもの</td></tr>
+<tr><td><code>(run prog)</code></td><td><code>prog.eval</code>(effect 無し)/ <code>KyoApp.run(prog)</code>(Sync・Async あり)</td><td></td></tr>
+<tr><td><code>Absent</code></td><td><code>Absent</code>(<code>Maybe</code>)</td><td>同じ語</td></tr>
+<tr><td><code>Raise</code> / 例外の effect</td><td><code>Abort[E]</code></td><td><code>Abort.run</code> で <code>Result[E, A]</code> に</td></tr>
+<tr><td>環境(設定・時計)の effect</td><td><code>Env[Config]</code>・<code>Clock</code>(Kyo 組み込み)</td><td>doeff-time の GetTime / Delay は Kyo の <code>Clock</code> / <code>Async.sleep</code> に</td></tr>
+<tr><td><code>:tags {:context … :role …}</code></td><td><code>@context("…") @role("…")</code></td><td>注釈。「タグで閲覧」は注釈を読む道具を作る</td></tr>
+<tr><td><code>deftest</code> + pytest</td><td><code>munit</code> / <code>kyo-test</code></td><td></td></tr>
+<tr><td>Python の library(httpx・sqlite3・yaml)</td><td>ScalaPy で <code>py.module("…")</code>、または JVM の同等品</td><td>一番外の handler の中だけ</td></tr>
+</table>
+
+<h2>8. 得る物・失う物・費用</h2>
+<table>
+<tr><th></th><th>今(Hy + doeff)</th><th>Scala 3 + Kyo (+ ScalaPy)</th></tr>
+<tr><td>effect の宣言の正しさ</td><td class="mid">:effects を手で書き、linter が突合</td><td class="ok">型検査(書き漏れ・当て忘れ・組の不足が compile で止まる)</td></tr>
+<tr><td>契約(:pre/:post)</td><td class="mid">実行時の検査 + linter</td><td class="ok">型。述語だけ require / 精錬型</td></tr>
+<tr><td>match の取りこぼし</td><td class="ng">実行時</td><td class="ok">compile(-Werror)</td></tr>
+<tr><td>性能</td><td class="mid">CPython + generator(doeff-vm で改善中)</td><td class="ok">JVM。Kyo は effect 系の中で最速の部類(公表の benchmark)</td></tr>
+<tr><td>binary</td><td class="ng">無し</td><td class="mid">Scala Native(Kyo・ScalaPy の Native 対応は要確認)</td></tr>
+<tr><td>Python の呼び出し</td><td class="ok">素通し</td><td class="mid">ScalaPy(CPython を同じ process に埋め込む。境界で型を写す)</td></tr>
+<tr><td>macro</td><td class="ok">Hy の macro</td><td class="ok">Scala 3 の inline / macro(型付き・衛生的)</td></tr>
+<tr><td>agent の知識</td><td class="mid">Hy は薄い・doeff-hy は 0(skill で教える)</td><td class="mid">Scala 3 は厚い・Kyo は薄い(skill で教える。ZIO の経験が効く)</td></tr>
+<tr><td>書いてからテストまで(agent の周回)</td><td class="ok">秒(import が要る分だけ)</td><td class="mid">数秒〜数十秒(sbt / bloop の差分 compile。JVM の起動 0.5 秒)</td></tr>
+<tr><td>読みやすさ(operator)</td><td class="ng">lisp(D で補う)</td><td class="ok">Scala の見た目そのもの — D の話は不要になる</td></tr>
+<tr><td>既存の資産</td><td class="ok">Hy 907 file(agora-controllers)+ 10 repo 以上・defadr・linter・VS Code 拡張・skill</td><td class="ng">全部書き直し。移行は言語間の翻訳(印字器では済まない)</td></tr>
+</table>
+<div class="note" style="margin-top:10px">上の Scala は手で書いた見本で、compile はしていません。名の細部(Sync / IO・defer / .now・ArrowEffect の引数)は Kyo の版で動きます。</div>
+</body></html>

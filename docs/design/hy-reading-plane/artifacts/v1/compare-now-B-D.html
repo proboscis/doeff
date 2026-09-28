@@ -1,0 +1,381 @@
+<!doctype html><html lang="ja"><meta charset="utf-8"><title>defk の見せ方 — 今・案 B・案 D の比較</title>
+<style>
+html,body{background:#1e1e1e;color:#d4d4d4}
+body{font-family:-apple-system,"Hiragino Sans",sans-serif;margin:24px 28px}
+h1{font-size:21px;margin:0 0 6px}
+h2{font-size:17px;margin:40px 0 8px;color:#ffd97a;border-bottom:1px solid #444;padding-bottom:4px}
+h2 small{color:#999;font-weight:normal;font-size:12px;margin-left:8px}
+h3{font-size:13px;color:#bbb;margin:0 0 6px;font-weight:600}
+.note{color:#bbb;font-size:13.5px;line-height:1.75;max-width:1300px}
+.note b{color:#eee}
+.shot{max-width:1400px;width:100%;border:1px solid #444;border-radius:6px}
+.tri{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px;align-items:start}
+.pane{background:#252526;border-radius:6px;padding:10px 12px;overflow-x:auto}
+.pane.d{background:#1a1d23;border:1px solid #3b5a80}
+.bar{font:12px -apple-system,"Hiragino Sans",sans-serif;color:#9ab;margin:-4px 0 8px;display:flex;gap:8px;align-items:center}
+.btn{border:1px solid #4a6a90;border-radius:4px;padding:0 6px;color:#bcd;font-size:11px}
+.code{font:12.5px/1.65 Menlo,monospace}
+.code div{min-height:1.65em;white-space:pre}
+.ln{display:inline-block;width:3.2em;color:#6e7681;text-align:right;margin-right:1.2em;user-select:none}
+.k{color:#c586c0}.f{color:#dcdcaa;font-weight:bold}.t{color:#4ec9b0}.s{color:#ce9178}.c{color:#6a9955}
+.a{color:#8fb3d9;font-size:11px;opacity:.85}
+.p{color:#6e7681}
+.tb{color:#4ec9b0;border:1px solid #3f7f5f;border-radius:3px;padding:0 3px}
+.u{color:#6e7681;border:1px dashed #6e7681;border-radius:3px;padding:0 3px}
+.nm{color:#dcdcaa;font-weight:bold;text-decoration:underline dotted #666}
+.ef{color:#9cdcfe;font-size:11.5px}
+.lens{font:11px -apple-system,"Hiragino Sans",sans-serif;color:#8a8a8a}
+.chip{font:10.5px -apple-system,sans-serif;background:#4a3a1f;color:#f0c674;border-radius:8px;padding:0 6px;margin-left:4px}
+.fold{background:#3a3d41;color:#bbb;border-radius:3px;padding:0 4px;margin-left:6px}
+.gl{display:inline-block;width:14px;height:14px;background:url(glyph.svg) center/contain no-repeat;vertical-align:-2px;image-rendering:pixelated;margin-right:2px}
+.skip{color:#6e7681;font-style:italic}
+table{border-collapse:collapse;font-size:13px;color:#d4d4d4;margin-top:8px}
+td,th{border:1px solid #444;padding:5px 9px;vertical-align:top;text-align:left}
+th{background:#2d2d30;color:#eee}
+td.ok{color:#9fdf9f}td.ng{color:#f08c8c}td.mid{color:#e6c07b}
+.rec{color:#9fdf9f;font-weight:600}
+code{font-family:Menlo,monospace;font-size:12px;background:#2d2d30;padding:0 3px;border-radius:3px}
+.mini{font:12px/1.6 Menlo,monospace;white-space:pre;background:#1a1d23;padding:4px 8px;border-radius:4px;display:block}
+</style>
+<body>
+<h1>defk の見せ方 — 今の表示・案 B・案 D を並べる</h1>
+<div class="note">
+operator の言葉: 「defk を Scala の関数定義のように見せたい」「defk の塊を丸ごと置き換えられないか」。source の Hy は手で編集しない前提(editor は読むためだけ)。<br>
+材料は agora-controllers の実物の defk 5 本(<code>run-input-request</code>・<code>judged</code>・<code>meter-trail</code>・<code>full-system-with</code>・<code>sim-part</code>)。
+行番号は source の実際の行です。<b>今の表示</b>の列は下の画面から起こした近似(色と枠だけ真似ています)。
+<b>案 B</b> は同じ editor の中で、装飾に折りたたみを足したもの(行番号が飛ぶ所が畳んだ行)。
+<b>案 D</b> は editor とは別の「読む面」(webview)に、塊を丸ごと Scala の形で描き直したもの。
+</div>
+
+<h2>今の画面 <small>/tmp/defk-sig/after-6-dedupe-body.png(0.6.27・controllers/kanban/core/body.hy)</small></h2>
+<img class="shot" src="now-0.6.27-body.png">
+
+<h2>比較の表</h2>
+<table>
+<tr><th>観点</th><th>A 今の装飾</th><th>B 装飾 + 折りたたみ</th><th>C 行間の差し込み</th><th>D 読むための別の面</th></tr>
+<tr><td>頭が <code>def f(x: T): R =</code> の 1 行になるか</td><td class="ng">ならない(<code>(defk f [x]</code> の行 + 型の行 + effect の行)</td><td class="ok">なる(契約の行を畳む)</td><td class="mid">なる(ただし元の行は残る)</td><td class="ok">なる</td></tr>
+<tr><td>隠した契約の行の跡(空いた行)</td><td class="ng">残る</td><td class="ok">消える</td><td class="mid">残る</td><td class="ok">消える</td></tr>
+<tr><td>閉じ括弧 <code>))</code></td><td class="ng">残る</td><td class="mid">残る(薄くはできる)</td><td class="ng">残る</td><td class="ok">消える(字下げで表す)</td></tr>
+<tr><td>本体の制御の形(when・if・match・for)</td><td class="ng">lisp のまま</td><td class="ng">lisp のまま</td><td class="ng">lisp のまま</td><td class="ok">Scala の形に描ける(<code>if … then</code>・<code>match / case</code>・<code>for x &lt;- xs do</code>)</td></tr>
+<tr><td>行を足す・減らす・並べ替える</td><td class="ng">できない</td><td class="mid">減らす(隠す)だけ</td><td class="mid">足すだけ</td><td class="ok">自由</td></tr>
+<tr><td>source と同じ画面か</td><td class="ok">同じ</td><td class="ok">同じ</td><td class="ok">同じ</td><td class="mid">別の面(横に並べるか、開いた時の既定にするか)</td></tr>
+<tr><td>定義へ飛ぶ・呼び出し元の数</td><td class="ok">VS Code の機能のまま</td><td class="ok">そのまま</td><td class="ok">そのまま</td><td class="mid">面の中で作り直す(名をクリック → 定義の場所を開く)</td></tr>
+<tr><td>linter の違反の印</td><td class="ok">波線と問題の欄</td><td class="ok">そのまま</td><td class="ok">そのまま</td><td class="mid">面の中に自前で描く(問題の欄は source 側に残る)</td></tr>
+<tr><td>カーソルを置いた時</td><td class="mid">その行は元の lisp に戻る</td><td class="mid">畳みが開いて元に戻る</td><td class="mid">同左</td><td class="ok">関係なし(読むだけ)</td></tr>
+<tr><td>VS Code の API の範囲</td><td class="ok">正式の API</td><td class="ok">正式の API(畳む状態は VS Code が持つので、開くたびに畳み直す手順が要る)</td><td class="ng">提案段階の API(起動に特別な引数が要り、配布できない)</td><td class="ok">正式の API(webview・custom editor)</td></tr>
+<tr><td>作る量</td><td>済み</td><td>小</td><td>中</td><td>大(Hy の塊を Scala の形の文に変える変換が要る。今の呼びの置き換え f(a, b) を土台にできる)</td></tr>
+</table>
+
+<!-- ============ run-input-request ============ -->
+<h2>run-input-request <small>controllers/messaging/core/conversation_input.hy:81 — effect 3 つ・match の入れ子</small></h2>
+<div class="tri">
+<div class="pane"><h3>今の表示(A)</h3><div class="code">
+<div class="lens">                呼び出し元 2 箇所</div>
+<div><span class="ln">81</span><span class="p">(</span><i class="gl"></i><span class="nm">run-input-request</span> [request]    <span class="chip">messaging</span><span class="chip">program</span></div>
+<div><span class="ln">82</span>  (<span class="tb">InputRequest</span>) -&gt; <span class="tb">RunOutcome</span></div>
+<div><span class="ln">83</span>    <span class="ef">effect <i class="gl"></i>ReadInput · <i class="gl"></i>WriteInput · <i class="gl"></i>SettleIntake</span></div>
+<div><span class="ln">84</span>  <span class="s">"要求 1 つを実体化して結末を積むため。答え = done / rejected(結末を積めた)/ deferred(次の周へ)。"</span></div>
+<div><span class="ln">85</span>  <span class="tb">InputDone | InputRejected | None</span> outcome &lt;- outcome-of(request)</div>
+<div><span class="ln">86</span>  <span class="p">(</span><span class="k">when</span> (outcome is None)</div>
+<div><span class="ln">87</span>    <span class="p">(</span><span class="k">return</span> RunOutcome.DEFERRED<span class="p">))</span></div>
+<div><span class="ln">88</span>  <span class="tb">IntakeSettlement</span> settlement &lt;- settlement-of(request.request-id, ROUTE-INPUT, outcome)</div>
+<div><span class="ln">89</span>  <span class="tb">IntakeSettleLanded | IntakeSettleRefused | IntakeUnreachable</span> settled &lt;- <i class="gl"></i>SettleIntake(settlement)</div>
+<div><span class="ln">90</span>  <span class="p">(</span><span class="k">match</span> settled</div>
+<div><span class="ln">91</span>    (IntakeSettleLanded) <span class="p">(</span><span class="k">match</span> outcome</div>
+<div><span class="ln">92</span>                           (InputDone) RunOutcome.DONE</div>
+<div><span class="ln">93</span>                           (InputRejected) RunOutcome.REJECTED<span class="p">)</span></div>
+<div><span class="ln">94</span>    _ RunOutcome.DEFERRED<span class="p">))</span></div>
+</div></div>
+<div class="pane"><h3>案 B(装飾 + 折りたたみ・同じ editor)</h3><div class="code">
+<div class="lens">                呼び出し元 2 箇所</div>
+<div><span class="ln">81</span><span class="k">def</span> <span class="nm">run-input-request</span>(request: <span class="t">InputRequest</span>)(<span class="k">using</span> <i class="gl"></i>ReadInput, <i class="gl"></i>WriteInput, <i class="gl"></i>SettleIntake): <span class="t">RunOutcome</span> =<span class="fold">⋯</span> <span class="chip">messaging</span><span class="chip">program</span></div>
+<div><span class="ln">84</span>  <span class="s">"要求 1 つを実体化して結末を積むため。答え = done / rejected(結末を積めた)/ deferred(次の周へ)。"</span></div>
+<div><span class="ln">85</span>  <span class="tb">InputDone | InputRejected | None</span> outcome &lt;- outcome-of(request)</div>
+<div><span class="ln">86</span>  <span class="p">(</span><span class="k">when</span> (outcome is None)</div>
+<div><span class="ln">87</span>    <span class="p">(</span><span class="k">return</span> RunOutcome.DEFERRED<span class="p">))</span></div>
+<div><span class="ln">88</span>  <span class="tb">IntakeSettlement</span> settlement &lt;- settlement-of(request.request-id, ROUTE-INPUT, outcome)</div>
+<div><span class="ln">89</span>  <span class="tb">IntakeSettleLanded | IntakeSettleRefused | IntakeUnreachable</span> settled &lt;- <i class="gl"></i>SettleIntake(settlement)</div>
+<div><span class="ln">90</span>  <span class="p">(</span><span class="k">match</span> settled</div>
+<div><span class="ln">91</span>    (IntakeSettleLanded) <span class="p">(</span><span class="k">match</span> outcome</div>
+<div><span class="ln">92</span>                           (InputDone) RunOutcome.DONE</div>
+<div><span class="ln">93</span>                           (InputRejected) RunOutcome.REJECTED<span class="p">)</span></div>
+<div><span class="ln">94</span>    _ RunOutcome.DEFERRED<span class="p">)</span></div>
+</div></div>
+<div class="pane d"><div class="bar">conversation_input.hy — 読む面 <span class="btn">source を開く</span></div><div class="code">
+<div class="lens">呼び出し元 2 箇所</div>
+<div><span class="c">/** 要求 1 つを実体化して結末を積むため。答え = done / rejected(結末を積めた)/ deferred(次の周へ)。 */</span></div>
+<div><span class="a">@messaging @program</span></div>
+<div><span class="k">def</span> <span class="nm">run-input-request</span>(request: <span class="t">InputRequest</span>)</div>
+<div>    (<span class="k">using</span> <i class="gl"></i>ReadInput, <i class="gl"></i>WriteInput, <i class="gl"></i>SettleIntake): <span class="t">RunOutcome</span> =</div>
+<div>  <span class="k">val</span> outcome: <span class="t">Option[InputDone | InputRejected]</span> &lt;- outcome-of(request)</div>
+<div>  <span class="k">if</span> outcome is None <span class="k">then return</span> RunOutcome.DEFERRED</div>
+<div>  <span class="k">val</span> settlement: <span class="t">IntakeSettlement</span> &lt;- settlement-of(request.request-id, ROUTE-INPUT, outcome)</div>
+<div>  <span class="k">val</span> settled: <span class="t">IntakeSettleLanded | IntakeSettleRefused | IntakeUnreachable</span> &lt;- <i class="gl"></i>SettleIntake(settlement)</div>
+<div>  settled <span class="k">match</span></div>
+<div>    <span class="k">case</span> IntakeSettleLanded() =&gt;</div>
+<div>      outcome <span class="k">match</span></div>
+<div>        <span class="k">case</span> InputDone()     =&gt; RunOutcome.DONE</div>
+<div>        <span class="k">case</span> InputRejected() =&gt; RunOutcome.REJECTED</div>
+<div>    <span class="k">case</span> _ =&gt; RunOutcome.DEFERRED</div>
+</div></div>
+</div>
+
+<!-- ============ judged ============ -->
+<h2>judged <small>controllers/messaging/core/conversation_input.hy:46 — None を返す・var の書き戻し</small></h2>
+<div class="tri">
+<div class="pane"><h3>今の表示(A)</h3><div class="code">
+<div class="lens">                呼び出し元 1 箇所</div>
+<div><span class="ln">46</span><span class="p">(</span><i class="gl"></i><span class="nm">judged</span> [request]    <span class="chip">messaging</span><span class="chip">program</span></div>
+<div><span class="ln">47</span>  (<span class="tb">InputRequest</span>) -&gt; <span class="tb">Judgment | None</span></div>
+<div><span class="ln">48</span>    <span class="ef">effect <i class="gl"></i>ReadInput</span></div>
+<div><span class="ln">49</span>  <span class="s">"名指した行を読んで判じるため。読めなかった(届かない)= None(この周は見送る)。"</span></div>
+<div><span class="ln">50</span>  <span class="tb">str | None</span> target &lt;- target-of(request)</div>
+<div><span class="ln">51</span>  <span class="u">?</span> row = None</div>
+<div><span class="ln">52</span>  <span class="p">(</span><span class="k">when</span> (target is not None)</div>
+<div><span class="ln">53</span>    <span class="tb">InputRow | InputAbsent | InputUnreadable</span> answer &lt;- <i class="gl"></i>ReadInput(target)</div>
+<div><span class="ln">54</span>    <span class="p">(</span><span class="k">match</span> answer</div>
+<div><span class="ln">55</span>      (InputUnreadable) <span class="p">(</span><span class="k">return</span> None<span class="p">)</span></div>
+<div><span class="ln">56</span>      (InputRow) <span class="p">(</span>:= row answer<span class="p">)</span></div>
+<div><span class="ln">57</span>      (InputAbsent) None<span class="p">))</span></div>
+<div><span class="ln">58</span>  <span class="tb">Judgment</span> judgment &lt;- judge(request, row)</div>
+<div><span class="ln">59</span>  judgment<span class="p">)</span></div>
+</div></div>
+<div class="pane"><h3>案 B(装飾 + 折りたたみ・同じ editor)</h3><div class="code">
+<div class="lens">                呼び出し元 1 箇所</div>
+<div><span class="ln">46</span><span class="k">def</span> <span class="nm">judged</span>(request: <span class="t">InputRequest</span>)(<span class="k">using</span> <i class="gl"></i>ReadInput): <span class="t">Option[Judgment]</span> =<span class="fold">⋯</span> <span class="chip">messaging</span><span class="chip">program</span></div>
+<div><span class="ln">49</span>  <span class="s">"名指した行を読んで判じるため。読めなかった(届かない)= None(この周は見送る)。"</span></div>
+<div><span class="ln">50</span>  <span class="tb">str | None</span> target &lt;- target-of(request)</div>
+<div><span class="ln">51</span>  <span class="u">?</span> row = None</div>
+<div><span class="ln">52</span>  <span class="p">(</span><span class="k">when</span> (target is not None)</div>
+<div><span class="ln">53</span>    <span class="tb">InputRow | InputAbsent | InputUnreadable</span> answer &lt;- <i class="gl"></i>ReadInput(target)</div>
+<div><span class="ln">54</span>    <span class="p">(</span><span class="k">match</span> answer</div>
+<div><span class="ln">55</span>      (InputUnreadable) <span class="p">(</span><span class="k">return</span> None<span class="p">)</span></div>
+<div><span class="ln">56</span>      (InputRow) <span class="p">(</span>:= row answer<span class="p">)</span></div>
+<div><span class="ln">57</span>      (InputAbsent) None<span class="p">))</span></div>
+<div><span class="ln">58</span>  <span class="tb">Judgment</span> judgment &lt;- judge(request, row)</div>
+<div><span class="ln">59</span>  judgment</div>
+</div></div>
+<div class="pane d"><div class="bar">conversation_input.hy — 読む面 <span class="btn">source を開く</span></div><div class="code">
+<div class="lens">呼び出し元 1 箇所</div>
+<div><span class="c">/** 名指した行を読んで判じるため。読めなかった(届かない)= None(この周は見送る)。 */</span></div>
+<div><span class="a">@messaging @program</span></div>
+<div><span class="k">def</span> <span class="nm">judged</span>(request: <span class="t">InputRequest</span>)</div>
+<div>    (<span class="k">using</span> <i class="gl"></i>ReadInput): <span class="t">Option[Judgment]</span> =</div>
+<div>  <span class="k">val</span> target: <span class="t">Option[str]</span> &lt;- target-of(request)</div>
+<div>  <span class="k">var</span> row = None</div>
+<div>  <span class="k">if</span> target is not None <span class="k">then</span></div>
+<div>    <span class="k">val</span> answer: <span class="t">InputRow | InputAbsent | InputUnreadable</span> &lt;- <i class="gl"></i>ReadInput(target)</div>
+<div>    answer <span class="k">match</span></div>
+<div>      <span class="k">case</span> InputUnreadable() =&gt; <span class="k">return</span> None</div>
+<div>      <span class="k">case</span> InputRow()        =&gt; row = answer</div>
+<div>      <span class="k">case</span> InputAbsent()     =&gt; None</div>
+<div>  <span class="k">val</span> judgment: <span class="t">Judgment</span> &lt;- judge(request, row)</div>
+<div>  judgment</div>
+</div></div>
+</div>
+
+<!-- ============ meter-trail ============ -->
+<h2>meter-trail <small>controllers/agora_sim/turn_records_meter.hy:298 — 引数 5 つ・契約が 1 行・for の入れ子</small></h2>
+<div class="tri">
+<div class="pane"><h3>今の表示(A)</h3><div class="code">
+<div class="lens">                 呼び出し元 10 箇所</div>
+<div><span class="ln">298</span><span class="p">(</span><i class="gl"></i><span class="nm">meter-trail</span> [trail since-ms until-ms sink grace-ms]    <span class="chip">turn</span><span class="chip">judgment</span></div>
+<div><span class="ln">299</span>  (<span class="tb">RecordsTrail</span>, <span class="tb">int</span>, <span class="tb">int</span>, <span class="tb">Sink</span>, <span class="tb">int</span>) -&gt; <span class="tb">TrailMeter</span></div>
+<div><span class="ln">300</span>  <span class="c">;; 窓 [since, until − grace) に作られた手番を持つ会話ごとに 7 条を当てる。それより新しい手番は進行中として数だけ返す。</span></div>
+<div><span class="ln">301</span>  <span class="tb">MeteredView</span> view &lt;- records-view(trail, until-ms, sink)</div>
+<div><span class="ln">302</span>  <span class="u">?</span> run = view.run</div>
+<div><span class="ln">303</span>  <span class="u">?</span> cutoff = until-ms - grace-ms</div>
+<div><span class="ln">304</span>  <span class="tb">frozenset</span> judged &lt;- judged-jobs(run, since-ms, cutoff)</div>
+<div><span class="ln">305</span>  <span class="tb">int</span> in-progress &lt;- in-progress-jobs(run, cutoff)</div>
+<div><span class="ln">306</span>  <span class="u">?</span> chats = sorted(<span class="p">(</span><span class="k">sfor</span> w run.turn-writes :if (w.job-id in judged) w.chat<span class="p">)</span>)</div>
+<div><span class="ln">307</span>  <span class="u">?</span> out = []</div>
+<div><span class="ln">308</span>  <span class="p">(</span><span class="k">for</span> [chat chats]</div>
+<div><span class="ln">309</span>    <span class="tb">RunView</span> one &lt;- chat-view(run, chat, judged)</div>
+<div><span class="ln">310</span>    <span class="u">?</span> jobs = frozenset(<span class="p">(</span><span class="k">gfor</span> w one.turn-writes w.job-id<span class="p">)</span>)</div>
+<div><span class="ln">311</span>    <span class="u">?</span> reach = []</div>
+<div><span class="ln">312</span>    <span class="p">(</span><span class="k">for</span> [law sorted(TURN-LAWS)]</div>
+<div><span class="ln">313</span>      <span class="tb">LawReach</span> one-reach &lt;- law-reach-of(law, view.sources, jobs)</div>
+<div><span class="ln">314</span>      reach.append(one-reach)<span class="p">)</span></div>
+<div><span class="ln">315</span>    out.append(ChatMeter(chat=chat, jobs=len(jobs), breaches=tuple(!all-turn-breaches(one)), reach=tuple(reach)))<span class="p">)</span></div>
+<div><span class="ln">316</span>  TrailMeter(meters=out, in-progress=in-progress)<span class="p">)</span></div>
+</div></div>
+<div class="pane"><h3>案 B(装飾 + 折りたたみ・同じ editor)</h3><div class="code">
+<div class="lens">                 呼び出し元 10 箇所</div>
+<div><span class="ln">298</span><span class="k">def</span> <span class="nm">meter-trail</span>(trail: <span class="t">RecordsTrail</span>, since-ms: <span class="t">int</span>, until-ms: <span class="t">int</span>, sink: <span class="t">Sink</span>, grace-ms: <span class="t">int</span>): <span class="t">TrailMeter</span> =<span class="fold">⋯</span> <span class="chip">turn</span><span class="chip">judgment</span></div>
+<div><span class="ln">300</span>  <span class="c">;; 窓 [since, until − grace) に作られた手番を持つ会話ごとに 7 条を当てる。それより新しい手番は進行中として数だけ返す。</span></div>
+<div><span class="ln">301</span>  <span class="tb">MeteredView</span> view &lt;- records-view(trail, until-ms, sink)</div>
+<div class="skip"><span class="ln">…</span>(302〜314 は今の表示と同じ)</div>
+<div><span class="ln">315</span>    out.append(ChatMeter(chat=chat, jobs=len(jobs), breaches=tuple(!all-turn-breaches(one)), reach=tuple(reach)))<span class="p">)</span></div>
+<div><span class="ln">316</span>  TrailMeter(meters=out, in-progress=in-progress)</div>
+</div></div>
+<div class="pane d"><div class="bar">turn_records_meter.hy — 読む面 <span class="btn">source を開く</span></div><div class="code">
+<div class="lens">呼び出し元 10 箇所</div>
+<div><span class="a">@turn @judgment</span></div>
+<div><span class="k">def</span> <span class="nm">meter-trail</span>(trail: <span class="t">RecordsTrail</span>, since-ms: <span class="t">int</span>, until-ms: <span class="t">int</span>, sink: <span class="t">Sink</span>, grace-ms: <span class="t">int</span>): <span class="t">TrailMeter</span> =</div>
+<div>  <span class="c">// 窓 [since, until − grace) に作られた手番を持つ会話ごとに 7 条を当てる。それより新しい手番は進行中として数だけ返す。</span></div>
+<div>  <span class="k">val</span> view: <span class="t">MeteredView</span> &lt;- records-view(trail, until-ms, sink)</div>
+<div>  <span class="k">val</span> run = view.run</div>
+<div>  <span class="k">val</span> cutoff = until-ms - grace-ms</div>
+<div>  <span class="k">val</span> judged: <span class="t">frozenset</span> &lt;- judged-jobs(run, since-ms, cutoff)</div>
+<div>  <span class="k">val</span> in-progress: <span class="t">int</span> &lt;- in-progress-jobs(run, cutoff)</div>
+<div>  <span class="k">val</span> chats = sorted({w.chat <span class="k">for</span> w <span class="k">in</span> run.turn-writes <span class="k">if</span> w.job-id in judged})</div>
+<div>  <span class="k">var</span> out = []</div>
+<div>  <span class="k">for</span> chat &lt;- chats <span class="k">do</span></div>
+<div>    <span class="k">val</span> one: <span class="t">RunView</span> &lt;- chat-view(run, chat, judged)</div>
+<div>    <span class="k">val</span> jobs = frozenset(w.job-id <span class="k">for</span> w <span class="k">in</span> one.turn-writes)</div>
+<div>    <span class="k">var</span> reach = []</div>
+<div>    <span class="k">for</span> law &lt;- sorted(TURN-LAWS) <span class="k">do</span></div>
+<div>      <span class="k">val</span> one-reach: <span class="t">LawReach</span> &lt;- law-reach-of(law, view.sources, jobs)</div>
+<div>      reach.append(one-reach)</div>
+<div>    out.append(ChatMeter(chat=chat, jobs=len(jobs), breaches=tuple(!all-turn-breaches(one)), reach=tuple(reach)))</div>
+<div>  TrailMeter(meters=out, in-progress=in-progress)</div>
+</div></div>
+</div>
+
+<!-- ============ full-system-with ============ -->
+<h2>full-system-with <small>controllers/agora_sim/full_system.hy:56 — 文書が契約より先・本体 1 行</small></h2>
+<div class="tri">
+<div class="pane"><h3>今の表示(A)</h3><div class="code">
+<div class="lens">               呼び出し元 2 箇所</div>
+<div><span class="ln">56</span><span class="p">(</span><i class="gl"></i><span class="nm">full-system-with</span> [parts]    <span class="chip">turn</span><span class="chip">judgment</span></div>
+<div><span class="ln">57</span>  <span class="s">"常設の full-system の後ろに部品の service を足した系(名 full-system+)。"</span></div>
+<div><span class="ln">58</span>  (<span class="tb">list</span>) -&gt; <span class="tb">System</span></div>
+<div><span class="ln">59</span>    <span class="ef">effect なし</span></div>
+<div><span class="ln">60</span></div>
+<div><span class="ln">61</span>  System(<span class="s">"full-system+"</span>, tuple(list(full-system.services) + <span class="p">(</span><span class="k">lfor</span> part parts s part[<span class="s">"services"</span>] s<span class="p">)</span>))<span class="p">)</span></div>
+</div></div>
+<div class="pane"><h3>案 B(装飾 + 折りたたみ・同じ editor)</h3><div class="code">
+<div class="lens">               呼び出し元 2 箇所</div>
+<div><span class="ln">56</span><span class="k">def</span> <span class="nm">full-system-with</span>(parts: <span class="t">list</span>): <span class="t">System</span> =   <span class="chip">turn</span><span class="chip">judgment</span></div>
+<div><span class="ln">57</span>  <span class="s">"常設の full-system の後ろに部品の service を足した系(名 full-system+)。"</span><span class="fold">⋯</span></div>
+<div><span class="ln">61</span>  System(<span class="s">"full-system+"</span>, tuple(list(full-system.services) + <span class="p">(</span><span class="k">lfor</span> part parts s part[<span class="s">"services"</span>] s<span class="p">)</span>))</div>
+<div class="skip">  ↑ 文書の行が契約より先にあるので、畳みは 57 行目から始まり「⋯」は文書の後ろに付く</div>
+</div></div>
+<div class="pane d"><div class="bar">full_system.hy — 読む面 <span class="btn">source を開く</span></div><div class="code">
+<div class="lens">呼び出し元 2 箇所</div>
+<div><span class="c">/** 常設の full-system の後ろに部品の service を足した系(名 full-system+)。 */</span></div>
+<div><span class="a">@turn @judgment</span></div>
+<div><span class="k">def</span> <span class="nm">full-system-with</span>(parts: <span class="t">list</span>): <span class="t">System</span> =</div>
+<div>  System(<span class="s">"full-system+"</span>, tuple(list(full-system.services) + [s <span class="k">for</span> part <span class="k">in</span> parts <span class="k">for</span> s <span class="k">in</span> part[<span class="s">"services"</span>]]))</div>
+</div></div>
+</div>
+
+<!-- ============ sim-part ============ -->
+<h2>sim-part <small>controllers/agora_sim/full_system.hy:29 — None を許す引数・dict の値を返すだけ</small></h2>
+<div class="tri">
+<div class="pane"><h3>今の表示(A)</h3><div class="code">
+<div class="lens">               呼び出し元 2 箇所</div>
+<div><span class="ln">29</span><span class="p">(</span><i class="gl"></i><span class="nm">sim-part</span> [services handlers]    <span class="chip">turn</span><span class="chip">judgment</span></div>
+<div><span class="ln">30</span>  <span class="s">"部品の値(services = service の宣言の list・handlers = state → handler の list、無ければ None)。"</span></div>
+<div><span class="ln">31</span>  (<span class="tb">list</span>, <span class="tb">Callable | None</span>) -&gt; <span class="tb">dict</span></div>
+<div><span class="ln">32</span>    <span class="ef">effect なし</span></div>
+<div><span class="ln">33</span></div>
+<div><span class="ln">34</span>  {<span class="s">"services"</span> services <span class="s">"handlers"</span> handlers}<span class="p">)</span></div>
+</div></div>
+<div class="pane"><h3>案 B(装飾 + 折りたたみ・同じ editor)</h3><div class="code">
+<div class="lens">               呼び出し元 2 箇所</div>
+<div><span class="ln">29</span><span class="k">def</span> <span class="nm">sim-part</span>(services: <span class="t">list</span>, handlers: <span class="t">Option[Callable]</span>): <span class="t">dict</span> =   <span class="chip">turn</span><span class="chip">judgment</span></div>
+<div><span class="ln">30</span>  <span class="s">"部品の値(services = service の宣言の list・handlers = state → handler の list、無ければ None)。"</span><span class="fold">⋯</span></div>
+<div><span class="ln">34</span>  {<span class="s">"services"</span> services <span class="s">"handlers"</span> handlers}</div>
+</div></div>
+<div class="pane d"><div class="bar">full_system.hy — 読む面 <span class="btn">source を開く</span></div><div class="code">
+<div class="lens">呼び出し元 2 箇所</div>
+<div><span class="c">/** 部品の値(services = service の宣言の list・handlers = state → handler の list、無ければ None)。 */</span></div>
+<div><span class="a">@turn @judgment</span></div>
+<div><span class="k">def</span> <span class="nm">sim-part</span>(services: <span class="t">list</span>, handlers: <span class="t">Option[Callable]</span>): <span class="t">dict</span> =</div>
+<div>  {<span class="s">"services"</span>: services, <span class="s">"handlers"</span>: handlers}</div>
+</div></div>
+</div>
+
+<!-- ============ D: file 1 本を丸ごと ============ -->
+<h2>案 D で file 1 本を丸ごと描いた形 <small>controllers/agora_sim/full_system.hy(66 行)— defk 以外の行(説明・import・setv)も描き直せる</small></h2>
+<div class="tri" style="grid-template-columns:minmax(0,1.3fr) minmax(0,1fr)">
+<div class="pane d"><div class="bar">full_system.hy — 読む面 <span class="btn">source を開く</span> <span class="btn">横に並べる</span></div><div class="code">
+<div><span class="c">// 手元の検証環境に本物の controller を並べる系(System)— 核の run-agora(sim-world = 仮想の時計 + 共有の fake の店)で回す。</span></div>
+<div><span class="c">// …(先頭の説明 16 行は畳んである・クリックで開く)</span><span class="fold">⋯</span></div>
+<div><span class="p">import doeff-hy.macros.{defk, &lt;-}</span></div>
+<div><span class="k">import</span> collections.abc.Callable</div>
+<div><span class="k">import</span> doeff.with_handlers</div>
+<div><span class="k">import</span> doeff_time.SimClock</div>
+<div><span class="k">import</span> controllers.agora_sim.world.{System, run-agora}</div>
+<div><span class="k">import</span> controllers.agora_sim.kanban_services.{kanban-writes, kanban-automation, kanban-delivery, kanban-intake-router}</div>
+<div></div>
+<div><span class="c">// 差し込み口(2026-09-25): この file を書き換えずに controller を並べる形。…</span><span class="fold">⋯</span></div>
+<div><span class="c">/** 部品の値(services = service の宣言の list・handlers = state → handler の list、無ければ None)。 */</span></div>
+<div><span class="a">@turn @judgment</span></div>
+<div><span class="k">def</span> <span class="nm">sim-part</span>(services: <span class="t">list</span>, handlers: <span class="t">Option[Callable]</span>): <span class="t">dict</span> =</div>
+<div>  {<span class="s">"services"</span>: services, <span class="s">"handlers"</span>: handlers}</div>
+<div></div>
+<div><span class="c">/** 部品のまねた環境の handler の組を 1 つの list に(部品の順・外側が先)。 */</span></div>
+<div><span class="a">@turn @judgment</span></div>
+<div><span class="k">def</span> <span class="nm">part-handlers</span>(parts: <span class="t">list</span>, state: <span class="t">dict</span>): <span class="t">list</span> =</div>
+<div>  [h <span class="k">for</span> part <span class="k">in</span> parts <span class="k">if</span> part[<span class="s">"handlers"</span>] is not None <span class="k">for</span> h <span class="k">in</span> part[<span class="s">"handlers"</span>](state)]</div>
+<div></div>
+<div><span class="a">@turn @entry</span></div>
+<div><span class="k">def</span> <span class="nm">run-emulated-with</span>(agora: <span class="t">System</span>, parts: <span class="t">list</span>, state: <span class="t">dict</span>, clock: <span class="t">SimClock</span>, overrides: <span class="t">Option[dict]</span>): <span class="t">list</span> =</div>
+<div>  <span class="c">// 系を部品の handler の下で回すため(核の run-agora に部品の handler を外側から被せる)。結果 = service ごとの戻り値の list。</span></div>
+<div>  <span class="k">val</span> results: <span class="t">list</span> &lt;- with_handlers(!part-handlers(parts, state), run-agora(agora, state, clock, overrides))</div>
+<div>  results</div>
+<div></div>
+<div><span class="c">// 本物の controller の全部(載ったものから足す)。</span></div>
+<div>full-system = System(<span class="s">"full-system"</span>, (kanban-writes, kanban-automation, kanban-delivery, kanban-intake-router))</div>
+<div></div>
+<div><span class="c">/** 常設の full-system の後ろに部品の service を足した系(名 full-system+)。 */</span></div>
+<div><span class="a">@turn @judgment</span></div>
+<div><span class="k">def</span> <span class="nm">full-system-with</span>(parts: <span class="t">list</span>): <span class="t">System</span> =</div>
+<div>  System(<span class="s">"full-system+"</span>, tuple(list(full-system.services) + [s <span class="k">for</span> part <span class="k">in</span> parts <span class="k">for</span> s <span class="k">in</span> part[<span class="s">"services"</span>]]))</div>
+</div></div>
+<div class="note" style="font-size:13px">
+<b>この形で読む面に要る機能</b>(source の editor では VS Code が持っていて、読む面では作り直す物)
+<ul>
+<li>名(下線付き)をクリック → 定義へ飛ぶ。飛び先が別の file なら、その file の読む面を開く</li>
+<li>「呼び出し元 N 箇所」をクリック → 呼び出し元の一覧</li>
+<li>linter の違反: 該当の行の左に印と波線(source の行へ戻して場所を合わせる)。問題の欄は source 側のまま</li>
+<li>束縛の型・effect の絵に hover で説明</li>
+<li>面の中の検索(Cmd+F)</li>
+<li>source を開いた時に同じ場所へ(読む面の行 ↔ source の行の対応を持つ)</li>
+</ul>
+<b>source の editor 側</b>は今の装飾(A)のままでよい、というのがこの席の見立てです(B の折りたたみは読む面と役目が重なるうえ、畳む状態を VS Code が持つので開くたびに畳み直す手順が要る)。
+</div>
+</div>
+
+<!-- ============ D の中で決めること ============ -->
+<h2>案 D の中で決めること <small>見本はどれも run-input-request / judged で示す</small></h2>
+<table>
+<tr><th>決めること</th><th>候補</th><th>見え方</th><th>この席の推奨</th></tr>
+<tr><td rowspan="2">面の出し方</td><td>横に並べる(Markdown の preview と同じ形)</td><td>左に source(今の装飾)、右に読む面。スクロールが連動</td><td rowspan="2"><span class="rec">開いた時の既定を読む面にする</span>。operator は手で編集しないので、source は必要な時だけ。git の差分や検索の結果から開く時にどちらが出るかは試して確かめる</td></tr>
+<tr><td><code>.hy</code> を開くと読む面が既定、source は切り替え</td><td>tab 1 つ。上の「source を開く」で同じ場所の source へ</td></tr>
+<tr><td rowspan="3">effect の置き場</td><td>a. Scala の通り <code>(using …)</code> を 2 行目に</td><td><span class="mini">def judged(request: InputRequest)
+    (using ReadInput): Option[Judgment] =</span></td><td rowspan="3"><span class="rec">a</span>。Scala の形のままで、effect が引数と別の行に出る(以前の「effect は型の行から外す」とも合う)。effect の無い defk は 1 行で閉じる</td></tr>
+<tr><td>b. 頭は <code>def f(x: T): R =</code> で閉じ、effect は下の小さな行</td><td><span class="mini">def judged(request: InputRequest): Option[Judgment] =
+  <span class="ef">using ReadInput</span></span></td></tr>
+<tr><td>c. 1 行に全部</td><td><span class="mini">def judged(request: InputRequest)(using ReadInput): Option[Judgment] =</span></td></tr>
+<tr><td rowspan="3">束縛の書き方</td><td><code>val x: T &lt;- e</code>(effect を通す)と <code>val x: T = e</code>(値)</td><td><span class="mini">val target: Option[str] &lt;- target-of(request)
+val cutoff = until-ms - grace-ms</span></td><td rowspan="3"><span class="rec">1 つ目</span>。Scala の <code>val</code> の形で、矢印だけで「effect を通したか」が分かる</td></tr>
+<tr><td><code>x: T &lt;- e</code>(Scala の for の中の形)</td><td><span class="mini">target: Option[str] &lt;- target-of(request)</span></td></tr>
+<tr><td><code>T x &lt;- e</code>(今の表示のまま)</td><td><span class="mini">Option[str] target &lt;- target-of(request)</span></td></tr>
+<tr><td rowspan="2">本体の制御の形</td><td>Scala の形</td><td><span class="mini">if outcome is None then return RunOutcome.DEFERRED
+settled match
+  case IntakeSettleLanded() =&gt; …</span></td><td rowspan="2"><span class="rec">Scala の形</span>。閉じ括弧が消えるのは D だけの利点</td></tr>
+<tr><td>lisp のまま(呼びだけ <code>f(a, b)</code>)</td><td><span class="mini">(when (outcome is None)
+  (return RunOutcome.DEFERRED))</span></td></tr>
+<tr><td rowspan="2">式の綴り</td><td>Python のまま</td><td><code>part["services"]</code>・<code>a + b</code>・<code>[s for part in parts …]</code>・<code>x is None</code>・<code>f(a, key=v)</code></td><td rowspan="2"><span class="rec">Python のまま</span>。意味が 1 対 1 で、Scala に寄せると list / set / generator の内包の違いが消える</td></tr>
+<tr><td>Scala に寄せる</td><td><code>part("services")</code>・<code>for … yield s</code>・<code>x == null</code>・<code>f(a, key = v)</code></td></tr>
+<tr><td rowspan="2">None を含む型</td><td><code>Option[T]</code></td><td><code>Option[InputDone | InputRejected]</code></td><td rowspan="2"><span class="rec"><code>Option[T]</code></span>(Scala の読み方。None 以外が 1 つでも複数でも同じ形)</td></tr>
+<tr><td><code>T | None</code></td><td><code>InputDone | InputRejected | None</code></td></tr>
+<tr><td rowspan="2">名前</td><td>kebab のまま</td><td><code>run-input-request</code></td><td rowspan="2"><span class="rec">kebab のまま</span>。検索・linter の知らせ・source と同じ綴り</td></tr>
+<tr><td>camelCase</td><td><code>runInputRequest</code></td></tr>
+<tr><td rowspan="2">型の名</td><td>Python のまま</td><td><code>dict</code>・<code>list</code>・<code>frozenset</code>・<code>int</code></td><td rowspan="2"><span class="rec">Python のまま</span>(実際の型と同じ名)</td></tr>
+<tr><td>Scala の名</td><td><code>Map</code>・<code>List</code>・<code>Set</code>・<code>Int</code></td></tr>
+<tr><td rowspan="2">tags</td><td>注釈の行(小さな字)</td><td><span class="a">@messaging @program</span></td><td rowspan="2"><span class="rec">注釈の行</span></td></tr>
+<tr><td>右端のラベル(今と同じ)</td><td><span class="chip">messaging</span><span class="chip">program</span></td></tr>
+<tr><td rowspan="2">文書(docstring)</td><td><code>/** … */</code> を def の上に</td><td><span class="mini c">/** 名指した行を読んで判じるため。… */</span></td><td rowspan="2"><span class="rec">def の上に</span>(Scala の Scaladoc の置き場)</td></tr>
+<tr><td>本体の頭に文字列のまま</td><td><span class="mini s">"名指した行を読んで判じるため。…"</span></td></tr>
+<tr><td rowspan="2">本体の区切り</td><td>Scala 3 の字下げ</td><td><span class="mini">def f(x: T): R =
+  body</span></td><td rowspan="2"><span class="rec">字下げ</span>(括弧を 1 つも出さない)</td></tr>
+<tr><td><code>= { … }</code></td><td><span class="mini">def f(x: T): R = {
+  body
+}</span></td></tr>
+</table>
+<div class="note" style="margin-top:10px">上の見本はどれも手で起こしたもので、source の Hy は変えていません。</div>
+</body></html>

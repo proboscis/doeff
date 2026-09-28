@@ -1,0 +1,33 @@
+{
+  "artifacts": [
+    {
+      "path": "artifacts/v1/design.md",
+      "sha256": "525847ed97e0b8baf35013ec1fb3d15811e0002e28a16532e9e29528829c74c5"
+    }
+  ],
+  "body": {
+    "actor": "user",
+    "authority": "direct",
+    "decision": "design",
+    "outcome": "accepted",
+    "scope_of_agreement": "operator が合意したのは上の statement の範囲(D・対象・単位と軸・置き場と構造の層・言語は後)。design.md 2.3 節の見え方の細目・2.4 節の制約(読み戻せる印字・目印つきの lisp・位置・linter の知らせ・索引だけを読む)は席の推奨を既定にした戻せる決定で、operator は反対していないが明示的に選んでもいない。言語の候補(3 節)は記録だけで、何も選んでいない。",
+    "source": "operator の直接の議論 2026-09-28 22:1x〜23:1x(会話 defk-view-discuss・herdr pane w3J:pA)。逐語: \"perhaps D is the way to go\" / \"to me D reads far better, than pure lisp\" / \"I see, so ultimately we want new lang but for now we go with D and linter to cover\" / \"actually we are not only talking about defk but the whole doeff-hy code reading plane\" / \"I feel it's nonesense to make a scope of variable or anything bound to a file and file structure\" / \"because a tree structure can never cover the entire axis of domain\" / \"the system should be more organized across multiple axis of tags rather than a single file structure tree\" / \"so hy lang is just a way to store data but we want our doeff-hy to be in different plane as a system structure\"",
+    "statement": "doeff-hy の code の見せ方は案 D(読むための別の面)にする。対象は defk だけでなく doeff-hy の code 全体。単位は file ではなく定義で、入口は木ではなく tag の複数の軸(と effect・呼び出し・型・テスト・置き場)の切り替えと交差。Hy の file は定義を置いておく形式で、系の構造は定義 × 属性の面にある。最終的には新しい言語(静的な型・型に載る effect・Python の呼び出し・file と独立の名前空間)を目指すが、今は D と linter で賄う(言語の compiler が担うはずの検査は当面 doeff-linter が担う)。",
+    "subjects": [
+      "design-c718ca28a562"
+    ],
+    "supersedes": []
+  },
+  "created_at": "2026-09-28T14:06:05.174270+00:00",
+  "id": "decision-05be5e9de565",
+  "inputs": [
+    {
+      "id": "design-c718ca28a562",
+      "role": "subject",
+      "sha256": "40e0d4c12d0d0d6f11c6cb535a6cac651eb17616c4d606e6b9a5f5568687fc6b"
+    }
+  ],
+  "kind": "decision",
+  "schema_version": 1,
+  "scope": "doeff-hy の code を読む面(VS Code)。単位は file ではなく定義(defk・defrecord・defeffect・defhandler・deftest …)で、Scala 3 の見た目に印字し、tag・effect・呼び出し・型から辿る。source の Hy は編集しない。その先の言語(静的な型・型に載る effect・Python の呼び出し・file に縛られない名前空間)の要件も持つ"
+}
