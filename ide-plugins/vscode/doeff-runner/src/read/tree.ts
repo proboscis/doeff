@@ -26,6 +26,10 @@ export interface CallGraph {
   readonly callers: ReadonlyMap<string, readonly string[]>;
   /** effect の完全修飾名 → それを解く effect 節の数(handled by N) */
   readonly handlers: ReadonlyMap<string, number>;
+  /** 型の完全修飾名 → その型を答えに書いた定義(returned by) */
+  readonly returnedBy: ReadonlyMap<string, readonly string[]>;
+  /** 型の完全修飾名 → その型を引数に書いた定義(accepted by) */
+  readonly acceptedBy: ReadonlyMap<string, readonly string[]>;
 }
 
 /** 位置が範囲に入るか。 */
@@ -52,6 +56,8 @@ function push(table: Map<string, string[]>, key: string, value: string): void {
 export function buildCallGraph(files: readonly HyFileIndex[]): CallGraph {
   const definitions = new Map<string, GraphDefinition>();
   const handlers = new Map<string, number>();
+  const returnedBy = new Map<string, string[]>();
+  const acceptedBy = new Map<string, string[]>();
   for (const file of files) {
     for (const definition of file.definitions) {
       if (!definitions.has(definition.qualifiedName)) {
@@ -60,6 +66,21 @@ export function buildCallGraph(files: readonly HyFileIndex[]): CallGraph {
       const handled = definition.handles?.target ?? null;
       if (handled !== null) {
         handlers.set(handled, (handlers.get(handled) ?? 0) + 1);
+      }
+      // 型の逆引きは関数の見出し(defk など)だけから — 欄の型(defrecord の #^)は「受ける」ではないため
+      if (TREE_KINDS.has(definition.kind) && definition.kind !== 'defeffect') {
+        for (const name of definition.answerType?.names ?? []) {
+          if (name.target !== null) {
+            push(returnedBy, name.target, definition.qualifiedName);
+          }
+        }
+        for (const param of definition.paramTypes) {
+          for (const name of param.type.names) {
+            if (name.target !== null) {
+              push(acceptedBy, name.target, definition.qualifiedName);
+            }
+          }
+        }
       }
     }
   }
@@ -81,7 +102,7 @@ export function buildCallGraph(files: readonly HyFileIndex[]): CallGraph {
       }
     }
   }
-  return { definitions, callees, callers, handlers };
+  return { definitions, callees, callers, handlers, returnedBy, acceptedBy };
 }
 
 /** 位置を含む最上位の定義(位置の順に並べた列を二分探索 — 大きな repo でも呼びごとに全定義を回さないため)。 */

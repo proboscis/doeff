@@ -4,12 +4,12 @@
 // カードは 1 行に畳める(v4)。面に出る文字は labels.ts の表からだけ引く(v5)。
 // 本体の文字(val / var の表)は linter の印字が入るまで出さず、元の Hy は実体ごとの source ボタンで開閉する(v3 3 節)。
 
-import type { HyDefinition } from '../hy/contract';
 import { pieceStyle, sliceHighlight, type Piece, type SourceColoring } from '../hy/highlight/spans';
 import type { LintBody, LintBodySegment, LintSignature, LintViolation } from '../lint/contract';
 import { answerText, headerEffects, typeText } from '../defk/model';
 import { cardKey, LINE_FIELDS, type FoldState, type LineField } from './fold';
 import { escapeHtml, tagClass, type Glyphs } from './html';
+import { contractRow, entityLineArgs, entityRows, relationBand } from './entity';
 import { LABELS } from './labels';
 import { axisKey, axisTitle, facets, visibleCards, worstLevel, type Card, type Facet, type Selection } from './model';
 import { relationOf, type CallGraph, type CallTree } from './tree';
@@ -126,52 +126,6 @@ function effectRow(signature: LintSignature, glyphs: Glyphs): string {
   return `<div class="row"><span class="k">${escapeHtml(LABELS.effects)}</span><div>${chips}${partial}</div></div>`;
 }
 
-/** 入れ子の定義の欄の見出し(kind ごと)。 */
-function memberTitle(kind: HyDefinition['kind']): string {
-  switch (kind) {
-    case 'field':
-      return LABELS.fields;
-    case 'enum-member':
-      return LABELS.values;
-    case 'effect-clause':
-      return LABELS.handles;
-    case 'method':
-      return LABELS.methods;
-    default:
-      return kind;
-  }
-}
-
-/** 入れ子の定義を見出しごとに束ねる(書いた順)。 */
-function memberGroups(card: Card): Array<readonly [string, HyDefinition[]]> {
-  const groups = new Map<string, HyDefinition[]>();
-  for (const member of card.members) {
-    const title = memberTitle(member.kind);
-    groups.set(title, [...(groups.get(title) ?? []), member]);
-  }
-  return [...groups.entries()];
-}
-
-/** 見出しの無い実体の欄(引数の名・基底・入れ子の定義・:check)。 */
-function attributeRows(card: Card): string {
-  const d = card.definition;
-  const rows: string[] = [];
-  const row = (label: string, body: string): string => `<div class="row"><span class="k">${escapeHtml(label)}</span><div>${body}</div></div>`;
-  if (d.params.length > 0) {
-    rows.push(row(LABELS.args, d.params.map((p) => `<span class="p"><span class="n">${escapeHtml(p)}</span></span>`).join('')));
-  }
-  if (d.bases.length > 0) {
-    rows.push(row(LABELS.bases, d.bases.map((b) => `<span class="p"><span class="t">${escapeHtml(b)}</span></span>`).join('')));
-  }
-  for (const [title, members] of memberGroups(card)) {
-    rows.push(row(title, members.map((m) => `<span class="p"><span class="n">${escapeHtml(m.name)}</span></span>`).join('')));
-  }
-  if (d.checks !== null && d.checks.length > 0) {
-    rows.push(row(LABELS.contract, d.checks.map((c) => `<code>${escapeHtml(c)}</code>`).join('')));
-  }
-  return rows.join('');
-}
-
 /** 1 行の形の「args / return type」— `(name: T, …) → R`(見出しの無い実体は入れ子の定義の名・引数の名)。 */
 function lineArgs(card: Card): string {
   const s = card.signature;
@@ -185,12 +139,7 @@ function lineArgs(card: Card): string {
     const params = s.params.map((p) => `${escapeHtml(p.name)}: <span class="t">${escapeHtml(typeText(p.type))}</span>`).join(', ');
     return `<span class="f f-args">(${params}) → ${answer}</span>`;
   }
-  const groups = memberGroups(card);
-  if (groups.length > 0) {
-    return `<span class="f f-args">${groups.map(([title, ms]) => `${escapeHtml(title)}: ${ms.map((m) => escapeHtml(m.name)).join(', ')}`).join(' · ')}</span>`;
-  }
-  const d = card.definition;
-  return d.params.length === 0 ? '' : `<span class="f f-args">(${d.params.map(escapeHtml).join(', ')})</span>`;
+  return entityLineArgs(card);
 }
 
 /** 説明の 1 行目(先頭の 1 文を省略記号で切る)。 */
@@ -324,7 +273,7 @@ export function renderCard(card: Card, ctx: CardContext, hidden: boolean): strin
   const relationText = `${LABELS.callers} <b>${relation.callers}</b> · ${LABELS.tests} <b>${relation.tests}</b>`;
   // 帯の callers / callees は木の入口(v7 3 節の入口 a)
   const qn = escapeHtml(d.qualifiedName);
-  const band = `<button class="rel" data-tree-root="${qn}" data-tree-dir="callers">${escapeHtml(LABELS.callers)} <b>${relation.callers}</b></button><button class="rel" data-tree-root="${qn}" data-tree-dir="callees">${escapeHtml(LABELS.callees)} <b>${relation.callees}</b></button><span>${escapeHtml(LABELS.tests)} <b>${relation.tests}</b></span>`;
+  const band = relationBand(d, ctx.graph);
   const location = `${escapeHtml(ctx.place)}:${card.firstLine}`;
   const doc = docFirstLine(d.docstring);
   const effects = card.signature === undefined ? '' : effectChips(card.signature, ctx.glyphs);
@@ -337,12 +286,13 @@ export function renderCard(card: Card, ctx: CardContext, hidden: boolean): strin
     `<span class="f f-location loc">${location}</span>`
   ].join('');
   const typed = d.kind === 'defk' || d.kind === 'deff';
+  // 契約(型でない述語)は索引から来るので、linter の見出しの有無に関わらず出す
   const middle =
-    card.signature !== undefined
+    (card.signature !== undefined
       ? signatureStrip(card.signature) + effectRow(card.signature, ctx.glyphs)
       : typed
         ? `<div class="row"><span class="k">${escapeHtml(LABELS.argsReturnType)}</span><span class="none">${escapeHtml(LABELS.waitingForLinter)}</span></div>`
-        : attributeRows(card);
+        : entityRows(card, ctx.glyphs)) + contractRow(d);
   const docBlock = d.docstring === null ? '' : `<div class="doc">${escapeHtml(d.docstring)}</div>`;
   const body = card.body === undefined ? '' : bodyBlock(card.body, ctx.glyphs, card.violations);
   const level = worstLevel(card.violations);

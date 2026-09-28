@@ -28,7 +28,14 @@ export const LABELS = {
   methods: 'methods',
   bases: 'bases',
   contract: 'contract',
-  /** カードの関係の帯 */
+  type: 'type',
+  value: 'value',
+  /** カードの関係の帯(defeffect・defrecord・defhandler の分は v5 の表) */
+  usedBy: 'used by',
+  handlers: 'handlers',
+  returnedBy: 'returned by',
+  acceptedBy: 'accepted by',
+  installedAt: 'installed at',
   callers: 'callers',
   callees: 'callees',
   tests: 'tests',

@@ -298,7 +298,7 @@ suite('定義を読む面 — 頁(V10・V12・V13)', () => {
 
   test('入れ子の定義はカードの部品: defrecord の欄はチップ(V13 の一部)', () => {
     const card = cardHtml(planePage(new Map()), 'Row');
-    assert.ok(card.includes('<span class="k">fields</span><div><span class="p"><span class="n">key</span></span><span class="p"><span class="n">text</span></span></div>'));
+    assert.ok(card.includes('<span class="k">fields</span><div><span class="p"><span class="n">key</span><span class="t">str</span></span><span class="p"><span class="n">text</span><span class="t">str</span></span></div>'));
   });
 
   test('source の文字は HTML として逃がす', () => {
@@ -560,6 +560,7 @@ suite('定義を読む面 — 本体の文字(V6・V11 の一部・U5)', () => {
       fold: unfoldAll(INITIAL_FOLD, cards.map((c) => cardKey(c.definition))),
       graph: buildCallGraph([planeIndex()]),
       tree: undefined,
+      coloring: undefined,
       cspSource: 'vscode-resource:',
       nonce: 'n'
     });
@@ -579,6 +580,7 @@ suite('定義を読む面 — 本体の文字(V6・V11 の一部・U5)', () => {
       fold: unfoldAll(INITIAL_FOLD, cards.map((c) => cardKey(c.definition))),
       graph: buildCallGraph([planeIndex()]),
       tree: undefined,
+      coloring: undefined,
       cspSource: 'vscode-resource:',
       nonce: 'n'
     });
@@ -612,5 +614,73 @@ suite('定義を読む面 — 違反を本体の行へ(V7・U5)', () => {
     const card = cardHtml(html, 'fetch-row');
     assert.ok(/<span class="ln">17<\/span>.*<span class="viol viol-major" title="DOEFF142: テストの違反">DOEFF142<\/span><\/div>/.test(card));
     assert.ok(!/<span class="ln">18<\/span>[^\n]*DOEFF142/.test(card.split('<span class="ln">18</span>')[1]?.split('</div>')[0] ?? ''));
+  });
+});
+
+suite('定義を読む面 — 実体の種類ごとの欄と帯(V13・v2 2.1 節)', () => {
+  /** entities.hy に hy-index 版 5 を当てた実出力のカード(linter の見出しは無し — 索引の欄だけで描ける物を確かめる)。 */
+  const entitiesPage = (): { readonly html: string; readonly lines: string } => {
+    const parsed = parseHyIndexJson(fs.readFileSync(path.join(FIXTURES, 'entities-index.json'), 'utf8'));
+    if (parsed.tag !== 'ok') {
+      assert.fail(`実体の fixture を読めない: ${parsed.reason}`);
+    }
+    const file = parsed.document.files[0];
+    const cards = buildCards({
+      definitions: file.definitions,
+      signatures: [],
+      bodies: [],
+      violations: [],
+      lines: fs.readFileSync(path.join(FIXTURES, 'entities.hy'), 'utf8').split(/\r?\n/)
+    });
+    const page = (fold: FoldState): string =>
+      renderPage({
+        place: 'pkg/entities.hy',
+        state: { tag: 'cards', cards, selection: new Map() },
+        glyphs: { effect: () => undefined },
+        fold,
+        graph: buildCallGraph(parsed.document.files),
+        tree: undefined,
+        coloring: undefined,
+        cspSource: 'vscode-resource:',
+        nonce: 'n'
+      });
+    return { html: page(unfoldAll(INITIAL_FOLD, cards.map((c) => cardKey(c.definition)))), lines: page(INITIAL_FOLD) };
+  };
+
+  test('defeffect: 欄のチップ → 答えの型。帯は used by(押すと木)と handlers', () => {
+    const { html, lines } = entitiesPage();
+    const card = cardHtml(html, 'ReadSlot');
+    assert.ok(card.includes('<div class="sig"><span class="p"><span class="n">key</span><span class="t">str</span></span><span class="arrow">→</span><span class="ret">Slot | None</span></div>'));
+    assert.ok(card.includes('data-tree-dir="callers">used by <b>1</b></button><span>handlers <b>1</b></span>'));
+    assert.ok(cardHtml(lines, 'ReadSlot').includes('(key: <span class="t">str</span>) → <span class="r">Slot | None</span>'));
+  });
+
+  test('defrecord: 欄のチップ(名と型)。帯は returned by / accepted by', () => {
+    const { html, lines } = entitiesPage();
+    const card = cardHtml(html, 'Slot');
+    assert.ok(card.includes('<span class="k">fields</span><div><span class="p"><span class="n">key</span><span class="t">str</span></span><span class="p"><span class="n">size</span><span class="t">int</span></span></div>'));
+    assert.ok(card.includes('<span>returned by <b>0</b></span><span>accepted by <b>0</b></span>'));
+    assert.ok(cardHtml(lines, 'Slot').includes('(key: <span class="t">str</span>, size: <span class="t">int</span>)'));
+  });
+
+  test('defenum: 値のチップ。1 行は A | B', () => {
+    const { html, lines } = entitiesPage();
+    assert.ok(cardHtml(html, 'Tone').includes('<span class="k">values</span><div><span class="p"><span class="n">LOUD</span></span><span class="p"><span class="n">QUIET</span></span></div>'));
+    assert.ok(cardHtml(lines, 'Tone').includes('<span class="f f-args">LOUD | QUIET</span>'));
+  });
+
+  test('defhandler: 解く effect(handles)と使う effect。帯は installed at', () => {
+    const { html, lines } = entitiesPage();
+    const card = cardHtml(html, 'slot-store');
+    assert.ok(card.includes('<span class="k">handles</span><div><span class="eff">ReadSlot</span></div>'));
+    assert.ok(card.includes('<span class="k">effects</span><div><span class="eff">ReadRow</span></div>'));
+    assert.ok(card.includes('data-tree-dir="callers">installed at <b>0</b></button>'));
+    assert.ok(cardHtml(lines, 'slot-store').includes('<span class="f f-args">handles: ReadSlot</span>'));
+  });
+
+  test('契約の欄は型でない述語だけ(型の注記は引数と答えへ溶ける)。無い実体には出さない', () => {
+    const { html } = entitiesPage();
+    assert.ok(cardHtml(html, 'slot-size').includes('<span class="k">contract</span><div><code>pre: (&gt; limit 0)</code></div>'));
+    assert.ok(!cardHtml(html, 'ReadSlot').includes('<span class="k">contract</span>'));
   });
 });

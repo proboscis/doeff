@@ -1,0 +1,1453 @@
+{
+  "version": 5,
+  "root": "/repo",
+  "files": [
+    {
+      "path": "/repo/pkg/entities.hy",
+      "module": "pkg.entities",
+      "definitions": [
+        {
+          "name": "Slot",
+          "mangled": "Slot",
+          "qualified_name": "pkg.entities.Slot",
+          "kind": "defrecord",
+          "range": {
+            "start": {
+              "line": 6,
+              "character": 11
+            },
+            "end": {
+              "line": 6,
+              "character": 15
+            }
+          },
+          "full_range": {
+            "start": {
+              "line": 6,
+              "character": 0
+            },
+            "end": {
+              "line": 9,
+              "character": 16
+            }
+          },
+          "container": null,
+          "docstring": "置き場 1 つ。",
+          "params": [],
+          "bases": [],
+          "raw": {
+            "direct": [],
+            "via": []
+          },
+          "tags": null,
+          "effects": null,
+          "param_types": [
+            {
+              "name": "key",
+              "type": {
+                "text": "str",
+                "names": [
+                  {
+                    "name": "str",
+                    "target": null
+                  }
+                ]
+              }
+            },
+            {
+              "name": "size",
+              "type": {
+                "text": "int",
+                "names": [
+                  {
+                    "name": "int",
+                    "target": null
+                  }
+                ]
+              }
+            }
+          ],
+          "answer_type": null,
+          "contracts": [],
+          "handles": null
+        },
+        {
+          "name": "key",
+          "mangled": "key",
+          "qualified_name": "pkg.entities.Slot.key",
+          "kind": "field",
+          "range": {
+            "start": {
+              "line": 8,
+              "character": 10
+            },
+            "end": {
+              "line": 8,
+              "character": 13
+            }
+          },
+          "full_range": {
+            "start": {
+              "line": 8,
+              "character": 2
+            },
+            "end": {
+              "line": 8,
+              "character": 14
+            }
+          },
+          "container": "Slot",
+          "docstring": null,
+          "params": [],
+          "bases": [],
+          "raw": {
+            "direct": [],
+            "via": []
+          },
+          "tags": null,
+          "effects": null,
+          "param_types": [],
+          "answer_type": null,
+          "contracts": [],
+          "handles": null
+        },
+        {
+          "name": "size",
+          "mangled": "size",
+          "qualified_name": "pkg.entities.Slot.size",
+          "kind": "field",
+          "range": {
+            "start": {
+              "line": 9,
+              "character": 10
+            },
+            "end": {
+              "line": 9,
+              "character": 14
+            }
+          },
+          "full_range": {
+            "start": {
+              "line": 9,
+              "character": 2
+            },
+            "end": {
+              "line": 9,
+              "character": 15
+            }
+          },
+          "container": "Slot",
+          "docstring": null,
+          "params": [],
+          "bases": [],
+          "raw": {
+            "direct": [],
+            "via": []
+          },
+          "tags": null,
+          "effects": null,
+          "param_types": [],
+          "answer_type": null,
+          "contracts": [],
+          "handles": null
+        },
+        {
+          "name": "Tone",
+          "mangled": "Tone",
+          "qualified_name": "pkg.entities.Tone",
+          "kind": "defenum",
+          "range": {
+            "start": {
+              "line": 12,
+              "character": 9
+            },
+            "end": {
+              "line": 12,
+              "character": 13
+            }
+          },
+          "full_range": {
+            "start": {
+              "line": 12,
+              "character": 0
+            },
+            "end": {
+              "line": 12,
+              "character": 25
+            }
+          },
+          "container": null,
+          "docstring": null,
+          "params": [],
+          "bases": [],
+          "raw": {
+            "direct": [],
+            "via": []
+          },
+          "tags": null,
+          "effects": null,
+          "param_types": [],
+          "answer_type": null,
+          "contracts": [],
+          "handles": null
+        },
+        {
+          "name": "LOUD",
+          "mangled": "LOUD",
+          "qualified_name": "pkg.entities.Tone.LOUD",
+          "kind": "enum-member",
+          "range": {
+            "start": {
+              "line": 12,
+              "character": 14
+            },
+            "end": {
+              "line": 12,
+              "character": 18
+            }
+          },
+          "full_range": {
+            "start": {
+              "line": 12,
+              "character": 14
+            },
+            "end": {
+              "line": 12,
+              "character": 18
+            }
+          },
+          "container": "Tone",
+          "docstring": null,
+          "params": [],
+          "bases": [],
+          "raw": {
+            "direct": [],
+            "via": []
+          },
+          "tags": null,
+          "effects": null,
+          "param_types": [],
+          "answer_type": null,
+          "contracts": [],
+          "handles": null
+        },
+        {
+          "name": "QUIET",
+          "mangled": "QUIET",
+          "qualified_name": "pkg.entities.Tone.QUIET",
+          "kind": "enum-member",
+          "range": {
+            "start": {
+              "line": 12,
+              "character": 19
+            },
+            "end": {
+              "line": 12,
+              "character": 24
+            }
+          },
+          "full_range": {
+            "start": {
+              "line": 12,
+              "character": 19
+            },
+            "end": {
+              "line": 12,
+              "character": 24
+            }
+          },
+          "container": "Tone",
+          "docstring": null,
+          "params": [],
+          "bases": [],
+          "raw": {
+            "direct": [],
+            "via": []
+          },
+          "tags": null,
+          "effects": null,
+          "param_types": [],
+          "answer_type": null,
+          "contracts": [],
+          "handles": null
+        },
+        {
+          "name": "ReadSlot",
+          "mangled": "ReadSlot",
+          "qualified_name": "pkg.entities.ReadSlot",
+          "kind": "defeffect",
+          "range": {
+            "start": {
+              "line": 15,
+              "character": 11
+            },
+            "end": {
+              "line": 15,
+              "character": 19
+            }
+          },
+          "full_range": {
+            "start": {
+              "line": 15,
+              "character": 0
+            },
+            "end": {
+              "line": 19,
+              "character": 44
+            }
+          },
+          "container": null,
+          "docstring": "置き場を鍵で 1 つ読む(答え = 頭の註)。",
+          "params": [],
+          "bases": [
+            "EffectBase"
+          ],
+          "raw": {
+            "direct": [],
+            "via": []
+          },
+          "tags": {
+            "context": "store",
+            "role": "intent"
+          },
+          "effects": null,
+          "param_types": [
+            {
+              "name": "key",
+              "type": {
+                "text": "str",
+                "names": [
+                  {
+                    "name": "str",
+                    "target": null
+                  }
+                ]
+              }
+            }
+          ],
+          "answer_type": {
+            "text": "(| Slot None)",
+            "names": [
+              {
+                "name": "Slot",
+                "target": "pkg.entities.Slot"
+              },
+              {
+                "name": "None",
+                "target": null
+              }
+            ]
+          },
+          "contracts": [],
+          "handles": null
+        },
+        {
+          "name": "slot-store",
+          "mangled": "slot_store",
+          "qualified_name": "pkg.entities.slot_store",
+          "kind": "defhandler",
+          "range": {
+            "start": {
+              "line": 22,
+              "character": 12
+            },
+            "end": {
+              "line": 22,
+              "character": 22
+            }
+          },
+          "full_range": {
+            "start": {
+              "line": 22,
+              "character": 0
+            },
+            "end": {
+              "line": 27,
+              "character": 18
+            }
+          },
+          "container": null,
+          "docstring": null,
+          "params": [],
+          "bases": [],
+          "raw": {
+            "direct": [],
+            "via": []
+          },
+          "tags": {
+            "context": "store",
+            "role": "protocol"
+          },
+          "effects": [
+            {
+              "name": "ReadRow",
+              "target": null
+            }
+          ],
+          "param_types": [],
+          "answer_type": null,
+          "contracts": [],
+          "handles": null
+        },
+        {
+          "name": "ReadSlot",
+          "mangled": "ReadSlot",
+          "qualified_name": "pkg.entities.slot_store.ReadSlot",
+          "kind": "effect-clause",
+          "range": {
+            "start": {
+              "line": 25,
+              "character": 3
+            },
+            "end": {
+              "line": 25,
+              "character": 11
+            }
+          },
+          "full_range": {
+            "start": {
+              "line": 25,
+              "character": 2
+            },
+            "end": {
+              "line": 27,
+              "character": 17
+            }
+          },
+          "container": "slot-store",
+          "docstring": null,
+          "params": [
+            "key"
+          ],
+          "bases": [],
+          "raw": {
+            "direct": [],
+            "via": []
+          },
+          "tags": null,
+          "effects": null,
+          "param_types": [],
+          "answer_type": null,
+          "contracts": [],
+          "handles": {
+            "name": "ReadSlot",
+            "target": "pkg.entities.ReadSlot"
+          }
+        },
+        {
+          "name": "slot-size",
+          "mangled": "slot_size",
+          "qualified_name": "pkg.entities.slot_size",
+          "kind": "defk",
+          "range": {
+            "start": {
+              "line": 30,
+              "character": 6
+            },
+            "end": {
+              "line": 30,
+              "character": 15
+            }
+          },
+          "full_range": {
+            "start": {
+              "line": 30,
+              "character": 0
+            },
+            "end": {
+              "line": 35,
+              "character": 46
+            }
+          },
+          "container": null,
+          "docstring": "置き場の大きさを上限つきで返すため。",
+          "params": [
+            "key",
+            "limit"
+          ],
+          "bases": [],
+          "raw": {
+            "direct": [],
+            "via": []
+          },
+          "tags": {
+            "context": "store",
+            "role": "program"
+          },
+          "effects": [
+            {
+              "name": "ReadSlot",
+              "target": "pkg.entities.ReadSlot"
+            }
+          ],
+          "param_types": [
+            {
+              "name": "key",
+              "type": {
+                "text": "str",
+                "names": [
+                  {
+                    "name": "str",
+                    "target": null
+                  }
+                ]
+              }
+            },
+            {
+              "name": "limit",
+              "type": {
+                "text": "int",
+                "names": [
+                  {
+                    "name": "int",
+                    "target": null
+                  }
+                ]
+              }
+            }
+          ],
+          "answer_type": {
+            "text": "int",
+            "names": [
+              {
+                "name": "int",
+                "target": null
+              }
+            ]
+          },
+          "contracts": [
+            {
+              "side": "pre",
+              "text": "(> limit 0)"
+            }
+          ],
+          "handles": null
+        }
+      ],
+      "imports": [
+        {
+          "module": "doeff-hy.macros",
+          "name": "defk",
+          "alias": null,
+          "range": {
+            "start": {
+              "line": 1,
+              "character": 26
+            },
+            "end": {
+              "line": 1,
+              "character": 30
+            }
+          },
+          "is_require": true
+        },
+        {
+          "module": "doeff-hy.macros",
+          "name": "defhandler",
+          "alias": null,
+          "range": {
+            "start": {
+              "line": 1,
+              "character": 31
+            },
+            "end": {
+              "line": 1,
+              "character": 41
+            }
+          },
+          "is_require": true
+        },
+        {
+          "module": "doeff-hy.macros",
+          "name": "<-",
+          "alias": null,
+          "range": {
+            "start": {
+              "line": 1,
+              "character": 42
+            },
+            "end": {
+              "line": 1,
+              "character": 44
+            }
+          },
+          "is_require": true
+        },
+        {
+          "module": "doeff-hy.record",
+          "name": "defrecord",
+          "alias": null,
+          "range": {
+            "start": {
+              "line": 2,
+              "character": 26
+            },
+            "end": {
+              "line": 2,
+              "character": 35
+            }
+          },
+          "is_require": true
+        },
+        {
+          "module": "doeff-hy.record",
+          "name": "defenum",
+          "alias": null,
+          "range": {
+            "start": {
+              "line": 2,
+              "character": 36
+            },
+            "end": {
+              "line": 2,
+              "character": 43
+            }
+          },
+          "is_require": true
+        },
+        {
+          "module": "doeff-hy.effects",
+          "name": "defeffect",
+          "alias": null,
+          "range": {
+            "start": {
+              "line": 3,
+              "character": 26
+            },
+            "end": {
+              "line": 3,
+              "character": 35
+            }
+          },
+          "is_require": false
+        }
+      ],
+      "references": [
+        {
+          "name": "doeff-hy",
+          "mangled": "doeff_hy",
+          "qualifier": null,
+          "range": {
+            "start": {
+              "line": 1,
+              "character": 9
+            },
+            "end": {
+              "line": 1,
+              "character": 17
+            }
+          }
+        },
+        {
+          "name": "macros",
+          "mangled": "macros",
+          "qualifier": "doeff-hy",
+          "range": {
+            "start": {
+              "line": 1,
+              "character": 18
+            },
+            "end": {
+              "line": 1,
+              "character": 24
+            }
+          }
+        },
+        {
+          "name": "defk",
+          "mangled": "defk",
+          "qualifier": null,
+          "range": {
+            "start": {
+              "line": 1,
+              "character": 26
+            },
+            "end": {
+              "line": 1,
+              "character": 30
+            }
+          }
+        },
+        {
+          "name": "defhandler",
+          "mangled": "defhandler",
+          "qualifier": null,
+          "range": {
+            "start": {
+              "line": 1,
+              "character": 31
+            },
+            "end": {
+              "line": 1,
+              "character": 41
+            }
+          }
+        },
+        {
+          "name": "doeff-hy",
+          "mangled": "doeff_hy",
+          "qualifier": null,
+          "range": {
+            "start": {
+              "line": 2,
+              "character": 9
+            },
+            "end": {
+              "line": 2,
+              "character": 17
+            }
+          }
+        },
+        {
+          "name": "record",
+          "mangled": "record",
+          "qualifier": "doeff-hy",
+          "range": {
+            "start": {
+              "line": 2,
+              "character": 18
+            },
+            "end": {
+              "line": 2,
+              "character": 24
+            }
+          }
+        },
+        {
+          "name": "defrecord",
+          "mangled": "defrecord",
+          "qualifier": null,
+          "range": {
+            "start": {
+              "line": 2,
+              "character": 26
+            },
+            "end": {
+              "line": 2,
+              "character": 35
+            }
+          }
+        },
+        {
+          "name": "defenum",
+          "mangled": "defenum",
+          "qualifier": null,
+          "range": {
+            "start": {
+              "line": 2,
+              "character": 36
+            },
+            "end": {
+              "line": 2,
+              "character": 43
+            }
+          }
+        },
+        {
+          "name": "doeff-hy",
+          "mangled": "doeff_hy",
+          "qualifier": null,
+          "range": {
+            "start": {
+              "line": 3,
+              "character": 8
+            },
+            "end": {
+              "line": 3,
+              "character": 16
+            }
+          }
+        },
+        {
+          "name": "effects",
+          "mangled": "effects",
+          "qualifier": "doeff-hy",
+          "range": {
+            "start": {
+              "line": 3,
+              "character": 17
+            },
+            "end": {
+              "line": 3,
+              "character": 24
+            }
+          }
+        },
+        {
+          "name": "defeffect",
+          "mangled": "defeffect",
+          "qualifier": null,
+          "range": {
+            "start": {
+              "line": 3,
+              "character": 26
+            },
+            "end": {
+              "line": 3,
+              "character": 35
+            }
+          }
+        },
+        {
+          "name": "Slot",
+          "mangled": "Slot",
+          "qualifier": null,
+          "range": {
+            "start": {
+              "line": 6,
+              "character": 11
+            },
+            "end": {
+              "line": 6,
+              "character": 15
+            }
+          }
+        },
+        {
+          "name": "str",
+          "mangled": "str",
+          "qualifier": null,
+          "range": {
+            "start": {
+              "line": 8,
+              "character": 6
+            },
+            "end": {
+              "line": 8,
+              "character": 9
+            }
+          }
+        },
+        {
+          "name": "key",
+          "mangled": "key",
+          "qualifier": null,
+          "range": {
+            "start": {
+              "line": 8,
+              "character": 10
+            },
+            "end": {
+              "line": 8,
+              "character": 13
+            }
+          }
+        },
+        {
+          "name": "int",
+          "mangled": "int",
+          "qualifier": null,
+          "range": {
+            "start": {
+              "line": 9,
+              "character": 6
+            },
+            "end": {
+              "line": 9,
+              "character": 9
+            }
+          }
+        },
+        {
+          "name": "size",
+          "mangled": "size",
+          "qualifier": null,
+          "range": {
+            "start": {
+              "line": 9,
+              "character": 10
+            },
+            "end": {
+              "line": 9,
+              "character": 14
+            }
+          }
+        },
+        {
+          "name": "Tone",
+          "mangled": "Tone",
+          "qualifier": null,
+          "range": {
+            "start": {
+              "line": 12,
+              "character": 9
+            },
+            "end": {
+              "line": 12,
+              "character": 13
+            }
+          }
+        },
+        {
+          "name": "LOUD",
+          "mangled": "LOUD",
+          "qualifier": null,
+          "range": {
+            "start": {
+              "line": 12,
+              "character": 14
+            },
+            "end": {
+              "line": 12,
+              "character": 18
+            }
+          }
+        },
+        {
+          "name": "QUIET",
+          "mangled": "QUIET",
+          "qualifier": null,
+          "range": {
+            "start": {
+              "line": 12,
+              "character": 19
+            },
+            "end": {
+              "line": 12,
+              "character": 24
+            }
+          }
+        },
+        {
+          "name": "ReadSlot",
+          "mangled": "ReadSlot",
+          "qualifier": null,
+          "range": {
+            "start": {
+              "line": 15,
+              "character": 11
+            },
+            "end": {
+              "line": 15,
+              "character": 19
+            }
+          }
+        },
+        {
+          "name": "key",
+          "mangled": "key",
+          "qualifier": null,
+          "range": {
+            "start": {
+              "line": 17,
+              "character": 15
+            },
+            "end": {
+              "line": 17,
+              "character": 18
+            }
+          }
+        },
+        {
+          "name": "str",
+          "mangled": "str",
+          "qualifier": null,
+          "range": {
+            "start": {
+              "line": 17,
+              "character": 19
+            },
+            "end": {
+              "line": 17,
+              "character": 22
+            }
+          }
+        },
+        {
+          "name": "Slot",
+          "mangled": "Slot",
+          "qualifier": null,
+          "range": {
+            "start": {
+              "line": 18,
+              "character": 14
+            },
+            "end": {
+              "line": 18,
+              "character": 18
+            }
+          }
+        },
+        {
+          "name": "slot-store",
+          "mangled": "slot_store",
+          "qualifier": null,
+          "range": {
+            "start": {
+              "line": 22,
+              "character": 12
+            },
+            "end": {
+              "line": 22,
+              "character": 22
+            }
+          }
+        },
+        {
+          "name": "ReadRow",
+          "mangled": "ReadRow",
+          "qualifier": null,
+          "range": {
+            "start": {
+              "line": 22,
+              "character": 34
+            },
+            "end": {
+              "line": 22,
+              "character": 41
+            }
+          }
+        },
+        {
+          "name": "ReadSlot",
+          "mangled": "ReadSlot",
+          "qualifier": null,
+          "range": {
+            "start": {
+              "line": 25,
+              "character": 3
+            },
+            "end": {
+              "line": 25,
+              "character": 11
+            }
+          }
+        },
+        {
+          "name": "key",
+          "mangled": "key",
+          "qualifier": null,
+          "range": {
+            "start": {
+              "line": 25,
+              "character": 13
+            },
+            "end": {
+              "line": 25,
+              "character": 16
+            }
+          }
+        },
+        {
+          "name": "row",
+          "mangled": "row",
+          "qualifier": null,
+          "range": {
+            "start": {
+              "line": 26,
+              "character": 8
+            },
+            "end": {
+              "line": 26,
+              "character": 11
+            }
+          }
+        },
+        {
+          "name": "Slot",
+          "mangled": "Slot",
+          "qualifier": null,
+          "range": {
+            "start": {
+              "line": 26,
+              "character": 15
+            },
+            "end": {
+              "line": 26,
+              "character": 19
+            }
+          }
+        },
+        {
+          "name": "ReadRow",
+          "mangled": "ReadRow",
+          "qualifier": null,
+          "range": {
+            "start": {
+              "line": 26,
+              "character": 27
+            },
+            "end": {
+              "line": 26,
+              "character": 34
+            }
+          }
+        },
+        {
+          "name": "key",
+          "mangled": "key",
+          "qualifier": null,
+          "range": {
+            "start": {
+              "line": 26,
+              "character": 35
+            },
+            "end": {
+              "line": 26,
+              "character": 38
+            }
+          }
+        },
+        {
+          "name": "row",
+          "mangled": "row",
+          "qualifier": null,
+          "range": {
+            "start": {
+              "line": 27,
+              "character": 12
+            },
+            "end": {
+              "line": 27,
+              "character": 15
+            }
+          }
+        },
+        {
+          "name": "slot-size",
+          "mangled": "slot_size",
+          "qualifier": null,
+          "range": {
+            "start": {
+              "line": 30,
+              "character": 6
+            },
+            "end": {
+              "line": 30,
+              "character": 15
+            }
+          }
+        },
+        {
+          "name": "key",
+          "mangled": "key",
+          "qualifier": null,
+          "range": {
+            "start": {
+              "line": 30,
+              "character": 17
+            },
+            "end": {
+              "line": 30,
+              "character": 20
+            }
+          }
+        },
+        {
+          "name": "limit",
+          "mangled": "limit",
+          "qualifier": null,
+          "range": {
+            "start": {
+              "line": 30,
+              "character": 21
+            },
+            "end": {
+              "line": 30,
+              "character": 26
+            }
+          }
+        },
+        {
+          "name": "key",
+          "mangled": "key",
+          "qualifier": null,
+          "range": {
+            "start": {
+              "line": 31,
+              "character": 12
+            },
+            "end": {
+              "line": 31,
+              "character": 15
+            }
+          }
+        },
+        {
+          "name": "str",
+          "mangled": "str",
+          "qualifier": null,
+          "range": {
+            "start": {
+              "line": 31,
+              "character": 16
+            },
+            "end": {
+              "line": 31,
+              "character": 19
+            }
+          }
+        },
+        {
+          "name": "limit",
+          "mangled": "limit",
+          "qualifier": null,
+          "range": {
+            "start": {
+              "line": 31,
+              "character": 24
+            },
+            "end": {
+              "line": 31,
+              "character": 29
+            }
+          }
+        },
+        {
+          "name": "int",
+          "mangled": "int",
+          "qualifier": null,
+          "range": {
+            "start": {
+              "line": 31,
+              "character": 30
+            },
+            "end": {
+              "line": 31,
+              "character": 33
+            }
+          }
+        },
+        {
+          "name": "limit",
+          "mangled": "limit",
+          "qualifier": null,
+          "range": {
+            "start": {
+              "line": 31,
+              "character": 38
+            },
+            "end": {
+              "line": 31,
+              "character": 43
+            }
+          }
+        },
+        {
+          "name": "int",
+          "mangled": "int",
+          "qualifier": null,
+          "range": {
+            "start": {
+              "line": 31,
+              "character": 60
+            },
+            "end": {
+              "line": 31,
+              "character": 63
+            }
+          }
+        },
+        {
+          "name": "ReadSlot",
+          "mangled": "ReadSlot",
+          "qualifier": null,
+          "range": {
+            "start": {
+              "line": 32,
+              "character": 13
+            },
+            "end": {
+              "line": 32,
+              "character": 21
+            }
+          }
+        },
+        {
+          "name": "slot",
+          "mangled": "slot",
+          "qualifier": null,
+          "range": {
+            "start": {
+              "line": 34,
+              "character": 6
+            },
+            "end": {
+              "line": 34,
+              "character": 10
+            }
+          }
+        },
+        {
+          "name": "Slot",
+          "mangled": "Slot",
+          "qualifier": null,
+          "range": {
+            "start": {
+              "line": 34,
+              "character": 14
+            },
+            "end": {
+              "line": 34,
+              "character": 18
+            }
+          }
+        },
+        {
+          "name": "ReadSlot",
+          "mangled": "ReadSlot",
+          "qualifier": null,
+          "range": {
+            "start": {
+              "line": 34,
+              "character": 26
+            },
+            "end": {
+              "line": 34,
+              "character": 34
+            }
+          }
+        },
+        {
+          "name": "key",
+          "mangled": "key",
+          "qualifier": null,
+          "range": {
+            "start": {
+              "line": 34,
+              "character": 35
+            },
+            "end": {
+              "line": 34,
+              "character": 38
+            }
+          }
+        },
+        {
+          "name": "slot",
+          "mangled": "slot",
+          "qualifier": null,
+          "range": {
+            "start": {
+              "line": 35,
+              "character": 10
+            },
+            "end": {
+              "line": 35,
+              "character": 14
+            }
+          }
+        },
+        {
+          "name": "min",
+          "mangled": "min",
+          "qualifier": null,
+          "range": {
+            "start": {
+              "line": 35,
+              "character": 24
+            },
+            "end": {
+              "line": 35,
+              "character": 27
+            }
+          }
+        },
+        {
+          "name": "slot",
+          "mangled": "slot",
+          "qualifier": null,
+          "range": {
+            "start": {
+              "line": 35,
+              "character": 28
+            },
+            "end": {
+              "line": 35,
+              "character": 32
+            }
+          }
+        },
+        {
+          "name": "size",
+          "mangled": "size",
+          "qualifier": "slot",
+          "range": {
+            "start": {
+              "line": 35,
+              "character": 33
+            },
+            "end": {
+              "line": 35,
+              "character": 37
+            }
+          }
+        },
+        {
+          "name": "limit",
+          "mangled": "limit",
+          "qualifier": null,
+          "range": {
+            "start": {
+              "line": 35,
+              "character": 38
+            },
+            "end": {
+              "line": 35,
+              "character": 43
+            }
+          }
+        }
+      ],
+      "calls": [
+        {
+          "callee": "ReadRow",
+          "mangled": "ReadRow",
+          "qualifier": null,
+          "range": {
+            "start": {
+              "line": 26,
+              "character": 27
+            },
+            "end": {
+              "line": 26,
+              "character": 34
+            }
+          },
+          "caller": 8,
+          "performed": true,
+          "target": null
+        },
+        {
+          "callee": "ReadSlot",
+          "mangled": "ReadSlot",
+          "qualifier": null,
+          "range": {
+            "start": {
+              "line": 34,
+              "character": 26
+            },
+            "end": {
+              "line": 34,
+              "character": 34
+            }
+          },
+          "caller": 9,
+          "performed": true,
+          "target": "pkg.entities.ReadSlot"
+        },
+        {
+          "callee": "min",
+          "mangled": "min",
+          "qualifier": null,
+          "range": {
+            "start": {
+              "line": 35,
+              "character": 24
+            },
+            "end": {
+              "line": 35,
+              "character": 27
+            }
+          },
+          "caller": 9,
+          "performed": false,
+          "target": null
+        }
+      ],
+      "errors": []
+    }
+  ],
+  "raw_via": "not-computed",
+  "raw_catalog_problems": []
+}
