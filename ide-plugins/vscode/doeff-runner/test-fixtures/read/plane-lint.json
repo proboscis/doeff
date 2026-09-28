@@ -1,0 +1,1194 @@
+{
+ "version": 2,
+ "linter": {
+  "version": "0.2.0",
+  "commit": "fixture"
+ },
+ "root": "/repo",
+ "layers": [],
+ "semantic": null,
+ "architecture": null,
+ "violations": [],
+ "signatures": [
+  {
+   "kind": "defk",
+   "name": "fetch-row",
+   "path": "/repo/pkg/plane.hy",
+   "range": {
+    "start": {
+     "line": 12,
+     "character": 6
+    },
+    "end": {
+     "line": 12,
+     "character": 15
+    }
+   },
+   "full_range": {
+    "start": {
+     "line": 12,
+     "character": 0
+    },
+    "end": {
+     "line": 17,
+     "character": 6
+    }
+   },
+   "contract_range": {
+    "start": {
+     "line": 13,
+     "character": 2
+    },
+    "end": {
+     "line": 14,
+     "character": 84
+    }
+   },
+   "params": [
+    {
+     "name": "key",
+     "type": {
+      "kind": "name",
+      "name": "str",
+      "definition": null
+     }
+    }
+   ],
+   "answer": {
+    "kind": "name",
+    "name": "Row",
+    "definition": {
+     "path": "/repo/pkg/plane.hy",
+     "range": {
+      "start": {
+       "line": 6,
+       "character": 11
+      },
+      "end": {
+       "line": 6,
+       "character": 14
+      }
+     }
+    }
+   },
+   "absent": false,
+   "raises": [],
+   "effects": {
+    "declared": [
+     {
+      "name": "ReadInput",
+      "definition": null,
+      "answer": null,
+      "absent": [],
+      "failure": []
+     }
+    ],
+    "inferred": [
+     {
+      "name": "ReadInput",
+      "definition": null,
+      "answer": null,
+      "absent": [],
+      "failure": []
+     }
+    ],
+    "complete": true
+   },
+   "tags": {
+    "context": "messaging",
+    "owner": "input",
+    "role": "program"
+   }
+  },
+  {
+   "kind": "deff",
+   "name": "row-text",
+   "path": "/repo/pkg/plane.hy",
+   "range": {
+    "start": {
+     "line": 20,
+     "character": 6
+    },
+    "end": {
+     "line": 20,
+     "character": 14
+    }
+   },
+   "full_range": {
+    "start": {
+     "line": 20,
+     "character": 0
+    },
+    "end": {
+     "line": 23,
+     "character": 11
+    }
+   },
+   "contract_range": {
+    "start": {
+     "line": 21,
+     "character": 2
+    },
+    "end": {
+     "line": 21,
+     "character": 86
+    }
+   },
+   "params": [
+    {
+     "name": "row",
+     "type": {
+      "kind": "name",
+      "name": "Row",
+      "definition": {
+       "path": "/repo/pkg/plane.hy",
+       "range": {
+        "start": {
+         "line": 6,
+         "character": 11
+        },
+        "end": {
+         "line": 6,
+         "character": 14
+        }
+       }
+      }
+     }
+    }
+   ],
+   "answer": {
+    "kind": "name",
+    "name": "str",
+    "definition": null
+   },
+   "absent": false,
+   "raises": [],
+   "effects": {
+    "declared": null,
+    "inferred": [],
+    "complete": true
+   },
+   "tags": {
+    "context": "messaging",
+    "role": "judgment"
+   }
+  },
+  {
+   "kind": "defk",
+   "name": "shout",
+   "path": "/repo/pkg/plane.hy",
+   "range": {
+    "start": {
+     "line": 26,
+     "character": 6
+    },
+    "end": {
+     "line": 26,
+     "character": 11
+    }
+   },
+   "full_range": {
+    "start": {
+     "line": 26,
+     "character": 0
+    },
+    "end": {
+     "line": 31,
+     "character": 26
+    }
+   },
+   "contract_range": {
+    "start": {
+     "line": 27,
+     "character": 2
+    },
+    "end": {
+     "line": 28,
+     "character": 83
+    }
+   },
+   "params": [
+    {
+     "name": "key",
+     "type": {
+      "kind": "name",
+      "name": "str",
+      "definition": null
+     }
+    }
+   ],
+   "answer": {
+    "kind": "name",
+    "name": "str",
+    "definition": null
+   },
+   "absent": false,
+   "raises": [],
+   "effects": {
+    "declared": [
+     {
+      "name": "ReadInput",
+      "definition": null,
+      "answer": null,
+      "absent": [],
+      "failure": []
+     }
+    ],
+    "inferred": [
+     {
+      "name": "ReadInput",
+      "definition": null,
+      "answer": null,
+      "absent": [],
+      "failure": []
+     }
+    ],
+    "complete": true
+   },
+   "tags": {
+    "context": "screen",
+    "owner": "screen",
+    "role": "judgment"
+   }
+  }
+ ],
+ "bindings": [
+  {
+   "form": "val",
+   "name": "LIMIT",
+   "path": "/repo/pkg/plane.hy",
+   "range": {
+    "start": {
+     "line": 3,
+     "character": 5
+    },
+    "end": {
+     "line": 3,
+     "character": 10
+    }
+   },
+   "form_range": {
+    "start": {
+     "line": 3,
+     "character": 0
+    },
+    "end": {
+     "line": 3,
+     "character": 13
+    }
+   },
+   "head_range": {
+    "start": {
+     "line": 3,
+     "character": 1
+    },
+    "end": {
+     "line": 3,
+     "character": 4
+    }
+   },
+   "annotation_range": null,
+   "value_range": {
+    "start": {
+     "line": 3,
+     "character": 11
+    },
+    "end": {
+     "line": 3,
+     "character": 12
+    }
+   },
+   "type": {
+    "kind": "name",
+    "name": "int",
+    "definition": null
+   },
+   "origin": "literal",
+   "absent": false,
+   "raises": []
+  },
+  {
+   "form": "<-",
+   "name": "row",
+   "path": "/repo/pkg/plane.hy",
+   "range": {
+    "start": {
+     "line": 16,
+     "character": 6
+    },
+    "end": {
+     "line": 16,
+     "character": 9
+    }
+   },
+   "form_range": {
+    "start": {
+     "line": 16,
+     "character": 2
+    },
+    "end": {
+     "line": 16,
+     "character": 30
+    }
+   },
+   "head_range": {
+    "start": {
+     "line": 16,
+     "character": 3
+    },
+    "end": {
+     "line": 16,
+     "character": 5
+    }
+   },
+   "annotation_range": {
+    "start": {
+     "line": 16,
+     "character": 10
+    },
+    "end": {
+     "line": 16,
+     "character": 13
+    }
+   },
+   "value_range": {
+    "start": {
+     "line": 16,
+     "character": 14
+    },
+    "end": {
+     "line": 16,
+     "character": 29
+    }
+   },
+   "type": {
+    "kind": "name",
+    "name": "Row",
+    "definition": {
+     "path": "/repo/pkg/plane.hy",
+     "range": {
+      "start": {
+       "line": 6,
+       "character": 11
+      },
+      "end": {
+       "line": 6,
+       "character": 14
+      }
+     }
+    }
+   },
+   "origin": "annotation",
+   "absent": false,
+   "raises": []
+  },
+  {
+   "form": "<-",
+   "name": "row",
+   "path": "/repo/pkg/plane.hy",
+   "range": {
+    "start": {
+     "line": 30,
+     "character": 6
+    },
+    "end": {
+     "line": 30,
+     "character": 9
+    }
+   },
+   "form_range": {
+    "start": {
+     "line": 30,
+     "character": 2
+    },
+    "end": {
+     "line": 30,
+     "character": 30
+    }
+   },
+   "head_range": {
+    "start": {
+     "line": 30,
+     "character": 3
+    },
+    "end": {
+     "line": 30,
+     "character": 5
+    }
+   },
+   "annotation_range": {
+    "start": {
+     "line": 30,
+     "character": 10
+    },
+    "end": {
+     "line": 30,
+     "character": 13
+    }
+   },
+   "value_range": {
+    "start": {
+     "line": 30,
+     "character": 14
+    },
+    "end": {
+     "line": 30,
+     "character": 29
+    }
+   },
+   "type": {
+    "kind": "name",
+    "name": "Row",
+    "definition": {
+     "path": "/repo/pkg/plane.hy",
+     "range": {
+      "start": {
+       "line": 6,
+       "character": 11
+      },
+      "end": {
+       "line": 6,
+       "character": 14
+      }
+     }
+    }
+   },
+   "origin": "annotation",
+   "absent": false,
+   "raises": []
+  }
+ ],
+ "rewrites": [
+  {
+   "kind": "call",
+   "path": "/repo/pkg/plane.hy",
+   "range": {
+    "start": {
+     "line": 30,
+     "character": 14
+    },
+    "end": {
+     "line": 30,
+     "character": 29
+    }
+   },
+   "original": "(fetch-row key)",
+   "text": "fetch-row(key)",
+   "edits": [
+    {
+     "range": {
+      "start": {
+       "line": 30,
+       "character": 14
+      },
+      "end": {
+       "line": 30,
+       "character": 15
+      }
+     },
+     "text": "",
+     "effect": null
+    },
+    {
+     "range": {
+      "start": {
+       "line": 30,
+       "character": 24
+      },
+      "end": {
+       "line": 30,
+       "character": 25
+      }
+     },
+     "text": "(",
+     "effect": null
+    }
+   ],
+   "parts": [
+    {
+     "range": {
+      "start": {
+       "line": 30,
+       "character": 15
+      },
+      "end": {
+       "line": 30,
+       "character": 24
+      }
+     },
+     "name": "fetch-row",
+     "role": "defk",
+     "definition": {
+      "path": "/repo/pkg/plane.hy",
+      "range": {
+       "start": {
+        "line": 12,
+        "character": 6
+       },
+       "end": {
+        "line": 12,
+        "character": 15
+       }
+      }
+     },
+     "answer": {
+      "kind": "name",
+      "name": "Row",
+      "definition": {
+       "path": "/repo/pkg/plane.hy",
+       "range": {
+        "start": {
+         "line": 6,
+         "character": 11
+        },
+        "end": {
+         "line": 6,
+         "character": 14
+        }
+       }
+      }
+     }
+    }
+   ],
+   "parent": null
+  },
+  {
+   "kind": "method",
+   "path": "/repo/pkg/plane.hy",
+   "range": {
+    "start": {
+     "line": 31,
+     "character": 2
+    },
+    "end": {
+     "line": 31,
+     "character": 25
+    }
+   },
+   "original": "(.upper (row-text row))",
+   "text": "row-text(row).upper()",
+   "edits": [
+    {
+     "range": {
+      "start": {
+       "line": 31,
+       "character": 2
+      },
+      "end": {
+       "line": 31,
+       "character": 10
+      }
+     },
+     "text": "",
+     "effect": null
+    },
+    {
+     "range": {
+      "start": {
+       "line": 31,
+       "character": 24
+      },
+      "end": {
+       "line": 31,
+       "character": 24
+      }
+     },
+     "text": ".upper(",
+     "effect": null
+    }
+   ],
+   "parts": [
+    {
+     "range": {
+      "start": {
+       "line": 31,
+       "character": 3
+      },
+      "end": {
+       "line": 31,
+       "character": 9
+      }
+     },
+     "name": "upper",
+     "role": "method",
+     "definition": null,
+     "answer": null
+    }
+   ],
+   "parent": null
+  },
+  {
+   "kind": "call",
+   "path": "/repo/pkg/plane.hy",
+   "range": {
+    "start": {
+     "line": 31,
+     "character": 10
+    },
+    "end": {
+     "line": 31,
+     "character": 24
+    }
+   },
+   "original": "(row-text row)",
+   "text": "row-text(row).upper(",
+   "edits": [
+    {
+     "range": {
+      "start": {
+       "line": 31,
+       "character": 10
+      },
+      "end": {
+       "line": 31,
+       "character": 11
+      }
+     },
+     "text": "",
+     "effect": null
+    },
+    {
+     "range": {
+      "start": {
+       "line": 31,
+       "character": 19
+      },
+      "end": {
+       "line": 31,
+       "character": 20
+      }
+     },
+     "text": "(",
+     "effect": null
+    }
+   ],
+   "parts": [
+    {
+     "range": {
+      "start": {
+       "line": 31,
+       "character": 11
+      },
+      "end": {
+       "line": 31,
+       "character": 19
+      }
+     },
+     "name": "row-text",
+     "role": "deff",
+     "definition": {
+      "path": "/repo/pkg/plane.hy",
+      "range": {
+       "start": {
+        "line": 20,
+        "character": 6
+       },
+       "end": {
+        "line": 20,
+        "character": 14
+       }
+      }
+     },
+     "answer": {
+      "kind": "name",
+      "name": "str",
+      "definition": null
+     }
+    }
+   ],
+   "parent": 1
+  }
+ ],
+ "modules": [],
+ "rules": [
+  {
+   "rule": "DOEFF001",
+   "adr": null,
+   "statement": "A function parameter or variable shadows a Python builtin (e.g., `list`, `dict`, `id`).",
+   "wired": true,
+   "title": "変数名が builtin を隠す",
+   "family": "python"
+  },
+  {
+   "rule": "DOEFF002",
+   "adr": null,
+   "statement": "A mutable class attribute (list, dict, set) doesn't follow the `_mut_` naming convention.",
+   "wired": true,
+   "title": "可変な属性名に _mut_ が無い",
+   "family": "python"
+  },
+  {
+   "rule": "DOEFF003",
+   "adr": null,
+   "statement": "A class has too many mutable attributes, indicating potential design issues.",
+   "wired": true,
+   "title": "可変な属性が多すぎる",
+   "family": "python"
+  },
+  {
+   "rule": "DOEFF004",
+   "adr": null,
+   "statement": "Direct access to `os.environ` breaks dependency injection principles.",
+   "wired": true,
+   "title": "os.environ を直に読む",
+   "family": "python"
+  },
+  {
+   "rule": "DOEFF005",
+   "adr": null,
+   "statement": "Setter methods (set_*, @property.setter) violate immutability principles.",
+   "wired": true,
+   "title": "setter method がある",
+   "family": "python"
+  },
+  {
+   "rule": "DOEFF006",
+   "adr": null,
+   "statement": "Returning raw tuples reduces code readability and type safety.",
+   "wired": true,
+   "title": "生の tuple を返している",
+   "family": "python"
+  },
+  {
+   "rule": "DOEFF007",
+   "adr": null,
+   "statement": "Mutating function arguments (list.append, dict.update) causes side effects.",
+   "wired": true,
+   "title": "引数の可変な値を書き換える",
+   "family": "python"
+  },
+  {
+   "rule": "DOEFF008",
+   "adr": null,
+   "statement": "Mutating dataclass attributes after creation breaks immutability.",
+   "wired": true,
+   "title": "dataclass の属性を書き換える",
+   "family": "python"
+  },
+  {
+   "rule": "DOEFF009",
+   "adr": null,
+   "statement": "Functions without return type annotations reduce code clarity and type safety.",
+   "wired": true,
+   "title": "返り値の型注釈が無い",
+   "family": "python"
+  },
+  {
+   "rule": "DOEFF010",
+   "adr": null,
+   "statement": "Test files should be in a `tests/` directory, not mixed with source code.",
+   "wired": true,
+   "title": "テストが tests/ の外にある",
+   "family": "python"
+  },
+  {
+   "rule": "DOEFF011",
+   "adr": null,
+   "statement": "Functions and dataclasses use flag/mode arguments instead of callbacks or protocol objects.",
+   "wired": true,
+   "title": "flag・mode の引数を使っている",
+   "family": "python"
+  },
+  {
+   "rule": "DOEFF012",
+   "adr": null,
+   "statement": "Empty list initialization followed by for-loop append obscures the data transformation pipeline.",
+   "wired": true,
+   "title": "空リストへ append するループ",
+   "family": "python"
+  },
+  {
+   "rule": "DOEFF013",
+   "adr": null,
+   "statement": "Optional[X] or X | None type annotations should use doeff's Maybe monad for explicit null handling.",
+   "wired": true,
+   "title": "Maybe でなく Optional を使う",
+   "family": "python"
+  },
+  {
+   "rule": "DOEFF014",
+   "adr": null,
+   "statement": "Using try-except blocks hides error handling flow. Use doeff's error handling effects instead.",
+   "wired": true,
+   "title": "try-except を使っている",
+   "family": "python"
+  },
+  {
+   "rule": "DOEFF015",
+   "adr": null,
+   "statement": "Program entrypoints should not be created by zero-argument factory functions.",
+   "wired": true,
+   "title": "引数無しの Program の入口",
+   "family": "python"
+  },
+  {
+   "rule": "DOEFF016",
+   "adr": null,
+   "statement": "Relative imports make code harder to understand and refactor.",
+   "wired": true,
+   "title": "相対 import を使っている",
+   "family": "python"
+  },
+  {
+   "rule": "DOEFF017",
+   "adr": null,
+   "statement": "@do functions should accept type T, not Program[T]. Program[T] prevents auto-unwrapping.",
+   "wired": true,
+   "title": "引数の型が Program[T]",
+   "family": "python"
+  },
+  {
+   "rule": "DOEFF018",
+   "adr": null,
+   "statement": "Using `yield Ask(...)` inside try blocks can cause unexpected behavior.",
+   "wired": true,
+   "title": "try の中で Ask を呼ぶ",
+   "family": "python"
+  },
+  {
+   "rule": "DOEFF019",
+   "adr": null,
+   "statement": "Using fallback values with Ask defeats the purpose of dependency injection.",
+   "wired": true,
+   "title": "Ask に既定値を付けている",
+   "family": "python"
+  },
+  {
+   "rule": "DOEFF020",
+   "adr": null,
+   "statement": "Program type variables should use 'p_' prefix for consistency.",
+   "wired": true,
+   "title": "Program の変数名が p_ で始まらない",
+   "family": "python"
+  },
+  {
+   "rule": "DOEFF021",
+   "adr": null,
+   "statement": "This project defaults to exporting everything from modules.",
+   "wired": true,
+   "title": "__all__ を宣言している",
+   "family": "python"
+  },
+  {
+   "rule": "DOEFF022",
+   "adr": null,
+   "statement": "Functions should use @do decorator to enable structured effects and logging with `yield slog`.",
+   "wired": true,
+   "title": "@do を付けていない関数",
+   "family": "python"
+  },
+  {
+   "rule": "DOEFF023",
+   "adr": null,
+   "statement": "@do functions used to create Program entrypoints must have `# doeff: pipeline` marker.",
+   "wired": true,
+   "title": "pipeline の目印が無い",
+   "family": "python"
+  },
+  {
+   "rule": "DOEFF024",
+   "adr": null,
+   "statement": "Using `recover()` with `ask()` defeats dependency injection.",
+   "wired": true,
+   "title": "recover と ask を組み合わせる",
+   "family": "python"
+  },
+  {
+   "rule": "DOEFF030",
+   "adr": null,
+   "statement": "Results of `yield ask(...)` must be assigned to typed variables, and callable injections must use Protocol keys with @impl providers.",
+   "wired": true,
+   "title": "ask の結果に型注釈が無い",
+   "family": "python"
+  },
+  {
+   "rule": "DOEFF031",
+   "adr": null,
+   "statement": "Avoid creating Program entrypoints by calling @do wrappers that only forward args to a single yielded call and return it.",
+   "wired": true,
+   "title": "@do の入口が素通しの wrapper",
+   "family": "python"
+  },
+  {
+   "rule": "DOEFF100",
+   "adr": null,
+   "statement": "設定(pyproject の [tool.doeff-linter]・architecture.hy)の鍵と規則の ID は、この linter が知っている物だけ — 知らない物はその鍵だけを読まずに残りの規則を走らせ、知らせる(linter が設定より古いか、書き違い)",
+   "wired": true,
+   "title": "設定の知らない鍵",
+   "family": "place"
+  },
+  {
+   "rule": "DOEFF128",
+   "adr": null,
+   "statement": "Hy の file は読み取り器が最後まで読める(読めない file は違反が欠けるので、有効な規則の一覧に関わらず error で知らせる)",
+   "wired": true,
+   "title": "Hy の file を読めない",
+   "family": "place"
+  },
+  {
+   "rule": "DOEFF101",
+   "adr": null,
+   "statement": "層の module は、設定で許した層の module だけを import する(repo の外の import は数えない)",
+   "wired": false,
+   "title": "層の向きに逆らう import",
+   "family": "layer"
+  },
+  {
+   "rule": "DOEFF102",
+   "adr": null,
+   "statement": "層の module は、その層に禁じた module(I/O の module など)を直に import しない",
+   "wired": false,
+   "title": "層に禁じた module の import",
+   "family": "layer"
+  },
+  {
+   "rule": "DOEFF103",
+   "adr": null,
+   "statement": "型だけの層の module は関数と handler を定めない",
+   "wired": false,
+   "title": "型だけの層に関数がある",
+   "family": "layer"
+  },
+  {
+   "rule": "DOEFF104",
+   "adr": null,
+   "statement": "層の module の定義は、定義の :tags か module の頭のタグで文脈(context)と役(role)を名乗る",
+   "wired": false,
+   "title": "文脈と役のタグが無い",
+   "family": "tags"
+  },
+  {
+   "rule": "DOEFF105",
+   "adr": null,
+   "statement": "タグの role は、その module の層で許された role の 1 つで、context も名乗る",
+   "wired": false,
+   "title": "層に合わない role",
+   "family": "tags"
+  },
+  {
+   "rule": "DOEFF106",
+   "adr": null,
+   "statement": "生の副作用(http・時刻・乱数・file・process・環境変数 …)に直に触る定義は、設定で許した層にだけ置く",
+   "wired": false,
+   "title": "許されない層で生の副作用",
+   "family": "raw"
+  },
+  {
+   "rule": "DOEFF107",
+   "adr": null,
+   "statement": "呼ぶ定義を通して生の副作用に届く定義の知らせ(違反ではなく事実)",
+   "wired": false,
+   "title": "呼んだ先で生の副作用に届く",
+   "family": "raw"
+  },
+  {
+   "rule": "DOEFF108",
+   "adr": null,
+   "statement": "業務の file・handler・組み立ての関数の名に環境の語を付けない",
+   "wired": false,
+   "title": "業務の名に環境の語",
+   "family": "naming"
+  },
+  {
+   "rule": "DOEFF109",
+   "adr": null,
+   "statement": "ある service の判断と翻訳の層(設定の guarded_layers)は、別の service の同じ層を読まない。読んでよいのは別の service の open_layers と共有の置き場だけ",
+   "wired": false,
+   "title": "別の service の内側を読む",
+   "family": "place"
+  },
+  {
+   "rule": "DOEFF110",
+   "adr": null,
+   "statement": "Hy の定義は defn / defn/a ではなく defk で書く(マクロの展開の時の関数と、設定で除いた置き場は除く)",
+   "wired": false,
+   "title": "defn を使っている",
+   "family": "definition"
+  },
+  {
+   "rule": "DOEFF111",
+   "adr": null,
+   "statement": "deff の定義の行か直前の行に、defk にできない理由の註を書く",
+   "wired": false,
+   "title": "deff に理由の註が無い",
+   "family": "definition"
+  },
+  {
+   "rule": "DOEFF112",
+   "adr": null,
+   "statement": "defk・deff・defp・defhandler・defeffect は契約の辞書の :tags で必須の鍵(設定)を名乗る",
+   "wired": false,
+   "title": "定義の :tags が足りない",
+   "family": "definition"
+  },
+  {
+   "rule": "DOEFF113",
+   "adr": null,
+   "statement": "タグの :context は、その file が置かれた service の名と合う(知らせ)",
+   "wired": false,
+   "title": ":context が service と違う",
+   "family": "tags"
+  },
+  {
+   "rule": "DOEFF114",
+   "adr": null,
+   "statement": "root の下の module は、architecture.hy で宣言した service の層・shared・foundation・legacy のどれかに置く",
+   "wired": false,
+   "title": "宣言に無い置き場所の module",
+   "family": "place"
+  },
+  {
+   "rule": "DOEFF115",
+   "adr": null,
+   "statement": "root の下の dir は宣言した service か shared・foundation・legacy で、service の中の dir は宣言した層",
+   "wired": false,
+   "title": "宣言に無い dir",
+   "family": "place"
+  },
+  {
+   "rule": "DOEFF116",
+   "adr": null,
+   "statement": "service A が読んでよいのは、A の :depends-on に在る service の、A の module の層が読める層(その層の :dependency-layers — 組み立ての層は intent と protocol —、無ければ :open-layers の intent)と shared だけ",
+   "wired": false,
+   "title": "宣言に無い service への依存",
+   "family": "place"
+  },
+  {
+   "rule": "DOEFF117",
+   "adr": null,
+   "statement": "宣言した依存(:depends-on)を、その service のどの module も読んでいない(知らせ)",
+   "wired": false,
+   "title": "使っていない依存",
+   "family": "place"
+  },
+  {
+   "rule": "DOEFF118",
+   "adr": null,
+   "statement": "検の置き場(設定の test_paths)の検は deftest で書く — 名が test- / test_ で始まる defn・deff・defk・fn の束縛を置かない",
+   "wired": false,
+   "title": "deftest でないテスト",
+   "family": "definition"
+  },
+  {
+   "rule": "DOEFF119",
+   "adr": null,
+   "statement": "業務の code の defclass は値の class だけ — method か欄の初期値が生の副作用に触る class(error)と、method が self の欄を書き換える class(warning)を書かない。欄だけの class は defrecord を勧める(info)。例外・Enum・Protocol・外の library の基底を継ぐ class は許す。名前では判じない",
+   "wired": false,
+   "title": "処理を持つ class",
+   "family": "class"
+  },
+  {
+   "rule": "DOEFF120",
+   "adr": null,
+   "statement": "JsonValue・JSONValue・JsonObject・JSONObject(素の dict・list・str … を名で包んだだけの型)を使ってよいのは、汎用の解き手(doeff_hy.wire・doeff_records.wire)と、architecture.hy の :wire-modules に挙げた foundation の層の送受信の module だけ。ほかの module(protocol・intent・core …)は、解き手が形を確かめた型のある値だけを見る",
+   "wired": false,
+   "title": "送受信の外で JsonValue",
+   "family": "wire"
+  },
+  {
+   "rule": "DOEFF121",
+   "adr": null,
+   "statement": "判断の層(設定の smells.shape_check_layers)の定義は、文字列の鍵の (.get x \"欄\") とその欄への isinstance で入力の形を検めない",
+   "wired": false,
+   "title": "判断の層で入力の形を調べる",
+   "family": "smell"
+  },
+  {
+   "rule": "DOEFF122",
+   "adr": null,
+   "statement": "match の腕が、失敗の型(defrecord の :failure True・defeffect の :failure / :absent の宣言)を受けて、受けた値かそれを包み直した値を return するだけにしない",
+   "wired": false,
+   "title": "失敗を受けて返し直すだけ",
+   "family": "smell"
+  },
+  {
+   "rule": "DOEFF123",
+   "adr": null,
+   "statement": "(<- x T (f …)) の直後に (return x) を置き、x を他で使わない形にしない",
+   "wired": false,
+   "title": "<- の直後に return するだけ",
+   "family": "smell"
+  },
+  {
+   "rule": "DOEFF124",
+   "adr": null,
+   "statement": "同じ値の 2 つ以上の欄を + か f 文字列で 1 本の文字列につながない",
+   "wired": false,
+   "title": "欄をつないで 1 本の文字列にする",
+   "family": "smell"
+  },
+  {
+   "rule": "DOEFF125",
+   "adr": null,
+   "statement": "for / while の中で (:= xs (+ xs #(…))) と蓄えを毎回作り直さない",
+   "wired": false,
+   "title": "ループの中で蓄えを作り直す",
+   "family": "smell"
+  },
+  {
+   "rule": "DOEFF126",
+   "adr": null,
+   "statement": "defk の定義は Program として渡す所((<- …) の右辺・(! …)・(return …)・Program を受ける呼びの引数)だけで呼ぶ — 素で呼ぶと答えではなく Program が返る",
+   "wired": false,
+   "title": "defk を素で呼んで答えに使う",
+   "family": "definition"
+  },
+  {
+   "rule": "DOEFF127",
+   "adr": null,
+   "statement": "defk の :effects を書いたなら、本体で撃つ呼び((<- …)・(! …))から推論した effect と同じ集合にする — 宣言に無い effect を起こさず、起こさない effect を宣言しない(:effects の無い defk は対象外)",
+   "wired": false,
+   "title": ":effects の宣言が推論と合わない",
+   "family": "definition"
+  },
+  {
+   "rule": "DOEFF129",
+   "adr": null,
+   "statement": "役 judgment の defk は effect を起こさない — 本体で撃つ呼び((<- …)・(! …))を defk の中まで辿って推論する(:effects を書いていない defk にも当たる)",
+   "wired": false,
+   "title": "判断(judgment)が effect を起こす",
+   "family": "definition"
+  },
+  {
+   "rule": "DOEFF201",
+   "adr": null,
+   "statement": "翻訳の層の定義は、要求を相手の話し方へ言い換えるだけで、業務の判断をしない(Jev の判定・warning か info)",
+   "wired": false,
+   "title": "翻訳の層で業務の判断(Jev)",
+   "family": "jev"
+  },
+  {
+   "rule": "DOEFF202",
+   "adr": null,
+   "statement": "判断の層の定義は、通信の手段(URL・HTTP・JSON の wire・SQL)を知らない(Jev の判定・warning か info)",
+   "wired": false,
+   "title": "判断の層が通信の手段を知る(Jev)",
+   "family": "jev"
+  },
+  {
+   "rule": "DOEFF203",
+   "adr": null,
+   "statement": "deff の理由の註の文は、architecture.hy が受け入れる理由(外の library が素の関数を呼ぶ等)に当たる(Jev の判定・warning か info)",
+   "wired": false,
+   "title": "deff の理由が合わない(Jev)",
+   "family": "jev"
+  },
+  {
+   "rule": "DOEFF204",
+   "adr": null,
+   "statement": "DOEFF119 が何も出さない、処理を持つ method のある class は値の class(欄から計算するだけ)である(Jev の判定 — 外の世界の窓口か状態を持つ物なら warning か info)",
+   "wired": false,
+   "title": "class が外の窓口か状態を持つ(Jev)",
+   "family": "class"
+  },
+  {
+   "rule": "DOEFF205",
+   "adr": null,
+   "statement": "役が judgment / program の定義は、入力の形の検めと業務の判断を混ぜない(Jev の判定 — warning か info)",
+   "wired": false,
+   "title": "入力の形の確認と判断が混ざる(Jev)",
+   "family": "smell"
+  }
+ ],
+ "errors": []
+}
