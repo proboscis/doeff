@@ -101,9 +101,10 @@
 (import doeff_cluster.semaphore_model [drop-holders])
 
 (deftest test-release-leases-drops-only-the-finished-process-holders-on-an-old-coordinator
-  ;; 盤の semaphore の行から、token が「<worker>/<世代の名>/」で始まる担い手だけを外す(他の process の lease は残す)。
-  (setv board {"semaphore/app-writer" {"permits" 1 "holders" {"zeus/1-old/ab12/1" 99 "zeus/2-new/cd34/1" 88}}
-               "semaphore/other" {"permits" 1 "holders" {"atlas/1-old/ee/1" 77}}}
+  ;; 盤の semaphore の行から、token が子の名乗った担い手の頭「<job>/<世代の名>/」(semaphore_model.lease-holder)で始まる担い手だけを
+  ;; 外す(他の process の lease は残す)。
+  (setv board {"semaphore/app-writer" {"permits" 1 "holders" {"app-writer/1-old/1" 99 "app-writer/2-new/1" 88}}
+               "semaphore/other" {"permits" 1 "holders" {"other-job/1-old/1" 77}}}
         puts [])
   (defn #^ httpx.Response handle [#^ httpx.Request request]
     (cond
@@ -117,8 +118,8 @@
                    (do (setv (get board key) (get body "value")) (httpx.Response 200 :json {}))
                    (httpx.Response 409 :json {})))))
   (setv link (CoordinatorLink "http://coord" "zeus" #() 1 60000 :transport (httpx.MockTransport handle)))
-  (release-leases link "1-old")
-  (assert (= (get board "semaphore/app-writer" "holders") {"zeus/2-new/cd34/1" 88}))
-  (assert (= (get board "semaphore/other" "holders") {"atlas/1-old/ee/1" 77}) "別の worker の同じ名の世代は触らない")
+  (release-leases link "app-writer" "1-old")
+  (assert (= (get board "semaphore/app-writer" "holders") {"app-writer/2-new/1" 88}))
+  (assert (= (get board "semaphore/other" "holders") {"other-job/1-old/1" 77}) "別の job の同じ名の世代は触らない")
   (assert (= puts ["semaphore/app-writer"]))
   (assert (is (drop-holders {"permits" 1 "holders" {"x/1/a" 1}} "y/") None)))
