@@ -30,7 +30,8 @@
     "defadr_doeff_hy_005_typecheck_and_record_fences.hy",
     "defadr_doeff_hy_006_val_var_lazy.hy",
     "defadr_doeff_hy_007_def_macros_over_classes.hy",
-    "defadr_doeff_preset_001_retirement.hy"
+    "defadr_doeff_preset_001_retirement.hy",
+    "defadr_doeff_runner_001_reading_plane.hy"
   ],
   "semgrep_rules": [
     "adr0001-d1-agentd-only-worker-route",
@@ -165,6 +166,8 @@
     "doeff-public-api-no-subpackage-imports",
     "doeff-public-docs-no-subpackage-imports",
     "doeff-pyvm-no-enum-catchall-arms",
+    "doeff-runner-reading-plane-is-read-only",
+    "doeff-runner-reading-plane-reads-only-the-index",
     "doeff-scheduler-spawn-must-capture-boundaries",
     "doeff-task-join-deprecated",
     "doeff-to-generator-must-wrap-doeff-generator",
@@ -444,7 +447,10 @@
     "ADR-DOE-HY-007 value-classes-are-allowed",
     "ADR-DOE-HY-007 world-touching-classes-become-foundation-handlers",
     "ADR-DOE-PRESET-001 display-default-owned-by-slog-handler",
-    "ADR-DOE-PRESET-001 preset-stays-retired"
+    "ADR-DOE-PRESET-001 preset-stays-retired",
+    "ADR-DOE-RUNNER-001 reading-plane-is-read-only",
+    "ADR-DOE-RUNNER-001 reading-plane-labels-come-from-one-table",
+    "ADR-DOE-RUNNER-001 reading-plane-reads-only-the-index"
   ],
   "adr_deftest_enforcements": [
     "ADR-DOE-ADR-001 test-adr-doe-adr-001-gate-test-spawns-no-nested-collection",
@@ -578,6 +584,8 @@
     "ADR-DOE-ENFORCE-002 p0-scheduler-spawn-must-capture-boundaries",
     "ADR-DOE-ENFORCE-002 p0-vm-core-no-wildcard-unreachable-on-match",
     "ADR-DOE-ENFORCE-002 p0-vm-no-raw-runtime-or-type-throw",
-    "ADR-DOE-PRESET-001 no-doeff-preset-import"
+    "ADR-DOE-PRESET-001 no-doeff-preset-import",
+    "ADR-DOE-RUNNER-001 doeff-runner-reading-plane-is-read-only",
+    "ADR-DOE-RUNNER-001 doeff-runner-reading-plane-reads-only-the-index"
   ]
 }

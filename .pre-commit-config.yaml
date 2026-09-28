@@ -22,6 +22,15 @@ repos:
         pass_filenames: true
         exclude: *semgrep-fixtures
 
+      # ADR-DOE-RUNNER-001 R2 / R3: 読む面(doeff-runner の src/read/)の TypeScript も同じ規則の file で検める。
+      # 規則の paths.include が src/read/ だけに当たるので、ほかの TypeScript は渡さない。
+      - id: semgrep-reading-plane
+        name: semgrep reading plane rules
+        entry: *semgrep-entry
+        language: system
+        files: '^ide-plugins/vscode/doeff-runner/src/read/.*\.ts$'
+        pass_filenames: true
+
       - id: doeff-linter
         name: doeff-linter
         entry: doeff-linter --no-log
