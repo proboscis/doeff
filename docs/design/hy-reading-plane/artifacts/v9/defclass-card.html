@@ -1,0 +1,134 @@
+<!doctype html><html lang="ja" style="background:#1b1d21;color:#d6d8dc"><meta charset="utf-8"><title>実体のカード v5 — ラベルは args / return type などの英語の技術用語</title>
+<style>
+html,body{background:#1b1d21;color:#d6d8dc}
+body{font-family:-apple-system,"Hiragino Sans",sans-serif;margin:0;display:grid;grid-template-columns:260px minmax(0,1fr);min-height:100vh}
+a{color:#8fc1ff;text-decoration:none}a:hover{text-decoration:underline}
+/* 左: 軸 */
+.axes{background:#15171a;border-right:1px solid #2c3036;padding:16px 14px;font-size:12.5px}
+.axes h2{font-size:11px;letter-spacing:.08em;color:#8a9099;margin:14px 0 6px;text-transform:uppercase}
+.axes h2:first-child{margin-top:0}
+.fac{display:flex;flex-wrap:wrap;gap:5px}
+.fac span{border:1px solid #3a3f47;border-radius:12px;padding:1px 8px;color:#b8bec7;background:#1f2227}
+.fac span.on{background:#2f4a66;border-color:#4a76a8;color:#dfeeff}
+.fac span small{color:#7d858f;margin-left:4px}
+.hint{color:#7d858f;font-size:11px;line-height:1.6;margin-top:18px}
+/* 右: カード */
+.main{padding:18px 26px 40px;max-width:1240px}
+.crumb{font-size:12px;color:#8a9099;margin-bottom:10px}
+.crumb b{color:#c9ced5;font-weight:600}
+.card{background:#22252a;border:1px solid #33383f;border-radius:10px;margin:0 0 18px;box-shadow:0 1px 0 #000}
+.hd{display:flex;align-items:center;gap:10px;padding:12px 16px;border-bottom:1px solid #33383f;flex-wrap:wrap}
+.kind{font-size:10.5px;font-weight:700;letter-spacing:.06em;color:#1b1d21;background:#e2c46a;border-radius:4px;padding:2px 6px}
+.kind.eff{background:#8fd3ff}.kind.rec{background:#b9e39a}.kind.hdl{background:#f0a8a8}
+.name{font:600 17px Menlo,monospace;color:#f2e6a8}
+.chips{display:flex;gap:6px;flex-wrap:wrap;margin-left:auto}
+.chip{font-size:11px;border-radius:12px;padding:2px 9px;background:#3b3220;color:#f0c674;border:1px solid #5a4a25}
+.chip.role{background:#232f3b;color:#9dd0ff;border-color:#2f4a66}
+.sig{display:flex;align-items:center;gap:8px;padding:12px 16px;flex-wrap:wrap;font:13px Menlo,monospace}
+.p{display:inline-flex;align-items:center;gap:6px;background:#1b1d21;border:1px solid #3a3f47;border-radius:6px;padding:4px 8px}
+.p .n{color:#d6d8dc}.p .t{color:#4ec9b0}
+.arrow{color:#8a9099;font-size:16px;margin:0 4px}
+.ret{display:inline-flex;align-items:center;gap:6px;background:#1f2a24;border:1px solid #2f5a45;border-radius:6px;padding:4px 10px;color:#9fe3c0}
+.ret .alt{color:#7d858f}
+.row{display:grid;grid-template-columns:96px minmax(0,1fr);gap:10px;padding:8px 16px;border-top:1px solid #2c3036;font-size:12.5px;align-items:start}
+.row .k{color:#8a9099;padding-top:3px}
+.eff{display:inline-flex;align-items:center;gap:6px;background:#1b1d21;border:1px solid #3a3f47;border-radius:6px;padding:3px 8px;margin:0 6px 4px 0;font:12px Menlo,monospace}
+.eff img{width:14px;height:14px;image-rendering:pixelated}
+.eff .who{color:#7d858f;font:11px -apple-system,"Hiragino Sans",sans-serif}
+.doc{padding:10px 16px;border-top:1px solid #2c3036;color:#c9ced5;font-size:13px;line-height:1.7}
+.body{border-top:1px solid #2c3036;padding:10px 16px 12px;font:12.5px/1.7 Menlo,monospace;overflow-x:auto}
+.body div{white-space:pre;min-height:1.7em}
+.ln{display:inline-block;width:2.6em;color:#555b63;text-align:right;margin-right:1.1em;user-select:none;font-size:11px}
+.b{color:#4ec9b0}.kw{color:#c586c0}.s{color:#ce9178}.c{color:#6a9955}.fx{color:#8fd3ff}.q{color:#7d858f;border:1px dashed #555b63;border-radius:3px;padding:0 3px;font-size:11px}
+.bind{background:#262a31;border-radius:4px;padding:0 4px}
+.ft{display:flex;gap:18px;padding:8px 16px;border-top:1px solid #33383f;font-size:12px;color:#b8bec7;flex-wrap:wrap}
+.ft b{color:#e6e9ee;font-weight:600}
+.srcbar{margin-left:10px;display:flex;gap:6px}
+.btn{font-size:11px;border:1px solid #4a76a8;border-radius:5px;padding:2px 8px;color:#bcd8ff;background:#1f2a3a;cursor:pointer}
+details.src{border-top:1px solid #2c3036}
+details.src summary{list-style:none;display:none}
+details.src[open] pre{margin:0;padding:10px 16px;font:12px/1.6 Menlo,monospace;background:#15171a;color:#c9ced5;white-space:pre;overflow-x:auto}
+.src .h{color:#7d858f;font:11px -apple-system,"Hiragino Sans",sans-serif;padding:6px 16px 0;background:#15171a}
+.loc{margin-left:auto;color:#7d858f;font:11px Menlo,monospace}
+.small{padding:10px 16px;font-size:12px;color:#b8bec7;line-height:1.7}
+.note{color:#b8bec7;font-size:13px;line-height:1.75;max-width:1000px;margin:6px 0 16px}
+.vs{display:grid;grid-template-columns:1fr 1fr;gap:12px;font-size:12px;color:#b8bec7;margin:0 0 18px}
+.vs div{background:#15171a;border:1px solid #2c3036;border-radius:8px;padding:8px 12px;line-height:1.6}
+.vs b{color:#e6e9ee}
+
+/* v4: 1 行に畳む + 出す物の切り替え */
+.bar{display:flex;align-items:center;gap:14px;flex-wrap:wrap;background:#15171a;border:1px solid #2c3036;border-radius:8px;padding:8px 12px;margin:0 0 14px;font-size:12px;color:#b8bec7}
+.bar label{display:inline-flex;align-items:center;gap:4px;cursor:pointer}
+.bar .sep{color:#3a3f47}
+.fold{font-size:11px;border:1px solid #3a3f47;border-radius:5px;padding:2px 7px;color:#b8bec7;background:#1f2227;cursor:pointer;margin-left:6px}
+.line{display:none;align-items:center;gap:10px;padding:8px 16px;font-size:12.5px;flex-wrap:wrap;color:#c9ced5}
+.line .f-sig{font:12px Menlo,monospace}.line .f-sig .t{color:#4ec9b0}.line .f-sig .r{color:#9fe3c0}
+.line .f-eff{display:inline-flex;gap:6px;font:12px Menlo,monospace;color:#8fd3ff}.line .f-eff img{width:12px;height:12px;vertical-align:-1px;image-rendering:pixelated;margin-right:2px}
+.line .f-tags .chip{font-size:10px;padding:1px 7px}
+.line .f-doc{color:#9aa1aa;max-width:520px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.line .f-rel{color:#8a9099}.line .f-loc{color:#6e7681;font:11px Menlo,monospace;margin-left:auto}
+.card.folded > .hd .chips{display:none}
+.card.folded > *:not(.hd):not(.line){display:none}
+.card.folded > .line{display:flex}
+.card.folded{margin-bottom:6px}.card.folded > .hd{padding:6px 16px;border-bottom:none}
+body.hide-sig .f-sig,body.hide-eff .f-eff,body.hide-tags .f-tags,body.hide-doc .f-doc,body.hide-rel .f-rel,body.hide-loc .f-loc{display:none!important}
+</style>
+<body style="background:#1b1d21;color:#d6d8dc;display:block;padding:18px 22px;max-width:1100px">
+<style>
+h2{font:600 12px -apple-system,"Hiragino Sans",sans-serif;letter-spacing:.08em;text-transform:uppercase;color:#8a9099;margin:18px 0 8px}
+h2 small{color:#5f6670;letter-spacing:0;text-transform:none;font-weight:400;margin-left:8px}
+.card{margin:0 0 4px}
+.hd{padding:5px 14px;border-bottom:none}
+.card.open .hd{border-bottom:1px solid #33383f}
+.line{display:flex;gap:12px;align-items:center;flex-wrap:wrap;padding:0 14px 6px;font:12.5px Menlo,monospace;color:#d6d8dc}
+.line .t{color:#4ec9b0}
+.kind.cls{background:#c3b6ff}
+.deco{font-size:10.5px;border-radius:4px;padding:1px 6px;border:1px solid #5a4a8a;color:#c3b6ff;background:#2a2440;font-family:Menlo,monospace}
+.used span{display:inline-block;margin:0 8px 4px 0;color:#bcd8ff}
+.used b{color:#8a9099;font-weight:500;margin-right:4px}
+.p .t i{color:#7d858f;font-style:normal}
+.ft{padding:6px 14px}
+.row .p{justify-self:start}
+.note{color:#7d858f;font-size:12px;line-height:1.7;margin:4px 0 14px}
+</style>
+
+<h2>今(0.6.32)<small>畳んだ形 — 欄の名だけ・型も説明も無い</small></h2>
+<div class="card">
+<div class="hd"><span class="kind cls">defclass</span><span class="name">PlacedVersion</span><span class="fold">▸</span><span class="srcbar"><span class="btn">source</span><span class="btn">open in editor</span></span></div>
+<div class="line"><span>(ref, text, request-id, sent-at, at)</span></div>
+</div>
+<div class="card">
+<div class="hd"><span class="kind cls">defclass</span><span class="name">InputVersions</span><span class="fold">▸</span><span class="srcbar"><span class="btn">source</span><span class="btn">open in editor</span></span></div>
+<div class="line"><span>(placed, ledger, handed)</span></div>
+</div>
+
+<h2>案: defrecord と同じ扱い<small>畳んだ形 — 欄に型・decorator のバッジ・doc の 1 行目(show in line に従う)</small></h2>
+<div class="card">
+<div class="hd"><span class="kind cls">defclass</span><span class="name">PlacedVersion</span><span class="deco">frozen dataclass</span><span class="fold">▸</span><span class="srcbar"><span class="btn">source</span><span class="btn">open in editor</span></span></div>
+<div class="line"><span>(ref: <span class="t">str</span>, text: <span class="t">str</span>, request-id: <span class="t">str | None</span>, sent-at: <span class="t">int</span>, at: <span class="t">int</span>)</span><span style="color:#8a9099">本文の行(表 placed-input)の版 1 つ</span></div>
+</div>
+<div class="card">
+<div class="hd"><span class="kind cls">defclass</span><span class="name">InputVersions</span><span class="deco">frozen dataclass</span><span class="fold">▸</span><span class="srcbar"><span class="btn">source</span><span class="btn">open in editor</span></span></div>
+<div class="line"><span>(placed: <span class="t">tuple[PlacedVersion, ...]</span>, ledger: <span class="t">tuple[LedgerVersion, ...]</span>, handed: <span class="t">tuple[HandedVersion, ...]</span>)</span><span style="color:#8a9099">置き場の入力の版の列の組</span></div>
+</div>
+
+<h2>案: 開いた形<small>fields の縦の表(v6 の閾: 欄 ≥ 4 か型が長い)・doc・使う定義(型の軸)・帯</small></h2>
+<div class="card open">
+<div class="hd"><span class="kind cls">defclass</span><span class="name">PlacedVersion</span><span class="deco">frozen dataclass</span><span class="fold">▾</span><span class="srcbar"><span class="btn">source</span><span class="btn">open in editor</span></span></div>
+<div class="row"><span class="k">fields</span><span style="display:grid;grid-template-columns:max-content minmax(0,1fr);gap:4px 18px;font:13px Menlo,monospace">
+<span class="n">ref</span><span class="p"><span class="t">str</span></span>
+<span class="n">text</span><span class="p"><span class="t">str</span></span>
+<span class="n">request-id</span><span class="p"><span class="t">str <i>|</i> None</span></span>
+<span class="n">sent-at</span><span class="p"><span class="t">int</span></span>
+<span class="n">at</span><span class="p"><span class="t">int</span></span>
+</span></div>
+<div class="doc">本文の行(表 placed-input)の版 1 つ: ref = 入力の id・text = 文・request-id = 送信の requestId(郵便から置いた行は None)・sent-at = 行の at(送った刻)・at = この版が置き場に確定した刻。</div>
+<div class="row"><span class="k">used by</span><span class="used"><span><b>arg of</b> latest-by-ref</span><span><b>arg of</b> s7-inputs-face</span><span><b>field of</b> InputVersions</span><span><b>made in</b> input-versions</span></span></div>
+<div class="ft"><span>callers <b>0</b></span><span>callees <b>0</b></span><span>tests <b>2</b>: test_screen_invariants_s7 · …</span><span>types <b>1</b>: InputVersions</span><span style="margin-left:auto;color:#7d858f">controllers/agora_sim/screen_invariants.hy:63</span></div>
+</div>
+
+<div class="note">
+出せる材料の出所 — 欄の名と型・decorator・doc・基底・method は source にあり(索引が読む)、「used by」は linter の signature(引数と答えの型)と索引の呼び出し。今 defclass だけ型が落ちるのは、索引が defrecord の欄の型は読むのに defclass の <code>#^ T x</code> を名だけで積むため(1 か所の直し)。
+</div>
+</body>
+</html>
