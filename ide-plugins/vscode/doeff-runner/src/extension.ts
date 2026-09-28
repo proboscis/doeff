@@ -2935,7 +2935,7 @@ export function activate(context: vscode.ExtensionContext) {
   // Browse definitions by service / layer / tags (display only).
   registerBrowse(context, hyStore, hyNavigation.status, lintStore, output, treePixels);
   // 定義を読む面(webview)— 定義 1 つを 1 枚のカードにし、kind と :tags の軸で絞る。定義の一覧は hy-index だけから(agora-redesign #910)
-  registerReadingPlane(context, hyStore, hyNavigation.status, lintStore, pixelIcons, lint.watch);
+  registerReadingPlane(context, hyStore, hyNavigation.status, lintStore, pixelIcons, lint.watch, output);
   // エディタの上の pixel art(gutter の種類の icon と状態の印・決まった語の文字の置き換えと hover・状態バーの doe)
   // defk の見出し(型の流れ・effect・tags)と束縛の型 — linter の editor-json 版 2 を読むだけの表示(agora-redesign #849)
   const defkView = registerDefkView(context, lintStore, (name) => pixelIcons.sprite(name), output);

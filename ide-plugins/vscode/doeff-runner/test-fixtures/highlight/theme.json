@@ -1,0 +1,9 @@
+{
+  "name": "Fixture Dark",
+  "include": "./theme-base.json",
+  "tokenColors": [
+    { "scope": "keyword.control", "settings": { "foreground": "#C586C0" } },
+    { "scope": "constant.numeric", "settings": { "foreground": "#B5CEA8", "fontStyle": "bold underline" } },
+    { "scope": "entity.name.function", "settings": { "foreground": "#DCDCAA" } }
+  ]
+}

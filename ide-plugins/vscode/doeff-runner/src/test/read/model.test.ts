@@ -238,6 +238,7 @@ function planePage(selection: Selection, fold?: FoldState): string {
     fold: fold ?? unfoldAll(INITIAL_FOLD, cards.map((c) => cardKey(c.definition))),
     graph: buildCallGraph([planeIndex()]),
     tree: undefined,
+    coloring: undefined,
     cspSource: 'vscode-resource:',
     nonce: 'n'
   });
@@ -259,6 +260,7 @@ suite('定義を読む面 — 頁(V10・V12・V13)', () => {
       fold: INITIAL_FOLD,
       graph: buildCallGraph([]),
       tree: undefined,
+      coloring: undefined,
       cspSource: 'vscode-resource:',
       nonce: 'n'
     });
@@ -503,6 +505,7 @@ suite('定義を読む面 — 呼び出しの依存の木(V19・v7 3 節)', () =
       fold: INITIAL_FOLD,
       graph: graph(),
       tree: { tree, showTests: false },
+      coloring: undefined,
       cspSource: 'vscode-resource:',
       nonce: 'n'
     });
@@ -602,6 +605,7 @@ suite('定義を読む面 — 違反を本体の行へ(V7・U5)', () => {
       fold: unfoldAll(INITIAL_FOLD, cards.map((c) => cardKey(c.definition))),
       graph: buildCallGraph([planeIndex()]),
       tree: undefined,
+      coloring: undefined,
       cspSource: 'vscode-resource:',
       nonce: 'n'
     });

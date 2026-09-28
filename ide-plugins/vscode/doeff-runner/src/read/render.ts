@@ -5,6 +5,7 @@
 // 本体の文字(val / var の表)は linter の印字が入るまで出さず、元の Hy は実体ごとの source ボタンで開閉する(v3 3 節)。
 
 import type { HyDefinition } from '../hy/contract';
+import { pieceStyle, sliceHighlight, type Piece, type SourceColoring } from '../hy/highlight/spans';
 import type { LintBody, LintBodySegment, LintSignature, LintViolation } from '../lint/contract';
 import { answerText, headerEffects, typeText } from '../defk/model';
 import { cardKey, LINE_FIELDS, type FoldState, type LineField } from './fold';
@@ -209,6 +210,8 @@ export interface CardContext {
   readonly fold: FoldState;
   /** 索引の全 file の呼び出しの表(関係の数と木の材料) */
   readonly graph: CallGraph;
+  /** 開いた document の file 全体の色(editor と同じ文法・theme・記号ごとの色。まだ塗れていなければ undefined) */
+  readonly coloring: SourceColoring | undefined;
 }
 
 /** 本体の字の役 → 色の class(色は U16 で theme の token の色に寄せる — 今は見本 v3 の色)。 */
@@ -278,11 +281,23 @@ function bodyBlock(body: LintBody, glyphs: Glyphs, violations: readonly LintViol
   return `<div class="body">${lines}</div>`;
 }
 
-/** 元の Hy(source の行番号つき・読むだけ)。 */
-function sourceBox(card: Card, fileLabel: string): string {
+/** 色つきの 1 片の HTML(色も字の形も無ければ文字だけ)。 */
+function pieceHtml(piece: Piece): string {
+  const style = pieceStyle(piece);
+  return style === '' ? escapeHtml(piece.text) : `<span style="${style}">${escapeHtml(piece.text)}</span>`;
+}
+
+/**
+ * 元の Hy(source の行番号つき・読むだけ)。file 全体の色があれば定義の範囲を切り出して editor と同じ色で描き
+ * (記号ごとの色は file 全体の記号の順で決まるので、切り出してから塗らない)、無ければ色なしの文字で描く。
+ */
+function sourceBox(card: Card, fileLabel: string, coloring: SourceColoring | undefined): string {
   const lines = card.source.split('\n');
   const last = card.firstLine + lines.length - 1;
-  const numbered = lines.map((text, i) => `<div><span class="ln">${card.firstLine + i}</span>${escapeHtml(text)}</div>`).join('');
+  const pieces = coloring === undefined ? undefined : sliceHighlight(coloring.lines, coloring.spans, card.definition.fullRange);
+  const colored = pieces !== undefined && pieces.length === lines.length ? pieces : undefined;
+  const body = (text: string, i: number): string => (colored === undefined ? escapeHtml(text) : colored[i].map(pieceHtml).join(''));
+  const numbered = lines.map((text, i) => `<div><span class="ln">${card.firstLine + i}</span>${body(text, i)}</div>`).join('');
   return `<div class="srcbox" id="src-${card.id}" hidden><div class="h">${escapeHtml(LABELS.hySource)} · ${escapeHtml(fileLabel)}:${card.firstLine}–${last}</div><div class="code">${numbered}</div></div>`;
 }
 
@@ -338,7 +353,7 @@ export function renderCard(card: Card, ctx: CardContext, hidden: boolean): strin
   const foot = `<div class="ft">${band}${violations}<span class="loc">${location}</span></div>`;
   const fileLabel = ctx.place.split('/').pop() ?? ctx.place;
   const classes = open ? 'card open' : 'card';
-  return `<section class="${classes}" id="${card.id}" data-key="${escapeHtml(key)}" data-qn="${qn}"${hidden ? ' hidden' : ''}>${head}<div class="line">${line}</div><div class="full">${middle}${docBlock}${body}</div>${sourceBox(card, fileLabel)}<div class="full">${foot}</div></section>`;
+  return `<section class="${classes}" id="${card.id}" data-key="${escapeHtml(key)}" data-qn="${qn}"${hidden ? ' hidden' : ''}>${head}<div class="line">${line}</div><div class="full">${middle}${docBlock}${body}</div>${sourceBox(card, fileLabel, ctx.coloring)}<div class="full">${foot}</div></section>`;
 }
 
 /** 面の状態 — 索引にその file が無い時・設定で切った時は理由を出す。 */
@@ -356,6 +371,8 @@ export interface PageInput {
   readonly graph: CallGraph;
   /** 開いている呼び出しの木(無ければ undefined)と、その木で deftest を出すか */
   readonly tree: { readonly tree: CallTree; readonly showTests: boolean } | undefined;
+  /** 開いた document の file 全体の色(まだ塗れていなければ undefined — source は色なしで描く) */
+  readonly coloring: SourceColoring | undefined;
   /** webview の CSP の出どころ(`webview.cspSource`) */
   readonly cspSource: string;
   /** script に付ける 1 回限りの数 */
@@ -388,7 +405,7 @@ export function renderTreePart(
 
 /** 頁の全体(左に軸・上に 1 行の切り替え・右に実体のカード)。 */
 export function renderPage(input: PageInput): string {
-  const ctx: CardContext = { place: input.place, glyphs: input.glyphs, fold: input.fold, graph: input.graph };
+  const ctx: CardContext = { place: input.place, glyphs: input.glyphs, fold: input.fold, graph: input.graph, coloring: input.coloring };
   const content = (() => {
     switch (input.state.tag) {
       case 'message':
@@ -518,10 +535,10 @@ code{font:12px Menlo,monospace;background:#1b1d21;border:1px solid #3a3f47;borde
 .body .gl{width:13px;height:13px;image-rendering:pixelated;vertical-align:-2px;margin-right:2px}
 .body .warn{margin-left:10px;color:#e6c07b;font:11px -apple-system,sans-serif}
 .body .viol{margin-left:10px;font-family:-apple-system,sans-serif}
-.srcbox{border-top:1px solid #2c3036;background:#15171a}
+.srcbox{border-top:1px solid #2c3036;background:var(--vscode-editor-background,#15171a)}
 .srcbox[hidden]{display:none}
 .srcbox .h{color:#7d858f;font-size:11px;padding:6px 16px 0}
-.srcbox .code{padding:6px 16px 10px;font:12px/1.6 Menlo,monospace;color:#c9ced5;overflow-x:auto}
+.srcbox .code{padding:6px 16px 10px;font-family:var(--vscode-editor-font-family,Menlo,monospace);font-size:12px;line-height:1.6;color:var(--vscode-editor-foreground,#c9ced5);overflow-x:auto}
 .srcbox .code div{white-space:pre;min-height:1.6em}
 .ln{display:inline-block;width:2.8em;color:#555b63;text-align:right;margin-right:1.1em;user-select:none;font-size:11px}
 .ft{display:flex;gap:18px;align-items:center;padding:7px 16px;border-top:1px solid #33383f;font-size:12px;color:#b8bec7;flex-wrap:wrap}

@@ -1629,5 +1629,10 @@
     "svg2ttf": "^6.1.0",
     "ttf2woff": "^3.0.0",
     "typescript": "^5.4.5"
+  },
+  "dependencies": {
+    "jsonc-parser": "^3.3.1",
+    "vscode-oniguruma": "^2.0.1",
+    "vscode-textmate": "^9.3.2"
   }
 }
