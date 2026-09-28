@@ -424,7 +424,7 @@ mod tests {
         let mut project_rules = BTreeSet::new();
         project_rules.insert(ProjectRule::DefnForbidden); // DOEFF110
         let project_wired = BTreeSet::new();
-        let project = ProjectReport { findings: Vec::new(), modules: Vec::new(), errors: Vec::new(), semantic: None };
+        let project = ProjectReport { findings: Vec::new(), modules: Vec::new(), errors: Vec::new(), semantic: None, world: None };
         let mut settings = ProjectSettings::default();
         settings.laws.push(LawSpec {
             name: "no-針-law".to_string(),
