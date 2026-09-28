@@ -1008,7 +1008,7 @@
   (defn #^ None tell [self #^ str outcome #^ str line]
     "heartbeat の結果の変わり目(初めて名乗れた・名乗れない理由が変わった・戻った)だけを stderr へ 1 行出すため。同じ結果の繰り返しは
      出さない。以前は断りも途絶も黙っていて、13 回目の本番の切り替えでは coordinator が heartbeat を 400 で断り続けたのに、worker の
-     log は「起動します」の後に 32 分何も出さなかった(fence を越えると状態の file の note も空になる — 2026-09-29・agora-redesign #1005)。"
+     log は「起動します」の後に 32 分何も出さなかった(fence を越えると状態の file の note も空になる — 2026-09-29・#1005)。"
     (when (!= outcome self.told)
       (setv self.told outcome)
       (print line :file sys.stderr :flush True)))

@@ -56,7 +56,7 @@
 
 (defclass CoordinatorRefused [Exception]
   "coordinator が要求を断った(4xx・5xx)。status と coordinator の返した本文(先頭 500 字)を持つ。httpx の raise-for-status の例外は
-   本文を持たず、断りの理由(coordinator の {\"error\": …})が worker の log と状態の note に出なかった(2026-09-29・agora-redesign #1005)。"
+   本文を持たず、断りの理由(coordinator の {\"error\": …})が worker の log と状態の note に出なかった(2026-09-29・#1005)。"
   (defn __init__ [self #^ int status #^ str body]
     (.__init__ (super) status body)
     (setv self.status status self.body body))

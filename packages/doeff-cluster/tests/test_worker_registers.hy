@@ -1,4 +1,4 @@
-;;; 本物の process と HTTP で、worker が起きて coordinator に名乗る(agora-redesign #1005)。
+;;; 本物の process と HTTP で、worker が起きて coordinator に名乗る(#1005)。
 ;;;
 ;;; 13 回目の本番の切り替え(2026-09-29)で、本番の状態の写しから起きた coordinator に新しい形の worker が 1 つも名乗れなかった。
 ;;; sim-cluster の検は本物の HTTP の口を通らないので見えなかった。ここでは coordinator(hy -m doeff_cluster.coordinator)と worker

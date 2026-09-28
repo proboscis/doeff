@@ -137,7 +137,7 @@
   (defn transport [self] (httpx.MockTransport self.handle)))
 
 (deftest test-heartbeat-refusal-and-registration-are-told-at-each-change [capsys]
-  ;; 13 回目の本番の切り替え(agora-redesign #1005): coordinator が heartbeat を 400 で断り続けても、worker は「起動します」の後に
+  ;; 13 回目の本番の切り替え(#1005): coordinator が heartbeat を 400 で断り続けても、worker は「起動します」の後に
   ;; 32 分 log に何も出さなかった(断りを「届かない」と同じに数え、fence を越えると状態の file の note も空になる)。
   ;; 名乗れない理由(status と coordinator の返した本文)は変わり目ごとに 1 行、名乗れた時に 1 行出す。同じ理由の繰り返しは出さない。
   (setv refusal (httpx.Response 400 :json {"error" "TypeError: 'NoneType' object is not subscriptable"})
