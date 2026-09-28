@@ -203,7 +203,15 @@ suite('pixel art の effect の種類の装置', () => {
     assert.strictEqual(effectGlyph('ForwardHttp'), 'effect-http');
     assert.strictEqual(effectGlyph('SocketSend'), 'effect-http');
     assert.strictEqual(effectGlyph('Readme'), 'effect-device', '頭の語は大文字の区切りまで(Readme は Read ではない)');
-    assert.strictEqual(effectGlyph('LaunchServer'), 'effect-device');
+    assert.strictEqual(effectGlyph('LaunchServer'), 'effect-launch');
+    assert.strictEqual(effectGlyph('StopTurn'), 'effect-launch');
+    assert.strictEqual(effectGlyph('OpenPage'), 'effect-door');
+    assert.strictEqual(effectGlyph('ClosePage'), 'effect-door');
+    assert.strictEqual(effectGlyph('Sleep'), 'effect-wait');
+    assert.strictEqual(effectGlyph('SendText'), 'effect-send');
+    assert.strictEqual(effectGlyph('Post'), 'effect-send');
+    assert.strictEqual(effectGlyph('DropCard'), 'effect-delete');
+    assert.strictEqual(effectGlyph('PageGoto'), 'effect-device');
     assert.strictEqual(effectGlyph('lowercase'), 'effect-device');
   });
 
