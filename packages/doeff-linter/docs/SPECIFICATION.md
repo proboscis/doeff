@@ -484,8 +484,10 @@ coordinator の決定 2026-09-28(戻せる・agora-redesign #798 に記録)。�
   "raises": [TypeRef],                   // 呼び手へ抜けうる Raise の型
   "effects": {"declared": [EffectRef] | null,   // :effects(#800)。書いていなければ null
               "inferred": [EffectRef],          // 推論(下)
-              "complete": true},                // 推論が追いきれたか — 追えない呼び(repo の外の関数・deff・method)を撃っていれば false で、
+              "complete": true,                 // 推論が追いきれたか — 追えない呼び(repo の外の関数・deff・method)を撃っていれば false で、
                                                 // inferred は見えた分だけ(エディタは空でも「effect なし」と描かない)
+              "opaque": []},                    // 追えなかった呼びの頭の名(最後の節・重複なし・名の順。complete が false の時だけ空でない —
+                                                // エディタが「inference partial: with_handlers, …」と出す。版 2 への欄の追加・無ければ空と読む)
   "tags": {"context": "demo", "role": "program"}
 }],
 "bindings": [{

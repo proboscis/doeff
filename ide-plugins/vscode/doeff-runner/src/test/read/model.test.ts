@@ -17,7 +17,7 @@ import {
   type PlaneAxis,
   type Selection
 } from '../../read/model';
-import { escapeHtml, isTallSignature, renderPage } from '../../read/render';
+import { escapeHtml, inferencePartialNote, isTallSignature, renderPage } from '../../read/render';
 import {
   cardKey,
   DEFAULT_LINE_FIELDS,
@@ -294,6 +294,17 @@ suite('定義を読む面 — 頁(V10・V12・V13)', () => {
   test('入れ子の定義はカードの部品: defrecord の欄はチップ(V13 の一部)', () => {
     const card = cardHtml(planePage(new Map()), 'Row');
     assert.ok(card.includes('<span class="k">fields</span><div><span class="p"><span class="n">key</span></span><span class="p"><span class="n">text</span></span></div>'));
+  });
+
+  test('effects の推論が途中なら、何が追えなかったか(呼びの頭の名)を注記に添える。名が無い古い linter は語だけ', () => {
+    const fetchRow = planeLint().signatures.find((s) => s.name === 'fetch-row');
+    assert.ok(fetchRow !== undefined);
+    assert.strictEqual(inferencePartialNote(fetchRow), '', '追いきれた推論に注記は無い');
+    const named = inferencePartialNote({ ...fetchRow, inferenceComplete: false, inferenceOpaque: ['run', 'with_handlers'] });
+    assert.ok(named.includes('(inference partial: run, with_handlers)'), named);
+    assert.ok(named.includes(`title="${LABELS.inferencePartialTitle}"`), named);
+    const nameless = inferencePartialNote({ ...fetchRow, inferenceComplete: false, inferenceOpaque: [] });
+    assert.ok(nameless.includes('(inference partial)') && !nameless.includes('partial:'), nameless);
   });
 
   test('source の文字は HTML として逃がす', () => {
