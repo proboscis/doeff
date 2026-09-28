@@ -117,7 +117,8 @@ operator の主体の名の tuple。既定の空 = 誰も `operator_paths` の�
   `store` を受け取り、借りた接続では表を用意し直さない)。
 
 client の handler `doeff_records.http_client.http_records_handler(RecordsEndpoint(base_url, token))` は、同じ公開 effect に口越しで
-答える。`401` は書き(`PutRow`・`AppendEvent`)なら `Refused`、`PutRows` なら束の最初の行の `RowsRefused`、読みなら `Unreachable`。`404` は `UndeclaredTable` を上げる。
+答える。`401` / `403`(handler を組んだ token の身元を認めない)は操作を問わず `RecordsUnauthorized` を上げる — 組み立ての誤りで、
+時間を置いても晴れないので `Unreachable`(撃ち直してよい届かなさ)にも `Refused`(宣言がその書きを断った)にもしない。`404` は `UndeclaredTable` を上げる。
 `WatchChanges` の待ちは client の時計で回す(口へは待たない問い合わせだけを送る)。
 
 ## 置き場の手入れ(`doeff_records.maintenance`)

@@ -23,8 +23,6 @@
 ;; 複数行を全部か 0 で書く操作(本文 = {writes: [{table key value expect} …]})— 前の 6 つの綴りは変えずに足した。
 (val OP-PUT-ROWS "put-rows")
 (setv OPERATIONS #(OP-READ-ROW OP-LIST-ROWS OP-PUT-ROW OP-WATCH-CHANGES OP-APPEND-EVENT OP-READ-EVENTS OP-PUT-ROWS))
-;; 書きの操作(身元の名簿に無い呼び手の書きを、client の handler が Refused / RowsRefused の答えにする操作)。
-(setv WRITE-OPERATIONS #(OP-PUT-ROW OP-APPEND-EVENT OP-PUT-ROWS))
 
 ;; 断りの語(契約 $defs.refusal の error の語彙のうち、この口が使う物)と HTTP の status。
 (setv ERROR-MALFORMED "malformed" ERROR-UNAUTHORIZED "unauthorized" ERROR-NOT-FOUND "not-found"
