@@ -322,9 +322,45 @@ PROGRAMS_HY = """\
 
 
 OUTCOMES_HY = """\
-(require doeff-hy.macros [defk do! <- absent-as])
+(require doeff-hy.macros [defk defeffect do! <- absent-as])
+(import dataclasses [dataclass])
+(import doeff_vm [Ok Err])
 (import doeff_core_effects.effects [Absent])
+(import doeff_core_effects.outcomes [result])
 (import {pkg}.effects [Tick Ping])
+
+(defclass [(dataclass :frozen True)] Gone [] #^ str key)
+(defclass [(dataclass :frozen True)] Down [] #^ str detail)
+(defclass [(dataclass :frozen True)] Refused [] #^ str why)
+
+;; <- opens the answer: Gone is performed as Absent, Down as Raise(Down), in the binder's scope.
+(defeffect Lookup
+  {:fields [(: key str)] :answer (| str Gone Down) :absent [Gone] :failure [Down]
+   :tags {:context "analyzer-test" :role "intent"}})
+
+(defeffect Peek
+  {:fields [(: key str)] :answer (| str None) :tags {:context "analyzer-test" :role "intent"}})
+
+(defk looking []
+  {:pre [] :post [(: % str)] :tags {:context "analyzer-test" :role "program"}}
+  (<- v (Lookup "k"))
+  v)
+
+(defk peeking []
+  {:pre [] :post [(: % str)] :tags {:context "analyzer-test" :role "program"}}
+  (<- v (Peek "k"))
+  v)
+
+;; :absent turns every Absent inside the one bind into Raise(Refused).
+(defk looking-or-refused []
+  {:pre [] :post [(: % str)] :tags {:context "analyzer-test" :role "program"}}
+  (<- v (Lookup "k") :absent (Refused "no row"))
+  v)
+
+(defk looked-up []
+  {:pre [] :post [(: % (| Ok Err))] :tags {:context "analyzer-test" :role "program"}}
+  (<- r (result (looking)))
+  r)
 
 (defk missing []
   {:pre [] :post [(: % int)] :tags {:context "analyzer-test" :role "program"}}
@@ -674,3 +710,19 @@ def test_what_a_clause_cannot_follow_is_not_closed(pkg: str) -> None:
     # A clause that answers nothing here adds nothing to follow.
     quiet = analyze_program(f"{pkg}.programs:not_pinged")
     assert quiet.residual.unresolved == ()
+
+
+def test_a_bind_opens_a_declared_answer_into_absent_and_raise(pkg: str) -> None:
+    # ADR-DOE-CORE-EFFECTS-003 R13: the inferred set shows Absent / Raise.  <- on an
+    # effect declaring :absent / :failure performs them in the binder's scope; they
+    # used to be invisible (a written (<- (Raise …)) was counted, the declared one not).
+    assert _types(analyze_program(f"{pkg}.outcomes:looking").effect_types) == {
+        "Lookup",
+        "Absent",
+        "Raise",
+    }
+    assert _types(analyze_program(f"{pkg}.outcomes:peeking").effect_types) == {"Peek"}
+    refused = analyze_program(f"{pkg}.outcomes:looking_or_refused")
+    assert _types(refused.effect_types) == {"Lookup", "Raise"}
+    folded = analyze_program(f"{pkg}.outcomes:looked_up")  # result answers Raise
+    assert _types(folded.effect_types) == {"Lookup", "Absent"}

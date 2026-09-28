@@ -1083,25 +1083,84 @@ def _argument(call: ast.Call, index: int, keyword: str) -> ast.expr | None:
     return None
 
 
-def _bind_wrappers() -> dict[Any, int]:
-    """The wrappers doeff-hy's binds put around what runs, each with the position of
-    the wrapped ``expr``: ``open_bind(e[, absent])`` (every ``<-`` / ``!``) and
-    ``direct_bind(token, e)`` (``absent-as`` marks its body and the binds written in it)."""
+@dataclass(frozen=True)
+class _BindWrapper:
+    """Where a doeff-hy bind wrapper keeps what runs (``operand``) and the failure
+    written as ``(<- x e :absent F)`` (``absent`` — None for a wrapper without one)."""
+
+    operand: int
+    absent: int | None
+
+
+@dataclass(frozen=True)
+class _Opening:
+    """A yielded bind, unwrapped: the ``operand`` that runs and its ``:absent`` failure
+    expression (None when the bind has none)."""
+
+    operand: ast.expr
+    absent: ast.expr | None
+
+
+def _bind_wrappers() -> dict[Any, _BindWrapper]:
+    """The wrappers doeff-hy's binds put around what runs: ``open_bind(e[, absent])``
+    (every ``<-`` / ``!``) and ``direct_bind(token, e)`` (``absent-as`` marks its body and
+    the binds written in it)."""
     outcomes = importlib.import_module("doeff_core_effects.outcomes")
-    return {outcomes.open_bind: 0, outcomes.direct_bind: 1}
+    return {
+        outcomes.open_bind: _BindWrapper(operand=0, absent=1),
+        outcomes.direct_bind: _BindWrapper(operand=1, absent=None),
+    }
+
+
+def _opening(expr: ast.expr, scope: _Scope) -> _Opening | None:
+    """``expr`` as doeff-hy's bind wrappers (``open_bind(e)`` / ``open_bind(e, absent)`` /
+    ``open_bind(direct_bind(token, e))`` — ADR-DOE-CORE-EFFECTS-003), or None."""
+    if not isinstance(expr, ast.Call):
+        return None
+    wrapper = _bind_wrappers().get(scope.resolve(expr.func))
+    operand = None if wrapper is None else _argument(expr, wrapper.operand, "expr")
+    if wrapper is None or operand is None:
+        return None
+    absent = None if wrapper.absent is None else _argument(expr, wrapper.absent, "absent")
+    if isinstance(absent, ast.Constant) and absent.value is None:
+        absent = None
+    inner = _opening(operand, scope)
+    if inner is None:
+        return _Opening(operand, absent)
+    return _Opening(inner.operand, absent if inner.absent is None else inner.absent)
 
 
 def _bound_operand(expr: ast.expr, scope: _Scope) -> ast.expr:
-    """What a yielded ``expr`` runs: the ``e`` inside doeff-hy's bind wrappers
-    (``open_bind(e)`` / ``open_bind(direct_bind(token, e))`` — ADR-DOE-CORE-EFFECTS-003),
-    anything else → itself.  open_bind performs ``e`` itself — an undeclared effect or a
-    Program passes through unchanged, a declared one is opened after it runs — and
-    direct_bind only marks ``e`` for the absent-as around it."""
-    if not isinstance(expr, ast.Call):
-        return expr
-    position = _bind_wrappers().get(scope.resolve(expr.func))
-    operand = None if position is None else _argument(expr, position, "expr")
-    return expr if operand is None else _bound_operand(operand, scope)
+    """What a yielded ``expr`` runs: the ``e`` inside doeff-hy's bind wrappers, anything
+    else → itself.  open_bind performs ``e`` itself — an undeclared effect or a Program
+    passes through unchanged, a declared one is opened after it runs — and direct_bind
+    only marks ``e`` for the absent-as around it."""
+    opening = _opening(expr, scope)
+    return expr if opening is None else opening.operand
+
+
+def _opened_answers(effect: Imported) -> list[type]:
+    """What ``<-`` performs in the binder's scope when it opens ``effect``'s answer:
+    Absent for a declared ``:absent`` answer, Raise for a ``:failure`` one (R5・R6)."""
+    outcomes = importlib.import_module("doeff_core_effects.outcomes")
+    declared = outcomes.outcomes_of(effect)
+    if declared is None:
+        return []
+    effects = importlib.import_module("doeff_core_effects.effects")
+    return [
+        *([effects.Absent] if declared.absent else []),
+        *([effects.Raise] if declared.failure else []),
+    ]
+
+
+@functools.cache
+def _absent_receiver() -> HandlerEffects:
+    """The receiver ``(<- x e :absent F)`` wraps the one bind in (``absent_raises``:
+    Absent → Raise), read from its clauses once."""
+    from doeff_effect_analyzer import handler_effects
+
+    outcomes = importlib.import_module("doeff_core_effects.outcomes")
+    return handler_effects.analyze_handler(outcomes.absent_raises, name=":absent")
 
 
 def _install_form(call: ast.Call, scope: _Scope) -> _InstallForm | None:
@@ -1225,10 +1284,9 @@ class _Reader:
                 ("yielded a value that is not a call", ast.unparse(expr), location)
             )
             return
-        opened = _bound_operand(call, scope)
-        if opened is not call:
-            # doeff-hy's ``(<- x e)`` / ``(! e)`` yield ``open_bind(e)``: e is what runs.
-            self._performed(opened, scope, filename, facts)
+        opening = _opening(call, scope)
+        if opening is not None:
+            self._opened(opening, scope, filename, facts, location)
             return
         form = _install_form(call, scope)
         if form is not None:
@@ -1257,6 +1315,28 @@ class _Reader:
                     location,
                 )
             )
+
+    def _opened(
+        self,
+        opening: _Opening,
+        scope: _Scope,
+        filename: str,
+        facts: _Facts,
+        location: Location,
+    ) -> None:
+        """``(<- x e)`` / ``(! e)``: ``e`` runs, and a declared effect's absent / failure
+        answer is performed as Absent / Raise in this scope (ADR-DOE-CORE-EFFECTS-003 R13).
+        ``:absent F`` wraps the one bind in a receiver turning every Absent inside into Raise."""
+        inner = facts if opening.absent is None else _Facts()
+        self._performed(opening.operand, scope, filename, inner)
+        call = self._as_call(opening.operand, scope)
+        target = UNBOUND if call is None else scope.resolve(call.func)
+        if target is not UNBOUND and _is_effect_class(target):
+            inner.effects.extend((answer, location) for answer in _opened_answers(target))
+        if opening.absent is not None:
+            receiver = replace(_absent_receiver(), name=f":absent {ast.unparse(opening.absent)}")
+            text = ast.unparse(opening.operand)
+            facts.handled.append(_HandledFacts((receiver,), inner, text, location))
 
     def _handled(
         self,
