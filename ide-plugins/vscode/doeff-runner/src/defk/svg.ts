@@ -6,6 +6,7 @@
 import type { LintTypeRef } from '../lint/contract';
 import type { Palette, Pixels } from '../pixel/glyphs';
 import { escapeXml, mergeRects } from '../pixel/render';
+import { effectGlyph } from '../pixel/vocabulary';
 import { shownEffects, typeText, type BindingChip, type EffectAgreement, type EffectState } from './model';
 import type { LintSignature } from '../lint/contract';
 
@@ -169,11 +170,11 @@ function typeChip(row: Row, type: LintTypeRef | null, options: { param?: string;
   });
 }
 
-/** effect の装置の印(宣言と推論の状態で見た目を変える)。 */
+/** effect の装置の印 — 絵は effect の名 → 装置の絵の表(effectGlyph)から引く(宣言と推論の状態で見た目を変える)。 */
 function effectDevice(row: Row, name: string, state: EffectState): void {
   const from = row.x;
   row.space(2);
-  row.sprite(name === 'Ask' ? 'ask' : 'effect', spriteSize(row.metrics), state === 'unused' ? 0.35 : 1);
+  row.sprite(effectGlyph(name), spriteSize(row.metrics), state === 'unused' ? 0.35 : 1);
   row.space(2);
   row.text(name, { color: state === 'unused' ? '#6b7785' : state === 'undeclared' ? '#ffcc66' : '#cfe3ff', size: Math.round(row.metrics.fontSize * 0.85) });
   row.space(3);

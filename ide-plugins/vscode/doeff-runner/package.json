@@ -1070,361 +1070,424 @@
           "fontCharacter": "\\E00F"
         }
       },
+      "doeff-effect-ask": {
+        "description": "effect(Ask)— 環境に問う受話器",
+        "default": {
+          "fontPath": "resources/pixel/doeff-icons.woff",
+          "fontCharacter": "\\E010"
+        }
+      },
+      "doeff-effect-read": {
+        "description": "effect(Read・Fetch・List・Observe …)— 読み取り機",
+        "default": {
+          "fontPath": "resources/pixel/doeff-icons.woff",
+          "fontCharacter": "\\E011"
+        }
+      },
+      "doeff-effect-write": {
+        "description": "effect(Write・Put・Append・Create・Update …)— 印刷機",
+        "default": {
+          "fontPath": "resources/pixel/doeff-icons.woff",
+          "fontCharacter": "\\E012"
+        }
+      },
+      "doeff-effect-settle": {
+        "description": "effect(Settle・Record・Mark・Submit …)— 確定と登録の判子",
+        "default": {
+          "fontPath": "resources/pixel/doeff-icons.woff",
+          "fontCharacter": "\\E013"
+        }
+      },
+      "doeff-effect-time": {
+        "description": "effect(GetTime・Now・Sleep・Wait)— 時計",
+        "default": {
+          "fontPath": "resources/pixel/doeff-icons.woff",
+          "fontCharacter": "\\E014"
+        }
+      },
+      "doeff-effect-raise": {
+        "description": "effect(Raise・Fail)— 失敗を知らせる警報灯",
+        "default": {
+          "fontPath": "resources/pixel/doeff-icons.woff",
+          "fontCharacter": "\\E015"
+        }
+      },
+      "doeff-effect-absent": {
+        "description": "effect(Absent)— 値が無い空の枠",
+        "default": {
+          "fontPath": "resources/pixel/doeff-icons.woff",
+          "fontCharacter": "\\E016"
+        }
+      },
+      "doeff-effect-http": {
+        "description": "effect(Http・Forward・Post・Send・Socket・Deliver …)— 外とつなぐ無線の塔",
+        "default": {
+          "fontPath": "resources/pixel/doeff-icons.woff",
+          "fontCharacter": "\\E017"
+        }
+      },
+      "doeff-effect-device": {
+        "description": "effect(種類の分からない effect)— 一般の装置",
+        "default": {
+          "fontPath": "resources/pixel/doeff-icons.woff",
+          "fontCharacter": "\\E018"
+        }
+      },
       "doeff-absent": {
         "description": "Absent — 値が無い(何も積んでいない空の貨物室)",
         "default": {
           "fontPath": "resources/pixel/doeff-icons.woff",
-          "fontCharacter": "\\E010"
+          "fontCharacter": "\\E019"
         }
       },
       "doeff-raise": {
         "description": "Raise — 失敗を知らせる信号弾を打ち上げる",
         "default": {
           "fontPath": "resources/pixel/doeff-icons.woff",
-          "fontCharacter": "\\E011"
+          "fontCharacter": "\\E01A"
         }
       },
       "doeff-unreachable": {
         "description": "Unreachable — 相手に届かない(外れた接続の差し込み)",
         "default": {
           "fontPath": "resources/pixel/doeff-icons.woff",
-          "fontCharacter": "\\E012"
+          "fontCharacter": "\\E01B"
         }
       },
       "doeff-refused": {
         "description": "Refused — 相手が断った(止まれの手をかざすロボットの手)",
         "default": {
           "fontPath": "resources/pixel/doeff-icons.woff",
-          "fontCharacter": "\\E013"
+          "fontCharacter": "\\E01C"
         }
       },
       "doeff-conflict": {
         "description": "Conflict — 同じ物を 2 者が同時に取り合った(ぶつかる矢印)",
         "default": {
           "fontPath": "resources/pixel/doeff-icons.woff",
-          "fontCharacter": "\\E014"
+          "fontCharacter": "\\E01D"
         }
       },
       "doeff-malformed": {
         "description": "Malformed — 形が崩れて読めない(壊れたデータのカートリッジ)",
         "default": {
           "fontPath": "resources/pixel/doeff-icons.woff",
-          "fontCharacter": "\\E015"
+          "fontCharacter": "\\E01E"
         }
       },
       "doeff-layer-core": {
         "description": "core — 業務の判断を置くドームの家",
         "default": {
           "fontPath": "resources/pixel/doeff-icons.woff",
-          "fontCharacter": "\\E016"
+          "fontCharacter": "\\E01F"
         }
       },
       "doeff-layer-intent": {
         "description": "intent — 何をしたいかを掲げる立て札(公開の契約)",
         "default": {
           "fontPath": "resources/pixel/doeff-icons.woff",
-          "fontCharacter": "\\E017"
+          "fontCharacter": "\\E020"
         }
       },
       "doeff-layer-protocol": {
         "description": "protocol — 相手の話し方へ訳す通訳のロボット",
         "default": {
           "fontPath": "resources/pixel/doeff-icons.woff",
-          "fontCharacter": "\\E018"
+          "fontCharacter": "\\E021"
         }
       },
       "doeff-layer-foundation": {
         "description": "foundation — 外の世界とつなぐ港の係留の錨(実際の I/O)",
         "default": {
           "fontPath": "resources/pixel/doeff-icons.woff",
-          "fontCharacter": "\\E019"
+          "fontCharacter": "\\E022"
         }
       },
       "doeff-layer-entry": {
         "description": "entry — 外から入るエアロックの扉(組み立ての入口)",
         "default": {
           "fontPath": "resources/pixel/doeff-icons.woff",
-          "fontCharacter": "\\E01A"
+          "fontCharacter": "\\E023"
         }
       },
       "doeff-lint-error": {
         "description": "error — 新しい違反(赤く回る警報灯)",
         "default": {
           "fontPath": "resources/pixel/doeff-icons.woff",
-          "fontCharacter": "\\E01B"
+          "fontCharacter": "\\E024"
         }
       },
       "doeff-lint-warning": {
         "description": "warning — 違反の警告(灯った琥珀の灯)",
         "default": {
           "fontPath": "resources/pixel/doeff-icons.woff",
-          "fontCharacter": "\\E01C"
+          "fontCharacter": "\\E025"
         }
       },
       "doeff-lint-info": {
         "description": "info — 知らせ(竿の先の青い灯)",
         "default": {
           "fontPath": "resources/pixel/doeff-icons.woff",
-          "fontCharacter": "\\E01D"
+          "fontCharacter": "\\E026"
         }
       },
       "doeff-lint-registered": {
         "description": "登録済み — 登録簿に載った既知の違反(工事中の三角コーン)",
         "default": {
           "fontPath": "resources/pixel/doeff-icons.woff",
-          "fontCharacter": "\\E01E"
+          "fontCharacter": "\\E027"
         }
       },
       "doeff-jev-unjudged": {
         "description": "Jev の未判定 — Jev がまだ判定していない(霧)",
         "default": {
           "fontPath": "resources/pixel/doeff-icons.woff",
-          "fontCharacter": "\\E01F"
+          "fontCharacter": "\\E028"
         }
       },
       "doeff-jev": {
         "description": "Jev — Jev の意味の判定(アンテナの付いたロボットのふくろう)",
         "default": {
           "fontPath": "resources/pixel/doeff-icons.woff",
-          "fontCharacter": "\\E020"
+          "fontCharacter": "\\E029"
         }
       },
       "doeff-rule-layer": {
         "description": "層の規則 — 層の向きと、層に置いてよい物(積み重なった床のモジュール)",
         "default": {
           "fontPath": "resources/pixel/doeff-icons.woff",
-          "fontCharacter": "\\E021"
+          "fontCharacter": "\\E02A"
         }
       },
       "doeff-rule-tags": {
         "description": "タグの規則 — 定義と module が名乗る文脈と役(荷札)",
         "default": {
           "fontPath": "resources/pixel/doeff-icons.woff",
-          "fontCharacter": "\\E022"
+          "fontCharacter": "\\E02B"
         }
       },
       "doeff-rule-raw": {
         "description": "生の副作用の規則 — 外の世界に直に触る場所(港)",
         "default": {
           "fontPath": "resources/pixel/doeff-icons.woff",
-          "fontCharacter": "\\E023"
+          "fontCharacter": "\\E02C"
         }
       },
       "doeff-rule-naming": {
         "description": "名前の規則 — 業務の名に環境の語を付けない(名札)",
         "default": {
           "fontPath": "resources/pixel/doeff-icons.woff",
-          "fontCharacter": "\\E024"
+          "fontCharacter": "\\E02D"
         }
       },
       "doeff-rule-place": {
         "description": "置き場所の規則 — 宣言した地図の区画に置き、区画をまたいで読まない(地図)",
         "default": {
           "fontPath": "resources/pixel/doeff-icons.woff",
-          "fontCharacter": "\\E025"
+          "fontCharacter": "\\E02E"
         }
       },
       "doeff-rule-definition": {
         "description": "定義の書き方の規則 — defk・deff・:tags・deftest の書き方(判子を持った小さなロボット)",
         "default": {
           "fontPath": "resources/pixel/doeff-icons.woff",
-          "fontCharacter": "\\E026"
+          "fontCharacter": "\\E02F"
         }
       },
       "doeff-rule-class": {
         "description": "class の規則 — 値だけを持つ class にする(木箱)",
         "default": {
           "fontPath": "resources/pixel/doeff-icons.woff",
-          "fontCharacter": "\\E027"
+          "fontCharacter": "\\E030"
         }
       },
       "doeff-rule-class-jev": {
         "description": "Jev が判定した class — ロボットのふくろうが乗った貨物の木箱(DOEFF204 など)",
         "default": {
           "fontPath": "resources/pixel/doeff-icons.woff",
-          "fontCharacter": "\\E028"
+          "fontCharacter": "\\E031"
         }
       },
       "doeff-rule-wire": {
         "description": "JSON の規則 — JsonValue は送受信の口の中だけで使う(差し込み口の木箱)",
         "default": {
           "fontPath": "resources/pixel/doeff-icons.woff",
-          "fontCharacter": "\\E029"
+          "fontCharacter": "\\E032"
         }
       },
       "doeff-rule-smell": {
         "description": "臭いの規則 — 直した方がよい書き癖(匂いを嗅ぐセンサーのドローン)",
         "default": {
           "fontPath": "resources/pixel/doeff-icons.woff",
-          "fontCharacter": "\\E02A"
+          "fontCharacter": "\\E033"
         }
       },
       "doeff-rule-smell-jev": {
         "description": "Jev が判定した臭い — ふくろうの顔の、匂いを嗅ぐドローン(DOEFF205 など)",
         "default": {
           "fontPath": "resources/pixel/doeff-icons.woff",
-          "fontCharacter": "\\E02B"
+          "fontCharacter": "\\E034"
         }
       },
       "doeff-rule-jev": {
         "description": "Jev の規則 — Jev が意味を読んで判定する(ふくろう)",
         "default": {
           "fontPath": "resources/pixel/doeff-icons.woff",
-          "fontCharacter": "\\E02C"
+          "fontCharacter": "\\E035"
         }
       },
       "doeff-rule-law": {
         "description": "決まりの規則 — ADR の決まりと Python の規則(天秤)",
         "default": {
           "fontPath": "resources/pixel/doeff-icons.woff",
-          "fontCharacter": "\\E02D"
+          "fontCharacter": "\\E036"
         }
       },
       "doeff-doe": {
         "description": "doeff runner — Program(中央の機械)は外に触れず管で要求を出し、差し替えられる 3 つの箱(handler)が答えを返す",
         "default": {
           "fontPath": "resources/pixel/doeff-icons.woff",
-          "fontCharacter": "\\E02E"
+          "fontCharacter": "\\E037"
         }
       },
       "doeff-doe-calm": {
         "description": "違反なし — 落ち着いた doe",
         "default": {
           "fontPath": "resources/pixel/doeff-icons.woff",
-          "fontCharacter": "\\E02F"
+          "fontCharacter": "\\E038"
         }
       },
       "doeff-doe-worried": {
         "description": "警告あり — 困った doe",
         "default": {
           "fontPath": "resources/pixel/doeff-icons.woff",
-          "fontCharacter": "\\E030"
+          "fontCharacter": "\\E039"
         }
       },
       "doeff-doe-surprised": {
         "description": "error あり — 驚いた doe",
         "default": {
           "fontPath": "resources/pixel/doeff-icons.woff",
-          "fontCharacter": "\\E031"
+          "fontCharacter": "\\E03A"
         }
       },
       "doeff-service-tick": {
         "description": "service tick の旗",
         "default": {
           "fontPath": "resources/pixel/doeff-icons.woff",
-          "fontCharacter": "\\E032"
+          "fontCharacter": "\\E03B"
         }
       },
       "doeff-service-webapp": {
         "description": "service webapp の旗",
         "default": {
           "fontPath": "resources/pixel/doeff-icons.woff",
-          "fontCharacter": "\\E033"
+          "fontCharacter": "\\E03C"
         }
       },
       "doeff-service-daily-verify": {
         "description": "service daily-verify の旗",
         "default": {
           "fontPath": "resources/pixel/doeff-icons.woff",
-          "fontCharacter": "\\E034"
+          "fontCharacter": "\\E03D"
         }
       },
       "doeff-service-chat": {
         "description": "service chat の旗",
         "default": {
           "fontPath": "resources/pixel/doeff-icons.woff",
-          "fontCharacter": "\\E035"
+          "fontCharacter": "\\E03E"
         }
       },
       "doeff-service-nodeboot": {
         "description": "service nodeboot の旗",
         "default": {
           "fontPath": "resources/pixel/doeff-icons.woff",
-          "fontCharacter": "\\E036"
+          "fontCharacter": "\\E03F"
         }
       },
       "doeff-service-agent-task": {
         "description": "service agent-task の旗",
         "default": {
           "fontPath": "resources/pixel/doeff-icons.woff",
-          "fontCharacter": "\\E037"
+          "fontCharacter": "\\E040"
         }
       },
       "doeff-service-scheduling": {
         "description": "service scheduling の旗",
         "default": {
           "fontPath": "resources/pixel/doeff-icons.woff",
-          "fontCharacter": "\\E038"
+          "fontCharacter": "\\E041"
         }
       },
       "doeff-service-agent-catalog": {
         "description": "service agent-catalog の旗",
         "default": {
           "fontPath": "resources/pixel/doeff-icons.woff",
-          "fontCharacter": "\\E039"
+          "fontCharacter": "\\E042"
         }
       },
       "doeff-service-screen": {
         "description": "service screen の旗",
         "default": {
           "fontPath": "resources/pixel/doeff-icons.woff",
-          "fontCharacter": "\\E03A"
+          "fontCharacter": "\\E043"
         }
       },
       "doeff-service-classifier": {
         "description": "service classifier の旗",
         "default": {
           "fontPath": "resources/pixel/doeff-icons.woff",
-          "fontCharacter": "\\E03B"
+          "fontCharacter": "\\E044"
         }
       },
       "doeff-service-land-notice": {
         "description": "service land-notice の旗",
         "default": {
           "fontPath": "resources/pixel/doeff-icons.woff",
-          "fontCharacter": "\\E03C"
+          "fontCharacter": "\\E045"
         }
       },
       "doeff-service-messaging": {
         "description": "service messaging の旗",
         "default": {
           "fontPath": "resources/pixel/doeff-icons.woff",
-          "fontCharacter": "\\E03D"
+          "fontCharacter": "\\E046"
         }
       },
       "doeff-service-turn": {
         "description": "service turn の旗",
         "default": {
           "fontPath": "resources/pixel/doeff-icons.woff",
-          "fontCharacter": "\\E03E"
+          "fontCharacter": "\\E047"
         }
       },
       "doeff-service-kanban": {
         "description": "service kanban の旗",
         "default": {
           "fontPath": "resources/pixel/doeff-icons.woff",
-          "fontCharacter": "\\E03F"
+          "fontCharacter": "\\E048"
         }
       },
       "doeff-service-durable": {
         "description": "service durable の旗",
         "default": {
           "fontPath": "resources/pixel/doeff-icons.woff",
-          "fontCharacter": "\\E040"
+          "fontCharacter": "\\E049"
         }
       },
       "doeff-service-runtime-env": {
         "description": "service runtime-env の旗",
         "default": {
           "fontPath": "resources/pixel/doeff-icons.woff",
-          "fontCharacter": "\\E041"
+          "fontCharacter": "\\E04A"
         }
       },
       "doeff-service-custody": {
         "description": "service custody の旗",
         "default": {
           "fontPath": "resources/pixel/doeff-icons.woff",
-          "fontCharacter": "\\E042"
+          "fontCharacter": "\\E04B"
         }
       }
     }

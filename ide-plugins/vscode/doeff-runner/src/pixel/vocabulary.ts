@@ -33,6 +33,87 @@ export function kindGlyph(kind: HyDefinitionKind): string | undefined {
   return KIND_GLYPHS[kind];
 }
 
+/** effect の種類の装置の icon(閉じた集合)— defk の見出しと文字の置き換えの印が effect の名の前に出す絵。 */
+export const EFFECT_GLYPHS = ['effect-ask', 'effect-read', 'effect-write', 'effect-settle', 'effect-time', 'effect-raise', 'effect-absent', 'effect-http', 'effect-device'] as const;
+export type EffectGlyph = (typeof EFFECT_GLYPHS)[number];
+
+/**
+ * effect の名 → 装置の絵の決まった表(当て方の唯一の持ち主 — 見出しの描画と文字の置き換えがここを引く)。
+ * 先に名の全体で引き(`names`)、無ければ名の頭の語(CamelCase の最初の語・例 `ReadBoard` の `Read`)で引く(`verbs`)。
+ * どちらにも無い effect は一般の装置(effect-device)。種類の判定はしない — 名の字面だけで絵を選ぶ。
+ */
+export const EFFECT_GLYPH_TABLE: {
+  readonly names: Readonly<Record<string, EffectGlyph>>;
+  readonly verbs: Readonly<Record<string, EffectGlyph>>;
+} = {
+  names: { Ask: 'effect-ask', GetTime: 'effect-time', Now: 'effect-time', Raise: 'effect-raise', Absent: 'effect-absent' },
+  verbs: {
+    // 問い合わせ・読み — 受話器と読み取り機
+    Ask: 'effect-ask',
+    Read: 'effect-read',
+    Fetch: 'effect-read',
+    Get: 'effect-read',
+    List: 'effect-read',
+    Observe: 'effect-read',
+    Inspect: 'effect-read',
+    Count: 'effect-read',
+    Watch: 'effect-read',
+    Await: 'effect-read',
+    Awaiting: 'effect-read',
+    Evaluate: 'effect-read',
+    Ping: 'effect-read',
+    // 書き込み — 印刷機
+    Write: 'effect-write',
+    Put: 'effect-write',
+    Append: 'effect-write',
+    Insert: 'effect-write',
+    Create: 'effect-write',
+    Update: 'effect-write',
+    Revise: 'effect-write',
+    Print: 'effect-write',
+    Publish: 'effect-write',
+    Export: 'effect-write',
+    Migrate: 'effect-write',
+    // 確定・登録 — 判子
+    Settle: 'effect-settle',
+    Record: 'effect-settle',
+    Mark: 'effect-settle',
+    Submit: 'effect-settle',
+    Attach: 'effect-settle',
+    Relate: 'effect-settle',
+    Tombstone: 'effect-settle',
+    Declared: 'effect-settle',
+    Resolve: 'effect-settle',
+    // 時刻 — 時計
+    Sleep: 'effect-time',
+    Wait: 'effect-time',
+    Time: 'effect-time',
+    Clock: 'effect-time',
+    // 外部との通信(HTTP・socket・送り届け)— 無線の塔
+    Http: 'effect-http',
+    Forward: 'effect-http',
+    Post: 'effect-http',
+    Send: 'effect-http',
+    Socket: 'effect-http',
+    Deliver: 'effect-http',
+    Serve: 'effect-http',
+    // 失敗・無い
+    Raise: 'effect-raise',
+    Fail: 'effect-raise',
+    Absent: 'effect-absent'
+  }
+};
+
+/** effect の名の頭の語(CamelCase の最初の語。大文字で始まらない名は名の全体)。 */
+function leadingWord(name: string): string {
+  return /^[A-Z][a-z0-9]*/.exec(name)?.[0] ?? name;
+}
+
+/** effect の名から装置の絵を選ぶ(名の全体 → 頭の語 → 一般の装置)。 */
+export function effectGlyph(name: string): EffectGlyph {
+  return EFFECT_GLYPH_TABLE.names[name] ?? EFFECT_GLYPH_TABLE.verbs[leadingWord(name)] ?? 'effect-device';
+}
+
 /** 層のタイルの icon を持つ層(linter の層の名前)。 */
 const LAYER_NAMES = ['core', 'intent', 'protocol', 'foundation', 'entry'];
 

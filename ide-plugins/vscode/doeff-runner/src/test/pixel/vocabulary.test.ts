@@ -6,6 +6,9 @@ import { allGlyphs, PIXEL_DIR } from '../../pixel/build';
 import {
   axisValueGlyph,
   doeStatus,
+  EFFECT_GLYPHS,
+  EFFECT_GLYPH_TABLE,
+  effectGlyph,
   fileMood,
   gutterLines,
   kindGlyph,
@@ -183,6 +186,34 @@ suite('pixel art の当て方 — 語・kind・違反の印', () => {
     assert.strictEqual(axisValueGlyph({ tag: 'builtin', name: 'service' }, 'kanban'), 'service-kanban');
     assert.strictEqual(axisValueGlyph({ tag: 'builtin', name: 'service' }, '(不明)'), undefined);
     assert.strictEqual(axisValueGlyph({ tag: 'tag', key: 'owner' }, 'x'), undefined);
+  });
+});
+
+suite('pixel art の effect の種類の装置', () => {
+  test('effect の名 → 装置の絵 — 名の全体が先、次に頭の語、どちらにも無ければ一般の装置', () => {
+    assert.strictEqual(effectGlyph('Ask'), 'effect-ask');
+    assert.strictEqual(effectGlyph('GetTime'), 'effect-time', 'GetTime は頭の語 Get(読み取り)より名の全体が先');
+    assert.strictEqual(effectGlyph('ReadBoard'), 'effect-read');
+    assert.strictEqual(effectGlyph('FetchArtifacts'), 'effect-read');
+    assert.strictEqual(effectGlyph('WriteDoneMark'), 'effect-write', '頭の語だけを見る(後ろの Mark は判子にしない)');
+    assert.strictEqual(effectGlyph('PutWindow'), 'effect-write');
+    assert.strictEqual(effectGlyph('SettleIntake'), 'effect-settle');
+    assert.strictEqual(effectGlyph('Raise'), 'effect-raise');
+    assert.strictEqual(effectGlyph('Absent'), 'effect-absent');
+    assert.strictEqual(effectGlyph('ForwardHttp'), 'effect-http');
+    assert.strictEqual(effectGlyph('SocketSend'), 'effect-http');
+    assert.strictEqual(effectGlyph('Readme'), 'effect-device', '頭の語は大文字の区切りまで(Readme は Read ではない)');
+    assert.strictEqual(effectGlyph('LaunchServer'), 'effect-device');
+    assert.strictEqual(effectGlyph('lowercase'), 'effect-device');
+  });
+
+  test('表の絵は全部元の定義にあり、表の外の絵は選ばない', () => {
+    const names = new Set(allGlyphs(glyphSet()).map((g) => g.name));
+    for (const glyph of EFFECT_GLYPHS) {
+      assert.ok(names.has(glyph), `${glyph} が glyphs.json に無い`);
+    }
+    const chosen = [...Object.values(EFFECT_GLYPH_TABLE.names), ...Object.values(EFFECT_GLYPH_TABLE.verbs)];
+    assert.ok(chosen.every((g) => (EFFECT_GLYPHS as readonly string[]).includes(g)));
   });
 });
 
