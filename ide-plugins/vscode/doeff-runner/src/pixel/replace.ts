@@ -3,6 +3,8 @@
 // 表示の上でだけ icon に置き換え、hover と見本の HTML も同じ結果を使う(何を置き換えるかの持ち主はこの 1 か所)。
 // 文字列・註の中は見ない。VS Code には触らない。
 
+import { EFFECT_GLYPHS, effectGlyph } from './vocabulary';
+
 /** 置き換えの種類(設定で種類ごとに入り切りする閉じた集合)。 */
 export const REPLACE_KINDS = ['definition', 'bind', 'tags', 'contract', 'effect', 'handler', 'failure'] as const;
 export type ReplaceKind = (typeof REPLACE_KINDS)[number];
@@ -13,7 +15,7 @@ export const REPLACE_KIND_LABELS: Readonly<Record<ReplaceKind, string>> = {
   bind: '<-(Program の結果を受け取る)',
   tags: ':tags の辞書(1 行に収まる辞書は丸ごと 1 つの荷札に畳む)',
   contract: ':pre / :post(定義の契約)',
-  effect: 'effect の頭(Ask は吹き出しに置き換え、宣言した effect は名前の前に手紙の印)',
+  effect: 'effect の頭(Ask は受話器に置き換え、宣言した effect は名前の前に種類の装置の印 — 読み取り機・印刷機・判子・時計・無線の塔ほか)',
   handler: 'handler の中の resume / finish',
   failure: '失敗の語彙(Absent・Raise・Unreachable・Refused・Conflict・Malformed)'
 };
@@ -47,8 +49,8 @@ const DEFINITION_HEADS: Readonly<Record<string, string>> = {
   defp: 'program'
 };
 
-/** doeff の組み込みの effect で、icon に置き換える頭。 */
-const BUILTIN_EFFECT_HEADS: Readonly<Record<string, string>> = { Ask: 'ask' };
+/** doeff の組み込みの effect で、icon に置き換える頭(絵は effect の名 → 装置の絵の表から引く)。 */
+const BUILTIN_EFFECT_HEADS: Readonly<Record<string, string>> = { Ask: effectGlyph('Ask') };
 
 /** 失敗の語彙 → icon(頭でも値でも置き換える)。 */
 const FAILURE_WORDS: Readonly<Record<string, string>> = {
@@ -75,7 +77,7 @@ const CONTRACT_KEYS: Readonly<Record<string, string>> = { ':pre': 'contract', ':
 /** 置き換えが使う icon の名前の全部(元の定義に全部あるかを検で確かめるため)。 */
 export function replacementGlyphs(): string[] {
   const tables = [DEFINITION_HEADS, BUILTIN_EFFECT_HEADS, FAILURE_WORDS, HANDLER_HEADS, CONTRACT_KEYS];
-  return [...new Set([...tables.flatMap((t) => Object.values(t)), 'bind', 'tags', 'effect'])].sort();
+  return [...new Set([...tables.flatMap((t) => Object.values(t)), 'bind', 'tags', ...EFFECT_GLYPHS])].sort();
 }
 
 /** 語彙の表で名前を引く(Object の prototype の名前 — toString など — に当てない)。 */
@@ -354,7 +356,7 @@ export function findReplacements(text: string, isEffect: (name: string) => boole
       continue;
     }
     if (isEffect(word)) {
-      add('effect', 'mark', 'effect', token.start, token.end, word);
+      add('effect', 'mark', effectGlyph(word), token.start, token.end, word);
     }
   }
   return found;

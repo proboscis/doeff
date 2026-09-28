@@ -42,9 +42,9 @@ suite('文字の置き換え — 置き換える語の場所', () => {
       '1:25-30 contract/replace contract ":post"',
       '1:45-90 tags/replace tags ":tags {:context \\"durable\\" :role \\"foundation\\"}"',
       '4:3-5 bind/replace bind "<-"',
-      '4:19-28 effect/mark effect "WatchOnce"',
+      '4:19-28 effect/mark effect-read "WatchOnce"',
       '5:3-5 bind/replace bind "<-"',
-      '5:11-14 effect/replace ask "Ask"',
+      '5:11-14 effect/replace effect-ask "Ask"',
       '6:3-9 failure/replace absent "Absent"'
     ]);
   });
