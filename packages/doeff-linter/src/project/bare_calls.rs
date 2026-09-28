@@ -19,6 +19,7 @@
 //! 定義の外には Program を走らせる所が無く、表の行や名に束ねた Program は値の代わりに流れる(実弾 = agora-controllers c6271008a が
 //! scripts/land_focus_gate.hy の最上位の表に defk の tests-of を run 無しで足し、`--all` が起動で落ちた)。ただし `run`・`<-`・`!`・
 //! doeff の package の呼びの中、defk の呼びの引数、関数の本体(`fn`・`fnk`・`defmacro`・`defclass` …)、quote / quasiquote の中は定義の中と同じ判定で下る。
+//! `defsystem` は定義(関数に展開される)で、job の行の Program の式は答えとして使う所ではない(agora-redesign #913)。
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -137,8 +138,9 @@ const BRANCHING_FORMS: &[&str] = &["if", "when", "unless", "cond", "do", "let"];
 /// 内包表記(元は items[2])。
 const COMPREHENSIONS: &[&str] = &["lfor", "sfor", "gfor", "dfor"];
 
-/// 定義の頭(呼びを含む定義の名を取るため)。
-const DEFINITION_HEADS: &[&str] = &["defk", "deff", "defn", "defn/a", "defp", "defpp", "defhandler", "deftest", "defeffect"];
+/// 定義の頭(呼びを含む定義の名を取るため)。defsystem(doeff-hy・agora-redesign #833)は関数に展開され、job の行の式は「名 → Program」の
+/// Program の値そのもの(実行しない — 宣言の道具と sim-cluster が読む)なので、定義の中と同じ判定で下る(job の式は答えとして使う所ではない・#913)。
+const DEFINITION_HEADS: &[&str] = &["defk", "deff", "defn", "defn/a", "defp", "defpp", "defhandler", "deftest", "defeffect", "defsystem"];
 
 /// 定義の外で、中の Program を受ける形(`run` と effect として出す形)— 中は定義の中と同じ判定で下る。doeff の package の呼びも同じ扱い。
 const MODULE_LEVEL_PROGRAM_HEADS: &[&str] = &["run", "<-", "!", "yield", "yield-from"];
@@ -476,6 +478,21 @@ mod tests {
 (when (= __name__ "__main__") (run (fetch 5)))"#;
         let bindings = [("run", "doeff"), ("with_handlers", "doeff"), ("load", "lib")];
         assert!(found(source, &bindings).is_empty(), "{:?}", found(source, &bindings));
+    }
+
+    #[test]
+    fn defsystem_job_programs_are_declared_not_bare() {
+        // doeff-hy の defsystem(agora-redesign #833)は関数に展開され、job の行の式は「名 → Program」の Program の値そのもの(実行しない)。
+        // job の名が defk の名と同じ形(controllers/kanban/entry/writes_service.hy の (fetch (fetch foundation)))も呼びではない(agora-redesign #913)。
+        let source = r#"(defsystem sample-system [foundation]
+  "見本の系"
+  (fetch (fetch foundation 3 1.0) :needs #{"sim"})
+  (placer (load foundation) :needs #{"sim"} :environ {"POLL" "5.0"}))
+(defsystem wrong-system [foundation]
+  (reader (fetch foundation) :environ {"X" (str (load "k"))}))
+(val OUTSIDE (fetch 1))"#;
+        // defsystem の中でも答えとして使う所(`str` の引数)の素の呼びと、定義の外の素の呼びは今までどおり拾う。
+        assert_eq!(found(source, &[("load", "lib")]), vec!["wrong_system::load", "<m>::fetch"]);
     }
 }
 

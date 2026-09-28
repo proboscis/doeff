@@ -504,6 +504,10 @@ coordinator の決定 2026-09-28(戻せる・agora-redesign #798 に記録)。�
   関数かもしれず追えない)、名への束ね、関数の答えとして返す形。初版は「Program として渡す所の外は全部」だったが、agora の本線で 239 件
   (Program を受けて走らせる run-on・in-record・run-wired などへ渡す形が大半)になり、error の重さでは外れが重いので、答えとして使う所に
   絞った(本線 1 件)。
+- **`defsystem` は定義**(doeff-hy・agora-redesign #833 — 関数に展開され、job の行 `(名 (job の関数 foundation …) :needs … :environ …)` の
+  式は「名 → Program」の Program の値そのもので、実行しない)。定義の中と同じ判定で下るので、job の行の式は拾わず、その中で答えとして
+  使う所(`:environ {"X" (str (f …))}` など)だけを拾う。鍵の `<定義>` は系の名。事実: agora の本線で module の最上位の defsystem の
+  job の行が 43 件 `<module>` として当たっていた(agora-redesign #913)。
 - **重さ**: error(静かな誤りなので)。登録簿に載れば `registered_severity`(既定 warning)。母集団は `definitions` の業務の file と検の置き場。
 - **鍵**: `<path>::DOEFF126::<定義>::<呼んだ defk>`(定義の外は `<module>`)。位置は呼びの式。
 - **引数で受けた関数の素の呼び**(2 つ目の形): repo の全部の呼び `(g … 引数 …)` のうち、引数が repo の defk の名か `(fnk …)` の物を
