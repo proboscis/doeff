@@ -74,7 +74,7 @@ The extension bundles `doeff-indexer` binaries for common platforms (macOS, Linu
   - 問うている間にまた打つと、その答えは捨てて最新の中身の答えだけを出します。まだ走り始めていない古い中身の依頼は取り下げます。
   - repo の pyproject に `[tool.doeff-linter.semantic] proxy_url` があれば、Jev の呼び出しを覚える代理を経由します。同じ定義を 2 回目に問う時は、どの機体・worktree からでも Jev を呼びません。
 - **波線**(問題の一覧): 重さは linter のとおりです(error = 新しい破れ、warning = 登録簿に載った既知の破れ、info)。文には、直し方と、規則の ID・ADR の law の名が付きます。
-- **「違反(linter)」パネル**: law(無ければ規則の ID)→ file → 違反の順に並べます。押すとその位置へ移動します。
+- **「違反(linter)」パネル**: 重大さの要約 → (重大さ, 規則) → file → 違反の順に並べます(詳しくは下の「拡張の中での使い方」)。押すとその位置へ移動します。
   - 上の `$(law)` で「規則の一覧」に切り替えます。針のつながっていない規則は灰色で、linter がまだ見ていない物です。
 - **「層の地図(linter)」パネル**: linter の `modules` の層(core・intent・protocol・foundation・entry・層の外)→ dir → file の木です。色は違反の有無だけで付けます。
 
@@ -158,7 +158,7 @@ doeff の語(`defk`・`<-`・`Absent` など)・層・linter の違反と規則�
 
 ### 拡張の中での使い方
 
-- **「違反(linter)」の欄**: 違反を規則の番号でまとめ、見出しは「規則の番号 + linter が出す短い名」(例 `DOEFF110 defn を使っている`)、件数に重さの内訳。law の名・ADR・規則の文は hover に出します。行の icon は規則の家族の sprite で、灯の色が重さです。
+- **「違反(linter)」の欄**: 一番上に重大さ(CRITICAL・MAJOR・MINOR・INFO)ごとの件数の要約を出し、それぞれを「新しい分(登録簿に無い)・既知の分(登録簿に載った)・照合中」に分けます。重大さは repo が pyproject の `[tool.doeff-linter.rules.<ID>] level` で規則ごとに宣言し(無い規則は規則の重さから — error = major・warning = minor・info = info)、登録簿で波線の色を下げても重大さは下げません。その下に (重大さ, 規則) ごとの行を critical から並べ、見出しは「重大さ 件数 · 規則の番号 + 短い名」(例 `CRITICAL 3 · DOEFF126 defk を素で呼んで答えに使う`)、説明に新しい分と既知の分の数。欄の見出しのボタンで、重大さ(全部 → critical だけ → major 以上)と「新しい分だけ」を切り替えます。要約の行と状態バーには、前に VS Code を開いていた時の最後の数からの新しい分の増減も出ます。状態バーの `CRITICAL n(新しい m)` を押すと critical だけに絞った欄を開きます。law の名・ADR・規則の文は hover に出します。行の icon は規則の家族の sprite で、灯の色が重大さ(critical = 赤・major = 琥珀・minor = 消えた灯・info = 青)です。
 - **「タグで閲覧」「層の地図」**: kind・層・service の sprite に、違反の最も重い重さの灯。
 - **gutter(行の左端)**: 定義の行に kind の sprite(灯 = 定義の範囲の違反の重さ)、定義の外の違反の行に印の sprite。設定 `doeff-runner.pixel.gutter` で「層と service」(層の建物の右下に service の旗)・「出さない」に切り替えられます。
 - **状態バー**: 今の file の違反で表情の変わる doe。

@@ -11,6 +11,16 @@ import { ChildProcessLinter } from './runner';
 import { pauseDelayMs, semanticStatus } from './semantic';
 import { LintService } from './service';
 import { LintStore } from './store';
+import {
+  ALL_VIOLATIONS,
+  filterText,
+  levelStatus,
+  levelTally,
+  nextLevelFilter,
+  readSavedTally,
+  saveTally,
+  type PanelFilter
+} from './severity';
 
 /** 設定の名前(workspace ごとに決められる)。 */
 const LINT_COMMAND_SETTING = 'doeff-runner.hy.lintCommand';
@@ -23,6 +33,8 @@ const SEMANTIC_ON_SAVE_SETTING = 'doeff-runner.hy.semanticOnSave';
 /** 編集中に打つのが止まったら Jev に問うかの設定と、止まってから問うまでの秒。 */
 const SEMANTIC_ON_CHANGE_SETTING = 'doeff-runner.hy.semanticOnChange';
 const SEMANTIC_ON_CHANGE_DELAY_SETTING = 'doeff-runner.hy.semanticOnChangeDelaySeconds';
+/** 重大さごとの数えを覚えておく workspace の状態の鍵(次に開いた時の「前回から」の元)。 */
+const LEVEL_TALLY_KEY = 'doeff-runner.lint.levelTally';
 
 /** workspace の root の設定から linter の命令を読む(空なら無効)。 */
 function lintCommandFor(root: string): string {
@@ -87,17 +99,39 @@ export function registerLint(
     staleStatus.show();
   });
   context.subscriptions.push(staleStatus, { dispose: offStale });
-  const violations = new LintViolationsTree(store, pixel.tree);
+  // 前回 = この workspace で前に開いていた時の最後の数(起動の時に 1 度だけ読み、以後は今の数を書き続ける)
+  const previous = readSavedTally(context.workspaceState.get(LEVEL_TALLY_KEY));
+  const violations = new LintViolationsTree(store, pixel.tree, () => previous);
   const map = new LintMapTree(store, pixel.tree);
   // 行末の文・行の左端の印・右端のスクロールバーの印(細い info の波線は色付けの上で見えないため)。
   // pixel art の gutter が出ている Hy の file では、左端の丸は出さない(1 行に画は 1 つ)
   const decorations = new LintDecorations(store, output, pixel.ownsGutter);
   const violationsView = vscode.window.createTreeView('doeff-lint-violations', { treeDataProvider: violations, showCollapseAll: true });
   const mapView = vscode.window.createTreeView('doeff-lint-map', { treeDataProvider: map, showCollapseAll: true });
-  // 置き場が変わったら木を出し直す(波線は係が出し直す)
+  // 手つかずの critical の数を状態バーに常に出す(押すと critical だけに絞った違反の欄)
+  const levelStatusItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 37);
+  levelStatusItem.command = 'doeff-runner.lint.showCritical';
+  const showFilter = (filter: PanelFilter): void => {
+    violations.setFilter(filter);
+    violationsView.description = filter.level === 'all' && filter.standing === 'all' ? undefined : filterText(filter);
+  };
+  // 置き場が変わったら木を出し直し、重大さの数え(状態バー・欄の badge・覚えておく値)を更新する(波線は係が出し直す)
   const unsubscribe = store.onDidChange(() => {
     violations.refresh();
     map.refresh();
+    if (store.rootPaths().length === 0) {
+      levelStatusItem.hide();
+      violationsView.badge = undefined;
+      return;
+    }
+    const tally = levelTally(store.violations());
+    const status = levelStatus(tally, previous);
+    levelStatusItem.text = status.text;
+    levelStatusItem.tooltip = status.tooltip;
+    levelStatusItem.backgroundColor = status.alarming ? new vscode.ThemeColor('statusBarItem.errorBackground') : undefined;
+    levelStatusItem.show();
+    violationsView.badge = { value: tally.critical.total, tooltip: `critical ${tally.critical.total} 件(新しい ${tally.critical.new})` };
+    void context.workspaceState.update(LEVEL_TALLY_KEY, saveTally(tally));
   });
   // 木の pixel art の icon の入り切りで出し直す
   const treeSetting = vscode.workspace.onDidChangeConfiguration((event) => {
@@ -115,7 +149,19 @@ export function registerLint(
     violationsView,
     mapView,
     { dispose: unsubscribe },
+    levelStatusItem,
     vscode.commands.registerCommand('doeff-runner.lint.rerun', () => service.lintAll()),
+    vscode.commands.registerCommand('doeff-runner.lint.cycleLevel', () =>
+      showFilter({ ...violations.filter, level: nextLevelFilter(violations.filter.level) })
+    ),
+    vscode.commands.registerCommand('doeff-runner.lint.toggleNewOnly', () =>
+      showFilter({ ...violations.filter, standing: violations.filter.standing === 'new' ? 'all' : 'new' })
+    ),
+    vscode.commands.registerCommand('doeff-runner.lint.showAll', () => showFilter(ALL_VIOLATIONS)),
+    vscode.commands.registerCommand('doeff-runner.lint.showCritical', () => {
+      showFilter({ level: 'critical', standing: 'all' });
+      void vscode.commands.executeCommand('doeff-lint-violations.focus');
+    }),
     vscode.commands.registerCommand('doeff-runner.lint.toggleRules', () => {
       violations.toggleRules();
       violationsView.message = violations.showing === 'rules' ? 'linter の規則の一覧(灰色 = 針なしで見ていない規則)' : undefined;

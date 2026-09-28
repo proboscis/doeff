@@ -153,6 +153,8 @@ pub fn findings(notices: &[ConfigNotice], root: &Path) -> Vec<Finding> {
                 message,
                 hint: rule.hint().to_string(),
                 registered: false,
+                base_severity: Severity::Warning,
+                standing: super::Standing::New,
                 explanation: Explanation {
                     subject,
                     reason: format!(

@@ -42,8 +42,10 @@ function report(name: string): LintReport {
 /** 節を短い文字列にする(木の形を比べる用)。 */
 function show(node: LintNode): string {
   switch (node.tag) {
+    case 'summary':
+      return `summary ${node.level} ${node.counts.total}`;
     case 'group':
-      return `group ${groupLabel(node.rule, node.summary)} (${node.violations.length})`;
+      return `group ${node.level} ${groupLabel(node.rule, node.summary)} (${node.violations.length})`;
     case 'file':
       return `file ${node.label} (${node.violations.length})`;
     case 'violation':
@@ -156,21 +158,35 @@ suite('linter の結果の見せ方', () => {
     assert.deepStrictEqual(diagnosticOf(info).message.split('\n'), ['setv の再代入', '規則 DOEFF101']);
   });
 
-  test('違反の木 — 規則の ID と linter の短い名(law の名で束ねない)→ file → 違反(行の順)', () => {
+  test('違反の木 — 重大さの要約の行、(重大さ, 規則) の束(重い順)→ file → 違反(行の順)。重大さの欄の無い古い linter は重さから', () => {
     const r = report('report.json');
     const roots = violationRoots(r.violations, r.rules);
-    assert.deepStrictEqual(roots.map(show), ['group DOEFF101 (1)', 'group DOEFF201 層の向きに逆らう import (2)']);
-    const [goal] = lintChildren(roots[1]);
-    assert.strictEqual(show(goal), 'file goal.hy (2)');
-    assert.deepStrictEqual(lintChildren(goal).map(show), ['violation 3 warning', 'violation 12 error']);
+    assert.deepStrictEqual(roots.map(show), [
+      'summary critical 0',
+      'summary major 1',
+      'summary minor 1',
+      'summary info 1',
+      'group major DOEFF201 層の向きに逆らう import (1)',
+      'group minor DOEFF201 層の向きに逆らう import (1)',
+      'group info DOEFF101 (1)'
+    ]);
+    const [goal] = lintChildren(roots[4]);
+    assert.strictEqual(show(goal), 'file goal.hy (1)');
+    assert.deepStrictEqual(lintChildren(goal).map(show), ['violation 12 error']);
     assert.deepStrictEqual(violationRoots([], r.rules).map(show), ['(linter の違反はありません)']);
     // 規則の一覧がまだ無い(1 file の実行だけ)時も、番号だけの見出しで束ねる
-    assert.deepStrictEqual(violationRoots(r.violations, []).map(show), ['group DOEFF101 (1)', 'group DOEFF201 (2)']);
+    assert.deepStrictEqual(violationRoots(r.violations, []).slice(4).map(show), ['group major DOEFF201 (1)', 'group minor DOEFF201 (1)', 'group info DOEFF101 (1)']);
   });
 
   test('束の件数と hover — 重さが混ざれば内訳、law の名と ADR と規則の文は hover に、名の無い古い linter には案内', () => {
     const r = report('report.json');
-    const [plain, layer] = violationRoots(r.violations, r.rules);
+    const byRule = new Map<string, typeof r.violations[number][]>();
+    for (const v of r.violations) {
+      byRule.set(v.rule, [...(byRule.get(v.rule) ?? []), v]);
+    }
+    const group = (rule: string): LintNode => ({ tag: 'group', level: 'major', rule, summary: violationRoots(r.violations, r.rules).flatMap((n) => (n.tag === 'group' && n.rule === rule ? [n.summary] : []))[0], violations: byRule.get(rule) ?? [] });
+    const plain = group('DOEFF101');
+    const layer = group('DOEFF201');
     assert.ok(plain.tag === 'group' && layer.tag === 'group');
     assert.strictEqual(groupDescription(layer.violations), '2 件(error 1・warning 1)');
     assert.strictEqual(groupDescription(plain.violations), '1 件');

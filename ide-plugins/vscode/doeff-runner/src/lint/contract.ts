@@ -10,7 +10,7 @@ export const LINT_CONTRACT_VERSION = 2;
 /** 読める版 — 版 1(見出しと束縛の無い古い linter)も読み、見出しと束縛を空とする(linter の置き場が本線に追いつくまでの間、違反の欄を消さないため)。 */
 export const LINT_READABLE_VERSIONS: readonly number[] = [1, 2];
 
-/** 違反の重さ(契約の閉じた集合)。error = 新しい破れ、warning = 登録簿に載った既知の破れ、info。 */
+/** 違反の重さ(契約の閉じた集合)。`severity` は登録簿と照合中で下げた後の重さ、`baseSeverity` は規則そのものの重さ。 */
 export const LINT_SEVERITIES = ['error', 'warning', 'info'] as const;
 export type LintSeverity = (typeof LINT_SEVERITIES)[number];
 
@@ -42,6 +42,12 @@ export interface LintViolation {
   readonly key: string | null;
   /** 登録簿に載っている既知の破れか */
   readonly registered: boolean;
+  /** 登録簿と照合中で下げる前の規則そのものの重さ(更新 7。古い linter の出力には無く、その時は severity) */
+  readonly baseSeverity: LintSeverity;
+  /** 新しい・登録簿の既知・照合中(更新 7。古い linter の出力には無く、その時は registered から new か registered) */
+  readonly standing: LintStanding;
+  /** 規則の重大さ(更新 7。古い linter の出力には無く、その時は baseSeverity から linter の既定の決め方で) */
+  readonly level: LintLevel;
   /** これは何か・なぜ違反か・law の :statement(更新 3。古い linter の出力には無く null) */
   readonly explanation: LintExplanation | null;
   /** 出どころ(更新 5。古い linter の出力には無く、その時は決定的な規則 = linter とみなす) */
@@ -49,6 +55,30 @@ export interface LintViolation {
   /** Jev の判定の確率(Jev の違反だけ。他は null) */
   readonly probability: number | null;
 }
+
+/** 規則の重大さ(更新 7)— repo が規則ごとに宣言する方針(無い規則は linter が規則そのものの重さから決める)。登録簿で下げない。 */
+export const LINT_LEVELS = ['critical', 'major', 'minor', 'info'] as const;
+export type LintLevel = (typeof LINT_LEVELS)[number];
+
+/** 重大さの欄の無い古い linter の出力の時の重大さ — linter の既定の決め方(error = major・warning = minor・info = info)の写し。 */
+function levelOfSeverity(severity: LintSeverity): LintLevel {
+  switch (severity) {
+    case 'error':
+      return 'major';
+    case 'warning':
+      return 'minor';
+    case 'info':
+      return 'info';
+    default: {
+      const unreachable: never = severity;
+      throw new Error(`網羅されていない重さ: ${JSON.stringify(unreachable)}`);
+    }
+  }
+}
+
+/** 違反の立場(更新 7)— new = 登録簿に無い新しい破れ、registered = 登録簿に載った既知の破れ、reconciling = 照合中で info に下げた。 */
+export const LINT_STANDINGS = ['new', 'registered', 'reconciling'] as const;
+export type LintStanding = (typeof LINT_STANDINGS)[number];
 
 /** 違反の出どころ(更新 5)— 決定的な規則か、Jev の意味の判定か。 */
 export const LINT_SOURCES = ['linter', 'jev'] as const;
@@ -433,19 +463,29 @@ function lintLayer(value: unknown, where: string): LintLayer {
 }
 
 /** 違反 1 件を検める。 */
-function violation(value: unknown, where: string): LintViolation {
+function violation(value: unknown, where: string, notes: Notes): LintViolation {
   const obj = asObject(value, where);
+  const current = severity(obj, where);
+  const registered = bool(obj, 'registered', where);
+  // 知らない語(linter の方が新しい)は落とさず、下げる前の重さを今の重さ・立場を registered から、として控える
+  const base = optional(obj, 'base_severity', where, (v, at) => lenient(v, at, LINT_SEVERITIES, notes) ?? null) ?? current;
+  const standing =
+    optional(obj, 'standing', where, (v, at) => lenient(v, at, LINT_STANDINGS, notes) ?? null) ?? (registered ? 'registered' : 'new');
+  const level = optional(obj, 'level', where, (v, at) => lenient(v, at, LINT_LEVELS, notes) ?? null) ?? levelOfSeverity(base);
   return {
     rule: str(obj, 'rule', where),
     law: strOrNull(obj, 'law', where),
     adr: strOrNull(obj, 'adr', where),
-    severity: severity(obj, where),
+    severity: current,
+    baseSeverity: base,
+    standing,
+    level,
     path: str(obj, 'path', where),
     range: range(obj, where),
     message: str(obj, 'message', where),
     hint: strOrNull(obj, 'hint', where),
     key: strOrNull(obj, 'key', where),
-    registered: bool(obj, 'registered', where),
+    registered,
     explanation: optional(obj, 'explanation', where, explanation),
     source: optional(obj, 'source', where, (v, at) => closed(v, at, LINT_SOURCES)) ?? 'linter',
     probability: optional(obj, 'probability', where, probability)
@@ -678,7 +718,7 @@ export function parseLintJson(stdout: string): LintParseResult {
       report: {
         version,
         root: str(obj, 'root', '$'),
-        violations: list(obj, 'violations', '$', violation),
+        violations: list(obj, 'violations', '$', (v, at) => violation(v, at, notes)),
         modules: list(obj, 'modules', '$', lintModule),
         rules: list(obj, 'rules', '$', (v, at) => lintRule(v, at, notes)),
         layers: Object.prototype.hasOwnProperty.call(obj, 'layers') ? list(obj, 'layers', '$', lintLayer) : [],

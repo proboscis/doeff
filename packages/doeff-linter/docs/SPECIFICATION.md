@@ -64,6 +64,9 @@ warning の違反 **DOEFF100**(設定の知らない鍵)を出す(agora-redesign
       "hint": "…",                           // 直し方の 1 行
       "key": "controllers/core/goal.hy::core-imports-only-intent::controllers.foundation.records",  // 層の規則だけ。Python の規則は null
       "registered": false,                   // 登録簿に載っているか
+      "base_severity": "error",              // 登録簿と照合中で下げる前の規則そのものの重さ(版 2 への欄の追加)
+      "standing": "new",                     // new(新しい)| registered(登録簿の既知)| reconciling(照合中で info に下げた)
+      "level": "critical",                   // 規則の重大さ(設定 rules.<ID>.level。無ければ base_severity から)— 登録簿で下げない
       "explanation": {                       // 層の規則だけ(Python の規則は null)
         "subject": "これは何か(import 先とその層・定義と kind・file の層と、それを何で決めたか)",
         "reason": "なぜ違反か(層の説明と規則を結ぶ文)",
@@ -95,6 +98,10 @@ warning の違反 **DOEFF100**(設定の知らない鍵)を出す(agora-redesign
   (`layer`・`tags`・`raw`・`naming`・`place`・`definition`・`class`・`wire`・`smell`・`jev`・`python`・`law` の閉じた集合。
   Python の文ごとの規則(DOEFF001〜031・NOQA001・知らない ID)は `python`、針の無い law は `law`)— エディタが規則の一覧を
   束ねて見せる時に使う。名と家族の判定は linter が持ち、エディタは写しを持たない。
+
+- `severity` は下げた後の重さ、`base_severity` は規則そのものの重さ。登録簿に載った error は `registered_severity`(既定 warning)、
+  載った warning は info、照合中の規則は info に下がる。エディタはこの 2 つと `standing` で「重い規則の破れが新しい分・既知の分で何件残るか」
+  を数える(下げた理由の判定は linter が持つ)。Python の文ごとの規則は下げないので 2 つは同じで `standing` は `new`。
 
 - `signatures`・`bindings`(版 2): `--stdin` の Hy の file の defk / deff の見出しと束縛の型。全体の実行では空の列。形と読み方は 16 節。
 - `rewrites`(版 2 への欄の追加): `--stdin` の Hy の file の、定義の本体の呼びを `f(a, b)` の形で見せる表示の置き換え。全体の実行では空の列。17 節。
@@ -128,6 +135,7 @@ warning の違反 **DOEFF100**(設定の知らない鍵)を出す(agora-redesign
 | `laws`(配列) | `name`・`adr`・`statement`・`rules`・`layers` | layers が空なら全部の層 |
 | `registry` | `dirs`(1 鍵 1 file の dir)・`files`(1 行 1 鍵)・`config_files`(1 行 1 鍵・設定 file の dir からの相対)・`reconciling` | dirs と files は repo の根から |
 | `rules.<ID>` | `registered_severity`(登録簿に載った破れの重さ: error・warning・info) | warning |
+| `rules.<ID>` | `level`(規則の重大さ: critical・major・minor・info。どの規則でも書ける。登録簿で下げない — エディタが「手つかずの critical」を数える軸) | 規則そのものの重さから(error = major・warning = minor・info = info) |
 
 `enable`・`disable` は Python の規則と層の規則の両方に効く(`ALL` は両方を含む)。
 

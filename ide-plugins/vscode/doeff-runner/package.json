@@ -2,7 +2,7 @@
   "name": "doeff-runner",
   "displayName": "doeff runner",
   "description": "Run doeff Programs from VS Code using the doeff-indexer and Python debugger.",
-  "version": "0.6.23",
+  "version": "0.6.24",
   "publisher": "Proboscis",
   "icon": "icon.png",
   "license": "Apache-2.0",
@@ -51,6 +51,7 @@
     "onCommand:doeff-runner.watchWorkflow",
     "onCommand:doeff-runner.stopWorkflow",
     "onCommand:doeff-runner.refreshWorkflows",
+    "onCommand:doeff-runner.lint.showCritical",
     "onView:doeff-programs",
     "onView:doeff-programs-all",
     "onView:doeff-playlists",
@@ -376,6 +377,24 @@
         "command": "doeff-runner.lint.toggleRules",
         "title": "規則の一覧 / 違反の一覧を切り替える",
         "icon": "$(law)"
+      },
+      {
+        "command": "doeff-runner.lint.cycleLevel",
+        "title": "違反を重大さで絞る(全部 → critical だけ → major 以上)",
+        "icon": "$(filter)"
+      },
+      {
+        "command": "doeff-runner.lint.toggleNewOnly",
+        "title": "新しい分だけ / 既知の分も を切り替える",
+        "icon": "$(diff-added)"
+      },
+      {
+        "command": "doeff-runner.lint.showAll",
+        "title": "違反の絞り込みを外す(全部の重大さ・既知の分も)"
+      },
+      {
+        "command": "doeff-runner.lint.showCritical",
+        "title": "critical の違反を見る"
       },
       {
         "command": "doeff-runner.lint.showLayers",
@@ -788,14 +807,24 @@
           "group": "navigation@0"
         },
         {
-          "command": "doeff-runner.lint.toggleRules",
+          "command": "doeff-runner.lint.cycleLevel",
           "when": "view == doeff-lint-violations",
           "group": "navigation@0"
         },
         {
-          "command": "doeff-runner.lint.rerun",
+          "command": "doeff-runner.lint.toggleNewOnly",
           "when": "view == doeff-lint-violations",
           "group": "navigation@1"
+        },
+        {
+          "command": "doeff-runner.lint.toggleRules",
+          "when": "view == doeff-lint-violations",
+          "group": "navigation@2"
+        },
+        {
+          "command": "doeff-runner.lint.rerun",
+          "when": "view == doeff-lint-violations",
+          "group": "navigation@3"
         },
         {
           "command": "doeff-runner.lint.rerun",

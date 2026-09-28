@@ -72,6 +72,9 @@ function context(): BrowseContext {
     hint: null,
     key: null,
     registered: false,
+    baseSeverity: 'error',
+    standing: 'new',
+    level: 'major',
     explanation: null,
     source: 'linter',
     probability: null

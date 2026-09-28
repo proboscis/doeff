@@ -4,6 +4,20 @@
 import * as path from 'path';
 import type { LintModule, LintRange, LintRule, LintRuleFamily, LintSeverity, LintViolation } from './contract';
 import { violationExplanationLines } from './layers';
+import {
+  ALL_VIOLATIONS,
+  byLevel,
+  filterViolations,
+  newDelta,
+  levelTag,
+  levelTally,
+  standingCounts,
+  standingText,
+  type PanelFilter,
+  type SavedTally,
+  type StandingCounts
+} from './severity';
+import { LINT_LEVELS, type LintLevel } from './contract';
 
 /** 表の値の並びへ 1 件足す(数千件でも線形に束ねる)。 */
 export function pushTo<K, V>(table: Map<K, V[]>, key: K, value: V): void {
@@ -71,8 +85,16 @@ const UNKNOWN_RULE: RuleSummary = { title: null, family: null, statements: [] };
 
 /** パネルの木の節。 */
 export type LintNode =
-  /** 違反を規則の ID でまとめた束(law の名は hover に出す) */
-  | { readonly tag: 'group'; readonly rule: string; readonly summary: RuleSummary; readonly violations: readonly LintViolation[] }
+  /** 重大さ 1 つの要約の行 — 件数と、新しい分・既知の分・照合中の内訳、前回からの増減(前回が無ければ undefined) */
+  | { readonly tag: 'summary'; readonly level: LintLevel; readonly counts: StandingCounts; readonly delta: number | undefined }
+  /** 違反を (重大さ, 規則の ID) でまとめた束(law の名は hover に出す) */
+  | {
+      readonly tag: 'group';
+      readonly level: LintLevel;
+      readonly rule: string;
+      readonly summary: RuleSummary;
+      readonly violations: readonly LintViolation[];
+    }
   /** 束の中の file */
   | { readonly tag: 'file'; readonly path: string; readonly label: string; readonly violations: readonly LintViolation[] }
   | { readonly tag: 'violation'; readonly violation: LintViolation }
@@ -106,6 +128,8 @@ export function violationCount(node: LintNode): number {
       return node.entries.reduce((n, e) => n + e.module.violations, 0);
     case 'module':
       return node.entry.module.violations;
+    case 'summary':
+      return node.counts.total;
     case 'rule':
     case 'message':
       return 0;
@@ -117,29 +141,69 @@ export function violationCount(node: LintNode): number {
 }
 
 /**
- * 違反の木の最上段 — 規則の ID ごとの束(ID の順)。見出しの名と家族は linter の規則の一覧から引く(拡張は写しを
- * 持たない)。違反が無ければ札。
+ * 違反の木の最上段 — 重大さごとの要約の行(critical・major・minor・info — 絞り込みによらず全部の数)と、その下に (重大さ, 規則) ごとの束。
+ * 手つかずの critical が何件残るかを一目で読むため、束は重い順 → 新しい分の多い順 → 件数の多い順 → ID の順に並べる。重大さは repo が
+ * 規則ごとに宣言した物で、登録簿で下げない。見出しの名と家族は linter の規則の一覧から引く(拡張は写しを持たない)。
+ * 違反が無ければ札、絞り込みで 0 になれば要約の下に札。
  */
-export function violationRoots(violations: readonly LintViolation[], rules: readonly LintRule[]): LintNode[] {
+export function violationRoots(
+  violations: readonly LintViolation[],
+  rules: readonly LintRule[],
+  filter: PanelFilter = ALL_VIOLATIONS,
+  previous?: SavedTally
+): LintNode[] {
   if (violations.length === 0) {
     return [{ tag: 'message', label: 'linter の違反はありません' }];
   }
-  const byRule = new Map<string, LintViolation[]>();
-  for (const violation of violations) {
-    pushTo(byRule, violation.rule, violation);
+  const tally = levelTally(violations);
+  const summaryRows: LintNode[] = LINT_LEVELS.map((level) => ({
+    tag: 'summary',
+    level,
+    counts: tally[level],
+    delta: newDelta(tally, previous, level)
+  }));
+  const shown = filterViolations(violations, filter);
+  if (shown.length === 0) {
+    return [...summaryRows, { tag: 'message', label: '絞り込みに当たる違反はありません' }];
+  }
+  const byKey = new Map<string, LintViolation[]>();
+  for (const violation of shown) {
+    pushTo(byKey, `${violation.level}\u0000${violation.rule}`, violation);
   }
   const summaries = ruleSummaries(rules);
-  return [...byRule.keys()].sort().map((rule) => ({
-    tag: 'group',
-    rule,
-    summary: summaries.get(rule) ?? UNKNOWN_RULE,
-    violations: byRule.get(rule) ?? []
+  const groups = [...byKey.values()].map((list) => ({
+    group: {
+      tag: 'group' as const,
+      level: list[0].level,
+      rule: list[0].rule,
+      summary: summaries.get(list[0].rule) ?? UNKNOWN_RULE,
+      violations: list
+    },
+    fresh: list.filter((v) => v.standing === 'new').length
   }));
+  groups.sort(
+    (a, b) =>
+      byLevel(a.group.level, b.group.level) ||
+      b.fresh - a.fresh ||
+      b.group.violations.length - a.group.violations.length ||
+      a.group.rule.localeCompare(b.group.rule)
+  );
+  return [...summaryRows, ...groups.map((g) => g.group)];
 }
 
 /** 束の見出し — 規則の ID と短い名(名の無い古い linter の出力は ID だけ)。 */
 export function groupLabel(rule: string, summary: RuleSummary): string {
   return summary.title === null ? rule : `${rule} ${summary.title}`;
+}
+
+/** 束の行の見出し — 重大さの札と件数を先に(例: `CRITICAL 3 · DOEFF126 defk を素で呼んで答えに使う`)。 */
+export function groupHeading(level: LintLevel, rule: string, summary: RuleSummary, count: number): string {
+  return `${levelTag(level)} ${count} · ${groupLabel(rule, summary)}`;
+}
+
+/** 束の行の説明 — 新しい分・既知の分・照合中の内訳(例: `新しい 16 · 既知 303`)。 */
+export function groupStanding(violations: readonly LintViolation[]): string {
+  return standingText(standingCounts(violations));
 }
 
 /** 違反の束で最も重い重さ(束の絵の縁の色)。 */
@@ -285,6 +349,7 @@ export function lintChildren(node: LintNode): LintNode[] {
     case 'dir':
       return dirChildren(node.prefix, node.entries);
     case 'violation':
+    case 'summary':
     case 'rule':
     case 'message':
       return [];

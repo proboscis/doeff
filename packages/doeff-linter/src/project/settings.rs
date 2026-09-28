@@ -441,6 +441,39 @@ impl ProjectRuleOrExternal {
     }
 }
 
+/// 規則の重大さ(repo が `[tool.doeff-linter.rules.<ID>] level` で宣言する方針)。重さ(severity)とは別の軸で、
+/// 登録簿で重さを下げても重大さは下げない — エディタが「手つかずの critical が何件残るか」を数えるため。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, serde::Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum RuleLevel {
+    Critical,
+    Major,
+    Minor,
+    Info,
+}
+
+impl RuleLevel {
+    /// 設定の綴りを読む(閉じた集合の外は None)。
+    pub fn parse(text: &str) -> Option<RuleLevel> {
+        match text {
+            "critical" => Some(RuleLevel::Critical),
+            "major" => Some(RuleLevel::Major),
+            "minor" => Some(RuleLevel::Minor),
+            "info" => Some(RuleLevel::Info),
+            _ => None,
+        }
+    }
+
+    /// 宣言の無い規則の重大さ — 規則そのものの重さ(登録簿で下げる前)から決める。critical は宣言だけが付ける。
+    pub fn default_for(base: crate::models::Severity) -> RuleLevel {
+        match base {
+            crate::models::Severity::Error => RuleLevel::Major,
+            crate::models::Severity::Warning => RuleLevel::Minor,
+            crate::models::Severity::Info => RuleLevel::Info,
+        }
+    }
+}
+
 /// 登録簿の設定(検めた後)。
 #[derive(Debug, Clone, Default)]
 pub struct RegistrySpec {
@@ -462,6 +495,8 @@ pub struct ProjectSettings {
     pub registered_severity: BTreeMap<ProjectRule, crate::models::Severity>,
     /// 規則ごとの重さの上書き(臭いの規則 DOEFF121〜125 だけ — 既定の info を warning に上げる時)。
     pub severity: BTreeMap<ProjectRule, crate::models::Severity>,
+    /// 規則ごとの重大さの宣言(規則の ID の大文字 → 重大さ。層の規則も Python の規則も)。無い規則は重さから決める。
+    pub level: BTreeMap<String, RuleLevel>,
     /// 臭いの規則の設定(`[tool.doeff-linter.smells]`・無ければ None)。
     pub smells: Option<SmellSettings>,
     /// 設定を読んだ file の dir(registry.config_files の基準)。
@@ -643,6 +678,7 @@ impl ProjectSettings {
                 definitions,
                 registered_severity: BTreeMap::new(),
                 severity: BTreeMap::new(),
+                level: BTreeMap::new(),
                 smells: None,
                 config_dir: None,
                 architecture: None,
@@ -654,6 +690,11 @@ impl ProjectSettings {
         } else {
             Err(problems)
         }
+    }
+
+    /// 違反の重大さ — 宣言があればそれ、無ければ規則そのものの重さ base から。
+    pub fn level_of(&self, rule_id: &str, base: crate::models::Severity) -> RuleLevel {
+        self.level.get(&rule_id.to_uppercase()).copied().unwrap_or_else(|| RuleLevel::default_for(base))
     }
 
     /// 規則 rule が層 layer の file で出す違反の law(無ければ None)。層を問わない規則は layer = None。
