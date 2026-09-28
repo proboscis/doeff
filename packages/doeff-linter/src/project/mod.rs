@@ -22,6 +22,7 @@ pub mod unreadable;
 pub mod settings;
 pub mod signatures;
 pub mod call_view;
+pub mod body_view;
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::{Path, PathBuf};

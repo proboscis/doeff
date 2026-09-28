@@ -1,0 +1,2834 @@
+{
+ "version": 2,
+ "linter": {
+  "version": "0.2.0",
+  "commit": "fixture"
+ },
+ "root": "/repo",
+ "layers": [],
+ "semantic": null,
+ "architecture": null,
+ "violations": [],
+ "signatures": [
+  {
+   "kind": "defk",
+   "name": "judged",
+   "path": "/repo/packages/doeff-linter/tests/fixtures/body_view/controllers/messaging/core/conversation_input.hy",
+   "range": {
+    "start": {
+     "line": 45,
+     "character": 6
+    },
+    "end": {
+     "line": 45,
+     "character": 12
+    }
+   },
+   "full_range": {
+    "start": {
+     "line": 45,
+     "character": 0
+    },
+    "end": {
+     "line": 58,
+     "character": 11
+    }
+   },
+   "contract_range": {
+    "start": {
+     "line": 46,
+     "character": 2
+    },
+    "end": {
+     "line": 47,
+     "character": 69
+    }
+   },
+   "params": [
+    {
+     "name": "request",
+     "type": {
+      "kind": "name",
+      "name": "InputRequest",
+      "definition": null
+     }
+    }
+   ],
+   "answer": {
+    "kind": "union",
+    "members": [
+     {
+      "kind": "name",
+      "name": "Judgment",
+      "definition": null
+     },
+     {
+      "kind": "name",
+      "name": "None",
+      "definition": null
+     }
+    ]
+   },
+   "absent": false,
+   "raises": [],
+   "effects": {
+    "declared": [
+     {
+      "name": "ReadInput",
+      "definition": null,
+      "answer": null,
+      "absent": [],
+      "failure": []
+     }
+    ],
+    "inferred": [
+     {
+      "name": "ReadInput",
+      "definition": null,
+      "answer": null,
+      "absent": [],
+      "failure": []
+     }
+    ],
+    "complete": false
+   },
+   "tags": {
+    "context": "messaging",
+    "role": "program"
+   }
+  },
+  {
+   "kind": "defk",
+   "name": "outcome-of",
+   "path": "/repo/packages/doeff-linter/tests/fixtures/body_view/controllers/messaging/core/conversation_input.hy",
+   "range": {
+    "start": {
+     "line": 61,
+     "character": 6
+    },
+    "end": {
+     "line": 61,
+     "character": 16
+    }
+   },
+   "full_range": {
+    "start": {
+     "line": 61,
+     "character": 0
+    },
+    "end": {
+     "line": 77,
+     "character": 7
+    }
+   },
+   "contract_range": {
+    "start": {
+     "line": 62,
+     "character": 2
+    },
+    "end": {
+     "line": 63,
+     "character": 80
+    }
+   },
+   "params": [
+    {
+     "name": "request",
+     "type": {
+      "kind": "name",
+      "name": "InputRequest",
+      "definition": null
+     }
+    }
+   ],
+   "answer": {
+    "kind": "union",
+    "members": [
+     {
+      "kind": "name",
+      "name": "InputDone",
+      "definition": null
+     },
+     {
+      "kind": "name",
+      "name": "InputRejected",
+      "definition": null
+     },
+     {
+      "kind": "name",
+      "name": "None",
+      "definition": null
+     }
+    ]
+   },
+   "absent": false,
+   "raises": [],
+   "effects": {
+    "declared": [
+     {
+      "name": "ReadInput",
+      "definition": null,
+      "answer": null,
+      "absent": [],
+      "failure": []
+     },
+     {
+      "name": "WriteInput",
+      "definition": null,
+      "answer": null,
+      "absent": [],
+      "failure": []
+     }
+    ],
+    "inferred": [
+     {
+      "name": "ReadInput",
+      "definition": null,
+      "answer": null,
+      "absent": [],
+      "failure": []
+     },
+     {
+      "name": "WriteInput",
+      "definition": null,
+      "answer": null,
+      "absent": [],
+      "failure": []
+     }
+    ],
+    "complete": false
+   },
+   "tags": {
+    "context": "messaging",
+    "role": "program"
+   }
+  },
+  {
+   "kind": "defk",
+   "name": "run-input-request",
+   "path": "/repo/packages/doeff-linter/tests/fixtures/body_view/controllers/messaging/core/conversation_input.hy",
+   "range": {
+    "start": {
+     "line": 80,
+     "character": 6
+    },
+    "end": {
+     "line": 80,
+     "character": 23
+    }
+   },
+   "full_range": {
+    "start": {
+     "line": 80,
+     "character": 0
+    },
+    "end": {
+     "line": 93,
+     "character": 27
+    }
+   },
+   "contract_range": {
+    "start": {
+     "line": 81,
+     "character": 2
+    },
+    "end": {
+     "line": 82,
+     "character": 93
+    }
+   },
+   "params": [
+    {
+     "name": "request",
+     "type": {
+      "kind": "name",
+      "name": "InputRequest",
+      "definition": null
+     }
+    }
+   ],
+   "answer": {
+    "kind": "name",
+    "name": "RunOutcome",
+    "definition": null
+   },
+   "absent": false,
+   "raises": [],
+   "effects": {
+    "declared": [
+     {
+      "name": "ReadInput",
+      "definition": null,
+      "answer": null,
+      "absent": [],
+      "failure": []
+     },
+     {
+      "name": "WriteInput",
+      "definition": null,
+      "answer": null,
+      "absent": [],
+      "failure": []
+     },
+     {
+      "name": "SettleIntake",
+      "definition": null,
+      "answer": null,
+      "absent": [],
+      "failure": []
+     }
+    ],
+    "inferred": [
+     {
+      "name": "ReadInput",
+      "definition": null,
+      "answer": null,
+      "absent": [],
+      "failure": []
+     },
+     {
+      "name": "WriteInput",
+      "definition": null,
+      "answer": null,
+      "absent": [],
+      "failure": []
+     },
+     {
+      "name": "SettleIntake",
+      "definition": null,
+      "answer": null,
+      "absent": [],
+      "failure": []
+     }
+    ],
+    "complete": false
+   },
+   "tags": {
+    "context": "messaging",
+    "role": "program"
+   }
+  }
+ ],
+ "bindings": [
+  {
+   "form": "val",
+   "modifier": null,
+   "name": "MODULE-TAGS",
+   "path": "/repo/packages/doeff-linter/tests/fixtures/body_view/controllers/messaging/core/conversation_input.hy",
+   "range": {
+    "start": {
+     "line": 39,
+     "character": 5
+    },
+    "end": {
+     "line": 39,
+     "character": 16
+    }
+   },
+   "form_range": {
+    "start": {
+     "line": 39,
+     "character": 0
+    },
+    "end": {
+     "line": 39,
+     "character": 56
+    }
+   },
+   "head_range": {
+    "start": {
+     "line": 39,
+     "character": 1
+    },
+    "end": {
+     "line": 39,
+     "character": 4
+    }
+   },
+   "annotation_range": null,
+   "value_range": {
+    "start": {
+     "line": 39,
+     "character": 17
+    },
+    "end": {
+     "line": 39,
+     "character": 55
+    }
+   },
+   "type": {
+    "kind": "name",
+    "name": "dict",
+    "definition": null
+   },
+   "origin": "literal",
+   "absent": false,
+   "raises": []
+  },
+  {
+   "form": "val",
+   "modifier": null,
+   "name": "ATTEMPTS",
+   "path": "/repo/packages/doeff-linter/tests/fixtures/body_view/controllers/messaging/core/conversation_input.hy",
+   "range": {
+    "start": {
+     "line": 42,
+     "character": 5
+    },
+    "end": {
+     "line": 42,
+     "character": 13
+    }
+   },
+   "form_range": {
+    "start": {
+     "line": 42,
+     "character": 0
+    },
+    "end": {
+     "line": 42,
+     "character": 16
+    }
+   },
+   "head_range": {
+    "start": {
+     "line": 42,
+     "character": 1
+    },
+    "end": {
+     "line": 42,
+     "character": 4
+    }
+   },
+   "annotation_range": null,
+   "value_range": {
+    "start": {
+     "line": 42,
+     "character": 14
+    },
+    "end": {
+     "line": 42,
+     "character": 15
+    }
+   },
+   "type": {
+    "kind": "name",
+    "name": "int",
+    "definition": null
+   },
+   "origin": "literal",
+   "absent": false,
+   "raises": []
+  },
+  {
+   "form": "<-",
+   "modifier": null,
+   "name": "target",
+   "path": "/repo/packages/doeff-linter/tests/fixtures/body_view/controllers/messaging/core/conversation_input.hy",
+   "range": {
+    "start": {
+     "line": 49,
+     "character": 6
+    },
+    "end": {
+     "line": 49,
+     "character": 12
+    }
+   },
+   "form_range": {
+    "start": {
+     "line": 49,
+     "character": 2
+    },
+    "end": {
+     "line": 49,
+     "character": 46
+    }
+   },
+   "head_range": {
+    "start": {
+     "line": 49,
+     "character": 3
+    },
+    "end": {
+     "line": 49,
+     "character": 5
+    }
+   },
+   "annotation_range": {
+    "start": {
+     "line": 49,
+     "character": 13
+    },
+    "end": {
+     "line": 49,
+     "character": 25
+    }
+   },
+   "value_range": {
+    "start": {
+     "line": 49,
+     "character": 26
+    },
+    "end": {
+     "line": 49,
+     "character": 45
+    }
+   },
+   "type": {
+    "kind": "union",
+    "members": [
+     {
+      "kind": "name",
+      "name": "str",
+      "definition": null
+     },
+     {
+      "kind": "name",
+      "name": "None",
+      "definition": null
+     }
+    ]
+   },
+   "origin": "annotation",
+   "absent": false,
+   "raises": []
+  },
+  {
+   "form": "var",
+   "modifier": null,
+   "name": "row",
+   "path": "/repo/packages/doeff-linter/tests/fixtures/body_view/controllers/messaging/core/conversation_input.hy",
+   "range": {
+    "start": {
+     "line": 50,
+     "character": 7
+    },
+    "end": {
+     "line": 50,
+     "character": 10
+    }
+   },
+   "form_range": {
+    "start": {
+     "line": 50,
+     "character": 2
+    },
+    "end": {
+     "line": 50,
+     "character": 16
+    }
+   },
+   "head_range": {
+    "start": {
+     "line": 50,
+     "character": 3
+    },
+    "end": {
+     "line": 50,
+     "character": 6
+    }
+   },
+   "annotation_range": null,
+   "value_range": {
+    "start": {
+     "line": 50,
+     "character": 11
+    },
+    "end": {
+     "line": 50,
+     "character": 15
+    }
+   },
+   "type": null,
+   "origin": "unknown",
+   "absent": false,
+   "raises": []
+  },
+  {
+   "form": "<-",
+   "modifier": null,
+   "name": "answer",
+   "path": "/repo/packages/doeff-linter/tests/fixtures/body_view/controllers/messaging/core/conversation_input.hy",
+   "range": {
+    "start": {
+     "line": 52,
+     "character": 8
+    },
+    "end": {
+     "line": 52,
+     "character": 14
+    }
+   },
+   "form_range": {
+    "start": {
+     "line": 52,
+     "character": 4
+    },
+    "end": {
+     "line": 52,
+     "character": 75
+    }
+   },
+   "head_range": {
+    "start": {
+     "line": 52,
+     "character": 5
+    },
+    "end": {
+     "line": 52,
+     "character": 7
+    }
+   },
+   "annotation_range": {
+    "start": {
+     "line": 52,
+     "character": 15
+    },
+    "end": {
+     "line": 52,
+     "character": 55
+    }
+   },
+   "value_range": {
+    "start": {
+     "line": 52,
+     "character": 56
+    },
+    "end": {
+     "line": 52,
+     "character": 74
+    }
+   },
+   "type": {
+    "kind": "union",
+    "members": [
+     {
+      "kind": "name",
+      "name": "InputRow",
+      "definition": null
+     },
+     {
+      "kind": "name",
+      "name": "InputAbsent",
+      "definition": null
+     },
+     {
+      "kind": "name",
+      "name": "InputUnreadable",
+      "definition": null
+     }
+    ]
+   },
+   "origin": "annotation",
+   "absent": false,
+   "raises": []
+  },
+  {
+   "form": ":=",
+   "modifier": null,
+   "name": "row",
+   "path": "/repo/packages/doeff-linter/tests/fixtures/body_view/controllers/messaging/core/conversation_input.hy",
+   "range": {
+    "start": {
+     "line": 55,
+     "character": 21
+    },
+    "end": {
+     "line": 55,
+     "character": 24
+    }
+   },
+   "form_range": {
+    "start": {
+     "line": 55,
+     "character": 17
+    },
+    "end": {
+     "line": 55,
+     "character": 32
+    }
+   },
+   "head_range": {
+    "start": {
+     "line": 55,
+     "character": 18
+    },
+    "end": {
+     "line": 55,
+     "character": 20
+    }
+   },
+   "annotation_range": null,
+   "value_range": {
+    "start": {
+     "line": 55,
+     "character": 25
+    },
+    "end": {
+     "line": 55,
+     "character": 31
+    }
+   },
+   "type": null,
+   "origin": "unknown",
+   "absent": false,
+   "raises": []
+  },
+  {
+   "form": "<-",
+   "modifier": null,
+   "name": "judgment",
+   "path": "/repo/packages/doeff-linter/tests/fixtures/body_view/controllers/messaging/core/conversation_input.hy",
+   "range": {
+    "start": {
+     "line": 57,
+     "character": 6
+    },
+    "end": {
+     "line": 57,
+     "character": 14
+    }
+   },
+   "form_range": {
+    "start": {
+     "line": 57,
+     "character": 2
+    },
+    "end": {
+     "line": 57,
+     "character": 44
+    }
+   },
+   "head_range": {
+    "start": {
+     "line": 57,
+     "character": 3
+    },
+    "end": {
+     "line": 57,
+     "character": 5
+    }
+   },
+   "annotation_range": {
+    "start": {
+     "line": 57,
+     "character": 15
+    },
+    "end": {
+     "line": 57,
+     "character": 23
+    }
+   },
+   "value_range": {
+    "start": {
+     "line": 57,
+     "character": 24
+    },
+    "end": {
+     "line": 57,
+     "character": 43
+    }
+   },
+   "type": {
+    "kind": "name",
+    "name": "Judgment",
+    "definition": null
+   },
+   "origin": "annotation",
+   "absent": false,
+   "raises": []
+  },
+  {
+   "form": "<-",
+   "modifier": null,
+   "name": "judgment",
+   "path": "/repo/packages/doeff-linter/tests/fixtures/body_view/controllers/messaging/core/conversation_input.hy",
+   "range": {
+    "start": {
+     "line": 66,
+     "character": 8
+    },
+    "end": {
+     "line": 66,
+     "character": 16
+    }
+   },
+   "form_range": {
+    "start": {
+     "line": 66,
+     "character": 4
+    },
+    "end": {
+     "line": 66,
+     "character": 52
+    }
+   },
+   "head_range": {
+    "start": {
+     "line": 66,
+     "character": 5
+    },
+    "end": {
+     "line": 66,
+     "character": 7
+    }
+   },
+   "annotation_range": {
+    "start": {
+     "line": 66,
+     "character": 17
+    },
+    "end": {
+     "line": 66,
+     "character": 34
+    }
+   },
+   "value_range": {
+    "start": {
+     "line": 66,
+     "character": 35
+    },
+    "end": {
+     "line": 66,
+     "character": 51
+    }
+   },
+   "type": {
+    "kind": "union",
+    "members": [
+     {
+      "kind": "name",
+      "name": "Judgment",
+      "definition": null
+     },
+     {
+      "kind": "name",
+      "name": "None",
+      "definition": null
+     }
+    ]
+   },
+   "origin": "annotation",
+   "absent": false,
+   "raises": []
+  },
+  {
+   "form": "<-",
+   "modifier": null,
+   "name": "answer",
+   "path": "/repo/packages/doeff-linter/tests/fixtures/body_view/controllers/messaging/core/conversation_input.hy",
+   "range": {
+    "start": {
+     "line": 71,
+     "character": 8
+    },
+    "end": {
+     "line": 71,
+     "character": 14
+    }
+   },
+   "form_range": {
+    "start": {
+     "line": 71,
+     "character": 4
+    },
+    "end": {
+     "line": 71,
+     "character": 103
+    }
+   },
+   "head_range": {
+    "start": {
+     "line": 71,
+     "character": 5
+    },
+    "end": {
+     "line": 71,
+     "character": 7
+    }
+   },
+   "annotation_range": {
+    "start": {
+     "line": 71,
+     "character": 15
+    },
+    "end": {
+     "line": 71,
+     "character": 74
+    }
+   },
+   "value_range": {
+    "start": {
+     "line": 71,
+     "character": 75
+    },
+    "end": {
+     "line": 71,
+     "character": 102
+    }
+   },
+   "type": {
+    "kind": "union",
+    "members": [
+     {
+      "kind": "name",
+      "name": "WriteLanded",
+      "definition": null
+     },
+     {
+      "kind": "name",
+      "name": "WriteConflict",
+      "definition": null
+     },
+     {
+      "kind": "name",
+      "name": "WriteRefused",
+      "definition": null
+     },
+     {
+      "kind": "name",
+      "name": "WriteUnreachable",
+      "definition": null
+     }
+    ]
+   },
+   "origin": "annotation",
+   "absent": false,
+   "raises": []
+  },
+  {
+   "form": "<-",
+   "modifier": null,
+   "name": "outcome",
+   "path": "/repo/packages/doeff-linter/tests/fixtures/body_view/controllers/messaging/core/conversation_input.hy",
+   "range": {
+    "start": {
+     "line": 84,
+     "character": 6
+    },
+    "end": {
+     "line": 84,
+     "character": 13
+    }
+   },
+   "form_range": {
+    "start": {
+     "line": 84,
+     "character": 2
+    },
+    "end": {
+     "line": 84,
+     "character": 68
+    }
+   },
+   "head_range": {
+    "start": {
+     "line": 84,
+     "character": 3
+    },
+    "end": {
+     "line": 84,
+     "character": 5
+    }
+   },
+   "annotation_range": {
+    "start": {
+     "line": 84,
+     "character": 14
+    },
+    "end": {
+     "line": 84,
+     "character": 46
+    }
+   },
+   "value_range": {
+    "start": {
+     "line": 84,
+     "character": 47
+    },
+    "end": {
+     "line": 84,
+     "character": 67
+    }
+   },
+   "type": {
+    "kind": "union",
+    "members": [
+     {
+      "kind": "name",
+      "name": "InputDone",
+      "definition": null
+     },
+     {
+      "kind": "name",
+      "name": "InputRejected",
+      "definition": null
+     },
+     {
+      "kind": "name",
+      "name": "None",
+      "definition": null
+     }
+    ]
+   },
+   "origin": "annotation",
+   "absent": false,
+   "raises": []
+  },
+  {
+   "form": "<-",
+   "modifier": null,
+   "name": "settlement",
+   "path": "/repo/packages/doeff-linter/tests/fixtures/body_view/controllers/messaging/core/conversation_input.hy",
+   "range": {
+    "start": {
+     "line": 87,
+     "character": 6
+    },
+    "end": {
+     "line": 87,
+     "character": 16
+    }
+   },
+   "form_range": {
+    "start": {
+     "line": 87,
+     "character": 2
+    },
+    "end": {
+     "line": 87,
+     "character": 89
+    }
+   },
+   "head_range": {
+    "start": {
+     "line": 87,
+     "character": 3
+    },
+    "end": {
+     "line": 87,
+     "character": 5
+    }
+   },
+   "annotation_range": {
+    "start": {
+     "line": 87,
+     "character": 17
+    },
+    "end": {
+     "line": 87,
+     "character": 33
+    }
+   },
+   "value_range": {
+    "start": {
+     "line": 87,
+     "character": 34
+    },
+    "end": {
+     "line": 87,
+     "character": 88
+    }
+   },
+   "type": {
+    "kind": "name",
+    "name": "IntakeSettlement",
+    "definition": null
+   },
+   "origin": "annotation",
+   "absent": false,
+   "raises": []
+  },
+  {
+   "form": "<-",
+   "modifier": null,
+   "name": "settled",
+   "path": "/repo/packages/doeff-linter/tests/fixtures/body_view/controllers/messaging/core/conversation_input.hy",
+   "range": {
+    "start": {
+     "line": 88,
+     "character": 6
+    },
+    "end": {
+     "line": 88,
+     "character": 13
+    }
+   },
+   "form_range": {
+    "start": {
+     "line": 88,
+     "character": 2
+    },
+    "end": {
+     "line": 88,
+     "character": 101
+    }
+   },
+   "head_range": {
+    "start": {
+     "line": 88,
+     "character": 3
+    },
+    "end": {
+     "line": 88,
+     "character": 5
+    }
+   },
+   "annotation_range": {
+    "start": {
+     "line": 88,
+     "character": 14
+    },
+    "end": {
+     "line": 88,
+     "character": 74
+    }
+   },
+   "value_range": {
+    "start": {
+     "line": 88,
+     "character": 75
+    },
+    "end": {
+     "line": 88,
+     "character": 100
+    }
+   },
+   "type": {
+    "kind": "union",
+    "members": [
+     {
+      "kind": "name",
+      "name": "IntakeSettleLanded",
+      "definition": null
+     },
+     {
+      "kind": "name",
+      "name": "IntakeSettleRefused",
+      "definition": null
+     },
+     {
+      "kind": "name",
+      "name": "IntakeUnreachable",
+      "definition": null
+     }
+    ]
+   },
+   "origin": "annotation",
+   "absent": false,
+   "raises": []
+  }
+ ],
+ "rewrites": [],
+ "bodies": [
+  {
+   "kind": "defk",
+   "name": "judged",
+   "path": "/repo/packages/doeff-linter/tests/fixtures/body_view/controllers/messaging/core/conversation_input.hy",
+   "range": {
+    "start": {
+     "line": 45,
+     "character": 6
+    },
+    "end": {
+     "line": 45,
+     "character": 12
+    }
+   },
+   "full_range": {
+    "start": {
+     "line": 45,
+     "character": 0
+    },
+    "end": {
+     "line": 58,
+     "character": 11
+    }
+   },
+   "lines": [
+    {
+     "line": 49,
+     "depth": 0,
+     "segments": [
+      {
+       "text": "val",
+       "role": "keyword",
+       "range": {
+        "start": {
+         "line": 49,
+         "character": 3
+        },
+        "end": {
+         "line": 49,
+         "character": 5
+        }
+       },
+       "effect": null,
+       "definition": null
+      },
+      {
+       "text": " ",
+       "role": "text",
+       "range": null,
+       "effect": null,
+       "definition": null
+      },
+      {
+       "text": "str | None",
+       "role": "type",
+       "range": {
+        "start": {
+         "line": 49,
+         "character": 13
+        },
+        "end": {
+         "line": 49,
+         "character": 25
+        }
+       },
+       "effect": null,
+       "definition": null
+      },
+      {
+       "text": " ",
+       "role": "text",
+       "range": null,
+       "effect": null,
+       "definition": null
+      },
+      {
+       "text": "target",
+       "role": "name",
+       "range": {
+        "start": {
+         "line": 49,
+         "character": 6
+        },
+        "end": {
+         "line": 49,
+         "character": 12
+        }
+       },
+       "effect": null,
+       "definition": null
+      },
+      {
+       "text": " ",
+       "role": "text",
+       "range": null,
+       "effect": null,
+       "definition": null
+      },
+      {
+       "text": "⇐",
+       "role": "bind",
+       "range": null,
+       "effect": null,
+       "definition": null
+      },
+      {
+       "text": " ",
+       "role": "text",
+       "range": null,
+       "effect": null,
+       "definition": null
+      },
+      {
+       "text": "target-of",
+       "role": "call",
+       "range": {
+        "start": {
+         "line": 49,
+         "character": 27
+        },
+        "end": {
+         "line": 49,
+         "character": 36
+        }
+       },
+       "effect": null,
+       "definition": null
+      },
+      {
+       "text": "(",
+       "role": "text",
+       "range": null,
+       "effect": null,
+       "definition": null
+      },
+      {
+       "text": "request)",
+       "role": "text",
+       "range": {
+        "start": {
+         "line": 49,
+         "character": 37
+        },
+        "end": {
+         "line": 49,
+         "character": 45
+        }
+       },
+       "effect": null,
+       "definition": null
+      }
+     ],
+     "binding": 2,
+     "warning": null
+    },
+    {
+     "line": 50,
+     "depth": 0,
+     "segments": [
+      {
+       "text": "var",
+       "role": "keyword",
+       "range": {
+        "start": {
+         "line": 50,
+         "character": 3
+        },
+        "end": {
+         "line": 50,
+         "character": 6
+        }
+       },
+       "effect": null,
+       "definition": null
+      },
+      {
+       "text": " ",
+       "role": "text",
+       "range": null,
+       "effect": null,
+       "definition": null
+      },
+      {
+       "text": "?",
+       "role": "unknown-type",
+       "range": null,
+       "effect": null,
+       "definition": null
+      },
+      {
+       "text": " ",
+       "role": "text",
+       "range": null,
+       "effect": null,
+       "definition": null
+      },
+      {
+       "text": "row",
+       "role": "name",
+       "range": {
+        "start": {
+         "line": 50,
+         "character": 7
+        },
+        "end": {
+         "line": 50,
+         "character": 10
+        }
+       },
+       "effect": null,
+       "definition": null
+      },
+      {
+       "text": " ",
+       "role": "text",
+       "range": null,
+       "effect": null,
+       "definition": null
+      },
+      {
+       "text": "=",
+       "role": "assign",
+       "range": null,
+       "effect": null,
+       "definition": null
+      },
+      {
+       "text": " ",
+       "role": "text",
+       "range": null,
+       "effect": null,
+       "definition": null
+      },
+      {
+       "text": "None",
+       "role": "text",
+       "range": {
+        "start": {
+         "line": 50,
+         "character": 11
+        },
+        "end": {
+         "line": 50,
+         "character": 15
+        }
+       },
+       "effect": null,
+       "definition": null
+      }
+     ],
+     "binding": 3,
+     "warning": null
+    },
+    {
+     "line": 51,
+     "depth": 0,
+     "segments": [
+      {
+       "text": "(when (is-not target None)",
+       "role": "lisp",
+       "range": {
+        "start": {
+         "line": 51,
+         "character": 2
+        },
+        "end": {
+         "line": 51,
+         "character": 28
+        }
+       },
+       "effect": null,
+       "definition": null
+      }
+     ],
+     "binding": null,
+     "warning": null
+    },
+    {
+     "line": 52,
+     "depth": 0,
+     "segments": [
+      {
+       "text": "  ",
+       "role": "text",
+       "range": null,
+       "effect": null,
+       "definition": null
+      },
+      {
+       "text": "(<- answer (| InputRow InputAbsent InputUnreadable) (ReadInput target))",
+       "role": "lisp",
+       "range": {
+        "start": {
+         "line": 52,
+         "character": 4
+        },
+        "end": {
+         "line": 52,
+         "character": 75
+        }
+       },
+       "effect": null,
+       "definition": null
+      }
+     ],
+     "binding": null,
+     "warning": null
+    },
+    {
+     "line": 53,
+     "depth": 0,
+     "segments": [
+      {
+       "text": "  ",
+       "role": "text",
+       "range": null,
+       "effect": null,
+       "definition": null
+      },
+      {
+       "text": "(match answer",
+       "role": "lisp",
+       "range": {
+        "start": {
+         "line": 53,
+         "character": 4
+        },
+        "end": {
+         "line": 53,
+         "character": 17
+        }
+       },
+       "effect": null,
+       "definition": null
+      }
+     ],
+     "binding": null,
+     "warning": null
+    },
+    {
+     "line": 54,
+     "depth": 0,
+     "segments": [
+      {
+       "text": "    ",
+       "role": "text",
+       "range": null,
+       "effect": null,
+       "definition": null
+      },
+      {
+       "text": "(InputUnreadable) (return None)",
+       "role": "lisp",
+       "range": {
+        "start": {
+         "line": 54,
+         "character": 6
+        },
+        "end": {
+         "line": 54,
+         "character": 37
+        }
+       },
+       "effect": null,
+       "definition": null
+      }
+     ],
+     "binding": null,
+     "warning": null
+    },
+    {
+     "line": 55,
+     "depth": 0,
+     "segments": [
+      {
+       "text": "    ",
+       "role": "text",
+       "range": null,
+       "effect": null,
+       "definition": null
+      },
+      {
+       "text": "(InputRow) (:= row answer)",
+       "role": "lisp",
+       "range": {
+        "start": {
+         "line": 55,
+         "character": 6
+        },
+        "end": {
+         "line": 55,
+         "character": 32
+        }
+       },
+       "effect": null,
+       "definition": null
+      }
+     ],
+     "binding": null,
+     "warning": null
+    },
+    {
+     "line": 56,
+     "depth": 0,
+     "segments": [
+      {
+       "text": "    ",
+       "role": "text",
+       "range": null,
+       "effect": null,
+       "definition": null
+      },
+      {
+       "text": "(InputAbsent) None))",
+       "role": "lisp",
+       "range": {
+        "start": {
+         "line": 56,
+         "character": 6
+        },
+        "end": {
+         "line": 56,
+         "character": 26
+        }
+       },
+       "effect": null,
+       "definition": null
+      }
+     ],
+     "binding": null,
+     "warning": null
+    },
+    {
+     "line": 57,
+     "depth": 0,
+     "segments": [
+      {
+       "text": "val",
+       "role": "keyword",
+       "range": {
+        "start": {
+         "line": 57,
+         "character": 3
+        },
+        "end": {
+         "line": 57,
+         "character": 5
+        }
+       },
+       "effect": null,
+       "definition": null
+      },
+      {
+       "text": " ",
+       "role": "text",
+       "range": null,
+       "effect": null,
+       "definition": null
+      },
+      {
+       "text": "Judgment",
+       "role": "type",
+       "range": {
+        "start": {
+         "line": 57,
+         "character": 15
+        },
+        "end": {
+         "line": 57,
+         "character": 23
+        }
+       },
+       "effect": null,
+       "definition": null
+      },
+      {
+       "text": " ",
+       "role": "text",
+       "range": null,
+       "effect": null,
+       "definition": null
+      },
+      {
+       "text": "judgment",
+       "role": "name",
+       "range": {
+        "start": {
+         "line": 57,
+         "character": 6
+        },
+        "end": {
+         "line": 57,
+         "character": 14
+        }
+       },
+       "effect": null,
+       "definition": null
+      },
+      {
+       "text": " ",
+       "role": "text",
+       "range": null,
+       "effect": null,
+       "definition": null
+      },
+      {
+       "text": "⇐",
+       "role": "bind",
+       "range": null,
+       "effect": null,
+       "definition": null
+      },
+      {
+       "text": " ",
+       "role": "text",
+       "range": null,
+       "effect": null,
+       "definition": null
+      },
+      {
+       "text": "judge",
+       "role": "call",
+       "range": {
+        "start": {
+         "line": 57,
+         "character": 25
+        },
+        "end": {
+         "line": 57,
+         "character": 30
+        }
+       },
+       "effect": null,
+       "definition": null
+      },
+      {
+       "text": "(",
+       "role": "text",
+       "range": null,
+       "effect": null,
+       "definition": null
+      },
+      {
+       "text": "request",
+       "role": "text",
+       "range": {
+        "start": {
+         "line": 57,
+         "character": 31
+        },
+        "end": {
+         "line": 57,
+         "character": 38
+        }
+       },
+       "effect": null,
+       "definition": null
+      },
+      {
+       "text": ", ",
+       "role": "text",
+       "range": null,
+       "effect": null,
+       "definition": null
+      },
+      {
+       "text": "row)",
+       "role": "text",
+       "range": {
+        "start": {
+         "line": 57,
+         "character": 39
+        },
+        "end": {
+         "line": 57,
+         "character": 43
+        }
+       },
+       "effect": null,
+       "definition": null
+      }
+     ],
+     "binding": 6,
+     "warning": null
+    },
+    {
+     "line": 58,
+     "depth": 0,
+     "segments": [
+      {
+       "text": "judgment",
+       "role": "text",
+       "range": {
+        "start": {
+         "line": 58,
+         "character": 2
+        },
+        "end": {
+         "line": 58,
+         "character": 10
+        }
+       },
+       "effect": null,
+       "definition": null
+      }
+     ],
+     "binding": null,
+     "warning": null
+    }
+   ]
+  },
+  {
+   "kind": "defk",
+   "name": "outcome-of",
+   "path": "/repo/packages/doeff-linter/tests/fixtures/body_view/controllers/messaging/core/conversation_input.hy",
+   "range": {
+    "start": {
+     "line": 61,
+     "character": 6
+    },
+    "end": {
+     "line": 61,
+     "character": 16
+    }
+   },
+   "full_range": {
+    "start": {
+     "line": 61,
+     "character": 0
+    },
+    "end": {
+     "line": 77,
+     "character": 7
+    }
+   },
+   "lines": [
+    {
+     "line": 65,
+     "depth": 0,
+     "segments": [
+      {
+       "text": "(for [_ (range ATTEMPTS)]",
+       "role": "lisp",
+       "range": {
+        "start": {
+         "line": 65,
+         "character": 2
+        },
+        "end": {
+         "line": 65,
+         "character": 27
+        }
+       },
+       "effect": null,
+       "definition": null
+      }
+     ],
+     "binding": null,
+     "warning": null
+    },
+    {
+     "line": 66,
+     "depth": 0,
+     "segments": [
+      {
+       "text": "  ",
+       "role": "text",
+       "range": null,
+       "effect": null,
+       "definition": null
+      },
+      {
+       "text": "(<- judgment (| Judgment None) (judged request))",
+       "role": "lisp",
+       "range": {
+        "start": {
+         "line": 66,
+         "character": 4
+        },
+        "end": {
+         "line": 66,
+         "character": 52
+        }
+       },
+       "effect": null,
+       "definition": null
+      }
+     ],
+     "binding": null,
+     "warning": null
+    },
+    {
+     "line": 67,
+     "depth": 0,
+     "segments": [
+      {
+       "text": "  ",
+       "role": "text",
+       "range": null,
+       "effect": null,
+       "definition": null
+      },
+      {
+       "text": "(when (is judgment None)",
+       "role": "lisp",
+       "range": {
+        "start": {
+         "line": 67,
+         "character": 4
+        },
+        "end": {
+         "line": 67,
+         "character": 28
+        }
+       },
+       "effect": null,
+       "definition": null
+      }
+     ],
+     "binding": null,
+     "warning": null
+    },
+    {
+     "line": 68,
+     "depth": 0,
+     "segments": [
+      {
+       "text": "    ",
+       "role": "text",
+       "range": null,
+       "effect": null,
+       "definition": null
+      },
+      {
+       "text": "(return None))",
+       "role": "lisp",
+       "range": {
+        "start": {
+         "line": 68,
+         "character": 6
+        },
+        "end": {
+         "line": 68,
+         "character": 20
+        }
+       },
+       "effect": null,
+       "definition": null
+      }
+     ],
+     "binding": null,
+     "warning": null
+    },
+    {
+     "line": 69,
+     "depth": 0,
+     "segments": [
+      {
+       "text": "  ",
+       "role": "text",
+       "range": null,
+       "effect": null,
+       "definition": null
+      },
+      {
+       "text": "(when (is judgment.write None)",
+       "role": "lisp",
+       "range": {
+        "start": {
+         "line": 69,
+         "character": 4
+        },
+        "end": {
+         "line": 69,
+         "character": 34
+        }
+       },
+       "effect": null,
+       "definition": null
+      }
+     ],
+     "binding": null,
+     "warning": null
+    },
+    {
+     "line": 70,
+     "depth": 0,
+     "segments": [
+      {
+       "text": "    ",
+       "role": "text",
+       "range": null,
+       "effect": null,
+       "definition": null
+      },
+      {
+       "text": "(return judgment.outcome))",
+       "role": "lisp",
+       "range": {
+        "start": {
+         "line": 70,
+         "character": 6
+        },
+        "end": {
+         "line": 70,
+         "character": 32
+        }
+       },
+       "effect": null,
+       "definition": null
+      }
+     ],
+     "binding": null,
+     "warning": null
+    },
+    {
+     "line": 71,
+     "depth": 0,
+     "segments": [
+      {
+       "text": "  ",
+       "role": "text",
+       "range": null,
+       "effect": null,
+       "definition": null
+      },
+      {
+       "text": "(<- answer (| WriteLanded WriteConflict WriteRefused WriteUnreachable) (WriteInput judgment.write))",
+       "role": "lisp",
+       "range": {
+        "start": {
+         "line": 71,
+         "character": 4
+        },
+        "end": {
+         "line": 71,
+         "character": 103
+        }
+       },
+       "effect": null,
+       "definition": null
+      }
+     ],
+     "binding": null,
+     "warning": null
+    },
+    {
+     "line": 72,
+     "depth": 0,
+     "segments": [
+      {
+       "text": "  ",
+       "role": "text",
+       "range": null,
+       "effect": null,
+       "definition": null
+      },
+      {
+       "text": "(match answer",
+       "role": "lisp",
+       "range": {
+        "start": {
+         "line": 72,
+         "character": 4
+        },
+        "end": {
+         "line": 72,
+         "character": 17
+        }
+       },
+       "effect": null,
+       "definition": null
+      }
+     ],
+     "binding": null,
+     "warning": null
+    },
+    {
+     "line": 73,
+     "depth": 0,
+     "segments": [
+      {
+       "text": "    ",
+       "role": "text",
+       "range": null,
+       "effect": null,
+       "definition": null
+      },
+      {
+       "text": "(WriteLanded) (return judgment.outcome)",
+       "role": "lisp",
+       "range": {
+        "start": {
+         "line": 73,
+         "character": 6
+        },
+        "end": {
+         "line": 73,
+         "character": 45
+        }
+       },
+       "effect": null,
+       "definition": null
+      }
+     ],
+     "binding": null,
+     "warning": null
+    },
+    {
+     "line": 74,
+     "depth": 0,
+     "segments": [
+      {
+       "text": "    ",
+       "role": "text",
+       "range": null,
+       "effect": null,
+       "definition": null
+      },
+      {
+       "text": "(WriteRefused) (return (InputRejected :reason REJECT-WRITER-REFUSED :detail answer.detail))",
+       "role": "lisp",
+       "range": {
+        "start": {
+         "line": 74,
+         "character": 6
+        },
+        "end": {
+         "line": 74,
+         "character": 97
+        }
+       },
+       "effect": null,
+       "definition": null
+      }
+     ],
+     "binding": null,
+     "warning": null
+    },
+    {
+     "line": 75,
+     "depth": 0,
+     "segments": [
+      {
+       "text": "    ",
+       "role": "text",
+       "range": null,
+       "effect": null,
+       "definition": null
+      },
+      {
+       "text": "(WriteUnreachable) (return None)",
+       "role": "lisp",
+       "range": {
+        "start": {
+         "line": 75,
+         "character": 6
+        },
+        "end": {
+         "line": 75,
+         "character": 38
+        }
+       },
+       "effect": null,
+       "definition": null
+      }
+     ],
+     "binding": null,
+     "warning": null
+    },
+    {
+     "line": 76,
+     "depth": 0,
+     "segments": [
+      {
+       "text": "    ",
+       "role": "text",
+       "range": null,
+       "effect": null,
+       "definition": null
+      },
+      {
+       "text": "(WriteConflict) None))",
+       "role": "lisp",
+       "range": {
+        "start": {
+         "line": 76,
+         "character": 6
+        },
+        "end": {
+         "line": 76,
+         "character": 28
+        }
+       },
+       "effect": null,
+       "definition": null
+      }
+     ],
+     "binding": null,
+     "warning": null
+    },
+    {
+     "line": 77,
+     "depth": 0,
+     "segments": [
+      {
+       "text": "None",
+       "role": "text",
+       "range": {
+        "start": {
+         "line": 77,
+         "character": 2
+        },
+        "end": {
+         "line": 77,
+         "character": 6
+        }
+       },
+       "effect": null,
+       "definition": null
+      }
+     ],
+     "binding": null,
+     "warning": null
+    }
+   ]
+  },
+  {
+   "kind": "defk",
+   "name": "run-input-request",
+   "path": "/repo/packages/doeff-linter/tests/fixtures/body_view/controllers/messaging/core/conversation_input.hy",
+   "range": {
+    "start": {
+     "line": 80,
+     "character": 6
+    },
+    "end": {
+     "line": 80,
+     "character": 23
+    }
+   },
+   "full_range": {
+    "start": {
+     "line": 80,
+     "character": 0
+    },
+    "end": {
+     "line": 93,
+     "character": 27
+    }
+   },
+   "lines": [
+    {
+     "line": 84,
+     "depth": 0,
+     "segments": [
+      {
+       "text": "val",
+       "role": "keyword",
+       "range": {
+        "start": {
+         "line": 84,
+         "character": 3
+        },
+        "end": {
+         "line": 84,
+         "character": 5
+        }
+       },
+       "effect": null,
+       "definition": null
+      },
+      {
+       "text": " ",
+       "role": "text",
+       "range": null,
+       "effect": null,
+       "definition": null
+      },
+      {
+       "text": "InputDone | InputRejected | None",
+       "role": "type",
+       "range": {
+        "start": {
+         "line": 84,
+         "character": 14
+        },
+        "end": {
+         "line": 84,
+         "character": 46
+        }
+       },
+       "effect": null,
+       "definition": null
+      },
+      {
+       "text": " ",
+       "role": "text",
+       "range": null,
+       "effect": null,
+       "definition": null
+      },
+      {
+       "text": "outcome",
+       "role": "name",
+       "range": {
+        "start": {
+         "line": 84,
+         "character": 6
+        },
+        "end": {
+         "line": 84,
+         "character": 13
+        }
+       },
+       "effect": null,
+       "definition": null
+      },
+      {
+       "text": " ",
+       "role": "text",
+       "range": null,
+       "effect": null,
+       "definition": null
+      },
+      {
+       "text": "⇐",
+       "role": "bind",
+       "range": null,
+       "effect": null,
+       "definition": null
+      },
+      {
+       "text": " ",
+       "role": "text",
+       "range": null,
+       "effect": null,
+       "definition": null
+      },
+      {
+       "text": "outcome-of",
+       "role": "call",
+       "range": {
+        "start": {
+         "line": 84,
+         "character": 48
+        },
+        "end": {
+         "line": 84,
+         "character": 58
+        }
+       },
+       "effect": null,
+       "definition": {
+        "path": "/repo/packages/doeff-linter/tests/fixtures/body_view/controllers/messaging/core/conversation_input.hy",
+        "range": {
+         "start": {
+          "line": 61,
+          "character": 6
+         },
+         "end": {
+          "line": 61,
+          "character": 16
+         }
+        }
+       }
+      },
+      {
+       "text": "(",
+       "role": "text",
+       "range": null,
+       "effect": null,
+       "definition": null
+      },
+      {
+       "text": "request)",
+       "role": "text",
+       "range": {
+        "start": {
+         "line": 84,
+         "character": 59
+        },
+        "end": {
+         "line": 84,
+         "character": 67
+        }
+       },
+       "effect": null,
+       "definition": null
+      }
+     ],
+     "binding": 9,
+     "warning": null
+    },
+    {
+     "line": 85,
+     "depth": 0,
+     "segments": [
+      {
+       "text": "(when (is outcome None)",
+       "role": "lisp",
+       "range": {
+        "start": {
+         "line": 85,
+         "character": 2
+        },
+        "end": {
+         "line": 85,
+         "character": 25
+        }
+       },
+       "effect": null,
+       "definition": null
+      }
+     ],
+     "binding": null,
+     "warning": null
+    },
+    {
+     "line": 86,
+     "depth": 0,
+     "segments": [
+      {
+       "text": "  ",
+       "role": "text",
+       "range": null,
+       "effect": null,
+       "definition": null
+      },
+      {
+       "text": "(return RunOutcome.DEFERRED))",
+       "role": "lisp",
+       "range": {
+        "start": {
+         "line": 86,
+         "character": 4
+        },
+        "end": {
+         "line": 86,
+         "character": 33
+        }
+       },
+       "effect": null,
+       "definition": null
+      }
+     ],
+     "binding": null,
+     "warning": null
+    },
+    {
+     "line": 87,
+     "depth": 0,
+     "segments": [
+      {
+       "text": "val",
+       "role": "keyword",
+       "range": {
+        "start": {
+         "line": 87,
+         "character": 3
+        },
+        "end": {
+         "line": 87,
+         "character": 5
+        }
+       },
+       "effect": null,
+       "definition": null
+      },
+      {
+       "text": " ",
+       "role": "text",
+       "range": null,
+       "effect": null,
+       "definition": null
+      },
+      {
+       "text": "IntakeSettlement",
+       "role": "type",
+       "range": {
+        "start": {
+         "line": 87,
+         "character": 17
+        },
+        "end": {
+         "line": 87,
+         "character": 33
+        }
+       },
+       "effect": null,
+       "definition": null
+      },
+      {
+       "text": " ",
+       "role": "text",
+       "range": null,
+       "effect": null,
+       "definition": null
+      },
+      {
+       "text": "settlement",
+       "role": "name",
+       "range": {
+        "start": {
+         "line": 87,
+         "character": 6
+        },
+        "end": {
+         "line": 87,
+         "character": 16
+        }
+       },
+       "effect": null,
+       "definition": null
+      },
+      {
+       "text": " ",
+       "role": "text",
+       "range": null,
+       "effect": null,
+       "definition": null
+      },
+      {
+       "text": "⇐",
+       "role": "bind",
+       "range": null,
+       "effect": null,
+       "definition": null
+      },
+      {
+       "text": " ",
+       "role": "text",
+       "range": null,
+       "effect": null,
+       "definition": null
+      },
+      {
+       "text": "settlement-of",
+       "role": "call",
+       "range": {
+        "start": {
+         "line": 87,
+         "character": 35
+        },
+        "end": {
+         "line": 87,
+         "character": 48
+        }
+       },
+       "effect": null,
+       "definition": null
+      },
+      {
+       "text": "(",
+       "role": "text",
+       "range": null,
+       "effect": null,
+       "definition": null
+      },
+      {
+       "text": "request.request-id",
+       "role": "text",
+       "range": {
+        "start": {
+         "line": 87,
+         "character": 49
+        },
+        "end": {
+         "line": 87,
+         "character": 67
+        }
+       },
+       "effect": null,
+       "definition": null
+      },
+      {
+       "text": ", ",
+       "role": "text",
+       "range": null,
+       "effect": null,
+       "definition": null
+      },
+      {
+       "text": "ROUTE-INPUT",
+       "role": "text",
+       "range": {
+        "start": {
+         "line": 87,
+         "character": 68
+        },
+        "end": {
+         "line": 87,
+         "character": 79
+        }
+       },
+       "effect": null,
+       "definition": null
+      },
+      {
+       "text": ", ",
+       "role": "text",
+       "range": null,
+       "effect": null,
+       "definition": null
+      },
+      {
+       "text": "outcome)",
+       "role": "text",
+       "range": {
+        "start": {
+         "line": 87,
+         "character": 80
+        },
+        "end": {
+         "line": 87,
+         "character": 88
+        }
+       },
+       "effect": null,
+       "definition": null
+      }
+     ],
+     "binding": 10,
+     "warning": null
+    },
+    {
+     "line": 88,
+     "depth": 0,
+     "segments": [
+      {
+       "text": "val",
+       "role": "keyword",
+       "range": {
+        "start": {
+         "line": 88,
+         "character": 3
+        },
+        "end": {
+         "line": 88,
+         "character": 5
+        }
+       },
+       "effect": null,
+       "definition": null
+      },
+      {
+       "text": " ",
+       "role": "text",
+       "range": null,
+       "effect": null,
+       "definition": null
+      },
+      {
+       "text": "IntakeSettleLanded | IntakeSettleRefused | IntakeUnreachable",
+       "role": "type",
+       "range": {
+        "start": {
+         "line": 88,
+         "character": 14
+        },
+        "end": {
+         "line": 88,
+         "character": 74
+        }
+       },
+       "effect": null,
+       "definition": null
+      },
+      {
+       "text": " ",
+       "role": "text",
+       "range": null,
+       "effect": null,
+       "definition": null
+      },
+      {
+       "text": "settled",
+       "role": "name",
+       "range": {
+        "start": {
+         "line": 88,
+         "character": 6
+        },
+        "end": {
+         "line": 88,
+         "character": 13
+        }
+       },
+       "effect": null,
+       "definition": null
+      },
+      {
+       "text": " ",
+       "role": "text",
+       "range": null,
+       "effect": null,
+       "definition": null
+      },
+      {
+       "text": "⇐",
+       "role": "bind",
+       "range": null,
+       "effect": null,
+       "definition": null
+      },
+      {
+       "text": " ",
+       "role": "text",
+       "range": null,
+       "effect": null,
+       "definition": null
+      },
+      {
+       "text": "SettleIntake",
+       "role": "effect",
+       "range": {
+        "start": {
+         "line": 88,
+         "character": 76
+        },
+        "end": {
+         "line": 88,
+         "character": 88
+        }
+       },
+       "effect": "SettleIntake",
+       "definition": null
+      },
+      {
+       "text": "(",
+       "role": "text",
+       "range": null,
+       "effect": null,
+       "definition": null
+      },
+      {
+       "text": "settlement)",
+       "role": "text",
+       "range": {
+        "start": {
+         "line": 88,
+         "character": 89
+        },
+        "end": {
+         "line": 88,
+         "character": 100
+        }
+       },
+       "effect": null,
+       "definition": null
+      }
+     ],
+     "binding": 11,
+     "warning": null
+    },
+    {
+     "line": 89,
+     "depth": 0,
+     "segments": [
+      {
+       "text": "(match settled",
+       "role": "lisp",
+       "range": {
+        "start": {
+         "line": 89,
+         "character": 2
+        },
+        "end": {
+         "line": 89,
+         "character": 16
+        }
+       },
+       "effect": null,
+       "definition": null
+      }
+     ],
+     "binding": null,
+     "warning": null
+    },
+    {
+     "line": 90,
+     "depth": 0,
+     "segments": [
+      {
+       "text": "  ",
+       "role": "text",
+       "range": null,
+       "effect": null,
+       "definition": null
+      },
+      {
+       "text": "(IntakeSettleLanded) (match outcome",
+       "role": "lisp",
+       "range": {
+        "start": {
+         "line": 90,
+         "character": 4
+        },
+        "end": {
+         "line": 90,
+         "character": 39
+        }
+       },
+       "effect": null,
+       "definition": null
+      }
+     ],
+     "binding": null,
+     "warning": null
+    },
+    {
+     "line": 91,
+     "depth": 0,
+     "segments": [
+      {
+       "text": "                         ",
+       "role": "text",
+       "range": null,
+       "effect": null,
+       "definition": null
+      },
+      {
+       "text": "(InputDone) RunOutcome.DONE",
+       "role": "lisp",
+       "range": {
+        "start": {
+         "line": 91,
+         "character": 27
+        },
+        "end": {
+         "line": 91,
+         "character": 54
+        }
+       },
+       "effect": null,
+       "definition": null
+      }
+     ],
+     "binding": null,
+     "warning": null
+    },
+    {
+     "line": 92,
+     "depth": 0,
+     "segments": [
+      {
+       "text": "                         ",
+       "role": "text",
+       "range": null,
+       "effect": null,
+       "definition": null
+      },
+      {
+       "text": "(InputRejected) RunOutcome.REJECTED)",
+       "role": "lisp",
+       "range": {
+        "start": {
+         "line": 92,
+         "character": 27
+        },
+        "end": {
+         "line": 92,
+         "character": 63
+        }
+       },
+       "effect": null,
+       "definition": null
+      }
+     ],
+     "binding": null,
+     "warning": null
+    },
+    {
+     "line": 93,
+     "depth": 0,
+     "segments": [
+      {
+       "text": "  ",
+       "role": "text",
+       "range": null,
+       "effect": null,
+       "definition": null
+      },
+      {
+       "text": "_ RunOutcome.DEFERRED)",
+       "role": "lisp",
+       "range": {
+        "start": {
+         "line": 93,
+         "character": 4
+        },
+        "end": {
+         "line": 93,
+         "character": 26
+        }
+       },
+       "effect": null,
+       "definition": null
+      }
+     ],
+     "binding": null,
+     "warning": null
+    }
+   ]
+  }
+ ],
+ "modules": [],
+ "rules": [],
+ "errors": []
+}

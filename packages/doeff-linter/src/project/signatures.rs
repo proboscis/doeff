@@ -134,6 +134,25 @@ pub enum BindingForm {
     Assign,
 }
 
+/// `val` / `var` の前に付く語(ADR-DOE-HY-006: `(lazy val x e)` = 初めて使った時に評価・`(session val x e)` = defhandler の
+/// セッションで共有)。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum BindingModifier {
+    Lazy,
+    Session,
+}
+
+impl BindingModifier {
+    /// 頭の語から読む(`lazy` / `session` でなければ None)。
+    pub(super) fn of(word: &str) -> Option<BindingModifier> {
+        [("lazy", BindingModifier::Lazy), ("session", BindingModifier::Session)]
+            .into_iter()
+            .find(|(spelled, _)| *spelled == word)
+            .map(|(_, modifier)| modifier)
+    }
+}
+
 /// 束縛の型をどこから読んだか。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "lowercase")]
@@ -158,6 +177,8 @@ pub enum BindingOrigin {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct Binding {
     pub form: BindingForm,
+    /// `(lazy val …)`・`(session var …)` の前の語(無ければ null。form は val / var)。
+    pub modifier: Option<BindingModifier>,
     pub name: String,
     pub path: String,
     /// 名の範囲。
@@ -184,6 +205,8 @@ pub struct FileSignatures {
     pub bindings: Vec<Binding>,
     /// 定義の本体の呼びを `f(a, b)` の形で見せる表示の置き換え(`call_view.rs`)。
     pub rewrites: Vec<super::call_view::Rewrite>,
+    /// 定義ごとの本体の文字の行(`body_view.rs` — 読む面が描く)。
+    pub bodies: Vec<super::body_view::Body>,
 }
 
 // --- repo の表 ---------------------------------------------------------------------------
@@ -769,15 +792,44 @@ struct Flags {
 }
 
 /// `(<- …)` を読んだ物(名・注記・式・`:absent F`)。
-struct BindShape<'f> {
-    name: Option<&'f Form>,
-    annotation: Option<&'f Form>,
-    value: &'f Form,
-    absent_as_raise: Option<&'f Form>,
+pub(super) struct BindShape<'f> {
+    pub(super) name: Option<&'f Form>,
+    pub(super) annotation: Option<&'f Form>,
+    pub(super) value: &'f Form,
+    pub(super) absent_as_raise: Option<&'f Form>,
+}
+
+/// 宣言の名と値の組 1 つ。`bang` は値の前の `!`(`(val x ! (f a))` — Hy の reader は `!(f a)` も 2 つの要素に読む)。
+pub(super) struct BindingPair<'f> {
+    pub(super) name: &'f Form,
+    pub(super) bang: Option<&'f Form>,
+    /// 値(`(val x)` のように欠けていれば None)。
+    pub(super) value: Option<&'f Form>,
+}
+
+/// 宣言(`val`・`var`・`lazy val` … と `:=`)の頭の後ろの並びを名と値の組に読む。値の前の `! 式` の 2 つ組は撃つ値として
+/// 1 つに畳む(ADR-DOE-HY-006 §3 — 宣言と `:=` の値の部分に限る。setv は畳まない)。
+pub(super) fn binding_pairs<'f>(hy: &Hy, items: &[&'f Form]) -> Vec<BindingPair<'f>> {
+    let mut pairs = Vec::new();
+    let mut i = 0;
+    while i < items.len() {
+        let name = items[i];
+        match (items.get(i + 1), items.get(i + 2)) {
+            (Some(bang), Some(value)) if hy.symbol(bang) == Some("!") => {
+                pairs.push(BindingPair { name, bang: Some(bang), value: Some(value) });
+                i += 3;
+            }
+            (value, _) => {
+                pairs.push(BindingPair { name, bang: None, value: value.copied() });
+                i += 2;
+            }
+        }
+    }
+    pairs
 }
 
 /// `(<- x e)` / `(<- x T e)` / `(<- e)`、末尾に `:absent F` があってもよい。
-fn bind_shape<'f>(hy: &Hy, items: &[&'f Form]) -> Option<BindShape<'f>> {
+pub(super) fn bind_shape<'f>(hy: &Hy, items: &[&'f Form]) -> Option<BindShape<'f>> {
     let mut args = &items[1..];
     let mut absent_as_raise = None;
     if args.len() >= 3
@@ -1199,6 +1251,7 @@ pub fn file_signatures(world: &World, root: &Path, rel: &str, source: &str) -> F
         );
     }
     out.rewrites = super::call_view::file_rewrites(world, &reader, &forms);
+    out.bodies = super::body_view::file_bodies(world, &reader, &forms, &out.bindings);
     out
 }
 
@@ -1529,6 +1582,7 @@ fn collect_bindings(
                     out.push(binding(
                         reader,
                         BindingForm::Bind,
+                        None,
                         form,
                         head_form,
                         name,
@@ -1539,30 +1593,15 @@ fn collect_bindings(
                 }
             }
         }
-        Some(word @ ("val" | "var" | "setv")) => {
-            let kind = match word {
-                "val" => BindingForm::Val,
-                "var" => BindingForm::Var,
-                _ => BindingForm::Setv,
-            };
+        Some("setv") => {
             for pair in children[1..].chunks(2) {
                 if let [name, value] = pair {
                     if matches!(name.node, Node::Symbol) {
-                        let typed = match value_type(world, reader, value, flags) {
-                            // `(var x None)` は後で別の型の値を入れる置き場 — None を型と読まない(分からないにする)。
-                            Typed {
-                                type_ref: Some(TypeRef::Name { name, .. }),
-                                origin: BindingOrigin::Literal,
-                                ..
-                            } if kind == BindingForm::Var && name == "None" => Typed::unknown(),
-                            other => other,
-                        };
-                        if kind == BindingForm::Var {
-                            vars.insert(reader.hy.text(name).to_string(), typed.type_ref.clone());
-                        }
+                        let typed = value_type(world, reader, value, flags);
                         out.push(binding(
                             reader,
-                            kind,
+                            BindingForm::Setv,
+                            None,
                             form,
                             head_form,
                             name,
@@ -1574,8 +1613,45 @@ fn collect_bindings(
                 }
             }
         }
+        Some(word @ ("val" | "var" | "lazy" | "session")) => {
+            // `(lazy val x e)`・`(session var x e)` は前の語の次が val / var
+            let (modifier, word, start) = match BindingModifier::of(word) {
+                Some(modifier) => (Some(modifier), children.get(1).and_then(|w| reader.hy.symbol(w)).unwrap_or(""), 2),
+                None => (None, word, 1),
+            };
+            let kind = [("val", BindingForm::Val), ("var", BindingForm::Var)]
+                .into_iter()
+                .find(|(spelled, _)| *spelled == word)
+                .map(|(_, kind)| kind);
+            if let Some(kind) = kind {
+                for pair in binding_pairs(&reader.hy, &children[start.min(children.len())..]) {
+                    let (name, Some(value)) = (pair.name, pair.value) else { continue };
+                    if !matches!(name.node, Node::Symbol) {
+                        continue;
+                    }
+                    let typed = match pair.bang {
+                        Some(_) => performed_type(world, reader, value, None, flags),
+                        None => value_type(world, reader, value, flags),
+                    };
+                    let typed = match typed {
+                        // `(var x None)` は後で別の型の値を入れる置き場 — None を型と読まない(分からないにする)。
+                        Typed {
+                            type_ref: Some(TypeRef::Name { name, .. }),
+                            origin: BindingOrigin::Literal,
+                            ..
+                        } if kind == BindingForm::Var && name == "None" => Typed::unknown(),
+                        other => other,
+                    };
+                    if kind == BindingForm::Var {
+                        vars.insert(reader.hy.text(name).to_string(), typed.type_ref.clone());
+                    }
+                    out.push(binding(reader, kind, modifier, form, head_form, name, None, Some(value), typed));
+                }
+            }
+        }
         Some(":=") => {
-            if let [_, name, value, ..] = children.as_slice() {
+            let pair = binding_pairs(&reader.hy, &children[1..]).into_iter().next();
+            if let Some(BindingPair { name, value: Some(value), .. }) = pair {
                 if matches!(name.node, Node::Symbol) {
                     let typed = match vars.get(reader.hy.text(name)) {
                         Some(Some(type_ref)) => Typed {
@@ -1589,6 +1665,7 @@ fn collect_bindings(
                     out.push(binding(
                         reader,
                         BindingForm::Assign,
+                        None,
                         form,
                         head_form,
                         name,
@@ -1631,6 +1708,7 @@ fn collect_bindings(
 fn binding(
     reader: &FileReader,
     form: BindingForm,
+    modifier: Option<BindingModifier>,
     whole: &Form,
     head: Option<&Form>,
     name: &Form,
@@ -1640,6 +1718,7 @@ fn binding(
 ) -> Binding {
     Binding {
         form,
+        modifier,
         name: reader.hy.text(name).to_string(),
         path: reader.path.clone(),
         range: reader.range(name),

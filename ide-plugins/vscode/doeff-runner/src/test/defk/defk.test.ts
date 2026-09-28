@@ -414,6 +414,7 @@ suite('束縛の型 — Text x <- …', () => {
     const source = '  (<- a str (helper id))\n';
     const bind: LintBinding = {
       form: '<-',
+      modifier: null,
       name: 'a',
       path: '/repo/x.hy',
       range: { start: { line: 0, character: 6 }, end: { line: 0, character: 7 } },
