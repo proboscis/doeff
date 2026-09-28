@@ -11,10 +11,10 @@
 (import .worker_model [JobSpec])
 (import .cluster_model [ClusterJob WorkerInfo GenerationOrder Placement ClusterTiming ClusterState TaskRecord Request Drain EnvFailed WarmEntry HandoffPhase RefusedJob
                         capabilities-of component-versions-of task-record-to-json task-record-from-json ACCEPTED-FORMATS format-refusal
-                        PLACED-PHASES handoff-watch-from-json])
+                        PLACED-PHASES handoff-watch-from-json environ-pairs])
 (import .semaphore_model [SEMAPHORE-PREFIX lease-op semaphore-write-refusal semaphore-key])
 (import doeff [run])
-(import .runtime_env_model [runtime-env-of-json RuntimeEnvInvalid EnvVar env-key])
+(import .runtime_env_model [runtime-env-of-json RuntimeEnvInvalid env-key child-environ-refusal])
 (import .readiness_model [readiness-refusal])
 
 (setv JOB-ENTRY "doeff_cluster.job_entry")
@@ -57,7 +57,7 @@
                    revision
                    :handoff (= (.get item "update") "handoff") :runtime-env runtime
                    :program (get run "program")
-                   :environ (tuple (sorted (.items (.get item "environ" {}))))))
+                   :environ (environ-pairs (.get item "environ" {}))))
     True (raise (ValueError (+ "知らない run.kind: " (repr (.get run "kind")))))))
 
 
@@ -92,7 +92,7 @@
   {:pre [(: item dict)] :post [(: % (| str None))] :tags {:context "doeff-cluster" :role "judgment"}}
   "Program の job の宣言の行が受けられない理由(受けられれば None)。旧い形(run.factory・run.env・run.config・requires)・
    image の版を追う欄(baseFrom・base・overlay — Program を詰めた commit と別の commit で解くことになる — 改訂 1 の E)・置き場のキーの形・identity の欠け・
-   environ の名(EnvVar の検め・実行環境の env-vars との重なり — 改訂 1 の G)を検める。"
+   environ の名(child-environ-refusal の検め・実行環境の env-vars との重なり — 改訂 1 の G)を検める。"
   (setv run (get item "run")
         old (lfor k OLD-RUN-KEYS :if (in k run) k)
         environ (.get item "environ" {})
@@ -114,19 +114,28 @@
 
 (deff environ-refusal [#^ dict environ #^ list declared]  ; defk にできない: 宣言の読み(coordinator の純粋な判断)が呼ぶ
   {:pre [(: environ dict) (: declared list)] :post [(: % (| str None))] :tags {:context "doeff-cluster" :role "judgment"}}
-  "宣言の environ が受けられない理由。名と値は実行環境の env-vars と同じ検め(runtime_env_model.EnvVar — 名の形・worker の予約)で、
-   env-vars と同じ名は断る(子の環境変数の足し口を 1 つにする — 改訂 1 の G)。"
-  (for [#(k v) (.items environ)]
-    (when (not (isinstance v str))
-      (return (.format "environ の {} の値は文字列: {!r}" k v)))
-    (try
-      (EnvVar :name k :value v)
-      (except [error RuntimeEnvInvalid]
-        (return (.format "environ の {}: {}" k error)))))
+  "宣言の行・task の本文の environ が受けられない理由。名と値は実行環境の env-vars と同じ検め(runtime_env_model.child-environ-refusal —
+   EnvVar の名の形・worker の予約・秘密の中身の名)で、env-vars と同じ名は断る(子の環境変数の足し口を 1 つにする — 改訂 1 の G)。"
+  (setv problem (child-environ-refusal environ))
+  (when problem (return problem))
   (setv clash (sorted (gfor k environ :if (in k declared) k)))
   (if clash
       (.format "environ の {} は実行環境の env-vars と同じ名 — どちらか 1 つで宣言する" clash)
       None))
+
+
+(deff task-environ-refusal [#^ dict body]  ; defk にできない: HTTP の本文を読む境界(Program の外)が呼ぶ純粋な判断
+  {:pre [(: body dict)] :post [(: % (| str None))] :tags {:context "doeff-cluster" :role "judgment"}}
+  "task(POST /tasks・PUT /detached)の本文の environ(子の環境変数 — 無ければ空)が受けられない理由。規則は service の宣言の行と同じ
+   environ-refusal 1 つ(2026-09-28)。runtimeEnv の形の誤りは runtime-env-refusal が断るので、ここでは object の時だけ
+   env-vars の名と比べる。"
+  (setv environ (.get body "environ" {})
+        runtime (.get body "runtimeEnv"))
+  (if (not (isinstance environ dict))
+      (.format "environ は環境変数の名 → 文字列の object: {!r}" environ)
+      (environ-refusal environ (if (isinstance runtime dict)
+                                   (lfor v (.get runtime "envVars" []) :if (isinstance v dict) (.get v "name"))
+                                   []))))
 
 
 (defn #^ ClusterJob job-from-json [#^ dict item]
@@ -348,7 +357,7 @@
 (deff task-body-refusal [#^ ClusterState state #^ dict body]  ; defk にできない: HTTP の本文を読む境界(Program の外)が呼ぶ純粋な判断
   {:pre [(: state ClusterState) (: body dict)] :post [(: % (| str None))] :tags {:context "doeff-cluster" :role "judgment"}}
   "task(POST /tasks・PUT /detached)の本文が受けられない理由 — 旧い形の env(handler の組の import path)・旧い形の blob(詰めた
-   Program を本文に載せる形)と versions(版の写し)・置き場のキー program の形と置き場に在るか・needs の欠け。task も Program の値 1 つで、handler は Program の
+   Program を本文に載せる形)と versions(版の写し)・置き場のキー program の形と置き場に在るか・子の環境変数 environ(service の :environ と同じ規則)・needs の欠け。task も Program の値 1 つで、handler は Program の
    中で並べ(ADR-DOE-CLUSTER-001 R1・R2・改訂 1 の J の 11)、詰めた Program は service の宣言と同じく先に /programs/<sha> に置いて
    本文は sha だけを運ぶ(R3b — service と task で運び方を分けない)。"
   (let [program (.get body "program")]
@@ -365,7 +374,7 @@
         (.format "program は詰めた Program の置き場のキー(64 桁の sha256): {!r}" program)
       (not-in program state.programs)
         (.format "program {} は置き場に無い — 先に PUT /programs/{} で置く" program program)
-      True (needs-refusal body))))
+      True (or (task-environ-refusal body) (needs-refusal body)))))
 
 
 (deff program-versions [#^ ClusterState state #^ str sha]  ; defk にできない: HTTP の本文を読む境界(Program の外)が呼ぶ純粋な判断
@@ -777,7 +786,10 @@
            ;; adopt-running-detached・2026-09-27)。
            (if task.detached {"detached" True "key" task.key "leaseMs" task.lease-ms "retainMs" task.retain-ms
                               "needs" (list task.needs)} {})
-           (if (is-not task.runtime-env None) {"runtimeEnv" task.runtime-env} {}))))
+           (if (is-not task.runtime-env None) {"runtimeEnv" task.runtime-env} {})
+           ;; 子の環境変数(service の job の行の environ と同じ欄 — worker は同じ路で子の環境に置く)。切り離した task は写しにも残る
+           ;; (引き取る時に同じ environ で行を作り直す)。
+           (if task.environ {"environ" (dict task.environ)} {}))))
 
 
 (defn #^ TaskRecord absorb-detached-report [#^ TaskRecord task #^ dict status #^ int now]
@@ -1020,19 +1032,21 @@
             (not-in (.get status "phase") ADOPTABLE-PHASES))
     (return None))
   (setv id (cut row-name 5 None) key (.get echo "key") lease-ms (.get echo "leaseMs")
-        revision (.get echo "revision") needs (.get echo "needs" []) program (.get echo "program"))
+        revision (.get echo "revision") needs (.get echo "needs" []) program (.get echo "program")
+        environ (.get echo "environ" {}))
   ;; 写しの program(置き場のキー)が無い・形の違う報告(blob を運んでいた旧い worker)は引き取らない。引き取った行は同じ sha を
   ;; 参照する(担い手は cache の file を持っているので、状態を失った置き場に Program が無くても走り続ける)。
   (when (or (in id state.tasks) (!= (.get echo "id") id) (not (.get echo "detached"))
             (not (isinstance key str)) (not (isinstance lease-ms int))
             (not (isinstance revision str)) (not (isinstance needs list))
             (not (and (isinstance program str) (PROGRAM-SHA.fullmatch program)))
+            (not (isinstance environ dict))
             (any (gfor t (.values state.tasks) (= t.key key))))
     (return None))
   (TaskRecord id (.get echo "name" "") program revision
               (component-versions-of (.get echo "versions" {})) (capabilities-of needs "引き取る task の needs") lease-ms (+ now lease-ms) now
               :phase "assigned" :worker worker :started-ms now :detached True :key key :boot boot
-              :retain-ms (int (.get echo "retainMs" 0)) :runtime-env (.get echo "runtimeEnv")
+              :retain-ms (int (.get echo "retainMs" 0)) :runtime-env (.get echo "runtimeEnv") :environ (environ-pairs environ)
               :detail (.format "coordinator の置き場に行が無く、担い手 {} が走らせていた task を引き取った" worker)))
 
 
@@ -1161,7 +1175,8 @@
                          (program-versions state (get body "program"))
                          (request-needs body "task の needs")
                          lease-ms (+ now lease-ms) now
-                         :runtime-env (.get body "runtimeEnv")))
+                         :runtime-env (.get body "runtimeEnv")
+                         :environ (environ-pairs (.get body "environ" {}))))
   #((replace state :tasks (| state.tasks {id task}) :next-task (+ state.next-task 1)) 200 {"task" id}))
 
 
