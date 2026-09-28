@@ -180,3 +180,17 @@
   (.close server)
   (setv answer (run-as server clock (get LAW-TOKENS "maker") (ReadRow "parts" #("p1"))))
   (assert (isinstance answer Unreachable) (repr answer)))
+
+
+(deftest test-a-client-sending-by-the-http-effect-reads-an-unreachable-service-as-a-value
+  ;; agora-redesign #810: 送り方が HttpRequest の effect(EffectTransport)でも、届かない口は Unreachable の値で答える(例外で上げない)—
+  ;; 処理ループと同じ scheduler の task が読む時に、記録の service の不達で task を落とさないため。
+  (import doeff_core_effects.handlers [await-handler])
+  (import doeff_core_effects.http_handlers [http-production-handler])
+  (import doeff_records.http_client [EffectTransport])
+  (val closed (RecordsEndpoint "http://127.0.0.1:9" "t" :request-timeout 2.0 :transport (EffectTransport)))
+  (val answer (run (scheduled (with_handlers [(await-handler) (http-production-handler) (sim-time-handler :clock (SimClock))
+                                              (http-records-handler closed)]
+                                             (ReadRow "parts" #("p1"))))))
+  (assert (isinstance answer Unreachable) (repr answer))
+  (assert (in "記録の service に届かない" answer.detail) (repr answer)))

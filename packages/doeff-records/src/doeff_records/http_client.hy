@@ -14,12 +14,19 @@
 ;;;
 ;;; WatchChanges の待ちは client の側で回す(service へは timeout 0 で撃ち、空なら poll-seconds 眠って撃ち直す — doeff-time の Delay)。
 ;;; 時計は呼び手の時計なので、仮想の時計の下では memory の handler と同じに一瞬で進む。
+;;;
+;;; 要求の送り方は endpoint の transport が決める(閉じた 2 種・agora-redesign #810):
+;;;   BlockingTransport(既定)  呼び手の thread で urllib の urlopen を撃つ — 同期の run の中の client(送る間は VM が止まる)
+;;;   EffectTransport          要求を doeff-core-effects の HttpRequest の effect として出す — 答え手は外側(本番 = 塞がない
+;;;                            http-production-handler と await-handler)。処理ループと同じ scheduler の task から読む呼び手が、記録の
+;;;                            service に届かない間も処理ループを止めないため。届かない(HttpFailed)は Unreachable に読む
 (require doeff-hy.macros [defhandler defk <-])
 (import dataclasses [dataclass])
 (import json)
 (import socket)
 (import urllib.error [HTTPError URLError])
 (import urllib.request [Request urlopen])
+(import doeff_core_effects.http_effects [HttpRequest HttpResponse HttpFailed])
 (import doeff_records.values [Refused Unreachable UndeclaredTable RowsRefused])
 (import doeff_records.effects [ReadRow ListRows PutRow PutRows WatchChanges AppendEvent ReadEvents])
 (import doeff_records.watching [wait-for-changes])
@@ -34,13 +41,22 @@
   "service が 400 / 500 で答えた(client か service の実装の誤り — 値の失敗ではない)。")
 
 
+(defclass [(dataclass :frozen True)] BlockingTransport []
+  "要求を呼び手の thread で urllib の urlopen に撃つ(既定 — file の頭の註)。")
+
+
+(defclass [(dataclass :frozen True)] EffectTransport []
+  "要求を HttpRequest の effect として出す(答え手は外側 — file の頭の註)。")
+
+
 (defclass [(dataclass :frozen True)] RecordsEndpoint []
   "記録の service 1 つへの接続の組: base-url = http://host:port / token = 呼び手の身元の token(Bearer)/
-   request-timeout = 要求 1 つの上限の秒 / poll-seconds = WatchChanges の待ちの読み直しの間隔。"
+   request-timeout = 要求 1 つの上限の秒 / poll-seconds = WatchChanges の待ちの読み直しの間隔 / transport = 要求の送り方(file の頭の註)。"
   (#^ str base-url)
   (#^ str token)
   (setv #^ float request-timeout DEFAULT-REQUEST-TIMEOUT)
-  (setv #^ float poll-seconds DEFAULT-POLL-SECONDS))
+  (setv #^ float poll-seconds DEFAULT-POLL-SECONDS)
+  (setv #^ (| BlockingTransport EffectTransport) transport (BlockingTransport)))
 
 
 (defclass [(dataclass :frozen True)] RawReply []
@@ -49,14 +65,41 @@
   (#^ JsonValue body))
 
 
-(defk exchange [endpoint operation body]
+(defk service-url [endpoint operation]
+  {:pre [(: endpoint RecordsEndpoint) (: operation str)] :post [(: % str)]}
+  "操作 1 つの口の URL。"
+  (+ (.rstrip endpoint.base-url "/") PATH-PREFIX operation))
+
+
+(defk request-headers [endpoint]
+  {:pre [(: endpoint RecordsEndpoint)] :post [(: % dict)]}
+  "要求の header(本文の型と身元の token)。"
+  {"Content-Type" "application/json; charset=utf-8"
+   "Authorization" (+ "Bearer " endpoint.token)})
+
+
+(defk request-bytes [body]
+  {:pre [(: body dict)] :post [(: % bytes)]}
+  "要求の本文の綴り(どちらの送り方も同じ byte を送る)。"
+  (.encode (json.dumps body :ensure-ascii False :separators #("," ":")) "utf-8"))
+
+
+(defk raw-reply-of [operation status payload]
+  {:pre [(: operation str) (: status int) (: payload bytes)] :post [(: % RawReply)]}
+  "答えの status と本文の byte を RawReply にする(本文が JSON でなければ WireError)。"
+  (try
+    (RawReply status (json.loads (.decode payload "utf-8")))
+    (except [error #(UnicodeDecodeError json.JSONDecodeError)]
+      (raise (WireError (.format "{} の答え(status {})が JSON でない: {}" operation status error))))))
+
+
+(defk exchange-blocking [endpoint operation body]
   {:pre [(: endpoint RecordsEndpoint) (: operation str) (: body dict)] :post [(: % (| RawReply Unreachable))]}
-  "要求 1 つを送り、status と JSON の本文を受ける(HTTP の境界の 1 か所)。届かなければ Unreachable。"
-  (setv request (Request (+ (.rstrip endpoint.base-url "/") PATH-PREFIX operation)
-                         :data (.encode (json.dumps body :ensure-ascii False :separators #("," ":")) "utf-8")
-                         :method "POST"
-                         :headers {"Content-Type" "application/json; charset=utf-8"
-                                   "Authorization" (+ "Bearer " endpoint.token)}))
+  "要求 1 つを urllib の urlopen で送る(BlockingTransport)。届かなければ Unreachable。"
+  (<- url str (service-url endpoint operation))
+  (<- headers dict (request-headers endpoint))
+  (<- data bytes (request-bytes body))
+  (setv request (Request url :data data :method "POST" :headers headers))
   (try
     (with [response (urlopen request :timeout endpoint.request-timeout)]
       (setv status response.status payload (.read response)))
@@ -64,10 +107,32 @@
       (setv status error.code payload (.read error)))
     (except [error #(URLError ConnectionError socket.timeout)]
       (return (Unreachable (.format "記録の service に届かない: {}" error)))))
-  (try
-    (RawReply status (json.loads (.decode payload "utf-8")))
-    (except [error #(UnicodeDecodeError json.JSONDecodeError)]
-      (raise (WireError (.format "{} の答え(status {})が JSON でない: {}" operation status error))))))
+  (<- reply RawReply (raw-reply-of operation status payload))
+  reply)
+
+
+(defk exchange-by-effect [endpoint operation body]
+  {:pre [(: endpoint RecordsEndpoint) (: operation str) (: body dict)] :post [(: % (| RawReply Unreachable))]}
+  "要求 1 つを HttpRequest の effect として出す(EffectTransport)。撃ち直しは呼び手の読みが決めるので 0 回、届かない失敗は値で受けて
+   Unreachable にする。"
+  (<- url str (service-url endpoint operation))
+  (<- headers dict (request-headers endpoint))
+  (<- data bytes (request-bytes body))
+  (<- answer (| HttpResponse HttpFailed)
+      (HttpRequest "POST" url :headers headers :body data :timeout-seconds endpoint.request-timeout :max-retries 0
+                   :follow-redirects False :failures-as-values True))
+  (when (isinstance answer HttpFailed)
+    (return (Unreachable (.format "記録の service に届かない: {}" answer.detail))))
+  (<- reply RawReply (raw-reply-of operation answer.status answer.content))
+  reply)
+
+
+(defk exchange [endpoint operation body]
+  {:pre [(: endpoint RecordsEndpoint) (: operation str) (: body dict)] :post [(: % (| RawReply Unreachable))]}
+  "要求 1 つを送り、status と JSON の本文を受ける(HTTP の境界の 1 か所 — 送り方は endpoint の transport)。届かなければ Unreachable。"
+  (match endpoint.transport
+    (BlockingTransport) (! (exchange-blocking endpoint operation body))
+    (EffectTransport) (! (exchange-by-effect endpoint operation body))))
 
 
 (defk refused-write [ask reason]
