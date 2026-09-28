@@ -81,6 +81,7 @@ function simPart(source: string): LintSignature {
     declared: null,
     inferred: [],
     inferenceComplete: true,
+    inferenceOpaque: [],
     tags: new Map([
       ['context', 'turn'],
       ['role', 'judgment']
@@ -122,6 +123,24 @@ suite('defk の見出し — 契約 版 2 の読み込み', () => {
       ]
     );
     assert.deepStrictEqual(r.unknown, []);
+  });
+
+  test('effects.opaque(追えなかった呼びの頭の名)を読む。欄の無い古い出力は空(版 2 への欄の追加)', () => {
+    const old = report();
+    assert.deepStrictEqual(old.signatures.map((s) => s.inferenceOpaque), old.signatures.map(() => []), '欄が無ければ空');
+    // fixture は complete の欄が入る前の出力なので、effects の欄の頭に 2 つの欄を差し込む
+    const text = readFixture('signatures.json').replace('"effects": {', '"effects": {"complete": false, "opaque": ["with_handlers", "helper"],');
+    const newer = parseLintJson(text);
+    assert.strictEqual(newer.tag, 'ok');
+    if (newer.tag !== 'ok') {
+      return;
+    }
+    const partial = newer.report.signatures.filter((s) => !s.inferenceComplete);
+    assert.strictEqual(partial.length, 1, '書き換えた 1 つだけが途中の推論');
+    assert.deepStrictEqual(partial[0].inferenceOpaque, ['with_handlers', 'helper'], '名の列をそのまま運ぶ(並びは linter の側)');
+    assert.ok(newer.report.signatures.filter((s) => s.inferenceComplete).every((s) => s.inferenceOpaque.length === 0));
+    const bad = parseLintJson(readFixture('signatures.json').replace('"effects": {', '"effects": {"complete": false, "opaque": "with_handlers",'));
+    assert.strictEqual(bad.tag, 'rejected', '文字列の列でない opaque は契約の破れ');
   });
 
   test('知らない語(規則の家族・見出しの種類・束縛の形・型の式の種類)は出力を捨てず、その項目だけ既定にして unknown に控える(#848)', () => {

@@ -116,10 +116,19 @@ function effectChips(signature: LintSignature, glyphs: Glyphs): string {
     .join('');
 }
 
+/** 推論が途中の時の注記 — 何が追えなかったか(呼びの頭の名)を添える。名が無い(古い linter)なら語だけ。 */
+export function inferencePartialNote(signature: LintSignature): string {
+  if (signature.inferenceComplete) {
+    return '';
+  }
+  const names = signature.inferenceOpaque.length === 0 ? '' : `: ${signature.inferenceOpaque.join(', ')}`;
+  return `<span class="none" title="${escapeHtml(LABELS.inferencePartialTitle)}">(${escapeHtml(LABELS.inferencePartial)}${escapeHtml(names)})</span>`;
+}
+
 /** effects の欄(開いたカード)。effect が無ければ欄ごと出さない。 */
 function effectRow(signature: LintSignature, glyphs: Glyphs): string {
   const chips = effectChips(signature, glyphs);
-  const partial = signature.inferenceComplete ? '' : `<span class="none">(${escapeHtml(LABELS.inferencePartial)})</span>`;
+  const partial = inferencePartialNote(signature);
   if (chips === '') {
     return signature.inferenceComplete ? '' : `<div class="row"><span class="k">${escapeHtml(LABELS.effects)}</span><div>${partial}</div></div>`;
   }

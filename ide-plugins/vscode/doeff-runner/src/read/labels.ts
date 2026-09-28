@@ -65,6 +65,8 @@ export const LABELS = {
   none: 'none',
   noArgs: 'no args',
   inferencePartial: 'inference partial',
+  /** 推論が途中の注記の hover — 何が追えなかったか(追えない呼び = repo の外の関数・deff・method) */
+  inferencePartialTitle: 'effects behind these calls could not be followed (functions outside the repo, deff, methods)',
   waitingForLinter: 'waiting for linter',
   violations: 'violations',
   hySource: 'Hy source (read only)',

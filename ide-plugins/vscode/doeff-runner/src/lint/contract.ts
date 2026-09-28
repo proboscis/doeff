@@ -197,6 +197,8 @@ export interface LintSignature {
   readonly inferred: readonly LintEffectRef[];
   /** 推論が追いきれたか(追えない呼びを撃っていれば false — inferred は見えた分だけ)。欄の無い古い linter は true */
   readonly inferenceComplete: boolean;
+  /** 追えなかった呼びの頭の名(名の順・重複なし)。inferenceComplete が false の時だけ空でない。欄の無い古い linter は空 */
+  readonly inferenceOpaque: readonly string[];
   readonly tags: ReadonlyMap<string, string>;
 }
 
@@ -683,6 +685,12 @@ function signature(value: unknown, where: string, notes: Notes): LintSignature |
       }
       return v;
     }) ?? true,
+    inferenceOpaque: optional(effects, 'opaque', `${where}.effects`, (v, at) => {
+      if (!Array.isArray(v) || !v.every((s) => typeof s === 'string')) {
+        throw new LintContractViolation(`${at}: 文字列の列でない`);
+      }
+      return v as string[];
+    }) ?? [],
     tags: new Map(Object.keys(tags).map((k) => [k, text(tags[k], `${where}.tags.${k}`)]))
   };
 }

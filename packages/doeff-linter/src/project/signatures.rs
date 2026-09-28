@@ -80,6 +80,9 @@ pub struct SignatureEffects {
     /// 推論が追いきれたか — 追えない呼び(repo の外の関数・deff・method)を撃っていれば false で、`inferred` は見えた分だけ。
     /// エディタが「effect なし」と「推論しきれない」を分けて描くため(版 2 への欄の追加)。
     pub complete: bool,
+    /// 追えなかった呼びの頭の名(書かれた綴りの最後の節・重複なし・並びは名の順)。`complete` が false の時だけ空でない。
+    /// エディタが「inference partial: with_handlers, …」と何が追えなかったかを出すため(版 2 への欄の追加・無い出力は空と読む)。
+    pub opaque: Vec<String>,
 }
 
 /// 引数 1 つ(`:pre` に型が無ければ type は null)。
@@ -282,6 +285,8 @@ struct Summary {
     /// 追えない呼び(repo の外の関数・deff・method)を撃っている(推論の effect の集合が欠けうる — DOEFF127 が
     /// 「宣言したのに起こしていない」を判じない)。
     opaque: bool,
+    /// 追えない呼びの頭(module まで含めた名)— エディタが「何が追えなかったか」を出すため(呼び先の defk の分も畳んで持つ)。
+    opaque_calls: BTreeSet<String>,
 }
 
 /// repo の Hy の file 全部から集めた、型・effect・defk の表と、defk の推論。
@@ -381,6 +386,7 @@ impl World {
             summary.effects.extend(outcome.effects);
             summary.absent |= outcome.absent;
             summary.opaque |= outcome.opaque;
+            summary.opaque_calls.extend(outcome.opaque_calls);
             summary.raises.extend(outcome.raises);
         }
         summary
@@ -400,6 +406,7 @@ impl World {
         } else if let Some(summary) = self.summaries.get(&site.callee) {
             out.effects.extend(summary.effects.iter().cloned());
             out.opaque = summary.opaque;
+            out.opaque_calls.extend(summary.opaque_calls.iter().cloned());
             (summary.absent, summary.raises.clone())
         } else if self.is_foreign_effect(&site.callee) {
             // repo の外の effect(doeff 本体の Delay・Ask など)— 撃っているので effect として数える。答えの分け方は分からない
@@ -408,6 +415,7 @@ impl World {
         } else {
             // 追えない呼び(repo の外の関数・deff・method)を撃っている — その先の effect は分からない
             out.opaque = true;
+            out.opaque_calls.insert(site.callee.clone());
             return out;
         };
         if !site.raise_handled {
@@ -1323,7 +1331,18 @@ fn signature_of(
             .iter()
             .map(|(q, spelled)| world.resolve_qualified(q, spelled))
             .collect(),
-        effects: SignatureEffects { declared, inferred, complete: !summary.opaque },
+        effects: SignatureEffects {
+            declared,
+            inferred,
+            complete: !summary.opaque,
+            opaque: summary
+                .opaque_calls
+                .iter()
+                .map(|q| last_segment(q).to_string())
+                .collect::<BTreeSet<String>>()
+                .into_iter()
+                .collect(),
+        },
         tags,
     }
 }
@@ -1845,9 +1864,15 @@ mod tests {
         assert_eq!(sim.params[1].type_ref.as_ref().map(name_of).as_deref(), Some("Callable | None"));
         assert_eq!(sim.tags.get("role").map(String::as_str), Some("judgment"));
         assert!(sim.effects.complete);
+        assert!(sim.effects.opaque.is_empty(), "追えない呼びが無ければ名の列は空");
         let run = &got.signatures[1];
         assert!(run.effects.inferred.is_empty());
         assert!(!run.effects.complete, "追えない呼び with_handlers を撃つので、推論が空でも「effect なし」とは言えない");
+        assert_eq!(
+            run.effects.opaque,
+            vec!["helper".to_string(), "with_handlers".to_string()],
+            "何が追えなかったか(撃った呼びの頭の名・名の順・重複なし)をエディタへ出す"
+        );
     }
 
     #[test]
