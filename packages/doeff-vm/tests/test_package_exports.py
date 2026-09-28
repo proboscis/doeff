@@ -19,6 +19,7 @@ CURRENT_RUNTIME_SYMBOLS = (
     "Expand",
     "DoFunction",
     "Call",
+    "BindOpener",
     "Pass",
     "WithHandler",
     "ResumeThrow",

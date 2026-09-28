@@ -394,6 +394,7 @@ pub fn register_pyvm(m: &Bound<'_, pyo3::types::PyModule>) -> PyResult<()> {
     m.add_class::<crate::do_expr::PyExpand>()?;
     m.add_class::<crate::do_expr::PyDoFunction>()?;
     m.add_class::<crate::do_expr::PyCall>()?;
+    m.add_class::<crate::do_expr::PyBindOpener>()?;
     m.add_class::<crate::do_expr::PyPass>()?;
     m.add_class::<crate::do_expr::PyWithHandler>()?;
     m.add_class::<crate::do_expr::PyResumeThrow>()?;

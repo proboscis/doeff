@@ -390,6 +390,84 @@ impl PyCall {
     }
 }
 
+/// BindOpener(fallback, generator_program) — what `doeff_core_effects.outcomes.open_bind`
+/// is: the one callable every doeff-hy bind (`(<- x e)` / `(! e)`) calls on its operand.
+///
+/// The hot path runs here without entering Python: with no `absent` and an operand that
+/// is a `Call` of a definition whose body does not yield (a defk judgment), call the
+/// function in place and return `Pure(answer)` — the bind then takes `.value` without a
+/// VM round trip. This is the same answer `outcomes._settled` gives (agora-redesign
+/// #844 — a screen row binds such judgments 10–16 times, and the Python dispatch
+/// `open_bind` → `_opened` → `_settled` was the largest cost left per bind). An answer
+/// that is itself a generator runs as a program, as the VM would run it:
+/// `generator_program(gen)`. Everything else (an `absent`, a yielding definition, any
+/// other operand) goes to `fallback(expr[, absent])`, the Python dispatch, unchanged.
+#[pyclass(name = "BindOpener", frozen, module = "doeff_vm.doeff_vm")]
+pub struct PyBindOpener {
+    #[pyo3(get)]
+    pub fallback: Py<PyAny>,
+    #[pyo3(get)]
+    pub generator_program: Py<PyAny>,
+}
+
+#[pymethods]
+impl PyBindOpener {
+    #[new]
+    fn new(fallback: Py<PyAny>, generator_program: Py<PyAny>) -> Self {
+        Self {
+            fallback,
+            generator_program,
+        }
+    }
+
+    #[pyo3(signature = (expr, absent=None))]
+    fn __call__(
+        &self,
+        py: Python<'_>,
+        expr: &Bound<'_, PyAny>,
+        absent: Option<&Bound<'_, PyAny>>,
+    ) -> PyResult<Py<PyAny>> {
+        let absent = absent.filter(|a| !a.is_none());
+        if absent.is_none() {
+            if let Ok(call) = expr.cast::<PyCall>() {
+                let call = call.get();
+                let definition = call.function.bind(py).get();
+                if !definition.yields {
+                    let value = definition
+                        .function
+                        .bind(py)
+                        .call(call.args.bind(py), Some(call.kwargs.bind(py)))?;
+                    // SAFETY: `value` is a live object held by this frame.
+                    if unsafe { pyo3::ffi::PyGen_CheckExact(value.as_ptr()) } != 0 {
+                        return Ok(self.generator_program.bind(py).call1((value,))?.unbind());
+                    }
+                    return Ok(Py::new(
+                        py,
+                        PyPure {
+                            value: value.unbind(),
+                        },
+                    )?
+                    .into_any());
+                }
+            }
+        }
+        match absent {
+            None => Ok(self.fallback.bind(py).call1((expr,))?.unbind()),
+            Some(absent) => Ok(self.fallback.bind(py).call1((expr, absent))?.unbind()),
+        }
+    }
+
+    fn __repr__(&self, py: Python<'_>) -> PyResult<String> {
+        let f = self.fallback.bind(py).repr()?;
+        Ok(format!("BindOpener({})", f))
+    }
+
+    fn __traverse__(&self, visit: PyVisit<'_>) -> Result<(), PyTraverseError> {
+        visit_py_field(&visit, &self.fallback)?;
+        visit_py_field(&visit, &self.generator_program)
+    }
+}
+
 /// Pass(effect, k) — handler doesn't handle, forward to outer.
 #[pyclass(name = "Pass", frozen, dict, module = "doeff_vm.doeff_vm")]
 pub struct PyPass {

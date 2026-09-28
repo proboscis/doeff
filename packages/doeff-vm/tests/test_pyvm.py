@@ -108,6 +108,62 @@ def test_do_call_runs_generator_value_kwargs_and_raises_like_before() -> None:
     assert run(reader({"base": 10})(caller())) == (3, 26, "boom")
 
 
+def test_bind_opener_calls_a_non_yielding_call_in_place_and_hands_the_rest_to_its_fallback() -> None:
+    """`outcomes.open_bind` is a BindOpener (agora-redesign #844).
+
+    The slow shape: every bind of a defk judgment went through the Python dispatch
+    `open_bind` → `_opened` → `_settled` — the largest cost left per bind (a screen row
+    binds 10–16 judgments). The hot path (no `absent`, a `Call` whose definition does not
+    yield) must answer `Pure(answer)` without touching the fallback; everything else must
+    reach the fallback with the same arguments.
+    """
+    seen: list[tuple] = []
+
+    def fallback(*args):
+        seen.append(args)
+        return ("fallback", args)
+
+    def generator_program(gen):
+        return ("generator", next(gen))
+
+    opener = doeff_vm.BindOpener(fallback, generator_program)
+
+    @do
+    def judge(x, *, bias=0):
+        return x + bias > 3
+
+    @do
+    def asks(x):
+        base = yield Ask("base")
+        return base + x
+
+    @do
+    def gives_generator():
+        return (n for n in (7,))
+
+    @do
+    def fails(message):
+        raise ValueError(message)
+
+    answer = opener(judge(3, bias=1))
+    assert type(answer) is doeff_vm.Pure
+    assert answer.value is True
+    assert seen == []
+    assert opener(gives_generator()) == ("generator", 7)
+    with pytest.raises(ValueError, match="boom"):
+        opener(fails("boom"))
+    assert seen == []
+
+    yielding = asks(1)
+    marker = object()
+    absent = lambda: "why"  # noqa: E731
+    assert opener(yielding) == ("fallback", (yielding,))
+    assert opener(marker) == ("fallback", (marker,))
+    assert opener(marker, None) == ("fallback", (marker,))
+    assert opener(judge(1), absent)[0] == "fallback"
+    assert [len(args) for args in seen] == [1, 1, 1, 2]
+
+
 def test_apply_resolves_doexpr_args() -> None:
     vm = doeff_vm.PyVM()
     adder = doeff_vm.Callable(lambda left, right: left + right)

@@ -22,6 +22,7 @@ Apply = _ext.Apply
 Expand = _ext.Expand
 DoFunction = _ext.DoFunction
 Call = _ext.Call
+BindOpener = _ext.BindOpener
 Pass = _ext.Pass
 WithHandler = _ext.WithHandler
 ResumeThrow = _ext.ResumeThrow

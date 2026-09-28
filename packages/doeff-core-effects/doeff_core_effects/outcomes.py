@@ -22,7 +22,7 @@ from enum import Enum
 from types import GeneratorType, NoneType, UnionType
 from typing import TYPE_CHECKING, Generic, Never, TypeAlias, TypeVar, Union, get_args, get_origin
 
-from doeff_vm import Call, EffectBase, Err, Expand, IRStream, Ok, Pure
+from doeff_vm import BindOpener, Call, EffectBase, Err, Expand, IRStream, Ok, Pure
 
 from doeff.do import do
 from doeff.program import Pass, ProgramHandler, Transfer
@@ -292,8 +292,8 @@ def _opened(expr: object, token: AbsentAsToken | None) -> object:
     return expr
 
 
-def open_bind(expr: object, absent: Callable[[], object] | None = None) -> object:
-    """``(<- x expr)`` / ``(! expr)`` が yield する物(doeff-hy の <- の展開の 1 点が呼ぶ)。
+def _open_bind(expr: object, absent: Callable[[], object] | None = None) -> object:
+    """``(<- x expr)`` / ``(! expr)`` が yield する物(doeff-hy の <- の展開の 1 点が呼ぶ ``open_bind`` の Python の道)。
 
     - 宣言(``__doeff_outcomes__``)を持つ effect → 答えを宣言に従って開く Program
     - Ok / Err / Some / Nothing → 開く Program
@@ -309,6 +309,18 @@ def open_bind(expr: object, absent: Callable[[], object] | None = None) -> objec
     if absent is None:
         return opened
     return absent_raises(absent)(_performed(opened))
+
+
+def _generator_program(value: GeneratorType) -> object:
+    """効果を出さない @do の関数が生成器を返した時の Program(VM と同じくその生成器を走らせる — ``_settled`` と同じ形)。"""
+    return Expand(Pure(IRStream(value)))
+
+
+# 束ねの 1 点。熱い道(``absent`` 無しで、効果を出さない @do の呼び ``Call`` を束ねる — defk の判断)は doeff-vm の
+# ``BindOpener`` が Rust の中でその場で呼んで ``Pure`` を返し、それ以外は ``_open_bind`` へ渡す(答えは同じ・
+# agora-redesign #844 — 画面の 1 行で 10〜16 回束ねる判断で、Python の振り分け open_bind → _opened → _settled が
+# 1 回の束ねの一番大きい残りの費用だった)。doeff-hy の <- の展開と effect-analyzer は、この object を名で引く。
+open_bind = BindOpener(_open_bind, _generator_program)
 
 
 @do

@@ -439,6 +439,13 @@ def _effect_base() -> type:
     return EffectBase
 
 
+def _bind_opener_class() -> type:
+    """doeff-vm の BindOpener の型 — ``outcomes.open_bind`` の奥の Python の道を読むため(``_function_of``)。"""
+    from doeff_vm import BindOpener
+
+    return BindOpener
+
+
 def _is_effect_class(obj: Any) -> bool:
     return isinstance(obj, type) and issubclass(obj, _effect_base())
 
@@ -451,6 +458,10 @@ def _function_of(obj: Any) -> types.FunctionType | None:
     """The plain function behind a Program function (``@do``/``defk`` wrappers unwrapped)."""
     if isinstance(obj, types.MethodType):
         obj = obj.__func__
+    if isinstance(obj, _bind_opener_class()):
+        # ``outcomes.open_bind`` is doeff-vm's BindOpener: its in-place path gives the answer
+        # its Python path gives, so read the Python path (agora-redesign #844).
+        obj = obj.fallback
     if not callable(obj) or isinstance(obj, type):
         return None
     unwrapped = inspect.unwrap(obj)
