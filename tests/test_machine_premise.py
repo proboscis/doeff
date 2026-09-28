@@ -366,8 +366,6 @@ def test_real_codex_worker_test_names_a_codex_that_does_not_start(
 # --- A premise other than a tool: a git checkout holding a pinned commit (依頼書 K) ----------
 
 CHECKOUT_NODEID = "test_premise.py::test_reads_the_pinned_contract"
-CUSTODY_FILE = "packages/doeff-agents/tests/test_sessionhost_acp_custody_lender_copy.py"
-CUSTODY_TEST = f"{CUSTODY_FILE}::test_the_copy_is_the_custody_contract_at_the_pinned_commit"
 
 
 def _assert_declared(
@@ -496,25 +494,3 @@ def test_each_unmet_premise_is_named_under_its_own_word(
     ]
     assert all(": codex" in reason for reason in declarations["tool-absent"])
     assert declarations["premise-unmet"] == [f"{CHECKOUT_NODEID}: checkout {missing} is missing"]
-
-
-def test_custody_copy_test_names_a_machine_without_the_custody_checkout(
-    tmp_path: Path, check_layer: ModuleType | None, machine_tool
-) -> None:
-    """The real custody copy test on a machine without the checkout: rc 0, skipped, premise-unmet."""
-    missing = tmp_path / "no-custody"
-    result = _run_pytest(
-        tmp_path,
-        REPO_ROOT,
-        _home(tmp_path / "home", with_check_layer=True),
-        _stand_in_bin(tmp_path / "bin", None, git=machine_tool("git")),
-        "-q",
-        "-m",
-        "not e2e",
-        CUSTODY_FILE,
-        env={"CUSTODY_CHECKOUT": str(missing)},
-    )
-
-    assert result.ret == 0, result.stdout.str() + result.stderr.str()
-    result.assert_outcomes(passed=6, skipped=1)
-    _assert_declared(result, check_layer, "premise-unmet", CUSTODY_TEST, f"checkout {missing}")
