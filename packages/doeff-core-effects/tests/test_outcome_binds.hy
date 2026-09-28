@@ -241,6 +241,45 @@
     (run (count-judged [1 "x"]))))
 
 
+(defclass [(dataclass :frozen True)] Shaped [EffectBase]
+  "欄の名が組み込みの名(type・len・list)の effect(束ねの式の衛生の検)。"
+  #^ str type
+  #^ int len
+  #^ list list)
+
+(defhandler shadowing-handler
+  "引数の名が組み込みの名の腕と、<- で束ねる腕が同じ handler に在る — Python は type を handler の関数全体の局所の名と見る。"
+  {:tags {:context "outcomes-test" :role "foundation"}}
+  (Shaped [type len list] (resume #(type len list)))
+  (Echo [value]
+    (<- ok (judge-row value))
+    (resume ok)))
+
+(defk judge-shadowed [type len list]
+  {:pre [(: type str) (: len int) (: list tuple)] :post [(: % tuple)]
+   :tags {:context "outcomes-test" :role "program"}}
+  "引数の名が組み込みの名の defk の中で束ねる。"
+  (<- ok (judge-row len))
+  #(type ok list))
+
+(defk echo-and-shape []
+  {:pre [] :post [(: % tuple)]
+   :tags {:context "outcomes-test" :role "program"}}
+  "Echo と Shaped を出す。"
+  (<- judged (Echo 5))
+  (<- shaped (Shaped "t" 2 [1]))
+  #(judged shaped))
+
+
+(deftest test-bind-does-not-read-the-callers-names
+  ;; L562 の後始末: 束ねの式が組み込みの type を名で引いていたので、引数に type を持つ腕の在る handler
+  ;; (agora-controllers の kanban-board-records の Relate)で他の腕の <- が UnboundLocalError で落ちた
+  (<- got (shadowing-handler (echo-and-shape)))
+  (assert (= got #(True #("t" 2 [1]))) got)
+  (<- shadowed (judge-shadowed "t" 5 #(1)))
+  (assert (= shadowed #("t" True #(1))) shadowed))
+
+
 (val FAILURES-BUILT [])
 
 (deff conflict-for [key]

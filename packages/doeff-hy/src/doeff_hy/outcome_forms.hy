@@ -98,7 +98,10 @@
         opened (if (is absent None)
                    `(. ~imported (open_bind ~expr))
                    `(. ~imported (open_bind ~expr (fn [] ~absent))))]
-    `(if (is (type (setx ~bound ~opened)) (. ~module Pure))
+    ;; 組み込みの名(type など)を名で引かない — 呼び手の引数・局所の名が同じ綴りだと、Python はそれを関数全体の
+    ;; 局所の名と見て束ねが壊れる(defhandler の腕の引数 type で UnboundLocalError・L562 の後始末)。
+    ;; 型は属性 __class__ で読み、名で引くのは gensym の束縛だけにする。
+    `(if (is (. (setx ~bound ~opened) __class__) (. ~module Pure))
          (. ~bound value)
          (yield ~bound))))
 

@@ -1138,14 +1138,14 @@ def _opening(expr: ast.expr, scope: _Scope) -> _Opening | None:
 
 def _bind_expression(expr: ast.expr, scope: _Scope) -> ast.Call | None:
     """The bind wrapper call ``W`` when ``expr`` is doeff-hy's bind expression
-    ``b.value if type(b := W) is <Pure> else (yield b)`` (``W`` = ``open_bind(e[, absent])``),
+    ``b.value if (b := W).__class__ is <Pure> else (yield b)`` (``W`` = ``open_bind(e[, absent])``),
     else None. The expression yields ``W`` unless ``W`` already answered (agora-redesign #844)."""
     match expr:
         case ast.IfExp(
             test=ast.Compare(
-                left=ast.Call(
-                    func=ast.Name(id="type"),
-                    args=[ast.NamedExpr(target=ast.Name(id=bound), value=ast.Call() as wrapper)],
+                left=ast.Attribute(
+                    value=ast.NamedExpr(target=ast.Name(id=bound), value=ast.Call() as wrapper),
+                    attr="__class__",
                 ),
                 ops=[ast.Is()],
             ),
@@ -1335,7 +1335,7 @@ class _Reader:
                 return
             opened = scope.local_values.get(expr.id)
             if opened is not None and _opening(opened, scope) is not None:
-                # doeff-hy's bind: ``b.value if type(b := open_bind(e)) is Pure else (yield b)``
+                # doeff-hy's bind: ``b.value if (b := open_bind(e)).__class__ is Pure else (yield b)``
                 # — what is yielded is the bind it named (agora-redesign #844).
                 self._performed(opened, scope, filename, facts)
                 return
