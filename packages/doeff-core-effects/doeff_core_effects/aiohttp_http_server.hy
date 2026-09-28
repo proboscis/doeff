@@ -10,16 +10,30 @@
 ;;;                 値のまま。中継先に届かなければ 502
 ;;;   ws の中継     先に中継先へ ws で繋いでから(届かなければ 502)、要求を ws に上げて frame を両向きに写す。1 frame の上限は HttpListen の
 ;;;                 ws-max-bytes。中継の側は ping を撃たず(autoping を切る)、端末の間の ping / pong と close の状態符をそのまま写す
+;;;   ws の終端     WsAccept で要求を ws に上げる(handshake の形が合わなければ断りの応答 — GET でなければ 405・Upgrade: websocket が無ければ
+;;;                 426・他は 400 — を返して 1 行名乗る)。上げたら接続ごとに読みの loop(aiohttp が ping への pong・分割の組み立て・UTF-8 の検め・
+;;;                 1 通の上限 ws-max-bytes を持つ)と、送りの箱 + 書き手の task(WsSendText / WsClose は箱へ積むだけで待たない — 遅い 1 接続が
+;;;                 他の接続と本体を塞がない)を立てる。箱の溜まりが ws-send-max-bytes を超える 1 通が来たら、その接続をその場で切る(箱を捨てる・
+;;;                 transport を落とす)。閉じた接続への送りは黙って捨てる。出来事(WsOpened・WsTextArrived・WsBinaryArrived・WsClosed)は要求と
+;;;                 同じ列へ並べ、受けた拍の単調時計を received-at に載せる
+;;;   閉じ          HttpShutdown で新しい要求を受けず、開いている ws の全部へ close 1000 を積み、書き手が流し切るのを drain-seconds まで待ち、
+;;;                 残った接続は落として待ち受けを畳む。以後の HttpNextRequest は HttpServerClosed
+;;;   送りの勘定    積んだ・流した・捨てた byte と流すまでの所要を数え、TakeWsSendReport で渡して 0 に戻す(消費者の計器の材料)
 ;;; 並び: 組の外側に await-handler が要る。
 (require doeff-hy.macros [defhandler <- val])
 (import asyncio)
+(import collections [deque])
 (import sys)
+(import time)
 (import pathlib [Path])
 (import aiohttp)
 (import aiohttp [web WSMsgType])
 (import doeff_core_effects.effects [Await])
-(import doeff_core_effects.http_server_effects [HttpAddress HttpServerClosed HttpCommand HttpHeader HttpRequestArrived HttpListen
-                                                HttpNextRequest HttpRespond HttpForward WsForward HttpBodyBytes HttpBodyFileRange HttpNoBody])
+(import doeff_core_effects.http_server_effects [HttpAddress HttpServerClosed HttpCommand HttpEvent HttpHeader HttpRequestArrived HttpListen
+                                                HttpNextRequest HttpRespond HttpForward WsForward WsAccept WsSendText WsClose HttpShutdown
+                                                TakeWsSendReport WsSendReport WsOpened WsTextArrived WsBinaryArrived WsClosed
+                                                HttpBodyBytes HttpBodyFileRange HttpNoBody FLUSH-SAMPLES-LIMIT DEFAULT-DRAIN-SECONDS WS-CLOSE-NORMAL
+                                                WS-CLOSE-ABNORMAL])
 
 ;; file の範囲を送る塊の byte 数。
 (val FILE-CHUNK-BYTES 262144)
@@ -37,6 +51,8 @@
 (val ABNORMAL-CLOSE-CODES (frozenset #(1006 1015)))
 (val NORMAL-CLOSE 1000)
 (val RELAY-FAILED-CLOSE 1011)
+;; 送りの上限で切った接続の WsClosed の理由。
+(val CUT-REASON "送りの箱が上限を超えた(読まない相手)")
 
 
 (defn #^ bool upgrade-asked [#^ web.Request request]  ; defk にできない: aiohttp の要求の頭を読む受け口の実 I/O
@@ -97,23 +113,66 @@
   None)
 
 
+(defn #^ int refusal-status [#^ web.Request request]  ; defk にできない: aiohttp の要求の頭を読む受け口の実 I/O
+  "ws に上げられない要求へ返す断りの status を決めるため(GET でない 405・Upgrade: websocket が無い 426・他の形の違いは 400)。"
+  (cond
+    (!= request.method "GET") 405
+    (not (upgrade-asked request)) 426
+    True 400))
+
+
+(defclass WsPeer []
+  "ws に上げた接続 1 本と、その送りの箱(await-handler の共有の event loop の上だけで触る)。outbox = 積んだ物の列(#(\"text\" 文 積んだ拍)
+   か #(\"close\" #(状態符 理由) 積んだ拍))・pending = 箱の文の byte の合計・closed = 以後は積まない(閉じを積んだ・切った・終わった)・
+   cut = 送りの上限で切った理由(None = 切っていない)・wake = 書き手を起こす印・writer = 書き手の task。"
+
+  (defn #^ None __init__ [self #^ str ticket #^ web.Request request #^ web.WebSocketResponse ws]
+    (setv self.ticket ticket
+          self.request request
+          self.ws ws
+          self.outbox (deque)
+          self.pending 0
+          self.closed False
+          self.cut None
+          self.wake (asyncio.Event)
+          self.writer None)
+    None))
+
+
 (defclass WebEdge []
-  "aiohttp の待ち受けと、札ごとの命令の待ち(await-handler の共有の event loop の上だけで触る)。待ち受けの handler の session の値。"
+  "aiohttp の待ち受けと、札ごとの命令の待ちと、ws に上げた接続(await-handler の共有の event loop の上だけで触る)。待ち受けの handler の
+   session の値。"
 
   (defn #^ None __init__ [self]
     (setv self.address None
           self.ws-max-bytes None
+          self.ws-send-max-bytes None
           self.queue None
           self.client None
           self.runner None
           self.waiting {}
+          self.peers {}
+          self.shut None
+          self.ws-send-drain None
           self.count 0)
+    (self.reset-report)
     None)
 
-  (defn :async #^ None start [self #^ HttpAddress address #^ int ws-max-bytes]
-    "待ち受けを開くため(開いた後に届いた要求はすべて列へ並ぶ)。"
+  (defn #^ None reset-report [self]
+    "送りの勘定を 0 に戻すため(TakeWsSendReport で渡した後)。"
+    (setv self.queued-frames 0
+          self.queued-bytes 0
+          self.flushed-bytes 0
+          self.flush-seconds (deque :maxlen FLUSH-SAMPLES-LIMIT)
+          self.dropped-bytes 0
+          self.cuts 0)
+    None)
+
+  (defn :async #^ HttpAddress start [self #^ HttpAddress address #^ int ws-max-bytes #^ int ws-send-max-bytes]
+    "待ち受けを開き、結んだ宛先を答えるため(開いた後に届いた要求はすべて列へ並ぶ)。"
     (setv self.address address
-          self.ws-max-bytes ws-max-bytes)
+          self.ws-max-bytes ws-max-bytes
+          self.ws-send-max-bytes ws-send-max-bytes)
     (setv self.queue (asyncio.Queue)
           self.client (aiohttp.ClientSession :auto-decompress False
                                              :timeout (aiohttp.ClientTimeout :total None :sock-connect CONNECT-SECONDS
@@ -123,11 +182,17 @@
     (setv self.runner (web.AppRunner app :access-log None))
     (await (.setup self.runner))
     (await (.start (web.TCPSite self.runner self.address.host self.address.port)))
-    None)
+    (setv bound (get self.runner.addresses 0))
+    (HttpAddress :host self.address.host :port (get bound 1)))
 
-  (defn :async #^ (| HttpRequestArrived HttpServerClosed) next-arrival [self]
-    "受け口の列の次の出来事を本体へ渡すため。"
-    (await (.get self.queue)))
+  (defn :async #^ HttpEvent next-arrival [self]
+    "受け口の列の次の出来事を本体へ渡すため(閉じた後は列に何が残っていても HttpServerClosed)。"
+    (when (is-not self.shut None)
+      (return (HttpServerClosed :reason self.shut)))
+    (setv event (await (.get self.queue)))
+    (if (and (is-not self.shut None) (not (isinstance event HttpServerClosed)))
+        (HttpServerClosed :reason self.shut)
+        event))
 
   (defn :async #^ None settle [self #^ str ticket #^ HttpCommand command]
     "本体の命令を札の要求へ渡すため(同じ札へ 2 度渡すと KeyError — 判断は要求ごとに 1 つ)。"
@@ -142,12 +207,155 @@
     (setv (get self.waiting ticket) waiting)
     (await (.put self.queue (HttpRequestArrived :ticket ticket :method request.method :path request.path :target request.raw-path
                                          :upgrade (upgrade-asked request)
-                                         :headers (tuple (gfor [name value] (.items request.headers) (HttpHeader :name name :value value))))))
+                                         :headers (tuple (gfor [name value] (.items request.headers) (HttpHeader :name name :value value)))
+                                         :received-at (time.monotonic))))
     (setv command (await waiting))
     (match command
       (HttpRespond :status status :headers headers :body body) (await (self.respond request status headers body))
       (HttpForward :url url) (await (self.relay-http request url))
-      (WsForward :url url) (await (self.relay-ws request url))))
+      (WsForward :url url) (await (self.relay-ws request url))
+      (WsAccept :ticket accepted) (await (self.terminate-ws request accepted))))
+
+  (defn :async #^ web.StreamResponse terminate-ws [self #^ web.Request request #^ str ticket]
+    "札の要求を ws に上げて終端するため: 読みの loop で 1 通を出来事へ並べ、送りは書き手の task に任せ、終わったら WsClosed を並べる。"
+    (setv ws (web.WebSocketResponse :max-msg-size self.ws-max-bytes))
+    (when (not (. (.can-prepare ws request) ok))
+      (setv status (refusal-status request))
+      (relay-failed (.format "札 {} の ws の handshake が成らなかった: 形が違う(status {})" ticket status))
+      (return (web.Response :status status :text "WebSocket の Upgrade(GET・Upgrade: websocket・Sec-WebSocket-Key)が要る")))
+    (try
+      (await (.prepare ws request))
+      (except [error #(ConnectionResetError RuntimeError web.HTTPException)]
+        (relay-failed (.format "札 {} の ws の handshake が成らなかった: {!r}" ticket error))
+        (return ws)))
+    (setv peer (WsPeer ticket request ws))
+    (setv (get self.peers ticket) peer)
+    (setv peer.writer (asyncio.create-task (self.write-loop peer)))
+    (await (.put self.queue (WsOpened :ticket ticket :received-at (time.monotonic))))
+    (try
+      (for [:async message ws]
+        (match message.type
+          WSMsgType.TEXT (await (.put self.queue (WsTextArrived :ticket ticket :text message.data :received-at (time.monotonic))))
+          WSMsgType.BINARY (await (.put self.queue (WsBinaryArrived :ticket ticket :data message.data :received-at (time.monotonic))))
+          _ (break)))
+      (except [#(ConnectionResetError RuntimeError)] None)
+      (finally
+        (await (self.finish-peer peer))))
+    ws)
+
+  (defn :async #^ None finish-peer [self #^ WsPeer peer]
+    "読みの loop が終わった接続を畳むため: こちらが閉じを積んでいれば書き手が流し切るのを待ち、他は箱を捨てて書き手を止め、WsClosed を並べる。"
+    (setv closing (and peer.closed (is peer.cut None)))
+    (when (and closing (is-not peer.writer None))
+      (await (asyncio.wait #{peer.writer} :timeout (or self.ws-send-drain DEFAULT-DRAIN-SECONDS))))
+    (self.seal peer 0)
+    (when (is-not peer.writer None)
+      (.cancel peer.writer))
+    (.pop self.peers peer.ticket None)
+    (setv code (cond
+                 (is-not peer.cut None) WS-CLOSE-ABNORMAL
+                 (is peer.ws.close-code None) WS-CLOSE-ABNORMAL
+                 True peer.ws.close-code))
+    (setv said (getattr peer.ws "close_reason" None))
+    (setv reason (cond (is-not peer.cut None) peer.cut (isinstance said str) said True ""))
+    (await (.put self.queue (WsClosed :ticket peer.ticket :code code :reason reason :received-at (time.monotonic))))
+    None)
+
+  (defn :async #^ None write-loop [self #^ WsPeer peer]
+    "接続ごとの書き手: 箱の 1 通を順に相手へ書き(流した勘定と所要を数える)、閉じを積まれたら close を送って終わる。書けなければ箱を捨てる。"
+    (while True
+      (while (not peer.outbox)
+        (when peer.closed
+          (return None))
+        (.clear peer.wake)
+        (await (.wait peer.wake)))
+      (setv [kind payload queued-at] (.popleft peer.outbox))
+      (match kind
+        "text"
+          (do (setv size (len (.encode payload "utf-8")))
+              (setv peer.pending (- peer.pending size))
+              (try
+                (await (.send-str peer.ws payload))
+                (except [#(ConnectionResetError RuntimeError aiohttp.ClientError)]
+                  (self.seal peer size)
+                  (return None))
+                (except [asyncio.CancelledError]
+                  ;; 書きかけのまま接続が終わった(読みの loop が書き手を取り消した): 取り出した 1 通も捨てた勘定へ載せてから取り消しを通す。
+                  (self.seal peer size)
+                  (raise)))
+              (setv self.flushed-bytes (+ self.flushed-bytes size))
+              (.append self.flush-seconds (- (time.monotonic) queued-at)))
+        "close"
+          (do (try
+                (await (.close peer.ws :code (get payload 0) :message (.encode (get payload 1) "utf-8")))
+                (except [#(ConnectionResetError RuntimeError aiohttp.ClientError)] None))
+              (return None)))))
+
+  (defn #^ None seal [self #^ WsPeer peer #^ int unsent]
+    "接続の箱を閉じて中身を捨てるため(unsent = 書き手が取り出したが書けなかった byte — 箱の中身と一緒に捨てた勘定へ)。"
+    (setv peer.closed True)
+    (setv dropped (+ peer.pending unsent))
+    (setv peer.outbox (deque) peer.pending 0)
+    (setv self.dropped-bytes (+ self.dropped-bytes dropped))
+    (.set peer.wake)
+    None)
+
+  (defn :async #^ None send-text [self #^ str ticket #^ str text]
+    "札の接続の箱へ文字の 1 通を積むため(待たない)。閉じた・知らない札は捨てる。溜まりが上限を超える 1 通なら接続をその場で切る。"
+    (setv peer (.get self.peers ticket))
+    (when (or (is peer None) peer.closed)
+      (return None))
+    (setv size (len (.encode text "utf-8")))
+    (if (> (+ peer.pending size) self.ws-send-max-bytes)
+        (do (setv self.cuts (+ self.cuts 1)
+                  peer.cut CUT-REASON)
+            (self.seal peer 0)
+            (when peer.request.transport
+              (.abort peer.request.transport)))
+        (do (.append peer.outbox #("text" text (time.monotonic)))
+            (setv peer.pending (+ peer.pending size)
+                  self.queued-frames (+ self.queued-frames 1)
+                  self.queued-bytes (+ self.queued-bytes size))
+            (.set peer.wake)))
+    None)
+
+  (defn :async #^ None close-ws [self #^ str ticket #^ int code #^ str reason]
+    "札の接続へ閉じを積むため(積んだ 1 通を流し切ってから close を送る — 待たない)。"
+    (setv peer (.get self.peers ticket))
+    (when (or (is peer None) peer.closed)
+      (return None))
+    (.append peer.outbox #("close" #(code reason) (time.monotonic)))
+    (setv peer.closed True)
+    (.set peer.wake)
+    None)
+
+  (defn :async #^ None shutdown [self #^ str reason #^ float drain-seconds]
+    "待ち受けを閉じるため: 開いている ws の全部へ close 1000 を積み、書き手が流し切るのを drain-seconds まで待ち、残りは落として畳む。"
+    (setv self.shut reason
+          self.ws-send-drain drain-seconds)
+    (setv peers (list (.values self.peers)))
+    (for [peer peers]
+      (await (self.close-ws peer.ticket WS-CLOSE-NORMAL reason)))
+    (setv writers (lfor peer peers :if (is-not peer.writer None) peer.writer))
+    (when writers
+      (await (asyncio.wait writers :timeout drain-seconds)))
+    (for [peer (list (.values self.peers))]
+      (when peer.request.transport
+        (.abort peer.request.transport)))
+    (when (is-not self.runner None)
+      (await (.cleanup self.runner)))
+    (when (is-not self.client None)
+      (await (.close self.client)))
+    (when (is-not self.queue None)
+      (await (.put self.queue (HttpServerClosed :reason reason))))
+    None)
+
+  (defn :async #^ WsSendReport take-report [self]
+    "送りの勘定を渡して 0 に戻すため。"
+    (setv report (WsSendReport :queued-frames self.queued-frames :queued-bytes self.queued-bytes :flushed-bytes self.flushed-bytes
+                               :flush-seconds (tuple self.flush-seconds) :dropped-bytes self.dropped-bytes :cuts self.cuts))
+    (self.reset-report)
+    report)
 
   (defn :async #^ web.StreamResponse respond [self #^ web.Request request #^ int status #^ tuple headers
                                               #^ (| HttpBodyBytes HttpBodyFileRange HttpNoBody) body]
@@ -227,9 +435,9 @@
   ;; 待ち受けの effect の実 I/O(頭の註)。待ち受けの object は session の値に 1 度だけ作る。effect の中の coroutine は await-handler の共有の
   ;; event loop で走る(組の外側に await-handler が要る)。
   (session val edge (WebEdge))
-  (HttpListen [address ws-max-bytes]
-    (<- (Await (.start edge address ws-max-bytes)))
-    (resume None))
+  (HttpListen [address ws-max-bytes ws-send-max-bytes]
+    (<- bound HttpAddress (Await (.start edge address ws-max-bytes ws-send-max-bytes)))
+    (resume bound))
   (HttpNextRequest []
     (<- arrival (Await (.next-arrival edge)))
     (resume arrival))
@@ -241,4 +449,19 @@
     (resume None))
   (WsForward [ticket url]
     (<- (Await (.settle edge ticket effect)))
-    (resume None)))
+    (resume None))
+  (WsAccept [ticket]
+    (<- (Await (.settle edge ticket effect)))
+    (resume None))
+  (WsSendText [ticket text]
+    (<- (Await (.send-text edge ticket text)))
+    (resume None))
+  (WsClose [ticket code reason]
+    (<- (Await (.close-ws edge ticket code reason)))
+    (resume None))
+  (HttpShutdown [reason drain-seconds]
+    (<- (Await (.shutdown edge reason drain-seconds)))
+    (resume None))
+  (TakeWsSendReport []
+    (<- report WsSendReport (Await (.take-report edge)))
+    (resume report)))

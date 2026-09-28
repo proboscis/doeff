@@ -5,17 +5,20 @@
 ;;;     (本文と X-Forwarded-Proto・届かない先の 502)・ws の中継(frame の往復・close の状態符)を確かめる(aiohttp の無い venv では skip)。
 (require doeff-hy.macros [defk <- val var])
 (import asyncio)
+(import collections.abc [Callable])
 (import socket)
 (import threading)
 (import pytest)
-(import doeff [run with_handlers])
+(import doeff [run with_handlers Program])
 (import doeff_core_effects.handlers [state await-handler])
 (import doeff_core_effects.scheduler [scheduled])
 (import doeff_core_effects.file_effects [MemoryFile MemoryFiles])
 (import doeff_core_effects.memory_file [memory-file-handler])
 (import doeff_core_effects.http_server_effects [HttpAddress HttpHeader HttpRequestArrived HttpServerClosed HttpListen HttpNextRequest
                                                 HttpRespond HttpForward WsForward HttpBodyBytes HttpBodyFileRange HttpNoBody HttpScript
-                                                ScriptedUpstream HttpServed ReadHttpServed])
+                                                ScriptedUpstream HttpServed ReadHttpServed HttpEvent WsAccept WsSendText WsClose
+                                                HttpShutdown TakeWsSendReport WsSendReport WsTextArrived WsBinaryArrived WsClosed
+                                                WsTextSent WsCloseSent AppendHttpScript])
 (import doeff_core_effects.scripted_http_server [scripted-http-server])
 
 
@@ -186,3 +189,129 @@
              (except [aiohttp.ClientConnectionError] (await (asyncio.sleep 0.05))))))
     (raise (RuntimeError "待ち受けが開かない")))
   (asyncio.run (scenario)))
+
+
+;; --- ws の終端(agora-redesign #811 変更 3a)-----------------------------------------------------------------------------------
+
+(defk ws-echo [limit publish]
+  {:pre [(: limit int) (: publish Callable)] :post [(: % tuple)]}
+  "検の Program: ws に上げて 1 通ごとに答え、閉じるまで回すため(答え = 受けた出来事の列と、最後の送りの勘定)。text \"bye\" = 4001 で閉じる・
+   \"big\" = 送りの上限の 2 倍の 1 通を送る(読まない相手と同じく溜まりが上限を超えて切られる)・\"stop\" = 待ち受けを閉じる・他は echo。
+   byte の 1 通は 1003 で閉じる。/plain の要求も ws に上げようとする(Upgrade の無い要求の断り)。publish = 結んだ宛先を検へ渡す口。"
+  (<- bound HttpAddress (HttpListen :address (HttpAddress :host "127.0.0.1" :port 0) :ws-send-max-bytes limit))
+  (publish bound)
+  (var seen #(bound))
+  (while True
+    (<- event HttpEvent (HttpNextRequest))
+    (:= seen (+ seen #(event)))
+    (match event
+      (HttpServerClosed) (do (<- report WsSendReport (TakeWsSendReport))
+                             (return (+ seen #(report))))
+      (HttpRequestArrived :ticket t) (<- (WsAccept :ticket t))
+      (WsTextArrived :ticket t :text "bye") (<- (WsClose :ticket t :code 4001 :reason "さようなら"))
+      (WsTextArrived :ticket t :text "big") (<- (WsSendText :ticket t :text (* "x" (* 2 limit))))
+      (WsTextArrived :ticket t :text "stop") (<- (HttpShutdown :reason "検が閉じた" :drain-seconds 2.0))
+      (WsTextArrived :ticket t :text text) (<- (WsSendText :ticket t :text (+ "echo:" text)))
+      (WsBinaryArrived :ticket t) (<- (WsClose :ticket t :code 1003 :reason "text だけ"))
+      _ None)))
+
+
+(defn test-the-scripted-server-terminates-ws-and-records-what-it-sent []
+  (setv script (HttpScript :arrivals #((arrival "a" "/ws" :upgrade True) (WsTextArrived :ticket "a" :text "hi")
+                                      (arrival "b" "/ws" :upgrade True) (WsTextArrived :ticket "b" :text "big")
+                                      (WsBinaryArrived :ticket "a" :data b"\x00")
+                                      (arrival "c" "/ws" :upgrade True) (WsTextArrived :ticket "c" :text "bye")
+                                      (arrival "d" "/ws" :upgrade True) (WsTextArrived :ticket "d" :text "stop")
+                                      (WsTextArrived :ticket "d" :text "never"))
+                           :stalled (frozenset #("b")))
+        [answer served] (run (scheduled (with_handlers [(state) (scripted-http-server script)]
+                                                       (do-served (ws-echo 10 (fn [bound] None))))))
+        [bound #* events report] answer)
+  ;; 台本は port を結ばない — 渡した宛先のまま。
+  (assert (= bound (HttpAddress :host "127.0.0.1" :port 0)))
+  ;; WsAccept の拍に WsOpened が列の頭へ差さる・閉じと切りの WsClosed も。
+  (assert (= (lfor e events (. (type e) __name__))
+             ["HttpRequestArrived" "WsOpened" "WsTextArrived"
+              "HttpRequestArrived" "WsOpened" "WsTextArrived" "WsClosed"
+              "WsBinaryArrived" "WsClosed"
+              "HttpRequestArrived" "WsOpened" "WsTextArrived" "WsClosed"
+              "HttpRequestArrived" "WsOpened" "WsTextArrived" "HttpServerClosed"]))
+  (setv closes (lfor e events :if (isinstance e WsClosed) #(e.ticket e.code e.reason)))
+  (assert (= (lfor c closes (cut c 0 2)) [#("b" 1006) #("a" 1003) #("c" 4001)]))
+  (assert (= (. (get events -1) reason) "検が閉じた"))
+  ;; 読まない相手(b)は 20 byte を溜めて切られ、捨てた勘定に載る。a は直ぐに読む。
+  (assert (= [report.queued-frames report.queued-bytes report.flushed-bytes report.dropped-bytes report.cuts] [2 27 7 20 1]))
+  (assert (= (lfor s served :if (isinstance s WsTextSent) #(s.ticket s.text)) [#("a" "echo:hi")]))
+  (assert (= (lfor s served :if (isinstance s WsCloseSent) #(s.ticket s.code)) [#("a" 1003) #("c" 4001) #("d" 1000)]))
+  (assert (= (lfor s served :if (isinstance s HttpServed) s.status) [101 101 101 101])))
+
+
+(defk do-served [program]
+  {:pre [(: program Program)] :post [(: % tuple)]}
+  "Program を回してから台本の記録を読むため。"
+  (<- answer tuple program)
+  (<- served tuple (ReadHttpServed))
+  #(answer served))
+
+
+(defk append-then-drain []
+  {:pre [] :post [(: % tuple)]}
+  "走っている台本へ出来事を足すと、尽きた後でも続きが届くことを見るため(答え = 受けた出来事の型の名)。"
+  (<- first HttpEvent (HttpNextRequest))
+  (<- (AppendHttpScript :arrivals #((arrival "z" "/late"))))
+  (<- second HttpEvent (HttpNextRequest))
+  (<- third HttpEvent (HttpNextRequest))
+  #((. (type first) __name__) second.ticket (. (type third) __name__)))
+
+
+(defn test-an-appended-script-is-served-after-the-script-ran-dry []
+  (assert (= (run (scheduled (with_handlers [(state) (scripted-http-server (HttpScript :arrivals #()))] (append-then-drain))))
+             #("HttpServerClosed" "z" "HttpServerClosed"))))
+
+
+(defn test-the-aiohttp-server-terminates-ws-cuts-a-stuffed-outbox-and-shuts-down []
+  (setv aiohttp (pytest.importorskip "aiohttp" :reason "aiohttp は extra http-server の依存"))
+  (import aiohttp [WSMsgType])
+  (import queue)
+  (import doeff_core_effects.aiohttp_http_server [aiohttp-http-server])
+  (setv result (queue.Queue) bound (queue.Queue))
+  (.start (threading.Thread :target (fn [] (.put result (run (scheduled (with_handlers [(await-handler) (state) aiohttp-http-server]
+                                                                                       (ws-echo 64 bound.put))))))
+                            :daemon True))
+  (defn :async scenario [base]
+    (with [:async session (aiohttp.ClientSession)]
+      ;; Upgrade の無い要求を ws に上げようとすると 426。
+      (with [:async r (.get session (+ base "/plain"))]
+        (assert (= r.status 426)))
+      (with [:async ws (.ws-connect session (+ base "/ws"))]
+        (await (.send-str ws "hi"))
+        (assert (= (. (await (.receive ws :timeout 5)) data) "echo:hi"))
+        (await (.send-bytes ws b"\x01"))
+        (setv closing (await (.receive ws :timeout 5)))
+        (assert (= [closing.type closing.data] [WSMsgType.CLOSE 1003])))
+      (with [:async ws (.ws-connect session (+ base "/ws"))]
+        (await (.send-str ws "bye"))
+        (setv closing (await (.receive ws :timeout 5)))
+        (assert (= [closing.type closing.data] [WSMsgType.CLOSE 4001])))
+      (with [:async ws (.ws-connect session (+ base "/ws"))]
+        ;; 上限(64 byte)の 2 倍の 1 通 — 箱へ積む前に切られ、相手は close を受けずに切れる。
+        (await (.send-str ws "big"))
+        (setv cut (await (.receive ws :timeout 5)))
+        (assert (in cut.type #(WSMsgType.CLOSED WSMsgType.ERROR WSMsgType.CLOSE))))
+      (with [:async ws (.ws-connect session (+ base "/ws"))
+             :async other (.ws-connect session (+ base "/ws"))]
+        (await (.send-str ws "stop"))
+        ;; 待ち受けを閉じると、開いている接続の全部に close 1000。
+        (setv closing (await (.receive other :timeout 5)))
+        (assert (= [closing.type closing.data] [WSMsgType.CLOSE 1000])))))
+  ;; port 0 で開き、結んだ port を HttpListen の答えで知る。
+  (setv port (. (.get bound :timeout 30) port))
+  (assert (> port 0))
+  (asyncio.run (scenario (.format "http://127.0.0.1:{}" port)))
+  (setv [_bound #* events report] (.get result :timeout 30))
+  (assert (all (gfor e events :if (not (isinstance e HttpServerClosed)) (isinstance e.received-at float))))
+  (setv closes (lfor e events :if (isinstance e WsClosed) #(e.code e.reason)))
+  (assert (in #(1006 "送りの箱が上限を超えた(読まない相手)") closes) closes)
+  (assert (= (. (get events -1) reason) "検が閉じた"))
+  (assert (= report.cuts 1))
+  (assert (>= report.flushed-bytes (len "echo:hi"))))
