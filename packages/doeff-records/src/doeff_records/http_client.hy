@@ -18,6 +18,7 @@
 ;;;   400 / 500              WireError を上げる(client か service の実装の誤り)
 ;;;
 ;;; WatchChanges の待ちは client の側で回す(service へは timeout 0 で撃ち、空なら poll-seconds 眠って撃ち直す — doeff-time の Delay)。
+;;; WatchEvents(列の頭が進むのを待つ — wire に載せない)も client の側で、ReadEvents(limit 1)を poll-seconds ごとに読み直して答える。
 ;;; 時計は呼び手の時計なので、仮想の時計の下では memory の handler と同じに一瞬で進む。
 ;;;
 ;;; 要求の送り方は endpoint の transport が決める(閉じた 2 種):
@@ -32,9 +33,9 @@
 (import urllib.error [HTTPError URLError])
 (import urllib.request [Request urlopen])
 (import doeff_core_effects.http_effects [HttpRequest HttpResponse HttpFailed])
-(import doeff_records.values [Unreachable UndeclaredTable])
-(import doeff_records.effects [ReadRow ListRows PutRow PutRows WatchChanges AppendEvent ReadEvents])
-(import doeff_records.watching [wait-for-changes])
+(import doeff_records.values [EventsMoved EventsQuiet Unreachable UndeclaredTable])
+(import doeff_records.effects [ReadRow ListRows PutRow PutRows WatchChanges WatchEvents AppendEvent ReadEvents])
+(import doeff_records.watching [wait-for-changes moved-of])
 (import doeff_records.wire [PATH-PREFIX PublicEffect WireAnswer JsonValue encode-request decode-answer refusal-from])
 
 (setv DEFAULT-REQUEST-TIMEOUT 30.0)
@@ -177,6 +178,15 @@
              endpoint.base-url reply.status operation reason)))
 
 
+(defk moved-by-reading [endpoint ask]
+  {:pre [(: endpoint RecordsEndpoint) (: ask ReadEvents)] :post [(: % (| EventsMoved EventsQuiet Unreachable))]
+   :tags {:context "records" :role "foundation"}}
+  "WatchEvents の 1 回ぶんの答えを、service へ撃つ ReadEvents(limit 1)の答えから作るため(列の待ちの読み直しの 1 回)。"
+  (<- answer (call-service endpoint ask))
+  (<- moved (moved-of answer))
+  moved)
+
+
 (defk call-service [endpoint ask]
   {:pre [(: endpoint RecordsEndpoint) (: ask PublicEffect)] :post [(: % (| WireAnswer Unreachable))]}
   "公開 effect(ask)1 つを service へ撃ち、答えの値にする(status の写し方は file の頭の表)。"
@@ -213,6 +223,11 @@
     (setv once (WatchChanges tables cursor :timeout 0.0 :limit limit))
     (<- answer (wait-for-changes (fn [now-ms] (call-service endpoint once)) endpoint.poll-seconds timeout))
     (resume answer))
+  (WatchEvents [stream after timeout]
+    ;; 列の待ちも client の時計で回す — service へは ReadEvents(limit 1)だけを撃つ(記録の service の口は変えない)。
+    (val once (ReadEvents stream :after after :limit 1))
+    (<- answer (wait-for-changes (fn [now-ms] (moved-by-reading endpoint once)) endpoint.poll-seconds timeout))
+    (resume answer))
   (AppendEvent [stream idempotency-key body]
     (<- answer (call-service endpoint effect))
     (resume answer))
@@ -224,7 +239,7 @@
 (defhandler http-table-records-handler [#^ RecordsEndpoint endpoint #^ frozenset served]
   ;; 引数に残す理由: 同じ handler を置き場ごとに別の口と表で 1 つの組に重ねる(Ask では区別できない)。
   ;; 表 served の読み書きだけに答える http-records-handler(他の表と追記の列は外側の handler へ渡す)— 記録が表ごとに別の service に
-  ;; 在る時(例: 着地の列の台帳と agora の記録)、置き場ごとの handler を値の列を持たずに重ねるため(内側に表で絞った handler・外側に
+  ;; 在る時(例: 着地の列の台帳と業務の記録)、置き場ごとの handler を値の列を持たずに重ねるため(内側に表で絞った handler・外側に
   ;; 残りの表の handler)。handler の列を値で持って中で並べ直す振り分けは、組み立てを実行せずに読む道具(doeff-effect-analyzer)が
   ;; 読めない — この形は並びが呼び出しの字面に在るので読める。束の書き(PutRows)と待ち(WatchChanges)は、束の表が全部 served の中の時
   ;; だけ答える(置き場をまたぐ束は 1 つの置き場では書けない — 外側で断られる)。

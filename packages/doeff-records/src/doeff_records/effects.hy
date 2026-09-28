@@ -1,5 +1,7 @@
 ;;; 記録の仕組みの公開 effect 7 つ(lease は既存の doeff-cluster の LeaseOp / HeldLease を使い、ここには作らない)。
 ;;; 7 つ目の PutRows は複数行を全部か 0 で書く(書きの束の 1 行 = RowWrite — PutRow と同じ欄)。
+;;; 公開 effect の外に、追記の列の頭が進むのを待つ WatchEvents を置く(wire には載せない — 置き場の handler が自分の待ち方で答える:
+;;; memory = 列の呼び鈴・PostgreSQL と HTTP の口の client = ReadEvents の読み直し。出自の issue は #1019)。
 ;;;
 ;;; 書き手の身元は effect の引数にしない — handler を組む時(composition root)に渡す。答えの型は values.hy。
 ;;; 欄 → 値の写像(PutRow.value・ListRows.where)と出来事の本文(AppendEvent.body)は、作る時に深く凍らせる(dict を渡してもよい)。
@@ -129,6 +131,21 @@
     (checked-table-name self.stream "AppendEvent.stream")
     (when (not (and (isinstance self.idempotency-key str) self.idempotency-key))
       (raise (ValueError "AppendEvent.idempotency_key は空でない文字列")))))
+
+
+(defclass [(dataclass :frozen True)] WatchEvents [EffectBase]
+  "追記の列 stream の頭が after より進むのを、timeout 秒まで待つ(出来事を読むのは呼び手 — 起きた後に ReadEvents で読む)。
+   答え = EventsMoved(進んだ — もう進んでいれば待たずに返る)| EventsQuiet(timeout まで進まなかった — after が頭より先でも誤りに
+   しない)| Unreachable。列には版が無いので Reset は無い。出来事の番号は置き場の全部の列で 1 本。timeout 0 は待たずに 1 回だけ見る。"
+  (#^ str stream)
+  (setv #^ int after 0)
+  (setv #^ float timeout 0.0)
+  (defn #^ None __post_init__ [self]
+    (checked-table-name self.stream "WatchEvents.stream")
+    (when (or (isinstance self.after bool) (not (isinstance self.after int)) (< self.after 0))
+      (raise (ValueError (.format "WatchEvents.after は 0 以上の整数: {!r}" self.after))))
+    (when (or (isinstance self.timeout bool) (not (isinstance self.timeout #(int float))) (< self.timeout 0))
+      (raise (ValueError (.format "WatchEvents.timeout は 0 以上の秒: {!r}" self.timeout))))))
 
 
 (defclass [(dataclass :frozen True)] ReadEvents [EffectBase]

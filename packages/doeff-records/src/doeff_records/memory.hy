@@ -1,18 +1,19 @@
-;;; memory の handler — 公開 effect 7 つに手元の表と番号の列で答える(模擬環境・手元の 1 process・単体の検)。
+;;; memory の handler — 公開 effect 7 つと列の待ち WatchEvents に手元の表と番号の列で答える(模擬環境・手元の 1 process・単体の検)。
 ;;; 行の値は凍らせた写像なので、答えに出す Row は置き場の Row そのもの(写し取らなくても呼び手は変えられない)。
 ;;;
 ;;; 判断(期待・書きの許可・保持・索引・頁)は admission.hy の純関数ちょうど 1 つ。ここは置き場の data と番号の採り方だけを持つ。
 ;;; 時刻は doeff-time の GetTime(仮想の時計の下では保持の期限も一瞬で来る)。
-;;; WatchChanges の待ちは読み直しの繰り返し(ポーリング)ではなく呼び鈴: 待ち手は置き場に外の promise(呼び鈴)を掛けて眠り、変更の列を
-;;; 動かす書き(行の書き・保持の刈り・版の更新・変更の刈り)が鳴らす。期限(timeout と、保持の期限で行が消え得る刻の早い方)は doeff-time の
-;;; ScheduleAt で 1 回だけ鳴らす。呼び鈴を外の promise にするのは、同期の書き(handler の外から置き場の関数を直に呼ぶ模擬の支度)と別の
+;;; WatchChanges と WatchEvents の待ちは読み直しの繰り返し(ポーリング)ではなく呼び鈴: 待ち手は置き場に外の promise(呼び鈴)を、待つ名
+;;; (表か列)と一緒に掛けて眠る。書きはその名の待ち手だけを鳴らす — 行の書きと保持の刈りの行の消し = その表・追記 = その列・版の更新と
+;;; 変更の刈り = 全部(出自の issue は #1019 — 前は変更の列を動かす書きが全部の待ち手を鳴らし、追記は鳴らさなかった)。
+;;; 期限(timeout と、保持の期限で行が消え得る刻の早い方)は doeff-time の ScheduleAt で 1 回だけ鳴らす。呼び鈴を外の promise にするのは、同期の書き(handler の外から置き場の関数を直に呼ぶ模擬の支度)と別の
 ;;; thread の書きからも鳴らせるため。待ちは PRIORITY_IDLE で park する(仮想の時計を止めない — 期限の刻まで時計が進める)。
 ;;; 書き手の身元は handler を組む時の引数 writer(effect の欄にしない)。同じ MemoryStore を別の writer の handler で包めば、
 ;;; 1 つの置き場を複数の書き手が使う形になる。
 ;;;
 ;;; 置き場は thread の間で共有してよい(書き手の thread と実況の読みの thread が同じ MemoryStore を使う — この系の Python は GIL の無い
 ;;; free-threaded)。置き場の不変条件(列・番号・索引)の持ち主は MemoryStore なので、錠(MemoryStore.lock・RLock)も置き場が持ち、
-;;; handler の各節は「保持の刈り(purge-expired)と操作」の組を錠の内で 1 つずつ行う(guarded)。WatchChanges の待ち(呼び鈴で眠る間)は
+;;; handler の各節は「保持の刈り(purge-expired)と操作」の組を錠の内で 1 つずつ行う(guarded)。WatchChanges と WatchEvents の待ち(呼び鈴で眠る間)は
 ;;; 錠を持たない — 走査と呼び鈴を掛けるのを同じ錠の内で 1 回にする(間に積まれた変更を取りこぼさない・持ったまま眠ると他の書きが止まる)。
 (require doeff-hy.macros [defhandler defk deff <- val var])
 (require doeff-hy.record [defrecord])
@@ -27,9 +28,9 @@
 (import doeff_time [GetTime ScheduleAt])
 (import doeff_hy.frozen [FrozenMap])
 (import doeff_records.values [KeepFor RecordsSchema StreamDecl Row Missing Page Written WrittenRows RowChanged RowRemoved Changes Appended
-                              Event Events Reset WatchCursor ListCursor Refused RowsConflict RowsRefused Unreachable
-                              Conflict NotIndexed])
-(import doeff_records.effects [ReadRow ListRows PutRow PutRows WatchChanges AppendEvent ReadEvents])
+                              Event Events EventsMoved EventsQuiet Reset WatchCursor ListCursor Refused RowsConflict RowsRefused
+                              Unreachable Conflict NotIndexed])
+(import doeff_records.effects [ReadRow ListRows PutRow PutRows WatchChanges WatchEvents AppendEvent ReadEvents])
 (import doeff_records.faults [AdvanceStoreEpoch SetStoreOutage StoreFault StoreOperation AddStoreFault ClearStoreFaults])
 (import doeff_records.maintenance [SweepExpired PruneChanges Swept Pruned])
 (import doeff_records.admission [Admitted AppendNew AppendReplay judge-expect judge-put judge-put-rows judge-append
@@ -73,9 +74,10 @@
 (defclass MemoryStore []
   "memory の置き場: schema = 宣言(operator の欄を書ける主体の一覧 operators を含む)/
    lock = 置き場を読み書きする操作を 1 つずつにする錠(thread の間で置き場を共有するため — 同じ thread の入れ子は通す RLock)/
-   bells = WatchChanges の待ち手が掛けた呼び鈴(外の promise → None の dict — 掛けた順の集合。変更の列を動かす書きが掛けた順に全部鳴らして外す。
+   bells = WatchChanges と WatchEvents の待ち手が掛けた呼び鈴(外の promise → 待つ名の frozenset の dict — 掛けた順。名は #(\"table\" 表)と
+   #(\"stream\" 列)の組で、表と列が同じ綴りでも混ざらない。書きは待つ名が重なる呼び鈴を掛けた順に鳴らして外す。
    set にしないのは、set の順は object の番地で決まり、走らせるたびに待ち手の起きる順が変わって模擬の結果が揺れるため)。
-   待ちは読み直さず呼び鈴で起きるので、見回りの刻みは受けない(使い手が渡すのをやめたので 2026-09-29 に外した — agora-redesign #1017)。"
+   待ちは読み直さず呼び鈴で起きるので、見回りの刻みは受けない(使い手が渡すのをやめたので 2026-09-29 に外した — 出自の issue は #1017)。"
   (defn #^ None __init__ [self #^ RecordsSchema schema]
     (setv self.schema schema
           self.lock (threading.RLock)
@@ -126,16 +128,18 @@
         (setv self.purge-due-ms (get state "purge_due_ms"))))))
 
 
-;; --- 呼び鈴(WatchChanges の待ち手を起こす)-----------------------------------------------------------------
+;; --- 呼び鈴(WatchChanges と WatchEvents の待ち手を起こす)---------------------------------------------------
 
-(deff ring-bells [store]  ; defk にできない: 錠の内で同期に置き場を書く関数(handler の節と、handler の外から置き場を直に書く模擬の支度の両方)が呼ぶ
-  {:pre [(: store MemoryStore)] :post [(: % None)]
+(deff ring-bells [store names]  ; defk にできない: 錠の内で同期に置き場を書く関数(handler の節と、handler の外から置き場を直に書く模擬の支度の両方)が呼ぶ
+  {:pre [(: store MemoryStore) (: names (| frozenset None))] :post [(: % None)]
    :tags {:context "records" :role "foundation"}}
-  "変更の列が動いた(積んだ・版が進んだ・床が上がった)ことを、掛かっている呼び鈴の全部へ知らせて外すため。起きた待ち手は走査し直し、
-   自分の表に変更が無ければ呼び鈴を掛け直す。外の promise の complete は thread の間で安全で、2 度目(期限の鳴らしと重なる)は効かない。"
+  "書きが動かした名(表か列 — None = 全部: 版が進んだ・床が上がった)を待っている呼び鈴へ知らせて外すため。待つ名の重ならない待ち手は
+   起こさない(起きても走査し直して掛け直すだけ — その費用を書きの数 × 待ち手の数にしない)。起きた待ち手は走査し直し、答えが無ければ
+   呼び鈴を掛け直す。外の promise の complete は thread の間で安全で、2 度目(期限の鳴らしと重なる)は効かない。"
   (with [store.lock]
-    (setv bells (tuple store.bells))
-    (.clear store.bells))
+    (setv bells (tuple (gfor #(bell waiting) (.items store.bells) :if (or (is names None) (& waiting names)) bell)))
+    (for [bell bells]
+      (.pop store.bells bell)))
   (for [bell bells]
     (.complete bell None))
   None)
@@ -261,7 +265,7 @@
     (setv (get store.changed-at store.head) now-ms)
     (.append store.changes (RowRemoved item.table item.stored.row.key store.head)))
   (when removed
-    (ring-bells store))
+    (ring-bells store (frozenset (gfor item rows #("table" item.table)))))
   (when events
     (drop-events store events))
   removed)
@@ -324,7 +328,7 @@
   (+= store.head 1)
   (setv (get store.changed-at store.head) now-ms)
   (.append store.changes (RowChanged table key version value store.head now-ms))
-  (ring-bells store)
+  (ring-bells store (frozenset [#("table" table)]))
   (setv decl (store.schema.table table))
   (when (and (isinstance decl.retention KeepFor) (terminal-row? decl value))
     (push-due store (+ now-ms (keep-ms decl.retention)) (RowDue :table table :text text :stored stored)))
@@ -364,28 +368,48 @@
   (Changes items (WatchCursor store.epoch (next-watch-sequence items ask.limit store.head))))
 
 
-;; --- WatchChanges の待ち ------------------------------------------------------------------------------------
+(defn #^ (| EventsMoved EventsQuiet) memory-events-scan [#^ MemoryStore store #^ WatchEvents ask]  ; defk にできない: 錠の内(watch-round)で同期に呼ぶ置き場の走査(memory-watch-scan と同じ作法)
+  "WatchEvents の今の答え(待たない): 列 ask.stream に after より後の出来事が在れば EventsMoved。出来事の列は番号の順なので、after の
+   位置から後ろだけを見る(番号は全部の列で 1 本 — 他の列の出来事は読み捨てる)。"
+  (store.schema.stream ask.stream)
+  (setv start (bisect.bisect-right store.events ask.after :key (fn [event] event.sequence)))
+  (if (any (gfor event (cut store.events start None) (= event.stream ask.stream)))
+      (EventsMoved)
+      (EventsQuiet)))
+
+
+;; --- WatchChanges と WatchEvents の待ち ---------------------------------------------------------------------
 
 (defrecord WatchRound
-  "WatchChanges の待ちの 1 周の走査: answer = 今の答え(Changes | Reset)/ quiet = 空の Changes(待ち続ける答え)か /
-   due-ms = 保持の期限で何かが消え得る最も早い刻(epoch ミリ秒・None = 無い — 待ちはこの刻にも起きて刈りを走らせる)。"
+  "待ちの 1 周の走査: answer = 今の答え(Changes | Reset | EventsMoved | EventsQuiet)/ quiet = 待ち続ける答え(空の Changes か EventsQuiet)か /
+   due-ms = 保持の期限で行が消え得る最も早い刻(epoch ミリ秒・None = 無い — WatchChanges の待ちはこの刻にも起きて刈りを走らせる。
+   WatchEvents の待ちは None — 出来事が消えても列の頭は進まない)。"
   #^ object answer
   #^ bool quiet
   #^ (| int None) due-ms)
 
 
 (deff watch-round [store ask now-ms bell]  ; defk にできない: 錠の内(guarded の fn)で同期に呼ぶ置き場の走査と呼び鈴の掛け
-  {:pre [(: store MemoryStore) (: ask WatchChanges) (: now-ms int) (: bell (| ExternalPromise None))] :post [(: % WatchRound)]
+  {:pre [(: store MemoryStore) (: ask (| WatchChanges WatchEvents)) (: now-ms int) (: bell (| ExternalPromise None))] :post [(: % WatchRound)]
    :tags {:context "records" :role "foundation"}}
-  "保持の刈りの後に 1 回走査し、空の Changes なら呼び鈴 bell を掛ける(None = 掛けない)。走査と掛けを同じ錠の内で行うのは、その間に
-   積まれた変更の鳴らしを取りこぼさないため。"
+  "保持の刈りの後に 1 回走査し、待ち続ける答えなら呼び鈴 bell を待つ名(WatchChanges = 頼んだ表・WatchEvents = その列)と一緒に掛ける
+   (None = 掛けない)。走査と掛けを同じ錠の内で行うのは、その間に積まれた書きの鳴らしを取りこぼさないため。"
   (with [store.lock]
     (purge-expired store now-ms)
-    (setv answer (memory-watch-scan store ask)
-          quiet (and (isinstance answer Changes) (not answer.items)))
+    (match ask
+      (WatchChanges :tables tables)
+        (setv answer (memory-watch-scan store ask)
+              quiet (and (isinstance answer Changes) (not answer.items))
+              names (frozenset (gfor name tables #("table" name)))
+              due-ms store.purge-due-ms)
+      (WatchEvents :stream stream)
+        (setv answer (memory-events-scan store ask)
+              quiet (isinstance answer EventsQuiet)
+              names (frozenset [#("stream" stream)])
+              due-ms None))
     (when (and quiet (is-not bell None))
-      (setv (get store.bells bell) None))
-    (WatchRound :answer answer :quiet quiet :due-ms store.purge-due-ms)))
+      (setv (get store.bells bell) names))
+    (WatchRound :answer answer :quiet quiet :due-ms due-ms)))
 
 
 (defk rung [bell]
@@ -457,10 +481,11 @@
 
 
 (defk memory-watch [store ask]
-  {:pre [(: store MemoryStore) (: ask WatchChanges)] :post [(: % (| Changes Reset))]
+  {:pre [(: store MemoryStore) (: ask (| WatchChanges WatchEvents))] :post [(: % (| Changes Reset EventsMoved EventsQuiet))]
    :tags {:context "records" :role "foundation"}}
-  "WatchChanges の答え: 自分の表に変更が来るか timeout 秒が過ぎるまで待つ(Reset はすぐ返す)。読み直しを繰り返さず、変更の列を動かす
-   書きが鳴らす呼び鈴と、期限(timeout・保持の期限)の 1 回の鳴らしで起きる。timeout を過ぎたら最後に 1 回走査した答えを返す。"
+  "WatchChanges と WatchEvents の答え: 待つ名(頼んだ表・列)に書きが来るか timeout 秒が過ぎるまで待つ(Reset はすぐ返す)。読み直しを
+   繰り返さず、その名の書きが鳴らす呼び鈴と、期限(timeout・保持の期限)の 1 回の鳴らしで起きる。timeout を過ぎたら最後に 1 回走査した
+   答えを返す。"
   (<- started (GetTime))
   (<- span (wait-span ask.timeout))
   (val deadline (+ started span))
@@ -494,6 +519,8 @@
              (setv (get store.by-idempotency slot) event)
              (when (isinstance decl.retention KeepFor)
                (note-event-due store decl event))
+             ;; 新しく積んだ時だけ、この列を待つ待ち手を鳴らす(再送は列の頭を動かさない)。
+             (ring-bells store (frozenset [#("stream" ask.stream)]))
              (Appended event.sequence))))
 
 
@@ -512,7 +539,7 @@
     (setv store.floor store.head
           store.changes []
           store.changed-at {})
-    (ring-bells store)
+    (ring-bells store None)
     store.epoch))
 
 
@@ -533,7 +560,7 @@
   (for [change old] (del (get store.changed-at change.sequence)))
   (when old
     (setv store.floor (max store.floor (. (get old -1) sequence)))
-    (ring-bells store))
+    (ring-bells store None))
   (setv store.changes (lfor change store.changes :if (> change.sequence store.floor) change))
   (Pruned store.floor (len old)))
 
@@ -581,9 +608,9 @@
 
 (defk answered [store operation names ask program]
   {:pre [(: store MemoryStore) (: operation StoreOperation) (: names tuple) (: ask EffectBase) (: program Program)]
-   ;; 答え = 公開 effect 7 つの答えの型のどれか(program の答えか、故障の答え Refused / Unreachable)。
+   ;; 答え = 公開 effect 7 つと WatchEvents の答えの型のどれか(program の答えか、故障の答え Refused / Unreachable)。
    :post [(: % (| Row Missing Page Reset NotIndexed Written Conflict Refused Unreachable WrittenRows RowsConflict RowsRefused
-                  Changes Appended Events))]
+                  Changes Appended Events EventsMoved EventsQuiet))]
    :tags {:context "records" :role "foundation"}}
   "公開 effect ask の答え: 届かない状態(SetStoreOutage)が先・次に当たる故障(lands でなければ置き場に触らずに故障の答え・lands なら
    program で置き場に着けてから故障の答え)・どちらも無ければ program の答え。"
@@ -633,6 +660,9 @@
   (WatchChanges [tables cursor timeout limit]
     (<- answer (answered store READ (tuple tables) effect
                          (memory-watch store effect)))
+    (resume answer))
+  (WatchEvents [stream after timeout]
+    (<- answer (answered store READ #(stream) effect (memory-watch store effect)))
     (resume answer))
   (AppendEvent [stream idempotency-key body]
     (<- answer (answered store WRITE #(stream) effect (at-now store (fn [now-ms] (memory-append store writer effect now-ms)))))

@@ -18,12 +18,12 @@
 (import doeff_time [GetTime])
 (import doeff_records.values [RecordsSchema KeepFor ByKeySuffix Row Missing Page Written WrittenRows RowChanged RowRemoved Changes Appended
                               Event Events Reset WatchCursor ListCursor Refused Unreachable RowsConflict RowsRefused])
-(import doeff_records.effects [ReadRow ListRows PutRow PutRows WatchChanges AppendEvent ReadEvents])
+(import doeff_records.effects [ReadRow ListRows PutRow PutRows WatchChanges WatchEvents AppendEvent ReadEvents])
 (import doeff_records.faults [AdvanceStoreEpoch])
 (import doeff_records.maintenance [SweepExpired PruneChanges Swept Pruned])
 (import doeff_records.admission [AppendReplay judge-expect judge-put judge-put-rows judge-append row-expired? where-refusal listed-row
                                  key-text key-from-text canonical-json next-watch-sequence epoch-ms])
-(import doeff_records.watching [wait-for-changes])
+(import doeff_records.watching [wait-for-changes moved-of])
 (import doeff_records.pg_sql [Statement DEFAULT-PREFIX checked-prefix schema-statements drop-statements lock-statement
                               migrate-lock-statement
                               store-head-statement read-row-statement lock-row-statement list-rows-statement
@@ -338,6 +338,12 @@
     (resume (guarded host (fn [] (purge-expired host (epoch-ms now)) (pg-put-rows host writer effect (epoch-ms now))))))
   (WatchChanges [tables cursor timeout limit]
     (<- answer (wait-for-changes (fn [now-ms] (Pure (guarded host (fn [] (purge-expired host now-ms) (pg-watch-scan host effect)))))
+                                 host.poll-seconds timeout))
+    (resume answer))
+  (WatchEvents [stream after timeout]
+    ;; 列の待ちは ReadEvents(limit 1)の読み直し(WatchChanges と同じ poll-seconds — LISTEN / NOTIFY は後の変更)。
+    (setv once (ReadEvents stream :after after :limit 1))
+    (<- answer (wait-for-changes (fn [now-ms] (moved-of (guarded host (fn [] (purge-expired host now-ms) (pg-read-events host once)))))
                                  host.poll-seconds timeout))
     (resume answer))
   (AppendEvent [stream idempotency-key body]

@@ -6,7 +6,7 @@
 ;;; 組み立ては呼び手: LAW-SCHEMA の宣言で置き場を作り、LawHarness の as-writer(書き手の名・Program → その書き手の handler で包んだ
 ;;; Program)を渡す。書き手の名は宣言の欄の書き手の名(maker / painter / closer)と、どこにも載らない stranger。
 ;;; 保持の法(law-transient-rows-expire)は doeff-time の Delay で時間を進めるので、仮想の時計(sim-time-handler)の下で回す。
-;;; 待ちの法(law-watch-waits-for-a-change)は doeff の scheduler の Spawn を使う。
+;;; 待ちの法(law-watch-waits-for-a-change・law-watch-events-waits-for-an-append)は doeff の scheduler の Spawn を使う。
 ;;; 手入れの法(law-maintenance-prunes-and-sweeps)は手入れの effect(maintenance.SweepExpired / PruneChanges — 公開 effect ではない)も撃つ。
 (require doeff-hy.macros [defk <-])
 (import dataclasses [dataclass])
@@ -16,8 +16,8 @@
 (import doeff_time [Delay GetTime])
 (import doeff_records.values [FieldDecl TableDecl StreamDecl RecordsSchema KeepFor KeepForever ByKeySuffix ExpectAbsent ExpectVersion ExpectAny
                               WatchCursor ListCursor Row Missing Page Written WrittenRows Conflict Refused NotIndexed Reset
-                              Changes RowChanged RowRemoved Appended Events RowsConflict RowsRefused])
-(import doeff_records.effects [ReadRow ListRows PutRow PutRows RowWrite WatchChanges AppendEvent ReadEvents])
+                              Changes RowChanged RowRemoved Appended Events EventsMoved EventsQuiet RowsConflict RowsRefused])
+(import doeff_records.effects [ReadRow ListRows PutRow PutRows RowWrite WatchChanges WatchEvents AppendEvent ReadEvents])
 (import doeff_records.faults [AdvanceStoreEpoch])
 (import doeff_records.maintenance [SweepExpired PruneChanges Swept Pruned])
 (import doeff_records.admission [row-matches? epoch-ms])
@@ -386,6 +386,41 @@
   [start idle woke written])
 
 
+;; --- 法 8b: WatchEvents は列の頭が進むまで待つ(行の書きでは起きない)--------------------------------------------
+
+(defk late-append [#^ LawHarness harness]
+  {:pre [(: harness LawHarness)] :post [(: % Appended)]
+   :tags {:context "records" :role "program"}}
+  "待ちの法 8b の書き手: 2 秒後に待つ列の外(表 parts)へ 1 行書き、5 秒後に待つ列 journal へ 1 つ積むため(行の書きで列の待ち手が
+   答えを返さないことと、追記で返すことを同じ筋書きで見る)。"
+  (<- (Delay 2))
+  (<- (as-writer harness MAKER (PutRow "parts" #("side") (FrozenMap {"label" "s"}) (ExpectAbsent))))
+  (<- (Delay 3))
+  (<- appended (as-writer harness MAKER (AppendEvent "journal" "late" {"n" 1})))
+  appended)
+
+(defk law-watch-events-waits-for-an-append [#^ LawHarness harness]
+  {:pre [(: harness LawHarness)] :post [(: % list)]
+   :tags {:context "records" :role "program"}}
+  "列の待ちの法: 頭が after より進んでいれば待たずに EventsMoved・進まなければ timeout で EventsQuiet(after が頭より先でも誤りに
+   しない)・待っている間の追記で EventsMoved(列の外の行の書きでは返らない)。どの置き場の handler も同じ答えを返すことを確かめるため。"
+  (setv law "WatchEvents は列の頭が after より進むまで timeout まで待つ")
+  (<- first (as-writer harness MAKER (AppendEvent "journal" "first" {"n" 0})))
+  (<- moved (as-writer harness MAKER (WatchEvents "journal" :after 0 :timeout 30.0)))
+  (require-law (= moved (EventsMoved)) law (.format "もう進んでいる列の待ち: {!r}" moved))
+  (<- idle (as-writer harness MAKER (WatchEvents "journal" :after first.sequence :timeout 1.0)))
+  (require-law (= idle (EventsQuiet)) law (.format "進まない列の待ち: {!r}" idle))
+  (<- ahead (as-writer harness MAKER (WatchEvents "journal" :after (+ first.sequence 100) :timeout 0.0)))
+  (require-law (= ahead (EventsQuiet)) law (.format "頭より先の after: {!r}" ahead))
+  (<- task (Spawn (late-append harness)))
+  (<- woke (as-writer harness MAKER (WatchEvents "journal" :after first.sequence :timeout 30.0)))
+  (<- appended (Wait task))
+  (require-law (= woke (EventsMoved)) law (.format "待っている間の追記: {!r}" woke))
+  (<- read (as-writer harness MAKER (ReadEvents "journal" :after first.sequence)))
+  (require-law (= (lfor e read.items e.idempotency-key) ["late"]) law (.format "起きた後の読み: {!r}" read))
+  [first moved idle ahead woke appended read])
+
+
 ;; --- 法 9: 差分の None はその欄を消す(JSON merge patch の null)------------------------------------------------
 
 (defk law-none-removes-a-field [#^ LawHarness harness]
@@ -562,6 +597,7 @@
             "indexed-list-equals-filtered-scan" law-indexed-list-equals-filtered-scan
             "append-is-idempotent" law-append-is-idempotent
             "watch-waits-for-a-change" law-watch-waits-for-a-change
+            "watch-events-waits-for-an-append" law-watch-events-waits-for-an-append
             "none-removes-a-field" law-none-removes-a-field
             "maintenance-prunes-and-sweeps" law-maintenance-prunes-and-sweeps
             "put-rows-is-all-or-nothing" law-put-rows-is-all-or-nothing

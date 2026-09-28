@@ -6,6 +6,7 @@
                             law-undeclared-writes-are-refused law-operator-paths-need-an-operator law-founders-write-only-at-birth
                             law-transient-rows-expire
                             law-indexed-list-equals-filtered-scan law-append-is-idempotent law-watch-waits-for-a-change
+                            law-watch-events-waits-for-an-append
                             law-none-removes-a-field law-maintenance-prunes-and-sweeps law-put-rows-is-all-or-nothing
                             law-grouped-events-expire-together])
 (import tests.interpreters [LawSetup])
@@ -63,6 +64,12 @@
   {:interpreters ["memory" "pg" "http-memory" "http-effect-memory" "http-pg"]}
   (<- harness (LawSetup))
   (<- transcript (law-watch-waits-for-a-change harness))
+  (assert transcript))
+
+(deftest test-watch-events-waits-for-an-append
+  {:interpreters ["memory" "pg" "http-memory" "http-effect-memory" "http-pg"]}
+  (<- harness (LawSetup))
+  (<- transcript (law-watch-events-waits-for-an-append harness))
   (assert transcript))
 
 (deftest test-none-removes-a-field

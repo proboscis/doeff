@@ -341,6 +341,12 @@
   (#^ tuple items)
   (#^ int last-sequence))
 
+(defclass [(dataclass :frozen True)] EventsMoved []
+  "WatchEvents の答え: 列の頭が after より進んだ(出来事は運ばない — 読み手が ReadEvents で読む)。")
+
+(defclass [(dataclass :frozen True)] EventsQuiet []
+  "WatchEvents の答え: timeout まで列の頭が after より進まなかった(読み手は読み直さずに待ちを掛け直す)。")
+
 
 ;; --- 失敗の答え --------------------------------------------------------------------------------------------
 
@@ -390,4 +396,5 @@
 (setv WatchChangesAnswer (| Changes Reset Unreachable))
 (setv AppendEventAnswer (| Appended Refused Unreachable))
 (setv ReadEventsAnswer (| Events Unreachable))
+(val WatchEventsAnswer (| EventsMoved EventsQuiet Unreachable))
 (val PutRowsAnswer (| WrittenRows RowsConflict RowsRefused Unreachable))
