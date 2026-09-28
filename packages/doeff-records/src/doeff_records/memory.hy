@@ -43,13 +43,14 @@
 (defclass MemoryStore []
   "memory の置き場: schema = 宣言(operator の欄を書ける主体の一覧 operators を含む)/
    lock = 置き場を読み書きする操作を 1 つずつにする錠(thread の間で置き場を共有するため — 同じ thread の入れ子は通す RLock)/
-   bells = WatchChanges の待ち手が掛けた呼び鈴(外の promise の集合 — 変更の列を動かす書きが全部鳴らして外す)。
+   bells = WatchChanges の待ち手が掛けた呼び鈴(外の promise → None の dict — 掛けた順の集合。変更の列を動かす書きが掛けた順に全部鳴らして外す。
+   set にしないのは、set の順は object の番地で決まり、走らせるたびに待ち手の起きる順が変わって模擬の結果が揺れるため)。
    poll-seconds は受けるが使わない: 待ちが読み直しをやめた(呼び鈴で起きる)ので刻みは無い。使い手の模擬の組み立てが
    まだ渡すので、呼び手が渡すのをやめるまで受ける(外す時は呼び手ごと)。"
   (defn #^ None __init__ [self #^ RecordsSchema schema * #^ (| float None) [poll-seconds None]]
     (setv self.schema schema
           self.lock (threading.RLock)
-          self.bells (set)
+          self.bells {}
           self.epoch 1
           self.floor 0
           self.head 0
@@ -82,7 +83,7 @@
     (when (not-in "faults" state)
       (setv self.faults #()))
     (setv self.lock (threading.RLock)
-          self.bells (set))))
+          self.bells {})))
 
 
 ;; --- 呼び鈴(WatchChanges の待ち手を起こす)-----------------------------------------------------------------
@@ -296,7 +297,7 @@
     (setv answer (memory-watch-scan store ask)
           quiet (and (isinstance answer Changes) (not answer.items)))
     (when (and quiet (is-not bell None))
-      (.add store.bells bell))
+      (setv (get store.bells bell) None))
     (WatchRound :answer answer :quiet quiet :due-ms store.purge-due-ms)))
 
 
@@ -328,7 +329,7 @@
     (<- (Wait bell.future :priority PRIORITY-IDLE))
     (finally
       (with [store.lock]
-        (.discard store.bells bell))
+        (.pop store.bells bell None))
       ;; 取り消しは期限の鳴らしの task の中へ届けられ、その task が解けてから終わる — 解け終わるまで待つ(待たずに実行の根が返ると、
       ;; 解けていない task が置き去りの仕事として残る)。先に鳴らし終えていれば取り消しは効かず、待ちはすぐ返る。
       (<- (Cancel timer))

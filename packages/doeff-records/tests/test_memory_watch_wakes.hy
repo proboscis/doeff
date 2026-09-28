@@ -137,7 +137,7 @@
   (assert (< (- (time.monotonic) started) 10) (- (time.monotonic) started))
   (setv answer (get box 0))
   (assert (and (isinstance answer Changes) (= (lfor item answer.items item.key) [#("from-thread")])) answer)
-  (assert (= store.bells (set)) store.bells))
+  (assert (= store.bells {}) store.bells))
 
 
 (defk tiny-wait []
@@ -152,3 +152,36 @@
   ;; 残りの秒を渡して待ち直す呼び手が同じ刻で回り続けないよう、正の timeout は時計を少なくとも 1 刻み(1 マイクロ秒)進める。
   (setv at (run-on (MemoryStore LAW-SCHEMA) (tiny-wait)))
   (assert (= at 1e-06) at))
+
+
+(defk watch-and-note [name woke]
+  {:pre [(: name str) (: woke list)] :post [(: % None)]}
+  "parts を待ち、起きたら名を woke へ積む(起きた順を見るため)。"
+  (<- (watch-parts LONG-WAIT))
+  (.append woke name)
+  None)
+
+
+(defk many-waiters-then-write [store count]
+  {:pre [(: store MemoryStore) (: count int)] :post [(: % list)]}
+  "count 人の待ち手を順に掛けてから 1 行書く。答え = 待ち手の起きた順の名。"
+  (val woke [])
+  (val tasks (lfor i (range count) (Spawn (watch-and-note (.format "w{:02d}" i) woke))))
+  (val spawned [])
+  (for [spawn tasks]
+    (<- task spawn)
+    (.append spawned task))
+  (<- (Delay 1.0))
+  (<- (PutRow "parts" #("bell") (FrozenMap {"label" "b"}) (ExpectAbsent)))
+  (for [task spawned]
+    (<- (Wait task)))
+  woke)
+
+
+(defn test-waiters-wake-in-the-order-they-waited []  ; defk にできない: 検の入口で Program を run する
+  ;; 待ち手は掛けた順に起きる(呼び鈴を set に持つと順が object の番地で決まり、走らせるたびに模擬の結果が揺れた — 使い手の手番の模擬が
+  ;; 3 回に 1〜2 回赤)。
+  (setv store (MemoryStore LAW-SCHEMA))
+  (setv woke (run-on store (many-waiters-then-write store 16)))
+  (assert (= woke (sorted woke)) woke)
+  (assert (= (len woke) 16) woke))
