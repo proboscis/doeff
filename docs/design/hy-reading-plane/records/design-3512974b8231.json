@@ -1,0 +1,256 @@
+{
+  "artifacts": [
+    {
+      "path": "artifacts/v4/design.md",
+      "sha256": "95eb26971398538f58a9bce9af4d8f47fc83d03ec5998d39a3dba73bf1a306e9"
+    },
+    {
+      "path": "artifacts/v4/entity.html",
+      "sha256": "0b3dc718f31195056c9fcdaddf8245764fc2c62cbbb0477dbcb2cdfa29e05174"
+    },
+    {
+      "path": "artifacts/v4/glyph.svg",
+      "sha256": "c8cc0490e553b7cfc2be1e0eba7d342163262a8930e8f15d8d404bcf6af92de8"
+    },
+    {
+      "path": "artifacts/v4/entity-render.png",
+      "sha256": "9d8f58f32a7a339478edd05738d5a282b46cd8c155d6e3b3d2e1775707974f89"
+    }
+  ],
+  "body": {
+    "alternatives": [
+      {
+        "options": [
+          {
+            "benefits": "一目で見渡す用途に合う。設定 1 つ",
+            "costs": "実体の種類ごとに欄が違う所は種類側で読み替える(defrecord の型 = 欄の一覧)",
+            "name": "全カード共通(面の上の欄で切り替え)"
+          },
+          {
+            "benefits": "細かく選べる",
+            "costs": "見渡す時に行ごとに形が違い、かえって読みにくい。設定が増える",
+            "name": "カードごと"
+          }
+        ],
+        "question": "1 行に出す物の設定の粒度",
+        "reason": "operator の目的は glance(見渡す)。行の形が揃う方が速い",
+        "reconsider_when": "operator がカードごとの設定を求めた時",
+        "selected": "全カード共通(面の上の欄で切り替え)"
+      },
+      {
+        "options": [
+          {
+            "benefits": "多くの実体を一目で。開きたい物だけ開く",
+            "costs": "本体を読むには 1 手要る",
+            "name": "畳んだ形"
+          },
+          {
+            "benefits": "すぐ読める",
+            "costs": "数十枚になると見渡せない",
+            "name": "開いた形"
+          }
+        ],
+        "question": "軸で出た一覧の既定",
+        "reason": "\"so i can glance at\"",
+        "reconsider_when": "一覧が数枚しかない時は開いた形でもよい(実装で件数の閾を置いてもよい)",
+        "selected": "畳んだ形"
+      }
+    ],
+    "change_cases": [
+      {
+        "change": "1 行に出す欄が増える(例: 契約・違反の数)",
+        "expected_elements": [
+          "entity-card"
+        ],
+        "id": "C1",
+        "preserve": [
+          "欄は属性 1 つ = 切り替え 1 つ"
+        ],
+        "priority": "required",
+        "protected_contracts": [
+          "K4"
+        ],
+        "provenance": {
+          "kind": "observed",
+          "source": "v1 の構造の層(定義 × 属性)"
+        },
+        "rationale": "実体の属性は索引で増える",
+        "verification": "欄を 1 つ足すと切り替えの欄に 1 つ増え、既存の設定は保たれる"
+      }
+    ],
+    "contracts": [
+      {
+        "canonical_source": "ide-plugins/vscode/doeff-runner(実装の issue で決める)",
+        "effects": [],
+        "failures": [
+          "属性が無い欄は空で出す(欄を消さない)"
+        ],
+        "id": "K4",
+        "invariants": [
+          "種類・名・開閉のボタンは畳んでも出る",
+          "1 行の欄は fields の設定だけで決まる"
+        ],
+        "operations": [
+          "render(entity, attributes, folded, fields) -> HTML"
+        ],
+        "owner": "entity-card"
+      }
+    ],
+    "elements": [
+      {
+        "depends_on": [
+          "structure-index"
+        ],
+        "hidden_decisions": [
+          "1 行の欄は全カード共通",
+          "既定で出すのは型・effect・tags"
+        ],
+        "id": "entity-card",
+        "kind": "internal",
+        "requirement_ids": [
+          "R13"
+        ],
+        "responsibility": "v3 のまま + 畳んだ形(1 行)を描く。1 行の各欄は切り替えの設定に従う",
+        "state": [
+          "畳んでいるか"
+        ]
+      },
+      {
+        "depends_on": [
+          "entity-card"
+        ],
+        "hidden_decisions": [
+          "状態は VS Code の workspaceState に持つ(実装の issue で決める)"
+        ],
+        "id": "view",
+        "kind": "internal",
+        "requirement_ids": [
+          "R13",
+          "R14"
+        ],
+        "responsibility": "v1 のまま + 切り替えの欄(1 行に出す物)・全部畳む / 全部開く・状態を覚える・軸の一覧は既定で畳む",
+        "state": [
+          "1 行に出す物の設定",
+          "各カードの開閉"
+        ]
+      },
+      {
+        "depends_on": [],
+        "hidden_decisions": [],
+        "id": "structure-index",
+        "kind": "internal",
+        "requirement_ids": [
+          "R13"
+        ],
+        "responsibility": "v1・v3 のまま(定義 × 属性の索引。1 行の欄の属性もここから)",
+        "state": []
+      }
+    ],
+    "handoff": {
+      "fixed": [
+        "カードを 1 行に畳める",
+        "1 行に出す物を切り替えられる(全カード共通)",
+        "全部畳む / 全部開く"
+      ],
+      "free": [
+        "既定で出す欄",
+        "軸の一覧の既定",
+        "状態の置き場"
+      ],
+      "next": [
+        "main が読む面の実装の issue を立てる時、v4 の 2 節を受け入れ条件に足す"
+      ]
+    },
+    "level": "実体のカードの畳んだ形(1 行)と、面の上の切り替えの欄と、面が覚える状態",
+    "methods": [
+      {
+        "evidence": [
+          "design-f953339f038c の methods"
+        ],
+        "name": "change-cases",
+        "profile": "change-cases-1996-local-v1",
+        "reason": "v2・v3 の当て方に欄の増加(C1)を足しただけ",
+        "status": "reused",
+        "steps": []
+      },
+      {
+        "evidence": [],
+        "name": "ddd",
+        "profile": "ddd-evans-2015-local-v1",
+        "reason": "表示の設計",
+        "status": "not_applicable",
+        "steps": []
+      },
+      {
+        "evidence": [],
+        "name": "volatility",
+        "profile": "volatility-righting-software-local-v1",
+        "reason": "change-cases で扱った",
+        "status": "not_applicable",
+        "steps": []
+      },
+      {
+        "evidence": [],
+        "name": "add",
+        "profile": "add-2.0-local-v1",
+        "reason": "要素 2 つ",
+        "status": "not_applicable",
+        "steps": []
+      },
+      {
+        "evidence": [],
+        "name": "saam",
+        "profile": "saam-1996-local-v1",
+        "reason": "alternatives の表で済ませた",
+        "status": "not_applicable",
+        "steps": []
+      },
+      {
+        "evidence": [],
+        "name": "c4",
+        "profile": "c4-web-2026-09-14-local-v1",
+        "reason": "v1 の図で足りる",
+        "status": "not_applicable",
+        "steps": []
+      }
+    ],
+    "open_questions": [
+      "1 行の既定(型・effect・tags を出す)と、軸の一覧を既定で畳むこと(R14)は席の既定。戻せる",
+      "畳んだ状態と設定をどこに覚えるか(workspaceState か設定か)は実装の issue で決める"
+    ],
+    "perspective": "proposed",
+    "purpose": "v4: v3(design-fa5e8d3125d1)に 1 点を足す。実体のカードを 1 行の形に畳め、1 行に出す物(引数と答えの型・effect・tags・説明の 1 行目・関係の数・置き場)を全カード共通で切り替えられる。軸で出た一覧は既定で畳む",
+    "requirements": [
+      {
+        "id": "R13",
+        "kind": "functional",
+        "provenance": {
+          "kind": "user",
+          "source": "operator 2026-09-28 \"in plugin view. i want to be able to fold a card to oneline form where i can toggle what to show so i can glance at\""
+        },
+        "statement": "カードを 1 行の形に畳める(1 枚ずつと全部)。1 行に出す物を切り替えられ、設定は全カード共通で面が覚える。常に出すのは種類・名・開閉のボタン"
+      },
+      {
+        "id": "R14",
+        "kind": "constraint",
+        "provenance": {
+          "kind": "assumption",
+          "source": "席の整理(\"so i can glance at\" から。戻せる)"
+        },
+        "statement": "軸の切り替えで出たカードの一覧は既定で畳んだ形。開いたカードは積んだカードとして残す"
+      }
+    ]
+  },
+  "created_at": "2026-09-28T14:34:38.372022+00:00",
+  "id": "design-3512974b8231",
+  "inputs": [
+    {
+      "id": "design-fa5e8d3125d1",
+      "role": "basis",
+      "sha256": "24be42eece293bf7d26fb9053121baaca10d4d956e2427e371257721333cc269"
+    }
+  ],
+  "kind": "design",
+  "schema_version": 1,
+  "scope": "doeff-hy の code を読む面(VS Code)。単位は file ではなく定義(defk・defrecord・defeffect・defhandler・deftest …)で、Scala 3 の見た目に印字し、tag・effect・呼び出し・型から辿る。source の Hy は編集しない。その先の言語(静的な型・型に載る effect・Python の呼び出し・file に縛られない名前空間)の要件も持つ"
+}

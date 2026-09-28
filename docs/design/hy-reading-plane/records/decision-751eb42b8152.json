@@ -1,0 +1,44 @@
+{
+  "artifacts": [
+    {
+      "path": "artifacts/v4/design.md",
+      "sha256": "95eb26971398538f58a9bce9af4d8f47fc83d03ec5998d39a3dba73bf1a306e9"
+    },
+    {
+      "path": "artifacts/v4/entity.html",
+      "sha256": "0b3dc718f31195056c9fcdaddf8245764fc2c62cbbb0477dbcb2cdfa29e05174"
+    }
+  ],
+  "body": {
+    "actor": "user",
+    "authority": "direct",
+    "decision": "design",
+    "outcome": "accepted",
+    "scope_of_agreement": "operator が合意したのは 1 行に畳めることと 1 行に出す物を切り替えられること、および v3 の本体の文字の形。1 行の既定(型・effect・tags)・軸の一覧を既定で畳むこと・状態の置き場は席の既定で戻せる。",
+    "source": "operator の直接の議論 2026-09-28 23:4x〜23:5x(会話 defk-view-discuss・herdr pane w3J:pA)。逐語: \"yeah val var when match is perfect.\"(v3 の本体の文字の承認)/ \"in plugin view. i want to be able to fold a card to oneline form where i can toggle what to show so i can glance at\"",
+    "statement": "v3 の裁定に 1 点を足す。実体のカードを 1 行の形に畳め(1 枚ずつと全部)、1 行に出す物(引数と答えの型・effect・tags・説明の 1 行目・関係の数・置き場)を全カード共通で切り替えられる。常に出すのは種類・名・開閉のボタン。あわせて v3 の本体の文字の形(val / var・when・match の矢印)は operator が明示的に承認した(席の既定から承認済みへ)。v3 までの他の決まりはそのまま。",
+    "subjects": [
+      "design-3512974b8231"
+    ],
+    "supersedes": [
+      "decision-83f77c4ed0e0"
+    ]
+  },
+  "created_at": "2026-09-28T14:35:14.606284+00:00",
+  "id": "decision-751eb42b8152",
+  "inputs": [
+    {
+      "id": "design-3512974b8231",
+      "role": "subject",
+      "sha256": "fa4381ed7f94b1c921aef3a384efbb70d0bcfc5d08e19ad3e729cdbd0c6e191a"
+    },
+    {
+      "id": "decision-83f77c4ed0e0",
+      "role": "basis",
+      "sha256": "8633f8d8de48b42733bc510ab443ba67cdc8d6ad12ca7f6c556c0b681068dfff"
+    }
+  ],
+  "kind": "decision",
+  "schema_version": 1,
+  "scope": "doeff-hy の code を読む面(VS Code)。単位は file ではなく定義(defk・defrecord・defeffect・defhandler・deftest …)で、Scala 3 の見た目に印字し、tag・effect・呼び出し・型から辿る。source の Hy は編集しない。その先の言語(静的な型・型に載る effect・Python の呼び出し・file に縛られない名前空間)の要件も持つ"
+}
