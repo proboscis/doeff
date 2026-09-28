@@ -99,6 +99,7 @@ PROGRAMS_PY = """\
 from collections.abc import Generator
 
 from doeff import do
+from doeff_core_effects.scheduler import Spawn
 
 from {pkg}.effects import Nap, ReadBoard, WriteAudit, WriteBoard
 
@@ -116,17 +117,40 @@ def placer(n):
     return len(rows)
 
 
-def bump(state):
-    return helper(state)
+def replace_state(state, **changes):
+    return helper("turn/state")
+
+
+def carry(program):
+    return (yield from program)
 
 
 @do
-def rebound(state):
-    # A parameter rebound once to a call that reads it (state = f(state) — the
-    # dataclasses.replace shape): the call's argument is the parameter, not the call.
-    state = bump(state)
-    yield from bump(state)
+def on_cache(state, awaiting):
+    # The on-cache shape (agora-controllers controllers/screen/runtime/react.hy): a
+    # parameter rebound once to a call that reads it among its arguments
+    # (state = replace(state, awaiting=...)); the argument is the earlier value, not the call.
+    state = replace_state(state, awaiting=awaiting)
+    yield from carry(replace_state(state, awaiting=None))
     return state
+
+
+@do
+def followed(n):
+    # A local bound once to a call that does not read itself is still followed.
+    program = helper("turn/b")
+    return (yield from carry(program))
+
+
+def other(key):
+    return (yield ReadBoard(key))
+
+
+@do
+def spawn_either(n):
+    # A carried Program chosen by a conditional: both branches are carried.
+    task = yield Spawn(helper("turn/a") if n else other("turn/"))
+    return task
 """
 
 HANDLERS_HY = """\
@@ -145,6 +169,13 @@ HANDLERS_HY = """\
 
 (defhandler ticker []
   (Tick [] (resume None)))
+
+;; Observes the effect and performs the same effect outward (a meter's shape).
+(defhandler nap-watch []
+  (Nap [seconds]
+    (<- (Tick))
+    (<- answer effect)
+    (resume answer)))
 
 (defhandler audit-sink []
   (WriteFamily [] (resume None)))
@@ -229,12 +260,29 @@ def test_project_defined_effects_are_found_in_a_python_program(pkg: str) -> None
 
 
 def test_a_local_rebound_to_a_call_of_itself_is_not_followed_through_itself(pkg: str) -> None:
-    # Regression (agora-redesign #811 3c): `state = bump(state)` put `state` in the
-    # bound-once table as `bump(state)`, so the argument `state` of that call was read
-    # as the same call again — the reader recursed until RecursionError.
-    report = analyze_program(f"{pkg}.programs:rebound")
+    # Regression (agora-redesign #811 3c): `state = replace_state(state, awaiting=...)`
+    # put `state` in the bound-once table as that call, so the argument `state` of the
+    # call was read as the same call again — the reader recursed until RecursionError.
+    report = analyze_program(f"{pkg}.programs:on_cache")
 
     assert _short(report.effect_names) == {"WriteBoard"}
+
+
+def test_a_local_bound_to_a_call_that_does_not_read_itself_is_still_followed(pkg: str) -> None:
+    report = analyze_program(f"{pkg}.programs:followed")
+
+    assert _short(report.effect_names) == {"WriteBoard"}
+    assert report.unresolved == ()
+
+
+def test_a_carried_program_chosen_by_a_conditional_carries_both_branches(pkg: str) -> None:
+    # Regression (agora-redesign #811 3c): Spawn(a() if c else b()) carried nothing, so
+    # the closure check did not see what the spawned task performs.
+    report = analyze_program(f"{pkg}.programs:spawn_either")
+
+    [carried] = report.carried
+    assert carried.carrier.__name__ == "Spawn"
+    assert _short(carried.program.effect_names) == {"WriteBoard", "ReadBoard"}
 
 
 def test_hy_service_defined_by_a_user_macro_wrapping_defk(pkg: str) -> None:
@@ -265,6 +313,18 @@ def test_handler_clauses_and_what_they_perform(pkg: str) -> None:
     [nap] = clock.clauses
     assert nap.handles.__name__ == "Nap"
     assert _short(nap.emits.effect_names) == {"Tick"}
+
+
+def test_a_clause_that_performs_the_effect_it_received_emits_that_effect(pkg: str) -> None:
+    # Regression (agora-redesign #811 3c): `(<- answer effect)` in a clause was "a value
+    # that is not a call"; the clause's effect parameter holds an effect of the class the
+    # clause handles, so performing it emits that class (answered further out).
+    watch = analyze_handler(f"{pkg}.handlers:nap_watch")
+
+    [nap] = watch.clauses
+    assert nap.handles.__name__ == "Nap"
+    assert _short(nap.emits.effect_names) == {"Tick", "Nap"}
+    assert nap.emits.unresolved == ()
 
 
 def test_a_factory_returning_a_partial_of_a_dispatch_function(pkg: str) -> None:

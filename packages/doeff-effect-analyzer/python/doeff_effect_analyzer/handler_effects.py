@@ -48,6 +48,7 @@ from typing import Any
 from doeff_effect_analyzer.program_effects import (
     UNBOUND,
     Basis,
+    Binding,
     Clause,
     EffectUse,
     Escape,
@@ -55,6 +56,7 @@ from doeff_effect_analyzer.program_effects import (
     HandlerEffects,
     Location,
     ProgramEffects,
+    ReceivedEffect,
     Residual,
     Unresolved,
     _bind_expression,
@@ -455,13 +457,22 @@ def _read_clauses(
                 Unresolved("handled class is not an importable effect class", text, location)
                 for text in named.missing
             )
-            facts = _Facts()
-            reader.collect(region, scope, filename, facts, generator=True)
-            emits = _report_facts(reader, facts, label=f"{label} clause")
-            clauses.extend(
-                Clause(handles=cls, emits=emits, location=location) for cls in named.found
-            )
+            # Read once per handled class, with the effect parameter bound to the effect
+            # of that class (performing it emits that class — ``ReceivedEffect``).
+            for cls in named.found:
+                facts = _Facts()
+                reader.collect(region, _received_in(scope, param, cls), filename, facts, generator=True)
+                emits = _report_facts(reader, facts, label=f"{label} clause")
+                clauses.append(Clause(handles=cls, emits=emits, location=location))
     return _ReadClauses(tuple(clauses), tuple(unresolved))
+
+
+def _received_in(scope: _Scope, param: str | None, cls: type) -> _Scope:
+    """``scope`` with the clause's effect parameter bound to the effect it received."""
+    if param is None:
+        return scope
+    received = _Bound((Binding(param, ReceivedEffect(cls)),))
+    return dataclasses.replace(scope, bound=scope.bound.plus(received))
 
 
 def _branches(

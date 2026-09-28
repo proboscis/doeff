@@ -537,6 +537,15 @@ class Binding:
     value: Imported
 
 
+@dataclass(frozen=True)
+class ReceivedEffect:
+    """A handler clause's effect parameter read inside the clause for ``cls``: the effect
+    the clause received.  Performing it (``yield effect`` — a meter observing and passing
+    the same effect outward) emits an effect of ``cls``, answered further out."""
+
+    cls: type
+
+
 class _IdentityKind(Enum):
     PROGRAM = "program"  # a Program argument: its function and bindings
     INSTANCE = "instance"  # an instance of a class
@@ -714,7 +723,7 @@ class _Scope:
         value = self.local_values.get(name)
         if not isinstance(value, ast.Call):
             return UNBOUND
-        if _mentions(value.func, name):
+        if _reads_itself(value, name):
             return UNBOUND
         cls = self.resolve(value.func)
         if (
@@ -727,9 +736,12 @@ class _Scope:
         return UNBOUND
 
 
-def _mentions(expr: ast.AST, name: str) -> bool:
-    """Whether ``expr`` reads the name ``name`` anywhere inside it."""
-    return any(isinstance(node, ast.Name) and node.id == name for node in ast.walk(expr))
+def _reads_itself(call: ast.Call, name: str) -> bool:
+    """Whether the call bound to ``name`` reads ``name`` anywhere — its callee, its
+    positional arguments or its keywords (``x = x.method()``, ``state = replace(state, ...)``).
+    There the name inside the call is the earlier value, not the call: a local bound
+    that way is neither followed through the call nor read as an instance of it."""
+    return any(isinstance(node, ast.Name) and node.id == name for node in ast.walk(call))
 
 
 def _builtins_of(module: types.ModuleType) -> dict[str, Any]:
@@ -888,15 +900,12 @@ def _scope_of(
             functions.setdefault(node.name, []).append(node)
     # A local bound exactly once can be followed through what it was bound to.
     values = {name: exprs[0] for name, exprs in assigned.items() if len(exprs) == 1}
-    # A call that reads the name it is bound to (``state = replace(state, ...)``) is not
-    # the value of that name inside the call: following it would read the call as its
-    # own argument without end.  The name still holds the call after the assignment,
-    # but where it came from is the earlier value, so it is not followed (as
-    # ``_local_instance`` refuses ``x = x.method()``).
+    # A call that reads the name it is bound to is not followed (``_reads_itself`` —
+    # following it would read the call as its own argument without end).
     local_calls = {
         name: value
         for name, value in values.items()
-        if isinstance(value, ast.Call) and not _mentions(value, name)
+        if isinstance(value, ast.Call) and not _reads_itself(value, name)
     }
     local_functions = {name: nodes[0] for name, nodes in functions.items() if len(nodes) == 1}
     # A parameter rebound in the body no longer holds what the caller passed.
@@ -1353,6 +1362,9 @@ class _Reader:
             return
         if isinstance(expr, ast.Name):
             argument = scope.resolve(expr)
+            if isinstance(argument, ReceivedEffect):
+                facts.effects.append((argument.cls, location))
+                return
             if isinstance(argument, _ProgramArg):
                 # A Program the caller passed: it runs here, read where it was written.
                 facts.performed_arguments.add(_identity(argument))
@@ -1538,7 +1550,14 @@ class _Reader:
 
     def _carried_program(self, argument: ast.expr, scope: _Scope) -> _ProgramArg | None:
         """The Program an argument hands over: a Program the caller passed on, a Program
-        call, or an install form (an effect or plain data is not carried)."""
+        call, or an install form (an effect or plain data is not carried).  A conditional
+        (``a() if c else b()``) carries itself when either branch is a Program: performing
+        it reads both branches (``_performed``)."""
+        if isinstance(argument, ast.IfExp):
+            branches = (argument.body, argument.orelse)
+            if any(self._carried_program(branch, scope) is not None for branch in branches):
+                return _ProgramArg(argument, scope)
+            return None
         if isinstance(argument, ast.Name):
             value = scope.resolve(argument)
             if isinstance(value, _ProgramArg):
