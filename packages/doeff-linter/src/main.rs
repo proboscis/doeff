@@ -520,7 +520,7 @@ fn main() -> ExitCode {
 
 /// `--output-format editor-json` — エディタ向けの JSON を 1 つ出す。終了コード 0 = 新しい破れ(error)なし、1 = あり、2 = 引数・設定の誤り。
 fn run_editor(args: &Args) -> ExitCode {
-    let setup = match prepare(args) {
+    let setup = match doeff_linter::timing::timed("prepare", || prepare(args)) {
         Ok(setup) => setup,
         Err(reason) => {
             eprintln!("doeff-linter: {}", reason);
@@ -550,8 +550,10 @@ fn run_editor(args: &Args) -> ExitCode {
             Vec::new()
         };
         let project_report = if setup.has_project_rules() {
-            let mode = semantic_mode(args, &setup.root, Some(&path));
-            project::run_with(&setup.root, &setup.settings, &project_rules, Target::Single { path: path.clone(), source: &source }, &mode)
+            let mode = doeff_linter::timing::timed("semantic-mode", || semantic_mode(args, &setup.root, Some(&path)));
+            doeff_linter::timing::timed("project(single)", || {
+                project::run_with(&setup.root, &setup.settings, &project_rules, Target::Single { path: path.clone(), source: &source }, &mode)
+            })
         } else {
             ProjectReport::default()
         };
