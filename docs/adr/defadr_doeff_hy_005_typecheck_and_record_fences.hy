@@ -81,7 +81,8 @@
     (setv rel (.relative-to source repo-root))
     (when (& (set rel.parts) SCAN-SKIP-PARTS)
       (continue))
-    (when (re.search r"\(defmacro\s"
+    ;; 行頭の形だけを定義と数える — 検の見本の文字列の中の "(defmacro …)" は定義ではない
+    (when (re.search r"(?m)^\s*\(defmacro\s"
                      (.read-text source :encoding "utf-8" :errors "replace"))
       (.append found (str rel))))
   (tuple found))
