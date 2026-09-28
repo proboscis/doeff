@@ -2,7 +2,7 @@
 ;;; 被せる。手元で系全体を確かめる時は、handler を被せずに手元の runner sim-cluster(local.hy)で走らせる — sim の宿が同じ要求の形
 ;;; (この module の detached-path・detached-submit-body・detached-refusal・awaited-answer・warm-request-body)で coordinator の口へ送る。
 ;;; 契約(本物の coordinator と worker が決める):
-;;;   - key で冪等に送る(同じ key がまだ在れば created = False・name / needs が違えば DetachedRefused)
+;;;   - key で冪等に送る(同じ key がまだ在れば created = False・name / needs / environ が違えば DetachedRefused)
 ;;;   - 呼び手が消えても(await が取り消されても)task は続く・後から同じ key で待てる
 ;;;   - 終わった結果は解放か保持の期限まで持つ・終わった後の取り消しは False で結果はそのまま
 ;;;   - 担い手の死 = DetachedLost(走らせ直さない)・結果の後の担い手の死では結果は変わらない
@@ -42,15 +42,17 @@
 
 
 (deff detached-submit-body [#^ str sha #^ str revision #^ frozenset needs #^ str name #^ float lease-seconds #^ float retain-seconds
-                            #^ (| dict None) runtime-env]  ; defk にできない: 本番の client と sim の宿が同じ形を作る純粋な判断
+                            #^ (| dict None) runtime-env #^ dict environ]  ; defk にできない: 本番の client と sim の宿が同じ形を作る純粋な判断
   {:pre [(: sha str) (: revision str) (: needs frozenset) (: name str) (: lease-seconds float) (: retain-seconds float)
-         (: runtime-env (| dict None))]
+         (: runtime-env (| dict None)) (: environ dict)]
    :post [(: % dict)] :tags {:context "doeff-cluster" :role "protocol"}}
   "PUT /detached/<key> の本文を作るため: 詰めた Program は置き場 /programs/<sha> に先に置き、本文は sha だけを運ぶ(ADR-DOE-CLUSTER-001
-   R3b)。runtime-env = 実行環境の宣言の JSON(在れば worker は env の root を準備して、その中で走らせる)。"
+   R3b)。runtime-env = 実行環境の宣言の JSON(在れば worker は env の root を準備して、その中で走らせる)。environ = 子の環境変数
+   (SubmitDetached.environ — 空なら欄を置かない・同じ key の送り直しの比べに入る)。"
   (| {"program" sha "revision" revision "needs" (sorted needs) "name" name "leaseSeconds" lease-seconds
       "retainSeconds" retain-seconds "format" PROTOCOL-FORMAT}
-     (if (is runtime-env None) {} {"runtimeEnv" runtime-env})))
+     (if (is runtime-env None) {} {"runtimeEnv" runtime-env})
+     (if environ {"environ" (dict environ)} {})))
 
 
 (deff detached-refusal [#^ (| int None) status #^ (| dict None) body]  ; defk にできない: 本番の client と sim の宿が同じ判断で返事を読む
@@ -147,13 +149,14 @@
 
   (defn #^ dict submit [self #^ str key #^ str blob #^ frozenset needs #^ str name
                         #^ float lease-seconds
-                        #^ float retain-seconds]
+                        #^ float retain-seconds #^ (| dict None) [environ None]]
     "切り離した task を 1 本出す: 詰めた Program を版と一緒に置き場 /programs/<sha> に先に置き、本文は sha だけを運ぶ(service の宣言と
      同じ運び方 — ADR-DOE-CLUSTER-001 R3b)。置きも送りも何度送っても同じ意味なので、通信の失敗を越えて送り直す。"
     (setv #(sha put) (put-program self.endpoint blob (current-versions) self.deadline-seconds))
     (.answer self put)
     (setv body (detached-submit-body sha self.revision needs name lease-seconds retain-seconds
-                                     (if (is self.runtime-env None) None (run-program (runtime-env->json self.runtime-env)))))
+                                     (if (is self.runtime-env None) None (run-program (runtime-env->json self.runtime-env)))
+                                     (or environ {})))
     (.answer self (.resend self (fn [] (.request self.endpoint "PUT" (detached-path key "") :json body)))))
 
   (defn #^ dict read [self #^ str key]
@@ -199,10 +202,10 @@
   answer)
 
 (defhandler detached-cluster [#^ DetachedClient client [poll-seconds 1.0]]
-  (SubmitDetached [program key needs name lease-seconds retain-seconds]
+  (SubmitDetached [program key needs name lease-seconds retain-seconds environ]
     ;; 送れない値は送る前に断る(encode-program が UnsendableProgram を投げ、呼び手へ届く)。
     (setv blob (encode-program program))
-    (resume (try (DetachedSubmitted key (get (.submit client key blob needs name (float lease-seconds) (float retain-seconds)) "created"))
+    (resume (try (DetachedSubmitted key (get (.submit client key blob needs name (float lease-seconds) (float retain-seconds) environ) "created"))
                  (except [error httpx.TransportError]
                    (submit-unreachable (str error))))))
   (AwaitDetached [key timeout-seconds]

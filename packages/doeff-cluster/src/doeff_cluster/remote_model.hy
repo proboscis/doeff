@@ -23,7 +23,7 @@
 (import base64)
 (import collections)
 (import io)
-(import dataclasses [dataclass])
+(import dataclasses [dataclass field])
 (import hashlib)
 (import importlib.metadata)
 (import pathlib [Path])
@@ -37,15 +37,21 @@
 
 (defclass [(dataclass :frozen True)] RemoteJob [EffectBase]
   "program = 未実行の Program(値 — handler は Program の中の with-handlers で並べる・ADR-DOE-CLUSTER-001 R1・R2)・needs = 要る能力の名の frozenset(置く worker は needs ⊆ provides)。
+   environ = 子の環境変数(名 → 文字列 — service の :environ と同じ規則・既定は空)。本番は worker が子 process の環境変数に置き、
+   sim は sim の宿が同じ名の Ask に答える(Program は名の Ask で読む — 本番の土台は env-var-ask)。
    結果 = Program の戻り値。Program が投げた例外はそのまま呼び手へ届く。"
   (#^ (| Program EffectBase) program)
   (setv #^ frozenset needs (frozenset))
   (setv #^ str name "")
+  (setv #^ dict environ (field :default-factory dict))
   (defn __post-init__ [self]
-    "needs を作る時に検める(空・旧い形を断る — cluster_model.effect-needs-problem)。"
+    "needs と environ を作る時に検める(needs の空・旧い形・environ の名の形・予約・秘密の名を断る — cluster_model.effect-needs-problem・runtime_env_model.child-environ-refusal)。"
     (import doeff_cluster.cluster_model [effect-needs-problem])
+    (import doeff_cluster.runtime_env_model [child-environ-refusal])
     (setv problem (effect-needs-problem self.needs))
-    (when problem (raise (TypeError (+ "RemoteJob.needs: " problem))))))
+    (when problem (raise (TypeError (+ "RemoteJob.needs: " problem))))
+    (setv problem (child-environ-refusal self.environ))
+    (when problem (raise (TypeError (+ "RemoteJob.environ: " problem))))))
 
 
 (defclass RemoteJobFailed [Exception]

@@ -8,7 +8,7 @@
 (import collections.abc [Callable])
 (import doeff [with-handlers DoExpr EffectBase Program])
 (import doeff_core_effects.effects [Ask])
-(import doeff_core_effects.handlers [reader state])
+(import doeff_core_effects.handlers [reader state env-var-ask])
 (import doeff_core_effects.scheduler [scheduled])
 (import doeff_cluster.host_contract [HOST-CONTRACT host-reader])
 (import tests.fixtures.envs [scheduler-foundation])
@@ -28,6 +28,14 @@
   "自分で reader(base = 100)を並べ、土台(scheduler)の下で base に n を足す。"
   (<- base int (scheduler-foundation (with-handlers [(reader {"base" 100})] (Ask "base"))))
   (+ base n))
+
+
+(defk environ-read [name]
+  {:pre [(: name str)] :post [(: % str)] :tags {:context "doeff-cluster-test" :role "entry"}}
+  "task の :environ を本番の土台と同じ形で読む見本: 名の Ask に、子の環境変数を読む env-var-ask(環境に無い名は外へ通す)を並べて答える。
+   本番の worker の子では環境変数が答え、sim の子では env-var-ask が外へ通した Ask に sim の宿(host-answers)が spec.environ から答える。"
+  (<- value str (scheduler-foundation (with-handlers [(env-var-ask :prefix "")] (Ask name))))
+  value)
 
 
 (defk counter-program [prefix]

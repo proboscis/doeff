@@ -1,6 +1,6 @@
 ;;; 切り離した task の HTTP の口の純粋な判断(2026-09-25・effect は detached_model.hy)。I/O はしない。
 ;;;
-;;;   PUT    /detached/<key>          送る(job id = key で冪等)。{program revision needs name leaseSeconds retainSeconds}
+;;;   PUT    /detached/<key>          送る(job id = key で冪等)。{program revision needs name leaseSeconds retainSeconds environ}
 ;;;                                   program = 先に PUT /programs/<sha> で置いた詰めた Program の sha(版は置いた時の版 — service の宣言と同じ運び方)
 ;;;                                   → {"key" "task" "created" "phase"}。同じ key が在れば何も作らず created = false
 ;;;   GET    /detached/<key>          読む(lease に触らない)→ {"key" "phase" "detail" "result" "worker"}。知らない key は phase = unknown
@@ -12,7 +12,7 @@
 ;;; renew-detached・absorb-detached-report)。ここは要求 1 件 → Reply(次の状態・status・本文)だけ。
 (import dataclasses [replace])
 (import typing [NamedTuple])
-(import .cluster_model [ClusterState ClusterTiming TaskRecord format-refusal])
+(import .cluster_model [ClusterState ClusterTiming TaskRecord format-refusal environ-pairs])
 (import .cluster_policy [DETACHED-TERMINAL TASK-MAX-OPEN end-detached runtime-env-refusal task-id task-body-refusal request-needs
                          program-versions])
 (import .detached_model [DETACHED-DEFAULT-LEASE-SECONDS DETACHED-DEFAULT-RETAIN-SECONDS OPEN-PHASES WARMING-PHASE])
@@ -52,8 +52,8 @@
 
 
 (defn #^ Reply submit-detached [#^ ClusterState state #^ str key #^ dict body #^ int now]
-  "PUT /detached/<key>: 同じ key の行が在ればそれを返す(created = false)。name・needs が違えば 409(同じ job id を別の
-   仕事に使った呼び手の誤り)。無ければ待ちの行を作る。"
+  "PUT /detached/<key>: 同じ key の行が在ればそれを返す(created = false)。name・needs・実行環境・子の環境変数(environ)が違えば 409
+   (同じ job id を別の仕事に使った呼び手の誤り — environ は Program の読む設定なので、違えば別の仕事)。無ければ待ちの行を作る。"
   (setv lease (.get body "leaseSeconds" DETACHED-DEFAULT-LEASE-SECONDS)
         retain (.get body "retainSeconds" DETACHED-DEFAULT-RETAIN-SECONDS)
         refusal (or (format-refusal body)
@@ -64,14 +64,15 @@
                     (seconds-refusal "retainSeconds" retain DETACHED-MAX-RETAIN-SECONDS)))
   (when refusal (return (Reply state 400 {"error" refusal})))
   (setv needs (request-needs body "切り離した task の needs")
+        environ (environ-pairs (.get body "environ" {}))
         existing (task-by-key state key))
   (when (is-not existing None)
     (return
-      (if (= #(existing.name existing.needs existing.runtime-env)
-             #((.get body "name" "") needs (.get body "runtimeEnv")))
+      (if (= #(existing.name existing.needs existing.runtime-env existing.environ)
+             #((.get body "name" "") needs (.get body "runtimeEnv") environ))
           (Reply state 200 {"key" key "task" existing.id "created" False "phase" existing.phase})
-          (Reply state 409 {"error" (.format "key {} は別の仕事(name {!r}・needs {})に使われている"
-                                        key existing.name (list existing.needs))}))))
+          (Reply state 409 {"error" (.format "key {} は別の仕事(name {!r}・needs {}・environ の名 {})に使われている"
+                                        key existing.name (list existing.needs) (lfor #(k _) existing.environ k))}))))
   (setv open-count (len (lfor t (.values state.tasks) :if (in t.phase OPEN-PHASES) t))
         detached-count (len (lfor t (.values state.tasks) :if t.detached t)))
   (when (>= open-count TASK-MAX-OPEN)
@@ -85,7 +86,7 @@
                          (program-versions state (get body "program"))
                          needs lease-ms (+ now lease-ms) now
                          :detached True :key key :retain-ms (int (* 1000 retain))
-                         :runtime-env (.get body "runtimeEnv")))
+                         :runtime-env (.get body "runtimeEnv") :environ environ))
   (Reply (replace state :tasks (| state.tasks {id task}) :next-task (+ state.next-task 1))
          200 {"key" key "task" id "created" True "phase" task.phase}))
 

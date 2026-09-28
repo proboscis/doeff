@@ -38,6 +38,11 @@
 ;; 子の環境変数のうち、宣言で置けない物(worker が組む・interpreter と uv の挙動を変える)。
 (val RESERVED-ENV-PREFIXES #("PYTHON" "HY_" "UV_" "LD_" "DOEFF_"))
 (val RESERVED-ENV-NAMES (frozenset #("PATH" "HOME" "VIRTUAL_ENV")))
+;; 子の環境変数のうち、値が秘密の中身になる名の末尾(宣言の行・task の行・詰めた Program は coordinator の状態に残るので置けない —
+;; 秘密は置き場を名指す名(末尾 PATH-ENV-SUFFIXES — 値は file や dir の path)で運ぶ)。service の :environ・実行環境の env-vars・
+;; task の :environ が同じ規則 1 つ(EnvVar)で断る(2026-09-28)。
+(val SECRET-ENV-SUFFIXES #("_TOKEN" "_KEY" "_SECRET" "_PASSWORD"))
+(val PATH-ENV-SUFFIXES #("_FILE" "_DIR" "_PATH"))
 
 
 ;; --- 宣言の誤り ---------------------------------------------------------------------------
@@ -46,7 +51,7 @@
 ;; REVISION-DIFFERS は系の宣言(declare)が断る物: 系の関数の source が git の checkout の中に無い・checkout の HEAD が宣言の版と違う
 ;; (2026-09-28 — 詰める Program の参照する code と、実行先が宣言の版で展開する code を一致させる)。
 (defenum InvalidKind
-  INVALID-NAME DUPLICATE-REPO BAD-COMMIT BAD-URL BAD-SHA256 UNKNOWN-REPO BAD-PATH RESERVED-ENV-VAR EMPTY BAD-JSON
+  INVALID-NAME DUPLICATE-REPO BAD-COMMIT BAD-URL BAD-SHA256 UNKNOWN-REPO BAD-PATH RESERVED-ENV-VAR SECRET-ENV-VAR EMPTY BAD-JSON
   DIRTY-TREE COMMIT-NOT-ON-REMOTE SENDER-SOURCE-DIFFERS NOT-IN-CHECKOUT REVISION-DIFFERS)
 
 
@@ -146,8 +151,27 @@
       (_invalid InvalidKind.INVALID-NAME (.format "環境変数の名は英大文字・数字・_: {!r}" self.name)))
     (when (or (in self.name RESERVED-ENV-NAMES) (.startswith self.name RESERVED-ENV-PREFIXES))
       (_invalid InvalidKind.RESERVED-ENV-VAR (.format "worker が組む環境変数は宣言で置けない: {}" self.name)))
+    (when (and (.endswith self.name SECRET-ENV-SUFFIXES) (not (.endswith self.name PATH-ENV-SUFFIXES)))
+      (_invalid InvalidKind.SECRET-ENV-VAR
+                (.format "秘密の中身を名指す環境変数は置けない(宣言と task は coordinator の状態に残る — 秘密は file の path の名 {} で運ぶ): {}"
+                         (.join "・" PATH-ENV-SUFFIXES) self.name)))
     (when (not (isinstance self.value str))
       (raise (TypeError (.format "環境変数 {} の値は文字列: {!r}" self.name self.value))))))
+
+
+(defn #^ (| str None) child-environ-refusal [environ]  ; defk にできない: effect の構成子(__post_init__)・coordinator の本文の読み(Program の外)が呼ぶ純粋な判断
+  "子の環境変数の組(service の :environ・task の :environ — 名 → 文字列の dict)が受けられない理由(受けられれば None)。
+   名と値の規則は EnvVar 1 つ(名の形・worker の予約・秘密の中身の名・文字列の値)— service と task で同じ(2026-09-28)。"
+  (when (not (isinstance environ dict))
+    (return (.format "environ は環境変数の名 → 文字列の dict: {!r}" environ)))
+  (for [#(k v) (.items environ)]
+    (when (not (isinstance v str))
+      (return (.format "environ の {} の値は文字列: {!r}" k v)))
+    (try
+      (EnvVar :name k :value v)
+      (except [error RuntimeEnvInvalid]
+        (return (.format "environ の {}: {}" k error)))))
+  None)
 
 
 (defrecord RuntimeEnv
