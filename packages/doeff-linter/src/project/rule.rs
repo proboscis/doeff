@@ -39,6 +39,8 @@ pub enum ProjectRule {
     /// DOEFF100: 設定(pyproject の [tool.doeff-linter]・architecture.hy)にこの linter の知らない鍵か規則の ID がある
     /// (その鍵だけを読まずに残りの規則を走らせた知らせ・warning — linter が設定より古いか、書き違い)。
     UnknownConfigKey,
+    /// DOEFF128: Hy の file を読み取り器が最後まで読めない(違反が欠ける — 有効な規則の一覧に関わらず出す)。
+    UnreadableFile,
     /// DOEFF101: 層の import の向き — 許された層の外の module を import しない。
     LayerImportDirection,
     /// DOEFF102: 層ごとに禁じた module(I/O の module など)を直に import しない。
@@ -107,8 +109,9 @@ pub enum ProjectRule {
 
 impl ProjectRule {
     /// 全部の層の規則(出力の一覧と `ALL` の展開のため)。
-    pub const ALL: [ProjectRule; 33] = [
+    pub const ALL: [ProjectRule; 34] = [
         ProjectRule::UnknownConfigKey,
+        ProjectRule::UnreadableFile,
         ProjectRule::LayerImportDirection,
         ProjectRule::LayerForbiddenModule,
         ProjectRule::LayerTypesOnly,
@@ -147,6 +150,7 @@ impl ProjectRule {
     pub fn id(self) -> &'static str {
         match self {
             ProjectRule::UnknownConfigKey => "DOEFF100",
+            ProjectRule::UnreadableFile => "DOEFF128",
             ProjectRule::LayerImportDirection => "DOEFF101",
             ProjectRule::LayerForbiddenModule => "DOEFF102",
             ProjectRule::LayerTypesOnly => "DOEFF103",
@@ -215,7 +219,7 @@ impl ProjectRule {
             | ProjectRule::ServiceDependency
             | ProjectRule::SemanticBusinessDecision
             | ProjectRule::SemanticTransportKnowledge => true,
-            ProjectRule::UnknownConfigKey | ProjectRule::UndeclaredPlace | ProjectRule::UndeclaredDirectory | ProjectRule::UnusedDependency => false,
+            ProjectRule::UnknownConfigKey | ProjectRule::UnreadableFile | ProjectRule::UndeclaredPlace | ProjectRule::UndeclaredDirectory | ProjectRule::UnusedDependency => false,
             ProjectRule::EnvironmentName
             | ProjectRule::DefnForbidden
             | ProjectRule::DeffNeedsReason
@@ -240,6 +244,7 @@ impl ProjectRule {
     pub fn label(self) -> &'static str {
         match self {
             ProjectRule::UnknownConfigKey => "設定の知らない鍵",
+            ProjectRule::UnreadableFile => "Hy の file を読めない",
             ProjectRule::LayerImportDirection => "層の向きに逆らう import",
             ProjectRule::LayerForbiddenModule => "層に禁じた module の import",
             ProjectRule::LayerTypesOnly => "型だけの層に関数がある",
@@ -287,6 +292,7 @@ impl ProjectRule {
             ProjectRule::RawSideEffectDirect | ProjectRule::RawSideEffectVia => RuleFamily::Raw,
             ProjectRule::EnvironmentName => RuleFamily::Naming,
             ProjectRule::UnknownConfigKey
+            | ProjectRule::UnreadableFile
             | ProjectRule::ServiceBoundary
             | ProjectRule::UndeclaredPlace
             | ProjectRule::UndeclaredDirectory
@@ -316,6 +322,7 @@ impl ProjectRule {
     pub fn title(self) -> &'static str {
         match self {
             ProjectRule::UnknownConfigKey => "Unknown Config Key",
+            ProjectRule::UnreadableFile => "Unreadable Hy File",
             ProjectRule::LayerImportDirection => "Layer Import Direction",
             ProjectRule::LayerForbiddenModule => "Layer Forbidden Module",
             ProjectRule::LayerTypesOnly => "Types-Only Layer",
@@ -354,6 +361,7 @@ impl ProjectRule {
     /// 規則の文(law が結びついていない時に一覧へ出す)。
     pub fn statement(self) -> &'static str {
         match self {
+            ProjectRule::UnreadableFile => "Hy の file は読み取り器が最後まで読める(読めない file は違反が欠けるので、有効な規則の一覧に関わらず error で知らせる)",
             ProjectRule::UnknownConfigKey => "設定(pyproject の [tool.doeff-linter]・architecture.hy)の鍵と規則の ID は、この linter が知っている物だけ — 知らない物はその鍵だけを読まずに残りの規則を走らせ、知らせる(linter が設定より古いか、書き違い)",
             ProjectRule::LayerImportDirection => "層の module は、設定で許した層の module だけを import する(repo の外の import は数えない)",
             ProjectRule::LayerForbiddenModule => "層の module は、その層に禁じた module(I/O の module など)を直に import しない",
@@ -393,6 +401,7 @@ impl ProjectRule {
     /// 直し方の既定の 1 行。
     pub fn hint(self) -> &'static str {
         match self {
+            ProjectRule::UnreadableFile => "Hy 本体(hy.read_many)が読めるなら doeff-linter の読み取り器の誤りなので知らせる。Hy も読めないなら括弧か文字列を直す",
             ProjectRule::UnknownConfigKey => "linter が古いなら本線からの自動の組み直しを待つ(開発版の置き場は数分以内に置き換わる — 手で組んで差し替えない)。書き違いなら鍵の名を直す",
             ProjectRule::LayerImportDirection => "向きに反する import を外す — 要る値は許された層(intent の型など)へ移すか、effect を出して下の層の handler に答えさせる",
             ProjectRule::LayerForbiddenModule => "I/O は許された層(foundation など)の handler に置き、この層からは effect を出す",
@@ -435,8 +444,9 @@ mod tests {
     use super::*;
 
     /// DOEFF の ID → 割り当てるべき家族(依頼の表そのもの)。
-    const EXPECTED_FAMILIES: [(&str, RuleFamily); 33] = [
+    const EXPECTED_FAMILIES: [(&str, RuleFamily); 34] = [
         ("DOEFF100", RuleFamily::Place),
+        ("DOEFF128", RuleFamily::Place),
         ("DOEFF101", RuleFamily::Layer),
         ("DOEFF102", RuleFamily::Layer),
         ("DOEFF103", RuleFamily::Layer),

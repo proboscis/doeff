@@ -17,6 +17,7 @@ pub mod rule;
 pub mod bare_calls;
 pub mod semantic;
 pub mod smells;
+pub mod unreadable;
 pub mod settings;
 pub mod signatures;
 pub mod call_view;
@@ -168,6 +169,11 @@ pub fn run_with(root: &Path, settings: &ProjectSettings, enabled: &BTreeSet<Proj
     let wants_raw = enabled.contains(&ProjectRule::RawSideEffectDirect) || enabled.contains(&ProjectRule::RawSideEffectVia);
     let mut drafts = Vec::new();
 
+    // 読めない Hy の file の知らせ(DOEFF128)の材料 — 全体なら repo の Hy の file の全部、1 file ならその保存前の中身。
+    let unreadable_target: Option<(PathBuf, String)> = match &target {
+        Target::Whole => None,
+        Target::Single { path, source } => Some((path.clone(), source.to_string())),
+    };
     match target {
         Target::Whole => {
             let layer_files = settings.layers.as_ref().map(|layers| collect_layer_files(root, layers)).unwrap_or_default();
@@ -385,6 +391,8 @@ pub fn run_with(root: &Path, settings: &ProjectSettings, enabled: &BTreeSet<Proj
         }
     }
     report.findings = finish(drafts, settings, &registry);
+    // 読めない Hy の file は、有効な規則の一覧に関わらず知らせる(違反が欠けているのを黙らせない — DOEFF128)。
+    report.findings.extend(unreadable_findings(root, settings, &unreadable_target));
     report
 }
 
@@ -2051,6 +2059,38 @@ fn failure_types_for(root: &Path, enabled: &BTreeSet<ProjectRule>, reading: &set
         all.extend(smells::failure_types_in(&source, smells::Scope { module: &module, bindings: &facts.bindings }));
     }
     all
+}
+
+/// 読めない Hy の file を DOEFF128 の違反にする(全体 = 規則が読む Hy の file を並べて読む・1 file = 保存前の中身だけ)。
+fn unreadable_findings(root: &Path, settings: &ProjectSettings, single: &Option<(PathBuf, String)>) -> Vec<Finding> {
+    match single {
+        Some((path, source)) => {
+            let is_hy = language_of(path) == Some(Language::Hy);
+            let rel = relative_path(root, path).unwrap_or_else(|| path.to_string_lossy().into_owned());
+            if is_hy && is_judged_file(&rel, source, settings) {
+                unreadable::finding(&rel, &root.join(&rel), source).into_iter().collect()
+            } else {
+                Vec::new()
+            }
+        }
+        None => hy_index::collect_hy_files(root)
+            .par_iter()
+            .filter_map(|path| {
+                let rel = relative_path(root, path)?;
+                let source = std::fs::read_to_string(path).ok()?;
+                is_judged_file(&rel, &source, settings).then(|| unreadable::finding(&rel, path, &source)).flatten()
+            })
+            .collect(),
+    }
+}
+
+/// どれかの規則が読む file か(層の置き場・定義の規則の母集団・検の置き場・業務の名の母集団)— 規則が読まない file(文書の中の
+/// 抜き書きなど)は、読めなくても違反が欠けないので知らせない。
+fn is_judged_file(rel: &str, source: &str, settings: &ProjectSettings) -> bool {
+    let layered = settings.layers.as_ref().is_some_and(|layers| classify_layer_file(rel, layers).or_else(|| infer_layer_site(rel, source, layers)).is_some());
+    let defined = settings.definitions.as_ref().is_some_and(|d| is_definition_file(rel, d) || is_test_file(rel, d));
+    let named = settings.environment.as_ref().is_some_and(|env| is_environment_file(rel, env));
+    layered || defined || named
 }
 
 /// DOEFF126 の defk の集合を repo の Hy の file から集める(規則が有効な時だけ — 無ければ空)。`(defk` の綴りを含む file だけを読み、

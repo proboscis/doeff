@@ -1573,3 +1573,28 @@ fn effects_disagreeing_with_inference_are_warnings_at_the_call_and_the_declarati
     let unused = violation(&report, "app/core/flow.hy::DOEFF127::store::Delay");
     assert!(unused["message"].as_str().unwrap().contains(":effects に Delay を書いているが、起こしていない"));
 }
+
+#[test]
+fn an_unreadable_hy_file_is_reported_to_the_editor_and_the_hook() {
+    // 読めない file の違反が黙って空にならない — 有効な規則の一覧(ここでは DOEFF104 だけ)に関わらず DOEFF128 の error で出る。
+    let files = [
+        ("app/core/broken.hy", "(val MODULE-TAGS {:context \"c\" :role \"judgment\"})\n(defk f [x]\n  (print \"no end)\n"),
+        ("app/core/fine.hy", "(val MODULE-TAGS {:context \"c\" :role \"judgment\"})\n(defk g [xs] (print f\"{(.join \"; \" xs)}\"))\n"),
+    ];
+    let dir = repo(&files, "");
+    let (code, report) = editor(dir.path());
+    assert_eq!(keys(&report, "DOEFF128"), vec!["app/core/broken.hy::DOEFF128"]);
+    let broken = violation(&report, "app/core/broken.hy::DOEFF128");
+    assert_eq!(broken["severity"], "error");
+    assert_eq!(broken["range"]["start"]["line"], 1);
+    assert!(broken["message"].as_str().unwrap().contains("読めない"), "{}", broken["message"]);
+    assert_eq!(code, 1);
+    // 保存前の 1 file の実行でも同じ。
+    let (_, stdout, _) = run(dir.path(), &["--output-format", "editor-json", "--no-log", "--stdin", "--path", "app/core/broken.hy"], Some(files[0].1));
+    let single: Value = serde_json::from_str(&stdout).unwrap();
+    assert_eq!(keys(&single, "DOEFF128"), vec!["app/core/broken.hy::DOEFF128"]);
+    // agent の hook の知らせにも出る。
+    let hook_input = format!("{{\"workspace_roots\": [\"{}\"]}}", dir.path().display());
+    let (_, stdout, stderr) = run(dir.path(), &["--hook", "--no-log"], Some(&hook_input));
+    assert!(stdout.contains("DOEFF128"), "{}\n{}", stdout, stderr);
+}

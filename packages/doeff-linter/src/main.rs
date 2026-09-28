@@ -193,7 +193,7 @@ impl Setup {
         self.project_rules()
             .into_iter()
             .filter(|rule| match rule {
-                ProjectRule::UnknownConfigKey => true,
+                ProjectRule::UnknownConfigKey | ProjectRule::UnreadableFile => true,
                 ProjectRule::LayerImportDirection
                 | ProjectRule::LayerForbiddenModule
                 | ProjectRule::LayerTypesOnly

@@ -335,20 +335,8 @@ impl<'a> Reader<'a> {
 
     /// `"…"` の文字列を読む(`quote` は開きの `"` の位置、`start` は接頭辞を含む始まり)。
     fn read_string(&mut self, start: usize, quote: usize, kind: StrKind) -> Form {
-        self.pos = quote + 1;
-        let mut body_end = None;
-        while self.pos < self.end {
-            match self.bytes[self.pos] {
-                b'\\' => self.pos += 2,
-                b'"' => {
-                    body_end = Some(self.pos);
-                    self.pos += 1;
-                    break;
-                }
-                _ => self.pos += 1,
-            }
-        }
-        self.pos = self.pos.min(self.end);
+        let (body_end, after) = self.string_end(quote, kind == StrKind::Format);
+        self.pos = after.min(self.end);
         let body_end = match body_end {
             Some(at) => at,
             None => {
@@ -358,6 +346,47 @@ impl<'a> Reader<'a> {
         };
         // `\` の後の 2 byte 飛ばしが多 byte 文字の途中に落ちても、終わりは `"` か範囲の終わりなので境目に来る。
         Form { span: Span { start, end: self.pos }, node: Node::Str { kind, body: Span { start: quote + 1, end: body_end } } }
+    }
+
+    /// 開きの `"` の位置 quote から文字列の終わりを探す — (閉じの `"` の位置・その次の位置)。閉じが無ければ (None・範囲の終わり)。
+    /// f 文字列(format)は、置き換えの欄 `{…}` の中が Hy の式なので、欄の中の文字列(入れ子の `f"…"` も)と括弧を飛ばしてから
+    /// 閉じの `"` を探す — Hy の読み手と同じ(`f"{(.join "; " xs)}"` の中の `"` で文字列を閉じない)。`{{` は字面の `{`。
+    fn string_end(&self, quote: usize, format: bool) -> (Option<usize>, usize) {
+        let mut pos = quote + 1;
+        while pos < self.end {
+            match self.bytes[pos] {
+                b'\\' => pos += 2,
+                b'"' => return (Some(pos), pos + 1),
+                b'{' if format && self.bytes.get(pos + 1) == Some(&b'{') => pos += 2,
+                b'{' if format => pos = self.replacement_end(pos + 1),
+                _ => pos += 1,
+            }
+        }
+        (None, self.end)
+    }
+
+    /// f 文字列の置き換えの欄の中身(`{` の次)から、対応する `}` の次の位置を返す。中の文字列は `string_end` で飛ばし
+    /// (接頭辞 `f` の付いた入れ子の f 文字列も)、`(`・`[`・`{` の入れ子を数える。閉じが無ければ範囲の終わり。
+    fn replacement_end(&self, mut pos: usize) -> usize {
+        let mut depth = 0usize;
+        while pos < self.end {
+            match self.bytes[pos] {
+                b'"' => {
+                    let nested_format = pos > 0 && self.bytes[pos - 1] == b'f' && (pos < 2 || is_delimiter(self.bytes[pos - 2]));
+                    let (_, after) = self.string_end(pos, nested_format);
+                    pos = after;
+                    continue;
+                }
+                b'\\' => pos += 1,
+                b'(' | b'[' | b'{' => depth += 1,
+                b')' | b']' => depth = depth.saturating_sub(1),
+                b'}' if depth == 0 => return pos + 1,
+                b'}' => depth -= 1,
+                _ => {}
+            }
+            pos += 1;
+        }
+        self.end
     }
 
     /// 記号・keyword・数・接頭辞つき文字列(`f"…"` など)を読む。

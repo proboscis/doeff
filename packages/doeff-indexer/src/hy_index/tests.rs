@@ -573,3 +573,27 @@ fn defwire_is_read_as_a_record() {
     // defwire の頭は呼び出しに入れない(予約語)。
     assert!(!file.calls.iter().any(|call| call.callee == "defwire"));
 }
+
+#[test]
+fn format_strings_skip_strings_and_brackets_inside_replacement_fields() {
+    // agora の controllers/durable/protocol/contract.hy(a3f3b062)の形 — 置き換えの欄の中の "; " と入れ子の f 文字列で文字列を
+    // 閉じていた(括弧か文字列が閉じない所が 3 か所と出て、違反が空になった)。Hy の読み手(hy.read_many)と同じく最後まで 1 つの式。
+    let cases = [
+        r#"(raise (ValueError f"bad: {(.join "; " (gfor f parsed.fields f"{f.field}: {f.reason}"))}"))"#,
+        r#"(print f"{{literal}} {x} {(get d "k")} {{ and }}")"#,
+        r#"(print f"{(dict :a "}")} end")"#,
+        r#"(print f"{x !r} {y :>10} \" quote")"#,
+    ];
+    for source in cases {
+        let mut reader = crate::hy_index::reader::Reader::new(source, 0, source.len());
+        let forms = reader.read_all();
+        assert!(reader.issues.is_empty(), "{:?}: {:?}", source, reader.issues);
+        assert_eq!(forms.len(), 1, "{:?}", source);
+        assert_eq!(forms[0].span.end, source.len(), "{:?}", source);
+    }
+    // 閉じない f 文字列は今までどおり読めない所として積む。
+    let broken = r#"(print f"{(get d "k")}"#;
+    let mut reader = crate::hy_index::reader::Reader::new(broken, 0, broken.len());
+    reader.read_all();
+    assert!(!reader.issues.is_empty());
+}
