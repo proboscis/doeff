@@ -15,13 +15,14 @@
 (import dataclasses [dataclass replace])
 (import json)
 (import doeff [with-handlers])
-(import doeff_time [Delay])
+(import doeff_time [SimClock Delay])
 (import doeff_cluster.clock [now-epoch-ms])
 (import doeff_cluster.runtime_env_model [RuntimeEnv runtime-env->json runtime-env-of-json env-key current-platform])
 (import doeff_cluster.detached_model [SubmitDetached AwaitDetached DetachedSucceeded])
 (import httpx)
 (import doeff_cluster.detached [WarmClient warm-cluster])
-(import doeff_cluster.local [sim-cluster SimWorker SimLink ClientLink coordinator-answers ReadCoordinator ProcessesOf PreparationsOf])
+(import doeff_cluster.local [sim-cluster SimWorker SimLink ClientLink coordinator-answers ReadCoordinator ProcessesOf PreparationsOf
+                            StopCoordinator])
 (import doeff_cluster.service_model [system-of])
 (import doeff_cluster.warm_model [WarmRuntimeEnv ReadWarmState WarmState WarmUnreachable WarmAnswer warm-key warm-state-of-json])
 (import doeff_cluster.env_upkeep [RootInfo PrepareLimits sweep-choice prepare-overdue env-capacity])
@@ -268,6 +269,27 @@
 (deftest test-the-real-warm-client-answers-a-refused-connection-as-unreachable
   ;; 反例 2: 接続が断られる(送り直しの期限を過ぎた通信の失敗)→ 温める頼みも読みも WarmUnreachable(理由は接続の失敗)。
   (<- answers tuple (warm-through (httpx.MockTransport refuses-connection)))
+  (for [answer answers]
+    (assert (isinstance answer WarmUnreachable) answer)
+    (assert (in "接続できない" answer.detail) answer)))
+
+
+(defk warm-while-the-coordinator-is-down []
+  {:pre [] :post [(: % tuple)] :tags {:context "doeff-cluster-test" :role "program"}}
+  "筋書き: coordinator を送り直しの期限より長く止め、その間に温める頼みと読みを 1 回ずつ出して、2 つの答えを返すため。"
+  (<- env RuntimeEnv (env-of "app-1" "lib-1" LOCK))
+  (<- key str (warm-key env #("local")))
+  (<- (StopCoordinator 90.0))
+  (<- (Delay 1.0))
+  (<- written WarmAnswer (WarmRuntimeEnv env (frozenset ["local"]) 600.0 "tests"))
+  (<- read WarmAnswer (ReadWarmState key))
+  #(written read))
+
+
+(deftest test-the-sim-host-answers-an-unreachable-coordinator-as-unreachable-like-the-real-warm-client
+  ;; sim の宿も本番の WarmClient と同じ読み(同じ定義 detached.warm-unconnected)で答える: coordinator が送り直しの期限を越えて止まって
+  ;; いる間の温める頼みと読みは、例外でなく WarmUnreachable(理由は接続の失敗)。本番と sim で同じ Program が同じ値を受ける。
+  (<- answers tuple (sim-cluster NO-JOBS (warm-while-the-coordinator-is-down) :workers WARM-WORKERS))
   (for [answer answers]
     (assert (isinstance answer WarmUnreachable) answer)
     (assert (in "接続できない" answer.detail) answer)))
