@@ -5,10 +5,11 @@
 ;;   戻した後: 届かない間に撃った書きは 1 つも残っていない・読み書きは今までどおり
 (require doeff-hy.macros [deftest defk <- val])
 (import doeff [run with_handlers])
-(import doeff_core_effects.scheduler [scheduled])
+(import doeff_core_effects.scheduler [scheduled Spawn Wait])
+(import doeff_time [Delay GetTime])
 (import doeff_time [SimClock sim-time-handler])
 (import doeff_hy.frozen [FrozenMap])
-(import doeff_records.values [ExpectAbsent Written Missing Unreachable Appended WatchCursor])
+(import doeff_records.values [ExpectAbsent Written Missing Unreachable Appended WatchCursor Changes EventsQuiet])
 (import doeff_records.effects [ReadRow ListRows PutRow PutRows RowWrite WatchChanges WatchEvents AppendEvent ReadEvents])
 (import doeff_records.faults [SetStoreOutage])
 (import doeff_records.memory [MemoryStore memory-records-handler])
@@ -70,3 +71,43 @@
                                         (RowWrite "parts" #("p1") (FrozenMap {"id" "p1" "label" "a" "state" "open"}) (ExpectAbsent))))))
   (assert (= mixed (Unreachable DETAIL)) mixed)
   (assert (= (in-store store (ReadRow "charters" #("c1"))) (Missing))))
+
+
+(defk outage-after [seconds names]
+  {:pre [(: seconds float) (: names (| frozenset None))] :post [(: % None)]}
+  "seconds 秒後に置き場を届かない状態にする筋書きの手(待ち手とは別の task — 検の口 SetStoreOutage を handler 越しに撃つ)。"
+  (<- (Delay seconds))
+  (<- (SetStoreOutage DETAIL :names names))
+  None)
+
+
+(defk waits-through-an-outage [names]
+  {:pre [(: names (| frozenset None))] :post [(: % tuple)]}
+  "parts の変更の待ちと journal の追記の待ちを上限 30 秒で並べ、2 秒後に届かない状態を置く。答え = #(表の待ちの答え 列の待ちの答え 起きた刻の秒)。"
+  (<- start (GetTime))
+  (<- table-wait (Spawn (WatchChanges #("parts") (WatchCursor 1 0) :timeout 30.0)))
+  (<- event-wait (Spawn (WatchEvents "journal" :timeout 30.0)))
+  (<- _outage (Spawn (outage-after 2.0 names)))
+  (<- changes (Wait table-wait))
+  (<- events (Wait event-wait))
+  (<- now (GetTime))
+  #(changes events (.total-seconds (- now start))))
+
+
+(deftest test-an-outage-set-during-a-wait-wakes-the-waiters-with-unreachable
+  ;; 待ちの最中に置いた届かない状態は、眠っている待ち手を鳴らし、起きた回の走査が Unreachable で返す(上限 30 秒まで眠らない)—
+  ;; HTTP と PostgreSQL の口の待ちが読み直しの次の問いで不達を知るのと同じ(出自の issue は #1020)。
+  (val store (MemoryStore LAW-SCHEMA))
+  (val answers (in-store store (waits-through-an-outage None)))
+  (assert (= (get answers 0) (Unreachable DETAIL)) answers)
+  (assert (= (get answers 1) (Unreachable DETAIL)) answers)
+  (assert (= (get answers 2) 2.0) answers))
+
+
+(deftest test-an-outage-of-other-names-set-during-a-wait-leaves-the-waiters-waiting
+  ;; 待つ名に当たらない届かない状態(表 tickets だけ)では、鳴らされた待ち手も走査して待ち続け、上限で静かな答えを返す。
+  (val store (MemoryStore LAW-SCHEMA))
+  (val answers (in-store store (waits-through-an-outage (frozenset #("tickets")))))
+  (assert (and (isinstance (get answers 0) Changes) (= (. (get answers 0) items) #())) answers)
+  (assert (isinstance (get answers 1) EventsQuiet) answers)
+  (assert (= (get answers 2) 30.0) answers))
