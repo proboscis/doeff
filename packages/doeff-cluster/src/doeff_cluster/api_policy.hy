@@ -31,9 +31,9 @@
 (import .cluster_model [ClusterState ClusterTiming ClusterNaming Request PlainText format-refusal])
 (import .metrics_policy [record-metrics metrics-text])
 (import .cluster_policy [reconcile register-heartbeat heartbeat-reply state-view submit-task poll-task board-write lease-write
-                         still-live-somewhere other-generation-boot])
-(import .resource_policy [Refused refuse stamp require-actor valid-actor service-readiness record-readiness running-process
-                          list-resources get-resource events-view create-resource update-resource delete-resource
+                         other-generation-boot])
+(import .resource_policy [Refused refuse stamp require-actor valid-actor service-readiness service-stopped record-readiness
+                          running-process list-resources get-resource events-view create-resource update-resource delete-resource
                           legacy-put-jobs COORDINATOR])
 (import .drain_policy [advance-drains request-drain cancel-drain worker-view superseded-worker-view drains-view])
 (import .handoff_policy [watch-handoffs])
@@ -101,11 +101,11 @@
 
 (defn #^ dict target-view [#^ ClusterState state #^ dict target #^ dict status #^ int now #^ ClusterTiming timing]
   (if (= (get target "kind") "Service")
+      ;; 止まっているかは版の判定(resource_policy.version-state の Stopped)と同じ述語 service-stopped で読む(条件を 2 か所に書かない)。
       (do (setv name (get target "name")
                 job (next (gfor j state.jobs :if (= j.spec.name name) j) None)
                 verdict (service-readiness state name now timing)
-                stopped (and (or (is job None) (= job.replicas 0)) (not-in name state.placements)
-                             (not (still-live-somewhere now state name timing))))
+                stopped (service-stopped state name now timing))
           {"ready" (get verdict "state") "stopped" stopped "specReplicas" (if job job.replicas None)
            "reason" (if stopped "止まっている" (get verdict "reason"))})
       (do (setv key (+ (get target "namespace") "/" (get target "name"))
