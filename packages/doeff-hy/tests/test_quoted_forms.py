@@ -13,7 +13,7 @@ import hy.compiler
 import hy.models
 
 from doeff_hy.quoted_forms import QuotedForms
-from doeff_hy.sexpr import body_of
+from doeff_hy.sexpr import args_of, body_of
 
 SOURCE = """
 (require doeff-hy.macros [defk defp defhandler <-])
@@ -50,6 +50,16 @@ def test_the_body_is_carried_as_quoted_forms_equal_to_the_written_models() -> No
     assert len(namespace["ask_handler"].__doeff_body__) == 1
     assert str(namespace["ask_handler"].__doeff_body__[0][0]) == "Ask1"
     assert len(namespace["answer"].__doeff_body__) == 1
+
+
+def test_the_args_are_carried_as_quoted_forms_equal_to_the_written_params() -> None:
+    # 引数(__doeff_args__)も本体と同じく文字列で運び、読んだ値は書いたままの引数の列と等しい。
+    # 本体は source の file を読み直さないので、file の無い eval(ここ)でも本体と引数が読める。
+    namespace = _module_namespace()
+    written = hy.read_many(SOURCE)
+    defk_form = next(form for form in written if isinstance(form, hy.models.Expression) and str(form[0]) == "defk")
+    assert isinstance(namespace["long_body"].__doeff_args__, QuotedForms)
+    assert args_of(namespace["long_body"]) == defk_form[2]
 
 
 def test_the_compiled_module_does_not_rebuild_the_body_models() -> None:
