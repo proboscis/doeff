@@ -858,10 +858,28 @@
                              :priority effect.priority :daemon effect.daemon)))
   (KeepChild []
     (reperform effect))
+  (KillOf []
+    ;; 一番内側の dead-process-gate が問う sim の仕組みの effect(KeepChild と同じく通す)。
+    (reperform effect))
   (EffectBase []
     :when (not (isinstance effect passable))
     (raise (UnhandledEffect (.format "sim の柵: 答えの無い effect {} ({!r}) — 本番の子 process でも答える handler が無い"
                                      (. (type effect) __name__) effect)))))
+
+
+(defhandler dead-process-gate [#^ int pid]
+  {:tags {:context "doeff-cluster" :role "protocol"}}
+  ;; 引数に残す理由: どの process が殺されたかを process の番号で問う(Program の effect ではない番号を Ask で問えない)。
+  ;; 殺された process(worker の死 = -9・Crash = 1)の取り消しの巻き戻しの中で撃たれた effect を、宿の答えにも外の世界にも届けない —
+  ;; 本物の機体の死と子 process の落ちでは、落ちた後の process から何も届かない。Program の一番内側に置き、scheduler と時計の effect
+  ;; (SIM-PASSABLE — 巻き戻しの Wait・Cancel)は通す。止めの合図(KillOf が None — 優雅な停止)の後の後始末は通す。
+  (EffectBase []
+    :when (not (isinstance effect SIM-PASSABLE))
+    (<- killed (KillOf pid))
+    (if (is killed None)
+        (reperform effect)
+        (raise (UnhandledEffect (.format "sim: 落ちた process {} の effect {} は届かない(exit {})" pid (. (type effect) __name__)
+                                         killed.code))))))
 
 
 (defrecord SimChild
@@ -974,14 +992,19 @@
   "Program を柵と答えの中で走らせ、終わり方を決めるため(本番の job_entry の service / task の入口の終わり方と同じ: service は
    値 = 0・例外 = 1、task は結果を書いて 0。止めの合図 = -15・Crash = 1・worker の死 = -9)。"
   (try
-    (<- value (with-handlers [#* child.outside (fence child.pid child.passable) (coordinator-answers child.link) (host-answers child)] program))
+    (<- value (with-handlers [#* child.outside (fence child.pid child.passable) (coordinator-answers child.link) (host-answers child) (dead-process-gate child.pid)] program))
     (SimExit :code 0 :result (if once (encode-outcome (TaskSucceeded value)) None) :value (if once None value))
     (except [TaskCancelledError]
       (<- killed (| SimExit None) (KillOf child.pid))
       (if (is killed None) (SimExit :code -15 :result None :detail "止めの合図") killed))
     (except [error Exception]
-      (SimExit :code (if once 0 1) :result (if once (encode-outcome (failed-from error)) None)
-               :detail (.format "{}: {}" (. (type error) __name__) error)))))
+      ;; 殺された process の巻き戻しの中で例外が出ても(落ちた後の effect を dead-process-gate が断る時を含む)、終わり方は殺された形
+      ;; (worker の死 = -9・Crash = 1)— 本番の子 process は殺された時点で終わっており、後の例外は外から見えない。
+      (<- killed (| SimExit None) (KillOf child.pid))
+      (if (is-not killed None)
+          killed
+          (SimExit :code (if once 0 1) :result (if once (encode-outcome (failed-from error)) None)
+                   :detail (.format "{}: {}" (. (type error) __name__) error))))))
 
 
 (defk refused-exit [refusal once]
