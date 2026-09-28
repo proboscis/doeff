@@ -284,7 +284,7 @@ struct Summary {
 }
 
 /// repo の Hy の file 全部から集めた、型・effect・defk の表と、defk の推論。
-#[derive(Debug, Default)]
+#[derive(Debug, Clone, Default)]
 pub struct World {
     pub(super) types: HashMap<String, Location>,
     pub(super) effects: HashMap<String, EffectFacts>,
@@ -322,10 +322,10 @@ impl World {
         let on_disk: Vec<(String, std::path::PathBuf)> =
             files.into_iter().filter(|(rel, _)| overlay.is_none_or(|(o, _)| o != rel)).collect();
         // file ごとの事実はその file の中身だけで決まる(root は path の綴りにしか使わない)ので、変わった file だけ作り直す。
-        let mut facts: Vec<FileFacts> = super::facts_cache::per_file(root, "signature-facts", &on_disk, |rel, path| {
+        let mut facts: Vec<FileFacts> = crate::timing::timed("effect-world.facts", || super::facts_cache::per_file(root, "signature-facts", &on_disk, |rel, path| {
             let source = std::fs::read_to_string(path).ok()?;
             source.contains("(def").then(|| file_facts(root, rel, &source))
-        });
+        }));
         if let Some((rel, source)) = overlay {
             facts.push(file_facts(root, rel, source));
         }
@@ -335,7 +335,7 @@ impl World {
             world.effects.extend(file.effects);
             world.definitions.extend(file.definitions);
         }
-        world.infer();
+        crate::timing::timed("effect-world.infer", || world.infer());
         world
     }
 

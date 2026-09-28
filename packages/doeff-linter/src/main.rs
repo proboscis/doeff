@@ -583,8 +583,16 @@ fn run_editor(args: &Args) -> ExitCode {
     let signatures = stdin_file.as_ref().and_then(|(path, source)| {
         let is_hy = path.extension().is_some_and(|e| e == "hy" || e == "hyk" || e == "hyp");
         let rel = project::relative_path(&setup.root, path).filter(|_| is_hy)?;
-        let world = project::signatures::World::build(&setup.root, Some((&rel, source)));
-        Some(project::signatures::file_signatures(&world, &setup.root, &rel, source))
+        // project の実行が同じ overlay で組んだ表があれば使い回す(無い時 = 規則が表を要らなかった時だけ組む・#1033)。
+        let built;
+        let world = match project_report.world.as_ref() {
+            Some(world) => world,
+            None => {
+                built = project::signatures::World::build(&setup.root, Some((&rel, source)));
+                &built
+            }
+        };
+        Some(project::signatures::file_signatures(world, &setup.root, &rel, source))
     });
     let report = editor::build(&EditorInput {
         root: &setup.root,

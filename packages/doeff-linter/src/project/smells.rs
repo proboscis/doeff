@@ -60,7 +60,7 @@ impl Smell {
 
 /// 失敗の型の集合(module まで含めた名・mangle 済み — `controllers.core.kanban_write_rules.Refusal`)— 宣言から集める。
 /// 型の名から推し量らない。同じ名の型が別の module にあっても、宣言した方だけが失敗の型になる。
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct FailureTypes {
     names: BTreeSet<String>,
 }

@@ -127,6 +127,8 @@ pub struct ProjectReport {
     pub errors: Vec<String>,
     /// 意味の規則の要約(設定が無ければ None)。
     pub semantic: Option<semantic::SemanticSummary>,
+    /// 1 file の実行で組んだ effect の推論の表(組んだ時だけ・書いた file の中身を overlay にした物)。
+    pub world: Option<signatures::World>,
 }
 
 /// 何を判じるか — repo 全体か、保存前の内容の 1 file。
@@ -429,6 +431,8 @@ pub fn run_with(root: &Path, settings: &ProjectSettings, enabled: &BTreeSet<Proj
                     }
                 }
             }
+            // 同じ根・同じ overlay で組んだ表を返す — editor の見出しと束縛(版 2)が作り直さずに使う(1 回で 2 度組んでいた・#1033)。
+            report.world = effect_world;
         }
     }
     if let (Some(semantic), Some(layers)) = (&settings.semantic, &settings.layers) {
@@ -2121,15 +2125,28 @@ fn failure_types_for(root: &Path, enabled: &BTreeSet<ProjectRule>, reading: &set
     if !enabled.contains(&ProjectRule::FailureRethrow) {
         return all;
     }
-    for path in hy_index::collect_hy_files(root) {
-        let Some(rel) = relative_path(root, &path) else { continue };
-        let Ok(source) = std::fs::read_to_string(&path) else { continue };
+    // file ごとの失敗の型は、その file の中身とタグの読み方(設定)で決まる — 読み方の指紋を印に含めて file ごとに覚え、
+    // 変わった file だけ読み直す(#1033)。集合の和なので、束ねる順は答えを変えない。
+    let files: Vec<(String, PathBuf)> = hy_index::collect_hy_files(root)
+        .into_iter()
+        .filter_map(|path| relative_path(root, &path).map(|rel| (rel, path)))
+        .collect();
+    let key = {
+        use sha2::{Digest, Sha256};
+        format!("{:x}", Sha256::digest(format!("{reading:?}").as_bytes()))
+    };
+    let found: Vec<smells::FailureTypes> = facts_cache::per_file_keyed(root, "failure-types", &key, &files, |rel, path| {
+        let source = std::fs::read_to_string(path).ok()?;
         if !(source.contains(":failure") || source.contains(":absent")) {
-            continue;
+            return None;
         }
-        let module = module_of(&rel);
+        let module = module_of(rel);
         let facts = read_facts(Language::Hy, &source, &module, reading);
-        all.extend(smells::failure_types_in(&source, smells::Scope { module: &module, bindings: &facts.bindings }));
+        let found = smells::failure_types_in(&source, smells::Scope { module: &module, bindings: &facts.bindings });
+        (!found.is_empty()).then_some(found)
+    });
+    for one in found {
+        all.extend(one);
     }
     all
 }
