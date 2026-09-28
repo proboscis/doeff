@@ -6,6 +6,9 @@
 ;;; WatchChanges と WatchEvents の待ちは読み直しの繰り返し(ポーリング)ではなく呼び鈴: 待ち手は置き場に外の promise(呼び鈴)を、待つ名
 ;;; (表か列)と一緒に掛けて眠る。書きはその名の待ち手だけを鳴らす — 行の書きと保持の刈りの行の消し = その表・追記 = その列・版の更新と
 ;;; 変更の刈り = 全部(出自の issue は #1019 — 前は変更の列を動かす書きが全部の待ち手を鳴らし、追記は鳴らさなかった)。
+;;; 届かない状態(検の口 faults.SetStoreOutage)を置くと待ち手を全部鳴らし、待ちの各回の走査が待つ名の届かない状態を見て Unreachable で
+;;; 返る — HTTP と PostgreSQL の口の待ちが読み直しの次の問いで不達を知るのと同じ(待ちの頭だけで見ると、待ちの最中に置いた窓に上限まで
+;;; 気づかない — 出自の issue は #1020・使い手の画面の読み手で上限を 30 秒に延ばした時に出た)。
 ;;; 期限(timeout と、保持の期限で行が消え得る刻の早い方)は doeff-time の ScheduleAt で 1 回だけ鳴らす。呼び鈴を外の promise にするのは、同期の書き(handler の外から置き場の関数を直に呼ぶ模擬の支度)と別の
 ;;; thread の書きからも鳴らせるため。待ちは PRIORITY_IDLE で park する(仮想の時計を止めない — 期限の刻まで時計が進める)。
 ;;; 書き手の身元は handler を組む時の引数 writer(effect の欄にしない)。同じ MemoryStore を別の writer の handler で包めば、
@@ -381,7 +384,7 @@
 ;; --- WatchChanges と WatchEvents の待ち ---------------------------------------------------------------------
 
 (defrecord WatchRound
-  "待ちの 1 周の走査: answer = 今の答え(Changes | Reset | EventsMoved | EventsQuiet)/ quiet = 待ち続ける答え(空の Changes か EventsQuiet)か /
+  "待ちの 1 周の走査: answer = 今の答え(Changes | Reset | EventsMoved | EventsQuiet | Unreachable — 待つ名が届かない状態)/ quiet = 待ち続ける答え(空の Changes か EventsQuiet)か /
    due-ms = 保持の期限で行が消え得る最も早い刻(epoch ミリ秒・None = 無い — WatchChanges の待ちはこの刻にも起きて刈りを走らせる。
    WatchEvents の待ちは None — 出来事が消えても列の頭は進まない)。"
   #^ object answer
@@ -393,9 +396,15 @@
   {:pre [(: store MemoryStore) (: ask (| WatchChanges WatchEvents)) (: now-ms int) (: bell (| ExternalPromise None))] :post [(: % WatchRound)]
    :tags {:context "records" :role "foundation"}}
   "保持の刈りの後に 1 回走査し、待ち続ける答えなら呼び鈴 bell を待つ名(WatchChanges = 頼んだ表・WatchEvents = その列)と一緒に掛ける
-   (None = 掛けない)。走査と掛けを同じ錠の内で行うのは、その間に積まれた書きの鳴らしを取りこぼさないため。"
+   (None = 掛けない)。走査と掛けを同じ錠の内で行うのは、その間に積まれた書きの鳴らしを取りこぼさないため。待つ名のどれかが届かない
+   状態(SetStoreOutage)なら、走査の前に Unreachable を答える(待ちの最中に置いた窓も、起きた回で不達として返す — 頭の註)。"
   (with [store.lock]
     (purge-expired store now-ms)
+    (setv down (unreachable-for store (match ask
+                                        (WatchChanges :tables tables) (tuple tables)
+                                        (WatchEvents :stream stream) #(stream))))
+    (when (is-not down None)
+      (return (WatchRound :answer down :quiet False :due-ms None)))
     (match ask
       (WatchChanges :tables tables)
         (setv answer (memory-watch-scan store ask)
@@ -481,11 +490,11 @@
 
 
 (defk memory-watch [store ask]
-  {:pre [(: store MemoryStore) (: ask (| WatchChanges WatchEvents))] :post [(: % (| Changes Reset EventsMoved EventsQuiet))]
+  {:pre [(: store MemoryStore) (: ask (| WatchChanges WatchEvents))] :post [(: % (| Changes Reset EventsMoved EventsQuiet Unreachable))]
    :tags {:context "records" :role "foundation"}}
   "WatchChanges と WatchEvents の答え: 待つ名(頼んだ表・列)に書きが来るか timeout 秒が過ぎるまで待つ(Reset はすぐ返す)。読み直しを
    繰り返さず、その名の書きが鳴らす呼び鈴と、期限(timeout・保持の期限)の 1 回の鳴らしで起きる。timeout を過ぎたら最後に 1 回走査した
-   答えを返す。"
+   答えを返す。待ちの最中に待つ名が届かない状態になれば(SetStoreOutage が待ち手を鳴らす)、起きた回で Unreachable を返す。"
   (<- started (GetTime))
   (<- span (wait-span ask.timeout))
   (val deadline (+ started span))
@@ -671,7 +680,10 @@
     (<- answer (answered store READ #(stream) effect (at-now store (fn [now-ms] (memory-read-events store effect)))))
     (resume answer))
   (SetStoreOutage [detail names]
-    (setv store.outage (if (is detail None) None effect))
+    ;; 置いた(外した)時に待ち手を全部鳴らす — 眠っている待ちが次の走査で届かない状態を見て Unreachable で返るため(頭の註)。
+    (with [store.lock]
+      (setv store.outage (if (is detail None) None effect))
+      (ring-bells store None))
     (resume None))
   (AddStoreFault [fault]
     (memory-add-fault store fault)
