@@ -22,8 +22,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::Path;
 
 use doeff_indexer::hy_index::reader::{Delim, Form, Node, Reader};
-use rayon::prelude::*;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::position::{LineIndex, Range};
 
@@ -34,7 +33,7 @@ use super::smells::{live, Hy, Scope};
 // --- 契約の形 ------------------------------------------------------------------------------
 
 /// 定義の位置(エディタが押して飛ぶ先)。
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Location {
     pub path: String,
     pub range: Range,
@@ -91,7 +90,7 @@ pub struct SignatureParam {
 }
 
 /// 見出しを持つ定義の種類。
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum SignatureKind {
     Defk,
@@ -212,7 +211,7 @@ pub struct FileSignatures {
 // --- repo の表 ---------------------------------------------------------------------------
 
 /// 型の式(解く前 — 書かれた綴りと module まで含めた名)。
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 enum TypeSyntax {
     Name { spelled: String, qualified: String },
     Union(Vec<TypeSyntax>),
@@ -239,7 +238,7 @@ impl TypeSyntax {
 }
 
 /// defeffect 1 つ。
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub(super) struct EffectFacts {
     pub(super) location: Location,
     answer: Option<TypeSyntax>,
@@ -248,7 +247,7 @@ pub(super) struct EffectFacts {
 }
 
 /// 撃った呼び 1 つ。
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 struct Site {
     /// 呼びの頭(module まで含めた名)。
     callee: String,
@@ -263,7 +262,7 @@ struct Site {
 }
 
 /// defk / deff 1 つ(推論の材料)。
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub(super) struct DefinitionFacts {
     pub(super) kind: SignatureKind,
     /// 名の位置(表示の置き換えの部品が押して飛ぶ先)。
@@ -294,7 +293,7 @@ pub struct World {
 }
 
 /// 1 file から集めた表の材料。
-#[derive(Default)]
+#[derive(Default, Clone, Serialize, Deserialize)]
 struct FileFacts {
     types: Vec<(String, Location)>,
     effects: Vec<(String, EffectFacts)>,
@@ -319,16 +318,14 @@ impl World {
                 .into_iter()
                 .filter_map(|path| super::relative_path(root, &path).map(|rel| (rel, path)))
                 .collect();
-        let mut facts: Vec<FileFacts> = files
-            .par_iter()
-            .filter(|(rel, _)| overlay.is_none_or(|(o, _)| o != rel))
-            .filter_map(|(rel, path)| {
-                let source = std::fs::read_to_string(path).ok()?;
-                source
-                    .contains("(def")
-                    .then(|| file_facts(root, rel, &source))
-            })
-            .collect();
+        // 書いた file(overlay)は disk でなく渡された中身から作るので、cache の母集団から外す。
+        let on_disk: Vec<(String, std::path::PathBuf)> =
+            files.into_iter().filter(|(rel, _)| overlay.is_none_or(|(o, _)| o != rel)).collect();
+        // file ごとの事実はその file の中身だけで決まる(root は path の綴りにしか使わない)ので、変わった file だけ作り直す。
+        let mut facts: Vec<FileFacts> = super::facts_cache::per_file(root, "signature-facts", &on_disk, |rel, path| {
+            let source = std::fs::read_to_string(path).ok()?;
+            source.contains("(def").then(|| file_facts(root, rel, &source))
+        });
         if let Some((rel, source)) = overlay {
             facts.push(file_facts(root, rel, source));
         }
