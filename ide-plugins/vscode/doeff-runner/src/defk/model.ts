@@ -127,11 +127,13 @@ export type PieceContent =
   /** Raise の札(警報灯と型の名) */
   | { readonly kind: 'raise'; readonly name: string };
 
-/** 描く部品 1 つ — 隠した文字 1 つに付け、前(before)に中身、後ろ(after)に区切りの文字を描く。押すと targets へ飛ぶ。 */
+/**
+ * 描く部品 1 つ — 隠した文字 1 つに付け、その前(before)に中身を描く。押すと targets へ飛ぶ。区切りの文字も 1 つの部品にする
+ * (後ろ(after)に描くと、隣の文字に付けた次の部品の前と同じ位置に重なり、次の部品より後ろへ回る — 実測 2026-09-28)。
+ */
 export interface Piece {
   readonly at: At;
   readonly before: PieceContent;
-  readonly after: string | undefined;
   readonly targets: readonly LintLocation[];
 }
 
@@ -150,8 +152,10 @@ export interface HeaderPlan {
   readonly headLine: number;
   /** 太字にする名 */
   readonly name: Span;
-  /** 文字を隠す範囲(契約の辞書) */
+  /** 文字を隠す範囲(契約の辞書のうち描く行 — 部品の位置で切ってある) */
   readonly hidden: readonly Span[];
+  /** 描く物の無い辞書の行(隠さずに淡く見せる) */
+  readonly dimmed: readonly Span[];
   /** 隠した文字に付ける部品(型の行と effect の行) */
   readonly pieces: readonly Piece[];
   /** tags の札を置く所(頭の行の末尾) */
@@ -175,57 +179,88 @@ function inside(range: LintRange, lines: LineSource): boolean {
 /** 部品を付けてよい文字(空白・括弧・引用符 — 語の文字の上では Hy の「定義へ移動」がその語を解いてしまう)。 */
 const ANCHOR_CHAR = /[\s()[\]{}"'#]/;
 
-/** 隠した範囲の中の、部品を付けてよい文字の位置(左から)。 */
+/** 押す部品(型の名・effect の札)を付けてよい文字か — 空白と括弧で、直前も語の文字でない(語の上や直後は Hy の「定義へ移動」が解く)。 */
+function clickable(text: string, c: number): boolean {
+  return ANCHOR_CHAR.test(text[c] ?? '') && (c === 0 || ANCHOR_CHAR.test(text[c - 1] ?? ''));
+}
+
+/** 隠した範囲の中の、押す部品を付けてよい文字の位置(左から)。 */
 export function anchorsIn(span: Span, text: string): At[] {
   const found: At[] = [];
   for (let c = span.start; c < span.end; c++) {
-    // 直前の文字も語の文字でないこと — 語の直後の位置は、その語の範囲の端として Hy の「定義へ移動」に解かれる(実測: `ReadInput WriteInput` の間の空白)
-    if (ANCHOR_CHAR.test(text[c] ?? '') && (c === 0 || ANCHOR_CHAR.test(text[c - 1] ?? ''))) {
+    if (clickable(text, c)) {
       found.push({ line: span.line, character: c });
     }
   }
   return found;
 }
 
-/** 型の行の部品 — `(`・引数の型ごと(後ろに `,` か `) -> `)・答えの型(Maybe の包みは前後の区切りに)。 */
+/** 部品が押すと飛ぶ物か(型の名・effect の札)— 押す部品は押してよい文字に、区切りと見出しの語はどの文字にも付けられる。 */
+function isClickable(draft: Draft): boolean {
+  // 飛ぶ先の無い部品(組み込みの型・型の書かれていない ?)は押しても何もしないので、どの文字に付けてもよい(短い辞書の行に収めるため)
+  return draft.targets.length > 0;
+}
+
+/** 型の行の部品 — `(`・引数の型・`, `・`) -> `(Maybe なら `) -> Maybe[`)・答えの型・(Maybe なら `]`)。 */
 function typeLineDrafts(signature: LintSignature): Draft[] {
-  const maybe = signature.absent;
-  const arrow = `) -> ${maybe ? 'Maybe[' : ''}`;
-  const typePiece = (type: LintTypeRef | null, after: string | undefined): Draft => ({
+  const punct = (text: string): Draft => ({ before: { kind: 'punct', text }, targets: [] });
+  const typePiece = (type: LintTypeRef | null): Draft => ({
     before: { kind: 'type', text: typeText(type), colorKey: typeText(type).split(/[ |[]/)[0] },
-    after,
     targets: definitionsOf(type)
   });
-  const params = signature.params;
-  const drafts: Draft[] = [{ before: { kind: 'punct', text: '(' }, after: params.length === 0 ? arrow : undefined, targets: [] }];
-  params.forEach((p, i) => drafts.push(typePiece(p.type, i === params.length - 1 ? arrow : ',')));
-  drafts.push(typePiece(signature.answer, maybe ? ']' : undefined));
+  const drafts: Draft[] = [punct('(')];
+  signature.params.forEach((p, i) => {
+    if (i > 0) {
+      drafts.push(punct(', '));
+    }
+    drafts.push(typePiece(p.type));
+  });
+  drafts.push(punct(signature.absent ? ') -> Maybe[' : ') -> '));
+  drafts.push(typePiece(signature.answer));
+  if (signature.absent) {
+    drafts.push(punct(']'));
+  }
   return drafts;
 }
 
 /** effect の行の部品 — 見出しの語 `effects` と、effect と Raise の札ごと(effect が無ければ空)。 */
-function effectLineDrafts(signature: LintSignature): Draft[] {
+function effectLineDrafts(signature: LintSignature, ownRow: boolean): Draft[] {
   const items = headerEffects(signature);
-  if (items.length === 0) {
-    return [];
+  const unknown: Draft[] = signature.inferenceComplete ? [] : [{ before: { kind: 'label', text: '+ 追えない呼びの先' }, targets: [] }];
+  if (items.length === 0 && unknown.length === 0) {
+    // 自分の行があれば、effect を起こさないことも書く(無いことも読める・空の行を残さない)
+    return ownRow && signature.kind === 'defk' ? [{ before: { kind: 'label', text: 'effect なし' }, targets: [] }] : [];
   }
   return [
-    { before: { kind: 'label', text: 'effects' }, after: undefined, targets: [] },
-    ...items.map((item): Draft => ({ before: { kind: item.kind, name: item.name }, after: undefined, targets: item.definition === null ? [] : [item.definition] }))
+    { before: { kind: 'label', text: 'effects' }, targets: [] },
+    ...items.map((item): Draft => ({ before: { kind: item.kind, name: item.name }, targets: item.definition === null ? [] : [item.definition] })),
+    ...unknown
   ];
 }
 
-/** 部品を付けてよい位置へ並べる — 足りなければ最後の位置に残りを `…` として畳む(押すと残りの定義の全部へ)。 */
-function place(drafts: readonly Draft[], anchors: readonly At[]): Piece[] {
-  if (drafts.length === 0 || anchors.length === 0) {
-    return [];
+/**
+ * 部品を隠した範囲の文字へ左から順に付ける。押す部品は押してよい文字に、区切りはどの文字にも付ける(文字は 1 つに 1 部品)。
+ * 付けきれなければ、付けられた所までと、最後に `…`(押すと残りの定義の全部へ)を置く。
+ */
+function place(drafts: readonly Draft[], span: Span, text: string): Piece[] {
+  const pieces: Piece[] = [];
+  let c = span.start;
+  for (let i = 0; i < drafts.length; i++) {
+    const draft = drafts[i];
+    let at = c;
+    while (at < span.end && isClickable(draft) && !clickable(text, at)) {
+      at++;
+    }
+    if (at >= span.end) {
+      const rest = drafts.slice(i);
+      const last = pieces.pop();
+      const where = last?.at ?? { line: span.line, character: span.start };
+      return [...pieces, { at: where, before: { kind: 'punct', text: '…' }, targets: [...(last?.targets ?? []), ...rest.flatMap((d) => d.targets)] }];
+    }
+    pieces.push({ ...draft, at: { line: span.line, character: at } });
+    c = at + 1;
   }
-  if (drafts.length <= anchors.length) {
-    return drafts.map((d, i) => ({ ...d, at: anchors[i] }));
-  }
-  const kept = drafts.slice(0, anchors.length - 1).map((d, i) => ({ ...d, at: anchors[i] }));
-  const rest = drafts.slice(anchors.length - 1);
-  return [...kept, { at: anchors[anchors.length - 1], before: { kind: 'punct', text: '…' }, after: undefined, targets: rest.flatMap((d) => d.targets) }];
+  return pieces;
 }
 
 /** 見出し 1 つの描く場所と部品(位置が document に合わなければ undefined)。 */
@@ -243,30 +278,63 @@ export function headerPlan(signature: LintSignature, lines: LineSource): HeaderP
     return `${signatureText(signature)}${effects.length > 0 ? `   effects: ${effects.join(' ')}` : ''}`;
   };
   if (contract === null || !inside(contract, lines)) {
-    return { headLine, name, hidden: [], pieces: [], tagsAt, fallback: fallbackText(), lines: whole };
+    return { headLine, name, hidden: [], dimmed: [], pieces: [], tagsAt, fallback: fallbackText(), lines: whole };
   }
-  const hidden: Span[] = [];
+  const spans: Span[] = [];
   for (let line = contract.start.line; line <= contract.end.line; line++) {
     const text = lines.lineText(line);
     const start = line === contract.start.line ? contract.start.character : indentOf(text);
     const end = line === contract.end.line ? contract.end.character : text.length;
     if (end > start) {
-      hidden.push({ line, start, end });
+      spans.push({ line, start, end });
     }
   }
   const types = typeLineDrafts(signature);
-  const effects = effectLineDrafts(signature);
-  const anchors = hidden.map((span) => anchorsIn(span, lines.lineText(span.line)));
-  const [first, second] = anchors;
-  if (first === undefined || first.length === 0) {
-    return { headLine, name, hidden, pieces: [], tagsAt, fallback: fallbackText(), lines: whole };
+  const secondLine = spans[1];
+  const effects = effectLineDrafts(signature, secondLine !== undefined && anchorsIn(secondLine, lines.lineText(secondLine.line)).length > 0);
+  const [first, second] = spans;
+  if (first === undefined || anchorsIn(first, lines.lineText(first.line)).length === 0) {
+    // 描く場所が無い — 辞書は隠さない(隠したのに何も描かない行を作らない)
+    return { headLine, name, hidden: [], dimmed: [], pieces: [], tagsAt, fallback: fallbackText(), lines: whole };
   }
-  // 2 行目があれば effect の行はそこへ、無ければ型の行の後ろへ続けて並べる(辞書が頭と同じ行でも同じ)
-  const pieces =
-    second !== undefined && second.length > 0
-      ? [...place(types, first), ...place(effects, second)]
-      : place([...types, ...effects], first);
-  return { headLine, name, hidden, pieces, tagsAt, fallback: undefined, lines: whole };
+  // 型の行は辞書の 1 行目、effect の行は 2 行目(無ければ型の行の後ろへ続ける)。描く物の無い辞書の行は隠さずに淡く見せる
+  const twoRows = effects.length > 0 && second !== undefined && anchorsIn(second, lines.lineText(second.line)).length > 0;
+  const firstText = lines.lineText(first.line);
+  const pieces = twoRows
+    ? [...place(types, first, firstText), ...place(effects, second, lines.lineText(second.line))]
+    : place([...types, ...effects], first, firstText);
+  const used = twoRows ? 2 : 1;
+  return {
+    headLine,
+    name,
+    hidden: splitAtPieces(spans.slice(0, used), pieces),
+    dimmed: spans.slice(used),
+    pieces,
+    tagsAt,
+    fallback: undefined,
+    lines: whole
+  };
+}
+
+/**
+ * 隠す範囲を部品の位置で切る — 部品の前(before)に描く文字は、それを囲む隠す範囲の中にあると一緒に隠れる
+ * (実測 2026-09-28: 範囲の頭の `(` だけが見え、途中の型の名が全部消えた)。部品の位置を範囲の境目にする。
+ */
+export function splitAtPieces(spans: readonly Span[], pieces: readonly Piece[]): Span[] {
+  const out: Span[] = [];
+  for (const span of spans) {
+    const cuts = new Set<number>();
+    for (const piece of pieces) {
+      if (piece.at.line === span.line) {
+        cuts.add(piece.at.character);
+      }
+    }
+    const points = [span.start, ...[...cuts].filter((c) => c > span.start && c < span.end).sort((x, y) => x - y), span.end];
+    for (let i = 0; i + 1 < points.length; i++) {
+      out.push({ line: span.line, start: points[i], end: points[i + 1] });
+    }
+  }
+  return out;
 }
 
 /** 束縛の型の札の中身。 */

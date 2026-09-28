@@ -483,7 +483,9 @@ coordinator の決定 2026-09-28(戻せる・agora-redesign #798 に記録)。�
   "absent": true,                        // 答えが Maybe か(Absent が呼び手へ抜けうる)
   "raises": [TypeRef],                   // 呼び手へ抜けうる Raise の型
   "effects": {"declared": [EffectRef] | null,   // :effects(#800)。書いていなければ null
-              "inferred": [EffectRef]},         // 推論(下)
+              "inferred": [EffectRef],          // 推論(下)
+              "complete": true},                // 推論が追いきれたか — 追えない呼び(repo の外の関数・deff・method)を撃っていれば false で、
+                                                // inferred は見えた分だけ(エディタは空でも「effect なし」と描かない)
   "tags": {"context": "demo", "role": "program"}
 }],
 "bindings": [{

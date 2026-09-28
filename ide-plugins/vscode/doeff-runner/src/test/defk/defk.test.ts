@@ -1,7 +1,7 @@
 import * as assert from 'assert';
 import * as fs from 'fs';
 import * as path from 'path';
-import { parseLintJson, type LintBinding, type LintReport, type LintSignature } from '../../lint/contract';
+import { parseLintJson, type LintBinding, type LintReport, type LintSignature, type LintTypeRef } from '../../lint/contract';
 import { LintStore } from '../../lint/store';
 import { bindingHover, headerHover } from '../../defk/hover';
 import {
@@ -13,6 +13,7 @@ import {
   multiBindingForms,
   parseRevealMode,
   signatureText,
+  splitAtPieces,
   targetsAt,
   type LineSource
 } from '../../defk/model';
@@ -48,6 +49,43 @@ const FLOW_SOURCE = `(import intent.rows [ReadRow Row])
   (:= count (+ count n))
   row)
 `;
+
+/** agora-controllers の controllers/agora_sim/full_system.hy の sim-part(docstring が契約の辞書より先の形)の実物の source。 */
+const SIM_PART_SOURCE = `(defk sim-part [services handlers]
+  "部品の値(services = service の宣言の list・handlers = state → handler の list、無ければ None)。"
+  {:pre [(: services list) (: handlers (| Callable None))]
+   :post [(: % dict)]
+   :tags {:context "turn" :role "judgment"}}
+  {"services" services "handlers" handlers})
+`;
+
+/** sim-part の見出し(linter の editor-json が出した値 — 行は SIM_PART_SOURCE の中の位置に直した)。 */
+function simPart(source: string): LintSignature {
+  const name = (n: string): LintTypeRef => ({ kind: 'name', name: n, definition: null });
+  const text = source.split('\n');
+  return {
+    kind: 'defk',
+    name: 'sim-part',
+    path: '/repo/controllers/agora_sim/full_system.hy',
+    range: { start: { line: 0, character: 6 }, end: { line: 0, character: 14 } },
+    fullRange: { start: { line: 0, character: 0 }, end: { line: 5, character: text[5].length } },
+    contractRange: { start: { line: 2, character: 2 }, end: { line: 4, character: 44 } },
+    params: [
+      { name: 'services', type: name('list') },
+      { name: 'handlers', type: { kind: 'union', members: [name('Callable'), name('None')] } }
+    ],
+    answer: name('dict'),
+    absent: false,
+    raises: [],
+    declared: null,
+    inferred: [],
+    inferenceComplete: true,
+    tags: new Map([
+      ['context', 'turn'],
+      ['role', 'judgment']
+    ])
+  };
+}
 
 /** 文字列の行を行の口にする。 */
 function lines(source: string): LineSource {
@@ -124,62 +162,118 @@ suite('defk の見出し — 契約 版 2 の読み込み', () => {
 });
 
 suite('defk の見出し — 描く場所と部品', () => {
-  test('辞書が複数行: 辞書の文字は全部隠し、1 行目に型の行の部品・2 行目に effect の行の部品を、空白と括弧の上に付ける', () => {
+  test('map が先(3 行): 1 行目に型の行・2 行目に effect の行を描き、描く物の無い残りの行は隠さずに淡く見せる', () => {
     const plan = headerPlan(report().signatures[0], lines(FLOW_SOURCE));
     assert.ok(plan !== undefined);
     assert.strictEqual(plan.headLine, 2);
     assert.deepStrictEqual(plan.name, { line: 2, start: 6, end: 11 });
     assert.deepStrictEqual(
-      plan.hidden.map((h) => h.line),
-      [3, 4, 5, 6]
-    );
-    assert.deepStrictEqual(
-      plan.pieces.map((p) => [p.at.line, p.at.character, p.before.kind, 'text' in p.before ? p.before.text : 'name' in p.before ? p.before.name : '', p.after ?? '']),
+      plan.pieces.map((p) => [p.at.line, p.at.character, p.before.kind, 'text' in p.before ? p.before.text : 'name' in p.before ? p.before.name : '']),
       [
-        [3, 2, 'punct', '(', ''],
-        [3, 9, 'type', 'str', ','],
-        [3, 19, 'type', 'int', ') -> Maybe['],
-        [3, 25, 'type', 'Row', ']'],
-        [4, 8, 'label', 'effects', ''],
-        [4, 9, 'effect', 'ReadRow', ''],
-        [4, 19, 'raise', 'Unreadable', '']
+        [3, 2, 'punct', '('],
+        [3, 3, 'type', 'str'],
+        [3, 4, 'punct', ', '],
+        [3, 5, 'type', 'int'],
+        [3, 6, 'punct', ') -> Maybe['],
+        [3, 9, 'type', 'Row'],
+        [3, 10, 'punct', ']'],
+        [4, 3, 'label', 'effects'],
+        [4, 8, 'effect', 'ReadRow'],
+        [4, 9, 'raise', 'Unreadable']
       ]
     );
+    assert.deepStrictEqual(
+      plan.dimmed.map((d) => d.line),
+      [5, 6],
+      '隠したのに何も描かない行を作らない'
+    );
+    assert.ok(plan.hidden.every((h) => h.line === 3 || h.line === 4));
     assert.deepStrictEqual(plan.tagsAt, { line: 2, character: 18 });
-    assert.strictEqual(plan.fallback, undefined);
   });
 
-  test('部品は語の文字の上に付けない(Hy の「定義へ移動」がその語を解いて混ざらないように)', () => {
+  test('隠す範囲は部品の位置で切る(部品の前に描く文字が、囲む隠す範囲と一緒に隠れないように — 実測 2026-09-28)', () => {
+    const plan = headerPlan(report().signatures[0], lines(FLOW_SOURCE));
+    assert.ok(plan !== undefined);
+    for (const piece of plan.pieces) {
+      assert.ok(
+        plan.hidden.some((h) => h.line === piece.at.line && h.start === piece.at.character),
+        `部品 ${piece.at.line}:${piece.at.character} が隠す範囲の頭にある`
+      );
+      assert.ok(!plan.hidden.some((h) => h.line === piece.at.line && h.start < piece.at.character && piece.at.character < h.end));
+    }
+    assert.deepStrictEqual(
+      splitAtPieces([{ line: 0, start: 2, end: 10 }], [{ at: { line: 0, character: 5 }, before: { kind: 'punct', text: ',' }, targets: [] }]),
+      [
+        { line: 0, start: 2, end: 5 },
+        { line: 0, start: 5, end: 10 }
+      ]
+    );
+  });
+
+  test('押す部品(飛ぶ先のある型の名・effect)は語の文字の上にも語の直後にも付けない', () => {
     const plan = headerPlan(report().signatures[0], lines(FLOW_SOURCE));
     assert.ok(plan !== undefined);
     const text = FLOW_SOURCE.split('\n');
-    for (const piece of plan.pieces) {
+    for (const piece of plan.pieces.filter((p) => p.targets.length > 0)) {
       assert.match(text[piece.at.line][piece.at.character], /[\s()[\]{}"'#]/, `${piece.at.line}:${piece.at.character}`);
       assert.match(text[piece.at.line][piece.at.character - 1], /[\s()[\]{}"'#]/, `直前も語の文字でない ${piece.at.line}:${piece.at.character}`);
     }
   });
 
-  test('辞書が 1 行: 型の行の後ろに effect の部品を続ける・部品を付ける文字が足りなければ残りを … に畳む', () => {
-    const source = '(defk f [x]\n  {:pre [(: x int)] :post [(: % int)] :effects [ReadRow]}\n  x)\n';
+  test('docstring が先(agora-controllers の sim-part の実物の形): 同じ見出しを描き、和の型 Callable | None も読める', () => {
+    const source = SIM_PART_SOURCE;
+    const plan = headerPlan(simPart(source), lines(source));
+    assert.ok(plan !== undefined);
+    const typeLine = plan.pieces
+      .filter((p) => p.at.line === 2)
+      .map((p) => ('text' in p.before ? p.before.text : ''))
+      .join('');
+    assert.strictEqual(typeLine, '(list, Callable | None) -> dict');
+    assert.deepStrictEqual(
+      plan.pieces.filter((p) => p.at.line === 3).map((p) => 'text' in p.before && p.before.text),
+      ['effect なし'],
+      '2 行目は effect の行(起こさないことも書く)'
+    );
+    assert.deepStrictEqual(
+      plan.dimmed.map((d) => d.line),
+      [4]
+    );
+    assert.ok(plan.hidden.every((h) => h.line === 2 || h.line === 3), 'docstring の行は隠さない');
+  });
+
+  test('追えない呼びを撃つ defk は、推論が空でも「effect なし」と描かない', () => {
+    const source = SIM_PART_SOURCE;
+    const plan = headerPlan({ ...simPart(source), inferenceComplete: false }, lines(source));
+    assert.ok(plan !== undefined);
+    assert.deepStrictEqual(
+      plan.pieces.filter((p) => p.at.line === 3).map((p) => 'text' in p.before && p.before.text),
+      ['effects', '+ 追えない呼びの先']
+    );
+  });
+
+  test('tags だけで型の無い 1 行の辞書: 型の行は ? で描き、短い辞書の行にも収める(飛ぶ先の無い部品はどの文字にも付ける)', () => {
+    const source = '(defk tags-and-effects [id]\n  {:effects [ReadRow]\n   :tags {:context "demo" :role "program"}}\n  row)\n';
     const base = report().signatures[0];
     const sig: LintSignature = {
       ...base,
-      name: 'f',
-      params: [{ name: 'x', type: { kind: 'name', name: 'int', definition: null } }],
-      absent: false,
+      name: 'tags-and-effects',
+      params: [{ name: 'id', type: null }],
+      answer: null,
       raises: [],
-      range: { start: { line: 0, character: 6 }, end: { line: 0, character: 7 } },
-      fullRange: { start: { line: 0, character: 0 }, end: { line: 2, character: 4 } },
-      contractRange: { start: { line: 1, character: 2 }, end: { line: 1, character: source.split('\n')[1].length } }
+      range: { start: { line: 0, character: 6 }, end: { line: 0, character: 22 } },
+      fullRange: { start: { line: 0, character: 0 }, end: { line: 3, character: 6 } },
+      contractRange: { start: { line: 1, character: 2 }, end: { line: 2, character: 42 } }
     };
     const plan = headerPlan(sig, lines(source));
     assert.ok(plan !== undefined);
-    assert.deepStrictEqual(
-      plan.pieces.map((p) => p.before.kind),
-      ['punct', 'type', 'type', 'label', 'effect']
+    assert.ok(!plan.pieces.some((p) => 'text' in p.before && p.before.text === '…'), '途中で切らない');
+    assert.strictEqual(
+      plan.pieces
+        .filter((p) => p.at.line === 1)
+        .map((p) => ('text' in p.before ? p.before.text : ''))
+        .join(''),
+      '(?) -> Maybe[?]'
     );
-    const crowded = headerPlan(sig, lines(source.replace('{:pre [(: x int)] :post [(: % int)] :effects [ReadRow]}', '{:pre:post:effects}')));
-    assert.ok(crowded === undefined || crowded.pieces.length <= 1 || crowded.pieces[crowded.pieces.length - 1].before.kind === 'punct');
   });
 
   test('document と位置が合わない(版の食い違い)時は描かない', () => {
@@ -214,13 +308,13 @@ suite('defk の見出し — 定義へ飛ぶ', () => {
     assert.ok(header !== undefined && binding !== undefined);
     const where = (line: number, character: number): string[] | undefined =>
       targetsAt([header], [binding], { line, character })?.map((l) => `${l.path.split('/').slice(-2).join('/')}:${l.range.start.line}`);
-    assert.deepStrictEqual(where(3, 25), ['intent/rows.hy:0'], '答えの型 Row');
-    assert.deepStrictEqual(where(4, 9), ['intent/rows.hy:3'], 'effect ReadRow');
-    assert.deepStrictEqual(where(4, 19), ['intent/rows.hy:2'], 'Raise Unreadable');
+    assert.deepStrictEqual(where(3, 9), ['intent/rows.hy:0'], '答えの型 Row');
+    assert.deepStrictEqual(where(4, 8), ['intent/rows.hy:3'], 'effect ReadRow');
+    assert.deepStrictEqual(where(4, 9), ['intent/rows.hy:2'], 'Raise Unreadable');
     assert.deepStrictEqual(where(8, 5), ['intent/rows.hy:0'], '束縛 row の型 Row');
-    assert.deepStrictEqual(where(3, 9), [], '組み込みの str は飛ばない');
+    assert.deepStrictEqual(where(3, 3), [], '組み込みの str は飛ばない');
     assert.deepStrictEqual(where(3, 2), [], '区切りの ( は飛ばない');
-    assert.strictEqual(where(3, 3), undefined, '部品の無い位置は他の口に任せる');
+    assert.strictEqual(where(3, 20), undefined, '部品の無い位置は他の口に任せる');
   });
 });
 

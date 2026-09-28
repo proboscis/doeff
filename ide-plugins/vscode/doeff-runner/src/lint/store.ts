@@ -67,12 +67,13 @@ export class LintStore {
 
   /** 1 file の実行(stdin)の見出しと束縛を、渡した document の版と組で置く(全体の結果が無い root でも置く)。 */
   replaceSignatures(filePath: string, version: number, report: LintReport): void {
-    const wanted = key(filePath);
-    this.signatures.set(wanted, {
+    // 1 file の実行(stdin)の結果は全部その file の物 — path では絞らない。linter は symlink を解いた path を名乗り
+    // (macOS の /tmp は /private/tmp)、絞ると見出しが 1 つも出なかった(実測 2026-09-28)
+    this.signatures.set(key(filePath), {
       version,
-      signatures: report.signatures.filter((s) => key(s.path) === wanted),
-      bindings: report.bindings.filter((b) => key(b.path) === wanted),
-      rewrites: report.rewrites.every((r) => key(r.path) === wanted) ? report.rewrites : []
+      signatures: report.signatures,
+      bindings: report.bindings,
+      rewrites: report.rewrites
     });
     this.noteUnknown(filePath, report);
     this.emit();

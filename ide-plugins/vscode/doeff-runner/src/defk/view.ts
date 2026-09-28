@@ -158,6 +158,7 @@ export class DefkView implements vscode.Disposable {
   private readonly piece: vscode.TextEditorDecorationType;
   private readonly tags: vscode.TextEditorDecorationType;
   private readonly operator: vscode.TextEditorDecorationType;
+  private readonly dimmed: vscode.TextEditorDecorationType;
   private readonly disposables: vscode.Disposable[] = [];
   private readonly reported = new Set<string>();
   private readonly shown = new WeakMap<vscode.TextEditor, Shown>();
@@ -185,6 +186,7 @@ export class DefkView implements vscode.Disposable {
     this.piece = vscode.window.createTextEditorDecorationType({});
     this.tags = vscode.window.createTextEditorDecorationType({});
     this.operator = vscode.window.createTextEditorDecorationType({});
+    this.dimmed = vscode.window.createTextEditorDecorationType({ opacity: '0.4' });
     const offStore = store.onDidChange(() => this.schedule());
     this.disposables.push(
       { dispose: offStore },
@@ -315,8 +317,7 @@ export class DefkView implements vscode.Disposable {
         throw new Error(`網羅されていない部品: ${JSON.stringify(unreachable)}`);
       }
     }
-    const after = piece.after === undefined ? undefined : textContent(piece.after, 'punct');
-    return { range: charRange(piece.at), renderOptions: after === undefined ? { before } : { before, after } };
+    return { range: charRange(piece.at), renderOptions: { before } };
   }
 
   /** editor 1 つを描き直す。 */
@@ -329,6 +330,7 @@ export class DefkView implements vscode.Disposable {
     const pieces: vscode.DecorationOptions[] = [];
     const tags: vscode.DecorationOptions[] = [];
     const operators: vscode.DecorationOptions[] = [];
+    const dimmed: vscode.Range[] = [];
     const hiddenSpans: Span[] = [];
     const drawnHeaders: HeaderPlan[] = [];
     const drawnBindings: BindingPlan[] = [];
@@ -344,6 +346,9 @@ export class DefkView implements vscode.Disposable {
           hidden.push({ range: toRange(span) });
           hiddenSpans.push(span);
         }
+        dimmed.push(...plan.dimmed.map(toRange));
+        // 淡く見せる行にも #841 の絵を描かない(元の文字のまま淡く)
+        hiddenSpans.push(...plan.dimmed);
         pieces.push(...plan.pieces.map((p) => this.pieceDecoration(p)));
         const end = new vscode.Range(plan.tagsAt.line, plan.tagsAt.character, plan.tagsAt.line, plan.tagsAt.character);
         const drawnTags = tagsSvg(signature.tags, this.metrics, this.sprites);
@@ -380,6 +385,7 @@ export class DefkView implements vscode.Disposable {
     editor.setDecorations(this.piece, pieces);
     editor.setDecorations(this.tags, tags);
     editor.setDecorations(this.operator, operators);
+    editor.setDecorations(this.dimmed, dimmed);
     this.shown.set(editor, { hidden: hiddenSpans, headers: drawnHeaders, bindings: drawnBindings });
     for (const listener of this.listeners) {
       listener();
@@ -394,7 +400,7 @@ export class DefkView implements vscode.Disposable {
     for (const d of this.disposables) {
       d.dispose();
     }
-    for (const type of [this.hidden, this.headLine, this.name, this.piece, this.tags, this.operator]) {
+    for (const type of [this.hidden, this.headLine, this.name, this.piece, this.tags, this.operator, this.dimmed]) {
       type.dispose();
     }
   }

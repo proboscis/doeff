@@ -195,6 +195,8 @@ export interface LintSignature {
   /** 宣言(`:effects` が無ければ null)と推論 */
   readonly declared: readonly LintEffectRef[] | null;
   readonly inferred: readonly LintEffectRef[];
+  /** 推論が追いきれたか(追えない呼びを撃っていれば false — inferred は見えた分だけ)。欄の無い古い linter は true */
+  readonly inferenceComplete: boolean;
   readonly tags: ReadonlyMap<string, string>;
 }
 
@@ -611,6 +613,12 @@ function signature(value: unknown, where: string, notes: Notes): LintSignature |
     raises: list(obj, 'raises', where, types),
     declared: declared === null ? null : list(effects, 'declared', `${where}.effects`, effect),
     inferred: list(effects, 'inferred', `${where}.effects`, effect),
+    inferenceComplete: optional(effects, 'complete', `${where}.effects`, (v, at) => {
+      if (typeof v !== 'boolean') {
+        throw new LintContractViolation(`${at}: 真偽値でない`);
+      }
+      return v;
+    }) ?? true,
     tags: new Map(Object.keys(tags).map((k) => [k, text(tags[k], `${where}.tags.${k}`)]))
   };
 }
