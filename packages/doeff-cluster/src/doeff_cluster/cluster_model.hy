@@ -230,6 +230,49 @@
            {}))))
 
 
+;; --- 版の判定(2026-09-29・#1013) -------------------------------------------------------------
+;; Service ごとに「指定の版(spec.revision)が実際に仕事をしているか」を coordinator が答える(resource_policy.version-state)。
+;; 材料の判定(running-process・入れ替えの見張り・停止の述語)の答えは、理由の文ではなく下の閉じた型で運ぶ — version-state は種類を
+;; 網羅の match で状態へ写し、文を読んで分けない。
+
+(defenum UnplacedKind WAITING-PREVIOUS-HOLDER NO-ELIGIBLE-WORKER NO-ROOM)
+;; 置き先が無い理由(cluster_policy.unplaced-kind)。WAITING-PREVIOUS-HOLDER = 前の担い手が止め終えるのを待っている(drain や
+;; 入れ替えの正常な途中)・NO-ELIGIBLE-WORKER = 置ける worker が無い・NO-ROOM = 置ける worker に空きが無い。
+
+
+(defenum NotReadyKind
+  NO-DECLARATION NO-REPLICAS WAITING-PREVIOUS-HOLDER NO-ELIGIBLE-WORKER NO-ROOM CARRIER-SILENT NOT-RUNNING
+  REVISION-MISMATCH NO-INSTANCE SPEC-MISMATCH PLACEMENT-MISMATCH)
+;; running-process が ok でない理由の種類(答えの dict の "kind")。宣言が無い・replicas 0・置き先が無い 3 種(UnplacedKind と同じ)・
+;; 担い手の報告が古い(Unknown の間も同じ種類)・担い手の行の phase が running でない・版の違い・process の世代を報告しない・
+;; 設定の指紋の違い・割り当ての世代の違い。
+
+
+(defenum VersionState
+  (CURRENT "Current")
+  (UPDATING "Updating")
+  (BLOCKED "Blocked")
+  (STOPPED "Stopped")
+  (UNKNOWN "Unknown"))
+;; 版の判定の 5 値(Service の資源の status.version.state の綴り — 外へ見せる約束)。Current = 指定の版の process が仕事をしていて、
+;; 退いた旧い process が生きていない(健康 readiness は含まない)・Updating = 指定の版へ移っている途中・Blocked = 待っても指定の版へ
+;; 進まない・Stopped = 止めている・Unknown = 担い手の報告が途絶えていて分からない。
+
+
+(defrecord VersionVerdict
+  "版の判定の答え(resource_policy.version-state)。reason = 人が読む理由(Current は空)。"
+  (#^ VersionState state)
+  (#^ str reason))
+
+
+(defrecord LiveProcess
+  "Service の process が生きている行 1 つの事実(resource_policy.live-processes — 判定ではない)。revision = 動いている版
+   (process を持つ行なら worker が必ず載せる。載せない行の None は埋めずにそのまま運ぶ)・retired = 入れ替えで退いた旧い process の
+   行か(行の retiredFrom が Service の名)。"
+  (#^ (| str None) revision)
+  (#^ bool retired))
+
+
 (defn #^ HandoffWatch handoff-watch-from-json [#^ dict data]  ; defk にできない: 保存の読み(coordinator の起動の純粋な関数)が呼ぶ
   "保存の形 → HandoffWatch(HandoffWatch.to-json の逆)。知らない段は読めない(ValueError — 黙って待ちに戻さない)。"
   (HandoffWatch :declaration (get data "declaration") :since-ms (get data "sinceMs")

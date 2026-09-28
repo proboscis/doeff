@@ -8,7 +8,7 @@
 ;;      recreate の起動中 = Updating。
 ;;   3. drain の模擬(test_drain の Coord): 置き先が「前の担い手の停止を待つ」間は Updating。
 ;;   4. 停止の述語は 1 つ: target-view と version-state が同じ関数(service-stopped)を呼ぶ(止まっている・止めている途中)。
-(require doeff-hy.macros [deftest])
+(require doeff-hy.macros [deftest val])
 (import pytest)
 (import doeff_cluster.cluster_model [ClusterTiming ClusterState Request RefusedJob VersionState NotReadyKind UnplacedKind])
 (import doeff_cluster.worker_model [JobPhase spec-hash])
@@ -22,15 +22,15 @@
 (import tests.test_handoff_deadline [Sim HANDOFF RECREATE TIMEOUT-SECONDS])
 (import tests.test_drain [Coord service running-writer])
 
-(setv T (ClusterTiming))
-(setv SPEC {"revision" "r1" "needs" ["net"] "run" SAMPLE-RUN})
-(setv START 1000000)            ; 状態を読んだ時刻(0)から lease を十分に過ぎた時刻 — 起動直後の Unknown に入らない
+(val T (ClusterTiming))
+(val SPEC {"revision" "r1" "needs" ["net"] "run" SAMPLE-RUN})
+(val START 1000000)             ; 状態を読んだ時刻(0)から lease を十分に過ぎた時刻 — 起動直後の Unknown に入らない
 
 
 ;; --- 設計 4.1 の表(写し先)---------------------------------------------------------------------
 
 ;; phase が running でない担い手の行の phase → 状態(ENV-FAILED は再試行するかで分かれる・RUNNING は下の註)。
-(setv PHASE-STATES
+(val PHASE-STATES
   {JobPhase.PREPARING VersionState.UPDATING
    JobPhase.PROBING VersionState.UPDATING
    JobPhase.STARTING VersionState.UPDATING
@@ -46,7 +46,7 @@
    JobPhase.RUNNING VersionState.UNKNOWN})
 
 ;; phase を見ない理由の種類 → 状態。
-(setv KIND-STATES
+(val KIND-STATES
   {NotReadyKind.NO-DECLARATION VersionState.UPDATING    ; 宣言を消した直後で process がまだ生きている
    NotReadyKind.NO-REPLICAS VersionState.UPDATING       ; replicas 0 で止めている途中
    NotReadyKind.WAITING-PREVIOUS-HOLDER VersionState.UPDATING
@@ -110,6 +110,25 @@
   (sorted (gfor p (get version "running") #((get p "revision") (get p "retired")))))
 
 
+(defn answer [state [now START]]  ; defk にできない: 検の道具
+  "Service w の #(running-process の理由の種類(ok なら None) version-state の状態)。"
+  (setv proc (running-process state "w" now T))
+  #((.get proc "kind") (. (version-state state "w" now T) state)))
+
+
+(defn reported-phase [#^ JobPhase phase #^ bool retryable]  ; defk にできない: 検の道具
+  "担い手 atlas が今の宣言の spec の行を phase で報告した状態(ENV-FAILED は失敗の種類と再試行するかを載せる)。"
+  (reporting (if (= phase JobPhase.ENV-FAILED) {"failureKind" "sync-failed" "retryable" retryable} {}) phase.value))
+
+
+(defn scaled-to-zero [#^ (| list None) rows]  ; defk にできない: 検の道具
+  "w を replicas 0 に書き換えた後、atlas が rows(w の process がまだ生きている行・空なら止め終えた)を報告した状態。"
+  (setv s (reporting) row (row-of s))
+  (setv s (call s "PUT" "/resources/Service/w" {"spec" (| SPEC {"replicas" 0})
+                                                 "resourceVersion" (get s.meta "Service/w" "resourceVersion")}))
+  (beat s "atlas" (if (is rows None) [row] rows)))
+
+
 ;; --- 1. 網羅 -----------------------------------------------------------------------------------
 
 (deftest test-every-phase-and-every-not-ready-kind-maps-to-one-of-the-five-states
@@ -150,106 +169,99 @@
 (deftest test-every-reported-phase-of-the-carrier-gives-one-of-the-five-states
   ;; 担い手が今の宣言の spec の行を phase ごとに報告した世界で、version-state が 5 値のどれかを答える(本物の heartbeat の読み)。
   (for [phase JobPhase retryable [True False]]
-    (setv s (reporting (if (= phase JobPhase.ENV-FAILED) {"failureKind" "sync-failed" "retryable" retryable} {})
-                       phase.value)
-          verdict (version-state s "w" START T))
-    (assert (isinstance verdict.state VersionState) phase)
-    (if (= phase JobPhase.RUNNING)
-        (assert (= verdict.state VersionState.CURRENT) verdict)
-        (do (assert (= (get (running-process s "w" START T) "kind") NotReadyKind.NOT-RUNNING) phase)
-            (assert (= verdict.state (phase-version phase retryable)) #(phase retryable verdict))))))
+    (assert (isinstance (get (answer (reported-phase phase retryable)) 1) VersionState) phase)
+    (assert (= (answer (reported-phase phase retryable))
+               (if (= phase JobPhase.RUNNING)
+                   #(None VersionState.CURRENT)
+                   #(NotReadyKind.NOT-RUNNING (phase-version phase retryable))))
+            #(phase retryable))))
 
 
 (deftest test-running-process-names-the-kind-of-every-not-ready-branch
   ;; running-process の NotReady / Unknown の 11 の分岐が、それぞれ種類を名乗る。理由の文・ok・state は今までどおり。
-  (defn kind [state [now START]] (get (running-process state "w" now T) "kind"))
-  (defn state-of [state [now START]] (. (version-state state "w" now T) state))
   ;; 宣言が無い: 消した直後で、担い手の上で process がまだ生きている。
-  (setv s (reporting) row (row-of s))
-  (setv s (beat (call s "DELETE" "/resources/Service/w") "atlas" [row]))
-  (assert (= #((kind s) (state-of s)) #(NotReadyKind.NO-DECLARATION VersionState.UPDATING)))
+  (val running (reporting))
+  (val deleted (beat (call running "DELETE" "/resources/Service/w") "atlas" [(row-of running)]))
+  (assert (= (answer deleted) #(NotReadyKind.NO-DECLARATION VersionState.UPDATING)))
   ;; replicas 0: 止めている途中(process がまだ生きている)。
-  (setv s (reporting) row (row-of s))
-  (setv s (call s "PUT" "/resources/Service/w" {"spec" (| SPEC {"replicas" 0})
-                                                 "resourceVersion" (get s.meta "Service/w" "resourceVersion")}))
-  (setv s (beat s "atlas" [row]))
-  (assert (= #((kind s) (state-of s)) #(NotReadyKind.NO-REPLICAS VersionState.UPDATING)))
+  (assert (= (answer (scaled-to-zero None)) #(NotReadyKind.NO-REPLICAS VersionState.UPDATING)))
   ;; 置き先が無い: 前の担い手の停止を待つ(置いていない zeus の上で w がまだ動いている)。
-  (setv s (declared))
-  (setv s (beat s "zeus" [{"name" "w" "phase" "running" "runningRevision" "r1" "instance" "0-z" "specHash" "old"}]))
-  (assert (not-in "w" s.placements))
-  (assert (= (get (unplaced-jobs START s T) "w") "前の担い手が止め終えるのを待っている"))
-  (assert (= #((kind s) (state-of s)) #(NotReadyKind.WAITING-PREVIOUS-HOLDER VersionState.UPDATING)))
-  ;; 置き先が無い: 置ける worker が無い・空きが無い。
-  (setv s (declared))
-  (assert (= #((kind s) (state-of s)) #(NotReadyKind.NO-ELIGIBLE-WORKER VersionState.BLOCKED)))
-  (assert (.startswith (get (running-process s "w" START T) "reason") "置き先が無い: 置ける worker が無い"))
-  (setv s (beat (declared) "atlas" :capacity 0))
-  (assert (= #((kind s) (state-of s)) #(NotReadyKind.NO-ROOM VersionState.BLOCKED)))
-  (assert (= (get (running-process s "w" START T) "reason") "置き先が無い: 置ける worker に空きが無い"))
+  (val waiting (beat (declared) "zeus" [{"name" "w" "phase" "running" "runningRevision" "r1" "instance" "0-z" "specHash" "old"}]))
+  (assert (not-in "w" waiting.placements))
+  (assert (= (get (unplaced-jobs START waiting T) "w") "前の担い手が止め終えるのを待っている"))
+  (assert (= (answer waiting) #(NotReadyKind.WAITING-PREVIOUS-HOLDER VersionState.UPDATING)))
+  ;; 置き先が無い: 置ける worker が無い・空きが無い(理由の文は今までどおり)。
+  (assert (= (answer (declared)) #(NotReadyKind.NO-ELIGIBLE-WORKER VersionState.BLOCKED)))
+  (assert (.startswith (get (running-process (declared) "w" START T) "reason") "置き先が無い: 置ける worker が無い"))
+  (val full (beat (declared) "atlas" :capacity 0))
+  (assert (= (answer full) #(NotReadyKind.NO-ROOM VersionState.BLOCKED)))
+  (assert (= (get (running-process full "w" START T) "reason") "置き先が無い: 置ける worker に空きが無い"))
   ;; 担い手の報告が古い: 移し替えの期限の内は Unknown(分からない)、過ぎた後(調停の前)は NotReady。
-  (setv s (reporting))
-  (setv silent (+ START (* 2 T.lease-ms)) gone (+ START T.reassign-after-ms T.lease-ms))
-  (assert (= (get (running-process s "w" silent T) "state") "Unknown"))
-  (assert (= #((kind s silent) (state-of s silent)) #(NotReadyKind.CARRIER-SILENT VersionState.UNKNOWN)))
-  (assert (= (get (running-process s "w" gone T) "state") "NotReady"))
-  (assert (= #((kind s gone) (state-of s gone)) #(NotReadyKind.CARRIER-SILENT VersionState.UPDATING)))
+  (val silent (+ START (* 2 T.lease-ms)))
+  (val gone (+ START T.reassign-after-ms T.lease-ms))
+  (assert (= (get (running-process running "w" silent T) "state") "Unknown"))
+  (assert (= (answer running silent) #(NotReadyKind.CARRIER-SILENT VersionState.UNKNOWN)))
+  (assert (= (get (running-process running "w" gone T) "state") "NotReady"))
+  (assert (= (answer running gone) #(NotReadyKind.CARRIER-SILENT VersionState.UPDATING)))
   ;; phase が running でない: 担い手の行にまだ載っていない。
-  (setv s (placed))
-  (assert (= (get (running-process s "w" START T) "reason") "担い手 atlas の上で まだ起動していない"))
-  (assert (= #((kind s) (state-of s)) #(NotReadyKind.NOT-RUNNING VersionState.UPDATING)))
+  (assert (= (get (running-process (placed) "w" START T) "reason") "担い手 atlas の上で まだ起動していない"))
+  (assert (= (answer (placed)) #(NotReadyKind.NOT-RUNNING VersionState.UPDATING)))
   ;; 版の違い・process の世代を報告しない・設定の指紋の違い・割り当ての世代の違い。
   (for [#(extra want) [[{"runningRevision" "r0"} #(NotReadyKind.REVISION-MISMATCH VersionState.UPDATING)]
                        [{"instance" None} #(NotReadyKind.NO-INSTANCE VersionState.BLOCKED)]
                        [{"specHash" "0000"} #(NotReadyKind.SPEC-MISMATCH VersionState.UPDATING)]
                        [{"placement" 99} #(NotReadyKind.PLACEMENT-MISMATCH VersionState.UPDATING)]]]
-    (setv s (reporting extra))
-    (assert (= #((kind s) (state-of s)) want) extra))
+    (assert (= (answer (reporting extra)) want) extra))
   ;; ok の答えは種類を持たない(今までと同じ欄)。
-  (setv proc (running-process (reporting) "w" START T))
+  (val proc (running-process running "w" START T))
   (assert (and (get proc "ok") (not-in "kind" proc)) proc))
+
+
 
 
 (deftest test-a-worker-phase-the-coordinator-does-not-know-is-unknown
   ;; coordinator より新しい worker が知らない phase を報告した: 既定の状態へ黙って倒さず、分からないと答える。
-  (setv verdict (version-state (reporting {} "rebooting") "w" START T))
+  (val verdict (version-state (reporting {} "rebooting") "w" START T))
   (assert (= verdict.state VersionState.UNKNOWN) verdict)
   (assert (in "rebooting" verdict.reason) verdict))
 
 
 (deftest test-status-version-carries-state-reason-and-running
   ;; Current: running-process が ok で、退いた旧い process が生きていない。理由は空。
-  (setv s (reporting))
-  (assert (= (version-of s) {"state" "Current" "reason" "" "running" [{"revision" "r1" "retired" False}]}))
+  (val current (reporting))
+  (assert (= (version-of current) {"state" "Current" "reason" "" "running" [{"revision" "r1" "retired" False}]}))
   ;; state は snapshot に入る(変わった時に出来事と resourceVersion が進む)。reason と running は snapshot に入れない。
-  (assert (= (get (snapshot s START T) "Service/w" "status" "version") {"state" "Current"}))
-  (assert (any (gfor e s.audit (= (.get (get e "changes") "status.version") [{"state" "Updating"} {"state" "Current"}])))
-          (lfor e s.audit (get e "changes")))
-  ;; 既存の欄は今までどおり(ready・readyReason・process)。
-  (setv #(_ _ body) (respond s (Request "GET" "/resources/Service/w" {} None :actor None) START T))
+  (assert (= (get (snapshot current START T) "Service/w" "status" "version") {"state" "Current"}))
+  (assert (any (gfor e current.audit (= (.get (get e "changes") "status.version") [{"state" "Updating"} {"state" "Current"}])))
+          (lfor e current.audit (get e "changes")))
+  ;; 既存の欄は今までどおり(ready・process)。
+  (val body (get (respond current (Request "GET" "/resources/Service/w" {} None :actor None) START T) 2))
   (assert (= (get body "status" "ready") "Ready"))
   (assert (= (get body "status" "process" "runningRevision") "r1"))
   ;; running の母集団は still-live-somewhere と同じ: lease の内に報告した全部の worker の、名が一致する行と退いた行。
   ;; phase は process が生きている物(RUNNING・STOPPING・STOP-UNCONFIRMED)だけ。沈黙した worker の行は入れない。
-  (setv s (beat s "zeus" [{"name" "w" "phase" "stopping" "runningRevision" "r0" "instance" "0-z"}
-                          {"name" "w#retired-0" "retiredFrom" "w" "phase" "stop-unconfirmed" "runningRevision" "rA"}
-                          {"name" "w#retired-1" "retiredFrom" "w" "phase" "backoff" "runningRevision" "rB"}
-                          {"name" "other" "phase" "running" "runningRevision" "rX"}]))
-  (assert (= (sorted (gfor p (live-processes s "w" START T) #(p.revision p.retired)))
+  (val mixed (beat current "zeus" [{"name" "w" "phase" "stopping" "runningRevision" "r0" "instance" "0-z"}
+                                   {"name" "w#retired-0" "retiredFrom" "w" "phase" "stop-unconfirmed" "runningRevision" "rA"}
+                                   {"name" "w#retired-1" "retiredFrom" "w" "phase" "backoff" "runningRevision" "rB"}
+                                   {"name" "other" "phase" "running" "runningRevision" "rX"}]))
+  (assert (= (sorted (gfor p (live-processes mixed "w" START T) #(p.revision p.retired)))
              [#("r0" False) #("r1" False) #("rA" True)]))
-  (setv late (+ START (* 2 T.lease-ms)))
-  (setv s (beat s "atlas" [(row-of s)] :now late))
-  (assert (= (pairs (version-of s :now late)) [#("r1" False)])))
+  ;; 退いた旧い process が生きている間は、running-process が ok でも Current にしない。
+  (assert (= (answer mixed) #(None VersionState.UPDATING)))
+  (val late (+ START (* 2 T.lease-ms)))
+  (val quiet (beat mixed "atlas" [(row-of mixed)] :now late))
+  (assert (= (pairs (version-of quiet :now late)) [#("r1" False)]))
+  (assert (= (get (version-of quiet :now late) "state") "Current")))
 
 
 (deftest test-a-refused-declaration-is-blocked-until-it-is-deleted
   ;; 受け付けていない宣言の行(state.refused)は、DELETE で消すまで Blocked の行として残る。既存の欄 refused は今までどおり。
-  (setv s (ClusterState :refused {"old" (RefusedJob :name "old" :row {"name" "old" "revision" "r9"} :reason "旧い形の行")}))
-  (setv verdict (version-state s "old" START T))
+  (val state (ClusterState :refused {"old" (RefusedJob :name "old" :row {"name" "old" "revision" "r9"} :reason "旧い形の行")}))
+  (val verdict (version-state state "old" START T))
   (assert (= verdict.state VersionState.BLOCKED) verdict)
   (assert (in "旧い形の行" verdict.reason) verdict)
-  (setv #(_ _ body) (respond s (Request "GET" "/resources/Service" {} None :actor None) START T))
-  (setv item (next (gfor i (get body "items") :if (= (get i "name") "old") i)))
+  (val body (get (respond state (Request "GET" "/resources/Service" {} None :actor None) START T) 2))
+  (val item (next (gfor i (get body "items") :if (= (get i "name") "old") i)))
   (assert (= (get item "status" "refused") "旧い形の行"))
   (assert (= (get item "status" "version" "state") "Blocked") item))
 
@@ -257,7 +269,7 @@
 ;; --- 2. 入れ替えの模擬の世界 ---------------------------------------------------------------------
 
 (deftest test-a-handoff-to-a-broken-revision-is-updating-then-blocked-after-the-deadline
-  (setv sim (Sim HANDOFF))
+  (val sim (Sim HANDOFF))
   (sim.steps 12)
   (assert (= (get (sim.status) "version") {"state" "Current" "reason" "" "running" [{"revision" "r1" "retired" False}]})
           (sim.status))
@@ -266,7 +278,7 @@
   ;; 5 秒後: 新しい版 r2 は動いているが Ready でない。旧い版 r1 は退避名で仕事を続けている。running-process は ok と答える
   ;; (入れ替えの合図の意味)が、版の判定は Updating。
   (sim.steps 5)
-  (setv during (get (sim.status) "version"))
+  (val during (get (sim.status) "version"))
   (assert (get (running-process sim.state "writer-a" sim.now T) "ok"))
   (assert (= (get (sim.status) "handoff" "phase") "WaitingReady"))
   (assert (= (get during "state") "Updating") during)
@@ -274,7 +286,7 @@
   (assert (in "r2" (get during "reason")) during)
   ;; 期限の後: 入れ替えを諦めた(新しい版を止め、旧い版 r1 が動き続けている)= Blocked。
   (sim.steps (+ TIMEOUT-SECONDS 15))
-  (setv after (get (sim.status) "version"))
+  (val after (get (sim.status) "version"))
   (assert (= (get (sim.status) "handoff" "phase") "Abandoned"))
   (assert (= (get after "state") "Blocked") after)
   (assert (in "入れ替えを諦めた" (get after "reason")) after)
@@ -282,12 +294,12 @@
 
 
 (deftest test-a-recreate-service-is-updating-while-the-new-revision-starts
-  (setv sim (Sim RECREATE))
+  (val sim (Sim RECREATE))
   (sim.steps 12)
   (sim.mark-broken "r2")
   (sim.redeclare (| RECREATE {"revision" "r2"}))
   (sim.steps 5)
-  (setv starting (get (sim.status) "version"))
+  (val starting (get (sim.status) "version"))
   (assert (= (get (sim.status) "process" "phase") "starting") (sim.status))
   (assert (= (get starting "state") "Updating") starting)
   (assert (= (get starting "running") []) starting)
@@ -300,12 +312,13 @@
 ;; --- 3. drain の模擬 -----------------------------------------------------------------------------
 
 (defn coord-version [#^ Coord c #^ str name]  ; defk にできない: 検の道具
+  "drain の模擬の coordinator の、Service name の status.version。"
   (get (c.call "GET" (+ "/resources/Service/" name)) "status" "version"))
 
 
 (deftest test-a-placement-waiting-for-the-previous-holder-to-stop-is-updating
   ;; drain で止めて移す(recreate の Service): 移す先の zeus が戻ると置き先を外し、旧い担い手 atlas が止め終えるまで置かない。
-  (setv c (Coord))
+  (val c (Coord))
   (c.call "POST" "/resources/Service" {"name" "r" "spec" (service {"update" "recreate"})} :expect 201)
   (c.beat "atlas" ["r"])
   (assert (= (get (coord-version c "r") "state") "Current"))
@@ -316,7 +329,7 @@
   (c.beat "atlas" ["r"])
   (assert (not-in "r" c.state.placements))
   (assert (= (get (running-process c.state "r" c.now T) "kind") NotReadyKind.WAITING-PREVIOUS-HOLDER))
-  (setv waiting (coord-version c "r"))
+  (val waiting (coord-version c "r"))
   (assert (= (get waiting "state") "Updating") waiting)
   (assert (in "前の担い手が止め終えるのを待っている" (get waiting "reason")) waiting)
   (assert (= (pairs waiting) [#("r1" False)]) waiting)
@@ -330,11 +343,11 @@
 
 (deftest test-a-surged-handoff-writer-stays-current-and-running-lists-both-processes
   ;; drain で並べた置き先(surge)の process も running に入る(同じ版・退いていない)。版は指定どおりなので Current。
-  (setv c (running-writer))
+  (val c (running-writer))
   (c.call "POST" "/workers/atlas/drain" {} :actor "drain@atlas")
   (c.beat "zeus" ["w"])
   (c.beat "atlas" ["w"])
-  (setv version (coord-version c "w"))
+  (val version (coord-version c "w"))
   (assert (= (get version "state") "Current") version)
   (assert (= (pairs version) [#("r1" False) #("r1" False)]) version))
 
@@ -342,32 +355,29 @@
 ;; --- 4. 停止の述語は 1 つ -------------------------------------------------------------------------
 
 (defn #^ None test-target-view-and-version-state-call-the-same-stop-predicate [#^ pytest.MonkeyPatch monkeypatch]
+  ;; target-view(Rollout の相手の観測)と version-state が、同じ名前の述語 service-stopped を呼ぶ。述語を差し替えた spy が
+  ;; 両方から呼ばれ、止めている途中・止まっている の 2 場面で両方の答えが揃う。
   (assert (is api-policy.service-stopped resource-policy.service-stopped) "target-view が別の停止の述語を持っている")
-  (setv calls [] original resource-policy.service-stopped)
+  (setv calls [] original resource-policy.service-stopped target {"kind" "Service" "name" "w"})
   (defn spy [#* args]  ; defk にできない: 検の道具(呼ばれた事を数える)
+    "停止の述語の代わり: 呼ばれた事を記録して本物を呼ぶ。"
     (.append calls args)
     (original #* args))
   (.setattr monkeypatch api-policy "service_stopped" spy)
   (.setattr monkeypatch resource-policy "service_stopped" spy)
-  (setv target {"kind" "Service" "name" "w"})
   (defn both [state]  ; defk にできない: 検の道具
-    "#(target-view の stopped と呼んだ回数 version-state の状態と呼んだ回数)。"
+    "#(target-view の stopped と述語を呼んだ回数 version-state の状態と述語を呼んだ回数)。"
     (.clear calls)
     (setv view (target-view state target {} START T) by-view (len calls))
     (.clear calls)
     (setv verdict (version-state state "w" START T) by-version (len calls))
     #((get view "stopped") by-view verdict.state by-version))
   ;; 止めている途中: replicas 0 だが atlas の上で w がまだ動いている。
-  (setv s (reporting) row (row-of s))
-  (setv s (call s "PUT" "/resources/Service/w" {"spec" (| SPEC {"replicas" 0})
-                                                 "resourceVersion" (get s.meta "Service/w" "resourceVersion")}))
-  (setv s (beat s "atlas" [row]))
-  (setv #(stopped by-view state by-version) (both s))
+  (setv #(stopped by-view state by-version) (both (scaled-to-zero None)))
   (assert (= #(stopped state) #(False VersionState.UPDATING)))
   (assert (and (>= by-view 1) (>= by-version 1)) #(by-view by-version))
   ;; 止まっている: replicas 0・置き先が無い・どこにも生きていない。
-  (setv s (beat s "atlas" []))
-  (setv #(stopped by-view state by-version) (both s))
+  (setv #(stopped by-view state by-version) (both (scaled-to-zero [])))
   (assert (= #(stopped state) #(True VersionState.STOPPED)))
   (assert (and (>= by-view 1) (>= by-version 1)) #(by-view by-version))
-  (assert (= (. (version-state s "w" START T) reason) "止めている")))
+  (assert (= (. (version-state (scaled-to-zero []) "w" START T) reason) "止めている")))

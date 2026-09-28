@@ -9,7 +9,7 @@
 (import re)
 
 (import .worker_model [JobSpec])
-(import .cluster_model [ClusterJob WorkerInfo GenerationOrder Placement ClusterTiming ClusterState TaskRecord Request Drain EnvFailed WarmEntry HandoffPhase RefusedJob
+(import .cluster_model [ClusterJob WorkerInfo GenerationOrder Placement ClusterTiming ClusterState TaskRecord Request Drain EnvFailed WarmEntry HandoffPhase RefusedJob UnplacedKind
                         capabilities-of component-versions-of task-record-to-json task-record-from-json ACCEPTED-FORMATS format-refusal
                         PLACED-PHASES handoff-watch-from-json environ-pairs])
 (import .semaphore_model [SEMAPHORE-PREFIX lease-op semaphore-write-refusal semaphore-key])
@@ -404,16 +404,23 @@
 (setv LIVE-PHASES #{"preparing" "probing" "starting" "backoff" "running" "stopping" "stop-unconfirmed"})
 
 
+(defn #^ tuple service-rows [#^ int now #^ ClusterState state #^ str name #^ ClusterTiming timing]
+  "job name の process の行の母集団(worker の名の順): lease の内に報告した全部の worker の最新の報告のうち、名が一致する行と、
+   入れ替えで退いた process の行(行の名は <名>#retired-<世代>・retiredFrom = 名)。「まだどこかで動いているか」(still-live-somewhere)と
+   「どの版が動いているか」(resource_policy.live-processes)が同じ母集団を読むための定義点。"
+  (tuple (gfor #(wname st) (sorted (.items state.statuses))
+               :setv w (.get state.workers wname)
+               :if (and (is-not w None) (alive now w timing.lease-ms))
+               row (.get st "jobs" [])
+               :if (or (= (.get row "name") name) (= (.get row "retiredFrom") name))
+               row)))
+
+
 (defn #^ bool still-live-somewhere [#^ int now #^ ClusterState state #^ str name #^ ClusterTiming timing]
   "生きている worker の最新の報告に、その job がまだ動いている形で載っているか。載っている間は他へ置かない
-   (動いている担い手から移す時、元の担い手が止め終えるまで新しい担い手を起動しない = 同じ job を 2 つ動かさない)。"
-  (any (gfor #(wname st) (.items state.statuses)
-             :setv w (.get state.workers wname)
-             (and (is-not w None) (alive now w timing.lease-ms)
-                  ;; 入れ替えで退いた process(行の名は <名>#retired-<世代>・retiredFrom = 名)も、その job がまだ動いていると数える。
-                  (any (gfor row (.get st "jobs" [])
-                             (and (or (= (.get row "name") name) (= (.get row "retiredFrom") name))
-                                  (in (.get row "phase") LIVE-PHASES))))))))
+   (動いている担い手から移す時、元の担い手が止め終えるまで新しい担い手を起動しない = 同じ job を 2 つ動かさない)。
+   入れ替えで退いた process も、その job がまだ動いていると数える(母集団は service-rows)。"
+  (any (gfor row (service-rows now state name timing) (in (.get row "phase") LIVE-PHASES))))
 
 
 ;; --- drain(2026-09-25) -----------------------------------------------------------------
@@ -643,18 +650,33 @@
            (list task.needs) (dict task.versions) (or (.join " / " seen) "(生きている worker が無い)")))
 
 
+(defn #^ UnplacedKind unplaced-kind [#^ int now #^ ClusterState state #^ ClusterJob job #^ ClusterTiming timing]
+  "担い手の無い job を、なぜ置けないかの種類に分ける — 状態の表示(unplaced-jobs の文)と版の判定(running-process の種類 →
+   resource_policy.version-state: 前の担い手を待つのは正常な途中・他の 2 つは待っても進まない)が同じ分け方を読むため。"
+  (cond
+    (still-live-somewhere now state job.spec.name timing) UnplacedKind.WAITING-PREVIOUS-HOLDER
+    (not (any (gfor w (.values state.workers) (and (alive now w timing.lease-ms) (eligible job w)
+                                                    (not-in w.name (draining-workers state now))))))
+      UnplacedKind.NO-ELIGIBLE-WORKER
+    True UnplacedKind.NO-ROOM))
+
+
+(defn #^ str unplaced-text [#^ UnplacedKind kind #^ ClusterJob job]
+  "置き先が無い理由の種類 → 人が読む文(状態の表示 GET /state の unplaced と Service の readyReason の綴り)。"
+  (match kind
+    UnplacedKind.WAITING-PREVIOUS-HOLDER "前の担い手が止め終えるのを待っている"
+    UnplacedKind.NO-ELIGIBLE-WORKER
+      (.format "置ける worker が無い(要る能力 {}・固定 {}。専用の能力を持つ worker には、そのどれかを要る job だけを置く。drain 中の worker には置かない)"
+               (list job.needs) job.pin)
+    UnplacedKind.NO-ROOM "置ける worker に空きが無い"))
+
+
 (defn #^ dict unplaced-jobs [#^ int now #^ ClusterState state #^ ClusterTiming timing]
   "担い手の無い job と、その理由(状態の表示用)。"
   (dfor job (active-jobs state)
         :if (not-in job.spec.name state.placements)
         job.spec.name
-        (cond
-          (still-live-somewhere now state job.spec.name timing) "前の担い手が止め終えるのを待っている"
-          (not (any (gfor w (.values state.workers) (and (alive now w timing.lease-ms) (eligible job w)
-                                                          (not-in w.name (draining-workers state now))))))
-            (.format "置ける worker が無い(要る能力 {}・固定 {}。専用の能力を持つ worker には、そのどれかを要る job だけを置く。drain 中の worker には置かない)"
-                     (list job.needs) job.pin)
-          True "置ける worker に空きが無い")))
+        (unplaced-text (unplaced-kind now state job timing) job)))
 
 
 (setv DETACHED-TERMINAL #("finished" "code-failed" "env-failed" "failed" "version-mismatch" "lost" "cancelled"))

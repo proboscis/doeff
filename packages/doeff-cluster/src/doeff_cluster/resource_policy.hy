@@ -7,11 +7,14 @@
 ;;;   一覧の丸ごとの上書きはしない。宣言を消せるのは所有者か、明示の force つきの delete だけ。
 ;;; - readiness: Service が Ready か(service-readiness)。process の生存(worker の報告の running)と、宣言が readiness を
 ;;;   持てば ReportReady の直近の報告の両方で決める。
+;;; - 版の判定: Service の指定の版が実際に仕事をしているか(version-state — 5 値・status.version)。running-process・入れ替えの見張り・
+;;;   停止の述語(service-stopped — Rollout の相手の観測 api_policy.target-view と共有)を呼んで組み立てる。
 (import dataclasses [replace])
 (import json)
-(import .cluster_model [ClusterState ClusterTiming Placement])
-(import .worker_model [spec-hash])
-(import .cluster_policy [job-from-json job-to-json alive still-live-somewhere unplaced-jobs task-summary])
+(import .cluster_model [ClusterState ClusterTiming Placement HandoffPhase UnplacedKind NotReadyKind VersionState VersionVerdict
+                        LiveProcess])
+(import .worker_model [spec-hash JobPhase])
+(import .cluster_policy [job-from-json job-to-json alive still-live-somewhere service-rows unplaced-kind unplaced-text task-summary])
 (import .rollout_policy [validate-rollout-spec rollout-targets target-key TERMINAL-PHASES])
 (import .readiness_model [handoff-timeout-ms])
 
@@ -71,15 +74,18 @@
 (defn #^ dict running-process [#^ ClusterState state #^ str name #^ int now #^ ClusterTiming timing
                                #^ (| Placement None) [placement None]]
   "Service を今動かしている process。ok = 担い手の worker が今の宣言の spec(版と設定の指紋・割り当ての世代)で running と
-   報告している。ok でなければ state(NotReady | Unknown)と reason を持つ。
+   報告している。ok でなければ state(NotReady | Unknown)と reason と、理由の種類 kind(NotReadyKind — 版の判定 version-state が
+   文を読まずに分けるため)を持つ。kind が NOT-RUNNING なら担い手の行 row(行に載っていなければ None)も持つ。
+   ok・state・reason の意味は readiness・入れ替えの合図(api_policy.ready-instance)・drain・計器が読むので変えない。
    placement = 見る置き先(既定 = いまの置き先。drain で並べた置き先(surge)の process を見る時はそれを渡す — drain_policy)。"
   (setv job (next (gfor j state.jobs :if (= j.spec.name name) j) None))
-  (defn no [s reason] {"ok" False "state" s "reason" reason "job" job})
-  (when (is job None) (return (no "NotReady" "宣言が無い")))
-  (when (= job.replicas 0) (return (no "NotReady" "replicas 0(置かない)")))
+  (defn no [s kind reason #** extra] (| {"ok" False "state" s "kind" kind "reason" reason "job" job} extra))
+  (when (is job None) (return (no "NotReady" NotReadyKind.NO-DECLARATION "宣言が無い")))
+  (when (= job.replicas 0) (return (no "NotReady" NotReadyKind.NO-REPLICAS "replicas 0(置かない)")))
   (setv a (if (is placement None) (.get state.placements name) placement))
   (when (is a None)
-    (return (no "NotReady" (+ "置き先が無い: " (.get (unplaced-jobs now state timing) name "")))))
+    (setv unplaced (unplaced-kind now state job timing))
+    (return (no "NotReady" (unplaced-not-ready unplaced) (+ "置き先が無い: " (unplaced-text unplaced job)))))
   (setv warming (< (- now state.started-ms) timing.lease-ms)
         st (.get state.statuses a.worker))
   ;; 担い手の報告が古い: 移し替えの期限(reassign-after-ms)の内なら「分からない」(Unknown — 途絶の間。Rollout は失敗と数えない)。
@@ -88,23 +94,30 @@
   (when (or (is st None) (> (- now (get st "at")) timing.lease-ms))
     (setv carrier (.get state.workers a.worker)
           silent (and carrier (alive now carrier timing.reassign-after-ms)))
-    (return (no (if (or warming silent) "Unknown" "NotReady") (.format "担い手 {} の報告が無い・古い" a.worker))))
+    (return (no (if (or warming silent) "Unknown" "NotReady") NotReadyKind.CARRIER-SILENT
+                (.format "担い手 {} の報告が無い・古い" a.worker))))
   (setv row (job-status-row state a.worker name))
   (when (or (is row None) (!= (.get row "phase") "running"))
-    (return (no "NotReady" (.format "担い手 {} の上で {}" a.worker (if row (.get row "phase") "まだ起動していない")))))
+    (return (no "NotReady" NotReadyKind.NOT-RUNNING
+                (.format "担い手 {} の上で {}" a.worker (if row (.get row "phase") "まだ起動していない"))
+                :row row)))
   ;; 担い手の行の detail(入れ替えの途中・新の入口を読み込めない理由 — worker_policy.statuses)を添える: Service の status.readyReason
   ;; から「なぜ新が起きないか」が読める(2026-09-25)。
   (setv note (if (.get row "detail") (+ ":" (get row "detail")) ""))
   (when (!= (.get row "runningRevision") job.spec.revision)
-    (return (no "NotReady" (.format "版が違う(動いている版 {}・宣言 {}){}" (.get row "runningRevision") job.spec.revision note))))
+    (return (no "NotReady" NotReadyKind.REVISION-MISMATCH
+                (.format "版が違う(動いている版 {}・宣言 {}){}" (.get row "runningRevision") job.spec.revision note))))
   (setv want (spec-hash job.spec))
   (when (not (.get row "instance"))
-    (return (no "NotReady" (.format "担い手 {} が process の世代を報告しない(世代を知らない古い worker)" a.worker))))
+    (return (no "NotReady" NotReadyKind.NO-INSTANCE
+                (.format "担い手 {} が process の世代を報告しない(世代を知らない古い worker)" a.worker))))
   (when (!= (.get row "specHash") want)
-    (return (no "NotReady" (.format "動いている process は前の宣言(設定か版)で起こした物(指紋 {}・宣言 {})— 起こし直しを待っている{}"
-                                    (.get row "specHash") want note))))
+    (return (no "NotReady" NotReadyKind.SPEC-MISMATCH
+                (.format "動いている process は前の宣言(設定か版)で起こした物(指紋 {}・宣言 {})— 起こし直しを待っている{}"
+                         (.get row "specHash") want note))))
   (when (and (is-not (.get row "placement") None) (!= (.get row "placement") a.generation))
-    (return (no "NotReady" (.format "動いている process は前の割り当ての世代 {} で起こした物(いま {})" (.get row "placement") a.generation))))
+    (return (no "NotReady" NotReadyKind.PLACEMENT-MISMATCH
+                (.format "動いている process は前の割り当ての世代 {} で起こした物(いま {})" (.get row "placement") a.generation))))
   {"ok" True "job" job "worker" a.worker "row" row "instance" (get row "instance") "attempt" (str (.get row "attempts"))
    "specHash" want "placement" (.get row "placement")})
 
@@ -161,6 +174,152 @@
     True (| (verdict "Ready" (.get report "reason" "")) {"role" role})))
 
 
+;; --- 版の判定(2026-09-29・#1013)---------------------------------------------------------------
+;; Service の指定の版(spec.revision)が実際に仕事をしているかを 5 値(cluster_model.VersionState)で答える。running-process の ok は
+;; 入れ替え(handoff)の途中で「新しい版が仕事をしている」を意味しない(新が Ready になるまで旧い版が退避名 <名>#retired-<世代> で
+;; 仕事を続け、諦めた後も動き続ける)ので、running-process の意味は変えずに、ここで入れ替えの見張りと退いた process を重ねる。
+
+(setv PROCESS-PHASES (frozenset (gfor p #(JobPhase.RUNNING JobPhase.STOPPING JobPhase.STOP-UNCONFIRMED) p.value)))
+;; 子 process が生きている phase(worker_policy.phase-of — process を持つ行だけがこの 3 つになる)。
+
+
+(defn #^ bool service-stopped [#^ ClusterState state #^ str name #^ int now #^ ClusterTiming timing]
+  ;; defk にできない: coordinator の純粋な判断(Program の外 — api_policy.target-view と version-state)が呼ぶ
+  "Service name が止まっているか: 宣言が無いか replicas 0、かつ置き先が無く、どこにも生きていない(still-live-somewhere)。
+   Rollout の相手の観測(api_policy.target-view の stopped)と版の判定(version-state の Stopped)が同じ条件を読むための定義点。"
+  (setv job (next (gfor j state.jobs :if (= j.spec.name name) j) None))
+  (and (or (is job None) (= job.replicas 0)) (not-in name state.placements)
+       (not (still-live-somewhere now state name timing))))
+
+
+(defn #^ tuple live-processes [#^ ClusterState state #^ str name #^ int now #^ ClusterTiming timing]
+  ;; defk にできない: coordinator の純粋な判断(Program の外 — resource-json と version-state)が呼ぶ
+  "Service name の process が生きている行の版と、入れ替えで退いた旧い process か(status.version.running — 事実の列で、判定ではない)。
+   母集団は still-live-somewhere と同じ(cluster_policy.service-rows)で、phase は PROCESS-PHASES。drain で並べた置き先の process も入る。"
+  (tuple (gfor row (service-rows now state name timing)
+               :if (in (.get row "phase") PROCESS-PHASES)
+               ;; 版は process を持つ行なら worker が必ず載せる(worker_policy.statuses)。載せない行は None のまま運ぶ(黙って埋めない)。
+               (LiveProcess :revision (.get row "runningRevision") :retired (= (.get row "retiredFrom") name)))))
+
+
+(defn #^ (| JobPhase None) phase-named [phase]
+  ;; defk にできない: coordinator の純粋な判断(Program の外 — version-state)が呼ぶ
+  "worker の行の phase の綴り → JobPhase。coordinator の知らない綴り(coordinator より新しい worker の phase)は None —
+   呼び手は既定の状態へ倒さず「分からない」と答える。"
+  (next (gfor p JobPhase :if (= p.value phase) p) None))
+
+
+(defn #^ NotReadyKind unplaced-not-ready [#^ UnplacedKind kind]
+  ;; defk にできない: coordinator の純粋な判断(Program の外 — running-process)が呼ぶ
+  "置き先が無い理由の種類 → running-process の NotReady の種類(unplaced-jobs の 3 種をそのまま種類にする)。"
+  (match kind
+    UnplacedKind.WAITING-PREVIOUS-HOLDER NotReadyKind.WAITING-PREVIOUS-HOLDER
+    UnplacedKind.NO-ELIGIBLE-WORKER NotReadyKind.NO-ELIGIBLE-WORKER
+    UnplacedKind.NO-ROOM NotReadyKind.NO-ROOM))
+
+
+(defn #^ VersionState phase-version [#^ JobPhase phase #^ bool retryable]
+  ;; defk にできない: coordinator の純粋な判断(Program の外 — version-state)が呼ぶ
+  "担い手の行の phase(running-process が running でないと答えた行)→ 版の判定の状態。retryable = ENV-FAILED の失敗を worker が
+   再試行するか(行の retryable)。phase を足したら写し先をここに足す — 漏れると何も返さず、網羅の検査(test_version_state)が赤になる。"
+  (match phase
+    JobPhase.PREPARING VersionState.UPDATING
+    JobPhase.PROBING VersionState.UPDATING
+    JobPhase.STARTING VersionState.UPDATING
+    JobPhase.STOPPING VersionState.UPDATING
+    ;; 担い手がまだ宣言を受け取っていない。
+    JobPhase.STOPPED VersionState.UPDATING
+    ;; 実行環境の準備の失敗: 一時の失敗は撃ち直しを待つ途中・再試行しない失敗は待っても進まない。
+    JobPhase.ENV-FAILED (if retryable VersionState.UPDATING VersionState.BLOCKED)
+    JobPhase.CODE-FAILED VersionState.BLOCKED
+    JobPhase.PROBE-FAILED VersionState.BLOCKED
+    ;; 落ちて起こし直している(1 回落ちただけでも Blocked — 落ちた回数は行の detail の文にしか無い・設計 v3 の戻せる決定)。
+    JobPhase.BACKOFF VersionState.BLOCKED
+    JobPhase.STOP-UNCONFIRMED VersionState.BLOCKED
+    ;; service の process が終わった — 想定の外。
+    JobPhase.FINISHED VersionState.BLOCKED
+    ;; 入れ替えを諦めた(worker の側から見た同じ事実 — 見張りの Abandoned)。
+    JobPhase.HANDOFF-ABANDONED VersionState.BLOCKED
+    ;; running-process は phase が running の行を「running でない」と答えないので、ここへは届かない。届いたら答えの食い違いなので
+    ;; 既定の状態へ倒さず「分からない」と答える。
+    JobPhase.RUNNING VersionState.UNKNOWN))
+
+
+(defn #^ VersionState not-ready-version [#^ NotReadyKind kind #^ (| JobPhase None) phase #^ bool retryable]
+  ;; defk にできない: coordinator の純粋な判断(Program の外 — version-state)が呼ぶ
+  "running-process が ok でない理由の種類 → 版の判定の状態(Unknown の答えは version-state が先に Unknown にする)。phase・retryable は
+   種類が NOT-RUNNING の時だけ読む: 担い手の行の phase(None = 行にまだ載っていない = 宣言を受け取っていない)と ENV-FAILED を
+   再試行するか。種類を足したら写し先をここに足す(漏れると網羅の検査が赤になる)。"
+  (match kind
+    ;; 宣言を消した直後・replicas 0 で止めている途中(停止の述語が止まっていないと答えた = process がまだ生きている)。
+    NotReadyKind.NO-DECLARATION VersionState.UPDATING
+    NotReadyKind.NO-REPLICAS VersionState.UPDATING
+    ;; drain や入れ替えの正常な途中。
+    NotReadyKind.WAITING-PREVIOUS-HOLDER VersionState.UPDATING
+    NotReadyKind.NO-ELIGIBLE-WORKER VersionState.BLOCKED
+    NotReadyKind.NO-ROOM VersionState.BLOCKED
+    ;; 担い手の報告が途絶えて移し替えの期限を過ぎた(次の調停で他へ移す)。
+    NotReadyKind.CARRIER-SILENT VersionState.UPDATING
+    NotReadyKind.NOT-RUNNING (if (is phase None) VersionState.UPDATING (phase-version phase retryable))
+    NotReadyKind.REVISION-MISMATCH VersionState.UPDATING
+    ;; process の世代を報告しない古い worker — worker を上げるまで進まない。
+    NotReadyKind.NO-INSTANCE VersionState.BLOCKED
+    NotReadyKind.SPEC-MISMATCH VersionState.UPDATING
+    NotReadyKind.PLACEMENT-MISMATCH VersionState.UPDATING))
+
+
+(defn #^ VersionVerdict not-ready-verdict [#^ dict proc]
+  ;; defk にできない: coordinator の純粋な判断(Program の外 — version-state)が呼ぶ
+  "running-process の NotReady の答え → 版の判定(理由は running-process の文)。担い手の行が coordinator の知らない phase を
+   持つ時は Unknown(既定の状態へ倒さない)。"
+  ;; row は種類が NOT-RUNNING の答えだけが持つ(担い手の行 — 行に載っていなければ None)。
+  (setv row (.get proc "row") reason (get proc "reason")
+        phase (if (is row None) None (phase-named (.get row "phase"))))
+  (if (and (is-not row None) (is phase None))
+      (VersionVerdict :state VersionState.UNKNOWN :reason (+ "担い手が coordinator の知らない phase を報告した: " reason))
+      (VersionVerdict :state (not-ready-version (get proc "kind") phase (and (is-not row None) (is (.get row "retryable") True)))
+                      :reason reason)))
+
+
+(defn #^ VersionVerdict version-state [#^ ClusterState state #^ str name #^ int now #^ ClusterTiming timing]
+  ;; defk にできない: coordinator の純粋な判断(Program の外 — snapshot と resource-json)が呼ぶ
+  "Service name の指定の版が実際に仕事をしているか(status.version)。上から順に判定する:
+   受け付けていない宣言 → Blocked・止まっている(service-stopped)→ Stopped・担い手の報告が途絶えている(running-process の
+   Unknown)→ Unknown・入れ替えを諦めた → Blocked・running-process が ok でない → 理由の種類と phase で Updating / Blocked・
+   ok だが入れ替えの途中(見張りが新の Ready を待っている・退いた旧い process が生きている)→ Updating・それ以外 → Current
+   (健康 readiness は含まない — 表示は status.ready が運ぶ)。"
+  (setv refused (.get state.refused name))
+  (when (is-not refused None)
+    (return (VersionVerdict :state VersionState.BLOCKED :reason (+ "宣言を受け付けていない: " refused.reason))))
+  (when (service-stopped state name now timing)
+    (return (VersionVerdict :state VersionState.STOPPED :reason "止めている")))
+  (setv proc (running-process state name now timing)
+        watch (.get state.handoffs name)
+        handoff (if (is watch None) None watch.phase)
+        retired (.join "・" (gfor p (live-processes state name now timing) :if p.retired (str p.revision))))
+  (cond
+    (and (not (get proc "ok")) (= (get proc "state") "Unknown"))
+      (VersionVerdict :state VersionState.UNKNOWN :reason (get proc "reason"))
+    (= handoff HandoffPhase.ABANDONED)
+      (VersionVerdict :state VersionState.BLOCKED
+                      :reason (if retired (.format "入れ替えを諦めた(旧い版 {} が動き続けている)" retired) "入れ替えを諦めた"))
+    (not (get proc "ok")) (not-ready-verdict proc)
+    (= handoff HandoffPhase.WAITING)
+      (VersionVerdict :state VersionState.UPDATING
+                      :reason (.format "入れ替えの途中(新しい版 {} は準備中{})" (. (get proc "job") spec revision)
+                                       (if retired (.format "・旧い版 {} が仕事をしている" retired) "")))
+    retired
+      (VersionVerdict :state VersionState.UPDATING :reason (.format "入れ替えの途中(旧い版 {} がまだ動いている)" retired))
+    True (VersionVerdict :state VersionState.CURRENT :reason "")))
+
+
+(defn #^ dict version-json [#^ VersionVerdict verdict #^ tuple live]
+  ;; defk にできない: 資源の見せる形(Program の外 — resource-json)が呼ぶ JSON の境界
+  "status.version の JSON の形(資源の口の境界): {state reason running: [{revision retired}]}。"
+  {"state" verdict.state.value "reason" verdict.reason
+   "running" (lfor p live {"revision" p.revision "retired" p.retired})})
+
+
 (defn #^ ClusterState record-readiness [#^ ClusterState state #^ str name #^ dict body #^ int now]
   (when (not (any (gfor j state.jobs (= j.spec.name name))))
     (refuse 404 (+ "無い Service: " name)))
@@ -185,7 +344,10 @@
     (setv (get out (key-of "Service" job.spec.name))
           {"spec" (service-spec job)
            "status" (| {"worker" (if a a.worker None) "placement" (if a a.generation None)
-                        "ready" (get (service-readiness state job.spec.name now timing) "state")}
+                        "ready" (get (service-readiness state job.spec.name now timing) "state")
+                        ;; 版の判定の状態(2026-09-29 — ready と同じく、変わった時に出来事と resourceVersion を進める)。理由と動いている
+                        ;; 版の列は変わりやすい観測なので入れない(resource-json が組む)。
+                        "version" {"state" (. (version-state state job.spec.name now timing) state value)}}
                        ;; drain で並べた置き先(2026-09-25)。在る間だけ載せる(無い Service の status の形・版は以前と同じ)。
                        (if (in job.spec.name state.surges)
                            {"surge" (. (get state.surges job.spec.name) worker)}
@@ -195,10 +357,11 @@
                        (if (in job.spec.name state.handoffs)
                            {"handoff" (.status-json (get state.handoffs job.spec.name) (handoff-timeout-ms job.readiness))}
                            {}))}))
-  ;; 受け付けない Service の行(改訂 1 の C): spec は元の行のまま・status に理由。
+  ;; 受け付けない Service の行(改訂 1 の C): spec は元の行のまま・status に理由。版の判定は DELETE で消すまで Blocked。
   (for [r (.values state.refused)]
     (setv (get out (key-of "Service" r.name))
-          {"spec" (dfor #(k v) (.items r.row) :if (!= k "name") k v) "status" {"refused" r.reason}}))
+          {"spec" (dfor #(k v) (.items r.row) :if (!= k "name") k v)
+           "status" {"refused" r.reason "version" {"state" (. (version-state state r.name now timing) state value)}}}))
   (for [w (.values state.workers)]
     (setv (get out (key-of "Worker" w.name))
           {"spec" {"provides" (list w.provides) "exclusive" (list w.exclusive) "node" w.node "capacity" w.capacity "versions" (dict w.versions)}
@@ -296,7 +459,9 @@
                 reports (.get state.readiness name))
           (.update status {"readyReason" (get verdict "reason")
                            "lastReadiness" (if reports (get reports -1) None)
-                           "process" (if a (job-status-row state a.worker name) None)}))
+                           "process" (if a (job-status-row state a.worker name) None)
+                           ;; 版の判定(state は snapshot と同じ値)と、その理由・動いている版の列(2026-09-29)。
+                           "version" (version-json (version-state state name now timing) (live-processes state name now timing))}))
     (= kind "Worker")
       (do (setv w (get state.workers name))
           (.update status {"silentMs" (- now w.last-seen-ms) "alive" (alive now w timing.lease-ms)}))
