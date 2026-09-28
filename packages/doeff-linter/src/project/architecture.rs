@@ -10,6 +10,7 @@
 //!            (layer entry … :dependency-layers [intent protocol])]   ; 依存先のどの層を読んでよいか(既定 = :open-layers)
 //!   :shared "shared"                 ; どの service からも読める置き場(root/shared/<層>/)
 //!   :foundation "foundation"         ; service の外の層(root/foundation/)— :layers に同じ名の layer が要る
+//!   :verification-environment "agora_sim"  ; 模擬の環境の置き場(root/<dir>/ 1 つ)— service ではない置き場で DOEFF114・115 にしない。他の規則は当たる
 //!   :open-layers [intent]            ; 別の service から読んでよい層(Tach の interfaces に当たる)
 //!   :roles {:judgment "業務の判断をする純粋な関数" …}
 //!   :wire-modules ["controllers.foundation.record_client"]  ; JSON の送受信そのものを行う foundation の module(DOEFF120 が JsonValue を許す)
@@ -84,6 +85,11 @@ pub struct Architecture {
     pub layers: Vec<ArchLayer>,
     pub shared: Option<String>,
     pub foundation: Option<String>,
+    /// 模擬の環境の置き場(root の直下の dir 1 つ・`:verification-environment "agora_sim"`)— 本番の組み立てのまま handler だけを
+    /// 差し替えて全 service を走らせる検証の環境は、全 service の core と entry を読むのでどの service にも属さない(R8 の scripts/ と
+    /// 同じ理屈)。この dir の下の module は DOEFF114・115 で置き場所の違反にしない。ほかの規則は今までどおり当たる。
+    /// 1 つだけ受ける(列は受けない — 何でも逃がせる欄にしない。:legacy を廃した理由と同じ)。
+    pub verification_environment: Option<String>,
     pub open_layers: Vec<String>,
     pub services: Vec<ArchService>,
     /// 素の関数を許す理由の種類の閉じた一覧(DOEFF203 の受け入れる答え)。
@@ -362,6 +368,7 @@ impl<'a> Parser<'a> {
             layers: Vec::new(),
             shared: None,
             foundation: None,
+            verification_environment: None,
             open_layers: Vec::new(),
             services: Vec::new(),
             plain_callable_reasons: Vec::new(),
@@ -394,6 +401,7 @@ impl<'a> Parser<'a> {
                 }
                 ":shared" => arch.shared = self.required_string(value, ":shared"),
                 ":foundation" => arch.foundation = self.name(value),
+                ":verification-environment" => arch.verification_environment = self.required_string(value, ":verification-environment"),
                 ":open-layers" => {
                     arch.open_layers = self.names(value, ":open-layers");
                     open_given = true;
@@ -600,6 +608,17 @@ impl<'a> Parser<'a> {
         if let Some(foundation) = &arch.foundation {
             if !layers.contains(foundation.as_str()) {
                 push(&mut self.problems, format!(":foundation {} と同じ名の層が :layers に無い", foundation));
+            }
+        }
+        if let Some(place) = &arch.verification_environment {
+            if place.is_empty() || place.contains('/') {
+                push(&mut self.problems, format!(":verification-environment {:?} は root の直下の dir の名 1 つ(`/` を含まない)", place));
+            }
+            if arch.shared.as_deref() == Some(place.as_str()) || arch.foundation.as_deref() == Some(place.as_str()) {
+                push(&mut self.problems, format!(":verification-environment {} は shared・foundation と同じ名にできない", place));
+            }
+            if arch.services.iter().any(|s| s.dir == *place) {
+                push(&mut self.problems, format!(":verification-environment {} は宣言した service の dir と同じ名にできない", place));
             }
         }
         for open in &arch.open_layers {

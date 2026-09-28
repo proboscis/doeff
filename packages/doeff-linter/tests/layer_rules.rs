@@ -1677,3 +1677,31 @@ fn an_unreadable_hy_file_is_reported_to_the_editor_and_the_hook() {
     let (_, stdout, stderr) = run(dir.path(), &["--hook", "--no-log"], Some(&hook_input));
     assert!(stdout.contains("DOEFF128"), "{}\n{}", stdout, stderr);
 }
+
+/// :verification-environment の dir(模擬の環境 — service ではない置き場)の下の module は DOEFF114・115 にしない。
+/// 1 つだけ受け、ほかの置き場の判定は変えない。service と同じ名は設定の誤り。
+#[test]
+fn verification_environment_is_a_declared_non_service_place() {
+    let files = [
+        ("app/sim/world.hy", tags("sim", "entry") + "(defn world [] 1)\n"),
+        ("app/sim/peers/jev.hy", tags("sim", "foundation") + "(defn peer [] 1)\n"),
+        ("app/sim/tests/test_world.hy", "(defn test-world [] 1)\n".to_string()),
+        ("app/old/anything.hy", "(defn legacy [] 1)\n".to_string()),
+    ];
+    let dir = architecture_repo(&files, "");
+    let path = dir.path().join("architecture.hy");
+    let text = std::fs::read_to_string(&path).unwrap().replace(":foundation foundation)", ":foundation foundation\n  :verification-environment \"sim\")");
+    std::fs::write(&path, text).unwrap();
+    let (_, report) = editor(dir.path());
+    assert_eq!(keys(&report, "DOEFF114"), vec!["app/old/anything.hy::DOEFF114"]);
+    assert_eq!(keys(&report, "DOEFF115"), vec!["app/old::DOEFF115"]);
+
+    // service の dir と同じ名は設定の誤り(置き場の判定が 2 通りに読める)。
+    let dir = architecture_repo(&files, "");
+    let path = dir.path().join("architecture.hy");
+    let text = std::fs::read_to_string(&path).unwrap().replace(":foundation foundation)", ":foundation foundation\n  :verification-environment \"billing\")");
+    std::fs::write(&path, text).unwrap();
+    let (code, _, stderr) = run(dir.path(), &["--output-format", "editor-json", "--no-log"], None);
+    assert_eq!(code, 2, "{}", stderr);
+    assert!(stderr.contains(":verification-environment billing は宣言した service の dir と同じ名にできない"), "{}", stderr);
+}

@@ -226,6 +226,7 @@ law の対応だけを残す。無ければ TOML の設定で今どおり動く�
            (layer protocol …) (layer foundation …)
            (layer entry … :dependency-layers [intent protocol])]   ; 外の世界から遠い順。:dependency-layers = 依存先で読んでよい層(既定 :open-layers)
   :shared "shared"                            ; root/shared/<層>/ — どの service からも読める
+  :verification-environment "agora_sim"      ; 模擬の環境(本番の組み立てのまま handler だけを差し替えて全 service を走らせる検証の環境)の置き場 1 つ — service ではない。DOEFF114・115 にしない(列は受けない)
   :foundation foundation                      ; root/foundation/ — service の外の層(同じ名の layer が要る)
   :open-layers [intent]                       ; 別の service から読んでよい層(既定 intent)
   :roles {:judgment "業務の判断をする純粋な関数" …}   ; role の説明
