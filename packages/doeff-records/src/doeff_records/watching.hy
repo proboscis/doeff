@@ -1,4 +1,5 @@
-;;; WatchChanges の待ち(handler の組が共有する 1 つ)— 変更が来るか timeout 秒が過ぎるまで、poll-seconds ごとに読み直す。
+;;; WatchChanges の待ち(本物の外とつながる handler — PostgreSQL の置き場と HTTP の口 — が共有する 1 つ)— 変更が来るか timeout 秒が
+;;; 過ぎるまで、poll-seconds ごとに読み直す。memory の置き場はこれを使わない(書きが待ち手を起こす呼び鈴 — memory.hy の memory-watch)。
 ;;; 時計は doeff-time(GetMonotonic で経過を測り、Delay で眠る・GetTime で保持の期限を刻む)。仮想の時計の下では一瞬で終わる。
 (require doeff-hy.macros [defk <-])
 (import collections.abc [Callable])
