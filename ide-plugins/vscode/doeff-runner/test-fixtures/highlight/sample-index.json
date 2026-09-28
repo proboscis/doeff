@@ -1,0 +1,201 @@
+{
+  "version": 5,
+  "root": "/ws",
+  "files": [
+    {
+      "path": "/ws/sample.hy",
+      "module": "sample",
+      "definitions": [
+        {
+          "name": "run-it",
+          "mangled": "run_it",
+          "qualified_name": "sample.run_it",
+          "kind": "defk",
+          "range": {
+            "start": {
+              "line": 0,
+              "character": 6
+            },
+            "end": {
+              "line": 0,
+              "character": 12
+            }
+          },
+          "full_range": {
+            "start": {
+              "line": 0,
+              "character": 0
+            },
+            "end": {
+              "line": 4,
+              "character": 21
+            }
+          },
+          "container": null,
+          "docstring": "要求 1 つを実体化するため。",
+          "params": [
+            "request",
+            "budget"
+          ],
+          "bases": [],
+          "raw": {
+            "direct": [],
+            "via": []
+          },
+          "tags": null,
+          "effects": null,
+          "param_types": [],
+          "answer_type": null,
+          "contracts": [],
+          "handles": null
+        }
+      ],
+      "imports": [],
+      "references": [
+        {
+          "name": "run-it",
+          "mangled": "run_it",
+          "qualifier": null,
+          "range": {
+            "start": {
+              "line": 0,
+              "character": 6
+            },
+            "end": {
+              "line": 0,
+              "character": 12
+            }
+          }
+        },
+        {
+          "name": "request",
+          "mangled": "request",
+          "qualifier": null,
+          "range": {
+            "start": {
+              "line": 0,
+              "character": 14
+            },
+            "end": {
+              "line": 0,
+              "character": 21
+            }
+          }
+        },
+        {
+          "name": "budget",
+          "mangled": "budget",
+          "qualifier": null,
+          "range": {
+            "start": {
+              "line": 0,
+              "character": 22
+            },
+            "end": {
+              "line": 0,
+              "character": 28
+            }
+          }
+        },
+        {
+          "name": "outcome",
+          "mangled": "outcome",
+          "qualifier": null,
+          "range": {
+            "start": {
+              "line": 2,
+              "character": 6
+            },
+            "end": {
+              "line": 2,
+              "character": 13
+            }
+          }
+        },
+        {
+          "name": "outcome-of",
+          "mangled": "outcome_of",
+          "qualifier": null,
+          "range": {
+            "start": {
+              "line": 2,
+              "character": 15
+            },
+            "end": {
+              "line": 2,
+              "character": 25
+            }
+          }
+        },
+        {
+          "name": "request",
+          "mangled": "request",
+          "qualifier": null,
+          "range": {
+            "start": {
+              "line": 2,
+              "character": 26
+            },
+            "end": {
+              "line": 2,
+              "character": 33
+            }
+          }
+        },
+        {
+          "name": "outcome",
+          "mangled": "outcome",
+          "qualifier": null,
+          "range": {
+            "start": {
+              "line": 3,
+              "character": 12
+            },
+            "end": {
+              "line": 3,
+              "character": 19
+            }
+          }
+        },
+        {
+          "name": "budget",
+          "mangled": "budget",
+          "qualifier": null,
+          "range": {
+            "start": {
+              "line": 4,
+              "character": 12
+            },
+            "end": {
+              "line": 4,
+              "character": 18
+            }
+          }
+        }
+      ],
+      "calls": [
+        {
+          "callee": "outcome-of",
+          "mangled": "outcome_of",
+          "qualifier": null,
+          "range": {
+            "start": {
+              "line": 2,
+              "character": 15
+            },
+            "end": {
+              "line": 2,
+              "character": 25
+            }
+          },
+          "caller": 0,
+          "performed": true,
+          "target": null
+        }
+      ],
+      "errors": []
+    }
+  ],
+  "raw_via": "not-computed",
+  "raw_catalog_problems": []
+}
