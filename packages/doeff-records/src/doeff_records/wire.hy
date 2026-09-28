@@ -10,7 +10,7 @@
 (require doeff-hy.macros [defk <- val])
 (import dataclasses [dataclass])
 (import doeff_hy.frozen [FrozenMap thaw-json])
-;; JSON の値の型の定義は doeff_hy.json_value の 1 か所だけ(agora-redesign #840)— ここは import して、この module の読み手へも同じ名で見せる。
+;; JSON の値の型の定義は doeff_hy.json_value の 1 か所だけ — ここは import して、この module の読み手へも同じ名で見せる。
 (import doeff_hy.json_value [JsonValue])
 (import doeff_records.values [ExpectAbsent ExpectVersion ExpectAny WatchCursor ListCursor Row Missing Page Written WrittenRows
                               RowChanged RowRemoved Changes Appended Event Events Conflict Refused NotIndexed Reset

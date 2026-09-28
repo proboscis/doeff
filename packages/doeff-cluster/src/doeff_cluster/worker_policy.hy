@@ -250,7 +250,7 @@
       (replace record :stopping
         (StopProgress (if (is record.stopping None) now record.stopping.requested-ms) action.stage now))
     (isinstance action ReapJob)
-      ;; 数え方は 2 つ(agora-redesign #768): unexpected-exits = 停止を求めずに終わった回数(起こし直しの間を伸ばす・exit code を問わない)、
+      ;; 数え方は 2 つ: unexpected-exits = 停止を求めずに終わった回数(起こし直しの間を伸ばす・exit code を問わない)、
       ;; failures = そのうち exit code が 0 でなかった回数(失敗として表示する)。どちらも長く動いた後の終わりは 1 回目に数え直す。
       (do
         (setv exited (= action.outcome Outcome.EXITED)
