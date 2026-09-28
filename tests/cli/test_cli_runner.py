@@ -27,7 +27,7 @@ def run_cli(*args: str) -> subprocess.CompletedProcess[str]:
         "HOME": os.environ.get("HOME", ""),
         "DOEFF_DISABLE_DEFAULT_ENV": "1",
     }
-    for key in ("UV_PROJECT_ENVIRONMENT", "UV_CACHE_DIR", "VIRTUAL_ENV"):
+    for key in ("UV_PROJECT_ENVIRONMENT", "UV_CACHE_DIR", "VIRTUAL_ENV", "PYTHONDONTWRITEBYTECODE"):
         value = os.environ.get(key)
         if value:
             env[key] = value
