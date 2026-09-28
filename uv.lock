@@ -566,6 +566,7 @@ dev = [
     { name = "doeff-gemini" },
     { name = "doeff-hy" },
     { name = "doeff-jev" },
+    { name = "doeff-jev-proxy" },
     { name = "doeff-llm" },
     { name = "doeff-ml-nexus" },
     { name = "doeff-openai" },
@@ -612,6 +613,7 @@ dev = [
     { name = "doeff-gemini", editable = "packages/doeff-gemini" },
     { name = "doeff-hy", editable = "packages/doeff-hy" },
     { name = "doeff-jev", editable = "packages/doeff-jev" },
+    { name = "doeff-jev-proxy", editable = "packages/doeff-jev-proxy" },
     { name = "doeff-llm", editable = "packages/doeff-llm" },
     { name = "doeff-ml-nexus", editable = "packages/doeff-ml-nexus" },
     { name = "doeff-openai", editable = "packages/doeff-openai" },
@@ -888,12 +890,12 @@ dependencies = [
 
 [package.optional-dependencies]
 dogfood = [
-    { name = "doeff-core-effects" },
+    { name = "doeff-core-effects", extra = ["http-server"] },
 ]
 
 [package.metadata]
 requires-dist = [
-    { name = "doeff-core-effects", marker = "extra == 'dogfood'", editable = "packages/doeff-core-effects" },
+    { name = "doeff-core-effects", extras = ["http-server"], marker = "extra == 'dogfood'", editable = "packages/doeff-core-effects" },
     { name = "doeff-vm", editable = "packages/doeff-vm" },
     { name = "hy", git = "https://github.com/proboscis/hy.git?rev=5b10b443f231869f77182110ecff725118118463" },
 ]
