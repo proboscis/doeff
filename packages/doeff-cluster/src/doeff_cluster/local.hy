@@ -721,8 +721,8 @@
   (if (= (get answer 0) 409) False (do (answered-body answer "盤に書けない") True)))
 
 
-(defk remote-outcome [link program needs name]
-  {:pre [(: link SimLink) (: program (| Program EffectBase)) (: needs frozenset) (: name str)]
+(defk remote-outcome [link program needs name environ]
+  {:pre [(: link SimLink) (: program (| Program EffectBase)) (: needs frozenset) (: name str) (: environ dict)]
    :post [(: % (| TaskSucceeded TaskFailed))] :tags {:context "doeff-cluster" :role "protocol"}}
   "RemoteJob を本番の remote-cluster と同じ手順で coordinator へ出し、結果を待つため: 詰めた Program を PUT /programs/<sha> で置き、
    POST /tasks(task-submit-body)で出し、問い合わせ(lease を延ばす)を終わるまで続け、抜ける時は task を落とす。送れない値は送る前に
@@ -731,7 +731,7 @@
   (val sha (program-sha blob))
   (<- put tuple (send-resent link "PUT" (+ "/programs/" sha) {} {"blob" blob "versions" (current-versions)}))
   (answered-body put "task の Program を置けない")
-  (<- sent tuple (send-request link "POST" "/tasks" {} (task-submit-body sha link.revision needs name TASK-LEASE-SECONDS None)))
+  (<- sent tuple (send-request link "POST" "/tasks" {} (task-submit-body sha link.revision needs name TASK-LEASE-SECONDS None environ)))
   (val id (get (answered-body sent "task を出せない") "task"))
   (var outcome None)
   (try
@@ -755,9 +755,9 @@
           declared)))
 
 
-(defk submit-detached [link program key needs name lease-seconds retain-seconds]
+(defk submit-detached [link program key needs name lease-seconds retain-seconds environ]
   {:pre [(: link SimLink) (: program (| Program EffectBase)) (: key str) (: needs frozenset) (: name str) (: lease-seconds float)
-         (: retain-seconds float)]
+         (: retain-seconds float) (: environ dict)]
    :post [(: % DetachedSubmitAnswer)] :tags {:context "doeff-cluster" :role "protocol"}}
   "SubmitDetached を本番の DetachedClient と同じ手順で送るため: 詰めた Program を版と一緒に PUT /programs/<sha> に置き、PUT /detached/<key>
    (detached-submit-body)で出す。どちらも何度送っても同じ意味なので期限まで送り直し、届かなければ DetachedUnreachable(送れたかは
@@ -770,7 +770,7 @@
       (do (refused-or-body put "task の Program を置けない")
           (<- declared (| dict None) (declared-env link.runtime-env))
           (<- sent tuple (send-resent link "PUT" (detached-path key "") {}
-                                      (detached-submit-body sha link.revision needs name lease-seconds retain-seconds declared)))
+                                      (detached-submit-body sha link.revision needs name lease-seconds retain-seconds declared environ)))
           (if (is (get sent 0) None)
               (submit-unreachable (unreached-reason sent))
               (DetachedSubmitted key (get (refused-or-body sent "task を出せない") "created"))))))
@@ -866,7 +866,7 @@
 
 (defrecord SimChild
   "sim の子 process 1 つに宿が答える物(宿の答え host-answers の引数)。ctx = 宿の契約の run-context・program-path = Program の path・
-   environ = 宣言の :environ(上書きを重ねた物 — 名 → 値)・link = coordinator へ話す口(送り手 = job の名・居る所 = worker)・
+   environ = 宣言の :environ(上書きを重ねた物)か task の effect の :environ(名 → 値 — どちらも spec.environ)・link = coordinator へ話す口(送り手 = job の名・居る所 = worker)・
    pid = sim の中の process の番号・passable = 柵が外へ通す effect の型(SimPlan.passable)・outside = この process の外の handler の組
    (SimOutside.per-process が作った物 — 柵の外側に並べる)。"
   (#^ RunContext ctx)
@@ -922,11 +922,11 @@
     (val shape (lease-request name op token permits ttl-ms))
     (<- answer tuple (if (in op #("claim" "renew")) (send-shaped-resent link shape) (send-shaped link shape)))
     (resume (answered-body answer (.format "lease {} の {}" name op))))
-  (RemoteJob [program needs name]
-    (<- outcome (remote-outcome link program needs name))
+  (RemoteJob [program needs name environ]
+    (<- outcome (remote-outcome link program needs name environ))
     (resume (settled-value outcome)))
-  (SubmitDetached [program key needs name lease-seconds retain-seconds]
-    (<- submitted (submit-detached link program key needs name (float lease-seconds) (float retain-seconds)))
+  (SubmitDetached [program key needs name lease-seconds retain-seconds environ]
+    (<- submitted (submit-detached link program key needs name (float lease-seconds) (float retain-seconds) environ))
     (resume submitted))
   (AwaitDetached [key timeout-seconds]
     (<- awaited (await-detached link key timeout-seconds))
