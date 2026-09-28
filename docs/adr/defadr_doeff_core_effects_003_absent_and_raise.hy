@@ -347,15 +347,15 @@
   {:tags {:context "doeff-core-effects-adr" :role "foundation"}}
   (ProbeRead [] (with [(suppress ValueError)] (resume (int "数でない")))))
 
-(deff probe-expansion-refusal [source]
+(defk probe-expansion-refusal [source]
   {:pre [(: source str)] :post [(: % str)]
    :tags {:context "doeff-core-effects-adr" :role "judgment"}}
   "source を展開した時の誤りの文(通れば空の文字列)— 展開の時に断る macro の規則を検で見るため。"
   (try
     (hy.eval (hy.read-many source))
-    (return "")
+    ""
     (except [e hy.errors.HyMacroExpansionError]
-      (return (str e)))))
+      (str e))))
 
 
 (defadr ADR-DOE-CORE-EFFECTS-003
@@ -628,15 +628,15 @@
        (_check-clause-terminates "ProbeAbsent" [(hy.read "(resume None)")])
        (_check-clause-terminates "ProbeAbsent" [(hy.read "(finish None)")])
        (val head "(require doeff-hy.macros [defhandler]) (import doeff_core_effects.effects [Raise Absent]) (defhandler probe-h ")
-       (assert (in "missing resume" (probe-expansion-refusal (+ head "(ProbeRead [] \"値\"))"))) "resume の書き忘れ")
-       (assert (in "missing resume" (probe-expansion-refusal (+ head "(ProbeRead [] (if True (resume 1) None)))"))) "枝の片方だけ")
-       (assert (in "missing resume" (probe-expansion-refusal (+ head "(ProbeRead [] (when True (resume 1))))"))) "when だけ")
-       (assert (in "missing resume" (probe-expansion-refusal (+ head "(ProbeRead [] (match 1 1 (resume 1) 2 (resume 2))))"))) "最後の _ の無い match")
-       (assert (in "Raise の節は" (probe-expansion-refusal (+ head "(Raise [reason] (resume 0)))"))) "Raise の resume")
-       (assert (in "Absent の節は" (probe-expansion-refusal (+ head "(Absent [why] (transfer 0)))"))) "Absent の再開")
-       (assert (in ":finish-reason" (probe-expansion-refusal (+ head "(ProbeRead [] (finish None)))"))) "理由の無い打ち切り")
-       (assert (= "" (probe-expansion-refusal (+ head "(Raise [reason] (finish reason)) (Absent [why] (finish None)))"))))
-       (assert (= "" (probe-expansion-refusal (+ head "(ProbeRead [] :finish-reason \"時間切れ\" (finish None)))")))))
+       (assert (in "missing resume" (run (probe-expansion-refusal (+ head "(ProbeRead [] \"値\"))")))) "resume の書き忘れ")
+       (assert (in "missing resume" (run (probe-expansion-refusal (+ head "(ProbeRead [] (if True (resume 1) None)))")))) "枝の片方だけ")
+       (assert (in "missing resume" (run (probe-expansion-refusal (+ head "(ProbeRead [] (when True (resume 1))))")))) "when だけ")
+       (assert (in "missing resume" (run (probe-expansion-refusal (+ head "(ProbeRead [] (match 1 1 (resume 1) 2 (resume 2))))")))) "最後の _ の無い match")
+       (assert (in "Raise の節は" (run (probe-expansion-refusal (+ head "(Raise [reason] (resume 0)))")))) "Raise の resume")
+       (assert (in "Absent の節は" (run (probe-expansion-refusal (+ head "(Absent [why] (transfer 0)))")))) "Absent の再開")
+       (assert (in ":finish-reason" (run (probe-expansion-refusal (+ head "(ProbeRead [] (finish None)))")))) "理由の無い打ち切り")
+       (assert (= "" (run (probe-expansion-refusal (+ head "(Raise [reason] (finish reason)) (Absent [why] (finish None)))")))))
+       (assert (= "" (run (probe-expansion-refusal (+ head "(ProbeRead [] :finish-reason \"時間切れ\" (finish None)))"))))))
      (deftest test-adr-doe-core-effects-003-clause-endings-checked-at-install-and-run
        ;; R15(被せた時と実行の時): 別名で import した Raise の resume は初めて本文に被せた時に断り、展開の時に見えない道で
        ;; resume も finish もせずに抜けた節は実行の時に誤りにする。理由つきの打ち切りは handler のスコープを値で終える。
@@ -725,7 +725,7 @@
        (with [(pytest.raises ValueError :match "boom")]
          (run (probe-raises-python)))
        (for [pattern ["_" "reason" "(Exception)" "(object)"]]
-         (assert (in "受けられない" (probe-expansion-refusal (+ "(require doeff-hy.macros [on-raise]) (on-raise body " pattern " 0)")))
+         (assert (in "受けられない" (run (probe-expansion-refusal (+ "(require doeff-hy.macros [on-raise]) (on-raise body " pattern " 0)"))))
                  pattern))
        (with [(pytest.raises TypeError)]
          (RaiseCase #(ValueError) (fn [r] (Some r))))
