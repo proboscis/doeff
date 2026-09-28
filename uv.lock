@@ -623,7 +623,7 @@ dev = [
     { name = "doeff-validation", editable = "packages/doeff-validation" },
     { name = "doeff-vm", editable = "packages/doeff-vm" },
     { name = "httpx", specifier = ">=0.25.0" },
-    { name = "hy", specifier = ">=1.2.0" },
+    { name = "hy", git = "https://github.com/proboscis/hy.git?rev=5b10b443f231869f77182110ecff725118118463" },
     { name = "maturin", specifier = ">=1.5,<2" },
     { name = "pillow", specifier = ">=11.3.0" },
     { name = "pre-commit", specifier = ">=4,<5" },
@@ -650,7 +650,7 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "doeff-hy", editable = "packages/doeff-hy" },
-    { name = "hy", specifier = ">=1.2.0" },
+    { name = "hy", git = "https://github.com/proboscis/hy.git?rev=5b10b443f231869f77182110ecff725118118463" },
     { name = "pytest", specifier = ">=8.1.1" },
     { name = "pyyaml", specifier = ">=6.0" },
 ]
@@ -754,7 +754,7 @@ requires-dist = [
     { name = "doeff-core-effects", editable = "packages/doeff-core-effects" },
     { name = "doeff-hy", editable = "packages/doeff-hy" },
     { name = "doeff-time", editable = "packages/doeff-time" },
-    { name = "hy", specifier = ">=1.3" },
+    { name = "hy", git = "https://github.com/proboscis/hy.git?rev=5b10b443f231869f77182110ecff725118118463" },
 ]
 
 [[package]]
@@ -779,7 +779,7 @@ requires-dist = [
     { name = "doeff-hy", editable = "packages/doeff-hy" },
     { name = "doeff-time", editable = "packages/doeff-time" },
     { name = "httpx", specifier = ">=0.25.0" },
-    { name = "hy", specifier = ">=1.3" },
+    { name = "hy", git = "https://github.com/proboscis/hy.git?rev=5b10b443f231869f77182110ecff725118118463" },
 ]
 
 [[package]]
@@ -817,7 +817,7 @@ requires-dist = [
     { name = "doeff-git", editable = "packages/doeff-git" },
     { name = "doeff-hy", editable = "packages/doeff-hy" },
     { name = "httpx", marker = "extra == 'dev'", specifier = ">=0.25.0" },
-    { name = "hy", specifier = ">=1.2.0" },
+    { name = "hy", git = "https://github.com/proboscis/hy.git?rev=5b10b443f231869f77182110ecff725118118463" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=7.0.0" },
     { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=0.21.0" },
     { name = "pyyaml", specifier = ">=6.0" },
@@ -874,7 +874,7 @@ requires-dist = [
     { name = "doeff-core-effects", editable = "packages/doeff-core-effects" },
     { name = "doeff-hy", editable = "packages/doeff-hy" },
     { name = "doeff-vm", editable = "packages/doeff-vm" },
-    { name = "hy", specifier = ">=1.0.0" },
+    { name = "hy", git = "https://github.com/proboscis/hy.git?rev=5b10b443f231869f77182110ecff725118118463" },
 ]
 
 [[package]]
@@ -895,7 +895,7 @@ dogfood = [
 requires-dist = [
     { name = "doeff-core-effects", marker = "extra == 'dogfood'", editable = "packages/doeff-core-effects" },
     { name = "doeff-vm", editable = "packages/doeff-vm" },
-    { name = "hy", specifier = ">=1.2.0" },
+    { name = "hy", git = "https://github.com/proboscis/hy.git?rev=5b10b443f231869f77182110ecff725118118463" },
 ]
 provides-extras = ["dogfood"]
 
@@ -1047,7 +1047,7 @@ requires-dist = [
     { name = "doeff", editable = "." },
     { name = "doeff-core-effects", editable = "packages/doeff-core-effects" },
     { name = "doeff-hy-pytest", editable = "packages/doeff-hy-pytest" },
-    { name = "hy", specifier = ">=1.2.0" },
+    { name = "hy", git = "https://github.com/proboscis/hy.git?rev=5b10b443f231869f77182110ecff725118118463" },
     { name = "pydantic", specifier = ">=2.11" },
 ]
 
@@ -1138,7 +1138,7 @@ requires-dist = [
     { name = "doeff-jev", editable = "packages/doeff-jev" },
     { name = "doeff-records", editable = "packages/doeff-records" },
     { name = "httpx", specifier = ">=0.25.0" },
-    { name = "hy", specifier = ">=1.3" },
+    { name = "hy", git = "https://github.com/proboscis/hy.git?rev=5b10b443f231869f77182110ecff725118118463" },
 ]
 
 [[package]]
@@ -1196,7 +1196,7 @@ requires-dist = [
     { name = "doeff-docker", editable = "packages/doeff-docker" },
     { name = "doeff-hy", editable = "packages/doeff-hy" },
     { name = "doeff-vm", editable = "packages/doeff-vm" },
-    { name = "hy", specifier = ">=1.0.0" },
+    { name = "hy", git = "https://github.com/proboscis/hy.git?rev=5b10b443f231869f77182110ecff725118118463" },
 ]
 
 [package.metadata.requires-dev]
@@ -1337,7 +1337,7 @@ requires-dist = [
     { name = "doeff-core-effects", editable = "packages/doeff-core-effects" },
     { name = "doeff-hy", editable = "packages/doeff-hy" },
     { name = "doeff-time", editable = "packages/doeff-time" },
-    { name = "hy", specifier = ">=1.3" },
+    { name = "hy", git = "https://github.com/proboscis/hy.git?rev=5b10b443f231869f77182110ecff725118118463" },
     { name = "psycopg", marker = "extra == 'pg'", specifier = ">=3.1" },
     { name = "pydantic", specifier = ">=2.6" },
 ]
@@ -1866,12 +1866,11 @@ wheels = [
 
 [[package]]
 name = "hy"
-version = "1.3.0"
-source = { registry = "https://pypi.org/simple" }
+version = "1.3.1"
+source = { git = "https://github.com/proboscis/hy.git?rev=5b10b443f231869f77182110ecff725118118463#5b10b443f231869f77182110ecff725118118463" }
 dependencies = [
     { name = "funcparserlib" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/96/18/ded2cebddf51e424fa31ea4ec31679a793d41e474242e9692ffafdaf84ad/hy-1.3.0.tar.gz", hash = "sha256:4af4bd7b262ba0f41bc2d441219ddb455036c0e8890b279b4aa889390baedad7", size = 126966, upload-time = "2026-05-24T14:05:13.659Z" }
 
 [[package]]
 name = "identify"
