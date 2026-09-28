@@ -17,7 +17,9 @@ dependencies = [
 # The dogfood declaration module (doeff_domain.core_effects_domains) is the
 # ONLY part of this package allowed to depend on doeff-core-effects
 # (ADR-DOE-DOMAIN-001 D1, one-way).
-dogfood = ["doeff-core-effects>=0.1.0"]
+# 検 assert-no-orphan-effects は doeff-core-effects の module を全部 import するので、任意の依存(extra)の module
+# の依存も要る — aiohttp_http_server.hy は extra http-server の aiohttp を import する。
+dogfood = ["doeff-core-effects[http-server]>=0.1.0"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/doeff_domain"]
