@@ -16,6 +16,8 @@
 ;;; 錠を持たない — 走査と呼び鈴を掛けるのを同じ錠の内で 1 回にする(間に積まれた変更を取りこぼさない・持ったまま眠ると他の書きが止まる)。
 (require doeff-hy.macros [defhandler defk deff <- val var])
 (require doeff-hy.record [defrecord])
+(import bisect)
+(import heapq)
 (import threading)
 (import collections.abc [Callable])
 (import dataclasses [dataclass])
@@ -24,20 +26,48 @@
 (import doeff_core_effects.scheduler [Cancel CreateExternalPromise ExternalPromise PRIORITY-IDLE Spawn Task TaskCancelledError Wait])
 (import doeff_time [GetTime ScheduleAt])
 (import doeff_hy.frozen [FrozenMap])
-(import doeff_records.values [KeepFor RecordsSchema Row Missing Page Written WrittenRows RowChanged RowRemoved Changes Appended
+(import doeff_records.values [KeepFor RecordsSchema StreamDecl Row Missing Page Written WrittenRows RowChanged RowRemoved Changes Appended
                               Event Events Reset WatchCursor ListCursor Refused RowsConflict RowsRefused Unreachable
                               Conflict NotIndexed])
 (import doeff_records.effects [ReadRow ListRows PutRow PutRows WatchChanges AppendEvent ReadEvents])
 (import doeff_records.faults [AdvanceStoreEpoch SetStoreOutage StoreFault StoreOperation AddStoreFault ClearStoreFaults])
 (import doeff_records.maintenance [SweepExpired PruneChanges Swept Pruned])
-(import doeff_records.admission [Admitted AppendNew AppendReplay judge-expect judge-put judge-put-rows judge-append row-expired?
-                                 event-expired? retention-group-of where-refusal row-matches? listed-row key-text next-watch-sequence
+(import doeff_records.admission [Admitted AppendNew AppendReplay judge-expect judge-put judge-put-rows judge-append
+                                 retention-group-of where-refusal row-matches? listed-row key-text next-watch-sequence
                                  epoch-ms terminal-row?])
 
 (defclass StoredRow []
   "置き場の行 1 つ: row = 答えに出す Row / updated-ms = 最後に書かれた刻。"
   (defn #^ None __init__ [self #^ Row row #^ int updated-ms]
     (setv self.row row self.updated-ms updated-ms)))
+
+
+(defclass StoredGroup []
+  "組で数える列(ByKeySuffix)の組 1 つ: last-at = 組の最後の出来事を積んだ刻(保持を数え始める刻)/ events = 組の出来事(積んだ順)。"
+  (defn #^ None __init__ [self #^ int last-at]
+    (setv self.last-at last-at self.events [])))
+
+
+;; 保持の期限の索引の項(3 種)— 索引(MemoryStore.expiry)は期限の刻で並ぶ heap で、刈りは期限の来た項だけを取り出す。
+;; 項は書いた時に積み、指す物が置き場から変わっていたら取り出した時に読み捨てる(遅延の無効化 — due-live?)。
+(defrecord RowDue
+  "表の行 1 つの期限: table = 表の名 / text = 鍵の文字列 / stored = 終端になった書きの StoredRow(置き場の行がまだこれの時だけ有効)。"
+  #^ str table
+  #^ str text
+  #^ StoredRow stored)
+
+
+(defrecord EventDue
+  "出来事ごとに数える列の出来事 1 つの期限: event = 積んだ出来事(冪等キーの引きがまだこの出来事の時だけ有効)。"
+  #^ Event event)
+
+
+(defrecord GroupDue
+  "組で数える列の組 1 つの期限: stream = 列の名 / group = 組の名 / last-at = 数え始めた刻(組に後の出来事が積まれて組の最後の刻が
+   動いたら、この項は読み捨てる — 動いた時に新しい項を積む)。"
+  #^ str stream
+  #^ str group
+  #^ int last-at)
 
 
 (defclass MemoryStore []
@@ -65,8 +95,14 @@
           self.outage None
           ;; 置いた故障の列(検の口 faults.AddStoreFault の値 — 置いた順・空 = 故障なし)。
           self.faults #()
-          ;; 保持の期限で何かが消え得る最も早い刻(epoch ミリ秒・None = 消え得る物が無い)— purge-expired はこの刻より前なら走査しない。
-          self.purge-due-ms None))
+          ;; 保持の期限で何かが消え得る最も早い刻(epoch ミリ秒・None = 消え得る物が無い)— purge-expired はこの刻より前なら索引を見ない。
+          self.purge-due-ms None
+          ;; 保持の期限の索引(heap — 項は #(期限の刻 積んだ順 項)・項 = RowDue | EventDue | GroupDue)と、積んだ順の番号(同じ刻の項を
+          ;; 比べるための一意の番号 — heap は項そのものを比べない)。
+          self.expiry []
+          self.expiry-order 0
+          ;; 組で数える列の組(#(列 組) → StoredGroup)。
+          self.groups {}))
   ;; 錠と呼び鈴は置き場の中身ではなく、この process の thread と実行の間の取り決め — pickle と copy は錠と呼び鈴を除いた中身だけを運び、
   ;; 戻した側で新しい錠と空の呼び鈴を作る(置き場を含む値を pickle する使い手 — worker の結果の file・coordinator の状態 — を壊さないため。
   ;; 呼び鈴は掛けた実行の中でしか意味を持たない)。
@@ -83,7 +119,12 @@
     (when (not-in "faults" state)
       (setv self.faults #()))
     (setv self.lock (threading.RLock)
-          self.bells {})))
+          self.bells {})
+    ;; 期限の索引を持つ前に pickle した置き場は、行と出来事から 1 度だけ索引を作り直す。
+    (when (not-in "expiry" state)
+      (rebuild-expiry self)
+      (when (in "purge_due_ms" state)
+        (setv self.purge-due-ms (get state "purge_due_ms"))))))
 
 
 ;; --- 呼び鈴(WatchChanges の待ち手を起こす)-----------------------------------------------------------------
@@ -125,35 +166,73 @@
     (setv store.purge-due-ms due-ms)))
 
 
-(defn #^ dict event-group-at [#^ MemoryStore store]  ; defk にできない: 錠の内で同期に読む置き場の走査
-  "組で数える列(ByKeySuffix)の組ごとの、組の最後の出来事を積んだ刻(#(列 組) → epoch ミリ秒)。"
-  (setv group-at {})
-  (for [event store.events]
-    (setv group (retention-group-of (store.schema.stream event.stream) event.idempotency-key))
-    (when (is-not group None)
-      (setv (get group-at #(event.stream group)) (max event.at (.get group-at #(event.stream group) event.at)))))
-  group-at)
+(defn #^ None push-due [#^ MemoryStore store #^ int due-ms #^ (| RowDue EventDue GroupDue) item]  ; defk にできない: 錠の内で同期に呼ぶ置き場の書き
+  "期限の索引に項を 1 つ積み、消え得る刻を早める。heap の要素は #(刻 積んだ順 項)の組 — heapq は要素どうしの比べでしか並べないので、
+   刻と一意の番号を前に置き、項そのものは比べさせない。"
+  (+= store.expiry-order 1)
+  (heapq.heappush store.expiry #(due-ms store.expiry-order item))
+  (note-purge-due store due-ms))
 
 
-(defn #^ (| int None) next-purge-due [#^ MemoryStore store]  ; defk にできない: 錠の内で同期に読む置き場の走査
-  "残っている行と出来事のうち、最も早く消える物の刻(row-expired? / event-expired? が真になる最初の刻)。無ければ None。
-   終端でない行は数えない — 終端になる書きの時に note-purge-due が刻を足す。"
-  (setv dues [])
-  (for [#(name decl) (.items store.schema.tables) :if (isinstance decl.retention KeepFor)]
-    (for [stored (.values (get store.rows name)) :if (terminal-row? decl stored.row.value)]
-      (.append dues (+ stored.updated-ms (keep-ms decl.retention)))))
-  (setv group-at (event-group-at store))
+(defn #^ None note-event-due [#^ MemoryStore store #^ StreamDecl decl #^ Event event]  ; defk にできない: 錠の内で同期に呼ぶ置き場の書き
+  "期限つき(KeepFor)の列に積んだ出来事 1 つを期限の索引に入れる。出来事ごとに数える列は出来事の項・組で数える列は組の最後の刻が
+   動いた時(組が生まれた時を含む)だけ組の項を積む — 前の組の項は last-at が合わなくなり、取り出した時に読み捨てる。"
+  (setv keep (keep-ms decl.retention))
+  (setv group (retention-group-of decl event.idempotency-key))
+  (when (is group None)
+    (push-due store (+ event.at keep) (EventDue :event event))
+    (return None))
+  (setv slot #(event.stream group))
+  (setv held (.get store.groups slot))
+  (setv fresh (is held None))
+  (when fresh
+    (setv held (StoredGroup event.at))
+    (setv (get store.groups slot) held))
+  (.append held.events event)
+  (when (or fresh (> event.at held.last-at))
+    (setv held.last-at (max held.last-at event.at))
+    (push-due store (+ held.last-at keep) (GroupDue :stream event.stream :group group :last-at held.last-at)))
+  None)
+
+
+(defn #^ None rebuild-expiry [#^ MemoryStore store]  ; defk にできない: pickle から戻す時(__setstate__)に同期に呼ぶ置き場の書き
+  "期限の索引を行と出来事の全部から作り直す(索引を持つ前に pickle した置き場を戻す時の 1 度だけ)。消え得る刻も数え直す。"
+  (setv store.expiry [] store.expiry-order 0 store.groups {} store.purge-due-ms None)
+  (for [#(name decl) (sorted (.items store.schema.tables)) :if (isinstance decl.retention KeepFor)]
+    (for [#(text stored) (sorted (.items (get store.rows name))) :if (terminal-row? decl stored.row.value)]
+      (push-due store (+ stored.updated-ms (keep-ms decl.retention)) (RowDue :table name :text text :stored stored))))
   (for [event store.events]
     (setv decl (store.schema.stream event.stream))
     (when (isinstance decl.retention KeepFor)
-      (setv group (retention-group-of decl event.idempotency-key))
-      (.append dues (+ (if (is group None) event.at (get group-at #(event.stream group))) (keep-ms decl.retention)))))
-  (min dues :default None))
+      (note-event-due store decl event)))
+  (setv store.purge-due-ms (next-purge-due store))
+  None)
+
+
+(defn #^ bool due-live? [#^ MemoryStore store #^ (| RowDue EventDue GroupDue) item]  ; defk にできない: 錠の内で同期に読む置き場の読み
+  "期限の索引の項が、まだ置き場に在る物を指すか(偽 = 読み捨てる — 行が消えた・出来事が消えた・組の最後の刻が動いた)。"
+  (match item
+    (RowDue :table table :text text :stored stored)
+      (is (.get (get store.rows table) text) stored)
+    (EventDue :event event)
+      (is (.get store.by-idempotency #(event.stream event.idempotency-key)) event)
+    (GroupDue :stream stream :group group)
+      (do (setv held (.get store.groups #(stream group)))
+          (and (is-not held None) (= held.last-at item.last-at)))
+    _ (raise (TypeError (.format "期限の索引の項ではない: {!r}" item)))))
+
+
+(defn #^ (| int None) next-purge-due [#^ MemoryStore store]  ; defk にできない: 錠の内で同期に呼ぶ置き場の読みと索引の読み捨て
+  "残っている行と出来事のうち、最も早く消える物の刻(row-expired? / event-expired? が真になる最初の刻)。無ければ None。
+   索引の先頭の読み捨てられる項を外してから先頭の刻を読む — 費用は外した項の数 × log(索引の長さ)で、行と出来事の数に比例しない。
+   終端でない行は索引に無い — 終端になる書きの時に項を積む。"
+  (while (and store.expiry (not (due-live? store (get (get store.expiry 0) 2))))
+    (heapq.heappop store.expiry))
+  (if store.expiry (get (get store.expiry 0) 0) None))
 
 
 (defn #^ int purge-expired-locked [#^ MemoryStore store #^ int now-ms]  ; defk にできない: purge-expired が錠の内で同期に呼ぶ置き場の書き
-  "purge-expired の中身(呼び手が錠を持つ)。消え得る刻(purge-due-ms)より前なら走査しない — 操作ごとに全部の行と出来事を読み直すと、
-   出来事の数の 2 乗で遅くなる(2026-09-27 の実測: 出来事 1 万の筋書き 1 つが 5 分を越えた)。走査した後は刻を数え直す。"
+  "purge-expired の中身(呼び手が錠を持つ)。消え得る刻(purge-due-ms)より前なら索引を見ない。刈った後は刻を数え直す。"
   (when (or (is store.purge-due-ms None) (< now-ms store.purge-due-ms))
     (return 0))
   (setv removed (purge-expired-scan store now-ms))
@@ -162,38 +241,45 @@
 
 
 (defn #^ int purge-expired-scan [#^ MemoryStore store #^ int now-ms]  ; defk にできない: purge-expired-locked が錠の内で同期に呼ぶ置き場の書き
-  "期限を過ぎた行と出来事を全部消す走査。期限切れの出来事が 1 つも無ければ列を差し替えない。"
+  "期限の来た項だけを期限の索引から取り出し、指す行と出来事を消す。費用は取り出した項の数 × log(索引の長さ)— 行と出来事の数に
+   比例しない(2026-09-29 の実測: 前の形は刈りのたびに全部の行と出来事を読み、手番の模擬の筋書き 1 つで刈り 731 回 × 出来事の全部 —
+   agora-redesign #907)。行の RowRemoved は表の名・鍵の文字列の順に積む(前の全部の走査と同じ順)。"
+  (setv rows [] events [])
+  (while (and store.expiry (<= (get (get store.expiry 0) 0) now-ms))
+    (setv item (get (heapq.heappop store.expiry) 2))
+    (when (due-live? store item)
+      (match item
+        (RowDue) (.append rows item)
+        (EventDue :event event) (.append events event)
+        ;; 組の出来事は同時に消える — 組を外すので、同じ組の残りの項は読み捨てになる。
+        (GroupDue :stream stream :group group) (.extend events (. (.pop store.groups #(stream group)) events))
+        _ (raise (TypeError (.format "期限の索引の項ではない: {!r}" item))))))
   (setv removed 0)
-  ;; 期限を持つ(KeepFor の)表と列だけを走査する — 期限の無い置き場で操作ごとに全部の行と出来事を読み直すと、出来事の数の 2 乗で
-  ;; 遅くなる(2026-09-26 の実測: 出来事 1 万で 1 筋書きが 1 分を越えた)。
-  (for [#(name decl) (sorted (.items store.schema.tables)) :if (isinstance decl.retention KeepFor)]
-    (setv table (get store.rows name))
-    (for [text (sorted (lfor #(text stored) (.items table)
-                             :if (row-expired? decl stored.row.value stored.updated-ms now-ms)
-                             text))]
-      (setv stored (.pop table text))
-      (+= store.head 1)
-      (+= removed 1)
-      (setv (get store.changed-at store.head) now-ms)
-      (.append store.changes (RowRemoved name stored.row.key store.head))))
+  (for [item (sorted rows :key (fn [item] #(item.table item.text)))]
+    (.pop (get store.rows item.table) item.text)
+    (+= store.head 1)
+    (+= removed 1)
+    (setv (get store.changed-at store.head) now-ms)
+    (.append store.changes (RowRemoved item.table item.stored.row.key store.head)))
   (when removed
     (ring-bells store))
-  (when (not (any (gfor s (.values store.schema.streams) (isinstance s.retention KeepFor))))
-    (return removed))
-  ;; 組で数える列(ByKeySuffix)は、組の最後の出来事を積んだ刻から数える — 組の出来事は同時に消える。
-  (setv group-at (event-group-at store))
-  (setv expired (lfor event store.events
-                      :setv decl (store.schema.stream event.stream)
-                      :setv group (retention-group-of decl event.idempotency-key)
-                      :if (event-expired? decl (if (is group None) event.at (get group-at #(event.stream group))) now-ms)
-                      event))
-  (when (not expired)
-    (return removed))
-  (for [event expired]
-    (.pop store.by-idempotency #(event.stream event.idempotency-key) None))
-  (setv gone (set (gfor event expired event.sequence)))
-  (setv store.events (lfor event store.events :if (not-in event.sequence gone) event))
+  (when events
+    (drop-events store events))
   removed)
+
+
+(defn #^ None drop-events [#^ MemoryStore store #^ list events]  ; defk にできない: purge-expired-scan が錠の内で同期に呼ぶ置き場の書き
+  "期限の来た出来事を冪等キーの引きと出来事の列から外す。列は番号の順なので、1 つずつ番号で二分探索して外す。列は差し替える
+   (写しは 1 回の C の複写 — 錠の外で前の列を読んでいる読み手の走査を壊さないため。前の形も差し替えていた)。"
+  (for [event events]
+    (.pop store.by-idempotency #(event.stream event.idempotency-key) None))
+  (setv kept (list store.events))
+  (for [sequence (sorted (gfor event events event.sequence) :reverse True)]
+    (setv at (bisect.bisect-left kept sequence :key (fn [event] event.sequence)))
+    (when (and (< at (len kept)) (= (. (get kept at) sequence) sequence))
+      (del (get kept at))))
+  (setv store.events kept)
+  None)
 
 
 ;; --- 行 --------------------------------------------------------------------------------------------------
@@ -233,14 +319,16 @@
                                    #^ int now-ms]  ; defk にできない: 同期の置き場の書き(memory-put-row / memory-put-rows)が呼ぶ置き場の更新
   "判定を通った 1 行を置き場に書き、変更の列に 1 つ積む(PutRow と PutRows の書きを 1 つにし、版と番号の採り方を揃えるため)。"
   (setv version (if (is current None) 1 (+ current.version 1)))
-  (setv (get (get store.rows table) (key-text key)) (StoredRow (Row key value version) now-ms))
+  (setv text (key-text key)
+        stored (StoredRow (Row key value version) now-ms))
+  (setv (get (get store.rows table) text) stored)
   (+= store.head 1)
   (setv (get store.changed-at store.head) now-ms)
   (.append store.changes (RowChanged table key version value store.head now-ms))
   (ring-bells store)
   (setv decl (store.schema.table table))
   (when (and (isinstance decl.retention KeepFor) (terminal-row? decl value))
-    (note-purge-due store (+ now-ms (keep-ms decl.retention))))
+    (push-due store (+ now-ms (keep-ms decl.retention)) (RowDue :table table :text text :stored stored)))
   (Written version value))
 
 
@@ -406,7 +494,7 @@
              (.append store.events event)
              (setv (get store.by-idempotency slot) event)
              (when (isinstance decl.retention KeepFor)
-               (note-purge-due store (+ now-ms (keep-ms decl.retention))))
+               (note-event-due store decl event))
              (Appended event.sequence))))
 
 
