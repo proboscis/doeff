@@ -57,6 +57,12 @@ pub struct EditorViolation {
     pub hint: Option<String>,
     pub key: Option<String>,
     pub registered: bool,
+    /// 登録簿と照合中で下げる前の、規則そのものの重さ(`severity` はこれを下げた後)。エディタが「手つかずの重い破れ」を数える材料。
+    pub base_severity: EditorSeverity,
+    /// 新しい破れ(new)・登録簿に載った既知の破れ(registered)・照合中で下げた(reconciling)。
+    pub standing: crate::project::Standing,
+    /// 規則の重大さ(repo の宣言 `rules.<ID>.level`、無ければ base_severity から)。登録簿で下げない。
+    pub level: crate::project::settings::RuleLevel,
     /// これは何か・なぜ違反か・law の文(層の規則だけ。Python の文ごとの規則は null)。
     pub explanation: Option<Explanation>,
     /// 判定の出どころ(linter = 決定的な規則・jev = Jev の意味の判定)。
@@ -197,6 +203,9 @@ pub fn build(input: &EditorInput) -> EditorReport {
                 hint: Some(info.fix.to_string()),
                 key: None,
                 registered: false,
+                base_severity: violation.severity.into(),
+                standing: crate::project::Standing::New,
+                level: input.settings.level_of(&violation.rule_id, violation.severity),
                 explanation: None,
                 source: crate::project::FindingOrigin::Linter,
                 probability: None,
@@ -215,6 +224,9 @@ pub fn build(input: &EditorInput) -> EditorReport {
             hint: Some(finding.hint.clone()),
             key: Some(finding.key.clone()),
             registered: finding.registered,
+            base_severity: finding.base_severity.into(),
+            standing: finding.standing,
+            level: input.settings.level_of(finding.rule.id(), finding.base_severity),
             explanation: Some(finding.explanation.clone()),
             source: finding.origin,
             probability: finding.probability,

@@ -170,6 +170,7 @@ impl Config {
         let mut unknown_rules = Vec::new();
         let mut registered_severity = std::collections::BTreeMap::new();
         let mut base_severity = std::collections::BTreeMap::new();
+        let mut level = std::collections::BTreeMap::new();
         for (id, rule) in &self.rules {
             // この binary に無い規則(DOEFF と 3 桁の形)の設定は、誤りにせずその規則の設定だけを読まずに知らせる(DOEFF100)。
             // Python の文ごとの規則(DOEFF001〜031)の設定もこの表に在るので、層の規則でも Python の規則でもない物だけ。
@@ -194,6 +195,14 @@ impl Config {
                     (_, None) => problems.push(format!("rules.{}.severity: {:?} は warning・info のどちらでもない(臭いの規則は error にしない)", id, text)),
                 }
             }
+            if let Some(text) = &rule.level {
+                match crate::project::settings::RuleLevel::parse(text) {
+                    Some(parsed) => {
+                        level.insert(id.to_uppercase(), parsed);
+                    }
+                    None => problems.push(format!("rules.{}.level: {:?} は critical・major・minor・info のどれでもない", id, text)),
+                }
+            }
             let Some(text) = &rule.registered_severity else { continue };
             let severity = match text.as_str() {
                 "error" => Some(Severity::Error),
@@ -216,6 +225,7 @@ impl Config {
         };
         settings.registered_severity = registered_severity;
         settings.severity = base_severity;
+        settings.level = level;
         settings.unknown_rules.extend(unknown_rules);
         Ok(settings)
     }
@@ -274,6 +284,10 @@ pub struct RuleConfig {
 
     /// 層の規則(DOEFF101〜113): 登録簿に載った破れの重さ(error・warning・info。既定 warning)
     pub registered_severity: Option<String>,
+
+    /// どの規則でも: 重大さ(critical・major・minor・info)。無ければ規則そのものの重さから(error = major・warning = minor・info = info)。
+    /// 重さと違い登録簿で下げない — エディタの違反の欄が「手つかずの critical」を数える軸
+    pub level: Option<String>,
 
     /// 臭いの規則(DOEFF121〜125): 重さ(warning・info。既定 warning — Absent / Raise が本線に入ったので info から上げた)
     pub severity: Option<String>,

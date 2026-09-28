@@ -831,6 +831,38 @@ registered_severity = "info"
     assert!(stderr.contains("registered_severity"), "{}", stderr);
 }
 
+#[test]
+fn level_is_declared_per_rule_and_registry_lowers_only_the_severity() {
+    // 重大さ(level)は repo の宣言で、登録簿で重さ(severity)を下げても下げない — エディタが「手つかずの critical」を数える軸。
+    let source = "(defn old [x] x)\n(defn new-one [x] x)\n";
+    let config = r#"
+[tool.doeff-linter.rules.DOEFF110]
+registered_severity = "info"
+level = "critical"
+"#;
+    let dir = definition_repo(&[("app/a.hy", source)], config);
+    std::fs::write(dir.path().join("known.txt"), "app/a.hy::DOEFF110::old\n").unwrap();
+    let (_, report) = editor(dir.path());
+    let old = violation(&report, "app/a.hy::DOEFF110::old");
+    assert_eq!(old["severity"], "info");
+    assert_eq!(old["base_severity"], "error");
+    assert_eq!(old["standing"], "registered");
+    assert_eq!(old["level"], "critical");
+    let fresh = violation(&report, "app/a.hy::DOEFF110::new_one");
+    assert_eq!(fresh["severity"], "error");
+    assert_eq!(fresh["standing"], "new");
+    assert_eq!(fresh["level"], "critical");
+    // 宣言の無い規則は規則そのものの重さから(error = major)。
+    let dir = definition_repo(&[("app/a.hy", source)], "");
+    let (_, report) = editor(dir.path());
+    assert_eq!(violation(&report, "app/a.hy::DOEFF110::old")["level"], "major");
+    // 知らない重大さは設定の誤り。
+    let dir = definition_repo(&[("app/a.hy", source)], &config.replace("\"critical\"", "\"loud\""));
+    let (code, _, stderr) = run(dir.path(), &["--output-format", "editor-json", "--no-log"], None);
+    assert_eq!(code, 2);
+    assert!(stderr.contains("rules.DOEFF110.level"), "{}", stderr);
+}
+
 /// architecture.hy を repo の根に置いた repo(TOML には規則の入り切りだけ)。
 fn architecture_repo(files: &[(&str, String)], toml_extra: &str) -> tempfile::TempDir {
     let dir = tempfile::TempDir::new().unwrap();

@@ -2,12 +2,12 @@
 // 木の中身は view.ts の純粋な関数が作り、ここは VS Code の TreeItem へ写すだけ。規則の名と家族は linter の出力から。
 
 import * as vscode from 'vscode';
-import type { LintLayer, LintSeverity, LintViolation } from './contract';
+import type { LintLayer, LintLevel, LintSeverity, LintViolation } from './contract';
 import { layerSummary, violationExplanationLines } from './layers';
 import {
   displayRange,
-  groupDescription,
-  groupLabel,
+  groupHeading,
+  groupStanding,
   groupTooltipLines,
   lintChildren,
   mapRoots,
@@ -18,6 +18,7 @@ import {
   type LintNode
 } from './view';
 import type { LintStore } from './store';
+import { ALL_VIOLATIONS, summaryDescription, summaryLabel, type PanelFilter, type SavedTally } from './severity';
 import type { IconSource } from '../pixel/icons';
 import { layerGlyph, ruleIcon, serviceGlyph, violationMark } from '../pixel/vocabulary';
 
@@ -59,6 +60,30 @@ function severityIcon(severity: LintSeverity | undefined): vscode.ThemeIcon {
   }
 }
 
+/** 重大さを灯の重さへ写す — critical = 赤・major = 琥珀・info = 青、minor は灯を消す(pixel art の灯は 3 色だけのため)。 */
+function levelLamp(level: LintLevel): LintSeverity | null {
+  switch (level) {
+    case 'critical':
+      return 'error';
+    case 'major':
+      return 'warning';
+    case 'minor':
+      return null;
+    case 'info':
+      return 'info';
+    default: {
+      const unreachable: never = level;
+      throw new Error(`網羅されていない重大さ: ${JSON.stringify(unreachable)}`);
+    }
+  }
+}
+
+/** 重大さの codicon(minor は灯の消えた丸)。 */
+function levelIcon(level: LintLevel): vscode.ThemeIcon {
+  const lamp = levelLamp(level);
+  return lamp === null ? new vscode.ThemeIcon('circle-outline', new vscode.ThemeColor('descriptionForeground')) : severityIcon(lamp);
+}
+
 /** hover の Markdown に linter の文をそのまま出す(`*`・`_`・`<` などを文字として読ませる)。 */
 function escapeMarkdown(line: string): string {
   return line.replace(/[\\`*_{}[\]<>()#+!|]/g, (ch) => `\\${ch}`);
@@ -70,9 +95,14 @@ export type TreePixels = () => IconSource | undefined;
 /** 節の pixel art の icon(当てる icon が無い節・切っている時は undefined — codicon のまま)。 */
 function pixelIcon(node: LintNode, icons: IconSource): vscode.Uri | undefined {
   switch (node.tag) {
+    case 'summary': {
+      // 要約の行 = 重大さの色の印(火・琥珀の旗・青い旗)。minor は印が無いので codicon のまま
+      const lamp = levelLamp(node.level);
+      return lamp === null ? undefined : icons.icon(lamp === 'error' ? 'lint-error' : lamp === 'warning' ? 'lint-warning' : 'lint-info');
+    }
     case 'group':
-      // sprite = 規則の家族、灯の色 = 束の最も重い重さ(小さな印では 16px で見分けられないため)
-      return icons.lit(ruleIcon(node.summary.family, worstSeverity(node.violations) ?? null, node.violations));
+      // sprite = 規則の家族、灯の色 = 束の重大さ(登録簿に載った分も重大さの色で灯す)
+      return icons.lit(ruleIcon(node.summary.family, levelLamp(node.level), node.violations));
     case 'violation':
       return icons.icon(violationMark(node.violation));
     case 'rule':
@@ -112,12 +142,25 @@ function codiconTreeItem(node: LintNode, layers: readonly LintLayer[]): vscode.T
   const collapsed = vscode.TreeItemCollapsibleState.Collapsed;
   const none = vscode.TreeItemCollapsibleState.None;
   switch (node.tag) {
+    case 'summary': {
+      const item = new vscode.TreeItem(summaryLabel(node.level, node.counts), none);
+      item.description = summaryDescription(node.counts, node.delta);
+      item.tooltip = [
+        `${summaryLabel(node.level, node.counts)} — 重大さが ${node.level} の規則の違反(重大さは repo の設定 rules.<ID>.level が決め、登録簿で下げない)`,
+        `新しい ${node.counts.new}(登録簿に無い)`,
+        `既知 ${node.counts.registered}(登録簿に載った分 — 波線の色は下げてある)`,
+        `照合中 ${node.counts.reconciling}(照合中の規則 — info に下げてある)`,
+        ...(node.delta === undefined ? [] : ['前回 = この workspace で前に VS Code を開いていた時の最後の数'])
+      ].join('\n');
+      item.iconPath = levelIcon(node.level);
+      return item;
+    }
     case 'group': {
-      const item = new vscode.TreeItem(groupLabel(node.rule, node.summary), collapsed);
-      item.description = groupDescription(node.violations);
+      const item = new vscode.TreeItem(groupHeading(node.level, node.rule, node.summary, node.violations.length), collapsed);
+      item.description = groupStanding(node.violations);
       // law の名・ADR・規則の文は hover に(見出しは規則の番号と短い名にそろえる)
       item.tooltip = new vscode.MarkdownString(groupTooltipLines(node.rule, node.summary, node.violations).map(escapeMarkdown).join('\n\n'));
-      item.iconPath = severityIcon(worstSeverity(node.violations));
+      item.iconPath = levelIcon(node.level);
       return item;
     }
     case 'file': {
@@ -130,7 +173,8 @@ function codiconTreeItem(node: LintNode, layers: readonly LintLayer[]): vscode.T
     case 'violation': {
       const v = node.violation;
       const item = new vscode.TreeItem(v.message, none);
-      item.description = `${v.range.start.line + 1} 行 · ${v.rule}${v.registered ? ' · 登録簿' : ''}`;
+      const standing = v.standing === 'registered' ? ' · 既知(登録簿)' : v.standing === 'reconciling' ? ' · 照合中' : '';
+      item.description = `${v.range.start.line + 1} 行 · ${v.rule}${standing}`;
       item.tooltip = new vscode.MarkdownString(
         [v.message, ...violationExplanationLines(v), `規則 \`${v.rule}\`${v.law === null ? '' : ` · law \`${v.law}\``}`].join('\n\n')
       );
@@ -193,11 +237,25 @@ export class LintViolationsTree implements vscode.TreeDataProvider<LintNode>, vs
   private readonly changed = new vscode.EventEmitter<LintNode | undefined>();
   readonly onDidChangeTreeData = this.changed.event;
   private mode: 'violations' | 'rules' = 'violations';
+  private filterState: PanelFilter = ALL_VIOLATIONS;
 
   constructor(
     private readonly store: LintStore,
-    private readonly pixels: TreePixels
+    private readonly pixels: TreePixels,
+    /** 前回の数え(増減の元 — 無ければ増減を出さない) */
+    private readonly previous: () => SavedTally | undefined
   ) {}
+
+  /** 今の絞り込み。 */
+  get filter(): PanelFilter {
+    return this.filterState;
+  }
+
+  /** 絞り込みを替えて出し直す。 */
+  setFilter(filter: PanelFilter): void {
+    this.filterState = filter;
+    this.refresh();
+  }
 
   /** 今の出し方(違反か規則の一覧)。 */
   get showing(): 'violations' | 'rules' {
@@ -230,7 +288,9 @@ export class LintViolationsTree implements vscode.TreeDataProvider<LintNode>, vs
     if (node !== undefined) {
       return lintChildren(node);
     }
-    return this.mode === 'violations' ? violationRoots(this.store.violations(), this.store.rules()) : ruleNodes(this.store.rules());
+    return this.mode === 'violations'
+      ? violationRoots(this.store.violations(), this.store.rules(), this.filterState, this.previous())
+      : ruleNodes(this.store.rules());
   }
 }
 
