@@ -2,7 +2,7 @@
   "name": "doeff-runner",
   "displayName": "doeff runner",
   "description": "Run doeff Programs from VS Code using the doeff-indexer and Python debugger.",
-  "version": "0.6.24",
+  "version": "0.6.25",
   "publisher": "Proboscis",
   "icon": "icon.png",
   "license": "Apache-2.0",
@@ -334,6 +334,14 @@
         "command": "doeff-runner.hy.refreshNavigation",
         "title": "Refresh",
         "icon": "$(refresh)"
+      },
+      {
+        "command": "doeff-runner.hy.reindex",
+        "title": "Doeff: Hy の索引を作り直す"
+      },
+      {
+        "command": "doeff-runner.hy.showOutput",
+        "title": "Doeff: Output を開く"
       },
       {
         "command": "doeff-runner.hy.showReferences",
@@ -1566,7 +1574,7 @@
     }
   },
   "scripts": {
-    "vscode:prepublish": "npm run compile",
+    "vscode:prepublish": "npm run compile && node scripts/bundle-indexer.js",
     "compile": "tsc -p ./",
     "watch": "tsc -watch -p ./",
     "pretest": "npm run compile && npm run lint",

@@ -2931,7 +2931,7 @@ export function activate(context: vscode.ExtensionContext) {
   // doeff-linter's findings (the linter is the source of truth; the editor only displays them).
   const lintStore = registerLint(context, output, { tree: treePixels, ownsGutter: pixelOwnsGutter, icons: pixelIcons });
   // Browse definitions by service / layer / tags (display only).
-  registerBrowse(context, hyStore, lintStore, output, treePixels);
+  registerBrowse(context, hyStore, hyNavigation.status, lintStore, output, treePixels);
   // エディタの上の pixel art(gutter の種類の icon と状態の印・決まった語の文字の置き換えと hover・状態バーの doe)
   // defk の見出し(型の流れ・effect・tags)と束縛の型 — linter の editor-json 版 2 を読むだけの表示(agora-redesign #849)
   const defkView = registerDefkView(context, lintStore, (name) => pixelIcons.sprite(name), output);

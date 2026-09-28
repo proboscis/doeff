@@ -187,7 +187,7 @@ export type BrowseNode =
       readonly items: readonly BrowseItem[];
     }
   | { readonly tag: 'item'; readonly item: BrowseItem }
-  | { readonly tag: 'message'; readonly label: string };
+  | { readonly tag: 'message'; readonly label: string; readonly tooltip?: string; readonly command?: string };
 
 /** 値の並べ方 — 名前の順、「(不明)」と「なし」は最後。 */
 function valueOrder(a: string, b: string): number {

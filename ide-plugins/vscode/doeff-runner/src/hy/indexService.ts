@@ -3,13 +3,12 @@
 
 import * as vscode from 'vscode';
 import type { HyFileIndex } from './contract';
+import { HY_EXCLUDE_GLOB, HY_FILE_GLOB, isExcludedPath, isHyPath } from './hyPaths';
 import type { HyIndexer, HyIndexOutcome, HyIndexRequest } from './indexer';
+import { nextStatus, type HyIndexStatus, type IndexResult } from './indexStatus';
 import { normalizeKey, type HyIndexStore } from './store';
 
-/** Hy の file の拡張子(languageId `hy` と同じ集合)。 */
-export const HY_FILE_GLOB = '**/*.{hy,hyk,hyp}';
-/** 索引の対象から外す dir(契約の --root の除外と同じ)。 */
-export const HY_EXCLUDE_GLOB = '**/{.venv,node_modules,target,.git,__pycache__}/**';
+export { HY_EXCLUDE_GLOB, HY_FILE_GLOB, isHyPath };
 
 const EDIT_DEBOUNCE_MS = 500;
 const DIRECTORY_REINDEX_DEBOUNCE_MS = 1500;
@@ -19,22 +18,29 @@ export interface HyLog {
   appendLine(line: string): void;
 }
 
-/** path が Hy の file かを拡張子で見る。 */
-export function isHyPath(filePath: string): boolean {
-  return /\.(hy|hyk|hyp)$/.test(filePath);
-}
-
 /** 開いている document が Hy のものかを見る(languageId か拡張子)。 */
 function isHyDocument(document: vscode.TextDocument): boolean {
-  return document.uri.scheme === 'file' && (document.languageId === 'hy' || isHyPath(document.uri.fsPath));
+  return (
+    document.uri.scheme === 'file' &&
+    (document.languageId === 'hy' || isHyPath(document.uri.fsPath)) &&
+    !isExcludedPath(document.uri.fsPath)
+  );
+}
+
+/** 索引の状態を読む面(パネルが「なぜ無いのか」を出すのに使う)。 */
+export interface HyIndexStatusView {
+  readonly status: HyIndexStatus;
+  onDidChangeStatus(listener: () => void): () => void;
 }
 
 /** 索引を取り、store を最新に保つ係。 */
-export class HyIndexService implements vscode.Disposable {
+export class HyIndexService implements vscode.Disposable, HyIndexStatusView {
   private disabled = false;
   private readonly disposables: vscode.Disposable[] = [];
   private readonly debounces = new Map<string, NodeJS.Timeout>();
   private readonly rootRuns = new Map<string, Promise<void>>();
+  private current: HyIndexStatus = { tag: 'waiting' };
+  private readonly statusListeners = new Set<() => void>();
 
   constructor(
     private readonly store: HyIndexStore,
@@ -84,9 +90,41 @@ export class HyIndexService implements vscode.Disposable {
         this.store.removeUnder(uri.fsPath);
       })
     );
-    for (const folder of vscode.workspace.workspaceFolders ?? []) {
-      void this.indexFolderIfHy(folder);
+    void this.indexAllFolders();
+  }
+
+  /** 今の索引の状態。 */
+  get status(): HyIndexStatus {
+    return this.current;
+  }
+
+  /** 状態の変化を購読する。戻り値で購読をやめる。 */
+  onDidChangeStatus(listener: () => void): () => void {
+    this.statusListeners.add(listener);
+    return () => this.statusListeners.delete(listener);
+  }
+
+  /** 状態を変えて購読者へ知らせる。 */
+  private setStatus(status: HyIndexStatus): void {
+    this.current = status;
+    for (const listener of this.statusListeners) {
+      listener();
     }
+  }
+
+  /** 全 folder を調べ、Hy の file を持つ folder の索引を取る(1 つも無ければ状態に出す)。 */
+  private async indexAllFolders(): Promise<void> {
+    const found = await Promise.all((vscode.workspace.workspaceFolders ?? []).map((folder) => this.indexFolderIfHy(folder)));
+    if (!found.some((f) => f)) {
+      this.setStatus({ tag: 'no-hy-files' });
+    }
+  }
+
+  /** 止めた索引を再び動かし、全 folder の索引を取り直す(道具を入れ直した後の口 — 探し直しは呼び手が indexer に頼む)。 */
+  resume(): void {
+    this.disabled = false;
+    this.setStatus({ tag: 'waiting' });
+    void this.indexAllFolders();
   }
 
   /** 購読と保留中の debounce を止める。 */
@@ -102,21 +140,21 @@ export class HyIndexService implements vscode.Disposable {
 
   /** 全 folder の root 全体の索引を取り直す(目録の設定が変わった時)。 */
   reindexAll(): void {
-    for (const folder of vscode.workspace.workspaceFolders ?? []) {
-      void this.indexFolderIfHy(folder);
-    }
+    void this.indexAllFolders();
   }
 
-  /** folder に Hy の file が 1 つでもあれば、root 全体の索引を取る(Python だけの workspace では走らせない)。 */
-  private async indexFolderIfHy(folder: vscode.WorkspaceFolder): Promise<void> {
+  /** folder に Hy の file が 1 つでもあれば、root 全体の索引を取る(Python だけの workspace では走らせない)。取ったかを返す。 */
+  private async indexFolderIfHy(folder: vscode.WorkspaceFolder): Promise<boolean> {
     const any = await vscode.workspace.findFiles(
       new vscode.RelativePattern(folder, HY_FILE_GLOB),
       new vscode.RelativePattern(folder, HY_EXCLUDE_GLOB),
       1
     );
-    if (any.length > 0) {
-      await this.indexRoot(folder.uri.fsPath);
+    if (any.length === 0) {
+      return false;
     }
+    await this.indexRoot(folder.uri.fsPath);
+    return true;
   }
 
   /** root 全体の索引を取り直す(同じ root の走行が進行中なら、それに合流する)。 */
@@ -125,6 +163,9 @@ export class HyIndexService implements vscode.Disposable {
     const running = this.rootRuns.get(key);
     if (running !== undefined) {
       return running;
+    }
+    if (!this.disabled) {
+      this.setStatus({ tag: 'indexing', root });
     }
     const run = this.request({ tag: 'root', root })
       .then(() => this.reindexDirtyDocuments(root))
@@ -144,6 +185,9 @@ export class HyIndexService implements vscode.Disposable {
 
   /** disk の上で作られた・書き換えられた file を取り直す(編集中の document は editor 側の event に任せる)。 */
   private onDiskChange(uri: vscode.Uri): void {
+    if (isExcludedPath(uri.fsPath)) {
+      return;
+    }
     const open = vscode.workspace.textDocuments.find((d) => d.uri.fsPath === uri.fsPath);
     if (open !== undefined && open.isDirty) {
       return;
@@ -164,7 +208,7 @@ export class HyIndexService implements vscode.Disposable {
       return;
     }
     const folder = vscode.workspace.getWorkspaceFolder(uri);
-    if (folder === undefined || /[\\/](\.git|\.venv|node_modules|target|__pycache__)([\\/]|$)/.test(uri.fsPath)) {
+    if (folder === undefined || isExcludedPath(uri.fsPath)) {
       return;
     }
     let stat: vscode.FileStat;
@@ -224,6 +268,7 @@ export class HyIndexService implements vscode.Disposable {
     }
     const outcome = await this.indexer.index(request);
     this.apply(request, outcome);
+    this.setStatus(nextStatus(this.current, request, resultOf(outcome, this.store.entries().length)));
   }
 
   /** 索引の結果を store へ入れ、失敗・捨てた file・file ごとの errors を Output に出す。 */
@@ -231,6 +276,12 @@ export class HyIndexService implements vscode.Disposable {
     switch (outcome.tag) {
       case 'unsupported':
         this.disable(outcome.reason);
+        return;
+      case 'missing':
+        // 道具が無い時は file ごとに同じ理由が並ぶので、root 全体の依頼の時だけ出す(状態はパネルに出る)
+        if (request.tag === 'root') {
+          this.log.appendLine(`[hy-index] 索引を作る道具が無い (${describe(request)}): ${outcome.reason}`);
+        }
         return;
       case 'failed':
         this.log.appendLine(`[hy-index] 失敗 (${describe(request)}): ${outcome.reason}`);
@@ -287,6 +338,24 @@ export class HyIndexService implements vscode.Disposable {
     this.disabled = true;
     this.log.appendLine(`[hy-index] Hy の索引を止めた: ${reason}`);
     this.onUnsupported(reason);
+  }
+}
+
+/** 索引の口の結果を、状態を決める材料に写す(ok の時は置き場の file の数を添える)。 */
+function resultOf(outcome: HyIndexOutcome, files: number): IndexResult {
+  switch (outcome.tag) {
+    case 'ok':
+      return { tag: 'ok', files };
+    case 'missing':
+      return { tag: 'missing', reason: outcome.reason };
+    case 'unsupported':
+      return { tag: 'unsupported', binary: outcome.binary, reason: outcome.reason };
+    case 'failed':
+      return { tag: 'failed', reason: outcome.reason };
+    default: {
+      const unreachable: never = outcome;
+      throw new Error(`網羅されていない結果: ${JSON.stringify(unreachable)}`);
+    }
   }
 }
 

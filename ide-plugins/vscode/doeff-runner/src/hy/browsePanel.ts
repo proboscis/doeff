@@ -23,6 +23,8 @@ import {
   type BrowseView,
   type BrowseViewSetting
 } from './browse';
+import type { HyIndexStatusView } from './indexService';
+import { emptyIndexLines } from './indexStatus';
 import type { HyIndexStore } from './store';
 import type { LintStore } from '../lint/store';
 import type { TreePixels } from '../lint/panel';
@@ -42,6 +44,8 @@ export class BrowseTree implements vscode.TreeDataProvider<BrowseNode>, vscode.D
 
   constructor(
     private readonly hy: HyIndexStore,
+    /** 索引の状態(定義が 0 件の時に、なぜ無いのかと作り方を出す) */
+    private readonly status: HyIndexStatusView,
     private readonly lint: LintStore,
     /** 木の pixel art の icon の口(切っている時は undefined — codicon のまま) */
     private readonly pixels: TreePixels
@@ -115,8 +119,14 @@ export class BrowseTree implements vscode.TreeDataProvider<BrowseNode>, vscode.D
         item.iconPath = pixel ?? new vscode.ThemeIcon(own.length > 0 ? 'error' : 'symbol-function');
         return item;
       }
-      case 'message':
-        return new vscode.TreeItem(node.label, vscode.TreeItemCollapsibleState.None);
+      case 'message': {
+        const item = new vscode.TreeItem(node.label, vscode.TreeItemCollapsibleState.None);
+        item.tooltip = node.tooltip;
+        if (node.command !== undefined) {
+          item.command = { title: node.label, command: node.command };
+        }
+        return item;
+      }
       default: {
         const unreachable: never = node;
         throw new Error(`網羅されていない節: ${JSON.stringify(unreachable)}`);
@@ -128,7 +138,7 @@ export class BrowseTree implements vscode.TreeDataProvider<BrowseNode>, vscode.D
   getChildren(node?: BrowseNode): BrowseNode[] {
     if (node === undefined) {
       if (this.items().length === 0) {
-        return [{ tag: 'message', label: 'Hy の索引がまだありません' }];
+        return emptyIndexLines(this.status.status).map((line) => ({ tag: 'message', ...line }));
       }
       return browseRoots(this.items(), this.view, this.context);
     }
@@ -160,11 +170,12 @@ function savedViews(output: vscode.OutputChannel): BrowseView[] {
 export function registerBrowse(
   context: vscode.ExtensionContext,
   hy: HyIndexStore,
+  status: HyIndexStatusView,
   lint: LintStore,
   output: vscode.OutputChannel,
   pixels: TreePixels
 ): void {
-  const tree = new BrowseTree(hy, lint, pixels);
+  const tree = new BrowseTree(hy, status, lint, pixels);
   const view = vscode.window.createTreeView('doeff-hy-browse', { treeDataProvider: tree, showCollapseAll: true });
   // 今の見方を view の説明欄に出す
   const describe = (): void => {
@@ -173,6 +184,7 @@ export function registerBrowse(
   describe();
   const unsubscribeHy = hy.onDidChange(() => tree.refresh());
   const unsubscribeLint = lint.onDidChange(() => tree.refresh());
+  const unsubscribeStatus = status.onDidChangeStatus(() => tree.refresh());
   // 木の pixel art の icon の入り切りで出し直す
   context.subscriptions.push(
     vscode.workspace.onDidChangeConfiguration((event) => {
@@ -186,6 +198,7 @@ export function registerBrowse(
     view,
     { dispose: unsubscribeHy },
     { dispose: unsubscribeLint },
+    { dispose: unsubscribeStatus },
     vscode.commands.registerCommand('doeff-runner.browse.chooseOrder', async () => {
       const axes = availableAxes(tree.items());
       const order: Axis[] = [];
