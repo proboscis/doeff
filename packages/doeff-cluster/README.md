@@ -115,8 +115,8 @@ Program の中の `with-handlers` で並べます(実行先は handler を 1 つ
 
 ### 土台と :needs
 
-- 本番の土台は scheduler と時計を含みます。手元の `sim-cluster` に渡す sim の土台は含みません(sim の外側の scheduler と仮想の時計が
-  答えます)。同じ系の関数に違う土台を渡すだけで、本番と手元の系の値ができます。
+- 本番の土台は scheduler と時計を含みます。手元の `sim-cluster` / `wall-sim-cluster` に渡す sim の土台は含みません(sim の外側の
+  scheduler と時計が答えます)。同じ系の関数に違う土台を渡すだけで、本番と手元の系の値ができます。
 - 土台の関数の頭の `:needs`(`__doeff_needs__`)は、その土台を使う job の `:needs` の一部でなければなりません。`declare` が宣言の前に
   検めて断ります。土台が中に並べる handler の `:needs` は集めません(土台の頭に手で書く — 漏れは doeff-linter の照合が入るまで
   見つかりません)。
@@ -232,6 +232,15 @@ worker は業務の repo の commit を 1 つ展開して子 process の cwd に
 - 筋書き(scenario)の中で使う effect: `Crash`・`Redeclare`・`ReportsOf`・`ReadinessOf`・`ProcessesOf`・`SharedRows`・`ReadCoordinator`・
   `StopCoordinator`・`CrashCoordinator`・`CoordinatorRuns`・`KillWorker`・`StopWorker`・`StartWorker`・`CutWorker`・`DrainWorker`・
   `PreparationsOf`・`ClientLink`。時間を進めるのは scenario の `Delay` です。
+- 壁の時計で回すなら `wall-sim-cluster`(引数は `sim-cluster` と同じで、`start-ms` だけが無い — 今の時刻から始まります)。時計は
+  doeff-time の `async-time-handler` と `await-handler` で、`Delay` は実時間で待ちます。外の thread の客・本物の待ち受け・実時間の遅れを
+  確かめる検と、手元で系を実時間で回す道具に使います。筋書きは `Await` を出せます。job の `Await` は柵を通らないので、本物の I/O を持つ
+  job は本番の土台と同じく自分の土台に `await-handler` を並べるか、その I/O を `outside` の handler に置きます。
+
+  ```hy
+  (<- answer (wall-sim-cluster (my-system sim-foundation) (scenario)
+                               :workers #((SimWorker :name "w1" :provides #{"cluster-net"}))))
+  ```
 - 本番との既知の差: 1 process なので module の大域の状態は job の間で共有されうる・sim の土台は scheduler を含まない(本番の土台の
   入れ忘れは `foundation_check` で確かめる)・土台の `:needs` の漏れは見つからない。
 
