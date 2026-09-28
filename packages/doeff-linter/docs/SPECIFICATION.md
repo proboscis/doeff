@@ -294,7 +294,7 @@ intent の層は Tach の interfaces に当たる — 別の service が読ん�
   `layers.describe`)。
 - cache = repo の根の `.doeff-linter/semantic-cache/<鍵>.json`(git の外に置く — `.gitignore` に足すかは repo ごと)。鍵 = sha256(model・問いの JSON・層の説明・
   タグを消した source)。申告の役は鍵に入れず、判定の後にコードで比べる。cache の答えが無い定義は違反にせず、最上位の `semantic.unjudged` に数える(合格に倒さない)。
-- 重さは warning か info だけ(当たり外れを測り終えるまで error にしない — 設定にも error の欄は無い)。外れは登録簿に載せる。
+- 重さは warning か info だけ(当たり外れを測り終えるまで error にしない — 設定にも error の欄は無い)。外れは誤判定の一覧に載せる(下の「誤判定の一覧と正例の一覧」)。
 - 宛先・model・キーは doeff の `packages/doeff-jev/src/doeff_jev/target.py` と同じ決め方(Rust に写した — 決め方は 1 つ):
   環境変数 `JEV_BASE_URL` / `JEV_MODEL` / `JEV_WIRE` / `JEV_API_KEY` / `JEV_API_KEY_FILE` → 設定 file `~/.config/jev/client.json` → 既定 = TypeSafe 直
   (`https://api.typesafe.ai/v1/systemone`・model `jev-latest`・キーは `TYPESAFE_API_KEY` → `~/.config/jev/api_key`)。gateway は名指した時だけ。
@@ -334,7 +334,34 @@ proxy_peek_timeout_ms = 5000                     # 既定(覚えている時だ�
 
 editor-json: violation の `source`(`linter` = 決定的な規則・`jev` = 意味の判定)と `probability`(Jev の違反だけ)、最上位の `semantic`
 (`model`・`wire`・`judged`・`unjudged`・`asked`・`peeked`(代理が覚えていた答えを受け取った数)・`cost_usd`(gateway だけが返す)・`input_tokens`・
-`served_model`・`calibration` = not-run / ok / drifted / failed)。`wire` は宛先の形と決め方(例 `direct(default)`・`direct(env)`・`direct(repo)` = repo の代理)。
+`served_model`・`calibration` = not-run / ok / drifted / failed・`false_positives`・`labeled` — 下の節)。`wire` は宛先の形と決め方(例 `direct(default)`・`direct(env)`・`direct(repo)` = repo の代理)。
+
+### 誤判定の一覧と正例の一覧(agora-redesign #1039)
+
+Jev の判定は確率で、高い確率の外れと低い確率の当たりが混ざる。外れを登録簿に載せると「既知の破れ」として重大さ(level)が残り続けるので、
+人が外れと判定した当たりは登録簿とは別の置き場に置き、**違反として出さず、件数にも入れない**。
+
+```toml
+[tool.doeff-linter.semantic]
+false_positives = ["scripts/doeff_lint/JEV-FALSE-POSITIVES"]   # 誤判定の一覧(反例)
+true_positives = ["scripts/doeff_lint/JEV-TRUE-POSITIVES"]     # 人が本当の違反と判定した当たり(正例)
+```
+
+- どちらも repo の根からの dir の列。中の `*.txt` 1 つが判定 1 つで、1 行目が違反の鍵(5 節の綴り — editor-json の `key` をそのまま写す)、
+  2 行目から後が人の判定の理由(空でない行を空白でつないで読む)。**理由の無い file は判定として読まず**、`errors` に理由を出す
+  (理由の書けない判定を黙って効かせない)。読めない dir・file も `errors`。
+- 効くのは意味の規則(DOEFF201〜205)の当たりだけ。鍵が誤判定の一覧に載った当たりは `violations` に出さず、最上位の
+  `semantic.false_positives` に外した数を出す(text の出力は stderr の要約の行「意味の規則の誤判定 N 件」)。登録簿にも載っていても外す。
+- 正例の一覧は違反の出し方を変えない(載っていても閾値に届かなければ出ない)。当たり外れを測る材料として読むだけ。
+- 同じ鍵が両方の一覧に在れば食い違いとして `errors` に出し、どちらとしても読まない。
+- `semantic.labeled` = 人の判定と Jev の答えの突き合わせ:
+  `positives` / `negatives` = `{listed: 一覧に載った数, judged: そのうち Jev の答えのある数, flagged: そのうち今の閾値で当たりになる数}`、
+  `items` = 答えのある判定ごとの `{key, rule, expect(true = 正例), probability, flagged}`(鍵の順)。閾値に届かない答えも載る
+  (閾値を決め直す材料)。答えの無い判定(未判定の定義・もう無い定義)は `listed` にだけ数える。
+- 較正の手順: 判定を付けた file を `--semantic <file>…`(か `--semantic-all`)で問い、`semantic.labeled` の正例の `flagged / judged`
+  (当たりを拾えた割合)と反例の `flagged / judged`(外れを出す割合)を読む。同梱の較正の見張り(model の中身が変わったかの検め)とは別の物で、
+  見張りの幅には入れない(人の判定は閾値の際の物が多く、幅から外れても model の変化とは限らないため)。
+- 読みの限界: 鍵は定義の名で作るので、定義の中身が変わっても判定は載ったまま効く(登録簿と同じ)。中身が大きく変わった定義の判定は人が見直す。
 
 
 ## 11. 素の関数(deff)の理由と検の書き方 — DOEFF110・111・118・203

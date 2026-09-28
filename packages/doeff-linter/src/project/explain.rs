@@ -473,7 +473,7 @@ impl<'a> Narrator<'a> {
             Explain::MixedConcerns { name, kind, probability, layer } => (
                 format!("定義 {}({})", name, kind),
                 format!(
-                    "Jev の判定 p={:.2}: 入力の形の検め(辞書の鍵を読む・isinstance・空の検め)と業務の判断が 1 つの定義に混ざっている見込み。層 {} の定義は型のある値を受けて判断だけをする — 形を検める所が判断の中に散ると、何が入力の形の違いで何が業務の断りかを型で分けられない。(意味の判定 — 外れなら登録簿に載せる)",
+                    "Jev の判定 p={:.2}: 入力の形の検め(辞書の鍵を読む・isinstance・空の検め)と業務の判断が 1 つの定義に混ざっている見込み。層 {} の定義は型のある値を受けて判断だけをする — 形を検める所が判断の中に散ると、何が入力の形の違いで何が業務の断りかを型で分けられない。(意味の判定 — 外れなら誤判定の一覧に載せる)",
                     probability, layer
                 ),
             ),
@@ -485,11 +485,11 @@ impl<'a> Narrator<'a> {
                 ),
                 match chosen.as_str() {
                     "external-world" => format!(
-                        "Jev の判定 p={:.2}: 外の世界の窓口 — 外から渡された client や store を欄に持ち、method で使っている見込み(生の呼び出しが見えなくても)。class の method にすると effect と handler の差し替えを通らない。(意味の判定 — 外れなら登録簿に載せる)",
+                        "Jev の判定 p={:.2}: 外の世界の窓口 — 外から渡された client や store を欄に持ち、method で使っている見込み(生の呼び出しが見えなくても)。class の method にすると effect と handler の差し替えを通らない。(意味の判定 — 外れなら誤判定の一覧に載せる)",
                         probability
                     ),
                     _ => format!(
-                        "Jev の判定 p={:.2}: 状態を持つ class — method が自分か別の物の状態を変える見込み。状態が値の中に散ると、どこで何が変わったかを effect と handler の記録で追えない。(意味の判定 — 外れなら登録簿に載せる)",
+                        "Jev の判定 p={:.2}: 状態を持つ class — method が自分か別の物の状態を変える見込み。状態が値の中に散ると、どこで何が変わったかを effect と handler の記録で追えない。(意味の判定 — 外れなら誤判定の一覧に載せる)",
                         probability
                     ),
                 },
@@ -622,7 +622,7 @@ impl<'a> Narrator<'a> {
             Explain::Semantic { placement, definition, kind, question, probability } => (
                 format!("定義 {}({}) — {}", definition, kind, self.file_subject(placement)),
                 format!(
-                    "Jev の判定 p={:.2} — {}。{}(これは決定的な規則ではなく意味の判定で、当たり外れを測っている途中 — 外れなら登録簿に載せる)",
+                    "Jev の判定 p={:.2} — {}。{}(これは決定的な規則ではなく意味の判定で、当たり外れを測っている途中 — 外れなら誤判定の一覧に載せる)",
                     probability,
                     question.meaning(),
                     self.character(placement.layer)
@@ -632,18 +632,18 @@ impl<'a> Narrator<'a> {
                 format!("定義 {}({})— 書かれた理由「{}」", definition, kind, stated),
                 match (chosen_accepted, chosen.as_str()) {
                     (true, _) => format!(
-                        "Jev の判定: 受け入れる理由 {}({})に近い(p={:.2})が、受け入れない答えの確率の和が {:.2} ある。理由の文をこの定義に固有に書き直すか、defk にできないかを確かめる。(意味の判定 — 外れなら登録簿に載せる)",
+                        "Jev の判定: 受け入れる理由 {}({})に近い(p={:.2})が、受け入れない答えの確率の和が {:.2} ある。理由の文をこの定義に固有に書き直すか、defk にできないかを確かめる。(意味の判定 — 外れなら誤判定の一覧に載せる)",
                         chosen,
                         chosen_description.clone().unwrap_or_default(),
                         chosen_probability,
                         rejected_total
                     ),
                     (false, "none") => format!(
-                        "Jev の判定 p={:.2}: この理由は受け入れられない — 宣言した受け入れる理由のどれにも当たらず、素の関数でなければならない理由が見えない。呼び手を Program にして defk にできる見込み。(意味の判定 — 外れなら登録簿に載せる)",
+                        "Jev の判定 p={:.2}: この理由は受け入れられない — 宣言した受け入れる理由のどれにも当たらず、素の関数でなければならない理由が見えない。呼び手を Program にして defk にできる見込み。(意味の判定 — 外れなら誤判定の一覧に載せる)",
                         chosen_probability
                     ),
                     (false, _) => format!(
-                        "Jev の判定 p={:.2}: この理由は受け入れられない — 近い型は {}({})。{}(意味の判定 — 外れなら登録簿に載せる)",
+                        "Jev の判定 p={:.2}: この理由は受け入れられない — 近い型は {}({})。{}(意味の判定 — 外れなら誤判定の一覧に載せる)",
                         chosen_probability,
                         chosen,
                         chosen_description.clone().unwrap_or_default(),
