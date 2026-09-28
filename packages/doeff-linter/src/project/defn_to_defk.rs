@@ -252,7 +252,7 @@ pub struct SkippedDefinition {
     pub reason: SkipReason,
 }
 
-/// 変換の後に残った素の呼び(DOEFF126)1 件。
+/// 変換の後に残った素の呼び(DOEFF126)1 件。位置は書き換えた後の source の行(ほかの報告の位置は書き換える前の行)。
 #[derive(Debug, Clone, Serialize)]
 pub struct ResidualBareCall {
     pub location: Location,
@@ -292,13 +292,13 @@ impl FixReport {
             self.changed_files.len()
         ));
         if !self.converted.is_empty() {
-            out.push_str("\n## 変換した定義\n\n| 所 | 名 | 足した契約 |\n|---|---|---|\n");
+            out.push_str("\n## 変換した定義\n\n| 所(書き換える前の行) | 名 | 足した契約 |\n|---|---|---|\n");
             for c in &self.converted {
                 out.push_str(&format!("| {} | {} | `{}` |\n", c.location, c.name, c.contract));
             }
         }
         if !self.rewritten_calls.is_empty() {
-            out.push_str("\n## 書き換えた呼び\n\n| 所 | 呼び先 | 呼びを含む定義 | 形 |\n|---|---|---|---|\n");
+            out.push_str("\n## 書き換えた呼び\n\n| 所(書き換える前の行) | 呼び先 | 呼びを含む定義 | 形 |\n|---|---|---|---|\n");
             for c in &self.rewritten_calls {
                 let form = match &c.rewrite {
                     CallRewrite::Bind { from } => format!("{} → <-", from),
@@ -308,19 +308,19 @@ impl FixReport {
             }
         }
         if !self.needs_judgement.is_empty() {
-            out.push_str("\n## 判断の要る物\n\n| 所 | 定義 | 理由 |\n|---|---|---|\n");
+            out.push_str("\n## 判断の要る物\n\n| 所(書き換える前の行) | 定義 | 理由 |\n|---|---|---|\n");
             for j in &self.needs_judgement {
                 out.push_str(&format!("| {} | {} | {} |\n", j.location, j.definition, j.reason));
             }
         }
         if !self.skipped.is_empty() {
-            out.push_str("\n## 当てなかった物\n\n| 所 | 名 | 理由 |\n|---|---|---|\n");
+            out.push_str("\n## 当てなかった物\n\n| 所(書き換える前の行) | 名 | 理由 |\n|---|---|---|\n");
             for s in &self.skipped {
                 out.push_str(&format!("| {} | {} | {} |\n", s.location, s.name, s.reason));
             }
         }
         if !self.residual_bare_calls.is_empty() {
-            out.push_str("\n## 残った素の呼び(DOEFF126)\n\n| 所 | 定義 | 呼び先 |\n|---|---|---|\n");
+            out.push_str("\n## 残った素の呼び(DOEFF126)\n\n| 所(書き換えた後の行) | 定義 | 呼び先 |\n|---|---|---|\n");
             for r in &self.residual_bare_calls {
                 out.push_str(&format!("| {} | {} | {} |\n", r.location, r.definition, r.callee));
             }
