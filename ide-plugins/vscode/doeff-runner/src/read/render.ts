@@ -465,8 +465,10 @@ export function renderPage(input: PageInput): string {
 <body class="${lineClasses(input.fold)}">
 <aside class="axes"><input id="search" type="search" placeholder="${escapeHtml(LABELS.searchNames)}" value="${escapeHtml([...(searchOf(input.state))].join(' '))}"><div id="axes">${content.axes}</div>${content.picker}<div class="hint">${escapeHtml(LABELS.axesHint)}</div></aside>
 <main class="main">
+<div class="top">
 <div class="crumb"><b>${escapeHtml(input.place)}</b><span id="summary">${escapeHtml(content.summary)}</span><button class="btn" id="clear">${escapeHtml(LABELS.clearFilter)}</button></div>
 ${content.bar}
+</div>
 <div id="tree">${content.tree}</div>
 <div id="cards">${content.cards}</div>
 </main>
@@ -490,17 +492,18 @@ button{font:inherit;cursor:pointer}
 .facet.on small{color:#bcd8ff}
 .facet.empty{opacity:.4}
 .hint{color:#7d858f;font-size:11px;line-height:1.6;margin-top:18px}
-.main{padding:14px 22px 40px;min-width:0}
+.main{padding:0 22px 40px;min-width:0}
+.top{position:sticky;top:0;z-index:3;background:#1b1d21;padding-top:14px}
 .crumb{display:flex;gap:12px;align-items:center;font-size:12px;color:#8a9099;margin-bottom:10px;flex-wrap:wrap}
 .crumb b{color:#c9ced5;font-weight:600;font-family:Menlo,monospace}
 .linebar{display:flex;gap:14px;align-items:center;flex-wrap:wrap;background:#22252a;border:1px solid #33383f;border-radius:8px;padding:8px 14px;margin-bottom:14px;font-size:12.5px;color:#c9ced5}
 .linebar label{display:inline-flex;gap:5px;align-items:center;cursor:pointer}
 .linebar .sep{width:1px;height:16px;background:#3a3f47}
-.card{background:#22252a;border:1px solid #33383f;border-radius:10px;margin:0 0 12px;box-shadow:0 1px 0 #000}
+.card{background:#22252a;border:1px solid #33383f;border-radius:10px;margin:0 0 4px;box-shadow:0 1px 0 #000}
 .card[hidden]{display:none}
 .card:not(.open) .full,.card:not(.open) .full-only{display:none}
 .card.open .line{display:none}
-.hd{display:flex;align-items:center;gap:10px;padding:9px 16px;flex-wrap:wrap}
+.hd{display:flex;align-items:center;gap:10px;padding:5px 14px;flex-wrap:wrap}
 .card.open .hd{border-bottom:1px solid #33383f}
 .kind{font-size:10.5px;font-weight:700;letter-spacing:.06em;color:#1b1d21;background:#e2c46a;border-radius:4px;padding:2px 6px}
 .k-deff{background:#d8cf8a}.k-defn{background:#a8a8a8}.k-defeffect,.k-effect-clause{background:#8fd3ff}.k-defrecord,.k-deftype{background:#b9e39a}
@@ -517,7 +520,7 @@ button{font:inherit;cursor:pointer}
 .tag-role{background:#232f3b;color:#9dd0ff;border-color:#2f4a66}
 .tag-c0{background:#1f3a33;color:#8fe3c8;border-color:#2f5a4d}.tag-c1{background:#3b2233;color:#f0a0c8;border-color:#5a2f4a}.tag-c2{background:#2f2640;color:#c8a8f0;border-color:#4a3a66}
 .tag-c3{background:#3b2a20;color:#f0b890;border-color:#5a3f2f}.tag-c4{background:#2a3320;color:#c8e39a;border-color:#3f4a2f}.tag-c5{background:#2c2f33;color:#d6d8dc;border-color:#454a52}
-.line{display:flex;gap:12px;align-items:center;flex-wrap:wrap;padding:0 16px 9px;font:12.5px Menlo,monospace;color:#d6d8dc}
+.line{display:flex;gap:12px;align-items:center;flex-wrap:wrap;padding:0 14px 6px;font:12.5px Menlo,monospace;color:#d6d8dc}
 .line .f{display:none;align-items:center;gap:4px}
 .show-args .line .f-args,.show-effects .line .f-effects,.show-tags .line .f-tags,.show-doc .line .f-doc,.show-relations .line .f-relations,.show-location .line .f-location{display:inline-flex}
 .show-args .line .f-args{display:inline}

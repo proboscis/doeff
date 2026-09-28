@@ -1,0 +1,40 @@
+{
+  "artifacts": [
+    {
+      "path": "artifacts/v8/design.md",
+      "sha256": "0bac8e1b0738e0bcaadac905b85c3725da85d5feeea3aab84b3a63df5391bfc6"
+    }
+  ],
+  "body": {
+    "actor": "user",
+    "authority": "direct",
+    "decision": "design",
+    "outcome": "accepted",
+    "scope_of_agreement": "operator が合意したのは「カードの間隔を詰める」と「header を sticky にする」の 2 点。余白の具体の数と、header に何を含めるか(絞りの解除だけ・軸の値の選択は左の欄)は席の既定で戻せる。",
+    "source": "operator の直接の指示 2026-09-29 00:5x〜01:0x(会話 defk-view-discuss・herdr pane w3J:pC)。実物 doeff-runner 0.6.30 を見ての逐語: \"great, can you reduce the spacing between cards?\" / \"the reader view should have a header that can set filter\" / \"i mean sticky header\"。",
+    "statement": "v7 の裁定に 2 点を足す。(1) カードの間隔を詰める: カードの下の余白 12px → 4px、頭の行の padding 9px 16px → 5px 14px、畳んだ 1 行の padding 0 16px 9px → 0 14px 6px(数は席の既定・戻せる)。開いたカードの中の余白は変えない。(2) 面の上の欄 2 行(file 名・定義の数・clear filter / show in line の切り替え・fold all・unfold all)を 1 つの箱に包み、scroll しても上に留める(sticky)。絞りの値の選択は左の欄(既に sticky)のままで、header には複製しない。記録 = artifacts/v8/design.md。",
+    "subjects": [
+      "design-c6ae8fe5208d"
+    ],
+    "supersedes": [
+      "decision-ab12b884cefe"
+    ]
+  },
+  "created_at": "2026-09-28T15:40:57.032950+00:00",
+  "id": "decision-a1ba0cbe242a",
+  "inputs": [
+    {
+      "id": "design-c6ae8fe5208d",
+      "role": "subject",
+      "sha256": "26fd760976222a158ed6509f39d0b7f569237435d06f863d96f4d419c7840c8c"
+    },
+    {
+      "id": "decision-ab12b884cefe",
+      "role": "basis",
+      "sha256": "87807bd5fceedbfbcab2df63dc3b5726816d5ae9f565cdb6bb724700f6b30b20"
+    }
+  ],
+  "kind": "decision",
+  "schema_version": 1,
+  "scope": "doeff-hy の code を読む面(VS Code)。単位は file ではなく定義(defk・defrecord・defeffect・defhandler・deftest …)で、Scala 3 の見た目に印字し、tag・effect・呼び出し・型から辿る。source の Hy は編集しない。その先の言語(静的な型・型に載る effect・Python の呼び出し・file に縛られない名前空間)の要件も持つ"
+}
