@@ -187,6 +187,12 @@ pub struct SemanticSection {
     pub proxy_token_file: Option<String>,
     /// 覚えている時だけの問いの時間の上限(ms・既定 5000 — 全部の束を合わせた上限)。
     pub proxy_peek_timeout_ms: Option<u64>,
+    /// 誤判定の一覧の dir(repo の根からの相対・1 鍵 1 file・2 行目から後が人の判定の理由)。載った Jev の当たりは出さず、件数にも入れない。
+    #[serde(default)]
+    pub false_positives: Vec<String>,
+    /// 人が「本当の違反」と判定した当たりの一覧の dir(形は誤判定の一覧と同じ)。違反の出し方は変えず、当たり外れを測る正例として読む。
+    #[serde(default)]
+    pub true_positives: Vec<String>,
 }
 
 /// `[tool.doeff-linter.semantic] mixed_concerns`(読んだ形)。
@@ -265,6 +271,10 @@ pub struct SemanticSettings {
     pub source_limit: usize,
     /// Jev の呼び出しを覚える代理(無ければ使わない)。
     pub proxy: Option<ProxySettings>,
+    /// 誤判定の一覧の dir(repo の根からの相対)。
+    pub false_positives: Vec<String>,
+    /// 人が本当の違反と判定した当たりの一覧の dir(repo の根からの相対)。
+    pub true_positives: Vec<String>,
 }
 
 
@@ -333,6 +343,8 @@ impl SemanticSettings {
         }
         SemanticSettings {
             proxy,
+            false_positives: section.false_positives.clone(),
+            true_positives: section.true_positives.clone(),
             plain_callable,
             class_role,
             mixed_concerns,
@@ -1019,6 +1031,44 @@ pub struct SemanticSummary {
     pub served_model: Option<String>,
     /// 較正の見張りの結果(not-run・ok・drifted・failed)。
     pub calibration: String,
+    /// 誤判定の一覧に載っていて、違反から外した当たりの数(出さず・件数に入れない)。
+    pub false_positives: usize,
+    /// 人の判定(誤判定の一覧 = 反例・正例の一覧 = 正例)と Jev の答えの突き合わせ。
+    pub labeled: LabeledSummary,
+}
+
+/// 人の判定と Jev の答えの突き合わせ — 今の閾値で当たりになるかと、判定ごとの確率(閾値を決める材料)。
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct LabeledSummary {
+    /// 正例(人が本当の違反と判定した物)。
+    pub positives: LabelCount,
+    /// 反例(誤判定の一覧)。
+    pub negatives: LabelCount,
+    /// 答えのある判定ごとの確率(鍵の順)。
+    pub items: Vec<LabeledAnswer>,
+}
+
+/// 判定の種類ごとの数。
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct LabelCount {
+    /// 一覧に載った鍵の数。
+    pub listed: usize,
+    /// そのうち Jev の答えがある(今の定義を判じた)数。
+    pub judged: usize,
+    /// そのうち今の閾値で当たりになる数(正例なら当たり・反例なら誤判定)。
+    pub flagged: usize,
+}
+
+/// 判定 1 つと Jev の答え。
+#[derive(Debug, Clone, Serialize)]
+pub struct LabeledAnswer {
+    pub key: String,
+    pub rule: String,
+    /// 人の判定(true = 本当の違反・false = 誤判定)。
+    pub expect: bool,
+    pub probability: f64,
+    /// 今の閾値で当たりになるか。
+    pub flagged: bool,
 }
 
 /// 何を撃つか。

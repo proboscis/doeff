@@ -206,6 +206,18 @@ impl ProjectRule {
         )
     }
 
+    /// Jev に問う意味の規則(DOEFF201〜205)か — 誤判定の一覧が効くのはこの規則の当たりだけ。
+    pub fn is_semantic(self) -> bool {
+        matches!(
+            self,
+            ProjectRule::SemanticBusinessDecision
+                | ProjectRule::SemanticTransportKnowledge
+                | ProjectRule::SemanticPlainCallable
+                | ProjectRule::SemanticClassRole
+                | ProjectRule::SemanticMixedConcerns
+        )
+    }
+
     /// ID の綴り(大文字小文字は問わない)から規則を引く。層の規則でなければ None。
     pub fn parse(id: &str) -> Option<ProjectRule> {
         let upper = id.to_uppercase();
@@ -443,9 +455,9 @@ impl ProjectRule {
             ProjectRule::TestIsDeftest => "deftest にする(検の値を組む補助は defk にして deftest の中で `(<- …)` で呼ぶ)",
             ProjectRule::ClassWithBehaviour => "外の世界の窓口は土台の handler にする — 資源(接続・client・file の手)は defhandler の直下の (session val …) に持ち、ListRows・PutRow などの effect に答える(模擬なら模擬の土台の handler)。状態なら 値は defrecord(不変)、振る舞いは新しい値を返す純粋な関数、状態は world などの handler の (session var …) 1 か所に置き、変化は effect で流す。速さのために書き換えが要る時も書き換えは handler の中だけ",
             ProjectRule::JsonValueOutsideWire => "JSON の形を defwire で型に起こし、送受信の foundation の module が parse した型のある値を渡す(JsonValue を手で分解して読む関数は書かない)。送受信そのものを行う foundation の module なら architecture.hy の :wire-modules に挙げる",
-            ProjectRule::SemanticBusinessDecision => "業務の判断は core の judgment へ移し、翻訳の handler はその答えを使うだけにする(Jev の外れなら登録簿に載せる)",
-            ProjectRule::SemanticTransportKnowledge => "通信の手段は protocol の翻訳の handler へ移し、core は intent を出すだけにする(Jev の外れなら登録簿に載せる)",
-            ProjectRule::SemanticPlainCallable => "種類が当たらないなら defk にする — 組み立て(handler の並び)なら `(defk handlers-of [foundation])` に・テストなら deftest に・値を組む補助なら defk にして `(<- …)` で呼ぶ(Jev の外れなら登録簿に載せる)",
+            ProjectRule::SemanticBusinessDecision => "業務の判断は core の judgment へ移し、翻訳の handler はその答えを使うだけにする(Jev の外れなら誤判定の一覧に載せる)",
+            ProjectRule::SemanticTransportKnowledge => "通信の手段は protocol の翻訳の handler へ移し、core は intent を出すだけにする(Jev の外れなら誤判定の一覧に載せる)",
+            ProjectRule::SemanticPlainCallable => "種類が当たらないなら defk にする — 組み立て(handler の並び)なら `(defk handlers-of [foundation])` に・テストなら deftest に・値を組む補助なら defk にして `(<- …)` で呼ぶ(Jev の外れなら誤判定の一覧に載せる)",
             ProjectRule::ShapeCheckInJudgment => "形の検めは protocol の境目で defwire の型に parse し(形が合わなければ解く所で失敗)、この定義は型のある値を受けて判断だけをする",
             ProjectRule::FailureRethrow => "失敗は (<- (Raise 失敗の値)) で出し(呼び手へ手で return し直さない)、受けて写す所だけ呼ぶ側で (on-raise 本文 (Refusal r) 写し先) と受ける(ADR-DOE-CORE-EFFECTS-003 R3・R7)",
             ProjectRule::BindThenReturn => "(return (! (f …))) と 1 つにするか、失敗なら (<- (Raise …)) で出す",
@@ -455,8 +467,8 @@ impl ProjectRule {
             ProjectRule::JudgmentPerformsEffect => "effect を出す部分を呼び手の program へ移し、判断はその答えの値を引数で受ける — effect を出すのが仕事なら役を program に改める(推論は handler で受けた effect を引かない — 本体で受けているなら登録簿に載せる)",
             ProjectRule::TranslationEmitsIntent => "intent を出す業務の流れは層 core の program に置き、翻訳の handler は受けた intent を doeff の汎用の effect(HttpRequest・記録の読み書き・時計 …)へ出し直すだけにする — 経由した defk が intent を出すなら、その defk を呼ばずに汎用の effect を直に使う",
             ProjectRule::DefkCalledBare => "(<- x (f …)) で束ねるか (! (f …)) で答えを受ける — 素の関数の中なら、その関数を defk にして呼び手を Program にする",
-            ProjectRule::SemanticMixedConcerns => "形の検めは protocol の境目で defwire の型に parse し(形が合わなければ解く所で失敗)、この定義は型のある値を受けて判断だけをする(Jev の外れなら登録簿に載せる)",
-            ProjectRule::SemanticClassRole => "外の世界の窓口なら土台の handler(資源は (session val …))、状態なら handler の (session var …) 1 か所(Jev の外れなら登録簿に載せる)",
+            ProjectRule::SemanticMixedConcerns => "形の検めは protocol の境目で defwire の型に parse し(形が合わなければ解く所で失敗)、この定義は型のある値を受けて判断だけをする(Jev の外れなら誤判定の一覧に載せる)",
+            ProjectRule::SemanticClassRole => "外の世界の窓口なら土台の handler(資源は (session val …))、状態なら handler の (session var …) 1 か所(Jev の外れなら誤判定の一覧に載せる)",
         }
     }
 }

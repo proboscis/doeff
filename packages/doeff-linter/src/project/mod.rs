@@ -39,7 +39,7 @@ use facts::{read_facts, ByteSpan, Language, ModuleFacts};
 use names::{environment_words_of, hy_mangle, is_upper_name, module_of};
 use registry::Registry;
 use rule::ProjectRule;
-use settings::{EnvironmentSettings, LayerId, LayerSettings, ProjectSettings};
+use settings::{EnvironmentSettings, LawSpec, LayerId, LayerSettings, ProjectSettings};
 
 /// 違反 1 件(law と登録簿を当てた後)。
 #[derive(Debug, Clone)]
@@ -199,7 +199,8 @@ pub fn run_with(root: &Path, settings: &ProjectSettings, enabled: &BTreeSet<Proj
     }
     report.errors.extend(registry.problems.iter().cloned());
     let raw = raw_settings(root, settings, &mut report.errors);
-    let wants_raw = enabled.contains(&ProjectRule::RawSideEffectDirect) || enabled.contains(&ProjectRule::RawSideEffectVia);
+    let mut semantic_probes: Vec<SemanticProbe> = Vec::new();
+    let wants_raw =enabled.contains(&ProjectRule::RawSideEffectDirect) || enabled.contains(&ProjectRule::RawSideEffectVia);
     let mut drafts = Vec::new();
 
     // 読めない Hy の file の知らせ(DOEFF128)の材料 — 全体なら repo の Hy の file の全部、1 file ならその保存前の中身。
@@ -454,13 +455,21 @@ pub fn run_with(root: &Path, settings: &ProjectSettings, enabled: &BTreeSet<Proj
                 tags: settings.definitions.as_ref().map(|d| d.tags.clone()),
                 indexes: &indexes,
             };
-            let (found, summary, errors) = crate::timing::timed("semantic", || judge_semantic(root, semantic, layers, enabled, &semantic_files, semantic_mode, &plain));
+            let (found, summary, errors, probes) =
+                crate::timing::timed("semantic", || judge_semantic(root, semantic, layers, enabled, &semantic_files, semantic_mode, &plain));
             drafts.extend(found);
             report.errors.extend(errors);
             report.semantic = Some(summary);
+            semantic_probes = probes;
         }
     }
-    report.findings = finish(drafts, settings, &registry);
+    let labels = judged_labels(root, settings, &mut report.errors);
+    let (findings, dropped) = finish(drafts, settings, &registry, &labels.false_positives);
+    report.findings = findings;
+    if let Some(summary) = report.semantic.as_mut() {
+        summary.false_positives = dropped;
+        summary.labeled = labeled_summary(settings, &labels, &semantic_probes);
+    }
     // 読めない Hy の file は、有効な規則の一覧に関わらず知らせる(違反が欠けているのを黙らせない — DOEFF128)。
     report.findings.extend(unreadable_findings(root, settings, &unreadable_target));
     report
@@ -1537,6 +1546,19 @@ fn semantic_rule(question: semantic::SemanticQuestion) -> ProjectRule {
     }
 }
 
+/// Jev の答えのある定義 1 つ — 人の判定との突き合わせの材料(閾値に届かず違反にならなかった定義も含む)。
+struct SemanticProbe {
+    rule: ProjectRule,
+    /// 鍵の law を引く層(層を問う規則 DOEFF201・202 だけ)。
+    layer: Option<LayerId>,
+    rel: String,
+    /// 鍵の細目(mangle した定義の名)。
+    detail: String,
+    probability: f64,
+    /// 今の閾値で違反になるか。
+    flagged: bool,
+}
+
 /// DOEFF201・202: 設定した層の Hy の最上位の定義を Jev の問いにし、cache を読むか(既定)撃つ(--semantic)。答えの無い定義は未判定の数。
 fn judge_semantic(
     root: &Path,
@@ -1546,7 +1568,7 @@ fn judge_semantic(
     files: &[(LayerFile, Option<String>)],
     mode: &semantic::SemanticMode,
     plain: &PlainCallableInput<'_>,
-) -> (Vec<Draft>, semantic::SemanticSummary, Vec<String>) {
+) -> (Vec<Draft>, semantic::SemanticSummary, Vec<String>, Vec<SemanticProbe>) {
     let target = semantic::target_for_repo(settings.proxy.as_ref());
     let model = target.model.clone();
     let wire = format!("{:?}({})", target.wire, target.source).to_lowercase();
@@ -1797,10 +1819,7 @@ fn judge_semantic(
     let mut summary = outcome.summary;
     summary.model = model;
     summary.wire = wire;
-    let drafts = outcome
-        .answered
-        .into_iter()
-        .filter_map(|(item, answer)| {
+    let draft_of = |item: &semantic::SemanticItem, answer: &semantic::Answer| -> Option<Draft> {
             let probability = answer.probability;
             if item.question == semantic::SemanticQuestion::MixedConcerns {
                 let chosen = answer.choice.clone().unwrap_or_else(|| "neither".to_string());
@@ -1906,9 +1925,23 @@ fn judge_semantic(
                 base,
                 explain: Explain::Semantic { placement, definition: item.name.clone(), kind: item.kind, question: item.question, probability },
             })
-        })
-        .collect();
-    (drafts, summary, errors)
+    };
+    let mut drafts = Vec::new();
+    let mut probes = Vec::new();
+    for (item, answer) in &outcome.answered {
+        let draft = draft_of(item, answer);
+        let layered = matches!(item.question, semantic::SemanticQuestion::BusinessDecision | semantic::SemanticQuestion::TransportKnowledge);
+        probes.push(SemanticProbe {
+            rule: semantic_rule(item.question),
+            layer: layered.then_some(item.layer),
+            rel: item.rel.clone(),
+            detail: hy_mangle(&item.name),
+            probability: answer.probability,
+            flagged: draft.is_some(),
+        });
+        drafts.extend(draft);
+    }
+    (drafts, summary, errors, probes)
 }
 
 // --- 定義の書き方(DOEFF110〜112)------------------------------------------------------
@@ -2857,18 +2890,74 @@ fn judge_environment_names(file: &SourceFile, source: &str, env: &EnvironmentSet
 
 // --- 仕上げ -------------------------------------------------------------------------------
 
-/// 下書きに law・鍵・登録簿・照合中を当てて違反にする(path と位置の順)。
-fn finish(drafts: Vec<Draft>, settings: &ProjectSettings, registry: &Registry) -> Vec<Finding> {
+/// 違反の鍵 `<repo の根からの path>::<law の名か規則の ID>[::<細目>]`(登録簿・誤判定の一覧が照らす綴り — 組むのはここ 1 か所)。
+fn finding_key(law: Option<&LawSpec>, rule: ProjectRule, rel: &str, detail: Option<&str>) -> String {
+    let segment = law.map(|l| l.name.as_str()).unwrap_or_else(|| rule.id());
+    match detail {
+        Some(detail) => format!("{}::{}::{}", rel, segment, detail),
+        None => format!("{}::{}", rel, segment),
+    }
+}
+
+/// 人の判定の一覧(意味の規則の誤判定と正例 — 鍵 → 理由)。
+#[derive(Debug, Default)]
+struct JudgedLabels {
+    false_positives: BTreeMap<String, String>,
+    true_positives: BTreeMap<String, String>,
+}
+
+/// 意味の規則の設定の誤判定の一覧と正例の一覧を読む。両方に載った鍵は食い違いとして理由を積み、どちらとしても読まない。
+fn judged_labels(root: &Path, settings: &ProjectSettings, errors: &mut Vec<String>) -> JudgedLabels {
+    let Some(semantic) = &settings.semantic else { return JudgedLabels::default() };
+    let negatives = registry::JudgedKeys::load(root, &semantic.false_positives);
+    let positives = registry::JudgedKeys::load(root, &semantic.true_positives);
+    errors.extend(negatives.problems);
+    errors.extend(positives.problems);
+    let mut labels = JudgedLabels { false_positives: negatives.reasons, true_positives: positives.reasons };
+    let both: Vec<String> = labels.false_positives.keys().filter(|k| labels.true_positives.contains_key(*k)).cloned().collect();
+    for key in both {
+        errors.push(format!("判定の一覧の食い違い: {} が誤判定の一覧と正例の一覧の両方に在る — どちらとしても読まない", key));
+        labels.false_positives.remove(&key);
+        labels.true_positives.remove(&key);
+    }
+    labels
+}
+
+/// 人の判定と Jev の答えを突き合わせる(鍵の順)。一覧に載っても答えの無い(未判定の・今は無い)定義は listed にだけ数える。
+fn labeled_summary(settings: &ProjectSettings, labels: &JudgedLabels, probes: &[SemanticProbe]) -> semantic::LabeledSummary {
+    let mut summary = semantic::LabeledSummary::default();
+    summary.positives.listed = labels.true_positives.len();
+    summary.negatives.listed = labels.false_positives.len();
+    for probe in probes {
+        let key = finding_key(settings.law_for(probe.rule, probe.layer), probe.rule, &probe.rel, Some(&probe.detail));
+        let expect = match (labels.true_positives.contains_key(&key), labels.false_positives.contains_key(&key)) {
+            (true, _) => true,
+            (false, true) => false,
+            (false, false) => continue,
+        };
+        let count = if expect { &mut summary.positives } else { &mut summary.negatives };
+        count.judged += 1;
+        count.flagged += usize::from(probe.flagged);
+        summary.items.push(semantic::LabeledAnswer { key, rule: probe.rule.id().to_string(), expect, probability: probe.probability, flagged: probe.flagged });
+    }
+    summary.items.sort_by(|a, b| a.key.cmp(&b.key));
+    summary
+}
+
+/// 下書きに law・鍵・登録簿・照合中を当てて違反にする(path と位置の順)。意味の規則の当たりで鍵が誤判定の一覧に載った物は出さない
+/// (返す数 = 外した数)。
+fn finish(drafts: Vec<Draft>, settings: &ProjectSettings, registry: &Registry, false_positives: &BTreeMap<String, String>) -> (Vec<Finding>, usize) {
     let narrator = Narrator { layers: settings.layers.as_ref(), raw: settings.raw.as_ref() };
+    let mut dropped = 0;
     let mut findings: Vec<Finding> = drafts
         .into_iter()
-        .map(|draft| {
+        .filter_map(|draft| {
             let law = settings.law_for(draft.rule, draft.layer);
-            let segment = law.map(|l| l.name.clone()).unwrap_or_else(|| draft.rule.id().to_string());
-            let key = match &draft.detail {
-                Some(detail) => format!("{}::{}::{}", draft.rel, segment, detail),
-                None => format!("{}::{}", draft.rel, segment),
-            };
+            let key = finding_key(law, draft.rule, &draft.rel, draft.detail.as_deref());
+            if draft.rule.is_semantic() && false_positives.contains_key(&key) {
+                dropped += 1;
+                return None;
+            }
             let registered = registry.keys.contains(&key);
             let base = settings.severity.get(&draft.rule).copied().unwrap_or(draft.base);
             let reconciling = settings.registry.reconciling.contains(&draft.rule);
@@ -2889,7 +2978,7 @@ fn finish(drafts: Vec<Draft>, settings: &ProjectSettings, registry: &Registry) -
                 Explain::MixedConcerns { probability, .. } => Some(*probability),
                 _ => None,
             };
-            Finding {
+            Some(Finding {
                 origin: if probability.is_some() { FindingOrigin::Jev } else { FindingOrigin::Linter },
                 probability,
                 rule: draft.rule,
@@ -2906,11 +2995,11 @@ fn finish(drafts: Vec<Draft>, settings: &ProjectSettings, registry: &Registry) -
                 standing: Standing::of(registered, reconciling),
                 registered,
                 explanation: narrator.explain(&draft.explain, law),
-            }
+            })
         })
         .collect();
     findings.sort_by(|a, b| (&a.rel, a.range.start, a.rule).cmp(&(&b.rel, b.range.start, b.rule)));
-    findings
+    (findings, dropped)
 }
 
 /// 判じる規則の集合(`enable`・`disable` を展開した ID の列から。None は全部)。

@@ -237,6 +237,68 @@ fn semantic_severity_cannot_be_error_and_thresholds_are_checked() {
     assert!(String::from_utf8_lossy(&output.stderr).contains("info ≤ warning"));
 }
 
+/// 判定 1 つの file を書く(1 行目が鍵・2 行目から後が理由)。
+fn write_judgment(dir: &Path, list: &str, name: &str, key: &str, reason: &str) {
+    let path = dir.join(list);
+    std::fs::create_dir_all(&path).unwrap();
+    std::fs::write(path.join(format!("{}.txt", name)), format!("{}\n{}\n", key, reason)).unwrap();
+}
+
+#[test]
+fn false_positives_are_not_reported_nor_counted_and_labels_meet_the_answers() {
+    let semantic = format!("{}false_positives = [\"FALSE\"]\ntrue_positives = [\"TRUE\"]\n", SEMANTIC);
+    let dir = repo(FILES, &semantic);
+    std::fs::create_dir_all(dir.path().join("FALSE")).unwrap();
+    std::fs::create_dir_all(dir.path().join("TRUE")).unwrap();
+    let jev = fake_jev(false);
+    let (_, report, _) = run(dir.path(), &jev.url, &["--semantic-all"]);
+    let key_of = |rule: &str, name: &str| find(&report, rule, name).unwrap()["key"].as_str().unwrap().to_string();
+    let borderline = key_of("DOEFF201", "borderline");
+    let route = key_of("DOEFF202", "route");
+    let may_post = report["violations"].as_array().unwrap().iter().find(|v| v["rule"] == "DOEFF201" && v["severity"] == "warning").unwrap()["key"].as_str().unwrap().to_string();
+    // 閾値に届かず違反にならない定義の鍵(read-body)も、同じ綴りで判定できる。
+    let read_body = borderline.replace("borderline", "read_body");
+    write_judgment(dir.path(), "FALSE", "a", &borderline, "値を読むだけで業務の判断ではない");
+    write_judgment(dir.path(), "FALSE", "b", &route, "宛先の名を渡すだけ");
+    write_judgment(dir.path(), "TRUE", "a", &may_post, "誰に許すかを決めている");
+    write_judgment(dir.path(), "TRUE", "b", &read_body, "本当は判断している(Jev は拾えない)");
+    let (code, report, stderr) = run(dir.path(), &jev.url, &[]);
+    assert_eq!(code, 0, "{}", stderr);
+    assert!(report["errors"].as_array().unwrap().is_empty(), "{}", report["errors"]);
+    // 誤判定の一覧に載った当たりは出さず、数だけを別に出す。正例の一覧は出し方を変えない。
+    assert!(find(&report, "DOEFF201", "borderline").is_none());
+    assert!(find(&report, "DOEFF202", "route").is_none());
+    assert_eq!(report["violations"].as_array().unwrap().iter().filter(|v| v["source"] == "jev").count(), 1);
+    let semantic = &report["semantic"];
+    assert_eq!(semantic["false_positives"], 2);
+    let labeled = &semantic["labeled"];
+    assert_eq!(labeled["positives"], serde_json::json!({"listed": 2, "judged": 2, "flagged": 1}));
+    assert_eq!(labeled["negatives"], serde_json::json!({"listed": 2, "judged": 2, "flagged": 2}));
+    let missed = labeled["items"].as_array().unwrap().iter().find(|i| i["key"] == read_body.as_str()).unwrap();
+    assert_eq!((missed["expect"].as_bool(), missed["flagged"].as_bool(), missed["probability"].as_f64()), (Some(true), Some(false), Some(0.05)));
+    // text の出力は stderr の要約の行に誤判定の数を出す。
+    let home = tempfile::TempDir::new().unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_doeff-linter"))
+        .args(["--no-log"])
+        .current_dir(dir.path())
+        .env("HOME", home.path())
+        .env("JEV_BASE_URL", &jev.url)
+        .env("JEV_MODEL", "jev-test")
+        .output()
+        .unwrap();
+    assert!(String::from_utf8_lossy(&output.stderr).contains("意味の規則の誤判定 2 件"), "{}", String::from_utf8_lossy(&output.stderr));
+    // 理由の無い判定は読まない・両方の一覧に在る鍵は食い違いとしてどちらとしても読まない(どちらも errors に出す)。
+    std::fs::write(dir.path().join("FALSE/b.txt"), format!("{}\n\n", route)).unwrap();
+    write_judgment(dir.path(), "TRUE", "c", &borderline, "やはり違反");
+    let (_, report, _) = run(dir.path(), &jev.url, &[]);
+    let errors = report["errors"].to_string();
+    assert!(errors.contains("判定の理由"), "{}", errors);
+    assert!(errors.contains("食い違い"), "{}", errors);
+    assert!(find(&report, "DOEFF202", "route").is_some());
+    assert!(find(&report, "DOEFF201", "borderline").is_some());
+    assert_eq!(report["semantic"]["false_positives"], 0);
+}
+
 #[test]
 fn plain_callable_reason_is_accepted_or_rejected_by_jev() {
     let dir = tempfile::TempDir::new().unwrap();
