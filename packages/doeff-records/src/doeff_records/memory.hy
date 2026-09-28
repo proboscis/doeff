@@ -75,9 +75,8 @@
    lock = 置き場を読み書きする操作を 1 つずつにする錠(thread の間で置き場を共有するため — 同じ thread の入れ子は通す RLock)/
    bells = WatchChanges の待ち手が掛けた呼び鈴(外の promise → None の dict — 掛けた順の集合。変更の列を動かす書きが掛けた順に全部鳴らして外す。
    set にしないのは、set の順は object の番地で決まり、走らせるたびに待ち手の起きる順が変わって模擬の結果が揺れるため)。
-   poll-seconds は受けるが使わない: 待ちが読み直しをやめた(呼び鈴で起きる)ので刻みは無い。使い手の模擬の組み立てが
-   まだ渡すので、呼び手が渡すのをやめるまで受ける(外す時は呼び手ごと)。"
-  (defn #^ None __init__ [self #^ RecordsSchema schema * #^ (| float None) [poll-seconds None]]
+   待ちは読み直さず呼び鈴で起きるので、見回りの刻みは受けない(使い手が渡すのをやめたので 2026-09-29 に外した — agora-redesign #1017)。"
+  (defn #^ None __init__ [self #^ RecordsSchema schema]
     (setv self.schema schema
           self.lock (threading.RLock)
           self.bells {}
