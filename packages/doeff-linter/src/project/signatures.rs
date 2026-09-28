@@ -1218,6 +1218,131 @@ pub fn judgment_effects(world: &World, rel: &str, source: &str) -> Vec<JudgmentE
     out
 }
 
+// --- DOEFF130: 翻訳の handler は業務の intent を出さない ------------------------------------------
+
+/// DOEFF130 の破れ 1 つ — 翻訳の層の handler が出す業務の intent 1 つと、それに至る最初の撃った呼び。範囲は byte。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TranslationIntent {
+    /// handler の綴り(defhandler の名か、`[effect k]` を受ける関数の名)。
+    pub handler: String,
+    /// intent の module まで含めた名。
+    pub qualified: String,
+    /// 撃った呼びから intent までに経由した defk の綴り(呼んだ順 — intent を直に撃っていれば空)。
+    pub chain: Vec<String>,
+    pub start: usize,
+    pub end: usize,
+}
+
+impl TranslationIntent {
+    /// intent の綴り(module を外した最後の区切り)。
+    pub fn effect(&self) -> &str {
+        last_segment(&self.qualified)
+    }
+
+    /// 経由の道(`a → b`)— 直に撃っていれば None。
+    pub fn via(&self) -> Option<String> {
+        (!self.chain.is_empty()).then(|| self.chain.join(" → "))
+    }
+}
+
+/// 1 file の翻訳の handler — `(defhandler 名 …)` と、引数が `[effect k]` の最上位の関数 — が出す業務の intent を読む。
+/// `is_intent` は module まで含めた名が業務の intent(層 intent の型)かを答える。撃った呼びの頭が repo の defk なら、その defk の
+/// 撃った呼びへ `max_depth` 段まで辿る(import した defk の先も — 定義の本文だけでは、import した関数経由の intent がすり抜ける)。
+/// handler ごと・intent ごとに、本文の順で最初の撃った呼びを 1 つ出す。追えない呼び(repo の外の関数・deff・method)の先は数えない。
+pub fn translation_intents(world: &World, rel: &str, source: &str, is_intent: &dyn Fn(&str) -> bool, max_depth: usize) -> Vec<TranslationIntent> {
+    let forms = Reader::new(source, 0, source.len()).read_all();
+    let module = module_of(rel);
+    let bindings = form_bindings(&forms, source, &module);
+    let reader = FileReader {
+        hy: Hy { src: source },
+        lines: LineIndex::new(source),
+        scope: Scope {
+            module: &module,
+            bindings: &bindings,
+        },
+        path: rel.to_string(),
+    };
+    let mut out = Vec::new();
+    for form in top_definitions(&reader.hy, &forms) {
+        let Some((name, body)) = translation_handler(&reader.hy, form) else {
+            continue;
+        };
+        let mut sites = Vec::new();
+        for item in body {
+            collect_sites(&reader, item, Flags::default(), &mut sites);
+        }
+        let mut found: Vec<TranslationIntent> = Vec::new();
+        for site in sites {
+            let mut reached = Vec::new();
+            reach_intents(world, &site.callee, is_intent, max_depth, &mut BTreeSet::new(), &mut Vec::new(), &mut reached);
+            for (qualified, chain) in reached {
+                if found.iter().any(|f| f.qualified == qualified) {
+                    continue;
+                }
+                found.push(TranslationIntent {
+                    handler: reader.hy.text(name).to_string(),
+                    qualified,
+                    chain,
+                    start: site.head.0,
+                    end: site.head.1,
+                });
+            }
+        }
+        out.extend(found);
+    }
+    out
+}
+
+/// 最上位の form が翻訳の handler なら、その名の form と本体(撃った呼びを探す form の列)。
+/// `(defhandler 名 節…)`・引数が `[effect k]` の `defk` / `deff` / `defn`。
+fn translation_handler<'f>(hy: &Hy, form: &'f Form) -> Option<(&'f Form, Vec<&'f Form>)> {
+    let items = live(form)?;
+    let head = items.first().and_then(|h| hy.symbol(h))?;
+    let name = items.get(1).copied().filter(|n| matches!(n.node, Node::Symbol))?;
+    match head {
+        "defhandler" => Some((name, items[2..].to_vec())),
+        "defk" | "deff" | "defn" => {
+            let params: Vec<&str> = items
+                .get(2)?
+                .bracket_items()?
+                .iter()
+                .filter(|i| !matches!(i.node, Node::Discarded))
+                .map(|i| hy.text(i))
+                .collect();
+            (params == ["effect", "k"]).then(|| (name, items[3..].to_vec()))
+        }
+        _ => None,
+    }
+}
+
+/// 撃った呼びの頭 callee から届く業務の intent を集める(intent なら 1 つ・repo の defk ならその撃った呼びへ、残り depth 段まで)。
+/// `visited` は同じ handler の中で辿った defk(輪と二度の辿りを切る)、`chain` は今の道の defk の綴り。
+fn reach_intents(
+    world: &World,
+    callee: &str,
+    is_intent: &dyn Fn(&str) -> bool,
+    depth: usize,
+    visited: &mut BTreeSet<String>,
+    chain: &mut Vec<String>,
+    out: &mut Vec<(String, Vec<String>)>,
+) {
+    if is_intent(callee) {
+        out.push((callee.to_string(), chain.clone()));
+        return;
+    }
+    let Some(definition) = world.definitions.get(callee).filter(|d| d.kind == SignatureKind::Defk) else {
+        return;
+    };
+    if depth == 0 || !visited.insert(callee.to_string()) {
+        return;
+    }
+    chain.push(last_segment(callee).to_string());
+    for site in &definition.sites {
+        reach_intents(world, &site.callee, is_intent, depth - 1, visited, chain, out);
+    }
+    chain.pop();
+}
+
 // --- 1 file の見出しと束縛 -----------------------------------------------------------------
 
 /// 1 file の見出しと束縛を読む(表は `World::build` で、この file の同じ中身を overlay にして作った物)。

@@ -225,6 +225,8 @@ pub enum Explain {
     EffectMismatch { mismatch: super::signatures::EffectMismatch },
     /// DOEFF129: 役 judgment の defk が effect を起こす。
     JudgmentEffect { effect: super::signatures::JudgmentEffect },
+    /// DOEFF130: 翻訳の層の handler が業務の intent を出す(層の名は設定から)。
+    TranslationIntent { intent: super::signatures::TranslationIntent, handler_layer: String, intent_layer: String },
     /// DOEFF121〜125: 臭いの規則(形の照らし)。
     Smell { smell: super::smells::Smell },
     /// DOEFF205: Jev が、判断の定義に形の検めと業務の判断が混ざっていると見た。
@@ -446,6 +448,19 @@ impl<'a> Narrator<'a> {
                 format!(
                     "役 judgment は値から値を決める純粋な判断で、effect を起こさない。{} を起こすと、判断を検めるのに handler の組が要り、同じ入力で同じ答えになることを値だけで確かめられない。effect を出す部分は呼び手の program に置き、判断はその答えの値を引数で受ける。",
                     effect.effect()
+                ),
+            ),
+            Explain::TranslationIntent { intent, handler_layer, intent_layer } => (
+                match intent.via() {
+                    Some(via) => format!(
+                        "handler {}(層 {})が {} を経由して、層 {} の intent {} を出している",
+                        intent.handler, handler_layer, via, intent_layer, intent.effect()
+                    ),
+                    None => format!("handler {}(層 {})が層 {} の intent {} を出している", intent.handler, handler_layer, intent_layer, intent.effect()),
+                },
+                format!(
+                    "層 {} の handler は受けた intent を doeff の汎用の effect(HttpRequest・記録の読み書き・時計・file・process・Ask …)へ出し直す翻訳で、業務の流れを持たない。{} は層 {} の業務の intent なので、それを出すと翻訳の handler が業務の判断と流れを抱え込み、責務の境界が崩れる。import した関数を経由しても同じ — 推論は本体で実行する呼び((<- …)・(! …))を defk の先まで辿る。intent を出す流れは層 core の program に置く。",
+                    handler_layer, intent.effect(), intent_layer
                 ),
             ),
             Explain::BareDefkCall { call } => (
