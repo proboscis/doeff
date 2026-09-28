@@ -87,7 +87,7 @@
 
 
 (defn #^ str _source-fingerprint [#^ str module-name]
-  ;; 同じ dist の版でも source が違えば cloudpickle が値として運ぶ内部の関数(doeff.do の thunk 等)は食い違う。
+  ;; 同じ dist の版でも source が違えば cloudpickle が値として運ぶ内部の関数(@do の定義の関数等)は食い違う。
   ;; 版の名だけでは足りないので、その file の hash も添える。
   (setv module (importlib.import-module module-name) file module.__file__)
   (when (is file None)
