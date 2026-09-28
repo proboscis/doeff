@@ -202,7 +202,8 @@ export function registerPixelEditor(
   lint: LintStore,
   icons: IconSource,
   output: vscode.OutputChannel,
-  defk: DefkView
+  /** 文字を隠している係(defk の見出しと束縛・呼びの形)— そこへは画を描かない */
+  defk: Pick<DefkView, 'hiddenSpans' | 'onDidRedraw'>
 ): void {
   const gutter = new PixelGutter(hy, lint, icons, output);
   const replacements = new ReplacementCache(effects);

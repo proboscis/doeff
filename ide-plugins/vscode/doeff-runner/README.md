@@ -184,6 +184,16 @@ defk / deff の型・effect・tags を、**読むだけの表示**として edit
 - 入り切り: 設定 `doeff-runner.defk.header`・`doeff-runner.defk.bindingTypes`、命令「doeff: defk の見出し(型・effect・tags)の入り切り」。
 - linter の出力に拡張の知らない語があっても出力は捨てず、その項目だけ一般の見た目にして、状態バーに「doeff: 拡張が古い」を出します。
 
+### 呼びを f(a, b) の形で見せる表示
+
+defk / deff の本体の呼びを Python に近い形で見せます(読むだけの表示・file の文字は変えません)。材料は editor-json の `rewrites` で、式の形を読むのは linter の 1 か所です。
+
+- `(f a b)` → `f(a, b)`・`(f a :key v)` → `f(a, key=v)`・`(.get row "k")` → `row.get("k")`・`(get row "k")` → `row["k"]`・`(+ a b)` → `a + b`(優先順位が変わる所だけ括弧)。
+- effect は `!` の印を残し、その前に effect の装置の小さな絵を添えます: `(val x (+ (! (f 0)) 1))` → `T x = !f(0) + 1`。effect の値を作る呼び `(Effect a)` も `Effect(a)` の前に絵。
+- 制御の形(`when`・`if`・`match`・`for`)と知らない macro は lisp のまま。字下げは作り直しません。
+- カーソルの行と選んだ範囲の行は元の lisp。置き換えた式の上の hover で元の lisp と、呼びの頭の定義への link・答えの型を見せます。名・引数は元の文字のまま残るので、定義へ飛ぶ機能もそのまま効きます。
+- 入り切り: 設定 `doeff-runner.defk.callSyntax`、命令「doeff: 呼びを f(a, b) の形で見せる表示の入り切り」。
+
 ## Agentic Workflows
 
 The extension integrates with `doeff-agentic` CLI for monitoring and managing agent-based workflows.

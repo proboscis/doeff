@@ -2,7 +2,7 @@
   "name": "doeff-runner",
   "displayName": "doeff runner",
   "description": "Run doeff Programs from VS Code using the doeff-indexer and Python debugger.",
-  "version": "0.6.22",
+  "version": "0.6.23",
   "publisher": "Proboscis",
   "icon": "icon.png",
   "license": "Apache-2.0",
@@ -422,6 +422,10 @@
       {
         "command": "doeff-runner.defk.toggleHeader",
         "title": "doeff: defk の見出し(型・effect・tags)の入り切り"
+      },
+      {
+        "command": "doeff-runner.defk.toggleCallSyntax",
+        "title": "doeff: 呼びを f(a, b) の形で見せる表示の入り切り"
       }
     ],
     "configuration": {
@@ -643,6 +647,11 @@
           "type": "boolean",
           "default": true,
           "markdownDescription": "束縛の型を名の前に描く: `(<- x T e)` → `T x <- e`・`(val x e)` → `T x = e`・`(var x e)` → `var T x = e`・`(:= x v)` → `x := v`。型が分からない束縛は `?`。カーソルの行は元の文字。材料は editor-json の `bindings`。"
+        },
+        "doeff-runner.defk.callSyntax": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "defk / deff の本体の呼びを Python に近い形で見せる: `(f a b)` → `f(a, b)`・`(f a :key v)` → `f(a, key=v)`・`(.get row \"k\")` → `row.get(\"k\")`・`(get row \"k\")` → `row[\"k\"]`・`(+ a b)` → `a + b`(優先順位が変わる所だけ括弧)・`(! (f a))` → `!f(a)`(effect なら前に装置の絵)。制御の形(when・if・match・for)と知らない macro は lisp のまま。カーソルの行と選んだ範囲の行は元の lisp。hover で元の lisp を見せる。読むだけの表示で、file の文字は変えない。材料は doeff-linter の editor-json の `rewrites`。"
         },
         "doeff-runner.defk.revealOnCursor": {
           "type": "string",

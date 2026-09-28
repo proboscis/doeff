@@ -19,6 +19,7 @@ pub mod semantic;
 pub mod smells;
 pub mod settings;
 pub mod signatures;
+pub mod call_view;
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
