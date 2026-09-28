@@ -132,24 +132,30 @@ class InputFateState(Enum):
 
 @dataclass(frozen=True, kw_only=True)
 class AgentTurnUsage:
-    """Tokens one turn used, as the agent runtime counted them.
+    """Tokens one turn used, and what it cost, as the agent runtime counted them.
 
     ``cache_write_tokens`` = tokens written to the prompt cache,
-    ``cache_read_tokens`` = tokens read from it.  A count the runtime did not
-    report is ``None`` (never an invented 0).
+    ``cache_read_tokens`` = tokens read from it.  ``cost_usd`` = what this
+    turn cost in USD, as the agent runtime (the CLI) itself priced it — for
+    Claude Code, the turn's share of the CLI's own ``total_cost_usd``, which
+    the CLI reports as a running total for the whole conversation.  A count or
+    cost the runtime did not report (or that cannot be attributed to this turn)
+    is ``None`` (never an invented 0).
     """
 
     input_tokens: int | None = None
     output_tokens: int | None = None
     cache_write_tokens: int | None = None
     cache_read_tokens: int | None = None
+    cost_usd: float | None = None
 
 
 @dataclass(frozen=True, kw_only=True)
 class AgentTurnCompleted:
     """The turn finished.  ``resume_from`` continues this agent's context.
 
-    ``usage`` = the tokens the turn used (``None`` when the runtime reports none).
+    ``usage`` = the tokens the turn used and what it cost (``None`` when the
+    runtime reports none of them).
     """
 
     result_text: str
@@ -162,8 +168,8 @@ class AgentTurnCompleted:
 class AgentTurnFailed:
     """The agent runtime ended the turn with an error.
 
-    ``usage`` = the tokens the turn used before the error (``None`` when the
-    runtime reports none).
+    ``usage`` = the tokens the turn used before the error and what they cost
+    (``None`` when the runtime reports none of them).
     """
 
     detail: str

@@ -25,7 +25,7 @@
   Launch FollowUp Interrupt Events AwaitResult Monitor Capture Stop ReleaseSession ExportContextEffect
   SessionHandle AgentEventPage AwaitStatus TurnInputMode InputFateState
   AgentTextEvent AgentToolUseEvent AgentInputFateEvent AgentTurnEndEvent
-  AgentTurnCompleted AgentTurnInterrupted AgentTurnLost AgentTurnUsage
+  AgentTurnCompleted AgentTurnFailed AgentTurnInterrupted AgentTurnLost AgentTurnUsage
   AgentCapabilityUnsupportedError NoTurnInFlightError ResumeTargetNotFoundError SessionNotFoundError
   AgentError AgentLaunchError TurnInFlightError])
 (import doeff_agents.monitor [SessionStatus])
@@ -55,7 +55,11 @@
 (defn #^ str extra-prompt [] (.format "Also include the word {} in your final reply." EXTRA-WORD))
 
 (defn fake-responder [#^ str text #^ tuple memory]
-  "fake の返事(scenario_rules.hy の reply-for と同じ規則の写し — 型の違う 2 つ目の規則を作らない範囲で最小)。"
+  "fake の返事(scenario_rules.hy の reply-for と同じ規則の写し — 型の違う 2 つ目の規則を作らない範囲で最小)。
+   fake にだけ在る規則: 「Fail after spending <額>」= 額を使った後に誤りで終える手番(失敗の手番の額の写しを見る検のため)。"
+  (setv spent (re.search r"Fail after spending (\S+)" text))
+  (when spent
+    (return (FakeReply "" :tool-seconds 2.0 :fail "spent then failed" :cost-usd (float (.group spent 1)))))
   (setv sleep (re.search r"sleep (\d+)" text)
         exact (re.search r"[Rr]eply with exactly: (\S+)" text)
         extra (re.search r"include the word (\S+)" text))
@@ -157,6 +161,24 @@
   (<- two (read-until second (fn [events end] (is-not end None)) s.timeout -1))
   (<- (ReleaseSession second))
   {"one" one "outcome" outcome "status" status.status "after-stop" after-stop.status "two" two})
+
+(defk one-turn-then-stop [#^ Setting s #^ (| str None) resume-from]
+  {:pre [(: s Setting) (: resume-from (| str None))] :post [(: % AgentTurnCompleted)]}
+  "1 手番を最後まで読んで session を止める(process が降りて CLI が額を transcript に記すまで待つ)— 手番ごとに handler の組を
+   作り直す使い手の 1 手番の形。resume-from = 続ける文脈(None = 新しい文脈)。答え = 手番の終わり。"
+  (<- handle (launch s (if (is resume-from None) "adapter-cold-one" "adapter-cold-next") (reply-prompt "COLD") resume-from))
+  (<- done (read-until handle (fn [events end] (is-not end None)) s.timeout -1))
+  (<- (Stop handle))
+  (assert (isinstance done.end AgentTurnCompleted) (repr done.end))
+  done.end)
+
+(defk failed-turn-after-spending [#^ Setting s]
+  {:pre [(: s Setting)] :post [(: % Read)]}
+  "額を使った後に誤りで終える手番を 1 つ最後まで読む(失敗の手番も額を運ぶかを見るため — fake の規則)。"
+  (<- handle (launch s "adapter-failed" "Fail after spending 0.5" None))
+  (<- done (read-until handle (fn [events end] (is-not end None)) s.timeout -1))
+  (<- (Stop handle))
+  done)
 
 (defk next-turn-input-waits-for-the-running-turn [#^ Setting s]
   {:pre [(: s Setting)] :post [(: % Read)]}
@@ -442,8 +464,31 @@
   (val seen (run-on STUB tmp-path one-turn-then-resume))
   (check-one-turn-then-resume seen)
   ;; 手番の使った token の数は層 2 の result の行の usage から層 3 の終わりへ運ぶ(stub は input 1・output 1 だけを名乗る —
-  ;; 名乗らない cache の欄は None のまま・agora-redesign #766)。
-  (assert (= (. (get seen "one") end usage) (AgentTurnUsage :input-tokens 1 :output-tokens 1)) (repr (. (get seen "one") end))))
+  ;; 名乗らない cache の欄は None のまま・agora-redesign #766)。手番の額は層 2 が CLI の累積の額から手番の分に直した値:
+  ;; stub の累積は 1 手番目 0.25・続きの 2 手番目 0.5 だが、どちらの手番の額も 0.25(agora-redesign #883)。
+  (assert (= (. (get seen "one") end usage) (AgentTurnUsage :input-tokens 1 :output-tokens 1 :cost-usd 0.25))
+          (repr (. (get seen "one") end)))
+  (assert (= (. (get seen "two") end usage) (AgentTurnUsage :input-tokens 1 :output-tokens 1 :cost-usd 0.25))
+          (repr (. (get seen "two") end))))
+
+(deftest test-headless-each-turn-in-a-new-handler-carries-its-own-cost-stub [tmp-path]
+  ;; agora の worker の形: 手番ごとに handler の組(= 層 2 の host)を作り直し、2 手番目からはその host の知らない続き
+  ;; (毎回 cold resume)。層 2 は transcript の最後の cost-state の額を起点に読むので、どの手番の額も累積(0.25 → 0.5 → 0.75)
+  ;; ではなく手番の分 0.25(#883)。
+  (val one (run-on STUB tmp-path (fn [s] (one-turn-then-stop s None))))
+  (val two (run-on STUB tmp-path (fn [s] (one-turn-then-stop s one.resume-from))))
+  (val three (run-on STUB tmp-path (fn [s] (one-turn-then-stop s two.resume-from))))
+  (assert (= [one.usage two.usage three.usage]
+             (* [(AgentTurnUsage :input-tokens 1 :output-tokens 1 :cost-usd 0.25)] 3))
+          (repr [one two three])))
+
+(deftest test-headless-failed-turn-carries-its-cost-fake [tmp-path]
+  ;; 誤りで終えた手番も層 2 の額を AgentTurnUsage.cost_usd へ運ぶ。token の数を名乗らなくても額が在れば usage は None にしない
+  ;; (4 欄と額がすべて無い時だけ None・agora-redesign #883)。
+  (val done (run-on FAKE tmp-path failed-turn-after-spending))
+  (assert (isinstance done.end AgentTurnFailed) (repr done.end))
+  (assert (= done.end.detail "spent then failed") (repr done.end))
+  (assert (= done.end.usage (AgentTurnUsage :cost-usd 0.5)) (repr done.end)))
 
 (deftest test-headless-one-turn-and-resume-real [tmp-path]
   {:marks ["e2e" "slow"]

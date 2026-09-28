@@ -3,9 +3,10 @@
 ;;; 分類(classify-record)は純関数: stream-json の 1 行(JSON の object)→ ClaudeLineKind。語彙の外の行は捨てずに
 ;;; Other { type, subtype } へ名前だけ持つ(発明しない)。1 行の逐語は ClaudeStreamLine.raw に残る。
 ;;;
-;;; JSON の境界はこの file の 1 か所(parse-record と classify-*)。状態機械(dialogue.hy)も上の層も、分類した型だけを読む
-;;; — 生の dict を読み直す 2 か所目を作らない。
-(import dataclasses [dataclass field])
+;;; JSON の境界はこの file の 1 か所(parse-record と classify-*、transcript の額の行を読む recorded-cost)。状態機械(dialogue.hy)も
+;;; 上の層も、分類した型だけを読む — 生の dict を読み直す 2 か所目を作らない。
+(require doeff-hy.macros [defk val])
+(import dataclasses [dataclass field fields])
 (import datetime [datetime])
 (import json)
 (import doeff_hy.frozen [FrozenMap freeze-json frozen-json-object])
@@ -16,6 +17,8 @@
 
 (defclass [(dataclass :frozen True)] Usage []
   "手番の終わり(result の行)の usage。CLI が名乗った数だけを持ち、名乗らない欄は None(0 を発明しない)。
+   result の行の usage はその CLI の手番 1 回分で、累積ではない(実測 2.1.283・#883: 同じ process の 2 つ目の
+   result の行は 2 回目の分だけを名乗る)。
    欄: input-tokens = input_tokens / output-tokens = output_tokens / cache-creation-input-tokens = cache_creation_input_tokens /
    cache-read-input-tokens = cache_read_input_tokens / cache-creation-5m-input-tokens・cache-creation-1h-input-tokens =
    cache_creation.ephemeral_5m_input_tokens・ephemeral_1h_input_tokens / web-search-requests = server_tool_use.web_search_requests /
@@ -27,7 +30,20 @@
   (setv #^ (| int None) cache-creation-5m-input-tokens None)
   (setv #^ (| int None) cache-creation-1h-input-tokens None)
   (setv #^ (| int None) web-search-requests None)
-  (setv #^ (| str None) service-tier None))
+  (setv #^ (| str None) service-tier None)
+  (defn __add__ [self #^ "Usage" other]
+    "2 つの result の行の usage の和。1 つの host の手番に result の行が 2 つ以上ある時(読まれていない注入を CLI が次の CLI の手番として
+     走らせた・CLI が自分で起こした手番)に、手番の usage を額と同じ母集団(手番に読んだ全部の行)で数えるため(状態機械 dialogue.hy)。
+     欄ごとに、どちらも名乗らなければ None、片方だけなら名乗った数(0 を発明しない)。service-tier は後の行の物(無ければ前の行の物)。"
+    (when (not (isinstance other Usage)) (return NotImplemented))
+    (Usage #** (dfor usage-field (fields self)
+                     :setv before (getattr self usage-field.name)
+                     :setv after (getattr other usage-field.name)
+                     usage-field.name (cond
+                                        (is after None) before
+                                        (is before None) after
+                                        (= usage-field.name "service_tier") after
+                                        True (+ before after))))))
 
 
 ;; --- 行の種類 ---------------------------------------------------------------------------------
@@ -96,8 +112,12 @@
 
 (defclass [(dataclass :frozen True)] TurnResult []
   "result の行(CLI の手番の終わり)。host の手番の終わりかどうかは状態機械(dialogue.hy)が決める。
-   origin-kind = origin.kind(CLI が自分で起こした手番の印)/ result-text = result の本文 / usage = 消費の token /
-   cost-usd = total_cost_usd / api-error-status = API の誤りの HTTP status / input-refs = user_message_uuids(名乗らなければ空)。"
+   origin-kind = origin.kind(CLI が自分で起こした手番の印)/ result-text = result の本文 /
+   usage = 消費の token(この CLI の手番の分)/
+   cost-usd = total_cost_usd — 会話の累積の額(USD)で、この行の手番だけの額ではない(実測 2.1.283・#883: 同じ process の
+   2 つ目の result の行は 1 つ目の額との和を名乗り、--resume で起こした process は、前の process が降りる時に transcript へ記した額から
+   数え続ける — --fork-session の枝も親の transcript の額から数える)。手番の額へ直すのは状態機械(dialogue.hy)/
+   api-error-status = API の誤りの HTTP status / input-refs = user_message_uuids(名乗らなければ空)。"
   (#^ str subtype)
   (#^ bool is-error)
   (setv #^ str terminal-reason "")
@@ -127,7 +147,9 @@
 ;; --- 手番の終わり ---------------------------------------------------------------------------------
 
 (defclass [(dataclass :frozen True)] Completed []
-  "CLI が誤りなく終えた手番。usage = 消費の token(Usage)。"
+  "CLI が誤りなく終えた手番。usage = この手番に読んだ result の行の消費の token の和(Usage)/
+   cost-usd = この手番の額(USD)= CLI が名乗った累積の額(total_cost_usd)の、手番の始まりから終わりまでの差(状態機械 dialogue.hy が
+   数える)。始まりか終わりの額が分からなければ None(0 を発明しない)。"
   (setv #^ str result-text "")
   (setv #^ Usage usage (field :default-factory Usage))
   (setv #^ (| float None) cost-usd None)
@@ -135,11 +157,13 @@
 
 (defclass [(dataclass :frozen True)] Failed []
   "CLI が誤りで終えた手番。detail = CLI が名乗った文(無ければ subtype)・api-error-status = API の誤りの HTTP status・
-   usage = 誤りの前に消費した token(result の行が名乗った物 — 注入の断りのように result の行が無い終わりは空の Usage)。"
+   usage = 誤りの前に消費した token(result の行が名乗った物 — 注入の断りのように result の行が無い終わりは空の Usage)・
+   cost-usd = 誤りの前に使った額(USD — 数え方は Completed と同じ。result の行が無い終わり・額が分からない時は None)。"
   (#^ str detail)
   (setv #^ (| int None) api-error-status None)
   (setv #^ str terminal-reason "")
   (setv #^ Usage usage (field :default-factory Usage))
+  (setv #^ (| float None) cost-usd None)
   (setv #^ (get tuple #(str ...)) input-refs #()))
 
 (defclass [(dataclass :frozen True)] Interrupted []
@@ -279,6 +303,22 @@
 (defn classify-stream-event [#^ dict record]
   (setv delta (object-at (object-at record "event") "delta"))
   (PartialMessage :text-delta (if (= (text-at delta "type") "text_delta") (text-at delta "text") "")))
+
+;; --- transcript の額の行(純関数) ---------------------------------------------------------------------
+
+(defk recorded-cost [#^ str transcript-text]
+  {:pre [(: transcript-text str)] :post [(: % (| float None))] :tags {:context "claude-code" :role "foundation"}}
+  "--resume(--fork-session を含む)で起こした CLI が数え始める額を、handler がその会話の transcript(jsonl の本文)から知るため:
+   CLI は降りる時に会話の累積の額を {\"type\":\"cost-state\", \"totalCostUSD\": 数} の行で記し、続きの process と枝の process は
+   最後のその行の額から数え続ける(実測 2.1.283・#883)。読むのは最後の cost-state の行の totalCostUSD の 1 欄だけ。
+   行が無い・最後の行の値が数でない(bool は数えない)なら None(0 を発明しない — CLI の版で形が変わっても誤った額を出さない)。"
+  (val found (next (gfor line (reversed (.splitlines transcript-text))
+                         :if (in "\"cost-state\"" line)
+                         :setv record (parse-record line)
+                         :if (and (is-not record None) (= (.get record "type") "cost-state"))
+                         record)
+                   None))
+  (if (is found None) None (number-at found "totalCostUSD")))
 
 (defn classify-record [#^ dict record]
   "stream-json の 1 行 → ClaudeLineKind(純関数・語彙の外は Other)。"

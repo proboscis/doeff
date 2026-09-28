@@ -1,5 +1,5 @@
 ;; argv の組み立て・「手番を始める」の判断・行の分類の検 — 純関数だけ。
-(require doeff-hy.macros [deftest val])
+(require doeff-hy.macros [deftest val <-])
 (import json)
 (import pytest)
 (import doeff_claude_code.values [ClaudeHome ClaudeSessionSpec ClaudeTurn BypassAll AskHost DenyUnlisted McpSse McpStdio
@@ -8,7 +8,7 @@
 (import doeff_claude_code.decision [SessionView Refuse Launch start-decision])
 (import doeff_claude_code.effects [SessionIdInUse SessionNotFound TurnInFlight])
 (import doeff_claude_code.lines [classify-record Init AssistantMessage ToolResult InputFate PermissionRequested TaskEvent
-                                 RateLimit TurnResult PartialMessage Other ControlResponse Usage])
+                                 RateLimit TurnResult PartialMessage Other ControlResponse Usage recorded-cost])
 (import doeff_claude_code.values [Allow])
 
 (setv SID "560828de-2992-4635-ab21-c6e06b0c6eb8")
@@ -141,6 +141,46 @@
                                        :cache-read-input-tokens 13 :cache-creation-5m-input-tokens 2
                                        :cache-creation-1h-input-tokens 9 :web-search-requests 1
                                        :service-tier "standard")))))
+
+
+(deftest test-usage-adds-field-by-field-without-inventing-zero
+  ;; 1 つの host の手番に result の行が 2 つある時の usage の和: 欄ごとに足し、どちらも名乗らない欄は None のまま、
+  ;; 片方だけが名乗った欄はその数。service-tier は後の行の物(後の行が名乗らなければ前の行の物)。
+  (val earlier (Usage :input-tokens 10 :output-tokens 54 :cache-creation-input-tokens 15322 :service-tier "standard"))
+  (val later (Usage :input-tokens 10 :output-tokens 48 :cache-read-input-tokens 29011 :service-tier "priority"))
+  (assert (= (+ earlier later)
+             (Usage :input-tokens 20 :output-tokens 102 :cache-creation-input-tokens 15322 :cache-read-input-tokens 29011
+                    :service-tier "priority")))
+  (assert (= (. (+ earlier (Usage)) service-tier) "standard"))
+  (assert (= (+ (Usage) (Usage)) (Usage)))
+  (with [(pytest.raises TypeError)]
+    (+ earlier 1)))
+
+
+(deftest test-the-recorded-cost-is-the-last-cost-state-line
+  ;; 続き・枝の CLI が数え始める額 = transcript の最後の cost-state の行の totalCostUSD(行の形は実測 2.1.283 の逐語から欄を抜いた)。
+  ;; 本文に cost-state の語を含む発話の行は額の行ではない。
+  (val sid "4fa6f85c-9739-49cf-b36d-802e36398843")
+  (val records [{"type" "user" "message" {"role" "user" "content" "cost-state の話"}}
+                {"type" "cost-state" "sessionId" sid "totalCostUSD" 0.035648 "modelUsage" {}}
+                {"type" "assistant"}
+                {"type" "cost-state" "sessionId" sid "totalCostUSD" 0.038911299999999996 "hasUnknownModelCost" False}
+                {"type" "user" "message" {"role" "user" "content" "\"cost-state\" と書いた発話"}}])
+  (<- found (recorded-cost (.join "\n" (gfor record records (json.dumps record :ensure-ascii False :separators #("," ":"))))))
+  (assert (= found 0.038911299999999996) found)
+  ;; 額の行が無い・空の本文 = None(0 を発明しない)。
+  (<- absent (recorded-cost "{\"type\":\"user\",\"text\":\"x\"}\n"))
+  (assert (is absent None))
+  (<- empty (recorded-cost ""))
+  (assert (is empty None))
+  ;; 最後の額の行の値が数でない(形が変わった)= None — 前の行の額へ倒れて誤った起点を作らない。bool も数えない。
+  (<- changed (recorded-cost "{\"type\":\"cost-state\",\"totalCostUSD\":0.5}\n{\"type\":\"cost-state\",\"totalCostUSD\":\"0.7\"}\n"))
+  (assert (is changed None))
+  (<- flag (recorded-cost "{\"type\":\"cost-state\",\"totalCostUSD\":true}"))
+  (assert (is flag None))
+  ;; 壊れた(JSON にならない)行は行として数えない。
+  (<- torn (recorded-cost "{\"type\":\"cost-state\",\"totalCostUSD\":0.5}\n{\"type\":\"cost-state\",\"totalCo"))
+  (assert (= torn 0.5) torn))
 
 
 (deftest test-open-maps-are-frozen-when-built

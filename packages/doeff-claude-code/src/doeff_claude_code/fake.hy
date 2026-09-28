@@ -39,6 +39,7 @@
   "筋書きの 1 手番の返事: text = 最後の本文・tool-seconds = 道具が走る秒数(0 = 道具なし)・
    needs-permission = 道具の前に許可の問いを出す・fail = 期限で Failed(detail = この文)で終わる・lose = 期限で process が消えて
    BackendLost(detail = この文)で終わる(fail と lose は多くとも 1 つ)・usage = Completed / Failed に載せる usage・
+   cost-usd = Completed / Failed に載せる手番の額(USD — 本番の handler が累積の額の差から数える値の代わり。None = 名乗らない)・
    lines = 始めてから期限までの前半に、本文の行(AssistantMessage)を lines 行ほど等間隔に出す(出来事の量の多い手番)・
    think-seconds = 道具を使わずに考える秒(道具の行を出さずに長く走る手番)。"
   (#^ str text)
@@ -47,6 +48,7 @@
   (setv #^ (| str None) fail None)
   (setv #^ (| str None) lose None)
   (setv #^ Usage usage (field :default-factory Usage))
+  (setv #^ (| float None) cost-usd None)
   (setv #^ int lines 0)
   ;; 道具なしで考える秒(0 = 既定の短い手番)。本文の行だけで、道具の行を出さずにこの秒まで走る。
   (setv #^ float think-seconds 0.0)
@@ -162,7 +164,8 @@
                               (TurnResult "success" False :terminal-reason "completed" :usage turn.reply.usage)]))
   (for [injection turn.injections]
     (<- (emit session turn (InputFate injection.ref "completed"))))
-  (<- (finish session turn (Completed :result-text text :usage turn.reply.usage :input-refs (tuple turn.refs))))
+  (<- (finish session turn (Completed :result-text text :usage turn.reply.usage :cost-usd turn.reply.cost-usd
+                                      :input-refs (tuple turn.refs))))
   None)
 
 (defn #^ float line-due-at [#^ FakeTurn turn #^ int index]
@@ -190,7 +193,8 @@
   (if (is-not reply.fail None)
       (do
         (<- (emit session turn (TurnResult "error_during_execution" True :terminal-reason "failed" :usage reply.usage)))
-        (<- (finish session turn (Failed reply.fail :terminal-reason "failed" :usage reply.usage :input-refs (tuple turn.refs)))))
+        (<- (finish session turn (Failed reply.fail :terminal-reason "failed" :usage reply.usage :cost-usd reply.cost-usd
+                                         :input-refs (tuple turn.refs)))))
       (<- (finish session turn (BackendLost reply.lose))))
   None)
 

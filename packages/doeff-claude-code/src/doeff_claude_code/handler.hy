@@ -17,12 +17,14 @@
 (import os)
 (import os.path)
 (import pathlib [Path])
+(import signal)
 (import threading)
 (import uuid)
 (import doeff_time [Delay GetMonotonic])
 (import doeff_claude_code.values [ClaudeTurn ClaudeHome ClaudeSessionSpec TurnInput FreshSession ResumeSession ForkSession
                                   LinkFromHome Rebuilt IMAGE-MIMES])
-(import doeff_claude_code.lines [ClaudeStreamLine Completed Failed Interrupted BackendLost parse-record classify-record])
+(import doeff_claude_code.lines [ClaudeStreamLine Completed Failed Interrupted BackendLost parse-record classify-record
+                                 recorded-cost])
 (import doeff_claude_code.effects [ClaudeStartTurn ClaudeInjectInput ClaudeInterruptTurn ClaudeReadTurnEvents
                                    ClaudeAnswerPermission ClaudeCloseSession ClaudeSessionStatus ClaudeExportSession
                                    TurnStarted InputQueued InterruptRequested TurnEventPage Answered SessionClosed
@@ -65,13 +67,14 @@
   process)
 
 (defclass SessionRuntime []
-  "1 つの会話の状態(handler の中だけ)。session-id は ForkSession の init を読むまで空。"
-  (defn __init__ [self #^ str session-id #^ ClaudeHome home #^ str canonical-cwd]
+  "1 つの会話の状態(handler の中だけ)。session-id は ForkSession の init を読むまで空。
+   cost-mark = 最初の process の手番の額の起点(CLI の累積の額がどこから数えるか — 新しい会話は 0・知らない続きは None)。"
+  (defn __init__ [self #^ str session-id #^ ClaudeHome home #^ str canonical-cwd #^ (| float None) [cost-mark None]]
     (setv self.session-id session-id
           self.home home
           self.canonical-cwd canonical-cwd
           self.lock (threading.Lock)
-          self.state (DialogueState :session-id session-id)
+          self.state (DialogueState :session-id session-id :cost-mark cost-mark :start-mark cost-mark)
           self.current-seq 0
           self.next-line-seq 0
           self.init-seen False
@@ -182,6 +185,20 @@
 
 (defn #^ bool file-present [#^ str path] (os.path.exists path))
 
+(defk recorded-cost-mark [#^ ClaudeHome home #^ str canonical-cwd #^ str session-id]
+  {:pre [(: home ClaudeHome) (: canonical-cwd str) (: session-id str)] :post [(: % (| float None))]
+   :tags {:context "claude-code" :role "foundation"}}
+  "手番の額の起点を、この handler が前の process を見ていない会話(新しい host での続き・持ち込んだ transcript・枝の親)でも知るため、
+   CLI が数え始める額 = その会話の transcript の最後の cost-state の額を読む(置き場は transcript-present と同じ transcript-path)。
+   file が無い・読めない・行が無い・値が数でなければ None。"
+  (val path (transcript-path home.config-dir canonical-cwd session-id))
+  (val text (try
+              (.read-text (Path path) :encoding "utf-8")
+              (except [#(OSError UnicodeDecodeError)] None)))
+  (when (is text None) (return None))
+  (<- mark (recorded-cost text))
+  mark)
+
 (defn link-if-present [#^ str source #^ str target]
   "周辺の置き物の持ち込み(在れば張る・無ければ飛ばす)。"
   (when (and (os.path.exists source) (not (os.path.lexists target)))
@@ -257,12 +274,26 @@
 
 ;; --- 節の中身 -----------------------------------------------------------------------------------
 
-(defn spawn-turn [#^ ClaudeCodeHost host #^ SessionRuntime runtime #^ ClaudeSessionSpec spec origin #^ TurnInput input]
-  "手番の process を起こして入力を書く。答え = 手番の番号か LaunchFailed(実行ファイルが無い等)。"
+(defn spawn-turn [#^ ClaudeCodeHost host #^ SessionRuntime runtime #^ ClaudeSessionSpec spec origin #^ TurnInput input
+                  #^ (| float None) recorded]
+  "手番の process を起こして入力を書く。答え = 手番の番号か LaunchFailed(実行ファイルが無い等)。
+   新しい process の状態機械へ引き継ぐのは会話の id と手番の額の起点だけ。CLI は降りる時に会話の累積の額を transcript に記し、
+   --resume・--fork-session の process は最後に記した額から数え続ける(実測 2.1.283・#883 — 手番ごとには記さず、降りる時に 1 回)。
+   起点は recorded(transcript の最後の cost-state の額 — CLI が数え始める額そのもの)が在ればそれ。無ければ前の process の降り方で
+   決める: 前の process が無い・終了コード 0 = 今の起点 / SIGKILL(額を記せずに消えた — CLI は前の process が始まった時の額から
+   数える)= 前の process の始まりの起点 / ほか(期限の SIGTERM・誤りの終了)= 分からないので None(その手番の額は None。次の手番
+   からは読んだ行の累積で数え直す)。"
   (with [runtime.lock]
+    (setv previous runtime.process)
+    (setv exit-code (if (is previous None) None (.exit-code previous)))
+    (setv mark (cond
+                 (is-not recorded None) recorded
+                 (or (is previous None) (= exit-code 0)) runtime.state.cost-mark
+                 (= exit-code (- signal.SIGKILL)) runtime.state.start-mark
+                 True None))
     (setv runtime.closed False
           runtime.init-seen False
-          runtime.state (DialogueState :session-id runtime.session-id))
+          runtime.state (DialogueState :session-id runtime.session-id :cost-mark mark :start-mark mark))
     (setv turn-seq (.open-turn runtime))
     (setv binding (Binding turn-seq))
     (setv runtime.binding binding)
@@ -324,13 +355,19 @@
     (<- down (wait-until (fn [] (not (.alive old))) RETIRE-WAIT-SECONDS))
     (when (not down)
       (return (LaunchFailed :stderr-tail "the previous process of this session did not go down"))))
+  ;; CLI が数え始める額 = 続き・枝の親の transcript の最後の cost-state の額(前の process が降りて額を記した後 = 降りるのを待った後に
+  ;; 読む)。冷えた続きの前の命令より前に読む — その命令が使った額もこの手番の額に数える。新しい会話は transcript が無いので None。
+  (<- recorded (recorded-cost-mark spec.home canonical target-id))
   (when decision.cold-resume
     (<- (run-cold-resume host spec target-id)))
   (setv fresh-runtime (is runtime None))
   (when fresh-runtime
-    (setv runtime (SessionRuntime (if (isinstance origin ForkSession) "" target-id) spec.home canonical))
+    ;; transcript に額の行が無い時の起点: 新しい会話の CLI は 0 から数える。この handler が前の process を見ていない続き・枝は
+    ;; 分からない(None — 最初の手番の額は None)。
+    (setv runtime (SessionRuntime (if (isinstance origin ForkSession) "" target-id) spec.home canonical
+                                  :cost-mark (if (isinstance origin FreshSession) 0.0 None)))
     (when (not (isinstance origin ForkSession)) (.register host runtime)))
-  (setv spawned (spawn-turn host runtime spec origin input))
+  (setv spawned (spawn-turn host runtime spec origin input recorded))
   (when (isinstance spawned LaunchFailed)
     (when fresh-runtime (.forget host target-id runtime))
     (return spawned))

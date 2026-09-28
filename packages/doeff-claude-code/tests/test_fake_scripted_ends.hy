@@ -16,15 +16,16 @@
 
 (val SPEC (ClaudeSessionSpec :home (ClaudeHome "fake-home") :cwd "/work"))
 (val USAGE (Usage :input-tokens 11 :output-tokens 22 :cache-creation-input-tokens 3 :cache-read-input-tokens 4))
+(val COST 0.5)
 (val TIMEOUT 120.0)
 
 (defn scripted-reply [#^ str text #^ tuple memory]  ; defk にできない: fake の世界が呼ぶ callback
   "筋書きの返事(本文の語で終わり方を選ぶ): fail / lose / lines / usage / それ以外は 30 秒の道具のあと本文をそのまま返す。"
   (cond
-    (= text "fail") (FakeReply "" :tool-seconds 2.0 :fail "下の層の失敗" :usage USAGE)
+    (= text "fail") (FakeReply "" :tool-seconds 2.0 :fail "下の層の失敗" :usage USAGE :cost-usd COST)
     (= text "lose") (FakeReply "" :tool-seconds 2.0 :lose "消えた")
     (= text "lines") (FakeReply "done" :tool-seconds 4.0 :lines 300)
-    (= text "usage") (FakeReply "counted" :usage USAGE)
+    (= text "usage") (FakeReply "counted" :usage USAGE :cost-usd COST)
     (= text "think") (FakeReply "thought" :think-seconds 5.0)
     True (FakeReply text :tool-seconds 30.0)))
 
@@ -50,11 +51,12 @@
 
 
 (deftest test-a-scripted-failure-ends-as-failed-with-usage
-  ;; fail の返事: 期限で Failed(detail = 筋書きの文)で終わり、usage を運ぶ。
+  ;; fail の返事: 期限で Failed(detail = 筋書きの文)で終わり、usage と手番の額を運ぶ。
   (<- record TurnRecord (on-fake (FakeClaudeWorld scripted-reply) (run-one "fail")))
   (assert (isinstance record.end Failed) (repr record.end))
   (assert (= record.end.detail "下の層の失敗") (repr record.end))
-  (assert (= record.end.usage USAGE) (repr record.end)))
+  (assert (= record.end.usage USAGE) (repr record.end))
+  (assert (= record.end.cost-usd COST) (repr record.end)))
 
 (deftest test-a-scripted-loss-ends-as-backend-lost-and-resume-works
   ;; lose の返事: 期限で BackendLost で終わる。会話は家に残り、次の ResumeSession は通る。
@@ -74,10 +76,15 @@
   (assert (isinstance done.end Completed) (repr done.end)))
 
 (deftest test-usage-is-carried-on-the-completed-end
-  ;; usage の返事: Completed が筋書きの usage を運ぶ(無い返事は空の Usage のまま — 今までと同じ)。
+  ;; usage の返事: Completed が筋書きの usage と手番の額を運ぶ(無い返事は空の Usage・額 None のまま — 0 を発明しない)。
   (<- record TurnRecord (on-fake (FakeClaudeWorld scripted-reply) (run-one "usage")))
   (assert (isinstance record.end Completed) (repr record.end))
-  (assert (= record.end.usage USAGE) (repr record.end)))
+  (assert (= record.end.usage USAGE) (repr record.end))
+  (assert (= record.end.cost-usd COST) (repr record.end))
+  (<- plain TurnRecord (on-fake (FakeClaudeWorld scripted-reply) (run-one "think")))
+  (assert (isinstance plain.end Completed) (repr plain.end))
+  (assert (= plain.end.usage (Usage)) (repr plain.end))
+  (assert (is plain.end.cost-usd None) (repr plain.end)))
 
 (deftest test-lines-are-emitted-before-the-end
   ;; lines の返事: 本文の行が lines 行、終わりの前に出る(最後の本文の行 1 つは別)。

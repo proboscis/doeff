@@ -13,6 +13,11 @@
 ;;;   touch を本当に撃つ)。
 ;;; - stdin の EOF で降りる。stdin を開いたまま result の後も生きる(温かい — 降ろすのは host の仕事)。
 ;;; - --input-format の無い -p <prompt>(冷えた続きの前の 1 回きりの命令)は transcript に印を 1 行足して rc 0。
+;;; - 額(実測 2.1.283・#883): result の行の total_cost_usd は会話の累積(CLI の手番 1 回 = TURN-COST)で、usage は
+;;;   その手番の分だけ。stdin の EOF・SIGINT で降りる時に累積の額を transcript に実物と同じ形の 1 行で記し
+;;;   ({"type":"cost-state","sessionId":…,"totalCostUSD":…} — handler が続きの起点として読む)、--resume の process と
+;;;   --fork-session の枝は最後に記した額から数え続ける。SIGKILL で消えた process は額を記さない(実物と同じ — 次の process は
+;;;   前に記した額から数える)。
 (import json)
 (import os)
 (import os.path)
@@ -26,6 +31,8 @@
 (import scenario_rules [reply-for])
 
 (setv CAPABILITIES ["msg_lifecycle_v1" "interrupt_receipt_v1"])
+;; CLI の手番 1 回の額(USD — 2 進で割り切れる値にして、累積の差が検の比べで端数を出さないようにする)。
+(setv TURN-COST 0.25)
 
 
 (defclass Stop [Exception] "stdin の EOF(降りる)。")
@@ -46,7 +53,8 @@
 (defn memory-of [#^ str path]
   (if (os.path.exists path)
       (tuple (gfor line (.splitlines (.read-text (Path path) :encoding "utf-8")) :if (.strip line)
-                   (.get (json.loads line) "text" "")))
+                   :setv record (json.loads line) :if (= (.get record "type") "user")
+                   (.get record "text" "")))
       #()))
 
 (defn remember [#^ str path #^ str text]
@@ -64,7 +72,14 @@
 (defclass Session []
   (defn __init__ [self #^ str session-id #^ str path #^ bool ask]
     (setv self.session-id session-id self.path path self.ask ask
-          self.pending b""))
+          self.pending b"")
+    ;; 会話の累積の額は transcript に最後に記した額から数え続ける(無ければ 0)。
+    (setv records (if (os.path.exists path)
+                      (lfor line (.splitlines (.read-text (Path path) :encoding "utf-8")) :if (.strip line) (json.loads line))
+                      []))
+    (setv self.cost (next (gfor record (reversed records) :if (= (.get record "type") "cost-state")
+                                (.get record "totalCostUSD"))
+                          0.0)))
 
   (defn lifecycle [self uuid state]
     (when uuid
@@ -123,8 +138,9 @@
   (defn result [self #^ str text #^ list refs]
     (emit {"type" "assistant" "session_id" self.session-id
            "message" {"role" "assistant" "content" [{"type" "text" "text" text}]}})
+    (+= self.cost TURN-COST)
     (emit {"type" "result" "subtype" "success" "is_error" False "result" text "terminal_reason" "completed"
-           "session_id" self.session-id "total_cost_usd" 0.0 "usage" {"input_tokens" 1 "output_tokens" 1}
+           "session_id" self.session-id "total_cost_usd" self.cost "usage" {"input_tokens" 1 "output_tokens" 1}
            "user_message_uuids" refs}))
 
   (defn run-turn [self #^ list records]
@@ -159,8 +175,9 @@
         (setv queued (lfor record injections :if (.get record "uuid") (.get record "uuid")))
         (emit {"type" "control_response"
                "response" {"subtype" "success" "request_id" stop "response" {"still_queued" queued}}})
+        (+= self.cost TURN-COST)
         (emit {"type" "result" "subtype" "error_during_execution" "is_error" True "terminal_reason" "aborted_tools"
-               "session_id" self.session-id "user_message_uuids" refs})
+               "session_id" self.session-id "total_cost_usd" self.cost "user_message_uuids" refs})
         (for [ref refs] (.lifecycle self ref "cancelled"))
         (when injections (.run-turn self injections))
         (return None))
@@ -223,9 +240,17 @@
     (.serve session)
     (except [Stop] (sys.exit 0))
     (except [KeyboardInterrupt]
+      (+= session.cost TURN-COST)
       (emit {"type" "result" "subtype" "error_during_execution" "is_error" True "terminal_reason" "aborted_streaming"
-             "session_id" session.session-id})
-      (sys.exit 0))))
+             "session_id" session.session-id "total_cost_usd" session.cost})
+      (sys.exit 0))
+    (finally
+      ;; 降りる時に累積の額を transcript に記す(SIGKILL では走らない — 実物と同じ)。
+      (os.makedirs (os.path.dirname session.path) :exist-ok True)
+      (with [handle (open session.path "a" :encoding "utf-8")]
+        (.write handle (+ (json.dumps {"type" "cost-state" "sessionId" session.session-id "totalCostUSD" session.cost}
+                                      :separators #("," ":"))
+                          "\n"))))))
 
 (when (= __name__ "__main__")
   (main))

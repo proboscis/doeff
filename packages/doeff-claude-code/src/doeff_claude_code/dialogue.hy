@@ -14,16 +14,21 @@
 ;;;   terminal_reason つき)。
 ;;; - 手番の終わり = process を降ろす(close)。手番の境界の所有者は host — CLI に result の後の手番を持たせない(#517)。
 ;;;   control_request で止めて注入が生き残った時だけ、process は生き残った入力の手番を走らせてから降りる(continues)。
+;;; - 手番の額(#883): result の行の total_cost_usd は会話の累積で、usage はその CLI の手番 1 回分(実測 2.1.283 —
+;;;   同じ process の 2 つ目の result の行は 1 つ目の額との和を名乗り、--resume で起こした process は前の process が降りる時に
+;;;   transcript へ記した額から数え続ける)。だから host の手番の額 = 手番を閉じた result の行の累積 − 手番の起点(cost-mark = 前の手番を
+;;;   閉じた result の行の累積)、usage = 手番の途中に読んだ result の行の usage の和 — 額と usage を同じ行の集まりで数える。
+;;;   起点が分からなければ額は None(次の手番からは読んだ行の累積で数え直す)。起点を次の process へ引き継ぐのは handler(spawn-turn)。
 ;;;
 ;;; stdout の行は lines.hy が分類した型(ClaudeLineKind)で受ける — JSON の読みは lines.hy の 1 か所だけ。
 ;;; stdin へ書く行の綴り(JSON へ書く境界)はこの file の dumps の 1 か所。
-(import dataclasses [dataclass replace])
+(import dataclasses [dataclass field replace])
 (import json)
 (import typing [NamedTuple])
 (import doeff_hy.frozen [thaw-json])
 (import doeff_claude_code.values [TurnInput Allow Deny])
 (import doeff_claude_code.lines [Completed Failed Interrupted BackendLost Init InputFate ControlResponse PermissionRequested
-                                 TurnResult INPUT-FATES INPUT-FATE-TERMINAL])
+                                 TurnResult Usage INPUT-FATES INPUT-FATE-TERMINAL])
 
 ;; CLI が system/init の capabilities で名乗る能力(実測 2.1.282)。
 (setv LIFECYCLE-CAPABILITY "msg_lifecycle_v1")
@@ -54,7 +59,10 @@
    (入力を書いてから、か init から result まで)/ lifecycle・interrupt-receipt = CLI が名乗った能力 /
    turn-refs = この host の手番に入れた入力の ref / injections = 足した入力(Injection)の列 /
    stop = 止めるの求め / deferred-result = 注入を待って飲んだ result の行(TurnResult)/
-   permissions = 答え待ちの許可の問い(PermissionRequested)。"
+   permissions = 答え待ちの許可の問い(PermissionRequested)/
+   cost-mark = 手番の額の起点(CLI の累積の額 total_cost_usd の、前の手番を閉じた result の行の値。process の始まりは handler が
+   引き継いだ値 — None = 分からない)/ start-mark = この process の始まりの cost-mark(この process が額を記さずに消えた時、次の
+   process の CLI が数え始める額 — handler が読む)/ turn-usage = この host の手番の途中に読んだ result の行の usage の和。"
   (setv #^ str session-id "")
   (setv #^ bool in-flight False)
   (setv #^ bool cli-turn-open False)
@@ -64,7 +72,10 @@
   (setv #^ (get tuple #(Injection ...)) injections #())
   (setv #^ (| NoStop StopSignal StopControl) stop (NoStop))
   (setv #^ (| TurnResult None) deferred-result None)
-  (setv #^ (get tuple #(PermissionRequested ...)) permissions #()))
+  (setv #^ (get tuple #(PermissionRequested ...)) permissions #())
+  (setv #^ (| float None) cost-mark None)
+  (setv #^ (| float None) start-mark None)
+  (setv #^ Usage turn-usage (field :default-factory Usage)))
 
 (defclass [(dataclass :frozen True)] Transition []
   "遷移の答え: 次の状態・stdin へ書く行・host の手番の終わり(無ければ None)・close(この行で process を降ろす)・
@@ -127,26 +138,35 @@
   (if result.input-refs result.input-refs state.turn-refs))
 
 (defn end-of-result [#^ TurnResult result #^ DialogueState state]
-  "result の行 → Completed | Failed。誤りの detail は CLI が名乗った文ちょうど(無ければ subtype)。"
+  "result の行 → Completed | Failed。誤りの detail は CLI が名乗った文ちょうど(無ければ subtype)。
+   usage = 手番の途中に読んだ result の行の usage の和(state.turn-usage — この行の分を足した後の状態を渡す)・
+   cost-usd = この行の累積の額 − 手番の起点(state.cost-mark)。どちらかが分からない・差が負(CLI が起点の額から数えていない)なら None。"
   (setv refs (result-input-refs result state))
+  (setv total result.cost-usd mark state.cost-mark)
+  (setv cost (if (or (is total None) (is mark None) (< total mark)) None (- total mark)))
   (if result.is-error
       (Failed :detail (or (.strip result.result-text) result.subtype "error")
               :api-error-status result.api-error-status
               :terminal-reason result.terminal-reason
-              :usage result.usage
+              :usage state.turn-usage
+              :cost-usd cost
               :input-refs refs)
       (Completed :result-text result.result-text
-                 :usage result.usage
-                 :cost-usd result.cost-usd
+                 :usage state.turn-usage
+                 :cost-usd cost
                  :input-refs refs)))
 
 (defn #^ DialogueState closed-turn [#^ DialogueState state]
-  "host の手番を閉じた状態(会話の id と CLI の能力は保つ)。"
+  "host の手番を閉じた状態(会話の id・CLI の能力・額の起点は保つ)。"
   (replace state :in-flight False :cli-turn-open False :turn-refs #() :injections #() :stop (NoStop)
-           :deferred-result None :permissions #()))
+           :deferred-result None :permissions #() :turn-usage (Usage)))
 
-(defn ended [#^ DialogueState state end [close True]]
-  (Transition :state (closed-turn state) :end end :close close))
+(defn ended [#^ DialogueState state end [close True] #^ (| TurnResult None) [priced-by None]]
+  "host の手番を end で閉じる遷移。priced-by = 手番を閉じた result の行(在ればその行の累積の額が次の手番の額の起点 —
+   止めた手番の額は数えずに捨て、次の手番へ混ぜない。行が無い終わりは起点を動かさない)。"
+  (setv closed (closed-turn state))
+  (Transition :state (if (is priced-by None) closed (replace closed :cost-mark priced-by.cost-usd))
+              :end end :close close))
 
 
 ;; --- 遷移(呼び手の操作) -----------------------------------------------------------------------------
@@ -204,7 +224,7 @@
     (not (isinstance state.stop NoStop))
       (ended state (Interrupted :dropped-refs (queued-refs state)) :close False)
     (is-not state.deferred-result None)
-      (ended state (end-of-result state.deferred-result state) :close False)
+      (ended state (end-of-result state.deferred-result state) :close False :priced-by state.deferred-result)
     True
       (ended state (BackendLost :detail (.format "process exited with code {} before the turn ended{}" exit-code
                                                  (if stderr-tail (+ ": " stderr-tail) "")))
@@ -233,9 +253,9 @@
   (if (and moved.in-flight (not moved.cli-turn-open)
            (in fate INPUT-FATE-TERMINAL) (!= fate "completed")
            (not (queued-refs moved)))
-      (ended moved (if (is-not moved.deferred-result None)
-                       (end-of-result moved.deferred-result moved)
-                       (Failed :detail (.format "injected input {} was {}" ref fate) :input-refs moved.turn-refs)))
+      (if (is-not moved.deferred-result None)
+          (ended moved (end-of-result moved.deferred-result moved) :priced-by moved.deferred-result)
+          (ended moved (Failed :detail (.format "injected input {} was {}" ref fate) :input-refs moved.turn-refs)))
       (Transition :state moved)))
 
 (defn on-control-response [#^ DialogueState state #^ ControlResponse response]
@@ -251,15 +271,19 @@
   (Transition :state (replace state :permissions (+ state.permissions #(request)))))
 
 (defn on-result [#^ DialogueState state #^ TurnResult result]
-  "result の行(規則は冒頭)。"
-  (when (or (in result.origin-kind CLI-OWN-TURN-ORIGINS) (not state.in-flight))
+  "result の行(規則は冒頭)。手番の途中に読んだ result の行は、CLI が自分で起こした手番の物も usage を手番に足す
+   (累積の額の差にはどの行の分も入るので、usage も同じ行の集まりで数える)。"
+  (when (not state.in-flight)
     (return (Transition :state state)))
-  (setv open-closed (replace state :cli-turn-open False))
+  (setv counted (replace state :turn-usage (+ state.turn-usage result.usage)))
+  (when (in result.origin-kind CLI-OWN-TURN-ORIGINS)
+    (return (Transition :state counted)))
+  (setv open-closed (replace counted :cli-turn-open False))
   (setv queued (queued-refs open-closed))
   (setv stop open-closed.stop)
   (cond
     (isinstance stop StopSignal)
-      (ended open-closed (Interrupted :dropped-refs queued))
+      (ended open-closed (Interrupted :dropped-refs queued) :priced-by result)
     (isinstance stop StopControl)
       (do
         (setv survivors (if (is stop.still-queued None) queued
@@ -267,14 +291,15 @@
         (setv dropped (tuple (gfor ref queued :if (not-in ref survivors) ref)))
         (if survivors
             (Transition :state (replace (closed-turn open-closed) :in-flight True :turn-refs survivors
-                                        :injections (tuple (gfor ref survivors (Injection ref "queued"))))
+                                        :injections (tuple (gfor ref survivors (Injection ref "queued")))
+                                        :cost-mark result.cost-usd)
                         :end (Interrupted :surviving-refs survivors :dropped-refs dropped)
                         :continues True)
-            (ended open-closed (Interrupted :dropped-refs dropped))))
+            (ended open-closed (Interrupted :dropped-refs dropped) :priced-by result)))
     queued
       (Transition :state (replace open-closed :deferred-result result))
     True
-      (ended open-closed (end-of-result result open-closed))))
+      (ended open-closed (end-of-result result open-closed) :priced-by result)))
 
 (defn on-record [#^ DialogueState state kind]
   "stdout の 1 行を読んだ遷移。kind = lines.hy が分類した行の型(ClaudeLineKind)— 状態機械が読む型の外は何もしない。"

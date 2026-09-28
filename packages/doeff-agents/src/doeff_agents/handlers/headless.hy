@@ -16,6 +16,8 @@
 ;;;   EventsEffect / AwaitResultEffect / MonitorEffect → ClaudeReadTurnEvents(行を層 3 の出来事と手番の終わりに写す)
 ;;;   Completed.usage / Failed.usage   → AgentTurnCompleted.usage / AgentTurnFailed.usage(AgentTurnUsage — cache_creation → cache_write・cache_read → cache_read。
 ;;;                                      CLI が名乗らない欄は None のまま・4 欄とも無ければ usage = None)
+;;;   Completed.cost-usd / Failed.cost-usd → AgentTurnUsage.cost_usd(手番の額 USD — 層 2 が CLI の累積の額から手番の分に直した値。
+;;;                                      分からなければ None。token の 4 欄と額がすべて無ければ usage = None・agora-redesign #883)
 ;;;   StopEffect / StopSessionEffect / ReleaseSessionEffect → ClaudeCloseSession(待たせた入力は discarded の運命で閉じる)
 ;;;   CaptureEffect / AttachAgentSessionEffect → 画面が無いので AgentCapabilityUnsupportedError
 ;;; この handler が起こしていない session の effect と、CLAUDE 以外の LaunchEffect は外側の handler へ回す。
@@ -134,12 +136,14 @@
   (lfor #(index build) (enumerate (event-builders-of line.kind line.at))
         (build (+ first-seq index))))
 
-(defn #^ (| AgentTurnUsage None) usage-of [#^ Usage usage]
-  "層 2 の手番の usage → 層 3 の AgentTurnUsage(4 欄とも名乗らなければ None — 0 を発明しない)。"
+(defn #^ (| AgentTurnUsage None) usage-of [#^ Usage usage #^ (| float None) cost-usd]
+  "層 2 の手番の usage と額 → 層 3 の AgentTurnUsage。手番の消費と額を記録へ運ぶための写しで、token の 4 欄と額がすべて
+   名乗られなければ None(0 を発明しない)。"
   (setv turn-usage (AgentTurnUsage :input-tokens usage.input-tokens
                                    :output-tokens usage.output-tokens
                                    :cache-write-tokens usage.cache-creation-input-tokens
-                                   :cache-read-tokens usage.cache-read-input-tokens))
+                                   :cache-read-tokens usage.cache-read-input-tokens
+                                   :cost-usd cost-usd))
   (if (= turn-usage (AgentTurnUsage)) None turn-usage))
 
 (defn end-of [end #^ str context-id]
@@ -147,10 +151,10 @@
   (cond
     (isinstance end Completed)
       (AgentTurnCompleted :result-text end.result-text :input-refs end.input-refs :resume-from context-id
-                          :usage (usage-of end.usage))
+                          :usage (usage-of end.usage end.cost-usd))
     (isinstance end Failed)
       (AgentTurnFailed :detail end.detail :input-refs end.input-refs :resume-from context-id
-                       :usage (usage-of end.usage))
+                       :usage (usage-of end.usage end.cost-usd))
     (isinstance end Interrupted)
       (AgentTurnInterrupted :surviving-refs end.surviving-refs :dropped-refs end.dropped-refs :resume-from context-id)
     (isinstance end BackendLost)

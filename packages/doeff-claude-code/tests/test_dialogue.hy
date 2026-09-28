@@ -1,6 +1,6 @@
 ;; 状態機械(dialogue.hy)の検 — 純関数だけ。行は実物の形(claude 2.1.282 の実測 = #602 の layer2-cli-capabilities.md)。
 ;; 状態機械は lines.hy が分類した型を読む — 検は実物の形の行を classify-record に通してから渡す(本番の handler と同じ道)。
-(require doeff-hy.macros [deftest])
+(require doeff-hy.macros [deftest val])
 (import json)
 (import doeff_claude_code.values [TurnInput ImageAttachment Allow Deny])
 (import doeff_claude_code.lines [Completed Failed Interrupted BackendLost Usage classify-record])
@@ -18,15 +18,29 @@
 (setv SUCCESS-RESULT {"type" "result" "subtype" "success" "is_error" False "result" "OKAPI-77"
                       "terminal_reason" "completed" "total_cost_usd" 0.04 "usage" {"output_tokens" 7}
                       "user_message_uuids" ["msg-1"] "session_id" SID})
+;; 実測の額と usage(claude 2.1.283・model claude-haiku-4-5・2026-09-28・#883 — 値は逐語、欄は抜いた)。
+;; 1 つの process に stream-json で user の発話を 2 回(FIRST・SECOND)、別の process で --resume して 1 回(RESUMED)。
+;; total_cost_usd は会話の累積(SECOND = FIRST + 2 回目の分・RESUMED = SECOND + 3 回目の分 — 前の process の額から数え続ける)、
+;; usage はその回の分だけ(単価の表で確かめた: 2 回目の分 = 0.035648 − 0.0322929 = 0.0033551 が SECOND の usage の額ちょうど)。
+(val MEASURED-FIRST {"type" "result" "subtype" "success" "is_error" False "result" "1" "total_cost_usd" 0.0322929
+                     "usage" {"input_tokens" 10 "cache_creation_input_tokens" 15322 "cache_read_input_tokens" 13689
+                              "output_tokens" 54}})
+(val MEASURED-SECOND {"type" "result" "subtype" "success" "is_error" False "result" "2" "total_cost_usd" 0.035648
+                      "usage" {"input_tokens" 10 "cache_creation_input_tokens" 102 "cache_read_input_tokens" 29011
+                               "output_tokens" 48}})
+(val MEASURED-RESUMED {"type" "result" "subtype" "success" "is_error" False "result" "3"
+                       "total_cost_usd" 0.038911299999999996
+                       "usage" {"input_tokens" 10 "cache_creation_input_tokens" 96 "cache_read_input_tokens" 29113
+                                "output_tokens" 30}})
 
 
 (defn read-record [state #^ dict record]
   "実物の形の 1 行を分類して状態機械へ渡す(handler の on-line と同じ道)。"
   (dialogue.on-record state (classify-record record)))
 
-(defn started []
-  "init を読んだ後の手番の途中の状態。"
-  (setv begun (dialogue.begin-turn (DialogueState) (TurnInput "hello" "msg-1")))
+(defn started [#^ (| float None) [cost-mark 0.0]]
+  "init を読んだ後の手番の途中の状態。cost-mark = 手番の額の起点(既定は新しい会話の 0 — None は分からない起点)。"
+  (setv begun (dialogue.begin-turn (DialogueState :cost-mark cost-mark :start-mark cost-mark) (TurnInput "hello" "msg-1")))
   (. (read-record begun.state INIT) state))
 
 (defn lifecycle [ref state]
@@ -73,6 +87,107 @@
                "usage" {"input_tokens" 5 "output_tokens" 6 "cache_read_input_tokens" 7}})
   (val read (read-record (started) capped))
   (assert (= read.end.usage (Usage :input-tokens 5 :output-tokens 6 :cache-read-input-tokens 7)) read.end))
+
+
+;; --- 手番の額(#883) ------------------------------------------------------------------
+
+(deftest test-a-failed-result-carries-its-cost
+  ;; 誤りで終えた手番も額を運ぶ: 累積の額 − 手番の起点(0.75 − 0.25)。
+  (val capped {"type" "result" "subtype" "error_max_turns" "is_error" True "result" "" "total_cost_usd" 0.75
+               "usage" {"output_tokens" 6}})
+  (val read (read-record (started 0.25) capped))
+  (assert (isinstance read.end Failed) (repr read.end))
+  (assert (= read.end.cost-usd 0.5) (repr read.end))
+  (assert (= read.end.usage (Usage :output-tokens 6)) (repr read.end))
+  ;; result の行が額を名乗らなければ None(0 を発明しない)。
+  (val silent (read-record (started 0.25) {"type" "result" "subtype" "error_during_execution" "is_error" True}))
+  (assert (is silent.end.cost-usd None) (repr silent.end)))
+
+
+(deftest test-a-fresh-session-costs-its-whole-total
+  ;; 新しい会話の起点は 0: 最初の手番の額は result の行の累積ちょうど。手番を閉じた行の累積が次の起点になる。
+  (val read (read-record (started 0.0) MEASURED-FIRST))
+  (assert (= read.end.cost-usd 0.0322929) (repr read.end))
+  (assert (= read.end.usage (Usage :input-tokens 10 :output-tokens 54 :cache-creation-input-tokens 15322
+                                   :cache-read-input-tokens 13689))
+          (repr read.end))
+  (assert (= read.state.cost-mark 0.0322929)))
+
+
+(deftest test-a-resumed-turn-costs-the-total-minus-the-mark
+  ;; --resume の process の最初の result の行は前の process の額から数えた累積(実測)。手番の額はその差で、累積そのものではない。
+  (val read (read-record (started 0.035648) MEASURED-RESUMED))
+  (assert (isinstance read.end Completed) (repr read.end))
+  (assert (< (abs (- read.end.cost-usd 0.0032633)) 1e-12) (repr read.end))
+  (assert (= read.end.usage (Usage :input-tokens 10 :output-tokens 30 :cache-creation-input-tokens 96
+                                   :cache-read-input-tokens 29113))
+          (repr read.end)))
+
+
+(deftest test-an-unknown-mark-gives-no-cost-and-the-next-turn-counts-again
+  ;; 起点が分からない(handler の知らない会話の続き)手番の額は None。usage は運ぶ。閉じた行の累積から次の手番は数え直す。
+  (val first (read-record (started None) MEASURED-FIRST))
+  (assert (is first.end.cost-usd None) (repr first.end))
+  (assert (= first.end.usage.output-tokens 54) (repr first.end))
+  (val again (dialogue.begin-turn first.state (TurnInput "2 とだけ答えて" "msg-2")))
+  (val second (read-record (. (read-record again.state INIT) state) MEASURED-SECOND))
+  (assert (< (abs (- second.end.cost-usd 0.0033551)) 1e-12) (repr second.end))
+  (assert (= second.end.usage.output-tokens 48) (repr second.end)))
+
+
+(deftest test-a-total-below-the-mark-gives-no-cost
+  ;; 累積が起点より小さい = CLI が起点の額から数えていない(起点の読み違い)。負の額を作らず None。
+  (val read (read-record (started 0.5) SUCCESS-RESULT))
+  (assert (isinstance read.end Completed) (repr read.end))
+  (assert (is read.end.cost-usd None) (repr read.end)))
+
+
+(deftest test-a-swallowed-result-and-the-next-result-are-one-turn
+  ;; 注入を待って飲んだ result の行と、注入を走らせた CLI の手番の result の行は 1 つの host の手番: 額は最後の行の累積 − 起点、
+  ;; usage は 2 行の和(額と同じ行の集まり)。
+  (val injected (dialogue.inject (started 0.0) (TurnInput "late" "inj-1")))
+  (val swallowed (read-record injected.state MEASURED-FIRST))
+  (assert (is swallowed.end None))
+  (val running (. (read-record swallowed.state (lifecycle "inj-1" "started")) state))
+  (val done (read-record running MEASURED-SECOND))
+  (assert (isinstance done.end Completed) (repr done.end))
+  (assert (= done.end.cost-usd 0.035648) (repr done.end))
+  (assert (= done.end.usage (Usage :input-tokens 20 :output-tokens 102 :cache-creation-input-tokens 15424
+                                   :cache-read-input-tokens 42700))
+          (repr done.end))
+  (assert (= done.state.turn-usage (Usage)))
+  (assert (= done.state.cost-mark 0.035648)))
+
+
+(deftest test-a-cli-own-result-counts-in-the-turn
+  ;; 手番の途中に CLI が自分で起こした手番の result の行は終わりではないが、その額は累積に入るので usage も手番に足す。
+  (val own {"type" "result" "subtype" "success" "is_error" False "result" "" "origin" {"kind" "task-notification"}
+            "total_cost_usd" 0.25 "usage" {"output_tokens" 3}})
+  (val noted (read-record (started 0.0) own))
+  (assert (is noted.end None))
+  (val done (read-record noted.state (| SUCCESS-RESULT {"total_cost_usd" 0.75})))
+  (assert (= done.end.cost-usd 0.75) (repr done.end))
+  (assert (= done.end.usage (Usage :output-tokens 10)) (repr done.end)))
+
+
+(deftest test-an-interrupted-turn-moves-the-mark-so-the-next-turn-costs-only-itself
+  ;; 止めた手番(Interrupted — 額の欄が無い)を閉じた result の行の累積が次の手番の起点: 生き残った入力の手番の額と usage は
+  ;; その手番の分だけ(止めた手番の分を混ぜない)。
+  (val injected (dialogue.inject (started 0.0) (TurnInput "also this" "inj-1")))
+  (val plan (dialogue.interrupt injected.state "rid-9"))
+  (val answered (read-record plan.state {"type" "control_response"
+                                         "response" {"subtype" "success" "request_id" "rid-9"
+                                                     "response" {"still_queued" ["inj-1"]}}}))
+  (val aborted (read-record answered.state {"type" "result" "subtype" "error_during_execution" "is_error" True
+                                            "terminal_reason" "aborted_tools" "total_cost_usd" 0.25
+                                            "usage" {"output_tokens" 5}}))
+  (assert aborted.continues)
+  (assert (= aborted.state.cost-mark 0.25))
+  (assert (= aborted.state.turn-usage (Usage)))
+  (val running (. (read-record aborted.state (lifecycle "inj-1" "started")) state))
+  (val done (read-record running (| SUCCESS-RESULT {"user_message_uuids" ["inj-1"] "total_cost_usd" 0.75})))
+  (assert (= done.end.cost-usd 0.5) (repr done.end))
+  (assert (= done.end.usage (Usage :output-tokens 7)) (repr done.end)))
 
 
 (deftest test-an-interrupt-with-unread-input-uses-control-request-and-continues
