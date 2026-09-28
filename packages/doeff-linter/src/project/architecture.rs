@@ -63,9 +63,21 @@ pub struct ArchService {
     pub description: Option<String>,
     pub depends_on: Vec<String>,
     pub layers: Vec<String>,
+    /// 公開の契約の形(`:public-contract`)。書かない = in-process(他の service が `:depends-on` に載せて読める)。
+    pub public_contract: PublicContract,
     /// architecture.hy の中の defservice の位置(DOEFF117 の知らせの位置)。
     #[serde(skip)]
     pub range: doeff_indexer::hy_index::Range,
+}
+
+/// service の公開の契約の形(`defservice` の `:public-contract`)。
+/// `Http` の service は、公開の契約が HTTP の口だけで、他の service は `:depends-on` に載せて in-process で読まない
+/// (置き場の状態を持つ service の近道を止める — agora-redesign #978 の設計 artifact-store v10)。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum PublicContract {
+    InProcess,
+    Http,
 }
 
 /// 素の関数(deff)を許す理由の種類 1 つ(`(reason 名 "説明")`)。
@@ -564,7 +576,15 @@ impl<'a> Parser<'a> {
             return None;
         };
         let range = self.lines.range(items[1].span.start, items[1].span.end);
-        let mut service = ArchService { dir: hy_mangle(&name), name, description: None, depends_on: Vec::new(), layers: Vec::new(), range };
+        let mut service = ArchService {
+            dir: hy_mangle(&name),
+            name,
+            description: None,
+            depends_on: Vec::new(),
+            layers: Vec::new(),
+            public_contract: PublicContract::InProcess,
+            range,
+        };
         for part in items.iter().skip(2) {
             if let Some(text) = self.string(part) {
                 service.description = Some(text);
@@ -577,6 +597,10 @@ impl<'a> Parser<'a> {
                             ":depends-on" => service.depends_on = self.names(value, ":depends-on"),
                             ":layers" => service.layers = self.names(value, ":layers"),
                             ":dir" => service.dir = self.required_string(value, ":dir").unwrap_or_default(),
+                            ":public-contract" => match self.symbol(value) {
+                                Some("http") => service.public_contract = PublicContract::Http,
+                                _ => self.problem(value, ":public-contract は http だけ(書かない = in-process)"),
+                            },
                             _ => self.unknown_key(key, "defservice"),
                         }
                     }
@@ -591,6 +615,12 @@ impl<'a> Parser<'a> {
     fn check(&mut self, arch: &Architecture) {
         let layers: BTreeSet<&str> = arch.layers.iter().map(|l| l.name.as_str()).collect();
         let services: BTreeSet<&str> = arch.services.iter().map(|s| s.name.as_str()).collect();
+        let http_only: BTreeSet<&str> = arch
+            .services
+            .iter()
+            .filter(|s| s.public_contract == PublicContract::Http)
+            .map(|s| s.name.as_str())
+            .collect();
         let file = self.path.display().to_string();
         let push = |problems: &mut Vec<String>, text: String| problems.push(format!("{}: {}", file, text));
         for layer in &arch.layers {
@@ -642,6 +672,15 @@ impl<'a> Parser<'a> {
             for dependency in &service.depends_on {
                 if !services.contains(dependency.as_str()) {
                     push(&mut self.problems, format!("service {} の :depends-on の {} は宣言した service に無い", service.name, dependency));
+                }
+                if http_only.contains(dependency.as_str()) {
+                    push(
+                        &mut self.problems,
+                        format!(
+                            "service {} の :depends-on の {} は :public-contract http(公開の契約は HTTP の口だけ)— in-process の依存に載せず、HTTP で読む",
+                            service.name, dependency
+                        ),
+                    );
                 }
             }
         }
@@ -707,6 +746,26 @@ mod tests {
         let lines: Vec<u32> = arch.notices.iter().map(|n| n.range.start.line).collect();
         let expect = |needle: &str| newer.lines().position(|l| l.contains(needle)).unwrap() as u32;
         assert_eq!(lines, vec![expect(":future-knob"), expect(":brand-new-key"), expect(":owners")]);
+    }
+
+    #[test]
+    fn public_contract_http_is_read_and_cannot_be_depended_on() {
+        // agora-redesign #978: 公開の契約が HTTP だけの service(:public-contract http)は、他の service の :depends-on に載せられない。
+        let declared = GOOD.replace("{:depends-on [custody] :layers [core intent]}", "{:layers [core intent]}");
+        let with_http = declared.replace("(defservice custody", "(defservice custody {:public-contract http})\n(defservice custody-old");
+        let arch = Architecture::parse(&with_http, Path::new("architecture.hy")).unwrap();
+        let custody = arch.services.iter().find(|s| s.name == "custody").unwrap();
+        assert_eq!(custody.public_contract, PublicContract::Http);
+        assert!(arch.services.iter().filter(|s| s.name != "custody").all(|s| s.public_contract == PublicContract::InProcess));
+        assert!(arch.notices.is_empty(), "知らない鍵として知らせた: {:?}", arch.notices);
+
+        let depended = GOOD.replace("(defservice custody", "(defservice custody {:public-contract http})\n(defservice custody-old");
+        let problems = Architecture::parse(&depended, Path::new("architecture.hy")).unwrap_err().join("\n");
+        assert!(problems.contains(":depends-on の custody は :public-contract http"), "依存を止めていない:\n{}", problems);
+
+        let bad = GOOD.replace("(defservice custody", "(defservice custody {:public-contract grpc})\n(defservice custody-old");
+        let problems = Architecture::parse(&bad, Path::new("architecture.hy")).unwrap_err().join("\n");
+        assert!(problems.contains(":public-contract は http だけ"), "語彙の外を通した:\n{}", problems);
     }
 
     #[test]

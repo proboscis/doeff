@@ -245,10 +245,13 @@ law の対応だけを残す。無ければ TOML の設定で今どおり動く�
   module の `layer_reason` は「タグで決めた — …」。旧い機能の dir(層の名の段が無い)は層の規則の母集団に入らない。
 - operator 2026-09-27 逐語 "we dont want 'legacy' stuff. we want anything all flagged" — `:legacy` は廃止。
 - service の dir は名の `-` を `_` にした物(`land-notice` → `controllers/land_notice/`)。`{:dir "…"}` で変えられる。
+- `{:public-contract http}` の service は、公開の契約が HTTP の口だけ。他の service の `:depends-on` に載せると設定の誤り
+  (in-process で読む近道を止める — 置き場の状態を持つ service が 2 つ目の持ち主を作らせないため・agora-redesign #978)。書かない = in-process。
+  値は `http` だけ(他は設定の誤り)。載せられないので、その service の module を import すると DOEFF116 が当たる。
 - 読み違い(知らない鍵・重複した service や層・存在しない層や service の名・:foundation の層が無い)は `architecture.hy:行:列: 理由` の形で
   設定の誤り(終了コード 2)。
 - editor-json の最上位に `architecture`(name・root・layers(name・summary・knows・does_not_know・question・roles)・shared・foundation・
-  open_layers・services(name・dir・description・depends_on・layers))。無ければ null。
+  open_layers・services(name・dir・description・depends_on・layers・public_contract — `in-process` か `http`))。無ければ null。
 
 | 規則 | 判じ方 | 鍵の細目 | 位置 |
 |---|---|---|---|
