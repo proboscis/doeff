@@ -7,7 +7,7 @@
 ;;;
 ;;;   (defk my-foundation [body]
 ;;;     …
-;;;     (<- answer (scheduled (with-handlers [(await-handler) (state) (env-var-ask :prefix "") host-reader (async-time-handler)]
+;;;     (<- answer (scheduled (with-handlers [(await-handler) (state) (environ-reader) host-reader (async-time-handler)]
 ;;;                             (with-cluster-handlers body))))
 ;;;     answer)
 ;;;
