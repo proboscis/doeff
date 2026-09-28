@@ -1,6 +1,6 @@
 ;;; 切り離した task(呼び手と寿命を切り離した task)の effect と、答えの型(2026-09-25)。
 ;;;
-;;;   (<- submitted (SubmitDetached (summarize foundation rows) :key job-id :needs (frozenset ["gpu"])))
+;;;   (<- submitted (SubmitDetached (summarize foundation rows) :key job-id :needs (frozenset ["gpu"]) :environ {"ROWS_URL" url}))
 ;;;   ... 呼び手の process が消えてもよい ...
 ;;;   (<- outcome (AwaitDetached job-id))          ; 別の process からでも、同じ key で待てる
 ;;;
@@ -17,10 +17,11 @@
 ;;; (2026-09-28 — 同じ VM で走らせる模擬 detached-local は、呼び手の外側の handler を継いで足りない handler を黙って補うので消した)。
 (require doeff-hy.macros [val])
 (require doeff-hy.record [defrecord])
-(import dataclasses [dataclass])
+(import dataclasses [dataclass field])
 (import doeff [EffectBase Program])
 (import .remote_model [TaskSucceeded TaskFailed decode-outcome])
 (import .cluster_model [effect-needs-problem])
+(import .runtime_env_model [child-environ-refusal])
 
 (setv DETACHED-DEFAULT-LEASE-SECONDS 60.0)       ; 担い手の worker が沈黙してから消失とみなすまで
 (setv DETACHED-DEFAULT-RETAIN-SECONDS 86400.0)   ; 終わった後に結果を持っておく長さ
@@ -39,10 +40,15 @@
   (setv #^ str name "")
   (setv #^ float lease-seconds DETACHED-DEFAULT-LEASE-SECONDS)
   (setv #^ float retain-seconds DETACHED-DEFAULT-RETAIN-SECONDS)
+  ;; 子の環境変数(名 → 文字列・既定は空 — RemoteJob.environ と同じ意味と規則)。同じ key の送り直しで違えば別の仕事(409)。
+  (setv #^ dict environ (field :default-factory dict))
   (defn __post-init__ [self]
-    "needs が能力の名の frozenset であることを作る時に検める(旧い Requirement の tuple を黙って受けない)。"
+    "needs が能力の名の frozenset であること・environ が service の :environ と同じ規則を通ることを作る時に検める(旧い Requirement の
+     tuple・予約の名・秘密の名を黙って受けない)。"
     (setv problem (effect-needs-problem self.needs))
-    (when problem (raise (TypeError (+ "SubmitDetached.needs: " problem))))))
+    (when problem (raise (TypeError (+ "SubmitDetached.needs: " problem))))
+    (setv problem (child-environ-refusal self.environ))
+    (when problem (raise (TypeError (+ "SubmitDetached.environ: " problem))))))
 
 
 (defclass [(dataclass :frozen True)] AwaitDetached [EffectBase]

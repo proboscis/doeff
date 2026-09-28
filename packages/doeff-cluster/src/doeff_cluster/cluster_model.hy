@@ -73,6 +73,13 @@
                None)))
 
 
+(deff environ-pairs [#^ dict environ]  ; defk にできない: coordinator の本文の読み・worker の返事の読み(Program の外)が呼ぶ純粋な判断
+  {:pre [(: environ dict)] :post [(: % tuple)] :tags {:context "doeff-cluster" :role "judgment"}}
+  "子の環境変数の dict → 名の順の #(名 値) の tuple(TaskRecord.environ・JobSpec.environ の形)— 行と spec の比べと指紋を
+   名の順 1 つにするため。"
+  (tuple (gfor k (sorted environ) #(k (get environ k)))))
+
+
 (defclass ComponentVersion [NamedTuple]
   "版 1 つ: 部品の名(python・cloudpickle・doeff)とその版の綴り。task を送れる worker を選ぶのに、送り手と worker の組を比べる。"
   (#^ str component)
@@ -343,7 +350,11 @@
   (setv #^ int env-attempts 0)
   (setv #^ tuple avoid #())
   (setv #^ str failure-kind "")
-  (setv #^ bool retryable False))
+  (setv #^ bool retryable False)
+  ;; --- 子の環境変数(2026-09-28)---
+  ;; environ = 送り手の effect の :environ(名の順の #(名 値) の tuple — service の JobSpec.environ と同じ形)。heartbeat の返事で worker へ
+  ;; 運び、worker は service と同じ路(ProcessHost.launch)で子の環境変数に置く。この欄の無い行(2026-09-28 より前)は空で読む。
+  (setv #^ tuple environ #()))
 
 
 ;; 担い手の worker に置いた task の phase(担い手の数・送る task・報告の吸い上げ・lease の延長で同じに扱う)。
@@ -352,7 +363,7 @@
 
 (defn #^ dict task-record-to-json [#^ TaskRecord task]
   "TaskRecord → 保存の JSON の形(版は名 → 値の object・needs は名の list)。保存の 2 つの形(state file と durable の KV)はここだけを使う。"
-  (| (asdict task) {"versions" (dict task.versions) "needs" (list task.needs)}))
+  (| (asdict task) {"versions" (dict task.versions) "needs" (list task.needs) "environ" (dict task.environ)}))
 
 
 ;; 終わった task の phase(旧い形の保存の行を読む時に、まだ終わっていない行だけを断る — task-record-from-json)。
@@ -374,7 +385,9 @@
                      body
                      {"versions" (component-versions-of (get body "versions"))
                       "needs" (capabilities-of (.get body "needs" []) "task の needs")
-                      "avoid" (tuple (.get body "avoid" []))}
+                      "avoid" (tuple (.get body "avoid" []))
+                      ;; 子の環境変数の欄の無い旧い行は空(欄が無いだけで旧い形とは数えない — 足した欄)。
+                      "environ" (environ-pairs (.get body "environ" {}))}
                      (if (and reason unended)
                          {"phase" "failed" "detail" reason}
                          {}))))
