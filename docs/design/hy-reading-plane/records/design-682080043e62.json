@@ -1,0 +1,219 @@
+{
+  "artifacts": [
+    {
+      "path": "artifacts/v5/design.md",
+      "sha256": "3c219a789bf2421ba3546e102a1614414e77a205e6eca689716ad5dc54ab885e"
+    },
+    {
+      "path": "artifacts/v5/entity.html",
+      "sha256": "b66cc933dbe6f66c9b136ddab7bb3143c46265c1b9b5b5c2fe1c705db2d2c57c"
+    },
+    {
+      "path": "artifacts/v5/glyph.svg",
+      "sha256": "c8cc0490e553b7cfc2be1e0eba7d342163262a8930e8f15d8d404bcf6af92de8"
+    },
+    {
+      "path": "artifacts/v5/entity-render.png",
+      "sha256": "daf3e4a39f5dc1984fd950df666391fa70494814dbc257784d40ff4ae546f348"
+    }
+  ],
+  "body": {
+    "alternatives": [
+      {
+        "options": [
+          {
+            "benefits": "面の中で語の流儀が 1 つ。operator の指示と同じ向き",
+            "costs": "operator が明示したのは 2 語だけ。残りは席の既定",
+            "name": "同じ流儀(英語の技術用語)で全部揃える"
+          },
+          {
+            "benefits": "指示の範囲に留まる",
+            "costs": "1 つの面に日本語と英語のラベルが混ざる",
+            "name": "2 語だけ変えて残りは日本語のまま"
+          }
+        ],
+        "question": "args / return type 以外のラベルをどうするか",
+        "reason": "混ざるより揃える方が読みやすい。戻せる(表 1 つ)",
+        "reconsider_when": "operator が別の語や日本語を指した時",
+        "selected": "同じ流儀(英語の技術用語)で全部揃える"
+      }
+    ],
+    "change_cases": [
+      {
+        "change": "ラベルを別の語や別の言語に変える",
+        "expected_elements": [
+          "labels"
+        ],
+        "id": "C1",
+        "preserve": [
+          "ラベルは文字列の表 1 つ"
+        ],
+        "priority": "required",
+        "protected_contracts": [
+          "K5"
+        ],
+        "provenance": {
+          "kind": "user",
+          "source": "operator 2026-09-29"
+        },
+        "rationale": "operator の好みで変わる",
+        "verification": "表の 1 行を変えると面の該当のラベルだけが変わる"
+      }
+    ],
+    "contracts": [
+      {
+        "canonical_source": "ide-plugins/vscode/doeff-runner(実装の issue で決める)",
+        "effects": [],
+        "failures": [
+          "表に無い key は key をそのまま出す(空にしない)"
+        ],
+        "id": "K5",
+        "invariants": [
+          "面のラベルは全部この表から引く(直書きしない)"
+        ],
+        "operations": [
+          "label(key) -> 文字"
+        ],
+        "owner": "labels"
+      }
+    ],
+    "elements": [
+      {
+        "depends_on": [],
+        "hidden_decisions": [
+          "小文字の英語の技術用語",
+          "source の語(種類・tags の key)は訳さない"
+        ],
+        "id": "labels",
+        "kind": "internal",
+        "requirement_ids": [
+          "R15"
+        ],
+        "responsibility": "面に出るラベルの文字列の表(design.md 2 節)。カード・切り替えの欄・軸の見出しはここから引く",
+        "state": [
+          "ラベルの表"
+        ]
+      },
+      {
+        "depends_on": [
+          "labels"
+        ],
+        "hidden_decisions": [],
+        "id": "entity-card",
+        "kind": "internal",
+        "requirement_ids": [
+          "R15"
+        ],
+        "responsibility": "v4 のまま。ラベルは labels から",
+        "state": []
+      },
+      {
+        "depends_on": [
+          "labels",
+          "entity-card"
+        ],
+        "hidden_decisions": [],
+        "id": "view",
+        "kind": "internal",
+        "requirement_ids": [
+          "R15"
+        ],
+        "responsibility": "v4 のまま。切り替えの欄と軸の見出しのラベルは labels から",
+        "state": []
+      }
+    ],
+    "handoff": {
+      "fixed": [
+        "ラベルは args / return type",
+        "ラベルは文字列の表 1 つから引く"
+      ],
+      "free": [
+        "残りのラベルの語"
+      ],
+      "next": [
+        "main が読む面の実装の issue を立てる時、v5 の 2 節の表を受け入れ条件に足す"
+      ]
+    },
+    "level": "読む面のラベルの文字列の表",
+    "methods": [
+      {
+        "evidence": [
+          "design-f953339f038c の methods"
+        ],
+        "name": "change-cases",
+        "profile": "change-cases-1996-local-v1",
+        "reason": "v2〜v4 の当て方にラベルの変更(C1)を足しただけ",
+        "status": "reused",
+        "steps": []
+      },
+      {
+        "evidence": [],
+        "name": "ddd",
+        "profile": "ddd-evans-2015-local-v1",
+        "reason": "表示の設計",
+        "status": "not_applicable",
+        "steps": []
+      },
+      {
+        "evidence": [],
+        "name": "volatility",
+        "profile": "volatility-righting-software-local-v1",
+        "reason": "change-cases で扱った",
+        "status": "not_applicable",
+        "steps": []
+      },
+      {
+        "evidence": [],
+        "name": "add",
+        "profile": "add-2.0-local-v1",
+        "reason": "要素 3 つ",
+        "status": "not_applicable",
+        "steps": []
+      },
+      {
+        "evidence": [],
+        "name": "saam",
+        "profile": "saam-1996-local-v1",
+        "reason": "alternatives の表で済ませた",
+        "status": "not_applicable",
+        "steps": []
+      },
+      {
+        "evidence": [],
+        "name": "c4",
+        "profile": "c4-web-2026-09-14-local-v1",
+        "reason": "v1 の図で足りる",
+        "status": "not_applicable",
+        "steps": []
+      }
+    ],
+    "open_questions": [
+      "args / return type 以外のラベルの語は席の既定(design.md 2 節の表)。operator が変えたい語があれば表の 1 行"
+    ],
+    "perspective": "proposed",
+    "purpose": "v5: v4(design-3512974b8231)に 1 点を足す。面に出るラベルは args / return type などの一般に通じる英語の技術用語で揃える(operator が決めたのは args / return type。残りは席が同じ流儀で揃えた既定)",
+    "requirements": [
+      {
+        "id": "R15",
+        "kind": "constraint",
+        "provenance": {
+          "kind": "user",
+          "source": "operator 2026-09-29 \"instead of 引数/答え use args / return type\"(args / return type が operator の裁定。残りは席の既定)"
+        },
+        "statement": "面のラベルは「引数 / 答え」ではなく args / return type。ほかのラベル(effects・handles・handled by・callers・callees・tests・types・used by・handlers・returned by・accepted by・installed at・location・show in line・fold all・unfold all・open in editor・axis)も同じ流儀。実体の種類のバッジと tags の key と docstring と本体は source のまま"
+      }
+    ]
+  },
+  "created_at": "2026-09-28T14:37:36.427512+00:00",
+  "id": "design-682080043e62",
+  "inputs": [
+    {
+      "id": "design-3512974b8231",
+      "role": "basis",
+      "sha256": "fa4381ed7f94b1c921aef3a384efbb70d0bcfc5d08e19ad3e729cdbd0c6e191a"
+    }
+  ],
+  "kind": "design",
+  "schema_version": 1,
+  "scope": "doeff-hy の code を読む面(VS Code)。単位は file ではなく定義(defk・defrecord・defeffect・defhandler・deftest …)で、Scala 3 の見た目に印字し、tag・effect・呼び出し・型から辿る。source の Hy は編集しない。その先の言語(静的な型・型に載る effect・Python の呼び出し・file に縛られない名前空間)の要件も持つ"
+}
