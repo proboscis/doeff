@@ -287,7 +287,7 @@ to doeff-agents.
 
 | Public effect | What the headless handler does |
 |---|---|
-| `Launch(..., resume_from=None)` | starts the first turn when `prompt` is given; `resume_from` continues an earlier context (`ResumeTargetNotFoundError` when it is not here) |
+| `Launch(..., resume_from=None)` | starts the first turn when `prompt` is given; `resume_from` continues an earlier context (`ResumeTargetNotFoundError` when it is not here, `TurnInFlightError` when another turn already runs in it) |
 | `FollowUp(handle, text, mode=NEXT_TURN)` / `Send` | runs it as the next turn — waits behind a running turn |
 | `FollowUp(handle, text, mode=INJECT)` | adds it to the running turn (`NoTurnInFlightError` when none runs) |
 | `Interrupt(handle)` | stops the running turn only; the session and its context stay |

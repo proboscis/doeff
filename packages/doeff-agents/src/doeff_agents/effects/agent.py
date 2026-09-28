@@ -1173,6 +1173,21 @@ class NoTurnInFlightError(AgentError):
         super().__init__(f"session {session_id} has no turn in flight")
 
 
+class TurnInFlightError(AgentError):
+    """A turn was to be started in a context where another turn is already running.
+
+    The runtime refuses a second turn on the same context; the caller decides
+    whether to wait for the running turn or give up.
+    """
+
+    def __init__(self, *, session_id: str, context_id: str) -> None:
+        self.session_id = session_id
+        self.context_id = context_id
+        super().__init__(
+            f"session {session_id}: context {context_id} already has a turn in flight"
+        )
+
+
 def refuse_turn_capabilities(effect: AgentEffectBase, *, handler: str) -> None:
     """Refuse the turn-level fields a turn-less (terminal) handler cannot honour.
 
@@ -1336,6 +1351,7 @@ __all__ = [
     "StopSessionEffect",
     "TranscriptRef",
     "TurnCredential",
+    "TurnInFlightError",
     "TurnInputMode",
     "TurnRef",
     "agent",

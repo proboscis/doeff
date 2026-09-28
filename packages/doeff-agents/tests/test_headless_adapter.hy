@@ -7,7 +7,7 @@
 ;;         無ければ skip・印 e2e(日次と着地の門は -m "not e2e" で除く)。会社の profile は使わない。
 ;;
 ;; 筋書きの Program は session host の socket を開かず、doeff_claude_code も doeff_agents.sessionhost も import しない(公開 effect だけ)。
-(require doeff-hy.macros [deftest defk <- val])
+(require doeff-hy.macros [deftest defk <- val var])
 (import collections.abc [Callable])
 (import dataclasses [dataclass])
 (import os)
@@ -26,7 +26,8 @@
   SessionHandle AgentEventPage AwaitStatus TurnInputMode InputFateState
   AgentTextEvent AgentToolUseEvent AgentInputFateEvent AgentTurnEndEvent
   AgentTurnCompleted AgentTurnInterrupted AgentTurnLost AgentTurnUsage
-  AgentCapabilityUnsupportedError NoTurnInFlightError ResumeTargetNotFoundError SessionNotFoundError])
+  AgentCapabilityUnsupportedError NoTurnInFlightError ResumeTargetNotFoundError SessionNotFoundError
+  AgentError AgentLaunchError TurnInFlightError])
 (import doeff_agents.monitor [SessionStatus])
 ;; 層 2 の handler との対は doeff-agents の組み立ての部品で作る(この検も doeff_claude_code を import しない)。
 (import doeff_agents.handlers.headless_compose [FakeReply headless-claude-handlers fake-headless-claude-handlers])
@@ -217,6 +218,34 @@
   (setv (get found "idle-page") page)
   (<- (Stop handle))
   found)
+
+
+(defk busy-context-refused [#^ Setting s]
+  {:pre [(: s Setting)] :post [(: % dict)]}
+  "文脈で手番が走っている間に、同じ文脈を続ける別の session を起こすと TurnInFlightError で断る(起動の失敗 AgentLaunchError ではない —
+   agora-redesign #789)。走っている手番は断りの後もそのまま走る。"
+  (<- handle (launch s "adapter-busy-a" (reply-prompt "FIRST") None))
+  (<- first (read-until handle (fn [events end] (is-not end None)) s.timeout -1))
+  (<- _ (FollowUp handle (sleep-prompt 40 "NEVER")))
+  (<- started (read-until handle tool-started s.timeout first.after))
+  (var refused None)
+  (try
+    (<- (launch s "adapter-busy-b" (reply-prompt "SECOND") first.end.resume-from))
+    (except [error AgentError] (:= refused error)))
+  (<- page (Events handle :after-seq started.after))
+  (<- (Stop handle))
+  {"context" first.end.resume-from "refused" refused "page" page})
+
+
+(deftest test-headless-busy-context-is-refused-as-turn-in-flight-fake [tmp-path]
+  (val seen (run-on FAKE tmp-path busy-context-refused))
+  (val refused (get seen "refused"))
+  (assert (isinstance refused TurnInFlightError) (repr refused))
+  ;; 反例: 起動の失敗(AgentLaunchError の族)としては名乗らない — 呼び手が「起こせなかった」と数え違えない。
+  (assert (not (isinstance refused AgentLaunchError)) (repr refused))
+  (assert (= #(refused.session-id refused.context-id) #("adapter-busy-b" (get seen "context"))) (repr refused))
+  ;; 走っている手番は断りで終わらない(終わりはまだ無い)。
+  (assert (is (. (get seen "page") end) None) (repr (get seen "page"))))
 
 
 (defk lost-turn-continues [#^ Setting s]

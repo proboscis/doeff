@@ -36,7 +36,7 @@
   AgentEventPage AgentTextEvent AgentTextDeltaEvent AgentToolUseEvent AgentToolResultEvent AgentInputFateEvent
   AgentTurnEndEvent AgentTurnCompleted AgentTurnFailed AgentTurnInterrupted AgentTurnLost AgentTurnUsage
   AgentError AgentLaunchError AgentCapabilityUnsupportedError NoTurnInFlightError ResumeTargetNotFoundError
-  SessionAlreadyExistsError SessionNotFoundError])
+  SessionAlreadyExistsError SessionNotFoundError TurnInFlightError])
 (import doeff_claude_code.values [ClaudeHome ClaudeSessionSpec ClaudeTurn TurnInput FreshSession ResumeSession Rebuilt
                                   checked-session-id])
 (import doeff_claude_code.lines [AssistantMessage PartialMessage ToolResult InputFate
@@ -201,8 +201,10 @@
       (AgentLaunchError (.format "session {} の手番を起こせない(exit {}): {}" session.name outcome.exit-code outcome.stderr-tail))
     (isinstance outcome CarryRefused) (AgentLaunchError (.format "session {}: {}" session.name outcome.detail))
     (isinstance outcome AttachmentRefused) (AgentLaunchError (.format "session {}: 受けない添付 {}" session.name outcome.mime))
+    ;; 文脈で別の手番が走っている(この handler の知らない手番 — 別の session が同じ文脈を続けている)。起動の失敗と分けて型で名乗る
+    ;; (agora は session-busy と読む・agora-redesign #789)。
     (isinstance outcome TurnInFlight)
-      (AgentError (.format "session {} の文脈に、この handler の知らない手番が走っている: {!r}" session.name outcome.turn))
+      (TurnInFlightError :session-id session.name :context-id session.context-id)
     True (AgentError (.format "session {}: 層 2 の答えが閉語彙の外: {!r}" session.name outcome))))
 
 
