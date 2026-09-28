@@ -1,5 +1,5 @@
 {
-  "version": 4,
+  "version": 5,
   "root": "/repo",
   "files": [
     {
@@ -39,7 +39,12 @@
             "direct": [],
             "via": []
           },
-          "tags": null
+          "tags": null,
+          "effects": null,
+          "param_types": [],
+          "answer_type": null,
+          "contracts": [],
+          "handles": null
         },
         {
           "name": "Row",
@@ -74,7 +79,12 @@
             "direct": [],
             "via": []
           },
-          "tags": null
+          "tags": null,
+          "effects": null,
+          "param_types": [],
+          "answer_type": null,
+          "contracts": [],
+          "handles": null
         },
         {
           "name": "key",
@@ -109,7 +119,12 @@
             "direct": [],
             "via": []
           },
-          "tags": null
+          "tags": null,
+          "effects": null,
+          "param_types": [],
+          "answer_type": null,
+          "contracts": [],
+          "handles": null
         },
         {
           "name": "text",
@@ -144,7 +159,12 @@
             "direct": [],
             "via": []
           },
-          "tags": null
+          "tags": null,
+          "effects": null,
+          "param_types": [],
+          "answer_type": null,
+          "contracts": [],
+          "handles": null
         },
         {
           "name": "fetch-row",
@@ -185,7 +205,12 @@
             "context": "messaging",
             "owner": "input",
             "role": "program"
-          }
+          },
+          "effects": null,
+          "param_types": [],
+          "answer_type": null,
+          "contracts": [],
+          "handles": null
         },
         {
           "name": "row-text",
@@ -225,7 +250,12 @@
           "tags": {
             "context": "messaging",
             "role": "judgment"
-          }
+          },
+          "effects": null,
+          "param_types": [],
+          "answer_type": null,
+          "contracts": [],
+          "handles": null
         },
         {
           "name": "shout",
@@ -266,7 +296,12 @@
             "context": "screen",
             "owner": "screen",
             "role": "judgment"
-          }
+          },
+          "effects": null,
+          "param_types": [],
+          "answer_type": null,
+          "contracts": [],
+          "handles": null
         },
         {
           "name": "test-row-text-is-the-text",
@@ -301,7 +336,12 @@
             "direct": [],
             "via": []
           },
-          "tags": null
+          "tags": null,
+          "effects": null,
+          "param_types": [],
+          "answer_type": null,
+          "contracts": [],
+          "handles": null
         }
       ],
       "imports": [

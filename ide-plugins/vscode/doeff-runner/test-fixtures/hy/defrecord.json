@@ -1,5 +1,5 @@
 {
- "version": 4,
+ "version": 5,
  "root": "/ws",
  "files": [
   {
@@ -45,7 +45,12 @@
      },
      "checks": [
       "(CHAT-ID-PATTERN.fullmatch value)"
-     ]
+     ],
+     "effects": null,
+     "param_types": [],
+     "answer_type": null,
+     "contracts": [],
+     "handles": null
     },
     {
      "name": "value",
@@ -80,7 +85,12 @@
       "direct": [],
       "via": []
      },
-     "tags": null
+     "tags": null,
+     "effects": null,
+     "param_types": [],
+     "answer_type": null,
+     "contracts": [],
+     "handles": null
     },
     {
      "name": "Plain",
@@ -115,7 +125,12 @@
       "direct": [],
       "via": []
      },
-     "tags": null
+     "tags": null,
+     "effects": null,
+     "param_types": [],
+     "answer_type": null,
+     "contracts": [],
+     "handles": null
     },
     {
      "name": "key",
@@ -150,7 +165,12 @@
       "direct": [],
       "via": []
      },
-     "tags": null
+     "tags": null,
+     "effects": null,
+     "param_types": [],
+     "answer_type": null,
+     "contracts": [],
+     "handles": null
     }
    ],
    "imports": [],

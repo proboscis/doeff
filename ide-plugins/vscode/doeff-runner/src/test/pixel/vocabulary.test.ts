@@ -58,7 +58,12 @@ function def(name: string, kind: HyDefinitionKind, line: number, end: number, co
     bases: [],
     raw: { direct: [], via: [] },
     tags: null,
-    checks: null
+    checks: null,
+    effects: null,
+    paramTypes: [],
+    answerType: null,
+    contracts: [],
+    handles: null
   };
 }
 

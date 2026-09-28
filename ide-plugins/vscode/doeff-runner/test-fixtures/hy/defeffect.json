@@ -1,5 +1,5 @@
 {
- "version": 4,
+ "version": 5,
  "root": "/ws",
  "files": [
   {
@@ -47,7 +47,12 @@
      "tags": {
       "context": "custody",
       "role": "intent"
-     }
+     },
+     "effects": null,
+     "param_types": [],
+     "answer_type": null,
+     "contracts": [],
+     "handles": null
     },
     {
      "name": "borrow",
@@ -87,7 +92,12 @@
      "tags": {
       "context": "custody",
       "role": "program"
-     }
+     },
+     "effects": null,
+     "param_types": [],
+     "answer_type": null,
+     "contracts": [],
+     "handles": null
     }
    ],
    "imports": [],

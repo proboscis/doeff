@@ -1,5 +1,5 @@
 {
- "version": 4,
+ "version": 5,
  "root": "/deps/src",
  "files": [
   {
@@ -38,7 +38,12 @@
      "raw": {
       "direct": [],
       "via": []
-     }
+     },
+     "effects": null,
+     "param_types": [],
+     "answer_type": null,
+     "contracts": [],
+     "handles": null
     },
     {
      "name": "put-row",
@@ -75,7 +80,12 @@
      "raw": {
       "direct": [],
       "via": []
-     }
+     },
+     "effects": null,
+     "param_types": [],
+     "answer_type": null,
+     "contracts": [],
+     "handles": null
     },
     {
      "name": "make-store",
@@ -109,7 +119,12 @@
      "raw": {
       "direct": [],
       "via": []
-     }
+     },
+     "effects": null,
+     "param_types": [],
+     "answer_type": null,
+     "contracts": [],
+     "handles": null
     }
    ],
    "imports": [],

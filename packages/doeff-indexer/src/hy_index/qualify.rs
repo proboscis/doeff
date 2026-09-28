@@ -1,4 +1,6 @@
-//! 完全修飾名(版 4)— 定義の `qualified_name` と、呼び出しの `target`(呼び先の完全修飾名)。
+//! 完全修飾名(版 4)— 定義の `qualified_name` と、呼び出しの `target`(呼び先の完全修飾名)。版 5 からは同じ名前の解決で、
+//! 宣言した effect(`effects`)・型の注記の中の名(`param_types` / `answer_type` の `names`)・effect 節の解く effect(`handles`)の
+//! `target` も埋める。
 //!
 //! 完全修飾名 = module の dotted 名 + 入れ物の名(在れば)+ 定義の名。区切りはどれも mangle した綴り
 //! (`pkg.mod.Store.put_row`)。呼び出しの `target` は、その file の中身(module・definitions・imports)だけで決める
@@ -15,7 +17,7 @@
 //! 3. どれでもない(組み込み・special form・局所の束縛・引数・値の上の属性)は null。
 
 use super::analyze::mangle;
-use super::model::{Call, Definition, HyFileIndex, Import};
+use super::model::{Definition, HyFileIndex, Import, NameRef, TypeNote};
 
 /// dotted の名前を区切りごとに mangle する(空の区切りは落とす)。
 fn mangle_dotted(dotted: &str) -> String {
@@ -64,11 +66,54 @@ fn bound_name(import: &Import) -> &str {
     import.alias.as_deref().or(import.name.as_deref()).unwrap_or(&import.module)
 }
 
-/// 呼び出し 1 件の呼び先の完全修飾名(解決の順は module の説明のとおり)。
-fn call_target(path: &str, module: &str, definitions: &[Definition], imports: &[Import], call: &Call) -> Option<String> {
-    let name = call.mangled.as_str();
+/// 名前の解決の場 — 1 つの file の module・定義・import(他の file は見ない)。
+struct Scope<'a> {
+    path: &'a str,
+    module: &'a str,
+    definitions: &'a [Definition],
+    imports: &'a [Import],
+}
+
+impl Scope<'_> {
+    /// 書かれた dotted の名(`ReadInput`・`intent.ReadInput`)の完全修飾名。
+    fn resolve_written(&self, written: &str) -> Option<String> {
+        let (qualifier, name) = match written.rsplit_once('.') {
+            Some((qualifier, name)) if !qualifier.is_empty() && !name.is_empty() => (Some(qualifier), name),
+            Some(_) | None => (None, written),
+        };
+        self.resolve(qualifier, &mangle(name))
+    }
+
+    /// 修飾(書かれた綴り)と mangle した名の完全修飾名(解決の順は module の説明のとおり)。
+    fn resolve(&self, qualifier: Option<&str>, name: &str) -> Option<String> {
+        let (path, module, definitions, imports) = (self.path, self.module, self.definitions, self.imports);
+        call_target(path, module, definitions, imports, qualifier, name)
+    }
+
+    /// 名 1 つの target を埋める。
+    fn fill(&self, name_ref: &mut NameRef) {
+        name_ref.target = self.resolve_written(&name_ref.name);
+    }
+
+    /// 型の注記の中の名の target を埋める。
+    fn fill_type(&self, note: &mut TypeNote) {
+        for name_ref in &mut note.names {
+            self.fill(name_ref);
+        }
+    }
+}
+
+/// 修飾と名の完全修飾名(解決の順は module の説明のとおり)。
+fn call_target(
+    path: &str,
+    module: &str,
+    definitions: &[Definition],
+    imports: &[Import],
+    qualifier: Option<&str>,
+    name: &str,
+) -> Option<String> {
     let own_module = mangle_dotted(module);
-    match &call.qualifier {
+    match qualifier {
         None => {
             if definitions.iter().any(|d| d.container.is_none() && d.mangled == name) {
                 return Some(join(&[&own_module, name]));
@@ -103,17 +148,29 @@ fn call_target(path: &str, module: &str, definitions: &[Definition], imports: &[
     }
 }
 
-/// file の索引に完全修飾名を埋める — 定義の `qualified_name` と呼び出しの `target`。
+/// file の索引に完全修飾名を埋める — 定義の `qualified_name`、呼び出しの `target`、定義の effect・型・effect 節の名の `target`。
 pub fn link(file: &mut HyFileIndex) {
     for definition in &mut file.definitions {
         definition.qualified_name = qualified_name(&file.module, definition);
     }
-    let targets: Vec<Option<String>> = file
-        .calls
-        .iter()
-        .map(|call| call_target(&file.path, &file.module, &file.definitions, &file.imports, call))
-        .collect();
-    for (call, target) in file.calls.iter_mut().zip(targets) {
-        call.target = target;
+    // 解決は埋める前の定義の写しの上で行う(定義の欄を書きながら同じ定義の列を読まないため)
+    let definitions = file.definitions.clone();
+    let scope = Scope { path: &file.path, module: &file.module, definitions: &definitions, imports: &file.imports };
+    for call in &mut file.calls {
+        call.target = scope.resolve(call.qualifier.as_deref(), &call.mangled);
+    }
+    for definition in &mut file.definitions {
+        for effect in definition.effects.iter_mut().flatten() {
+            scope.fill(effect);
+        }
+        for param in &mut definition.param_types {
+            scope.fill_type(&mut param.type_note);
+        }
+        if let Some(answer) = &mut definition.answer_type {
+            scope.fill_type(answer);
+        }
+        if let Some(handles) = &mut definition.handles {
+            scope.fill(handles);
+        }
     }
 }

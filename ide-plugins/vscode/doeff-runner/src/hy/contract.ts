@@ -1,9 +1,14 @@
-// `doeff-indexer hy-index` の出力 JSON(契約 版 4)の型と、読み込みの唯一の検査。
+// `doeff-indexer hy-index` の出力 JSON(契約 版 5)の型と、読み込みの唯一の検査。
 // 契約の正本 = experiments/hy-highlighter/hy-index-contract.md(版 1)+ -v2.md(版 2)+ -v3.md(版 3 = 生の副作用の判定)
-// + doeff-indexer の SPECIFICATION.md の Hy Index の節(版 4 = 完全修飾名 qualified_name・呼び出しの target)。欄が欠けた・型が違う・版が違う JSON は
+// + doeff-indexer の SPECIFICATION.md の Hy Index の節(版 4 = 完全修飾名 qualified_name・呼び出しの target、
+// 版 5 = 宣言した effect・引数と答えの型・型でない契約・effect 節の解く effect)。欄が欠けた・型が違う・版が違う JSON は
 // 理由つきで捨て、既定値で埋めない。
 
-export const HY_INDEX_CONTRACT_VERSION = 4;
+export const HY_INDEX_CONTRACT_VERSION = 5;
+
+/** 契約の述語の側(閉じた集合)。 */
+export const HY_CONTRACT_SIDES = ['pre', 'post'] as const;
+export type HyContractSide = (typeof HY_CONTRACT_SIDES)[number];
 
 /** 生の副作用の分類(契約の閉じた集合 — 判定と目録は hy-index が持ち、拡張は読むだけ)。 */
 export const RAW_CATEGORIES = ['http', 'async', 'time', 'random', 'file', 'process', 'env', 'network', 'db', 'thread'] as const;
@@ -87,6 +92,42 @@ export interface HyDefinition {
   readonly tags: Readonly<Record<string, string>> | null;
   /** defrecord の頭の辞書の :check の式(書かれたとおりの綴り・書いた順)。頭の辞書を持つ defrecord だけが持ち、それ以外は null(欄が無い出力も null) */
   readonly checks: readonly string[] | null;
+  /** 宣言した effect(版 5)— `:effects [E …]` の名を書いた順に。`:effects` を書いていなければ null(`[]` は起こさない宣言)。
+   * 推論した effect は持たない(正本は linter の signatures・DOEFF127 が宣言と推論の一致を検める) */
+  readonly effects: readonly HyNameRef[] | null;
+  /** 引数の型(版 5)— `:pre` の `(: 引数 型)`・defeffect の `:fields`・defrecord の欄の `#^ 型`。型を書いた引数だけ・引数の順 */
+  readonly paramTypes: readonly HyParamType[];
+  /** 答えの型(版 5)— `:post` の `(: % 型)`、無ければ名の `#^ 型`。defeffect は `:answer`。無ければ null */
+  readonly answerType: HyTypeNote | null;
+  /** 型でない契約の述語(版 5)— 書かれたとおり */
+  readonly contracts: readonly HyContractClause[];
+  /** effect 節が解く effect(版 5)— kind が effect-clause の定義だけが持ち、他は null。解く handler はこの target が一致する
+   * effect 節の container(逆引きは索引に持たず、読む側が引く) */
+  readonly handles: HyNameRef | null;
+}
+
+/** 書かれた名と、その完全修飾名(版 5 — 呼び出しの target と同じ名前の解決。解けなければ null)。 */
+export interface HyNameRef {
+  readonly name: string;
+  readonly target: string | null;
+}
+
+/** 型の注記 1 つ(版 5)— 書かれた綴りと、その中の名。型の意味の読み方は linter の signatures が正本。 */
+export interface HyTypeNote {
+  readonly text: string;
+  readonly names: readonly HyNameRef[];
+}
+
+/** 引数 1 つの型(版 5)。 */
+export interface HyParamType {
+  readonly name: string;
+  readonly type: HyTypeNote;
+}
+
+/** 型でない契約の述語 1 つ(版 5)。 */
+export interface HyContractClause {
+  readonly side: HyContractSide;
+  readonly text: string;
 }
 
 /** 生の副作用の証拠 1 件。 */
@@ -362,8 +403,81 @@ function parseDefinition(value: unknown, where: string): HyDefinition {
     bases,
     raw: parseRawMark(value, where),
     tags: parseTags(value, where),
-    checks: parseChecks(value, kind, where)
+    checks: parseChecks(value, kind, where),
+    effects: parseEffects(value, where),
+    paramTypes: arr(value, 'param_types', where).map((p, i) => parseParamType(p, `${where}.param_types[${i}]`)),
+    answerType: parseAnswerType(value, where),
+    contracts: arr(value, 'contracts', where).map((c, i) => parseContractClause(c, `${where}.contracts[${i}]`)),
+    handles: parseHandles(value, kind, where)
   };
+}
+
+/** 名 1 つを検める(版 5)。 */
+function parseNameRef(value: unknown, where: string): HyNameRef {
+  if (!isObject(value)) {
+    throw new ContractViolation(`${where}: object でない`);
+  }
+  return { name: str(value, 'name', where), target: strOrNull(value, 'target', where) };
+}
+
+/** 型の注記 1 つを検める(版 5)。 */
+function parseTypeNote(value: unknown, where: string): HyTypeNote {
+  if (!isObject(value)) {
+    throw new ContractViolation(`${where}: object でない`);
+  }
+  return {
+    text: str(value, 'text', where),
+    names: arr(value, 'names', where).map((n, i) => parseNameRef(n, `${where}.names[${i}]`))
+  };
+}
+
+/** 引数 1 つの型を検める(版 5)。 */
+function parseParamType(value: unknown, where: string): HyParamType {
+  if (!isObject(value)) {
+    throw new ContractViolation(`${where}: object でない`);
+  }
+  return { name: str(value, 'name', where), type: parseTypeNote(field(value, 'type', where), `${where}.type`) };
+}
+
+/** 型でない契約の述語 1 つを検める(版 5)。 */
+function parseContractClause(value: unknown, where: string): HyContractClause {
+  if (!isObject(value)) {
+    throw new ContractViolation(`${where}: object でない`);
+  }
+  return { side: oneOf(value, 'side', where, HY_CONTRACT_SIDES), text: str(value, 'text', where) };
+}
+
+/** 宣言した effect の欄を検める(欄は必須。null は宣言なし、配列は宣言した名)。 */
+function parseEffects(parent: JsonObject, where: string): readonly HyNameRef[] | null {
+  const value = field(parent, 'effects', where);
+  if (value === null) {
+    return null;
+  }
+  if (!Array.isArray(value)) {
+    throw new ContractViolation(`${where}.effects: 配列でも null でもない`);
+  }
+  return value.map((e, i) => parseNameRef(e, `${where}.effects[${i}]`));
+}
+
+/** 答えの型の欄を検める(欄は必須・null 可)。 */
+function parseAnswerType(parent: JsonObject, where: string): HyTypeNote | null {
+  const value = field(parent, 'answer_type', where);
+  return value === null ? null : parseTypeNote(value, `${where}.answer_type`);
+}
+
+/** effect 節の解く effect の欄を検める(欄は必須。effect-clause だけが持ち、他の kind は null)。 */
+function parseHandles(parent: JsonObject, kind: HyDefinitionKind, where: string): HyNameRef | null {
+  const value = field(parent, 'handles', where);
+  if (value === null) {
+    if (kind === 'effect-clause') {
+      throw new ContractViolation(`${where}.handles: effect-clause は解く effect を持つ`);
+    }
+    return null;
+  }
+  if (kind !== 'effect-clause') {
+    throw new ContractViolation(`${where}.handles: ${kind} は effect を解かない`);
+  }
+  return parseNameRef(value, `${where}.handles`);
 }
 
 /** defrecord の checks の欄を検める(欄が無い・null は null。在れば文字列の列で、defrecord だけが持つ)。 */
