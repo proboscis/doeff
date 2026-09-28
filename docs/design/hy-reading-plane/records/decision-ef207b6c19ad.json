@@ -1,0 +1,44 @@
+{
+  "artifacts": [
+    {
+      "path": "artifacts/v5/design.md",
+      "sha256": "3c219a789bf2421ba3546e102a1614414e77a205e6eca689716ad5dc54ab885e"
+    },
+    {
+      "path": "artifacts/v5/entity.html",
+      "sha256": "b66cc933dbe6f66c9b136ddab7bb3143c46265c1b9b5b5c2fe1c705db2d2c57c"
+    }
+  ],
+  "body": {
+    "actor": "user",
+    "authority": "direct",
+    "decision": "design",
+    "outcome": "accepted",
+    "scope_of_agreement": "operator が合意したのは「.hy を開いた時の既定は読む面」と args / return type の 2 語。残りのラベルの語は席の既定で、文字列の表 1 つで戻せる。",
+    "source": "operator の直接の議論 2026-09-29 00:0x(会話 defk-view-discuss・herdr pane w3J:pA)。逐語: \"instead of 引数/答え use args / return type\" / \"great, when opening hy file the default should be reading view\"",
+    "statement": "v4 の裁定に 2 点を足す。(1) .hy の file を開いた時の既定は読む面(v1 で席の既定にしていた項目を operator が裁定した。source は切り替えで開く)。(2) 面のラベルは「引数 / 答え」ではなく args / return type。ほかのラベル(effects・handles・handled by・callers・callees・tests・types・used by・handlers・returned by・accepted by・installed at・location・show in line・fold all・unfold all・open in editor・axis)は席が同じ流儀(一般に通じる英語の技術用語)で揃えた既定。実体の種類のバッジ・tags の key・docstring・本体は source のまま。v4 までの他の決まりはそのまま。",
+    "subjects": [
+      "design-682080043e62"
+    ],
+    "supersedes": [
+      "decision-751eb42b8152"
+    ]
+  },
+  "created_at": "2026-09-28T14:38:31.481770+00:00",
+  "id": "decision-ef207b6c19ad",
+  "inputs": [
+    {
+      "id": "design-682080043e62",
+      "role": "subject",
+      "sha256": "87d9b86cf6f80b7a2f4374b8a4e25525a2ae62bbadd5174a1e228bb20dcc97d8"
+    },
+    {
+      "id": "decision-751eb42b8152",
+      "role": "basis",
+      "sha256": "f4db43402bf3a76c741820e6420bfd4e092e3e2cb4cfedd0f026952a540de76e"
+    }
+  ],
+  "kind": "decision",
+  "schema_version": 1,
+  "scope": "doeff-hy の code を読む面(VS Code)。単位は file ではなく定義(defk・defrecord・defeffect・defhandler・deftest …)で、Scala 3 の見た目に印字し、tag・effect・呼び出し・型から辿る。source の Hy は編集しない。その先の言語(静的な型・型に載る effect・Python の呼び出し・file に縛られない名前空間)の要件も持つ"
+}
