@@ -63,7 +63,8 @@ function def(name: string, kind: HyDefinitionKind, line: number, end: number, co
     paramTypes: [],
     answerType: null,
     contracts: [],
-    handles: null
+    handles: null,
+    decorators: []
   };
 }
 

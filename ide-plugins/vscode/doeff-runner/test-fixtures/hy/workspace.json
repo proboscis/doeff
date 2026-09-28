@@ -1,5 +1,5 @@
 {
- "version": 5,
+ "version": 6,
  "root": "/ws",
  "files": [
   {
@@ -45,7 +45,8 @@
      "param_types": [],
      "answer_type": null,
      "contracts": [],
-     "handles": null
+     "handles": null,
+     "decorators": []
     },
     {
      "name": "helper",
@@ -84,7 +85,8 @@
      "param_types": [],
      "answer_type": null,
      "contracts": [],
-     "handles": null
+     "handles": null,
+     "decorators": []
     },
     {
      "name": "Store",
@@ -123,7 +125,8 @@
      "param_types": [],
      "answer_type": null,
      "contracts": [],
-     "handles": null
+     "handles": null,
+     "decorators": []
     },
     {
      "name": "path",
@@ -162,7 +165,8 @@
      "param_types": [],
      "answer_type": null,
      "contracts": [],
-     "handles": null
+     "handles": null,
+     "decorators": []
     },
     {
      "name": "save",
@@ -204,7 +208,8 @@
      "param_types": [],
      "answer_type": null,
      "contracts": [],
-     "handles": null
+     "handles": null,
+     "decorators": []
     },
     {
      "name": "Color",
@@ -243,7 +248,8 @@
      "param_types": [],
      "answer_type": null,
      "contracts": [],
-     "handles": null
+     "handles": null,
+     "decorators": []
     },
     {
      "name": "RED",
@@ -282,7 +288,8 @@
      "param_types": [],
      "answer_type": null,
      "contracts": [],
-     "handles": null
+     "handles": null,
+     "decorators": []
     },
     {
      "name": "app-handler",
@@ -321,7 +328,8 @@
      "param_types": [],
      "answer_type": null,
      "contracts": [],
-     "handles": null
+     "handles": null,
+     "decorators": []
     },
     {
      "name": "Ask",
@@ -365,7 +373,8 @@
      "handles": {
       "name": "Ask",
       "target": null
-     }
+     },
+     "decorators": []
     },
     {
      "name": "test-run-app",
@@ -404,7 +413,8 @@
      "param_types": [],
      "answer_type": null,
      "contracts": [],
-     "handles": null
+     "handles": null,
+     "decorators": []
     },
     {
      "name": "orphan",
@@ -443,7 +453,8 @@
      "param_types": [],
      "answer_type": null,
      "contracts": [],
-     "handles": null
+     "handles": null,
+     "decorators": []
     }
    ],
    "imports": [
@@ -959,7 +970,8 @@
      "param_types": [],
      "answer_type": null,
      "contracts": [],
-     "handles": null
+     "handles": null,
+     "decorators": []
     },
     {
      "name": "parse-it",
@@ -1000,7 +1012,8 @@
      "param_types": [],
      "answer_type": null,
      "contracts": [],
-     "handles": null
+     "handles": null,
+     "decorators": []
     }
    ],
    "imports": [],
@@ -1080,7 +1093,8 @@
      "param_types": [],
      "answer_type": null,
      "contracts": [],
-     "handles": null
+     "handles": null,
+     "decorators": []
     }
    ],
    "imports": [],
@@ -1145,7 +1159,8 @@
      "param_types": [],
      "answer_type": null,
      "contracts": [],
-     "handles": null
+     "handles": null,
+     "decorators": []
     },
     {
      "name": "name",
@@ -1184,7 +1199,8 @@
      "param_types": [],
      "answer_type": null,
      "contracts": [],
-     "handles": null
+     "handles": null,
+     "decorators": []
     }
    ],
    "imports": [],
@@ -1233,7 +1249,8 @@
      "param_types": [],
      "answer_type": null,
      "contracts": [],
-     "handles": null
+     "handles": null,
+     "decorators": []
     }
    ],
    "imports": [],
@@ -1282,7 +1299,8 @@
      "param_types": [],
      "answer_type": null,
      "contracts": [],
-     "handles": null
+     "handles": null,
+     "decorators": []
     }
    ],
    "imports": [],
@@ -1331,7 +1349,8 @@
      "param_types": [],
      "answer_type": null,
      "contracts": [],
-     "handles": null
+     "handles": null,
+     "decorators": []
     },
     {
      "name": "format-name",
@@ -1370,7 +1389,8 @@
      "param_types": [],
      "answer_type": null,
      "contracts": [],
-     "handles": null
+     "handles": null,
+     "decorators": []
     }
    ],
    "imports": [],
@@ -1564,7 +1584,8 @@
      "param_types": [],
      "answer_type": null,
      "contracts": [],
-     "handles": null
+     "handles": null,
+     "decorators": []
     },
     {
      "name": "GetRow",
@@ -1605,7 +1626,8 @@
      "param_types": [],
      "answer_type": null,
      "contracts": [],
-     "handles": null
+     "handles": null,
+     "decorators": []
     },
     {
      "name": "SpecialPut",
@@ -1646,7 +1668,8 @@
      "param_types": [],
      "answer_type": null,
      "contracts": [],
-     "handles": null
+     "handles": null,
+     "decorators": []
     },
     {
      "name": "Plain",
@@ -1687,7 +1710,8 @@
      "param_types": [],
      "answer_type": null,
      "contracts": [],
-     "handles": null
+     "handles": null,
+     "decorators": []
     },
     {
      "name": "save-row",
@@ -1728,7 +1752,8 @@
      "param_types": [],
      "answer_type": null,
      "contracts": [],
-     "handles": null
+     "handles": null,
+     "decorators": []
     },
     {
      "name": "helper-fn",
@@ -1769,7 +1794,8 @@
      "param_types": [],
      "answer_type": null,
      "contracts": [],
-     "handles": null
+     "handles": null,
+     "decorators": []
     },
     {
      "name": "memory-handler",
@@ -1808,7 +1834,8 @@
      "param_types": [],
      "answer_type": null,
      "contracts": [],
-     "handles": null
+     "handles": null,
+     "decorators": []
     },
     {
      "name": "PutRow",
@@ -1852,7 +1879,8 @@
      "handles": {
       "name": "PutRow",
       "target": "pkg.effects.PutRow"
-     }
+     },
+     "decorators": []
     },
     {
      "name": "GetRow",
@@ -1896,7 +1924,8 @@
      "handles": {
       "name": "GetRow",
       "target": "pkg.effects.GetRow"
-     }
+     },
+     "decorators": []
     },
     {
      "name": "load-row",
@@ -1937,7 +1966,8 @@
      "param_types": [],
      "answer_type": null,
      "contracts": [],
-     "handles": null
+     "handles": null,
+     "decorators": []
     }
    ],
    "imports": [],
@@ -2149,7 +2179,8 @@
      "param_types": [],
      "answer_type": null,
      "contracts": [],
-     "handles": null
+     "handles": null,
+     "decorators": []
     },
     {
      "name": "PutRow",
@@ -2193,7 +2224,8 @@
      "handles": {
       "name": "PutRow",
       "target": "pkg.effects.PutRow"
-     }
+     },
+     "decorators": []
     },
     {
      "name": "Tell",
@@ -2237,7 +2269,8 @@
      "handles": {
       "name": "Tell",
       "target": null
-     }
+     },
+     "decorators": []
     },
     {
      "name": "announce",
@@ -2276,7 +2309,8 @@
      "param_types": [],
      "answer_type": null,
      "contracts": [],
-     "handles": null
+     "handles": null,
+     "decorators": []
     }
    ],
    "imports": [

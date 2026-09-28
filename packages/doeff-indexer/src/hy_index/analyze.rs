@@ -431,6 +431,8 @@ impl<'a> Analyzer<'a> {
             contracts: Vec::new(),
             // effect 節の解く effect(handler_def が埋める)
             handles: None,
+            // decorator(function_def・class_def が埋める)
+            decorators: Vec::new(),
         });
         self.definition_spans.push(full);
         text
@@ -464,12 +466,54 @@ impl<'a> Analyzer<'a> {
             None => (Vec::new(), rest.get(1..).unwrap_or_default()),
         };
         let docstring = self.leading_docstring(body);
+        let decorators = self.decorators(&items[1..]);
         self.push_def(name, kind, form.span, container, docstring, params);
         // `#^ T name` の注記は答えの型(契約の辞書の :post が在ればそちらが勝つ — read_contract が上書きする)
-        if let Some(Node::Annotated { annotation: Some(annotation), .. }) = rest.first().map(|first| &first.node) {
-            let answer = self.type_note(annotation);
-            if let Some(last) = self.definitions.last_mut() {
-                last.answer_type = Some(answer);
+        let answer = match rest.first().map(|first| &first.node) {
+            Some(Node::Annotated { annotation: Some(annotation), .. }) => Some(self.type_note(annotation)),
+            Some(_) | None => None,
+        };
+        if let Some(last) = self.definitions.last_mut() {
+            last.answer_type = answer;
+            last.decorators = decorators;
+        }
+    }
+
+    /// 定義の頭の decorator の `[…]`(`skip_decorators` が読み飛ばす物)の各要素の綴り — 読む面がバッジに出すため。
+    /// 呼びの形は外側の括弧を外し、文字列の外の空白の連なりは 1 つに詰める。`[…]` が無ければ空の列。
+    fn decorators(&self, rest: &[Form]) -> Vec<String> {
+        if skip_decorators(rest).len() == rest.len() {
+            return Vec::new();
+        }
+        let Some(items) = rest.first().and_then(Form::bracket_items) else {
+            return Vec::new();
+        };
+        items
+            .iter()
+            .filter(|item| !matches!(item.node, Node::Discarded))
+            .map(|item| {
+                let written = self.text(item.span);
+                let text = match item.paren_items() {
+                    // `(dataclass :frozen True)` → `dataclass :frozen True`(閉じていない括弧は開きだけを外す)
+                    Some(_) => {
+                        let inner = written.strip_prefix('(').unwrap_or(written);
+                        inner.strip_suffix(')').unwrap_or(inner)
+                    }
+                    None => written,
+                };
+                collapse_spaces(text)
+            })
+            .filter(|text| !text.is_empty())
+            .collect()
+    }
+
+    /// 欄の `#^ 型` の注記を、定義 `index` の `param_types` に書いた順に積む(defrecord と defclass で同じ読み方)。
+    fn push_field_types(&mut self, index: usize, targets: &[super::fields::FieldTarget]) {
+        for target in targets {
+            if let (Some(annotation), false) = (target.annotation, is_operator(self.text(target.name))) {
+                let type_note = self.type_note_of_span(annotation);
+                let param = ParamType { name: self.text(target.name).to_string(), type_note };
+                self.definitions[index].param_types.push(param);
             }
         }
     }
@@ -486,7 +530,15 @@ impl<'a> Analyzer<'a> {
         };
         let (docstring, members) = self.body_docstring(body);
         let kind = DefinitionKind::Defclass;
+        let decorators = self.decorators(&items[1..]);
         let class_name = self.push_def_with_bases(name, kind, form.span, container, docstring, Vec::new(), bases);
+        let class_index = self.definitions.len() - 1;
+        self.definitions[class_index].decorators = decorators;
+        // 欄の型は defrecord と同じ読み手(fields.rs)で読む(v9: defclass のカードも欄に型を出す)。欄の定義そのもの
+        // (kind field)は今までどおり class_member が積む。
+        let fields: Vec<&Form> = members.iter().collect();
+        let targets = super::fields::record_field_targets(self.src, &fields);
+        self.push_field_types(class_index, &targets);
         for member in members {
             self.class_member(member, &class_name);
         }
@@ -504,24 +556,27 @@ impl<'a> Analyzer<'a> {
                 let Some(items) = member.paren_items() else {
                     return;
                 };
-                match (self.head(items), items.first().map(|first| &first.node)) {
-                    (Some("defn" | "defn/a" | "defk" | "deff" | "defmacro"), _) => {
-                        self.function_def(member, items, DefinitionKind::Method, Some(class_name));
+                let head = self.head(items);
+                if matches!(head, Some("defn" | "defn/a" | "defk" | "deff" | "defmacro")) {
+                    self.function_def(member, items, DefinitionKind::Method, Some(class_name));
+                } else if head == Some("setv") {
+                    for pair in items[1..].chunks(2) {
+                        self.binding_targets(member, &pair[0], DefinitionKind::Field, Some(class_name));
                     }
-                    (Some("setv"), _) => {
-                        for pair in items[1..].chunks(2) {
-                            self.binding_targets(member, &pair[0], DefinitionKind::Field, Some(class_name));
-                        }
+                } else if matches!(items.first().map(|first| &first.node), Some(Node::Annotated { .. })) {
+                    if let Some(name) = self.def_name(&items[0]) {
+                        self.push_def(name, DefinitionKind::Field, member.span, Some(class_name), None, Vec::new());
                     }
-                    (_, Some(Node::Annotated { .. })) => {
-                        if let Some(name) = self.def_name(&items[0]) {
-                            self.push_def(name, DefinitionKind::Field, member.span, Some(class_name), None, Vec::new());
-                        }
-                    }
-                    _ => {}
                 }
             }
-            _ => {}
+            // 記号・keyword・文字列・数などの裸の form は class の欄ではない
+            Node::Symbol
+            | Node::Keyword
+            | Node::Str { .. }
+            | Node::Number
+            | Node::Prefixed { .. }
+            | Node::Discarded
+            | Node::Tagged { .. } => {}
         }
     }
 
@@ -562,13 +617,7 @@ impl<'a> Analyzer<'a> {
         let members: Vec<&Form> = fields.iter().collect();
         let targets = super::fields::record_field_targets(self.src, &members);
         let record_index = self.definitions.len() - 1;
-        for target in &targets {
-            if let (Some(annotation), false) = (target.annotation, is_operator(self.text(target.name))) {
-                let type_note = self.type_note_of_span(annotation);
-                let param = ParamType { name: self.text(target.name).to_string(), type_note };
-                self.definitions[record_index].param_types.push(param);
-            }
-        }
+        self.push_field_types(record_index, &targets);
         for target in targets {
             if !is_operator(self.text(target.name)) {
                 self.push_def(target.name, DefinitionKind::Field, target.member, Some(&record), None, Vec::new());
@@ -1407,6 +1456,39 @@ impl<'a> Analyzer<'a> {
             is_require,
         });
     }
+}
+
+/// 文字列の外の空白の連なり(改行を含む)を 1 つの空白に詰め、両端を落とす(decorator の綴りを 1 行にするため)。
+fn collapse_spaces(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut in_string = false;
+    let mut escaped = false;
+    let mut pending_space = false;
+    for c in text.chars() {
+        if in_string {
+            out.push(c);
+            match (escaped, c) {
+                (true, _) => escaped = false,
+                (false, '\\') => escaped = true,
+                (false, '"') => in_string = false,
+                (false, _) => {}
+            }
+            continue;
+        }
+        if c.is_whitespace() {
+            pending_space = !out.is_empty();
+            continue;
+        }
+        if pending_space {
+            out.push(' ');
+            pending_space = false;
+        }
+        if c == '"' {
+            in_string = true;
+        }
+        out.push(c);
+    }
+    out
 }
 
 /// `(defn [decorators] name …)` の decorator の list を読み飛ばす(次が名前の形の時だけ decorator)。

@@ -1,6 +1,6 @@
 //! `hy-index` の出力の型 — 契約 `hy-index-contract.md`(版 1)・`hy-index-contract-v2.md`(版 2)・`hy-index-contract-v3.md`(版 3 = 生の副作用の証拠)
 //! と版 4(完全修飾名 = 定義の `qualified_name`・呼び出しの `target`)・版 5(宣言した effect・引数と答えの型・型でない契約・
-//! effect 節が解く effect)— どちらも SPECIFICATION.md の Hy Index の節 — の JSON の形そのもの。
+//! effect 節が解く effect)・版 6(定義の decorator)— どれも SPECIFICATION.md の Hy Index の節 — の JSON の形そのもの。
 //! JSON への変換は CLI の出力の 1 か所(`main.rs`)だけが行う。
 
 use serde::Serialize;
@@ -9,7 +9,7 @@ pub use super::position::{Position, Range};
 pub use super::raw_catalog::RawCategory;
 
 /// 契約の版。形を変える時は契約と一緒に上げる。
-pub const CONTRACT_VERSION: u32 = 5;
+pub const CONTRACT_VERSION: u32 = 6;
 
 /// `hy-index` の出力の全体。
 #[derive(Debug, Clone, Serialize)]
@@ -139,6 +139,10 @@ pub struct Definition {
     /// effect 節が解く effect(版 5)— kind が `effect-clause` の定義だけが持ち、他は null。`name` は節の頭の綴り、
     /// `target` は effect の完全修飾名(解く handler は、この target が一致する effect 節の container の定義)。
     pub handles: Option<NameRef>,
+    /// 定義の decorator(版 6)— `(defclass [d …] Name …)` / `(defn [d …] name …)` の `[…]` の各要素を書いた順に。
+    /// 綴りは書かれたとおりで、呼びの形は外側の括弧を外し(`(dataclass :frozen True)` → `dataclass :frozen True`)、
+    /// 文字列の外の空白の連なりは 1 つに詰める。decorator の無い定義は空の列。
+    pub decorators: Vec<String>,
 }
 
 /// 書かれた名と、その完全修飾名(版 5 — 呼び出しの `target` と同じ名前の解決。解けなければ null)。

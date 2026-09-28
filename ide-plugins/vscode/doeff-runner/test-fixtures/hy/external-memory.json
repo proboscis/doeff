@@ -1,5 +1,5 @@
 {
- "version": 5,
+ "version": 6,
  "root": "/deps/src",
  "files": [
   {
@@ -43,7 +43,8 @@
      "param_types": [],
      "answer_type": null,
      "contracts": [],
-     "handles": null
+     "handles": null,
+     "decorators": []
     },
     {
      "name": "put-row",
@@ -85,7 +86,8 @@
      "param_types": [],
      "answer_type": null,
      "contracts": [],
-     "handles": null
+     "handles": null,
+     "decorators": []
     },
     {
      "name": "make-store",
@@ -124,7 +126,8 @@
      "param_types": [],
      "answer_type": null,
      "contracts": [],
-     "handles": null
+     "handles": null,
+     "decorators": []
     }
    ],
    "imports": [],

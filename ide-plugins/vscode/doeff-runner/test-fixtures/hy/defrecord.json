@@ -1,5 +1,5 @@
 {
- "version": 5,
+ "version": 6,
  "root": "/ws",
  "files": [
   {
@@ -50,7 +50,8 @@
      "param_types": [],
      "answer_type": null,
      "contracts": [],
-     "handles": null
+     "handles": null,
+     "decorators": []
     },
     {
      "name": "value",
@@ -90,7 +91,8 @@
      "param_types": [],
      "answer_type": null,
      "contracts": [],
-     "handles": null
+     "handles": null,
+     "decorators": []
     },
     {
      "name": "Plain",
@@ -130,7 +132,8 @@
      "param_types": [],
      "answer_type": null,
      "contracts": [],
-     "handles": null
+     "handles": null,
+     "decorators": []
     },
     {
      "name": "key",
@@ -170,7 +173,8 @@
      "param_types": [],
      "answer_type": null,
      "contracts": [],
-     "handles": null
+     "handles": null,
+     "decorators": []
     }
    ],
    "imports": [],
