@@ -20,9 +20,13 @@
 (defclass FrozenMap [(get Mapping #(str V))]
   "文字列の鍵 → 値の変えられない写像。作る時に source(写像か鍵と値の対の列)を写し取り、以後は変えられない。
    中の値はそのまま持つ(JSON の値を深く凍らせるのは freeze-json)。"
-  (setv __slots__ #("_entries" "_hash"))
+  (setv __slots__ #("_entries" "_hash" "_deep"))
   (#^ (get dict #(str V)) _entries)
   (#^ (| int None) _hash)
+  ;; 中の値まで freeze-json で深く凍らせてあるか(freeze-json と frozen-json-object が作った時だけ真)。凍った値は変えられないので、
+  ;; 真のまま正しい — 深く凍った値を凍らせ直す呼び(行を一覧に出すたび・Row の __post_init__)が中を歩かずにそのまま返すため。
+  ;; 2026-09-28 の実測: 記録の模擬の一覧の読みで凍らせ直しが 282 万回走り、自動処理の係の模擬の検の本体の 4 割を占めた。
+  (#^ bool _deep)
 
   (defn __init__ [self [source None]]
     (setv entries (if (is source None) {} (dict source)))
@@ -30,7 +34,8 @@
       (when (not (isinstance key str))
         (raise (TypeError (.format "FrozenMap の鍵は文字列: {!r}" key)))))
     (object.__setattr__ self "_entries" entries)
-    (object.__setattr__ self "_hash" None))
+    (object.__setattr__ self "_hash" None)
+    (object.__setattr__ self "_deep" False))
 
   (defn #^ V __getitem__ [self #^ str key]
     (get self._entries key))
@@ -61,19 +66,43 @@
     #(FrozenMap #((dict self._entries)))))
 
 
+;; JSON の葉の型(ちょうどこの型の値は凍らせる・戻すの両方でそのまま)— 部分型(bool の子など)は下の一般の分岐が見る。
+(setv JSON-LEAF-TYPES (frozenset #(str int float bool (type None))))
+
+
+(defn #^ bool deeply-frozen? [#^ object value]
+  "value が freeze-json で深く凍らせた FrozenMap か(凍らせ直しを省くため)。"
+  (and (isinstance value FrozenMap) value._deep))
+
+
+(defn #^ FrozenMap deep-frozen-map [#^ object value]
+  "写像の中の値を深く凍らせた FrozenMap を作り、深く凍った印を付ける(freeze-json と frozen-json-object の 1 点)。"
+  (setv frozen (FrozenMap (gfor #(key item) (.items value) #(key (freeze-json item)))))
+  (object.__setattr__ frozen "_deep" True)
+  frozen)
+
+
 (defn #^ object freeze-json [#^ object value]
   "JSON の値を深く凍らせる: object(写像)→ FrozenMap・array(list / tuple)→ tuple。ほかの値はそのまま。
-   既に凍った値を渡しても同じ形が返る(何度撃っても同じ)。"
+   既に凍った値を渡しても同じ形が返る(何度撃っても同じ)— 深く凍った FrozenMap は中を歩かずにそのまま返す。"
   (cond
-    (isinstance value Mapping) (FrozenMap (gfor #(key item) (.items value) #(key (freeze-json item))))
+    (in (type value) JSON-LEAF-TYPES) value
+    (deeply-frozen? value) value
+    (isinstance value Mapping) (deep-frozen-map value)
     (isinstance value #(list tuple)) (tuple (gfor item value (freeze-json item)))
     True value))
 
 
 (defn #^ object thaw-json [#^ object value]
   "凍らせた JSON の値を json.dumps が受ける形へ戻す: 写像 → dict・tuple / list → list(新しい値 — 元は変えない)。
-   JSON へ書く境界だけで撃つ。"
+   JSON へ書く境界だけで撃つ。
+   葉(文字列・数・真偽・None)と FrozenMap を具体の型で先に分ける — 抽象の Mapping への isinstance は 1 回ごとに ABC の判定を
+   通るので、記録の行を型へ写す読みのたびに深く歩くと遅い(2026-09-28 の実測: 自動処理の係の模擬の検 1 本で 420 万回)。"
+  (setv kind (type value))
   (cond
+    (in kind JSON-LEAF-TYPES) value
+    (is kind FrozenMap) (dfor #(key item) (.items value._entries) key (thaw-json item))
+    (in kind #(list tuple)) (lfor item value (thaw-json item))
     (isinstance value Mapping) (dfor #(key item) (.items value) key (thaw-json item))
     (isinstance value #(list tuple)) (lfor item value (thaw-json item))
     True value))
@@ -84,7 +113,7 @@
    frozen の dataclass の __post_init__ が、受けた写像を凍らせる時に使う。"
   (when (not (isinstance value Mapping))
     (raise (TypeError (.format "{} は写像(欄の名 → JSON の値): {!r}" what value))))
-  (FrozenMap (gfor #(key item) (.items value) #(key (freeze-json item)))))
+  (if (deeply-frozen? value) value (deep-frozen-map value)))
 
 
 (defn #^ FrozenMap frozen-map-of [#^ object value #^ str what]

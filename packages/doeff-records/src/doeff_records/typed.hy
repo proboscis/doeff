@@ -11,6 +11,7 @@
 (require doeff-hy.macros [defk <-])
 (import dataclasses)
 (import dataclasses [dataclass field])
+(import functools)
 (import types [NoneType])
 (import typing [Generic TypeVar])
 (import pydantic [TypeAdapter])
@@ -69,8 +70,10 @@
 
 ;; --- 写し(純関数)------------------------------------------------------------------------------------------
 
-(defn #^ tuple model-field-names [#^ type model]
-  "純粋: 行の型の欄の名(pydantic の BaseModel は alias が在れば alias・dataclass は欄の名)。"
+(defn [functools.cache] #^ tuple model-field-names [#^ type model]
+  "純粋: 行の型の欄の名(pydantic の BaseModel は alias が在れば alias・dataclass は欄の名)。
+   型ごとに 1 回だけ数える(行を型へ写す読みのたびに dataclasses.fields を回すと、2026-09-28 の実測で自動処理の係の模擬の検 1 本
+   26 万回・本体の 1 割になった — 型の欄は作った後に変わらない)。"
   (if (dataclasses.is-dataclass model)
       (tuple (gfor f (dataclasses.fields model) f.name))
       (tuple (gfor #(name info) (.items model.model-fields) (or info.alias name)))))
