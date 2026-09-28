@@ -631,7 +631,7 @@
 ;;                                 r)))
 ;;     answer)
 ;;
-;; 記録か再生かは Ask RECORD-MODE-KEY の答え(本番は宣言の :environ を os.environ を読む handler — env_var_ask — が答える)。
+;; 記録か再生かは Ask RECORD-MODE-KEY の答え(本番は宣言の :environ を土台の host_contract.environ-reader — 子の os.environ を字面どおり読む — が答える)。
 ;;   off    = 記録係を置かない(空の組)
 ;;   record = effect-recorder。置き場は Ask RECORD-OTLP-KEY(OpenTelemetry の collector の URL)。header は宿の契約(HOST-CONTRACT)の
 ;;            run-context と Program の path(置き場のキー = file の名)と版。

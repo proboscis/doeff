@@ -21,7 +21,8 @@
 ;;;     運ぶ)把手を世界に覚えさせ、process の終わり(値・例外・止めの合図・Crash・worker の死)で一緒に取り消す(本番は子 process ごと
 ;;;     消える)。
 ;;;   - 宿の答え(host-answers — process ごと)= host_contract.HOST-CONTRACT の 3 つ(run-context・Program の path・宣言の environ の名の
-;;;     Ask)と ReportReady・ReportMetrics。クラスタの約束の答え(coordinator-answers — 送り手の口 SimLink ごと)= ReadShared / WriteShared・
+;;;     Ask — environ は本番の土台と同じ読みの定義 host_contract.environ-reader を子の spec.environ の上に並べる:
+;;;     値は字面どおり)と ReportReady・ReportMetrics。クラスタの約束の答え(coordinator-answers — 送り手の口 SimLink ごと)= ReadShared / WriteShared・
 ;;;     LeaseOp・RemoteJob・SubmitDetached / AwaitDetached / CancelDetached / ReleaseDetached / ReadRunners・WarmRuntimeEnv / ReadWarmState。
 ;;;     本番では土台の HTTP の handler が coordinator へ送る物で、要求の形は本番の送り手と同じ関数(report_client.report-request・
 ;;;     shared_handlers.board-*-request / lease-request・remote.task-submit-body / outcome-of / settled-value・detached.detached-path /
@@ -58,7 +59,8 @@
 ;;;
 ;;; 本番との既知の差(検めない):
 ;;;   - 1 process なので、import した module の大域の状態は job の間で共有されうる(改訂 1 の Q)。effect 以外の共有は機械で全部は断れない。
-;;;   - environ は宿が宣言の :environ の名の Ask にだけ答える(本番の os.environ を読む handler は PATH などの宣言の外の名にも答える)。
+;;;   - environ は宿が宣言の :environ の名の Ask にだけ答える(本番の土台の (environ-reader) は子の os.environ を読むので、PATH などの宣言の
+;;;     外の名にも答える)。宣言の名の値は、どちらも同じ読みの定義(host_contract.environ-reader)で字面どおり返る。
 ;;;   - 土台の関数の :needs が中の handler の :needs を漏らしていても見つからない(計画 9 の P — doeff-linter の照合は別便)。
 ;;;   - sim の土台は scheduler と時計を含まないので、本番の土台に scheduler を入れ忘れてもここでは見つからない(計画 7)。
 ;;;   - coordinator に届かない・断られた時の例外の型は RemoteJobFailed(本番は httpx の例外)。書きの要求は 1 回だけ送る(本番の
@@ -100,7 +102,7 @@
 (import .drain_client [drain-request DRAIN-DEADLINE-SECONDS DRAIN-TTL-MARGIN-SECONDS])
 (import .handlers [declared-job-spec task-spec heartbeat-body status-report desired-when-unreachable env-report env-heartbeat-part
                    warm-env-of-row])
-(import .host_contract [HOST-CONTRACT SIM-PASSABLE])
+(import .host_contract [HOST-CONTRACT SIM-PASSABLE environ-reader])
 (import .job_context [RunContext])
 (import .job_entry [decoded-program])
 (import .metrics_model [ReportMetrics])
@@ -910,12 +912,12 @@
   {:tags {:context "doeff-cluster" :role "foundation"}}
   ;; 引数に残す理由: 答えは process ごとに違い(世代・Program の path・environ)、宿の契約の Ask の鍵は本番の宿と同じなので、Ask で
   ;; 区別できない。柵の内側に在るので世界の effect で読むこともできない。
-  ;; 本番の宿と土台の HTTP の handler が process に答える物(宿の契約 HOST-CONTRACT の 3 つ・service の報告)に、同じ本文で答える。
+  ;; 本番の宿と土台の HTTP の handler が process に答える物(宿の契約 HOST-CONTRACT の run-context と Program の path・service の報告)に、
+  ;; 同じ本文で答える。宣言の :environ は、本番の土台と同じ読みの定義 environ-reader を子の spec.environ の上に並べて
+  ;; 答える(run-fenced — ここで第 2 の読みを持たない)。
   (Ask [key]
-    :when (or (in key #(HOST-CONTRACT.run-context-key HOST-CONTRACT.program-key)) (in key child.environ))
-    (resume (cond (= key HOST-CONTRACT.run-context-key) child.ctx
-                  (= key HOST-CONTRACT.program-key) child.program-path
-                  True (get child.environ key))))
+    :when (in key #(HOST-CONTRACT.run-context-key HOST-CONTRACT.program-key))
+    (resume (if (= key HOST-CONTRACT.run-context-key) child.ctx child.program-path)))
   (ReportReady [ready reason role]
     (<- (send-report child "readiness" {"ready" ready "reason" reason "role" role}))
     (resume None))
@@ -992,7 +994,9 @@
   "Program を柵と答えの中で走らせ、終わり方を決めるため(本番の job_entry の service / task の入口の終わり方と同じ: service は
    値 = 0・例外 = 1、task は結果を書いて 0。止めの合図 = -15・Crash = 1・worker の死 = -9)。"
   (try
-    (<- value (with-handlers [#* child.outside (fence child.pid child.passable) (coordinator-answers child.link) (host-answers child) (dead-process-gate child.pid)] program))
+    (<- value (with-handlers [#* child.outside (fence child.pid child.passable) (coordinator-answers child.link) (host-answers child)
+                              (environ-reader child.environ) (dead-process-gate child.pid)]
+                             program))
     (SimExit :code 0 :result (if once (encode-outcome (TaskSucceeded value)) None) :value (if once None value))
     (except [TaskCancelledError]
       (<- killed (| SimExit None) (KillOf child.pid))

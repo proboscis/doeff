@@ -10,7 +10,7 @@
 (import doeff_core_effects.effects [Ask])
 (import doeff_core_effects.handlers [reader state env-var-ask])
 (import doeff_core_effects.scheduler [scheduled])
-(import doeff_cluster.host_contract [HOST-CONTRACT host-reader])
+(import doeff_cluster.host_contract [HOST-CONTRACT host-reader environ-reader])
 (import tests.fixtures.envs [scheduler-foundation])
 ;; 子の中で job_entry は __main__ として読まれる。業務の module が doeff_cluster.job_entry から文脈の読みを import しても、文脈の型が
 ;; 1 つのままであることの反例(test_job_context)に使うので、job_entry から import する。
@@ -32,8 +32,18 @@
 
 (defk environ-read [name]
   {:pre [(: name str)] :post [(: % str)] :tags {:context "doeff-cluster-test" :role "entry"}}
-  "task の :environ を本番の土台と同じ形で読む見本: 名の Ask に、子の環境変数を読む env-var-ask(環境に無い名は外へ通す)を並べて答える。
-   本番の worker の子では環境変数が答え、sim の子では env-var-ask が外へ通した Ask に sim の宿(host-answers)が spec.environ から答える。"
+  "task の :environ を本番の土台と同じ形で読む見本: 名の Ask に、子の環境変数を字面どおり読む (environ-reader)(環境に無い名は外へ通す)を
+   並べて答える。本番の worker の子では環境変数が答え、sim の子では (environ-reader) が外へ通した Ask に、sim の宿が同じ読みの定義
+   (host_contract.environ-reader)で spec.environ から答える。"
+  (<- value str (scheduler-foundation (with-handlers [(environ-reader)] (Ask name))))
+  value)
+
+
+(defk environ-resolved-read [name]
+  {:pre [(: name str)] :post [(: % str)] :tags {:context "doeff-cluster-test" :role "entry"}}
+  "反例の見本: 同じ名を env-var-ask(接頭辞なし — { で始まり } で終わる値を {module.path} の import として解く)で読む。宣言の :environ に
+   JSON の object を置くと、本番の子ではこの読みが import に失敗する(sim の子では環境に無い名を外へ通すので sim の宿が字面どおり返し、
+   食い違いが見えない)。"
   (<- value str (scheduler-foundation (with-handlers [(env-var-ask :prefix "")] (Ask name))))
   value)
 
