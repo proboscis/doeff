@@ -26,6 +26,8 @@
 
 (import os.path)
 (import inspect)
+;; 実行時の guard(_guard-performed・_guard-statement-value)が defk の呼びごと・文ごとに引く型(#844)
+(import doeff [DoExpr EffectBase])
 (import doeff-hy.declarations [CONTRACT-KEYS refuse-unknown-keys declaration-setters defeffect-form declared-value])
 (import doeff-hy.positions [locate-synthesized])
 
@@ -412,8 +414,8 @@ defk {name}: :post type annotation cannot be an empty string.
    agent). The Program-return composition pattern returns a DoExpr (Pure/Expand/
    a @do call), NOT an EffectBase, so this never fires on it; plain functions
    (deff/defn) returning effect constructors are not kleisli and are not guarded.
-   Returns `result` unchanged when fine, so it can wrap a return position."
-  (import doeff [EffectBase])
+   Returns `result` unchanged when fine, so it can wrap a return position.
+   Runs on every defk call: the names come from the module's import (no import per call — #844)."
   (when (isinstance result EffectBase)
     (raise (RuntimeError
              (+ label ": last expression is an unperformed effect `"
@@ -443,8 +445,7 @@ defk {name}: :post type annotation cannot be an empty string.
 (defn _guard-statement-value [value owner line source]
   "ADR-DOE-HY-001 R1 の実行時 guard。statement 位置で評価された値が
    Program(DoExpr)/EffectBase なら RuntimeError を送出する。それ以外の値は
-   そのまま返す(R4: 非 Program 文は無傷)。"
-  (import doeff [DoExpr EffectBase])
+   そのまま返す(R4: 非 Program 文は無傷)。defk の本体の文ごとに走るので、名前は module の import から引く。"
   (when (isinstance value #(DoExpr EffectBase))
     (raise (RuntimeError
              (+ owner " (line " (str line) "): statement-position expression evaluated to an "

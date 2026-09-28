@@ -148,3 +148,18 @@ class TestDeftestSelfContained:
           (<- val (Ask "key"))
           (assert (= val "hello")))
         """)
+
+
+def test_runtime_guards_do_not_import_per_call() -> None:
+    """The guards a defk body calls on every call hold their names from the module (#844).
+
+    The slow shape: `_guard-performed` ran `(import doeff [EffectBase])` inside the function,
+    so every defk call went through the import machinery (`_handle_fromlist`, ~0.5 µs).
+    """
+    import dis
+
+    from doeff_hy.macros import _guard_performed, _guard_statement_value
+
+    for guard in (_guard_performed, _guard_statement_value):
+        opnames = {instruction.opname for instruction in dis.get_instructions(guard)}
+        assert "IMPORT_NAME" not in opnames, guard.__name__
