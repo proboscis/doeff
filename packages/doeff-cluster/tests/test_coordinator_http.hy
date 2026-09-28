@@ -127,3 +127,33 @@
   (assert (< (- (time.monotonic) link.last-ok) 1))
   ;; heartbeat は今の宛先を名乗る(coordinator の /state に出る)
   (assert (= (get net.sent -1) #("tailnet" "/heartbeat"))))
+
+
+(defclass ScriptedCoordinator []
+  "heartbeat への返事を順に返す偽の coordinator(返事が尽きたら最後の返事を繰り返す)。"
+  (defn __init__ [self replies] (setv self.replies (list replies)))
+  (defn handle [self request]
+    (if (> (len self.replies) 1) (.pop self.replies 0) (get self.replies 0)))
+  (defn transport [self] (httpx.MockTransport self.handle)))
+
+(deftest test-heartbeat-refusal-and-registration-are-told-at-each-change [capsys]
+  ;; 13 回目の本番の切り替え(agora-redesign #1005): coordinator が heartbeat を 400 で断り続けても、worker は「起動します」の後に
+  ;; 32 分 log に何も出さなかった(断りを「届かない」と同じに数え、fence を越えると状態の file の note も空になる)。
+  ;; 名乗れない理由(status と coordinator の返した本文)は変わり目ごとに 1 行、名乗れた時に 1 行出す。同じ理由の繰り返しは出さない。
+  (setv refusal (httpx.Response 400 :json {"error" "TypeError: 'NoneType' object is not subscriptable"})
+        accepted (httpx.Response 200 :json {"jobs" [] "tasks" []})
+        coordinator (ScriptedCoordinator [refusal refusal accepted accepted])
+        link (CoordinatorLink LAN "w" #() 1 20000 :transport (.transport coordinator)))
+  (setv first (.poll link))
+  (assert (isinstance first DesiredUnreadable))
+  (assert (in "400" first.reason) first.reason)
+  (assert (in "TypeError: 'NoneType' object is not subscriptable" first.reason) first.reason)
+  (.poll link)
+  (assert (= (.poll link) (DesiredJobs #())))
+  (.poll link)
+  (setv lines (.splitlines (. (.readouterr capsys) err)))
+  (assert (= (len lines) 2) lines)
+  (assert (in "名乗れない" (get lines 0)) lines)
+  (assert (in "TypeError: 'NoneType' object is not subscriptable" (get lines 0)) lines)
+  (assert (in "名乗りました" (get lines 1)) lines)
+  (assert (in LAN (get lines 1)) lines))

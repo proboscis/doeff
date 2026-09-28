@@ -226,3 +226,68 @@
   (assert (= #(done.phase done.result) #("finished" "done")) done)
   (assert (= pending.phase "failed") pending)
   (assert (in "env" pending.detail) pending.detail))
+
+
+;; --- 読み直しで捨てた行の版の記録(agora-redesign #1005)-----------------------------------------------------------
+;; 13 回目の本番の切り替え(2026-09-29)で、本番の状態の写しから起きた coordinator に新しい形の worker が 1 つも名乗れなかった。読み直しは
+;; 旧い形(labels だけ)の worker の行を捨てるが、その版の記録 meta/Worker/<名> は置き場に残る。同じ名の heartbeat で
+;; resource_policy.stamp が「前の状態に行が無いのに版の記録は在る」組を扱えず TypeError になり、respond はそれを 400 で返していた。
+;; 資源の作成は版の記録ではなく前の状態の行の有無で決まる — 残った版の記録は捨て、作り直した資源の記録を generation 1 から始める。
+
+(val STALE-META {"resourceVersion" 866 "generation" 4 "createdBy" "old" "createdMs" 100 "updatedBy" "old" "updatedMs" 200})
+
+
+(defk store-with-dropped-rows []
+  {:pre [] :post [(: % dict)] :tags {:context "doeff-cluster-test" :role "entry"}}
+  "読み直しで行を捨てる、または行の無い版の記録を持つ durable KV: 旧い形の worker w1 の行(labels だけ)とその版の記録・行の無い
+   Service s1 の版の記録。"
+  (| (full-kv (ClusterState))
+     {"worker/w1" {"name" "w1" "capacity" 4 "labels" {"host" "w1" "role" "agent"} "versions" {} "lastSeenMs" 100}
+      "meta/Worker/w1" STALE-META
+      "meta/Service/s1" STALE-META}))
+
+
+(defk created-afresh [state key actor now]
+  {:pre [(: state ClusterState) (: key str) (: actor str) (: now int)] :post [(: % bool)]
+   :tags {:context "doeff-cluster-test" :role "entry"}}
+  "key の資源が作り直された(版の記録が generation 1・作った送り手と時刻から始まり、出来事の記録に create が在る)。"
+  (val m (get state.meta key))
+  (and (= #((get m "generation") (get m "createdBy") (get m "createdMs")) #(1 actor now))
+       (in #("create" #* (.split key "/" 1)) (lfor e state.audit #((get e "verb") (get e "kind") (get e "name"))))))
+
+
+(deftest test-a-worker-dropped-by-the-reload-registers-again-under-the-same-name
+  (<- kv dict (store-with-dropped-rows))
+  (val state (state-from-kv kv 5000))
+  (assert (not-in "w1" state.workers) "旧い形の worker の行は読まない")
+  (<- beat tuple (call state "POST" "/heartbeat"
+                       {"name" "w1" "provides" ["agent" "host-w1"] "exclusive" ["host-w1"] "capacity" 1 "versions" {}
+                        "statuses" [] "boot" "b1" "format" 1} 6000))
+  (assert (= (get beat 1) 200) beat)
+  (assert (in "w1" (. (get beat 0) workers)))
+  (<- fresh bool (created-afresh (get beat 0) "Worker/w1" "w1" 6000))
+  (assert fresh (. (get beat 0) meta)))
+
+
+(deftest test-a-service-whose-row-is-gone-but-whose-version-record-stayed-is-declared-again
+  ;; 種類を問わない: 行の無い版の記録が残っていても、同じ名の新しい形の Service を作れる。
+  (<- kv dict (store-with-dropped-rows))
+  (val state (state-from-kv kv 5000))
+  (<- made tuple (call state "POST" "/resources/Service" {"name" "s1" "spec" ROW} 6000))
+  (assert (= (get made 1) 201) made)
+  (<- fresh bool (created-afresh (get made 0) "Service/s1" "c-me" 6000))
+  (assert fresh (. (get made 0) meta)))
+
+
+(deftest test-an-old-service-row-in-the-durable-kv-is-declared-again-by-post
+  ;; 読み直しで受け付けない行(RefusedJob)になった旧い Service は、同じ名の新しい形の POST で受け付けた job に置き換わる(版の記録は
+  ;; 同じ資源の続き — 行は前の状態に在った)。
+  (<- data dict (saved-with-old-row))
+  (val state (state-from-kv (full-kv (state-from-json data 5000)) 5000))
+  (val before (get state.meta "Service/old"))
+  (<- run dict (program-run "m:g" 1))
+  (<- made tuple (call state "POST" "/resources/Service" {"name" "old" "spec" (| ROW {"run" run})} 6000))
+  (assert (= (get made 1) 201) made)
+  (assert (= (. (get made 0) refused) {}))
+  (assert (in "old" (lfor j (. (get made 0) jobs) j.spec.name)))
+  (assert (= (get (get (. (get made 0) meta) "Service/old") "generation") (+ (get before "generation") 1))))
