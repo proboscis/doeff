@@ -1,0 +1,44 @@
+{
+  "artifacts": [
+    {
+      "path": "artifacts/v3/design.md",
+      "sha256": "c55b54f2647bde2f062f6fd2ff17bcb6e0832691ad0729b5b59c0694a41beee6"
+    },
+    {
+      "path": "artifacts/v3/entity.html",
+      "sha256": "6e4f6d89a9c060e5bf355a4988f33fdfe405a22f11088b143545b872cda454ed"
+    }
+  ],
+  "body": {
+    "actor": "user",
+    "authority": "direct",
+    "decision": "design",
+    "outcome": "accepted",
+    "scope_of_agreement": "operator が合意したのは val / var の書き分けと source のボタンの 2 点。語と型と名の順(val T x = e)・:= の綴り・ボタンの置き場は席の既定で戻せる。",
+    "source": "operator の直接の議論 2026-09-28 23:2x(会話 defk-view-discuss・herdr pane w3J:pA)。逐語: \"good, i want val/var style for mutability clearness, and a button to show raw source per defk (entity)\"",
+    "statement": "v2 の裁定に 2 点を足す。本体の束縛は val / var の語で書き換えられるかどうかを見せる(ADR-DOE-HY-006 の意味のまま: <- と val は val・var は var・:= は語なしの書き換え・lazy / session は語を前に・本体の setv は警告の印)。実体ごとにカードの中で元の Hy の source を開閉するボタンと editor で開くボタンを置く。v2 の他の決まりはそのまま。",
+    "subjects": [
+      "design-fa5e8d3125d1"
+    ],
+    "supersedes": [
+      "decision-ca54efb91260"
+    ]
+  },
+  "created_at": "2026-09-28T14:27:06.634771+00:00",
+  "id": "decision-83f77c4ed0e0",
+  "inputs": [
+    {
+      "id": "design-fa5e8d3125d1",
+      "role": "subject",
+      "sha256": "24be42eece293bf7d26fb9053121baaca10d4d956e2427e371257721333cc269"
+    },
+    {
+      "id": "decision-ca54efb91260",
+      "role": "basis",
+      "sha256": "7df728f24310574c50e83af84b9f5bb2bf33521e7d00abe146e624f27a97210c"
+    }
+  ],
+  "kind": "decision",
+  "schema_version": 1,
+  "scope": "doeff-hy の code を読む面(VS Code)。単位は file ではなく定義(defk・defrecord・defeffect・defhandler・deftest …)で、Scala 3 の見た目に印字し、tag・effect・呼び出し・型から辿る。source の Hy は編集しない。その先の言語(静的な型・型に載る effect・Python の呼び出し・file に縛られない名前空間)の要件も持つ"
+}

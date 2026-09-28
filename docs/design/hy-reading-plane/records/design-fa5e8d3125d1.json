@@ -1,0 +1,290 @@
+{
+  "artifacts": [
+    {
+      "path": "artifacts/v3/design.md",
+      "sha256": "c55b54f2647bde2f062f6fd2ff17bcb6e0832691ad0729b5b59c0694a41beee6"
+    },
+    {
+      "path": "artifacts/v3/entity.html",
+      "sha256": "6e4f6d89a9c060e5bf355a4988f33fdfe405a22f11088b143545b872cda454ed"
+    },
+    {
+      "path": "artifacts/v3/glyph.svg",
+      "sha256": "c8cc0490e553b7cfc2be1e0eba7d342163262a8930e8f15d8d404bcf6af92de8"
+    },
+    {
+      "path": "artifacts/v3/entity-render.png",
+      "sha256": "c1f5c835992faf74951ba9bdcd806a068e43c3a8c3507cc82852b8400df2cf1f"
+    }
+  ],
+  "body": {
+    "alternatives": [
+      {
+        "options": [
+          {
+            "benefits": "= の束縛と一目で区別できる。source の綴りと同じ",
+            "costs": "Scala の綴り(x = v)と違う",
+            "name": "x := v(:= を残す)"
+          },
+          {
+            "benefits": "Scala に慣れた目に自然",
+            "costs": "val x = e の = と同じ字で、書き換えかどうかは語の有無でしか分からない",
+            "name": "x = v(Scala の綴り)"
+          }
+        ],
+        "question": "書き換えの行(:=)をどう見せるか",
+        "reason": "operator の要件は書き換えられるかどうかの明瞭さ。語の有無に加えて字でも区別する(戻せる)",
+        "reconsider_when": "operator が Scala の綴りを選んだ時",
+        "selected": "x := v(:= を残す)"
+      },
+      {
+        "options": [
+          {
+            "benefits": "面を離れない。実体ごとに見られる",
+            "costs": "カードが長くなる",
+            "name": "カードの中で開閉(ボタン)"
+          },
+          {
+            "benefits": "作る物が少ない",
+            "costs": "面を離れる。operator の \"button to show raw source per entity\" に合わない",
+            "name": "editor の該当の行へ飛ぶだけ"
+          }
+        ],
+        "question": "source の出し方",
+        "reason": "operator の逐語。editor で開くボタンも隣に置く",
+        "reconsider_when": "—",
+        "selected": "カードの中で開閉(ボタン)"
+      }
+    ],
+    "change_cases": [
+      {
+        "change": "束縛の語が増える(ADR-DOE-HY-006 に新しい語が入る)",
+        "expected_elements": [
+          "body-printer"
+        ],
+        "id": "C1",
+        "preserve": [
+          "束縛の行は語 + 型 + 名 + 矢印か = + 式の 1 形"
+        ],
+        "priority": "required",
+        "protected_contracts": [
+          "K2"
+        ],
+        "provenance": {
+          "kind": "observed",
+          "source": "docs/design/defk-val-var-lazy/design.md"
+        },
+        "rationale": "val / var / lazy / session は ADR で増える",
+        "verification": "新しい語を表に 1 行足すだけで印字が出る"
+      },
+      {
+        "change": "source の切り出しの出所が変わる(索引 → 別の正本)",
+        "expected_elements": [
+          "entity-card"
+        ],
+        "id": "C2",
+        "preserve": [
+          "カードは索引の口だけを呼ぶ"
+        ],
+        "priority": "prepare",
+        "protected_contracts": [
+          "K3"
+        ],
+        "provenance": {
+          "kind": "user",
+          "source": "operator \"hy lang is just a way to store data\""
+        },
+        "rationale": "v1 C5(構造の層が正本になる)",
+        "verification": "口の実装を替えてもボタンの動きが変わらない"
+      }
+    ],
+    "contracts": [
+      {
+        "canonical_source": "ide-plugins/vscode/doeff-runner(実装の issue で決める)",
+        "effects": [],
+        "failures": [
+          "表に無い form は目印つきの lisp"
+        ],
+        "id": "K2",
+        "invariants": [
+          "束縛の行は必ず語(val / var / lazy val / lazy var / session val / session var / setv)か := を持つ"
+        ],
+        "operations": [
+          "print-body(definition) -> 行の列"
+        ],
+        "owner": "body-printer"
+      },
+      {
+        "canonical_source": "packages/doeff-indexer",
+        "effects": [
+          "file の読み(切り出しの時だけ)"
+        ],
+        "failures": [
+          "位置が古い(file が変わった)"
+        ],
+        "id": "K3",
+        "invariants": [
+          "カードは索引の口だけを呼ぶ"
+        ],
+        "operations": [
+          "source-of(definition) -> 文字と行番号"
+        ],
+        "owner": "structure-index"
+      }
+    ],
+    "elements": [
+      {
+        "depends_on": [
+          "structure-index"
+        ],
+        "hidden_decisions": [
+          "型は名の前(#849 逐語 12)",
+          ":= は = と区別する"
+        ],
+        "id": "body-printer",
+        "kind": "internal",
+        "requirement_ids": [
+          "R11"
+        ],
+        "responsibility": "v2 のまま + 束縛の行に val / var / lazy / session の語を出し、:= は語なし、本体の setv は警告の印",
+        "state": [
+          "本体の文字の表(束縛の行を v3 の表に置き換え)"
+        ]
+      },
+      {
+        "depends_on": [
+          "body-printer",
+          "structure-index"
+        ],
+        "hidden_decisions": [
+          "source は読むためだけ"
+        ],
+        "id": "entity-card",
+        "kind": "internal",
+        "requirement_ids": [
+          "R12"
+        ],
+        "responsibility": "v2 のまま + 頭の右端に source のボタン(カードの中で開閉)と editor で開くボタン",
+        "state": [
+          "source の開閉"
+        ]
+      },
+      {
+        "depends_on": [],
+        "hidden_decisions": [],
+        "id": "structure-index",
+        "kind": "internal",
+        "requirement_ids": [
+          "R12"
+        ],
+        "responsibility": "v1 のまま + 実体の source の切り出しの口(file・開始と終わりの行から文字を返す)",
+        "state": []
+      }
+    ],
+    "handoff": {
+      "fixed": [
+        "束縛は val / var の語で見せる",
+        "実体ごとに source の開閉のボタン"
+      ],
+      "free": [
+        "語と型と名の順",
+        ":= の綴り",
+        "ボタンの置き場と見た目"
+      ],
+      "next": [
+        "main が読む面の実装の issue を立てる時、v3 の 2 節の表と 3 節のボタンを受け入れ条件に足す"
+      ]
+    },
+    "level": "実体のカードの本体の文字の表(束縛の行)と、頭の部品(source のボタン)",
+    "methods": [
+      {
+        "evidence": [
+          "design-f953339f038c の methods"
+        ],
+        "name": "change-cases",
+        "profile": "change-cases-1996-local-v1",
+        "reason": "v2 の当て方に束縛の語の増加(C1)と切り出しの出所の変更(C2)を足しただけ",
+        "status": "reused",
+        "steps": []
+      },
+      {
+        "evidence": [],
+        "name": "ddd",
+        "profile": "ddd-evans-2015-local-v1",
+        "reason": "表示の設計",
+        "status": "not_applicable",
+        "steps": []
+      },
+      {
+        "evidence": [],
+        "name": "volatility",
+        "profile": "volatility-righting-software-local-v1",
+        "reason": "change-cases で扱った",
+        "status": "not_applicable",
+        "steps": []
+      },
+      {
+        "evidence": [],
+        "name": "add",
+        "profile": "add-2.0-local-v1",
+        "reason": "要素 3 つ",
+        "status": "not_applicable",
+        "steps": []
+      },
+      {
+        "evidence": [],
+        "name": "saam",
+        "profile": "saam-1996-local-v1",
+        "reason": "alternatives の表で済ませた",
+        "status": "not_applicable",
+        "steps": []
+      },
+      {
+        "evidence": [],
+        "name": "c4",
+        "profile": "c4-web-2026-09-14-local-v1",
+        "reason": "v1 の図で足りる",
+        "status": "not_applicable",
+        "steps": []
+      }
+    ],
+    "open_questions": [
+      "型を名の前に置く順(#849 逐語 12)と val / var の語の組み合わせ `val T x = e` は席の既定。Scala の順 `val x: T = e` に変えるなら表の 1 行",
+      "本体の setv の警告の印は linter の警告(ADR-DOE-HY-006)をそのまま写す — 警告が無い版の linter では印なし"
+    ],
+    "perspective": "proposed",
+    "purpose": "v3: v2(design-f953339f038c)に 2 点を足す。本体の束縛は val / var の書き方で書き換えられるかどうかを見せる(ADR-DOE-HY-006 の意味のまま)。実体ごとに元の Hy の source を出すボタンを置く。v2 の他の決まりはそのまま",
+    "requirements": [
+      {
+        "id": "R11",
+        "kind": "functional",
+        "provenance": {
+          "kind": "user",
+          "source": "operator 2026-09-28 \"good, i want val/var style for mutability clearness\" + ADR-DOE-HY-006(docs/design/defk-val-var-lazy)"
+        },
+        "statement": "本体の束縛は val / var の語で書き換えられるかどうかを見せる: <- と val は val、var は var、:= は語なしの x := v、lazy / session は語を前に付ける、本体の setv は警告の印つき"
+      },
+      {
+        "id": "R12",
+        "kind": "functional",
+        "provenance": {
+          "kind": "user",
+          "source": "operator 2026-09-28 \"and a button to show raw source per defk (entity)\""
+        },
+        "statement": "実体ごとにカードの中で元の Hy の source(行番号つき)を開閉するボタンと、editor の該当の行を開くボタンを置く。切り出しは索引の位置から"
+      }
+    ]
+  },
+  "created_at": "2026-09-28T14:26:08.676524+00:00",
+  "id": "design-fa5e8d3125d1",
+  "inputs": [
+    {
+      "id": "design-f953339f038c",
+      "role": "basis",
+      "sha256": "988758727751eb7676a42e27a37ef4b25cbc95dc77f0c24491b74efee202e255"
+    }
+  ],
+  "kind": "design",
+  "schema_version": 1,
+  "scope": "doeff-hy の code を読む面(VS Code)。単位は file ではなく定義(defk・defrecord・defeffect・defhandler・deftest …)で、Scala 3 の見た目に印字し、tag・effect・呼び出し・型から辿る。source の Hy は編集しない。その先の言語(静的な型・型に載る effect・Python の呼び出し・file に縛られない名前空間)の要件も持つ"
+}
