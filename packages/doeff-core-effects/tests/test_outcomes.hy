@@ -8,7 +8,7 @@
 ;;;   * absent-as は奥の不在で既定値のスコープの終わりを返す
 ;;;   * 受け手の無い Absent / Raise は未処理の effect として止まる(黙って Nothing にしない)
 
-(require doeff-hy.macros [deftest defk deff <- val on-raise absent-as])
+(require doeff-hy.macros [deftest defk <- val on-raise absent-as])
 
 (import dataclasses [dataclass fields])
 (import hy)
@@ -163,7 +163,7 @@
       (RaiseCase #(bad) (fn [r] (Some r))))))
 
 
-(deff expansion-refusal [source]
+(defk expansion-refusal [source]
   {:pre [(: source str)] :post [(: % str)]
    :tags {:context "outcomes-test" :role "judgment"}}
   "source を展開した時の誤りの文(通れば空の文字列)— 展開の時に断る macro の規則を検で見るため。"
@@ -176,9 +176,9 @@
 
 (deftest test-on-raise-refuses-catch-all-patterns-at-expansion
   (for [pattern ["_" "reason" "(Exception)" "(object)" "(BaseException e)" "(| (Conflict d) _)"]]
-    (assert (in "受けられない" (expansion-refusal (+ "(require doeff-hy.macros [on-raise]) (on-raise body " pattern " 0)")))
+    (assert (in "受けられない" (! (expansion-refusal (+ "(require doeff-hy.macros [on-raise]) (on-raise body " pattern " 0)"))))
             pattern))
-  (assert (in "値の式" (expansion-refusal "(require doeff-hy.macros [on-raise]) (on-raise body (Conflict d) (! (f d)))"))
+  (assert (in "値の式" (! (expansion-refusal "(require doeff-hy.macros [on-raise]) (on-raise body (Conflict d) (! (f d)))")))
           "写し先は値の式(効果を使えない)"))
 
 

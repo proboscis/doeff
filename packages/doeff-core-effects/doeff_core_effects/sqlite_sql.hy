@@ -15,7 +15,7 @@
 (import dataclasses [dataclass])
 (import doeff_core_effects.sql_effects [SqlQuery SqlInsertRows SqlTransaction SqlEnsureTables SetSqlOutage SqlRows SqlFailed SqlUnreachable
                                         SqlSchemaApplied SqlColumnType SqlText SqlPlaceholder split-statement checked-params param-value
-                                        checked-identifier checked-rows normalized-rows])
+                                        checked-identifier checked-identifiers checked-rows normalized-rows])
 (import doeff_core_effects.sql_transaction [run-in-transaction])
 
 ;; 例外の類 → SQLSTATE の類(psycopg が SQLSTATE から類を選ぶ表の逆 — agora-controllers services/record/handlers_wire.hy の
@@ -81,17 +81,17 @@
   "表の宣言を sqlite の DDL(CREATE TABLE / INDEX IF NOT EXISTS)に描くため。"
   (var statements [])
   (for [table tables]
-    (val table-name (checked-identifier table.name))
+    (val table-name (! (checked-identifier table.name)))
     (var definitions [])
     (for [column table.columns]
-      (.append definitions (.format "{} {}{}" (checked-identifier column.name) (get SQLITE-TYPES column.type)
+      (.append definitions (.format "{} {}{}" (! (checked-identifier column.name)) (get SQLITE-TYPES column.type)
                                     (if column.nullable "" " NOT NULL"))))
     (when table.primary-key
-      (.append definitions (.format "PRIMARY KEY ({})" (.join ", " (lfor name table.primary-key (checked-identifier name))))))
+      (.append definitions (.format "PRIMARY KEY ({})" (.join ", " (! (checked-identifiers table.primary-key))))))
     (.append statements (.format "CREATE TABLE IF NOT EXISTS {} ({})" table-name (.join ", " definitions)))
     (for [index table.indexes]
-      (.append statements (.format "CREATE {}INDEX IF NOT EXISTS {} ON {} ({})" (if index.unique "UNIQUE " "") (checked-identifier index.name)
-                                   table-name (.join ", " (lfor name index.columns (checked-identifier name)))))))
+      (.append statements (.format "CREATE {}INDEX IF NOT EXISTS {} ON {} ({})" (if index.unique "UNIQUE " "") (! (checked-identifier index.name))
+                                   table-name (.join ", " (! (checked-identifiers index.columns)))))))
   (tuple statements))
 
 
@@ -103,7 +103,7 @@
     (val cursor (.execute connection text values))
     (if (is cursor.description None)
         (SqlRows :rows #() :rowcount (if (>= cursor.rowcount 0) cursor.rowcount None))
-        (do (val rows (normalized-rows (.fetchall cursor)))
+        (do (val rows (! (normalized-rows (.fetchall cursor))))
             (SqlRows :rows rows :rowcount (len rows))))
     (except [error sqlite3.Error]
       (<- failure (sqlite-failure (tuple (gfor c (. (type error) __mro__) c.__name__)) (str error)))
@@ -124,8 +124,8 @@
    :tags {:context "sql" :role "foundation"}}
   "SqlInsertRows 1 つに executemany で答えるため。"
   (<- (checked-rows request.columns request.rows))
-  (val table (checked-identifier request.table))
-  (val names (lfor name request.columns (checked-identifier name)))
+  (val table (! (checked-identifier request.table)))
+  (val names (! (checked-identifiers request.columns)))
   (val text (.format "INSERT INTO {} ({}) VALUES ({})" table (.join ", " names) (.join ", " (* ["?"] (len names)))))
   (try
     (val cursor (.executemany connection text (list request.rows)))

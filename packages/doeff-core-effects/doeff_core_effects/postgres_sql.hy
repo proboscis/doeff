@@ -17,7 +17,7 @@
 (import dataclasses [dataclass field])
 (import doeff_core_effects.sql_effects [SqlQuery SqlInsertRows SqlTransaction SqlEnsureTables SqlRows SqlFailed SqlUnreachable
                                         SqlSchemaApplied SqlParam SqlColumnType SqlText SqlPlaceholder split-statement checked-params
-                                        checked-identifier checked-rows normalized-rows])
+                                        checked-identifier checked-identifiers checked-rows normalized-rows])
 (import doeff_core_effects.sql_transaction [run-in-transaction])
 
 ;; SQLSTATE を持たない driver の誤りの類 → その類の SQLSTATE の class の code(psycopg が SQLSTATE から類を選ぶ表の逆)。
@@ -115,7 +115,7 @@
   {:pre [(: table str) (: columns tuple)] :post [(: % str)]
    :tags {:context "sql" :role "foundation"}}
   "SqlInsertRows の executemany の文(位置の `%s`)を描くため。"
-  (.format "INSERT INTO {} ({}) VALUES ({})" (checked-identifier table) (.join ", " (lfor name columns (checked-identifier name)))
+  (.format "INSERT INTO {} ({}) VALUES ({})" (! (checked-identifier table)) (.join ", " (! (checked-identifiers columns)))
            (.join ", " (* ["%s"] (len columns)))))
 
 
@@ -136,17 +136,17 @@
   "表の宣言を PostgreSQL の DDL(CREATE TABLE / INDEX IF NOT EXISTS)に描くため。"
   (var statements [])
   (for [table tables]
-    (val table-name (checked-identifier table.name))
-    (val definitions (lfor column table.columns
-                           (.format "{} {}{}" (checked-identifier column.name) (get POSTGRES-TYPES column.type)
+    (val table-name (! (checked-identifier table.name)))
+    (var definitions [])
+    (for [column table.columns]
+      (.append definitions (.format "{} {}{}" (! (checked-identifier column.name)) (get POSTGRES-TYPES column.type)
                                     (if column.nullable "" " NOT NULL"))))
-    (val keys (if table.primary-key
-                  [(.format "PRIMARY KEY ({})" (.join ", " (lfor name table.primary-key (checked-identifier name))))]
-                  []))
-    (.append statements (.format "CREATE TABLE IF NOT EXISTS {} ({})" table-name (.join ", " (+ definitions keys))))
+    (when table.primary-key
+      (.append definitions (.format "PRIMARY KEY ({})" (.join ", " (! (checked-identifiers table.primary-key))))))
+    (.append statements (.format "CREATE TABLE IF NOT EXISTS {} ({})" table-name (.join ", " definitions)))
     (for [index table.indexes]
-      (.append statements (.format "CREATE {}INDEX IF NOT EXISTS {} ON {} ({})" (if index.unique "UNIQUE " "") (checked-identifier index.name)
-                                   table-name (.join ", " (lfor name index.columns (checked-identifier name)))))))
+      (.append statements (.format "CREATE {}INDEX IF NOT EXISTS {} ON {} ({})" (if index.unique "UNIQUE " "") (! (checked-identifier index.name))
+                                   table-name (.join ", " (! (checked-identifiers index.columns)))))))
   (tuple statements))
 
 
@@ -169,7 +169,7 @@
       (.execute cursor text (if (is params None) None (dfor p params p.name p.value)))
       (if (is cursor.description None)
           (SqlRows :rows #() :rowcount (if (>= cursor.rowcount 0) cursor.rowcount None))
-          (do (val rows (normalized-rows (.fetchall cursor)))
+          (do (val rows (! (normalized-rows (.fetchall cursor))))
               (SqlRows :rows rows :rowcount (len rows)))))
     (except [error psycopg.Error]
       (<- failure (postgres-error error))

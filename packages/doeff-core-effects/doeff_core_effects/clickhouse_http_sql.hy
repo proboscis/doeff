@@ -9,7 +9,7 @@
 ;;;   - SqlTransaction は SqlFailed(0A000)で断る(transaction の無い置き場 — program を走らせない)。
 ;;;   - 失敗: X-ClickHouse-Exception-Code の在る答えは SqlFailed(sqlstate = None — ClickHouse は SQLSTATE を持たない・reason に code と文)。
 ;;;     HTTP が届かない・code の無い 5xx(前段の proxy)は SqlUnreachable。
-(require doeff-hy.macros [defhandler defk deff <- val var])
+(require doeff-hy.macros [defhandler defk <- val var])
 (require doeff-hy.record [defrecord])
 (import functools)
 (import json)
@@ -19,7 +19,7 @@
 (import dataclasses [dataclass field])
 (import doeff_core_effects.sql_effects [SqlQuery SqlInsertRows SqlTransaction SqlEnsureTables SqlRows SqlFailed SqlUnreachable
                                         SqlSchemaApplied SqlColumnType SqlText SqlPlaceholder split-statement checked-params param-value
-                                        checked-identifier checked-rows normalized-rows])
+                                        checked-identifier checked-identifiers checked-rows normalized-rows])
 
 ;; 値の Python の型 → 引数の ClickHouse の型(閉じた表・bool は int より先に引く)。None は型が分からないので Nullable(String)。
 (val CLICKHOUSE-TYPES #(#(bool "Bool") #(int "Int64") #(float "Float64") #(str "String") #(bytes "String") #((type None) "Nullable(String)")))
@@ -81,23 +81,23 @@
   (#^ (| str None) summary))
 
 
-(deff clickhouse-type [value]  ; defk にしない: 引数ごとに内包表記の中で呼ぶ純関数(内包表記の中では effect を出せない)
+(defk clickhouse-type [value]
   {:pre [(: value (| int float str bytes bool None))] :post [(: % str)]
    :tags {:context "sql" :role "foundation"}}
   "引数の値の Python の型から ClickHouse の型を引くため(閉じた表 CLICKHOUSE-TYPES)。"
   (next (gfor #(kind name) CLICKHOUSE-TYPES :if (isinstance value kind) name)))
 
 
-(deff clickhouse-param-text [value]  ; defk にしない: 引数ごとに内包表記の中で呼ぶ純関数(同上)
+(defk clickhouse-param-text [value]
   {:pre [(: value (| int float str bytes bool None))] :post [(: % bytes)]
    :tags {:context "sql" :role "foundation"}}
   "引数の値を URL の param_* で送る escaped の形の byte 列にするため(NULL は \\N)。"
-  (setv raw (match value
-              None None
-              (bool) (if value b"true" b"false")
-              (| (int) (float)) (.encode (repr value) "ascii")
-              (str) (.encode value "utf-8")
-              (bytes) value))
+  (val raw (match value
+             None None
+             (bool) (if value b"true" b"false")
+             (| (int) (float)) (.encode (repr value) "ascii")
+             (str) (.encode value "utf-8")
+             (bytes) value))
   (if (is raw None)
       b"\\N"
       (functools.reduce (fn [text pair] (.replace text (get pair 0) (get pair 1))) ESCAPES raw)))
@@ -113,8 +113,10 @@
   (for [part parts]
     (match part
       (SqlText :text piece) (:= text (+ text piece))
-      (SqlPlaceholder :name name) (:= text (+ text (.format "{{{}:{}}}" name (clickhouse-type (! (param-value params name))))))))
-  (val sent (lfor p params (ClickHouseParam :name p.name :text (clickhouse-param-text p.value))))
+      (SqlPlaceholder :name name) (:= text (+ text (.format "{{{}:{}}}" name (! (clickhouse-type (! (param-value params name)))))))))
+  (var sent [])
+  (for [p params]
+    (.append sent (ClickHouseParam :name p.name :text (! (clickhouse-param-text p.value)))))
   (ClickHouseStatement :text text :params (tuple sent)))
 
 
@@ -149,8 +151,8 @@
   (for [row rows]
     (when (any (gfor value row (isinstance value bytes)))
       (raise (ValueError (.format "ClickHouse の JSON の投入は bytes の値を運べない(表 {})" table)))))
-  (val query (.format "INSERT INTO {} ({}) FORMAT JSONCompactEachRow" (checked-identifier table)
-                      (.join ", " (lfor name columns (checked-identifier name)))))
+  (val query (.format "INSERT INTO {} ({}) FORMAT JSONCompactEachRow" (! (checked-identifier table))
+                      (.join ", " (! (checked-identifiers columns)))))
   (val body (.join "" (gfor row rows (+ (json.dumps (list row) :ensure-ascii False) "\n"))))
   (ClickHouseRequest :url (! (clickhouse-url database [#("query" query)])) :body (.encode body "utf-8")
                      :headers (! (clickhouse-headers database))))
@@ -160,7 +162,7 @@
   {:pre [(: body bytes)] :post [(: % tuple)]
    :tags {:context "sql" :role "foundation"}}
   "JSONCompactEachRow の答えの本文を行の tuple へ写すため(値は SqlValue へ正規化 — 配列・Map の欄は TypeError)。"
-  (normalized-rows (lfor line (.splitlines (.decode body "utf-8")) :if (.strip line) (json.loads line))))
+  (! (normalized-rows (lfor line (.splitlines (.decode body "utf-8")) :if (.strip line) (json.loads line)))))
 
 
 (defk clickhouse-written-rows [summary]
@@ -192,19 +194,20 @@
   (for [table tables]
     (when (any (gfor index table.indexes index.unique))
       (return (SqlFailed :sqlstate NOT-SUPPORTED-SQLSTATE :reason (.format "ClickHouse は一意の索引を持てない(表 {})" table.name))))
-    (val columns (lfor column table.columns
-                       (.format "{} {}" (checked-identifier column.name)
-                                (if column.nullable
-                                    (.format "Nullable({})" (get CLICKHOUSE-COLUMN-TYPES column.type))
-                                    (get CLICKHOUSE-COLUMN-TYPES column.type)))))
-    (val indexes (lfor index table.indexes
-                       (.format "INDEX {} ({}) TYPE minmax GRANULARITY 1" (checked-identifier index.name)
-                                (.join ", " (lfor name index.columns (checked-identifier name))))))
+    (var definitions [])
+    (for [column table.columns]
+      (.append definitions (.format "{} {}" (! (checked-identifier column.name))
+                                    (if column.nullable
+                                        (.format "Nullable({})" (get CLICKHOUSE-COLUMN-TYPES column.type))
+                                        (get CLICKHOUSE-COLUMN-TYPES column.type)))))
+    (for [index table.indexes]
+      (.append definitions (.format "INDEX {} ({}) TYPE minmax GRANULARITY 1" (! (checked-identifier index.name))
+                                    (.join ", " (! (checked-identifiers index.columns))))))
     (val order (if table.primary-key
-                   (.format "({})" (.join ", " (lfor name table.primary-key (checked-identifier name))))
+                   (.format "({})" (.join ", " (! (checked-identifiers table.primary-key))))
                    "tuple()"))
-    (.append statements (.format "CREATE TABLE IF NOT EXISTS {} ({}) ENGINE = MergeTree ORDER BY {}" (checked-identifier table.name)
-                                 (.join ", " (+ columns indexes)) order)))
+    (.append statements (.format "CREATE TABLE IF NOT EXISTS {} ({}) ENGINE = MergeTree ORDER BY {}" (! (checked-identifier table.name))
+                                 (.join ", " definitions) order)))
   (tuple statements))
 
 

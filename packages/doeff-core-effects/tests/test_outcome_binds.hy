@@ -93,7 +93,7 @@
   (assert (is (getattr PlainRead "__doeff_outcomes__" None) None) "宣言しなければ置かない"))
 
 
-(deff expansion-refusal [source]
+(defk expansion-refusal [source]
   {:pre [(: source str)] :post [(: % str)]
    :tags {:context "outcomes-test" :role "judgment"}}
   "source を展開した時の誤りの文(通れば空の文字列)— 展開の時に断る macro の規則を検で見るため。"
@@ -106,9 +106,9 @@
 
 (deftest test-declaration-refuses-types-outside-the-answer
   (val head "(require doeff-hy.macros [defeffect]) (defeffect Bad {:answer (| Row Missing) :tags {:context \"t\" :role \"intent\"} ")
-  (assert (in "要素ではない" (expansion-refusal (+ head ":absent [Unreachable]})"))))
-  (assert (in "両方にある" (expansion-refusal (+ head ":absent [Missing] :failure [Missing]})"))))
-  (assert (in "list" (expansion-refusal (+ head ":absent Missing})")))))
+  (assert (in "要素ではない" (! (expansion-refusal (+ head ":absent [Unreachable]})")))))
+  (assert (in "両方にある" (! (expansion-refusal (+ head ":absent [Missing] :failure [Missing]})")))))
+  (assert (in "list" (! (expansion-refusal (+ head ":absent Missing})"))))))
 
 
 (deftest test-declared-bind-opens-the-answer
@@ -280,14 +280,9 @@
   (assert (= shadowed #("t" True #(1))) shadowed))
 
 
+;; :absent の失敗を作った鍵を記す(:absent の失敗が不在の時にだけ作られることを見るため)。失敗は値の式(! / <- を書けない)なので、
+;; 作る所は関数にせず :absent の式の中に書く — open-bind が不在の時にだけその式を評価する。
 (val FAILURES-BUILT [])
-
-(deff conflict-for [key]
-  {:pre [(: key str)] :post [(: % Conflict)]
-   :tags {:context "outcomes-test" :role "judgment"}}
-  "作った数を記す失敗の値(:absent の失敗が不在の時にだけ作られることを見るため)。"
-  (.append FAILURES-BUILT key)
-  (Conflict (+ key " の行が無い")))
 
 (defk deep-read [key]
   {:pre [(: key str)] :post [(: % (| str Stale))]
@@ -300,14 +295,14 @@
   {:pre [(: key str)] :post [(: % (| str Stale))]
    :tags {:context "outcomes-test" :role "program"}}
   "(e) :absent で、この束ねの不在(奥の defk の中で出た物も)を Conflict の失敗として投げる。"
-  (<- v (deep-read key) :absent (conflict-for key))
+  (<- v (deep-read key) :absent (do (.append FAILURES-BUILT key) (Conflict (+ key " の行が無い"))))
   v)
 
 (defk nothing-or-conflict []
   {:pre [] :post [(: % str)]
    :tags {:context "outcomes-test" :role "program"}}
   "Maybe の値 Nothing を :absent つきで開く。"
-  (<- v Nothing :absent (conflict-for "nothing"))
+  (<- v Nothing :absent (do (.append FAILURES-BUILT "nothing") (Conflict "nothing の行が無い")))
   v)
 
 
@@ -322,8 +317,8 @@
   (assert (= (repr down) "Err(Unreachable(detail='網が落ちた'))") "失敗はそのまま(:absent は不在だけを写す)")
   (<- from-nothing (result (nothing-or-conflict)))
   (assert (= (repr from-nothing) "Err(Conflict(detail='nothing の行が無い'))") from-nothing)
-  (assert (in "値の式" (expansion-refusal "(require doeff-hy.macros [<-]) (<- x (f) :absent (! (g)))")))
-  (assert (in "知らない鍵" (expansion-refusal "(require doeff-hy.macros [<-]) (<- x (f) :absnt 1)"))))
+  (assert (in "値の式" (! (expansion-refusal "(require doeff-hy.macros [<-]) (<- x (f) :absent (! (g)))"))))
+  (assert (in "知らない鍵" (! (expansion-refusal "(require doeff-hy.macros [<-]) (<- x (f) :absnt 1)")))))
 
 
 (defk open-value [value]

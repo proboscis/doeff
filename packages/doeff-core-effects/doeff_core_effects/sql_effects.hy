@@ -218,13 +218,23 @@
   (next (gfor p params :if (= p.name name) p.value)))
 
 
-(deff checked-identifier [name]  ; defk にしない: 描く名ごとに内包表記の中で呼ぶ純関数(内包表記の中では effect を出せない)
+(defk checked-identifier [name]
   {:pre [(: name str)] :post [(: % str)]
    :tags {:context "sql" :role "foundation"}}
   "DDL と投入の文に描く名が引用なしで安全な形であることを確かめるため(外れは ValueError)。"
   (when (not (.fullmatch IDENTIFIER name))
     (raise (ValueError (.format "名 {!r} は [A-Za-z_][A-Za-z0-9_]* の形でない" name))))
   name)
+
+
+(defk checked-identifiers [names]
+  {:pre [(: names tuple)] :post [(: % tuple)]
+   :tags {:context "sql" :role "foundation"}}
+  "名の並び(欄・主鍵・索引の欄)の全部を checked-identifier で確かめ、書いた順の tuple で返すため(最初の外れで ValueError)。"
+  (var checked [])
+  (for [name names]
+    (.append checked (! (checked-identifier name))))
+  (tuple checked))
 
 
 (defk checked-rows [columns rows]
@@ -242,8 +252,9 @@
 
 ;; --- 行の値の正規化 --------------------------------------------------------------------------------------------------------
 
-(deff normalized-value [value]  ; defk にしない: 読んだ行の値 1 つごとに呼ぶ純関数(大きな読みで値ごとに Program を回さない)
-  {:pre [(: value "driver の値(型は driver ごと — ここで検める)")] :post [(: % (| int float str bytes bool None))]}
+(defk normalized-value [value]
+  {:pre [(: value "driver の値(型は driver ごと — ここで検める)")] :post [(: % (| int float str bytes bool None))]
+   :tags {:context "sql" :role "foundation"}}
   "driver の値を閉じた集合 SqlValue へ写すため(集合の外で写し方の決まっていない型は TypeError — 黙って str にしない)。
    value の型は driver ごとに違う(ここが境界で型を検める 1 点)。"
   (match value
@@ -255,7 +266,14 @@
     _ (raise (TypeError (.format "driver の値の型 {} を SqlValue へ写す決まりが無い" (. (type value) __name__))))))
 
 
-(deff normalized-rows [rows]  ; defk にしない: 読んだ行の全部に normalized-value を当てる純関数(同上)
-  {:pre [(: rows #(list tuple))] :post [(: % tuple)]}
+(defk normalized-rows [rows]
+  {:pre [(: rows #(list tuple))] :post [(: % tuple)]
+   :tags {:context "sql" :role "foundation"}}
   "driver の行の列を SqlRows の rows(値を正規化した tuple の tuple)へ写すため。"
-  (tuple (gfor row rows (tuple (gfor value row (normalized-value value))))))
+  (var normalized [])
+  (for [row rows]
+    (var values [])
+    (for [value row]
+      (.append values (! (normalized-value value))))
+    (.append normalized (tuple values)))
+  (tuple normalized))
