@@ -97,7 +97,10 @@ doeff-records = { workspace = true }
 doeff-jev-proxy = { workspace = true }
 # Hy は fork の 1.3.1 + 呼び出し元の階層の取り方の直し(inspect.stack → sys._getframe)を pin する。本家へ送った PR = hylang/hy#2728。
 # 取り込まれた版が出たらこの行を消して PyPI の hy に戻す(agora-controllers の pyproject.toml の同じ行も)。
-hy = { git = "https://github.com/proboscis/hy.git", rev = "5b10b443f231869f77182110ecff725118118463" }
+# その上に、マクロの提供元の file が変わったら使う側の .pyc を作り直す直しを積む(fork の branch wt/pyc-macro-deps-1.3.1 —
+# .pyc の有効判定は source の更新時刻とサイズだけなので、doeff-hy のマクロが変わった後も古い展開の bytecode が実行され続けた・
+# agora-redesign #1003)。PyPI の hy に戻す条件にこの直しの取り込みも加える(本家への PR はまだ送っていない)。
+hy = { git = "https://github.com/proboscis/hy.git", rev = "1f3e11739b0c4a52d010323e5ebb75fba7916cdc" }
 
 [tool.pytest.ini_options]
 timeout = 60
