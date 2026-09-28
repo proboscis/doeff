@@ -7,7 +7,8 @@
 ;;   coordinator … TaskRecord.environ に持ち、heartbeat の返事の task の行に載せる。切り離した task の同じ key の送り直しは environ も
 ;;               比べる(違えば 409)。worker の写しから引き取る時も environ を持つ。欄の無い旧い行は空の environ で読む。
 ;;   worker    … task-spec が JobSpec.environ に写し、ProcessHost.launch が service と同じ路で子の環境変数に置く。
-;;   sim       … sim の宿(host-answers)が spec.environ の名の Ask に答える(本番の土台の env-var-ask が外へ通した Ask)。
+;;   sim       … sim の宿が spec.environ の名の Ask に、本番の土台と同じ読みの定義(host_contract.environ-reader)で答える
+;;               (本番の土台の (environ-reader) が外へ通した Ask)。値の字面どおりの読みの契約は test_environ_reader.hy。
 (require doeff-hy.macros [deftest defk <- val var])
 (import json)
 (import os)
@@ -37,7 +38,7 @@
 (val V {"python" "3.14.0" "doeff" "1"})
 (val LOCAL (frozenset RIG-PROVIDES))
 (val NET (frozenset ["net"]))
-;; 見本の設定の名(検の process の環境変数に無い名 — sim では env-var-ask が外へ通し、sim の宿が答える)。
+;; 見本の設定の名(検の process の環境変数に無い名 — sim では (environ-reader) が外へ通し、sim の宿が答える)。
 (val URL-NAME "TASK_ENVIRON_ROWS_URL")
 (val URL "http://rows.invalid:8080")
 (val ROOT (. (Path (os.path.abspath __file__)) parent parent))
@@ -182,10 +183,10 @@
   (assert (= task.environ #(#(URL-NAME URL))) task))
 
 
-(deftest test-a-detached-task-child-answers-the-environ-name-through-env-var-ask [tmp-path]
+(deftest test-a-detached-task-child-answers-the-environ-name-through-the-environ-reader [tmp-path]
   ;; 本番の形の通し: DetachedClient が :environ つきで送り、本物の coordinator の判断(MemoryCoordinator)が返事に載せ、本物の
   ;; CoordinatorLink が Program を cache へ取り、ProcessHost が組んだ子の環境で job_entry の task 入口の子 process が走る。
-  ;; Program の名の Ask に env-var-ask(本番の土台の読み)が environ の値で答える。
+  ;; Program の名の Ask に (environ-reader)(本番の土台の読み)が environ の値で答える。
   (val coordinator (MemoryCoordinator (SimClock)))
   (val transport (httpx.MockTransport coordinator.handle))
   (val link (CoordinatorLink "http://coordinator" "w1" RIG-PROVIDES 10 60000 :task-dir (str (/ tmp-path "state" "tasks"))
@@ -215,7 +216,7 @@
 
 (defk sim-environ-scenario []
   {:pre [] :post [(: % tuple)] :tags {:context "doeff-cluster-test" :role "program"}}
-  "筋書き: 同じ Program(env-var-ask で名を読む)を RemoteJob と SubmitDetached で :environ つきで送り、答えを返す。"
+  "筋書き: 同じ Program((environ-reader) で名を読む)を RemoteJob と SubmitDetached で :environ つきで送り、答えを返す。"
   (<- remote str (RemoteJob (environ-read URL-NAME) :needs LOCAL :environ {URL-NAME URL}))
   (<- submitted DetachedSubmitted (SubmitDetached (environ-read URL-NAME) :key "sim-env" :needs LOCAL
                                                   :environ {URL-NAME "http://detached.invalid"}))
@@ -224,7 +225,7 @@
 
 
 (deftest test-a-sim-task-child-answers-the-environ-name-from-the-host
-  ;; sim の子では env-var-ask が環境に無い名を外へ通し、sim の宿が spec.environ から答える(本番と同じ Program・同じ :environ)。
+  ;; sim の子では (environ-reader) が環境に無い名を外へ通し、sim の宿が同じ読みの定義で spec.environ から答える(本番と同じ Program・同じ :environ)。
   (<- answer tuple (sim-cluster NO-JOBS (sim-environ-scenario) :workers #((SimWorker :name "w1" :provides LOCAL))))
   (assert (= (get answer 0) URL) answer)
   (assert (= (get answer 1) (DetachedSubmitted "sim-env" True)) answer)
