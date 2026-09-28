@@ -34,3 +34,12 @@
 
 (deftest test-row-text-is-the-text
   (assert (= (row-text (Row :key "k" :text "t")) "t")))
+
+
+(defk describe-row [row prefix suffix width]
+  {:pre [(: row (| Row None)) (: prefix str) (: suffix str) (: width int)] :post [(: % (| str None))]
+   :tags {:context "screen" :role "judgment"}}
+  "行を枠つきの文字にするため。行が無ければ None。"
+  (when (is row None)
+    (return None))
+  (+ prefix (.ljust (row-text row) width) suffix))

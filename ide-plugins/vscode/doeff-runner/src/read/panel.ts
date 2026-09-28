@@ -1,6 +1,7 @@
 // 定義を読む面の VS Code の層 — `.hy` を webview(custom text editor)で開き、model.ts が組むカードと軸を render.ts の
 // HTML で描く。読むためだけの面で、document を書き換えない(operator は source を手で編集しない)。
 // 定義の一覧は hy-index の置き場だけから読み、面が自分で file を歩かない。型・effect・違反は linter の置き場から添える。
+// `.hy` を開いた時の既定はこの面(v5・operator 2026-09-29 "when opening hy file the default should be reading view")。
 
 import * as crypto from 'crypto';
 import * as path from 'path';
@@ -11,8 +12,22 @@ import type { HyIndexStore } from '../hy/store';
 import type { LintStore } from '../lint/store';
 import type { IconSource } from '../pixel/icons';
 import { effectGlyph } from '../pixel/vocabulary';
+import {
+  cardKey,
+  foldAll,
+  loadFold,
+  parseLineField,
+  relationCounts,
+  saveFold,
+  toggleLineField,
+  toggleOpen,
+  unfoldAll,
+  type FoldState,
+  type RelationCount
+} from './fold';
+import { LABELS } from './labels';
 import { buildCards, facets, parseAxisKey, toggle, visibleCards, type Card, type Selection } from './model';
-import { renderFacets, renderPage, summaryText, type Glyphs, type PlaneState } from './render';
+import { lineClasses, renderFacets, renderPage, summaryText, type Glyphs, type PlaneState } from './render';
 
 /** custom editor の種類の名(package.json の customEditors と同じ)。 */
 export const READING_PLANE_VIEW_TYPE = 'doeff-runner.readingPlane';
@@ -22,12 +37,20 @@ export const READING_PLANE_SETTING = 'doeff-runner.hy.readingPlane.enabled';
 const REDRAW_DELAY_MS = 200;
 /** 頁の中身が変わったかを比べる時の nonce(実際に描く頁は毎回新しい nonce)。 */
 const COMPARE_NONCE = 'compare';
+/** 1 行に出す欄の設定を覚える workspace の状態の鍵(全カード・全 file 共通)。 */
+const LINE_STATE_KEY = 'doeff-runner.read.line';
+/** 開いたカードを覚える workspace の状態の鍵の頭(file ごと)。 */
+const OPEN_STATE_PREFIX = 'doeff-runner.read.open:';
 
 /** webview から届く知らせ。 */
 type PlaneMessage =
   | { readonly type: 'toggle'; readonly axis: string; readonly value: string }
   | { readonly type: 'clear' }
-  | { readonly type: 'open'; readonly line: number; readonly character: number };
+  | { readonly type: 'open'; readonly line: number; readonly character: number }
+  | { readonly type: 'fold'; readonly key: string }
+  | { readonly type: 'fold-all' }
+  | { readonly type: 'unfold-all' }
+  | { readonly type: 'line'; readonly field: string };
 
 /** webview の知らせを形で確かめて読む(知らない形は undefined)。 */
 function readMessage(raw: unknown): PlaneMessage | undefined {
@@ -36,20 +59,36 @@ function readMessage(raw: unknown): PlaneMessage | undefined {
   }
   const fields = new Map<string, unknown>(Object.entries(raw));
   const type = fields.get('type');
-  if (type === 'clear') {
-    return { type };
+  const text = (name: string): string | undefined => {
+    const value = fields.get(name);
+    return typeof value === 'string' ? value : undefined;
+  };
+  switch (type) {
+    case 'clear':
+    case 'fold-all':
+    case 'unfold-all':
+      return { type };
+    case 'toggle': {
+      const axis = text('axis');
+      const value = text('value');
+      return axis !== undefined && value !== undefined ? { type, axis, value } : undefined;
+    }
+    case 'open': {
+      const line = fields.get('line');
+      const character = fields.get('character');
+      return typeof line === 'number' && typeof character === 'number' ? { type, line, character } : undefined;
+    }
+    case 'fold': {
+      const key = text('key');
+      return key !== undefined ? { type, key } : undefined;
+    }
+    case 'line': {
+      const field = text('field');
+      return field !== undefined ? { type, field } : undefined;
+    }
+    default:
+      return undefined;
   }
-  if (type === 'toggle') {
-    const axis = fields.get('axis');
-    const value = fields.get('value');
-    return typeof axis === 'string' && typeof value === 'string' ? { type, axis, value } : undefined;
-  }
-  if (type === 'open') {
-    const line = fields.get('line');
-    const character = fields.get('character');
-    return typeof line === 'number' && typeof character === 'number' ? { type, line, character } : undefined;
-  }
-  return undefined;
 }
 
 /** 面を使う設定か。 */
@@ -57,9 +96,43 @@ function planeEnabled(): boolean {
   return vscode.workspace.getConfiguration().get<boolean>(READING_PLANE_SETTING) !== false;
 }
 
-/** 面 1 枚(開いた document 1 つ)の係 — 選択を持ち、置き場が変わったら描き直す。 */
+/** 畳む状態を覚える口(VS Code の workspace の状態 — 開き直しても同じにするため)。 */
+interface FoldMemory {
+  load(filePath: string): FoldState;
+  save(filePath: string, state: FoldState): void;
+}
+
+/** workspace の状態に畳む状態を書く口を作る。 */
+function workspaceFoldMemory(state: vscode.Memento): FoldMemory {
+  return {
+    load: (filePath) => loadFold({ open: state.get(OPEN_STATE_PREFIX + filePath), line: state.get(LINE_STATE_KEY) }),
+    save: (filePath, fold) => {
+      const saved = saveFold(fold);
+      void state.update(OPEN_STATE_PREFIX + filePath, saved.open);
+      void state.update(LINE_STATE_KEY, saved.line);
+    }
+  };
+}
+
+/** 索引の全 file の呼び出しの逆引き(索引の版が同じ間は作り直さない)。 */
+class RelationTable {
+  private cached: { readonly version: number; readonly table: ReadonlyMap<string, RelationCount> } | undefined;
+
+  constructor(private readonly hy: HyIndexStore) {}
+
+  /** 呼び先の完全修飾名 → 呼び手と deftest の数(1 行の callers / tests)。 */
+  get table(): ReadonlyMap<string, RelationCount> {
+    if (this.cached === undefined || this.cached.version !== this.hy.version) {
+      this.cached = { version: this.hy.version, table: relationCounts(this.hy.entries().map((e) => e.file)) };
+    }
+    return this.cached.table;
+  }
+}
+
+/** 面 1 枚(開いた document 1 つ)の係 — 選択と畳む状態を持ち、置き場が変わったら描き直す。 */
 class PlanePanel implements vscode.Disposable {
   private selection: Selection = new Map();
+  private fold: FoldState;
   private cards: readonly Card[] = [];
   private lastHtml = '';
   private timer: NodeJS.Timeout | undefined;
@@ -71,8 +144,11 @@ class PlanePanel implements vscode.Disposable {
     private readonly hy: HyIndexStore,
     private readonly status: HyIndexStatusView,
     private readonly lint: LintStore,
-    private readonly glyphs: Glyphs
+    private readonly glyphs: Glyphs,
+    private readonly memory: FoldMemory,
+    private readonly relations: RelationTable
   ) {
+    this.fold = memory.load(document.uri.fsPath);
     panel.webview.options = { enableScripts: true };
     const offHy = hy.onDidChange(() => this.schedule());
     const offLint = lint.onDidChange(() => this.schedule());
@@ -100,7 +176,7 @@ class PlanePanel implements vscode.Disposable {
   /** 今の置き場から面の状態を作る(索引にその file が無ければ理由の文)。 */
   private state(): PlaneState {
     if (!planeEnabled()) {
-      return { tag: 'message', text: `定義を読む面は設定 ${READING_PLANE_SETTING} で切ってあります` };
+      return { tag: 'message', text: `${LABELS.disabled} (${READING_PLANE_SETTING})` };
     }
     const filePath = this.document.uri.fsPath;
     const entry = this.hy.get(filePath);
@@ -108,7 +184,7 @@ class PlanePanel implements vscode.Disposable {
       const status = this.status.status;
       const text =
         status.tag === 'ready'
-          ? 'この file はまだ Hy の索引(hy-index)に入っていません'
+          ? LABELS.notIndexed
           : emptyIndexLines(status)
               .map((l) => l.label)
               .join(' / ');
@@ -144,7 +220,15 @@ class PlanePanel implements vscode.Disposable {
 
   /** 状態から頁を組む(比べる用には決まった nonce を渡す)。 */
   private page(state: PlaneState, nonce: string): string {
-    return renderPage({ place: this.place(), state, glyphs: this.glyphs, cspSource: this.panel.webview.cspSource, nonce });
+    return renderPage({
+      place: this.place(),
+      state,
+      glyphs: this.glyphs,
+      fold: this.fold,
+      relations: this.relations.table,
+      cspSource: this.panel.webview.cspSource,
+      nonce
+    });
   }
 
   /** 頁を描き直す(中身が同じなら描かない — 読んでいる位置を崩さないため)。 */
@@ -158,6 +242,11 @@ class PlanePanel implements vscode.Disposable {
     this.panel.webview.html = this.page(state, crypto.randomBytes(16).toString('hex'));
   }
 
+  /** 送った変化の入った頁を覚え直す(次の描き直しで同じ頁を作り直さないため)。 */
+  private remember(): void {
+    this.lastHtml = this.page({ tag: 'cards', cards: this.cards, selection: this.selection }, COMPARE_NONCE);
+  }
+
   /** 選択を変えた結果(札の並び・見せるカード)だけを webview へ送る(頁ごと描き直すと読んでいる位置が飛ぶため)。 */
   private postFilter(): void {
     const shown = visibleCards(this.cards, this.selection);
@@ -168,8 +257,15 @@ class PlanePanel implements vscode.Disposable {
       visible: shown.map((c) => c.id),
       summary: summaryText(shown.length, this.cards.length, all)
     });
-    // 次の描き直しで同じ頁を作り直さないよう、選択の入った頁を覚え直す
-    this.lastHtml = this.page({ tag: 'cards', cards: this.cards, selection: this.selection }, COMPARE_NONCE);
+    this.remember();
+  }
+
+  /** 畳む状態を変え、覚えて、webview へ送る。 */
+  private setFold(next: FoldState): void {
+    this.fold = next;
+    this.memory.save(this.document.uri.fsPath, next);
+    void this.panel.webview.postMessage({ type: 'fold', open: [...next.open], line: [...next.line], lineClasses: lineClasses(next) });
+    this.remember();
   }
 
   /** webview の知らせに応える。 */
@@ -193,6 +289,22 @@ class PlanePanel implements vscode.Disposable {
       case 'open': {
         const at = new vscode.Position(message.line, message.character);
         void vscode.window.showTextDocument(this.document, { selection: new vscode.Range(at, at), preview: false });
+        return;
+      }
+      case 'fold':
+        this.setFold(toggleOpen(this.fold, message.key));
+        return;
+      case 'fold-all':
+        this.setFold(foldAll(this.fold));
+        return;
+      case 'unfold-all':
+        this.setFold(unfoldAll(this.fold, visibleCards(this.cards, this.selection).map((c) => cardKey(c.definition))));
+        return;
+      case 'line': {
+        const field = parseLineField(message.field);
+        if (field !== undefined) {
+          this.setFold(toggleLineField(this.fold, field));
+        }
         return;
       }
       default: {
@@ -221,13 +333,23 @@ class ReadingPlaneProvider implements vscode.CustomTextEditorProvider {
     private readonly status: HyIndexStatusView,
     private readonly lint: LintStore,
     private readonly glyphs: Glyphs,
+    private readonly memory: FoldMemory,
+    private readonly relations: RelationTable,
     private readonly watch: (document: vscode.TextDocument) => void
   ) {}
 
-  /** 面を開いた時 — 型と effect の材料を linter に聞かせ、面の係を立てる。 */
+  /**
+   * 面を開いた時 — 型と effect の材料を linter に聞かせ、面の係を立てる。面を設定で切ってある時は、既定で開かれても
+   * 面を閉じて今の editor で開き直す(v5: 既定は読む面・切れば今の装飾と「タグで閲覧」だけ)。
+   */
   resolveCustomTextEditor(document: vscode.TextDocument, panel: vscode.WebviewPanel): void {
+    if (!planeEnabled()) {
+      panel.dispose();
+      void vscode.commands.executeCommand('vscode.openWith', document.uri, 'default');
+      return;
+    }
     this.watch(document);
-    new PlanePanel(document, panel, this.hy, this.status, this.lint, this.glyphs);
+    new PlanePanel(document, panel, this.hy, this.status, this.lint, this.glyphs, this.memory, this.relations);
   }
 }
 
@@ -242,13 +364,12 @@ export function registerReadingPlane(
 ): void {
   // effect の絵は装飾 A と同じ pixel art を data URI で(webview の CSP は img-src data: だけを許す)
   const glyphs: Glyphs = { effect: (name) => icons.inline(effectGlyph(name), 14)?.toString(true) };
+  const provider = new ReadingPlaneProvider(hy, status, lint, glyphs, workspaceFoldMemory(context.workspaceState), new RelationTable(hy), watch);
   context.subscriptions.push(
-    vscode.window.registerCustomEditorProvider(READING_PLANE_VIEW_TYPE, new ReadingPlaneProvider(hy, status, lint, glyphs, watch), {
-      webviewOptions: { retainContextWhenHidden: true }
-    }),
+    vscode.window.registerCustomEditorProvider(READING_PLANE_VIEW_TYPE, provider, { webviewOptions: { retainContextWhenHidden: true } }),
     vscode.commands.registerCommand('doeff-runner.read.open', async (target?: vscode.Uri) => {
       if (!planeEnabled()) {
-        void vscode.window.showInformationMessage(`定義を読む面は設定 ${READING_PLANE_SETTING} で切ってあります`);
+        void vscode.window.showInformationMessage(`${LABELS.disabled} (${READING_PLANE_SETTING})`);
         return;
       }
       const uri = target ?? vscode.window.activeTextEditor?.document.uri;

@@ -1,11 +1,14 @@
 // 定義を読む面の HTML を組む純粋な関数(VS Code に触らない)。カード = 定義などの実体 1 つの部品を HTML で見せる物で、
 // 構文はなぞらない(v2・operator 2026-09-28 "so we are not to follow syntax like using. we want better html visualization of
-// entity like defk")。見本 = docs/design/hy-reading-plane/artifacts/v3/entity.html(左に軸・右に実体のカード)。
-// 本体の文字(val / var の表)は linter の印字が入るまで出さず、元の Hy は実体ごとの `source` ボタンで開閉する(v3 3 節)。
+// entity like defk")。見本 = docs/design/hy-reading-plane/artifacts/v5/entity.html(左に軸・上に 1 行の切り替え・右に実体のカード)。
+// カードは 1 行に畳める(v4)。面に出る文字は labels.ts の表からだけ引く(v5)。
+// 本体の文字(val / var の表)は linter の印字が入るまで出さず、元の Hy は実体ごとの source ボタンで開閉する(v3 3 節)。
 
 import type { HyDefinition } from '../hy/contract';
 import type { LintSignature } from '../lint/contract';
 import { answerText, headerEffects, typeText } from '../defk/model';
+import { cardKey, LINE_FIELDS, type FoldState, type LineField, type RelationCount } from './fold';
+import { LABELS } from './labels';
 import { axisKey, axisTitle, facets, visibleCards, worstLevel, type Card, type Facet, type Selection } from './model';
 
 /** HTML の特別な文字を逃がす。 */
@@ -36,6 +39,16 @@ export interface Glyphs {
   readonly effect: (name: string) => string | undefined;
 }
 
+/** 1 行の切り替えの欄の見出し(labels の表から)。 */
+const LINE_FIELD_LABEL: Readonly<Record<LineField, string>> = {
+  args: LABELS.argsReturnType,
+  effects: LABELS.effects,
+  tags: LABELS.tags,
+  doc: LABELS.docFirstLine,
+  relations: LABELS.callersTests,
+  location: LABELS.location
+};
+
 /** 左の軸の欄(軸ごとに値の札)。 */
 export function renderFacets(all: readonly Facet[]): string {
   return all
@@ -47,7 +60,7 @@ export function renderFacets(all: readonly Facet[]): string {
           return `<button class="${classes}" data-axis="${escapeHtml(key)}" data-value="${escapeHtml(v.value)}">${escapeHtml(v.value)}<small>${v.count}</small></button>`;
         })
         .join('');
-      return `<h2>軸: ${escapeHtml(axisTitle(facet.axis))}</h2><div class="fac">${chips}</div>`;
+      return `<h2>${escapeHtml(LABELS.axis)}: ${escapeHtml(axisTitle(facet.axis))}</h2><div class="fac">${chips}</div>`;
     })
     .join('');
 }
@@ -57,26 +70,65 @@ export function summaryText(shown: number, total: number, all: readonly Facet[] 
   const chosen = all
     .map((f) => ({ title: axisTitle(f.axis), values: f.values.filter((v) => v.selected).map((v) => v.value) }))
     .filter((c) => c.values.length > 0)
-    .map((c) => `${c.title} = ${c.values.join(' か ')}`);
-  const count = shown === total ? `定義 ${total}` : `定義 ${shown} / ${total}`;
+    .map((c) => `${c.title} = ${c.values.join(' or ')}`);
+  const count = shown === total ? `${LABELS.definitions} ${total}` : `${LABELS.definitions} ${shown} / ${total}`;
   return chosen.length === 0 ? count : `${chosen.join(' × ')} → ${count}`;
 }
 
-/** 引数と答えのチップ(defk / deff の見出しから)。 */
+/** 1 行の切り替えの欄と、全部畳む / 全部開く。 */
+export function renderLineBar(state: FoldState): string {
+  const boxes = LINE_FIELDS.map(
+    (f) => `<label><input type="checkbox" data-line-field="${f}"${state.line.has(f) ? ' checked' : ''}>${escapeHtml(LINE_FIELD_LABEL[f])}</label>`
+  ).join('');
+  return `<div class="linebar"><b>${escapeHtml(LABELS.showInLine)}</b>${boxes}<span class="sep"></span><button class="btn" id="fold-all">${escapeHtml(LABELS.foldAll)}</button><button class="btn" id="unfold-all">${escapeHtml(LABELS.unfoldAll)}</button></div>`;
+}
+
+/** 1 行に出す欄の class(body に付け、CSS で欄を出し入れする — 切り替えで頁を描き直さないため)。 */
+export function lineClasses(state: FoldState): string {
+  return LINE_FIELDS.filter((f) => state.line.has(f))
+    .map((f) => `show-${f}`)
+    .join(' ');
+}
+
+/** 縦の表に切り替える閾(v6 2.1 節・席の既定で戻せる): 引数の数と、引数と return type の型の文字の合計。 */
+export const TALL_SIGNATURE_PARAMS = 4;
+export const TALL_SIGNATURE_CHARS = 60;
+/** 畳んだ 1 行で型を省いて名だけにする引数の数(v6 2.2 節)。 */
+export const NAMES_ONLY_PARAMS = 4;
+
+/** 引数が多いか型が長い見出しか(1 行のチップでは return type が折り返しに埋もれるので、縦の表で描くため)。 */
+export function isTallSignature(signature: LintSignature): boolean {
+  const chars = signature.params.reduce((n, p) => n + typeText(p.type).length, 0) + answerText(signature).length;
+  return signature.params.length >= TALL_SIGNATURE_PARAMS || chars > TALL_SIGNATURE_CHARS;
+}
+
+/** 型を候補ごとの小さなチップにする(union の `|` は薄く・None は破線で弱く — 候補の切れ目を見せるため)。 */
+function typeChips(type: LintSignature['answer']): string {
+  const members = type !== null && type.kind === 'union' ? type.members : [type];
+  return members
+    .map((m) => {
+      const text = typeText(m);
+      return `<span class="${text === 'None' ? 'none' : ''}">${escapeHtml(text)}</span>`;
+    })
+    .join('<i>|</i>');
+}
+
+/** 引数と答え(defk / deff の見出しから・開いたカード)— 短ければ 1 行のチップ、長ければ縦の表(v6)。 */
 function signatureStrip(signature: LintSignature): string {
+  if (isTallSignature(signature)) {
+    const rows = signature.params.map((p) => `<span class="n">${escapeHtml(p.name)}</span><span class="tc">${typeChips(p.type)}</span>`).join('');
+    const answer = signature.absent ? `<span>${escapeHtml(answerText(signature))}</span>` : typeChips(signature.answer);
+    return `<div class="sig2"><div class="lab">${escapeHtml(LABELS.args)}</div>${rows}<div class="rt"><span class="k">${escapeHtml(LABELS.returnType)}</span><span class="tc">${answer}</span></div></div>`;
+  }
   const params = signature.params
     .map((p) => `<span class="p"><span class="n">${escapeHtml(p.name)}</span><span class="t">${escapeHtml(typeText(p.type))}</span></span>`)
     .join('');
-  return `<div class="sig">${params === '' ? '<span class="none">引数なし</span>' : params}<span class="arrow">→</span><span class="ret">${escapeHtml(answerText(signature))}</span></div>`;
+  return `<div class="sig">${params === '' ? `<span class="none">${escapeHtml(LABELS.noArgs)}</span>` : params}<span class="arrow">→</span><span class="ret" title="${escapeHtml(LABELS.returnType)}">${escapeHtml(answerText(signature))}</span></div>`;
 }
 
-/** 使う effect の欄(絵つきのチップ・Raise は赤い札)。effect が無ければ欄ごと出さない。 */
-function effectRow(signature: LintSignature, glyphs: Glyphs): string {
-  const items = headerEffects(signature);
-  if (items.length === 0) {
-    return signature.inferenceComplete ? '' : '<div class="row"><span class="k">使う effect</span><span class="none">見えた分は無し(推論は途中まで)</span></div>';
-  }
-  const chips = items
+/** effect のチップ(絵つき・Raise は赤い札)。 */
+function effectChips(signature: LintSignature, glyphs: Glyphs): string {
+  return headerEffects(signature)
     .map((e) => {
       if (e.kind === 'raise') {
         return `<span class="eff raise">Raise ${escapeHtml(e.name)}</span>`;
@@ -86,48 +138,102 @@ function effectRow(signature: LintSignature, glyphs: Glyphs): string {
       return `<span class="eff">${img}${escapeHtml(e.name)}</span>`;
     })
     .join('');
-  const partial = signature.inferenceComplete ? '' : '<span class="none">(推論は途中まで)</span>';
-  return `<div class="row"><span class="k">使う effect</span><div>${chips}${partial}</div></div>`;
+}
+
+/** effects の欄(開いたカード)。effect が無ければ欄ごと出さない。 */
+function effectRow(signature: LintSignature, glyphs: Glyphs): string {
+  const chips = effectChips(signature, glyphs);
+  const partial = signature.inferenceComplete ? '' : `<span class="none">(${escapeHtml(LABELS.inferencePartial)})</span>`;
+  if (chips === '') {
+    return signature.inferenceComplete ? '' : `<div class="row"><span class="k">${escapeHtml(LABELS.effects)}</span><div>${partial}</div></div>`;
+  }
+  return `<div class="row"><span class="k">${escapeHtml(LABELS.effects)}</span><div>${chips}${partial}</div></div>`;
 }
 
 /** 入れ子の定義の欄の見出し(kind ごと)。 */
 function memberTitle(kind: HyDefinition['kind']): string {
   switch (kind) {
     case 'field':
-      return '欄';
+      return LABELS.fields;
     case 'enum-member':
-      return '値';
+      return LABELS.values;
     case 'effect-clause':
-      return '解く effect';
+      return LABELS.handles;
     case 'method':
-      return 'method';
+      return LABELS.methods;
     default:
       return kind;
   }
+}
+
+/** 入れ子の定義を見出しごとに束ねる(書いた順)。 */
+function memberGroups(card: Card): Array<readonly [string, HyDefinition[]]> {
+  const groups = new Map<string, HyDefinition[]>();
+  for (const member of card.members) {
+    const title = memberTitle(member.kind);
+    groups.set(title, [...(groups.get(title) ?? []), member]);
+  }
+  return [...groups.entries()];
 }
 
 /** 見出しの無い実体の欄(引数の名・基底・入れ子の定義・:check)。 */
 function attributeRows(card: Card): string {
   const d = card.definition;
   const rows: string[] = [];
+  const row = (label: string, body: string): string => `<div class="row"><span class="k">${escapeHtml(label)}</span><div>${body}</div></div>`;
   if (d.params.length > 0) {
-    rows.push(`<div class="row"><span class="k">引数</span><div>${d.params.map((p) => `<span class="p"><span class="n">${escapeHtml(p)}</span></span>`).join('')}</div></div>`);
+    rows.push(row(LABELS.args, d.params.map((p) => `<span class="p"><span class="n">${escapeHtml(p)}</span></span>`).join('')));
   }
   if (d.bases.length > 0) {
-    rows.push(`<div class="row"><span class="k">基底</span><div>${d.bases.map((b) => `<span class="p"><span class="t">${escapeHtml(b)}</span></span>`).join('')}</div></div>`);
+    rows.push(row(LABELS.bases, d.bases.map((b) => `<span class="p"><span class="t">${escapeHtml(b)}</span></span>`).join('')));
   }
-  const groups = new Map<string, HyDefinition[]>();
-  for (const member of card.members) {
-    const title = memberTitle(member.kind);
-    groups.set(title, [...(groups.get(title) ?? []), member]);
-  }
-  for (const [title, members] of groups) {
-    rows.push(`<div class="row"><span class="k">${escapeHtml(title)}</span><div>${members.map((m) => `<span class="p"><span class="n">${escapeHtml(m.name)}</span></span>`).join('')}</div></div>`);
+  for (const [title, members] of memberGroups(card)) {
+    rows.push(row(title, members.map((m) => `<span class="p"><span class="n">${escapeHtml(m.name)}</span></span>`).join('')));
   }
   if (d.checks !== null && d.checks.length > 0) {
-    rows.push(`<div class="row"><span class="k">契約</span><div>${d.checks.map((c) => `<code>${escapeHtml(c)}</code>`).join('')}</div></div>`);
+    rows.push(row(LABELS.contract, d.checks.map((c) => `<code>${escapeHtml(c)}</code>`).join('')));
   }
   return rows.join('');
+}
+
+/** 1 行の形の「args / return type」— `(name: T, …) → R`(見出しの無い実体は入れ子の定義の名・引数の名)。 */
+function lineArgs(card: Card): string {
+  const s = card.signature;
+  if (s !== undefined) {
+    const answer = `<span class="r">${escapeHtml(answerText(s))}</span>`;
+    if (s.params.length >= NAMES_ONLY_PARAMS) {
+      // 引数が多い時は名だけ(型は hover で)。return type は常に出す(v6 2.2 節)
+      const typed = s.params.map((p) => `${p.name}: ${typeText(p.type)}`).join('\n');
+      return `<span class="f f-args" title="${escapeHtml(typed)}">(${s.params.map((p) => escapeHtml(p.name)).join(', ')}) → ${answer}</span>`;
+    }
+    const params = s.params.map((p) => `${escapeHtml(p.name)}: <span class="t">${escapeHtml(typeText(p.type))}</span>`).join(', ');
+    return `<span class="f f-args">(${params}) → ${answer}</span>`;
+  }
+  const groups = memberGroups(card);
+  if (groups.length > 0) {
+    return `<span class="f f-args">${groups.map(([title, ms]) => `${escapeHtml(title)}: ${ms.map((m) => escapeHtml(m.name)).join(', ')}`).join(' · ')}</span>`;
+  }
+  const d = card.definition;
+  return d.params.length === 0 ? '' : `<span class="f f-args">(${d.params.map(escapeHtml).join(', ')})</span>`;
+}
+
+/** 説明の 1 行目(先頭の 1 文を省略記号で切る)。 */
+export function docFirstLine(docstring: string | null, limit = 80): string {
+  if (docstring === null) {
+    return '';
+  }
+  const first = docstring.split('\n')[0].trim();
+  const sentence = /^[^。.!?！？]*[。.!?！？]?/.exec(first)?.[0] ?? first;
+  return sentence.length > limit ? `${sentence.slice(0, limit - 1)}…` : sentence;
+}
+
+/** カードを描く材料(カード以外)。 */
+export interface CardContext {
+  readonly place: string;
+  readonly glyphs: Glyphs;
+  readonly fold: FoldState;
+  /** 呼び先の完全修飾名 → 呼び手と deftest の数 */
+  readonly relations: ReadonlyMap<string, RelationCount>;
 }
 
 /** 元の Hy(source の行番号つき・読むだけ)。 */
@@ -135,37 +241,58 @@ function sourceBox(card: Card, fileLabel: string): string {
   const lines = card.source.split('\n');
   const last = card.firstLine + lines.length - 1;
   const numbered = lines.map((text, i) => `<div><span class="ln">${card.firstLine + i}</span>${escapeHtml(text)}</div>`).join('');
-  return `<div class="srcbox" id="src-${card.id}" hidden><div class="h">元の Hy(読むだけ)· ${escapeHtml(fileLabel)}:${card.firstLine}–${last}</div><div class="code">${numbered}</div></div>`;
+  return `<div class="srcbox" id="src-${card.id}" hidden><div class="h">${escapeHtml(LABELS.hySource)} · ${escapeHtml(fileLabel)}:${card.firstLine}–${last}</div><div class="code">${numbered}</div></div>`;
 }
 
-/** カード 1 枚 — 頭(種類・名・source と editor のボタン・tags のチップ)・引数と答え・使う effect・説明・元の Hy・置き場。 */
-export function renderCard(card: Card, place: string, glyphs: Glyphs, hidden: boolean): string {
+/**
+ * カード 1 枚 — 頭(種類・名・開閉・source と open in editor)は常に。畳んだ時は 1 行(切り替えた欄)、開いた時は
+ * 引数と答え・effects・欄・説明・関係の数・置き場。元の Hy は source ボタンで開閉(畳んでいても出せる)。
+ */
+export function renderCard(card: Card, ctx: CardContext, hidden: boolean): string {
   const d = card.definition;
-  const tags = Object.entries(d.tags ?? {})
-    .map(
-      ([key, value]) =>
-        `<button class="chip ${tagClass(key)}" data-axis="${escapeHtml(`tag:${key}`)}" data-value="${escapeHtml(value)}" title="この値で絞る">${escapeHtml(key)}: ${escapeHtml(value)}</button>`
-    )
-    .join('');
+  const key = cardKey(d);
+  const open = ctx.fold.open.has(key);
+  const tagChips = (cls: string): string =>
+    Object.entries(d.tags ?? {})
+      .map(
+        ([k, value]) =>
+          `<button class="${cls} ${tagClass(k)}" data-axis="${escapeHtml(`tag:${k}`)}" data-value="${escapeHtml(value)}">${escapeHtml(k)}: ${escapeHtml(value)}</button>`
+      )
+      .join('');
   const start = d.fullRange.start;
-  const buttons = `<span class="srcbar"><button class="btn" data-src="${card.id}">source</button><button class="btn" data-line="${start.line}" data-character="${start.character}">editor で開く</button></span>`;
-  const head = `<div class="hd"><span class="kind k-${escapeHtml(d.kind)}">${escapeHtml(d.kind)}</span><span class="name">${escapeHtml(d.name)}</span>${buttons}<span class="chips">${tags}</span></div>`;
+  const toggle = `<button class="fold" data-fold="${escapeHtml(key)}" title="${escapeHtml(open ? LABELS.fold : LABELS.unfold)}">${open ? '▾' : '▸'}</button>`;
+  const buttons = `<span class="srcbar"><button class="btn" data-src="${card.id}">${escapeHtml(LABELS.source)}</button><button class="btn" data-line="${start.line}" data-character="${start.character}">${escapeHtml(LABELS.openInEditor)}</button></span>`;
+  const head = `<div class="hd"><span class="kind k-${escapeHtml(d.kind)}">${escapeHtml(d.kind)}</span><span class="name">${escapeHtml(d.name)}</span>${toggle}${buttons}<span class="chips full-only">${tagChips('chip')}</span></div>`;
+  const relation = ctx.relations.get(d.qualifiedName) ?? { callers: 0, tests: 0 };
+  const relationText = `${LABELS.callers} <b>${relation.callers}</b> · ${LABELS.tests} <b>${relation.tests}</b>`;
+  const location = `${escapeHtml(ctx.place)}:${card.firstLine}`;
+  const doc = docFirstLine(d.docstring);
+  const effects = card.signature === undefined ? '' : effectChips(card.signature, ctx.glyphs);
+  const line = [
+    lineArgs(card),
+    effects === '' ? '' : `<span class="f f-effects">${effects}</span>`,
+    d.tags === null ? '' : `<span class="f f-tags">${tagChips('mini')}</span>`,
+    doc === '' ? '' : `<span class="f f-doc">${escapeHtml(doc)}</span>`,
+    `<span class="f f-relations">${relationText}</span>`,
+    `<span class="f f-location loc">${location}</span>`
+  ].join('');
   const typed = d.kind === 'defk' || d.kind === 'deff';
   const middle =
     card.signature !== undefined
-      ? signatureStrip(card.signature) + effectRow(card.signature, glyphs)
+      ? signatureStrip(card.signature) + effectRow(card.signature, ctx.glyphs)
       : typed
-        ? '<div class="row"><span class="k">型と effect</span><span class="none">linter の答え待ち</span></div>'
+        ? `<div class="row"><span class="k">${escapeHtml(LABELS.argsReturnType)}</span><span class="none">${escapeHtml(LABELS.waitingForLinter)}</span></div>`
         : attributeRows(card);
-  const doc = d.docstring === null ? '' : `<div class="doc">${escapeHtml(d.docstring)}</div>`;
+  const docBlock = d.docstring === null ? '' : `<div class="doc">${escapeHtml(d.docstring)}</div>`;
   const level = worstLevel(card.violations);
   const violations =
     level === undefined
       ? ''
-      : `<span class="viol viol-${level}" title="${escapeHtml(card.violations.map((v) => `${v.rule}: ${v.message}`).join('\n'))}">違反 ${card.violations.length}</span>`;
-  const foot = `<div class="ft">${violations}<span class="loc">${escapeHtml(place)}:${card.firstLine}</span></div>`;
-  const fileLabel = place.split('/').pop() ?? place;
-  return `<section class="card" id="${card.id}"${hidden ? ' hidden' : ''}>${head}${middle}${doc}${sourceBox(card, fileLabel)}${foot}</section>`;
+      : `<span class="viol viol-${level}" title="${escapeHtml(card.violations.map((v) => `${v.rule}: ${v.message}`).join('\n'))}">${escapeHtml(LABELS.violations)} ${card.violations.length}</span>`;
+  const foot = `<div class="ft"><span>${relationText}</span>${violations}<span class="loc">${location}</span></div>`;
+  const fileLabel = ctx.place.split('/').pop() ?? ctx.place;
+  const classes = open ? 'card open' : 'card';
+  return `<section class="${classes}" id="${card.id}" data-key="${escapeHtml(key)}"${hidden ? ' hidden' : ''}>${head}<div class="line">${line}</div><div class="full">${middle}${docBlock}</div>${sourceBox(card, fileLabel)}<div class="full">${foot}</div></section>`;
 }
 
 /** 面の状態 — 索引にその file が無い時・設定で切った時は理由を出す。 */
@@ -179,18 +306,21 @@ export interface PageInput {
   readonly place: string;
   readonly state: PlaneState;
   readonly glyphs: Glyphs;
+  readonly fold: FoldState;
+  readonly relations: ReadonlyMap<string, RelationCount>;
   /** webview の CSP の出どころ(`webview.cspSource`) */
   readonly cspSource: string;
   /** script に付ける 1 回限りの数 */
   readonly nonce: string;
 }
 
-/** 頁の全体(左に軸・右に実体のカード)。 */
+/** 頁の全体(左に軸・上に 1 行の切り替え・右に実体のカード)。 */
 export function renderPage(input: PageInput): string {
+  const ctx: CardContext = { place: input.place, glyphs: input.glyphs, fold: input.fold, relations: input.relations };
   const content = (() => {
     switch (input.state.tag) {
       case 'message':
-        return { axes: '', summary: '', cards: `<p class="message">${escapeHtml(input.state.text)}</p>` };
+        return { axes: '', summary: '', bar: '', cards: `<p class="message">${escapeHtml(input.state.text)}</p>` };
       case 'cards': {
         const { cards, selection } = input.state;
         const shown = new Set(visibleCards(cards, selection).map((c) => c.id));
@@ -198,7 +328,8 @@ export function renderPage(input: PageInput): string {
         return {
           axes: renderFacets(all),
           summary: summaryText(shown.size, cards.length, all),
-          cards: cards.map((c) => renderCard(c, input.place, input.glyphs, !shown.has(c.id))).join('')
+          bar: renderLineBar(input.fold),
+          cards: cards.map((c) => renderCard(c, ctx, !shown.has(c.id))).join('')
         };
       }
       default: {
@@ -215,10 +346,11 @@ export function renderPage(input: PageInput): string {
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <style>${PAGE_STYLE}</style>
 </head>
-<body>
-<aside class="axes"><div id="axes">${content.axes}</div><div class="hint">左の軸はどれからでも入れて、交差できる。数は索引(hy-index)から。カードの tags のチップを押してもその値で絞る。</div></aside>
+<body class="${lineClasses(input.fold)}">
+<aside class="axes"><div id="axes">${content.axes}</div><div class="hint">${escapeHtml(LABELS.axesHint)}</div></aside>
 <main class="main">
-<div class="crumb"><b>${escapeHtml(input.place)}</b><span id="summary">${escapeHtml(content.summary)}</span><button class="btn" id="clear">絞り込みを外す</button></div>
+<div class="crumb"><b>${escapeHtml(input.place)}</b><span id="summary">${escapeHtml(content.summary)}</span><button class="btn" id="clear">${escapeHtml(LABELS.clearFilter)}</button></div>
+${content.bar}
 <div id="cards">${content.cards}</div>
 </main>
 <script nonce="${input.nonce}">${PAGE_SCRIPT}</script>
@@ -226,14 +358,14 @@ export function renderPage(input: PageInput): string {
 </html>`;
 }
 
-/** 頁の見た目(見本 artifacts/v3/entity.html の色と部品に合わせる)。 */
+/** 頁の見た目(見本 artifacts/v5/entity.html の色と部品に合わせる)。 */
 const PAGE_STYLE = `
 html,body{background:#1b1d21;color:#d6d8dc}
 body{font-family:-apple-system,"Hiragino Sans",sans-serif;margin:0;display:grid;grid-template-columns:240px minmax(0,1fr);min-height:100vh}
 button{font:inherit;cursor:pointer}
 .axes{background:#15171a;border-right:1px solid #2c3036;padding:16px 14px;font-size:12.5px;position:sticky;top:0;height:100vh;overflow-y:auto;box-sizing:border-box}
-.axes h2{font-size:11px;letter-spacing:.08em;color:#8a9099;margin:14px 0 6px}
-.axes h2:first-child{margin-top:0}
+.axes h2{font-size:11px;letter-spacing:.08em;color:#8a9099;margin:14px 0 6px;text-transform:uppercase}
+#axes h2:first-child{margin-top:0}
 .fac{display:flex;flex-wrap:wrap;gap:5px}
 .facet{border:1px solid #3a3f47;border-radius:12px;padding:1px 8px;color:#b8bec7;background:#1f2227;font-size:12px}
 .facet small{color:#7d858f;margin-left:4px}
@@ -242,24 +374,52 @@ button{font:inherit;cursor:pointer}
 .facet.empty{opacity:.4}
 .hint{color:#7d858f;font-size:11px;line-height:1.6;margin-top:18px}
 .main{padding:14px 22px 40px;min-width:0}
-.crumb{display:flex;gap:12px;align-items:center;font-size:12px;color:#8a9099;margin-bottom:12px;flex-wrap:wrap}
+.crumb{display:flex;gap:12px;align-items:center;font-size:12px;color:#8a9099;margin-bottom:10px;flex-wrap:wrap}
 .crumb b{color:#c9ced5;font-weight:600;font-family:Menlo,monospace}
-.card{background:#22252a;border:1px solid #33383f;border-radius:10px;margin:0 0 16px;box-shadow:0 1px 0 #000}
+.linebar{display:flex;gap:14px;align-items:center;flex-wrap:wrap;background:#22252a;border:1px solid #33383f;border-radius:8px;padding:8px 14px;margin-bottom:14px;font-size:12.5px;color:#c9ced5}
+.linebar label{display:inline-flex;gap:5px;align-items:center;cursor:pointer}
+.linebar .sep{width:1px;height:16px;background:#3a3f47}
+.card{background:#22252a;border:1px solid #33383f;border-radius:10px;margin:0 0 12px;box-shadow:0 1px 0 #000}
 .card[hidden]{display:none}
-.hd{display:flex;align-items:center;gap:10px;padding:10px 16px;border-bottom:1px solid #33383f;flex-wrap:wrap}
+.card:not(.open) .full,.card:not(.open) .full-only{display:none}
+.card.open .line{display:none}
+.hd{display:flex;align-items:center;gap:10px;padding:9px 16px;flex-wrap:wrap}
+.card.open .hd{border-bottom:1px solid #33383f}
 .kind{font-size:10.5px;font-weight:700;letter-spacing:.06em;color:#1b1d21;background:#e2c46a;border-radius:4px;padding:2px 6px}
 .k-deff{background:#d8cf8a}.k-defn{background:#a8a8a8}.k-defeffect,.k-effect-clause{background:#8fd3ff}.k-defrecord,.k-deftype{background:#b9e39a}
 .k-defhandler{background:#f0a8a8}.k-deftest{background:#c8a8f0}.k-defenum{background:#f0b890}.k-defclass{background:#a0a8ff}.k-variable{background:#bfc5cc}
 .name{font:600 16px Menlo,monospace;color:#f2e6a8}
+.fold{border:1px solid #3a3f47;background:#1b1d21;color:#b8bec7;border-radius:4px;padding:0 6px;font-size:11px}
 .srcbar{display:flex;gap:6px}
 .btn{font-size:11px;border:1px solid #4a76a8;border-radius:5px;padding:2px 8px;color:#bcd8ff;background:#1f2a3a}
 .btn.on{background:#2f4a66}
 .chips{display:flex;gap:6px;flex-wrap:wrap;margin-left:auto}
 .chip{font-size:11px;border-radius:12px;padding:2px 9px;border:1px solid #3a3f47}
+.mini{font-size:10px;border-radius:9px;padding:0 6px;border:1px solid #3a3f47;margin-right:4px}
 .tag-context{background:#3b3220;color:#f0c674;border-color:#5a4a25}
 .tag-role{background:#232f3b;color:#9dd0ff;border-color:#2f4a66}
 .tag-c0{background:#1f3a33;color:#8fe3c8;border-color:#2f5a4d}.tag-c1{background:#3b2233;color:#f0a0c8;border-color:#5a2f4a}.tag-c2{background:#2f2640;color:#c8a8f0;border-color:#4a3a66}
 .tag-c3{background:#3b2a20;color:#f0b890;border-color:#5a3f2f}.tag-c4{background:#2a3320;color:#c8e39a;border-color:#3f4a2f}.tag-c5{background:#2c2f33;color:#d6d8dc;border-color:#454a52}
+.line{display:flex;gap:12px;align-items:center;flex-wrap:wrap;padding:0 16px 9px;font:12.5px Menlo,monospace;color:#d6d8dc}
+.line .f{display:none;align-items:center;gap:4px}
+.show-args .line .f-args,.show-effects .line .f-effects,.show-tags .line .f-tags,.show-doc .line .f-doc,.show-relations .line .f-relations,.show-location .line .f-location{display:inline-flex}
+.show-args .line .f-args{display:inline}
+.line .f-doc{font:12px -apple-system,"Hiragino Sans",sans-serif;color:#b8bec7}
+.line .f-relations{font:12px -apple-system,sans-serif;color:#b8bec7}
+.line .f-location{margin-left:auto}
+.line .eff{margin:0 4px 0 0;padding:0 6px}
+.t{color:#4ec9b0}.r{color:#9fe3c0}
+.sig2{display:grid;grid-template-columns:max-content minmax(0,1fr);gap:4px 18px;padding:10px 16px;align-items:baseline;font:13px Menlo,monospace}
+.sig2 .lab{color:#8a9099;font:11px -apple-system,sans-serif;letter-spacing:.06em;text-transform:uppercase;grid-column:1/3}
+.sig2 .n{color:#d6d8dc}
+.sig2 .rt{grid-column:1/3;display:grid;grid-template-columns:max-content minmax(0,1fr);gap:4px 18px;background:#1f2a24;border:1px solid #2f5a45;border-radius:6px;padding:6px 10px;margin-top:6px}
+.sig2 .rt .k{color:#7fbf9f;font:11px -apple-system,sans-serif;letter-spacing:.06em;text-transform:uppercase;align-self:center}
+.tc{display:inline-flex;gap:4px;flex-wrap:wrap;align-items:center}
+.tc span{background:#1b1d21;border:1px solid #2f4a45;border-radius:4px;padding:1px 6px;color:#4ec9b0}
+.tc span.none{border-style:dashed;color:#7d858f;border-color:#3a3f47}
+.tc i{color:#5f6670;font-style:normal}
+.rt .tc span{color:#9fe3c0;border-color:#2f5a45}
+.rt .tc span.none{color:#7d858f;border-color:#3a3f47}
 .sig{display:flex;align-items:center;gap:8px;padding:10px 16px;flex-wrap:wrap;font:13px Menlo,monospace}
 .p{display:inline-flex;align-items:center;gap:6px;background:#1b1d21;border:1px solid #3a3f47;border-radius:6px;padding:3px 8px;margin:0 6px 4px 0;font:12.5px Menlo,monospace}
 .sig .p{margin:0}
@@ -268,7 +428,7 @@ button{font:inherit;cursor:pointer}
 .ret{display:inline-flex;align-items:center;background:#1f2a24;border:1px solid #2f5a45;border-radius:6px;padding:3px 10px;color:#9fe3c0}
 .row{display:grid;grid-template-columns:96px minmax(0,1fr);gap:10px;padding:8px 16px;border-top:1px solid #2c3036;font-size:12.5px;align-items:start}
 .row .k{color:#8a9099;padding-top:3px}
-.eff{display:inline-flex;align-items:center;gap:6px;background:#1b1d21;border:1px solid #3a3f47;border-radius:6px;padding:3px 8px;margin:0 6px 4px 0;font:12px Menlo,monospace}
+.eff{display:inline-flex;align-items:center;gap:6px;background:#1b1d21;border:1px solid #3a3f47;border-radius:6px;padding:3px 8px;margin:0 6px 4px 0;font:12px Menlo,monospace;color:#8fd3ff}
 .eff img{width:14px;height:14px;image-rendering:pixelated}
 .eff.raise{color:#f08c8c;border-color:#7a2f2f}
 .none{color:#7d858f;font-size:12px}
@@ -281,20 +441,27 @@ code{font:12px Menlo,monospace;background:#1b1d21;border:1px solid #3a3f47;borde
 .srcbox .code div{white-space:pre;min-height:1.6em}
 .ln{display:inline-block;width:2.8em;color:#555b63;text-align:right;margin-right:1.1em;user-select:none;font-size:11px}
 .ft{display:flex;gap:18px;align-items:center;padding:7px 16px;border-top:1px solid #33383f;font-size:12px;color:#b8bec7;flex-wrap:wrap}
+.ft b{color:#e6e9ee}
 .loc{margin-left:auto;color:#7d858f;font:11px Menlo,monospace}
 .viol{font-size:11px;border-radius:4px;padding:1px 6px}
 .viol-critical{background:#5a1d1d;color:#ffb0b0}.viol-major{background:#5a3a1d;color:#ffd0a0}.viol-minor{background:#3a3a1d;color:#e6e0a0}.viol-info{background:#1d3a5a;color:#a0c8ff}
 .message{color:#8a9099;margin-top:24px}
 `;
 
-/** 頁の動き — 軸の札・tags のチップ・行の移動は拡張へ送り、拡張の答え(絞った結果)を描く。絞る判断は拡張の側(model.ts)だけ。source の開閉だけは頁の中で閉じる。 */
+/**
+ * 頁の動き — 軸の札・tags のチップ・行の移動・畳む・1 行の切り替えは拡張へ送り、拡張の答えを描く(判断と覚えるのは拡張の側)。
+ * source の開閉だけは頁の中で閉じる(覚えない)。
+ */
 const PAGE_SCRIPT = `
 const vscode = acquireVsCodeApi();
 document.addEventListener('click', (event) => {
-  const target = event.target instanceof Element ? event.target.closest('[data-axis],[data-line],[data-src],#clear') : null;
+  const target = event.target instanceof Element ? event.target.closest('[data-axis],[data-line],[data-src],[data-fold],#clear,#fold-all,#unfold-all') : null;
   if (target === null) { return; }
   event.preventDefault();
   if (target.id === 'clear') { vscode.postMessage({ type: 'clear' }); return; }
+  if (target.id === 'fold-all') { vscode.postMessage({ type: 'fold-all' }); return; }
+  if (target.id === 'unfold-all') { vscode.postMessage({ type: 'unfold-all' }); return; }
+  if (target.hasAttribute('data-fold')) { vscode.postMessage({ type: 'fold', key: target.getAttribute('data-fold') }); return; }
   if (target.hasAttribute('data-src')) {
     const box = document.getElementById('src-' + target.getAttribute('data-src'));
     if (box !== null) { box.hidden = !box.hidden; target.classList.toggle('on', !box.hidden); }
@@ -306,13 +473,32 @@ document.addEventListener('click', (event) => {
   }
   vscode.postMessage({ type: 'toggle', axis: target.getAttribute('data-axis'), value: target.getAttribute('data-value') });
 });
+document.addEventListener('change', (event) => {
+  const target = event.target;
+  if (target instanceof HTMLInputElement && target.hasAttribute('data-line-field')) {
+    vscode.postMessage({ type: 'line', field: target.getAttribute('data-line-field') });
+  }
+});
 window.addEventListener('message', (event) => {
   const message = event.data;
-  if (message.type !== 'filter') { return; }
-  document.getElementById('axes').innerHTML = message.axes;
-  document.getElementById('summary').textContent = message.summary;
-  const shown = new Set(message.visible);
-  for (const card of document.querySelectorAll('.card')) { card.hidden = !shown.has(card.id); }
-  window.scrollTo(0, 0);
+  if (message.type === 'filter') {
+    document.getElementById('axes').innerHTML = message.axes;
+    document.getElementById('summary').textContent = message.summary;
+    const shown = new Set(message.visible);
+    for (const card of document.querySelectorAll('.card')) { card.hidden = !shown.has(card.id); }
+    window.scrollTo(0, 0);
+    return;
+  }
+  if (message.type === 'fold') {
+    const open = new Set(message.open);
+    for (const card of document.querySelectorAll('.card')) {
+      const isOpen = open.has(card.getAttribute('data-key'));
+      card.classList.toggle('open', isOpen);
+      const button = card.querySelector('[data-fold]');
+      if (button !== null) { button.textContent = isOpen ? '▾' : '▸'; }
+    }
+    document.body.className = message.lineClasses;
+    for (const box of document.querySelectorAll('[data-line-field]')) { box.checked = message.line.includes(box.getAttribute('data-line-field')); }
+  }
 });
 `;

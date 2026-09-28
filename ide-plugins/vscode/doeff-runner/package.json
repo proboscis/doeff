@@ -530,7 +530,7 @@
         "doeff-runner.hy.readingPlane.enabled": {
           "type": "boolean",
           "default": true,
-          "markdownDescription": "定義を読む面(webview)を使う。定義 1 つを 1 枚のカードにし、kind と `:tags` の軸で絞る。切ると今の装飾と「タグで閲覧」だけになる(agora-redesign #910)。"
+          "markdownDescription": "定義を読む面(webview)を使う。`.hy` を開いた時の既定はこの面で、定義 1 つを 1 枚のカードにし、kind と `:tags` の軸で絞る。切ると `.hy` は今の editor で開き、今の装飾と「タグで閲覧」だけになる(agora-redesign #910)。"
         },
         "doeff-runner.hy.browseViews": {
           "type": "array",
@@ -719,7 +719,7 @@
             "filenamePattern": "*.hy"
           }
         ],
-        "priority": "option"
+        "priority": "default"
       }
     ],
     "menus": {
