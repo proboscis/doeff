@@ -161,6 +161,14 @@ def mislabelled_tick_handler(step=1.0):
 
 mislabelled_tick_handler.__doeff_handles__ = (Unseen,)
 mislabelled_tick_handler.__doeff_effects__ = ()
+
+
+def early_return_handlers(flag):
+    from {pkg}.handlers import nap_clock, ticker
+
+    if flag:
+        return [ticker]
+    return [ticker, nap_clock]
 """
 
 ENVS_HY = """\
@@ -201,6 +209,14 @@ ENVS_HY = """\
 (defk no-handlers []
   {:pre [] :post [(: % list)] :tags {:context "analyzer-test" :role "foundation"}}
   [])
+
+(defk chosen-handlers [flag]
+  {:pre [(: flag bool)] :post [(: % list)] :tags {:context "analyzer-test" :role "foundation"}}
+  (if flag [translate ticker] [translate ticker]))
+
+(defk branching-handlers [flag]
+  {:pre [(: flag bool)] :post [(: % list)] :tags {:context "analyzer-test" :role "foundation"}}
+  (if flag [ticker] [ticker nap-clock]))
 
 (deff production-foundation [program]
   {:pre [(: program DoExpr)] :post [(: % DoExpr)] :tags {:context "analyzer-test" :role "foundation"}}
@@ -726,3 +742,17 @@ def test_a_bind_opens_a_declared_answer_into_absent_and_raise(pkg: str) -> None:
     assert _types(refused.effect_types) == {"Lookup", "Raise"}
     folded = analyze_program(f"{pkg}.outcomes:looked_up")  # result answers Raise
     assert _types(folded.effect_types) == {"Lookup", "Absent"}
+
+
+def test_a_builder_is_read_on_every_path_it_can_return(pkg: str) -> None:
+    # Only the last return used to be read: early_return_handlers answered
+    # [ticker, nap_clock] although the early path installs ticker alone (Nap leaves).
+    same = analyze_env(f"{pkg}.envs:chosen_handlers", bindings={"flag": True})
+    assert [h.name for h in same] == ["translate", "ticker"]
+    for builder in (f"{pkg}.envs:branching_handlers", f"{pkg}.runtimes:early_return_handlers"):
+        [entry] = analyze_env(builder, bindings={"flag": True})
+        assert entry.basis is Basis.UNREAD, builder
+        assert entry.unresolved[0].reason == "builder returns different handler lists on its paths"
+    napping = analyze_program(f"{pkg}.programs:napping")
+    env = analyze_env(f"{pkg}.runtimes:early_return_handlers", bindings={"flag": True})
+    assert not check_coverage(napping, env).complete
