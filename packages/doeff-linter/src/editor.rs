@@ -127,6 +127,8 @@ pub struct EditorReport {
     pub signatures: Vec<crate::project::signatures::Signature>,
     /// `--stdin` の file の束縛(`<-`・val・var・setv・:=)の型(版 2・全体の実行では空)。
     pub bindings: Vec<crate::project::signatures::Binding>,
+    /// `--stdin` の file の定義の本体の呼びを `f(a, b)` の形で見せる表示の置き換え(版 2 への欄の追加・全体の実行では空・17 節)。
+    pub rewrites: Vec<crate::project::call_view::Rewrite>,
     pub modules: Vec<EditorModule>,
     pub rules: Vec<EditorRule>,
     pub errors: Vec<String>,
@@ -253,6 +255,7 @@ pub fn build(input: &EditorInput) -> EditorReport {
         violations,
         signatures: input.signatures.map(|s| s.signatures.clone()).unwrap_or_default(),
         bindings: input.signatures.map(|s| s.bindings.clone()).unwrap_or_default(),
+        rewrites: input.signatures.map(|s| s.rewrites.clone()).unwrap_or_default(),
         modules,
         rules: rule_list(input),
         errors,
