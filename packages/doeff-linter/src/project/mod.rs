@@ -187,7 +187,7 @@ pub fn run_with(root: &Path, settings: &ProjectSettings, enabled: &BTreeSet<Proj
     // hy-index の file(生の副作用の証拠つき)— DOEFF119 と、DOEFF119 が何も出さない class だけを問う DOEFF204 が同じ物を読む。
     let mut indexes: HashMap<String, HyFileIndex> = HashMap::new();
     let mut report = ProjectReport::default();
-    let mut registry = Registry::load(root, &settings.registry.dirs, &settings.registry.files);
+    let mut registry = crate::timing::timed("registry", || Registry::load(root, &settings.registry.dirs, &settings.registry.files));
     if !settings.registry.config_files.is_empty() {
         let base = settings.config_dir.clone().unwrap_or_else(|| root.to_path_buf());
         let extra = Registry::load(&base, &[], &settings.registry.config_files);
@@ -370,11 +370,11 @@ pub fn run_with(root: &Path, settings: &ProjectSettings, enabled: &BTreeSet<Proj
             if let (Some(index), Some(rel)) = (&hy_file, &rel) {
                 indexes.insert(rel.clone(), index.clone());
             }
-            let effect_world = rel.as_ref().and_then(|rel| effect_world_for(root, settings, enabled, Some((rel.as_str(), source))));
+            let effect_world = crate::timing::timed("effect-world", || rel.as_ref().and_then(|rel| effect_world_for(root, settings, enabled, Some((rel.as_str(), source)))));
             if let (Some(layers), Some(rel)) = (&settings.layers, &rel) {
                 if let Some((site, language)) = classify_layer_file(rel, layers).or_else(|| infer_layer_site(rel, source, layers)) {
                     let file = LayerFile { file: SourceFile { rel: rel.clone(), path: path.clone(), language }, module: module_of(rel), site };
-                    let mut layer_files = collect_layer_files(root, layers);
+                    let mut layer_files = crate::timing::timed("layer-files", || collect_layer_files(root, layers));
                     layer_files.push(file.clone());
                     let index = module_index(&layer_files);
                     let judged = judge_layer_file(&file, source, layers, settings, enabled, &index, hy_file.as_ref());
@@ -401,9 +401,10 @@ pub fn run_with(root: &Path, settings: &ProjectSettings, enabled: &BTreeSet<Proj
                 {
                     let file = SourceFile { rel: rel.clone(), path: path.clone(), language: Language::Hy };
                     drafts.extend(judge_definitions(&file, source, definitions, enabled, plain_callable_reasons(settings), hy_file.as_ref()));
-                    drafts.extend(judge_smells(&file, source, settings, definitions, enabled, &failure_types_for(root, enabled, &definitions.tags)));
-                    let defks = defk_names_for(root, enabled);
-                    let program_params = program_params_for(root, enabled, &defks);
+                    let failure = crate::timing::timed("failure-types", || failure_types_for(root, enabled, &definitions.tags));
+                    drafts.extend(judge_smells(&file, source, settings, definitions, enabled, &failure));
+                    let defks = crate::timing::timed("defk-names", || defk_names_for(root, enabled));
+                    let program_params = crate::timing::timed("program-params", || program_params_for(root, enabled, &defks));
                     drafts.extend(judge_bare_calls(&file, source, definitions, enabled, &defks, &program_params));
                     if enabled.contains(&ProjectRule::EffectsDisagreeWithInference) {
                         drafts.extend(judge_effect_mismatches(&file, source, definitions, effect_world.as_ref()));
@@ -448,7 +449,7 @@ pub fn run_with(root: &Path, settings: &ProjectSettings, enabled: &BTreeSet<Proj
                 tags: settings.definitions.as_ref().map(|d| d.tags.clone()),
                 indexes: &indexes,
             };
-            let (found, summary, errors) = judge_semantic(root, semantic, layers, enabled, &semantic_files, semantic_mode, &plain);
+            let (found, summary, errors) = crate::timing::timed("semantic", || judge_semantic(root, semantic, layers, enabled, &semantic_files, semantic_mode, &plain));
             drafts.extend(found);
             report.errors.extend(errors);
             report.semantic = Some(summary);

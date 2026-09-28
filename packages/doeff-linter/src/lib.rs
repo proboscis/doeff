@@ -21,6 +21,7 @@ pub mod project;
 pub mod report;
 pub mod rule_info;
 pub mod rules;
+pub mod timing;
 pub mod stats;
 pub mod utils;
 
