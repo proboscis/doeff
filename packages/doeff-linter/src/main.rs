@@ -394,7 +394,117 @@ fn project_results(report: &ProjectReport, only: Option<&[PathBuf]>) -> Vec<Lint
         .collect()
 }
 
+
+/// `doeff-linter fix <変換>` — 書き換えの命令(違反を報告する本体の命令とは別の口)。
+#[derive(Parser, Debug)]
+#[command(name = "doeff-linter fix", about = "機械的に直せる違反を書き換える")]
+struct FixCli {
+    #[command(subcommand)]
+    command: FixCommand,
+}
+
+#[derive(clap::Subcommand, Debug)]
+enum FixCommand {
+    /// Hy の defn を defk に直し、repo の中の呼び手を <- / ! に書き換える(DOEFF110・DOEFF126)
+    DefnToDefk(DefnToDefkArgs),
+}
+
+#[derive(clap::Args, Debug)]
+struct DefnToDefkArgs {
+    /// 変換する定義を探す file か dir(複数可)
+    #[arg(long, required = true)]
+    path: Vec<PathBuf>,
+    /// repo の根(呼び手を探す範囲)。既定は path から上へ探した .git のある dir
+    #[arg(long)]
+    root: Option<PathBuf>,
+    /// file を書かずに計画だけを出す
+    #[arg(long)]
+    dry_run: bool,
+    /// 出力の形: text(人が読む表)・json
+    #[arg(long, default_value = "text")]
+    output_format: String,
+    /// 報告の JSON を書く file(出力の形と別に)
+    #[arg(long)]
+    report: Option<PathBuf>,
+    /// 呼び手を全部書き換えられる関数だけを変換する(既定は変換して、書き換えられない呼び手を判断の要る物に出す)
+    #[arg(long)]
+    strict: bool,
+    /// 除く path(根からの前方一致・既定の clients/hy/acp_client と docs/design-checks に足す)
+    #[arg(long, value_delimiter = ',')]
+    exclude: Vec<String>,
+}
+
+/// `fix` の命令を走らせる。終了コード 0 = 残った素の呼びなし・1 = 残った素の呼びあり・2 = 引数・読み書きの誤り。
+fn run_fix(argv: &[String]) -> ExitCode {
+    let cli = FixCli::parse_from(argv.iter().skip(1));
+    let FixCommand::DefnToDefk(args) = cli.command;
+    let targets: Vec<PathBuf> = match args.path.iter().map(|p| p.canonicalize().map_err(|e| format!("{} を読めない: {}", p.display(), e))).collect() {
+        Ok(targets) => targets,
+        Err(reason) => {
+            eprintln!("doeff-linter fix: {}", reason);
+            return ExitCode::from(2);
+        }
+    };
+    let root = match args.root.as_ref().map(|r| r.canonicalize()).transpose() {
+        Ok(Some(root)) => root,
+        Ok(None) => match targets.first().and_then(|t| t.ancestors().find(|a| a.join(".git").exists()).map(Path::to_path_buf)) {
+            Some(root) => root,
+            None => {
+                eprintln!("doeff-linter fix: repo の根(.git のある dir)が見つからない — --root で渡す");
+                return ExitCode::from(2);
+            }
+        },
+        Err(error) => {
+            eprintln!("doeff-linter fix: --root を読めない: {}", error);
+            return ExitCode::from(2);
+        }
+    };
+    // deff の理由の印は repo の設定([tool.doeff-linter.definitions] deff_reason_marker)から — 読めなければ既定。
+    let reason_marker = config::load_config_checked(None, &root)
+        .ok()
+        .flatten()
+        .and_then(|loaded| loaded.config.project_settings_with(None).ok())
+        .and_then(|settings| settings.definitions.map(|d| d.deff_reason_marker))
+        .unwrap_or_else(|| project::defn_to_defk::DEFAULT_REASON_MARKER.to_string());
+    let mut excludes: Vec<String> = project::defn_to_defk::DEFAULT_EXCLUDES.iter().map(|s| s.to_string()).collect();
+    excludes.extend(args.exclude.iter().cloned());
+    let options = project::defn_to_defk::FixOptions { root, targets, excludes, reason_marker, write: !args.dry_run, strict: args.strict };
+    let report = match project::defn_to_defk::run(&options) {
+        Ok(report) => report,
+        Err(reason) => {
+            eprintln!("doeff-linter fix: {}", reason);
+            return ExitCode::from(2);
+        }
+    };
+    let json = match serde_json::to_string_pretty(&report) {
+        Ok(json) => json,
+        Err(error) => {
+            eprintln!("doeff-linter fix: 報告を JSON にできない: {}", error);
+            return ExitCode::from(2);
+        }
+    };
+    if let Some(path) = &args.report {
+        if let Err(error) = std::fs::write(path, &json) {
+            eprintln!("doeff-linter fix: {} を書けない: {}", path.display(), error);
+            return ExitCode::from(2);
+        }
+    }
+    match args.output_format.as_str() {
+        "json" => println!("{}", json),
+        _ => print!("{}", report.table()),
+    }
+    if report.residual_bare_calls.is_empty() {
+        ExitCode::SUCCESS
+    } else {
+        ExitCode::from(1)
+    }
+}
+
 fn main() -> ExitCode {
+    let argv: Vec<String> = std::env::args().collect();
+    if argv.get(1).map(String::as_str) == Some("fix") {
+        return run_fix(&argv);
+    }
     let args = Args::parse();
 
     if args.hook {

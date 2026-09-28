@@ -274,6 +274,27 @@ shape_check_layers` に挙げた判断の層の file だけ、DOEFF122〜125 は
 module まで解く)。DOEFF205 は役が judgment / program の定義に形の検めと判断が混ざっているかを Jev に問います
 (`[tool.doeff-linter.semantic] mixed_concerns = { layer = "core" }`)。詳しくは [docs/SPECIFICATION.md](docs/SPECIFICATION.md) の 14 節。
 
+## 書き換えの命令(fix)
+
+```bash
+# defn を defk に直し、repo の中の呼び手を <- / ! に書き換える(DOEFF110・DOEFF126)
+doeff-linter fix defn-to-defk --path scripts/module_tags.hy
+doeff-linter fix defn-to-defk --path controllers/intent --dry-run          # 書かずに計画だけ
+doeff-linter fix defn-to-defk --path scripts --report /tmp/fix.json        # 報告の JSON も書く
+doeff-linter fix defn-to-defk --path scripts --strict                      # 呼び手を全部直せる関数だけ変換する
+```
+
+- 定義: `(defn #^ R 名 [#^ T x …] …)` → `(defk 名 [x …] {:pre [(: x T) …] :post [(: % R)]} …)`。契約は `#^` の注記から組みます(defk の
+  macro が全部の引数の型と戻り値の型を要るので)。`(get list int)` のような型の引数つきの型は契約に元の型を書き、引数の注記は残します。
+  既定値が None の引数は `(| T None)`、`float` は `(| float int)`。既にある `{:pre … :post … :tags …}` は残し、足りない鍵だけ足します。
+- 呼び手: 名 1 つへの束ね `(setv x (f a))`・`(val x (f a))` は `(<- x (f a))`、それ以外(末尾も)は `(! (f a))`。file の require に `defk`・`<-`
+  が無ければ足します(`!` は defk の macro が展開する記号で、require する macro ではありません)。
+- 書き換えない所(判断の要る物に出す): 内包表記の中・素の関数(defn・deff・fn)の中・module の最上位・macro の中・`->` の段・関数そのものを
+  値として渡す所・Python と toml からの参照・import の別名。既に `<-` / `!` / `run` へ渡している defn は Program を返す組み立てなので変換しません。
+- 当てない形: dunder・`:async`・`defk にできない:`(設定の `definitions.deff_reason_marker`)か「defn のまま」の註・`eval-and-compile` の中・
+  class の method・除いた path(既定 `clients/hy/acp_client`・`docs/design-checks`、`--exclude` で足す)。
+- 変換の後に同じ読み手で DOEFF126 を撃ち、残った素の呼びを報告します。終了コード 0 = 残りなし・1 = 残りあり・2 = 誤り。
+
 ## エディタ向けの出力(editor-json)
 
 ```bash
