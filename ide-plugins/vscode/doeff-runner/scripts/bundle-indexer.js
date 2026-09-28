@@ -11,6 +11,7 @@
 
 const { execFileSync } = require('child_process');
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
 
 const EXTENSION_DIR = path.join(__dirname, '..');
@@ -44,10 +45,45 @@ function verifyHyIndex(binary) {
   execFileSync(binary, ['hy-index', '--help'], { stdio: 'ignore' });
 }
 
+/** 拡張が読む索引の契約の版(src/hy/contract.ts の HY_INDEX_CONTRACT_VERSION — 正本はそこ 1 か所)。 */
+function expectedContractVersion() {
+  const source = fs.readFileSync(path.join(EXTENSION_DIR, 'src', 'hy', 'contract.ts'), 'utf8');
+  const found = /export const HY_INDEX_CONTRACT_VERSION = (\d+);/.exec(source);
+  if (found === null) {
+    throw new Error('src/hy/contract.ts に HY_INDEX_CONTRACT_VERSION が無い');
+  }
+  return Number(found[1]);
+}
+
+/**
+ * 同梱する binary の索引の契約の版が、拡張の読む版と同じことを確かめる — 版が違うと拡張は索引を丸ごと捨て、読む面・「タグで閲覧」・
+ * 移動が空になる(版 4 の U7・版 5 の U8 で、binary と拡張は同時に更新が要る)。小さな Hy の file を 1 つ索引にして版を読む。
+ */
+function verifyContractVersion(binary) {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bundle-indexer-'));
+  try {
+    fs.writeFileSync(path.join(root, 'probe.hy'), '(defn probe [] 1)\n');
+    const out = execFileSync(binary, ['hy-index', '--root', root], { encoding: 'utf8', maxBuffer: 16 * 1024 * 1024 });
+    const version = JSON.parse(out).version;
+    const expected = expectedContractVersion();
+    if (version !== expected) {
+      throw new Error(`同梱の doeff-indexer の索引の契約は版 ${version}、拡張が読むのは版 ${expected}(同じ commit から組むこと)`);
+    }
+    console.log(`[bundle-indexer] 索引の契約の版 ${version} が拡張と合っている`);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+}
+
 function verifyPrebuilt() {
   const missing = ALL_BINARIES.filter((name) => !fs.existsSync(path.join(BIN_DIR, name)));
   if (missing.length > 0) {
     throw new Error(`CI の vsix に同梱の doeff-indexer が足りない: ${missing.join(', ')}`);
+  }
+  // この機体で走る binary だけは版まで確かめる(他の platform の binary は走らせられない)
+  const host = path.join(BIN_DIR, hostBinaryName());
+  if (fs.existsSync(host)) {
+    verifyContractVersion(host);
   }
   console.log(`[bundle-indexer] CI: 同梱の doeff-indexer ${ALL_BINARIES.length} 本を確かめた`);
 }
@@ -69,6 +105,7 @@ function buildHost() {
   fs.chmodSync(tmp, 0o755);
   fs.renameSync(tmp, dest);
   verifyHyIndex(dest);
+  verifyContractVersion(dest);
   console.log(`[bundle-indexer] 同梱の doeff-indexer を置いた: ${dest}`);
 }
 
