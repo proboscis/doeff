@@ -1032,7 +1032,7 @@ defk {name}: {{:post [...]}} is required.
    quality checker (dotfiles agent/quality/hy_dsl.py effect_bind) projects the
    same isinstance and relies on this guarantee existing.
    B = 束ね 1 つの式(outcome-forms の open-form): open-bind の答えが Pure ならその値、それ以外は yield した答え
-     (<- expr)           → B = (if (is (type (:= b (open-bind expr))) Pure) b.value (yield b))
+     (<- expr)           → B = (if (is (. (:= b (open-bind expr)) __class__) Pure) b.value (yield b))
      (<- name expr)      → (setv name B)
      (<- name Type expr) → (do (setv name B)
                                (assert (isinstance name Type) \"expected Type, got <actual>\"))
