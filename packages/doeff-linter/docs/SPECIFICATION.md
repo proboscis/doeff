@@ -137,9 +137,23 @@ warning の違反 **DOEFF100**(設定の知らない鍵)を出す(agora-redesign
 | `translation_effects` | `handler_layers`・`intent_layers`・`max_depth`(DOEFF130 — 21 節) | protocol・intent・8 |
 | `registry` | `dirs`(1 鍵 1 file の dir)・`files`(1 行 1 鍵)・`config_files`(1 行 1 鍵・設定 file の dir からの相対)・`reconciling` | dirs と files は repo の根から |
 | `rules.<ID>` | `registered_severity`(登録簿に載った破れの重さ: error・warning・info) | warning |
-| `rules.<ID>` | `level`(規則の重大さ: critical・major・minor・info。どの規則でも書ける。登録簿で下げない — エディタが「手つかずの critical」を数える軸) | 規則そのものの重さから(error = major・warning = minor・info = info) |
+| `rules.<ID>` | `level`(規則の重大さ: critical・major・minor・info。どの規則でも書ける。登録簿で下げない — エディタが「手つかずの critical」を数える軸) | 下の「既定の重大さ」の表、表に無い規則は規則そのものの重さから(error = major・warning = minor・info = info) |
 
 `enable`・`disable` は Python の規則と層の規則の両方に効く(`ALL` は両方を含む)。
+
+### 既定の重大さ(agora-redesign #1041)
+
+責務の境界の違反は、どの repo でも critical(operator 2026-09-29 "responsibility boundary violations are always CRITICAL to make our
+doeff code testable")。repo ごとに写すと片方が黙って古くなるので、既定の表は doeff-linter の 1 か所(`ProjectRule::default_level` —
+網羅の match で、新しい規則は決めずに足せない)に置き、repo の設定の `rules.<ID>.level` は既定と違う所だけを書く(書けば repo の宣言が勝つ)。
+
+| 既定 | 規則 |
+|---|---|
+| critical — 責務の境界 | DOEFF101(層の向き)・102(層で禁じた module)・103(型だけの層の関数)・106(生の副作用の直接の証拠)・109(service の境界)・116(service の依存)・130(翻訳の handler が業務の intent を出す)・201(翻訳の層の業務の判断・Jev)・202(判断の層の通信の手段・Jev)・205(形の検めと判断の混ざり・Jev) |
+| critical — そのほか | DOEFF114・115(宣言に無い置き場所)・126(defk を素で呼ぶ — Program が値として流れる)・128(読めない file — 判定が欠け、0 件に見えても合格ではない) |
+| 規則そのものの重さから | 上に無い規則の全部(Python の文ごとの規則 DOEFF001〜031 も) |
+
+Jev の規則(201・202・205)は確率で info にも出るが、level は規則の軸なので info の当たりも critical に数える(外れは誤判定の一覧へ — 10 節)。
 
 ## 4. 母集団
 
@@ -279,10 +293,13 @@ intent の層は Tach の interfaces に当たる — 別の service が読ん�
 
 決定的な規則では読めない「コードが何をしているか」を、Jev(TypeSafe の System One の model)に Noul(確率)の問いで問う。
 
-| 規則 | 問い(英語のまま・`src/project/semantic.rs` の 1 か所) | 当てる層(設定) | 既定の閾値 |
-|---|---|---|---|
-| DOEFF201 | 要求を相手の話し方へ言い換えるのを越えて、業務の判断(誰に許すか・業務の決まり・宛先・業務の結果)をしているか(jev-lint の J2) | `semantic.business_decision.layers` | warning p ≥ 0.8・info p ≥ 0.6 |
-| DOEFF202 | 通信の手段(URL や query・HTTP の method や status・JSON の wire・SQL・宛先の address)を知っているか(jev-lint の J3) | `semantic.transport_knowledge.layers` | warning p ≥ 0.6・info p ≥ 0.4 |
+| 規則 | 問い(英語のまま・`src/project/semantic.rs` の 1 か所) | 当てる層(設定) | 既定の閾値 | 既定の重大さ(3 節) |
+|---|---|---|---|---|
+| DOEFF201 | 要求を相手の話し方へ言い換えるのを越えて、業務の判断(誰に許すか・業務の決まり・宛先・業務の結果)をしているか(jev-lint の J2) | `semantic.business_decision.layers` | warning p ≥ 0.8・info p ≥ 0.6 | critical |
+| DOEFF202 | 通信の手段(URL や query・HTTP の method や status・JSON の wire・SQL・宛先の address)を知っているか(jev-lint の J3) | `semantic.transport_knowledge.layers` | warning p ≥ 0.6・info p ≥ 0.4 | critical |
+| DOEFF203 | deff の理由の註が受け入れる理由に当たるか(11 節) | `semantic.plain_callable` | warning_min 0.4・info_min 0.4 | 重さから |
+| DOEFF204 | 処理を持つ method のある class が value / external-world / stateful / other のどれか(12 節) | `semantic.class_role` | warning_min 0.7・info_min 0.5 | 重さから |
+| DOEFF205 | judgment / program の定義が形の検めと判断を混ぜているか(14 節) | `semantic.mixed_concerns` | warning_min 0.7・info_min 0.5 | critical |
 
 - **撃つのは `--semantic`(path の引数の file、`--stdin` なら `--path` の file、無ければ git で変わった file)と `--semantic-all`(設定した層の全定義)の時だけ。**
   `--semantic-changed` を足すと、そのうち手元の cache に答えの無い定義(中身が変わった定義)だけを撃つ(エディタが編集中に打つのが止まった時に使う)。

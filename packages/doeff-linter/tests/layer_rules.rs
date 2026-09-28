@@ -174,6 +174,8 @@ fn import_direction_bad_and_good_in_hy_and_python() {
     assert_eq!(hy["adr"], "ADR-TEST");
     assert_eq!(hy["severity"], "error");
     assert_eq!(hy["registered"], false);
+    // 責務の境界の規則は宣言が無くても既定で critical(agora-redesign #1041)。
+    assert_eq!(hy["level"], "critical");
     // 位置は import の記号 send(1 行目の 27〜31 列)。
     assert_eq!(hy["range"]["start"], serde_json::json!({"line": 0, "character": 27}));
     assert_eq!(hy["range"]["end"], serde_json::json!({"line": 0, "character": 31}));
@@ -868,10 +870,17 @@ level = "critical"
     assert_eq!(fresh["severity"], "error");
     assert_eq!(fresh["standing"], "new");
     assert_eq!(fresh["level"], "critical");
-    // 宣言の無い規則は規則そのものの重さから(error = major)。
+    // 宣言も既定の表も無い規則は規則そのものの重さから(error = major)。
     let dir = definition_repo(&[("app/a.hy", source)], "");
     let (_, report) = editor(dir.path());
     assert_eq!(violation(&report, "app/a.hy::DOEFF110::old")["level"], "major");
+    // 既定の表の規則も repo の宣言が勝つ(既定と違う所だけを書く)。
+    let dir = repo(
+        &[("app/foundation/io.hy", FOUNDATION_HY), ("app/core/bad.hy", "(import app.foundation.io [send])\n(val MODULE-TAGS {:context \"billing\" :role \"judgment\"})\n(defn decide [x] x)\n")],
+        "[tool.doeff-linter.rules.DOEFF101]\nlevel = \"major\"\n",
+    );
+    let (_, report) = editor(dir.path());
+    assert_eq!(violation(&report, "app/core/bad.hy::core-imports-only-intent::app.foundation.io.send")["level"], "major");
     // 知らない重大さは設定の誤り。
     let dir = definition_repo(&[("app/a.hy", source)], &config.replace("\"critical\"", "\"loud\""));
     let (code, _, stderr) = run(dir.path(), &["--output-format", "editor-json", "--no-log"], None);

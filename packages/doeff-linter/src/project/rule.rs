@@ -194,6 +194,55 @@ impl ProjectRule {
         }
     }
 
+    /// 規則の既定の重大さ(repo の宣言 `rules.<ID>.level` が無い時 — agora-redesign #1041)。None の規則は規則そのものの重さから決める
+    /// (error = major・warning = minor・info = info)。責務の境界の違反は常に critical(operator 2026-09-29 "responsibility boundary
+    /// violations are always CRITICAL to make our doeff code testable")— repo ごとに写すと片方が黙って古くなるので、既定はここ 1 か所。
+    /// 新しい規則はどちらかに置く(網羅の match — 決めずに足せない)。
+    pub fn default_level(self) -> Option<super::settings::RuleLevel> {
+        match self {
+            // 責務の境界: 層の向き・層で禁じた module・型だけの層・生の副作用・service の境界と依存・翻訳が業務の intent を出す・
+            // Jev の判定(翻訳の層の業務の判断・判断の層の通信の手段・形の検めと判断の混ざり)。
+            ProjectRule::LayerImportDirection
+            | ProjectRule::LayerForbiddenModule
+            | ProjectRule::LayerTypesOnly
+            | ProjectRule::RawSideEffectDirect
+            | ProjectRule::ServiceBoundary
+            | ProjectRule::ServiceDependency
+            | ProjectRule::TranslationEmitsIntent
+            | ProjectRule::SemanticBusinessDecision
+            | ProjectRule::SemanticTransportKnowledge
+            | ProjectRule::SemanticMixedConcerns
+            // 宣言に無い置き場所(どの層の決まりも当たらない)・defk を素で呼ぶ(Program が値として流れる本物の誤り)・
+            // 読めない file(判定が欠け、0 件に見えても合格ではない)。
+            | ProjectRule::UndeclaredPlace
+            | ProjectRule::UndeclaredDirectory
+            | ProjectRule::DefkCalledBare
+            | ProjectRule::UnreadableFile => Some(super::settings::RuleLevel::Critical),
+            ProjectRule::UnknownConfigKey
+            | ProjectRule::ModuleDeclaresTags
+            | ProjectRule::RoleMatchesLayer
+            | ProjectRule::RawSideEffectVia
+            | ProjectRule::EnvironmentName
+            | ProjectRule::DefnForbidden
+            | ProjectRule::DeffNeedsReason
+            | ProjectRule::DefinitionTagsRequired
+            | ProjectRule::ContextMatchesService
+            | ProjectRule::UnusedDependency
+            | ProjectRule::TestIsDeftest
+            | ProjectRule::ClassWithBehaviour
+            | ProjectRule::JsonValueOutsideWire
+            | ProjectRule::ShapeCheckInJudgment
+            | ProjectRule::FailureRethrow
+            | ProjectRule::BindThenReturn
+            | ProjectRule::FieldsJoinedIntoText
+            | ProjectRule::RebuiltAccumulator
+            | ProjectRule::EffectsDisagreeWithInference
+            | ProjectRule::JudgmentPerformsEffect
+            | ProjectRule::SemanticPlainCallable
+            | ProjectRule::SemanticClassRole => None,
+        }
+    }
+
     /// 臭いの規則(DOEFF121〜125 — 既定の重さ warning・設定の severity で info に下げられる)か。
     pub fn is_smell(self) -> bool {
         matches!(

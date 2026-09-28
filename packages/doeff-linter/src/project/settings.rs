@@ -740,9 +740,14 @@ impl ProjectSettings {
         }
     }
 
-    /// 違反の重大さ — 宣言があればそれ、無ければ規則そのものの重さ base から。
+    /// 違反の重大さ — repo の宣言があればそれ、無ければ規則の既定(`ProjectRule::default_level`)、それも無ければ規則そのものの重さ base から。
     pub fn level_of(&self, rule_id: &str, base: crate::models::Severity) -> RuleLevel {
-        self.level.get(&rule_id.to_uppercase()).copied().unwrap_or_else(|| RuleLevel::default_for(base))
+        let id = rule_id.to_uppercase();
+        self.level
+            .get(&id)
+            .copied()
+            .or_else(|| ProjectRule::parse(&id).and_then(ProjectRule::default_level))
+            .unwrap_or_else(|| RuleLevel::default_for(base))
     }
 
     /// 規則 rule が層 layer の file で出す違反の law(無ければ None)。層を問わない規則は layer = None。
