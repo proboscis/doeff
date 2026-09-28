@@ -2,7 +2,7 @@
   "name": "doeff-runner",
   "displayName": "doeff runner",
   "description": "Run doeff Programs from VS Code using the doeff-indexer and Python debugger.",
-  "version": "0.6.30",
+  "version": "0.6.31",
   "publisher": "Proboscis",
   "icon": "icon.png",
   "license": "Apache-2.0",
@@ -64,7 +64,8 @@
     "onView:doeff-lint-map",
     "onView:doeff-hy-browse",
     "onCustomEditor:doeff-runner.readingPlane",
-    "onCommand:doeff-runner.read.open"
+    "onCommand:doeff-runner.read.open",
+    "onCommand:doeff-runner.read.openAll"
   ],
   "main": "./out/extension.js",
   "contributes": {
@@ -418,6 +419,12 @@
         "icon": "$(book)"
       },
       {
+        "command": "doeff-runner.read.openAll",
+        "title": "定義を読む面で repo 全体を開く",
+        "category": "doeff",
+        "icon": "$(library)"
+      },
+      {
         "command": "doeff-runner.browse.pickView",
         "title": "保存した見方を選ぶ",
         "icon": "$(bookmark)"
@@ -724,6 +731,11 @@
     ],
     "menus": {
       "editor/title": [
+        {
+          "command": "doeff-runner.read.openAll",
+          "when": "activeCustomEditorId == doeff-runner.readingPlane && config.doeff-runner.hy.readingPlane.enabled",
+          "group": "navigation"
+        },
         {
           "command": "doeff-runner.read.open",
           "when": "resourceExtname == .hy && config.doeff-runner.hy.readingPlane.enabled && activeCustomEditorId != doeff-runner.readingPlane",

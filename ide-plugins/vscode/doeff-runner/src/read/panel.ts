@@ -26,7 +26,7 @@ import {
   type FoldState
 } from './fold';
 import { LABELS } from './labels';
-import { buildCards, facets, locationOf, parseAxisKey, toggle, visibleCards, type Card, type Selection } from './model';
+import { buildCards, facets, parseAxisKey, toggle, visibleCards, type Card, type Selection } from './model';
 import type { Glyphs } from './html';
 import { lineClasses, renderFacets, renderPage, renderTreePart, summaryText, type PlaneState } from './render';
 import { buildCallGraph, buildCallTree, DEFAULT_TREE_DEPTH, relationOf, type CallGraph, type CallTree, type TreeDirection, type TreeQuery } from './tree';
@@ -36,19 +36,20 @@ export const READING_PLANE_VIEW_TYPE = 'doeff-runner.readingPlane';
 /** 面を使うかの設定(切ると今の装飾と「タグで閲覧」だけになる)。 */
 export const READING_PLANE_SETTING = 'doeff-runner.hy.readingPlane.enabled';
 /** 置き場が変わってから描き直すまでの間(続けて変わる時に 1 度で済ませるため)。 */
-const REDRAW_DELAY_MS = 200;
+export const REDRAW_DELAY_MS = 200;
 /** 頁の中身が変わったかを比べる時の nonce(実際に描く頁は毎回新しい nonce)。 */
-const COMPARE_NONCE = 'compare';
+export const COMPARE_NONCE = 'compare';
 /** 1 行に出す欄の設定を覚える workspace の状態の鍵(全カード・全 file 共通)。 */
 const LINE_STATE_KEY = 'doeff-runner.read.line';
 /** 開いたカードを覚える workspace の状態の鍵の頭(file ごと)。 */
 const OPEN_STATE_PREFIX = 'doeff-runner.read.open:';
 
 /** webview から届く知らせ。 */
-type PlaneMessage =
+export type PlaneMessage =
   | { readonly type: 'toggle'; readonly axis: string; readonly value: string }
   | { readonly type: 'clear' }
-  | { readonly type: 'open'; readonly line: number; readonly character: number }
+  | { readonly type: 'open'; readonly line: number; readonly character: number; readonly qualifiedName: string }
+  | { readonly type: 'hydrate'; readonly qualifiedName: string; readonly source: boolean }
   | { readonly type: 'fold'; readonly key: string }
   | { readonly type: 'fold-all' }
   | { readonly type: 'unfold-all' }
@@ -66,7 +67,7 @@ function parseDirection(value: unknown): TreeDirection | undefined {
 }
 
 /** webview の知らせを形で確かめて読む(知らない形は undefined)。 */
-function readMessage(raw: unknown): PlaneMessage | undefined {
+export function readMessage(raw: unknown): PlaneMessage | undefined {
   if (typeof raw !== 'object' || raw === null) {
     return undefined;
   }
@@ -105,7 +106,13 @@ function readMessage(raw: unknown): PlaneMessage | undefined {
     case 'open': {
       const line = fields.get('line');
       const character = fields.get('character');
-      return typeof line === 'number' && typeof character === 'number' ? { type, line, character } : undefined;
+      const qualifiedName = text('qualifiedName') ?? '';
+      return typeof line === 'number' && typeof character === 'number' ? { type, line, character, qualifiedName } : undefined;
+    }
+    case 'hydrate': {
+      const qualifiedName = text('qualifiedName');
+      const source = fields.get('source');
+      return qualifiedName !== undefined && typeof source === 'boolean' ? { type, qualifiedName, source } : undefined;
     }
     case 'fold': {
       const key = text('key');
@@ -121,18 +128,18 @@ function readMessage(raw: unknown): PlaneMessage | undefined {
 }
 
 /** 面を使う設定か。 */
-function planeEnabled(): boolean {
+export function planeEnabled(): boolean {
   return vscode.workspace.getConfiguration().get<boolean>(READING_PLANE_SETTING) !== false;
 }
 
 /** 畳む状態を覚える口(VS Code の workspace の状態 — 開き直しても同じにするため)。 */
-interface FoldMemory {
+export interface FoldMemory {
   load(filePath: string): FoldState;
   save(filePath: string, state: FoldState): void;
 }
 
 /** workspace の状態に畳む状態を書く口を作る。 */
-function workspaceFoldMemory(state: vscode.Memento): FoldMemory {
+export function workspaceFoldMemory(state: vscode.Memento): FoldMemory {
   return {
     load: (filePath) => loadFold({ open: state.get(OPEN_STATE_PREFIX + filePath), line: state.get(LINE_STATE_KEY) }),
     save: (filePath, fold) => {
@@ -144,7 +151,7 @@ function workspaceFoldMemory(state: vscode.Memento): FoldMemory {
 }
 
 /** 索引の全 file の呼び出しの表(索引の版が同じ間は作り直さない — カードの関係の数と木が同じ表を使う)。 */
-class GraphTable {
+export class GraphTable {
   private cached: { readonly version: number; readonly graph: CallGraph } | undefined;
 
   constructor(private readonly hy: HyIndexStore) {}
@@ -310,7 +317,7 @@ class PlanePanel implements vscode.Disposable {
       violations: this.lint.violationsIn(filePath),
       lines: this.document.getText().split(/\r?\n/),
       testsOf: (qn) => relationOf(this.graphs.graph, qn).tests,
-      location: locationOf(path.relative(entry.root, filePath))
+      place: path.relative(entry.root, filePath)
     });
     return { tag: 'cards', cards: this.cards, selection: this.selection };
   }
@@ -400,7 +407,7 @@ class PlanePanel implements vscode.Disposable {
     const all = facets(this.cards, this.selection);
     void this.panel.webview.postMessage({
       type: 'filter',
-      axes: renderFacets(all),
+      axes: renderFacets(all, Number.POSITIVE_INFINITY),
       visible: shown.map((c) => c.id),
       summary: summaryText(shown.length, this.cards.length, all)
     });
@@ -438,6 +445,9 @@ class PlanePanel implements vscode.Disposable {
         void vscode.window.showTextDocument(this.document, { selection: new vscode.Range(at, at), preview: false });
         return;
       }
+      case 'hydrate':
+        // この面のカードは開いた document から切り出した source を持つので、読み込む物は無い
+        return;
       case 'fold':
         this.setFold(toggleOpen(this.fold, message.key));
         return;
@@ -536,7 +546,15 @@ class ReadingPlaneProvider implements vscode.CustomTextEditorProvider {
   }
 }
 
-/** 定義を読む面の custom editor と「定義を読む面で開く」の命令を登録する。 */
+/** file の面と repo 全体の面が共有する部品(同じ絵・同じ畳む状態の覚え・同じ呼び出しの表・同じ色の係)。 */
+export interface ReadingPlaneParts {
+  readonly glyphs: Glyphs;
+  readonly memory: FoldMemory;
+  readonly graphs: GraphTable;
+  readonly highlighter: SourceHighlighter;
+}
+
+/** 定義を読む面の custom editor と「定義を読む面で開く」の命令を登録し、repo 全体の面と共有する部品を返す。 */
 export function registerReadingPlane(
   context: vscode.ExtensionContext,
   hy: HyIndexStore,
@@ -545,22 +563,14 @@ export function registerReadingPlane(
   icons: IconSource,
   watch: (document: vscode.TextDocument) => void,
   output: vscode.OutputChannel
-): void {
+): ReadingPlaneParts {
   // effect の絵は装飾 A と同じ pixel art を data URI で(webview の CSP は img-src data: だけを許す)
   const glyphs: Glyphs = { effect: (name) => icons.inline(effectGlyph(name), 14)?.toString(true) };
   // source の箱の色 — editor の `.hy` と同じ文法・theme・記号ごとの色(agora-redesign #910 U16)
   const highlighter = new SourceHighlighter(output);
-  const provider = new ReadingPlaneProvider(
-    hy,
-    status,
-    lint,
-    glyphs,
-    workspaceFoldMemory(context.workspaceState),
-    new GraphTable(hy),
-    new PlaneNavigator(),
-    highlighter,
-    watch
-  );
+  const memory = workspaceFoldMemory(context.workspaceState);
+  const graphs = new GraphTable(hy);
+  const provider = new ReadingPlaneProvider(hy, status, lint, glyphs, memory, graphs, new PlaneNavigator(), highlighter, watch);
   context.subscriptions.push(
     highlighter,
     vscode.window.registerCustomEditorProvider(READING_PLANE_VIEW_TYPE, provider, { webviewOptions: { retainContextWhenHidden: true } }),
@@ -577,4 +587,5 @@ export function registerReadingPlane(
       await vscode.commands.executeCommand('vscode.openWith', uri, READING_PLANE_VIEW_TYPE);
     })
   );
+  return { glyphs, memory, graphs, highlighter };
 }

@@ -9,7 +9,7 @@ import type { LintBody, LintBodySegment, LintSignature, LintViolation } from '..
 import { answerText, headerEffects, typeText } from '../defk/model';
 import { cardKey, LINE_FIELDS, type FoldState, type LineField } from './fold';
 import { escapeHtml, tagClass, type Glyphs } from './html';
-import { contractRow, entityLineArgs, entityRows, relationBand } from './entity';
+import { contractRow, declaredEffectChips, entityLineArgs, entityRows, indexSignatureRows, relationBand } from './entity';
 import { LABELS } from './labels';
 import { axisKey, axisTitle, facets, visibleCards, worstLevel, type Card, type Facet, type Selection } from './model';
 import { relationOf, type CallGraph, type CallTree } from './tree';
@@ -25,18 +25,21 @@ const LINE_FIELD_LABEL: Readonly<Record<LineField, string>> = {
   location: LABELS.location
 };
 
-/** 左の軸の欄(軸ごとに値の札)。 */
-export function renderFacets(all: readonly Facet[]): string {
+/** 左の軸の欄(軸ごとに値の札)。値の多い軸は上位 limit 個と選んだ値だけ見せ、残りは数だけ(repo 全体の面の型・置き場の軸のため)。 */
+export function renderFacets(all: readonly Facet[], limit: number): string {
   return all
     .map((facet) => {
       const key = axisKey(facet.axis);
-      const chips = facet.values
+      const kept = facet.values.filter((v, i) => i < limit || v.selected);
+      const hiddenCount = facet.values.length - kept.length;
+      const chips = kept
         .map((v) => {
           const classes = ['facet', v.selected ? 'on' : '', v.count === 0 && !v.selected ? 'empty' : ''].filter((c) => c !== '').join(' ');
           return `<button class="${classes}" data-axis="${escapeHtml(key)}" data-value="${escapeHtml(v.value)}">${escapeHtml(v.value)}<small>${v.count}</small></button>`;
         })
         .join('');
-      return `<h2>${escapeHtml(LABELS.axis)}: ${escapeHtml(axisTitle(facet.axis))}</h2><div class="fac">${chips}</div>`;
+      const rest = hiddenCount === 0 ? '' : `<span class="more">+${hiddenCount}</span>`;
+      return `<h2>${escapeHtml(LABELS.axis)}: ${escapeHtml(axisTitle(facet.axis))}</h2><div class="fac">${chips}${rest}</div>`;
     })
     .join('');
 }
@@ -154,13 +157,12 @@ export function docFirstLine(docstring: string | null, limit = 80): string {
 
 /** カードを描く材料(カード以外)。 */
 export interface CardContext {
-  readonly place: string;
   readonly glyphs: Glyphs;
   readonly fold: FoldState;
   /** 索引の全 file の呼び出しの表(関係の数と木の材料) */
   readonly graph: CallGraph;
-  /** 開いた document の file 全体の色(editor と同じ文法・theme・記号ごとの色。まだ塗れていなければ undefined) */
-  readonly coloring: SourceColoring | undefined;
+  /** カードの file 全体の色(editor と同じ文法・theme・記号ごとの色。まだ塗れていなければ undefined) */
+  readonly coloringOf: (card: Card) => SourceColoring | undefined;
 }
 
 /** 本体の字の役 → 色の class(色は U16 で theme の token の色に寄せる — 今は見本 v3 の色)。 */
@@ -274,9 +276,9 @@ export function renderCard(card: Card, ctx: CardContext, hidden: boolean): strin
   // 帯の callers / callees は木の入口(v7 3 節の入口 a)
   const qn = escapeHtml(d.qualifiedName);
   const band = relationBand(d, ctx.graph);
-  const location = `${escapeHtml(ctx.place)}:${card.firstLine}`;
+  const location = `${escapeHtml(card.place)}:${card.firstLine}`;
   const doc = docFirstLine(d.docstring);
-  const effects = card.signature === undefined ? '' : effectChips(card.signature, ctx.glyphs);
+  const effects = card.signature === undefined ? declaredEffectChips(d, ctx.glyphs) : effectChips(card.signature, ctx.glyphs);
   const line = [
     lineArgs(card),
     effects === '' ? '' : `<span class="f f-effects">${effects}</span>`,
@@ -291,7 +293,7 @@ export function renderCard(card: Card, ctx: CardContext, hidden: boolean): strin
     (card.signature !== undefined
       ? signatureStrip(card.signature) + effectRow(card.signature, ctx.glyphs)
       : typed
-        ? `<div class="row"><span class="k">${escapeHtml(LABELS.argsReturnType)}</span><span class="none">${escapeHtml(LABELS.waitingForLinter)}</span></div>`
+        ? indexSignatureRows(d, ctx.glyphs)
         : entityRows(card, ctx.glyphs)) + contractRow(d);
   const docBlock = d.docstring === null ? '' : `<div class="doc">${escapeHtml(d.docstring)}</div>`;
   const body = card.body === undefined ? '' : bodyBlock(card.body, ctx.glyphs, card.violations);
@@ -301,15 +303,57 @@ export function renderCard(card: Card, ctx: CardContext, hidden: boolean): strin
       ? ''
       : `<span class="viol viol-${level}" title="${escapeHtml(card.violations.map((v) => `${v.rule}: ${v.message}`).join('\n'))}">${escapeHtml(LABELS.violations)} ${card.violations.length}</span>`;
   const foot = `<div class="ft">${band}${violations}<span class="loc">${location}</span></div>`;
-  const fileLabel = ctx.place.split('/').pop() ?? ctx.place;
+  const fileLabel = card.place.split('/').pop() ?? card.place;
+  // source を持たないカード(repo 全体の面の索引だけのカード)は、開く・source を押すとその file を読み込む(v3 3 節 — 索引の位置から切り出す)
+  const lazy = card.source === '' ? ' data-lazy' : '';
   const classes = open ? 'card open' : 'card';
-  return `<section class="${classes}" id="${card.id}" data-key="${escapeHtml(key)}" data-qn="${qn}"${hidden ? ' hidden' : ''}>${head}<div class="line">${line}</div><div class="full">${middle}${docBlock}${body}</div>${sourceBox(card, fileLabel, ctx.coloring)}<div class="full">${foot}</div></section>`;
+  return `<section class="${classes}" id="${card.id}" data-key="${escapeHtml(key)}" data-qn="${qn}"${lazy}${hidden ? ' hidden' : ''}>${head}<div class="line">${line}</div><div class="full">${middle}${docBlock}${body}</div>${sourceBox(card, fileLabel, ctx.coloringOf(card))}<div class="full">${foot}</div></section>`;
 }
 
 /** 面の状態 — 索引にその file が無い時・設定で切った時は理由を出す。 */
 export type PlaneState =
   | { readonly tag: 'cards'; readonly cards: readonly Card[]; readonly selection: Selection }
+  | WorkspaceState
   | { readonly tag: 'message'; readonly text: string };
+
+/**
+ * repo 全体の面の状態(#910 U9)— 全カードで軸と数を作り、見せるのは積んだカード(木・帯・名から寄せた物)と、絞った先の上限まで。
+ * 全部を描かないのは、repo の定義が 1 万近くあり、頁が重くなって読めなくなるため。
+ */
+export interface WorkspaceState {
+  readonly tag: 'workspace';
+  readonly cards: readonly Card[];
+  readonly selection: Selection;
+  /** 積んだカードの完全修飾名(新しい物が上) */
+  readonly pinned: readonly string[];
+  /** 絞った先のカードを描く上限 */
+  readonly limit: number;
+  /** 左の欄の軸ごとに見せる値の数の上限(選んだ値はいつも見せる) */
+  readonly facetLimit: number;
+  /** カードの file 全体の色(読み込んだ file の分だけ) */
+  readonly coloringOf: (card: Card) => SourceColoring | undefined;
+}
+
+/** repo 全体の面の右の列(積んだカード + 絞った先の上限まで)と、上の行の件数の文。 */
+export function renderWorkspaceCards(state: WorkspaceState, ctx: CardContext): { readonly html: string; readonly summary: string; readonly axes: string } {
+  const all = facets(state.cards, state.selection);
+  const visible = visibleCards(state.cards, state.selection);
+  const byName = new Map(state.cards.map((c) => [c.definition.qualifiedName, c]));
+  const pinned = state.pinned.flatMap((qn) => {
+    const card = byName.get(qn);
+    return card === undefined ? [] : [card];
+  });
+  const pinnedNames = new Set(pinned.map((c) => c.definition.qualifiedName));
+  const rest = visible.filter((c) => !pinnedNames.has(c.definition.qualifiedName));
+  const shown = rest.slice(0, state.limit);
+  const stack = pinned.length === 0 ? '' : `<div class="stackhead">${escapeHtml(LABELS.stacked)}</div>${pinned.map((c) => renderCard(c, ctx, false)).join('')}<div class="stackhead">${escapeHtml(LABELS.matches)}</div>`;
+  const more = rest.length > shown.length ? `<p class="message">${escapeHtml(LABELS.showing)} ${shown.length} / ${rest.length} — ${escapeHtml(LABELS.narrowWithAxes)}</p>` : '';
+  return {
+    html: stack + shown.map((c) => renderCard(c, ctx, false)).join('') + more,
+    summary: summaryText(visible.length, state.cards.length, all),
+    axes: renderFacets(all, state.facetLimit)
+  };
+}
 
 /** 面の頁の材料。 */
 export interface PageInput {
@@ -355,7 +399,12 @@ export function renderTreePart(
 
 /** 頁の全体(左に軸・上に 1 行の切り替え・右に実体のカード)。 */
 export function renderPage(input: PageInput): string {
-  const ctx: CardContext = { place: input.place, glyphs: input.glyphs, fold: input.fold, graph: input.graph, coloring: input.coloring };
+  const ctx: CardContext = {
+    glyphs: input.glyphs,
+    fold: input.fold,
+    graph: input.graph,
+    coloringOf: input.state.tag === 'workspace' ? input.state.coloringOf : () => input.coloring
+  };
   const content = (() => {
     switch (input.state.tag) {
       case 'message':
@@ -365,12 +414,23 @@ export function renderPage(input: PageInput): string {
         const shown = new Set(visibleCards(cards, selection).map((c) => c.id));
         const all = facets(cards, selection);
         return {
-          axes: renderFacets(all),
+          axes: renderFacets(all, Number.POSITIVE_INFINITY),
           summary: summaryText(shown.size, cards.length, all),
           bar: renderLineBar(input.fold),
           picker: renderTreePicker(cards, input.tree?.tree.root.qualifiedName),
           tree: renderTreePart(cards, input.graph, input.glyphs, input.tree),
           cards: cards.map((c) => renderCard(c, ctx, !shown.has(c.id))).join('')
+        };
+      }
+      case 'workspace': {
+        const listed = renderWorkspaceCards(input.state, ctx);
+        return {
+          axes: listed.axes,
+          summary: listed.summary,
+          bar: renderLineBar(input.fold),
+          picker: '',
+          tree: renderTreePart(input.state.cards, input.graph, input.glyphs, input.tree),
+          cards: listed.html
         };
       }
       default: {
@@ -550,13 +610,16 @@ document.addEventListener('click', (event) => {
   if (target.id === 'fold-all') { vscode.postMessage({ type: 'fold-all' }); return; }
   if (target.id === 'unfold-all') { vscode.postMessage({ type: 'unfold-all' }); return; }
   if (target.hasAttribute('data-fold')) { vscode.postMessage({ type: 'fold', key: target.getAttribute('data-fold') }); return; }
+  const card = target.closest('.card');
+  const qualifiedName = card === null ? '' : card.getAttribute('data-qn');
   if (target.hasAttribute('data-src')) {
+    if (card !== null && card.hasAttribute('data-lazy')) { vscode.postMessage({ type: 'hydrate', qualifiedName, source: true }); return; }
     const box = document.getElementById('src-' + target.getAttribute('data-src'));
     if (box !== null) { box.hidden = !box.hidden; target.classList.toggle('on', !box.hidden); }
     return;
   }
   if (target.hasAttribute('data-line')) {
-    vscode.postMessage({ type: 'open', line: Number(target.getAttribute('data-line')), character: Number(target.getAttribute('data-character')) });
+    vscode.postMessage({ type: 'open', line: Number(target.getAttribute('data-line')), character: Number(target.getAttribute('data-character')), qualifiedName });
     return;
   }
   vscode.postMessage({ type: 'toggle', axis: target.getAttribute('data-axis'), value: target.getAttribute('data-value') });
@@ -594,6 +657,22 @@ window.addEventListener('message', (event) => {
   if (message.type === 'tree') {
     document.getElementById('tree').innerHTML = message.html;
     if (message.html !== '') { document.getElementById('tree').scrollIntoView({ block: 'start' }); }
+    return;
+  }
+  if (message.type === 'card') {
+    const old = document.getElementById(message.id);
+    if (old !== null) {
+      old.outerHTML = message.html;
+      const box = document.getElementById('src-' + message.id);
+      if (message.showSource && box !== null) { box.hidden = false; }
+    }
+    return;
+  }
+  if (message.type === 'cards') {
+    document.getElementById('cards').innerHTML = message.html;
+    document.getElementById('axes').innerHTML = message.axes;
+    document.getElementById('summary').textContent = message.summary;
+    if (message.scrollTop) { window.scrollTo(0, 0); }
     return;
   }
   if (message.type === 'reveal') {

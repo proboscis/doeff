@@ -60,6 +60,12 @@ export const LABELS = {
   noTests: 'no tests',
   /** 面の上の行 */
   clearFilter: 'clear filter',
+  /** repo 全体の面 */
+  allDefinitions: 'all definitions',
+  stacked: 'stacked',
+  matches: 'matches',
+  showing: 'showing',
+  narrowWithAxes: 'narrow with the axes on the left',
   definitions: 'definitions',
   /** 値が無い・まだ無い時の短い語 */
   none: 'none',

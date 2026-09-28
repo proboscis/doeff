@@ -26,6 +26,11 @@ function effectChip(name: string, glyphs: Glyphs): string {
   return `<span class="eff">${src === undefined ? '' : `<img src="${escapeHtml(src)}" alt="">`}${escapeHtml(name)}</span>`;
 }
 
+/** 宣言した effect のチップ(索引 版 5 — 1 行の effects に。linter の見出しが無い時)。 */
+export function declaredEffectChips(definition: HyDefinition, glyphs: Glyphs): string {
+  return (definition.effects ?? []).map((e) => effectChip(e.name, glyphs)).join('');
+}
+
 /** 入れ子の定義のうち指定の種類(書いた順)。 */
 function membersOf(card: Card, kind: HyDefinition['kind']): HyDefinition[] {
   return card.members.filter((m) => m.kind === kind);
@@ -49,6 +54,28 @@ export function contractRow(definition: HyDefinition): string {
     ...(definition.checks ?? []).map((c) => `check: ${c}`)
   ];
   return clauses.length === 0 ? '' : row(LABELS.contract, clauses.map((c) => `<code>${escapeHtml(c)}</code>`).join(''));
+}
+
+/** 関数の引数の名と型(索引 版 5 — 型を書いていない引数は名だけ)。 */
+function typedParams(definition: HyDefinition): Array<{ readonly name: string; readonly type: HyTypeNote | undefined }> {
+  const typed = new Map(definition.paramTypes.map((p) => [p.name, p.type]));
+  const names = definition.params.length > 0 ? definition.params : definition.paramTypes.map((p) => p.name);
+  return names.map((name) => ({ name, type: typed.get(name) }));
+}
+
+/** 畳んだ 1 行で型を省いて名だけにする引数の数(v6 2.2 節 — render.ts の見出しの 1 行と同じ数)。 */
+const NAMES_ONLY_PARAMS = 4;
+
+/**
+ * linter の見出しがまだ無い関数(defk・deff・defn)の欄 — 索引 版 5 の引数と答えの型・宣言した effect で描く
+ * (repo 全体の面では他の file の定義が全部これ。linter の見出しが届けば render.ts が見出しで描き直す)。
+ */
+export function indexSignatureRows(definition: HyDefinition, glyphs: Glyphs): string {
+  const params = typedParams(definition).map((p) => nameTypeChip(p.name, p.type)).join('');
+  const answer = definition.answerType === null ? '' : `<span class="arrow">→</span><span class="ret">${escapeHtml(indexTypeText(definition.answerType))}</span>`;
+  const sig = `<div class="sig">${params === '' ? `<span class="none">${escapeHtml(LABELS.noArgs)}</span>` : params}${answer}</div>`;
+  const effects = (definition.effects ?? []).map((e) => effectChip(e.name, glyphs)).join('');
+  return sig + (effects === '' ? '' : row(LABELS.effects, effects));
 }
 
 /** 見出しの無い実体の欄(v2 2.1 節の表)。 */
@@ -106,6 +133,19 @@ export function entityLineArgs(card: Card): string {
     case 'defeffect': {
       const answer = d.answerType === null ? '' : ` → <span class="r">${escapeHtml(indexTypeText(d.answerType))}</span>`;
       return `<span class="f f-args">(${typed(d.paramTypes)})${answer}</span>`;
+    }
+    case 'defk':
+    case 'deff':
+    case 'defn': {
+      // linter の見出しが無い関数 — 索引の型で。引数が多い時は名だけ(型は hover)
+      const params = typedParams(d);
+      const answer = d.answerType === null ? '' : ` → <span class="r">${escapeHtml(indexTypeText(d.answerType))}</span>`;
+      if (params.length >= NAMES_ONLY_PARAMS) {
+        const title = params.map((p) => `${p.name}: ${p.type === undefined ? '?' : indexTypeText(p.type)}`).join('\n');
+        return `<span class="f f-args" title="${escapeHtml(title)}">(${params.map((p) => escapeHtml(p.name)).join(', ')})${answer}</span>`;
+      }
+      const shown = params.map((p) => (p.type === undefined ? escapeHtml(p.name) : `${escapeHtml(p.name)}: <span class="t">${escapeHtml(indexTypeText(p.type))}</span>`));
+      return `<span class="f f-args">(${shown.join(', ')})${answer}</span>`;
     }
     case 'defrecord':
     case 'deftype':

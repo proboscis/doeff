@@ -106,6 +106,8 @@ export interface Card {
   readonly firstLine: number;
   /** 軸の値のうち索引と呼び出しの表から引く物(effect・type・tests・location) */
   readonly facts: CardFacts;
+  /** 定義の file の path(索引の root から — 置き場の表示) */
+  readonly place: string;
 }
 
 /** カードの軸の値のうち、定義だけでは決まらない物。 */
@@ -134,8 +136,8 @@ export interface PlaneInput {
   readonly lines: readonly string[];
   /** その定義を呼ぶ deftest の数(呼び出しの表から) */
   readonly testsOf: (qualifiedName: string) => number;
-  /** この file の置き場(dir) */
-  readonly location: string;
+  /** この file の path(索引の root から) */
+  readonly place: string;
 }
 
 /** 重ねずに並べる(書いた順)。 */
@@ -207,8 +209,9 @@ export function buildCards(input: PlaneInput): Card[] {
         effects: effectsOf(definition, members),
         types: typesOf(definition),
         tested: input.testsOf(definition.qualifiedName) > 0,
-        location: input.location
+        location: locationOf(input.place)
       },
+      place: input.place,
       signature: sameDefinition(definition, input.signatures),
       body: sameDefinition(definition, input.bodies),
       violations: input.violations.filter((v) => within(definition.fullRange, v.range.start.line, v.range.start.character)),

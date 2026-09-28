@@ -19,7 +19,7 @@ import {
   type Selection
 } from '../../read/model';
 import { escapeHtml } from '../../read/html';
-import { isTallSignature, renderPage } from '../../read/render';
+import { isTallSignature, renderCard, renderPage, renderWorkspaceCards, type CardContext, type WorkspaceState } from '../../read/render';
 import { buildCallGraph, buildCallTree, DEFAULT_TREE_DEPTH, indexTypeText, relationOf } from '../../read/tree';
 import {
   cardKey,
@@ -76,7 +76,7 @@ function planeCards(violations: readonly LintViolation[] = []): Card[] {
     violations,
     lines: planeLines(),
     testsOf: (qn) => relationOf(graph, qn).tests,
-    location: 'pkg'
+    place: 'pkg/plane.hy'
   });
 }
 
@@ -642,7 +642,7 @@ suite('定義を読む面 — 実体の種類ごとの欄と帯(V13・v2 2.1 節
       violations: [],
       lines: fs.readFileSync(path.join(FIXTURES, 'entities.hy'), 'utf8').split(/\r?\n/),
       testsOf: () => 0,
-      location: 'pkg'
+      place: 'pkg/plane.hy'
     });
     const page = (fold: FoldState): string =>
       renderPage({
@@ -737,7 +737,7 @@ suite('定義を読む面 — effect・type・tests・location の軸(V2・V3・
       violations: [],
       lines: fs.readFileSync(path.join(FIXTURES, 'entities.hy'), 'utf8').split(/\r?\n/),
       testsOf: () => 0,
-      location: 'pkg'
+      place: 'pkg/plane.hy'
     });
     assert.deepStrictEqual(names(visibleCards(cards, select([[EFFECT, 'ReadSlot']]))), ['ReadSlot', 'slot-store', 'slot-size']);
   });
@@ -748,5 +748,107 @@ suite('定義を読む面 — effect・type・tests・location の軸(V2・V3・
       assert.ok(html.includes(`<h2>axis: ${title}</h2>`), title);
     }
     assert.ok(html.includes('data-axis="tests" data-value="has tests">has tests<small>2</small>'));
+  });
+});
+
+suite('定義を読む面 — repo 全体の入口(U9)', () => {
+  /** plane.hy と tree.hy の索引から、repo 全体の面と同じ作り方(source を持たない索引だけのカード・id は file の順で)でカードを作る。 */
+  const workspaceCards = (): { readonly cards: Card[]; readonly graph: ReturnType<typeof buildCallGraph> } => {
+    const parsed = parseHyIndexJson(fs.readFileSync(path.join(FIXTURES, 'tree-index.json'), 'utf8'));
+    if (parsed.tag !== 'ok') {
+      assert.fail(parsed.reason);
+    }
+    const graph = buildCallGraph(parsed.document.files);
+    const cards = parsed.document.files.flatMap((file, index) =>
+      buildCards({
+        definitions: file.definitions,
+        signatures: [],
+        bodies: [],
+        violations: [],
+        lines: [],
+        testsOf: (qn) => relationOf(graph, qn).tests,
+        place: file.path.replace('/repo/', '')
+      }).map((card) => ({ ...card, id: `f${index}-${card.id}` }))
+    );
+    return { cards, graph };
+  };
+  const ctxOf = (graph: ReturnType<typeof buildCallGraph>, fold: FoldState): CardContext => ({
+    glyphs: { effect: () => undefined },
+    fold,
+    graph,
+    coloringOf: () => undefined
+  });
+  const state = (cards: readonly Card[], selection: Selection, pinned: readonly string[], limit: number, facetLimit: number): WorkspaceState => ({
+    tag: 'workspace',
+    cards,
+    selection,
+    pinned,
+    limit,
+    facetLimit,
+    coloringOf: () => undefined
+  });
+
+  test('全 file の定義で軸と数を作り、置き場の軸は file ごとの dir になる', () => {
+    const { cards, graph } = workspaceCards();
+    const listed = renderWorkspaceCards(state(cards, new Map(), [], 200, 40), ctxOf(graph, INITIAL_FOLD));
+    assert.ok(listed.summary.startsWith(`${LABELS.definitions} ${cards.length}`));
+    assert.ok(listed.axes.includes('data-axis="location" data-value="pkg">pkg'));
+    assert.ok(new Set(cards.map((c) => c.id)).size === cards.length, 'id が file を跨いで重ならない');
+  });
+
+  test('索引だけのカードは source を持たず data-lazy(開く・source を押すとその file を読み込む)', () => {
+    const { cards, graph } = workspaceCards();
+    const html = renderWorkspaceCards(state(cards, new Map(), [], 200, 40), ctxOf(graph, INITIAL_FOLD)).html;
+    assert.ok(/<section class="card" id="f1-d\d+" data-key="[^"]*" data-qn="pkg\.tree\.show_both" data-lazy>/.test(html));
+  });
+
+  test('積んだカードは上に「stacked」として残り、絞った先から外れても消えない', () => {
+    const { cards, graph } = workspaceCards();
+    const onlyTree = select([[{ tag: 'tag', key: 'role' }, 'program']]);
+    const html = renderWorkspaceCards(state(cards, onlyTree, ['pkg.plane.row_text'], 200, 40), ctxOf(graph, INITIAL_FOLD)).html;
+    const stackAt = html.indexOf(`<div class="stackhead">${LABELS.stacked}</div>`);
+    const pinnedAt = html.indexOf('data-qn="pkg.plane.row_text"');
+    const matchesAt = html.indexOf(`<div class="stackhead">${LABELS.matches}</div>`);
+    assert.ok(stackAt >= 0 && stackAt < pinnedAt && pinnedAt < matchesAt);
+    assert.ok(html.slice(matchesAt).includes('data-qn="pkg.tree.show_both"'));
+  });
+
+  test('絞った先は上限まで描き、残りは「showing N / M」(repo の定義は 1 万近いので全部は描かない)', () => {
+    const { cards, graph } = workspaceCards();
+    const html = renderWorkspaceCards(state(cards, new Map(), [], 3, 40), ctxOf(graph, INITIAL_FOLD)).html;
+    assert.strictEqual((html.match(/<section class="card/g) ?? []).length, 3);
+    assert.ok(html.includes(`${LABELS.showing} 3 / ${cards.length} — ${LABELS.narrowWithAxes}`));
+  });
+
+  test('値の多い軸は上位の値と選んだ値だけ見せ、残りは +N', () => {
+    const { cards, graph } = workspaceCards();
+    const html = renderWorkspaceCards(state(cards, select([[KIND, 'deftest']]), [], 200, 1), ctxOf(graph, INITIAL_FOLD)).axes;
+    const kindAxis = html.split('<h2>')[1];
+    assert.ok(kindAxis.includes('data-value="deftest"'), '選んだ値は上限を越えても見せる');
+    assert.ok(/<span class="more">\+\d+<\/span>/.test(kindAxis));
+  });
+
+  test('linter の見出しが無い関数は索引の型と宣言した effect で描く(他の file の定義)', () => {
+    const parsed = parseHyIndexJson(fs.readFileSync(path.join(FIXTURES, 'entities-index.json'), 'utf8'));
+    if (parsed.tag !== 'ok') {
+      assert.fail(parsed.reason);
+    }
+    const cards = buildCards({
+      definitions: parsed.document.files[0].definitions,
+      signatures: [],
+      bodies: [],
+      violations: [],
+      lines: [],
+      testsOf: () => 0,
+      place: 'pkg/entities.hy'
+    });
+    const graph = buildCallGraph(parsed.document.files);
+    const size = cards.find((c) => c.definition.name === 'slot-size');
+    assert.ok(size !== undefined);
+    const open = renderCard(size, ctxOf(graph, unfoldAll(INITIAL_FOLD, [cardKey(size.definition)])), false);
+    assert.ok(open.includes('<div class="sig"><span class="p"><span class="n">key</span><span class="t">str</span></span><span class="p"><span class="n">limit</span><span class="t">int</span></span><span class="arrow">→</span><span class="ret">int</span></div>'));
+    assert.ok(open.includes('<span class="k">effects</span><div><span class="eff">ReadSlot</span></div>'));
+    assert.ok(open.includes('(key: <span class="t">str</span>, limit: <span class="t">int</span>) → <span class="r">int</span>'));
+    assert.ok(open.includes('<span class="f f-effects"><span class="eff">ReadSlot</span></span>'));
   });
 });
