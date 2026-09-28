@@ -123,7 +123,7 @@
   (assert (= (plan (+ now 2000) #(A1) (world) records policy) #((StartJob A1 7 "/c/rev1")))))
 
 
-;; --- 終わり方の数え方(agora-redesign #768): exit code 0 は失敗に数えない。起こし直しの間は数え方と別に持つ -----------
+;; --- 終わり方の数え方: exit code 0 は失敗に数えない。起こし直しの間は数え方と別に持つ -----------
 
 (deftest test-task-that-exits-with-code-0-is-not-counted-as-a-failure
   ;; 1 回だけ走って exit code 0 で終わった task は失敗ではない。記録の failures は 0 で、状態に failures・backoff を出さない。

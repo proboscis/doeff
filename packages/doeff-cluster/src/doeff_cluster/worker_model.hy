@@ -251,7 +251,7 @@
   ;; 最後に起動した時刻(十分長く動いた後の終了は数え直す)。
   (setv #^ (| int None) last-start-ms None)
   ;; 停止を求めずに続けて終わった回数(exit code を問わない — 起こし直しの間 backoff を伸ばす)。失敗の数え方とは別に持つ
-  ;; (exit code 0 で終わってすぐ起こし直すサービスも、間を伸ばして起こし直しの連打を避ける — agora-redesign #768)。
+  ;; (exit code 0 で終わってすぐ起こし直すサービスも、間を伸ばして起こし直しの連打を避ける)。
   (setv #^ int unexpected-exits 0))
 
 
