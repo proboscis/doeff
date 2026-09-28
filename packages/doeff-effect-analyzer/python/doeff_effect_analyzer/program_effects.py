@@ -668,6 +668,9 @@ class _Scope:
                 return getattr(base, expr.attr)
         if isinstance(expr, ast.Call):
             return self._imported_module(expr)
+        if isinstance(expr, ast.NamedExpr):
+            # ``(m := __import__(...)).open_bind`` — doeff-hy's bind names what it reaches.
+            return self.resolve(expr.value)
         return UNBOUND
 
     def _imported_module(self, call: ast.Call) -> Any:
@@ -765,9 +768,12 @@ class _Assignment:
 
 
 def _single_assignment(node: ast.AST) -> _Assignment | None:
-    """``x = v`` / ``x: T = v`` with one target (what a name or attribute is bound to)."""
+    """``x = v`` / ``x: T = v`` / ``(x := v)`` with one target (what a name or attribute is
+    bound to)."""
     match node:
         case ast.Assign(targets=[target], value=value):
+            return _Assignment(target, value)
+        case ast.NamedExpr(target=target, value=value):
             return _Assignment(target, value)
         case ast.AnnAssign(target=target, value=ast.expr() as value):
             return _Assignment(target, value)
@@ -1130,6 +1136,27 @@ def _opening(expr: ast.expr, scope: _Scope) -> _Opening | None:
     return _Opening(inner.operand, absent if inner.absent is None else inner.absent)
 
 
+def _bind_expression(expr: ast.expr, scope: _Scope) -> ast.Call | None:
+    """The bind wrapper call ``W`` when ``expr`` is doeff-hy's bind expression
+    ``b.value if type(b := W) is <Pure> else (yield b)`` (``W`` = ``open_bind(e[, absent])``),
+    else None. The expression yields ``W`` unless ``W`` already answered (agora-redesign #844)."""
+    match expr:
+        case ast.IfExp(
+            test=ast.Compare(
+                left=ast.Call(
+                    func=ast.Name(id="type"),
+                    args=[ast.NamedExpr(target=ast.Name(id=bound), value=ast.Call() as wrapper)],
+                ),
+                ops=[ast.Is()],
+            ),
+            body=ast.Attribute(value=ast.Name(id=body_name), attr="value"),
+            orelse=ast.Yield(value=ast.Name(id=yielded_name)),
+        ) if body_name == bound == yielded_name and _opening(wrapper, scope) is not None:
+            return wrapper
+        case _:
+            return None
+
+
 def _guard_globals_function() -> Any:
     """``doeff_hy.macros._install_guard_globals`` — returns the function it is given."""
     return importlib.import_module("doeff_hy.macros")._install_guard_globals
@@ -1305,6 +1332,12 @@ class _Reader:
                 # A Program the caller passed: it runs here, read where it was written.
                 facts.performed_arguments.add(_identity(argument))
                 self._performed(argument.expr, argument.scope, argument.filename, facts)
+                return
+            opened = scope.local_values.get(expr.id)
+            if opened is not None and _opening(opened, scope) is not None:
+                # doeff-hy's bind: ``b.value if type(b := open_bind(e)) is Pure else (yield b)``
+                # — what is yielded is the bind it named (agora-redesign #844).
+                self._performed(opened, scope, filename, facts)
                 return
         call = self._as_call(expr, scope)
         if call is None:

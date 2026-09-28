@@ -258,23 +258,29 @@ impl PyExpand {
     }
 }
 
-/// DoFunction(function, tail_resume_lines) — a `@do` definition: the undecorated
-/// function and the lines of its tail-position resumes. Built once per definition
-/// (`doeff.do.program_factory`) and shared by every `Call` of it.
+/// DoFunction(function, tail_resume_lines, yields) — a `@do` definition: the
+/// undecorated function, the lines of its tail-position resumes, and whether its
+/// body yields (a generator function). Built once per definition
+/// (`doeff.do.program_factory`) and shared by every `Call` of it. A call to a
+/// definition that does not yield performs nothing, so a bind may call it in place
+/// (`doeff_core_effects.outcomes.open_bind` — agora-redesign #844).
 #[pyclass(name = "DoFunction", frozen, module = "doeff_vm.doeff_vm")]
 pub struct PyDoFunction {
     #[pyo3(get)]
     pub function: Py<PyAny>,
     pub tail_resume_lines: Vec<u32>,
+    #[pyo3(get)]
+    pub yields: bool,
 }
 
 #[pymethods]
 impl PyDoFunction {
     #[new]
-    fn new(function: Py<PyAny>, tail_resume_lines: Vec<u32>) -> Self {
+    fn new(function: Py<PyAny>, tail_resume_lines: Vec<u32>, yields: bool) -> Self {
         Self {
             function,
             tail_resume_lines,
+            yields,
         }
     }
 
@@ -288,11 +294,15 @@ impl PyDoFunction {
         Ok(format!("DoFunction({})", f))
     }
 
-    fn __reduce__(&self, py: Python<'_>) -> PyResult<(Py<PyAny>, (Py<PyAny>, Vec<u32>))> {
+    fn __reduce__(&self, py: Python<'_>) -> PyResult<(Py<PyAny>, (Py<PyAny>, Vec<u32>, bool))> {
         let cls = py.get_type::<Self>().into_any().unbind();
         Ok((
             cls,
-            (self.function.clone_ref(py), self.tail_resume_lines.clone()),
+            (
+                self.function.clone_ref(py),
+                self.tail_resume_lines.clone(),
+                self.yields,
+            ),
         ))
     }
 

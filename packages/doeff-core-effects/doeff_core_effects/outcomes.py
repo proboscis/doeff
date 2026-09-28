@@ -19,10 +19,10 @@ handler は値で答え、変換は呼び手の本文の ``<-`` で行う(R4)—
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import Enum
-from types import NoneType, UnionType
+from types import GeneratorType, NoneType, UnionType
 from typing import TYPE_CHECKING, Generic, Never, TypeAlias, TypeVar, Union, get_args, get_origin
 
-from doeff_vm import EffectBase, Err, Ok
+from doeff_vm import Call, EffectBase, Err, Expand, IRStream, Ok, Pure
 
 from doeff.do import do
 from doeff.program import Pass, ProgramHandler, Transfer
@@ -258,8 +258,27 @@ def _perform_unresumable(effect: Absent | Raise) -> "EffectGenerator[Never]":
 _VALUE_TYPES: frozenset[type] = frozenset({Ok, Err, Some, _NothingType})
 
 
+def _settled(call: Call) -> object:
+    """効果を出さない @do の呼び(本体に yield の無い関数 — defk の判断など)をその場で呼んだ答えの ``Pure``。
+
+    VM がその呼びを走らせても、関数を呼んで答えをそのまま返すだけ(本体は何も出さない)なので、束ねる所で
+    呼んでも意味は同じ — 呼ぶ時点(束ねた所)・例外の上がる位置・``:pre`` / ``:post`` の検めは変わらず、VM の往復
+    だけが消える(agora-redesign #844)。本体に yield の在る関数の呼びは ``call`` そのもの(VM が走らせる)。
+    yield の無い関数が生成器を返したら、VM と同じくその生成器を Program として走らせる。
+    """
+    definition = call.function
+    if definition.yields:
+        return call
+    value = definition.function(*call.args, **call.kwargs)
+    if type(value) is GeneratorType:
+        return Expand(Pure(IRStream(value)))
+    return Pure(value)
+
+
 def _opened(expr: object, token: AbsentAsToken | None) -> object:
     """expr を開いた Program(開く物でなければ expr そのもの)。"""
+    if isinstance(expr, Call):
+        return _settled(expr)
     kind = type(expr)
     if kind is DirectBind:
         return _opened(expr.expr, expr.token)
@@ -279,6 +298,9 @@ def open_bind(expr: object, absent: Callable[[], object] | None = None) -> objec
     - 宣言(``__doeff_outcomes__``)を持つ effect → 答えを宣言に従って開く Program
     - Ok / Err / Some / Nothing → 開く Program
     - Absent / Raise → 出し、再開されたら誤りにする Program
+    - 効果を出さない @do の呼び(本体に yield の無い関数)→ その場で呼んだ答えの ``Pure``(``_settled``)。
+      doeff-hy の束ねは ``Pure`` を受けたら yield せずに ``.value`` を束ねる(VM の往復を省く — #844)。
+      yield しても同じ答え(``Pure`` はその答えを返す Program)
     - それ以外(宣言の無い effect・Program)→ **expr そのもの**(今までと同じ物を yield する)
     - ``absent`` を渡すと、その 1 つの束ねを狭い受け手で包み、中で出た Absent を ``Raise(absent())`` に変える
       (``<-`` の ``:absent <失敗>``)。受け手は呼び手の本文の内側にあるので、その Raise は呼び手の境目に届く。

@@ -1030,9 +1030,10 @@ defk {name}: {{:post [...]}} is required.
    4-element bind is honored at runtime wherever it is written — the shared
    quality checker (dotfiles agent/quality/hy_dsl.py effect_bind) projects the
    same isinstance and relies on this guarantee existing.
-     (<- expr)           → (yield (open-bind expr))
-     (<- name expr)      → (setv name (yield (open-bind expr)))
-     (<- name Type expr) → (do (setv name (yield (open-bind expr)))
+   B = 束ね 1 つの式(outcome-forms の open-form): open-bind の答えが Pure ならその値、それ以外は yield した答え
+     (<- expr)           → B = (if (is (type (:= b (open-bind expr))) Pure) b.value (yield b))
+     (<- name expr)      → (setv name B)
+     (<- name Type expr) → (do (setv name B)
                                (assert (isinstance name Type) \"expected Type, got <actual>\"))
      (<- … :absent F)    → open-bind の受け手が、その束ねの中で出た Absent を Raise(F) に変える
    open-bind(doeff_core_effects.outcomes)は宣言を持つ effect の不在・失敗の答えを Absent / Raise に変えて呼び手の
@@ -1059,10 +1060,10 @@ defk {name}: {{:post [...]}} is required.
           (or (is source None) (not (isinstance name hy.models.Symbol)))
             `(setv ~name ~bound)
           True `(setv (annotate ~name ~(hy.models.String source)) ~bound)))
-    (is name None) `(yield ~performed)
-    (is tp None) `(setv ~name (yield ~performed))
+    (is name None) performed
+    (is tp None) `(setv ~name ~performed)
     True `(do
-            (setv ~name (yield ~performed))
+            (setv ~name ~performed)
             (assert (isinstance ~name ~(_runtime-type tp))
                     (+ ~(+ "expected " (str tp) ", got ") (. (type ~name) __name__))))))
 
@@ -1336,7 +1337,7 @@ the effect in the enclosing do-context.
           (if (_static-view?)
               `(yield ~(walk (get node 1) ctx))
               (do (import doeff-hy.outcome-forms [open-form])
-                  `(yield ~(open-form (walk (get node 1) ctx) None)))))
+                  (open-form (walk (get node 1) ctx) None))))
 
       (isinstance node hy.models.Expression)
         (do

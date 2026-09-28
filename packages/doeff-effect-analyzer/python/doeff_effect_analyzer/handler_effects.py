@@ -57,6 +57,7 @@ from doeff_effect_analyzer.program_effects import (
     ProgramEffects,
     Residual,
     Unresolved,
+    _bind_expression,
     _body_nodes,
     _Bound,
     _bound_operand,
@@ -652,6 +653,9 @@ def stack_of(
                 *stack_of(left, scope, filename, depth=deeper),
                 *stack_of(right, scope, filename, depth=deeper),
             ]
+        case ast.IfExp() if (wrapper := _bind_expression(expr, scope)) is not None:
+            # doeff-hy's bind (``(<- hs (builder))``): the list the bound builder answers.
+            stack = stack_of(_bound_operand(wrapper, scope), scope, filename, depth=deeper)
         case ast.IfExp(body=body, orelse=orelse):
             stack = _one_stack([body, orelse], scope, filename, text, location, depth=deeper)
         case (

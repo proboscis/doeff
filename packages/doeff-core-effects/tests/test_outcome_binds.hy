@@ -17,7 +17,7 @@
 (import doeff [run EffectBase DoExpr K])
 (import doeff.program [Resume Pass])
 (import doeff.result [Nothing Some])
-(import doeff_vm [Err Ok WithHandler])
+(import doeff_vm [Call Err Ok WithHandler])
 (import doeff_core_effects.effects [Absent Raise])
 (import doeff_core_effects.outcomes [maybe result open-bind Outcomes])
 
@@ -192,6 +192,53 @@
   (<- plain-none (table-rows (read-plain "none")))
   (assert (= #(plain-missing plain-down plain-none) #((Missing "zz") (Unreachable "網が落ちた") None))
           #(plain-missing plain-down plain-none)))
+
+
+(defk judge-row [x]
+  {:pre [(: x int)] :post [(: % bool)]
+   :tags {:context "outcomes-test" :role "program"}}
+  "効果を出さない判断(本体に yield が無い)— 画面の行ごとの判断の形(agora-redesign #844)。"
+  (> x 3))
+
+(defk count-judged [xs]
+  {:pre [(: xs list)] :post [(: % int)]
+   :tags {:context "outcomes-test" :role "program"}}
+  "判断を <- で束ねて数え、最後に ! でも束ねる。"
+  (var n 0)
+  (for [x xs]
+    (<- ok (judge-row x))
+    (when ok (:= n (+ n 1))))
+  (if (! (judge-row 9)) n 0))
+
+(defk judge-then-read [x]
+  {:pre [(: x int)] :post [(: % (| Row Missing Unreachable (type None)))]
+   :tags {:context "outcomes-test" :role "program"}}
+  "効果を出さない判断の後に、効果を出す defk を束ねる。"
+  (<- ok (judge-row x))
+  (<- row (read-plain (if ok "a" "zz")))
+  row)
+
+
+(deftest test-effect-free-defk-bind-runs-in-place
+  ;; #844: 効果を出さない defk を <- / ! で束ねると、その場で呼んで答えを束ね、VM へ yield しない。
+  ;; 遅い形 = 束ねごとに Program を VM へ yield し、VM が関数を呼んで答えを send で返していた(1 回 数 µs)。
+  (val steps ((. (count-judged [1 5 7]) function function) [1 5 7]))
+  (with [stopped (pytest.raises StopIteration)]
+    (next steps))
+  (assert (= (. stopped value value) 2) "束ねは 1 度も yield せずに終わる")
+  (assert (= (. (open-bind (judge-row 5)) value) True) "open-bind は答えの Pure を返す")
+  ;; 効果を出す defk の束ねは今までどおり VM へ yield する(効果を出さない束ねの後でも)
+  (val reads ((. (judge-then-read 5) function function) 5))
+  (assert (isinstance (next reads) Call) "効果を出す defk の呼びは VM へ渡す")
+  ;; VM で走らせた答えも同じ
+  (<- judged (count-judged [1 5 7]))
+  (assert (= judged 2) judged))
+
+
+(deftest test-effect-free-defk-bind-raises-where-it-binds
+  ;; 束ねる所で呼ぶので、契約の破れ(:pre)はその束ねの位置から上がる(VM を通した時と同じ位置)
+  (with [(pytest.raises BaseException :match "judge-row")]
+    (run (count-judged [1 "x"]))))
 
 
 (val FAILURES-BUILT [])

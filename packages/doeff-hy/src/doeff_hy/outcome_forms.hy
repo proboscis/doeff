@@ -84,15 +84,23 @@
 (deff open-form [expr absent]  ; defk にできない: macro の展開の時に呼ぶ関数
   {:pre [(: expr Object) (: absent (| Object None))] :post [(: % Expression)]
    :tags {:context "doeff-hy-outcomes" :role "foundation"}}
-  "束ね 1 つが yield する物の form `(open-bind expr)`(R5・R6)。open-bind の引きを形の中に持つ — defhandler の節・利用者の
-   defn など、どこに書いた `<-` / `!` でも名前が解けるように。引きは文を持たない式(`__import__` の値の属性)にする —
-   `!` は式の中のどこにでも書けるので、`(setv (get (! e) 鍵) 値)` のように代入の的の中にも来る。import の文を持つ
-   `(do (import …) …)` では Hy が的を組めずに compile が落ちる(agora-controllers の kanban_services.hy・2026-09-28)。
-   1 回の束ねで約 0.3µs(import の文と同じ桁・hy.I は 4µs — 2026-09-28 に測った)。"
-  (let [open-bind `(. (__import__ "doeff_core_effects.outcomes" :fromlist #("open_bind")) open_bind)]
-    (if (is absent None)
-        `(~open-bind ~expr)
-        `(~open-bind ~expr (fn [] ~absent)))))
+  "束ね 1 つの式(R5・R6): `(open-bind expr)` の答えが `Pure` ならその値、それ以外は yield して VM の答え。
+   open-bind は効果を出さない @do の呼び(本体に yield の無い defk など)をその場で呼んで答えの `Pure` を返すので、
+   その束ねは VM を往復しない(agora-redesign #844)。`Pure` を yield しても同じ答えなので、意味は yield する形と同じ。
+   open-bind と `Pure` の引きを形の中に持つ — defhandler の節・利用者の defn など、どこに書いた `<-` / `!` でも名前が
+   解けるように。形は文を持たない 1 つの式(条件式と代入式)にする — `!` は式の中のどこにでも書けるので、
+   `(setv (get (! e) 鍵) 値)` のように代入の的の中にも来る。import の文を持つ `(do (import …) …)` では Hy が的を組めずに
+   compile が落ちる(agora-controllers の kanban_services.hy・2026-09-28)。module の引き(`__import__`)は 1 回の束ねで
+   1 回・約 0.3µs(import の文と同じ桁・hy.I は 4µs — 2026-09-28 に測った)。"
+  (let [module (hy.gensym "outcomes")
+        bound (hy.gensym "bound")
+        imported `(setx ~module (__import__ "doeff_core_effects.outcomes" :fromlist #("open_bind")))
+        opened (if (is absent None)
+                   `(. ~imported (open_bind ~expr))
+                   `(. ~imported (open_bind ~expr (fn [] ~absent))))]
+    `(if (is (type (setx ~bound ~opened)) (. ~module Pure))
+         (. ~bound value)
+         (yield ~bound))))
 
 
 (deff bind-form [form]  ; defk にできない: macro の展開の時に呼ぶ関数
