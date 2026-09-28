@@ -221,6 +221,8 @@ pub enum Explain {
     BareDefkCall { call: super::bare_calls::BareCall },
     /// DOEFF126: 引数で受けた関数を素で呼んでいる(呼び手が defk か fnk を渡している)。
     ParamCalledBare { call: super::param_calls::ParamCall },
+    /// DOEFF127: defk の `:effects` の宣言が推論と合わない。
+    EffectMismatch { mismatch: super::signatures::EffectMismatch },
     /// DOEFF121〜125: 臭いの規則(形の照らし)。
     Smell { smell: super::smells::Smell },
     /// DOEFF205: Jev が、判断の定義に形の検めと業務の判断が混ざっていると見た。
@@ -415,6 +417,25 @@ impl<'a> Narrator<'a> {
                     call.param, call.passed, call.param, call.param
                 ),
             ),
+            Explain::EffectMismatch { mismatch } => match mismatch {
+                super::signatures::EffectMismatch::Undeclared { definition, effect, via, .. } => (
+                    match via {
+                        Some(via) => format!("defk {} が {} を経由して effect {} を起こしている", definition, via, effect),
+                        None => format!("defk {} が effect {} を撃っている", definition, effect),
+                    },
+                    format!(
+                        "{} は :effects を宣言しているが、その中に {} が無い。:effects は定義が起こす effect の宣言で、handler の組がそれを受けるかを確かめる材料になる — 無い effect を起こすと、宣言を信じて組んだ handler の組で受けきれない。推論は本体で撃つ呼び((<- …)・(! …))を defk の中まで辿って集める(handler で受けた分は引かない)。",
+                        definition, effect
+                    ),
+                ),
+                super::signatures::EffectMismatch::Unused { definition, effect, .. } => (
+                    format!("defk {} の :effects の {}", definition, effect),
+                    format!(
+                        "{} は :effects に {} を書いているが、本体で撃つ呼びを defk の中まで辿っても {} を起こしていない。起こさない effect の宣言は、handler の組に要らない受け手を求める。",
+                        definition, effect, effect
+                    ),
+                ),
+            },
             Explain::BareDefkCall { call } => (
                 format!("定義 {}({})が defk {} を素で呼んでいる", call.definition, call.container, call.callee),
                 format!(

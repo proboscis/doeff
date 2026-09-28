@@ -1530,3 +1530,46 @@ fn a_function_argument_called_bare_across_files_is_found_at_the_callee() {
     assert!(found["explanation"]["subject"].as_str().unwrap().contains("呼び手 app/core/tags.hy の tag_rows_of がそこに fnk を渡す"), "{}", found["explanation"]["subject"]);
     assert_eq!(found["range"]["start"]["line"], 2);
 }
+
+#[test]
+fn effects_disagreeing_with_inference_are_warnings_at_the_call_and_the_declaration() {
+    // #849: 見出しの「宣言と推論の食い違い」の札をやめ、違反している場所(撃った呼び・:effects の中の名)に出す。
+    let dir = tempfile::TempDir::new().unwrap();
+    std::fs::write(
+        dir.path().join("pyproject.toml"),
+        "[tool.doeff-linter]\nenable = [\"DOEFF127\"]\n[tool.doeff-linter.definitions]\npaths = [\"app\"]\n",
+    )
+    .unwrap();
+    let files = [
+        (
+            "app/intent/rows.hy",
+            "(defrecord Row \"行\" (#^ str id))\n(defeffect ReadRow \"読む\" {:fields [(: id str)] :answer Row :tags {:context \"c\" :role \"intent\"}})\n(defeffect PutRow \"書く\" {:fields [(: row Row)] :answer bool :tags {:context \"c\" :role \"intent\"}})\n",
+        ),
+        (
+            "app/core/flow.hy",
+            concat!(
+                "(import app.intent.rows [ReadRow PutRow Row])\n",
+                "(import doeff_core_effects [Delay])\n",
+                "(defk fetch [id] {:pre [(: id str)] :post [(: % Row)] :effects [ReadRow]} (<- row (ReadRow id)) row)\n",
+                "(defk store [id] {:pre [(: id str)] :post [(: % bool)] :effects [PutRow Delay]} (val row (! (fetch id))) (<- ok (PutRow row)) ok)\n",
+                "(defk quiet [id] {:pre [(: id str)] :post [(: % Row)]} (<- row (ReadRow id)) row)\n",
+                "(defk waits [s] {:pre [(: s int)] :post [(: % int)] :effects [Delay]} (<- (Delay s)) s)\n",
+            ),
+        ),
+    ];
+    for (rel, text) in &files {
+        let path = dir.path().join(rel);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, text).unwrap();
+    }
+    let (_, report) = editor(dir.path());
+    // 宣言の無い quiet・一致する fetch・外の effect Delay が一致する waits は出ない。
+    assert_eq!(keys(&report, "DOEFF127"), vec!["app/core/flow.hy::DOEFF127::store::Delay", "app/core/flow.hy::DOEFF127::store::ReadRow"]);
+    let undeclared = violation(&report, "app/core/flow.hy::DOEFF127::store::ReadRow");
+    assert_eq!(undeclared["severity"], "warning");
+    assert_eq!(undeclared["range"]["start"]["line"], 3);
+    assert!(undeclared["message"].as_str().unwrap().contains("fetch を経由して、:effects に無い effect ReadRow"), "{}", undeclared);
+    assert_eq!(undeclared["explanation"]["subject"], "defk store が fetch を経由して effect ReadRow を起こしている");
+    let unused = violation(&report, "app/core/flow.hy::DOEFF127::store::Delay");
+    assert!(unused["message"].as_str().unwrap().contains(":effects に Delay を書いているが、起こしていない"));
+}

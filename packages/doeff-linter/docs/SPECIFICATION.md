@@ -550,3 +550,26 @@ call look like f(a,b) instead of (f a b)?"・式の途中の effect は `!` の�
   (中の呼びだけ置き換える)。lisp の形の中の演算は括弧を残す(`(when (a and b) …)`)。
 - **字下げ**: 作り直さない。引数が次の行へ続く所は前の引数の後ろに `,` を挿すだけ。頭と最初の項が別の行の演算・method は lisp のまま。
 - 名の束縛(`(<- x T e)`・`val` …)は 16 節の `bindings` が描き、ここは値の式だけを置き換える。quote の中は読まない。
+
+## 18. `:effects` の宣言と推論の食い違い — DOEFF127
+
+operator の訂正 2026-09-28(agora-redesign #849 に記録)。逐語 "such linter info must be displayed where it's violating and must show
+what it is violating"。前は拡張(doeff-runner)が defk の見出しの中で宣言と推論を比べ、「宣言なし」「違反 2」の札にまとめて出していた。
+判じる所を linter に移し、違反している所に規則の違反として出す(拡張は描くだけ)。
+
+- **対象**: `:effects` を書いた defk だけ。`:effects` は任意(#800)なので、書いていない defk は対象外(「宣言なし」は違反にしない)。
+  母集団は `definitions` の業務の file(検の置き場も含む — `paths` の下なら)。
+- **推論**: 16 節の見出しと同じ `signatures::World`(1 か所)。本体で撃つ呼び(`(<- …)` の右辺・`(! …)`)の頭を module まで解き、
+  effect ならそれ、repo の defk ならその推論を辿って集める。撃つ位置に分岐(`if`・`when`・`cond`・`match`・`do`・`let`)を置いた形は、
+  枝の呼びを 1 つずつ撃ったと数える。
+- **違反 2 種**:
+  - 宣言に無い effect を起こす — 位置 = その effect に至る最初の撃った呼びの頭(defk を経由するならその defk の名)。文に起こす effect と
+    経由した呼びを書く。
+  - 宣言した effect を起こさない — 位置 = `:effects` の中のその名。**追えない呼び**(repo の外の関数・deff・method・名で引けない物)を
+    1 つでも撃つ defk では、推論の集合が欠けうるので出さない。初版(この抑えなし)は agora の本線で 23 件のうち 19 件がこの形の外れ
+    (`read-typed` のような foundation の関数を経由する protocol の defk)だったので抑えた(本線 4 件 — 全部が宣言に無い effect)。
+- **重さ**: warning(戻せる決定・#849)。error にしない理由 = 推論は handler で受けた effect を引かない上からの見積もりで、本体の中で
+  受けている effect を「宣言に無い」と出しうる。info にしない理由 = 見出しの札をやめて違反の場所だけに出す以上、見落とされない重さが要る。
+  登録簿に載れば `registered_severity`。
+- **鍵**: `<path>::DOEFF127::<定義>::<effect>`(effect は module を外した綴り)。
+

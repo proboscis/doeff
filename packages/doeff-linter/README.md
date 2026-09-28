@@ -104,6 +104,7 @@ skip_test_functions = true
 | DOEFF124 | Fields Joined Into Text | 同じ値の 2 つ以上の欄を文字列と一緒に `+` か f 文字列でつなぐ |
 | DOEFF125 | Rebuilt Accumulator | for / while の中の `(:= xs (+ xs #(…)))`(内包表記へ) |
 | DOEFF126 | defk Called Bare | defk の答えを値として使う所(比べ・演算・組み込みの関数・method・条件・繰り返しの元・record の欄)で defk を素で呼ぶ(error) |
+| DOEFF127 | Effects Disagree With Inference | `:effects` を書いた defk が、宣言に無い effect を起こす(位置 = 経由した呼び)か、宣言した effect を起こさない(位置 = `:effects` の中の名)(warning) |
 | DOEFF120 | JsonValue Outside Wire Modules | JsonValue・JsonObject を使ってよいのは汎用の解き手と、architecture.hy の `:wire-modules` に挙げた foundation の送受信の module だけ |
 
 ## 層の規則(Hy と Python)

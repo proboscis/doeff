@@ -232,6 +232,8 @@ struct Site {
     absent_handled: bool,
     /// `on-raise` の program の中(Raise を受けている)。
     raise_handled: bool,
+    /// 呼びの頭の記号の byte の範囲(DOEFF127 が違反の場所に使う — 表の比べには使わない)。
+    head: (usize, usize),
 }
 
 /// defk / deff 1 つ(推論の材料)。
@@ -251,6 +253,9 @@ struct Summary {
     absent: bool,
     /// module まで含めた名 → 書かれた綴り。
     raises: BTreeMap<String, String>,
+    /// 追えない呼び(repo の外の関数・deff・method)を撃っている(推論の effect の集合が欠けうる — DOEFF127 が
+    /// 「宣言したのに起こしていない」を判じない)。
+    opaque: bool,
 }
 
 /// repo の Hy の file 全部から集めた、型・effect・defk の表と、defk の推論。
@@ -349,6 +354,7 @@ impl World {
             let outcome = self.site_outcome(site);
             summary.effects.extend(outcome.effects);
             summary.absent |= outcome.absent;
+            summary.opaque |= outcome.opaque;
             summary.raises.extend(outcome.raises);
         }
         summary
@@ -367,12 +373,15 @@ impl World {
             (!effect.absent.is_empty(), raises)
         } else if let Some(summary) = self.summaries.get(&site.callee) {
             out.effects.extend(summary.effects.iter().cloned());
+            out.opaque = summary.opaque;
             (summary.absent, summary.raises.clone())
         } else if self.is_foreign_effect(&site.callee) {
             // repo の外の effect(doeff 本体の Delay・Ask など)— 撃っているので effect として数える。答えの分け方は分からない
             out.effects.insert(site.callee.clone());
             (false, BTreeMap::new())
         } else {
+            // 追えない呼び(repo の外の関数・deff・method)を撃っている — その先の effect は分からない
+            out.opaque = true;
             return out;
         };
         if !site.raise_handled {
@@ -798,6 +807,13 @@ fn bind_shape<'f>(hy: &Hy, items: &[&'f Form]) -> Option<BindShape<'f>> {
     }
 }
 
+/// 呼びの頭の記号の byte の範囲(記号でなければ式の頭の位置)。
+fn call_head_span(form: &Form) -> (usize, usize) {
+    live(form)
+        .and_then(|items| items.first().map(|h| (h.span.start, h.span.end)))
+        .unwrap_or((form.span.start, form.span.start))
+}
+
 /// 呼びの頭の綴り(`(f …)` の f)。
 fn call_head<'a>(hy: &Hy<'a>, form: &Form) -> Option<&'a str> {
     live(form)?.first().and_then(|h| hy.symbol(h))
@@ -912,14 +928,166 @@ fn push_site(
     flags: Flags,
     out: &mut Vec<Site>,
 ) {
-    if let Some(head) = call_head(&reader.hy, value) {
-        out.push(Site {
+    match call_head(&reader.hy, value) {
+        // 撃つ位置に分岐を置いた形(`(<- x (if c (A …) (B …)))`)— 撃つのは枝の式なので、枝ごとに呼びとして控える
+        Some("if" | "when" | "unless" | "cond" | "do" | "match" | "let") => {
+            let items = live(value).unwrap_or_default();
+            let branches = match items.first().and_then(|h| reader.hy.symbol(h)) {
+                Some("if" | "when" | "unless" | "let") => items.get(2..).unwrap_or_default(),
+                Some("match") => items.get(2..).unwrap_or_default(),
+                _ => items.get(1..).unwrap_or_default(),
+            };
+            for branch in branches {
+                if branch.paren_items().is_some() {
+                    push_site(reader, branch, absent_as_raise.clone(), flags, out);
+                }
+            }
+        }
+        Some(head) => out.push(Site {
             callee: reader.scope.qualify(head),
             absent_as_raise,
             absent_handled: flags.absent_handled,
             raise_handled: flags.raise_handled,
-        });
+            head: call_head_span(value),
+        }),
+        None => {}
     }
+}
+
+// --- DOEFF127: :effects の宣言と推論の食い違い ------------------------------------------------
+
+/// DOEFF127 の食い違い 1 つ(`:effects` を宣言した defk だけ — 宣言は任意(#800)なので、宣言の無い defk は対象外)。
+/// 推論は見出しと同じ `World` の読み(1 か所)を使う。範囲は byte。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum EffectMismatch {
+    /// 推論で起こしているのに `:effects` に無い effect。場所 = その effect に至る撃った呼びの頭(本体の最初の 1 つ)。
+    /// via = その呼びが defk を経由する時の、呼んだ定義の綴り(effect を直に撃っていれば None)。
+    Undeclared {
+        definition: String,
+        effect: String,
+        via: Option<String>,
+        start: usize,
+        end: usize,
+    },
+    /// `:effects` に在るのに推論では起こしていない effect。場所 = `:effects` の中のその名。
+    Unused {
+        definition: String,
+        effect: String,
+        start: usize,
+        end: usize,
+    },
+}
+
+impl EffectMismatch {
+    /// 違反の場所の byte の範囲。
+    pub fn span(&self) -> (usize, usize) {
+        match self {
+            EffectMismatch::Undeclared { start, end, .. }
+            | EffectMismatch::Unused { start, end, .. } => (*start, *end),
+        }
+    }
+
+    /// 定義の綴り。
+    pub fn definition(&self) -> &str {
+        match self {
+            EffectMismatch::Undeclared { definition, .. }
+            | EffectMismatch::Unused { definition, .. } => definition,
+        }
+    }
+
+    /// effect の綴り(module を外した最後の区切り)。
+    pub fn effect(&self) -> &str {
+        match self {
+            EffectMismatch::Undeclared { effect, .. } | EffectMismatch::Unused { effect, .. } => {
+                effect
+            }
+        }
+    }
+}
+
+/// 1 file の defk の `:effects` の宣言と推論の食い違いを判じる(表は `World::build` で作った物 — 1 file の実行では
+/// この file の同じ中身を overlay にした物)。
+pub fn effect_mismatches(world: &World, rel: &str, source: &str) -> Vec<EffectMismatch> {
+    let forms = Reader::new(source, 0, source.len()).read_all();
+    let module = module_of(rel);
+    let bindings = form_bindings(&forms, source, &module);
+    let reader = FileReader {
+        hy: Hy { src: source },
+        lines: LineIndex::new(source),
+        scope: Scope {
+            module: &module,
+            bindings: &bindings,
+        },
+        path: rel.to_string(),
+    };
+    let mut out = Vec::new();
+    for form in top_definitions(&reader.hy, &forms) {
+        let Some(shape) = definition_shape(&reader.hy, form) else {
+            continue;
+        };
+        if shape.kind != SignatureKind::Defk {
+            continue;
+        }
+        let Some(list) = shape
+            .contract
+            .and_then(|c| reader.dict_value(c, ":effects"))
+            .and_then(|l| l.bracket_items())
+        else {
+            continue;
+        };
+        let definition = reader.hy.text(shape.name).to_string();
+        let declared: Vec<(String, &Form)> = list
+            .iter()
+            .filter(|i| matches!(i.node, Node::Symbol))
+            .map(|i| (reader.scope.qualify(reader.hy.text(i)), i))
+            .collect();
+        let mut sites = Vec::new();
+        for item in &shape.body {
+            collect_sites(&reader, item, Flags::default(), &mut sites);
+        }
+        // effect → それに至る最初の撃った呼び(本文の順)
+        let mut inferred: Vec<(String, &Site)> = Vec::new();
+        let mut opaque = false;
+        for site in &sites {
+            let outcome = world.site_outcome(site);
+            opaque |= outcome.opaque;
+            for effect in outcome.effects {
+                if !inferred.iter().any(|(e, _)| *e == effect) {
+                    inferred.push((effect, site));
+                }
+            }
+        }
+        for (effect, site) in &inferred {
+            if declared.iter().any(|(q, _)| q == effect) {
+                continue;
+            }
+            let via = (site.callee != *effect).then(|| {
+                source
+                    .get(site.head.0..site.head.1)
+                    .unwrap_or("")
+                    .to_string()
+            });
+            out.push(EffectMismatch::Undeclared {
+                definition: definition.clone(),
+                effect: last_segment(effect).to_string(),
+                via,
+                start: site.head.0,
+                end: site.head.1,
+            });
+        }
+        // 追えない呼びを撃っていれば推論の集合が欠けうるので、「宣言したのに起こしていない」は判じない
+        for (qualified, symbol) in declared.iter().filter(|_| !opaque) {
+            if !inferred.iter().any(|(e, _)| e == qualified) {
+                out.push(EffectMismatch::Unused {
+                    definition: definition.clone(),
+                    effect: reader.hy.text(symbol).to_string(),
+                    start: symbol.span.start,
+                    end: symbol.span.end,
+                });
+            }
+        }
+    }
+    out
 }
 
 // --- 1 file の見出しと束縛 -----------------------------------------------------------------
@@ -1100,6 +1268,7 @@ fn performed_type(
         absent_as_raise: absent_as_raise.map(|f| raise_type(reader, f)),
         absent_handled: flags.absent_handled,
         raise_handled: flags.raise_handled,
+        head: call_head_span(value),
     };
     let outcome = world.site_outcome(&site);
     let raises = outcome
@@ -1697,6 +1866,85 @@ mod tests {
 "#;
         let got = read(&[("core/q.hy", core)], "core/q.hy");
         assert!(got.bindings.iter().all(|b| b.name != "hidden"));
+    }
+
+    /// 根に file を並べて表を作り、1 file の DOEFF127 の食い違いを読む。
+    fn mismatches(files: &[(&str, &str)], target: &str) -> Vec<EffectMismatch> {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().canonicalize().unwrap();
+        for (rel, text) in files {
+            let path = root.join(rel);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, text).unwrap();
+        }
+        let source = files.iter().find(|(rel, _)| *rel == target).unwrap().1;
+        let world = World::build(&root, Some((target, source)));
+        effect_mismatches(&world, target, source)
+    }
+
+    #[test]
+    fn effect_mismatches_point_at_the_call_and_the_declaration() {
+        let core = r#"
+(import intent.rows [ReadRow PutRow Row])
+(import doeff_core_effects [Delay])
+(defk fetch [id]
+  {:pre [(: id str)] :post [(: % Row)] :effects [ReadRow]}
+  (<- row (ReadRow id))
+  row)
+(defk store [id]
+  {:pre [(: id str)] :post [(: % bool)] :effects [PutRow Delay]}
+  (val row (! (fetch id)))
+  (<- ok (PutRow row))
+  ok)
+(defk undeclared-ok [id]
+  {:pre [(: id str)] :post [(: % Row)]}
+  (<- row (ReadRow id))
+  row)
+(defk waits [s]
+  {:pre [(: s int)] :post [(: % int)] :effects [Delay]}
+  (<- (Delay s))
+  s)
+(defk branches [id flag]
+  {:pre [(: id str) (: flag bool)] :post [(: % Row)] :effects [ReadRow PutRow]}
+  (<- got (if flag (ReadRow id) (PutRow id)))
+  got)
+(defk through-helper [id]
+  {:pre [(: id str)] :post [(: % Row)] :effects [ReadRow]}
+  (<- row (read-typed id))
+  row)
+"#;
+        let got = mismatches(
+            &[("intent/rows.hy", INTENT), ("core/flow.hy", core)],
+            "core/flow.hy",
+        );
+        let at = |m: &EffectMismatch| &core[m.span().0..m.span().1];
+        // 出ない: 宣言なしの undeclared-ok・一致の fetch と waits(外の effect Delay)・枝の両方を撃つ branches・
+        // 追えない呼び read-typed を撃つ through-helper(起こしていないと言えない)
+        assert_eq!(got.len(), 2, "{:?}", got);
+        match &got[0] {
+            EffectMismatch::Undeclared {
+                definition,
+                effect,
+                via,
+                ..
+            } => {
+                assert_eq!(
+                    (definition.as_str(), effect.as_str(), via.as_deref()),
+                    ("store", "ReadRow", Some("fetch"))
+                );
+                assert_eq!(at(&got[0]), "fetch", "場所は defk を経由した呼びの頭");
+            }
+            other => panic!("{:?}", other),
+        }
+        match &got[1] {
+            EffectMismatch::Unused {
+                definition, effect, ..
+            } => {
+                assert_eq!((definition.as_str(), effect.as_str()), ("store", "Delay"));
+                assert_eq!(at(&got[1]), "Delay", "場所は :effects の中の名");
+            }
+            other => panic!("{:?}", other),
+        }
     }
 
     #[test]
