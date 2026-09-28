@@ -7,7 +7,7 @@ import { loadDocument, readFixture } from './fixtures';
 suite('Hy 索引の契約の読み込み', () => {
   test('契約どおりの fixture は全 file が読める', () => {
     const document = loadDocument('workspace.json');
-    assert.strictEqual(document.version, 4);
+    assert.strictEqual(document.version, 5);
     assert.strictEqual(document.files.length, 11);
     const app = document.files.find((f) => f.module === 'pkg.app');
     assert.ok(app);
@@ -48,7 +48,75 @@ suite('Hy 索引の契約の読み込み', () => {
     assert.ok((callers.get('pkg.effects.PutRow') ?? []).length > 0, JSON.stringify([...callers.entries()]));
   });
 
-  test('版 1 の JSON は全体を理由つきで捨てる(版 4 だけを受け付ける)', () => {
+  test('effect 節の handles は解く effect の完全修飾名を持ち、解く handler は読む側が逆に引ける(版 5)', () => {
+    const document = loadDocument('workspace.json');
+    const handlers = new Map<string, string[]>();
+    for (const file of document.files) {
+      for (const def of file.definitions) {
+        if (def.handles !== null && def.handles.target !== null && def.container !== null) {
+          handlers.set(def.handles.target, [...(handlers.get(def.handles.target) ?? []), def.container]);
+        }
+        assert.strictEqual(def.handles !== null, def.kind === 'effect-clause', `${def.name} (${def.kind})`);
+      }
+    }
+    const putRow = document.files.flatMap((f) => f.definitions).find((d) => d.qualifiedName === 'pkg.effects.PutRow');
+    assert.ok(putRow);
+    assert.ok((handlers.get(putRow.qualifiedName) ?? []).length > 0, JSON.stringify([...handlers.entries()]));
+  });
+
+  test('版 5 の欄(effects・param_types・answer_type・contracts)を読む', () => {
+    const parsed = parseHyIndexJson(
+      JSON.stringify({
+        version: 5,
+        root: '/ws',
+        raw_via: 'not-computed',
+        raw_catalog_problems: [],
+        files: [
+          {
+            path: '/ws/m.hy',
+            module: 'm',
+            definitions: [
+              {
+                name: 'run-it',
+                mangled: 'run_it',
+                qualified_name: 'm.run_it',
+                kind: 'defk',
+                range: { start: { line: 0, character: 6 }, end: { line: 0, character: 12 } },
+                full_range: { start: { line: 0, character: 0 }, end: { line: 3, character: 1 } },
+                container: null,
+                docstring: null,
+                params: ['request'],
+                bases: [],
+                raw: { direct: [], via: [] },
+                tags: null,
+                effects: [{ name: 'ReadInput', target: 'intent.ReadInput' }],
+                param_types: [{ name: 'request', type: { text: 'InputRequest', names: [{ name: 'InputRequest', target: 'types.InputRequest' }] } }],
+                answer_type: { text: '(| Judgment None)', names: [{ name: 'Judgment', target: null }, { name: 'None', target: null }] },
+                contracts: [{ side: 'pre', text: '(> budget 0)' }],
+                handles: null
+              }
+            ],
+            imports: [],
+            references: [],
+            calls: [],
+            errors: []
+          }
+        ]
+      })
+    );
+    assert.strictEqual(parsed.tag, 'ok');
+    if (parsed.tag !== 'ok') {
+      return;
+    }
+    assert.deepStrictEqual(parsed.rejected, []);
+    const def = parsed.document.files[0].definitions[0];
+    assert.deepStrictEqual(def.effects, [{ name: 'ReadInput', target: 'intent.ReadInput' }]);
+    assert.strictEqual(def.paramTypes[0].type.names[0].target, 'types.InputRequest');
+    assert.strictEqual(def.answerType?.text, '(| Judgment None)');
+    assert.deepStrictEqual(def.contracts, [{ side: 'pre', text: '(> budget 0)' }]);
+  });
+
+  test('版 1 の JSON は全体を理由つきで捨てる(版 5 だけを受け付ける)', () => {
     const parsed = parseHyIndexJson(readFixture('bad-version.json'));
     assert.strictEqual(parsed.tag, 'rejected');
     assert.match(parsed.tag === 'rejected' ? parsed.reason : '', /版が違う/);
@@ -78,7 +146,7 @@ suite('Hy 索引の契約の読み込み', () => {
     );
     assert.deepStrictEqual(parsed.document.files[0].errors, ['3 行目: 括弧が閉じていない']);
     const reasons = new Map(parsed.rejected.map((r) => [r.path, r.reason]));
-    assert.strictEqual(parsed.rejected.length, 10);
+    assert.strictEqual(parsed.rejected.length, 13);
     assert.match(reasons.get('/ws/no_module.hy') ?? '', /"module" が無い/);
     assert.match(reasons.get('/ws/unknown_kind.hy') ?? '', /契約に無い kind "defwhatever"/);
     assert.match(reasons.get('/ws/missing_is_require.hy') ?? '', /"is_require" が無い/);
@@ -89,6 +157,9 @@ suite('Hy 索引の契約の読み込み', () => {
     assert.match(reasons.get('/ws/missing_calls.hy') ?? '', /"calls" が無い/);
     assert.match(reasons.get('/ws/missing_qualified_name.hy') ?? '', /"qualified_name" が無い/);
     assert.match(reasons.get('/ws/missing_target.hy') ?? '', /"target" が無い/);
+    assert.match(reasons.get('/ws/missing_effects.hy') ?? '', /"effects" が無い/);
+    assert.match(reasons.get('/ws/handles_on_defn.hy') ?? '', /defn は effect を解かない/);
+    assert.match(reasons.get('/ws/bad_contract_side.hy') ?? '', /契約に無い値 "during"/);
   });
 });
 

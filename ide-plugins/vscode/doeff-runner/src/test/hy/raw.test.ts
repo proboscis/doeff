@@ -27,7 +27,7 @@ function def(graph: EffectGraph, filePath: string, name: string): DefRef {
 suite('生の副作用の証拠の読み込み(版 3)', () => {
   test('全体の実行の出力は経由まで読める', () => {
     const document = loadDocument('raw-workspace.json');
-    assert.strictEqual(document.version, 4);
+    assert.strictEqual(document.version, 5);
     assert.strictEqual(document.rawVia, 'computed');
     assert.deepStrictEqual(document.rawCatalogProblems, []);
   });

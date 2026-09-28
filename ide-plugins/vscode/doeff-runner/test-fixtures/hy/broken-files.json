@@ -1,5 +1,5 @@
 {
- "version": 4,
+ "version": 5,
  "root": "/ws",
  "files": [
   {
@@ -46,7 +46,12 @@
      "raw": {
       "direct": [],
       "via": []
-     }
+     },
+     "effects": null,
+     "param_types": [],
+     "answer_type": null,
+     "contracts": [],
+     "handles": null
     }
    ],
    "imports": [],
@@ -139,7 +144,12 @@
      "raw": {
       "direct": [],
       "via": []
-     }
+     },
+     "effects": null,
+     "param_types": [],
+     "answer_type": null,
+     "contracts": [],
+     "handles": null
     }
    ],
    "imports": [],
@@ -185,7 +195,12 @@
      "raw": {
       "direct": [],
       "via": []
-     }
+     },
+     "effects": null,
+     "param_types": [],
+     "answer_type": null,
+     "contracts": [],
+     "handles": null
     }
    ],
    "imports": [],
@@ -308,7 +323,12 @@
      "raw": {
       "direct": [],
       "via": []
-     }
+     },
+     "effects": null,
+     "param_types": [],
+     "answer_type": null,
+     "contracts": [],
+     "handles": null
     }
    ],
    "imports": [],
@@ -332,6 +352,163 @@
      "performed": false
     }
    ],
+   "errors": []
+  },
+  {
+   "path": "/ws/missing_effects.hy",
+   "module": "missing_effects",
+   "definitions": [
+    {
+     "name": "f",
+     "mangled": "f",
+     "qualified_name": "missing_effects.f",
+     "kind": "defn",
+     "range": {
+      "start": {
+       "line": 0,
+       "character": 6
+      },
+      "end": {
+       "line": 0,
+       "character": 7
+      }
+     },
+     "full_range": {
+      "start": {
+       "line": 0,
+       "character": 0
+      },
+      "end": {
+       "line": 0,
+       "character": 12
+      }
+     },
+     "container": null,
+     "docstring": null,
+     "params": [],
+     "bases": [],
+     "raw": {
+      "direct": [],
+      "via": []
+     },
+     "tags": null,
+     "param_types": [],
+     "answer_type": null,
+     "contracts": [],
+     "handles": null
+    }
+   ],
+   "imports": [],
+   "references": [],
+   "calls": [],
+   "errors": []
+  },
+  {
+   "path": "/ws/handles_on_defn.hy",
+   "module": "handles_on_defn",
+   "definitions": [
+    {
+     "name": "f",
+     "mangled": "f",
+     "qualified_name": "handles_on_defn.f",
+     "kind": "defn",
+     "range": {
+      "start": {
+       "line": 0,
+       "character": 6
+      },
+      "end": {
+       "line": 0,
+       "character": 7
+      }
+     },
+     "full_range": {
+      "start": {
+       "line": 0,
+       "character": 0
+      },
+      "end": {
+       "line": 0,
+       "character": 12
+      }
+     },
+     "container": null,
+     "docstring": null,
+     "params": [],
+     "bases": [],
+     "raw": {
+      "direct": [],
+      "via": []
+     },
+     "tags": null,
+     "effects": null,
+     "param_types": [],
+     "answer_type": null,
+     "contracts": [],
+     "handles": {
+      "name": "X",
+      "target": null
+     }
+    }
+   ],
+   "imports": [],
+   "references": [],
+   "calls": [],
+   "errors": []
+  },
+  {
+   "path": "/ws/bad_contract_side.hy",
+   "module": "bad_contract_side",
+   "definitions": [
+    {
+     "name": "f",
+     "mangled": "f",
+     "qualified_name": "bad_contract_side.f",
+     "kind": "defn",
+     "range": {
+      "start": {
+       "line": 0,
+       "character": 6
+      },
+      "end": {
+       "line": 0,
+       "character": 7
+      }
+     },
+     "full_range": {
+      "start": {
+       "line": 0,
+       "character": 0
+      },
+      "end": {
+       "line": 0,
+       "character": 12
+      }
+     },
+     "container": null,
+     "docstring": null,
+     "params": [],
+     "bases": [],
+     "raw": {
+      "direct": [],
+      "via": []
+     },
+     "tags": null,
+     "effects": null,
+     "param_types": [],
+     "answer_type": null,
+     "contracts": [
+      {
+       "side": "during",
+       "text": "(> x 0)"
+      }
+     ],
+     "handles": null
+    }
+   ],
+   "imports": [],
+   "references": [],
+   "calls": [],
    "errors": []
   },
   {

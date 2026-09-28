@@ -1,5 +1,5 @@
 {
- "version": 4,
+ "version": 5,
  "root": "/ws",
  "files": [
   {
@@ -40,7 +40,12 @@
      "raw": {
       "direct": [],
       "via": []
-     }
+     },
+     "effects": null,
+     "param_types": [],
+     "answer_type": null,
+     "contracts": [],
+     "handles": null
     },
     {
      "name": "helper",
@@ -74,7 +79,12 @@
      "raw": {
       "direct": [],
       "via": []
-     }
+     },
+     "effects": null,
+     "param_types": [],
+     "answer_type": null,
+     "contracts": [],
+     "handles": null
     },
     {
      "name": "Store",
@@ -108,7 +118,12 @@
      "raw": {
       "direct": [],
       "via": []
-     }
+     },
+     "effects": null,
+     "param_types": [],
+     "answer_type": null,
+     "contracts": [],
+     "handles": null
     },
     {
      "name": "path",
@@ -142,7 +157,12 @@
      "raw": {
       "direct": [],
       "via": []
-     }
+     },
+     "effects": null,
+     "param_types": [],
+     "answer_type": null,
+     "contracts": [],
+     "handles": null
     },
     {
      "name": "save",
@@ -179,7 +199,12 @@
      "raw": {
       "direct": [],
       "via": []
-     }
+     },
+     "effects": null,
+     "param_types": [],
+     "answer_type": null,
+     "contracts": [],
+     "handles": null
     },
     {
      "name": "Color",
@@ -213,7 +238,12 @@
      "raw": {
       "direct": [],
       "via": []
-     }
+     },
+     "effects": null,
+     "param_types": [],
+     "answer_type": null,
+     "contracts": [],
+     "handles": null
     },
     {
      "name": "RED",
@@ -247,7 +277,12 @@
      "raw": {
       "direct": [],
       "via": []
-     }
+     },
+     "effects": null,
+     "param_types": [],
+     "answer_type": null,
+     "contracts": [],
+     "handles": null
     },
     {
      "name": "app-handler",
@@ -281,7 +316,12 @@
      "raw": {
       "direct": [],
       "via": []
-     }
+     },
+     "effects": null,
+     "param_types": [],
+     "answer_type": null,
+     "contracts": [],
+     "handles": null
     },
     {
      "name": "Ask",
@@ -317,6 +357,14 @@
      "raw": {
       "direct": [],
       "via": []
+     },
+     "effects": null,
+     "param_types": [],
+     "answer_type": null,
+     "contracts": [],
+     "handles": {
+      "name": "Ask",
+      "target": null
      }
     },
     {
@@ -351,7 +399,12 @@
      "raw": {
       "direct": [],
       "via": []
-     }
+     },
+     "effects": null,
+     "param_types": [],
+     "answer_type": null,
+     "contracts": [],
+     "handles": null
     },
     {
      "name": "orphan",
@@ -385,7 +438,12 @@
      "raw": {
       "direct": [],
       "via": []
-     }
+     },
+     "effects": null,
+     "param_types": [],
+     "answer_type": null,
+     "contracts": [],
+     "handles": null
     }
    ],
    "imports": [
@@ -896,7 +954,12 @@
      "raw": {
       "direct": [],
       "via": []
-     }
+     },
+     "effects": null,
+     "param_types": [],
+     "answer_type": null,
+     "contracts": [],
+     "handles": null
     },
     {
      "name": "parse-it",
@@ -932,7 +995,12 @@
      "raw": {
       "direct": [],
       "via": []
-     }
+     },
+     "effects": null,
+     "param_types": [],
+     "answer_type": null,
+     "contracts": [],
+     "handles": null
     }
    ],
    "imports": [],
@@ -1007,7 +1075,12 @@
      "raw": {
       "direct": [],
       "via": []
-     }
+     },
+     "effects": null,
+     "param_types": [],
+     "answer_type": null,
+     "contracts": [],
+     "handles": null
     }
    ],
    "imports": [],
@@ -1067,7 +1140,12 @@
      "raw": {
       "direct": [],
       "via": []
-     }
+     },
+     "effects": null,
+     "param_types": [],
+     "answer_type": null,
+     "contracts": [],
+     "handles": null
     },
     {
      "name": "name",
@@ -1101,7 +1179,12 @@
      "raw": {
       "direct": [],
       "via": []
-     }
+     },
+     "effects": null,
+     "param_types": [],
+     "answer_type": null,
+     "contracts": [],
+     "handles": null
     }
    ],
    "imports": [],
@@ -1145,7 +1228,12 @@
      "raw": {
       "direct": [],
       "via": []
-     }
+     },
+     "effects": null,
+     "param_types": [],
+     "answer_type": null,
+     "contracts": [],
+     "handles": null
     }
    ],
    "imports": [],
@@ -1189,7 +1277,12 @@
      "raw": {
       "direct": [],
       "via": []
-     }
+     },
+     "effects": null,
+     "param_types": [],
+     "answer_type": null,
+     "contracts": [],
+     "handles": null
     }
    ],
    "imports": [],
@@ -1233,7 +1326,12 @@
      "raw": {
       "direct": [],
       "via": []
-     }
+     },
+     "effects": null,
+     "param_types": [],
+     "answer_type": null,
+     "contracts": [],
+     "handles": null
     },
     {
      "name": "format-name",
@@ -1267,7 +1365,12 @@
      "raw": {
       "direct": [],
       "via": []
-     }
+     },
+     "effects": null,
+     "param_types": [],
+     "answer_type": null,
+     "contracts": [],
+     "handles": null
     }
    ],
    "imports": [],
@@ -1456,7 +1559,12 @@
      "raw": {
       "direct": [],
       "via": []
-     }
+     },
+     "effects": null,
+     "param_types": [],
+     "answer_type": null,
+     "contracts": [],
+     "handles": null
     },
     {
      "name": "GetRow",
@@ -1492,7 +1600,12 @@
      "raw": {
       "direct": [],
       "via": []
-     }
+     },
+     "effects": null,
+     "param_types": [],
+     "answer_type": null,
+     "contracts": [],
+     "handles": null
     },
     {
      "name": "SpecialPut",
@@ -1528,7 +1641,12 @@
      "raw": {
       "direct": [],
       "via": []
-     }
+     },
+     "effects": null,
+     "param_types": [],
+     "answer_type": null,
+     "contracts": [],
+     "handles": null
     },
     {
      "name": "Plain",
@@ -1564,7 +1682,12 @@
      "raw": {
       "direct": [],
       "via": []
-     }
+     },
+     "effects": null,
+     "param_types": [],
+     "answer_type": null,
+     "contracts": [],
+     "handles": null
     },
     {
      "name": "save-row",
@@ -1600,7 +1723,12 @@
      "raw": {
       "direct": [],
       "via": []
-     }
+     },
+     "effects": null,
+     "param_types": [],
+     "answer_type": null,
+     "contracts": [],
+     "handles": null
     },
     {
      "name": "helper-fn",
@@ -1636,7 +1764,12 @@
      "raw": {
       "direct": [],
       "via": []
-     }
+     },
+     "effects": null,
+     "param_types": [],
+     "answer_type": null,
+     "contracts": [],
+     "handles": null
     },
     {
      "name": "memory-handler",
@@ -1670,7 +1803,12 @@
      "raw": {
       "direct": [],
       "via": []
-     }
+     },
+     "effects": null,
+     "param_types": [],
+     "answer_type": null,
+     "contracts": [],
+     "handles": null
     },
     {
      "name": "PutRow",
@@ -1706,6 +1844,14 @@
      "raw": {
       "direct": [],
       "via": []
+     },
+     "effects": null,
+     "param_types": [],
+     "answer_type": null,
+     "contracts": [],
+     "handles": {
+      "name": "PutRow",
+      "target": "pkg.effects.PutRow"
      }
     },
     {
@@ -1742,6 +1888,14 @@
      "raw": {
       "direct": [],
       "via": []
+     },
+     "effects": null,
+     "param_types": [],
+     "answer_type": null,
+     "contracts": [],
+     "handles": {
+      "name": "GetRow",
+      "target": "pkg.effects.GetRow"
      }
     },
     {
@@ -1778,7 +1932,12 @@
      "raw": {
       "direct": [],
       "via": []
-     }
+     },
+     "effects": null,
+     "param_types": [],
+     "answer_type": null,
+     "contracts": [],
+     "handles": null
     }
    ],
    "imports": [],
@@ -1985,7 +2144,12 @@
      "raw": {
       "direct": [],
       "via": []
-     }
+     },
+     "effects": null,
+     "param_types": [],
+     "answer_type": null,
+     "contracts": [],
+     "handles": null
     },
     {
      "name": "PutRow",
@@ -2021,6 +2185,14 @@
      "raw": {
       "direct": [],
       "via": []
+     },
+     "effects": null,
+     "param_types": [],
+     "answer_type": null,
+     "contracts": [],
+     "handles": {
+      "name": "PutRow",
+      "target": "pkg.effects.PutRow"
      }
     },
     {
@@ -2057,6 +2229,14 @@
      "raw": {
       "direct": [],
       "via": []
+     },
+     "effects": null,
+     "param_types": [],
+     "answer_type": null,
+     "contracts": [],
+     "handles": {
+      "name": "Tell",
+      "target": null
      }
     },
     {
@@ -2091,7 +2271,12 @@
      "raw": {
       "direct": [],
       "via": []
-     }
+     },
+     "effects": null,
+     "param_types": [],
+     "answer_type": null,
+     "contracts": [],
+     "handles": null
     }
    ],
    "imports": [

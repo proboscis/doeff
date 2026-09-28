@@ -1,5 +1,6 @@
 //! `hy-index` の出力の型 — 契約 `hy-index-contract.md`(版 1)・`hy-index-contract-v2.md`(版 2)・`hy-index-contract-v3.md`(版 3 = 生の副作用の証拠)
-//! と版 4(完全修飾名 = 定義の `qualified_name`・呼び出しの `target` — SPECIFICATION.md の Hy Index の節)の JSON の形そのもの。
+//! と版 4(完全修飾名 = 定義の `qualified_name`・呼び出しの `target`)・版 5(宣言した effect・引数と答えの型・型でない契約・
+//! effect 節が解く effect)— どちらも SPECIFICATION.md の Hy Index の節 — の JSON の形そのもの。
 //! JSON への変換は CLI の出力の 1 か所(`main.rs`)だけが行う。
 
 use serde::Serialize;
@@ -8,7 +9,7 @@ pub use super::position::{Position, Range};
 pub use super::raw_catalog::RawCategory;
 
 /// 契約の版。形を変える時は契約と一緒に上げる。
-pub const CONTRACT_VERSION: u32 = 4;
+pub const CONTRACT_VERSION: u32 = 5;
 
 /// `hy-index` の出力の全体。
 #[derive(Debug, Clone, Serialize)]
@@ -124,6 +125,59 @@ pub struct Definition {
     /// (:check が無ければ空の列)、それ以外の定義は欄ごと出さない(版 3 への追加)。
     #[serde(skip_serializing_if = "Option::is_none")]
     pub checks: Option<Vec<String>>,
+    /// 宣言した effect(版 5)— 契約の辞書の `:effects [E …]` の名を書いた順に。`:effects` を書いていなければ null
+    /// (`[]` は「effect を起こさない」の宣言)。推論した effect は持たない(正本は doeff-linter の signatures・DOEFF127 が
+    /// 宣言と推論の一致を検める)。
+    pub effects: Option<Vec<NameRef>>,
+    /// 引数の型(版 5)— defk 等は `:pre` の `(: 引数 型)`、defeffect は `:fields` の `(: 欄 型)`、defrecord は欄の `#^ 型`。
+    /// 型を書いた引数だけ・引数の順。
+    pub param_types: Vec<ParamType>,
+    /// 答えの型(版 5)— `:post` の `(: % 型)`、無ければ名の `#^ 型`。defeffect は `:answer`。無ければ null。
+    pub answer_type: Option<TypeNote>,
+    /// 型でない契約の述語(版 5)— `:pre` / `:post` のうち `(: 引数 型)` / `(: % 型)` でない物を書かれたとおりに。
+    pub contracts: Vec<ContractClause>,
+    /// effect 節が解く effect(版 5)— kind が `effect-clause` の定義だけが持ち、他は null。`name` は節の頭の綴り、
+    /// `target` は effect の完全修飾名(解く handler は、この target が一致する effect 節の container の定義)。
+    pub handles: Option<NameRef>,
+}
+
+/// 書かれた名と、その完全修飾名(版 5 — 呼び出しの `target` と同じ名前の解決。解けなければ null)。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct NameRef {
+    pub name: String,
+    pub target: Option<String>,
+}
+
+/// 型の注記 1 つ(版 5)— 書かれた綴りと、その中の名(`|`・`of`・`get` の構文を除く記号を書いた順・重ねない)。
+/// 型の意味の読み方(Union・Maybe・Raise)は doeff-linter の signatures が正本で、索引は書かれた事実だけを持つ。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct TypeNote {
+    pub text: String,
+    pub names: Vec<NameRef>,
+}
+
+/// 引数 1 つの型(版 5)。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct ParamType {
+    pub name: String,
+    #[serde(rename = "type")]
+    pub type_note: TypeNote,
+}
+
+/// 契約の述語がどちらの側か。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub enum ContractSide {
+    #[serde(rename = "pre")]
+    Pre,
+    #[serde(rename = "post")]
+    Post,
+}
+
+/// 型でない契約の述語 1 つ(版 5)。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct ContractClause {
+    pub side: ContractSide,
+    pub text: String,
 }
 
 /// 定義の種類(契約の kind の一覧ちょうど)。

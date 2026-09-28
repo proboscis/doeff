@@ -20,6 +20,8 @@ mod tests;
 #[cfg(test)]
 mod raw_tests;
 #[cfg(test)]
+mod contract_tests;
+#[cfg(test)]
 mod qualify_tests;
 
 use std::path::{Component, Path, PathBuf};
@@ -27,7 +29,8 @@ use std::path::{Component, Path, PathBuf};
 pub use analyze::mangle;
 pub use model::{
     Call, Definition, DefinitionKind, HyFileIndex, HyIndex, Import, Position, Range, RawEvidence, RawEvidenceKind, RawMark,
-    RawStep, RawStrength, RawVia, RawViaScope, Reference, CONTRACT_VERSION,
+    RawStep, RawStrength, RawVia, RawViaScope, Reference, CONTRACT_VERSION, ContractClause, ContractSide, NameRef, ParamType,
+    TypeNote,
 };
 pub use position::LineIndex;
 pub use raw::{annotate as annotate_raw, matches_pattern};

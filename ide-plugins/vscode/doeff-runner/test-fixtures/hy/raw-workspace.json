@@ -1,5 +1,5 @@
 {
- "version": 4,
+ "version": 5,
  "root": "/raw",
  "files": [
   {
@@ -56,7 +56,12 @@
        }
       ],
       "via": []
-     }
+     },
+     "effects": null,
+     "param_types": [],
+     "answer_type": null,
+     "contracts": [],
+     "handles": null
     },
     {
      "name": "Fetch",
@@ -110,6 +115,14 @@
        }
       ],
       "via": []
+     },
+     "effects": null,
+     "param_types": [],
+     "answer_type": null,
+     "contracts": [],
+     "handles": {
+      "name": "Fetch",
+      "target": null
      }
     },
     {
@@ -179,7 +192,12 @@
        }
       ],
       "via": []
-     }
+     },
+     "effects": null,
+     "param_types": [],
+     "answer_type": null,
+     "contracts": [],
+     "handles": null
     },
     {
      "name": "Now",
@@ -248,6 +266,14 @@
        }
       ],
       "via": []
+     },
+     "effects": null,
+     "param_types": [],
+     "answer_type": null,
+     "contracts": [],
+     "handles": {
+      "name": "Now",
+      "target": null
      }
     },
     {
@@ -317,7 +343,12 @@
        }
       ],
       "via": []
-     }
+     },
+     "effects": null,
+     "param_types": [],
+     "answer_type": null,
+     "contracts": [],
+     "handles": null
     },
     {
      "name": "ReadIt",
@@ -388,6 +419,14 @@
        }
       ],
       "via": []
+     },
+     "effects": null,
+     "param_types": [],
+     "answer_type": null,
+     "contracts": [],
+     "handles": {
+      "name": "ReadIt",
+      "target": null
      }
     },
     {
@@ -440,7 +479,12 @@
        }
       ],
       "via": []
-     }
+     },
+     "effects": null,
+     "param_types": [],
+     "answer_type": null,
+     "contracts": [],
+     "handles": null
     },
     {
      "name": "via-handler",
@@ -501,7 +545,12 @@
         }
        }
       ]
-     }
+     },
+     "effects": null,
+     "param_types": [],
+     "answer_type": null,
+     "contracts": [],
+     "handles": null
     },
     {
      "name": "Tick",
@@ -562,6 +611,14 @@
         }
        }
       ]
+     },
+     "effects": null,
+     "param_types": [],
+     "answer_type": null,
+     "contracts": [],
+     "handles": {
+      "name": "Tick",
+      "target": null
      }
     },
     {
@@ -623,7 +680,12 @@
         }
        }
       ]
-     }
+     },
+     "effects": null,
+     "param_types": [],
+     "answer_type": null,
+     "contracts": [],
+     "handles": null
     },
     {
      "name": "loop-b",
@@ -675,7 +737,12 @@
        }
       ],
       "via": []
-     }
+     },
+     "effects": null,
+     "param_types": [],
+     "answer_type": null,
+     "contracts": [],
+     "handles": null
     },
     {
      "name": "bad-program",
@@ -727,7 +794,12 @@
        }
       ],
       "via": []
-     }
+     },
+     "effects": null,
+     "param_types": [],
+     "answer_type": null,
+     "contracts": [],
+     "handles": null
     },
     {
      "name": "performs-external",
@@ -761,7 +833,12 @@
      "raw": {
       "direct": [],
       "via": []
-     }
+     },
+     "effects": null,
+     "param_types": [],
+     "answer_type": null,
+     "contracts": [],
+     "handles": null
     },
     {
      "name": "performs-domain",
@@ -795,7 +872,12 @@
      "raw": {
       "direct": [],
       "via": []
-     }
+     },
+     "effects": null,
+     "param_types": [],
+     "answer_type": null,
+     "contracts": [],
+     "handles": null
     },
     {
      "name": "custom-program",
@@ -831,7 +913,12 @@
      "raw": {
       "direct": [],
       "via": []
-     }
+     },
+     "effects": null,
+     "param_types": [],
+     "answer_type": null,
+     "contracts": [],
+     "handles": null
     },
     {
      "name": "d1",
@@ -907,7 +994,12 @@
         }
        }
       ]
-     }
+     },
+     "effects": null,
+     "param_types": [],
+     "answer_type": null,
+     "contracts": [],
+     "handles": null
     },
     {
      "name": "d2",
@@ -1019,7 +1111,12 @@
         }
        }
       ]
-     }
+     },
+     "effects": null,
+     "param_types": [],
+     "answer_type": null,
+     "contracts": [],
+     "handles": null
     },
     {
      "name": "d3",
@@ -1121,7 +1218,12 @@
         }
        }
       ]
-     }
+     },
+     "effects": null,
+     "param_types": [],
+     "answer_type": null,
+     "contracts": [],
+     "handles": null
     },
     {
      "name": "d4",
@@ -1213,7 +1315,12 @@
         }
        }
       ]
-     }
+     },
+     "effects": null,
+     "param_types": [],
+     "answer_type": null,
+     "contracts": [],
+     "handles": null
     },
     {
      "name": "d5",
@@ -1292,7 +1399,12 @@
         }
        }
       ]
-     }
+     },
+     "effects": null,
+     "param_types": [],
+     "answer_type": null,
+     "contracts": [],
+     "handles": null
     },
     {
      "name": "d6",
@@ -1344,7 +1456,12 @@
        }
       ],
       "via": []
-     }
+     },
+     "effects": null,
+     "param_types": [],
+     "answer_type": null,
+     "contracts": [],
+     "handles": null
     },
     {
      "name": "memory-handler",
@@ -1380,7 +1497,12 @@
      "raw": {
       "direct": [],
       "via": []
-     }
+     },
+     "effects": null,
+     "param_types": [],
+     "answer_type": null,
+     "contracts": [],
+     "handles": null
     },
     {
      "name": "Store",
@@ -1417,6 +1539,14 @@
      "raw": {
       "direct": [],
       "via": []
+     },
+     "effects": null,
+     "param_types": [],
+     "answer_type": null,
+     "contracts": [],
+     "handles": {
+      "name": "Store",
+      "target": null
      }
     }
    ],
@@ -3354,7 +3484,12 @@
      "raw": {
       "direct": [],
       "via": []
-     }
+     },
+     "effects": null,
+     "param_types": [],
+     "answer_type": null,
+     "contracts": [],
+     "handles": null
     }
    ],
    "imports": [],

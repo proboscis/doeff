@@ -9,7 +9,9 @@
 
 use std::collections::{BTreeMap, HashSet};
 
-use super::model::{Call, Definition, DefinitionKind, Import, RawMark, Reference};
+use super::model::{
+    Call, ContractClause, ContractSide, Definition, DefinitionKind, Import, NameRef, ParamType, RawMark, Reference, TypeNote,
+};
 use super::position::LineIndex;
 use super::reader::{matching_brace, Delim, Form, Node, Prefix, ReadIssue, Reader, Span, StrKind};
 
@@ -41,6 +43,9 @@ const DOEFF_REQUIRED_KEYWORDS: &[&str] = &[
 
 /// 契約の辞書(`{:pre … :post … :tags …}`)を持てる定義の頭。
 const CONTRACT_DEFINERS: &[&str] = &["defk", "deff", "defp", "defpp", "defhandler"];
+
+/// 型の注記の中の構文の記号(名として数えない)。
+const TYPE_SYNTAX: &[&str] = &["|", "of", "get"];
 
 /// doeff-hy の束縛の構文の頭。defk / deftest / defhandler の macro が本体の中で読むので、file が
 /// require していなくても構文であり、呼び出しには入れない。
@@ -273,9 +278,15 @@ impl<'a> Analyzer<'a> {
     fn definition(&mut self, form: &Form, head: &str, items: &[Form], container: Option<&str>) {
         let before = self.definitions.len();
         self.definition_by_head(form, head, items, container);
-        // 契約の辞書を持つ定義(defk・deff・defp・defpp・defhandler)は、その辞書の :tags を定義のタグとして控える。
+        // 契約の辞書を持つ定義(defk・deff・defp・defpp・defhandler)は、その辞書の :tags を定義のタグとして、
+        // :effects を宣言した effect として、:pre / :post を引数と答えの型と型でない契約として控える。
         if CONTRACT_DEFINERS.contains(&head) && self.definitions.len() > before {
-            self.definitions[before].tags = self.contract_tags(items);
+            let dict = self.contract_dict(items);
+            let tags = dict.and_then(|d| self.dict_value(d, ":tags")).filter(|v| v.is_brace()).and_then(|v| self.tags_of_dict(v));
+            self.definitions[before].tags = tags;
+            if let Some(dict) = dict {
+                self.read_contract(before, dict);
+            }
         }
     }
 
@@ -413,6 +424,13 @@ impl<'a> Analyzer<'a> {
             tags: None,
             // 作る時の検めの式(defrecord の頭の辞書の :check だけ — record_def が埋める)
             checks: None,
+            // 宣言した effect・型・契約は契約の辞書を持つ定義と defeffect・defrecord だけ(形ごとの読み手が埋める)
+            effects: None,
+            param_types: Vec::new(),
+            answer_type: None,
+            contracts: Vec::new(),
+            // effect 節の解く effect(handler_def が埋める)
+            handles: None,
         });
         self.definition_spans.push(full);
         text
@@ -447,6 +465,13 @@ impl<'a> Analyzer<'a> {
         };
         let docstring = self.leading_docstring(body);
         self.push_def(name, kind, form.span, container, docstring, params);
+        // `#^ T name` の注記は答えの型(契約の辞書の :post が在ればそちらが勝つ — read_contract が上書きする)
+        if let Some(Node::Annotated { annotation: Some(annotation), .. }) = rest.first().map(|first| &first.node) {
+            let answer = self.type_note(annotation);
+            if let Some(last) = self.definitions.last_mut() {
+                last.answer_type = Some(answer);
+            }
+        }
     }
 
     /// `(defclass [decorators]? Name [bases]? "doc"? body…)` を読み、method と field を入れ子に積む。
@@ -535,7 +560,16 @@ impl<'a> Analyzer<'a> {
         }
         // 欄の読み方は defrecord / defwire の正本(fields.rs・Hy 側は doeff_hy.declarations/field-targets)に揃える。
         let members: Vec<&Form> = fields.iter().collect();
-        for target in super::fields::record_field_targets(self.src, &members) {
+        let targets = super::fields::record_field_targets(self.src, &members);
+        let record_index = self.definitions.len() - 1;
+        for target in &targets {
+            if let (Some(annotation), false) = (target.annotation, is_operator(self.text(target.name))) {
+                let type_note = self.type_note_of_span(annotation);
+                let param = ParamType { name: self.text(target.name).to_string(), type_note };
+                self.definitions[record_index].param_types.push(param);
+            }
+        }
+        for target in targets {
             if !is_operator(self.text(target.name)) {
                 self.push_def(target.name, DefinitionKind::Field, target.member, Some(&record), None, Vec::new());
             }
@@ -608,12 +642,12 @@ impl<'a> Analyzer<'a> {
         found
     }
 
-    /// 契約の辞書の :tags を読む — 名の後の引数の list と docstring を飛ばした最初の辞書(名から 4 つ目まで)。
-    fn contract_tags(&self, items: &[Form]) -> Option<BTreeMap<String, String>> {
-        let items: Vec<&Form> = items.iter().filter(|item| !matches!(item.node, Node::Discarded)).collect();
+    /// 契約の辞書 — 名の後の引数の list と docstring を飛ばした最初の辞書(名から 4 つ目まで)。
+    fn contract_dict<'f>(&self, items: &'f [Form]) -> Option<&'f Form> {
+        let items: Vec<&'f Form> = items.iter().filter(|item| !matches!(item.node, Node::Discarded)).collect();
         for part in items.iter().skip(2).take(4) {
             if part.is_brace() {
-                return self.dict_value(part, ":tags").filter(|v| v.is_brace()).and_then(|v| self.tags_of_dict(v));
+                return Some(*part);
             }
             let skippable = matches!(part.node, Node::Str { kind: StrKind::Plain | StrKind::Raw | StrKind::Bracket, .. })
                 || part.bracket_items().is_some();
@@ -622,6 +656,114 @@ impl<'a> Analyzer<'a> {
             }
         }
         None
+    }
+
+    /// 契約の辞書の :effects・:pre・:post を定義 `index` に控える。`(: 引数 型)` は引数の型、`(: % 型)` は答えの型、
+    /// それ以外の述語(型の注記でも引数でない名への物を含む)は型でない契約として書かれたとおりに残す。
+    fn read_contract(&mut self, index: usize, dict: &Form) {
+        let effects = self.dict_value(dict, ":effects").and_then(Form::bracket_items).map(|names| {
+            names
+                .iter()
+                .filter(|n| matches!(n.node, Node::Symbol) && !is_operator(self.text(n.span)))
+                .map(|n| NameRef { name: self.text(n.span).to_string(), target: None })
+                .collect()
+        });
+        let params = self.definitions[index].params.clone();
+        let mut param_types: Vec<ParamType> = Vec::new();
+        let mut answer_type = None;
+        let mut contracts = Vec::new();
+        for (key, side) in [(":pre", ContractSide::Pre), (":post", ContractSide::Post)] {
+            let Some(clauses) = self.dict_value(dict, key).and_then(Form::bracket_items) else {
+                continue;
+            };
+            for clause in clauses.iter().filter(|c| !matches!(c.node, Node::Discarded)) {
+                let placed = match (self.annotation_of(clause), side) {
+                    (Some((name, type_form)), ContractSide::Pre)
+                        if params.iter().any(|p| p == name) && !param_types.iter().any(|t| t.name == name) =>
+                    {
+                        param_types.push(ParamType { name: name.to_string(), type_note: self.type_note(type_form) });
+                        true
+                    }
+                    (Some(("%", type_form)), ContractSide::Post) if answer_type.is_none() => {
+                        answer_type = Some(self.type_note(type_form));
+                        true
+                    }
+                    (Some(_), ContractSide::Pre | ContractSide::Post) | (None, ContractSide::Pre | ContractSide::Post) => false,
+                };
+                if !placed {
+                    contracts.push(ContractClause { side, text: self.text(clause.span).to_string() });
+                }
+            }
+        }
+        // 型は引数の順に並べる(:pre に書いた順ではない)
+        param_types.sort_by_key(|t| params.iter().position(|p| *p == t.name));
+        let definition = &mut self.definitions[index];
+        definition.effects = effects;
+        definition.param_types = param_types;
+        if answer_type.is_some() {
+            definition.answer_type = answer_type;
+        }
+        definition.contracts = contracts;
+    }
+
+    /// `(: 名 型)` の形なら (名の綴り, 型の form)。
+    fn annotation_of<'f>(&self, clause: &'f Form) -> Option<(&'a str, &'f Form)> {
+        let items: Vec<&Form> = clause.paren_items()?.iter().filter(|i| !matches!(i.node, Node::Discarded)).collect();
+        match items.as_slice() {
+            [head, name, type_form]
+                if matches!(head.node, Node::Symbol)
+                    && self.text(head.span) == ":"
+                    && matches!(name.node, Node::Symbol) =>
+            {
+                Some((self.text(name.span), *type_form))
+            }
+            _ => None,
+        }
+    }
+
+    /// 型の form の注記(書かれた綴りと、その中の名 — 完全修飾名は qualify::link が埋める)。
+    fn type_note(&self, form: &Form) -> TypeNote {
+        let mut names: Vec<NameRef> = Vec::new();
+        self.type_names(form, &mut names);
+        TypeNote { text: self.text(form.span).to_string(), names }
+    }
+
+    /// 型の注記の範囲(fields.rs が返す span)から注記を作る。
+    fn type_note_of_span(&self, span: Span) -> TypeNote {
+        let mut reader = Reader::new(self.src, span.start, span.end);
+        match reader.read_form() {
+            Some(form) => self.type_note(&form),
+            None => TypeNote { text: self.text(span).to_string(), names: Vec::new() },
+        }
+    }
+
+    /// 型の form の中の名を書いた順に集める(構文の記号・keyword・文字列・数は除き、同じ名は 1 度)。
+    fn type_names(&self, form: &Form, names: &mut Vec<NameRef>) {
+        match &form.node {
+            Node::Symbol => {
+                let text = self.text(form.span);
+                if !TYPE_SYNTAX.contains(&text) && !is_operator(text) && !names.iter().any(|n| n.name == text) {
+                    names.push(NameRef { name: text.to_string(), target: None });
+                }
+            }
+            Node::Seq { items, .. } => {
+                for item in items {
+                    self.type_names(item, names);
+                }
+            }
+            Node::Annotated { annotation, target } => {
+                for inner in [annotation, target].into_iter().flatten() {
+                    self.type_names(inner, names);
+                }
+            }
+            Node::Prefixed { inner: Some(inner), .. } => self.type_names(inner, names),
+            Node::Prefixed { inner: None, .. }
+            | Node::Keyword
+            | Node::Str { .. }
+            | Node::Number
+            | Node::Discarded
+            | Node::Tagged { .. } => {}
+        }
     }
 
     /// `(defeffect Name "doc"? {:fields [a b] :answer T :tags {…}})` を読む(doeff-hy の effect の型 — 常に EffectBase を継ぐ
@@ -634,11 +776,20 @@ impl<'a> Analyzer<'a> {
         let mut docstring = None;
         let mut params = Vec::new();
         let mut tags = None;
+        let mut param_types = Vec::new();
+        let mut answer_type = None;
         for part in live.iter().skip(2).take(2) {
             if part.is_brace() {
                 if let Some(fields) = self.dict_value(part, ":fields").and_then(Form::bracket_items) {
                     params = self.param_names(fields);
+                    // `(: 欄 型)` の欄は型つき(裸の記号の欄は型なし)
+                    param_types = fields
+                        .iter()
+                        .filter_map(|field| self.annotation_of(field))
+                        .map(|(name, type_form)| ParamType { name: name.to_string(), type_note: self.type_note(type_form) })
+                        .collect();
                 }
+                answer_type = self.dict_value(part, ":answer").map(|answer| self.type_note(answer));
                 tags = self.dict_value(part, ":tags").filter(|v| v.is_brace()).and_then(|v| self.tags_of_dict(v));
                 break;
             }
@@ -651,6 +802,8 @@ impl<'a> Analyzer<'a> {
         self.push_def_with_bases(name, DefinitionKind::Defeffect, form.span, container, docstring, params, bases);
         if let Some(last) = self.definitions.last_mut() {
             last.tags = tags;
+            last.param_types = param_types;
+            last.answer_type = answer_type;
         }
     }
 
@@ -688,7 +841,10 @@ impl<'a> Analyzer<'a> {
                         let fields = self.param_names(fields);
                         let effect_span = parts[0].span;
                         let kind = DefinitionKind::EffectClause;
-                        self.push_def(effect_span, kind, clause.span, Some(&handler), None, fields);
+                        let effect = self.push_def(effect_span, kind, clause.span, Some(&handler), None, fields);
+                        if let Some(last) = self.definitions.last_mut() {
+                            last.handles = Some(NameRef { name: effect, target: None });
+                        }
                     }
                 }
                 _ => {}
