@@ -14,7 +14,7 @@
 use std::collections::{HashMap, HashSet};
 
 use super::model::{
-    HyFileIndex, Import, RawEvidence, RawEvidenceKind, RawMark, RawStep, RawStrength, RawVia, Range, Reference,
+    HyFileIndex, RawEvidence, RawEvidenceKind, RawMark, RawStep, RawStrength, RawVia, Range, Reference,
 };
 use super::position::Position;
 use super::raw_catalog::RawCatalog;
@@ -332,157 +332,27 @@ pub fn direct_evidence(scan: &FileScan, full_range: &Range) -> Vec<RawEvidence> 
 /// 定義を一意に指す番号(file の添字と定義の添字)。
 type DefId = (usize, usize);
 
-/// import が束ねる先。
-struct Binding {
-    module: String,
-    symbol: Option<String>,
-    container: Option<String>,
-}
-
 /// 経由の計算のための、索引全体の引き表と覚え書き。
 struct ViaWorld<'a> {
     files: &'a [HyFileIndex],
-    by_module: HashMap<String, Vec<usize>>,
-    defined_names: HashSet<String>,
+    /// 完全修飾名 → 定義(呼び出しの `target` の行き先 — 名前の解決は qualify.rs の 1 か所)
+    by_qualified: HashMap<&'a str, Vec<DefId>>,
     direct: Vec<Vec<Vec<RawEvidence>>>,
     callees: HashMap<DefId, Vec<DefId>>,
     /// (定義, 残りの段数) → その段数の中で直接の証拠を持つ定義に届き得るか(訪問中の定義を除かない上限の見積もり)
     reachable: HashMap<(DefId, usize), bool>,
 }
 
-/// file が package の `__init__` か(相対 import の基準が変わる)。
-fn is_package_init(path: &str) -> bool {
-    let base = std::path::Path::new(path).file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
-    matches!(base.as_str(), "__init__.hy" | "__init__.hyk" | "__init__.hyp")
-}
-
-/// 相対 import を書いた file の module を基準に絶対の dotted 名へ直す。
-fn absolute_module(file: &HyFileIndex, module: &str) -> String {
-    let dots = module.len() - module.trim_start_matches('.').len();
-    if dots == 0 {
-        return module.to_string();
-    }
-    let base: Vec<&str> = file.module.split('.').filter(|p| !p.is_empty()).collect();
-    let package: Vec<&str> = if is_package_init(&file.path) { base } else { base[..base.len().saturating_sub(1)].to_vec() };
-    let keep = package.len().saturating_sub(dots - 1);
-    let mut parts: Vec<String> = package[..keep].iter().map(|s| s.to_string()).collect();
-    let rest = &module[dots..];
-    if !rest.is_empty() {
-        parts.extend(rest.split('.').map(str::to_string));
-    }
-    parts.join(".")
-}
-
-/// import が file の中に作る名前(別名 > 名前 > module)。
-fn bound_name(import: &Import) -> &str {
-    import.alias.as_deref().or(import.name.as_deref()).unwrap_or(&import.module)
-}
-
 impl<'a> ViaWorld<'a> {
     /// 索引全体の引き表を作り、全定義の直接の証拠を計算する。
     fn new(files: &'a [HyFileIndex], direct: Vec<Vec<Vec<RawEvidence>>>) -> ViaWorld<'a> {
-        let mut by_module: HashMap<String, Vec<usize>> = HashMap::new();
-        let mut defined_names = HashSet::new();
-        for (i, file) in files.iter().enumerate() {
-            by_module.entry(match_dotted(&file.module)).or_default().push(i);
-            for definition in &file.definitions {
-                defined_names.insert(definition.mangled.clone());
+        let mut by_qualified: HashMap<&'a str, Vec<DefId>> = HashMap::new();
+        for (fi, file) in files.iter().enumerate() {
+            for (di, definition) in file.definitions.iter().enumerate() {
+                by_qualified.entry(definition.qualified_name.as_str()).or_default().push((fi, di));
             }
         }
-        ViaWorld { files, by_module, defined_names, direct, callees: HashMap::new(), reachable: HashMap::new() }
-    }
-
-    /// 修飾の無い名前を束ねる import(最初の 1 つ)。
-    fn binding_for_name(file: &HyFileIndex, mangled: &str) -> Option<Binding> {
-        file.imports.iter().find(|imp| match_dotted(bound_name(imp)) == mangled).map(|imp| {
-            let module = absolute_module(file, &imp.module);
-            Binding { module, symbol: imp.name.as_ref().map(|n| match_name(n)), container: None }
-        })
-    }
-
-    /// `q.m` の q を import で解き、m の在る module(と入れ物)を返す。
-    fn bindings_for_qualified(file: &HyFileIndex, qualifier: &str, mangled: &str) -> Vec<Binding> {
-        let q = match_dotted(qualifier);
-        let mut found = Vec::new();
-        for imp in &file.imports {
-            let bound = match_dotted(bound_name(imp));
-            let module = absolute_module(file, &imp.module);
-            match &imp.name {
-                None => {
-                    if q == bound {
-                        found.push(Binding { module, symbol: Some(mangled.to_string()), container: None });
-                    } else if q.starts_with(&format!("{}.", bound)) {
-                        let rest = &q[bound.len()..];
-                        found.push(Binding { module: format!("{}{}", module, rest), symbol: Some(mangled.to_string()), container: None });
-                    }
-                }
-                Some(name) => {
-                    if q == bound {
-                        found.push(Binding { module: format!("{}.{}", module, name), symbol: Some(mangled.to_string()), container: None });
-                        found.push(Binding { module, symbol: Some(mangled.to_string()), container: Some(match_name(name)) });
-                    }
-                }
-            }
-        }
-        found
-    }
-
-    /// 定義が「入れ物 container の中の名前 symbol」か。
-    fn is_member(definition: &super::model::Definition, symbol: &str, container: Option<&str>) -> bool {
-        let container_matches = match container {
-            None => definition.container.is_none(),
-            Some(c) => definition.container.as_deref().is_some_and(|dc| match_name(dc) == c),
-        };
-        definition.mangled == symbol && container_matches
-    }
-
-    /// 呼び出しの行き先を、同じ file か import で決まる Hy の定義に解く(workspace 全体の同名当ては使わない)。
-    fn resolve(&self, file_index: usize, name: &str, qualifier: Option<&str>) -> Vec<DefId> {
-        let file = &self.files[file_index];
-        let mangled = match_name(name);
-        let local: Vec<DefId> = file
-            .definitions
-            .iter()
-            .enumerate()
-            .filter(|(_, d)| {
-                d.mangled == mangled
-                    && match qualifier {
-                        None => d.container.is_none(),
-                        Some(q) => d.container.as_deref().is_some_and(|c| match_name(c) == match_dotted(q)),
-                    }
-            })
-            .map(|(i, _)| (file_index, i))
-            .collect();
-        if !local.is_empty() {
-            return local;
-        }
-        let bindings = match qualifier {
-            None => Self::binding_for_name(file, &mangled).into_iter().collect(),
-            Some(q) => Self::bindings_for_qualified(file, q, &mangled),
-        };
-        for binding in bindings {
-            let Some(module_files) = self.by_module.get(&match_dotted(&binding.module)) else {
-                continue;
-            };
-            let Some(symbol) = &binding.symbol else {
-                return Vec::new(); // module そのもの(呼び出しの行き先の定義は無い)
-            };
-            let found: Vec<DefId> = module_files
-                .iter()
-                .flat_map(|&fi| {
-                    self.files[fi]
-                        .definitions
-                        .iter()
-                        .enumerate()
-                        .filter(|(_, d)| Self::is_member(d, symbol, binding.container.as_deref()))
-                        .map(move |(di, _)| (fi, di))
-                })
-                .collect();
-            if !found.is_empty() {
-                return found;
-            }
-        }
-        Vec::new()
+        ViaWorld { files, by_qualified, direct, callees: HashMap::new(), reachable: HashMap::new() }
     }
 
     /// 定義の範囲の中の呼び出しが行き着く定義(自分の中の入れ子は除く・書いた順・重ねない)。
@@ -494,10 +364,13 @@ impl<'a> ViaWorld<'a> {
         let range = file.definitions[id.1].full_range;
         let mut found: Vec<DefId> = Vec::new();
         for call in &file.calls {
-            if !contains(&range, &call.range.start) || !self.defined_names.contains(&call.mangled) {
+            if !contains(&range, &call.range.start) {
                 continue;
             }
-            for target in self.resolve(id.0, &call.callee, call.qualifier.as_deref()) {
+            let Some(targets) = call.target.as_deref().and_then(|name| self.by_qualified.get(name)) else {
+                continue;
+            };
+            for &target in targets {
                 let target_def = &self.files[target.0].definitions[target.1];
                 let inside = target.0 == id.0 && contains(&range, &target_def.range.start);
                 if !inside && !found.contains(&target) {

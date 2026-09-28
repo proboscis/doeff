@@ -1,8 +1,9 @@
-// `doeff-indexer hy-index` の出力 JSON(契約 版 3)の型と、読み込みの唯一の検査。
-// 契約の正本 = experiments/hy-highlighter/hy-index-contract.md(版 1)+ -v2.md(版 2)+ -v3.md(版 3 = 生の副作用の判定)。欄が欠けた・型が違う・版が違う JSON は
+// `doeff-indexer hy-index` の出力 JSON(契約 版 4)の型と、読み込みの唯一の検査。
+// 契約の正本 = experiments/hy-highlighter/hy-index-contract.md(版 1)+ -v2.md(版 2)+ -v3.md(版 3 = 生の副作用の判定)
+// + doeff-indexer の SPECIFICATION.md の Hy Index の節(版 4 = 完全修飾名 qualified_name・呼び出しの target)。欄が欠けた・型が違う・版が違う JSON は
 // 理由つきで捨て、既定値で埋めない。
 
-export const HY_INDEX_CONTRACT_VERSION = 3;
+export const HY_INDEX_CONTRACT_VERSION = 4;
 
 /** 生の副作用の分類(契約の閉じた集合 — 判定と目録は hy-index が持ち、拡張は読むだけ)。 */
 export const RAW_CATEGORIES = ['http', 'async', 'time', 'random', 'file', 'process', 'env', 'network', 'db', 'thread'] as const;
@@ -69,6 +70,9 @@ export interface HyRange {
 export interface HyDefinition {
   readonly name: string;
   readonly mangled: string;
+  /** 完全修飾名(版 4)— module + 入れ物(在れば)+ 名、どの区切りも mangle した綴り。呼び出しの target と文字列で一致させて
+   * 呼び先・呼び手を引く鍵。同じ file の同名の再定義では重なり得るので、一致は複数として扱う */
+  readonly qualifiedName: string;
   readonly kind: HyDefinitionKind;
   readonly range: HyRange;
   readonly fullRange: HyRange;
@@ -125,6 +129,10 @@ export interface HyCall {
   readonly caller: number | null;
   /** `<-` / yield / yield-from で撃たれている */
   readonly performed: boolean;
+  /** 呼び先の完全修飾名(版 4)— その file の定義と import だけで決める名前の解決の結果。解決できなければ null。
+   * Hy の定義とは限らない(Python の関数も完全修飾名で出る)— 索引の qualifiedName に一致すれば Hy の定義。
+   * 呼び手の逆引きは索引に持たず、読む側がこの一致を逆に引く */
+  readonly target: string | null;
 }
 
 export interface HyImport {
@@ -344,6 +352,7 @@ function parseDefinition(value: unknown, where: string): HyDefinition {
   return {
     name: str(value, 'name', where),
     mangled: str(value, 'mangled', where),
+    qualifiedName: str(value, 'qualified_name', where),
     kind,
     range: parseRange(value, 'range', where),
     fullRange: parseRange(value, 'full_range', where),
@@ -411,7 +420,8 @@ function parseCall(value: unknown, where: string, definitionCount: number): HyCa
     qualifier: strOrNull(value, 'qualifier', where),
     range: parseRange(value, 'range', where),
     caller,
-    performed: bool(value, 'performed', where)
+    performed: bool(value, 'performed', where),
+    target: strOrNull(value, 'target', where)
   };
 }
 

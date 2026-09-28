@@ -398,6 +398,8 @@ impl<'a> Analyzer<'a> {
         self.definitions.push(Definition {
             mangled: mangle(&text),
             name: text.clone(),
+            // module は file の索引が決めるので、解析の後に qualify::link が埋める
+            qualified_name: String::new(),
             kind,
             range: self.lines.range(name.start, name.end),
             full_range: self.lines.range(full.start, full.end),
@@ -1088,6 +1090,8 @@ impl<'a> Analyzer<'a> {
             range: self.lines.range(start, start + callee.len()),
             caller,
             performed,
+            // import と定義が全部そろった後に qualify::link が埋める
+            target: None,
         });
     }
 

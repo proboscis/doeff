@@ -1,5 +1,5 @@
 {
- "version": 3,
+ "version": 4,
  "root": "/deps/src",
  "files": [
   {
@@ -9,6 +9,7 @@
     {
      "name": "MemoryStore",
      "mangled": "MemoryStore",
+     "qualified_name": "doeff_records.memory.MemoryStore",
      "kind": "defclass",
      "range": {
       "start": {
@@ -42,6 +43,7 @@
     {
      "name": "put-row",
      "mangled": "put_row",
+     "qualified_name": "doeff_records.memory.MemoryStore.put_row",
      "kind": "method",
      "range": {
       "start": {
@@ -78,6 +80,7 @@
     {
      "name": "make-store",
      "mangled": "make_store",
+     "qualified_name": "doeff_records.memory.make_store",
      "kind": "defn",
      "range": {
       "start": {

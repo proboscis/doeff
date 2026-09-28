@@ -7,7 +7,7 @@ import { loadDocument, readFixture } from './fixtures';
 suite('Hy 索引の契約の読み込み', () => {
   test('契約どおりの fixture は全 file が読める', () => {
     const document = loadDocument('workspace.json');
-    assert.strictEqual(document.version, 3);
+    assert.strictEqual(document.version, 4);
     assert.strictEqual(document.files.length, 11);
     const app = document.files.find((f) => f.module === 'pkg.app');
     assert.ok(app);
@@ -22,11 +22,33 @@ suite('Hy 索引の契約の読み込み', () => {
       qualifier: null,
       range: { start: { line: 16, character: 8 }, end: { line: 16, character: 14 } },
       caller: 4,
-      performed: true
+      performed: true,
+      target: 'pkg.effects.PutRow'
     });
+    assert.strictEqual(effects.definitions[0].qualifiedName, 'pkg.effects.PutRow');
   });
 
-  test('版 1 の JSON は全体を理由つきで捨てる(版 3 だけを受け付ける)', () => {
+  test('呼び出しの target は索引の qualifiedName で呼び先の定義を引け、同じ一致の逆で呼び手を引ける(版 4)', () => {
+    const document = loadDocument('workspace.json');
+    const byQualified = new Map<string, string[]>();
+    for (const file of document.files) {
+      for (const def of file.definitions) {
+        byQualified.set(def.qualifiedName, [...(byQualified.get(def.qualifiedName) ?? []), `${file.path}#${def.name}`]);
+      }
+    }
+    const callers = new Map<string, string[]>();
+    for (const file of document.files) {
+      for (const call of file.calls) {
+        if (call.target !== null && call.caller !== null && byQualified.has(call.target)) {
+          callers.set(call.target, [...(callers.get(call.target) ?? []), file.definitions[call.caller].qualifiedName]);
+        }
+      }
+    }
+    assert.deepStrictEqual(byQualified.get('pkg.effects.save_row'), ['/ws/pkg/effects.hy#save-row']);
+    assert.ok((callers.get('pkg.effects.PutRow') ?? []).length > 0, JSON.stringify([...callers.entries()]));
+  });
+
+  test('版 1 の JSON は全体を理由つきで捨てる(版 4 だけを受け付ける)', () => {
     const parsed = parseHyIndexJson(readFixture('bad-version.json'));
     assert.strictEqual(parsed.tag, 'rejected');
     assert.match(parsed.tag === 'rejected' ? parsed.reason : '', /版が違う/);
@@ -44,7 +66,7 @@ suite('Hy 索引の契約の読み込み', () => {
     assert.match(parsed.tag === 'rejected' ? parsed.reason : '', /"files"/);
   });
 
-  test('欄の欠け・契約に無い kind・負の行・基底・呼び出し元の添字の違反はその file だけ理由つきで捨てる', () => {
+  test('欄の欠け・契約に無い kind・負の行・基底・呼び出し元の添字・完全修飾名の欠けはその file だけ理由つきで捨てる', () => {
     const parsed = parseHyIndexJson(readFixture('broken-files.json'));
     assert.strictEqual(parsed.tag, 'ok');
     if (parsed.tag !== 'ok') {
@@ -56,7 +78,7 @@ suite('Hy 索引の契約の読み込み', () => {
     );
     assert.deepStrictEqual(parsed.document.files[0].errors, ['3 行目: 括弧が閉じていない']);
     const reasons = new Map(parsed.rejected.map((r) => [r.path, r.reason]));
-    assert.strictEqual(parsed.rejected.length, 8);
+    assert.strictEqual(parsed.rejected.length, 10);
     assert.match(reasons.get('/ws/no_module.hy') ?? '', /"module" が無い/);
     assert.match(reasons.get('/ws/unknown_kind.hy') ?? '', /契約に無い kind "defwhatever"/);
     assert.match(reasons.get('/ws/missing_is_require.hy') ?? '', /"is_require" が無い/);
@@ -65,6 +87,8 @@ suite('Hy 索引の契約の読み込み', () => {
     assert.match(reasons.get('/ws/bases_on_defn.hy') ?? '', /defn は基底を持たない/);
     assert.match(reasons.get('/ws/caller_out_of_range.hy') ?? '', /caller: definitions の添字でない/);
     assert.match(reasons.get('/ws/missing_calls.hy') ?? '', /"calls" が無い/);
+    assert.match(reasons.get('/ws/missing_qualified_name.hy') ?? '', /"qualified_name" が無い/);
+    assert.match(reasons.get('/ws/missing_target.hy') ?? '', /"target" が無い/);
   });
 });
 

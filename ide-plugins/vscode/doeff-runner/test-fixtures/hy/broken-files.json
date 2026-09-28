@@ -1,5 +1,5 @@
 {
- "version": 3,
+ "version": 4,
  "root": "/ws",
  "files": [
   {
@@ -17,6 +17,7 @@
     {
      "name": "x",
      "mangled": "x",
+     "qualified_name": "unknown_kind.x",
      "kind": "defwhatever",
      "range": {
       "start": {
@@ -110,6 +111,7 @@
     {
      "name": "f",
      "mangled": "f",
+     "qualified_name": "missing_bases.f",
      "kind": "defn",
      "range": {
       "start": {
@@ -152,6 +154,7 @@
     {
      "name": "f",
      "mangled": "f",
+     "qualified_name": "bases_on_defn.f",
      "kind": "defn",
      "range": {
       "start": {
@@ -212,7 +215,8 @@
       }
      },
      "caller": 0,
-     "performed": false
+     "performed": false,
+     "target": null
     }
    ],
    "errors": []
@@ -223,6 +227,111 @@
    "definitions": [],
    "imports": [],
    "references": [],
+   "errors": []
+  },
+  {
+   "path": "/ws/missing_qualified_name.hy",
+   "module": "missing_qualified_name",
+   "definitions": [
+    {
+     "name": "f",
+     "mangled": "f",
+     "kind": "defn",
+     "range": {
+      "start": {
+       "line": 0,
+       "character": 6
+      },
+      "end": {
+       "line": 0,
+       "character": 7
+      }
+     },
+     "full_range": {
+      "start": {
+       "line": 0,
+       "character": 0
+      },
+      "end": {
+       "line": 0,
+       "character": 12
+      }
+     },
+     "container": null,
+     "docstring": null,
+     "params": [],
+     "bases": [],
+     "raw": {
+      "direct": [],
+      "via": []
+     }
+    }
+   ],
+   "imports": [],
+   "references": [],
+   "calls": [],
+   "errors": []
+  },
+  {
+   "path": "/ws/missing_target.hy",
+   "module": "missing_target",
+   "definitions": [
+    {
+     "name": "f",
+     "mangled": "f",
+     "qualified_name": "missing_target.f",
+     "kind": "defn",
+     "range": {
+      "start": {
+       "line": 0,
+       "character": 6
+      },
+      "end": {
+       "line": 0,
+       "character": 7
+      }
+     },
+     "full_range": {
+      "start": {
+       "line": 0,
+       "character": 0
+      },
+      "end": {
+       "line": 0,
+       "character": 12
+      }
+     },
+     "container": null,
+     "docstring": null,
+     "params": [],
+     "bases": [],
+     "raw": {
+      "direct": [],
+      "via": []
+     }
+    }
+   ],
+   "imports": [],
+   "references": [],
+   "calls": [
+    {
+     "callee": "g",
+     "mangled": "g",
+     "qualifier": null,
+     "range": {
+      "start": {
+       "line": 0,
+       "character": 10
+      },
+      "end": {
+       "line": 0,
+       "character": 11
+      }
+     },
+     "caller": 0,
+     "performed": false
+    }
+   ],
    "errors": []
   },
   {

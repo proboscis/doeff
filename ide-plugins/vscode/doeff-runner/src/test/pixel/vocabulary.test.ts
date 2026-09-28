@@ -48,6 +48,7 @@ function def(name: string, kind: HyDefinitionKind, line: number, end: number, co
   return {
     name,
     mangled: name,
+    qualifiedName: container === null ? `sample.${name}` : `sample.${container}.${name}`,
     kind,
     range: { start: { line, character: 1 }, end: { line, character: 1 + name.length } },
     fullRange: { start: { line, character: 0 }, end: { line: end, character: 10 } },

@@ -212,6 +212,23 @@ fn via_follows_calls_stops_cycles_and_depth_four() {
 }
 
 #[test]
+fn via_follows_calls_through_aliased_imports_across_files() {
+    // 呼び出しの名(backtest-main)と定義の名(main)が違う別名の import も辿る(版 4 で経由の解決を qualify.rs の
+    // 完全修飾名の引きへ一本化する前は、呼び出しの名が索引のどこにも定義されていないとして捨てていた)
+    let root = Path::new("/r");
+    let mut files = vec![
+        index_source(root, Path::new("/r/pkg/entry.hy"), "(import time)\n(defn main [] (time.sleep 1))\n"),
+        index_source(
+            root,
+            Path::new("/r/tests/test_entry.hy"),
+            "(import pkg.entry [main :as backtest-main])\n(deftest runs-the-entry (backtest-main))\n",
+        ),
+    ];
+    annotate(&mut files, &RawCatalog::bundled().expect("目録"), true);
+    assert_eq!(via(&files, "runs-the-entry"), vec!["main time time.sleep"]);
+}
+
+#[test]
 fn partial_runs_do_not_compute_via() {
     let root = Path::new("/r");
     let mut files = vec![index_source(root, Path::new("/r/pkg/io_handlers.hy"), IO)];
