@@ -879,6 +879,17 @@ fn run_normal(args: &Args) -> ExitCode {
                 "doeff-linter: 意味の規則(Jev {}・{}) — 判定済み {}・未判定 {}・今回撃った {}・代理の覚えから {}・入力のトークン {}・較正 {}",
                 semantic.model, semantic.wire, semantic.judged, semantic.unjudged, semantic.asked, semantic.peeked, semantic.input_tokens, semantic.calibration
             );
+            let labeled = &semantic.labeled;
+            eprintln!(
+                "doeff-linter: 意味の規則の誤判定 {} 件(一覧に載り、違反から外した)・人の判定との突き合わせ — 正例 {} 件のうち答え {}・当たり {}/反例 {} 件のうち答え {}・当たり {}",
+                semantic.false_positives,
+                labeled.positives.listed,
+                labeled.positives.judged,
+                labeled.positives.flagged,
+                labeled.negatives.listed,
+                labeled.negatives.judged,
+                labeled.negatives.flagged
+            );
         }
         // --modified の時は、変更した file の違反だけにする(変更していない file の既知の違反で止めない)。
         let only = if args.modified { Some(files.iter().map(|f| editor::normalize_path(f)).collect()) } else { only_paths(&args.paths) };
