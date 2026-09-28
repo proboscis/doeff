@@ -208,9 +208,15 @@ export type LintBindingForm = (typeof LINT_BINDING_FORMS)[number];
 export const LINT_BINDING_ORIGINS = ['annotation', 'effect', 'call', 'literal', 'constructor', 'var', 'unknown'] as const;
 export type LintBindingOrigin = (typeof LINT_BINDING_ORIGINS)[number];
 
+/** `val` / `var` の前の語(`(lazy val …)`・`(session var …)`)。 */
+export const LINT_BINDING_MODIFIERS = ['lazy', 'session'] as const;
+export type LintBindingModifier = (typeof LINT_BINDING_MODIFIERS)[number];
+
 /** 束縛 1 つ(版 2)。 */
 export interface LintBinding {
   readonly form: LintBindingForm;
+  /** `lazy` / `session`(無い・古い linter・知らない語は null) */
+  readonly modifier: LintBindingModifier | null;
   readonly name: string;
   readonly path: string;
   /** 名の範囲 */
@@ -264,6 +270,60 @@ export interface LintRewrite {
   readonly parent: number | null;
 }
 
+/** 本体の文字の字の役(閉じた集合 — 読む面の本体の行・agora-redesign #910)。 */
+export const LINT_BODY_ROLES = [
+  'keyword',
+  'type',
+  'unknown-type',
+  'name',
+  'bind',
+  'assign',
+  'effect',
+  'call',
+  'text',
+  'lisp'
+] as const;
+export type LintBodyRole = (typeof LINT_BODY_ROLES)[number];
+
+/** 本体の行の警告の種類。 */
+export const LINT_BODY_WARNING_KINDS = ['setv'] as const;
+export type LintBodyWarningKind = (typeof LINT_BODY_WARNING_KINDS)[number];
+
+/** 本体の行の字の範囲 1 つ(行の字は text をつないだ物)。 */
+export interface LintBodySegment {
+  readonly text: string;
+  /** 知らない役は null(ただの字として描く) */
+  readonly role: LintBodyRole | null;
+  /** 元の source の範囲(source に無い字は null) */
+  readonly range: LintRange | null;
+  /** effect の役の時の effect の名(絵を選ぶ) */
+  readonly effect: string | null;
+  readonly definition: LintLocation | null;
+}
+
+/** 本体の行 1 つ。 */
+export interface LintBodyLine {
+  /** source の行(0 始まり) */
+  readonly line: number;
+  /** 字下げの段 */
+  readonly depth: number;
+  readonly segments: readonly LintBodySegment[];
+  /** この行が描く束縛の番号(同じ report の bindings の中の位置 — 知らない語で落とした束縛を指していれば null) */
+  readonly binding: number | null;
+  readonly warning: { readonly kind: LintBodyWarningKind | null; readonly message: string } | null;
+}
+
+/** 定義 1 つの本体の文字(版 2 への欄の追加)。 */
+export interface LintBody {
+  readonly kind: LintSignatureKind;
+  readonly name: string;
+  readonly path: string;
+  /** 名の範囲(signatures の同じ定義と同じ) */
+  readonly range: LintRange;
+  readonly fullRange: LintRange;
+  readonly lines: readonly LintBodyLine[];
+}
+
 /** linter の出力の全体。 */
 export interface LintReport {
   readonly version: number;
@@ -281,6 +341,8 @@ export interface LintReport {
   readonly bindings: readonly LintBinding[];
   /** `--stdin` の file の呼びの表示の置き換え(版 2 への欄の追加 — 古い linter の出力には無く []) */
   readonly rewrites: readonly LintRewrite[];
+  /** `--stdin` の file の定義ごとの本体の文字の行(版 2 への欄の追加 — 古い linter の出力には無く []) */
+  readonly bodies: readonly LintBody[];
   /** linter 自身が読めなかった file など */
   readonly errors: readonly string[];
   /** 拡張の知らない語(linter の方が新しい)— その項目だけ既定の見た目にした理由。空なら無し */
@@ -633,6 +695,7 @@ function binding(value: unknown, where: string, notes: Notes): LintBinding | und
   }
   return {
     form,
+    modifier: optional(obj, 'modifier', where, (v, at) => lenient(v, at, LINT_BINDING_MODIFIERS, notes) ?? null),
     name: str(obj, 'name', where),
     path: str(obj, 'path', where),
     range: range(obj, where),
@@ -679,6 +742,64 @@ function rewrite(value: unknown, where: string, notes: Notes): LintRewrite {
   };
 }
 
+/** 0 以上の整数か null の欄を検める(欄そのものは必須)。 */
+function indexOrNull(obj: JsonObject, key: string, where: string): number | null {
+  const value = field(obj, key, where);
+  if (value !== null && (typeof value !== 'number' || !Number.isInteger(value) || value < 0)) {
+    throw new LintContractViolation(`${where}.${key}: 0 以上の整数でも null でもない`);
+  }
+  return value;
+}
+
+/**
+ * 本体 1 つを検める(知らない種類の定義は undefined — 描かない)。`bindingIndex` は linter の bindings の番号 → 読んだ
+ * bindings の番号(知らない語で落とした束縛は undefined)。
+ */
+function body(value: unknown, where: string, notes: Notes, bindingIndex: readonly (number | undefined)[]): LintBody | undefined {
+  const obj = asObject(value, where);
+  const kind = lenient(field(obj, 'kind', where), `${where}.kind`, LINT_SIGNATURE_KINDS, notes);
+  if (kind === undefined) {
+    return undefined;
+  }
+  return {
+    kind,
+    name: str(obj, 'name', where),
+    path: str(obj, 'path', where),
+    range: range(obj, where),
+    fullRange: rangeValue(field(obj, 'full_range', where), `${where}.full_range`),
+    lines: list(obj, 'lines', where, (v, at) => {
+      const line = asObject(v, at);
+      const binding = indexOrNull(line, 'binding', at);
+      const warning = field(line, 'warning', at);
+      return {
+        line: nat(line, 'line', at),
+        depth: nat(line, 'depth', at),
+        segments: list(line, 'segments', at, (s, sat) => {
+          const segment = asObject(s, sat);
+          return {
+            text: str(segment, 'text', sat),
+            role: lenient(field(segment, 'role', sat), `${sat}.role`, LINT_BODY_ROLES, notes) ?? null,
+            range: rangeOrNull(segment, 'range', sat),
+            effect: strOrNull(segment, 'effect', sat),
+            definition: locationOrNull(segment, 'definition', sat)
+          };
+        }),
+        binding: binding === null ? null : bindingIndex[binding] ?? null,
+        warning:
+          warning === null
+            ? null
+            : (() => {
+                const w = asObject(warning, `${at}.warning`);
+                return {
+                  kind: lenient(field(w, 'kind', `${at}.warning`), `${at}.warning.kind`, LINT_BODY_WARNING_KINDS, notes) ?? null,
+                  message: str(w, 'message', `${at}.warning`)
+                };
+              })()
+      };
+    })
+  };
+}
+
 /** 読みの途中で控える、拡張の知らない語。 */
 interface Notes {
   readonly unknown: string[];
@@ -721,6 +842,10 @@ export function parseLintJson(stdout: string): LintParseResult {
     const hasSignatures = version >= 2;
     const notes: Notes = { unknown: [] };
     const present = <T>(items: readonly (T | undefined)[]): T[] => items.filter((i): i is T => i !== undefined);
+    const rawBindings = hasSignatures ? list(obj, 'bindings', '$', (v, at) => binding(v, at, notes)) : [];
+    // 知らない語の束縛を落とすので、本体の行の束縛の番号を読んだ bindings の番号へ付け替える
+    let kept = 0;
+    const bindingIndex = rawBindings.map((b) => (b === undefined ? undefined : kept++));
     return {
       tag: 'ok',
       report: {
@@ -732,8 +857,11 @@ export function parseLintJson(stdout: string): LintParseResult {
         layers: Object.prototype.hasOwnProperty.call(obj, 'layers') ? list(obj, 'layers', '$', lintLayer) : [],
         semantic: optional(obj, 'semantic', '$', semanticSummary),
         signatures: hasSignatures ? present(list(obj, 'signatures', '$', (v, at) => signature(v, at, notes))) : [],
-        bindings: hasSignatures ? present(list(obj, 'bindings', '$', (v, at) => binding(v, at, notes))) : [],
+        bindings: present(rawBindings),
         rewrites: Object.prototype.hasOwnProperty.call(obj, 'rewrites') ? list(obj, 'rewrites', '$', (v, at) => rewrite(v, at, notes)) : [],
+        bodies: Object.prototype.hasOwnProperty.call(obj, 'bodies')
+          ? present(list(obj, 'bodies', '$', (v, at) => body(v, at, notes, bindingIndex)))
+          : [],
         errors: list(obj, 'errors', '$', text),
         unknown: notes.unknown
       }

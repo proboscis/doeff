@@ -377,6 +377,21 @@ fn editor_json_shape_rules_and_python_rule_ranges() {
     let plain = bindings.iter().find(|b| b["name"] == "n").expect("n の束縛");
     assert_eq!(plain["form"], "val");
     assert!(plain["annotation_range"].is_null());
+    assert!(plain["modifier"].is_null());
+    // 定義ごとの本体の文字の行(20 節・#910)— 全体の実行では空、stdin の実行では定義ごとに行と字の役が出る。
+    assert_eq!(report["bodies"], serde_json::json!([]));
+    let body = single["bodies"].as_array().unwrap().iter().find(|b| b["name"] == "plan").expect("plan の本体");
+    let shown: Vec<(u64, String)> = body["lines"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|l| {
+            let text: String = l["segments"].as_array().unwrap().iter().map(|s| s["text"].as_str().unwrap()).collect();
+            (l["line"].as_u64().unwrap(), text)
+        })
+        .collect();
+    assert_eq!(shown, vec![(2, "val str s ⇐ render(x)".to_string()), (3, "val int n = 1".to_string()), (4, "s".to_string())]);
+    assert_eq!(body["lines"][0]["segments"][0], serde_json::json!({"text": "val", "role": "keyword", "range": {"start": {"line": 2, "character": 3}, "end": {"line": 2, "character": 5}}, "effect": null, "definition": null}));
     // 既存の Python の規則(DOEFF016)も行の範囲と law つきで出る。
     let relative = report["violations"].as_array().unwrap().iter().find(|v| v["rule"] == "DOEFF016").expect("DOEFF016");
     assert_eq!(relative["law"], "absolute-imports");

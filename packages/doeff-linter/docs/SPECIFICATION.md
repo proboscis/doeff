@@ -105,6 +105,7 @@ warning の違反 **DOEFF100**(設定の知らない鍵)を出す(agora-redesign
 
 - `signatures`・`bindings`(版 2): `--stdin` の Hy の file の defk / deff の見出しと束縛の型。全体の実行では空の列。形と読み方は 16 節。
 - `rewrites`(版 2 への欄の追加): `--stdin` の Hy の file の、定義の本体の呼びを `f(a, b)` の形で見せる表示の置き換え。全体の実行では空の列。17 節。
+- `bodies`(版 2 への欄の追加): `--stdin` の Hy の file の、定義ごとの本体の文字の行(読む面が描く)。全体の実行では空の列。20 節。
 
 ### 説明の文(explanation・layer_reason)
 
@@ -490,6 +491,7 @@ coordinator の決定 2026-09-28(戻せる・agora-redesign #798 に記録)。�
 }],
 "bindings": [{
   "form": "<-",                          // <- | val | var | setv | :=
+  "modifier": "lazy" | null,             // (lazy val …)・(session var …) の前の語(form は val / var)
   "name": "row", "path": "…",
   "range": {…}, "form_range": {…}, "head_range": {…},   // 名・form 全体(括弧を含む)・頭の記号
   "annotation_range": {…} | null,        // (<- x T e) の T
@@ -610,3 +612,66 @@ handler の組が要り、同じ入力で同じ答えになることを値だけ
   最初の読めない所に error の違反 DOEFF128(鍵 `<path>::DOEFF128`・登録簿の外)として出す。エディタ・hook・text の全部に出る。
 - 読み取り器は f 文字列の置き換えの欄 `{…}` の中を Hy の式として飛ばす(欄の中の文字列・入れ子の f 文字列・括弧で文字列を閉じない
   — Hy の `hy.read_many` と同じ)。`{{` は字面の `{`。
+
+## 20. 定義の本体の文字 — editor-json の `bodies`(agora-redesign #910)
+
+doeff-runner の読む面(webview)は定義などの実体を HTML のカードで見せ、**文字で出すのは本体だけ**。その本体の行の材料。本体の文字の
+形は operator が承認済み("yeah val var when match is perfect.")で、表の正本は `docs/design/hy-reading-plane/artifacts/v2/design.md`
+2.2 節と `v3/design.md` 2 節(意味の正本 ADR-DOE-HY-006)。Hy の form の読み方は `src/project/body_view.rs` の 1 か所に置き、面は行と
+字の範囲を描くだけにする(#849 の決定「読み方の写しを持たない」)。呼びの読み(何を呼びと読むか・括弧の要否)は 17 節の
+`call_view.rs` の読み手を式 1 つずつ呼んで使う。版 2 への欄の追加(古いエディタは読み飛ばす)。`--stdin --path <file>` の時だけその
+file の defk / deff の分を出す(全体の実行では空)。
+
+```jsonc
+"bodies": [{
+  "kind": "defk",                   // defk | deff(signatures と同じ定義)
+  "name": "judged", "path": "/abs/core/conversation_input.hy",
+  "range": {…}, "full_range": {…},  // 名の範囲・定義の form 全体(signatures と同じ)
+  "lines": [{
+    "line": 49,                     // source の行(0 始まり — 面は 1 を足して見せる)。1 つの行に文が 2 つあれば同じ番号が続く
+    "depth": 0,                     // 字下げの段(本体の一番外 = 0)
+    "segments": [                   // 行の字 = text をつないだ物
+      {"text": "val", "role": "keyword", "range": {…}, "effect": null, "definition": null},
+      {"text": " ", "role": "text", "range": null, "effect": null, "definition": null},
+      {"text": "str | None", "role": "type", "range": {…}, …},        // range = (<- x T e) の T(注釈が無ければ null)
+      {"text": "target", "role": "name", "range": {…}, …},
+      {"text": "⇐", "role": "bind", "range": null, …},
+      {"text": "target-of", "role": "call", "range": {…}, "definition": {"path", "range"} | null},
+      {"text": "SettleIntake", "role": "effect", "range": {…}, "effect": "SettleIntake", …}
+    ],
+    "binding": 3 | null,            // この行が描く束縛(同じ出力の bindings の番号)
+    "warning": {"kind": "setv", "message": "setv の代わりに (val x …)、…"} | null
+  }]
+}]
+```
+
+- **字の役**(閉じた集合): `keyword`(`val`・`var`・`lazy`・`session`・`setv`・`return`・`resume`)・`type`(束縛の型)・
+  `unknown-type`(型が分からない印 `?`)・`name`(束ねる名)・`bind`(`⇐`)・`assign`(`=` と `:=`)・`effect`(effect の値を作る呼びの頭 —
+  面が `effect` の名で絵を選ぶ)・`call`(それ以外の呼びの頭)・`text`(引数・演算子・字面・区切り)・`lisp`(表に無い form)。
+- **range**: source から来た字は source の範囲を持ち、区切り・`⇐`・`?` のように source に無い字は null。`keyword` と `type` は綴りが
+  変わりうる(`<-` → `val`・`(| A B)` → `A | B`)。それ以外の役は範囲の字と text が一字一句同じ。
+- **型**: 16 節の `bindings` の型と同じ物(`binding` の番号の束縛の `type` を `A | B`・`H[a, b]` と綴る)。分からなければ `?`(別の型で
+  埋めない)。
+
+| 元の form | 本体の文字 |
+|---|---|
+| `(<- x T e)` / `(<- x e)` | `val T x ⇐ e` |
+| `(val x e)` / `(var x e)` | `val T x = e` / `var T x = e` |
+| `(val x ! e)` / `(val x (! e))` | `val T x ⇐ e`(撃つ値 — `(<- x e)` と同じ意味) |
+| `(lazy val x e)` / `(lazy var x e)` / `(session val x e)` / `(session var x e)` | `lazy val T x = e` … |
+| `(:= x v)` | `x := v` |
+| 本体の `(setv x e)` | `setv x = e` + `warning`(val / var へ) |
+| `(E a)` / `(! (E a))` / `(<- (E a))`(E が effect) | `E(a)`(E が `effect` の役・`!` は出さない) |
+| `(! (f a))` / `(<- (f a))`(effect でない) | `!f(a)` |
+| `(f a b)`・`(.m o a)`・`(get d k)`・`(. o a)`・`(f a :k v)`・演算 | 17 節の置き換えと同じ(`f(a, b)`・`o.m(a)`・`d[k]`・`o.a`・`f(a, k=v)`・`a + b`) |
+| `(return v)` / `(resume v)` | `return v` / `resume v` |
+| `(<- x T e :absent F)` | `val T x ⇐ e` の後ろに `:absent F` を `lisp` のまま |
+| 表に無い form(`when`・`match`・`for` … は #910 U3 まで・知らない macro・名が記号でない setv) | 元の lisp のまま(`lisp` の役)。推測で描かない |
+
+- **lisp の島**: 式の中で置き換えなかった括弧(知らない頭)は、その括弧だけ元の lisp のまま `lisp` の役で出す(中の呼びも置き換えない)。
+- **複数行**: 式や lisp が次の行へ続く所は新しい行(`line` = その source の行・`depth` は同じ)にし、source の字下げの文の頭からの差を
+  頭の空白の字で持つ。
+- **本体の頭の文字列**: 後ろに文がある時は説明として出さない(文字列 1 つだけの本体はその文字列が答えなので出す)。
+- 16 節の束縛の読みも同じ変更で直した: `(val x ! e)`(Hy の reader は `!(e)` も `!` と `(e)` の 2 つの要素に読む — ADR-DOE-HY-006 §3)
+  の 2 つ組を撃つ値に畳み、`(lazy val x e)`・`(session var x e)` を束縛として読んで `bindings` の欄 `modifier`(`lazy` | `session` | null)
+  に前の語を載せる(版 2 への欄の追加)。

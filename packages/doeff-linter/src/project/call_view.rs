@@ -31,7 +31,10 @@ use serde::Serialize;
 
 use crate::position::Range;
 
-use super::signatures::{definition_shape, top_definitions, FileReader, Location, SignatureKind, TypeRef, World};
+use super::signatures::{
+    binding_pairs, definition_shape, top_definitions, BindingModifier, DefinitionShape, FileReader, Location, SignatureKind,
+    TypeRef, World,
+};
 use super::smells::live;
 
 // --- 契約の形 ------------------------------------------------------------------------------
@@ -193,7 +196,7 @@ const LISP_HEADS: &[&str] = &[
     "else", "with", "with/a", "import", "require", "quote", "quasiquote", "unquote", "get", "cut", "lfor", "sfor", "dfor", "gfor",
     "assert", "del", "global", "nonlocal", "break", "continue", "pass", "->", "->>", "as->", "doto", "absent-as", "on-raise",
     "handle", "resume", "finish", "of", "annotate", "py", "pys", "hy", "eval-and-compile", "eval-when-compile", ".", "chainc",
-    "try-except", "unpack-iterable", "unpack-mapping", "nonlocal", "defmain", "comment",
+    "try-except", "unpack-iterable", "unpack-mapping", "nonlocal", "defmain", "comment", "lazy", "session",
 ];
 
 /// Python の組み込みの呼べる名(頭がこれなら呼び)。
@@ -244,14 +247,9 @@ pub(super) fn file_rewrites(world: &World, reader: &FileReader, forms: &[Form]) 
     let mut out = Vec::new();
     for form in top_definitions(&reader.hy, forms) {
         let Some(shape) = definition_shape(&reader.hy, form) else { continue };
-        let mut locals = HashSet::new();
-        if let Some(params) = shape.params {
-            collect_symbols(reader, params, &mut locals);
-        }
-        for item in &shape.body {
-            collect_locals(reader, item, &mut locals);
-        }
-        let mut walker = Walker { world, reader, locals: &locals, file_names: &file_names, out: Vec::new() };
+        let locals = definition_locals(reader, &shape);
+        let mut walker =
+            Walker { world, reader, locals: &locals, file_names: &file_names, bang: BangStyle::Mark, out: Vec::new() };
         for item in &shape.body {
             walker.walk(item, Ctx::Free, None);
         }
@@ -265,8 +263,51 @@ pub(super) fn file_rewrites(world: &World, reader: &FileReader, forms: &[Form]) 
     out
 }
 
+/// 呼びと読める頭を決める名(定義の中の局所の名と、file の最上位の名)— 本体の文字(`body_view.rs`)が式 1 つずつ読むため。
+pub(super) struct CallNames {
+    pub(super) locals: HashSet<String>,
+    pub(super) file_names: HashSet<String>,
+}
+
+impl CallNames {
+    /// 定義 1 つの名(file の最上位の名は `file_names` で渡す)。
+    pub(super) fn of(reader: &FileReader, file_names: &HashSet<String>, shape: &DefinitionShape) -> CallNames {
+        CallNames { locals: definition_locals(reader, shape), file_names: file_names.clone() }
+    }
+}
+
+/// 本体の文字の式 1 つの置き換え(文の値の場所 = 括弧の要らない場所で読む)。effect を撃つ `!` は印を出さず、呼びの頭の
+/// effect の部品が絵を持つ(`(! (E a))` → `E(a)` — 読む面の本体の文字の表・agora-redesign #910)。effect でない `!` は残す。
+pub(super) fn expression_rewrites(world: &World, reader: &FileReader, names: &CallNames, form: &Form) -> Vec<Rewrite> {
+    let mut walker =
+        Walker { world, reader, locals: &names.locals, file_names: &names.file_names, bang: BangStyle::Glyph, out: Vec::new() };
+    walker.walk(form, Ctx::Free, None);
+    let mut out = walker.out;
+    fill_texts(reader, &mut out);
+    out
+}
+
+/// 定義の引数と、本体で束ねた局所の名。
+fn definition_locals(reader: &FileReader, shape: &DefinitionShape) -> HashSet<String> {
+    let mut locals = HashSet::new();
+    if let Some(params) = shape.params {
+        collect_symbols(reader, params, &mut locals);
+    }
+    for item in &shape.body {
+        collect_locals(reader, item, &mut locals);
+    }
+    locals
+}
+
+/// 撃つ式(`!` / `<-` の中身)の頭が effect ならその名(呼びと読む頭の決め方は置き換えと同じ)。
+pub(super) fn performed_effect(world: &World, reader: &FileReader, names: &CallNames, inner: &Form) -> Option<String> {
+    let walker =
+        Walker { world, reader, locals: &names.locals, file_names: &names.file_names, bang: BangStyle::Glyph, out: Vec::new() };
+    walker.performed_effect(inner)
+}
+
 /// この file の最上位で定義・束縛した名(`defn`・`setv`・`val` … の名)。
-fn file_level_names(reader: &FileReader, forms: &[Form]) -> HashSet<String> {
+pub(super) fn file_level_names(reader: &FileReader, forms: &[Form]) -> HashSet<String> {
     let mut names = HashSet::new();
     for form in top_definitions(&reader.hy, forms) {
         let Some(items) = live(form) else { continue };
@@ -316,9 +357,17 @@ fn collect_locals(reader: &FileReader, form: &Form, out: &mut HashSet<String>) {
     });
     match head {
         Some("quote" | "quasiquote") => return,
-        Some("val" | "var" | "setv") => {
+        Some("setv") => {
             for pair in items[1..].chunks(2) {
                 if let Some(s) = reader.hy.symbol(pair[0]) {
+                    out.insert(s.to_string());
+                }
+            }
+        }
+        Some(word @ ("val" | "var" | "lazy" | "session")) => {
+            let start = if BindingModifier::of(word).is_some() { 2 } else { 1 };
+            for pair in binding_pairs(&reader.hy, &items[start.min(items.len())..]) {
+                if let Some(s) = reader.hy.symbol(pair.name) {
                     out.insert(s.to_string());
                 }
             }
@@ -349,11 +398,21 @@ struct Callee {
     effect: Option<String>,
 }
 
+/// effect を撃つ `!` の見せ方。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum BangStyle {
+    /// `!E(a)` — `!` を残し、`!` の edit が effect の名を持つ(editor の上の置き換え・17 節)。
+    Mark,
+    /// `E(a)` — `!` を出さず、呼びの頭の `(` の edit が effect の名を持つ(読む面の本体の文字)。effect でない `!` は残す。
+    Glyph,
+}
+
 struct Walker<'w, 'r, 'a> {
     world: &'w World,
     reader: &'r FileReader<'a>,
     locals: &'r HashSet<String>,
     file_names: &'r HashSet<String>,
+    bang: BangStyle,
     out: Vec<Rewrite>,
 }
 
@@ -480,7 +539,19 @@ impl Walker<'_, '_, '_> {
                 self.chain(form, args, RewriteKind::Attribute, parent)
             }
             "<-" => self.bind(form, head_form, args, parent),
-            "val" | "var" | "setv" => {
+            "val" | "var" | "lazy" | "session" => {
+                let start = if BindingModifier::of(head).is_some() { 1 } else { 0 };
+                if let Some(word) = args.first().filter(|_| start == 1) {
+                    self.walk(word, Ctx::Lisp, parent);
+                }
+                for pair in binding_pairs(&self.reader.hy, &args[start.min(args.len())..]) {
+                    self.walk(pair.name, Ctx::Lisp, parent);
+                    if let Some(value) = pair.value {
+                        self.walk(value, Ctx::Free, parent);
+                    }
+                }
+            }
+            "setv" => {
                 for pair in args.chunks(2) {
                     match pair {
                         [name, value] => {
@@ -731,9 +802,13 @@ impl Walker<'_, '_, '_> {
         let effect = self.performed_effect(inner);
         let index = self.push(RewriteKind::Perform, form, parent);
         let open = form.span.start;
-        let shown = if keep { "(!" } else { "!" };
-        let mut edits = vec![self.edit(open, inner.span.start, shown, effect)];
-        self.walk(inner, Ctx::Performed, Some(index));
+        let (shown, glyph, inner_ctx) = match (self.bang, effect) {
+            (BangStyle::Glyph, Some(_)) => (if keep { "(" } else { "" }, None, Ctx::Free),
+            (BangStyle::Glyph, None) => (if keep { "(!" } else { "!" }, None, Ctx::Performed),
+            (BangStyle::Mark, effect) => (if keep { "(!" } else { "!" }, effect, Ctx::Performed),
+        };
+        let mut edits = vec![self.edit(open, inner.span.start, shown, glyph)];
+        self.walk(inner, inner_ctx, Some(index));
         if !keep {
             edits.push(self.edit(form.span.end - 1, form.span.end, "", None));
         }
