@@ -1,0 +1,40 @@
+{
+  "artifacts": [
+    {
+      "path": "artifacts/v10/design.md",
+      "sha256": "e32f2e8b59dc27abe34b5a5e1191881a0f5d712f7fbe047910c599607def0b8d"
+    }
+  ],
+  "body": {
+    "actor": "user",
+    "authority": "direct",
+    "decision": "design",
+    "outcome": "accepted",
+    "scope_of_agreement": "operator が合意したのは「違反の項目 → その file の読む面 + source」。カードと source の両方を開くこと・scroll の位置・定義に属さない行(module の最上位)の扱い(file の面を開いて先頭)・層の地図(linter)の項目には当てないことは席の既定で戻せる。",
+    "source": "operator の直接の指示 2026-09-29 00:5x(会話 defk-view-discuss・herdr pane w3J:pC)。逐語: \"clicking linter issue browser's item must open the corresponding hy files' reading view with source\"。",
+    "statement": "v9 の裁定に 1 点を足す。doeff-runner の違反(linter)の一覧の項目(違反 1 つ)を押した時の既定を、text editor を開く(vscode.open)から「その .hy の読む面を開き、違反の行を含む定義のカードを開き、そのカードの source の箱も開いて、該当の行(本体の行と source の行)へ scroll する」に変える。読む面の設定を切っている時だけ今までどおり editor を開く。text editor は読む面のカードの open in editor から開ける。記録 = artifacts/v10/design.md。",
+    "subjects": [
+      "design-c6ae8fe5208d"
+    ],
+    "supersedes": [
+      "decision-c7d9790deda4"
+    ]
+  },
+  "created_at": "2026-09-28T16:04:21.809151+00:00",
+  "id": "decision-a83856be28aa",
+  "inputs": [
+    {
+      "id": "design-c6ae8fe5208d",
+      "role": "subject",
+      "sha256": "26fd760976222a158ed6509f39d0b7f569237435d06f863d96f4d419c7840c8c"
+    },
+    {
+      "id": "decision-c7d9790deda4",
+      "role": "basis",
+      "sha256": "8df903fc97a4bb0da9225b4e6ff712f039355623ece6f33d5e5cb534bade6b0b"
+    }
+  ],
+  "kind": "decision",
+  "schema_version": 1,
+  "scope": "doeff-hy の code を読む面(VS Code)。単位は file ではなく定義(defk・defrecord・defeffect・defhandler・deftest …)で、Scala 3 の見た目に印字し、tag・effect・呼び出し・型から辿る。source の Hy は編集しない。その先の言語(静的な型・型に載る effect・Python の呼び出し・file に縛られない名前空間)の要件も持つ"
+}
