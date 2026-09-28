@@ -347,15 +347,15 @@
   {:tags {:context "doeff-core-effects-adr" :role "foundation"}}
   (ProbeRead [] (with [(suppress ValueError)] (resume (int "数でない")))))
 
-(deff probe-expansion-refusal [source]
+(defk probe-expansion-refusal [source]
   {:pre [(: source str)] :post [(: % str)]
    :tags {:context "doeff-core-effects-adr" :role "judgment"}}
   "source を展開した時の誤りの文(通れば空の文字列)— 展開の時に断る macro の規則を検で見るため。"
   (try
     (hy.eval (hy.read-many source))
-    (return "")
+    ""
     (except [e hy.errors.HyMacroExpansionError]
-      (return (str e)))))
+      (str e))))
 
 
 (defadr ADR-DOE-CORE-EFFECTS-003
@@ -478,7 +478,7 @@
      (rule R12 "記録と再生との関係: handler は値で答え、記録係は境目の下で本物の答え(失敗の値も)を書き留める(ADR-DOE-CLUSTER-001 R5)。<- の変換は本文の中の決定的な計算なので、再生でも同じ答えから同じ Absent / Raise が出る。Absent / Raise を記録係へ届く汎用の effect にしない(記録するのは読みの effect の答え)。")
      (rule R13 "関数がどの effect を出すか(Absent・Raise を含む)は、手で書かずに doeff-effect-analyzer で推論する(呼び先を推移的にたどり、Hy は macro を展開してから読み、defhandler の節から受ける effect を読み、追えない物は unresolved と報告する)。関数の型は、戻り値(中身だけ・Maybe / Result に包まない)と推論した残りの effect の集合の組として見せる。表記の例: settle-landing : str → Program[Row] ! {Absent, Raise[Unreachable | Refused], ReadRow, PutRow}(Eff などの論文の計算の型 A ! Δ と同じ考え方)。handler で包むと、その handler が受ける effect が集合から消える。:effects(defk の頭の辞書に既にある任意のキー)は必須にしない。公開の境目にだけ上限として書き、推論 ⊆ 宣言を linter が確かめる(宣言が古くならない)。使い道: エディタの hover で残りの effect を出す/job の入口の Program の残りの effect が空であることを書いた時点で確かめる(R9 の 1 つ目)/core の定義の残りの effect に汎用の effect(通信・記録)が入れば層の違反として出す。analyzer に足りない物は :context の interpretation。")
      (rule R14 "移し替え(段階 3 と段階 5 の切り替えの手順): 今の doeff-records の effect は失敗を値で返す決まり(README『失敗の答え(値で返す)』)。宣言を切り替えると、(match body (Missing) …) の既存の呼び手は Missing を見なくなる(決して通らない分岐が残る)。だから次の順で、effect ごとに(1 つの版で 1 つの effect — 一度に全部の effect を切り替えない)、doeff-records の宣言と agora の呼び手を同じ版で切り替える:\n(1) 切り替える effect E を 1 つ選ぶ(呼び手の少ない物から — ReadPlacedInput・PostMessage など。ReadRow は最後)。\n(2) doeff-records の E を defclass から defeffect へ移し、:absent / :failure / :value を R17 の割り当てで宣言する。E に答える handler は変えない(値で答える — handler の節で Raise を出すと呼び手のスコープを飛び越える: R4)。記録の形も変わらないので、既存の記録はそのまま再生できる。\n(3) 同じ版で agora の E の呼び手を書き換える: 不在・失敗を (match …) / isinstance で分けていた呼び手は成功の道だけにし、不在で何かしたい所は <- の :absent <失敗> か absent-as、失敗で何かしたい所は on-raise にする。Missing を普通の値として持ち回る・数える呼び手は (maybe …) で包み、Maybe の値(Missing の代わりに Nothing)を受ける形にする。:value と宣言した答え(Conflict)の呼び手は変えない。job の入口と、handler の節で Program を走らせる翻訳の handler で Absent / Raise を閉じる(R9)。\n(4) 古い分岐(E の不在・失敗と宣言した型を値として match / isinstance する分岐)は doeff-linter の規則が拾う(段階 4 の道具)。当たりが 0 になるまでその版を着地させない — law declarations-switch-one-effect-at-a-time。\n(5) 型の決まった書き換え(古い分岐の削除・maybe での包み・:absent への移し替え)は Sonnet 5 に任せる — effect ごとの手順(この R14)と linter の当たりの一覧を渡して機械的に進める。不在を何の失敗にするか・どこで閉じるかの判断が要る所は、その呼び手の持ち主が決める。\n(6) HTTP の答えの状態コードは、翻訳の層(HTTP の答えを業務の答えへ写す handler)の 1 か所で 4 種類に写し(R17)、呼び手に状態コードを見せない。")
-     (rule R15 "handler の節の終わり方(operator の懸念『再開の書き忘れ』— 逐語 10): 節は resume(非末尾なら続きの答えが節へ戻る)・transfer・finish(続きを捨て、handler を置いたスコープの答えをその値にする)・reperform・raise のどれかで終わる。書き忘れは今までどおり誤り — 節のすべての道(if・cond・match・try の枝ごと。cond は最後が True、match は最後が番の無い _、try は except の本体も)が終わらなければ展開の時に SyntaxError。when・unless・and・or・loop・入れ子の関数と内包表記の中の resume は終わりに数えない。effect ごとに再開の扱いを宣言する(effect の型の属性 __doeff_resumption__ = doeff_core_effects.effects.Resumption: Raise = NEVER(誰も再開しない)・Absent = ABSENT_AS_ONLY(absent-as だけが再開する)・宣言しない普通の effect = REQUIRED)。宣言に反する節(Raise / Absent を resume・transfer する節、普通の effect を finish で打ち切る節)は違反 — 名前で分かる物(節の頭が Raise / Absent・finish の節に理由が無い)は展開の時に SyntaxError、分からない物(別名で import した Raise・__doeff_resumption__ を宣言した型)は handler を初めて本文に被せた時に ClauseEndingError。とくに Raise の resume は『失敗したのに成功したかのように続く』ので、宣言(NEVER)と展開の両方で断り、<- が開いた Raise / Absent を素の handler 関数が再開しても、開く側が RuntimeError にする。普通の effect を意図して打ち切る節(時間切れで処理全体を止める等)は、節に :finish-reason \"理由\" を書いた時だけ許す(deff の理由の註と同じ扱い)。実行の時: 節が resume も finish もせずに抜けたら(例外を黙らせる with の中の resume など、展開の時に見えない道)、defhandler の包みが RuntimeError にする — VM は再開しない handler の値でスコープを黙って終えるため。素の Python の handler 関数(@do の関数・deff の handler)にはこの包みが無く、VM は『再開しないで値を返す』を正当な終わり方として受けるので、実行の時の検めは効かない(塞げない理由: finish と書き忘れを見分ける印が VM に無い — 見分けるには VM に明示の終わりの操作を足し、既存の Python の handler を全部書き換える必要がある)。素の handler 関数の終わり方は doeff-linter の規則の候補(番号は未定)。")
+     (rule R15 "handler の節の終わり方(operator の懸念『再開の書き忘れ』— 逐語 10): 節は resume(非末尾なら続きの答えが節へ戻る)・transfer・finish(続きを捨て、handler を置いたスコープの答えをその値にする)・reperform・raise のどれかで終わる。書き忘れは今までどおり誤り — 節のすべての道(if・cond・match・try の枝ごと。cond は最後が True、match は最後が番の無い _、try は except の本体も)が終わらなければ展開の時に SyntaxError。when・unless・and・or・loop・入れ子の関数と内包表記の中の resume は終わりに数えない。effect ごとに再開の扱いを宣言する(effect の型の属性 __doeff_resumption__ = doeff_core_effects.effects.Resumption: Raise = NEVER(誰も再開しない)・Absent = ABSENT_AS_ONLY(absent-as だけが再開する)・宣言しない普通の effect = REQUIRED)。宣言に反する節(Raise / Absent を resume・transfer する節、普通の effect を finish で打ち切る節)は違反 — 名前で分かる物(節の頭が Raise / Absent・finish の節に理由が無い)は展開の時に SyntaxError、分からない物(別名で import した Raise・__doeff_resumption__ を宣言した型)は handler を初めて本文に被せた時に ClauseEndingError。とくに Raise の resume は『失敗したのに成功したかのように続く』ので、宣言(NEVER)と展開の両方で断り、<- が開いた Raise / Absent を素の handler 関数が再開しても、開く側が RuntimeError にする。普通の effect を意図して打ち切る節(時間切れで処理全体を止める等)は、節に :finish-reason \"理由\" を書いた時だけ許す(理由の註を書いた deff と同じ扱い)。実行の時: 節が resume も finish もせずに抜けたら(例外を黙らせる with の中の resume など、展開の時に見えない道)、defhandler の包みが RuntimeError にする — VM は再開しない handler の値でスコープを黙って終えるため。素の Python の handler 関数(@do の関数・deff の handler)にはこの包みが無く、VM は『再開しないで値を返す』を正当な終わり方として受けるので、実行の時の検めは効かない(塞げない理由: finish と書き忘れを見分ける印が VM に無い — 見分けるには VM に明示の終わりの操作を足し、既存の Python の handler を全部書き換える必要がある)。素の handler 関数の終わり方は doeff-linter の規則の候補(番号は未定)。")
      (rule R16 "段階の計画(2026-09-27 夜・operator の決定 — 逐語 9):\n段階 1(振る舞いを変えない・足すだけ): Absent / Raise の effect・境目の handler maybe・result・on-raise・absent-as(奥の不在は既定値でスコープを終える)・defhandler の終わる節 (finish) と節の終わり方の検め(R15)。\n段階 2(振る舞いを変えない — 宣言を持つ effect がまだ無い): defeffect の答えの宣言(R5)・<- と ! の変換・:absent・Result / Option の値を開く形(R6)・absent-as の字面の中の <- の再開(R8)。宣言の無い effect の <- は yield する物も束ねる答えも今までと同じ。\n段階 3: doeff-records の effect を defeffect へ移して宣言を付ける(handler は変えない)。\n段階 4: 段階 3 と 5 を切り替える前に要る道具 — 古い分岐を拾う doeff-linter の規則(R14 (4))・on-raise の何でも受ける形と handler の節の Absent / Raise の規則(R4・R9)・推論(R13)・Rust の analyzer の <- の :absent の読み。\n段階 5: agora の呼び手の書き換え。段階 3 と段階 5 は同時に — effect ごとに同じ版で — 切り替える(R14)。")
      (rule R17 "繰り返し出る 4 種類の失敗の割り当て(operator の決定 — 逐語 9): Unreachable(置き場・相手に届かない)と Refused(相手が断った)は失敗(:failure — <- は Raise を出す)、Missing(行が無い)は不在(:absent — <- は Absent を出す)、Conflict(版の負け)は値(:value — CAS の繰り返しで普通に扱う答え)。4 種類はコードの本文では effect、外の世界との境目(handler の答え・記録)と呼び手が何かしたい境目(maybe・result・on-raise・absent-as)ではデータ。HTTP の状態コードは翻訳の層の 1 か所でこの 4 種類に写す(例: 404 → Missing、409・412 → Conflict、401・403 → Refused、5xx と通信の失敗 → Unreachable — 写し方の表は翻訳の層が持つ)。\n追補(2026-09-28・agora-redesign #840 — 5 つ目の失敗の種類): Malformed(外から来た JSON が型の約束の形でない — どの型の・どの欄が・なぜを持つ。doeff_hy.wire)は失敗(:failure — <- は Raise を出す)。相手の版の食い違いは運用で起きうるので、実装の誤りの例外ではなく業務の失敗として扱う。出所は defwire の解き手 parse / parse-json の 1 か所だけ(ADR-DOE-HY-007 R8)。段階 3 の切り替え(R14)までは parse は Malformed を値で返し(答えの型 = (| T Malformed))、呼び手は値で分ける。切り替えで parse を :failure の宣言つきにし、Raise(Malformed) に寄せる(effect ごとに 1 つの版で — 他の 4 種類と同じ手順)。決めた席 = #840 の担当(operator の決定 \"A\" の後・推奨どおり — 戻せる決定)。戻し方: この追補の文を消し、parse の答えを Malformed の値のままにする。")]
   :laws
@@ -628,15 +628,15 @@
        (_check-clause-terminates "ProbeAbsent" [(hy.read "(resume None)")])
        (_check-clause-terminates "ProbeAbsent" [(hy.read "(finish None)")])
        (val head "(require doeff-hy.macros [defhandler]) (import doeff_core_effects.effects [Raise Absent]) (defhandler probe-h ")
-       (assert (in "missing resume" (probe-expansion-refusal (+ head "(ProbeRead [] \"値\"))"))) "resume の書き忘れ")
-       (assert (in "missing resume" (probe-expansion-refusal (+ head "(ProbeRead [] (if True (resume 1) None)))"))) "枝の片方だけ")
-       (assert (in "missing resume" (probe-expansion-refusal (+ head "(ProbeRead [] (when True (resume 1))))"))) "when だけ")
-       (assert (in "missing resume" (probe-expansion-refusal (+ head "(ProbeRead [] (match 1 1 (resume 1) 2 (resume 2))))"))) "最後の _ の無い match")
-       (assert (in "Raise の節は" (probe-expansion-refusal (+ head "(Raise [reason] (resume 0)))"))) "Raise の resume")
-       (assert (in "Absent の節は" (probe-expansion-refusal (+ head "(Absent [why] (transfer 0)))"))) "Absent の再開")
-       (assert (in ":finish-reason" (probe-expansion-refusal (+ head "(ProbeRead [] (finish None)))"))) "理由の無い打ち切り")
-       (assert (= "" (probe-expansion-refusal (+ head "(Raise [reason] (finish reason)) (Absent [why] (finish None)))"))))
-       (assert (= "" (probe-expansion-refusal (+ head "(ProbeRead [] :finish-reason \"時間切れ\" (finish None)))")))))
+       (assert (in "missing resume" (run (probe-expansion-refusal (+ head "(ProbeRead [] \"値\"))")))) "resume の書き忘れ")
+       (assert (in "missing resume" (run (probe-expansion-refusal (+ head "(ProbeRead [] (if True (resume 1) None)))")))) "枝の片方だけ")
+       (assert (in "missing resume" (run (probe-expansion-refusal (+ head "(ProbeRead [] (when True (resume 1))))")))) "when だけ")
+       (assert (in "missing resume" (run (probe-expansion-refusal (+ head "(ProbeRead [] (match 1 1 (resume 1) 2 (resume 2))))")))) "最後の _ の無い match")
+       (assert (in "Raise の節は" (run (probe-expansion-refusal (+ head "(Raise [reason] (resume 0)))")))) "Raise の resume")
+       (assert (in "Absent の節は" (run (probe-expansion-refusal (+ head "(Absent [why] (transfer 0)))")))) "Absent の再開")
+       (assert (in ":finish-reason" (run (probe-expansion-refusal (+ head "(ProbeRead [] (finish None)))")))) "理由の無い打ち切り")
+       (assert (= "" (run (probe-expansion-refusal (+ head "(Raise [reason] (finish reason)) (Absent [why] (finish None)))")))))
+       (assert (= "" (run (probe-expansion-refusal (+ head "(ProbeRead [] :finish-reason \"時間切れ\" (finish None)))"))))))
      (deftest test-adr-doe-core-effects-003-clause-endings-checked-at-install-and-run
        ;; R15(被せた時と実行の時): 別名で import した Raise の resume は初めて本文に被せた時に断り、展開の時に見えない道で
        ;; resume も finish もせずに抜けた節は実行の時に誤りにする。理由つきの打ち切りは handler のスコープを値で終える。
@@ -725,7 +725,7 @@
        (with [(pytest.raises ValueError :match "boom")]
          (run (probe-raises-python)))
        (for [pattern ["_" "reason" "(Exception)" "(object)"]]
-         (assert (in "受けられない" (probe-expansion-refusal (+ "(require doeff-hy.macros [on-raise]) (on-raise body " pattern " 0)")))
+         (assert (in "受けられない" (run (probe-expansion-refusal (+ "(require doeff-hy.macros [on-raise]) (on-raise body " pattern " 0)"))))
                  pattern))
        (with [(pytest.raises TypeError)]
          (RaiseCase #(ValueError) (fn [r] (Some r))))

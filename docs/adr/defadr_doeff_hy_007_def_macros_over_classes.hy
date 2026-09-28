@@ -141,7 +141,7 @@
      (law defk-answers-are-not-used-bare
        :statement "for_all repo の defk f と呼び (f …): 呼びの答えを値として使う所(比べ・演算・組み込みの関数・method・属性・条件・繰り返しの元・record の欄)に無い — 答えは (<- x (f …)) か (! (f …)) で受ける"
        :counterexamples
-         [(counterexample "(deff text-at [ref] (.get (latest-by-ref ref) \"text\")) — latest-by-ref は defk。Program の .get を読み、答えのつもりで静かに間違う")]
+         [(counterexample "(defk text-at [ref] (.get (latest-by-ref ref) \"text\")) — latest-by-ref は defk。Program の .get を読み、答えのつもりで静かに間違う")]
        :enforced-by ["doeff-linter DOEFF126"]
        :wiring "配線(2026-09-28)— doeff-linter DOEFF126(wt/hy-defk-bare-call)")
      (law judgment-does-not-check-json-shape
