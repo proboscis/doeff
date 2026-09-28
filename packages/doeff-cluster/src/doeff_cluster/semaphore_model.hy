@@ -20,11 +20,30 @@
 ;;;   瞬間は送った瞬間より後なので、柵が締まるのは coordinator の期限より必ず前(時計の進み方の差だけを前提にする・ずれは問わない)。
 ;;;   盤への直の書き(旧い版の process)で、coordinator の時計でまだ切れていない担い手を追い出して自分を足す書きは断る
 ;;;   (semaphore-write-refusal)。どちらの時計も doeff-time の GetTime で読む。
+;;;
+;;; 担い手の名と token の綴り(2026-09-29 に 1 つにした): 担い手 = lease-holder(<job>/<process の世代の名> — cluster で一意・同じ job の
+;;; 新旧の世代を分ける)・token = <担い手>/<番号>。子の土台(cluster_foundation.lease-holder-of → SemaphoreSession.next-token)が名乗り、
+;;; worker の返し(handlers.release-leases・sim の local.release-leases)が同じ定義で頭を作って外す。以前は名乗りが <job>/<世代>、外しが
+;;; <worker>/<世代>/ の頭で食い違い、終わった process の lease が期限まで残った(入れ替えの新しい版が期限まで置けなかった)。
+(require doeff-hy.macros [deff])
 (import dataclasses [dataclass])
 (import doeff [EffectBase])
 (import doeff_core_effects.scheduler [CreateSemaphore Semaphore])
 
 (setv SEMAPHORE-PREFIX "semaphore/")
+
+
+(deff lease-holder [#^ str job #^ str instance]  ; defk にできない: worker の返し(Program の外の本番の手続き handlers.release-leases)も呼ぶ純粋な判断
+  {:pre [(: job str) (: instance str)] :post [(: % str)] :tags {:context "doeff-cluster" :role "judgment"}}
+  "名前付きの lease の担い手の名を、名乗る側(子の土台)と外す側(worker)が同じ綴りで作るため: <job>/<process の世代の名>。"
+  (.format "{}/{}" job instance))
+
+
+(deff holder-tokens-prefix [#^ str holder]  ; defk にできない: SemaphoreSession(手元の記憶の class)と worker の返し(Program の外)が呼ぶ純粋な判断
+  {:pre [(: holder str)] :post [(: % str)] :tags {:context "doeff-cluster" :role "judgment"}}
+  "担い手 holder の token の頭(<担い手>/)を、token を作る側(SemaphoreSession.next-token)と担い手の token を全部外す側(release-leases)が
+   同じ綴りで作るため。"
+  (+ holder "/"))
 
 
 (defclass CreateNamedSemaphore [CreateSemaphore]
@@ -180,7 +199,7 @@
 
 (defn drop-holders [row #^ str prefix]
   "純粋: token が prefix で始まる担い手を外した後の行。外す物が無ければ None。終了を確かめた process の lease を、期限を待たずに
-   返すために worker が使う(token は「<worker>/<process の世代の名>/…」— services/envs.hy の lease-holder)。
+   返すために worker が使う(prefix = holder-tokens-prefix(lease-holder job 世代の名) — 頭の註)。
    期限の判断は入れない(外すのは名指した担い手だけで、他の担い手の期限はそのまま)。"
   (when (or (not (isinstance row dict)) (not (isinstance (.get row "holders") dict))) (return None))
   (setv kept (dfor #(t e) (.items (get row "holders")) :if (not (.startswith t prefix)) t e))
