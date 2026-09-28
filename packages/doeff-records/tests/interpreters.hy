@@ -11,7 +11,7 @@
 ;;;           PruneChanges — HTTP の口に出さない)は、client の外側に被せた置き場の handler が直に答える。
 ;;;   http-effect-memory
 ;;;           http-memory と同じ口と置き場で、client の要求の送り方だけを EffectTransport にする(要求は HttpRequest の effect —
-;;;           答え手は外側の await-handler と http-production-handler・agora-redesign #810)。送り方が替わっても法の答えが同じことを確かめる。
+;;;           答え手は外側の await-handler と http-production-handler)。送り方が替わっても法の答えが同じことを確かめる。
 ;;;
 ;;; 法は LawSetup の effect で自分の LawHarness(書き手の名 → その書き手の handler で包む関数)を読む。
 (require doeff-hy.macros [defhandler])
