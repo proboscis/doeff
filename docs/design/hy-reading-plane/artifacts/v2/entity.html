@@ -1,0 +1,162 @@
+<!doctype html><html lang="ja" style="background:#1b1d21;color:#d6d8dc"><meta charset="utf-8"><title>defk を実体として見せる — HTML のカードの見本</title>
+<style>
+html,body{background:#1b1d21;color:#d6d8dc}
+body{font-family:-apple-system,"Hiragino Sans",sans-serif;margin:0;display:grid;grid-template-columns:260px minmax(0,1fr);min-height:100vh}
+a{color:#8fc1ff;text-decoration:none}a:hover{text-decoration:underline}
+/* 左: 軸 */
+.axes{background:#15171a;border-right:1px solid #2c3036;padding:16px 14px;font-size:12.5px}
+.axes h2{font-size:11px;letter-spacing:.08em;color:#8a9099;margin:14px 0 6px;text-transform:uppercase}
+.axes h2:first-child{margin-top:0}
+.fac{display:flex;flex-wrap:wrap;gap:5px}
+.fac span{border:1px solid #3a3f47;border-radius:12px;padding:1px 8px;color:#b8bec7;background:#1f2227}
+.fac span.on{background:#2f4a66;border-color:#4a76a8;color:#dfeeff}
+.fac span small{color:#7d858f;margin-left:4px}
+.hint{color:#7d858f;font-size:11px;line-height:1.6;margin-top:18px}
+/* 右: カード */
+.main{padding:18px 26px 40px;max-width:1240px}
+.crumb{font-size:12px;color:#8a9099;margin-bottom:10px}
+.crumb b{color:#c9ced5;font-weight:600}
+.card{background:#22252a;border:1px solid #33383f;border-radius:10px;margin:0 0 18px;box-shadow:0 1px 0 #000}
+.hd{display:flex;align-items:center;gap:10px;padding:12px 16px;border-bottom:1px solid #33383f;flex-wrap:wrap}
+.kind{font-size:10.5px;font-weight:700;letter-spacing:.06em;color:#1b1d21;background:#e2c46a;border-radius:4px;padding:2px 6px}
+.kind.eff{background:#8fd3ff}.kind.rec{background:#b9e39a}.kind.hdl{background:#f0a8a8}
+.name{font:600 17px Menlo,monospace;color:#f2e6a8}
+.chips{display:flex;gap:6px;flex-wrap:wrap;margin-left:auto}
+.chip{font-size:11px;border-radius:12px;padding:2px 9px;background:#3b3220;color:#f0c674;border:1px solid #5a4a25}
+.chip.role{background:#232f3b;color:#9dd0ff;border-color:#2f4a66}
+.sig{display:flex;align-items:center;gap:8px;padding:12px 16px;flex-wrap:wrap;font:13px Menlo,monospace}
+.p{display:inline-flex;align-items:center;gap:6px;background:#1b1d21;border:1px solid #3a3f47;border-radius:6px;padding:4px 8px}
+.p .n{color:#d6d8dc}.p .t{color:#4ec9b0}
+.arrow{color:#8a9099;font-size:16px;margin:0 4px}
+.ret{display:inline-flex;align-items:center;gap:6px;background:#1f2a24;border:1px solid #2f5a45;border-radius:6px;padding:4px 10px;color:#9fe3c0}
+.ret .alt{color:#7d858f}
+.row{display:grid;grid-template-columns:96px minmax(0,1fr);gap:10px;padding:8px 16px;border-top:1px solid #2c3036;font-size:12.5px;align-items:start}
+.row .k{color:#8a9099;padding-top:3px}
+.eff{display:inline-flex;align-items:center;gap:6px;background:#1b1d21;border:1px solid #3a3f47;border-radius:6px;padding:3px 8px;margin:0 6px 4px 0;font:12px Menlo,monospace}
+.eff img{width:14px;height:14px;image-rendering:pixelated}
+.eff .who{color:#7d858f;font:11px -apple-system,"Hiragino Sans",sans-serif}
+.doc{padding:10px 16px;border-top:1px solid #2c3036;color:#c9ced5;font-size:13px;line-height:1.7}
+.body{border-top:1px solid #2c3036;padding:10px 16px 12px;font:12.5px/1.7 Menlo,monospace;overflow-x:auto}
+.body div{white-space:pre;min-height:1.7em}
+.ln{display:inline-block;width:2.6em;color:#555b63;text-align:right;margin-right:1.1em;user-select:none;font-size:11px}
+.b{color:#4ec9b0}.kw{color:#c586c0}.s{color:#ce9178}.c{color:#6a9955}.fx{color:#8fd3ff}.q{color:#7d858f;border:1px dashed #555b63;border-radius:3px;padding:0 3px;font-size:11px}
+.bind{background:#262a31;border-radius:4px;padding:0 4px}
+.ft{display:flex;gap:18px;padding:8px 16px;border-top:1px solid #33383f;font-size:12px;color:#b8bec7;flex-wrap:wrap}
+.ft b{color:#e6e9ee;font-weight:600}
+.loc{margin-left:auto;color:#7d858f;font:11px Menlo,monospace}
+.small{padding:10px 16px;font-size:12px;color:#b8bec7;line-height:1.7}
+.note{color:#b8bec7;font-size:13px;line-height:1.75;max-width:1000px;margin:6px 0 16px}
+.vs{display:grid;grid-template-columns:1fr 1fr;gap:12px;font-size:12px;color:#b8bec7;margin:0 0 18px}
+.vs div{background:#15171a;border:1px solid #2c3036;border-radius:8px;padding:8px 12px;line-height:1.6}
+.vs b{color:#e6e9ee}
+</style>
+<body style="background:#1b1d21;color:#d6d8dc">
+<nav class="axes">
+<h2>軸: context</h2><div class="fac"><span class="on">messaging<small>312</small></span><span>kanban<small>204</small></span><span>turn<small>171</small></span><span>chat<small>96</small></span><span>…</span></div>
+<h2>軸: role</h2><div class="fac"><span>entry</span><span class="on">program<small>41</small></span><span>judgment</span><span>protocol</span><span>intent</span><span>type</span><span>foundation</span></div>
+<h2>軸: effect</h2><div class="fac"><span class="on">ReadInput<small>4</small></span><span>WriteInput<small>3</small></span><span>SettleIntake<small>5</small></span><span>ReadIntake</span><span>GetTime</span><span>…</span></div>
+<h2>軸: 型</h2><div class="fac"><span>InputRequest</span><span>Judgment</span><span>RunOutcome</span><span>InputQueue</span></div>
+<h2>軸: テスト</h2><div class="fac"><span>テストあり<small>3</small></span><span>テストなし<small>1</small></span></div>
+<h2>軸: 置き場</h2><div class="fac"><span>messaging/core<small>4</small></span></div>
+<div class="hint">選んだ軸: context = messaging × role = program × effect = ReadInput → 4 件。<br>左の軸はどれからでも入れて、交差できる。file の木は「置き場」の軸に降りる。<br>数は索引(hy-index)から。</div>
+</nav>
+<main class="main">
+<div class="crumb">実体のカード 4 件 — <b>run-input-request</b>・judged・outcome-of・run-requests(context = messaging × role = program × effect = ReadInput)</div>
+
+<div class="vs">
+<div><b>今の #849 の逐語との対応</b><br>"it shouldnt be about pure text visualization" → 頭・引数・型・effect・tags・関係は部品で出す。文字は本体だけ<br>"tags should be displayed like typical tags on web app" → 右上のチップ<br>"metadata of defk could be displayed like such webapp style" → カードの頭と欄<br>"(X,Y,Z)->M[B] style" → 引数のチップ → 矢印 → 答えの型(絵にした形)</div>
+<div><b>Scala の見本との違い</b><br>`def f(x: T)(using E): R =` の構文はなぞらない。`using`・`/** */`・`=`・字下げは無い<br>effect は「使う effect」の欄に絵つきで並び、それを解く handler へ飛べる<br>契約のうち型は引数と答えの型の中へ溶け、型でない述語だけ「契約」の欄に残る<br>本体だけが文字(Python 風の式・lisp の括弧は出さない)</div>
+</div>
+
+<!-- ===== run-input-request ===== -->
+<section class="card">
+<div class="hd"><span class="kind">defk</span><span class="name">run-input-request</span>
+  <div class="chips"><span class="chip">context: messaging</span><span class="chip role">role: program</span></div></div>
+<div class="sig"><span class="p"><span class="n">request</span><span class="t">InputRequest</span></span><span class="arrow">→</span><span class="ret">RunOutcome</span></div>
+<div class="row"><span class="k">使う effect</span><span>
+  <span class="eff"><img src="glyph.svg">ReadInput <span class="who">解く: conversation-input-store</span></span>
+  <span class="eff"><img src="glyph.svg">WriteInput <span class="who">解く: conversation-input-store</span></span>
+  <span class="eff"><img src="glyph.svg">SettleIntake <span class="who">解く: intake-settlement-store</span></span>
+  <span style="color:#7d858f;font-size:11px">(ReadInput・WriteInput は outcome-of 経由)</span></span></div>
+<div class="doc">要求 1 つを実体化して結末を積むため。答え = done / rejected(結末を積めた)/ deferred(次の周へ)。</div>
+<div class="body">
+<div><span class="ln">85</span><span class="bind"><span class="b">InputDone | InputRejected | None</span> outcome <span class="fx">⇐</span> outcome-of(request)</span></div>
+<div><span class="ln">86</span><span class="kw">when</span> outcome is None</div>
+<div><span class="ln">87</span>  <span class="kw">return</span> RunOutcome.DEFERRED</div>
+<div><span class="ln">88</span><span class="bind"><span class="b">IntakeSettlement</span> settlement <span class="fx">⇐</span> settlement-of(request.request-id, ROUTE-INPUT, outcome)</span></div>
+<div><span class="ln">89</span><span class="bind"><span class="b">IntakeSettleLanded | IntakeSettleRefused | IntakeUnreachable</span> settled <span class="fx">⇐</span> <img src="glyph.svg" style="width:13px;height:13px;vertical-align:-2px;image-rendering:pixelated"> SettleIntake(settlement)</span></div>
+<div><span class="ln">90</span><span class="kw">match</span> settled</div>
+<div><span class="ln">91</span>  IntakeSettleLanded  → <span class="kw">match</span> outcome</div>
+<div><span class="ln">92</span>                          InputDone      → RunOutcome.DONE</div>
+<div><span class="ln">93</span>                          InputRejected  → RunOutcome.REJECTED</div>
+<div><span class="ln">94</span>  _                   → RunOutcome.DEFERRED</div>
+</div>
+<div class="ft"><span>呼び手 <b>2</b>: run-requests・…</span><span>呼び先 <b>2</b>: outcome-of・settlement-of</span><span>テスト <b>0</b></span><span>使う型 <b>6</b></span><span class="loc">controllers/messaging/core/conversation_input.hy:81</span></div>
+</section>
+
+<!-- ===== judged ===== -->
+<section class="card">
+<div class="hd"><span class="kind">defk</span><span class="name">judged</span>
+  <div class="chips"><span class="chip">context: messaging</span><span class="chip role">role: program</span></div></div>
+<div class="sig"><span class="p"><span class="n">request</span><span class="t">InputRequest</span></span><span class="arrow">→</span><span class="ret">Judgment <span class="alt">| None</span></span></div>
+<div class="row"><span class="k">使う effect</span><span><span class="eff"><img src="glyph.svg">ReadInput <span class="who">解く: conversation-input-store</span></span></span></div>
+<div class="doc">名指した行を読んで判じるため。読めなかった(届かない)= None(この周は見送る)。</div>
+<div class="body">
+<div><span class="ln">50</span><span class="bind"><span class="b">str | None</span> target <span class="fx">⇐</span> target-of(request)</span></div>
+<div><span class="ln">51</span><span class="q">?</span> row = None</div>
+<div><span class="ln">52</span><span class="kw">when</span> target is not None</div>
+<div><span class="ln">53</span>  <span class="bind"><span class="b">InputRow | InputAbsent | InputUnreadable</span> answer <span class="fx">⇐</span> <img src="glyph.svg" style="width:13px;height:13px;vertical-align:-2px;image-rendering:pixelated"> ReadInput(target)</span></div>
+<div><span class="ln">54</span>  <span class="kw">match</span> answer</div>
+<div><span class="ln">55</span>    InputUnreadable → <span class="kw">return</span> None</div>
+<div><span class="ln">56</span>    InputRow        → row = answer</div>
+<div><span class="ln">57</span>    InputAbsent     → None</div>
+<div><span class="ln">58</span><span class="bind"><span class="b">Judgment</span> judgment <span class="fx">⇐</span> judge(request, row)</span></div>
+<div><span class="ln">59</span>judgment</div>
+</div>
+<div class="ft"><span>呼び手 <b>1</b>: outcome-of</span><span>呼び先 <b>2</b>: target-of・judge</span><span>テスト <b>3</b>: test_conversation_input_judgment</span><span class="loc">controllers/messaging/core/conversation_input.hy:46</span></div>
+</section>
+
+<!-- ===== 関係する実体(同じ面に積める) ===== -->
+<div class="crumb" style="margin-top:22px">カードから飛んだ先の実体も同じ面に積める(file を跨ぐという概念は無い)</div>
+
+<section class="card">
+<div class="hd"><span class="kind eff">defeffect</span><span class="name">ReadInput</span>
+  <div class="chips"><span class="chip">context: messaging</span><span class="chip role">role: intent</span></div></div>
+<div class="sig"><span class="p"><span class="n">id</span><span class="t">str</span></span><span class="arrow">→</span><span class="ret">InputRow <span class="alt">| InputAbsent | InputUnreadable</span></span></div>
+<div class="doc">入力の行を id で 1 つ読む(答え = 頭の註)。</div>
+<div class="ft"><span>使う定義 <b>4</b>: judged・outcome-of・run-input-request・run-requests</span><span>解く handler <b>2</b>: conversation-input-store・(テスト) fake-store</span><span class="loc">controllers/messaging/intent/conversation_input.hy:176</span></div>
+</section>
+
+<section class="card">
+<div class="hd"><span class="kind rec">defrecord</span><span class="name">Judgment</span>
+  <div class="chips"><span class="chip">context: messaging</span><span class="chip role">role: type</span></div></div>
+<div class="sig"><span class="p"><span class="n">write</span><span class="t">InputCreate | InputRevise | InputWithdraw | None</span></span><span class="p"><span class="n">outcome</span><span class="t">InputDone | InputRejected</span></span></div>
+<div class="doc">判断 1 つ = 書き(高々 1 つ・None = 書かない)と結末。</div>
+<div class="ft"><span>返す定義 <b>2</b>: judged・judge</span><span>受ける定義 <b>1</b>: outcome-of</span><span class="loc">controllers/messaging/core/conversation_input_types.hy:26</span></div>
+</section>
+
+<section class="card">
+<div class="hd"><span class="kind hdl">defhandler</span><span class="name">conversation-input-store</span>
+  <div class="chips"><span class="chip">context: messaging</span><span class="chip role">role: protocol</span></div></div>
+<div class="row"><span class="k">解く effect</span><span><span class="eff"><img src="glyph.svg">ReadInput</span><span class="eff"><img src="glyph.svg">WriteInput</span></span></div>
+<div class="row"><span class="k">使う effect</span><span><span class="eff"><img src="glyph.svg">ReadRow</span><span class="eff"><img src="glyph.svg">PutRow</span><span class="eff"><img src="glyph.svg">PlaceInput</span><span class="eff"><img src="glyph.svg">ReadPlacedInput</span><span class="eff"><img src="glyph.svg">WithdrawPlacedInput</span></span></div>
+<div class="doc">入力の行の読み書きを、置いた入力の本文の表と置いた側の台帳の口で答える(頭の註)。</div>
+<div class="body">
+<div><span class="ln">135</span><span class="fx">ReadInput</span>(id)</div>
+<div><span class="ln">136</span>  <span class="bind"><span class="b">InputRow | InputAbsent | InputUnreadable</span> answer <span class="fx">⇐</span> read-input(id)</span></div>
+<div><span class="ln">137</span>  <span class="kw">resume</span> answer</div>
+<div><span class="ln">138</span><span class="fx">WriteInput</span>(write)</div>
+<div><span class="ln">139</span>  <span class="bind"><span class="b">WriteLanded | WriteConflict | WriteRefused | WriteUnreachable</span> answer <span class="fx">⇐</span> write-input(write)</span></div>
+<div><span class="ln">140</span>  <span class="kw">resume</span> answer</div>
+</div>
+<div class="ft"><span>被せる場所 <b>3</b>: messaging の service の組み立て・…</span><span class="loc">controllers/messaging/protocol/conversation_input.hy:132</span></div>
+</section>
+
+<div class="note" style="margin-top:20px">
+<b>カードの部品(実体の種類ごとに欄が変わる)</b><br>
+defk: 種類のバッジ・名・tags のチップ・引数のチップ(名と型)→ 答えの型・使う effect(絵・解く handler へのリンク)・契約(型でない述語だけ。ここでは無いので欄ごと出ない)・説明・本体(文字)・関係(呼び手・呼び先・テスト・使う型)・置き場。<br>
+defeffect: 欄の型 → 答えの型・使う定義・解く handler。defrecord: 欄のチップ・返す定義・受ける定義。defhandler: 解く effect・使う effect・effect ごとの本体・被せる場所。<br>
+本体の文字: 束縛は「型 名 ⇐ 式」の 1 行(effect を通す ⇐ と値の = を分ける)、呼びは f(a, b)、分岐は when / match と字下げ、lisp の括弧は出さない。effect を呼ぶ所に絵。行番号は source の行(報告・差分から辿るため)。
+</div>
+</main>
+</body></html>

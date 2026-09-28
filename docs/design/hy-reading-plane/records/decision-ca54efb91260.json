@@ -1,0 +1,44 @@
+{
+  "artifacts": [
+    {
+      "path": "artifacts/v2/design.md",
+      "sha256": "151d554bc874465e409a260e1a2efb0d93243be5129df1ceafcbdf47f380aaee"
+    },
+    {
+      "path": "artifacts/v2/entity.html",
+      "sha256": "fcaa4690165e9e2e70fbd4b509631efb17e6845eedabfa07532c771cebf8c4d6"
+    }
+  ],
+  "body": {
+    "actor": "user",
+    "authority": "direct",
+    "decision": "design",
+    "outcome": "accepted",
+    "scope_of_agreement": "operator が合意したのは「構文をなぞらず実体を HTML で見せる」と「Hy は保存の形式として残す」の 2 点。実体のカードの欄の表(v2 2.1)と本体の文字の決まり(v2 2.2)、見本 entity.html の見た目は席の推奨を既定にした戻せる決定で、operator は反対していないが明示的に選んでもいない。",
+    "source": "operator の直接の議論 2026-09-28 23:1x(会話 defk-view-discuss・herdr pane w3J:pA)。逐語: \"so we are not to follow syntax like using. we want better html visualization of entity like defk\" / \"in my understanding hy is great at storing arbitrary data and code in freely structured manner, for our purpose\"",
+    "statement": "読む面は Scala の構文(using・/** */・=・字下げ)をなぞらず、defk などの実体を HTML の部品(種類・名・tags のチップ・引数と答えの型・使う effect と解く handler・契約・説明・関係・置き場)で見せる。文字で出すのは本体だけ。Hy は data と code を自由な構造で置いておく保存の形式として残し、置き換える対象にしない。v1 の裁定(案 D・対象は doeff-hy の code 全体・単位は定義・入口は tag の複数の軸・Hy は置き場の層で構造は定義 × 属性の面・言語は後)はそのまま生き、v1 の構文の細目(2.3 節)と読み戻せる印字の制約(制約 1)だけをこの裁定が置き換える。",
+    "subjects": [
+      "design-f953339f038c"
+    ],
+    "supersedes": [
+      "decision-05be5e9de565"
+    ]
+  },
+  "created_at": "2026-09-28T14:22:24.871121+00:00",
+  "id": "decision-ca54efb91260",
+  "inputs": [
+    {
+      "id": "design-f953339f038c",
+      "role": "subject",
+      "sha256": "988758727751eb7676a42e27a37ef4b25cbc95dc77f0c24491b74efee202e255"
+    },
+    {
+      "id": "decision-05be5e9de565",
+      "role": "basis",
+      "sha256": "e3c83cf87007a224ca177a3881570476b7ff48589bef10abc9c813bf0c0a20ec"
+    }
+  ],
+  "kind": "decision",
+  "schema_version": 1,
+  "scope": "doeff-hy の code を読む面(VS Code)。単位は file ではなく定義(defk・defrecord・defeffect・defhandler・deftest …)で、Scala 3 の見た目に印字し、tag・effect・呼び出し・型から辿る。source の Hy は編集しない。その先の言語(静的な型・型に載る effect・Python の呼び出し・file に縛られない名前空間)の要件も持つ"
+}

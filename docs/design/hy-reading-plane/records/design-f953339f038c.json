@@ -1,0 +1,385 @@
+{
+  "artifacts": [
+    {
+      "path": "artifacts/v2/design.md",
+      "sha256": "151d554bc874465e409a260e1a2efb0d93243be5129df1ceafcbdf47f380aaee"
+    },
+    {
+      "path": "artifacts/v2/entity.html",
+      "sha256": "fcaa4690165e9e2e70fbd4b509631efb17e6845eedabfa07532c771cebf8c4d6"
+    },
+    {
+      "path": "artifacts/v2/glyph.svg",
+      "sha256": "c8cc0490e553b7cfc2be1e0eba7d342163262a8930e8f15d8d404bcf6af92de8"
+    },
+    {
+      "path": "artifacts/v2/entity-render.png",
+      "sha256": "6a246acbacef3bc3cffc44c10b3c665ad5285c24506a84833f834fac8b611e20"
+    }
+  ],
+  "body": {
+    "alternatives": [
+      {
+        "options": [
+          {
+            "benefits": "1 つの印字器で済み、将来の言語の文法と兼ねられる",
+            "costs": "構文の細目(using・/** */・=・字下げ)を決め続ける。文字なので tags・effect・関係が部品にならない。operator の \"it shouldnt be about pure text visualization\" に反する",
+            "name": "Scala 3 の構文の文字に印字する(v1 の 2.3 節)"
+          },
+          {
+            "benefits": "頭・型・effect・tags・関係が部品(チップ・絵・リンク)になり、軸の入口を兼ねる。構文の細目が要らない",
+            "costs": "実体の種類ごとに欄の表を持つ。本体の文字の表は残る",
+            "name": "実体の部品を HTML で見せ、文字は本体だけ"
+          }
+        ],
+        "question": "実体をどう見せるか",
+        "reason": "operator \"we are not to follow syntax like using. we want better html visualization of entity like defk\"",
+        "reconsider_when": "— (operator の裁定)",
+        "selected": "実体の部品を HTML で見せ、文字は本体だけ"
+      },
+      {
+        "options": [
+          {
+            "benefits": "自由な構造で data と code を置ける。10 repo 以上の資産がそのまま。macro で構造を足せる",
+            "costs": "agent が書く側は lisp のまま。静的な型は linter の推論で補う",
+            "name": "Hy は保存の形式として残し、検査と見る面を強くする"
+          },
+          {
+            "benefits": "agent の書く精度(未知)・runtime の分離(binary)",
+            "costs": "v1 3 節の通り(front-end・移行・2 つの parser)",
+            "name": "新しい表面の構文に置き換える"
+          }
+        ],
+        "question": "Hy を置き換えるか",
+        "reason": "operator \"hy is great at storing arbitrary data and code in freely structured manner, for our purpose\"",
+        "reconsider_when": "agent の書く精度や binary の runtime を要件に置いた時(v1 3.5 の未決)",
+        "selected": "Hy は保存の形式として残し、検査と見る面を強くする"
+      }
+    ],
+    "change_cases": [
+      {
+        "change": "実体の種類が増える(例: defwire の亜種・新しい def 系の macro)",
+        "expected_elements": [
+          "entity-card"
+        ],
+        "id": "C1",
+        "preserve": [
+          "欄の表は実体の種類ごとに 1 行"
+        ],
+        "priority": "required",
+        "protected_contracts": [
+          "K4"
+        ],
+        "provenance": {
+          "kind": "observed",
+          "source": "doeff-hy の macros.hy(40 個ほど)"
+        },
+        "rationale": "doeff-hy の macro は増える",
+        "verification": "表に無い種類は名と tags と置き場と lisp の本体だけのカードで出る"
+      },
+      {
+        "change": "本体の文字の表に form を足す(check・session・handle など)",
+        "expected_elements": [
+          "body-printer"
+        ],
+        "id": "C2",
+        "preserve": [
+          "表に無い form は推測で描かない"
+        ],
+        "priority": "required",
+        "protected_contracts": [
+          "K2"
+        ],
+        "provenance": {
+          "kind": "observed",
+          "source": "agora-controllers の出現数(check 21・session 87・handle 3)"
+        },
+        "rationale": "v1 2.2 の表で lisp のまま残る form を減らす",
+        "verification": "足した form の印字のテスト + 表に無い form の目印のテスト"
+      },
+      {
+        "change": "静的な型の検査(推論)が linter に入り、契約の欄が消える",
+        "expected_elements": [
+          "entity-card"
+        ],
+        "id": "C3",
+        "preserve": [
+          "カードは索引の属性を描くだけ(型の出所を知らない)"
+        ],
+        "priority": "prepare",
+        "protected_contracts": [
+          "K3"
+        ],
+        "provenance": {
+          "kind": "user",
+          "source": "operator \"ultimately we want new lang\" + \"hy is great at storing …\""
+        },
+        "rationale": "v2 3 節: 言語の仕事の 1 つ目",
+        "verification": "索引の型の欄の出所を linter の推論に替えてもカードが変わらない"
+      },
+      {
+        "change": "実体のカードを切って装飾 A と「タグで閲覧」だけに戻す",
+        "expected_elements": [
+          "entity-card"
+        ],
+        "id": "C4",
+        "preserve": [],
+        "priority": "required",
+        "protected_contracts": [],
+        "provenance": {
+          "kind": "inherited",
+          "source": "CLAUDE.md two-way door の規則"
+        },
+        "rationale": "戻せる決定の戻し方",
+        "verification": "設定 1 つ"
+      }
+    ],
+    "contracts": [
+      {
+        "canonical_source": "ide-plugins/vscode/doeff-runner(実装の issue で決める)",
+        "effects": [],
+        "failures": [
+          "表に無い form は目印つきの lisp で出し、失敗にしない"
+        ],
+        "id": "K2",
+        "invariants": [
+          "表に無い form は推測で描かない",
+          "行番号は source の行"
+        ],
+        "operations": [
+          "print-body(definition) -> 行の列(文字・行番号・effect の印)"
+        ],
+        "owner": "body-printer"
+      },
+      {
+        "canonical_source": "packages/doeff-indexer",
+        "effects": [],
+        "failures": [],
+        "id": "K3",
+        "invariants": [
+          "カードは索引の属性だけを描く"
+        ],
+        "operations": [
+          "v1 の K3 と同じ"
+        ],
+        "owner": "structure-index"
+      },
+      {
+        "canonical_source": "同上",
+        "effects": [],
+        "failures": [
+          "欄の表に無い種類は最小のカード(名・tags・置き場・lisp の本体)"
+        ],
+        "id": "K4",
+        "invariants": [
+          "構文をなぞる文字を頭と欄に出さない"
+        ],
+        "operations": [
+          "render(entity, attributes) -> HTML"
+        ],
+        "owner": "entity-card"
+      }
+    ],
+    "elements": [
+      {
+        "depends_on": [
+          "body-printer",
+          "structure-index"
+        ],
+        "hidden_decisions": [
+          "契約のうち型は引数と答えの型に溶かす",
+          "契約が無ければ欄ごと出さない"
+        ],
+        "id": "entity-card",
+        "kind": "internal",
+        "requirement_ids": [
+          "R1"
+        ],
+        "responsibility": "実体 1 つを HTML の部品で描く(design.md 2.1 の欄の表)。tags のチップは軸の入口を兼ねる。effect の絵から解く handler へ飛ぶ。関係の帯から隣のカードへ",
+        "state": [
+          "欄の表(実体の種類ごと)"
+        ]
+      },
+      {
+        "depends_on": [
+          "structure-index"
+        ],
+        "hidden_decisions": [
+          "Python の式の綴りのまま",
+          "束縛は T x ⇐ e / T x = e / ? x = e"
+        ],
+        "id": "body-printer",
+        "kind": "internal",
+        "requirement_ids": [
+          "R3"
+        ],
+        "responsibility": "本体(defk・defhandler・deftest の中身)だけを文字に印字する(design.md 2.2 の表)。表に無い form は lisp のまま目印つき。source の行番号を持つ",
+        "state": [
+          "本体の文字の表"
+        ]
+      },
+      {
+        "depends_on": [],
+        "hidden_decisions": [],
+        "id": "structure-index",
+        "kind": "internal",
+        "requirement_ids": [
+          "R10"
+        ],
+        "responsibility": "v1 のまま(定義 × 属性の索引・face は索引だけを読む)",
+        "state": []
+      },
+      {
+        "depends_on": [
+          "entity-card"
+        ],
+        "hidden_decisions": [],
+        "id": "view",
+        "kind": "internal",
+        "requirement_ids": [
+          "R1"
+        ],
+        "responsibility": "v1 のまま(軸の切り替えと交差 → カードの一覧 → カード)",
+        "state": []
+      }
+    ],
+    "handoff": {
+      "fixed": [
+        "Scala の構文はなぞらない。実体を HTML の部品で見せ、文字は本体だけ",
+        "Hy は保存の形式として残す",
+        "v1 の 3 層・単位と軸・form の表・制約 2〜5 は生きる"
+      ],
+      "free": [
+        "欄の表と本体の文字の表の細目(戻せる)",
+        "実装の置き場(webview か custom editor か・印字器を TypeScript か Rust か)"
+      ],
+      "next": [
+        "main が読む面の実装の issue を立てる(v2 の 2 節を受け入れ条件に。v1 の 2.3 節は使わない)",
+        "言語の issue は v1 3 節 + v2 3 節(Hy は残す・検査と見る面に分かれる)で立てる(着手しない)"
+      ]
+    },
+    "level": "doeff-runner(VS Code 拡張)の読む面の、実体のカードの部品と本体の文字の決まり。v1 の要素 structure-index・view はそのまま",
+    "methods": [
+      {
+        "evidence": [
+          "artifacts/v2/design.md 2 節",
+          "artifacts/v2/entity.html"
+        ],
+        "name": "change-cases",
+        "profile": "change-cases-1996-local-v1",
+        "reason": "v1 の C1(言語の parser)が退き、実体の種類と本体の form の増加が主な変更になったので当て直した",
+        "status": "performed",
+        "steps": [
+          {
+            "result": "変更の候補: 実体の種類が増える(C1)・本体の form を足す(C2)・静的な型の検査が入る(C3)・カードを切る(C4)",
+            "step": "1"
+          },
+          {
+            "result": "出所: doeff-hy の macro の増加(C1・C2)・言語の仕事の分割(C3)・two-way door(C4)",
+            "step": "2"
+          },
+          {
+            "result": "重要度: C1・C2・C4 は required、C3 は prepare",
+            "step": "3"
+          },
+          {
+            "result": "当てた結果: 欄の表(種類ごと 1 行)と本体の文字の表(form ごと 1 行)を分け、カードが索引の属性だけを描けば、C1〜C4 は表の 1 行か設定 1 つの変更で済む",
+            "step": "4"
+          },
+          {
+            "result": "検証: 表に無い種類の最小のカード(C1)・form の印字と目印のテスト(C2)・型の出所の差し替え(C3)・設定 1 つ(C4)",
+            "step": "5"
+          }
+        ]
+      },
+      {
+        "evidence": [],
+        "name": "ddd",
+        "profile": "ddd-evans-2015-local-v1",
+        "reason": "表示の設計",
+        "status": "not_applicable",
+        "steps": []
+      },
+      {
+        "evidence": [],
+        "name": "volatility",
+        "profile": "volatility-righting-software-local-v1",
+        "reason": "change-cases で扱った",
+        "status": "not_applicable",
+        "steps": []
+      },
+      {
+        "evidence": [],
+        "name": "add",
+        "profile": "add-2.0-local-v1",
+        "reason": "要素 4 つ",
+        "status": "not_applicable",
+        "steps": []
+      },
+      {
+        "evidence": [],
+        "name": "saam",
+        "profile": "saam-1996-local-v1",
+        "reason": "alternatives の表で済ませた",
+        "status": "not_applicable",
+        "steps": []
+      },
+      {
+        "evidence": [],
+        "name": "c4",
+        "profile": "c4-web-2026-09-14-local-v1",
+        "reason": "v1 の 3 層の図で足りる",
+        "status": "not_applicable",
+        "steps": []
+      }
+    ],
+    "open_questions": [
+      "カードの欄の細目(design.md 2.1)と本体の文字の決まり(2.2)は席の既定。operator が変えたい所があれば表の 1 行で戻る",
+      "静的な型の検査(推論)を linter に入れる範囲と順番(言語の issue へ)",
+      "v1 3.5 の未決はそのまま(印なし・backend・標準の型・名前空間・実験)。ただし Hy を保存の形式として残す前提が付いた"
+    ],
+    "perspective": "proposed",
+    "purpose": "v2: doeff-hy の code を読む面は、Scala の構文をなぞらず、defk などの実体(名・引数と型・答えの型・effect・契約・tags・説明・本体・関係)を HTML の部品で見せる。文字で出すのは本体だけ。Hy は data と code を自由な構造で置いておく保存の形式として残す。v1(design-c718ca28a562)の 3 層・単位と軸・form の表・制約 2〜5・言語の要件は生きる",
+    "requirements": [
+      {
+        "id": "R1",
+        "kind": "functional",
+        "provenance": {
+          "kind": "user",
+          "source": "operator 2026-09-28 \"so we are not to follow syntax like using. we want better html visualization of entity like defk\" / #849 逐語 3・7・8・9・10"
+        },
+        "statement": "defk などの実体を HTML の部品(種類のバッジ・名・tags のチップ・引数のチップと答えの型・使う effect の絵と解く handler へのリンク・契約・説明・本体・関係の帯・置き場)で見せる。Scala の構文はなぞらない"
+      },
+      {
+        "id": "R3",
+        "kind": "constraint",
+        "provenance": {
+          "kind": "assumption",
+          "source": "席の整理 2026-09-28(v1 の R3・R4 をこの形に縮める)"
+        },
+        "statement": "文字で出すのは本体だけ。本体の文字の表(design.md 2.2)に無い form は lisp のまま目印を付ける。読み戻せる印字の制約は実体のカードには当てない"
+      },
+      {
+        "id": "R10",
+        "kind": "constraint",
+        "provenance": {
+          "kind": "user",
+          "source": "operator 2026-09-28 \"in my understanding hy is great at storing arbitrary data and code in freely structured manner, for our purpose\""
+        },
+        "statement": "Hy は data と code を自由な構造で置いておく保存の形式として残す(置き換える対象ではない)。言語の仕事は Hy の data の上の検査と見る面に分かれ、新しい表面の構文は agent の書く精度や runtime の分離を求めた時だけ"
+      }
+    ]
+  },
+  "created_at": "2026-09-28T14:21:44.685887+00:00",
+  "id": "design-f953339f038c",
+  "inputs": [
+    {
+      "id": "design-c718ca28a562",
+      "role": "basis",
+      "sha256": "40e0d4c12d0d0d6f11c6cb535a6cac651eb17616c4d606e6b9a5f5568687fc6b"
+    }
+  ],
+  "kind": "design",
+  "schema_version": 1,
+  "scope": "doeff-hy の code を読む面(VS Code)。単位は file ではなく定義(defk・defrecord・defeffect・defhandler・deftest …)で、Scala 3 の見た目に印字し、tag・effect・呼び出し・型から辿る。source の Hy は編集しない。その先の言語(静的な型・型に載る effect・Python の呼び出し・file に縛られない名前空間)の要件も持つ"
+}
