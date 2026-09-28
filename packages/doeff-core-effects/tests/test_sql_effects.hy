@@ -98,7 +98,7 @@
     (<- (sqlite-statement "SELECT :a" #((SqlParam :name "a" :value (json.loads "[1]")))))
     (assert False "閉じた集合の外の値が通った")
     (except [TypeError]))
-  (assert (= (normalized-value (Decimal "2")) 2)))
+  (assert (= (! (normalized-value (Decimal "2"))) 2)))
 
 
 ;; --- 失敗の 2 型 ------------------------------------------------------------------------------------------------------------
