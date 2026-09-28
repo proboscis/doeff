@@ -96,7 +96,8 @@
 (import .kube_handlers [KubeMemory])
 (import .declare [create-body spec-for-update])
 (import .detached [detached-path detached-submit-body detached-refusal submit-unreachable awaited-answer runner-facts-of-view
-                   runners-unreachable warm-request-body warm-path absent-warm-state])
+                   runners-unreachable warm-request-body warm-path absent-warm-state SERVER-ERROR warm-unconnected
+                   warm-server-failure])
 (import .detached_model [SubmitDetached AwaitDetached CancelDetached ReleaseDetached ReadRunners DetachedSubmitted
                          DetachedSubmitAnswer DetachedAwaited RunnersUnreachable])
 (import .drain_client [drain-request DRAIN-DEADLINE-SECONDS DRAIN-TTL-MARGIN-SECONDS])
@@ -116,7 +117,7 @@
 (import .service_model [System Declaration system-declaration])
 (import .shared_handlers [board-read-request board-write-request lease-request])
 (import .shared_model [ReadShared WriteShared])
-(import .warm_model [WarmRuntimeEnv ReadWarmState WarmState warm-state-of-json])
+(import .warm_model [WarmRuntimeEnv ReadWarmState WarmState WarmAnswer warm-state-of-json])
 (import .worker [run-worker])
 (import .worker_model [JobSpec WorkerPolicy WorkerState WorldView CodeView CodeState ProcessView ProbeView ProbeState
                        DesiredJobs DesiredUnreadable ReadDesired ObserveWorld WorkerStopRequested PublishStatus
@@ -806,22 +807,34 @@
       (runner-facts-of-view (get (answered-body read "名簿を読めない") "workers"))))
 
 
+(deff warm-answer-of [#^ tuple answer #^ str what]  ; defk にできない: 答えの節が返事を Program への答えに変える純粋な判断
+  {:pre [(: answer tuple) (: what str)] :post [(: % WarmAnswer)] :tags {:context "doeff-cluster" :role "judgment"}}
+  "温める表の返事を、本番の WarmClient と同じ読み(同じ定義 detached.warm-unconnected・warm-server-failure)で答えにするため:
+   期限まで届かない = WarmUnreachable・coordinator の 5xx = WarmUnreachable・断り(400 ほか)= DetachedRefused・それ以外 = 行の姿。"
+  (cond
+    (is (get answer 0) None) (warm-unconnected (unreached-reason answer))
+    (>= (get answer 0) SERVER-ERROR) (warm-server-failure (get answer 0) (str (get answer 1)))
+    True (warm-state-of-json (refused-or-body answer what))))
+
+
 (defk warm-write [link env needs ttl-seconds holder]
-  {:pre [(: link SimLink) (: env RuntimeEnv) (: needs frozenset) (: ttl-seconds float) (: holder str)] :post [(: % WarmState)]
+  {:pre [(: link SimLink) (: env RuntimeEnv) (: needs frozenset) (: ttl-seconds float) (: holder str)] :post [(: % WarmAnswer)]
    :tags {:context "doeff-cluster" :role "protocol"}}
-  "WarmRuntimeEnv を本番の WarmClient.write と同じ本文(warm-request-body)で POST /warm に書き、今の姿を読むため。"
+  "WarmRuntimeEnv を本番の WarmClient.write と同じ本文(warm-request-body)で POST /warm に書き、今の姿を読むため(届かない・coordinator の
+   5xx は本番と同じ WarmUnreachable)。"
   (<- declared dict (runtime-env->json env))
   (<- written tuple (send-resent link "POST" "/warm" {} (warm-request-body declared needs ttl-seconds holder)))
-  (warm-state-of-json (refused-or-body written "温める表に書けない")))
+  (warm-answer-of written "温める表に書けない"))
 
 
 (defk warm-read [link key]
-  {:pre [(: link SimLink) (: key str)] :post [(: % WarmState)] :tags {:context "doeff-cluster" :role "protocol"}}
-  "ReadWarmState を本番の WarmClient.read と同じく GET /warm/<キー> で読むため(表に無い行 = 404 は空の姿)。"
+  {:pre [(: link SimLink) (: key str)] :post [(: % WarmAnswer)] :tags {:context "doeff-cluster" :role "protocol"}}
+  "ReadWarmState を本番の WarmClient.read と同じく GET /warm/<キー> で読むため(表に無い行 = 404 は空の姿・届かない・coordinator の
+   5xx は本番と同じ WarmUnreachable)。"
   (<- read tuple (send-resent link "GET" (warm-path key) {} None))
   (if (= (get read 0) 404)
       (absent-warm-state key)
-      (warm-state-of-json (answered-body read "温める表を読めない"))))
+      (warm-answer-of read "温める表を読めない")))
 
 
 ;; --- 柵と答え(process ごと・Program のすぐ外)--------------------------------------------------------------
@@ -961,10 +974,10 @@
     (<- runners (read-runners link))
     (resume runners))
   (WarmRuntimeEnv [env needs ttl-seconds holder]
-    (<- warmed WarmState (warm-write link env needs (float ttl-seconds) holder))
+    (<- warmed WarmAnswer (warm-write link env needs (float ttl-seconds) holder))
     (resume warmed))
   (ReadWarmState [key]
-    (<- warm WarmState (warm-read link key))
+    (<- warm WarmAnswer (warm-read link key))
     (resume warm)))
 
 
