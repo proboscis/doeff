@@ -33,9 +33,11 @@
 
 (defclass TaskClient []
   "coordinator の /tasks との連絡(I/O)。revision = 送り手の commit(受け側はこの版のコードを準備してから復元する)。
-   runtime-env = 実行環境の宣言(在れば worker は env の root を準備して、その中の子 process で走らせる — revision は使わない)。"
-  (defn __init__ [self #^ str url #^ str revision [timeout REPLY-SECONDS] #^ (| RuntimeEnv None) [runtime-env None]]
-    (setv self.revision revision self.runtime-env runtime-env self.endpoint (CoordinatorEndpoint url timeout 4)))
+   runtime-env = 実行環境の宣言(在れば worker は env の root を準備して、その中の子 process で走らせる — revision は使わない)。
+   transport = httpx の transport(DetachedClient・WarmClient と同じ — 検が coordinator の模擬を後ろに置く。既定 None = 網)。"
+  (defn __init__ [self #^ str url #^ str revision [timeout REPLY-SECONDS] #^ (| RuntimeEnv None) [runtime-env None] [transport None]]
+    (setv self.revision revision self.runtime-env runtime-env
+          self.endpoint (CoordinatorEndpoint url timeout 4 :transport transport)))
 
   (defn #^ str submit [self #^ str blob #^ frozenset needs #^ dict versions #^ str name #^ float lease-seconds #^ (| dict None) [environ None]]
     "task を 1 本出す: 詰めた Program を版と一緒に置き場 /programs/<sha> に先に置き、本文は sha だけを運ぶ(service の宣言と同じ運び方 —

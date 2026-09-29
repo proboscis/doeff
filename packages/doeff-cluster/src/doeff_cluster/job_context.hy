@@ -6,10 +6,13 @@
 ;;; (実験用の namespace で再現)。入口でないこの module の class は 1 つだけ読まれる。job_entry はここから import し、今の名は
 ;;; job_entry からも引ける。
 (require doeff-hy.macros [defk <-])
+(import collections.abc [Mapping])
 (import dataclasses [dataclass])
 (import json)
 (import os)
+(import doeff [run])
 (import .runtime_env_model [RuntimeEnv runtime-env-of-json])
+(import .worker_model [JobSpec spec-hash])
 
 
 (defclass [(dataclass :frozen True)] RunContext []
@@ -34,17 +37,47 @@
      "placement" (if self.placement (int self.placement) None)}))
 
 
+(defk worker-context-environ [coordinator worker]
+  {:pre [(: coordinator str) (: worker str)] :post [(: % dict)] :tags {:context "doeff-cluster" :role "protocol"}}
+  "worker が自分の子 process 全部へ渡す文脈の環境変数(coordinator の URL と worker の名)を作るため。本番の worker の入口(main)と
+   sim の宿(local.run-context-of)が同じ名で作り、context-of-environ が読む(名の定義点はこの module)。"
+  {"DOEFF_WORKER_COORDINATOR" coordinator "DOEFF_WORKER_NAME" worker})
+
+
+(defk process-context-environ [spec instance attempt]
+  {:pre [(: spec JobSpec) (: instance str) (: attempt int)] :post [(: % dict)] :tags {:context "doeff-cluster" :role "protocol"}}
+  "worker が起こす子 process 1 つへ渡す文脈の環境変数(job の名・版・試行・世代・spec の指紋・割り当て、実行環境の job なら宣言の
+   JSON とキー)を作るため。本番の ProcessHost.launch と sim の宿(local.run-context-of)が同じ関数で作る — 実行環境の job の子だけが
+   DOEFF_RUNTIME_ENV・DOEFF_RUNTIME_ENV_KEY を受ける(env の job でなければ置かない)。"
+  (| {"DOEFF_WORKER_JOB" spec.name
+      "DOEFF_WORKER_REVISION" spec.revision
+      "DOEFF_WORKER_ATTEMPT" (str attempt)
+      "DOEFF_WORKER_INSTANCE" instance
+      "DOEFF_WORKER_SPEC_HASH" (spec-hash spec)
+      "DOEFF_WORKER_PLACEMENT" (if (is spec.placement None) "" (str spec.placement))}
+     (if spec.runtime-env
+         {"DOEFF_RUNTIME_ENV" spec.runtime-env "DOEFF_RUNTIME_ENV_KEY" (or spec.env-key "")}
+         {})))
+
+
+(defk context-of-environ [environ]
+  {:pre [(: environ Mapping)] :post [(: % RunContext)] :tags {:context "doeff-cluster" :role "protocol"}}
+  "子 process の環境変数(worker-context-environ と process-context-environ が置いた名)から RunContext を読むため(無い名は空)。
+   本番の子(context-from-env — os.environ)と sim の宿(local.run-context-of — 同じ関数が作った dict)が同じ読みを通る。"
+  (RunContext (.get environ "DOEFF_WORKER_COORDINATOR" "")
+              (.get environ "DOEFF_WORKER_NAME" "")
+              (.get environ "DOEFF_WORKER_REVISION" "")
+              (.get environ "DOEFF_WORKER_JOB" "")
+              :instance (.get environ "DOEFF_WORKER_INSTANCE" "")
+              :attempt (.get environ "DOEFF_WORKER_ATTEMPT" "")
+              :spec-hash (.get environ "DOEFF_WORKER_SPEC_HASH" "")
+              :placement (.get environ "DOEFF_WORKER_PLACEMENT" "")
+              :runtime-env (.get environ "DOEFF_RUNTIME_ENV" "")
+              :env-key (.get environ "DOEFF_RUNTIME_ENV_KEY" "")))
+
+
 (defn #^ RunContext context-from-env []
-  (RunContext (os.environ.get "DOEFF_WORKER_COORDINATOR" "")
-              (os.environ.get "DOEFF_WORKER_NAME" "")
-              (os.environ.get "DOEFF_WORKER_REVISION" "")
-              (os.environ.get "DOEFF_WORKER_JOB" "")
-              :instance (os.environ.get "DOEFF_WORKER_INSTANCE" "")
-              :attempt (os.environ.get "DOEFF_WORKER_ATTEMPT" "")
-              :spec-hash (os.environ.get "DOEFF_WORKER_SPEC_HASH" "")
-              :placement (os.environ.get "DOEFF_WORKER_PLACEMENT" "")
-              :runtime-env (os.environ.get "DOEFF_RUNTIME_ENV" "")
-              :env-key (os.environ.get "DOEFF_RUNTIME_ENV_KEY" "")))
+  (run (context-of-environ os.environ)))
 
 
 (defk runtime-env-of-context [ctx]

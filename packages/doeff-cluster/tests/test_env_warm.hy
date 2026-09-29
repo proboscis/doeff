@@ -15,14 +15,13 @@
 (import dataclasses [dataclass replace])
 (import json)
 (import doeff [with-handlers])
-(import doeff_time [SimClock Delay])
+(import doeff_time [Delay])
 (import doeff_cluster.clock [now-epoch-ms])
 (import doeff_cluster.runtime_env_model [RuntimeEnv runtime-env->json runtime-env-of-json env-key current-platform])
 (import doeff_cluster.detached_model [SubmitDetached AwaitDetached DetachedSucceeded])
 (import httpx)
 (import doeff_cluster.detached [WarmClient warm-cluster])
-(import doeff_cluster.local [sim-cluster SimWorker SimLink ClientLink coordinator-answers ReadCoordinator ProcessesOf PreparationsOf
-                            StopCoordinator])
+(import doeff_cluster.local [sim-cluster SimWorker SimLink ClientLink coordinator-answers ReadCoordinator ProcessesOf PreparationsOf])
 (import doeff_cluster.service_model [system-of])
 (import doeff_cluster.warm_model [WarmRuntimeEnv ReadWarmState WarmState WarmUnreachable WarmAnswer warm-key warm-state-of-json])
 (import doeff_cluster.env_upkeep [RootInfo PrepareLimits sweep-choice prepare-overdue env-capacity])
@@ -36,7 +35,7 @@
 (import doeff_cluster.handlers [task-spec])
 (import doeff_cluster.code_prepare [cpu-limit-of import-closure])
 (import tests.env_fixtures [LOCK env-of])
-(import tests.detached_rig [MemoryCoordinator slow-add])
+(import tests.detached_rig [slow-add])
 (import tests.program_rows [SAMPLE-TASK-PROGRAM program-placed])
 
 ;; --- 筋書き 8 と反例(手元の runner sim-cluster)-------------------------------------------------
@@ -236,11 +235,6 @@
   "coordinator の /warm の代役: どの要求にも 503 を返す(作り直しの最中の coordinator の 5xx)。"
   (httpx.Response 503 :json {"error" "coordinator が作り直しの最中"}))
 
-(deff refuses-connection [request]  ; defk にできない: httpx の MockTransport が同期で呼ぶ外の callback
-  {:pre [(: request httpx.Request)] :post [(: % httpx.Response)]}
-  "coordinator に届かない transport(接続が断られる)。"
-  (raise (httpx.ConnectError "connection refused" :request request)))
-
 (defk warm-and-read [env]
   {:pre [(: env RuntimeEnv)] :post [(: % tuple)]}
   "温める頼みと行の読みを 1 回ずつ出し、2 つの答えを返す。"
@@ -266,45 +260,8 @@
     (assert (in "503" answer.detail) answer)))
 
 
-(deftest test-the-real-warm-client-answers-a-refused-connection-as-unreachable
-  ;; 反例 2: 接続が断られる(送り直しの期限を過ぎた通信の失敗)→ 温める頼みも読みも WarmUnreachable(理由は接続の失敗)。
-  (<- answers tuple (warm-through (httpx.MockTransport refuses-connection)))
-  (for [answer answers]
-    (assert (isinstance answer WarmUnreachable) answer)
-    (assert (in "接続できない" answer.detail) answer)))
-
-
-(defk warm-while-the-coordinator-is-down []
-  {:pre [] :post [(: % tuple)] :tags {:context "doeff-cluster-test" :role "program"}}
-  "筋書き: coordinator を送り直しの期限より長く止め、その間に温める頼みと読みを 1 回ずつ出して、2 つの答えを返すため。"
-  (<- env RuntimeEnv (env-of "app-1" "lib-1" LOCK))
-  (<- key str (warm-key env #("local")))
-  (<- (StopCoordinator 90.0))
-  (<- (Delay 1.0))
-  (<- written WarmAnswer (WarmRuntimeEnv env (frozenset ["local"]) 600.0 "tests"))
-  (<- read WarmAnswer (ReadWarmState key))
-  #(written read))
-
-
-(deftest test-the-sim-host-answers-an-unreachable-coordinator-as-unreachable-like-the-real-warm-client
-  ;; sim の宿も本番の WarmClient と同じ読み(同じ定義 detached.warm-unconnected)で答える: coordinator が送り直しの期限を越えて止まって
-  ;; いる間の温める頼みと読みは、例外でなく WarmUnreachable(理由は接続の失敗)。本番と sim で同じ Program が同じ値を受ける。
-  (<- answers tuple (sim-cluster NO-JOBS (warm-while-the-coordinator-is-down) :workers WARM-WORKERS))
-  (for [answer answers]
-    (assert (isinstance answer WarmUnreachable) answer)
-    (assert (in "接続できない" answer.detail) answer)))
-
-
-(deftest test-the-real-warm-client-still-answers-the-warm-state-when-reachable
-  ;; 届く時の答えは変わらない: 本物の coordinator の判断(MemoryCoordinator)の後ろで、頼みも読みも WarmState(まだ準備中の worker が無い)。
-  (val coordinator (MemoryCoordinator (SimClock)))
-  (<- answers tuple (warm-through (httpx.MockTransport coordinator.handle)))
-  (val written (get answers 0))
-  (val read (get answers 1))
-  (assert (isinstance written WarmState) written)
-  (assert (= read written) #(read written))
-  (assert (= #(written.ready written.preparing) #(#() #())) written)
-  (assert (> written.until-ms 0) written))
+;; 接続が断られる時(送り直しの期限を過ぎた通信の失敗)の答え・sim の宿の同じ答え・届く時の頼みと読みの姿は、本物と sim が同じ Program を
+;; 通る契約テスト test_warm_contract.hy が持つ。
 
 
 (deftest test-placement-prefers-a-warm-worker-and-marks-a-cold-start
