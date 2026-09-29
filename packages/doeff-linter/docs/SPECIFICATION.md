@@ -186,6 +186,7 @@ Jev の規則(201・202・205)は確率で info にも出るが、level は規�
 | DOEFF132 | `:world-handlers` の定義 1 本ずつ — module が層の置き場に無い(無い module か層の外)・foundation の外の層に在る・Hy の module に定義が無い。全体の実行だけ。既定の重大さ critical(agora-redesign #1106 の R2・#1141) | `<module:名>` | architecture.hy の名簿の要素 |
 | DOEFF133 | テストの種類(手元 / 縁)を届く先から導く — 全体の索引で定義の間の辺(呼び出し・参照・入れ子)を組み、名簿の定義・`:wraps` の handler を名指す定義・強い生の I/O の証拠を持つ定義から逆向きに辿る。届く deftest は縁で `:edge-mark` の印(deftest の `:marks` か module の `pytestmark`)が要り、届かない deftest は印を持たない。食い違いを critical で出し、縁の message に届く道を書く。Python の検は数えない(R6)。`:edge-mark` を書いた時だけ当たる(agora-redesign #1106 の R3・#1142) | `<定義>::edge` / `<定義>::local` | deftest の名 |
 | DOEFF135 | テストは deftest だけ — `:test-forms {:tests [..] :check-scripts [..] :runners [..]}` の綴りの型で file を選び、:tests の Python の file の `def test_*`(python-test・件数を message に)、:tests の file の module ごとの skip(字下げの無い段の `pytest.skip`・`allow_module_level`・`pytestmark` の `mark.skip`)、:check-scripts の file(check-script)、:runners の file(runner)を file ごとに 1 件。全体の実行だけ。既定の重大さ critical(agora-redesign #1106 の R6・#1144) | `python-test` / `module-skip` / `check-script` / `runner` | file の頭か最初の当たりの行 |
+| DOEFF136 | 模擬の環境で回していない service — `:verification-environment` を書いた repo で、entry の層を持つ service ごとに、その service の entry の層の dir(`<root>/<service の dir>/entry`)の定義から呼び手(呼び出し・参照・入れ子 — DOEFF133 と同じ図)を逆向きに辿り、模擬の環境の dir の下の deftest に 1 本も届かなければ defservice の位置で critical(鍵 = service の名)。entry の層を宣言しても定義が 0 本の service は数えない(回す組み立てが無い)。service の中の tests は模擬の環境の外なので数えない。索引は `defsystem`(doeff-cluster の系の宣言)も定義として読むので、deftest → defsystem → entry の経路も届く(agora-redesign #1143・R5・#1111)。 |
 | DOEFF109 | service を持つ file(置き場の `*` に当たった物)の層が `services.guarded_layers` に在り、import の先が別の service の守る層の module なら破れ。先が共有の置き場・`open_layers` の層・例外の組なら許す | import の先の綴り | 最初の import の記号 |
 | DOEFF110 | Hy の `defn` / `defn/a` の定義(decorator つきも)。`do` の中も最上位として見る。`eval-and-compile` / `eval-when-compile` の中は外 | 定義の名 | 定義の名 |
 | DOEFF111 | `deff` の定義の行か直前の行の註(`;` の後)に `definitions.deff_reason_marker` が無い、または理由が空・「同上」とその変形 | 定義の名 | 定義の名 |
@@ -248,7 +249,7 @@ law の対応だけを残す。無ければ TOML の設定で今どおり動く�
            (layer protocol …) (layer foundation …)
            (layer entry … :dependency-layers [intent protocol])]   ; 外の世界から遠い順。:dependency-layers = 依存先で読んでよい層(既定 :open-layers)
   :shared "shared"                            ; root/shared/<層>/ — どの service からも読める
-  :verification-environment "agora_sim"      ; 模擬の環境(本番の組み立てのまま handler だけを差し替えて全 service を走らせる検証の環境)の置き場 1 つ — service ではない。DOEFF114・115 にしない(列は受けない)
+  :verification-environment "agora_sim"      ; 模擬の環境(本番の組み立てのまま handler だけを差し替えて全 service を走らせる検証の環境)の置き場 1 つ — service ではない。DOEFF114・115 にしない(列は受けない)。DOEFF136 はこの下の deftest を「手元のテスト」と数える
   :foundation foundation                      ; root/foundation/ — service の外の層(同じ名の layer が要る)
   :open-layers [intent]                       ; 別の service から読んでよい層(既定 intent)
   :roles {:judgment "業務の判断をする関数" …}   ; role の説明

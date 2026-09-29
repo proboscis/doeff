@@ -2120,3 +2120,28 @@ fn world_handler_rules_cover_files_outside_the_layers() {
     assert!(found["message"].as_str().unwrap().contains("層の置き場の外"), "{}", found["message"]);
     assert_eq!(found["level"], "critical");
 }
+
+/// agora-redesign #1143(R5): service の entry の層の定義に、模擬の環境(:verification-environment)の下の deftest が 1 本も届かなければ
+/// defservice の位置で DOEFF136(critical)。模擬の環境のテストが組み立てを呼ぶ service と、entry の層を持たない service は当てない。
+/// service の中のテスト(app/ledger/tests)が呼んでいても、模擬の環境の外なので数えない。billing は defsystem を挟んで届く(defsystem も呼び出しの持ち主)。
+#[test]
+fn services_not_run_on_the_sim_are_red() {
+    let files = [
+        ("app/foundation/host.hy", tags("shared", "foundation") + "(defk with-host [body] body)\n"),
+        ("app/billing/entry/main.hy", tags("billing", "entry") + "(defk run [] 1)\n"),
+        ("app/ledger/entry/main.hy", tags("ledger", "entry") + "(defk start [] 2)\n"),
+        ("app/ledger/tests/test_own.hy", "(import app.ledger.entry.main [start])\n(deftest test-own (start))\n".to_string()),
+        ("app/sim/bench.hy", "(import app.billing.entry.main [run])\n(defsystem billing-bench [foundation] (run))\n".to_string()),
+        ("app/sim/tests/test_billing.hy", "(import app.sim.bench [billing-bench])\n(deftest test-billing-on-sim (billing-bench None))\n".to_string()),
+    ];
+    let dir = world_repo_with(&files, "", "[\"DOEFF136\"]");
+    let arch_path = dir.path().join("architecture.hy");
+    let text = std::fs::read_to_string(&arch_path).unwrap().replace(":foundation foundation", ":foundation foundation\n  :verification-environment \"sim\"")
+        + "(defservice ledger \"台帳\" {:layers [core entry]})\n(defservice notes \"覚え書き\" {:layers [core]})\n";
+    std::fs::write(&arch_path, text).unwrap();
+    let (_, report) = editor(dir.path());
+    assert_eq!(keys(&report, "DOEFF136"), vec!["architecture.hy::DOEFF136::ledger"], "{}", report);
+    let found = violation(&report, "architecture.hy::DOEFF136::ledger");
+    assert!(found["message"].as_str().unwrap().contains("service ledger の entry の層("), "{}", found["message"]);
+    assert_eq!(found["severity"], "error", "{}", found);
+}

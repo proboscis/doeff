@@ -229,6 +229,9 @@ pub enum DefinitionKind {
     Defsemgrep,
     #[serde(rename = "law")]
     Law,
+    /// doeff-cluster の系の宣言(`(defsystem 名 [引数] 本体)` — 中の呼び出しの持ち主。agora-redesign #1143)。
+    #[serde(rename = "defsystem")]
+    Defsystem,
     #[serde(rename = "defpipeline")]
     Defpipeline,
     #[serde(rename = "defworkflow")]
@@ -270,6 +273,7 @@ impl DefinitionKind {
             DefinitionKind::Defadr => "defadr",
             DefinitionKind::Defsemgrep => "defsemgrep",
             DefinitionKind::Law => "law",
+            DefinitionKind::Defsystem => "defsystem",
             DefinitionKind::Defpipeline => "defpipeline",
             DefinitionKind::Defworkflow => "defworkflow",
             DefinitionKind::Defphase => "defphase",
