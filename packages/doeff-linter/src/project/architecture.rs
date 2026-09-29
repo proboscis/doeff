@@ -444,6 +444,37 @@ pub struct CountedSpelling {
     pub range: doeff_indexer::hy_index::Range,
 }
 
+/// 偽の handler の決まり(`:business-fakes {…}` — DOEFF143)。file の綴りの型は repo の根からの glob。
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+pub struct BusinessFakes {
+    /// 模擬の環境の file(定義は模擬の根・本番の code ではない)。
+    pub simulation: Vec<String>,
+    /// 組み立ての層の file(定義は模擬の根で、本番の code でもある)。
+    pub assembly: Vec<String>,
+    /// 検の file(模擬の根にも本番の code にも数えない)。
+    pub tests: Vec<String>,
+    /// 読まない file。
+    pub skip: Vec<String>,
+    /// 本番の入口を探す file(本番の code と宣言の道具 — 書かなければ検・模擬・読まない file の外の全部)。
+    pub production: Vec<String>,
+    /// 組の file(名が :simulation-prefix で始まる定義は模擬の根・:production-prefix で始まる定義は本番の入口)。
+    pub sets: Vec<String>,
+    pub simulation_prefix: Option<String>,
+    pub production_prefix: Option<String>,
+    /// 本番の入口を `"<module>:<名>"` の文字列で指す時の module の頭(本番の code と :entry-string-files の本文から探す)。
+    pub entry_string_modules: Vec<String>,
+    /// 入口の文字列を探す宣言の file(配備の宣言・package の宣言)。
+    pub entry_string_files: Vec<String>,
+    /// 業務の効果を定義する module の綴り(`a.b` は a.b とその下・末尾 `*` は前方一致)。
+    pub business_modules: Vec<String>,
+    /// 外の世界の効果の表の dir(1 鍵 1 file・1 行目が効果の完全名・2 行目から理由)。
+    pub external_effects: Option<String>,
+    /// わざと壊した反例の handler の表の dir(鍵 = `<path>::<handler>::<効果>`)。
+    pub counterexamples: Option<String>,
+    /// 本番の答え手がまだ無い外の世界の効果の表の dir(鍵 = 効果の完全名)。
+    pub unserved: Option<String>,
+}
+
 /// architecture.hy の全体。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct Architecture {
@@ -524,6 +555,8 @@ pub struct Architecture {
     /// 型の宣言(.pyi)を読む file(`:record-stubs {:files [..] :except [..]}`)。書けば DOEFF145 が、同じ dir の同じ名の .hy の kw-only の
     /// record を kw_only=True 無しの @dataclass で宣言する .pyi を出す(#1191)。
     pub record_stubs: Option<FileSelection>,
+    /// 偽の handler の決まり(書けば DOEFF143 が業務の効果に答える偽の handler を出す — agora-redesign #1375)。
+    pub business_fakes: Option<BusinessFakes>,
     #[serde(skip)]
     pub role_descriptions: BTreeMap<String, String>,
     #[serde(skip)]
@@ -861,6 +894,7 @@ impl<'a> Parser<'a> {
             handler_arguments: None,
             typed_values: None,
             record_stubs: None,
+            business_fakes: None,
             role_descriptions: BTreeMap::new(),
             exclude: vec!["tests".into(), "__pycache__".into(), "conftest.py".into()],
             extensions: None,
@@ -924,6 +958,7 @@ impl<'a> Parser<'a> {
                 ":handler-arguments" => arch.handler_arguments = self.handler_arguments(value),
                 ":typed-values" => arch.typed_values = self.file_selection(value, ":typed-values"),
                 ":record-stubs" => arch.record_stubs = self.file_selection(value, ":record-stubs"),
+                ":business-fakes" => arch.business_fakes = self.business_fakes(value),
                 ":edge-touches" => {
                     let mut touches = Vec::new();
                     for word in self.names(value, ":edge-touches") {
@@ -1491,6 +1526,41 @@ impl<'a> Parser<'a> {
             out.push(group);
         }
         out
+    }
+
+    /// `:business-fakes {…}` を読む(:simulation と :business-modules は要る)。
+    fn business_fakes(&mut self, value: &Form) -> Option<BusinessFakes> {
+        let Some(entries) = self.brace(value) else {
+            self.problem(value, ":business-fakes は {:simulation [..] :assembly [..] :tests [..] :skip [..] :sets [..] … :business-modules [..]} の辞書");
+            return None;
+        };
+        let mut decl = BusinessFakes::default();
+        for (key, field) in self.pairs(&entries) {
+            match self.text(key) {
+                ":simulation" => decl.simulation = self.path_globs(field, ":business-fakes :simulation"),
+                ":assembly" => decl.assembly = self.path_globs(field, ":business-fakes :assembly"),
+                ":tests" => decl.tests = self.path_globs(field, ":business-fakes :tests"),
+                ":skip" => decl.skip = self.path_globs(field, ":business-fakes :skip"),
+                ":production" => decl.production = self.path_globs(field, ":business-fakes :production"),
+                ":sets" => decl.sets = self.path_globs(field, ":business-fakes :sets"),
+                ":simulation-prefix" => decl.simulation_prefix = self.required_string(field, ":business-fakes :simulation-prefix"),
+                ":production-prefix" => decl.production_prefix = self.required_string(field, ":business-fakes :production-prefix"),
+                ":entry-string-modules" => decl.entry_string_modules = self.names(field, ":business-fakes :entry-string-modules"),
+                ":entry-string-files" => decl.entry_string_files = self.path_globs(field, ":business-fakes :entry-string-files"),
+                ":business-modules" => decl.business_modules = self.names(field, ":business-fakes :business-modules"),
+                ":external-effects" => decl.external_effects = self.required_string(field, ":business-fakes :external-effects"),
+                ":counterexamples" => decl.counterexamples = self.required_string(field, ":business-fakes :counterexamples"),
+                ":unserved" => decl.unserved = self.required_string(field, ":business-fakes :unserved"),
+                _ => self.unknown_key(key, ":business-fakes"),
+            }
+        }
+        if decl.simulation.is_empty() {
+            self.problem(value, ":business-fakes に :simulation(模擬の環境の file の綴りの型)が無い");
+        }
+        if decl.business_modules.is_empty() {
+            self.problem(value, ":business-fakes に :business-modules(業務の効果を定義する module)が無い");
+        }
+        Some(decl)
     }
 
     /// `{:files [..] :exclude [..] :store-names [..] :store-suffixes [..] :keep-mark "…" :value-types [..]}` を読む(:files は要る)。

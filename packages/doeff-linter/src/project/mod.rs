@@ -38,6 +38,7 @@ pub mod call_sites;
 pub mod handler_arguments;
 pub mod typed_values;
 pub mod record_stubs;
+pub mod business_fakes;
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
@@ -472,6 +473,11 @@ pub fn run_with(root: &Path, settings: &ProjectSettings, enabled: &BTreeSet<Proj
                     }
                     if enabled.contains(&ProjectRule::TestKindMismatch) && !architecture.world_handlers.is_empty() {
                         drafts.extend(judge_test_kinds(root, architecture, hy));
+                    }
+                    if let Some(decl) = architecture.business_fakes.as_ref().filter(|_| enabled.contains(&ProjectRule::BusinessEffectFake)) {
+                        let (found, problems) = crate::timing::timed("business-fakes", || judge_business_fakes(root, architecture, decl, hy));
+                        drafts.extend(found);
+                        report.errors.extend(problems);
                     }
                     if enabled.contains(&ProjectRule::ServiceUntestedOnSim) {
                         drafts.extend(judge_untested_services(architecture, hy).into_iter().map(|d| Draft { path: root.join(&d.rel), ..d }));
@@ -912,7 +918,8 @@ fn whole_hy_index(
     // DOEFF133 はテストの file を含む全体の索引で、テストから定義を辿る。
     // 許可名簿を書いた repo は、層の置き場の外の file にも DOEFF106・131 を当てる(#1147)ので、全体の索引を作る。
     // DOEFF136 は模擬の環境の deftest から service の entry の層の定義へ届くかを見る。
-    let wants_tests = (enabled.contains(&ProjectRule::TestKindMismatch) && settings.architecture.as_ref().is_some_and(|a| a.edge_mark.is_some()))
+    let wants_tests = (enabled.contains(&ProjectRule::BusinessEffectFake) && settings.architecture.as_ref().is_some_and(|a| a.business_fakes.is_some()))
+        || (enabled.contains(&ProjectRule::TestKindMismatch) && settings.architecture.as_ref().is_some_and(|a| a.edge_mark.is_some()))
         || (enabled.contains(&ProjectRule::ServiceUntestedOnSim) && settings.architecture.as_ref().is_some_and(|a| a.verification_environment.is_some()))
         || (settings.raw.as_ref().is_some_and(|r| r.world_modules.is_some())
             && (enabled.contains(&ProjectRule::RawSideEffectDirect) || enabled.contains(&ProjectRule::WorldHandlerNamedOutsideList)));
@@ -2367,6 +2374,218 @@ fn judge_test_kinds(root: &Path, architecture: &architecture::Architecture, hy: 
         }
     }
     drafts
+}
+
+/// DOEFF143: 模擬の根と本番の入口から定義の辺の図を前向きに辿り、模擬の根からだけ届く effect の節(偽物)が業務の効果に tap でなく
+/// 答える所と、外の世界の表・反例の表の腐りを出す(agora-redesign #1375)。全体の索引が要る(全体の実行だけ)。読めない表の理由は 2 つ目に返す。
+fn judge_business_fakes(
+    root: &Path,
+    architecture: &architecture::Architecture,
+    decl: &architecture::BusinessFakes,
+    hy: &HashMap<String, HyFileIndex>,
+) -> (Vec<Draft>, Vec<String>) {
+    use business_fakes::{FileRole, Verdict};
+    let mut problems = Vec::new();
+    let mut table = |dir: &Option<String>| -> BTreeMap<String, String> {
+        let Some(dir) = dir else { return BTreeMap::new() };
+        let judged = registry::JudgedKeys::load(root, std::slice::from_ref(dir));
+        problems.extend(judged.problems);
+        judged.reasons
+    };
+    let external = table(&decl.external_effects);
+    let counterexamples = table(&decl.counterexamples);
+    let unserved = table(&decl.unserved);
+    let graph = definition_graph(architecture, hy);
+    let count = graph.nodes.len();
+    let mut callees: Vec<Vec<usize>> = vec![Vec::new(); count];
+    // 系の値の中の辺(defsystem の本体・:carriers の引数)も本番では系が回すので、届く先に数える(DOEFF133 の縁の数えとは別 — #1390)。
+    for (callee, (callers, carried)) in graph.callers.iter().zip(&graph.carried).enumerate() {
+        for &caller in callers.iter().chain(carried) {
+            callees[caller].push(callee);
+        }
+    }
+    let definition = |node: usize| {
+        let (rel, index) = graph.nodes[node];
+        &hy[rel].definitions[index]
+    };
+    let role = |node: usize| business_fakes::role_of(graph.nodes[node].0, decl);
+    let mut by_name: HashMap<&str, usize> = HashMap::new();
+    for node in 0..count {
+        by_name.entry(definition(node).qualified_name.as_str()).or_insert(node);
+    }
+    // 模擬の根: 模擬の環境と組み立ての層の定義・組の file の模擬の組の関数。
+    let simulation_roots: Vec<usize> = (0..count)
+        .filter(|&n| {
+            let (rel, _) = graph.nodes[n];
+            matches!(role(n), FileRole::Simulation | FileRole::Assembly)
+                || (role(n) == FileRole::Production && business_fakes::set_member(rel, &definition(n).name, decl.simulation_prefix.as_deref(), decl))
+        })
+        .collect();
+    // 本番の入口: 本番の code の組の file の本番の組の関数・defsystem・__main__ の節が名指す定義・入口の文字列が指す定義。
+    let production_code = |rel: &str| {
+        matches!(business_fakes::role_of(rel, decl), FileRole::Production | FileRole::Assembly)
+            && (decl.production.is_empty() || decl.production.iter().any(|p| glob_matches(p, rel)))
+    };
+    let mut production_roots: Vec<usize> = (0..count)
+        .filter(|&n| {
+            let (rel, _) = graph.nodes[n];
+            let d = definition(n);
+            production_code(rel)
+                && (business_fakes::set_member(rel, &d.name, decl.production_prefix.as_deref(), decl) || d.kind == DefinitionKind::Defsystem)
+        })
+        .collect();
+    let mut entry_strings: Vec<String> = Vec::new();
+    for rel in graph.rels.iter().filter(|r| production_code(r.as_str())) {
+        let Ok(source) = std::fs::read_to_string(root.join(rel.as_str())) else { continue };
+        entry_strings.extend(business_fakes::entry_names(&source, decl));
+        let guards = business_fakes::main_guard_lines(&source);
+        if guards.is_empty() {
+            continue;
+        }
+        let file = &hy[rel.as_str()];
+        let inside = |line: u32| guards.iter().any(|(s, e)| *s <= line && line <= *e);
+        let targets = file
+            .references
+            .iter()
+            .filter(|r| inside(r.range.start.line))
+            .filter_map(|r| r.target.as_deref())
+            .chain(file.calls.iter().filter(|c| inside(c.range.start.line)).filter_map(|c| c.target.as_deref()));
+        production_roots.extend(targets.filter_map(|t| by_name.get(t).copied()));
+    }
+    for path in WalkDir::new(root).follow_links(false).into_iter().filter_map(Result::ok).filter(|e| e.file_type().is_file()) {
+        let Some(rel) = relative_path(root, path.path()) else { continue };
+        if rel.starts_with('.') || !decl.entry_string_files.iter().any(|p| glob_matches(p, &rel)) {
+            continue;
+        }
+        if let Ok(source) = std::fs::read_to_string(path.path()) {
+            entry_strings.extend(business_fakes::entry_names(&source, decl));
+        }
+    }
+    // 文字列の綴りは定義の完全名まで縮める(属性の綴りは定義へ)。
+    for spelling in entry_strings {
+        let mut name = spelling.as_str();
+        loop {
+            if let Some(&node) = by_name.get(name) {
+                production_roots.push(node);
+                break;
+            }
+            match name.rsplit_once('.') {
+                Some((head, _)) => name = head,
+                None => break,
+            }
+        }
+    }
+    let reach = |roots: &[usize]| -> Vec<bool> {
+        let mut seen = vec![false; count];
+        let mut queue: std::collections::VecDeque<usize> = roots.iter().copied().collect();
+        roots.iter().for_each(|&n| seen[n] = true);
+        while let Some(node) = queue.pop_front() {
+            for &next in &callees[node] {
+                if !seen[next] {
+                    seen[next] = true;
+                    queue.push_back(next);
+                }
+            }
+        }
+        seen
+    };
+    let simulated_nodes = reach(&simulation_roots);
+    let produced_nodes = reach(&production_roots);
+    // effect の節(検と読まない file の節は数えない)。
+    let mut clauses: Vec<business_fakes::Clause> = Vec::new();
+    let mut taps: HashMap<&str, HashMap<(String, String), bool>> = HashMap::new();
+    for node in 0..count {
+        let (rel, _) = graph.nodes[node];
+        let d = definition(node);
+        if d.kind != DefinitionKind::EffectClause || role(node) == FileRole::Skipped {
+            continue;
+        }
+        let Some(effect) = d.handles.as_ref().and_then(|h| h.target.clone()) else { continue };
+        let handler = d.container.clone().unwrap_or_default();
+        let file_taps = taps.entry(rel).or_insert_with(|| std::fs::read_to_string(root.join(rel)).map(|s| business_fakes::taps_in(&s)).unwrap_or_default());
+        let head = d.handles.as_ref().map(|h| h.name.clone()).unwrap_or_default();
+        let tap = file_taps.get(&(handler.clone(), head)).copied().unwrap_or(false);
+        clauses.push(business_fakes::Clause { node, rel: rel.to_string(), handler, effect, tap, test: role(node) == FileRole::Test });
+    }
+    let simulated: Vec<bool> = clauses.iter().map(|c| simulated_nodes[c.node]).collect();
+    let produced: Vec<bool> = clauses.iter().map(|c| produced_nodes[c.node]).collect();
+    // 本番の code の Python の handler(索引の図の外)が isinstance で答える効果。
+    let python_answered: BTreeSet<String> = WalkDir::new(root)
+        .follow_links(false)
+        .into_iter()
+        .filter_entry(|e| !e.file_name().to_string_lossy().starts_with('.') && e.file_name() != "__pycache__")
+        .filter_map(Result::ok)
+        .filter(|e| e.file_type().is_file() && e.path().extension().is_some_and(|x| x == "py"))
+        .filter_map(|e| relative_path(root, e.path()).map(|rel| (rel, e.path().to_path_buf())))
+        .filter(|(rel, _)| decl.entry_string_modules.iter().any(|m| rel.starts_with(&format!("{}/", m.replace('.', "/")))) && production_code(rel))
+        .filter_map(|(rel, path)| std::fs::read_to_string(path).ok().map(|source| (module_of(&rel), source)))
+        .flat_map(|(module, source)| business_fakes::python_isinstance_effects(&source, &module))
+        .collect();
+    let inputs = business_fakes::Inputs {
+        clauses: &clauses,
+        simulated: &simulated,
+        produced: &produced,
+        external: &external,
+        counterexamples: &counterexamples,
+        unserved: &unserved,
+        python_answered: &python_answered,
+    };
+    let table_draft = |dir: &Option<String>, detail: String, subject: String, reason: &str| {
+        let rel = dir.clone().unwrap_or_else(|| "architecture.hy".to_string());
+        Draft {
+            rule: ProjectRule::BusinessEffectFake,
+            layer: None,
+            path: root.join(&rel),
+            rel,
+            range: zero_range(),
+            message: subject.clone(),
+            detail: Some(detail),
+            base: Severity::Error,
+            explain: Explain::BusinessEffectFake { subject, reason: reason.to_string() },
+        }
+    };
+    let drafts = business_fakes::judge(&inputs, decl)
+        .into_iter()
+        .map(|verdict| match verdict {
+            Verdict::Fake(i) => {
+                let clause = &clauses[i];
+                let d = definition(clause.node);
+                Draft {
+                    rule: ProjectRule::BusinessEffectFake,
+                    layer: None,
+                    path: root.join(&clause.rel),
+                    rel: clause.rel.clone(),
+                    range: d.range,
+                    message: format!("{} の {} が業務の効果 {} に答える偽物(模擬の根からだけ届く)", clause.rel, clause.handler, clause.effect),
+                    detail: Some(format!("{}::{}", clause.handler, clause.effect)),
+                    base: Severity::Error,
+                    explain: Explain::BusinessEffectFake {
+                        subject: format!("handler {} の節 {}", clause.handler, clause.effect),
+                        reason: "模擬の根から届き本番の入口から届かない定義が業務の効果に答えを作っている。業務の操作は下の層の効果を出す defk で書き、検査は外の世界の handler だけを差し替える。".to_string(),
+                    },
+                }
+            }
+            Verdict::StaleCounterexample(key) => table_draft(
+                &decl.counterexamples,
+                format!("counterexample-unused::{}", key),
+                format!("反例の表の {} はもう当たらない", key),
+                "反例の表の行は、わざと壊した反例の handler が今も在る間だけ置く — 表から外す。",
+            ),
+            Verdict::UnusedExternal(effect) => table_draft(
+                &decl.external_effects,
+                format!("external-unused::{}", effect),
+                format!("外の世界の表の {} にどの偽物も答えない", effect),
+                "外の世界の表は偽物が答える外の世界の効果の宣言 — 答える偽物が無い行は表から外す(表を腐らせない)。",
+            ),
+            Verdict::UnservedExternal(effect) => table_draft(
+                &decl.external_effects,
+                format!("external-unserved::{}", effect),
+                format!("外の世界の表の {} に本番の入口から届く答え手が無い", effect),
+                "外と名乗った効果には本番の答え手が要る(偽物 1 つで通さない)— 本番の handler を書くか、業務の効果なら下の層の効果で書く。今の不足は :unserved の表に理由と担い手つきで載せる。",
+            ),
+        })
+        .collect();
+    (drafts, problems)
 }
 
 /// DOEFF136: service ごとに、entry の層の定義から呼び手を逆向きに辿り、模擬の環境(:verification-environment)の下の deftest に

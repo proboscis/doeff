@@ -150,6 +150,9 @@ pub enum ProjectRule {
     /// DOEFF145: 同じ dir の同じ名の .hy で kw-only の record(defrecord か、飾りに :kw-only True の dataclass を持つ defclass)を、
     /// 型の宣言(.pyi)が kw_only=True の無い @dataclass で宣言する — 型検査は位置の引数の呼びを通すが実行時は TypeError(#1191)。
     RecordStubNotKwOnly,
+    /// DOEFF143: 模擬の根から届き本番の入口から届かない定義が業務の効果に tap でなく答える(偽の handler)・外の世界の表と反例の表の腐り
+    /// (agora-redesign #1375)。宣言は architecture.hy の :business-fakes。
+    BusinessEffectFake,
     /// DOEFF201(意味・Jev): 翻訳の層の定義が業務の判断をしている。
     SemanticBusinessDecision,
     /// DOEFF202(意味・Jev): 判断の層の定義が通信の手段を知っている。
@@ -213,6 +216,7 @@ impl ProjectRule {
         ProjectRule::HandlerArgumentHoldsState,
         ProjectRule::UntypedStructuredValue,
         ProjectRule::RecordStubNotKwOnly,
+        ProjectRule::BusinessEffectFake,
         ProjectRule::SemanticBusinessDecision,
         ProjectRule::SemanticTransportKnowledge,
         ProjectRule::SemanticPlainCallable,
@@ -271,6 +275,7 @@ impl ProjectRule {
             ProjectRule::HandlerArgumentHoldsState => "DOEFF142",
             ProjectRule::UntypedStructuredValue => "DOEFF144",
             ProjectRule::RecordStubNotKwOnly => "DOEFF145",
+            ProjectRule::BusinessEffectFake => "DOEFF143",
             ProjectRule::SemanticBusinessDecision => "DOEFF201",
             ProjectRule::SemanticTransportKnowledge => "DOEFF202",
             ProjectRule::SemanticPlainCallable => "DOEFF203",
@@ -316,6 +321,7 @@ impl ProjectRule {
             // 公開面の型の素の写像・素の組と、.pyi の kw_only の食い違い(#1191 の決め — 既定は critical)。
             | ProjectRule::UntypedStructuredValue
             | ProjectRule::RecordStubNotKwOnly
+            | ProjectRule::BusinessEffectFake
             | ProjectRule::ServiceBoundary
             | ProjectRule::ServiceDependency
             | ProjectRule::TranslationEmitsIntent
@@ -420,7 +426,8 @@ impl ProjectRule {
             | ProjectRule::CallOutsideDeclaredSites
             | ProjectRule::HandlerArgumentHoldsState
             | ProjectRule::UntypedStructuredValue
-            | ProjectRule::RecordStubNotKwOnly => false,
+            | ProjectRule::RecordStubNotKwOnly
+            | ProjectRule::BusinessEffectFake => false,
             ProjectRule::EnvironmentName
             | ProjectRule::DefnForbidden
             | ProjectRule::DeffNeedsReason
@@ -492,6 +499,7 @@ impl ProjectRule {
             ProjectRule::HandlerArgumentHoldsState => "handler の引数が client・可変の店を取る",
             ProjectRule::UntypedStructuredValue => "公開面の型が素の写像・素の組",
             ProjectRule::RecordStubNotKwOnly => "型の宣言の @dataclass に kw_only=True が無い",
+            ProjectRule::BusinessEffectFake => "業務の効果に答える偽の handler",
             ProjectRule::SemanticBusinessDecision => "翻訳の層で業務の判断(Jev)",
             ProjectRule::SemanticTransportKnowledge => "判断の層が通信の手段を知る(Jev)",
             ProjectRule::SemanticPlainCallable => "deff の理由が合わない(Jev)",
@@ -540,6 +548,7 @@ impl ProjectRule {
             | ProjectRule::HandlerArgumentHoldsState
             | ProjectRule::UntypedStructuredValue
             | ProjectRule::RecordStubNotKwOnly
+            | ProjectRule::BusinessEffectFake
             | ProjectRule::DefkCalledBare
             | ProjectRule::EffectsDisagreeWithInference => RuleFamily::Definition,
             ProjectRule::ClassWithBehaviour | ProjectRule::SemanticClassRole => RuleFamily::Class,
@@ -607,6 +616,7 @@ impl ProjectRule {
             ProjectRule::HandlerArgumentHoldsState => "Handler Argument Holds State",
             ProjectRule::UntypedStructuredValue => "Untyped Structured Value",
             ProjectRule::RecordStubNotKwOnly => "Record Stub Not Kw Only",
+            ProjectRule::BusinessEffectFake => "Business Effect Fake",
             ProjectRule::SemanticBusinessDecision => "Business Decision In Translation (Jev)",
             ProjectRule::SemanticTransportKnowledge => "Transport Knowledge In Core (Jev)",
             ProjectRule::SemanticPlainCallable => "Plain Callable Reason (Jev)",
@@ -664,6 +674,7 @@ impl ProjectRule {
             ProjectRule::RecordStubNotKwOnly => "architecture.hy の :record-stubs の型の宣言(.pyi)は、同じ dir の同じ名の .hy の実行時の形を偽らない — .hy で欄を名でしか受けない record(defrecord か、飾りに (dataclass … :kw-only True …) を持つ defclass)を @dataclass で宣言するなら kw_only=True を書く",
             ProjectRule::ServiceUntestedOnSim => "業務の service は、本番の組み立て(entry の層)のまま模擬の環境に載せ、handler の差し替えだけで回して確かめる — 模擬の環境(:verification-environment)の下の deftest がその service の entry の層の定義に 1 本も届かなければ、未検証の service として赤にする",
             ProjectRule::HandlerArgumentHoldsState => "handler は接続の object や書き換える店を引数で受け取らない — 接続先と資格・設定は Ask で読み、client は本文の先頭の (session val client …) で 1 回だけ作り、状態は (session var …) で持つ(外側の handler が差し替え・観測できる)。引数に残す物は本文に architecture.hy の :handler-arguments の :keep-mark の註で理由を書く",
+            ProjectRule::BusinessEffectFake => "業務の効果に答える偽物を作らない — 偽物は外の世界に触れる効果だけ(operator 2026-09-26 \"we only need fake for effects that access external world\")。業務の操作は下の層の効果を出す defk で書き、検査は外の世界の handler だけを差し替える。模擬の根と本番の入口と業務の module は architecture.hy の :business-fakes で宣言する",
             ProjectRule::TestKindMismatch => "テストの種類は 2 つだけ — 手元(届く定義に外の世界に触れる handler が無い)/ 縁(名簿の定義・:wraps の handler・生の I/O に届く)。種類は人が決めず届く先から導き、縁のテストだけが architecture.hy の :edge-mark の印を持つ(operator 2026-09-29 \"everything is 'pure' until we apply handler that has real IO\")",
             ProjectRule::WorldHandlerMisplaced => "architecture.hy の :world-handlers に挙げた定義は実在し、層 foundation の module に在る(外の世界に触れてよい定義の置き場は foundation だけ)",
             ProjectRule::WorldHandlerNamedOutsideList => "architecture.hy の :world-handlers の :wraps に挙げた doeff の実 I/O の handler(os-file-handler・http-production-handler …)を名指してよいのは、許可名簿の定義(とその中の入れ子の定義)だけ — 値として渡す所(with-handlers の列)も呼び出しも数える",
@@ -722,6 +733,7 @@ impl ProjectRule {
             ProjectRule::HandlerArgumentHoldsState => "引数を消し、接続先と設定は Ask、client は (session val …)、状態は (session var …) へ移す — 同じ handler を別の設定で並べるなど引数に残す物は本文に理由の註を書く",
             ProjectRule::UntypedStructuredValue => "欄の名前と型を持つ frozen の record(defrecord・defwire・dataclass)を定義して返す・持つ — :post は [(: % <record の型>)] で検める。キーで引く索引は dict[str, Row]・同じ型の列は tuple[X, ...] と中身の型を書く。値の形を外の系が決める境界なら登録簿に理由と共に載せる",
             ProjectRule::RecordStubNotKwOnly => "型の宣言の飾りを @dataclass(frozen=True, kw_only=True) にする",
+            ProjectRule::BusinessEffectFake => "業務の操作を下の層の効果を出す defk で書き直して偽物を消す — 外の世界の効果なら外の世界の表に理由つきで足し、わざと壊した反例なら反例の表に載せる",
             ProjectRule::ServiceUntestedOnSim => "模擬の環境の tests に、その service の entry の組み立てを handler の差し替えだけで回す deftest を足す",
             ProjectRule::TestKindMismatch => "縁なら印を付け(既定の pytest から外れる)、手元のつもりなら届く先の実 I/O の handler を模擬の handler に替える — 手元なのに印が在れば外す",
             ProjectRule::WorldHandlerMisplaced => "定義を foundation の層(architecture.hy の :foundation の dir)へ移すか、名簿の綴り(module:名)を実物に合わせる — 要らなくなった定義なら名簿から外す",
@@ -786,6 +798,7 @@ mod tests {
         ("DOEFF150", RuleFamily::Naming),
         ("DOEFF151", RuleFamily::Naming),
         ("DOEFF142", RuleFamily::Definition),
+        ("DOEFF143", RuleFamily::Definition),
         ("DOEFF146", RuleFamily::Naming),
         ("DOEFF148", RuleFamily::Naming),
         ("DOEFF161", RuleFamily::Naming),

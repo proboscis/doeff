@@ -198,6 +198,8 @@ pub enum Explain {
     ServiceUntestedOnSim { service: String, entry: String, definitions: usize, sim: String },
     /// DOEFF142: defhandler の引数が client・可変の店を取る。
     HandlerArgumentHoldsState { handler: String, param: String, kind: &'static str, type_text: String },
+    /// DOEFF143: 業務の効果の偽物・表の腐り。
+    BusinessEffectFake { subject: String, reason: String },
     /// DOEFF106・131 を層の置き場の外の file に当てた当たり(層の説明の主体が無い — message をそのまま主体にする)。
     WorldOutsideLayers { subject: String },
     /// DOEFF107: 定義が呼ぶ定義を通して生の副作用に届く。
@@ -525,6 +527,7 @@ impl<'a> Narrator<'a> {
                 format!("handler {} の引数 {}({}{})", handler, param, kind, if type_text.is_empty() { String::new() } else { format!(" {}", type_text) }),
                 "引数で受けた client や店は外側の handler から差し替えも観測もできず、模擬の環境で handler の差し替えだけで回せない。接続先と資格・設定は Ask で読み、client は handler の本文の先頭の (session val client …) で 1 回だけ作り、状態は (session var …) で持つ。".to_string(),
             ),
+            Explain::BusinessEffectFake { subject, reason } => (subject.clone(), reason.clone()),
             Explain::WorldOutsideLayers { subject } => (
                 subject.clone(),
                 "層の置き場の外の file も、外の世界に触れてよいのは architecture.hy の :world-handlers の定義だけ(agora-redesign #1147)。effect を出して名簿の定義の handler に答えさせるか、置き場を foundation に移して名簿に載せる。".to_string(),
