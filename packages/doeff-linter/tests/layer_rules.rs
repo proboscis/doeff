@@ -1980,6 +1980,13 @@ fn test_kind_is_derived_from_what_the_test_reaches() {
              (deftest test-edge-module-marked (<- n (hosted 1)) (assert n))\n"
                 .to_string(),
         ),
+        // defadr の並び [..] の中に入れ子の deftest の :marks も印(当てない)。
+        (
+            "app/billing/tests/test_nested_adr.hy",
+            "(import app.billing.core.helpers [hosted])\n\
+             (defadr adr-nested :title \"入れ子\" :tests [(deftest test-edge-in-a-list {:marks [\"real_world\"]} (<- n (hosted 1)) (assert n))])\n"
+                .to_string(),
+        ),
         // 読むだけの受け手(:static-readers)に値で渡すだけの縁の定義は、実行されないので届かない(手元 — 当てない)。
         ("app/billing/core/closure.hy", tags("billing", "judgment") + "(defk read-closure [case] (str case))\n"),
         (

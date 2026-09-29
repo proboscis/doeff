@@ -1658,9 +1658,10 @@ impl FileMarks {
         let mut deftests = HashMap::new();
         let mut stack: Vec<&Form> = forms.iter().collect();
         while let Some(form) = stack.pop() {
-            let Some(items) = form.paren_items() else { continue };
+            // 入れ子はどの括弧の中にも在る(defadr の :tests [(deftest …) …] の並びの中など)。
+            let Node::Seq { delim, items } = &form.node else { continue };
             stack.extend(items.iter());
-            if !items.first().is_some_and(|head| text(head) == "deftest") {
+            if *delim != Delim::Paren || !items.first().is_some_and(|head| text(head) == "deftest") {
                 continue;
             }
             let mut body = items.get(2..).unwrap_or_default();
