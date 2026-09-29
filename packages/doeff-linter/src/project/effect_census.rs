@@ -8,7 +8,8 @@
 //!   * 一覧に在って宣言が無い effect は architecture.hy の位置で 1 件(`<名>:<effect>:missing`)。
 //!   * `:files` に当たる file が無ければ architecture.hy の位置で 1 件(`<名>:missing` — 母集団 0 を緑にしない)。
 //! effect を足す変更は、宣言の一覧も同じ変更で直す(黙って増えない)。宣言の形は Python の `class X(… base …):` と Hy の
-//! `(defclass [飾り] X [… base …])` / `(defclass X [… base …])`。
+//! `(defclass [飾り] X [… base …])` / `(defclass X [… base …])`、`:base` が `EffectBase` なら Hy の `(defeffect X …)` も
+//! (defeffect は常に EffectBase を継ぐ — agora-redesign #1464)。
 
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -51,15 +52,24 @@ fn at_line(line: u32) -> Range {
 
 /// file の本文(註を落とした物)の中の、base を継ぐ class の (名, byte の位置)。
 fn declared_in(rel: &str, code: &str, base: &str) -> Vec<(String, usize)> {
+    let is_effect_base = base == EFFECT_BASE;
     let base = regex::escape(base);
     let pattern = if rel.ends_with(".hy") {
-        format!(r"\(defclass\s+(?:\[[^\]]*\]\s+)?([\w\-]+)\s+\[[^\]]*\b{}\b[^\]]*\]", base)
+        let defclass = format!(r"\(defclass\s+(?:\[[^\]]*\]\s+)?([\w\-]+)\s+\[[^\]]*\b{}\b[^\]]*\]", base);
+        // doeff-hy の defeffect は常に doeff の EffectBase を継ぐ class へ展開する(doeff_hy/declarations.hy の defeffect-form)。
+        if is_effect_base { format!(r"{}|\(defeffect\s+([\w\-]+)", defclass) } else { defclass }
     } else {
         format!(r"(?m)^[ \t]*class\s+(\w+)\s*\([^)]*\b{}\b[^)]*\)\s*:", base)
     };
     let Ok(regex) = regex::Regex::new(&pattern) else { return Vec::new() };
-    regex.captures_iter(code).filter_map(|c| c.get(1).map(|m| (m.as_str().to_string(), m.start()))).collect()
+    regex
+        .captures_iter(code)
+        .filter_map(|c| c.get(1).or_else(|| c.get(2)).map(|m| (m.as_str().to_string(), m.start())))
+        .collect()
 }
+
+/// defeffect が継ぐ base の名。
+const EFFECT_BASE: &str = "EffectBase";
 
 /// 宣言 1 つを判じる。読めなかった file は errors へ積む。
 fn judge_one(root: &Path, declared: &EffectCensus, architecture_rel: &str, errors: &mut Vec<String>) -> Vec<CensusFinding> {
@@ -159,6 +169,19 @@ mod tests {
         let hy = "; (defclass [(dataclass)] Gone [EffectBase])\n(defclass [(dataclass :frozen True)] Close [EffectBase])\n(defclass Plain [EffectBase])\n";
         assert_eq!(declared_in("e.py", &code_text("e.py", py), "EffectBase").into_iter().map(|d| d.0).collect::<Vec<_>>(), vec!["Send", "Log"]);
         assert_eq!(declared_in("s.hy", &code_text("s.hy", hy), "EffectBase").into_iter().map(|d| d.0).collect::<Vec<_>>(), vec!["Close", "Plain"]);
+    }
+
+    #[test]
+    fn hy_defeffect_declarations_count_as_effect_base() {
+        let hy = "; (defeffect Gone {:answer int :tags {}})\n(defeffect Tally\n  \"数える\"\n  {:answer int :tags {}})\n(defeffect Frame-Cut {:answer int :tags {}})\n";
+        let code = code_text("s.hy", hy);
+        assert_eq!(declared_in("s.hy", &code, "EffectBase").into_iter().map(|d| d.0).collect::<Vec<_>>(), vec!["Tally", "Frame-Cut"]);
+        // defeffect は常に doeff の EffectBase を継ぐ — 別の base の宣言には数えない。
+        assert!(declared_in("s.hy", &code, "ScreenEffect").is_empty());
+        let dir = repo(&[("s/loop_reports.hy", hy)]);
+        let (hits, errors) = find(dir.path(), &[census(&["s/loop_reports.hy"], &["Tally", "Frame-Cut"])], "architecture.hy");
+        assert!(errors.is_empty(), "{:?}", errors);
+        assert!(hits.is_empty(), "{:?}", hits);
     }
 
     #[test]
