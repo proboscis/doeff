@@ -2085,3 +2085,38 @@ fn test_forms_other_than_deftest_are_red() {
     assert_eq!(python["range"]["start"]["line"], 5);
     assert_eq!(python["level"], "critical");
 }
+
+/// agora-redesign #1147: 許可名簿の規則(DOEFF106・131)は層の置き場の外の file(層の外の dir・:root の外で :raw-io-roots に挙げた dir)にも当たる。
+/// 検の file と :raw-io-roots の外(scripts/)は当てない。
+#[test]
+fn world_handler_rules_cover_files_outside_the_layers() {
+    let files = [
+        ("app/foundation/host.hy", tags("shared", "foundation") + "(defk with-host [body] body)\n"),
+        ("app/billing/runtime/handlers.hy", "(import socket)\n(defn open-one [] (socket.socket))\n".to_string()),
+        (
+            "services/record/main.hy",
+            "(import threading)\n(import doeff_core_effects.os_file [os-file-handler])\n(defn serve [] (threading.Thread))\n(defn run [body] (with-handlers [os-file-handler] body))\n"
+                .to_string(),
+        ),
+        ("services/record/tests/test_main.hy", "(import socket)\n(deftest test-x (socket.socket))\n".to_string()),
+        ("scripts/tool.hy", "(import subprocess)\n(defn go [] (subprocess.run [\"true\"]))\n".to_string()),
+        // 実行できる ADR の冊(defadr を持つ file)と、file の中の deftest の実 I/O はテストの持ち分 — 当てない。
+        ("app/sim/adr/defadr_rule.hy", "(import pathlib [Path])\n(defadr rule \"x\")\n(defn read-src [] (open \"a.hy\"))\n".to_string()),
+        ("app/sim/checks.hy", "(import socket)\n(deftest test-open (socket.socket))\n".to_string()),
+    ];
+    let dir = world_repo_with(&files, "", "[\"DOEFF106\", \"DOEFF131\"]");
+    let arch_path = dir.path().join("architecture.hy");
+    let text = std::fs::read_to_string(&arch_path).unwrap().replace(":foundation foundation", ":foundation foundation\n  :raw-io-roots [\"app\" \"services\"]");
+    std::fs::write(&arch_path, text).unwrap();
+    let (_, report) = editor(dir.path());
+    assert_eq!(
+        keys(&report, "DOEFF106"),
+        vec!["app/billing/runtime/handlers.hy::DOEFF106::open_one::socket.socket", "services/record/main.hy::DOEFF106::serve::threading.Thread"],
+        "{}",
+        report
+    );
+    assert_eq!(keys(&report, "DOEFF131"), vec!["services/record/main.hy::DOEFF131::run::world::doeff_core_effects.os_file:os-file-handler"], "{}", report);
+    let found = violation(&report, "services/record/main.hy::DOEFF131::run::world::doeff_core_effects.os_file:os-file-handler");
+    assert!(found["message"].as_str().unwrap().contains("層の置き場の外"), "{}", found["message"]);
+    assert_eq!(found["level"], "critical");
+}

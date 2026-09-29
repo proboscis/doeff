@@ -277,6 +277,10 @@ pub fn run_with(root: &Path, settings: &ProjectSettings, enabled: &BTreeSet<Proj
                     if enabled.contains(&ProjectRule::TestKindMismatch) && !architecture.world_handlers.is_empty() {
                         drafts.extend(judge_test_kinds(root, architecture, hy));
                     }
+                    if let Some(raw) = settings.raw.as_ref().filter(|r| r.world_modules.is_some()) {
+                        let placed: BTreeSet<&str> = layer_files.iter().map(|f| f.file.rel.as_str()).collect();
+                        drafts.extend(judge_unplaced_world(root, architecture, raw, &placed, hy, enabled));
+                    }
                     if let Some(forms) = architecture.test_forms.as_ref().filter(|_| enabled.contains(&ProjectRule::TestFormNotDeftest)) {
                         drafts.extend(test_forms::find(root, forms).into_iter().map(|found| {
                             let start = Position { line: found.line, character: 0 };
@@ -543,7 +547,10 @@ fn whole_hy_index(
     // DOEFF119 は業務の file の class の生の副作用(経由も)を見るので、全体の索引を作る。
     let wants_classes = (enabled.contains(&ProjectRule::ClassWithBehaviour) || enabled.contains(&ProjectRule::SemanticClassRole)) && settings.definitions.is_some();
     // DOEFF133 はテストの file を含む全体の索引で、テストから定義を辿る。
-    let wants_tests = enabled.contains(&ProjectRule::TestKindMismatch) && settings.architecture.as_ref().is_some_and(|a| a.edge_mark.is_some());
+    // 許可名簿を書いた repo は、層の置き場の外の file にも DOEFF106・131 を当てる(#1147)ので、全体の索引を作る。
+    let wants_tests = (enabled.contains(&ProjectRule::TestKindMismatch) && settings.architecture.as_ref().is_some_and(|a| a.edge_mark.is_some()))
+        || (settings.raw.as_ref().is_some_and(|r| r.world_modules.is_some())
+            && (enabled.contains(&ProjectRule::RawSideEffectDirect) || enabled.contains(&ProjectRule::WorldHandlerNamedOutsideList)));
     if !(wants_raw && settings.raw.is_some()) && !wants_env && !wants_classes && !wants_tests {
         return HashMap::new();
     }
@@ -1145,21 +1152,8 @@ impl<'a> LayerJudge<'a> {
             Some(_) => "生の副作用に触ってよいのは architecture.hy の :world-handlers(外の世界に触れてよい定義の許可名簿)の定義の module だけ".to_string(),
             None => format!("生の副作用に触ってよい層は {}", raw.allowed.iter().map(|id| self.layer_name(*id)).collect::<Vec<_>>().join("・")),
         };
-        let mut chosen: BTreeMap<EvidenceSpot, EvidenceRef> = BTreeMap::new();
-        for (definition_index, definition) in definitions.iter().enumerate() {
-            for (evidence_index, evidence) in definition.raw.direct.iter().enumerate() {
-                let spot = EvidenceSpot { path: evidence.path.clone(), start: evidence.range.start, end: evidence.range.end, name: evidence.name.clone() };
-                let candidate = EvidenceRef { definition: definition_index, evidence: evidence_index };
-                let keep_current = chosen
-                    .get(&spot)
-                    .is_some_and(|current| definitions[current.definition].full_range.start >= definition.full_range.start);
-                if !keep_current {
-                    chosen.insert(spot, candidate);
-                }
-            }
-        }
-        chosen
-            .into_values()
+        innermost_raw_evidence(definitions)
+            .into_iter()
             .map(|found| {
                 let definition = &definitions[found.definition];
                 let evidence = &definition.raw.direct[found.evidence];
@@ -1196,40 +1190,11 @@ impl<'a> LayerJudge<'a> {
     /// DOEFF131: :wraps に挙げた doeff の実 I/O の handler を、名簿の定義(とその中の入れ子の定義)の外で名指す所。
     /// 値として渡す参照(with-handlers の列)と呼び出しの両方を数え、同じ定義の同じ handler は 1 件にまとめる。
     fn world_handler_named(&self, hy_file: &HyFileIndex, architecture: &architecture::Architecture) -> Vec<Draft> {
-        let wrapped = architecture.world_targets(world_catalog::WorldCatalog::bundled());
-        let listed = architecture.world_definition_targets();
         let definitions = &hy_file.definitions;
-        // import の行の名は名指しではない(import した名を使う所だけを数える)。
-        let in_import = |range: &Range| hy_file.imports.iter().any(|imp| imp.range.start <= range.start && range.end <= imp.range.end);
-        let spots = hy_file
-            .references
-            .iter()
-            .filter(|r| !in_import(&r.range))
-            .filter_map(|r| r.target.as_ref().map(|t| (t, r.range)))
-            .chain(hy_file.calls.iter().filter_map(|c| c.target.as_ref().map(|t| (t, c.range))));
-        let mut chosen: BTreeMap<(Option<usize>, String), Range> = BTreeMap::new();
-        for (target, range) in spots {
-            if !wrapped.contains_key(target) {
-                continue;
-            }
-            let inside = |d: &Definition| d.full_range.start <= range.start && range.end <= d.full_range.end;
-            if definitions.iter().any(|d| inside(d) && listed.contains_key(&d.qualified_name)) {
-                continue;
-            }
-            // いちばん内側の定義に数える(top level の式なら None)。
-            let owner = definitions
-                .iter()
-                .enumerate()
-                .filter(|(_, d)| inside(d))
-                .max_by_key(|(_, d)| d.full_range.start)
-                .map(|(index, _)| index);
-            chosen.entry((owner, target.clone())).or_insert(range);
-        }
-        chosen
+        world_handler_spots(hy_file, architecture)
             .into_iter()
-            .map(|((owner, target), range)| {
-                let (spelling, by, _) = &wrapped[&target];
-                let allowed = if by.is_empty() { "名簿のどの定義もこの handler を :wraps に挙げていない".to_string() } else { by.join("・") };
+            .map(|spot| {
+                let WorldSpot { owner, spelling, allowed, range } = spot;
                 let definition = owner.map(|i| definition_label(&definitions[i])).unwrap_or_else(|| "module の top level".to_string());
                 let shown = owner.map(|i| definitions[i].name.clone()).unwrap_or_else(|| "module の top level".to_string());
                 self.draft(
@@ -1812,6 +1777,154 @@ fn judge_test_kinds(root: &Path, architecture: &architecture::Architecture, hy: 
                 base: Severity::Error,
                 explain: Explain::TestKindMismatch { test: test.name.clone(), edge, mark: mark.to_string(), reached },
             });
+        }
+    }
+    drafts
+}
+
+/// 生の副作用の直接の証拠のうち、入れ子で重なる物はいちばん内側の定義に 1 度だけ(DOEFF106 の母集団)。
+fn innermost_raw_evidence(definitions: &[Definition]) -> Vec<EvidenceRef> {
+    let mut chosen: BTreeMap<EvidenceSpot, EvidenceRef> = BTreeMap::new();
+    for (definition_index, definition) in definitions.iter().enumerate() {
+        for (evidence_index, evidence) in definition.raw.direct.iter().enumerate() {
+            let spot = EvidenceSpot { path: evidence.path.clone(), start: evidence.range.start, end: evidence.range.end, name: evidence.name.clone() };
+            let candidate = EvidenceRef { definition: definition_index, evidence: evidence_index };
+            let keep_current = chosen.get(&spot).is_some_and(|current| definitions[current.definition].full_range.start >= definition.full_range.start);
+            if !keep_current {
+                chosen.insert(spot, candidate);
+            }
+        }
+    }
+    chosen.into_values().collect()
+}
+
+/// DOEFF131 の当たり 1 つ(持ち主の定義の添字 — top level の式なら None・handler の綴り・名指してよい名簿の定義の文・位置)。
+struct WorldSpot {
+    owner: Option<usize>,
+    spelling: String,
+    allowed: String,
+    range: Range,
+}
+
+/// 目録の実 I/O の handler を、名簿の定義(とその中の入れ子の定義)の外で名指す所(参照と呼び出し — import の行は数えない)。
+/// 同じ定義の同じ handler は 1 件。
+fn world_handler_spots(hy_file: &HyFileIndex, architecture: &architecture::Architecture) -> Vec<WorldSpot> {
+    let wrapped = architecture.world_targets(world_catalog::WorldCatalog::bundled());
+    let listed = architecture.world_definition_targets();
+    let definitions = &hy_file.definitions;
+    let in_import = |range: &Range| hy_file.imports.iter().any(|imp| imp.range.start <= range.start && range.end <= imp.range.end);
+    let spots = hy_file
+        .references
+        .iter()
+        .filter(|r| !in_import(&r.range))
+        .filter_map(|r| r.target.as_ref().map(|t| (t, r.range)))
+        .chain(hy_file.calls.iter().filter_map(|c| c.target.as_ref().map(|t| (t, c.range))));
+    let mut chosen: BTreeMap<(Option<usize>, String), Range> = BTreeMap::new();
+    for (target, range) in spots {
+        if !wrapped.contains_key(target) {
+            continue;
+        }
+        let inside = |d: &Definition| d.full_range.start <= range.start && range.end <= d.full_range.end;
+        if definitions.iter().any(|d| inside(d) && listed.contains_key(&d.qualified_name)) {
+            continue;
+        }
+        let owner = definitions.iter().enumerate().filter(|(_, d)| inside(d)).max_by_key(|(_, d)| d.full_range.start).map(|(index, _)| index);
+        chosen.entry((owner, target.clone())).or_insert(range);
+    }
+    chosen
+        .into_iter()
+        .map(|((owner, target), range)| {
+            let (spelling, by, _) = &wrapped[&target];
+            let allowed = if by.is_empty() { "名簿のどの定義もこの handler を :wraps に挙げていない".to_string() } else { by.join("・") };
+            WorldSpot { owner, spelling: spelling.clone(), allowed, range }
+        })
+        .collect()
+}
+
+/// agora-redesign #1147: 層の置き場の外の Hy の file(層の外の dir・architecture の :root の外の :raw-io-roots)にも、許可名簿の規則
+/// DOEFF106・131 を当てる — 外の世界に触れてよいのは名簿の定義だけで、置き場の破れ(DOEFF114)の file も例外ではない。検の file
+/// (path の段に tests・名が test_ か conftest)と :exclude の段は外す(縁のテストは DOEFF133 が持つ)。
+fn judge_unplaced_world(
+    root: &Path,
+    architecture: &architecture::Architecture,
+    raw: &settings::RawSettingsSpec,
+    placed: &BTreeSet<&str>,
+    hy: &HashMap<String, HyFileIndex>,
+    enabled: &BTreeSet<ProjectRule>,
+) -> Vec<Draft> {
+    let roots: Vec<String> = match &architecture.raw_io_roots {
+        Some(roots) => roots.iter().map(|r| settings::normalize_dir(r)).collect(),
+        None => vec![settings::normalize_dir(&architecture.root)],
+    };
+    let modules = raw.world_modules.clone().unwrap_or_default();
+    let mut rels: Vec<&String> = hy.keys().filter(|rel| !placed.contains(rel.as_str())).collect();
+    rels.sort();
+    let mut drafts = Vec::new();
+    for rel in rels {
+        let parts: Vec<&str> = rel.split('/').collect();
+        let name = parts.last().copied().unwrap_or("");
+        let under_root = roots.iter().any(|r| rel.starts_with(&format!("{}/", r)));
+        let excluded = parts.iter().any(|p| architecture.exclude.iter().any(|e| e == p)) || name.starts_with("test_") || name.starts_with("conftest");
+        if !under_root || excluded {
+            continue;
+        }
+        let file = &hy[rel];
+        let definitions = &file.definitions;
+        // 実行できる ADR の冊(defadr を持つ file)は pytest が集めるテストの冊 — 検の file と同じく外す。
+        if definitions.iter().any(|d| d.kind == DefinitionKind::Defadr) {
+            continue;
+        }
+        // deftest(ADR の冊の law の検を含む)の中の実 I/O はテストの持ち分(縁のテスト — DOEFF133)で、ここでは数えない。
+        let in_test = |index: usize| {
+            let target = &definitions[index];
+            target.kind == DefinitionKind::Deftest
+                || definitions.iter().any(|d| d.kind == DefinitionKind::Deftest && d.full_range.start <= target.full_range.start && target.full_range.end <= d.full_range.end)
+        };
+        let path = root.join(rel);
+        let draft = |rule: ProjectRule, range: Range, message: String, detail: String, base: Severity| Draft {
+            rule,
+            layer: None,
+            rel: rel.clone(),
+            path: path.clone(),
+            range,
+            message: message.clone(),
+            detail: Some(detail),
+            base,
+            explain: Explain::WorldOutsideLayers { subject: message },
+        };
+        if enabled.contains(&ProjectRule::RawSideEffectDirect) && !modules.contains(&architecture::mangle_dotted(&file.module)) {
+            for found in innermost_raw_evidence(definitions).into_iter().filter(|f| !in_test(f.definition)) {
+                let definition = &definitions[found.definition];
+                let evidence = &definition.raw.direct[found.evidence];
+                drafts.push(draft(
+                    ProjectRule::RawSideEffectDirect,
+                    evidence.range,
+                    format!(
+                        "定義 {}(層の置き場の外)が生の副作用 {}({})に直に触る — 生の副作用に触ってよいのは architecture.hy の :world-handlers の定義の module だけ",
+                        definition.name,
+                        evidence.name,
+                        evidence.category.as_str()
+                    ),
+                    format!("{}::{}", definition_label(definition), evidence.name),
+                    if evidence.strength == RawStrength::Strong { Severity::Error } else { Severity::Warning },
+                ));
+            }
+        }
+        if enabled.contains(&ProjectRule::WorldHandlerNamedOutsideList) {
+            for spot in world_handler_spots(file, architecture).into_iter().filter(|s| !s.owner.is_some_and(in_test)) {
+                let label = spot.owner.map(|i| definition_label(&definitions[i])).unwrap_or_else(|| "module の top level".to_string());
+                let shown = spot.owner.map(|i| definitions[i].name.clone()).unwrap_or_else(|| "module の top level".to_string());
+                drafts.push(draft(
+                    ProjectRule::WorldHandlerNamedOutsideList,
+                    spot.range,
+                    format!(
+                        "{}(層の置き場の外)が doeff の実 I/O の handler {} を名指す — 名指してよいのは architecture.hy の :world-handlers の定義({})だけ",
+                        shown, spot.spelling, spot.allowed
+                    ),
+                    format!("{}::world::{}", label, spot.spelling),
+                    Severity::Error,
+                ));
+            }
         }
     }
     drafts
