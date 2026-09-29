@@ -70,6 +70,7 @@ export const LABELS = {
   clearFilter: 'clear filter',
   searchNames: 'search names',
   revealLocationTitle: 'file:line (from a report, a diff or a traceback)',
+  pickDefinition: 'definitions with this name — pick one',
   /** repo 全体の面 */
   allDefinitions: 'all definitions',
   stacked: 'stacked',

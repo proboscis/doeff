@@ -305,7 +305,7 @@ suite('定義を読む面 — 頁(V10・V12・V13)', () => {
   test('defk は引数と答えのチップ・使う effect(絵つき)・説明。構文(def・using)はなぞらない', () => {
     const card = cardHtml(planePage(new Map()), 'fetch-row');
     assert.ok(card.includes('<span class="p"><span class="n">key</span><span class="t">str</span></span>'));
-    assert.ok(card.includes('<span class="ret" title="return type">Row</span>'));
+    assert.ok(card.includes('<span class="ret" title="return type"><span class="ent" data-reveal="pkg.plane.Row">Row</span></span>'));
     assert.ok(card.includes('<img src="data:image/svg+xml;fake,ReadInput" alt="">ReadInput'));
     assert.ok(card.includes('鍵の行を読むため。'));
     assert.ok(!/\busing\b|\bdef /.test(card));
@@ -431,7 +431,7 @@ suite('定義を読む面 — 長い signature の縦の表(V17・v6 2 節)', ()
 
   test('縦の表: 左に名・右に型のチップ(union は候補ごと・None は破線)・最後の行に return type の帯', () => {
     const card = cardHtml(planePage(new Map()), 'describe-row');
-    assert.ok(card.includes('<div class="sig2"><div class="lab">args</div><span class="n">row</span><span class="tc"><span class="">Row</span><i>|</i><span class="none">None</span></span>'));
+    assert.ok(card.includes('<div class="sig2"><div class="lab">args</div><span class="n">row</span><span class="tc"><span class=""><span class="ent" data-reveal="pkg.plane.Row">Row</span></span><i>|</i><span class="none">None</span></span>'));
     assert.ok(card.includes('<div class="rt"><span class="k">return type</span><span class="tc"><span class="">str</span><i>|</i><span class="none">None</span></span></div>'));
     assert.ok(!cardHtml(planePage(new Map()), 'fetch-row').includes('class="sig2"'));
   });
@@ -440,7 +440,7 @@ suite('定義を読む面 — 長い signature の縦の表(V17・v6 2 節)', ()
     const html = planePage(new Map(), INITIAL_FOLD);
     assert.ok(cardHtml(html, 'describe-row').includes('(row, prefix, suffix, width) → <span class="r">str | None</span>'));
     assert.ok(cardHtml(html, 'describe-row').includes('title="row: Row | None\nprefix: str\nsuffix: str\nwidth: int"'));
-    assert.ok(cardHtml(html, 'fetch-row').includes('(key: <span class="t">str</span>) → <span class="r">Row</span>'));
+    assert.ok(cardHtml(html, 'fetch-row').includes('(key: <span class="t">str</span>) → <span class="r"><span class="ent" data-reveal="pkg.plane.Row">Row</span></span>'));
   });
 });
 
@@ -533,7 +533,7 @@ suite('定義を読む面 — 呼び出しの依存の木(V19・v7 3 節)', () =
     assert.ok(html.includes('↺ seen above'));
     // 開いている file の定義(shout)は linter の見出しで、他の file の定義(show-both)は索引の型の綴りで 1 行を描く
     assert.ok(html.includes('(key: <span class="t">str</span>) → <span class="r">str</span>'));
-    assert.ok(html.includes('(key: <span class="t">str</span>, row: <span class="t">Row</span>) → <span class="r">str</span>'));
+    assert.ok(html.includes('(key: <span class="t">str</span>, row: <span class="t"><span class="ent" data-reveal="pkg.plane.Row">Row</span></span>) → <span class="r">str</span>'));
     // 入口: カードの帯の callers / callees と、左の欄の根の選び
     assert.ok(cardHtml(html, 'row-text').includes('data-tree-root="pkg.plane.row_text" data-tree-dir="callers">callers <b>2</b></button>'));
     assert.ok(html.includes('<select id="tree-root"><option value="">pick a root</option>'));
@@ -560,10 +560,10 @@ suite('定義を読む面 — 本体の文字(V6・V11 の一部・U5)', () => {
   test('本体の行は linter の bodies を描く: 行番号 = source の行・val / ⇐ の束縛の行は薄い背景・呼びは f(a)', () => {
     const html = planePage(new Map());
     const fetch = cardHtml(html, 'fetch-row');
-    assert.ok(fetch.includes('<div class="bl bound" data-src-line="17"><span class="ln">17</span><span class="kw">val</span> <span class="b">Row</span> <span class="var" title="row: Row\nbound at line 17">row</span> <span class="arrow-bind">⇐</span> '));
+    assert.ok(fetch.includes('<div class="bl bound" data-src-line="17"><span class="ln">17</span><span class="kw">val</span> <span class="b ent" data-reveal="pkg.plane.Row">Row</span> <span class="var" title="row: Row\nbound at line 17">row</span> <span class="arrow-bind">⇐</span> '));
     assert.ok(planeLines()[16].includes('(<- row Row (ReadInput key))'));
     const shout = cardHtml(html, 'shout');
-    assert.ok(shout.includes('<span class="fn">fetch-row</span>(<span class="var" title="key: str\nargument">key</span>)'));
+    assert.ok(shout.includes('<span class="fn ent" data-reveal="pkg.plane.fetch_row">fetch-row</span>(<span class="var" title="key: str\nargument">key</span>)'));
   });
 
   test('制御の形(U3): when は語 + 字下げの段(linter の bodies の depth)', () => {
@@ -677,10 +677,10 @@ suite('定義を読む面 — 実体の種類ごとの欄と帯(V13・v2 2.1 節
   test('defeffect: 欄のチップ → 答えの型。帯は used by(押すと木)と handlers', () => {
     const { html, lines } = entitiesPage();
     const card = cardHtml(html, 'ReadSlot');
-    assert.ok(card.includes('<div class="sig"><span class="p"><span class="n">key</span><span class="t">str</span></span><span class="arrow">→</span><span class="ret">Slot | None</span></div>'));
+    assert.ok(card.includes('<div class="sig"><span class="p"><span class="n">key</span><span class="t">str</span></span><span class="arrow">→</span><span class="ret"><span class="ent" data-reveal="pkg.entities.Slot">Slot</span> | None</span></div>'));
     assert.ok(card.includes('data-tree-dir="callers">used by <b>1</b></button>: <button class="tname-sm" data-reveal="pkg.entities.slot_size">slot-size</button></span>'));
     assert.ok(card.includes('<span class="relgroup">handlers <b>1</b>: <button class="tname-sm" data-reveal="pkg.entities.slot_store">slot-store</button></span>'));
-    assert.ok(cardHtml(lines, 'ReadSlot').includes('(key: <span class="t">str</span>) → <span class="r">Slot | None</span>'));
+    assert.ok(cardHtml(lines, 'ReadSlot').includes('(key: <span class="t">str</span>) → <span class="r"><span class="ent" data-reveal="pkg.entities.Slot">Slot</span> | None</span>'));
   });
 
   test('defrecord: 欄のチップ(名と型)。帯は returned by / accepted by', () => {
@@ -693,17 +693,17 @@ suite('定義を読む面 — 実体の種類ごとの欄と帯(V13・v2 2.1 節
 
   test('defenum: 値のチップ。1 行は A | B', () => {
     const { html, lines } = entitiesPage();
-    assert.ok(cardHtml(html, 'Tone').includes('<span class="k">values</span><div><span class="p"><span class="n">LOUD</span></span><span class="p"><span class="n">QUIET</span></span></div>'));
+    assert.ok(cardHtml(html, 'Tone').includes('<span class="k">values</span><div><span class="p"><span class="n ent" data-reveal="pkg.entities.Tone.LOUD">LOUD</span></span><span class="p"><span class="n ent" data-reveal="pkg.entities.Tone.QUIET">QUIET</span></span></div>'));
     assert.ok(cardHtml(lines, 'Tone').includes('<span class="f f-args">LOUD | QUIET</span>'));
   });
 
   test('defhandler: 解く effect(handles)と使う effect。帯は installed at', () => {
     const { html, lines } = entitiesPage();
     const card = cardHtml(html, 'slot-store');
-    assert.ok(/<span class="k">handles<\/span><div><span class="eff" title="[^"]*">ReadSlot<\/span><\/div>/.test(card));
+    assert.ok(/<span class="k">handles<\/span><div><span class="eff ent" data-reveal="pkg.entities.ReadSlot" title="[^"]*">ReadSlot<\/span><\/div>/.test(card));
     assert.ok(card.includes('<span class="k">effects</span><div><span class="eff" title="ReadRow">ReadRow</span></div>'));
     assert.ok(card.includes('data-tree-dir="callers">installed at <b>0</b></button>'));
-    assert.ok(cardHtml(lines, 'slot-store').includes('<span class="f f-args">handles: ReadSlot</span>'));
+    assert.ok(cardHtml(lines, 'slot-store').includes('<span class="f f-args">handles: <span class="ent" data-reveal="pkg.entities.ReadSlot">ReadSlot</span></span>'));
   });
 
   test('契約の欄は型でない述語だけ(型の注記は引数と答えへ溶ける)。無い実体には出さない', () => {
@@ -866,9 +866,9 @@ suite('定義を読む面 — repo 全体の入口(U9)', () => {
     assert.ok(size !== undefined);
     const open = renderCard(size, ctxOf(graph, unfoldAll(INITIAL_FOLD, [cardKey(size.definition)])), false);
     assert.ok(open.includes('<div class="sig"><span class="p"><span class="n">key</span><span class="t">str</span></span><span class="p"><span class="n">limit</span><span class="t">int</span></span><span class="arrow">→</span><span class="ret">int</span></div>'));
-    assert.ok(/<span class="k">effects<\/span><div><span class="eff" title="[^"]*">ReadSlot<\/span><\/div>/.test(open));
+    assert.ok(/<span class="k">effects<\/span><div><span class="eff ent" data-reveal="pkg.entities.ReadSlot" title="[^"]*">ReadSlot<\/span><\/div>/.test(open));
     assert.ok(open.includes('(key: <span class="t">str</span>, limit: <span class="t">int</span>) → <span class="r">int</span>'));
-    assert.ok(/<span class="f f-effects"><span class="eff" title="[^"]*">ReadSlot<\/span><\/span>/.test(open));
+    assert.ok(/<span class="f f-effects"><span class="eff ent" data-reveal="pkg.entities.ReadSlot" title="[^"]*">ReadSlot<\/span><\/span>/.test(open));
   });
 });
 
@@ -998,7 +998,7 @@ suite('定義を読む面 — defclass のカード(U17・v9)', () => {
     );
     assert.ok(placed.includes('<span class="f f-doc">本文の行の版 1 つ: ref = 入力の id・text = 文。</span>'));
     // defrecord の欄の型も Python の書き方で(V11 で見つけた lisp のままの型)
-    assert.ok(cardHtml(lines, 'InputVersions').includes('(placed: <span class="t">tuple[PlacedVersion, ...]</span>)'));
+    assert.ok(cardHtml(lines, 'InputVersions').includes('(placed: <span class="t">tuple[<span class="ent" data-reveal="pkg.classes.PlacedVersion">PlacedVersion</span>, ...]</span>)'));
   });
 
   test('開いた fields は v6 の閾で縦の表(欄 ≥ 4)— union は候補ごとのチップ。短ければ 1 行のチップ', () => {

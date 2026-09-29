@@ -9,6 +9,7 @@ import { escapeHtml, type Glyphs } from './html';
 import { LABELS } from './labels';
 import { NAMES_ONLY_PARAMS, TALL_SIGNATURE_CHARS, TALL_SIGNATURE_PARAMS } from './layout';
 import type { Card } from './model';
+import { effectRef, entityLink, indexTypeHtml, nameRefOf, resolveEntity, type EntityRef } from './resolve';
 import { calleesInTree, indexTypeText, indexUnionMembers, type CallGraph } from './tree';
 
 /** 欄 1 つの行。 */
@@ -16,10 +17,25 @@ function row(label: string, body: string): string {
   return `<div class="row"><span class="k">${escapeHtml(label)}</span><div>${body}</div></div>`;
 }
 
+/** 索引の型の注記を 1 行の綴りで描く(型の中の repo の名は定義へ押せる — v12)。 */
+function noteHtml(note: HyTypeNote, graph: CallGraph): string {
+  return indexTypeHtml(indexTypeText(note), note.names, graph);
+}
+
 /** 名と型のチップ(型が無ければ名だけ)。 */
-function nameTypeChip(name: string, type: HyTypeNote | undefined): string {
-  const t = type === undefined ? '' : `<span class="t">${escapeHtml(indexTypeText(type))}</span>`;
+function nameTypeChip(name: string, type: HyTypeNote | undefined, graph: CallGraph): string {
+  const t = type === undefined ? '' : `<span class="t">${noteHtml(type, graph)}</span>`;
   return `<span class="p"><span class="n">${escapeHtml(name)}</span>${t}</span>`;
+}
+
+/** 名だけのチップ(bases の名 — 最上位の定義の名で引き、repo の中の定義なら押せる)。 */
+function nameChip(name: string, cls: 'n' | 't', graph: CallGraph): string {
+  return `<span class="p">${entityLink(escapeHtml(name), resolveEntity({ tag: 'name', name }, graph), cls)}</span>`;
+}
+
+/** 入れ子の定義のチップ(method・enum の値 — 押すと入れ物のカードのその行へ)。 */
+function memberChip(member: HyDefinition, graph: CallGraph): string {
+  return `<span class="p">${entityLink(escapeHtml(member.name), resolveEntity({ tag: 'target', target: member.qualifiedName }, graph), 'n')}</span>`;
 }
 
 /** effect のチップを描く材料 — 絵の口と、hover に effect の中身を引く索引の表(render.ts の CardContext がそのまま渡る)。 */
@@ -28,10 +44,14 @@ export interface ChipContext {
   readonly graph: CallGraph;
 }
 
-/** effect のチップ(絵つき・hover に引数と答えと説明の 1 行目)。 */
-function effectChip(name: string, ctx: ChipContext): string {
+/**
+ * effect のチップ(絵つき・hover に引数と答えと説明の 1 行目)。known は linter の位置か索引の target — 引けなければ同名の defeffect
+ * で引き、定義に当たれば押せる(v12)。
+ */
+export function effectChip(name: string, known: EntityRef, ctx: ChipContext): string {
   const src = ctx.glyphs.effect(name);
-  return `<span class="eff" title="${escapeHtml(effectHover(name, ctx.graph))}">${src === undefined ? '' : `<img src="${escapeHtml(src)}" alt="">`}${escapeHtml(name)}</span>`;
+  const img = src === undefined ? '' : `<img src="${escapeHtml(src)}" alt="">`;
+  return entityLink(`${img}${escapeHtml(name)}`, resolveEntity(effectRef(name, known), ctx.graph), 'eff', effectHover(name, ctx.graph));
 }
 
 /**
@@ -54,7 +74,7 @@ export function decoratorBadges(definition: HyDefinition): string {
 
 /** 宣言した effect のチップ(索引 版 5 — 1 行の effects に。linter の見出しが無い時)。 */
 export function declaredEffectChips(definition: HyDefinition, ctx: ChipContext): string {
-  return (definition.effects ?? []).map((e) => effectChip(e.name, ctx)).join('');
+  return (definition.effects ?? []).map((e) => effectChip(e.name, nameRefOf(e), ctx)).join('');
 }
 
 /** 入れ子の定義のうち指定の種類(書いた順)。 */
@@ -80,9 +100,9 @@ function fieldsOf(card: Card): FieldView[] {
 }
 
 /** 欄のチップの並び(defeffect の引数の欄に使う — 型の欄の縦の表は fieldsRow)。 */
-function fieldChips(card: Card): string {
+function fieldChips(card: Card, graph: CallGraph): string {
   return fieldsOf(card)
-    .map((f) => nameTypeChip(f.name, f.type))
+    .map((f) => nameTypeChip(f.name, f.type, graph))
     .join('');
 }
 
@@ -93,18 +113,19 @@ function isTallFields(fields: readonly FieldView[]): boolean {
 }
 
 /** 型の欄(defrecord・deftype・defclass の開いた形)— 短ければ 1 行のチップ、長ければ名と型の縦の表(union は候補ごとのチップ)。 */
-function fieldsRow(card: Card): string {
+function fieldsRow(card: Card, graph: CallGraph): string {
   const fields = fieldsOf(card);
   if (fields.length === 0) {
     return '';
   }
   if (!isTallFields(fields)) {
-    return row(LABELS.fields, fields.map((f) => nameTypeChip(f.name, f.type)).join(''));
+    return row(LABELS.fields, fields.map((f) => nameTypeChip(f.name, f.type, graph)).join(''));
   }
   const rows = fields
     .map((f) => {
       const members = f.type === undefined ? [] : indexUnionMembers(f.type);
-      const chips = members.map((m) => `<span class="${m === 'None' ? 'none' : ''}">${escapeHtml(m)}</span>`).join('<i>|</i>');
+      const names = f.type?.names ?? [];
+      const chips = members.map((m) => `<span class="${m === 'None' ? 'none' : ''}">${indexTypeHtml(m, names, graph)}</span>`).join('<i>|</i>');
       return `<span class="n">${escapeHtml(f.name)}</span><span class="tc">${chips}</span>`;
     })
     .join('');
@@ -132,43 +153,44 @@ function typedParams(definition: HyDefinition): Array<{ readonly name: string; r
  * (repo 全体の面では他の file の定義が全部これ。linter の見出しが届けば render.ts が見出しで描き直す)。
  */
 export function indexSignatureRows(definition: HyDefinition, ctx: ChipContext): string {
-  const params = typedParams(definition).map((p) => nameTypeChip(p.name, p.type)).join('');
-  const answer = definition.answerType === null ? '' : `<span class="arrow">→</span><span class="ret">${escapeHtml(indexTypeText(definition.answerType))}</span>`;
+  const params = typedParams(definition).map((p) => nameTypeChip(p.name, p.type, ctx.graph)).join('');
+  const answer = definition.answerType === null ? '' : `<span class="arrow">→</span><span class="ret">${noteHtml(definition.answerType, ctx.graph)}</span>`;
   const sig = `<div class="sig">${params === '' ? `<span class="none">${escapeHtml(LABELS.noArgs)}</span>` : params}${answer}</div>`;
-  const effects = (definition.effects ?? []).map((e) => effectChip(e.name, ctx)).join('');
+  const effects = (definition.effects ?? []).map((e) => effectChip(e.name, nameRefOf(e), ctx)).join('');
   return sig + (effects === '' ? '' : row(LABELS.effects, effects));
 }
 
 /** 見出しの無い実体の欄(v2 2.1 節の表)。 */
 export function entityRows(card: Card, ctx: ChipContext): string {
   const d = card.definition;
+  const graph = ctx.graph;
   switch (d.kind) {
     case 'defeffect': {
-      const answer = d.answerType === null ? '' : `<span class="arrow">→</span><span class="ret">${escapeHtml(indexTypeText(d.answerType))}</span>`;
-      const fields = fieldChips(card);
+      const answer = d.answerType === null ? '' : `<span class="arrow">→</span><span class="ret">${noteHtml(d.answerType, graph)}</span>`;
+      const fields = fieldChips(card, ctx.graph);
       return `<div class="sig">${fields === '' ? `<span class="none">${escapeHtml(LABELS.noArgs)}</span>` : fields}${answer}</div>`;
     }
     case 'defrecord':
     case 'deftype':
-      return fieldsRow(card);
+      return fieldsRow(card, ctx.graph);
     case 'defclass': {
       // v9: defrecord と同じ欄(型つき・v6 の閾で縦の表)に、ある時だけ基底と method
-      const bases = d.bases.length === 0 ? '' : row(LABELS.bases, d.bases.map((b) => `<span class="p"><span class="t">${escapeHtml(b)}</span></span>`).join(''));
+      const bases = d.bases.length === 0 ? '' : row(LABELS.bases, d.bases.map((b) => nameChip(b, 't', ctx.graph)).join(''));
       const methods = membersOf(card, 'method');
-      const methodRow = methods.length === 0 ? '' : row(LABELS.methods, methods.map((m) => `<span class="p"><span class="n">${escapeHtml(m.name)}</span></span>`).join(''));
-      return fieldsRow(card) + bases + methodRow;
+      const methodRow = methods.length === 0 ? '' : row(LABELS.methods, methods.map((m) => memberChip(m, ctx.graph)).join(''));
+      return fieldsRow(card, ctx.graph) + bases + methodRow;
     }
     case 'defenum': {
       const values = membersOf(card, 'enum-member');
-      return values.length === 0 ? '' : row(LABELS.values, values.map((m) => `<span class="p"><span class="n">${escapeHtml(m.name)}</span></span>`).join(''));
+      return values.length === 0 ? '' : row(LABELS.values, values.map((m) => memberChip(m, ctx.graph)).join(''));
     }
     case 'defhandler': {
-      const handles = membersOf(card, 'effect-clause').map((m) => effectChip(m.handles?.name ?? m.name, ctx));
-      const uses = (d.effects ?? []).map((e) => effectChip(e.name, ctx));
+      const handles = membersOf(card, 'effect-clause').map((m) => effectChip(m.handles?.name ?? m.name, { tag: 'target', target: m.handles?.target ?? null }, ctx));
+      const uses = (d.effects ?? []).map((e) => effectChip(e.name, nameRefOf(e), ctx));
       return [handles.length === 0 ? '' : row(LABELS.handles, handles.join('')), uses.length === 0 ? '' : row(LABELS.effects, uses.join(''))].join('');
     }
     case 'variable': {
-      const type = d.answerType === null ? '' : row(LABELS.type, `<span class="p"><span class="t">${escapeHtml(indexTypeText(d.answerType))}</span></span>`);
+      const type = d.answerType === null ? '' : row(LABELS.type, `<span class="p"><span class="t">${noteHtml(d.answerType, graph)}</span></span>`);
       const first = card.source.split('\n')[0];
       return `${type}${row(LABELS.value, `<span class="lisp" title="${escapeHtml(LABELS.lispAsIs)}">${escapeHtml(first)}</span>`)}`;
     }
@@ -176,14 +198,14 @@ export function entityRows(card: Card, ctx: ChipContext): string {
       // 他の種類(deftest・defn など)は引数の名・基底・入れ子の定義
       const rows: string[] = [];
       if (d.params.length > 0) {
-        rows.push(row(LABELS.args, d.params.map((p) => nameTypeChip(p, d.paramTypes.find((t) => t.name === p)?.type)).join('')));
+        rows.push(row(LABELS.args, d.params.map((p) => nameTypeChip(p, d.paramTypes.find((t) => t.name === p)?.type, ctx.graph)).join('')));
       }
       if (d.bases.length > 0) {
-        rows.push(row(LABELS.bases, d.bases.map((b) => `<span class="p"><span class="t">${escapeHtml(b)}</span></span>`).join('')));
+        rows.push(row(LABELS.bases, d.bases.map((b) => nameChip(b, 't', ctx.graph)).join('')));
       }
       const methods = membersOf(card, 'method');
       if (methods.length > 0) {
-        rows.push(row(LABELS.methods, methods.map((m) => `<span class="p"><span class="n">${escapeHtml(m.name)}</span></span>`).join('')));
+        rows.push(row(LABELS.methods, methods.map((m) => memberChip(m, ctx.graph)).join('')));
       }
       return rows.join('');
     }
@@ -191,13 +213,13 @@ export function entityRows(card: Card, ctx: ChipContext): string {
 }
 
 /** 1 行の形の args / return type(見出しの無い実体 — 見本 v5 の `(id: str) → InputRow | …` の形)。 */
-export function entityLineArgs(card: Card): string {
+export function entityLineArgs(card: Card, graph: CallGraph): string {
   const d = card.definition;
   const typed = (items: ReadonlyArray<{ readonly name: string; readonly type: HyTypeNote }>): string =>
-    items.map((p) => `${escapeHtml(p.name)}: <span class="t">${escapeHtml(indexTypeText(p.type))}</span>`).join(', ');
+    items.map((p) => `${escapeHtml(p.name)}: <span class="t">${noteHtml(p.type, graph)}</span>`).join(', ');
   switch (d.kind) {
     case 'defeffect': {
-      const answer = d.answerType === null ? '' : ` → <span class="r">${escapeHtml(indexTypeText(d.answerType))}</span>`;
+      const answer = d.answerType === null ? '' : ` → <span class="r">${noteHtml(d.answerType, graph)}</span>`;
       return `<span class="f f-args">(${typed(d.paramTypes)})${answer}</span>`;
     }
     case 'defk':
@@ -205,12 +227,12 @@ export function entityLineArgs(card: Card): string {
     case 'defn': {
       // linter の見出しが無い関数 — 索引の型で。引数が多い時は名だけ(型は hover)
       const params = typedParams(d);
-      const answer = d.answerType === null ? '' : ` → <span class="r">${escapeHtml(indexTypeText(d.answerType))}</span>`;
+      const answer = d.answerType === null ? '' : ` → <span class="r">${noteHtml(d.answerType, graph)}</span>`;
       if (params.length >= NAMES_ONLY_PARAMS) {
         const title = params.map((p) => `${p.name}: ${p.type === undefined ? '?' : indexTypeText(p.type)}`).join('\n');
         return `<span class="f f-args" title="${escapeHtml(title)}">(${params.map((p) => escapeHtml(p.name)).join(', ')})${answer}</span>`;
       }
-      const shown = params.map((p) => (p.type === undefined ? escapeHtml(p.name) : `${escapeHtml(p.name)}: <span class="t">${escapeHtml(indexTypeText(p.type))}</span>`));
+      const shown = params.map((p) => (p.type === undefined ? escapeHtml(p.name) : `${escapeHtml(p.name)}: <span class="t">${noteHtml(p.type, graph)}</span>`));
       return `<span class="f f-args">(${shown.join(', ')})${answer}</span>`;
     }
     case 'defrecord':
@@ -219,7 +241,7 @@ export function entityLineArgs(card: Card): string {
       // 型の欄は数が多くても型を出す(v9 の見本 `(ref: str, text: str, request-id: str | None, …)`)。型の無い欄は名だけ
       const fields = fieldsOf(card);
       if (fields.length > 0) {
-        const shown = fields.map((f) => (f.type === undefined ? escapeHtml(f.name) : `${escapeHtml(f.name)}: <span class="t">${escapeHtml(indexTypeText(f.type))}</span>`));
+        const shown = fields.map((f) => (f.type === undefined ? escapeHtml(f.name) : `${escapeHtml(f.name)}: <span class="t">${noteHtml(f.type, graph)}</span>`));
         return `<span class="f f-args">(${shown.join(', ')})</span>`;
       }
       break;
@@ -229,7 +251,10 @@ export function entityLineArgs(card: Card): string {
       return values.length === 0 ? '' : `<span class="f f-args">${values.join(' | ')}</span>`;
     }
     case 'defhandler': {
-      const handles = membersOf(card, 'effect-clause').map((m) => escapeHtml(m.handles?.name ?? m.name));
+      const handles = membersOf(card, 'effect-clause').map((m) => {
+        const name = m.handles?.name ?? m.name;
+        return entityLink(escapeHtml(name), resolveEntity(effectRef(name, { tag: 'target', target: m.handles?.target ?? null }), graph));
+      });
       return handles.length === 0 ? '' : `<span class="f f-args">${escapeHtml(LABELS.handles)}: ${handles.join(', ')}</span>`;
     }
     default:
