@@ -178,7 +178,7 @@
 ;; --- 宣言の形 -------------------------------------------------------------------------------
 
 (defk declared-job [#^ (| dict None) readiness #^ str update]
-  {:pre [(: update str)] :post [(: % Job)] :tags {:context "doeff-cluster-test" :role "entry"}}
+  {:pre [(: readiness (| dict None)) (: update str)] :post [(: % Job)] :tags {:context "doeff-cluster-test" :role "entry"}}
   "readiness と update だけを変えた job の宣言(系の値の構成子 job — defsystem の展開が呼ぶ口を直に呼ぶ)。"
   (job "w" (tally-program plain-foundation 1) :call (CallShape :function tally-program :args [plain-foundation 1] :kwargs {})
        :needs (frozenset ["net"]) :update update :readiness readiness))

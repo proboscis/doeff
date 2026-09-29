@@ -24,7 +24,7 @@
 
 
 (defk program-run [function #* args]
-  {:pre [(: function str)] :post [(: % dict)] :tags {:context "doeff-cluster-test" :role "entry"}}
+  {:pre [(: function str) (: args tuple)] :post [(: % dict)] :tags {:context "doeff-cluster-test" :role "entry"}}
   "関数の参照 function(module:qualname)と位置の引数 args(JSON の値)の Program の job の run。identity を変えると spec-hash が変わる。"
   {"kind" "service"
    "program" SAMPLE-PROGRAM

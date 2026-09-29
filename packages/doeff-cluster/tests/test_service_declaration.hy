@@ -48,7 +48,7 @@
 
 
 (defk declare-cli [#* argv]
-  {:pre [] :post [(: % subprocess.CompletedProcess)] :tags {:context "doeff-cluster-test" :role "entry"}}
+  {:pre [(: argv tuple)] :post [(: % subprocess.CompletedProcess)] :tags {:context "doeff-cluster-test" :role "entry"}}
   "declare の CLI を子 process で撃つ(cwd = package の根 — tests.fixtures を import する)。"
   (subprocess.run [sys.executable "-m" "hy" "-m" "doeff_cluster.declare" #* argv]
                   :cwd (str PACKAGE-ROOT) :capture-output True :text True :timeout 120))
