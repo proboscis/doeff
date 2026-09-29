@@ -1903,6 +1903,52 @@ fn a_translation_handler_that_emits_a_business_intent_is_an_error() {
 }
 
 #[test]
+fn a_translation_handler_may_emit_another_services_public_intent() {
+    // agora-redesign #1134 の決め(DOEFF156 の「他の service の公開の効果」と揃える): 止めるのは handler と同じ service の intent だけ。
+    // 他の service の intent(公開の契約)を出すのは翻訳の仕事 — 例: durable の翻訳が郵便の受付の intent を出す(#1508)。
+    let files = [
+        ("app/kanban/intent/board.hy", "(defclass ReadBoard [])\n"),
+        ("app/orders/intent/orders.hy", "(defclass PlaceOrder [])\n"),
+        (
+            "app/kanban/protocol/reads.hy",
+            r#"(import app.kanban.intent.board [ReadBoard])
+(import app.orders.intent.orders [PlaceOrder])
+
+;; 正例: 他の service(orders)の公開の intent を出す。
+(defhandler order-bridge
+  (Bridge [x]
+    (<- r (PlaceOrder))
+    (resume r)))
+
+;; 反例: 自分の service(kanban)の intent を出す — 今までどおり error。
+(defhandler own-reads
+  (Lookup [c]
+    (<- b (ReadBoard))
+    (resume b)))
+"#,
+        ),
+    ];
+    let dir = translation_repo(&files, "");
+    std::fs::write(
+        dir.path().join("architecture.hy"),
+        r#"(defarchitecture sample
+  :root "app"
+  :layers [(layer core :roles [judgment program type])
+           (layer intent :roles [intent type])
+           (layer protocol :roles [protocol])])
+(defservice kanban "盤" {:depends-on [orders] :layers [core intent protocol]})
+(defservice orders "注文" {:layers [core intent protocol]})
+"#,
+    )
+    .unwrap();
+    let (_, report) = editor(dir.path());
+    assert_eq!(
+        keys(&report, "DOEFF130"),
+        vec!["app/kanban/protocol/reads.hy::translation-targets-only-generic-foundation-effects::own_reads::app.kanban.intent.board.ReadBoard"]
+    );
+}
+
+#[test]
 fn translation_effects_depth_and_layers_are_configured() {
     // 辿る段の上限は設定 — 0 なら handler の本体で直に出す intent だけ。
     let dir = translation_repo(&TRANSLATION_FILES, "\n[tool.doeff-linter.translation_effects]\nmax_depth = 1\n");

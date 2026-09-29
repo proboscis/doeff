@@ -3749,7 +3749,7 @@ fn is_translation_file(file: &LayerFile, translation: &settings::TranslationSett
 }
 
 /// DOEFF130: 翻訳の層の handler が業務の intent を出す所を判じる(error — 責務の境界の違反)。業務の intent = 撃った呼びの頭が、
-/// 設定の intent_layers の module の大文字の名(型)。撃った呼びの頭が repo の defk なら、その先を max_depth 段まで辿る —
+/// 設定の intent_layers の module の大文字の名(型)で、handler と同じ service の物(他の service の公開の intent は数えない)。撃った呼びの頭が repo の defk なら、その先を max_depth 段まで辿る —
 /// 定義の本文の名だけでは、import した関数を経由した intent がすり抜ける(agora-redesign #956・#942 の独立レビュー)。
 fn judge_translation_intents(
     file: &LayerFile,
@@ -3766,7 +3766,10 @@ fn judge_translation_intents(
             return None;
         }
         let site = index.get(module).or_else(|| index.get(&format!("{}.__init__", module)))?;
-        translation.intent_layers.contains(&site.layer).then_some(site.layer)
+        // 他の service の公開の intent を出すのは翻訳の仕事(DOEFF156 の「他の service の公開の効果」と同じ読み — agora-redesign #1134 の決め)。
+        // 止めるのは handler と同じ service の intent だけ。どちらかの service が決まらない(層が先の置き場)時は、今までどおり数える。
+        let other_service = matches!((&site.service, &file.site.service), (Some(intent), Some(handler)) if intent != handler);
+        (translation.intent_layers.contains(&site.layer) && !other_service).then_some(site.layer)
     };
     let is_intent = |qualified: &str| intent_layer_of(qualified).is_some();
     let lines = LineIndex::new(source);

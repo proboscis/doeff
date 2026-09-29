@@ -730,7 +730,9 @@ agora-redesign #956(#942 の決定 2 — 責務の境界の規則)。翻訳の�
   呼ばれれば、その先として辿られる)。
 - **業務の intent**: 実行する呼びの頭を module まで解いた名が、`translation_effects.intent_layers` の層(既定 intent)の module の、
   頭が大文字の名(型)であること。`defeffect` でも `defclass` でもよい(層 intent は型だけを置く — 型を実行すれば intent を出している)。
-  module は層の母集団の索引で解く(package の `__init__` も)。
+  module は層の母集団の索引で解く(package の `__init__` も)。数えるのは handler と**同じ service** の intent だけ — 他の service の intent
+  (公開の契約)を出すのは翻訳の仕事として許す(DOEFF156 の「他の service の公開の効果」と同じ読み・agora-redesign #1134 の決め)。
+  handler か intent のどちらかの service が決まらない(層が先の置き場)時は、今までどおり数える。
 - **推論**: handler の本体で実行する呼び(`(<- …)`・`(! …)` — 18 節と同じ `signatures::World` の読み)を順に見て、頭が業務の intent なら
   当たり、頭が repo の defk ならその defk の実行する呼びへ進む(import した defk の先も)。進む defk の数の上限は
   `translation_effects.max_depth`(既定 8・0 なら handler の本体で直に出す intent だけ)。同じ handler の中で同じ defk は 1 度だけ見る
