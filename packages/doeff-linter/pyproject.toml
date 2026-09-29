@@ -30,5 +30,29 @@ build-backend = "maturin"
 bindings = "bin"
 strip = true
 
+# uv が「作り直すか」を決める入力(agora-redesign #1294・親 #1160)。
+# uv は path で入れた依存を、既定では pyproject.toml / setup.py / setup.cfg が変わった時にしか作り直さない。
+# この package の中身は Rust の binary なので、src の .rs を変えても使う側の venv は古い binary のまま残る
+# (実例: agora-controllers の venv の `doeff-linter --version` が履歴の書き換えの前の 7cfe942 を名乗り続けた)。
+# そこで binary の入力を全部並べる:
+#   - この crate の Cargo.toml・build.rs(版に埋める commit を決める)・src の .rs・include_str! で埋める data の .json
+#   - path で依存する ../doeff-indexer の Cargo.toml・Cargo.lock・src の .rs・data の .json
+#   (この crate の Cargo.lock は git に載っていないので鍵にしない — 載せたら足す)
+# doeff の commit ごとに作り直す形(`{ git = { commit = true } }`)は、Rust の build が約 2 分かかるので採らない。
+# そのため .rs も data も変えない commit(文書だけ等)では作り直さず、版の表示は前の commit のまま。
+# 戻し方 = この [tool.uv] の節を消す(uv の既定に戻る)。
+[tool.uv]
+cache-keys = [
+    { file = "pyproject.toml" },
+    { file = "Cargo.toml" },
+    { file = "build.rs" },
+    { file = "src/**/*.rs" },
+    { file = "data/**/*.json" },
+    { file = "../doeff-indexer/Cargo.toml" },
+    { file = "../doeff-indexer/Cargo.lock" },
+    { file = "../doeff-indexer/src/**/*.rs" },
+    { file = "../doeff-indexer/data/**/*.json" },
+]
+
 
 
