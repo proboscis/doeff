@@ -1,0 +1,609 @@
+{
+ "_about": "doeff の実 I/O の handler の目録(agora-redesign #1209)— 被せると外の世界(HTTP・file・子 process・実時計・socket・DB・環境変数・thread・cluster の coordinator)に触れる handler と組み立て。linter の DOEFF131・DOEFF133 の相手で、:world-handlers の :wraps はここに在る物だけ。載せない物: 値から答えるだけ(memory・fake・sim・再生)・effect を出し直すだけの翻訳・例外の型。",
+ "_not_listed": {
+  "doeff_cluster.host_contract:environ-reader": "引数に値の表を渡すと純粋(模擬の宿がそう使う)— 既定の引数だけが os.environ。載せると模擬の宿の名指しが DOEFF131 の誤検出になる",
+  "doeff_core_effects.handlers:slog_handler": "stderr へ print するだけ(触れる先の語に stdout・stderr が無い)",
+  "doeff_cluster.record_handlers:effect-recorder": "sink が注入(MemorySink なら値だけ)— 実 I/O は recording-handler が組む sink",
+  "doeff_records.pg:pg-records-handler": "SqlQuery の出し直しだけ(実 DB は postgres-sql-handler)",
+  "doeff_core_effects.scheduler:scheduled": "共同の scheduler(模擬を含む全部の Program の下に敷く)— 環境変数は実装の選択・time.monotonic は停滞の見張りだけで、外の世界から effect に答えない"
+ },
+ "handlers": [
+  {
+   "handler": "doeff_core_effects._http_handlers_impl:http-production-handler",
+   "touches": [
+    "http"
+   ],
+   "why": "httpx.AsyncClient で送る(_http_handlers_impl.hy:39)"
+  },
+  {
+   "handler": "doeff_core_effects.http_handlers:http-production-handler",
+   "touches": [
+    "http"
+   ],
+   "why": "上の再輸出の綴り"
+  },
+  {
+   "handler": "doeff_core_effects._http_handlers_impl:http-fixture-handler",
+   "touches": [
+    "http",
+    "file"
+   ],
+   "why": "record で実送信・fixture の file を読み書き"
+  },
+  {
+   "handler": "doeff_core_effects.http_handlers:http-fixture-handler",
+   "touches": [
+    "http",
+    "file"
+   ],
+   "why": "上の再輸出の綴り"
+  },
+  {
+   "handler": "doeff_core_effects.os_file:os-file-handler",
+   "touches": [
+    "file"
+   ],
+   "why": "os・shutil・tempfile・fcntl で file を読み書き(os_file.hy:184)"
+  },
+  {
+   "handler": "doeff_core_effects.os_process:subprocess-handler",
+   "touches": [
+    "process",
+    "env"
+   ],
+   "why": "subprocess.run・os.environ(os_process.hy:73)"
+  },
+  {
+   "handler": "doeff_core_effects.aiohttp_http_server:aiohttp-http-server",
+   "touches": [
+    "network"
+   ],
+   "why": "aiohttp で listen する"
+  },
+  {
+   "handler": "doeff_core_effects.clickhouse_http_sql:clickhouse-http-sql-handler",
+   "touches": [
+    "http",
+    "db"
+   ],
+   "why": "urllib.request.urlopen で POST"
+  },
+  {
+   "handler": "doeff_core_effects.postgres_sql:postgres-sql-handler",
+   "touches": [
+    "db",
+    "thread"
+   ],
+   "why": "psycopg.connect・BoundedSemaphore"
+  },
+  {
+   "handler": "doeff_core_effects.pooled_postgres_sql:pooled-postgres-sql-handler",
+   "touches": [
+    "db",
+    "thread"
+   ],
+   "why": "Executor の thread で psycopg"
+  },
+  {
+   "handler": "doeff_core_effects.stop_signal_handlers:os-signal-stop-handler",
+   "touches": [
+    "process"
+   ],
+   "why": "signal.signal で SIGINT・SIGTERM を捕まえる"
+  },
+  {
+   "handler": "doeff_core_effects.thread_pool_compute:thread-pool-compute-handler",
+   "touches": [
+    "thread"
+   ],
+   "why": "pool.submit で別 thread の VM"
+  },
+  {
+   "handler": "doeff_core_effects.handlers:await_handler",
+   "touches": [
+    "thread"
+   ],
+   "why": "asyncio の loop を daemon thread で起こす"
+  },
+  {
+   "handler": "doeff_core_effects.handlers:env_var_ask",
+   "touches": [
+    "env"
+   ],
+   "why": "os.environ を読む"
+  },
+  {
+   "handler": "doeff_core_effects.cache_handlers:sqlite_cache_handler",
+   "touches": [
+    "db",
+    "file"
+   ],
+   "why": "sqlite3.connect の file"
+  },
+  {
+   "handler": "doeff_core_effects.memo_handlers:sqlite_memo_handler",
+   "touches": [
+    "db",
+    "file"
+   ],
+   "why": "sqlite3.connect の file"
+  },
+  {
+   "handler": "doeff_time.handlers.async_time:async_time_handler",
+   "touches": [
+    "clock"
+   ],
+   "why": "asyncio.sleep・datetime.now・time.monotonic(壁時計)"
+  },
+  {
+   "handler": "doeff_time:async-time-handler",
+   "touches": [
+    "clock"
+   ],
+   "why": "上の再輸出の綴り"
+  },
+  {
+   "handler": "doeff_time.handlers.sync_time:sync_time_handler",
+   "touches": [
+    "clock",
+    "thread"
+   ],
+   "why": "time.sleep・threading.Timer"
+  },
+  {
+   "handler": "doeff_time:sync-time-handler",
+   "touches": [
+    "clock",
+    "thread"
+   ],
+   "why": "上の再輸出の綴り"
+  },
+  {
+   "handler": "doeff_cluster.host_contract:host-reader",
+   "touches": [
+    "env"
+   ],
+   "why": "os.environ の DOEFF_WORKER_PROGRAM"
+  },
+  {
+   "handler": "doeff_cluster.runtime_identity_process:process-runtime-facts",
+   "touches": [
+    "env",
+    "file"
+   ],
+   "why": "os.environ・os.getpid・完成の印の file"
+  },
+  {
+   "handler": "doeff_cluster.record_handlers:recording-handler",
+   "touches": [
+    "http",
+    "clock"
+   ],
+   "why": "OTLP / HTTP の sink を urlopen で組む"
+  },
+  {
+   "handler": "doeff_cluster.kube_handlers:kube-api",
+   "touches": [
+    "http"
+   ],
+   "why": "httpx で kubernetes の API"
+  },
+  {
+   "handler": "doeff_cluster.readiness_handlers:readiness-http",
+   "touches": [
+    "cluster"
+   ],
+   "why": "coordinator へ httpx で POST"
+  },
+  {
+   "handler": "doeff_cluster.metrics_handlers:metrics-http",
+   "touches": [
+    "cluster"
+   ],
+   "why": "coordinator へ httpx で POST"
+  },
+  {
+   "handler": "doeff_cluster.shared_handlers:shared-http",
+   "touches": [
+    "cluster",
+    "clock"
+   ],
+   "why": "coordinator の board・leases へ httpx・time.sleep の再送"
+  },
+  {
+   "handler": "doeff_cluster.remote:remote-cluster",
+   "touches": [
+    "cluster"
+   ],
+   "why": "TaskClient で coordinator へ"
+  },
+  {
+   "handler": "doeff_cluster.detached:detached-cluster",
+   "touches": [
+    "cluster"
+   ],
+   "why": "DetachedClient(httpx)"
+  },
+  {
+   "handler": "doeff_cluster.detached:warm-cluster",
+   "touches": [
+    "cluster"
+   ],
+   "why": "WarmClient の /warm"
+  },
+  {
+   "handler": "doeff_cluster.drain_main:coordinator-calls",
+   "touches": [
+    "cluster"
+   ],
+   "why": "endpoint.request(httpx)"
+  },
+  {
+   "handler": "doeff_cluster.handlers:coordinator-desired",
+   "touches": [
+    "cluster"
+   ],
+   "why": "heartbeat を送る"
+  },
+  {
+   "handler": "doeff_cluster.handlers:lease-release-coordinator",
+   "touches": [
+    "cluster"
+   ],
+   "why": "release-leases を送る"
+  },
+  {
+   "handler": "doeff_cluster.handlers:status-to-coordinator",
+   "touches": [
+    "file",
+    "cluster"
+   ],
+   "why": "task の結果 file を読み heartbeat で送る"
+  },
+  {
+   "handler": "doeff_cluster.handlers:local-host",
+   "touches": [
+    "process",
+    "file"
+   ],
+   "why": "subprocess.Popen・os.rename・signal"
+  },
+  {
+   "handler": "doeff_cluster.handlers:status-file",
+   "touches": [
+    "file"
+   ],
+   "why": "write-text・os.replace"
+  },
+  {
+   "handler": "doeff_cluster.coordinator_inbox:http-requests",
+   "touches": [
+    "network",
+    "clock",
+    "thread"
+   ],
+   "why": "本物の HTTP server の thread と queue.get(timeout)"
+  },
+  {
+   "handler": "doeff_cluster.wal_store:wal-store",
+   "touches": [
+    "file"
+   ],
+   "why": "fsync・rename"
+  },
+  {
+   "handler": "doeff_cluster.record_store_handlers:record-files",
+   "touches": [
+    "file"
+   ],
+   "why": "open・os.fsync・gzip"
+  },
+  {
+   "handler": "doeff_cluster.code_prepare:local-tree",
+   "touches": [
+    "file"
+   ],
+   "why": "os.link・os.replace・os.walk"
+  },
+  {
+   "handler": "doeff_cluster.cluster_foundation:with-cluster-handlers",
+   "touches": [
+    "cluster"
+   ],
+   "why": "組み立て — readiness-http・shared-http・remote-cluster などの実 I/O の handler を被せる"
+  },
+  {
+   "handler": "doeff_cluster.cluster_foundation:cluster-handlers",
+   "touches": [
+    "cluster"
+   ],
+   "why": "組み立て — 上の列そのもの"
+  },
+  {
+   "handler": "doeff_records.http_client:http-records-handler",
+   "touches": [
+    "http"
+   ],
+   "why": "既定の BlockingTransport が urllib.request.urlopen(EffectTransport なら HttpRequest を出すだけ)"
+  },
+  {
+   "handler": "doeff_records.http_client:http-table-records-handler",
+   "touches": [
+    "http"
+   ],
+   "why": "上と同じ(表で絞るだけ)"
+  },
+  {
+   "handler": "doeff_agents.io_handlers:driver-io-handler",
+   "touches": [
+    "file",
+    "process",
+    "env",
+    "clock",
+    "network"
+   ],
+   "why": "shutil.which・os.environ・open・socket・subprocess・time"
+  },
+  {
+   "handler": "doeff_agents.sessionhost.substrate:real-substrate",
+   "touches": [
+    "process",
+    "clock",
+    "file",
+    "env"
+   ],
+   "why": "subprocess.run で tmux・time.sleep"
+  },
+  {
+   "handler": "doeff_agents.sessionhost.substrate_herdr:herdr-substrate",
+   "touches": [
+    "network"
+   ],
+   "why": "unix socket に connect"
+  },
+  {
+   "handler": "doeff_agents.sessionhost.store:sqlite-session-store",
+   "touches": [
+    "db",
+    "thread"
+   ],
+   "why": "sqlite3.connect と単一 writer の thread"
+  },
+  {
+   "handler": "doeff_agents.handlers.claude:claude-handler",
+   "touches": [
+    "process",
+    "file",
+    "network",
+    "thread"
+   ],
+   "why": "tmux・~/.claude.json・McpToolServer"
+  },
+  {
+   "handler": "doeff_agents.handlers.codex:codex-handler",
+   "touches": [
+    "process"
+   ],
+   "why": "tmux の new-session・send-keys"
+  },
+  {
+   "handler": "doeff_agents.handlers.effectful:tmux-agent-defhandler",
+   "touches": [
+    "process",
+    "network",
+    "clock"
+   ],
+   "why": "tmux・McpToolServer・time.monotonic"
+  },
+  {
+   "handler": "doeff_agents.handlers.effectful:agent-handler-defhandler",
+   "touches": [
+    "network",
+    "clock"
+   ],
+   "why": "節の中で McpToolServer を起こす"
+  },
+  {
+   "handler": "doeff_agents.handlers:daemon_agent_handler",
+   "touches": [
+    "network",
+    "process"
+   ],
+   "why": "agentd の unix socket・daemon を起こす"
+  },
+  {
+   "handler": "doeff_agents.handlers:claude_agent_runtime_handlers",
+   "touches": [
+    "process",
+    "file",
+    "thread"
+   ],
+   "why": "組み立て — doeff_claude_code の claude-code-handler(子 process の claude)を被せる"
+  },
+  {
+   "handler": "doeff_agents:claude-agent-runtime-handlers",
+   "touches": [
+    "process",
+    "file",
+    "thread"
+   ],
+   "why": "上の再輸出の綴り"
+  },
+  {
+   "handler": "doeff_claude_code.handler:claude-code-handler",
+   "touches": [
+    "process",
+    "file",
+    "thread"
+   ],
+   "why": "subprocess.Popen・stdin/stdout の thread・SIGTERM"
+  },
+  {
+   "handler": "doeff_docker.handlers.shell:shell-run-handler",
+   "touches": [
+    "process"
+   ],
+   "why": "subprocess.run"
+  },
+  {
+   "handler": "doeff_conductor.handlers:production_handlers",
+   "touches": [
+    "file",
+    "process",
+    "network",
+    "thread",
+    "clock"
+   ],
+   "why": "WorkspaceHandler・ExecHandler・agentd"
+  },
+  {
+   "handler": "doeff_conductor.handlers.utils:make_offloaded_scheduled_handler",
+   "touches": [
+    "thread"
+   ],
+   "why": "threading.Thread"
+  },
+  {
+   "handler": "doeff_agentic.handlers.opencode:opencode_handler",
+   "touches": [
+    "http",
+    "process",
+    "clock"
+   ],
+   "why": "httpx・subprocess.Popen・time.sleep"
+  },
+  {
+   "handler": "doeff_agentic.handlers.tmux:tmux_handler",
+   "touches": [
+    "process",
+    "clock"
+   ],
+   "why": "subprocess.run・time.sleep"
+  },
+  {
+   "handler": "doeff_agentic.handlers.production:agentic_effectful_handlers",
+   "touches": [
+    "process",
+    "file",
+    "clock"
+   ],
+   "why": "tmux・state_dir・time.sleep"
+  },
+  {
+   "handler": "doeff_git.handlers.production:production_handlers",
+   "touches": [
+    "process"
+   ],
+   "why": "git と gh を subprocess.run"
+  },
+  {
+   "handler": "doeff_flow.handlers.production:production_handlers",
+   "touches": [
+    "file",
+    "env",
+    "clock"
+   ],
+   "why": "JSONL の追記・DOEFF_FLOW_TRACE_DIR"
+  },
+  {
+   "handler": "doeff_jev.handlers.journal:journal_handler",
+   "touches": [
+    "file",
+    "clock"
+   ],
+   "why": "open(\"a\")・time.strftime"
+  },
+  {
+   "handler": "doeff_jev_proxy.handlers:sqlite-store-handler",
+   "touches": [
+    "db",
+    "clock"
+   ],
+   "why": "sqlite3.connect・time.time"
+  },
+  {
+   "handler": "doeff_secret.handlers:env_var_handler",
+   "touches": [
+    "env"
+   ],
+   "why": "os.environ"
+  },
+  {
+   "handler": "doeff_secret.handlers:env_var_handlers",
+   "touches": [
+    "env"
+   ],
+   "why": "os.environ"
+  },
+  {
+   "handler": "doeff_google_secret_manager.handlers.production:production_handlers",
+   "touches": [
+    "http"
+   ],
+   "why": "Secret Manager の client"
+  },
+  {
+   "handler": "doeff_gemini.handlers.production:production_handlers",
+   "touches": [
+    "http"
+   ],
+   "why": "google.genai の SDK を Await"
+  },
+  {
+   "handler": "doeff_gemini.handlers.production:gemini_production_handler",
+   "touches": [
+    "http"
+   ],
+   "why": "同上"
+  },
+  {
+   "handler": "doeff_gemini.handlers.production:gemini_image_handler",
+   "touches": [
+    "http"
+   ],
+   "why": "同上"
+  },
+  {
+   "handler": "doeff_openai.handlers.production:openai_production_handler",
+   "touches": [
+    "http"
+   ],
+   "why": "OpenAI の SDK を Await"
+  },
+  {
+   "handler": "doeff_openai.handlers.production:production_handlers",
+   "touches": [
+    "http"
+   ],
+   "why": "同上"
+  },
+  {
+   "handler": "doeff_openrouter.handlers.production:openrouter_production_handler",
+   "touches": [
+    "http"
+   ],
+   "why": "OpenRouter の SDK を Await"
+  },
+  {
+   "handler": "doeff_openrouter.handlers.production:production_handlers",
+   "touches": [
+    "http"
+   ],
+   "why": "同上"
+  },
+  {
+   "handler": "doeff_seedream.handlers.production:seedream_image_handler",
+   "touches": [
+    "http"
+   ],
+   "why": "Seedream の SDK を Await"
+  },
+  {
+   "handler": "doeff_seedream.handlers.production:production_handlers",
+   "touches": [
+    "http"
+   ],
+   "why": "同上"
+  }
+ ]
+}

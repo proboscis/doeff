@@ -2001,3 +2001,50 @@ fn test_kind_is_derived_from_what_the_test_reaches() {
     assert!(two_steps["message"].as_str().unwrap().contains("hosted → with-host → app.foundation.host:with-host"), "{}", two_steps["message"]);
     assert_eq!(two_steps["level"], "critical");
 }
+
+/// agora-redesign #1209: 実 I/O の handler は doeff の目録(data/world_handlers.json)から知る — :wraps は目録に在る物だけ(外は設定の誤り)、
+/// 目録に在り :wraps に無い handler(subprocess-handler)を名簿の外で名指しても DOEFF131、:edge-touches から file を外すと file だけに
+/// 届くテストは手元(決定 B)。
+#[test]
+fn world_catalog_widens_the_rules_and_edge_touches_narrow_the_edge() {
+    // :wraps が目録の外なら設定の誤り(終了コード 2)。
+    let outside = r#"
+                   (world-handler "app.foundation.host:with-other" :touches [http] :wraps ["somewhere.else:mystery-handler"])"#;
+    let dir = world_repo_with(&[("app/foundation/host.hy", tags("shared", "foundation") + "(defk with-host [body] body)\n(defk with-other [body] body)\n")], outside, "[\"DOEFF131\"]");
+    let (code, _, stderr) = run(dir.path(), &["--output-format", "editor-json", "--no-log"], None);
+    assert_eq!(code, 2, "{}", stderr);
+    assert!(stderr.contains("somewhere.else:mystery-handler は doeff の実 I/O の handler の目録"), "{}", stderr);
+
+    let files = [
+        ("app/foundation/host.hy", tags("shared", "foundation") + "(defk with-host [body] body)\n"),
+        (
+            "app/billing/entry/main.hy",
+            tags("billing", "entry") + "(import doeff_core_effects.os_process [subprocess-handler])\n(defk run [body] (with-handlers [subprocess-handler] body))\n",
+        ),
+        (
+            "app/billing/tests/test_io.hy",
+            "(import doeff_core_effects.os_file [os-file-handler])\n(import doeff_core_effects.os_process [subprocess-handler])\n\
+             (deftest test-files-only (<- n (with-handlers [os-file-handler] 1)) (assert n))\n\
+             (deftest test-files-marked {:marks [\"real_world\"]} (<- n (with-handlers [os-file-handler] 1)) (assert n))\n\
+             (deftest test-process (<- n (with-handlers [subprocess-handler] 1)) (assert n))\n"
+                .to_string(),
+        ),
+    ];
+    let dir = world_repo_with(&files, "", "[\"DOEFF131\", \"DOEFF133\"]");
+    let arch_path = dir.path().join("architecture.hy");
+    let text = std::fs::read_to_string(&arch_path)
+        .unwrap()
+        .replace(":foundation foundation", ":foundation foundation\n  :edge-mark \"real_world\"\n  :edge-touches [http db process clock cluster network thread]");
+    std::fs::write(&arch_path, text).unwrap();
+    let (_, report) = editor(dir.path());
+    let named = keys(&report, "DOEFF131");
+    assert!(named.contains(&"app/billing/entry/main.hy::DOEFF131::run::world::doeff_core_effects.os_process:subprocess-handler".to_string()), "{:?}", named);
+    let found = violation(&report, "app/billing/entry/main.hy::DOEFF131::run::world::doeff_core_effects.os_process:subprocess-handler");
+    assert!(found["message"].as_str().unwrap().contains("名簿のどの定義もこの handler を :wraps に挙げていない"), "{}", found["message"]);
+    assert_eq!(
+        keys(&report, "DOEFF133"),
+        vec!["app/billing/tests/test_io.hy::DOEFF133::test_files_marked::local", "app/billing/tests/test_io.hy::DOEFF133::test_process::edge"],
+        "file だけのテストは手元(印なしは当てない)・process は縁: {}",
+        report
+    );
+}

@@ -218,6 +218,9 @@ pub struct Architecture {
     /// 「縁」のテスト(外の世界に触れる handler に届くテスト)が持つ pytest の印の名(`:edge-mark "real_world"`)。
     /// 書けば DOEFF133 が、テストの届く先から導いた種類と印の有無の食い違いを出す(agora-redesign #1106 の R3)。
     pub edge_mark: Option<String>,
+    /// 縁と数える触れる先(`:edge-touches [http db …]` — 書かなければ全部)。agora は file・env を入れない
+    /// (一時 dir の file は手元 — agora-redesign #1142 の決定 B)。仕組みは linter・値は repo の宣言。
+    pub edge_touches: Option<Vec<WorldTouch>>,
     #[serde(skip)]
     pub role_descriptions: BTreeMap<String, String>,
     #[serde(skip)]
@@ -307,6 +310,27 @@ impl Architecture {
     /// 許可名簿の定義の module(mangle した dotted の綴り)— 生の副作用を許す所(DOEFF106)。
     pub fn world_modules(&self) -> BTreeSet<String> {
         self.world_handlers.iter().map(|h| h.definition.mangled_module()).collect()
+    }
+
+    /// 縁と数える触れる先(`:edge-touches`・書かなければ全部)。
+    pub fn counts_as_edge(&self, touches: &[WorldTouch]) -> bool {
+        match &self.edge_touches {
+            None => !touches.is_empty(),
+            Some(edge) => touches.iter().any(|t| edge.contains(t)),
+        }
+    }
+
+    /// 目録の doeff の実 I/O の handler の完全修飾名 → (綴り, それを :wraps に挙げた名簿の定義の綴りの列, 触れる先)。
+    pub fn world_targets(&self, catalog: &super::world_catalog::WorldCatalog) -> BTreeMap<String, (String, Vec<String>, Vec<WorldTouch>)> {
+        let wrapped = self.wrapped_targets();
+        catalog
+            .handlers
+            .iter()
+            .map(|(target, handler)| {
+                let by = wrapped.get(target).map(|(_, by)| by.clone()).unwrap_or_default();
+                (target.clone(), (handler.definition.spelling(), by, handler.touches.clone()))
+            })
+            .collect()
     }
 
     /// 許可名簿の定義の完全修飾名 → 綴り。
@@ -516,6 +540,7 @@ impl<'a> Parser<'a> {
             wire_modules: Vec::new(),
             world_handlers: Vec::new(),
             edge_mark: None,
+            edge_touches: None,
             role_descriptions: BTreeMap::new(),
             exclude: vec!["tests".into(), "__pycache__".into(), "conftest.py".into()],
             extensions: None,
@@ -556,6 +581,17 @@ impl<'a> Parser<'a> {
                 }
                 ":wire-modules" => arch.wire_modules = self.module_patterns(value, ":wire-modules"),
                 ":world-handlers" => arch.world_handlers = self.world_handlers(value),
+                ":edge-touches" => {
+                    let mut touches = Vec::new();
+                    for word in self.names(value, ":edge-touches") {
+                        match WorldTouch::parse(&word) {
+                            Some(touch) if !touches.contains(&touch) => touches.push(touch),
+                            Some(_) => self.problem(value, &format!(":edge-touches の {} が 2 度書かれている", word)),
+                            None => self.problem(value, &format!(":edge-touches の {} は語の外", word)),
+                        }
+                    }
+                    arch.edge_touches = Some(touches);
+                }
                 ":edge-mark" => {
                     arch.edge_mark = self.required_string(value, ":edge-mark");
                     let well_formed = arch.edge_mark.as_deref().is_some_and(|m| !m.is_empty() && m.chars().all(|c| c.is_ascii_alphanumeric() || c == '_'));

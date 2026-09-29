@@ -24,6 +24,7 @@ pub mod settings;
 pub mod signatures;
 pub mod call_view;
 pub mod body_view;
+pub mod world_catalog;
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
@@ -1178,7 +1179,7 @@ impl<'a> LayerJudge<'a> {
     /// DOEFF131: :wraps に挙げた doeff の実 I/O の handler を、名簿の定義(とその中の入れ子の定義)の外で名指す所。
     /// 値として渡す参照(with-handlers の列)と呼び出しの両方を数え、同じ定義の同じ handler は 1 件にまとめる。
     fn world_handler_named(&self, hy_file: &HyFileIndex, architecture: &architecture::Architecture) -> Vec<Draft> {
-        let wrapped = architecture.wrapped_targets();
+        let wrapped = architecture.world_targets(world_catalog::WorldCatalog::bundled());
         let listed = architecture.world_definition_targets();
         let definitions = &hy_file.definitions;
         // import の行の名は名指しではない(import した名を使う所だけを数える)。
@@ -1210,7 +1211,8 @@ impl<'a> LayerJudge<'a> {
         chosen
             .into_iter()
             .map(|((owner, target), range)| {
-                let (spelling, by) = &wrapped[&target];
+                let (spelling, by, _) = &wrapped[&target];
+                let allowed = if by.is_empty() { "名簿のどの定義もこの handler を :wraps に挙げていない".to_string() } else { by.join("・") };
                 let definition = owner.map(|i| definition_label(&definitions[i])).unwrap_or_else(|| "module の top level".to_string());
                 let shown = owner.map(|i| definitions[i].name.clone()).unwrap_or_else(|| "module の top level".to_string());
                 self.draft(
@@ -1220,10 +1222,10 @@ impl<'a> LayerJudge<'a> {
                         "{} が doeff の実 I/O の handler {} を名指す — 名指してよいのは architecture.hy の :world-handlers の定義({})だけ",
                         shown,
                         spelling,
-                        by.join("・")
+                        allowed
                     ),
                     Some(format!("{}::world::{}", definition, spelling)),
-                    Explain::WorldHandlerNamed { placement: self.placement.clone(), definition: shown.clone(), wrapped: spelling.clone(), listed_by: by.join("・") },
+                    Explain::WorldHandlerNamed { placement: self.placement.clone(), definition: shown.clone(), wrapped: spelling.clone(), listed_by: allowed.clone() },
                 )
             })
             .collect()
@@ -1662,8 +1664,9 @@ fn carries_edge_mark(source: &str, test: &Definition, mark: &str) -> bool {
 /// 求める。deftest がその集合に在れば縁(:edge-mark の印が要る)、無ければ手元(印を持たない)。Python の検は数えない(R6 で deftest へ)。
 fn judge_test_kinds(root: &Path, architecture: &architecture::Architecture, hy: &HashMap<String, HyFileIndex>) -> Vec<Draft> {
     let Some(mark) = architecture.edge_mark.as_deref() else { return Vec::new() };
-    let listed = architecture.world_definition_targets();
-    let wrapped = architecture.wrapped_targets();
+    let listed: HashMap<String, (String, Vec<architecture::WorldTouch>)> =
+        architecture.world_handlers.iter().map(|h| (h.definition.target(), (h.definition.spelling(), h.touches.clone()))).collect();
+    let wrapped = architecture.world_targets(world_catalog::WorldCatalog::bundled());
     let mut rels: Vec<&String> = hy.keys().collect();
     rels.sort();
     // 定義 1 つ = 節 1 つ(file の順・file の中の添字の順)。
@@ -1686,9 +1689,15 @@ fn judge_test_kinds(root: &Path, architecture: &architecture::Architecture, hy: 
         let first = base[rel.as_str()];
         let definitions = &file.definitions;
         for (index, definition) in definitions.iter().enumerate() {
-            if let Some(spelling) = listed.get(&definition.qualified_name) {
+            // 縁に数えるのは :edge-touches の触れる先だけ(名簿の定義はその :touches・生の I/O は証拠の分類で判じる)。
+            if let Some((spelling, _)) = listed.get(&definition.qualified_name).filter(|(_, t)| architecture.counts_as_edge(t)) {
                 world[first + index] = Some(spelling.clone());
-            } else if let Some(evidence) = definition.raw.direct.iter().find(|e| e.strength == RawStrength::Strong) {
+            } else if let Some(evidence) = definition
+                .raw
+                .direct
+                .iter()
+                .find(|e| e.strength == RawStrength::Strong && architecture.counts_as_edge(&[world_catalog::touch_of_raw(e.category)]))
+            {
                 world[first + index] = Some(evidence.name.clone());
             }
         }
@@ -1717,8 +1726,8 @@ fn judge_test_kinds(root: &Path, architecture: &architecture::Architecture, hy: 
         for (target, owner) in spots {
             let Some(owner) = owner else { continue };
             let owner = first + owner;
-            if let Some((spelling, _)) = wrapped.get(target) {
-                if world[owner].is_none() {
+            if let Some((spelling, _, touches)) = wrapped.get(target) {
+                if architecture.counts_as_edge(touches) && world[owner].is_none() {
                     world[owner] = Some(spelling.clone());
                 }
             } else if let Some(&callee) = by_name.get(target) {
