@@ -223,6 +223,37 @@ pub struct AllowedHeads {
     pub range: doeff_indexer::hy_index::Range,
 }
 
+/// 頭を呼んでよい場所 1 つ(`:call-sites` の `(site "module:名" :count N :parent "頭" :branch "名")`)。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct CallSiteSite {
+    pub definition: DefinitionRef,
+    /// この定義の中の呼びの数(書かなければ数えない)。
+    pub count: Option<usize>,
+    /// この定義の中の呼びは、直ぐ外の form の頭がこの綴りの物の直の要素(例: `(try-handler (serve config))` — 最も内側)。
+    pub parent: Option<String>,
+    /// この定義の中の呼びは、cond・when・if の分岐のうち条件の form にこの記号が在る枝の中。
+    pub branch: Option<String>,
+    /// architecture.hy の中の位置。
+    #[serde(skip)]
+    pub range: doeff_indexer::hy_index::Range,
+}
+
+/// 頭を呼んでよい場所と回数を決めた綴り 1 つ(`:call-sites` の `(call-site "頭" :files [..] :except [..] :sites [(site …) …] :why "…")` —
+/// DOEFF159・agora-redesign #1372・#1414)。:files の Hy の file(:except を除く)の中の `(頭 …)` の呼びは、どれも :sites の定義の中に在る。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct CallSite {
+    pub head: String,
+    /// 探す file(repo の根からの path の glob — :retired-words と同じ形)。
+    pub files: Vec<String>,
+    pub except: Vec<String>,
+    pub sites: Vec<CallSiteSite>,
+    /// なぜここだけか(知らせの文に入れる)。
+    pub why: String,
+    /// architecture.hy の中の位置。
+    #[serde(skip)]
+    pub range: doeff_indexer::hy_index::Range,
+}
+
 /// 系の値と系を回す入口(`:systems`)。defsystem の定義は書かなくても系の値。
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
 pub struct Systems {
@@ -375,6 +406,9 @@ pub struct Architecture {
     /// 呼んでよい頭を決めた定義(`:allowed-heads [(allowed-heads "module:名" :heads [..] :why "…") …]` — 空 = 宣言していない)。
     /// 書けば DOEFF147 が、その定義の中の一覧の外の頭を出す(agora-redesign #1413)。
     pub allowed_heads: Vec<AllowedHeads>,
+    /// 頭を呼んでよい場所と回数(`:call-sites [(call-site "頭" :files [..] :sites [(site "module:名" :count 1) …] :why "…") …]` — 空 = 宣言
+    /// していない)。書けば DOEFF159 が、場所の外の呼び・回数の食い違い・外の form と分岐の食い違いを出す(agora-redesign #1414)。
+    pub call_sites: Vec<CallSite>,
     pub services: Vec<ArchService>,
     /// 素の関数を許す理由の種類の閉じた一覧(DOEFF203 の受け入れる答え)。
     pub plain_callable_reasons: Vec<ReasonKind>,
@@ -738,6 +772,7 @@ impl<'a> Parser<'a> {
             placed_dependencies: Vec::new(),
             blind_definitions: Vec::new(),
             allowed_heads: Vec::new(),
+            call_sites: Vec::new(),
             services: Vec::new(),
             plain_callable_reasons: Vec::new(),
             rejected_plain_callable_reasons: Vec::new(),
@@ -791,6 +826,7 @@ impl<'a> Parser<'a> {
                 ":placed-dependencies" => arch.placed_dependencies = self.names(value, ":placed-dependencies"),
                 ":blind-definitions" => arch.blind_definitions = self.blind_definitions(value),
                 ":allowed-heads" => arch.allowed_heads = self.allowed_heads(value),
+                ":call-sites" => arch.call_sites = self.call_sites(value),
                 ":exclude" => arch.exclude = self.names(value, ":exclude"),
                 ":extensions" => arch.extensions = Some(self.names(value, ":extensions")),
                 ":plain-callable-reasons" => arch.plain_callable_reasons = self.reasons(value, ":plain-callable-reasons"),
@@ -1343,6 +1379,98 @@ impl<'a> Parser<'a> {
                 continue;
             }
             out.push(blind);
+        }
+        out
+    }
+
+    /// `[(call-site "頭" :files [..] :except [..]? :sites [(site "module:名" :count N? :parent "頭"? :branch "名"?) …] :why "…") …]` を読む
+    /// (:files・:sites・:why は要る)。
+    fn call_sites(&mut self, value: &Form) -> Vec<CallSite> {
+        let shape = "(call-site \"頭\" :files [..] :except [..]? :sites [(site \"module:名\" :count N? :parent \"頭\"? :branch \"名\"?) …] :why \"…\")";
+        let Some(entries) = self.bracket(value) else {
+            self.problem(value, &format!(":call-sites は {} の列", shape));
+            return Vec::new();
+        };
+        let mut out: Vec<CallSite> = Vec::new();
+        for entry in entries {
+            let parts = self.paren(entry).filter(|p| p.first().and_then(|h| self.symbol(h)) == Some("call-site"));
+            let Some(parts) = parts else {
+                self.problem(entry, &format!(":call-sites の要素は {}", shape));
+                continue;
+            };
+            let Some(head) = parts.get(1).and_then(|h| self.name(h)).filter(|h| !h.is_empty()) else {
+                self.problem(entry, "call-site に頭の綴りが無い");
+                continue;
+            };
+            let range = self.lines.range(entry.span.start, entry.span.end);
+            let mut declared = CallSite { head, files: Vec::new(), except: Vec::new(), sites: Vec::new(), why: String::new(), range };
+            let rest: Vec<&Form> = parts.iter().skip(2).copied().collect();
+            for (key, field) in self.pairs(&rest) {
+                match self.text(key) {
+                    ":files" => declared.files = self.names(field, ":files"),
+                    ":except" => declared.except = self.names(field, ":except"),
+                    ":sites" => declared.sites = self.call_site_sites(field),
+                    ":why" => declared.why = self.required_string(field, ":why").unwrap_or_default(),
+                    _ => self.unknown_key(key, "call-site"),
+                }
+            }
+            let head = declared.head.clone();
+            if declared.files.is_empty() {
+                self.problem(entry, &format!("call-site {} に :files が無い(探す file の無い宣言は置かない)", head));
+            }
+            if declared.sites.is_empty() {
+                self.problem(entry, &format!("call-site {} に :sites が無い(呼んでよい場所の無い宣言は置かない)", head));
+            }
+            if declared.why.trim().is_empty() {
+                self.problem(entry, &format!("call-site {} に :why(なぜここだけか)が無い", head));
+            }
+            if out.iter().any(|d| d.head == declared.head) {
+                self.problem(entry, &format!("call-site {} が 2 度宣言されている", head));
+                continue;
+            }
+            out.push(declared);
+        }
+        out
+    }
+
+    /// `[(site "module:名" :count N :parent "頭" :branch "名") …]` を読む。
+    fn call_site_sites(&mut self, value: &Form) -> Vec<CallSiteSite> {
+        let shape = "(site \"module:名\" :count N? :parent \"頭\"? :branch \"名\"?)";
+        let Some(entries) = self.bracket(value) else {
+            self.problem(value, &format!(":sites は {} の列", shape));
+            return Vec::new();
+        };
+        let mut out: Vec<CallSiteSite> = Vec::new();
+        for entry in entries {
+            let parts = self.paren(entry).filter(|p| p.first().and_then(|h| self.symbol(h)) == Some("site"));
+            let Some(parts) = parts else {
+                self.problem(entry, &format!(":sites の要素は {}", shape));
+                continue;
+            };
+            let Some(head) = parts.get(1) else {
+                self.problem(entry, "site に \"module:名\" が無い");
+                continue;
+            };
+            let Some(definition) = self.definition_ref(head, "site") else { continue };
+            let range = self.lines.range(head.span.start, head.span.end);
+            let mut site = CallSiteSite { definition, count: None, parent: None, branch: None, range };
+            let rest: Vec<&Form> = parts.iter().skip(2).copied().collect();
+            for (key, field) in self.pairs(&rest) {
+                match self.text(key) {
+                    ":count" => match self.text(field).parse::<usize>() {
+                        Ok(count) => site.count = Some(count),
+                        Err(_) => self.problem(field, ":count は 0 以上の整数"),
+                    },
+                    ":parent" => site.parent = self.required_string(field, ":parent"),
+                    ":branch" => site.branch = self.required_string(field, ":branch"),
+                    _ => self.unknown_key(key, "site"),
+                }
+            }
+            if out.iter().any(|s| s.definition == site.definition) {
+                self.problem(entry, &format!("site {} が 2 度書かれている", site.definition.spelling()));
+                continue;
+            }
+            out.push(site);
         }
         out
     }

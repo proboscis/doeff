@@ -263,6 +263,8 @@ law の対応だけを残す。無ければ TOML の設定で今どおり動く�
                         :no-imports True :allow-requires ["doeff-hy.macros"] :why "…")]  ; 決めた材料だけで判じる定義(DOEFF141)
   :allowed-heads [(allowed-heads "controllers.screen.entry.server:_confined" :heads ["defk" ":" "<-" "Try" "when" "return"]
                     :why "…")]  ; 呼んでよい頭を決めた定義(DOEFF147)
+  :call-sites [(call-site "Try" :files ["controllers/screen/**/*.hy"] :except ["controllers/screen/**/tests/**"]
+                 :sites [(site "controllers.screen.entry.server:_confined" :count 1)] :why "…")]  ; 頭を呼んでよい場所と回数(DOEFF159)
   :roles {:judgment "業務の判断をする関数" …}   ; role の説明
   :wire-modules ["controllers.foundation.records_client"]  ; JSON の送受信そのものを行う foundation の module(DOEFF120・13 節)
   :edge-mark "real_world"                  ; 縁のテストの pytest の印の名(DOEFF133 — :world-handlers が要る)
@@ -322,6 +324,7 @@ law の対応だけを残す。無ければ TOML の設定で今どおり動く�
 | DOEFF141 | 決めた材料だけで判じる定義 — `:blind-definitions` の定義ごとに、定義から呼び出しと名指し(値として渡す所)で推移的に届く repo の Hy の定義(入れ子を含む・索引が名前を解いた先で、repo に Hy の file が在る module だけ)の本体に、`:forbid-words` の綴りが部分一致で在る(註は除く)と、届いた定義と語ごとに 1 件。`:no-imports True` なら定義の module の import と require(`:allow-requires` の module の require は macro の読み込みなので除く)を module ごとに 1 件。宣言した定義が無ければ architecture.hy の位置で 1 件(母集団 0 を緑にしない)。読むのは宣言の module と届いた先の module の file だけ(repo 全体の索引は組まない)。全体の実行だけ。既定 critical(agora-redesign #1368) | `<届いた定義>:<語>` / `import:<module>` / `missing` | 語の最初の出現・import・architecture.hy の宣言 |
 | DOEFF147 | 呼んでよい頭を決めた定義 — `:allowed-heads` の定義ごとに、定義の form(入れ子を含む)の `( … )` の頭の綴り(記号と keyword — 特殊形式と macro も含む)が `:heads` に無ければ、頭ごとに 1 件。文字列・註・`#_` で読み捨てた form・tuple と `[ … ]`・`{ … }` の要素は頭に数えない。宣言した定義(file の top level の、頭が `def` で始まる form)が無ければ architecture.hy の位置で 1 件(母集団 0 を緑にしない)。読むのは宣言の module の file だけ(索引も組まない)。全体の実行だけ。既定 critical(agora-redesign #1372・#1413) | `<頭>` / `missing` | 頭の最初の出現・architecture.hy の宣言 |
 | DOEFF148 | 書いてよい file を決めた綴り — `:confined-spellings` の群ごとに、`:files`(repo の根に錨を下ろした glob)に当たる Hy・Python(`.hy`・`.py`・`.pyi`)の file のうち `:except` に当たらない物を読み、註を落とした本文(文字列の中は数える — DOEFF146 と違う)に `:patterns` のどれかが当たれば file ごとに 1 件(当たりの数を message に書く)。`:except` が空なら `:files` のどこにも書かない綴り。`:files` に当たる file が無い群は architecture.hy の位置で 1 件(母集団 0 を緑にしない)。歩くのは glob の頭の `*` を含まない dir だけ。全体の実行だけ。既定 critical(agora-redesign #1373・#1436 — 元は agora-controllers の一時の判定 intake_only_rules.hy) | `<群>` / `<群>:missing` | file の最初の当たり・architecture.hy の宣言 |
+| DOEFF159 | 頭を呼んでよい場所と回数 — `:call-sites` の宣言ごとに、`:files` の glob に当たる Hy の file(`:except` を除く)の `(頭 …)` の呼び(文字列・註・`#_` の中は除く)を集め、どの `:sites` の定義の中にも無い呼びは file ごとに 1 件。場所ごとに、`:count` を書けば呼びの数の食い違い、`:parent` を書けば直ぐ外の form の頭の食い違い、`:branch` を書けば条件の form にその記号が在る cond・when・if・unless の枝の外の呼びを 1 件。場所の定義が無い・`:files` に当たる file が 0 なら architecture.hy の位置で 1 件(母集団 0 を緑にしない)。歩くのは glob の字義どおりの頭の dir だけ。全体の実行だけ。既定 critical(agora-redesign #1372・#1414) | `<頭>:outside` / `<頭>:count:<名>` / `<頭>:parent:<名>` / `<頭>:branch:<名>` / `<頭>:missing:<名>` / `<頭>:empty` | 最初の呼び・場所の定義の名・architecture.hy の宣言 |
 | DOEFF113 | 宣言した service の中の :context の食い違いは warning に上がる | | |
 
 ### 既存の道具との対応

@@ -2855,6 +2855,103 @@ fn allowed_heads_pass_when_listed_and_misreadings_are_config_errors() {
     assert!(all.contains("allowed-heads の no-colon は \"module.path:名\" の綴り"), "{}", all);
 }
 
+/// agora-redesign #1414(#1372 の孫 2): 頭を呼んでよい場所と回数(:call-sites)。正しい形なら緑。場所の外の呼び・回数の食い違い・直ぐ外の
+/// form の食い違い・分岐の外の呼び・消えた場所・当たる file の無い宣言は、それぞれの鍵で赤(:except の file と註・文字列の中は数えない)。
+#[test]
+fn call_sites_confine_where_a_head_is_called() {
+    let server = "(require doeff-hy.macros [defk <-])\n\
+                  (defk confined [conn text] (<- r (Try (on-text conn text))) (when (isinstance r Err) (refuse conn r)))\n\
+                  (defk serve [config]\n  (cond (isinstance arrival Text) (confined arrival.conn arrival.text)\n        (isinstance arrival AnswerFailed) (refuse arrival.conn arrival.failure)))\n\
+                  (defk refuse [conn fault] (Send conn fault))\n";
+    let service = "(defk process [config] (run (watching (try-handler (serve config)))))\n";
+    let declare = "\n  :call-sites [(call-site \"Try\" :files [\"app/billing/**/*.hy\"] :except [\"app/billing/**/tests/**\"]\n                 :sites [(site \"app.billing.entry.server:confined\" :count 1)] :why \"閉じ込めは 1 点\")\n               (call-site \"refuse\" :files [\"app/billing/entry/server.hy\"]\n                 :sites [(site \"app.billing.entry.server:confined\" :count 1) (site \"app.billing.entry.server:serve\" :count 1 :branch \"AnswerFailed\")]\n                 :why \"断りは 2 か所\")\n               (call-site \"serve\" :files [\"app/billing/entry/service.hy\"]\n                 :sites [(site \"app.billing.entry.service:process\" :count 1 :parent \"try-handler\")] :why \"try-handler は最も内側\")]";
+    let build = |server: &str, service: &str, extra: &str| {
+        let files = [
+            ("app/foundation/host.hy", tags("shared", "foundation") + "(defk with-host [body] body)\n"),
+            ("app/billing/entry/server.hy", server.to_string()),
+            ("app/billing/entry/service.hy", service.to_string()),
+            ("app/billing/core/react.hy", "(defk react [x] ;; (Try x) は註\n  \"(Try x)\" x)\n".to_string()),
+            ("app/billing/core/tests/test_react.hy", "(defk t [] (Try (x)))\n".to_string()),
+        ];
+        let dir = world_repo_with(&files, "", "[\"DOEFF159\"]");
+        let arch_path = dir.path().join("architecture.hy");
+        let text = std::fs::read_to_string(&arch_path).unwrap().replace(":foundation foundation", &format!(":foundation foundation{}{}", declare, extra));
+        std::fs::write(&arch_path, text).unwrap();
+        dir
+    };
+    let (_, report) = editor(build(server, service, "").path());
+    assert_eq!(keys(&report, "DOEFF159"), Vec::<String>::new(), "{}", report);
+
+    let broken_server = server
+        .replace("(defk serve [config]", "(defk widen [] (Try (x)))\n(defk serve [config]")
+        .replace("(isinstance arrival AnswerFailed)", "(isinstance arrival AnswerLost)");
+    let broken_service = service.replace("(watching (try-handler (serve config)))", "(try-handler (watching (serve config)))");
+    let (_, report) = editor(build(&broken_server, &broken_service, "").path());
+    assert_eq!(
+        keys(&report, "DOEFF159"),
+        vec![
+            "app/billing/entry/server.hy::DOEFF159::Try:outside",
+            "app/billing/entry/server.hy::DOEFF159::refuse:branch:serve",
+            "app/billing/entry/service.hy::DOEFF159::serve:parent:process",
+        ],
+        "{}",
+        report
+    );
+    let outside = violation(&report, "app/billing/entry/server.hy::DOEFF159::Try:outside");
+    assert_eq!(outside["level"], "critical", "{}", outside);
+    assert_eq!(outside["range"]["start"]["line"], 2, "{}", outside);
+
+    // 場所の定義の名を変える(消えた場所)+ 断りの 1 点の中から自分を呼ぶ(場所の外の呼び)。
+    let renamed = server.replace("(Send conn fault)", "(refuse conn fault)").replace("(defk confined", "(defk kept");
+    let (_, report) = editor(build(&renamed, service, "").path());
+    assert_eq!(
+        keys(&report, "DOEFF159"),
+        vec![
+            "app/billing/entry/server.hy::DOEFF159::Try:outside",
+            "app/billing/entry/server.hy::DOEFF159::refuse:outside",
+            "architecture.hy::DOEFF159::Try:missing:confined",
+            "architecture.hy::DOEFF159::refuse:missing:confined",
+        ],
+        "{}",
+        report
+    );
+}
+
+/// 回数の食い違いと、当たる file の無い宣言。宣言の読み違い(:files・:sites・:why の無い宣言・2 度の宣言・整数でない :count)は設定の誤り。
+#[test]
+fn call_site_counts_and_misreadings() {
+    let files = [
+        ("app/foundation/host.hy", tags("shared", "foundation") + "(defk with-host [body] body)\n"),
+        ("app/billing/entry/server.hy", "(defk serve [] (go 1) (go 2))\n".to_string()),
+    ];
+    let dir = world_repo_with(&files, "", "[\"DOEFF159\"]");
+    let arch_path = dir.path().join("architecture.hy");
+    let original = std::fs::read_to_string(&arch_path).unwrap();
+    let counted = original.replace(
+        ":foundation foundation",
+        ":foundation foundation\n  :call-sites [(call-site \"go\" :files [\"app/billing/entry/server.hy\"] :sites [(site \"app.billing.entry.server:serve\" :count 1)] :why \"1 度\")\n               (call-site \"stop\" :files [\"app/nowhere/**/*.hy\"] :sites [(site \"app.billing.entry.server:serve\")] :why \"空\")]",
+    );
+    std::fs::write(&arch_path, counted).unwrap();
+    let (_, report) = editor(dir.path());
+    assert_eq!(keys(&report, "DOEFF159"), vec!["app/billing/entry/server.hy::DOEFF159::go:count:serve", "architecture.hy::DOEFF159::stop:empty"], "{}", report);
+    let count = violation(&report, "app/billing/entry/server.hy::DOEFF159::go:count:serve");
+    assert!(count["message"].as_str().unwrap().contains("app.billing.entry.server:serve の中の (go …) が 2 回(宣言は 1 回ちょうど)"), "{}", count["message"]);
+
+    let broken = original.replace(
+        ":foundation foundation",
+        ":foundation foundation\n  :call-sites [(call-site \"a\" :sites [(site \"x.y:z\")] :why \"x\")\n               (call-site \"b\" :files [\"x/*.hy\"] :why \"x\")\n               (call-site \"c\" :files [\"x/*.hy\"] :sites [(site \"x.y:z\" :count many)])\n               (call-site \"d\" :files [\"x/*.hy\"] :sites [(site \"x.y:z\")] :why \"x\")\n               (call-site \"d\" :files [\"x/*.hy\"] :sites [(site \"x.y:z\")] :why \"x\")]",
+    );
+    std::fs::write(&arch_path, broken).unwrap();
+    let (code, stdout, stderr) = run(dir.path(), &["--no-log"], None);
+    let all = format!("{}{}", stdout, stderr);
+    assert_ne!(code, 0, "{}", all);
+    assert!(all.contains("call-site a に :files が無い"), "{}", all);
+    assert!(all.contains("call-site b に :sites が無い"), "{}", all);
+    assert!(all.contains(":count は 0 以上の整数"), "{}", all);
+    assert!(all.contains("call-site c に :why"), "{}", all);
+    assert!(all.contains("call-site d が 2 度宣言されている"), "{}", all);
+}
+
 /// agora-redesign #1390: 系の値(defsystem の定義と :systems の :carriers の引数)が運ぶ土台は、系を回す入口(:systems の :runners)に
 /// 届く検からだけ届く — 系の値を読むだけの検と、道具で組むだけの検は手元。土台を直に呼ぶ検は今までどおり縁。
 #[test]
