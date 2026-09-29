@@ -4,11 +4,15 @@
 利用側の pyproject の ``[tool.pytest.ini_options]`` に置く設定:
 
 - ``doeff_test_call_budget_seconds`` — Hy の検の file から集めた検 1 本の実行(pytest の call の段階)の上限の CPU 秒。
+- ``doeff_test_call_budget_by_marker`` — 印ごとの実行の上限(1 行 = ``印=秒``・例 ``real_world=10``)。検が持つ印
+  (``item.iter_markers()`` — module の頭の ``pytestmark`` を含む)に当たる行があればその秒、複数当たれば最も長い秒、
+  1 つも当たらなければ ``doeff_test_call_budget_seconds``。収集の上限は file 単位で印を持たないので 1 つの値のまま。
 - ``doeff_test_collect_budget_seconds`` — Hy の検の file 1 本の module の import の上限の CPU 秒。
 - ``doeff_test_budget_mode`` — ``report``(既定・超えても赤にせず、警告と終わりの一覧だけ)か ``fail``(超えたら赤)。
-- ``doeff_test_budget_registry`` — 上限を超えてよい既存の検の登録簿の dir(rootdir からの相対)。
+- ``doeff_test_budget_registry`` — 上限を超えてよい既存の検の登録簿の dir(rootdir からの相対・1 行 = 1 dir・
+  1 つの値の書き方もそのまま読める)。どの dir に載った鍵も赤にしない。上限を超えた文が足し先に挙げるのは 1 行目の dir。
 
-上限の 2 つがどちらも無ければ何もしない。設計の決め:
+上限の 3 つ(実行・印ごとの実行・収集)がどれも無ければ何もしない。設計の決め:
 
 - 対象は ``.hy`` の検の file(deftest と、同じ file の素の検)だけ。Python の検は模擬の handler の検とは限らないので外す。
 - 判定は CPU 時間(``time.process_time`` — process の全 thread の CPU 時間)で行い、壁時計を併記する。壁時計は機体の負荷
@@ -43,7 +47,7 @@ import importlib.machinery
 import time
 import types
 import warnings
-from collections.abc import Callable, Generator, Mapping
+from collections.abc import Callable, Generator, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
@@ -51,6 +55,7 @@ from typing import Literal
 import pytest
 
 CALL_BUDGET_INI = "doeff_test_call_budget_seconds"
+MARKER_CALL_BUDGET_INI = "doeff_test_call_budget_by_marker"
 COLLECT_BUDGET_INI = "doeff_test_collect_budget_seconds"
 MODE_INI = "doeff_test_budget_mode"
 REGISTRY_INI = "doeff_test_budget_registry"
@@ -107,13 +112,15 @@ def vm_build_line(build: VmBuild) -> str:
 
 @dataclass(frozen=True)
 class Budgets:
-    """設定から読んだ上限(None = その段階は測らない)・超えた時の扱い・登録簿(鍵 → 理由)・doeff-vm の build の種類。"""
+    """設定から読んだ上限(None = その段階は測らない)・印ごとの実行の上限・超えた時の扱い・登録簿(全 dir の鍵 → 理由)・
+    登録簿の dir(設定の順)・doeff-vm の build の種類。"""
 
     call_seconds: float | None
+    call_seconds_by_marker: Mapping[str, float]
     collect_seconds: float | None
     mode: Mode
     registry: Mapping[str, str]
-    registry_dir: str | None
+    registry_dirs: tuple[str, ...]
     vm_build: VmBuild
 
     @property
@@ -212,6 +219,59 @@ def judge(measurement: Measurement, budget: float, registry: Mapping[str, str]) 
     return OverBudget(measurement, budget)
 
 
+@dataclass(frozen=True)
+class SettingError:
+    """設定の値が読めない(文つき)— session の始めに UsageError で止める。"""
+
+    message: str
+
+
+def parse_positive_seconds(raw: str) -> float | SettingError:
+    """秒の文字を正の数に読む。数でない・正でない値は既定へ黙って倒さず誤りにする。"""
+    try:
+        value = float(raw)
+    except ValueError:
+        return SettingError(f"正の秒の数: {raw!r}")
+    if value <= 0:
+        return SettingError(f"正の秒の数: {raw!r}")
+    return value
+
+
+def parse_marker_budgets(lines: Sequence[str]) -> Mapping[str, float] | SettingError:
+    """印ごとの実行の上限の行(``印=秒``)を 印 → 秒 に読む。= の無い行・空の印・読めない秒・同じ印の 2 行は誤り。"""
+    table: dict[str, float] = {}
+    for line in lines:
+        marker, sep, raw = line.partition("=")
+        marker = marker.strip()
+        if not sep or not marker:
+            return SettingError(f"{MARKER_CALL_BUDGET_INI} の行は 印=秒 の形: {line!r}")
+        if marker in table:
+            return SettingError(f"{MARKER_CALL_BUDGET_INI} に印 {marker} の行が 2 つある")
+        match parse_positive_seconds(raw.strip()):
+            case SettingError(message=message):
+                return SettingError(f"{MARKER_CALL_BUDGET_INI} の {marker} は{message}")
+            case float() as seconds:
+                table[marker] = seconds
+    return table
+
+
+def call_budget_for(
+    markers: Iterable[str], by_marker: Mapping[str, float], default: float | None
+) -> float | None:
+    """検 1 本の実行の上限を選ぶ — 当たる印の秒のうち最も長い物、当たる印が無ければ既定(None = 測らない)。"""
+    matched = [by_marker[name] for name in markers if name in by_marker]
+    return max(matched) if matched else default
+
+
+def load_registries(root: Path, directories: Sequence[str]) -> dict[str, str]:
+    """登録簿の dir を順に読み、全 dir の 鍵 → 理由 にまとめる(同じ鍵が 2 つの dir にあれば先の dir の理由)。"""
+    table: dict[str, str] = {}
+    for directory in directories:
+        for key, reason in load_registry(root / directory).items():
+            table.setdefault(key, reason)
+    return table
+
+
 def _seconds_text(measurement: Measurement) -> str:
     """測りの秒の書き方(判定に使う CPU 秒・壁時計・引いた変換)。"""
     text = f"CPU {measurement.judged_seconds:.3f} 秒(壁時計 {measurement.wall_seconds:.3f} 秒"
@@ -220,11 +280,11 @@ def _seconds_text(measurement: Measurement) -> str:
     return text + ")"
 
 
-def over_budget_message(verdict: OverBudget, registry_dir: str | None) -> str:
-    """上限を超えた検の文 — 何秒かかったか・上限・直し方を読み手に渡すため。"""
+def over_budget_message(verdict: OverBudget, registry_dirs: Sequence[str]) -> str:
+    """上限を超えた検の文 — 何秒かかったか・上限・直し方を読み手に渡すため(足し先は登録簿の 1 行目の dir)。"""
     m = verdict.measurement
     what = "実行(call)" if m.phase == "call" else "読み込み(import)"
-    where = registry_dir if registry_dir else f"{REGISTRY_INI} で指す dir"
+    where = registry_dirs[0] if registry_dirs else f"{REGISTRY_INI} で指す dir"
     return (
         f"doeff の検の時間の上限を超えた: {m.key} の{what}が {_seconds_text(m)}・上限 CPU {verdict.budget:.3f} 秒。"
         "検を速くする(模擬の世界を小さくする・待ちを書き込みで起こす)か、直せない理由があれば "
@@ -297,6 +357,12 @@ def pytest_addoption(parser: pytest.Parser) -> None:
         CALL_BUDGET_INI, "Hy の検 1 本の実行(call の段階)の上限の CPU 秒(空 = 測らない)", default=""
     )
     parser.addini(
+        MARKER_CALL_BUDGET_INI,
+        "印ごとの Hy の検 1 本の実行の上限の CPU 秒(1 行 = 印=秒・複数の印に当たれば最も長い秒)",
+        type="linelist",
+        default=[],
+    )
+    parser.addini(
         COLLECT_BUDGET_INI,
         "Hy の検の file 1 本の module の import の上限の CPU 秒(空 = 測らない)",
         default="",
@@ -307,7 +373,10 @@ def pytest_addoption(parser: pytest.Parser) -> None:
         default="report",
     )
     parser.addini(
-        REGISTRY_INI, "上限を超えてよい既存の検の登録簿の dir(rootdir からの相対)", default=""
+        REGISTRY_INI,
+        "上限を超えてよい既存の検の登録簿の dir(rootdir からの相対・1 行 = 1 dir)",
+        type="linelist",
+        default=[],
     )
 
 
@@ -316,13 +385,20 @@ def _seconds(config: pytest.Config, name: str) -> float | None:
     raw = str(config.getini(name)).strip()
     if not raw:
         return None
-    try:
-        value = float(raw)
-    except ValueError:
-        raise pytest.UsageError(f"{name} は正の秒の数: {raw!r}") from None
-    if value <= 0:
-        raise pytest.UsageError(f"{name} は正の秒の数: {raw!r}")
-    return value
+    match parse_positive_seconds(raw):
+        case SettingError(message=message):
+            raise pytest.UsageError(f"{name} は{message}")
+        case float() as value:
+            return value
+
+
+def _marker_seconds(config: pytest.Config) -> Mapping[str, float]:
+    """印ごとの実行の上限を読む。読めない行は止める。"""
+    match parse_marker_budgets([str(line) for line in config.getini(MARKER_CALL_BUDGET_INI)]):
+        case SettingError(message=message):
+            raise pytest.UsageError(message)
+        case table:
+            return table
 
 
 def _mode(config: pytest.Config) -> Mode:
@@ -338,17 +414,24 @@ def _mode(config: pytest.Config) -> Mode:
 def pytest_configure(config: pytest.Config) -> None:
     """上限が 1 つでも設定されていれば、登録簿を読み、変換の数えを差し込む。"""
     call_seconds = _seconds(config, CALL_BUDGET_INI)
+    call_seconds_by_marker = _marker_seconds(config)
     collect_seconds = _seconds(config, COLLECT_BUDGET_INI)
-    if call_seconds is None and collect_seconds is None:
+    if call_seconds is None and not call_seconds_by_marker and collect_seconds is None:
         return
     mode = _mode(config)
-    registry_dir = str(config.getini(REGISTRY_INI)).strip() or None
+    registry_dirs = tuple(str(line) for line in config.getini(REGISTRY_INI))
     try:
-        registry = load_registry(Path(config.rootpath) / registry_dir) if registry_dir else {}
+        registry = load_registries(Path(config.rootpath), registry_dirs)
     except RegistryError as exc:
         raise pytest.UsageError(str(exc)) from None
     config.stash[_BUDGETS_KEY] = Budgets(
-        call_seconds, collect_seconds, mode, registry, registry_dir, read_vm_build()
+        call_seconds,
+        call_seconds_by_marker,
+        collect_seconds,
+        mode,
+        registry,
+        registry_dirs,
+        read_vm_build(),
     )
     counter = CompileCounter()
     counter.install()
@@ -379,7 +462,7 @@ def _record(config: pytest.Config, verdict: Verdict) -> bool:
     budgets = config.stash[_BUDGETS_KEY]
     if budgets.fails_over_budget:
         return True
-    warnings.warn(BudgetWarning(over_budget_message(verdict, budgets.registry_dir)), stacklevel=1)
+    warnings.warn(BudgetWarning(over_budget_message(verdict, budgets.registry_dirs)), stacklevel=1)
     return False
 
 
@@ -406,7 +489,7 @@ def pytest_doeff_import_hy_module(
     )
     verdict = judge(measurement, budgets.collect_seconds, budgets.registry)
     if _record(config, verdict) and isinstance(verdict, OverBudget):
-        pytest.fail(over_budget_message(verdict, budgets.registry_dir), pytrace=False)
+        pytest.fail(over_budget_message(verdict, budgets.registry_dirs), pytrace=False)
     return module
 
 
@@ -431,19 +514,25 @@ def pytest_runtest_call(item: pytest.Item) -> Generator[None, None, None]:
 def pytest_runtest_makereport(
     item: pytest.Item, call: pytest.CallInfo[None]
 ) -> Generator[None, pytest.TestReport, pytest.TestReport]:
-    """通った Hy の検 1 本の call の段階を判定する(落ちた検はその失敗のまま)。"""
+    """通った Hy の検 1 本の call の段階を、その検の印で選んだ上限で判定する(落ちた検はその失敗のまま)。"""
     report = yield
     config = item.config
     budgets = config.stash.get(_BUDGETS_KEY, None)
     measured = item.stash.get(_CALL_MEASURED_KEY, None)
     if (
         budgets is None
-        or budgets.call_seconds is None
         or measured is None
         or call.when != "call"
         or report.outcome != "passed"
         or item.path.suffix != ".hy"
     ):
+        return report
+    budget = call_budget_for(
+        (marker.name for marker in item.iter_markers()),
+        budgets.call_seconds_by_marker,
+        budgets.call_seconds,
+    )
+    if budget is None:
         return report
     measurement = Measurement(
         key=item.nodeid,
@@ -452,10 +541,10 @@ def pytest_runtest_makereport(
         wall_seconds=call.duration,
         compile=measured.compile,
     )
-    verdict = judge(measurement, budgets.call_seconds, budgets.registry)
+    verdict = judge(measurement, budget, budgets.registry)
     if _record(config, verdict) and isinstance(verdict, OverBudget):
         report.outcome = "failed"
-        report.longrepr = over_budget_message(verdict, budgets.registry_dir)
+        report.longrepr = over_budget_message(verdict, budgets.registry_dirs)
     return report
 
 

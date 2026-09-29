@@ -13,14 +13,26 @@ doeff-hy の pytest plugin(entry point `pytest11` の名 `doeff_hy`)だけを持
 ## Hy の検の時間の上限(`doeff_hy_pytest/budget.py`)
 
 模擬の handler で回す検が遅くなったことに気づくための上限です(proboscis/agora-redesign#907)。利用側の
-`[tool.pytest.ini_options]` に置きます。上限の 2 つがどちらも無ければ何もしません。
+`[tool.pytest.ini_options]` に置きます。上限の 3 つ(実行・印ごとの実行・収集)がどれも無ければ何もしません。
 
 | 設定 | 意味 |
 |---|---|
-| `doeff_test_call_budget_seconds` | `.hy` の検の file から集めた検 1 本の実行(call の段階・fixture の setup と teardown を含まない)の上限の CPU 秒 |
-| `doeff_test_collect_budget_seconds` | `.hy` の検の file 1 本の収集(import を含む)の上限の CPU 秒 |
+| `doeff_test_call_budget_seconds` | `.hy` の検の file から集めた検 1 本の実行(call の段階・fixture の setup と teardown を含まない)の上限の CPU 秒。印ごとの上限に当たらない検に使う |
+| `doeff_test_call_budget_by_marker` | 印ごとの実行の上限の CPU 秒(list・1 行 = `印=秒`・例 `["real_world=10"]`)。検の印(module の頭の `pytestmark` を含む)に当たる行があればその秒、複数当たれば最も長い秒。当たらなければ `doeff_test_call_budget_seconds`(それも無ければ測らない)。`=` の無い行・数でない秒・0 以下・同じ印の 2 行は起動の時点で止まる |
+| `doeff_test_collect_budget_seconds` | `.hy` の検の file 1 本の収集(import を含む)の上限の CPU 秒。file 単位で印を持たないので 1 つの値 |
 | `doeff_test_budget_mode` | `report`(既定 — 超えても赤にせず、警告と終わりの一覧だけ)か `fail`(超えた検を赤にする) |
-| `doeff_test_budget_registry` | 上限を超えてよい既存の検の登録簿の dir(1 鍵 1 file・`<鍵の sha256 の先頭 12 字>.txt`・1 行目が鍵・2 行目から理由) |
+| `doeff_test_budget_registry` | 上限を超えてよい既存の検の登録簿の dir(list・1 行 = 1 dir・`"dir"` の 1 つの値の書き方もそのまま読める)。どの dir も 1 鍵 1 file・`<鍵の sha256 の先頭 12 字>.txt`・1 行目が鍵・2 行目から理由。どの dir に載った鍵も赤にせず報告だけ。超えた時の文が足し先に挙げるのは 1 行目の dir |
+
+例(手元の検 1 秒・縁の検 10 秒・登録簿 2 つ):
+
+```toml
+[tool.pytest.ini_options]
+doeff_test_call_budget_seconds = 1.0
+doeff_test_call_budget_by_marker = ["real_world=10"]
+doeff_test_collect_budget_seconds = 1.0
+doeff_test_budget_mode = "fail"
+doeff_test_budget_registry = ["scripts/test_budget/OVER-BUDGET", "scripts/doeff_lint/TEST-KIND-BREACHES"]
+```
 
 - 判定は CPU 時間(`time.process_time`)で行い、壁時計を併記します。壁時計は機体の混み具合で伸び縮みするためです。
 - バイトコードのキャッシュが無い import の変換(`SourceFileLoader.source_to_code` — Hy の import もここを通る)に使った

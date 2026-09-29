@@ -10,15 +10,22 @@ from pathlib import Path
 
 import pytest
 from doeff_hy_pytest.budget import (
+    Budgets,
     CompileCounter,
     CompileTally,
     Measurement,
     OverBudget,
     RegisteredOverBudget,
     RegistryError,
+    SettingError,
+    UncheckedVmBuild,
+    Verdict,
     WithinBudget,
+    call_budget_for,
     judge,
+    load_registries,
     load_registry,
+    parse_marker_budgets,
     registry_file_name,
 )
 
@@ -311,6 +318,148 @@ def test_import_budget_is_judged_at_setup_when_collected_from_records(
     assert "の読み込み(import)が" not in collected.stdout.str()
 
 
+# 印ごとの上限(agora-redesign #1296)。手元の検 1 秒・real_world の検 10 秒の設定で、測った値を判定の純粋な部分へ渡す
+# (実時計で 11 秒待たない)。
+LOCAL_AND_EDGE = {"real_world": 10.0}
+
+
+def _judge_with_markers(
+    markers: list[str], cpu: float, registry: dict[str, str] | None = None
+) -> Verdict:
+    budget = call_budget_for(markers, LOCAL_AND_EDGE, 1.0)
+    assert budget is not None
+    return judge(_measurement(cpu), budget, registry or {})
+
+
+def _fail_mode_budgets(registry: dict[str, str]) -> Budgets:
+    return Budgets(
+        call_seconds=1.0,
+        call_seconds_by_marker=LOCAL_AND_EDGE,
+        collect_seconds=None,
+        mode="fail",
+        registry=registry,
+        registry_dirs=("scripts/test_budget/OVER-BUDGET", "scripts/doeff_lint/TEST-KIND-BREACHES"),
+        vm_build=UncheckedVmBuild(),
+    )
+
+
+def test_unmarked_test_over_one_second_is_red_in_fail_mode() -> None:
+    """印の無い検は既定の 1 秒で判定し、1 秒を超えれば fail の形で赤。"""
+    assert _fail_mode_budgets({}).fails_over_budget
+    verdict = _judge_with_markers([], 1.2)
+    assert verdict == OverBudget(_measurement(1.2), 1.0)
+
+
+def test_real_world_test_of_five_seconds_is_green() -> None:
+    assert isinstance(_judge_with_markers(["real_world"], 5.0), WithinBudget)
+
+
+def test_real_world_test_of_eleven_seconds_is_red() -> None:
+    assert _judge_with_markers(["real_world"], 11.0) == OverBudget(_measurement(11.0), 10.0)
+
+
+def test_budget_is_the_longest_of_the_matching_markers() -> None:
+    """複数の印が当たる時は最も長い秒。当たらない印(parametrize など)は選びに効かない。"""
+    table = {"real_world": 10.0, "e2e": 30.0}
+    assert call_budget_for(["parametrize", "real_world", "e2e"], table, 1.0) == 30.0
+    assert call_budget_for(["parametrize"], table, 1.0) == 1.0
+    assert call_budget_for(["real_world"], table, None) == 10.0
+    assert call_budget_for([], table, None) is None
+
+
+def test_test_listed_only_in_the_second_registry_is_reported_not_red(tmp_path) -> None:
+    """2 つ目の登録簿の dir に載った検は、上限を超えても報告だけ(赤にしない)。"""
+    first = tmp_path / "scripts/test_budget/OVER-BUDGET"
+    second = tmp_path / "scripts/doeff_lint/TEST-KIND-BREACHES"
+    first.mkdir(parents=True)
+    second.mkdir(parents=True)
+    key = "t.hy::test"
+    (second / registry_file_name(key)).write_text(f"{key}\n縁の検の既知の超過\n", encoding="utf-8")
+    registry = load_registries(tmp_path, _fail_mode_budgets({}).registry_dirs)
+    assert registry == {key: "縁の検の既知の超過"}
+    assert isinstance(_judge_with_markers([], 1.2, registry), RegisteredOverBudget)
+
+
+def test_marker_budget_lines_are_parsed_and_errors_are_values() -> None:
+    assert parse_marker_budgets(["real_world=10", " e2e = 30 "]) == {"real_world": 10.0, "e2e": 30.0}
+    assert parse_marker_budgets([]) == {}
+    assert isinstance(parse_marker_budgets(["real_world=ten"]), SettingError)
+    assert isinstance(parse_marker_budgets(["real_world"]), SettingError)
+
+
+MARKED_SLOW_CALL = f"""\
+(require doeff-hy.macros [deftest])
+(import pytest)
+(setv pytestmark [pytest.mark.real_world])
+{SPIN}
+(deftest test-slow-edge
+  (spin 0.3)
+  (assert True))
+"""
+
+MARKER_INI = (
+    'markers = ["real_world: 縁の検"]\n'
+    'doeff_test_call_budget_seconds = 0.05\ndoeff_test_budget_mode = "fail"\n'
+)
+
+
+def test_marker_budget_is_chosen_from_the_item_markers(
+    pytester: pytest.Pytester, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """印 real_world の検は印の上限で、印の無い検は既定の上限で判定される(pytest の走行の中で item の印を読む)。"""
+    import doeff_vm
+
+    monkeypatch.setattr(doeff_vm, "invariant_checks_enabled", lambda: False)
+    _project(
+        pytester,
+        MARKER_INI + 'doeff_test_call_budget_by_marker = ["real_world=5"]\n',
+        {"test_slow": SLOW_CALL, "test_edge": MARKED_SLOW_CALL},
+    )
+    result = pytester.runpytest("-q")
+    result.assert_outcomes(passed=2, failed=1)
+    result.stdout.fnmatch_lines(["*test_slow.hy::test_slow の実行(call)が CPU *上限 CPU 0.050 秒*"])
+    assert "test_edge.hy::test_slow_edge の実行" not in result.stdout.str()
+
+
+def test_marker_budget_alone_turns_the_plugin_on_and_fails_the_marked_test(
+    pytester: pytest.Pytester, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """印ごとの上限だけの設定でも測る。印の上限を超えた印つきの検は赤、印の無い検は測らない。"""
+    import doeff_vm
+
+    monkeypatch.setattr(doeff_vm, "invariant_checks_enabled", lambda: False)
+    _project(
+        pytester,
+        'markers = ["real_world: 縁の検"]\ndoeff_test_budget_mode = "fail"\n'
+        'doeff_test_call_budget_by_marker = ["real_world=0.05"]\n',
+        {"test_slow": SLOW_CALL, "test_edge": MARKED_SLOW_CALL},
+    )
+    result = pytester.runpytest("-q")
+    result.assert_outcomes(passed=2, failed=1)
+    result.stdout.fnmatch_lines(["*test_edge.hy::test_slow_edge の実行(call)が CPU *上限 CPU 0.050 秒*"])
+
+
+def test_second_registry_dir_is_read_in_a_run(
+    pytester: pytest.Pytester, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """登録簿の dir を list で 2 つ書くと、2 つ目に載った検も報告だけになる。"""
+    import doeff_vm
+
+    monkeypatch.setattr(doeff_vm, "invariant_checks_enabled", lambda: False)
+    _project(
+        pytester,
+        MARKER_INI + 'doeff_test_budget_registry = ["over-budget", "kind-breaches"]\n',
+        {"test_slow": SLOW_CALL},
+    )
+    pytester.mkdir("over-budget")
+    second = pytester.mkdir("kind-breaches")
+    key = "test_slow.hy::test_slow"
+    (second / registry_file_name(key)).write_text(f"{key}\n既存の遅い検\n", encoding="utf-8")
+    result = pytester.runpytest("-q")
+    result.assert_outcomes(passed=2)
+    result.stdout.fnmatch_lines(["*登録簿に載った超過: test_slow.hy::test_slow(call*"])
+
+
 def test_python_test_files_are_not_measured(pytester: pytest.Pytester) -> None:
     pytester.makeconftest(CONFTEST)
     pytester.makepyprojecttoml(
@@ -330,6 +479,17 @@ def test_python_test_files_are_not_measured(pytester: pytest.Pytester) -> None:
         ('doeff_test_call_budget_seconds = "abc"\n', "正の秒の数"),
         ("doeff_test_call_budget_seconds = 0\n", "正の秒の数"),
         ('doeff_test_call_budget_seconds = 1\ndoeff_test_budget_mode = "loud"\n', "report か fail"),
+        (
+            'doeff_test_call_budget_by_marker = ["real_world=abc"]\n',
+            "doeff_test_call_budget_by_marker の real_world は正の秒の数: 'abc'",
+        ),
+        ('doeff_test_call_budget_by_marker = ["real_world=0"]\n', "real_world は正の秒の数"),
+        ('doeff_test_call_budget_by_marker = ["real_world"]\n', "印=秒 の形: 'real_world'"),
+        ('doeff_test_call_budget_by_marker = ["=10"]\n', "印=秒 の形: '=10'"),
+        (
+            'doeff_test_call_budget_by_marker = ["real_world=10", "real_world=5"]\n',
+            "印 real_world の行が 2 つある",
+        ),
     ],
 )
 def test_unreadable_settings_stop_the_session(
