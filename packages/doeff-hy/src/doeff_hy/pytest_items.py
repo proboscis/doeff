@@ -21,7 +21,7 @@ from dataclasses import dataclass
 from typing import Any, cast
 
 import hy
-from hy.importer import BOUND_NAMES_RECORD, add_compile_record
+from hy.importer import BOUND_NAMES_RECORD, DECORATORS_RECORD, TOP_LEVEL_CALLS_RECORD, add_compile_record
 
 NAMESPACE = "doeff.pytest-items"
 
@@ -100,6 +100,11 @@ class RecordedModule:
 
     records: tuple[Record, ...]
     bound_names: frozenset[str]
+    """module の最上位で束縛された名(定義・代入・import — Hy の importer の記録)。"""
+    decorators: dict[str, tuple[str, ...]]
+    """最上位の定義のうち decorator の付いた物の名 → decorator の頭の名(``pytest.fixture`` のように、名に依らず pytest に意味を持たせうる)。"""
+    top_level_calls: frozenset[str]
+    """module の実行の時に、関数と class の本体の外で呼ぶ関数の頭の名(``pytest.skip`` は module ごと飛ばす)。"""
 
 
 # ---------------------------------------------------------------------------
@@ -303,6 +308,11 @@ def read_module(records: Mapping[str, Iterable[Any]]) -> RecordedModule:
     try:
         items = tuple(_decode(raw) for raw in records.get(NAMESPACE, ()))
         bound = frozenset(str(n) for n in records.get(BOUND_NAMES_RECORD, ()))
+        raw_decorators = records.get(DECORATORS_RECORD, {})
+        if not isinstance(raw_decorators, Mapping):
+            raise MalformedRecord(f"decorator の記録 {raw_decorators!r}")
+        decorators = {str(name): tuple(str(h) for h in heads) for name, heads in raw_decorators.items()}
+        calls = frozenset(str(n) for n in records.get(TOP_LEVEL_CALLS_RECORD, ()))
     except (KeyError, TypeError, AttributeError) as exc:
         raise MalformedRecord(str(exc)) from exc
-    return RecordedModule(items, bound)
+    return RecordedModule(items, bound, decorators, calls)
