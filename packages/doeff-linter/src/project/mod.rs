@@ -1665,6 +1665,7 @@ fn definition_graph<'h>(architecture: &architecture::Architecture, hy: &'h HashM
     let listed: HashMap<String, (String, Vec<architecture::WorldTouch>)> =
         architecture.world_handlers.iter().map(|h| (h.definition.target(), (h.definition.spelling(), h.touches.clone()))).collect();
     let wrapped = architecture.world_targets(world_catalog::WorldCatalog::bundled());
+    let static_readers: BTreeSet<String> = architecture.static_readers.iter().map(|r| r.target()).collect();
     let mut rels: Vec<&String> = hy.keys().collect();
     rels.sort();
     // 定義 1 つ = 節 1 つ(file の順・file の中の添字の順)。
@@ -1713,12 +1714,16 @@ fn definition_graph<'h>(architecture: &architecture::Architecture, hy: &'h HashM
             open.push(index);
         }
         let in_import = |range: &Range| file.imports.iter().any(|imp| imp.range.start <= range.start && range.end <= imp.range.end);
+        // 読むだけの受け手(:static-readers)の呼び出しの引数の中の参照は、値として読まれるだけで実行されない — 辺にしない。
+        let read_only: Vec<&Range> =
+            file.calls.iter().filter(|c| c.target.as_deref().is_some_and(|t| static_readers.contains(t))).map(|c| &c.form_range).collect();
+        let only_read = |range: &Range| read_only.iter().any(|form| range_inside(range, form));
         // 辺になる名(索引の定義か :wraps の handler)だけを見る — ほかの名の持ち主の定義は引かない。
         let interesting = |t: &str| by_name.contains_key(t) || wrapped.contains_key(t);
         let spots = file
             .references
             .iter()
-            .filter(|r| r.target.as_deref().is_some_and(interesting) && !in_import(&r.range))
+            .filter(|r| r.target.as_deref().is_some_and(interesting) && !in_import(&r.range) && !only_read(&r.range))
             .filter_map(|r| r.target.as_deref().map(|t| (t, innermost_definition(definitions, &r.range))))
             .chain(file.calls.iter().filter_map(|c| c.target.as_deref().filter(|t| interesting(t)).map(|t| (t, c.caller))));
         for (target, owner) in spots {
