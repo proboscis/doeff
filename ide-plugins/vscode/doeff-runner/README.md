@@ -127,6 +127,15 @@ http・asyncio・時刻・乱数・file・process・環境変数・network・db�
 - `doeff-indexer` は上の「Binary Discovery Order」と同じ順で探します。見つかった binary が `hy-index` を知らない古い版なら、1 度だけ通知を出して Hy の機能を止めます(Python 向けの機能はそのまま動きます)。
 - 子 process は同時に 1 つだけ走らせます。失敗・契約に合わない出力・file ごとの読み取りの問題は Output の `doeff-runner` に理由つきで出ます。
 
+## 新しい版が入った時の報せ(vsix の追随)
+
+手元の機体では、dotfiles の vsix の追随(`agentcli` の `vsix_follow`)が、本線に入った拡張を組んで VS Code に入れます。VS Code は Reload Window まで動作中の拡張を替えないので、この拡張が次の 2 つを報せます。
+
+- **新しい版が入った**: 追随が書く状態 file `~/.local/state/ai/vsix-follow/status.json` の入った commit と、いま動いている拡張の入った dir の印 `out/vsix-follow-build.json` の commit が違えば、「新しい版が入った — Reload Window で有効」の通知を Reload のボタンつきで 1 回出します(この拡張と python-semantic-highlighter の両方)。押すと Reload Window が走ります。Reload は押した時だけで、追随は自分では Reload しません。
+- **組み立てが落ちた**: 状態 file に直近の失敗があれば、理由の 1 行つきの警告を 1 回出します(同じ失敗は繰り返しません)。
+
+状態 file が無い・読めない・知らない版の時は何も出しません。同じ文は Output の `doeff-runner` にも `[vsix の追随]` の行で出ます(agora-redesign #1043)。
+
 ## pixel art の icon
 
 doeff の語(`defk`・`<-`・`Absent` など)・層・linter の違反と規則・service を、同じ絵で見分けるための icon の組です。絵柄は工業の生活感のある機械の sprite(端末・貨物の木箱・データのカートリッジ・ドローン・錨・エアロック・警報灯 — 継ぎはぎの板・ラベル・通気口・配線・ボルト・錆の染み)で、枠は付けません。色と絵柄は operator がくれた見本の絵に寄せています(版 3・2026-09-28)。
