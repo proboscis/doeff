@@ -12,6 +12,7 @@
 ;;;   GET    /board?prefix=[&withVersions=1]   盤の行(鍵が prefix で始まる物)
 ;;;   PUT    /board/<鍵>     {"value": …, "expect"?: …, "expectVersion"?: …} compare-and-set。合わなければ 409
 ;;;   POST   /tasks · GET /tasks/<id> · DELETE /tasks/<id>   task を出す・問い合わせる(lease を延ばす)・落とす
+;;;   POST   /tasks/<id>/result   task の子 process が終わる前に直に届ける結果(届かなければ worker の heartbeat が運ぶ — #1387)
 ;;;   PUT /detached/<key> · GET /detached/<key> · POST /detached/<key>/cancel · DELETE /detached/<key>
 ;;;                           切り離した task を送る(job id で冪等)・読む(lease に触らない)・取り消す・保持を解く(detached_policy)
 ;;;   GET    /livez · /readyz   k8s の probe。調停ループを通さず、HTTP の受付(handler)が「ループが最後に要求を取りに来た時刻」だけで

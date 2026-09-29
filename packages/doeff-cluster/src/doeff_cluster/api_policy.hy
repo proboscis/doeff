@@ -20,6 +20,8 @@
 ;;;                                      boot = 頼み手の process の世代。退いた世代の頼みは今の世代に drain を付けない(2026-09-27)
 ;;;   POST   /warm {"runtimeEnv" "needs" "ttlSeconds" "holder"} · GET /warm/<キー>
 ;;;                        実行環境の温める表(2026-09-26 — warm_policy。答えは WarmState)
+;;;   POST   /tasks/<id>/result {"worker" "instance" "result" "format"}  task の子 process が終わる前に直に届ける結果(#1387 —
+;;;                        cluster_policy.absorb-task-result。終わった task には何もしない・届かなければ heartbeat が運ぶ)
 ;;;   PUT /programs/<sha> {"blob" "versions"} · GET /programs/<sha>
 ;;;                        詰めた Program の置き場(2026-09-27 — program_policy。宣言の行と heartbeat の返事は sha だけを運ぶ)
 ;;;   PUT /detached/<key> · GET /detached/<key> · POST /detached/<key>/cancel · DELETE /detached/<key>
@@ -32,8 +34,8 @@
 (import urllib.parse [unquote :as url-unquote])
 (import .cluster_model [ClusterState ClusterTiming ClusterNaming Request PlainText BodyInvalid Fault format-refusal required-field])
 (import .metrics_policy [record-metrics metrics-text])
-(import .cluster_policy [reconcile register-heartbeat heartbeat-reply state-view submit-task poll-task board-write lease-write
-                         other-generation-boot])
+(import .cluster_policy [reconcile register-heartbeat heartbeat-reply state-view submit-task poll-task absorb-task-result board-write
+                         lease-write other-generation-boot])
 (import .resource_policy [Refused refuse stamp require-actor valid-actor service-readiness service-stopped record-readiness
                           running-process list-resources get-resource events-view create-resource update-resource delete-resource
                           legacy-put-jobs COORDINATOR])
@@ -327,6 +329,10 @@
             ;; 断った本文(400・429)は状態を変えない — 調停も通さず同じ状態を返す。
             #((if (is after state) state (settle state after (loose-actor request) now timing)) status reply))
       (and (= method "GET") (= head "tasks") (= (len parts) 2)) (poll-task state (get parts 1) now)
+      ;; task の子 process が終わる前に直に届ける結果(#1387 — cluster_policy.absorb-task-result)。
+      (and (= method "POST") (= head "tasks") (= (len parts) 3) (= (get parts 2) "result"))
+        (do (setv #(after status reply) (absorb-task-result state (get parts 1) body now))
+            #((if (is after state) state (settle state after (loose-actor request) now timing)) status reply))
       (and (= method "DELETE") (= head "tasks") (= (len parts) 2))
         #((settle state (replace state :tasks (dfor #(k v) (.items state.tasks) :if (!= k (get parts 1)) k v))
                   (loose-actor request) now timing)
