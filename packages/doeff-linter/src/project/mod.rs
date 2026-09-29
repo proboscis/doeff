@@ -526,8 +526,11 @@ pub fn run_with(root: &Path, settings: &ProjectSettings, enabled: &BTreeSet<Proj
                     if enabled.contains(&ProjectRule::TestKindMismatch) && !architecture.world_handlers.is_empty() {
                         drafts.extend(judge_test_kinds(root, architecture, hy));
                     }
-                    if let Some(decl) = architecture.business_fakes.as_ref().filter(|_| enabled.contains(&ProjectRule::BusinessEffectFake)) {
-                        let (found, problems) = crate::timing::timed("business-fakes", || judge_business_fakes(root, architecture, decl, hy));
+                    let fake_rules = [ProjectRule::BusinessEffectFake, ProjectRule::TestOnlyFake, ProjectRule::IntentAnswererNotTranslation];
+                    if let Some(decl) = architecture.business_fakes.as_ref().filter(|_| fake_rules.iter().any(|r| enabled.contains(r))) {
+                        let (found, problems) = crate::timing::timed("business-fakes", || {
+                            judge_business_fakes(root, architecture, Some(layers), decl, architecture.assembly_shape.as_ref(), hy, enabled)
+                        });
                         drafts.extend(found);
                         report.errors.extend(problems);
                     }
@@ -983,6 +986,8 @@ fn whole_hy_index(
     // 許可名簿を書いた repo は、層の置き場の外の file にも DOEFF106・131 を当てる(#1147)ので、全体の索引を作る。
     // DOEFF136 は模擬の環境の deftest から service の entry の層の定義へ届くかを見る。
     let wants_tests = ((enabled.contains(&ProjectRule::BusinessEffectFake)
+        || enabled.contains(&ProjectRule::TestOnlyFake)
+        || enabled.contains(&ProjectRule::IntentAnswererNotTranslation)
         || enabled.contains(&ProjectRule::AssemblyShapeBroken)
         || enabled.contains(&ProjectRule::AssemblyAnswerMisplaced))
         && settings.architecture.as_ref().is_some_and(|a| a.business_fakes.is_some()))
@@ -2471,7 +2476,7 @@ fn effect_clauses(root: &Path, graph: &DefinitionGraph, hy: &HashMap<String, HyF
         let file_taps = taps.entry(rel).or_insert_with(|| std::fs::read_to_string(root.join(rel)).map(|s| business_fakes::taps_in(&s)).unwrap_or_default());
         let head = d.handles.as_ref().map(|h| h.name.clone()).unwrap_or_default();
         let tap = file_taps.get(&(handler.clone(), head)).copied().unwrap_or(false);
-        clauses.push(business_fakes::Clause { node, rel: rel.to_string(), handler, effect, tap, test: role == FileRole::Test });
+        clauses.push(business_fakes::Clause { node, rel: rel.to_string(), handler, effect, tap });
     }
     clauses
 }
@@ -2519,8 +2524,11 @@ fn judge_assembly_shape(
 fn judge_business_fakes(
     root: &Path,
     architecture: &architecture::Architecture,
+    layers: Option<&LayerSettings>,
     decl: &architecture::BusinessFakes,
+    shape: Option<&architecture::AssemblyShape>,
     hy: &HashMap<String, HyFileIndex>,
+    enabled: &BTreeSet<ProjectRule>,
 ) -> (Vec<Draft>, Vec<String>) {
     use business_fakes::{FileRole, Verdict};
     let mut problems = Vec::new();
@@ -2620,9 +2628,25 @@ fn judge_business_fakes(
     };
     let simulated_nodes = reach(&simulation_roots);
     let produced_nodes = reach(&production_roots);
+    // 検の根: 検の file の定義の全部(検だけが使う本番の code の置き場の業務の写しも、ここから届く)。
+    let test_roots: Vec<usize> = (0..count).filter(|&n| role(n) == FileRole::Test).collect();
+    let tested_nodes = reach(&test_roots);
     let clauses = effect_clauses(root, &graph, hy, decl);
     let simulated: Vec<bool> = clauses.iter().map(|c| simulated_nodes[c.node]).collect();
     let produced: Vec<bool> = clauses.iter().map(|c| produced_nodes[c.node]).collect();
+    let tested: Vec<bool> = clauses.iter().map(|c| tested_nodes[c.node]).collect();
+    // 層の名(intent と翻訳)は :assembly-shape から読む。効果の層は定義元の module の置き場で決める。
+    let layer_of = |rel: &str| layers.and_then(|l| classify_layer_file(rel, l).map(|(site, _)| l.layers[site.layer.0].name.clone()));
+    let intent_effect: Vec<bool> = clauses
+        .iter()
+        .map(|c| {
+            let base = business_fakes::module_of_effect(&c.effect).replace('.', "/");
+            let layer = layer_of(&format!("{}.hy", base)).or_else(|| layer_of(&format!("{}.py", base)));
+            shape.is_some_and(|s| layer.as_deref() == Some(s.intent_layer.as_str()))
+        })
+        .collect();
+    let translation_file: Vec<bool> =
+        clauses.iter().map(|c| shape.is_some_and(|s| layer_of(&c.rel).as_deref() == Some(s.translation_layer.as_str()))).collect();
     // 本番の code の Python の handler(索引の図の外)が isinstance で答える効果。
     let python_answered: BTreeSet<String> = WalkDir::new(root)
         .follow_links(false)
@@ -2639,6 +2663,9 @@ fn judge_business_fakes(
         clauses: &clauses,
         simulated: &simulated,
         produced: &produced,
+        tested: &tested,
+        intent_effect: &intent_effect,
+        translation_file: &translation_file,
         external: &external,
         counterexamples: &counterexamples,
         unserved: &unserved,
@@ -2658,27 +2685,63 @@ fn judge_business_fakes(
             explain: Explain::BusinessEffectFake { subject, reason: reason.to_string() },
         }
     };
+    // 節 1 つの知らせ(鍵の細目 = `[<種類>:]<handler>::<効果>`)。
+    let clause_draft = |rule: ProjectRule, i: usize, kind: Option<&str>, what: String, reason: &str| {
+        let clause = &clauses[i];
+        let explain = Explain::BusinessEffectFake { subject: format!("handler {} の節 {}", clause.handler, clause.effect), reason: reason.to_string() };
+        Draft {
+            rule,
+            layer: None,
+            path: root.join(&clause.rel),
+            rel: clause.rel.clone(),
+            range: definition(clause.node).range,
+            message: format!("{} の {} が{}", clause.rel, clause.handler, what),
+            detail: Some(match kind {
+                Some(kind) => format!("{}:{}::{}", kind, clause.handler, clause.effect),
+                None => format!("{}::{}", clause.handler, clause.effect),
+            }),
+            base: Severity::Error,
+            explain,
+        }
+    };
     let drafts = business_fakes::judge(&inputs, decl)
         .into_iter()
         .map(|verdict| match verdict {
-            Verdict::Fake(i) => {
-                let clause = &clauses[i];
-                let d = definition(clause.node);
-                Draft {
-                    rule: ProjectRule::BusinessEffectFake,
-                    layer: None,
-                    path: root.join(&clause.rel),
-                    rel: clause.rel.clone(),
-                    range: d.range,
-                    message: format!("{} の {} が業務の効果 {} に答える偽物(模擬の根からだけ届く)", clause.rel, clause.handler, clause.effect),
-                    detail: Some(format!("{}::{}", clause.handler, clause.effect)),
-                    base: Severity::Error,
-                    explain: Explain::BusinessEffectFake {
-                        subject: format!("handler {} の節 {}", clause.handler, clause.effect),
-                        reason: "模擬の根から届き本番の入口から届かない定義が業務の効果に答えを作っている。業務の操作は下の層の効果を出す defk で書き、検査は外の世界の handler だけを差し替える。".to_string(),
-                    },
-                }
-            }
+            Verdict::Fake(i) => clause_draft(
+                ProjectRule::BusinessEffectFake,
+                i,
+                None,
+                format!("業務の効果 {} に答える偽物(模擬の根からだけ届く)", clauses[i].effect),
+                "模擬の根から届き本番の入口から届かない定義が業務の効果に答えを作っている。業務の操作は下の層の効果を出す defk で書き、検査は外の世界の handler だけを差し替える。",
+            ),
+            Verdict::LowerLayerFake(i) => clause_draft(
+                ProjectRule::BusinessEffectFake,
+                i,
+                Some("lower"),
+                format!("下の層の効果 {} に答える第 2 の偽物(模擬の根からだけ届く)", clauses[i].effect),
+                "下の層の効果に答える偽物は下の層が持つ正典 1 つだけ。模擬は外の世界の handler と正典の偽物で組む。",
+            ),
+            Verdict::TestOnlyFake(i) => clause_draft(
+                ProjectRule::TestOnlyFake,
+                i,
+                None,
+                format!("{} に答える検だけの偽物(検の定義からだけ届く)", clauses[i].effect),
+                "検だけから届く定義が業務の効果か下の層の効果に答えを作っている。業務の handler は本番の 1 つだけで、検は土台(記録の効果・時計・外の相手)の handler の差し替えで組む。わざと壊した反例なら反例の表に載せる。",
+            ),
+            Verdict::IntentAnsweredOutside(i) => clause_draft(
+                ProjectRule::IntentAnswererNotTranslation,
+                i,
+                Some("outside"),
+                format!("intent の効果 {} に翻訳の層の外で答える(本番の入口から届く)", clauses[i].effect),
+                "intent の効果に答えるのは翻訳の層の handler 1 つだけ(本番と模擬で同じ)。環境ごとの別の答え手や土台の handler で答えず、模擬は土台を差し替える。",
+            ),
+            Verdict::IntentAnsweredTwice(i, n) => clause_draft(
+                ProjectRule::IntentAnswererNotTranslation,
+                i,
+                Some("shared"),
+                format!("intent の効果 {} に答える翻訳の handler {} 個の 1 つ", clauses[i].effect, n),
+                "intent の効果 1 つに答える翻訳の handler は 1 つだけ。答えを 1 つの handler にまとめる。",
+            ),
             Verdict::StaleCounterexample(key) => table_draft(
                 &decl.counterexamples,
                 format!("counterexample-unused::{}", key),
@@ -2698,6 +2761,7 @@ fn judge_business_fakes(
                 "外と名乗った効果には本番の答え手が要る(偽物 1 つで通さない)— 本番の handler を書くか、業務の効果なら下の層の効果で書く。今の不足は :unserved の表に理由と担い手つきで載せる。",
             ),
         })
+        .filter(|draft| enabled.contains(&draft.rule))
         .collect();
     (drafts, problems)
 }
