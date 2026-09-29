@@ -15,6 +15,7 @@ import os
 import hy.importer
 
 from doeff_hy.ast_unparse import install as _install_ast_unparse
+from doeff_hy.light_stack import install as _install_light_stack
 
 # Register .hyk and .hyp as Hy source extensions
 for _ext in (".hyk", ".hyp"):
@@ -35,3 +36,6 @@ hy.importer._could_be_hy_src = _could_be_hy_src
 # Hy の `ast.unparse` の差し替えが Python 3.14 の annotationlib と組むと止まらない再帰になる。
 # 定数の値を複製しない同じ変換へ置き換える(理由と上流の報告は doeff_hy/ast_unparse.py)。
 _install_ast_unparse()
+
+# Hy の require 系が呼ぶ inspect.stack を軽い版へ(Hy 以外の呼び出しは元の関数。理由は doeff_hy/light_stack.py)。
+_install_light_stack()
