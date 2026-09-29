@@ -60,6 +60,8 @@
 ;;;   ReadCoordinator path      coordinator の口の GET の本文(/state・/workers/<名>・/metrics など)。
 ;;;   StopCoordinator 秒        coordinator の Pod を優雅に止め(次の拍の止めの合図)、秒の間止めてから作り直す(置き場から読み直す)。
 ;;;   CrashCoordinator 秒       次の Persist を失敗させる(返事をせずに落ちる — 取った要求の送り手には接続の失敗)。秒の後に作り直す。
+;;;   FailRoute 型 path 状態 秒  coordinator の口 型 path(完全一致)への要求に、秒の間 状態(5xx など)で答える(本番の coordinator の前の
+;;;                             ingress や作り直しの最中の答え — 要求は調停ループに届かず、状態を変えない)。
 ;;;   CoordinatorRuns           coordinator の Pod の一生の列(SimCoordinatorRun — 始まり・終わり・止まり方)。
 ;;;   KillWorker 名             worker が node ごと死ぬ: 子 process は全部 exit -9 で止まり(中で Spawn した task も)、heartbeat が止まる。
 ;;;                             答え = 止めた process の数。
@@ -128,7 +130,7 @@
 (import .handlers [declared-job-spec task-spec heartbeat-body status-report desired-when-unreachable env-report env-heartbeat-part
                    warm-env-of-row])
 (import .host_contract [HOST-CONTRACT SIM-PASSABLE environ-reader])
-(import .job_context [RunContext worker-context-environ process-context-environ context-of-environ])
+(import .job_context [RunContext worker-context-environ process-context-environ context-of-environ runtime-env-of-context])
 (import .job_entry [decoded-program])
 (import .metrics_model [ReportMetrics])
 (import .readiness_model [ReportReady])
@@ -165,6 +167,7 @@
 (val PAUSE-STOP "stop")                      ; coordinator の止まりの種類: 優雅な停止
 (val PAUSE-CRASH "crash")                    ;                         Persist の失敗(返事をせずに落ちる)
 (val CUT-REASON "網が切れている(sim — 送り手の居る worker の網)")
+(val FAULT-REASON "sim: 注入した故障(FailRoute — coordinator の口がこの状態で答える)")
 
 
 ;; --- 公開の値 --------------------------------------------------------------------------------------------
@@ -341,6 +344,14 @@
    :answer None
    :tags {:context "doeff-cluster" :role "intent"}})
 
+(defeffect FailRoute
+  "検の effect: coordinator の口 method path(完全一致)への要求に、seconds 秒の間 status で答える(本番の coordinator の前の ingress・
+   作り直しの最中の 5xx — 要求は調停ループに届かず、状態を変えない。本文は {\"error\" 理由})。網の切れた worker の要求は接続の失敗の
+   まま(切断が先)。答え = None。"
+  {:fields [(: method str) (: path str) (: status int) (: seconds float)]
+   :answer None
+   :tags {:context "doeff-cluster" :role "intent"}})
+
 (defeffect CoordinatorRuns
   "検の effect: coordinator の Pod の一生の列(SimCoordinatorRun の tuple・起きた順)。"
   {:answer tuple
@@ -414,7 +425,8 @@
    上書きの環境変数(Redeclare にも重ねる)・passable = 柵が外へ通す effect の型(SIM-PASSABLE と外の世界の effects)・
    per-process = process ごとの外の handler の組を作る関数(SimOutside.per-process — None = 無し)・store = coordinator の置き場を作る
    関数(引数なし → MemoryWalStore の値 — 派生の class をそのまま渡せる。None = MemoryWalStore)。deployments = 偽の k8s の
-   初期観測(「namespace/名」→ dict)。parts-of が深い写しを作り、1 回の走りの間だけ変更する。"
+   初期観測(「namespace/名」→ dict)。parts-of が深い写しを作り、1 回の走りの間だけ変更する。runtime-env = 宣言の実行環境の宣言
+   (本番の declare の --runtime-env と同じ — Redeclare にも載せる。None = 送り手の版のコードだけ)。"
   (#^ System system)
   (#^ Declaration declaration)
   (#^ tuple workers)
@@ -427,7 +439,8 @@
   (#^ tuple passable)
   (setv #^ (| Callable None) per-process None)
   (setv #^ (| Callable None) store None)
-  (setv #^ (| dict None) deployments None))
+  (setv #^ (| dict None) deployments None)
+  (setv #^ (| RuntimeEnv None) runtime-env None))
 
 
 (defrecord SimParts
@@ -552,6 +565,10 @@
   "今網の切れている worker の名。"
   {:answer frozenset :tags {:context "doeff-cluster" :role "intent"}})
 
+(defeffect FailedRoutes
+  "今故障を入れている coordinator の口(#(method path) → 答える status)。"
+  {:answer dict :tags {:context "doeff-cluster" :role "intent"}})
+
 (defeffect HoldRequests
   "coordinator が取った要求(返事の前に落ちたら接続の失敗を返す相手)を覚える。"
   {:fields [(: batch tuple)] :answer None :tags {:context "doeff-cluster" :role "intent"}})
@@ -590,18 +607,20 @@
   #((SimWorker :name "sim-worker" :provides needs)))
 
 
-(defk declaration-of [system revision environ]
-  {:pre [(: system System) (: revision str) (: environ dict)] :post [(: % Declaration)] :tags {:context "doeff-cluster" :role "judgment"}}
-  "系 → coordinator へ渡す宣言(本番の declare と同じ system-declaration)に、job ごとの environ の上書きを重ねるため(計画 2.7 の H・
-   改訂 1 の M — whole.hy の overrides の置き換え先)。上書きの規則(系に無い job・宣言の :environ に無い名・文字列でない値は断る)は
-   本番の declare と同じ 1 つ(service_model.environ-overlay-refusal)。"
-  (system-declaration system revision :environ environ))
+(defk declaration-of [system revision environ runtime-env]
+  {:pre [(: system System) (: revision str) (: environ dict) (: runtime-env (| RuntimeEnv None))] :post [(: % Declaration)]
+   :tags {:context "doeff-cluster" :role "judgment"}}
+  "系 → coordinator へ渡す宣言(本番の declare と同じ system-declaration)に、job ごとの environ の上書きと実行環境の宣言を重ねるため
+   (計画 2.7 の H・改訂 1 の M — whole.hy の overrides の置き換え先)。上書きの規則(系に無い job・宣言の :environ に無い名・文字列でない
+   値は断る)は本番の declare と同じ 1 つ(service_model.environ-overlay-refusal)。実行環境の宣言は本番の declare の --runtime-env と同じ
+   欄に載り、本物の worker が子へ DOEFF_RUNTIME_ENV で渡す(子の run-context の runtime-env)。"
+  (system-declaration system revision :runtime-env runtime-env :environ environ))
 
 
-(defk sim-plan [system workers environ revision start-ms timing policy outside store [deployments None]]
+(defk sim-plan [system workers environ revision start-ms timing policy outside store [deployments None] [runtime-env None]]
   {:pre [(: system System) (: workers (| tuple None)) (: environ (| dict None)) (: revision str) (: start-ms int)
          (: timing (| ClusterTiming None)) (: policy (| WorkerPolicy None)) (: outside (| SimOutside None)) (: store (| Callable None))
-         (: deployments (| dict None))]
+         (: deployments (| dict None)) (: runtime-env (| RuntimeEnv None))]
    :post [(: % SimPlan)] :tags {:context "doeff-cluster" :role "judgment"}}
   "sim-cluster の引数を検めて筋にするため(走らせる前に断る — environ の上書きの誤り・名の重なる worker)。"
   (<- fallback tuple (default-workers system))
@@ -609,9 +628,9 @@
   (val names (lfor w chosen w.name))
   (when (or (not chosen) (!= (len names) (len (set names))) (not (all (gfor w chosen (isinstance w SimWorker)))))
     (raise (ValueError (.format "workers は名の重ならない SimWorker の 1 つ以上の tuple: {!r}" chosen))))
-  (<- declaration Declaration (declaration-of system revision (or environ {})))
+  (<- declaration Declaration (declaration-of system revision (or environ {}) runtime-env))
   (SimPlan :system system :declaration declaration :workers chosen :environ (or environ {}) :revision revision
-           :per-process (if (is outside None) None outside.per-process) :store store :deployments deployments
+           :per-process (if (is outside None) None outside.per-process) :store store :deployments deployments :runtime-env runtime-env
            :start-ms start-ms :timing (or timing (ClusterTiming)) :naming (ClusterNaming) :policy (or policy (WorkerPolicy))
            :passable (+ SIM-PASSABLE (if (is outside None) #() outside.effects))))
 
@@ -1318,7 +1337,9 @@
                                  :spec-hash (spec-hash spec) :started-ms now)))
     ;; 節の中から Spawn する — 新しい task は節の外側の handler(世界・時計)だけを持ち、run-worker の中の handler を持たない。
     (<- program-path str (program-path-of spec.program))
-    (val link (SimLink :queue parts.queue :actor spec.name :revision spec.revision :peer worker.name))
+    ;; 子の送り手の口は本番の子の TaskClient・DetachedClient と同じく run-context の実行環境の宣言を持つ(cluster_foundation の組)。
+    (<- child-env (| RuntimeEnv None) (runtime-env-of-context ctx))
+    (val link (SimLink :queue parts.queue :actor spec.name :revision spec.revision :peer worker.name :runtime-env child-env))
     (<- plan SimPlan (PlanOf))
     (<- outside ProcessOutside (process-outside plan.per-process spec.name worker.name))
     (val child (SimChild :ctx ctx :program-path program-path :environ (dict spec.environ) :link link :pid pid
@@ -1400,21 +1421,24 @@
 
 (defhandler observe-requests
   {:tags {:context "doeff-cluster" :role "foundation"}}
-  ;; 調停ループの一番内側: 取った要求のうち網の切れた worker から届いた物を落とし(送り手には接続の失敗 — 本番では届かない)、service の
+  ;; 調停ループの一番内側: 取った要求のうち網の切れた worker から届いた物を落とし(送り手には接続の失敗 — 本番では届かない)、故障を
+  ;; 入れている口(FailRoute)への物に注入した status で答えて調停ループへ渡さず、service の
   ;; 報告(ReportReady・ReportMetrics)を世界へ記録し、返事の前に落ちた時に接続の失敗を返す相手として取った要求を覚える。筋書きの
   ;; 止まり(止めの合図)と落ち(Persist の失敗 — 返事をせずに落ちる)を注入する。効果はそのまま外側(本物の組)へ出し直す。
   (NextRequests [timeout-seconds limit]
     (<- batch list effect)
     (<- cut frozenset (CutPeers))
-    (val kept (lfor r batch :if (not-in r.peer cut) r))
+    (<- failing dict (FailedRoutes))
+    (val kept (lfor r batch :if (and (not-in r.peer cut) (not-in #(r.method r.path) failing)) r))
     (<- now int (now-epoch-ms))
     (<- reports tuple (reports-in kept now))
     (when reports
       (<- (NoteReports reports)))
     (<- (HoldRequests (tuple kept)))
     (for [r batch]
-      (when (in r.peer cut)
-        (<- (CompletePromise r.slot #(None {"error" CUT-REASON})))))
+      (cond
+        (in r.peer cut) (<- (CompletePromise r.slot #(None {"error" CUT-REASON})))
+        (in #(r.method r.path) failing) (<- (CompletePromise r.slot #((get failing #(r.method r.path)) {"error" FAULT-REASON})))))
     (resume kept))
   (Reply [request status body]
     (<- (ReleaseRequest request))
@@ -1611,6 +1635,7 @@
   (session var stop-waiters {})
   (session var revivals {})
   (session var cuts {})
+  (session var failing {})
   (session var held #())
   (session var pauses #())
   (session var downtime None)
@@ -1711,6 +1736,9 @@
   (CutPeers []
     (<- now int (now-epoch-ms))
     (resume (frozenset (gfor #(name until) (.items cuts) :if (> until now) name))))
+  (FailedRoutes []
+    (<- now int (now-epoch-ms))
+    (resume (dfor #(route #(status until)) (.items failing) :if (> until now) route status)))
   (HoldRequests [batch]
     (:= held (+ held batch))
     (resume None))
@@ -1790,6 +1818,10 @@
     (<- now int (now-epoch-ms))
     (:= cuts (| cuts {name (+ now (int (* 1000 seconds)))}))
     (resume None))
+  (FailRoute [method path status seconds]
+    (<- now int (now-epoch-ms))
+    (:= failing (| failing {#(method path) #(status (+ now (int (* 1000 seconds))))}))
+    (resume None))
   (DrainWorker [name ttl-seconds]
     (val request (drain-request name ttl-seconds (. (get hosts name) boot)))
     (<- link SimLink (control-link parts.queue plan.revision))
@@ -1810,7 +1842,7 @@
   (ClientLink []
     (resume (SimLink :queue parts.queue :actor CLIENT-NAME :revision plan.revision :peer CLIENT-NAME)))
   (Redeclare [system]
-    (<- declaration Declaration (declaration-of system plan.revision plan.environ))
+    (<- declaration Declaration (declaration-of system plan.revision plan.environ plan.runtime-env))
     (<- link SimLink (control-link parts.queue plan.revision))
     (<- names tuple (apply-declaration link declaration))
     (resume names))
@@ -1895,26 +1927,26 @@
       (<- (Wait pod)))))
 
 
-(defk sim-under-clock [system scenario workers environ revision timing policy outside store [deployments None]]
+(defk sim-under-clock [system scenario workers environ revision timing policy outside store [deployments None] [runtime-env None]]
   {:pre [(: system System) (: scenario (| Program EffectBase)) (: workers (| tuple None)) (: environ (| dict None)) (: revision str)
          (: timing (| ClusterTiming None)) (: policy (| WorkerPolicy None)) (: outside (| SimOutside None)) (: store (| Callable None))
-         (: deployments (| dict None))]
+         (: deployments (| dict None)) (: runtime-env (| RuntimeEnv None))]
    :post [(: % "scenario の答え(型は筋書きごと)")]
    :tags {:context "doeff-cluster" :role "program"}}
   "入口(sim-cluster・wall-sim-cluster)が選んだ時計の内側で、時計の今を起点に筋を作り(引数を検めて断る)、session の値の置き場・sim の
    外の世界・sim の世界を並べて sim-main を走らせるため。時計の違いは入口が並べる handler だけで、ここから内側は同じ。"
   (<- start-ms int (now-epoch-ms))
-  (<- plan SimPlan (sim-plan system workers environ revision start-ms timing policy outside store deployments))
+  (<- plan SimPlan (sim-plan system workers environ revision start-ms timing policy outside store deployments runtime-env))
   (<- answer (with-handlers [(session-store) #* (if (is outside None) [] outside.handlers) (sim-world plan)]
                (sim-main scenario)))
   answer)
 
 
 (defk sim-cluster [system scenario * [workers None] [environ None] [revision "sim"] [start-ms SIM-START-MS] [timing None] [policy None]
-                  [outside None] [store None] [deployments None]]
+                  [outside None] [store None] [deployments None] [runtime-env None]]
   {:pre [(: system System) (: scenario (| Program EffectBase)) (: workers (| tuple None)) (: environ (| dict None)) (: revision str) (: start-ms int)
          (: timing (| ClusterTiming None)) (: policy (| WorkerPolicy None)) (: outside (| SimOutside None)) (: store (| Callable None))
-         (: deployments (| dict None))]
+         (: deployments (| dict None)) (: runtime-env (| RuntimeEnv None))]
    :post [(: % "scenario の答え(型は筋書きごと)")]
    :tags {:context "doeff-cluster" :role "entry"}}
   "系 system(sim の土台で作った System の値)を本物の coordinator と worker の上で走らせ、scenario(検の筋書きの Program — 同じ
@@ -1925,17 +1957,19 @@
    関数(引数なし → MemoryWalStore の値 — 既定 = MemoryWalStore。反例の壊れた置き場 — 書いたふり・読み直せない・欄を落とす — を
    派生の class で渡す。1 回の走りに 1 回だけ呼び、作り直した coordinator も同じ置き場から読み直す)。自分で scheduler を持つ(外に
    scheduler が在っても無くても走る)。deployments = 「namespace/名」→ KubeMemory の観測の dict(specReplicas・replicas・readyReplicas 等)。
-   走りごとに深い写しを作り、初期値を変えない。既定は空。Pod の進行は SettleDeployment。壁の時計で回すなら wall-sim-cluster。"
+   走りごとに深い写しを作り、初期値を変えない。既定は空。Pod の進行は SettleDeployment。runtime-env = 宣言の実行環境の宣言(本番の
+   declare の --runtime-env と同じ — 本物の worker が準備し、子の run-context の runtime-env になる。既定 None)。壁の時計で回すなら
+   wall-sim-cluster。"
   (<- answer (scheduled (with-handlers [(sim-time-handler :start-time (datetime-of-epoch-ms start-ms))]
-                          (sim-under-clock system scenario workers environ revision timing policy outside store deployments))))
+                          (sim-under-clock system scenario workers environ revision timing policy outside store deployments runtime-env))))
   answer)
 
 
 (defk wall-sim-cluster [system scenario * [workers None] [environ None] [revision "sim"] [timing None] [policy None] [outside None]
-                       [store None] [deployments None]]
+                       [store None] [deployments None] [runtime-env None]]
   {:pre [(: system System) (: scenario (| Program EffectBase)) (: workers (| tuple None)) (: environ (| dict None)) (: revision str)
          (: timing (| ClusterTiming None)) (: policy (| WorkerPolicy None)) (: outside (| SimOutside None)) (: store (| Callable None))
-         (: deployments (| dict None))]
+         (: deployments (| dict None)) (: runtime-env (| RuntimeEnv None))]
    :post [(: % "scenario の答え(型は筋書きごと)")]
    :tags {:context "doeff-cluster" :role "entry"}}
   "sim-cluster と同じ系・同じ本物の coordinator と worker・同じ偽の宿と柵を、壁の時計で走らせ、scenario の答えを返す(引数の意味は
@@ -1945,5 +1979,5 @@
    await-handler を並べる)ので、本物の待ち受けを持つ job は土台に await-handler を置くか、その I/O を outside の handler に置く
    (時計の内側なので、ここの await-handler が答える)。自分で scheduler を持つ。"
   (<- answer (scheduled (with-handlers [(await-handler) (async-time-handler)]
-                          (sim-under-clock system scenario workers environ revision timing policy outside store deployments))))
+                          (sim-under-clock system scenario workers environ revision timing policy outside store deployments runtime-env))))
   answer)
