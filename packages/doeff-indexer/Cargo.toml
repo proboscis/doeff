@@ -39,3 +39,5 @@ python = ["pyo3"]
 
 [dev-dependencies]
 tempfile = "3.10"
+# 索引の cache の形(hy_index::CachedHyFile)の往復を、linter の cache と同じ binary の形で確かめる(agora-redesign #1364)。
+bincode = "1.3"

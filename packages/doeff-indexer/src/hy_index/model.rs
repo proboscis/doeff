@@ -3,7 +3,7 @@
 //! effect 節が解く effect)・版 6(定義の decorator)— どれも SPECIFICATION.md の Hy Index の節 — の JSON の形そのもの。
 //! JSON への変換は CLI の出力の 1 か所(`main.rs`)だけが行う。
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 pub use super::position::{Position, Range};
 pub use super::raw_catalog::RawCategory;
@@ -33,7 +33,7 @@ pub enum RawViaScope {
 }
 
 /// 証拠の強さ — 強い = import を通した名前・組み込み、弱い = method 名だけ。
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum RawStrength {
     #[serde(rename = "strong")]
     Strong,
@@ -42,7 +42,7 @@ pub enum RawStrength {
 }
 
 /// 何で見つけたか。
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum RawEvidenceKind {
     #[serde(rename = "name")]
     Name,
@@ -53,7 +53,7 @@ pub enum RawEvidenceKind {
 }
 
 /// 生の副作用の証拠 1 件(参照 1 つの位置)。
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RawEvidence {
     pub category: RawCategory,
     /// import を通した完全な名前(`httpx.post`)か、組み込み・method(`.read_text`)の名前。
@@ -66,7 +66,7 @@ pub struct RawEvidence {
 }
 
 /// 経路の 1 段 — 呼んだ定義。
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RawStep {
     pub path: String,
     /// その file の `definitions` の添字。
@@ -75,14 +75,14 @@ pub struct RawStep {
 }
 
 /// 呼ぶ定義を通した証拠。
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RawVia {
     pub through: Vec<RawStep>,
     pub evidence: RawEvidence,
 }
 
 /// 定義 1 つの判定。
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RawMark {
     pub direct: Vec<RawEvidence>,
     pub via: Vec<RawVia>,
@@ -90,7 +90,7 @@ pub struct RawMark {
 
 
 /// 1 つの file の索引。
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HyFileIndex {
     pub path: String,
     pub module: String,
@@ -102,7 +102,7 @@ pub struct HyFileIndex {
 }
 
 /// top level の定義と、その直下の入れ子の定義。
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Definition {
     pub name: String,
     pub mangled: String,
@@ -146,7 +146,7 @@ pub struct Definition {
 }
 
 /// 書かれた名と、その完全修飾名(版 5 — 呼び出しの `target` と同じ名前の解決。解けなければ null)。
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct NameRef {
     pub name: String,
     pub target: Option<String>,
@@ -154,14 +154,14 @@ pub struct NameRef {
 
 /// 型の注記 1 つ(版 5)— 書かれた綴りと、その中の名(`|`・`of`・`get` の構文を除く記号を書いた順・重ねない)。
 /// 型の意味の読み方(Union・Maybe・Raise)は doeff-linter の signatures が正本で、索引は書かれた事実だけを持つ。
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TypeNote {
     pub text: String,
     pub names: Vec<NameRef>,
 }
 
 /// 引数 1 つの型(版 5)。
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ParamType {
     pub name: String,
     #[serde(rename = "type")]
@@ -169,7 +169,7 @@ pub struct ParamType {
 }
 
 /// 契約の述語がどちらの側か。
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ContractSide {
     #[serde(rename = "pre")]
     Pre,
@@ -178,14 +178,14 @@ pub enum ContractSide {
 }
 
 /// 型でない契約の述語 1 つ(版 5)。
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ContractClause {
     pub side: ContractSide,
     pub text: String,
 }
 
 /// 定義の種類(契約の kind の一覧ちょうど)。
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum DefinitionKind {
     #[serde(rename = "defn")]
     Defn,
@@ -286,7 +286,7 @@ impl DefinitionKind {
 }
 
 /// `(import …)` / `(require …)` の 1 つの名前(または module だけの import)。
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Import {
     pub module: String,
     pub name: Option<String>,
@@ -296,7 +296,7 @@ pub struct Import {
 }
 
 /// 記号の出現の 1 区切り(dotted の `a.b.c` は 3 件)。
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Reference {
     pub name: String,
     pub mangled: String,
@@ -315,7 +315,7 @@ pub struct Reference {
 }
 
 /// 呼び出しの 1 つ(`(` の直後の記号)。effect・handler・defk の間を行き来するためのもの。
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Call {
     /// 頭の記号の最後の区切り(書かれたとおり)。
     pub callee: String,

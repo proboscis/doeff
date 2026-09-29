@@ -18,6 +18,11 @@ use std::io::{self, Read};
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
 
+/// binary の確保器 — repo 全体の Hy の索引の cache の読み・辿り・後片づけの小さな確保と解放を速くするため(Cargo.toml の註・
+/// agora-redesign #1364)。答えは変えない。
+#[global_allocator]
+static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
 #[derive(Parser, Debug)]
 #[command(name = "doeff-linter")]
 #[command(version = doeff_linter::VERSION_TEXT, about = "A linter for enforcing code quality and immutability patterns")]
@@ -610,7 +615,9 @@ fn run_editor(args: &Args) -> ExitCode {
         };
         let only = only_paths(&args.paths);
         let project_report = if setup.has_project_rules() {
-            project::run_with(&setup.root, &setup.settings, &project_rules, Target::Whole { focus: only.as_deref() }, &semantic_mode(args, &setup.root, None))
+            doeff_linter::timing::timed("project", || {
+                project::run_with(&setup.root, &setup.settings, &project_rules, Target::Whole { focus: only.as_deref() }, &semantic_mode(args, &setup.root, None))
+            })
         } else {
             ProjectReport::default()
         };

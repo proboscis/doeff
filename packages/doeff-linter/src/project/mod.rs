@@ -282,18 +282,18 @@ pub fn run_with(root: &Path, settings: &ProjectSettings, enabled: &BTreeSet<Proj
                 _ => Vec::new(),
             };
             let env_files = settings.environment.as_ref().map(|env| collect_environment_files(root, env)).unwrap_or_default();
-            indexes = whole_hy_index(root, settings, enabled, &raw, &layer_files, &env_files, wants_raw);
+            indexes = crate::timing::timed("hy-index", || whole_hy_index(root, settings, enabled, &raw, &layer_files, &env_files, wants_raw));
             let hy = &indexes;
-            let effect_world = effect_world_for(root, settings, enabled, None);
+            let effect_world = crate::timing::timed("effect-world", || effect_world_for(root, settings, enabled, None));
             if let Some(layers) = &settings.layers {
                 let index = module_index(&layer_files);
-                let judged: Vec<LayerJudgement> = layer_files
+                let judged: Vec<LayerJudgement> = crate::timing::timed("layer-judge", || layer_files
                     .par_iter()
                     .map(|file| match std::fs::read_to_string(&file.file.path) {
                         Ok(source) => judge_layer_file(file, &source, layers, settings, enabled, &index, hy.get(&file.file.rel)),
                         Err(error) => LayerJudgement { errors: vec![format!("{}: 読めない: {}", file.file.rel, error)], ..LayerJudgement::default() },
                     })
-                    .collect();
+                    .collect());
                 let mut crossings: BTreeSet<(String, String)> = BTreeSet::new();
                 for judged in judged {
                     drafts.extend(judged.drafts);
@@ -325,7 +325,7 @@ pub fn run_with(root: &Path, settings: &ProjectSettings, enabled: &BTreeSet<Proj
                         drafts.extend(judge_unused_dependencies(root, architecture, &crossings));
                     }
                     if enabled.contains(&ProjectRule::WorldHandlerMisplaced) && !architecture.world_handlers.is_empty() {
-                        drafts.extend(judge_world_handler_places(root, architecture, layers, &layer_files, hy));
+                        drafts.extend(crate::timing::timed("world-handler-places", || judge_world_handler_places(root, architecture, layers, &layer_files, hy)));
                     }
                     if enabled.contains(&ProjectRule::TestKindMismatch) && !architecture.world_handlers.is_empty() {
                         drafts.extend(judge_test_kinds(root, architecture, hy));
@@ -335,7 +335,7 @@ pub fn run_with(root: &Path, settings: &ProjectSettings, enabled: &BTreeSet<Proj
                     }
                     if let Some(raw) = settings.raw.as_ref().filter(|r| r.world_modules.is_some()) {
                         let placed: BTreeSet<&str> = layer_files.iter().map(|f| f.file.rel.as_str()).collect();
-                        drafts.extend(judge_unplaced_world(root, architecture, raw, &placed, hy, enabled));
+                        drafts.extend(crate::timing::timed("unplaced-world", || judge_unplaced_world(root, architecture, raw, &placed, hy, enabled)));
                     }
                     if let Some(forms) = architecture.test_forms.as_ref().filter(|_| enabled.contains(&ProjectRule::TestFormNotDeftest)) {
                         drafts.extend(test_forms::find(root, forms).into_iter().map(|found| {
@@ -374,14 +374,14 @@ pub fn run_with(root: &Path, settings: &ProjectSettings, enabled: &BTreeSet<Proj
             if let (Some(architecture), Some(layers)) = (&settings.architecture, &settings.layers) {
                 if enabled.contains(&ProjectRule::UndeclaredPlace) || enabled.contains(&ProjectRule::UndeclaredDirectory) {
                     let files = collect_architecture_files(root, architecture, layers);
-                    drafts.extend(judge_places(root, architecture, layers, &files, enabled, PlaceScope::Whole, None));
+                    drafts.extend(crate::timing::timed("places", || judge_places(root, architecture, layers, &files, enabled, PlaceScope::Whole, None)));
                 }
             }
             if let Some(definitions) = &settings.definitions {
                 if wants_definitions(enabled) {
-                    let failure = failure_types_for(root, enabled, &definitions.tags);
-                    let defks = defk_names_for(root, enabled);
-                    let program_params = program_params_for(root, enabled, &defks);
+                    let failure = crate::timing::timed("failure-types", || failure_types_for(root, enabled, &definitions.tags));
+                    let defks = crate::timing::timed("defk-names", || defk_names_for(root, enabled));
+                    let program_params = crate::timing::timed("program-params", || program_params_for(root, enabled, &defks));
                     let files: Vec<SourceFile> = hy_index::collect_hy_files(root)
                         .into_iter()
                         .filter_map(|path| {
@@ -390,7 +390,7 @@ pub fn run_with(root: &Path, settings: &ProjectSettings, enabled: &BTreeSet<Proj
                                 .then_some(SourceFile { rel, path, language: Language::Hy })
                         })
                         .collect();
-                    let judged: Vec<Result<Vec<Draft>, String>> = files
+                    let judged: Vec<Result<Vec<Draft>, String>> = crate::timing::timed("definitions-judge", || files
                         .par_iter()
                         .map(|file| {
                             std::fs::read_to_string(&file.path)
@@ -405,7 +405,7 @@ pub fn run_with(root: &Path, settings: &ProjectSettings, enabled: &BTreeSet<Proj
                                 })
                                 .map_err(|error| format!("{}: 読めない: {}", file.rel, error))
                         })
-                        .collect();
+                        .collect());
                     for result in judged {
                         match result {
                             Ok(found) => drafts.extend(found),
@@ -611,8 +611,9 @@ pub fn run_with(root: &Path, settings: &ProjectSettings, enabled: &BTreeSet<Proj
             semantic_probes = probes;
         }
     }
-    let labels = judged_labels(root, settings, &mut report.errors);
-    let (findings, dropped) = finish(drafts, settings, &registry, &labels.false_positives);
+    crate::timing::timed("drop-index", || drop(indexes));
+    let labels = crate::timing::timed("labels", || judged_labels(root, settings, &mut report.errors));
+    let (findings, dropped) = crate::timing::timed("finish", || finish(drafts, settings, &registry, &labels.false_positives));
     report.findings = findings;
     if let Some(summary) = report.semantic.as_mut() {
         summary.false_positives = dropped;
@@ -774,8 +775,10 @@ fn whole_hy_index(
     if !(wants_raw && settings.raw.is_some()) && !wants_env && !wants_classes && !wants_tests {
         return HashMap::new();
     }
-    let index = if (enabled.contains(&ProjectRule::RawSideEffectVia) && settings.raw.is_some()) || wants_classes || wants_tests {
-        hy_index::index_root(root, raw)
+    // hy_index::index_root / index_paths と同じ組み方(集めた順に file ごとに読み、生の副作用を注記する)— ただし file ごとの読みを
+    // cache から引く(cached_hy_files)。経由の辿りは他の file の中身と目録で答えが変わるので毎回組む。
+    let (paths, via) = if (enabled.contains(&ProjectRule::RawSideEffectVia) && settings.raw.is_some()) || wants_classes || wants_tests {
+        (crate::timing::timed("hy-index.collect", || hy_index::collect_hy_files(root)), true)
     } else {
         let paths: BTreeSet<PathBuf> = layer_files
             .iter()
@@ -784,12 +787,23 @@ fn whole_hy_index(
             .filter(|f| f.language == Language::Hy)
             .map(|f| f.path.clone())
             .collect();
-        hy_index::index_paths(root, &paths.into_iter().collect::<Vec<_>>(), raw)
+        (paths.into_iter().collect::<Vec<_>>(), false)
     };
-    index
-        .files
+    let mut files = crate::timing::timed("hy-index.read", || cached_hy_files(root, &paths));
+    crate::timing::timed("hy-index.annotate", || hy_index::annotate_raw(&mut files, &raw.catalog, via));
+    files.into_iter().filter_map(|file| relative_path(root, Path::new(&file.path)).map(|rel| (rel, file))).collect()
+}
+
+/// Hy の file の索引(生の副作用の注記の前)を、file ごとの cache(facts_cache の種類 "hy-index"・binary の形)を通して読むため
+/// (agora-redesign #1364 — 1 file の実行でも repo 全体の索引を組むので、変わった file だけ読み直す)。答えは cache の無い
+/// hy_index::index_file と同じ — cache の形が契約の JSON の形では運べない欄も持つ(hy_index::CachedHyFile)。欄の数が合わない
+/// 壊れた cache はその file を読み直す。鍵は facts_cache と同じ(file の大きさと更新時刻・linter の binary の印と版)で、file の path を
+/// 鍵の名にする。
+fn cached_hy_files(root: &Path, paths: &[PathBuf]) -> Vec<HyFileIndex> {
+    let keyed: Vec<(String, PathBuf)> = paths.iter().map(|path| (path.to_string_lossy().into_owned(), path.clone())).collect();
+    facts_cache::per_file_compact(root, "hy-index", &keyed, |_key, path| Some(hy_index::CachedHyFile::of(hy_index::index_file(root, path))))
         .into_iter()
-        .filter_map(|file| relative_path(root, Path::new(&file.path)).map(|rel| (rel, file)))
+        .map(|cached| cached.into_file().unwrap_or_else(|broken| hy_index::index_file(root, Path::new(&broken.path))))
         .collect()
 }
 

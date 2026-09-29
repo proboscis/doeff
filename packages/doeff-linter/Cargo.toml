@@ -35,6 +35,11 @@ ureq = { version = "2.10", default-features = false, features = ["tls"] }
 sha2 = "0.10"
 # 設定の知らない鍵を、止めずに path つきで集める(struct の定義が知っている鍵の唯一の正本 — 鍵の表を手で持たない・agora-redesign #848)。
 serde_ignored = "0.1"
+# repo 全体の Hy の索引の file ごとの cache を、欄の名前を持たない binary の形で置く(JSON では 147MB・読みに 1.2 秒 — agora-redesign #1364)。
+bincode = "1.3"
+# binary の確保器(main.rs の global_allocator)— 索引の cache の読み・辿り・後片づけは小さな確保と解放の数百万回で、既定の確保器では
+# 1 file の実行の半分近くを占めた(agora-redesign #1364)。
+mimalloc = { version = "0.1", default-features = false }
 
 [dev-dependencies]
 tempfile = "3.10"

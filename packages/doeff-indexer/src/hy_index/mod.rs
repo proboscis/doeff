@@ -6,6 +6,7 @@
 //! 読めた分を出して `errors` に理由を積む。
 
 mod analyze;
+mod cache_form;
 pub mod fields;
 mod model;
 mod position;
@@ -27,6 +28,7 @@ mod qualify_tests;
 use std::path::{Component, Path, PathBuf};
 
 pub use analyze::mangle;
+pub use cache_form::{CachedHyFile, CachedHyFileMismatch};
 pub use model::{
     Call, Definition, DefinitionKind, HyFileIndex, HyIndex, Import, Position, Range, RawEvidence, RawEvidenceKind, RawMark,
     RawStep, RawStrength, RawVia, RawViaScope, Reference, CONTRACT_VERSION, ContractClause, ContractSide, NameRef, ParamType,
