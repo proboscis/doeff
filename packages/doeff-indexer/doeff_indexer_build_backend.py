@@ -5,21 +5,37 @@ and editable installs. Both the CLI build and maturin's build use the cargo targ
 doeff_cargo_backend.cargo_target_dir (outside the package dir — agora-redesign #1493).
 """
 
-import importlib
 import os
 import shutil
 import subprocess
 from pathlib import Path
-from typing import Any
 
-from doeff_cargo_backend import cargo_target_dir
+import maturin
+
+# build をしない hook は、共通の口のもの(maturin へそのまま渡す)を使う。
+from doeff_cargo_backend import (
+    ConfigSettings,
+    cargo_target_dir,
+    get_requires_for_build_editable,
+    get_requires_for_build_sdist,
+    get_requires_for_build_wheel,
+    prepare_metadata_for_build_editable,
+    prepare_metadata_for_build_wheel,
+)
+
+__all__ = [
+    "build_editable",
+    "build_sdist",
+    "build_wheel",
+    "get_requires_for_build_editable",
+    "get_requires_for_build_sdist",
+    "get_requires_for_build_wheel",
+    "prepare_metadata_for_build_editable",
+    "prepare_metadata_for_build_wheel",
+]
 
 _PROJECT_ROOT = Path(__file__).resolve().parent
 _PYTHON_BIN_DIR = _PROJECT_ROOT / "python" / "doeff_indexer" / "bin"
-
-
-def _maturin() -> Any:
-    return importlib.import_module("maturin")
 
 
 def _is_windows() -> bool:
@@ -69,49 +85,27 @@ def _ensure_cli_binary(target_dir: Path) -> None:
 
 def build_wheel(
     wheel_directory: str,
-    config_settings: dict[str, Any] | None = None,
+    config_settings: ConfigSettings | None = None,
     metadata_directory: str | None = None,
 ) -> str:
+    """wheel に CLI の binary を同梱して組むため(target は作業木の外)。"""
     with cargo_target_dir() as target_dir:
         _ensure_cli_binary(target_dir)
-        return _maturin().build_wheel(wheel_directory, config_settings, metadata_directory)
+        return maturin.build_wheel(wheel_directory, config_settings, metadata_directory)
 
 
 def build_editable(
     wheel_directory: str,
-    config_settings: dict[str, Any] | None = None,
+    config_settings: ConfigSettings | None = None,
     metadata_directory: str | None = None,
 ) -> str:
+    """editable で入れる時も CLI の binary を同梱するため(target は作業木の外)。"""
     with cargo_target_dir() as target_dir:
         _ensure_cli_binary(target_dir)
-        return _maturin().build_editable(wheel_directory, config_settings, metadata_directory)
+        return maturin.build_editable(wheel_directory, config_settings, metadata_directory)
 
 
-def build_sdist(sdist_directory: str, config_settings: dict[str, Any] | None = None) -> str:
+def build_sdist(sdist_directory: str, config_settings: ConfigSettings | None = None) -> str:
     """sdist を組む時も、maturin が cargo に作らせる target を作業木の外に置くため。"""
     with cargo_target_dir():
-        return _maturin().build_sdist(sdist_directory, config_settings)
-
-
-def get_requires_for_build_wheel(config_settings: dict[str, Any] | None = None) -> list[str]:
-    return _maturin().get_requires_for_build_wheel(config_settings)
-
-
-def get_requires_for_build_editable(config_settings: dict[str, Any] | None = None) -> list[str]:
-    return _maturin().get_requires_for_build_editable(config_settings)
-
-
-def get_requires_for_build_sdist(config_settings: dict[str, Any] | None = None) -> list[str]:
-    return _maturin().get_requires_for_build_sdist(config_settings)
-
-
-def prepare_metadata_for_build_wheel(
-    metadata_directory: str, config_settings: dict[str, Any] | None = None
-) -> str:
-    return _maturin().prepare_metadata_for_build_wheel(metadata_directory, config_settings)
-
-
-def prepare_metadata_for_build_editable(
-    metadata_directory: str, config_settings: dict[str, Any] | None = None
-) -> str:
-    return _maturin().prepare_metadata_for_build_editable(metadata_directory, config_settings)
+        return maturin.build_sdist(sdist_directory, config_settings)

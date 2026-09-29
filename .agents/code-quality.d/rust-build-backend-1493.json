@@ -1,0 +1,37 @@
+{
+  "include": [
+    "tools/doeff_cargo_backend.py",
+    "packages/doeff-indexer/doeff_indexer_build_backend.py",
+    "tests/test_rust_build_target_outside_package.py"
+  ],
+  "modules": [
+    {
+      "allow": [],
+      "layer": "io",
+      "name": "rust-build-backend",
+      "paths": [
+        "tools/doeff_cargo_backend.py",
+        "packages/doeff-indexer/doeff_indexer_build_backend.py"
+      ],
+      "public": [
+        "tools/doeff_cargo_backend.py",
+        "packages/doeff-indexer/doeff_indexer_build_backend.py"
+      ],
+      "responsibility": "Rust の package の PEP 517 の build の口。maturin を包み、cargo の target を作業木の外の、1 回の build ごとの一時の dir に置き、wheel を作ったら消す(agora-redesign #1493)。",
+      "typed": true
+    },
+    {
+      "allow": [
+        "rust-build-backend"
+      ],
+      "layer": "io",
+      "name": "rust-build-backend-tests",
+      "paths": [
+        "tests/test_rust_build_target_outside_package.py"
+      ],
+      "public": [],
+      "responsibility": "build の口が target を作業木に残さず、中身の違う作業木どうしで build を取り違えない事を、本物の maturin と cargo で確かめる。",
+      "typed": true
+    }
+  ]
+}
