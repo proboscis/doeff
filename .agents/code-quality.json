@@ -31,7 +31,6 @@
     "packages/doeff-records/src/doeff_records/http_client.hy",
     "packages/doeff-records/src/doeff_records/http_server.hy",
     "packages/doeff-records/src/doeff_records/maintenance.hy",
-    "packages/doeff-records/src/doeff_records/pg_pool.hy",
     "packages/doeff-records/src/doeff_records/main.hy"
   ],
   "exclude": [],
@@ -636,35 +635,17 @@
       "typed": true
     },
     {
-      "name": "records-pg-pool",
-      "paths": [
-        "packages/doeff-records/src/doeff_records/pg_pool.hy"
-      ],
-      "responsibility": "PostgreSQL の置き場の接続の貸し出し: 要求 1 つ = 接続 1 本(同時の要求の transaction を 1 本の接続に混ぜない)・切れた接続を捨てる",
-      "layer": "io",
-      "public": [
-        "packages/doeff-records/src/doeff_records/pg_pool.hy"
-      ],
-      "allow": [
-        "records-values",
-        "records-pg",
-        "records-pg-sql"
-      ],
-      "typed": true
-    },
-    {
       "name": "records-main",
       "paths": [
         "packages/doeff-records/src/doeff_records/main.hy"
       ],
-      "responsibility": "記録の service の composition root: env と Secret の file を読み、身元の名簿・置き場の宣言・接続の貸し出し・HTTP の口・手入れの係を組んで立てる(判断を持たない)",
+      "responsibility": "記録の service の composition root: env と Secret の file を読み、身元の名簿・置き場の宣言・PostgreSQL の SQL の答え手と接続の貸し出し(doeff_core_effects)・HTTP の口・手入れの係を組んで立てる(判断を持たない)",
       "layer": "runtime",
       "public": [
         "packages/doeff-records/src/doeff_records/main.hy"
       ],
       "allow": [
         "records-principals",
-        "records-pg-pool",
         "records-maintenance",
         "records-http-server",
         "records-values",

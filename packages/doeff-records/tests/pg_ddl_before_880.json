@@ -1,0 +1,13 @@
+[
+ "CREATE TABLE IF NOT EXISTS records_state_rows (\n           ledger text NOT NULL, key text NOT NULL, payload text NOT NULL, version bigint NOT NULL,\n           updated_at bigint NOT NULL, updated_by text NOT NULL, origin_host text NOT NULL, epoch bigint NOT NULL,\n           PRIMARY KEY (ledger, key))",
+ "CREATE TABLE IF NOT EXISTS records_append_rows (\n           seq bigserial PRIMARY KEY, ledger text NOT NULL, at bigint NOT NULL, payload text NOT NULL,\n           origin_host text NOT NULL, epoch bigint NOT NULL)",
+ "CREATE INDEX IF NOT EXISTS records_append_rows_ledger ON records_append_rows (ledger, seq)",
+ "CREATE UNIQUE INDEX IF NOT EXISTS records_append_rows_idempotency\n           ON records_append_rows (ledger, ((payload::jsonb) ->> 'idempotencyKey'))",
+ "CREATE TABLE IF NOT EXISTS records_row_changes (\n           seq bigserial PRIMARY KEY, ledger text NOT NULL, key text NOT NULL, version bigint NOT NULL,\n           payload text, at bigint NOT NULL, epoch bigint NOT NULL)",
+ "CREATE INDEX IF NOT EXISTS records_row_changes_ledger ON records_row_changes (ledger, seq)",
+ "CREATE TABLE IF NOT EXISTS records_store_epoch (\n           id smallint PRIMARY KEY CHECK (id = 1), epoch bigint NOT NULL, floor bigint NOT NULL)",
+ "INSERT INTO records_store_epoch (id, epoch, floor) VALUES (1, 1, 0) ON CONFLICT (id) DO NOTHING",
+ "CREATE INDEX IF NOT EXISTS records_ix_6dd0fe800114 ON records_state_rows (ledger, ((payload::jsonb) -> 'color'))",
+ "CREATE INDEX IF NOT EXISTS records_ix_64c65374dbab ON records_state_rows (ledger, ((payload::jsonb) -> 'label'))",
+ "CREATE INDEX IF NOT EXISTS records_ix_579233b2c479 ON records_state_rows (ledger, ((payload::jsonb) -> 'owner'))"
+]
