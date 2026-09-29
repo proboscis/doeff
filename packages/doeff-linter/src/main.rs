@@ -216,7 +216,6 @@ impl Setup {
                 ProjectRule::ClassWithBehaviour => self.settings.definitions.is_some(),
                 ProjectRule::DefkCalledBare => self.settings.definitions.is_some(),
                 ProjectRule::EffectsDisagreeWithInference => self.settings.definitions.is_some(),
-                ProjectRule::JudgmentPerformsEffect => self.settings.definitions.is_some(),
                 ProjectRule::TranslationEmitsIntent => self.settings.layers.is_some() && self.settings.translation.is_some(),
                 ProjectRule::JsonValueOutsideWire => self.settings.architecture.is_some(),
                 ProjectRule::ShapeCheckInJudgment => {

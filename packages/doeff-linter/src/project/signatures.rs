@@ -1128,7 +1128,7 @@ pub fn effect_mismatches(world: &World, rel: &str, source: &str) -> Vec<EffectMi
 }
 
 /// defk 1 つの本体から推論した effect と、それぞれに至る最初の撃った呼び(本文の順)、追えない呼びを撃っているか。
-/// DOEFF127 と DOEFF129 が同じ読みを使う(推論の読みを 2 か所に置かない)。
+/// DOEFF127 が使う読み。
 fn inferred_sites(world: &World, reader: &FileReader, shape: &DefinitionShape) -> (Vec<(String, Site)>, bool) {
     let mut sites = Vec::new();
     for item in &shape.body {
@@ -1146,73 +1146,6 @@ fn inferred_sites(world: &World, reader: &FileReader, shape: &DefinitionShape) -
         }
     }
     (inferred, opaque)
-}
-
-// --- DOEFF129: 判断(judgment)は effect を起こさない ------------------------------------------------
-
-/// DOEFF129 の破れ 1 つ — `:tags` で役 judgment を名乗った defk が起こす effect 1 つと、それに至る最初の撃った呼び。範囲は byte。
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct JudgmentEffect {
-    pub definition: String,
-    /// module まで含めた名。
-    pub qualified: String,
-    /// 撃った呼びが defk を経由する時の、呼んだ定義の綴り(effect を直に撃っていれば None)。
-    pub via: Option<String>,
-    pub start: usize,
-    pub end: usize,
-}
-
-impl JudgmentEffect {
-    /// effect の綴り(module を外した最後の区切り)。
-    pub fn effect(&self) -> &str {
-        last_segment(&self.qualified)
-    }
-}
-
-/// 1 file の、`:tags` で役 judgment を名乗った defk が起こす effect を読む(表は `World::build` で作った物)。
-/// 追えない呼びの先の effect は数えない(見えた effect だけで判じる — 無いと言い切らない)。
-pub fn judgment_effects(world: &World, rel: &str, source: &str) -> Vec<JudgmentEffect> {
-    let forms = Reader::new(source, 0, source.len()).read_all();
-    let module = module_of(rel);
-    let bindings = form_bindings(&forms, source, &module);
-    let reader = FileReader {
-        hy: Hy { src: source },
-        lines: LineIndex::new(source),
-        scope: Scope {
-            module: &module,
-            bindings: &bindings,
-        },
-        path: rel.to_string(),
-    };
-    let mut out = Vec::new();
-    for form in top_definitions(&reader.hy, &forms) {
-        let Some(shape) = definition_shape(&reader.hy, form) else {
-            continue;
-        };
-        if shape.kind != SignatureKind::Defk {
-            continue;
-        }
-        let role = shape
-            .contract
-            .and_then(|c| reader.dict_value(c, ":tags"))
-            .and_then(|tags| string_entries(&reader, tags).remove("role"));
-        if role.as_deref() != Some("judgment") {
-            continue;
-        }
-        let definition = reader.hy.text(shape.name).to_string();
-        let (inferred, _) = inferred_sites(world, &reader, &shape);
-        for (qualified, site) in inferred {
-            let via = (site.callee != qualified).then(|| source.get(site.head.0..site.head.1).unwrap_or("").to_string());
-            out.push(JudgmentEffect {
-                definition: definition.clone(),
-                qualified,
-                via,
-                start: site.head.0,
-                end: site.head.1,
-            });
-        }
-    }
-    out
 }
 
 // --- DOEFF130: 翻訳の handler は業務の intent を出さない ------------------------------------------

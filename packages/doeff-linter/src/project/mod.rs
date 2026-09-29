@@ -298,9 +298,6 @@ pub fn run_with(root: &Path, settings: &ProjectSettings, enabled: &BTreeSet<Proj
                                     if enabled.contains(&ProjectRule::EffectsDisagreeWithInference) {
                                         found.extend(judge_effect_mismatches(file, &source, definitions, effect_world.as_ref()));
                                     }
-                                    if enabled.contains(&ProjectRule::JudgmentPerformsEffect) {
-                                        found.extend(judge_judgment_effects(file, &source, definitions, effect_world.as_ref()));
-                                    }
                                     found
                                 })
                                 .map_err(|error| format!("{}: 読めない: {}", file.rel, error))
@@ -412,9 +409,6 @@ pub fn run_with(root: &Path, settings: &ProjectSettings, enabled: &BTreeSet<Proj
                     drafts.extend(judge_bare_calls(&file, source, definitions, enabled, &defks, &program_params));
                     if enabled.contains(&ProjectRule::EffectsDisagreeWithInference) {
                         drafts.extend(judge_effect_mismatches(&file, source, definitions, effect_world.as_ref()));
-                    }
-                    if enabled.contains(&ProjectRule::JudgmentPerformsEffect) {
-                        drafts.extend(judge_judgment_effects(&file, source, definitions, effect_world.as_ref()));
                     }
                 }
             }
@@ -1951,7 +1945,6 @@ fn wants_definitions(enabled: &BTreeSet<ProjectRule>) -> bool {
     if enabled.iter().any(|rule| rule.is_smell())
         || enabled.contains(&ProjectRule::DefkCalledBare)
         || enabled.contains(&ProjectRule::EffectsDisagreeWithInference)
-        || enabled.contains(&ProjectRule::JudgmentPerformsEffect)
     {
         return true;
     }
@@ -2239,11 +2232,10 @@ fn defk_names_for(root: &Path, enabled: &BTreeSet<ProjectRule>) -> bare_calls::D
     all
 }
 
-/// DOEFF127・129・130 の表(repo の Hy の file 全部の型・effect・defk と推論)— どれかの規則が有効な時だけ 1 度作る。1 file の実行はその file を
+/// DOEFF127・130 の表(repo の Hy の file 全部の型・effect・defk と推論)— どれかの規則が有効な時だけ 1 度作る。1 file の実行はその file を
 /// stdin の中身で読む。推論の読み方は defk の見出し(editor-json の signatures)と同じ `signatures::World` の 1 か所。
 fn effect_world_for(root: &Path, settings: &ProjectSettings, enabled: &BTreeSet<ProjectRule>, overlay: Option<(&str, &str)>) -> Option<signatures::World> {
-    let definitions = settings.definitions.is_some()
-        && (enabled.contains(&ProjectRule::EffectsDisagreeWithInference) || enabled.contains(&ProjectRule::JudgmentPerformsEffect));
+    let definitions = settings.definitions.is_some() && enabled.contains(&ProjectRule::EffectsDisagreeWithInference);
     let translation = settings.translation.is_some() && settings.layers.is_some() && enabled.contains(&ProjectRule::TranslationEmitsIntent);
     (definitions || translation).then(|| signatures::World::build(root, overlay))
 }
@@ -2343,41 +2335,6 @@ fn judge_effect_mismatches(
                 detail: Some(format!("{}::{}", hy_mangle(mismatch.definition()), mismatch.effect())),
                 base: Severity::Warning,
                 explain: Explain::EffectMismatch { mismatch },
-            }
-        })
-        .collect()
-}
-
-/// DOEFF129: `:tags` で役 judgment を名乗った defk が effect を起こす所を判じる(判断は値から値を決める純粋な定義 — #800 段階 4)。
-/// 推論は DOEFF127 と同じ上からの見積もり(handler で受けた effect を引かない)なので重さは warning。追えない呼びの先は数えない。
-fn judge_judgment_effects(
-    file: &SourceFile,
-    source: &str,
-    definitions: &settings::DefinitionSettings,
-    world: Option<&signatures::World>,
-) -> Vec<Draft> {
-    let Some(world) = world else { return Vec::new() };
-    if !is_definition_file(&file.rel, definitions) || !source.contains("\"judgment\"") {
-        return Vec::new();
-    }
-    let lines = LineIndex::new(source);
-    signatures::judgment_effects(world, &file.rel, source)
-        .into_iter()
-        .map(|effect| {
-            let message = match &effect.via {
-                Some(via) => format!("{} の defk {}(役 judgment)が {} を経由して effect {} を起こす — 判断は effect を起こさない", file.rel, effect.definition, via, effect.effect()),
-                None => format!("{} の defk {}(役 judgment)が effect {} を撃つ — 判断は effect を起こさない", file.rel, effect.definition, effect.effect()),
-            };
-            Draft {
-                rule: ProjectRule::JudgmentPerformsEffect,
-                layer: None,
-                rel: file.rel.clone(),
-                path: file.path.clone(),
-                range: lines.range(effect.start, effect.end),
-                message,
-                detail: Some(format!("{}::{}", hy_mangle(&effect.definition), effect.effect())),
-                base: Severity::Warning,
-                explain: Explain::JudgmentEffect { effect },
             }
         })
         .collect()
