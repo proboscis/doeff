@@ -314,7 +314,7 @@ impl World {
     /// repo の Hy の file 全部から表を作る。`overlay` = (根からの path, 中身)— 保存前の中身をその file の代わりに読む。
     pub fn build(root: &Path, overlay: Option<(&str, &str)>) -> World {
         let files: Vec<(String, std::path::PathBuf)> =
-            doeff_indexer::hy_index::collect_hy_files(root)
+            super::hy_files::collect(root)
                 .into_iter()
                 .filter_map(|path| super::relative_path(root, &path).map(|rel| (rel, path)))
                 .collect();
