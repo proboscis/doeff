@@ -1,10 +1,8 @@
 import asyncio
 import logging
-import time
 from datetime import datetime, timedelta, timezone
 
 import pytest
-from doeff_core_effects import Ask
 from doeff_time.effects import Delay, WaitUntil
 from doeff_time.handlers import async_time_handler
 from time_test_support import run_with_handlers
@@ -22,39 +20,10 @@ def _wait_until_program(target: datetime):
     yield WaitUntil(target)
 
 
-@do
-def _delegate_probe_program():
-    return (yield Ask("delegated_key"))
-
-
-def test_async_delay_uses_wall_clock_sleep() -> None:
-    start = time.perf_counter()
-    run_with_handlers(
-        async_time_handler()(_delay_program(0.03)),
-    )
-    elapsed = time.perf_counter() - start
-
-    assert elapsed >= 0.025
-
-
-def test_async_wait_until_blocks_until_target_time() -> None:
-    target = datetime.now(timezone.utc) + timedelta(seconds=0.03)
-    start = time.perf_counter()
-    run_with_handlers(
-        async_time_handler()(_wait_until_program(target)),
-    )
-    elapsed = time.perf_counter() - start
-
-    assert elapsed >= 0.025
-
-
-def test_async_handler_delegates_non_time_effects() -> None:
-    result = run_with_handlers(
-        async_time_handler()(_delegate_probe_program()),
-        env={"delegated_key": "ok"},
-    )
-    assert result == "ok"
-
+# Delay / WaitUntil against the wall clock and the pass-through of non-time
+# effects are the shared contract of every clock handler:
+# test_time_contract.hy (agora-redesign #1159). This file keeps what only the
+# async handler has — its clock waits as seen by the scheduler's stall report.
 
 # agora-redesign #765: a Delay is a clock wait whose wake time is known, so
 # the scheduler must not report it as stalled; only a clock wait that does not

@@ -73,7 +73,8 @@ class SyncTimeRuntime:
                 timer.daemon = True
                 timer.start()
                 yield WaitTask(ep.future)
-                yield effect.program
+                # Wait(task) answers the scheduled program's value (agora-redesign #1159).
+                return (yield effect.program)
 
             # Resume the caller with the spawned Task (same contract as
             # sim_time_handler) so failures of the deferred program can be

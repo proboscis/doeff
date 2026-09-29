@@ -141,7 +141,8 @@ class SimTimeRuntime:
             @do
             def deferred():
                 _ = yield self._wait_for_time(effect.time)
-                yield effect.program
+                # Wait(task) answers the scheduled program's value (agora-redesign #1159).
+                return (yield effect.program)
 
             task = yield Spawn(deferred())
             return (yield Transfer(k, task))

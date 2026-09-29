@@ -8,7 +8,8 @@ Provider-agnostic time effects for `doeff`.
 - `WaitUntil(target: datetime)` (`target` must be timezone-aware)
 - `GetTime()`
 - `GetMonotonic()` — monotonic seconds (`float`); only differences are meaningful
-- `ScheduleAt(time: datetime, program)` (`time` must be timezone-aware)
+- `ScheduleAt(time: datetime, program)` (`time` must be timezone-aware) — answers the spawned `Task`;
+  `Wait(task)` answers `program`'s value, or raises its failure
 - `SetTime(time: datetime)` (for simulation handlers, `time` must be timezone-aware)
 
 ## Handlers
@@ -18,6 +19,16 @@ Provider-agnostic time effects for `doeff`.
 - `sim_time_handler(start_time=...)` for deterministic virtual time (`start_time` is timezone-aware
   `datetime`), or `sim_time_handler(clock=SimClock(start))` when the caller wants to read or move
   the virtual clock outside the program (tests)
+
+### Shared contract (all three handlers)
+
+`tests/test_time_contract.hy` runs the same deftests under each handler (`:interpreters
+["async" "sync" "sim"]`): readings never go back, `Delay(d)` / `WaitUntil(t)` advance the clock by
+`d` / up to `t` (exactly on the virtual clock, with a small jitter bound on the wall clock), past
+targets return at once, other effects pass through, and `ScheduleAt` tasks run in time order and
+answer their program's value or failure through `Wait`. `SetTime` is simulation-only and stays out
+of the shared contract. Note: the scheduled program runs under the handlers outside the time
+handler, so it cannot itself perform time effects.
 
 ### Virtual time contract (`sim_time_handler`)
 
