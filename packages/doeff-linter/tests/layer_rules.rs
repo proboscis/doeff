@@ -2304,6 +2304,43 @@ fn retired_words_hit_once_per_word_and_skip_rule_lines() {
     assert!(names["message"].as_str().unwrap().contains("定義の名 ConversationSlice"), "{}", names["message"]);
 }
 
+/// agora-redesign #1369: `:in paths` の群は file の名(最後の `.` より前)だけを見る — 退役した名の file は語ごとに 1 件、中身・dir の名・
+/// 別の語の一部は当たらない。:rule-lines は :in lines の時だけ効くので、:in paths と組むと宣言の問題になる。
+#[test]
+fn retired_paths_hit_the_file_name_only() {
+    let dir = world_repo_with(
+        &[
+            ("app/operators/worker.hy", "(defk run [] 1)\n".to_string()),
+            ("app/operators/design_request.hy", "(defk run [] 1)\n".to_string()),
+            ("app/operators/worker_pool.hy", "(defk run [] 1)\n".to_string()),
+            ("app/operators/probe.hy", "(setv worker 1) ; worker は中身だけ\n".to_string()),
+            ("app/worker/probe.hy", "(defk run [] 1)\n".to_string()),
+        ],
+        "",
+        "[\"DOEFF150\"]",
+    );
+    let arch_path = dir.path().join("architecture.hy");
+    let declarations = r#":foundation foundation
+  :retired-words [(retired-words "retired-operators" :words ["worker" "design_request"] :files ["app/operators/*.hy"]
+                    :in paths :instead "退役した operator の file を置き直さない")]"#;
+    let text = std::fs::read_to_string(&arch_path).unwrap().replace(":foundation foundation", declarations);
+    std::fs::write(&arch_path, &text).unwrap();
+    let (_, report) = editor(dir.path());
+    assert_eq!(
+        keys(&report, "DOEFF150"),
+        vec!["app/operators/design_request.hy::DOEFF150::design_request", "app/operators/worker.hy::DOEFF150::worker"],
+        "{}",
+        report
+    );
+    let worker = violation(&report, "app/operators/worker.hy::DOEFF150::worker");
+    assert!(worker["message"].as_str().unwrap().contains("file の名に使わないと決めた綴り worker"), "{}", worker["message"]);
+    assert_eq!(worker["level"], "critical", "{}", worker);
+    std::fs::write(&arch_path, text.replace(":in paths", ":in paths :rule-lines [\"使わない\"]")).unwrap();
+    let (code, _, stderr) = run(dir.path(), &["--no-log"], None);
+    assert!(stderr.contains(":rule-lines は :in lines の時だけ効く"), "{}", stderr);
+    assert_ne!(code, 0, "宣言の誤りは走らせずに止まる");
+}
+
 /// agora-redesign #1193(C11): 退役した呼びは呼びごとに 1 件ずつ当たり(反例 = 各呼び 1 本)、註・文字列・読み捨てた form・:except の
 /// テストの file・値として名指すだけの所は当たらない。
 #[test]

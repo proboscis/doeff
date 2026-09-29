@@ -716,9 +716,10 @@ fn retired_drafts(path: &Path, source: &str, words: Vec<retired::WordHit>, calls
     let mut out: Vec<Draft> = words
         .into_iter()
         .map(|hit| {
-            let what = match &hit.name {
-                Some(name) => format!("定義の名 {} に使わないと決めた綴り {}", name, hit.spelling),
-                None => format!("使わないと決めた綴り {}", hit.spelling),
+            let what = match (&hit.place, &hit.name) {
+                (architecture::WordPlace::Paths, _) => format!("file の名に使わないと決めた綴り {}", hit.spelling),
+                (_, Some(name)) => format!("定義の名 {} に使わないと決めた綴り {}", name, hit.spelling),
+                (_, None) => format!("使わないと決めた綴り {}", hit.spelling),
             };
             Draft {
                 rule: ProjectRule::RetiredWord,
@@ -728,7 +729,7 @@ fn retired_drafts(path: &Path, source: &str, words: Vec<retired::WordHit>, calls
                 message: format!("{} — {}(群 {}・代わり: {})", hit.rel, what, hit.group, hit.instead),
                 detail: Some(hit.detail),
                 base: Severity::Error,
-                explain: Explain::RetiredWord { group: hit.group, spelling: hit.spelling, instead: hit.instead, name: hit.name },
+                explain: Explain::RetiredWord { group: hit.group, spelling: hit.spelling, instead: hit.instead, name: hit.name, place: hit.place },
                 rel: hit.rel,
             }
         })

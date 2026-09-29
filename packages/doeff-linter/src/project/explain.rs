@@ -174,7 +174,7 @@ pub enum Explain {
     /// DOEFF146: 判定を1か所に閉じ込めた語彙が :except の外に在る。
     VocabularyOutsideSinglePoint { group: String, count: usize, instead: String },
     /// DOEFF150: 使わないと決めた綴り(群の名・当たった綴り・代わりの語・:in names なら定義の名)。
-    RetiredWord { group: String, spelling: String, instead: String, name: Option<String> },
+    RetiredWord { group: String, spelling: String, instead: String, name: Option<String>, place: super::architecture::WordPlace },
     /// DOEFF151: 使わないと決めた呼び。
     RetiredCall { group: String, call: String, instead: String },
     /// DOEFF141: 決めた材料だけで判じる定義(宣言の綴り・理由・当たりの種類)。
@@ -396,10 +396,11 @@ impl<'a> Narrator<'a> {
                 format!("語彙 {} が :except の外に {} 行 — {}", group, count, instead),
                 "この語彙の判定は architecture.hy の :single-point-vocabulary が名指す 1 点だけに閉じ込める決まり。他の file が同じ語彙を読んで判定を写すと、直した時に写しの方を直し忘れて2つの判定が食い違う。".to_string(),
             ),
-            Explain::RetiredWord { group, spelling, instead, name } => (
-                match name {
-                    Some(name) => format!("定義の名 {}(使わないと決めた綴り {} — 群 {})", name, spelling, group),
-                    None => format!("綴り {}(使わないと決めた語 — 群 {})", spelling, group),
+            Explain::RetiredWord { group, spelling, instead, name, place } => (
+                match (place, name) {
+                    (super::architecture::WordPlace::Paths, _) => format!("file の名の綴り {}(使わないと決めた名 — 群 {})", spelling, group),
+                    (_, Some(name)) => format!("定義の名 {}(使わないと決めた綴り {} — 群 {})", name, spelling, group),
+                    (_, None) => format!("綴り {}(使わないと決めた語 — 群 {})", spelling, group),
                 },
                 format!("この repo は architecture.hy の :retired-words でこの綴りを使わないと決めた(代わり: {})。旧い語が残ると、同じ物を 2 つの名で呼ぶ code と文書が増え、読み手が別の物と取り違える。", instead),
             ),

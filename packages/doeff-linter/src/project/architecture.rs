@@ -243,7 +243,7 @@ pub struct TestForms {
     pub runners: Vec<String>,
 }
 
-/// 使わないと決めた綴りをどこで探すか(`:in` — 閉じた 2 つ)。
+/// 使わないと決めた綴りをどこで探すか(`:in` — 閉じた 3 つ)。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum WordPlace {
@@ -251,6 +251,8 @@ pub enum WordPlace {
     Lines,
     /// 定義の名だけ(Hy の `def…` の形と `setv`・`val`・`var` の左辺・Python の def と class の名)。
     Names,
+    /// file の名だけ(最後の `.` より前 — dir の名と中身は見ない)。退役した名の file を置き直さないため(agora-redesign #1369)。
+    Paths,
 }
 
 /// 使わないと決めた綴りの群 1 つ(`:retired-words` の `(retired-words "名" :words [..] :patterns [..] :files [..] …)` — DOEFF150)。
@@ -999,10 +1001,10 @@ impl<'a> Parser<'a> {
         Some(selection)
     }
 
-    /// `[(retired-words "名" :words [..] :patterns [r"…"] :files [..] :except [..] :rule-lines [..] :in lines|names :instead "…") …]` を読む
+    /// `[(retired-words "名" :words [..] :patterns [r"…"] :files [..] :except [..] :rule-lines [..] :in lines|names|paths :instead "…") …]` を読む
     /// (:files と :instead と、:words か :patterns のどちらかは要る)。
     fn retired_words(&mut self, value: &Form) -> Vec<RetiredWords> {
-        let shape = "(retired-words \"名\" :words [..] :patterns [r\"…\"] :files [..] :except [..]? :rule-lines [..]? :in lines|names? :instead \"…\")";
+        let shape = "(retired-words \"名\" :words [..] :patterns [r\"…\"] :files [..] :except [..]? :rule-lines [..]? :in lines|names|paths? :instead \"…\")";
         let Some(entries) = self.bracket(value) else {
             self.problem(value, &format!(":retired-words は {} の列", shape));
             return Vec::new();
@@ -1047,7 +1049,8 @@ impl<'a> Parser<'a> {
                     ":in" => match self.name(field).as_deref() {
                         Some("lines") => group.place = WordPlace::Lines,
                         Some("names") => group.place = WordPlace::Names,
-                        _ => self.problem(field, ":in は lines か names"),
+                        Some("paths") => group.place = WordPlace::Paths,
+                        _ => self.problem(field, ":in は lines か names か paths"),
                     },
                     ":instead" => group.instead = self.required_string(field, ":instead").unwrap_or_default(),
                     _ => self.unknown_key(key, "retired-words"),
@@ -1065,7 +1068,7 @@ impl<'a> Parser<'a> {
             if group.instead.trim().is_empty() {
                 self.problem(entry, &format!("retired-words {} に :instead(代わりに使う語・直し方)が無い", group.name));
             }
-            if group.place == WordPlace::Names && !group.rule_lines.is_empty() {
+            if group.place != WordPlace::Lines && !group.rule_lines.is_empty() {
                 self.problem(entry, &format!("retired-words {} の :rule-lines は :in lines の時だけ効く", group.name));
             }
             if out.iter().any(|g| g.name == group.name) {
