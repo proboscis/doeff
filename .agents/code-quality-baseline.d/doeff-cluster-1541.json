@@ -29,6 +29,13 @@
       "subject": "importlib.import_module"
     },
     {
+      "count": 2,
+      "path": "packages/doeff-cluster/src/doeff_cluster/service_model.hy",
+      "reason": "registered-with-legacy",
+      "rule": "dynamic-boundary",
+      "subject": "importlib.import_module"
+    },
+    {
       "count": 1,
       "path": "packages/doeff-cluster/tests/test_env_detached.hy",
       "reason": "registered-with-legacy",
@@ -283,6 +290,20 @@
     {
       "count": 1,
       "path": "packages/doeff-cluster/src/doeff_cluster/program_policy.hy",
+      "reason": "registered-with-legacy",
+      "rule": "transitive-io-dependency",
+      "subject": "packages/doeff-cluster/src/doeff_cluster/remote_model.hy -> pathlib"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-cluster/src/doeff_cluster/service_model.hy",
+      "reason": "registered-with-legacy",
+      "rule": "transitive-io-dependency",
+      "subject": "packages/doeff-cluster/src/doeff_cluster/remote_model.hy -> os"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-cluster/src/doeff_cluster/service_model.hy",
       "reason": "registered-with-legacy",
       "rule": "transitive-io-dependency",
       "subject": "packages/doeff-cluster/src/doeff_cluster/remote_model.hy -> pathlib"
@@ -1072,6 +1093,27 @@
       "subject": "on_signal"
     },
     {
+      "count": 1,
+      "path": "packages/doeff-cluster/src/doeff_cluster/remote.hy",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "__init__"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-cluster/src/doeff_cluster/remote.hy",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "drop"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-cluster/src/doeff_cluster/remote.hy",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "remote_cluster"
+    },
+    {
       "count": 2,
       "path": "packages/doeff-cluster/src/doeff_cluster/remote_model.hy",
       "reason": "registered-with-legacy",
@@ -1392,6 +1434,13 @@
       "reason": "registered-with-legacy",
       "rule": "untyped-boundary",
       "subject": "renew"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-cluster/src/doeff_cluster/service_model.hy",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "show"
     },
     {
       "count": 1,
@@ -1952,6 +2001,132 @@
       "reason": "registered-with-legacy",
       "rule": "untyped-boundary",
       "subject": "log_message"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-cluster/tests/test_handoff_deadline.hy",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "__init__"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-cluster/tests/test_handoff_deadline.hy",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "abandon_r2"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-cluster/tests/test_handoff_deadline.hy",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "apply"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-cluster/tests/test_handoff_deadline.hy",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "call"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-cluster/tests/test_handoff_deadline.hy",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "gapless"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-cluster/tests/test_handoff_deadline.hy",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "handoff_changes"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-cluster/tests/test_handoff_deadline.hy",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "live"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-cluster/tests/test_handoff_deadline.hy",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "mark_broken"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-cluster/tests/test_handoff_deadline.hy",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "phase_of"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-cluster/tests/test_handoff_deadline.hy",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "processes_tick"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-cluster/tests/test_handoff_deadline.hy",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "redeclare"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-cluster/tests/test_handoff_deadline.hy",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "restart_coordinator"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-cluster/tests/test_handoff_deadline.hy",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "started"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-cluster/tests/test_handoff_deadline.hy",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "status"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-cluster/tests/test_handoff_deadline.hy",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "step"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-cluster/tests/test_handoff_deadline.hy",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "steps"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-cluster/tests/test_handoff_deadline.hy",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "worker_tick"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-cluster/tests/test_handoff_deadline.hy",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "world"
     },
     {
       "count": 1,

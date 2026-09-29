@@ -1,18 +1,9 @@
 {
   "exclude": [
-    "packages/doeff-cluster/src/doeff_cluster/foundation_check.hy",
     "packages/doeff-cluster/src/doeff_cluster/handlers.hy",
-    "packages/doeff-cluster/src/doeff_cluster/remote.hy",
-    "packages/doeff-cluster/src/doeff_cluster/service_model.hy",
-    "packages/doeff-cluster/tests/coordinator_contract_handlers.hy",
     "packages/doeff-cluster/tests/fixtures/sim_programs.hy",
-    "packages/doeff-cluster/tests/program_rows.hy",
-    "packages/doeff-cluster/tests/test_boot_reexec.hy",
-    "packages/doeff-cluster/tests/test_boundary_recorder.hy",
     "packages/doeff-cluster/tests/test_detached_runners.hy",
     "packages/doeff-cluster/tests/test_env_warm.hy",
-    "packages/doeff-cluster/tests/test_handoff_deadline.hy",
-    "packages/doeff-cluster/tests/test_job_entry_program.hy",
     "packages/doeff-cluster/tests/test_remote.hy",
     "packages/doeff-cluster/tests/test_runtime_env_sender.hy",
     "packages/doeff-cluster/tests/test_semaphore.hy",
@@ -1305,40 +1296,12 @@
   ],
   "untyped_dependencies": [
     {
-      "path": "packages/doeff-cluster/src/doeff_cluster/foundation_check.hy",
-      "reason": "検査器(code-quality e659a3a)がこの Hy を型に写せない — hy:32: deff の各引数には実型契約が必要（可変長/既定値は未対応）。include の外に置き(変えた時は登録の前と同じ未導入の注意)、対応と取り込みは agora-redesign #1569"
-    },
-    {
       "path": "packages/doeff-cluster/src/doeff_cluster/handlers.hy",
       "reason": "検査器がこの Hy を型に写せない — hy:1082: deff の各引数には実型契約が必要（可変長/既定値は未対応）。対応は agora-redesign #1575(let の形は #1574 で写せるようになった)"
     },
     {
-      "path": "packages/doeff-cluster/src/doeff_cluster/remote.hy",
-      "reason": "検査器(code-quality e659a3a)がこの Hy を型に写せない — hy:23: deff の各引数には実型契約が必要（可変長/既定値は未対応）。include の外に置き(変えた時は登録の前と同じ未導入の注意)、対応と取り込みは agora-redesign #1569"
-    },
-    {
-      "path": "packages/doeff-cluster/src/doeff_cluster/service_model.hy",
-      "reason": "検査器(code-quality e659a3a)がこの Hy を型に写せない — hy:113: deff の各引数には実型契約が必要（可変長/既定値は未対応）。include の外に置き(変えた時は登録の前と同じ未導入の注意)、対応と取り込みは agora-redesign #1569"
-    },
-    {
-      "path": "packages/doeff-cluster/tests/coordinator_contract_handlers.hy",
-      "reason": "検査器(code-quality e659a3a)がこの Hy を型に写せない — hy:157: deff の各引数には実型契約が必要（可変長/既定値は未対応）。include の外に置き(変えた時は登録の前と同じ未導入の注意)、対応と取り込みは agora-redesign #1569"
-    },
-    {
       "path": "packages/doeff-cluster/tests/fixtures/sim_programs.hy",
       "reason": "検査器(code-quality e659a3a)がこの Hy を型に写せない — hy:5: require の macro は未対応: doeff_hy.macros.hyx_doXexclamation_markX。include の外に置き(変えた時は登録の前と同じ未導入の注意)、対応と取り込みは agora-redesign #1569"
-    },
-    {
-      "path": "packages/doeff-cluster/tests/program_rows.hy",
-      "reason": "検査器(code-quality e659a3a)がこの Hy を型に写せない — hy:26: defk の可変長の引数 args には契約 (: args tuple) が必要。include の外に置き(変えた時は登録の前と同じ未導入の注意)、対応と取り込みは agora-redesign #1569"
-    },
-    {
-      "path": "packages/doeff-cluster/tests/test_boot_reexec.hy",
-      "reason": "検査器(code-quality e659a3a)がこの Hy を型に写せない — hy:15: defk の可変長の引数 args には契約 (: args tuple) が必要。include の外に置き(変えた時は登録の前と同じ未導入の注意)、対応と取り込みは agora-redesign #1569"
-    },
-    {
-      "path": "packages/doeff-cluster/tests/test_boundary_recorder.hy",
-      "reason": "検査器(code-quality e659a3a)がこの Hy を型に写せない — hy:95: deff の可変長の引数 args には契約 (: args tuple) が必要。include の外に置き(変えた時は登録の前と同じ未導入の注意)、対応と取り込みは agora-redesign #1569"
     },
     {
       "path": "packages/doeff-cluster/tests/test_detached_runners.hy",
@@ -1347,14 +1310,6 @@
     {
       "path": "packages/doeff-cluster/tests/test_env_warm.hy",
       "reason": "検査器(code-quality e659a3a)がこの Hy を型に写せない — hy:13: require の macro は未対応: doeff_hy.macros.hyx_doXexclamation_markX。include の外に置き(変えた時は登録の前と同じ未導入の注意)、対応と取り込みは agora-redesign #1569"
-    },
-    {
-      "path": "packages/doeff-cluster/tests/test_handoff_deadline.hy",
-      "reason": "検査器(code-quality e659a3a)がこの Hy を型に写せない — hy:180: defk の各引数には実型契約が必要（可変長/既定値は未対応）。include の外に置き(変えた時は登録の前と同じ未導入の注意)、対応と取り込みは agora-redesign #1569"
-    },
-    {
-      "path": "packages/doeff-cluster/tests/test_job_entry_program.hy",
-      "reason": "検査器(code-quality e659a3a)がこの Hy を型に写せない — hy:32: defk の可変長の引数 args には契約 (: args tuple) が必要。include の外に置き(変えた時は登録の前と同じ未導入の注意)、対応と取り込みは agora-redesign #1569"
     },
     {
       "path": "packages/doeff-cluster/tests/test_remote.hy",
@@ -1370,7 +1325,7 @@
     },
     {
       "path": "packages/doeff-cluster/tests/test_service_declaration.hy",
-      "reason": "検査器(code-quality e659a3a)がこの Hy を型に写せない — hy:50: defk の可変長の引数 argv には契約 (: argv tuple) が必要。include の外に置き(変えた時は登録の前と同じ未導入の注意)、対応と取り込みは agora-redesign #1569"
+      "reason": "検査器(code-quality 7d27341)がこの Hy を型に写せない — hy:138: 入れ子の defk は型投影未対応(doeff-hy の実 macro が未対応)。引数の契約の理由(#1575)は直した。include の外に置き(変えた時は登録の前と同じ未導入の注意)、対応と取り込みは agora-redesign #1576"
     }
   ]
 }
