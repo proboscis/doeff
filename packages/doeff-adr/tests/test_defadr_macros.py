@@ -6,7 +6,7 @@ import textwrap
 import doeff_adr.registry
 import doeff_hy  # noqa: F401 - registers Hy import hooks
 import pytest
-from doeff_adr.registry import SemgrepSpec, clear_registry, get_adr, get_enforcement
+from doeff_adr.registry import SemgrepSpec, get_adr, get_enforcement, isolated_registry
 
 pytest_plugins = ["pytester"]
 
@@ -14,9 +14,8 @@ pytest_plugins = ["pytester"]
 @pytest.fixture
 def tmp_hy_dir(tmp_path):
     sys.path.insert(0, str(tmp_path))
-    clear_registry()
-    yield tmp_path
-    clear_registry()
+    with isolated_registry():
+        yield tmp_path
     sys.path.remove(str(tmp_path))
     for name in list(sys.modules):
         mod = sys.modules[name]
@@ -344,20 +343,17 @@ def test_defsemgrep_fails_when_semgrep_executable_is_missing(
     def missing_executable(_command: str) -> None:
         return None
 
-    clear_registry()
-    doeff_adr.registry.register_semgrep_enforcement(
-        "missing_semgrep",
-        pattern="forbidden-token",
-        bad=["forbidden-token"],
-        good=["allowed-token"],
-    )
-    monkeypatch.setattr(doeff_adr.registry.shutil, "which", missing_executable)
+    with isolated_registry():
+        doeff_adr.registry.register_semgrep_enforcement(
+            "missing_semgrep",
+            pattern="forbidden-token",
+            bad=["forbidden-token"],
+            good=["allowed-token"],
+        )
+        monkeypatch.setattr(doeff_adr.registry.shutil, "which", missing_executable)
 
-    try:
         with pytest.raises(AssertionError, match="semgrep executable is required"):
             doeff_adr.registry.assert_semgrep_enforcement("missing_semgrep")
-    finally:
-        clear_registry()
 
 
 def test_pytest_plugin_collects_defadr_hy_files(pytester):
