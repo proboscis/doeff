@@ -4,11 +4,8 @@
 (import fnmatch)
 (import os)
 (import subprocess)
-(import doeff_core_effects.process_effects [EnvEntry EnvMode ProcessOutcome RunProcess ExecutableAt ReadEnvironment WorkingDirectory])
-
-;; 時間切れの時の exit-code(coreutils の timeout と同じ)と、起こせない時の exit-code(shell と同じ)。
-(val TIMED-OUT-CODE 124)
-(val NOT-STARTED-CODE 127)
+(import doeff_core_effects.process_effects [EnvEntry EnvMode ProcessOutcome RunProcess ExecutableAt ReadEnvironment WorkingDirectory
+                                            timed-out-outcome not-started-outcome])
 
 
 (defk decoded [value]
@@ -63,9 +60,11 @@
     (except [error subprocess.TimeoutExpired]
       (<- partial-out str (decoded error.stdout))
       (<- partial-err str (decoded error.stderr))
-      (:= outcome (ProcessOutcome :exit-code TIMED-OUT-CODE :stdout partial-out :stderr partial-err :timed-out True)))
+      (<- timed-out ProcessOutcome (timed-out-outcome partial-out partial-err))
+      (:= outcome timed-out))
     (except [error OSError]
-      (:= outcome (ProcessOutcome :exit-code NOT-STARTED-CODE :stdout "" :stderr "" :started False :start-error (str error)))))
+      (<- refused ProcessOutcome (not-started-outcome (str error)))
+      (:= outcome refused)))
   (<- (append-output output-path outcome.stdout outcome.stderr))
   outcome)
 

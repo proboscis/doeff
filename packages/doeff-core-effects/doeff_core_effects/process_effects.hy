@@ -20,10 +20,20 @@
 ;;;   ExecutableAt      その path に実行できる file が在るか。答え = bool。
 ;;;   ReadEnvironment   自分の process の環境変数のうち names の分。答え = 在る分だけの EnvEntry の tuple(names の順)。
 ;;;   WorkingDirectory  自分の process の作業 dir(絶対 path)。
+;;;
+;;; 時間切れと起こせない形の答え(timed-out-outcome・not-started-outcome)と、起こせない理由の文(start-refusal — OSError の文と同じ形)は
+;;; ここで 1 度だけ作る。本物(os_process.hy)と I/O なし(scripted_process.hy)の答え手は同じ関数を呼ぶ(同じ形で答える — 契約テスト
+;;; tests/test_process_contract.hy)。
+(require doeff-hy.macros [defk val])
 (require doeff-hy.record [defrecord defenum])
+(import os)
 (import dataclasses [dataclass])
 (import enum [StrEnum])
 (import doeff [EffectBase])
+
+;; 時間切れの時の exit-code(coreutils の timeout と同じ)と、起こせない時の exit-code(shell と同じ)。
+(val TIMED-OUT-CODE 124)
+(val NOT-STARTED-CODE 127)
 
 
 ;; RunProcess の env の tuple の扱い(頭の註): REPLACE = 子の環境変数の全部・EXTEND = 呼び手の環境を継いで足す。
@@ -80,3 +90,21 @@
 
 (defclass [(dataclass :frozen True)] WorkingDirectory [EffectBase]
   "自分の process の作業 dir(頭の註)。")
+
+
+(defk timed-out-outcome [stdout stderr]
+  {:pre [(: stdout str) (: stderr str)] :post [(: % ProcessOutcome)] :tags {:context "process" :role "judgment"}}
+  "時間切れの答え(それまでの出力 stdout / stderr を持つ・exit-code 124・timed-out True)を作るため。"
+  (ProcessOutcome :exit-code TIMED-OUT-CODE :stdout stdout :stderr stderr :timed-out True :started True :start-error ""))
+
+
+(defk not-started-outcome [detail]
+  {:pre [(: detail str)] :post [(: % ProcessOutcome)] :tags {:context "process" :role "judgment"}}
+  "起こせない形の答え(exit-code 127・started False・理由 detail)を作るため。"
+  (ProcessOutcome :exit-code NOT-STARTED-CODE :stdout "" :stderr "" :timed-out False :started False :start-error detail))
+
+
+(defk start-refusal [error-number path]
+  {:pre [(: error-number int) (: path str)] :post [(: % str)] :tags {:context "process" :role "judgment"}}
+  "起こせない理由の文を、本物の subprocess が上げる OSError の文と同じ形(\"[Errno 2] No such file or directory: '/x'\")で作るため。"
+  (str (OSError error-number (os.strerror error-number) path)))

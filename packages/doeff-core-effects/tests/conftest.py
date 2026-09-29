@@ -3,7 +3,7 @@
 - doeff-adr の Hy の file の収集(``DoeffAdrHyFile``)をこの dir の中だけで使う(doeff-cluster の tests/conftest.py と同じ形 — 根の ini の
   ``doeff_adr_hy_files`` には足さない。package の母集団は ``make test-packages`` が別に走らせる)。
 - 契約テスト(agora-redesign #1159)は deftest の ``:interpreters`` で handler を差し替える。名 → 組み立ての表は
-  stop_contract_handlers.hy と http_contract_handlers.hy が持ち、ここはその表を引いて scheduler つきで 1 回回すだけ。
+  stop_contract_handlers.hy・http_contract_handlers.hy・process_contract_handlers.hy が持ち、ここはその表を引いて scheduler つきで 1 回回すだけ。
 """
 
 from __future__ import annotations
@@ -45,12 +45,14 @@ def doeff_interpreter_name() -> str:
 def doeff_interpreter(doeff_interpreter_name: str) -> Callable[[Program], object]:
     """deftest の Program を、:interpreters の名の handler の組の下で scheduler つきで 1 回回す。"""
     from http_contract_handlers import INTERPRETERS as HTTP_INTERPRETERS
+    from process_contract_handlers import INTERPRETERS as PROCESS_INTERPRETERS
     from stop_contract_handlers import INTERPRETERS as STOP_INTERPRETERS
 
     compositions: dict[str, Callable[[Program], Program]] = {
         PLAIN: lambda program: program,
         **STOP_INTERPRETERS,
         **HTTP_INTERPRETERS,
+        **PROCESS_INTERPRETERS,
     }
     compose = compositions[doeff_interpreter_name]
 

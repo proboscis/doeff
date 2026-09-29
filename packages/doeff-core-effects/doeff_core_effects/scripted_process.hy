@@ -2,8 +2,11 @@
 ;;; 起こさず、argv[0] の名(basename)ごとの台本(ScriptedCommand)で答える。台本は Program で、file system の effect(file_effects.hy)で置き場を
 ;;; 読み書きしてよい(外側の file の答え手 — 多くは memory-file-handler — が受ける)。業務を知らない: 台本の中身は呼び手が渡す。
 ;;;
-;;;   RunProcess        env-mode EXTEND は ProcessScript の env を継いで足した全部を台本に渡す。名の無い命令・無い cwd は started False(exit-code 127)— 本物の subprocess と同じ所で起こせない。output-path は
-;;;                     台本の出力をその file の末尾へ足す。timeout は台本に任せる(台本が timed-out の答えを返してよい)。
+;;;   RunProcess        env-mode EXTEND は ProcessScript の env を継いで足した全部を台本に渡す。無い cwd・名の無い命令は started False(exit-code 127)— 本物の subprocess と同じ所・同じ順・同じ文で起こせない
+;;;                     (process_effects.hy の not-started-outcome・start-refusal)。output-path は台本の出力をその file の末尾へ足し、足せなければ
+;;;                     本物と同じく OSError を上げる。timeout は台本に任せる(台本が timed-out-outcome の答えを返してよい)。
+;;;                     env が None の時は台本も None を受ける(呼び手の環境を継ぐ印 — 継いだ中身を読むのは台本の側)。
+;;;                     本物との契約は tests/test_process_contract.hy。
 ;;;   ExecutableAt      argv[0] の名が台本に在れば True。
 ;;;   ReadEnvironment   ProcessScript の env から。
 ;;;   WorkingDirectory  聞かれるたびに新しい空の dir(<work-root>/job-<n>)を作って答える — worker が job ごとに空の作業 dir を作って子を
@@ -11,14 +14,14 @@
 ;;; 並び: file の答え手をこの handler より外側に置く。session の値の置き場(doeff_core_effects の state)はさらに外側に要る。
 (require doeff-hy.macros [defhandler defk <- val var])
 (require doeff-hy.record [defrecord])
+(import errno)
 (import fnmatch)
 (import posixpath)
 (import collections.abc [Callable])
 (import dataclasses [dataclass])
-(import doeff_core_effects.process_effects [EnvEntry EnvMode ProcessOutcome RunProcess ExecutableAt ReadEnvironment WorkingDirectory])
+(import doeff_core_effects.process_effects [EnvEntry EnvMode ProcessOutcome RunProcess ExecutableAt ReadEnvironment WorkingDirectory
+                                            not-started-outcome start-refusal])
 (import doeff_core_effects.file_effects [PathKind PathStat StatPath MakeDirectory AppendText FileFailed])
-
-(val NOT-STARTED-CODE 127)
 
 
 (defrecord ScriptedCommand
@@ -34,12 +37,6 @@
   (#^ (get tuple #(ScriptedCommand ...)) commands)
   (setv #^ (get tuple #(EnvEntry ...)) env #())
   (setv #^ str work-root "/work/jobs"))
-
-
-(defk not-started [detail]
-  {:pre [(: detail str)] :post [(: % ProcessOutcome)]}
-  "起こせない形の答えを作るため(本物の subprocess-handler と同じ exit-code)。"
-  (ProcessOutcome :exit-code NOT-STARTED-CODE :stdout "" :stderr "" :started False :start-error detail))
 
 
 (defk scripted-child-env [inherited env env-mode env-drop]
@@ -58,17 +55,25 @@
 
 (defk run-scripted [commands request]
   {:pre [(: commands tuple) (: request RunProcess)] :post [(: % ProcessOutcome)]}
-  "命令 1 つを台本で走らせるため(名の無い命令・無い cwd は起こせない形)。台本から別の命令を走らせる時もこれを呼ぶ。"
+  "命令 1 つを台本で走らせるため(無い cwd・名の無い命令は起こせない形)。台本から別の命令を走らせる時もこれを呼ぶ。
+   本物の subprocess と同じ順で断る: 先に cwd(無ければ ENOENT・dir でなければ ENOTDIR)、次に命令(ENOENT)。"
+  (when (is-not request.cwd None)
+    (<- stat (StatPath request.cwd))
+    (val refused-errno (match stat
+                         (FileFailed) errno.ENOENT
+                         (PathStat :kind PathKind.DIRECTORY) None
+                         (PathStat :kind PathKind.MISSING) errno.ENOENT
+                         _ errno.ENOTDIR))
+    (when (is-not refused-errno None)
+      (<- cwd-refusal str (start-refusal refused-errno request.cwd))
+      (<- no-cwd ProcessOutcome (not-started-outcome cwd-refusal))
+      (return no-cwd)))
   (val name (posixpath.basename (get request.argv 0)))
   (val found (lfor c commands :if (= c.name name) c))
   (when (not found)
-    (<- missing ProcessOutcome (not-started (.format "[Errno 2] No such file or directory: {!r}" (get request.argv 0))))
+    (<- command-refusal str (start-refusal errno.ENOENT (get request.argv 0)))
+    (<- missing ProcessOutcome (not-started-outcome command-refusal))
     (return missing))
-  (when (is-not request.cwd None)
-    (<- stat (StatPath request.cwd))
-    (when (or (isinstance stat FileFailed) (!= stat.kind PathKind.DIRECTORY))
-      (<- no-cwd ProcessOutcome (not-started (.format "[Errno 2] No such file or directory: {!r}" request.cwd)))
-      (return no-cwd)))
   (<- outcome ProcessOutcome ((. (get found 0) run) commands request))
   outcome)
 
@@ -81,8 +86,11 @@
     (<- child-env (| tuple None) (scripted-child-env script.env env env-mode env-drop))
     (<- outcome ProcessOutcome (run-scripted script.commands (RunProcess :argv argv :stdin stdin :timeout timeout :cwd cwd :env child-env
                                                                           :output-path output-path)))
+    ;; 足せない output-path は本物と同じく例外で上げる(本物は子の後の open が OSError を上げ、答えは返らない)。
     (when (is-not output-path None)
-      (<- (AppendText output-path (+ outcome.stdout outcome.stderr))))
+      (<- appended (AppendText output-path (+ outcome.stdout outcome.stderr)))
+      (when (isinstance appended FileFailed)
+        (raise (OSError appended.detail))))
     (resume outcome))
   (ExecutableAt [path]
     (resume (any (gfor c script.commands (= c.name (posixpath.basename path))))))

@@ -1,10 +1,11 @@
 ;;; 汎用の子 process と file system の effect(process_effects.hy・file_effects.hy — agora-redesign #802 便 1)の検。
-;;;   - 本物の答え手(subprocess-handler・os-file-handler)は実 process と一時 dir で、値の詰め替え(生の returncode・時間切れ・起こせない形・
-;;;     出力の追記・種類・mode・symlink を保つ写し)を確かめる。
+;;;   - 子 process の本物(subprocess-handler)と I/O なし(scripted-process-handler)が同じ答えになる性質(returncode・出力・時間切れ・起こせない形・
+;;;     環境・cwd・stdin・出力の追記)は契約テスト test_process_contract.hy。ここは片方だけの性質(本物の WorkingDirectory・台本が env None を
+;;;     受ける形・job ごとの作業 dir・台本から台本を走らせる)。
+;;;   - 本物の file の答え手(os-file-handler)は一時 dir で、値の詰め替え(種類・mode・symlink を保つ写し)を確かめる。
 ;;;   - 同じ筋書きの Program を本物(一時 dir)と I/O なし(memory-file-handler)の両方で走らせ、答えが同じになることを確かめる(同じ所で断る)。
-;;;   - I/O なしの子 process(scripted-process-handler)は、台本・起こせない形・作業 dir・出力の追記を確かめる。
 ;;;   - doeff-agents の io_effects は同じ型を re-export する(定義は 1 つ)。
-(require doeff-hy.macros [defk <- val])
+(require doeff-hy.macros [defk deftest <- val])
 (require doeff-hy.record [defrecord])
 (import os)
 (import stat)
@@ -13,7 +14,7 @@
 (import doeff [run with_handlers])
 (import doeff_core_effects.handlers [state])
 (import doeff_core_effects.scheduler [scheduled Spawn Wait])
-(import doeff_core_effects.process_effects [EnvEntry EnvMode ProcessOutcome RunProcess ExecutableAt ReadEnvironment WorkingDirectory])
+(import doeff_core_effects.process_effects [EnvEntry ProcessOutcome RunProcess ExecutableAt WorkingDirectory])
 (import doeff_core_effects.file_effects [PathKind FileFailed PathStat DirEntry LockHeld MemoryFile MemoryFiles ReadMemoryFiles StatPath ReadDiskFree
                                          ReadText ReadBytes WriteText WriteBytes AppendText MakeDirectory ListDirectory WalkTree CopyFile
                                          CopyTree RenamePath RemoveTree AcquireLock ReleaseLock])
@@ -28,80 +29,31 @@
   (run (scheduled (with_handlers handlers program))))
 
 
-;; --- 本物の子 process -----------------------------------------------------------------------------------------------------
+;; --- 子 process: 本物だけ・fake だけの性質(両方が同じ答えになる性質は test_process_contract.hy の契約テスト) --------------------
 
-(defn test-subprocess-keeps-the-raw-returncode-and-gives-failures-as-values []
-  (with [root (tempfile.TemporaryDirectory)]
-    (setv log (os.path.join root "out.log"))
-    (setv done (on [subprocess-handler] (RunProcess :argv #("/bin/sh" "-c" "echo \"$GIVEN $(pwd)\"; echo err >&2; exit 3") :cwd root
-                                                    :env #((EnvEntry :name "GIVEN" :value "渡した")) :output-path log)))
-    (assert (= done (ProcessOutcome :exit-code 3 :stdout (.format "渡した {}\n" (os.path.realpath root)) :stderr "err\n")) done)
-    (with [f (open log :encoding "utf-8")] (assert (= (.read f) (+ done.stdout done.stderr))))
-    ;; signal で終わった子の returncode は負のまま(丸めない)。
-    (setv killed (on [subprocess-handler] (RunProcess :argv #("/bin/sh" "-c" "kill -9 $$"))))
-    (assert (= killed.exit-code -9) killed)
-    (setv slow (on [subprocess-handler] (RunProcess :argv #("sleep" "5") :timeout 0.2)))
-    (assert (and slow.timed-out slow.started (= slow.exit-code 124)) slow)
-    (setv missing (on [subprocess-handler] (RunProcess :argv #("/nonexistent/doeff-command"))))
-    (assert (and (not missing.started) (= missing.exit-code 127) (in "No such file" missing.start-error)) missing)
-    (assert (on [subprocess-handler] (ExecutableAt :path "/bin/sh")))
-    (assert (not (on [subprocess-handler] (ExecutableAt :path "/nonexistent/doeff-command"))))))
+(deftest test-subprocess-answers-the-own-working-directory
+  ;; 本物の WorkingDirectory は自分の process の作業 dir(fake は job ごとに新しい dir — 下の台本の筋書き)。
+  (<- here str (with_handlers [subprocess-handler] (WorkingDirectory)))
+  (assert (= here (os.getcwd)) here))
 
 
-(defn test-subprocess-reads-the-own-environment-and-working-directory []
-  (setv (get os.environ "DOEFF_PROCESS_PRESENT") "在る")
-  (try
-    (assert (= (on [subprocess-handler] (ReadEnvironment #("DOEFF_PROCESS_MISSING" "DOEFF_PROCESS_PRESENT")))
-               #((EnvEntry :name "DOEFF_PROCESS_PRESENT" :value "在る"))))
-    (finally (del (get os.environ "DOEFF_PROCESS_PRESENT"))))
-  (assert (= (on [subprocess-handler] (WorkingDirectory)) (os.getcwd))))
+(defk shown-env [commands request]
+  {:pre [(: commands tuple) (: request RunProcess)] :post [(: % ProcessOutcome)] :tags {:context "process-test" :role "judgment"}}
+  "台本が受けた env を名=値で並べて答える(None は None と書く)。"
+  (ProcessOutcome :exit-code 0 :stderr ""
+                  :stdout (match request.env
+                            None "None"
+                            given (.join "," (gfor e given (.format "{}={}" e.name e.value))))))
 
 
-;; 子の環境の 3 形(agora-redesign #822): None = 全部継ぐ・REPLACE(既定)= 渡した組が全部・EXTEND = 継いで足す(同じ名は足した方が勝つ)。
-(val ENV-PROBE #("/bin/sh" "-c" "printf '%s|%s|%s' \"$DOEFF_INHERITED\" \"$DOEFF_SHADOWED\" \"$DOEFF_ADDED\""))
-(val ENV-GIVEN #((EnvEntry :name "DOEFF_SHADOWED" :value "足した") (EnvEntry :name "DOEFF_ADDED" :value "足した")))
-
-
-(defn test-run-process-replaces-the-environment-by-default []
-  ;; 既定は前からの振る舞い(渡した組が子の環境の全部)のまま — 既存の使い手を壊さない。
-  (assert (= (. (RunProcess :argv #("x") :env ENV-GIVEN) env-mode) EnvMode.REPLACE)))
-
-
-(defn test-subprocess-extends-the-inherited-environment []
-  (setv (get os.environ "DOEFF_INHERITED") "継いだ")
-  (setv (get os.environ "DOEFF_SHADOWED") "親")
-  (try
-    (setv extended (on [subprocess-handler] (RunProcess :argv ENV-PROBE :env ENV-GIVEN :env-mode EnvMode.EXTEND)))
-    (assert (= extended.stdout "継いだ|足した|足した") extended)
-    (setv replaced (on [subprocess-handler] (RunProcess :argv ENV-PROBE :env ENV-GIVEN)))
-    (assert (= replaced.stdout "|足した|足した") replaced)
-    (setv inherited (on [subprocess-handler] (RunProcess :argv ENV-PROBE)))
-    (assert (= inherited.stdout "継いだ|親|") inherited)
-    ;; env-drop(#831)は EXTEND で継ぐ名のうち型に合う物を外す(足した名は外さない)。REPLACE では読まない。
-    (setv dropped (on [subprocess-handler] (RunProcess :argv ENV-PROBE :env ENV-GIVEN :env-mode EnvMode.EXTEND
-                                                       :env-drop #("DOEFF_INH*" "DOEFF_ADDED"))))
-    (assert (= dropped.stdout "|足した|足した") dropped)
-    (finally (del (get os.environ "DOEFF_INHERITED"))
-             (del (get os.environ "DOEFF_SHADOWED")))))
-
-
-(defn test-scripted-process-extends-the-script-environment []
-  ;; 台本が受ける env は子の環境の全部(EXTEND は ProcessScript の env を継いで足す — 本物と同じ規則)。
-  (defk shown-env [commands request]
-    {:pre [(: commands tuple) (: request RunProcess)] :post [(: % ProcessOutcome)]}
-    "台本が受けた env を名=値で並べて答えるため(継いだ・足した・勝った名を検が読む)。"
-    (ProcessOutcome :exit-code 0 :stderr ""
-                    :stdout (if (is request.env None) "None" (.join "," (gfor e request.env (.format "{}={}" e.name e.value))))))
-  (setv script (ProcessScript :commands #((ScriptedCommand :name "show" :run shown-env))
-                              :env #((EnvEntry :name "DOEFF_INHERITED" :value "継いだ") (EnvEntry :name "DOEFF_SHADOWED" :value "親"))))
-  (defn scripted [request]
-    (on [(state) (memory-file-handler (MemoryFiles)) (scripted-process-handler script)] request))
-  (assert (= (. (scripted (RunProcess :argv #("show") :env ENV-GIVEN :env-mode EnvMode.EXTEND)) stdout)
-             "DOEFF_INHERITED=継いだ,DOEFF_SHADOWED=足した,DOEFF_ADDED=足した"))
-  (assert (= (. (scripted (RunProcess :argv #("show") :env ENV-GIVEN :env-mode EnvMode.EXTEND :env-drop #("DOEFF_INH*" "DOEFF_ADDED"))) stdout)
-             "DOEFF_SHADOWED=足した,DOEFF_ADDED=足した"))
-  (assert (= (. (scripted (RunProcess :argv #("show") :env ENV-GIVEN)) stdout) "DOEFF_SHADOWED=足した,DOEFF_ADDED=足した"))
-  (assert (= (. (scripted (RunProcess :argv #("show"))) stdout) "None")))
+(deftest test-scripted-process-gives-the-script-none-for-an-inherited-environment
+  ;; env None(呼び手の環境を継ぐ)は台本に None で渡る — 継いだ中身を読むのは台本の側(本物の子は os.environ を継ぐ)。
+  ;; EXTEND で継いで足した全部を渡す規則は契約テスト。
+  (val script (ProcessScript :commands #((ScriptedCommand :name "show" :run shown-env))
+                             :env #((EnvEntry :name "DOEFF_INHERITED" :value "継いだ"))))
+  (<- shown ProcessOutcome (with_handlers [(state) (memory-file-handler (MemoryFiles)) (scripted-process-handler script)]
+                             (RunProcess :argv #("show"))))
+  (assert (= shown.stdout "None") shown))
 
 
 (defn test-doeff-agents-re-exports-the-same-process-types []
@@ -270,29 +222,19 @@
 
 
 (defk scripted-journey []
-  {:pre [] :post [(: % tuple)]}
-  "I/O なしの子 process の筋書き 1 つを走らせるため。"
-  (<- work (WorkingDirectory))
-  (<- again (WorkingDirectory))
-  (<- ran (RunProcess :argv #("/usr/bin/wrap" "echo" "a" "b") :cwd work :output-path (+ work "/out.log")))
-  (<- unknown (RunProcess :argv #("nope") :cwd work))
-  (<- no-cwd (RunProcess :argv #("echo") :cwd "/nowhere"))
-  (<- env (ReadEnvironment #("A" "B")))
-  (<- runnable (ExecutableAt :path "/bin/echo"))
-  (<- echoed (ReadText (+ work "/echoed")))
-  (<- logged (ReadText (+ work "/out.log")))
-  #(work again ran unknown no-cwd env runnable echoed logged))
+  {:pre [] :post [(: % tuple)] :tags {:context "process-test" :role "program"}}
+  "I/O なしの子 process の筋書き 1 つ(job の dir を 2 度聞き、wrap から echo を走らせ、echo が置いた file を読む)。"
+  (<- work str (WorkingDirectory))
+  (<- again str (WorkingDirectory))
+  (<- ran ProcessOutcome (RunProcess :argv #("/usr/bin/wrap" "echo" "a" "b") :cwd work))
+  (<- echoed str (ReadText (+ work "/echoed")))
+  #(work again ran echoed))
 
 
-(defn test-scripted-processes-run-the-script-on-the-file-handler []
-  (setv script (ProcessScript :commands #((ScriptedCommand :name "echo" :run echo-script) (ScriptedCommand :name "wrap" :run wrap-script))
-                              :env #((EnvEntry :name "A" :value "1")) :work-root "/work/jobs"))
-  (setv #(work again ran unknown no-cwd env runnable echoed logged)
-        (on [(state) (memory-file-handler (MemoryFiles)) (scripted-process-handler script)] (scripted-journey)))
-  (assert (= #(work again) #("/work/jobs/job-1" "/work/jobs/job-2")))
-  (assert (= ran (ProcessOutcome :exit-code 0 :stdout "a b\n" :stderr "")) ran)
-  (assert (and (not unknown.started) (= unknown.exit-code 127)) unknown)
-  (assert (and (not no-cwd.started) (in "/nowhere" no-cwd.start-error)) no-cwd)
-  (assert (= env #((EnvEntry :name "A" :value "1"))))
-  (assert runnable)
-  (assert (= #(echoed logged) #("a b" "a b\n"))))
+(deftest test-scripted-processes-run-the-script-on-the-file-handler
+  ;; fake だけの性質: WorkingDirectory は聞くたびに新しい job の dir・台本は file の effect で置き場を書く・台本から台本を
+  ;; run-scripted で走らせる。起こせない形・環境・ExecutableAt・output-path の追記は契約テスト(test_process_contract.hy)。
+  (val script (ProcessScript :commands #((ScriptedCommand :name "echo" :run echo-script) (ScriptedCommand :name "wrap" :run wrap-script))
+                             :work-root "/work/jobs"))
+  (<- answers tuple (with_handlers [(state) (memory-file-handler (MemoryFiles)) (scripted-process-handler script)] (scripted-journey)))
+  (assert (= answers #("/work/jobs/job-1" "/work/jobs/job-2" (ProcessOutcome :exit-code 0 :stdout "a b\n" :stderr "") "a b")) answers))
