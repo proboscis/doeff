@@ -2616,6 +2616,71 @@ fn single_point_vocabulary_requires_patterns_files_except_and_instead() {
     assert!(all.contains("vocabulary-scope a に :instead(直し方)が無い"), "{}", all);
 }
 
+/// agora-redesign #1373・#1436(DOEFF148): :confined-spellings の綴りを :except の外の file が書いていれば、file と群ごとに 1 件、
+/// critical で出す。文字列の中は数え(外の口の動詞・route の綴り)、註は数えない。Python の file も読む。:files に当たる file が
+/// 無い群は architecture.hy の位置で missing。
+#[test]
+fn spelling_outside_its_files_is_red() {
+    let files = [
+        ("app/foundation/host.hy", tags("shared", "foundation") + "(defk with-host [body] body)\n"),
+        ("app/billing/protocol/peer.hy", "(defk send [x] (HttpRequest \"POST\" \"/api/rows\" x))\n".to_string()),
+        (
+            "app/billing/core/glue.hy",
+            "; \"/api/intake\" は退いた\n(setv a 1)\n(defk go [x] (HttpRequest \"GET\" \"/api/intake\" x))\n".to_string(),
+        ),
+        ("app/billing/entry/values.py", "# /api/intake の註\nROUTE = \"/api/intake\"\n".to_string()),
+    ];
+    let dir = world_repo_with(&files, "", "[\"DOEFF148\"]");
+    let arch_path = dir.path().join("architecture.hy");
+    let text = std::fs::read_to_string(&arch_path).unwrap().replace(
+        ":foundation foundation",
+        ":foundation foundation\n  :confined-spellings [(confined-spelling \"http\" :patterns [r\"\\(HttpRequest\\s\"] \
+         :files [\"app/billing/**\"] :except [\"app/billing/protocol/*.hy\"] :why \"外の口は層 protocol だけ\") \
+         (confined-spelling \"acp-intake\" :patterns [r\"/api/intake\"] :files [\"app/billing/**\"] :why \"投函の受け手は列\") \
+         (confined-spelling \"gone\" :patterns [r\"x\"] :files [\"app/gone/**\"] :why \"消えた\")]",
+    );
+    std::fs::write(&arch_path, text).unwrap();
+    let (_, report) = editor(dir.path());
+    assert_eq!(
+        keys(&report, "DOEFF148"),
+        vec![
+            "app/billing/core/glue.hy::DOEFF148::acp-intake",
+            "app/billing/core/glue.hy::DOEFF148::http",
+            "app/billing/entry/values.py::DOEFF148::acp-intake",
+            "architecture.hy::DOEFF148::gone:missing",
+        ],
+        "{}",
+        report
+    );
+    let hit = violation(&report, "app/billing/core/glue.hy::DOEFF148::acp-intake");
+    assert!(hit["message"].as_str().unwrap().contains("1 か所"), "{}", hit["message"]);
+    assert_eq!(hit["range"]["start"]["line"], 2);
+    assert_eq!(hit["level"], "critical");
+    let python = violation(&report, "app/billing/entry/values.py::DOEFF148::acp-intake");
+    assert_eq!(python["range"]["start"]["line"], 1);
+}
+
+/// :confined-spellings の必須の鍵が無ければ読み取りの誤り(位置つき)。:except は書かなくてよい。
+#[test]
+fn confined_spelling_requires_patterns_files_and_why() {
+    let files = [("app/foundation/host.hy", tags("shared", "foundation") + "(defk with-host [body] body)\n")];
+    let dir = world_repo_with(&files, "", "[\"DOEFF148\"]");
+    let arch_path = dir.path().join("architecture.hy");
+    let text = std::fs::read_to_string(&arch_path).unwrap().replace(
+        ":foundation foundation",
+        ":foundation foundation\n  :confined-spellings [(confined-spelling \"a\") (confined-spelling \"b\" :patterns [r\"(\"] :files [\"x/**\"] :why \"y\")]",
+    );
+    std::fs::write(&arch_path, text).unwrap();
+    let (code, stdout, stderr) = run(dir.path(), &["--no-log"], None);
+    let all = format!("{}{}", stdout, stderr);
+    assert_ne!(code, 0, "{}", all);
+    assert!(all.contains("confined-spelling a に :patterns が無い"), "{}", all);
+    assert!(all.contains("confined-spelling a に :files が無い"), "{}", all);
+    assert!(all.contains("confined-spelling a に :why(なぜこの file だけか)が無い"), "{}", all);
+    assert!(!all.contains("confined-spelling a に :except"), "{}", all);
+    assert!(all.contains("confined-spelling b の正規表現 ( を読めない"), "{}", all);
+}
+
 /// agora-redesign #1318・#1410: 記録の client は HttpRequest の effect を出すだけ(送り方は EffectTransport 1 つ)— 実 HTTP は HttpRequest に
 /// 答える本物の handler(目録の http-production-handler)の側で数える。記録の client の handler(http-records-handler)は目録の「数えない」行。
 /// RecordsEndpoint を値として名指すだけ(型の注釈)の所も数えない。

@@ -112,6 +112,9 @@ pub enum ProjectRule {
     /// DOEFF146: 判定を1か所に閉じ込めた語彙が :except の外に在る — architecture.hy の :single-point-vocabulary の群が
     /// 名指す語彙(正規表現)を、:except の file(判定の1点)の外の :files が読んでいる(agora-redesign #1192・#1371)。
     VocabularyOutsideSinglePoint,
+    /// DOEFF148: 書いてよい file を決めた綴りが :except の外に在る — architecture.hy の :confined-spellings の群が名指す綴り
+    /// (正規表現・文字列の中も数える)を、:except の外の :files が書いている(agora-redesign #1373・#1436)。
+    SpellingOutsideItsFiles,
     /// DOEFF136: service の entry の層の定義に、模擬の環境(:verification-environment)の下の deftest が 1 本も届かない
     /// — 本番の組み立てを手元で回していない service(agora-redesign #1106 の R5・#1111)。
     ServiceUntestedOnSim,
@@ -188,6 +191,7 @@ impl ProjectRule {
         ProjectRule::TestKindMismatch,
         ProjectRule::TestFormNotDeftest,
         ProjectRule::VocabularyOutsideSinglePoint,
+        ProjectRule::SpellingOutsideItsFiles,
         ProjectRule::ServiceUntestedOnSim,
         ProjectRule::PlacedDependency,
         ProjectRule::BlindDefinitionReads,
@@ -242,6 +246,7 @@ impl ProjectRule {
             ProjectRule::TestKindMismatch => "DOEFF133",
             ProjectRule::TestFormNotDeftest => "DOEFF135",
             ProjectRule::VocabularyOutsideSinglePoint => "DOEFF146",
+            ProjectRule::SpellingOutsideItsFiles => "DOEFF148",
             ProjectRule::ServiceUntestedOnSim => "DOEFF136",
             ProjectRule::PlacedDependency => "DOEFF140",
             ProjectRule::BlindDefinitionReads => "DOEFF141",
@@ -276,6 +281,8 @@ impl ProjectRule {
             | ProjectRule::TestKindMismatch
             | ProjectRule::TestFormNotDeftest
             | ProjectRule::VocabularyOutsideSinglePoint
+            // 書いてよい file を決めた綴りが外に在る(#1436 — #1373 の孫。新しい当たりは critical)。
+            | ProjectRule::SpellingOutsideItsFiles
             | ProjectRule::ServiceUntestedOnSim
             // 置き場の外の module への依存(#1188 — 登録簿に載った既知の当たりは warning、新しい当たりは critical)。
             | ProjectRule::PlacedDependency
@@ -383,6 +390,7 @@ impl ProjectRule {
             | ProjectRule::TestKindMismatch
             | ProjectRule::TestFormNotDeftest
             | ProjectRule::VocabularyOutsideSinglePoint
+            | ProjectRule::SpellingOutsideItsFiles
             | ProjectRule::ServiceUntestedOnSim
             | ProjectRule::RetiredWord
             | ProjectRule::RetiredCall
@@ -452,6 +460,7 @@ impl ProjectRule {
             ProjectRule::TestKindMismatch => "テストの種類(手元 / 縁)と印が食い違う",
             ProjectRule::TestFormNotDeftest => "deftest 以外のテストの形",
             ProjectRule::VocabularyOutsideSinglePoint => "判定の1点の外で同じ語彙を読んでいる",
+            ProjectRule::SpellingOutsideItsFiles => "書いてよい file の外の綴り",
             ProjectRule::ServiceUntestedOnSim => "模擬の環境のテストが回さない service",
             ProjectRule::RetiredWord => "使わないと決めた綴り",
             ProjectRule::RetiredCall => "使わないと決めた呼び",
@@ -482,7 +491,8 @@ impl ProjectRule {
             | ProjectRule::TestKindMismatch => {
                 RuleFamily::Raw
             }
-            ProjectRule::EnvironmentName | ProjectRule::RetiredWord | ProjectRule::RetiredCall | ProjectRule::VocabularyOutsideSinglePoint => RuleFamily::Naming,
+            ProjectRule::EnvironmentName | ProjectRule::RetiredWord | ProjectRule::RetiredCall | ProjectRule::VocabularyOutsideSinglePoint
+            | ProjectRule::SpellingOutsideItsFiles => RuleFamily::Naming,
             ProjectRule::UnknownConfigKey
             | ProjectRule::UnreadableFile
             | ProjectRule::ServiceBoundary
@@ -559,6 +569,7 @@ impl ProjectRule {
             ProjectRule::TestKindMismatch => "Test Kind Mismatch",
             ProjectRule::TestFormNotDeftest => "Test Form Not Deftest",
             ProjectRule::VocabularyOutsideSinglePoint => "Vocabulary Outside Single Point",
+            ProjectRule::SpellingOutsideItsFiles => "Spelling Outside Its Files",
             ProjectRule::ServiceUntestedOnSim => "Service Untested On Sim",
             ProjectRule::RetiredWord => "Retired Word",
             ProjectRule::RetiredCall => "Retired Call",
@@ -612,6 +623,7 @@ impl ProjectRule {
             ProjectRule::EffectsDisagreeWithInference => "defk の :effects を書いたなら、本体で撃つ呼び((<- …)・(! …))から推論した effect と同じ集合にする — 宣言に無い effect を起こさず、起こさない effect を宣言しない(:effects の無い defk は対象外)",
             ProjectRule::TestFormNotDeftest => "テストは deftest だけで書き pytest が収集する — Python の def test_*・module ごとの skip・pytest の外で走る check script・deftest を自分で回す runner は置かない(operator 2026-09-27「検は deftest だけ」)。file は architecture.hy の :test-forms の綴りの型で選ぶ",
             ProjectRule::VocabularyOutsideSinglePoint => "ある語彙(job の phase・turn の state・担い手の欄 等)の判定は 1 つの file(architecture.hy の :single-point-vocabulary の :except)に閉じ込める — 他の file が同じ正規表現に当たる綴りを読むと、そこが第 2 の判定点になり、直す時に片方だけ直して食い違う",
+            ProjectRule::SpellingOutsideItsFiles => "architecture.hy の :confined-spellings の群の綴り(正規表現)は :except の file にだけ書く(:except が空なら :files のどこにも書かない)— :files に当たる Hy・Python の file の、註を落とした本文(文字列の中も数える)を読む。:files に当たる file が 1 つも無い群も当たる(母集団 0 を緑にしない)",
             ProjectRule::RetiredWord => "architecture.hy の :retired-words で使わないと決めた綴りを、群の :files の file に書かない — :words は語として単独で在る所(前後が英字・_・- でない)、:patterns は行ごとの正規表現、:in names は定義の名だけ・:in paths は file の名だけを見る。:rule-lines の綴りを含む行(規則そのものを述べる行)は数えない",
             ProjectRule::RetiredCall => "architecture.hy の :retired-calls で使わないと決めた呼び(退役した effect・時計 …)を、群の :files の Hy の file で呼ばない — 頭の記号が :calls の綴りの form を数え、註・文字列・読み捨てた form は数えない",
             ProjectRule::UntypedStructuredValue => "構造を持つ値は欄の名前と型を静的に持つ型(frozen の dataclass・defrecord・defwire)で表す — architecture.hy の :typed-values の file の公開面(名が _ で始まらない物)の、class の欄・関数と method の戻り値・defk / deff の :post の型に、素の写像(dict・Mapping・JsonValue …)・素の組(tuple)・値が object / Any の写像・長さの決まった組 tuple[A, B]・それらを中身に持つ入れ物を書かず、defn / defk / deff は長さ 2 以上の組の literal #(a b) を答えにしない。:post は isinstance の契約なので写像だけを赤にし、名に型の注記の無い defk / deff の :post は素の組も赤にする",
@@ -667,6 +679,7 @@ impl ProjectRule {
             ProjectRule::EffectsDisagreeWithInference => ":effects に起こしている effect を足すか、起こしていない effect を消す(推論は handler で受けた effect を引かない — 本体で受けているなら登録簿に載せる)",
             ProjectRule::TestFormNotDeftest => "deftest に書き直す(判定の関数は同じ process で呼ぶ)— 守る物が消えたなら file ごと消す。module ごとの skip は足りない物を直すか、その検だけを skip する",
             ProjectRule::VocabularyOutsideSinglePoint => "群の :instead が名指す判定の1点(:except の file)の答えを読む — 直せない既存の当たりは登録簿に載せる",
+            ProjectRule::SpellingOutsideItsFiles => "綴りを :except の file へ移し、外の file はその file の口を通す — 書いてよい file を増やすなら、理由を :why に書いて :except に足す",
             ProjectRule::RetiredWord => "群の :instead の語に書き換える(規則そのものを述べる行なら、:rule-lines の綴りを含めて書く)— 直せない既存の当たりは登録簿に載せる",
             ProjectRule::RetiredCall => "群の :instead の物に置き換える — 直せない既存の当たりは登録簿に載せる",
             ProjectRule::HandlerArgumentHoldsState => "引数を消し、接続先と設定は Ask、client は (session val …)、状態は (session var …) へ移す — 同じ handler を別の設定で並べるなど引数に残す物は本文に理由の註を書く",
@@ -736,6 +749,7 @@ mod tests {
         ("DOEFF151", RuleFamily::Naming),
         ("DOEFF142", RuleFamily::Definition),
         ("DOEFF146", RuleFamily::Naming),
+        ("DOEFF148", RuleFamily::Naming),
         ("DOEFF201", RuleFamily::Jev),
         ("DOEFF202", RuleFamily::Jev),
         ("DOEFF203", RuleFamily::Jev),

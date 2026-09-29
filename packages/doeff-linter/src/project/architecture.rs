@@ -331,6 +331,26 @@ pub struct VocabularyScope {
     pub instead: String,
 }
 
+/// 書いてよい file を決めた綴りの群 1 つ(`:confined-spellings` の
+/// `(confined-spelling "名" :patterns [r"…"] :files [..] :except [..] :why "…")` — DOEFF148・agora-redesign #1373・#1436)。
+/// :files と :except は repo の根からの path の glob。:except の file だけがこの綴りを書ける(空なら :files のどこにも書かない)。
+/// 註を落とした本文を読み、文字列の中は数える(DOEFF146 は文字列を数えない — 外の口の動詞や route の綴りは文字列に在る)。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct ConfinedSpelling {
+    /// 群の名(登録簿の鍵の細目)。
+    pub name: String,
+    /// 本文に当てる正規表現(読めることは読む時に確かめる)。
+    pub patterns: Vec<String>,
+    pub files: Vec<String>,
+    /// この綴りを書いてよい file(空 = :files のどこにも書かない)。
+    pub except: Vec<String>,
+    /// なぜこの file だけか(知らせの文に入れる)。
+    pub why: String,
+    /// architecture.hy の中の位置(:files に当たる file が無い時の当たりの位置)。
+    #[serde(skip)]
+    pub range: doeff_indexer::hy_index::Range,
+}
+
 /// architecture.hy の全体。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct Architecture {
@@ -391,6 +411,9 @@ pub struct Architecture {
     /// 判定を 1 か所に閉じ込めた語彙(`:single-point-vocabulary [(vocabulary-scope …) …]` — 空 = 宣言していない)。書けば
     /// DOEFF146 が :except の外でこの語彙を読む file を出す(agora-redesign #1192・#1371)。
     pub single_point_vocabulary: Vec<VocabularyScope>,
+    /// 書いてよい file を決めた綴り(`:confined-spellings [(confined-spelling …) …]` — 空 = 宣言していない)。書けば DOEFF148 が
+    /// :except の外でこの綴りを書く file を出す(agora-redesign #1373・#1436)。
+    pub confined_spellings: Vec<ConfinedSpelling>,
     /// handler の引数の決まり(書けば DOEFF142 が defhandler の引数の client・可変の店を出す — agora-redesign #1189 / #1366)。
     pub handler_arguments: Option<HandlerArguments>,
     /// 公開面の型の注記を読む file(`:typed-values {:files [..] :except [..]}`)。書けば DOEFF144 が、欄・戻り値・:post の型の素の写像・
@@ -729,6 +752,7 @@ impl<'a> Parser<'a> {
             retired_words: Vec::new(),
             retired_calls: Vec::new(),
             single_point_vocabulary: Vec::new(),
+            confined_spellings: Vec::new(),
             handler_arguments: None,
             typed_values: None,
             record_stubs: None,
@@ -788,6 +812,7 @@ impl<'a> Parser<'a> {
                 ":retired-words" => arch.retired_words = self.retired_words(value),
                 ":retired-calls" => arch.retired_calls = self.retired_calls(value),
                 ":single-point-vocabulary" => arch.single_point_vocabulary = self.single_point_vocabulary(value),
+                ":confined-spellings" => arch.confined_spellings = self.confined_spellings(value),
                 ":handler-arguments" => arch.handler_arguments = self.handler_arguments(value),
                 ":typed-values" => arch.typed_values = self.file_selection(value, ":typed-values"),
                 ":record-stubs" => arch.record_stubs = self.file_selection(value, ":record-stubs"),
@@ -1073,6 +1098,63 @@ impl<'a> Parser<'a> {
             }
             if out.iter().any(|g| g.name == group.name) {
                 self.problem(entry, &format!("retired-words {} が 2 度宣言されている", group.name));
+                continue;
+            }
+            out.push(group);
+        }
+        out
+    }
+
+    /// `[(confined-spelling "名" :patterns [r"…"] :files [..] :except [..] :why "…") …]` を読む(:patterns・:files・:why は要る —
+    /// :except は書かなくてよい = :files のどこにも書かない綴り)。
+    fn confined_spellings(&mut self, value: &Form) -> Vec<ConfinedSpelling> {
+        let shape = "(confined-spelling \"名\" :patterns [r\"…\"] :files [..] :except [..] :why \"…\")";
+        let Some(entries) = self.bracket(value) else {
+            self.problem(value, &format!(":confined-spellings は {} の列", shape));
+            return Vec::new();
+        };
+        let mut out: Vec<ConfinedSpelling> = Vec::new();
+        for entry in entries {
+            let parts = self.paren(entry).filter(|p| p.first().and_then(|h| self.symbol(h)) == Some("confined-spelling"));
+            let Some((name, head)) = parts.as_ref().and_then(|p| p.get(1)).and_then(|f| self.name(f).map(|n| (n, *f))) else {
+                self.problem(entry, &format!(":confined-spellings の要素は {}", shape));
+                continue;
+            };
+            let parts = parts.unwrap_or_default();
+            let range = self.lines.range(head.span.start, head.span.end);
+            let mut group = ConfinedSpelling { name, patterns: Vec::new(), files: Vec::new(), except: Vec::new(), why: String::new(), range };
+            let rest: Vec<&Form> = parts.iter().skip(2).copied().collect();
+            for (key, field) in self.pairs(&rest) {
+                match self.text(key) {
+                    ":patterns" => match self.bracket(field) {
+                        Some(items) => {
+                            for item in items {
+                                let Some(pattern) = self.pattern(item, ":patterns") else { continue };
+                                match regex::Regex::new(&pattern) {
+                                    Ok(_) => group.patterns.push(pattern),
+                                    Err(error) => self.problem(item, &format!("confined-spelling {} の正規表現 {} を読めない: {}", group.name, pattern, error)),
+                                }
+                            }
+                        }
+                        None => self.problem(field, ":patterns は [r\"…\" …] の列"),
+                    },
+                    ":files" => group.files = self.path_globs(field, ":files"),
+                    ":except" => group.except = self.path_globs(field, ":except"),
+                    ":why" => group.why = self.required_string(field, ":why").unwrap_or_default(),
+                    _ => self.unknown_key(key, "confined-spelling"),
+                }
+            }
+            if group.patterns.is_empty() {
+                self.problem(entry, &format!("confined-spelling {} に :patterns が無い", group.name));
+            }
+            if group.files.is_empty() {
+                self.problem(entry, &format!("confined-spelling {} に :files が無い(探す file の無い群は置かない)", group.name));
+            }
+            if group.why.trim().is_empty() {
+                self.problem(entry, &format!("confined-spelling {} に :why(なぜこの file だけか)が無い", group.name));
+            }
+            if out.iter().any(|g| g.name == group.name) {
+                self.problem(entry, &format!("confined-spelling {} が 2 度宣言されている", group.name));
                 continue;
             }
             out.push(group);
