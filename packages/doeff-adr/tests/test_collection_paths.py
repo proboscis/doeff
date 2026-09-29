@@ -8,7 +8,10 @@ import pytest
 from doeff_adr.pytest_plugin import (
     DEFAULT_FILE_PATTERNS,
     _discover_executable_adrs,
+    _import_base_for_path,
     _matches_file_patterns,
+    _module_name_for_path,
+    _relative_module_parts,
     _relative_posix,
 )
 
@@ -115,3 +118,28 @@ def test_strict_wiring_accepts_a_collected_defadr_reached_through_a_symlink(pyte
     result = pytester.runpytest_subprocess("-p", "no:cacheprovider", "--collect-only", "-q")
     assert result.ret == 0, result.stdout.str()
     result.stdout.fnmatch_lines(["docs/adr/defadr_linked.hy::test_linked", "docs/adr/defadr_plain.hy::test_plain"])
+
+
+def test_module_name_parts_are_cut_from_the_string_under_the_root(tmp_path: Path) -> None:
+    """module の名は拡張子を除いた rootdir からの部分(``with_suffix("").relative_to`` と同じ答え)。rootdir の外は
+    今までどおり ValueError。"""
+    root = tmp_path / "project"
+    assert _relative_module_parts(root / "controllers" / "x" / "tests" / "test_y.hy", root) == [
+        "controllers", "x", "tests", "test_y",
+    ]
+    assert _relative_module_parts(root / "a" / "b.c.hy", root) == ["a", "b.c"]
+    assert _relative_module_parts(tmp_path / "project2" / "a.hy", root) is None
+    assert _module_name_for_path(root / "pkg" / "tests" / "test_z.hy", root) == "pkg.tests.test_z"
+    with pytest.raises(ValueError, match="outside pytest root"):
+        _module_name_for_path(tmp_path / "elsewhere" / "test_z.hy", root)
+
+
+def test_import_base_falls_back_to_the_first_non_package_ancestor(tmp_path: Path) -> None:
+    """名に使えない部分(``doeff-cluster``)を含む path は、``__init__`` を持たない最初の祖先を基にする(今までどおり)。"""
+    root = tmp_path / "project"
+    tests = root / "packages" / "doeff-cluster" / "tests"
+    tests.mkdir(parents=True)
+    (tests / "__init__.py").write_text("")
+    source = tests / "test_x.hy"
+    assert _import_base_for_path(source, root) == root / "packages" / "doeff-cluster"
+    assert _import_base_for_path(root / "pkg" / "test_x.hy", root) == root

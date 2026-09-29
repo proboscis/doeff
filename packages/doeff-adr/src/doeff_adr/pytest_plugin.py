@@ -667,6 +667,26 @@ def _ensure_macro_module_loaded() -> None:
     loader.exec_module(module)
 
 
+def _relative_module_parts(path: Path, root: Path) -> list[str] | None:
+    """拡張子を除いた path の rootdir からの部分(module の名の素)。rootdir の下でなければ None。
+
+    収集は file ごとに import の基の dir と module の名を決めるので、この部分を 2 度ずつ求める。文字の上で rootdir の
+    下にある時は文字列を切って分ける — ``with_suffix`` / ``relative_to`` は path を作り直すので、420 file の収集で
+    目立っていた(agora-redesign #1551)。文字列の頭が合わない時は今までの部分の比べに回す。
+    """
+    text = path.as_posix()
+    root_text = root.as_posix()
+    prefix = root_text if root_text.endswith("/") else root_text + "/"
+    if text.startswith(prefix):
+        relative = text[len(prefix):]
+        suffix = path.suffix
+        return (relative[: -len(suffix)] if suffix else relative).split("/")
+    try:
+        return list(path.with_suffix("").relative_to(root).parts)
+    except ValueError:
+        return None
+
+
 def _import_base_for_path(path: Path, root: Path) -> Path:
     """The directory an executable Hy file is imported relative to.
 
@@ -681,11 +701,8 @@ def _import_base_for_path(path: Path, root: Path) -> Path:
     ``packages/doeff-cluster``. Paths outside the rootdir keep the rootdir so
     ``_module_name_for_path`` reports them.
     """
-    try:
-        parts = path.with_suffix("").relative_to(root).parts
-    except ValueError:
-        return root
-    if all(part.isidentifier() for part in parts):
+    parts = _relative_module_parts(path, root)
+    if parts is None or all(part.isidentifier() for part in parts):
         return root
     base = path.parent
     while (base / "__init__.py").exists() or (base / "__init__.hy").exists():
@@ -694,11 +711,9 @@ def _import_base_for_path(path: Path, root: Path) -> Path:
 
 
 def _module_name_for_path(path: Path, root: Path) -> str:
-    try:
-        relative = path.with_suffix("").relative_to(root)
-    except ValueError as exc:
-        raise ValueError(f"executable ADR file is outside pytest root: {path}") from exc
-    parts = relative.parts
+    parts = _relative_module_parts(path, root)
+    if parts is None:
+        raise ValueError(f"executable ADR file is outside pytest root: {path}")
     bad_parts = [part for part in parts if not part.isidentifier()]
     if bad_parts:
         raise ValueError(
