@@ -16,7 +16,7 @@
 (import doeff_records.laws [LAW-SCHEMA MAKER law-stream-end-is-the-last-sequence])
 (import doeff_records.memory [MemoryStore memory-records-handler])
 (import doeff_records.http_server [RecordsServerConfig start-records-server])
-(import doeff_records.http_client [BlockingTransport RecordsEndpoint EffectTransport http-records-handler])
+(import doeff_records.http_client [RecordsEndpoint EffectTransport http-records-handler])
 (import tests.interpreters [LAW-TOKENS LawSetup law-roster sim-request-handlers])
 
 (val DETAIL "記録の service が落ちている(筋書き)")
@@ -97,7 +97,7 @@
                                                          :request-handlers (sim-request-handlers clock))))
   (try
     (val answer (run (scheduled (with_handlers [(sim-time-handler :clock clock)
-                                                (http-records-handler (RecordsEndpoint server.url (get LAW-TOKENS MAKER) :transport (BlockingTransport)))]
+                                                (http-records-handler (RecordsEndpoint server.url (get LAW-TOKENS MAKER)))]
                                                (ReadStreamEnd "journal")))))
     (assert (= answer (Unreachable DETAIL)) (repr answer))
     (finally (.close server))))
