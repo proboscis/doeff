@@ -183,6 +183,18 @@ def _stub_function(item: FunctionItem, path: Path, module_name: str) -> Callable
     return marked
 
 
+def _stub_module_mark(name: str) -> pytest.MarkDecorator:
+    """module の印の名から、収集の ``-m`` が同じに読む仮の印を作る(引数は setup で実物の印に替わる)。
+
+    skipif / skip は引数が無いと無条件に飛ばす印と読まれるので、setup まで飛ばさない仮の条件を置く。
+    """
+    match name:
+        case "skipif":
+            return pytest.mark.skipif(False, reason="(条件は import の後に実物の印で評価する)")
+        case _:
+            return getattr(pytest.mark, name)
+
+
 def stub_module(recorded: RecordedModule, path: Path, module_name: str) -> types.ModuleType:
     """記録から仮の module を作る — pytest の Module の収集が読む物(関数と pytestmark)だけを持つ。"""
     module = types.ModuleType(module_name)
@@ -192,7 +204,7 @@ def stub_module(recorded: RecordedModule, path: Path, module_name: str) -> types
             case FunctionItem():
                 setattr(module, record.name, _stub_function(record, path, module_name))
             case ModuleMarks(names):
-                setattr(module, "pytestmark", [getattr(pytest.mark, name) for name in names])
+                setattr(module, "pytestmark", [_stub_module_mark(name) for name in names])
             case Dynamic():
                 raise AssertionError("Dynamic の記録を持つ file は plan_collection が import に回す")
     return module
@@ -287,6 +299,18 @@ def swap_in_real_function(item: pytest.Function, real_module: types.ModuleType) 
     item.obj = real
     callspec_marks = list(callspec.marks) if callspec is not None else []
     item.own_markers = [*real_marks, *callspec_marks]
+
+
+def swap_in_real_module_marks(node: pytest.Module, stub_module_obj: types.ModuleType, real_module: types.ModuleType) -> None:
+    """module の node の印(仮の module の pytestmark から付いた物)を実物の module の印に替える。名が記録と違えば RecordMismatch。"""
+    stub_marks = get_unpacked_marks(stub_module_obj)
+    real_marks = get_unpacked_marks(real_module)
+    if [m.name for m in stub_marks] != [m.name for m in real_marks]:
+        raise RecordMismatch(
+            f"{node.nodeid}: module の印が記録と違う — 記録 {[m.name for m in stub_marks]} / 実物 {[m.name for m in real_marks]}"
+        )
+    others = [m for m in node.own_markers if not any(m is s for s in stub_marks)]
+    node.own_markers = [*others, *real_marks]
 
 
 def check_no_unrecorded_items(module_names: Iterable[str], real_module: types.ModuleType, name_matches: Callable[[str], bool], where: str) -> None:

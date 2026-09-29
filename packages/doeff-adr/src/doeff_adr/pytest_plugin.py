@@ -21,6 +21,7 @@ from doeff_adr.lazy_collection import (
     NeedsImport,
     RecordMismatch,
     check_no_unrecorded_items,
+    swap_in_real_module_marks,
     forget_records,
     import_module_for,
     plan_collection,
@@ -300,6 +301,7 @@ class DoeffAdrHyFile(pytest.Module):
             real = self.config.hook.pytest_doeff_import_hy_module(collector=self)
             recorded_names = [name for name, value in vars(self.obj).items() if callable(value)]
             check_no_unrecorded_items(recorded_names, real, self._pytest_collects, self.nodeid)
+            swap_in_real_module_marks(self, self.obj, real)
             self._mut_real_module = real
         if item.obj is not getattr(real, item.originalname, None):
             swap_in_real_function(item, real)
@@ -471,6 +473,14 @@ def _walk_budget_message(root: Path, dirs_walked: int, max_dirs: int, mode: Wiri
 
 
 def _relative_posix(path: Path, root: Path) -> str:
+    """rootdir からの path(照合と報告のため)。
+
+    収集と wiring の走査は rootdir の下の path を 1 file ずつ渡すので、文字の上で rootdir の下にあればそのまま
+    相対にする。symlink の解決(realpath)は外れた時だけ — 毎回解決すると、収集の 1 回で 1 万回近く呼ばれて
+    収集の時間の 1 割を占めていた(agora-redesign #1227 の実測)。
+    """
+    if path.is_relative_to(root):
+        return path.relative_to(root).as_posix()
     try:
         return path.resolve().relative_to(root.resolve()).as_posix()
     except ValueError:

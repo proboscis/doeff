@@ -263,14 +263,28 @@ def record_function(
     _record(compiler, FunctionItem(fname, tuple(hy.mangle(str(a)) for a in argnames), tuple(specs)))
 
 
+# module の印のうち、収集の結果(item の本数・fixture の閉包)を変える物 — 呼び出しの形なら値が要るので記録しない。
+_COLLECTION_SHAPING_MARKS = frozenset({"parametrize", "usefixtures"})
+
+
 def _mark_name(form: object) -> str:
-    """``pytest.mark.<名>`` の形の form から印の名を読む(他の形は値が決まらない)。"""
+    """module の直下の印の form から、収集で ``-m`` が読む印の名を読む(他の形は値が決まらない)。
+
+    ``pytest.mark.<名>`` と、その呼び出し ``(pytest.mark.<名> …)`` を読む。呼び出しの引数(skipif の条件など)は
+    記録しない — plugin が item の setup で実物の module の印に替えてから評価する。ただし収集の結果を変える印
+    (parametrize・usefixtures)の呼び出しは値が要るので、決まらない物として扱う。
+    """
     # Hy の reader は ``pytest.mark.real-world`` を ``(. pytest mark real-world)`` の式に読む。
     match form:
         case hy.models.Expression() if len(form) == 4 and all(
             isinstance(part, hy.models.Symbol) for part in form
         ) and [str(part) for part in list(form)[:3]] == [".", "pytest", "mark"]:
             return hy.mangle(str(list(form)[3]))
+        case hy.models.Expression() if len(form) >= 1:
+            name = _mark_name(list(form)[0])
+            if name in _COLLECTION_SHAPING_MARKS:
+                raise _NotStatic(hy.repr(form))
+            return name
         case _:
             raise _NotStatic(hy.repr(form))
 
