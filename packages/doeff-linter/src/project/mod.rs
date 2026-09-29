@@ -202,7 +202,8 @@ pub fn run_with(root: &Path, settings: &ProjectSettings, enabled: &BTreeSet<Proj
     let mut semantic_probes: Vec<SemanticProbe> = Vec::new();
     let wants_raw = enabled.contains(&ProjectRule::RawSideEffectDirect)
         || enabled.contains(&ProjectRule::RawSideEffectVia)
-        || enabled.contains(&ProjectRule::WorldHandlerNamedOutsideList);
+        || enabled.contains(&ProjectRule::WorldHandlerNamedOutsideList)
+        || enabled.contains(&ProjectRule::WorldHandlerMisplaced);
     let mut drafts = Vec::new();
 
     // 読めない Hy の file の知らせ(DOEFF128)の材料 — 全体なら repo の Hy の file の全部、1 file ならその保存前の中身。
@@ -267,6 +268,9 @@ pub fn run_with(root: &Path, settings: &ProjectSettings, enabled: &BTreeSet<Proj
                 if let Some(architecture) = &settings.architecture {
                     if enabled.contains(&ProjectRule::UnusedDependency) {
                         drafts.extend(judge_unused_dependencies(root, architecture, &crossings));
+                    }
+                    if enabled.contains(&ProjectRule::WorldHandlerMisplaced) && !architecture.world_handlers.is_empty() {
+                        drafts.extend(judge_world_handler_places(root, architecture, layers, &layer_files, hy));
                     }
                 }
             }
@@ -1558,6 +1562,56 @@ fn judge_unused_dependencies(root: &Path, architecture: &architecture::Architect
                 detail: Some(format!("{}>{}", service.name, dependency)),
                 base: Severity::Info,
                 explain: Explain::UnusedDependency { service: service.name.clone(), dependency: dependency.clone() },
+            });
+        }
+    }
+    drafts
+}
+
+/// DOEFF132: 許可名簿の定義 1 本ずつ — module が層の置き場に在るか・その層が foundation か・Hy の module なら定義が在るか。
+/// 位置は architecture.hy の名簿の要素(全体の実行だけ)。
+fn judge_world_handler_places(
+    root: &Path,
+    architecture: &architecture::Architecture,
+    layers: &settings::LayerSettings,
+    layer_files: &[LayerFile],
+    hy: &HashMap<String, HyFileIndex>,
+) -> Vec<Draft> {
+    let rel = relative_path(root, &architecture.path).unwrap_or_else(|| architecture.path.to_string_lossy().into_owned());
+    let foundation = architecture.foundation.as_deref();
+    let mut drafts = Vec::new();
+    for handler in &architecture.world_handlers {
+        let module = handler.definition.mangled_module();
+        let file = layer_files.iter().find(|f| architecture::mangle_dotted(&f.module) == module);
+        let problem = match file {
+            None => Some(format!("module {} が層の置き場に無い(無い module か、層の外の置き場)", handler.definition.module)),
+            Some(file) => {
+                let layer = &layers.layers[file.site.layer.0].name;
+                if Some(layer.as_str()) != foundation {
+                    Some(format!("{} は層 {} に在る — foundation の層にだけ置く", file.file.rel, layer))
+                } else {
+                    let target = handler.definition.target();
+                    match hy.get(&file.file.rel) {
+                        Some(index) if !index.definitions.iter().any(|d| d.qualified_name == target) => {
+                            Some(format!("{} に定義 {} が無い", file.file.rel, handler.definition.name))
+                        }
+                        _ => None,
+                    }
+                }
+            }
+        };
+        if let Some(problem) = problem {
+            let spelling = handler.definition.spelling();
+            drafts.push(Draft {
+                rule: ProjectRule::WorldHandlerMisplaced,
+                layer: None,
+                rel: rel.clone(),
+                path: architecture.path.clone(),
+                range: handler.range,
+                message: format!("許可名簿の定義 {} — {}", spelling, problem),
+                detail: Some(spelling.clone()),
+                base: Severity::Error,
+                explain: Explain::WorldHandlerMisplaced { definition: spelling, problem },
             });
         }
     }

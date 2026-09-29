@@ -165,6 +165,8 @@ pub enum Explain {
     RawDirect { placement: Placement, definition: String, kind: &'static str, evidence: String, category: &'static str, weak: bool },
     /// DOEFF131: 許可名簿の外の定義が、:wraps に挙げた doeff の実 I/O の handler を名指す。
     WorldHandlerNamed { placement: Placement, definition: String, wrapped: String, listed_by: String },
+    /// DOEFF132: 許可名簿の定義が実在しない・foundation の外に在る。
+    WorldHandlerMisplaced { definition: String, problem: String },
     /// DOEFF107: 定義が呼ぶ定義を通して生の副作用に届く。
     RawVia { placement: Placement, definition: String, through: Vec<String>, evidence: String, category: &'static str },
     /// DOEFF108: 業務の名に環境の語がある。
@@ -344,6 +346,10 @@ impl<'a> Narrator<'a> {
                     "{} は外の世界に触れる handler で、許可名簿では {} だけが中で動かしてよい。ここで直に被せると、模擬で handler の組を差し替えてもこの所だけ本物の世界に触る。名簿の定義 {} を使うか、この定義を名簿に載せる(foundation の層に置く)。",
                     wrapped, listed_by, listed_by
                 ),
+            ),
+            Explain::WorldHandlerMisplaced { definition, problem } => (
+                format!("許可名簿の定義 {} — {}", definition, problem),
+                "外の世界に触れてよい定義は層 foundation にだけ置く(operator 2026-09-29 \"placed in specific dir with rules\")。名簿に在って実物が無い・foundation の外に在ると、名簿が外の世界に触れる所を言い当てなくなる。".to_string(),
             ),
             Explain::RawVia { placement, definition, through, evidence, category } => (
                 format!("定義 {} が {} を通して {}({} の生の副作用)に届く — {}", definition, through.join(" → "), evidence, category, self.file_subject(placement)),

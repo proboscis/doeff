@@ -1846,6 +1846,11 @@ fn translation_effects_depth_and_layers_are_configured() {
 
 /// 許可名簿(:world-handlers)を書いた repo(層 core・foundation・entry・service billing)。
 fn world_repo(files: &[(&str, String)]) -> tempfile::TempDir {
+    world_repo_with(files, "", "[\"DOEFF106\", \"DOEFF131\"]")
+}
+
+/// 名簿に要素を足した world_repo(`extra` は :world-handlers の列の末尾に足す要素・`enable` は規則の列)。
+fn world_repo_with(files: &[(&str, String)], extra: &str, enable: &str) -> tempfile::TempDir {
     let dir = tempfile::TempDir::new().unwrap();
     let architecture = r#"
 (defarchitecture sample
@@ -1855,11 +1860,12 @@ fn world_repo(files: &[(&str, String)]) -> tempfile::TempDir {
            (layer entry :roles [entry] :imports [core foundation entry])]
   :foundation foundation
   :world-handlers [(world-handler "app.foundation.host:with-host" :touches [http file]
-                     :wraps ["doeff_core_effects.os_file:os-file-handler"])])
+                     :wraps ["doeff_core_effects.os_file:os-file-handler"])EXTRA])
 (defservice billing "請求" {:layers [core entry]})
-"#;
+"#
+    .replace("EXTRA", extra);
     std::fs::write(dir.path().join("architecture.hy"), architecture).unwrap();
-    std::fs::write(dir.path().join("pyproject.toml"), "[tool.doeff-linter]\nenable = [\"DOEFF106\", \"DOEFF131\"]\n").unwrap();
+    std::fs::write(dir.path().join("pyproject.toml"), format!("[tool.doeff-linter]\nenable = {}\n", enable)).unwrap();
     for (rel, text) in files {
         let path = dir.path().join(rel);
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
@@ -1916,4 +1922,35 @@ fn world_handler_list_limits_raw_io_and_wrapped_handlers() {
     let found = violation(&report, "app/foundation/host.hy::DOEFF131::token_in_file::world::doeff_core_effects.os_file:os-file-handler");
     assert_eq!(found["severity"], "error");
     assert_eq!(found["level"], "critical");
+}
+
+/// agora-redesign #1141(R2): 許可名簿の定義は実在し、層 foundation の module に在る(DOEFF132 — 位置は architecture.hy の名簿の要素)。
+#[test]
+fn world_handler_list_entries_exist_in_the_foundation_layer() {
+    let files = [
+        ("app/foundation/host.hy", tags("shared", "foundation") + "(defk with-host [body] body)\n"),
+        ("app/billing/entry/main.hy", tags("billing", "entry") + "(defk run [body] body)\n"),
+    ];
+    let extra = r#"
+                   (world-handler "app.foundation.host:gone" :touches [file])
+                   (world-handler "app.billing.entry.main:run" :touches [file])
+                   (world-handler "app.foundation.nowhere:x" :touches [file])"#;
+    let dir = world_repo_with(&files, extra, "[\"DOEFF132\"]");
+    let (_, report) = editor(dir.path());
+    assert_eq!(
+        keys(&report, "DOEFF132"),
+        vec![
+            "architecture.hy::DOEFF132::app.billing.entry.main:run",
+            "architecture.hy::DOEFF132::app.foundation.host:gone",
+            "architecture.hy::DOEFF132::app.foundation.nowhere:x",
+        ],
+        "実在する foundation の with-host は当てない: {}",
+        report
+    );
+    let misplaced = violation(&report, "architecture.hy::DOEFF132::app.billing.entry.main:run");
+    assert!(misplaced["message"].as_str().unwrap().contains("層 entry に在る"), "{}", misplaced);
+    assert_eq!(misplaced["level"], "critical");
+    assert!(violation(&report, "architecture.hy::DOEFF132::app.foundation.host:gone")["message"].as_str().unwrap().contains("定義 gone が無い"));
+    let line = std::fs::read_to_string(dir.path().join("architecture.hy")).unwrap().lines().position(|l| l.contains("app.foundation.host:gone")).unwrap();
+    assert_eq!(violation(&report, "architecture.hy::DOEFF132::app.foundation.host:gone")["range"]["start"]["line"], line);
 }
