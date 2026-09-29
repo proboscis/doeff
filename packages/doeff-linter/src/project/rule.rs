@@ -118,6 +118,9 @@ pub enum ProjectRule {
     /// DOEFF161: 数を決めた綴りの当たりの数が決めた数でない — architecture.hy の :counted-spellings の宣言の :pattern を、:files(か :within
     /// の定義)の中で数えた数が :count / :at-least に合わない(agora-redesign #1373・#1437)。
     SpellingCountDiffers,
+    /// DOEFF162: effect の宣言の全体が一覧と食い違う — architecture.hy の :effect-census の :files で :base を継ぐ class の宣言が
+    /// :effects の一覧に無い・2 度在る・一覧の effect の宣言が無い(agora-redesign #1373・#1438)。
+    EffectOutsideCensus,
     /// DOEFF136: service の entry の層の定義に、模擬の環境(:verification-environment)の下の deftest が 1 本も届かない
     /// — 本番の組み立てを手元で回していない service(agora-redesign #1106 の R5・#1111)。
     ServiceUntestedOnSim,
@@ -199,6 +202,7 @@ impl ProjectRule {
         ProjectRule::VocabularyOutsideSinglePoint,
         ProjectRule::SpellingOutsideItsFiles,
         ProjectRule::SpellingCountDiffers,
+        ProjectRule::EffectOutsideCensus,
         ProjectRule::ServiceUntestedOnSim,
         ProjectRule::PlacedDependency,
         ProjectRule::BlindDefinitionReads,
@@ -256,6 +260,7 @@ impl ProjectRule {
             ProjectRule::VocabularyOutsideSinglePoint => "DOEFF146",
             ProjectRule::SpellingOutsideItsFiles => "DOEFF148",
             ProjectRule::SpellingCountDiffers => "DOEFF161",
+            ProjectRule::EffectOutsideCensus => "DOEFF162",
             ProjectRule::ServiceUntestedOnSim => "DOEFF136",
             ProjectRule::PlacedDependency => "DOEFF140",
             ProjectRule::BlindDefinitionReads => "DOEFF141",
@@ -294,6 +299,7 @@ impl ProjectRule {
             // 書いてよい file を決めた綴りが外に在る(#1436 — #1373 の孫。新しい当たりは critical)。
             | ProjectRule::SpellingOutsideItsFiles
             | ProjectRule::SpellingCountDiffers
+            | ProjectRule::EffectOutsideCensus
             | ProjectRule::ServiceUntestedOnSim
             // 置き場の外の module への依存(#1188 — 登録簿に載った既知の当たりは warning、新しい当たりは critical)。
             | ProjectRule::PlacedDependency
@@ -405,6 +411,7 @@ impl ProjectRule {
             | ProjectRule::VocabularyOutsideSinglePoint
             | ProjectRule::SpellingOutsideItsFiles
             | ProjectRule::SpellingCountDiffers
+            | ProjectRule::EffectOutsideCensus
             | ProjectRule::ServiceUntestedOnSim
             | ProjectRule::RetiredWord
             | ProjectRule::RetiredCall
@@ -478,6 +485,7 @@ impl ProjectRule {
             ProjectRule::VocabularyOutsideSinglePoint => "判定の1点の外で同じ語彙を読んでいる",
             ProjectRule::SpellingOutsideItsFiles => "書いてよい file の外の綴り",
             ProjectRule::SpellingCountDiffers => "数が決めた数でない綴り",
+            ProjectRule::EffectOutsideCensus => "一覧と食い違う effect の宣言",
             ProjectRule::ServiceUntestedOnSim => "模擬の環境のテストが回さない service",
             ProjectRule::RetiredWord => "使わないと決めた綴り",
             ProjectRule::RetiredCall => "使わないと決めた呼び",
@@ -510,7 +518,8 @@ impl ProjectRule {
             }
             ProjectRule::EnvironmentName | ProjectRule::RetiredWord | ProjectRule::RetiredCall | ProjectRule::VocabularyOutsideSinglePoint
             | ProjectRule::SpellingOutsideItsFiles
-            | ProjectRule::SpellingCountDiffers => RuleFamily::Naming,
+            | ProjectRule::SpellingCountDiffers
+            | ProjectRule::EffectOutsideCensus => RuleFamily::Naming,
             ProjectRule::UnknownConfigKey
             | ProjectRule::UnreadableFile
             | ProjectRule::ServiceBoundary
@@ -591,6 +600,7 @@ impl ProjectRule {
             ProjectRule::VocabularyOutsideSinglePoint => "Vocabulary Outside Single Point",
             ProjectRule::SpellingOutsideItsFiles => "Spelling Outside Its Files",
             ProjectRule::SpellingCountDiffers => "Spelling Count Differs",
+            ProjectRule::EffectOutsideCensus => "Effect Outside Census",
             ProjectRule::ServiceUntestedOnSim => "Service Untested On Sim",
             ProjectRule::RetiredWord => "Retired Word",
             ProjectRule::RetiredCall => "Retired Call",
@@ -647,6 +657,7 @@ impl ProjectRule {
             ProjectRule::VocabularyOutsideSinglePoint => "ある語彙(job の phase・turn の state・担い手の欄 等)の判定は 1 つの file(architecture.hy の :single-point-vocabulary の :except)に閉じ込める — 他の file が同じ正規表現に当たる綴りを読むと、そこが第 2 の判定点になり、直す時に片方だけ直して食い違う",
             ProjectRule::SpellingOutsideItsFiles => "architecture.hy の :confined-spellings の群の綴り(正規表現)は :except の file にだけ書く(:except が空なら :files のどこにも書かない)— :files に当たる Hy・Python の file の、註を落とした本文(文字列の中も数える)を読む。:files に当たる file が 1 つも無い群も当たる(母集団 0 を緑にしない)",
             ProjectRule::SpellingCountDiffers => "architecture.hy の :counted-spellings の宣言ごとに、:files に当たる file(Hy と Python は註を落とす・文字列は数える)の :pattern の当たりの数が :count(ちょうど)か :at-least(以上)に合う — :within があれば名指した top level の定義ごとに、その定義の中で数える。数える file や定義が無い宣言も当たる(母集団 0 を緑にしない)",
+            ProjectRule::EffectOutsideCensus => "architecture.hy の :effect-census の宣言ごとに、:files の Hy・Python の file(註を除く)で :base を継ぐ class の宣言の集まりが :effects の一覧と一致する — 一覧に無い宣言・同じ名の 2 度の宣言・宣言の無い一覧の effect が当たる。:files に当たる file が無い宣言も当たる(母集団 0 を緑にしない)",
             ProjectRule::RetiredWord => "architecture.hy の :retired-words で使わないと決めた綴りを、群の :files の file に書かない — :words は語として単独で在る所(前後が英字・_・- でない)、:patterns は行ごとの正規表現、:in names は定義の名だけ・:in paths は file の名だけを見る。:rule-lines の綴りを含む行(規則そのものを述べる行)は数えない",
             ProjectRule::RetiredCall => "architecture.hy の :retired-calls で使わないと決めた呼び(退役した effect・時計 …)を、群の :files の Hy の file で呼ばない — 頭の記号が :calls の綴りの form を数え、註・文字列・読み捨てた form は数えない",
             ProjectRule::UntypedStructuredValue => "構造を持つ値は欄の名前と型を静的に持つ型(frozen の dataclass・defrecord・defwire)で表す — architecture.hy の :typed-values の file の公開面(名が _ で始まらない物)の、class の欄・関数と method の戻り値・defk / deff の :post の型に、素の写像(dict・Mapping・JsonValue …)・素の組(tuple)・値が object / Any の写像・長さの決まった組 tuple[A, B]・それらを中身に持つ入れ物を書かず、defn / defk / deff は長さ 2 以上の組の literal #(a b) を答えにしない。:post は isinstance の契約なので写像だけを赤にし、名に型の注記の無い defk / deff の :post は素の組も赤にする",
@@ -705,6 +716,7 @@ impl ProjectRule {
             ProjectRule::VocabularyOutsideSinglePoint => "群の :instead が名指す判定の1点(:except の file)の答えを読む — 直せない既存の当たりは登録簿に載せる",
             ProjectRule::SpellingOutsideItsFiles => "綴りを :except の file へ移し、外の file はその file の口を通す — 書いてよい file を増やすなら、理由を :why に書いて :except に足す",
             ProjectRule::SpellingCountDiffers => "数を :count(:at-least)に合わせる — 足した当たりは決めた定義や file の口へ移し、消えた当たりは戻す。数を変えるなら、理由を :why に書いて宣言の数を同じ変更で直す",
+            ProjectRule::EffectOutsideCensus => "effect を足すなら同じ変更で :effects の一覧にも足す(消すなら一覧からも消す)— 同じ名の 2 つ目の宣言は 1 つにまとめる",
             ProjectRule::RetiredWord => "群の :instead の語に書き換える(規則そのものを述べる行なら、:rule-lines の綴りを含めて書く)— 直せない既存の当たりは登録簿に載せる",
             ProjectRule::RetiredCall => "群の :instead の物に置き換える — 直せない既存の当たりは登録簿に載せる",
             ProjectRule::HandlerArgumentHoldsState => "引数を消し、接続先と設定は Ask、client は (session val …)、状態は (session var …) へ移す — 同じ handler を別の設定で並べるなど引数に残す物は本文に理由の註を書く",
@@ -777,6 +789,7 @@ mod tests {
         ("DOEFF146", RuleFamily::Naming),
         ("DOEFF148", RuleFamily::Naming),
         ("DOEFF161", RuleFamily::Naming),
+        ("DOEFF162", RuleFamily::Naming),
         ("DOEFF201", RuleFamily::Jev),
         ("DOEFF202", RuleFamily::Jev),
         ("DOEFF203", RuleFamily::Jev),

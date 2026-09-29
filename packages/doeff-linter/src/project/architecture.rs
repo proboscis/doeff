@@ -382,6 +382,24 @@ pub struct ConfinedSpelling {
     pub range: doeff_indexer::hy_index::Range,
 }
 
+/// effect の宣言の全体 1 つ(`:effect-census` の `(effect-census "名" :files [..] :effects [..] :base "EffectBase" :why "…")` —
+/// DOEFF162・agora-redesign #1373・#1438)。:files の Hy・Python の file で :base を継ぐ class の宣言を集め、:effects の一覧と比べる。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct EffectCensus {
+    /// 宣言の名(登録簿の鍵の細目)。
+    pub name: String,
+    pub files: Vec<String>,
+    /// effect の一覧(class の名)。
+    pub effects: Vec<String>,
+    /// effect の class が継ぐ基底の名(書かなければ EffectBase)。
+    pub base: String,
+    /// なぜ一覧で閉じるか(知らせの文に入れる)。
+    pub why: String,
+    /// architecture.hy の中の位置(宣言の無い effect の当たりの位置)。
+    #[serde(skip)]
+    pub range: doeff_indexer::hy_index::Range,
+}
+
 /// 決めた数(閉じた 2 つ — `:count N` はちょうど N・`:at-least N` は N 以上)。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub enum WantedCount {
@@ -495,6 +513,9 @@ pub struct Architecture {
     /// 数を決めた綴り(`:counted-spellings [(counted-spelling …) …]` — 空 = 宣言していない)。書けば DOEFF161 が、:files(か :within の
     /// 定義)の中の当たりの数が決めた数でない所を出す(agora-redesign #1373・#1437)。
     pub counted_spellings: Vec<CountedSpelling>,
+    /// effect の宣言の全体(`:effect-census [(effect-census …) …]` — 空 = 宣言していない)。書けば DOEFF162 が、一覧に無い effect の
+    /// 宣言・2 度の宣言・宣言の無い一覧の effect を出す(agora-redesign #1373・#1438)。
+    pub effect_census: Vec<EffectCensus>,
     /// handler の引数の決まり(書けば DOEFF142 が defhandler の引数の client・可変の店を出す — agora-redesign #1189 / #1366)。
     pub handler_arguments: Option<HandlerArguments>,
     /// 公開面の型の注記を読む file(`:typed-values {:files [..] :except [..]}`)。書けば DOEFF144 が、欄・戻り値・:post の型の素の写像・
@@ -836,6 +857,7 @@ impl<'a> Parser<'a> {
             single_point_vocabulary: Vec::new(),
             confined_spellings: Vec::new(),
             counted_spellings: Vec::new(),
+            effect_census: Vec::new(),
             handler_arguments: None,
             typed_values: None,
             record_stubs: None,
@@ -898,6 +920,7 @@ impl<'a> Parser<'a> {
                 ":single-point-vocabulary" => arch.single_point_vocabulary = self.single_point_vocabulary(value),
                 ":confined-spellings" => arch.confined_spellings = self.confined_spellings(value),
                 ":counted-spellings" => arch.counted_spellings = self.counted_spellings(value),
+                ":effect-census" => arch.effect_census = self.effect_census(value),
                 ":handler-arguments" => arch.handler_arguments = self.handler_arguments(value),
                 ":typed-values" => arch.typed_values = self.file_selection(value, ":typed-values"),
                 ":record-stubs" => arch.record_stubs = self.file_selection(value, ":record-stubs"),
@@ -1243,6 +1266,56 @@ impl<'a> Parser<'a> {
                 continue;
             }
             out.push(group);
+        }
+        out
+    }
+
+    /// `[(effect-census "名" :files [..] :effects [..] :base "EffectBase" :why "…") …]` を読む(:files・:effects・:why は要る —
+    /// :base は書かなければ EffectBase)。
+    fn effect_census(&mut self, value: &Form) -> Vec<EffectCensus> {
+        let shape = "(effect-census \"名\" :files [..] :effects [..] :base \"EffectBase\" :why \"…\")";
+        let Some(entries) = self.bracket(value) else {
+            self.problem(value, &format!(":effect-census は {} の列", shape));
+            return Vec::new();
+        };
+        let mut out: Vec<EffectCensus> = Vec::new();
+        for entry in entries {
+            let parts = self.paren(entry).filter(|p| p.first().and_then(|h| self.symbol(h)) == Some("effect-census"));
+            let Some((name, head)) = parts.as_ref().and_then(|p| p.get(1)).and_then(|f| self.name(f).map(|n| (n, *f))) else {
+                self.problem(entry, &format!(":effect-census の要素は {}", shape));
+                continue;
+            };
+            let parts = parts.unwrap_or_default();
+            let range = self.lines.range(head.span.start, head.span.end);
+            let mut census =
+                EffectCensus { name, files: Vec::new(), effects: Vec::new(), base: "EffectBase".to_string(), why: String::new(), range };
+            let rest: Vec<&Form> = parts.iter().skip(2).copied().collect();
+            for (key, field) in self.pairs(&rest) {
+                match self.text(key) {
+                    ":files" => census.files = self.path_globs(field, ":files"),
+                    ":effects" => census.effects = self.names(field, ":effects"),
+                    ":base" => census.base = self.required_string(field, ":base").unwrap_or_default(),
+                    ":why" => census.why = self.required_string(field, ":why").unwrap_or_default(),
+                    _ => self.unknown_key(key, "effect-census"),
+                }
+            }
+            if census.files.is_empty() {
+                self.problem(entry, &format!("effect-census {} に :files が無い(effect を宣言する file を挙げる)", census.name));
+            }
+            if census.effects.is_empty() {
+                self.problem(entry, &format!("effect-census {} に :effects が無い(effect の一覧を挙げる)", census.name));
+            }
+            if census.base.trim().is_empty() {
+                self.problem(entry, &format!("effect-census {} の :base が空", census.name));
+            }
+            if census.why.trim().is_empty() {
+                self.problem(entry, &format!("effect-census {} に :why(なぜ一覧で閉じるか)が無い", census.name));
+            }
+            if out.iter().any(|c| c.name == census.name) {
+                self.problem(entry, &format!("effect-census {} が 2 度宣言されている", census.name));
+                continue;
+            }
+            out.push(census);
         }
         out
     }

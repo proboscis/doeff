@@ -2748,6 +2748,54 @@ fn counted_spelling_requires_pattern_files_one_count_and_why() {
     assert!(all.contains("counted-spelling c の :count は 0 以上の整数"), "{}", all);
 }
 
+/// agora-redesign #1373・#1438(DOEFF162): :effect-census の :files で EffectBase を継ぐ class の宣言が :effects の一覧と食い違えば、
+/// 食い違いごとに 1 件、critical で出す(一覧の外・2 度の宣言・宣言の無い一覧の effect)。
+#[test]
+fn effect_outside_census_is_red() {
+    let files = [
+        ("app/foundation/host.hy", tags("shared", "foundation") + "(defk with-host [body] body)\n"),
+        ("app/billing/effects.py", "# class Old(EffectBase):\nclass Send(EffectBase):\n    pass\n\nclass Sneaky(EffectBase):\n    pass\n".to_string()),
+        ("app/billing/intent/socket.hy", "(defclass [(dataclass :frozen True)] Close [EffectBase])\n".to_string()),
+    ];
+    let dir = world_repo_with(&files, "", "[\"DOEFF162\"]");
+    let arch_path = dir.path().join("architecture.hy");
+    let text = std::fs::read_to_string(&arch_path).unwrap().replace(
+        ":foundation foundation",
+        ":foundation foundation\n  :effect-census [(effect-census \"billing\" :files [\"app/billing/effects.py\" \"app/billing/intent/socket.hy\"] \
+         :effects [\"Send\" \"Close\" \"Log\"] :why \"外への要求は一覧で閉じる\")]",
+    );
+    std::fs::write(&arch_path, text).unwrap();
+    let (_, report) = editor(dir.path());
+    assert_eq!(
+        keys(&report, "DOEFF162"),
+        vec!["app/billing/effects.py::DOEFF162::billing:Sneaky", "architecture.hy::DOEFF162::billing:Log:missing"],
+        "{}",
+        report
+    );
+    let sneaky = violation(&report, "app/billing/effects.py::DOEFF162::billing:Sneaky");
+    assert_eq!(sneaky["range"]["start"]["line"], 4);
+    assert_eq!(sneaky["level"], "critical");
+}
+
+/// :effect-census の必須の鍵が無ければ読み取りの誤り。
+#[test]
+fn effect_census_requires_files_effects_and_why() {
+    let files = [("app/foundation/host.hy", tags("shared", "foundation") + "(defk with-host [body] body)\n")];
+    let dir = world_repo_with(&files, "", "[\"DOEFF162\"]");
+    let arch_path = dir.path().join("architecture.hy");
+    let text = std::fs::read_to_string(&arch_path).unwrap().replace(
+        ":foundation foundation",
+        ":foundation foundation\n  :effect-census [(effect-census \"a\")]",
+    );
+    std::fs::write(&arch_path, text).unwrap();
+    let (code, stdout, stderr) = run(dir.path(), &["--no-log"], None);
+    let all = format!("{}{}", stdout, stderr);
+    assert_ne!(code, 0, "{}", all);
+    assert!(all.contains("effect-census a に :files が無い"), "{}", all);
+    assert!(all.contains("effect-census a に :effects が無い"), "{}", all);
+    assert!(all.contains("effect-census a に :why(なぜ一覧で閉じるか)が無い"), "{}", all);
+}
+
 /// agora-redesign #1318・#1410: 記録の client は HttpRequest の effect を出すだけ(送り方は EffectTransport 1 つ)— 実 HTTP は HttpRequest に
 /// 答える本物の handler(目録の http-production-handler)の側で数える。記録の client の handler(http-records-handler)は目録の「数えない」行。
 /// RecordsEndpoint を値として名指すだけ(型の注釈)の所も数えない。
