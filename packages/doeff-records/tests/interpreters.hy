@@ -33,7 +33,7 @@
 (import concurrent.futures [ThreadPoolExecutor])
 (import doeff_records.principals [Roster token-digest])
 (import doeff_records.http_server [RecordsServerConfig start-records-server])
-(import doeff_records.http_client [RecordsEndpoint EffectTransport http-records-handler])
+(import doeff_records.http_client [RecordsEndpoint http-records-handler])
 (import doeff_core_effects.handlers [await-handler])
 (import doeff_core_effects.http_handlers [http-production-handler])
 (import doeff_hy.frozen [FrozenMap])
@@ -133,8 +133,7 @@
         harness (LawHarness (fn [writer program]
                               (with_handlers [(backing writer)
                                               (http-records-handler (RecordsEndpoint server.url (get LAW-TOKENS writer)
-                                                                                     :poll-seconds HTTP-POLL-SECONDS
-                                                                                     :transport (EffectTransport)))]
+                                                                                     :poll-seconds HTTP-POLL-SECONDS))]
                                              program))))
   (defn close []
     (.close server)
