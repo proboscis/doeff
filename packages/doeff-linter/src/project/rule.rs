@@ -95,8 +95,6 @@ pub enum ProjectRule {
     DefkCalledBare,
     /// DOEFF127: defk の `:effects` の宣言が推論と合わない(宣言に無い effect を起こす・宣言した effect を起こさない)。
     EffectsDisagreeWithInference,
-    /// DOEFF129: `:tags` で役 judgment を名乗った defk が effect を起こす(判断は値から値を決める純粋な定義)。
-    JudgmentPerformsEffect,
     /// DOEFF130: 翻訳の層の handler が業務の intent(層 intent の型の effect)を出す — import した defk の先まで辿る。
     TranslationEmitsIntent,
     /// DOEFF201(意味・Jev): 翻訳の層の定義が業務の判断をしている。
@@ -113,7 +111,7 @@ pub enum ProjectRule {
 
 impl ProjectRule {
     /// 全部の層の規則(出力の一覧と `ALL` の展開のため)。
-    pub const ALL: [ProjectRule; 36] = [
+    pub const ALL: [ProjectRule; 35] = [
         ProjectRule::UnknownConfigKey,
         ProjectRule::UnreadableFile,
         ProjectRule::LayerImportDirection,
@@ -143,7 +141,6 @@ impl ProjectRule {
         ProjectRule::RebuiltAccumulator,
         ProjectRule::DefkCalledBare,
         ProjectRule::EffectsDisagreeWithInference,
-        ProjectRule::JudgmentPerformsEffect,
         ProjectRule::TranslationEmitsIntent,
         ProjectRule::SemanticBusinessDecision,
         ProjectRule::SemanticTransportKnowledge,
@@ -184,7 +181,6 @@ impl ProjectRule {
             ProjectRule::RebuiltAccumulator => "DOEFF125",
             ProjectRule::DefkCalledBare => "DOEFF126",
             ProjectRule::EffectsDisagreeWithInference => "DOEFF127",
-            ProjectRule::JudgmentPerformsEffect => "DOEFF129",
             ProjectRule::TranslationEmitsIntent => "DOEFF130",
             ProjectRule::SemanticBusinessDecision => "DOEFF201",
             ProjectRule::SemanticTransportKnowledge => "DOEFF202",
@@ -237,7 +233,6 @@ impl ProjectRule {
             | ProjectRule::FieldsJoinedIntoText
             | ProjectRule::RebuiltAccumulator
             | ProjectRule::EffectsDisagreeWithInference
-            | ProjectRule::JudgmentPerformsEffect
             | ProjectRule::SemanticPlainCallable
             | ProjectRule::SemanticClassRole => None,
         }
@@ -304,7 +299,6 @@ impl ProjectRule {
             | ProjectRule::RebuiltAccumulator
             | ProjectRule::DefkCalledBare
             | ProjectRule::EffectsDisagreeWithInference
-            | ProjectRule::JudgmentPerformsEffect
             | ProjectRule::SemanticMixedConcerns
             | ProjectRule::SemanticPlainCallable
             | ProjectRule::SemanticClassRole => false,
@@ -343,7 +337,6 @@ impl ProjectRule {
             ProjectRule::RebuiltAccumulator => "ループの中で蓄えを作り直す",
             ProjectRule::DefkCalledBare => "defk を素で呼んで答えに使う",
             ProjectRule::EffectsDisagreeWithInference => ":effects の宣言が推論と合わない",
-            ProjectRule::JudgmentPerformsEffect => "判断(judgment)が effect を起こす",
             ProjectRule::TranslationEmitsIntent => "翻訳の handler が業務の intent を出す",
             ProjectRule::SemanticBusinessDecision => "翻訳の層で業務の判断(Jev)",
             ProjectRule::SemanticTransportKnowledge => "判断の層が通信の手段を知る(Jev)",
@@ -379,8 +372,7 @@ impl ProjectRule {
             | ProjectRule::DefinitionTagsRequired
             | ProjectRule::TestIsDeftest
             | ProjectRule::DefkCalledBare
-            | ProjectRule::EffectsDisagreeWithInference
-            | ProjectRule::JudgmentPerformsEffect => RuleFamily::Definition,
+            | ProjectRule::EffectsDisagreeWithInference => RuleFamily::Definition,
             ProjectRule::ClassWithBehaviour | ProjectRule::SemanticClassRole => RuleFamily::Class,
             ProjectRule::JsonValueOutsideWire => RuleFamily::Wire,
             ProjectRule::ShapeCheckInJudgment
@@ -427,7 +419,6 @@ impl ProjectRule {
             ProjectRule::RebuiltAccumulator => "Rebuilt Accumulator",
             ProjectRule::DefkCalledBare => "defk Called Bare",
             ProjectRule::EffectsDisagreeWithInference => "Effects Disagree With Inference",
-            ProjectRule::JudgmentPerformsEffect => "Judgment Performs Effect",
             ProjectRule::TranslationEmitsIntent => "Translation Emits Intent",
             ProjectRule::SemanticBusinessDecision => "Business Decision In Translation (Jev)",
             ProjectRule::SemanticTransportKnowledge => "Transport Knowledge In Core (Jev)",
@@ -471,7 +462,6 @@ impl ProjectRule {
             ProjectRule::FieldsJoinedIntoText => "同じ値の 2 つ以上の欄を + か f 文字列で 1 本の文字列につながない",
             ProjectRule::RebuiltAccumulator => "for / while の中で (:= xs (+ xs #(…))) と蓄えを毎回作り直さない",
             ProjectRule::EffectsDisagreeWithInference => "defk の :effects を書いたなら、本体で撃つ呼び((<- …)・(! …))から推論した effect と同じ集合にする — 宣言に無い effect を起こさず、起こさない effect を宣言しない(:effects の無い defk は対象外)",
-            ProjectRule::JudgmentPerformsEffect => "役 judgment の defk は effect を起こさない — 本体で撃つ呼び((<- …)・(! …))を defk の中まで辿って推論する(:effects を書いていない defk にも当たる)",
             ProjectRule::TranslationEmitsIntent => "翻訳の層(設定の handler_layers)の handler — defhandler と [effect k] を受ける関数 — は doeff の汎用の effect だけを出し、業務の intent(設定の intent_layers の型)を出さない — 本体で実行する呼び((<- …)・(! …))を import した defk の先まで辿る",
             ProjectRule::DefkCalledBare => "defk の定義は Program として渡す所((<- …) の右辺・(! …)・(return …)・Program を受ける呼びの引数)だけで呼ぶ — 素で呼ぶと答えではなく Program が返る",
             ProjectRule::SemanticMixedConcerns => "役が judgment / program の定義は、入力の形の検めと業務の判断を混ぜない(Jev の判定 — warning か info)",
@@ -513,7 +503,6 @@ impl ProjectRule {
             ProjectRule::FieldsJoinedIntoText => "型のある値のまま渡す(欄を文字列に潰さない)— 文にするのは人に見せる境目の 1 か所だけ",
             ProjectRule::RebuiltAccumulator => "蓄えは内包表記(lfor)で 1 度に作る — ループの中で (+ xs #(…)) の作り直しを重ねない",
             ProjectRule::EffectsDisagreeWithInference => ":effects に起こしている effect を足すか、起こしていない effect を消す(推論は handler で受けた effect を引かない — 本体で受けているなら登録簿に載せる)",
-            ProjectRule::JudgmentPerformsEffect => "effect を出す部分を呼び手の program へ移し、判断はその答えの値を引数で受ける — effect を出すのが仕事なら役を program に改める(推論は handler で受けた effect を引かない — 本体で受けているなら登録簿に載せる)",
             ProjectRule::TranslationEmitsIntent => "intent を出す業務の流れは層 core の program に置き、翻訳の handler は受けた intent を doeff の汎用の effect(HttpRequest・記録の読み書き・時計 …)へ出し直すだけにする — 経由した defk が intent を出すなら、その defk を呼ばずに汎用の effect を直に使う",
             ProjectRule::DefkCalledBare => "(<- x (f …)) で束ねるか (! (f …)) で答えを受ける — 素の関数の中なら、その関数を defk にして呼び手を Program にする",
             ProjectRule::SemanticMixedConcerns => "形の検めは protocol の境目で defwire の型に parse し(形が合わなければ解く所で失敗)、この定義は型のある値を受けて判断だけをする(Jev の外れなら誤判定の一覧に載せる)",
@@ -527,7 +516,7 @@ mod tests {
     use super::*;
 
     /// DOEFF の ID → 割り当てるべき家族(依頼の表そのもの)。
-    const EXPECTED_FAMILIES: [(&str, RuleFamily); 36] = [
+    const EXPECTED_FAMILIES: [(&str, RuleFamily); 35] = [
         ("DOEFF100", RuleFamily::Place),
         ("DOEFF128", RuleFamily::Place),
         ("DOEFF101", RuleFamily::Layer),
@@ -559,7 +548,6 @@ mod tests {
         ("DOEFF205", RuleFamily::Smell),
         ("DOEFF126", RuleFamily::Definition),
         ("DOEFF127", RuleFamily::Definition),
-        ("DOEFF129", RuleFamily::Definition),
         ("DOEFF130", RuleFamily::Layer),
         ("DOEFF201", RuleFamily::Jev),
         ("DOEFF202", RuleFamily::Jev),
