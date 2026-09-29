@@ -1980,6 +1980,13 @@ fn test_kind_is_derived_from_what_the_test_reaches() {
              (deftest test-edge-module-marked (<- n (hosted 1)) (assert n))\n"
                 .to_string(),
         ),
+        // 註と検の中の文字列の値に在る印の綴りは module の印ではない(手元のテストは印なしのまま — 当てない)。
+        (
+            "app/billing/tests/test_mark_in_text.hy",
+            "(import app.billing.core.calc [add])\n;; 印の綴りの説明: pytestmark = pytest.mark.real_world\n\
+             (deftest test-local-reads-spellings\n  (<- n (add 1 2))\n  (assert (in \"pytest\" \"(val pytestmark pytest.mark.real-world)\")))\n"
+                .to_string(),
+        ),
     ];
     let architecture_extra = "";
     let dir = world_repo_with(&files, architecture_extra, "[\"DOEFF133\"]");

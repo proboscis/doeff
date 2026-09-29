@@ -1643,7 +1643,10 @@ fn carries_edge_mark(source: &str, test: &Definition, mark: &str) -> bool {
             _ => false,
         }
     });
-    in_marks || lines.iter().any(|line| line.contains("pytestmark") && named(line))
+    // module の印は行頭から始まる宣言だけ — 註(`;;`・`#`)や検の中の文字列の値に在る綴りは印ではない。
+    let declares_module_mark =
+        |line: &str| ["(val pytestmark", "(setv pytestmark", "pytestmark =", "pytestmark="].iter().any(|head| line.starts_with(head));
+    in_marks || lines.iter().any(|line| declares_module_mark(line) && named(line))
 }
 
 /// 定義の間の辺(呼び出し・参照・入れ子)の図 — 全体の索引から 1 度だけ組む(DOEFF133・136 が使う)。
