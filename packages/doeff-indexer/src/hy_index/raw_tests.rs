@@ -155,6 +155,43 @@ fn bundled_catalog_is_readable_and_patterns_match_on_segment_boundaries() {
     assert!(matches_pattern("os.environ.get", "os.environ"));
 }
 
+/// #1564: 種を渡す生成とその instance は外部 I/O ではない。cache 往復でも同じ分類にする。
+#[test]
+fn seeded_random_is_local_including_variable_seed_and_instance_alias() {
+    let cases = [
+        "(import random)\n(defk sample [] (val rng (random.Random 7)) (rng.random))",
+        "(import random :as r)\n(defk sample [seed] (val rng (r.Random seed)) (.randint rng 0 9))",
+        "(import random [Random :as R])\n(defk sample [seed] (setv rng (R seed) alias rng) (alias.choice [1 2]))",
+        "(import random)\n(defk sample [seed] (val rng (random.Random :x seed)) (. rng (random)))",
+        "(defk sample [] (import random) (val rng (random.Random 619)) (.shuffle rng [1 2]))",
+        "(import random)\n(defk sample [rng] {:pre [(: rng random.Random)]} (.random rng))",
+        "(import random [Random])\n(defk sample [#^ Random rng] (.random rng))",
+    ];
+    for source in cases {
+        let file = index_source(Path::new("/r"), Path::new("/r/sample.hy"), source);
+        let encoded = bincode::serialize(&super::CachedHyFile::of(file)).unwrap();
+        let cached: super::CachedHyFile = bincode::deserialize(&encoded).unwrap();
+        let mut files = vec![cached.into_file().unwrap()];
+        annotate(&mut files, &RawCatalog::bundled().unwrap(), true);
+        assert!(direct(&files, "sample").is_empty(), "{source}: {:?}", direct(&files, "sample"));
+    }
+}
+
+#[test]
+fn entropy_random_stays_external_including_missing_or_none_seed() {
+    let calls = [
+        "(random.Random)", "(random.Random None)", "(random.Random :x None)",
+        "(random.random)", "(random.randint 0 9)", "(uuid.uuid4)", "(secrets.token-hex 8)",
+        "(random.SystemRandom 7)", "(random.Random (time.time))",
+    ];
+    for call in calls {
+        let source = format!("(import random uuid secrets time)\n(defk sample [] {call})");
+        let mut files = vec![index_source(Path::new("/r"), Path::new("/r/sample.hy"), &source)];
+        annotate(&mut files, &RawCatalog::bundled().unwrap(), true);
+        assert!(!direct(&files, "sample").is_empty(), "{call} の外部 I/O が消えた");
+    }
+}
+
 #[test]
 fn qualified_call_counts_and_exception_type_does_not() {
     let files = judged(None);
