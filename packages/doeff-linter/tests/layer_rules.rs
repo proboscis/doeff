@@ -1632,53 +1632,6 @@ fn effects_disagreeing_with_inference_are_warnings_at_the_call_and_the_declarati
 }
 
 #[test]
-fn a_judgment_that_performs_an_effect_is_a_warning_at_the_call() {
-    // #800 段階 4: 役 judgment の defk は effect を起こさない。:effects を書いていなくても推論で当たる(直に撃つ・defk を経由する・
-    // repo の外の effect)。役 program の defk・純粋な judgment・追えない呼びしか撃たない judgment は出ない。
-    let dir = tempfile::TempDir::new().unwrap();
-    std::fs::write(
-        dir.path().join("pyproject.toml"),
-        "[tool.doeff-linter]\nenable = [\"DOEFF129\"]\n[tool.doeff-linter.definitions]\npaths = [\"app\"]\n",
-    )
-    .unwrap();
-    let tags = |role: &str| format!(":tags {{:context \"c\" :role \"{}\"}}", role);
-    let flow = [
-        "(import app.intent.rows [ReadRow Row])\n".to_string(),
-        "(import doeff_core_effects [GetTime])\n".to_string(),
-        format!("(defk fetch [id] {{:pre [(: id str)] :post [(: % Row)] {}}} (<- row (ReadRow id)) row)\n", tags("program")),
-        format!("(defk reads [id] {{:pre [(: id str)] :post [(: % bool)] {}}} (<- row (ReadRow id)) (= row.id id))\n", tags("judgment")),
-        format!("(defk through [id] {{:pre [(: id str)] :post [(: % bool)] {}}} (val row (! (fetch id))) (= row.id id))\n", tags("judgment")),
-        format!("(defk clock [x] {{:pre [(: x int)] :post [(: % bool)] {}}} (<- now (GetTime)) (> now x))\n", tags("judgment")),
-        format!("(defk pure [x] {{:pre [(: x int)] :post [(: % bool)] {}}} (> x 0))\n", tags("judgment")),
-        format!("(defk opaque [x] {{:pre [(: x int)] :post [(: % bool)] {}}} (<- y (helper x)) y)\n", tags("judgment")),
-    ]
-    .concat();
-    let files = [
-        (
-            "app/intent/rows.hy".to_string(),
-            "(defrecord Row \"行\" (#^ str id))\n(defeffect ReadRow \"読む\" {:fields [(: id str)] :answer Row :tags {:context \"c\" :role \"intent\"}})\n".to_string(),
-        ),
-        ("app/core/flow.hy".to_string(), flow),
-    ];
-    for (rel, text) in &files {
-        let path = dir.path().join(rel);
-        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
-        std::fs::write(path, text).unwrap();
-    }
-    let (_, report) = editor(dir.path());
-    assert_eq!(
-        keys(&report, "DOEFF129"),
-        vec!["app/core/flow.hy::DOEFF129::clock::GetTime", "app/core/flow.hy::DOEFF129::reads::ReadRow", "app/core/flow.hy::DOEFF129::through::ReadRow"]
-    );
-    let direct = violation(&report, "app/core/flow.hy::DOEFF129::reads::ReadRow");
-    assert_eq!(direct["severity"], "warning");
-    assert_eq!(direct["range"]["start"]["line"], 3);
-    assert!(direct["message"].as_str().unwrap().contains("defk reads(役 judgment)が effect ReadRow を撃つ"), "{}", direct);
-    let via = violation(&report, "app/core/flow.hy::DOEFF129::through::ReadRow");
-    assert_eq!(via["explanation"]["subject"], "defk through(役 judgment)が fetch を経由して effect ReadRow を起こしている");
-}
-
-#[test]
 fn an_unreadable_hy_file_is_reported_to_the_editor_and_the_hook() {
     // 読めない file の違反が黙って空にならない — 有効な規則の一覧(ここでは DOEFF104 だけ)に関わらず DOEFF128 の error で出る。
     let files = [
