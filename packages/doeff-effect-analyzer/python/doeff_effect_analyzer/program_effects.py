@@ -567,6 +567,8 @@ class ReceivedEffect:
 
 class _IdentityKind(Enum):
     PROGRAM = "program"  # a Program argument: its function and bindings
+    PROGRAM_SEQUENCE = "program-sequence"  # a tuple / list of Program arguments
+    PROGRAM_ELEMENT = "program-element"  # one element of such a sequence, not known which
     INSTANCE = "instance"  # an instance of a class
     OBJECT = "object"  # any other object, by id
 
@@ -630,7 +632,8 @@ class _Bound:
     def depth(self) -> int:
         """How deeply Program arguments nest (bounded, so recursion through arguments ends)."""
         return max(
-            (b.value.depth for b in self.bindings if isinstance(b.value, _ProgramArg)), default=0
+            (b.value.depth for b in self.bindings if isinstance(b.value, _PROGRAM_VALUES)),
+            default=0,
         )
 
 
@@ -658,6 +661,92 @@ class _ProgramArg:
         return 1 + self.scope.bound.depth
 
 
+@dataclass(frozen=True, eq=False)
+class _ProgramSeq:
+    """A parameter bound to a tuple / list of Programs the caller built
+    (``f(parts, #((serve-a) (serve-b)))`` — one body per port).  It is not a Program
+    itself: what the callee takes out of it (``for p in ps`` / ``ps[i]``) is one of the
+    elements, read where the caller wrote it (agora-redesign #1265)."""
+
+    expr: ast.Tuple | ast.List
+    scope: "_Scope"
+
+    @property
+    def elements(self) -> tuple[_ProgramArg, ...]:
+        """Each element, as a Program argument written in the caller's scope."""
+        return tuple(_ProgramArg(element, self.scope) for element in self.expr.elts)
+
+    @property
+    def depth(self) -> int:
+        """The depth its elements have (they are written in the same scope)."""
+        return 1 + self.scope.bound.depth
+
+
+@dataclass(frozen=True, eq=False)
+class _ProgramAnyOf:
+    """An element taken out of a ``_ProgramSeq`` where the reader cannot tell which (a
+    loop variable, an index it cannot read): performing it performs each element, as
+    performing a conditional performs both branches."""
+
+    sequence: _ProgramSeq
+
+    @property
+    def depth(self) -> int:
+        """The sequence's depth."""
+        return self.sequence.depth
+
+
+_PROGRAM_VALUES = (_ProgramArg, _ProgramSeq, _ProgramAnyOf)
+
+
+def _programs_of(value: "_ProgramArg | _ProgramAnyOf") -> tuple[_ProgramArg, ...]:
+    """The Programs performing ``value`` may run: itself, or each element it may be."""
+    match value:
+        case _ProgramAnyOf(sequence=sequence):
+            return sequence.elements
+        case _ProgramArg():
+            return (value,)
+
+
+def _passed_programs(value: Imported) -> tuple["_ProgramArg | _ProgramAnyOf", ...]:
+    """The Programs a bound value hands the callee: a Program argument, an element taken
+    out of a sequence (and each element it may be), or each element of a sequence."""
+    match value:
+        case _ProgramSeq(elements=elements):
+            return elements
+        case _ProgramAnyOf(sequence=sequence):
+            return (value, *sequence.elements)
+        case _ProgramArg():
+            return (value,)
+        case _:
+            return ()
+
+
+def _label_of(program: "_ProgramArg | _ProgramAnyOf") -> str:
+    """How a carried Program is named in reports: the expression it was written as, or
+    the sequence an element was taken out of."""
+    match program:
+        case _ProgramAnyOf(sequence=sequence):
+            return f"an element of {ast.unparse(sequence.expr)}"
+        case _ProgramArg(expr=expr):
+            return ast.unparse(expr)
+
+
+def _element_of(sequence: Imported, index: ast.expr) -> Imported:
+    """``sequence[index]`` for a sequence of Programs: the element at a constant index,
+    or any element when the index is not a constant the reader can read."""
+    if not isinstance(sequence, _ProgramSeq):
+        return UNBOUND
+    elements = sequence.elements
+    match index:
+        case ast.Constant(value=int() as position) if -len(elements) <= position < len(elements):
+            return elements[position]
+        case ast.Constant():
+            return UNBOUND  # a constant outside the sequence (or not an index) names no element
+        case _:
+            return _ProgramAnyOf(sequence)
+
+
 @dataclass(frozen=True)
 class _ReadKey:
     """One function read with one set of bindings — the unit the reader caches and
@@ -672,6 +761,12 @@ def _identity(value: Imported) -> _Identity:
     match value:
         case _ProgramArg(expr=expr, scope=scope):
             return _Identity(_IdentityKind.PROGRAM, id(expr), scope.bound.key)
+        case _ProgramSeq(expr=expr, scope=scope):
+            return _Identity(_IdentityKind.PROGRAM_SEQUENCE, id(expr), scope.bound.key)
+        case _ProgramAnyOf(sequence=sequence):
+            return _Identity(
+                _IdentityKind.PROGRAM_ELEMENT, id(sequence.expr), sequence.scope.bound.key
+            )
         case _Instance(cls=cls):
             return _Identity(_IdentityKind.INSTANCE, id(cls))
         case _:
@@ -692,6 +787,11 @@ class _Scope:
     # A local bound exactly once → the expression bound (``x = yield f()`` → the Yield).
     local_values: dict[str, ast.expr] = field(default_factory=dict)
     local_functions: dict[str, FunctionNode] = field(default_factory=dict)
+    # A local bound by exactly one ``for`` (and nothing else) → what the loop walks.
+    local_elements: dict[str, ast.expr] = field(default_factory=dict)
+    # A local assigned on several paths, none reading it (Hy's ``match`` / ``cond`` as an
+    # expression: ``_hy_anon_1 = …`` once per branch) → every value it may hold.
+    local_choices: dict[str, tuple[ast.expr, ...]] = field(default_factory=dict)
     bound: _Bound = _NO_BINDINGS
 
     def resolve(self, expr: ast.expr) -> Any:
@@ -710,6 +810,9 @@ class _Scope:
         if isinstance(expr, ast.NamedExpr):
             # ``(m := __import__(...)).open_bind`` — doeff-hy's bind names what it reaches.
             return self.resolve(expr.value)
+        if isinstance(expr, ast.Subscript):
+            # ``ports[0]`` — an element of a sequence of Programs the caller passed.
+            return _element_of(self.resolve(expr.value), expr.slice)
         return UNBOUND
 
     def _imported_module(self, call: ast.Call) -> Any:
@@ -730,11 +833,27 @@ class _Scope:
         bound = self.bound.get(name)
         if bound is not UNBOUND:
             return bound
+        element = self._local_element(name)
+        if element is not UNBOUND:
+            return element
         if name in self.local_names:
             return self._local_instance(name)
         for table in (vars(self.module), _builtins_of(self.module)):
             if name in table:
                 return table[name]
+        return UNBOUND
+
+    def _local_element(self, name: str) -> Imported:
+        """An element of a sequence of Programs a local holds: the variable of a loop
+        over one (any element), or a local bound once to ``ports[i]``."""
+        walked = self.local_elements.get(name)
+        if walked is not None:
+            sequence = self.resolve(walked)
+            return _ProgramAnyOf(sequence) if isinstance(sequence, _ProgramSeq) else UNBOUND
+        value = self.local_values.get(name)
+        if isinstance(value, ast.Subscript) and not _reads_itself(value, name):
+            element = self.resolve(value)
+            return element if isinstance(element, (_ProgramArg, _ProgramAnyOf)) else UNBOUND
         return UNBOUND
 
     def _local_instance(self, name: str) -> Any:
@@ -755,12 +874,13 @@ class _Scope:
         return UNBOUND
 
 
-def _reads_itself(call: ast.Call, name: str) -> bool:
-    """Whether the call bound to ``name`` reads ``name`` anywhere — its callee, its
-    positional arguments or its keywords (``x = x.method()``, ``state = replace(state, ...)``).
-    There the name inside the call is the earlier value, not the call: a local bound
-    that way is neither followed through the call nor read as an instance of it."""
-    return any(isinstance(node, ast.Name) and node.id == name for node in ast.walk(call))
+def _reads_itself(value: ast.expr, name: str) -> bool:
+    """Whether the call (or subscript) bound to ``name`` reads ``name`` anywhere — its
+    callee, its positional arguments or its keywords (``x = x.method()``,
+    ``state = replace(state, ...)``, ``ports = ports[1]``).  There the name inside is the
+    earlier value, not the bound one: a local bound that way is neither followed through
+    the value nor read as an instance of it."""
+    return any(isinstance(node, ast.Name) and node.id == name for node in ast.walk(value))
 
 
 def _builtins_of(module: types.ModuleType) -> dict[str, Any]:
@@ -908,12 +1028,20 @@ def _scope_of(
     assigned: dict[str, list[ast.expr]] = {}
     imports: dict[str, tuple[str, str | None]] = {}
     functions: dict[str, list[FunctionNode]] = {}
+    loops: dict[str, list[ast.expr]] = {}
     for node in _body_nodes(function):
         names |= _bound_names(node)
         imports.update(_import_bindings(node))
         match _single_assignment(node):
             case _Assignment(target=ast.Name(id=name), value=value):
                 assigned.setdefault(name, []).append(value)
+            case _:
+                pass
+        match node:
+            case ast.For(target=ast.Name(id=name), iter=walked) | ast.AsyncFor(
+                target=ast.Name(id=name), iter=walked
+            ):
+                loops.setdefault(name, []).append(walked)
             case _:
                 pass
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
@@ -928,8 +1056,20 @@ def _scope_of(
         if isinstance(value, ast.Call) and not _reads_itself(value, name)
     }
     local_functions = {name: nodes[0] for name, nodes in functions.items() if len(nodes) == 1}
-    # A parameter rebound in the body no longer holds what the caller passed.
-    own_bound = bound.without(frozenset(assigned))
+    # A loop variable bound by one loop and nothing else holds an element of what it walks.
+    elements = {
+        name: walked[0]
+        for name, walked in loops.items()
+        if len(walked) == 1 and name not in assigned
+    }
+    choices = {
+        name: tuple(exprs)
+        for name, exprs in assigned.items()
+        if len(exprs) > 1 and name not in loops and not any(_reads_itself(e, name) for e in exprs)
+    }
+    # A parameter rebound in the body (by an assignment or a loop) no longer holds what
+    # the caller passed.
+    own_bound = bound.without(frozenset(assigned) | frozenset(loops))
     if parent is None:
         return _Scope(
             module=module,
@@ -938,6 +1078,8 @@ def _scope_of(
             local_imports=imports,
             local_values=values,
             local_functions=local_functions,
+            local_elements=elements,
+            local_choices=choices,
             bound=own_bound,
         )
     shadowed = frozenset(names)
@@ -948,6 +1090,8 @@ def _scope_of(
         local_imports={**parent.local_imports, **imports},
         local_values={**_unshadowed(parent.local_values, shadowed), **values},
         local_functions={**_unshadowed(parent.local_functions, shadowed), **local_functions},
+        local_elements={**_unshadowed(parent.local_elements, shadowed), **elements},
+        local_choices={**_unshadowed(parent.local_choices, shadowed), **choices},
         bound=parent.bound.without(shadowed).plus(own_bound),
     )
 
@@ -1075,18 +1219,39 @@ def _call_bindings(function: types.FunctionType, call: ast.Call, scope: _Scope) 
 def _argument_value(argument: ast.expr, scope: _Scope) -> Imported:
     """What an argument denotes when it is known: an object, or a Program built here."""
     value = scope.resolve(argument)
-    if value is not UNBOUND or not _is_program_expr(argument, scope):
+    if value is not UNBOUND:
+        return value
+    sequence = _program_sequence(argument, scope)
+    if sequence is not None:
+        return sequence if sequence.depth <= _MAX_BINDING_DEPTH else UNBOUND
+    if not _is_program_expr(argument, scope):
         return value
     program = _ProgramArg(argument, scope)
     return program if program.depth <= _MAX_BINDING_DEPTH else UNBOUND
 
 
+def _program_sequence(expr: ast.expr, scope: _Scope) -> _ProgramSeq | None:
+    """A tuple / list literal whose every element builds a Program (one body per port);
+    a literal holding plain data, or spreading another sequence, is not one."""
+    match expr:
+        case ast.Tuple(elts=[_, *_] as elements) | ast.List(elts=[_, *_] as elements) if all(
+            not isinstance(element, ast.Starred) and _is_program_expr(element, scope)
+            for element in elements
+        ):
+            return _ProgramSeq(expr, scope)
+        case _:
+            return None
+
+
 def _is_program_expr(expr: ast.expr, scope: _Scope) -> bool:
     """Whether ``expr`` builds a Program: a Program call, an effect, an install form, or
-    a name bound to one (so ``(x)(expr)`` installs a handler around it)."""
+    a name (or an element of a sequence) bound to one (so ``(x)(expr)`` installs a
+    handler around it)."""
     match expr:
+        case ast.Subscript():
+            return isinstance(scope.resolve(expr), (_ProgramArg, _ProgramAnyOf))
         case ast.Name(id=name):
-            if isinstance(scope.resolve(expr), _ProgramArg):
+            if isinstance(scope.resolve(expr), (_ProgramArg, _ProgramAnyOf)):
                 return True
             call = scope.local_calls.get(name)
             return call is not None and _is_program_expr(call, scope)
@@ -1380,21 +1545,32 @@ class _Reader:
             return
         if isinstance(expr, ast.Constant) and expr.value is None:
             return
+        if isinstance(expr, ast.Subscript):
+            element = scope.resolve(expr)
+            if isinstance(element, (_ProgramArg, _ProgramAnyOf)):
+                self._performed_passed(element, facts)
+                return
         if isinstance(expr, ast.Name):
             argument = scope.resolve(expr)
             if isinstance(argument, ReceivedEffect):
                 facts.effects.append((argument.cls, location, True))
                 return
-            if isinstance(argument, _ProgramArg):
-                # A Program the caller passed: it runs here, read where it was written.
-                facts.performed_arguments.add(_identity(argument))
-                self._performed(argument.expr, argument.scope, argument.filename, facts)
+            if isinstance(argument, (_ProgramArg, _ProgramAnyOf)):
+                self._performed_passed(argument, facts)
                 return
             opened = scope.local_values.get(expr.id)
             if opened is not None and _opening(opened, scope) is not None:
                 # doeff-hy's bind: ``b.value if (b := open_bind(e)).__class__ is Pure else (yield b)``
                 # — what is yielded is the bind it named (agora-redesign #844).
                 self._performed(opened, scope, filename, facts)
+                return
+            choices = scope.local_choices.get(expr.id)
+            if choices is not None:
+                # A local assigned on several paths (Hy's ``match`` as an expression): it
+                # holds whichever was assigned last — each is read, as both branches of a
+                # conditional are (an assigned ``None`` performs nothing).
+                for value in choices:
+                    self._performed(value, scope, filename, facts)
                 return
         call = self._as_call(expr, scope)
         if call is None:
@@ -1403,6 +1579,14 @@ class _Reader:
             )
             return
         self._performed_call(call, scope, filename, facts, location)
+
+    def _performed_passed(self, passed: _ProgramArg | _ProgramAnyOf, facts: _Facts) -> None:
+        """A Program the caller passed (or an element of the sequence it passed): it runs
+        here, read where it was written — each element when the reader cannot tell which."""
+        facts.performed_arguments.add(_identity(passed))
+        for program in _programs_of(passed):
+            facts.performed_arguments.add(_identity(program))
+            self._performed(program.expr, program.scope, program.filename, facts)
 
     def _performed_call(
         self, call: ast.Call, scope: _Scope, filename: str, facts: _Facts, location: Location
@@ -1531,7 +1715,11 @@ class _Reader:
         self, function: types.FunctionType, bound: _Bound
     ) -> frozenset[_Identity]:
         """The Program arguments in ``bound`` that ``function`` (transitively) runs."""
-        arguments = {_identity(b.value) for b in bound.bindings if isinstance(b.value, _ProgramArg)}
+        arguments = {
+            _identity(program)
+            for binding in bound.bindings
+            for program in _passed_programs(binding.value)
+        }
         if not arguments:
             return frozenset()
         found: set[_Identity] = set()
@@ -1560,27 +1748,42 @@ class _Reader:
     ) -> None:
         """Programs handed to ``carrier`` in ``call`` (those the callee runs itself skipped)."""
         for argument in (*call.args, *(keyword.value for keyword in call.keywords)):
-            program = self._carried_program(argument, scope)
-            if program is None or _identity(program) in skip:
-                continue
-            body = _Facts()
-            self._performed(program.expr, program.scope, program.filename, body)
             location = Location(filename, getattr(argument, "lineno", 0))
-            facts.carried.append(_Carried(carrier, body, ast.unparse(program.expr), location))
+            for program in self._carried_programs(argument, scope):
+                if _identity(program) in skip:
+                    continue
+                body = _Facts()
+                self._performed_passed(program, body)
+                facts.carried.append(_Carried(carrier, body, _label_of(program), location))
 
-    def _carried_program(self, argument: ast.expr, scope: _Scope) -> _ProgramArg | None:
-        """The Program an argument hands over: a Program the caller passed on, a Program
-        call, or an install form (an effect or plain data is not carried).  A conditional
-        (``a() if c else b()``) carries itself when either branch is a Program: performing
-        it reads both branches (``_performed``)."""
+    def _carried_programs(
+        self, argument: ast.expr, scope: _Scope
+    ) -> tuple[_ProgramArg | _ProgramAnyOf, ...]:
+        """The Programs an argument hands over: one Program, or each element of a
+        sequence of them (``f(#((serve-a) (serve-b)))`` — a callee that does not run
+        them itself carries them)."""
+        passed = _argument_value(argument, scope)
+        if isinstance(passed, _ProgramSeq):
+            return passed.elements
+        program = self._carried_program(argument, scope)
+        return () if program is None else (program,)
+
+    def _carried_program(
+        self, argument: ast.expr, scope: _Scope
+    ) -> _ProgramArg | _ProgramAnyOf | None:
+        """The Program an argument hands over: a Program the caller passed on (or an
+        element of a sequence it passed), a Program call, or an install form (an effect
+        or plain data is not carried).  A conditional (``a() if c else b()``) carries
+        itself when either branch is a Program: performing it reads both branches
+        (``_performed``)."""
         if isinstance(argument, ast.IfExp):
             branches = (argument.body, argument.orelse)
             if any(self._carried_program(branch, scope) is not None for branch in branches):
                 return _ProgramArg(argument, scope)
             return None
-        if isinstance(argument, ast.Name):
+        if isinstance(argument, (ast.Name, ast.Subscript)):
             value = scope.resolve(argument)
-            if isinstance(value, _ProgramArg):
+            if isinstance(value, (_ProgramArg, _ProgramAnyOf)):
                 return value
         inner = self._as_call(argument, scope)
         if inner is None:
