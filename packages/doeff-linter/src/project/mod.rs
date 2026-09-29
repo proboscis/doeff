@@ -28,6 +28,7 @@ pub mod world_catalog;
 pub mod test_forms;
 pub mod single_point_vocabulary;
 pub mod retired;
+pub mod blind;
 pub mod handler_arguments;
 pub mod typed_values;
 pub mod record_stubs;
@@ -227,6 +228,34 @@ pub fn run_with(root: &Path, settings: &ProjectSettings, enabled: &BTreeSet<Proj
                 let (found, errors) = crate::timing::timed("retired", || judge_retired_files(root, architecture, enabled, focus));
                 drafts.extend(found);
                 report.errors.extend(errors);
+                // DOEFF141 は宣言した定義の module と、届いた先の module の file だけを読む(名指しに関わらず小さい — repo 全体は読まない)。
+                if enabled.contains(&ProjectRule::BlindDefinitionReads) && !architecture.blind_definitions.is_empty() {
+                    let architecture_rel = relative_path(root, &architecture.path).unwrap_or_else(|| "architecture.hy".to_string());
+                    let (found, errors) =
+                        crate::timing::timed("blind", || blind::find(root, &architecture.blind_definitions, &raw, &architecture_rel));
+                    drafts.extend(found.into_iter().map(|found| Draft {
+                        rule: ProjectRule::BlindDefinitionReads,
+                        layer: None,
+                        path: root.join(&found.rel),
+                        message: format!(
+                            "{} — {}",
+                            found.rel,
+                            match &found.problem {
+                                blind::BlindProblem::ReadsWord { reached, word } => {
+                                    format!("{} から届く定義 {} が決めた材料の外の語 {} を読む", found.declared, reached, word)
+                                }
+                                blind::BlindProblem::Imports { module } => format!("{} の module が {} を import する", found.declared, module),
+                                blind::BlindProblem::Missing { reason } => format!("宣言した定義 {} が無い — {}", found.declared, reason),
+                            }
+                        ),
+                        detail: Some(found.detail),
+                        base: Severity::Error,
+                        explain: Explain::BlindDefinition { declared: found.declared, why: found.why, problem: found.problem },
+                        range: found.range,
+                        rel: found.rel,
+                    }));
+                    report.errors.extend(errors);
+                }
                 // DOEFF144・145 も file 1 つで判じる(名指しが在ればその下だけを読む — repo 全体の索引を組まない)。
                 if let Some(selection) = architecture.typed_values.as_ref().filter(|_| enabled.contains(&ProjectRule::UntypedStructuredValue)) {
                     let (found, errors) = crate::timing::timed("typed-values", || typed_values::find(root, selection, focus));

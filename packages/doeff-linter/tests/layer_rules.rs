@@ -2633,3 +2633,63 @@ fn a_catalog_row_kept_for_wraps_is_not_a_config_error() {
     let (_, report) = editor(dir.path());
     assert_eq!(report["errors"], serde_json::json!([]), "{}", report);
 }
+
+/// agora-redesign #1368(C7b): 決めた材料だけで判じる定義(:blind-definitions)— 宣言した定義から呼び出しで届く定義が、helper と別の
+/// module を越えても、使わない語を読めば赤(届いた定義と語ごとに 1 件)。註の中の語・届かない定義の語は数えない。:no-imports なら module の
+/// import は赤で、:allow-requires の macro の require は許す。名指す定義が無ければ architecture.hy の位置で赤(母集団 0 を緑にしない)。
+#[test]
+fn blind_definitions_read_only_their_inputs() {
+    let files = [
+        ("app/foundation/host.hy", tags("shared", "foundation") + "(defk with-host [body] body)\n"),
+        (
+            "app/billing/core/entrance.hy",
+            "(require doeff-hy.macros [defk])\n(import app.billing.core.routes [peek])\n\
+             (defk decide [said] (helper said))\n\
+             (defk helper [x]\n  ;; view.policy は読まない(註は数えない)\n  (peek x))\n"
+                .to_string(),
+        ),
+        ("app/billing/core/routes.hy", "(defk peek [x] (get x \"view.policy\"))\n(defk unrelated [] \"message-class\")\n".to_string()),
+        ("app/billing/core/clean.hy", "(require doeff-hy.macros [defk])\n(defk decide [said] (if (is said None) True said))\n".to_string()),
+    ];
+    let dir = world_repo_with(&files, "", "[\"DOEFF141\"]");
+    let arch_path = dir.path().join("architecture.hy");
+    let text = std::fs::read_to_string(&arch_path).unwrap().replace(
+        ":foundation foundation",
+        ":foundation foundation\n  :blind-definitions [(blind \"app.billing.core.entrance:decide\" :forbid-words [\"view.policy\" \"message-class\"]\n                         :no-imports True :allow-requires [\"doeff-hy.macros\"] :why \"保証は依頼者の言葉だけから決まる\")\n                       (blind \"app.billing.core.clean:decide\" :forbid-words [\"view.policy\"] :no-imports True\n                         :allow-requires [\"doeff-hy.macros\"] :why \"同じ\")\n                       (blind \"app.billing.core.gone:decide\" :no-imports True :why \"消えた定義\")]",
+    );
+    std::fs::write(&arch_path, text).unwrap();
+    let (_, report) = editor(dir.path());
+    assert_eq!(
+        keys(&report, "DOEFF141"),
+        vec![
+            "app/billing/core/entrance.hy::DOEFF141::import:app.billing.core.routes",
+            "app/billing/core/routes.hy::DOEFF141::peek:view.policy",
+            "architecture.hy::DOEFF141::missing",
+        ],
+        "{}",
+        report
+    );
+    let reached = violation(&report, "app/billing/core/routes.hy::DOEFF141::peek:view.policy");
+    assert_eq!(reached["level"], "critical", "{}", reached);
+    assert!(reached["message"].as_str().unwrap().contains("app.billing.core.entrance:decide から届く定義 peek"), "{}", reached["message"]);
+    assert_eq!(reached["range"]["start"]["line"], 0);
+}
+
+/// 宣言の読み違い(何も求めない宣言・:no-imports の無い :allow-requires・:why の無い宣言・綴りの形)は設定の誤り。
+#[test]
+fn blind_declaration_misreadings_are_config_errors() {
+    let dir = world_repo_with(&[], "", "[\"DOEFF141\"]");
+    let arch_path = dir.path().join("architecture.hy");
+    let text = std::fs::read_to_string(&arch_path).unwrap().replace(
+        ":foundation foundation",
+        ":foundation foundation\n  :blind-definitions [(blind \"a.b:c\" :why \"x\")\n                       (blind \"a.b:d\" :forbid-words [\"w\"] :allow-requires [\"m\"] :why \"x\")\n                       (blind \"a.b:e\" :forbid-words [\"w\"])\n                       (blind \"no-colon\" :forbid-words [\"w\"] :why \"x\")]",
+    );
+    std::fs::write(&arch_path, text).unwrap();
+    let (code, stdout, stderr) = run(dir.path(), &["--no-log"], None);
+    let all = format!("{}{}", stdout, stderr);
+    assert_ne!(code, 0, "{}", all);
+    assert!(all.contains("blind a.b:c に :forbid-words も :no-imports True も無い"), "{}", all);
+    assert!(all.contains("blind a.b:d の :allow-requires は :no-imports True の時だけ効く"), "{}", all);
+    assert!(all.contains("blind a.b:e に :why"), "{}", all);
+    assert!(all.contains("blind の no-colon は \"module.path:名\" の綴り"), "{}", all);
+}

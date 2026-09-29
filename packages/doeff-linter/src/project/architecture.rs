@@ -191,6 +191,23 @@ pub struct WorldHandler {
     pub range: doeff_indexer::hy_index::Range,
 }
 
+/// 決めた材料だけで判じる定義 1 つ(`:blind-definitions` の `(blind "module:名" :forbid-words [..] :no-imports True :allow-requires [..]
+/// :why "…")` — DOEFF141・agora-redesign #1368)。定義から呼び出しと名指しで推移的に届く repo の Hy の定義(入れ子を含む)の本体に
+/// :forbid-words の綴りが現れない(註は除く・部分一致)こと、:no-imports なら定義の module が import と require を持たない
+/// (:allow-requires に挙げた module の require だけは macro の読み込みなので許す)ことを求める。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct BlindDefinition {
+    pub definition: DefinitionRef,
+    pub forbid_words: Vec<String>,
+    pub no_imports: bool,
+    pub allow_requires: Vec<String>,
+    /// なぜその語を読まないか(知らせの文に入れる)。
+    pub why: String,
+    /// architecture.hy の中の位置。
+    #[serde(skip)]
+    pub range: doeff_indexer::hy_index::Range,
+}
+
 /// テストの形の決まり(`:test-forms`)— 綴りの型は repo の根からの path の glob(`**` は 0 個以上の段・`/` の無い型は file の名)。
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
 pub struct TestForms {
@@ -306,6 +323,9 @@ pub struct Architecture {
     /// 書けば DOEFF140 が、service と shared のこの層の module が root の下の層の置き場の外の module を import するのを出す
     /// (agora-redesign #1188 — 移す前の置き場への依存を移す変更で消し、新しく足さない)。
     pub placed_dependencies: Vec<String>,
+    /// 決めた材料だけで判じる定義(`:blind-definitions [(blind "module:名" :forbid-words [..] :no-imports True …) …]` — 空 = 宣言していない)。
+    /// 書けば DOEFF141 が、その定義から呼び出しと名指しで届く定義の本体の使わない語と、定義の module の import を出す(agora-redesign #1368)。
+    pub blind_definitions: Vec<BlindDefinition>,
     pub services: Vec<ArchService>,
     /// 素の関数を許す理由の種類の閉じた一覧(DOEFF203 の受け入れる答え)。
     pub plain_callable_reasons: Vec<ReasonKind>,
@@ -661,6 +681,7 @@ impl<'a> Parser<'a> {
             verification_environment: None,
             open_layers: Vec::new(),
             placed_dependencies: Vec::new(),
+            blind_definitions: Vec::new(),
             services: Vec::new(),
             plain_callable_reasons: Vec::new(),
             rejected_plain_callable_reasons: Vec::new(),
@@ -710,6 +731,7 @@ impl<'a> Parser<'a> {
                     open_given = true;
                 }
                 ":placed-dependencies" => arch.placed_dependencies = self.names(value, ":placed-dependencies"),
+                ":blind-definitions" => arch.blind_definitions = self.blind_definitions(value),
                 ":exclude" => arch.exclude = self.names(value, ":exclude"),
                 ":extensions" => arch.extensions = Some(self.names(value, ":extensions")),
                 ":plain-callable-reasons" => arch.plain_callable_reasons = self.reasons(value, ":plain-callable-reasons"),
@@ -1124,6 +1146,64 @@ impl<'a> Parser<'a> {
             self.problem(value, ":handler-arguments に :files(判じる file の綴りの型)が無い");
         }
         Some(decl)
+    }
+
+    /// `[(blind "module:名" :forbid-words [..] :no-imports True :allow-requires [..] :why "…") …]` を読む
+    /// (:why と、:forbid-words か :no-imports True のどちらかは要る)。
+    fn blind_definitions(&mut self, value: &Form) -> Vec<BlindDefinition> {
+        let shape = "(blind \"module:名\" :forbid-words [..]? :no-imports True? :allow-requires [..]? :why \"…\")";
+        let Some(entries) = self.bracket(value) else {
+            self.problem(value, &format!(":blind-definitions は {} の列", shape));
+            return Vec::new();
+        };
+        let mut out: Vec<BlindDefinition> = Vec::new();
+        for entry in entries {
+            let parts = self.paren(entry).filter(|p| p.first().and_then(|h| self.symbol(h)) == Some("blind"));
+            let Some(parts) = parts else {
+                self.problem(entry, &format!(":blind-definitions の要素は {}", shape));
+                continue;
+            };
+            let Some(head) = parts.get(1) else {
+                self.problem(entry, "blind に \"module:名\" が無い");
+                continue;
+            };
+            let Some(definition) = self.definition_ref(head, "blind") else { continue };
+            let range = self.lines.range(head.span.start, head.span.end);
+            let mut blind = BlindDefinition { definition, forbid_words: Vec::new(), no_imports: false, allow_requires: Vec::new(), why: String::new(), range };
+            let rest: Vec<&Form> = parts.iter().skip(2).copied().collect();
+            for (key, field) in self.pairs(&rest) {
+                match self.text(key) {
+                    ":forbid-words" => blind.forbid_words = self.names(field, ":forbid-words"),
+                    ":no-imports" => match self.symbol(field) {
+                        Some("True") => blind.no_imports = true,
+                        Some("False") => blind.no_imports = false,
+                        _ => self.problem(field, ":no-imports は True か False"),
+                    },
+                    ":allow-requires" => blind.allow_requires = self.names(field, ":allow-requires"),
+                    ":why" => blind.why = self.required_string(field, ":why").unwrap_or_default(),
+                    _ => self.unknown_key(key, "blind"),
+                }
+            }
+            let spelling = blind.definition.spelling();
+            if blind.forbid_words.iter().any(|w| w.is_empty()) {
+                self.problem(entry, &format!("blind {} の :forbid-words に空の綴りがある", spelling));
+            }
+            if blind.forbid_words.is_empty() && !blind.no_imports {
+                self.problem(entry, &format!("blind {} に :forbid-words も :no-imports True も無い(何も求めない宣言は置かない)", spelling));
+            }
+            if !blind.allow_requires.is_empty() && !blind.no_imports {
+                self.problem(entry, &format!("blind {} の :allow-requires は :no-imports True の時だけ効く", spelling));
+            }
+            if blind.why.trim().is_empty() {
+                self.problem(entry, &format!("blind {} に :why(なぜその材料を読まないか)が無い", spelling));
+            }
+            if out.iter().any(|b| b.definition == blind.definition) {
+                self.problem(entry, &format!("blind {} が 2 度宣言されている", spelling));
+                continue;
+            }
+            out.push(blind);
+        }
+        out
     }
 
     /// 許可名簿 `[(world-handler "module:名" :touches [..] :answers [..] :wraps [..]) …]` を読む。

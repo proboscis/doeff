@@ -118,6 +118,9 @@ pub enum ProjectRule {
     /// DOEFF140: architecture.hy の :placed-dependencies の層の module(service と shared)が、root の下の層の置き場の外の module を
     /// import する — 置き場の決まっていない module への依存(agora-redesign #1188)。
     PlacedDependency,
+    /// DOEFF141: architecture.hy の :blind-definitions の定義から届く定義が宣言した語を読む・定義の module が import を持つ
+    /// — 決めた材料だけで判じる定義に、ほかの材料が入り込む(agora-redesign #1368)。
+    BlindDefinitionReads,
     /// DOEFF150: architecture.hy の :retired-words で使わないと決めた綴り(語・正規表現・定義の名)が、宣言の file に在る
     /// (agora-redesign #1193 — 語の表は repo の宣言にだけ在る)。
     RetiredWord,
@@ -184,6 +187,7 @@ impl ProjectRule {
         ProjectRule::VocabularyOutsideSinglePoint,
         ProjectRule::ServiceUntestedOnSim,
         ProjectRule::PlacedDependency,
+        ProjectRule::BlindDefinitionReads,
         ProjectRule::RetiredWord,
         ProjectRule::RetiredCall,
         ProjectRule::HandlerArgumentHoldsState,
@@ -236,6 +240,7 @@ impl ProjectRule {
             ProjectRule::VocabularyOutsideSinglePoint => "DOEFF146",
             ProjectRule::ServiceUntestedOnSim => "DOEFF136",
             ProjectRule::PlacedDependency => "DOEFF140",
+            ProjectRule::BlindDefinitionReads => "DOEFF141",
             ProjectRule::RetiredWord => "DOEFF150",
             ProjectRule::RetiredCall => "DOEFF151",
             ProjectRule::HandlerArgumentHoldsState => "DOEFF142",
@@ -269,6 +274,8 @@ impl ProjectRule {
             | ProjectRule::ServiceUntestedOnSim
             // 置き場の外の module への依存(#1188 — 登録簿に載った既知の当たりは warning、新しい当たりは critical)。
             | ProjectRule::PlacedDependency
+            // 決めた材料だけで判じる定義に、ほかの材料が入り込む(#1368 — #1188 の子。新しい当たりは critical)。
+            | ProjectRule::BlindDefinitionReads
             // 使わないと決めた綴りと呼び(#1193 の決め — 登録簿に載った既知の当たりは warning、新しい当たりは critical)。
             | ProjectRule::RetiredWord
             | ProjectRule::RetiredCall
@@ -372,6 +379,7 @@ impl ProjectRule {
             | ProjectRule::ServiceUntestedOnSim
             | ProjectRule::RetiredWord
             | ProjectRule::RetiredCall
+            | ProjectRule::BlindDefinitionReads
             | ProjectRule::HandlerArgumentHoldsState
             | ProjectRule::UntypedStructuredValue
             | ProjectRule::RecordStubNotKwOnly => false,
@@ -417,6 +425,7 @@ impl ProjectRule {
             ProjectRule::UndeclaredDirectory => "宣言に無い dir",
             ProjectRule::ServiceDependency => "宣言に無い service への依存",
             ProjectRule::PlacedDependency => "置き場の外の module への依存",
+            ProjectRule::BlindDefinitionReads => "決めた材料の外を読む判断の定義",
             ProjectRule::UnusedDependency => "使っていない依存",
             ProjectRule::TestIsDeftest => "deftest でないテスト",
             ProjectRule::ClassWithBehaviour => "処理を持つ class",
@@ -472,6 +481,7 @@ impl ProjectRule {
             | ProjectRule::UndeclaredDirectory
             | ProjectRule::ServiceDependency
             | ProjectRule::PlacedDependency
+            | ProjectRule::BlindDefinitionReads
             | ProjectRule::UnusedDependency => RuleFamily::Place,
             ProjectRule::DefnForbidden
             | ProjectRule::DeffNeedsReason
@@ -520,6 +530,7 @@ impl ProjectRule {
             ProjectRule::UndeclaredDirectory => "Undeclared Directory",
             ProjectRule::ServiceDependency => "Service Dependency",
             ProjectRule::PlacedDependency => "Placed Dependency",
+            ProjectRule::BlindDefinitionReads => "Blind Definition Reads Beyond Its Inputs",
             ProjectRule::UnusedDependency => "Unused Dependency",
             ProjectRule::TestIsDeftest => "Tests Are deftest",
             ProjectRule::ClassWithBehaviour => "Class Touches The World Or Holds State",
@@ -572,6 +583,7 @@ impl ProjectRule {
             ProjectRule::UndeclaredPlace => "root の下の module は、architecture.hy で宣言した service の層・shared・foundation・legacy のどれかに置く",
             ProjectRule::UndeclaredDirectory => "root の下の dir は宣言した service か shared・foundation・legacy で、service の中の dir は宣言した層",
             ProjectRule::ServiceDependency => "service A が読んでよいのは、A の :depends-on に在る service の、A の module の層が読める層(その層の :dependency-layers — 組み立ての層は intent と protocol —、無ければ :open-layers の intent)と shared だけ",
+            ProjectRule::BlindDefinitionReads => "architecture.hy の :blind-definitions の定義は決めた材料だけで判じる — その定義から呼び出しと名指しで推移的に届く repo の Hy の定義の本体(註を除く)に :forbid-words の綴りが無く、:no-imports なら定義の module が import と require を持たない(:allow-requires の module の require は macro の読み込みなので除く)。宣言した定義は実在する",
             ProjectRule::PlacedDependency => "architecture.hy の :placed-dependencies の層の module(service と shared)は、層の置き場(service の層・shared の層・foundation と、層の名の段を持つ dir)に在る module にだけ依存する — root の下の置き場の決まっていない module(service の dir の直下・宣言に無い dir の中)を import しない",
             ProjectRule::UnusedDependency => "宣言した依存(:depends-on)を、その service のどの module も読んでいない(知らせ)",
             ProjectRule::TestIsDeftest => "検の置き場(設定の test_paths)の検は deftest で書く — 名が test- / test_ で始まる defn・deff・defk・fn の束縛を置かない",
@@ -625,6 +637,7 @@ impl ProjectRule {
             ProjectRule::UndeclaredPlace => "architecture.hy に宣言するか、宣言した置き場所(<root>/<service>/<層>/)へ移す",
             ProjectRule::UndeclaredDirectory => "architecture.hy に defservice か service の :layers を足すか、dir を宣言した置き場所へ移す",
             ProjectRule::ServiceDependency => "依存先を :depends-on に足し、依存先の intent を出して頼む(判断や翻訳の module を直に読まない)",
+            ProjectRule::BlindDefinitionReads => "判断に要る材料は定義の引数で受け、語の読みは呼び手の側(判断の外)に置く — 届いた先の helper へ逃がしても推移閉包で当たる。module の import は外し、値は引数で渡す",
             ProjectRule::PlacedDependency => "読む先の module を層の置き場(<root>/<service>/<層>/)へ移すか、要る型を intent へ移して読む — 移す前の置き場への依存は移す変更で消す",
             ProjectRule::UnusedDependency => "使っていない依存を :depends-on から外す",
             ProjectRule::TestIsDeftest => "deftest にする(検の値を組む補助は defk にして deftest の中で `(<- …)` で呼ぶ)",
@@ -702,6 +715,7 @@ mod tests {
         ("DOEFF135", RuleFamily::Definition),
         ("DOEFF136", RuleFamily::Definition),
         ("DOEFF140", RuleFamily::Place),
+        ("DOEFF141", RuleFamily::Place),
         ("DOEFF144", RuleFamily::Definition),
         ("DOEFF145", RuleFamily::Definition),
         ("DOEFF150", RuleFamily::Naming),
