@@ -516,6 +516,9 @@ pub struct BusinessFakes {
     pub entry_string_files: Vec<String>,
     /// 業務の効果を定義する module の綴り(`a.b` は a.b とその下・末尾 `*` は前方一致)。
     pub business_modules: Vec<String>,
+    /// 下の層の効果を定義する module の綴り(書き方は :business-modules と同じ)。検の file の反例の handler がこの効果に答える節も、
+    /// 反例の表の照らしに数える(本番の偽物の判定には使わない)。
+    pub lower_layer_modules: Vec<String>,
     /// 外の世界の効果の表の dir(1 鍵 1 file・1 行目が効果の完全名・2 行目から理由)。
     pub external_effects: Option<String>,
     /// わざと壊した反例の handler の表の dir(鍵 = `<path>::<handler>::<効果>`)。
@@ -1696,6 +1699,7 @@ impl<'a> Parser<'a> {
                 ":entry-string-modules" => decl.entry_string_modules = self.names(field, ":business-fakes :entry-string-modules"),
                 ":entry-string-files" => decl.entry_string_files = self.path_globs(field, ":business-fakes :entry-string-files"),
                 ":business-modules" => decl.business_modules = self.names(field, ":business-fakes :business-modules"),
+                ":lower-layer-modules" => decl.lower_layer_modules = self.names(field, ":business-fakes :lower-layer-modules"),
                 ":external-effects" => decl.external_effects = self.required_string(field, ":business-fakes :external-effects"),
                 ":counterexamples" => decl.counterexamples = self.required_string(field, ":business-fakes :counterexamples"),
                 ":unserved" => decl.unserved = self.required_string(field, ":business-fakes :unserved"),

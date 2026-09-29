@@ -63,7 +63,16 @@ pub fn set_member(rel: &str, name: &str, prefix: Option<&str>, decl: &BusinessFa
 
 /// module が業務の module か(`:business-modules` の綴り — `a.b` は a.b とその下・末尾 `*` は前方一致)。
 pub fn business_module(module: &str, decl: &BusinessFakes) -> bool {
-    decl.business_modules.iter().any(|p| match p.strip_suffix('*') {
+    listed(module, &decl.business_modules)
+}
+
+/// module が下の層の module か(`:lower-layer-modules` — 綴りは `:business-modules` と同じ)。
+pub fn lower_layer_module(module: &str, decl: &BusinessFakes) -> bool {
+    listed(module, &decl.lower_layer_modules)
+}
+
+fn listed(module: &str, patterns: &[String]) -> bool {
+    patterns.iter().any(|p| match p.strip_suffix('*') {
         Some(prefix) => module.starts_with(prefix),
         None => module == p || module.starts_with(&format!("{}.", p)),
     })
@@ -314,8 +323,10 @@ pub fn judge(inputs: &Inputs, decl: &BusinessFakes) -> Vec<Verdict> {
         }
         let business = !external.contains_key(&clause.effect) && business_module(module_of_effect(&clause.effect), decl);
         if !fake(i) {
-            // 検だけから届く節(C8b-3 の持ち分)も、わざと壊した反例の表の照らしには数える。
-            if clause.test && business {
+            // 検だけから届く節(C8b-3 の持ち分)も、わざと壊した反例の表の照らしには数える — 業務の効果か下の層の効果に答える節
+            // (下の層の置き場のわざと壊した代役も反例 — 元の検の test-answers と同じ)。
+            let lower = !external.contains_key(&clause.effect) && lower_layer_module(module_of_effect(&clause.effect), decl);
+            if clause.test && (business || lower) {
                 hit_keys.insert(clause.key());
             }
             continue;
@@ -363,6 +374,7 @@ mod tests {
             entry_string_modules: vec!["app".into()],
             entry_string_files: vec!["deploy/**".into()],
             business_modules: vec!["app.orders".into(), "app.intent*".into()],
+            lower_layer_modules: vec!["lib.records.effects".into()],
             external_effects: None,
             counterexamples: None,
             unserved: None,
@@ -417,14 +429,17 @@ mod tests {
             clause(3, "app.orders.intent.Send", false),           // 外の世界の表に在る
             clause(4, "app.orders.intent.Broken", false),         // 反例の表に在る
             clause(5, "app.orders.intent.Shared", false),         // 本番からも届く → 偽物でない
+            // 検の file のわざと壊した下の層の代役 → 反例の表の行に当たる(偽物ではない)
+            Clause { test: true, ..clause(6, "lib.records.effects.ReadRow", false) },
         ];
-        let simulated = vec![true, true, true, true, true, true];
-        let produced = vec![false, false, false, false, false, true];
+        let simulated = vec![true, true, true, true, true, true, false];
+        let produced = vec![false, false, false, false, false, true, false];
         let external: BTreeMap<String, String> =
             [("app.orders.intent.Send".to_string(), "外の相手".to_string()), ("app.gone.Old".to_string(), "古い".to_string())].into();
         let counterexamples: BTreeMap<String, String> = [
             ("app/sim/fake.hy::fake::app.orders.intent.Broken".to_string(), "反例".to_string()),
             ("app/sim/fake.hy::fake::app.orders.intent.Gone".to_string(), "古い反例".to_string()),
+            ("app/sim/fake.hy::fake::lib.records.effects.ReadRow".to_string(), "下の層の反例".to_string()),
         ]
         .into();
         let unserved: BTreeMap<String, String> = [("app.orders.intent.Send".to_string(), "#1 で書く".to_string())].into();
