@@ -10,6 +10,7 @@ pub mod architecture;
 pub mod explain;
 pub mod facts_cache;
 pub mod facts;
+pub mod hy_files;
 pub mod names;
 pub mod param_calls;
 pub mod registry;
@@ -468,7 +469,7 @@ pub fn run_with(root: &Path, settings: &ProjectSettings, enabled: &BTreeSet<Proj
             semantic_files = layer_files.iter().map(|f| (f.clone(), None)).collect();
             let wants_plain = settings.semantic.as_ref().is_some_and(|s| s.plain_callable.is_some() || s.class_role.is_some() || s.mixed_concerns.is_some());
             plain_files = match (&settings.definitions, wants_plain) {
-                (Some(definitions), true) => hy_index::collect_hy_files(root)
+                (Some(definitions), true) => hy_files::collect(root)
                     .into_iter()
                     .filter_map(|path| {
                         let rel = relative_path(root, &path)?;
@@ -594,7 +595,7 @@ pub fn run_with(root: &Path, settings: &ProjectSettings, enabled: &BTreeSet<Proj
                     let failure = crate::timing::timed("failure-types", || failure_types_for(root, enabled, &definitions.tags));
                     let defks = crate::timing::timed("defk-names", || defk_names_for(root, enabled));
                     let program_params = crate::timing::timed("program-params", || program_params_for(root, enabled, &defks));
-                    let files: Vec<SourceFile> = hy_index::collect_hy_files(root)
+                    let files: Vec<SourceFile> = hy_files::collect(root)
                         .into_iter()
                         .filter_map(|path| {
                             let rel = relative_path(root, &path)?;
@@ -1001,7 +1002,7 @@ fn whole_hy_index(
     // hy_index::index_root / index_paths と同じ組み方(集めた順に file ごとに読み、生の副作用を注記する)— ただし file ごとの読みを
     // cache から引く(cached_hy_files)。経由の辿りは他の file の中身と目録で答えが変わるので毎回組む。
     let (paths, via) = if (enabled.contains(&ProjectRule::RawSideEffectVia) && settings.raw.is_some()) || wants_classes || wants_tests {
-        (crate::timing::timed("hy-index.collect", || hy_index::collect_hy_files(root)), true)
+        (crate::timing::timed("hy-index.collect", || hy_files::collect(root)), true)
     } else {
         let paths: BTreeSet<PathBuf> = layer_files
             .iter()
@@ -3629,7 +3630,7 @@ fn failure_types_for(root: &Path, enabled: &BTreeSet<ProjectRule>, reading: &set
     }
     // file ごとの失敗の型は、その file の中身とタグの読み方(設定)で決まる — 読み方の指紋を印に含めて file ごとに覚え、
     // 変わった file だけ読み直す(#1033)。集合の和なので、束ねる順は答えを変えない。
-    let files: Vec<(String, PathBuf)> = hy_index::collect_hy_files(root)
+    let files: Vec<(String, PathBuf)> = hy_files::collect(root)
         .into_iter()
         .filter_map(|path| relative_path(root, &path).map(|rel| (rel, path)))
         .collect();
@@ -3665,7 +3666,7 @@ fn unreadable_findings(root: &Path, settings: &ProjectSettings, single: &Option<
                 Vec::new()
             }
         }
-        None => hy_index::collect_hy_files(root)
+        None => hy_files::collect(root)
             .par_iter()
             .filter_map(|path| {
                 let rel = relative_path(root, path)?;
@@ -3694,7 +3695,7 @@ fn defk_names_for(root: &Path, enabled: &BTreeSet<ProjectRule>) -> bare_calls::D
     }
     // file ごとの defk の名はその file の中身だけで決まるので、変わった file だけ読み直す(保存ごとの 1 file の実行でも
     // repo 全体の名が要るため — #1025)。
-    let files: Vec<(String, PathBuf)> = hy_index::collect_hy_files(root)
+    let files: Vec<(String, PathBuf)> = hy_files::collect(root)
         .into_iter()
         .filter_map(|path| relative_path(root, &path).map(|rel| (rel, path)))
         .collect();
@@ -3899,7 +3900,7 @@ fn program_params_for(
     }
     // file ごとの結果は、その file の中身と repo 全体の defk の名(defks)で決まる。defks の指紋を印に含めて file ごとに覚え、
     // defks が変わらない間は変わった file だけ解析し直す(defks が変われば全部を作り直す・#1026)。
-    let files: Vec<(String, PathBuf)> = hy_index::collect_hy_files(root)
+    let files: Vec<(String, PathBuf)> = hy_files::collect(root)
         .into_iter()
         .filter_map(|path| relative_path(root, &path).map(|rel| (rel, path)))
         .collect();

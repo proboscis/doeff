@@ -1074,7 +1074,7 @@ fn verdict(site: &Site, alive: &BTreeSet<usize>) -> Result<Option<ByteSpan>, Cal
 pub fn run(options: &FixOptions) -> Result<FixReport, String> {
     let root = &options.root;
     let mut files: Vec<HyFile> = Vec::new();
-    for path in hy_index::collect_hy_files(root) {
+    for path in super::hy_files::collect(root) {
         let source = std::fs::read_to_string(&path).map_err(|e| format!("{} を読めない: {}", path.display(), e))?;
         if let Some(file) = HyFile::read(root, &path, source, &options.targets, &options.excludes) {
             files.push(file);
