@@ -2578,3 +2578,58 @@ fn single_point_vocabulary_requires_patterns_files_except_and_instead() {
     assert!(all.contains("vocabulary-scope a に :except(判定の 1 点)が無い"), "{}", all);
     assert!(all.contains("vocabulary-scope a に :instead(直し方)が無い"), "{}", all);
 }
+
+/// agora-redesign #1318: 記録の client の実 HTTP は送り方(transport)の側で数える — 目録は BlockingTransport と、:transport を渡さない
+/// RecordsEndpoint(隠れた既定 = 実 HTTP)を http とし、http-records-handler そのものは載せない。EffectTransport の口と、RecordsEndpoint を
+/// 値として名指すだけ(型の注釈)の所は数えない。
+#[test]
+fn records_client_is_counted_by_its_transport() {
+    let files = [
+        ("app/foundation/host.hy", tags("shared", "foundation") + "(defk with-host [body] body)\n"),
+        (
+            "app/billing/core/ports.hy",
+            tags("billing", "judgment")
+                + "(import doeff_records.http_client [BlockingTransport EffectTransport RecordsEndpoint http-records-handler])\n\
+                   (defk blocking-port [url] (http-records-handler (RecordsEndpoint url \"t\" :transport (BlockingTransport))))\n\
+                   (defk default-port [url] (http-records-handler (RecordsEndpoint url \"t\")))\n\
+                   (defk effect-port [url] (http-records-handler (RecordsEndpoint url \"t\" :transport (EffectTransport))))\n\
+                   (defk named-port [endpoint] {:pre [(: endpoint RecordsEndpoint)]} endpoint)\n",
+        ),
+        (
+            "app/billing/tests/test_ports.hy",
+            "(import app.billing.core.ports [blocking-port default-port effect-port named-port])\n\
+             (deftest test-blocking-port-unmarked (<- h (blocking-port \"http://x\")) (assert h))\n\
+             (deftest test-default-port-unmarked (<- h (default-port \"http://x\")) (assert h))\n\
+             (deftest test-effect-port-unmarked (<- h (effect-port \"http://x\")) (assert h))\n\
+             (deftest test-named-port-unmarked (<- h (named-port 1)) (assert h))\n"
+                .to_string(),
+        ),
+    ];
+    let dir = world_repo_with(&files, "", "[\"DOEFF133\"]");
+    let arch_path = dir.path().join("architecture.hy");
+    let text = std::fs::read_to_string(&arch_path).unwrap().replace(":foundation foundation", ":foundation foundation\n  :edge-mark \"real_world\"");
+    std::fs::write(&arch_path, text).unwrap();
+    let (_, report) = editor(dir.path());
+    assert_eq!(
+        keys(&report, "DOEFF133"),
+        vec![
+            "app/billing/tests/test_ports.hy::DOEFF133::test_blocking_port_unmarked::edge",
+            "app/billing/tests/test_ports.hy::DOEFF133::test_default_port_unmarked::edge",
+        ],
+        "{}",
+        report
+    );
+    let default = violation(&report, "app/billing/tests/test_ports.hy::DOEFF133::test_default_port_unmarked::edge");
+    assert!(default["message"].as_str().unwrap().contains("RecordsEndpoint"), "{}", default["message"]);
+}
+
+/// agora-redesign #1318: 目録の「数えない」行(counted: false — 触れる先を別の行へ移した後、repo の :wraps が移るまでの行)は、名簿の
+/// :wraps に書いても設定の誤りにならない。目録から行を消すと、:wraps に挙げた repo の設定が誤りになり linter が全体で起動しなくなる。
+#[test]
+fn a_catalog_row_kept_for_wraps_is_not_a_config_error() {
+    let files = [("app/foundation/host.hy", tags("shared", "foundation") + "(defk with-host [body] body)\n(defk with-records [body] body)\n")];
+    let extra = "\n                   (world-handler \"app.foundation.host:with-records\" :touches [http] :wraps [\"doeff_records.http_client:http-records-handler\"])";
+    let dir = world_repo_with(&files, extra, "[\"DOEFF131\"]");
+    let (_, report) = editor(dir.path());
+    assert_eq!(report["errors"], serde_json::json!([]), "{}", report);
+}

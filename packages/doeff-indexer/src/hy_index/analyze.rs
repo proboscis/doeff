@@ -1166,7 +1166,8 @@ impl<'a> Analyzer<'a> {
         }
         if !self.is_keyword_head(head) {
             self.reference(items[0].span);
-            self.record_call(items[0].span, items.last().map_or(items[0].span.end, |last| last.span.end), performed);
+            let keywords = items[1..].iter().filter(|item| matches!(item.node, Node::Keyword)).map(|item| self.text(item.span).to_string()).collect();
+            self.record_call(items[0].span, items.last().map_or(items[0].span.end, |last| last.span.end), keywords, performed);
         }
         for (index, item) in rest.iter().enumerate() {
             match item.paren_items() {
@@ -1257,7 +1258,7 @@ impl<'a> Analyzer<'a> {
 
     /// 呼び出しの頭の記号を呼び出しとして積む(`.method` の形・演算子・定数は除く)。caller は
     /// 呼び出しの位置を form 全体の範囲に含む定義のうち最も狭いもの。
-    fn record_call(&mut self, head: Span, form_end: usize, performed: bool) {
+    fn record_call(&mut self, head: Span, form_end: usize, keywords: Vec<String>, performed: bool) {
         let text = self.text(head);
         if self.call_suppression > 0
             || text.is_empty()
@@ -1297,6 +1298,7 @@ impl<'a> Analyzer<'a> {
             qualifier,
             range: self.lines.range(start, start + callee.len()),
             form_range: self.lines.range(head.start, form_end.max(start + callee.len())),
+            keywords,
             caller,
             performed,
             // import と定義が全部そろった後に qualify::link が埋める

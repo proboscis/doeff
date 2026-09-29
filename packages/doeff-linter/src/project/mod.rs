@@ -1957,7 +1957,8 @@ struct DefinitionGraph<'h> {
 fn definition_graph<'h>(architecture: &architecture::Architecture, hy: &'h HashMap<String, HyFileIndex>) -> DefinitionGraph<'h> {
     let listed: HashMap<String, (String, Vec<architecture::WorldTouch>)> =
         architecture.world_handlers.iter().map(|h| (h.definition.target(), (h.definition.spelling(), h.touches.clone()))).collect();
-    let wrapped = architecture.world_targets(world_catalog::WorldCatalog::bundled());
+    let catalog = world_catalog::WorldCatalog::bundled();
+    let wrapped = architecture.world_targets(catalog);
     let static_readers: BTreeSet<String> = architecture.static_readers.iter().map(|r| r.target()).collect();
     let mut rels: Vec<&String> = hy.keys().collect();
     rels.sort();
@@ -2017,13 +2018,15 @@ fn definition_graph<'h>(architecture: &architecture::Architecture, hy: &'h HashM
             .references
             .iter()
             .filter(|r| r.target.as_deref().is_some_and(interesting) && !in_import(&r.range) && !only_read(&r.range))
-            .filter_map(|r| r.target.as_deref().map(|t| (t, innermost_definition(definitions, &r.range))))
-            .chain(file.calls.iter().filter_map(|c| c.target.as_deref().filter(|t| interesting(t)).map(|t| (t, c.caller))));
-        for (target, owner) in spots {
+            .filter_map(|r| r.target.as_deref().map(|t| (t, innermost_definition(definitions, &r.range), None)))
+            .chain(file.calls.iter().filter_map(|c| c.target.as_deref().filter(|t| interesting(t)).map(|t| (t, c.caller, Some(c.keywords.as_slice())))));
+        for (target, owner, keywords) in spots {
             let Some(owner) = owner else { continue };
             let owner = first + owner;
             if let Some((spelling, _, touches)) = wrapped.get(target) {
-                if architecture.counts_as_edge(touches) && world[owner].is_none() {
+                // 目録の条件つきの行(unless_keyword)は、その keyword を渡さない呼び出しだけが外の世界に触れる(agora-redesign #1318)。
+                let counted = catalog.handlers.get(target).is_some_and(|h| h.counts(keywords));
+                if counted && architecture.counts_as_edge(touches) && world[owner].is_none() {
                     world[owner] = Some(spelling.clone());
                 }
             } else if let Some(&callee) = by_name.get(target) {
@@ -2195,11 +2198,13 @@ fn world_handler_spots(hy_file: &HyFileIndex, architecture: &architecture::Archi
         .references
         .iter()
         .filter(|r| !in_import(&r.range))
-        .filter_map(|r| r.target.as_ref().map(|t| (t, r.range)))
-        .chain(hy_file.calls.iter().filter_map(|c| c.target.as_ref().map(|t| (t, c.range))));
+        .filter_map(|r| r.target.as_ref().map(|t| (t, r.range, None)))
+        .chain(hy_file.calls.iter().filter_map(|c| c.target.as_ref().map(|t| (t, c.range, Some(c.keywords.as_slice())))));
+    let catalog = world_catalog::WorldCatalog::bundled();
     let mut chosen: BTreeMap<(Option<usize>, String), Range> = BTreeMap::new();
-    for (target, range) in spots {
-        if !wrapped.contains_key(target) {
+    for (target, range, keywords) in spots {
+        // 目録の条件つきの行(unless_keyword)は、その keyword を渡さない呼び出しだけを数える(agora-redesign #1318)。
+        if !wrapped.contains_key(target) || !catalog.handlers.get(target).is_some_and(|h| h.counts(keywords)) {
             continue;
         }
         let inside = |d: &Definition| d.full_range.start <= range.start && range.end <= d.full_range.end;
