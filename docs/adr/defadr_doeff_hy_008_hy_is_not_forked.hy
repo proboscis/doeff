@@ -4,9 +4,9 @@
 ;;; doeff は Hy のフォーク(proboscis/hy・本家 1.3.1 に 10 commit)を固定して使っていた。フォークの 3 つの機能を doeff の側の
 ;;; 回避へ置き換える(子 #1291 テストの索引・#1292 macro の変更で古い bytecode を使わない・#1293 require の高速化)。
 ;;;
-;;; 期限つきの例外: 3 つの回避が main に入り、Hy の指定を PyPI の版へ戻す(#1290 の手順 4)までは、今のフォークの固定を
-;;; 例外として登録する(フォークだけの名前の import は #1291 が消したので、その台帳は空)。例外は期限(FORK-EXCEPTIONS-EXPIRE)を過ぎると赤になり、
-;;; 原因が消えた例外が台帳に残っても赤になる(消した便が同じ commit で台帳から削る)。
+;;; 期限つきの例外: 3 つの回避が main に入り、Hy の指定を PyPI の版へ戻す(#1290 の手順 4・#1293)までは、フォークの固定を
+;;; 例外として登録していた。手順 4 で固定を消したので、例外は 0(FORK-PIN = None・import の台帳は空)。例外を足すなら期限
+;;; (FORK-EXCEPTIONS-EXPIRE)を過ぎると赤になり、原因が消えた例外が台帳に残っても赤になる(消した便が同じ commit で台帳から削る)。
 ;;;
 ;;; 戻し方: この ADR を足した commit を revert する(ADR の file 1 つが消える)。
 
@@ -29,8 +29,9 @@
 ;; ---------------------------------------------------------------------------
 ;; 期限つきの例外の台帳(#1290 の手順 4 まで)
 
-;; 今のフォークの固定(doeff の pyproject.toml の [tool.uv.sources] と uv.lock)— この rev だけを例外にする。
-(val FORK-PIN "adbe989a958935172f95220526362ccc103e6d47")
+;; 例外にするフォークの固定の rev(None = 例外なし)。adbe989a958935172f95220526362ccc103e6d47 を 2026-09-29 まで例外にしていた —
+;; #1293 で doeff と agora-controllers の Hy の指定を PyPI の版へ戻した時に消した。
+(val FORK-PIN None)
 
 ;; 例外の期限。3 つの回避(#1291・#1292・#1293)の着地と PyPI の Hy へ戻す変更の目安(決めた日から 2 週)。
 ;; 延ばす時は理由を :problem に足し、この値を同じ commit で変える。
@@ -59,13 +60,13 @@
 ;; ---------------------------------------------------------------------------
 ;; 判断(純関数)
 
-(defk dependency-violations [mentions today]
-  {:pre [(: mentions list) (: today date)]
+(defk dependency-violations [mentions today pin]
+  {:pre [(: mentions list) (: today date) (: pin (| str None))]
    :post [(: % list)]
    :tags {:context "doeff-hy-adr" :role "judgment"}}
-  "依存の宣言の中のフォークの指し方 #(path 行) のうち、例外(今の固定の rev・期限の内)でない物を挙げる — R3 の判定。"
+  "依存の宣言の中のフォークの指し方 #(path 行) のうち、例外(固定の rev pin・期限の内)でない物を挙げる — R3 の判定(pin が None なら全部)。"
   (lfor #(rel line) mentions
-        :if (or (not-in FORK-PIN line) (> today FORK-EXCEPTIONS-EXPIRE))
+        :if (or (is pin None) (not-in pin line) (> today FORK-EXCEPTIONS-EXPIRE))
         f"{rel}: {(.strip line)}"))
 
 (defk import-violations [missing today exceptions]
@@ -86,8 +87,8 @@
   (+ (lfor entry (sorted FORK-ONLY-IMPORT-EXCEPTIONS)
            :if (not-in entry still-missing)
            f"import の例外 {entry} は、もう PyPI の Hy に無い名前を import していない — FORK-ONLY-IMPORT-EXCEPTIONS から削る")
-     (if (and (not mentions) FORK-PIN)
-         ["依存の宣言にフォークの固定がもう無い — FORK-PIN を空にし、期限つきの例外を閉じる"]
+     (if (and (not mentions) (is-not FORK-PIN None))
+         ["依存の宣言にフォークの固定がもう無い — FORK-PIN を None にし、期限つきの例外を閉じる"]
          [])))
 
 
@@ -217,7 +218,7 @@
 
 
 (defadr ADR-DOE-HY-008
-  :title "Hy はフォークしない・手を入れない。Hy の振る舞いで回避が要る所は doeff の側に置く。依存の宣言に proboscis/hy を書かず、PyPI の Hy に無い名前を hy.* から import しない(今のフォークの固定は期限つきの例外)"
+  :title "Hy はフォークしない・手を入れない。Hy の振る舞いで回避が要る所は doeff の側に置く。依存の宣言に proboscis/hy を書かず、PyPI の Hy に無い名前を hy.* から import しない(フォークの固定は #1293 で消した)"
   :status "accepted"
   :scope ["pyproject.toml"
           "uv.lock"
@@ -244,12 +245,12 @@
   :decision
     [(rule R1 "Hy には一切手を入れない。proboscis/hy に commit を足さない。最終形は PyPI の Hy。")
      (rule R2 "Hy の振る舞いで回避が要る所は doeff の側に置く: テストの索引(#1291)・macro の変更で古い bytecode を使わない判定(#1292 — doeff_hy_bytecode_guard が Python 標準の SourceFileLoader を包む)・require の高速化(#1293)。")
-     (rule R3 "doeff と agora-controllers の依存の宣言(pyproject.toml・uv.lock)に proboscis/hy を書かない。例外は今の固定(rev adbe989a)だけで、期限は FORK-EXCEPTIONS-EXPIRE(#1290 の手順 4 で消す)。doeff の検査は doeff の木を読む — agora-controllers の宣言は agora-controllers の側の検査が守る。")
+     (rule R3 "doeff と agora-controllers の依存の宣言(pyproject.toml・uv.lock)に proboscis/hy を書かない。例外は 0(rev adbe989a の固定を 2026-09-29 まで例外にしていた — #1293 で消した)。doeff の検査は doeff の木を読む — agora-controllers の宣言は agora-controllers の側の検査が守る。")
      (rule R4 "doeff の code は PyPI の Hy に無い名前を hy.* から import しない。例外の台帳(FORK-ONLY-IMPORT-EXCEPTIONS)は空(#1291 が c6783e8e2 で消した)。足すなら期限は R3 と同じ。")
      (rule R5 "例外の台帳は、原因が消えたら同じ commit で削る(フォークの固定を消す便は FORK-PIN を、import を消す便は FORK-ONLY-IMPORT-EXCEPTIONS の行を)。原因の消えた例外が台帳に残れば赤。")]
   :laws
     [(law dependency-declarations-name-no-hy-fork
-       :statement "for_all line in (pyproject.toml ∪ uv.lock) of doeff and agora-controllers: names(line, github.com/proboscis/hy) => (rev(line) == FORK-PIN and today <= FORK-EXCEPTIONS-EXPIRE)"
+       :statement "for_all line in (pyproject.toml ∪ uv.lock) of doeff and agora-controllers: names(line, github.com/proboscis/hy) => (FORK-PIN is not None and rev(line) == FORK-PIN and today <= FORK-EXCEPTIONS-EXPIRE)"
        :counterexamples
          [(counterexample "Hy の固定をフォークの新しい rev へ上げる(2026-09-29 13:16〜13:45 に agora のマージが全部落ちた形)")
           (counterexample "期限を過ぎても pyproject.toml の [tool.uv.sources] に hy = { git = \"https://github.com/proboscis/hy.git\", rev = \"adbe989a…\" } が残る")])
@@ -262,10 +263,10 @@
     [(deftest test-adr-doe-hy-008-dependency-declarations-name-no-hy-fork
        (val repo-root (. (Path __file__) parent parent parent))
        (val mentions (run (fork-mentions repo-root)))
-       (val violations (run (dependency-violations mentions (date.today))))
+       (val violations (run (dependency-violations mentions (date.today) FORK-PIN)))
        (assert (= violations [])
                (+ "依存の宣言が Hy のフォークを指している(ADR-DOE-HY-008 R3 — PyPI の Hy を指す。"
-                  "今の固定の例外は期限 " (str FORK-EXCEPTIONS-EXPIRE) " まで): " (str violations))))
+                  "例外の固定 = " (str FORK-PIN) "): " (str violations))))
      (deftest test-adr-doe-hy-008-imports-exist-in-pypi-hy
        (val repo-root (. (Path __file__) parent parent parent))
        (val imports (run (scan-hy-imports repo-root)))
@@ -284,11 +285,13 @@
        ;; 反例: 別の rev・期限の後・台帳に無い import は赤、台帳に在り期限の内の import は緑。
        (val before (date 2026 9 30))
        (val after (date 2026 12 31))
-       (val pin-line f"hy = {{ git = \"https://github.com/proboscis/hy.git\", rev = \"{FORK-PIN}\" }}")
+       (val pin "adbe989a958935172f95220526362ccc103e6d47")
+       (val pin-line f"hy = {{ git = \"https://github.com/proboscis/hy.git\", rev = \"{pin}\" }}")
        (val other-line "hy = { git = \"https://github.com/proboscis/hy.git\", rev = \"0123456789abcdef\" }")
-       (assert (= (run (dependency-violations [#("pyproject.toml" pin-line)] before)) []))
-       (assert (= (len (run (dependency-violations [#("pyproject.toml" other-line)] before))) 1))
-       (assert (= (len (run (dependency-violations [#("pyproject.toml" pin-line)] after))) 1))
+       (assert (= (run (dependency-violations [#("pyproject.toml" pin-line)] before pin)) []))
+       (assert (= (len (run (dependency-violations [#("pyproject.toml" other-line)] before pin))) 1))
+       (assert (= (len (run (dependency-violations [#("pyproject.toml" pin-line)] after pin))) 1))
+       (assert (= (len (run (dependency-violations [#("pyproject.toml" pin-line)] before None))) 1))
        (val registered #("packages/doeff-adr/src/doeff_adr/lazy_collection.py" "hy.importer" "read_valid_records"))
        (val unregistered #("packages/doeff-hy/src/doeff_hy/new_module.py" "hy.importer" "read_valid_records"))
        (val ledger #{registered})
