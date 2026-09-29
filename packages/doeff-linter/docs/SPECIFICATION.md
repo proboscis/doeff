@@ -183,6 +183,7 @@ Jev の規則(201・202・205)は確率で info にも出るが、level は規�
 | DOEFF131 | `:world-handlers` の `:wraps` に挙げた doeff の実 I/O の handler を、名簿の定義(とその中の入れ子の定義)の外で名指す。値として渡す参照(`with-handlers` の列)も呼び出しも数え、import の行は数えない。名指しの先は索引の参照の `target`(呼び出しと同じ名前の解決)。同じ定義の同じ handler は 1 件。既定の重大さ critical(agora-redesign #1106 の R1・#1140) | `<定義>::world::<module:名>` | 名指した記号 |
 | DOEFF132 | `:world-handlers` の定義 1 本ずつ — module が層の置き場に無い(無い module か層の外)・foundation の外の層に在る・Hy の module に定義が無い。全体の実行だけ。既定の重大さ critical(agora-redesign #1106 の R2・#1141) | `<module:名>` | architecture.hy の名簿の要素 |
 | DOEFF133 | テストの種類(手元 / 縁)を届く先から導く — 全体の索引で定義の間の辺(呼び出し・参照・入れ子)を組み、名簿の定義・`:wraps` の handler を名指す定義・強い生の I/O の証拠を持つ定義から逆向きに辿る。届く deftest は縁で `:edge-mark` の印(deftest の `:marks` か module の `pytestmark`)が要り、届かない deftest は印を持たない。食い違いを critical で出し、縁の message に届く道を書く。Python の検は数えない(R6)。`:edge-mark` を書いた時だけ当たる(agora-redesign #1106 の R3・#1142) | `<定義>::edge` / `<定義>::local` | deftest の名 |
+| DOEFF135 | テストは deftest だけ — `:test-forms {:tests [..] :check-scripts [..] :runners [..]}` の綴りの型で file を選び、:tests の Python の file の `def test_*`(python-test・件数を message に)、:tests の file の module ごとの skip(字下げの無い段の `pytest.skip`・`allow_module_level`・`pytestmark` の `mark.skip`)、:check-scripts の file(check-script)、:runners の file(runner)を file ごとに 1 件。全体の実行だけ。既定の重大さ critical(agora-redesign #1106 の R6・#1144) | `python-test` / `module-skip` / `check-script` / `runner` | file の頭か最初の当たりの行 |
 | DOEFF109 | service を持つ file(置き場の `*` に当たった物)の層が `services.guarded_layers` に在り、import の先が別の service の守る層の module なら破れ。先が共有の置き場・`open_layers` の層・例外の組なら許す | import の先の綴り | 最初の import の記号 |
 | DOEFF110 | Hy の `defn` / `defn/a` の定義(decorator つきも)。`do` の中も最上位として見る。`eval-and-compile` / `eval-when-compile` の中は外 | 定義の名 | 定義の名 |
 | DOEFF111 | `deff` の定義の行か直前の行の註(`;` の後)に `definitions.deff_reason_marker` が無い、または理由が空・「同上」とその変形 | 定義の名 | 定義の名 |
@@ -252,6 +253,7 @@ law の対応だけを残す。無ければ TOML の設定で今どおり動く�
   :wire-modules ["controllers.foundation.records_client"]  ; JSON の送受信そのものを行う foundation の module(DOEFF120・13 節)
   :edge-mark "real_world"                  ; 縁のテストの pytest の印の名(DOEFF133 — :world-handlers が要る)
   :edge-touches [http db process clock cluster network thread]  ; 縁と数える触れる先(DOEFF133 — 書かなければ全部)
+  :test-forms {:tests ["test_*.hy" "test_*.py"] :check-scripts ["scripts/check_*.hy"] :runners ["*_deftest_runner.hy"]}  ; テストの形の決まり(DOEFF135)
   :world-handlers [(world-handler "controllers.foundation.host:with-agora-process"   ; 外の世界に触れてよい定義の許可名簿(下の註)
                      :touches [http file clock env] :answers [HttpRequest ReadText]
                      :wraps ["doeff_core_effects.os_file:os-file-handler"])]

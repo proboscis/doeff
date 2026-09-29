@@ -2048,3 +2048,40 @@ fn world_catalog_widens_the_rules_and_edge_touches_narrow_the_edge() {
         report
     );
 }
+
+/// agora-redesign #1144(R6): テストは deftest だけ — :test-forms の綴りの型で選んだ file の、Python の def test_*・module ごとの skip・
+/// pytest の外の check script・deftest の runner を file ごとに 1 件 DOEFF135(critical)で出す。deftest だけの file は当てない。
+#[test]
+fn test_forms_other_than_deftest_are_red() {
+    let files = [
+        ("app/foundation/host.hy", tags("shared", "foundation") + "(defk with-host [body] body)\n"),
+        ("app/billing/tests/test_good.hy", "(deftest test-one (assert True))\n".to_string()),
+        ("app/billing/tests/test_python.py", "import pytest\n\ndef helper():\n    pass\n\ndef test_a():\n    assert True\n\nclass TestB:\n    def test_b(self):\n        assert True\n".to_string()),
+        ("app/billing/tests/test_skipped.hy", "(import pytest)\n(pytest.skip \"doeff 側の不足\" :allow-module-level True)\n(deftest test-x (assert True))\n".to_string()),
+        ("scripts/check_things.hy", "(defn main [] 0)\n".to_string()),
+        ("app/billing/tests/billing_deftest_runner.hy", "(defn main [] 0)\n".to_string()),
+    ];
+    let dir = world_repo_with(&files, "", "[\"DOEFF135\"]");
+    let arch_path = dir.path().join("architecture.hy");
+    let text = std::fs::read_to_string(&arch_path).unwrap().replace(
+        ":foundation foundation",
+        ":foundation foundation\n  :test-forms {:tests [\"test_*.hy\" \"test_*.py\"] :check-scripts [\"scripts/check_*.hy\"] :runners [\"*_deftest_runner.hy\"]}",
+    );
+    std::fs::write(&arch_path, text).unwrap();
+    let (_, report) = editor(dir.path());
+    assert_eq!(
+        keys(&report, "DOEFF135"),
+        vec![
+            "app/billing/tests/billing_deftest_runner.hy::DOEFF135::runner",
+            "app/billing/tests/test_python.py::DOEFF135::python-test",
+            "app/billing/tests/test_skipped.hy::DOEFF135::module-skip",
+            "scripts/check_things.hy::DOEFF135::check-script",
+        ],
+        "{}",
+        report
+    );
+    let python = violation(&report, "app/billing/tests/test_python.py::DOEFF135::python-test");
+    assert!(python["message"].as_str().unwrap().contains("def test_* が 2 本"), "{}", python["message"]);
+    assert_eq!(python["range"]["start"]["line"], 5);
+    assert_eq!(python["level"], "critical");
+}

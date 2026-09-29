@@ -25,6 +25,7 @@ pub mod signatures;
 pub mod call_view;
 pub mod body_view;
 pub mod world_catalog;
+pub mod test_forms;
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
@@ -275,6 +276,22 @@ pub fn run_with(root: &Path, settings: &ProjectSettings, enabled: &BTreeSet<Proj
                     }
                     if enabled.contains(&ProjectRule::TestKindMismatch) && !architecture.world_handlers.is_empty() {
                         drafts.extend(judge_test_kinds(root, architecture, hy));
+                    }
+                    if let Some(forms) = architecture.test_forms.as_ref().filter(|_| enabled.contains(&ProjectRule::TestFormNotDeftest)) {
+                        drafts.extend(test_forms::find(root, forms).into_iter().map(|found| {
+                            let start = Position { line: found.line, character: 0 };
+                            Draft {
+                                rule: ProjectRule::TestFormNotDeftest,
+                                layer: None,
+                                path: root.join(&found.rel),
+                                rel: found.rel.clone(),
+                                range: Range { start, end: start },
+                                message: format!("{} — テストの形 {}({})— テストは deftest だけ", found.rel, found.form, found.detail),
+                                detail: Some(found.form.to_string()),
+                                base: Severity::Error,
+                                explain: Explain::TestFormNotDeftest { form: found.form, detail: found.detail },
+                            }
+                        }));
                     }
                 }
             }

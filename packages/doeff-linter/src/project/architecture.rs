@@ -191,6 +191,17 @@ pub struct WorldHandler {
     pub range: doeff_indexer::hy_index::Range,
 }
 
+/// テストの形の決まり(`:test-forms`)— 綴りの型は repo の根からの path の glob(`**` は 0 個以上の段・`/` の無い型は file の名)。
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+pub struct TestForms {
+    /// テストの file(この中の Python の `def test_*` と module ごとの skip を出す)。
+    pub tests: Vec<String>,
+    /// pytest の外で走る検査の script(在るだけで出す)。
+    pub check_scripts: Vec<String>,
+    /// deftest を自分で回す runner(在るだけで出す)。
+    pub runners: Vec<String>,
+}
+
 /// architecture.hy の全体。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct Architecture {
@@ -221,6 +232,9 @@ pub struct Architecture {
     /// 縁と数える触れる先(`:edge-touches [http db …]` — 書かなければ全部)。agora は file・env を入れない
     /// (一時 dir の file は手元 — agora-redesign #1142 の決定 B)。仕組みは linter・値は repo の宣言。
     pub edge_touches: Option<Vec<WorldTouch>>,
+    /// テストの形の決まり(`:test-forms {:tests [..] :check-scripts [..] :runners [..]}` — どれも file の綴りの型の列)。
+    /// 書けば DOEFF135 が deftest 以外のテストの形を出す(agora-redesign #1106 の R6・#1144)。
+    pub test_forms: Option<TestForms>,
     #[serde(skip)]
     pub role_descriptions: BTreeMap<String, String>,
     #[serde(skip)]
@@ -541,6 +555,7 @@ impl<'a> Parser<'a> {
             world_handlers: Vec::new(),
             edge_mark: None,
             edge_touches: None,
+            test_forms: None,
             role_descriptions: BTreeMap::new(),
             exclude: vec!["tests".into(), "__pycache__".into(), "conftest.py".into()],
             extensions: None,
@@ -581,6 +596,7 @@ impl<'a> Parser<'a> {
                 }
                 ":wire-modules" => arch.wire_modules = self.module_patterns(value, ":wire-modules"),
                 ":world-handlers" => arch.world_handlers = self.world_handlers(value),
+                ":test-forms" => arch.test_forms = self.test_forms(value),
                 ":edge-touches" => {
                     let mut touches = Vec::new();
                     for word in self.names(value, ":edge-touches") {
@@ -676,6 +692,31 @@ impl<'a> Parser<'a> {
             self.problem(form, &format!("{} の {} は \"module.path:名\" の綴り(module は `.` 区切りで段が空でない・名は空でない)", what, text));
         }
         found
+    }
+
+    /// `{:tests [..] :check-scripts [..] :runners [..]}` を読む(:tests は要る)。
+    fn test_forms(&mut self, value: &Form) -> Option<TestForms> {
+        let Some(entries) = self.brace(value) else {
+            self.problem(value, ":test-forms は {:tests [..] :check-scripts [..] :runners [..]} の辞書");
+            return None;
+        };
+        let mut forms = TestForms::default();
+        let mut tests_given = false;
+        for (key, list) in self.pairs(&entries) {
+            match self.text(key) {
+                ":tests" => {
+                    tests_given = true;
+                    forms.tests = self.names(list, ":test-forms :tests");
+                }
+                ":check-scripts" => forms.check_scripts = self.names(list, ":test-forms :check-scripts"),
+                ":runners" => forms.runners = self.names(list, ":test-forms :runners"),
+                _ => self.unknown_key(key, ":test-forms"),
+            }
+        }
+        if !tests_given || forms.tests.is_empty() {
+            self.problem(value, ":test-forms に :tests(テストの file の綴りの型)が無い");
+        }
+        Some(forms)
     }
 
     /// 許可名簿 `[(world-handler "module:名" :touches [..] :answers [..] :wraps [..]) …]` を読む。
