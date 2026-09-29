@@ -10,12 +10,12 @@
 ;;;   * 起こせない子は答え(exit-code 127・started False・OSError の文)— 断る順は cwd が先、命令が後
 ;;;   * 時間切れは答え(exit-code 124・timed-out True)・時間内なら普通の答え
 ;;;   * output-path の末尾へ stdout・stderr の順に足す(答えも出力を持つ)。足せない output-path は OSError が上がる
-;;;   * ExecutableAt は起こせる命令と起こせない命令を分ける・WorkingDirectory は在る dir の絶対 path
+;;;   * ExecutableAt は起こせる命令と起こせない命令を分ける・dir(命令と同じ名でも)と無い path は False・WorkingDirectory は在る dir の絶対 path
 ;;; 本物だけの性質(WorkingDirectory が自分の process の作業 dir)と fake だけの性質(job ごとの作業 dir・台本から台本を走らせる・
 ;;; 台本が env None を None で受ける)は test_process_file_effects.hy。
 (require doeff-hy.macros [defk deftest <- val var])
 (import os)
-(import doeff_core_effects.file_effects [PathKind PathStat ReadText StatPath WriteText])
+(import doeff_core_effects.file_effects [MakeDirectory PathKind PathStat ReadText StatPath WriteText])
 (import doeff_core_effects.process_effects [EnvEntry EnvMode ExecutableAt ProcessOutcome ReadEnvironment RunProcess WorkingDirectory])
 (import process_contract_handlers [CAT ContractRoot ENV-PROBE KILLED OUT-ERR OUT-ERR-EXIT PWD])
 
@@ -133,6 +133,19 @@
   (<- missing bool (ExecutableAt :path MISSING-COMMAND))
   (assert runnable "/bin/sh が起こせない")
   (assert (not missing) (.format "{} が起こせる" MISSING-COMMAND)))
+
+
+(deftest test-a-directory-or-a-missing-path-is-not-executable
+  {:interpreters ["subprocess" "scripted-process"]}
+  ;; dir は実行の bit があっても起こせる file ではない — 命令と同じ名の dir も、置き場の根も False。置き場の無い path も False。
+  (<- root str (ContractRoot))
+  (val named-dir (+ root "/sh"))
+  (<- (MakeDirectory named-dir))
+  (<- root-seen bool (ExecutableAt :path root))
+  (<- named-dir-seen bool (ExecutableAt :path named-dir))
+  (<- missing-seen bool (ExecutableAt :path (+ root "/none")))
+  (assert (= #(root-seen named-dir-seen missing-seen) #(False False False))
+          (.format "ExecutableAt の答え(置き場の根・命令と同じ名の dir・無い path){}" #(root-seen named-dir-seen missing-seen))))
 
 
 (deftest test-the-own-working-directory-is-an-existing-directory
