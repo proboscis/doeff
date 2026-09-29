@@ -1,0 +1,33 @@
+{
+  "entries": [
+    {
+      "count": 1,
+      "path": "packages/doeff-hy/src/doeff_hy/frozen.hy",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "__delattr__"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-hy/src/doeff_hy/frozen.hy",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "__init__"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-hy/src/doeff_hy/frozen.hy",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "__reduce__"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-hy/src/doeff_hy/frozen.hy",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "__setattr__"
+    }
+  ],
+  "version": 1
+}
