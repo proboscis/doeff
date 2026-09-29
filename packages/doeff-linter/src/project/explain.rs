@@ -202,7 +202,7 @@ pub enum Explain {
     ServiceUntestedOnSim { service: String, entry: String, definitions: usize, sim: String },
     /// DOEFF142: defhandler の引数が client・可変の店を取る。
     HandlerArgumentHoldsState { handler: String, param: String, kind: &'static str, type_text: String },
-    /// DOEFF143: 業務の効果の偽物・表の腐り。
+    /// DOEFF143・157・158: 業務の効果の偽物・表の腐り・検だけの偽物・intent の効果の答え手。
     BusinessEffectFake { subject: String, reason: String },
     /// DOEFF155・156: 組み立ての形の破れ・翻訳の先か土台の答えが業務の効果。
     AssemblyShape { subject: String, reason: String },

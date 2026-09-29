@@ -164,6 +164,10 @@ pub enum ProjectRule {
     AssemblyShapeBroken,
     /// DOEFF156: 翻訳の handler が列の外の業務の効果を出し直す・土台の handler が業務の効果に答える(agora-redesign #1376)。
     AssemblyAnswerMisplaced,
+    /// DOEFF157: 検の定義からだけ届く定義が業務の効果か下の層の効果に答える — 検だけの偽物(agora-redesign #1377)。宣言は :business-fakes。
+    TestOnlyFake,
+    /// DOEFF158: 本番の入口から届く intent の効果の答え手が翻訳の層の handler 1 つでない(agora-redesign #1377)。層の名は :assembly-shape。
+    IntentAnswererNotTranslation,
     /// DOEFF201(意味・Jev): 翻訳の層の定義が業務の判断をしている。
     SemanticBusinessDecision,
     /// DOEFF202(意味・Jev): 判断の層の定義が通信の手段を知っている。
@@ -232,6 +236,8 @@ impl ProjectRule {
         ProjectRule::BusinessEffectFake,
         ProjectRule::AssemblyShapeBroken,
         ProjectRule::AssemblyAnswerMisplaced,
+        ProjectRule::TestOnlyFake,
+        ProjectRule::IntentAnswererNotTranslation,
         ProjectRule::SemanticBusinessDecision,
         ProjectRule::SemanticTransportKnowledge,
         ProjectRule::SemanticPlainCallable,
@@ -295,6 +301,8 @@ impl ProjectRule {
             ProjectRule::BusinessEffectFake => "DOEFF143",
             ProjectRule::AssemblyShapeBroken => "DOEFF155",
             ProjectRule::AssemblyAnswerMisplaced => "DOEFF156",
+            ProjectRule::TestOnlyFake => "DOEFF157",
+            ProjectRule::IntentAnswererNotTranslation => "DOEFF158",
             ProjectRule::SemanticBusinessDecision => "DOEFF201",
             ProjectRule::SemanticTransportKnowledge => "DOEFF202",
             ProjectRule::SemanticPlainCallable => "DOEFF203",
@@ -345,6 +353,8 @@ impl ProjectRule {
             | ProjectRule::BusinessEffectFake
             | ProjectRule::AssemblyShapeBroken
             | ProjectRule::AssemblyAnswerMisplaced
+            | ProjectRule::TestOnlyFake
+            | ProjectRule::IntentAnswererNotTranslation
             | ProjectRule::ServiceBoundary
             | ProjectRule::ServiceDependency
             | ProjectRule::TranslationEmitsIntent
@@ -454,7 +464,9 @@ impl ProjectRule {
             | ProjectRule::RecordStubNotKwOnly
             | ProjectRule::BusinessEffectFake
             | ProjectRule::AssemblyShapeBroken
-            | ProjectRule::AssemblyAnswerMisplaced => false,
+            | ProjectRule::AssemblyAnswerMisplaced
+            | ProjectRule::TestOnlyFake
+            | ProjectRule::IntentAnswererNotTranslation => false,
             ProjectRule::EnvironmentName
             | ProjectRule::DefnForbidden
             | ProjectRule::DeffNeedsReason
@@ -531,6 +543,8 @@ impl ProjectRule {
             ProjectRule::BusinessEffectFake => "業務の効果に答える偽の handler",
             ProjectRule::AssemblyShapeBroken => "組み立ての形の破れ",
             ProjectRule::AssemblyAnswerMisplaced => "翻訳の先か土台の答えが業務の効果",
+            ProjectRule::TestOnlyFake => "検だけの偽物",
+            ProjectRule::IntentAnswererNotTranslation => "intent の効果の答え手が翻訳の 1 つでない",
             ProjectRule::SemanticBusinessDecision => "翻訳の層で業務の判断(Jev)",
             ProjectRule::SemanticTransportKnowledge => "判断の層が通信の手段を知る(Jev)",
             ProjectRule::SemanticPlainCallable => "deff の理由が合わない(Jev)",
@@ -584,6 +598,8 @@ impl ProjectRule {
             | ProjectRule::BusinessEffectFake
             | ProjectRule::AssemblyShapeBroken
             | ProjectRule::AssemblyAnswerMisplaced
+            | ProjectRule::TestOnlyFake
+            | ProjectRule::IntentAnswererNotTranslation
             | ProjectRule::DefkCalledBare
             | ProjectRule::EffectsDisagreeWithInference => RuleFamily::Definition,
             ProjectRule::ClassWithBehaviour | ProjectRule::SemanticClassRole => RuleFamily::Class,
@@ -656,6 +672,8 @@ impl ProjectRule {
             ProjectRule::BusinessEffectFake => "Business Effect Fake",
             ProjectRule::AssemblyShapeBroken => "Assembly Shape Broken",
             ProjectRule::AssemblyAnswerMisplaced => "Assembly Answer Misplaced",
+            ProjectRule::TestOnlyFake => "Test Only Fake",
+            ProjectRule::IntentAnswererNotTranslation => "Intent Answerer Not Translation",
             ProjectRule::SemanticBusinessDecision => "Business Decision In Translation (Jev)",
             ProjectRule::SemanticTransportKnowledge => "Transport Knowledge In Core (Jev)",
             ProjectRule::SemanticPlainCallable => "Plain Callable Reason (Jev)",
@@ -718,6 +736,8 @@ impl ProjectRule {
             ProjectRule::BusinessEffectFake => "業務の効果に答える偽物を作らない — 偽物は外の世界に触れる効果だけ(operator 2026-09-26 \"we only need fake for effects that access external world\")。業務の操作は下の層の効果を出す defk で書き、検査は外の世界の handler だけを差し替える。模擬の根と本番の入口と業務の module は architecture.hy の :business-fakes で宣言する",
             ProjectRule::AssemblyShapeBroken => "組み立ては 1 点 — 組み立ての層の関数(引数 = 土台の値)が、土台の handler の列 1 つと、各 service の翻訳の層の翻訳の列の定数を並べるだけ。本番と模擬の違いは渡す土台の値だけで、組の file は残さない。翻訳の列は自分の service の翻訳だけを持ち、別の service の効果を出し直す列の外側にはそれに答える列を並べる。名前は architecture.hy の :assembly-shape で宣言する",
             ProjectRule::AssemblyAnswerMisplaced => "業務の効果の答えは翻訳の列の handler に置く — 翻訳の handler が出し直すのは業務を知らない汎用の効果か同じ列の効果(答える handler は外側)か他の service の公開の効果だけで、土台の handler は外の世界の効果にだけ答える",
+            ProjectRule::TestOnlyFake => "検だけの偽物を作らない — 業務の handler は本番の 1 つだけで、検は土台(記録の効果・時計・外の相手)の handler の差し替えで組む。わざと壊した反例の handler は反例の表(:counterexamples)に理由つきで載せる",
+            ProjectRule::IntentAnswererNotTranslation => "intent の効果に答えるのは翻訳の層の handler 1 つだけ(本番と模擬で同じ)— 環境ごとの別の答え手や土台の handler で答えず、模擬は土台を差し替える(ADR R9)",
             ProjectRule::TestKindMismatch => "テストの種類は 2 つだけ — 手元(届く定義に外の世界に触れる handler が無い)/ 縁(名簿の定義・:wraps の handler・生の I/O に届く)。種類は人が決めず届く先から導き、縁のテストだけが architecture.hy の :edge-mark の印を持つ(operator 2026-09-29 \"everything is 'pure' until we apply handler that has real IO\")",
             ProjectRule::WorldHandlerMisplaced => "architecture.hy の :world-handlers に挙げた定義は実在し、層 foundation の module に在る(外の世界に触れてよい定義の置き場は foundation だけ)",
             ProjectRule::WorldHandlerNamedOutsideList => "architecture.hy の :world-handlers の :wraps に挙げた doeff の実 I/O の handler(os-file-handler・http-production-handler …)を名指してよいのは、許可名簿の定義(とその中の入れ子の定義)だけ — 値として渡す所(with-handlers の列)も呼び出しも数える",
@@ -781,6 +801,8 @@ impl ProjectRule {
             ProjectRule::BusinessEffectFake => "業務の操作を下の層の効果を出す defk で書き直して偽物を消す — 外の世界の効果なら外の世界の表に理由つきで足し、わざと壊した反例なら反例の表に載せる",
             ProjectRule::AssemblyShapeBroken => "組の file の組み立てを組み立ての層の関数へ移して file を消す・関数を defk で書き、本体を [土台の列 翻訳の列 …] だけにする・別の service の翻訳は組み立ての層で別の列として並べる",
             ProjectRule::AssemblyAnswerMisplaced => "業務の効果に答える所を翻訳の列の handler へ移すか、答えを汎用の効果へ出し直す・出し直した効果に答える handler を列の前(外側)へ並べる",
+            ProjectRule::TestOnlyFake => "検の組み立てを本番の handler + 土台の差し替えに書き直して偽物を消す — わざと壊した反例なら反例の表に載せる",
+            ProjectRule::IntentAnswererNotTranslation => "intent の効果の答えを翻訳の層の handler 1 つへまとめ、土台や環境ごとの handler からは外す",
             ProjectRule::ServiceUntestedOnSim => "模擬の環境の tests に、その service の entry の組み立てを handler の差し替えだけで回す deftest を足す",
             ProjectRule::TestKindMismatch => "縁なら印を付け(既定の pytest から外れる)、手元のつもりなら届く先の実 I/O の handler を模擬の handler に替える — 手元なのに印が在れば外す",
             ProjectRule::WorldHandlerMisplaced => "定義を foundation の層(architecture.hy の :foundation の dir)へ移すか、名簿の綴り(module:名)を実物に合わせる — 要らなくなった定義なら名簿から外す",
@@ -849,6 +871,8 @@ mod tests {
         ("DOEFF143", RuleFamily::Definition),
         ("DOEFF155", RuleFamily::Definition),
         ("DOEFF156", RuleFamily::Definition),
+        ("DOEFF157", RuleFamily::Definition),
+        ("DOEFF158", RuleFamily::Definition),
         ("DOEFF146", RuleFamily::Naming),
         ("DOEFF148", RuleFamily::Naming),
         ("DOEFF161", RuleFamily::Naming),

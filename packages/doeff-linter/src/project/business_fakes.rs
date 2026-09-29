@@ -4,7 +4,14 @@
 //! 偽物 = 模擬の根から届き、本番の入口から届かない定義の中の effect の節。その節が業務の効果(定義元の module が
 //! `:business-modules` に当たる)に tap でなく答え、外の世界の効果の表(`:external-effects`)にも反例の表(`:counterexamples`)にも
 //! 無ければ critical。表の腐りも出す: 反例の表の行がもう当たらない・外の世界の表の行にどの偽物も答えない・外の世界の表の行に本番の
-//! 入口から届く答え手が無い(`:unserved` に理由つきで載せた物を除く)。
+//! 入口から届く答え手が無い(`:unserved` に理由つきで載せた物を除く)。偽物が下の層の効果(`:lower-layer-modules`)に tap でなく
+//! 答えるのも DOEFF143(下の層の偽物は repo の外の正典 1 つだけ — 元の判定 C)。
+//!
+//! DOEFF157(agora-redesign #1377 — 元の判定 B): 検だけの偽物 = 検の file の定義から届き、本番の入口からも模擬の根からも届かない
+//! 定義の節。業務の効果か下の層の効果に tap でなく答え、外の世界の表にも反例の表にも無ければ critical。
+//!
+//! DOEFF158(#1377 — 元の判定 G): 本番の入口から届く節のうち、intent の層(`:assembly-shape :intent-layer`)の効果に tap でなく
+//! 答えるのは、翻訳の層(`:translation-layer`)の handler 1 つだけ。翻訳の層の外の答え手と、同じ効果に答える翻訳の handler の 2 つ目以降を出す。
 //!
 //! 届く先は DOEFF133・136 と同じ定義の辺の図(呼び出し・参照・入れ子)を根から前向きに辿る。全体の実行だけ(repo 全体の図が要る)。
 //! 模擬の根・本番の入口・業務の module・表の置き場は repo の宣言 `:business-fakes` から読み、ここには repo の名前を置かない。
@@ -76,6 +83,13 @@ fn listed(module: &str, patterns: &[String]) -> bool {
         Some(prefix) => module.starts_with(prefix),
         None => module == p || module.starts_with(&format!("{}.", p)),
     })
+}
+
+/// 効果が業務の効果か — 定義元の module が業務の module で、その file が検の file でも模擬の環境でもない(検や模擬の筋書きが
+/// 自分で定義した効果は業務の語彙ではない)。
+pub fn business_effect(effect: &str, decl: &BusinessFakes) -> bool {
+    let module = module_of_effect(effect);
+    business_module(module, decl) && !matches!(role_of(&format!("{}.hy", module.replace('.', "/")), decl), FileRole::Test | FileRole::Simulation)
 }
 
 /// 効果の完全名 → 定義元の module。
@@ -277,8 +291,6 @@ pub struct Clause {
     pub handler: String,
     pub effect: String,
     pub tap: bool,
-    /// 検の file の節か(模擬の根から届けば偽物・届かなければ反例の表の照らしにだけ使う)。
-    pub test: bool,
 }
 
 impl Clause {
@@ -295,6 +307,12 @@ pub struct Inputs<'a> {
     pub simulated: &'a [bool],
     /// 本番の入口から届く節か。
     pub produced: &'a [bool],
+    /// 検の file の定義から届く節か。
+    pub tested: &'a [bool],
+    /// 節の効果が intent の層の効果か。
+    pub intent_effect: &'a [bool],
+    /// 節が翻訳の層の file に在るか。
+    pub translation_file: &'a [bool],
     pub external: &'a BTreeMap<String, String>,
     pub counterexamples: &'a BTreeMap<String, String>,
     pub unserved: &'a BTreeMap<String, String>,
@@ -307,6 +325,14 @@ pub struct Inputs<'a> {
 pub enum Verdict {
     /// 業務の効果の偽物(Clause の添字)。
     Fake(usize),
+    /// 下の層の効果の第 2 の偽物(DOEFF143)。
+    LowerLayerFake(usize),
+    /// 検だけから届く偽物(DOEFF157)。
+    TestOnlyFake(usize),
+    /// 翻訳の層の外の handler が intent の効果に答える(DOEFF158)。
+    IntentAnsweredOutside(usize),
+    /// 同じ intent の効果に翻訳の handler が 2 つ以上答える(DOEFF158 — 節の添字と、答える handler の数)。
+    IntentAnsweredTwice(usize, usize),
     /// 反例の表の行がもう当たらない。
     StaleCounterexample(String),
     /// 外の世界の表の行にどの偽物も答えない。
@@ -316,30 +342,51 @@ pub enum Verdict {
 }
 
 pub fn judge(inputs: &Inputs, decl: &BusinessFakes) -> Vec<Verdict> {
-    let Inputs { clauses, simulated, produced, external, counterexamples, unserved, python_answered } = inputs;
+    let Inputs { clauses, simulated, produced, tested, intent_effect, translation_file, external, counterexamples, unserved, python_answered } = inputs;
     let fake = |i: usize| simulated[i] && !produced[i];
+    let test_only = |i: usize| tested[i] && !simulated[i] && !produced[i];
     let mut out = Vec::new();
     let mut hit_keys = std::collections::BTreeSet::new();
     let mut answered = std::collections::BTreeSet::new();
     let mut served: std::collections::BTreeSet<&str> = python_answered.iter().map(String::as_str).collect();
+    // intent の効果 → それに答える翻訳の handler(`<path>::<handler>`)と、その最初の節。
+    let mut translators: BTreeMap<&str, BTreeMap<(&str, &str), usize>> = BTreeMap::new();
     for (i, clause) in clauses.iter().enumerate() {
         if clause.tap {
             continue;
         }
         if produced[i] {
             served.insert(clause.effect.as_str());
+            if intent_effect[i] {
+                if translation_file[i] {
+                    translators.entry(clause.effect.as_str()).or_default().entry((clause.rel.as_str(), clause.handler.as_str())).or_insert(i);
+                } else {
+                    out.push(Verdict::IntentAnsweredOutside(i));
+                }
+            }
         }
-        let business = !external.contains_key(&clause.effect) && business_module(module_of_effect(&clause.effect), decl);
-        if !fake(i) {
-            // 検だけから届く節(C8b-3 の持ち分)も、わざと壊した反例の表の照らしには数える — 業務の効果か下の層の効果に答える節
-            // (下の層の置き場のわざと壊した代役も反例 — 元の検の test-answers と同じ)。
-            let lower = !external.contains_key(&clause.effect) && lower_layer_module(module_of_effect(&clause.effect), decl);
-            if clause.test && (business || lower) {
-                hit_keys.insert(clause.key());
+        let outside = !external.contains_key(&clause.effect);
+        let business = outside && business_effect(&clause.effect, decl);
+        let lower = lower_layer_module(module_of_effect(&clause.effect), decl);
+        if test_only(i) {
+            // わざと壊した反例の handler(下の層の置き場の代役を含む)は反例の表で数え、それ以外は検だけの偽物。
+            if business || (outside && lower) {
+                let key = clause.key();
+                if counterexamples.contains_key(&key) {
+                    hit_keys.insert(key);
+                } else {
+                    out.push(Verdict::TestOnlyFake(i));
+                }
             }
             continue;
         }
+        if !fake(i) {
+            continue;
+        }
         answered.insert(clause.effect.as_str());
+        if lower {
+            out.push(Verdict::LowerLayerFake(i));
+        }
         if !business {
             continue;
         }
@@ -348,6 +395,9 @@ pub fn judge(inputs: &Inputs, decl: &BusinessFakes) -> Vec<Verdict> {
         if !counterexamples.contains_key(&key) {
             out.push(Verdict::Fake(i));
         }
+    }
+    for handlers in translators.values().filter(|h| h.len() > 1) {
+        out.extend(handlers.values().map(|&i| Verdict::IntentAnsweredTwice(i, handlers.len())));
     }
     for key in counterexamples.keys() {
         if !hit_keys.contains(key) {
@@ -390,7 +440,7 @@ mod tests {
     }
 
     fn clause(i: usize, effect: &str, tap: bool) -> Clause {
-        Clause { node: i, rel: "app/sim/fake.hy".into(), handler: "fake".into(), effect: effect.into(), tap, test: false }
+        Clause { node: i, rel: "app/sim/fake.hy".into(), handler: "fake".into(), effect: effect.into(), tap }
     }
 
     #[test]
@@ -406,6 +456,9 @@ mod tests {
         assert!(business_module("app.orders.intent.rows", &d));
         assert!(business_module("app.intent_rows", &d));
         assert!(!business_module("app.ordersx", &d));
+        assert!(business_effect("app.orders.intent.rows.ReadRow", &d));
+        assert!(!business_effect("app.orders.tests.world.ReadWorld", &d)); // 検が自分で定義した効果
+        assert!(!business_effect("app.sim.script.Step", &d)); // 模擬の筋書きの効果(業務の module でもない)
     }
 
     #[test]
@@ -446,10 +499,24 @@ mod tests {
             clause(4, "app.orders.intent.Broken", false),         // 反例の表に在る
             clause(5, "app.orders.intent.Shared", false),         // 本番からも届く → 偽物でない
             // 検の file のわざと壊した下の層の代役 → 反例の表の行に当たる(偽物ではない)
-            Clause { test: true, ..clause(6, "lib.records.effects.ReadRow", false) },
+            clause(6, "lib.records.effects.ReadRow", false),
+            clause(7, "lib.records.effects.WriteRow", false),     // 模擬の偽物が下の層に答える → DOEFF143
+            clause(8, "app.orders.intent.Ship", false),           // 検だけから届く業務の偽物 → DOEFF157
+            clause(9, "lib.records.effects.Scan", false),         // 検だけから届く下の層の偽物 → DOEFF157
+            clause(10, "app.clock.Now", false),                   // 検だけから届くが業務でも下の層でもない
+            clause(11, "app.orders.intent.Ship", true),           // 検だけから届く tap
         ];
-        let simulated = vec![true, true, true, true, true, true, false];
-        let produced = vec![false, false, false, false, false, true, false];
+        let n = clauses.len();
+        let mut simulated = vec![true; n];
+        let mut produced = vec![false; n];
+        let mut tested = vec![false; n];
+        simulated[8..].iter_mut().for_each(|s| *s = false);
+        tested[8..].iter_mut().for_each(|t| *t = true);
+        (simulated[6], tested[6]) = (false, true);
+        tested[5] = true; // 本番からも届けば検だけの偽物でない
+        produced[5] = true;
+        let intent_effect = vec![false; n];
+        let translation_file = vec![false; n];
         let external: BTreeMap<String, String> =
             [("app.orders.intent.Send".to_string(), "外の相手".to_string()), ("app.gone.Old".to_string(), "古い".to_string())].into();
         let counterexamples: BTreeMap<String, String> = [
@@ -461,17 +528,75 @@ mod tests {
         let unserved: BTreeMap<String, String> = [("app.orders.intent.Send".to_string(), "#1 で書く".to_string())].into();
         let python_answered = std::collections::BTreeSet::new();
         let verdicts = judge(
-            &Inputs { clauses: &clauses, simulated: &simulated, produced: &produced, external: &external, counterexamples: &counterexamples, unserved: &unserved, python_answered: &python_answered },
+            &Inputs {
+                clauses: &clauses,
+                simulated: &simulated,
+                produced: &produced,
+                tested: &tested,
+                intent_effect: &intent_effect,
+                translation_file: &translation_file,
+                external: &external,
+                counterexamples: &counterexamples,
+                unserved: &unserved,
+                python_answered: &python_answered,
+            },
             &decl(),
         );
         assert_eq!(
             verdicts,
             vec![
                 Verdict::Fake(0),
+                Verdict::LowerLayerFake(7),
+                Verdict::TestOnlyFake(8),
+                Verdict::TestOnlyFake(9),
                 Verdict::StaleCounterexample("app/sim/fake.hy::fake::app.orders.intent.Gone".into()),
                 Verdict::UnusedExternal("app.gone.Old".into()),
                 Verdict::UnservedExternal("app.gone.Old".into()),
             ]
         );
+    }
+
+    #[test]
+    fn intent_effects_are_answered_by_one_translation_handler() {
+        let at = |i: usize, rel: &str, handler: &str, tap: bool| Clause {
+            node: i,
+            rel: rel.into(),
+            handler: handler.into(),
+            effect: "app.orders.intent.Place".into(),
+            tap,
+        };
+        let clauses = vec![
+            at(0, "app/orders/protocol/a.hy", "translate", false), // 翻訳の handler 1 つ目
+            at(1, "app/orders/protocol/b.hy", "translate2", false), // 同じ効果に 2 つ目 → 2 つとも出す
+            at(2, "app/orders/entry/f.hy", "foundation", false),   // 翻訳の層の外 → 出す
+            at(3, "app/orders/entry/f.hy", "observe", true),       // tap は数えない
+            at(4, "app/sim/fake.hy", "fake", false),               // 本番から届かない → DOEFF158 の外
+            at(5, "app/orders/protocol/a.hy", "translate", false), // 同じ handler の 2 つ目の節は 1 つに数える
+        ];
+        let n = clauses.len();
+        let produced = vec![true, true, true, true, false, true];
+        let simulated = vec![false, false, false, false, true, false];
+        let tested = vec![false; n];
+        let intent_effect = vec![true; n];
+        let translation_file = vec![true, true, false, false, false, true];
+        let external = [("app.orders.intent.Place".to_string(), "外".to_string())].into();
+        let empty = BTreeMap::new();
+        let python_answered = std::collections::BTreeSet::new();
+        let verdicts = judge(
+            &Inputs {
+                clauses: &clauses,
+                simulated: &simulated,
+                produced: &produced,
+                tested: &tested,
+                intent_effect: &intent_effect,
+                translation_file: &translation_file,
+                external: &external,
+                counterexamples: &empty,
+                unserved: &empty,
+                python_answered: &python_answered,
+            },
+            &decl(),
+        );
+        assert_eq!(verdicts, vec![Verdict::IntentAnsweredOutside(2), Verdict::IntentAnsweredTwice(0, 2), Verdict::IntentAnsweredTwice(1, 2)]);
     }
 }
