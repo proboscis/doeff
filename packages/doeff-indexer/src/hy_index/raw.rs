@@ -14,10 +14,10 @@
 use std::collections::{HashMap, HashSet};
 
 use super::model::{
-    HyFileIndex, RawEvidence, RawEvidenceKind, RawMark, RawStep, RawStrength, RawVia, Range, Reference,
+    ArgumentValue, HyFileIndex, RawEvidence, RawEvidenceKind, RawMark, RawStep, RawStrength, RawVia, Range, Reference,
 };
 use super::position::Position;
-use super::raw_catalog::RawCatalog;
+use super::raw_catalog::{RawCatalog, RawCategory};
 
 /// 経由の伝播の深さの上限。
 pub const RAW_VIA_MAX_DEPTH: usize = 4;
@@ -175,6 +175,10 @@ enum Expanded {
 
 /// 参照を file の import で完全な名前に直す(最も長く一致する import を使う・先に見つけた同じ長さの物が勝つ)。
 fn expand(imports: &[CompiledImport], reference: &Reference, local_names: &HashSet<String>) -> Expanded {
+    // `.random rng` や `(. rng (random))` の method 名を、同名の import random と取り違えない。
+    if reference.member && reference.qualifier.is_none() {
+        return Expanded::Member(match_name(&reference.name));
+    }
     let chain = chain_of(reference);
     let segments: Vec<&str> = chain.split('.').collect();
     let mut best: Option<(usize, &CompiledImport)> = None;
@@ -242,6 +246,12 @@ fn scan_compiled(file: &HyFileIndex, catalog: &CompiledCatalog) -> FileScan {
     let mut context_refs: HashMap<String, Vec<Range>> = HashMap::new();
     let mut evidence = Vec::new();
     let mut method_contexts = Vec::new();
+    let seeded_constructors: HashSet<(u32, u32)> = file.calls.iter()
+        .filter(|call| call.target.as_deref() == Some("random.Random"))
+        .filter(|call| call.arguments.iter().find(|arg| arg.keyword.is_none() || arg.keyword.as_deref() == Some("x"))
+            .is_some_and(|arg| arg.value == ArgumentValue::Explicit))
+        .map(|call| (call.range.start.line, call.range.start.character))
+        .collect();
     for reference in &file.references {
         let expanded = expand(&imports, reference, &local_names);
         if let Expanded::Import(full) = &expanded {
@@ -265,6 +275,14 @@ fn scan_compiled(file: &HyFileIndex, catalog: &CompiledCatalog) -> FileScan {
             _ => false,
         };
         for entry in &catalog.entries {
+            if entry.category == RawCategory::Random {
+                // import と型の参照は乱数を引かない。種を明示した Random も OS の entropy に触れない。
+                let imported = file.imports.iter().any(|import| contains(&import.range, &reference.range.start));
+                let seeded = seeded_constructors.contains(&(reference.range.start.line, reference.range.start.character));
+                if reference.type_only || imported || seeded {
+                    continue;
+                }
+            }
             if let Some((found, context)) = match_entry(entry, &expanded, skip_import, at_call_head, &file.path, reference.range) {
                 evidence.push(found);
                 method_contexts.push(context);

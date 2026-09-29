@@ -30,7 +30,7 @@ use std::path::{Component, Path, PathBuf};
 pub use analyze::mangle;
 pub use cache_form::{CachedHyFile, CachedHyFileMismatch};
 pub use model::{
-    Call, Definition, DefinitionKind, HyFileIndex, HyIndex, Import, Position, Range, RawEvidence, RawEvidenceKind, RawMark,
+    ArgumentValue, Call, CallArgument, Definition, DefinitionKind, HyFileIndex, HyIndex, Import, Position, Range, RawEvidence, RawEvidenceKind, RawMark,
     RawStep, RawStrength, RawVia, RawViaScope, Reference, CONTRACT_VERSION, ContractClause, ContractSide, NameRef, ParamType,
     TypeNote,
 };

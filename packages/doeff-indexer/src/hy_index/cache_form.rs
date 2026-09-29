@@ -6,7 +6,7 @@
 //! この形が持つのは辿りの前の索引。
 //!
 //! 索引の型の serde の形は契約の JSON の形で、linter の判定が読む欄のうち次の 2 種はその形では運べない。この形が別に持つ:
-//! - 契約の JSON に出さない欄(`serde(skip)`)— `Reference` の `member`・`target`、`Call` の `form_range`・`keywords`。
+//! - 契約の JSON に出さない欄(`serde(skip)`)— `Reference` の `member`・`target`・`type_only`、`Call` の `form_range`・`keywords`・`arguments`。
 //! - 値の有無で出したり出さなかったりする欄(`skip_serializing_if`)— `Definition` の `checks`。cache は欄の名前を持たない
 //!   binary の形(linter の facts_cache の compact)で置くので、欄の数が値で変わると読み戻しがずれる。索引の側は常に `Some` に
 //!   そろえて書き、読み戻す時に別に持った値へ戻す。
@@ -19,7 +19,7 @@
 use serde::{Deserialize, Serialize};
 
 use super::model::{
-    Call, ContractClause, Definition, HyFileIndex, Import, NameRef, ParamType, RawEvidence, RawMark, RawStep, RawVia, Reference,
+    Call, CallArgument, ContractClause, Definition, HyFileIndex, Import, NameRef, ParamType, RawEvidence, RawMark, RawStep, RawVia, Reference,
     TypeNote,
 };
 use super::position::{Position, Range};
@@ -29,6 +29,7 @@ use super::position::{Position, Range};
 struct ReferenceExtra {
     member: bool,
     target: Option<String>,
+    type_only: bool,
 }
 
 /// 呼び出し 1 つの、契約に出さない欄。
@@ -36,6 +37,7 @@ struct ReferenceExtra {
 struct CallExtra {
     form_range: Range,
     keywords: Vec<String>,
+    arguments: Vec<CallArgument>,
 }
 
 /// cache に置く file 1 つの索引(辿りの前)と、契約の JSON の形のままでは運べない欄(参照・呼び出し・定義と同じ順)。
@@ -56,8 +58,8 @@ pub struct CachedHyFileMismatch {
 impl CachedHyFile {
     /// 索引 1 つを cache の形にする(契約の形のままでは運べない欄を別に写し、`checks` は常に `Some` にそろえる)。
     pub fn of(mut file: HyFileIndex) -> Self {
-        let references = file.references.iter().map(|r| ReferenceExtra { member: r.member, target: r.target.clone() }).collect();
-        let calls = file.calls.iter().map(|c| CallExtra { form_range: c.form_range, keywords: c.keywords.clone() }).collect();
+        let references = file.references.iter().map(|r| ReferenceExtra { member: r.member, target: r.target.clone(), type_only: r.type_only }).collect();
+        let calls = file.calls.iter().map(|c| CallExtra { form_range: c.form_range, keywords: c.keywords.clone(), arguments: c.arguments.clone() }).collect();
         let definition_checks = file.definitions.iter_mut().map(|d| d.checks.replace(Vec::new())).collect();
         CachedHyFile { file, references, calls, definition_checks }
     }
@@ -74,10 +76,12 @@ impl CachedHyFile {
         for (reference, extra) in file.references.iter_mut().zip(references) {
             reference.member = extra.member;
             reference.target = extra.target;
+            reference.type_only = extra.type_only;
         }
         for (call, extra) in file.calls.iter_mut().zip(calls) {
             call.form_range = extra.form_range;
             call.keywords = extra.keywords;
+            call.arguments = extra.arguments;
         }
         Ok(file)
     }
@@ -122,10 +126,10 @@ fn fields_are_accounted_for(file: &HyFileIndex) {
     for Import { module: _, name: _, alias: _, range, is_require: _ } in imports {
         ranges(&[*range]);
     }
-    for Reference { name: _, mangled: _, qualifier: _, range, member: _carried, target: _carried_too } in references {
+    for Reference { name: _, mangled: _, qualifier: _, range, member: _carried, target: _carried_too, type_only: _carried_type } in references {
         ranges(&[*range]);
     }
-    for Call { callee: _, mangled: _, qualifier: _, range, form_range: _carried, keywords: _carried_too, caller: _, performed: _, target: _ } in calls {
+    for Call { callee: _, mangled: _, qualifier: _, range, form_range: _carried, keywords: _carried_too, arguments: _carried_arguments, caller: _, performed: _, target: _ } in calls {
         ranges(&[*range]);
     }
 }

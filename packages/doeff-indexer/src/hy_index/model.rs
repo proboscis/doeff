@@ -312,6 +312,23 @@ pub struct Reference {
     /// 解決できなければ None。索引の JSON の契約(版 1)には出さない。
     #[serde(skip)]
     pub target: Option<String>,
+    /// 型注釈・pattern の中の参照。値の実行としては数えない。
+    #[serde(skip)]
+    pub type_only: bool,
+}
+
+/// 呼び出しへ渡された値の構文上の形。式の評価結果は推測しない。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ArgumentValue {
+    LiteralNone,
+    Explicit,
+    Unpacked,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CallArgument {
+    pub keyword: Option<String>,
+    pub value: ArgumentValue,
 }
 
 /// 呼び出しの 1 つ(`(` の直後の記号)。effect・handler・defk の間を行き来するためのもの。
@@ -330,6 +347,9 @@ pub struct Call {
     /// 直接の引数として渡した keyword の綴り(`(f a :k v)` の `:k`)。索引の JSON の契約には出さない。
     #[serde(skip)]
     pub keywords: Vec<String>,
+    /// 直接の引数の形。生の I/O の判定で明示された引数と省略を区別する。
+    #[serde(skip)]
+    pub arguments: Vec<CallArgument>,
     /// この呼び出しを含む最も内側の定義の、同じ file の `definitions` の添字。top level の式なら null。
     pub caller: Option<usize>,
     /// `<-` で撃たれている(または `yield` / `yield-from` の直下)なら true。
