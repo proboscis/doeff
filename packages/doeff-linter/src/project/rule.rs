@@ -175,6 +175,9 @@ pub enum ProjectRule {
     TestOnlyFake,
     /// DOEFF158: 本番の入口から届く intent の効果の答え手が翻訳の層の handler 1 つでない(agora-redesign #1377)。層の名は :assembly-shape。
     IntentAnswererNotTranslation,
+    /// DOEFF165: intent の層の効果に、手元の検から出す定義・模擬の答え手・本番の答え手のどれかが無い — 網羅の表の欠け
+    /// (agora-redesign #1561 K3・まず報告だけ = 重さ info。失敗にするのは #1562 K4)。層の名は :assembly-shape。
+    IntentEffectUncovered,
     /// DOEFF201(意味・Jev): 翻訳の層の定義が業務の判断をしている。
     SemanticBusinessDecision,
     /// DOEFF202(意味・Jev): 判断の層の定義が通信の手段を知っている。
@@ -247,6 +250,7 @@ impl ProjectRule {
         ProjectRule::AssemblyAnswerMisplaced,
         ProjectRule::TestOnlyFake,
         ProjectRule::IntentAnswererNotTranslation,
+        ProjectRule::IntentEffectUncovered,
         ProjectRule::SemanticBusinessDecision,
         ProjectRule::SemanticTransportKnowledge,
         ProjectRule::SemanticPlainCallable,
@@ -314,6 +318,7 @@ impl ProjectRule {
             ProjectRule::AssemblyAnswerMisplaced => "DOEFF156",
             ProjectRule::TestOnlyFake => "DOEFF157",
             ProjectRule::IntentAnswererNotTranslation => "DOEFF158",
+            ProjectRule::IntentEffectUncovered => "DOEFF165",
             ProjectRule::SemanticBusinessDecision => "DOEFF201",
             ProjectRule::SemanticTransportKnowledge => "DOEFF202",
             ProjectRule::SemanticPlainCallable => "DOEFF203",
@@ -400,6 +405,8 @@ impl ProjectRule {
             | ProjectRule::FieldsJoinedIntoText
             | ProjectRule::RebuiltAccumulator
             | ProjectRule::EffectsDisagreeWithInference
+            // 網羅の表の欠け(#1561 K3)— まず報告だけで、重さは知らせの info のまま。#1562 K4 が critical へ上げる。
+            | ProjectRule::IntentEffectUncovered
             | ProjectRule::SemanticPlainCallable
             | ProjectRule::SemanticClassRole => None,
         }
@@ -482,7 +489,8 @@ impl ProjectRule {
             | ProjectRule::AssemblyShapeBroken
             | ProjectRule::AssemblyAnswerMisplaced
             | ProjectRule::TestOnlyFake
-            | ProjectRule::IntentAnswererNotTranslation => false,
+            | ProjectRule::IntentAnswererNotTranslation
+            | ProjectRule::IntentEffectUncovered => false,
             ProjectRule::EnvironmentName
             | ProjectRule::DefnForbidden
             | ProjectRule::DeffNeedsReason
@@ -563,6 +571,7 @@ impl ProjectRule {
             ProjectRule::AssemblyAnswerMisplaced => "翻訳の先か土台の答えが業務の効果",
             ProjectRule::TestOnlyFake => "検だけの偽物",
             ProjectRule::IntentAnswererNotTranslation => "intent の効果の答え手が翻訳の 1 つでない",
+            ProjectRule::IntentEffectUncovered => "intent の効果の網羅の欠け",
             ProjectRule::SemanticBusinessDecision => "翻訳の層で業務の判断(Jev)",
             ProjectRule::SemanticTransportKnowledge => "判断の層が通信の手段を知る(Jev)",
             ProjectRule::SemanticPlainCallable => "deff の理由が合わない(Jev)",
@@ -620,6 +629,7 @@ impl ProjectRule {
             | ProjectRule::AssemblyAnswerMisplaced
             | ProjectRule::TestOnlyFake
             | ProjectRule::IntentAnswererNotTranslation
+            | ProjectRule::IntentEffectUncovered
             | ProjectRule::DefkCalledBare
             | ProjectRule::EffectsDisagreeWithInference => RuleFamily::Definition,
             ProjectRule::ClassWithBehaviour | ProjectRule::SemanticClassRole => RuleFamily::Class,
@@ -696,6 +706,7 @@ impl ProjectRule {
             ProjectRule::AssemblyAnswerMisplaced => "Assembly Answer Misplaced",
             ProjectRule::TestOnlyFake => "Test Only Fake",
             ProjectRule::IntentAnswererNotTranslation => "Intent Answerer Not Translation",
+            ProjectRule::IntentEffectUncovered => "Intent Effect Uncovered",
             ProjectRule::SemanticBusinessDecision => "Business Decision In Translation (Jev)",
             ProjectRule::SemanticTransportKnowledge => "Transport Knowledge In Core (Jev)",
             ProjectRule::SemanticPlainCallable => "Plain Callable Reason (Jev)",
@@ -761,6 +772,7 @@ impl ProjectRule {
             ProjectRule::AssemblyAnswerMisplaced => "業務の効果の答えは翻訳の列の handler に置く — 翻訳の handler が出し直すのは業務を知らない汎用の効果か同じ列の効果(答える handler は外側)か他の service の公開の効果だけで、土台の handler は外の世界の効果にだけ答える",
             ProjectRule::TestOnlyFake => "検だけの偽物を作らない — 業務の handler は本番の 1 つだけで、検は土台(記録の効果・時計・外の相手)の handler の差し替えで組む。わざと壊した反例の handler は反例の表(:counterexamples)に理由つきで載せる",
             ProjectRule::IntentAnswererNotTranslation => "intent の効果に答えるのは翻訳の層の handler 1 つだけ(本番と模擬で同じ)— 環境ごとの別の答え手や土台の handler で答えず、模擬は土台を差し替える(ADR R9)",
+            ProjectRule::IntentEffectUncovered => "intent の層の効果は、手元の検から届く定義が出し、模擬の根と本番の入口の両方から届く答え手を持つ — 3 つのどれかが無い効果は、テストしたと言えない業務の操作(agora-redesign #1561・#1155)",
             ProjectRule::TestKindMismatch => "テストの種類は 2 つだけ — 手元(届く定義に外の世界に触れる handler が無い)/ 縁(名簿の定義・:wraps の handler・生の I/O に届く)。種類は人が決めず届く先から導き、縁のテストだけが architecture.hy の :edge-mark の印を持つ(operator 2026-09-29 \"everything is 'pure' until we apply handler that has real IO\")",
             ProjectRule::WorldHandlerWithoutContractTest => "architecture.hy の :world-handlers の handler には縁の検が 1 本以上在る — 空でない :interpreters を持つ deftest のうち、定義の辺(呼び出し・参照・入れ子 — DOEFF133 と同じ図)を辿ってその handler の定義に届く物。:contract-test none の handler は判じない",
             ProjectRule::WorldHandlerMisplaced => "architecture.hy の :world-handlers に挙げた定義は実在し、層 foundation の module に在る(外の世界に触れてよい定義の置き場は foundation だけ)",
@@ -827,6 +839,7 @@ impl ProjectRule {
             ProjectRule::AssemblyAnswerMisplaced => "業務の効果に答える所を翻訳の列の handler へ移すか、答えを汎用の効果へ出し直す・出し直した効果に答える handler を列の前(外側)へ並べる",
             ProjectRule::TestOnlyFake => "検の組み立てを本番の handler + 土台の差し替えに書き直して偽物を消す — わざと壊した反例なら反例の表に載せる",
             ProjectRule::IntentAnswererNotTranslation => "intent の効果の答えを翻訳の層の handler 1 つへまとめ、土台や環境ごとの handler からは外す",
+            ProjectRule::IntentEffectUncovered => "欠けた列を埋める — 検から出さないなら模擬の環境の deftest でその業務の操作を通す・答え手が無いなら翻訳の層の handler を組み立てに載せる(使わない効果なら宣言を消す)",
             ProjectRule::ServiceUntestedOnSim => "模擬の環境の tests に、その service の entry の組み立てを handler の差し替えだけで回す deftest を足す",
             ProjectRule::ServiceInvariantsMissing => "defservice に :invariants [\"<module>:<関数>\" …] を足し、関数は :role \"judgment\" の defk で置く(模擬の環境の <service>_invariants.hy など)。既知の欠けは登録簿に理由と持ち主を載せる",
             ProjectRule::TestKindMismatch => "縁なら印を付け(既定の pytest から外れる)、手元のつもりなら届く先の実 I/O の handler を模擬の handler に替える — 手元なのに印が在れば外す",
@@ -901,6 +914,7 @@ mod tests {
         ("DOEFF156", RuleFamily::Definition),
         ("DOEFF157", RuleFamily::Definition),
         ("DOEFF158", RuleFamily::Definition),
+        ("DOEFF165", RuleFamily::Definition),
         ("DOEFF146", RuleFamily::Naming),
         ("DOEFF148", RuleFamily::Naming),
         ("DOEFF161", RuleFamily::Naming),

@@ -43,6 +43,7 @@ pub mod handler_arguments;
 pub mod typed_values;
 pub mod record_stubs;
 pub mod business_fakes;
+pub mod intent_coverage;
 pub mod assembly_shape;
 pub mod invariants;
 
@@ -531,7 +532,12 @@ pub fn run_with(root: &Path, settings: &ProjectSettings, enabled: &BTreeSet<Proj
                     if enabled.contains(&ProjectRule::WorldHandlerWithoutContractTest) && !architecture.world_handlers.is_empty() {
                         drafts.extend(crate::timing::timed("contract-tests", || judge_contract_tests(root, architecture, hy)));
                     }
-                    let fake_rules = [ProjectRule::BusinessEffectFake, ProjectRule::TestOnlyFake, ProjectRule::IntentAnswererNotTranslation];
+                    let fake_rules = [
+                        ProjectRule::BusinessEffectFake,
+                        ProjectRule::TestOnlyFake,
+                        ProjectRule::IntentAnswererNotTranslation,
+                        ProjectRule::IntentEffectUncovered,
+                    ];
                     if let Some(decl) = architecture.business_fakes.as_ref().filter(|_| fake_rules.iter().any(|r| enabled.contains(r))) {
                         let (found, problems) = crate::timing::timed("business-fakes", || {
                             judge_business_fakes(root, architecture, Some(layers), decl, architecture.assembly_shape.as_ref(), hy, enabled)
@@ -1000,6 +1006,7 @@ fn whole_hy_index(
     let wants_tests = ((enabled.contains(&ProjectRule::BusinessEffectFake)
         || enabled.contains(&ProjectRule::TestOnlyFake)
         || enabled.contains(&ProjectRule::IntentAnswererNotTranslation)
+        || enabled.contains(&ProjectRule::IntentEffectUncovered)
         || enabled.contains(&ProjectRule::AssemblyShapeBroken)
         || enabled.contains(&ProjectRule::AssemblyAnswerMisplaced))
         && settings.architecture.as_ref().is_some_and(|a| a.business_fakes.is_some()))
@@ -2811,6 +2818,68 @@ fn judge_business_fakes(
             explain,
         }
     };
+    // DOEFF165(#1561 K3): intent の層の効果ごとの網羅の表 — 同じ到達(模擬の根・本番の入口)と、deftest から前向きに届く定義から 3 列を読む。
+    let coverage: Vec<Draft> = match shape.filter(|_| enabled.contains(&ProjectRule::IntentEffectUncovered)) {
+        None => Vec::new(),
+        Some(shape) => {
+            // 出す側の根は検の file の deftest だけ(検の helper から届くだけの定義を「テストした」に数えない — DOEFF157 の検の根とは別)。
+            let deftest_roots: Vec<usize> = test_roots.iter().copied().filter(|&n| definition(n).kind == DefinitionKind::Deftest).collect();
+            let deftested = reach(&deftest_roots);
+            let service_root = settings::normalize_dir(&architecture.root);
+            let services: Vec<(String, String)> =
+                architecture.services.iter().map(|s| (s.name.clone(), format!("{}/{}", service_root, s.dir))).collect();
+            let answerers = |effect: &str, reached: &[bool]| -> Vec<String> {
+                let names: BTreeSet<String> =
+                    clauses.iter().zip(reached).filter(|(c, r)| **r && c.effect == effect).map(|(c, _)| c.handler.clone()).collect();
+                names.into_iter().collect()
+            };
+            let facts: Vec<intent_coverage::EffectFacts> = (0..count)
+                .filter(|&n| definition(n).kind == DefinitionKind::Defeffect && layer_of(graph.nodes[n].0).as_deref() == Some(shape.intent_layer.as_str()))
+                .map(|n| {
+                    let effect = definition(n).qualified_name.clone();
+                    // 出す側 = この効果を名指す定義のうち、答え手(効果の節とその handler)と宣言そのものを除いた物で、deftest から届く物。
+                    let emitters: BTreeSet<String> = graph.callers[n]
+                        .iter()
+                        .chain(&graph.carried[n])
+                        .filter(|&&m| deftested[m] && !matches!(definition(m).kind, DefinitionKind::EffectClause | DefinitionKind::Defhandler | DefinitionKind::Defeffect))
+                        .map(|&m| definition(m).qualified_name.clone())
+                        .collect();
+                    let rel = graph.nodes[n].0.to_string();
+                    intent_coverage::EffectFacts {
+                        service: intent_coverage::service_of(&rel, &services).map(str::to_string),
+                        simulated: answerers(&effect, &simulated),
+                        produced: answerers(&effect, &produced),
+                        emitters: emitters.into_iter().collect(),
+                        effect,
+                        rel,
+                    }
+                })
+                .collect();
+            intent_coverage::table(facts)
+                .into_iter()
+                .filter(|row| !row.gaps.is_empty())
+                .map(|row| {
+                    let node = by_name.get(row.facts.effect.as_str()).copied();
+                    Draft {
+                        rule: ProjectRule::IntentEffectUncovered,
+                        layer: None,
+                        path: root.join(&row.facts.rel),
+                        rel: row.facts.rel.clone(),
+                        range: node.map(|n| definition(n).range).unwrap_or_else(zero_range),
+                        message: format!("intent の効果 {} の網羅の欠け: {} — {}", row.facts.effect, row.gap_words(), row.columns()),
+                        detail: Some(row.detail()),
+                        base: Severity::Info,
+                        explain: Explain::IntentEffectCoverage {
+                            effect: row.facts.effect.clone(),
+                            service: row.facts.service.clone().unwrap_or_else(|| "-".to_string()),
+                            columns: row.columns(),
+                            gaps: row.gap_words(),
+                        },
+                    }
+                })
+                .collect()
+        }
+    };
     let drafts = business_fakes::judge(&inputs, decl)
         .into_iter()
         .map(|verdict| match verdict {
@@ -2869,6 +2938,7 @@ fn judge_business_fakes(
             ),
         })
         .filter(|draft| enabled.contains(&draft.rule))
+        .chain(coverage)
         .collect();
     (drafts, problems)
 }
