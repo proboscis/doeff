@@ -66,6 +66,8 @@ pub enum SegmentRole {
     Text,
     /// 表に無い form — 元の lisp のまま(目印つきで描く)
     Lisp,
+    /// 本体の途中の行全体の註(`;; …` → `# …`)
+    Comment,
 }
 
 /// 字の範囲 1 つ。行の字は segments の text をつないだ物。
@@ -138,9 +140,11 @@ pub(super) fn file_bodies(world: &World, reader: &FileReader, forms: &[Form], bi
             Printer { world, reader, names: &names, bindings, lines: Vec::new(), indent: Indent { depth: 0, pad: 0 } };
         // 本体の頭の文字列は説明(後ろに文がある時だけ — 文字列 1 つだけの本体はその文字列が答え)
         let skip = usize::from(matches!(shape.body.as_slice(), [first, _, ..] if matches!(first.node, Node::Str { .. })));
-        for item in &shape.body[skip..] {
-            printer.statement(item, Indent { depth: 0, pad: 0 }, false);
-        }
+        // 本体の文を定義の form の並びの中で描く(文と文の間の註を拾うため)
+        let siblings = live(form).unwrap_or_default();
+        let first = shape.body.get(skip).map(|f| f.span.start);
+        let from = siblings.iter().position(|f| Some(f.span.start) == first).unwrap_or(siblings.len());
+        printer.statements(&siblings, from, Indent { depth: 0, pad: 0 });
         out.push(Body {
             kind: shape.kind,
             name: reader.hy.text(shape.name).to_string(),
@@ -352,12 +356,75 @@ impl Printer<'_, '_, '_> {
     /// 本体の文 1 つ(`depth` = 字下げの段)。
     /// `inline` = 今の行の続きに描く(match の腕の `→` の後ろ)。
     fn statement(&mut self, form: &Form, indent: Indent, inline: bool) {
+        // `(do a b …)` は `do` の字を出さず中身を並べる(文の場所なら今の段に、腕の `→` の後ろなら 1 つ目をその行に続け、
+        // 残りをその列に揃える)
+        if let Some(items) = live(form).filter(|items| {
+            items.len() > 1 && items.first().and_then(|h| self.reader.hy.symbol(h)) == Some("do")
+        }) {
+            self.do_block(&items, indent, inline);
+            return;
+        }
         if !inline {
             self.start_line(form.span.start, indent);
         }
         let outer = std::mem::replace(&mut self.indent, indent);
         self.statement_body(form);
         self.indent = outer;
+    }
+
+    /// 並んだ文(`siblings[from..]`)を `indent` の段に 1 文ずつ描く。文と文の間の行全体の `;;` の註は `# …` の行にする。
+    fn statements(&mut self, siblings: &[&Form], from: usize, indent: Indent) {
+        for i in from..siblings.len() {
+            let gap_start = match i.checked_sub(1).and_then(|p| siblings.get(p)) {
+                Some(previous) => previous.span.end,
+                None => siblings[i].span.start,
+            };
+            self.comments(gap_start, siblings[i].span.start, indent);
+            self.statement(siblings[i], indent, false);
+        }
+    }
+
+    /// source の `start..end` にある行全体の註(`;` で始まる行)を `# …` の行にする(最初の行 = 前の form の行の残りは見ない)。
+    fn comments(&mut self, start: usize, end: usize, indent: Indent) {
+        let src = self.reader.hy.src;
+        let gap = src.get(start..end).unwrap_or("");
+        let mut at = start;
+        for (i, piece) in gap.split('\n').enumerate() {
+            let piece_start = at;
+            at += piece.len() + 1;
+            let trimmed = piece.trim_start_matches([' ', '\t']);
+            if i == 0 || !trimmed.starts_with(';') {
+                continue;
+            }
+            let lead = piece.len() - trimmed.len();
+            let body = trimmed.trim_end_matches('\r');
+            let text = body.trim_start_matches(';').trim_start();
+            let s = piece_start + lead;
+            self.start_line(s, indent);
+            let range = Some(self.range(s, s + body.len()));
+            self.push(BodySegment {
+                text: format!("# {text}"),
+                role: SegmentRole::Comment,
+                range,
+                effect: None,
+                definition: None,
+            });
+        }
+    }
+
+    /// `(do a b …)` の中身。
+    fn do_block(&mut self, items: &[&Form], indent: Indent, inline: bool) {
+        if !inline {
+            self.statements(items, 1, indent);
+            return;
+        }
+        let column = self.cursor();
+        let aligned = self.aligned(column);
+        self.statement(items[1], indent, true);
+        for i in 2..items.len() {
+            self.comments(items[i - 1].span.end, items[i].span.start, aligned);
+            self.statement(items[i], aligned, false);
+        }
     }
 
     fn statement_body(&mut self, form: &Form) {
@@ -383,7 +450,11 @@ impl Printer<'_, '_, '_> {
             Some("setv") => self.setv(&items, base),
             Some(":=") => self.assign(&items, base),
             Some("return" | "resume") => self.keyword_statement(&items, base),
-            Some("when") => self.when(&items, base),
+            Some("continue" | "break") => self.bare_keyword(&items),
+            Some("raise") => self.raise(&items, base),
+            Some("when" | "while") => self.when(&items, base),
+            Some("cond") => self.cond_arms(&items),
+            Some("try") => self.try_block(&items),
             Some("if") => self.if_else(&items, base),
             Some("match") => self.match_arms(&items, base),
             Some("for") => self.for_loop(&items, base),
@@ -406,23 +477,168 @@ impl Printer<'_, '_, '_> {
         }
     }
 
-    /// 塊の中身の文(`items` を 1 つ深い段に 1 文ずつ)。`column` = 塊の語の列。
-    fn block(&mut self, column: u32, items: &[&Form]) {
+    /// 塊の中身の文(`siblings[from..]` を 1 つ深い段に 1 文ずつ・間の註も)。`column` = 塊の語の列。
+    fn block(&mut self, column: u32, siblings: &[&Form], from: usize) {
         let inner = self.aligned(column);
         let inner = Indent { depth: inner.depth + 1, pad: inner.pad };
-        for item in items {
-            self.statement(item, inner, false);
-        }
+        self.statements(siblings, from, inner);
     }
 
     /// `(when c …)` → `when c` + 字下げの中身。
     fn when(&mut self, items: &[&Form], base: u32) -> bool {
-        let [head, condition, body @ ..] = items else { return false };
+        let [head, condition, _body @ ..] = items else { return false };
         let column = self.cursor();
         self.word(head, SegmentRole::Keyword);
         self.text(" ", SegmentRole::Text);
         self.expression(condition, base);
-        self.block(column, body);
+        self.block(column, items, 2);
+        true
+    }
+
+    /// `(continue)` / `(break)`。
+    fn bare_keyword(&mut self, items: &[&Form]) -> bool {
+        let [head] = items else { return false };
+        self.word(head, SegmentRole::Keyword);
+        true
+    }
+
+    /// `(raise)` / `(raise e)` / `(raise e :from c)` → `raise` / `raise e` / `raise e from c`。
+    fn raise(&mut self, items: &[&Form], base: u32) -> bool {
+        let (head, error, cause) = match items {
+            [head] => (*head, None, None),
+            [head, error] => (*head, Some(*error), None),
+            [head, error, from, cause] if self.reader.hy.text(from) == ":from" => (*head, Some(*error), Some(*cause)),
+            [] | [_, _, _] | [_, _, _, _] | [_, _, _, _, _, ..] => return false,
+        };
+        self.word(head, SegmentRole::Keyword);
+        if let Some(error) = error {
+            self.text(" ", SegmentRole::Text);
+            self.expression(error, base);
+        }
+        if let Some(cause) = cause {
+            self.text(" ", SegmentRole::Text);
+            self.text("from", SegmentRole::Keyword);
+            self.text(" ", SegmentRole::Text);
+            self.expression(cause, base);
+        }
+        true
+    }
+
+    /// `(cond c x c y … True z)` → `cond` + 腕ごとに `c → x`(条件の幅を揃えて `→` を縦に並べる・最後の `True` は `else`)。
+    fn cond_arms(&mut self, items: &[&Form]) -> bool {
+        let [head, rest @ ..] = items else { return false };
+        if rest.is_empty() || rest.len() % 2 != 0 {
+            return false;
+        }
+        let arms: Vec<(&Form, &Form)> = rest.chunks(2).map(|pair| (pair[0], pair[1])).collect();
+        let last = arms.len() - 1;
+        // 条件を先に 1 行ずつ測る — 1 行に収まらない条件があれば cond 全体を lisp のまま
+        let mut shown = Vec::new();
+        for (i, (condition, _)) in arms.iter().enumerate() {
+            let otherwise = i == last && self.reader.hy.symbol(condition) == Some("True");
+            let captured = self.capture(|p| {
+                if otherwise {
+                    p.text("else", SegmentRole::Keyword);
+                } else {
+                    let base = p.column(condition.span.start);
+                    p.expression(condition, base);
+                }
+                true
+            });
+            match captured {
+                Some(segments) => shown.push(segments),
+                None => return false,
+            }
+        }
+        let width = |segments: &[BodySegment]| segments.iter().map(|s| s.text.chars().count()).sum::<usize>();
+        let widest = shown.iter().map(|s| width(s)).max().unwrap_or(0);
+        let column = self.cursor();
+        self.word(head, SegmentRole::Keyword);
+        let at = self.aligned(column);
+        let arm_indent = Indent { depth: at.depth + 1, pad: at.pad };
+        for ((condition, result), segments) in arms.iter().zip(shown) {
+            self.start_line(condition.span.start, arm_indent);
+            let fill = widest - width(&segments);
+            self.extend(segments);
+            self.text(&format!("{} → ", " ".repeat(fill)), SegmentRole::Text);
+            self.statement(result, arm_indent, true);
+        }
+        true
+    }
+
+    /// `(try … (except [e T] …) (else …) (finally …))` → `try` + 中身、`except T as e` + 中身 …(節の語は try の列に揃える)。
+    fn try_block(&mut self, items: &[&Form]) -> bool {
+        let [head, rest @ ..] = items else { return false };
+        // 節の始まり(except / else / finally の括弧)を探す。それより前が try の中身
+        let clause_word = |f: &Form| -> Option<&str> {
+            let items = live(f)?;
+            let word = self.reader.hy.symbol(items.first()?)?;
+            matches!(word, "except" | "else" | "finally").then_some(word)
+        };
+        let split = rest.iter().position(|f| clause_word(f).is_some()).unwrap_or(rest.len());
+        let (body, clauses) = rest.split_at(split);
+        if clauses.iter().any(|f| clause_word(f).is_none()) {
+            return false;
+        }
+        // except の頭 `[e T]` / `[T]` / `[]` / `[e [A B]]` を先に測る
+        let mut heads = Vec::new();
+        for clause in clauses {
+            let parts = live(clause).unwrap_or_default();
+            let word = clause_word(clause).unwrap_or("");
+            let captured = self.capture(|p| {
+                p.word(parts[0], SegmentRole::Keyword);
+                if word != "except" {
+                    return true;
+                }
+                let Some(binder) = parts.get(1).and_then(|b| b.bracket_items()) else { return false };
+                let binder: Vec<&Form> = binder.iter().filter(|i| !matches!(i.node, Node::Discarded)).collect();
+                let (name, kind) = match binder.as_slice() {
+                    [] => (None, None),
+                    [kind] => (None, Some(*kind)),
+                    [name, kind] if matches!(name.node, Node::Symbol) => (Some(*name), Some(*kind)),
+                    [_, _] | [_, _, _, ..] => return false,
+                };
+                if let Some(kind) = kind {
+                    p.text(" ", SegmentRole::Text);
+                    match kind.bracket_items() {
+                        Some(kinds) => {
+                            let kinds: Vec<&Form> = kinds.iter().filter(|i| !matches!(i.node, Node::Discarded)).collect();
+                            p.text("(", SegmentRole::Text);
+                            for (i, k) in kinds.iter().enumerate() {
+                                if i > 0 {
+                                    p.text(", ", SegmentRole::Text);
+                                }
+                                p.expression(k, p.column(k.span.start));
+                            }
+                            p.text(")", SegmentRole::Text);
+                        }
+                        None => p.expression(kind, p.column(kind.span.start)),
+                    }
+                }
+                if let Some(name) = name {
+                    p.text(" ", SegmentRole::Text);
+                    p.text("as", SegmentRole::Keyword);
+                    p.text(" ", SegmentRole::Text);
+                    p.word(name, SegmentRole::Name);
+                }
+                true
+            });
+            match captured {
+                Some(segments) => heads.push(segments),
+                None => return false,
+            }
+        }
+        let column = self.cursor();
+        let at = self.aligned(column);
+        self.word(head, SegmentRole::Keyword);
+        self.block(column, &items[..1 + body.len()], 1);
+        for (clause, segments) in clauses.iter().zip(heads) {
+            self.start_line(clause.span.start, at);
+            self.extend(segments);
+            let parts = live(clause).unwrap_or_default();
+            let from = if clause_word(clause) == Some("except") { 2 } else { 1 };
+            self.block(column, &parts, from);
+        }
         true
     }
 
@@ -438,11 +654,11 @@ impl Printer<'_, '_, '_> {
         self.text(" ", SegmentRole::Text);
         self.expression(condition, base);
         let at = self.aligned(column);
-        self.block(column, &[then]);
+        self.block(column, &[then], 0);
         if let Some(otherwise) = otherwise {
             self.start_line(otherwise.span.start, at);
             self.text("else", SegmentRole::Keyword);
-            self.block(column, &[otherwise]);
+            self.block(column, &[otherwise], 0);
         }
         true
     }
@@ -594,7 +810,7 @@ impl Printer<'_, '_, '_> {
 
     /// `(for [x xs] …)` → `for x in xs` + 字下げの中身。
     fn for_loop(&mut self, items: &[&Form], base: u32) -> bool {
-        let [head, binder, body @ ..] = items else { return false };
+        let [head, binder, _body @ ..] = items else { return false };
         let Some(pairs) = binder.bracket_items() else { return false };
         let pairs: Vec<&Form> = pairs.iter().filter(|i| !matches!(i.node, Node::Discarded)).collect();
         let [target, iterable] = pairs.as_slice() else { return false };
@@ -607,7 +823,7 @@ impl Printer<'_, '_, '_> {
         self.text("in", SegmentRole::Keyword);
         self.text(" ", SegmentRole::Text);
         self.expression(iterable, base);
-        self.block(column, body);
+        self.block(column, items, 2);
         true
     }
 
@@ -780,13 +996,22 @@ impl Printer<'_, '_, '_> {
     /// 本体の `(setv x e)` → `setv x = e` + 警告の印。
     fn setv(&mut self, items: &[&Form], base: u32) -> bool {
         let pairs: Vec<&[&Form]> = items[1..].chunks(2).collect();
-        if pairs.is_empty() || pairs.iter().any(|p| p.len() != 2 || !matches!(p[0].node, Node::Symbol)) {
+        if pairs.is_empty() || pairs.iter().any(|p| p.len() != 2 || self.written_place(p[0]).is_none()) {
             return false;
         }
         for (i, pair) in pairs.iter().enumerate() {
             let (name, value) = (pair[0], pair[1]);
             if i > 0 {
                 self.start_line(name.span.start, self.indent);
+            }
+            if self.written_place(name) == Some(false) {
+                // 中身の書き換え `(setv (get x k) v)` / `(setv o.a v)` → `x[k] = v` / `o.a = v`(束縛ではない — setv の警告は付けない)
+                self.expression(name, base);
+                self.text(" ", SegmentRole::Text);
+                self.text("=", SegmentRole::Assign);
+                self.text(" ", SegmentRole::Text);
+                self.expression(value, base);
+                continue;
             }
             let shown = self.reader.hy.text(name).to_string();
             self.current().binding = self.binding_of(name);
@@ -805,6 +1030,18 @@ impl Printer<'_, '_, '_> {
             self.expression(value, base);
         }
         true
+    }
+
+    /// setv の書く先: 束ねる名なら Some(true)、中身の書き換え(`(get x k)`・`(. o a)`・`o.a`)なら Some(false)、それ以外は None。
+    fn written_place(&self, target: &Form) -> Option<bool> {
+        match self.reader.hy.symbol(target) {
+            Some(name) => Some(!name.contains('.')),
+            None => {
+                let items = live(target)?;
+                let head = self.reader.hy.symbol(items.first()?)?;
+                matches!(head, "get" | ".").then_some(false)
+            }
+        }
     }
 
     /// `(:= x v)` → `x := v`。
@@ -1276,6 +1513,61 @@ mod tests {
         assert_eq!(texts, vec!["(for [x items y d]", "  (shape-of x))"]);
     }
 
+    /// U20a(#1206): 塊の形 — do・cond・try / except / else / finally・while・continue / break / raise・註・中身の書き換え。
+    #[test]
+    fn block_forms_follow_the_table() {
+        let cases: [(&str, &[&str]); 11] = [
+            (
+                "  (when a\n    (do (shape-of a)\n        (return a)))",
+                &["when a", "  shape-of(a)", "  return a"],
+            ),
+            (
+                "  (match o\n    (Row) (do (shape-of o)\n              (return 1))\n    _ 2)",
+                &["match o", "  Row → shape-of(o)", "        return 1", "  _   → 2"],
+            ),
+            (
+                "  (cond\n    (= a 1) (return 1)\n    (is o None) 2\n    True 3)",
+                &["cond", "  a == 1    → return 1", "  o is None → 2", "  else      → 3"],
+            ),
+            (
+                "  (try\n    (shape-of a)\n    (except [e ValueError]\n      (raise e))\n    (except [[KeyError IndexError]]\n      (return None))\n    (finally\n      (shape-of o)))",
+                &[
+                    "try",
+                    "  shape-of(a)",
+                    "except ValueError as e",
+                    "  raise e",
+                    "except (KeyError, IndexError)",
+                    "  return None",
+                    "finally",
+                    "  shape-of(o)",
+                ],
+            ),
+            ("  (try\n    (shape-of a)\n    (except []\n      None)\n    (else\n      1))", &["try", "  shape-of(a)", "except", "  None", "else", "  1"]),
+            ("  (while (is o None)\n    (:= o (shape-of a)))", &["while o is None", "  o := shape-of(a)"]),
+            ("  (for [x items]\n    (when (is x None)\n      (continue))\n    (break))", &["for x in items", "  when x is None", "    continue", "  break"]),
+            ("  (raise (ValueError \"x\") :from o)", &["raise ValueError(\"x\") from o"]),
+            ("  (raise)", &["raise"]),
+            ("  (setv (get d \"k\") 1\n        o.a 2)", &["d[\"k\"] = 1", "o.a = 2"]),
+            ("  (shape-of a)\n  ;; 註の 1 行目\n  ;;; 註の 2 行目\n  (return a)", &["shape-of(a)", "# 註の 1 行目", "# 註の 2 行目", "return a"]),
+        ];
+        for (source, expected) in cases {
+            let (_, texts) = body(source);
+            assert_eq!(texts, expected.iter().map(|s| s.to_string()).collect::<Vec<_>>(), "{:?}", source);
+        }
+        // 中身の書き換えは束縛ではない — setv の警告を付けない
+        let (read, _) = body("  (setv (get d \"k\") 1)");
+        let line = &read.bodies.iter().find(|b| b.name == "subject").unwrap().lines[0];
+        assert_eq!(line.warning, None);
+        // 註は comment の役で、source の範囲を持つ
+        let (read, _) = body("  (shape-of a)\n  ;; 見出し\n  (return a)");
+        let line = &read.bodies.iter().find(|b| b.name == "subject").unwrap().lines[1];
+        assert_eq!(line.segments[0].role, SegmentRole::Comment);
+        assert!(line.segments[0].range.is_some());
+        // 腕の揃わない cond(1 行に収まらない条件)は lisp のまま
+        let (_, texts) = body("  (cond\n    (and a\n         o) 1\n    True 2)");
+        assert_eq!(texts[0], "(cond");
+    }
+
     /// V5: 表に無い form は推測で描かず、元の lisp のまま目印(役 lisp)を付けて出す。
     #[test]
     fn forms_outside_the_table_stay_marked_lisp() {
@@ -1298,9 +1590,9 @@ mod tests {
         assert_eq!(texts, vec!["val Row r ⇐ ReadRow(\"id\") :absent Missing"]);
         let line = &read.bodies.iter().find(|b| b.name == "subject").unwrap().lines[0];
         assert_eq!(line.segments.last().map(|s| (s.role, s.text.as_str())), Some((SegmentRole::Lisp, ":absent Missing")));
-        // 名が記号でない setv(中身の書き換え)は表に無い形 — 全体を lisp
-        let (_, texts) = body("  (setv (get d \"k\") 1)");
-        assert_eq!(texts, vec!["(setv (get d \"k\") 1)"]);
+        // 組への分解の setv は表に無い形 — 全体を lisp
+        let (_, texts) = body("  (setv #(p q) items)");
+        assert_eq!(texts, vec!["(setv #(p q) items)"]);
         // 複数行の知らない form は行を分け、source の行と字下げの差を保つ
         let (read, texts) = body("  (unless a\n    (shape-of a))");
         assert_eq!(texts, vec!["(unless a", "  (shape-of a))"]);
@@ -1329,8 +1621,16 @@ mod tests {
                             // `<-` は `val` と見せる。それ以外の語は source の綴りのまま
                             let spelled = slice(range);
                             assert!(spelled == "<-" || spelled == segment.text, "{} の {} 行: {:?}", body.name, line.line + 1, spelled);
-                            assert!(["<-", "val", "var", "lazy", "session", "setv", "return", "resume", "when", "if", "match", "for"]
-                                .contains(&spelled.as_str()));
+                            assert!([
+                                "<-", "val", "var", "lazy", "session", "setv", "return", "resume", "when", "if", "match", "for",
+                                "while", "cond", "try", "except", "finally", "else", "raise", "continue", "break",
+                            ]
+                            .contains(&spelled.as_str()));
+                        }
+                        SegmentRole::Comment => {
+                            let spelled = slice(range);
+                            assert!(spelled.starts_with(';'), "{} の {} 行: {:?}", body.name, line.line + 1, spelled);
+                            assert_eq!(segment.text, format!("# {}", spelled.trim_start_matches(';').trim_start()));
                         }
                         SegmentRole::Type => assert!(slice(range).starts_with('(') || !slice(range).is_empty()),
                         SegmentRole::Assign => assert_eq!(slice(range), ":="),
