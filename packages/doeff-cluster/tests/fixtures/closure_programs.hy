@@ -5,8 +5,8 @@
 (require doeff-hy.macros [defk defhandler <- val])
 (import doeff [EffectBase DoExpr with-handlers])
 (import doeff.program [handler :as program-handler])
-(import doeff_core_effects.effects [Ask])
-(import doeff_core_effects.handlers [state])
+(import doeff_core_effects.effects [Ask Try])
+(import doeff_core_effects.handlers [state try-handler])
 (import doeff_core_effects.scheduler [scheduled Spawn Wait])
 (import doeff_time [Delay sync-time-handler])
 
@@ -52,6 +52,27 @@
   (+ a c))
 
 
+(defk tried []
+  {:pre [] :post [(: % "Ok | Err")] :tags {:context "doeff-cluster-test" :role "program"}}
+  "業務の本体を Try に運ばせる(Try の答え手は出した所の handler の下で本体を走らせる — 本体の effect は出した所で数える)。"
+  (<- r (Try (business)))
+  r)
+
+
+(defk tried-job [foundation]
+  {:pre [(: foundation (| type DoExpr))] :post [(: % "Ok | Err")] :tags {:context "doeff-cluster-test" :role "entry"}}
+  "翻訳の handler の下で、Try に運ばせた本体を土台で包む job。"
+  (<- r (foundation (with-handlers [translate] (tried))))
+  r)
+
+
+(defk untranslated-tried-job [foundation]
+  {:pre [(: foundation (| type DoExpr))] :post [(: % "Ok | Err")] :tags {:context "doeff-cluster-test" :role "entry"}}
+  "Try に運ばせた本体の翻訳の handler を並べ忘れた job(本体の業務の effect は Try の中にしか無い)。"
+  (<- r (foundation (tried)))
+  r)
+
+
 (defk translated-body []
   {:pre [] :post [(: % int)] :tags {:context "doeff-cluster-test" :role "program"}}
   "翻訳の handler を並べた本体。"
@@ -75,8 +96,8 @@
 
 (defk production-foundation [inner]
   {:pre [(: inner DoExpr)] :post [(: % "inner の答え")] :tags {:context "doeff-cluster-test" :role "foundation"}}
-  "閉じている本番の土台(scheduler・時計・設定・外の世界)。"
-  (<- r (scheduled (with-handlers [(state) (sync-time-handler) fake-settings raw-world] inner)))
+  "閉じている本番の土台(scheduler・時計・設定・外の世界・Try)。"
+  (<- r (scheduled (with-handlers [(state) (sync-time-handler) fake-settings raw-world try-handler] inner)))
   r)
 
 

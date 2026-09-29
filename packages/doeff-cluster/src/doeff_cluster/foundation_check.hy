@@ -30,16 +30,18 @@
 
 
 (deff foundation-closure [#^ Callable job * #^ (| Callable None) [foundation None] #^ str [parameter "foundation"]
-                          #^ tuple [fold #("Spawn")]]  ; defk にできない: 開発の道具(analyzer)を呼ぶ検の入口 — Program の外で source を読む
+                          #^ tuple [fold #()]]  ; defk にできない: 開発の道具(analyzer)を呼ぶ検の入口 — Program の外で source を読む
   {:pre [(: job Callable) (: parameter str) (: fold tuple)] :post [(: % FoundationClosure)]
    :tags {:context "doeff-cluster" :role "judgment"}}
   "job の関数(土台を引数 parameter で受けて本体を包む module の最上位の Program 関数)が、土台 foundation で閉じているかを実行せずに
-   確かめる。foundation を渡さなければ束ねずに読む(土台の先を追えないので unresolved になる)。fold = 運ばれた Program を同じ handler の
-   下で数える運び手の名(既定 Spawn — 子の task は親の handler を持ち運ぶ)。"
-  (import doeff_effect_analyzer.program_effects [analyze_program qualified-name])
+   確かめる。foundation を渡さなければ束ねずに読む(土台の先を追えないので unresolved になる)。運ばれた Program は、運び手の effect が
+   「答え手が出した所の handler の下で走らせる」と宣言していれば(__doeff_runs_carried__ — Spawn・Try・Local・Listen・SqlTransaction)、
+   出した所で同じ handler の下で数える(以前の既定は名 Spawn だけで、Try と SqlTransaction の中の effect が検の外にあった)。fold = 宣言の外で同じく数える運び手の名(既定なし)。"
+  (import doeff_effect_analyzer.program_effects [analyze_program qualified-name runs-where-performed])
   (import doeff_effect_analyzer.handler_effects [check_coverage])
   (setv report (analyze_program job :bindings (if (is foundation None) None {parameter foundation}))
-        coverage (check_coverage report [] :include (fn [carrier] (in (getattr carrier "__name__" "") fold))))
+        coverage (check_coverage report [] :include (fn [carrier] (or (runs-where-performed carrier)
+                                                                      (in (getattr carrier "__name__" "") fold)))))
   (FoundationClosure :gaps (tuple (lfor g coverage.gaps (.format "{} ← {}" (qualified-name g.effect) g.origin)))
                      :unknown (tuple coverage.unknown-handlers)
                      :unresolved (tuple (lfor u coverage.unresolved (.format "{}: {}({})" u.reason u.text u.location)))))
