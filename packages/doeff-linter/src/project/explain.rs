@@ -167,6 +167,8 @@ pub enum Explain {
     WorldHandlerNamed { placement: Placement, definition: String, wrapped: String, listed_by: String },
     /// DOEFF132: 許可名簿の定義が実在しない・foundation の外に在る。
     WorldHandlerMisplaced { definition: String, problem: String },
+    /// DOEFF133: テストの種類と印が食い違う(edge = 縁なのに印が無い / 手元なのに印が在る)。
+    TestKindMismatch { test: String, edge: bool, mark: String, reached: Vec<String> },
     /// DOEFF107: 定義が呼ぶ定義を通して生の副作用に届く。
     RawVia { placement: Placement, definition: String, through: Vec<String>, evidence: String, category: &'static str },
     /// DOEFF108: 業務の名に環境の語がある。
@@ -350,6 +352,18 @@ impl<'a> Narrator<'a> {
             Explain::WorldHandlerMisplaced { definition, problem } => (
                 format!("許可名簿の定義 {} — {}", definition, problem),
                 "外の世界に触れてよい定義は層 foundation にだけ置く(operator 2026-09-29 \"placed in specific dir with rules\")。名簿に在って実物が無い・foundation の外に在ると、名簿が外の世界に触れる所を言い当てなくなる。".to_string(),
+            ),
+            Explain::TestKindMismatch { test, edge, mark, reached } => (
+                if *edge {
+                    format!("テスト {} は外の世界に届く(縁)のに印 {} が無い", test, mark)
+                } else {
+                    format!("テスト {} は外の世界に届かない(手元)のに印 {} が在る", test, mark)
+                },
+                if *edge {
+                    format!("届く道: {}。縁のテストは印で既定の pytest から外す — 印が無いと手元のテストの列に実 I/O が混ざる。", reached.join(" → "))
+                } else {
+                    "印は縁のテストの目印で、手元のテストに付けると既定の pytest から外れて回らなくなる。".to_string()
+                },
             ),
             Explain::RawVia { placement, definition, through, evidence, category } => (
                 format!("定義 {} が {} を通して {}({} の生の副作用)に届く — {}", definition, through.join(" → "), evidence, category, self.file_subject(placement)),

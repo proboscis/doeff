@@ -221,6 +221,9 @@ impl Setup {
                 ProjectRule::WorldHandlerNamedOutsideList | ProjectRule::WorldHandlerMisplaced => {
                     self.settings.architecture.as_ref().is_some_and(|a| !a.world_handlers.is_empty())
                 }
+                ProjectRule::TestKindMismatch => {
+                    self.settings.architecture.as_ref().is_some_and(|a| !a.world_handlers.is_empty() && a.edge_mark.is_some())
+                }
                 ProjectRule::ShapeCheckInJudgment => {
                     self.settings.definitions.is_some() && self.settings.smells.as_ref().is_some_and(|s| !s.shape_check_layers.is_empty())
                 }
