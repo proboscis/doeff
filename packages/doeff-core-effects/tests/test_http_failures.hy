@@ -3,6 +3,7 @@
 ;;; HttpRequest の failures-as-values(agora-redesign #805 の構成レビュー 2-1 — 呼び手が transport の library の例外の型を知らずに届かない失敗を読むため):
 ;;;   * 立てれば、応答が 1 度も来なかった失敗は HttpFailed(url・detail = 例外の class と文・kind = 失敗の類)で答える
 ;;;   * 立てなければ今までどおり transport の例外が上がる(今の使い手は変わらない)
+;;;   この 2 つは本物と fake(fixture の replay)の共通の契約として test_http_request_contract.hy が見る(agora-redesign #1159)。
 ;;; 失敗の類 kind(agora-redesign #850 — 消費者が detail の型名の文字列で期限切れを判じないため):
 ;;;   * 答え手が transport の例外の class の階層から写す: 期限切れ 4 種 = TIMED-OUT・接続できない = CONNECT-FAILED・残り = OTHER
 ;;;   * 反例: 名が Timeout で終わるだけの例外や、文に timed out を含む失敗は期限切れと読めない
@@ -36,20 +37,6 @@
                        :client-factory (fn [] (httpx.AsyncClient :transport (httpx.MockTransport (fn [request] (raise (error-class text :request request)))))))]
         (ask "https://api.test/x" values)))
   answer)
-
-
-(deftest test-an-unreachable-server-is-answered-as-a-value-when-asked
-  (<- failed (| HttpResponse HttpFailed) (answer-from-silent-server httpx.ConnectError "[Errno 111] Connection refused" True))
-  (assert (= failed (HttpFailed :url "https://api.test/x" :detail "ConnectError: [Errno 111] Connection refused"
-                                :kind HttpFailureKind.CONNECT-FAILED))
-          failed))
-
-
-(deftest test-without-the-field-the-transport-error-is-raised-as-before
-  (try
-    (<- (answer-from-silent-server httpx.ConnectError "[Errno 111] Connection refused" False))
-    (assert False "transport の例外が上がらなかった")
-    (except [httpx.ConnectError])))
 
 
 (deftest test-the-failure-kind-comes-from-the-transport-error-class

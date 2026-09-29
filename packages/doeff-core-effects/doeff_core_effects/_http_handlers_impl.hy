@@ -184,13 +184,26 @@
   (* 0.25 (** 2 attempt-index)))
 
 
-(defn _fixture-key [request]
-  (setv payload {"method" request.method
-                 "url" request.url
-                 "params" (_sorted-mapping request.params)
-                 "body_sha256" (_body-sha256 request.body)})
-  (setv encoded (.encode (json.dumps payload :sort-keys True :separators #("," ":"))
-                         "utf-8"))
+(defk _fixture-key [request]
+  {:pre [(: request HttpRequest)] :post [(: % str)] :tags {:context "http" :role "foundation"}}
+  "Name a request by every field that can change its answer, so two requests that the production handler may answer
+   differently never share one fixture: method, url, params and body, plus headers (names case-folded), the timeout, how
+   many times a 5xx / transport failure is retried, whether redirects are followed, and whether a failure is answered as
+   a value. log-each-request is left out (it only adds log lines). Added the fields after params / body for
+   agora-redesign #1159 (the HttpRequest contract test found replay answering a header-only / retry-only /
+   redirect-only difference with the other request's recording)."
+  (val payload {"method" request.method
+                "url" request.url
+                "params" (_sorted-mapping request.params)
+                "body_sha256" (_body-sha256 request.body)
+                "headers" (if (is request.headers None)
+                              None
+                              (sorted (gfor #(name value) (.items request.headers) #((.lower name) value))))
+                "timeout_seconds" request.timeout-seconds
+                "max_retries" request.max-retries
+                "follow_redirects" request.follow-redirects
+                "failures_as_values" request.failures-as-values})
+  (val encoded (.encode (json.dumps payload :sort-keys True :separators #("," ":")) "utf-8"))
   (.hexdigest (hashlib.sha256 encoded)))
 
 
@@ -228,27 +241,41 @@
     (pickle.dump fixtures fixture-file)))
 
 
-(defn _record-fixture-response [path fixtures key response]
-  (when (not (isinstance response HttpResponse))
-    (raise (TypeError (+ "HttpRequest fixture recorder received non-HttpResponse: "
-                         (repr response)))))
-  (setv (get fixtures key) (_response-to-record response))
-  (_write-fixtures path fixtures))
+;; A fixture record is one of three answers, named by "answer" (agora-redesign #1159 — the fake answers what the
+;; production handler answered, failures included):
+;;   "response"  an HttpResponse's fields
+;;   "failed"    the HttpFailed value (the request set failures-as-values and no response ever arrived)
+;;   "raised"    the transport error the production handler raised (failures-as-values unset) — replay raises it again
+(defk _record-fixture-answer [path fixtures key answer]
+  {:pre [(: path Path) (: fixtures dict) (: key str) (: answer (| HttpResponse HttpFailed httpx.RequestError))]
+   :post [(: % None)] :tags {:context "http" :role "foundation"}}
+  "Write what the production handler answered for the request named key into the fixture file."
+  (setv (get fixtures key) (match answer
+                             (HttpResponse) {"answer" "response"
+                                             "status" answer.status
+                                             "headers" answer.headers
+                                             "content" answer.content
+                                             "text" answer.text
+                                             "url" answer.url
+                                             "elapsed_seconds" answer.elapsed-seconds}
+                             (HttpFailed) {"answer" "failed" "failed" answer}
+                             (httpx.RequestError) {"answer" "raised" "error" answer}))
+  (_write-fixtures path fixtures)
+  None)
 
 
-(defn _replay-fixture-response [fixtures key request]
+(defk _replay-fixture-answer [fixtures key request]
+  {:pre [(: fixtures dict) (: key str) (: request HttpRequest)] :post [(: % (| HttpResponse HttpFailed))]
+   :tags {:context "http" :role "foundation"}}
+  "Answer the request named key from its fixture record (a recorded transport error is raised again)."
   (when (not-in key fixtures)
     (raise (KeyError (+ "No recorded HTTP fixture for " (repr request)))))
-  (_response-from-record (get fixtures key)))
-
-
-(defn _response-to-record [response]
-  {"status" response.status
-   "headers" response.headers
-   "content" response.content
-   "text" response.text
-   "url" response.url
-   "elapsed_seconds" response.elapsed-seconds})
+  (val record (get fixtures key))
+  (match (get record "answer")
+    "response" (_response-from-record record)
+    "failed" (get record "failed")
+    "raised" (raise (get record "error"))
+    other (raise (ValueError (+ "Unknown HTTP fixture answer " (repr other) " for " (repr request))))))
 
 
 (defn _response-from-record [record]
@@ -268,16 +295,24 @@
 
 
 (defhandler _http-fixture-record-handler [path fixtures]
-  "Record HttpRequest responses by delegating to the outer HTTP handler."
+  "Record HttpRequest answers by delegating to the outer HTTP handler — a response, an HttpFailed value, or the transport
+   error it raised (recorded, then raised on as before)."
   (HttpRequest []
-    (setv key (_fixture-key effect))
-    (<- response effect)
-    (_record-fixture-response path fixtures key response)
-    (resume response)))
+    (<- key str (_fixture-key effect))
+    (var answer None)
+    (try
+      (<- delegated effect)
+      (:= answer delegated)
+      (except [error httpx.RequestError]
+        (<- (_record-fixture-answer path fixtures key error))
+        (raise error)))
+    (<- (_record-fixture-answer path fixtures key answer))
+    (resume answer)))
 
 
 (defhandler _http-fixture-replay-handler [fixtures]
-  "Replay HttpRequest responses from loaded fixture records."
+  "Replay HttpRequest answers from loaded fixture records."
   (HttpRequest []
-    (setv key (_fixture-key effect))
-    (resume (_replay-fixture-response fixtures key effect))))
+    (<- key str (_fixture-key effect))
+    (<- answer (_replay-fixture-answer fixtures key effect))
+    (resume answer)))

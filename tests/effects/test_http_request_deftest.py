@@ -63,13 +63,6 @@ def test_http_production_handler_retries_request_exceptions_with_timeout() -> No
     )
 
 
-def test_http_fixture_record_forwards_to_production_handler(tmp_path: Path) -> None:
-    http_request_deftest.test_http_fixture_record_forwards_to_production_handler(
-        _deftest_interpreter,
-        tmp_path,
-    )
-
-
 def test_http_fixture_replay_errors_on_unknown_request(tmp_path: Path) -> None:
     http_request_deftest.test_http_fixture_replay_errors_on_unknown_request(
         _deftest_interpreter,
