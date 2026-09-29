@@ -8,6 +8,9 @@
 ;;;
 ;;; 写し(layer2-effects-design.md 10 節):
 ;;;   LaunchEffect(CLAUDE)            → ClaudeStartTurn(FreshSession か、resume_from なら ResumeSession)— prompt が無ければ手番を始めない
+;;;   LaunchEffect.turn_credential_ref → 起こす直前に RedeemTurnCredentialEffect(参照)を外側へ出し、答えの TurnCredential を子の env の
+;;;                                      手番の資格の名 1 つにだけ置く(HomeTurnCredential = 家の資格のまま・TurnCredentialUnavailable =
+;;;                                      TurnCredentialUnavailableError で起こさない — issue #979)
 ;;;   LaunchEffect.resume_snapshot     → その session の最初の ClaudeStartTurn の ResumeSession の carry = Rebuilt(写し)(2 手番目からは無し)
 ;;;   ExportContextEffect(CLAUDE)      → ClaudeExportSession(SessionExported → 写しの本文・SessionNotFound → None)
 ;;;   SendEffect / FollowUpEffect      → 手番が走っていなければ ClaudeStartTurn(ResumeSession)、走っていれば待たせて終わりの後に始める
@@ -38,7 +41,8 @@
   AgentEventPage AgentTextEvent AgentTextDeltaEvent AgentToolUseEvent AgentToolResultEvent AgentInputFateEvent
   AgentTurnEndEvent AgentTurnCompleted AgentTurnFailed AgentTurnInterrupted AgentTurnLost AgentTurnUsage
   AgentError AgentLaunchError AgentCapabilityUnsupportedError NoTurnInFlightError ResumeTargetNotFoundError
-  SessionAlreadyExistsError SessionNotFoundError TurnInFlightError])
+  SessionAlreadyExistsError SessionNotFoundError TurnInFlightError
+  RedeemTurnCredentialEffect TurnCredential HomeTurnCredential TurnCredentialUnavailable TurnCredentialUnavailableError])
 (import doeff_claude_code.values [ClaudeHome ClaudeSessionSpec ClaudeTurn TurnInput FreshSession ResumeSession Rebuilt
                                   checked-session-id])
 (import doeff_claude_code.lines [AssistantMessage PartialMessage ToolResult InputFate
@@ -51,7 +55,7 @@
 
 (setv HANDLER-NAME "headless-claude-handler")
 
-;; 借りた access token(LaunchEffect.turn_credential)を置く env の名(agora-redesign #665)。綴りの家は境界の env の語彙
+;; 引き換えた access token(LaunchEffect.turn_credential_ref の RedeemTurnCredentialEffect の答え — #665・#979)を置く env の名。綴りの家は境界の env の語彙
 ;; doeff_agents/agent_env.hy の 1 点(TURN-AUTH-ENV-KEYS の要素・#708 — 家は session host を import しない)。
 (import doeff_agents.agent_env [CLAUDE-TURN-CREDENTIAL-ENV :as TURN-CREDENTIAL-ENV])
 
@@ -102,14 +106,15 @@
 
 (defn #^ str new-ref [] (str (uuid.uuid4)))
 
-(defn #^ ClaudeSessionSpec spec-of [#^ HeadlessClaudeConfig config #^ LaunchEffect effect]
-  "LaunchEffect → 層 2 の会話の宣言。process の env = 家の env + session_env(非 auth の上書き)+ 借りた access token
-   (turn_credential — 手番の資格の env の名 1 つにだけ置く。家の env と session_env は資格の env を持てない — 資格の入口は型の欄 1 つ)。"
+(defn #^ ClaudeSessionSpec spec-of [#^ HeadlessClaudeConfig config #^ LaunchEffect effect #^ (| TurnCredential None) [credential None]]
+  "LaunchEffect → 層 2 の会話の宣言。process の env = 家の env + session_env(非 auth の上書き)+ 引き換えた access token
+   (credential — LaunchEffect.turn_credential_ref を RedeemTurnCredentialEffect で引き換えた答え・None = 家の資格。手番の資格の env の名
+   1 つにだけ置く。家の env と session_env は資格の env を持てない — 資格の入口は引き換えの答え 1 つ)。"
   (assert-session-env-is-non-auth-overlay effect.session-env :context "LaunchEffect.session_env (headless-claude-handler)")
   (setv env (| (dict config.home.env) (dict (or effect.session-env {}))))
   (assert-no-forbidden-agent-env env :context "headless-claude-handler の process の env")
-  (when (is-not effect.turn-credential None)
-    (setv (get env TURN-CREDENTIAL-ENV) effect.turn-credential.oauth-token))
+  (when (is-not credential None)
+    (setv (get env TURN-CREDENTIAL-ENV) credential.oauth-token))
   (ClaudeSessionSpec :home (ClaudeHome config.home.config-dir env)
                      :cwd (str effect.work-dir)
                      :model effect.model
@@ -329,6 +334,22 @@
 
 ;; --- 節の中身 -----------------------------------------------------------------------------------
 
+(defk redeemed-credential [#^ LaunchEffect request]
+  {:pre [(: request LaunchEffect)] :post [(: % (| TurnCredential None))]}
+  "LaunchEffect.turn_credential_ref を手番の資格へ引き換える(issue #979)。参照が無い・答えが家の資格なら None(家の資格で起こす)。
+   引き換えられなければ TurnCredentialUnavailableError で断る(session を起こさない)。答えは外側(参照を出した環境)が返す —
+   token は LaunchEffect に載らない。"
+  (val ref request.turn-credential-ref)
+  (when (is ref None)
+    (return None))
+  (<- answer (RedeemTurnCredentialEffect :credential-ref ref))
+  (match answer
+    (TurnCredential) answer
+    (HomeTurnCredential) None
+    (TurnCredentialUnavailable :reason reason) (raise (TurnCredentialUnavailableError :credential-ref ref :reason reason))
+    ;; 答えの型だけを名乗る(値は資格を運び得るので文に写さない)。
+    _ (raise (AgentError (.format "手番の資格 {} の引き換えの答えが閉語彙の外: {}" ref (. (type answer) __name__))))))
+
 (defk launch [#^ HeadlessClaudeConfig config #^ HeadlessState state #^ LaunchEffect request]
   {:pre [(: config HeadlessClaudeConfig) (: state HeadlessState) (: request LaunchEffect)] :post [(: % SessionHandle)]}
   "session を起こす。prompt が在れば最初の手番を始める。resume_from は前の文脈の続き(手元に無ければ ResumeTargetNotFoundError)。
@@ -346,7 +367,9 @@
       (checked-session-id request.resume-from "LaunchEffect.resume_from")
       (except [#(ValueError TypeError)]
         (raise (ResumeTargetNotFoundError :resume-from (str request.resume-from))))))
-  (setv spec (spec-of config request))
+  ;; 手番の資格は起こす直前に引き換える(断りの検めを通った起動だけが資格を受ける)。
+  (<- credential (redeemed-credential request))
+  (setv spec (spec-of config request credential))
   (val carry (if (is request.resume-snapshot None) None (Rebuilt request.resume-snapshot)))
   (val session (HeadlessSession name spec (or request.resume-from (new-ref)) (is request.resume-from None) request.lifecycle
                                 carry))
