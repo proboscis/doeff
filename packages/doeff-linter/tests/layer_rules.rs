@@ -2483,6 +2483,55 @@ fn services_without_declared_invariants_are_red() {
     assert_eq!(known["registered"], true, "{}", known);
 }
 
+/// agora-redesign #1560(K2): entry の層を持つ service ごとに、壊した handler の反例(反例の表の節に届き、その service の entry にも届く
+/// deftest)が無ければ defservice の位置で DOEFF164(critical)。billing は自分の業務の効果の壊した handler を自分の検で回す(有り)。
+/// stock は土台の効果(どの service の dir の下にも無い効果)の壊した handler を模擬の検で回す(有り — 表の当たりにも数え、腐りにしない)。
+/// ledger は模擬の検が entry に届くが反例が無い(赤)。notes は entry の層を持たない(数えない)。
+#[test]
+fn services_without_a_counterexample_are_red() {
+    let files = [
+        ("app/foundation/host.hy", tags("shared", "foundation") + "(defk with-host [body] body)\n"),
+        ("app/foundation/clock_effects.hy", "(import doeff [EffectBase])\n(defclass Now [EffectBase])\n".to_string()),
+        ("app/billing/intent/effects.hy", "(import doeff [EffectBase])\n(defclass Charge [EffectBase])\n".to_string()),
+        ("app/billing/entry/main.hy", tags("billing", "entry") + "(import app.billing.intent.effects [Charge])\n(defk run [] (Charge))\n"),
+        (
+            "app/billing/tests/test_broken.hy",
+            "(import app.billing.intent.effects [Charge])\n(import app.billing.entry.main [run])\n\
+             (defhandler broken-charge (Charge [] (resume 0)))\n(deftest test-broken-charge (with-handlers [broken-charge] (run)))\n"
+                .to_string(),
+        ),
+        ("app/ledger/entry/main.hy", tags("ledger", "entry") + "(defk start [] 2)\n"),
+        ("app/sim/tests/test_ledger.hy", "(import app.ledger.entry.main [start])\n(deftest test-ledger-on-sim (start))\n".to_string()),
+        ("app/stock/entry/main.hy", tags("stock", "entry") + "(import app.foundation.clock_effects [Now])\n(defk tick [] (Now))\n"),
+        ("app/sim/broken_clock.hy", "(import app.foundation.clock_effects [Now])\n(defhandler stopped-clock (Now [] (resume 0)))\n".to_string()),
+        (
+            "app/sim/tests/test_stock.hy",
+            "(import app.sim.broken_clock [stopped-clock])\n(import app.stock.entry.main [tick])\n\
+             (deftest test-stopped-clock (with-handlers [stopped-clock] (tick)))\n"
+                .to_string(),
+        ),
+        (
+            "tables/COUNTEREXAMPLES/billing.txt",
+            "app/billing/tests/test_broken.hy::broken-charge::app.billing.intent.effects.Charge\n請求を 0 で返す壊した handler\n".to_string(),
+        ),
+        ("tables/COUNTEREXAMPLES/stock.txt", "app/sim/broken_clock.hy::stopped-clock::app.foundation.clock_effects.Now\n止まった時計\n".to_string()),
+    ];
+    let dir = world_repo_with(&files, "", "[\"DOEFF143\", \"DOEFF157\", \"DOEFF164\"]");
+    let arch_path = dir.path().join("architecture.hy");
+    let fakes = ":foundation foundation\n  :verification-environment \"sim\"\n  :business-fakes {:simulation [\"app/sim/**\"] :assembly [\"app/*/entry/**\"] \
+                 :tests [\"**/tests/**\"] :production [\"app/**\"] :business-modules [\"app.billing\"] :counterexamples \"tables/COUNTEREXAMPLES\"}";
+    let text = std::fs::read_to_string(&arch_path).unwrap().replace(":foundation foundation", fakes)
+        + "(defservice ledger \"台帳\" {:layers [core entry]})\n(defservice stock \"在庫\" {:layers [core entry]})\n(defservice notes \"覚え書き\" {:layers [core]})\n";
+    std::fs::write(&arch_path, text).unwrap();
+    let (_, report) = editor(dir.path());
+    assert_eq!(keys(&report, "DOEFF164"), vec!["architecture.hy::DOEFF164::ledger"], "{}", report);
+    let found = violation(&report, "architecture.hy::DOEFF164::ledger");
+    assert!(found["message"].as_str().unwrap().contains("service ledger に壊した handler の反例が無い"), "{}", found["message"]);
+    assert_eq!(found["severity"], "error", "{}", found);
+    // 土台の効果に答える壊した handler の行は表の当たり(腐りの赤にしない)。
+    assert!(keys(&report, "DOEFF143").iter().all(|k| !k.contains("counterexample-unused")), "{}", report);
+}
+
 /// DOEFF150・151 の宣言を architecture.hy に足した一時の repo。語・呼びは agora-controllers の宣言(#1193 の移し元 check_vocabulary・
 /// check_controller_clock が数えていた物)と同じ綴りを検の材料として書く — linter の本体は語の表を持たない。
 fn retired_repo(files: &[(&str, String)]) -> tempfile::TempDir {
