@@ -1,0 +1,31 @@
+{
+  "schema": 1,
+  "written_at": "2026-09-29T12:34:56+09:00",
+  "written_by": "agentcli.vsix_follow(ai land arm の側 loop・agora-redesign #1043)",
+  "extensions": [
+    {
+      "name": "doeff-runner",
+      "identity": "proboscis.doeff-runner",
+      "installed": {
+        "version": "0.6.41",
+        "commit": "4141414141414141414141414141414141414141",
+        "installed_at": "2026-09-29T11:02:03+09:00"
+      },
+      "failure": null
+    },
+    {
+      "name": "python-semantic-highlighter",
+      "identity": "proboscis.python-semantic-highlighter",
+      "installed": {
+        "version": "1.6.4",
+        "commit": "1640164016401640164016401640164016401640",
+        "installed_at": "2026-09-29T09:00:00+09:00"
+      },
+      "failure": {
+        "commit": "1650165016501650165016501650165016501650",
+        "reason": "npm ci --workspace extension --no-audit --no-fund が rc=1 — log /Users/x/.local/state/ai/vsix-follow/python-semantic-highlighter/build.log",
+        "at": "2026-09-29T12:34:50+09:00"
+      }
+    }
+  ]
+}
