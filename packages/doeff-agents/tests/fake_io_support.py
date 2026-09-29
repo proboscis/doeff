@@ -11,9 +11,9 @@ from collections.abc import Callable
 from subprocess import CompletedProcess
 
 import hy  # noqa: F401  # .hy import hook — the fake handler is a Hy module
-from doeff import Program
+from doeff import Program, run
 from doeff_agents.io_effects import ProcessOutcome
-from doeff_agents.io_fake import FakeIoWorld, run_fake_io
+from doeff_agents.io_fake import FakeIoWorld, with_fake_io
 from doeff_agents.io_root import IoRoot
 
 __all__ = [
@@ -29,7 +29,7 @@ def fake_io_root(world: FakeIoWorld) -> IoRoot:
     """Return the composition root that runs programs in ``world``."""
 
     def root(program: Program) -> object:
-        return run_fake_io(world, program)
+        return run(with_fake_io(world, program))
 
     return root
 
