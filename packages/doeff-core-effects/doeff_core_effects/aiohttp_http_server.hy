@@ -23,6 +23,9 @@
 ;;;   閉じ          HttpShutdown で新しい要求を受けず、開いている ws の全部へ close 1000 を積み、書き手が流し切るのを drain-seconds まで待ち、
 ;;;                 残った接続は落として待ち受けを畳む。以後の HttpNextRequest は HttpServerClosed
 ;;;   送りの勘定    積んだ・流した・捨てた byte と流すまでの所要を数え、TakeWsSendReport で渡して 0 に戻す(消費者の計器の材料)
+;;; 台本の答え手と同じに決める物は http_server_effects.hy の判断の defk を呼ぶ(本文を運ぶ答えか carries-content・ws の断りの status
+;;; ws-refusal-status・送りの上限で切るか send-overflows・WsClosed で名乗る状態符と理由 closing-of — こちらの WsClose ならその状態符と理由、
+;;; 相手の close なら相手の状態符と理由)。契約テストは tests/test_http_server_contract.hy。
 ;;; 並び: 組の外側に await-handler が要る。
 (require doeff-hy.macros [defhandler <- val])
 (import asyncio)
@@ -37,8 +40,11 @@
                                                 HttpNextRequest HttpRespond HttpForward WsForward WsAccept WsSendText WsClose HttpShutdown
                                                 TakeWsSendReport WsSendReport WsOpened WsTextArrived WsBinaryArrived WsClosed
                                                 HttpBodyBytes HttpBodyFileRange HttpNoBody FLUSH-SAMPLES-LIMIT DEFAULT-DRAIN-SECONDS WS-CLOSE-NORMAL
-                                                WS-CLOSE-ABNORMAL HttpReadBody HttpBodyRead HttpBodyTooLarge HttpBodyFailed HttpBodyOutcome])
+                                                WS-CLOSE-ABNORMAL HttpReadBody HttpBodyRead HttpBodyTooLarge HttpBodyFailed HttpBodyOutcome
+                                                WS-REFUSAL-TEXT WS-CUT-REASON WsCloseFrame carries-content ws-refusal-status
+                                                send-overflows closing-of])
 (import aiohttp.web_protocol [PayloadAccessError])
+(import doeff [run])
 
 ;; file の範囲を送る塊の byte 数。
 (val FILE-CHUNK-BYTES 262144)
@@ -58,8 +64,6 @@
 (val ABNORMAL-CLOSE-CODES (frozenset #(1006 1015)))
 (val NORMAL-CLOSE 1000)
 (val RELAY-FAILED-CLOSE 1011)
-;; 送りの上限で切った接続の WsClosed の理由。
-(val CUT-REASON "送りの箱が上限を超えた(読まない相手)")
 
 
 (defn #^ bool upgrade-asked [#^ web.Request request]  ; defk にできない: aiohttp の要求の頭を読む受け口の実 I/O
@@ -121,17 +125,16 @@
 
 
 (defn #^ int refusal-status [#^ web.Request request]  ; defk にできない: aiohttp の要求の頭を読む受け口の実 I/O
-  "ws に上げられない要求へ返す断りの status を決めるため(GET でない 405・Upgrade: websocket が無い 426・他の形の違いは 400)。"
-  (cond
-    (!= request.method "GET") 405
-    (not (upgrade-asked request)) 426
-    True 400))
+  "ws に上げられない要求へ返す断りの status を決めるため(形の断りは台本の答え手と同じ ws-refusal-status — GET でない 405・
+   Upgrade: websocket が無い 426。形が合っても handshake の残りの検めで断れば 400)。"
+  (or (run (ws-refusal-status request.method (upgrade-asked request))) 400))
 
 
 (defclass WsPeer []
   "ws に上げた接続 1 本と、その送りの箱(await-handler の共有の event loop の上だけで触る)。outbox = 積んだ物の列(#(\"text\" 文 積んだ拍)
    か #(\"close\" #(状態符 理由) 積んだ拍))・pending = 箱の文の byte の合計・closed = 以後は積まない(閉じを積んだ・切った・終わった)・
-   cut = 送りの上限で切った理由(None = 切っていない)・wake = 書き手を起こす印・writer = 書き手の task。"
+   cut = 送りの上限で切った理由(None = 切っていない)・sent = こちらが積んだ閉じ(WsCloseFrame)・received = 相手から受けた閉じ・
+   wake = 書き手を起こす印・writer = 書き手の task。"
 
   (defn #^ None __init__ [self #^ str ticket #^ web.Request request #^ web.WebSocketResponse ws]
     (setv self.ticket ticket
@@ -141,6 +144,8 @@
           self.pending 0
           self.closed False
           self.cut None
+          #^ (| WsCloseFrame None) self.sent None
+          #^ (| WsCloseFrame None) self.received None
           self.wake (asyncio.Event)
           self.writer None)
     None))
@@ -236,7 +241,7 @@
     (when (not (. (.can-prepare ws request) ok))
       (setv status (refusal-status request))
       (relay-failed (.format "札 {} の ws の handshake が成らなかった: 形が違う(status {})" ticket status))
-      (return (web.Response :status status :text "WebSocket の Upgrade(GET・Upgrade: websocket・Sec-WebSocket-Key)が要る")))
+      (return (web.Response :status status :text WS-REFUSAL-TEXT)))
     (try
       (await (.prepare ws request))
       (except [error #(ConnectionResetError RuntimeError web.HTTPException)]
@@ -247,10 +252,14 @@
     (setv peer.writer (asyncio.create-task (self.write-loop peer)))
     (await (.put self.queue (WsOpened :ticket ticket :received-at (time.monotonic))))
     (try
-      (for [:async message ws]
+      ;; async for では相手の close の理由(message.extra)が読めないので、receive を直に回して相手の閉じを控える。
+      (while True
+        (setv message (await (.receive ws)))
         (match message.type
           WSMsgType.TEXT (await (.put self.queue (WsTextArrived :ticket ticket :text message.data :received-at (time.monotonic))))
           WSMsgType.BINARY (await (.put self.queue (WsBinaryArrived :ticket ticket :data message.data :received-at (time.monotonic))))
+          WSMsgType.CLOSE (do (setv peer.received (WsCloseFrame :code (int message.data) :reason (or message.extra "")))
+                              (break))
           _ (break)))
       (except [#(ConnectionResetError RuntimeError)] None)
       (finally
@@ -266,13 +275,10 @@
     (when (is-not peer.writer None)
       (.cancel peer.writer))
     (.pop self.peers peer.ticket None)
-    (setv code (cond
-                 (is-not peer.cut None) WS-CLOSE-ABNORMAL
-                 (is peer.ws.close-code None) WS-CLOSE-ABNORMAL
-                 True peer.ws.close-code))
-    (setv said (getattr peer.ws "close_reason" None))
-    (setv reason (cond (is-not peer.cut None) peer.cut (isinstance said str) said True ""))
-    (await (.put self.queue (WsClosed :ticket peer.ticket :code code :reason reason :received-at (time.monotonic))))
+    ;; 名乗る状態符と理由は台本の答え手と同じ closing-of で決める(切り・こちらの閉じ・相手の閉じ・切れた時の状態符の順)。
+    (setv lost peer.ws.close-code)
+    (setv frame (run (closing-of peer.cut peer.sent peer.received (if (is lost None) None (int lost)))))
+    (await (.put self.queue (WsClosed :ticket peer.ticket :code frame.code :reason frame.reason :received-at (time.monotonic))))
     None)
 
   (defn :async #^ None write-loop [self #^ WsPeer peer]
@@ -319,10 +325,14 @@
     (setv peer (.get self.peers ticket))
     (when (or (is peer None) peer.closed)
       (return None))
-    (setv size (len (.encode text "utf-8")))
-    (if (> (+ peer.pending size) self.ws-send-max-bytes)
+    (setv size (len (.encode text "utf-8"))
+          limit self.ws-send-max-bytes)
+    (when (is limit None)
+      (raise (RuntimeError "HttpListen の前の WsSendText")))
+    ;; 切るかは台本の答え手と同じ send-overflows で決める(上限を超える 1 通は積まずに切る)。
+    (if (run (send-overflows peer.pending size limit))
         (do (setv self.cuts (+ self.cuts 1)
-                  peer.cut CUT-REASON)
+                  peer.cut WS-CUT-REASON)
             (self.seal peer 0)
             (when peer.request.transport
               (.abort peer.request.transport)))
@@ -339,7 +349,8 @@
     (when (or (is peer None) peer.closed)
       (return None))
     (.append peer.outbox #("close" #(code reason) (time.monotonic)))
-    (setv peer.closed True)
+    (setv peer.closed True
+          peer.sent (WsCloseFrame :code code :reason reason))
     (.set peer.wake)
     None)
 
@@ -405,7 +416,9 @@
       (if (= (.lower header.name) "content-length")
           (setv response.content-length (int header.value))
           (.add response.headers header.name header.value)))
-    (match body
+    ;; 本文を運ばない答え(HEAD・1xx・204・304)は、本文を渡されても送らない — 台本の答え手と同じ carries-content で決める。
+    (setv sent-body (if (run (carries-content request.method status)) body (HttpNoBody)))
+    (match sent-body
       (HttpBodyBytes :data data)
         (do (setv response.content-length (len data))
             (await (.prepare response request))
