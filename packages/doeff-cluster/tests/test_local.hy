@@ -7,6 +7,7 @@
 (require doeff-hy.macros [deftest defk defhandler <- val var])
 (require doeff-hy.record [defrecord])
 (import dataclasses [dataclass])
+(import json)
 (import pytest)
 (import doeff [with-handlers])
 (import doeff_time [Delay])
@@ -20,7 +21,9 @@
 (import doeff_cluster.service_model [System CallShape job system-of])
 (import tests.fixtures.envs [sim-foundation])
 (import tests.fixtures.sim_programs [beacons beacons-v2 handoff-beacons handoff-beacons-v2 relay flavors fenced gpu-only
-                                    holding-unloadable Unloadable spawners quitters pulses detaching])
+                                    holding-unloadable Unloadable spawners quitters pulses detaching context-env-readers])
+(import doeff_cluster.runtime_env_model [RuntimeEnv runtime-env->json])
+(import tests.env_fixtures [LOCK env-of])
 
 
 (defrecord Seen
@@ -361,6 +364,31 @@
   (assert (= first.value 3) first)
   (assert (<= (get seen.just-after key "n") 5) seen.just-after)
   (assert (= (get seen.later key "n") (get seen.just-after key "n")) #(seen.just-after seen.later)))
+
+
+(defk ended-reader []
+  {:pre [] :post [(: % tuple)] :tags {:context "doeff-cluster-test" :role "program"}}
+  "筋書き: 読み手の process が値で抜けるまで待ち、その process の列を返す。"
+  (<- first tuple (ProcessesOf "context-env-reader"))
+  (var processes first)
+  (while (or (not processes) (is (. (get processes 0) exit-code) None))
+    (<- (Delay 1.0))
+    (<- again tuple (ProcessesOf "context-env-reader"))
+    (:= processes again))
+  processes)
+
+
+(deftest test-the-declared-runtime-env-reaches-the-child-run-context
+  ;; sim-cluster の runtime-env は本番の declare の --runtime-env と同じ欄に載り、本物の worker が準備して子の run-context の
+  ;; runtime-env(DOEFF_RUNTIME_ENV)として渡す。宣言しなければ子の run-context は空。
+  (<- env RuntimeEnv (env-of "app-1" "lib-1" LOCK))
+  (<- declared dict (runtime-env->json env))
+  (<- with-env tuple (sim-cluster (context-env-readers sim-foundation) (ended-reader) :runtime-env env))
+  (val read (get with-env 0))
+  (assert (= read.exit-code 0) with-env)
+  (assert (= (json.loads read.value) declared) read)
+  (<- without tuple (sim-cluster (context-env-readers sim-foundation) (ended-reader)))
+  (assert (= (. (get without 0) value) "") without))
 
 
 ;; --- 切り離した task を service が出す(段 5b の 2)------------------------------------------------------

@@ -364,3 +364,22 @@
 (defsystem long-quitters [foundation]
   "見本の系: 子の task に盤へ書かせ、自分は 120 拍で値を返して抜ける service 1 つ(process の終わりを待つ検)"
   (long-quitter (spawning-program foundation "long/" 120) :needs #{"cluster-net"}))
+
+
+;; --- 宣言の実行環境が子の run-context に届く検(test_local.hy)-------------------------------------------------------
+
+(defk context-env-body []
+  {:pre [] :post [(: % str)] :tags {:context "doeff-cluster-test" :role "program"}}
+  "自分の run-context の実行環境の宣言(JSON の文字列 — 宣言に無ければ空)を値にして抜ける。"
+  (<- ctx RunContext (Ask HOST-CONTRACT.run-context-key))
+  ctx.runtime-env)
+
+(defk context-env-program [foundation]
+  {:pre [(: foundation Callable)] :post [(: % str)] :tags {:context "doeff-cluster-test" :role "entry"}}
+  "service: context-env-body を土台で包む。"
+  (<- declared str (foundation (context-env-body)))
+  declared)
+
+(defsystem context-env-readers [foundation]
+  "見本の系: 自分の run-context の実行環境の宣言を値にして抜ける service 1 つ"
+  (context-env-reader (context-env-program foundation) :needs #{"cluster-net"}))

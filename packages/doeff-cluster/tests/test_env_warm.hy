@@ -21,7 +21,8 @@
 (import doeff_cluster.detached_model [SubmitDetached AwaitDetached DetachedSucceeded])
 (import httpx)
 (import doeff_cluster.detached [WarmClient warm-cluster])
-(import doeff_cluster.local [sim-cluster SimWorker SimLink ClientLink coordinator-answers ReadCoordinator ProcessesOf PreparationsOf])
+(import doeff_cluster.local [sim-cluster SimWorker SimLink ClientLink coordinator-answers ReadCoordinator ProcessesOf PreparationsOf
+                             FailRoute])
 (import doeff_cluster.service_model [system-of])
 (import doeff_cluster.warm_model [WarmRuntimeEnv ReadWarmState WarmState WarmUnreachable WarmAnswer warm-key warm-state-of-json])
 (import doeff_cluster.env_upkeep [RootInfo PrepareLimits sweep-choice prepare-overdue env-capacity])
@@ -262,6 +263,38 @@
 
 ;; 接続が断られる時(送り直しの期限を過ぎた通信の失敗)の答え・sim の宿の同じ答え・届く時の頼みと読みの姿は、本物と sim が同じ Program を
 ;; 通る契約テスト test_warm_contract.hy が持つ。
+
+
+;; --- sim-cluster の故障の口 FailRoute: coordinator の /warm の 5xx ------------------------------------------------
+
+(val FAULT-SECONDS 30.0)
+
+(defk warm-under-a-failed-route []
+  {:pre [] :post [(: % tuple)] :tags {:context "doeff-cluster-test" :role "program"}}
+  "筋書き: POST /warm に FAULT-SECONDS 秒 503 で答える故障を入れて温めを頼み、行を読み、故障が明けてから頼み直す。答え =
+   #(故障の間の頼みの答え 行の読み 明けた後の頼みの答え)。"
+  (<- env RuntimeEnv (env-of "app-1" "lib-1" LOCK))
+  (<- (FailRoute "POST" "/warm" 503 FAULT-SECONDS))
+  (<- failed WarmAnswer (WarmRuntimeEnv env (frozenset ["local"]) 600.0 "tests"))
+  (<- key str (warm-key env #("local")))
+  (<- absent WarmAnswer (ReadWarmState key))
+  (<- (Delay (+ FAULT-SECONDS 1.0)))
+  (<- again WarmAnswer (WarmRuntimeEnv env (frozenset ["local"]) 600.0 "tests"))
+  #(failed absent again))
+
+(deftest test-a-failed-warm-route-answers-unreachable-and-writes-no-row
+  ;; 故障の間の頼みは本番の warm-cluster と同じ WarmUnreachable(理由に返った状態)で、要求は調停ループに届かない(同じキーの行の読み —
+  ;; 故障を入れていない口 — は空の姿)。故障が明けた後の頼みは本物の coordinator が書いた行の姿。
+  (<- seen tuple (sim-cluster NO-JOBS (warm-under-a-failed-route) :workers WARM-WORKERS))
+  (val failed (get seen 0))
+  (val absent (get seen 1))
+  (val again (get seen 2))
+  (assert (isinstance failed WarmUnreachable) failed)
+  (assert (in "503" failed.detail) failed)
+  (assert (= #(absent.ready absent.preparing absent.until-ms) #(#() #() 0)) absent)
+  (assert (isinstance again WarmState) again)
+  (assert (= again.key absent.key) #(again absent))
+  (assert (> again.until-ms 0) again))
 
 
 (deftest test-placement-prefers-a-warm-worker-and-marks-a-cold-start
