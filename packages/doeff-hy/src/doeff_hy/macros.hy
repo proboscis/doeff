@@ -615,6 +615,9 @@ defk {name}: :post type annotation cannot be an empty string.
 
 (import doeff-hy.binding-forms [rewrite-body BodyKind ModuleBindings ModuleNames module-declaration])
 (import doeff-hy.static-view [report-findings])
+;; pytest の item の記録の口(agora-redesign #1211 — 記録の形の定義元は pytest_items.py)
+(import doeff-hy.pytest-items [record-function :as _record-test-function
+                               record-module-binding :as _record-module-binding])
 (import hy.scoping [ScopeGlobal])
 
 (defn _module-bindings [compiler]
@@ -659,6 +662,9 @@ defk {name}: :post type annotation cannot be an empty string.
                            "defk・deftest・defhandler の節の本体か、module の直下にだけ書けます"
                            "(defn・fn・class・let の中には書けません — 関数は defk で書きます)。"
                            " [ADR-DOE-HY-006]\n"))))
+  ;; module の直下の pytestmark を pytest の item の記録に載せる(agora-redesign #1211)
+  (when (is-not compiler None)
+    (_record-module-binding compiler head args))
   (module-declaration (_module-bindings compiler) form (_static-view?)))
 
 (defmacro val [_hy-compiler #* args]
@@ -1701,36 +1707,39 @@ the effect in the enclosing do-context.
       `(doeff_interpreter
          ((_doeff_do (fn [] ~@gen-body))))))
 
-  ;; Build the parametrize decorators
-  (setv decorators [])
+  ;; The pytest decorators, in source order, as #(kind first second) — the one list that both the
+  ;; decorator forms below and the item record (doeff-hy.pytest-items, agora-redesign #1211) are made from.
+  (setv item-decorators [])
 
   ;; :interpreters → @pytest.mark.parametrize("doeff_interpreter_name", [...])
   (when (is-not interpreters None)
-    (.append decorators
-      `(.parametrize (. pytest mark) "doeff_interpreter_name"
-         ~(hy.models.List interpreters))))
+    (.append item-decorators #("parametrize" "doeff_interpreter_name" (hy.models.List interpreters))))
 
   ;; :params → @pytest.mark.parametrize for each key
   (when (is-not params-dict None)
     (for [#(k v) (zip (cut params-dict None None 2) (cut params-dict 1 None 2))]
-      (setv param-name (if (isinstance k hy.models.String) (str k) (str k)))
-      (.append decorators
-        `(.parametrize (. pytest mark) ~(hy.models.String param-name)
-           ~v))))
+      (.append item-decorators #("parametrize" (str k) v))))
 
   ;; :marks → @pytest.mark.<name> for each mark
   (when (is-not marks None)
     (for [m marks]
-      (setv mark-name (if (isinstance m hy.models.String) (str m) (str m)))
-      (.append decorators
-        `(. (. pytest mark) ~(hy.models.Symbol mark-name)))))
+      (.append item-decorators #("mark" (str m) None))))
 
   ;; :skip-if → @pytest.mark.skipif(condition, reason=...)
   (when (is-not skip-if-expr None)
-    (setv reason (if (is-not skip-reason None) skip-reason
-                     (hy.models.String "skip condition met")))
-    (.append decorators
-      `(.skipif (. pytest mark) ~skip-if-expr :reason ~reason)))
+    (.append item-decorators #("skipif" None None)))
+
+  (setv decorators
+    (lfor #(kind first second) item-decorators
+      (match kind
+        "parametrize" `(.parametrize (. pytest mark) ~(hy.models.String first) ~second)
+        "mark" `(. (. pytest mark) ~(hy.models.Symbol first))
+        "skipif" `(.skipif (. pytest mark) ~skip-if-expr
+                    :reason ~(if (is-not skip-reason None) skip-reason
+                                 (hy.models.String "skip condition met"))))))
+
+  ;; pytest の item の記録 — 収集が test module を import せずに読む(agora-redesign #1211)
+  (_record-test-function _hy-compiler name fn-params item-decorators)
 
   ;; Assemble the function definition with decorators
   (locate-synthesized (if decorators

@@ -3,6 +3,8 @@
 (require doeff-hy.macros [deftest])
 
 (import hy)
+;; pytest の item の記録の口(agora-redesign #1211 — 記録の形の定義元は doeff_hy/pytest_items.py)
+(import doeff-hy.pytest-items [record-function :as _record-test-function])
 
 (defn _kw-text [x]
   (setv text (str x))
@@ -61,10 +63,11 @@
       (.append refs item)))
   #(emitted refs))
 
-(defmacro defsemgrep [name #* forms]
+(defmacro defsemgrep [_hy-compiler name #* forms]
   "Define a Semgrep enforcement with bad/good fixtures and a pytest check."
   (setv rule-id (hy.models.String (_symbol-text name)))
   (setv test-name (_test-symbol "test_" (+ (_symbol-text name) "_defsemgrep")))
+  (_record-test-function _hy-compiler test-name [] [])
   (if (and (>= (len forms) 3) (not (isinstance (get forms 0) hy.models.Keyword)))
       ;; Installed form: (defsemgrep name "rule-id" [hit …] [clean …] [:config "path"] [:expand-hy True])
       ;; :config absent → the nearest `.semgrep.yaml` above pytest's cwd (legacy).
@@ -126,7 +129,7 @@
            (defn ~test-name []
              (assert-semgrep-enforcement ~rule-id))))))
 
-(defmacro defadr [name #* forms]
+(defmacro defadr [_hy-compiler name #* forms]
   "Define an executable ADR contract.
 
   Inline enforcement forms inside :enforcement are emitted before the ADR is
@@ -146,6 +149,7 @@
   (setv laws (.get data "laws" `[]))
   (setv plans (.get data "plans" `[]))
   (setv test-name (_test-symbol "test_" (+ (_symbol-text name) "_adr_contract")))
+  (_record-test-function _hy-compiler test-name [] [])
   `(do
      (import doeff_adr.registry
        [register-adr assert-adr-contract enforcement-ref
