@@ -9,7 +9,7 @@
 //! この規則は「判定の二重化」を見るので、判定でないことを述べる註(例: 「routedTo はここで読まない」)まで赤にしない。
 //! 判定は字面の行で読む(この語彙を使わずに済む形かは linter には分からない — repo の宣言が「これは判定の語彙だ」と決める)。
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use super::architecture::VocabularyScope;
 use super::{glob_matches, relative_path};
@@ -68,27 +68,51 @@ pub struct VocabularyHit {
 /// 歩かない dir(隠し dir と生成物)。
 const SKIPPED_DIRS: &[&str] = &["node_modules", "target", "__pycache__", "venv", "site-packages"];
 
-/// `:single-point-vocabulary` の群ごとに `:except` の外の当たりを探す(path の順・群の宣言の順)。
-pub fn find(root: &Path, scopes: &[VocabularyScope]) -> Vec<VocabularyHit> {
+/// 歩く Hy の file(根からの path・path の順)— focus(命令の行の名指し)が在ればその下だけを歩き、無ければ根の全体を歩く。
+/// 隠し dir と生成物の下の file は、どちらの歩き方でも数えない(名指しがその中の file でも、全体の実行と同じ答えにするため)。
+fn walked_hy_files(root: &Path, focus: Option<&[PathBuf]>) -> Vec<String> {
+    let starts: Vec<PathBuf> = match focus {
+        Some(paths) => paths.to_vec(),
+        None => vec![root.to_path_buf()],
+    };
+    let mut rels: Vec<String> = starts
+        .iter()
+        .flat_map(|start| {
+            walkdir::WalkDir::new(start).follow_links(false).into_iter().filter_entry(|entry| {
+                let name = entry.file_name().to_string_lossy();
+                entry.depth() == 0 || !entry.file_type().is_dir() || !(name.starts_with('.') || SKIPPED_DIRS.contains(&name.as_ref()))
+            })
+        })
+        .filter_map(Result::ok)
+        .filter(|entry| entry.file_type().is_file())
+        .filter(|entry| entry.path().extension().is_some_and(|e| e == "hy"))
+        .filter_map(|entry| relative_path(root, entry.path()))
+        .filter(|rel| {
+            let dirs: Vec<&str> = rel.split('/').collect();
+            !dirs[..dirs.len().saturating_sub(1)].iter().any(|d| d.starts_with('.') || SKIPPED_DIRS.contains(d))
+        })
+        .collect();
+    rels.sort();
+    rels.dedup();
+    rels
+}
+
+/// `:single-point-vocabulary` の群ごとに `:except` の外の当たりを探す(群の宣言の順・path の順)。repo は 1 度だけ歩き(群ごとに
+/// 歩き直さない)、focus が在ればその下の file だけを読む — 当たりは file ごとにその file に付くので、答えは全体を読んで名指しで
+/// 絞った時と同じ(1 file の commit の hook で repo の全部の Hy を読んでいた・agora-redesign #1418)。
+pub fn find(root: &Path, scopes: &[VocabularyScope], focus: Option<&[PathBuf]>) -> Vec<VocabularyHit> {
     let mut out = Vec::new();
+    let walked = walked_hy_files(root, focus);
     for scope in scopes {
         let regexes: Vec<regex::Regex> = scope.patterns.iter().filter_map(|p| regex::Regex::new(p).ok()).collect();
         if regexes.is_empty() {
             continue;
         }
-        let walker = walkdir::WalkDir::new(root).follow_links(false).into_iter().filter_entry(|entry| {
-            let name = entry.file_name().to_string_lossy();
-            entry.depth() == 0 || !entry.file_type().is_dir() || !(name.starts_with('.') || SKIPPED_DIRS.contains(&name.as_ref()))
-        });
-        let mut rels: Vec<String> = walker
-            .filter_map(Result::ok)
-            .filter(|entry| entry.file_type().is_file())
-            .filter(|entry| entry.path().extension().is_some_and(|e| e == "hy"))
-            .filter_map(|entry| relative_path(root, entry.path()))
+        let rels = walked
+            .iter()
             .filter(|rel| scope.files.iter().any(|p| glob_matches(p, rel)))
             .filter(|rel| !scope.except.iter().any(|p| glob_matches(p, rel)))
-            .collect();
-        rels.sort();
+            .cloned();
         for rel in rels {
             let Ok(source) = std::fs::read_to_string(root.join(&rel)) else { continue };
             let code = strip_comments(&source);
@@ -127,7 +151,7 @@ mod tests {
             except: vec!["glue/slice.hy".to_string()],
             instead: "glue/slice.hy の答えを読む".to_string(),
         }];
-        let hits = find(dir.path(), &scopes);
+        let hits = find(dir.path(), &scopes, None);
         assert_eq!(hits.len(), 1, "{:?}", hits);
         assert_eq!(hits[0].rel, "glue/queue.hy");
         assert_eq!(hits[0].group, "job-phase");
@@ -152,7 +176,7 @@ mod tests {
             except: vec!["glue/slice.hy".to_string()],
             instead: "glue/slice.hy の答えを読む".to_string(),
         }];
-        let hits = find(dir.path(), &scopes);
+        let hits = find(dir.path(), &scopes, None);
         assert_eq!(hits.len(), 1, "{:?}", hits);
         assert_eq!(hits[0].line, 2, "註と文字列の中の当たりは数えない: {:?}", hits);
         assert_eq!(hits[0].count, 1);
@@ -170,7 +194,7 @@ mod tests {
             except: vec![],
             instead: "glue/slice.hy の答えを読む".to_string(),
         }];
-        assert!(find(dir.path(), &scopes).is_empty());
+        assert!(find(dir.path(), &scopes, None).is_empty());
     }
 
     #[test]
@@ -185,6 +209,31 @@ mod tests {
             except: vec!["glue/slice.hy".to_string()],
             instead: "glue/slice.hy の答えを読む".to_string(),
         }];
-        assert!(find(dir.path(), &scopes).is_empty());
+        assert!(find(dir.path(), &scopes, None).is_empty());
+    }
+
+    #[test]
+    fn named_paths_read_only_the_named_files_with_the_same_answer() {
+        // agora-redesign #1418: 名指しの実行の当たりは、全体の実行の当たりを名指しで絞った物と同じ(名指しの外の b.hy は出ない)。
+        // 隠し dir の下の file は名指しても数えない(全体の実行と同じ)。読めない file は全体でも黙って飛ばす(今までどおり)。
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(dir.path().join("glue")).unwrap();
+        std::fs::create_dir_all(dir.path().join("glue/.hidden")).unwrap();
+        std::fs::write(dir.path().join("glue/a.hy"), "(when (= phase JOB-PHASE-RUNNING) 1)\n").unwrap();
+        std::fs::write(dir.path().join("glue/b.hy"), "(when (= phase JOB-PHASE-ENDED) 2)\n").unwrap();
+        std::fs::write(dir.path().join("glue/.hidden/c.hy"), "(when (= phase JOB-PHASE-ENDED) 3)\n").unwrap();
+        std::fs::write(dir.path().join("glue/broken.hy"), [0xff_u8, 0xfe]).unwrap();
+        let scopes = vec![VocabularyScope {
+            name: "job-phase".to_string(),
+            patterns: vec![r"\bJOB-PHASE-[A-Z]+\b".to_string()],
+            files: vec!["glue/**".to_string()],
+            except: vec![],
+            instead: "答えを読む".to_string(),
+        }];
+        let whole = find(dir.path(), &scopes, None);
+        assert_eq!(whole.iter().map(|h| h.rel.as_str()).collect::<Vec<_>>(), vec!["glue/a.hy", "glue/b.hy"]);
+        let named = [dir.path().join("glue/a.hy"), dir.path().join("glue/.hidden/c.hy")];
+        let hits = find(dir.path(), &scopes, Some(&named));
+        assert_eq!(hits, whole.into_iter().filter(|h| h.rel == "glue/a.hy").collect::<Vec<_>>());
     }
 }
