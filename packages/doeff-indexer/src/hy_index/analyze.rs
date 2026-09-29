@@ -1364,6 +1364,7 @@ impl<'a> Analyzer<'a> {
                 qualifier: qualifier.clone(),
                 range: self.lines.range(start, start + part.len()),
                 member: member || method_head || qualifier.is_some(),
+                target: None,
             });
             qualifier = Some(match qualifier {
                 Some(prefix) => format!("{}.{}", prefix, part),

@@ -159,6 +159,9 @@ pub fn link(file: &mut HyFileIndex) {
     for call in &mut file.calls {
         call.target = scope.resolve(call.qualifier.as_deref(), &call.mangled);
     }
+    for reference in &mut file.references {
+        reference.target = scope.resolve(reference.qualifier.as_deref(), &reference.mangled);
+    }
     for definition in &mut file.definitions {
         for effect in definition.effects.iter_mut().flatten() {
             scope.fill(effect);

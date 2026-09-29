@@ -97,6 +97,9 @@ pub enum ProjectRule {
     EffectsDisagreeWithInference,
     /// DOEFF130: 翻訳の層の handler が業務の intent(層 intent の型の effect)を出す — import した defk の先まで辿る。
     TranslationEmitsIntent,
+    /// DOEFF131: architecture.hy の許可名簿(:world-handlers)の外の定義が、名簿の :wraps に挙げた doeff の実 I/O の handler を名指す
+    /// (外の世界に触れてよいのは名簿の定義だけ — agora-redesign #1106 の R1)。
+    WorldHandlerNamedOutsideList,
     /// DOEFF201(意味・Jev): 翻訳の層の定義が業務の判断をしている。
     SemanticBusinessDecision,
     /// DOEFF202(意味・Jev): 判断の層の定義が通信の手段を知っている。
@@ -111,7 +114,7 @@ pub enum ProjectRule {
 
 impl ProjectRule {
     /// 全部の層の規則(出力の一覧と `ALL` の展開のため)。
-    pub const ALL: [ProjectRule; 35] = [
+    pub const ALL: &'static [ProjectRule] = &[
         ProjectRule::UnknownConfigKey,
         ProjectRule::UnreadableFile,
         ProjectRule::LayerImportDirection,
@@ -142,6 +145,7 @@ impl ProjectRule {
         ProjectRule::DefkCalledBare,
         ProjectRule::EffectsDisagreeWithInference,
         ProjectRule::TranslationEmitsIntent,
+        ProjectRule::WorldHandlerNamedOutsideList,
         ProjectRule::SemanticBusinessDecision,
         ProjectRule::SemanticTransportKnowledge,
         ProjectRule::SemanticPlainCallable,
@@ -182,6 +186,7 @@ impl ProjectRule {
             ProjectRule::DefkCalledBare => "DOEFF126",
             ProjectRule::EffectsDisagreeWithInference => "DOEFF127",
             ProjectRule::TranslationEmitsIntent => "DOEFF130",
+            ProjectRule::WorldHandlerNamedOutsideList => "DOEFF131",
             ProjectRule::SemanticBusinessDecision => "DOEFF201",
             ProjectRule::SemanticTransportKnowledge => "DOEFF202",
             ProjectRule::SemanticPlainCallable => "DOEFF203",
@@ -202,6 +207,7 @@ impl ProjectRule {
             | ProjectRule::LayerForbiddenModule
             | ProjectRule::LayerTypesOnly
             | ProjectRule::RawSideEffectDirect
+            | ProjectRule::WorldHandlerNamedOutsideList
             | ProjectRule::ServiceBoundary
             | ProjectRule::ServiceDependency
             | ProjectRule::TranslationEmitsIntent
@@ -265,7 +271,7 @@ impl ProjectRule {
     /// ID の綴り(大文字小文字は問わない)から規則を引く。層の規則でなければ None。
     pub fn parse(id: &str) -> Option<ProjectRule> {
         let upper = id.to_uppercase();
-        ProjectRule::ALL.into_iter().find(|rule| rule.id() == upper)
+        ProjectRule::ALL.iter().copied().find(|rule| rule.id() == upper)
     }
 
     /// 層ごとに判じる規則か(law の layers が効く規則)。DOEFF108 は業務の file 全体に当たり、層を持たない。
@@ -278,6 +284,7 @@ impl ProjectRule {
             | ProjectRule::RoleMatchesLayer
             | ProjectRule::RawSideEffectDirect
             | ProjectRule::RawSideEffectVia
+            | ProjectRule::WorldHandlerNamedOutsideList
             | ProjectRule::ServiceBoundary
             | ProjectRule::ContextMatchesService
             | ProjectRule::ServiceDependency
@@ -338,6 +345,7 @@ impl ProjectRule {
             ProjectRule::DefkCalledBare => "defk を素で呼んで答えに使う",
             ProjectRule::EffectsDisagreeWithInference => ":effects の宣言が推論と合わない",
             ProjectRule::TranslationEmitsIntent => "翻訳の handler が業務の intent を出す",
+            ProjectRule::WorldHandlerNamedOutsideList => "許可名簿の外で実 I/O の handler を名指す",
             ProjectRule::SemanticBusinessDecision => "翻訳の層で業務の判断(Jev)",
             ProjectRule::SemanticTransportKnowledge => "判断の層が通信の手段を知る(Jev)",
             ProjectRule::SemanticPlainCallable => "deff の理由が合わない(Jev)",
@@ -358,7 +366,7 @@ impl ProjectRule {
             ProjectRule::ModuleDeclaresTags | ProjectRule::RoleMatchesLayer | ProjectRule::ContextMatchesService => {
                 RuleFamily::Tags
             }
-            ProjectRule::RawSideEffectDirect | ProjectRule::RawSideEffectVia => RuleFamily::Raw,
+            ProjectRule::RawSideEffectDirect | ProjectRule::RawSideEffectVia | ProjectRule::WorldHandlerNamedOutsideList => RuleFamily::Raw,
             ProjectRule::EnvironmentName => RuleFamily::Naming,
             ProjectRule::UnknownConfigKey
             | ProjectRule::UnreadableFile
@@ -420,6 +428,7 @@ impl ProjectRule {
             ProjectRule::DefkCalledBare => "defk Called Bare",
             ProjectRule::EffectsDisagreeWithInference => "Effects Disagree With Inference",
             ProjectRule::TranslationEmitsIntent => "Translation Emits Intent",
+            ProjectRule::WorldHandlerNamedOutsideList => "World Handler Named Outside The List",
             ProjectRule::SemanticBusinessDecision => "Business Decision In Translation (Jev)",
             ProjectRule::SemanticTransportKnowledge => "Transport Knowledge In Core (Jev)",
             ProjectRule::SemanticPlainCallable => "Plain Callable Reason (Jev)",
@@ -462,6 +471,7 @@ impl ProjectRule {
             ProjectRule::FieldsJoinedIntoText => "同じ値の 2 つ以上の欄を + か f 文字列で 1 本の文字列につながない",
             ProjectRule::RebuiltAccumulator => "for / while の中で (:= xs (+ xs #(…))) と蓄えを毎回作り直さない",
             ProjectRule::EffectsDisagreeWithInference => "defk の :effects を書いたなら、本体で撃つ呼び((<- …)・(! …))から推論した effect と同じ集合にする — 宣言に無い effect を起こさず、起こさない effect を宣言しない(:effects の無い defk は対象外)",
+            ProjectRule::WorldHandlerNamedOutsideList => "architecture.hy の :world-handlers の :wraps に挙げた doeff の実 I/O の handler(os-file-handler・http-production-handler …)を名指してよいのは、許可名簿の定義(とその中の入れ子の定義)だけ — 値として渡す所(with-handlers の列)も呼び出しも数える",
             ProjectRule::TranslationEmitsIntent => "翻訳の層(設定の handler_layers)の handler — defhandler と [effect k] を受ける関数 — は doeff の汎用の effect だけを出し、業務の intent(設定の intent_layers の型)を出さない — 本体で実行する呼び((<- …)・(! …))を import した defk の先まで辿る",
             ProjectRule::DefkCalledBare => "defk の定義は Program として渡す所((<- …) の右辺・(! …)・(return …)・Program を受ける呼びの引数)だけで呼ぶ — 素で呼ぶと答えではなく Program が返る",
             ProjectRule::SemanticMixedConcerns => "役が judgment / program の定義は、入力の形の検めと業務の判断を混ぜない(Jev の判定 — warning か info)",
@@ -503,6 +513,7 @@ impl ProjectRule {
             ProjectRule::FieldsJoinedIntoText => "型のある値のまま渡す(欄を文字列に潰さない)— 文にするのは人に見せる境目の 1 か所だけ",
             ProjectRule::RebuiltAccumulator => "蓄えは内包表記(lfor)で 1 度に作る — ループの中で (+ xs #(…)) の作り直しを重ねない",
             ProjectRule::EffectsDisagreeWithInference => ":effects に起こしている effect を足すか、起こしていない effect を消す(推論は handler で受けた effect を引かない — 本体で受けているなら登録簿に載せる)",
+            ProjectRule::WorldHandlerNamedOutsideList => "名簿の定義(例 with-agora-process)の下で本体を走らせ、自分では実 I/O の handler を被せない — 新しく外の世界に触れる所が要るなら、その定義を foundation の層に置いて名簿に載せる",
             ProjectRule::TranslationEmitsIntent => "intent を出す業務の流れは層 core の program に置き、翻訳の handler は受けた intent を doeff の汎用の effect(HttpRequest・記録の読み書き・時計 …)へ出し直すだけにする — 経由した defk が intent を出すなら、その defk を呼ばずに汎用の effect を直に使う",
             ProjectRule::DefkCalledBare => "(<- x (f …)) で束ねるか (! (f …)) で答えを受ける — 素の関数の中なら、その関数を defk にして呼び手を Program にする",
             ProjectRule::SemanticMixedConcerns => "形の検めは protocol の境目で defwire の型に parse し(形が合わなければ解く所で失敗)、この定義は型のある値を受けて判断だけをする(Jev の外れなら誤判定の一覧に載せる)",
@@ -516,7 +527,7 @@ mod tests {
     use super::*;
 
     /// DOEFF の ID → 割り当てるべき家族(依頼の表そのもの)。
-    const EXPECTED_FAMILIES: [(&str, RuleFamily); 35] = [
+    const EXPECTED_FAMILIES: &[(&str, RuleFamily)] = &[
         ("DOEFF100", RuleFamily::Place),
         ("DOEFF128", RuleFamily::Place),
         ("DOEFF101", RuleFamily::Layer),
@@ -549,6 +560,7 @@ mod tests {
         ("DOEFF126", RuleFamily::Definition),
         ("DOEFF127", RuleFamily::Definition),
         ("DOEFF130", RuleFamily::Layer),
+        ("DOEFF131", RuleFamily::Raw),
         ("DOEFF201", RuleFamily::Jev),
         ("DOEFF202", RuleFamily::Jev),
         ("DOEFF203", RuleFamily::Jev),
@@ -564,7 +576,7 @@ mod tests {
     #[test]
     fn family_matches_the_assignment_table_for_all_33_rules() {
         assert_eq!(EXPECTED_FAMILIES.len(), ProjectRule::ALL.len(), "割り当ての表が ALL の数と食い違う");
-        for (id, expected) in EXPECTED_FAMILIES {
+        for &(id, expected) in EXPECTED_FAMILIES {
             let rule = ProjectRule::parse(id).unwrap_or_else(|| panic!("{} は ProjectRule に無い", id));
             assert_eq!(rule.family(), expected, "{} の family が違う", id);
         }

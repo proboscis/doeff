@@ -456,6 +456,9 @@ pub struct EnvironmentSettings {
 pub struct RawSettingsSpec {
     pub allowed: BTreeSet<LayerId>,
     pub catalog_extra: Option<String>,
+    /// architecture.hy の許可名簿(:world-handlers)を書いた時、生の副作用を許す module(mangle した dotted の綴り)。
+    /// Some なら層の `allowed` は使わず、この module の file だけに許す(agora-redesign #1140)。
+    pub world_modules: Option<BTreeSet<String>>,
 }
 
 /// law の対応 1 件(検めた後)。
@@ -638,6 +641,7 @@ impl ProjectSettings {
                     .filter_map(|name| find_layer(name, "raw_side_effects.allowed_layers", &mut problems))
                     .collect(),
                 catalog_extra: raw.catalog_extra.clone(),
+                world_modules: None,
             }
         });
         let laws = sections

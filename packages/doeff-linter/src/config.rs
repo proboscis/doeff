@@ -135,6 +135,16 @@ impl Config {
             }
         };
         settings.architecture = architecture;
+        // 許可名簿を書いた repo では、生の副作用を許す所 = 名簿の定義の module(TOML の raw_side_effects の節が無くても判じる)。
+        if let Some(arch) = settings.architecture.as_ref().filter(|a| !a.world_handlers.is_empty()) {
+            let modules = arch.world_modules();
+            let raw = settings.raw.get_or_insert_with(|| crate::project::settings::RawSettingsSpec {
+                allowed: std::collections::BTreeSet::new(),
+                catalog_extra: None,
+                world_modules: None,
+            });
+            raw.world_modules = Some(modules);
+        }
         // 宣言した置き場所の外の module(層が先の dir など)は、:role のタグから層を推して層の規則をかける。
         if let (Some(arch), Some(layers)) = (&settings.architecture, settings.layers.as_mut()) {
             layers.infer_root = Some(crate::project::settings::normalize_dir(&arch.root));

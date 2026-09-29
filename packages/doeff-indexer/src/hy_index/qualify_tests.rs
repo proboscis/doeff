@@ -131,3 +131,22 @@ fn target_of_a_caller_matches_qualified_name_across_files() {
     let from = call(&caller, None, "view-body").caller.expect("caller");
     assert_eq!(caller.definitions[from].name, "renders");
 }
+
+/// 値として名指した handler(呼び出しにならない — `(with-handlers [os-file-handler] …)`)の完全修飾名を、呼び出しと同じ解決で
+/// 参照の `target` に埋める(agora-redesign #1140 — 外の世界に触れる handler の名指しを数えるため)。
+#[test]
+fn references_resolve_like_calls() {
+    let source = r#"(import doeff-core-effects.os-file [os-file-handler :as files])
+(import doeff-cluster.cluster-foundation)
+(require doeff-hy.macros [defk <-])
+(defk outer [body]
+  (with-handlers [files doeff-cluster.cluster-foundation.with-cluster-handlers local] body))
+"#;
+    let file = index_at("app/foundation/host.hy", source);
+    let target_of = |name: &str| {
+        file.references.iter().find(|r| r.name == name).unwrap_or_else(|| panic!("参照 {name} が無い")).target.clone()
+    };
+    assert_eq!(target_of("files").as_deref(), Some("doeff_core_effects.os_file.os_file_handler"));
+    assert_eq!(target_of("with-cluster-handlers").as_deref(), Some("doeff_cluster.cluster_foundation.with_cluster_handlers"));
+    assert_eq!(target_of("local"), None, "解決できない名に target を付けた");
+}

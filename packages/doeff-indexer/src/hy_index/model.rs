@@ -303,6 +303,11 @@ pub struct Reference {
     /// 局所の束縛の名 `stat` を `.stat` と読まないため(agora-redesign #798)。索引の JSON の契約(版 1)には出さない。
     #[serde(skip)]
     pub member: bool,
+    /// 名指した先の完全修飾名 — 呼び出しの `target` と同じ名前の解決(`qualify.rs`)。handler を値として渡す所
+    /// (`(with-handlers [os-file-handler] …)`)は呼び出しにならないので、名指しの先はここで引く(agora-redesign #1140)。
+    /// 解決できなければ None。索引の JSON の契約(版 1)には出さない。
+    #[serde(skip)]
+    pub target: Option<String>,
 }
 
 /// 呼び出しの 1 つ(`(` の直後の記号)。effect・handler・defk の間を行き来するためのもの。

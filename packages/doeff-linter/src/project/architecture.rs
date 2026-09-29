@@ -159,6 +159,21 @@ impl DefinitionRef {
     pub fn spelling(&self) -> String {
         format!("{}:{}", self.module, self.name)
     }
+
+    /// module の綴りを mangle した dotted の綴り(索引の file の module・完全修飾名の module の部分と同じ形)。
+    pub fn mangled_module(&self) -> String {
+        mangle_dotted(&self.module)
+    }
+
+    /// 完全修飾名(索引の定義の `qualified_name`・呼び出しと参照の `target` と同じ綴り)。
+    pub fn target(&self) -> String {
+        format!("{}.{}", self.mangled_module(), doeff_indexer::hy_index::mangle(&self.name))
+    }
+}
+
+/// dotted の綴りを段ごとに mangle する。
+pub fn mangle_dotted(dotted: &str) -> String {
+    dotted.split('.').filter(|part| !part.is_empty()).map(doeff_indexer::hy_index::mangle).collect::<Vec<_>>().join(".")
 }
 
 /// 外の世界に触れてよい定義 1 つ(`:world-handlers` の `(world-handler "module:名" :touches [..] :answers [..] :wraps [..])`)。
@@ -284,6 +299,27 @@ impl Architecture {
         } else {
             Err(parser.problems)
         }
+    }
+
+    /// 許可名簿の定義の module(mangle した dotted の綴り)— 生の副作用を許す所(DOEFF106)。
+    pub fn world_modules(&self) -> BTreeSet<String> {
+        self.world_handlers.iter().map(|h| h.definition.mangled_module()).collect()
+    }
+
+    /// 許可名簿の定義の完全修飾名 → 綴り。
+    pub fn world_definition_targets(&self) -> BTreeMap<String, String> {
+        self.world_handlers.iter().map(|h| (h.definition.target(), h.definition.spelling())).collect()
+    }
+
+    /// :wraps に挙げた doeff の実 I/O の handler の完全修飾名 → (綴り, 挙げた名簿の定義の綴りの列)。
+    pub fn wrapped_targets(&self) -> BTreeMap<String, (String, Vec<String>)> {
+        let mut out: BTreeMap<String, (String, Vec<String>)> = BTreeMap::new();
+        for handler in &self.world_handlers {
+            for wrapped in &handler.wraps {
+                out.entry(wrapped.target()).or_insert_with(|| (wrapped.spelling(), Vec::new())).1.push(handler.definition.spelling());
+            }
+        }
+        out
     }
 
     /// service の宣言を dir の名から引く。

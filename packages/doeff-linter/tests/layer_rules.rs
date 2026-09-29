@@ -1843,3 +1843,77 @@ fn translation_effects_depth_and_layers_are_configured() {
     assert_eq!(code, 2, "{}", stderr);
     assert!(stderr.contains("translation_effects.handler_layers: 層 ghost は宣言した層に無い"), "{}", stderr);
 }
+
+/// 許可名簿(:world-handlers)を書いた repo(層 core・foundation・entry・service billing)。
+fn world_repo(files: &[(&str, String)]) -> tempfile::TempDir {
+    let dir = tempfile::TempDir::new().unwrap();
+    let architecture = r#"
+(defarchitecture sample
+  :root "app"
+  :layers [(layer core :roles [judgment] :imports [core])
+           (layer foundation :roles [foundation] :imports [foundation])
+           (layer entry :roles [entry] :imports [core foundation entry])]
+  :foundation foundation
+  :world-handlers [(world-handler "app.foundation.host:with-host" :touches [http file]
+                     :wraps ["doeff_core_effects.os_file:os-file-handler"])])
+(defservice billing "請求" {:layers [core entry]})
+"#;
+    std::fs::write(dir.path().join("architecture.hy"), architecture).unwrap();
+    std::fs::write(dir.path().join("pyproject.toml"), "[tool.doeff-linter]\nenable = [\"DOEFF106\", \"DOEFF131\"]\n").unwrap();
+    for (rel, text) in files {
+        let path = dir.path().join(rel);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, text).unwrap();
+    }
+    dir
+}
+
+/// agora-redesign #1140(R1): 許可名簿を書いた repo では、生の I/O は名簿の定義の module だけに許し(層では許さない — entry も
+/// 名簿に無い foundation の module も当たる)、:wraps の doeff の実 I/O の handler を名指してよいのは名簿の定義だけ(DOEFF131)。
+#[test]
+fn world_handler_list_limits_raw_io_and_wrapped_handlers() {
+    let files = [
+        (
+            "app/foundation/host.hy",
+            tags("shared", "foundation")
+                + "(import httpx)\n(import doeff_core_effects.os_file [os-file-handler])\n(import doeff_core_effects.file_effects [ReadText])\n\
+                   (defk with-host [body] (with-handlers [os-file-handler (fn [] (httpx.AsyncClient))] body))\n\
+                   (defk token-in-file [path] (with-handlers [os-file-handler] (ReadText path)))\n",
+        ),
+        (
+            "app/foundation/unreachable.hy",
+            tags("shared", "foundation") + "(import httpx)\n(import urllib.parse)\n(defn refuse [u] (raise (httpx.ConnectError (urllib.parse.quote u))))\n",
+        ),
+        ("app/foundation/sockets.hy", tags("shared", "foundation") + "(import socket)\n(defn open-one [] (socket.socket))\n"),
+        (
+            "app/billing/entry/main.hy",
+            tags("billing", "entry")
+                + "(import httpx)\n(import doeff_core_effects.os_file [os-file-handler])\n\
+                   (defn fetch [] (httpx.get \"http://x\"))\n(defk run [body] (with-handlers [os-file-handler] body))\n",
+        ),
+        ("app/billing/entry/good.hy", tags("billing", "entry") + "(import app.foundation.host [with-host])\n(defk ok [body] (with-host body))\n"),
+    ];
+    let dir = world_repo(&files);
+    let (_, report) = editor(dir.path());
+    let raw = keys(&report, "DOEFF106");
+    assert_eq!(
+        raw,
+        vec!["app/billing/entry/main.hy::DOEFF106::fetch::httpx.get", "app/foundation/sockets.hy::DOEFF106::open_one::socket.socket"],
+        "名簿の module(host)・例外の型だけの httpx と urllib.parse(unreachable)は当てない: {}",
+        report
+    );
+    assert!(violation(&report, "app/billing/entry/main.hy::DOEFF106::fetch::httpx.get")["message"].as_str().unwrap().contains(":world-handlers"));
+    let named = keys(&report, "DOEFF131");
+    assert_eq!(
+        named,
+        vec![
+            "app/billing/entry/main.hy::DOEFF131::run::world::doeff_core_effects.os_file:os-file-handler",
+            "app/foundation/host.hy::DOEFF131::token_in_file::world::doeff_core_effects.os_file:os-file-handler",
+        ],
+        "名簿の定義 with-host の中は当てず、同じ module の名簿に無い定義と entry は当てる: {}",
+        report
+    );
+    let found = violation(&report, "app/foundation/host.hy::DOEFF131::token_in_file::world::doeff_core_effects.os_file:os-file-handler");
+    assert_eq!(found["severity"], "error");
+    assert_eq!(found["level"], "critical");
+}

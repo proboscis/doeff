@@ -200,7 +200,9 @@ pub fn run_with(root: &Path, settings: &ProjectSettings, enabled: &BTreeSet<Proj
     report.errors.extend(registry.problems.iter().cloned());
     let raw = raw_settings(root, settings, &mut report.errors);
     let mut semantic_probes: Vec<SemanticProbe> = Vec::new();
-    let wants_raw =enabled.contains(&ProjectRule::RawSideEffectDirect) || enabled.contains(&ProjectRule::RawSideEffectVia);
+    let wants_raw = enabled.contains(&ProjectRule::RawSideEffectDirect)
+        || enabled.contains(&ProjectRule::RawSideEffectVia)
+        || enabled.contains(&ProjectRule::WorldHandlerNamedOutsideList);
     let mut drafts = Vec::new();
 
     // 読めない Hy の file の知らせ(DOEFF128)の材料 — 全体なら repo の Hy の file の全部、1 file ならその保存前の中身。
@@ -750,13 +752,23 @@ fn judge_layer_file(
         }
     }
     if let (Some(raw), Some(hy_file)) = (&settings.raw, hy_file) {
-        if !raw.allowed.contains(&file.site.layer) {
+        // 許可名簿を書いた repo では名簿の定義の module だけに許す(層では許さない — agora-redesign #1140)。
+        let allowed_here = match &raw.world_modules {
+            Some(modules) => modules.contains(&architecture::mangle_dotted(&file.module)),
+            None => raw.allowed.contains(&file.site.layer),
+        };
+        if !allowed_here {
             if enabled.contains(&ProjectRule::RawSideEffectDirect) {
                 drafts.extend(judge.raw_direct(hy_file, raw));
             }
             if enabled.contains(&ProjectRule::RawSideEffectVia) {
                 drafts.extend(judge.raw_via(hy_file));
             }
+        }
+    }
+    if let (Some(architecture), Some(hy_file)) = (&settings.architecture, hy_file) {
+        if enabled.contains(&ProjectRule::WorldHandlerNamedOutsideList) && !architecture.world_handlers.is_empty() {
+            drafts.extend(judge.world_handler_named(hy_file, architecture));
         }
     }
     let tags = facts.summary_tags();
@@ -1102,7 +1114,10 @@ impl<'a> LayerJudge<'a> {
     /// 同じ証拠が重なる時は、いちばん内側の定義に 1 度だけ数える。
     fn raw_direct(&self, hy_file: &HyFileIndex, raw: &settings::RawSettingsSpec) -> Vec<Draft> {
         let definitions = &hy_file.definitions;
-        let allowed = raw.allowed.iter().map(|id| self.layer_name(*id)).collect::<Vec<_>>().join("・");
+        let allowed = match &raw.world_modules {
+            Some(_) => "生の副作用に触ってよいのは architecture.hy の :world-handlers(外の世界に触れてよい定義の許可名簿)の定義の module だけ".to_string(),
+            None => format!("生の副作用に触ってよい層は {}", raw.allowed.iter().map(|id| self.layer_name(*id)).collect::<Vec<_>>().join("・")),
+        };
         let mut chosen: BTreeMap<EvidenceSpot, EvidenceRef> = BTreeMap::new();
         for (definition_index, definition) in definitions.iter().enumerate() {
             for (evidence_index, evidence) in definition.raw.direct.iter().enumerate() {
@@ -1125,7 +1140,7 @@ impl<'a> LayerJudge<'a> {
                     ProjectRule::RawSideEffectDirect,
                     evidence.range,
                     format!(
-                        "定義 {}({})が生の副作用 {}({})に直に触る — 生の副作用に触ってよい層は {}",
+                        "定義 {}({})が生の副作用 {}({})に直に触る — {}",
                         definition.name,
                         self.layer_name(self.layer),
                         evidence.name,
@@ -1147,6 +1162,60 @@ impl<'a> LayerJudge<'a> {
                     RawStrength::Weak => Severity::Warning,
                 };
                 draft
+            })
+            .collect()
+    }
+
+    /// DOEFF131: :wraps に挙げた doeff の実 I/O の handler を、名簿の定義(とその中の入れ子の定義)の外で名指す所。
+    /// 値として渡す参照(with-handlers の列)と呼び出しの両方を数え、同じ定義の同じ handler は 1 件にまとめる。
+    fn world_handler_named(&self, hy_file: &HyFileIndex, architecture: &architecture::Architecture) -> Vec<Draft> {
+        let wrapped = architecture.wrapped_targets();
+        let listed = architecture.world_definition_targets();
+        let definitions = &hy_file.definitions;
+        // import の行の名は名指しではない(import した名を使う所だけを数える)。
+        let in_import = |range: &Range| hy_file.imports.iter().any(|imp| imp.range.start <= range.start && range.end <= imp.range.end);
+        let spots = hy_file
+            .references
+            .iter()
+            .filter(|r| !in_import(&r.range))
+            .filter_map(|r| r.target.as_ref().map(|t| (t, r.range)))
+            .chain(hy_file.calls.iter().filter_map(|c| c.target.as_ref().map(|t| (t, c.range))));
+        let mut chosen: BTreeMap<(Option<usize>, String), Range> = BTreeMap::new();
+        for (target, range) in spots {
+            if !wrapped.contains_key(target) {
+                continue;
+            }
+            let inside = |d: &Definition| d.full_range.start <= range.start && range.end <= d.full_range.end;
+            if definitions.iter().any(|d| inside(d) && listed.contains_key(&d.qualified_name)) {
+                continue;
+            }
+            // いちばん内側の定義に数える(top level の式なら None)。
+            let owner = definitions
+                .iter()
+                .enumerate()
+                .filter(|(_, d)| inside(d))
+                .max_by_key(|(_, d)| d.full_range.start)
+                .map(|(index, _)| index);
+            chosen.entry((owner, target.clone())).or_insert(range);
+        }
+        chosen
+            .into_iter()
+            .map(|((owner, target), range)| {
+                let (spelling, by) = &wrapped[&target];
+                let definition = owner.map(|i| definition_label(&definitions[i])).unwrap_or_else(|| "module の top level".to_string());
+                let shown = owner.map(|i| definitions[i].name.clone()).unwrap_or_else(|| "module の top level".to_string());
+                self.draft(
+                    ProjectRule::WorldHandlerNamedOutsideList,
+                    range,
+                    format!(
+                        "{} が doeff の実 I/O の handler {} を名指す — 名指してよいのは architecture.hy の :world-handlers の定義({})だけ",
+                        shown,
+                        spelling,
+                        by.join("・")
+                    ),
+                    Some(format!("{}::world::{}", definition, spelling)),
+                    Explain::WorldHandlerNamed { placement: self.placement.clone(), definition: shown.clone(), wrapped: spelling.clone(), listed_by: by.join("・") },
+                )
             })
             .collect()
     }
@@ -2962,7 +3031,7 @@ fn finish(drafts: Vec<Draft>, settings: &ProjectSettings, registry: &Registry, f
 /// 判じる規則の集合(`enable`・`disable` を展開した ID の列から。None は全部)。
 pub fn enabled_rules(enabled_ids: Option<&[String]>) -> BTreeSet<ProjectRule> {
     match enabled_ids {
-        None => ProjectRule::ALL.into_iter().collect(),
+        None => ProjectRule::ALL.iter().copied().collect(),
         Some(ids) => ids.iter().filter_map(|id| ProjectRule::parse(id)).collect(),
     }
 }
