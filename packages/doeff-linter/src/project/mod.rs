@@ -27,6 +27,8 @@ pub mod body_view;
 pub mod world_catalog;
 pub mod test_forms;
 pub mod single_point_vocabulary;
+pub mod spelling_scope;
+pub mod confined_spellings;
 pub mod retired;
 pub mod blind;
 pub mod allowed_heads;
@@ -281,6 +283,37 @@ pub fn run_with(root: &Path, settings: &ProjectSettings, enabled: &BTreeSet<Proj
                         explain: Explain::AllowedHeads { declared: found.declared, why: found.why, problem: found.problem },
                         range: found.range,
                         rel: found.rel,
+                    }));
+                    report.errors.extend(errors);
+                }
+                // DOEFF148 は群の :files の glob の頭の dir だけを歩く(repo 全体は読まない)。
+                if enabled.contains(&ProjectRule::SpellingOutsideItsFiles) && !architecture.confined_spellings.is_empty() {
+                    let architecture_rel = relative_path(root, &architecture.path).unwrap_or_else(|| "architecture.hy".to_string());
+                    let (found, errors) = crate::timing::timed("confined-spellings", || {
+                        confined_spellings::find(root, &architecture.confined_spellings, &architecture_rel)
+                    });
+                    drafts.extend(found.into_iter().map(|found| {
+                        let (message, detail) = match &found.problem {
+                            confined_spellings::ConfinedProblem::Outside { count } => (
+                                format!("{} — 綴りの群 {} を書いてよい file の外に {} か所", found.rel, found.group, count),
+                                found.group.clone(),
+                            ),
+                            confined_spellings::ConfinedProblem::Missing => (
+                                format!("{} — 綴りの群 {} の :files に当たる file が無い", found.rel, found.group),
+                                format!("{}:missing", found.group),
+                            ),
+                        };
+                        Draft {
+                            rule: ProjectRule::SpellingOutsideItsFiles,
+                            layer: None,
+                            path: root.join(&found.rel),
+                            message,
+                            detail: Some(detail),
+                            base: Severity::Error,
+                            explain: Explain::ConfinedSpelling { group: found.group, why: found.why, problem: found.problem },
+                            range: found.range,
+                            rel: found.rel,
+                        }
                     }));
                     report.errors.extend(errors);
                 }

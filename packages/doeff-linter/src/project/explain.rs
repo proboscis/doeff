@@ -173,6 +173,8 @@ pub enum Explain {
     TestFormNotDeftest { form: &'static str, detail: String },
     /// DOEFF146: 判定を1か所に閉じ込めた語彙が :except の外に在る。
     VocabularyOutsideSinglePoint { group: String, count: usize, instead: String },
+    /// DOEFF148: 書いてよい file を決めた綴り(群の名・理由・当たりの種類)。
+    ConfinedSpelling { group: String, why: String, problem: super::confined_spellings::ConfinedProblem },
     /// DOEFF150: 使わないと決めた綴り(群の名・当たった綴り・代わりの語・:in names なら定義の名)。
     RetiredWord { group: String, spelling: String, instead: String, name: Option<String>, place: super::architecture::WordPlace },
     /// DOEFF151: 使わないと決めた呼び。
@@ -396,6 +398,16 @@ impl<'a> Narrator<'a> {
                 format!("語彙 {} が :except の外に {} 行 — {}", group, count, instead),
                 "この語彙の判定は architecture.hy の :single-point-vocabulary が名指す 1 点だけに閉じ込める決まり。他の file が同じ語彙を読んで判定を写すと、直した時に写しの方を直し忘れて2つの判定が食い違う。".to_string(),
             ),
+            Explain::ConfinedSpelling { group, why, problem } => match problem {
+                super::confined_spellings::ConfinedProblem::Outside { count } => (
+                    format!("綴りの群 {} が書いてよい file の外に {} か所", group, count),
+                    format!("この綴りを書いてよい file は architecture.hy の :confined-spellings の :except で決めてある。外の file に書くと、その口を通らずに同じ事をする 2 つ目の場所ができる。理由: {}", why),
+                ),
+                super::confined_spellings::ConfinedProblem::Missing => (
+                    format!("綴りの群 {} の :files に当たる file が無い", group),
+                    format!("読む file が 1 つも無いと、規則は何も見ずに緑になる(母集団 0 を緑にしない)。理由: {}", why),
+                ),
+            },
             Explain::RetiredWord { group, spelling, instead, name, place } => (
                 match (place, name) {
                     (super::architecture::WordPlace::Paths, _) => format!("file の名の綴り {}(使わないと決めた名 — 群 {})", spelling, group),
