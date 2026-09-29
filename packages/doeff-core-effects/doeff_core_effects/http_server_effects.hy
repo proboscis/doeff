@@ -40,11 +40,14 @@
 ;;;                    答え手はその答えを送った後に接続を閉じる(残りの本文を読み捨てない)。HttpForward に渡す札では撃たない(中継は本文を
 ;;;                    streaming で写すので、先に読むと写す本文が無くなる)。
 ;;; file の状態は file_effects.hy の StatPath で読む(ここに持たない)。
+;;; 2 つの答え手が同じに決める物は、ここの判断の defk を両方が呼ぶ: carries-content(本文を運ぶ答えか — HEAD・1xx・204・304 は送らない)・
+;;; ws-refusal-status(WsAccept の断りの status)・send-overflows(送りの上限で切るか)・closing-of(WsClosed で名乗る状態符と理由)。
+;;; 2 つが同じ性質を持つことは tests/test_http_server_contract.hy の契約テストが両方の答え手で確かめる。
 ;;;
 ;;; 台本の語彙(本物の待ち受けには無い): HttpScript・ScriptedUpstream・ScriptedBody = 台本・HttpServed = 受けた命令と端末が受け取る答え・
 ;;; WsTextSent / WsCloseSent = ws の接続へ送った 1 通と閉じ・ReadHttpServed = 記録を読む effect(検と筋書きが覗くため)・
 ;;; AppendHttpScript = 走っている台本の後ろへ出来事を足す effect(筋書きの相手役が時刻の来た拍に届ける — scripted-http-server だけが答える)。
-(require doeff-hy.macros [val])
+(require doeff-hy.macros [defk val])
 (require doeff-hy.record [defrecord])
 (import dataclasses [dataclass])
 (import doeff [EffectBase])
@@ -58,6 +61,10 @@
 ;; ws の閉じの状態符(RFC 6455 7.4.1)— 答え手が名乗る物。
 (val WS-CLOSE-NORMAL 1000)
 (val WS-CLOSE-ABNORMAL 1006)
+;; ws に上げられない要求への断りの答えの本文(WsAccept の断り — 答え手が名乗る物)。
+(val WS-REFUSAL-TEXT "WebSocket の Upgrade(GET・Upgrade: websocket・Sec-WebSocket-Key)が要る")
+;; 送りの上限で切った接続の WsClosed の理由(答え手が名乗る物)。
+(val WS-CUT-REASON "送りの箱が上限を超えた(読まない相手)")
 
 
 (defrecord HttpAddress
@@ -243,6 +250,51 @@
 
 ;; 札の要求への命令の union(答え手と台本の記録が命令 1 つを受ける型)。
 (val HttpCommand (| HttpRespond HttpForward WsForward WsAccept))
+
+
+;; --- 答え手が共に呼ぶ判断(本物の aiohttp-http-server と台本の scripted-http-server が同じ関数で決める)--------------------------------
+
+(defk carries-content [method status]
+  {:pre [(: method str) (: status int)] :post [(: % bool)] :tags {:context "http-server" :role "judgment"}}
+  "method の要求への status の答えが本文を運ぶか(RFC 9110 6.4.1 — HEAD の答えと 1xx・204・304 は本文を送らない)。運ばない答えは
+   HttpRespond に本文を渡されても送らない(送ると同じ接続の次の答えの頭として読まれる)。"
+  (not (or (= method "HEAD") (< status 200) (in status #(204 304)))))
+
+
+(defk ws-refusal-status [method upgrade]
+  {:pre [(: method str) (: upgrade bool)] :post [(: % (| int None))] :tags {:context "http-server" :role "judgment"}}
+  "WsAccept で ws に上げられない要求の形への断りの status(GET でない 405・Upgrade: websocket が無い 426)。None = 形は上げられる
+   (本物の答え手は handshake の残りの検め — Sec-WebSocket-Key 等 — で断れば 400)。"
+  (cond
+    (!= method "GET") 405
+    (not upgrade) 426
+    True None))
+
+
+(defk send-overflows [held size limit]
+  {:pre [(: held int) (: size int) (: limit int)] :post [(: % bool)] :tags {:context "http-server" :role "judgment"}}
+  "送りの箱に held byte が溜まった接続へ size byte の 1 通を積むと上限 limit を超えるか(超えるならその 1 通を積まずに接続を切る —
+   WsSendText の頭の註)。"
+  (> (+ held size) limit))
+
+
+(defrecord WsCloseFrame
+  "ws の閉じの状態符と理由(こちらが送った close・相手から受けた close・接続が終わった時に名乗る物)。"
+  (#^ int code)
+  (#^ str reason))
+
+
+(defk closing-of [cut sent received lost]
+  {:pre [(: cut (| str None)) (: sent (| WsCloseFrame None)) (: received (| WsCloseFrame None)) (: lost (| int None))]
+   :post [(: % WsCloseFrame)] :tags {:context "http-server" :role "judgment"}}
+  "ws の接続が終わった時に WsClosed で名乗る状態符と理由を決めるため: 送りの上限で切った(cut = 切りの理由)なら 1006・こちらが WsClose で
+   閉じた(sent)ならその状態符と理由・相手が閉じた(received)なら相手の状態符と理由・どれでもなければ切れた時の状態符(lost — 無ければ
+   1006)。"
+  (cond
+    (is-not cut None) (WsCloseFrame :code WS-CLOSE-ABNORMAL :reason cut)
+    (is-not sent None) sent
+    (is-not received None) received
+    True (WsCloseFrame :code (if (is lost None) WS-CLOSE-ABNORMAL lost) :reason "")))
 
 
 ;; --- 台本の語彙(scripted-http-server) -----------------------------------------------------------------------------------

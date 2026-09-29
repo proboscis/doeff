@@ -10,29 +10,34 @@
 ;;;                    本文が上限を超えれば HttpBodyTooLarge(宣言が無ければ None)、failed が在れば HttpBodyFailed、他は HttpBodyRead(台本に
 ;;;                    本文の無い札は b"")。札ごとに 1 度だけ — 読み終えた札・命令を受けた札・知らない札は HttpBodyFailed(本物と同じ)
 ;;;   HttpRespond      受けた命令を記録する。端末が受け取る本文 = byte 列は UTF-8 で読み(読めない byte は置き換え)、file の範囲は
-;;;                    file system の effect(ReadBytes — 外側の file の答え手、多くは memory-file-handler)で読んで切り出す
+;;;                    file system の effect(ReadBytes — 外側の file の答え手、多くは memory-file-handler)で読んで切り出す。本文を運ばない
+;;;                    答え(carries-content — HEAD・1xx・204・304)の本文は空
 ;;;   HttpForward      台本の中継先(url の頭の最長の一致)の http-status で答えた扱いにする。当たらなければ 502
 ;;;   WsForward        台本の中継先が ws を受ければ 101、受けなければ・当たらなければ 502
-;;;   WsAccept         101 で上げた扱いにして記録する(handshake の断りは台本に無い — 断りの形は本物の答え手の検が撃つ)
+;;;   WsAccept         101 で上げた扱いにして記録する。ws に上げられない形の要求(ws-refusal-status — GET でない 405・Upgrade の無い 426)は
+;;;                    断りの答えを記録し、上げない(ws の出来事は出ない)
 ;;;   WsSendText       上げた札なら 1 通を記録する(WsTextSent — 相手は直ぐに読む: 積んだ byte を流した勘定・所要 0 秒)。読まない相手の札
-;;;                    (台本の stalled)は箱に溜め続け、送りの上限を超えた拍に切る(溜まりを捨てた勘定・WsClosed 1006)。閉じた・知らない札は捨てる
-;;;   WsClose          上げた札なら閉じを記録し(WsCloseSent)、箱の溜まりを捨て、WsClosed(同じ状態符と理由)を列の頭へ差す
+;;;                    (台本の stalled)は箱に溜め続ける。箱の溜まりに足すと送りの上限を超える 1 通(send-overflows)は積まずに接続を切る
+;;;                    (溜まりを捨てた勘定・WsClosed 1006 と切りの理由)。閉じた・知らない札は捨てる
+;;;   WsClose          上げた札なら閉じを記録し(WsCloseSent)、箱の溜まりを捨て、WsClosed(同じ状態符と理由 — closing-of)を列の頭へ差す
 ;;;   HttpShutdown     開いている札の全部へ close 1000 を記録し、以後は HttpServerClosed
 ;;;   TakeWsSendReport 送りの勘定(WsSendReport)を読んで 0 に戻す
 ;;;   ReadHttpServed   受けた命令と送った ws の記録(HttpServed・WsTextSent・WsCloseSent の tuple)
 ;;;   AppendHttpScript 台本の出来事の列の後ろへ足す(筋書きの相手役が時刻の来た拍に届ける)。足す要求の本文の台本も足す
+;;; 本物の答え手と同じに決める物は http_server_effects.hy の判断の defk を呼ぶ(契約テストは tests/test_http_server_contract.hy)。
+;;; 命令は届けた要求の札へ撃つ(届けていない札への命令は KeyError — 本物の答え手と同じ)。
 ;;; 並び: file の答え手をこの handler より外側に置く。session の値の置き場(doeff_core_effects の state)はさらに外側に要る。
 (require doeff-hy.macros [defhandler defk <- val var])
 (import doeff_core_effects.http_server_effects [HttpListen HttpNextRequest HttpRespond HttpForward WsForward WsAccept WsSendText WsClose
                                                 HttpShutdown TakeWsSendReport WsSendReport ReadHttpServed AppendHttpScript HttpServed
                                                 WsTextSent WsCloseSent WsOpened WsClosed HttpServerClosed HttpScript ScriptedUpstream
                                                 HttpBodyBytes HttpBodyFileRange HttpNoBody DEFAULT-WS-SEND-MAX-BYTES FLUSH-SAMPLES-LIMIT
-                                                WS-CLOSE-NORMAL WS-CLOSE-ABNORMAL HttpReadBody HttpBodyRead HttpBodyTooLarge HttpBodyFailed
-                                                HttpBodyOutcome HttpRequestArrived ScriptedBody])
+                                                WS-CLOSE-NORMAL HttpReadBody HttpBodyRead HttpBodyTooLarge HttpBodyFailed
+                                                HttpBodyOutcome HttpRequestArrived ScriptedBody WS-CUT-REASON WS-REFUSAL-TEXT WsCloseFrame
+                                                carries-content ws-refusal-status send-overflows closing-of])
 (import doeff_core_effects.file_effects [ReadBytes FileFailed])
 
 (val CLOSED-REASON "台本の要求の列が尽きた")
-(val CUT-REASON "送りの箱が上限を超えた(読まない相手)")
 (val EMPTY-REPORT (WsSendReport :queued-frames 0 :queued-bytes 0 :flushed-bytes 0 :flush-seconds #() :dropped-bytes 0 :cuts 0))
 
 
@@ -56,12 +61,15 @@
     (HttpNoBody) ""))
 
 
-(defk served-of [script command]
-  {:pre [(: script HttpScript) (: command (| HttpRespond HttpForward WsForward WsAccept))] :post [(: % HttpServed)]}
-  "受けた命令を、端末が受け取る答えにするため(本物の待ち受けと同じ振り分け)。"
+(defk served-of [script command arrival]
+  {:pre [(: script HttpScript) (: command (| HttpRespond HttpForward WsForward WsAccept)) (: arrival HttpRequestArrived)]
+   :post [(: % HttpServed)]}
+  "受けた命令を、端末が受け取る答えにするため(本物の待ち受けと同じ振り分け — arrival = 命令の札の届いた要求)。本文を運ばない答え
+   (carries-content — HEAD・1xx・204・304)の本文は空・ws に上げられない形の要求への WsAccept は断りの答え(ws-refusal-status)。"
   (match command
     (HttpRespond :ticket ticket :status status :body body)
-      (do (<- text str (body-text body))
+      (do (<- carried bool (carries-content arrival.method status))
+          (<- text str (if carried (body-text body) (body-text (HttpNoBody))))
           (HttpServed :ticket ticket :command command :status status :body text))
     (HttpForward :ticket ticket :url url)
       (do (<- upstream (| ScriptedUpstream None) (upstream-for script url))
@@ -74,7 +82,10 @@
               (HttpServed :ticket ticket :command command :status 101 :body (+ "ws の中継 " upstream.base))
               (HttpServed :ticket ticket :command command :status 502 :body (+ "中継先に ws で届かない: " url))))
     (WsAccept :ticket ticket)
-      (HttpServed :ticket ticket :command command :status 101 :body "ws をここで終端した")))
+      (do (<- refusal (| int None) (ws-refusal-status arrival.method arrival.upgrade))
+          (if (is refusal None)
+              (HttpServed :ticket ticket :command command :status 101 :body "ws をここで終端した")
+              (HttpServed :ticket ticket :command command :status refusal :body WS-REFUSAL-TEXT)))))
 
 
 (defk tally-queued [tally size]
@@ -134,11 +145,12 @@
   ;; 台本の待ち受け(頭の註)。pending = まだ届けていない出来事・served = 受けた命令と送った ws の記録の列・opened = ws に上げて開いている札・
   ;; backlog = 読まない相手の札の箱の溜まり(byte)・limit = 送りの上限(HttpListen が控える)・tally = 送りの勘定・closed = HttpShutdown の理由
   ;; (None = 開いている)・body-table = 札 → 本文の台本・readable = 本文をまだ読める札 → 宣言の長さ(届けた要求の札を入れ、読んだ・命令を
-  ;; 受けた札を外す)(どれも session の値)。
+  ;; 受けた札を外す)・arrived = 届けた要求(札 → HttpRequestArrived — 命令の答えの形を要求の method と Upgrade で決める)(どれも session の値)。
   ;; 引数に残す理由: script は呼び手が組んだ凍った台本(出来事の列と中継先の答えと読まない相手)で、組の外で差し替える相手がいない。
   (session var pending script.arrivals)
   (session var body-table (dfor b script.bodies b.ticket b))
   (session var readable {})
+  (session var arrived {})
   (session var served #())
   (session var opened (frozenset))
   (session var backlog {})
@@ -163,7 +175,8 @@
               (:= backlog rest))
             (when (isinstance head HttpRequestArrived)
               (<- declared (| int None) (declared-length head.headers))
-              (:= readable (| readable {head.ticket declared})))
+              (:= readable (| readable {head.ticket declared}))
+              (:= arrived (| arrived {head.ticket head})))
             (resume head))
       True (resume (HttpServerClosed :reason CLOSED-REASON))))
   (HttpReadBody [ticket max-bytes]
@@ -174,47 +187,53 @@
             (:= readable rest)
             (resume outcome))))
   (HttpRespond [ticket status headers body]
-    (<- answer HttpServed (served-of script effect))
+    (<- answer HttpServed (served-of script effect (get arrived ticket)))
     (:= served (+ served #(answer)))
     (<- rest dict (without-ticket readable ticket))
     (:= readable rest)
     (resume None))
   (HttpForward [ticket url]
-    (<- answer HttpServed (served-of script effect))
+    (<- answer HttpServed (served-of script effect (get arrived ticket)))
     (:= served (+ served #(answer)))
     (<- rest dict (without-ticket readable ticket))
     (:= readable rest)
     (resume None))
   (WsForward [ticket url]
-    (<- answer HttpServed (served-of script effect))
+    (<- answer HttpServed (served-of script effect (get arrived ticket)))
     (:= served (+ served #(answer)))
     (<- rest dict (without-ticket readable ticket))
     (:= readable rest)
     (resume None))
   (WsAccept [ticket]
-    (<- answer HttpServed (served-of script effect))
+    (<- answer HttpServed (served-of script effect (get arrived ticket)))
     (:= served (+ served #(answer)))
     (<- rest dict (without-ticket readable ticket))
     (:= readable rest)
-    (:= opened (| opened #{ticket}))
-    (:= pending (+ #((WsOpened :ticket ticket)) pending))
+    ;; 断った札(101 でない答え)は上げない — ws の出来事は出ない。
+    (when (= answer.status 101)
+      (:= opened (| opened #{ticket}))
+      (:= pending (+ #((WsOpened :ticket ticket)) pending)))
     (resume None))
   (WsSendText [ticket text]
     (val size (len (.encode text "utf-8")))
+    (val held (.get backlog ticket 0))
+    (<- overflows bool (send-overflows held size limit))
     (cond
       (not-in ticket opened) (resume None)
+      ;; 上限を超える 1 通は積まずに切る(本物と同じ send-overflows)— 箱の溜まりを捨て、WsClosed(closing-of — 1006 と切りの理由)。
+      overflows
+        (do (<- cut-tally WsSendReport (tally-dropped tally held True))
+            (:= tally cut-tally)
+            (<- rest dict (without-ticket backlog ticket))
+            (:= backlog rest)
+            (:= opened (- opened #{ticket}))
+            (<- frame WsCloseFrame (closing-of WS-CUT-REASON None None None))
+            (:= pending (+ #((WsClosed :ticket ticket :code frame.code :reason frame.reason)) pending))
+            (resume None))
       (in ticket script.stalled)
         (do (<- queued WsSendReport (tally-queued tally size))
             (:= tally queued)
-            (val held (+ (.get backlog ticket 0) size))
-            (if (> held limit)
-                (do (<- cut-tally WsSendReport (tally-dropped tally held True))
-                    (:= tally cut-tally)
-                    (<- rest dict (without-ticket backlog ticket))
-                    (:= backlog rest)
-                    (:= opened (- opened #{ticket}))
-                    (:= pending (+ #((WsClosed :ticket ticket :code WS-CLOSE-ABNORMAL :reason CUT-REASON)) pending)))
-                (:= backlog (| backlog {ticket held})))
+            (:= backlog (| backlog {ticket (+ held size)}))
             (resume None))
       True
         (do (<- queued WsSendReport (tally-queued tally size))
@@ -230,7 +249,9 @@
       (<- rest dict (without-ticket backlog ticket))
       (:= backlog rest)
       (:= opened (- opened #{ticket}))
-      (:= pending (+ #((WsClosed :ticket ticket :code code :reason reason)) pending)))
+      ;; 名乗る状態符と理由は本物と同じ closing-of(こちらの閉じ)。
+      (<- frame WsCloseFrame (closing-of None (WsCloseFrame :code code :reason reason) None None))
+      (:= pending (+ #((WsClosed :ticket ticket :code frame.code :reason frame.reason)) pending)))
     (resume None))
   (HttpShutdown [reason drain-seconds]
     (for [ticket (sorted opened)]

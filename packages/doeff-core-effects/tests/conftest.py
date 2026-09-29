@@ -3,11 +3,13 @@
 - doeff-adr の Hy の file の収集(``DoeffAdrHyFile``)をこの dir の中だけで使う(doeff-cluster の tests/conftest.py と同じ形 — 根の ini の
   ``doeff_adr_hy_files`` には足さない。package の母集団は ``make test-packages`` が別に走らせる)。
 - 契約テスト(agora-redesign #1159)は deftest の ``:interpreters`` で handler を差し替える。名 → 組み立ての表は
-  stop_contract_handlers.hy・http_contract_handlers.hy・process_contract_handlers.hy が持ち、ここはその表を引いて scheduler つきで 1 回回すだけ。
+  stop_contract_handlers.hy・http_contract_handlers.hy・process_contract_handlers.hy・http_server_contract_handlers.hy が持ち、ここはその表を
+  引いて scheduler つきで 1 回回すだけ。外の module が要る解釈器(REQUIRES)は、その module の無い環境では skip する。
 """
 
 from __future__ import annotations
 
+import importlib.util
 import sys
 from collections.abc import Callable
 from pathlib import Path
@@ -45,6 +47,8 @@ def doeff_interpreter_name() -> str:
 def doeff_interpreter(doeff_interpreter_name: str) -> Callable[[Program], object]:
     """deftest の Program を、:interpreters の名の handler の組の下で scheduler つきで 1 回回す。"""
     from http_contract_handlers import INTERPRETERS as HTTP_INTERPRETERS
+    from http_server_contract_handlers import INTERPRETERS as HTTP_SERVER_INTERPRETERS
+    from http_server_contract_handlers import REQUIRES as HTTP_SERVER_REQUIRES
     from process_contract_handlers import INTERPRETERS as PROCESS_INTERPRETERS
     from stop_contract_handlers import INTERPRETERS as STOP_INTERPRETERS
 
@@ -53,7 +57,11 @@ def doeff_interpreter(doeff_interpreter_name: str) -> Callable[[Program], object
         **STOP_INTERPRETERS,
         **HTTP_INTERPRETERS,
         **PROCESS_INTERPRETERS,
+        **HTTP_SERVER_INTERPRETERS,
     }
+    required = HTTP_SERVER_REQUIRES.get(doeff_interpreter_name)
+    if required is not None and importlib.util.find_spec(required) is None:
+        pytest.skip(f"解釈器 {doeff_interpreter_name} は {required} が要る")
     compose = compositions[doeff_interpreter_name]
 
     def interpret(program: Program) -> object:
