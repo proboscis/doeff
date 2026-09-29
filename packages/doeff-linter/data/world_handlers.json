@@ -331,22 +331,6 @@
    "why": "組み立て — 上の列そのもの"
   },
   {
-   "handler": "doeff_records.http_client:http-records-handler",
-   "touches": [
-    "http"
-   ],
-   "counted": false,
-   "why": "HttpRequest の effect を出すだけの翻訳(送り方は EffectTransport 1 つ)— 実 HTTP は HttpRequest に答える本物の handler(http-production-handler)の側で数える。repo の :wraps がこの handler を挙げている間は :wraps に書けるよう残す(数えない)。:wraps が移ったら消す"
-  },
-  {
-   "handler": "doeff_records.http_client:http-table-records-handler",
-   "touches": [
-    "http"
-   ],
-   "counted": false,
-   "why": "上と同じ(表で絞るだけ)"
-  },
-  {
    "handler": "doeff_agents.io_handlers:driver-io-handler",
    "touches": [
     "file",
