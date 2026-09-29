@@ -23,6 +23,13 @@
     },
     {
       "count": 1,
+      "path": "packages/doeff-cluster/src/doeff_cluster/remote_model.hy",
+      "reason": "registered-with-legacy",
+      "rule": "dynamic-boundary",
+      "subject": "importlib.import_module"
+    },
+    {
+      "count": 1,
       "path": "packages/doeff-cluster/tests/test_env_detached.hy",
       "reason": "registered-with-legacy",
       "rule": "dynamic-boundary",
@@ -212,6 +219,20 @@
     },
     {
       "count": 1,
+      "path": "packages/doeff-cluster/src/doeff_cluster/remote_model.hy",
+      "reason": "registered-with-legacy",
+      "rule": "pure-io-import",
+      "subject": "os"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-cluster/src/doeff_cluster/remote_model.hy",
+      "reason": "registered-with-legacy",
+      "rule": "pure-io-import",
+      "subject": "pathlib"
+    },
+    {
+      "count": 1,
       "path": "packages/doeff-cluster/src/doeff_cluster/code_prepare.hy",
       "reason": "registered-with-legacy",
       "rule": "read-model-in-controller",
@@ -254,6 +275,20 @@
     },
     {
       "count": 1,
+      "path": "packages/doeff-cluster/src/doeff_cluster/program_policy.hy",
+      "reason": "registered-with-legacy",
+      "rule": "transitive-io-dependency",
+      "subject": "packages/doeff-cluster/src/doeff_cluster/remote_model.hy -> os"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-cluster/src/doeff_cluster/program_policy.hy",
+      "reason": "registered-with-legacy",
+      "rule": "transitive-io-dependency",
+      "subject": "packages/doeff-cluster/src/doeff_cluster/remote_model.hy -> pathlib"
+    },
+    {
+      "count": 1,
       "path": "packages/doeff-cluster/src/doeff_cluster/api_policy.hy",
       "reason": "registered-with-legacy",
       "rule": "untyped-boundary",
@@ -265,6 +300,48 @@
       "reason": "registered-with-legacy",
       "rule": "untyped-boundary",
       "subject": "__post_init__"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-cluster/src/doeff_cluster/cluster_policy.hy",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "board_allows"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-cluster/src/doeff_cluster/cluster_policy.hy",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "heartbeat_reply"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-cluster/src/doeff_cluster/cluster_policy.hy",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "jobs_for"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-cluster/src/doeff_cluster/cluster_policy.hy",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "state_from_json"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-cluster/src/doeff_cluster/cluster_policy.hy",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "submit_task"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-cluster/src/doeff_cluster/cluster_policy.hy",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "superseded_reply"
     },
     {
       "count": 1,
@@ -295,6 +372,34 @@
       "subject": "on_signal"
     },
     {
+      "count": 2,
+      "path": "packages/doeff-cluster/src/doeff_cluster/coordinator_http.hy",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "__init__"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-cluster/src/doeff_cluster/coordinator_http.hy",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "request"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-cluster/src/doeff_cluster/coordinator_http.hy",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "send_idempotent"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-cluster/src/doeff_cluster/coordinator_http.hy",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "use"
+    },
+    {
       "count": 1,
       "path": "packages/doeff-cluster/src/doeff_cluster/declare.hy",
       "reason": "registered-with-legacy",
@@ -314,6 +419,34 @@
       "reason": "registered-with-legacy",
       "rule": "untyped-boundary",
       "subject": "spec_for_update"
+    },
+    {
+      "count": 2,
+      "path": "packages/doeff-cluster/src/doeff_cluster/detached.hy",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "__init__"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-cluster/src/doeff_cluster/detached.hy",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "answer"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-cluster/src/doeff_cluster/detached.hy",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "detached_cluster"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-cluster/src/doeff_cluster/detached.hy",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "resend"
     },
     {
       "count": 1,
@@ -517,6 +650,27 @@
       "reason": "registered-with-legacy",
       "rule": "untyped-boundary",
       "subject": "main"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-cluster/src/doeff_cluster/job_entry.hy",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "main"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-cluster/src/doeff_cluster/job_entry.hy",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "run_service"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-cluster/src/doeff_cluster/job_entry.hy",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "run_task"
     },
     {
       "count": 2,
@@ -916,6 +1070,55 @@
       "reason": "registered-with-legacy",
       "rule": "untyped-boundary",
       "subject": "on_signal"
+    },
+    {
+      "count": 2,
+      "path": "packages/doeff-cluster/src/doeff_cluster/remote_model.hy",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "__init__"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-cluster/src/doeff_cluster/remote_model.hy",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "__post_init__"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-cluster/src/doeff_cluster/remote_model.hy",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "decode_outcome"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-cluster/src/doeff_cluster/remote_model.hy",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "decode_program"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-cluster/src/doeff_cluster/remote_model.hy",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "encode_outcome"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-cluster/src/doeff_cluster/remote_model.hy",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "encode_program"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-cluster/src/doeff_cluster/remote_model.hy",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "reducer_override"
     },
     {
       "count": 1,

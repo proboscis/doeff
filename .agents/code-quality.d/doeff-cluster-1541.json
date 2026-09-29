@@ -1,16 +1,9 @@
 {
   "exclude": [
-    "packages/doeff-cluster/src/doeff_cluster/cluster_policy.hy",
-    "packages/doeff-cluster/src/doeff_cluster/coordinator_http.hy",
-    "packages/doeff-cluster/src/doeff_cluster/detached.hy",
     "packages/doeff-cluster/src/doeff_cluster/foundation_check.hy",
     "packages/doeff-cluster/src/doeff_cluster/handlers.hy",
     "packages/doeff-cluster/src/doeff_cluster/host_contract.hy",
-    "packages/doeff-cluster/src/doeff_cluster/job_entry.hy",
-    "packages/doeff-cluster/src/doeff_cluster/local.hy",
-    "packages/doeff-cluster/src/doeff_cluster/program_policy.hy",
     "packages/doeff-cluster/src/doeff_cluster/remote.hy",
-    "packages/doeff-cluster/src/doeff_cluster/remote_model.hy",
     "packages/doeff-cluster/src/doeff_cluster/service_model.hy",
     "packages/doeff-cluster/tests/coordinator_contract_handlers.hy",
     "packages/doeff-cluster/tests/fixtures/entry_programs.hy",
@@ -21,14 +14,11 @@
     "packages/doeff-cluster/tests/test_detached_runners.hy",
     "packages/doeff-cluster/tests/test_env_warm.hy",
     "packages/doeff-cluster/tests/test_handoff_deadline.hy",
-    "packages/doeff-cluster/tests/test_idle_skip.hy",
     "packages/doeff-cluster/tests/test_job_entry_program.hy",
-    "packages/doeff-cluster/tests/test_local.hy",
     "packages/doeff-cluster/tests/test_remote.hy",
     "packages/doeff-cluster/tests/test_runtime_env_sender.hy",
     "packages/doeff-cluster/tests/test_semaphore.hy",
-    "packages/doeff-cluster/tests/test_service_declaration.hy",
-    "packages/doeff-cluster/tests/test_task_programs.hy"
+    "packages/doeff-cluster/tests/test_service_declaration.hy"
   ],
   "include": [
     "packages/doeff-cluster/src/doeff_cluster/*.hy",
@@ -1317,48 +1307,20 @@
   ],
   "untyped_dependencies": [
     {
-      "path": "packages/doeff-cluster/src/doeff_cluster/cluster_policy.hy",
-      "reason": "検査器(code-quality e659a3a)がこの Hy を型に写せない — hy:365: 安全な静的投影の対象外の core macro: let。include の外に置き(変えた時は登録の前と同じ未導入の注意)、対応と取り込みは agora-redesign #1569"
-    },
-    {
-      "path": "packages/doeff-cluster/src/doeff_cluster/coordinator_http.hy",
-      "reason": "検査器(code-quality e659a3a)がこの Hy を型に写せない — hy:151: 安全な静的投影の対象外の core macro: let。include の外に置き(変えた時は登録の前と同じ未導入の注意)、対応と取り込みは agora-redesign #1569"
-    },
-    {
-      "path": "packages/doeff-cluster/src/doeff_cluster/detached.hy",
-      "reason": "検査器(code-quality e659a3a)がこの Hy を型に写せない — hy:89: 安全な静的投影の対象外の core macro: let。include の外に置き(変えた時は登録の前と同じ未導入の注意)、対応と取り込みは agora-redesign #1569"
-    },
-    {
       "path": "packages/doeff-cluster/src/doeff_cluster/foundation_check.hy",
       "reason": "検査器(code-quality e659a3a)がこの Hy を型に写せない — hy:32: deff の各引数には実型契約が必要（可変長/既定値は未対応）。include の外に置き(変えた時は登録の前と同じ未導入の注意)、対応と取り込みは agora-redesign #1569"
     },
     {
       "path": "packages/doeff-cluster/src/doeff_cluster/handlers.hy",
-      "reason": "検査器(code-quality e659a3a)がこの Hy を型に写せない — hy:64: 安全な静的投影の対象外の core macro: let。include の外に置き(変えた時は登録の前と同じ未導入の注意)、対応と取り込みは agora-redesign #1569"
+      "reason": "検査器がこの Hy を型に写せない — hy:1082: deff の各引数には実型契約が必要（可変長/既定値は未対応）。対応は agora-redesign #1575(let の形は #1574 で写せるようになった)"
     },
     {
       "path": "packages/doeff-cluster/src/doeff_cluster/host_contract.hy",
       "reason": "検査器(code-quality e659a3a)がこの Hy を型に写せない — hy:61: defhandler の宣言の辞書の鍵 ['needs'] をこの版の検査器は知らない(知っている鍵 = :effects / :tags)。include の外に置き(変えた時は登録の前と同じ未導入の注意)、対応と取り込みは agora-redesign #1569"
     },
     {
-      "path": "packages/doeff-cluster/src/doeff_cluster/job_entry.hy",
-      "reason": "検査器(code-quality e659a3a)がこの Hy を型に写せない — hy:44: 安全な静的投影の対象外の core macro: let。include の外に置き(変えた時は登録の前と同じ未導入の注意)、対応と取り込みは agora-redesign #1569"
-    },
-    {
-      "path": "packages/doeff-cluster/src/doeff_cluster/local.hy",
-      "reason": "検査器(code-quality e659a3a)がこの Hy を型に写せない — hy:793: 安全な静的投影の対象外の core macro: let。include の外に置き(変えた時は登録の前と同じ未導入の注意)、対応と取り込みは agora-redesign #1569"
-    },
-    {
-      "path": "packages/doeff-cluster/src/doeff_cluster/program_policy.hy",
-      "reason": "検査器(code-quality e659a3a)がこの Hy を型に写せない — hy:58: 安全な静的投影の対象外の core macro: let。include の外に置き(変えた時は登録の前と同じ未導入の注意)、対応と取り込みは agora-redesign #1569"
-    },
-    {
       "path": "packages/doeff-cluster/src/doeff_cluster/remote.hy",
       "reason": "検査器(code-quality e659a3a)がこの Hy を型に写せない — hy:23: deff の各引数には実型契約が必要（可変長/既定値は未対応）。include の外に置き(変えた時は登録の前と同じ未導入の注意)、対応と取り込みは agora-redesign #1569"
-    },
-    {
-      "path": "packages/doeff-cluster/src/doeff_cluster/remote_model.hy",
-      "reason": "検査器(code-quality e659a3a)がこの Hy を型に写せない — hy:123: 安全な静的投影の対象外の core macro: let。include の外に置き(変えた時は登録の前と同じ未導入の注意)、対応と取り込みは agora-redesign #1569"
     },
     {
       "path": "packages/doeff-cluster/src/doeff_cluster/service_model.hy",
@@ -1390,7 +1352,7 @@
     },
     {
       "path": "packages/doeff-cluster/tests/test_detached_runners.hy",
-      "reason": "検査器(code-quality e659a3a)がこの Hy を型に写せない — hy:117: 安全な静的投影の対象外の core macro: let。include の外に置き(変えた時は登録の前と同じ未導入の注意)、対応と取り込みは agora-redesign #1569"
+      "reason": "検査器がこの Hy を型に写せない — hy:289: 入れ子の defk は型投影未対応(doeff-hy の実 macro が未対応)。対応は agora-redesign #1576(let の形は #1574 で写せるようになった)"
     },
     {
       "path": "packages/doeff-cluster/tests/test_env_warm.hy",
@@ -1401,16 +1363,8 @@
       "reason": "検査器(code-quality e659a3a)がこの Hy を型に写せない — hy:180: defk の各引数には実型契約が必要（可変長/既定値は未対応）。include の外に置き(変えた時は登録の前と同じ未導入の注意)、対応と取り込みは agora-redesign #1569"
     },
     {
-      "path": "packages/doeff-cluster/tests/test_idle_skip.hy",
-      "reason": "検査器(code-quality e659a3a)がこの Hy を型に写せない — hy:114: 安全な静的投影の対象外の core macro: let。include の外に置き(変えた時は登録の前と同じ未導入の注意)、対応と取り込みは agora-redesign #1569"
-    },
-    {
       "path": "packages/doeff-cluster/tests/test_job_entry_program.hy",
       "reason": "検査器(code-quality e659a3a)がこの Hy を型に写せない — hy:32: defk の可変長の引数 args には契約 (: args tuple) が必要。include の外に置き(変えた時は登録の前と同じ未導入の注意)、対応と取り込みは agora-redesign #1569"
-    },
-    {
-      "path": "packages/doeff-cluster/tests/test_local.hy",
-      "reason": "検査器(code-quality e659a3a)がこの Hy を型に写せない — hy:464: 安全な静的投影の対象外の core macro: let。include の外に置き(変えた時は登録の前と同じ未導入の注意)、対応と取り込みは agora-redesign #1569"
     },
     {
       "path": "packages/doeff-cluster/tests/test_remote.hy",
@@ -1427,10 +1381,6 @@
     {
       "path": "packages/doeff-cluster/tests/test_service_declaration.hy",
       "reason": "検査器(code-quality e659a3a)がこの Hy を型に写せない — hy:50: defk の可変長の引数 argv には契約 (: argv tuple) が必要。include の外に置き(変えた時は登録の前と同じ未導入の注意)、対応と取り込みは agora-redesign #1569"
-    },
-    {
-      "path": "packages/doeff-cluster/tests/test_task_programs.hy",
-      "reason": "検査器(code-quality e659a3a)がこの Hy を型に写せない — hy:205: 安全な静的投影の対象外の core macro: let。include の外に置き(変えた時は登録の前と同じ未導入の注意)、対応と取り込みは agora-redesign #1569"
     }
   ]
 }
