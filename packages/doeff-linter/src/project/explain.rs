@@ -163,6 +163,8 @@ pub enum Explain {
     RoleMismatch { placement: Placement, role: Option<String>, context: Option<String> },
     /// DOEFF106: 定義が生の副作用に直に触る。
     RawDirect { placement: Placement, definition: String, kind: &'static str, evidence: String, category: &'static str, weak: bool },
+    /// DOEFF131: 許可名簿の外の定義が、:wraps に挙げた doeff の実 I/O の handler を名指す。
+    WorldHandlerNamed { placement: Placement, definition: String, wrapped: String, listed_by: String },
     /// DOEFF107: 定義が呼ぶ定義を通して生の副作用に届く。
     RawVia { placement: Placement, definition: String, through: Vec<String>, evidence: String, category: &'static str },
     /// DOEFF108: 業務の名に環境の語がある。
@@ -334,6 +336,13 @@ impl<'a> Narrator<'a> {
                     self.character(placement.layer),
                     category,
                     particle(&self.io_layers(), "の")
+                ),
+            ),
+            Explain::WorldHandlerNamed { placement, definition, wrapped, listed_by } => (
+                format!("{} が doeff の実 I/O の handler {} を名指す — {}", definition, wrapped, self.file_subject(placement)),
+                format!(
+                    "{} は外の世界に触れる handler で、許可名簿では {} だけが中で動かしてよい。ここで直に被せると、模擬で handler の組を差し替えてもこの所だけ本物の世界に触る。名簿の定義 {} を使うか、この定義を名簿に載せる(foundation の層に置く)。",
+                    wrapped, listed_by, listed_by
                 ),
             ),
             Explain::RawVia { placement, definition, through, evidence, category } => (
@@ -841,6 +850,9 @@ impl<'a> Narrator<'a> {
 
     /// 生の副作用を許す層の文。
     fn io_layers(&self) -> String {
+        if self.raw.is_some_and(|r| r.world_modules.is_some()) {
+            return "architecture.hy の :world-handlers(外の世界に触れてよい定義の許可名簿)の定義の module".to_string();
+        }
         match self.raw.filter(|r| !r.allowed.is_empty()) {
             Some(raw) => raw.allowed.iter().map(|id| format!("層 {}", self.name(*id))).collect::<Vec<_>>().join("・"),
             None => "外の世界に触ってよい層".to_string(),
