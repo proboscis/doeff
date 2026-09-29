@@ -258,6 +258,10 @@ pub struct Architecture {
     /// 1 つだけ受ける(列は受けない — 何でも逃がせる欄にしない。:legacy を廃した理由と同じ)。
     pub verification_environment: Option<String>,
     pub open_layers: Vec<String>,
+    /// 置き場の決まった module にだけ依存してよい層(`:placed-dependencies [core intent protocol]` — 空 = 宣言していない)。
+    /// 書けば DOEFF140 が、service と shared のこの層の module が root の下の層の置き場の外の module を import するのを出す
+    /// (agora-redesign #1188 — 移す前の置き場への依存を移す変更で消し、新しく足さない)。
+    pub placed_dependencies: Vec<String>,
     pub services: Vec<ArchService>,
     /// 素の関数を許す理由の種類の閉じた一覧(DOEFF203 の受け入れる答え)。
     pub plain_callable_reasons: Vec<ReasonKind>,
@@ -601,6 +605,7 @@ impl<'a> Parser<'a> {
             foundation: None,
             verification_environment: None,
             open_layers: Vec::new(),
+            placed_dependencies: Vec::new(),
             services: Vec::new(),
             plain_callable_reasons: Vec::new(),
             rejected_plain_callable_reasons: Vec::new(),
@@ -645,6 +650,7 @@ impl<'a> Parser<'a> {
                     arch.open_layers = self.names(value, ":open-layers");
                     open_given = true;
                 }
+                ":placed-dependencies" => arch.placed_dependencies = self.names(value, ":placed-dependencies"),
                 ":exclude" => arch.exclude = self.names(value, ":exclude"),
                 ":extensions" => arch.extensions = Some(self.names(value, ":extensions")),
                 ":plain-callable-reasons" => arch.plain_callable_reasons = self.reasons(value, ":plain-callable-reasons"),
@@ -1185,6 +1191,16 @@ impl<'a> Parser<'a> {
         for open in &arch.open_layers {
             if !layers.contains(open.as_str()) {
                 push(&mut self.problems, format!(":open-layers の {} は :layers に無い", open));
+            }
+        }
+        for (i, placed) in arch.placed_dependencies.iter().enumerate() {
+            if !layers.contains(placed.as_str()) {
+                push(&mut self.problems, format!(":placed-dependencies の {} は :layers に無い", placed));
+            } else if arch.foundation.as_deref() == Some(placed.as_str()) {
+                push(&mut self.problems, format!(":placed-dependencies の {} は :foundation の層 — service の外の層には当てない", placed));
+            }
+            if arch.placed_dependencies[..i].contains(placed) {
+                push(&mut self.problems, format!(":placed-dependencies の {} が 2 度書かれている", placed));
             }
         }
         // 送受信の module は foundation の層にだけ許す(DOEFF120)— foundation の無い宣言に :wire-modules を書いても何も許さないので誤り。
