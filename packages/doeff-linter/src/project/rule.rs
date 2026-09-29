@@ -112,6 +112,9 @@ pub enum ProjectRule {
     /// DOEFF136: service の entry の層の定義に、模擬の環境(:verification-environment)の下の deftest が 1 本も届かない
     /// — 本番の組み立てを手元で回していない service(agora-redesign #1106 の R5・#1111)。
     ServiceUntestedOnSim,
+    /// DOEFF140: architecture.hy の :placed-dependencies の層の module(service と shared)が、root の下の層の置き場の外の module を
+    /// import する — 置き場の決まっていない module への依存(agora-redesign #1188)。
+    PlacedDependency,
     /// DOEFF150: architecture.hy の :retired-words で使わないと決めた綴り(語・正規表現・定義の名)が、宣言の file に在る
     /// (agora-redesign #1193 — 語の表は repo の宣言にだけ在る)。
     RetiredWord,
@@ -167,6 +170,7 @@ impl ProjectRule {
         ProjectRule::TestKindMismatch,
         ProjectRule::TestFormNotDeftest,
         ProjectRule::ServiceUntestedOnSim,
+        ProjectRule::PlacedDependency,
         ProjectRule::RetiredWord,
         ProjectRule::RetiredCall,
         ProjectRule::SemanticBusinessDecision,
@@ -214,6 +218,7 @@ impl ProjectRule {
             ProjectRule::TestKindMismatch => "DOEFF133",
             ProjectRule::TestFormNotDeftest => "DOEFF135",
             ProjectRule::ServiceUntestedOnSim => "DOEFF136",
+            ProjectRule::PlacedDependency => "DOEFF140",
             ProjectRule::RetiredWord => "DOEFF150",
             ProjectRule::RetiredCall => "DOEFF151",
             ProjectRule::SemanticBusinessDecision => "DOEFF201",
@@ -241,6 +246,8 @@ impl ProjectRule {
             | ProjectRule::TestKindMismatch
             | ProjectRule::TestFormNotDeftest
             | ProjectRule::ServiceUntestedOnSim
+            // 置き場の外の module への依存(#1188 — 登録簿に載った既知の当たりは warning、新しい当たりは critical)。
+            | ProjectRule::PlacedDependency
             // 使わないと決めた綴りと呼び(#1193 の決め — 登録簿に載った既知の当たりは warning、新しい当たりは critical)。
             | ProjectRule::RetiredWord
             | ProjectRule::RetiredCall
@@ -324,6 +331,7 @@ impl ProjectRule {
             | ProjectRule::ServiceBoundary
             | ProjectRule::ContextMatchesService
             | ProjectRule::ServiceDependency
+            | ProjectRule::PlacedDependency
             | ProjectRule::TranslationEmitsIntent
             | ProjectRule::SemanticBusinessDecision
             | ProjectRule::SemanticTransportKnowledge => true,
@@ -379,6 +387,7 @@ impl ProjectRule {
             ProjectRule::UndeclaredPlace => "宣言に無い置き場所の module",
             ProjectRule::UndeclaredDirectory => "宣言に無い dir",
             ProjectRule::ServiceDependency => "宣言に無い service への依存",
+            ProjectRule::PlacedDependency => "置き場の外の module への依存",
             ProjectRule::UnusedDependency => "使っていない依存",
             ProjectRule::TestIsDeftest => "deftest でないテスト",
             ProjectRule::ClassWithBehaviour => "処理を持つ class",
@@ -429,6 +438,7 @@ impl ProjectRule {
             | ProjectRule::UndeclaredPlace
             | ProjectRule::UndeclaredDirectory
             | ProjectRule::ServiceDependency
+            | ProjectRule::PlacedDependency
             | ProjectRule::UnusedDependency => RuleFamily::Place,
             ProjectRule::DefnForbidden
             | ProjectRule::DeffNeedsReason
@@ -473,6 +483,7 @@ impl ProjectRule {
             ProjectRule::UndeclaredPlace => "Undeclared Place",
             ProjectRule::UndeclaredDirectory => "Undeclared Directory",
             ProjectRule::ServiceDependency => "Service Dependency",
+            ProjectRule::PlacedDependency => "Placed Dependency",
             ProjectRule::UnusedDependency => "Unused Dependency",
             ProjectRule::TestIsDeftest => "Tests Are deftest",
             ProjectRule::ClassWithBehaviour => "Class Touches The World Or Holds State",
@@ -521,6 +532,7 @@ impl ProjectRule {
             ProjectRule::UndeclaredPlace => "root の下の module は、architecture.hy で宣言した service の層・shared・foundation・legacy のどれかに置く",
             ProjectRule::UndeclaredDirectory => "root の下の dir は宣言した service か shared・foundation・legacy で、service の中の dir は宣言した層",
             ProjectRule::ServiceDependency => "service A が読んでよいのは、A の :depends-on に在る service の、A の module の層が読める層(その層の :dependency-layers — 組み立ての層は intent と protocol —、無ければ :open-layers の intent)と shared だけ",
+            ProjectRule::PlacedDependency => "architecture.hy の :placed-dependencies の層の module(service と shared)は、層の置き場(service の層・shared の層・foundation と、層の名の段を持つ dir)に在る module にだけ依存する — root の下の置き場の決まっていない module(service の dir の直下・宣言に無い dir の中)を import しない",
             ProjectRule::UnusedDependency => "宣言した依存(:depends-on)を、その service のどの module も読んでいない(知らせ)",
             ProjectRule::TestIsDeftest => "検の置き場(設定の test_paths)の検は deftest で書く — 名が test- / test_ で始まる defn・deff・defk・fn の束縛を置かない",
             ProjectRule::ClassWithBehaviour => "業務の code の defclass は値の class だけ — method か欄の初期値が生の副作用に触る class(error)と、method が self の欄を書き換える class(warning)を書かない。欄だけの class は defrecord を勧める(info)。例外・Enum・Protocol・外の library の基底を継ぐ class は許す。名前では判じない",
@@ -569,6 +581,7 @@ impl ProjectRule {
             ProjectRule::UndeclaredPlace => "architecture.hy に宣言するか、宣言した置き場所(<root>/<service>/<層>/)へ移す",
             ProjectRule::UndeclaredDirectory => "architecture.hy に defservice か service の :layers を足すか、dir を宣言した置き場所へ移す",
             ProjectRule::ServiceDependency => "依存先を :depends-on に足し、依存先の intent を出して頼む(判断や翻訳の module を直に読まない)",
+            ProjectRule::PlacedDependency => "読む先の module を層の置き場(<root>/<service>/<層>/)へ移すか、要る型を intent へ移して読む — 移す前の置き場への依存は移す変更で消す",
             ProjectRule::UnusedDependency => "使っていない依存を :depends-on から外す",
             ProjectRule::TestIsDeftest => "deftest にする(検の値を組む補助は defk にして deftest の中で `(<- …)` で呼ぶ)",
             ProjectRule::ClassWithBehaviour => "外の世界の窓口は土台の handler にする — 資源(接続・client・file の手)は defhandler の直下の (session val …) に持ち、ListRows・PutRow などの effect に答える(模擬なら模擬の土台の handler)。状態なら 値は defrecord(不変)、振る舞いは新しい値を返す純粋な関数、状態は world などの handler の (session var …) 1 か所に置き、変化は effect で流す。速さのために書き換えが要る時も書き換えは handler の中だけ",
@@ -640,6 +653,7 @@ mod tests {
         ("DOEFF133", RuleFamily::Raw),
         ("DOEFF135", RuleFamily::Definition),
         ("DOEFF136", RuleFamily::Definition),
+        ("DOEFF140", RuleFamily::Place),
         ("DOEFF150", RuleFamily::Naming),
         ("DOEFF151", RuleFamily::Naming),
         ("DOEFF201", RuleFamily::Jev),

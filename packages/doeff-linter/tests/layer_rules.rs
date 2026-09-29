@@ -1514,6 +1514,76 @@ fn only_the_assembly_layer_may_read_a_dependency_protocol() {
 }
 
 #[test]
+fn placed_layers_depend_only_on_placed_modules() {
+    // agora-redesign #1188: :placed-dependencies の層(service と shared)の module は、root の下の層の置き場の外の module を読まない。
+    let dir = tempfile::TempDir::new().unwrap();
+    std::fs::write(
+        dir.path().join("architecture.hy"),
+        r#"(defarchitecture sample
+  :root "app"
+  :layers [(layer core :roles [judgment type])
+           (layer intent :roles [intent type])
+           (layer foundation :roles [foundation])
+           (layer entry :roles [entry])]
+  :shared "shared"
+  :foundation foundation
+  :placed-dependencies [core intent])
+(defservice billing "請求" {:layers [core intent entry]})
+"#,
+    )
+    .unwrap();
+    std::fs::write(dir.path().join("pyproject.toml"), "[tool.doeff-linter]\nenable = [\"DOEFF140\"]\n").unwrap();
+    let files = [
+        // 置き場の外: service の dir の直下の module・宣言に無い dir の中の module・package の中の置き場の外の module。
+        ("app/billing/vocabulary.hy", "(setv WORD \"請求\")\n".to_string()),
+        ("app/billing/model/row.hy", "(setv ROW 1)\n".to_string()),
+        ("app/billing/views/__init__.py", "".to_string()),
+        ("app/billing/intent/charge.hy", tags("billing", "intent") + "(defclass Charge [])\n"),
+        ("app/foundation/store.hy", tags("io", "foundation") + "(defn store [] 1)\n"),
+        ("elsewhere/lib.hy", "(setv LIB 1)\n".to_string()),
+        // 違反: 同じ module を 2 度読んでも 1 件・名の import は持ち主の module に解く。
+        (
+            "app/billing/core/decide.hy",
+            tags("billing", "judgment")
+                + "(import app.billing.vocabulary [WORD])\n(import app.billing.vocabulary)\n(import app.billing.intent.charge [Charge])\n(import elsewhere.lib [LIB])\n(import json)\n(defn decide [] 1)\n",
+        ),
+        // 違反: shared の層も service と同じ(宣言に無い dir の中の module を読む)。
+        ("app/shared/intent/names.hy", tags("shared", "intent") + "(import app.billing.model.row [ROW])\n(defclass Name [])\n"),
+        // 通る: package の印(置き場の決まる前の dir の束ね)は数えない・:placed-dependencies に無い層(entry)は見ない。
+        ("app/billing/core/views.hy", tags("billing", "judgment") + "(import app.billing.views)\n(defn views [] 1)\n"),
+        ("app/billing/entry/main.hy", tags("billing", "entry") + "(import app.billing.vocabulary [WORD])\n(defn main [] 1)\n"),
+    ];
+    for (rel, text) in &files {
+        let path = dir.path().join(rel);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, text).unwrap();
+    }
+    let (code, report) = editor(dir.path());
+    assert_eq!(
+        keys(&report, "DOEFF140"),
+        vec!["app/billing/core/decide.hy::DOEFF140::app.billing.vocabulary", "app/shared/intent/names.hy::DOEFF140::app.billing.model.row"]
+    );
+    assert_eq!(code, 1);
+    let decide = violation(&report, "app/billing/core/decide.hy::DOEFF140::app.billing.vocabulary");
+    assert!(decide["message"].as_str().unwrap().contains("app/billing/vocabulary.hy"), "{}", decide["message"]);
+    assert_eq!(decide["range"]["start"]["line"], 1, "最初の import の所に出す");
+    // 渡した file 1 つの実行でも同じ 1 件(判定は渡した file の import と置き場だけで決まる)。
+    let (_, stdout, _) = run(dir.path(), &["--output-format", "editor-json", "--no-log", "app/billing/core/decide.hy"], None);
+    let single: Value = serde_json::from_str(&stdout).unwrap();
+    assert_eq!(keys(&single, "DOEFF140"), vec!["app/billing/core/decide.hy::DOEFF140::app.billing.vocabulary"]);
+    // 宣言に無い層の名と foundation の層は設定の誤り。
+    for (bad, said) in [("[core ghost]", ":placed-dependencies の ghost は :layers に無い"), ("[core foundation]", ":placed-dependencies の foundation は :foundation の層")] {
+        let text = std::fs::read_to_string(dir.path().join("architecture.hy")).unwrap().replace(":placed-dependencies [core intent]", &format!(":placed-dependencies {}", bad));
+        let broken = tempfile::TempDir::new().unwrap();
+        std::fs::write(broken.path().join("architecture.hy"), text).unwrap();
+        std::fs::write(broken.path().join("pyproject.toml"), "[tool.doeff-linter]\nenable = [\"DOEFF140\"]\n").unwrap();
+        let (code, _, stderr) = run(broken.path(), &["--output-format", "editor-json", "--no-log"], None);
+        assert_eq!(code, 2, "{}", stderr);
+        assert!(stderr.contains(said), "{}", stderr);
+    }
+}
+
+#[test]
 fn defk_called_bare_is_an_error_and_program_positions_are_not() {
     // 事実(#798): defk に改めた latest-by-ref を、deff と検が素のまま呼んでいた — Program が値として流れた。
     let dir = tempfile::TempDir::new().unwrap();
