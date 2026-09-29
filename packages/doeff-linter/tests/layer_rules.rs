@@ -1980,6 +1980,14 @@ fn test_kind_is_derived_from_what_the_test_reaches() {
              (deftest test-edge-module-marked (<- n (hosted 1)) (assert n))\n"
                 .to_string(),
         ),
+        // 読むだけの受け手(:static-readers)に値で渡すだけの縁の定義は、実行されないので届かない(手元 — 当てない)。
+        ("app/billing/core/closure.hy", tags("billing", "judgment") + "(defk read-closure [case] (str case))\n"),
+        (
+            "app/billing/tests/test_closure.hy",
+            "(import app.billing.core.closure [read-closure])\n(import app.billing.core.helpers [hosted])\n\
+             (deftest test-local-reads-a-foundation (<- text (read-closure hosted)) (assert text))\n"
+                .to_string(),
+        ),
         // 註と検の中の文字列の値に在る印の綴りは module の印ではない(手元のテストは印なしのまま — 当てない)。
         (
             "app/billing/tests/test_mark_in_text.hy",
@@ -1991,7 +1999,9 @@ fn test_kind_is_derived_from_what_the_test_reaches() {
     let architecture_extra = "";
     let dir = world_repo_with(&files, architecture_extra, "[\"DOEFF133\"]");
     let arch_path = dir.path().join("architecture.hy");
-    let text = std::fs::read_to_string(&arch_path).unwrap().replace(":foundation foundation", ":foundation foundation\n  :edge-mark \"real_world\"");
+    let text = std::fs::read_to_string(&arch_path)
+        .unwrap()
+        .replace(":foundation foundation", ":foundation foundation\n  :edge-mark \"real_world\"\n  :static-readers [\"app.billing.core.closure:read-closure\"]");
     std::fs::write(&arch_path, text).unwrap();
     let (_, report) = editor(dir.path());
     assert_eq!(

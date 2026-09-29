@@ -1166,7 +1166,7 @@ impl<'a> Analyzer<'a> {
         }
         if !self.is_keyword_head(head) {
             self.reference(items[0].span);
-            self.record_call(items[0].span, performed);
+            self.record_call(items[0].span, items.last().map_or(items[0].span.end, |last| last.span.end), performed);
         }
         for (index, item) in rest.iter().enumerate() {
             match item.paren_items() {
@@ -1257,7 +1257,7 @@ impl<'a> Analyzer<'a> {
 
     /// 呼び出しの頭の記号を呼び出しとして積む(`.method` の形・演算子・定数は除く)。caller は
     /// 呼び出しの位置を form 全体の範囲に含む定義のうち最も狭いもの。
-    fn record_call(&mut self, head: Span, performed: bool) {
+    fn record_call(&mut self, head: Span, form_end: usize, performed: bool) {
         let text = self.text(head);
         if self.call_suppression > 0
             || text.is_empty()
@@ -1296,6 +1296,7 @@ impl<'a> Analyzer<'a> {
             mangled: mangle(callee),
             qualifier,
             range: self.lines.range(start, start + callee.len()),
+            form_range: self.lines.range(head.start, form_end.max(start + callee.len())),
             caller,
             performed,
             // import と定義が全部そろった後に qualify::link が埋める

@@ -324,6 +324,9 @@ pub struct Call {
     pub qualifier: Option<String>,
     /// 頭の記号の最後の区切りの位置。
     pub range: Range,
+    /// 呼び出しの頭から最後の引数の終わりまで(引数の中の参照を引くため — agora-redesign #1279)。索引の JSON の契約には出さない。
+    #[serde(skip)]
+    pub form_range: Range,
     /// この呼び出しを含む最も内側の定義の、同じ file の `definitions` の添字。top level の式なら null。
     pub caller: Option<usize>,
     /// `<-` で撃たれている(または `yield` / `yield-from` の直下)なら true。

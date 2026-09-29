@@ -232,6 +232,9 @@ pub struct Architecture {
     /// 「縁」のテスト(外の世界に触れる handler に届くテスト)が持つ pytest の印の名(`:edge-mark "real_world"`)。
     /// 書けば DOEFF133 が、テストの届く先から導いた種類と印の有無の食い違いを出す(agora-redesign #1106 の R3)。
     pub edge_mark: Option<String>,
+    /// 渡された値を実行せずに読むだけの定義(`:static-readers ["module:名" …]` — 例: 土台の閉じを解析器で読む ClosureCase・open-foundations)。
+    /// この呼び出しの引数の中の参照は、DOEFF133・136 の「届く」の辺にしない(値として読むだけで、実行しない — agora-redesign #1279)。
+    pub static_readers: Vec<DefinitionRef>,
     /// 縁と数える触れる先(`:edge-touches [http db …]` — 書かなければ全部)。agora は file・env を入れない
     /// (一時 dir の file は手元 — agora-redesign #1142 の決定 B)。仕組みは linter・値は repo の宣言。
     pub edge_touches: Option<Vec<WorldTouch>>,
@@ -558,6 +561,7 @@ impl<'a> Parser<'a> {
             world_handlers: Vec::new(),
             raw_io_roots: None,
             edge_mark: None,
+            static_readers: Vec::new(),
             edge_touches: None,
             test_forms: None,
             role_descriptions: BTreeMap::new(),
@@ -628,6 +632,20 @@ impl<'a> Parser<'a> {
                         self.problem(value, ":edge-mark は pytest の印の名(英数字と _ — 例 \"real_world\")");
                     }
                 }
+                ":static-readers" => match self.bracket(value) {
+                    Some(items) => {
+                        for item in items {
+                            if let Some(reader) = self.definition_ref(item, ":static-readers") {
+                                if arch.static_readers.contains(&reader) {
+                                    self.problem(item, &format!(":static-readers の {} が 2 度書かれている", reader.spelling()));
+                                } else {
+                                    arch.static_readers.push(reader);
+                                }
+                            }
+                        }
+                    }
+                    None => self.problem(value, ":static-readers は [\"module:名\" …] の列"),
+                },
                 ":roles" => match self.brace(value) {
                     Some(entries) => {
                         for (role, text) in self.pairs(&entries) {
