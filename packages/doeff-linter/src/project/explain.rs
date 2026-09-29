@@ -171,6 +171,8 @@ pub enum Explain {
     TestKindMismatch { test: String, edge: bool, mark: String, reached: Vec<String> },
     /// DOEFF135: deftest 以外のテストの形。
     TestFormNotDeftest { form: &'static str, detail: String },
+    /// DOEFF146: 判定を1か所に閉じ込めた語彙が :except の外に在る。
+    VocabularyOutsideSinglePoint { group: String, count: usize, instead: String },
     /// DOEFF150: 使わないと決めた綴り(群の名・当たった綴り・代わりの語・:in names なら定義の名)。
     RetiredWord { group: String, spelling: String, instead: String, name: Option<String> },
     /// DOEFF151: 使わないと決めた呼び。
@@ -385,6 +387,10 @@ impl<'a> Narrator<'a> {
             Explain::TestFormNotDeftest { form, detail } => (
                 format!("テストの形 {} — {}", form, detail),
                 "テストは deftest だけ。pytest の外で走る検査や pytest の Python の形は、赤になっても誰も気づかない(#1104 の実測 — pytest の外の検査 5 本が赤のまま放置されていた)。".to_string(),
+            ),
+            Explain::VocabularyOutsideSinglePoint { group, count, instead } => (
+                format!("語彙 {} が :except の外に {} 行 — {}", group, count, instead),
+                "この語彙の判定は architecture.hy の :single-point-vocabulary が名指す 1 点だけに閉じ込める決まり。他の file が同じ語彙を読んで判定を写すと、直した時に写しの方を直し忘れて2つの判定が食い違う。".to_string(),
             ),
             Explain::RetiredWord { group, spelling, instead, name } => (
                 match name {
