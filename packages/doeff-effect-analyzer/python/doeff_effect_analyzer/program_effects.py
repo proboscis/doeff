@@ -46,10 +46,16 @@ treated as handling nothing, so what it might absorb is still reported).
 
 import ast
 import functools
+import hashlib
 import importlib
+import importlib.util
 import inspect
 import itertools
+import os
+import pickle
+import re
 import sys
+import tempfile
 import types
 from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field, replace
@@ -426,6 +432,20 @@ def _module_source(module: types.ModuleType) -> _ModuleSource:
 
 
 def _compile_hy(source: str, filename: str, module_name: str) -> ast.Module:
+    """The macro-expanded tree of a Hy module (from the disk cache when the same inputs were expanded before)."""
+    cache_path = _hy_cache_path(source, filename, module_name)
+    if cache_path is not None:
+        cached = _read_cached_tree(cache_path)
+        if cached is not None:
+            return cached
+    compiled = _expand_hy(source, filename, module_name)
+    if cache_path is not None:
+        _write_cached_tree(cache_path, compiled)
+    return compiled
+
+
+def _expand_hy(source: str, filename: str, module_name: str) -> ast.Module:
+    """Expand a Hy module with Hy's own compiler so user macros become the Python AST the reader walks."""
     import hy
     import hy.compiler
 
@@ -439,6 +459,84 @@ def _compile_hy(source: str, filename: str, module_name: str) -> ast.Module:
     if not isinstance(compiled, ast.Module):
         raise TypeError(f"{filename}: Hy compiled to {type(compiled)!r}, expected a module")
     return compiled
+
+
+# Macro expansion is most of the analysis time: every process re-expands each Hy
+# module it reads (0.5–1 s per module). The expanded tree depends only on the
+# source, the macro modules it requires, and the Hy / Python versions, so it is
+# cached on disk under a key made of exactly those. DOEFF_EFFECT_ANALYZER_CACHE
+# names the directory; "off" disables the cache.
+_REQUIRE = re.compile(r"\(require\s+([A-Za-z_][\w.\-]*)")
+
+
+def _hy_cache_dir() -> Path | None:
+    """Where expanded trees are kept (None = caching turned off)."""
+    configured = os.environ.get("DOEFF_EFFECT_ANALYZER_CACHE")
+    if configured == "off":
+        return None
+    if configured:
+        return Path(configured)
+    base = os.environ.get("XDG_CACHE_HOME") or str(Path.home() / ".cache")
+    return Path(base) / "doeff-effect-analyzer" / "hy-trees"
+
+
+def _required_macro_digests(source: str) -> list[str]:
+    """Digests of the macro modules the source requires (their expansion shapes the tree)."""
+    digests = []
+    for name in sorted(set(_REQUIRE.findall(source))):
+        try:
+            spec = importlib.util.find_spec(name.replace("-", "_"))
+        except (ImportError, ValueError):
+            spec = None
+        origin = spec.origin if spec is not None else None
+        if origin and Path(origin).is_file():
+            digests.append(f"{name}={hashlib.sha256(Path(origin).read_bytes()).hexdigest()}")
+        else:
+            digests.append(f"{name}=?")
+    return digests
+
+
+def _hy_cache_path(source: str, filename: str, module_name: str) -> Path | None:
+    """The cache file for these exact inputs, so a changed source or macro module never reuses an old tree."""
+    directory = _hy_cache_dir()
+    if directory is None:
+        return None
+    import hy
+
+    key = "\n".join(
+        [
+            "v1",
+            sys.version,
+            hy.__version__,
+            module_name,
+            filename,
+            hashlib.sha256(source.encode("utf-8")).hexdigest(),
+            *_required_macro_digests(source),
+        ]
+    )
+    return directory / f"{hashlib.sha256(key.encode('utf-8')).hexdigest()}.pickle"
+
+
+def _read_cached_tree(path: Path) -> ast.Module | None:
+    """The cached tree, or None when absent or unreadable (the caller expands again)."""
+    try:
+        with path.open("rb") as handle:
+            tree = pickle.load(handle)
+    except (OSError, pickle.UnpicklingError, EOFError, AttributeError, ImportError, IndexError):
+        return None
+    return tree if isinstance(tree, ast.Module) else None
+
+
+def _write_cached_tree(path: Path, tree: ast.Module) -> None:
+    """Write atomically; a cache that cannot be written only costs the next expansion."""
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        handle, temporary = tempfile.mkstemp(dir=path.parent, suffix=".tmp")
+        with os.fdopen(handle, "wb") as out:
+            pickle.dump(tree, out, protocol=pickle.HIGHEST_PROTOCOL)
+        os.replace(temporary, path)
+    except OSError:
+        return
 
 
 def resolve_target(spec: str) -> Any:
@@ -1078,8 +1176,25 @@ class _Facts:
     performed_arguments: set[_Identity] = field(default_factory=set)
 
 
-def _body_nodes(function: FunctionNode) -> Iterator[ast.AST]:
-    """Nodes of the function body, not descending into nested functions/classes/lambdas."""
+_BODY_NODES: dict[int, tuple[ast.AST, tuple[ast.AST, ...]]] = {}
+
+
+def _body_nodes(function: FunctionNode) -> tuple[ast.AST, ...]:
+    """Nodes of the function body, not descending into nested functions/classes/lambdas.
+
+    Listed once per def node: the reader and the handler reader walk the same bodies many
+    times over (every call followed, every clause read), and the tree never changes.
+    """
+    cached = _BODY_NODES.get(id(function))
+    if cached is not None and cached[0] is function:
+        return cached[1]
+    nodes = tuple(_walk_body_nodes(function))
+    _BODY_NODES[id(function)] = (function, nodes)
+    return nodes
+
+
+def _walk_body_nodes(function: FunctionNode) -> Iterator[ast.AST]:
+    """Walk the body depth-first in source order (the order ``_body_nodes`` keeps)."""
     body: list[ast.AST] = (
         [function.body] if isinstance(function, ast.Lambda) else list(function.body)
     )
@@ -1105,6 +1220,78 @@ def _scope_of(
     bound: _Bound = _NO_BINDINGS,
 ) -> _Scope:
     """The names ``function`` binds, on top of ``parent`` (the function it is nested in)."""
+    facts = _body_facts(function)
+    names = set(facts.names)
+    imports = facts.imports
+    values = facts.values
+    local_calls = facts.local_calls
+    local_functions = facts.local_functions
+    elements = facts.elements
+    choices = facts.choices
+    rewraps = facts.rewraps
+    # A parameter rebound in the body (by an assignment or a loop) no longer holds what
+    # the caller passed.
+    own_bound = bound.without(facts.rebound)
+    if parent is None:
+        return _Scope(
+            module=module,
+            local_names=frozenset(names - set(imports)),
+            local_calls=local_calls,
+            local_imports=imports,
+            local_values=values,
+            local_functions=local_functions,
+            local_elements=elements,
+            local_choices=choices,
+            local_rewraps=rewraps,
+            bound=own_bound,
+        )
+    shadowed = frozenset(names)
+    return _Scope(
+        module=module,
+        local_names=frozenset((names | parent.local_names) - set(imports)),
+        local_calls={**_unshadowed(parent.local_calls, shadowed), **local_calls},
+        local_imports={**parent.local_imports, **imports},
+        local_values={**_unshadowed(parent.local_values, shadowed), **values},
+        local_functions={**_unshadowed(parent.local_functions, shadowed), **local_functions},
+        local_elements={**_unshadowed(parent.local_elements, shadowed), **elements},
+        local_choices={**_unshadowed(parent.local_choices, shadowed), **choices},
+        local_rewraps={**_unshadowed(parent.local_rewraps, shadowed), **rewraps},
+        bound=parent.bound.without(shadowed).plus(own_bound),
+    )
+
+
+@dataclass(frozen=True)
+class _BodyFacts:
+    """What one function body binds — independent of the caller's bindings and the enclosing
+    scope, so it is read once per def (``_scope_of`` runs for every call the reader follows).
+    The mappings are shared between scopes and never mutated."""
+
+    names: frozenset[str]
+    imports: dict[str, tuple[str, str | None]]
+    values: dict[str, ast.expr]
+    local_calls: dict[str, ast.Call]
+    local_functions: dict[str, FunctionNode]
+    elements: dict[str, ast.expr]
+    choices: dict[str, tuple[ast.expr, ...]]
+    rewraps: dict[str, ast.expr]
+    rebound: frozenset[str]
+
+
+_BODY_FACTS: dict[int, tuple[FunctionNode, _BodyFacts]] = {}
+
+
+def _body_facts(function: FunctionNode) -> _BodyFacts:
+    """The bindings of ``function``'s body, read once per def node (see ``_BodyFacts``)."""
+    cached = _BODY_FACTS.get(id(function))
+    if cached is not None and cached[0] is function:
+        return cached[1]
+    facts = _read_body_facts(function)
+    _BODY_FACTS[id(function)] = (function, facts)
+    return facts
+
+
+def _read_body_facts(function: FunctionNode) -> _BodyFacts:
+    """Walk the body once and collect what it binds (parameters, assignments, loops, defs)."""
     arguments = function.args
     names = {arg.arg for arg in (*arguments.posonlyargs, *arguments.args, *arguments.kwonlyargs)}
     if arguments.vararg:
@@ -1158,34 +1345,16 @@ def _scope_of(
         for name, exprs in assigned.items()
         if len(exprs) > 1 and (seed := _rewrapped_seed(exprs, name)) is not None
     }
-    # A parameter rebound in the body (by an assignment or a loop) no longer holds what
-    # the caller passed.
-    own_bound = bound.without(frozenset(assigned) | frozenset(loops))
-    if parent is None:
-        return _Scope(
-            module=module,
-            local_names=frozenset(names - set(imports)),
-            local_calls=local_calls,
-            local_imports=imports,
-            local_values=values,
-            local_functions=local_functions,
-            local_elements=elements,
-            local_choices=choices,
-            local_rewraps=rewraps,
-            bound=own_bound,
-        )
-    shadowed = frozenset(names)
-    return _Scope(
-        module=module,
-        local_names=frozenset((names | parent.local_names) - set(imports)),
-        local_calls={**_unshadowed(parent.local_calls, shadowed), **local_calls},
-        local_imports={**parent.local_imports, **imports},
-        local_values={**_unshadowed(parent.local_values, shadowed), **values},
-        local_functions={**_unshadowed(parent.local_functions, shadowed), **local_functions},
-        local_elements={**_unshadowed(parent.local_elements, shadowed), **elements},
-        local_choices={**_unshadowed(parent.local_choices, shadowed), **choices},
-        local_rewraps={**_unshadowed(parent.local_rewraps, shadowed), **rewraps},
-        bound=parent.bound.without(shadowed).plus(own_bound),
+    return _BodyFacts(
+        names=frozenset(names),
+        imports=imports,
+        values=values,
+        local_calls=local_calls,
+        local_functions=local_functions,
+        elements=elements,
+        choices=choices,
+        rewraps=rewraps,
+        rebound=frozenset(assigned) | frozenset(loops),
     )
 
 
@@ -2061,23 +2230,12 @@ def _find_function(tree: ast.Module, function: types.FunctionType) -> FunctionNo
     A ``lambda`` (``<lambda>`` in the qualname — ``defhandler`` compiles a handler whose
     only clause is ``(resume v)`` to one) is matched by line and parameter names.
     """
-    parts = [part for part in function.__qualname__.split(".") if part != "<locals>"]
-    candidates: list[FunctionNode] = []
-
-    def walk(members: Iterable[ast.AST], depth: int) -> None:
-        for definition in _direct_definitions(members):
-            name = "<lambda>" if isinstance(definition, ast.Lambda) else definition.name
-            if name != parts[depth]:
-                continue
-            if depth == len(parts) - 1:
-                if not isinstance(definition, ast.ClassDef):
-                    candidates.append(definition)
-            elif isinstance(definition, ast.Lambda):
-                walk([definition.body], depth + 1)
-            else:
-                walk(definition.body, depth + 1)
-
-    walk(tree.body, 0)
+    parts = tuple(part for part in function.__qualname__.split(".") if part != "<locals>")
+    candidates: list[FunctionNode] = [
+        definition
+        for definition in _definitions_by_path(tree).get(parts, ())
+        if not isinstance(definition, ast.ClassDef)
+    ]
     if not candidates:
         return None
     code = function.__code__
@@ -2092,6 +2250,33 @@ def _find_function(tree: ast.Module, function: types.FunctionType) -> FunctionNo
         return _Closeness(min(abs(line - first_line) for line in lines), 0 if same_params else 1)
 
     return min(candidates, key=distance)
+
+
+_DEFINITION_INDEX: dict[int, tuple[ast.Module, dict[tuple[str, ...], list[ast.AST]]]] = {}
+
+
+def _definitions_by_path(tree: ast.Module) -> dict[tuple[str, ...], list[ast.AST]]:
+    """Every def / class / lambda of ``tree`` by its name path, built once per tree.
+
+    ``_find_function`` runs for every function the reader follows; walking the whole
+    module each time was most of an analysis once expansion was cached. Entries keep
+    depth-first order, so ties in ``_find_function`` resolve as before.
+    """
+    cached = _DEFINITION_INDEX.get(id(tree))
+    if cached is not None and cached[0] is tree:
+        return cached[1]
+    index: dict[tuple[str, ...], list[ast.AST]] = {}
+
+    def walk(members: Iterable[ast.AST], path: tuple[str, ...]) -> None:
+        for definition in _direct_definitions(members):
+            name = "<lambda>" if isinstance(definition, ast.Lambda) else definition.name
+            here = (*path, name)
+            index.setdefault(here, []).append(definition)
+            walk([definition.body] if isinstance(definition, ast.Lambda) else definition.body, here)
+
+    walk(tree.body, ())
+    _DEFINITION_INDEX[id(tree)] = (tree, index)
+    return index
 
 
 @dataclass(frozen=True, order=True)
