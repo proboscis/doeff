@@ -7,7 +7,8 @@ import { cardKey, INITIAL_FOLD, unfoldAll } from '../../read/fold';
 import { buildCards } from '../../read/model';
 import { renderPage } from '../../read/render';
 import { PLAIN } from '../../hy/highlight/spans';
-import { absoluteModule, destinationOf, entityLink, linkPieces, resolveEntity, sourceLinks } from '../../read/resolve';
+import { mentionLink } from '../../read/locate';
+import { absoluteModule, destinationOf, entityLink, linkPieces, messageEntities, resolveEntity, sourceLinks } from '../../read/resolve';
 import { buildCallGraph, relationOf, type CallGraph } from '../../read/tree';
 
 // v12(operator 2026-09-29 "jump to definition by clicking each entities like effect/class/record etc from reading view and the
@@ -234,5 +235,24 @@ suite('定義を読む面 — source の箱の記号を押せる(v12・U19b)', (
     assert.strictEqual(placed.length, 3, JSON.stringify(links));
     assert.ok(placed.every((l) => l.candidates.length === 1));
     assert.ok(!links.some((l) => l.candidates.includes('pkg.classes_other.placed_version')), '定義の名そのものは押せない');
+  });
+});
+
+suite('定義を読む面 — 違反の文の中の名から定義へ(v12・U19c)', () => {
+  test('文の中の語のうち、その file の最上位の定義の名か mangle した綴りだけを引く(普通の語は引かない)', () => {
+    const { graph } = planePage();
+    const found = messageEntities('/repo/pkg/plane.hy', 'pkg/plane.hy の row_text が request の欄 key・text を文字列につなぐ(describe-row も同じ)', graph);
+    assert.deepStrictEqual(found, [
+      { name: 'row_text', qualifiedName: 'pkg.plane.row_text' },
+      { name: 'describe-row', qualifiedName: 'pkg.plane.describe_row' }
+    ]);
+    assert.deepStrictEqual(messageEntities('/repo/elsewhere.hy', 'row-text', graph), []);
+  });
+
+  test('tooltip の名は読む面のカードを開く命令の link', () => {
+    assert.strictEqual(
+      mentionLink({ name: 'row-text', qualifiedName: 'pkg.plane.row_text' }),
+      `[\`row-text\`](command:doeff-runner.read.revealEntity?${encodeURIComponent('["pkg.plane.row_text"]')} "pkg.plane.row_text")`
+    );
   });
 });

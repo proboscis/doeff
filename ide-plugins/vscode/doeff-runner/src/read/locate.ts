@@ -66,6 +66,24 @@ export function locate(
 /** 違反(linter)の一覧の項目を押した時の命令 — 読む面の内部の命令(引数は ViolationPlace 1 つ・v10)。 */
 export const REVEAL_VIOLATION_COMMAND = 'doeff-runner.read.revealViolation';
 
+/** 実体の名(完全修飾名)の定義のカードを読む面で開く命令 — 違反の文の中の名の link から呼ぶ(v12・#910 U19c)。 */
+export const REVEAL_ENTITY_COMMAND = 'doeff-runner.read.revealEntity';
+
+/** 文の中に出た実体の名と、その定義の完全修飾名。 */
+export interface EntityMention {
+  readonly name: string;
+  readonly qualifiedName: string;
+}
+
+/** 違反の file と文から、文の中の実体の名を引く口(読む面の索引の表で解く — lint の欄は索引を知らない)。 */
+export type MentionsOf = (filePath: string, message: string) => readonly EntityMention[];
+
+/** 文の中の実体の名 1 つを、読む面のそのカードを開く command link の Markdown にする(違反の tooltip)。 */
+export function mentionLink(mention: EntityMention): string {
+  const args = encodeURIComponent(JSON.stringify([mention.qualifiedName]));
+  return `[\`${mention.name}\`](command:${REVEAL_ENTITY_COMMAND}?${args} "${mention.qualifiedName}")`;
+}
+
 /** 違反の位置(linter の path と 0 始まりの範囲 — editor で開く時は範囲を選ぶ)。 */
 export interface ViolationPlace {
   readonly path: string;

@@ -20,7 +20,8 @@ import {
 import { multiTokenFuzzyMatch } from './search';
 import { registerHyNavigation } from './hy/register';
 import { registerLint } from './lint/register';
-import { registerReadingPlane } from './read/panel';
+import { GraphTable, registerReadingPlane } from './read/panel';
+import { messageEntities } from './read/resolve';
 import { registerWorkspacePlane } from './read/workspace';
 import { registerBrowse } from './hy/browsePanel';
 import { registerDefkView } from './defk/view';
@@ -2931,12 +2932,16 @@ export function activate(context: vscode.ExtensionContext) {
   const pixelIcons = PixelIcons.load(context.extensionPath, output);
   const treePixels = (): IconSource | undefined => (treeIconsEnabled() ? pixelIcons : undefined);
   // doeff-linter's findings (the linter is the source of truth; the editor only displays them).
-  const lint = registerLint(context, output, { tree: treePixels, ownsGutter: pixelOwnsGutter, icons: pixelIcons });
+  // 索引の全 file の呼び出しの表 — 読む面と、違反の欄の文の中の名の解決が共有する(agora-redesign #910 v12)
+  const graphs = new GraphTable(hyStore);
+  const lint = registerLint(context, output, { tree: treePixels, ownsGutter: pixelOwnsGutter, icons: pixelIcons }, (filePath, message) =>
+    messageEntities(filePath, message, graphs.graph)
+  );
   const lintStore = lint.store;
   // Browse definitions by service / layer / tags (display only).
   registerBrowse(context, hyStore, hyNavigation.status, lintStore, output, treePixels);
   // 定義を読む面(webview)— 定義 1 つを 1 枚のカードにし、kind と :tags の軸で絞る。定義の一覧は hy-index だけから(agora-redesign #910)
-  const readingParts = registerReadingPlane(context, hyStore, hyNavigation.status, lintStore, pixelIcons, lint.watch, output);
+  const readingParts = registerReadingPlane(context, hyStore, hyNavigation.status, lintStore, pixelIcons, lint.watch, output, graphs);
   // 定義を読む面の repo 全体の入口 — file を開かずに索引の全定義を軸から絞る(agora-redesign #910 U9)
   registerWorkspacePlane(context, hyStore, lintStore, readingParts, lint.watch);
   // エディタの上の pixel art(gutter の種類の icon と状態の印・決まった語の文字の置き換えと hover・状態バーの doe)

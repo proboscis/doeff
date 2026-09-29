@@ -176,10 +176,10 @@ function segmentClass(role: LintBodySegment['role']): string {
       return 'fn';
     case 'lisp':
       return 'lisp';
+    // 註の行 comment(linter の U20a で足した役)— 色は面の担当が決めるまで既定の字
     case 'name':
     case 'assign':
     case 'text':
-    // 註の行(linter の U20a で足した役)— 色は面の担当が決めるまで既定の字
     case 'comment':
     case null:
       return '';
@@ -238,6 +238,7 @@ function segmentTargets(segment: LintBodySegment, graph: CallGraph, path: string
     case 'assign':
     case 'text':
     case 'lisp':
+    case 'comment':
     case null:
       return [];
     default: {

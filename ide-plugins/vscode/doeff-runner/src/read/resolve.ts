@@ -7,6 +7,7 @@
 import type { HyNameRef, HyRange } from '../hy/contract';
 import type { LintLocation, LintTypeRef } from '../lint/contract';
 import { escapeHtml } from './html';
+import type { EntityMention } from './locate';
 import type { CallGraph } from './tree';
 
 /** 名 1 つの手がかり — 何で引けるか。 */
@@ -235,6 +236,37 @@ export function linkPieces<T extends { readonly text: string }>(
     column = to;
   }
   return out.join('');
+}
+
+/** 文の中の Hy の識別子(mangle した綴り `on_record_write` も含む)。 */
+const MESSAGE_NAME = /[A-Za-z_][\w\-?!*]*/g;
+
+/**
+ * 違反の文の中の実体の名(v12 — 違反の欄の名も押せる)。その file の最上位の定義の名か mangle した綴りに一致する語だけ(文は
+ * 自由な文なので、repo 全体の名では引かない — `request` のような普通の語が別の定義に当たるのを避ける)。書いた順・重ねない。
+ */
+export function messageEntities(filePath: string, message: string, graph: CallGraph): EntityMention[] {
+  const file = graph.files.get(filePath);
+  if (file === undefined) {
+    return [];
+  }
+  const byWord = new Map<string, string>();
+  for (const d of file.definitions) {
+    if (d.container === null) {
+      byWord.set(d.name, d.qualifiedName);
+      byWord.set(d.mangled, d.qualifiedName);
+    }
+  }
+  const seen = new Set<string>();
+  const found: EntityMention[] = [];
+  for (const word of message.match(MESSAGE_NAME) ?? []) {
+    const qualifiedName = byWord.get(word);
+    if (qualifiedName !== undefined && !seen.has(word)) {
+      seen.add(word);
+      found.push({ name: word, qualifiedName });
+    }
+  }
+  return found;
 }
 
 /** 押した名 1 つの行き先 — その定義のカード(入れ子の定義は入れ物のカードのその行)か、text editor の定義の名の位置。 */

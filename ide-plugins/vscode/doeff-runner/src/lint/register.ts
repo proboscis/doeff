@@ -11,6 +11,7 @@ import { ChildProcessLinter } from './runner';
 import { pauseDelayMs, semanticStatus } from './semantic';
 import { LintService } from './service';
 import { LintStore } from './store';
+import type { MentionsOf } from '../read/locate';
 import {
   ALL_VIOLATIONS,
   filterText,
@@ -53,7 +54,9 @@ export interface LintRegistration {
 export function registerLint(
   context: vscode.ExtensionContext,
   output: vscode.OutputChannel,
-  pixel: { readonly tree: TreePixels; readonly ownsGutter: (document: vscode.TextDocument) => boolean; readonly icons: IconSource }
+  pixel: { readonly tree: TreePixels; readonly ownsGutter: (document: vscode.TextDocument) => boolean; readonly icons: IconSource },
+  /** 違反の文の中の実体の名を引く口(読む面の索引の表 — v12) */
+  mentions?: MentionsOf
 ): LintRegistration {
   const store = new LintStore();
   const linter = new ChildProcessLinter(lintCommandFor, LINT_TIMEOUT_MS);
@@ -108,7 +111,7 @@ export function registerLint(
   context.subscriptions.push(staleStatus, { dispose: offStale });
   // 前回 = この workspace で前に開いていた時の最後の数(起動の時に 1 度だけ読み、以後は今の数を書き続ける)
   const previous = readSavedTally(context.workspaceState.get(LEVEL_TALLY_KEY));
-  const violations = new LintViolationsTree(store, pixel.tree, () => previous);
+  const violations = new LintViolationsTree(store, pixel.tree, () => previous, mentions);
   const map = new LintMapTree(store, pixel.tree);
   // 行末の文・行の左端の印・右端のスクロールバーの印(細い info の波線は色付けの上で見えないため)。
   // pixel art の gutter が出ている Hy の file では、左端の丸は出さない(1 行に画は 1 つ)

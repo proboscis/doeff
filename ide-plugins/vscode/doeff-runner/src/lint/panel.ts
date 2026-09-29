@@ -21,7 +21,7 @@ import type { LintStore } from './store';
 import { ALL_VIOLATIONS, summaryDescription, summaryLabel, type PanelFilter, type SavedTally } from './severity';
 import type { IconSource } from '../pixel/icons';
 import { layerGlyph, ruleIcon, serviceGlyph, violationMark } from '../pixel/vocabulary';
-import { REVEAL_VIOLATION_COMMAND, type ViolationPlace } from '../read/locate';
+import { mentionLink, REVEAL_ENTITY_COMMAND, REVEAL_VIOLATION_COMMAND, type MentionsOf, type ViolationPlace } from '../read/locate';
 
 /**
  * 違反の項目を押した時の命令 — その .hy の読む面で、違反の行を含む定義のカードと source の箱の該当の行へ(v10・#910 U18)。
@@ -136,8 +136,8 @@ function pixelIcon(node: LintNode, icons: IconSource): vscode.Uri | undefined {
 }
 
 /** 節を VS Code の TreeItem にする(pixel art の icon があればそれ、無ければ codicon)。 */
-export function lintTreeItem(node: LintNode, layers: readonly LintLayer[], icons?: IconSource): vscode.TreeItem {
-  const item = codiconTreeItem(node, layers);
+export function lintTreeItem(node: LintNode, layers: readonly LintLayer[], icons?: IconSource, mentions?: MentionsOf): vscode.TreeItem {
+  const item = codiconTreeItem(node, layers, mentions);
   const pixel = icons === undefined ? undefined : pixelIcon(node, icons);
   if (pixel !== undefined) {
     item.iconPath = pixel;
@@ -146,7 +146,7 @@ export function lintTreeItem(node: LintNode, layers: readonly LintLayer[], icons
 }
 
 /** 節を codicon の TreeItem にする。 */
-function codiconTreeItem(node: LintNode, layers: readonly LintLayer[]): vscode.TreeItem {
+function codiconTreeItem(node: LintNode, layers: readonly LintLayer[], mentions?: MentionsOf): vscode.TreeItem {
   const collapsed = vscode.TreeItemCollapsibleState.Collapsed;
   const none = vscode.TreeItemCollapsibleState.None;
   switch (node.tag) {
@@ -183,9 +183,14 @@ function codiconTreeItem(node: LintNode, layers: readonly LintLayer[]): vscode.T
       const item = new vscode.TreeItem(v.message, none);
       const standing = v.standing === 'registered' ? ' · 既知(登録簿)' : v.standing === 'reconciling' ? ' · 照合中' : '';
       item.description = `${v.range.start.line + 1} 行 · ${v.rule}${standing}`;
-      item.tooltip = new vscode.MarkdownString(
-        [v.message, ...violationExplanationLines(v), `規則 \`${v.rule}\`${v.law === null ? '' : ` · law \`${v.law}\``}`].join('\n\n')
+      // 文の中の実体の名は、読む面のその定義のカードへの link(v12 — 違反の欄の名も押せる)
+      const named = mentions === undefined ? [] : mentions(v.path, v.message);
+      const definitions = named.length === 0 ? [] : [`定義: ${named.map(mentionLink).join('・')}`];
+      const tooltip = new vscode.MarkdownString(
+        [v.message, ...definitions, ...violationExplanationLines(v), `規則 \`${v.rule}\`${v.law === null ? '' : ` · law \`${v.law}\``}`].join('\n\n')
       );
+      tooltip.isTrusted = { enabledCommands: [REVEAL_ENTITY_COMMAND] };
+      item.tooltip = tooltip;
       item.command = openViolation(v);
       item.iconPath = new vscode.ThemeIcon(v.severity === 'error' ? 'error' : v.severity === 'warning' ? 'warning' : 'info');
       return item;
@@ -251,7 +256,9 @@ export class LintViolationsTree implements vscode.TreeDataProvider<LintNode>, vs
     private readonly store: LintStore,
     private readonly pixels: TreePixels,
     /** 前回の数え(増減の元 — 無ければ増減を出さない) */
-    private readonly previous: () => SavedTally | undefined
+    private readonly previous: () => SavedTally | undefined,
+    /** 違反の文の中の実体の名を引く口(読む面の索引の表 — tooltip の link) */
+    private readonly mentions?: MentionsOf
   ) {}
 
   /** 今の絞り込み。 */
@@ -288,7 +295,7 @@ export class LintViolationsTree implements vscode.TreeDataProvider<LintNode>, vs
 
   /** 節の表示。 */
   getTreeItem(node: LintNode): vscode.TreeItem {
-    return lintTreeItem(node, this.store.layers(), this.pixels());
+    return lintTreeItem(node, this.store.layers(), this.pixels(), this.mentions);
   }
 
   /** 節の子(最上段は law の束か規則の一覧)。 */

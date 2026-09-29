@@ -27,7 +27,7 @@ import {
 } from './fold';
 import { followEntity } from './goto';
 import { LABELS } from './labels';
-import { locate, parseLocation, REVEAL_VIOLATION_COMMAND, violationAction, type RevealTarget, type ViolationPlace } from './locate';
+import { locate, parseLocation, REVEAL_ENTITY_COMMAND, REVEAL_VIOLATION_COMMAND, violationAction, type RevealTarget, type ViolationPlace } from './locate';
 import { buildCards, facets, parseAxisKey, SEARCH_KEY, setSearch, toggle, visibleCards, type Card, type Selection } from './model';
 import type { Glyphs } from './html';
 import { lineClasses, renderFacets, renderPage, renderTreePart, summaryText, type PlaneState } from './render';
@@ -638,14 +638,15 @@ export function registerReadingPlane(
   lint: LintStore,
   icons: IconSource,
   watch: (document: vscode.TextDocument) => void,
-  output: vscode.OutputChannel
+  output: vscode.OutputChannel,
+  /** 索引の全 file の呼び出しの表(入口で 1 つ作り、違反の欄の名の解決と共有する — v12) */
+  graphs: GraphTable
 ): ReadingPlaneParts {
   // effect の絵は装飾 A と同じ pixel art を data URI で(webview の CSP は img-src data: だけを許す)
   const glyphs: Glyphs = { effect: (name) => icons.inline(effectGlyph(name), 14)?.toString(true) };
   // source の箱の色 — editor の `.hy` と同じ文法・theme・記号ごとの色(agora-redesign #910 U16)
   const highlighter = new SourceHighlighter(output);
   const memory = workspaceFoldMemory(context.workspaceState);
-  const graphs = new GraphTable(hy);
   const navigator = new PlaneNavigator();
   const provider = new ReadingPlaneProvider(hy, status, lint, glyphs, memory, graphs, navigator, highlighter, watch);
   context.subscriptions.push(
@@ -689,6 +690,15 @@ export function registerReadingPlane(
           throw new Error(`網羅されていない答え: ${JSON.stringify(unreachable)}`);
         }
       }
+    }),
+    // 違反の文の中の実体の名(tooltip の link)から、その定義のカードへ(v12・#910 U19c)
+    vscode.commands.registerCommand(REVEAL_ENTITY_COMMAND, (qualifiedName: unknown) => {
+      if (typeof qualifiedName !== 'string') {
+        return;
+      }
+      void followEntity(graphs.graph, [qualifiedName], false, (to) =>
+        navigator.revealElsewhere(to.path, { qualifiedName: to.qualifiedName, line: to.line, showSource: false })
+      );
     }),
     // 違反(linter)の一覧の項目から、その .hy の読む面のカードと source の箱の該当の行へ(v10・#910 U18)
     vscode.commands.registerCommand(REVEAL_VIOLATION_COMMAND, (place: ViolationPlace) => {
