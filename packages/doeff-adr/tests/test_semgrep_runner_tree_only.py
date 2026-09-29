@@ -25,16 +25,15 @@ from doeff_adr.registry import (
     _resolve_config_path,
     _run_semgrep,
     assert_semgrep_enforcement,
-    clear_registry,
+    isolated_registry,
     register_semgrep_enforcement,
 )
 
 
 @pytest.fixture
 def registry():
-    clear_registry()
-    yield
-    clear_registry()
+    with isolated_registry():
+        yield
 
 
 def _make_tree_without_git(tmp_path: Path) -> Path:

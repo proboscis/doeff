@@ -10,6 +10,8 @@ import json
 import shutil
 import subprocess
 import tempfile
+from collections.abc import Generator
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
@@ -74,6 +76,24 @@ _ENFORCEMENTS: dict[str, EnforcementRef | SemgrepSpec] = {}
 def clear_registry() -> None:
     _ADRS.clear()
     _ENFORCEMENTS.clear()
+
+
+@contextmanager
+def isolated_registry() -> Generator[None]:
+    """空の登録簿で中を走らせ、出る時に入る前の登録簿へ戻す。
+
+    収集で import された ADR は収集の時点で登録簿に載る — 空にしたまま返す test があると、後で走るその ADR の条文の
+    test が KeyError で落ちる(agora-redesign #1211)。test が登録簿を空にしたい時はこれを使う。
+    """
+    saved_adrs = dict(_ADRS)
+    saved_enforcements = dict(_ENFORCEMENTS)
+    clear_registry()
+    try:
+        yield
+    finally:
+        clear_registry()
+        _ADRS.update(saved_adrs)
+        _ENFORCEMENTS.update(saved_enforcements)
 
 
 def _keyword_to_text(value: Any) -> str:

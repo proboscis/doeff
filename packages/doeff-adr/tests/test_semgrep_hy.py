@@ -14,7 +14,7 @@ from pathlib import Path
 import doeff_hy  # noqa: F401 - registers Hy import hooks
 import pytest
 from doeff_adr.hy_expand import expand_hy_source
-from doeff_adr.registry import clear_registry
+from doeff_adr.registry import isolated_registry
 from doeff_adr.semgrep_hy import HyScanExpansionError, scan_with_hy_expansion
 
 pytestmark = pytest.mark.skipif(
@@ -171,11 +171,10 @@ def test_installed_defsemgrep_expands_hy_fixtures(tmp_path: Path) -> None:
           :expand-hy True)
         """)
     sys.path.insert(0, str(tmp_path))
-    clear_registry()
     try:
-        module = importlib.import_module(adr.stem)
-        module.test_aliased_socket_rule_defsemgrep()
+        with isolated_registry():
+            module = importlib.import_module(adr.stem)
+            module.test_aliased_socket_rule_defsemgrep()
     finally:
-        clear_registry()
         sys.path.remove(str(tmp_path))
         sys.modules.pop(adr.stem, None)
