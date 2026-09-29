@@ -19,12 +19,13 @@ import importlib.util
 import inspect
 import sys
 import types
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Generator, Iterable
+from typing import cast
 from pathlib import Path
 import pytest
 from _pytest.mark.structures import Mark as PytestMark
 from _pytest.mark.structures import get_unpacked_marks
-from _pytest.fixtures import getfixturemarker
+from _pytest.fixtures import FixtureFunctionDefinition, getfixturemarker
 from doeff_hy.pytest_items import (
     Decorator,
     Dynamic,
@@ -43,7 +44,14 @@ from doeff_hy.pytest_items import (
 )
 from hy.importer import HyLoader
 
-from doeff_adr.item_cache import CacheHit, CacheMiss, read_cached
+from doeff_adr.item_cache import (
+    CacheHit,
+    CacheMiss,
+    FixtureRecord,
+    MalformedCacheEntry,
+    fixture_scope,
+    read_cached,
+)
 
 # pytest の xunit の形の関数(名で意味を持つ — 仮の module は持たないので、あれば import して収集する)。
 XUNIT_NAMES = frozenset(
@@ -64,6 +72,7 @@ class Indexed:
     """記録で説明できる file — 仮の module で収集する。"""
 
     records: tuple[Record, ...]
+    fixtures: tuple[FixtureRecord, ...]
 
 
 @dataclass(frozen=True)
@@ -79,22 +88,51 @@ CollectionPlan = Indexed | NeedsImport
 def plan_collection(path: Path, cache_dir: Path) -> CollectionPlan:
     """収集で import せずに済むかを、キャッシュだけから決める(保存の時に実物と突き合わせ済みの記録しか入っていない)。"""
     match read_cached(path, cache_dir):
-        case CacheHit(records):
-            return Indexed(records)
+        case CacheHit(records, fixtures):
+            return Indexed(records, fixtures)
         case CacheMiss(reason):
             return NeedsImport(reason)
 
 
-def verify_records(real_module: types.ModuleType, name_matches: Callable[[str], bool]) -> list[str]:
-    """import した module の記録が、pytest がその module から集める物を全部説明するかを確かめる(食い違いの一覧)。
+@dataclass(frozen=True)
+class Verified:
+    """import した module と記録の突き合わせの結果 — ``problems`` が空の時だけ保存してよい。``fixtures`` は保存する fixture の記録。"""
 
-    空の時だけキャッシュに保存してよい。``name_matches`` は pytest の ``python_functions`` / ``python_classes`` の照合。
-    Hy の fork に足していた 3 つの記録(最上位の束縛の名・decorator・最上位の呼び出し)の代わり(#1291)。
+    problems: list[str]
+    fixtures: tuple[FixtureRecord, ...]
+
+
+def _fixture_record(attribute: str, value: FixtureFunctionDefinition) -> FixtureRecord | str:
+    """module の fixture 1 つを記録にする。収集の結果を変える fixture(params・autouse・呼び出しで決まる scope)は理由の文を返す。"""
+    marker = getfixturemarker(value)
+    if marker is None:
+        return f"fixture の {attribute} の印が読めない"
+    if marker.params is not None or marker.autouse:
+        return f"fixture の {attribute} が params / autouse を持つ"
+    try:
+        scope = fixture_scope(marker.scope)
+    except MalformedCacheEntry:
+        return f"fixture の {attribute} の scope が語でない(呼び出しで決まる scope)"
+    function = inspect.unwrap(value)
+    return FixtureRecord(
+        attribute=attribute,
+        name=value.name,
+        scope=scope,
+        argnames=tuple(inspect.signature(function).parameters),
+        generator=inspect.isgeneratorfunction(function),
+    )
+
+
+def verify_records(real_module: types.ModuleType, name_matches: Callable[[str], bool]) -> Verified:
+    """import した module の記録が、pytest がその module から集める物を全部説明するかを確かめる。
+
+    ``name_matches`` は pytest の ``python_functions`` / ``python_classes`` の照合。Hy の fork に足していた 3 つの記録
+    (最上位の束縛の名・decorator・最上位の呼び出し)の代わり(#1291)。module の fixture は記録にして返す(#1227 の案 B)。
     """
     try:
         records = decode_records(module_record_texts(real_module))
     except MalformedRecord as exc:
-        return [f"記録の形が違う: {exc}"]
+        return Verified([f"記録の形が違う: {exc}"], ())
     problems = [f"動的: {r.where} ({r.reason})" for r in records if isinstance(r, Dynamic)]
     functions = [r for r in records if isinstance(r, FunctionItem)]
     names = {r.name for r in functions}
@@ -113,16 +151,23 @@ def verify_records(real_module: types.ModuleType, name_matches: Callable[[str], 
     real_marks = [m.name for m in get_unpacked_marks(real_module)]
     if recorded_marks != real_marks:
         problems.append(f"module の印が記録と違う — 記録 {recorded_marks} / 実物 {real_marks}")
+    fixtures: list[FixtureRecord] = []
     for name, value in vars(real_module).items():
         if name in names:
             continue
         if name in XUNIT_NAMES:
             problems.append(f"xunit の {name} がある")
+        elif isinstance(value, FixtureFunctionDefinition):
+            match _fixture_record(name, value):
+                case FixtureRecord() as record:
+                    fixtures.append(record)
+                case reason:
+                    problems.append(reason)
         elif getfixturemarker(value) is not None:
-            problems.append(f"fixture の {name} がある")
+            problems.append(f"fixture の {name} の形が読めない")
         elif name_matches(name) and callable(value):
             problems.append(f"記録に無い test らしい名 {name} がある")
-    return problems
+    return Verified(problems, tuple(fixtures))
 
 
 # ---------------------------------------------------------------------------
@@ -203,10 +248,50 @@ def _stub_module_mark(name: str) -> pytest.MarkDecorator:
             return getattr(pytest.mark, name)
 
 
-def stub_module(records: tuple[Record, ...], path: Path, module_name: str) -> types.ModuleType:
-    """記録から仮の module を作る — pytest の Module の収集が読む物(関数と pytestmark)だけを持つ。"""
+def _stub_fixture(record: FixtureRecord, module_name: str) -> FixtureFunctionDefinition:
+    """記録の fixture 1 つから、同じ名・scope・引数の仮の fixture を作る。呼ばれた時は、setup で import 済みの本物の
+    module の fixture の元の関数を呼ぶ(fixture の意味は本物の module にだけある)。"""
+
+    def real_function() -> Callable[..., object]:
+        """本物の module の fixture の元の関数(item の setup が先に本物の module を import している)。"""
+        real_module = sys.modules.get(module_name)
+        if real_module is None:
+            raise RuntimeError(f"{module_name}: 仮の fixture {record.name} が、本物の module の import の前に呼ばれた")
+        return inspect.unwrap(vars(real_module)[record.attribute])
+
+    if record.generator:
+
+        def generator_stub(**kwargs: object) -> Generator[object, None, None]:
+            yield from cast(Generator[object, None, None], real_function()(**kwargs))
+
+        stub: Callable[..., object] = generator_stub
+    else:
+
+        def value_stub(**kwargs: object) -> object:
+            return real_function()(**kwargs)
+
+        stub = value_stub
+    # 仮の fixture の引数を pytest に見せる口(inspect.signature は __signature__ を読む)。
+    setattr(
+        stub,
+        "__signature__",
+        inspect.Signature(
+            [inspect.Parameter(name, inspect.Parameter.POSITIONAL_OR_KEYWORD) for name in record.argnames]
+        ),
+    )
+    stub.__name__ = stub.__qualname__ = record.attribute
+    stub.__module__ = module_name
+    return pytest.fixture(scope=record.scope, name=record.name)(stub)
+
+
+def stub_module(
+    records: tuple[Record, ...], fixtures: tuple[FixtureRecord, ...], path: Path, module_name: str
+) -> types.ModuleType:
+    """記録から仮の module を作る — pytest の Module の収集が読む物(関数・pytestmark・fixture)だけを持つ。"""
     module = types.ModuleType(module_name)
     module.__file__ = str(path)
+    for fixture in fixtures:
+        setattr(module, fixture.attribute, _stub_fixture(fixture, module_name))
     for record in records:
         match record:
             case FunctionItem():

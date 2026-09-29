@@ -292,9 +292,9 @@ class DoeffAdrHyFile(pytest.Module):
         base = _import_base_for_path(self.path.resolve(), Path(self.config.rootpath).resolve())
         module_name = _module_name_for_path(self.path.resolve(), base)
         match plan_collection(self.path.resolve(), items_cache_dir(self.config)):
-            case Indexed(records):
+            case Indexed(records, fixtures):
                 self.config.stash.setdefault(_INDEXED_FILES_KEY, []).append(self.path)
-                return stub_module(records, self.path.resolve(), module_name)
+                return stub_module(records, fixtures, self.path.resolve(), module_name)
             case NeedsImport(reason):
                 # import が途中で終わる file(module ごと skip する等)も報告に載せるため、import の前に積む。
                 self.config.stash.setdefault(_IMPORTED_FILES_KEY, []).append((self.path, reason))
@@ -309,12 +309,12 @@ class DoeffAdrHyFile(pytest.Module):
         if reason is None:
             return
         self._mut_import_reason = None
-        problems = verify_records(module, self._pytest_collects)
-        if problems:
+        verified = verify_records(module, self._pytest_collects)
+        if verified.problems:
             imported = self.config.stash[_IMPORTED_FILES_KEY]
-            imported[-1] = (self.path, f"{reason} — 保存しない: " + "・".join(problems))
+            imported[-1] = (self.path, f"{reason} — 保存しない: " + "・".join(verified.problems))
             return
-        write_cached(self.path.resolve(), module, items_cache_dir(self.config))
+        write_cached(self.path.resolve(), module, verified.fixtures, items_cache_dir(self.config))
 
     def _pytest_collects(self, name: str) -> bool:
         """pytest がこの名を test として集めるか(``python_functions`` / ``python_classes``)。"""

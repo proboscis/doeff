@@ -233,20 +233,55 @@ def test_a_changed_macro_provider_reads_no_stale_record(project: pytest.Pytester
     assert "pkg.tests.test_gamma" in _imports(tmp_path)
 
 
-def test_a_fixture_bound_by_assignment_keeps_its_file_imported(project: pytest.Pytester, tmp_path: Path) -> None:
-    """代入で作った fixture((val 名 ((pytest.fixture …) 関数)))を持つ file は保存せず、毎回 import する —
-    記録だけで集めると setup で fixture が見つからない(L701 の不具合・#1291 で直した)。"""
+def test_a_fixture_bound_by_assignment_is_collected_from_records(project: pytest.Pytester, tmp_path: Path) -> None:
+    """代入で作った module の fixture((val 名 ((pytest.fixture …) 関数)))を持つ file も記録から集める — 仮の module に
+    同じ名・scope・引数の仮の fixture を置き、呼ばれた時は本物の module の fixture を呼ぶ。その実行の中で本物の module の
+    import は 1 回だけ(agora-redesign #1227 の案 B・議論の席の条件 1)。L713 の前は記録だけで集めて fixture not found に
+    なっていた。"""
     (project.path / "pkg/tests/test_fixture_by_val.hy").write_text(
         PRELUDE
         + """
-(defn make-answer [] 42)
-(val answer ((pytest.fixture :name "answer") make-answer))
-(deftest test-uses-the-fixture [answer] (assert (= answer 42)))
+(defn make-answer [tmp-path-factory] (if (is-not tmp-path-factory None) 42 0))
+(val answer ((pytest.fixture :scope "module" :name "answer") make-answer))
+(defn make-counter []
+  (yield [1])
+  None)
+(val counter ((pytest.fixture :name "counter") make-counter))
+(deftest test-uses-the-fixture [answer counter] (assert (= answer 42)) (assert (= counter [1])))
+(deftest test-uses-it-again [answer] (assert (= answer 42)))
 """
     )
-    for _ in range(2):
-        result = project.runpytest_subprocess("-p", "no:cacheprovider", "-k", "test_uses_the_fixture")
-        result.assert_outcomes(passed=1, deselected=20, skipped=1)
+    first = project.runpytest_subprocess("-p", "no:cacheprovider", "-k", "uses_the_fixture or uses_it_again")
+    first.assert_outcomes(passed=2, deselected=20, skipped=1)
+    _imports(tmp_path)
     out = _collect(project).out
-    assert "import: pkg/tests/test_fixture_by_val.hy — 記録なし" in out
-    assert "保存しない: fixture の answer がある" in out
+    assert "test_fixture_by_val.hy" not in "\n".join(line for line in out.splitlines() if "import:" in line)
+    assert _imports(tmp_path).count("pkg.tests.test_fixture_by_val") == 0
+    second = project.runpytest_subprocess("-p", "no:cacheprovider", "-k", "uses_the_fixture or uses_it_again")
+    second.assert_outcomes(passed=2, deselected=20, skipped=1)
+    assert _imports(tmp_path).count("pkg.tests.test_fixture_by_val") == 1
+
+
+@pytest.mark.parametrize(
+    "fixture_form",
+    [
+        '((pytest.fixture :params [1 2] :name "answer") make-answer)',
+        '((pytest.fixture :autouse True :name "answer") make-answer)',
+    ],
+)
+def test_fixtures_that_shape_collection_keep_their_file_imported(
+    project: pytest.Pytester, tmp_path: Path, fixture_form: str
+) -> None:
+    """params / autouse つきの fixture は収集の結果を変えるので、その file は今までどおり収集で import する(条件 1)。"""
+    (project.path / "pkg/tests/test_shaping_fixture.hy").write_text(
+        PRELUDE
+        + f"""
+(defn make-answer [] 42)
+(val answer {fixture_form})
+(deftest test-shaping (assert True))
+"""
+    )
+    _collect(project)
+    out = _collect(project).out
+    assert "import: pkg/tests/test_shaping_fixture.hy — 記録なし" in out
+    assert "fixture の answer が params / autouse を持つ" in out

@@ -21,13 +21,15 @@ import tempfile
 import types
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Literal
 
 from doeff_hy.pytest_items import Record, decode_records, module_record_texts
 from doeff_hy_bytecode_guard import file_sha256, macro_dependencies
 
 DEFAULT_CACHE_DIR = Path.home() / ".cache" / "doeff-adr" / "pytest-items"
 # 記録の形か鍵の決め方を変えたら上げる(古い版のキャッシュは読まない)。2 = macro の提供元を doeff_hy_bytecode_guard の辿り方で求める。
-CACHE_FORMAT = 2
+# 3 = module の fixture の記録を足す(agora-redesign #1227 の案 B)。
+CACHE_FORMAT = 3
 
 
 @dataclass(frozen=True)
@@ -39,6 +41,46 @@ class MacroDependency:
     digest: str
 
 
+class MalformedCacheEntry(ValueError):
+    """キャッシュの file の形が違う(版の違う doeff-adr が書いた・書きかけ等)。"""
+
+
+FixtureScope = Literal["function", "class", "module", "package", "session"]
+
+
+def fixture_scope(value: object) -> FixtureScope:
+    """fixture の scope の語を閉じた型へ(語彙の外は MalformedCacheEntry — 黙って function にしない)。"""
+    match value:
+        case "function":
+            return "function"
+        case "class":
+            return "class"
+        case "module":
+            return "module"
+        case "package":
+            return "package"
+        case "session":
+            return "session"
+        case _:
+            raise MalformedCacheEntry(f"fixture の scope が語彙の外: {value!r}")
+
+
+@dataclass(frozen=True)
+class FixtureRecord:
+    """module の fixture 1 つ — 仮の module に同じ名・scope・引数の仮の fixture を置くための記録。
+
+    保存の時に本物の module の pytest の fixture の印から作る(fixture の定義元は本物の module のまま — 仮の fixture は
+    setup で本物の関数を呼ぶだけ・agora-redesign #1227 の案 B)。params / autouse つきの fixture は記録しない
+    (収集の結果を変えるので、その file は今までどおり import で集める)。
+    """
+
+    attribute: str
+    name: str
+    scope: FixtureScope
+    argnames: tuple[str, ...]
+    generator: bool
+
+
 @dataclass(frozen=True)
 class CacheEntry:
     """キャッシュの file 1 つの中身(JSON の境界で解いた形)。"""
@@ -46,6 +88,7 @@ class CacheEntry:
     format: int
     records: tuple[str, ...]
     deps: tuple[MacroDependency, ...]
+    fixtures: tuple[FixtureRecord, ...]
 
 
 @dataclass(frozen=True)
@@ -53,6 +96,7 @@ class CacheHit:
     """有効なキャッシュから引いた記録。"""
 
     records: tuple[Record, ...]
+    fixtures: tuple[FixtureRecord, ...]
 
 
 @dataclass(frozen=True)
@@ -63,10 +107,6 @@ class CacheMiss:
 
 
 CacheLookup = CacheHit | CacheMiss
-
-
-class MalformedCacheEntry(ValueError):
-    """キャッシュの file の形が違う(版の違う doeff-adr が書いた・書きかけ等)。"""
 
 
 def _entry_path(source: Path, cache_dir: Path) -> Path:
@@ -94,7 +134,19 @@ def _parse_entry(text: str) -> CacheEntry:
             format=int(raw["format"]),
             records=tuple(str(t) for t in raw["records"]),
             deps=tuple(MacroDependency(str(d["module"]), str(d["digest"])) for d in raw["deps"]),
+            fixtures=tuple(
+                FixtureRecord(
+                    attribute=str(f["attribute"]),
+                    name=str(f["name"]),
+                    scope=fixture_scope(f["scope"]),
+                    argnames=tuple(str(a) for a in f["argnames"]),
+                    generator=bool(f["generator"]),
+                )
+                for f in raw["fixtures"]
+            ),
         )
+    except MalformedCacheEntry:
+        raise
     except (ValueError, KeyError, TypeError) as exc:
         raise MalformedCacheEntry(str(exc)) from exc
 
@@ -107,6 +159,16 @@ def _dump_entry(entry: CacheEntry, source: Path) -> str:
             "source": str(source),
             "records": list(entry.records),
             "deps": [{"module": d.module, "digest": d.digest} for d in entry.deps],
+            "fixtures": [
+                {
+                    "attribute": f.attribute,
+                    "name": f.name,
+                    "scope": f.scope,
+                    "argnames": list(f.argnames),
+                    "generator": f.generator,
+                }
+                for f in entry.fixtures
+            ],
         },
         ensure_ascii=False,
         sort_keys=True,
@@ -132,18 +194,20 @@ def read_cached(source: Path, cache_dir: Path) -> CacheLookup:
             return CacheMiss(f"macro の提供元 {dependency.module} が見つからない")
         if file_sha256(str(path)) != dependency.digest:
             return CacheMiss(f"macro の提供元 {dependency.module} が変わった")
-    return CacheHit(tuple(decode_records(entry.records)))
+    return CacheHit(tuple(decode_records(entry.records)), entry.fixtures)
 
 
-def write_cached(source: Path, module: types.ModuleType, cache_dir: Path) -> None:
-    """import した module の記録と macro の提供元を、source の内容の hash を鍵に保存する(書き換えは rename で 1 度に)。"""
+def write_cached(
+    source: Path, module: types.ModuleType, fixtures: tuple[FixtureRecord, ...], cache_dir: Path
+) -> None:
+    """import した module の記録・fixture の記録・macro の提供元を、source の内容の hash を鍵に保存する(書き換えは rename で 1 度に)。"""
     entry_path = _entry_path(source, cache_dir)
     entry_path.parent.mkdir(parents=True, exist_ok=True)
     dependencies = tuple(
         MacroDependency(dependency.module, dependency.sha256)
         for dependency in macro_dependencies(module, module.__file__ or str(source))
     )
-    entry = CacheEntry(CACHE_FORMAT, tuple(module_record_texts(module)), dependencies)
+    entry = CacheEntry(CACHE_FORMAT, tuple(module_record_texts(module)), dependencies, fixtures)
     handle, temporary = tempfile.mkstemp(dir=entry_path.parent, prefix=".tmp-", suffix=".json")
     with os.fdopen(handle, "w", encoding="utf-8") as out:
         out.write(_dump_entry(entry, source))
