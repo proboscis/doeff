@@ -17,7 +17,7 @@
 (import doeff_core_effects.handlers [await-handler])
 (import doeff_core_effects.scheduler [CreatePromise CompletePromise Promise])
 (import doeff_time [async-time-handler])
-(import .cluster_model [Request NextRequests Reply])
+(import .cluster_model [Request NextRequests Reply CoordinatorFault])
 (import .wal_store [WalStore MAX-LOG-BYTES wal-store apply-delta])
 (import .kube_handlers [KubeMemory kube-memory])
 (import .coordinator_inbox [RequestInbox StopState http-requests stop-flag])
@@ -38,9 +38,10 @@
    模擬の coordinator の Persist の見張り(local.hy の observe-requests)が、その key の task の終わりの phase を書いた時に鳴らす。
    takers = 列の取り手(queued-requests の NextRequests)が、列が空の間に掛けた呼び鈴(doeff の Promise の list — 掛けた順)。送り手が
    列に積んだ時(enqueue-request)に全部鳴らして外す。列は読み直さない(前は仮想の 0.05 秒ごとに見直していた — 使い手の仮想の
-   1700 秒の検で 37,222 回眠り、所要の大半になった)。"
+   1700 秒の検で 37,222 回眠り、所要の大半になった)。
+   faults = coordinator の中の欠陥の log の行(CoordinatorFault の Fault — 出た順)。本番の受付が stderr へ出す 1 行の代わり。"
   (defn #^ None __init__ [self]
-    (setv self.pending [] self.up False self.bells {} self.takers [])
+    (setv self.pending [] self.up False self.bells {} self.takers [] self.faults [])
     None))
 
 
@@ -82,6 +83,9 @@
     (resume batch))
   (Reply [request status body]
     (<- (CompletePromise request.slot #(status body)))
+    (resume None))
+  (CoordinatorFault [fault]
+    (.append queue.faults fault)
     (resume None)))
 
 

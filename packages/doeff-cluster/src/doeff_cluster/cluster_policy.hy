@@ -11,7 +11,7 @@
 (import .worker_model [JobSpec])
 (import .cluster_model [ClusterJob WorkerInfo GenerationOrder Placement ClusterTiming ClusterState TaskRecord Request Drain EnvFailed WarmEntry HandoffPhase RefusedJob UnplacedKind
                         capabilities-of component-versions-of task-record-to-json task-record-from-json ACCEPTED-FORMATS format-refusal
-                        PLACED-PHASES handoff-watch-from-json environ-pairs])
+                        PLACED-PHASES handoff-watch-from-json environ-pairs BodyInvalid required-field int-field])
 (import .semaphore_model [SEMAPHORE-PREFIX lease-op semaphore-write-refusal semaphore-key])
 (import doeff [run])
 (import .runtime_env_model [runtime-env-of-json RuntimeEnvInvalid env-key child-environ-refusal])
@@ -47,18 +47,20 @@
   "宣言 1 行 → worker が起動する形(job_entry の service 入口と詰めた Program の置き場のキー)。宣言の job は Program の job だけ —
    run の無い行(生の entry と args を worker に直に起こさせる形)は理由つきで断る(ADR-DOE-CLUSTER-001 R1・R7 — 移行の期間は置かない)。
    runtimeEnv を持つ宣言は、worker が env の root を準備してその venv で起こす(版は worker が env のキーへ置き換える)。"
-  (setv run (.get item "run") revision (get item "revision") runtime (declared-runtime-env item))
+  (setv run (.get item "run") revision (required-field item "revision") runtime (declared-runtime-env item))
   (cond
-    (is run None) (raise (ValueError (raw-entry-refusal item)))
+    (is run None) (raise (BodyInvalid (raw-entry-refusal item)))
+    (not (isinstance run dict)) (raise (BodyInvalid (.format "run は JSON の object: {!r}" run)))
+    (not (isinstance revision str)) (raise (BodyInvalid (.format "revision は文字列: {!r}" revision)))
     (= (.get run "kind") "service")
       (do (setv refusal (program-row-refusal item))
-          (when refusal (raise (ValueError refusal)))
+          (when refusal (raise (BodyInvalid refusal)))
           (JobSpec (get item "name") JOB-ENTRY #("service" "--identity" (identity-hash run))
                    revision
                    :handoff (= (.get item "update") "handoff") :runtime-env runtime
                    :program (get run "program")
                    :environ (environ-pairs (.get item "environ" {}))))
-    True (raise (ValueError (+ "知らない run.kind: " (repr (.get run "kind")))))))
+    True (raise (BodyInvalid (+ "知らない run.kind: " (repr (.get run "kind")))))))
 
 
 ;; --- Program の job の行(ADR-DOE-CLUSTER-001・改訂 1 の A・E・F・G) -------------------------------------
@@ -141,17 +143,17 @@
 (defn #^ ClusterJob job-from-json [#^ dict item]
   (setv replicas (.get item "replicas" 1) readiness (.get item "readiness"))
   (when (not-in replicas #(0 1))
-    (raise (ValueError (.format "replicas は 0 か 1(Service は 1 つだけ動かす): {!r}" replicas))))
+    (raise (BodyInvalid (.format "replicas は 0 か 1(Service は 1 つだけ動かす): {!r}" replicas))))
   (setv update (.get item "update" "recreate"))
   (when (not-in update #("recreate" "handoff"))
-    (raise (ValueError (.format "update は recreate か handoff: {!r}" update))))
+    (raise (BodyInvalid (.format "update は recreate か handoff: {!r}" update))))
   ;; readiness の形(windowSeconds・入れ替えの期限 handoffTimeoutSeconds)は宣言の側と同じ規則(readiness_model.readiness-refusal)。
   (setv readiness-problem (readiness-refusal readiness update))
   (when (is-not readiness-problem None)
-    (raise (ValueError readiness-problem)))
+    (raise (BodyInvalid readiness-problem)))
   (setv env-refusal (runtime-env-refusal item))
   (when (is-not env-refusal None)
-    (raise (ValueError env-refusal)))
+    (raise (BodyInvalid env-refusal)))
   (ClusterJob (spec-of-declaration item)
               (request-needs item "Service の needs")
               (.get item "pin")
@@ -330,27 +332,27 @@
 (deff worker-capabilities-of [#^ dict body #^ str what]  ; defk にできない: heartbeat と保存の JSON を読む境界(Program の外)が呼ぶ
   {:pre [(: body dict) (: what str)] :post [(: % tuple) (= (len %) 2)] :tags {:context "doeff-cluster" :role "judgment"}}
   "worker の名乗り(heartbeat の本文・保存の行)→ #(provides exclusive)。exclusive は provides の一部でなければならない。
-   旧い形(labels だけで provides の無い名乗り)は ValueError — label の等しさの照合は受け付けない(ADR-DOE-CLUSTER-001 R4b)。"
+   旧い形(labels だけで provides の無い名乗り)は BodyInvalid(送り手の誤り — ValueError の子) — label の等しさの照合は受け付けない(ADR-DOE-CLUSTER-001 R4b)。"
   (when (and (in "labels" body) (not-in "provides" body))
-    (raise (ValueError (.format "{}: 旧い形の labels {!r} は受け付けない — worker は --provides と --exclusive で能力を名乗る"
+    (raise (BodyInvalid (.format "{}: 旧い形の labels {!r} は受け付けない — worker は --provides と --exclusive で能力を名乗る"
                                 what (get body "labels")))))
   (setv provides (capabilities-of (.get body "provides" []) (+ what " の provides")))
   (setv exclusive (capabilities-of (.get body "exclusive" []) (+ what " の exclusive")))
   (when (not (<= (set exclusive) (set provides)))
-    (raise (ValueError (.format "{}: exclusive {} は provides {} の一部で名乗る" what (list exclusive) (list provides)))))
+    (raise (BodyInvalid (.format "{}: exclusive {} は provides {} の一部で名乗る" what (list exclusive) (list provides)))))
   #(provides exclusive))
 
 
 (deff request-needs [#^ dict body #^ str what]  ; defk にできない: HTTP の本文・宣言の JSON を読む境界(Program の外)が呼ぶ
   {:pre [(: body dict) (: what str)] :post [(: % tuple)] :tags {:context "doeff-cluster" :role "judgment"}}
-  "送られた宣言・task・温める頼みの本文の needs → 名の順の tuple。旧い形の requires を持つ本文・空の needs は ValueError(理由つき)—
+  "送られた宣言・task・温める頼みの本文の needs → 名の順の tuple。旧い形の requires を持つ本文・空の needs は BodyInvalid(理由つき・ValueError の子)—
    旧い宣言は受け付けない(operator 2026-09-27)・要る能力は必ず書く(改訂 1 の I)。"
   (when (is-not (.get body "requires") None)
-    (raise (ValueError (.format "旧い形の requires {!r} は受け付けない — 要る能力の名の列 needs で書き直す(ADR-DOE-CLUSTER-001 R4b)"
+    (raise (BodyInvalid (.format "旧い形の requires {!r} は受け付けない — 要る能力の名の列 needs で書き直す(ADR-DOE-CLUSTER-001 R4b)"
                                 (get body "requires")))))
   (setv needs (capabilities-of (.get body "needs" []) what))
   (when (not needs)
-    (raise (ValueError (.format "{} が空 — 要る能力の名を 1 つ以上書く(どこにでも置ける仕事は無い・ADR-DOE-CLUSTER-001 R4b・改訂 1 の I)" what))))
+    (raise (BodyInvalid (.format "{} が空 — 要る能力の名を 1 つ以上書く(どこにでも置ける仕事は無い・ADR-DOE-CLUSTER-001 R4b・改訂 1 の I)" what))))
   needs)
 
 
@@ -374,6 +376,9 @@
         (.format "program は詰めた Program の置き場のキー(64 桁の sha256): {!r}" program)
       (not-in program state.programs)
         (.format "program {} は置き場に無い — 先に PUT /programs/{} で置く" program program)
+      ;; 版(送り手の commit)は行の必須の欄(TaskRecord.revision)— 欠けを行を作る所の KeyError に任せない(#1024)。
+      (not (isinstance (.get body "revision") str))
+        (.format "revision(送り手の commit の文字列)が無い: {!r}" (.get body "revision"))
       True (or (task-environ-refusal body) (needs-refusal body)))))
 
 
@@ -969,11 +974,44 @@
 
 ;; --- HTTP の要求への返事(判断の部品。要求の振り分けは api_policy) -----------------------------------
 
+(deff text-map? [value]  ; defk にできない: HTTP の本文を読む境界(Program の外)が呼ぶ純粋な判断
+  {:pre [(: value (| dict list str int float bool None))] :post [(: % bool)] :tags {:context "doeff-cluster" :role "judgment"}}
+  "JSON の値が「名 → 文字列」の object か — heartbeat の versions・tools(component-versions-of が名の順に並べる)を写す前に確かめるため。"
+  (and (isinstance value dict) (all (gfor #(k v) (.items value) (and (isinstance k str) (isinstance v str))))))
+
+
+(deff heartbeat-body-refusal [#^ dict body]  ; defk にできない: HTTP の本文を読む境界(Program の外)が呼ぶ純粋な判断
+  {:pre [(: body dict)] :post [(: % (| str None))] :tags {:context "doeff-cluster" :role "judgment"}}
+  "heartbeat の本文の形が受けられない理由(受けられれば None)— 送り手の本文の欠け・型の誤りを、写す途中の KeyError・TypeError・
+   AttributeError(受け口では coordinator の中の欠陥と区別できない — #1024)にしないため、写す前に 1 か所で検める。
+   能力の名乗り(provides・exclusive)の検めは worker-capabilities-of が持つ。"
+  (setv name (.get body "name") statuses (.get body "statuses" []) envs (.get body "envs" {}))
+  (cond
+    (not (and (isinstance name str) name)) (.format "name(worker の名の文字列)が無い: {!r}" name)
+    (not (and (isinstance statuses list) (all (gfor s statuses (isinstance s dict)))))
+      (.format "statuses は状態の報告の object の列: {!r}" statuses)
+    (not (isinstance envs dict)) (.format "envs は object: {!r}" envs)
+    (not (all (gfor k #("ready" "preparing")
+                    :setv keys (.get envs k [])
+                    (and (isinstance keys list) (all (gfor x keys (isinstance x str)))))))
+      "envs.ready・envs.preparing は env のキーの文字列の列"
+    (not (and (isinstance (.get envs "failed" []) list)
+              (all (gfor f (.get envs "failed" []) (and (isinstance f dict) (in "key" f) (in "kind" f))))))
+      "envs.failed は {key kind detail? retryable?} の object の列"
+    (not (text-map? (.get body "versions" {}))) "versions は部品の名 → 版の文字列の object"
+    (not (text-map? (.get body "tools" {}))) "tools は道具の名 → 版の文字列の object"
+    (not (isinstance (.get body "platform" "") str)) (.format "platform は文字列: {!r}" (.get body "platform"))
+    True None))
+
+
 (defn #^ ClusterState register-heartbeat [#^ ClusterState state #^ dict body #^ int now]
   "heartbeat の中身(worker の能力・容量・版と、各 job / task の状態)を状態へ写す。割り当ての調停はしない(呼び手が別の送り手
    = coordinator として調停する)。古い世代の heartbeat(generation-order が OLDER)は名乗りとして受けず、その世代を退いた世代の
    列に載せ、その世代に置いた task の終わりの報告と lease の延長だけを写す(absorb-superseded-heartbeat)。
-   知らない切り離した task をその process が走らせていれば、先に引き取る(adopt-running-detached — 状態を失った coordinator)。"
+   知らない切り離した task をその process が走らせていれば、先に引き取る(adopt-running-detached — 状態を失った coordinator)。
+   本文の形の誤り(heartbeat-body-refusal)は BodyInvalid(送り手の誤り・400)。"
+  (setv refusal (heartbeat-body-refusal body))
+  (when (is-not refusal None) (raise (BodyInvalid refusal)))
   (setv name (get body "name") boot (.get body "boot") boot-at (boot-at-of body)
         previous (.get state.workers name)
         order (generation-order previous boot boot-at)
@@ -986,7 +1024,7 @@
         caps (worker-capabilities-of body (.format "worker {} の名乗り" name))
         node (str (.get body "node" ""))
         info (WorkerInfo name (tuple (gfor c (get caps 0) :if (not-in c state.derivable) c))
-                         (int (.get body "capacity" 10)) now
+                         (int-field body "capacity" 10) now
                          (component-versions-of (.get body "versions" {}))
                          boot
                          (component-versions-of (.get body "tools" {}))
@@ -1069,13 +1107,13 @@
             (not (isinstance key str)) (not (isinstance lease-ms int))
             (not (isinstance revision str)) (not (isinstance needs list))
             (not (and (isinstance program str) (PROGRAM-SHA.fullmatch program)))
-            (not (isinstance environ dict))
+            (not (isinstance environ dict)) (not (text-map? (.get echo "versions" {})))
             (any (gfor t (.values state.tasks) (= t.key key))))
     (return None))
   (TaskRecord id (.get echo "name" "") program revision
               (component-versions-of (.get echo "versions" {})) (capabilities-of needs "引き取る task の needs") lease-ms (+ now lease-ms) now
               :phase "assigned" :worker worker :started-ms now :detached True :key key :boot boot
-              :retain-ms (int (.get echo "retainMs" 0)) :runtime-env (.get echo "runtimeEnv") :environ (environ-pairs environ)
+              :retain-ms (int-field echo "retainMs" 0) :runtime-env (.get echo "runtimeEnv") :environ (environ-pairs environ)
               :detail (.format "coordinator の置き場に行が無く、担い手 {} が走らせていた task を引き取った" worker)))
 
 
@@ -1192,8 +1230,13 @@
   "POST /tasks: 呼び手の問い合わせに寿命を縛られた task の行を作る。本文は置き場に置いた Program の sha を運ぶ(task-body-refusal)。"
   (setv refusal (or (format-refusal body) (runtime-env-refusal body) (task-body-refusal state body)))
   (when refusal (return #(state 400 {"error" refusal})))
-  (setv lease-seconds (float (.get body "leaseSeconds" 15.0))
-        open-count (len (lfor t (.values state.tasks) :if (or (= t.phase "queued") (in t.phase PLACED-PHASES)) t)))
+  ;; 数に読めない leaseSeconds は送り手の誤り(float() の ValueError / TypeError を受け口へ漏らさない — #1024)。
+  (setv lease-value (.get body "leaseSeconds" 15.0))
+  (try
+    (setv lease-seconds (float lease-value))
+    (except [[ValueError TypeError]]
+      (return #(state 400 {"error" (.format "leaseSeconds は 0 より大きく {} 以下の数: {!r}" TASK-MAX-LEASE-SECONDS lease-value)}))))
+  (setv open-count (len (lfor t (.values state.tasks) :if (or (= t.phase "queued") (in t.phase PLACED-PHASES)) t)))
   (when (not (< 0 lease-seconds (+ TASK-MAX-LEASE-SECONDS 1)))
     (return #(state 400 {"error" (.format "leaseSeconds は 0 より大きく {} 以下: {}" TASK-MAX-LEASE-SECONDS lease-seconds)})))
   (when (>= open-count TASK-MAX-OPEN)
@@ -1223,9 +1266,12 @@
 (defn #^ tuple lease-write [#^ ClusterState state #^ str name #^ dict body #^ int now]
   "POST /leases/<名>: lease の操作 1 つを coordinator の時計で当てる(semaphore_model.lease-op)。行が変われば盤へ書く
    (版を 1 進める・盤の書きと同じく永続化してから返事をする)。返り値 #(次の状態 status 答え)。"
+  ;; 本文の欄の欠け・型の誤りは送り手の誤り(BodyInvalid・400)— KeyError や int() の例外を受け口へ漏らさない(#1024)。
+  (setv op (required-field body "op") token (required-field body "token"))
+  (when (not (isinstance op str)) (raise (BodyInvalid (.format "op は文字列: {!r}" op))))
+  (when (not (isinstance token str)) (raise (BodyInvalid (.format "token は文字列: {!r}" token))))
   (setv key (semaphore-key name) current (.get state.board key)
-        #(row answer) (lease-op current (get body "op") (get body "token") (int (.get body "permits" 1))
-                                (int (.get body "ttlMs" 0)) now))
+        #(row answer) (lease-op current op token (int-field body "permits" 1) (int-field body "ttlMs" 0) now))
   (if (or (is row current) (is row None))
       #(state 200 answer)
       (do (setv version (.get state.board-versions key (if (is current None) 0 1)))
@@ -1287,9 +1333,9 @@
     ;; lease の行への直の書き(旧い版の process)は、coordinator の時計でまだ切れていない担い手を追い出せない(2026-09-25)。
     ;; 409 = 旧い版は compare-and-set の競合として読み直す。
     (and (.startswith key SEMAPHORE-PREFIX) (not (.get body "delete"))
-         (is-not (semaphore-write-refusal (.get state.board key) (get body "value") now) None))
+         (is-not (semaphore-write-refusal (.get state.board key) (required-field body "value") now) None))
       #(state 409 {"ok" False "current" (.get state.board key) "resourceVersion" version
-                   "error" (semaphore-write-refusal (.get state.board key) (get body "value") now)})
+                   "error" (semaphore-write-refusal (.get state.board key) (required-field body "value") now)})
     (.get body "delete")
       #((replace state :board (dfor #(k v) (.items state.board) :if (!= k key) k v)
                        :board-versions (dfor #(k v) (.items state.board-versions) :if (!= k key) k v)
@@ -1297,11 +1343,11 @@
                        :board-sizes (dfor #(k v) (.items state.board-sizes) :if (!= k key) k v))
         200 {"ok" True "resourceVersion" None})
     True
-      (do (setv size (value-size (get body "value"))
+      (do (setv size (value-size (required-field body "value"))
                 refusal (board-capacity-refusal state key size))
           (if (is-not refusal None)
               #(state 507 {"ok" False "error" refusal "usage" (board-usage state)})
-              #((replace state :board (| state.board {key (get body "value")})
+              #((replace state :board (| state.board {key (required-field body "value")})
                                :board-versions (| state.board-versions {key (+ version 1)})
                                :board-expiry (if (is ttl None)
                                                  (dfor #(k v) (.items state.board-expiry) :if (!= k key) k v)

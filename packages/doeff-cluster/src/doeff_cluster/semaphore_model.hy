@@ -29,6 +29,7 @@
 (import dataclasses [dataclass])
 (import doeff [EffectBase])
 (import doeff_core_effects.scheduler [CreateSemaphore Semaphore])
+(import .cluster_model [BodyInvalid])
 
 (setv SEMAPHORE-PREFIX "semaphore/")
 
@@ -116,11 +117,12 @@
 (setv LEASE-MAX-TTL-MS (* 10 60 1000))
 
 (defn #^ tuple lease-op [#^ (| dict None) row #^ str op #^ str token #^ int permits #^ int ttl-ms #^ int now-ms]
-  "純粋: lease の行と操作 → #(次の行 答え)。行が変わらなければ同じ row を返す。時刻 now-ms は coordinator の時計。"
-  (when (not-in op LEASE-OPS) (raise (ValueError (+ "知らない lease の操作: " (repr op)))))
+  "純粋: lease の行と操作 → #(次の行 答え)。行が変わらなければ同じ row を返す。時刻 now-ms は coordinator の時計。
+   受けられない操作・期限・token は BodyInvalid(要求の誤り — coordinator の口では 400・ValueError の子)。"
+  (when (not-in op LEASE-OPS) (raise (BodyInvalid (+ "知らない lease の操作: " (repr op)))))
   (when (and (in op #("claim" "renew")) (not (< 0 ttl-ms (+ LEASE-MAX-TTL-MS 1))))
-    (raise (ValueError (.format "ttlMs は 0 より大きく {} 以下: {}" LEASE-MAX-TTL-MS ttl-ms))))
-  (when (not token) (raise (ValueError "token が要る")))
+    (raise (BodyInvalid (.format "ttlMs は 0 より大きく {} 以下: {}" LEASE-MAX-TTL-MS ttl-ms))))
+  (when (not token) (raise (BodyInvalid "token が要る")))
   (cond
     (= op "claim")
       (do (setv updated (claim row permits token now-ms ttl-ms))
@@ -170,9 +172,9 @@
 
 (defn claim [row #^ int permits #^ str token #^ int now-ms #^ int ttl-ms]
   "純粋: permit を 1 つ取った後の行。空きが無ければ None。期限の切れた担い手はこの書きで落とす。
-   同じ名前で permits が食い違えば ValueError(同じ名前は同じ lock でなければならない)。"
+   同じ名前で permits が食い違えば BodyInvalid(要求の誤り・ValueError の子 — 同じ名前は同じ lock でなければならない)。"
   (when (and (is-not row None) (!= (get row "permits") permits))
-    (raise (ValueError (.format "同じ名前の semaphore の permits が食い違う: 行 {} / 要求 {}" (get row "permits") permits))))
+    (raise (BodyInvalid (.format "同じ名前の semaphore の permits が食い違う: 行 {} / 要求 {}" (get row "permits") permits))))
   (setv live (live-holders row now-ms))
   (if (or (in token live) (< (len live) permits))
       {"permits" permits "holders" (| live {token (+ now-ms ttl-ms)})}

@@ -8,7 +8,8 @@
 (import datetime [timedelta])
 (import doeff_time [SimClock sim-time-handler])
 (import tests.clock_fixtures [clock-ms])
-(import doeff_cluster.cluster_model [ClusterTiming ClusterNaming ClusterState Request NextRequests Reply Persist CoordinatorStopRequested])
+(import doeff_cluster.cluster_model [ClusterTiming ClusterNaming ClusterState Request NextRequests Reply Persist CoordinatorStopRequested
+                                     CoordinatorFault])
 (import doeff_cluster.cluster_policy [reconcile state-to-json state-from-json job-from-json identity-hash])
 (import tests.program_rows [SAMPLE-RUN SAMPLE-PROGRAM SAMPLE-TASK-PROGRAM program-placed])
 (import doeff [run])
@@ -170,6 +171,37 @@
     (<- _ ClusterState ((scripted script) (run-coordinator (ClusterState) T (ClusterNaming)))))
   (assert (= (lfor r script.replies (get r 0)) ["/board/a"]))
   (assert (= (lfor d script.saved (sorted d)) [["board/a"]])))
+
+
+(defhandler fault-log [#^ list faults]
+  ;; 本番の受付が stderr へ出す中の欠陥の 1 行の代わりに、出た Fault を list へ残す。
+  (CoordinatorFault [fault] (.append faults fault) (resume None)))
+
+(deftest test-a-fault-inside-the-coordinator-is-500-with-one-log-line [monkeypatch]
+  ;; 反例(#1024 — #1005 の形): 状態の書きの印(stamp)の中で TypeError が上がる。送り手の誤りの 400 に畳まず 500 で返し、
+  ;; log の 1 行(CoordinatorFault)に要求の path・例外の型・上がった所が出る。同じまとまりの送り手の誤り(object でない本文)は 400 のまま。
+  ;; 偽の stamp は worker w の名乗りの書きでだけ上げる(毎拍の調停 tick も stamp を通るので、他は本物に渡す)。
+  (import doeff_cluster.api_policy)
+  (val real-stamp doeff_cluster.api_policy.stamp)
+  (monkeypatch.setattr doeff_cluster.api_policy "stamp"
+                       (fn [before after actor #* rest]
+                         (if (= actor "w")
+                             (raise (TypeError "stamp の引数が合わない(偽の欠陥)"))
+                             (real-stamp before after actor #* rest))))
+  (val faults [])
+  (val script (Script [[(req "POST" "/heartbeat" {"name" "w" "provides" ["net"] "capacity" 10 "versions" V})
+                        (req "PUT" "/board/k" [1 2])]]))
+  (<- final ClusterState ((scripted script) ((fault-log faults) (run-coordinator (ClusterState) T (ClusterNaming)))))
+  (assert (= (lfor r script.replies #((get r 0) (get r 1))) [#("/heartbeat" 500) #("/board/k" 400)]) script.replies)
+  (val body (get (get script.replies 0) 2))
+  (assert (get body "fault") body)
+  (assert (in "TypeError" (get body "error")) body)
+  (assert (= (len faults) 1) faults)
+  (val fault (get faults 0))
+  (assert (= #(fault.method fault.path fault.error-type) #("POST" "/heartbeat" "TypeError")) fault)
+  (assert (in "test_coordinator.hy" fault.where) fault)
+  ;; 状態は受ける前のまま(途中まで進めた変化を残さない)
+  (assert (not-in "w" final.workers)))
 
 
 ;; --- shim(Python のまま残す見張り)-----------------------------------------------------------
