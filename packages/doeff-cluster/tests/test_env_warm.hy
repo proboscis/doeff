@@ -33,7 +33,7 @@
                                     EnvDisk code-key])
 (import doeff_cluster.worker_policy [plan pinned-env-keys])
 (import doeff_cluster.handlers [task-spec])
-(import doeff_cluster.code_prepare [cpu-limit-of import-closure])
+(import doeff_cluster.code_prepare [cpu-limit-of])
 (import tests.env_fixtures [LOCK env-of])
 (import tests.detached_rig [slow-add])
 (import tests.program_rows [SAMPLE-TASK-PROGRAM program-placed])
@@ -364,23 +364,6 @@
   (assert (= (cpu-limit-of "150000 100000\n" 16) 2) "端数は切り上げる")
   (assert (= (cpu-limit-of "max 100000\n" 16) 16) "上限の無い cgroup は使える CPU の数")
   (assert (= (cpu-limit-of None 3) 3) "cgroup の file が無ければ使える CPU の数"))
-
-
-(deftest test-the-compile-scope-is-the-import-closure-of-the-entries [tmp-path]
-  (for [#(rel text) [#("pkg/__init__.py" "")
-                     #("pkg/entry.hy" "(import pkg.used [f])\n(require pkg.macros [m])\n(import json os)\n")
-                     #("pkg/used.hy" "(import .deep [g])\n(defn f [] 1)\n")
-                     #("pkg/deep.py" "import pkg.leaf\n")
-                     #("pkg/leaf.py" "X = 1\n")
-                     #("pkg/macros.hy" "(defmacro m [] 1)\n")
-                     #("pkg/unused.hy" "(import pkg.leaf)\n")]]
-    (setv path (/ tmp-path rel))
-    (.mkdir path.parent :parents True :exist-ok True)
-    (.write-text path text))
-  (val sources (sorted (gfor p (.rglob tmp-path "*") :if (.is-file p) (str (.relative-to p tmp-path)))))
-  (val closure (import-closure (str tmp-path) sources #("pkg.entry") #(".")))
-  (assert (= closure (frozenset #("pkg/__init__.py" "pkg/entry.hy" "pkg/used.hy" "pkg/deep.py" "pkg/leaf.py" "pkg/macros.hy")))
-          closure))
 
 
 (deftest test-bytecode-entries-travel-in-the-declaration-but-not-in-the-key

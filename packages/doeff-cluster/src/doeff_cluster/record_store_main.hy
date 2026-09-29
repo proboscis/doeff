@@ -4,6 +4,7 @@
 (import sys)
 (import doeff [run])
 (import doeff_core_effects.handlers [await-handler])
+(import doeff_core_effects.os_file [os-file-handler])
 (import doeff_core_effects.scheduler [scheduled])
 (import doeff_time [async-time-handler])
 (import doeff_cluster.coordinator [http-requests stop-flag StopState])
@@ -26,7 +27,7 @@
   (.start inbox)
   (print (.format "records: :{} で受けます(置き場 {}・保持 {} 日)" args.port args.root args.retention-days) :file sys.stderr :flush True)
   (setv program (store-loop (int (* args.retention-days 86400000)) (int (* args.idle-seconds 1000))))
-  (for [h [(record-files args.root) (http-requests inbox) (stop-flag stop) (async-time-handler) (await-handler)]]
+  (for [h [(record-files args.root) os-file-handler (http-requests inbox) (stop-flag stop) (async-time-handler) (await-handler)]]
     (setv program (h program)))
   (run (scheduled program))
   (print "records: 止まりました" :file sys.stderr :flush True))

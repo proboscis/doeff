@@ -3,7 +3,10 @@
  "_not_listed": {
   "doeff_cluster.host_contract:environ-reader": "引数に値の表を渡すと純粋(模擬の宿がそう使う)— 既定の引数だけが os.environ。載せると模擬の宿の名指しが DOEFF131 の誤検出になる",
   "doeff_core_effects.handlers:slog_handler": "stderr へ print するだけ(触れる先の語に stdout・stderr が無い)",
-  "doeff_cluster.record_handlers:effect-recorder": "sink が注入(MemorySink なら値だけ)— 実 I/O は recording-handler が組む sink",
+  "doeff_cluster.handlers:status-file": "file system の effect(MakeDirectory・WriteText)を出し直すだけ — 実 I/O は外側の os-file-handler",
+  "doeff_cluster.record_store_handlers:record-files": "file system の effect を出し直すだけ — 実 I/O は外側の os-file-handler(record_store_main.hy)",
+  "doeff_cluster.code_prepare:files-tree": "木の effect を file system の effect へ出し直すだけ(模擬の世界では memory-file-handler が答える)",
+  "doeff_cluster.record_handlers:effect-recorder":"sink が注入(MemorySink なら値だけ)— 実 I/O は recording-handler が組む sink",
   "doeff_records.pg:pg-records-handler": "SqlQuery の出し直しだけ(実 DB は postgres-sql-handler)",
   "doeff_core_effects.scheduler:scheduled": "共同の scheduler(模擬を含む全部の Program の下に敷く)— 環境変数は実装の選択・time.monotonic は停滞の見張りだけで、外の世界から effect に答えない"
  },
@@ -269,13 +272,6 @@
    "why": "subprocess.Popen・os.rename・signal"
   },
   {
-   "handler": "doeff_cluster.handlers:status-file",
-   "touches": [
-    "file"
-   ],
-   "why": "write-text・os.replace"
-  },
-  {
    "handler": "doeff_cluster.coordinator_inbox:http-requests",
    "touches": [
     "network",
@@ -290,13 +286,6 @@
     "file"
    ],
    "why": "fsync・rename"
-  },
-  {
-   "handler": "doeff_cluster.record_store_handlers:record-files",
-   "touches": [
-    "file"
-   ],
-   "why": "open・os.fsync・gzip"
   },
   {
    "handler": "doeff_cluster.code_prepare:local-tree",
