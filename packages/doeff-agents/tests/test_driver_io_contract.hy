@@ -9,7 +9,7 @@
 ;;;   * TouchFile: 無ければ空の file・在れば中身を変えない
 ;;;   * CopyFile: source 不在は False(target は作らない)・在れば True で同じ中身
 ;;;   * ListDir: 不在は空・直下の file と dir を絶対 path の昇順で・pattern で絞る・孫は並べない
-;;;   * ExecutableAt: 実行の bit の在る mode で書いた file だけが True
+;;;   * ExecutableAt: 実行の bit の在る mode で書いた file だけが True・dir と無い path は False
 ;;;   * EnvValue: 在る名は値・無い名は None。WhichExecutable: 無い名は None
 ;;;   * HomePath・TempRoot は在る dir の絶対 path・ProcessId は正の整数
 ;;;   * MonotonicTime は戻らず、Sleep の秒以上進む
@@ -183,6 +183,18 @@
   (<- missing-seen (ExecutableAt :path MISSING-COMMAND))
   (assert (= #(runnable-seen plain-seen missing-seen) #(True False False))
           (.format "ExecutableAt の答え(0o755・0o644・不在){}" #(runnable-seen plain-seen missing-seen))))
+
+
+(deftest test-a-directory-or-a-missing-path-is-not-executable
+  {:interpreters ["driver-io" "fake-driver-io"]}
+  ;; dir は実行の bit があっても起こせる file ではない。在る dir の下の無い path も False。
+  (<- folder str (under-root "folder"))
+  (<- missing str (under-root "none"))
+  (<- (MakeDirs :path folder))
+  (<- folder-seen (ExecutableAt :path folder))
+  (<- missing-seen (ExecutableAt :path missing))
+  (assert (= #(folder-seen missing-seen) #(False False))
+          (.format "ExecutableAt の答え(dir・無い path){}" #(folder-seen missing-seen))))
 
 
 (deftest test-environment-values-are-read-by-name

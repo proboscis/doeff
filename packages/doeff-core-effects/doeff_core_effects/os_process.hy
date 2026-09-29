@@ -4,8 +4,23 @@
 (import fnmatch)
 (import os)
 (import subprocess)
+(import doeff_core_effects.file_effects [FileFailed PathKind PathStat])
+(import doeff_core_effects.os_file [stat-path])
 (import doeff_core_effects.process_effects [EnvEntry EnvMode ProcessOutcome RunProcess ExecutableAt ReadEnvironment WorkingDirectory
-                                            timed-out-outcome not-started-outcome])
+                                            timed-out-outcome not-started-outcome executable-file-answer])
+
+
+(defk os-executable-at [path]
+  {:pre [(: path str)] :post [(: % bool)] :tags {:context "process" :role "foundation"}}
+  "path に実行できる file が在るかを本物の file 系で読むため: 種類は symlink を辿った先(os.stat)、実行の許しは os.access の X_OK。
+   読めない path(途中が file・入れない dir)は無い物と同じに扱う。判断は executable-file-answer(I/O なしの答え手と同じ関数)。
+   doeff-agents の driver-io-handler も ExecutableAt にこれで答える。"
+  (<- seen (| PathStat FileFailed) (stat-path path True))
+  (val kind (match seen
+              (PathStat :kind found) found
+              (FileFailed) PathKind.MISSING))
+  (<- answer bool (executable-file-answer kind (os.access path os.X-OK)))
+  answer)
 
 
 (defk decoded [value]
@@ -75,7 +90,8 @@
     (<- outcome (run-subprocess argv stdin timeout cwd env env-mode output-path env-drop))
     (resume outcome))
   (ExecutableAt [path]
-    (resume (and (os.path.exists path) (os.access path os.X-OK))))
+    (<- found (os-executable-at path))
+    (resume found))
   (ReadEnvironment [names]
     (resume (tuple (gfor name names :if (in name os.environ) (EnvEntry :name name :value (get os.environ name))))))
   (WorkingDirectory []

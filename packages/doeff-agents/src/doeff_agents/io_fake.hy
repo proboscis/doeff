@@ -20,7 +20,8 @@
 
 (import collections.abc [Iterable Mapping])
 (import doeff [EffectBase Program])
-(import doeff_core_effects.process_effects [not-started-outcome start-refusal])
+(import doeff_core_effects.file_effects [PathKind])
+(import doeff_core_effects.process_effects [not-started-outcome start-refusal executable-file-answer])
 (import doeff_agents.io_effects [
   ProcessOutcome
   WhichExecutable
@@ -145,10 +146,17 @@
 
 (defk executable-file [world path]
   {:pre [(: world FakeIoWorld) (: path str)] :post [(: % bool)] :tags {:context "driver-io" :role "judgment"}}
-  "実行できる file か: 名簿(executables)に在るか、実行の bit の在る mode で置いた file。"
-  (or (in path world.executables)
-      (and (in path world.files)
-           (bool (& (.get world.modes path 0) (| stat.S-IXUSR stat.S-IXGRP stat.S-IXOTH))))))
+  "ExecutableAt に記憶の中の file 系で答えるため: 種類は dir の集合が先(dir は名簿に在っても dir)、次に file か名簿(executables — 名簿の
+   path は実行できる file の代役)、どれでもなければ無い物。実行の許しは名簿に在るか、実行の bit の在る mode で置いたこと。判断は本物と同じ
+   executable-file-answer(doeff_core_effects.process_effects)。"
+  (val kind (cond
+              (in path world.dirs) PathKind.DIRECTORY
+              (or (in path world.files) (in path world.executables)) PathKind.FILE
+              True PathKind.MISSING))
+  (val runnable (or (in path world.executables)
+                    (bool (& (.get world.modes path 0) (| stat.S-IXUSR stat.S-IXGRP stat.S-IXOTH)))))
+  (<- answer bool (executable-file-answer kind runnable))
+  answer)
 
 
 (defk socket-refusal [world path]

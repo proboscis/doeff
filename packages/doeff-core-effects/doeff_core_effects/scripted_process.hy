@@ -7,7 +7,8 @@
 ;;;                     本物と同じく OSError を上げる。timeout は台本に任せる(台本が timed-out-outcome の答えを返してよい)。
 ;;;                     env が None の時は台本も None を受ける(呼び手の環境を継ぐ印 — 継いだ中身を読むのは台本の側)。
 ;;;                     本物との契約は tests/test_process_contract.hy。
-;;;   ExecutableAt      argv[0] の名が台本に在れば True。
+;;;   ExecutableAt      種類は置き場(file の答え手)の StatPath — 置き場に無い path は台本に名(basename)が在れば実行できる file、無ければ無い物。
+;;;                     実行の許しは台本に名が在ること。判断は本物と同じ executable-file-answer(dir は名が台本に在っても False)。
 ;;;   ReadEnvironment   ProcessScript の env から。
 ;;;   WorkingDirectory  聞かれるたびに新しい空の dir(<work-root>/job-<n>)を作って答える — worker が job ごとに空の作業 dir を作って子を
 ;;;                     起こすのの代役(同じ VM で task を走らせる模擬では task ごとに 1 回聞かれる)。
@@ -20,7 +21,7 @@
 (import collections.abc [Callable])
 (import dataclasses [dataclass])
 (import doeff_core_effects.process_effects [EnvEntry EnvMode ProcessOutcome RunProcess ExecutableAt ReadEnvironment WorkingDirectory
-                                            not-started-outcome start-refusal])
+                                            not-started-outcome start-refusal executable-file-answer])
 (import doeff_core_effects.file_effects [PathKind PathStat StatPath MakeDirectory AppendText FileFailed])
 
 
@@ -78,6 +79,20 @@
   outcome)
 
 
+(defk scripted-executable-at [commands path]
+  {:pre [(: commands tuple) (: path str)] :post [(: % bool)] :tags {:context "process" :role "judgment"}}
+  "ExecutableAt に台本の世界で答えるため: 種類は置き場(外側の file の答え手)の StatPath — 置き場に無い path は、台本に名(basename)が在れば
+   実行できる file(台本がその命令の file の代役)、無ければ無い物。実行の許しは台本に名が在ること。判断は本物と同じ executable-file-answer。"
+  (val named (any (gfor c commands (= c.name (posixpath.basename path)))))
+  (<- seen (| PathStat FileFailed) (StatPath path))
+  (val kind (match seen
+              (PathStat :kind PathKind.MISSING) (if named PathKind.FILE PathKind.MISSING)
+              (PathStat :kind found) found
+              (FileFailed) PathKind.MISSING))
+  (<- answer bool (executable-file-answer kind named))
+  answer)
+
+
 (defhandler scripted-process-handler [#^ ProcessScript script]
   ;; 引数に残す理由: 台本の表と環境は筋書きごとに違う値(設定ではなく模擬の世界そのもの)。
   (session var jobs 0)
@@ -93,7 +108,8 @@
         (raise (OSError appended.detail))))
     (resume outcome))
   (ExecutableAt [path]
-    (resume (any (gfor c script.commands (= c.name (posixpath.basename path))))))
+    (<- found bool (scripted-executable-at script.commands path))
+    (resume found))
   (ReadEnvironment [names]
     (resume (tuple (gfor name names e script.env :if (= e.name name) e))))
   (WorkingDirectory []

@@ -20,7 +20,7 @@
 (import pathlib [Path])
 
 (import doeff [run])
-(import doeff_core_effects.os_process [run-subprocess])
+(import doeff_core_effects.os_process [run-subprocess os-executable-at])
 (import doeff_agents.io_effects [
   ProcessOutcome
   WhichExecutable
@@ -171,7 +171,9 @@
     (resume (_unix-connect-probe-io socket-path timeout)))
 
   (ExecutableAt [path]
-    (resume (and (.exists (Path path)) (os.access path os.X-OK))))
+    ;; 実装は汎用の subprocess-handler と同じ 1 つ(doeff_core_effects.os_process の os-executable-at — dir・無い path は False)。
+    (<- found (os-executable-at path))
+    (resume found))
 
   (MonotonicTime []
     (resume (time.monotonic)))

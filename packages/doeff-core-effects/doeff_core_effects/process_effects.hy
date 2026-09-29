@@ -17,7 +17,8 @@
 ;;;   持つ(負の値 = signal・137 など)。時間切れは timed-out True(exit-code 124)、起こせない時は exit-code 127。
 ;;;
 ;;;   RunProcess        子 process を 1 回走らせて終わりを待つ。答え = ProcessOutcome。
-;;;   ExecutableAt      その path に実行できる file が在るか。答え = bool。
+;;;   ExecutableAt      その path に実行できる file が在るか。答え = bool。symlink は辿った先で判じ、dir・無い path・file でない物は実行の bit が
+;;;                     あっても False(判断は executable-file-answer の 1 か所 — 本物と I/O なしの答え手が同じ関数を呼ぶ)。
 ;;;   ReadEnvironment   自分の process の環境変数のうち names の分。答え = 在る分だけの EnvEntry の tuple(names の順)。
 ;;;   WorkingDirectory  自分の process の作業 dir(絶対 path)。
 ;;;
@@ -30,6 +31,7 @@
 (import dataclasses [dataclass])
 (import enum [StrEnum])
 (import doeff [EffectBase])
+(import doeff_core_effects.file_effects [PathKind])
 
 ;; 時間切れの時の exit-code(coreutils の timeout と同じ)と、起こせない時の exit-code(shell と同じ)。
 (val TIMED-OUT-CODE 124)
@@ -108,3 +110,10 @@
   {:pre [(: error-number int) (: path str)] :post [(: % str)] :tags {:context "process" :role "judgment"}}
   "起こせない理由の文を、本物の subprocess が上げる OSError の文と同じ形(\"[Errno 2] No such file or directory: '/x'\")で作るため。"
   (str (OSError error-number (os.strerror error-number) path)))
+
+
+(defk executable-file-answer [kind runnable]
+  {:pre [(: kind PathKind) (: runnable bool)] :post [(: % bool)] :tags {:context "process" :role "judgment"}}
+  "ExecutableAt の答えを決めるため: 辿った先の種類 kind が file で、かつ実行を許されている(runnable)時だけ True。dir・無い path・その他の
+   種類は runnable でも False(dir の実行の bit は「中へ入れる」の意味で、起こせる file ではない)。"
+  (and (= kind PathKind.FILE) runnable))
