@@ -178,6 +178,8 @@ pub enum Explain {
     /// DOEFF140: 置き場の外の module への依存(この file の置き場・読む先の module・その file の root からの path)。
     PlacedDependency { placement: Placement, owner: String, owner_rel: String },
     ServiceUntestedOnSim { service: String, entry: String, definitions: usize, sim: String },
+    /// DOEFF142: defhandler の引数が client・可変の店を取る。
+    HandlerArgumentHoldsState { handler: String, param: String, kind: &'static str, type_text: String },
     /// DOEFF106・131 を層の置き場の外の file に当てた当たり(層の説明の主体が無い — message をそのまま主体にする)。
     WorldOutsideLayers { subject: String },
     /// DOEFF107: 定義が呼ぶ定義を通して生の副作用に届く。
@@ -398,6 +400,10 @@ impl<'a> Narrator<'a> {
             Explain::ServiceUntestedOnSim { service, entry, definitions, sim } => (
                 format!("service {} の組み立て {}({} 本の定義)", service, entry, definitions),
                 format!("{} の下の deftest から呼び出し・参照を辿っても届かない。本番の組み立てのまま handler だけを差し替えて回していない service は、業務の不変条件を確かめていない(未検証のまま配備しない)。", sim),
+            ),
+            Explain::HandlerArgumentHoldsState { handler, param, kind, type_text } => (
+                format!("handler {} の引数 {}({}{})", handler, param, kind, if type_text.is_empty() { String::new() } else { format!(" {}", type_text) }),
+                "引数で受けた client や店は外側の handler から差し替えも観測もできず、模擬の環境で handler の差し替えだけで回せない。接続先と資格・設定は Ask で読み、client は handler の本文の先頭の (session val client …) で 1 回だけ作り、状態は (session var …) で持つ。".to_string(),
             ),
             Explain::WorldOutsideLayers { subject } => (
                 subject.clone(),
