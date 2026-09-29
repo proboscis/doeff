@@ -29,7 +29,8 @@
 ;;;     job の handler も混ざらない(service ごとの別のスコープ)。終わり(値・例外・取り消し)は世界へ書き、ObserveWorld が exit-code として
 ;;;     返す。process の中で Spawn した task は柵が tracked-child で包み直して(元の継続のまま — 子の task は柵より内の handler を持ち
 ;;;     運ぶ)把手を世界に覚えさせ、process の終わり(値・例外・止めの合図・Crash・worker の死)で一緒に取り消す(本番は子 process ごと
-;;;     消える)。
+;;;     消える)。task の process は終わりを書く前に、結果を coordinator へ直に届ける(本番の job_entry.run-task と同じ要求 —
+;;;     report_client.task-result-request・#1387。届かなければ worker の heartbeat が運ぶ)。
 ;;;   - 宿の答え(host-answers — process ごと)= host_contract.HOST-CONTRACT の 3 つ(run-context・Program の path・宣言の environ の名の
 ;;;     Ask — environ は本番の土台と同じ読みの定義 host_contract.environ-reader を子の spec.environ の上に並べる:
 ;;;     値は字面どおり)と ReportReady・ReportMetrics。クラスタの約束の答え(coordinator-answers — 送り手の口 SimLink ごと)= ReadShared / WriteShared・
@@ -137,7 +138,7 @@
 (import .remote [task-submit-body outcome-of settled-value])
 (import .remote_model [RemoteJob RemoteJobFailed TaskSucceeded TaskFailed encode-program encode-outcome failed-from program-sha
                        current-versions])
-(import .report_client [report-request])
+(import .report_client [report-request task-result-request task-id-of-job])
 (import .runtime_env_model [RuntimeEnv EnvFailure runtime-env->json current-platform])
 (import .semaphore_model [LeaseOp SEMAPHORE-PREFIX drop-holders lease-holder holder-tokens-prefix])
 (import .service_model [System Declaration system-declaration])
@@ -1160,17 +1161,31 @@
            :detail (.format "{}: {}" (. (type refusal) __name__) refusal)))
 
 
+(defk deliver-task-result [child result]
+  {:pre [(: child SimChild) (: result str)] :post [(: % None)] :tags {:context "doeff-cluster" :role "protocol"}}
+  "本番の task の子 process が終わる前に結果を coordinator へ直に届けるのと同じ要求(report_client.task-result-request)を、子の送り手の
+   口で 1 回送るため(#1387)。答えは読まない — 届かなければ、世界に書いた結果を worker の heartbeat が運ぶ(本番の file の路と同じ)。
+   届ける相手の task の id は本番の子と同じ判断(report_client.task-id-of-job)で子の文脈の job の名から読み、読めなければ送らない。"
+  (val task (task-id-of-job child.ctx.job))
+  (when (is-not task None)
+    (<- (send-shaped child.link (task-result-request task child.ctx.worker child.ctx.instance result))))
+  None)
+
+
 (defk sim-process [worker spec child blob]
   {:pre [(: worker str) (: spec JobSpec) (: child SimChild) (: blob (| str None))]
    :post [(: % None)] :tags {:context "doeff-cluster" :role "program"}}
   "sim の子 process 1 つの一生: 詰めた Program を解き(解けなければ本番の入口と同じく service は 3・task は失敗の結果)、柵の中で
-   走らせ、終わりを世界へ書く(中で Spawn した task も一緒に止まる)。"
+   走らせ、task は終わる前に結果を coordinator へ直に届け(本番の job_entry.run-task と同じ)、終わりを世界へ書く(中で Spawn した task も
+   一緒に止まる)。殺された process(結果なし)は届けない。"
   (val decoded (if (is blob None)
                    #(None (RemoteJobFailed (.format "Program {} を coordinator の置き場から取れていない" spec.program)))
                    (decoded-program blob)))
   (<- ended SimExit (match decoded
                       #(None refusal) (refused-exit refusal spec.once)
                       #(program None) (run-fenced program child spec.once)))
+  (when (is-not ended.result None)
+    (<- (deliver-task-result child ended.result)))
   (<- (EndProcess worker child.pid ended))
   None)
 

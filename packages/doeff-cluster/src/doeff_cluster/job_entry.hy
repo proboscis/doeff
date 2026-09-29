@@ -15,6 +15,9 @@
 ;;; service と task は同じ file を同じ read-program で読む(運び方を分けない — R3b)。--identity は service の宣言の同一性の指紋
 ;;; (spec-hash の材料 — 入口では読まない)。
 ;;; task は結果(TaskSucceeded / TaskFailed)を必ず --result の file に書いてから 0 で終わる。0 以外で終わった = 結果を書けなかった。
+;;; file に書いた後、終わる前に結果を coordinator の POST /tasks/<id>/result へ直に届ける(report_client.deliver-task-result — #1387:
+;;; worker の次の heartbeat だけが運ぶ形では、exit 0 から heartbeat までに worker が死ぬと結果が届かず task が 2 度走った)。
+;;; 届かなければ今までどおり worker が file を読んで heartbeat で運ぶ(coordinator は 2 度目の結果を冪等に受ける)。
 ;;; 版の違い・file の欠け・解けない Program は、task では TaskFailed(VersionMismatch / RemoteJobFailed)として結果の file に書き、
 ;;; service と probe では理由の 1 行を出して止まる。
 ;;;
@@ -32,6 +35,7 @@
                        TaskSucceeded TaskFailed failed-from VersionMismatch RemoteJobFailed])
 ;; 子の文脈の型と読みは入口でない module に 1 つだけ置く(job_context の頭の註 — ここは import して、今の名を引けるように残す)。
 (import .job_context [RunContext context-from-env runtime-env-of-context])
+(import .report_client [deliver-task-result])
 
 
 (deff program-row [#^ str path]  ; defk にできない: process の入口(Program の外)が file を読む
@@ -110,13 +114,16 @@
 
 
 (defn run-task [args]  ; defk にできない: process の入口(Program の外)
-  "task の入口: 結果を必ず file に書いてから 0 で終わる。"
+  "task の入口: 結果を必ず file に書き、終わる前に coordinator へ直に届けてから 0 で終わる(届かなければ worker の heartbeat が file の
+   結果を運ぶ)。"
   (setv ctx (context-from-env))
   (setv outcome (task-outcome args.program ctx))
+  (setv encoded (encode-outcome outcome))
   (setv tmp (+ args.result ".tmp"))
   (with [f (open tmp "w" :encoding "utf-8")]
-    (.write f (encode-outcome outcome)))
+    (.write f encoded))
   (os.replace tmp args.result)
+  (deliver-task-result ctx encoded)
   (print (.format "task: {} → {}" ctx.job (. (type outcome) __name__)) :file sys.stderr :flush True))
 
 

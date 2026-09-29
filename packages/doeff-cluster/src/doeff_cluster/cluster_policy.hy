@@ -819,12 +819,20 @@
            (if task.environ {"environ" (dict task.environ)} {}))))
 
 
+(defn #^ TaskRecord task-finished [#^ TaskRecord task #^ int now #^ str detail #^ (| str None) result]
+  "純粋: 子 process が結果を持って終わった task の記録(切り離した task は終わりの phase — end-detached)。heartbeat の報告と子 process の
+   直の届け(absorb-task-result)が同じ形で終える。result = 詰めた結果(None = 結果なし — 切り離した task では呼ばない)。"
+  (if task.detached
+      (end-detached task "finished" now detail result)
+      (replace task :phase "finished" :finished-ms now :result result :detail detail)))
+
+
 (defn #^ TaskRecord absorb-detached-report [#^ TaskRecord task #^ dict status #^ int now]
   "切り離した task の終わりの報告 → 終わりの phase。結果を書かずに終わった子 process は lost(結果が無い = 消失)。"
   (setv phase (.get status "phase") detail (.get status "detail" ""))
   (cond
     (and (= phase "finished") (is-not (.get status "result") None))
-      (end-detached task "finished" now detail (get status "result"))
+      (task-finished task now detail (get status "result"))
     (= phase "finished")
       (end-detached task "lost" now (.format "子 process が結果を書かずに終わった({})" detail))
     (= phase "code-failed") (end-detached task "code-failed" now detail)
@@ -844,12 +852,40 @@
           (= phase "env-failed") (setv (get tasks id) (absorb-env-failure task worker status now))
           task.detached (setv (get tasks id) (absorb-detached-report task status now))
           (= phase "finished")
-            (setv (get tasks id) (replace task :phase "finished" :finished-ms now :result (.get status "result")
-                                          :detail (.get status "detail" "")))
+            (setv (get tasks id) (task-finished task now (.get status "detail" "") (.get status "result")))
           (= phase "code-failed")
             (setv (get tasks id) (replace task :phase "code-failed" :finished-ms now
                                           :detail (.get status "detail" "")))))))
   tasks)
+
+
+(defn #^ tuple absorb-task-result [#^ ClusterState state #^ str id #^ dict body #^ int now]
+  "POST /tasks/<id>/result: task の子 process が終わる前に直に届けた結果を task の記録へ写す(#1387 — 結果の運び手を worker の
+   heartbeat だけにすると、子の exit 0 から次の heartbeat までに worker が死んだ時に結果が届かず、起き直した worker が同じ task を
+   もう 1 度走らせた)。本文 = {worker instance result format}(report_client.task-result-request)。返り値 #(次の状態 status 答え)。
+   - 置いた worker からの、まだ終わっていない task の結果 → 結果を持って終える(task-finished)。200。
+   - 終わった task(heartbeat が先に運んだ・同じ結果の 2 度目の届け)→ 状態を変えない。200(冪等 — heartbeat の報告も終わった task には
+     何もしない: absorb-task-reports)。
+   - 別の worker に置いた task → 409(古い送り手)。知らない task(呼び手が落とした・lease 切れ)→ 404。
+   切り離した task も置いた worker の名だけで比べる: 子は worker の process の世代を知らず、切り離した task は置いた世代の process にしか
+   渡らない(tasks-for)ので、同じ名の worker の子が届ける結果はその task を走らせた process の物。"
+  (setv refusal (format-refusal body))
+  (when refusal (return #(state 400 {"error" refusal})))
+  (setv worker (required-field body "worker") result (required-field body "result"))
+  (when (not (isinstance worker str)) (raise (BodyInvalid (.format "worker は文字列: {!r}" worker))))
+  (when (not (isinstance result str)) (raise (BodyInvalid (.format "result は詰めた結果の文字列: {!r}" (type result)))))
+  (setv task (.get state.tasks id))
+  (cond
+    (is task None)
+      #(state 404 {"error" (.format "task {} を知らない(呼び手が落とした・lease が切れた)" id)})
+    (not-in task.phase PLACED-PHASES)
+      #(state 200 {"accepted" False "phase" task.phase})
+    (!= task.worker worker)
+      #(state 409 {"error" (.format "task {} は worker {} に置いてある(送り手 {})" id task.worker worker)})
+    True
+      #((replace state :tasks (| state.tasks {id (task-finished task now (.format "子 process {} が終わる前に届けた"
+                                                                                 (.get body "instance" "")) result)}))
+        200 {"accepted" True "phase" "finished"})))
 
 
 (defn #^ dict renew-detached [#^ dict tasks #^ str worker #^ (| str None) boot #^ int now]

@@ -139,7 +139,10 @@ Program の中の `with-handlers` で並べます(実行先は handler を 1 つ
 
 worker の子 process の入口は `hy -m doeff_cluster.job_entry service|task|probe --program FILE …` です。版(Python・cloudpickle・doeff)を
 検めて詰めた Program を解き、`(run program)` するだけで、handler を 1 つも足しません。答えの無い effect はその場で上がり、process は
-0 以外で終わります(worker が理由つきで起動し直します)。実行先が Program に提供するのは `host_contract.HOST-CONTRACT` の 3 つだけです:
+0 以外で終わります(worker が理由つきで起動し直します)。task の入口は結果を `--result` の file に書いた後、終わる前に coordinator の
+`POST /tasks/<id>/result` へ結果を直接送ります。届かなかった時だけ、worker が file を読んで次の heartbeat で運びます(子が終了コード 0 で
+終わった直後に worker が死んでも、結果は失われず、task は 2 回実行されません)。実行先が Program に提供するのは
+`host_contract.HOST-CONTRACT` の 3 つだけです:
 
 | 提供する物 | Program での読み方 |
 |---|---|
@@ -262,6 +265,7 @@ worker は業務の repo の commit を 1 つ展開して子 process の cwd に
 | `POST /workers/<名>/drain`・`DELETE /workers/<名>/drain` | worker の drain の依頼と取り消し |
 | `POST /leases/<名>` | 名前付きの lease(`op` = claim / renew / release / drop) |
 | `POST /tasks`・`GET /tasks/<id>`・`DELETE /tasks/<id>` | task を出す(`{program(sha) revision needs name leaseSeconds format runtimeEnv?}`)・問い合わせる(lease を延ばす)・落とす |
+| `POST /tasks/<id>/result` | task の子 process が終わる前に結果を送る(`{worker instance result format}`)。置いた worker からなら task を終える・終わった task には何もしない(200)・別の worker は 409・知らない task は 404 |
 | `POST /warm`・`GET /warm/<キー>` | 実行環境の root を温める頼み(`{runtimeEnv needs ttlSeconds holder}`) |
 
 書く時に守ること:
@@ -306,8 +310,9 @@ worker が無い・コードを準備できない)・`DetachedUnknown`(知らな
 - **世代**: task は置いた時の worker の process の世代(heartbeat の `boot`)に付きます。lease を延ばすのは置いた世代の heartbeat だけです。
   同じ名の別の世代(Pod を作り直した後の新しい process・preStop の間の旧い process)の heartbeat は、その task の lease を延ばしも
   lost にもしません。
-- **結果の後の消失**: 結果を受け取った後に worker が死んでも、結果は変わりません。結果は `retain-seconds`(既定 24 時間・30 日まで)か
-  `ReleaseDetached` まで持ちます。
+- **結果の後の消失**: 結果を受け取った後に worker が死んでも、結果は変わりません。子 process は終わる前に結果を coordinator へ直接
+  送るので、子が終わった直後(worker の次の heartbeat の前)に worker が死んでも結果は届いています。結果は `retain-seconds`(既定
+  24 時間・30 日まで)か `ReleaseDetached` まで持ちます。
 - **途絶**: worker は coordinator と途絶えても切り離した task を止めません(途絶が lease より長ければ coordinator が消失とし、再接続の
   返事から外れた時に止めます)。
 - **drain**: drain は worker の上の切り離した task が 0 になるまで `Drained` になりません(task は移せないので終わるのを待つ)。
