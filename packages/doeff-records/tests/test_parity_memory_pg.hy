@@ -1,4 +1,4 @@
-;; 同じ法の筋書きを memory の handler・PostgreSQL の handler・記録の service の HTTP の口越し(memory / PostgreSQL の置き場)で回し、
+;; 同じ法の筋書きを memory の handler・PostgreSQL の handler(SQL の答え手は同期の版と scheduler を塞がない版の 2 つ)・記録の service の HTTP の口越し(memory / PostgreSQL の置き場)で回し、
 ;; 答えの列(transcript)が等しいことを確かめる(番号・版・epoch・時刻まで同じ — どの置き場を選んでも、口越しでも、Program に見える
 ;; 答えは変わらない)。
 (require doeff-hy.macros [deftest])
@@ -38,4 +38,4 @@
 (deftest test-every-law-gives-the-same-answers-on-memory-and-postgres
   {:skip-if (not PG-DSN)
    :skip-reason "DOEFF_RECORDS_TEST_PG_DSN が無い(PostgreSQL の検は走っていない)"}
-  (assert-same-transcripts ["pg" "http-pg"]))
+  (assert-same-transcripts ["pg" "pg-pooled" "http-pg"]))
