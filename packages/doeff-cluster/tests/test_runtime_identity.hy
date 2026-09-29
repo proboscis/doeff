@@ -5,21 +5,18 @@
 ;;   * 反例: 宣言が無い(image の venv で起きた)・印の無い root・読めない形式の印・渡されたキーか印のキーの違い・宣言の root の外
 ;;     から import した module・root の venv(第三者の package の置き場)から import した module・import できない module —
 ;;     それぞれ失敗の kind で名乗る。
-;;   * この process を読む handler: 一時 dir に印つきの root と venv の形を作り、環境変数と sys.prefix をそこへ向けて、同じ判断を通す。
+;;   * この process を読む handler(process-runtime-facts)と材料を渡す handler(given-runtime-facts)が同じ場面に同じ答えを返すことは
+;;     契約テスト test_runtime_facts_contract.hy。
 ;; 印は本物の書き手(env_prepare の EnvMarker と env-marker->json)で作り、キーは env-key で計算する(形式を手書きしない — 書き手の形が
 ;; 変われば検が赤になる)。
 (require doeff-hy.macros [<- val])
 (import json)
-(import os)
-(import sys)
-(import pathlib [Path])
 (import doeff [run with_handlers])
 (import doeff_core_effects.scheduler [scheduled])
 (import doeff_cluster.runtime_env_model [RuntimeEnv RepoCheckout PythonProject EnvVar runtime-env->json env-key])
-(import doeff_cluster.env_prepare [ENV-MARKER EnvMarker env-marker->json])
+(import doeff_cluster.env_prepare [EnvMarker env-marker->json])
 (import doeff_cluster.runtime_identity [IdentityFailureKind ModuleOrigin ProcessFacts RuntimeIdentity RepoCommit
                                           check-runtime-identity given-runtime-facts])
-(import doeff_cluster.runtime_identity_process [process-runtime-facts])
 
 (val AC-COMMIT (* "a" 40))
 (val DF-COMMIT (* "d" 40))
@@ -156,77 +153,3 @@
   (setv got (judged (read-of :origins (cut IN-ROOT 2))))
   (assert (= got.kind IdentityFailureKind.MODULE-OUTSIDE-ROOT))
   (assert (in "import できない" got.detail)))
-
-
-;; --- 本物の handler ------------------------------------------------------------------------
-
-(defn make-root [#^ Path tmp #^ RuntimeEnv marker-env #** over]
-  "印つきの root・宣言の repo の dir・venv の形を一時 dir に作り、確かめる package を 1 つ repo の下に置く。"
-  (setv root (/ tmp "envs" KEY))
-  (setv pkg (/ root "app" "ridprobe"))
-  (.mkdir pkg :parents True)
-  (.write-text (/ pkg "__init__.py") "")
-  (.mkdir (/ root "app" ".venv") :parents True)
-  (.write-text (/ root ENV-MARKER) (marker-json marker-env #** over))
-  root)
-
-
-(defn on-process [#^ tuple modules]
-  (done (with_handlers [process-runtime-facts] (check-runtime-identity modules))))
-
-
-(defn point-at [monkeypatch #^ Path root]
-  (monkeypatch.setenv "DOEFF_RUNTIME_ENV" (env-json DECLARED))
-  (monkeypatch.setenv "DOEFF_RUNTIME_ENV_KEY" KEY)
-  (monkeypatch.setattr sys "prefix" (str (/ root "app" ".venv")))
-  (monkeypatch.syspath-prepend (str (/ root "app"))))
-
-
-(defn test-process-handler-agrees-inside-root [tmp-path monkeypatch]
-  (setv root (make-root tmp-path DECLARED))
-  (point-at monkeypatch root)
-  (setv got (on-process #("ridprobe")))
-  (assert (isinstance got RuntimeIdentity))
-  (assert (= got.pid (os.getpid)))
-  (assert (= got.root (str (.resolve root)))))
-
-
-(defn test-process-handler-reads-a-package-without-init [tmp-path monkeypatch]
-  ;; __init__ を持たない package(doeff_cluster と同じ形 — origin が無い)は、submodule を探す dir を置き場として一致を答える
-  ;; (origin だけを見て『import できない』と誤って断った形の反例)。
-  (setv root (make-root tmp-path DECLARED))
-  (.mkdir (/ root "app" "ridns"))
-  (.write-text (/ root "app" "ridns" "leaf.py") "")
-  (point-at monkeypatch root)
-  (setv got (on-process #("ridprobe" "ridns")))
-  (assert (isinstance got RuntimeIdentity) (if (hasattr got "detail") got.detail "")))
-
-
-(defn test-process-handler-names-stdlib-module-outside [tmp-path monkeypatch]
-  ;; 反例: root の外(この検を走らせている Python)の module。
-  (setv root (make-root tmp-path DECLARED))
-  (point-at monkeypatch root)
-  (setv got (on-process #("ridprobe" "json")))
-  (assert (= got.kind IdentityFailureKind.MODULE-OUTSIDE-ROOT))
-  (assert (in "json" got.detail)))
-
-
-(defn test-process-handler-reads-stale-marker [tmp-path monkeypatch]
-  (setv root (make-root tmp-path (env-of OTHER-COMMIT)))
-  (point-at monkeypatch root)
-  (assert (= (. (on-process #("ridprobe")) kind) IdentityFailureKind.MARKER-MISMATCH)))
-
-
-(defn test-process-handler-without-marker [tmp-path monkeypatch]
-  ;; 反例: 宣言は渡されたが、venv の上に完成の印が無い(準備の途中の root・印の無い別の dir)。
-  (setv venv (/ tmp-path "plain" ".venv"))
-  (.mkdir venv :parents True)
-  (monkeypatch.setenv "DOEFF_RUNTIME_ENV" (env-json DECLARED))
-  (monkeypatch.setenv "DOEFF_RUNTIME_ENV_KEY" KEY)
-  (monkeypatch.setattr sys "prefix" (str venv))
-  (assert (= (. (on-process #("json")) kind) IdentityFailureKind.ROOT-UNMARKED)))
-
-
-(defn test-process-handler-without-declaration [monkeypatch]
-  (monkeypatch.delenv "DOEFF_RUNTIME_ENV" :raising False)
-  (assert (= (. (on-process #("json")) kind) IdentityFailureKind.UNDECLARED)))
