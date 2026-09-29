@@ -2,7 +2,7 @@
 ;;; 詰め替えるだけで、判断を持たない。psycopg はこの module の I/O の関数の中でだけ読む(psycopg の無い環境でも、書き換えと写しの純関数は
 ;;; 読めて検を撃てる)。
 ;;;   - 接続の貸し出し PostgresConnections は組み立ての側(composition root)が database の宣言(PostgresDatabase — 名と DSN)から作って渡し、
-;;;     止める時に close する。要求 1 つ = 接続 1 本(doeff-records の PgHostPool と同じ方針 — 同時の要求の transaction を 1 本の接続で
+;;;     止める時に close する。要求 1 つ = 接続 1 本(doeff-records の置き場もこの貸し出しを使う — 同時の要求の transaction を 1 本の接続で
 ;;;     混ぜない)。接続は自動 commit・json / jsonb の欄は text で読む(値の正規化の決まり)。切れた接続と transaction の途中で返った接続は
 ;;;     返す時に捨てる / rollback する。
 ;;;   - 引数は中立の `:name` を `%(name)s` へ書き換え、文の `%` は `%%` にする(postgres-statement)。

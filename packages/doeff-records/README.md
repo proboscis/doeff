@@ -77,12 +77,15 @@ operator の主体の名の tuple。既定の空 = 誰も `operator_paths` の�
 
 - `doeff_records.memory.memory_records_handler(store, writer)` — `MemoryStore(schema)` の手元の表の上で答える。模擬環境・手元の
   1 process・単体の検に使う。同じ `MemoryStore` を別の `writer` の handler で包めば、1 つの置き場を複数の書き手が使う形になる。
-- `doeff_records.pg.pg_records_handler(host, writer)` — `PgRecordsHost(connection, store, unreachable_errors=...)` の
-  PostgreSQL の表で答える。`store` は `prepare_records_store(connection, schema, prefix)` の答えで、表の用意(移行)は process ごとに
-  この 1 度だけ(移行専用の advisory lock の transaction の中で流すので、複数の process が同時に用意しても UniqueViolation にならない)。
-  host を作っても文は流れない。接続(psycopg 3・自動 commit)と接続の失敗の例外の型は composition root が渡す(psycopg は extra `pg`)。表は状態の行の表(`state_rows`)と
-  追記の表(`append_rows`)と同じ列の形で、変更の列(`row_changes`)と置き場の版(`store_epoch`)を足す。書きは置き場ごとの
-  advisory lock で直列にする(番号の順と commit の順を揃えるため — 理由は `pg_sql.hy` の頭の註)。
+- `doeff_records.pg.pg_records_handler(store, writer, origin_host, poll_seconds)` — PostgreSQL の表で答える。文は doeff の汎用の
+  SQL の effect(`SqlQuery`・`SqlTransaction`)で出すので、外側に SQL の答え手(`doeff_core_effects.postgres_sql.postgres_sql_handler` か
+  scheduler を塞がない `doeff_core_effects.pooled_postgres_sql.pooled_postgres_sql_handler`)を置く。接続・driver(psycopg 3)・届かない時の
+  読み分けは答え手が持ち、答え手の `SqlUnreachable` は公開 effect の答え `Unreachable` になる(engine の失敗 `SqlFailed` は実装の誤りとして
+  `RecordsSqlFailed` を上げる)。`store` は `prepare_records_store(database, schema, prefix)`(Program)の答えで、表の用意(移行)は
+  process ごとにこの 1 度だけ(移行専用の錠の transaction の中で流すので、複数の process が同時に用意しても UniqueViolation にならない)。
+  表は状態の行の表(`state_rows`)と追記の表(`append_rows`)と同じ列の形で、変更の列(`row_changes`)と置き場の版(`store_epoch`)を足す。
+  書きは置き場ごとの advisory lock(`SqlTransaction` の `lock_key` = 接頭辞 + `records-writer`)で直列にする(番号の順と commit の順を
+  揃えるため — 理由は `pg_sql.hy` の頭の註)。
 
 どちらの handler も時刻を doeff-time の `GetTime` で読み、`WatchChanges` の待ちは `Delay` で眠る。仮想の時計
 (`sim_time_handler`)の下では保持の期限も待ちも一瞬で進む。
@@ -113,8 +116,8 @@ operator の主体の名の tuple。既定の空 = 誰も `operator_paths` の�
   書き手の名へ引く(`doeff_records.principals`)。引いた名で記録の handler を組むので、書き手の名は effect の引数にならない。
   名簿に在っても表の宣言の書き手でなければ、書きは記録の判断が `Refused` にする。
 - 口を開く部品は `doeff_records.http_server.start_records_server(RecordsServerConfig(...))`(標準の `http.server`)。
-  PostgreSQL の置き場では要求ごとに接続を 1 本借りる(`doeff_records.pg_pool.PgHostPool(connect, store, ...)` — 表を用意し終えた
-  `store` を受け取り、借りた接続では表を用意し直さない)。
+  PostgreSQL の置き場では、要求ごとの run の外側に SQL の答え手を置き、答え手が文ごと(transaction ごと)に接続を 1 本借りる
+  (`PostgresConnections` — 表は用意し終えた `store` を受け取り、要求では表を用意し直さない)。
 
 client の handler `doeff_records.http_client.http_records_handler(RecordsEndpoint(base_url, token))` は、同じ公開 effect に口越しで
 答える。`401` / `403`(handler を組んだ token の身元を認めない)は操作を問わず `RecordsUnauthorized` を上げる — 組み立ての誤りで、
@@ -133,15 +136,16 @@ client の handler `doeff_records.http_client.http_records_handler(RecordsEndpoi
 
 ## 記録の service を起動する(`doeff_records.main`)
 
-置き場の宣言と接続の開き方は呼び手の系が持つので、呼び手の系の入口が `serve_records_service` を呼ぶ:
+置き場の宣言と接続 URL の file の読み方は呼び手の系が持つので、呼び手の系の入口が `serve_records_service` を呼ぶ:
 
 ```hy
-(import psycopg)
 (import myapp.tables [SCHEMA])
 (import doeff_records.main [serve-records-service])
-(serve-records-service SCHEMA (fn [url] (psycopg.connect url :autocommit True))
-                       #(psycopg.OperationalError psycopg.InterfaceError))
+(defk dsn-of [text] {:pre [(: text str)] :post [(: % str)]} (.strip text))
+(serve-records-service SCHEMA dsn-of)
 ```
+
+`dsn-of` = 接続 URL の file の中身 → DSN の Program。接続は `PostgresConnections`(psycopg 3・自動 commit — image に psycopg が要る)。
 
 env(接続 URL の file・身元の名簿の file・接頭辞・port・手入れの間隔・変更の列に残す秒)の一覧と既定は `main.hy` の頭の註。
 表は接頭辞(既定 `records_`)つきで、起動時に `CREATE ... IF NOT EXISTS` だけを流す(既存の表を消さない・変えない)。
