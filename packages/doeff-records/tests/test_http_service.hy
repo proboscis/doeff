@@ -14,7 +14,7 @@
 (import doeff_records.laws [LAW-SCHEMA])
 (import doeff_records.memory [MemoryStore memory-records-handler])
 (import doeff_records.http_server [RecordsServerConfig RunningServer start-records-server])
-(import doeff_records.http_client [RecordsEndpoint RecordsUnauthorized http-records-handler http-table-records-handler])
+(import doeff_records.http_client [BlockingTransport RecordsEndpoint RecordsUnauthorized http-records-handler http-table-records-handler])
 (import tests.interpreters [LAW-TOKENS law-roster sim-request-handlers])
 
 
@@ -32,7 +32,7 @@
 
 (defn run-as [server clock #^ str token program]
   "token の身元の client の handler で Program を走らせる。"
-  (run (scheduled (with_handlers [(sim-time-handler :clock clock) (http-records-handler (RecordsEndpoint server.url token))]
+  (run (scheduled (with_handlers [(sim-time-handler :clock clock) (http-records-handler (RecordsEndpoint server.url token :transport (BlockingTransport)))]
                                  program))))
 
 
@@ -156,10 +156,8 @@
     (val server (! (front-refusal-server status page)))
     (val url (+ "http://127.0.0.1:" (str (get server.server-address 1))))
     (try
-      (for [transport [None (EffectTransport)]]
-        (val endpoint (if (is transport None)
-                          (RecordsEndpoint url "t" :request-timeout 5.0)
-                          (RecordsEndpoint url "t" :request-timeout 5.0 :transport transport)))
+      (for [transport [(BlockingTransport) (EffectTransport)]]
+        (val endpoint (RecordsEndpoint url "t" :request-timeout 5.0 :transport transport))
         (var said None)
         (try
           (run (scheduled (with_handlers [(await-handler) (http-production-handler) (sim-time-handler :clock (SimClock))
@@ -287,8 +285,8 @@
   (try
     (defn both [program]
       (run (scheduled (with_handlers [(sim-time-handler :clock clock)
-                                      (http-records-handler (RecordsEndpoint tickets-server.url maker))
-                                      (http-table-records-handler (RecordsEndpoint parts-server.url maker) (frozenset ["parts"]))]
+                                      (http-records-handler (RecordsEndpoint tickets-server.url maker :transport (BlockingTransport)))
+                                      (http-table-records-handler (RecordsEndpoint parts-server.url maker :transport (BlockingTransport)) (frozenset ["parts"]))]
                                      program))))
     (assert (isinstance (both (PutRow "parts" #("p1") {"label" "a"} (ExpectAbsent))) Written))
     (assert (isinstance (both (PutRow "tickets" #("g" "t1") {"state" "open"} (ExpectAbsent))) Written))
