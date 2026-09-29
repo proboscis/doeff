@@ -4,10 +4,15 @@
 ;;;     DDL の宣言・宣言していない database を外側へ回す。
 ;;;   - 本物の答え手(postgres-sql-handler・clickhouse-http-sql-handler)は、方言の書き換えと答えの写しを純関数で撃つ。実 DB の結合の検は
 ;;;     DSN / URL の環境変数(DOEFF_SQL_TEST_POSTGRES_DSN・DOEFF_SQL_TEST_CLICKHOUSE_URL)が無ければ skip する。
+;;;   - scheduler を塞がない答え手(pooled-postgres-sql-handler — #880 U2)は実 PG で: 同じ筋書きの答え・遅い問い合わせの横で別の task が進む・
+;;;     transaction の錠の番号が旧い書き方の hashtext と同じ・取り消しで rollback して接続と許可を返す。
 (require doeff-hy.macros [deftest defk <- val var with-handler])
 (import os)
 (import json)
 (import importlib.util)
+(import threading)
+(import time)
+(import concurrent.futures [ThreadPoolExecutor])
 (import dataclasses [dataclass])
 (import decimal [Decimal])
 (import doeff_core_effects.handlers [state])
@@ -18,6 +23,8 @@
 (import doeff_core_effects.sqlite_sql [sqlite-sql-handler sqlite-statement sqlite-failure])
 (import doeff_core_effects.postgres_sql [postgres-sql-handler postgres-statement postgres-insert-statement postgres-failure
                                          postgres-schema-statements PostgresDatabase PostgresConnections])
+(import doeff_core_effects.pooled_postgres_sql [pooled-postgres-sql-handler])
+(import doeff_core_effects.scheduler [CreateExternalPromise Wait Spawn Gather Cancel TaskCancelledError])
 (import doeff_core_effects.clickhouse_http_sql [clickhouse-http-sql-handler clickhouse-statement clickhouse-query-request
                                                 clickhouse-insert-request clickhouse-rows clickhouse-written-rows clickhouse-failure
                                                 clickhouse-schema-statements ClickHouseDatabase ClickHouseResponse ClickHouseParam])
@@ -481,3 +488,160 @@
   (assert (= inserted (SqlRows :rows #() :rowcount 2)) inserted)
   (assert (= read (SqlRows :rows #(#(1 "a\tb" True) #(2 None False)) :rowcount None)) read)
   (assert (and (isinstance broken SqlFailed) (in "no_such_table" broken.reason)) broken))
+
+
+;; --- scheduler を塞がない PostgreSQL の答え手(pooled-postgres-sql-handler — agora-redesign #880 U2)。実 PG が要る(環境変数が無ければ skip)---
+
+(defk pause [seconds]
+  {:pre [(: seconds float)] :post [(: % None)]
+   :tags {:context "sql" :role "program"}}
+  "壁の時計で seconds 待つため(外から完了させる promise — 待つのはこの task だけ)。"
+  (<- promise (CreateExternalPromise))
+  (.start (threading.Timer seconds (fn [] (.complete promise None))))
+  (<- (Wait promise.future))
+  None)
+
+
+(defk finished-at [statement]
+  {:pre [(: statement str)] :post [(: % float)]
+   :tags {:context "sql" :role "program"}}
+  "文 1 つを流し、終わった拍の単調時計を答えるため。"
+  (<- answer SqlRows (SqlQuery DB statement #()))
+  (time.monotonic))
+
+
+(defk ticks [count seconds]
+  {:pre [(: count int) (: seconds float)] :post [(: % tuple)]
+   :tags {:context "sql" :role "program"}}
+  "seconds ごとに count 回刻み、刻んだ拍の単調時計を答えるため(scheduler が塞がれていれば遅れる)。"
+  (var seen #())
+  (for [_ (range count)]
+    (<- (pause seconds))
+    (:= seen (+ seen #((time.monotonic)))))
+  seen)
+
+
+(defk slow-beside-ticks []
+  {:pre [] :post [(: % tuple)]
+   :tags {:context "sql" :role "program"}}
+  "遅い問い合わせ 1 つと、許可(接続 1 本)を待つ問い合わせ 1 つの横で、別の task が刻めるかを見るため。"
+  (<- slow (Spawn (finished-at "SELECT pg_sleep(1.0)")))
+  (<- queued (Spawn (finished-at "SELECT 1")))
+  (<- seen (ticks 5 0.05))
+  (<- finished (Gather slow queued))
+  #(seen (tuple finished)))
+
+
+(defk advisory-lock-held []
+  {:pre [] :post [(: % int)]
+   :tags {:context "sql" :role "program"}}
+  "transaction の中で、この接続が持つ advisory lock の番号(bigint の鍵)を pg_locks から読むため。"
+  (<- held SqlRows (SqlQuery DB (+ "SELECT ((classid::bigint << 32) | objid::bigint) FROM pg_locks "
+                                   "WHERE locktype = 'advisory' AND pid = pg_backend_pid()") #()))
+  (assert (= (len held.rows) 1) held.rows)
+  (get held.rows 0 0))
+
+
+(defk lock-numbers [key]
+  {:pre [(: key str)] :post [(: % tuple)]
+   :tags {:context "sql" :role "program"}}
+  "lock-key の transaction が取る錠の番号と、新しい書き方の SELECT hashtext(:k) の値を並べるため。"
+  (<- held (SqlTransaction :database DB :program (advisory-lock-held) :lock-key key))
+  (<- hashed SqlRows (SqlQuery DB "SELECT hashtext(:k)" #((SqlParam :name "k" :value key))))
+  #(held (get hashed.rows 0 0)))
+
+
+(defk insert-then-sleep []
+  {:pre [] :post [(: % None)]
+   :tags {:context "sql" :role "program"}}
+  "transaction の中で 1 行入れてから長く眠るため(眠りの間に取り消される)。"
+  (<- (SqlQuery DB "INSERT INTO pooled_cancel (id) VALUES (1)" #()))
+  (<- (SqlQuery DB "SELECT pg_sleep(1.5)" #()))
+  None)
+
+
+(defk cancel-mid-transaction []
+  {:pre [] :post [(: % tuple)]
+   :tags {:context "sql" :role "program"}}
+  "transaction の途中で task を取り消し、取り消しが届くか・入れた行が残らないか・許可が返って次の問い合わせが通るかを見るため。"
+  (<- (SqlQuery DB "DROP TABLE IF EXISTS pooled_cancel" #()))
+  (<- (SqlQuery DB "CREATE TABLE pooled_cancel (id bigint)" #()))
+  (<- task (Spawn (SqlTransaction :database DB :program (insert-then-sleep) :lock-key "pooled-cancel")))
+  (<- (pause 0.5))
+  (<- (Cancel task))
+  (var cancelled False)
+  (try
+    (<- (Wait task))
+    (except [TaskCancelledError] (:= cancelled True)))
+  (<- counted SqlRows (SqlQuery DB "SELECT count(*) FROM pooled_cancel" #()))
+  #(cancelled (get counted.rows 0 0)))
+
+
+(val POOLED-SKIP (or (is POSTGRES-DSN None) (is (importlib.util.find-spec "psycopg") None)))
+
+
+(deftest test-pooled-postgres-answers-like-the-sqlite-handler
+  {:skip-if POOLED-SKIP :skip-reason "DOEFF_SQL_TEST_POSTGRES_DSN が無い(か psycopg が無い)"}
+  (val connections (PostgresConnections #((PostgresDatabase :name DB :dsn (or POSTGRES-DSN ""))) :size 2))
+  (val pool (ThreadPoolExecutor :max-workers 2))
+  (try
+    (<- real (with-handler [(state) (pooled-postgres-sql-handler connections pool)] (postgres-journey)))
+    (finally (.close connections) (.shutdown pool)))
+  (<- memory (with-handler [(state) (sqlite-sql-handler #(DB))] (postgres-journey)))
+  (assert (= (cut (get real 0) 1 None) (cut (get memory 0) 1 None)) #(real memory))
+  (val class-of (fn [answer] (if (isinstance answer SqlFailed) (cut (or answer.sqlstate "") 0 2) answer)))
+  (assert (= (tuple (map class-of (get real 1))) (tuple (map class-of (get memory 1)))) #(real memory)))
+
+
+(deftest test-pooled-postgres-does-not-block-the-scheduler
+  {:skip-if POOLED-SKIP :skip-reason "DOEFF_SQL_TEST_POSTGRES_DSN が無い(か psycopg が無い)"}
+  ;; 接続 1 本: 遅い問い合わせが許可を持ち、2 つ目は許可を待つ。その間も別の task の刻みが遅れない。
+  (val connections (PostgresConnections #((PostgresDatabase :name DB :dsn (or POSTGRES-DSN ""))) :size 1))
+  (val pool (ThreadPoolExecutor :max-workers 1))
+  (try
+    (<- answer (with-handler [(state) (pooled-postgres-sql-handler connections pool)] (slow-beside-ticks)))
+    (finally (.close connections) (.shutdown pool)))
+  (val seen (get answer 0))
+  (val slow-done (get answer 1 0))
+  (val queued-done (get answer 1 1))
+  (assert (= (len seen) 5))
+  ;; 刻みは全部、遅い問い合わせ(1 秒)が終わる前に済む。
+  (assert (< (max seen) slow-done) #(seen slow-done))
+  ;; 2 つ目は許可(接続 1 本)が返るまで待った。
+  (assert (>= queued-done slow-done) #(queued-done slow-done)))
+
+
+(deftest test-pooled-postgres-takes-the-same-advisory-lock-as-before
+  {:skip-if POOLED-SKIP :skip-reason "DOEFF_SQL_TEST_POSTGRES_DSN が無い(か psycopg が無い)"}
+  (import psycopg)
+  (val keys #("records-writer" "agora-records-writer" "records-migrate" "会話-01J0000000000000000000000"))
+  (val connections (PostgresConnections #((PostgresDatabase :name DB :dsn (or POSTGRES-DSN ""))) :size 2))
+  (val pool (ThreadPoolExecutor :max-workers 2))
+  (var numbers #())
+  (try
+    (for [key keys]
+      (<- pair (with-handler [(state) (pooled-postgres-sql-handler connections pool)] (lock-numbers key)))
+      (:= numbers (+ numbers #(pair))))
+    (finally (.close connections) (.shutdown pool)))
+  ;; 旧い書き方(doeff-records の pg_sql.hy の lock-statement — 位置の %s に鍵を結ぶ)で同じ鍵の hashtext を読む。
+  (val old (with [connection (psycopg.connect (or POSTGRES-DSN "") :autocommit True)]
+             (tuple (gfor key keys (get (.fetchone (.execute connection "SELECT hashtext(%s)" #(key))) 0)))))
+  (for [[key pair before] (zip keys numbers old)]
+    ;; transaction が取った錠の番号 = 新しい書き方の hashtext(:k) = 旧い書き方の hashtext(%s)。
+    (assert (= (get pair 0) (get pair 1) before) #(key pair before))))
+
+
+(deftest test-pooled-postgres-rolls-back-and-returns-the-connection-on-cancel
+  {:skip-if POOLED-SKIP :skip-reason "DOEFF_SQL_TEST_POSTGRES_DSN が無い(か psycopg が無い)"}
+  (import psycopg)
+  ;; 接続 1 本: 取り消しの後の問い合わせが通れば、許可と接続が返っている。
+  (val connections (PostgresConnections #((PostgresDatabase :name DB :dsn (or POSTGRES-DSN ""))) :size 1))
+  (val pool (ThreadPoolExecutor :max-workers 1))
+  (try
+    (<- answer (with-handler [(state) (pooled-postgres-sql-handler connections pool)] (cancel-mid-transaction)))
+    (val idle (list (. (get connections.idle DB) queue)))
+    (assert (= (len idle) 1) idle)
+    (assert (= (. (get idle 0) info transaction-status) psycopg.pq.TransactionStatus.IDLE))
+    (finally (.close connections) (.shutdown pool)))
+  ;; 取り消しが届き、transaction の中で入れた行は rollback で残らない。
+  (assert (= answer #(True 0)) answer))

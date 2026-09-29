@@ -47,11 +47,13 @@
 
 
 (defclass PostgresConnections []
-  "接続の貸し出し(頭の註)。資源なので値の型ではない(中身を書き換え、同一性で扱う)。"
+  "接続の貸し出し(頭の註)。資源なので値の型ではない(中身を書き換え、同一性で扱う)。size = database ごとに同時に貸す接続の上限
+   (pooled-postgres-sql-handler が scheduler の許可の数として読む)。"
 
   (defn __init__ [self #^ tuple databases * [size DEFAULT-POOL-SIZE]]  ; defk にできない: 資源の class の初期化
     "database の宣言の列と、database ごとに同時に貸す接続の上限を受けるため。"
-    (setv self.databases (dfor d databases d.name d)
+    (setv self.size size
+          self.databases (dfor d databases d.name d)
           self.idle (dfor d databases d.name (Queue))
           self.permits (dfor d databases d.name (threading.BoundedSemaphore size))))
 

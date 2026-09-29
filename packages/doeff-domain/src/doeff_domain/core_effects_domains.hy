@@ -69,6 +69,7 @@
 (import doeff_core_effects.sql-effects [SqlQuery SqlInsertRows SqlEnsureTables
                                         SqlTransaction SetSqlOutage])
 (import doeff_core_effects.postgres-sql [postgres-sql-handler])
+(import doeff_core_effects.pooled-postgres-sql [pooled-postgres-sql-handler])
 (import doeff_core_effects.clickhouse-http-sql [clickhouse-http-sql-handler])
 (import doeff_core_effects.sqlite-sql [sqlite-sql-handler])
 (import doeff_core_effects.process-effects [RunProcess ExecutableAt
@@ -258,9 +259,9 @@
 (defdomain doeff-sql
   :title "SQL 語彙 — 汎用の SQL の問い合わせ・投入・transaction"
   :effects [SqlQuery SqlInsertRows SqlEnsureTables SqlTransaction SetSqlOutage]
-  :handlers [postgres-sql-handler clickhouse-http-sql-handler sqlite-sql-handler]
+  :handlers [postgres-sql-handler pooled-postgres-sql-handler clickhouse-http-sql-handler sqlite-sql-handler]
   :adrs ["ADR-DOE-DOMAIN-001"]
-  :docs "postgres-sql-handler / clickhouse-http-sql-handler(本物)と sqlite-sql-handler(I/O なし)が答える。SqlTransaction の手順は sql_transaction の run-in-transaction を答え手が共有する(それ自体は handler ではない)。SetSqlOutage は模擬の障害を切り替える effect で、答えるのは sqlite-sql-handler だけ。")
+  :docs "postgres-sql-handler / pooled-postgres-sql-handler(scheduler を塞がない版)/ clickhouse-http-sql-handler(本物)と sqlite-sql-handler(I/O なし)が答える。SqlTransaction の手順は sql_transaction の run-in-transaction を答え手が共有する(それ自体は handler ではない)。SetSqlOutage は模擬の障害を切り替える effect で、答えるのは sqlite-sql-handler だけ。")
 
 
 (defdomain doeff-process
