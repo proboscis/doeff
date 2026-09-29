@@ -116,6 +116,15 @@ impl Config {
                         ));
                     }
                 }
+                // 生の I/O を許す所は、architecture.hy の許可名簿(:world-handlers)を書いたらそこだけで決める — 層で許す
+                // [tool.doeff-linter.raw_side_effects] allowed_layers と並べない(agora-redesign #1106)。
+                let allowed_layers = self.raw_side_effects.as_ref().is_some_and(|raw| !raw.allowed_layers.is_empty());
+                if !arch.world_handlers.is_empty() && allowed_layers {
+                    clashes.push(format!(
+                        "[tool.doeff-linter.raw_side_effects] allowed_layers は {} の :world-handlers と二重の宣言 — 生の I/O を許す所は許可名簿だけに書く",
+                        arch.path.display()
+                    ));
+                }
                 if !clashes.is_empty() {
                     return Err(clashes);
                 }
@@ -578,6 +587,19 @@ max_mutable_attributes = 5
         assert_eq!(config.enable, vec!["DOEFF001", "DOEFF002"]);
         assert_eq!(config.exclude, vec!["venv", "build"]);
         assert_eq!(config.rules["DOEFF003"].max_mutable_attributes, Some(5));
+    }
+
+    /// architecture.hy の許可名簿(:world-handlers)を書いたら、層で生の I/O を許す allowed_layers は二重の宣言(agora-redesign #1106)。
+    #[test]
+    fn allowed_layers_clash_with_the_world_handler_list() {
+        let arch_source = r#"(defarchitecture s :root "app" :layers [(layer core) (layer foundation)] :foundation foundation
+  :world-handlers [(world-handler "app.foundation.host:with-host" :touches [http])])"#;
+        let arch = Architecture::parse(arch_source, Path::new("architecture.hy")).unwrap();
+        let with_layers: Config = toml::from_str("[raw_side_effects]\nallowed_layers = [\"foundation\"]\n").unwrap();
+        let problems = with_layers.project_settings_with(Some(arch.clone())).err().expect("二重の宣言を通した").join("\n");
+        assert!(problems.contains("allowed_layers は architecture.hy の :world-handlers と二重の宣言"), "{}", problems);
+        let without: Config = toml::from_str("[raw_side_effects]\ncatalog_extra = \"extra.json\"\n").unwrap();
+        assert!(without.project_settings_with(Some(arch)).is_ok(), "allowed_layers の無い raw_side_effects を断った");
     }
 
     /// 設定が binary より新しい時(知らない鍵がどの段に在っても)、誤りにせずその鍵だけを読まずに知らせ、残りは読む(agora-redesign #848)。

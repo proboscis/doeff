@@ -247,6 +247,9 @@ law の対応だけを残す。無ければ TOML の設定で今どおり動く�
   :open-layers [intent]                       ; 別の service から読んでよい層(既定 intent)
   :roles {:judgment "業務の判断をする純粋な関数" …}   ; role の説明
   :wire-modules ["controllers.foundation.records_client"]  ; JSON の送受信そのものを行う foundation の module(DOEFF120・13 節)
+  :world-handlers [(world-handler "controllers.foundation.host:with-agora-process"   ; 外の世界に触れてよい定義の許可名簿(下の註)
+                     :touches [http file clock env] :answers [HttpRequest ReadText]
+                     :wraps ["doeff_core_effects.os_file:os-file-handler"])]
   :exclude ["tests" "__pycache__" "conftest.py"]    ; 既定のまま
   :extensions ["hy" "py"]                           ; 既定 hy・hyk・hyp・py
   :shared "shared")  ; :legacy は廃止(書くと設定の誤り — 宣言の外の module は全部 DOEFF114・115、既存の分は登録簿)
@@ -262,6 +265,12 @@ law の対応だけを残す。無ければ TOML の設定で今どおり動く�
 - `{:public-contract http}` の service は、公開の契約が HTTP の口だけ。他の service の `:depends-on` に載せると設定の誤り
   (in-process で読む近道を止める — 置き場の状態を持つ service が 2 つ目の持ち主を作らせないため・agora-redesign #978)。書かない = in-process。
   値は `http` だけ(他は設定の誤り)。載せられないので、その service の module を import すると DOEFF116 が当たる。
+- `:world-handlers` は、外の世界に触れてよい定義の許可名簿(agora-redesign #1106 — operator 2026-09-29 "only allow small set of handlers to touch
+  actual world")。要素 `(world-handler "module.path:名" :touches [..] :answers [..]? :wraps [..]?)` の欄は、`:touches` = 触れる先(必須・閉じた語
+  http・db・file・process・clock・env・cluster・network・thread)・`:answers` = 答える effect の名・`:wraps` = 中で動かす doeff の実 I/O の handler
+  (`"module:名"`・名簿の定義は書けない)。名簿を書くには `:foundation` が要る。名簿を書いた repo では `[tool.doeff-linter.raw_side_effects]
+  allowed_layers` は二重の宣言(設定の誤り)— 生の I/O を許す所は名簿だけで決める(規則は agora-redesign #1134 の子で足す)。
+  読み違い(綴りが `module:名` でない・語の外・同じ定義や語の 2 度書き・`:touches` の無い要素)は設定の誤り。
 - 読み違い(知らない鍵・重複した service や層・存在しない層や service の名・:foundation の層が無い)は `architecture.hy:行:列: 理由` の形で
   設定の誤り(終了コード 2)。
 - editor-json の最上位に `architecture`(name・root・layers(name・summary・knows・does_not_know・question・roles)・shared・foundation・

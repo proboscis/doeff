@@ -14,6 +14,10 @@
 //!   :open-layers [intent]            ; 別の service から読んでよい層(Tach の interfaces に当たる)
 //!   :roles {:judgment "業務の判断をする純粋な関数" …}
 //!   :wire-modules ["controllers.foundation.record_client"]  ; JSON の送受信そのものを行う foundation の module(DOEFF120 が JsonValue を許す)
+//!   :world-handlers [(world-handler "controllers.foundation.host:with-agora-process"  ; 外の世界に触れてよい定義の許可名簿(agora-redesign #1106)
+//!                       :touches [http file clock env]           ; 触れる先(閉じた語 — WorldTouch)
+//!                       :answers [HttpRequest ReadText]          ; 答える effect(省略可)
+//!                       :wraps ["doeff_core_effects.os_file:os-file-handler"])]  ; 中で動かす doeff の実 I/O の handler(省略可)
 //!   :exclude ["tests" "__pycache__" "conftest.py"]
 //!   :shared "shared")
 //! (defservice land-notice "着地の報せ" {:depends-on [messaging] :layers [core intent protocol entry]})
@@ -89,6 +93,89 @@ pub struct ReasonKind {
     pub fix: Option<String>,
 }
 
+/// 外の世界の触れる先の種類(`:world-handlers` の `:touches` の閉じた語)。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum WorldTouch {
+    Http,
+    Db,
+    File,
+    Process,
+    Clock,
+    Env,
+    Cluster,
+    Network,
+    Thread,
+}
+
+impl WorldTouch {
+    pub const ALL: [WorldTouch; 9] = [
+        WorldTouch::Http,
+        WorldTouch::Db,
+        WorldTouch::File,
+        WorldTouch::Process,
+        WorldTouch::Clock,
+        WorldTouch::Env,
+        WorldTouch::Cluster,
+        WorldTouch::Network,
+        WorldTouch::Thread,
+    ];
+
+    pub fn name(self) -> &'static str {
+        match self {
+            WorldTouch::Http => "http",
+            WorldTouch::Db => "db",
+            WorldTouch::File => "file",
+            WorldTouch::Process => "process",
+            WorldTouch::Clock => "clock",
+            WorldTouch::Env => "env",
+            WorldTouch::Cluster => "cluster",
+            WorldTouch::Network => "network",
+            WorldTouch::Thread => "thread",
+        }
+    }
+
+    pub fn parse(text: &str) -> Option<WorldTouch> {
+        WorldTouch::ALL.into_iter().find(|t| t.name() == text)
+    }
+}
+
+/// 定義 1 つの名指し(`"module.path:名"` — module は `.` 区切り・名は Hy の綴りのまま)。
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize)]
+pub struct DefinitionRef {
+    pub module: String,
+    pub name: String,
+}
+
+impl DefinitionRef {
+    /// `"a.b.c:名"` を読む(module の段が空・名が空・空白を含む綴りは None)。
+    pub fn parse(text: &str) -> Option<DefinitionRef> {
+        let (module, name) = text.split_once(':')?;
+        let module_ok = !module.is_empty() && module.split('.').all(|segment| !segment.is_empty() && !segment.contains(char::is_whitespace) && !segment.contains('*'));
+        let name_ok = !name.is_empty() && !name.contains(char::is_whitespace) && !name.contains(':');
+        (module_ok && name_ok).then(|| DefinitionRef { module: module.to_string(), name: name.to_string() })
+    }
+
+    pub fn spelling(&self) -> String {
+        format!("{}:{}", self.module, self.name)
+    }
+}
+
+/// 外の世界に触れてよい定義 1 つ(`:world-handlers` の `(world-handler "module:名" :touches [..] :answers [..] :wraps [..])`)。
+/// 名簿の定義の下でだけ実 I/O の答え手(Python の生の I/O と、:wraps に挙げた doeff の実 I/O の handler)が動く(agora-redesign #1106)。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct WorldHandler {
+    pub definition: DefinitionRef,
+    pub touches: Vec<WorldTouch>,
+    /// 答える effect の名(書かなくてよい)。
+    pub answers: Vec<String>,
+    /// 中で動かす doeff の実 I/O の handler(書かなくてよい)。
+    pub wraps: Vec<DefinitionRef>,
+    /// architecture.hy の中の位置。
+    #[serde(skip)]
+    pub range: doeff_indexer::hy_index::Range,
+}
+
 /// architecture.hy の全体。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct Architecture {
@@ -111,6 +198,8 @@ pub struct Architecture {
     /// JSON の送受信そのものを行う module の綴りの pattern(`.` 区切りの module の綴り・`*` は段の中の任意の綴り・`**` は 0 個以上の段)。
     /// DOEFF120 は、ここに当たり、かつ foundation の層に在る module にだけ JsonValue を許す。
     pub wire_modules: Vec<String>,
+    /// 外の世界に触れてよい定義の許可名簿(`:world-handlers` — 空 = 宣言していない)。
+    pub world_handlers: Vec<WorldHandler>,
     #[serde(skip)]
     pub role_descriptions: BTreeMap<String, String>,
     #[serde(skip)]
@@ -386,6 +475,7 @@ impl<'a> Parser<'a> {
             plain_callable_reasons: Vec::new(),
             rejected_plain_callable_reasons: Vec::new(),
             wire_modules: Vec::new(),
+            world_handlers: Vec::new(),
             role_descriptions: BTreeMap::new(),
             exclude: vec!["tests".into(), "__pycache__".into(), "conftest.py".into()],
             extensions: None,
@@ -425,6 +515,7 @@ impl<'a> Parser<'a> {
                     arch.rejected_plain_callable_reasons = self.reasons(value, ":rejected-plain-callable-reasons")
                 }
                 ":wire-modules" => arch.wire_modules = self.module_patterns(value, ":wire-modules"),
+                ":world-handlers" => arch.world_handlers = self.world_handlers(value),
                 ":roles" => match self.brace(value) {
                     Some(entries) => {
                         for (role, text) in self.pairs(&entries) {
@@ -487,6 +578,88 @@ impl<'a> Parser<'a> {
                 continue;
             }
             out.push(pattern);
+        }
+        out
+    }
+
+    /// `"module:名"` の綴り 1 つを読む(読めなければ理由を積む)。
+    fn definition_ref(&mut self, form: &Form, what: &str) -> Option<DefinitionRef> {
+        let Some(text) = self.name(form) else {
+            self.problem(form, &format!("{} は \"module:名\" の文字列", what));
+            return None;
+        };
+        let found = DefinitionRef::parse(&text);
+        if found.is_none() {
+            self.problem(form, &format!("{} の {} は \"module.path:名\" の綴り(module は `.` 区切りで段が空でない・名は空でない)", what, text));
+        }
+        found
+    }
+
+    /// 許可名簿 `[(world-handler "module:名" :touches [..] :answers [..] :wraps [..]) …]` を読む。
+    fn world_handlers(&mut self, value: &Form) -> Vec<WorldHandler> {
+        let entries = self.bracket(value).unwrap_or_else(|| {
+            self.problem(value, ":world-handlers は (world-handler \"module:名\" :touches [..]) の列");
+            Vec::new()
+        });
+        let mut out: Vec<WorldHandler> = Vec::new();
+        for entry in entries {
+            let parts = self.paren(entry).filter(|p| p.first().and_then(|h| self.symbol(h)) == Some("world-handler"));
+            let Some(parts) = parts else {
+                self.problem(entry, ":world-handlers の要素は (world-handler \"module:名\" :touches [..] :answers [..]? :wraps [..]?)");
+                continue;
+            };
+            let Some(head) = parts.get(1) else {
+                self.problem(entry, "world-handler に \"module:名\" が無い");
+                continue;
+            };
+            let Some(definition) = self.definition_ref(head, "world-handler") else { continue };
+            let range = self.lines.range(head.span.start, head.span.end);
+            let mut handler = WorldHandler { definition, touches: Vec::new(), answers: Vec::new(), wraps: Vec::new(), range };
+            let mut touches_given = false;
+            let rest: Vec<&Form> = parts.iter().skip(2).copied().collect();
+            for (key, field) in self.pairs(&rest) {
+                match self.text(key) {
+                    ":touches" => {
+                        touches_given = true;
+                        for word in self.names(field, ":touches") {
+                            match WorldTouch::parse(&word) {
+                                Some(touch) if handler.touches.contains(&touch) => {
+                                    self.problem(field, &format!("world-handler {} の :touches の {} が 2 度書かれている", handler.definition.spelling(), word))
+                                }
+                                Some(touch) => handler.touches.push(touch),
+                                None => {
+                                    let words: Vec<&str> = WorldTouch::ALL.iter().map(|t| t.name()).collect();
+                                    self.problem(field, &format!("world-handler {} の :touches の {} は語の外({} のどれか)", handler.definition.spelling(), word, words.join("・")))
+                                }
+                            }
+                        }
+                    }
+                    ":answers" => handler.answers = self.names(field, ":answers"),
+                    ":wraps" => match self.bracket(field) {
+                        Some(items) => {
+                            for item in items {
+                                if let Some(wrapped) = self.definition_ref(item, ":wraps") {
+                                    if handler.wraps.contains(&wrapped) {
+                                        self.problem(item, &format!(":wraps の {} が 2 度書かれている", wrapped.spelling()));
+                                    } else {
+                                        handler.wraps.push(wrapped);
+                                    }
+                                }
+                            }
+                        }
+                        None => self.problem(field, ":wraps は [\"module:名\" …] の列"),
+                    },
+                    _ => self.unknown_key(key, "world-handler"),
+                }
+            }
+            if !touches_given || handler.touches.is_empty() {
+                self.problem(entry, &format!("world-handler {} に :touches が無い(触れる先の無い定義は名簿に載せない)", handler.definition.spelling()));
+            }
+            if out.iter().any(|h| h.definition == handler.definition) {
+                self.problem(entry, &format!("world-handler {} が 2 度宣言されている", handler.definition.spelling()));
+                continue;
+            }
+            out.push(handler);
         }
         out
     }
@@ -660,6 +833,20 @@ impl<'a> Parser<'a> {
         if !arch.wire_modules.is_empty() && arch.foundation.is_none() {
             push(&mut self.problems, ":wire-modules を書くには :foundation が要る(JsonValue を許す送受信の module は foundation の層にだけ置く)".to_string());
         }
+        // 名簿の定義は foundation の層にだけ置く(R2)— foundation の無い宣言に名簿を書いても置ける所が無いので誤り。
+        if !arch.world_handlers.is_empty() && arch.foundation.is_none() {
+            push(&mut self.problems, ":world-handlers を書くには :foundation が要る(外の世界に触れてよい定義は foundation の層にだけ置く)".to_string());
+        }
+        for handler in &arch.world_handlers {
+            for wrapped in &handler.wraps {
+                if arch.world_handlers.iter().any(|h| h.definition == *wrapped) {
+                    push(
+                        &mut self.problems,
+                        format!("world-handler {} の :wraps の {} は名簿の定義 — :wraps には doeff の実 I/O の handler だけを書く", handler.definition.spelling(), wrapped.spelling()),
+                    );
+                }
+            }
+        }
         for service in &arch.services {
             for layer in &service.layers {
                 if !layers.contains(layer.as_str()) {
@@ -778,5 +965,58 @@ mod tests {
         for needle in ["app/foundation/x.hy は module の綴り", "a..b は module の綴り", "a.x** は module の綴り", "ok.one が 2 度", ":wire-modules を書くには :foundation が要る"] {
             assert!(problems.contains(needle), "{} が無い:\n{}", needle, problems);
         }
+    }
+
+    #[test]
+    fn world_handlers_are_read_with_a_closed_vocabulary_of_touches() {
+        let good = GOOD.replace(
+            ":foundation foundation",
+            r#":foundation foundation
+  :world-handlers [(world-handler "app.foundation.host:with-host" :touches [http file clock]
+                     :answers [HttpRequest ReadText]
+                     :wraps ["doeff_core_effects.os_file:os-file-handler" "doeff_core_effects.http_handlers:http-production-handler"])
+                   (world-handler "app.foundation.agent:claude-runtime" :touches [process])]"#,
+        );
+        let arch = Architecture::parse(&good, Path::new("architecture.hy")).unwrap();
+        assert!(arch.notices.is_empty(), "知らない鍵として知らせた: {:?}", arch.notices);
+        assert_eq!(arch.world_handlers.len(), 2);
+        let host = &arch.world_handlers[0];
+        assert_eq!(host.definition, DefinitionRef { module: "app.foundation.host".into(), name: "with-host".into() });
+        assert_eq!(host.touches, vec![WorldTouch::Http, WorldTouch::File, WorldTouch::Clock]);
+        assert_eq!(host.answers, vec!["HttpRequest", "ReadText"]);
+        assert_eq!(host.wraps[0].spelling(), "doeff_core_effects.os_file:os-file-handler");
+        assert!(arch.world_handlers[1].wraps.is_empty() && arch.world_handlers[1].answers.is_empty());
+        let line = good.lines().position(|l| l.contains("app.foundation.host:with-host")).unwrap() as u32;
+        assert_eq!(host.range.start.line, line);
+    }
+
+    #[test]
+    fn world_handler_misreadings_are_errors() {
+        let bad = GOOD.replace(
+            ":foundation foundation",
+            r#":foundation foundation
+  :world-handlers [(world-handler "app.foundation.host:with-host" :touches [http smoke http])
+                   (world-handler "app.foundation.host:with-host" :touches [file])
+                   (world-handler "app..x:y" :touches [file])
+                   (world-handler "app.foundation.pure:answer")
+                   (world-handler "app.foundation.outer:outer" :touches [file] :wraps ["app.foundation.host:with-host" "nocolon"])
+                   (defk nope)]"#,
+        );
+        let problems = Architecture::parse(&bad, Path::new("architecture.hy")).unwrap_err().join("\n");
+        for needle in [
+            ":touches の smoke は語の外",
+            ":touches の http が 2 度",
+            "world-handler app.foundation.host:with-host が 2 度宣言",
+            "app..x:y は \"module.path:名\" の綴り",
+            "world-handler app.foundation.pure:answer に :touches が無い",
+            ":wraps の app.foundation.host:with-host は名簿の定義",
+            ":wraps の nocolon は",
+            ":world-handlers の要素は (world-handler",
+        ] {
+            assert!(problems.contains(needle), "{} が無い:\n{}", needle, problems);
+        }
+        let no_foundation = r#"(defarchitecture s :root "app" :layers [(layer core)] :world-handlers [(world-handler "app.x:y" :touches [file])])"#;
+        let problems = Architecture::parse(no_foundation, Path::new("architecture.hy")).unwrap_err().join("\n");
+        assert!(problems.contains(":world-handlers を書くには :foundation が要る"), "{}", problems);
     }
 }
