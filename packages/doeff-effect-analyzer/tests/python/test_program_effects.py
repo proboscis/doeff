@@ -155,6 +155,7 @@ def spawn_either(n):
 
 HANDLERS_HY = """\
 (require doeff-hy.macros [defhandler <-])
+(import doeff_vm [EffectBase])
 (import {pkg}.effects [ReadBoard WriteBoard Nap Tick WriteFamily])
 (import doeff_core_effects.effects [Await])
 
@@ -179,6 +180,15 @@ HANDLERS_HY = """\
 
 (defhandler audit-sink []
   (WriteFamily [] (resume None)))
+
+;; Receives every effect narrowed by :when and passes the one it received on (the shape of
+;; doeff-cluster's lease-fence / standby-divert).
+(defhandler write-fence [write-types]
+  (EffectBase []
+    :when (isinstance effect write-types)
+    (<- (Tick))
+    (<- answer effect)
+    (resume answer)))
 """
 
 HANDLERS_PY = """\
@@ -201,7 +211,7 @@ def tick_runtime():
 
 ENVS_HY = """\
 (import doeff_core_effects.handlers [reader])
-(import {pkg}.handlers [board-memory nap-clock ticker audit-sink])
+(import {pkg}.handlers [board-memory nap-clock ticker audit-sink write-fence])
 
 
 (defn full-env [config ctx]
@@ -210,6 +220,14 @@ ENVS_HY = """\
 
 (defn no-ticker-env [config ctx]
   [(reader {{"worker" "w"}}) (board-memory {{}}) (nap-clock) (audit-sink)])
+
+
+(defn fenced-env [config ctx]
+  [(ticker) (board-memory {{}}) (write-fence #(WriteBoard))])
+
+
+(defn fenced-bare-env [config ctx]
+  [(ticker) (write-fence #(WriteBoard))])
 
 
 (defn local-import-env [config ctx]
@@ -325,6 +343,24 @@ def test_a_clause_that_performs_the_effect_it_received_emits_that_effect(pkg: st
     assert nap.handles.__name__ == "Nap"
     assert _short(nap.emits.effect_names) == {"Tick", "Nap"}
     assert nap.emits.unresolved == ()
+
+
+def test_a_parent_class_clause_passes_on_the_effect_it_received_as_its_own_class(
+    pkg: str,
+) -> None:
+    # Regression (agora-redesign #1163): a clause keyed on EffectBase narrowed by :when
+    # (lease-fence) that performs the effect it received was read as emitting an
+    # EffectBase, a gap no handler answers.  What leaves is the effect that arrived.
+    program = analyze_program(f"{pkg}.programs:helper")
+
+    covered = check_coverage(program, analyze_env(f"{pkg}.envs:fenced_env"))
+    assert covered.gaps == ()
+    assert covered.complete
+
+    bare = check_coverage(program, analyze_env(f"{pkg}.envs:fenced_bare_env"))
+    assert [(gap.effect.__name__, gap.origin) for gap in bare.gaps] == [
+        ("WriteBoard", "write_fence((WriteBoard,))")
+    ]
 
 
 def test_a_factory_returning_a_partial_of_a_dispatch_function(pkg: str) -> None:

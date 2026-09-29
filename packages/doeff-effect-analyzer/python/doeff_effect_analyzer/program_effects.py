@@ -69,11 +69,17 @@ class Location:
 
 @dataclass(frozen=True)
 class EffectUse:
-    """One place an effect is performed.  ``via`` = Program functions from the target down."""
+    """One place an effect is performed.  ``via`` = Program functions from the target down.
+
+    ``forwarded`` = the place passes on the effect a handler clause received (``yield
+    effect``): what leaves is the effect that arrived, not a new effect of ``effect`` (the
+    class the clause was read for) — ``pass_through`` sends it on as the arriving class.
+    """
 
     effect: type
     location: Location
     via: tuple[str, ...] = ()
+    forwarded: bool = False
 
     @property
     def name(self) -> str:
@@ -346,14 +352,26 @@ def pass_through(
                 replace(item, via=(handler.name, *item.via)) for item in performed.unresolved
             )
             for escape in performed.escapes:
-                emitted.setdefault(
-                    escape.effect, Escape(escape.effect, escape.use, escape.by or handler.name)
-                )
+                sent = _forwarded_as(escape, effect)
+                emitted.setdefault(sent.effect, replace(sent, by=escape.by or handler.name))
         for effect, escape in emitted.items():
             pending.setdefault(effect, escape)
     return Residual(
         tuple(pending.values()), tuple(dict.fromkeys(unknown)), tuple(dict.fromkeys(unresolved))
     )
+
+
+def _forwarded_as(escape: Escape, arrived: type) -> Escape:
+    """``escape`` as it leaves a clause that answered ``arrived``.
+
+    The clause passing on the effect it received (``use.forwarded``, performed by the
+    clause itself — ``by`` empty) sends on the effect that arrived: a clause keyed on a
+    parent class (``EffectBase`` narrowed by ``:when``) forwards the concrete ``arrived``,
+    answered further out as that class.  Any other escape leaves as it is.
+    """
+    if not escape.use.forwarded or escape.by or not issubclass(arrived, escape.effect):
+        return escape
+    return Escape(arrived, replace(escape.use, effect=arrived), escape.by)
 
 
 def qualified_name(obj: Any) -> str:
@@ -541,7 +559,8 @@ class Binding:
 class ReceivedEffect:
     """A handler clause's effect parameter read inside the clause for ``cls``: the effect
     the clause received.  Performing it (``yield effect`` — a meter observing and passing
-    the same effect outward) emits an effect of ``cls``, answered further out."""
+    the same effect outward) is a forwarded use of ``cls``: it leaves as the class that
+    arrived (``pass_through``), answered further out."""
 
     cls: type
 
@@ -842,7 +861,8 @@ class _HandledFacts:
 class _Facts:
     """What one function body does, before following calls."""
 
-    effects: list[tuple[type, Location]] = field(default_factory=list)
+    # (effect class, where, forwarded — the received effect passed on, see ``EffectUse``)
+    effects: list[tuple[type, Location, bool]] = field(default_factory=list)
     calls: list[_Call] = field(default_factory=list)
     carried: list[_Carried] = field(default_factory=list)
     unresolved: list[tuple[str, str, Location]] = field(default_factory=list)
@@ -1363,7 +1383,7 @@ class _Reader:
         if isinstance(expr, ast.Name):
             argument = scope.resolve(expr)
             if isinstance(argument, ReceivedEffect):
-                facts.effects.append((argument.cls, location))
+                facts.effects.append((argument.cls, location, True))
                 return
             if isinstance(argument, _ProgramArg):
                 # A Program the caller passed: it runs here, read where it was written.
@@ -1412,7 +1432,7 @@ class _Reader:
                 )
             )
         elif _is_effect_class(target):
-            facts.effects.append((target, location))
+            facts.effects.append((target, location, False))
             self._carried_arguments(target, call, scope, filename, facts)
         elif (function := _function_of(target)) is not None and not _is_control_class(target):
             self._program_call(target, function, call, scope, filename, facts, location)
@@ -1441,7 +1461,7 @@ class _Reader:
         call = self._as_call(opening.operand, scope)
         target = UNBOUND if call is None else scope.resolve(call.func)
         if target is not UNBOUND and _is_effect_class(target):
-            inner.effects.extend((answer, location) for answer in _opened_answers(target))
+            inner.effects.extend((answer, location, False) for answer in _opened_answers(target))
         if opening.absent is not None:
             receiver = replace(_absent_receiver(), name=f":absent {ast.unparse(opening.absent)}")
             text = ast.unparse(opening.operand)
@@ -1779,7 +1799,10 @@ def _report_facts(
 
     def absorb(facts: _Facts, via: tuple[str, ...], path: frozenset[_ReadKey]) -> None:
         """Add one body's facts, then the bodies it calls (each once)."""
-        effects.extend(EffectUse(effect, location, via) for effect, location in facts.effects)
+        effects.extend(
+            EffectUse(effect, location, via, forwarded)
+            for effect, location, forwarded in facts.effects
+        )
         unresolved.extend(
             Unresolved(reason, text, location, via) for reason, text, location in facts.unresolved
         )
