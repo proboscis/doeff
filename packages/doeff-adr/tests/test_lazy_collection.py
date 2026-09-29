@@ -45,6 +45,12 @@ FILES = {
 (val VALUES [1 2 3])
 (deftest test-dynamic [v] {:params {"v" VALUES}} (assert (in v VALUES)))
 """,
+    # module の直下の skipif の pytestmark — 記録から収集し、条件は setup で実物の印から評価する
+    "pkg/tests/test_env_gated.hy": PRELUDE
+    + """
+(val pytestmark (pytest.mark.skipif (not (os.getenv "I1211_NEVER_SET")) :reason "env が無い"))
+(deftest test-gated (assert False))
+""",
     # module の最上位で module ごと飛ばす(import すれば item は 0 本)
     "pkg/tests/test_skipped_module.hy": PRELUDE
     + """
@@ -123,13 +129,14 @@ def test_warm_collection_matches_cold_and_imports_nothing(project: pytest.Pytest
             "pkg.tests.test_alpha",
             "pkg.tests.test_beta",
             "pkg.tests.test_dynamic",
+            "pkg.tests.test_env_gated",
             "pkg.tests.test_skipped_module",
         ]
     )
     warm = _collect(project)
     out = warm.out
     assert warm.nodeids == cold
-    assert "記録から収集 2 file・収集で import 2 file" in out
+    assert "記録から収集 3 file・収集で import 2 file" in out
     assert "import: pkg/tests/test_dynamic.hy — 動的: test_dynamic" in out
     assert "import: pkg/tests/test_skipped_module.hy — 最上位で呼ぶ: pytest.skip" in out
     assert _imports(tmp_path) == ["pkg.tests.test_dynamic", "pkg.tests.test_skipped_module"]
@@ -142,25 +149,25 @@ def test_selection_by_k_and_m_is_the_same_and_imports_only_the_chosen_file(
     _collect(project)
     _imports(tmp_path)
     result = project.runpytest_subprocess("-p", "no:cacheprovider", "-k", "test_slow")
-    result.assert_outcomes(passed=1, deselected=17, skipped=1)
+    result.assert_outcomes(passed=1, deselected=18, skipped=1)
     assert _imports(tmp_path) == [
         "pkg.tests.test_dynamic",
         "pkg.tests.test_skipped_module",
         "pkg.tests.test_alpha",
     ]
     result = project.runpytest_subprocess("-p", "no:cacheprovider", "-m", "slow")
-    result.assert_outcomes(passed=1, deselected=17, skipped=1)
+    result.assert_outcomes(passed=1, deselected=18, skipped=1)
     result = project.runpytest_subprocess("-p", "no:cacheprovider", "-m", "not real_world")
-    result.assert_outcomes(passed=4, deselected=14, skipped=1)
+    result.assert_outcomes(passed=4, deselected=14, skipped=2)
 
 
 def test_params_and_skip_if_run_as_when_imported(project: pytest.Pytester) -> None:
     """params の値は実物の値で走り(中身を問わない値も)、skip-if は実物の式で評価される。"""
     cold = project.runpytest_subprocess("-p", "no:cacheprovider")
-    cold.assert_outcomes(passed=17, skipped=2)
+    cold.assert_outcomes(passed=17, skipped=3)
     warm = project.runpytest_subprocess("-p", "no:cacheprovider", "-rs")
-    warm.assert_outcomes(passed=17, skipped=2)
-    warm.stdout.fnmatch_lines(["*always*"])
+    warm.assert_outcomes(passed=17, skipped=3)
+    warm.stdout.fnmatch_lines(["*always*", "*env が無い*"])
 
 
 def test_a_record_that_disagrees_fails_the_item_and_is_forgotten(project: pytest.Pytester, tmp_path: Path) -> None:
@@ -174,7 +181,7 @@ def test_a_record_that_disagrees_fails_the_item_and_is_forgotten(project: pytest
     hydeps.write_text(json.dumps(data))
     _imports(tmp_path)
     result = project.runpytest_subprocess("-p", "no:cacheprovider", "-k", "test_slow or test_fast")
-    result.assert_outcomes(errors=1, deselected=17, skipped=1)
+    result.assert_outcomes(errors=1, deselected=18, skipped=1)
     result.stdout.fnmatch_lines(["*記録と実物が食い違った*"])
     out = _collect(project).out
     assert "import: pkg/tests/test_alpha.hy — 記録なし" in out

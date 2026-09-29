@@ -136,16 +136,28 @@ def test_records_follow_the_source(tmp_path: Path) -> None:
     assert recorded.records == (FunctionItem("test_only", ("doeff_interpreter",), ()),)
 
 
-def test_module_marks_that_are_not_literal_are_dynamic(tmp_path: Path) -> None:
-    """``pytest.mark.<名>`` の形でない pytestmark は、展開の時に決まらないので Dynamic になる。"""
+def test_module_marks_that_shape_collection_are_dynamic(tmp_path: Path) -> None:
+    """module の直下の parametrize の呼び出しは item の本数を変えるので、展開の時に決まらない Dynamic になる。"""
     (tmp_path / "test_marks.hy").write_text(
         "(require doeff-hy.macros [val])\n(import pytest)\n"
-        "(val pytestmark (pytest.mark.skipif True :reason \"r\"))\n"
+        "(val pytestmark (pytest.mark.parametrize \"x\" [1 2]))\n"
     )
     _import(tmp_path, "test_marks")
     recorded = _recorded(tmp_path, "test_marks")
     assert recorded is not None
     assert [type(r) for r in recorded.records] == [Dynamic]
+
+
+def test_module_mark_calls_are_recorded_by_name(tmp_path: Path) -> None:
+    """module の直下の skipif の呼び出しは名で記録される(条件は plugin が setup で実物の印から評価する)。"""
+    (tmp_path / "test_marks.hy").write_text(
+        "(require doeff-hy.macros [val])\n(import os pytest)\n"
+        "(val pytestmark [pytest.mark.slow (pytest.mark.skipif (not (os.getenv \"X\")) :reason \"r\")])\n"
+    )
+    _import(tmp_path, "test_marks")
+    recorded = _recorded(tmp_path, "test_marks")
+    assert recorded is not None
+    assert recorded.records == (ModuleMarks(("slow", "skipif")),)
 
 
 def test_read_module_of_records_without_items() -> None:
