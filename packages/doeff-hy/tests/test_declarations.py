@@ -114,8 +114,10 @@ def test_a_handler_refuses_pre_and_post_and_do_refuses_declarations() -> None:
 
 
 def test_the_roles_are_the_closed_list_of_the_decision() -> None:
-    # agora-redesign #780 の層の確定(core -> intent -> protocol)。
-    assert ROLES == ("type", "judgment", "program", "intent", "protocol", "foundation", "entry")
+    # agora-redesign #780 の層の確定(core -> intent -> protocol)と、層 entry の 3 種の役(#1108・#1187)。
+    assert ROLES == ("type", "judgment", "program", "intent", "protocol", "foundation", "entry", "system", "process", "main")
+    for entry_role in ("system", "process", "main"):
+        assert DefinitionTags(context="kanban", role=entry_role).role == entry_role
     for retired in ("io-effect", "effect", "translation"):
         with pytest.raises(ValueError):
             DefinitionTags(context="kanban", role=retired)

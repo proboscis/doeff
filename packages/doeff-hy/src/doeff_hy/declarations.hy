@@ -25,7 +25,10 @@
 ;; 役の閉じた一覧(agora-redesign #780 の層の確定 — operator 2026-09-27 逐語 "core->intent->protocol"):
 ;; core の type・judgment・program / intent(core が外へ求める事の型 — defeffect)/ protocol(intent を相手の話し方へ訳す handler)/
 ;; foundation(汎用の I/O)/ entry(組み立て)。前の一覧の effect は intent に、translation は protocol に置き換わった。
-(setv ROLES #("type" "judgment" "program" "intent" "protocol" "foundation" "entry"))
+;; 層 entry の役は 3 種 — system(系の宣言)・process(handler の並び)・main(薄い main)(agora-redesign #1108 の決め・#1187・operator
+;; 2026-09-29 の案 A)。どの層にどの役を置くかは使う側の宣言(architecture.hy の :roles)が決め、ここは綴りの閉じた一覧だけを持つ。
+;; entry は 3 種へ移る前の綴りで、使う側が付け替え終えるまで残す。
+(setv ROLES #("type" "judgment" "program" "intent" "protocol" "foundation" "entry" "system" "process" "main"))
 ;; 契約の辞書が受ける鍵。
 (setv CONTRACT-KEYS #(":pre" ":post" ":effects" ":tags" ":needs"))
 ;; 頭の辞書に :pre / :post を持たない定義(defhandler)が受ける鍵。
