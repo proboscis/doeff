@@ -181,6 +181,20 @@ def test_params_and_skip_if_run_as_when_imported(project: pytest.Pytester) -> No
     warm.stdout.fnmatch_lines(["*always*", "*env が無い*"])
 
 
+def test_a_named_hy_file_imported_by_another_named_file_is_read_by_hy(project: pytest.Pytester) -> None:
+    """命令の行で名指した .hy を、先に並んだ別の名指しの file が import しても、Hy の loader で読まれる。
+
+    pytest の assert の書き換えは、命令の行で名指した file を Python として読み直す(``ast.parse``)。.hy が
+    そこへ渡ると SyntaxError になる(agora-redesign #1211 の後の報告 — test_emulated_delivery_unwritten が
+    test_emulated_delivery_to_turn を import する組)。記録が冷えていても温まっていても同じに通る。
+    """
+    named = ("pkg/tests/test_beta.hy", "pkg/tests/test_alpha.hy")
+    cold = project.runpytest_subprocess("-p", "no:cacheprovider", *named)
+    cold.assert_outcomes(passed=14, skipped=1)
+    warm = project.runpytest_subprocess("-p", "no:cacheprovider", *named)
+    warm.assert_outcomes(passed=14, skipped=1)
+
+
 def test_a_record_that_disagrees_fails_the_item_and_is_forgotten(project: pytest.Pytester, tmp_path: Path) -> None:
     """記録を手で書き換えて実物と食い違わせると、その item は赤になり、記録が消え、次の収集は import し直す。"""
     _collect(project)

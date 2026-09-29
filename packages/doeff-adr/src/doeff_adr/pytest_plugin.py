@@ -3,6 +3,8 @@
 import fnmatch
 import functools
 import importlib
+import importlib.abc
+import importlib.machinery
 import importlib.util
 import os
 import re
@@ -147,6 +149,44 @@ def pytest_doeff_import_hy_module(collector: pytest.Module) -> types.ModuleType:
     if isinstance(collector, DoeffAdrHyFile):
         collector.after_import(module)
     return module
+
+
+class HySourceFinder(importlib.abc.MetaPathFinder):
+    """.hy の module を pytest の assert の書き換えに渡さないための import の探し手。
+
+    pytest の書き換え(``AssertionRewritingHook``)は、命令の行で名指した file の module を ``SourceFileLoader`` の
+    spec で見つけると ``ast.parse`` で Python として読み直す。Hy の loader は ``SourceFileLoader`` の子なので、名指しの
+    .hy を別の test file が名前で import すると SyntaxError になる(記録から収集した file はまだ読まれていないので
+    当たりやすい — agora-redesign #1211 の後の報告)。書き換えより前に置き、.hy の spec はそのまま(Hy の loader)返す。
+    loader そのものには触れない(bytecode の見張り〔#1292〕が包む ``SourceFileLoader`` の口はそのまま効く)。
+    """
+
+    def find_spec(
+        self,
+        fullname: str,
+        path: Sequence[str] | None,
+        target: types.ModuleType | None = None,
+    ) -> importlib.machinery.ModuleSpec | None:
+        spec = importlib.machinery.PathFinder.find_spec(fullname, path, target)
+        if spec is not None and spec.origin is not None and spec.origin.endswith(".hy"):
+            return spec
+        return None
+
+
+_HY_SOURCE_FINDER = HySourceFinder()
+
+
+def pytest_configure(config: pytest.Config) -> None:
+    """.hy の探し手を import の探し手の先頭に置く — pytest は書き換えの探し手を plugin の configure より前に置くので、
+    ここで先頭に入れれば書き換えより先に .hy を引き受けられる。"""
+    if _HY_SOURCE_FINDER not in sys.meta_path:
+        sys.meta_path.insert(0, _HY_SOURCE_FINDER)
+
+
+def pytest_unconfigure(config: pytest.Config) -> None:
+    """configure で置いた .hy の探し手を外す(同じ process で pytest を何度も走らせる時に積み重ねないため)。"""
+    if _HY_SOURCE_FINDER in sys.meta_path:
+        sys.meta_path.remove(_HY_SOURCE_FINDER)
 
 
 def pytest_addoption(parser: pytest.Parser) -> None:
