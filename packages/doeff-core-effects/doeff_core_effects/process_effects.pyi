@@ -1,7 +1,11 @@
 from dataclasses import dataclass
 from enum import StrEnum
+from typing import Any
 
-from doeff import EffectBase
+from doeff import EffectBase, Program
+
+TIMED_OUT_CODE: int
+NOT_STARTED_CODE: int
 
 class EnvMode(StrEnum):
     REPLACE = "replace"
@@ -29,6 +33,7 @@ class RunProcess(EffectBase):
     cwd: str | None = None
     env: tuple[EnvEntry, ...] | None = None
     env_mode: EnvMode = EnvMode.REPLACE
+    env_drop: tuple[str, ...] = ()
     output_path: str | None = None
 
 @dataclass(frozen=True, kw_only=True)
@@ -41,3 +46,7 @@ class ReadEnvironment(EffectBase):
 
 @dataclass(frozen=True)
 class WorkingDirectory(EffectBase): ...
+
+def timed_out_outcome(stdout: str, stderr: str) -> Program[ProcessOutcome, Any]: ...
+def not_started_outcome(detail: str) -> Program[ProcessOutcome, Any]: ...
+def start_refusal(error_number: int, path: str) -> Program[str, Any]: ...
