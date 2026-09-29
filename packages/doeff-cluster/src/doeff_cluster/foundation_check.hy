@@ -31,7 +31,7 @@
 
 (deff foundation-closure [#^ Callable job * #^ (| Callable None) [foundation None] #^ str [parameter "foundation"]
                           #^ tuple [fold #()]]  ; defk にできない: 開発の道具(analyzer)を呼ぶ検の入口 — Program の外で source を読む
-  {:pre [(: job Callable) (: parameter str) (: fold tuple)] :post [(: % FoundationClosure)]
+  {:pre [(: job Callable) (: foundation (| Callable None)) (: parameter str) (: fold tuple)] :post [(: % FoundationClosure)]
    :tags {:context "doeff-cluster" :role "judgment"}}
   "job の関数(土台を引数 parameter で受けて本体を包む module の最上位の Program 関数)が、土台 foundation で閉じているかを実行せずに
    確かめる。foundation を渡さなければ束ねずに読む(土台の先を追えないので unresolved になる)。運ばれた Program は、運び手の effect が

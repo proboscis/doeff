@@ -13,7 +13,7 @@
 
 
 (defk git [cwd #* args]
-  {:pre [(: cwd Path)] :post [(: % str)]}
+  {:pre [(: cwd Path) (: args tuple)] :post [(: % str)]}
   "tmp の repo で git を 1 回撃つ(検の root の材料を作るため)。"
   (. (subprocess.run ["git" "-C" (str cwd) #* args] :capture-output True :text True :check True) stdout))
 

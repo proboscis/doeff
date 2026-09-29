@@ -112,7 +112,7 @@
 
 (deff job [#^ str name program * #^ CallShape call needs #^ (| dict None) [readiness None] #^ str [update "recreate"]
            #^ (| dict None) [environ None]]  ; defk にできない: defsystem の展開(module の読み込みの時の値)が呼ぶ構成子
-  {:pre [(: name str) (: program (| DoExpr int str list dict None)) (: call CallShape) (: needs (| frozenset set list tuple None)) (: update str)]
+  {:pre [(: name str) (: program (| DoExpr int str list dict None)) (: call CallShape) (: needs (| frozenset set list tuple None)) (: readiness (| dict None)) (: update str) (: environ (| dict None))]
    :post [(: % Job)] :tags {:context "doeff-cluster" :role "entry"}}
   "job 1 つを検めて作る(defsystem の展開が呼ぶ)。旧い引数(:env・:config・:env-config・:requires)はこの関数に無いので TypeError。"
   (when (not (isinstance program DoExpr))
@@ -211,7 +211,7 @@
 
 
 (deff system-declaration [#^ System system #^ str revision #^ (| RuntimeEnv None) [runtime-env None] #^ (| dict None) [environ None]]  ; defk にできない: declare の CLI が呼ぶ
-  {:pre [(: system System) (: revision str) (: environ (| dict None))] :post [(: % Declaration)] :tags {:context "doeff-cluster" :role "entry"}}
+  {:pre [(: system System) (: revision str) (: runtime-env (| RuntimeEnv None)) (: environ (| dict None))] :post [(: % Declaration)] :tags {:context "doeff-cluster" :role "entry"}}
   "系 → coordinator へ渡す宣言(改訂 1 の A・F・G)。job ごとに Program を詰めて sha を鍵に programs へ、行は sha と identity・
    versions・describe・environ を持つ。runtime-env の env-vars と :environ で同じ名が在れば断る(子の環境変数の足し口を 1 つにする)。
    environ = job ごとの environ の上書き(配る先ごとの値 — 口の URL・下限の刻など。宣言の :environ に重ね、規則は environ-overlay-refusal。

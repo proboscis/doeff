@@ -30,7 +30,7 @@
 
 
 (defk entry [module #* args]
-  {:pre [(: module str)] :post [(: % subprocess.CompletedProcess)] :tags {:context "doeff-cluster-test" :role "entry"}}
+  {:pre [(: module str) (: args tuple)] :post [(: % subprocess.CompletedProcess)] :tags {:context "doeff-cluster-test" :role "entry"}}
   "hy -m <module> <args…> を子の文脈(DOEFF_WORKER_JOB)付きで起こす。"
   (subprocess.run [HY "-m" module #* args]
                   :cwd ROOT :env (| (dict os.environ) {"PYTHONPATH" ROOT "DOEFF_WORKER_JOB" "entry-probe"})
