@@ -1632,21 +1632,44 @@ fn innermost_definition(definitions: &[Definition], spot: &Range) -> Option<usiz
 fn carries_edge_mark(source: &str, test: &Definition, mark: &str) -> bool {
     let spellings = [mark.to_string(), mark.replace('_', "-")];
     let named = |text: &str| spellings.iter().any(|s| text.contains(&format!("\"{}\"", s)) || text.contains(&format!("mark.{}", s)));
-    let lines: Vec<&str> = source.lines().collect();
-    let start = test.full_range.start.line as usize;
-    let end = (test.full_range.end.line as usize).min(lines.len().saturating_sub(1));
-    let body = lines.get(start..=end).map(|l| l.join("\n")).unwrap_or_default();
-    let in_marks = body.match_indices(":marks").any(|(at, _)| {
-        let rest = &body[at..];
-        match (rest.find('['), rest.find(']')) {
-            (Some(open), Some(close)) if open < close => named(&rest[open..close]),
-            _ => false,
+    deftest_marks(source, test.full_range.start.line as usize).is_some_and(|marks| named(marks)) || declares_module_mark(source, &named)
+}
+
+/// その行から始まる `(deftest 名 {… :marks [..] …} …)` の :marks の並びの綴り(Hy の reader で読む — 検の本体の文字列の中の
+/// `{:marks …}` は印ではない)。defadr などの中に入れ子の deftest も探す。
+fn deftest_marks(source: &str, line: usize) -> Option<&str> {
+    use doeff_indexer::hy_index::reader::{Delim, Form, Node, Reader};
+    let text = |form: &Form| source.get(form.span.start..form.span.end).unwrap_or("");
+    let line_of = |form: &Form| source.get(..form.span.start).map_or(0, |before| before.matches('\n').count());
+    fn find<'f>(forms: &'f [Form], hit: &dyn Fn(&Form) -> bool) -> Option<&'f Form> {
+        forms.iter().find_map(|form| if hit(form) { Some(form) } else { form.paren_items().and_then(|items| find(items, hit)) })
+    }
+    let forms = Reader::new(source, 0, source.len()).read_all();
+    let is_test = |form: &Form| line_of(form) == line && form.paren_items().and_then(|items| items.first()).is_some_and(|head| text(head) == "deftest");
+    let test = find(&forms, &is_test)?;
+    // doeff-hy の deftest と同じ読み方: 名の後の fixture の並び `[..]` を 1 つ外し、先頭の文字列(docstring)を飛ばした最初の dict が設定。
+    let mut body = test.paren_items()?.get(2..)?;
+    if body.first().is_some_and(|form| form.bracket_items().is_some()) {
+        body = &body[1..];
+    }
+    let options = body.iter().find(|form| !matches!(form.node, Node::Str { .. }))?;
+    let Node::Seq { delim: Delim::Brace, items } = &options.node else { return None };
+    items.chunks(2).find(|pair| pair.first().is_some_and(|key| text(key) == ":marks")).and_then(|pair| pair.get(1)).map(|marks| text(marks))
+}
+
+/// module の印 = Hy の reader で読んだ最上位の `(val pytestmark 値)` / `(setv pytestmark 値)` の値が印を名指す — 註や検の中の文字列の値に
+/// 在る綴りは印ではない(agora-redesign #1279)。
+fn declares_module_mark(source: &str, named: &dyn Fn(&str) -> bool) -> bool {
+    let text = |form: &doeff_indexer::hy_index::reader::Form| source.get(form.span.start..form.span.end).unwrap_or("");
+    doeff_indexer::hy_index::reader::Reader::new(source, 0, source.len()).read_all().iter().any(|form| match form.paren_items() {
+        Some([head, name, value, ..]) => {
+            matches!(head.node, doeff_indexer::hy_index::reader::Node::Symbol)
+                && matches!(text(head), "val" | "setv")
+                && text(name) == "pytestmark"
+                && named(text(value))
         }
-    });
-    // module の印は行頭から始まる宣言だけ — 註(`;;`・`#`)や検の中の文字列の値に在る綴りは印ではない。
-    let declares_module_mark =
-        |line: &str| ["(val pytestmark", "(setv pytestmark", "pytestmark =", "pytestmark="].iter().any(|head| line.starts_with(head));
-    in_marks || lines.iter().any(|line| declares_module_mark(line) && named(line))
+        _ => false,
+    })
 }
 
 /// 定義の間の辺(呼び出し・参照・入れ子)の図 — 全体の索引から 1 度だけ組む(DOEFF133・136 が使う)。
