@@ -3174,3 +3174,91 @@ fn a_system_value_reaches_the_world_only_when_a_runner_runs_it() {
         report
     );
 }
+
+/// agora-redesign #1372・#1415(DOEFF160): :broad-catches の :files の Hy・Python の file の広い例外の捕捉は、:carriers の定義の中で
+/// 例外を名で束縛して :event の出来事へ渡す物だけ — 外の捕捉は file ごとに、名を渡さない境界は境界ごとに 1 件、critical で出す。
+#[test]
+fn broad_catches_are_confined_to_declared_carriers() {
+    let deferred = "(defk carry [inbox program]\n  (try (<- a program)\n    (except [TaskCancelledError] (raise))\n    (except [error Exception] (<- (PutChannel inbox (Queued :arrival None :failure error))))))\n";
+    let react = "(defk react [x] ;; (except [Exception] x) は註\n  \"(except [] x)\" (try (x) (except [ValueError] None)))\n";
+    let worker = "def work():\n    try:\n        run()\n    except (KeyError, ValueError):\n        pass\n";
+    let declare = "\n  :broad-catches [(broad-catch \"screen\" :files [\"app/billing/**/*.hy\" \"app/billing/**/*.py\"] :except [\"app/billing/**/tests/**\"]\n                   :carriers [(carrier \"app.billing.core.deferred:carry\" :event \"Queued\")] :why \"契約の破れを握りつぶさない\")]";
+    let build = |deferred: &str, react: &str, worker: &str| {
+        let files = [
+            ("app/foundation/host.hy", tags("shared", "foundation") + "(defk with-host [body] body)\n"),
+            ("app/billing/core/deferred.hy", deferred.to_string()),
+            ("app/billing/core/react.hy", react.to_string()),
+            ("app/billing/core/worker.py", worker.to_string()),
+            ("app/billing/core/tests/test_react.hy", "(defk t [] (try (x) (except [] None)))\n".to_string()),
+        ];
+        let dir = world_repo_with(&files, "", "[\"DOEFF160\"]");
+        let arch_path = dir.path().join("architecture.hy");
+        let text = std::fs::read_to_string(&arch_path).unwrap().replace(":foundation foundation", &format!(":foundation foundation{}", declare));
+        std::fs::write(&arch_path, text).unwrap();
+        dir
+    };
+    let (_, report) = editor(build(deferred, react, worker).path());
+    assert_eq!(keys(&report, "DOEFF160"), Vec::<String>::new(), "{}", report);
+
+    // 反応に Hy の広い捕捉・Python に except Exception: と except:・境界が例外を出来事へ渡さない(握りつぶし)。
+    let swallowing = deferred.replace(":failure error", ":failure None");
+    let broad_react = react.replace("(except [ValueError] None)", "(except [e Exception] None)");
+    let broad_worker = worker.replace("except (KeyError, ValueError):", "except (KeyError, Exception):") + "\ndef other():\n    try:\n        run()\n    except:\n        pass\n";
+    let (_, report) = editor(build(&swallowing, &broad_react, &broad_worker).path());
+    assert_eq!(
+        keys(&report, "DOEFF160"),
+        vec![
+            "app/billing/core/deferred.hy::DOEFF160::screen:unbound:carry",
+            "app/billing/core/react.hy::DOEFF160::screen:outside",
+            "app/billing/core/worker.py::DOEFF160::screen:outside",
+        ],
+        "{}",
+        report
+    );
+    let worker_hit = violation(&report, "app/billing/core/worker.py::DOEFF160::screen:outside");
+    assert_eq!(worker_hit["level"], "critical", "{}", worker_hit);
+    assert_eq!(worker_hit["range"]["start"]["line"], 3, "{}", worker_hit);
+    assert!(worker_hit["message"].as_str().unwrap().contains("2 件"), "{}", worker_hit);
+
+    // 束縛しない広い捕捉は境界の中でも当たる。境界の定義が消えれば、その中の捕捉は外の捕捉になり、境界は無い。
+    let unbound = deferred.replace("(except [error Exception]", "(except [Exception]");
+    let (_, report) = editor(build(&unbound, react, worker).path());
+    assert_eq!(keys(&report, "DOEFF160"), vec!["app/billing/core/deferred.hy::DOEFF160::screen:unbound:carry"], "{}", report);
+    let renamed = deferred.replace("(defk carry", "(defk kept");
+    let (_, report) = editor(build(&renamed, react, worker).path());
+    assert_eq!(
+        keys(&report, "DOEFF160"),
+        vec!["app/billing/core/deferred.hy::DOEFF160::screen:outside", "architecture.hy::DOEFF160::screen:missing:carry"],
+        "{}",
+        report
+    );
+}
+
+/// :broad-catches の母集団 0 は赤、読み違いは読み取りの誤り。
+#[test]
+fn broad_catches_empty_population_and_misreadings() {
+    let files = [("app/foundation/host.hy", tags("shared", "foundation") + "(defk with-host [body] body)\n")];
+    let dir = world_repo_with(&files, "", "[\"DOEFF160\"]");
+    let arch_path = dir.path().join("architecture.hy");
+    let original = std::fs::read_to_string(&arch_path).unwrap();
+    let text = original.replace(
+        ":foundation foundation",
+        ":foundation foundation\n  :broad-catches [(broad-catch \"gone\" :files [\"app/gone/**/*.hy\"] :why \"母集団 0\")]",
+    );
+    std::fs::write(&arch_path, text).unwrap();
+    let (_, report) = editor(dir.path());
+    assert_eq!(keys(&report, "DOEFF160"), vec!["architecture.hy::DOEFF160::gone:empty"], "{}", report);
+
+    let text = original.replace(
+        ":foundation foundation",
+        ":foundation foundation\n  :broad-catches [(broad-catch \"a\" :carriers [(carrier \"app.x:y\")]) (broad-catch \"b\" :files [\"app/**/*.hy\"] :why \"x\") (broad-catch \"b\" :files [\"app/**/*.hy\"] :why \"x\")]",
+    );
+    std::fs::write(&arch_path, text).unwrap();
+    let (code, stdout, stderr) = run(dir.path(), &["--no-log"], None);
+    let all = format!("{}{}", stdout, stderr);
+    assert_ne!(code, 0, "{}", all);
+    assert!(all.contains("carrier app.x:y に :event(例外を載せる出来事)が無い"), "{}", all);
+    assert!(all.contains("broad-catch a に :files が無い"), "{}", all);
+    assert!(all.contains("broad-catch a に :why(なぜ広い捕捉を置かないか)が無い"), "{}", all);
+    assert!(all.contains("broad-catch b が 2 度宣言されている"), "{}", all);
+}

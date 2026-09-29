@@ -254,6 +254,34 @@ pub struct CallSite {
     pub range: doeff_indexer::hy_index::Range,
 }
 
+/// 広い例外の捕捉を許す運搬の境界 1 つ(`:broad-catches` の `(carrier "module:名" :event "出来事")`)。定義の中の広い捕捉は、捕まえた
+/// 例外を名で束縛し、その捕捉の中でその名を `(出来事 …)` の引数に渡す時だけ許す。定義は Hy の file の top level の form。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct BroadCatchCarrier {
+    pub definition: DefinitionRef,
+    /// 例外を載せる出来事の頭の綴り。
+    pub event: String,
+    /// architecture.hy の中の位置。
+    #[serde(skip)]
+    pub range: doeff_indexer::hy_index::Range,
+}
+
+/// 広い例外の捕捉を置かない file の群 1 つ(`:broad-catches` の `(broad-catch "名" :files [..] :except [..] :carriers [(carrier …) …]
+/// :why "…")` — DOEFF160・agora-redesign #1372・#1415)。:files の Hy・Python の file(:except を除く)の広い捕捉は、どれも :carriers の中に在る。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct BroadCatch {
+    /// 群の名(登録簿の鍵の細目)。
+    pub name: String,
+    pub files: Vec<String>,
+    pub except: Vec<String>,
+    pub carriers: Vec<BroadCatchCarrier>,
+    /// なぜ広い捕捉を置かないか(知らせの文に入れる)。
+    pub why: String,
+    /// architecture.hy の中の位置。
+    #[serde(skip)]
+    pub range: doeff_indexer::hy_index::Range,
+}
+
 /// 系の値と系を回す入口(`:systems`)。defsystem の定義は書かなくても系の値。
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
 pub struct Systems {
@@ -523,6 +551,9 @@ pub struct Architecture {
     /// 頭を呼んでよい場所と回数(`:call-sites [(call-site "頭" :files [..] :sites [(site "module:名" :count 1) …] :why "…") …]` — 空 = 宣言
     /// していない)。書けば DOEFF159 が、場所の外の呼び・回数の食い違い・外の form と分岐の食い違いを出す(agora-redesign #1414)。
     pub call_sites: Vec<CallSite>,
+    /// 広い例外の捕捉を置かない file の群(`:broad-catches [(broad-catch "名" :files [..] :carriers [(carrier "module:名" :event "出来事") …]
+    /// :why "…") …]` — 空 = 宣言していない)。書けば DOEFF160 が、運搬の境界の外の広い捕捉を出す(agora-redesign #1415)。
+    pub broad_catches: Vec<BroadCatch>,
     pub services: Vec<ArchService>,
     /// 素の関数を許す理由の種類の閉じた一覧(DOEFF203 の受け入れる答え)。
     pub plain_callable_reasons: Vec<ReasonKind>,
@@ -898,6 +929,7 @@ impl<'a> Parser<'a> {
             blind_definitions: Vec::new(),
             allowed_heads: Vec::new(),
             call_sites: Vec::new(),
+            broad_catches: Vec::new(),
             services: Vec::new(),
             plain_callable_reasons: Vec::new(),
             rejected_plain_callable_reasons: Vec::new(),
@@ -956,6 +988,7 @@ impl<'a> Parser<'a> {
                 ":blind-definitions" => arch.blind_definitions = self.blind_definitions(value),
                 ":allowed-heads" => arch.allowed_heads = self.allowed_heads(value),
                 ":call-sites" => arch.call_sites = self.call_sites(value),
+                ":broad-catches" => arch.broad_catches = self.broad_catches(value),
                 ":exclude" => arch.exclude = self.names(value, ":exclude"),
                 ":extensions" => arch.extensions = Some(self.names(value, ":extensions")),
                 ":plain-callable-reasons" => arch.plain_callable_reasons = self.reasons(value, ":plain-callable-reasons"),
@@ -1785,6 +1818,90 @@ impl<'a> Parser<'a> {
                 continue;
             }
             out.push(declared);
+        }
+        out
+    }
+
+    /// `[(broad-catch "名" :files [..] :except [..]? :carriers [(carrier "module:名" :event "出来事") …]? :why "…") …]` を読む
+    /// (:files・:why は要る — :carriers を書かない群は、広い捕捉を 1 つも許さない)。
+    fn broad_catches(&mut self, value: &Form) -> Vec<BroadCatch> {
+        let shape = "(broad-catch \"名\" :files [..] :except [..]? :carriers [(carrier \"module:名\" :event \"出来事\") …]? :why \"…\")";
+        let Some(entries) = self.bracket(value) else {
+            self.problem(value, &format!(":broad-catches は {} の列", shape));
+            return Vec::new();
+        };
+        let mut out: Vec<BroadCatch> = Vec::new();
+        for entry in entries {
+            let parts = self.paren(entry).filter(|p| p.first().and_then(|h| self.symbol(h)) == Some("broad-catch"));
+            let Some((name, head)) = parts.as_ref().and_then(|p| p.get(1)).and_then(|f| self.name(f).map(|n| (n, *f))) else {
+                self.problem(entry, &format!(":broad-catches の要素は {}", shape));
+                continue;
+            };
+            let parts = parts.unwrap_or_default();
+            let range = self.lines.range(head.span.start, head.span.end);
+            let mut declared =
+                BroadCatch { name, files: Vec::new(), except: Vec::new(), carriers: Vec::new(), why: String::new(), range };
+            let rest: Vec<&Form> = parts.iter().skip(2).copied().collect();
+            for (key, field) in self.pairs(&rest) {
+                match self.text(key) {
+                    ":files" => declared.files = self.names(field, ":files"),
+                    ":except" => declared.except = self.names(field, ":except"),
+                    ":carriers" => declared.carriers = self.broad_catch_carriers(field),
+                    ":why" => declared.why = self.required_string(field, ":why").unwrap_or_default(),
+                    _ => self.unknown_key(key, "broad-catch"),
+                }
+            }
+            if declared.files.is_empty() {
+                self.problem(entry, &format!("broad-catch {} に :files が無い(探す file の無い宣言は置かない)", declared.name));
+            }
+            if declared.why.trim().is_empty() {
+                self.problem(entry, &format!("broad-catch {} に :why(なぜ広い捕捉を置かないか)が無い", declared.name));
+            }
+            if out.iter().any(|d| d.name == declared.name) {
+                self.problem(entry, &format!("broad-catch {} が 2 度宣言されている", declared.name));
+                continue;
+            }
+            out.push(declared);
+        }
+        out
+    }
+
+    /// `[(carrier "module:名" :event "出来事") …]` を読む(:event は要る)。
+    fn broad_catch_carriers(&mut self, value: &Form) -> Vec<BroadCatchCarrier> {
+        let shape = "(carrier \"module:名\" :event \"出来事\")";
+        let Some(entries) = self.bracket(value) else {
+            self.problem(value, &format!(":carriers は {} の列", shape));
+            return Vec::new();
+        };
+        let mut out: Vec<BroadCatchCarrier> = Vec::new();
+        for entry in entries {
+            let Some(parts) = self.paren(entry).filter(|p| p.first().and_then(|h| self.symbol(h)) == Some("carrier")) else {
+                self.problem(entry, &format!(":carriers の要素は {}", shape));
+                continue;
+            };
+            let Some(head) = parts.get(1) else {
+                self.problem(entry, "carrier に \"module:名\" が無い");
+                continue;
+            };
+            let Some(definition) = self.definition_ref(head, "carrier") else { continue };
+            let range = self.lines.range(head.span.start, head.span.end);
+            let mut event: Option<String> = None;
+            let rest: Vec<&Form> = parts.iter().skip(2).copied().collect();
+            for (key, field) in self.pairs(&rest) {
+                match self.text(key) {
+                    ":event" => event = self.required_string(field, ":event"),
+                    _ => self.unknown_key(key, "carrier"),
+                }
+            }
+            let Some(event) = event.filter(|e| !e.trim().is_empty()) else {
+                self.problem(entry, &format!("carrier {} に :event(例外を載せる出来事)が無い", definition.spelling()));
+                continue;
+            };
+            if out.iter().any(|c| c.definition == definition) {
+                self.problem(entry, &format!("carrier {} が 2 度書かれている", definition.spelling()));
+                continue;
+            }
+            out.push(BroadCatchCarrier { definition, event, range });
         }
         out
     }
