@@ -30,6 +30,7 @@ pub mod single_point_vocabulary;
 pub mod spelling_scope;
 pub mod confined_spellings;
 pub mod counted_spellings;
+pub mod effect_census;
 pub mod retired;
 pub mod blind;
 pub mod allowed_heads;
@@ -350,6 +351,32 @@ pub fn run_with(root: &Path, settings: &ProjectSettings, enabled: &BTreeSet<Proj
                             detail: Some(found.detail),
                             base: Severity::Error,
                             explain: Explain::CountedSpelling { group: found.group, why: found.why, problem: found.problem },
+                            range: found.range,
+                            rel: found.rel,
+                        }
+                    }));
+                    report.errors.extend(errors);
+                }
+                // DOEFF162 は宣言の :files の file だけを読む(repo 全体は読まない)。
+                if enabled.contains(&ProjectRule::EffectOutsideCensus) && !architecture.effect_census.is_empty() {
+                    let architecture_rel = relative_path(root, &architecture.path).unwrap_or_else(|| "architecture.hy".to_string());
+                    let (found, errors) =
+                        crate::timing::timed("effect-census", || effect_census::find(root, &architecture.effect_census, &architecture_rel));
+                    drafts.extend(found.into_iter().map(|found| {
+                        let what = match &found.problem {
+                            effect_census::CensusProblem::Unlisted { effect } => format!("effect {} が一覧 {} の外で宣言されている", effect, found.group),
+                            effect_census::CensusProblem::Twice { effect } => format!("effect {} が 2 度宣言されている(一覧 {})", effect, found.group),
+                            effect_census::CensusProblem::Undeclared { effect } => format!("一覧 {} の effect {} の宣言が無い", found.group, effect),
+                            effect_census::CensusProblem::NoFiles => format!("一覧 {} の :files に当たる file が無い", found.group),
+                        };
+                        Draft {
+                            rule: ProjectRule::EffectOutsideCensus,
+                            layer: None,
+                            path: root.join(&found.rel),
+                            message: format!("{} — {}", found.rel, what),
+                            detail: Some(found.detail),
+                            base: Severity::Error,
+                            explain: Explain::EffectCensus { group: found.group, why: found.why, problem: found.problem },
                             range: found.range,
                             rel: found.rel,
                         }

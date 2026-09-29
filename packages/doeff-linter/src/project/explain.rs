@@ -177,6 +177,8 @@ pub enum Explain {
     ConfinedSpelling { group: String, why: String, problem: super::confined_spellings::ConfinedProblem },
     /// DOEFF161: 数を決めた綴り(宣言の名・理由・当たりの種類)。
     CountedSpelling { group: String, why: String, problem: super::counted_spellings::CountProblem },
+    /// DOEFF162: effect の宣言の全体(一覧の名・理由・当たりの種類)。
+    EffectCensus { group: String, why: String, problem: super::effect_census::CensusProblem },
     /// DOEFF150: 使わないと決めた綴り(群の名・当たった綴り・代わりの語・:in names なら定義の名)。
     RetiredWord { group: String, spelling: String, instead: String, name: Option<String>, place: super::architecture::WordPlace },
     /// DOEFF151: 使わないと決めた呼び。
@@ -425,6 +427,24 @@ impl<'a> Narrator<'a> {
                     format!("数える file や定義が無いと、規則は何も見ずに緑になる(母集団 0 を緑にしない)。理由: {}", why),
                 ),
             },
+            Explain::EffectCensus { group, why, problem } => {
+                let rule = "effect の全体は architecture.hy の :effect-census の一覧で閉じてある。黙って増えた effect は、決めた口の外に新しい外への要求を生やす。";
+                match problem {
+                    super::effect_census::CensusProblem::Unlisted { effect } => {
+                        (format!("effect {} が一覧 {} の外で宣言されている", effect, group), format!("{}理由: {}", rule, why))
+                    }
+                    super::effect_census::CensusProblem::Twice { effect } => {
+                        (format!("effect {} が 2 度宣言されている(一覧 {})", effect, group), format!("{}理由: {}", rule, why))
+                    }
+                    super::effect_census::CensusProblem::Undeclared { effect } => {
+                        (format!("一覧 {} の effect {} の宣言が無い", group, effect), format!("{}理由: {}", rule, why))
+                    }
+                    super::effect_census::CensusProblem::NoFiles => (
+                        format!("一覧 {} の :files に当たる file が無い", group),
+                        format!("読む file が 1 つも無いと、規則は何も見ずに緑になる(母集団 0 を緑にしない)。理由: {}", why),
+                    ),
+                }
+            }
             Explain::RetiredWord { group, spelling, instead, name, place } => (
                 match (place, name) {
                     (super::architecture::WordPlace::Paths, _) => format!("file の名の綴り {}(使わないと決めた名 — 群 {})", spelling, group),
