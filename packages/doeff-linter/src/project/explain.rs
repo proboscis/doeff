@@ -179,6 +179,8 @@ pub enum Explain {
     CountedSpelling { group: String, why: String, problem: super::counted_spellings::CountProblem },
     /// DOEFF162: effect の宣言の全体(一覧の名・理由・当たりの種類)。
     EffectCensus { group: String, why: String, problem: super::effect_census::CensusProblem },
+    /// DOEFF149: 型の欄を持つ class の顔ぶれ(一覧の名・型の綴り・理由・当たりの種類)。
+    FieldHolders { group: String, type_name: String, why: String, problem: super::field_holders::HolderProblem },
     /// DOEFF150: 使わないと決めた綴り(群の名・当たった綴り・代わりの語・:in names なら定義の名)。
     RetiredWord { group: String, spelling: String, instead: String, name: Option<String>, place: super::architecture::WordPlace },
     /// DOEFF151: 使わないと決めた呼び。
@@ -443,6 +445,27 @@ impl<'a> Narrator<'a> {
                     }
                     super::effect_census::CensusProblem::NoFiles => (
                         format!("一覧 {} の :files に当たる file が無い", group),
+                        format!("読む file が 1 つも無いと、規則は何も見ずに緑になる(母集団 0 を緑にしない)。理由: {}", why),
+                    ),
+                }
+            }
+            Explain::FieldHolders { group, type_name, why, problem } => {
+                let rule = format!(
+                    "{} の欄を持ってよい class は architecture.hy の :field-holders の一覧で閉じてある。ほかの class に同じ欄が生えると、その型の値の置き場が 2 つになる。",
+                    type_name
+                );
+                match problem {
+                    super::field_holders::HolderProblem::Unlisted { class } => {
+                        (format!("class {} が {} の欄を持つ(持ち手の一覧 {} の外)", class, type_name, group), format!("{}理由: {}", rule, why))
+                    }
+                    super::field_holders::HolderProblem::Absent { class } => {
+                        (format!("持ち手の一覧 {} の class {} が {} の欄を持たない", group, class, type_name), format!("{}理由: {}", rule, why))
+                    }
+                    super::field_holders::HolderProblem::NoClass { class } => {
+                        (format!("持ち手の一覧 {} が名指す class {} が無い", group, class), format!("{}理由: {}", rule, why))
+                    }
+                    super::field_holders::HolderProblem::NoFiles => (
+                        format!("持ち手の一覧 {} の :files に当たる Python の file が無い", group),
                         format!("読む file が 1 つも無いと、規則は何も見ずに緑になる(母集団 0 を緑にしない)。理由: {}", why),
                     ),
                 }

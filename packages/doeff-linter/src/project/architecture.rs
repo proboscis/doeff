@@ -400,6 +400,27 @@ pub struct EffectCensus {
     pub range: doeff_indexer::hy_index::Range,
 }
 
+/// 型の欄を持つ class の顔ぶれ 1 つ(`:field-holders` の
+/// `(field-holders "名" :type "T" :files [..] :classes [..] :holders [..] :why "…")` — DOEFF149・agora-redesign #1374)。
+/// :files の Python の file の module の直下の class のうち、欄の注記に :type の綴りが語として在る class を :holders と比べる。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct FieldHolders {
+    /// 宣言の名(登録簿の鍵の細目)。
+    pub name: String,
+    /// 欄の注記の中で数える型の綴り。
+    pub type_name: String,
+    pub files: Vec<String>,
+    /// 数える class(空 = :files の module の直下の全部)。
+    pub classes: Vec<String>,
+    /// その型の欄を持ってよい class の一覧(空 = どの class も持たない)。
+    pub holders: Vec<String>,
+    /// なぜこの顔ぶれか(知らせの文に入れる)。
+    pub why: String,
+    /// architecture.hy の中の位置(一覧の class の欠けの当たりの位置)。
+    #[serde(skip)]
+    pub range: doeff_indexer::hy_index::Range,
+}
+
 /// 決めた数(閉じた 2 つ — `:count N` はちょうど N・`:at-least N` は N 以上)。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub enum WantedCount {
@@ -547,6 +568,9 @@ pub struct Architecture {
     /// effect の宣言の全体(`:effect-census [(effect-census …) …]` — 空 = 宣言していない)。書けば DOEFF162 が、一覧に無い effect の
     /// 宣言・2 度の宣言・宣言の無い一覧の effect を出す(agora-redesign #1373・#1438)。
     pub effect_census: Vec<EffectCensus>,
+    /// 型の欄を持つ class の顔ぶれ(`:field-holders [(field-holders …) …]` — 空 = 宣言していない)。書けば DOEFF149 が、一覧に無い
+    /// 持ち手と、欄を持たない一覧の class を出す(agora-redesign #1374)。
+    pub field_holders: Vec<FieldHolders>,
     /// handler の引数の決まり(書けば DOEFF142 が defhandler の引数の client・可変の店を出す — agora-redesign #1189 / #1366)。
     pub handler_arguments: Option<HandlerArguments>,
     /// 公開面の型の注記を読む file(`:typed-values {:files [..] :except [..]}`)。書けば DOEFF144 が、欄・戻り値・:post の型の素の写像・
@@ -891,6 +915,7 @@ impl<'a> Parser<'a> {
             confined_spellings: Vec::new(),
             counted_spellings: Vec::new(),
             effect_census: Vec::new(),
+            field_holders: Vec::new(),
             handler_arguments: None,
             typed_values: None,
             record_stubs: None,
@@ -955,6 +980,7 @@ impl<'a> Parser<'a> {
                 ":confined-spellings" => arch.confined_spellings = self.confined_spellings(value),
                 ":counted-spellings" => arch.counted_spellings = self.counted_spellings(value),
                 ":effect-census" => arch.effect_census = self.effect_census(value),
+                ":field-holders" => arch.field_holders = self.field_holders(value),
                 ":handler-arguments" => arch.handler_arguments = self.handler_arguments(value),
                 ":typed-values" => arch.typed_values = self.file_selection(value, ":typed-values"),
                 ":record-stubs" => arch.record_stubs = self.file_selection(value, ":record-stubs"),
@@ -1351,6 +1377,74 @@ impl<'a> Parser<'a> {
                 continue;
             }
             out.push(census);
+        }
+        out
+    }
+
+    /// `[(field-holders "名" :type "T" :files [..] :classes [..] :holders [..] :why "…") …]` を読む(:type・:files・:holders・:why は要る —
+    /// :holders は空の列でよい = どの class も持たない。:classes は書かなくてよい = module の直下の全部。:classes を書けば :holders は
+    /// その中の名)。
+    fn field_holders(&mut self, value: &Form) -> Vec<FieldHolders> {
+        let shape = "(field-holders \"名\" :type \"T\" :files [..] :classes [..] :holders [..] :why \"…\")";
+        let Some(entries) = self.bracket(value) else {
+            self.problem(value, &format!(":field-holders は {} の列", shape));
+            return Vec::new();
+        };
+        let mut out: Vec<FieldHolders> = Vec::new();
+        for entry in entries {
+            let parts = self.paren(entry).filter(|p| p.first().and_then(|h| self.symbol(h)) == Some("field-holders"));
+            let Some((name, head)) = parts.as_ref().and_then(|p| p.get(1)).and_then(|f| self.name(f).map(|n| (n, *f))) else {
+                self.problem(entry, &format!(":field-holders の要素は {}", shape));
+                continue;
+            };
+            let parts = parts.unwrap_or_default();
+            let range = self.lines.range(head.span.start, head.span.end);
+            let mut type_name = String::new();
+            let mut files: Vec<String> = Vec::new();
+            let mut classes: Vec<String> = Vec::new();
+            let mut holders: Option<Vec<String>> = None;
+            let mut why = String::new();
+            let rest: Vec<&Form> = parts.iter().skip(2).copied().collect();
+            for (key, field) in self.pairs(&rest) {
+                match self.text(key) {
+                    ":type" => type_name = self.required_string(field, ":type").unwrap_or_default(),
+                    ":files" => files = self.path_globs(field, ":files"),
+                    ":classes" => classes = self.names(field, ":classes"),
+                    ":holders" => holders = Some(self.names(field, ":holders")),
+                    ":why" => why = self.required_string(field, ":why").unwrap_or_default(),
+                    _ => self.unknown_key(key, "field-holders"),
+                }
+            }
+            let mut complete = true;
+            if type_name.trim().is_empty() {
+                self.problem(entry, &format!("field-holders {} に :type(数える型の綴り)が無い", name));
+                complete = false;
+            }
+            if files.is_empty() {
+                self.problem(entry, &format!("field-holders {} に :files が無い(数える file の無い宣言は置かない)", name));
+                complete = false;
+            }
+            if holders.is_none() {
+                self.problem(entry, &format!("field-holders {} に :holders が無い(持ってよい class が無いなら [] と書く)", name));
+                complete = false;
+            }
+            if why.trim().is_empty() {
+                self.problem(entry, &format!("field-holders {} に :why(なぜこの顔ぶれか)が無い", name));
+            }
+            let holders = holders.unwrap_or_default();
+            if !classes.is_empty() {
+                for holder in holders.iter().filter(|h| !classes.contains(*h)) {
+                    self.problem(entry, &format!("field-holders {} の :holders の {} が :classes に無い", name, holder));
+                    complete = false;
+                }
+            }
+            if out.iter().any(|d| d.name == name) {
+                self.problem(entry, &format!("field-holders {} が 2 度宣言されている", name));
+                continue;
+            }
+            if complete {
+                out.push(FieldHolders { name, type_name, files, classes, holders, why, range });
+            }
         }
         out
     }

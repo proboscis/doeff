@@ -31,6 +31,7 @@ pub mod spelling_scope;
 pub mod confined_spellings;
 pub mod counted_spellings;
 pub mod effect_census;
+pub mod field_holders;
 pub mod retired;
 pub mod blind;
 pub mod allowed_heads;
@@ -378,6 +379,36 @@ pub fn run_with(root: &Path, settings: &ProjectSettings, enabled: &BTreeSet<Proj
                             detail: Some(found.detail),
                             base: Severity::Error,
                             explain: Explain::EffectCensus { group: found.group, why: found.why, problem: found.problem },
+                            range: found.range,
+                            rel: found.rel,
+                        }
+                    }));
+                    report.errors.extend(errors);
+                }
+                // DOEFF149 も宣言の :files の file だけを読む(repo 全体は読まない)。
+                if enabled.contains(&ProjectRule::FieldHoldersDiffer) && !architecture.field_holders.is_empty() {
+                    let architecture_rel = relative_path(root, &architecture.path).unwrap_or_else(|| "architecture.hy".to_string());
+                    let (found, errors) =
+                        crate::timing::timed("field-holders", || field_holders::find(root, &architecture.field_holders, &architecture_rel));
+                    drafts.extend(found.into_iter().map(|found| {
+                        let what = match &found.problem {
+                            field_holders::HolderProblem::Unlisted { class } => {
+                                format!("class {} が {} の欄を持つ(持ち手の一覧 {} の外)", class, found.type_name, found.group)
+                            }
+                            field_holders::HolderProblem::Absent { class } => {
+                                format!("持ち手の一覧 {} の class {} が {} の欄を持たない", found.group, class, found.type_name)
+                            }
+                            field_holders::HolderProblem::NoClass { class } => format!("持ち手の一覧 {} が名指す class {} が無い", found.group, class),
+                            field_holders::HolderProblem::NoFiles => format!("持ち手の一覧 {} の :files に当たる Python の file が無い", found.group),
+                        };
+                        Draft {
+                            rule: ProjectRule::FieldHoldersDiffer,
+                            layer: None,
+                            path: root.join(&found.rel),
+                            message: format!("{} — {}", found.rel, what),
+                            detail: Some(found.detail),
+                            base: Severity::Error,
+                            explain: Explain::FieldHolders { group: found.group, type_name: found.type_name, why: found.why, problem: found.problem },
                             range: found.range,
                             rel: found.rel,
                         }

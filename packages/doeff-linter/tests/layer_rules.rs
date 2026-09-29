@@ -2748,6 +2748,69 @@ fn counted_spelling_requires_pattern_files_one_count_and_why() {
     assert!(all.contains("counted-spelling c の :count は 0 以上の整数"), "{}", all);
 }
 
+/// agora-redesign #1374(DOEFF149): :field-holders の型の欄を持つ class が :holders と違えば、一覧の外の持ち手は class の位置で、欄を
+/// 持たない一覧の class と :classes の無い class は architecture.hy の位置で、critical で出す。docstring・method の中・既定値の文字列は数えない。
+#[test]
+fn field_holders_differ_is_red() {
+    let files = [
+        ("app/foundation/host.hy", tags("shared", "foundation") + "(defk with-host [body] body)\n"),
+        (
+            "app/billing/core/types.py",
+            "class RecordCache:\n    \"\"\"RecordCache は本文の容器。\"\"\"\n    rows: tuple\n\n\
+             class Sent:\n    cache: RecordCache | None = None\n\n\
+             class Sneaky:\n    spare: list[RecordCache]\n\n\
+             class State:\n    note: str = \"Record\"\n    def f(self) -> None:\n        x: Record = None\n"
+                .to_string(),
+        ),
+    ];
+    let dir = world_repo_with(&files, "", "[\"DOEFF149\"]");
+    let arch_path = dir.path().join("architecture.hy");
+    let text = std::fs::read_to_string(&arch_path).unwrap().replace(
+        ":foundation foundation",
+        ":foundation foundation\n  :field-holders [(field-holders \"cache\" :type \"RecordCache\" :files [\"app/billing/core/*.py\"] \
+         :holders [\"Sent\" \"Page\"] :why \"容器は 1 つ\") \
+         (field-holders \"state\" :type \"Record\" :files [\"app/billing/core/*.py\"] :classes [\"State\" \"Gone\"] :holders [] :why \"状態は本文を持たない\")]",
+    );
+    std::fs::write(&arch_path, text).unwrap();
+    let (_, report) = editor(dir.path());
+    assert_eq!(
+        keys(&report, "DOEFF149"),
+        vec![
+            "app/billing/core/types.py::DOEFF149::cache:Sneaky",
+            "architecture.hy::DOEFF149::cache:Page:absent",
+            "architecture.hy::DOEFF149::state:Gone:missing",
+        ],
+        "{}",
+        report
+    );
+    let sneaky = violation(&report, "app/billing/core/types.py::DOEFF149::cache:Sneaky");
+    assert!(sneaky["message"].as_str().unwrap().contains("class Sneaky が RecordCache の欄を持つ"), "{}", sneaky["message"]);
+    assert_eq!(sneaky["level"], "critical");
+    assert_eq!(sneaky["range"]["start"]["line"], 7);
+}
+
+/// :field-holders の必須の鍵が無ければ読み取りの誤り。:holders は空の列でよいが書く。:classes を書けば :holders はその中の名。
+#[test]
+fn field_holders_requires_type_files_holders_and_why() {
+    let files = [("app/foundation/host.hy", tags("shared", "foundation") + "(defk with-host [body] body)\n")];
+    let dir = world_repo_with(&files, "", "[\"DOEFF149\"]");
+    let arch_path = dir.path().join("architecture.hy");
+    let text = std::fs::read_to_string(&arch_path).unwrap().replace(
+        ":foundation foundation",
+        ":foundation foundation\n  :field-holders [(field-holders \"a\") \
+         (field-holders \"b\" :type \"T\" :files [\"x.py\"] :classes [\"A\"] :holders [\"B\"] :why \"y\")]",
+    );
+    std::fs::write(&arch_path, text).unwrap();
+    let (code, stdout, stderr) = run(dir.path(), &["--no-log"], None);
+    let all = format!("{}{}", stdout, stderr);
+    assert_ne!(code, 0, "{}", all);
+    assert!(all.contains("field-holders a に :type(数える型の綴り)が無い"), "{}", all);
+    assert!(all.contains("field-holders a に :files が無い"), "{}", all);
+    assert!(all.contains("field-holders a に :holders が無い"), "{}", all);
+    assert!(all.contains("field-holders a に :why(なぜこの顔ぶれか)が無い"), "{}", all);
+    assert!(all.contains("field-holders b の :holders の B が :classes に無い"), "{}", all);
+}
+
 /// agora-redesign #1373・#1438(DOEFF162): :effect-census の :files で EffectBase を継ぐ class の宣言が :effects の一覧と食い違えば、
 /// 食い違いごとに 1 件、critical で出す(一覧の外・2 度の宣言・宣言の無い一覧の effect)。
 #[test]

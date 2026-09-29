@@ -239,6 +239,7 @@ impl Setup {
                 ProjectRule::SpellingOutsideItsFiles => self.settings.architecture.as_ref().is_some_and(|a| !a.confined_spellings.is_empty()),
                 ProjectRule::SpellingCountDiffers => self.settings.architecture.as_ref().is_some_and(|a| !a.counted_spellings.is_empty()),
                 ProjectRule::EffectOutsideCensus => self.settings.architecture.as_ref().is_some_and(|a| !a.effect_census.is_empty()),
+                ProjectRule::FieldHoldersDiffer => self.settings.architecture.as_ref().is_some_and(|a| !a.field_holders.is_empty()),
                 ProjectRule::PlacedDependency => self.settings.architecture.as_ref().is_some_and(|a| !a.placed_dependencies.is_empty()),
                 ProjectRule::RetiredWord => self.settings.architecture.as_ref().is_some_and(|a| !a.retired_words.is_empty()),
                 ProjectRule::RetiredCall => self.settings.architecture.as_ref().is_some_and(|a| !a.retired_calls.is_empty()),
