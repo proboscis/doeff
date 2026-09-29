@@ -11,9 +11,13 @@
 //!   (事実の集め方が変わりうるため)。
 //!
 //! 置き場は `$DOEFF_LINTER_CACHE_DIR`・無ければ `$XDG_CACHE_HOME/doeff-linter`・無ければ `~/.cache/doeff-linter` の下の
-//! 根の path の hash の dir に、種類ごとの 1 file。書くのは一時 file から rename する(並走する hook どうしで壊さない —
-//! 後に書いた方が勝つだけで、どちらも正しい事実)。`DOEFF_LINTER_NO_CACHE` が在れば読みも書きもしない。
-//! 読めない・壊れた cache は無い物として扱う(全部を解析し直す — 答えは変わらない)。
+//! 根の path の hash の dir に、種類ごとの dir(`<種類>.<形>.d/`)を置き、file の path で決まる SHARDS 個の塊(`00`〜)に分けて置く。
+//! 書くのは変わった塊だけ(再計算した file か、消えた file を含む塊)— 1 file を変えた直後の実行が、repo 全体の事実(Hy の索引で
+//! 65MB)を丸ごと書き直していた(zeus で約 0.35 秒・agora-redesign #1523)。読むのは全部の塊を並べて読む。前の形の 1 file
+//! (`<種類>.<形>`)は、新しい形で初めて書く時に消す(読まない — 塊が無ければ作り直すだけで答えは変わらない)。
+//! 書くのは一時 file から rename する(並走する hook どうしで壊さない — 後に書いた方が勝つだけで、どちらも正しい事実)。
+//! `DOEFF_LINTER_NO_CACHE` が在れば読みも書きもしない。読めない・壊れた塊は無い物として扱う(その塊の file を解析し直す —
+//! 答えは変わらない)。
 //!
 //! 形は 2 つ: 既定は JSON(`<種類>.json`)。repo 全体の Hy の索引のように大きい種類は、欄の名前を持たない binary(bincode・
 //! `<種類>.bin`)で置く(`per_file_compact` — JSON では agora の本線で 147MB・読みに 1.2 秒かかった・agora-redesign #1364)。
@@ -30,6 +34,24 @@ use std::time::UNIX_EPOCH;
 
 const NO_CACHE_ENV: &str = "DOEFF_LINTER_NO_CACHE";
 const DIR_ENV: &str = "DOEFF_LINTER_CACHE_DIR";
+/// 種類ごとの塊の数(頭の註)— 1 file の変更で書き直すのは約 1/SHARDS、読みで開くのは種類ごとに SHARDS 個。
+const SHARDS: usize = 16;
+
+/// file の根からの path が載る塊(FNV-1a — 実行と build をまたいで同じ答え)。
+fn shard_of(rel: &str) -> usize {
+    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+    for byte in rel.as_bytes() {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    (hash % SHARDS as u64) as usize
+}
+
+/// 種類の置き場 file(前の形の 1 file の path)から、塊 n の path(`<置き場>.d/<n>`)。
+fn shard_path(file: &Path, n: usize) -> PathBuf {
+    let name = file.file_name().and_then(|n| n.to_str()).unwrap_or("facts");
+    file.with_file_name(format!("{name}.d")).join(format!("{n:02}"))
+}
 
 /// file 1 つの鍵(大きさ・更新時刻の ns)。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -144,21 +166,21 @@ struct StoredRef<'a, T> {
     entries: HashMap<&'a str, &'a Entry<T>>,
 }
 
-fn encode<T: Serialize + Sync>(identity: &str, entries: &[(String, Entry<T>, bool)], format: Format) -> Option<Vec<u8>> {
+fn encode<T: Serialize + Sync>(identity: &str, entries: &[(&str, &Entry<T>)], format: Format) -> Option<Vec<u8>> {
     match format {
         Format::Json => {
-            let stored = StoredRef { identity, entries: entries.iter().map(|(rel, entry, _)| (rel.as_str(), entry)).collect() };
+            let stored = StoredRef { identity, entries: entries.iter().map(|(rel, entry)| (*rel, *entry)).collect() };
             serde_json::to_vec(&stored).ok()
         }
         Format::Compact => {
             let entries: Option<Vec<CompactEntry>> = entries
                 .par_iter()
-                .map(|(rel, entry, _)| {
+                .map(|(rel, entry)| {
                     let value = match &entry.value {
                         Some(value) => Some(bincode::serialize(value).ok()?),
                         None => None,
                     };
-                    Some(CompactEntry { rel: rel.clone(), stamp: entry.stamp, value })
+                    Some(CompactEntry { rel: rel.to_string(), stamp: entry.stamp, value })
                 })
                 .collect();
             bincode::serialize(&CompactStored { identity: identity.to_string(), entries: entries? }).ok()
@@ -166,7 +188,13 @@ fn encode<T: Serialize + Sync>(identity: &str, entries: &[(String, Entry<T>, boo
     }
 }
 
-fn save<T: Serialize + Sync>(file: &Path, identity: &str, entries: &[(String, Entry<T>, bool)], format: Format) {
+/// 全部の塊を並べて読み、1 つの表にする(読めない・印の違う塊は無い物 — その塊の file は解析し直される)。
+fn load_shards<T: DeserializeOwned + Send>(file: &Path, identity: &str, format: Format) -> HashMap<String, Entry<T>> {
+    let shards: Vec<HashMap<String, Entry<T>>> = (0..SHARDS).into_par_iter().map(|n| load(&shard_path(file, n), identity, format)).collect();
+    shards.into_iter().flatten().collect()
+}
+
+fn save<T: Serialize + Sync>(file: &Path, identity: &str, entries: &[(&str, &Entry<T>)], format: Format) {
     let Some(dir) = file.parent() else { return };
     if std::fs::create_dir_all(dir).is_err() {
         return;
@@ -215,8 +243,8 @@ where
     let Some(file) = file else {
         return files.par_iter().filter_map(|(rel, path)| compute(rel, path)).collect();
     };
-    let mut known: HashMap<String, Entry<T>> = crate::timing::timed("facts-cache.load", || load(file, identity, format));
-    let before = known.len();
+    let mut known: HashMap<String, Entry<T>> = crate::timing::timed("facts-cache.load", || load_shards(file, identity, format));
+    let loaded: Vec<String> = known.keys().cloned().collect();
     // cache の値は複製せずに移す(repo 全体の Hy の索引では、値の複製が cache の読みの大半を占めた — agora-redesign #1364)。
     let taken: Vec<Option<Entry<T>>> = files.iter().map(|(rel, _)| known.remove(rel)).collect();
     let fresh: Vec<(String, Entry<T>, bool)> = files
@@ -230,9 +258,31 @@ where
             }
         })
         .collect();
-    let changed = fresh.iter().any(|(_, _, recomputed)| *recomputed) || fresh.len() != before;
-    if changed {
-        save(file, identity, &fresh, format);
+    // 書き直す塊 = 再計算した file の塊と、cache に在ったのに今は無い(消えた・読めない)file の塊。
+    let mut dirty = [false; SHARDS];
+    for (rel, _, recomputed) in &fresh {
+        if *recomputed {
+            dirty[shard_of(rel)] = true;
+        }
+    }
+    let present: std::collections::HashSet<&str> = fresh.iter().map(|(rel, _, _)| rel.as_str()).collect();
+    for rel in loaded.iter().filter(|rel| !present.contains(rel.as_str())) {
+        dirty[shard_of(rel)] = true;
+    }
+    if dirty.iter().any(|d| *d) {
+        crate::timing::timed("facts-cache.save", || {
+            let mut by_shard: Vec<Vec<(&str, &Entry<T>)>> = (0..SHARDS).map(|_| Vec::new()).collect();
+            for (rel, entry, _) in &fresh {
+                by_shard[shard_of(rel)].push((rel.as_str(), entry));
+            }
+            by_shard
+                .par_iter()
+                .enumerate()
+                .filter(|(n, _)| dirty[*n])
+                .for_each(|(n, entries)| save(&shard_path(file, n), identity, entries, format));
+            // 前の形の 1 file は読まないので消す(頭の註 — 置き場は linter が持つ cache だけ)。
+            let _ = std::fs::remove_file(file);
+        });
     }
     fresh.into_iter().filter_map(|(_, entry, _)| entry.value).collect()
 }
@@ -300,10 +350,51 @@ mod tests {
             let a = dir.path().join("a.hy");
             std::fs::write(&a, "(defk a [])").unwrap();
             let cache = dir.path().join(format!("kind.{}", format.extension()));
-            std::fs::write(&cache, broken).unwrap();
+            let shard = shard_path(&cache, shard_of("a.hy"));
+            std::fs::create_dir_all(shard.parent().unwrap()).unwrap();
+            std::fs::write(&shard, broken).unwrap();
             let calls = AtomicUsize::new(0);
             assert_eq!(run(&cache, "v1", &[("a.hy".to_string(), a)], &calls, format), vec!["(defk a [])".to_string()]);
             assert_eq!(calls.load(Ordering::SeqCst), 1);
+        }
+    }
+
+    /// agora-redesign #1523: 1 file を変えた時に書き直すのはその file の塊だけ — 他の塊の file は書かない(更新時刻が変わらない)。
+    /// 消えた file の塊も書き直し、前の形の 1 file は消す。
+    #[test]
+    fn only_the_shard_of_a_changed_file_is_written_again() {
+        for format in [Format::Json, Format::Compact] {
+            let dir = tempfile::tempdir().unwrap();
+            // 塊の違う 2 つの file を選ぶ。
+            let names: Vec<String> = (0..64).map(|i| format!("f{i}.hy")).collect();
+            let first = names[0].clone();
+            let other = names.iter().find(|n| shard_of(n) != shard_of(&first)).unwrap().clone();
+            let files: Vec<(String, PathBuf)> = [&first, &other]
+                .iter()
+                .map(|n| {
+                    let path = dir.path().join(n.as_str());
+                    std::fs::write(&path, format!("(defk {n} [])")).unwrap();
+                    (n.to_string(), path)
+                })
+                .collect();
+            let cache = dir.path().join("cache").join(format!("kind.{}", format.extension()));
+            std::fs::create_dir_all(cache.parent().unwrap()).unwrap();
+            std::fs::write(&cache, b"old single file").unwrap();
+            let calls = AtomicUsize::new(0);
+            run(&cache, "v1", &files, &calls, format);
+            assert!(!cache.exists(), "前の形の 1 file が残った");
+            let modified = |n: &str| std::fs::metadata(shard_path(&cache, shard_of(n))).unwrap().modified().unwrap();
+            let (first_at, other_at) = (modified(&first), modified(&other));
+            std::thread::sleep(std::time::Duration::from_millis(20));
+            std::fs::write(&files[0].1, "(defk changed [])").unwrap();
+            assert_eq!(run(&cache, "v1", &files, &calls, format), vec!["(defk changed [])".to_string(), format!("(defk {other} [])")]);
+            assert_ne!(modified(&first), first_at, "変えた file の塊を書き直していない");
+            assert_eq!(modified(&other), other_at, "変えていない file の塊まで書き直した");
+            // 消えた file の塊は書き直す(読み戻しても消えている)。
+            std::thread::sleep(std::time::Duration::from_millis(20));
+            std::fs::remove_file(&files[1].1).unwrap();
+            assert_eq!(run(&cache, "v1", &files, &calls, format), vec!["(defk changed [])".to_string()]);
+            assert_ne!(modified(&other), other_at, "消えた file の塊を書き直していない");
         }
     }
 }

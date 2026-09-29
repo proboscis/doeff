@@ -70,12 +70,16 @@ fn rewrite_keeping_stamp(path: &Path, text: &str) {
     std::fs::File::options().write(true).open(path).unwrap().set_modified(before).unwrap();
 }
 
+/// cache の置き場の file を、種類の dir の名と塊の名の組(`<種類>.<形>.d/<塊>`)で並べる(agora-redesign #1523 — 種類ごとに塊へ分けて置く)。
 fn cache_files(cache: &Path) -> Vec<String> {
     let mut names: Vec<String> = walkdir::WalkDir::new(cache)
         .into_iter()
         .filter_map(Result::ok)
         .filter(|e| e.file_type().is_file())
-        .map(|e| e.file_name().to_string_lossy().into_owned())
+        .map(|e| {
+            let parent = e.path().parent().and_then(|p| p.file_name()).map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+            format!("{}/{}", parent, e.file_name().to_string_lossy())
+        })
         .collect();
     names.sort();
     names
@@ -92,7 +96,7 @@ fn only_the_changed_file_is_indexed_again_and_the_answer_matches_the_uncached_ru
     let first = raw_keys(dir.path(), Some(cache.path()));
     assert_eq!(first, vec![clock.clone()]);
     assert_eq!(first, raw_keys(dir.path(), None));
-    assert!(cache_files(cache.path()).contains(&"hy-index.bin".to_string()), "{:?}", cache_files(cache.path()));
+    assert!(cache_files(cache.path()).iter().any(|f| f.starts_with("hy-index.bin.d/")), "{:?}", cache_files(cache.path()));
 
     // 変わらない 2 回目も同じ答え。
     assert_eq!(raw_keys(dir.path(), Some(cache.path())), first);
