@@ -598,6 +598,10 @@ pub fn run_with(root: &Path, settings: &ProjectSettings, enabled: &BTreeSet<Proj
                             (is_definition_file(&rel, definitions) || is_test_file(&rel, definitions))
                                 .then_some(SourceFile { rel, path, language: Language::Hy })
                         })
+                        // 名指しが在れば、その下の file だけを判じる — 判定は file 1 つ(と全体の表)で決まり、出力は名指しの path で絞られる
+                        // (main の project_results と同じ述語)。全部を判じると、1 file の commit の hook で CPU 2.4 秒を使っていた
+                        // (agora-redesign #1418)。
+                        .filter(|file| focus.is_none_or(|only| only.iter().any(|p| file.path.starts_with(p))))
                         .collect();
                     let judged: Vec<Result<Vec<Draft>, String>> = crate::timing::timed("definitions-judge", || files
                         .par_iter()
