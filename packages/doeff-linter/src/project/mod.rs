@@ -1995,6 +1995,12 @@ struct DefinitionGraph<'h> {
     world: Vec<Option<String>>,
     /// callers[n] = n に届く定義(辺の逆向き)。
     callers: Vec<Vec<usize>>,
+    /// world_carried[n] = 系の値の中(defsystem の本体・:systems の :carriers の引数)で外の世界に触れる理由(agora-redesign #1390)。
+    world_carried: Vec<Option<String>>,
+    /// carried[n] = 系の値の中の辺で n に届く定義(系の値として運ぶだけで、この場では回らない辺)。
+    carried: Vec<Vec<usize>>,
+    /// runs[n] = その定義が系を回す入口(:systems の :runners)を名指す。
+    runs: Vec<bool>,
 }
 
 fn definition_graph<'h>(architecture: &architecture::Architecture, hy: &'h HashMap<String, HyFileIndex>) -> DefinitionGraph<'h> {
@@ -2003,6 +2009,16 @@ fn definition_graph<'h>(architecture: &architecture::Architecture, hy: &'h HashM
     let catalog = world_catalog::WorldCatalog::bundled();
     let wrapped = architecture.world_targets(catalog);
     let static_readers: BTreeSet<String> = architecture.static_readers.iter().map(|r| r.target()).collect();
+    // 系の値を組む物 = :carriers と、索引の defsystem の定義(その呼び出しの引数の土台は系の値として運ばれる)。
+    let carriers: BTreeSet<String> = architecture
+        .systems
+        .iter()
+        .flat_map(|s| s.carriers.iter().map(|r| r.target()))
+        .chain(architecture.systems.iter().flat_map(|_| {
+            hy.values().flat_map(|f| f.definitions.iter().filter(|d| d.kind == DefinitionKind::Defsystem).map(|d| d.qualified_name.clone()))
+        }))
+        .collect();
+    let runners: BTreeSet<String> = architecture.systems.iter().flat_map(|s| s.runners.iter().map(|r| r.target())).collect();
     let mut rels: Vec<&String> = hy.keys().collect();
     rels.sort();
     // 定義 1 つ = 節 1 つ(file の順・file の中の添字の順)。
@@ -2020,6 +2036,9 @@ fn definition_graph<'h>(architecture: &architecture::Architecture, hy: &'h HashM
     let mut world: Vec<Option<String>> = vec![None; nodes.len()];
     // callers[n] = n に届く定義(辺の逆向き)。
     let mut callers: Vec<Vec<usize>> = vec![Vec::new(); nodes.len()];
+    let mut world_carried: Vec<Option<String>> = vec![None; nodes.len()];
+    let mut carried: Vec<Vec<usize>> = vec![Vec::new(); nodes.len()];
+    let mut runs: Vec<bool> = vec![false; nodes.len()];
     for rel in &rels {
         let file = &hy[*rel];
         let first = base[rel.as_str()];
@@ -2055,31 +2074,46 @@ fn definition_graph<'h>(architecture: &architecture::Architecture, hy: &'h HashM
         let read_only: Vec<&Range> =
             file.calls.iter().filter(|c| c.target.as_deref().is_some_and(|t| static_readers.contains(t))).map(|c| &c.form_range).collect();
         let only_read = |range: &Range| read_only.iter().any(|form| range_inside(range, form));
+        // 系の値の中(:carriers の呼び出しの引数・defsystem の本体)の名は、系の値として運ばれるだけの辺(#1390)。
+        let carrier_forms: Vec<&Range> =
+            file.calls.iter().filter(|c| c.target.as_deref().is_some_and(|t| carriers.contains(t))).map(|c| &c.form_range).collect();
+        let in_carrier = |range: &Range| carrier_forms.iter().any(|form| range_inside(range, form));
         // 辺になる名(索引の定義か :wraps の handler)だけを見る — ほかの名の持ち主の定義は引かない。
-        let interesting = |t: &str| by_name.contains_key(t) || wrapped.contains_key(t);
+        let interesting = |t: &str| by_name.contains_key(t) || wrapped.contains_key(t) || runners.contains(t);
         let spots = file
             .references
             .iter()
             .filter(|r| r.target.as_deref().is_some_and(interesting) && !in_import(&r.range) && !only_read(&r.range))
-            .filter_map(|r| r.target.as_deref().map(|t| (t, innermost_definition(definitions, &r.range), None)))
-            .chain(file.calls.iter().filter_map(|c| c.target.as_deref().filter(|t| interesting(t)).map(|t| (t, c.caller, Some(c.keywords.as_slice())))));
-        for (target, owner, keywords) in spots {
-            let Some(owner) = owner else { continue };
-            let owner = first + owner;
+            .filter_map(|r| r.target.as_deref().map(|t| (t, innermost_definition(definitions, &r.range), None, in_carrier(&r.range))))
+            .chain(file.calls.iter().filter_map(|c| {
+                c.target.as_deref().filter(|t| interesting(t)).map(|t| (t, c.caller, Some(c.keywords.as_slice()), in_carrier(&c.range)))
+            }));
+        for (target, owner, keywords, inside_carrier) in spots {
+            let Some(owner_index) = owner else { continue };
+            let owner = first + owner_index;
+            // :systems を宣言しない repo は今までどおり(defsystem の中の辺もふつうの辺 — 入口を知らないので、系の中を別に数えない)。
+            let is_carried = architecture.systems.is_some() && (inside_carrier || definitions[owner_index].kind == DefinitionKind::Defsystem);
+            if runners.contains(target) {
+                runs[owner] = true;
+                continue;
+            }
             if let Some((spelling, _, touches)) = wrapped.get(target) {
                 // 目録の条件つきの行(unless_keyword)は、その keyword を渡さない呼び出しだけが外の世界に触れる(agora-redesign #1318)。
                 let counted = catalog.handlers.get(target).is_some_and(|h| h.counts(keywords));
-                if counted && architecture.counts_as_edge(touches) && world[owner].is_none() {
-                    world[owner] = Some(spelling.clone());
+                if counted && architecture.counts_as_edge(touches) {
+                    let slot = if is_carried { &mut world_carried[owner] } else { &mut world[owner] };
+                    if slot.is_none() {
+                        *slot = Some(spelling.clone());
+                    }
                 }
             } else if let Some(&callee) = by_name.get(target) {
                 if callee != owner {
-                    callers[callee].push(owner);
+                    if is_carried { carried[callee].push(owner) } else { callers[callee].push(owner) }
                 }
             }
         }
     }
-    DefinitionGraph { rels, nodes, base, world, callers }
+    DefinitionGraph { rels, nodes, base, world, callers, world_carried, carried, runs }
 }
 
 /// DOEFF133: テストの種類を届く先から導く。定義の間の辺(呼び出し・参照・入れ子)を全体の索引から 1 度だけ組み、外の世界の側
@@ -2087,20 +2121,59 @@ fn definition_graph<'h>(architecture: &architecture::Architecture, hy: &'h HashM
 /// 求める。deftest がその集合に在れば縁(:edge-mark の印が要る)、無ければ手元(印を持たない)。Python の検は数えない(R6 で deftest へ)。
 fn judge_test_kinds(root: &Path, architecture: &architecture::Architecture, hy: &HashMap<String, HyFileIndex>) -> Vec<Draft> {
     let Some(mark) = architecture.edge_mark.as_deref() else { return Vec::new() };
-    let DefinitionGraph { rels, nodes, base, world, callers } = definition_graph(architecture, hy);
+    let DefinitionGraph { rels, nodes, base, world, callers, world_carried, carried, runs } = definition_graph(architecture, hy);
     // 外の世界の側から逆向きに辿る(toward[n] = n から外の世界へ向かう次の節・None なら n 自身が触れる)。
-    let mut reaches: Vec<bool> = world.iter().map(Option::is_some).collect();
+    // 2 段: direct = 系の値の中の辺を通らずに届く・via_system = 系の値の中の辺を 1 度でも通って届く(#1390)。
+    let mut direct: Vec<bool> = world.iter().map(Option::is_some).collect();
     let mut toward: Vec<Option<usize>> = vec![None; nodes.len()];
-    let mut queue: std::collections::VecDeque<usize> = (0..nodes.len()).filter(|n| reaches[*n]).collect();
+    let mut queue: std::collections::VecDeque<usize> = (0..nodes.len()).filter(|n| direct[*n]).collect();
     while let Some(node) = queue.pop_front() {
         for &caller in &callers[node] {
-            if !reaches[caller] {
-                reaches[caller] = true;
+            if !direct[caller] {
+                direct[caller] = true;
                 toward[caller] = Some(node);
                 queue.push_back(caller);
             }
         }
     }
+    let mut via_system: Vec<bool> = vec![false; nodes.len()];
+    let mut queue: std::collections::VecDeque<usize> = std::collections::VecDeque::new();
+    let mark_via = |node: usize, from: Option<usize>, via_system: &mut Vec<bool>, toward: &mut Vec<Option<usize>>, queue: &mut std::collections::VecDeque<usize>| {
+        if !direct[node] && !via_system[node] {
+            via_system[node] = true;
+            toward[node] = from;
+            queue.push_back(node);
+        }
+    };
+    for node in 0..nodes.len() {
+        if world_carried[node].is_some() {
+            mark_via(node, None, &mut via_system, &mut toward, &mut queue);
+        }
+        if direct[node] {
+            for &caller in &carried[node] {
+                mark_via(caller, Some(node), &mut via_system, &mut toward, &mut queue);
+            }
+        }
+    }
+    while let Some(node) = queue.pop_front() {
+        for &caller in callers[node].iter().chain(carried[node].iter()) {
+            mark_via(caller, Some(node), &mut via_system, &mut toward, &mut queue);
+        }
+    }
+    // 系を回す入口に届く定義(入口を名指す定義から、ふつうの辺を逆向きに辿る)。
+    let mut running = runs.clone();
+    let mut queue: std::collections::VecDeque<usize> = (0..nodes.len()).filter(|n| running[*n]).collect();
+    while let Some(node) = queue.pop_front() {
+        for &caller in &callers[node] {
+            if !running[caller] {
+                running[caller] = true;
+                queue.push_back(caller);
+            }
+        }
+    }
+    // 検が外の世界に届く = 直に届くか、系の値の中から届き、しかも系を回す入口にも届く。
+    let reaches: Vec<bool> = (0..nodes.len()).map(|n| direct[n] || (via_system[n] && running[n])).collect();
+    let world: Vec<Option<String>> = world.into_iter().zip(world_carried).map(|(w, c)| w.or(c)).collect();
     let name_of = |node: usize| -> String {
         let (rel, index) = nodes[node];
         hy[rel].definitions[index].name.clone()
@@ -2181,7 +2254,8 @@ fn judge_untested_services(architecture: &architecture::Architecture, hy: &HashM
                 tested = true;
                 break;
             }
-            for &caller in &graph.callers[node] {
+            // 系の値の中の辺も数える(模擬の環境の検が系を組むだけでも、組み立ての entry に届いている)。
+            for &caller in graph.callers[node].iter().chain(graph.carried[node].iter()) {
                 if !seen[caller] {
                     seen[caller] = true;
                     queue.push_back(caller);

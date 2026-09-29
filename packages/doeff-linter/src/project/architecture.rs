@@ -208,6 +208,15 @@ pub struct BlindDefinition {
     pub range: doeff_indexer::hy_index::Range,
 }
 
+/// 系の値と系を回す入口(`:systems`)。defsystem の定義は書かなくても系の値。
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+pub struct Systems {
+    /// 系の値を組む道具(この呼び出しの引数の中の土台は、系の値として運ばれるだけで、この場では回らない)。
+    pub carriers: Vec<DefinitionRef>,
+    /// 系の値を回す入口(ここに届く検だけが、系の値の中の土台を回す)。
+    pub runners: Vec<DefinitionRef>,
+}
+
 /// テストの形の決まり(`:test-forms`)— 綴りの型は repo の根からの path の glob(`**` は 0 個以上の段・`/` の無い型は file の名)。
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
 pub struct TestForms {
@@ -345,6 +354,9 @@ pub struct Architecture {
     /// 渡された値を実行せずに読むだけの定義(`:static-readers ["module:名" …]` — 例: 土台の閉じを解析器で読む ClosureCase・open-foundations)。
     /// この呼び出しの引数の中の参照は、DOEFF133・136 の「届く」の辺にしない(値として読むだけで、実行しない — agora-redesign #1279)。
     pub static_readers: Vec<DefinitionRef>,
+    /// 系の値と系を回す入口(`:systems {:carriers [..] :runners [..]}` — agora-redesign #1390)。系の値(defsystem の定義と :carriers の
+    /// 呼び出しの引数)の中から外の世界に届く検は、:runners のどれかにも届く時だけ縁(系の値を読むだけの検は手元)。
+    pub systems: Option<Systems>,
     /// 縁と数える触れる先(`:edge-touches [http db …]` — 書かなければ全部)。agora は file・env を入れない
     /// (一時 dir の file は手元 — agora-redesign #1142 の決定 B)。仕組みは linter・値は repo の宣言。
     pub edge_touches: Option<Vec<WorldTouch>>,
@@ -690,6 +702,7 @@ impl<'a> Parser<'a> {
             raw_io_roots: None,
             edge_mark: None,
             static_readers: Vec::new(),
+            systems: None,
             edge_touches: None,
             test_forms: None,
             retired_words: Vec::new(),
@@ -774,19 +787,23 @@ impl<'a> Parser<'a> {
                         self.problem(value, ":edge-mark は pytest の印の名(英数字と _ — 例 \"real_world\")");
                     }
                 }
-                ":static-readers" => match self.bracket(value) {
-                    Some(items) => {
-                        for item in items {
-                            if let Some(reader) = self.definition_ref(item, ":static-readers") {
-                                if arch.static_readers.contains(&reader) {
-                                    self.problem(item, &format!(":static-readers の {} が 2 度書かれている", reader.spelling()));
-                                } else {
-                                    arch.static_readers.push(reader);
-                                }
+                ":static-readers" => arch.static_readers = self.definition_refs(value, ":static-readers"),
+                ":systems" => match self.brace(value) {
+                    Some(entries) => {
+                        let mut systems = Systems::default();
+                        for (key, list) in self.pairs(&entries) {
+                            match self.text(key) {
+                                ":carriers" => systems.carriers = self.definition_refs(list, ":systems の :carriers"),
+                                ":runners" => systems.runners = self.definition_refs(list, ":systems の :runners"),
+                                other => self.problem(key, &format!(":systems の知らない鍵 {}(:carriers と :runners だけ)", other)),
                             }
                         }
+                        if systems.runners.is_empty() {
+                            self.problem(value, ":systems に :runners が無い(系を回す入口が無いと、系の中から届く検がどれも手元になる)");
+                        }
+                        arch.systems = Some(systems);
                     }
-                    None => self.problem(value, ":static-readers は [\"module:名\" …] の列"),
+                    None => self.problem(value, ":systems は {:carriers [..] :runners [..]} の辞書"),
                 },
                 ":roles" => match self.brace(value) {
                     Some(entries) => {
@@ -850,6 +867,25 @@ impl<'a> Parser<'a> {
                 continue;
             }
             out.push(pattern);
+        }
+        out
+    }
+
+    /// `["module:名" …]` の列を読む(2 度書いた名・読めない綴りは理由を積む)。
+    fn definition_refs(&mut self, value: &Form, what: &str) -> Vec<DefinitionRef> {
+        let Some(items) = self.bracket(value) else {
+            self.problem(value, &format!("{} は [\"module:名\" …] の列", what));
+            return Vec::new();
+        };
+        let mut out: Vec<DefinitionRef> = Vec::new();
+        for item in items {
+            if let Some(found) = self.definition_ref(item, what) {
+                if out.contains(&found) {
+                    self.problem(item, &format!("{} の {} が 2 度書かれている", what, found.spelling()));
+                } else {
+                    out.push(found);
+                }
+            }
         }
         out
     }

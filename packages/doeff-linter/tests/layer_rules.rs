@@ -2693,3 +2693,48 @@ fn blind_declaration_misreadings_are_config_errors() {
     assert!(all.contains("blind a.b:e に :why"), "{}", all);
     assert!(all.contains("blind の no-colon は \"module.path:名\" の綴り"), "{}", all);
 }
+
+/// agora-redesign #1390: 系の値(defsystem の定義と :systems の :carriers の引数)が運ぶ土台は、系を回す入口(:systems の :runners)に
+/// 届く検からだけ届く — 系の値を読むだけの検と、道具で組むだけの検は手元。土台を直に呼ぶ検は今までどおり縁。
+#[test]
+fn a_system_value_reaches_the_world_only_when_a_runner_runs_it() {
+    let files = [
+        ("app/foundation/host.hy", tags("shared", "foundation") + "(defk with-host [body] body)\n"),
+        ("app/billing/core/helpers.hy", tags("billing", "judgment") + "(import app.foundation.host [with-host])\n(defk hosted [body] (with-host body))\n"),
+        (
+            "app/billing/core/systems.hy",
+            tags("billing", "judgment")
+                + "(import app.billing.core.helpers [hosted])\n\
+                   (defsystem billing-system [foundation] (hosted foundation))\n\
+                   (defk part [name foundation] #(name foundation))\n\
+                   (defk run-system [system] system)\n",
+        ),
+        (
+            "app/billing/tests/test_systems.hy",
+            "(import app.billing.core.systems [billing-system part run-system])\n(import app.billing.core.helpers [hosted])\n\
+             (deftest test-reads-the-system (<- s (billing-system 1)) (assert s))\n\
+             (deftest test-runs-the-system (<- s (run-system (billing-system 1))) (assert s))\n\
+             (deftest test-builds-a-part (<- p (part \"a\" hosted)) (assert p))\n\
+             (deftest test-calls-the-foundation (<- n (hosted 1)) (assert n))\n"
+                .to_string(),
+        ),
+    ];
+    let dir = world_repo_with(&files, "", "[\"DOEFF133\"]");
+    let arch_path = dir.path().join("architecture.hy");
+    let text = std::fs::read_to_string(&arch_path).unwrap().replace(
+        ":foundation foundation",
+        ":foundation foundation\n  :edge-mark \"real_world\"\n  :systems {:carriers [\"app.billing.core.systems:part\"] :runners [\"app.billing.core.systems:run-system\"]}",
+    );
+    std::fs::write(&arch_path, text).unwrap();
+    let (_, report) = editor(dir.path());
+    assert_eq!(report["errors"], serde_json::json!([]), "{}", report);
+    assert_eq!(
+        keys(&report, "DOEFF133"),
+        vec![
+            "app/billing/tests/test_systems.hy::DOEFF133::test_calls_the_foundation::edge",
+            "app/billing/tests/test_systems.hy::DOEFF133::test_runs_the_system::edge",
+        ],
+        "{}",
+        report
+    );
+}
