@@ -100,6 +100,9 @@ pub enum ProjectRule {
     /// DOEFF131: architecture.hy の許可名簿(:world-handlers)の外の定義が、名簿の :wraps に挙げた doeff の実 I/O の handler を名指す
     /// (外の世界に触れてよいのは名簿の定義だけ — agora-redesign #1106 の R1)。
     WorldHandlerNamedOutsideList,
+    /// DOEFF132: 許可名簿の定義が実在しない・層 foundation の外に在る(外の世界に触れてよい定義は foundation の層にだけ置く —
+    /// agora-redesign #1106 の R2)。位置は architecture.hy の名簿の要素。
+    WorldHandlerMisplaced,
     /// DOEFF201(意味・Jev): 翻訳の層の定義が業務の判断をしている。
     SemanticBusinessDecision,
     /// DOEFF202(意味・Jev): 判断の層の定義が通信の手段を知っている。
@@ -146,6 +149,7 @@ impl ProjectRule {
         ProjectRule::EffectsDisagreeWithInference,
         ProjectRule::TranslationEmitsIntent,
         ProjectRule::WorldHandlerNamedOutsideList,
+        ProjectRule::WorldHandlerMisplaced,
         ProjectRule::SemanticBusinessDecision,
         ProjectRule::SemanticTransportKnowledge,
         ProjectRule::SemanticPlainCallable,
@@ -187,6 +191,7 @@ impl ProjectRule {
             ProjectRule::EffectsDisagreeWithInference => "DOEFF127",
             ProjectRule::TranslationEmitsIntent => "DOEFF130",
             ProjectRule::WorldHandlerNamedOutsideList => "DOEFF131",
+            ProjectRule::WorldHandlerMisplaced => "DOEFF132",
             ProjectRule::SemanticBusinessDecision => "DOEFF201",
             ProjectRule::SemanticTransportKnowledge => "DOEFF202",
             ProjectRule::SemanticPlainCallable => "DOEFF203",
@@ -208,6 +213,7 @@ impl ProjectRule {
             | ProjectRule::LayerTypesOnly
             | ProjectRule::RawSideEffectDirect
             | ProjectRule::WorldHandlerNamedOutsideList
+            | ProjectRule::WorldHandlerMisplaced
             | ProjectRule::ServiceBoundary
             | ProjectRule::ServiceDependency
             | ProjectRule::TranslationEmitsIntent
@@ -291,7 +297,12 @@ impl ProjectRule {
             | ProjectRule::TranslationEmitsIntent
             | ProjectRule::SemanticBusinessDecision
             | ProjectRule::SemanticTransportKnowledge => true,
-            ProjectRule::UnknownConfigKey | ProjectRule::UnreadableFile | ProjectRule::UndeclaredPlace | ProjectRule::UndeclaredDirectory | ProjectRule::UnusedDependency => false,
+            ProjectRule::UnknownConfigKey
+            | ProjectRule::UnreadableFile
+            | ProjectRule::UndeclaredPlace
+            | ProjectRule::UndeclaredDirectory
+            | ProjectRule::UnusedDependency
+            | ProjectRule::WorldHandlerMisplaced => false,
             ProjectRule::EnvironmentName
             | ProjectRule::DefnForbidden
             | ProjectRule::DeffNeedsReason
@@ -346,6 +357,7 @@ impl ProjectRule {
             ProjectRule::EffectsDisagreeWithInference => ":effects の宣言が推論と合わない",
             ProjectRule::TranslationEmitsIntent => "翻訳の handler が業務の intent を出す",
             ProjectRule::WorldHandlerNamedOutsideList => "許可名簿の外で実 I/O の handler を名指す",
+            ProjectRule::WorldHandlerMisplaced => "許可名簿の定義が無い・foundation の外に在る",
             ProjectRule::SemanticBusinessDecision => "翻訳の層で業務の判断(Jev)",
             ProjectRule::SemanticTransportKnowledge => "判断の層が通信の手段を知る(Jev)",
             ProjectRule::SemanticPlainCallable => "deff の理由が合わない(Jev)",
@@ -366,7 +378,9 @@ impl ProjectRule {
             ProjectRule::ModuleDeclaresTags | ProjectRule::RoleMatchesLayer | ProjectRule::ContextMatchesService => {
                 RuleFamily::Tags
             }
-            ProjectRule::RawSideEffectDirect | ProjectRule::RawSideEffectVia | ProjectRule::WorldHandlerNamedOutsideList => RuleFamily::Raw,
+            ProjectRule::RawSideEffectDirect | ProjectRule::RawSideEffectVia | ProjectRule::WorldHandlerNamedOutsideList | ProjectRule::WorldHandlerMisplaced => {
+                RuleFamily::Raw
+            }
             ProjectRule::EnvironmentName => RuleFamily::Naming,
             ProjectRule::UnknownConfigKey
             | ProjectRule::UnreadableFile
@@ -429,6 +443,7 @@ impl ProjectRule {
             ProjectRule::EffectsDisagreeWithInference => "Effects Disagree With Inference",
             ProjectRule::TranslationEmitsIntent => "Translation Emits Intent",
             ProjectRule::WorldHandlerNamedOutsideList => "World Handler Named Outside The List",
+            ProjectRule::WorldHandlerMisplaced => "World Handler Misplaced",
             ProjectRule::SemanticBusinessDecision => "Business Decision In Translation (Jev)",
             ProjectRule::SemanticTransportKnowledge => "Transport Knowledge In Core (Jev)",
             ProjectRule::SemanticPlainCallable => "Plain Callable Reason (Jev)",
@@ -471,6 +486,7 @@ impl ProjectRule {
             ProjectRule::FieldsJoinedIntoText => "同じ値の 2 つ以上の欄を + か f 文字列で 1 本の文字列につながない",
             ProjectRule::RebuiltAccumulator => "for / while の中で (:= xs (+ xs #(…))) と蓄えを毎回作り直さない",
             ProjectRule::EffectsDisagreeWithInference => "defk の :effects を書いたなら、本体で撃つ呼び((<- …)・(! …))から推論した effect と同じ集合にする — 宣言に無い effect を起こさず、起こさない effect を宣言しない(:effects の無い defk は対象外)",
+            ProjectRule::WorldHandlerMisplaced => "architecture.hy の :world-handlers に挙げた定義は実在し、層 foundation の module に在る(外の世界に触れてよい定義の置き場は foundation だけ)",
             ProjectRule::WorldHandlerNamedOutsideList => "architecture.hy の :world-handlers の :wraps に挙げた doeff の実 I/O の handler(os-file-handler・http-production-handler …)を名指してよいのは、許可名簿の定義(とその中の入れ子の定義)だけ — 値として渡す所(with-handlers の列)も呼び出しも数える",
             ProjectRule::TranslationEmitsIntent => "翻訳の層(設定の handler_layers)の handler — defhandler と [effect k] を受ける関数 — は doeff の汎用の effect だけを出し、業務の intent(設定の intent_layers の型)を出さない — 本体で実行する呼び((<- …)・(! …))を import した defk の先まで辿る",
             ProjectRule::DefkCalledBare => "defk の定義は Program として渡す所((<- …) の右辺・(! …)・(return …)・Program を受ける呼びの引数)だけで呼ぶ — 素で呼ぶと答えではなく Program が返る",
@@ -513,6 +529,7 @@ impl ProjectRule {
             ProjectRule::FieldsJoinedIntoText => "型のある値のまま渡す(欄を文字列に潰さない)— 文にするのは人に見せる境目の 1 か所だけ",
             ProjectRule::RebuiltAccumulator => "蓄えは内包表記(lfor)で 1 度に作る — ループの中で (+ xs #(…)) の作り直しを重ねない",
             ProjectRule::EffectsDisagreeWithInference => ":effects に起こしている effect を足すか、起こしていない effect を消す(推論は handler で受けた effect を引かない — 本体で受けているなら登録簿に載せる)",
+            ProjectRule::WorldHandlerMisplaced => "定義を foundation の層(architecture.hy の :foundation の dir)へ移すか、名簿の綴り(module:名)を実物に合わせる — 要らなくなった定義なら名簿から外す",
             ProjectRule::WorldHandlerNamedOutsideList => "名簿の定義(例 with-agora-process)の下で本体を走らせ、自分では実 I/O の handler を被せない — 新しく外の世界に触れる所が要るなら、その定義を foundation の層に置いて名簿に載せる",
             ProjectRule::TranslationEmitsIntent => "intent を出す業務の流れは層 core の program に置き、翻訳の handler は受けた intent を doeff の汎用の effect(HttpRequest・記録の読み書き・時計 …)へ出し直すだけにする — 経由した defk が intent を出すなら、その defk を呼ばずに汎用の effect を直に使う",
             ProjectRule::DefkCalledBare => "(<- x (f …)) で束ねるか (! (f …)) で答えを受ける — 素の関数の中なら、その関数を defk にして呼び手を Program にする",
@@ -561,6 +578,7 @@ mod tests {
         ("DOEFF127", RuleFamily::Definition),
         ("DOEFF130", RuleFamily::Layer),
         ("DOEFF131", RuleFamily::Raw),
+        ("DOEFF132", RuleFamily::Raw),
         ("DOEFF201", RuleFamily::Jev),
         ("DOEFF202", RuleFamily::Jev),
         ("DOEFF203", RuleFamily::Jev),
