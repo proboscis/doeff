@@ -5026,6 +5026,26 @@ rules:
       include:
         - "**/doeff_adr/**"
 
+  - id: doeff-adr-pytest-collection-internals-single-owner
+    languages:
+      - generic
+    severity: ERROR
+    message: >
+      doeff-adr touches pytest's private collection machinery (Metafunc,
+      FuncFixtureInfo, the session's FixtureManager, _pytest.python) only in
+      doeff_adr/recorded_collection.py (agora-redesign #1551). That module
+      builds items from recorded function names and shares fixture
+      resolutions between siblings; keeping every such dependency in one
+      owner means a pytest upgrade breaks one typed place, and a reviewer
+      can check the "same items as the normal path" argument in one file.
+      Call recorded_collection instead of reaching into pytest here.
+    pattern-regex: '\b(Metafunc|FuncFixtureInfo|_fixturemanager)\b|\b_pytest\.python\b'
+    paths:
+      include:
+        - "**/doeff_adr/**"
+      exclude:
+        - "**/doeff_adr/recorded_collection.py"
+
   - id: doeff-agents-does-not-spell-seat-facing-env
     languages:
       - generic

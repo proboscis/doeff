@@ -4,6 +4,7 @@ import hashlib
 import os
 import sys
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -47,16 +48,44 @@ def loaded_sources(root: Path) -> SourceSnapshot:
     return SourceSnapshot(tuple(result))
 
 
+@dataclass(frozen=True)
+class ProviderFound:
+    """macro の提供元の module の今の file の sha256(読めなければ None — どの記録の digest とも合わない)。"""
+
+    digest: str | None
+
+
+@dataclass(frozen=True)
+class ProviderMissing:
+    """macro の提供元の module の file が見つからない。"""
+
+
+ProviderState = ProviderFound | ProviderMissing
+
+
 @dataclass
 class DependencyChecks:
-    """収集1回の観測。重複した依存fileはstatとhashの結果を共有する。"""
+    """収集1回の観測。重複した依存fileはstatとhashの結果を共有する。
+
+    macro の提供元も同じく、module 名ごとに 1 度だけ調べる — 記録の file の多く(agora では 420 file)が同じ 9 個ほどの
+    提供元を指し、file ごとに調べ直すと 3,700 回の stat と path の生成になっていた(agora-redesign #1551)。
+    """
 
     _mut_files: dict[str, SourceDependency | None] = field(default_factory=dict)
     _mut_hashes: dict[str, str] = field(default_factory=dict)
+    _mut_providers: dict[str, ProviderState] = field(default_factory=dict)
     _mut_stat_hits: int = 0
     _mut_checks: int = 0
     _mut_rebuilds: int = 0
     _mut_seconds: float = 0.0
+
+    def macro_provider(self, module: str, find: Callable[[str], ProviderState]) -> ProviderState:
+        """macro の提供元 ``module`` の今の状態。調べ方(``find``)は記録のキャッシュの側が持つ 1 つだけを使う。"""
+        known = self._mut_providers.get(module)
+        if known is None:
+            known = find(module)
+            self._mut_providers[module] = known
+        return known
 
     def verify(self, root: Path, saved: tuple[SourceDependency, ...]) -> SourceSnapshot | str:
         started: float = time.perf_counter()
@@ -67,13 +96,15 @@ class DependencyChecks:
 
     def _verify(self, root: Path, saved: tuple[SourceDependency, ...]) -> SourceSnapshot | str:
         refreshed: list[SourceDependency] = []
+        root_text: str = str(root)
         for dependency in saved:
-            path: Path = root / dependency.path
-            key: str = str(path)
+            # 鍵は文字列で作る — 記録の path は rootdir からの正規の posix の相対 path なので ``str(root / path)`` と
+            # 同じ文字列になる。Path を作って文字列へ戻すのを照合ごとにしない(420 file で 1 万回近い — agora-redesign #1551)。
+            key: str = os.path.join(root_text, dependency.path)
             self._mut_checks += 1
             if key not in self._mut_files:
                 try:
-                    self._mut_files[key] = snapshot(path, dependency.path, "")
+                    self._mut_files[key] = snapshot(Path(key), dependency.path, "")
                 except OSError:
                     self._mut_files[key] = None
             current: SourceDependency | None = self._mut_files[key]
@@ -87,7 +118,7 @@ class DependencyChecks:
                 refreshed.append(dependency)
                 continue
             if key not in self._mut_hashes:
-                self._mut_hashes[key] = hashlib.sha256(path.read_bytes()).hexdigest()
+                self._mut_hashes[key] = hashlib.sha256(Path(key).read_bytes()).hexdigest()
             digest: str = self._mut_hashes[key]
             if digest != dependency.digest:
                 self._mut_rebuilds += 1

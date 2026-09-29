@@ -58,6 +58,7 @@
     "doctrl-variants-require-approval",
     "doeff-adr-no-git-metadata-anchor",
     "doeff-adr-no-silent-empty-scan-verdict",
+    "doeff-adr-pytest-collection-internals-single-owner",
     "doeff-agentd-retired-crate-reference-forbidden",
     "doeff-agentic-no-legacy-intercept",
     "doeff-agents-adopt-must-not-mutate-substrate",

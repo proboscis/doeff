@@ -21,7 +21,7 @@ def _type_checking_imports() -> set[str]:
             case ast.If(test=ast.Name(id="TYPE_CHECKING"), body=body):
                 for statement in body:
                     match statement:
-                        case ast.ImportFrom(module="registry", names=aliases):
+                        case ast.ImportFrom(module="doeff_adr.registry", names=aliases):
                             names.update(alias.asname or alias.name for alias in aliases)
                         case _:
                             pass
@@ -36,15 +36,15 @@ def _run_python(code: str) -> subprocess.CompletedProcess[str]:
 
 
 def test_the_type_checked_names_are_the_runtime_names() -> None:
-    """型の検査器に見せる名(TYPE_CHECKING の import)と、実行の時に引ける名(``__all__``)が同じ。"""
-    assert _type_checking_imports() == set(doeff_adr.__all__) - {"doeff_hy"}
-    assert set(dir(doeff_adr)) >= set(doeff_adr.__all__)
+    """型の検査器に見せる名(TYPE_CHECKING の import)と、実行の時に引ける名(``_REGISTRY_EXPORTS``)が同じ。"""
+    assert _type_checking_imports() == set(doeff_adr._REGISTRY_EXPORTS)
+    assert set(dir(doeff_adr)) >= set(doeff_adr._REGISTRY_EXPORTS)
 
 
 def test_every_public_name_is_the_registry_value() -> None:
     """公開の名の値は registry の物そのもの(写しや包みではない)。"""
     registry_names = vars(doeff_adr.registry)
-    for name in set(doeff_adr.__all__) - {"doeff_hy"}:
+    for name in doeff_adr._REGISTRY_EXPORTS:
         assert getattr(doeff_adr, name) is registry_names[name]
         # 1 度引いた名は package の普通の属性になる(2 回目から __getattr__ を通らない)
         assert vars(doeff_adr)[name] is registry_names[name]

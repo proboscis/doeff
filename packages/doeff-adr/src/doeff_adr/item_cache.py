@@ -28,6 +28,9 @@ from doeff_hy_bytecode_guard import file_sha256, macro_dependencies
 
 from doeff_adr.source_dependencies import (
     DependencyChecks,
+    ProviderFound,
+    ProviderMissing,
+    ProviderState,
     SourceDependency,
     SourceSnapshot,
     loaded_sources,
@@ -135,6 +138,14 @@ def _module_file(name: str) -> Path | None:
     return Path(origin)
 
 
+def _provider_state(name: str) -> ProviderState:
+    """macro の提供元の今の file と sha256(``DependencyChecks.macro_provider`` が収集 1 回の間 module 名ごとに覚える)。"""
+    path = _module_file(name)
+    if path is None:
+        return ProviderMissing()
+    return ProviderFound(file_sha256(str(path)))
+
+
 def _parse_entry(text: str) -> CacheEntry:
     """キャッシュの file の JSON を型へ解く(JSON の境界はここだけ)。形が違えば MalformedCacheEntry。"""
     try:
@@ -200,11 +211,13 @@ def read_cached(source: Path, cache_dir: Path, root: Path, checks: DependencyChe
     if entry.format != CACHE_FORMAT:
         return CacheMiss(f"キャッシュの形の版が違う({entry.format} ≠ {CACHE_FORMAT})")
     for dependency in entry.deps:
-        path = _module_file(dependency.module)
-        if path is None:
-            return CacheMiss(f"macro の提供元 {dependency.module} が見つからない")
-        if file_sha256(str(path)) != dependency.digest:
-            return CacheMiss(f"macro の提供元 {dependency.module} が変わった")
+        match checks.macro_provider(dependency.module, _provider_state):
+            case ProviderMissing():
+                return CacheMiss(f"macro の提供元 {dependency.module} が見つからない")
+            case ProviderFound(digest) if digest != dependency.digest:
+                return CacheMiss(f"macro の提供元 {dependency.module} が変わった")
+            case ProviderFound():
+                pass
     return _read_runtime_entry(entry_path, entry, source, root, checks)
 
 

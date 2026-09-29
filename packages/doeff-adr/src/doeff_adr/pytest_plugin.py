@@ -11,7 +11,7 @@ import re
 import sys
 import types
 import warnings
-from collections.abc import Generator, Sequence
+from collections.abc import Generator, Iterable, Iterator, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
@@ -22,6 +22,7 @@ from hy.importer import HyLoader
 
 from doeff_adr.item_cache import DEFAULT_CACHE_DIR, forget_cached, write_cached
 from doeff_adr.lazy_collection import (
+    CollectionPlan,
     Indexed,
     NeedsImport,
     RecordMismatch,
@@ -32,6 +33,12 @@ from doeff_adr.lazy_collection import (
     swap_in_real_function,
     swap_in_real_module_marks,
     verify_records,
+)
+from doeff_adr.recorded_collection import (
+    RecordedModuleCollection,
+    collect_recorded,
+    generate_functions,
+    known_collection_hooks,
 )
 from doeff_adr.source_dependencies import DependencyChecks
 
@@ -125,6 +132,9 @@ _WIRING_VERDICT_KEY = pytest.StashKey[WiringVerdict]()
 _INDEXED_FILES_KEY = pytest.StashKey[list[Path]]()
 _IMPORTED_FILES_KEY = pytest.StashKey[list[tuple[Path, str]]]()
 _DEPENDENCY_CHECKS_KEY = pytest.StashKey[DependencyChecks]()
+# 記録から集めた file のうち、未知の plugin の hook が収集に加わるので pytest の Module の汎用の収集に回した file
+# (agora-redesign #1551 — 記録の関数の名から item を作る近道を使わなかった物。報告に出して経路を見えるようにする)。
+_GENERIC_FILES_KEY = pytest.StashKey[list[Path]]()
 
 
 class DoeffAdrHookspecs:
@@ -256,6 +266,10 @@ def pytest_report_collectionfinish(config: pytest.Config) -> list[str]:
     root = Path(config.rootpath)
     lines = [f"doeff-adr: 記録から収集 {len(indexed)} file・収集で import {len(imported)} file"]
     lines += [f"  import: {_relative_posix(path, root)} — {reason}" for path, reason in imported]
+    generic = config.stash.get(_GENERIC_FILES_KEY, [])
+    if generic:
+        lines.append(f"doeff-adr: 記録から収集した file のうち、未知の plugin の hook があり pytest の汎用の収集に回した {len(generic)} file")
+        lines += [f"  generic: {_relative_posix(path, root)}" for path in generic]
     checks = config.stash.get(_DEPENDENCY_CHECKS_KEY, None)
     if checks is not None:
         lines.append(checks.report())
@@ -264,7 +278,13 @@ def pytest_report_collectionfinish(config: pytest.Config) -> list[str]:
 
 @pytest.hookimpl(tryfirst=True)
 def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
-    config.stash[_COLLECTED_FILES_KEY] = frozenset(Path(item.path).resolve() for item in items)
+    config.stash[_COLLECTED_FILES_KEY] = _resolved_item_files(items)
+
+
+def _resolved_item_files(items: Sequence[pytest.Item]) -> frozenset[Path]:
+    """item の file の実の path の集まり。symlink の解決(realpath)は file ごとに 1 回 — item ごとに解くと、
+    1 file に 7 本ほどの item が並ぶので同じ解決を繰り返していた(agora-redesign #1551)。"""
+    return frozenset(path.resolve() for path in {item.path for item in items})
 
 
 def pytest_collection_finish(session: pytest.Session) -> None:
@@ -327,20 +347,31 @@ class DoeffAdrHyFile(pytest.Module):
     収集で import しない(agora-redesign #1211 / #1223): item を作る macro が書いた記録で説明できる file は、記録から
     作った仮の module を Module の収集に渡し、module の import は item の setup まで待つ(``lazy_collection``)。
     記録で説明できない file だけ、今までどおり収集で import する。
+
+    記録で説明できる file の item は、記録の関数の名から作る(``recorded_collection`` — agora-redesign #1551)。
+    収集に未知の plugin の hook が加わる時は、仮の module を pytest の Module の収集にそのまま渡す。
     """
 
     _mut_real_module: types.ModuleType | None = None
     # 収集の中で import する理由(キャッシュに無い file)— import の直後の保存がこれを見る。setup の import では None。
     _mut_import_reason: str | None = None
+    # この file をどう収集するか(_getobj が決める — 記録から / import して)。
+    _mut_plan: CollectionPlan | None = None
+    # 記録から item を作っている ``collect`` の間だけの状態(_genfunctions がこれを見る)。
+    _mut_recorded: RecordedModuleCollection | None = None
 
     def _getobj(self) -> types.ModuleType:
-        base = _import_base_for_path(self.path.resolve(), Path(self.config.rootpath).resolve())
-        module_name = _module_name_for_path(self.path.resolve(), base)
+        # source と rootdir の実の path は 1 回ずつ解く(symlink の解決は重い — agora-redesign #1551)。
+        source = self.path.resolve()
+        root = Path(self.config.rootpath).resolve()
+        module_name = _module_name_for_path(source, _import_base_for_path(source, root))
         checks = self.config.stash.setdefault(_DEPENDENCY_CHECKS_KEY, DependencyChecks())
-        match plan_collection(self.path.resolve(), items_cache_dir(self.config), Path(self.config.rootpath).resolve(), checks):
+        plan = plan_collection(source, items_cache_dir(self.config), root, checks)
+        self._mut_plan = plan
+        match plan:
             case Indexed(records, fixtures):
                 self.config.stash.setdefault(_INDEXED_FILES_KEY, []).append(self.path)
-                return stub_module(records, fixtures, self.path.resolve(), module_name)
+                return stub_module(records, fixtures, source, module_name)
             case NeedsImport(reason):
                 # import が途中で終わる file(module ごと skip する等)も報告に載せるため、import の前に積む。
                 self.config.stash.setdefault(_IMPORTED_FILES_KEY, []).append((self.path, reason))
@@ -348,6 +379,30 @@ class DoeffAdrHyFile(pytest.Module):
                 module = self.config.hook.pytest_doeff_import_hy_module(collector=self)
                 self._mut_real_module = module
                 return module
+
+    def collect(self) -> Iterable[pytest.Item | pytest.Collector]:
+        """記録で説明できる file は記録の関数の名から item を作り、それ以外は pytest の Module の収集に任せる。"""
+        module = self.obj
+        plan = self._mut_plan
+        if not isinstance(plan, Indexed):
+            return super().collect()
+        hooks = known_collection_hooks(self)
+        if hooks is None:
+            self.config.stash.setdefault(_GENERIC_FILES_KEY, []).append(self.path)
+            return super().collect()
+        self._mut_recorded = RecordedModuleCollection.from_records(plan.records, hooks)
+        try:
+            return collect_recorded(self, module, self._mut_recorded)
+        finally:
+            self._mut_recorded = None
+
+    def _genfunctions(self, name: str, funcobj: object) -> Iterator[pytest.Function]:
+        """関数 1 つの item の生成(``pytest_pycollect_makeitem`` の既定の実装が呼ぶ)。記録から item を作っている
+        間は、fixture の解決を同じ形の兄弟と共有する。"""
+        recorded = self._mut_recorded
+        if recorded is None:
+            return super()._genfunctions(name, funcobj)
+        return generate_functions(self, name, funcobj, recorded)
 
     def after_import(self, module: types.ModuleType) -> None:
         """収集の中で import した直後に、記録が実物を全部説明するなら保存し、説明しないなら理由を報告に足す。"""
@@ -485,7 +540,7 @@ def _collected_files(session: pytest.Session) -> frozenset[Path]:
     snapshot = session.config.stash.get(_COLLECTED_FILES_KEY, None)
     if snapshot is not None:
         return snapshot
-    return frozenset(Path(item.path).resolve() for item in session.items)
+    return _resolved_item_files(session.items)
 
 
 def _wiring_verdict(
@@ -527,6 +582,9 @@ def _discover_executable_adrs(
             and not any(fnmatch.fnmatch(name, pattern) for pattern in norecurse)
         )
         for file_name in sorted(file_names):
+            # .hy でない file(走査の大半)は Path を作る前に外す(agora-redesign #1551)。
+            if not file_name.endswith(".hy"):
+                continue
             path = Path(directory, file_name)
             if path.suffix == ".hy" and _matches_file_patterns(path, root, patterns):
                 executable_adrs.add(path.resolve())
@@ -563,7 +621,16 @@ def _relative_posix(path: Path, root: Path) -> str:
     収集と wiring の走査は rootdir の下の path を 1 file ずつ渡すので、文字の上で rootdir の下にあればそのまま
     相対にする。symlink の解決(realpath)は外れた時だけ — 毎回解決すると、収集の 1 回で 1 万回近く呼ばれて
     収集の時間の 1 割を占めていた(agora-redesign #1227 の実測)。
+
+    文字の上で下にあるかは、まず文字列の頭で見る — ``is_relative_to`` / ``relative_to`` は path を部分に分けて
+    作り直すので、収集と wiring の走査の 2,500 回ほどで目立っていた(agora-redesign #1551)。文字列の頭が合わない
+    時(大小文字だけ違う等)は、今までの部分の比べと実の path の解決へ回す。
     """
+    text = path.as_posix()
+    root_text = root.as_posix()
+    prefix = root_text if root_text.endswith("/") else root_text + "/"
+    if text.startswith(prefix):
+        return text[len(prefix):]
     if path.is_relative_to(root):
         return path.relative_to(root).as_posix()
     try:
