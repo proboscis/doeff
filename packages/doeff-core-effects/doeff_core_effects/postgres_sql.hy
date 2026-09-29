@@ -5,6 +5,10 @@
 ;;;     止める時に close する。要求 1 つ = 接続 1 本(doeff-records の置き場もこの貸し出しを使う — 同時の要求の transaction を 1 本の接続で
 ;;;     混ぜない)。接続は自動 commit・json / jsonb の欄は text で読む(値の正規化の決まり)。切れた接続と transaction の途中で返った接続は
 ;;;     返す時に捨てる / rollback する。
+;;;   - 接続の上限(PostgresTimeouts・agora-redesign #1479): 接続は開く時の上限・TCP の keepalive・送った bytes の返事を待つ上限
+;;;     (tcp_user_timeout)・文の上限(statement_timeout)を持つ。DB の pod が入れ替わると空きの接続は相手の居ない TCP のまま残り、上限が
+;;;     無いと次の文が kernel の再送の限り(数十分)固まって許可を持ち続ける — 上限があれば文は OperationalError で落ち、SqlUnreachable を
+;;;     答え、返す時に切れた接続として捨てられ、次の借りが新しく張る。
 ;;;   - 引数は中立の `:name` を `%(name)s` へ書き換え、文の `%` は `%%` にする(postgres-statement)。
 ;;;   - 失敗: engine の SQLSTATE をそのまま SqlFailed に。SQLSTATE の無い driver の誤りは類の表(DRIVER-CLASS-SQLSTATES — agora-controllers
 ;;;     services/record/handlers_wire.hy と同じ表)で類の code に。SQLSTATE の無い OperationalError / InterfaceError・接続できない時・
@@ -57,6 +61,23 @@
   (setv dsn (field :repr False)))
 
 
+(defrecord PostgresTimeouts
+  "接続の上限(頭の註): 開く時(秒)・keepalive の最初の問いまでの無音(秒)・問いの間隔(秒)・答えの無い問いの数・送った bytes の返事を
+   待つ上限(ミリ秒)・文の上限(ミリ秒 — None = 付けない)。"
+  (#^ int connect-seconds)
+  (#^ int keepalive-idle-seconds)
+  (#^ int keepalive-interval-seconds)
+  (#^ int keepalive-count)
+  (#^ int unacknowledged-milliseconds)
+  (#^ (| int None) statement-milliseconds))
+
+
+;; 既定の上限: 死んだ相手は keepalive で 10 + 5 × 3 = 25 秒・文を送った後は 15 秒で見つかる。文の上限 60 秒は記録の service の文(短い
+;; 読み書きと、錠を待つ表の用意)より十分長い。
+(val DEFAULT-TIMEOUTS (PostgresTimeouts :connect-seconds 5 :keepalive-idle-seconds 10 :keepalive-interval-seconds 5 :keepalive-count 3
+                                        :unacknowledged-milliseconds 15000 :statement-milliseconds 60000))
+
+
 (defrecord PostgresStatement
   "psycopg へ渡す形に書き換えた文(text = `%(name)s` の文・params = 引数 — dict にするのは driver を呼ぶ 1 点だけ)。"
   (#^ str text)
@@ -65,11 +86,12 @@
 
 (defclass PostgresConnections []
   "接続の貸し出し(頭の註)。資源なので値の型ではない(中身を書き換え、同一性で扱う)。size = database ごとに同時に貸す接続の上限
-   (pooled-postgres-sql-handler が scheduler の許可の数として読む)。"
+   (pooled-postgres-sql-handler が scheduler の許可の数として読む)・timeouts = 開く接続に付ける上限。"
 
-  (defn __init__ [self #^ tuple databases * [size DEFAULT-POOL-SIZE]]  ; defk にできない: 資源の class の初期化
-    "database の宣言の列と、database ごとに同時に貸す接続の上限を受けるため。"
+  (defn __init__ [self #^ tuple databases * [size DEFAULT-POOL-SIZE] [timeouts DEFAULT-TIMEOUTS]]  ; defk にできない: 資源の class の初期化
+    "database の宣言の列と、database ごとに同時に貸す接続の上限と、接続の上限を受けるため。"
     (setv self.size size
+          self.timeouts timeouts
           self.databases (dfor d databases d.name d)
           self.idle (dfor d databases d.name (Queue))
           self.permits (dfor d databases d.name (threading.BoundedSemaphore size))))
@@ -77,6 +99,19 @@
   (defn names [self]  ; defk にできない: 答え手の番(:when)で呼ぶ読み(Program を返すと真偽にならない)
     "この貸し出しが答える database の名の並びを読むため。"
     (tuple self.databases))
+
+  (defn connection-options [self]  ; defk にできない: 接続を開く thread の中で読む psycopg への引数(Program を返すと psycopg へ渡せない)
+    "開く接続に付ける上限を libpq の接続の parameter の写像で読むため(connect の keyword に渡す — DSN に同じ名が在ればこちらが勝つ)。"
+    (setv timeouts self.timeouts
+          options {"connect_timeout" timeouts.connect-seconds
+                   "keepalives" 1
+                   "keepalives_idle" timeouts.keepalive-idle-seconds
+                   "keepalives_interval" timeouts.keepalive-interval-seconds
+                   "keepalives_count" timeouts.keepalive-count
+                   "tcp_user_timeout" timeouts.unacknowledged-milliseconds})
+    (when (is-not timeouts.statement-milliseconds None)
+      (setv (get options "options") (.format "-c statement_timeout={}" timeouts.statement-milliseconds)))
+    options)
 
   (defn acquire [self #^ str name]  ; defk にできない: 資源の貸し出し(thread の間で blocking に待つ)
     "接続を 1 本借りるため(空きが無ければ開く・上限なら返されるまで待つ)。開けない時は psycopg の例外を通す。"
@@ -87,7 +122,8 @@
       (try
         (.get-nowait (get self.idle name))
         (except [Empty]
-          (setv connection (psycopg.connect (. (get self.databases name) dsn) :autocommit True))
+          (setv connection (psycopg.connect (. (get self.databases name) dsn) :autocommit True
+                                            #** (.connection-options self)))
           (.register-loader connection.adapters "json" TextLoader)
           (.register-loader connection.adapters "jsonb" TextLoader)
           connection))

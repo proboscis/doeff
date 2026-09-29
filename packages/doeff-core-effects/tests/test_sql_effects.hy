@@ -14,6 +14,7 @@
 (import importlib.util)
 (import threading)
 (import time)
+(import socket)
 (import concurrent.futures [ThreadPoolExecutor])
 (import dataclasses [dataclass])
 (import decimal [Decimal])
@@ -24,7 +25,7 @@
                                         normalized-value])
 (import doeff_core_effects.sqlite_sql [sqlite-sql-handler sqlite-statement sqlite-failure])
 (import doeff_core_effects.postgres_sql [postgres-sql-handler postgres-statement postgres-insert-statement postgres-failure
-                                         postgres-schema-statements PostgresDatabase PostgresConnections])
+                                         postgres-schema-statements PostgresDatabase PostgresConnections PostgresTimeouts])
 (import doeff_core_effects.pooled_postgres_sql [pooled-postgres-sql-handler])
 (import doeff_core_effects.scheduler [CreateExternalPromise Wait Spawn Gather Cancel TaskCancelledError])
 (import doeff_core_effects.clickhouse_http_sql [clickhouse-http-sql-handler clickhouse-statement clickhouse-query-request
@@ -34,6 +35,8 @@
 (val DB "store")
 (val POSTGRES-DSN (os.environ.get "DOEFF_SQL_TEST_POSTGRES_DSN"))
 (val CLICKHOUSE-URL (os.environ.get "DOEFF_SQL_TEST_CLICKHOUSE_URL"))
+;; 実 PG の検の skip(DSN か psycopg が無い)。
+(val POOLED-SKIP (or (is POSTGRES-DSN None) (is (importlib.util.find-spec "psycopg") None)))
 
 ;; 検の表: 主鍵つきの行の表と、一意の索引を持つ表。
 (val ITEMS (SqlTable :name "items"
@@ -375,6 +378,62 @@
     (assert (= answer (SqlFailed :sqlstate sqlstate :reason "engine")) #(sqlstate answer))))
 
 
+;; --- 接続の上限(agora-redesign #1479)------------------------------------------------------------------------------------------
+;; DB の pod が入れ替わった後、上限の無い接続は相手の居ない TCP のまま文を待ち続け、記録の service が 44 分固まった。
+
+(deftest test-postgres-connections-carry-the-timeouts
+  ;; 既定の貸し出しは、開く接続に接続・keepalive・送った bytes の返事・文の上限を付ける。
+  (val connections (PostgresConnections #((PostgresDatabase :name DB :dsn ""))))
+  (assert (= (.connection-options connections)
+             {"connect_timeout" 5 "keepalives" 1 "keepalives_idle" 10 "keepalives_interval" 5 "keepalives_count" 3
+              "tcp_user_timeout" 15000 "options" "-c statement_timeout=60000"})
+          (.connection-options connections))
+  ;; 文の上限を付けない宣言(None)では options を渡さない(DSN の options を消さない)。
+  (val unbounded (PostgresConnections #((PostgresDatabase :name DB :dsn ""))
+                                      :timeouts (PostgresTimeouts :connect-seconds 2 :keepalive-idle-seconds 1 :keepalive-interval-seconds 1
+                                                                  :keepalive-count 1 :unacknowledged-milliseconds 900
+                                                                  :statement-milliseconds None)))
+  (assert (not-in "options" (.connection-options unbounded)))
+  (assert (= (get (.connection-options unbounded) "tcp_user_timeout") 900)))
+
+
+(val PSYCOPG-SKIP (is (importlib.util.find-spec "psycopg") None))
+
+
+(deftest test-postgres-connect-to-a-silent-server-answers-unreachable
+  {:skip-if PSYCOPG-SKIP :skip-reason "psycopg が無い"}
+  ;; 接続を受けるだけで何も答えない口(DB の pod の入れ替えの最中と同じ形 — TCP の握手は kernel が済ませ、PostgreSQL の起動の答えが来ない)へ
+  ;; 開くと、上限(libpq の下限 2 秒)で SqlUnreachable が返る。反例 = 上限の無い接続は、口が閉じるまで答えを待ち続ける。
+  (val silent (socket.create-server #("127.0.0.1" 0)))
+  (val port (get (.getsockname silent) 1))
+  (val connections (PostgresConnections #((PostgresDatabase :name DB :dsn (.format "host=127.0.0.1 port={} dbname=x user=x" port)))
+                                        :timeouts (PostgresTimeouts :connect-seconds 2 :keepalive-idle-seconds 1
+                                                                    :keepalive-interval-seconds 1 :keepalive-count 1
+                                                                    :unacknowledged-milliseconds 1000 :statement-milliseconds 1000)))
+  (val started (time.monotonic))
+  (try
+    (<- answer (with-handler [(postgres-sql-handler connections)] (SqlQuery DB "SELECT 1" #())))
+    (finally (.close connections) (.close silent)))
+  (val elapsed (- (time.monotonic) started))
+  (assert (isinstance answer SqlUnreachable) answer)
+  (assert (< elapsed 6) elapsed))
+
+
+(deftest test-postgres-cuts-a-statement-at-the-statement-timeout
+  {:skip-if POOLED-SKIP :skip-reason "DOEFF_SQL_TEST_POSTGRES_DSN が無い(か psycopg が無い)"}
+  ;; 実 PG: 文の上限(0.5 秒)を超えた文は engine が取り消し(57014)、SqlFailed で返る。接続は返されて次の文が答える。
+  (val connections (PostgresConnections #((PostgresDatabase :name DB :dsn (or POSTGRES-DSN "")))
+                                        :timeouts (PostgresTimeouts :connect-seconds 5 :keepalive-idle-seconds 10
+                                                                    :keepalive-interval-seconds 5 :keepalive-count 3
+                                                                    :unacknowledged-milliseconds 15000 :statement-milliseconds 500)))
+  (try
+    (<- slow (with-handler [(postgres-sql-handler connections)] (SqlQuery DB "SELECT pg_sleep(3)" #())))
+    (<- next (with-handler [(postgres-sql-handler connections)] (SqlQuery DB "SELECT 1" #())))
+    (finally (.close connections)))
+  (assert (= slow.sqlstate "57014") slow)
+  (assert (= (get next.rows 0 0) 1) next))
+
+
 (deftest test-postgres-draws-the-schema-declaration
   (<- statements (postgres-schema-statements #(ITEMS)))
   (assert (= statements
@@ -614,8 +673,6 @@
   (<- counted SqlRows (SqlQuery DB "SELECT count(*) FROM pooled_cancel" #()))
   #(cancelled (get counted.rows 0 0)))
 
-
-(val POOLED-SKIP (or (is POSTGRES-DSN None) (is (importlib.util.find-spec "psycopg") None)))
 
 
 (deftest test-pooled-postgres-answers-like-the-sqlite-handler
