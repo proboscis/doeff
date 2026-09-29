@@ -2291,3 +2291,34 @@ fn retired_declaration_misreadings_are_config_errors() {
     assert!(all.contains("retired-words c に :files が無い"), "{}", all);
     assert!(all.contains(":in は lines か names"), "{}", all);
 }
+
+/// agora-redesign #1318: 記録の client の実 HTTP は transport の側で数える — 目録は BlockingTransport を http とし、http-records-handler
+/// そのものは載せない。BlockingTransport で endpoint を作る定義に届く検は縁、EffectTransport だけの検は手元。
+#[test]
+fn records_client_is_counted_by_its_transport() {
+    let files = [
+        ("app/foundation/host.hy", tags("shared", "foundation") + "(defk with-host [body] body)\n"),
+        (
+            "app/billing/core/ports.hy",
+            tags("billing", "judgment")
+                + "(import doeff_records.http_client [BlockingTransport EffectTransport RecordsEndpoint http-records-handler])\n\
+                   (defk blocking-port [url] (http-records-handler (RecordsEndpoint url \"t\" :transport (BlockingTransport))))\n\
+                   (defk effect-port [url] (http-records-handler (RecordsEndpoint url \"t\" :transport (EffectTransport))))\n",
+        ),
+        (
+            "app/billing/tests/test_ports.hy",
+            "(import app.billing.core.ports [blocking-port effect-port])\n\
+             (deftest test-blocking-port-unmarked (<- h (blocking-port \"http://x\")) (assert h))\n\
+             (deftest test-effect-port-unmarked (<- h (effect-port \"http://x\")) (assert h))\n"
+                .to_string(),
+        ),
+    ];
+    let dir = world_repo_with(&files, "", "[\"DOEFF133\"]");
+    let arch_path = dir.path().join("architecture.hy");
+    let text = std::fs::read_to_string(&arch_path).unwrap().replace(":foundation foundation", ":foundation foundation\n  :edge-mark \"real_world\"");
+    std::fs::write(&arch_path, text).unwrap();
+    let (_, report) = editor(dir.path());
+    assert_eq!(keys(&report, "DOEFF133"), vec!["app/billing/tests/test_ports.hy::DOEFF133::test_blocking_port_unmarked::edge"], "{}", report);
+    let found = violation(&report, "app/billing/tests/test_ports.hy::DOEFF133::test_blocking_port_unmarked::edge");
+    assert!(found["message"].as_str().unwrap().contains("BlockingTransport"), "{}", found["message"]);
+}

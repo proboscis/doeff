@@ -6,7 +6,7 @@
   "doeff_cluster.handlers:status-file": "file system の effect(MakeDirectory・WriteText)を出し直すだけ — 実 I/O は外側の os-file-handler",
   "doeff_cluster.record_store_handlers:record-files": "file system の effect を出し直すだけ — 実 I/O は外側の os-file-handler(record_store_main.hy)",
   "doeff_cluster.code_prepare:files-tree": "木の effect を file system の effect へ出し直すだけ(模擬の世界では memory-file-handler が答える)",
-  "doeff_cluster.record_handlers:effect-recorder":"sink が注入(MemorySink なら値だけ)— 実 I/O は recording-handler が組む sink",
+  "doeff_cluster.record_handlers:effect-recorder": "sink が注入(MemorySink なら値だけ)— 実 I/O は recording-handler が組む sink",
   "doeff_records.pg:pg-records-handler": "SqlQuery の出し直しだけ(実 DB は postgres-sql-handler)",
   "doeff_core_effects.scheduler:scheduled": "共同の scheduler(模擬を含む全部の Program の下に敷く)— 環境変数は実装の選択・time.monotonic は停滞の見張りだけで、外の世界から effect に答えない"
  },
@@ -309,18 +309,11 @@
    "why": "組み立て — 上の列そのもの"
   },
   {
-   "handler": "doeff_records.http_client:http-records-handler",
+   "handler": "doeff_records.http_client:BlockingTransport",
    "touches": [
     "http"
    ],
-   "why": "既定の BlockingTransport が urllib.request.urlopen(EffectTransport なら HttpRequest を出すだけ)"
-  },
-  {
-   "handler": "doeff_records.http_client:http-table-records-handler",
-   "touches": [
-    "http"
-   ],
-   "why": "上と同じ(表で絞るだけ)"
+   "why": "要求を呼び手の thread で urllib.request.urlopen に撃つ送り方(作る = 実 HTTP を選ぶ)。記録の client の handler(http-records-handler・http-table-records-handler)は endpoint の transport に従うだけで、EffectTransport なら HttpRequest を出すだけ — 触れる先は transport の側で数える(agora-redesign #1318)"
   },
   {
    "handler": "doeff_agents.io_handlers:driver-io-handler",
