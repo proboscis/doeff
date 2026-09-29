@@ -14,7 +14,7 @@ import warnings
 from collections.abc import Generator, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Literal
+from typing import Literal
 
 import doeff_hy  # noqa: F401 - registers Hy import hooks
 import pytest
@@ -222,8 +222,8 @@ def pytest_addoption(parser: pytest.Parser) -> None:
     )
 
 
-def pytest_collect_file(file_path: Any, parent: pytest.Collector) -> pytest.Collector | None:
-    path = _coerce_path(file_path)
+def pytest_collect_file(file_path: Path, parent: pytest.Collector) -> pytest.Collector | None:
+    path = file_path
     if path.suffix != ".hy":
         return None
     if not _should_collect_hy_file(path, parent.config):
@@ -333,7 +333,7 @@ class DoeffAdrHyFile(pytest.Module):
     # 収集の中で import する理由(キャッシュに無い file)— import の直後の保存がこれを見る。setup の import では None。
     _mut_import_reason: str | None = None
 
-    def _getobj(self) -> Any:
+    def _getobj(self) -> types.ModuleType:
         base = _import_base_for_path(self.path.resolve(), Path(self.config.rootpath).resolve())
         module_name = _module_name_for_path(self.path.resolve(), base)
         checks = self.config.stash.setdefault(_DEPENDENCY_CHECKS_KEY, DependencyChecks())
@@ -390,15 +390,6 @@ def items_cache_dir(config: pytest.Config) -> Path:
         return DEFAULT_CACHE_DIR
     path = Path(configured).expanduser()
     return path if path.is_absolute() else Path(config.rootpath) / path
-
-
-def _coerce_path(path: Any) -> Path:
-    if isinstance(path, Path):
-        return path
-    strpath = getattr(path, "strpath", None)
-    if strpath is not None:
-        return Path(strpath)
-    return Path(str(path))
 
 
 def _should_collect_hy_file(path: Path, config: pytest.Config) -> bool:
@@ -581,7 +572,7 @@ def _relative_posix(path: Path, root: Path) -> str:
         return path.as_posix()
 
 
-def _import_hy_file(path: Path, root: Path) -> Any:
+def _import_hy_file(path: Path, root: Path) -> types.ModuleType:
     root = _import_base_for_path(path.resolve(), root.resolve())
     path = path.resolve()
     module_name = _module_name_for_path(path, root)

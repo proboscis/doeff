@@ -21,7 +21,6 @@ import types
 from collections.abc import Callable, Generator, Iterable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import cast
 
 import pytest
 from _pytest.fixtures import FixtureFunctionDefinition, getfixturemarker
@@ -277,7 +276,10 @@ def _stub_fixture(record: FixtureRecord, module_name: str) -> FixtureFunctionDef
     if record.generator:
 
         def generator_stub(**kwargs: object) -> Generator[object, None, None]:
-            yield from cast(Generator[object, None, None], real_function()(**kwargs))
+            result: object = real_function()(**kwargs)
+            if not isinstance(result, Generator):
+                raise TypeError(f"{module_name}.{record.attribute}: generatorのfixtureがGeneratorを返さなかった")
+            yield from result
 
         stub: Callable[..., object] = generator_stub
     else:

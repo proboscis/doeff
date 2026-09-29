@@ -19,9 +19,8 @@ params の値の扱い: 展開の時に見えるのは式の形だけなので�
 
 import json
 import types
-from collections.abc import Iterable, Mapping, MutableMapping, Sequence
+from collections.abc import Iterable, MutableMapping, Sequence
 from dataclasses import dataclass
-from typing import Any, cast
 
 import hy
 
@@ -107,7 +106,7 @@ class MalformedRecord(ValueError):
     """記録がこの module の書く形でない(版の違う doeff-hy が書いた等)。"""
 
 
-def _encode_value(value: ParamValue) -> dict[str, Any]:
+def _encode_value(value: ParamValue) -> dict[str, object]:
     """params の値 1 つを記録の JSON へ(書く側の境界)。"""
     match value:
         case LiteralValue(v):
@@ -116,7 +115,7 @@ def _encode_value(value: ParamValue) -> dict[str, Any]:
             return {"opaque": True}
 
 
-def _encode_decorator(decorator: Decorator) -> dict[str, Any]:
+def _encode_decorator(decorator: Decorator) -> dict[str, object]:
     """decorator 1 つを記録の JSON へ(書く側の境界)。"""
     match decorator:
         case Parametrize(argnames, values, ids):
@@ -127,7 +126,7 @@ def _encode_decorator(decorator: Decorator) -> dict[str, Any]:
             return {"skipif": True}
 
 
-def _encode(record: Record) -> dict[str, Any]:
+def _encode(record: Record) -> dict[str, object]:
     """記録 1 つを JSON へ — 展開の式が module に積み、doeff-adr がキャッシュに保存する形。"""
     match record:
         case FunctionItem(name, argnames, decorators):
@@ -142,42 +141,68 @@ def _encode(record: Record) -> dict[str, Any]:
             return {"dynamic": where, "reason": reason}
 
 
-def _decode_value(raw: Mapping[str, Any]) -> ParamValue:
-    """記録の JSON から params の値 1 つを読む(読む側の境界)。"""
-    if "literal" in raw:
-        return LiteralValue(cast(JsonValue, raw["literal"]))
-    if raw.get("opaque") is True:
-        return OpaqueValue()
+def _text(raw: object) -> str:
+    """型が違う値を文字列へ変換せず、記録を拒む。"""
+    if not isinstance(raw, str):
+        raise MalformedRecord(f"文字列でない: {raw!r}")
+    return raw
+
+
+def _array(raw: object) -> list[object]:
+    """JSONの配列だけを受け取る。文字列を文字の並びとして読まない。"""
+    if not isinstance(raw, list):
+        raise MalformedRecord(f"配列でない: {raw!r}")
+    return raw
+
+
+def _decode_value(raw: object) -> ParamValue:
+    """paramsのliteralは許されたscalarか検証してから値にする。"""
+    match raw:
+        case {"literal": value}:
+            if value is not None and not isinstance(value, (str, int, float, bool)):
+                raise MalformedRecord(f"literalの値がscalarでない: {value!r}")
+            return LiteralValue(value)
+        case {"opaque": True}:
+            return OpaqueValue()
     raise MalformedRecord(f"params の値 {raw!r}")
 
 
-def _decode_decorator(raw: Mapping[str, Any]) -> Decorator:
-    """記録の JSON から decorator 1 つを読む(読む側の境界)。"""
-    if "parametrize" in raw:
-        ids = raw.get("ids")
-        return Parametrize(
-            str(raw["parametrize"]), tuple(_decode_value(v) for v in raw["values"]),
-            None if ids is None else tuple(None if value is None else str(value) for value in ids),
-        )
-    if "mark" in raw:
-        return Mark(str(raw["mark"]))
-    if raw.get("skipif") is True:
-        return SkipIf()
+def _decode_ids(raw: object, count: int) -> list[str | None] | None:
+    if raw is None:
+        return None
+    ids: list[str | None] = [None if value is None else _text(value) for value in _array(raw)]
+    if len(ids) != count:
+        raise MalformedRecord("parametrizeのidsとvaluesの長さが違う")
+    return ids
+
+
+def _decode_decorator(raw: object) -> Decorator:
+    """記録のJSONからdecoratorを読む。各欄の実際の型を確かめる。"""
+    match raw:
+        case {"parametrize": argnames} as parameters:
+            decoded: tuple[ParamValue, ...] = tuple(_decode_value(value) for value in _array(parameters.get("values")))
+            ids: list[str | None] | None = _decode_ids(parameters.get("ids"), len(decoded))
+            return Parametrize(_text(argnames), decoded, None if ids is None else tuple(ids))
+        case {"mark": name}:
+            return Mark(_text(name))
+        case {"skipif": True}:
+            return SkipIf()
     raise MalformedRecord(f"decorator {raw!r}")
 
 
-def _decode(raw: Mapping[str, Any]) -> Record:
-    """記録の JSON 1 つを型へ(読む側の境界)。"""
-    if "function" in raw:
-        return FunctionItem(
-            name=str(raw["function"]),
-            argnames=tuple(str(a) for a in raw["args"]),
-            decorators=tuple(_decode_decorator(d) for d in raw["decorators"]),
-        )
-    if "pytestmark" in raw:
-        return ModuleMarks(tuple(str(n) for n in raw["pytestmark"]))
-    if "dynamic" in raw:
-        return Dynamic(str(raw["dynamic"]), str(raw["reason"]))
+def _decode(raw: object) -> Record:
+    """記録のJSONを型へ。未知の形や不正な欄はMalformedRecordで止める。"""
+    match raw:
+        case {"function": name} as function:
+            return FunctionItem(
+                name=_text(name),
+                argnames=tuple(_text(arg) for arg in _array(function.get("args"))),
+                decorators=tuple(_decode_decorator(decorator) for decorator in _array(function.get("decorators"))),
+            )
+        case {"pytestmark": names}:
+            return ModuleMarks(tuple(_text(name) for name in _array(names)))
+        case {"dynamic": where, "reason": reason}:
+            return Dynamic(_text(where), _text(reason))
     raise MalformedRecord(f"記録 {raw!r}")
 
 
@@ -344,7 +369,7 @@ def decode_records(texts: Iterable[object]) -> list[Record]:
     形が違えば ``MalformedRecord``(呼ぶ側はその file を import して収集する)。
     """
     try:
-        return [_decode(json.loads(cast(str, text))) for text in texts]
+        return [_decode(json.loads(_text(text))) for text in texts]
     except (KeyError, TypeError, AttributeError, ValueError) as exc:
         raise MalformedRecord(str(exc)) from exc
 

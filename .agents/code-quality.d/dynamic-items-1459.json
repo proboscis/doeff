@@ -7,7 +7,8 @@
     "packages/doeff-adr/src/doeff_adr/lazy_collection.py",
     "packages/doeff-adr/src/doeff_adr/pytest_plugin.py",
     "packages/doeff-adr/tests/test_dynamic_item_cache.py",
-    "packages/doeff-adr/tests/test_lazy_collection.py"
+    "packages/doeff-adr/tests/test_lazy_collection.py",
+    "packages/doeff-hy/tests/test_pytest_item_types.py"
   ],
   "modules": [
     {
@@ -86,7 +87,8 @@
       "name": "pytest-item-collection-tests",
       "paths": [
         "packages/doeff-adr/tests/test_dynamic_item_cache.py",
-        "packages/doeff-adr/tests/test_lazy_collection.py"
+        "packages/doeff-adr/tests/test_lazy_collection.py",
+        "packages/doeff-hy/tests/test_pytest_item_types.py"
       ],
       "public": [],
       "responsibility": "独立processで収集と実行を照合し、動的値と定数変更の反例を確かめる。",
