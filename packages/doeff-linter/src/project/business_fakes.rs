@@ -9,7 +9,7 @@
 //! 届く先は DOEFF133・136 と同じ定義の辺の図(呼び出し・参照・入れ子)を根から前向きに辿る。全体の実行だけ(repo 全体の図が要る)。
 //! 模擬の根・本番の入口・業務の module・表の置き場は repo の宣言 `:business-fakes` から読み、ここには repo の名前を置かない。
 //!
-//! tap = 節の本体が同じ効果を出し直す節(節の頭の名の呼び — 観測・障害の注入)。出し直した上で答えを変える節も tap に見える(読みの限界)。
+//! tap = 節の本体が同じ効果を出し直す節(節の頭の名の呼び・`(<- 答え effect)`・`(yield effect)` — 観測・障害の注入)。出し直した上で答えを変える節も tap に見える(読みの限界)。
 
 use std::collections::{BTreeMap, HashMap};
 
@@ -91,14 +91,22 @@ fn head_symbol<'s>(source: &'s str, items: &[Form]) -> Option<&'s str> {
     items.first().filter(|f| matches!(f.node, Node::Symbol)).map(|f| text(source, f))
 }
 
-/// form の中に `(name …)` の呼びが在るか。
-fn calls(source: &str, form: &Form, name: &str) -> bool {
+/// form の中に同じ効果の出し直しが在るか — `(name …)` の呼び・受けた effect をそのまま外へ出す `(<- 答え effect)`・`(yield effect)`。
+fn reissues(source: &str, form: &Form, name: &str) -> bool {
     match &form.node {
         Node::Seq { delim, items } => {
-            (*delim == Delim::Paren && head_symbol(source, items) == Some(name)) || items.iter().any(|i| calls(source, i, name))
+            let last_is_effect = items.last().is_some_and(|f| matches!(f.node, Node::Symbol) && text(source, f) == "effect");
+            let here = *delim == Delim::Paren
+                && match head_symbol(source, items) {
+                    Some(head) if head == name => true,
+                    Some("<-") => items.len() >= 3 && last_is_effect,
+                    Some("yield") => items.len() == 2 && last_is_effect,
+                    _ => false,
+                };
+            here || items.iter().any(|i| reissues(source, i, name))
         }
-        Node::Prefixed { inner: Some(inner), .. } | Node::Tagged { inner: Some(inner) } => calls(source, inner, name),
-        Node::Annotated { target: Some(target), .. } => calls(source, target, name),
+        Node::Prefixed { inner: Some(inner), .. } | Node::Tagged { inner: Some(inner) } => reissues(source, inner, name),
+        Node::Annotated { target: Some(target), .. } => reissues(source, target, name),
         _ => false,
     }
 }
@@ -120,7 +128,7 @@ pub fn taps_in(source: &str) -> HashMap<(String, String), bool> {
                     if parts.get(1).and_then(Form::bracket_items).is_none() {
                         continue;
                     }
-                    let tap = parts[2..].iter().any(|p| calls(source, p, head));
+                    let tap = parts[2..].iter().any(|p| reissues(source, p, head));
                     *out.entry((handler.clone(), head.to_string())).or_insert(false) |= tap;
                 }
             }
@@ -405,14 +413,22 @@ mod tests {
         let source = r#"
 (defhandler fake
   (ReadRow [key] (resume k (ReadRow key)))
-  (WriteRow [row] (resume k None)))
+  (WriteRow [row] (resume k None))
+  (Tick [n] (<- seen effect) (resume k seen))
+  (Log [line] (yield effect))
+  (Drop [n] (<- other effect2) (yield effect n)))
+(defhandler fake2
+  (Stop [] (resume k None)))
 (when (= __name__ "__main__")
   (main))
 "#;
         let taps = taps_in(source);
         assert_eq!(taps.get(&("fake".to_string(), "ReadRow".to_string())), Some(&true));
         assert_eq!(taps.get(&("fake".to_string(), "WriteRow".to_string())), Some(&false));
-        assert_eq!(main_guard_lines(source), vec![(4, 5)]);
+        assert_eq!(taps.get(&("fake".to_string(), "Tick".to_string())), Some(&true)); // (<- 答え effect)
+        assert_eq!(taps.get(&("fake".to_string(), "Log".to_string())), Some(&true)); // (yield effect)
+        assert_eq!(taps.get(&("fake".to_string(), "Drop".to_string())), Some(&false)); // 別の値の出し直しは tap でない
+        assert_eq!(main_guard_lines(source), vec![(9, 10)]);
         assert_eq!(entry_names("env = \"app.orders.envs:make-env\"", &decl()), vec!["app.orders.envs.make_env".to_string()]);
         let py = "from app.screen.effects import Log\nimport app.clock as c\ndef dispatch(effect, k):\n    if isinstance(effect, Log):\n        return 1\n    if isinstance(effect, (c.Now, str)):\n        return 2\n";
         assert_eq!(python_isinstance_effects(py, "app.screen.entry.values"), vec!["app.clock.Now".to_string(), "app.screen.effects.Log".to_string()]);
