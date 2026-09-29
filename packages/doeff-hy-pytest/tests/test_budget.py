@@ -6,6 +6,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 from doeff_hy_pytest.budget import (
     CompileCounter,
@@ -279,10 +281,34 @@ def test_collect_budget_subtracts_compilation_but_fails_slow_import(
     result.assert_outcomes(passed=1, errors=1)
     result.stdout.fnmatch_lines(
         [
-            "*test_slow_collect.hy の収集(import を含む)が CPU *キャッシュ無しの変換 * 回の CPU * 秒を引いた*"
+            "*test_slow_collect.hy の読み込み(import)が CPU *キャッシュ無しの変換 * 回の CPU * 秒を引いた*"
         ]
     )
-    assert "test_slow_compile.hy の収集" not in result.stdout.str()
+    assert "test_slow_compile.hy の読み込み(import)" not in result.stdout.str()
+
+
+def test_import_budget_is_judged_at_setup_when_collected_from_records(
+    pytester: pytest.Pytester, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """記録から収集した file(2 回目 — 1 回目の import が pyc と記録を書く)は、module の import が item の setup で起き、
+    上限はそこで同じ鍵で判定される(赤はその item の setup の誤り・agora-redesign #1225)。"""
+    _project(
+        pytester,
+        'doeff_test_collect_budget_seconds = 0.05\ndoeff_test_budget_mode = "fail"\n',
+        {"test_slow_collect": SLOW_COLLECT},
+    )
+    pytester.makeconftest(CONFTEST + PIN_UNCHECKED_VM_BUILD)
+    monkeypatch.setenv("PYTHONPYCACHEPREFIX", str(tmp_path / "pyc"))
+    monkeypatch.setenv("PYTHONDONTWRITEBYTECODE", "")
+    first = pytester.runpytest_subprocess("-q", "-p", "no:cacheprovider", "--continue-on-collection-errors")
+    first.assert_outcomes(errors=1)
+    second = pytester.runpytest_subprocess("-q", "-p", "no:cacheprovider")
+    second.stdout.fnmatch_lines(["*記録から収集 1 file*"])
+    second.assert_outcomes(errors=1)
+    second.stdout.fnmatch_lines(["*ERROR at setup of test_fast*", "*test_slow_collect.hy の読み込み(import)が CPU *"])
+    collected = pytester.runpytest_subprocess("-q", "-p", "no:cacheprovider", "--collect-only")
+    collected.stdout.fnmatch_lines(["*1 test collected*"])
+    assert "の読み込み(import)が" not in collected.stdout.str()
 
 
 def test_python_test_files_are_not_measured(pytester: pytest.Pytester) -> None:
