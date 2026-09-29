@@ -99,8 +99,8 @@
 (import doeff [with-handlers EffectBase UnhandledEffect DoExpr Program])
 (import doeff_core_effects.effects [Ask])
 (import doeff_core_effects.handlers [state :as session-store await-handler])
-(import doeff_core_effects.scheduler [scheduled CreatePromise CompletePromise Wait Spawn Gather Cancel Race Promise Task
-                                      Future TaskCancelledError])
+(import doeff_core_effects.scheduler [scheduled CreatePromise CompletePromise Wait Spawn Gather Cancel Promise Task
+                                      TaskCancelledError])
 (import doeff_time [Delay sim-time-handler async-time-handler])
 (import doeff_cluster.clock [now-epoch-ms datetime-of-epoch-ms])
 (import .cluster_model [ClusterState ClusterTiming ClusterNaming Request NextRequests Reply Persist CoordinatorStopRequested
@@ -110,7 +110,8 @@
 (import .coordinator [run-coordinator load-state])
 (import .coordinator_http [IDEMPOTENT-DEADLINE-SECONDS RESEND-PAUSE-SECONDS])
 (import .coordinator_inbox [StopState])
-(import .coordinator_handler_sets [RequestQueue MemoryWalStore emulated-handlers])
+(import .coordinator_handler_sets [RequestQueue MemoryWalStore emulated-handlers enqueue-request])
+(import .promise_wait [promise-or-timeout])
 (import .kube_handlers [KubeMemory])
 (import .declare [create-body spec-for-update])
 (import .detached [detached-path detached-submit-body detached-refusal submit-unreachable awaited-answer runner-facts-of-view
@@ -685,7 +686,7 @@
   (if (not link.queue.up)
       #(None {"error" "coordinator に接続できない(止まっている)"})
       (do (<- promise Promise (CreatePromise))
-          (.append link.queue.pending (Request method path query body :slot promise :actor link.actor :peer link.peer))
+          (<- (enqueue-request link.queue (Request method path query body :slot promise :actor link.actor :peer link.peer)))
           (<- answer tuple (Wait promise.future))
           answer)))
 
@@ -807,46 +808,6 @@
           (if (is (get sent 0) None)
               (submit-unreachable (unreached-reason sent))
               (DetachedSubmitted key (get (refused-or-body sent "task を出せない") "created"))))))
-
-
-(defk expire-after [seconds]
-  {:pre [(: seconds float)] :post [(: % None)] :tags {:context "doeff-cluster" :role "program"}}
-  "待ちの期限の鳴らし: seconds 秒眠ってから None で終わるため(promise-or-timeout が呼び鈴と競わせる)。"
-  (<- (Delay seconds))
-  None)
-
-
-(defk withdraw-timer [timer]
-  {:pre [(: timer Task)] :post [(: % None)] :tags {:context "doeff-cluster" :role "program"}}
-  "期限の鳴らし timer を取り消し、解け終わるまで待つため(置き去りの眠りを残さない — 壁の時計では実時間で眠り続ける)。取り消しの
-   TaskCancelledError はこの片付けの task の中でだけ飲む(待ち手の中で飲むと、待ち手自身への取り消しと見分けられない)。"
-  (<- (Cancel timer))
-  (try
-    (<- (Wait timer))
-    (except [TaskCancelledError]
-      None))
-  None)
-
-
-(defk promise-or-timeout [future seconds]
-  {:pre [(: future Future) (: seconds (| float int None))] :post [(: % "future の答え(時間切れは None)")]
-   :tags {:context "doeff-cluster" :role "program"}}
-  "書き手が満たす Promise(future)を、seconds 秒(None = 上限なし)まで待つため — 読み直さずに書きで起きる待ちの 1 点。答え = future の
-   答え(満たす側は None を渡さない)か、時間切れの None。期限の鳴らしは終わりに取り消して解け終わるまで待つ(待ち手が取り消された時も)。"
-  (when (is seconds None)
-    (<- value (Wait future))
-    (return value))
-  (<- timer Task (Spawn (expire-after (float seconds))))
-  (try
-    (<- first (Race future timer))
-    first
-    (finally
-      (<- withdrawing Task (Spawn (withdraw-timer timer)))
-      (try
-        (<- (Wait withdrawing))
-        (except [cancelled TaskCancelledError]
-          (<- (Wait withdrawing))
-          (raise cancelled))))))
 
 
 (defk bell-span [view timeout-seconds waited]

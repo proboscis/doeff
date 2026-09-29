@@ -12,18 +12,16 @@
 ;;;
 ;;; 組は with_handlers に渡す list(外側が先)。選ぶのは composition root(coordinator.main・業務の側の模擬環境)だけ。
 ;;; 本番の受付の handler は coordinator_inbox.hy(coordinator.hy から分けた — この module と coordinator.hy の循環を作らない)。
-(require doeff-hy.macros [defhandler <-])
+(require doeff-hy.macros [defhandler defk <- val])
 (import copy)
 (import doeff_core_effects.handlers [await-handler])
-(import doeff_core_effects.scheduler [CompletePromise])
-(import doeff_time [Delay async-time-handler])
-(import .cluster_model [NextRequests Reply])
+(import doeff_core_effects.scheduler [CreatePromise CompletePromise Promise])
+(import doeff_time [async-time-handler])
+(import .cluster_model [Request NextRequests Reply])
 (import .wal_store [WalStore MAX-LOG-BYTES wal-store apply-delta])
 (import .kube_handlers [KubeMemory kube-memory])
 (import .coordinator_inbox [RequestInbox StopState http-requests stop-flag])
-
-;; 列が空の間、NextRequests が列を見直す間隔(秒)。本番の受付は要求が届いた瞬間に起きるので、模擬の遅れはこの間隔まで。
-(setv QUEUE-POLL-SECONDS 0.05)
+(import .promise_wait [promise-or-timeout])
 
 
 (defn #^ list production-handlers [#^ RequestInbox inbox #^ WalStore store #^ StopState stop #^ object kube]
@@ -37,19 +35,48 @@
   "process の中の要求の列(HTTP の受付の代わり)。送り手は Request の slot に doeff の Promise を入れて並べ、Wait で返事
    #(status 本文)を受ける。up = 受け付けているか(coordinator の process が止まっている間は偽 — 送り手は接続の失敗として扱う)。
    bells = 切り離した task の key → 呼び鈴(doeff の Promise)の tuple。送り手が task の終わりを読み直さずに待つため、読む前に掛ける。
-   模擬の coordinator の Persist の見張り(local.hy の observe-requests)が、その key の task の終わりの phase を書いた時に鳴らす。"
+   模擬の coordinator の Persist の見張り(local.hy の observe-requests)が、その key の task の終わりの phase を書いた時に鳴らす。
+   takers = 列の取り手(queued-requests の NextRequests)が、列が空の間に掛けた呼び鈴(doeff の Promise の list — 掛けた順)。送り手が
+   列に積んだ時(enqueue-request)に全部鳴らして外す。列は読み直さない(前は仮想の 0.05 秒ごとに見直していた — 使い手の仮想の
+   1700 秒の検で 37,222 回眠り、所要の大半になった)。"
   (defn #^ None __init__ [self]
-    (setv self.pending [] self.up False self.bells {})
+    (setv self.pending [] self.up False self.bells {} self.takers [])
     None))
 
 
+(defk enqueue-request [queue request]
+  {:pre [(: queue RequestQueue) (: request Request)] :post [(: % None)] :tags {:context "doeff-cluster" :role "program"}}
+  "要求を列の後ろに積み、列が空の間に待っていた取り手の呼び鈴を全部鳴らして外すため(取り手は積んだのと同じ仮想の刻で起きる)。
+   積む順 = 取る順(列は先頭から取る)。鳴らすのは積んだ後 — 起きた取り手は必ず積んだ要求を見る。"
+  (.append queue.pending request)
+  (val waiting (tuple queue.takers))
+  (.clear queue.takers)
+  (for [bell waiting]
+    (<- (CompletePromise bell True)))
+  None)
+
+
+(defk await-first-request [queue timeout-seconds]
+  {:pre [(: queue RequestQueue) (: timeout-seconds (| float int))] :post [(: % None)] :tags {:context "doeff-cluster" :role "program"}}
+  "列が空なら、送り手が積む(enqueue-request が呼び鈴を鳴らす)か timeout 秒が過ぎるまで 1 回だけ眠るため(読み直さない)。列に何か
+   在れば眠らない。起きた時(時間切れ・取り消しを含む)は自分の呼び鈴を取り手の list から外す。鳴らすのは積む時だけなので、鳴って
+   起きた時の列は空でない(時間切れで起きた時だけ空のまま)。"
+  (when (and (not queue.pending) (> timeout-seconds 0))
+    (<- bell Promise (CreatePromise))
+    (.append queue.takers bell)
+    (try
+      (<- (promise-or-timeout bell.future timeout-seconds))
+      (finally
+        (when (in bell queue.takers)
+          (.remove queue.takers bell)))))
+  None)
+
+
 (defhandler queued-requests [#^ RequestQueue queue]
-  ;; 本番の http-requests と同じ意味: 最初の 1 件を timeout 秒まで待ち、その時点で並んでいる要求を limit 件まで一緒に取る。
+  ;; 本番の http-requests と同じ意味: 最初の 1 件を timeout 秒まで待ち、その時点で並んでいる要求を limit 件まで一緒に取る。待ちは列への
+  ;; 書き(enqueue-request)で起きる — 本番の受付が要求の届いた瞬間に起きるのと同じ刻。
   (NextRequests [timeout-seconds limit]
-    (setv waited 0.0)
-    (while (and (not queue.pending) (< waited timeout-seconds))
-      (<- (Delay QUEUE-POLL-SECONDS))
-      (+= waited QUEUE-POLL-SECONDS))
+    (<- (await-first-request queue timeout-seconds))
     (setv batch (cut queue.pending 0 limit))
     (setv queue.pending (cut queue.pending limit None))
     (resume batch))
