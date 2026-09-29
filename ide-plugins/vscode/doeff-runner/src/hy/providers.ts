@@ -8,6 +8,7 @@ import type { EffectGraphSource } from './effects';
 import type { ExternalFileView, ExternalModuleSource } from './external';
 import type { HyLog } from './indexService';
 import { mangle } from './mangle';
+import { OPEN_LOCATION_COMMAND } from '../defk/hover';
 import { definitionTargetsWithHandlers, hoverExtras, implementationTargets } from './navigation';
 import type { RawEffectSource } from './rawEffects';
 import { rawHoverLines, rawRoleOf } from './rawView';
@@ -224,6 +225,9 @@ export class HyNavigationProvider
     }
     const extra = resolved.resolution.targets.length - parts.length;
     const text = parts.join('\n\n---\n\n') + (extra > 0 ? `\n\n(他に ${extra} 件)` : '');
-    return new vscode.Hover(new vscode.MarkdownString(text));
+    // hover の中の名は定義の位置へ飛ぶ command link(v12)— その命令だけを信頼する
+    const markdown = new vscode.MarkdownString(text);
+    markdown.isTrusted = { enabledCommands: [OPEN_LOCATION_COMMAND] };
+    return new vscode.Hover(markdown);
   }
 }

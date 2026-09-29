@@ -45,6 +45,8 @@ export interface CallGraph {
   readonly owners: ReadonlyMap<string, string>;
   /** 呼び出しの頭の記号の位置(path と行と列 — resolve.ts の locationKey)→ 索引が解いた呼び先(本体の字と source の記号を定義に当てる — v12) */
   readonly callTargets: ReadonlyMap<string, string>;
+  /** 索引の file(path → 索引)— source の箱の記号を、その file の参照と import で定義に当てる(v12) */
+  readonly files: ReadonlyMap<string, HyFileIndex>;
 }
 
 /** 欄を持つ種類(索引の param_types が欄の型 — v9: defclass の `#^ T x` も defrecord と同じ読み手で載る)。 */
@@ -154,7 +156,7 @@ export function buildCallGraph(files: readonly HyFileIndex[]): CallGraph {
       }
     }
   }
-  return { definitions, callees, callers, handlers, handlerDefinitions, returnedBy, acceptedBy, fieldOf, effectsByName, locations, byName, owners, callTargets };
+  return { definitions, callees, callers, handlers, handlerDefinitions, returnedBy, acceptedBy, fieldOf, effectsByName, locations, byName, owners, callTargets, files: new Map(files.map((f) => [f.path, f])) };
 }
 
 /** 位置を含む最上位の定義(位置の順に並べた列を二分探索 — 大きな repo でも呼びごとに全定義を回さないため)。 */

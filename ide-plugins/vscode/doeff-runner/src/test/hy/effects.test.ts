@@ -181,12 +181,21 @@ suite('effect の行き来 — クリック・実装へ移動・注記・hover',
 
   test('hover の追記 — effect は handler の数、プログラムは撃つ effect、handler は扱う effect', () => {
     const { graph } = world();
-    assert.deepStrictEqual(hoverExtras(graph, def(graph, EFFECTS, 'PutRow', 'defclass')), [
-      'effect — handler 2 個(memory-handler, logging-handler)'
-    ]);
-    assert.deepStrictEqual(hoverExtras(graph, def(graph, EFFECTS, 'load-row')), ['撃つ effect: GetRow, PutRow']);
-    assert.deepStrictEqual(hoverExtras(graph, def(graph, LOGGING, 'logging-handler')), ['扱う effect: PutRow, Tell']);
+    // 名は定義の位置へ飛ぶ command link(v12)— link を外した文字で中身を比べる
+    const plain = (lines: readonly string[]): string[] => lines.map((l) => l.replace(/\[`([^`]*)`\]\(command:[^ ]* "[^"]*"\)/g, '$1').replace(/`([^`]*)`/g, '$1'));
+    assert.deepStrictEqual(plain(hoverExtras(graph, def(graph, EFFECTS, 'PutRow', 'defclass'))), ['effect — handler 2 個(memory-handler, logging-handler)']);
+    assert.deepStrictEqual(plain(hoverExtras(graph, def(graph, EFFECTS, 'load-row'))), ['撃つ effect: GetRow, PutRow']);
+    assert.deepStrictEqual(plain(hoverExtras(graph, def(graph, LOGGING, 'logging-handler'))), ['扱う effect: PutRow, Tell']);
     assert.deepStrictEqual(hoverExtras(graph, def(graph, EFFECTS, 'helper-fn')), []);
+  });
+
+  test('hover の中の名は定義の位置へ飛ぶ command link(v12・U19b)— handler は handler の定義、effect は effect の class', () => {
+    const { graph } = world();
+    const [handlers] = hoverExtras(graph, def(graph, EFFECTS, 'PutRow', 'defclass'));
+    assert.ok(handlers.includes('[`logging-handler`](command:doeff-runner.defk.openLocation?'), handlers);
+    assert.ok(handlers.includes(encodeURIComponent('"/ws/pkg/logging_handler.hy"')), handlers);
+    const [performed] = hoverExtras(graph, def(graph, EFFECTS, 'load-row'));
+    assert.ok(performed.includes('[`PutRow`](command:doeff-runner.defk.openLocation?'), performed);
   });
 });
 

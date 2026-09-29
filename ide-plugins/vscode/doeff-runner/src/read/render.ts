@@ -5,14 +5,14 @@
 // 本体の文字(val / var の表)は linter の印字が入るまで出さず、元の Hy は実体ごとの source ボタンで開閉する(v3 3 節)。
 
 import type { HyDefinition } from '../hy/contract';
-import { pieceStyle, sliceHighlight, type Piece, type SourceColoring } from '../hy/highlight/spans';
+import { pieceStyle, PLAIN, sliceHighlight, type Piece, type SourceColoring } from '../hy/highlight/spans';
 import type { LintBody, LintBodySegment, LintSignature, LintViolation } from '../lint/contract';
 import { answerText, headerEffects, typeText } from '../defk/model';
 import { cardKey, LINE_FIELDS, type FoldState, type LineField } from './fold';
 import { docFirstLine, escapeHtml, tagClass, type Glyphs } from './html';
 import { contractRow, declaredEffectChips, decoratorBadges, effectChip, entityLineArgs, entityRows, indexSignatureRows, relationBand, usedByRow, type ChipContext } from './entity';
 import { effectHover, nameHover, nameScope, type NameScope } from './hover';
-import { effectRef, entityLink, resolveEntity, typeHtml, type EntityRef } from './resolve';
+import { effectRef, entityLink, linkPieces, resolveEntity, sourceLinks, typeHtml, type EntityRef } from './resolve';
 import { LABELS } from './labels';
 import { NAMES_ONLY_PARAMS, TALL_SIGNATURE_CHARS, TALL_SIGNATURE_PARAMS } from './layout';
 import { axisKey, axisTitle, facets, SEARCH_KEY, visibleCards, worstLevel, type Card, type Facet, type Selection } from './model';
@@ -300,12 +300,22 @@ function pieceHtml(piece: Piece): string {
  * 元の Hy(source の行番号つき・読むだけ)。file 全体の色があれば定義の範囲を切り出して editor と同じ色で描き
  * (記号ごとの色は file 全体の記号の順で決まるので、切り出してから塗らない)、無ければ色なしの文字で描く。
  */
-function sourceBox(card: Card, fileLabel: string, coloring: SourceColoring | undefined): string {
+function sourceBox(card: Card, fileLabel: string, coloring: SourceColoring | undefined, graph: CallGraph): string {
   const lines = card.source.split('\n');
   const last = card.firstLine + lines.length - 1;
   const pieces = coloring === undefined ? undefined : sliceHighlight(coloring.lines, coloring.spans, card.definition.fullRange);
   const colored = pieces !== undefined && pieces.length === lines.length ? pieces : undefined;
-  const body = (text: string, i: number): string => (colored === undefined ? escapeHtml(text) : colored[i].map(pieceHtml).join(''));
+  // 記号のうち定義に当たる物は押せる(v12)— 引数と束縛の名は局所の名なので引かない
+  const filePath = graph.definitions.get(card.definition.qualifiedName)?.path;
+  const locals = new Set([...card.definition.params, ...card.bindings.map((b) => b.name), ...(card.signature?.params.map((p) => p.name) ?? [])]);
+  const links = filePath === undefined || card.source === '' ? [] : sourceLinks(filePath, card.definition.fullRange, graph, locals);
+  const body = (text: string, i: number): string => {
+    const line = card.definition.fullRange.start.line + i;
+    const offset = i === 0 ? card.definition.fullRange.start.character : 0;
+    const here = links.filter((l) => l.line === line);
+    const plain: readonly Piece[] = [{ text, color: null, fontStyle: PLAIN }];
+    return linkPieces(colored === undefined ? plain : colored[i], offset, here, (piece, cut) => pieceHtml({ ...piece, text: cut }));
+  };
   // 行の目印 data-hy-line は source の行(1 始まり)— 違反の項目から来た時にその行へ送るため(本体の行の data-src-line とは別の名)
   const numbered = lines.map((text, i) => `<div data-hy-line="${card.firstLine + i}"><span class="ln">${card.firstLine + i}</span>${body(text, i)}</div>`).join('');
   return `<div class="srcbox" id="src-${card.id}" hidden><div class="h">${escapeHtml(LABELS.hySource)} · ${escapeHtml(fileLabel)}:${card.firstLine}–${last}</div><div class="code">${numbered}</div></div>`;
@@ -367,7 +377,7 @@ export function renderCard(card: Card, ctx: CardContext, hidden: boolean): strin
   // source を持たないカード(repo 全体の面の索引だけのカード)は、開く・source を押すとその file を読み込む(v3 3 節 — 索引の位置から切り出す)
   const lazy = card.source === '' ? ' data-lazy' : '';
   const classes = open ? 'card open' : 'card';
-  return `<section class="${classes}" id="${card.id}" data-key="${escapeHtml(key)}" data-qn="${qn}"${lazy}${hidden ? ' hidden' : ''}>${head}<div class="line">${line}</div><div class="full">${middle}${docBlock}${usedBy}${body}</div>${sourceBox(card, fileLabel, ctx.coloringOf(card))}<div class="full">${foot}</div></section>`;
+  return `<section class="${classes}" id="${card.id}" data-key="${escapeHtml(key)}" data-qn="${qn}"${lazy}${hidden ? ' hidden' : ''}>${head}<div class="line">${line}</div><div class="full">${middle}${docBlock}${usedBy}${body}</div>${sourceBox(card, fileLabel, ctx.coloringOf(card), ctx.graph)}<div class="full">${foot}</div></section>`;
 }
 
 /** 面の状態 — 索引にその file が無い時・設定で切った時は理由を出す。 */

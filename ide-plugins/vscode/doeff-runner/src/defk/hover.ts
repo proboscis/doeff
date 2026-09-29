@@ -1,18 +1,26 @@
 // defk の見出しと束縛の hover の Markdown を作る純粋な関数(VS Code に触らない)。型と effect の名は定義へ飛ぶ link にする。
 
-import type { LintBinding, LintSignature, LintTypeRef } from '../lint/contract';
+import type { LintBinding, LintLocation, LintSignature, LintTypeRef } from '../lint/contract';
 import { namedTypes, signatureText, typeText } from './model';
 
 /** 定義へ飛ぶ命令(hover の型と effect の名から呼ぶ)。 */
 export const OPEN_LOCATION_COMMAND = 'doeff-runner.defk.openLocation';
 
+/**
+ * 名 1 つを、定義の位置へ飛ぶ link の Markdown にする(位置の無い名は文字のまま)— editor の hover の中の実体の名はどれもここを通す
+ * (v12 — hover の中の名も押せる・agora-redesign #910 U19b)。
+ */
+export function locationLink(name: string, location: LintLocation | null): string {
+  if (location === null) {
+    return `\`${name}\``;
+  }
+  const args = encodeURIComponent(JSON.stringify([location.path, location.range.start.line, location.range.start.character]));
+  return `[\`${name}\`](command:${OPEN_LOCATION_COMMAND}?${args} "${location.path}")`;
+}
+
 /** 型の名 1 つを、定義へ飛ぶ link の Markdown にする(定義の無い名は文字のまま)。 */
 function typeLink(type: Extract<LintTypeRef, { kind: 'name' }>): string {
-  if (type.definition === null) {
-    return `\`${type.name}\``;
-  }
-  const args = encodeURIComponent(JSON.stringify([type.definition.path, type.definition.range.start.line, type.definition.range.start.character]));
-  return `[\`${type.name}\`](command:${OPEN_LOCATION_COMMAND}?${args} "${type.definition.path}")`;
+  return locationLink(type.name, type.definition);
 }
 
 /** 見出しの hover の Markdown(型の流れの文・型と effect の定義への link・effect の答えの分け方・tags)。 */

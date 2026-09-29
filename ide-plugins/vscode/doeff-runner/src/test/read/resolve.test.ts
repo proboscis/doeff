@@ -6,7 +6,8 @@ import { parseLintJson, type LintReport } from '../../lint/contract';
 import { cardKey, INITIAL_FOLD, unfoldAll } from '../../read/fold';
 import { buildCards } from '../../read/model';
 import { renderPage } from '../../read/render';
-import { destinationOf, entityLink, resolveEntity } from '../../read/resolve';
+import { PLAIN } from '../../hy/highlight/spans';
+import { absoluteModule, destinationOf, entityLink, linkPieces, resolveEntity, sourceLinks } from '../../read/resolve';
 import { buildCallGraph, relationOf, type CallGraph } from '../../read/tree';
 
 // v12(operator 2026-09-29 "jump to definition by clicking each entities like effect/class/record etc from reading view and the
@@ -178,5 +179,60 @@ suite('定義を読む面 — 押した名の行き先(v12・U19a)', () => {
       qualifiedName: 'pkg.entities.Tone',
       line: loud.definition.fullRange.start.line
     });
+  });
+});
+
+suite('定義を読む面 — source の箱の記号を押せる(v12・U19b)', () => {
+  /** 頁の中の source の箱(カード 1 枚分)。 */
+  const sourceOf = (html: string, name: string): string => {
+    const card = cardHtml(html, name);
+    const at = card.indexOf('<div class="srcbox"');
+    assert.ok(at >= 0, `カード ${name} に source の箱が無い`);
+    return card.slice(at);
+  };
+
+  test('呼び(fetch-row)と同じ file の型(Row)は押せ、定義の名・引数・束縛・組み込み(str)は押せない', () => {
+    const box = sourceOf(planePage().html, 'shout');
+    assert.ok(box.includes('<span class="ent" data-reveal="pkg.plane.fetch_row">fetch-row</span>'));
+    assert.ok(box.includes('<span class="ent" data-reveal="pkg.plane.Row">Row</span>'));
+    assert.ok(box.includes('(defk shout [key]'), '定義の名 shout と引数 key は文字のまま');
+    assert.ok(!box.includes('>str</span>'), 'str は押せない');
+    assert.ok(!/data-reveal="[^"]*">row</.test(box), '束縛 row は押せない');
+  });
+
+  test('色の片は link の境で割り、片の色はそのまま', () => {
+    const html = linkPieces(
+      [
+        { text: '(fetch-row ', color: '#ffffff', fontStyle: PLAIN },
+        { text: 'key)', color: '#00ff00', fontStyle: PLAIN }
+      ],
+      2,
+      [{ line: 0, start: 3, end: 12, candidates: ['pkg.plane.fetch_row'] }],
+      (piece, text) => `<i style="color:${piece.color}">${text}</i>`
+    );
+    assert.strictEqual(
+      html,
+      '<i style="color:#ffffff">(</i><span class="ent" data-reveal="pkg.plane.fetch_row"><i style="color:#ffffff">fetch-row</i></span><i style="color:#ffffff"> </i><i style="color:#00ff00">key)</i>'
+    );
+  });
+
+  test('相対 import の module は file の module から数える(Python と同じ)', () => {
+    assert.strictEqual(absoluteModule('controllers.screen.runtime.react', '..model'), 'controllers.screen.model');
+    assert.strictEqual(absoluteModule('controllers.screen.runtime.react', '.view'), 'controllers.screen.runtime.view');
+    assert.strictEqual(absoluteModule('a.b', 'controllers.x'), 'controllers.x');
+  });
+
+  test('import した名は、その module の定義に当てる(同名の別 module の定義には当てない)', () => {
+    const files = indexFiles('classes-index.json');
+    const graph = buildCallGraph(files);
+    const other = files.find((f) => f.path.endsWith('classes_other.hy'));
+    assert.ok(other !== undefined);
+    const whole = { start: { line: 0, character: 0 }, end: { line: 10_000, character: 0 } };
+    const links = sourceLinks(other.path, whole, graph, new Set());
+    // (import pkg.classes [PlacedVersion]) の名・:post の型・本体の呼びの 3 か所 — どれも pkg.classes の定義 1 つ
+    const placed = links.filter((l) => l.candidates.includes('pkg.classes.PlacedVersion'));
+    assert.strictEqual(placed.length, 3, JSON.stringify(links));
+    assert.ok(placed.every((l) => l.candidates.length === 1));
+    assert.ok(!links.some((l) => l.candidates.includes('pkg.classes_other.placed_version')), '定義の名そのものは押せない');
   });
 });

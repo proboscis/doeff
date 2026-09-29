@@ -137,6 +137,106 @@ export function indexTypeHtml(text: string, names: readonly HyNameRef[], graph: 
     .join('');
 }
 
+/**
+ * import の module の綴りを絶対の module 名にする(`..model` は file の module の親の親の下 — Python の相対 import と同じ数え方)。
+ * 相対でなければそのまま。
+ */
+export function absoluteModule(fileModule: string, written: string): string {
+  const dots = /^\.*/.exec(written)?.[0].length ?? 0;
+  if (dots === 0) {
+    return written;
+  }
+  const base = fileModule.split('.').slice(0, -dots);
+  const rest = written.slice(dots);
+  return [...base, ...(rest === '' ? [] : [rest])].join('.');
+}
+
+/** source の箱の中で押せる記号 1 つ(行は 0 始まり・列は [start, end))。 */
+export interface SourceLink {
+  readonly line: number;
+  readonly start: number;
+  readonly end: number;
+  readonly candidates: readonly string[];
+}
+
+/**
+ * source の箱の記号の link(v12 — 設計 4 節「U16 の token 列に索引の範囲を重ねる」)。file の範囲の中の、索引の呼び出し(target)と
+ * 参照(同じ file の最上位の定義 → import した名の順で引く)のうち、定義に当たる物。局所の名(引数・束縛 — locals)と、限定つきの
+ * 名(`mod.name` の `name`)は引かない(名前の解決を推測で広げない)。
+ */
+export function sourceLinks(filePath: string, range: HyRange, graph: CallGraph, locals: ReadonlySet<string>): SourceLink[] {
+  const file = graph.files.get(filePath);
+  if (file === undefined) {
+    return [];
+  }
+  const inside = (r: HyRange): boolean =>
+    (r.start.line > range.start.line || (r.start.line === range.start.line && r.start.character >= range.start.character)) &&
+    (r.end.line < range.end.line || (r.end.line === range.end.line && r.end.character <= range.end.character)) &&
+    r.start.line === r.end.line;
+  const own = new Map(file.definitions.filter((d) => d.container === null).map((d) => [d.name, d.qualifiedName] as const));
+  const imported = new Map<string, string>();
+  for (const imp of file.imports) {
+    if (!imp.isRequire && imp.name !== null) {
+      const module = absoluteModule(file.module, imp.module);
+      const found = (graph.byName.get(imp.name) ?? []).filter((qn) => qn.startsWith(`${module}.`) && qn.slice(module.length + 1).indexOf('.') < 0);
+      if (found.length > 0) {
+        imported.set(imp.alias ?? imp.name, found[0]);
+      }
+    }
+  }
+  const links = new Map<string, SourceLink>();
+  const add = (r: HyRange, candidates: readonly string[]): void => {
+    const key = `${r.start.line}:${r.start.character}`;
+    // 定義の名の位置(`(defk shout …` の shout)はその定義そのものなので押せる名にしない
+    const definitionSite = graph.locations.has(locationKey(filePath, r.start.line, r.start.character));
+    if (candidates.length > 0 && !links.has(key) && !definitionSite && inside(r)) {
+      links.set(key, { line: r.start.line, start: r.start.character, end: r.end.character, candidates });
+    }
+  };
+  for (const call of file.calls) {
+    if (!locals.has(call.callee)) {
+      add(call.range, resolveEntity({ tag: 'target', target: call.target }, graph));
+    }
+  }
+  for (const ref of file.references) {
+    if (ref.qualifier === null && !locals.has(ref.name)) {
+      const qn = own.get(ref.name) ?? imported.get(ref.name);
+      add(ref.range, qn === undefined ? [] : resolveEntity({ tag: 'target', target: qn }, graph));
+    }
+  }
+  return [...links.values()].sort((a, b) => a.line - b.line || a.start - b.start);
+}
+
+/**
+ * 1 行の片(書かれた文字の区切り)を link の境で割り、link の中の片を押せるようにして描く。offset = 片の並びの頭の列
+ * (カードの最初の行は定義の頭の列から始まる)。片の描き方(色)は render に任せる。
+ */
+export function linkPieces<T extends { readonly text: string }>(
+  pieces: readonly T[],
+  offset: number,
+  links: readonly SourceLink[],
+  render: (piece: T, text: string) => string
+): string {
+  const out: string[] = [];
+  let column = offset;
+  for (const piece of pieces) {
+    const from = column;
+    const to = column + piece.text.length;
+    const cuts = [from, to, ...links.flatMap((l) => [l.start, l.end]).filter((c) => c > from && c < to)].sort((a, b) => a - b);
+    for (let i = 0; i + 1 < cuts.length; i += 1) {
+      const [a, b] = [cuts[i], cuts[i + 1]];
+      if (b <= a) {
+        continue;
+      }
+      const html = render(piece, piece.text.slice(a - from, b - from));
+      const link = links.find((l) => l.start <= a && b <= l.end);
+      out.push(link === undefined ? html : entityLink(html, link.candidates));
+    }
+    column = to;
+  }
+  return out.join('');
+}
+
 /** 押した名 1 つの行き先 — その定義のカード(入れ子の定義は入れ物のカードのその行)か、text editor の定義の名の位置。 */
 export type EntityDestination =
   | { readonly tag: 'card'; readonly path: string; readonly qualifiedName: string; readonly line: number | undefined }

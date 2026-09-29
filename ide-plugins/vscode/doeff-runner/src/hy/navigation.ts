@@ -4,6 +4,8 @@
 import type { DefRef, CallSite, EffectGraph } from './effects';
 import { PROGRAM_KINDS } from './effects';
 import type { DefinitionResolution, DefinitionTarget } from './resolve';
+import { locationLink } from '../defk/hover';
+import type { LintLocation } from '../lint/contract';
 
 /** 定義の参照を定義へ移動の行き先にする。 */
 function refTarget(ref: DefRef): DefinitionTarget {
@@ -135,20 +137,33 @@ export function lensTitle(spec: LensSpec, callerCount: number | undefined): stri
   }
 }
 
+/** 定義の名の位置(hover の link の飛び先)。 */
+function refLocation(ref: DefRef): LintLocation {
+  return { path: ref.path, range: ref.definition.range };
+}
+
 /** hover に足す行 — effect なら扱う handler の数、プログラムなら撃つ effect、handler なら扱う effect。 */
 export function hoverExtras(graph: EffectGraph, ref: DefRef): string[] {
+  // 名は定義の位置へ飛ぶ link(v12 — hover の中の名も押せる)。effect の class が 1 つに決まらない名は文字のまま
+  const effectLink = (name: string, mangled: string): string => {
+    const classes = graph.effect(mangled)?.classes ?? [];
+    return locationLink(name, classes.length === 1 ? refLocation(classes[0]) : null);
+  };
   if (graph.isEffectClass(ref)) {
     const clauses = graph.clausesFor(ref.definition.mangled);
-    const handlers = clauses.map((c) => c.definition.container ?? '?');
+    const handlers = clauses.map((c) => {
+      const handler = graph.handlerOfClause(c);
+      return locationLink(c.definition.container ?? '?', handler === undefined ? null : refLocation(handler));
+    });
     return [`effect — handler ${clauses.length} 個${handlers.length > 0 ? `(${handlers.join(', ')})` : ''}`];
   }
   if (ref.definition.kind === 'defhandler') {
     const clauses = graph.handlerClauses(ref);
-    return [`扱う effect: ${clauses.length === 0 ? 'なし' : clauses.map((c) => c.definition.name).join(', ')}`];
+    return [`扱う effect: ${clauses.length === 0 ? 'なし' : clauses.map((c) => effectLink(c.definition.name, c.definition.mangled)).join(', ')}`];
   }
   if (PROGRAM_KINDS.includes(ref.definition.kind)) {
     const performed = graph.performedEffects(ref);
-    return [`撃つ effect: ${performed.length === 0 ? 'なし' : performed.map((p) => p.name).join(', ')}`];
+    return [`撃つ effect: ${performed.length === 0 ? 'なし' : performed.map((p) => effectLink(p.name, p.mangled)).join(', ')}`];
   }
   return [];
 }
