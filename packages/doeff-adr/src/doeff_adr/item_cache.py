@@ -23,8 +23,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from doeff_hy.pytest_items import Record, decode_records, module_record_texts
-from doeff_hy_bytecode_guard import macro_dependencies
-from doeff_hy_bytecode_guard.loader_hooks import file_sha256
+from doeff_hy_bytecode_guard import file_sha256, macro_dependencies
 
 DEFAULT_CACHE_DIR = Path.home() / ".cache" / "doeff-adr" / "pytest-items"
 # 記録の形か鍵の決め方を変えたら上げる(古い版のキャッシュは読まない)。2 = macro の提供元を doeff_hy_bytecode_guard の辿り方で求める。
