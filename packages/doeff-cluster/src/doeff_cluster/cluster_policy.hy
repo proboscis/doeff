@@ -1338,9 +1338,11 @@
   (setv workers {})
   (for [#(name w) (.items state.workers)]
     (setv seen (.get state.nodes w.node))
-    (setv (get workers name)
-          (cond
-            (not w.node) (replace w :derived #())
-            (or (is seen None) (in "error" seen)) w
-            True (replace w :derived (derived-capabilities (get seen "labels") table)))))
-  (replace state :workers workers))
+    (setv derived
+      (cond
+        (not w.node) #()
+        (or (is seen None) (in "error" seen)) w.derived
+        True (derived-capabilities (get seen "labels") table)))
+    ;; 能力の計算と検査は毎回行い、値が等しい時だけ既存の object を返す。
+    (setv (get workers name) (if (= derived w.derived) w (replace w :derived derived))))
+  (if (= workers state.workers) state (replace state :workers workers)))
