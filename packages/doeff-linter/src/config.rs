@@ -135,6 +135,21 @@ impl Config {
             }
         };
         settings.architecture = architecture;
+        // :wraps は doeff の実 I/O の handler の目録に在る物だけ(目録の外の handler を包むと、どの規則もその handler を実 I/O と知らない)。
+        if let Some(arch) = settings.architecture.as_ref() {
+            let catalog = crate::project::world_catalog::WorldCatalog::bundled();
+            let outside: Vec<String> = arch
+                .world_handlers
+                .iter()
+                .flat_map(|h| h.wraps.iter().filter(|w| !catalog.handlers.contains_key(&w.target())).map(move |w| format!("{} の :wraps の {}", h.definition.spelling(), w.spelling())))
+                .collect();
+            if !outside.is_empty() {
+                return Err(outside
+                    .into_iter()
+                    .map(|what| format!("{}: {} は doeff の実 I/O の handler の目録(doeff-linter data/world_handlers.json)に無い — 目録に足すか :wraps から外す", arch.path.display(), what))
+                    .collect());
+            }
+        }
         // 許可名簿を書いた repo では、生の副作用を許す所 = 名簿の定義の module(TOML の raw_side_effects の節が無くても判じる)。
         if let Some(arch) = settings.architecture.as_ref().filter(|a| !a.world_handlers.is_empty()) {
             let modules = arch.world_modules();
