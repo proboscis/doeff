@@ -252,6 +252,9 @@ impl Setup {
                 ProjectRule::ServiceUntestedOnSim => self.settings.architecture.as_ref().is_some_and(|a| a.verification_environment.is_some()),
                 ProjectRule::HandlerArgumentHoldsState => self.settings.architecture.as_ref().is_some_and(|a| a.handler_arguments.is_some()),
                 ProjectRule::BusinessEffectFake => self.settings.architecture.as_ref().is_some_and(|a| a.business_fakes.is_some()),
+                ProjectRule::AssemblyShapeBroken | ProjectRule::AssemblyAnswerMisplaced => {
+                    self.settings.architecture.as_ref().is_some_and(|a| a.business_fakes.is_some() && a.assembly_shape.is_some())
+                }
                 ProjectRule::TestKindMismatch => {
                     self.settings.architecture.as_ref().is_some_and(|a| !a.world_handlers.is_empty() && a.edge_mark.is_some())
                 }
