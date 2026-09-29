@@ -26,6 +26,7 @@ pub mod call_view;
 pub mod body_view;
 pub mod world_catalog;
 pub mod test_forms;
+pub mod single_point_vocabulary;
 pub mod retired;
 pub mod handler_arguments;
 pub mod typed_values;
@@ -320,6 +321,22 @@ pub fn run_with(root: &Path, settings: &ProjectSettings, enabled: &BTreeSet<Proj
                                 detail: Some(found.form.to_string()),
                                 base: Severity::Error,
                                 explain: Explain::TestFormNotDeftest { form: found.form, detail: found.detail },
+                            }
+                        }));
+                    }
+                    if !architecture.single_point_vocabulary.is_empty() && enabled.contains(&ProjectRule::VocabularyOutsideSinglePoint) {
+                        drafts.extend(single_point_vocabulary::find(root, &architecture.single_point_vocabulary).into_iter().map(|hit| {
+                            let start = Position { line: hit.line, character: 0 };
+                            Draft {
+                                rule: ProjectRule::VocabularyOutsideSinglePoint,
+                                layer: None,
+                                path: root.join(&hit.rel),
+                                rel: hit.rel.clone(),
+                                range: Range { start, end: start },
+                                message: format!("{} — 語彙 {} が判定の 1 点の外に {} 行(#146) — {}", hit.rel, hit.group, hit.count, hit.instead),
+                                detail: Some(hit.group.clone()),
+                                base: Severity::Error,
+                                explain: Explain::VocabularyOutsideSinglePoint { group: hit.group, count: hit.count, instead: hit.instead },
                             }
                         }));
                     }
