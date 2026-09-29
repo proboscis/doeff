@@ -142,6 +142,30 @@
   (assert (= back (SqlRows :rows #(#(1)) :rowcount 1)) back))
 
 
+(defk out-of-range [database]
+  {:pre [(: database str)] :post [(: % tuple)]
+   :tags {:context "sql" :role "program"}}
+  "INTEGER の範囲(64 bit)の外の整数を引数の bind と行の挿入の両方で渡す筋書き(agora-redesign #1234)。"
+  (<- (seeded database))
+  (<- bound (SqlQuery database "INSERT INTO items (id, label) VALUES (:id, 'x')" #((SqlParam :name "id" :value (** 2 63)))))
+  (<- inserted (SqlInsertRows database "items" #("id" "label") #(#((** 2 63) "y"))))
+  (<- after (SqlQuery database "SELECT count(*) FROM items" #()))
+  #(bound inserted after))
+
+
+(deftest test-sqlite-refuses-an-out-of-range-integer-like-postgres
+  ;; 本物の PostgreSQL は bigint の範囲外を 22003(numeric_value_out_of_range)で断る。sqlite3 の bind は OverflowError(sqlite3.Error の仲間
+  ;; ではない)を出すので、答え手が値にしないと呼び手の Program へ例外が抜け、模擬と本物の答えが食い違う(agora-redesign #1234)。
+  (<- answers (with-handler [(state) (sqlite-sql-handler #(DB))] (out-of-range DB)))
+  (val bound (get answers 0))
+  (val inserted (get answers 1))
+  (val after (get answers 2))
+  (assert (and (isinstance bound SqlFailed) (= bound.sqlstate "22003")) bound)
+  (assert (and (isinstance inserted SqlFailed) (= inserted.sqlstate "22003")) inserted)
+  ;; 断った後も接続は使える(行は 1 つも入っていない)。
+  (assert (= after (SqlRows :rows #(#(0)) :rowcount 1)) after))
+
+
 (deftest test-sqlite-exception-classes-map-to-sqlstate-classes
   (assert (= (! (sqlite-failure #("IntegrityError" "DatabaseError" "Error") "UNIQUE constraint failed")) (SqlFailed :sqlstate "23000" :reason "UNIQUE constraint failed")))
   (assert (= (. (! (sqlite-failure #("DataError" "DatabaseError") "too big")) sqlstate) "22000"))

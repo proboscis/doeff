@@ -22,6 +22,11 @@
 ;; DRIVER-CLASS-SQLSTATES と同じ類)。OperationalError は文で分ける(sqlite-failure)。
 (val SQLITE-CLASS-SQLSTATES {"IntegrityError" "23000" "DataError" "22000" "InterfaceError" "22000" "ProgrammingError" "42000"
                              "NotSupportedError" "0A000" "InternalError" "XX000"})
+;; 引数の bind で sqlite3 が出す例外のうち、sqlite3.Error の仲間でない物(agora-redesign #1234)。OverflowError = INTEGER(64 bit)の範囲外の
+;; 整数 — 本物の PostgreSQL は同じ値を 22003(numeric_value_out_of_range)で断る。値にしないと呼び手の Program へ例外が抜け、模擬と本物の
+;; 答えが食い違う。
+(val BIND-ERRORS #(OverflowError))
+(val BIND-CLASS-SQLSTATES {"OverflowError" "22003"})
 ;; 錠の取り合い(一時的)の SQLSTATE — serialization_failure。
 (val BUSY-SQLSTATE "40001")
 ;; 文の誤り・無い表など OperationalError の残りの SQLSTATE。
@@ -71,6 +76,8 @@
     (in "closed database" lowered) (SqlUnreachable :reason message)
     (and (in "OperationalError" class-names) (or (in "locked" lowered) (in "busy" lowered))) (SqlFailed :sqlstate BUSY-SQLSTATE :reason message)
     (in "OperationalError" class-names) (SqlFailed :sqlstate OPERATIONAL-SQLSTATE :reason message)
+    (any (gfor name class-names (in name BIND-CLASS-SQLSTATES)))
+      (SqlFailed :sqlstate (next (gfor name class-names :if (in name BIND-CLASS-SQLSTATES) (get BIND-CLASS-SQLSTATES name))) :reason message)
     True (SqlFailed :sqlstate (next (gfor name class-names :if (in name SQLITE-CLASS-SQLSTATES) (get SQLITE-CLASS-SQLSTATES name)) None)
                     :reason message)))
 
@@ -105,7 +112,7 @@
         (SqlRows :rows #() :rowcount (if (>= cursor.rowcount 0) cursor.rowcount None))
         (do (val rows (! (normalized-rows (.fetchall cursor))))
             (SqlRows :rows rows :rowcount (len rows))))
-    (except [error sqlite3.Error]
+    (except [error #(sqlite3.Error #* BIND-ERRORS)]
       (<- failure (sqlite-failure (tuple (gfor c (. (type error) __mro__) c.__name__)) (str error)))
       failure)))
 
@@ -130,7 +137,7 @@
   (try
     (val cursor (.executemany connection text (list request.rows)))
     (SqlRows :rows #() :rowcount (if (>= cursor.rowcount 0) cursor.rowcount None))
-    (except [error sqlite3.Error]
+    (except [error #(sqlite3.Error #* BIND-ERRORS)]
       (<- failure (sqlite-failure (tuple (gfor c (. (type error) __mro__) c.__name__)) (str error)))
       failure)))
 
