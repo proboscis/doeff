@@ -218,7 +218,9 @@ impl Setup {
                 ProjectRule::EffectsDisagreeWithInference => self.settings.definitions.is_some(),
                 ProjectRule::TranslationEmitsIntent => self.settings.layers.is_some() && self.settings.translation.is_some(),
                 ProjectRule::JsonValueOutsideWire => self.settings.architecture.is_some(),
-                ProjectRule::WorldHandlerNamedOutsideList => self.settings.architecture.as_ref().is_some_and(|a| !a.world_handlers.is_empty()),
+                ProjectRule::WorldHandlerNamedOutsideList | ProjectRule::WorldHandlerMisplaced => {
+                    self.settings.architecture.as_ref().is_some_and(|a| !a.world_handlers.is_empty())
+                }
                 ProjectRule::ShapeCheckInJudgment => {
                     self.settings.definitions.is_some() && self.settings.smells.as_ref().is_some_and(|s| !s.shape_check_layers.is_empty())
                 }
