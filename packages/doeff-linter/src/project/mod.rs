@@ -1627,49 +1627,66 @@ fn innermost_definition(definitions: &[Definition], spot: &Range) -> Option<usiz
         .map(|(index, _)| index)
 }
 
-/// テストの定義か module の頭が、縁の印 mark を持つか(deftest の `:marks [..]` と module の `pytestmark` の `pytest.mark.<印>`)。
-/// 印の名は Python の綴り(`real_world`)と Hy の綴り(`real-world`)の両方で読む。
-fn carries_edge_mark(source: &str, test: &Definition, mark: &str) -> bool {
-    let spellings = [mark.to_string(), mark.replace('_', "-")];
-    let named = |text: &str| spellings.iter().any(|s| text.contains(&format!("\"{}\"", s)) || text.contains(&format!("mark.{}", s)));
-    deftest_marks(source, test.full_range.start.line as usize).is_some_and(|marks| named(marks)) || declares_module_mark(source, &named)
+/// 1 つの test file の印の読み(file ごとに Hy の reader で 1 度だけ読む — deftest ごとに読み直さない・agora-redesign #1352)。
+/// module の印 = 最上位の `(val pytestmark 値)` / `(setv pytestmark 値)` の値の綴り。deftest の印 = deftest の始まりの行 → :marks の並びの
+/// 綴り(doeff-hy の deftest と同じ読み方 — 名の後の fixture の並び `[..]` を 1 つ外し、先頭の文字列を飛ばした最初の dict の :marks)。
+/// 註・検の本体の文字列の中の綴りは印ではない(agora-redesign #1279)。defadr などの中に入れ子の deftest も読む。
+struct FileMarks {
+    module: Vec<String>,
+    deftests: HashMap<usize, String>,
 }
 
-/// その行から始まる `(deftest 名 {… :marks [..] …} …)` の :marks の並びの綴り(Hy の reader で読む — 検の本体の文字列の中の
-/// `{:marks …}` は印ではない)。defadr などの中に入れ子の deftest も探す。
-fn deftest_marks(source: &str, line: usize) -> Option<&str> {
-    use doeff_indexer::hy_index::reader::{Delim, Form, Node, Reader};
-    let text = |form: &Form| source.get(form.span.start..form.span.end).unwrap_or("");
-    let line_of = |form: &Form| source.get(..form.span.start).map_or(0, |before| before.matches('\n').count());
-    fn find<'f>(forms: &'f [Form], hit: &dyn Fn(&Form) -> bool) -> Option<&'f Form> {
-        forms.iter().find_map(|form| if hit(form) { Some(form) } else { form.paren_items().and_then(|items| find(items, hit)) })
-    }
-    let forms = Reader::new(source, 0, source.len()).read_all();
-    let is_test = |form: &Form| line_of(form) == line && form.paren_items().and_then(|items| items.first()).is_some_and(|head| text(head) == "deftest");
-    let test = find(&forms, &is_test)?;
-    // doeff-hy の deftest と同じ読み方: 名の後の fixture の並び `[..]` を 1 つ外し、先頭の文字列(docstring)を飛ばした最初の dict が設定。
-    let mut body = test.paren_items()?.get(2..)?;
-    if body.first().is_some_and(|form| form.bracket_items().is_some()) {
-        body = &body[1..];
-    }
-    let options = body.iter().find(|form| !matches!(form.node, Node::Str { .. }))?;
-    let Node::Seq { delim: Delim::Brace, items } = &options.node else { return None };
-    items.chunks(2).find(|pair| pair.first().is_some_and(|key| text(key) == ":marks")).and_then(|pair| pair.get(1)).map(|marks| text(marks))
-}
-
-/// module の印 = Hy の reader で読んだ最上位の `(val pytestmark 値)` / `(setv pytestmark 値)` の値が印を名指す — 註や検の中の文字列の値に
-/// 在る綴りは印ではない(agora-redesign #1279)。
-fn declares_module_mark(source: &str, named: &dyn Fn(&str) -> bool) -> bool {
-    let text = |form: &doeff_indexer::hy_index::reader::Form| source.get(form.span.start..form.span.end).unwrap_or("");
-    doeff_indexer::hy_index::reader::Reader::new(source, 0, source.len()).read_all().iter().any(|form| match form.paren_items() {
-        Some([head, name, value, ..]) => {
-            matches!(head.node, doeff_indexer::hy_index::reader::Node::Symbol)
-                && matches!(text(head), "val" | "setv")
-                && text(name) == "pytestmark"
-                && named(text(value))
+impl FileMarks {
+    fn read(source: &str) -> FileMarks {
+        use doeff_indexer::hy_index::reader::{Delim, Form, Node, Reader};
+        let text = |form: &Form| source.get(form.span.start..form.span.end).unwrap_or("").to_string();
+        let forms = Reader::new(source, 0, source.len()).read_all();
+        let module = forms
+            .iter()
+            .filter_map(|form| match form.paren_items() {
+                Some([head, name, value, ..])
+                    if matches!(head.node, Node::Symbol) && matches!(text(head).as_str(), "val" | "setv") && text(name) == "pytestmark" =>
+                {
+                    Some(text(value))
+                }
+                _ => None,
+            })
+            .collect();
+        // 行の頭の byte の位置(form の始まりの行を二分探索で引く)。
+        let starts: Vec<usize> = std::iter::once(0).chain(source.match_indices('\n').map(|(at, _)| at + 1)).collect();
+        let line_of = |form: &Form| starts.partition_point(|start| *start <= form.span.start).saturating_sub(1);
+        let mut deftests = HashMap::new();
+        let mut stack: Vec<&Form> = forms.iter().collect();
+        while let Some(form) = stack.pop() {
+            let Some(items) = form.paren_items() else { continue };
+            stack.extend(items.iter());
+            if !items.first().is_some_and(|head| text(head) == "deftest") {
+                continue;
+            }
+            let mut body = items.get(2..).unwrap_or_default();
+            if body.first().is_some_and(|form| form.bracket_items().is_some()) {
+                body = &body[1..];
+            }
+            let options = body.iter().find(|form| !matches!(form.node, Node::Str { .. }));
+            let marks = options.and_then(|options| match &options.node {
+                Node::Seq { delim: Delim::Brace, items } => {
+                    items.chunks(2).find(|pair| pair.first().is_some_and(|key| text(key) == ":marks")).and_then(|pair| pair.get(1)).map(|m| text(m))
+                }
+                _ => None,
+            });
+            if let Some(marks) = marks {
+                deftests.insert(line_of(form), marks);
+            }
         }
-        _ => false,
-    })
+        FileMarks { module, deftests }
+    }
+
+    /// テストの定義か module の頭が、縁の印 mark を持つか。印の名は Python の綴り(`real_world`)と Hy の綴り(`real-world`)の両方で読む。
+    fn carries(&self, test: &Definition, mark: &str) -> bool {
+        let spellings = [mark.to_string(), mark.replace('_', "-")];
+        let named = |text: &str| spellings.iter().any(|s| text.contains(&format!("\"{}\"", s)) || text.contains(&format!("mark.{}", s)));
+        self.deftests.get(&(test.full_range.start.line as usize)).is_some_and(|marks| named(marks)) || self.module.iter().any(|value| named(value))
+    }
 }
 
 /// 定義の間の辺(呼び出し・参照・入れ子)の図 — 全体の索引から 1 度だけ組む(DOEFF133・136 が使う)。
@@ -1798,10 +1815,11 @@ fn judge_test_kinds(root: &Path, architecture: &architecture::Architecture, hy: 
             continue;
         }
         let Ok(source) = std::fs::read_to_string(root.join(rel.as_str())) else { continue };
+        let marks = FileMarks::read(&source);
         for index in tests {
             let test = &file.definitions[index];
             let edge = reaches[first + index];
-            let marked = carries_edge_mark(&source, test, mark);
+            let marked = marks.carries(test, mark);
             if edge == marked {
                 continue;
             }
