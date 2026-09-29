@@ -10,7 +10,7 @@ readme = "README.md"
 requires-python = ">=3.10"
 license = {text = "MIT"}
 authors = [
-    {name = "Proboscis"},
+    {name = "Proboscis", email = "3684241+proboscis@users.noreply.github.com"},
 ]
 keywords = ["llm", "effects", "doeff", "providers", "structured-output"]
 classifiers = [

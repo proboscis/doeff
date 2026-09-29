@@ -9,7 +9,7 @@ description = "Static effect dependency analyzer for doeff programs"
 requires-python = ">=3.10"
 license = {text = "MIT"}
 authors = [
-    {name = "doeff contributors"}
+    {name = "Proboscis", email = "3684241+proboscis@users.noreply.github.com"}
 ]
 
 [project.scripts]
