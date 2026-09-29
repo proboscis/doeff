@@ -14,7 +14,8 @@
 ;;;
 ;;; 中身(写しを作らない — 起こし直しの間隔・readiness の窓・handoff の期限・needs ⊆ provides の置き方・lease・fence は本物が決める):
 ;;;   - coordinator の Pod = 本物の run-coordinator を coordinator_handler_sets.emulated-handlers(要求の列 RequestQueue・memory の
-;;;     置き場・偽の k8s)の上で回す。止まれば(止めの合図・Persist の失敗)返事の無い要求に接続の失敗を返し、止まっている秒の後に同じ
+;;;     置き場・偽の k8s)の上で回す。置き場は入口の store(MemoryWalStore の値を作る関数)で差し替えられる — 置き場の欠陥が不変条件を
+;;;     破るのを確かめる反例の壊れた置き場のため(#989)。止まれば(止めの合図・Persist の失敗)返事の無い要求に接続の失敗を返し、止まっている秒の後に同じ
 ;;;     置き場から load-state で読み直して作り直す。一番内側の見張り(observe-requests)が、届いた ReportReady / ReportMetrics を世界へ
 ;;;     記録し、網の切れた worker から届いた要求を落とし(送り手には接続の失敗)、筋書きの止まり・落ちを注入する。
 ;;;   - worker = 本物の run-worker を、worker ごとの偽の宿(sim-host)の上で回す(worker-keeper が node の一生を持つ — 死んだ・止めた
@@ -390,7 +391,8 @@
 (defrecord SimPlan
   "sim の 1 回の走りの筋(sim-cluster が引数から作る)。declaration = 最初の宣言(environ の上書きを重ねた行)・environ = job 名 →
    上書きの環境変数(Redeclare にも重ねる)・passable = 柵が外へ通す effect の型(SIM-PASSABLE と外の世界の effects)・
-   per-process = process ごとの外の handler の組を作る関数(SimOutside.per-process — None = 無し)。"
+   per-process = process ごとの外の handler の組を作る関数(SimOutside.per-process — None = 無し)・store = coordinator の置き場を作る
+   関数(引数なし → MemoryWalStore の値 — 派生の class をそのまま渡せる。None = MemoryWalStore)。"
   (#^ System system)
   (#^ Declaration declaration)
   (#^ tuple workers)
@@ -401,7 +403,8 @@
   (#^ ClusterNaming naming)
   (#^ WorkerPolicy policy)
   (#^ tuple passable)
-  (setv #^ (| Callable None) per-process None))
+  (setv #^ (| Callable None) per-process None)
+  (setv #^ (| Callable None) store None))
 
 
 (defrecord SimParts
@@ -572,9 +575,9 @@
   (system-declaration system revision :environ environ))
 
 
-(defk sim-plan [system workers environ revision start-ms timing policy outside]
+(defk sim-plan [system workers environ revision start-ms timing policy outside store]
   {:pre [(: system System) (: workers (| tuple None)) (: environ (| dict None)) (: revision str) (: start-ms int)
-         (: timing (| ClusterTiming None)) (: policy (| WorkerPolicy None)) (: outside (| SimOutside None))]
+         (: timing (| ClusterTiming None)) (: policy (| WorkerPolicy None)) (: outside (| SimOutside None)) (: store (| Callable None))]
    :post [(: % SimPlan)] :tags {:context "doeff-cluster" :role "judgment"}}
   "sim-cluster の引数を検めて筋にするため(走らせる前に断る — environ の上書きの誤り・名の重なる worker)。"
   (<- fallback tuple (default-workers system))
@@ -584,15 +587,19 @@
     (raise (ValueError (.format "workers は名の重ならない SimWorker の 1 つ以上の tuple: {!r}" chosen))))
   (<- declaration Declaration (declaration-of system revision (or environ {})))
   (SimPlan :system system :declaration declaration :workers chosen :environ (or environ {}) :revision revision
-           :per-process (if (is outside None) None outside.per-process)
+           :per-process (if (is outside None) None outside.per-process) :store store
            :start-ms start-ms :timing (or timing (ClusterTiming)) :naming (ClusterNaming) :policy (or policy (WorkerPolicy))
            :passable (+ SIM-PASSABLE (if (is outside None) #() outside.effects))))
 
 
-(defk parts-of []
-  {:pre [] :post [(: % SimParts)] :tags {:context "doeff-cluster" :role "foundation"}}
-  "coordinator の Pod の部品を作るため(世界の handler が session で 1 回だけ呼ぶ)。"
-  (SimParts :queue (RequestQueue) :store (MemoryWalStore) :stop (StopState) :kube (KubeMemory {})))
+(defk parts-of [plan]
+  {:pre [(: plan SimPlan)] :post [(: % SimParts)] :tags {:context "doeff-cluster" :role "foundation"}}
+  "coordinator の Pod の部品を作るため(世界の handler が session で 1 回だけ呼ぶ — 置き場は 1 回の走りに 1 つで、作り直した
+   coordinator も同じ置き場から読み直す)。置き場は筋の store が作る(無ければ MemoryWalStore)。"
+  (val store (if (is plan.store None) (MemoryWalStore) (plan.store)))
+  (when (not (isinstance store MemoryWalStore))
+    (raise (TypeError (.format "store は MemoryWalStore の値を作る関数: {!r} が {!r} を返した" plan.store store))))
+  (SimParts :queue (RequestQueue) :store store :stop (StopState) :kube (KubeMemory {})))
 
 
 (defk fresh-truth [name generation now fence-ms]
@@ -1565,7 +1572,7 @@
   ;; 網の切断・止まれの合図)を session に持ち、仕組みの effect と検の effect に答える。session の値の置き場(doeff_core_effects の
   ;; state)はこの handler の外側に要る(sim-cluster が置く)。真実(本当に動いている process・届いた報告)はここが持つ — coordinator の
   ;; 信念(状態の中の報告)ではない。節の session の書きは scheduler の切り替わる effect より前に済ませる(頭の註)。
-  (session val parts !(parts-of))
+  (session val parts !(parts-of plan))
   (session var hosts !(fresh-hosts plan))
   (session var generations (dfor w plan.workers w.name 1))
   (session var handles {})
@@ -1855,40 +1862,43 @@
       (<- (Wait pod)))))
 
 
-(defk sim-under-clock [system scenario workers environ revision timing policy outside]
+(defk sim-under-clock [system scenario workers environ revision timing policy outside store]
   {:pre [(: system System) (: scenario (| Program EffectBase)) (: workers (| tuple None)) (: environ (| dict None)) (: revision str)
-         (: timing (| ClusterTiming None)) (: policy (| WorkerPolicy None)) (: outside (| SimOutside None))]
+         (: timing (| ClusterTiming None)) (: policy (| WorkerPolicy None)) (: outside (| SimOutside None)) (: store (| Callable None))]
    :post [(: % "scenario の答え(型は筋書きごと)")]
    :tags {:context "doeff-cluster" :role "program"}}
   "入口(sim-cluster・wall-sim-cluster)が選んだ時計の内側で、時計の今を起点に筋を作り(引数を検めて断る)、session の値の置き場・sim の
    外の世界・sim の世界を並べて sim-main を走らせるため。時計の違いは入口が並べる handler だけで、ここから内側は同じ。"
   (<- start-ms int (now-epoch-ms))
-  (<- plan SimPlan (sim-plan system workers environ revision start-ms timing policy outside))
+  (<- plan SimPlan (sim-plan system workers environ revision start-ms timing policy outside store))
   (<- answer (with-handlers [(session-store) #* (if (is outside None) [] outside.handlers) (sim-world plan)]
                (sim-main scenario)))
   answer)
 
 
 (defk sim-cluster [system scenario * [workers None] [environ None] [revision "sim"] [start-ms SIM-START-MS] [timing None] [policy None]
-                  [outside None]]
+                  [outside None] [store None]]
   {:pre [(: system System) (: scenario (| Program EffectBase)) (: workers (| tuple None)) (: environ (| dict None)) (: revision str) (: start-ms int)
-         (: timing (| ClusterTiming None)) (: policy (| WorkerPolicy None)) (: outside (| SimOutside None))]
+         (: timing (| ClusterTiming None)) (: policy (| WorkerPolicy None)) (: outside (| SimOutside None)) (: store (| Callable None))]
    :post [(: % "scenario の答え(型は筋書きごと)")]
    :tags {:context "doeff-cluster" :role "entry"}}
   "系 system(sim の土台で作った System の値)を本物の coordinator と worker の上で走らせ、scenario(検の筋書きの Program — 同じ
    scheduler・同じ仮想の時計で並んで走る)の答えを返す。workers = SimWorker の tuple(既定 = 全 job の needs の和を提供する 1 台)・
    environ = job 名 → 宣言の :environ に重ねる環境変数(宣言に無い名は断る)・revision = 宣言の版・start-ms = 仮想の時計の起点・
    timing / policy = coordinator と worker の時間の設定(既定 = 本番の既定)・outside = sim の外の世界(SimOutside — 業務の外の系の模擬の
-   handler と、それが答える effect の型。時計の内側・sim の世界の外側に置き、柵はその型も通す)。自分で scheduler を持つ(外に
+   handler と、それが答える effect の型。時計の内側・sim の世界の外側に置き、柵はその型も通す)・store = coordinator の置き場を作る
+   関数(引数なし → MemoryWalStore の値 — 既定 = MemoryWalStore。反例の壊れた置き場 — 書いたふり・読み直せない・欄を落とす — を
+   派生の class で渡す。1 回の走りに 1 回だけ呼び、作り直した coordinator も同じ置き場から読み直す)。自分で scheduler を持つ(外に
    scheduler が在っても無くても走る)。壁の時計で回すなら wall-sim-cluster。"
   (<- answer (scheduled (with-handlers [(sim-time-handler :start-time (datetime-of-epoch-ms start-ms))]
-                          (sim-under-clock system scenario workers environ revision timing policy outside))))
+                          (sim-under-clock system scenario workers environ revision timing policy outside store))))
   answer)
 
 
-(defk wall-sim-cluster [system scenario * [workers None] [environ None] [revision "sim"] [timing None] [policy None] [outside None]]
+(defk wall-sim-cluster [system scenario * [workers None] [environ None] [revision "sim"] [timing None] [policy None] [outside None]
+                       [store None]]
   {:pre [(: system System) (: scenario (| Program EffectBase)) (: workers (| tuple None)) (: environ (| dict None)) (: revision str)
-         (: timing (| ClusterTiming None)) (: policy (| WorkerPolicy None)) (: outside (| SimOutside None))]
+         (: timing (| ClusterTiming None)) (: policy (| WorkerPolicy None)) (: outside (| SimOutside None)) (: store (| Callable None))]
    :post [(: % "scenario の答え(型は筋書きごと)")]
    :tags {:context "doeff-cluster" :role "entry"}}
   "sim-cluster と同じ系・同じ本物の coordinator と worker・同じ偽の宿と柵を、壁の時計で走らせ、scenario の答えを返す(引数の意味は
@@ -1898,5 +1908,5 @@
    await-handler を並べる)ので、本物の待ち受けを持つ job は土台に await-handler を置くか、その I/O を outside の handler に置く
    (時計の内側なので、ここの await-handler が答える)。自分で scheduler を持つ。"
   (<- answer (scheduled (with-handlers [(await-handler) (async-time-handler)]
-                          (sim-under-clock system scenario workers environ revision timing policy outside))))
+                          (sim-under-clock system scenario workers environ revision timing policy outside store))))
   answer)

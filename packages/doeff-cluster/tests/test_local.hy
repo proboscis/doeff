@@ -10,7 +10,7 @@
 (import pytest)
 (import doeff [with-handlers])
 (import doeff_time [Delay])
-(import doeff_cluster.coordinator_handler_sets [RequestQueue])
+(import doeff_cluster.coordinator_handler_sets [RequestQueue MemoryWalStore])
 (import doeff_cluster.job_context [RunContext])
 (import doeff_cluster.remote_model [UnsendableProgram TaskFailed decode-outcome])
 (import doeff_cluster.worker_model [JobSpec])
@@ -426,6 +426,28 @@
   (assert (= seen.after.readiness.state "Ready") seen.after.readiness)
   (assert (any (gfor p seen.after.processes (and (= p.exit-code 1) (in "RemoteJobFailed" p.detail)))) seen.after.processes)
   (assert (is (. (get seen.after.processes -1) exit-code) None) seen.after.processes))
+
+
+(deftest test-the-coordinator-writes-and-rereads-the-store-the-caller-makes
+  ;; 置き場の差し替えの口(#989 — 使い手の反例の壊れた置き場のため): sim-cluster は store が作る置き場を 1 回の走りに 1 つだけ作り、
+  ;; coordinator はそこへ書き、止めた後の作り直しも同じ置き場から読み直す(盤の行が残り、service は Ready に戻る)。
+  (val made [])
+  (<- seen Outage (sim-cluster (beacons sim-foundation) (pause-coordinator False 10.0)
+                               :store (fn [] (let [store (MemoryWalStore)] (.append made store) store))))
+  (assert (= (len made) 1) made)
+  (val store (get made 0))
+  (assert (> store.seq 0) store.seq)
+  (assert (in "board/beacon/a" store.kv) (sorted store.kv))
+  (assert (= (len seen.runs) 2) seen.runs)
+  (assert (= seen.after.readiness.state "Ready") seen.after.readiness)
+  (assert (> (get seen.after.rows "beacon/a" "n") 0) seen.after.rows))
+
+
+(deftest test-a-store-maker-that-does-not-make-a-memory-store-is-refused
+  ;; 置き場を作る関数が MemoryWalStore でない値を返せば、走らせる前に断る(emulated-handlers と load-state が読む口が無い)。
+  (with [raised (pytest.raises TypeError)]
+    (<- (sim-cluster (beacons sim-foundation) (Delay 1.0) :store (fn [] {}))))
+  (assert (in "MemoryWalStore" (str raised.value)) (str raised.value)))
 
 
 ;; --- worker の死・止め・網の切断・drain(段 5b の 4)----------------------------------------------------
