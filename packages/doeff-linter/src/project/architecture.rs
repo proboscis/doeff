@@ -244,6 +244,25 @@ pub struct RetiredCalls {
     pub instead: String,
 }
 
+/// handler の引数の決まり(`:handler-arguments {:files [..] :exclude [..] :store-names [..] :store-suffixes [..] :keep-mark "…" :value-types [..]}`)
+/// — DOEFF142 の母集団と、repo の語(店の名・残す理由の註の印・値として扱う外の型)。client・可変の入れ物・値の型の既定は linter が持つ
+/// (Python の一般の名だけ)。
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+pub struct HandlerArguments {
+    /// 判じる file の綴りの型(repo の根からの glob)。
+    pub files: Vec<String>,
+    /// 外す file の綴りの型。
+    pub exclude: Vec<String>,
+    /// 型の注記の無い引数を店と読む名。
+    pub store_names: Vec<String>,
+    /// 型の注記の無い引数を店と読む名の末尾。
+    pub store_suffixes: Vec<String>,
+    /// handler の本文にこの綴りの註が在れば、その handler の引数は数えない(引数に残す理由の印)。
+    pub keep_mark: Option<String>,
+    /// repo の索引に無くても値として扱う型の名(外の package の frozen の型)。
+    pub value_types: Vec<String>,
+}
+
 /// architecture.hy の全体。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct Architecture {
@@ -292,6 +311,8 @@ pub struct Architecture {
     pub retired_words: Vec<RetiredWords>,
     /// 使わないと決めた呼び(`:retired-calls [(retired-calls …) …]` — 空 = 宣言していない)。書けば DOEFF151 が当たりを出す(#1193)。
     pub retired_calls: Vec<RetiredCalls>,
+    /// handler の引数の決まり(書けば DOEFF142 が defhandler の引数の client・可変の店を出す — agora-redesign #1189 / #1366)。
+    pub handler_arguments: Option<HandlerArguments>,
     #[serde(skip)]
     pub role_descriptions: BTreeMap<String, String>,
     #[serde(skip)]
@@ -618,6 +639,7 @@ impl<'a> Parser<'a> {
             test_forms: None,
             retired_words: Vec::new(),
             retired_calls: Vec::new(),
+            handler_arguments: None,
             role_descriptions: BTreeMap::new(),
             exclude: vec!["tests".into(), "__pycache__".into(), "conftest.py".into()],
             extensions: None,
@@ -671,6 +693,7 @@ impl<'a> Parser<'a> {
                 ":test-forms" => arch.test_forms = self.test_forms(value),
                 ":retired-words" => arch.retired_words = self.retired_words(value),
                 ":retired-calls" => arch.retired_calls = self.retired_calls(value),
+                ":handler-arguments" => arch.handler_arguments = self.handler_arguments(value),
                 ":edge-touches" => {
                     let mut touches = Vec::new();
                     for word in self.names(value, ":edge-touches") {
@@ -957,6 +980,30 @@ impl<'a> Parser<'a> {
             out.push(group);
         }
         out
+    }
+
+    /// `{:files [..] :exclude [..] :store-names [..] :store-suffixes [..] :keep-mark "…" :value-types [..]}` を読む(:files は要る)。
+    fn handler_arguments(&mut self, value: &Form) -> Option<HandlerArguments> {
+        let Some(entries) = self.brace(value) else {
+            self.problem(value, ":handler-arguments は {:files [..] :exclude [..] :store-names [..] :store-suffixes [..] :keep-mark \"…\" :value-types [..]} の辞書");
+            return None;
+        };
+        let mut decl = HandlerArguments::default();
+        for (key, field) in self.pairs(&entries) {
+            match self.text(key) {
+                ":files" => decl.files = self.names(field, ":handler-arguments :files"),
+                ":exclude" => decl.exclude = self.names(field, ":handler-arguments :exclude"),
+                ":store-names" => decl.store_names = self.names(field, ":handler-arguments :store-names"),
+                ":store-suffixes" => decl.store_suffixes = self.names(field, ":handler-arguments :store-suffixes"),
+                ":keep-mark" => decl.keep_mark = self.required_string(field, ":handler-arguments :keep-mark").filter(|m| !m.is_empty()),
+                ":value-types" => decl.value_types = self.names(field, ":handler-arguments :value-types"),
+                _ => self.unknown_key(key, ":handler-arguments"),
+            }
+        }
+        if decl.files.is_empty() {
+            self.problem(value, ":handler-arguments に :files(判じる file の綴りの型)が無い");
+        }
+        Some(decl)
     }
 
     /// 許可名簿 `[(world-handler "module:名" :touches [..] :answers [..] :wraps [..]) …]` を読む。

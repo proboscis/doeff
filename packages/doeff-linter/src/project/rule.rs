@@ -120,6 +120,9 @@ pub enum ProjectRule {
     RetiredWord,
     /// DOEFF151: architecture.hy の :retired-calls で使わないと決めた呼び(退役した effect・時計 …)を、宣言の Hy の file が呼ぶ(#1193)。
     RetiredCall,
+    /// DOEFF142: defhandler の引数に client・可変の入れ物・可変の object・店の名の引数を取る(接続先と設定は Ask・状態は session に持つ —
+    /// agora-redesign #1189 / #1366)。母集団と店の名は architecture.hy の :handler-arguments から読む。
+    HandlerArgumentHoldsState,
     /// DOEFF201(意味・Jev): 翻訳の層の定義が業務の判断をしている。
     SemanticBusinessDecision,
     /// DOEFF202(意味・Jev): 判断の層の定義が通信の手段を知っている。
@@ -173,6 +176,7 @@ impl ProjectRule {
         ProjectRule::PlacedDependency,
         ProjectRule::RetiredWord,
         ProjectRule::RetiredCall,
+        ProjectRule::HandlerArgumentHoldsState,
         ProjectRule::SemanticBusinessDecision,
         ProjectRule::SemanticTransportKnowledge,
         ProjectRule::SemanticPlainCallable,
@@ -221,6 +225,7 @@ impl ProjectRule {
             ProjectRule::PlacedDependency => "DOEFF140",
             ProjectRule::RetiredWord => "DOEFF150",
             ProjectRule::RetiredCall => "DOEFF151",
+            ProjectRule::HandlerArgumentHoldsState => "DOEFF142",
             ProjectRule::SemanticBusinessDecision => "DOEFF201",
             ProjectRule::SemanticTransportKnowledge => "DOEFF202",
             ProjectRule::SemanticPlainCallable => "DOEFF203",
@@ -251,6 +256,7 @@ impl ProjectRule {
             // 使わないと決めた綴りと呼び(#1193 の決め — 登録簿に載った既知の当たりは warning、新しい当たりは critical)。
             | ProjectRule::RetiredWord
             | ProjectRule::RetiredCall
+            | ProjectRule::HandlerArgumentHoldsState
             | ProjectRule::ServiceBoundary
             | ProjectRule::ServiceDependency
             | ProjectRule::TranslationEmitsIntent
@@ -345,7 +351,8 @@ impl ProjectRule {
             | ProjectRule::TestFormNotDeftest
             | ProjectRule::ServiceUntestedOnSim
             | ProjectRule::RetiredWord
-            | ProjectRule::RetiredCall => false,
+            | ProjectRule::RetiredCall
+            | ProjectRule::HandlerArgumentHoldsState => false,
             ProjectRule::EnvironmentName
             | ProjectRule::DefnForbidden
             | ProjectRule::DeffNeedsReason
@@ -407,6 +414,7 @@ impl ProjectRule {
             ProjectRule::ServiceUntestedOnSim => "模擬の環境のテストが回さない service",
             ProjectRule::RetiredWord => "使わないと決めた綴り",
             ProjectRule::RetiredCall => "使わないと決めた呼び",
+            ProjectRule::HandlerArgumentHoldsState => "handler の引数が client・可変の店を取る",
             ProjectRule::SemanticBusinessDecision => "翻訳の層で業務の判断(Jev)",
             ProjectRule::SemanticTransportKnowledge => "判断の層が通信の手段を知る(Jev)",
             ProjectRule::SemanticPlainCallable => "deff の理由が合わない(Jev)",
@@ -446,6 +454,7 @@ impl ProjectRule {
             | ProjectRule::TestIsDeftest
             | ProjectRule::TestFormNotDeftest
             | ProjectRule::ServiceUntestedOnSim
+            | ProjectRule::HandlerArgumentHoldsState
             | ProjectRule::DefkCalledBare
             | ProjectRule::EffectsDisagreeWithInference => RuleFamily::Definition,
             ProjectRule::ClassWithBehaviour | ProjectRule::SemanticClassRole => RuleFamily::Class,
@@ -503,6 +512,7 @@ impl ProjectRule {
             ProjectRule::ServiceUntestedOnSim => "Service Untested On Sim",
             ProjectRule::RetiredWord => "Retired Word",
             ProjectRule::RetiredCall => "Retired Call",
+            ProjectRule::HandlerArgumentHoldsState => "Handler Argument Holds State",
             ProjectRule::SemanticBusinessDecision => "Business Decision In Translation (Jev)",
             ProjectRule::SemanticTransportKnowledge => "Transport Knowledge In Core (Jev)",
             ProjectRule::SemanticPlainCallable => "Plain Callable Reason (Jev)",
@@ -550,6 +560,7 @@ impl ProjectRule {
             ProjectRule::RetiredWord => "architecture.hy の :retired-words で使わないと決めた綴りを、群の :files の file に書かない — :words は語として単独で在る所(前後が英字・_・- でない)、:patterns は行ごとの正規表現、:in names は定義の名だけを見る。:rule-lines の綴りを含む行(規則そのものを述べる行)は数えない",
             ProjectRule::RetiredCall => "architecture.hy の :retired-calls で使わないと決めた呼び(退役した effect・時計 …)を、群の :files の Hy の file で呼ばない — 頭の記号が :calls の綴りの form を数え、註・文字列・読み捨てた form は数えない",
             ProjectRule::ServiceUntestedOnSim => "業務の service は、本番の組み立て(entry の層)のまま模擬の環境に載せ、handler の差し替えだけで回して確かめる — 模擬の環境(:verification-environment)の下の deftest がその service の entry の層の定義に 1 本も届かなければ、未検証の service として赤にする",
+            ProjectRule::HandlerArgumentHoldsState => "handler は接続の object や書き換える店を引数で受け取らない — 接続先と資格・設定は Ask で読み、client は本文の先頭の (session val client …) で 1 回だけ作り、状態は (session var …) で持つ(外側の handler が差し替え・観測できる)。引数に残す物は本文に architecture.hy の :handler-arguments の :keep-mark の註で理由を書く",
             ProjectRule::TestKindMismatch => "テストの種類は 2 つだけ — 手元(届く定義に外の世界に触れる handler が無い)/ 縁(名簿の定義・:wraps の handler・生の I/O に届く)。種類は人が決めず届く先から導き、縁のテストだけが architecture.hy の :edge-mark の印を持つ(operator 2026-09-29 \"everything is 'pure' until we apply handler that has real IO\")",
             ProjectRule::WorldHandlerMisplaced => "architecture.hy の :world-handlers に挙げた定義は実在し、層 foundation の module に在る(外の世界に触れてよい定義の置き場は foundation だけ)",
             ProjectRule::WorldHandlerNamedOutsideList => "architecture.hy の :world-handlers の :wraps に挙げた doeff の実 I/O の handler(os-file-handler・http-production-handler …)を名指してよいのは、許可名簿の定義(とその中の入れ子の定義)だけ — 値として渡す所(with-handlers の列)も呼び出しも数える",
@@ -598,6 +609,7 @@ impl ProjectRule {
             ProjectRule::TestFormNotDeftest => "deftest に書き直す(判定の関数は同じ process で呼ぶ)— 守る物が消えたなら file ごと消す。module ごとの skip は足りない物を直すか、その検だけを skip する",
             ProjectRule::RetiredWord => "群の :instead の語に書き換える(規則そのものを述べる行なら、:rule-lines の綴りを含めて書く)— 直せない既存の当たりは登録簿に載せる",
             ProjectRule::RetiredCall => "群の :instead の物に置き換える — 直せない既存の当たりは登録簿に載せる",
+            ProjectRule::HandlerArgumentHoldsState => "引数を消し、接続先と設定は Ask、client は (session val …)、状態は (session var …) へ移す — 同じ handler を別の設定で並べるなど引数に残す物は本文に理由の註を書く",
             ProjectRule::ServiceUntestedOnSim => "模擬の環境の tests に、その service の entry の組み立てを handler の差し替えだけで回す deftest を足す",
             ProjectRule::TestKindMismatch => "縁なら印を付け(既定の pytest から外れる)、手元のつもりなら届く先の実 I/O の handler を模擬の handler に替える — 手元なのに印が在れば外す",
             ProjectRule::WorldHandlerMisplaced => "定義を foundation の層(architecture.hy の :foundation の dir)へ移すか、名簿の綴り(module:名)を実物に合わせる — 要らなくなった定義なら名簿から外す",
@@ -656,6 +668,7 @@ mod tests {
         ("DOEFF140", RuleFamily::Place),
         ("DOEFF150", RuleFamily::Naming),
         ("DOEFF151", RuleFamily::Naming),
+        ("DOEFF142", RuleFamily::Definition),
         ("DOEFF201", RuleFamily::Jev),
         ("DOEFF202", RuleFamily::Jev),
         ("DOEFF203", RuleFamily::Jev),

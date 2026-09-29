@@ -27,6 +27,7 @@ pub mod body_view;
 pub mod world_catalog;
 pub mod test_forms;
 pub mod retired;
+pub mod handler_arguments;
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
@@ -372,6 +373,23 @@ pub fn run_with(root: &Path, settings: &ProjectSettings, enabled: &BTreeSet<Proj
                     }
                 }
             }
+            if let Some(decl) = settings.architecture.as_ref().and_then(|a| a.handler_arguments.as_ref()).filter(|_| enabled.contains(&ProjectRule::HandlerArgumentHoldsState)) {
+                let classes = crate::timing::timed("handler-argument-classes", || handler_arguments::class_index(root, None));
+                let judged: Vec<Result<Vec<Draft>, String>> = handler_arguments::population(root, decl)
+                    .par_iter()
+                    .map(|(rel, path)| {
+                        std::fs::read_to_string(path)
+                            .map(|source| judge_handler_arguments(root, rel, &source, decl, &classes))
+                            .map_err(|error| format!("{}: 読めない: {}", rel, error))
+                    })
+                    .collect();
+                for result in judged {
+                    match result {
+                        Ok(found) => drafts.extend(found),
+                        Err(error) => report.errors.push(error),
+                    }
+                }
+            }
             if let Some(env) = &settings.environment {
                 if enabled.contains(&ProjectRule::EnvironmentName) {
                     for file in &env_files {
@@ -472,6 +490,12 @@ pub fn run_with(root: &Path, settings: &ProjectSettings, enabled: &BTreeSet<Proj
                         let file = SourceFile { rel: rel.clone(), path: path.clone(), language };
                         drafts.extend(judge_environment_names(&file, source, env, hy_file.as_ref()));
                     }
+                }
+            }
+            if let (Some(decl), Some(rel)) = (settings.architecture.as_ref().and_then(|a| a.handler_arguments.as_ref()), &rel) {
+                if enabled.contains(&ProjectRule::HandlerArgumentHoldsState) && handler_arguments::in_population(rel, decl) {
+                    let classes = crate::timing::timed("handler-argument-classes", || handler_arguments::class_index(root, Some((rel.as_str(), source))));
+                    drafts.extend(judge_handler_arguments(root, rel, source, decl, &classes));
                 }
             }
             // 同じ根・同じ overlay で組んだ表を返す — editor の見出しと束縛(版 2)が作り直さずに使う(1 回で 2 度組んでいた・#1033)。
@@ -2934,6 +2958,28 @@ fn effect_world_for(root: &Path, settings: &ProjectSettings, enabled: &BTreeSet<
     let definitions = settings.definitions.is_some() && enabled.contains(&ProjectRule::EffectsDisagreeWithInference);
     let translation = settings.translation.is_some() && settings.layers.is_some() && enabled.contains(&ProjectRule::TranslationEmitsIntent);
     (definitions || translation).then(|| signatures::World::build(root, overlay))
+}
+
+/// DOEFF142: 1 file の defhandler の引数の当たり → 下書き(critical — 責務の境界)。
+fn judge_handler_arguments(root: &Path, rel: &str, source: &str, decl: &architecture::HandlerArguments, classes: &handler_arguments::ClassIndex) -> Vec<Draft> {
+    let lines = LineIndex::new(source);
+    handler_arguments::findings_in(source, decl, classes)
+        .into_iter()
+        .map(|found| {
+            let type_part = if found.type_text.is_empty() { String::new() } else { format!(" {}", found.type_text) };
+            Draft {
+                rule: ProjectRule::HandlerArgumentHoldsState,
+                layer: None,
+                path: root.join(rel),
+                rel: rel.to_string(),
+                range: lines.range(found.span.start, found.span.end),
+                message: format!("{} の {} が引数 {}({}{})を取る — 接続先と設定は Ask、client は (session val …)、状態は (session var …) で持つ", rel, found.handler, found.param, found.kind.word(), type_part),
+                detail: Some(found.detail()),
+                base: Severity::Error,
+                explain: Explain::HandlerArgumentHoldsState { handler: found.handler.clone(), param: found.param.clone(), kind: found.kind.word(), type_text: found.type_text.clone() },
+            }
+        })
+        .collect()
 }
 
 /// DOEFF130 の母集団 — 翻訳の層(設定の handler_layers)の Hy の module。
