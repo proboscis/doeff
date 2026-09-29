@@ -115,9 +115,14 @@ operator の主体の名の tuple。既定の空 = 誰も `operator_paths` の�
 - 身元: `Authorization: Bearer <token>` を身元の名簿 `principals.json`(`{version: 1, principals: [{name, tokenSha256}]}`)で
   書き手の名へ引く(`doeff_records.principals`)。引いた名で記録の handler を組むので、書き手の名は effect の引数にならない。
   名簿に在っても表の宣言の書き手でなければ、書きは記録の判断が `Refused` にする。
-- 口を開く部品は `doeff_records.http_server.start_records_server(RecordsServerConfig(...))`(標準の `http.server`)。
-  PostgreSQL の置き場では、要求ごとの run の外側に SQL の答え手を置き、答え手が文ごと(transaction ごと)に接続を 1 本借りる
-  (`PostgresConnections` — 表は用意し終えた `store` を受け取り、要求では表を用意し直さない)。
+- 待ち受けは入口の Program `doeff_records.http_server.serve_records` 1 つで、1 つの run・1 つの scheduler の中で動く(#880 U7)。
+  doeff の汎用の HTTP の待ち受けの effect(`HttpListen`・`HttpNextRequest`・`HttpReadBody`・`HttpRespond`・`HttpShutdown`)を出し、
+  要求ごとに `Spawn` した task が答える(例外でも必ず答える — 答えていなければ 500 internal)。本文の上限(16 MiB)は `HttpReadBody` が
+  読む前に判じる。表の用意は task で、口は先に開き、用意の前の記録の操作は 503 store-unavailable・`/healthz` は 200。用意が落ちれば
+  run は例外で終わる。止めの合図(`StopRequested`)で `HttpShutdown` し、走り中の要求を待ってから終わる。
+- 検と模擬の殻は `doeff_records.http_server.start_records_server(RecordsServerConfig(schema, roster, handler_for, request_handlers=…))`:
+  入口の Program を別の thread の run で回し、`url` と `close()` を持つ `RunningServer` を返す。`handler_for` = 書き手の名 → 用意し終えた
+  置き場の handler、`request_handlers` = 要求ごとの答えの外側に被せる handler の列(検の仮想の時計・SQL の答え手)。
 
 client の handler `doeff_records.http_client.http_records_handler(RecordsEndpoint(base_url, token))` は、同じ公開 effect に口越しで
 答える。`401` / `403`(handler を組んだ token の身元を認めない)は操作を問わず `RecordsUnauthorized` を上げる — 組み立ての誤りで、
@@ -142,10 +147,13 @@ client の handler `doeff_records.http_client.http_records_handler(RecordsEndpoi
 (import myapp.tables [SCHEMA])
 (import doeff_records.main [serve-records-service])
 (defk dsn-of [text] {:pre [(: text str)] :post [(: % str)]} (.strip text))
-(serve-records-service SCHEMA dsn-of)
+(when (= __name__ "__main__")
+  (sys.exit (run (with-handlers [subprocess-handler os-file-handler] (serve-records-service SCHEMA dsn-of)))))
 ```
 
-`dsn-of` = 接続 URL の file の中身 → DSN の Program。接続は `PostgresConnections`(psycopg 3・自動 commit — image に psycopg が要る)。
+`dsn-of` = 接続 URL の file の中身 → DSN の Program。`serve-records-service` は env と file を effect(`ReadEnvironment`・`ReadText`)で読む
+Program で、答え = process の終わりの code。本番の土台(`records-foundation`)は scheduler・`await-handler`・`async-time-handler`・
+`os-signal-stop-handler`・`aiohttp-http-server`・`pooled-postgres-sql-handler`(psycopg 3・自動 commit — image に psycopg が要る)。
 
 env(接続 URL の file・身元の名簿の file・接頭辞・port・手入れの間隔・変更の列に残す秒)の一覧と既定は `main.hy` の頭の註。
 表は接頭辞(既定 `records_`)つきで、起動時に `CREATE ... IF NOT EXISTS` だけを流す(既存の表を消さない・変えない)。

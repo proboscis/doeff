@@ -621,7 +621,7 @@
       "paths": [
         "packages/doeff-records/src/doeff_records/http_server.hy"
       ],
-      "responsibility": "標準の http.server で記録の service の口を開く I/O の配線: 見出しと本文を要求の値にし、要求ごとに handler の組を借りて respond の Program を runner で走らせ、答えを書く",
+      "responsibility": "記録の service の待ち受けの入口の Program(doeff の汎用の HTTP の effect を出し、要求ごとに Spawn した task が respond で答える・表の用意と手入れの task・止めの見張り)と、それを別の thread の run で回す検の殻(start-records-server)",
       "layer": "io",
       "public": [
         "packages/doeff-records/src/doeff_records/http_server.hy"
@@ -630,7 +630,9 @@
         "records-service",
         "records-wire",
         "records-principals",
-        "records-values"
+        "records-values",
+        "records-effects",
+        "records-maintenance"
       ],
       "typed": true
     },
@@ -639,7 +641,7 @@
       "paths": [
         "packages/doeff-records/src/doeff_records/main.hy"
       ],
-      "responsibility": "記録の service の composition root: env と Secret の file を読み、身元の名簿・置き場の宣言・PostgreSQL の SQL の答え手と接続の貸し出し(doeff_core_effects)・HTTP の口・手入れの係を組んで立てる(判断を持たない)",
+      "responsibility": "記録の service の composition root: env と Secret の file を effect で読み、身元の名簿・置き場の宣言・PostgreSQL の SQL の答え手と接続の貸し出し(doeff_core_effects)・本番の土台を組んで入口の Program を走らせる(判断を持たない)",
       "layer": "runtime",
       "public": [
         "packages/doeff-records/src/doeff_records/main.hy"
