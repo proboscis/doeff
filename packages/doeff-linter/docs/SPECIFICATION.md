@@ -761,7 +761,17 @@ file の defk / deff の分を出す(全体の実行では空)。
 | `(continue)` / `(break)` / `(raise)` / `(raise e)` / `(raise e :from c)` | `continue` / `break` / `raise` / `raise e` / `raise e from c` |
 | `(setv (get x k) v)` / `(setv (. o a) v)` / `(setv o.a v)` | `x[k] = v` / `o.a = v`(中身の書き換え — 束縛ではないので setv の警告を付けない・ADR-DOE-HY-006 の対象外) |
 | 塊の中の文と文の間の行全体の `;; …` | `# …` の行(`comment` の役・source の範囲つき) |
-| 表に無い form(知らない macro・`unless`・`dfor`・内包の `:setv` / `:do`・名が組でない `for`・腕の欠けた `match`・表に無い pattern・組への分解の setv) | 元の lisp のまま(`lisp` の役)。推測で描かない |
+| `(del x …)` / `(assert c m)` | `del x, …` / `assert c, m` |
+| 式の中の `(if c a b)` | `a if c else b`(演算の項・method の的では括弧で包む)。束縛・return の値と腕の `→` の後ろでは、100 字を超えれば縦の `if` / `else` に開く |
+| 式の中の `(fn [x] e)` / `(fn [a b] e)` / `(fn [] e)` | `x ⇒ e` / `(a, b) ⇒ e` / `() ⇒ e`(引数は名だけ・本体は式 1 つ。`#*`・既定値は lisp のまま) |
+| `(cut xs a b)` / `(cut xs b)` / `(cut xs)` / `(cut xs a b s)` | `xs[a:b]`(`None` の端は空)/ `xs[:b]` / `xs[:]` / `xs[a:b:s]` |
+| 式の中の内包(`lfor` / `gfor` / `sfor` / `dfor`) | `[e for …]` / `(e for …)` / `{e for …}` / `{k: v for …}`(`:setv` / `:do` の節は lisp のまま) |
+| 字面 `#(a b)` / `#(a)` / `[a b]` / `#{a b}` / `{k v}` | `(a, b)` / `(a,)` / `[a, b]` / `{a, b}` / `{k: v}`(鍵が keyword の辞書は元の字のまま) |
+| 束縛・return の値の場所の `cond` / `match` / `do` / `try` | 縦に開く(1 行目は束縛の行に続け、中身は塊の語の列に揃える) |
+| 表に無い form(知らない macro・`unless`・内包の `:setv` / `:do`・名が組でない `for`・腕の欠けた `match`・表に無い pattern・組への分解の setv・行の途中に註のある式) | 元の lisp のまま(`lisp` の役)。推測で描かない |
+
+- **平らにする**: 式の中の形(3 項・lambda・cut・内包・字面)と、cond の条件・match の pattern と `:if`・except の頭は、source で複数行
+  でも改行と字下げを空白 1 つにして 1 行に描く。行の途中に註(文字列の外の `;`)があれば平らにせず lisp のまま(註が後ろの字を飲むため)。
 
 - **lisp の島**: 式の中で置き換えなかった括弧(知らない頭)は、その括弧だけ元の lisp のまま `lisp` の役で出す(中の呼びも置き換えない)。
 - **複数行**: 式や lisp が次の行へ続く所は新しい行(`line` = その source の行・`depth` は同じ)にし、source の字下げの文の頭からの差を
