@@ -1,0 +1,40 @@
+{
+  "artifacts": [
+    {
+      "path": "artifacts/v12/design.md",
+      "sha256": "ecc062f13d35bf8b54bba4bc2e49003813e4257657ebb1fbfcce224dfbcecba3"
+    }
+  ],
+  "body": {
+    "actor": "user",
+    "authority": "direct",
+    "decision": "design",
+    "outcome": "accepted",
+    "scope_of_agreement": "operator が合意したのは「実体の名を押せばどこからでも定義へ」。Cmd / Ctrl で editor へという 2 段の割り当て・複数の候補の quick pick・軸の値を link にしないことは席の既定で戻せる。",
+    "source": "operator の直接の指示 2026-09-29 10:0x(会話 defk-view-discuss・herdr pane w3J:pC)。逐語: \"oh and i want to be able to jump to definition by clicking each entities like effect/class/record etc from reading view and the source view... i mean every location of plugin\"。",
+    "statement": "v11 の裁定に 1 点を足す。repo の中に定義がある実体の名(defk / deff / defhandler / deftest / defrecord / defclass / defenum / defeffect / defwire / defn / 最上位の変数)は、読む面の中で描かれる場所の全部(カードの頭のチップ・本体の文字・source の箱の記号・帯・木・hover)で押せば定義のカードへ飛ぶ(別の file なら v10 と同じ口でその file の面を開く)。Cmd / Ctrl を押しながらなら text editor の定義の位置へ。解き方は linter の definition → 索引の references / calls の target → 名で引く(複数なら quick pick)。組み込みの型と repo の外の名は link にしない。左の欄の軸の値は絞り込みのまま。記録 = artifacts/v12/design.md。",
+    "subjects": [
+      "design-c6ae8fe5208d"
+    ],
+    "supersedes": [
+      "decision-959daeccc296"
+    ]
+  },
+  "created_at": "2026-09-29T01:06:30.625275+00:00",
+  "id": "decision-c6866ce1363b",
+  "inputs": [
+    {
+      "id": "design-c6ae8fe5208d",
+      "role": "subject",
+      "sha256": "26fd760976222a158ed6509f39d0b7f569237435d06f863d96f4d419c7840c8c"
+    },
+    {
+      "id": "decision-959daeccc296",
+      "role": "basis",
+      "sha256": "c3ff27e3ae824e77d32732617e0bb8874abed1ddc7426387d6f4c74c80031243"
+    }
+  ],
+  "kind": "decision",
+  "schema_version": 1,
+  "scope": "doeff-hy の code を読む面(VS Code)。単位は file ではなく定義(defk・defrecord・defeffect・defhandler・deftest …)で、Scala 3 の見た目に印字し、tag・effect・呼び出し・型から辿る。source の Hy は編集しない。その先の言語(静的な型・型に載る effect・Python の呼び出し・file に縛られない名前空間)の要件も持つ"
+}

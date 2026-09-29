@@ -1,0 +1,48 @@
+{
+  "artifacts": [
+    {
+      "path": "artifacts/v11/design.md",
+      "sha256": "6276e94f5c696983256f8c6c90eb4ae0fff502e6638237e7b9bc30aaae699014"
+    },
+    {
+      "path": "artifacts/v11/lisp-tally.md",
+      "sha256": "2d8fa7ee4d410d57a01da4a3d217bcd8f5b14c02eb2567efecbf15e2c52533b8"
+    },
+    {
+      "path": "artifacts/v11/lisp_tally.py",
+      "sha256": "0e595a7c2ba6d600e538f393a7b3d9f2e830b840922f9855ab850a4d7dd5e119"
+    }
+  ],
+  "body": {
+    "actor": "user",
+    "authority": "direct",
+    "decision": "design",
+    "outcome": "accepted",
+    "scope_of_agreement": "operator が合意したのは「できるだけ読みやすい形に直す」こと。form ごとの形(3 項の if・⇒・slice の綴り)と足す順番は席の既定で戻せる。",
+    "source": "operator の直接の指示 2026-09-29 10:0x(会話 defk-view-discuss・herdr pane w3J:pC)。席が実物の数(本体 12,264 行のうち lisp のまま 3,524 行・29%)と form の内訳を示して範囲を問い、逐語: \"and yeah try to convert to readable form as much as possible\"。",
+    "statement": "v10 の裁定に 1 点を足す。本体の文字の表(v2 2.2 節・U2 / U3)を、実物で lisp のまま残る form へできるだけ広げる: do の塊・cond(match と同じ縦の形)・式の中の if(3 項)・continue / return / raise・try / except / finally・while・式の中の fn(⇒)・式の中の内包・cut(slice)・比較と論理の中置・素の呼び・本体の註。推測で描かない(知らない macro・収まらない式は lisp のまま)は変えない。網羅は artifacts/v11/lisp_tally.py で同じ 158 本を測り、目標は 3,524 → 500 未満。記録 = artifacts/v11/design.md。",
+    "subjects": [
+      "design-c6ae8fe5208d"
+    ],
+    "supersedes": [
+      "decision-a83856be28aa"
+    ]
+  },
+  "created_at": "2026-09-29T01:06:30.497298+00:00",
+  "id": "decision-959daeccc296",
+  "inputs": [
+    {
+      "id": "design-c6ae8fe5208d",
+      "role": "subject",
+      "sha256": "26fd760976222a158ed6509f39d0b7f569237435d06f863d96f4d419c7840c8c"
+    },
+    {
+      "id": "decision-a83856be28aa",
+      "role": "basis",
+      "sha256": "d152c52e9588f135aec21cfe485679b002881975e2d61c71fb8e7dbd7495e052"
+    }
+  ],
+  "kind": "decision",
+  "schema_version": 1,
+  "scope": "doeff-hy の code を読む面(VS Code)。単位は file ではなく定義(defk・defrecord・defeffect・defhandler・deftest …)で、Scala 3 の見た目に印字し、tag・effect・呼び出し・型から辿る。source の Hy は編集しない。その先の言語(静的な型・型に載る effect・Python の呼び出し・file に縛られない名前空間)の要件も持つ"
+}
