@@ -2940,27 +2940,31 @@ fn effect_census_requires_files_effects_and_why() {
     assert!(all.contains("effect-census a に :why(なぜ一覧で閉じるか)が無い"), "{}", all);
 }
 
-/// agora-redesign #1318・#1410: 記録の client は HttpRequest の effect を出すだけ(送り方は EffectTransport 1 つ)— 実 HTTP は HttpRequest に
-/// 答える本物の handler(目録の http-production-handler)の側で数える。記録の client の handler(http-records-handler)は目録の「数えない」行。
+/// agora-redesign #1312・#1410: 記録の client は HttpRequest の effect を出すだけ — 実 HTTP は HttpRequest に
+/// 答える本物の handler(目録の http-production-handler)の側で数える。通常の client と表で絞る client は目録に載せない。
 /// RecordsEndpoint を値として名指すだけ(型の注釈)の所も数えない。
 #[test]
-fn records_client_is_counted_by_its_transport() {
+fn records_client_is_counted_by_its_outer_http_handler() {
     let files = [
         ("app/foundation/host.hy", tags("shared", "foundation") + "(defk with-host [body] body)\n"),
         (
             "app/billing/core/ports.hy",
             tags("billing", "judgment")
-                + "(import doeff_records.http_client [EffectTransport RecordsEndpoint http-records-handler])\n\
+                + "(import doeff_records.http_client [RecordsEndpoint http-records-handler http-table-records-handler])\n\
                    (import doeff_core_effects.http_handlers [http-production-handler])\n\
-                   (defk effect-port [url] (http-records-handler (RecordsEndpoint url \"t\" :transport (EffectTransport))))\n\
+                   (defk effect-port [url] (http-records-handler (RecordsEndpoint url \"t\")))\n\
+                   (defk table-port [url] (http-table-records-handler (RecordsEndpoint url \"t\") (frozenset [\"orders\"])))\n\
                    (defk answered-port [url body] (with-handlers [(http-production-handler) (effect-port url)] body))\n\
+                   (defk answered-table-port [url body] (with-handlers [(http-production-handler) (table-port url)] body))\n\
                    (defk named-port [endpoint] {:pre [(: endpoint RecordsEndpoint)]} endpoint)\n",
         ),
         (
             "app/billing/tests/test_ports.hy",
-            "(import app.billing.core.ports [effect-port answered-port named-port])\n\
+            "(import app.billing.core.ports [effect-port table-port answered-port answered-table-port named-port])\n\
              (deftest test-effect-port-unmarked (<- h (effect-port \"http://x\")) (assert h))\n\
+             (deftest test-table-port-unmarked (<- h (table-port \"http://x\")) (assert h))\n\
              (deftest test-answered-port-unmarked (<- h (answered-port \"http://x\" 1)) (assert h))\n\
+             (deftest test-answered-table-port-unmarked (<- h (answered-table-port \"http://x\" 1)) (assert h))\n\
              (deftest test-named-port-unmarked (<- h (named-port 1)) (assert h))\n"
                 .to_string(),
         ),
@@ -2970,20 +2974,30 @@ fn records_client_is_counted_by_its_transport() {
     let text = std::fs::read_to_string(&arch_path).unwrap().replace(":foundation foundation", ":foundation foundation\n  :edge-mark \"real_world\"");
     std::fs::write(&arch_path, text).unwrap();
     let (_, report) = editor(dir.path());
-    assert_eq!(keys(&report, "DOEFF133"), vec!["app/billing/tests/test_ports.hy::DOEFF133::test_answered_port_unmarked::edge"], "{}", report);
-    let answered = violation(&report, "app/billing/tests/test_ports.hy::DOEFF133::test_answered_port_unmarked::edge");
-    assert!(answered["message"].as_str().unwrap().contains("http-production-handler"), "{}", answered["message"]);
+    let expected = vec![
+        "app/billing/tests/test_ports.hy::DOEFF133::test_answered_port_unmarked::edge",
+        "app/billing/tests/test_ports.hy::DOEFF133::test_answered_table_port_unmarked::edge",
+    ];
+    assert_eq!(keys(&report, "DOEFF133"), expected, "{}", report);
+    for key in expected {
+        let answered = violation(&report, key);
+        assert!(answered["message"].as_str().unwrap().contains("http-production-handler"), "{}", answered["message"]);
+    }
 }
 
-/// agora-redesign #1318: 目録の「数えない」行(counted: false — 触れる先を別の行へ移した後、repo の :wraps が移るまでの行)は、名簿の
-/// :wraps に書いても設定の誤りにならない。目録から行を消すと、:wraps に挙げた repo の設定が誤りになり linter が全体で起動しなくなる。
+/// agora-redesign #1410: 移行の間だけ残した目録の行は撤去済み。効果を出すだけの記録 client を
+/// 実 I/O の :wraps に挙げる古い宣言は、通常の「目録に無い」設定エラーで止める。
 #[test]
-fn a_catalog_row_kept_for_wraps_is_not_a_config_error() {
+fn records_clients_cannot_be_declared_as_world_handler_wraps() {
     let files = [("app/foundation/host.hy", tags("shared", "foundation") + "(defk with-host [body] body)\n(defk with-records [body] body)\n")];
-    let extra = "\n                   (world-handler \"app.foundation.host:with-records\" :touches [http] :wraps [\"doeff_records.http_client:http-records-handler\"])";
-    let dir = world_repo_with(&files, extra, "[\"DOEFF131\"]");
-    let (_, report) = editor(dir.path());
-    assert_eq!(report["errors"], serde_json::json!([]), "{}", report);
+    for name in ["http-records-handler", "http-table-records-handler"] {
+        let target = format!("doeff_records.http_client:{name}");
+        let extra = format!("\n(world-handler \"app.foundation.host:with-records\" :touches [http] :wraps [\"{target}\"])");
+        let dir = world_repo_with(&files, &extra, "[\"DOEFF131\"]");
+        let (code, _, stderr) = run(dir.path(), &["--no-log"], None);
+        assert_eq!(code, 2, "{}", stderr);
+        assert!(stderr.contains(&format!("{target} は doeff の実 I/O の handler の目録")), "{}", stderr);
+    }
 }
 
 /// agora-redesign #1368(C7b): 決めた材料だけで判じる定義(:blind-definitions)— 宣言した定義から呼び出しで届く定義が、helper と別の
