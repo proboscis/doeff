@@ -231,6 +231,8 @@ impl Setup {
                 ProjectRule::PlacedDependency => self.settings.architecture.as_ref().is_some_and(|a| !a.placed_dependencies.is_empty()),
                 ProjectRule::RetiredWord => self.settings.architecture.as_ref().is_some_and(|a| !a.retired_words.is_empty()),
                 ProjectRule::RetiredCall => self.settings.architecture.as_ref().is_some_and(|a| !a.retired_calls.is_empty()),
+                ProjectRule::UntypedStructuredValue => self.settings.architecture.as_ref().is_some_and(|a| a.typed_values.is_some()),
+                ProjectRule::RecordStubNotKwOnly => self.settings.architecture.as_ref().is_some_and(|a| a.record_stubs.is_some()),
                 ProjectRule::ServiceUntestedOnSim => self.settings.architecture.as_ref().is_some_and(|a| a.verification_environment.is_some()),
                 ProjectRule::HandlerArgumentHoldsState => self.settings.architecture.as_ref().is_some_and(|a| a.handler_arguments.is_some()),
                 ProjectRule::TestKindMismatch => {
@@ -367,12 +369,13 @@ fn prepare(args: &Args) -> Result<Setup, String> {
     Ok(Setup { config, root, enabled_rules, exclude_patterns, settings, notices })
 }
 
-/// 違反を出す file を path の引数で絞る時の path の列(既定の "." なら None = 全部)。
+/// 違反を出す file を path の引数で絞る時の path の列(既定の "." なら None = 全部)。名指しの .hy の隣の同じ名の .pyi も含める
+/// (DOEFF145 は .hy の実行時の形を偽る .pyi に当たりを出す — .hy だけを名指しても判じて残す)。
 fn only_paths(paths: &[String]) -> Option<Vec<PathBuf>> {
     if paths.iter().all(|p| p == ".") {
         return None;
     }
-    Some(paths.iter().map(|p| editor::normalize_path(Path::new(p))).collect())
+    Some(project::record_stubs::with_sibling_stubs(paths.iter().map(|p| editor::normalize_path(Path::new(p))).collect()))
 }
 
 /// 層の規則の違反を、今までの出力(text・json・hook)が読む形(Python の規則の違反と同じ Violation)に写す。
@@ -903,7 +906,7 @@ fn run_normal(args: &Args) -> ExitCode {
     if setup.has_project_rules() {
         // --modified の時は、変更した file の違反だけにする(変更していない file の既知の違反で止めない)。file 1 つで判じられる規則は
         // この path の下だけを読む(Target::Whole の focus)。
-        let only: Option<Vec<PathBuf>> = if args.modified { Some(files.iter().map(|f| editor::normalize_path(f)).collect()) } else { only_paths(&args.paths) };
+        let only: Option<Vec<PathBuf>> = if args.modified { Some(project::record_stubs::with_sibling_stubs(files.iter().map(|f| editor::normalize_path(f)).collect())) } else { only_paths(&args.paths) };
         let mut report =
             project::run_with(&setup.root, &setup.settings, &setup.project_rules(), Target::Whole { focus: only.as_deref() }, &semantic_mode(args, &setup.root, None));
         report.findings.extend(setup.notice_findings());

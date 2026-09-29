@@ -123,6 +123,12 @@ pub enum ProjectRule {
     /// DOEFF142: defhandler の引数に client・可変の入れ物・可変の object・店の名の引数を取る(接続先と設定は Ask・状態は session に持つ —
     /// agora-redesign #1189 / #1366)。母集団と店の名は architecture.hy の :handler-arguments から読む。
     HandlerArgumentHoldsState,
+    /// DOEFF144: 公開面の型の注記(class の欄・関数の戻り値・defk / deff の :post)が素の写像・素の組・値の開いた写像・長さの決まった組、
+    /// または関数が長さ 2 以上の組の literal を答えにする — 構造を持つ値は欄の名前と型を持つ型で表す(agora-redesign #1191)。
+    UntypedStructuredValue,
+    /// DOEFF145: 同じ dir の同じ名の .hy で kw-only の record(defrecord か、飾りに :kw-only True の dataclass を持つ defclass)を、
+    /// 型の宣言(.pyi)が kw_only=True の無い @dataclass で宣言する — 型検査は位置の引数の呼びを通すが実行時は TypeError(#1191)。
+    RecordStubNotKwOnly,
     /// DOEFF201(意味・Jev): 翻訳の層の定義が業務の判断をしている。
     SemanticBusinessDecision,
     /// DOEFF202(意味・Jev): 判断の層の定義が通信の手段を知っている。
@@ -177,6 +183,8 @@ impl ProjectRule {
         ProjectRule::RetiredWord,
         ProjectRule::RetiredCall,
         ProjectRule::HandlerArgumentHoldsState,
+        ProjectRule::UntypedStructuredValue,
+        ProjectRule::RecordStubNotKwOnly,
         ProjectRule::SemanticBusinessDecision,
         ProjectRule::SemanticTransportKnowledge,
         ProjectRule::SemanticPlainCallable,
@@ -226,6 +234,8 @@ impl ProjectRule {
             ProjectRule::RetiredWord => "DOEFF150",
             ProjectRule::RetiredCall => "DOEFF151",
             ProjectRule::HandlerArgumentHoldsState => "DOEFF142",
+            ProjectRule::UntypedStructuredValue => "DOEFF144",
+            ProjectRule::RecordStubNotKwOnly => "DOEFF145",
             ProjectRule::SemanticBusinessDecision => "DOEFF201",
             ProjectRule::SemanticTransportKnowledge => "DOEFF202",
             ProjectRule::SemanticPlainCallable => "DOEFF203",
@@ -257,6 +267,9 @@ impl ProjectRule {
             | ProjectRule::RetiredWord
             | ProjectRule::RetiredCall
             | ProjectRule::HandlerArgumentHoldsState
+            // 公開面の型の素の写像・素の組と、.pyi の kw_only の食い違い(#1191 の決め — 既定は critical)。
+            | ProjectRule::UntypedStructuredValue
+            | ProjectRule::RecordStubNotKwOnly
             | ProjectRule::ServiceBoundary
             | ProjectRule::ServiceDependency
             | ProjectRule::TranslationEmitsIntent
@@ -352,7 +365,9 @@ impl ProjectRule {
             | ProjectRule::ServiceUntestedOnSim
             | ProjectRule::RetiredWord
             | ProjectRule::RetiredCall
-            | ProjectRule::HandlerArgumentHoldsState => false,
+            | ProjectRule::HandlerArgumentHoldsState
+            | ProjectRule::UntypedStructuredValue
+            | ProjectRule::RecordStubNotKwOnly => false,
             ProjectRule::EnvironmentName
             | ProjectRule::DefnForbidden
             | ProjectRule::DeffNeedsReason
@@ -415,6 +430,8 @@ impl ProjectRule {
             ProjectRule::RetiredWord => "使わないと決めた綴り",
             ProjectRule::RetiredCall => "使わないと決めた呼び",
             ProjectRule::HandlerArgumentHoldsState => "handler の引数が client・可変の店を取る",
+            ProjectRule::UntypedStructuredValue => "公開面の型が素の写像・素の組",
+            ProjectRule::RecordStubNotKwOnly => "型の宣言の @dataclass に kw_only=True が無い",
             ProjectRule::SemanticBusinessDecision => "翻訳の層で業務の判断(Jev)",
             ProjectRule::SemanticTransportKnowledge => "判断の層が通信の手段を知る(Jev)",
             ProjectRule::SemanticPlainCallable => "deff の理由が合わない(Jev)",
@@ -455,6 +472,8 @@ impl ProjectRule {
             | ProjectRule::TestFormNotDeftest
             | ProjectRule::ServiceUntestedOnSim
             | ProjectRule::HandlerArgumentHoldsState
+            | ProjectRule::UntypedStructuredValue
+            | ProjectRule::RecordStubNotKwOnly
             | ProjectRule::DefkCalledBare
             | ProjectRule::EffectsDisagreeWithInference => RuleFamily::Definition,
             ProjectRule::ClassWithBehaviour | ProjectRule::SemanticClassRole => RuleFamily::Class,
@@ -513,6 +532,8 @@ impl ProjectRule {
             ProjectRule::RetiredWord => "Retired Word",
             ProjectRule::RetiredCall => "Retired Call",
             ProjectRule::HandlerArgumentHoldsState => "Handler Argument Holds State",
+            ProjectRule::UntypedStructuredValue => "Untyped Structured Value",
+            ProjectRule::RecordStubNotKwOnly => "Record Stub Not Kw Only",
             ProjectRule::SemanticBusinessDecision => "Business Decision In Translation (Jev)",
             ProjectRule::SemanticTransportKnowledge => "Transport Knowledge In Core (Jev)",
             ProjectRule::SemanticPlainCallable => "Plain Callable Reason (Jev)",
@@ -559,6 +580,8 @@ impl ProjectRule {
             ProjectRule::TestFormNotDeftest => "テストは deftest だけで書き pytest が収集する — Python の def test_*・module ごとの skip・pytest の外で走る check script・deftest を自分で回す runner は置かない(operator 2026-09-27「検は deftest だけ」)。file は architecture.hy の :test-forms の綴りの型で選ぶ",
             ProjectRule::RetiredWord => "architecture.hy の :retired-words で使わないと決めた綴りを、群の :files の file に書かない — :words は語として単独で在る所(前後が英字・_・- でない)、:patterns は行ごとの正規表現、:in names は定義の名だけを見る。:rule-lines の綴りを含む行(規則そのものを述べる行)は数えない",
             ProjectRule::RetiredCall => "architecture.hy の :retired-calls で使わないと決めた呼び(退役した effect・時計 …)を、群の :files の Hy の file で呼ばない — 頭の記号が :calls の綴りの form を数え、註・文字列・読み捨てた form は数えない",
+            ProjectRule::UntypedStructuredValue => "構造を持つ値は欄の名前と型を静的に持つ型(frozen の dataclass・defrecord・defwire)で表す — architecture.hy の :typed-values の file の公開面(名が _ で始まらない物)の、class の欄・関数と method の戻り値・defk / deff の :post の型に、素の写像(dict・Mapping・JsonValue …)・素の組(tuple)・値が object / Any の写像・長さの決まった組 tuple[A, B]・それらを中身に持つ入れ物を書かず、defn / defk / deff は長さ 2 以上の組の literal #(a b) を答えにしない。:post は isinstance の契約なので写像だけを赤にし、名に型の注記の無い defk / deff の :post は素の組も赤にする",
+            ProjectRule::RecordStubNotKwOnly => "architecture.hy の :record-stubs の型の宣言(.pyi)は、同じ dir の同じ名の .hy の実行時の形を偽らない — .hy で欄を名でしか受けない record(defrecord か、飾りに (dataclass … :kw-only True …) を持つ defclass)を @dataclass で宣言するなら kw_only=True を書く",
             ProjectRule::ServiceUntestedOnSim => "業務の service は、本番の組み立て(entry の層)のまま模擬の環境に載せ、handler の差し替えだけで回して確かめる — 模擬の環境(:verification-environment)の下の deftest がその service の entry の層の定義に 1 本も届かなければ、未検証の service として赤にする",
             ProjectRule::HandlerArgumentHoldsState => "handler は接続の object や書き換える店を引数で受け取らない — 接続先と資格・設定は Ask で読み、client は本文の先頭の (session val client …) で 1 回だけ作り、状態は (session var …) で持つ(外側の handler が差し替え・観測できる)。引数に残す物は本文に architecture.hy の :handler-arguments の :keep-mark の註で理由を書く",
             ProjectRule::TestKindMismatch => "テストの種類は 2 つだけ — 手元(届く定義に外の世界に触れる handler が無い)/ 縁(名簿の定義・:wraps の handler・生の I/O に届く)。種類は人が決めず届く先から導き、縁のテストだけが architecture.hy の :edge-mark の印を持つ(operator 2026-09-29 \"everything is 'pure' until we apply handler that has real IO\")",
@@ -610,6 +633,8 @@ impl ProjectRule {
             ProjectRule::RetiredWord => "群の :instead の語に書き換える(規則そのものを述べる行なら、:rule-lines の綴りを含めて書く)— 直せない既存の当たりは登録簿に載せる",
             ProjectRule::RetiredCall => "群の :instead の物に置き換える — 直せない既存の当たりは登録簿に載せる",
             ProjectRule::HandlerArgumentHoldsState => "引数を消し、接続先と設定は Ask、client は (session val …)、状態は (session var …) へ移す — 同じ handler を別の設定で並べるなど引数に残す物は本文に理由の註を書く",
+            ProjectRule::UntypedStructuredValue => "欄の名前と型を持つ frozen の record(defrecord・defwire・dataclass)を定義して返す・持つ — :post は [(: % <record の型>)] で検める。キーで引く索引は dict[str, Row]・同じ型の列は tuple[X, ...] と中身の型を書く。値の形を外の系が決める境界なら登録簿に理由と共に載せる",
+            ProjectRule::RecordStubNotKwOnly => "型の宣言の飾りを @dataclass(frozen=True, kw_only=True) にする",
             ProjectRule::ServiceUntestedOnSim => "模擬の環境の tests に、その service の entry の組み立てを handler の差し替えだけで回す deftest を足す",
             ProjectRule::TestKindMismatch => "縁なら印を付け(既定の pytest から外れる)、手元のつもりなら届く先の実 I/O の handler を模擬の handler に替える — 手元なのに印が在れば外す",
             ProjectRule::WorldHandlerMisplaced => "定義を foundation の層(architecture.hy の :foundation の dir)へ移すか、名簿の綴り(module:名)を実物に合わせる — 要らなくなった定義なら名簿から外す",
@@ -666,6 +691,8 @@ mod tests {
         ("DOEFF135", RuleFamily::Definition),
         ("DOEFF136", RuleFamily::Definition),
         ("DOEFF140", RuleFamily::Place),
+        ("DOEFF144", RuleFamily::Definition),
+        ("DOEFF145", RuleFamily::Definition),
         ("DOEFF150", RuleFamily::Naming),
         ("DOEFF151", RuleFamily::Naming),
         ("DOEFF142", RuleFamily::Definition),

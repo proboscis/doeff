@@ -177,6 +177,10 @@ pub enum Explain {
     RetiredCall { group: String, call: String, instead: String },
     /// DOEFF140: 置き場の外の module への依存(この file の置き場・読む先の module・その file の root からの path)。
     PlacedDependency { placement: Placement, owner: String, owner_rel: String },
+    /// DOEFF144: 公開面の型の注記の素の写像・素の組(どこの注記か・名・赤の理由)。
+    UntypedStructuredValue { what: String, name: String, problem: String },
+    /// DOEFF145: .pyi の @dataclass に kw_only=True が無い(class の名・.hy の側の書き方)。
+    RecordStubNotKwOnly { class: String, form: String },
     ServiceUntestedOnSim { service: String, entry: String, definitions: usize, sim: String },
     /// DOEFF142: defhandler の引数が client・可変の店を取る。
     HandlerArgumentHoldsState { handler: String, param: String, kind: &'static str, type_text: String },
@@ -396,6 +400,14 @@ impl<'a> Narrator<'a> {
             Explain::PlacedDependency { placement, owner, owner_rel } => (
                 format!("import 先 {}(path が {} — 層の置き場の外) — {}", owner, owner_rel, self.file_subject(placement)),
                 format!("置き場の決まっていない module {}({})に依存する。architecture.hy の :placed-dependencies の層は、層の置き場に在る module にだけ依存する — 置き場の外の module は層の規則(向き・タグ・service の境界)の外なので、それを読むとその規則を迂回できる。", owner, owner_rel),
+            ),
+            Explain::UntypedStructuredValue { what, name, problem } => (
+                format!("{} {} の型 — {}", what, name, problem),
+                "構造を持つ値を素の写像や素の組で運ぶと、欄の名前と型が静的に見えず、綴りの誤りや欄の食い違いが実行まで見つからない(型検査が何も守らない)。欄の名前と型を持つ型で表す。".to_string(),
+            ),
+            Explain::RecordStubNotKwOnly { class, form } => (
+                format!("型の宣言の class {}(.hy の側は {})", class, form),
+                "実行時の __init__ は欄を名でしか受けないのに、型の宣言は位置の引数を許す。型検査は位置の引数の呼びを通すが、実行時は TypeError になる — 型の宣言が実行時の形を偽る。".to_string(),
             ),
             Explain::ServiceUntestedOnSim { service, entry, definitions, sim } => (
                 format!("service {} の組み立て {}({} 本の定義)", service, entry, definitions),

@@ -2361,3 +2361,166 @@ fn retired_declaration_misreadings_are_config_errors() {
     assert!(all.contains("retired-words c に :files が無い"), "{}", all);
     assert!(all.contains(":in は lines か names"), "{}", all);
 }
+
+/// DOEFF144・145 の宣言を architecture.hy に足した一時の repo(読む file の glob は agora-controllers の宣言と同じ形)。
+fn typed_repo(files: &[(&str, String)]) -> tempfile::TempDir {
+    let dir = world_repo_with(files, "", "[\"DOEFF144\", \"DOEFF145\"]");
+    let arch_path = dir.path().join("architecture.hy");
+    let declarations = r#":foundation foundation
+  :typed-values {:files ["app/**/*.hy" "app/**/*.py"] :except ["**/tests/**" "**/adr/**" "**/__pycache__/**"]}
+  :record-stubs {:files ["app/**/*.pyi"] :except ["**/__pycache__/**"]}"#;
+    let text = std::fs::read_to_string(&arch_path).unwrap().replace(":foundation foundation", declarations);
+    std::fs::write(&arch_path, text).unwrap();
+    dir
+}
+
+/// agora-redesign #1191: 公開面の型の注記の素の写像・素の組は、欄・戻り値・:post・答えの組の 4 種類の鍵で 1 か所 1 件ずつ当たる。
+/// 内部の名・入れ子の関数・:except の file・宣言の外の file は当たらない。直した形(欄の名前と型を持つ record)は何も出さない。
+#[test]
+fn typed_values_red_on_counterexamples_and_empty_on_typed_forms() {
+    let bad = "(defrecord Charge (#^ dict meta) (#^ (get dict #(str Row)) index))\n\
+               (defclass Plain [] #^ (get tuple #(str int)) pair)\n\
+               (defk decide [x] {:pre [(: x int)] :post [(: % tuple)]} x)\n\
+               (deff #^ Row named [x] {:post [(: % tuple)]} x)\n\
+               (deff #^ Row mapped [x] {:post [(: % Mapping)]} x)\n\
+               (defn #^ JsonValue load [x] x)\n\
+               (defn split [x] (defn inner [] #(1 2)) (when x (return #(x x))) x)\n\
+               (defn #^ dict _private [] 1)\n";
+    let py = "from typing import Any\nclass Row:\n    meta: dict[str, Any]\n    ok: dict[str, int]\n    def pair(self) -> tuple[int, str]: ...\ndef rows() -> 'list[dict]': ...\n";
+    let good = "(defrecord Charge (#^ Meta meta) (#^ (get dict #(str Row)) index))\n(defk decide [x] {:post [(: % Decision)]} (Decision :x x))\n(defn #^ (get tuple #(Row ...)) rows [] #())\n";
+    let dir = typed_repo(&[
+        ("app/core/bad.hy", bad.to_string()),
+        ("app/core/bad_py.py", py.to_string()),
+        ("app/core/good.hy", good.to_string()),
+        ("app/core/tests/test_x.hy", "(defn #^ dict helper [] 1)\n".to_string()),
+        ("other/outside.hy", "(defn #^ dict helper [] 1)\n".to_string()),
+    ]);
+    let (code, report) = editor(dir.path());
+    let mut expected: Vec<String> = [
+        "app/core/bad.hy::DOEFF144::field:Charge.meta",
+        "app/core/bad.hy::DOEFF144::field:Plain.pair",
+        "app/core/bad.hy::DOEFF144::post:decide",
+        "app/core/bad.hy::DOEFF144::post:mapped",
+        "app/core/bad.hy::DOEFF144::return:load",
+        "app/core/bad.hy::DOEFF144::pair:split",
+        "app/core/bad_py.py::DOEFF144::field:Row.meta",
+        "app/core/bad_py.py::DOEFF144::return:Row.pair",
+        "app/core/bad_py.py::DOEFF144::return:rows",
+    ]
+    .iter()
+    .map(|s| s.to_string())
+    .collect();
+    expected.sort();
+    assert_eq!(keys(&report, "DOEFF144"), expected, "{}", report);
+    assert_ne!(code, 0, "新しい当たりは error");
+    let decide = violation(&report, "app/core/bad.hy::DOEFF144::post:decide");
+    assert_eq!(decide["level"], "critical", "{}", decide);
+    assert!(decide["message"].as_str().unwrap().contains("答え(:post・名の注釈なし) decide の型が 素の組 tuple"), "{}", decide["message"]);
+    assert_eq!(report["errors"], serde_json::json!([]), "{}", report);
+}
+
+/// agora-redesign #1191: .hy で kw-only の record を kw_only=True の無い @dataclass で宣言する .pyi は class ごとに 1 件。直した .pyi・
+/// 同じ名の .hy の無い .pyi・@dataclass の無い class は当たらない。
+#[test]
+fn record_stubs_red_when_kw_only_record_stub_lacks_kw_only() {
+    let hy = "(defrecord Row (#^ str a))\n(defclass [(dataclass :frozen True :kw-only True)] Manual [] (#^ int n))\n(defrecord Fine (#^ str b))\n(defrecord Bare (#^ str c))\n";
+    let stub = "from dataclasses import dataclass\n@dataclass(frozen=True)\nclass Row:\n    a: str\n@dataclass\nclass Manual:\n    n: int\n\
+                @dataclass(frozen=True, kw_only=True)\nclass Fine:\n    b: str\nclass Bare:\n    c: str\n";
+    let dir = typed_repo(&[
+        ("app/core/rows.hy", hy.to_string()),
+        ("app/core/rows.pyi", stub.to_string()),
+        ("app/core/lonely.pyi", "from dataclasses import dataclass\n@dataclass\nclass Row:\n    a: str\n".to_string()),
+    ]);
+    let (_, report) = editor(dir.path());
+    assert_eq!(keys(&report, "DOEFF145"), vec!["app/core/rows.pyi::DOEFF145::Manual".to_string(), "app/core/rows.pyi::DOEFF145::Row".to_string()], "{}", report);
+    let row = violation(&report, "app/core/rows.pyi::DOEFF145::Row");
+    assert_eq!(row["level"], "critical", "{}", row);
+    assert_eq!(row["range"]["start"]["line"], 1, "位置は @dataclass の飾り: {}", row);
+    // 直した形は何も出さない。
+    std::fs::write(dir.path().join("app/core/rows.pyi"), stub.replace("@dataclass(frozen=True)\nclass Row", "@dataclass(frozen=True, kw_only=True)\nclass Row").replace("@dataclass\nclass Manual", "@dataclass(kw_only=True)\nclass Manual")).unwrap();
+    let (_, fixed) = editor(dir.path());
+    assert!(keys(&fixed, "DOEFF145").is_empty(), "{}", fixed);
+}
+
+/// agora-redesign #1191 の条件: DOEFF144・145 は file 1 つで判じるので、名指しの path が在ればその下の file だけを読む(repo 全体を
+/// 読まない)。全体の実行は宣言の file を全部読む — 読めない file(UTF-8 でない)が理由に出るかどうかで、読んだ母集団を見分ける。
+#[test]
+fn typed_value_rules_read_only_the_named_files() {
+    let dir = typed_repo(&[("app/core/named.hy", "(defn #^ dict load [] 1)\n".to_string())]);
+    std::fs::write(dir.path().join("app/core/broken.hy"), [0xffu8, 0xfe, b'\n']).unwrap();
+    std::fs::write(dir.path().join("app/core/broken.pyi"), [0xffu8, 0xfe, b'\n']).unwrap();
+    let (_, whole_out, whole_err) = run(dir.path(), &["--no-log"], None);
+    assert!(whole_err.contains("app/core/broken.hy: 読めない"), "全体の実行は宣言の file を全部読む: {}\n{}", whole_err, whole_out);
+    assert!(whole_err.contains("app/core/broken.pyi: 読めない"), "全体の実行は宣言の .pyi を全部読む: {}\n{}", whole_err, whole_out);
+    let (code, named_out, named_err) = run(dir.path(), &["--no-log", "app/core/named.hy"], None);
+    assert!(!named_err.contains("broken"), "名指しの実行は名指しの file だけを読む: {}", named_err);
+    assert!(named_out.contains("DOEFF144") && named_out.contains("named.hy"), "名指しの file の当たりは出る: {}\n{}", named_out, named_err);
+    assert_ne!(code, 0, "新しい当たりは error");
+}
+
+/// :typed-values・:record-stubs の読み違い(辞書でない・:files が無い・知らない鍵)は位置つきの設定の誤りにする。
+#[test]
+fn typed_value_declaration_misreadings_are_config_errors() {
+    let dir = world_repo_with(&[], "", "[\"DOEFF144\", \"DOEFF145\"]");
+    let arch_path = dir.path().join("architecture.hy");
+    let text = std::fs::read_to_string(&arch_path)
+        .unwrap()
+        .replace(":foundation foundation", ":foundation foundation\n  :typed-values [\"app/**\"]\n  :record-stubs {:except [\"x/**\"]}");
+    std::fs::write(&arch_path, text).unwrap();
+    let (code, stdout, stderr) = run(dir.path(), &["--no-log"], None);
+    let all = format!("{}{}", stdout, stderr);
+    assert_ne!(code, 0, "{}", all);
+    assert!(all.contains(":typed-values は {:files [..] :except [..]} の辞書"), "{}", all);
+    assert!(all.contains(":record-stubs に :files(読む file の glob)が無い"), "{}", all);
+}
+
+/// レビューの指摘(#1191): .hy だけを名指した実行でも、隣の同じ名の .pyi(宣言の glob に当たる物)を判じ、.pyi の鍵で出す。
+#[test]
+fn record_stubs_judge_the_stub_next_to_a_named_hy() {
+    let dir = typed_repo(&[
+        ("app/core/rows.hy", "(defrecord Row (#^ str a))\n".to_string()),
+        ("app/core/rows.pyi", "from dataclasses import dataclass\n@dataclass(frozen=True)\nclass Row:\n    a: str\n".to_string()),
+        ("app/core/other.hy", "(defrecord Other (#^ str a))\n".to_string()),
+        ("app/core/other.pyi", "from dataclasses import dataclass\n@dataclass\nclass Other:\n    a: str\n".to_string()),
+    ]);
+    let (code, stdout, stderr) = run(dir.path(), &["--no-log", "--output-format", "editor-json", "app/core/rows.hy"], None);
+    let report: Value = serde_json::from_str(&stdout).unwrap_or_else(|e| panic!("{}: {}\n{}", e, stdout, stderr));
+    assert_eq!(keys(&report, "DOEFF145"), vec!["app/core/rows.pyi::DOEFF145::Row".to_string()], "{}", report);
+    assert_ne!(code, 0);
+}
+
+/// 保存前の 1 file の実行(--stdin): .hy の中身は stdin から、隣の .pyi は disk から読み、当たりは .pyi の path で出す。DOEFF144 も
+/// stdin の中身で判じる(disk の中身ではない)。
+#[test]
+fn stdin_run_judges_unsaved_hy_for_typed_values_and_record_stubs() {
+    let dir = typed_repo(&[
+        ("app/core/rows.hy", "(defclass Row [] (#^ str a))\n".to_string()),
+        ("app/core/rows.pyi", "from dataclasses import dataclass\n@dataclass(frozen=True)\nclass Row:\n    a: str\n".to_string()),
+    ]);
+    let unsaved = "(defrecord Row (#^ str a))\n(defn #^ dict load [] 1)\n";
+    let (_, stdout, stderr) = run(dir.path(), &["--output-format", "editor-json", "--no-log", "--stdin", "--path", "app/core/rows.hy"], Some(unsaved));
+    let report: Value = serde_json::from_str(&stdout).unwrap_or_else(|e| panic!("{}: {}\n{}", e, stdout, stderr));
+    assert_eq!(keys(&report, "DOEFF145"), vec!["app/core/rows.pyi::DOEFF145::Row".to_string()], "{}", report);
+    assert_eq!(keys(&report, "DOEFF144"), vec!["app/core/rows.hy::DOEFF144::return:load".to_string()], "{}", report);
+    // disk の .hy は defclass(kw-only でない)なので、全体の実行では DOEFF145 は当たらない。
+    let (_, whole) = editor(dir.path());
+    assert!(keys(&whole, "DOEFF145").is_empty(), "{}", whole);
+}
+
+/// :record-stubs の :except に当たる .pyi は読まない。
+#[test]
+fn record_stubs_except_is_honoured() {
+    let hy = "(defrecord Row (#^ str a))\n".to_string();
+    let stub = "from dataclasses import dataclass\n@dataclass\nclass Row:\n    a: str\n".to_string();
+    let dir = typed_repo(&[
+        ("app/core/rows.hy", hy),
+        ("app/core/rows.pyi", stub),
+    ]);
+    let (_, report) = editor(dir.path());
+    assert_eq!(keys(&report, "DOEFF145"), vec!["app/core/rows.pyi::DOEFF145::Row".to_string()], "{}", report);
+    let arch_path = dir.path().join("architecture.hy");
+    let text = std::fs::read_to_string(&arch_path).unwrap().replace(":except [\"**/__pycache__/**\"]}", ":except [\"**/__pycache__/**\" \"app/core/**\"]}");
+    std::fs::write(&arch_path, text).unwrap();
+    let (_, excepted) = editor(dir.path());
+    assert!(keys(&excepted, "DOEFF145").is_empty(), "{}", excepted);
+}

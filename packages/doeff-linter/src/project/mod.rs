@@ -28,6 +28,8 @@ pub mod world_catalog;
 pub mod test_forms;
 pub mod retired;
 pub mod handler_arguments;
+pub mod typed_values;
+pub mod record_stubs;
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
@@ -224,6 +226,17 @@ pub fn run_with(root: &Path, settings: &ProjectSettings, enabled: &BTreeSet<Proj
                 let (found, errors) = crate::timing::timed("retired", || judge_retired_files(root, architecture, enabled, focus));
                 drafts.extend(found);
                 report.errors.extend(errors);
+                // DOEFF144・145 も file 1 つで判じる(名指しが在ればその下だけを読む — repo 全体の索引を組まない)。
+                if let Some(selection) = architecture.typed_values.as_ref().filter(|_| enabled.contains(&ProjectRule::UntypedStructuredValue)) {
+                    let (found, errors) = crate::timing::timed("typed-values", || typed_values::find(root, selection, focus));
+                    drafts.extend(found.into_iter().flat_map(|file| typed_value_drafts(&file.rel, &file.path, &file.source, file.hits)));
+                    report.errors.extend(errors);
+                }
+                if let Some(selection) = architecture.record_stubs.as_ref().filter(|_| enabled.contains(&ProjectRule::RecordStubNotKwOnly)) {
+                    let (found, errors) = crate::timing::timed("record-stubs", || record_stubs::find(root, selection, focus));
+                    drafts.extend(found.into_iter().flat_map(|file| record_stub_drafts(&file.rel, &file.path, &file.source, file.mismatches)));
+                    report.errors.extend(errors);
+                }
             }
             let layer_files = settings.layers.as_ref().map(|layers| collect_layer_files(root, layers)).unwrap_or_default();
             semantic_files = layer_files.iter().map(|f| (f.clone(), None)).collect();
@@ -483,6 +496,29 @@ pub fn run_with(root: &Path, settings: &ProjectSettings, enabled: &BTreeSet<Proj
                 let (words, calls) = retired_groups(architecture, enabled);
                 let (word_hits, call_hits) = retired::judge(rel, source, words, calls);
                 drafts.extend(retired_drafts(&path, source, word_hits, call_hits));
+                if enabled.contains(&ProjectRule::UntypedStructuredValue) && architecture.typed_values.as_ref().is_some_and(|s| typed_values::wants(rel, s)) {
+                    match typed_values::judge(rel, source) {
+                        Ok(hits) => drafts.extend(typed_value_drafts(rel, &path, source, hits)),
+                        Err(reason) => report.errors.push(format!("{}: DOEFF144 の判定が読めない({})", rel, reason)),
+                    }
+                }
+                if let Some(selection) = architecture.record_stubs.as_ref().filter(|_| enabled.contains(&ProjectRule::RecordStubNotKwOnly)) {
+                    if record_stubs::wants(rel, &path, selection) {
+                        match record_stubs::judge_file(rel, &path, source) {
+                            Ok(found) => drafts.extend(record_stub_drafts(rel, &path, source, found)),
+                            Err(reason) => report.errors.push(format!("{}: DOEFF145 の判定が読めない({})", rel, reason)),
+                        }
+                    } else if let Some((stub_rel, stub_path)) = record_stubs::stub_of_hy(rel, &path, selection) {
+                        // 保存前の .hy は stdin の中身で、隣の型の宣言(.pyi)は disk から読み、当たりは .pyi の path で出す。
+                        let judged = std::fs::read_to_string(&stub_path)
+                            .map_err(|error| error.to_string())
+                            .and_then(|stub| record_stubs::judge(source, &stub, &stub_rel).map(|found| (stub, found)));
+                        match judged {
+                            Ok((stub, found)) => drafts.extend(record_stub_drafts(&stub_rel, &stub_path, &stub, found)),
+                            Err(reason) => report.errors.push(format!("{}: DOEFF145 の判定が読めない({})", stub_rel, reason)),
+                        }
+                    }
+                }
             }
             if let (Some(env), Some(rel)) = (&settings.environment, &rel) {
                 if enabled.contains(&ProjectRule::EnvironmentName) && is_environment_file(rel, env) {
@@ -557,6 +593,46 @@ fn judge_retired_files(root: &Path, architecture: &architecture::Architecture, e
     let (found, errors) = retired::find(root, words, calls, focus);
     let drafts = found.into_iter().flat_map(|file| retired_drafts(&file.path, &file.source, file.words, file.calls)).collect();
     (drafts, errors)
+}
+
+/// DOEFF144 の当たりを違反の下書きにする(file 1 つ分 — 鍵の細目は `<種類>:<名>`)。
+fn typed_value_drafts(rel: &str, path: &Path, source: &str, hits: Vec<typed_values::TypedHit>) -> Vec<Draft> {
+    let lines = LineIndex::new(source);
+    hits.into_iter()
+        .map(|hit| Draft {
+            rule: ProjectRule::UntypedStructuredValue,
+            layer: None,
+            path: path.to_path_buf(),
+            range: lines.range(hit.start, hit.end),
+            message: format!("{} — {} {} の型が {}(欄の名前と型を持つ型で表す)", rel, hit.what.label(), hit.name, hit.problem),
+            detail: Some(hit.detail()),
+            base: Severity::Error,
+            explain: Explain::UntypedStructuredValue { what: hit.what.label().to_string(), name: hit.name, problem: hit.problem },
+            rel: rel.to_string(),
+        })
+        .collect()
+}
+
+/// DOEFF145 の食い違いを違反の下書きにする(.pyi 1 つ分 — 鍵の細目は class の名)。
+fn record_stub_drafts(rel: &str, path: &Path, source: &str, mismatches: Vec<record_stubs::Mismatch>) -> Vec<Draft> {
+    let lines = LineIndex::new(source);
+    mismatches
+        .into_iter()
+        .map(|m| Draft {
+            rule: ProjectRule::RecordStubNotKwOnly,
+            layer: None,
+            path: path.to_path_buf(),
+            range: lines.range(m.start, m.end),
+            message: format!(
+                "{} — class {} は同じ名の .hy で {}(実行時は欄を名でしか受けない)なのに、型の宣言の @dataclass に kw_only=True が無い",
+                rel, m.name, m.form
+            ),
+            detail: Some(m.name.clone()),
+            base: Severity::Error,
+            explain: Explain::RecordStubNotKwOnly { class: m.name, form: m.form.to_string() },
+            rel: rel.to_string(),
+        })
+        .collect()
 }
 
 /// 当たりを違反の下書きにする(file 1 つ分)。

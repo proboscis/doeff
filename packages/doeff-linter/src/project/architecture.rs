@@ -263,6 +263,14 @@ pub struct HandlerArguments {
     pub value_types: Vec<String>,
 }
 
+/// file 1 つで判じる規則の母集団(`{:files [..] :except [..]}` — DOEFF144 の :typed-values・DOEFF145 の :record-stubs)。
+/// glob は :retired-words と同じく repo の根に錨を下ろす(`**` は 0 個以上の段・`*` は段の中の任意の綴り・`/` の無い型は根の直下の file)。
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+pub struct FileSelection {
+    pub files: Vec<String>,
+    pub except: Vec<String>,
+}
+
 /// architecture.hy の全体。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct Architecture {
@@ -313,6 +321,12 @@ pub struct Architecture {
     pub retired_calls: Vec<RetiredCalls>,
     /// handler の引数の決まり(書けば DOEFF142 が defhandler の引数の client・可変の店を出す — agora-redesign #1189 / #1366)。
     pub handler_arguments: Option<HandlerArguments>,
+    /// 公開面の型の注記を読む file(`:typed-values {:files [..] :except [..]}`)。書けば DOEFF144 が、欄・戻り値・:post の型の素の写像・
+    /// 素の組と、組の literal の答えを出す(agora-redesign #1191)。
+    pub typed_values: Option<FileSelection>,
+    /// 型の宣言(.pyi)を読む file(`:record-stubs {:files [..] :except [..]}`)。書けば DOEFF145 が、同じ dir の同じ名の .hy の kw-only の
+    /// record を kw_only=True 無しの @dataclass で宣言する .pyi を出す(#1191)。
+    pub record_stubs: Option<FileSelection>,
     #[serde(skip)]
     pub role_descriptions: BTreeMap<String, String>,
     #[serde(skip)]
@@ -640,6 +654,8 @@ impl<'a> Parser<'a> {
             retired_words: Vec::new(),
             retired_calls: Vec::new(),
             handler_arguments: None,
+            typed_values: None,
+            record_stubs: None,
             role_descriptions: BTreeMap::new(),
             exclude: vec!["tests".into(), "__pycache__".into(), "conftest.py".into()],
             extensions: None,
@@ -694,6 +710,8 @@ impl<'a> Parser<'a> {
                 ":retired-words" => arch.retired_words = self.retired_words(value),
                 ":retired-calls" => arch.retired_calls = self.retired_calls(value),
                 ":handler-arguments" => arch.handler_arguments = self.handler_arguments(value),
+                ":typed-values" => arch.typed_values = self.file_selection(value, ":typed-values"),
+                ":record-stubs" => arch.record_stubs = self.file_selection(value, ":record-stubs"),
                 ":edge-touches" => {
                     let mut touches = Vec::new();
                     for word in self.names(value, ":edge-touches") {
@@ -858,6 +876,27 @@ impl<'a> Parser<'a> {
             }
         }
         globs
+    }
+
+    /// `{:files [..] :except [..]}` を読む(:files は要る — 空なら理由を積んで宣言しなかったことにする)。
+    fn file_selection(&mut self, value: &Form, what: &str) -> Option<FileSelection> {
+        let Some(entries) = self.brace(value) else {
+            self.problem(value, &format!("{} は {{:files [..] :except [..]}} の辞書", what));
+            return None;
+        };
+        let mut selection = FileSelection::default();
+        for (key, list) in self.pairs(&entries) {
+            match self.text(key) {
+                ":files" => selection.files = self.path_globs(list, &format!("{} :files", what)),
+                ":except" => selection.except = self.path_globs(list, &format!("{} :except", what)),
+                _ => self.unknown_key(key, what),
+            }
+        }
+        if selection.files.is_empty() {
+            self.problem(value, &format!("{} に :files(読む file の glob)が無い", what));
+            return None;
+        }
+        Some(selection)
     }
 
     /// `[(retired-words "名" :words [..] :patterns [r"…"] :files [..] :except [..] :rule-lines [..] :in lines|names :instead "…") …]` を読む
