@@ -255,7 +255,8 @@ impl Setup {
                 ProjectRule::AssemblyShapeBroken | ProjectRule::AssemblyAnswerMisplaced | ProjectRule::IntentAnswererNotTranslation => {
                     self.settings.architecture.as_ref().is_some_and(|a| a.business_fakes.is_some() && a.assembly_shape.is_some())
                 }
-                ProjectRule::TestKindMismatch => {
+                // DOEFF137 は DOEFF133 と同じ全体の索引と定義の辺の図を使う(有効にする条件も同じ)。
+                ProjectRule::TestKindMismatch | ProjectRule::WorldHandlerWithoutContractTest => {
                     self.settings.architecture.as_ref().is_some_and(|a| !a.world_handlers.is_empty() && a.edge_mark.is_some())
                 }
                 ProjectRule::ShapeCheckInJudgment => {
