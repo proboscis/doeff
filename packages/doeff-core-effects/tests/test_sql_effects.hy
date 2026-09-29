@@ -419,6 +419,76 @@
   (assert (< elapsed 6) elapsed))
 
 
+(defclass CuttingProxy []
+  "実 PG の前に置く TCP の中継(検の殻)— cut で走っている接続を両側とも閉じる(DB の pod の入れ替えで口が途中で閉じた形)。"
+
+  (defn __init__ [self #^ str host #^ int port]  ; defk にできない: 検の殻の資源(socket と thread)の初期化
+    "中継の待ち受けを開き、受けた接続ごとに行き先へ繋いで流す thread を立てるため。"
+    (setv self.target #(host port)
+          self.listener (socket.create-server #("127.0.0.1" 0))
+          self.port (get (.getsockname self.listener) 1)
+          self.live []
+          self.lock (threading.Lock))
+    (.start (threading.Thread :target self.accept :daemon True)))
+
+  (defn accept [self]  ; defk にできない: 検の殻の thread の target
+    "受けた接続を行き先へ繋ぎ、両向きに流すため(待ち受けが閉じたら終わる)。"
+    (while True
+      (try
+        (setv [client _] (.accept self.listener))
+        (except [OSError] (return None)))
+      (setv upstream (socket.create-connection self.target))
+      (with [self.lock] (.extend self.live [client upstream]))
+      (for [[a b] [[client upstream] [upstream client]]]
+        (.start (threading.Thread :target self.pipe :args #(a b) :daemon True)))))
+
+  (defn pipe [self a b]  ; defk にできない: 検の殻の thread の target
+    "a から読んだ bytes を b へ流すため(どちらかが閉じたら終わる)。"
+    (try
+      (while True
+        (setv data (.recv a 65536))
+        (when (not data) (break))
+        (.sendall b data))
+      (except [OSError] None)))
+
+  (defn cut [self]  ; defk にできない: 検の殻の操作
+    "走っている接続を全部、両側とも閉じるため(待ち受けは開いたまま — 次の接続は通す)。"
+    (with [self.lock]
+      (for [s self.live]
+        (try (.shutdown s socket.SHUT-RDWR) (except [OSError] None))
+        (.close s))
+      (.clear self.live)))
+
+  (defn close [self]  ; defk にできない: 検の殻の後始末
+    "中継を止めるため。"
+    (.cut self)
+    (.close self.listener)))
+
+
+(deftest test-postgres-recovers-after-the-connection-is-cut-mid-way
+  {:skip-if POOLED-SKIP :skip-reason "DOEFF_SQL_TEST_POSTGRES_DSN が無い(か psycopg が無い)"}
+  ;; 実 PG の反例(#1479 の受入 — 本番の DB の pod は入れ替えない): 中継の口で接続を途中で閉じると、その接続の次の文は
+  ;; SqlUnreachable、その次の文は新しい接続で 25 秒以内に答える(切れた接続は返す時に捨てられ、次の借りが張り直す)。
+  (import psycopg.conninfo [conninfo-to-dict make-conninfo])
+  (val target (conninfo-to-dict (or POSTGRES-DSN "")))
+  (val proxy (CuttingProxy (.get target "host" "127.0.0.1") (int (.get target "port" 5432))))
+  (val connections (PostgresConnections #((PostgresDatabase :name DB :dsn (make-conninfo (or POSTGRES-DSN "") :host "127.0.0.1"
+                                                                                         :port (str proxy.port))))
+                                        :size 1))
+  (try
+    (<- before (with-handler [(postgres-sql-handler connections)] (SqlQuery DB "SELECT 1" #())))
+    (.cut proxy)
+    (val cut-at (time.monotonic))
+    (<- broken (with-handler [(postgres-sql-handler connections)] (SqlQuery DB "SELECT 1" #())))
+    (<- after (with-handler [(postgres-sql-handler connections)] (SqlQuery DB "SELECT 1" #())))
+    (val recovered-in (- (time.monotonic) cut-at))
+    (finally (.close connections) (.close proxy)))
+  (assert (isinstance before SqlRows) before)
+  (assert (isinstance broken SqlUnreachable) broken)
+  (assert (isinstance after SqlRows) after)
+  (assert (< recovered-in 25) recovered-in))
+
+
 (deftest test-postgres-cuts-a-statement-at-the-statement-timeout
   {:skip-if POOLED-SKIP :skip-reason "DOEFF_SQL_TEST_POSTGRES_DSN が無い(か psycopg が無い)"}
   ;; 実 PG: 文の上限(0.5 秒)を超えた文は engine が取り消し(57014)、SqlFailed で返る。接続は返されて次の文が答える。
