@@ -47,6 +47,9 @@
 ;;; 検の effect(sim の世界が答える — scenario の中で出す。service の Program が出すと柵で落ちる):
 ;;;   Crash 名                  動いている process を exit 1 で落とす(答え = 落とした数)。worker が本物の判断で起こし直す。
 ;;;   Redeclare 系              宣言し直す(本番の declare と同じ順で Program を置いてから Service の行を書く — update に従い recreate / handoff)。
+;;;   DeclareRollout 名 spec     POST /resources/Rollout で作る(本番と同じ検証・所有者・重複検査)。
+;;;   KubeCalls                 偽の k8s が受けた書きの履歴の写し(tuple)。
+;;;   SettleDeployment ns 名     Deployment の Pod を宣言の台数へ進める(ready で準備済み台数を指定できる)。
 ;;;   ReportsOf 名              coordinator に届いた ReportReady / ReportMetrics の列(SimReport)。
 ;;;   ReadinessOf 名            coordinator の Service の status の ready(SimReadiness — Ready / NotReady / Unknown / Missing)。
 ;;;   ProcessesOf 名            その job の process の列(SimProcess — 世代・worker・始まり・終わり・exit-code)。task は task/<id>。
@@ -94,6 +97,7 @@
 (require doeff-hy.macros [defk deff defhandler defeffect <- val var])
 (require doeff-hy.record [defrecord])
 (import collections.abc [Callable])
+(import copy [deepcopy])
 (import dataclasses [dataclass replace])
 (import pathlib [Path])
 (import urllib.parse [quote :as url-quote unquote :as url-unquote])
@@ -269,6 +273,23 @@
    :answer tuple
    :tags {:context "doeff-cluster" :role "intent"}})
 
+(defeffect DeclareRollout
+  "検の effect: 本番の資源 API と同じ要求で Rollout を作る。答え = 資源の本文。拒否・接続失敗は RemoteJobFailed。"
+  {:fields [(: name str) (: spec dict)]
+   :answer dict
+   :tags {:context "doeff-cluster" :role "intent"}})
+
+(defeffect KubeCalls
+  "検の effect: KubeMemory.calls の写し(受けた順の dict の tuple)。dryRun の書きも含む。"
+  {:answer tuple
+   :tags {:context "doeff-cluster" :role "intent"}})
+
+(defeffect SettleDeployment
+  "検の effect: 偽の Deployment の Pod を宣言の台数に揃える。ready = None は全台準備済み。worker は StartWorker で別に起こす。"
+  {:fields [(: namespace str) (: name str) (: ready (| int None) None)]
+   :answer None
+   :tags {:context "doeff-cluster" :role "intent"}})
+
 (defeffect ReportsOf
   "検の effect: job name の process から coordinator に届いた ReportReady / ReportMetrics の列(SimReport の tuple・届いた順)。"
   {:fields [(: name str)]
@@ -392,7 +413,8 @@
   "sim の 1 回の走りの筋(sim-cluster が引数から作る)。declaration = 最初の宣言(environ の上書きを重ねた行)・environ = job 名 →
    上書きの環境変数(Redeclare にも重ねる)・passable = 柵が外へ通す effect の型(SIM-PASSABLE と外の世界の effects)・
    per-process = process ごとの外の handler の組を作る関数(SimOutside.per-process — None = 無し)・store = coordinator の置き場を作る
-   関数(引数なし → MemoryWalStore の値 — 派生の class をそのまま渡せる。None = MemoryWalStore)。"
+   関数(引数なし → MemoryWalStore の値 — 派生の class をそのまま渡せる。None = MemoryWalStore)。deployments = 偽の k8s の
+   初期観測(「namespace/名」→ dict)。parts-of が深い写しを作り、1 回の走りの間だけ変更する。"
   (#^ System system)
   (#^ Declaration declaration)
   (#^ tuple workers)
@@ -404,7 +426,8 @@
   (#^ WorkerPolicy policy)
   (#^ tuple passable)
   (setv #^ (| Callable None) per-process None)
-  (setv #^ (| Callable None) store None))
+  (setv #^ (| Callable None) store None)
+  (setv #^ (| dict None) deployments None))
 
 
 (defrecord SimParts
@@ -575,9 +598,10 @@
   (system-declaration system revision :environ environ))
 
 
-(defk sim-plan [system workers environ revision start-ms timing policy outside store]
+(defk sim-plan [system workers environ revision start-ms timing policy outside store [deployments None]]
   {:pre [(: system System) (: workers (| tuple None)) (: environ (| dict None)) (: revision str) (: start-ms int)
-         (: timing (| ClusterTiming None)) (: policy (| WorkerPolicy None)) (: outside (| SimOutside None)) (: store (| Callable None))]
+         (: timing (| ClusterTiming None)) (: policy (| WorkerPolicy None)) (: outside (| SimOutside None)) (: store (| Callable None))
+         (: deployments (| dict None))]
    :post [(: % SimPlan)] :tags {:context "doeff-cluster" :role "judgment"}}
   "sim-cluster の引数を検めて筋にするため(走らせる前に断る — environ の上書きの誤り・名の重なる worker)。"
   (<- fallback tuple (default-workers system))
@@ -587,7 +611,7 @@
     (raise (ValueError (.format "workers は名の重ならない SimWorker の 1 つ以上の tuple: {!r}" chosen))))
   (<- declaration Declaration (declaration-of system revision (or environ {})))
   (SimPlan :system system :declaration declaration :workers chosen :environ (or environ {}) :revision revision
-           :per-process (if (is outside None) None outside.per-process) :store store
+           :per-process (if (is outside None) None outside.per-process) :store store :deployments deployments
            :start-ms start-ms :timing (or timing (ClusterTiming)) :naming (ClusterNaming) :policy (or policy (WorkerPolicy))
            :passable (+ SIM-PASSABLE (if (is outside None) #() outside.effects))))
 
@@ -599,7 +623,7 @@
   (val store (if (is plan.store None) (MemoryWalStore) (plan.store)))
   (when (not (isinstance store MemoryWalStore))
     (raise (TypeError (.format "store は MemoryWalStore の値を作る関数: {!r} が {!r} を返した" plan.store store))))
-  (SimParts :queue (RequestQueue) :store store :stop (StopState) :kube (KubeMemory {})))
+  (SimParts :queue (RequestQueue) :store store :stop (StopState) :kube (KubeMemory (deepcopy (or plan.deployments {})))))
 
 
 (defk fresh-truth [name generation now fence-ms]
@@ -1790,6 +1814,15 @@
     (<- link SimLink (control-link parts.queue plan.revision))
     (<- names tuple (apply-declaration link declaration))
     (resume names))
+  (DeclareRollout [name spec]
+    (<- link SimLink (control-link parts.queue plan.revision))
+    (<- answer tuple (send-request link "POST" "/resources/Rollout" {} {"name" name "spec" (deepcopy spec)}))
+    (resume (answered-body answer (+ "Rollout を作れない: " name))))
+  (KubeCalls []
+    (resume (deepcopy (tuple parts.kube.calls))))
+  (SettleDeployment [namespace name ready]
+    (.settle parts.kube (+ namespace "/" name) ready)
+    (resume None))
   (ReportsOf [name]
     (resume (tuple (gfor r reports :if (= r.job name) r))))
   (ProcessesOf [name]
@@ -1862,24 +1895,26 @@
       (<- (Wait pod)))))
 
 
-(defk sim-under-clock [system scenario workers environ revision timing policy outside store]
+(defk sim-under-clock [system scenario workers environ revision timing policy outside store [deployments None]]
   {:pre [(: system System) (: scenario (| Program EffectBase)) (: workers (| tuple None)) (: environ (| dict None)) (: revision str)
-         (: timing (| ClusterTiming None)) (: policy (| WorkerPolicy None)) (: outside (| SimOutside None)) (: store (| Callable None))]
+         (: timing (| ClusterTiming None)) (: policy (| WorkerPolicy None)) (: outside (| SimOutside None)) (: store (| Callable None))
+         (: deployments (| dict None))]
    :post [(: % "scenario の答え(型は筋書きごと)")]
    :tags {:context "doeff-cluster" :role "program"}}
   "入口(sim-cluster・wall-sim-cluster)が選んだ時計の内側で、時計の今を起点に筋を作り(引数を検めて断る)、session の値の置き場・sim の
    外の世界・sim の世界を並べて sim-main を走らせるため。時計の違いは入口が並べる handler だけで、ここから内側は同じ。"
   (<- start-ms int (now-epoch-ms))
-  (<- plan SimPlan (sim-plan system workers environ revision start-ms timing policy outside store))
+  (<- plan SimPlan (sim-plan system workers environ revision start-ms timing policy outside store deployments))
   (<- answer (with-handlers [(session-store) #* (if (is outside None) [] outside.handlers) (sim-world plan)]
                (sim-main scenario)))
   answer)
 
 
 (defk sim-cluster [system scenario * [workers None] [environ None] [revision "sim"] [start-ms SIM-START-MS] [timing None] [policy None]
-                  [outside None] [store None]]
+                  [outside None] [store None] [deployments None]]
   {:pre [(: system System) (: scenario (| Program EffectBase)) (: workers (| tuple None)) (: environ (| dict None)) (: revision str) (: start-ms int)
-         (: timing (| ClusterTiming None)) (: policy (| WorkerPolicy None)) (: outside (| SimOutside None)) (: store (| Callable None))]
+         (: timing (| ClusterTiming None)) (: policy (| WorkerPolicy None)) (: outside (| SimOutside None)) (: store (| Callable None))
+         (: deployments (| dict None))]
    :post [(: % "scenario の答え(型は筋書きごと)")]
    :tags {:context "doeff-cluster" :role "entry"}}
   "系 system(sim の土台で作った System の値)を本物の coordinator と worker の上で走らせ、scenario(検の筋書きの Program — 同じ
@@ -1889,16 +1924,18 @@
    handler と、それが答える effect の型。時計の内側・sim の世界の外側に置き、柵はその型も通す)・store = coordinator の置き場を作る
    関数(引数なし → MemoryWalStore の値 — 既定 = MemoryWalStore。反例の壊れた置き場 — 書いたふり・読み直せない・欄を落とす — を
    派生の class で渡す。1 回の走りに 1 回だけ呼び、作り直した coordinator も同じ置き場から読み直す)。自分で scheduler を持つ(外に
-   scheduler が在っても無くても走る)。壁の時計で回すなら wall-sim-cluster。"
+   scheduler が在っても無くても走る)。deployments = 「namespace/名」→ KubeMemory の観測の dict(specReplicas・replicas・readyReplicas 等)。
+   走りごとに深い写しを作り、初期値を変えない。既定は空。Pod の進行は SettleDeployment。壁の時計で回すなら wall-sim-cluster。"
   (<- answer (scheduled (with-handlers [(sim-time-handler :start-time (datetime-of-epoch-ms start-ms))]
-                          (sim-under-clock system scenario workers environ revision timing policy outside store))))
+                          (sim-under-clock system scenario workers environ revision timing policy outside store deployments))))
   answer)
 
 
 (defk wall-sim-cluster [system scenario * [workers None] [environ None] [revision "sim"] [timing None] [policy None] [outside None]
-                       [store None]]
+                       [store None] [deployments None]]
   {:pre [(: system System) (: scenario (| Program EffectBase)) (: workers (| tuple None)) (: environ (| dict None)) (: revision str)
-         (: timing (| ClusterTiming None)) (: policy (| WorkerPolicy None)) (: outside (| SimOutside None)) (: store (| Callable None))]
+         (: timing (| ClusterTiming None)) (: policy (| WorkerPolicy None)) (: outside (| SimOutside None)) (: store (| Callable None))
+         (: deployments (| dict None))]
    :post [(: % "scenario の答え(型は筋書きごと)")]
    :tags {:context "doeff-cluster" :role "entry"}}
   "sim-cluster と同じ系・同じ本物の coordinator と worker・同じ偽の宿と柵を、壁の時計で走らせ、scenario の答えを返す(引数の意味は
@@ -1908,5 +1945,5 @@
    await-handler を並べる)ので、本物の待ち受けを持つ job は土台に await-handler を置くか、その I/O を outside の handler に置く
    (時計の内側なので、ここの await-handler が答える)。自分で scheduler を持つ。"
   (<- answer (scheduled (with-handlers [(await-handler) (async-time-handler)]
-                          (sim-under-clock system scenario workers environ revision timing policy outside store))))
+                          (sim-under-clock system scenario workers environ revision timing policy outside store deployments))))
   answer)
