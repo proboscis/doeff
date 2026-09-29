@@ -1,9 +1,18 @@
 """動的な値と明示idの収集記録、および古い記録を実行しない反例(#1459)。"""
 
 import hashlib
+import os
 from pathlib import Path
 
 import pytest
+from _pytest.mark.structures import ParameterSet
+from doeff_adr.runtime_records import UnrecordableError, parametrize_record
+from doeff_adr.source_dependencies import (
+    DependencyChecks,
+    SourceDependency,
+    SourceSnapshot,
+    snapshot,
+)
 
 pytest_plugins = ["pytester"]
 
@@ -95,6 +104,8 @@ def test_dynamic_values_interpreters_and_explicit_ids_are_cached(dynamic_project
     assert nodeids(warm) == nodeids(cold)
     assert imports(project) == []
     assert "記録から収集 1 file・収集で import 0 file" in warm.stdout.str()
+    assert "hash 0 file" in warm.stdout.str()
+    assert "依存変更で再作成 0 file" in warm.stdout.str()
     collect(project, "-k", "not_selected")
     assert imports(project) == []
     result: pytest.RunResult = project.runpytest_subprocess("pkg/test_dynamic.hy", "-q")
@@ -102,15 +113,20 @@ def test_dynamic_values_interpreters_and_explicit_ids_are_cached(dynamic_project
     assert imports(project) == ["imported"]
 
 
-def test_changed_provider_invalidates_interpreters_values_and_ids(dynamic_project: pytest.Pytester) -> None:
+@pytest.mark.parametrize("initial_values", ["[1, 2]", "[]"])
+def test_changed_provider_invalidates_interpreters_values_and_ids(
+    dynamic_project: pytest.Pytester, initial_values: str
+) -> None:
     project: pytest.Pytester = dynamic_project
+    provider: Path = project.path / "pkg/inputs.py"
+    provider.write_text(INPUTS.replace("[1, 2]", initial_values))
     collect(project)
     assert cache_path(project).exists()
     imports(project)
-    provider: Path = project.path / "pkg/inputs.py"
     provider.write_text(INPUTS.replace("host-a", "host-b").replace("[1, 2]", "[3]").replace("case-a", "case-b"))
     changed: pytest.RunResult = collect(project)
     assert imports(project) == ["imported"]
+    assert "依存変更で再作成 1 file" in changed.stdout.str()
     assert any("[host-b]" in name for name in nodeids(changed))
     assert any("[3]" in name for name in nodeids(changed))
     assert any("[case-b]" in name for name in nodeids(changed))
@@ -120,13 +136,15 @@ def test_changed_provider_invalidates_interpreters_values_and_ids(dynamic_projec
     assert imports(project) == []
 
 
-@pytest.mark.parametrize("changed_part", ["value", "id"])
+@pytest.mark.parametrize("changed_part", ["value", "id", "type"])
 def test_runtime_mismatch_fails_before_body_and_forgets_cache(
     dynamic_project: pytest.Pytester, monkeypatch: pytest.MonkeyPatch, changed_part: str
 ) -> None:
     project: pytest.Pytester = dynamic_project
     source: Path = project.path / "pkg/test_dynamic.hy"
     form: str = '(int (os.getenv "DYNAMIC_VALUE" "1"))' if changed_part == "value" else '1 :id (os.getenv "DYNAMIC_VALUE" "1")'
+    if changed_part == "type":
+        form = '(if (= (os.getenv "DYNAMIC_VALUE") "1") 1 True)'
     source.write_text(
         '(require doeff-hy.macros [deftest])\n(import os pytest)\n'
         f'(deftest test-changing [value] {{:params {{"value" [(pytest.param {form})]}}}}\n'
@@ -140,3 +158,34 @@ def test_runtime_mismatch_fails_before_body_and_forgets_cache(
     result.assert_outcomes(errors=1)
     assert "記録と実物が食い違った" in result.stdout.str()
     assert not cache_path(project).exists()
+
+
+def test_dependency_stat_fast_path_hash_refresh_and_same_size_edit(tmp_path: Path) -> None:
+    source: Path = tmp_path / "values.py"
+    source.write_text("VALUE = 1\n")
+    digest: str = hashlib.sha256(source.read_bytes()).hexdigest()
+    saved: tuple[SourceDependency, ...] = (snapshot(source, "values.py", digest),)
+    checks: DependencyChecks = DependencyChecks()
+    assert checks.verify(tmp_path, saved) == SourceSnapshot(saved)
+    assert checks._mut_stat_hits == 1
+    assert checks._mut_hashes == {}
+    status: os.stat_result = source.stat()
+    os.utime(source, ns=(status.st_atime_ns, status.st_mtime_ns + 1_000_000))
+    changed_stamp: DependencyChecks = DependencyChecks()
+    refreshed: SourceSnapshot | str = changed_stamp.verify(tmp_path, saved)
+    assert isinstance(refreshed, SourceSnapshot)
+    assert len(changed_stamp._mut_hashes) == 1
+    next_collection: DependencyChecks = DependencyChecks()
+    assert next_collection.verify(tmp_path, refreshed.sources) == refreshed
+    assert next_collection._mut_hashes == {}
+    source.write_text("VALUE = 2\n")
+    os.utime(source, ns=(status.st_atime_ns, refreshed.sources[0].mtime_ns))
+    edited: DependencyChecks = DependencyChecks()
+    assert isinstance(edited.verify(tmp_path, refreshed.sources), str)
+    assert edited._mut_rebuilds == 1
+
+
+def test_individual_parameter_marks_are_not_silently_dropped() -> None:
+    case: ParameterSet = pytest.param(1, id="skip-me", marks=pytest.mark.skip)
+    with pytest.raises(UnrecordableError, match="個別の印"):
+        parametrize_record(pytest.mark.parametrize("value", [case]).mark)

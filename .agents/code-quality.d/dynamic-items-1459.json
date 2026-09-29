@@ -1,0 +1,96 @@
+{
+  "include": [
+    "packages/doeff-hy/src/doeff_hy/pytest_items.py",
+    "packages/doeff-adr/src/doeff_adr/runtime_records.py",
+    "packages/doeff-adr/src/doeff_adr/source_dependencies.py",
+    "packages/doeff-adr/src/doeff_adr/item_cache.py",
+    "packages/doeff-adr/src/doeff_adr/lazy_collection.py",
+    "packages/doeff-adr/src/doeff_adr/pytest_plugin.py",
+    "packages/doeff-adr/tests/test_dynamic_item_cache.py",
+    "packages/doeff-adr/tests/test_lazy_collection.py"
+  ],
+  "modules": [
+    {
+      "allow": [],
+      "layer": "pure",
+      "name": "pytest-item-records",
+      "paths": [
+        "packages/doeff-hy/src/doeff_hy/pytest_items.py"
+      ],
+      "public": [
+        "packages/doeff-hy/src/doeff_hy/pytest_items.py"
+      ],
+      "responsibility": "macroと収集が共有するitem記録の型、JSONとの変換、macro展開時の記録の作成。",
+      "typed": true
+    },
+    {
+      "allow": [
+        "pytest-item-records"
+      ],
+      "layer": "pure",
+      "name": "pytest-runtime-records",
+      "paths": [
+        "packages/doeff-adr/src/doeff_adr/runtime_records.py"
+      ],
+      "public": [
+        "packages/doeff-adr/src/doeff_adr/runtime_records.py"
+      ],
+      "responsibility": "評価済みのpytestの印から、保存可能な実値とidを判断する。値を再実行しない。",
+      "typed": true
+    },
+    {
+      "allow": [
+        "pytest-item-records",
+        "pytest-runtime-records",
+        "hy-bytecode-import"
+      ],
+      "layer": "io",
+      "name": "pytest-item-collection",
+      "paths": [
+        "packages/doeff-adr/src/doeff_adr/source_dependencies.py",
+        "packages/doeff-adr/src/doeff_adr/item_cache.py",
+        "packages/doeff-adr/src/doeff_adr/lazy_collection.py",
+        "packages/doeff-adr/src/doeff_adr/pytest_plugin.py"
+      ],
+      "public": [
+        "packages/doeff-adr/src/doeff_adr/source_dependencies.py",
+        "packages/doeff-adr/src/doeff_adr/item_cache.py",
+        "packages/doeff-adr/src/doeff_adr/lazy_collection.py",
+        "packages/doeff-adr/src/doeff_adr/pytest_plugin.py"
+      ],
+      "responsibility": "記録の保存・sourceの照合・pytest収集とsetup時のimportを組み立てる。古い値の実行を拒否する。",
+      "typed": true
+    },
+    {
+      "allow": [],
+      "layer": "io",
+      "name": "hy-bytecode-import",
+      "paths": [
+        "packages/doeff-hy/src/doeff_hy/__init__.py",
+        "packages/doeff-hy/src/doeff_hy_bytecode_guard/**"
+      ],
+      "public": [
+        "packages/doeff-hy/src/doeff_hy/__init__.py",
+        "packages/doeff-hy/src/doeff_hy_bytecode_guard/__init__.py"
+      ],
+      "responsibility": "既存のHy importの設定とmacro提供元のhashを読む公開口。今回変更しない依存先。",
+      "typed": true
+    },
+    {
+      "allow": [
+        "pytest-item-collection",
+        "pytest-item-records",
+        "pytest-runtime-records"
+      ],
+      "layer": "io",
+      "name": "pytest-item-collection-tests",
+      "paths": [
+        "packages/doeff-adr/tests/test_dynamic_item_cache.py",
+        "packages/doeff-adr/tests/test_lazy_collection.py"
+      ],
+      "public": [],
+      "responsibility": "独立processで収集と実行を照合し、動的値と定数変更の反例を確かめる。",
+      "typed": true
+    }
+  ]
+}
