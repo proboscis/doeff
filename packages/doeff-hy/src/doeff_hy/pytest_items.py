@@ -14,7 +14,7 @@ parametrize・mark・skipif)に直した形で渡る。plugin は deftest の鍵
 params の値の扱い: 展開の時に見えるのは式の形だけなので、値が literal(文字列・整数・小数・真偽・None)なら値を
 そのまま、literal の入れ物(list・tuple・dict・set・keyword)なら「中身を問わない値」(pytest の id は
 ``<引数の名><番号>`` になり値に依らない)として記録する。それ以外(式・名の参照)は本数が実行するまで決まらない
-ので「動的」と記録し、plugin はその module を収集で import する。
+ので「動的」と記録する。pluginは初回のimport後に実値と明示idを補い、保存できれば次の収集から記録を使う。
 """
 
 import json
@@ -55,6 +55,7 @@ ParamValue = LiteralValue | OpaqueValue
 class Parametrize:
     argnames: str
     values: tuple[ParamValue, ...]
+    ids: tuple[str | None, ...] | None = None
 
 
 @dataclass(frozen=True)
@@ -118,8 +119,8 @@ def _encode_value(value: ParamValue) -> dict[str, Any]:
 def _encode_decorator(decorator: Decorator) -> dict[str, Any]:
     """decorator 1 つを記録の JSON へ(書く側の境界)。"""
     match decorator:
-        case Parametrize(argnames, values):
-            return {"parametrize": argnames, "values": [_encode_value(v) for v in values]}
+        case Parametrize(argnames, values, ids):
+            return {"parametrize": argnames, "values": [_encode_value(v) for v in values], "ids": ids}
         case Mark(name):
             return {"mark": name}
         case SkipIf():
@@ -153,7 +154,11 @@ def _decode_value(raw: Mapping[str, Any]) -> ParamValue:
 def _decode_decorator(raw: Mapping[str, Any]) -> Decorator:
     """記録の JSON から decorator 1 つを読む(読む側の境界)。"""
     if "parametrize" in raw:
-        return Parametrize(str(raw["parametrize"]), tuple(_decode_value(v) for v in raw["values"]))
+        ids = raw.get("ids")
+        return Parametrize(
+            str(raw["parametrize"]), tuple(_decode_value(v) for v in raw["values"]),
+            None if ids is None else tuple(None if value is None else str(value) for value in ids),
+        )
     if "mark" in raw:
         return Mark(str(raw["mark"]))
     if raw.get("skipif") is True:
@@ -326,6 +331,11 @@ def record_module_binding(head: str, args: Sequence[object]) -> hy.models.Expres
 # ---------------------------------------------------------------------------
 # 読む側(plugin が収集で呼ぶ)
 # ---------------------------------------------------------------------------
+
+
+def encode_records(records: Iterable[Record]) -> list[str]:
+    """import後に補った実値も、macroと同じ記録の形式で保存する。"""
+    return [json.dumps(_encode(record), ensure_ascii=False, sort_keys=True) for record in records]
 
 
 def decode_records(texts: Iterable[object]) -> list[Record]:

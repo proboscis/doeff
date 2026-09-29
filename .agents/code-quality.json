@@ -46,7 +46,9 @@
   "source_roots": {
     "python": [
       "packages/doeff-agents/src",
-      "packages/doeff-records/src"
+      "packages/doeff-records/src",
+      "packages/doeff-adr/src",
+      "packages/doeff-hy/src"
     ]
   },
   "modules": [

@@ -33,6 +33,7 @@ from doeff_adr.lazy_collection import (
     swap_in_real_module_marks,
     verify_records,
 )
+from doeff_adr.source_dependencies import DependencyChecks
 
 DEFAULT_FILE_PATTERNS = (
     "defadr_*.hy",
@@ -123,6 +124,7 @@ _WIRING_VERDICT_KEY = pytest.StashKey[WiringVerdict]()
 # 収集の終わりの報告(agora-redesign #1223): 記録から収集した file と、import して収集した file とその理由。
 _INDEXED_FILES_KEY = pytest.StashKey[list[Path]]()
 _IMPORTED_FILES_KEY = pytest.StashKey[list[tuple[Path, str]]]()
+_DEPENDENCY_CHECKS_KEY = pytest.StashKey[DependencyChecks]()
 
 
 class DoeffAdrHookspecs:
@@ -254,6 +256,9 @@ def pytest_report_collectionfinish(config: pytest.Config) -> list[str]:
     root = Path(config.rootpath)
     lines = [f"doeff-adr: 記録から収集 {len(indexed)} file・収集で import {len(imported)} file"]
     lines += [f"  import: {_relative_posix(path, root)} — {reason}" for path, reason in imported]
+    checks = config.stash.get(_DEPENDENCY_CHECKS_KEY, None)
+    if checks is not None:
+        lines.append(checks.report())
     return lines
 
 
@@ -331,7 +336,8 @@ class DoeffAdrHyFile(pytest.Module):
     def _getobj(self) -> Any:
         base = _import_base_for_path(self.path.resolve(), Path(self.config.rootpath).resolve())
         module_name = _module_name_for_path(self.path.resolve(), base)
-        match plan_collection(self.path.resolve(), items_cache_dir(self.config)):
+        checks = self.config.stash.setdefault(_DEPENDENCY_CHECKS_KEY, DependencyChecks())
+        match plan_collection(self.path.resolve(), items_cache_dir(self.config), Path(self.config.rootpath).resolve(), checks):
             case Indexed(records, fixtures):
                 self.config.stash.setdefault(_INDEXED_FILES_KEY, []).append(self.path)
                 return stub_module(records, fixtures, self.path.resolve(), module_name)
@@ -354,7 +360,8 @@ class DoeffAdrHyFile(pytest.Module):
             imported = self.config.stash[_IMPORTED_FILES_KEY]
             imported[-1] = (self.path, f"{reason} — 保存しない: " + "・".join(verified.problems))
             return
-        write_cached(self.path.resolve(), module, verified.fixtures, items_cache_dir(self.config))
+        write_cached(self.path.resolve(), module, verified.fixtures, items_cache_dir(self.config),
+                     verified.records, Path(self.config.rootpath).resolve(), verified.dynamic)
 
     def _pytest_collects(self, name: str) -> bool:
         """pytest がこの名を test として集めるか(``python_functions`` / ``python_classes``)。"""

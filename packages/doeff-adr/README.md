@@ -15,6 +15,24 @@ The package provides Hy macros for:
 
 Accepted ADRs must carry at least one executable enforcement.
 
+## 動的なparametrizeの収集記録
+
+`:interpreters`の定数参照や`:params`の式は、初回のimport後に実値と明示idを記録する。
+文字列・整数などは値を保存する。相手役やrecord等は明示idがある時だけ位置を保存し、
+setupで同じ位置の実値へ置き換える。個別の印・間接fixture・複数引数など、記録で
+収集を再現できない形は理由を表示して従来のimport収集を保つ。
+
+動的な値の出自を推測しないため、保存時にpytestのroot配下で読み込まれていたsourceを
+保守的に記録する。再exportや値が0件から増える変更も、sourceの変更で記録を作り直す。
+無関係なsource変更でも再作成する場合がある。warm収集はfileのsize・mtimeを先に照合し、
+同じ大きさの書換や別worktreeも区別するためctime・device・inodeも使う。状態が変わった
+fileだけhashを計算し、中身が同一なら状態の記録を更新する。照合はmoduleをimportしない。
+
+収集の報告に、照合file数・stat一致数・hashを計算したfile数・所要時間・依存変更で
+再作成したtest file数を出す。環境変数等、source以外の値の変化はsetupの照合で拒否し、
+古い記録を消す。importは任意の副作用を起こせるため、記録は任意の実行環境の同一性を
+保証するものではない。
+
 ## Where an installed `defsemgrep` reads its rule
 
 The installed form names a rule id and carries hit / clean fixtures:

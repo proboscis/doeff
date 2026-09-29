@@ -19,17 +19,25 @@ import os
 import sys
 import tempfile
 import types
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 from typing import Literal
 
-from doeff_hy.pytest_items import Record, decode_records, module_record_texts
+from doeff_hy.pytest_items import Record, decode_records, encode_records
 from doeff_hy_bytecode_guard import file_sha256, macro_dependencies
+
+from doeff_adr.source_dependencies import (
+    DependencyChecks,
+    SourceDependency,
+    SourceSnapshot,
+    loaded_sources,
+)
 
 DEFAULT_CACHE_DIR = Path.home() / ".cache" / "doeff-adr" / "pytest-items"
 # 記録の形か鍵の決め方を変えたら上げる(古い版のキャッシュは読まない)。2 = macro の提供元を doeff_hy_bytecode_guard の辿り方で求める。
 # 3 = module の fixture の記録を足す(agora-redesign #1227 の案 B)。
-CACHE_FORMAT = 3
+# 4 = import後の実値・明示idとproject内sourceの状態を保存する(#1459)。
+CACHE_FORMAT = 4
 
 
 @dataclass(frozen=True)
@@ -89,6 +97,7 @@ class CacheEntry:
     records: tuple[str, ...]
     deps: tuple[MacroDependency, ...]
     fixtures: tuple[FixtureRecord, ...]
+    sources: tuple[SourceDependency, ...]
 
 
 @dataclass(frozen=True)
@@ -144,6 +153,7 @@ def _parse_entry(text: str) -> CacheEntry:
                 )
                 for f in raw["fixtures"]
             ),
+            sources=tuple(SourceDependency(**dependency) for dependency in raw["sources"]),
         )
     except MalformedCacheEntry:
         raise
@@ -159,6 +169,7 @@ def _dump_entry(entry: CacheEntry, source: Path) -> str:
             "source": str(source),
             "records": list(entry.records),
             "deps": [{"module": d.module, "digest": d.digest} for d in entry.deps],
+            "sources": [asdict(dependency) for dependency in entry.sources],
             "fixtures": [
                 {
                     "attribute": f.attribute,
@@ -175,7 +186,7 @@ def _dump_entry(entry: CacheEntry, source: Path) -> str:
     )
 
 
-def read_cached(source: Path, cache_dir: Path) -> CacheLookup:
+def read_cached(source: Path, cache_dir: Path, root: Path, checks: DependencyChecks) -> CacheLookup:
     """source の記録をキャッシュから引く。無い・古い(提供元が変わった・形の版が違う)なら CacheMiss とその理由。"""
     entry_path = _entry_path(source, cache_dir)
     try:
@@ -194,20 +205,39 @@ def read_cached(source: Path, cache_dir: Path) -> CacheLookup:
             return CacheMiss(f"macro の提供元 {dependency.module} が見つからない")
         if file_sha256(str(path)) != dependency.digest:
             return CacheMiss(f"macro の提供元 {dependency.module} が変わった")
+    return _read_runtime_entry(entry_path, entry, source, root, checks)
+
+
+def _read_runtime_entry(
+    entry_path: Path, entry: CacheEntry, source: Path, root: Path, checks: DependencyChecks
+) -> CacheLookup:
+    """macroの版が合う記録の、実値の依存を照合しstatを更新する。"""
+    refreshed: SourceSnapshot | str = checks.verify(root, entry.sources)
+    if isinstance(refreshed, str):
+        return CacheMiss(refreshed)
+    if refreshed.sources != entry.sources:
+        _write_entry(entry_path, replace(entry, sources=refreshed.sources), source)
     return CacheHit(tuple(decode_records(entry.records)), entry.fixtures)
 
 
 def write_cached(
-    source: Path, module: types.ModuleType, fixtures: tuple[FixtureRecord, ...], cache_dir: Path
+    source: Path, module: types.ModuleType, fixtures: tuple[FixtureRecord, ...], cache_dir: Path,
+    records: tuple[Record, ...], root: Path, dynamic: bool,
 ) -> None:
-    """import した module の記録・fixture の記録・macro の提供元を、source の内容の hash を鍵に保存する(書き換えは rename で 1 度に)。"""
+    """照合済みの記録を保存する。動的な値には読込済みのlocal sourceも記録する。"""
     entry_path = _entry_path(source, cache_dir)
     entry_path.parent.mkdir(parents=True, exist_ok=True)
     dependencies = tuple(
         MacroDependency(dependency.module, dependency.sha256)
         for dependency in macro_dependencies(module, module.__file__ or str(source))
     )
-    entry = CacheEntry(CACHE_FORMAT, tuple(module_record_texts(module)), dependencies, fixtures)
+    sources: tuple[SourceDependency, ...] = loaded_sources(root).sources if dynamic else ()
+    entry = CacheEntry(CACHE_FORMAT, tuple(encode_records(records)), dependencies, fixtures, sources)
+    _write_entry(entry_path, entry, source)
+
+
+def _write_entry(entry_path: Path, entry: CacheEntry, source: Path) -> None:
+    """初回保存と、内容が同一だった依存fileのstat更新を原子的に書く。"""
     handle, temporary = tempfile.mkstemp(dir=entry_path.parent, prefix=".tmp-", suffix=".json")
     with os.fdopen(handle, "w", encoding="utf-8") as out:
         out.write(_dump_entry(entry, source))

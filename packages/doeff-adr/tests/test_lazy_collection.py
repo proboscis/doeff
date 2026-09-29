@@ -132,7 +132,7 @@ def _collect(project: pytest.Pytester, *args: str) -> Collected:
 
 
 def test_warm_collection_matches_cold_and_imports_nothing(project: pytest.Pytester, tmp_path: Path) -> None:
-    """2 回目(記録あり)の収集は 1 回目と同じ nodeid を返し、動的な file の他は test module を import しない。"""
+    """2回目は動的な値も記録から収集し、moduleごとskipするfileだけをimportする。"""
     cold = _collect(project).nodeids
     assert sorted(_imports(tmp_path)) == sorted(
         [
@@ -147,10 +147,9 @@ def test_warm_collection_matches_cold_and_imports_nothing(project: pytest.Pytest
     warm = _collect(project)
     out = warm.out
     assert warm.nodeids == cold
-    assert "記録から収集 4 file・収集で import 2 file" in out
-    assert "保存しない: 動的: test_dynamic" in out
+    assert "記録から収集 5 file・収集で import 1 file" in out
     assert "import: pkg/tests/test_skipped_module.hy — 記録なし" in out
-    assert _imports(tmp_path) == ["pkg.tests.test_dynamic", "pkg.tests.test_skipped_module"]
+    assert _imports(tmp_path) == ["pkg.tests.test_skipped_module"]
 
 
 def test_selection_by_k_and_m_is_the_same_and_imports_only_the_chosen_file(
@@ -162,7 +161,6 @@ def test_selection_by_k_and_m_is_the_same_and_imports_only_the_chosen_file(
     result = project.runpytest_subprocess("-p", "no:cacheprovider", "-k", "test_slow")
     result.assert_outcomes(passed=1, deselected=19, skipped=1)
     assert _imports(tmp_path) == [
-        "pkg.tests.test_dynamic",
         "pkg.tests.test_skipped_module",
         "pkg.tests.test_alpha",
     ]
@@ -232,7 +230,7 @@ def test_one_changed_character_reads_no_stale_record(project: pytest.Pytester, t
     assert "import: pkg/tests/test_alpha.hy — 記録なし" in out
     assert "pkg.tests.test_alpha" in _imports(tmp_path)
     assert _cache_entry(project, tmp_path, "pkg/tests/test_alpha.hy").exists()
-    assert "記録から収集 4 file" in _collect(project).out
+    assert "記録から収集 5 file" in _collect(project).out
 
 
 def test_a_changed_macro_provider_reads_no_stale_record(project: pytest.Pytester, tmp_path: Path) -> None:

@@ -7,25 +7,26 @@
   parametrize を持つ仮の関数を並べた仮の module を作る。その仮の module を pytest の Module の収集に渡すので、nodeid・
   parametrize の id・印は import して収集した時と同じ pytest の手順で作られる。
 - **キャッシュに無い file** は、今までどおり収集で import する。import した module の記録が実物を全部説明する時
-  (``verify_records`` — 記録に無い test らしい名・fixture・xunit の関数・動的な記録が無く、印の形が同じ)だけキャッシュに
+  (``verify_records`` — 動的な記録を実値から補い、記録に無いtest・未対応fixture・xunitの関数が無く、印の形が同じ)だけキャッシュに
   保存する。module ごと飛ばす file は import が Skipped で終わるので保存されない。理由は収集の終わりに報告する。
 - **setup**: item の fixture より先に、その file の module を通常の import の経路で 1 度だけ読み、item の関数・印・
   parametrize の値を実物に替える。実物が記録と食い違えば、その item を赤にし、記録を消す(黙って古い item で走らない)。
 """
 
-from dataclasses import dataclass
 import importlib
 import importlib.util
 import inspect
 import sys
 import types
 from collections.abc import Callable, Generator, Iterable
-from typing import cast
+from dataclasses import dataclass
 from pathlib import Path
+from typing import cast
+
 import pytest
-from _pytest.mark.structures import Mark as PytestMark
-from _pytest.mark.structures import get_unpacked_marks
 from _pytest.fixtures import FixtureFunctionDefinition, getfixturemarker
+from _pytest.mark.structures import Mark as PytestMark
+from _pytest.mark.structures import ParameterSet, get_unpacked_marks
 from doeff_hy.pytest_items import (
     Decorator,
     Dynamic,
@@ -52,6 +53,13 @@ from doeff_adr.item_cache import (
     fixture_scope,
     read_cached,
 )
+from doeff_adr.runtime_records import (
+    OpaqueParam,
+    UnrecordableError,
+    parametrize_record,
+    runtime_function_record,
+)
+from doeff_adr.source_dependencies import DependencyChecks
 
 # pytest の xunit の形の関数(名で意味を持つ — 仮の module は持たないので、あれば import して収集する)。
 XUNIT_NAMES = frozenset(
@@ -85,9 +93,9 @@ class NeedsImport:
 CollectionPlan = Indexed | NeedsImport
 
 
-def plan_collection(path: Path, cache_dir: Path) -> CollectionPlan:
+def plan_collection(path: Path, cache_dir: Path, root: Path, checks: DependencyChecks) -> CollectionPlan:
     """収集で import せずに済むかを、キャッシュだけから決める(保存の時に実物と突き合わせ済みの記録しか入っていない)。"""
-    match read_cached(path, cache_dir):
+    match read_cached(path, cache_dir, root, checks):
         case CacheHit(records, fixtures):
             return Indexed(records, fixtures)
         case CacheMiss(reason):
@@ -100,6 +108,8 @@ class Verified:
 
     problems: list[str]
     fixtures: tuple[FixtureRecord, ...]
+    records: tuple[Record, ...] = ()
+    dynamic: bool = False
 
 
 def _fixture_record(attribute: str, value: FixtureFunctionDefinition) -> FixtureRecord | str:
@@ -123,17 +133,42 @@ def _fixture_record(attribute: str, value: FixtureFunctionDefinition) -> Fixture
     )
 
 
-def verify_records(real_module: types.ModuleType, name_matches: Callable[[str], bool]) -> Verified:
-    """import した module の記録が、pytest がその module から集める物を全部説明するかを確かめる。
+@dataclass(frozen=True)
+class ResolvedRecords:
+    records: list[Record]
+    problems: list[str]
 
-    ``name_matches`` は pytest の ``python_functions`` / ``python_classes`` の照合。Hy の fork に足していた 3 つの記録
-    (最上位の束縛の名・decorator・最上位の呼び出し)の代わり(#1291)。module の fixture は記録にして返す(#1227 の案 B)。
-    """
+
+def _resolve_dynamic_records(
+    records: list[Record], real_module: types.ModuleType
+) -> ResolvedRecords:
+    """動的な記録だけを実値で補い、保存できない形は理由を返す。"""
+    resolved: list[Record] = []
+    problems: list[str] = []
+    for record in records:
+        if isinstance(record, Dynamic):
+            function: object = vars(real_module).get(record.where)
+            if not callable(function):
+                problems.append(f"動的: {record.where} ({record.reason})")
+                continue
+            try:
+                resolved.append(runtime_function_record(record.where, function))
+            except UnrecordableError as exc:
+                problems.append(f"動的: {record.where} ({exc})")
+        else:
+            resolved.append(record)
+    return ResolvedRecords(resolved, problems)
+
+
+def verify_records(real_module: types.ModuleType, name_matches: Callable[[str], bool]) -> Verified:
+    """import後の記録がpytestの集める関数・印・fixtureを全部説明するか確かめる。"""
     try:
         records = decode_records(module_record_texts(real_module))
     except MalformedRecord as exc:
         return Verified([f"記録の形が違う: {exc}"], ())
-    problems = [f"動的: {r.where} ({r.reason})" for r in records if isinstance(r, Dynamic)]
+    dynamic: bool = any(isinstance(r, Dynamic) for r in records)
+    resolved = _resolve_dynamic_records(records, real_module)
+    records, problems = resolved.records, resolved.problems
     functions = [r for r in records if isinstance(r, FunctionItem)]
     names = {r.name for r in functions}
     for record in functions:
@@ -144,7 +179,7 @@ def verify_records(real_module: types.ModuleType, name_matches: Callable[[str], 
         stub = _stub_function(record, Path(real_module.__file__ or ""), real_module.__name__)
         try:
             _check_marks(get_unpacked_marks(stub), get_unpacked_marks(real), record.name)
-        except RecordMismatch as exc:
+        except (RecordMismatch, UnrecordableError) as exc:
             problems.append(str(exc))
     module_marks = [r for r in records if isinstance(r, ModuleMarks)]
     recorded_marks = [name for r in module_marks for name in r.names]
@@ -167,26 +202,12 @@ def verify_records(real_module: types.ModuleType, name_matches: Callable[[str], 
             problems.append(f"fixture の {name} の形が読めない")
         elif name_matches(name) and callable(value):
             problems.append(f"記録に無い test らしい名 {name} がある")
-    return Verified(problems, tuple(fixtures))
+    return Verified(problems, tuple(fixtures), tuple(records), dynamic)
 
 
 # ---------------------------------------------------------------------------
 # 仮の module(記録から作る — 収集だけに使い、setup で実物に替わる)
 # ---------------------------------------------------------------------------
-
-
-@dataclass(frozen=True, eq=False)
-class OpaqueParam:
-    """中身を問わない params の値の仮の値。pytest の id は実物と同じく ``<引数の名><番号>`` になる。
-
-    ``position`` は parametrize の値の並びの中の位置 — setup でこの位置の実物の値に替える
-    (pytest の ``callspec.indices`` は後で通し番号に振り直されるので使えない)。
-    """
-
-    position: int
-
-    def __repr__(self) -> str:
-        return f"<import の後に実物の値へ替わる #{self.position}>"
 
 
 def _param_value(value: ParamValue, position: int) -> object:
@@ -201,9 +222,9 @@ def _param_value(value: ParamValue, position: int) -> object:
 def _stub_mark(decorator: Decorator) -> pytest.MarkDecorator:
     """記録の decorator 1 つを、実物と同じ名・同じ id を作る pytest の印へ直す。"""
     match decorator:
-        case Parametrize(argnames, values):
+        case Parametrize(argnames, values, ids):
             return pytest.mark.parametrize(
-                argnames, [_param_value(v, position) for position, v in enumerate(values)]
+                argnames, [_param_value(v, position) for position, v in enumerate(values)], ids=ids
             )
         case Mark(name):
             return getattr(pytest.mark, name)
@@ -219,13 +240,7 @@ def _stub_function(item: FunctionItem, path: Path, module_name: str) -> Callable
         raise RuntimeError(f"{module_name}.{item.name}: 記録から作った仮の関数が呼ばれた(setup で実物に替わるはず)")
 
     # 仮の関数の引数を pytest に見せる口(inspect.signature は __signature__ を読む)。
-    setattr(
-        stub,
-        "__signature__",
-        inspect.Signature(
-            [inspect.Parameter(name, inspect.Parameter.POSITIONAL_OR_KEYWORD) for name in item.argnames]
-        ),
-    )
+    stub.__signature__ = inspect.Signature([inspect.Parameter(name, inspect.Parameter.POSITIONAL_OR_KEYWORD) for name in item.argnames])
     stub.__name__ = stub.__qualname__ = item.name
     stub.__module__ = module_name
     # 報告の位置(pytest の reportinfo)は test file を指す。行は記録に無いので 1。
@@ -272,13 +287,7 @@ def _stub_fixture(record: FixtureRecord, module_name: str) -> FixtureFunctionDef
 
         stub = value_stub
     # 仮の fixture の引数を pytest に見せる口(inspect.signature は __signature__ を読む)。
-    setattr(
-        stub,
-        "__signature__",
-        inspect.Signature(
-            [inspect.Parameter(name, inspect.Parameter.POSITIONAL_OR_KEYWORD) for name in record.argnames]
-        ),
-    )
+    stub.__signature__ = inspect.Signature([inspect.Parameter(name, inspect.Parameter.POSITIONAL_OR_KEYWORD) for name in record.argnames])
     stub.__name__ = stub.__qualname__ = record.attribute
     stub.__module__ = module_name
     return pytest.fixture(scope=record.scope, name=record.name)(stub)
@@ -297,7 +306,7 @@ def stub_module(
             case FunctionItem():
                 setattr(module, record.name, _stub_function(record, path, module_name))
             case ModuleMarks(names):
-                setattr(module, "pytestmark", [_stub_module_mark(name) for name in names])
+                module.pytestmark = [_stub_module_mark(name) for name in names]
             case Dynamic():
                 raise AssertionError("Dynamic の記録を持つ file は plan_collection が import に回す")
     return module
@@ -318,12 +327,11 @@ def _shape(marks: Iterable[PytestMark]) -> list[tuple[str, object]]:
     for mark in marks:
         match mark.name:
             case "parametrize":
-                argnames, values = mark.args[0], list(mark.args[1])
-                literal = [
-                    v if isinstance(v, (str, int, float, bool, type(None))) else OpaqueParam
-                    for v in values
-                ]
-                shape.append(("parametrize", (argnames, literal)))
+                spec: Parametrize = parametrize_record(mark)
+                # Pythonでは1 == True == 1.0だが、pytestのidと実値の型は異なる。
+                literal_types = tuple(type(value.value) if isinstance(value, LiteralValue) else None
+                                      for value in spec.values)
+                shape.append(("parametrize", (spec, literal_types)))
             case "skipif":
                 shape.append(("skipif", None))
             case name:
@@ -333,13 +341,11 @@ def _shape(marks: Iterable[PytestMark]) -> list[tuple[str, object]]:
 
 def _check_marks(stub_marks: list[PytestMark], real_marks: list[PytestMark], where: str) -> None:
     """仮の関数と実物の関数の印が、記録の言える範囲で同じかを確かめる。"""
-    stub_shape = [
-        (name, (arg[0], [OpaqueParam if isinstance(v, OpaqueParam) else v for v in arg[1]]))
-        if name == "parametrize" and isinstance(arg, tuple)
-        else (name, arg)
-        for name, arg in _shape(stub_marks)
-    ]
-    real_shape = _shape(real_marks)
+    try:
+        stub_shape = _shape(stub_marks)
+        real_shape = _shape(real_marks)
+    except UnrecordableError as exc:
+        raise RecordMismatch(f"{where}: 実物の印を照合できない: {exc}") from exc
     if stub_shape != real_shape:
         raise RecordMismatch(f"{where}: 印が記録と違う — 記録 {stub_shape} / 実物 {real_shape}")
 
@@ -388,7 +394,8 @@ def swap_in_real_function(item: pytest.Function, real_module: types.ModuleType) 
         }
         for argname, value in list(callspec.params.items()):
             if isinstance(value, OpaqueParam):
-                callspec.params[argname] = real_values[argname][value.position]
+                actual: object = real_values[argname][value.position]
+                callspec.params[argname] = actual.values[0] if isinstance(actual, ParameterSet) else actual
     item.obj = real
     callspec_marks = list(callspec.marks) if callspec is not None else []
     item.own_markers = [*real_marks, *callspec_marks]
