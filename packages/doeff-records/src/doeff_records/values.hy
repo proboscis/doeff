@@ -347,6 +347,16 @@
 (defclass [(dataclass :frozen True)] EventsQuiet []
   "WatchEvents の答え: timeout まで列の頭が after より進まなかった(読み手は読み直さずに待ちを掛け直す)。")
 
+(defclass [(dataclass :frozen True)] StreamEnd []
+  "ReadStreamEnd の答え: sequence = 列に今ある最後の出来事の番号(保持で刈った後の断面 — 1 以上)。"
+  (#^ int sequence)
+  (defn #^ None __post_init__ [self]
+    (when (or (isinstance self.sequence bool) (not (isinstance self.sequence int)) (< self.sequence 1))
+      (raise (ValueError (.format "StreamEnd.sequence は 1 以上の整数: {!r}" self.sequence))))))
+
+(defclass [(dataclass :frozen True)] StreamEmpty []
+  "ReadStreamEnd の答え: 列に出来事が 1 つも無い(まだ積んでいない・保持で全部刈った)— 番号 0 と混ぜずに型で分ける。")
+
 
 ;; --- 失敗の答え --------------------------------------------------------------------------------------------
 
@@ -397,4 +407,5 @@
 (setv AppendEventAnswer (| Appended Refused Unreachable))
 (setv ReadEventsAnswer (| Events Unreachable))
 (val WatchEventsAnswer (| EventsMoved EventsQuiet Unreachable))
+(val ReadStreamEndAnswer (| StreamEnd StreamEmpty Unreachable))
 (val PutRowsAnswer (| WrittenRows RowsConflict RowsRefused Unreachable))

@@ -302,6 +302,14 @@
              :params (! (params-of #(#("ledger" stream) #("after" after) #("limit" limit))))))
 
 
+(defk stream-end-statement [prefix stream]
+  {:pre [(: prefix str) (: stream str)] :post [(: % Statement)]
+   :tags {:context "records" :role "foundation"}}
+  "追記の列の最後の出来事の番号(出来事が無ければ NULL)を 1 文で読む文を作るため(ReadStreamEnd)。"
+  (Statement :text (.format "SELECT max(seq) FROM {p}append_rows WHERE ledger = :ledger" :p prefix)
+             :params (! (params-of #(#("ledger" stream))))))
+
+
 (defk expire-events-statement [prefix stream before-at]
   {:pre [(: prefix str) (: stream str) (: before-at int)] :post [(: % Statement)]
    :tags {:context "records" :role "foundation"}}

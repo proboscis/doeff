@@ -1,4 +1,4 @@
-;;; memory の handler — 公開 effect 7 つと列の待ち WatchEvents に手元の表と番号の列で答える(模擬環境・手元の 1 process・単体の検)。
+;;; memory の handler — 公開 effect 8 つと列の待ち WatchEvents に手元の表と番号の列で答える(模擬環境・手元の 1 process・単体の検)。
 ;;; 行の値は凍らせた写像なので、答えに出す Row は置き場の Row そのもの(写し取らなくても呼び手は変えられない)。
 ;;;
 ;;; 判断(期待・書きの許可・保持・索引・頁)は admission.hy の純関数ちょうど 1 つ。ここは置き場の data と番号の採り方だけを持つ。
@@ -32,8 +32,8 @@
 (import doeff_hy.frozen [FrozenMap])
 (import doeff_records.values [KeepFor RecordsSchema StreamDecl Row Missing Page Written WrittenRows RowChanged RowRemoved Changes Appended
                               Event Events EventsMoved EventsQuiet Reset WatchCursor ListCursor Refused RowsConflict RowsRefused
-                              Unreachable Conflict NotIndexed])
-(import doeff_records.effects [ReadRow ListRows PutRow PutRows WatchChanges WatchEvents AppendEvent ReadEvents])
+                              Unreachable Conflict NotIndexed StreamEnd StreamEmpty])
+(import doeff_records.effects [ReadRow ListRows PutRow PutRows WatchChanges WatchEvents AppendEvent ReadEvents ReadStreamEnd])
 (import doeff_records.faults [AdvanceStoreEpoch SetStoreOutage StoreFault StoreOperation AddStoreFault ClearStoreFaults])
 (import doeff_records.maintenance [SweepExpired PruneChanges Swept Pruned])
 (import doeff_records.admission [Admitted AppendNew AppendReplay judge-expect judge-put judge-put-rows judge-append
@@ -542,6 +542,15 @@
   (Events items (if items (. (get items -1) sequence) ask.after)))
 
 
+(defn #^ (| StreamEnd StreamEmpty) memory-read-stream-end [#^ MemoryStore store #^ ReadStreamEnd ask]  ; defk にできない: 錠の内で同期に呼ぶ置き場の読み(at-now の operation)
+  "ReadStreamEnd に答えるため: 保持で刈った後の今の断面で、列 stream の最後の出来事の番号(列の出来事は番号の昇順に並ぶので後ろから探す)。"
+  (store.schema.stream ask.stream)
+  (for [event (reversed store.events)]
+    (when (= event.stream ask.stream)
+      (return (StreamEnd event.sequence))))
+  (StreamEmpty))
+
+
 (defn #^ int memory-advance-epoch [#^ MemoryStore store]
   (with [store.lock]
     (+= store.epoch 1)
@@ -617,9 +626,9 @@
 
 (defk answered [store operation names ask program]
   {:pre [(: store MemoryStore) (: operation StoreOperation) (: names tuple) (: ask EffectBase) (: program Program)]
-   ;; 答え = 公開 effect 7 つと WatchEvents の答えの型のどれか(program の答えか、故障の答え Refused / Unreachable)。
+   ;; 答え = 公開 effect 8 つと WatchEvents の答えの型のどれか(program の答えか、故障の答え Refused / Unreachable)。
    :post [(: % (| Row Missing Page Reset NotIndexed Written Conflict Refused Unreachable WrittenRows RowsConflict RowsRefused
-                  Changes Appended Events EventsMoved EventsQuiet))]
+                  Changes Appended Events EventsMoved EventsQuiet StreamEnd StreamEmpty))]
    :tags {:context "records" :role "foundation"}}
   "公開 effect ask の答え: 届かない状態(SetStoreOutage)が先・次に当たる故障(lands でなければ置き場に触らずに故障の答え・lands なら
    program で置き場に着けてから故障の答え)・どちらも無ければ program の答え。"
@@ -635,9 +644,9 @@
 
 (defk at-now [store operation]
   {:pre [(: store MemoryStore) (: operation Callable)]
-   ;; 答え = 置き場の操作の答え(公開 effect 7 つの答えの型のどれか)。
+   ;; 答え = 置き場の操作の答え(公開 effect 8 つの答えの型のどれか)。
    :post [(: % (| Row Missing Page Reset NotIndexed Written Conflict Refused Unreachable WrittenRows RowsConflict RowsRefused
-                  Changes Appended Events))]
+                  Changes Appended Events StreamEnd StreamEmpty))]
    :tags {:context "records" :role "foundation"}}
   "いまの刻(epoch ミリ秒)を読み、置き場の錠の内で保持の刈りの後に operation(刻 → 答え)を呼ぶ(各節の置き場の操作の 1 つの形)。"
   (<- now (GetTime))
@@ -678,6 +687,9 @@
     (resume answer))
   (ReadEvents [stream after limit]
     (<- answer (answered store READ #(stream) effect (at-now store (fn [now-ms] (memory-read-events store effect)))))
+    (resume answer))
+  (ReadStreamEnd [stream]
+    (<- answer (answered store READ #(stream) effect (at-now store (fn [now-ms] (memory-read-stream-end store effect)))))
     (resume answer))
   (SetStoreOutage [detail names]
     ;; 置いた(外した)時に待ち手を全部鳴らす — 眠っている待ちが次の走査で届かない状態を見て Unreachable で返るため(頭の註)。

@@ -1,4 +1,4 @@
-;;; PostgreSQL の handler — 公開 effect 7 つに PostgreSQL の表で答える(本番の置き場)。
+;;; PostgreSQL の handler — 公開 effect 8 つに PostgreSQL の表で答える(本番の置き場)。
 ;;; PutRows は PutRow と同じ置き場の錠と transaction 1 つの中で、全部の行を検めてから書く(途中の失敗は transaction ごと戻る)。
 ;;;
 ;;; 判断(期待・書きの許可・保持・索引・頁)は admission.hy の純関数ちょうど 1 つ(memory の handler と同じ関数)。
@@ -24,9 +24,9 @@
 (import doeff_time [GetTime])
 (import doeff_core_effects.sql_effects [SqlQuery SqlTransaction SqlRows SqlFailed SqlUnreachable])
 (import doeff_records.values [RecordsSchema KeepFor ByKeySuffix Row Missing Page Written WrittenRows RowChanged RowRemoved Changes Appended
-                              Conflict NotIndexed EventsMoved EventsQuiet
+                              Conflict NotIndexed EventsMoved EventsQuiet StreamEnd StreamEmpty
                               Event Events Reset WatchCursor ListCursor Refused Unreachable RowsConflict RowsRefused])
-(import doeff_records.effects [ReadRow ListRows PutRow PutRows WatchChanges WatchEvents AppendEvent ReadEvents])
+(import doeff_records.effects [ReadRow ListRows PutRow PutRows WatchChanges WatchEvents AppendEvent ReadEvents ReadStreamEnd])
 (import doeff_records.faults [AdvanceStoreEpoch])
 (import doeff_records.maintenance [SweepExpired PruneChanges Swept Pruned])
 (import doeff_records.admission [AppendReplay judge-expect judge-put judge-put-rows judge-append row-expired? where-refusal listed-row
@@ -36,7 +36,7 @@
                               store-head-statement read-row-statement lock-row-statement list-rows-statement
                               terminal-rows-statement upsert-row-statement delete-row-statement append-change-statement
                               changes-statement advance-epoch-statement forget-changes-statement prune-changes-statement find-event-statement
-                              insert-event-statement read-events-statement expire-events-statement
+                              insert-event-statement read-events-statement stream-end-statement expire-events-statement
                               expire-event-groups-statement])
 
 (val MODULE-TAGS {:context "records" :role "foundation"})
@@ -423,6 +423,17 @@
   (Events (tuple items) (if items (. (get items -1) sequence) ask.after)))
 
 
+(defk pg-read-stream-end [store ask]
+  {:pre [(: store PreparedStore) (: ask ReadStreamEnd)] :post [(: % (| StreamEnd StreamEmpty))]
+   :tags {:context "records" :role "foundation"}}
+  "ReadStreamEnd に答えるため: 列の max(seq) を 1 文で読む(期限切れの回収の後の断面 — 出来事が無ければ StreamEmpty)。"
+  (store.schema.stream ask.stream)
+  (<- statement (stream-end-statement store.prefix ask.stream))
+  (<- records (query-rows store.database statement))
+  (val last (get (get records 0) 0))
+  (if (is last None) (StreamEmpty) (StreamEnd (int last))))
+
+
 (defk moved-after [program]
   {:pre [(: program Program)] :post [(: % (| EventsMoved EventsQuiet Unreachable))]
    :tags {:context "records" :role "foundation"}}
@@ -507,6 +518,10 @@
   (ReadEvents [stream after limit]
     (<- now (GetTime))
     (<- answer (reached (swept-before store (epoch-ms now) (pg-read-events store effect))))
+    (resume answer))
+  (ReadStreamEnd [stream]
+    (<- now (GetTime))
+    (<- answer (reached (swept-before store (epoch-ms now) (pg-read-stream-end store effect))))
     (resume answer))
   (AdvanceStoreEpoch []
     ;; 検の口: 届かなければ StoreUnreachable を上げる(答えの型は int だけ — 旧い版と同じ)。

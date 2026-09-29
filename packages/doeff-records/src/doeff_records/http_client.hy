@@ -1,4 +1,4 @@
-;;; 記録の service の HTTP の口に公開 effect 7 つで答える client の handler — 別の process の Hy / Python の Program が、
+;;; 記録の service の HTTP の口に公開 effect 8 つで答える client の handler — 別の process の Hy / Python の Program が、
 ;;; memory や PostgreSQL の handler と同じ effect のまま記録の service を読み書きするため。
 ;;;
 ;;; 書き手の身元は effect の引数ではなく endpoint の token(handler を組む時に渡す)。service がその token を身元の名簿で書き手の名へ引く。
@@ -34,7 +34,7 @@
 (import urllib.request [Request urlopen])
 (import doeff_core_effects.http_effects [HttpRequest HttpResponse HttpFailed])
 (import doeff_records.values [EventsMoved EventsQuiet Unreachable UndeclaredTable])
-(import doeff_records.effects [ReadRow ListRows PutRow PutRows WatchChanges WatchEvents AppendEvent ReadEvents])
+(import doeff_records.effects [ReadRow ListRows PutRow PutRows WatchChanges WatchEvents AppendEvent ReadEvents ReadStreamEnd])
 (import doeff_records.watching [wait-for-changes moved-of])
 (import doeff_records.wire [PATH-PREFIX PublicEffect WireAnswer JsonValue encode-request decode-answer refusal-from])
 
@@ -232,6 +232,9 @@
     (<- answer (call-service endpoint effect))
     (resume answer))
   (ReadEvents [stream after limit]
+    (<- answer (call-service endpoint effect))
+    (resume answer))
+  (ReadStreamEnd [stream]
     (<- answer (call-service endpoint effect))
     (resume answer)))
 

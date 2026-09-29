@@ -16,8 +16,9 @@
 (import doeff_time [Delay GetTime])
 (import doeff_records.values [FieldDecl TableDecl StreamDecl RecordsSchema KeepFor KeepForever ByKeySuffix ExpectAbsent ExpectVersion ExpectAny
                               WatchCursor ListCursor Row Missing Page Written WrittenRows Conflict Refused NotIndexed Reset
-                              Changes RowChanged RowRemoved Appended Events EventsMoved EventsQuiet RowsConflict RowsRefused])
-(import doeff_records.effects [ReadRow ListRows PutRow PutRows RowWrite WatchChanges WatchEvents AppendEvent ReadEvents])
+                              Changes RowChanged RowRemoved Appended Events EventsMoved EventsQuiet RowsConflict RowsRefused
+                              StreamEnd StreamEmpty])
+(import doeff_records.effects [ReadRow ListRows PutRow PutRows RowWrite WatchChanges WatchEvents AppendEvent ReadEvents ReadStreamEnd])
 (import doeff_records.faults [AdvanceStoreEpoch])
 (import doeff_records.maintenance [SweepExpired PruneChanges Swept Pruned])
 (import doeff_records.admission [row-matches? epoch-ms])
@@ -584,6 +585,42 @@
   [ask-a ask-b solo done-a read again-a fresh-b later fresh-a])
 
 
+;; --- 法 13: 列の末尾の番号は 1 回の読みで答え、空の列は空と答える ----------------------------------------------------
+
+(defk law-stream-end-is-the-last-sequence [harness]
+  {:pre [(: harness LawHarness)] :post [(: % list)]
+   :tags {:context "records" :role "program"}}
+  "列の末尾の法: ReadStreamEnd は列の最後の出来事の番号を StreamEnd で答え(別の列に後から積んだ出来事は数えない・同じ冪等キーの再送は
+   末尾を動かさない)、出来事が 1 つも無い列は StreamEmpty で答える。保持で刈った後は残る出来事の最後の番号・全部刈れば StreamEmpty。
+   使い手が列の末尾を ReadEvents の倍々の先読みと二分で探さずに 1 回で読むため(出自の issue は agora-redesign #1037)。"
+  (val law "ReadStreamEnd は列の最後の出来事の番号を答え、空の列は StreamEmpty")
+  (<- empty (as-writer harness MAKER (ReadStreamEnd "journal")))
+  (require-law (= empty (StreamEmpty)) law (.format "空の列: {!r}" empty))
+  (<- first (as-writer harness MAKER (AppendEvent "journal" "end-1" {"n" 1})))
+  (<- second (as-writer harness MAKER (AppendEvent "journal" "end-2" {"n" 2})))
+  (<- other (as-writer harness MAKER (AppendEvent "pairs" "end-other" {"n" 3})))
+  (<- tail (as-writer harness MAKER (ReadStreamEnd "journal")))
+  (require-law (= tail (StreamEnd second.sequence)) law
+               (.format "積んだ列の末尾(別の列の後の出来事 {} を数えない): {!r}" other.sequence tail))
+  (<- replay (as-writer harness MAKER (AppendEvent "journal" "end-1" {"n" 1})))
+  (<- replayed (as-writer harness MAKER (ReadStreamEnd "journal")))
+  (require-law (and (= replay first) (= replayed tail)) law (.format "再送が末尾を動かした: {!r} {!r}" replay replayed))
+  (<- other-end (as-writer harness MAKER (ReadStreamEnd "pairs")))
+  (require-law (= other-end (StreamEnd other.sequence)) law (.format "別の列の末尾: {!r}" other-end))
+  ;; 保持(pairs は積んでから PAIR-KEEP-SECONDS 秒で消える — 区切りを含まないキーは出来事ごと)。
+  (<- (Delay 30))
+  (<- young (as-writer harness MAKER (AppendEvent "pairs" "end-young" {"n" 4})))
+  (<- (Delay (+ (- PAIR-KEEP-SECONDS 30) 1)))
+  (<- partial (as-writer harness MAKER (ReadStreamEnd "pairs")))
+  (require-law (= partial (StreamEnd young.sequence)) law (.format "一部を刈った後の末尾: {!r}" partial))
+  (<- (Delay 30))
+  (<- gone (as-writer harness MAKER (ReadStreamEnd "pairs")))
+  (require-law (= gone (StreamEmpty)) law (.format "全部を刈った列: {!r}" gone))
+  (<- kept (as-writer harness MAKER (ReadStreamEnd "journal")))
+  (require-law (= kept tail) law (.format "保持の無い列の末尾が時間で変わった: {!r}" kept))
+  [empty first second other tail replay replayed other-end young partial gone kept])
+
+
 ;; 全部の法(名 → 法)。SHARED-LAWS = 時間を進めない法(仮想の時計を持たない組でも回せる・答えの比べに使う)。
 ;; law-put-rows-is-all-or-nothing は SHARED-LAWS に入れない — SHARED-LAWS は前からの 6 つの effect だけで回る法の名簿で、
 ;; PutRows を答えない handler の組(呼び手の系の写しの handler など)もこの名簿で答えを比べている。
@@ -601,7 +638,8 @@
             "none-removes-a-field" law-none-removes-a-field
             "maintenance-prunes-and-sweeps" law-maintenance-prunes-and-sweeps
             "put-rows-is-all-or-nothing" law-put-rows-is-all-or-nothing
-            "grouped-events-expire-together" law-grouped-events-expire-together})
+            "grouped-events-expire-together" law-grouped-events-expire-together
+            "stream-end-is-the-last-sequence" law-stream-end-is-the-last-sequence})
 (setv SHARED-LAWS #("stale-put-conflicts" "committed-changes-appear-once-in-order" "epoch-change-resets"
                     "undeclared-writes-are-refused" "operator-paths-need-an-operator" "founders-write-only-at-birth"
                     "indexed-list-equals-filtered-scan" "append-is-idempotent" "none-removes-a-field"))

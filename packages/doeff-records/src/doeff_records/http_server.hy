@@ -43,7 +43,7 @@
                                                 HttpShutdown])
 (import doeff_time [Delay GetMonotonic async-time-handler])
 (import doeff_records.values [RecordsSchema Unreachable])
-(import doeff_records.effects [ReadRow ListRows PutRow PutRows WatchChanges AppendEvent ReadEvents])
+(import doeff_records.effects [ReadRow ListRows PutRow PutRows WatchChanges AppendEvent ReadEvents ReadStreamEnd])
 (import doeff_records.principals [Roster])
 (import doeff_records.maintenance [maintenance-loop])
 (import doeff_records.service [HttpRequest HttpAnswer RecordsService respond refusal-answer])
@@ -170,7 +170,8 @@
   (PutRows [writes] (resume (Unreachable NOT-PREPARED-REASON)))
   (WatchChanges [tables cursor timeout limit] (resume (Unreachable NOT-PREPARED-REASON)))
   (AppendEvent [stream idempotency-key body] (resume (Unreachable NOT-PREPARED-REASON)))
-  (ReadEvents [stream after limit] (resume (Unreachable NOT-PREPARED-REASON))))
+  (ReadEvents [stream after limit] (resume (Unreachable NOT-PREPARED-REASON)))
+  (ReadStreamEnd [stream] (resume (Unreachable NOT-PREPARED-REASON))))
 
 
 ;; --- 1 要求の答え -------------------------------------------------------------------------------------------------------------------

@@ -1,4 +1,4 @@
-;;; 記録の service の wire の綴り(I/O なし)— 公開 effect 7 つの要求と答えを JSON の値へ写し、JSON の値から読む。
+;;; 記録の service の wire の綴り(I/O なし)— 公開 effect 8 つの要求と答えを JSON の値へ写し、JSON の値から読む。
 ;;;
 ;;; JSON(dict / list)と凍らせた値(FrozenMap・tuple・frozen の dataclass)の行き来はこの file の 1 か所だけ。
 ;;; HTTP の口(service.hy)と client の handler(http_client.hy)は両方ここを呼ぶ — 綴りを 2 か所に写さない。
@@ -14,15 +14,17 @@
 (import doeff_hy.json_value [JsonValue])
 (import doeff_records.values [ExpectAbsent ExpectVersion ExpectAny WatchCursor ListCursor Row Missing Page Written WrittenRows
                               RowChanged RowRemoved Changes Appended Event Events Conflict Refused NotIndexed Reset
-                              RowsConflict RowsRefused])
-(import doeff_records.effects [ReadRow ListRows PutRow PutRows RowWrite WatchChanges AppendEvent ReadEvents])
+                              RowsConflict RowsRefused StreamEnd StreamEmpty])
+(import doeff_records.effects [ReadRow ListRows PutRow PutRows RowWrite WatchChanges AppendEvent ReadEvents ReadStreamEnd])
 
 (setv PATH-PREFIX "/v1/records/")
 (setv OP-READ-ROW "read-row" OP-LIST-ROWS "list-rows" OP-PUT-ROW "put-row" OP-WATCH-CHANGES "watch-changes"
       OP-APPEND-EVENT "append-event" OP-READ-EVENTS "read-events")
 ;; 複数行を全部か 0 で書く操作(本文 = {writes: [{table key value expect} …]})— 前の 6 つの綴りは変えずに足した。
 (val OP-PUT-ROWS "put-rows")
-(setv OPERATIONS #(OP-READ-ROW OP-LIST-ROWS OP-PUT-ROW OP-WATCH-CHANGES OP-APPEND-EVENT OP-READ-EVENTS OP-PUT-ROWS))
+;; 追記の列の末尾の番号を 1 回で読む操作(本文 = {stream} — agora-redesign #1037)。前の 7 つの綴りは変えずに足した。
+(val OP-READ-STREAM-END "read-stream-end")
+(setv OPERATIONS #(OP-READ-ROW OP-LIST-ROWS OP-PUT-ROW OP-WATCH-CHANGES OP-APPEND-EVENT OP-READ-EVENTS OP-PUT-ROWS OP-READ-STREAM-END))
 
 ;; 断りの語(契約 $defs.refusal の error の語彙のうち、この口が使う物)と HTTP の status。
 (setv ERROR-MALFORMED "malformed" ERROR-UNAUTHORIZED "unauthorized" ERROR-NOT-FOUND "not-found"
@@ -37,12 +39,13 @@
                     OP-WATCH-CHANGES #("changes" "reset")
                     OP-APPEND-EVENT #("appended" "refused")
                     OP-READ-EVENTS #("events")
-                    OP-PUT-ROWS #("writtenRows" "rowsConflict" "rowsRefused")})
+                    OP-PUT-ROWS #("writtenRows" "rowsConflict" "rowsRefused")
+                    OP-READ-STREAM-END #("streamEnd" "streamEmpty")})
 
 ;; 境界の値の型(公開 effect・wire の本文で運ぶ答え)。JSON の値の型 JsonValue は上の import(doeff_hy.json_value)。
-(setv PublicEffect (| ReadRow ListRows PutRow WatchChanges AppendEvent ReadEvents PutRows))
+(setv PublicEffect (| ReadRow ListRows PutRow WatchChanges AppendEvent ReadEvents PutRows ReadStreamEnd))
 (setv WireAnswer (| Row Missing Page Written Conflict Refused NotIndexed Reset Changes Appended Events
-                    WrittenRows RowsConflict RowsRefused))
+                    WrittenRows RowsConflict RowsRefused StreamEnd StreamEmpty))
 
 
 (defclass WireMalformed [ValueError]
@@ -235,6 +238,8 @@
       (WireRequest OP-APPEND-EVENT {"stream" stream "idempotencyKey" idempotency-key "body" (thaw-json body)})
     (ReadEvents :stream stream :after after :limit limit)
       (WireRequest OP-READ-EVENTS {"stream" stream "after" after "limit" limit})
+    (ReadStreamEnd :stream stream)
+      (WireRequest OP-READ-STREAM-END {"stream" stream})
     (PutRows :writes writes)
       (do (val write-items [])
           (for [write writes] (.append write-items (! (row-write-json write))))
@@ -286,6 +291,9 @@
             (ReadEvents (! (string-of (get body "stream") "stream")) #** keywords))
       "put-rows"
         (PutRows (! (row-writes-from body)))
+      "read-stream-end"
+        (do (<- (object-of body "read-stream-end の本文" #("stream") #()))
+            (ReadStreamEnd (! (string-of (get body "stream") "stream"))))
       _ (raise (WireMalformed (.format "知らない操作: {!r}(操作 = {})" request.operation OPERATIONS)))))
     (except [error WireMalformed] (raise error))
     (except [error #(TypeError ValueError)] (raise (! (malformed request.operation error)))))
@@ -302,6 +310,7 @@
     (WatchChanges :tables tables) (NamedStores tables #())
     (AppendEvent :stream stream) (NamedStores #() #(stream))
     (ReadEvents :stream stream) (NamedStores #() #(stream))
+    (ReadStreamEnd :stream stream) (NamedStores #() #(stream))
     (PutRows :writes writes) (NamedStores (tuple (sorted (sfor write writes write.table))) #())))
 
 
@@ -362,7 +371,9 @@
     (RowsConflict :index index :table table :key key :current current)
       {"kind" "rowsConflict" "index" index "table" table "key" (list key) "current" (! (encode-answer current))}
     (RowsRefused :index index :table table :key key :reason reason)
-      {"kind" "rowsRefused" "index" index "table" table "key" (list key) "reason" reason}))
+      {"kind" "rowsRefused" "index" index "table" table "key" (list key) "reason" reason}
+    (StreamEnd :sequence sequence) {"kind" "streamEnd" "sequence" sequence}
+    (StreamEmpty) {"kind" "streamEmpty"}))
 
 
 (defk row-from [value]
@@ -472,6 +483,10 @@
             (setv items [])
             (for [item (! (list-in (get value "items") "events.items"))] (.append items (! (event-from item))))
             (Events (tuple items) (! (integer-of (get value "lastSequence") "events.lastSequence"))))
+      {"kind" "streamEnd"}
+        (do (<- (object-of value "streamEnd" #("kind" "sequence") #()))
+            (StreamEnd (! (integer-of (get value "sequence") "streamEnd.sequence"))))
+      {"kind" "streamEmpty"} (do (<- (object-of value "streamEmpty" #("kind") #())) (StreamEmpty))
       {"kind" "writtenRows"} (! (written-rows-from value))
       {"kind" "rowsConflict"} (! (rows-conflict-from value))
       {"kind" "rowsRefused"}

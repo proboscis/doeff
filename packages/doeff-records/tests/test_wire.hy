@@ -5,8 +5,8 @@
 (import doeff_hy.frozen [FrozenMap])
 (import doeff_records.values [ExpectAbsent ExpectVersion ExpectAny WatchCursor ListCursor Row Missing Page Written
                               RowChanged RowRemoved Changes Appended Event Events Conflict Refused NotIndexed Reset
-                              WrittenRows RowsConflict RowsRefused])
-(import doeff_records.effects [ReadRow ListRows PutRow PutRows RowWrite WatchChanges AppendEvent ReadEvents])
+                              WrittenRows RowsConflict RowsRefused StreamEnd StreamEmpty])
+(import doeff_records.effects [ReadRow ListRows PutRow PutRows RowWrite WatchChanges AppendEvent ReadEvents ReadStreamEnd])
 (import doeff_records.wire [WireRequest WireMalformed ANSWER-KINDS encode-request decode-request encode-answer decode-answer])
 
 (setv ROW (Row #("g1" "t1") {"group" "g1" "id" "t1" "nested" {"a" [1 2.5 True None "x"]}} 3))
@@ -22,6 +22,7 @@
    (AppendEvent "journal" "k1" {"n" [1 {"m" None}]})
    (AppendEvent "journal" "k2" "a string body")
    (ReadEvents "journal" :after 4 :limit 2)
+   (ReadStreamEnd "journal")
    (PutRows #((RowWrite "parts" #("p1") {"label" "a" "color" None} (ExpectVersion 2))
               (RowWrite "tickets" #("g1" "t1") {"owner" "o1"} (ExpectAbsent))
               (RowWrite "parts" #("p2") {} (ExpectAny))))])
@@ -44,6 +45,8 @@
    #("append-event" (Appended 7))
    #("append-event" (Refused "別の本文"))
    #("read-events" (Events #((Event "journal" 1 "k1" {"n" 1} "maker" 1000)) 1))
+   #("read-stream-end" (StreamEnd 7))
+   #("read-stream-end" (StreamEmpty))
    #("put-rows" (WrittenRows #((Written 2 {"id" "p1"}) (Written 1 {"group" "g1" "id" "t1"}))))
    #("put-rows" (RowsConflict 1 "tickets" #("g1" "t1") ROW))
    #("put-rows" (RowsConflict 0 "parts" #("p1") (Missing)))
@@ -87,6 +90,9 @@
                            #("watch-changes" {"tables" ["parts"] "cursor" {"epoch" 1}})
                            #("append-event" {"stream" "journal" "idempotencyKey" "" "body" 1})
                            #("read-events" {"stream" "journal" "after" -1})
+                           #("read-stream-end" {})
+                           #("read-stream-end" {"stream" "journal" "after" 0})
+                           #("read-stream-end" {"stream" "Journal!"})
                            #("put-rows" {"writes" []})
                            #("put-rows" {"writes" {"table" "parts"}})
                            #("put-rows" {"writes" [{"table" "parts" "key" ["p1"] "value" {}}]})
@@ -116,7 +122,13 @@
                                                         "value" {} "sequence" 5}]})
                            ;; 読める最も古い位置 floor の無い Reset は、floor を黙って 0 に倒さず断る。
                            #("watch-changes" {"kind" "reset" "epoch" 2})
-                           #("list-rows" {"kind" "reset" "epoch" 2 "floor" "0"})]]
+                           #("list-rows" {"kind" "reset" "epoch" 2 "floor" "0"})
+                           ;; 列の末尾の番号の無い streamEnd・0 や真偽値の番号は断る(空の列は streamEmpty で運ぶ — 0 に倒さない)。
+                           #("read-stream-end" {"kind" "streamEnd"})
+                           #("read-stream-end" {"kind" "streamEnd" "sequence" 0})
+                           #("read-stream-end" {"kind" "streamEnd" "sequence" True})
+                           #("read-stream-end" {"kind" "streamEmpty" "sequence" 3})
+                           #("read-stream-end" {"kind" "events" "items" [] "lastSequence" 0})]]
     (try
       (run (decode-answer operation body))
       (assert False (.format "形の違う答えを読んだ: {} {!r}" operation body))
