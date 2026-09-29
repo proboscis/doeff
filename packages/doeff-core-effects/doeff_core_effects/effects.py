@@ -69,6 +69,8 @@ class Local(EffectBase[_T], Generic[_T]):
     yield Local({key: value, ...}, program) → result of program
     """
 
+    __doeff_runs_carried__: ClassVar[frozenset[str]] = frozenset({"program"})
+
     def __init__(self, env: dict[Any, Any], program: "Program[_T]") -> None:
         super().__init__()
         self.env = env
@@ -83,6 +85,8 @@ class Listen(EffectBase[tuple[_T, list[Any]]], Generic[_T]):
 
     yield Listen(program, types=(WriterTellEffect,)) → (result, collected)
     """
+
+    __doeff_runs_carried__: ClassVar[frozenset[str]] = frozenset({"program"})
 
     def __init__(self, program: "Program[_T]", types: tuple[type, ...] | None = None) -> None:
         super().__init__()
@@ -118,6 +122,8 @@ class Try(EffectBase["Ok[_T] | Err"], Generic[_T]):
     yield Try(some_program) → Ok(value) or Err(error)
     """
 
+    __doeff_runs_carried__: ClassVar[frozenset[str]] = frozenset({"program"})
+
     def __init__(self, program: "Program[_T]") -> None:
         super().__init__()
         self.program = program
@@ -145,6 +151,26 @@ def resumption_of(effect_type: type) -> Resumption:
     if not isinstance(declared, Resumption):
         raise TypeError(
             f"{effect_type.__name__}.__doeff_resumption__ must be a Resumption, got {declared!r}"
+        )
+    return declared
+
+
+def runs_carried_of(effect_type: type) -> frozenset[str]:
+    """The fields of ``effect_type`` holding a Program its handler runs where the effect was
+    performed — under the handlers around the performing site, as if written there.
+
+    An effect type declares them with the class attribute ``__doeff_runs_carried__``
+    (``Try`` / ``Local`` / ``Listen`` run their ``program`` in place; ``Spawn``'s child task
+    carries the spawner's handlers; ``SqlTransaction`` runs its ``program`` under the SQL
+    handler that answered it).  A type that declares none runs what it carries elsewhere,
+    if at all (a remote job).  A closure check reads the declared Programs as run at the
+    performing site (agora-redesign #1456).
+    """
+    declared = getattr(effect_type, "__doeff_runs_carried__", frozenset())
+    if not (isinstance(declared, frozenset) and all(isinstance(name, str) for name in declared)):
+        raise TypeError(
+            f"{effect_type.__name__}.__doeff_runs_carried__ must be a frozenset of field names, "
+            f"got {declared!r}"
         )
     return declared
 

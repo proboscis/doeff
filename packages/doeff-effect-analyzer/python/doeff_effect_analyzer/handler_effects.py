@@ -576,7 +576,12 @@ def raw_handler_of(expr: ast.expr, scope: _Scope, filename: str, label: str) -> 
         node = local.node
     if node is not None:
         return _inline_handler(node, scope, filename, label, location)
-    value = scope.resolve(expr)
+    # ``WithHandler(factory(args), body)`` — the dispatcher the factory returns
+    # (``run-in-transaction``'s ``transaction-scope``), read as an env element's factory is.
+    head = expr.func if isinstance(expr, ast.Call) else expr
+    value = scope.resolve(head)
+    if isinstance(expr, ast.Call) and _function_of(value) is None:
+        value = UNBOUND
     if value is UNBOUND:
         return _unread(
             label, Unresolved("handler is not a module-level name", ast.unparse(expr), location)

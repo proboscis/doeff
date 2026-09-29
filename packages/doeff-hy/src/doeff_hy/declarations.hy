@@ -146,7 +146,9 @@
 
 ;; defeffect の頭の辞書が受ける鍵(:answer と :tags は必須・:fields は無ければ欄なし・:pre は作る時の検め)。
 ;; :absent / :failure / :value は答えの型の分け方(ADR-DOE-CORE-EFFECTS-003 R5 — どれも任意・:answer の union の要素の list)。
-(setv EFFECT-KEYS #(":fields" ":answer" ":tags" ":pre" ":absent" ":failure" ":value"))
+;; :runs-carried は、答え手が effect を出した所(その所の handler の下)で走らせる Program の欄の名の list(agora-redesign #1456 —
+;; doeff_core_effects.effects の runs-carried-of が読む)。
+(setv EFFECT-KEYS #(":fields" ":answer" ":tags" ":pre" ":absent" ":failure" ":value" ":runs-carried"))
 ;; 答えの分け方の鍵。<- は :absent の答えを Absent に、:failure の答えを Raise(答え) に変えて呼び手のスコープで出す。
 ;; :value は業務で普通に扱う答え(失敗と宣言しない印)、どれにも書かない要素は成功。
 (setv OUTCOME-KEYS #(":absent" ":failure" ":value"))
@@ -207,6 +209,19 @@
   #(out names))
 
 
+(defn runs-carried-names [form names #^ str where]  ; defk にできない: macro の展開の時に呼ぶ関数
+  "defeffect の :runs-carried を検め、答え手が effect を出した所で走らせる Program の欄の名(Python の属性の名)の整列した list に
+   するため(書かなければ空)。形は :fields の欄の名の list だけ — 無い欄の名は展開の時に断る。"
+  (when (is form None)
+    (return []))
+  (when (not (isinstance form List))
+    (raise (SyntaxError (.format "{}: :runs-carried は :fields の欄の名の list([program] の形): {}" where (hy.repr form)))))
+  (for [item form]
+    (when (not (and (isinstance item Symbol) (in (str item) names)))
+      (raise (SyntaxError (.format "{}: :runs-carried の {} は :fields の欄の名ではない(欄 = {})" where (hy.repr item) names)))))
+  (sorted (sfor item form (hy.mangle (str item)))))
+
+
 (defn defeffect-form [name docstring #^ Dict contract #^ str where pre-code]  ; defk にできない: macro の展開の時に呼ぶ関数
   "defeffect の展開: EffectBase を継ぐ frozen の dataclass と、属性 __doeff_answer__(handler が resume で返す値の型)・
    __doeff_tags__・__doeff_defeffect__(defeffect で作った印 — defk の :effects の検めが読む)を置く form を作るため。
@@ -234,6 +249,7 @@
                      #(~@(get outcome-types ":failure"))
                      #(~@(get outcome-types ":value"))))]
         []))
+  (setv runs-carried (runs-carried-names (declared-value contract ":runs-carried") names where))
   (setv post-init
     (if pre-code
         [`(defn __post-init__ [self]
@@ -252,6 +268,9 @@
      (setattr ~name "__doeff_answer__" ~answer)
      (setattr ~name "__doeff_tags__" ~(tags-form tags where))
      (setattr ~name "__doeff_defeffect__" True)
+     ~@(if runs-carried
+           [`(setattr ~name "__doeff_runs_carried__" (frozenset [~@(lfor n runs-carried (String n))]))]
+           [])
      ~@outcomes))
 
 

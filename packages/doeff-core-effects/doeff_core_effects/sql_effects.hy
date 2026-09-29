@@ -151,6 +151,7 @@
   {:fields [(: database str) (: program Program) (: lock-key (| str None) None)]
    :pre [(: database str) (: program Program) (: lock-key (| str None))]
    :answer (| T SqlFailed SqlUnreachable)
+   :runs-carried [program]
    :tags {:context "sql" :role "foundation"}})
 
 

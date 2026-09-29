@@ -201,6 +201,18 @@ def _no_carrier(_carrier: Any) -> bool:
     return False
 
 
+def runs_where_performed(carrier: Any) -> bool:
+    """Whether ``carrier`` is an effect class whose handler runs the Program it carries where
+    the effect was performed — under the handlers around the performing site
+    (``__doeff_runs_carried__``: ``Try`` / ``Local`` / ``Listen`` / ``Spawn`` /
+    ``SqlTransaction``).  A closure check folds those carried Programs in (agora-redesign
+    #1456); a carrier that declares nothing (a remote job) runs its Program elsewhere."""
+    if not _is_effect_class(carrier):
+        return False
+    effects = importlib.import_module("doeff_core_effects.effects")
+    return bool(effects.runs_carried_of(carrier))
+
+
 @dataclass(frozen=True)
 class HandledProgram:
     """A Program the Program runs under handlers it installs itself.

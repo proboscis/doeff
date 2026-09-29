@@ -206,3 +206,24 @@ def test_defeffect_refuses_misplaced_defaults_and_pre() -> None:
     assert ":fields の無い" in refused('(defeffect E {:pre [(> 1 0)] ' + tags + '})')
     assert "条件の list" in refused('(defeffect E {:fields [(: a int)] :pre (> a 0) ' + tags + '})')
     assert "defk / do!" in refused('(defeffect E {:fields [(: a int)] :pre [(check = a 0 :reason "x")] ' + tags + '})')
+
+
+def test_defeffect_runs_carried_names_the_fields_its_handler_runs_in_place() -> None:
+    """:runs-carried(agora-redesign #1456)— 答え手が出した所で走らせる Program の欄を宣言し、閉じの検がそれを読む。"""
+    from doeff_core_effects.effects import runs_carried_of
+
+    ns = evaluate("""
+(import doeff [Program])
+(defeffect InTransaction
+  {:fields [(: database str) (: work-program Program)]
+   :answer int
+   :runs-carried [work-program]
+   :tags {:context "k" :role "intent"}})
+(defeffect Plain {:fields [(: a int)] :answer int :tags {:context "k" :role "intent"}})
+""")
+    assert runs_carried_of(ns["InTransaction"]) == frozenset({"work_program"})  # Python の属性の名
+    assert runs_carried_of(ns["Plain"]) == frozenset()  # 宣言しない effect は運ぶ物を別の所で走らせる
+    # 反例: 欄に無い名・list でない形は展開の時に断る(黙って空の宣言にしない)。
+    tags = ':answer int :tags {:context "k" :role "intent"}'
+    assert "欄の名ではない" in refused('(defeffect E {:fields [(: a int)] :runs-carried [b] ' + tags + '})')
+    assert "欄の名の list" in refused('(defeffect E {:fields [(: a int)] :runs-carried a ' + tags + '})')

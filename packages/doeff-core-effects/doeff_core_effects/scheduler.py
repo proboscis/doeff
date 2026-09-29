@@ -29,7 +29,7 @@ import time
 import warnings
 import weakref
 from collections.abc import Callable, Generator
-from typing import TYPE_CHECKING, Any, Generic, Literal, TypeVar
+from typing import TYPE_CHECKING, Any, ClassVar, Generic, Literal, TypeVar
 
 from doeff_vm import Callable as _VmCallable
 from doeff_vm import EffectBase, Err, Ok, TailEval
@@ -144,6 +144,10 @@ class Spawn(EffectBase["Task[_T]"], Generic[_T, _E]):
     detection (#495), and the stall log still see daemon tasks like any
     other task.
     """
+
+    # The child task carries the spawner's handlers: its Program runs as if performed at
+    # the Spawn (``doeff_core_effects.effects.runs_carried_of``).
+    __doeff_runs_carried__: ClassVar[frozenset[str]] = frozenset({"program"})
 
     def __init__(
         self, program: "Program[_T, _E]", priority: int = PRIORITY_NORMAL, daemon: bool = False

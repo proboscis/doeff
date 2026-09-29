@@ -714,7 +714,12 @@ defk {name}: :post type annotation cannot be an empty string.
 
    :value [Conflict] marks an answer handled as an ordinary value (not a failure); members
    in none of the lists are the success. Writing any of them sets __doeff_outcomes__
-   (doeff_core_effects.outcomes.Outcomes); an effect without them binds its answer as-is."
+   (doeff_core_effects.outcomes.Outcomes); an effect without them binds its answer as-is.
+
+   :runs-carried [program] names the fields holding a Program the handler runs where the
+   effect was performed (under the handlers there — SqlTransaction's program). It sets
+   __doeff_runs_carried__ (read by doeff_core_effects.effects.runs_carried_of; a closure
+   check reads those Programs as run at the performing site — agora-redesign #1456)."
   (setv docstring None contract None forms (list rest))
   (when (and forms (isinstance (get forms 0) hy.models.String))
     (setv docstring (get forms 0) forms (cut forms 1 None)))

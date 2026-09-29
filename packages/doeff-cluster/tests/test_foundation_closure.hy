@@ -5,8 +5,8 @@
 ;;; 読めない handler・追えない所は閉じていると数えない。
 (require doeff-hy.macros [deftest val])
 (import doeff_cluster.foundation_check [foundation-closure closed?])
-(import tests.fixtures.closure_programs [job untranslated-job production-foundation clockless-foundation
-                                         unscheduled-foundation opaque-foundation])
+(import tests.fixtures.closure_programs [job untranslated-job tried-job untranslated-tried-job production-foundation
+                                         clockless-foundation unscheduled-foundation opaque-foundation])
 
 
 (deftest test-a-job-under-the-full-production-foundation-is-closed
@@ -22,6 +22,18 @@
 
 (deftest test-a-forgotten-translation-leaves-the-business-effect
   (val closure (foundation-closure untranslated-job :foundation production-foundation))
+  (assert (any (gfor g closure.gaps (in "Ping" g))) closure.gaps))
+
+
+(deftest test-a-program-carried-by-try-is-counted-where-try-was-performed
+  ;; Try は運んだ本体を出した所の handler の下で走らせる(__doeff_runs_carried__)ので、本体の effect は出した所で数える。
+  (val closure (foundation-closure tried-job :foundation production-foundation))
+  (assert (closed? closure) closure))
+
+
+(deftest test-a-forgotten-translation-inside-try-is-a-gap
+  ;; 反例: 業務の effect が Try の中にしか無くても、翻訳を並べ忘れれば gap(以前は Try の運ぶ本体を数えず、閉じていると読んだ)。
+  (val closure (foundation-closure untranslated-tried-job :foundation production-foundation))
   (assert (any (gfor g closure.gaps (in "Ping" g))) closure.gaps))
 
 
