@@ -183,6 +183,7 @@ fn entropy_random_stays_external_including_missing_or_none_seed() {
         "(random.Random)", "(random.Random None)", "(random.Random :x None)",
         "(random.random)", "(random.randint 0 9)", "(uuid.uuid4)", "(secrets.token-hex 8)",
         "(random.SystemRandom 7)", "(random.Random (time.time))",
+        "(random.Random #* args)", "(random.Random #** kwargs)",
     ];
     for call in calls {
         let source = format!("(import random uuid secrets time)\n(defk sample [] {call})");

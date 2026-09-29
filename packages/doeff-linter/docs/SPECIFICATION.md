@@ -330,7 +330,7 @@ law の対応だけを残す。無ければ TOML の設定で今どおり動く�
   書かなければ DOEFF137 が縁の検を求める)。名簿を書くには `:foundation` が要る。名簿を書いた repo では `[tool.doeff-linter.raw_side_effects]
   allowed_layers` は二重の宣言(設定の誤り)— 生の I/O を許す所は名簿だけで決める(規則は agora-redesign #1134 の子で足す)。
   読み違い(綴りが `module:名` でない・語の外・同じ定義や語の 2 度書き・`:touches` の無い要素)は設定の誤り。
-- 実 I/O の handler は doeff の目録 `data/world_handlers.json`(doeff-linter に同梱・agora-redesign #1209)から知る。目録の要素 = `{"handler": "module:名", "touches": [..], "why": "…"}`。`:wraps` は目録に在る物だけ(外は設定の誤り)。DOEFF131 は目録の handler のどれもを相手にし、DOEFF133 は目録の handler・名簿の定義・生の I/O の証拠のうち触れる先が `:edge-touches` に当たる物だけを縁に数える(生の I/O の分類は async・thread → thread、time・random → clock と写す)。
+- 実 I/O の handler は doeff の目録 `data/world_handlers.json`(doeff-linter に同梱・agora-redesign #1209)から知る。目録の要素 = `{"handler": "module:名", "touches": [..], "why": "…"}`。`:wraps` は目録に在る物だけ(外は設定の誤り)。DOEFF131 は目録の handler のどれもを相手にし、DOEFF133 は目録の handler・名簿の定義・生の I/O の証拠のうち触れる先が `:edge-touches` に当たる物だけを縁に数える(生の I/O の分類は async・thread → thread、time・random → clock と写す。種つきの `random.Random` は生の I/O の証拠から外す — 後述「種つきの疑似乱数と外部 I/O」)。
 - 読み違い(知らない鍵・重複した service や層・存在しない層や service の名・:foundation の層が無い)は `architecture.hy:行:列: 理由` の形で
   設定の誤り(終了コード 2)。
 - editor-json の最上位に `architecture`(name・root・layers(name・summary・knows・does_not_know・question・roles)・shared・foundation・
@@ -855,3 +855,11 @@ file の defk / deff の分を出す(全体の実行では空)。
 - 16 節の束縛の読みも同じ変更で直した: `(val x ! e)`(Hy の reader は `!(e)` も `!` と `(e)` の 2 つの要素に読む — ADR-DOE-HY-006 §3)
   の 2 つ組を撃つ値に畳み、`(lazy val x e)`・`(session var x e)` を束縛として読んで `bindings` の欄 `modifier`(`lazy` | `session` | null)
   に前の語を載せる(版 2 への欄の追加)。
+
+### 種つきの疑似乱数と外部 I/O（DOEFF133・agora-redesign #1564）
+
+生の I/O の索引は、種を明示した `random.Random(seed)`（Hy の `(random.Random seed)`・`:x seed`）を外部 I/O に数えない。数値定数だけでなく、変数の種も明示された引数として扱う。生成した instance の method、instance を別名へ代入してからの method、`random.Random` の型注釈、関数内の import も、それだけでは外部 I/O ではない。module の import と同じ綴りの method（`(.random rng)`・`(. rng (random))`）は module 自体の参照と区別する。
+
+種を省略した `random.Random()`、明示的な `None`、展開引数だけで種が確認できない生成、module 大域の `random.random()` 等、`SystemRandom`、`uuid.uuid4`、`secrets` は外部 I/O のまま。種を作る式自体が時計などを読む場合も、その式の I/O は残す。変数の実行時の値が `None` かどうかまでは推論しない。
+
+索引は呼び出しの引数の形と型専用の参照を内部の事実として持ち、file の cache にも運ぶ。公開 JSON の形は変えない。外部 I/O の抽出元を直すため、DOEFF133 のみの例外表は追加しない。

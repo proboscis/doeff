@@ -10,7 +10,7 @@
 use std::collections::{BTreeMap, HashSet};
 
 use super::model::{
-    Call, ContractClause, ContractSide, Definition, DefinitionKind, Import, NameRef, ParamType, RawMark, Reference, TypeNote,
+    ArgumentValue, Call, CallArgument, ContractClause, ContractSide, Definition, DefinitionKind, Import, NameRef, ParamType, RawMark, Reference, TypeNote,
 };
 use super::position::LineIndex;
 use super::reader::{matching_brace, Delim, Form, Node, Prefix, ReadIssue, Reader, Span, StrKind};
@@ -1112,6 +1112,14 @@ impl<'a> Analyzer<'a> {
             }
             return;
         }
+        // doeff の型注記 `(: 値 型)`。型の名前は値の呼び出しではない。
+        if let [colon, value, note] = items {
+            if self.text(colon.span) == ":" {
+                self.walk(value, Quoting::None);
+                self.walk_without_calls(note);
+                return;
+            }
+        }
         let Some(head) = self.head(items) else {
             for item in items {
                 self.walk(item, quoting);
@@ -1167,7 +1175,8 @@ impl<'a> Analyzer<'a> {
         if !self.is_keyword_head(head) {
             self.reference(items[0].span);
             let keywords = items[1..].iter().filter(|item| matches!(item.node, Node::Keyword)).map(|item| self.text(item.span).to_string()).collect();
-            self.record_call(items[0].span, items.last().map_or(items[0].span.end, |last| last.span.end), keywords, performed);
+            let arguments = self.call_arguments(&items[1..]);
+            self.record_call(items[0].span, items.last().map_or(items[0].span.end, |last| last.span.end), keywords, arguments, performed);
         }
         for (index, item) in rest.iter().enumerate() {
             match item.paren_items() {
@@ -1258,7 +1267,7 @@ impl<'a> Analyzer<'a> {
 
     /// 呼び出しの頭の記号を呼び出しとして積む(`.method` の形・演算子・定数は除く)。caller は
     /// 呼び出しの位置を form 全体の範囲に含む定義のうち最も狭いもの。
-    fn record_call(&mut self, head: Span, form_end: usize, keywords: Vec<String>, performed: bool) {
+    fn record_call(&mut self, head: Span, form_end: usize, keywords: Vec<String>, arguments: Vec<CallArgument>, performed: bool) {
         let text = self.text(head);
         if self.call_suppression > 0
             || text.is_empty()
@@ -1299,11 +1308,34 @@ impl<'a> Analyzer<'a> {
             range: self.lines.range(start, start + callee.len()),
             form_range: self.lines.range(head.start, form_end.max(start + callee.len())),
             keywords,
+            arguments,
             caller,
             performed,
             // import と定義が全部そろった後に qualify::link が埋める
             target: None,
         });
+    }
+
+    fn call_arguments(&self, forms: &[Form]) -> Vec<CallArgument> {
+        let mut arguments = Vec::new();
+        let mut remaining = forms.iter();
+        while let Some(form) = remaining.next() {
+            let (keyword, value) = if matches!(form.node, Node::Keyword) {
+                let Some(value) = remaining.next() else { break };
+                (Some(self.text(form.span).trim_start_matches(':').to_string()), value)
+            } else {
+                (None, form)
+            };
+            let value = if matches!(value.node, Node::Symbol) && self.text(value.span) == "None" {
+                ArgumentValue::LiteralNone
+            } else if matches!(value.node, Node::Prefixed { prefix: Prefix::Unpack | Prefix::UnpackMapping, .. }) {
+                ArgumentValue::Unpacked
+            } else {
+                ArgumentValue::Explicit
+            };
+            arguments.push(CallArgument { keyword, value });
+        }
+        arguments
     }
 
     /// f 文字列の `{form}` の中を読んで歩く(`{x:>10}` の書式は名前から外す)。
@@ -1371,6 +1403,7 @@ impl<'a> Analyzer<'a> {
                 range: self.lines.range(start, start + part.len()),
                 member: member || method_head || qualifier.is_some(),
                 target: None,
+                type_only: self.call_suppression > 0,
             });
             qualifier = Some(match qualifier {
                 Some(prefix) => format!("{}.{}", prefix, part),
