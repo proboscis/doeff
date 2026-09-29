@@ -4,6 +4,7 @@
 // 既定(席の既定・戻せる): 向きは callees・深さ 3・同じ実体の 2 度目は ↺ で開かない・deftest は隠す。
 
 import type { HyDefinition, HyFileIndex, HyRange, HyTypeNote } from '../hy/contract';
+import { locationKey } from './resolve';
 
 /** 木の向き — 根が呼ぶ物を下へ(callees)か、根を呼ぶ物を上へ(callers)。 */
 export type TreeDirection = 'callees' | 'callers';
@@ -36,6 +37,14 @@ export interface CallGraph {
   readonly fieldOf: ReadonlyMap<string, readonly string[]>;
   /** effect の名(書かれた短い名)→ その名の defeffect の完全修飾名(effect の絵の hover — 1 つに決まる時だけ中身を出す) */
   readonly effectsByName: ReadonlyMap<string, readonly string[]>;
+  /** 定義の名の範囲の頭(path と行と列 — resolve.ts の locationKey)→ 完全修飾名(linter の definition を定義に当てる — v12) */
+  readonly locations: ReadonlyMap<string, string>;
+  /** 最上位の定義の名 → 完全修飾名(名だけで引く時 — 同名が複数なら全部。v12) */
+  readonly byName: ReadonlyMap<string, readonly string[]>;
+  /** 入れ子の定義(method・欄・effect 節 …)→ それを含む最上位の定義(入れ子の名を押した時に入れ物のカードへ行く — v12) */
+  readonly owners: ReadonlyMap<string, string>;
+  /** 呼び出しの頭の記号の位置(path と行と列 — resolve.ts の locationKey)→ 索引が解いた呼び先(本体の字と source の記号を定義に当てる — v12) */
+  readonly callTargets: ReadonlyMap<string, string>;
 }
 
 /** 欄を持つ種類(索引の param_types が欄の型 — v9: defclass の `#^ T x` も defrecord と同じ読み手で載る)。 */
@@ -70,6 +79,8 @@ export function buildCallGraph(files: readonly HyFileIndex[]): CallGraph {
   const acceptedBy = new Map<string, string[]>();
   const fieldOf = new Map<string, string[]>();
   const effectsByName = new Map<string, string[]>();
+  const locations = new Map<string, string>();
+  const byName = new Map<string, string[]>();
   for (const file of files) {
     for (const definition of file.definitions) {
       if (!definitions.has(definition.qualifiedName)) {
@@ -77,7 +88,11 @@ export function buildCallGraph(files: readonly HyFileIndex[]): CallGraph {
         if (definition.kind === 'defeffect') {
           push(effectsByName, definition.name, definition.qualifiedName);
         }
+        if (definition.container === null) {
+          push(byName, definition.name, definition.qualifiedName);
+        }
       }
+      locations.set(locationKey(file.path, definition.range.start.line, definition.range.start.character), definition.qualifiedName);
       const handled = definition.handles?.target ?? null;
       if (handled !== null) {
         handlers.set(handled, (handlers.get(handled) ?? 0) + 1);
@@ -114,15 +129,24 @@ export function buildCallGraph(files: readonly HyFileIndex[]): CallGraph {
   }
   const callees = new Map<string, string[]>();
   const callers = new Map<string, string[]>();
+  const owners = new Map<string, string>();
+  const callTargets = new Map<string, string>();
   for (const file of files) {
     const top = file.definitions
       .filter((d) => d.container === null)
       .slice()
       .sort((a, b) => a.fullRange.start.line - b.fullRange.start.line || a.fullRange.start.character - b.fullRange.start.character);
+    for (const member of file.definitions) {
+      const owner = member.container === null ? undefined : ownerOf(top, member.fullRange.start.line, member.fullRange.start.character);
+      if (owner !== undefined && owner.qualifiedName !== member.qualifiedName && !owners.has(member.qualifiedName)) {
+        owners.set(member.qualifiedName, owner.qualifiedName);
+      }
+    }
     for (const call of file.calls) {
       if (call.target === null || !definitions.has(call.target)) {
         continue;
       }
+      callTargets.set(locationKey(file.path, call.range.start.line, call.range.start.character), call.target);
       const owner = ownerOf(top, call.range.start.line, call.range.start.character);
       if (owner !== undefined && owner.qualifiedName !== call.target) {
         push(callees, owner.qualifiedName, call.target);
@@ -130,7 +154,7 @@ export function buildCallGraph(files: readonly HyFileIndex[]): CallGraph {
       }
     }
   }
-  return { definitions, callees, callers, handlers, handlerDefinitions, returnedBy, acceptedBy, fieldOf, effectsByName };
+  return { definitions, callees, callers, handlers, handlerDefinitions, returnedBy, acceptedBy, fieldOf, effectsByName, locations, byName, owners, callTargets };
 }
 
 /** 位置を含む最上位の定義(位置の順に並べた列を二分探索 — 大きな repo でも呼びごとに全定義を回さないため)。 */

@@ -4,13 +4,15 @@
 // カードは 1 行に畳める(v4)。面に出る文字は labels.ts の表からだけ引く(v5)。
 // 本体の文字(val / var の表)は linter の印字が入るまで出さず、元の Hy は実体ごとの source ボタンで開閉する(v3 3 節)。
 
+import type { HyDefinition } from '../hy/contract';
 import { pieceStyle, sliceHighlight, type Piece, type SourceColoring } from '../hy/highlight/spans';
 import type { LintBody, LintBodySegment, LintSignature, LintViolation } from '../lint/contract';
 import { answerText, headerEffects, typeText } from '../defk/model';
 import { cardKey, LINE_FIELDS, type FoldState, type LineField } from './fold';
 import { docFirstLine, escapeHtml, tagClass, type Glyphs } from './html';
-import { contractRow, declaredEffectChips, decoratorBadges, entityLineArgs, entityRows, indexSignatureRows, relationBand, usedByRow, type ChipContext } from './entity';
+import { contractRow, declaredEffectChips, decoratorBadges, effectChip, entityLineArgs, entityRows, indexSignatureRows, relationBand, usedByRow, type ChipContext } from './entity';
 import { effectHover, nameHover, nameScope, type NameScope } from './hover';
+import { effectRef, entityLink, resolveEntity, typeHtml, type EntityRef } from './resolve';
 import { LABELS } from './labels';
 import { NAMES_ONLY_PARAMS, TALL_SIGNATURE_CHARS, TALL_SIGNATURE_PARAMS } from './layout';
 import { axisKey, axisTitle, facets, SEARCH_KEY, visibleCards, worstLevel, type Card, type Facet, type Selection } from './model';
@@ -78,46 +80,52 @@ export function isTallSignature(signature: LintSignature): boolean {
 }
 
 /** 型を候補ごとの小さなチップにする(union の `|` は薄く・None は破線で弱く — 候補の切れ目を見せるため)。 */
-function typeChips(type: LintSignature['answer']): string {
+function typeChips(type: LintSignature['answer'], graph: CallGraph): string {
   const members = type !== null && type.kind === 'union' ? type.members : [type];
   return members
     .map((m) => {
       const text = typeText(m);
-      return `<span class="${text === 'None' ? 'none' : ''}">${escapeHtml(text)}</span>`;
+      return `<span class="${text === 'None' ? 'none' : ''}">${typeHtml(m, graph)}</span>`;
     })
     .join('<i>|</i>');
 }
 
+/** 答えの型の文字(answerText と同じ綴り — 名の型は押せる)。 */
+function answerHtml(signature: LintSignature, graph: CallGraph): string {
+  return signature.absent ? `Maybe[${typeHtml(signature.answer, graph)}]` : typeHtml(signature.answer, graph);
+}
+
 /** 引数と答え(defk / deff の見出しから・開いたカード)— 短ければ 1 行のチップ、長ければ縦の表(v6)。 */
-function signatureStrip(signature: LintSignature): string {
+function signatureStrip(signature: LintSignature, graph: CallGraph): string {
   if (isTallSignature(signature)) {
-    const rows = signature.params.map((p) => `<span class="n">${escapeHtml(p.name)}</span><span class="tc">${typeChips(p.type)}</span>`).join('');
-    const answer = signature.absent ? `<span>${escapeHtml(answerText(signature))}</span>` : typeChips(signature.answer);
+    const rows = signature.params.map((p) => `<span class="n">${escapeHtml(p.name)}</span><span class="tc">${typeChips(p.type, graph)}</span>`).join('');
+    const answer = signature.absent ? `<span>${answerHtml(signature, graph)}</span>` : typeChips(signature.answer, graph);
     return `<div class="sig2"><div class="lab">${escapeHtml(LABELS.args)}</div>${rows}<div class="rt"><span class="k">${escapeHtml(LABELS.returnType)}</span><span class="tc">${answer}</span></div></div>`;
   }
   const params = signature.params
-    .map((p) => `<span class="p"><span class="n">${escapeHtml(p.name)}</span><span class="t">${escapeHtml(typeText(p.type))}</span></span>`)
+    .map((p) => `<span class="p"><span class="n">${escapeHtml(p.name)}</span><span class="t">${typeHtml(p.type, graph)}</span></span>`)
     .join('');
-  return `<div class="sig">${params === '' ? `<span class="none">${escapeHtml(LABELS.noArgs)}</span>` : params}<span class="arrow">→</span><span class="ret" title="${escapeHtml(LABELS.returnType)}">${escapeHtml(answerText(signature))}</span></div>`;
+  return `<div class="sig">${params === '' ? `<span class="none">${escapeHtml(LABELS.noArgs)}</span>` : params}<span class="arrow">→</span><span class="ret" title="${escapeHtml(LABELS.returnType)}">${answerHtml(signature, graph)}</span></div>`;
 }
 
-/** effect のチップ(絵つき・Raise は赤い札・hover に引数と答えと説明の 1 行目)。 */
-function effectChips(signature: LintSignature, ctx: ChipContext): string {
+/** effect のチップ(絵つき・Raise は赤い札・hover に引数と答えと説明の 1 行目 — 名は定義へ押せる)。 */
+function effectChips(signature: LintSignature, declared: HyDefinition['effects'], ctx: ChipContext): string {
+  const targets = new Map((declared ?? []).map((d) => [d.name, d.target]));
   return headerEffects(signature)
     .map((e) => {
+      // linter の位置 → 索引の宣言の target(linter が解かない effect の class — agora の EffectBase の defclass)
+      const location: EntityRef = { tag: 'first', refs: [{ tag: 'location', location: e.definition }, { tag: 'target', target: targets.get(e.name) ?? null }] };
       if (e.kind === 'raise') {
-        return `<span class="eff raise">Raise ${escapeHtml(e.name)}</span>`;
+        return entityLink(`Raise ${escapeHtml(e.name)}`, resolveEntity(location, ctx.graph), 'eff raise');
       }
-      const src = ctx.glyphs.effect(e.name);
-      const img = src === undefined ? '' : `<img src="${escapeHtml(src)}" alt="">`;
-      return `<span class="eff" title="${escapeHtml(effectHover(e.name, ctx.graph))}">${img}${escapeHtml(e.name)}</span>`;
+      return effectChip(e.name, location, ctx);
     })
     .join('');
 }
 
 /** effects の欄(開いたカード)。effect が無ければ欄ごと出さない。 */
-function effectRow(signature: LintSignature, ctx: ChipContext): string {
-  const chips = effectChips(signature, ctx);
+function effectRow(signature: LintSignature, declared: HyDefinition['effects'], ctx: ChipContext): string {
+  const chips = effectChips(signature, declared, ctx);
   const partial = signature.inferenceComplete ? '' : `<span class="none">(${escapeHtml(LABELS.inferencePartial)})</span>`;
   if (chips === '') {
     return signature.inferenceComplete ? '' : `<div class="row"><span class="k">${escapeHtml(LABELS.effects)}</span><div>${partial}</div></div>`;
@@ -126,19 +134,19 @@ function effectRow(signature: LintSignature, ctx: ChipContext): string {
 }
 
 /** 1 行の形の「args / return type」— `(name: T, …) → R`(見出しの無い実体は入れ子の定義の名・引数の名)。 */
-function lineArgs(card: Card): string {
+function lineArgs(card: Card, graph: CallGraph): string {
   const s = card.signature;
   if (s !== undefined) {
-    const answer = `<span class="r">${escapeHtml(answerText(s))}</span>`;
+    const answer = `<span class="r">${answerHtml(s, graph)}</span>`;
     if (s.params.length >= NAMES_ONLY_PARAMS) {
       // 引数が多い時は名だけ(型は hover で)。return type は常に出す(v6 2.2 節)
       const typed = s.params.map((p) => `${p.name}: ${typeText(p.type)}`).join('\n');
       return `<span class="f f-args" title="${escapeHtml(typed)}">(${s.params.map((p) => escapeHtml(p.name)).join(', ')}) → ${answer}</span>`;
     }
-    const params = s.params.map((p) => `${escapeHtml(p.name)}: <span class="t">${escapeHtml(typeText(p.type))}</span>`).join(', ');
+    const params = s.params.map((p) => `${escapeHtml(p.name)}: <span class="t">${typeHtml(p.type, graph)}</span>`).join(', ');
     return `<span class="f f-args">(${params}) → ${answer}</span>`;
   }
-  return entityLineArgs(card);
+  return entityLineArgs(card, graph);
 }
 
 /** カードを描く材料(カード以外)。 */
@@ -188,6 +196,8 @@ interface LineContext {
   readonly chips: ChipContext;
   readonly scope: NameScope;
   readonly line: number;
+  /** 本体の file の path(linter が位置を解かなかった字を、その位置の索引の呼び出しで引くため) */
+  readonly path: string;
 }
 
 /**
@@ -204,17 +214,49 @@ function namedText(text: string, at: LineContext): string {
     .join('');
 }
 
-/** 字 1 つ(effect は絵を添え、hover に effect の中身。名は hover に型)。 */
+/**
+ * 本体の字 1 つが指す定義の候補(v12 — 型・effect・呼び・名の役で、linter が定義の位置を解いた物。effect は同名の defeffect でも引く)。
+ * lisp の目印の字と、役の無い字は押せない(lisp は書かれたまま — v1 制約 2)。
+ */
+function segmentTargets(segment: LintBodySegment, graph: CallGraph, path: string): readonly string[] {
+  // linter の位置 → その位置の索引の呼び出しの target(linter が解かない effect の class・import した呼び)
+  const at: readonly EntityRef[] =
+    segment.range === null ? [] : [{ tag: 'call-at', path, line: segment.range.start.line, character: segment.range.start.character }];
+  const location: EntityRef = { tag: 'first', refs: [{ tag: 'location', location: segment.definition }, ...at] };
+  switch (segment.role) {
+    case 'effect':
+      return resolveEntity(effectRef(segment.effect ?? segment.text, location), graph);
+    case 'type':
+    case 'call':
+    case 'name':
+      return resolveEntity(location, graph);
+    case 'keyword':
+    case 'unknown-type':
+    case 'bind':
+    case 'assign':
+    case 'text':
+    case 'lisp':
+    case null:
+      return [];
+    default: {
+      const unreachable: never = segment.role;
+      throw new Error(`網羅されていない字の役: ${JSON.stringify(unreachable)}`);
+    }
+  }
+}
+
+/** 字 1 つ(effect は絵を添え、hover に effect の中身。名は hover に型。定義に当たる字は押せる — v12)。 */
 function renderSegment(segment: LintBodySegment, at: LineContext): string {
   const cls = segmentClass(segment.role);
   const effect = segment.role === 'effect' ? segment.effect : null;
   const img = effect === null ? undefined : at.chips.glyphs.effect(effect);
   const glyph = img === undefined ? '' : `<img class="gl" src="${escapeHtml(img)}" alt="">`;
+  const targets = segmentTargets(segment, at.chips.graph, at.path);
   if (cls === '') {
-    return `${glyph}${namedText(segment.text, at)}`;
+    return `${glyph}${entityLink(namedText(segment.text, at), targets)}`;
   }
   const title = segment.role === 'lisp' ? LABELS.lispAsIs : effect === null ? undefined : effectHover(effect, at.chips.graph);
-  return `<span class="${cls}"${title === undefined ? '' : ` title="${escapeHtml(title)}"`}>${glyph}${escapeHtml(segment.text)}</span>`;
+  return entityLink(`${glyph}${escapeHtml(segment.text)}`, targets, cls, title);
 }
 
 /**
@@ -239,7 +281,7 @@ function bodyBlock(body: LintBody, chips: ChipContext, violations: readonly Lint
       const level = worstLevel(here);
       const marks =
         level === undefined ? '' : `<span class="viol viol-${level}" title="${escapeHtml(here.map((v) => `${v.rule}: ${v.message}`).join('\n'))}">${escapeHtml(here.map((v) => v.rule).join(' '))}</span>`;
-      const text = `${'  '.repeat(line.depth)}${' '.repeat(line.pad)}${line.segments.map((s) => renderSegment(s, { chips, scope, line: line.line })).join('')}`;
+      const text = `${'  '.repeat(line.depth)}${' '.repeat(line.pad)}${line.segments.map((s) => renderSegment(s, { chips, scope, line: line.line, path: body.path })).join('')}`;
       return `<div class="${bound ? 'bl bound' : 'bl'}" data-src-line="${line.line + 1}"><span class="ln">${line.line + 1}</span>${text}${warning}${marks}</div>`;
     })
     .join('');
@@ -293,9 +335,9 @@ export function renderCard(card: Card, ctx: CardContext, hidden: boolean): strin
   const band = relationBand(card, ctx.graph);
   const location = `${escapeHtml(card.place)}:${card.firstLine}`;
   const doc = docFirstLine(d.docstring);
-  const effects = card.signature === undefined ? declaredEffectChips(d, ctx) : effectChips(card.signature, ctx);
+  const effects = card.signature === undefined ? declaredEffectChips(d, ctx) : effectChips(card.signature, d.effects, ctx);
   const line = [
-    lineArgs(card),
+    lineArgs(card, ctx.graph),
     effects === '' ? '' : `<span class="f f-effects">${effects}</span>`,
     d.tags === null ? '' : `<span class="f f-tags">${tagChips('mini')}</span>`,
     doc === '' ? '' : `<span class="f f-doc">${escapeHtml(doc)}</span>`,
@@ -306,7 +348,7 @@ export function renderCard(card: Card, ctx: CardContext, hidden: boolean): strin
   // 契約(型でない述語)は索引から来るので、linter の見出しの有無に関わらず出す
   const middle =
     (card.signature !== undefined
-      ? signatureStrip(card.signature) + effectRow(card.signature, ctx)
+      ? signatureStrip(card.signature, ctx.graph) + effectRow(card.signature, d.effects, ctx)
       : typed
         ? indexSignatureRows(d, ctx)
         : entityRows(card, ctx)) + contractRow(d);
@@ -400,7 +442,7 @@ export function renderTreePicker(cards: readonly Card[], current: string | undef
 /** 木を描く材料 — 開いている file の定義は linter の見出しで、他は索引の型の綴りで。 */
 function treeContext(cards: readonly Card[], graph: CallGraph, glyphs: Glyphs, showTests: boolean): TreeRenderContext {
   const signatures = new Map(cards.flatMap((c) => (c.signature === undefined ? [] : [[c.definition.qualifiedName, c.signature] as const])));
-  return { glyphs, showTests, signatureOf: (qn) => signatures.get(qn), handlersOf: (qn) => graph.handlers.get(qn) ?? 0 };
+  return { glyphs, showTests, graph, signatureOf: (qn) => signatures.get(qn), handlersOf: (qn) => graph.handlers.get(qn) ?? 0 };
 }
 
 /** 木の欄の HTML(頁の中と、木を変えた時に webview へ送る分で同じ物を使うため)。木が無ければ空。 */
@@ -627,7 +669,10 @@ code{font:12px Menlo,monospace;background:#1b1d21;border:1px solid #3a3f47;borde
 .tcount{margin-left:auto;color:#8a9099;font:11px -apple-system,sans-serif}
 .card.flash,.bl.flash{outline:2px solid #4a76a8}
 .bl.flash{background:#2f4a66}
+.ent{cursor:pointer}
+.ent:hover{text-decoration:underline}
 .var{cursor:help;border-radius:3px}
+.ent .var{cursor:pointer}
 .var:hover{background:#2a3340}
 .srcbox .code div.flash{outline:2px solid #4a76a8;background:#2f4a66}
 `;
@@ -670,7 +715,12 @@ document.addEventListener('click', (event) => {
   if (target.hasAttribute('data-tree-dir')) { vscode.postMessage({ type: 'tree-direction', direction: target.getAttribute('data-tree-dir') }); return; }
   if (target.id === 'tree-more') { vscode.postMessage({ type: 'tree-more' }); return; }
   if (target.id === 'tree-close') { vscode.postMessage({ type: 'tree-close' }); return; }
-  if (target.hasAttribute('data-reveal')) { vscode.postMessage({ type: 'reveal', qualifiedName: target.getAttribute('data-reveal') }); return; }
+  // 実体の名 — 素の click はカードへ、Cmd / Ctrl + click は editor の定義へ(v12)。値は候補の完全修飾名を空白で区切った物
+  if (target.hasAttribute('data-reveal')) {
+    const qualifiedNames = target.getAttribute('data-reveal').split(' ').filter((qn) => qn !== '');
+    vscode.postMessage({ type: 'reveal', qualifiedNames, editor: event.metaKey || event.ctrlKey });
+    return;
+  }
   if (target.id === 'clear') { vscode.postMessage({ type: 'clear' }); return; }
   if (target.id === 'fold-all') { vscode.postMessage({ type: 'fold-all' }); return; }
   if (target.id === 'unfold-all') { vscode.postMessage({ type: 'unfold-all' }); return; }

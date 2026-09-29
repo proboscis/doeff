@@ -11,6 +11,7 @@ import type { SourceColoring } from '../hy/highlight/spans';
 import type { HyIndexStore } from '../hy/store';
 import type { LintStore } from '../lint/store';
 import { cardKey, foldAll, parseLineField, toggleLineField, toggleOpen, unfoldAll, type FoldState } from './fold';
+import { followEntity } from './goto';
 import type { Glyphs } from './html';
 import { LABELS } from './labels';
 import { buildCards, parseAxisKey, SEARCH_KEY, setSearch, toggle, visibleCards, type Card, type Selection } from './model';
@@ -334,7 +335,8 @@ export class WorkspacePlane implements vscode.Disposable {
         this.setTree(undefined);
         return;
       case 'reveal':
-        await this.pin(message.qualifiedName);
+        // 名を押した — そのカードを積む。Cmd / Ctrl なら editor へ(v12)
+        await followEntity(this.graphs.graph, message.qualifiedNames, message.editor, (to) => this.pin(to.qualifiedName));
         return;
       case 'ready':
         // repo 全体の面の知らせは頁の操作への答えだけ(頁が読み込めた後にしか送らない)なので、溜めずに済む

@@ -25,6 +25,7 @@ import {
   unfoldAll,
   type FoldState
 } from './fold';
+import { followEntity } from './goto';
 import { LABELS } from './labels';
 import { locate, parseLocation, REVEAL_VIOLATION_COMMAND, violationAction, type RevealTarget, type ViolationPlace } from './locate';
 import { buildCards, facets, parseAxisKey, SEARCH_KEY, setSearch, toggle, visibleCards, type Card, type Selection } from './model';
@@ -61,7 +62,8 @@ export type PlaneMessage =
   | { readonly type: 'tree-more' }
   | { readonly type: 'tree-close' }
   | { readonly type: 'tree-tests' }
-  | { readonly type: 'reveal'; readonly qualifiedName: string }
+  /** 実体の名を押した(候補の完全修飾名 — 複数なら選ばせる。editor = Cmd / Ctrl を押していた — v12) */
+  | { readonly type: 'reveal'; readonly qualifiedNames: readonly string[]; readonly editor: boolean }
   /** 頁が読み込めて知らせを受けられる(html を差し替えた後 — それまで送る知らせは溜める) */
   | { readonly type: 'ready' };
 
@@ -100,8 +102,10 @@ export function readMessage(raw: unknown): PlaneMessage | undefined {
       return direction !== undefined ? { type, direction } : undefined;
     }
     case 'reveal': {
-      const qualifiedName = text('qualifiedName');
-      return qualifiedName !== undefined ? { type, qualifiedName } : undefined;
+      const names = fields.get('qualifiedNames');
+      const editor = fields.get('editor');
+      const qualifiedNames = Array.isArray(names) && names.every((n): n is string => typeof n === 'string') ? names : undefined;
+      return qualifiedNames !== undefined && qualifiedNames.length > 0 && typeof editor === 'boolean' ? { type, qualifiedNames, editor } : undefined;
     }
     case 'toggle': {
       const axis = text('axis');
@@ -558,19 +562,17 @@ class PlanePanel implements vscode.Disposable {
       case 'tree-close':
         this.setTree(undefined);
         return;
-      case 'reveal': {
-        const found = this.graphs.graph.definitions.get(message.qualifiedName);
-        if (found === undefined) {
-          return;
-        }
-        const target: RevealTarget = { qualifiedName: message.qualifiedName, line: undefined, showSource: false };
-        if (path.normalize(found.path) === path.normalize(this.document.uri.fsPath)) {
-          this.reveal(target);
-        } else {
-          this.navigator.revealElsewhere(found.path, target);
-        }
+      case 'reveal':
+        // 名を押した — そのカードへ(別の file はその file の面を開いてから)。Cmd / Ctrl なら editor へ(v12)
+        void followEntity(this.graphs.graph, message.qualifiedNames, message.editor, (to) => {
+          const target: RevealTarget = { qualifiedName: to.qualifiedName, line: to.line, showSource: false };
+          if (path.normalize(to.path) === path.normalize(this.document.uri.fsPath)) {
+            this.reveal(target);
+          } else {
+            this.navigator.revealElsewhere(to.path, target);
+          }
+        });
         return;
-      }
       default: {
         const unreachable: never = message;
         throw new Error(`網羅されていない知らせ: ${JSON.stringify(unreachable)}`);
