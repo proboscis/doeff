@@ -68,7 +68,7 @@ fn anchored(glob: &str, rel: &str) -> bool {
     super::segments_match(&parts, &path)
 }
 
-fn selected(rel: &str, files: &[String], except: &[String]) -> bool {
+pub(super) fn selected(rel: &str, files: &[String], except: &[String]) -> bool {
     files.iter().any(|g| anchored(g, rel)) && !except.iter().any(|g| anchored(g, rel))
 }
 
@@ -98,14 +98,12 @@ fn files_under(path: &Path) -> Vec<PathBuf> {
         .collect()
 }
 
-/// 判じる file の候補(根からの path の順・重なりなし)— focus が在ればその下だけ、無ければ宣言の glob の頭の dir だけを歩く。
-fn candidates(root: &Path, words: &[RetiredWords], calls: &[RetiredCalls], focus: Option<&[PathBuf]>) -> Vec<(String, PathBuf)> {
+/// 宣言の glob(files)の候補の file(根からの path の順・重なりなし)— focus が在ればその下だけ、無ければ glob の頭の dir だけを
+/// 歩く(file 1 つで判じる規則の共通の読み — DOEFF144・145・150・151)。glob の選別(selected)は呼び手がする。
+pub(super) fn candidate_files<'g>(root: &Path, files: impl Iterator<Item = &'g String>, focus: Option<&[PathBuf]>) -> Vec<(String, PathBuf)> {
     let starts: Vec<PathBuf> = match focus {
         Some(paths) => paths.to_vec(),
-        None => {
-            let globs = words.iter().flat_map(|g| g.files.iter()).chain(calls.iter().flat_map(|g| g.files.iter()));
-            globs.map(|g| root.join(literal_head(g))).collect()
-        }
+        None => files.map(|g| root.join(literal_head(g))).collect(),
     };
     let mut found: Vec<(String, PathBuf)> = starts
         .iter()
@@ -320,14 +318,34 @@ fn judge_prepared(rel: &str, source: &str, prepared: &Prepared) -> (Vec<WordHit>
 /// 宣言の群に当たる file を読んで判じる(focus が在ればその下の file だけ)。読めない file は理由を返す。
 pub fn find(root: &Path, words: &[RetiredWords], calls: &[RetiredCalls], focus: Option<&[PathBuf]>) -> (Vec<FileHits>, Vec<String>) {
     let prepared = Prepared::new(words, calls);
-    let wanted: Vec<(String, PathBuf)> = candidates(root, words, calls, focus).into_iter().filter(|(rel, _)| prepared.wants(rel)).collect();
-    let judged: Vec<Result<Option<FileHits>, String>> = wanted
+    let globs = words.iter().flat_map(|g| g.files.iter()).chain(calls.iter().flat_map(|g| g.files.iter()));
+    judge_files(
+        root,
+        globs,
+        focus,
+        |rel, _| prepared.wants(rel),
+        |rel, path, source| {
+            let (word_hits, call_hits) = judge_prepared(&rel, &source, &prepared);
+            Ok((!word_hits.is_empty() || !call_hits.is_empty()).then(|| FileHits { rel, path, source, words: word_hits, calls: call_hits }))
+        },
+    )
+}
+
+/// file 1 つで判じる規則(DOEFF144・145・150・151)の共通の読み — 宣言の glob の候補(focus が在ればその下だけ)のうち wants が
+/// 選んだ file を並列に読み、judge に (根からの path・path・中身) を渡す。答えの在る file だけを候補の順に返し、読めない file と
+/// judge が返した理由は errors に積む。
+pub(super) fn judge_files<'g, R: Send>(
+    root: &Path,
+    globs: impl Iterator<Item = &'g String>,
+    focus: Option<&[PathBuf]>,
+    wants: impl Fn(&str, &Path) -> bool,
+    judge: impl Fn(String, PathBuf, String) -> Result<Option<R>, String> + Sync,
+) -> (Vec<R>, Vec<String>) {
+    let wanted: Vec<(String, PathBuf)> = candidate_files(root, globs, focus).into_iter().filter(|(rel, path)| wants(rel, path)).collect();
+    let judged: Vec<Result<Option<R>, String>> = wanted
         .into_par_iter()
         .map(|(rel, path)| match std::fs::read_to_string(&path) {
-            Ok(source) => {
-                let (word_hits, call_hits) = judge_prepared(&rel, &source, &prepared);
-                Ok((!word_hits.is_empty() || !call_hits.is_empty()).then(|| FileHits { rel, path, source, words: word_hits, calls: call_hits }))
-            }
+            Ok(source) => judge(rel, path, source),
             Err(error) => Err(format!("{}: 読めない: {}", rel, error)),
         })
         .collect();
@@ -335,7 +353,7 @@ pub fn find(root: &Path, words: &[RetiredWords], calls: &[RetiredCalls], focus: 
     let mut errors = Vec::new();
     for result in judged {
         match result {
-            Ok(Some(hits)) => found.push(hits),
+            Ok(Some(one)) => found.push(one),
             Ok(None) => {}
             Err(error) => errors.push(error),
         }
