@@ -202,6 +202,8 @@ pub enum Explain {
     /// DOEFF145: .pyi の @dataclass に kw_only=True が無い(class の名・.hy の側の書き方)。
     RecordStubNotKwOnly { class: String, form: String },
     ServiceUntestedOnSim { service: String, entry: String, definitions: usize, sim: String },
+    /// DOEFF163: code を持つ service の不変条件の宣言の欠け(service の名・欠けの文)。
+    ServiceInvariantsMissing { service: String, gap: String },
     /// DOEFF142: defhandler の引数が client・可変の店を取る。
     HandlerArgumentHoldsState { handler: String, param: String, kind: &'static str, type_text: String },
     /// DOEFF143・157・158: 業務の効果の偽物・表の腐り・検だけの偽物・intent の効果の答え手。
@@ -568,6 +570,10 @@ impl<'a> Narrator<'a> {
             Explain::ServiceUntestedOnSim { service, entry, definitions, sim } => (
                 format!("service {} の組み立て {}({} 本の定義)", service, entry, definitions),
                 format!("{} の下の deftest から呼び出し・参照を辿っても届かない。本番の組み立てのまま handler だけを差し替えて回していない service は、業務の不変条件を確かめていない(未検証のまま配備しない)。", sim),
+            ),
+            Explain::ServiceInvariantsMissing { service, gap } => (
+                format!("service {} の :invariants", service),
+                format!("{}。業務ロジックを「テストした」には、記録を受けて破りの列を返す純粋な不変条件の関数が service ごとに要る(agora-redesign #1155 の定義 1)— 宣言が無い・名指しが外れている・判断でない関数では、何を確かめたかを linter が数えられない。", gap),
             ),
             Explain::HandlerArgumentHoldsState { handler, param, kind, type_text } => (
                 format!("handler {} の引数 {}({}{})", handler, param, kind, if type_text.is_empty() { String::new() } else { format!(" {}", type_text) }),

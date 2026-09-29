@@ -69,6 +69,9 @@ pub struct ArchService {
     pub layers: Vec<String>,
     /// 公開の契約の形(`:public-contract`)。書かない = in-process(他の service が `:depends-on` に載せて読める)。
     pub public_contract: PublicContract,
+    /// 業務の不変条件の関数(`:invariants` — `module:関数` の列・書かない = None)。DOEFF163 が、code を持つ service に宣言・実在・
+    /// :role judgment を求める(agora-redesign #1559・#1155 の定義 1)。
+    pub invariants: Option<Vec<DefinitionRef>>,
     /// architecture.hy の中の defservice の位置(DOEFF117 の知らせの位置)。
     #[serde(skip)]
     pub range: doeff_indexer::hy_index::Range,
@@ -2228,6 +2231,7 @@ impl<'a> Parser<'a> {
             depends_on: Vec::new(),
             layers: Vec::new(),
             public_contract: PublicContract::InProcess,
+            invariants: None,
             range,
         };
         for part in items.iter().skip(2) {
@@ -2242,6 +2246,7 @@ impl<'a> Parser<'a> {
                             ":depends-on" => service.depends_on = self.names(value, ":depends-on"),
                             ":layers" => service.layers = self.names(value, ":layers"),
                             ":dir" => service.dir = self.required_string(value, ":dir").unwrap_or_default(),
+                            ":invariants" => service.invariants = Some(self.definition_refs(value, ":invariants")),
                             ":public-contract" => match self.symbol(value) {
                                 Some("http") => service.public_contract = PublicContract::Http,
                                 _ => self.problem(value, ":public-contract は http だけ(書かない = in-process)"),
@@ -2438,6 +2443,29 @@ mod tests {
         let bad = GOOD.replace("(defservice custody", "(defservice custody {:public-contract grpc})\n(defservice custody-old");
         let problems = Architecture::parse(&bad, Path::new("architecture.hy")).unwrap_err().join("\n");
         assert!(problems.contains(":public-contract は http だけ"), "語彙の外を通した:\n{}", problems);
+    }
+
+    #[test]
+    fn invariants_are_module_colon_function_strings() {
+        // agora-redesign #1559: :invariants は "module:関数" の文字列の列。書かない service は None(宣言の欠けは DOEFF163 が判じる)。
+        let declared = GOOD.replace(
+            "{:depends-on [custody] :layers [core intent]}",
+            "{:depends-on [custody] :layers [core intent] :invariants [\"app.sim.billing_invariants:charges-hold\"]}",
+        );
+        let arch = Architecture::parse(&declared, Path::new("architecture.hy")).unwrap();
+        let billing = arch.services.iter().find(|s| s.name == "billing").unwrap();
+        let spelled: Vec<String> = billing.invariants.iter().flatten().map(|d| d.spelling()).collect();
+        assert_eq!(spelled, vec!["app.sim.billing_invariants:charges-hold"]);
+        assert!(arch.services.iter().filter(|s| s.name != "billing").all(|s| s.invariants.is_none()));
+        assert!(arch.notices.is_empty(), "知らない鍵として知らせた: {:?}", arch.notices);
+
+        let bad = GOOD.replace("{:depends-on [custody] :layers [core intent]}", "{:depends-on [custody] :layers [core intent] :invariants [\"nocolon\" \"a:b\" \"a:b\"]}");
+        let problems = Architecture::parse(&bad, Path::new("architecture.hy")).unwrap_err().join("\n");
+        assert!(problems.contains(":invariants の nocolon は \"module.path:名\" の綴り"), "綴りの誤りを通した:\n{}", problems);
+        assert!(problems.contains(":invariants の a:b が 2 度書かれている"), "重なりを通した:\n{}", problems);
+        let scalar = GOOD.replace("{:depends-on [custody] :layers [core intent]}", "{:depends-on [custody] :layers [core intent] :invariants \"a:b\"}");
+        let problems = Architecture::parse(&scalar, Path::new("architecture.hy")).unwrap_err().join("\n");
+        assert!(problems.contains(":invariants は [\"module:名\" …] の列"), "列でない値を通した:\n{}", problems);
     }
 
     #[test]

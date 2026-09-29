@@ -44,6 +44,7 @@ pub mod typed_values;
 pub mod record_stubs;
 pub mod business_fakes;
 pub mod assembly_shape;
+pub mod invariants;
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -549,6 +550,9 @@ pub fn run_with(root: &Path, settings: &ProjectSettings, enabled: &BTreeSet<Proj
                     if enabled.contains(&ProjectRule::ServiceUntestedOnSim) {
                         drafts.extend(judge_untested_services(architecture, hy).into_iter().map(|d| Draft { path: root.join(&d.rel), ..d }));
                     }
+                    if enabled.contains(&ProjectRule::ServiceInvariantsMissing) {
+                        drafts.extend(judge_service_invariants(root, architecture, hy));
+                    }
                     if let Some(raw) = settings.raw.as_ref().filter(|r| r.world_modules.is_some()) {
                         let placed: BTreeSet<&str> = layer_files.iter().map(|f| f.file.rel.as_str()).collect();
                         drafts.extend(crate::timing::timed("unplaced-world", || judge_unplaced_world(root, architecture, raw, &placed, hy, enabled)));
@@ -1002,6 +1006,7 @@ fn whole_hy_index(
         || ((enabled.contains(&ProjectRule::TestKindMismatch) || enabled.contains(&ProjectRule::WorldHandlerWithoutContractTest))
             && settings.architecture.as_ref().is_some_and(|a| a.edge_mark.is_some()))
         || (enabled.contains(&ProjectRule::ServiceUntestedOnSim) && settings.architecture.as_ref().is_some_and(|a| a.verification_environment.is_some()))
+        || (enabled.contains(&ProjectRule::ServiceInvariantsMissing) && settings.architecture.is_some())
         || (settings.raw.as_ref().is_some_and(|r| r.world_modules.is_some())
             && (enabled.contains(&ProjectRule::RawSideEffectDirect) || enabled.contains(&ProjectRule::WorldHandlerNamedOutsideList)));
     if !(wants_raw && settings.raw.is_some()) && !wants_env && !wants_classes && !wants_tests {
@@ -2921,6 +2926,31 @@ fn judge_untested_services(architecture: &architecture::Architecture, hy: &HashM
         });
     }
     drafts
+}
+
+/// DOEFF163: code を持つ service の不変条件の宣言の欠けを、defservice の位置の下書きにする(鍵の細目 = service の名・関数の欠けは `::` と名指し)。
+fn judge_service_invariants(root: &Path, architecture: &architecture::Architecture, hy: &HashMap<String, HyFileIndex>) -> Vec<Draft> {
+    let rel = relative_path(root, &architecture.path).unwrap_or_else(|| architecture.path.to_string_lossy().into_owned());
+    invariants::gaps(architecture, hy)
+        .into_iter()
+        .map(|(service, gap)| {
+            let message = gap.describe(&service.name);
+            Draft {
+                rule: ProjectRule::ServiceInvariantsMissing,
+                layer: None,
+                rel: rel.clone(),
+                path: architecture.path.clone(),
+                range: service.range,
+                detail: Some(match gap.detail() {
+                    Some(spelling) => format!("{}::{}", service.name, spelling),
+                    None => service.name.clone(),
+                }),
+                base: Severity::Error,
+                explain: Explain::ServiceInvariantsMissing { service: service.name.clone(), gap: message.clone() },
+                message,
+            }
+        })
+        .collect()
 }
 
 /// 生の副作用の直接の証拠のうち、入れ子で重なる物はいちばん内側の定義に 1 度だけ(DOEFF106 の母集団)。

@@ -2387,6 +2387,69 @@ fn services_not_run_on_the_sim_are_red() {
     assert_eq!(found["severity"], "error", "{}", found);
 }
 
+/// agora-redesign #1559(#1155 の K1): code を持つ service(entry の層に定義が 1 本以上)が defservice に :invariants(`module:関数` の列)を
+/// 宣言していない・名指した関数が実在しない・その関数の :role が judgment でない時、defservice の位置で DOEFF163(critical)。
+/// entry の層を持たない service と、entry の層に定義の無い service は当てない。登録簿に載った欠けは warning に下がる。
+#[test]
+fn services_without_declared_invariants_are_red() {
+    let judged = "{:pre [(: seen list)] :post [(: % list)] :tags {:context \"sim\" :role \"judgment\"}}";
+    let files = [
+        ("app/foundation/host.hy", tags("shared", "foundation") + "(defk with-host [body] body)\n"),
+        ("app/billing/entry/main.hy", tags("billing", "entry") + "(defk run [] 1)\n"),
+        ("app/ledger/entry/main.hy", tags("ledger", "entry") + "(defk start [] 2)\n"),
+        ("app/orders/entry/main.hy", tags("orders", "entry") + "(defk take [] 3)\n"),
+        ("app/stock/entry/main.hy", tags("stock", "entry") + "(defk count-all [] 4)\n"),
+        (
+            "app/sim/invariants.hy",
+            format!(
+                "(defk billing-holds [seen]\n  {}\n  \"請求の不変条件。\"\n  [])\n\
+                 (defk orders-run [seen]\n  {{:pre [(: seen list)] :post [(: % list)] :tags {{:context \"sim\" :role \"program\"}}}}\n  \"判断でない。\"\n  [])\n\
+                 (defk stock-holds [seen]\n  {}\n  \"在庫の不変条件。\"\n  [])\n",
+                judged, judged
+            ),
+        ),
+    ];
+    let dir = world_repo_with(&files, "", "[\"DOEFF163\"]");
+    let arch_path = dir.path().join("architecture.hy");
+    let text = std::fs::read_to_string(&arch_path)
+        .unwrap()
+        .replace("{:layers [core entry]})", "{:layers [core entry] :invariants [\"app.sim.invariants:billing-holds\"]})")
+        + "(defservice ledger \"台帳\" {:layers [core entry]})\n\
+           (defservice orders \"注文\" {:layers [core entry] :invariants [\"app.sim.invariants:gone\" \"app.sim.invariants:orders-run\"]})\n\
+           (defservice stock \"在庫\" {:layers [core entry]})\n\
+           (defservice notes \"覚え書き\" {:layers [core]})\n\
+           (defservice empty \"空\" {:layers [core entry]})\n";
+    std::fs::write(&arch_path, text).unwrap();
+    // 既知の欠け: stock の宣言の欠けは登録簿に載っている(warning に下がる)。
+    let pyproject = dir.path().join("pyproject.toml");
+    let settings = std::fs::read_to_string(&pyproject).unwrap() + "[tool.doeff-linter.registry]\nfiles = [\"registry/keys.txt\"]\n";
+    std::fs::write(&pyproject, settings).unwrap();
+    std::fs::create_dir_all(dir.path().join("registry")).unwrap();
+    std::fs::write(dir.path().join("registry/keys.txt"), "architecture.hy::DOEFF163::stock\n").unwrap();
+    let (_, report) = editor(dir.path());
+    assert_eq!(
+        keys(&report, "DOEFF163"),
+        vec![
+            "architecture.hy::DOEFF163::ledger",
+            "architecture.hy::DOEFF163::orders::app.sim.invariants:gone",
+            "architecture.hy::DOEFF163::orders::app.sim.invariants:orders-run",
+            "architecture.hy::DOEFF163::stock",
+        ],
+        "{}",
+        report
+    );
+    let missing = violation(&report, "architecture.hy::DOEFF163::ledger");
+    assert!(missing["message"].as_str().unwrap().contains("service ledger は :invariants を宣言していない"), "{}", missing["message"]);
+    assert_eq!(missing["level"], "critical", "{}", missing);
+    let gone = violation(&report, "architecture.hy::DOEFF163::orders::app.sim.invariants:gone");
+    assert!(gone["message"].as_str().unwrap().contains("定義が無い"), "{}", gone["message"]);
+    let role = violation(&report, "architecture.hy::DOEFF163::orders::app.sim.invariants:orders-run");
+    assert!(role["message"].as_str().unwrap().contains(":role が program"), "{}", role["message"]);
+    let known = violation(&report, "architecture.hy::DOEFF163::stock");
+    assert_eq!(known["severity"], "warning", "{}", known);
+    assert_eq!(known["registered"], true, "{}", known);
+}
+
 /// DOEFF150・151 の宣言を architecture.hy に足した一時の repo。語・呼びは agora-controllers の宣言(#1193 の移し元 check_vocabulary・
 /// check_controller_clock が数えていた物)と同じ綴りを検の材料として書く — linter の本体は語の表を持たない。
 fn retired_repo(files: &[(&str, String)]) -> tempfile::TempDir {

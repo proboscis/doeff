@@ -131,6 +131,9 @@ pub enum ProjectRule {
     /// DOEFF136: service の entry の層の定義に、模擬の環境(:verification-environment)の下の deftest が 1 本も届かない
     /// — 本番の組み立てを手元で回していない service(agora-redesign #1106 の R5・#1111)。
     ServiceUntestedOnSim,
+    /// DOEFF163: code を持つ service(entry の層に定義が 1 本以上)が defservice に :invariants を宣言していない・名指した関数が実在しない・
+    /// その関数の :role が judgment でない(agora-redesign #1559・#1155 の定義 1 — 業務ロジックを「テストした」の条 (b))。
+    ServiceInvariantsMissing,
     /// DOEFF140: architecture.hy の :placed-dependencies の層の module(service と shared)が、root の下の層の置き場の外の module を
     /// import する — 置き場の決まっていない module への依存(agora-redesign #1188)。
     PlacedDependency,
@@ -228,6 +231,7 @@ impl ProjectRule {
         ProjectRule::EffectOutsideCensus,
         ProjectRule::FieldHoldersDiffer,
         ProjectRule::ServiceUntestedOnSim,
+        ProjectRule::ServiceInvariantsMissing,
         ProjectRule::PlacedDependency,
         ProjectRule::BlindDefinitionReads,
         ProjectRule::DefinitionCallsUnlistedHead,
@@ -294,6 +298,7 @@ impl ProjectRule {
             ProjectRule::EffectOutsideCensus => "DOEFF162",
             ProjectRule::FieldHoldersDiffer => "DOEFF149",
             ProjectRule::ServiceUntestedOnSim => "DOEFF136",
+            ProjectRule::ServiceInvariantsMissing => "DOEFF163",
             ProjectRule::PlacedDependency => "DOEFF140",
             ProjectRule::BlindDefinitionReads => "DOEFF141",
             ProjectRule::DefinitionCallsUnlistedHead => "DOEFF147",
@@ -342,6 +347,7 @@ impl ProjectRule {
             | ProjectRule::EffectOutsideCensus
             | ProjectRule::FieldHoldersDiffer
             | ProjectRule::ServiceUntestedOnSim
+            | ProjectRule::ServiceInvariantsMissing
             // 置き場の外の module への依存(#1188 — 登録簿に載った既知の当たりは warning、新しい当たりは critical)。
             | ProjectRule::PlacedDependency
             // 決めた材料だけで判じる定義に、ほかの材料が入り込む(#1368 — #1188 の子。新しい当たりは critical)。
@@ -462,6 +468,7 @@ impl ProjectRule {
             | ProjectRule::EffectOutsideCensus
             | ProjectRule::FieldHoldersDiffer
             | ProjectRule::ServiceUntestedOnSim
+            | ProjectRule::ServiceInvariantsMissing
             | ProjectRule::RetiredWord
             | ProjectRule::RetiredCall
             | ProjectRule::BlindDefinitionReads
@@ -545,6 +552,7 @@ impl ProjectRule {
             ProjectRule::EffectOutsideCensus => "一覧と食い違う effect の宣言",
             ProjectRule::FieldHoldersDiffer => "一覧と食い違う型の欄の持ち手",
             ProjectRule::ServiceUntestedOnSim => "模擬の環境のテストが回さない service",
+            ProjectRule::ServiceInvariantsMissing => "不変条件を宣言していない service",
             ProjectRule::RetiredWord => "使わないと決めた綴り",
             ProjectRule::RetiredCall => "使わないと決めた呼び",
             ProjectRule::HandlerArgumentHoldsState => "handler の引数が client・可変の店を取る",
@@ -600,6 +608,7 @@ impl ProjectRule {
             | ProjectRule::TestIsDeftest
             | ProjectRule::TestFormNotDeftest
             | ProjectRule::ServiceUntestedOnSim
+            | ProjectRule::ServiceInvariantsMissing
             | ProjectRule::DefinitionCallsUnlistedHead
             | ProjectRule::CallOutsideDeclaredSites
             | ProjectRule::BroadCatchOutsideCarrier
@@ -676,6 +685,7 @@ impl ProjectRule {
             ProjectRule::EffectOutsideCensus => "Effect Outside Census",
             ProjectRule::FieldHoldersDiffer => "Field Holders Differ",
             ProjectRule::ServiceUntestedOnSim => "Service Untested On Sim",
+            ProjectRule::ServiceInvariantsMissing => "Service Invariants Missing",
             ProjectRule::RetiredWord => "Retired Word",
             ProjectRule::RetiredCall => "Retired Call",
             ProjectRule::HandlerArgumentHoldsState => "Handler Argument Holds State",
@@ -744,6 +754,7 @@ impl ProjectRule {
             ProjectRule::UntypedStructuredValue => "構造を持つ値は欄の名前と型を静的に持つ型(frozen の dataclass・defrecord・defwire)で表す — architecture.hy の :typed-values の file の公開面(名が _ で始まらない物)の、class の欄・関数と method の戻り値・defk / deff の :post の型に、素の写像(dict・Mapping・JsonValue …)・素の組(tuple)・値が object / Any の写像・長さの決まった組 tuple[A, B]・それらを中身に持つ入れ物を書かず、defn / defk / deff は長さ 2 以上の組の literal #(a b) を答えにしない。:post は isinstance の契約なので写像だけを赤にし、名に型の注記の無い defk / deff の :post は素の組も赤にする",
             ProjectRule::RecordStubNotKwOnly => "architecture.hy の :record-stubs の型の宣言(.pyi)は、同じ dir の同じ名の .hy の実行時の形を偽らない — .hy で欄を名でしか受けない record(defrecord か、飾りに (dataclass … :kw-only True …) を持つ defclass)を @dataclass で宣言するなら kw_only=True を書く",
             ProjectRule::ServiceUntestedOnSim => "業務の service は、本番の組み立て(entry の層)のまま模擬の環境に載せ、handler の差し替えだけで回して確かめる — 模擬の環境(:verification-environment)の下の deftest がその service の entry の層の定義に 1 本も届かなければ、未検証の service として赤にする",
+            ProjectRule::ServiceInvariantsMissing => "code を持つ業務の service(entry の層に定義が 1 本以上)は、architecture.hy の defservice に :invariants(業務の不変条件の関数 `module:関数` の列)を宣言する — 名指した関数は実在し、:tags の :role が judgment(記録を受けて破りの列を返す純粋な判断)。宣言の無い service・実在しない関数・判断でない関数は赤",
             ProjectRule::HandlerArgumentHoldsState => "handler は接続の object や書き換える店を引数で受け取らない — 接続先と資格・設定は Ask で読み、client は本文の先頭の (session val client …) で 1 回だけ作り、状態は (session var …) で持つ(外側の handler が差し替え・観測できる)。引数に残す物は本文に architecture.hy の :handler-arguments の :keep-mark の註で理由を書く",
             ProjectRule::BusinessEffectFake => "業務の効果に答える偽物を作らない — 偽物は外の世界に触れる効果だけ(operator 2026-09-26 \"we only need fake for effects that access external world\")。業務の操作は下の層の効果を出す defk で書き、検査は外の世界の handler だけを差し替える。模擬の根と本番の入口と業務の module は architecture.hy の :business-fakes で宣言する",
             ProjectRule::AssemblyShapeBroken => "組み立ては 1 点 — 組み立ての層の関数(引数 = 土台の値)が、土台の handler の列 1 つと、各 service の翻訳の層の翻訳の列の定数を並べるだけ。本番と模擬の違いは渡す土台の値だけで、組の file は残さない。翻訳の列は自分の service の翻訳だけを持ち、別の service の効果を出し直す列の外側にはそれに答える列を並べる。名前は architecture.hy の :assembly-shape で宣言する",
@@ -817,6 +828,7 @@ impl ProjectRule {
             ProjectRule::TestOnlyFake => "検の組み立てを本番の handler + 土台の差し替えに書き直して偽物を消す — わざと壊した反例なら反例の表に載せる",
             ProjectRule::IntentAnswererNotTranslation => "intent の効果の答えを翻訳の層の handler 1 つへまとめ、土台や環境ごとの handler からは外す",
             ProjectRule::ServiceUntestedOnSim => "模擬の環境の tests に、その service の entry の組み立てを handler の差し替えだけで回す deftest を足す",
+            ProjectRule::ServiceInvariantsMissing => "defservice に :invariants [\"<module>:<関数>\" …] を足し、関数は :role \"judgment\" の defk で置く(模擬の環境の <service>_invariants.hy など)。既知の欠けは登録簿に理由と持ち主を載せる",
             ProjectRule::TestKindMismatch => "縁なら印を付け(既定の pytest から外れる)、手元のつもりなら届く先の実 I/O の handler を模擬の handler に替える — 手元なのに印が在れば外す",
             ProjectRule::WorldHandlerWithoutContractTest => "本物(その handler)と模擬の解釈器を :interpreters に並べた deftest を書き、同じ検を両方に通す — 縁の検を持たない理由が在る handler だけ、名簿の行に :contract-test none を書く",
             ProjectRule::WorldHandlerMisplaced => "定義を foundation の層(architecture.hy の :foundation の dir)へ移すか、名簿の綴り(module:名)を実物に合わせる — 要らなくなった定義なら名簿から外す",
@@ -873,6 +885,7 @@ mod tests {
         ("DOEFF137", RuleFamily::Raw),
         ("DOEFF135", RuleFamily::Definition),
         ("DOEFF136", RuleFamily::Definition),
+        ("DOEFF163", RuleFamily::Definition),
         ("DOEFF140", RuleFamily::Place),
         ("DOEFF141", RuleFamily::Place),
         ("DOEFF147", RuleFamily::Definition),
