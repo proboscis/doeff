@@ -281,7 +281,8 @@ export const LINT_BODY_ROLES = [
   'effect',
   'call',
   'text',
-  'lisp'
+  'lisp',
+  'comment'
 ] as const;
 export type LintBodyRole = (typeof LINT_BODY_ROLES)[number];
 

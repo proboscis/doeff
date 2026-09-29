@@ -725,9 +725,9 @@ file の defk / deff の分を出す(全体の実行では空)。
 }]
 ```
 
-- **字の役**(閉じた集合): `keyword`(`val`・`var`・`lazy`・`session`・`setv`・`return`・`resume`・`when`・`if`・`else`・`match`・`for`・`in`)・`type`(束縛の型)・
+- **字の役**(閉じた集合): `keyword`(`val`・`var`・`lazy`・`session`・`setv`・`return`・`resume`・`when`・`while`・`if`・`else`・`match`・`cond`・`for`・`in`・`try`・`except`・`as`・`finally`・`raise`・`from`・`continue`・`break`)・`type`(束縛の型)・
   `unknown-type`(型が分からない印 `?`)・`name`(束ねる名)・`bind`(`⇐`)・`assign`(`=` と `:=`)・`effect`(effect の値を作る呼びの頭 —
-  面が `effect` の名で絵を選ぶ)・`call`(それ以外の呼びの頭)・`text`(引数・演算子・字面・区切り)・`lisp`(表に無い form)。
+  面が `effect` の名で絵を選ぶ)・`call`(それ以外の呼びの頭)・`text`(引数・演算子・字面・区切り)・`lisp`(表に無い form)・`comment`(本体の途中の行全体の註 `;; …` を `# …` にした行)。
 - **range**: source から来た字は source の範囲を持ち、区切り・`⇐`・`?` のように source に無い字は null。`keyword` と `type` は綴りが
   変わりうる(`<-` → `val`・`(| A B)` → `A | B`)。それ以外の役は範囲の字と text が一字一句同じ。
 - **型**: 16 節の `bindings` の型と同じ物(`binding` の番号の束縛の `type` を `A | B`・`H[a, b]` と綴る)。分からなければ `?`(別の型で
@@ -751,7 +751,14 @@ file の defk / deff の分を出す(全体の実行では空)。
 | `(match v P x P :if g y …)` | `match v` + 腕ごとに `P → x` / `P if g → y`(`→` の前は腕の pattern の最大幅 + 空白 1 つで揃える)。pattern は `(C)` → `C`・`(C a :k p)` → `C(a, k=p)`・`(\| p q)` → `p \| q`・`[p q]` → `[p, q]`・名と字面はそのまま |
 | `(for [x xs] …)` / `(for [[a b] xs] …)` | `for x in xs` / `for a, b in xs` + 1 つ深い段の中身 |
 | `(lfor x xs :if c e)` / `gfor` / `sfor` | `[e for x in xs if c]` / `(e for …)` / `{e for …}`(節の重ねは `for … for …`) |
-| 表に無い form(知らない macro・`do`・`cond`・`unless`・`dfor`・内包の `:setv` / `:do`・名が組でない `for`・腕の欠けた `match`・表に無い pattern・名が記号でない setv) | 元の lisp のまま(`lisp` の役)。推測で描かない |
+| `(do a b …)` | `do` の字は出さず中身を並べる(文の場所なら今の段に。腕の `→` の後ろなら 1 つ目をその行に続け、残りをその列に揃える) |
+| `(cond c x … True z)` | `cond` + 腕ごとに `c → x`(条件の幅を揃える・最後の `True` は `else →`)。1 行に収まらない条件があれば cond 全体を lisp |
+| `(while c …)` | `while c` + 1 つ深い段の中身 |
+| `(try … (except [e T] …) (except [[A B]] …) (except [] …) (else …) (finally …))` | `try` / `except T as e` / `except (A, B)` / `except` / `else` / `finally`(節の語は try の列・中身は 1 つ深い段) |
+| `(continue)` / `(break)` / `(raise)` / `(raise e)` / `(raise e :from c)` | `continue` / `break` / `raise` / `raise e` / `raise e from c` |
+| `(setv (get x k) v)` / `(setv (. o a) v)` / `(setv o.a v)` | `x[k] = v` / `o.a = v`(中身の書き換え — 束縛ではないので setv の警告を付けない・ADR-DOE-HY-006 の対象外) |
+| 塊の中の文と文の間の行全体の `;; …` | `# …` の行(`comment` の役・source の範囲つき) |
+| 表に無い form(知らない macro・`unless`・`dfor`・内包の `:setv` / `:do`・名が組でない `for`・腕の欠けた `match`・表に無い pattern・組への分解の setv) | 元の lisp のまま(`lisp` の役)。推測で描かない |
 
 - **lisp の島**: 式の中で置き換えなかった括弧(知らない頭)は、その括弧だけ元の lisp のまま `lisp` の役で出す(中の呼びも置き換えない)。
 - **複数行**: 式や lisp が次の行へ続く所は新しい行(`line` = その source の行・`depth` は同じ)にし、source の字下げの文の頭からの差を

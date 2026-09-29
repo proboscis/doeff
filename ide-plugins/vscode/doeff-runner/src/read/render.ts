@@ -171,6 +171,8 @@ function segmentClass(role: LintBodySegment['role']): string {
     case 'name':
     case 'assign':
     case 'text':
+    // 註の行(linter の U20a で足した役)— 色は面の担当が決めるまで既定の字
+    case 'comment':
     case null:
       return '';
     default: {
