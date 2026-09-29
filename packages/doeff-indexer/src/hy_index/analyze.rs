@@ -319,6 +319,9 @@ impl<'a> Analyzer<'a> {
             "defpp" => {
                 self.named_def(form, items, DefinitionKind::Defpp, DocRule::Leading, container);
             }
+            "defsystem" => {
+                self.named_def(form, items, DefinitionKind::Defsystem, DocRule::Leading, container);
+            }
             "defpipeline" => {
                 self.named_def(form, items, DefinitionKind::Defpipeline, DocRule::Leading, container);
             }
