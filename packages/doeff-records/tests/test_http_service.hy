@@ -1,7 +1,6 @@
 ;; 記録の service の HTTP の口: 身元(名簿に無い token は読み書きを問わず client が RecordsUnauthorized を上げ、何も変えない)・
 ;; 断りの status と本文・宣言に無い表・置き場に届かない時の 503。置き場は memory(仮想の時計)— PostgreSQL の上の口は test_laws / test_parity の http-pg が確かめる。
 (require doeff-hy.macros [deftest defhandler defk deff val var])
-(import contextlib [contextmanager])
 (import http.server [BaseHTTPRequestHandler ThreadingHTTPServer])
 (import json)
 (import threading)
@@ -16,21 +15,19 @@
 (import doeff_records.memory [MemoryStore memory-records-handler])
 (import doeff_records.http_server [RecordsServerConfig RunningServer start-records-server])
 (import doeff_records.http_client [RecordsEndpoint RecordsUnauthorized http-records-handler http-table-records-handler])
-(import tests.interpreters [LAW-TOKENS law-roster sim-runner])
+(import tests.interpreters [LAW-TOKENS law-roster sim-request-handlers])
 
 
-(defn open-service [lease-handlers]
-  "memory の置き場の上に口を開く(検ごと)。答え = #(開いた口 仮想の時計)。"
+(defn open-service [handler-for]
+  "置き場の上に口を開く(検ごと)。handler-for = 書き手の名 → 置き場の handler。答え = #(開いた口 仮想の時計)。"
   (setv clock (SimClock))
-  #((start-records-server (RecordsServerConfig LAW-SCHEMA (law-roster) lease-handlers (sim-runner clock) :concurrent False))
+  #((start-records-server (RecordsServerConfig LAW-SCHEMA (law-roster) handler-for :request-handlers (sim-request-handlers clock)))
     clock))
 
 
 (defn memory-lease [store]
-  "書き手の名 → memory の handler を渡す lease-handlers。"
-  (defn [contextmanager] lease []
-    (yield (fn [writer] (memory-records-handler store writer))))
-  lease)
+  "書き手の名 → memory の handler。"
+  (fn [writer] (memory-records-handler store writer)))
 
 
 (defn run-as [server clock #^ str token program]
@@ -246,9 +243,7 @@
 
 
 (deftest test-an-unreachable-store-answers-503-and-the-client-sees-unreachable
-  (defn [contextmanager] lease []
-    (yield (fn [writer] (unreachable-store))))
-  (setv #(server clock) (open-service lease)
+  (setv #(server clock) (open-service (fn [writer] (unreachable-store)))
         maker (get LAW-TOKENS "maker"))
   (try
     (setv #(status body) (raw server "POST" "/v1/records/read-row" :body {"table" "parts" "key" ["p1"]} :token maker))

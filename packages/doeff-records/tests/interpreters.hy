@@ -39,7 +39,6 @@
 (import doeff_core_effects.handlers [await-handler])
 (import doeff_core_effects.http_handlers [http-production-handler])
 (import doeff_hy.frozen [FrozenMap])
-(import contextlib [contextmanager nullcontext])
 
 (setv PLAIN "plain" MEMORY "memory" PG "pg" PG-POOLED "pg-pooled" HTTP-MEMORY "http-memory" HTTP-PG "http-pg"
       HTTP-EFFECT-MEMORY "http-effect-memory")
@@ -122,18 +121,18 @@
   (Roster (FrozenMap (dfor #(writer token) (.items LAW-TOKENS) writer (run (token-digest token))))))
 
 
-(defn sim-runner [clock [answerers []]]
-  "service が要求ごとに Program を走らせる関数 — 法の側と同じ仮想の時計を読む。answerers = 置き場の外側に置く答え手(SQL の答え手)。"
-  (fn [program] (run (scheduled (with_handlers (+ [(sim-time-handler :clock clock)] answerers) program)))))
+(defn sim-request-handlers [clock [answerers []]]
+  "service が要求ごとの答えの外側に被せる handler の列 — 法の側と同じ仮想の時計を読む。answerers = 置き場の外側に置く答え手(SQL の答え手)。"
+  (tuple (+ [(sim-time-handler :clock clock)] answerers)))
 
 
-(defn http-interpreter [lease-handlers backing concurrent close-store [transport (BlockingTransport)] [answerers []]]
+(defn http-interpreter [handler-for backing close-store [transport (BlockingTransport)] [answerers []]]
   "HTTP の口を開き、法の書き手を client の handler(その書き手の token)で包む組。backing = 書き手の名 → 置き場の handler
    (検の口と手入れの effect に直に答える — client の外側に被せる)。transport = client の要求の送り方(EffectTransport なら
    HttpRequest の答え手 await-handler と http-production-handler を組の最も外側に置く)。"
   (setv clock (SimClock)
-        server (start-records-server (RecordsServerConfig LAW-SCHEMA (law-roster) lease-handlers (sim-runner clock answerers)
-                                                          :concurrent concurrent))
+        server (start-records-server (RecordsServerConfig LAW-SCHEMA (law-roster) handler-for
+                                                          :request-handlers (sim-request-handlers clock answerers)))
         harness (LawHarness (fn [writer program]
                               (with_handlers [(backing writer)
                                               (http-records-handler (RecordsEndpoint server.url (get LAW-TOKENS writer)
@@ -175,15 +174,13 @@
             (.close connections))
           (interpreter-over (harness-of (records-handler-for store)) [(state) (pooled-postgres-sql-handler connections pool)] close))
     (= name HTTP-MEMORY)
-      (do (setv store (MemoryStore LAW-SCHEMA))
-          (defn [contextmanager] memory-lease []
-            (yield (fn [writer] (memory-records-handler store writer))))
-          (http-interpreter memory-lease (fn [writer] (memory-records-handler store writer)) False (fn [] None)))
+      (do (setv store (MemoryStore LAW-SCHEMA)
+                handler-for (fn [writer] (memory-records-handler store writer)))
+          (http-interpreter handler-for handler-for (fn [] None)))
     (= name HTTP-EFFECT-MEMORY)
-      (do (setv store (MemoryStore LAW-SCHEMA))
-          (defn [contextmanager] memory-lease []
-            (yield (fn [writer] (memory-records-handler store writer))))
-          (http-interpreter memory-lease (fn [writer] (memory-records-handler store writer)) False (fn [] None) (EffectTransport)))
+      (do (setv store (MemoryStore LAW-SCHEMA)
+                handler-for (fn [writer] (memory-records-handler store writer)))
+          (http-interpreter handler-for handler-for (fn [] None) (EffectTransport)))
     (= name HTTP-PG)
       (do (setv connections (postgres-connections)
                 store (prepared-store connections (fresh-prefix))
@@ -191,6 +188,6 @@
           (defn close-pg []
             (run-sql connections (drop-records-tables store))
             (.close connections))
-          (http-interpreter (fn [] (nullcontext handler-for)) handler-for True close-pg
+          (http-interpreter handler-for handler-for close-pg
                             :answerers [(postgres-sql-handler connections)]))
     True (BuiltInterpreter (fn [program] (run (scheduled program))) (fn [] None) (fn [] None))))

@@ -10,7 +10,8 @@ readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
     "doeff>=0.2.0",
-    "doeff-core-effects",
+    # 記録の service の待ち受け(http_server.hy)は doeff の汎用の HTTP の待ち受けの本物の答え手 aiohttp-http-server を使う(#880 U7)。
+    "doeff-core-effects[http-server]",
     "doeff-hy",
     "doeff-time",
     "hy>=1.3",

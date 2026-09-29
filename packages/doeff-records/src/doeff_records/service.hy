@@ -21,8 +21,6 @@
 
 (setv METHOD-GET "GET" METHOD-POST "POST")
 (setv PATH-HEALTHZ "/healthz")
-;; 要求の本文の上限(行の値の上限は表の宣言の size-budget が決める — これは口の読みの上限)。
-(setv REQUEST-MAX-BYTES (* 16 1024 1024))
 
 
 (defclass [(dataclass :frozen True)] HttpRequest []
@@ -75,9 +73,8 @@
 
 (defk serve-operation [service principal operation body]
   {:pre [(: service RecordsService) (: principal Principal) (: operation str) (: body bytes)] :post [(: % HttpAnswer)]}
-  "身元の引けた要求 1 つを、その書き手の handler の下で公開 effect にして撃ち、答えを HTTP の答えにする。"
-  (when (> (len body) REQUEST-MAX-BYTES)
-    (return (! (refusal-answer ERROR-MALFORMED (.format "本文が {} byte を超える" REQUEST-MAX-BYTES)))))
+  "身元の引けた要求 1 つを、その書き手の handler の下で公開 effect にして撃ち、答えを HTTP の答えにする(本文の上限は待ち受けの
+   HttpReadBody が読む前に判じる — http_server.hy)。"
   (try
     (setv document (json.loads (.decode body "utf-8")))
     (except [error #(UnicodeDecodeError json.JSONDecodeError)]

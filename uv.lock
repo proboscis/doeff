@@ -1145,7 +1145,6 @@ requires-dist = [
 
 [[package]]
 name = "doeff-linter"
-version = "0.1.0"
 source = { editable = "packages/doeff-linter" }
 
 [[package]]
@@ -1321,7 +1320,7 @@ version = "0.1.0"
 source = { editable = "packages/doeff-records" }
 dependencies = [
     { name = "doeff" },
-    { name = "doeff-core-effects" },
+    { name = "doeff-core-effects", extra = ["http-server"] },
     { name = "doeff-hy" },
     { name = "doeff-time" },
     { name = "hy" },
@@ -1336,7 +1335,7 @@ pg = [
 [package.metadata]
 requires-dist = [
     { name = "doeff", editable = "." },
-    { name = "doeff-core-effects", editable = "packages/doeff-core-effects" },
+    { name = "doeff-core-effects", extras = ["http-server"], editable = "packages/doeff-core-effects" },
     { name = "doeff-hy", editable = "packages/doeff-hy" },
     { name = "doeff-time", editable = "packages/doeff-time" },
     { name = "hy", git = "https://github.com/proboscis/hy.git?rev=414f53f4834366957959dd7891d909f49c88567d" },
