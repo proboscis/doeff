@@ -26,6 +26,7 @@ pub mod call_view;
 pub mod body_view;
 pub mod world_catalog;
 pub mod test_forms;
+pub mod retired;
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
@@ -135,7 +136,10 @@ pub struct ProjectReport {
 
 /// 何を判じるか — repo 全体か、保存前の内容の 1 file。
 pub enum Target<'a> {
-    Whole,
+    /// repo 全体。focus は命令の行で名指した path(None = 全部)— file 1 つで判じられる規則(DOEFF150・151)は、名指しが在れば
+    /// その下の file だけを読み、repo 全体を読まない(agora-redesign #1193 — 全体を読む規則が commit を止めた DOEFF133 の再発を防ぐ)。
+    /// ほかの規則は今までどおり全体を読み、出力を名指しの path で絞る。
+    Whole { focus: Option<&'a [PathBuf]> },
     Single { path: PathBuf, source: &'a str },
 }
 
@@ -210,11 +214,16 @@ pub fn run_with(root: &Path, settings: &ProjectSettings, enabled: &BTreeSet<Proj
 
     // 読めない Hy の file の知らせ(DOEFF128)の材料 — 全体なら repo の Hy の file の全部、1 file ならその保存前の中身。
     let unreadable_target: Option<(PathBuf, String)> = match &target {
-        Target::Whole => None,
+        Target::Whole { .. } => None,
         Target::Single { path, source } => Some((path.clone(), source.to_string())),
     };
     match target {
-        Target::Whole => {
+        Target::Whole { focus } => {
+            if let Some(architecture) = &settings.architecture {
+                let (found, errors) = crate::timing::timed("retired", || judge_retired_files(root, architecture, enabled, focus));
+                drafts.extend(found);
+                report.errors.extend(errors);
+            }
             let layer_files = settings.layers.as_ref().map(|layers| collect_layer_files(root, layers)).unwrap_or_default();
             semantic_files = layer_files.iter().map(|f| (f.clone(), None)).collect();
             let wants_plain = settings.semantic.as_ref().is_some_and(|s| s.plain_callable.is_some() || s.class_role.is_some() || s.mixed_concerns.is_some());
@@ -452,6 +461,11 @@ pub fn run_with(root: &Path, settings: &ProjectSettings, enabled: &BTreeSet<Proj
                     drafts.extend(judge_json_value(&file, source, architecture, settings.layers.as_ref()));
                 }
             }
+            if let (Some(architecture), Some(rel)) = (&settings.architecture, &rel) {
+                let (words, calls) = retired_groups(architecture, enabled);
+                let (word_hits, call_hits) = retired::judge(rel, source, words, calls);
+                drafts.extend(retired_drafts(&path, source, word_hits, call_hits));
+            }
             if let (Some(env), Some(rel)) = (&settings.environment, &rel) {
                 if enabled.contains(&ProjectRule::EnvironmentName) && is_environment_file(rel, env) {
                     if let Some(language) = language_of(&path) {
@@ -501,6 +515,61 @@ pub fn run_with(root: &Path, settings: &ProjectSettings, enabled: &BTreeSet<Proj
     // 読めない Hy の file は、有効な規則の一覧に関わらず知らせる(違反が欠けているのを黙らせない — DOEFF128)。
     report.findings.extend(unreadable_findings(root, settings, &unreadable_target));
     report
+}
+
+/// 有効な規則の分の群(DOEFF150 が無効なら語の群は空・DOEFF151 が無効なら呼びの群は空)。
+fn retired_groups<'a>(architecture: &'a architecture::Architecture, enabled: &BTreeSet<ProjectRule>) -> (&'a [architecture::RetiredWords], &'a [architecture::RetiredCalls]) {
+    let words: &[architecture::RetiredWords] = if enabled.contains(&ProjectRule::RetiredWord) { &architecture.retired_words } else { &[] };
+    let calls: &[architecture::RetiredCalls] = if enabled.contains(&ProjectRule::RetiredCall) { &architecture.retired_calls } else { &[] };
+    (words, calls)
+}
+
+/// DOEFF150・151 を全体の実行で判じる(focus が在ればその下の file だけを読む)。
+fn judge_retired_files(root: &Path, architecture: &architecture::Architecture, enabled: &BTreeSet<ProjectRule>, focus: Option<&[PathBuf]>) -> (Vec<Draft>, Vec<String>) {
+    let (words, calls) = retired_groups(architecture, enabled);
+    if words.is_empty() && calls.is_empty() {
+        return (Vec::new(), Vec::new());
+    }
+    let (found, errors) = retired::find(root, words, calls, focus);
+    let drafts = found.into_iter().flat_map(|file| retired_drafts(&file.path, &file.source, file.words, file.calls)).collect();
+    (drafts, errors)
+}
+
+/// 当たりを違反の下書きにする(file 1 つ分)。
+fn retired_drafts(path: &Path, source: &str, words: Vec<retired::WordHit>, calls: Vec<retired::CallHit>) -> Vec<Draft> {
+    let lines = LineIndex::new(source);
+    let mut out: Vec<Draft> = words
+        .into_iter()
+        .map(|hit| {
+            let what = match &hit.name {
+                Some(name) => format!("定義の名 {} に使わないと決めた綴り {}", name, hit.spelling),
+                None => format!("使わないと決めた綴り {}", hit.spelling),
+            };
+            Draft {
+                rule: ProjectRule::RetiredWord,
+                layer: None,
+                path: path.to_path_buf(),
+                range: lines.range(hit.start, hit.end),
+                message: format!("{} — {}(群 {}・代わり: {})", hit.rel, what, hit.group, hit.instead),
+                detail: Some(hit.detail),
+                base: Severity::Error,
+                explain: Explain::RetiredWord { group: hit.group, spelling: hit.spelling, instead: hit.instead, name: hit.name },
+                rel: hit.rel,
+            }
+        })
+        .collect();
+    out.extend(calls.into_iter().map(|hit| Draft {
+        rule: ProjectRule::RetiredCall,
+        layer: None,
+        path: path.to_path_buf(),
+        range: lines.range(hit.start, hit.end),
+        message: format!("{} — 使わないと決めた呼び ({} …)(群 {}・代わり: {})", hit.rel, hit.call, hit.group, hit.instead),
+        detail: Some(hit.call.clone()),
+        base: Severity::Error,
+        explain: Explain::RetiredCall { group: hit.group, call: hit.call, instead: hit.instead },
+        rel: hit.rel,
+    }));
+    out
 }
 
 /// 目録(同梱の物と、設定の追加)を読む。追加が読めなければ理由を積んで同梱の物だけで判じる。

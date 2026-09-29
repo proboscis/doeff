@@ -2173,3 +2173,121 @@ fn services_not_run_on_the_sim_are_red() {
     assert!(found["message"].as_str().unwrap().contains("service ledger の entry の層("), "{}", found["message"]);
     assert_eq!(found["severity"], "error", "{}", found);
 }
+
+/// DOEFF150・151 の宣言を architecture.hy に足した一時の repo。語・呼びは agora-controllers の宣言(#1193 の移し元 check_vocabulary・
+/// check_controller_clock が数えていた物)と同じ綴りを検の材料として書く — linter の本体は語の表を持たない。
+fn retired_repo(files: &[(&str, String)]) -> tempfile::TempDir {
+    let dir = world_repo_with(files, "", "[\"DOEFF150\", \"DOEFF151\"]");
+    let arch_path = dir.path().join("architecture.hy");
+    let declarations = r#":foundation foundation
+  :retired-words [(retired-words "vocabulary" :words ["席" "mailbox" "letter" "auth home" "mail" "掃引"]
+                    :files ["README.md" "app/**/*.hy" "app/**/*.md" "app/**/*.json"] :except ["app/terms.json"]
+                    :rule-lines ["使わない" "置かない"] :instead "chat・agent・器 / Message / 退役 / 見回り")
+                  (retired-words "conversation-means-agent"
+                    :patterns [r"会話\s*[（(]\s*(?:意味は|=)\s*agent" r"(?i)\bconversation\s+(?:means|is|=)\s+(?:an?\s+|one\s+)?agent\b"]
+                    :files ["docs/**/*.md"] :instead "会話の id は chat の id、参加者は agent と書く")
+                  (retired-words "conversation-names" :patterns [r"(?i)conversation"] :files ["app/chat/**/*.hy" "app/chat/**/*.py"]
+                    :in names :instead "chat・agent・participation")]
+  :retired-calls [(retired-calls "clock" :calls ["Now" "Elapsed" "EpochMillis" "ReadClock" "time.time"]
+                    :files ["app/**/*.hy"] :except ["app/**/tests/**"] :instead "(GetMonotonic) か (GetTime)(doeff-time)")]"#;
+    let text = std::fs::read_to_string(&arch_path).unwrap().replace(":foundation foundation", declarations);
+    std::fs::write(&arch_path, text).unwrap();
+    dir
+}
+
+/// agora-redesign #1193(C11): 使わないと決めた語は語ごとに 1 件ずつ当たり(反例 = 各語 1 本)、別の語の一部・規則を述べる行・宣言の外の
+/// file・:except の file は当たらない。意味の綴りは正規表現で、定義の名の群は定義の名だけを見る。新しい当たりは critical。
+#[test]
+fn retired_words_hit_once_per_word_and_skip_rule_lines() {
+    let words = ["席", "mailbox", "letter", "auth home", "mail", "掃引"];
+    let mut files: Vec<(String, String)> = words.iter().enumerate().map(|(i, w)| (format!("app/billing/w{}.md", i), format!("# 見出し\n本文に {} を書く\n", w))).collect();
+    files.extend([
+        ("README.md".to_string(), "郵便は Message と書く。email address と mail-box は別の語。\n使わない語 = 席 / mail\n".to_string()),
+        ("docs/README.md".to_string(), "mail は根の README ではないので宣言の外\n".to_string()),
+        ("app/terms.json".to_string(), "{\"terms\": [{\"term\": \"mail\"}]}\n".to_string()),
+        ("docs/design/turns.md".to_string(), "会話(意味は agent)が chat を受ける\nconversation means agent\n会話は agent の手番の列を持つ\n".to_string()),
+        (
+            "app/chat/rows.hy".to_string(),
+            "(defrecord ConversationSlice (#^ str chat))\n(setv CHAT-KIND \"conversation\") ; conversation の綴りは値と註だけ\n(defk chat-of [row] row.chat)\n"
+                .to_string(),
+        ),
+    ]);
+    let refs: Vec<(&str, String)> = files.iter().map(|(p, t)| (p.as_str(), t.clone())).collect();
+    let dir = retired_repo(&refs);
+    let (_, report) = editor(dir.path());
+    let mut expected: Vec<String> = words.iter().enumerate().map(|(i, w)| format!("app/billing/w{}.md::DOEFF150::{}", i, w)).collect();
+    // 意味の綴りは 2 行(日本語の形と英語の形)に当たり、どちらも群の名の鍵になる。
+    expected.extend([
+        "app/chat/rows.hy::DOEFF150::conversation-names".to_string(),
+        "docs/design/turns.md::DOEFF150::conversation-means-agent".to_string(),
+        "docs/design/turns.md::DOEFF150::conversation-means-agent".to_string(),
+    ]);
+    expected.sort();
+    assert_eq!(keys(&report, "DOEFF150"), expected, "{}", report);
+    let turns: Vec<&Value> = report["violations"].as_array().unwrap().iter().filter(|v| v["key"] == "docs/design/turns.md::DOEFF150::conversation-means-agent").collect();
+    assert_eq!(turns.len(), 2, "意味の綴りは行ごとに 1 件: {:?}", turns);
+    let mail = violation(&report, "app/billing/w4.md::DOEFF150::mail");
+    assert_eq!(mail["level"], "critical", "{}", mail);
+    assert_eq!(mail["range"]["start"]["line"], 1);
+    assert!(mail["message"].as_str().unwrap().contains("使わないと決めた綴り mail(群 vocabulary・代わり:"), "{}", mail["message"]);
+    let names = violation(&report, "app/chat/rows.hy::DOEFF150::conversation-names");
+    assert!(names["message"].as_str().unwrap().contains("定義の名 ConversationSlice"), "{}", names["message"]);
+}
+
+/// agora-redesign #1193(C11): 退役した呼びは呼びごとに 1 件ずつ当たり(反例 = 各呼び 1 本)、註・文字列・読み捨てた form・:except の
+/// テストの file・値として名指すだけの所は当たらない。
+#[test]
+fn retired_calls_hit_once_per_call() {
+    let calls = ["Now", "Elapsed", "EpochMillis", "ReadClock", "time.time"];
+    let mut files: Vec<(String, String)> = calls.iter().enumerate().map(|(i, c)| (format!("app/billing/c{}.hy", i), format!("(defk stamp [] ({}))\n", c))).collect();
+    files.extend([
+        (
+            "app/billing/quiet.hy".to_string(),
+            ";; 効果 (Now) と (Elapsed) は退役した(経過は (GetMonotonic))\n(setv note \"(time.time)\")\n#_(Now)\n(setv clock Now)\n(defk ok [] (GetMonotonic))\n"
+                .to_string(),
+        ),
+        ("app/billing/tests/test_clock.hy".to_string(), "(deftest test-clock (Now))\n".to_string()),
+    ]);
+    let refs: Vec<(&str, String)> = files.iter().map(|(p, t)| (p.as_str(), t.clone())).collect();
+    let dir = retired_repo(&refs);
+    let (_, report) = editor(dir.path());
+    let mut expected: Vec<String> = calls.iter().enumerate().map(|(i, c)| format!("app/billing/c{}.hy::DOEFF151::{}", i, c)).collect();
+    expected.sort();
+    assert_eq!(keys(&report, "DOEFF151"), expected, "{}", report);
+    let now = violation(&report, "app/billing/c0.hy::DOEFF151::Now");
+    assert_eq!(now["level"], "critical");
+    assert_eq!(now["range"]["start"]["character"], 16, "位置は呼びの頭の記号: {}", now);
+}
+
+/// agora-redesign #1193 の条件: file 1 つで判じられる規則は、名指しの path が在ればその下の file だけを読む(repo 全体を読まない)。
+/// 全体の実行は宣言の file を全部読む — 読めない file(UTF-8 でない)が理由に出るかどうかで、読んだ file の母集団を見分ける。
+#[test]
+fn retired_rules_read_only_the_named_files() {
+    let dir = retired_repo(&[("app/billing/named.md", "mail を送る\n".to_string())]);
+    std::fs::write(dir.path().join("app/billing/broken.md"), [0xffu8, 0xfe, b'\n']).unwrap();
+    let (_, whole_out, whole_err) = run(dir.path(), &["--no-log"], None);
+    assert!(whole_err.contains("app/billing/broken.md: 読めない"), "全体の実行は宣言の file を全部読む: {}\n{}", whole_err, whole_out);
+    let (code, named_out, named_err) = run(dir.path(), &["--no-log", "app/billing/named.md"], None);
+    assert!(!named_err.contains("broken.md"), "名指しの実行は名指しの file だけを読む: {}", named_err);
+    assert!(named_out.contains("DOEFF150") && named_out.contains("named.md"), "名指しの file の当たりは出る: {}\n{}", named_out, named_err);
+    assert_ne!(code, 0, "新しい当たりは error");
+}
+
+/// 宣言の読み違い(正規表現が読めない・普通の文字列の \・:files が無い・:in の語の外)は、位置つきの設定の誤りにする。
+#[test]
+fn retired_declaration_misreadings_are_config_errors() {
+    let dir = world_repo_with(&[], "", "[\"DOEFF150\"]");
+    let arch_path = dir.path().join("architecture.hy");
+    let text = std::fs::read_to_string(&arch_path).unwrap().replace(
+        ":foundation foundation",
+        ":foundation foundation\n  :retired-words [(retired-words \"a\" :patterns [r\"(\"] :files [\"x/**\"] :instead \"y\")\n                  (retired-words \"b\" :patterns [\"\\\\s+\"] :files [\"x/**\"] :instead \"y\")\n                  (retired-words \"c\" :words [\"z\"] :instead \"y\" :in everywhere)]",
+    );
+    std::fs::write(&arch_path, text).unwrap();
+    let (code, stdout, stderr) = run(dir.path(), &["--no-log"], None);
+    let all = format!("{}{}", stdout, stderr);
+    assert_ne!(code, 0, "{}", all);
+    assert!(all.contains("retired-words a の正規表現 ( を読めない"), "{}", all);
+    assert!(all.contains(":patterns の正規表現は r\"…\" の文字列で書く"), "{}", all);
+    assert!(all.contains("retired-words c に :files が無い"), "{}", all);
+    assert!(all.contains(":in は lines か names"), "{}", all);
+}

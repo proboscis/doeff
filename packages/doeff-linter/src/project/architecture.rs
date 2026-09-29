@@ -202,6 +202,48 @@ pub struct TestForms {
     pub runners: Vec<String>,
 }
 
+/// 使わないと決めた綴りをどこで探すか(`:in` — 閉じた 2 つ)。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum WordPlace {
+    /// file の行の全部(註・文字列・文書を含む — 既定)。
+    Lines,
+    /// 定義の名だけ(Hy の `def…` の形と `setv`・`val`・`var` の左辺・Python の def と class の名)。
+    Names,
+}
+
+/// 使わないと決めた綴りの群 1 つ(`:retired-words` の `(retired-words "名" :words [..] :patterns [..] :files [..] …)` — DOEFF150)。
+/// :files と :except は repo の根からの path の glob で、根に錨を下ろす(`**` は 0 個以上の段・`*` は段の中の任意の綴り・
+/// `/` の無い型は根の直下の file だけ)。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct RetiredWords {
+    /// 群の名(知らせと、:patterns の当たりの登録簿の鍵の細目)。
+    pub name: String,
+    /// 語として単独で在る綴り(前後が英字・`_`・`-` でない所 — 別の語の一部は数えない)。登録簿の鍵の細目は語そのもの。
+    pub words: Vec<String>,
+    /// 行ごとに当てる正規表現(読めることは読む時に確かめる)。
+    pub patterns: Vec<String>,
+    pub files: Vec<String>,
+    pub except: Vec<String>,
+    /// この綴りを含む行は数えない(規則そのものを述べる行 — :in lines の時だけ効く)。
+    pub rule_lines: Vec<String>,
+    pub place: WordPlace,
+    /// 代わりに使う語・直し方(知らせの文に入れる)。
+    pub instead: String,
+}
+
+/// 使わないと決めた呼びの群 1 つ(`:retired-calls` の `(retired-calls "名" :calls [..] :files [..] :except [..] :instead "…")` — DOEFF151)。
+/// Hy の file の `(名 …)` の形の呼びだけを数える(註・文字列・`#_` で読み捨てた form は数えない)。glob は :retired-words と同じ。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct RetiredCalls {
+    pub name: String,
+    /// 呼びの頭の綴り(書かれたとおり — `time.time` は `(time.time …)` に当たる)。登録簿の鍵の細目は呼びの綴り。
+    pub calls: Vec<String>,
+    pub files: Vec<String>,
+    pub except: Vec<String>,
+    pub instead: String,
+}
+
 /// architecture.hy の全体。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct Architecture {
@@ -241,6 +283,11 @@ pub struct Architecture {
     /// テストの形の決まり(`:test-forms {:tests [..] :check-scripts [..] :runners [..]}` — どれも file の綴りの型の列)。
     /// 書けば DOEFF135 が deftest 以外のテストの形を出す(agora-redesign #1106 の R6・#1144)。
     pub test_forms: Option<TestForms>,
+    /// 使わないと決めた綴り(`:retired-words [(retired-words …) …]` — 空 = 宣言していない)。書けば DOEFF150 が当たりを出す
+    /// (agora-redesign #1193)。語の表は repo の宣言にだけ在り、linter は持たない。
+    pub retired_words: Vec<RetiredWords>,
+    /// 使わないと決めた呼び(`:retired-calls [(retired-calls …) …]` — 空 = 宣言していない)。書けば DOEFF151 が当たりを出す(#1193)。
+    pub retired_calls: Vec<RetiredCalls>,
     #[serde(skip)]
     pub role_descriptions: BTreeMap<String, String>,
     #[serde(skip)]
@@ -564,6 +611,8 @@ impl<'a> Parser<'a> {
             static_readers: Vec::new(),
             edge_touches: None,
             test_forms: None,
+            retired_words: Vec::new(),
+            retired_calls: Vec::new(),
             role_descriptions: BTreeMap::new(),
             exclude: vec!["tests".into(), "__pycache__".into(), "conftest.py".into()],
             extensions: None,
@@ -614,6 +663,8 @@ impl<'a> Parser<'a> {
                     arch.raw_io_roots = Some(roots);
                 }
                 ":test-forms" => arch.test_forms = self.test_forms(value),
+                ":retired-words" => arch.retired_words = self.retired_words(value),
+                ":retired-calls" => arch.retired_calls = self.retired_calls(value),
                 ":edge-touches" => {
                     let mut touches = Vec::new();
                     for word in self.names(value, ":edge-touches") {
@@ -748,6 +799,158 @@ impl<'a> Parser<'a> {
             self.problem(value, ":test-forms に :tests(テストの file の綴りの型)が無い");
         }
         Some(forms)
+    }
+
+    /// 正規表現の文字列(`r"…"` か bracket 文字列 — 普通の文字列は `\` の書き方が Hy と正規表現で二重になるので、`\` を含むなら理由を積む)。
+    fn pattern(&mut self, form: &Form, what: &str) -> Option<String> {
+        match &form.node {
+            Node::Str { kind: StrKind::Raw | StrKind::Bracket, body } => self.src.get(body.start..body.end).map(str::to_string),
+            Node::Str { kind: StrKind::Plain, body } => {
+                let text = self.src.get(body.start..body.end).unwrap_or("");
+                if text.contains('\\') {
+                    self.problem(form, &format!("{} の正規表現は r\"…\" の文字列で書く(普通の文字列の \\ は Hy と正規表現で二重に読まれる)", what));
+                    return None;
+                }
+                Some(text.to_string())
+            }
+            _ => {
+                self.problem(form, &format!("{} の要素は正規表現の文字列(r\"…\")", what));
+                None
+            }
+        }
+    }
+
+    /// repo の根からの path の glob の列を読む(`/` で始まる・`..` を含む綴りは理由を積む)。
+    fn path_globs(&mut self, value: &Form, what: &str) -> Vec<String> {
+        let globs = self.names(value, what);
+        for glob in &globs {
+            if glob.is_empty() || glob.starts_with('/') || glob.split('/').any(|p| p == "..") {
+                self.problem(value, &format!("{} の {} は repo の根からの path の glob(/ で始めない・.. を含まない)", what, glob));
+            }
+        }
+        globs
+    }
+
+    /// `[(retired-words "名" :words [..] :patterns [r"…"] :files [..] :except [..] :rule-lines [..] :in lines|names :instead "…") …]` を読む
+    /// (:files と :instead と、:words か :patterns のどちらかは要る)。
+    fn retired_words(&mut self, value: &Form) -> Vec<RetiredWords> {
+        let shape = "(retired-words \"名\" :words [..] :patterns [r\"…\"] :files [..] :except [..]? :rule-lines [..]? :in lines|names? :instead \"…\")";
+        let Some(entries) = self.bracket(value) else {
+            self.problem(value, &format!(":retired-words は {} の列", shape));
+            return Vec::new();
+        };
+        let mut out: Vec<RetiredWords> = Vec::new();
+        for entry in entries {
+            let parts = self.paren(entry).filter(|p| p.first().and_then(|h| self.symbol(h)) == Some("retired-words"));
+            let Some(name) = parts.as_ref().and_then(|p| p.get(1)).and_then(|f| self.name(f)) else {
+                self.problem(entry, &format!(":retired-words の要素は {}", shape));
+                continue;
+            };
+            let parts = parts.unwrap_or_default();
+            let mut group = RetiredWords {
+                name,
+                words: Vec::new(),
+                patterns: Vec::new(),
+                files: Vec::new(),
+                except: Vec::new(),
+                rule_lines: Vec::new(),
+                place: WordPlace::Lines,
+                instead: String::new(),
+            };
+            let rest: Vec<&Form> = parts.iter().skip(2).copied().collect();
+            for (key, field) in self.pairs(&rest) {
+                match self.text(key) {
+                    ":words" => group.words = self.names(field, ":words"),
+                    ":patterns" => match self.bracket(field) {
+                        Some(items) => {
+                            for item in items {
+                                let Some(pattern) = self.pattern(item, ":patterns") else { continue };
+                                match regex::Regex::new(&pattern) {
+                                    Ok(_) => group.patterns.push(pattern),
+                                    Err(error) => self.problem(item, &format!("retired-words {} の正規表現 {} を読めない: {}", group.name, pattern, error)),
+                                }
+                            }
+                        }
+                        None => self.problem(field, ":patterns は [r\"…\" …] の列"),
+                    },
+                    ":files" => group.files = self.path_globs(field, ":files"),
+                    ":except" => group.except = self.path_globs(field, ":except"),
+                    ":rule-lines" => group.rule_lines = self.names(field, ":rule-lines"),
+                    ":in" => match self.name(field).as_deref() {
+                        Some("lines") => group.place = WordPlace::Lines,
+                        Some("names") => group.place = WordPlace::Names,
+                        _ => self.problem(field, ":in は lines か names"),
+                    },
+                    ":instead" => group.instead = self.required_string(field, ":instead").unwrap_or_default(),
+                    _ => self.unknown_key(key, "retired-words"),
+                }
+            }
+            if group.words.is_empty() && group.patterns.is_empty() {
+                self.problem(entry, &format!("retired-words {} に :words も :patterns も無い", group.name));
+            }
+            if group.words.iter().any(|w| w.trim().is_empty()) {
+                self.problem(entry, &format!("retired-words {} の :words に空の語がある", group.name));
+            }
+            if group.files.is_empty() {
+                self.problem(entry, &format!("retired-words {} に :files が無い(探す file の無い群は置かない)", group.name));
+            }
+            if group.instead.trim().is_empty() {
+                self.problem(entry, &format!("retired-words {} に :instead(代わりに使う語・直し方)が無い", group.name));
+            }
+            if group.place == WordPlace::Names && !group.rule_lines.is_empty() {
+                self.problem(entry, &format!("retired-words {} の :rule-lines は :in lines の時だけ効く", group.name));
+            }
+            if out.iter().any(|g| g.name == group.name) {
+                self.problem(entry, &format!("retired-words {} が 2 度宣言されている", group.name));
+                continue;
+            }
+            out.push(group);
+        }
+        out
+    }
+
+    /// `[(retired-calls "名" :calls [..] :files [..] :except [..] :instead "…") …]` を読む(:calls・:files・:instead は要る)。
+    fn retired_calls(&mut self, value: &Form) -> Vec<RetiredCalls> {
+        let shape = "(retired-calls \"名\" :calls [..] :files [..] :except [..]? :instead \"…\")";
+        let Some(entries) = self.bracket(value) else {
+            self.problem(value, &format!(":retired-calls は {} の列", shape));
+            return Vec::new();
+        };
+        let mut out: Vec<RetiredCalls> = Vec::new();
+        for entry in entries {
+            let parts = self.paren(entry).filter(|p| p.first().and_then(|h| self.symbol(h)) == Some("retired-calls"));
+            let Some(name) = parts.as_ref().and_then(|p| p.get(1)).and_then(|f| self.name(f)) else {
+                self.problem(entry, &format!(":retired-calls の要素は {}", shape));
+                continue;
+            };
+            let parts = parts.unwrap_or_default();
+            let mut group = RetiredCalls { name, calls: Vec::new(), files: Vec::new(), except: Vec::new(), instead: String::new() };
+            let rest: Vec<&Form> = parts.iter().skip(2).copied().collect();
+            for (key, field) in self.pairs(&rest) {
+                match self.text(key) {
+                    ":calls" => group.calls = self.names(field, ":calls"),
+                    ":files" => group.files = self.path_globs(field, ":files"),
+                    ":except" => group.except = self.path_globs(field, ":except"),
+                    ":instead" => group.instead = self.required_string(field, ":instead").unwrap_or_default(),
+                    _ => self.unknown_key(key, "retired-calls"),
+                }
+            }
+            if group.calls.is_empty() || group.calls.iter().any(|c| c.is_empty() || c.contains(char::is_whitespace)) {
+                self.problem(entry, &format!("retired-calls {} の :calls は呼びの頭の綴り(空白を含まない)の列で、空にしない", group.name));
+            }
+            if group.files.is_empty() {
+                self.problem(entry, &format!("retired-calls {} に :files が無い", group.name));
+            }
+            if group.instead.trim().is_empty() {
+                self.problem(entry, &format!("retired-calls {} に :instead(代わりに使う物)が無い", group.name));
+            }
+            if out.iter().any(|g| g.name == group.name) {
+                self.problem(entry, &format!("retired-calls {} が 2 度宣言されている", group.name));
+                continue;
+            }
+            out.push(group);
+        }
+        out
     }
 
     /// 許可名簿 `[(world-handler "module:名" :touches [..] :answers [..] :wraps [..]) …]` を読む。

@@ -228,6 +228,8 @@ impl Setup {
                     self.settings.architecture.as_ref().is_some_and(|a| !a.world_handlers.is_empty())
                 }
                 ProjectRule::TestFormNotDeftest => self.settings.architecture.as_ref().is_some_and(|a| a.test_forms.is_some()),
+                ProjectRule::RetiredWord => self.settings.architecture.as_ref().is_some_and(|a| !a.retired_words.is_empty()),
+                ProjectRule::RetiredCall => self.settings.architecture.as_ref().is_some_and(|a| !a.retired_calls.is_empty()),
                 ProjectRule::ServiceUntestedOnSim => self.settings.architecture.as_ref().is_some_and(|a| a.verification_environment.is_some()),
                 ProjectRule::TestKindMismatch => {
                     self.settings.architecture.as_ref().is_some_and(|a| !a.world_handlers.is_empty() && a.edge_mark.is_some())
@@ -597,12 +599,13 @@ fn run_editor(args: &Args) -> ExitCode {
             let files = collect_python_files_with_options(&args.paths, &setup.exclude_patterns, args.force_exclude);
             lint_files_parallel(&files, &python_rules)
         };
+        let only = only_paths(&args.paths);
         let project_report = if setup.has_project_rules() {
-            project::run_with(&setup.root, &setup.settings, &project_rules, Target::Whole, &semantic_mode(args, &setup.root, None))
+            project::run_with(&setup.root, &setup.settings, &project_rules, Target::Whole { focus: only.as_deref() }, &semantic_mode(args, &setup.root, None))
         } else {
             ProjectReport::default()
         };
-        (python_results, project_report, None, only_paths(&args.paths))
+        (python_results, project_report, None, only)
     };
 
     let mut project_report = project_report;
@@ -707,9 +710,11 @@ fn run_as_hook(args: &Args) -> ExitCode {
     let mut results = lint_files_parallel(&files, &all_rules);
     if setup.has_project_rules() {
         // hook(作業係の停止の見張り)は全体の実行 — 代理が在れば「覚えている時だけ」問う。
-        let mut report = project::run_with(&setup.root, &setup.settings, &setup.project_rules(), Target::Whole, &project::semantic::SemanticMode::Peek);
+        let only = only_paths(&paths);
+        let mut report =
+            project::run_with(&setup.root, &setup.settings, &setup.project_rules(), Target::Whole { focus: only.as_deref() }, &project::semantic::SemanticMode::Peek);
         report.findings.extend(setup.notice_findings());
-        results.extend(project_results(&report, only_paths(&paths).as_deref()));
+        results.extend(project_results(&report, only.as_deref()));
     } else if !setup.notices.is_empty() {
         let report = ProjectReport { findings: setup.notice_findings(), ..ProjectReport::default() };
         results.extend(project_results(&report, only_paths(&paths).as_deref()));
@@ -894,7 +899,11 @@ fn run_normal(args: &Args) -> ExitCode {
     // 意味の規則で問うはずだったのに答えを得られなかった数(0 でなければ、破れが無くても緑と分けて終了コード 3)。
     let mut unmeasured = 0;
     if setup.has_project_rules() {
-        let mut report = project::run_with(&setup.root, &setup.settings, &setup.project_rules(), Target::Whole, &semantic_mode(args, &setup.root, None));
+        // --modified の時は、変更した file の違反だけにする(変更していない file の既知の違反で止めない)。file 1 つで判じられる規則は
+        // この path の下だけを読む(Target::Whole の focus)。
+        let only: Option<Vec<PathBuf>> = if args.modified { Some(files.iter().map(|f| editor::normalize_path(f)).collect()) } else { only_paths(&args.paths) };
+        let mut report =
+            project::run_with(&setup.root, &setup.settings, &setup.project_rules(), Target::Whole { focus: only.as_deref() }, &semantic_mode(args, &setup.root, None));
         report.findings.extend(setup.notice_findings());
         for error in &report.errors {
             eprintln!("doeff-linter: {}", error);
@@ -925,8 +934,6 @@ fn run_normal(args: &Args) -> ExitCode {
                 labeled.negatives.flagged
             );
         }
-        // --modified の時は、変更した file の違反だけにする(変更していない file の既知の違反で止めない)。
-        let only = if args.modified { Some(files.iter().map(|f| editor::normalize_path(f)).collect()) } else { only_paths(&args.paths) };
         results.extend(project_results(&report, only.as_deref()));
     } else if !setup.notices.is_empty() {
         // 層の規則の節が無い設定でも、知らない鍵は知らせる(黙って読み飛ばさない)。
