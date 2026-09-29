@@ -13,8 +13,10 @@
     "packages/doeff-adr/src/doeff_adr/item_cache.py",
     "packages/doeff-adr/src/doeff_adr/lazy_collection.py",
     "packages/doeff-adr/src/doeff_adr/pytest_plugin.py",
+    "packages/doeff-adr/src/doeff_adr/recorded_collection.py",
     "packages/doeff-adr/tests/test_dynamic_item_cache.py",
     "packages/doeff-adr/tests/test_lazy_collection.py",
+    "packages/doeff-adr/tests/test_recorded_collection.py",
     "packages/doeff-hy/tests/test_pytest_item_types.py"
   ],
   "modules": [
@@ -48,9 +50,25 @@
     },
     {
       "allow": [
+        "pytest-item-records"
+      ],
+      "layer": "pure",
+      "name": "pytest-recorded-collection",
+      "paths": [
+        "packages/doeff-adr/src/doeff_adr/recorded_collection.py"
+      ],
+      "public": [
+        "packages/doeff-adr/src/doeff_adr/recorded_collection.py"
+      ],
+      "responsibility": "記録で説明できる仮のmoduleの収集を、通常の経路と同じitemのまま軽くする。pytestの非公開の収集の部品に触る唯一の場所(#1551)。",
+      "typed": true
+    },
+    {
+      "allow": [
         "pytest-item-records",
         "pytest-runtime-records",
-        "hy-bytecode-import"
+        "hy-bytecode-import",
+        "pytest-recorded-collection"
       ],
       "layer": "io",
       "name": "pytest-item-collection",
@@ -88,13 +106,15 @@
       "allow": [
         "pytest-item-collection",
         "pytest-item-records",
-        "pytest-runtime-records"
+        "pytest-runtime-records",
+        "pytest-recorded-collection"
       ],
       "layer": "io",
       "name": "pytest-item-collection-tests",
       "paths": [
         "packages/doeff-adr/tests/test_dynamic_item_cache.py",
         "packages/doeff-adr/tests/test_lazy_collection.py",
+        "packages/doeff-adr/tests/test_recorded_collection.py",
         "packages/doeff-hy/tests/test_pytest_item_types.py"
       ],
       "public": [],

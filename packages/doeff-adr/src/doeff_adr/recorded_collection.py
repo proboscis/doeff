@@ -14,21 +14,18 @@ pytest の非公開の部品(``FixtureManager`` の登録簿・``FuncFixtureInfo
   fixture の解決(``FixtureManager.getfixtureinfo`` の結果)も同じになる。解決は親の鎖(module・dir・session)の
   fixture・autouse・印と、関数の引数と印だけから決まり、同じ module の兄弟は親の鎖が同じだから。
 
-この 3 つを使い、汎用の属性の走査・xunit の探索・同じ形の関数ごとの fixture の解決の繰り返しを省く。parametrize の
-無い関数では、hook に見せる定義の node と item を 1 つにする(通常の経路は 2 つ作る)。item の生成
+この 3 つを使い、汎用の属性の走査・xunit の探索・同じ形の関数ごとの fixture の解決の繰り返しを省く。item の生成
 (``pytest_pycollect_makeitem``)・parametrize の展開(``pytest_generate_tests`` と ``Metafunc``)は pytest の hook の
 ままで、hook を飛ばさない。
 
 通常の経路と結果が変わりうるのは、pytest と下の既知の plugin 以外の実装がこの 2 つの hook に加わる時(未知の
-plugin は、属性の名で item を作るかもしれず、収集の途中で fixture を登録するかもしれず、定義の node の型
-``FunctionDefinition`` を求めるかもしれない)。その時は ``known_collection_hooks`` が None を返し、呼ぶ側は module の
+plugin は、属性の名で item を作るかもしれず、収集の途中で fixture を登録するかもしれない)。その時は ``known_collection_hooks`` が None を返し、呼ぶ側は module の
 収集を丸ごと通常の経路へ戻す。
 """
 
 from collections.abc import Iterator, Sequence
 from dataclasses import dataclass, field
 from types import ModuleType
-from typing import cast
 
 import pytest
 from _pytest.fixtures import FuncFixtureInfo
@@ -205,25 +202,17 @@ def generate_functions(
     """``PyCollector._genfunctions`` と同じ手順で、関数 1 つの item を作る。``pytest_generate_tests`` は全部の実装を呼び、
     parametrize は ``Metafunc`` が展開する。仮の module は ``pytest_generate_tests`` を持たない(``stub_module``)。
 
-    通常の経路との違いは 2 つだけ:
-
-    - fixture の解決を同じ形の兄弟と共有する(解決済みの写しを渡す)。
-    - parametrize の無い関数では、item を 1 つだけ作る。通常の経路は ``FunctionDefinition`` を作って hook に見せ、
-      parametrize が無ければ同じ関数の ``Function`` をもう 1 つ作る。ここでは hook に見せる物を ``Function`` で作り、
-      parametrize が無ければそれをそのまま item にする。
+    通常の経路との違いは、fixture の解決を同じ形の兄弟と共有すること(解決済みの写しを ``FunctionDefinition`` に
+    渡す)だけ。parametrize の無い関数でも、hook に見せる ``FunctionDefinition`` と item の ``Function`` を通常の経路と
+    同じく別に作る — 1 つにまとめるには ``Metafunc`` の型(``FunctionDefinition``)に ``Function`` を渡す型逃げが要る。
     """
-    item = pytest.Function.from_parent(
+    definition = FunctionDefinition.from_parent(
         collector, name=name, callobj=function, fixtureinfo=collection.resolutions.resolved_for(name)
     )
-    fixtureinfo = item._fixtureinfo
+    fixtureinfo = definition._fixtureinfo
     collection.resolutions.remember(collector, name, fixtureinfo)
     metafunc = Metafunc(
-        # 型の境界: pytest の Metafunc は definition に FunctionDefinition(実行すると例外を出す Function の子)を求める。
-        # ここに渡すのは同じ関数・同じ親・同じ fixture の解決の Function。これを読む pytest_generate_tests の実装は、
-        # known_collection_hooks が既知と確かめた物(_KNOWN_GENERATE_OWNERS — definition の型を問わず、definition を
-        # 書き換えない)だけ。型を問う実装(FunctionDefinition を isinstance で確かめる等)が加わる file は通常の経路へ
-        # 回る — tests/test_recorded_collection.py の未知の plugin の反例がその分かれ目を確かめる。
-        definition=cast(FunctionDefinition, item),
+        definition=definition,
         fixtureinfo=fixtureinfo,
         config=collector.config,
         cls=None,
@@ -232,7 +221,7 @@ def generate_functions(
     )
     collection.hooks.generate_tests.call_extra([], {"metafunc": metafunc})
     if not metafunc._calls:
-        yield item
+        yield pytest.Function.from_parent(collector, name=name, fixtureinfo=fixtureinfo)
         return
     metafunc._recompute_direct_params_indices()
     fixtureinfo.prune_dependency_tree()
