@@ -89,6 +89,18 @@ def handler_spec(handler: object) -> HandlerSpec:
         )
         setattr(handler, _SPEC_ATTR, spec)
         return spec
+    if isinstance(handler, types.MethodType):
+        definition = handler.__func__.__dict__
+        generator = definition.get("__doeff_generator_function__")
+        if isinstance(generator, types.FunctionType):
+            # @do の定義を同じ self / cls に束縛する。型の解決は元の
+            # bound method に対して行い、effect の前の self を読み飛ばす。
+            # self を関数の cache に保存しない: 別 instance と共有しない。
+            return HandlerSpec(
+                handler_effect_types(handler),
+                types.MethodType(generator, handler.__self__),
+                tuple(definition.get("__doeff_tail_resume_lines__", ())),
+            )
     return HandlerSpec(handler_effect_types(handler), None, ())
 
 
