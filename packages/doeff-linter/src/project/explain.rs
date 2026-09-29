@@ -177,6 +177,8 @@ pub enum Explain {
     RetiredWord { group: String, spelling: String, instead: String, name: Option<String> },
     /// DOEFF151: 使わないと決めた呼び。
     RetiredCall { group: String, call: String, instead: String },
+    /// DOEFF141: 決めた材料だけで判じる定義(宣言の綴り・理由・当たりの種類)。
+    BlindDefinition { declared: String, why: String, problem: super::blind::BlindProblem },
     /// DOEFF140: 置き場の外の module への依存(この file の置き場・読む先の module・その file の root からの path)。
     PlacedDependency { placement: Placement, owner: String, owner_rel: String },
     /// DOEFF144: 公開面の型の注記の素の写像・素の組(どこの注記か・名・赤の理由)。
@@ -398,6 +400,25 @@ impl<'a> Narrator<'a> {
                     None => format!("綴り {}(使わないと決めた語 — 群 {})", spelling, group),
                 },
                 format!("この repo は architecture.hy の :retired-words でこの綴りを使わないと決めた(代わり: {})。旧い語が残ると、同じ物を 2 つの名で呼ぶ code と文書が増え、読み手が別の物と取り違える。", instead),
+            ),
+            Explain::BlindDefinition { declared, why, problem } => (
+                match problem {
+                    super::blind::BlindProblem::ReadsWord { reached, word } => {
+                        format!("{} から届く定義 {} の本体の綴り {}", declared, reached, word)
+                    }
+                    super::blind::BlindProblem::Imports { module } => format!("{} の module の import {}", declared, module),
+                    super::blind::BlindProblem::Missing { reason } => format!("宣言した定義 {}({})", declared, reason),
+                },
+                match problem {
+                    super::blind::BlindProblem::Missing { .. } => format!(
+                        "architecture.hy の :blind-definitions が名指す定義が無いと、規則は何も見ずに緑になる(母集団 0 を緑にしない)。理由: {}",
+                        why
+                    ),
+                    super::blind::BlindProblem::ReadsWord { .. } | super::blind::BlindProblem::Imports { .. } => format!(
+                        "この定義は決めた材料だけで判じると architecture.hy の :blind-definitions で宣言した。届く先の定義がほかの材料を読むか、module が依存を持つと、判断が宣言の外の材料で変わる。理由: {}",
+                        why
+                    ),
+                },
             ),
             Explain::RetiredCall { group, call, instead } => (
                 format!("呼び ({} …)(使わないと決めた呼び — 群 {})", call, group),
