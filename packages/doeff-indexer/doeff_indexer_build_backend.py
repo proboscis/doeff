@@ -5,7 +5,6 @@ and editable installs. Both the CLI build and maturin's build use the cargo targ
 doeff_cargo_backend.cargo_target_dir (outside the package dir — agora-redesign #1493).
 """
 
-
 import importlib
 import os
 import shutil
@@ -89,7 +88,9 @@ def build_editable(
 
 
 def build_sdist(sdist_directory: str, config_settings: dict[str, Any] | None = None) -> str:
-    return _maturin().build_sdist(sdist_directory, config_settings)
+    """sdist を組む時も、maturin が cargo に作らせる target を作業木の外に置くため。"""
+    with cargo_target_dir():
+        return _maturin().build_sdist(sdist_directory, config_settings)
 
 
 def get_requires_for_build_wheel(config_settings: dict[str, Any] | None = None) -> list[str]:

@@ -9,11 +9,16 @@ wheel を作ったら消す。uv sync・uv build・別の repo の path の依�
 成果物より古く見え、別の作業木の build を黙って使う(cargo 1.96.1 で実測・agora-redesign #1472 の comment)。
 
 利用者が CARGO_TARGET_DIR を渡した時はそこに組み、消さない — Rust を直すセッションが差分の build を使う
-ための口。その dir を中身の違う作業木どうしで共有すると上の取り違えが起きる。
+ための口。その dir を中身の違う作業木どうしで共有すると上の取り違えが起きる。cargo では env の
+CARGO_TARGET_DIR が config の build.target-dir(と CARGO_BUILD_TARGET_DIR)に勝つので、口の一時の dir は
+それらの設定にも勝つ — 手元の target を使いたい時は CARGO_TARGET_DIR で渡す。
+
+一時の dir の名には build の process の pid を入れる(doeff-cargo-target-<pid>-<乱字>)。SIGTERM・SIGKILL で
+止められた build は後始末をしないので、次の build が入口で、持ち主の process が居ない dir を片づける。
 
 正本は tools/doeff_cargo_backend.py。各 package の doeff_cargo_backend.py はこの file への symlink
 (backend-path は package の dir の中しか指せない — PEP 517)。`python doeff_cargo_backend.py <命令…>` は
-命令を同じ扱いの target の中で走らせる(make sync の maturin develop)。
+命令を同じ扱いの target の中で走らせる(文書が勧める maturin develop)。
 """
 
 from __future__ import annotations
@@ -24,7 +29,7 @@ import subprocess
 import sys
 import tempfile
 from collections.abc import Iterator, Mapping
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
 from pathlib import Path
 from typing import Any
 
@@ -34,17 +39,57 @@ TARGET_ENV = "CARGO_TARGET_DIR"
 TEMP_PREFIX = "doeff-cargo-target-"
 
 
+def _owner_pid(name: str) -> int | None:
+    """一時の target の名(doeff-cargo-target-<pid>-<乱字>)から、それを作った build の pid を読む。"""
+    match name.removeprefix(TEMP_PREFIX).split("-", 1):
+        case [pid, _] if pid.isdigit():
+            return int(pid)
+        case _:
+            # この口の名の形ではない — 持ち主を言えないので片づけの対象にしない。
+            return None
+
+
+def _alive(pid: int) -> bool:
+    """pid の process がまだ居るか(居なければ、その build は止められて後始末をしていない)。"""
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        # 別の利用者の process が同じ pid で居る。
+        return True
+    return True
+
+
+def _sweep_orphans(root: Path) -> None:
+    """止められた build が残した一時の target を消す。持ち主の process が居ない dir だけで、走っている build には触らない。"""
+    for path in root.glob(f"{TEMP_PREFIX}*"):
+        match _owner_pid(path.name):
+            case int(pid) if not _alive(pid):
+                # 同時に入口に来た別の build が先に消していれば、消えた file は探さない。
+                with suppress(FileNotFoundError):
+                    shutil.rmtree(path)
+            case _:
+                pass
+
+
 @contextmanager
 def cargo_target_dir() -> Iterator[Path]:
     """この build の cargo の target。利用者の指定が無ければ一時の dir を作って env に渡し、抜ける時に消す。"""
     match os.environ.get(TARGET_ENV):
-        case None:
-            made = Path(tempfile.mkdtemp(prefix=TEMP_PREFIX))
+        case (None | "") as absent:
+            root = Path(tempfile.gettempdir())
+            _sweep_orphans(root)
+            made = Path(tempfile.mkdtemp(prefix=f"{TEMP_PREFIX}{os.getpid()}-", dir=root))
             os.environ[TARGET_ENV] = str(made)
             try:
                 yield made
             finally:
-                del os.environ[TARGET_ENV]
+                match absent:
+                    case None:
+                        del os.environ[TARGET_ENV]
+                    case str():
+                        os.environ[TARGET_ENV] = absent
                 shutil.rmtree(made)
         case str() as given:
             yield Path(given)
@@ -70,7 +115,12 @@ def build_editable(
         return maturin.build_editable(wheel_directory, config_settings, metadata_directory)
 
 
-build_sdist = maturin.build_sdist
+def build_sdist(sdist_directory: str, config_settings: Mapping[str, Any] | None = None) -> str:
+    """sdist を組む時も、maturin が cargo に作らせる target を作業木の外に置くため。"""
+    with cargo_target_dir():
+        return maturin.build_sdist(sdist_directory, config_settings)
+
+
 get_requires_for_build_wheel = maturin.get_requires_for_build_wheel
 get_requires_for_build_editable = maturin.get_requires_for_build_editable
 get_requires_for_build_sdist = maturin.get_requires_for_build_sdist

@@ -58,12 +58,11 @@ install:
 # (agora-redesign #980 — 以前は cargo feature で make sync の build だけが検査つきになり、同じ venv が
 # 最後に組んだ経路で 15 倍速さを変えた)。doeff の pytest は root の conftest.py が有効にし、
 # tests/test_vm_invariant_checks_enabled.py が hard-fail で検査する(skip 禁止)。
-# だから make sync と素の uv sync は同じ build を作る。maturin develop は uv の Rust の変化の見落としに備えた作り直し
-# (maturin は dev の依存・プロジェクトの環境から呼ぶ — agora-redesign #645 課題 7)。
-# maturin develop も uv の build と同じく、cargo の target を作業木の外の一時の dir に置く(agora-redesign #1493)。
+# だから make sync と素の uv sync は同じ build を作る。--reinstall-package doeff-vm は uv の Rust の変化の見落としに
+# 備えた作り直しで、doeff-vm を必ず組み直す(以前の maturin develop の役)。組み直しは uv の build と同じ口を通り、
+# cargo の target を作業木の外の一時の dir に置くので、1 回の make sync で組むのは 1 回だけ(agora-redesign #1493)。
 sync:
-	uv sync --group dev
-	cd packages/doeff-vm && uv run --no-sync python doeff_cargo_backend.py maturin develop --release
+	uv sync --group dev --reinstall-package doeff-vm
 
 pre-commit-install:
 	uv run pre-commit install

@@ -206,7 +206,7 @@ make bench-smoke
 ## Development
 
 ```bash
-make sync            # install deps + rebuild Rust VM (maturin develop --release)
+make sync            # install deps + rebuild Rust VM (uv sync --reinstall-package doeff-vm)
 uv run pytest        # run full test suite
 ```
 

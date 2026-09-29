@@ -31,6 +31,9 @@ backend-path = ["."]
 # Build as a pure Rust binary, not a Python extension
 bindings = "bin"
 strip = true
+# sdist は path 依存の crate(doeff-indexer)を持つので crate を doeff-linter/ の下へ移す。build の口は pyproject と
+# 同じ根に要る(backend-path = ["."])ので、根に写す — 無いと sdist から組めない(agora-redesign #1493)。
+include = [{ path = "doeff_cargo_backend.py", format = "sdist" }]
 
 # uv が「作り直すか」を決める入力(agora-redesign #1294・親 #1160)。
 # uv は path で入れた依存を、既定では pyproject.toml / setup.py / setup.cfg が変わった時にしか作り直さない。
