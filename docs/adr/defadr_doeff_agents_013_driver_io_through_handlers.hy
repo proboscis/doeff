@@ -22,7 +22,7 @@
 (import pathlib [Path])
 
 (import doeff_agents.io_effects [read-text write-text which-executable run-process])
-(import doeff_agents.io_fake [FakeIoWorld run-fake-io])
+(import doeff_agents.io_fake [FakeIoWorld with-fake-io])
 
 
 ;; ---------------------------------------------------------------------------
@@ -192,15 +192,15 @@
        ;; 検の家が同じ語彙を全部果たし、実世界を触らずに答えること。
        (setv world (FakeIoWorld :files {"/agent/in.txt" "hello"}
                                 :which {"tmux" "/usr/bin/tmux"}))
-       (assert (= (run-fake-io world (read-text "/agent/in.txt")) "hello"))
-       (assert (is (run-fake-io world (read-text "/agent/missing.txt")) None))
-       (assert (= (run-fake-io world (which-executable "tmux")) "/usr/bin/tmux"))
-       (assert (is (run-fake-io world (which-executable "nope")) None))
-       (run-fake-io world (write-text "/agent/out.txt" "written"))
+       (assert (= (run (with-fake-io world (read-text "/agent/in.txt"))) "hello"))
+       (assert (is (run (with-fake-io world (read-text "/agent/missing.txt"))) None))
+       (assert (= (run (with-fake-io world (which-executable "tmux"))) "/usr/bin/tmux"))
+       (assert (is (run (with-fake-io world (which-executable "nope"))) None))
+       (run (with-fake-io world (write-text "/agent/out.txt" "written")))
        (assert (= (get world.files "/agent/out.txt") "written"))
        (assert (not (.exists (Path "/agent/out.txt")))
                "検の家が実 file を作っている(記憶の中の世界だけで果たすこと)")
-       (setv outcome (run-fake-io world (run-process #("tmux" "-V"))))
+       (val outcome (run (with-fake-io world (run-process #("tmux" "-V")))))
        (assert (= outcome.exit-code 127)
                "台本に無い命令は『その命令は無い』で返る(黙って成功にしない)")
        (assert (= (len world.commands) 1)))]
