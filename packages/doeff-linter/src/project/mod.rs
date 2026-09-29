@@ -32,6 +32,7 @@ pub mod confined_spellings;
 pub mod retired;
 pub mod blind;
 pub mod allowed_heads;
+pub mod call_sites;
 pub mod handler_arguments;
 pub mod typed_values;
 pub mod record_stubs;
@@ -316,6 +317,22 @@ pub fn run_with(root: &Path, settings: &ProjectSettings, enabled: &BTreeSet<Proj
                         }
                     }));
                     report.errors.extend(errors);
+                }
+                // DOEFF159 は :files の glob の字義どおりの頭の dir だけを歩く(名指しに関わらず小さい — repo 全体は歩かない)。
+                if enabled.contains(&ProjectRule::CallOutsideDeclaredSites) && !architecture.call_sites.is_empty() {
+                    let architecture_rel = relative_path(root, &architecture.path).unwrap_or_else(|| "architecture.hy".to_string());
+                    let found = crate::timing::timed("call-sites", || call_sites::find(root, &architecture.call_sites, &architecture_rel));
+                    drafts.extend(found.into_iter().map(|found| Draft {
+                        rule: ProjectRule::CallOutsideDeclaredSites,
+                        layer: None,
+                        path: root.join(&found.rel),
+                        message: format!("{} — {}", found.rel, call_sites::describe(&found.head, &found.problem)),
+                        detail: Some(found.detail),
+                        base: Severity::Error,
+                        explain: Explain::CallSites { head: found.head, why: found.why, problem: found.problem },
+                        range: found.range,
+                        rel: found.rel,
+                    }));
                 }
                 // DOEFF144・145 も file 1 つで判じる(名指しが在ればその下だけを読む — repo 全体の索引を組まない)。
                 if let Some(selection) = architecture.typed_values.as_ref().filter(|_| enabled.contains(&ProjectRule::UntypedStructuredValue)) {

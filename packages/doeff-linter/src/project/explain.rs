@@ -183,6 +183,8 @@ pub enum Explain {
     BlindDefinition { declared: String, why: String, problem: super::blind::BlindProblem },
     /// DOEFF147: 呼んでよい頭を決めた定義(宣言の綴り・理由・当たりの種類)。
     AllowedHeads { declared: String, why: String, problem: super::allowed_heads::HeadProblem },
+    /// DOEFF159: 頭を呼んでよい場所と回数(頭・理由・当たりの種類)。
+    CallSites { head: String, why: String, problem: super::call_sites::CallSiteProblem },
     /// DOEFF140: 置き場の外の module への依存(この file の置き場・読む先の module・その file の root からの path)。
     PlacedDependency { placement: Placement, owner: String, owner_rel: String },
     /// DOEFF144: 公開面の型の注記の素の写像・素の組(どこの注記か・名・赤の理由)。
@@ -431,6 +433,22 @@ impl<'a> Narrator<'a> {
                     ),
                     super::blind::BlindProblem::ReadsWord { .. } | super::blind::BlindProblem::Imports { .. } => format!(
                         "この定義は決めた材料だけで判じると architecture.hy の :blind-definitions で宣言した。届く先の定義がほかの材料を読むか、module が依存を持つと、判断が宣言の外の材料で変わる。理由: {}",
+                        why
+                    ),
+                },
+            ),
+            Explain::CallSites { head, why, problem } => (
+                super::call_sites::describe(head, problem),
+                match problem {
+                    super::call_sites::CallSiteProblem::Missing { .. } | super::call_sites::CallSiteProblem::Empty => format!(
+                        "architecture.hy の :call-sites が名指す場所か探す file が無いと、規則は何も見ずに緑になる(母集団 0 を緑にしない)。理由: {}",
+                        why
+                    ),
+                    super::call_sites::CallSiteProblem::Outside { .. }
+                    | super::call_sites::CallSiteProblem::Count { .. }
+                    | super::call_sites::CallSiteProblem::Parent { .. }
+                    | super::call_sites::CallSiteProblem::Branch { .. } => format!(
+                        "この頭を呼んでよい場所と回数は architecture.hy の :call-sites で決めてある。場所の外の呼びや回数の食い違いは、1 点に閉じ込めた境界が黙って 2 つ目を生やすか、境界が外れた形。理由: {}",
                         why
                     ),
                 },
