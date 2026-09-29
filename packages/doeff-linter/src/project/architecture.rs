@@ -271,6 +271,23 @@ pub struct FileSelection {
     pub except: Vec<String>,
 }
 
+/// 判定を 1 か所に閉じ込めた語彙の群 1 つ(`:single-point-vocabulary` の
+/// `(vocabulary-scope "名" :patterns [r"…"] :files [..] :except [..] :instead "…")` — DOEFF146)。
+/// :files と :except は repo の根からの path の glob(:retired-words と同じ形)。:except の file だけがこの語彙を読める
+/// (そこが判定の 1 点)— 他の :files に当たった file がこの語彙を読むと、判定の第 2 の点になる。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct VocabularyScope {
+    /// 群の名(登録簿の鍵の細目)。
+    pub name: String,
+    /// 行ごとに当てる正規表現(読めることは読む時に確かめる)。
+    pub patterns: Vec<String>,
+    pub files: Vec<String>,
+    /// 判定の 1 点(この語彙を読んでよい file — 空にしない)。
+    pub except: Vec<String>,
+    /// 直し方(知らせの文に入れる — 例「slice.hy の答えを読む」)。
+    pub instead: String,
+}
+
 /// architecture.hy の全体。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct Architecture {
@@ -319,6 +336,9 @@ pub struct Architecture {
     pub retired_words: Vec<RetiredWords>,
     /// 使わないと決めた呼び(`:retired-calls [(retired-calls …) …]` — 空 = 宣言していない)。書けば DOEFF151 が当たりを出す(#1193)。
     pub retired_calls: Vec<RetiredCalls>,
+    /// 判定を 1 か所に閉じ込めた語彙(`:single-point-vocabulary [(vocabulary-scope …) …]` — 空 = 宣言していない)。書けば
+    /// DOEFF146 が :except の外でこの語彙を読む file を出す(agora-redesign #1192・#1371)。
+    pub single_point_vocabulary: Vec<VocabularyScope>,
     /// handler の引数の決まり(書けば DOEFF142 が defhandler の引数の client・可変の店を出す — agora-redesign #1189 / #1366)。
     pub handler_arguments: Option<HandlerArguments>,
     /// 公開面の型の注記を読む file(`:typed-values {:files [..] :except [..]}`)。書けば DOEFF144 が、欄・戻り値・:post の型の素の写像・
@@ -653,6 +673,7 @@ impl<'a> Parser<'a> {
             test_forms: None,
             retired_words: Vec::new(),
             retired_calls: Vec::new(),
+            single_point_vocabulary: Vec::new(),
             handler_arguments: None,
             typed_values: None,
             record_stubs: None,
@@ -709,6 +730,7 @@ impl<'a> Parser<'a> {
                 ":test-forms" => arch.test_forms = self.test_forms(value),
                 ":retired-words" => arch.retired_words = self.retired_words(value),
                 ":retired-calls" => arch.retired_calls = self.retired_calls(value),
+                ":single-point-vocabulary" => arch.single_point_vocabulary = self.single_point_vocabulary(value),
                 ":handler-arguments" => arch.handler_arguments = self.handler_arguments(value),
                 ":typed-values" => arch.typed_values = self.file_selection(value, ":typed-values"),
                 ":record-stubs" => arch.record_stubs = self.file_selection(value, ":record-stubs"),
@@ -970,6 +992,65 @@ impl<'a> Parser<'a> {
             }
             if out.iter().any(|g| g.name == group.name) {
                 self.problem(entry, &format!("retired-words {} が 2 度宣言されている", group.name));
+                continue;
+            }
+            out.push(group);
+        }
+        out
+    }
+
+    /// `[(vocabulary-scope "名" :patterns [r"…"] :files [..] :except [..] :instead "…") …]` を読む
+    /// (:patterns・:files・:except・:instead は要る — :except が無ければ「判定の 1 点」が無い宣言になる)。
+    fn single_point_vocabulary(&mut self, value: &Form) -> Vec<VocabularyScope> {
+        let shape = "(vocabulary-scope \"名\" :patterns [r\"…\"] :files [..] :except [..] :instead \"…\")";
+        let Some(entries) = self.bracket(value) else {
+            self.problem(value, &format!(":single-point-vocabulary は {} の列", shape));
+            return Vec::new();
+        };
+        let mut out: Vec<VocabularyScope> = Vec::new();
+        for entry in entries {
+            let parts = self.paren(entry).filter(|p| p.first().and_then(|h| self.symbol(h)) == Some("vocabulary-scope"));
+            let Some(name) = parts.as_ref().and_then(|p| p.get(1)).and_then(|f| self.name(f)) else {
+                self.problem(entry, &format!(":single-point-vocabulary の要素は {}", shape));
+                continue;
+            };
+            let parts = parts.unwrap_or_default();
+            let mut group = VocabularyScope { name, patterns: Vec::new(), files: Vec::new(), except: Vec::new(), instead: String::new() };
+            let rest: Vec<&Form> = parts.iter().skip(2).copied().collect();
+            for (key, field) in self.pairs(&rest) {
+                match self.text(key) {
+                    ":patterns" => match self.bracket(field) {
+                        Some(items) => {
+                            for item in items {
+                                let Some(pattern) = self.pattern(item, ":patterns") else { continue };
+                                match regex::Regex::new(&pattern) {
+                                    Ok(_) => group.patterns.push(pattern),
+                                    Err(error) => self.problem(item, &format!("vocabulary-scope {} の正規表現 {} を読めない: {}", group.name, pattern, error)),
+                                }
+                            }
+                        }
+                        None => self.problem(field, ":patterns は [r\"…\" …] の列"),
+                    },
+                    ":files" => group.files = self.path_globs(field, ":files"),
+                    ":except" => group.except = self.path_globs(field, ":except"),
+                    ":instead" => group.instead = self.required_string(field, ":instead").unwrap_or_default(),
+                    _ => self.unknown_key(key, "vocabulary-scope"),
+                }
+            }
+            if group.patterns.is_empty() {
+                self.problem(entry, &format!("vocabulary-scope {} に :patterns が無い", group.name));
+            }
+            if group.files.is_empty() {
+                self.problem(entry, &format!("vocabulary-scope {} に :files が無い(探す file の無い群は置かない)", group.name));
+            }
+            if group.except.is_empty() {
+                self.problem(entry, &format!("vocabulary-scope {} に :except(判定の 1 点)が無い", group.name));
+            }
+            if group.instead.trim().is_empty() {
+                self.problem(entry, &format!("vocabulary-scope {} に :instead(直し方)が無い", group.name));
+            }
+            if out.iter().any(|g| g.name == group.name) {
+                self.problem(entry, &format!("vocabulary-scope {} が 2 度宣言されている", group.name));
                 continue;
             }
             out.push(group);

@@ -2524,3 +2524,57 @@ fn record_stubs_except_is_honoured() {
     let (_, excepted) = editor(dir.path());
     assert!(keys(&excepted, "DOEFF145").is_empty(), "{}", excepted);
 }
+
+/// agora-redesign #1192・#1371(DOEFF146): :single-point-vocabulary の :except の外でその群の語彙(正規表現)を読んでいる file を
+/// 群ごとに 1 件、critical で出す。:except の file 自身は当てない。
+#[test]
+fn vocabulary_outside_its_single_point_is_red() {
+    let files = [
+        ("app/foundation/host.hy", tags("shared", "foundation") + "(defk with-host [body] body)\n"),
+        (
+            "app/billing/glue/slice.hy",
+            "(setv JOB-PHASE-RUNNING \"Running\")\n(defn slice-of [job] (= job.phase JOB-PHASE-RUNNING))\n".to_string(),
+        ),
+        (
+            "app/billing/glue/queue.hy",
+            "(setv a 1)\n(when (= phase JOB-PHASE-RUNNING) (print 1))\n(when (= phase JOB-PHASE-ENDED) (print 2))\n".to_string(),
+        ),
+        ("app/billing/glue/rows.hy", "(setv b (+ 1 2))\n".to_string()),
+    ];
+    let dir = world_repo_with(&files, "", "[\"DOEFF146\"]");
+    let arch_path = dir.path().join("architecture.hy");
+    let text = std::fs::read_to_string(&arch_path).unwrap().replace(
+        ":foundation foundation",
+        ":foundation foundation\n  :single-point-vocabulary [(vocabulary-scope \"job-phase\" \
+         :patterns [r\"\\bJOB-PHASE-[A-Z]+\\b\"] :files [\"app/billing/glue/**\"] \
+         :except [\"app/billing/glue/slice.hy\"] :instead \"app/billing/glue/slice.hy の答えを読む\")]",
+    );
+    std::fs::write(&arch_path, text).unwrap();
+    let (_, report) = editor(dir.path());
+    assert_eq!(keys(&report, "DOEFF146"), vec!["app/billing/glue/queue.hy::DOEFF146::job-phase"], "{}", report);
+    let hit = violation(&report, "app/billing/glue/queue.hy::DOEFF146::job-phase");
+    assert!(hit["message"].as_str().unwrap().contains("2 行"), "{}", hit["message"]);
+    assert!(hit["message"].as_str().unwrap().contains("slice.hy の答えを読む"), "{}", hit["message"]);
+    assert_eq!(hit["range"]["start"]["line"], 1);
+    assert_eq!(hit["level"], "critical");
+}
+
+/// :single-point-vocabulary の必須の鍵が無ければ読み取りの誤り(位置つき)。
+#[test]
+fn single_point_vocabulary_requires_patterns_files_except_and_instead() {
+    let files = [("app/foundation/host.hy", tags("shared", "foundation") + "(defk with-host [body] body)\n")];
+    let dir = world_repo_with(&files, "", "[\"DOEFF146\"]");
+    let arch_path = dir.path().join("architecture.hy");
+    let text = std::fs::read_to_string(&arch_path).unwrap().replace(
+        ":foundation foundation",
+        ":foundation foundation\n  :single-point-vocabulary [(vocabulary-scope \"a\")]",
+    );
+    std::fs::write(&arch_path, text).unwrap();
+    let (code, stdout, stderr) = run(dir.path(), &["--no-log"], None);
+    let all = format!("{}{}", stdout, stderr);
+    assert_ne!(code, 0, "{}", all);
+    assert!(all.contains("vocabulary-scope a に :patterns が無い"), "{}", all);
+    assert!(all.contains("vocabulary-scope a に :files が無い"), "{}", all);
+    assert!(all.contains("vocabulary-scope a に :except(判定の 1 点)が無い"), "{}", all);
+    assert!(all.contains("vocabulary-scope a に :instead(直し方)が無い"), "{}", all);
+}
