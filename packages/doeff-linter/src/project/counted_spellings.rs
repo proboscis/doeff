@@ -10,11 +10,12 @@
 
 use std::path::Path;
 
-use doeff_indexer::hy_index::reader::{Form, Node, Reader};
-use doeff_indexer::hy_index::{mangle, Position, Range};
+use doeff_indexer::hy_index::reader::Reader;
+use doeff_indexer::hy_index::{Position, Range};
 
 use super::architecture::{CountedSpelling, WantedCount};
 use super::spelling_scope::{code_text, line_of, selected, Extensions};
+use super::top_level;
 
 /// 当たりの種類(閉じた 2 つ)。
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -45,16 +46,8 @@ fn at_line(line: u32) -> Range {
 
 /// top level の、頭が def で始まり 2 つ目が name の form の byte の範囲。
 fn definition_span(source: &str, name: &str) -> Option<(usize, usize)> {
-    let wanted = mangle(name);
-    let symbol = |form: &Form| matches!(form.node, Node::Symbol).then(|| &source[form.span.start..form.span.end]);
-    Reader::new(source, 0, source.len())
-        .read_all()
-        .iter()
-        .find(|form| match form.paren_items() {
-            Some([head, named, ..]) => symbol(head).is_some_and(|h| h.starts_with("def")) && symbol(named).is_some_and(|n| mangle(n) == wanted),
-            _ => false,
-        })
-        .map(|form| (form.span.start, form.span.end))
+    let forms = Reader::new(source, 0, source.len()).read_all();
+    top_level::definition(source, &forms, name).map(|form| (form.span.start, form.span.end))
 }
 
 /// 宣言 1 つを判じる。読めなかった file は errors へ積む。

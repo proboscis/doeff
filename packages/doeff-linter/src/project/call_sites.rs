@@ -17,10 +17,10 @@ use std::collections::BTreeSet;
 use std::path::Path;
 
 use doeff_indexer::hy_index::reader::{Delim, Form, Node, Reader};
-use doeff_indexer::hy_index::{mangle, Range};
+use doeff_indexer::hy_index::Range;
 
 use super::architecture::{CallSite, CallSiteSite};
-use super::{glob_matches, relative_path};
+use super::{glob_matches, relative_path, top_level};
 use crate::position::LineIndex;
 
 /// 当たりの種類(閉じた 6 つ)。
@@ -166,14 +166,9 @@ fn files_of(root: &Path, declared: &CallSite) -> Vec<String> {
 fn locate<'s>(root: &Path, site: &'s CallSiteSite) -> Result<Located<'s>, String> {
     let rel = format!("{}.hy", site.definition.mangled_module().replace('.', "/"));
     let source = std::fs::read_to_string(root.join(&rel)).map_err(|_| format!("module {} の Hy の file({})が読めない", site.definition.module, rel))?;
-    let wanted = mangle(&site.definition.name);
     let top = Reader::new(&source, 0, source.len()).read_all();
-    let found = top.iter().find_map(|form| match form.paren_items() {
-        Some([head, name, ..])
-            if symbol_text(&source, head).is_some_and(|h| h.starts_with("def")) && symbol_text(&source, name).is_some_and(|n| mangle(n) == wanted) =>
-        {
-            Some((form.span.start, form.span.end, (name.span.start, name.span.end)))
-        }
+    let found = top_level::definition(&source, &top, &site.definition.name).and_then(|form| match form.paren_items() {
+        Some([_, name, ..]) => Some((form.span.start, form.span.end, (name.span.start, name.span.end))),
         _ => None,
     });
     let (start, end, name_at) = found.ok_or_else(|| format!("{} に定義 {} が無い", rel, site.definition.name))?;

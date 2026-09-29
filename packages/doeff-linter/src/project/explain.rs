@@ -191,6 +191,8 @@ pub enum Explain {
     AllowedHeads { declared: String, why: String, problem: super::allowed_heads::HeadProblem },
     /// DOEFF159: 頭を呼んでよい場所と回数(頭・理由・当たりの種類)。
     CallSites { head: String, why: String, problem: super::call_sites::CallSiteProblem },
+    /// DOEFF160: 広い例外の捕捉を置かない群(群の名・理由・当たりの種類)。
+    BroadCatches { group: String, why: String, problem: super::broad_catches::BroadCatchProblem },
     /// DOEFF140: 置き場の外の module への依存(この file の置き場・読む先の module・その file の root からの path)。
     PlacedDependency { placement: Placement, owner: String, owner_rel: String },
     /// DOEFF144: 公開面の型の注記の素の写像・素の組(どこの注記か・名・赤の理由)。
@@ -509,6 +511,19 @@ impl<'a> Narrator<'a> {
                     | super::call_sites::CallSiteProblem::Parent { .. }
                     | super::call_sites::CallSiteProblem::Branch { .. } => format!(
                         "この頭を呼んでよい場所と回数は architecture.hy の :call-sites で決めてある。場所の外の呼びや回数の食い違いは、1 点に閉じ込めた境界が黙って 2 つ目を生やすか、境界が外れた形。理由: {}",
+                        why
+                    ),
+                },
+            ),
+            Explain::BroadCatches { group, why, problem } => (
+                super::broad_catches::describe(group, problem),
+                match problem {
+                    super::broad_catches::BroadCatchProblem::Missing { .. } | super::broad_catches::BroadCatchProblem::Empty => format!(
+                        "architecture.hy の :broad-catches が名指す運搬の境界か探す file が無いと、規則は何も見ずに緑になる(母集団 0 を緑にしない)。理由: {}",
+                        why
+                    ),
+                    super::broad_catches::BroadCatchProblem::Outside { .. } | super::broad_catches::BroadCatchProblem::Unbound { .. } => format!(
+                        "広い例外の捕捉は契約の破れ(:pre / :post・型の束縛・assert)まで握りつぶす。許すのは architecture.hy の :broad-catches の :carriers で、捕まえた例外を名で束縛して決めた出来事に載せ、列へ運ぶ境界だけ。理由: {}",
                         why
                     ),
                 },

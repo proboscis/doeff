@@ -246,6 +246,7 @@ impl Setup {
                 ProjectRule::BlindDefinitionReads => self.settings.architecture.as_ref().is_some_and(|a| !a.blind_definitions.is_empty()),
                 ProjectRule::DefinitionCallsUnlistedHead => self.settings.architecture.as_ref().is_some_and(|a| !a.allowed_heads.is_empty()),
                 ProjectRule::CallOutsideDeclaredSites => self.settings.architecture.as_ref().is_some_and(|a| !a.call_sites.is_empty()),
+                ProjectRule::BroadCatchOutsideCarrier => self.settings.architecture.as_ref().is_some_and(|a| !a.broad_catches.is_empty()),
                 ProjectRule::UntypedStructuredValue => self.settings.architecture.as_ref().is_some_and(|a| a.typed_values.is_some()),
                 ProjectRule::RecordStubNotKwOnly => self.settings.architecture.as_ref().is_some_and(|a| a.record_stubs.is_some()),
                 ProjectRule::ServiceUntestedOnSim => self.settings.architecture.as_ref().is_some_and(|a| a.verification_environment.is_some()),
