@@ -69,11 +69,19 @@ name = "doeff"
 #   テストの段は make sync から)と tests/test_daily_test_population.py(package の loop の網羅・失敗名の形・test file の置き場)。
 # ⇒ 戻し方: 4 段の列を、build の make sync の後ろへ root・packages・rust の命令を && でつないだ 1 本の文字列へ戻し、上の R8 の
 #   deftest を外す(設計 = docs/design/test-population-ki-08ec/design.md §3.2)。
+# 2026-09-29(agora-redesign #1236・manager w3J:p2 の決め・戻せる): VS Code 拡張 ide-plugins/vscode/doeff-runner の compile(tsc)と
+# eslint の段 vscode を足す。拡張を触る 2 つの変更(契約 LintBodyRole に comment を足した変更と、render.ts に role の網羅の switch を
+# 足した変更)が別々にマージされ、合わさると tsc が落ちて vsix の自動追随が 10:27 から組めなかった。マージ前の検査には足さない
+# (operator の裁定 land-gate-runs-no-tests — マージの列は衝突の印の走査だけ・型検査と lint は日次)。合流で壊れたのを早く知るのは
+# vsix の自動追随が組めなかった時の知らせ(#1043)が持つ。段は make sync を要らず(Python の母集団を呼ばない)、zeus の login shell の
+# node 22 / npm 10 で走る(実測 2026-09-29: 緑 12 秒・case 'comment' を抜いた木で TS2322 の赤 rc 2)。後ろを止めない。
+# 戻すには vscode の段の 1 行を消す。
 full = [
   { name = "build", run = "python3 $HOME/dotfiles/agentcli/src/agentcli/remote_check.py --node zeus --tree . --label doeff-gate-full --sync-timeout 900 --run-timeout 3600 --fallback-local -- sh -c \"UV_CACHE_DIR=\\$HOME/.cache/uv-lanes/land-doeff make sync\"", blocks_rest = true },
   { name = "root", run = "python3 $HOME/dotfiles/agentcli/src/agentcli/remote_check.py --node zeus --tree . --label doeff-gate-full --sync-timeout 900 --run-timeout 3600 --fallback-local -- sh -c \"UV_CACHE_DIR=\\$HOME/.cache/uv-lanes/land-doeff make sync && UV_CACHE_DIR=\\$HOME/.cache/uv-lanes/land-doeff PYTHONUNBUFFERED=1 uv run --no-sync pytest -q -m 'not e2e'\"" },
   { name = "packages", run = "python3 $HOME/dotfiles/agentcli/src/agentcli/remote_check.py --node zeus --tree . --label doeff-gate-full --sync-timeout 900 --run-timeout 3600 --fallback-local -- sh -c \"UV_CACHE_DIR=\\$HOME/.cache/uv-lanes/land-doeff make sync && UV_CACHE_DIR=\\$HOME/.cache/uv-lanes/land-doeff PYTHONUNBUFFERED=1 make test-packages PACKAGE_UV_RUN='uv run --no-sync'\"" },
-  { name = "rust", run = "python3 $HOME/dotfiles/agentcli/src/agentcli/remote_check.py --node zeus --tree . --label doeff-gate-full --sync-timeout 900 --run-timeout 3600 --fallback-local -- sh -c \"UV_CACHE_DIR=\\$HOME/.cache/uv-lanes/land-doeff make sync && UV_CACHE_DIR=\\$HOME/.cache/uv-lanes/land-doeff make test-rust\"" }
+  { name = "rust", run = "python3 $HOME/dotfiles/agentcli/src/agentcli/remote_check.py --node zeus --tree . --label doeff-gate-full --sync-timeout 900 --run-timeout 3600 --fallback-local -- sh -c \"UV_CACHE_DIR=\\$HOME/.cache/uv-lanes/land-doeff make sync && UV_CACHE_DIR=\\$HOME/.cache/uv-lanes/land-doeff make test-rust\"" },
+  { name = "vscode", run = "python3 $HOME/dotfiles/agentcli/src/agentcli/remote_check.py --node zeus --tree . --label doeff-gate-full --sync-timeout 900 --run-timeout 1800 --fallback-local -- sh -c \"cd ide-plugins/vscode/doeff-runner && npm ci --no-audit --no-fund && npm run compile && npm run lint\"" }
 ]
 # 門の走行の持ち時間 2700→7200(2026-08-17)。実測 = L32 が 2713.4s で時間切れ
 # (4 連敗・Mac 飽和帯)。ADR-DOE-ENFORCE-001 R6 の第 3 の締切の宣言先行便。
