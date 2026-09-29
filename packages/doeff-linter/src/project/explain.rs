@@ -171,6 +171,10 @@ pub enum Explain {
     TestKindMismatch { test: String, edge: bool, mark: String, reached: Vec<String> },
     /// DOEFF135: deftest 以外のテストの形。
     TestFormNotDeftest { form: &'static str, detail: String },
+    /// DOEFF150: 使わないと決めた綴り(群の名・当たった綴り・代わりの語・:in names なら定義の名)。
+    RetiredWord { group: String, spelling: String, instead: String, name: Option<String> },
+    /// DOEFF151: 使わないと決めた呼び。
+    RetiredCall { group: String, call: String, instead: String },
     ServiceUntestedOnSim { service: String, entry: String, definitions: usize, sim: String },
     /// DOEFF106・131 を層の置き場の外の file に当てた当たり(層の説明の主体が無い — message をそのまま主体にする)。
     WorldOutsideLayers { subject: String },
@@ -373,6 +377,17 @@ impl<'a> Narrator<'a> {
             Explain::TestFormNotDeftest { form, detail } => (
                 format!("テストの形 {} — {}", form, detail),
                 "テストは deftest だけ。pytest の外で走る検査や pytest の Python の形は、赤になっても誰も気づかない(#1104 の実測 — pytest の外の検査 5 本が赤のまま放置されていた)。".to_string(),
+            ),
+            Explain::RetiredWord { group, spelling, instead, name } => (
+                match name {
+                    Some(name) => format!("定義の名 {}(使わないと決めた綴り {} — 群 {})", name, spelling, group),
+                    None => format!("綴り {}(使わないと決めた語 — 群 {})", spelling, group),
+                },
+                format!("この repo は architecture.hy の :retired-words でこの綴りを使わないと決めた(代わり: {})。旧い語が残ると、同じ物を 2 つの名で呼ぶ code と文書が増え、読み手が別の物と取り違える。", instead),
+            ),
+            Explain::RetiredCall { group, call, instead } => (
+                format!("呼び ({} …)(使わないと決めた呼び — 群 {})", call, group),
+                format!("この repo は architecture.hy の :retired-calls でこの呼びを退役させた(代わり: {})。退役した物を呼ぶ所が残ると、同じ役の物が 2 つ並び、座標や答えが黙って食い違う。", instead),
             ),
             Explain::ServiceUntestedOnSim { service, entry, definitions, sim } => (
                 format!("service {} の組み立て {}({} 本の定義)", service, entry, definitions),
@@ -724,6 +739,8 @@ impl<'a> Narrator<'a> {
                 }
                 .to_string(),
             ),
+            Explain::RetiredWord { instead, .. } => Some(format!("{} に書き換える(規則そのものを述べる行なら :rule-lines の綴りを含めて書く)— 直せない既存の当たりは登録簿に載せる", instead)),
+            Explain::RetiredCall { instead, .. } => Some(format!("{} に置き換える — 直せない既存の当たりは登録簿に載せる", instead)),
             Explain::MixedConcerns { .. } => Some("形の検めは protocol の境目で defwire の型に parse し(形が合わなければ解く所で失敗)、この定義は型のある値を受けて判断だけをする".to_string()),
             Explain::ClassRoleDoubt { chosen, .. } if chosen == "external-world" => Some(WORLD_FIX.to_string()),
             Explain::ClassRoleDoubt { .. } => Some(STATE_FIX.to_string()),
