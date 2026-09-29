@@ -5,6 +5,10 @@
 ;;;   待ち受け      aiohttp の server を await-handler の共有の event loop の上に立てる(HttpListen)。要求ごとに札を振り、出来事
 ;;;                 HttpRequestArrived(頭を含む)を列へ並べ、命令(札つき)を待ってから実 I/O を撃つ — 呼び手は撃つだけで待たないので、
 ;;;                 長い中継が他の要求を止めない
+;;;   本文の読み    HttpReadBody で札の要求の本文を request.content から塊で流しながら読む(aiohttp の request.read の既定の上限 1 MiB は
+;;;                 通らない — 上限は effect の max-bytes だけ)。宣言の Content-Length が上限を超えれば読まずに断り、宣言が無い(chunked)・
+;;;                 偽る要求は読んだ量が上限を 1 byte でも超えた拍に止めて断る。断った札は、答えを送った後に接続を閉じる(残りの本文を
+;;;                 aiohttp の lingering で読み捨てさせない)
 ;;;   応答の送出    HttpRespond の status と頭をそのまま・本文は byte 列か file の範囲(start から length byte を塊で読んで書く)
 ;;;   HTTP の中継   本文を両向きとも streaming で通す。hop-by-hop の頭を落とし、X-Forwarded-Proto / X-Forwarded-For を足す。Host は要求の
 ;;;                 値のまま。中継先に届かなければ 502
@@ -33,10 +37,13 @@
                                                 HttpNextRequest HttpRespond HttpForward WsForward WsAccept WsSendText WsClose HttpShutdown
                                                 TakeWsSendReport WsSendReport WsOpened WsTextArrived WsBinaryArrived WsClosed
                                                 HttpBodyBytes HttpBodyFileRange HttpNoBody FLUSH-SAMPLES-LIMIT DEFAULT-DRAIN-SECONDS WS-CLOSE-NORMAL
-                                                WS-CLOSE-ABNORMAL])
+                                                WS-CLOSE-ABNORMAL HttpReadBody HttpBodyRead HttpBodyTooLarge HttpBodyFailed HttpBodyOutcome])
+(import aiohttp.web_protocol [PayloadAccessError])
 
 ;; file の範囲を送る塊の byte 数。
 (val FILE-CHUNK-BYTES 262144)
+;; 要求の本文を読む塊の byte 数(上限の手前では残りの分だけ読む)。
+(val BODY-CHUNK-BYTES 262144)
 
 ;; 中継先への接続の上限と、HTTP の中継の読みの間の上限(秒 — 旧い nginx の proxy_read_timeout 300s と同じ)。
 (val CONNECT-SECONDS 10.0)
@@ -151,6 +158,8 @@
           self.client None
           self.runner None
           self.waiting {}
+          self.unread {}
+          self.oversized (set)
           self.peers {}
           self.shut None
           self.ws-send-drain None
@@ -204,14 +213,19 @@
     (setv self.count (+ self.count 1))
     (setv ticket (str self.count)
           waiting (.create-future (asyncio.get-running-loop)))
-    (setv (get self.waiting ticket) waiting)
+    (setv (get self.waiting ticket) waiting
+          (get self.unread ticket) request)
     (await (.put self.queue (HttpRequestArrived :ticket ticket :method request.method :path request.path :target request.raw-path
                                          :upgrade (upgrade-asked request)
                                          :headers (tuple (gfor [name value] (.items request.headers) (HttpHeader :name name :value value)))
                                          :received-at (time.monotonic))))
     (setv command (await waiting))
+    ;; 命令を受けた札の本文はもう読ませない。本文を上限で断った札は、答えを送った後に接続を閉じる。
+    (.pop self.unread ticket None)
+    (setv cut-off (in ticket self.oversized))
+    (.discard self.oversized ticket)
     (match command
-      (HttpRespond :status status :headers headers :body body) (await (self.respond request status headers body))
+      (HttpRespond :status status :headers headers :body body) (await (self.respond request status headers body cut-off))
       (HttpForward :url url) (await (self.relay-http request url))
       (WsForward :url url) (await (self.relay-ws request url))
       (WsAccept :ticket accepted) (await (self.terminate-ws request accepted))))
@@ -357,9 +371,35 @@
     (self.reset-report)
     report)
 
+  (defn :async #^ HttpBodyOutcome read-body [self #^ str ticket #^ int max-bytes]  ; defk にできない: aiohttp の要求の本文を読む実 I/O(event loop の coroutine)
+    "札の要求の本文を上限まで流しながら読むため(頭の註 — 宣言が上限を超えれば読まずに断る・読んだ量が上限を超えた拍に止めて断る)。
+     札ごとに 1 度だけ: 読み終えた・命令を受けた・知らない札は HttpBodyFailed。"
+    (setv request (.pop self.unread ticket None))
+    (when (is request None)
+      (return (HttpBodyFailed :reason (.format "札 {} の要求の本文は読めない(知らない札・読み終えた札・命令を撃った後の札)" ticket))))
+    (setv declared request.content-length)
+    (when (and (is-not declared None) (> declared max-bytes))
+      (.add self.oversized ticket)
+      (return (HttpBodyTooLarge :declared declared)))
+    (setv chunks [] total 0)
+    (try
+      (while True
+        (setv chunk (await (.read request.content (min BODY-CHUNK-BYTES (- (+ max-bytes 1) total)))))
+        (when (not chunk)
+          (break))
+        (.append chunks chunk)
+        (setv total (+ total (len chunk)))
+        (when (> total max-bytes)
+          (.add self.oversized ticket)
+          (return (HttpBodyTooLarge :declared declared))))
+      (except [error #(ConnectionError web.RequestPayloadError PayloadAccessError)]
+        (return (HttpBodyFailed :reason (.format "札 {} の要求の本文を読めなかった: {!r}" ticket error)))))
+    (HttpBodyRead :data (.join b"" chunks)))
+
   (defn :async #^ web.StreamResponse respond [self #^ web.Request request #^ int status #^ tuple headers
-                                              #^ (| HttpBodyBytes HttpBodyFileRange HttpNoBody) body]
-    "翻訳の handler が決めた答えをそのまま送るため(file の範囲は塊で読んで書く)。"
+                                              #^ (| HttpBodyBytes HttpBodyFileRange HttpNoBody) body #^ bool cut-off]
+    "翻訳の handler が決めた答えをそのまま送るため(file の範囲は塊で読んで書く)。cut-off = 本文を上限で断った札 — 送った後に接続を閉じる
+     (残りの本文を読み捨てない)。"
     (setv response (web.StreamResponse :status status))
     (for [header headers]
       (if (= (.lower header.name) "content-length")
@@ -382,6 +422,9 @@
                 (await (.write response chunk)))))
       (HttpNoBody) (await (.prepare response request)))
     (await (.write-eof response))
+    (when cut-off
+      ;; 書いた答えは transport が流し切ってから閉じる。protocol の側で閉じるので、aiohttp は残りの本文の lingering をしない。
+      (.force-close request.protocol))
     response)
 
   (defn :async #^ web.StreamResponse relay-http [self #^ web.Request request #^ str url]
@@ -441,6 +484,9 @@
   (HttpNextRequest []
     (<- arrival (Await (.next-arrival edge)))
     (resume arrival))
+  (HttpReadBody [ticket max-bytes]
+    (<- outcome HttpBodyOutcome (Await (.read-body edge ticket max-bytes)))
+    (resume outcome))
   (HttpRespond [ticket status headers body]
     (<- (Await (.settle edge ticket effect)))
     (resume None))

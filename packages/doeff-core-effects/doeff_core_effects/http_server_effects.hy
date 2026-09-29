@@ -27,9 +27,21 @@
 ;;;                    消費者が自分の計器へ積むための材料で、答え手は消費者の計器を知らない
 ;;; 出来事の received-at = 答え手がその出来事を受けた拍の単調時計の秒(time.monotonic と同じ物差し — 消費者の待ちの計器の起点)。時計を
 ;;; 持たない台本の答え手では、台本の書き手が載せた値のまま(載せなければ None)。
-;;; 要求の本文を読む effect は今の消費者に要らないので持たない(要る時に契約を足す)。file の状態は file_effects.hy の StatPath で読む(ここに持たない)。
+;;; 要求の本文を読む effect(agora-redesign #880 U1 — 記録の service は POST の本文が本体):
+;;;   HttpReadBody     札の要求の本文を max-bytes まで読む。答え = HttpBodyOutcome:
+;;;                      HttpBodyRead(data)          本文の全部(本文なしは b"")
+;;;                      HttpBodyTooLarge(declared)  本文が max-bytes を超える — declared = 要求が宣言した Content-Length(chunked 等で
+;;;                                                  宣言が無ければ None)。宣言が上限を超えていれば 1 byte も読まずに断る。宣言が無い・
+;;;                                                  宣言を偽る要求は、流しながら読んで上限を 1 byte でも超えた拍に読むのを止めて断る
+;;;                                                  (Content-Length の有無を問わず、memory に載せるのは高々 max-bytes + 1 byte)
+;;;                      HttpBodyFailed(reason)      読めなかった(相手が途中で切った・本文の形が壊れている・知らない札・命令を
+;;;                                                  撃った後の札)
+;;;                    命令(HttpRespond 等)より前に、札ごとに高々 1 度撃つ。断った後の答え(413 等)は呼び手が HttpRespond で送り、
+;;;                    答え手はその答えを送った後に接続を閉じる(残りの本文を読み捨てない)。HttpForward に渡す札では撃たない(中継は本文を
+;;;                    streaming で写すので、先に読むと写す本文が無くなる)。
+;;; file の状態は file_effects.hy の StatPath で読む(ここに持たない)。
 ;;;
-;;; 台本の語彙(本物の待ち受けには無い): HttpScript・ScriptedUpstream = 台本・HttpServed = 受けた命令と端末が受け取る答え・
+;;; 台本の語彙(本物の待ち受けには無い): HttpScript・ScriptedUpstream・ScriptedBody = 台本・HttpServed = 受けた命令と端末が受け取る答え・
 ;;; WsTextSent / WsCloseSent = ws の接続へ送った 1 通と閉じ・ReadHttpServed = 記録を読む effect(検と筋書きが覗くため)・
 ;;; AppendHttpScript = 走っている台本の後ろへ出来事を足す effect(筋書きの相手役が時刻の来た拍に届ける — scripted-http-server だけが答える)。
 (require doeff-hy.macros [val])
@@ -145,6 +157,25 @@
 (val HttpBody (| HttpBodyBytes HttpBodyFileRange HttpNoBody))
 
 
+(defrecord HttpBodyRead
+  "HttpReadBody の答え: 要求の本文の全部(本文なしは b\"\")。"
+  (#^ bytes data))
+
+
+(defrecord HttpBodyTooLarge
+  "HttpReadBody の答え: 本文が上限を超えた(declared = 要求が宣言した Content-Length・宣言が無ければ None — 頭の註)。"
+  (#^ (| int None) declared))
+
+
+(defrecord HttpBodyFailed
+  "HttpReadBody の答え: 本文を読めなかった(reason = 理由の文 — 頭の註)。"
+  (#^ str reason))
+
+
+;; HttpReadBody の答えの union。
+(val HttpBodyOutcome (| HttpBodyRead HttpBodyTooLarge HttpBodyFailed))
+
+
 (defclass [(dataclass :frozen True)] HttpListen [EffectBase]
   "待ち受けを開く(頭の註)。答え = 結んだ宛先 HttpAddress。"
   (#^ HttpAddress address)
@@ -162,6 +193,12 @@
   (#^ int status)
   (#^ (get tuple #(HttpHeader ...)) headers)
   (#^ HttpBody body))
+
+
+(defclass [(dataclass :frozen True)] HttpReadBody [EffectBase]
+  "札の要求の本文を max-bytes まで読む(頭の註)。答え = HttpBodyOutcome。"
+  (#^ str ticket)
+  (#^ int max-bytes))
 
 
 (defclass [(dataclass :frozen True)] HttpForward [EffectBase]
@@ -218,12 +255,22 @@
   (#^ bool accepts-ws))
 
 
+(defrecord ScriptedBody
+  "札の要求の本文 1 つの台本: data = 相手が送る本文の byte 列・failed = 読みの途中で相手が切った等の理由(None = 読める)。宣言の長さ
+   (Content-Length)は要求の頭(HttpRequestArrived の headers)に台本の書き手が載せる — 載せなければ chunked と同じ宣言なし。台本に本文の
+   無い札は本文なし(b\"\")。"
+  (#^ str ticket)
+  (#^ bytes data)
+  (setv #^ (| str None) failed None))
+
+
 (defrecord HttpScript
   "scripted-http-server の台本: 届く出来事の列(要求と、WsAccept で上げた札の ws の出来事)と、中継先ごとの答えと、読まない相手の札
-   (stalled — その札の送りは箱に溜まり続け、送りの上限を超えれば切られる)。"
+   (stalled — その札の送りは箱に溜まり続け、送りの上限を超えれば切られる)と、要求の本文(bodies — HttpReadBody の答えの元)。"
   (#^ (get tuple #((| HttpRequestArrived WsTextArrived WsBinaryArrived WsClosed) ...)) arrivals)
   (setv #^ (get tuple #(ScriptedUpstream ...)) upstreams #()
-        #^ (get frozenset str) stalled (frozenset)))
+        #^ (get frozenset str) stalled (frozenset)
+        #^ (get tuple #(ScriptedBody ...)) bodies #()))
 
 
 (defrecord HttpServed
@@ -252,5 +299,6 @@
 
 
 (defclass [(dataclass :frozen True)] AppendHttpScript [EffectBase]
-  "走っている台本の出来事の列の後ろへ arrivals を足す(頭の註)。答え = None。"
-  (#^ (get tuple #((| HttpRequestArrived WsTextArrived WsBinaryArrived WsClosed) ...)) arrivals))
+  "走っている台本の出来事の列の後ろへ arrivals を足す(頭の註)。bodies = 足す要求の本文の台本。答え = None。"
+  (#^ (get tuple #((| HttpRequestArrived WsTextArrived WsBinaryArrived WsClosed) ...)) arrivals)
+  (setv #^ (get tuple #(ScriptedBody ...)) bodies #()))

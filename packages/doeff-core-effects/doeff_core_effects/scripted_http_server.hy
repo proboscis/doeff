@@ -6,6 +6,9 @@
 ;;;   HttpNextRequest  台本の出来事を順に渡し、尽きたら HttpServerClosed。WsAccept で上げた札の WsOpened と、WsClose・送りの上限の切りで
 ;;;                    終わった札の WsClosed は、その拍に列の頭へ差す(本物の待ち受けが直ぐに出す出来事と同じ並び)。HttpShutdown の後は
 ;;;                    列に何が残っていても HttpServerClosed(その理由)
+;;;   HttpReadBody     台本の本文(ScriptedBody)で答える: 宣言の長さ(要求の頭の Content-Length)が上限を超えれば読まずに HttpBodyTooLarge、
+;;;                    本文が上限を超えれば HttpBodyTooLarge(宣言が無ければ None)、failed が在れば HttpBodyFailed、他は HttpBodyRead(台本に
+;;;                    本文の無い札は b"")。札ごとに 1 度だけ — 読み終えた札・命令を受けた札・知らない札は HttpBodyFailed(本物と同じ)
 ;;;   HttpRespond      受けた命令を記録する。端末が受け取る本文 = byte 列は UTF-8 で読み(読めない byte は置き換え)、file の範囲は
 ;;;                    file system の effect(ReadBytes — 外側の file の答え手、多くは memory-file-handler)で読んで切り出す
 ;;;   HttpForward      台本の中継先(url の頭の最長の一致)の http-status で答えた扱いにする。当たらなければ 502
@@ -17,14 +20,15 @@
 ;;;   HttpShutdown     開いている札の全部へ close 1000 を記録し、以後は HttpServerClosed
 ;;;   TakeWsSendReport 送りの勘定(WsSendReport)を読んで 0 に戻す
 ;;;   ReadHttpServed   受けた命令と送った ws の記録(HttpServed・WsTextSent・WsCloseSent の tuple)
-;;;   AppendHttpScript 台本の出来事の列の後ろへ足す(筋書きの相手役が時刻の来た拍に届ける)
+;;;   AppendHttpScript 台本の出来事の列の後ろへ足す(筋書きの相手役が時刻の来た拍に届ける)。足す要求の本文の台本も足す
 ;;; 並び: file の答え手をこの handler より外側に置く。session の値の置き場(doeff_core_effects の state)はさらに外側に要る。
 (require doeff-hy.macros [defhandler defk <- val var])
 (import doeff_core_effects.http_server_effects [HttpListen HttpNextRequest HttpRespond HttpForward WsForward WsAccept WsSendText WsClose
                                                 HttpShutdown TakeWsSendReport WsSendReport ReadHttpServed AppendHttpScript HttpServed
                                                 WsTextSent WsCloseSent WsOpened WsClosed HttpServerClosed HttpScript ScriptedUpstream
                                                 HttpBodyBytes HttpBodyFileRange HttpNoBody DEFAULT-WS-SEND-MAX-BYTES FLUSH-SAMPLES-LIMIT
-                                                WS-CLOSE-NORMAL WS-CLOSE-ABNORMAL])
+                                                WS-CLOSE-NORMAL WS-CLOSE-ABNORMAL HttpReadBody HttpBodyRead HttpBodyTooLarge HttpBodyFailed
+                                                HttpBodyOutcome HttpRequestArrived ScriptedBody])
 (import doeff_core_effects.file_effects [ReadBytes FileFailed])
 
 (val CLOSED-REASON "台本の要求の列が尽きた")
@@ -101,12 +105,40 @@
   (dfor [t n] (.items backlog) :if (!= t ticket) t n))
 
 
+(defk declared-length [headers]
+  {:pre [(: headers tuple)] :post [(: % (| int None))]}
+  "要求の頭から宣言された本文の長さ(Content-Length)を読むため(無い・数でなければ None — chunked と同じ宣言なし)。"
+  (val said (next (gfor h headers :if (= (.lower h.name) "content-length") (.strip h.value)) None))
+  (if (and (is-not said None) (.isdigit said)) (int said) None))
+
+
+(defk scripted-body-outcome [declared body max-bytes]
+  {:pre [(: declared (| int None)) (: body (| ScriptedBody None)) (: max-bytes int)] :post [(: % HttpBodyOutcome)]}
+  "台本の本文 1 つを HttpReadBody の答えにするため(本物と同じ順: 宣言が上限を超えれば読まずに断る → 読みの途中の失敗 → 読んだ量が上限を
+   超えれば断る → 読めた)。"
+  (val data (if (is body None) b"" body.data))
+  (cond
+    (and (is-not declared None) (> declared max-bytes)) (HttpBodyTooLarge :declared declared)
+    (and (is-not body None) (is-not body.failed None)) (HttpBodyFailed :reason body.failed)
+    (> (len data) max-bytes) (HttpBodyTooLarge :declared declared)
+    True (HttpBodyRead :data data)))
+
+
+(defk bodies-by-ticket [bodies]
+  {:pre [(: bodies tuple)] :post [(: % dict)]}
+  "本文の台本を札で引ける表にするため。"
+  (dfor b bodies b.ticket b))
+
+
 (defhandler scripted-http-server [#^ HttpScript script]
   ;; 台本の待ち受け(頭の註)。pending = まだ届けていない出来事・served = 受けた命令と送った ws の記録の列・opened = ws に上げて開いている札・
   ;; backlog = 読まない相手の札の箱の溜まり(byte)・limit = 送りの上限(HttpListen が控える)・tally = 送りの勘定・closed = HttpShutdown の理由
-  ;; (None = 開いている)(どれも session の値)。
+  ;; (None = 開いている)・body-table = 札 → 本文の台本・readable = 本文をまだ読める札 → 宣言の長さ(届けた要求の札を入れ、読んだ・命令を
+  ;; 受けた札を外す)(どれも session の値)。
   ;; 引数に残す理由: script は呼び手が組んだ凍った台本(出来事の列と中継先の答えと読まない相手)で、組の外で差し替える相手がいない。
   (session var pending script.arrivals)
+  (session var body-table (dfor b script.bodies b.ticket b))
+  (session var readable {})
   (session var served #())
   (session var opened (frozenset))
   (session var backlog {})
@@ -129,23 +161,41 @@
               (:= tally dropped)
               (<- rest dict (without-ticket backlog head.ticket))
               (:= backlog rest))
+            (when (isinstance head HttpRequestArrived)
+              (<- declared (| int None) (declared-length head.headers))
+              (:= readable (| readable {head.ticket declared})))
             (resume head))
       True (resume (HttpServerClosed :reason CLOSED-REASON))))
+  (HttpReadBody [ticket max-bytes]
+    (if (not-in ticket readable)
+        (resume (HttpBodyFailed :reason (.format "札 {} の要求の本文は読めない(知らない札・読み終えた札・命令を撃った後の札)" ticket)))
+        (do (<- outcome HttpBodyOutcome (scripted-body-outcome (get readable ticket) (.get body-table ticket) max-bytes))
+            (<- rest dict (without-ticket readable ticket))
+            (:= readable rest)
+            (resume outcome))))
   (HttpRespond [ticket status headers body]
     (<- answer HttpServed (served-of script effect))
     (:= served (+ served #(answer)))
+    (<- rest dict (without-ticket readable ticket))
+    (:= readable rest)
     (resume None))
   (HttpForward [ticket url]
     (<- answer HttpServed (served-of script effect))
     (:= served (+ served #(answer)))
+    (<- rest dict (without-ticket readable ticket))
+    (:= readable rest)
     (resume None))
   (WsForward [ticket url]
     (<- answer HttpServed (served-of script effect))
     (:= served (+ served #(answer)))
+    (<- rest dict (without-ticket readable ticket))
+    (:= readable rest)
     (resume None))
   (WsAccept [ticket]
     (<- answer HttpServed (served-of script effect))
     (:= served (+ served #(answer)))
+    (<- rest dict (without-ticket readable ticket))
+    (:= readable rest)
     (:= opened (| opened #{ticket}))
     (:= pending (+ #((WsOpened :ticket ticket)) pending))
     (resume None))
@@ -197,6 +247,8 @@
     (resume report))
   (ReadHttpServed []
     (resume served))
-  (AppendHttpScript [arrivals]
+  (AppendHttpScript [arrivals bodies]
     (:= pending (+ pending arrivals))
+    (<- added dict (bodies-by-ticket bodies))
+    (:= body-table (| body-table added))
     (resume None)))

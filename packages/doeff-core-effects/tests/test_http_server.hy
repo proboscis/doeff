@@ -3,8 +3,10 @@
 ;;;     台本の答え(最長の一致・ws を受けない先は 502)を確かめる。
 ;;;   - 本物の答え手(aiohttp-http-server)は、同じ Program を本物の socket で回し、byte 列と file の範囲の本文・頭・HEAD・HTTP の中継
 ;;;     (本文と X-Forwarded-Proto・届かない先の 502)・ws の中継(frame の往復・close の状態符)を確かめる(aiohttp の無い venv では skip)。
-(require doeff-hy.macros [defk <- val var])
+;;;   - 要求の本文の読み(HttpReadBody — #880 U1)は、同じ Program を両方の答え手で回し、上限の境目で同じ答えになることを確かめる。
+(require doeff-hy.macros [deftest defk <- val var with-handler])
 (import asyncio)
+(import importlib.util)
 (import collections.abc [Callable])
 (import socket)
 (import threading)
@@ -18,7 +20,8 @@
                                                 HttpRespond HttpForward WsForward HttpBodyBytes HttpBodyFileRange HttpNoBody HttpScript
                                                 ScriptedUpstream HttpServed ReadHttpServed HttpEvent WsAccept WsSendText WsClose
                                                 HttpShutdown TakeWsSendReport WsSendReport WsTextArrived WsBinaryArrived WsClosed
-                                                WsTextSent WsCloseSent AppendHttpScript])
+                                                WsTextSent WsCloseSent AppendHttpScript HttpReadBody HttpBodyRead HttpBodyTooLarge
+                                                HttpBodyFailed HttpBodyOutcome ScriptedBody])
 (import doeff_core_effects.scripted_http_server [scripted-http-server])
 
 
@@ -315,3 +318,137 @@
   (assert (= (. (get events -1) reason) "検が閉じた"))
   (assert (= report.cuts 1))
   (assert (>= report.flushed-bytes (len "echo:hi"))))
+
+
+;; --- 要求の本文の読み(agora-redesign #880 U1)------------------------------------------------------------------------------------
+;; 同じ検の Program を台本の答え手と本物の答え手で回し、境目(上限ちょうど・1 byte 超え・chunked の上限内と超え・本文なし・上限を大きく
+;; 超える宣言)で同じ答えになることを確かめる。
+
+(val BODY-LIMIT 8)
+;; 上限を大きく超える宣言(本物の検では本文を 1 byte も送らない — 読まずに断らなければ答えが来ない)。
+(val HUGE-DECLARED 100000000)
+
+
+(defk body-echo [limit publish]
+  {:pre [(: limit int) (: publish Callable)] :post [(: % tuple)]
+   :tags {:context "http-server" :role "program"}}
+  "検の Program: 要求ごとに本文を limit まで読み(2 度目の読みも撃つ)、読めた本文は 200・上限超えは 413(宣言の長さ)・読めなければ 400 で
+   答え、/stop で待ち受けを閉じるため。答え = 要求ごとの #(path 1 度目の答え 2 度目の答えの型の名) の列。publish = 結んだ宛先を検へ渡す口。"
+  (<- bound HttpAddress (HttpListen :address (HttpAddress :host "127.0.0.1" :port 0)))
+  (publish bound)
+  (var seen #())
+  (while True
+    (<- event HttpEvent (HttpNextRequest))
+    (match event
+      (HttpServerClosed) (return seen)
+      (HttpRequestArrived :ticket t :path "/stop")
+        (do (<- (HttpRespond :ticket t :status 200 :headers #() :body (HttpNoBody)))
+            (<- (HttpShutdown :reason "検が閉じた" :drain-seconds 0.5)))
+      (HttpRequestArrived :ticket t :path path)
+        (do (<- outcome HttpBodyOutcome (HttpReadBody :ticket t :max-bytes limit))
+            (<- again HttpBodyOutcome (HttpReadBody :ticket t :max-bytes limit))
+            (:= seen (+ seen #(#(path outcome (. (type again) __name__)))))
+            (match outcome
+              (HttpBodyRead :data data) (<- (HttpRespond :ticket t :status 200 :headers #() :body (HttpBodyBytes :data data)))
+              (HttpBodyTooLarge :declared declared)
+                (<- (HttpRespond :ticket t :status 413 :headers #() :body (HttpBodyBytes :data (.encode (str declared) "utf-8"))))
+              (HttpBodyFailed :reason reason)
+                (<- (HttpRespond :ticket t :status 400 :headers #() :body (HttpBodyBytes :data (.encode reason "utf-8"))))))
+      _ None)))
+
+
+;; 境目の要求の期待: path → 1 度目の答え(2 度目はどれも HttpBodyFailed)。
+(val BODY-EXPECTED #(#("/exact" (HttpBodyRead :data b"12345678"))
+                     #("/over" (HttpBodyTooLarge :declared 9))
+                     #("/chunked-fit" (HttpBodyRead :data b"abcdefgh"))
+                     #("/chunked-over" (HttpBodyTooLarge :declared None))
+                     #("/empty" (HttpBodyRead :data b""))
+                     #("/huge-declared" (HttpBodyTooLarge :declared HUGE-DECLARED))))
+
+
+(deftest test-the-scripted-server-reads-bodies-up-to-the-limit
+  (val length (fn [n] #((HttpHeader :name "Content-Length" :value (str n)))))
+  (val script (HttpScript :arrivals #((arrival 1 "/exact" :method "POST" :headers (length 8))
+                                      (arrival 2 "/over" :method "POST" :headers (length 9))
+                                      (arrival 3 "/chunked-fit" :method "POST" :headers #((HttpHeader :name "Transfer-Encoding" :value "chunked")))
+                                      (arrival 4 "/chunked-over" :method "POST" :headers #((HttpHeader :name "Transfer-Encoding" :value "chunked")))
+                                      (arrival 5 "/empty")
+                                      (arrival 6 "/huge-declared" :method "POST" :headers (length HUGE-DECLARED))
+                                      (arrival 7 "/broken" :method "POST")
+                                      (arrival 8 "/stop"))
+                          :bodies #((ScriptedBody :ticket "1" :data b"12345678") (ScriptedBody :ticket "2" :data b"123456789")
+                                    (ScriptedBody :ticket "3" :data b"abcdefgh") (ScriptedBody :ticket "4" :data b"abcdefghijkl")
+                                    (ScriptedBody :ticket "7" :data b"12" :failed "相手が途中で切った"))))
+  (<- answer tuple (with-handler [(state) (scripted-http-server script)] (do-served (body-echo BODY-LIMIT (fn [bound] None)))))
+  (val seen (get answer 0))
+  (val served (get answer 1))
+  (assert (= (tuple (gfor [path outcome _again] seen #(path outcome)))
+             (+ BODY-EXPECTED #(#("/broken" (HttpBodyFailed :reason "相手が途中で切った")))))
+          seen)
+  ;; 札ごとに 1 度だけ — 2 度目は読めない。
+  (assert (= (set (gfor [_path _outcome again] seen again)) #{"HttpBodyFailed"}))
+  (assert (= (lfor s served :if (isinstance s HttpServed) s.status) [200 413 200 413 200 413 400 200])))
+
+
+(defk read-after-respond []
+  {:pre [] :post [(: % HttpBodyOutcome)]
+   :tags {:context "http-server" :role "program"}}
+  "命令を撃った後の札の本文は読めないことを見るため。"
+  (<- event HttpEvent (HttpNextRequest))
+  (<- (HttpRespond :ticket event.ticket :status 204 :headers #() :body (HttpNoBody)))
+  (<- late HttpBodyOutcome (HttpReadBody :ticket event.ticket :max-bytes BODY-LIMIT))
+  late)
+
+
+(deftest test-the-scripted-server-refuses-to-read-a-body-after-the-command
+  (val script (HttpScript :arrivals #((arrival 1 "/x" :method "POST")) :bodies #((ScriptedBody :ticket "1" :data b"abc"))))
+  (<- late (with-handler [(state) (scripted-http-server script)] (read-after-respond)))
+  (assert (isinstance late HttpBodyFailed) late))
+
+
+(defk ask-over-http [port method path body]
+  {:pre [(: port int) (: method str) (: path str) (: body (| bytes list None))] :post [(: % tuple)]
+   :tags {:context "http-server" :role "program"}}
+  "本物の待ち受けへ要求を 1 つ送り、#(status 本文) を読むため(1 要求 = 1 接続 — 上限で断った接続は答え手が閉じる)。body が list なら
+   Content-Length を付けずに chunked で送る。"
+  (import http.client [HTTPConnection])
+  (val connection (HTTPConnection "127.0.0.1" port :timeout 10))
+  (if (isinstance body list)
+      (.request connection method path :body (iter body) :encode-chunked True :headers {"Transfer-Encoding" "chunked"})
+      (.request connection method path :body body))
+  (val response (.getresponse connection))
+  (val answer #(response.status (.read response)))
+  (.close connection)
+  answer)
+
+
+(deftest test-the-aiohttp-server-reads-bodies-up-to-the-limit-with-or-without-content-length
+  {:skip-if (is (importlib.util.find-spec "aiohttp") None)
+   :skip-reason "aiohttp は extra http-server の依存"}
+  (import queue)
+  (import doeff_core_effects.aiohttp_http_server [aiohttp-http-server])
+  (val result (queue.Queue))
+  (val bound (queue.Queue))
+  (.start (threading.Thread :target (fn [] (.put result (run (scheduled (with_handlers [(await-handler) (state) aiohttp-http-server]
+                                                                                    (body-echo BODY-LIMIT bound.put))))))
+                            :daemon True))
+  (val port (. (.get bound :timeout 30) port))
+  (assert (= (! (ask-over-http port "POST" "/exact" b"12345678")) #(200 b"12345678")))
+  (assert (= (! (ask-over-http port "POST" "/over" b"123456789")) #(413 b"9")))
+  (assert (= (! (ask-over-http port "POST" "/chunked-fit" [b"abcd" b"efgh"])) #(200 b"abcdefgh")))
+  (assert (= (! (ask-over-http port "POST" "/chunked-over" [b"abcd" b"efgh" b"ijkl"])) #(413 b"None")))
+  (assert (= (! (ask-over-http port "GET" "/empty" None)) #(200 b"")))
+  ;; 上限を大きく超える宣言: 頭だけ送って本文を送らない — 読まずに断るので答えが来て、答えの後に接続が閉じる。
+  (with [raw (socket.create-connection #("127.0.0.1" port) :timeout 10)]
+    (.sendall raw (.encode (.format "POST /huge-declared HTTP/1.1\r\nHost: x\r\nContent-Length: {}\r\n\r\n" HUGE-DECLARED) "ascii"))
+    (var received b"")
+    (while True
+      (val chunk (.recv raw 65536))
+      (when (not chunk) (break))
+      (:= received (+ received chunk)))
+    (assert (.startswith received b"HTTP/1.1 413") received)
+    (assert (.endswith received (.encode (str HUGE-DECLARED) "ascii")) received))
+  (assert (= (! (ask-over-http port "GET" "/stop" None)) #(200 b"")))
+  (val seen (.get result :timeout 30))
+  (assert (= (tuple (gfor [path outcome _again] seen #(path outcome))) BODY-EXPECTED) seen)
+  (assert (= (set (gfor [_path _outcome again] seen again)) #{"HttpBodyFailed"})))
