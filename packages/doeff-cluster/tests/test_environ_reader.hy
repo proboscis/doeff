@@ -3,6 +3,7 @@
 ;; 責務:
 ;;   読みの定義   … environ-reader の 1 つ(名 → 値の置き場を引数に取る)。宣言の名の Ask に値を字面どおり答え、置き場に無い名と文字列で
 ;;                 ない鍵は外側へ通す。本番の土台は引数なしの (environ-reader)(子の os.environ の上)・sim の宿は子の spec.environ の上に同じ定義を並べる。
+;;                 読みの性質(字面どおり・外側へ渡す)を本物と sim の宿で比べる契約は test_host_reads_contract.hy。
 ;;   本番の子     … job_entry の task 入口の子 process(ProcessHost が組んだ環境)で、JSON の object の値が字面どおり返る。
 ;;   sim の子     … sim-cluster の task で、同じ Program・同じ :environ が同じ字面を返す。
 ;;   反例         … 同じ値を env_var_ask(接頭辞なし)で読むと {module.path} の import として解かれ、本番の子でだけ ModuleNotFoundError で
@@ -17,9 +18,9 @@
 (import pytest)
 (import doeff [with-handlers DoExpr])
 (import doeff_core_effects.effects [Ask])
-(import doeff_core_effects.handlers [reader env-var-ask])
+(import doeff_core_effects.handlers [env-var-ask])
 (import doeff_time [SimClock])
-(import doeff_cluster.host_contract [HOST-CONTRACT environ-reader])
+(import doeff_cluster.host_contract [HOST-CONTRACT])
 (import doeff_cluster.handlers [CoordinatorLink ProcessHost program-file])
 (import doeff_cluster.detached [DetachedClient])
 (import doeff_cluster.remote_model [RemoteJob TaskSucceeded TaskFailed encode-program decode-outcome current-versions])
@@ -39,25 +40,10 @@
 
 ;; --- 読みの定義 ---------------------------------------------------------------------------------------------------
 
-(deftest test-the-environ-reader-answers-the-literal-value-and-passes-other-names
-  ;; 置き場の名は字面どおり(JSON を parse しない・{…} を解かない)。置き場に無い名・文字列でない鍵は外側(ここでは reader)が答える。
-  (<- literal str (with-handlers [(reader {"OTHER" "outer"}) (environ-reader {NAME POLICY})] (Ask NAME)))
-  (assert (= literal POLICY) literal)
-  (<- other str (with-handlers [(reader {"OTHER" "outer"}) (environ-reader {NAME POLICY})] (Ask "OTHER")))
-  (assert (= other "outer") other)
-  (<- typed str (with-handlers [(reader {int "by-type"}) (environ-reader {NAME POLICY})] (Ask int)))
-  (assert (= typed "by-type") typed))
-
-
-(deftest test-the-production-reader-returns-the-json-object-literally-and-env-var-ask-resolves-it [monkeypatch]
-  ;; 本番の土台の (environ-reader)(引数なし)は子の os.environ を字面どおり読む。反例: 同じ値を env_var_ask(接頭辞なし)は {module.path} の import と
-  ;; して解き、ModuleNotFoundError で落ちる。
+(deftest test-env-var-ask-resolves-a-json-object-value-as-an-import [monkeypatch]
+  ;; 反例: 本番の土台の (environ-reader) が字面どおり返す値(宿の読みの契約 test_host_reads_contract.hy)を、env_var_ask(接頭辞なし)は
+  ;; {module.path} の import として解き、ModuleNotFoundError で落ちる。
   (.setenv monkeypatch NAME POLICY)
-  (<- literal str (with-handlers [(environ-reader)] (Ask NAME)))
-  (assert (= literal POLICY) literal)
-  ;; 文字列でない鍵(型を鍵にする Ask)は os.environ に問わずに外側へ通す(os.environ は文字列でない鍵の問いで TypeError を投げる)。
-  (<- typed str (with-handlers [(reader {int "by-type"}) (environ-reader)] (Ask int)))
-  (assert (= typed "by-type") typed)
   (with [raised (pytest.raises ModuleNotFoundError)]
     (<- (with-handlers [(env-var-ask :prefix "")] (Ask NAME))))
   (assert (in "\"a\"" (str raised.value)) (str raised.value)))
