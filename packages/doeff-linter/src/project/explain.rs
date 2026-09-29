@@ -171,6 +171,8 @@ pub enum Explain {
     TestKindMismatch { test: String, edge: bool, mark: String, reached: Vec<String> },
     /// DOEFF135: deftest 以外のテストの形。
     TestFormNotDeftest { form: &'static str, detail: String },
+    /// DOEFF106・131 を層の置き場の外の file に当てた当たり(層の説明の主体が無い — message をそのまま主体にする)。
+    WorldOutsideLayers { subject: String },
     /// DOEFF107: 定義が呼ぶ定義を通して生の副作用に届く。
     RawVia { placement: Placement, definition: String, through: Vec<String>, evidence: String, category: &'static str },
     /// DOEFF108: 業務の名に環境の語がある。
@@ -370,6 +372,10 @@ impl<'a> Narrator<'a> {
             Explain::TestFormNotDeftest { form, detail } => (
                 format!("テストの形 {} — {}", form, detail),
                 "テストは deftest だけ。pytest の外で走る検査や pytest の Python の形は、赤になっても誰も気づかない(#1104 の実測 — pytest の外の検査 5 本が赤のまま放置されていた)。".to_string(),
+            ),
+            Explain::WorldOutsideLayers { subject } => (
+                subject.clone(),
+                "層の置き場の外の file も、外の世界に触れてよいのは architecture.hy の :world-handlers の定義だけ(agora-redesign #1147)。effect を出して名簿の定義の handler に答えさせるか、置き場を foundation に移して名簿に載せる。".to_string(),
             ),
             Explain::RawVia { placement, definition, through, evidence, category } => (
                 format!("定義 {} が {} を通して {}({} の生の副作用)に届く — {}", definition, through.join(" → "), evidence, category, self.file_subject(placement)),

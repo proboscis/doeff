@@ -226,6 +226,9 @@ pub struct Architecture {
     pub wire_modules: Vec<String>,
     /// 外の世界に触れてよい定義の許可名簿(`:world-handlers` — 空 = 宣言していない)。
     pub world_handlers: Vec<WorldHandler>,
+    /// 許可名簿の規則(DOEFF106・131)を層の置き場の外の file にも当てる dir(repo の根からの綴りの列・`:raw-io-roots ["controllers" "services"]`)。
+    /// 書かなければ `:root` だけ(agora-redesign #1147 — :root の外の services/ も名簿で縛る)。
+    pub raw_io_roots: Option<Vec<String>>,
     /// 「縁」のテスト(外の世界に触れる handler に届くテスト)が持つ pytest の印の名(`:edge-mark "real_world"`)。
     /// 書けば DOEFF133 が、テストの届く先から導いた種類と印の有無の食い違いを出す(agora-redesign #1106 の R3)。
     pub edge_mark: Option<String>,
@@ -553,6 +556,7 @@ impl<'a> Parser<'a> {
             rejected_plain_callable_reasons: Vec::new(),
             wire_modules: Vec::new(),
             world_handlers: Vec::new(),
+            raw_io_roots: None,
             edge_mark: None,
             edge_touches: None,
             test_forms: None,
@@ -596,6 +600,15 @@ impl<'a> Parser<'a> {
                 }
                 ":wire-modules" => arch.wire_modules = self.module_patterns(value, ":wire-modules"),
                 ":world-handlers" => arch.world_handlers = self.world_handlers(value),
+                ":raw-io-roots" => {
+                    let roots = self.names(value, ":raw-io-roots");
+                    for root in &roots {
+                        if root.is_empty() || root.starts_with('/') || root.split('/').any(|p| p == "..") {
+                            self.problem(value, &format!(":raw-io-roots の {} は repo の根からの dir の綴り(/ で始めない・.. を含まない)", root));
+                        }
+                    }
+                    arch.raw_io_roots = Some(roots);
+                }
                 ":test-forms" => arch.test_forms = self.test_forms(value),
                 ":edge-touches" => {
                     let mut touches = Vec::new();
