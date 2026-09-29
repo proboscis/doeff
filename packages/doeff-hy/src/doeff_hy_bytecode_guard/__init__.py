@@ -21,6 +21,7 @@ Python 標準の ``importlib.machinery.SourceFileLoader`` の 2 つの口を包�
 :mod:`doeff_hy_bytecode_guard.records` にあり、Hy の module を初めて読む時にだけ import する。
 """
 
+from doeff_hy_bytecode_guard.loader_hooks import file_sha256 as file_sha256
 from doeff_hy_bytecode_guard.loader_hooks import install as install
 from doeff_hy_bytecode_guard.loader_hooks import installed as installed
 from doeff_hy_bytecode_guard.loader_hooks import macro_dependencies as macro_dependencies
