@@ -701,6 +701,23 @@ fn service_first_layout_judges_layers_and_service_boundaries() {
     assert!(keys(&report, "DOEFF109").is_empty());
 }
 
+#[test]
+fn named_paths_judge_definitions_only_in_the_named_files() {
+    // agora-redesign #1418: 命令の行で path を名指した実行(commit の hook)は、定義の規則を名指しの下の file だけで判じる。
+    // 名指しの外の file を読まないことを、読めない file(UTF-8 でない)で確かめる — 全体の実行では「読めない」を名乗る。
+    let dir = definition_repo(&[("app/a.hy", "(defn helper [x] x)\n"), ("app/b.hy", "(defn other [x] x)\n")], "");
+    std::fs::write(dir.path().join("app/broken.hy"), [0xff_u8, 0xfe, 0x00]).unwrap();
+    let (_, whole, _) = run(dir.path(), &["--output-format", "editor-json", "--no-log"], None);
+    let whole: Value = serde_json::from_str(&whole).unwrap();
+    assert!(whole["errors"].to_string().contains("app/broken.hy"), "{}", whole["errors"]);
+    assert_eq!(keys(&whole, "DOEFF110"), vec!["app/a.hy::DOEFF110::helper", "app/b.hy::DOEFF110::other"]);
+
+    let (_, named, _) = run(dir.path(), &["--output-format", "editor-json", "--no-log", "app/a.hy"], None);
+    let named: Value = serde_json::from_str(&named).unwrap();
+    assert!(!named["errors"].to_string().contains("app/broken.hy"), "{}", named["errors"]);
+    assert_eq!(keys(&named, "DOEFF110"), vec!["app/a.hy::DOEFF110::helper"]);
+}
+
 /// 定義の書き方の規則(DOEFF110〜112)だけの repo。
 fn definition_repo(files: &[(&str, &str)], extra: &str) -> tempfile::TempDir {
     let dir = tempfile::TempDir::new().unwrap();
