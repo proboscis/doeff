@@ -54,6 +54,7 @@ def doeff_interpreter(doeff_interpreter_name: str) -> Callable[[Program], object
     from latest_contract_handlers import INTERPRETERS as LATEST_INTERPRETERS
     from meter_contract_handlers import INTERPRETERS as METER_INTERPRETERS
     from process_contract_handlers import INTERPRETERS as PROCESS_INTERPRETERS
+    from random_contract_handlers import INTERPRETERS as RANDOM_INTERPRETERS
     from stop_contract_handlers import INTERPRETERS as STOP_INTERPRETERS
 
     compositions: dict[str, Callable[[Program], Program]] = {
@@ -65,6 +66,7 @@ def doeff_interpreter(doeff_interpreter_name: str) -> Callable[[Program], object
         **METER_INTERPRETERS,
         **LATEST_INTERPRETERS,
         **HEAP_INTERPRETERS,
+        **RANDOM_INTERPRETERS,
     }
     required = HTTP_SERVER_REQUIRES.get(doeff_interpreter_name)
     if required is not None and importlib.util.find_spec(required) is None:
