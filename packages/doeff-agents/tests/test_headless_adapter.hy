@@ -7,7 +7,7 @@
 ;;         無ければ skip・印 e2e(日次と着地の門は -m "not e2e" で除く)。会社の profile は使わない。
 ;;
 ;; 筋書きの Program は session host の socket を開かず、doeff_claude_code も doeff_agents.sessionhost も import しない(公開 effect だけ)。
-(require doeff-hy.macros [deftest defk <- val var])
+(require doeff-hy.macros [deftest defk defhandler <- val var])
 (import collections.abc [Callable])
 (import dataclasses [dataclass])
 (import os)
@@ -27,7 +27,7 @@
   AgentTextEvent AgentToolUseEvent AgentInputFateEvent AgentTurnEndEvent
   AgentTurnCompleted AgentTurnFailed AgentTurnInterrupted AgentTurnLost AgentTurnUsage
   AgentCapabilityUnsupportedError NoTurnInFlightError ResumeTargetNotFoundError SessionNotFoundError
-  AgentError AgentLaunchError TurnInFlightError])
+  AgentError AgentLaunchError TurnInFlightError LaunchEffect RedeemTurnCredentialEffect])
 (import doeff_agents.monitor [SessionStatus])
 ;; 層 2 の handler との対は doeff-agents の組み立ての部品で作る(この検も doeff_claude_code を import しない)。
 (import doeff_agents.handlers.headless_compose [FakeReply headless-claude-handlers fake-headless-claude-handlers])
@@ -562,60 +562,112 @@
   (import doeff_agents.handlers.testing [MockAgentHandler])
   (with [(pytest.raises AgentCapabilityUnsupportedError)]
     (.handle-launch (MockAgentHandler) launch-effect))
-  ;; 借りた token(turn_credential)を置けない端末の handler は、家の資格で黙って走らせずに断る(agora-redesign #665)。
-  (import doeff_agents.effects [TurnCredential])
+  ;; 手番の資格の参照(turn_credential_ref)を引き換えて置けない端末の handler は、家の資格で黙って走らせずに断る(#665・#979)。
   (with [(pytest.raises AgentCapabilityUnsupportedError)]
     (refuse-turn-capabilities (LaunchEffect :session-name "x" :agent-type AgentType.CLAUDE :work-dir tmp-path
-                                            :turn-credential (TurnCredential "tok-never-printed"))
+                                            :turn-credential-ref "lease-1")
                               :handler "t")))
 
 
-(deftest test-headless-places-the-borrowed-access-token [tmp-path]
-  ;; agora-redesign #665: 借りた access token は型の欄(LaunchEffect.turn_credential)1 つから入り、子の claude の env の手番の資格の名
-  ;; (本番の agentd が貸与の札を運ぶ名 = TURN-AUTH-ENV-KEYS の 1 つ)にだけ置かれる。session_env から資格を入れる路は断られ、
-  ;; token は effect・家・宣言の repr に写らない。欄が無ければ家の env のまま(local の家の資格)。
-  (import doeff_agents.effects [LaunchEffect TurnCredential])
+;; --- 手番の資格の参照の引き換え(issue #979)------------------------------------------------------------------------
+
+(defhandler redeem-answers [#^ dict answers #^ list asked]
+  ;; 検の環境: 手番の資格の参照を出した側の代わりに、参照 → 引き換えの答えを返す(頼まれた参照を asked に写す)。
+  ;; 引数に残す理由: 答えの表と写しの置き場は検ごとに違い、検が走らせた後に asked を読む。
+  (RedeemTurnCredentialEffect [credential-ref]
+    (.append asked credential-ref)
+    (resume (get answers credential-ref))))
+
+(defk launch-with-ref [#^ Path work #^ str name #^ (| str None) ref]
+  {:pre [(: work Path) (: name str) (: ref (| str None))] :post [(: % SessionHandle)]}
+  "手番の資格の参照を持って 1 手番を起こす(引き換えの答えごとに、子の env に何が置かれるかを見るため)。"
+  (<- handle SessionHandle (LaunchEffect :session-name name :agent-type AgentType.CLAUDE :work-dir work :prompt (reply-prompt "OK")
+                                         :lifecycle AgentSessionLifecycle.MULTI-TURN :turn-credential-ref ref))
+  handle)
+
+(defn run-with-redeem [#^ Path tmp-path world #^ dict answers #^ list asked program]
+  "fake の層 2(呼び手の world)+ headless の adapter の外側に、引き換えの答え手を置いて走らせる。"
+  (run (scheduled (with_handlers (+ [(sim-time-handler :clock (SimClock)) (redeem-answers answers asked)]
+                                    (fake-headless-claude-handlers None (str (/ tmp-path "home")) :world world))
+                                 program))))
+
+(deftest test-headless-redeems-the-credential-ref-into-the-turn-env [tmp-path]
+  ;; #665・#979: token は LaunchEffect に載らない。adapter が起こす直前に RedeemTurnCredentialEffect(参照)を外側へ出し、答えの token を
+  ;; 子の claude の env の手番の資格の名(本番の agentd が貸与の札を運ぶ名 = TURN-AUTH-ENV-KEYS の 1 つ)にだけ置く。家の資格の答え・
+  ;; 参照の無い起動は家の env のまま。token は effect・答え・家・宣言の repr に写らない。
+  (import doeff_agents.effects [LaunchEffect TurnCredential HomeTurnCredential RedeemTurnCredentialEffect])
   (import doeff_agents.handlers.headless [HeadlessClaudeConfig TURN-CREDENTIAL-ENV spec-of])
   (import doeff_agents.sessionhost.policy [TURN-AUTH-ENV-KEYS])
+  (import doeff_claude_code.fake [FakeClaudeWorld])
   (import doeff_claude_code.values [ClaudeHome])
-  (setv token "sk-ant-oat01-never-printed" config (HeadlessClaudeConfig (ClaudeHome (str (/ tmp-path "home")) {"PATH" "/usr/bin"})))
+  (setv token "sk-ant-oat01-never-printed" work (/ tmp-path "work"))
+  (.mkdir work :parents True :exist-ok True)
   (assert (in TURN-CREDENTIAL-ENV TURN-AUTH-ENV-KEYS))
-  (setv launch (LaunchEffect :session-name "x" :agent-type AgentType.CLAUDE :work-dir tmp-path
-                             :turn-credential (TurnCredential token))
-        spec (spec-of config launch))
+  (setv world (FakeClaudeWorld fake-responder) asked [])
+  (setv answers {"lease-borrowed" (TurnCredential token) "lease-home" (HomeTurnCredential)})
+  (for [#(name ref) [#("borrowed" "lease-borrowed") #("home" "lease-home") #("plain" None)]]
+    (run-with-redeem tmp-path world answers asked (launch-with-ref work name ref)))
+  ;; 引き換えは参照のある起動だけ・1 回ずつ。
+  (assert (= asked ["lease-borrowed" "lease-home"]) asked)
+  (setv envs (lfor session (.values world.sessions) (dict session.home.env)))
+  (assert (= (len envs) 3) envs)
+  (assert (= (lfor env envs :if (in TURN-CREDENTIAL-ENV env) (get env TURN-CREDENTIAL-ENV)) [token]) "token を置くのは借りた起動 1 つだけ")
+  ;; 資格の入口は引き換えの答え 1 つ: session_env から資格を入れる路は断られ、宣言の repr に token は写らない。
+  (setv config (HeadlessClaudeConfig (ClaudeHome (str (/ tmp-path "home")) {"PATH" "/usr/bin"}))
+        launch (LaunchEffect :session-name "x" :agent-type AgentType.CLAUDE :work-dir tmp-path :turn-credential-ref "lease-borrowed")
+        spec (spec-of config launch (TurnCredential token)))
   (assert (= (get spec.home.env TURN-CREDENTIAL-ENV) token))
   (assert (= (get spec.home.env "PATH") "/usr/bin"))
-  (for [shown [(repr launch) (repr spec) (repr spec.home) (repr launch.turn-credential)]]
+  (for [shown [(repr launch) (repr spec) (repr spec.home) (repr (TurnCredential token))
+               (repr (RedeemTurnCredentialEffect :credential-ref "lease-borrowed"))]]
     (assert (not-in token shown)))
-  (assert (not-in TURN-CREDENTIAL-ENV (. (spec-of config (LaunchEffect :session-name "x" :agent-type AgentType.CLAUDE
-                                                                         :work-dir tmp-path)) home env)))
   (with [(pytest.raises ValueError)]
     (spec-of config (LaunchEffect :session-name "x" :agent-type AgentType.CLAUDE :work-dir tmp-path
                                   :session-env {TURN-CREDENTIAL-ENV token})))
   (for [bad ["" "a\nb"]]
     (with [(pytest.raises ValueError)]
-      (TurnCredential bad))))
+      (TurnCredential bad)))
+  (with [(pytest.raises ValueError)]
+    (LaunchEffect :session-name "x" :agent-type AgentType.CLAUDE :work-dir tmp-path :turn-credential-ref "")))
+
+(deftest test-an-unredeemable-credential-ref-does-not-start-the-session [tmp-path]
+  ;; #979 の反例: 引き換えられない参照(知らない・もう返した lease)の起動は TurnCredentialUnavailableError(AgentLaunchError の 1 つ)で
+  ;; 断り、CLI の会話を 1 つも始めない(家の資格で黙って走らせない)。断りの理由は答えの文のまま運ぶ。
+  (import doeff_agents.effects [TurnCredentialUnavailable TurnCredentialUnavailableError])
+  (import doeff_claude_code.fake [FakeClaudeWorld])
+  (setv work (/ tmp-path "work"))
+  (.mkdir work :parents True :exist-ok True)
+  (setv world (FakeClaudeWorld fake-responder) asked [])
+  (with [info (pytest.raises TurnCredentialUnavailableError)]
+    (run-with-redeem tmp-path world {"lease-gone" (TurnCredentialUnavailable "lease lease-gone は借りていないか、もう返した")} asked
+                     (launch-with-ref work "gone" "lease-gone")))
+  (assert (isinstance info.value AgentLaunchError))
+  (assert (= info.value.reason "lease lease-gone は借りていないか、もう返した") info.value.reason)
+  (assert (= info.value.credential-ref "lease-gone"))
+  (assert (= asked ["lease-gone"]) asked)
+  (assert (= world.sessions {}) world.sessions))
 
 
-(defk launch-with-credential [#^ Path work #^ str token]
-  {:pre [(: work Path) (: token str)] :post [(: % SessionHandle)]}
-  ;; 借りた token を持って 1 手番を起こす(起きない CLI の筋書きで、失敗の文に token が写らないかを見るため)。
-  (import doeff_agents.effects [LaunchEffect TurnCredential])
+(defk launch-with-credential [#^ Path work]
+  {:pre [(: work Path)] :post [(: % SessionHandle)]}
+  ;; 手番の資格の参照を持って 1 手番を起こす(起きない CLI の筋書きで、失敗の文に引き換えた token が写らないかを見るため)。
+  (import doeff_agents.effects [LaunchEffect])
   (<- handle SessionHandle (LaunchEffect :session-name "cred-fail" :agent-type AgentType.CLAUDE :work-dir work :prompt "x"
-                                         :lifecycle AgentSessionLifecycle.MULTI-TURN :turn-credential (TurnCredential token)))
+                                         :lifecycle AgentSessionLifecycle.MULTI-TURN :turn-credential-ref "lease-1"))
   handle)
 
 (deftest test-a-launch-failure-does-not-carry-the-borrowed-token [tmp-path]
-  ;; agora-redesign #665(cry-w8 の独立レビューの指摘): CLI が起きない時の失敗の文・repr・traceback は worker の log に入る。借りた
+  ;; agora-redesign #665(cry-w8 の独立レビューの指摘): CLI が起きない時の失敗の文・repr・traceback は worker の log に入る。引き換えた
   ;; token(子の env の CLAUDE_CODE_OAUTH_TOKEN)の値がそこへ写らない。
   (import traceback)
+  (import doeff_agents.effects [TurnCredential])
   (setv token "sk-ant-oat01-must-not-leak-665" work (/ tmp-path "work"))
   (.mkdir work :parents True :exist-ok True)
-  (setv handlers (+ [(sync-time-handler)]
+  (setv handlers (+ [(sync-time-handler) (redeem-answers {"lease-1" (TurnCredential token)} [])]
                     (headless-claude-handlers (str (/ tmp-path "home")) (child-env)
                                               :command #((str (/ tmp-path "no-such-claude"))))))
   (with [info (pytest.raises Exception)]
-    (run (scheduled (with_handlers handlers (launch-with-credential work token)))))
+    (run (scheduled (with_handlers handlers (launch-with-credential work)))))
   (setv shown (.join "" (traceback.format-exception info.value)))
   (assert (in "no-such-claude" shown) shown)
   (for [text [(str info.value) (repr info.value) shown]]

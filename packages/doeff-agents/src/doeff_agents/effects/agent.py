@@ -589,15 +589,17 @@ class AgentEffectBase(EffectBase):
 
 @dataclass(frozen=True)
 class TurnCredential:
-    """An access token the caller borrowed for this session's turns (agora-redesign #665).
+    """An access token for this session's turns (issue #665).
 
-    The caller (e.g. an agent task that borrowed from a custody service) hands
-    the token over as a typed value, never through ``session_env`` (which stays
-    a non-auth overlay). A handler that can place it puts it into the agent
-    process's turn-auth env (``CLAUDE_CODE_OAUTH_TOKEN`` for Claude); a handler
-    that cannot refuses the launch via ``refuse_turn_capabilities``. Only the
-    access token travels — a refresh token is never carried. The token is kept
-    out of ``repr`` so effects and errors never print it.
+    It is never a field of a caller-visible effect: ``LaunchEffect`` carries
+    only ``turn_credential_ref`` (a reference the caller holds), and the launch
+    handler redeems that reference with ``RedeemTurnCredentialEffect`` — this
+    value is one answer of that effect (issue #979). A handler that can place
+    it puts it into the agent process's turn-auth env
+    (``CLAUDE_CODE_OAUTH_TOKEN`` for Claude), never through ``session_env``
+    (which stays a non-auth overlay). Only the access token travels — a
+    refresh token is never carried. The token is kept out of ``repr`` so
+    effects, answers and errors never print it.
     """
 
     oauth_token: str = field(repr=False)
@@ -607,6 +609,43 @@ class TurnCredential:
             raise ValueError("TurnCredential.oauth_token must be a non-empty string")
         if any(ch in self.oauth_token for ch in "\r\n\x00"):
             raise ValueError("TurnCredential.oauth_token must be a single line")
+
+
+@dataclass(frozen=True)
+class HomeTurnCredential:
+    """Answer of ``RedeemTurnCredentialEffect``: the reference is valid, and the
+    credential lives in the agent's home — launch on the handler's own home
+    credentials (no token is handed over)."""
+
+
+@dataclass(frozen=True)
+class TurnCredentialUnavailable:
+    """Answer of ``RedeemTurnCredentialEffect``: the reference cannot be redeemed
+    (unknown, already returned, expired ...). ``reason`` is for people and never
+    holds a credential value. The launch handler does not start the session."""
+
+    reason: str
+
+
+@dataclass(frozen=True, kw_only=True)
+class RedeemTurnCredentialEffect(AgentEffectBase):
+    """Redeem a turn credential reference for the credential itself (issue #979).
+
+    Emitted by a launch handler that can place a turn credential, when
+    ``LaunchEffect.turn_credential_ref`` is set, right before it starts the
+    agent process. It is answered by the environment the caller installs
+    outside the agent runtime handlers (whoever issued the reference) — the
+    caller's program never sees the token, and the token never appears in
+    ``LaunchEffect``.
+
+    Yields: TurnCredential | HomeTurnCredential | TurnCredentialUnavailable
+    """
+
+    credential_ref: str
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.credential_ref, str) or not self.credential_ref:
+            raise ValueError("RedeemTurnCredentialEffect.credential_ref must be a non-empty string")
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -648,14 +687,21 @@ class LaunchEffect(AgentEffectBase):
     ready_timeout: float = 120.0
     session_env: dict[str, str] | None = None
     resume_from: str | None = None
-    # The borrowed access token for this session's turns (None = the handler's
-    # own home credentials). See ``TurnCredential``.
-    turn_credential: TurnCredential | None = None
+    # A reference to the credential for this session's turns (None = the
+    # handler's own home credentials). The launch handler redeems it with
+    # ``RedeemTurnCredentialEffect``; the token itself never rides on this
+    # effect (issue #979). Handlers that cannot place a turn credential refuse
+    # it with ``AgentCapabilityUnsupportedError``.
+    turn_credential_ref: str | None = None
     # An opaque copy of the ``resume_from`` context (the answer of
     # ``ExportContextEffect``) to bring in before continuing.
     resume_snapshot: str | None = None
 
     def __post_init__(self) -> None:
+        if self.turn_credential_ref is not None and (
+            not isinstance(self.turn_credential_ref, str) or not self.turn_credential_ref
+        ):
+            raise ValueError("LaunchEffect.turn_credential_ref must be a non-empty string")
         if self.resume_snapshot is None:
             return
         if self.resume_from is None:
@@ -1199,7 +1245,7 @@ def refuse_turn_capabilities(effect: AgentEffectBase, *, handler: str) -> None:
 
     Terminal handlers call this before acting on ``LaunchEffect`` /
     ``FollowUpEffect``, so ``resume_from`` never silently starts a fresh
-    context, a borrowed ``turn_credential`` is never silently dropped (the
+    context, a ``turn_credential_ref`` is never silently dropped (the
     launch would run on whatever home credentials the handler has), and ``TurnInputMode.INJECT`` never silently becomes a keystroke.
     """
     if isinstance(effect, LaunchEffect) and effect.resume_from is not None:
@@ -1210,14 +1256,28 @@ def refuse_turn_capabilities(effect: AgentEffectBase, *, handler: str) -> None:
         raise AgentCapabilityUnsupportedError(
             capability="LaunchEffect.resume_snapshot", handler=handler
         )
-    if isinstance(effect, LaunchEffect) and effect.turn_credential is not None:
+    if isinstance(effect, LaunchEffect) and effect.turn_credential_ref is not None:
         raise AgentCapabilityUnsupportedError(
-            capability="LaunchEffect.turn_credential", handler=handler
+            capability="LaunchEffect.turn_credential_ref", handler=handler
         )
     if isinstance(effect, FollowUpEffect) and effect.mode is not TurnInputMode.NEXT_TURN:
         raise AgentCapabilityUnsupportedError(
             capability=f"FollowUpEffect.mode={effect.mode.value}", handler=handler
         )
+
+
+class TurnCredentialUnavailableError(AgentLaunchError):
+    """``turn_credential_ref`` could not be redeemed, so the session was not started.
+
+    ``reason`` is the ``TurnCredentialUnavailable.reason`` of the redeem answer
+    (never a credential value). The caller decides what to do (e.g. refuse the
+    turn as credential-unavailable).
+    """
+
+    def __init__(self, *, credential_ref: str, reason: str) -> None:
+        self.credential_ref = credential_ref
+        self.reason = reason
+        super().__init__(f"turn credential {credential_ref} is unavailable: {reason}")
 
 
 class ResumeTargetNotFoundError(AgentLaunchError):
@@ -1357,6 +1417,10 @@ __all__ = [
     "StopSessionEffect",
     "TranscriptRef",
     "TurnCredential",
+    "HomeTurnCredential",
+    "TurnCredentialUnavailable",
+    "RedeemTurnCredentialEffect",
+    "TurnCredentialUnavailableError",
     "TurnInFlightError",
     "TurnInputMode",
     "TurnRef",
