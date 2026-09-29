@@ -6,7 +6,7 @@ import pytest
 from doeff_core_effects import scheduler
 from doeff_vm import K
 
-from doeff import EffectBase, Pass, Resume, Spawn, Wait, do, handler, run
+from doeff import EffectBase, Pass, Pure, Resume, Spawn, Wait, do, handler, run
 from doeff.program import ProgramHandler
 
 
@@ -49,3 +49,32 @@ def test_spawn_does_not_renormalize_captured_handlers(monkeypatch: pytest.Monkey
     # GetBoundaries が返す値は VM が受理済みの dispatcher。利用者向けの
     # installer / dispatcher の形式判定を、子タスクごとにやり直さない。
     assert answer_number not in normalized
+
+
+@pytest.mark.parametrize("invalid", [None, 7, object()])
+def test_invalid_handler_is_rejected_at_public_entry(invalid) -> None:
+    with pytest.raises(TypeError, match="handler: raw_handler must be callable"):
+        handler(invalid)
+
+
+@pytest.mark.parametrize("invalid", [None, 7, object()])
+def test_reinstall_still_rejects_an_unvalidated_non_callable(invalid) -> None:
+    # 内部の再設定へ不正な値を直接渡しても、WithHandler の VM 検証が
+    # 拒否する。形式判定の省略で callable の検証を迂回できない。
+    with pytest.raises(TypeError, match="WithHandler: handler must be callable"):
+        scheduler._reinstall_boundary(Pure(None), "handler", invalid)
+
+
+def test_wrong_handler_arity_is_still_rejected_by_vm() -> None:
+    def wrong_arity(effect: object) -> Pure[object]:
+        return Pure(effect)
+
+    # callable でも dispatcher の引数 (effect, k) を受け取れなければ、
+    # 元の入口と引き継ぎ先のどちらでも VM 実行時の TypeError を保つ。
+    programs: tuple[object, ...] = (
+        handler(wrong_arity)(read_number()),
+        scheduler._reinstall_boundary(read_number(), "handler", wrong_arity),
+    )
+    for program in programs:
+        with pytest.raises(TypeError, match="positional argument"):
+            run(program)
