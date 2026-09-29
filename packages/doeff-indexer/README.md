@@ -38,8 +38,9 @@ cd packages/doeff-indexer
 # Build the Rust binary only (no Python features)
 cargo build --release --no-default-features
 
-# Or build with Python bindings (requires maturin)
-maturin develop
+# Or build with Python bindings (requires maturin). The wrapper puts the cargo target in a
+# temporary directory outside the checkout and deletes it afterwards (tools/doeff_cargo_backend.py).
+uv run --no-sync python doeff_cargo_backend.py maturin develop
 ```
 
 ## CLI Usage

@@ -117,7 +117,7 @@ for effect sets and coverage.
 ## Building
 
 ```
-uv run maturin develop --manifest-path packages/doeff-effect-analyzer/Cargo.toml
+uv run python tools/doeff_cargo_backend.py maturin develop --manifest-path packages/doeff-effect-analyzer/Cargo.toml
 ```
 
 Mixed layout: `python-source = "python"`, extension module

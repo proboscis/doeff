@@ -703,7 +703,7 @@ graph TD
     B -->|Yes| D{Marker in<br/>hierarchy?}
     D -->|No| E[Fix: Add marker to parent module<br/>or use --interpreter]
     D -->|Yes| F{Indexer<br/>built?}
-    F -->|No| G[Fix: Rebuild indexer<br/>uvx maturin develop]
+    F -->|No| G[Fix: Rebuild indexer<br/>uv sync --reinstall-package doeff-indexer]
     F -->|Yes| H{Marker<br/>on function?}
     H -->|No| I[Fix: Ensure marker on<br/>interpreter function not variable]
     H -->|Yes| J[Check logs with --verbose]
