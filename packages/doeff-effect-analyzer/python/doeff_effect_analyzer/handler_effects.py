@@ -70,6 +70,7 @@ from doeff_effect_analyzer.program_effects import (
     _handler_wrapper_function,
     _is_effect_class,
     _is_installer,
+    _LocalFunction,
     _locate,
     _location_of,
     _no_carrier,
@@ -571,8 +572,8 @@ def raw_handler_of(expr: ast.expr, scope: _Scope, filename: str, label: str) -> 
     node: FunctionNode | None = None
     if isinstance(expr, ast.Lambda):
         node = expr
-    elif isinstance(expr, ast.Name) and scope.resolve(expr) is UNBOUND:
-        node = scope.local_functions.get(expr.id)
+    elif isinstance(expr, ast.Name) and isinstance(local := scope.resolve(expr), _LocalFunction):
+        node = local.node
     if node is not None:
         return _inline_handler(node, scope, filename, label, location)
     value = scope.resolve(expr)
@@ -591,15 +592,15 @@ def element_of(
     location = Location(filename, getattr(element, "lineno", 0))
     if isinstance(element, ast.Lambda):
         return raw_handler_of(element, scope, filename, text)
+    if isinstance(element, ast.Name) and isinstance(scope.resolve(element), _LocalFunction):
+        return raw_handler_of(element, scope, filename, text)  # a dispatch function defined in the body
     if (
         isinstance(element, ast.Name)
         and scope.resolve(element) is UNBOUND
         and depth < _MAX_LIST_HOPS
-    ):
-        if element.id in scope.local_values:  # h = (reader {...}) … [h]
-            return element_of(scope.local_values[element.id], scope, filename, depth=depth + 1)
-        if element.id in scope.local_functions:  # a dispatch function defined in the body
-            return raw_handler_of(element, scope, filename, text)
+        and element.id in scope.local_values
+    ):  # h = (reader {...}) … [h]
+        return element_of(scope.local_values[element.id], scope, filename, depth=depth + 1)
     head = element.func if isinstance(element, ast.Call) else element
     value = scope.resolve(head)
     if value is UNBOUND:

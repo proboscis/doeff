@@ -528,6 +528,8 @@ def _do_decorator() -> Any:
 # (_is_effect_class / _function_of / _is_installer) before relying on it.
 Imported = Any
 
+FunctionNode = ast.FunctionDef | ast.AsyncFunctionDef | ast.Lambda
+
 
 class _Unbound:
     """What a name resolves to when the reader cannot bind it to an object."""
@@ -565,10 +567,24 @@ class ReceivedEffect:
     cls: type
 
 
+@dataclass(frozen=True)
+class ReceivedField:
+    """``effect.<attr>`` for a clause's received effect (``ReceivedEffect``): a field of
+    the effect that arrived.  Performing it runs a Program the effect carried
+    (``Try(program)`` → ``yield effect.program``); that Program was read where the
+    effect was performed — carried with the effect class as carrier — so performing it
+    here adds nothing (agora-redesign #1432)."""
+
+    cls: type
+    attr: str
+
+
 class _IdentityKind(Enum):
     PROGRAM = "program"  # a Program argument: its function and bindings
     PROGRAM_SEQUENCE = "program-sequence"  # a tuple / list of Program arguments
     PROGRAM_ELEMENT = "program-element"  # one element of such a sequence, not known which
+    LOCAL_FUNCTION = "local-function"  # a lambda / nested def, read where it was written
+    RECEIVED_FIELD = "received-field"  # a field of a clause's received effect
     INSTANCE = "instance"  # an instance of a class
     OBJECT = "object"  # any other object, by id
 
@@ -696,7 +712,28 @@ class _ProgramAnyOf:
         return self.sequence.depth
 
 
-_PROGRAM_VALUES = (_ProgramArg, _ProgramSeq, _ProgramAnyOf)
+@dataclass(frozen=True, eq=False)
+class _LocalFunction:
+    """A lambda or a def nested in a body (``(fn [] (begin-query c))`` passed to a
+    callee, ``attempt`` defined in a handler clause): calling it runs its body, read
+    where it was written (``scope``) with its parameters bound to the call's arguments
+    (agora-redesign #1432)."""
+
+    node: FunctionNode
+    scope: "_Scope"
+
+    @property
+    def filename(self) -> str:
+        """The file the function was written in."""
+        return _module_source(self.scope.module).filename
+
+    @property
+    def depth(self) -> int:
+        """1 + the nesting of the Program arguments its scope was itself bound with."""
+        return 1 + self.scope.bound.depth
+
+
+_PROGRAM_VALUES = (_ProgramArg, _ProgramSeq, _ProgramAnyOf, _LocalFunction)
 
 
 def _programs_of(value: "_ProgramArg | _ProgramAnyOf") -> tuple[_ProgramArg, ...]:
@@ -758,6 +795,21 @@ class _ReadKey:
 
 def _identity(value: Imported) -> _Identity:
     """A hashable identity for a bound value (bound objects need not be hashable)."""
+    written = _written_identity(value)
+    if written is not None:
+        return written
+    match value:
+        case ReceivedField():
+            return _Identity(_IdentityKind.RECEIVED_FIELD, hash(value))
+        case _Instance(cls=cls):
+            return _Identity(_IdentityKind.INSTANCE, id(cls))
+        case _:
+            return _Identity(_IdentityKind.OBJECT, id(value))
+
+
+def _written_identity(value: Imported) -> _Identity | None:
+    """The identity of a value written in a caller's body (a Program, a sequence of them,
+    an element of one, a local function): where it was written and the scope's bindings."""
     match value:
         case _ProgramArg(expr=expr, scope=scope):
             return _Identity(_IdentityKind.PROGRAM, id(expr), scope.bound.key)
@@ -767,13 +819,10 @@ def _identity(value: Imported) -> _Identity:
             return _Identity(
                 _IdentityKind.PROGRAM_ELEMENT, id(sequence.expr), sequence.scope.bound.key
             )
-        case _Instance(cls=cls):
-            return _Identity(_IdentityKind.INSTANCE, id(cls))
+        case _LocalFunction(node=node, scope=scope):
+            return _Identity(_IdentityKind.LOCAL_FUNCTION, id(node), scope.bound.key)
         case _:
-            return _Identity(_IdentityKind.OBJECT, id(value))
-
-
-FunctionNode = ast.FunctionDef | ast.AsyncFunctionDef | ast.Lambda
+            return None
 
 
 @dataclass(frozen=True)
@@ -792,6 +841,9 @@ class _Scope:
     # A local assigned on several paths, none reading it (Hy's ``match`` / ``cond`` as an
     # expression: ``_hy_anon_1 = …`` once per branch) → every value it may hold.
     local_choices: dict[str, tuple[ast.expr, ...]] = field(default_factory=dict)
+    # A local bound once and then only rebound to a call that wraps it (``prog = h(prog)``
+    # — handlers put back around a Program) → what it was first bound to.
+    local_rewraps: dict[str, ast.expr] = field(default_factory=dict)
     bound: _Bound = _NO_BINDINGS
 
     def resolve(self, expr: ast.expr) -> Any:
@@ -801,6 +853,8 @@ class _Scope:
             return self._resolve_name(expr.id)
         if isinstance(expr, ast.Attribute):
             base = self.resolve(expr.value)
+            if isinstance(base, ReceivedEffect):
+                return ReceivedField(base.cls, expr.attr)
             if isinstance(base, _Instance):
                 return _instance_attribute(base, expr.attr)
             if base is not UNBOUND and hasattr(base, expr.attr):
@@ -833,9 +887,9 @@ class _Scope:
         bound = self.bound.get(name)
         if bound is not UNBOUND:
             return bound
-        element = self._local_element(name)
-        if element is not UNBOUND:
-            return element
+        local = self._local_value(name)
+        if local is not UNBOUND:
+            return local
         if name in self.local_names:
             return self._local_instance(name)
         for table in (vars(self.module), _builtins_of(self.module)):
@@ -855,6 +909,26 @@ class _Scope:
             element = self.resolve(value)
             return element if isinstance(element, (_ProgramArg, _ProgramAnyOf)) else UNBOUND
         return UNBOUND
+
+    def _local_value(self, name: str) -> Imported:
+        """What a local the reader follows holds: an element of a sequence of Programs, a
+        field of the received effect, or a function defined in the body — else ``UNBOUND``."""
+        if name in self.local_functions:
+            return _LocalFunction(self.local_functions[name], self)
+        element = self._local_element(name)
+        return element if element is not UNBOUND else self._received_field(name)
+
+    def _received_field(self, name: str) -> Imported:
+        """A local holding a field of the received effect: bound once to
+        ``effect.<attr>`` (``program = effect.program`` — what ``defhandler`` expands a
+        clause's field pattern to), or first bound to it and then only wrapped in
+        handlers (``prog = effect.program`` … ``prog = h(prog)`` — ``try_handler``
+        puts the inner handlers back around the Program it received)."""
+        value = self.local_values.get(name, self.local_rewraps.get(name))
+        if not isinstance(value, ast.Attribute) or _reads_itself(value, name):
+            return UNBOUND
+        field_value = self.resolve(value)
+        return field_value if isinstance(field_value, ReceivedField) else UNBOUND
 
     def _local_instance(self, name: str) -> Any:
         """``runtime = SomeClass(...)`` → an instance of ``SomeClass`` (for its methods)."""
@@ -1067,6 +1141,11 @@ def _scope_of(
         for name, exprs in assigned.items()
         if len(exprs) > 1 and name not in loops and not any(_reads_itself(e, name) for e in exprs)
     }
+    rewraps = {
+        name: seed
+        for name, exprs in assigned.items()
+        if len(exprs) > 1 and (seed := _rewrapped_seed(exprs, name)) is not None
+    }
     # A parameter rebound in the body (by an assignment or a loop) no longer holds what
     # the caller passed.
     own_bound = bound.without(frozenset(assigned) | frozenset(loops))
@@ -1080,6 +1159,7 @@ def _scope_of(
             local_functions=local_functions,
             local_elements=elements,
             local_choices=choices,
+            local_rewraps=rewraps,
             bound=own_bound,
         )
     shadowed = frozenset(names)
@@ -1092,8 +1172,30 @@ def _scope_of(
         local_functions={**_unshadowed(parent.local_functions, shadowed), **local_functions},
         local_elements={**_unshadowed(parent.local_elements, shadowed), **elements},
         local_choices={**_unshadowed(parent.local_choices, shadowed), **choices},
+        local_rewraps={**_unshadowed(parent.local_rewraps, shadowed), **rewraps},
         bound=parent.bound.without(shadowed).plus(own_bound),
     )
+
+
+def _rewrapped_seed(exprs: Sequence[ast.expr], name: str) -> ast.expr | None:
+    """The first value of a local every other assignment of which wraps it
+    (``prog = effect.program`` · ``prog = h(prog)`` · ``prog = try_handler(prog)``), or
+    None.  A wrapping call takes the local as its one argument and reads it nowhere
+    else (not in its callee)."""
+    seeds = [expr for expr in exprs if not _reads_itself(expr, name)]
+    wraps = [expr for expr in exprs if _reads_itself(expr, name)]
+    if len(seeds) != 1 or not all(_wraps(expr, name) for expr in wraps):
+        return None
+    return seeds[0]
+
+
+def _wraps(expr: ast.expr, name: str) -> bool:
+    """``f(name)`` / ``(f x)(name)`` with ``name`` read only as the one argument."""
+    match expr:
+        case ast.Call(args=[ast.Name(id=argument)], keywords=[], func=func):
+            return argument == name and not _reads_itself(func, name)
+        case _:
+            return False
 
 
 def _unshadowed(table: dict[str, Any], shadowed: frozenset[str]) -> dict[str, Any]:
@@ -1219,6 +1321,11 @@ def _call_bindings(function: types.FunctionType, call: ast.Call, scope: _Scope) 
 def _argument_value(argument: ast.expr, scope: _Scope) -> Imported:
     """What an argument denotes when it is known: an object, or a Program built here."""
     value = scope.resolve(argument)
+    if isinstance(value, _LocalFunction) or isinstance(argument, ast.Lambda):
+        # A function written here, called by the callee (``begin`` / ``commit`` handed to
+        # ``run-in-transaction``): read where it was written, bounded like a Program argument.
+        local = value if isinstance(value, _LocalFunction) else _LocalFunction(argument, scope)
+        return local if local.depth <= _MAX_BINDING_DEPTH else UNBOUND
     if value is not UNBOUND:
         return value
     sequence = _program_sequence(argument, scope)
@@ -1251,7 +1358,7 @@ def _is_program_expr(expr: ast.expr, scope: _Scope) -> bool:
         case ast.Subscript():
             return isinstance(scope.resolve(expr), (_ProgramArg, _ProgramAnyOf))
         case ast.Name(id=name):
-            if isinstance(scope.resolve(expr), (_ProgramArg, _ProgramAnyOf)):
+            if isinstance(scope.resolve(expr), (_ProgramArg, _ProgramAnyOf, ReceivedField)):
                 return True
             call = scope.local_calls.get(name)
             return call is not None and _is_program_expr(call, scope)
@@ -1398,8 +1505,9 @@ def _do_block(call: ast.Call, scope: _Scope) -> FunctionNode | None:
     match wrapped.args[0]:
         case ast.Lambda() as node:
             return node
-        case ast.Name(id=name) if scope.resolve(wrapped.args[0]) is UNBOUND:
-            return scope.local_functions.get(name)
+        case ast.Name():
+            local = scope.resolve(wrapped.args[0])
+            return local.node if isinstance(local, _LocalFunction) else None
         case _:
             return None
 
@@ -1491,6 +1599,8 @@ class _Reader:
 
     def __init__(self) -> None:
         self._facts: dict[_ReadKey, _Facts] = {}
+        # Local functions being read (a local function calling itself is read once).
+        self._local_reads: set[_Identity] = set()
 
     def facts(self, function: types.FunctionType, bound: _Bound = _NO_BINDINGS) -> _Facts:
         """What ``function`` does when read with ``bound`` (cached)."""
@@ -1543,7 +1653,7 @@ class _Reader:
             self._performed(expr.body, scope, filename, facts)
             self._performed(expr.orelse, scope, filename, facts)
             return
-        if isinstance(expr, ast.Constant) and expr.value is None:
+        if _adds_nothing(expr, scope):
             return
         if isinstance(expr, ast.Subscript):
             element = scope.resolve(expr)
@@ -1607,7 +1717,9 @@ class _Reader:
             self.collect(_body_nodes(block), inner, filename, facts, generator=True)
             return
         target = scope.resolve(call.func)
-        if target is UNBOUND:
+        if isinstance(target, _LocalFunction):
+            self._local_call(target, call, scope, facts)
+        elif target is UNBOUND:
             facts.unresolved.append(
                 (
                     "yielded a call whose target is not a module-level name",
@@ -1628,6 +1740,38 @@ class _Reader:
                     location,
                 )
             )
+
+    def _local_call(
+        self, local: _LocalFunction, call: ast.Call, scope: _Scope, facts: _Facts
+    ) -> None:
+        """A yielded call of a lambda / nested def: its body is read where it was written,
+        its parameters bound to the arguments known here.  A generator body runs as the
+        Program; any other body returns the Program that runs (a lambda's expression, a
+        def's ``return``s)."""
+        identity = _identity(local)
+        if identity in self._local_reads:
+            return  # a local function calling itself: its body is being read further up
+        params = _positional_params(local.node)
+        leading = itertools.takewhile(lambda a: not isinstance(a, ast.Starred), call.args)
+        passed = [
+            Binding(name, _argument_value(argument, scope))
+            for name, argument in zip(params, leading, strict=False)
+        ]
+        bound = _Bound(tuple(b for b in passed if b.value is not UNBOUND))
+        inner = _scope_of(local.node, local.scope.module, parent=local.scope, bound=bound)
+        self._local_reads.add(identity)
+        try:
+            match local.node:
+                case ast.Lambda(body=body):
+                    self._performed(body, inner, local.filename, facts)
+                case node if _is_generator(node):
+                    self.collect(_body_nodes(node), inner, local.filename, facts, generator=True)
+                case node:
+                    for child in _body_nodes(node):
+                        if isinstance(child, ast.Return) and child.value is not None:
+                            self._performed(child.value, inner, local.filename, facts)
+        finally:
+            self._local_reads.discard(identity)
 
     def _opened(
         self,
@@ -1714,7 +1858,9 @@ class _Reader:
     def _performed_arguments(
         self, function: types.FunctionType, bound: _Bound
     ) -> frozenset[_Identity]:
-        """The Program arguments in ``bound`` that ``function`` (transitively) runs."""
+        """The Program arguments in ``bound`` that ``function`` (transitively) runs where
+        the reader sees what answers them — not beneath a handler it cannot read
+        (``scheduled`` runs its body under ``core.prompt()``: read as a wrapper instead)."""
         arguments = {
             _identity(program)
             for binding in bound.bindings
@@ -1733,7 +1879,11 @@ class _Reader:
                 if key not in visited:
                     visited.add(key)
                     pending.append(self.facts(called.function, called.bound))
-            pending.extend(scope.body for scope in facts.handled)
+            pending.extend(
+                scope.body
+                for scope in facts.handled
+                if all(handler.known for handler in scope.handlers)
+            )
         return frozenset(found)
 
     def _carried_arguments(
@@ -1806,6 +1956,19 @@ class _Reader:
         if isinstance(expr, ast.Name) and expr.id in scope.local_calls:
             return scope.local_calls[expr.id]
         return None
+
+
+def _adds_nothing(expr: ast.expr, scope: _Scope) -> bool:
+    """A yielded value whose performing adds nothing here: ``None``, or the Program the
+    received effect carried (``yield effect.program`` — read where the effect was
+    performed, see ``ReceivedField``)."""
+    match expr:
+        case ast.Constant(value=None):
+            return True
+        case ast.Name() | ast.Attribute():
+            return isinstance(scope.resolve(expr), ReceivedField)
+        case _:
+            return False
 
 
 def _wrapper(
