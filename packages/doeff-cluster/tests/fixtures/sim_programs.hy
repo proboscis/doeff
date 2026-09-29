@@ -351,3 +351,16 @@
 (defsystem detaching [foundation]
   "見本の系: 切り離した task を出して待つ service 1 つ"
   (detacher (detaching-program foundation 3 "detached/result") :needs #{"cluster-net"}))
+
+
+;; --- 終わりの待ちの検(test_local_wakes.hy — proboscis/doeff#631)------------------------------------------------
+
+(defk slow-task [foundation seconds]
+  {:pre [(: foundation Callable) (: seconds float)] :post [(: % float)] :tags {:context "doeff-cluster-test" :role "entry"}}
+  "task: seconds 秒眠ってから眠った秒を返す(送った task の終わりを書きで起きて待てるかを見るため)。"
+  (<- slept float (foundation (do! (<- (Delay seconds)) seconds)))
+  slept)
+
+(defsystem long-quitters [foundation]
+  "見本の系: 子の task に盤へ書かせ、自分は 120 拍で値を返して抜ける service 1 つ(process の終わりを待つ検)"
+  (long-quitter (spawning-program foundation "long/" 120) :needs #{"cluster-net"}))

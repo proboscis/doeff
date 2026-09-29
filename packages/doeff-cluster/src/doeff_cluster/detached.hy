@@ -15,6 +15,8 @@
 ;;; 外側の handler を継ぎ、Program に足りない handler を黙って補っていた(ADR-DOE-CLUSTER-001 R1・R2 に反する)。模擬の担い手の筋書き
 ;;; (担い手の死・drain・戻り・coordinator の途絶)は sim-cluster の検の effect(KillWorker・DrainWorker・StartWorker・StopCoordinator)が持つ。
 (require doeff-hy.macros [defhandler defk deff <- val var])
+(require doeff-hy.record [defrecord])
+(import dataclasses [dataclass])
 (import urllib.parse [quote :as url-quote])
 (import httpx)
 (import doeff [run :as run-program])
@@ -24,6 +26,7 @@
 (import .runtime_env_model [RuntimeEnv runtime-env->json])
 (import .remote_model [encode-program current-versions])
 (import .warm_model [WarmRuntimeEnv ReadWarmState WarmState WarmUnreachable WarmAnswer warm-state-of-json])
+(import .process_model [AwaitProcessEnded ProcessEnded ProcessWaitExpired])
 (import .detached_model [SubmitDetached AwaitDetached CancelDetached ReleaseDetached ReadRunners WARMING-PHASE
                          DetachedSubmitted DetachedPending DetachedRefused DetachedAwaited DetachedUnreachable
                          RunnerFact RunnersUnreachable RunnersAnswer outcome-of-view])
@@ -218,6 +221,65 @@
       (:= waited (+ waited poll-seconds))))
   answer)
 
+;; --- job の process の終わりの待ち(AwaitProcessEnded — process_model.hy)の本番の答え -------------------------------
+
+;; worker の状態の行の phase のうち、子 process が動いている物と、まだ起きていない(準備・起動待ち・入口の検め)物。どちらでもない行
+;; (backoff・finished・stopped・各種の失敗)は、その job の最後の process が終わった姿。
+(val LIVE-JOB-PHASES (frozenset #("running" "stopping" "stop-unconfirmed")))
+(val UNSTARTED-JOB-PHASES (frozenset #("preparing" "starting" "probing")))
+
+
+(defrecord ProcessWatch
+  "AwaitProcessEnded の本番の待ちの 1 回の読みの結果(process-watch-step の答え)。watched = 見張っている動いている process(終わった時の
+   答えの形 — まだ見ていなければ None)・ended = 終わっていればその答え(まだなら None)。"
+  (#^ (| ProcessEnded None) watched)
+  (#^ (| ProcessEnded None) ended))
+
+
+(defk process-watch-step [statuses job watched]
+  {:pre [(: statuses dict) (: job str) (: watched (| ProcessEnded None))] :post [(: % ProcessWatch)]
+   :tags {:context "doeff-cluster" :role "judgment"}}
+  "coordinator の GET /state の statuses(worker の名 → 最後の状態の報告 {jobs stale …})の 1 回の読みから、job の待つ相手の process が
+   終わったかを決めるため。沈黙した worker(stale)の報告は数えない。見張っている process が動いている行から消えれば終わり・まだ
+   見張っていなければ、動いている行を見張り始めるか、終わった姿の行(動いていない・起きる前でもない)ならすぐ終わり。"
+  (val rows (lfor #(worker status) (sorted (.items statuses)) :if (not (.get status "stale" False))
+                  row (.get status "jobs" []) :if (= (.get row "name") job)
+                  #(worker row)))
+  (val live (lfor #(worker row) rows :if (in (.get row "phase") LIVE-JOB-PHASES)
+                  (ProcessEnded :job job :instance (str (or (.get row "instance") "")) :worker worker)))
+  (val gone (lfor #(worker row) rows :if (not-in (.get row "phase") (| LIVE-JOB-PHASES UNSTARTED-JOB-PHASES))
+                  (ProcessEnded :job job :instance (str (or (.get row "instance") "")) :worker worker)))
+  (cond
+    (is-not watched None) (ProcessWatch :watched watched :ended (if (in watched live) None watched))
+    live (ProcessWatch :watched (get live 0) :ended None)
+    gone (ProcessWatch :watched None :ended (get gone 0))
+    True (ProcessWatch :watched None :ended None)))
+
+
+(defk await-process-cluster [client job timeout-seconds poll-seconds]
+  {:pre [(: client DetachedClient) (: job str) (: timeout-seconds (| float int None)) (: poll-seconds float)]
+   :post [(: % (| ProcessEnded ProcessWaitExpired))] :tags {:context "doeff-cluster" :role "protocol"}}
+  "AwaitProcessEnded の本番の答え: coordinator の GET /state を poll-seconds ごとに読み、process-watch-step で終わりを決める(本番の
+   coordinator は長い待ちの読みを持たないので読み直す — 契約の答え)。届かない読みは次の拍で読み直す。timeout-seconds を過ぎたら
+   ProcessWaitExpired。眠りは Delay(同じ VM の他の task を塞がない)。"
+  (var waited 0.0)
+  (var watched None)
+  (var answer None)
+  (while (is answer None)
+    (val read (try (.resend client (fn [] (.request client.endpoint "GET" "/state")))
+                   (except [error httpx.TransportError] None)))
+    (when (and (is-not read None) (= read.status-code 200))
+      (<- step ProcessWatch (process-watch-step (.get (.json read) "statuses" {}) job watched))
+      (:= watched step.watched)
+      (:= answer step.ended))
+    (when (and (is answer None) (is-not timeout-seconds None) (>= waited timeout-seconds))
+      (:= answer (ProcessWaitExpired :job job :waited-seconds waited)))
+    (when (is answer None)
+      (<- (Delay poll-seconds))
+      (:= waited (+ waited poll-seconds))))
+  answer)
+
+
 (defhandler detached-cluster [#^ DetachedClient client [poll-seconds 1.0]]
   (SubmitDetached [program key needs name lease-seconds retain-seconds environ]
     ;; 送れない値は送る前に断る(encode-program が UnsendableProgram を投げ、呼び手へ届く)。
@@ -230,7 +292,10 @@
     (resume outcome))
   (CancelDetached [key] (resume (.cancel client key)))
   (ReleaseDetached [key] (resume (.release client key)))
-  (ReadRunners [] (resume (.runners client))))
+  (ReadRunners [] (resume (.runners client)))
+  (AwaitProcessEnded [job timeout-seconds]
+    (<- ended (await-process-cluster client job timeout-seconds poll-seconds))
+    (resume ended)))
 
 
 ;; --- 温める表(2026-09-26): coordinator の /warm の口 -------------------------------------------------
