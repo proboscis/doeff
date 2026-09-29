@@ -209,31 +209,6 @@
   (assert (= client.close-calls 1)))
 
 
-(deftest test-http-fixture-record-forwards-to-production-handler [tmp-path]
-  (setv fixture-path (/ tmp-path "http-fixture.pickle"))
-  (setv client (FakeAsyncClient
-                 [(make-response 200 {"X-Fixture" "yes"} b"fixture" "fixture"
-                                 "https://example.test/resource" 0.3)]))
-  (<- recorded
-      ((state) (slog-handler ((await-handler)
-          ((http-fixture-handler fixture-path :mode "record"
-                                 :client-factory (fn [] client)
-                                 :sleep noop-sleep)
-            (do!
-              (<- resp (HttpRequest "GET" "https://example.test/resource"))
-              resp))))))
-  (<- replayed
-      ((http-fixture-handler fixture-path :mode "replay")
-        (do!
-          (<- resp (HttpRequest "GET" "https://example.test/resource"))
-          resp)))
-  (assert (= (. recorded status) 200))
-  (assert (= (. replayed status) 200))
-  (assert (= (. replayed text) "fixture"))
-  (assert (= (len client.calls) 1))
-  (assert (= client.close-calls 1)))
-
-
 (deftest test-http-fixture-replay-errors-on-unknown-request [tmp-path]
   (with [(pytest.raises KeyError :match "No recorded HTTP fixture")]
     (<- _

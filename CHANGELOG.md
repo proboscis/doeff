@@ -23,6 +23,10 @@
 
 ### Changed
 
+- `http_fixture_handler` now keys a fixture by every request field that can change the answer (headers, timeout,
+  `max_retries`, `follow_redirects`, `failures_as_values` in addition to method / url / params / body), and records and
+  replays failures too (an `HttpFailed` value, or the transport error raised again). Fixture files recorded before this
+  change no longer match and must be recorded again.
 - `Cancel(task)` now throws `TaskCancelledError` into a started task at its suspension point, so
   its `except` / `finally` blocks run (and may perform effects) before waiters observe the
   cancellation. Previously the task's continuation was dropped and its cleanup never ran.

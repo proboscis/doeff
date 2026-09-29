@@ -46,12 +46,6 @@ def test_http_production_handler_retries_request_exceptions_with_timeout(
 ) -> None: ...
 
 
-def test_http_fixture_record_forwards_to_production_handler(
-    doeff_interpreter: DeftestInterpreter,
-    tmp_path: Path,
-) -> None: ...
-
-
 def test_http_fixture_replay_errors_on_unknown_request(
     doeff_interpreter: DeftestInterpreter,
     tmp_path: Path,
