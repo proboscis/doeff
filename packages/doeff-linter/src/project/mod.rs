@@ -272,6 +272,9 @@ pub fn run_with(root: &Path, settings: &ProjectSettings, enabled: &BTreeSet<Proj
                     if enabled.contains(&ProjectRule::WorldHandlerMisplaced) && !architecture.world_handlers.is_empty() {
                         drafts.extend(judge_world_handler_places(root, architecture, layers, &layer_files, hy));
                     }
+                    if enabled.contains(&ProjectRule::TestKindMismatch) && !architecture.world_handlers.is_empty() {
+                        drafts.extend(judge_test_kinds(root, architecture, hy));
+                    }
                 }
             }
             if let (Some(architecture), Some(layers)) = (&settings.architecture, &settings.layers) {
@@ -521,10 +524,12 @@ fn whole_hy_index(
     let wants_env = enabled.contains(&ProjectRule::EnvironmentName) && settings.environment.is_some();
     // DOEFF119 は業務の file の class の生の副作用(経由も)を見るので、全体の索引を作る。
     let wants_classes = (enabled.contains(&ProjectRule::ClassWithBehaviour) || enabled.contains(&ProjectRule::SemanticClassRole)) && settings.definitions.is_some();
-    if !(wants_raw && settings.raw.is_some()) && !wants_env && !wants_classes {
+    // DOEFF133 はテストの file を含む全体の索引で、テストから定義を辿る。
+    let wants_tests = enabled.contains(&ProjectRule::TestKindMismatch) && settings.architecture.as_ref().is_some_and(|a| a.edge_mark.is_some());
+    if !(wants_raw && settings.raw.is_some()) && !wants_env && !wants_classes && !wants_tests {
         return HashMap::new();
     }
-    let index = if (enabled.contains(&ProjectRule::RawSideEffectVia) && settings.raw.is_some()) || wants_classes {
+    let index = if (enabled.contains(&ProjectRule::RawSideEffectVia) && settings.raw.is_some()) || wants_classes || wants_tests {
         hy_index::index_root(root, raw)
     } else {
         let paths: BTreeSet<PathBuf> = layer_files
@@ -1612,6 +1617,174 @@ fn judge_world_handler_places(
                 detail: Some(spelling.clone()),
                 base: Severity::Error,
                 explain: Explain::WorldHandlerMisplaced { definition: spelling, problem },
+            });
+        }
+    }
+    drafts
+}
+
+/// 定義の範囲 inner が outer の中に在るか(同じ範囲は入れ子ではない)。
+fn range_inside(inner: &Range, outer: &Range) -> bool {
+    outer.start <= inner.start && inner.end <= outer.end && inner != outer
+}
+
+/// 位置 spot を含む、いちばん内側の定義の添字(無ければ None)。
+fn innermost_definition(definitions: &[Definition], spot: &Range) -> Option<usize> {
+    definitions
+        .iter()
+        .enumerate()
+        .filter(|(_, d)| d.full_range.start <= spot.start && spot.end <= d.full_range.end)
+        .max_by_key(|(_, d)| d.full_range.start)
+        .map(|(index, _)| index)
+}
+
+/// テストの定義か module の頭が、縁の印 mark を持つか(deftest の `:marks [..]` と module の `pytestmark` の `pytest.mark.<印>`)。
+/// 印の名は Python の綴り(`real_world`)と Hy の綴り(`real-world`)の両方で読む。
+fn carries_edge_mark(source: &str, test: &Definition, mark: &str) -> bool {
+    let spellings = [mark.to_string(), mark.replace('_', "-")];
+    let named = |text: &str| spellings.iter().any(|s| text.contains(&format!("\"{}\"", s)) || text.contains(&format!("mark.{}", s)));
+    let lines: Vec<&str> = source.lines().collect();
+    let start = test.full_range.start.line as usize;
+    let end = (test.full_range.end.line as usize).min(lines.len().saturating_sub(1));
+    let body = lines.get(start..=end).map(|l| l.join("\n")).unwrap_or_default();
+    let in_marks = body.match_indices(":marks").any(|(at, _)| {
+        let rest = &body[at..];
+        match (rest.find('['), rest.find(']')) {
+            (Some(open), Some(close)) if open < close => named(&rest[open..close]),
+            _ => false,
+        }
+    });
+    in_marks || lines.iter().any(|line| line.contains("pytestmark") && named(line))
+}
+
+/// DOEFF133: テストの種類を届く先から導く。定義の間の辺(呼び出し・参照・入れ子)を全体の索引から 1 度だけ組み、外の世界の側
+/// (名簿の定義・:wraps の handler を名指す定義・強い生の I/O の証拠を持つ定義)から逆向きに辿って「外の世界に届く定義」の集合を
+/// 求める。deftest がその集合に在れば縁(:edge-mark の印が要る)、無ければ手元(印を持たない)。Python の検は数えない(R6 で deftest へ)。
+fn judge_test_kinds(root: &Path, architecture: &architecture::Architecture, hy: &HashMap<String, HyFileIndex>) -> Vec<Draft> {
+    let Some(mark) = architecture.edge_mark.as_deref() else { return Vec::new() };
+    let listed = architecture.world_definition_targets();
+    let wrapped = architecture.wrapped_targets();
+    let mut rels: Vec<&String> = hy.keys().collect();
+    rels.sort();
+    // 定義 1 つ = 節 1 つ(file の順・file の中の添字の順)。
+    let mut nodes: Vec<(&str, usize)> = Vec::new();
+    let mut base: HashMap<&str, usize> = HashMap::new();
+    let mut by_name: HashMap<&str, usize> = HashMap::new();
+    for rel in &rels {
+        base.insert(rel.as_str(), nodes.len());
+        for (index, definition) in hy[*rel].definitions.iter().enumerate() {
+            by_name.entry(definition.qualified_name.as_str()).or_insert(nodes.len());
+            nodes.push((rel.as_str(), index));
+        }
+    }
+    // world[n] = その定義そのものが外の世界に触れる理由(名簿の定義の綴り・:wraps の handler の綴り・生の I/O の証拠の名)。
+    let mut world: Vec<Option<String>> = vec![None; nodes.len()];
+    // callers[n] = n に届く定義(辺の逆向き)。
+    let mut callers: Vec<Vec<usize>> = vec![Vec::new(); nodes.len()];
+    for rel in &rels {
+        let file = &hy[*rel];
+        let first = base[rel.as_str()];
+        let definitions = &file.definitions;
+        for (index, definition) in definitions.iter().enumerate() {
+            if let Some(spelling) = listed.get(&definition.qualified_name) {
+                world[first + index] = Some(spelling.clone());
+            } else if let Some(evidence) = definition.raw.direct.iter().find(|e| e.strength == RawStrength::Strong) {
+                world[first + index] = Some(evidence.name.clone());
+            }
+        }
+        // 入れ子: 外の定義は内の定義の届く先に届く(始まりの順に並べ、開いている定義の stack で親を引く)。
+        let mut order: Vec<usize> = (0..definitions.len()).collect();
+        order.sort_by(|a, b| definitions[*a].full_range.start.cmp(&definitions[*b].full_range.start).then(definitions[*b].full_range.end.cmp(&definitions[*a].full_range.end)));
+        let mut open: Vec<usize> = Vec::new();
+        for index in order {
+            while open.last().is_some_and(|top| !range_inside(&definitions[index].full_range, &definitions[*top].full_range)) {
+                open.pop();
+            }
+            if let Some(parent) = open.last() {
+                callers[first + index].push(first + *parent);
+            }
+            open.push(index);
+        }
+        let in_import = |range: &Range| file.imports.iter().any(|imp| imp.range.start <= range.start && range.end <= imp.range.end);
+        // 辺になる名(索引の定義か :wraps の handler)だけを見る — ほかの名の持ち主の定義は引かない。
+        let interesting = |t: &str| by_name.contains_key(t) || wrapped.contains_key(t);
+        let spots = file
+            .references
+            .iter()
+            .filter(|r| r.target.as_deref().is_some_and(interesting) && !in_import(&r.range))
+            .filter_map(|r| r.target.as_deref().map(|t| (t, innermost_definition(definitions, &r.range))))
+            .chain(file.calls.iter().filter_map(|c| c.target.as_deref().filter(|t| interesting(t)).map(|t| (t, c.caller))));
+        for (target, owner) in spots {
+            let Some(owner) = owner else { continue };
+            let owner = first + owner;
+            if let Some((spelling, _)) = wrapped.get(target) {
+                if world[owner].is_none() {
+                    world[owner] = Some(spelling.clone());
+                }
+            } else if let Some(&callee) = by_name.get(target) {
+                if callee != owner {
+                    callers[callee].push(owner);
+                }
+            }
+        }
+    }
+    // 外の世界の側から逆向きに辿る(toward[n] = n から外の世界へ向かう次の節・None なら n 自身が触れる)。
+    let mut reaches: Vec<bool> = world.iter().map(Option::is_some).collect();
+    let mut toward: Vec<Option<usize>> = vec![None; nodes.len()];
+    let mut queue: std::collections::VecDeque<usize> = (0..nodes.len()).filter(|n| reaches[*n]).collect();
+    while let Some(node) = queue.pop_front() {
+        for &caller in &callers[node] {
+            if !reaches[caller] {
+                reaches[caller] = true;
+                toward[caller] = Some(node);
+                queue.push_back(caller);
+            }
+        }
+    }
+    let name_of = |node: usize| -> String {
+        let (rel, index) = nodes[node];
+        hy[rel].definitions[index].name.clone()
+    };
+    let mut drafts = Vec::new();
+    for rel in &rels {
+        let file = &hy[*rel];
+        let first = base[rel.as_str()];
+        let tests: Vec<usize> = file.definitions.iter().enumerate().filter(|(_, d)| d.kind == DefinitionKind::Deftest).map(|(i, _)| i).collect();
+        if tests.is_empty() {
+            continue;
+        }
+        let Ok(source) = std::fs::read_to_string(root.join(rel.as_str())) else { continue };
+        for index in tests {
+            let test = &file.definitions[index];
+            let edge = reaches[first + index];
+            let marked = carries_edge_mark(&source, test, mark);
+            if edge == marked {
+                continue;
+            }
+            let mut reached = Vec::new();
+            let mut at = first + index;
+            while let Some(next) = toward[at] {
+                reached.push(name_of(next));
+                at = next;
+            }
+            if let Some(reason) = &world[at] {
+                reached.push(reason.clone());
+            }
+            let message = if edge {
+                format!("テスト {} は外の世界に届く(縁 — {})のに印 {} が無い", test.name, reached.join(" → "), mark)
+            } else {
+                format!("テスト {} は外の世界に届かない(手元)のに印 {} が在る", test.name, mark)
+            };
+            drafts.push(Draft {
+                rule: ProjectRule::TestKindMismatch,
+                layer: None,
+                rel: (*rel).clone(),
+                path: root.join(rel.as_str()),
+                range: test.range,
+                message,
+                detail: Some(format!("{}::{}", definition_label(test), if edge { "edge" } else { "local" })),
+                base: Severity::Error,
+                explain: Explain::TestKindMismatch { test: test.name.clone(), edge, mark: mark.to_string(), reached },
             });
         }
     }

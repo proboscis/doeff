@@ -215,6 +215,9 @@ pub struct Architecture {
     pub wire_modules: Vec<String>,
     /// 外の世界に触れてよい定義の許可名簿(`:world-handlers` — 空 = 宣言していない)。
     pub world_handlers: Vec<WorldHandler>,
+    /// 「縁」のテスト(外の世界に触れる handler に届くテスト)が持つ pytest の印の名(`:edge-mark "real_world"`)。
+    /// 書けば DOEFF133 が、テストの届く先から導いた種類と印の有無の食い違いを出す(agora-redesign #1106 の R3)。
+    pub edge_mark: Option<String>,
     #[serde(skip)]
     pub role_descriptions: BTreeMap<String, String>,
     #[serde(skip)]
@@ -512,6 +515,7 @@ impl<'a> Parser<'a> {
             rejected_plain_callable_reasons: Vec::new(),
             wire_modules: Vec::new(),
             world_handlers: Vec::new(),
+            edge_mark: None,
             role_descriptions: BTreeMap::new(),
             exclude: vec!["tests".into(), "__pycache__".into(), "conftest.py".into()],
             extensions: None,
@@ -552,6 +556,13 @@ impl<'a> Parser<'a> {
                 }
                 ":wire-modules" => arch.wire_modules = self.module_patterns(value, ":wire-modules"),
                 ":world-handlers" => arch.world_handlers = self.world_handlers(value),
+                ":edge-mark" => {
+                    arch.edge_mark = self.required_string(value, ":edge-mark");
+                    let well_formed = arch.edge_mark.as_deref().is_some_and(|m| !m.is_empty() && m.chars().all(|c| c.is_ascii_alphanumeric() || c == '_'));
+                    if arch.edge_mark.is_some() && !well_formed {
+                        self.problem(value, ":edge-mark は pytest の印の名(英数字と _ — 例 \"real_world\")");
+                    }
+                }
                 ":roles" => match self.brace(value) {
                     Some(entries) => {
                         for (role, text) in self.pairs(&entries) {
@@ -872,6 +883,9 @@ impl<'a> Parser<'a> {
         // 名簿の定義は foundation の層にだけ置く(R2)— foundation の無い宣言に名簿を書いても置ける所が無いので誤り。
         if !arch.world_handlers.is_empty() && arch.foundation.is_none() {
             push(&mut self.problems, ":world-handlers を書くには :foundation が要る(外の世界に触れてよい定義は foundation の層にだけ置く)".to_string());
+        }
+        if arch.edge_mark.is_some() && arch.world_handlers.is_empty() {
+            push(&mut self.problems, ":edge-mark を書くには :world-handlers が要る(縁のテストは名簿の定義に届くテスト)".to_string());
         }
         for handler in &arch.world_handlers {
             for wrapped in &handler.wraps {

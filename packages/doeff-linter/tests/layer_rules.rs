@@ -1954,3 +1954,50 @@ fn world_handler_list_entries_exist_in_the_foundation_layer() {
     let line = std::fs::read_to_string(dir.path().join("architecture.hy")).unwrap().lines().position(|l| l.contains("app.foundation.host:gone")).unwrap();
     assert_eq!(violation(&report, "architecture.hy::DOEFF132::app.foundation.host:gone")["range"]["start"]["line"], line);
 }
+
+/// agora-redesign #1142(R3): テストの種類は届く先から導く — 名簿の定義・:wraps の handler・生の I/O に(定義を辿って)届く deftest は
+/// 縁で :edge-mark の印が要り、届かない deftest は手元で印を持たない。食い違いは DOEFF133(critical)。
+#[test]
+fn test_kind_is_derived_from_what_the_test_reaches() {
+    let files = [
+        ("app/foundation/host.hy", tags("shared", "foundation") + "(defk with-host [body] body)\n"),
+        ("app/billing/core/calc.hy", tags("billing", "judgment") + "(defk add [a b] (+ a b))\n"),
+        ("app/billing/core/helpers.hy", tags("billing", "judgment") + "(import app.foundation.host [with-host])\n(defk hosted [body] (with-host body))\n"),
+        (
+            "app/billing/tests/test_kinds.hy",
+            "(import pytest)\n(import subprocess)\n(import doeff_core_effects.os_file [os-file-handler])\n\
+             (import app.billing.core.calc [add])\n(import app.billing.core.helpers [hosted])\n\
+             (deftest test-local-good (<- n (add 1 2)) (assert (= n 3)))\n\
+             (deftest test-local-marked {:marks [\"real_world\"]} (<- n (add 1 2)) (assert (= n 3)))\n\
+             (deftest test-edge-two-steps (<- n (hosted (add 1 2))) (assert n))\n\
+             (deftest test-edge-wrapped (<- n (with-handlers [os-file-handler] (add 1 2))) (assert n))\n\
+             (deftest test-edge-raw-good {:marks [\"real_world\"]} (assert (subprocess.run [\"true\"])))\n"
+                .to_string(),
+        ),
+        (
+            "app/billing/tests/test_module_mark.hy",
+            "(import pytest)\n(import app.billing.core.helpers [hosted])\n(setv pytestmark pytest.mark.real-world)\n\
+             (deftest test-edge-module-marked (<- n (hosted 1)) (assert n))\n"
+                .to_string(),
+        ),
+    ];
+    let architecture_extra = "";
+    let dir = world_repo_with(&files, architecture_extra, "[\"DOEFF133\"]");
+    let arch_path = dir.path().join("architecture.hy");
+    let text = std::fs::read_to_string(&arch_path).unwrap().replace(":foundation foundation", ":foundation foundation\n  :edge-mark \"real_world\"");
+    std::fs::write(&arch_path, text).unwrap();
+    let (_, report) = editor(dir.path());
+    assert_eq!(
+        keys(&report, "DOEFF133"),
+        vec![
+            "app/billing/tests/test_kinds.hy::DOEFF133::test_edge_two_steps::edge",
+            "app/billing/tests/test_kinds.hy::DOEFF133::test_edge_wrapped::edge",
+            "app/billing/tests/test_kinds.hy::DOEFF133::test_local_marked::local",
+        ],
+        "印の在る縁(:marks と module の pytestmark)と印の無い手元は当てない: {}",
+        report
+    );
+    let two_steps = violation(&report, "app/billing/tests/test_kinds.hy::DOEFF133::test_edge_two_steps::edge");
+    assert!(two_steps["message"].as_str().unwrap().contains("hosted → with-host → app.foundation.host:with-host"), "{}", two_steps["message"]);
+    assert_eq!(two_steps["level"], "critical");
+}
