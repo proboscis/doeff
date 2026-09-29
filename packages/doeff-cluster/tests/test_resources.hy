@@ -4,7 +4,7 @@
 (import doeff_cluster.cluster_model [ClusterTiming ClusterState Request PlainText])
 (import doeff_cluster.cluster_policy [state-to-json state-from-json board-changes job-from-json])
 (import doeff_cluster.worker_model [spec-hash])
-(import doeff_cluster.api_policy [respond])
+(import doeff_cluster.api_policy [respond tick plan-rollouts])
 (import doeff_cluster.resource_policy [LEGACY-OWNER adopt-legacy])
 (import tests.program_rows [SAMPLE-RUN program-placed program-run])
 (import doeff [run])
@@ -47,6 +47,20 @@
   (assert (is s3 s2))
   ;; もう在る名前は作れない
   (assert (= (get (call s2 "POST" "/resources/Service" {"name" "a" "spec" SPEC}) 1) 409)))
+
+
+(deftest test-an-idle-tick-returns-the-same-state-and-advances-no-version
+  ;; 変化の無い拍(#1356): 調停(tick)も Rollout の計画(plan-rollouts)も状態そのものを返し、版の番号も出来事も進まない。
+  ;; 版を付ける stamp は同じ object なら資源の写しを作らずに返すので、この同一性が 1 秒ごとの拍の計算を省く。
+  ;; 反例: 割り当てか Rollout を毎拍作り直した dict で返すと、中身が同じでも別の object になり赤。
+  (setv #(s status _) (call (ClusterState) "POST" "/resources/Service" {"name" "a" "spec" SPEC}))
+  (assert (= status 201))
+  (setv s (tick (beat s "atlas" 1000) 1000 T))
+  (assert (in "a" s.placements) s.placements)
+  (setv idle (tick s 1500 T))
+  (assert (is idle s))
+  (assert (= #(idle.revision idle.audit-seq (len idle.events)) #(s.revision s.audit-seq (len s.events))))
+  (assert (is (get (plan-rollouts s 1500 T) 0) s)))
 
 
 (deftest test-every-write-records-the-actor-and-the-versions

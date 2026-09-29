@@ -919,10 +919,17 @@
 
 (defn #^ ClusterState reconcile [#^ int now #^ ClusterState state #^ ClusterTiming timing]
   (setv state (forget-silent-workers (sweep-warms (sweep-drains (sweep-board state now) now) now) now))
+  ;; 変わらない割り当てと task は元の object のまま引き継ぎ、何も変わらなければ状態そのものを返す(2026-09-29・#1356):
+  ;; 版を付ける stamp は同じ object なら資源の写し(snapshot)を作らずに返す。以前は毎拍作り直した dict を返したので、変化の無い
+  ;; 1 秒ごとの拍でも写しを 2 つ作って比べていた(模擬の仮想 1700 秒で約 2,000 回)。
   (setv before state.placements
-        after (place-jobs now state timing)
-        tasks (place-tasks now state after timing)
-        events (list state.events))
+        placed (place-jobs now state timing)
+        after (if (= placed before) before placed)
+        placed-tasks (place-tasks now state after timing)
+        tasks (if (= placed-tasks state.tasks) state.tasks placed-tasks))
+  (when (and (is after before) (is tasks state.tasks))
+    (return state))
+  (setv events (list state.events))
   (for [name (sorted (| (set before) (set after)))]
     (setv old (.get before name) new (.get after name))
     (when (!= old new)

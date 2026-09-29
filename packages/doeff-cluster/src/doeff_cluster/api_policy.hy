@@ -191,7 +191,8 @@
       (setv #(ns dep) (.split key "/" 1))
       (.append actions {"rollout" name "op" "annotate" "namespace" ns "name" dep
                         "annotations" {naming.owner-annotation (.format "{}/Rollout/{} replicas={}" naming.owner-scope name expected)}})))
-  #((replace state :rollouts rollouts) actions))
+  ;; 段が進まなければ状態そのものを返す(reconcile と同じ — stamp が写しを作らずに返す・#1356)。
+  #((if (= rollouts state.rollouts) state (replace state :rollouts rollouts)) actions))
 
 
 (defn #^ ClusterState scale-service [#^ ClusterState state #^ str name #^ int replicas]
