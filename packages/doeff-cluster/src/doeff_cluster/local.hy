@@ -49,6 +49,9 @@
 ;;;   ReportsOf 名              coordinator に届いた ReportReady / ReportMetrics の列(SimReport)。
 ;;;   ReadinessOf 名            coordinator の Service の status の ready(SimReadiness — Ready / NotReady / Unknown / Missing)。
 ;;;   ProcessesOf 名            その job の process の列(SimProcess — 世代・worker・始まり・終わり・exit-code)。task は task/<id>。
+;;;   AwaitProcessStarted 名    その job の最初の process が起きるまで待ち、その記録を返す(世界が process を記録した時に起きる)。
+;;;   AwaitProcessEnded 名      契約の effect(process_model.hy — 本番は detached-cluster が coordinator を読んで答える)。sim では世界が
+;;;                             答え、job の今の最後の process の終わりを世界が書いた時に待ち手の Promise を満たす(読み直さない)。
 ;;;   SharedRows 頭             coordinator の盤の行(鍵が頭で始まる物)。
 ;;;   ReadCoordinator path      coordinator の口の GET の本文(/state・/workers/<名>・/metrics など)。
 ;;;   StopCoordinator 秒        coordinator の Pod を優雅に止め(次の拍の止めの合図)、秒の間止めてから作り直す(置き場から読み直す)。
@@ -78,6 +81,10 @@
 ;;;   - 実行環境の root は準備の中身(git・uv・disk)を模擬しない(prepare-seconds の後に揃うか env-failure で終わる)。disk は常に ok。
 ;;;   - process の中で Spawn した task は 1 段の包み(tracked-child)の task として起きる(Program が受ける把手は包みの物 — 取り消し・待ち・
 ;;;     答えは同じ)。
+;;;   - AwaitProcessEnded は筋書きにだけ答える(世界の真実で答える — 本番の答えは coordinator の信念で、heartbeat の分だけ遅れる)。
+;;;     job の Program が出すと柵で落ちる。
+;;;   - AwaitDetached は読み直さず、模擬の coordinator がその task の終わりの phase を書いた時(Persist)に起きる(本番の detached-cluster は
+;;;     poll-seconds ごとに読む — 答えの意味は同じ)。
 ;;;
 ;;; 状態の置き場(ADR-DOE-HY-007): 世界の状態は世界の handler(sim-world)の session var に置き、値は defrecord、変化は effect で書く。
 ;;; 要求の列・memory の置き場・停止の合図・偽の k8s は coordinator_handler_sets の既存の資源(世界の session val が 1 回だけ作る)。
@@ -92,12 +99,13 @@
 (import doeff [with-handlers EffectBase UnhandledEffect DoExpr Program])
 (import doeff_core_effects.effects [Ask])
 (import doeff_core_effects.handlers [state :as session-store await-handler])
-(import doeff_core_effects.scheduler [scheduled CreatePromise CompletePromise Wait Spawn Gather Cancel Promise Task
-                                      TaskCancelledError])
+(import doeff_core_effects.scheduler [scheduled CreatePromise CompletePromise Wait Spawn Gather Cancel Race Promise Task
+                                      Future TaskCancelledError])
 (import doeff_time [Delay sim-time-handler async-time-handler])
 (import doeff_cluster.clock [now-epoch-ms datetime-of-epoch-ms])
 (import .cluster_model [ClusterState ClusterTiming ClusterNaming Request NextRequests Reply Persist CoordinatorStopRequested
-                        PlainText])
+                        PlainText ENDED-PHASES])
+(import .process_model [AwaitProcessEnded ProcessEnded ProcessWaitExpired])
 (import .cluster_policy [fresh-task-prefix])
 (import .coordinator [run-coordinator load-state])
 (import .coordinator_http [IDEMPOTENT-DEADLINE-SECONDS RESEND-PAUSE-SECONDS])
@@ -109,7 +117,7 @@
                    runners-unreachable warm-request-body warm-path absent-warm-state SERVER-ERROR warm-unconnected
                    warm-server-failure])
 (import .detached_model [SubmitDetached AwaitDetached CancelDetached ReleaseDetached ReadRunners DetachedSubmitted
-                         DetachedSubmitAnswer DetachedAwaited RunnersUnreachable])
+                         DetachedSubmitAnswer DetachedAwaited RunnersUnreachable WARMING-PHASE])
 (import .drain_client [drain-request DRAIN-DEADLINE-SECONDS DRAIN-TTL-MARGIN-SECONDS])
 (import .handlers [declared-job-spec task-spec heartbeat-body status-report desired-when-unreachable env-report env-heartbeat-part
                    warm-env-of-row])
@@ -274,6 +282,13 @@
   "検の effect: job name の process の列(SimProcess の tuple・起こした順)。"
   {:fields [(: name str)]
    :answer tuple
+   :tags {:context "doeff-cluster" :role "intent"}})
+
+(defeffect AwaitProcessStarted
+  "検の effect: job name の最初の process が起きるまで待ち、その記録(SimProcess)を返す(既に起きていればすぐ)。読み直さず、世界が
+   process を記録した時(NoteProcess)に起きる。"
+  {:fields [(: name str)]
+   :answer SimProcess
    :tags {:context "doeff-cluster" :role "intent"}})
 
 (defeffect SharedRows
@@ -789,23 +804,107 @@
               (DetachedSubmitted key (get (refused-or-body sent "task を出せない") "created"))))))
 
 
+(defk expire-after [seconds]
+  {:pre [(: seconds float)] :post [(: % None)] :tags {:context "doeff-cluster" :role "program"}}
+  "待ちの期限の鳴らし: seconds 秒眠ってから None で終わるため(promise-or-timeout が呼び鈴と競わせる)。"
+  (<- (Delay seconds))
+  None)
+
+
+(defk withdraw-timer [timer]
+  {:pre [(: timer Task)] :post [(: % None)] :tags {:context "doeff-cluster" :role "program"}}
+  "期限の鳴らし timer を取り消し、解け終わるまで待つため(置き去りの眠りを残さない — 壁の時計では実時間で眠り続ける)。取り消しの
+   TaskCancelledError はこの片付けの task の中でだけ飲む(待ち手の中で飲むと、待ち手自身への取り消しと見分けられない)。"
+  (<- (Cancel timer))
+  (try
+    (<- (Wait timer))
+    (except [TaskCancelledError]
+      None))
+  None)
+
+
+(defk promise-or-timeout [future seconds]
+  {:pre [(: future Future) (: seconds (| float int None))] :post [(: % "future の答え(時間切れは None)")]
+   :tags {:context "doeff-cluster" :role "program"}}
+  "書き手が満たす Promise(future)を、seconds 秒(None = 上限なし)まで待つため — 読み直さずに書きで起きる待ちの 1 点。答え = future の
+   答え(満たす側は None を渡さない)か、時間切れの None。期限の鳴らしは終わりに取り消して解け終わるまで待つ(待ち手が取り消された時も)。"
+  (when (is seconds None)
+    (<- value (Wait future))
+    (return value))
+  (<- timer Task (Spawn (expire-after (float seconds))))
+  (try
+    (<- first (Race future timer))
+    first
+    (finally
+      (<- withdrawing Task (Spawn (withdraw-timer timer)))
+      (try
+        (<- (Wait withdrawing))
+        (except [cancelled TaskCancelledError]
+          (<- (Wait withdrawing))
+          (raise cancelled))))))
+
+
+(defk bell-span [view timeout-seconds waited]
+  {:pre [(: view (| dict None)) (: timeout-seconds (| float int None)) (: waited float)] :post [(: % (| float None))]
+   :tags {:context "doeff-cluster" :role "judgment"}}
+  "切り離した task の待ちの 1 回の眠りの上限を決めるため: coordinator に届かない・起きた直後(warming)の間は送り直しの間隔
+   DETACHED-POLL-SECONDS(書きが来ない — 本番の送り手の送り直しと同じ)、それ以外は期限までの残り(期限なし = None — 終わりの書きの
+   呼び鈴だけで起きる)。"
+  (cond
+    (or (is view None) (= (.get view "phase") WARMING-PHASE)) DETACHED-POLL-SECONDS
+    (is timeout-seconds None) None
+    True (max 0.0 (- (float timeout-seconds) waited))))
+
+
 (defk await-detached [link key timeout-seconds]
   {:pre [(: link SimLink) (: key str) (: timeout-seconds (| float int None))] :post [(: % DetachedAwaited)]
    :tags {:context "doeff-cluster" :role "protocol"}}
-  "AwaitDetached を本番の await-cluster と同じ手順で待つため: GET /detached/<key>(期限まで送り直す・503 = 起きた直後の warming は本文)を
-   DETACHED-POLL-SECONDS ごとに読み、1 拍の読みは本番と同じ判断(detached.awaited-answer)で答えか待ち続けるかを決める。"
-  (var waited 0.0)
+  "AwaitDetached を本番の await-cluster と同じ読みで待つため: GET /detached/<key>(期限まで送り直す・503 = 起きた直後の warming は本文)を
+   読み、1 回の読みは本番と同じ判断(detached.awaited-answer)で答えか待ち続けるかを決める。待つ間は読み直さず、読む前に掛けた
+   呼び鈴(RequestQueue.bells — 模擬の coordinator がその task の終わりの phase を書いた時に鳴らす)か期限で起きる(proboscis/doeff#631)。
+   読みの回数は終わりの書きの前後の 2 回と期限の 1 回ほど(coordinator に届かない間だけ DETACHED-POLL-SECONDS ごとに送り直す)。"
+  (<- started int (now-epoch-ms))
+  (val bells link.queue.bells)
   (var answer None)
   (while (is answer None)
+    (<- bell Promise (CreatePromise))
+    ;; 読む前に掛ける(読みの返事と終わりの書きの間に鳴らしを取りこぼさない)。
+    (setv (get bells key) (+ (.get bells key #()) #(bell)))
     (<- read tuple (send-resent link "GET" (detached-path key "") {} None))
+    (<- now int (now-epoch-ms))
+    (val waited (/ (- now started) 1000.0))
     (val view (cond (is (get read 0) None) None
                     (= (get read 0) 503) (get read 1)
                     True (refused-or-body read "task を読めない")))
     (:= answer (awaited-answer view (unreached-reason read) key waited timeout-seconds))
     (when (is answer None)
-      (<- (Delay DETACHED-POLL-SECONDS))
-      (:= waited (+ waited DETACHED-POLL-SECONDS))))
+      (<- span (| float None) (bell-span view timeout-seconds waited))
+      (<- (promise-or-timeout bell.future span)))
+    ;; 鳴らなかった呼び鈴を外す(鳴った物は鳴らした側が外している)。
+    (val left (tuple (gfor b (.get bells key #()) :if (is-not b bell) b)))
+    (if left (setv (get bells key) left) (.pop bells key None)))
   answer)
+
+
+(defk ended-task-keys [delta]
+  {:pre [(: delta dict)] :post [(: % frozenset)] :tags {:context "doeff-cluster" :role "judgment"}}
+  "coordinator の 1 回の Persist の差分から、終わりの phase(cluster_model.ENDED-PHASES)を書いた切り離した task の key を読むため
+   (その key の呼び鈴を鳴らす)。"
+  (frozenset (gfor #(k row) (.items delta)
+                   :if (and (.startswith k "task/") (isinstance row dict) (.get row "detached") (.get row "key")
+                            (in (.get row "phase") ENDED-PHASES))
+                   (get row "key"))))
+
+
+(defk ring-ended-tasks [queue delta]
+  {:pre [(: queue RequestQueue) (: delta dict)] :post [(: % int)] :tags {:context "doeff-cluster" :role "program"}}
+  "Persist が書き終えた差分で終わった切り離した task の呼び鈴を外して鳴らすため(待っている送り手が 1 回だけ読み直す)。
+   答え = 鳴らした呼び鈴の数。"
+  (<- keys frozenset (ended-task-keys delta))
+  (val rung (lfor key (sorted keys) bell (.pop queue.bells key #()) bell))
+  (for [bell rung]
+    (<- (CompletePromise bell None)))
+  (len rung))
 
 
 (defk read-runners [link]
@@ -1329,6 +1428,9 @@
     (when crash
       (raise (OSError "sim: Persist の失敗(注入 — fsync の失敗)。返事をせずに落ちる")))
     (<- effect)
+    ;; 書き終えた差分で終わった切り離した task の待ち手を起こす(送り手は読み直さずに待っている — proboscis/doeff#631)。
+    (<- parts SimParts (PartsOf))
+    (<- (ring-ended-tasks parts.queue delta))
     (resume None))
   (CoordinatorStopRequested []
     (<- due bool (PauseDue PAUSE-STOP))
@@ -1445,6 +1547,48 @@
   (tuple (gfor row declaration.rows (get row "name"))))
 
 
+;; --- process の終わりの待ち(AwaitProcessEnded — 世界が書きで起こす)---------------------------------------------
+
+(defrecord DueWaiters
+  "process の終わりを書いた後の待ち手の分け方(due-end-waiters の答え)。remaining = まだ待つ job → Promise の tuple・due = 起こす
+   #(Promise 答え) の tuple(掛けた順)。"
+  (#^ dict remaining)
+  (#^ tuple due))
+
+
+(defk ended-process [log job]
+  {:pre [(: log tuple) (: job str)] :post [(: % (| SimProcess None))] :tags {:context "doeff-cluster" :role "judgment"}}
+  "AwaitProcessEnded の待つ相手(job の今の最後の process)が終わっていればその記録を、動いている・まだ無ければ None を返すため。"
+  (val mine (lfor r log :if (= r.job job) r))
+  (if (and mine (is-not (. (get mine -1) ended-ms) None)) (get mine -1) None))
+
+
+(defk first-process [log job]
+  {:pre [(: log tuple) (: job str)] :post [(: % (| SimProcess None))] :tags {:context "doeff-cluster" :role "judgment"}}
+  "AwaitProcessStarted の待つ相手(job の最初の process)が起きていればその記録を、まだなら None を返すため。"
+  (next (gfor r log :if (= r.job job) r) None))
+
+
+(defk ended-answer [process]
+  {:pre [(: process SimProcess)] :post [(: % ProcessEnded)] :tags {:context "doeff-cluster" :role "judgment"}}
+  "終わった process の記録を AwaitProcessEnded の答えにするため。"
+  (ProcessEnded :job process.job :instance process.instance :worker process.worker))
+
+
+(defk due-end-waiters [log waiters]
+  {:pre [(: log tuple) (: waiters dict)] :post [(: % DueWaiters)] :tags {:context "doeff-cluster" :role "judgment"}}
+  "process の終わりを記録に書いた直後に、待ち手のうち待つ相手の終わった物(起こす)と、まだ待つ物を分けるため。"
+  (var remaining {})
+  (var due #())
+  (for [#(job promises) (.items waiters)]
+    (<- ended (| SimProcess None) (ended-process log job))
+    (if (is ended None)
+        (:= remaining (| remaining {job promises}))
+        (do (<- answer ProcessEnded (ended-answer ended))
+            (:= due (+ due (tuple (gfor p promises #(p answer))))))))
+  (DueWaiters :remaining remaining :due due))
+
+
 ;; --- 世界 -----------------------------------------------------------------------------------------------
 
 (defhandler sim-world [#^ SimPlan plan]
@@ -1474,6 +1618,8 @@
   (session var pauses #())
   (session var downtime None)
   (session var runs #())
+  (session var end-waiters {})
+  (session var start-waiters {})
   (PlanOf []
     (resume plan))
   (PartsOf []
@@ -1501,6 +1647,12 @@
             (resume None))))
   (NoteProcess [process]
     (:= log (+ log #(process)))
+    ;; その job の最初の process を待つ AwaitProcessStarted の待ち手を起こす(読み直さない — 書きで起こす)。
+    (val starting (.get start-waiters process.job #()))
+    (:= start-waiters (dfor #(k v) (.items start-waiters) :if (!= k process.job) k v))
+    (<- first (| SimProcess None) (first-process log process.job))
+    (for [promise starting]
+      (<- (CompletePromise promise first)))
     (resume None))
   (EndProcess [worker pid ended]
     (<- now int (now-epoch-ms))
@@ -1517,9 +1669,14 @@
     (:= handles (dfor #(k v) (.items handles) :if (!= k pid) k v))
     (:= children (dfor #(k v) (.items children) :if (!= k pid) k v))
     (:= finished (| finished (frozenset [pid])))
+    ;; 待つ相手の process が終わった AwaitProcessEnded の待ち手を起こす(読み直さない — 書きで起こす)。
+    (<- woken DueWaiters (due-end-waiters log end-waiters))
+    (:= end-waiters woken.remaining)
     ;; process が終われば、中で Spawn した task も止まる(本番は子 process ごと消える)。
     (for [task spawned]
       (<- (Cancel task)))
+    (for [#(promise answer) woken.due]
+      (<- (CompletePromise promise answer)))
     (resume None))
   (KillOf [pid]
     (resume (.get kills pid)))
@@ -1600,10 +1757,14 @@
     (:= hosts (| hosts {name (replace truth :down True)}))
     ;; 記録の終わりはここで書く(走り出す前に取り消された process は EndProcess を書かない — 動いているように見せない)。
     (:= log (tuple (gfor r log (if (in r.pid victims) (replace r :ended-ms now :exit-code killed.code :detail killed.detail) r))))
+    (<- woken DueWaiters (due-end-waiters log end-waiters))
+    (:= end-waiters woken.remaining)
     ;; 把手がまだ無い process(StartJob の Spawn と KeepHandle の間)は KeepHandle がその場で取り消す。
     (for [pid victims]
       (when (in pid handles)
         (<- (Cancel (get handles pid)))))
+    (for [#(promise answer) woken.due]
+      (<- (CompletePromise promise answer)))
     (resume (len victims)))
   (StopWorker [name]
     (val truth (get hosts name))
@@ -1660,6 +1821,29 @@
     (resume (tuple (gfor r reports :if (= r.job name) r))))
   (ProcessesOf [name]
     (resume (tuple (gfor r log :if (= r.job name) r))))
+  (AwaitProcessStarted [name]
+    (<- first (| SimProcess None) (first-process log name))
+    (if (is-not first None)
+        (resume first)
+        (do (<- promise Promise (CreatePromise))
+            (:= start-waiters (| start-waiters {name (+ (.get start-waiters name #()) #(promise))}))
+            (<- started SimProcess (Wait promise.future))
+            (resume started))))
+  (AwaitProcessEnded [job timeout-seconds]
+    ;; 待つ相手(job の今の最後の process — まだ無ければ最初に起きる process)が終わっていればすぐ答え、それ以外は Promise を掛けて、
+    ;; 世界が process の終わりを書いた時(EndProcess・KillWorker)に起きる。読み直さない(proboscis/doeff#631)。
+    (<- ended (| SimProcess None) (ended-process log job))
+    (cond
+      (is-not ended None)
+        (do (<- answer ProcessEnded (ended-answer ended))
+            (resume answer))
+      (and (is-not timeout-seconds None) (<= timeout-seconds 0))
+        (resume (ProcessWaitExpired :job job :waited-seconds 0.0))
+      True
+        (do (<- promise Promise (CreatePromise))
+            (:= end-waiters (| end-waiters {job (+ (.get end-waiters job #()) #(promise))}))
+            (<- answer (promise-or-timeout promise.future timeout-seconds))
+            (resume (if (is answer None) (ProcessWaitExpired :job job :waited-seconds (float timeout-seconds)) answer)))))
   (ReadinessOf [name]
     (<- link SimLink (control-link parts.queue plan.revision))
     (<- answer tuple (send-request link "GET" (+ "/resources/Service/" (url-quote name :safe "")) {} None))
