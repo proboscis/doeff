@@ -12,12 +12,18 @@
 ;;;
 ;;; 組は with_handlers に渡す list(外側が先)。選ぶのは composition root(coordinator.main・業務の側の模擬環境)だけ。
 ;;; 本番の受付の handler は coordinator_inbox.hy(coordinator.hy から分けた — この module と coordinator.hy の循環を作らない)。
-(require doeff-hy.macros [defhandler defk <- val])
+(require doeff-hy.macros [defhandler defk <- val var])
 (import copy)
+(import math [ceil])
+(import doeff_cluster.clock [now-epoch-ms])
+(import doeff_time [Delay])
+;; 模擬の列は、要求の無い間に眠る長さを本番の判断の関数で試す(idle_policy — 判断の層を読むのはこのためだけ)。
+(import .idle_policy [quiet-ticks])
+(import .api_policy [TICK-MS])
 (import doeff_core_effects.handlers [await-handler])
 (import doeff_core_effects.scheduler [CreatePromise CompletePromise Promise])
 (import doeff_time [async-time-handler])
-(import .cluster_model [Request NextRequests Reply CoordinatorFault])
+(import .cluster_model [Request NextRequests IdleProbe Reply CoordinatorFault])
 (import .wal_store [WalStore MAX-LOG-BYTES wal-store apply-delta])
 (import .kube_handlers [KubeMemory kube-memory])
 (import .coordinator_inbox [RequestInbox StopState http-requests stop-flag])
@@ -39,9 +45,11 @@
    takers = 列の取り手(queued-requests の NextRequests)が、列が空の間に掛けた呼び鈴(doeff の Promise の list — 掛けた順)。送り手が
    列に積んだ時(enqueue-request)に全部鳴らして外す。列は読み直さない(前は仮想の 0.05 秒ごとに見直していた — 使い手の仮想の
    1700 秒の検で 37,222 回眠り、所要の大半になった)。
-   faults = coordinator の中の欠陥の log の行(CoordinatorFault の Fault — 出た順)。本番の受付が stderr へ出す 1 行の代わり。"
-  (defn #^ None __init__ [self]
-    (setv self.pending [] self.up False self.bells {} self.takers [] self.faults [])
+   faults = coordinator の中の欠陥の log の行(CoordinatorFault の Fault — 出た順)。本番の受付が stderr へ出す 1 行の代わり。
+   skip-idle = 要求が無い間、調停が何も変えない拍の数だけ一度に眠るか(idle_policy.quiet-ticks — 模擬の時計の下の入口だけが真に
+   する・2026-09-30。偽なら本番と同じく timeout 秒ごとに起きる)。takes = 取り手が取った回数(coordinator の拍の数 — 検が読む)。"
+  (defn #^ None __init__ [self #^ bool [skip-idle False]]
+    (setv self.pending [] self.up False self.bells {} self.takers [] self.faults [] self.skip-idle skip-idle self.takes 0)
     None))
 
 
@@ -57,29 +65,91 @@
   None)
 
 
+(defk nudge-takers [queue]
+  {:pre [(: queue RequestQueue)] :post [(: % None)] :tags {:context "doeff-cluster" :role "program"}}
+  "要求ではない外の出来事(止めの合図・止まりの注入)を、眠っている取り手に知らせるため。起きた取り手は、要求が無ければ本番の拍の
+   刻(眠り始め + 整数秒)まで眠り直してから拍を回す(本番のループがその出来事に気づくのと同じ刻 — await-idle)。skip-idle でない
+   列の取り手は起こさない(1 秒ごとの拍が、本番と同じ刻でその出来事に気づく — 起こすと本番より早く気づく)。"
+  (when queue.skip-idle
+    (val waiting (tuple queue.takers))
+    (.clear queue.takers)
+    (for [bell waiting]
+      (<- (CompletePromise bell False))))
+  None)
+
+
 (defk await-first-request [queue timeout-seconds]
-  {:pre [(: queue RequestQueue) (: timeout-seconds (| float int))] :post [(: % None)] :tags {:context "doeff-cluster" :role "program"}}
+  {:pre [(: queue RequestQueue) (: timeout-seconds (| float int))] :post [(: % (| bool None))]
+   :tags {:context "doeff-cluster" :role "program"}}
   "列が空なら、送り手が積む(enqueue-request が呼び鈴を鳴らす)か timeout 秒が過ぎるまで 1 回だけ眠るため(読み直さない)。列に何か
-   在れば眠らない。起きた時(時間切れ・取り消しを含む)は自分の呼び鈴を取り手の list から外す。鳴らすのは積む時だけなので、鳴って
-   起きた時の列は空でない(時間切れで起きた時だけ空のまま)。"
+   在れば眠らない。起きた時(時間切れ・取り消しを含む)は自分の呼び鈴を取り手の list から外す。答え = True(積まれた)・False
+   (nudge-takers — 要求ではない出来事)・None(時間切れか、眠らなかった)。"
+  (var woke None)
   (when (and (not queue.pending) (> timeout-seconds 0))
     (<- bell Promise (CreatePromise))
     (.append queue.takers bell)
     (try
-      (<- (promise-or-timeout bell.future timeout-seconds))
+      (<- answer (| bool None) (promise-or-timeout bell.future timeout-seconds))
+      (:= woke answer)
       (finally
         (when (in bell queue.takers)
           (.remove queue.takers bell)))))
+  woke)
+
+
+(defk await-idle [queue probe]
+  {:pre [(: queue RequestQueue) (: probe IdleProbe)] :post [(: % None)] :tags {:context "doeff-cluster" :role "program"}}
+  "要求の無い間の眠りを、調停が何も変えない拍の数(idle_policy.quiet-ticks — 本番の判断の関数で試した数)だけ一度に取るため。
+   要求が積まれればすぐ起きる(本番と同じ刻)。要求ではない出来事で起こされたら、本番の 1 秒の拍がそれに気づく刻(眠り始めから
+   整数秒 — 1 秒以上)まで眠り直す。飛ばした拍は本番でも何も変えないので、起きる刻とそこでの判断は 1 秒ごとの拍と同じ。
+   判断を試すのは、要求の来ないまま最初の 1 拍が過ぎた時だけ(要求が 1 秒より短い間隔で続く系では、飛ばせる拍が無いのに状態の
+   大きい判断を拍ごとに試すことになり、1 秒ごとの拍より遅くなった — 使い手の模擬の全体の検の実測 49.5 秒 → 60 秒超)。要求では
+   ない出来事で起こされた後は試さない(本番の 1 秒の拍が、その出来事に気づく拍で返す)。"
+  (<- started int (now-epoch-ms))
+  (var limit-ms TICK-MS)
+  (var probed False)
+  (var nudged False)
+  (var left-ms TICK-MS)
+  (while (and (not queue.pending) (> left-ms 0))
+    (<- woke (| bool None) (await-first-request queue (/ left-ms 1000.0)))
+    (<- now int (now-epoch-ms))
+    (val elapsed (- now started))
+    (cond
+      (is woke False) (do (<- rest int (rest-to-tick elapsed limit-ms))
+                          (:= nudged True)
+                          (:= left-ms rest))
+      (and (is woke None) (not probed) (not nudged) (not queue.pending))
+        (do (<- quiet int (quiet-ticks probe started))
+            (:= probed True)
+            (:= limit-ms (* TICK-MS quiet))
+            (:= left-ms (- limit-ms elapsed)))
+      True (:= left-ms 0)))
   None)
+
+
+(defk rest-to-tick [elapsed-ms quiet-ms]
+  {:pre [(: elapsed-ms int) (: quiet-ms int)] :post [(: % int)] :tags {:context "doeff-cluster" :role "judgment"}}
+  "要求ではない出来事で起こされた取り手が、本番の 1 秒の拍がその出来事に気づく刻(眠り始めから整数秒・1 秒以上・飛ばしてよい長さ
+   まで)まで、あと何 ms 眠るかを知るため。"
+  (- (min quiet-ms (max TICK-MS (* TICK-MS (ceil (/ elapsed-ms TICK-MS))))) elapsed-ms))
 
 
 (defhandler queued-requests [#^ RequestQueue queue]
   ;; 本番の http-requests と同じ意味: 最初の 1 件を timeout 秒まで待ち、その時点で並んでいる要求を limit 件まで一緒に取る。待ちは列への
-  ;; 書き(enqueue-request)で起きる — 本番の受付が要求の届いた瞬間に起きるのと同じ刻。
-  (NextRequests [timeout-seconds limit]
-    (<- (await-first-request queue timeout-seconds))
+  ;; 書き(enqueue-request)で起きる — 本番の受付が要求の届いた瞬間に起きるのと同じ刻。skip-idle の列(模擬の時計の下)は、idle の
+  ;; 材料があれば、要求が無い間の何も変えない拍を一度に眠る(await-idle)。
+  ;; 要求の無いまま起きた時は、0 秒の Delay を 1 回はさむ: 同じ仮想の刻に来る出来事(筋書きの止めの注入など)を先に全部通してから拍を
+  ;; 回す。はさまないと、同じ刻の出来事と拍の順が時計の timer の登録順で決まり、1 秒ごとの拍と飛ばす拍で順が違う(拍の timer の有無が
+  ;; 違うため — 2026-09-30 のレビューの再現)。
+  (NextRequests [timeout-seconds limit idle]
+    (if (and queue.skip-idle (is-not idle None) (not queue.pending))
+        (<- (await-idle queue idle))
+        (<- (await-first-request queue timeout-seconds)))
+    (when (not queue.pending)
+      (<- (Delay 0.0)))
     (setv batch (cut queue.pending 0 limit))
     (setv queue.pending (cut queue.pending limit None))
+    (+= queue.takes 1)
     (resume batch))
   (Reply [request status body]
     (<- (CompletePromise request.slot #(status body)))

@@ -34,13 +34,13 @@
 (import doeff [run with_handlers])
 (import doeff_core_effects.scheduler [scheduled])
 (import doeff_cluster.clock [now-epoch-ms])
-(import .cluster_model [ClusterState ClusterTiming ClusterNaming naming-from-json NextRequests Reply Persist CoordinatorStopRequested
+(import .cluster_model [ClusterState ClusterTiming ClusterNaming IdleProbe naming-from-json NextRequests Reply Persist CoordinatorStopRequested
                         Fault CoordinatorFault])
 (import .cluster_policy [state-from-json fresh-task-prefix nodes-to-read with-derived-capabilities])
 (import .durable_kv [durable-kv kv-delta full-kv state-from-kv legacy-key-moves resume-writes])
 (import .wal_store [WalStore wal-store])
 (import .api_policy [respond tick plan-rollouts deployments-to-observe scale-service record-action mark-alive resume-after-downtime
-                     ROLLOUT-ACTOR])
+                     ROLLOUT-ACTOR ROLLOUT-TICK-MS TICK-MS])
 (import .resource_policy [stamp adopt-legacy])
 (import .kube_model [ReadDeployment ScaleDeployment AnnotateDeployment ReadNodeLabels KubeUnavailable])
 (import .kube_handlers [kube-api kube-unavailable KubeClient])
@@ -49,7 +49,6 @@
                             StopState])
 (import .coordinator_handler_sets [production-handlers])
 
-(setv ROLLOUT-TICK-MS 1000)
 
 
 ;; --- 調停ループ(Program) -------------------------------------------------------------
@@ -114,7 +113,7 @@
   {:pre [(: state ClusterState) (: timing ClusterTiming) (: naming ClusterNaming)] :post [(: % tuple)]}
   ;; 1 まとまり = 並んでいる要求を全部受ける(無ければ 1 秒待つ)→ 1 件ずつ判断 → Rollout(1 秒ごと)→ 永続化 → 全員に返事。
   ;; 返り値 = #(次の状態 まとまりの要求の数)。
-  (<- batch list (NextRequests 1.0))
+  (<- batch list (NextRequests (/ TICK-MS 1000.0) :idle (IdleProbe state timing naming)))
   (<- now int (now-epoch-ms))
   ;; 期限の経過(worker の沈黙・task の lease・readiness の window)は、まとまりの有無と無関係に毎拍調停する(2026-09-25)。
   ;; 以前は要求の無い拍だけだったので、読みの要求(GET)が 1 秒より短い間隔で続く間は調停が走らず、担い手の死んだ切り離した task が

@@ -572,11 +572,21 @@
 
 ;; --- effect ----------------------------------------------------------------------
 
+(defclass [(dataclass :frozen True)] IdleProbe []
+  "要求の無い拍を飛ばしてよい長さを、模擬の時計の下の受け口が本番と同じ判断の関数で試すための材料(idle_policy.quiet-ticks —
+   2026-09-30)。state = この拍の前の調停の状態・timing / naming = 調停ループの設定。本番の受け口は読まない。"
+  (#^ ClusterState state)
+  (#^ ClusterTiming timing)
+  (#^ ClusterNaming naming))
+
+
 (defclass [(dataclass :frozen True)] NextRequests [EffectBase]
   "結果は Request の list。最初の 1 件を timeout-seconds まで待ち(来なければ空 = 期限の経過で割り当てを動かす拍)、
-   その時点で並んでいる要求を limit 件まで一緒に取る(group commit の 1 まとまり)。"
+   その時点で並んでいる要求を limit 件まで一緒に取る(group commit の 1 まとまり)。idle = 模擬の時計の下の受け口だけが読む材料
+   (要求が無ければ、本番の判断で何も変わらない拍の数だけ一度に眠る — 本番の受け口は読まず、拍の間隔は timeout-seconds のまま)。"
   (#^ float timeout-seconds)
-  (setv #^ int limit 256))
+  (setv #^ int limit 256)
+  (setv #^ (| IdleProbe None) idle None))
 
 
 (defclass [(dataclass :frozen True)] Reply [EffectBase]

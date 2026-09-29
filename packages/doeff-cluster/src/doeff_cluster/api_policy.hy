@@ -47,6 +47,8 @@
 
 (setv OBSERVATION-STALE-MS 15000)   ; これより古い k8s の観測は Unknown
 (setv ROLLOUT-ACTOR "rollout-controller")
+(setv TICK-MS 1000)               ; 調停ループの要求の無い拍の間隔(本番の NextRequests の待ち — coordinator-step・模擬の列・idle_policy が読む)
+(setv ROLLOUT-TICK-MS 1000)       ; Rollout の拍の間隔(coordinator.coordinator-step と idle_policy が読む)
 
 
 (defn #^ ClusterState settle [#^ ClusterState before #^ ClusterState after #^ str actor #^ int now #^ ClusterTiming timing]

@@ -117,7 +117,7 @@
 (import .coordinator [run-coordinator load-state])
 (import .coordinator_http [IDEMPOTENT-DEADLINE-SECONDS RESEND-PAUSE-SECONDS])
 (import .coordinator_inbox [StopState])
-(import .coordinator_handler_sets [RequestQueue MemoryWalStore emulated-handlers enqueue-request])
+(import .coordinator_handler_sets [RequestQueue MemoryWalStore emulated-handlers enqueue-request nudge-takers])
 (import .promise_wait [promise-or-timeout])
 (import .kube_handlers [KubeMemory])
 (import .declare [create-body spec-for-update])
@@ -426,7 +426,8 @@
    per-process = process ごとの外の handler の組を作る関数(SimOutside.per-process — None = 無し)・store = coordinator の置き場を作る
    関数(引数なし → MemoryWalStore の値 — 派生の class をそのまま渡せる。None = MemoryWalStore)。deployments = 偽の k8s の
    初期観測(「namespace/名」→ dict)。parts-of が深い写しを作り、1 回の走りの間だけ変更する。runtime-env = 宣言の実行環境の宣言
-   (本番の declare の --runtime-env と同じ — Redeclare にも載せる。None = 送り手の版のコードだけ)。"
+   (本番の declare の --runtime-env と同じ — Redeclare にも載せる。None = 送り手の版のコードだけ)。skip-idle = coordinator の要求の列が、要求の無い間に何も変えない拍を
+   一度に眠るか(仮想の時計の入口 sim-cluster だけが真 — 本番の拍の間隔と判断の刻は変えない・2026-09-30)。"
   (#^ System system)
   (#^ Declaration declaration)
   (#^ tuple workers)
@@ -440,7 +441,8 @@
   (setv #^ (| Callable None) per-process None)
   (setv #^ (| Callable None) store None)
   (setv #^ (| dict None) deployments None)
-  (setv #^ (| RuntimeEnv None) runtime-env None))
+  (setv #^ (| RuntimeEnv None) runtime-env None)
+  (setv #^ bool skip-idle False))
 
 
 (defrecord SimParts
@@ -617,10 +619,10 @@
   (system-declaration system revision :runtime-env runtime-env :environ environ))
 
 
-(defk sim-plan [system workers environ revision start-ms timing policy outside store [deployments None] [runtime-env None]]
+(defk sim-plan [system workers environ revision start-ms timing policy outside store [deployments None] [runtime-env None] [skip-idle False]]
   {:pre [(: system System) (: workers (| tuple None)) (: environ (| dict None)) (: revision str) (: start-ms int)
          (: timing (| ClusterTiming None)) (: policy (| WorkerPolicy None)) (: outside (| SimOutside None)) (: store (| Callable None))
-         (: deployments (| dict None)) (: runtime-env (| RuntimeEnv None))]
+         (: deployments (| dict None)) (: runtime-env (| RuntimeEnv None)) (: skip-idle bool)]
    :post [(: % SimPlan)] :tags {:context "doeff-cluster" :role "judgment"}}
   "sim-cluster の引数を検めて筋にするため(走らせる前に断る — environ の上書きの誤り・名の重なる worker)。"
   (<- fallback tuple (default-workers system))
@@ -631,6 +633,7 @@
   (<- declaration Declaration (declaration-of system revision (or environ {}) runtime-env))
   (SimPlan :system system :declaration declaration :workers chosen :environ (or environ {}) :revision revision
            :per-process (if (is outside None) None outside.per-process) :store store :deployments deployments :runtime-env runtime-env
+           :skip-idle skip-idle
            :start-ms start-ms :timing (or timing (ClusterTiming)) :naming (ClusterNaming) :policy (or policy (WorkerPolicy))
            :passable (+ SIM-PASSABLE (if (is outside None) #() outside.effects))))
 
@@ -642,7 +645,7 @@
   (val store (if (is plan.store None) (MemoryWalStore) (plan.store)))
   (when (not (isinstance store MemoryWalStore))
     (raise (TypeError (.format "store は MemoryWalStore の値を作る関数: {!r} が {!r} を返した" plan.store store))))
-  (SimParts :queue (RequestQueue) :store store :stop (StopState) :kube (KubeMemory (deepcopy (or plan.deployments {})))))
+  (SimParts :queue (RequestQueue :skip-idle plan.skip-idle) :store store :stop (StopState) :kube (KubeMemory (deepcopy (or plan.deployments {})))))
 
 
 (defk fresh-truth [name generation now fence-ms]
@@ -1833,6 +1836,8 @@
     (resume (tuple (gfor p preparations :if (= p.worker name) p))))
   (StopCoordinator [seconds]
     (:= pauses (+ pauses #(#(PAUSE-STOP (float seconds)))))
+    ;; 眠っている coordinator に知らせる(要求の無い拍を飛ばす列は、本番の 1 秒の拍が止めに気づく刻まで眠り直す — nudge-takers)。
+    (<- (nudge-takers parts.queue))
     (resume None))
   (CrashCoordinator [seconds]
     (:= pauses (+ pauses #(#(PAUSE-CRASH (float seconds)))))
@@ -1924,29 +1929,31 @@
       (<- (StopWorkers))
       (<- (Gather #* keepers))
       (setattr parts.stop "requested" True)
+      (<- (nudge-takers parts.queue))
       (<- (Wait pod)))))
 
 
-(defk sim-under-clock [system scenario workers environ revision timing policy outside store [deployments None] [runtime-env None]]
+(defk sim-under-clock [system scenario workers environ revision timing policy outside store [deployments None] [runtime-env None]
+                       [skip-idle False]]
   {:pre [(: system System) (: scenario (| Program EffectBase)) (: workers (| tuple None)) (: environ (| dict None)) (: revision str)
          (: timing (| ClusterTiming None)) (: policy (| WorkerPolicy None)) (: outside (| SimOutside None)) (: store (| Callable None))
-         (: deployments (| dict None)) (: runtime-env (| RuntimeEnv None))]
+         (: deployments (| dict None)) (: runtime-env (| RuntimeEnv None)) (: skip-idle bool)]
    :post [(: % "scenario の答え(型は筋書きごと)")]
    :tags {:context "doeff-cluster" :role "program"}}
   "入口(sim-cluster・wall-sim-cluster)が選んだ時計の内側で、時計の今を起点に筋を作り(引数を検めて断る)、session の値の置き場・sim の
    外の世界・sim の世界を並べて sim-main を走らせるため。時計の違いは入口が並べる handler だけで、ここから内側は同じ。"
   (<- start-ms int (now-epoch-ms))
-  (<- plan SimPlan (sim-plan system workers environ revision start-ms timing policy outside store deployments runtime-env))
+  (<- plan SimPlan (sim-plan system workers environ revision start-ms timing policy outside store deployments runtime-env skip-idle))
   (<- answer (with-handlers [(session-store) #* (if (is outside None) [] outside.handlers) (sim-world plan)]
                (sim-main scenario)))
   answer)
 
 
 (defk sim-cluster [system scenario * [workers None] [environ None] [revision "sim"] [start-ms SIM-START-MS] [timing None] [policy None]
-                  [outside None] [store None] [deployments None] [runtime-env None]]
+                  [outside None] [store None] [deployments None] [runtime-env None] [skip-idle True]]
   {:pre [(: system System) (: scenario (| Program EffectBase)) (: workers (| tuple None)) (: environ (| dict None)) (: revision str) (: start-ms int)
          (: timing (| ClusterTiming None)) (: policy (| WorkerPolicy None)) (: outside (| SimOutside None)) (: store (| Callable None))
-         (: deployments (| dict None)) (: runtime-env (| RuntimeEnv None))]
+         (: deployments (| dict None)) (: runtime-env (| RuntimeEnv None)) (: skip-idle bool)]
    :post [(: % "scenario の答え(型は筋書きごと)")]
    :tags {:context "doeff-cluster" :role "entry"}}
   "系 system(sim の土台で作った System の値)を本物の coordinator と worker の上で走らせ、scenario(検の筋書きの Program — 同じ
@@ -1959,9 +1966,11 @@
    scheduler が在っても無くても走る)。deployments = 「namespace/名」→ KubeMemory の観測の dict(specReplicas・replicas・readyReplicas 等)。
    走りごとに深い写しを作り、初期値を変えない。既定は空。Pod の進行は SettleDeployment。runtime-env = 宣言の実行環境の宣言(本番の
    declare の --runtime-env と同じ — 本物の worker が準備し、子の run-context の runtime-env になる。既定 None)。壁の時計で回すなら
-   wall-sim-cluster。"
+   wall-sim-cluster。skip-idle = coordinator が要求の無い間、本番の判断で何も変えない拍を一度に眠る(既定 = 真。判断の刻は 1 秒ごとの
+   拍と同じ — 同値の検が偽と真を比べる・2026-09-30)。"
   (<- answer (scheduled (with-handlers [(sim-time-handler :start-time (datetime-of-epoch-ms start-ms))]
-                          (sim-under-clock system scenario workers environ revision timing policy outside store deployments runtime-env))))
+                          (sim-under-clock system scenario workers environ revision timing policy outside store deployments runtime-env
+                                           :skip-idle skip-idle))))
   answer)
 
 
