@@ -265,6 +265,7 @@ law の対応だけを残す。無ければ TOML の設定で今どおり動く�
   :wire-modules ["controllers.foundation.records_client"]  ; JSON の送受信そのものを行う foundation の module(DOEFF120・13 節)
   :edge-mark "real_world"                  ; 縁のテストの pytest の印の名(DOEFF133 — :world-handlers が要る)
   :static-readers ["controllers.shared.core.foundation_closure:ClosureCase"]  ; 渡された値を実行せずに読むだけの定義 — この呼び出しの引数の中の参照は DOEFF133・136 の「届く」の辺にしない(module の印は行頭から始まる pytestmark の宣言だけを読む)
+  :systems {:carriers ["scripts.declare_system:SystemPart"] :runners ["doeff_cluster.local:sim-cluster"]}  ; 系の値と系を回す入口 — defsystem の定義(本体と呼び出しの引数)と :carriers の呼び出しの引数の中から外の世界に届く検は、:runners のどれかにも届く時だけ縁(DOEFF133・書かなければ今までどおり)
   :edge-touches [http db process clock cluster network thread]  ; 縁と数える触れる先(DOEFF133 — 書かなければ全部)
   :test-forms {:tests ["test_*.hy" "test_*.py"] :check-scripts ["scripts/check_*.hy"] :runners ["*_deftest_runner.hy"]}  ; テストの形の決まり(DOEFF135)
   :retired-words [(retired-words "vocabulary" :words ["mail"] :files ["README.md" "controllers/**/*.hy"]   ; 使わないと決めた綴り(DOEFF150)
