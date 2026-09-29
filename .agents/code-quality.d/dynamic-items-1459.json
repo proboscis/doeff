@@ -1,4 +1,11 @@
 {
+  "dynamic_imports": [
+    {
+      "function": "import_module_for",
+      "path": "packages/doeff-adr/src/doeff_adr/lazy_collection.py",
+      "reason": "pytestが選んだHy test moduleの親packageを通常のimport経路で先に読み、読み込んだ子moduleを親へ結び付けるため（#1212・#1468・#1470）。"
+    }
+  ],
   "include": [
     "packages/doeff-hy/src/doeff_hy/pytest_items.py",
     "packages/doeff-adr/src/doeff_adr/runtime_records.py",
