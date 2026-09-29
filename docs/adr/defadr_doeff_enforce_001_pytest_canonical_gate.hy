@@ -49,7 +49,7 @@
     [(rule R1 "enforcement の正典ゲートは既定の `uv run pytest`(testpaths 収集)である。GitHub CI には依存しない。pre-commit / make はこのゲートの別名であってよいが、代替ではない。")
      (rule R2 "testpaths は docs/adr を含む。さらに defadr 収集自己検査(defadr_*.hy のファイル数と収集された ADR モジュール数の一致検査)を doeff-adr パッケージが所有・提供し、全消費リポジトリが継承する(issue doeff-adr-wiring-selfcheck の根本対処)。")
      (rule R3 ".semgrep.yaml のルールは defsemgrep(installed-rule 形式)経由で既定 pytest 収集に載せる。semgrep バイナリ不在は skip ではなく hard fail。semgrep は dev 依存として `make sync` で必ず入る。")
-     (rule R4 "dev ビルドは doeff-vm-core を feature `invariant-checks` + `python_bridge` 有効でビルドする(2026-07-14 B3 裁定)。VM conformance oracle(I1–I8)は pytest から起動される。invariant-checks 無効ビルドでの oracle テストは hard fail(skip 禁止)。")
+     (rule R4 "dev ビルドは doeff-vm-core を feature `invariant-checks` + `python_bridge` 有効でビルドする(2026-07-14 B3 裁定)。VM conformance oracle(I1–I8)は pytest から起動される。invariant-checks 無効ビルドでの oracle テストは hard fail(skip 禁止)。【2026-09-29 追補 — 実行時に有効にする形へ([issue])】cargo feature で build を分けた形は、make sync(検査つき)と素の uv sync(検査なし・venv-run が lock の変化で自動で撃つ)の 2 経路を生み、同じ venv が最後に組んだ経路で 15 倍速くも遅くもした(実測: agora の 1 検で 3.3〜5.7 秒 / 49.8〜62.2 秒)。検査はどの build にも compile し、実行時に有効にする — 環境変数 DOEFF_VM_INVARIANT_CHECKS=1(拡張が最初の step で 1 回読む・0 / 1 以外は panic)か doeff_vm.doeff_vm.set_invariant_checks(True)。doeff の pytest は root の conftest.py が有効にし(子 process は変数を継ぐ)、それ以外(agora と本番)は既定で無効。cargo feature `invariant-checks` は Rust の conformance test(make test-vm-invariants)のために『常に有効』の意味で残す。oracle が無効な pytest の走行は tests/test_vm_invariant_checks_enabled.py が hard fail にする規則は変わらない。無効時の費用は step ごとの atomic の読み 1 回。")
      (rule R5 "anti-drop ratchet: enforcement 台帳(defadr 数・law 数・defsemgrep 数・deftest enforcement 数)が黙って減ったら fail するメタテストを既定収集に置く(orch SpecInventorySpec の pytest 版)。台帳の意図的な削減は台帳ファイルの明示的更新を伴う。")
      [removed]
      [removed]
@@ -124,11 +124,19 @@
                f"docs/adr が testpaths に無い: {testpaths} — ADR-DOE-ENFORCE-001 R2"))
      (deftest test-adr-doe-enforce-001-vm-oracle-wired
        ;; RED(2026-07-14): Makefile に invariant-checks の起動経路が無い。R4 実装で green。
+       ;; 2026-09-29(#980): 配線は root の conftest.py が oracle を実行時に有効にする形。この走行で
+       ;; 有効であること(= 配線が効いていること)と、make sync が build を feature で分けないことを見る。
        (import pathlib [Path])
+       (import doeff_vm.doeff_vm [invariant_checks_enabled])
        (setv root (get (. (Path __file__) parents) 2))
+       (setv conftest (.read-text (/ root "conftest.py")))
        (setv makefile (.read-text (/ root "Makefile")))
-       (assert (in "invariant-checks" makefile)
-               [removed]
+       (assert (in "DOEFF_VM_INVARIANT_CHECKS" conftest)
+               "root の conftest.py が VM の oracle を有効にしていない — ADR-DOE-ENFORCE-001 R4")
+       (assert (invariant_checks_enabled)
+               "この pytest の走行で VM の oracle が無効 — ADR-DOE-ENFORCE-001 R4")
+       (assert (not-in "maturin develop --release --features" makefile)
+               "make sync が VM の build を feature で分けている — 2 経路の build の食い違いに戻る(#980)"))
      (deftest test-adr-doe-enforce-001-deadlines-are-load-scaled
        ;; R6 + law deadline-measures-hang-not-load: 2 つの締切がどちらも
        ;; 係数に掛かっていること、係数の家が 1 つであること、伸ばした事実を

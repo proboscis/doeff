@@ -6,6 +6,7 @@
 //! Python bridge lives in doeff-vm crate.
 
 pub mod handle;
+pub mod invariant_switch;
 pub mod py_shared;
 
 #[cfg(feature = "python_bridge")]
@@ -45,6 +46,8 @@ mod vm;
 mod vm_tests;
 
 // --- Re-exports ---
+
+pub use invariant_switch::{invariant_checks_enabled, set_invariant_checks, INVARIANT_CHECKS_ENV};
 
 #[cfg(feature = "python_bridge")]
 pub use arena::FiberArena;

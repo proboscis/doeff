@@ -20,7 +20,6 @@ mod step_impl;
 #[path = "vm/var_store.rs"]
 mod var_store_impl;
 
-#[cfg(feature = "invariant-checks")]
 #[path = "vm/invariants.rs"]
 mod invariants_impl;
 

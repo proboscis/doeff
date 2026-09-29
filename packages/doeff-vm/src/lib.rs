@@ -39,12 +39,19 @@ fn doeff_vm(m: &Bound<'_, PyModule>) -> PyResult<()> {
         (c.live_segments, c.live_continuations, c.live_ir_streams)
     }
 
-    /// True when the VM was compiled with doeff-vm-core's `invariant-checks`
-    /// feature (the per-step runtime conformance oracle). Dev builds must
-    /// enable it (ADR-DOE-ENFORCE-001 R4); release wheels ship without it.
+    /// True when the per-step runtime conformance oracle is on in this
+    /// process. Every build carries the checks; they run only when turned on
+    /// (`DOEFF_VM_INVARIANT_CHECKS=1` or `set_invariant_checks(True)`).
+    /// doeff's own pytest sessions turn them on (ADR-DOE-ENFORCE-001 R4).
     #[pyfn(m)]
     fn invariant_checks_enabled() -> bool {
-        cfg!(feature = "invariant-checks")
+        doeff_vm_core::invariant_checks_enabled()
+    }
+
+    /// Turn the per-step runtime conformance oracle on or off for this process.
+    #[pyfn(m)]
+    fn set_invariant_checks(on: bool) {
+        doeff_vm_core::set_invariant_checks(on);
     }
 
     /// Conformance oracle for the GC traverse invariant (see the `gc` module docs):
