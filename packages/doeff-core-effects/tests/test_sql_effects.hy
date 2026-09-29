@@ -337,6 +337,18 @@
   (assert (= (! (postgres-failure None #("Error") "other")) (SqlFailed :sqlstate None :reason "other"))))
 
 
+(deftest test-postgres-connection-sqlstates-map-to-unreachable
+  ;; 接続の例外(class 08 の全部)と 57P01・57P02・57P03(管理者による切断・crash による切断・起動中 / 停止中)は SQLSTATE を持っていても
+  ;; 届かない(agora-redesign #880 の裁定)。
+  (for [sqlstate ["08000" "08001" "08003" "08006" "08P01" "57P01" "57P02" "57P03"]]
+    (<- answer (postgres-failure sqlstate #("OperationalError" "DatabaseError" "Error") "gone"))
+    (assert (= answer (SqlUnreachable :reason "gone")) #(sqlstate answer)))
+  ;; 反例: class 57 の他(57014 = 文の取り消し・57000)と、接続でない engine の答え(23505・40001・53300)は SqlFailed のまま。
+  (for [sqlstate ["57014" "57000" "23505" "40001" "53300"]]
+    (<- answer (postgres-failure sqlstate #("OperationalError" "DatabaseError" "Error") "engine"))
+    (assert (= answer (SqlFailed :sqlstate sqlstate :reason "engine")) #(sqlstate answer))))
+
+
 (deftest test-postgres-draws-the-schema-declaration
   (<- statements (postgres-schema-statements #(ITEMS)))
   (assert (= statements
@@ -645,3 +657,42 @@
     (finally (.close connections) (.shutdown pool)))
   ;; 取り消しが届き、transaction の中で入れた行は rollback で残らない。
   (assert (= answer #(True 0)) answer))
+
+
+(defn answer-while-terminated [answerer-of]  ; defk にできない: 答え手を別の thread の run で回し、この thread から接続を切る検の入口
+  "長い問い合わせの途中で管理者がその接続を切った(pg_terminate_backend — SQLSTATE 57P01)時の答えを読むため。
+   answerer-of = 接続の貸し出し → 答え手の組(list)。"
+  (import psycopg)
+  (import uuid)
+  (import doeff [run with_handlers])
+  (import doeff_core_effects.scheduler [scheduled])
+  (setv marker (.format "doeff_terminate_{}" (. (uuid.uuid4) hex))
+        connections (PostgresConnections #((PostgresDatabase :name DB :dsn (or POSTGRES-DSN ""))) :size 1)
+        answers [])
+  (defn ask []  ; defk にできない: thread の target
+    (.append answers (run (scheduled (with_handlers (answerer-of connections)
+                                                    (SqlQuery DB (.format "SELECT pg_sleep(30) /* {} */" marker) #()))))))
+  (setv worker (threading.Thread :target ask))
+  (.start worker)
+  (with [admin (psycopg.connect (or POSTGRES-DSN "") :autocommit True)]
+    (setv terminated False deadline (+ (time.monotonic) 10))
+    (while (and (not terminated) (< (time.monotonic) deadline))
+      (setv terminated (get (.fetchone (.execute admin "SELECT count(pg_terminate_backend(pid)) FROM pg_stat_activity
+                                                        WHERE query LIKE %s AND pid <> pg_backend_pid()" #((.format "%{}%" marker)))) 0))
+      (time.sleep 0.05)))
+  (.join worker 20)
+  (.close connections)
+  (get answers 0))
+
+
+(deftest test-postgres-reads-an-administrator-disconnect-as-unreachable
+  {:skip-if POOLED-SKIP :skip-reason "DOEFF_SQL_TEST_POSTGRES_DSN が無い(か psycopg が無い)"}
+  ;; 実 PG の反例: 問い合わせの途中で接続を管理者に切られた(57P01)答えは、同期の答え手でも塞がない答え手でも SqlUnreachable
+  ;; (#880 の裁定の前は SqlFailed(57P01))。
+  (val sync-answer (answer-while-terminated (fn [connections] [(postgres-sql-handler connections)])))
+  (assert (isinstance sync-answer SqlUnreachable) sync-answer)
+  (val pool (ThreadPoolExecutor :max-workers 1))
+  (try
+    (val pooled-answer (answer-while-terminated (fn [connections] [(state) (pooled-postgres-sql-handler connections pool)])))
+    (finally (.shutdown pool)))
+  (assert (isinstance pooled-answer SqlUnreachable) pooled-answer))

@@ -7,8 +7,8 @@
 ;;;     返す時に捨てる / rollback する。
 ;;;   - 引数は中立の `:name` を `%(name)s` へ書き換え、文の `%` は `%%` にする(postgres-statement)。
 ;;;   - 失敗: engine の SQLSTATE をそのまま SqlFailed に。SQLSTATE の無い driver の誤りは類の表(DRIVER-CLASS-SQLSTATES — agora-controllers
-;;;     services/record/handlers_wire.hy と同じ表)で類の code に。SQLSTATE の無い OperationalError / InterfaceError と接続できない時は
-;;;     SqlUnreachable(postgres-failure)。
+;;;     services/record/handlers_wire.hy と同じ表)で類の code に。SQLSTATE の無い OperationalError / InterfaceError・接続できない時・
+;;;     接続の例外の SQLSTATE(class 08 と 57P01・57P02・57P03)は SqlUnreachable(postgres-failure)。
 ;;;   - SqlTransaction = 接続 1 本で BEGIN → lock-key が在れば pg_advisory_xact_lock(hashtext(鍵))→ program → COMMIT(sql_transaction.hy)。
 (require doeff-hy.macros [defhandler defk <- val var])
 (require doeff-hy.record [defrecord])
@@ -25,6 +25,11 @@
                              "InternalError" "XX000"})
 ;; SQLSTATE を持たなければ届かない(接続できない・切れた)と読む類。
 (val UNREACHABLE-CLASSES #("OperationalError" "InterfaceError"))
+;; SQLSTATE を持っていても届かない(接続が切れた・engine が接続を受けない)と読む code: class 08 = 接続の例外の全部(前方 2 文字)と、
+;; 57P01 管理者による切断・57P02 crash による切断・57P03 起動中 / 停止中で接続を受けない(class 57 の他 — 57014 取り消し等 — は engine の答え)。
+;; 業務の文の誤りではなく、時間を置いて撃ち直せば晴れる失敗なので SqlFailed にしない(agora-redesign #880 の裁定)。
+(val UNREACHABLE-SQLSTATE-CLASS "08")
+(val UNREACHABLE-SQLSTATES #("57P01" "57P02" "57P03"))
 ;; 同時に貸す接続の既定の上限(database ごと)。
 (val DEFAULT-POOL-SIZE 8)
 
@@ -124,8 +129,11 @@
 (defk postgres-failure [sqlstate class-names message]
   {:pre [(: sqlstate (| str None)) (: class-names tuple) (: message str)] :post [(: % (| SqlFailed SqlUnreachable))]
    :tags {:context "sql" :role "foundation"}}
-  "psycopg の例外(SQLSTATE・類の名の並び = MRO の名・文)を失敗の値へ写すため(頭の註)。"
+  "psycopg の例外(SQLSTATE・類の名の並び = MRO の名・文)を失敗の値へ写すため(頭の註)。postgres-sql-handler と
+   pooled-postgres-sql-handler が共に使う読み分けの 1 点。"
   (cond
+    (and (is-not sqlstate None) (or (.startswith sqlstate UNREACHABLE-SQLSTATE-CLASS) (in sqlstate UNREACHABLE-SQLSTATES)))
+      (SqlUnreachable :reason message)
     (is-not sqlstate None) (SqlFailed :sqlstate sqlstate :reason message)
     (any (gfor name class-names (in name UNREACHABLE-CLASSES))) (SqlUnreachable :reason message)
     True (SqlFailed :sqlstate (next (gfor name class-names :if (in name DRIVER-CLASS-SQLSTATES) (get DRIVER-CLASS-SQLSTATES name)) None)
