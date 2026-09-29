@@ -30,11 +30,6 @@
   (assert-same-transcripts ["http-memory"]))
 
 
-(deftest test-every-law-gives-the-same-answers-when-the-client-sends-by-the-http-effect
-  ;; 要求の送り方を HttpRequest の effect にした client でも、答えの列は memory と 1 つも違わない。
-  (assert-same-transcripts ["http-effect-memory"]))
-
-
 (deftest test-every-law-gives-the-same-answers-on-memory-and-postgres
   {:skip-if (not PG-DSN)
    :skip-reason "DOEFF_RECORDS_TEST_PG_DSN が無い(PostgreSQL の検は走っていない)"}

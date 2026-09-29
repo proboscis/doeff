@@ -24,7 +24,7 @@
 
 
 (deftest test-stream-end-law-holds-on-every-store
-  {:interpreters ["memory" "pg" "http-memory" "http-effect-memory" "http-pg"]}
+  {:interpreters ["memory" "pg" "http-memory" "http-pg"]}
   (<- harness (LawSetup))
   (<- transcript (law-stream-end-is-the-last-sequence harness))
   (assert transcript))
@@ -96,7 +96,7 @@
   (val server (start-records-server (RecordsServerConfig LAW-SCHEMA (law-roster) (fn [writer] (memory-records-handler store writer))
                                                          :request-handlers (sim-request-handlers clock))))
   (try
-    (val answer (run (scheduled (with_handlers [(sim-time-handler :clock clock)
+    (val answer (run (scheduled (with_handlers [(await-handler) (http-production-handler) (sim-time-handler :clock clock)
                                                 (http-records-handler (RecordsEndpoint server.url (get LAW-TOKENS MAKER)))]
                                                (ReadStreamEnd "journal")))))
     (assert (= answer (Unreachable DETAIL)) (repr answer))

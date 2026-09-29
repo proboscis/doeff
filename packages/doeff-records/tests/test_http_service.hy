@@ -8,6 +8,8 @@
 (import urllib.request [Request urlopen])
 (import doeff [EffectBase run with_handlers])
 (import doeff_core_effects.scheduler [scheduled])
+(import doeff_core_effects.handlers [await-handler])
+(import doeff_core_effects.http_handlers [http-production-handler])
 (import doeff_time [SimClock sim-time-handler])
 (import doeff_records.values [ExpectAbsent ExpectAny Missing Unreachable UndeclaredTable Written WrittenRows WatchCursor])
 (import doeff_records.effects [ReadRow ListRows PutRow PutRows RowWrite WatchChanges AppendEvent ReadEvents])
@@ -32,7 +34,8 @@
 
 (defn run-as [server clock #^ str token program]
   "token の身元の client の handler で Program を走らせる。"
-  (run (scheduled (with_handlers [(sim-time-handler :clock clock) (http-records-handler (RecordsEndpoint server.url token))]
+  (run (scheduled (with_handlers [(await-handler) (http-production-handler) (sim-time-handler :clock clock)
+                                  (http-records-handler (RecordsEndpoint server.url token))]
                                  program))))
 
 
@@ -147,19 +150,14 @@
 
 (deftest test-an-identity-refusal-with-a-non-json-body-raises-by-status
   ;; 前に立つ口の 401 / 403 は本文が HTML でも status で身元の断りと読む(本文を JSON として読んで WireError にしない)。
-  ;; 送り方を問わない(BlockingTransport・EffectTransport)。理由は本文の頭だけを写す。
-  (import doeff_core_effects.handlers [await-handler])
-  (import doeff_core_effects.http_handlers [http-production-handler])
-  (import doeff_records.http_client [EffectTransport])
+  ;; 理由は本文の頭だけを写す。
   (val page (+ b"<html><body>" (* b"x" 2000) b"</body></html>"))
   (for [status [401 403]]
     (val server (! (front-refusal-server status page)))
     (val url (+ "http://127.0.0.1:" (str (get server.server-address 1))))
     (try
-      (for [transport [None (EffectTransport)]]
-        (val endpoint (if (is transport None)
-                          (RecordsEndpoint url "t" :request-timeout 5.0)
-                          (RecordsEndpoint url "t" :request-timeout 5.0 :transport transport)))
+      (do
+        (val endpoint (RecordsEndpoint url "t" :request-timeout 5.0))
         (var said None)
         (try
           (run (scheduled (with_handlers [(await-handler) (http-production-handler) (sim-time-handler :clock (SimClock))
@@ -167,7 +165,7 @@
                                          (ReadRow "parts" #("p1")))))
           (except [error RecordsUnauthorized]
             (:= said (str error))))
-        (assert (is-not said None) (.format "{} の前の口の断りが答えの値になった({!r})" status transport))
+        (assert (is-not said None) (.format "{} の前の口の断りが答えの値になった" status))
         (assert (in (.format "({} read-row)" status) said) said)
         (assert (in "<html>" said) said)
         (assert (< (len said) 1000) said))
@@ -263,12 +261,9 @@
 
 
 (deftest test-a-client-sending-by-the-http-effect-reads-an-unreachable-service-as-a-value
-  ;; 送り方が HttpRequest の effect(EffectTransport)でも、届かない口は Unreachable の値で答える(例外で上げない)—
+  ;; 送り方は HttpRequest の effect(EffectTransport)で、届かない口は Unreachable の値で答える(例外で上げない)—
   ;; 処理ループと同じ scheduler の task が読む時に、記録の service の不達で task を落とさないため。
-  (import doeff_core_effects.handlers [await-handler])
-  (import doeff_core_effects.http_handlers [http-production-handler])
-  (import doeff_records.http_client [EffectTransport])
-  (val closed (RecordsEndpoint "http://127.0.0.1:9" "t" :request-timeout 2.0 :transport (EffectTransport)))
+  (val closed (RecordsEndpoint "http://127.0.0.1:9" "t" :request-timeout 2.0))
   (val answer (run (scheduled (with_handlers [(await-handler) (http-production-handler) (sim-time-handler :clock (SimClock))
                                               (http-records-handler closed)]
                                              (ReadRow "parts" #("p1"))))))
@@ -286,7 +281,7 @@
   (val maker (get LAW-TOKENS "maker"))
   (try
     (defn both [program]
-      (run (scheduled (with_handlers [(sim-time-handler :clock clock)
+      (run (scheduled (with_handlers [(await-handler) (http-production-handler) (sim-time-handler :clock clock)
                                       (http-records-handler (RecordsEndpoint tickets-server.url maker))
                                       (http-table-records-handler (RecordsEndpoint parts-server.url maker) (frozenset ["parts"]))]
                                      program))))

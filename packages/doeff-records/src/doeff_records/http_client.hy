@@ -21,17 +21,12 @@
 ;;; WatchEvents(列の頭が進むのを待つ — wire に載せない)も client の側で、ReadEvents(limit 1)を poll-seconds ごとに読み直して答える。
 ;;; 時計は呼び手の時計なので、仮想の時計の下では memory の handler と同じに一瞬で進む。
 ;;;
-;;; 要求の送り方は endpoint の transport が決める(閉じた 2 種):
-;;;   BlockingTransport(既定)  呼び手の thread で urllib の urlopen を撃つ — 同期の run の中の client(送る間は VM が止まる)
-;;;   EffectTransport          要求を doeff-core-effects の HttpRequest の effect として出す — 答え手は外側(本番 = 塞がない
-;;;                            http-production-handler と await-handler)。処理ループと同じ scheduler の task から読む呼び手が、記録の
-;;;                            service に届かない間も処理ループを止めないため。届かない(HttpFailed)は Unreachable に読む
+;;; 要求の送り方は 1 つ(EffectTransport): 要求を doeff-core-effects の HttpRequest の effect として出し、答えるのは呼び手の外側の
+;;; handler(本番 = 塞がない http-production-handler と await-handler)。処理ループと同じ scheduler の task から読む呼び手が、記録の
+;;; service に届かない間も処理ループを止めないため。届かない(HttpFailed)は Unreachable に読む。
 (require doeff-hy.macros [defhandler defk <- val var])
 (import dataclasses [dataclass])
 (import json)
-(import socket)
-(import urllib.error [HTTPError URLError])
-(import urllib.request [Request urlopen])
 (import doeff_core_effects.http_effects [HttpRequest HttpResponse HttpFailed])
 (import doeff_records.values [EventsMoved EventsQuiet Unreachable UndeclaredTable])
 (import doeff_records.effects [ReadRow ListRows PutRow PutRows WatchChanges WatchEvents AppendEvent ReadEvents ReadStreamEnd])
@@ -58,10 +53,6 @@
 (val REASON-MAX-CHARS 300)
 
 
-(defclass [(dataclass :frozen True)] BlockingTransport []
-  "要求を呼び手の thread で urllib の urlopen に撃つ(既定 — file の頭の註)。")
-
-
 (defclass [(dataclass :frozen True)] EffectTransport []
   "要求を HttpRequest の effect として出す(答え手は外側 — file の頭の註)。")
 
@@ -73,7 +64,7 @@
   (#^ str token)
   (setv #^ float request-timeout DEFAULT-REQUEST-TIMEOUT)
   (setv #^ float poll-seconds DEFAULT-POLL-SECONDS)
-  (setv #^ (| BlockingTransport EffectTransport) transport (BlockingTransport)))
+  (setv #^ EffectTransport transport (EffectTransport)))
 
 
 (defclass [(dataclass :frozen True)] RawReply []
@@ -112,23 +103,6 @@
       (raise (WireError (.format "{} の答え(status {})が JSON でない: {}" operation reply.status error))))))
 
 
-(defk exchange-blocking [endpoint operation body]
-  {:pre [(: endpoint RecordsEndpoint) (: operation str) (: body dict)] :post [(: % (| RawReply Unreachable))]}
-  "要求 1 つを urllib の urlopen で送る(BlockingTransport)。届かなければ Unreachable。"
-  (<- url str (service-url endpoint operation))
-  (<- headers dict (request-headers endpoint))
-  (<- data bytes (request-bytes body))
-  (setv request (Request url :data data :method "POST" :headers headers))
-  (try
-    (with [response (urlopen request :timeout endpoint.request-timeout)]
-      (setv status response.status payload (.read response)))
-    (except [error HTTPError]
-      (setv status error.code payload (.read error)))
-    (except [error #(URLError ConnectionError socket.timeout)]
-      (return (Unreachable (.format "記録の service に届かない: {}" error)))))
-  (RawReply status payload))
-
-
 (defk exchange-by-effect [endpoint operation body]
   {:pre [(: endpoint RecordsEndpoint) (: operation str) (: body dict)] :post [(: % (| RawReply Unreachable))]}
   "要求 1 つを HttpRequest の effect として出す(EffectTransport)。撃ち直しは呼び手の読みが決めるので 0 回、届かない失敗は値で受けて
@@ -146,9 +120,8 @@
 
 (defk exchange [endpoint operation body]
   {:pre [(: endpoint RecordsEndpoint) (: operation str) (: body dict)] :post [(: % (| RawReply Unreachable))]}
-  "要求 1 つを送り、status と JSON の本文を受ける(HTTP の境界の 1 か所 — 送り方は endpoint の transport)。届かなければ Unreachable。"
+  "要求 1 つを送り、status と JSON の本文を受ける(HTTP の境界の 1 か所 — 送り方は EffectTransport 1 つ)。届かなければ Unreachable。"
   (match endpoint.transport
-    (BlockingTransport) (! (exchange-blocking endpoint operation body))
     (EffectTransport) (! (exchange-by-effect endpoint operation body))))
 
 

@@ -12,9 +12,7 @@
 ;;;           client の handler(http-records-handler)で公開 effect を撃つ。書き手の名は身元の名簿の token で運ぶ(LAW-TOKENS)。
 ;;;           service と client は同じ仮想の時計(SimClock 1 つ)を読む。検の口と手入れの effect(AdvanceStoreEpoch・SweepExpired・
 ;;;           PruneChanges — HTTP の口に出さない)は、client の外側に被せた置き場の handler が直に答える。
-;;;   http-effect-memory
-;;;           http-memory と同じ口と置き場で、client の要求の送り方だけを EffectTransport にする(要求は HttpRequest の effect —
-;;;           答え手は外側の await-handler と http-production-handler)。送り方が替わっても法の答えが同じことを確かめる。
+;;;           client の要求は HttpRequest の effect なので、答え手(await-handler と http-production-handler)を組の最も外側に置く。
 ;;;
 ;;; 法は LawSetup の effect で自分の LawHarness(書き手の名 → その書き手の handler で包む関数)を読む。
 (require doeff-hy.macros [defhandler])
@@ -35,13 +33,12 @@
 (import concurrent.futures [ThreadPoolExecutor])
 (import doeff_records.principals [Roster token-digest])
 (import doeff_records.http_server [RecordsServerConfig start-records-server])
-(import doeff_records.http_client [RecordsEndpoint BlockingTransport EffectTransport http-records-handler])
+(import doeff_records.http_client [RecordsEndpoint EffectTransport http-records-handler])
 (import doeff_core_effects.handlers [await-handler])
 (import doeff_core_effects.http_handlers [http-production-handler])
 (import doeff_hy.frozen [FrozenMap])
 
-(setv PLAIN "plain" MEMORY "memory" PG "pg" PG-POOLED "pg-pooled" HTTP-MEMORY "http-memory" HTTP-PG "http-pg"
-      HTTP-EFFECT-MEMORY "http-effect-memory")
+(setv PLAIN "plain" MEMORY "memory" PG "pg" PG-POOLED "pg-pooled" HTTP-MEMORY "http-memory" HTTP-PG "http-pg")
 (setv PG-DSN-VARIABLE "DOEFF_RECORDS_TEST_PG_DSN")
 ;; 検の置き場の database の名(SqlQuery に書く名 — 答え手の宣言と揃える)と、行に刻む機体の名。
 (setv DATABASE "records" ORIGIN-HOST "law-host")
@@ -126,10 +123,10 @@
   (tuple (+ [(sim-time-handler :clock clock)] answerers)))
 
 
-(defn http-interpreter [handler-for backing close-store [transport (BlockingTransport)] [answerers []]]
+(defn http-interpreter [handler-for backing close-store [answerers []]]
   "HTTP の口を開き、法の書き手を client の handler(その書き手の token)で包む組。backing = 書き手の名 → 置き場の handler
-   (検の口と手入れの effect に直に答える — client の外側に被せる)。transport = client の要求の送り方(EffectTransport なら
-   HttpRequest の答え手 await-handler と http-production-handler を組の最も外側に置く)。"
+   (検の口と手入れの effect に直に答える — client の外側に被せる)。client の要求は HttpRequest の effect なので、答え手
+   await-handler と http-production-handler を組の最も外側に置く。"
   (setv clock (SimClock)
         server (start-records-server (RecordsServerConfig LAW-SCHEMA (law-roster) handler-for
                                                           :request-handlers (sim-request-handlers clock answerers)))
@@ -137,16 +134,14 @@
                               (with_handlers [(backing writer)
                                               (http-records-handler (RecordsEndpoint server.url (get LAW-TOKENS writer)
                                                                                      :poll-seconds HTTP-POLL-SECONDS
-                                                                                     :transport transport))]
+                                                                                     :transport (EffectTransport)))]
                                              program))))
   (defn close []
     (.close server)
     (close-store))
   (BuiltInterpreter (fn [program]
-                      (run (scheduled (with_handlers (+ (if (isinstance transport EffectTransport)
-                                                            [(await-handler) (http-production-handler)]
-                                                            [])
-                                                        [(sim-time-handler :clock clock)] answerers [(law-setup harness)])
+                      (run (scheduled (with_handlers (+ [(await-handler) (http-production-handler)]
+                                               [(sim-time-handler :clock clock)] answerers [(law-setup harness)])
                                                      program))))
                     close
                     (fn [] harness)))
@@ -177,10 +172,6 @@
       (do (setv store (MemoryStore LAW-SCHEMA)
                 handler-for (fn [writer] (memory-records-handler store writer)))
           (http-interpreter handler-for handler-for (fn [] None)))
-    (= name HTTP-EFFECT-MEMORY)
-      (do (setv store (MemoryStore LAW-SCHEMA)
-                handler-for (fn [writer] (memory-records-handler store writer)))
-          (http-interpreter handler-for handler-for (fn [] None) (EffectTransport)))
     (= name HTTP-PG)
       (do (setv connections (postgres-connections)
                 store (prepared-store connections (fresh-prefix))
