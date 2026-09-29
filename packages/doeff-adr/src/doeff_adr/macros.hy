@@ -63,11 +63,11 @@
       (.append refs item)))
   #(emitted refs))
 
-(defmacro defsemgrep [_hy-compiler name #* forms]
+(defmacro defsemgrep [name #* forms]
   "Define a Semgrep enforcement with bad/good fixtures and a pytest check."
   (setv rule-id (hy.models.String (_symbol-text name)))
   (setv test-name (_test-symbol "test_" (+ (_symbol-text name) "_defsemgrep")))
-  (_record-test-function _hy-compiler test-name [] [])
+  (setv item-record (_record-test-function test-name [] []))
   (if (and (>= (len forms) 3) (not (isinstance (get forms 0) hy.models.Keyword)))
       ;; Installed form: (defsemgrep name "rule-id" [hit …] [clean …] [:config "path"] [:expand-hy True])
       ;; :config absent → the nearest `.semgrep.yaml` above pytest's cwd (legacy).
@@ -102,7 +102,8 @@
              :clean-fixtures ~clean-fixtures
              ~@config-forms)
            (defn ~test-name []
-             (assert-semgrep-enforcement ~rule-id))))
+             (assert-semgrep-enforcement ~rule-id))
+           ~item-record))
       (do
         (setv data (_pairs-to-dict forms))
         (setv pattern (get data "pattern"))
@@ -127,9 +128,10 @@
              :good ~good
              :mode ~mode)
            (defn ~test-name []
-             (assert-semgrep-enforcement ~rule-id))))))
+             (assert-semgrep-enforcement ~rule-id))
+           ~item-record))))
 
-(defmacro defadr [_hy-compiler name #* forms]
+(defmacro defadr [name #* forms]
   "Define an executable ADR contract.
 
   Inline enforcement forms inside :enforcement are emitted before the ADR is
@@ -149,7 +151,7 @@
   (setv laws (.get data "laws" `[]))
   (setv plans (.get data "plans" `[]))
   (setv test-name (_test-symbol "test_" (+ (_symbol-text name) "_adr_contract")))
-  (_record-test-function _hy-compiler test-name [] [])
+  (setv item-record (_record-test-function test-name [] []))
   `(do
      (import doeff_adr.registry
        [register-adr assert-adr-contract enforcement-ref
@@ -167,7 +169,8 @@
        :enforcement [~@enforcement-refs]
        :plans ~plans)
      (defn ~test-name []
-       (assert-adr-contract ~adr-id))))
+       (assert-adr-contract ~adr-id))
+     ~item-record))
 
 (defn fact [text #** extra]
   (import doeff_adr.registry [make-fact])

@@ -662,10 +662,12 @@ defk {name}: :post type annotation cannot be an empty string.
                            "defk・deftest・defhandler の節の本体か、module の直下にだけ書けます"
                            "(defn・fn・class・let の中には書けません — 関数は defk で書きます)。"
                            " [ADR-DOE-HY-006]\n"))))
-  ;; module の直下の pytestmark を pytest の item の記録に載せる(agora-redesign #1211)
-  (when (is-not compiler None)
-    (_record-module-binding compiler head args))
-  (module-declaration (_module-bindings compiler) form (_static-view?)))
+  (setv declaration (module-declaration (_module-bindings compiler) form (_static-view?)))
+  ;; module の直下の pytestmark を pytest の item の記録に載せる(agora-redesign #1211 / #1291 — 記録の式を展開に足す)
+  (setv item-record (when (is-not compiler None) (_record-module-binding head args)))
+  (if (is item-record None)
+      declaration
+      `(do ~declaration ~item-record)))
 
 (defmacro val [_hy-compiler #* args]
   "module の直下の一度だけの束縛 (val 名前 式)。defk・deftest・defhandler の節の本体の中では本体の macro が扱う。"
@@ -1738,8 +1740,8 @@ the effect in the enclosing do-context.
                     :reason ~(if (is-not skip-reason None) skip-reason
                                  (hy.models.String "skip condition met"))))))
 
-  ;; pytest の item の記録 — 収集が test module を import せずに読む(agora-redesign #1211)
-  (_record-test-function _hy-compiler name fn-params item-decorators)
+  ;; pytest の item の記録 — 収集が test module を import せずに読む(agora-redesign #1211 / #1291 — 記録の式を展開に足す)
+  (setv item-record (_record-test-function name fn-params item-decorators))
 
   ;; Assemble the function definition with decorators
   (locate-synthesized (if decorators
@@ -1747,11 +1749,13 @@ the effect in the enclosing do-context.
        (import pytest)
        ~(_helper-imports)
        (defn [~@decorators] ~name [~@fn-params] ~fn-body)
-       (_install-guard-globals ~name {"_doeff_do" _doeff_do}))
+       (_install-guard-globals ~name {"_doeff_do" _doeff_do})
+       ~item-record)
     `(do
        ~(_helper-imports)
        (defn ~name [~@fn-params] ~fn-body)
-       (_install-guard-globals ~name {"_doeff_do" _doeff_do})))))
+       (_install-guard-globals ~name {"_doeff_do" _doeff_do})
+       ~item-record))))
 
 
 ;; ---------------------------------------------------------------------------

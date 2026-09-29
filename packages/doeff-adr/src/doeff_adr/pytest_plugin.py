@@ -16,17 +16,18 @@ import doeff_hy  # noqa: F401 - registers Hy import hooks
 import pytest
 from hy.importer import HyLoader
 
+from doeff_adr.item_cache import DEFAULT_CACHE_DIR, forget_cached, write_cached
 from doeff_adr.lazy_collection import (
     Indexed,
     NeedsImport,
     RecordMismatch,
     check_no_unrecorded_items,
-    swap_in_real_module_marks,
-    forget_records,
     import_module_for,
     plan_collection,
     stub_module,
     swap_in_real_function,
+    swap_in_real_module_marks,
+    verify_records,
 )
 
 DEFAULT_FILE_PATTERNS = (
@@ -138,8 +139,12 @@ def pytest_addhooks(pluginmanager: pytest.PytestPluginManager) -> None:
 
 @pytest.hookimpl
 def pytest_doeff_import_hy_module(collector: pytest.Module) -> types.ModuleType:
-    """Hy の test file の module を読む既定の実装。"""
-    return _import_hy_file(collector.path, Path(collector.config.rootpath))
+    """Hy の test file の module を読む既定の実装。収集の中で読んだ file は、読んだ直後に記録を実物と突き合わせて
+    キャッシュに保存する(時間の上限の wrapper が後で落としても、読めた module の記録は残す — 判定と保存は別の事柄)。"""
+    module = _import_hy_file(collector.path, Path(collector.config.rootpath))
+    if isinstance(collector, DoeffAdrHyFile):
+        collector.after_import(module)
+    return module
 
 
 def pytest_addoption(parser: pytest.Parser) -> None:
@@ -148,6 +153,11 @@ def pytest_addoption(parser: pytest.Parser) -> None:
         "Glob patterns for executable ADR Hy files collected by doeff-adr.",
         type="linelist",
         default=[],
+    )
+    parser.addini(
+        "doeff_adr_items_cache",
+        "Directory of the doeff-adr cache of Hy test item records (empty = ~/.cache/doeff-adr/pytest-items).",
+        default="",
     )
     parser.addini(
         "doeff_adr_wiring",
@@ -185,7 +195,7 @@ def pytest_runtest_setup(item: pytest.Item) -> Generator[None, None, None]:
         try:
             parent.realize(item)
         except RecordMismatch as exc:
-            forget_records(parent.path)
+            forget_cached(parent.path.resolve(), items_cache_dir(parent.config))
             pytest.fail(
                 f"doeff-adr: 記録と実物が食い違った — 記録を消したので、次の収集はこの file を import して作り直す\n{exc}",
                 pytrace=False,
@@ -273,19 +283,36 @@ class DoeffAdrHyFile(pytest.Module):
     """
 
     _mut_real_module: types.ModuleType | None = None
+    # 収集の中で import する理由(キャッシュに無い file)— import の直後の保存がこれを見る。setup の import では None。
+    _mut_import_reason: str | None = None
 
     def _getobj(self) -> Any:
         base = _import_base_for_path(self.path.resolve(), Path(self.config.rootpath).resolve())
         module_name = _module_name_for_path(self.path.resolve(), base)
-        match plan_collection(self.path.resolve(), self._pytest_collects):
-            case Indexed(recorded):
+        match plan_collection(self.path.resolve(), items_cache_dir(self.config)):
+            case Indexed(records):
                 self.config.stash.setdefault(_INDEXED_FILES_KEY, []).append(self.path)
-                return stub_module(recorded, self.path.resolve(), module_name)
+                return stub_module(records, self.path.resolve(), module_name)
             case NeedsImport(reason):
+                # import が途中で終わる file(module ごと skip する等)も報告に載せるため、import の前に積む。
                 self.config.stash.setdefault(_IMPORTED_FILES_KEY, []).append((self.path, reason))
+                self._mut_import_reason = reason
                 module = self.config.hook.pytest_doeff_import_hy_module(collector=self)
                 self._mut_real_module = module
                 return module
+
+    def after_import(self, module: types.ModuleType) -> None:
+        """収集の中で import した直後に、記録が実物を全部説明するなら保存し、説明しないなら理由を報告に足す。"""
+        reason = self._mut_import_reason
+        if reason is None:
+            return
+        self._mut_import_reason = None
+        problems = verify_records(module, self._pytest_collects)
+        if problems:
+            imported = self.config.stash[_IMPORTED_FILES_KEY]
+            imported[-1] = (self.path, f"{reason} — 保存しない: " + "・".join(problems))
+            return
+        write_cached(self.path.resolve(), module, items_cache_dir(self.config))
 
     def _pytest_collects(self, name: str) -> bool:
         """pytest がこの名を test として集めるか(``python_functions`` / ``python_classes``)。"""
@@ -305,6 +332,15 @@ class DoeffAdrHyFile(pytest.Module):
             self._mut_real_module = real
         if item.obj is not getattr(real, item.originalname, None):
             swap_in_real_function(item, real)
+
+
+def items_cache_dir(config: pytest.Config) -> Path:
+    """item の記録のキャッシュの置き場(ini の doeff_adr_items_cache — 相対なら rootdir から・空なら利用者のキャッシュの dir)。"""
+    configured = str(config.getini("doeff_adr_items_cache")).strip()
+    if not configured:
+        return DEFAULT_CACHE_DIR
+    path = Path(configured).expanduser()
+    return path if path.is_absolute() else Path(config.rootpath) / path
 
 
 def _coerce_path(path: Any) -> Path:

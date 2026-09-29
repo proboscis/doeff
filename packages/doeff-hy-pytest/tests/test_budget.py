@@ -301,7 +301,8 @@ def test_import_budget_is_judged_at_setup_when_collected_from_records(
     上限はそこで同じ鍵で判定される(赤はその item の setup の誤り・agora-redesign #1225)。"""
     _project(
         pytester,
-        'doeff_test_collect_budget_seconds = 0.05\ndoeff_test_budget_mode = "fail"\n',
+        'doeff_test_collect_budget_seconds = 0.05\ndoeff_test_budget_mode = "fail"\n'
+        + f'doeff_adr_items_cache = "{tmp_path / "items"}"\n',
         {"test_slow_collect": SLOW_COLLECT},
     )
     pytester.makeconftest(CONFTEST + PIN_UNCHECKED_VM_BUILD)

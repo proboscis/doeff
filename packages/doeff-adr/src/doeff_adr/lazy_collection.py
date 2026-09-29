@@ -2,12 +2,13 @@
 
 収集で test module を import すると module の最上位の実行が走り、1 file で 10 秒かかる(#1211 の実測)。そこで:
 
-- **収集**: item を作る macro が展開の時に書いた記録(``doeff_hy.pytest_items``)を、Hy の importer が pyc と同じ条件で
-  有効と判じた時だけ読み(``hy.importer.read_valid_records``)、記録と同じ引数・印・parametrize を持つ仮の関数を
-  並べた仮の module を作る。その仮の module を pytest の Module の収集に渡すので、nodeid・parametrize の id・印は
-  import して収集した時と同じ pytest の手順で作られる。
-- **記録で説明できない file**(記録が無い / 古い / 動的な params / 記録に無い test らしい名・decorator の付いた定義・
-  xunit の setup)は、今までどおり収集で import する。理由は収集の終わりに報告する。
+- **収集**: item を作る macro が展開の式で module に積んだ記録(``doeff_hy.pytest_items``)を、doeff-adr のキャッシュ
+  (``item_cache`` — 鍵は source の内容の hash と macro の提供元の内容の hash・#1291)から引き、記録と同じ引数・印・
+  parametrize を持つ仮の関数を並べた仮の module を作る。その仮の module を pytest の Module の収集に渡すので、nodeid・
+  parametrize の id・印は import して収集した時と同じ pytest の手順で作られる。
+- **キャッシュに無い file** は、今までどおり収集で import する。import した module の記録が実物を全部説明する時
+  (``verify_records`` — 記録に無い test らしい名・fixture・xunit の関数・動的な記録が無く、印の形が同じ)だけキャッシュに
+  保存する。module ごと飛ばす file は import が Skipped で終わるので保存されない。理由は収集の終わりに報告する。
 - **setup**: item の fixture より先に、その file の module を通常の import の経路で 1 度だけ読み、item の関数・印・
   parametrize の値を実物に替える。実物が記録と食い違えば、その item を赤にし、記録を消す(黙って古い item で走らない)。
 """
@@ -23,6 +24,7 @@ from pathlib import Path
 import pytest
 from _pytest.mark.structures import Mark as PytestMark
 from _pytest.mark.structures import get_unpacked_marks
+from _pytest.fixtures import getfixturemarker
 from doeff_hy.pytest_items import (
     Decorator,
     Dynamic,
@@ -34,14 +36,14 @@ from doeff_hy.pytest_items import (
     OpaqueValue,
     Parametrize,
     ParamValue,
-    RecordedModule,
+    Record,
     SkipIf,
-    read_module,
+    decode_records,
+    module_record_texts,
 )
-from hy.importer import HyLoader, read_valid_records
+from hy.importer import HyLoader
 
-# module の最上位で呼ぶと module ごと飛ばす pytest の関数(from pytest import skip の形も同じ名)。
-MODULE_SKIPS = frozenset({"skip", "importorskip"})
+from doeff_adr.item_cache import CacheHit, CacheMiss, read_cached
 
 # pytest の xunit の形の関数(名で意味を持つ — 仮の module は持たないので、あれば import して収集する)。
 XUNIT_NAMES = frozenset(
@@ -61,7 +63,7 @@ XUNIT_NAMES = frozenset(
 class Indexed:
     """記録で説明できる file — 仮の module で収集する。"""
 
-    recorded: RecordedModule
+    records: tuple[Record, ...]
 
 
 @dataclass(frozen=True)
@@ -74,47 +76,53 @@ class NeedsImport:
 CollectionPlan = Indexed | NeedsImport
 
 
-def plan_collection(path: Path, name_matches: Callable[[str], bool]) -> CollectionPlan:
-    """収集で import せずに済むかを、記録だけから決める。
+def plan_collection(path: Path, cache_dir: Path) -> CollectionPlan:
+    """収集で import せずに済むかを、キャッシュだけから決める(保存の時に実物と突き合わせ済みの記録しか入っていない)。"""
+    match read_cached(path, cache_dir):
+        case CacheHit(records):
+            return Indexed(records)
+        case CacheMiss(reason):
+            return NeedsImport(reason)
 
-    ``name_matches`` は pytest の ``python_functions`` / ``python_classes`` の照合(その名を pytest が test として
-    集めるか)。記録に無い名を pytest が集める file は、仮の module では item が欠けるので import する。
+
+def verify_records(real_module: types.ModuleType, name_matches: Callable[[str], bool]) -> list[str]:
+    """import した module の記録が、pytest がその module から集める物を全部説明するかを確かめる(食い違いの一覧)。
+
+    空の時だけキャッシュに保存してよい。``name_matches`` は pytest の ``python_functions`` / ``python_classes`` の照合。
+    Hy の fork に足していた 3 つの記録(最上位の束縛の名・decorator・最上位の呼び出し)の代わり(#1291)。
     """
-    records = read_valid_records(str(path))
-    if records is None:
-        return NeedsImport("記録なし(pyc が無い・古い)")
     try:
-        recorded = read_module(records)
+        records = decode_records(module_record_texts(real_module))
     except MalformedRecord as exc:
-        return NeedsImport(f"記録の形が違う: {exc}")
-    # module ごと飛ばす呼び出し(pytest.skip / importorskip)は、import すれば item が 0 本になる。
-    skips = sorted(c for c in recorded.top_level_calls if c.rpartition(".")[2] in MODULE_SKIPS)
-    if skips:
-        return NeedsImport("最上位で呼ぶ: " + ", ".join(skips))
-    dynamic = [r for r in recorded.records if isinstance(r, Dynamic)]
-    if dynamic:
-        return NeedsImport("動的: " + ", ".join(f"{d.where} ({d.reason})" for d in dynamic))
-    functions = {r.name for r in recorded.records if isinstance(r, FunctionItem)}
-    has_module_marks = any(isinstance(r, ModuleMarks) for r in recorded.records)
-    unaccounted = sorted(
-        name
-        for name in recorded.bound_names
-        if name not in functions
-        and (
-            name_matches(name)
-            or name in XUNIT_NAMES
-            or (name == "pytestmark" and not has_module_marks)
-        )
-    )
-    # decorator が名に依らず pytest に意味を持たせる定義(fixture)は、仮の module に無いので import する。
-    unaccounted += sorted(
-        name
-        for name, heads in recorded.decorators.items()
-        if name not in functions and any(head.rpartition(".")[2] == "fixture" for head in heads)
-    )
-    if unaccounted:
-        return NeedsImport("記録に無い名: " + ", ".join(unaccounted))
-    return Indexed(recorded)
+        return [f"記録の形が違う: {exc}"]
+    problems = [f"動的: {r.where} ({r.reason})" for r in records if isinstance(r, Dynamic)]
+    functions = [r for r in records if isinstance(r, FunctionItem)]
+    names = {r.name for r in functions}
+    for record in functions:
+        real = getattr(real_module, record.name, None)
+        if real is None:
+            problems.append(f"記録の {record.name} が module に無い")
+            continue
+        stub = _stub_function(record, Path(real_module.__file__ or ""), real_module.__name__)
+        try:
+            _check_marks(get_unpacked_marks(stub), get_unpacked_marks(real), record.name)
+        except RecordMismatch as exc:
+            problems.append(str(exc))
+    module_marks = [r for r in records if isinstance(r, ModuleMarks)]
+    recorded_marks = [name for r in module_marks for name in r.names]
+    real_marks = [m.name for m in get_unpacked_marks(real_module)]
+    if recorded_marks != real_marks:
+        problems.append(f"module の印が記録と違う — 記録 {recorded_marks} / 実物 {real_marks}")
+    for name, value in vars(real_module).items():
+        if name in names:
+            continue
+        if name in XUNIT_NAMES:
+            problems.append(f"xunit の {name} がある")
+        elif getfixturemarker(value) is not None:
+            problems.append(f"fixture の {name} がある")
+        elif name_matches(name) and callable(value):
+            problems.append(f"記録に無い test らしい名 {name} がある")
+    return problems
 
 
 # ---------------------------------------------------------------------------
@@ -195,11 +203,11 @@ def _stub_module_mark(name: str) -> pytest.MarkDecorator:
             return getattr(pytest.mark, name)
 
 
-def stub_module(recorded: RecordedModule, path: Path, module_name: str) -> types.ModuleType:
+def stub_module(records: tuple[Record, ...], path: Path, module_name: str) -> types.ModuleType:
     """記録から仮の module を作る — pytest の Module の収集が読む物(関数と pytestmark)だけを持つ。"""
     module = types.ModuleType(module_name)
     module.__file__ = str(path)
-    for record in recorded.records:
+    for record in records:
         match record:
             case FunctionItem():
                 setattr(module, record.name, _stub_function(record, path, module_name))
@@ -323,8 +331,3 @@ def check_no_unrecorded_items(module_names: Iterable[str], real_module: types.Mo
     )
     if extra:
         raise RecordMismatch(f"{where}: 記録に無い test がある — {extra}")
-
-
-def forget_records(path: Path) -> None:
-    """記録が実物と食い違った file の pyc を消す — 次の収集はその file を import し、展開をやり直して記録を書き直す。"""
-    Path(importlib.util.cache_from_source(str(path))).unlink(missing_ok=True)
