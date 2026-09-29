@@ -5,8 +5,9 @@ import importlib
 import importlib.util
 import os
 import sys
+import types
 import warnings
-from collections.abc import Sequence
+from collections.abc import Generator, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
@@ -14,6 +15,18 @@ from typing import Any, Literal
 import doeff_hy  # noqa: F401 - registers Hy import hooks
 import pytest
 from hy.importer import HyLoader
+
+from doeff_adr.lazy_collection import (
+    Indexed,
+    NeedsImport,
+    RecordMismatch,
+    check_no_unrecorded_items,
+    forget_records,
+    import_module_for,
+    plan_collection,
+    stub_module,
+    swap_in_real_function,
+)
 
 DEFAULT_FILE_PATTERNS = (
     "defadr_*.hy",
@@ -101,6 +114,9 @@ _COLLECTED_FILES_KEY = pytest.StashKey[frozenset[Path]]()
 # One measurement per session: the collection-finish report and an in-session
 # gate test read the same verdict instead of walking rootdir twice.
 _WIRING_VERDICT_KEY = pytest.StashKey[WiringVerdict]()
+# 収集の終わりの報告(agora-redesign #1223): 記録から収集した file と、import して収集した file とその理由。
+_INDEXED_FILES_KEY = pytest.StashKey[list[Path]]()
+_IMPORTED_FILES_KEY = pytest.StashKey[list[tuple[Path, str]]]()
 
 
 def pytest_addoption(parser: pytest.Parser) -> None:
@@ -136,6 +152,34 @@ def pytest_collect_file(file_path: Any, parent: pytest.Collector) -> pytest.Coll
     if not _should_collect_hy_file(path, parent.config):
         return None
     return DoeffAdrHyFile.from_parent(parent, path=path)
+
+
+@pytest.hookimpl(wrapper=True)
+def pytest_runtest_setup(item: pytest.Item) -> Generator[None, None, None]:
+    """記録から収集した item は、fixture と skip の評価より先に実物の module と関数に替える(遅延 import)。"""
+    parent = item.parent
+    if isinstance(item, pytest.Function) and isinstance(parent, DoeffAdrHyFile):
+        try:
+            parent.realize(item)
+        except RecordMismatch as exc:
+            forget_records(parent.path)
+            pytest.fail(
+                f"doeff-adr: 記録と実物が食い違った — 記録を消したので、次の収集はこの file を import して作り直す\n{exc}",
+                pytrace=False,
+            )
+    return (yield)
+
+
+def pytest_report_collectionfinish(config: pytest.Config) -> list[str]:
+    """収集の終わりに、記録から収集した file の数と、import して収集した file とその理由を報告する。"""
+    indexed = config.stash.get(_INDEXED_FILES_KEY, [])
+    imported = config.stash.get(_IMPORTED_FILES_KEY, [])
+    if not indexed and not imported:
+        return []
+    root = Path(config.rootpath)
+    lines = [f"doeff-adr: 記録から収集 {len(indexed)} file・収集で import {len(imported)} file"]
+    lines += [f"  import: {_relative_posix(path, root)} — {reason}" for path, reason in imported]
+    return lines
 
 
 @pytest.hookimpl(tryfirst=True)
@@ -199,10 +243,44 @@ class DoeffAdrHyFile(pytest.Module):
     ``:params`` が付ける ``pytest.mark.parametrize`` が展開されず、parametrize の fixture は既定の値のまま 1 本だけ
     走っていた(ADR-DOE-HY-002 R2「deftest の params を fixture へ忠実に受け渡す」の違反・2026-09-25 の
     doeff-claude-code の検で発覚)。Module の収集は parametrize を callspec に展開する。
+
+    収集で import しない(agora-redesign #1211 / #1223): item を作る macro が書いた記録で説明できる file は、記録から
+    作った仮の module を Module の収集に渡し、module の import は item の setup まで待つ(``lazy_collection``)。
+    記録で説明できない file だけ、今までどおり収集で import する。
     """
 
+    _mut_real_module: types.ModuleType | None = None
+
     def _getobj(self) -> Any:
-        return _import_hy_file(self.path, self.config.rootpath)
+        base = _import_base_for_path(self.path.resolve(), Path(self.config.rootpath).resolve())
+        module_name = _module_name_for_path(self.path.resolve(), base)
+        match plan_collection(self.path.resolve(), self._pytest_collects):
+            case Indexed(recorded):
+                self.config.stash.setdefault(_INDEXED_FILES_KEY, []).append(self.path)
+                return stub_module(recorded, self.path.resolve(), module_name)
+            case NeedsImport(reason):
+                self.config.stash.setdefault(_IMPORTED_FILES_KEY, []).append((self.path, reason))
+                module = _import_hy_file(self.path, self.config.rootpath)
+                self._mut_real_module = module
+                return module
+
+    def _pytest_collects(self, name: str) -> bool:
+        """pytest がこの名を test として集めるか(``python_functions`` / ``python_classes``)。"""
+        return self.funcnamefilter(name) or self.classnamefilter(name)
+
+    def realize(self, item: pytest.Function) -> None:
+        """item の setup の前に、この file の module を 1 度だけ import し、item を実物の関数に替える。
+
+        実物が記録と食い違えば ``RecordMismatch``(呼ぶ側が item を赤にし、記録を消す)。
+        """
+        real = self._mut_real_module
+        if real is None:
+            real = _import_hy_file(self.path, Path(self.config.rootpath))
+            recorded_names = [name for name, value in vars(self.obj).items() if callable(value)]
+            check_no_unrecorded_items(recorded_names, real, self._pytest_collects, self.nodeid)
+            self._mut_real_module = real
+        if item.obj is not getattr(real, item.originalname, None):
+            swap_in_real_function(item, real)
 
 
 def _coerce_path(path: Any) -> Path:
@@ -385,26 +463,7 @@ def _import_hy_file(path: Path, root: Path) -> Any:
     if root_text not in sys.path:
         sys.path.insert(0, root_text)
     _ensure_macro_module_loaded()
-    existing = sys.modules.get(module_name)
-    if existing is not None and Path(getattr(existing, "__file__", "")).resolve() == path:
-        return existing
-    importlib.invalidate_caches()
-    # Import the parent package first and bind the module on it afterwards, the way the normal
-    # import system does: a module put into ``sys.modules`` with neither step makes a later
-    # ``import a.b.c as x`` fail, because that statement reads ``c`` as an attribute of ``a.b``
-    # (agora-redesign #1212).
-    parent_name, _, child_name = module_name.rpartition(".")
-    parent = importlib.import_module(parent_name) if parent_name else None
-    loader = HyLoader(module_name, str(path))
-    spec = importlib.util.spec_from_file_location(module_name, path, loader=loader)
-    if spec is None:
-        raise ImportError(f"could not create import spec for executable ADR: {path}")
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[module_name] = module
-    loader.exec_module(module)
-    if parent is not None:
-        setattr(parent, child_name, module)
-    return module
+    return import_module_for(path, module_name)
 
 
 def _ensure_macro_module_loaded() -> None:

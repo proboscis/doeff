@@ -150,4 +150,6 @@ def test_module_marks_that_are_not_literal_are_dynamic(tmp_path: Path) -> None:
 
 def test_read_module_of_records_without_items() -> None:
     """item の記録の無い module(記録は Hy の束縛の名だけ)は、item 0 の記録として読める。"""
-    assert read_module({"hy.bound-names": ["x"]}) == RecordedModule((), frozenset({"x"}))
+    assert read_module({"hy.bound-names": ["x"], "hy.decorators": {"f": ["pytest.fixture"]}}) == RecordedModule(
+        (), frozenset({"x"}), {"f": ("pytest.fixture",)}, frozenset()
+    )
