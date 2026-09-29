@@ -4,7 +4,7 @@
 利用側の pyproject の ``[tool.pytest.ini_options]`` に置く設定:
 
 - ``doeff_test_call_budget_seconds`` — Hy の検の file から集めた検 1 本の実行(pytest の call の段階)の上限の CPU 秒。
-- ``doeff_test_collect_budget_seconds`` — Hy の検の file 1 本の収集(import を含む)の上限の CPU 秒。
+- ``doeff_test_collect_budget_seconds`` — Hy の検の file 1 本の module の import の上限の CPU 秒。
 - ``doeff_test_budget_mode`` — ``report``(既定・超えても赤にせず、警告と終わりの一覧だけ)か ``fail``(超えたら赤)。
 - ``doeff_test_budget_registry`` — 上限を超えてよい既存の検の登録簿の dir(rootdir からの相対)。
 
@@ -17,8 +17,11 @@
 - 実行は call の段階だけを測り、setup と teardown(fixture)は含めない。session / module の範囲の fixture の準備は、
   その範囲で最初に走った検 1 本に丸ごと乗るので、含めると検の選び方と並び順で同じ検の合否が変わる。deftest の本体
   (模擬の handler で Program を回す所)は call の段階にある。
-- 収集は ``pytest_make_collect_report`` の前後で測る。Hy の file の import(依存の module の import を含む)は
-  ``Module.collect`` の中で起きる。
+- file の上限は module の import(依存の module の import を含む)を測る。測る所は doeff-adr の hook
+  ``pytest_doeff_import_hy_module`` の前後 — doeff-adr は記録で説明できる file を import せずに収集し、module の import を
+  item の setup まで待つので(agora-redesign #1211 / #1225)、import は収集の中か setup の中のどちらかで 1 度起きる。
+  どちらで起きても同じ hook を通るので、同じ鍵(file の path)で測る。超えて赤にする時は、その場で落とす(収集なら
+  収集の誤り、setup ならその item の setup の誤り)。
 - キャッシュ無しを赤にしない: 測った区間から、source から code への変換(``SourceFileLoader.source_to_code`` —
   バイトコードのキャッシュに当たらなかった時だけ呼ばれる。Hy の import も Hy が差し替えた同じ口を通る)に使った CPU 時間を
   引いた値で判定する(変換が入れ子になった時は最も外側の区間だけを引く)。回を丸ごと除く形にしないのは、着地の門と日次の
@@ -38,6 +41,7 @@
 import hashlib
 import importlib.machinery
 import time
+import types
 import warnings
 from collections.abc import Callable, Generator, Mapping
 from dataclasses import dataclass
@@ -219,7 +223,7 @@ def _seconds_text(measurement: Measurement) -> str:
 def over_budget_message(verdict: OverBudget, registry_dir: str | None) -> str:
     """上限を超えた検の文 — 何秒かかったか・上限・直し方を読み手に渡すため。"""
     m = verdict.measurement
-    what = "実行(call)" if m.phase == "call" else "収集(import を含む)"
+    what = "実行(call)" if m.phase == "call" else "読み込み(import)"
     where = registry_dir if registry_dir else f"{REGISTRY_INI} で指す dir"
     return (
         f"doeff の検の時間の上限を超えた: {m.key} の{what}が {_seconds_text(m)}・上限 CPU {verdict.budget:.3f} 秒。"
@@ -294,7 +298,7 @@ def pytest_addoption(parser: pytest.Parser) -> None:
     )
     parser.addini(
         COLLECT_BUDGET_INI,
-        "Hy の検の file 1 本の収集(import を含む)の上限の CPU 秒(空 = 測らない)",
+        "Hy の検の file 1 本の module の import の上限の CPU 秒(空 = 測らない)",
         default="",
     )
     parser.addini(
@@ -379,25 +383,20 @@ def _record(config: pytest.Config, verdict: Verdict) -> bool:
     return False
 
 
-@pytest.hookimpl(wrapper=True)
-def pytest_make_collect_report(
-    collector: pytest.Collector,
-) -> Generator[None, pytest.CollectReport, pytest.CollectReport]:
-    """Hy の検の file 1 本の収集(import を含む)を測って判定する。"""
+@pytest.hookimpl(wrapper=True, optionalhook=True)
+def pytest_doeff_import_hy_module(
+    collector: pytest.Module,
+) -> Generator[None, types.ModuleType, types.ModuleType]:
+    """Hy の検の file 1 本の module の import を測って判定する(doeff-adr の hook — 収集の中でも setup の中でも)。"""
     config = collector.config
     budgets = config.stash.get(_BUDGETS_KEY, None)
-    if (
-        budgets is None
-        or budgets.collect_seconds is None
-        or not isinstance(collector, pytest.Module)
-        or collector.path.suffix != ".hy"
-    ):
+    if budgets is None or budgets.collect_seconds is None or collector.path.suffix != ".hy":
         return (yield)
     counter = config.stash[_COUNTER_KEY]
     compile_before = counter.tally()
     cpu_started = time.process_time()
     wall_started = time.perf_counter()
-    report = yield
+    module = yield
     measurement = Measurement(
         key=_relative_key(collector.path, Path(config.rootpath)),
         phase="collect",
@@ -405,14 +404,10 @@ def pytest_make_collect_report(
         wall_seconds=time.perf_counter() - wall_started,
         compile=counter.tally().since(compile_before),
     )
-    if report.outcome != "passed":
-        return report
     verdict = judge(measurement, budgets.collect_seconds, budgets.registry)
     if _record(config, verdict) and isinstance(verdict, OverBudget):
-        report.outcome = "failed"
-        report.longrepr = over_budget_message(verdict, budgets.registry_dir)
-        report.result = []
-    return report
+        pytest.fail(over_budget_message(verdict, budgets.registry_dir), pytrace=False)
+    return module
 
 
 @pytest.hookimpl(wrapper=True)

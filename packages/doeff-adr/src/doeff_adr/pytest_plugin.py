@@ -119,6 +119,28 @@ _INDEXED_FILES_KEY = pytest.StashKey[list[Path]]()
 _IMPORTED_FILES_KEY = pytest.StashKey[list[tuple[Path, str]]]()
 
 
+class DoeffAdrHookspecs:
+    """doeff-adr が他の plugin に見せる hook。"""
+
+    @pytest.hookspec(firstresult=True)
+    def pytest_doeff_import_hy_module(self, collector: pytest.Module) -> types.ModuleType | None:
+        """Hy の test file の module を読む — 収集で読む時(記録で説明できない file)と、item の setup で読む時
+        (記録から収集した file)の両方がここを通る。import の時間を測る plugin(doeff-hy-pytest の上限)は、この hook を
+        wrapper で包む(agora-redesign #1225)。"""
+        raise NotImplementedError
+
+
+def pytest_addhooks(pluginmanager: pytest.PytestPluginManager) -> None:
+    """doeff-adr の hook を pytest に登録する。"""
+    pluginmanager.add_hookspecs(DoeffAdrHookspecs)
+
+
+@pytest.hookimpl
+def pytest_doeff_import_hy_module(collector: pytest.Module) -> types.ModuleType:
+    """Hy の test file の module を読む既定の実装。"""
+    return _import_hy_file(collector.path, Path(collector.config.rootpath))
+
+
 def pytest_addoption(parser: pytest.Parser) -> None:
     parser.addini(
         "doeff_adr_hy_files",
@@ -260,7 +282,7 @@ class DoeffAdrHyFile(pytest.Module):
                 return stub_module(recorded, self.path.resolve(), module_name)
             case NeedsImport(reason):
                 self.config.stash.setdefault(_IMPORTED_FILES_KEY, []).append((self.path, reason))
-                module = _import_hy_file(self.path, self.config.rootpath)
+                module = self.config.hook.pytest_doeff_import_hy_module(collector=self)
                 self._mut_real_module = module
                 return module
 
@@ -275,7 +297,7 @@ class DoeffAdrHyFile(pytest.Module):
         """
         real = self._mut_real_module
         if real is None:
-            real = _import_hy_file(self.path, Path(self.config.rootpath))
+            real = self.config.hook.pytest_doeff_import_hy_module(collector=self)
             recorded_names = [name for name, value in vars(self.obj).items() if callable(value)]
             check_no_unrecorded_items(recorded_names, real, self._pytest_collects, self.nodeid)
             self._mut_real_module = real

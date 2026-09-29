@@ -16,7 +16,7 @@ from doeff_hy.ast_unparse import install
 
 from doeff_hy_pytest.budget import pytest_addoption as pytest_addoption
 from doeff_hy_pytest.budget import pytest_configure as pytest_configure
-from doeff_hy_pytest.budget import pytest_make_collect_report as pytest_make_collect_report
+from doeff_hy_pytest.budget import pytest_doeff_import_hy_module as pytest_doeff_import_hy_module
 from doeff_hy_pytest.budget import pytest_runtest_call as pytest_runtest_call
 from doeff_hy_pytest.budget import pytest_runtest_makereport as pytest_runtest_makereport
 from doeff_hy_pytest.budget import pytest_terminal_summary as pytest_terminal_summary
