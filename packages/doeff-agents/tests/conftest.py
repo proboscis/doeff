@@ -14,10 +14,21 @@
 ``params_silently_dropped == 0``)。
 """
 
+import sys
+from collections.abc import Callable
 from pathlib import Path
 
 import hy  # noqa: F401 — activates Hy import hook
 import pytest
+
+from doeff import Program
+
+TESTS_DIR = Path(__file__).resolve().parent
+
+# 契約テストの組み立ての module(driver_io_contract_handlers.hy)を名で import できるようにする
+# (pytest は検の file の dir を遅れて足すので、他の testpaths と一緒に集めた時に備える)。
+if str(TESTS_DIR) not in sys.path:
+    sys.path.insert(0, str(TESTS_DIR))
 
 
 def pytest_collect_file(file_path: Path, parent: pytest.Collector) -> pytest.Collector | None:
@@ -34,28 +45,39 @@ def pytest_collect_file(file_path: Path, parent: pytest.Collector) -> pytest.Col
     return None
 
 
+# 契約テストでない deftest の名: handler は各 deftest が本体の中で被せる。
+PLAIN = "plain"
+
+
 @pytest.fixture
-def doeff_interpreter(request: pytest.FixtureRequest):
+def doeff_interpreter_name() -> str:
+    return PLAIN
+
+
+@pytest.fixture
+def doeff_interpreter(doeff_interpreter_name: str) -> Callable[..., object]:
     """deftest を走らせる実行時 interpreter(ADR-DOE-HY-002 R3 の参照実装と同じ形)。
 
-    ``:env`` は reader handler 経由で必ず反映する(黙って無視しない)。未対応の
-    params は hard fail させる — 黙って無視すると宣言が効かないまま green になる
-    (R2)。
+    ``:env`` は reader handler 経由で必ず反映する(黙って無視しない)。``:interpreters`` の名
+    (契約テスト)は handler の組の組み立てを引いて被せる。名 → 組み立ての
+    表は driver_io_contract_handlers.hy が持ち、表に無い名は KeyError で落とす(黙って素通しに
+    しない — R2)。
     """
-    if "doeff_interpreter_name" in request.fixturenames:
-        raise NotImplementedError(
-            "deftest :interpreters (doeff_interpreter_name) is not wired in "
-            "doeff-agents — ADR-DOE-HY-002 R2 forbids silently ignoring it. "
-            "Wire the named interpreter stack here before declaring :interpreters."
-        )
+    from driver_io_contract_handlers import INTERPRETERS
 
-    def run_program(program, *, env=None):
+    compositions: dict[str, Callable[[Program], Program]] = {
+        PLAIN: lambda program: program,
+        **INTERPRETERS,
+    }
+    compose = compositions[doeff_interpreter_name]
+
+    def run_program(program: Program, *, env: dict[str, object] | None = None) -> object:
         from doeff import run
 
         if env:
             from doeff_core_effects.handlers import reader
 
             program = reader(dict(env))(program)
-        return run(program)
+        return run(compose(program))
 
     return run_program

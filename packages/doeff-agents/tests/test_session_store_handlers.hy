@@ -21,7 +21,7 @@
 
 (import doeff [run])
 (import doeff_agents.effects [AgentSessionQuery GetAgentSession PutAgentSession])
-(import doeff_agents.io_fake [FakeIoWorld run-fake-io])
+(import doeff_agents.io_fake [FakeIoWorld with-fake-io])
 (import doeff_agents.session_store [InMemoryAgentSessionRepository JsonlAgentSessionRepository])
 (import doeff_agents.session_store_sql [
   COLUMN-NAMES
@@ -61,7 +61,7 @@
 (defn jsonl-repository []
   (setv world (FakeIoWorld))
   (JsonlAgentSessionRepository (Path "/store/sessions")
-                               :io-root (fn [program] (run-fake-io world program))))
+                               :io-root (fn [program] (run (with-fake-io world program)))))
 
 
 (defn open-postgres []
