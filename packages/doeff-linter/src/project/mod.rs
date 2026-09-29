@@ -299,7 +299,7 @@ pub fn run_with(root: &Path, settings: &ProjectSettings, enabled: &BTreeSet<Proj
                 if enabled.contains(&ProjectRule::SpellingOutsideItsFiles) && !architecture.confined_spellings.is_empty() {
                     let architecture_rel = relative_path(root, &architecture.path).unwrap_or_else(|| "architecture.hy".to_string());
                     let (found, errors) = crate::timing::timed("confined-spellings", || {
-                        confined_spellings::find(root, &architecture.confined_spellings, &architecture_rel)
+                        confined_spellings::find(root, &architecture.confined_spellings, &architecture_rel, focus)
                     });
                     drafts.extend(found.into_iter().map(|found| {
                         let (message, detail) = match &found.problem {
@@ -828,7 +828,11 @@ pub fn run_with(root: &Path, settings: &ProjectSettings, enabled: &BTreeSet<Proj
             semantic_probes = probes;
         }
     }
-    crate::timing::timed("drop-index", || drop(indexes));
+    // 索引(repo 全体の Hy・数百 MB)の後片づけは別の thread で — 実行の終わりを待たせない(1 file の commit の hook で 0.07 秒・
+    // agora-redesign #1418)。process が先に終われば片づけは OS が持つ。
+    crate::timing::timed("drop-index", || {
+        std::thread::spawn(move || drop(indexes));
+    });
     let labels = crate::timing::timed("labels", || judged_labels(root, settings, &mut report.errors));
     let (findings, dropped) = crate::timing::timed("finish", || finish(drafts, settings, &registry, &labels.false_positives));
     report.findings = findings;

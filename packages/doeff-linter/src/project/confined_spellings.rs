@@ -9,7 +9,7 @@
 //! DOEFF146(:single-point-vocabulary)と違い、文字列の中も数え、Python の file も読む — 外の口の動詞 `"POST"`・route の綴り
 //! `"/api/intake"`・effect の宣言の file(effects.py)は、文字列か Python の中に在る。
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use doeff_indexer::hy_index::Range;
 
@@ -36,8 +36,10 @@ pub struct ConfinedFinding {
     pub problem: ConfinedProblem,
 }
 
-/// 群ごとに `:except` の外の当たりを探す(群の宣言の順・path の順)。読めなかった file は errors へ積む。
-pub fn find(root: &Path, groups: &[ConfinedSpelling], architecture_rel: &str) -> (Vec<ConfinedFinding>, Vec<String>) {
+/// 群ごとに `:except` の外の当たりを探す(群の宣言の順・path の順)。読めなかった file は errors へ積む。focus(命令の行の名指し)が
+/// 在れば、その下の file だけを読む — 当たりは file ごとに 1 件でその file に付くので、答えは全部を読んで名指しで絞った時と同じ
+/// (母集団 0 の知らせは glob で決まり、読まない)。1 file の commit の hook で群ごとに母集団を全部読んでいた(agora-redesign #1418)。
+pub fn find(root: &Path, groups: &[ConfinedSpelling], architecture_rel: &str, focus: Option<&[PathBuf]>) -> (Vec<ConfinedFinding>, Vec<String>) {
     let mut out = Vec::new();
     let mut errors = Vec::new();
     for group in groups {
@@ -53,7 +55,11 @@ pub fn find(root: &Path, groups: &[ConfinedSpelling], architecture_rel: &str) ->
             });
             continue;
         }
-        for rel in population.iter().filter(|rel| !group.except.iter().any(|p| super::glob_matches(p, rel))) {
+        for rel in population
+            .iter()
+            .filter(|rel| !group.except.iter().any(|p| super::glob_matches(p, rel)))
+            .filter(|rel| focus.is_none_or(|only| only.iter().any(|p| root.join(rel.as_str()).starts_with(p))))
+        {
             let source = match std::fs::read_to_string(root.join(rel)) {
                 Ok(source) => source,
                 Err(error) => {
@@ -103,7 +109,7 @@ mod tests {
         std::fs::create_dir_all(dir.path().join("s")).unwrap();
         std::fs::write(dir.path().join("s/a.hy"), "; \"/api/intake\" は退いた\n(setv u \"/api/intake\")\n").unwrap();
         std::fs::write(dir.path().join("s/b.py"), "# /api/intake\nx = 1\n").unwrap();
-        let (hits, errors) = find(dir.path(), &[group(&[r"/api/intake"], &["s/**"], &[])], "architecture.hy");
+        let (hits, errors) = find(dir.path(), &[group(&[r"/api/intake"], &["s/**"], &[])], "architecture.hy", None);
         assert!(errors.is_empty(), "{:?}", errors);
         assert_eq!(hits.len(), 1, "{:?}", hits);
         assert_eq!(hits[0].rel, "s/a.hy");
@@ -117,7 +123,7 @@ mod tests {
         std::fs::create_dir_all(dir.path().join("s")).unwrap();
         std::fs::write(dir.path().join("s/a.hy"), "(PostIntake x)\n(PostIntake y)\n").unwrap();
         std::fs::write(dir.path().join("s/b.hy"), "(PostIntake x)\n").unwrap();
-        let (hits, _) = find(dir.path(), &[group(&[r"\bPostIntake\b"], &["s/**"], &["s/b.hy"])], "architecture.hy");
+        let (hits, _) = find(dir.path(), &[group(&[r"\bPostIntake\b"], &["s/**"], &["s/b.hy"])], "architecture.hy", None);
         assert_eq!(hits.len(), 1, "{:?}", hits);
         assert_eq!(hits[0].rel, "s/a.hy");
         assert_eq!(hits[0].problem, ConfinedProblem::Outside { count: 2 });
@@ -126,9 +132,27 @@ mod tests {
     #[test]
     fn an_empty_population_is_missing_not_green() {
         let dir = tempfile::tempdir().unwrap();
-        let (hits, _) = find(dir.path(), &[group(&[r"x"], &["gone/**"], &[])], "architecture.hy");
+        let (hits, _) = find(dir.path(), &[group(&[r"x"], &["gone/**"], &[])], "architecture.hy", None);
         assert_eq!(hits.len(), 1, "{:?}", hits);
         assert_eq!(hits[0].rel, "architecture.hy");
         assert_eq!(hits[0].problem, ConfinedProblem::Missing);
+    }
+
+    #[test]
+    fn named_paths_read_only_the_named_files() {
+        // agora-redesign #1418: 名指しの下の file だけを読む — 名指しの外の読めない file(UTF-8 でない)を読まず、当たりは名指しの分だけ。
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(dir.path().join("s")).unwrap();
+        std::fs::write(dir.path().join("s/a.hy"), "(PostIntake x)\n").unwrap();
+        std::fs::write(dir.path().join("s/b.hy"), "(PostIntake y)\n").unwrap();
+        std::fs::write(dir.path().join("s/broken.hy"), [0xff_u8, 0xfe]).unwrap();
+        let groups = [group(&[r"\bPostIntake\b"], &["s/**"], &[])];
+        let (all, all_errors) = find(dir.path(), &groups, "architecture.hy", None);
+        assert_eq!(all.iter().map(|h| h.rel.as_str()).collect::<Vec<_>>(), vec!["s/a.hy", "s/b.hy"]);
+        assert_eq!(all_errors.len(), 1, "{:?}", all_errors);
+        let named = [dir.path().join("s/a.hy")];
+        let (hits, errors) = find(dir.path(), &groups, "architecture.hy", Some(&named));
+        assert!(errors.is_empty(), "{:?}", errors);
+        assert_eq!(hits.iter().map(|h| h.rel.as_str()).collect::<Vec<_>>(), vec!["s/a.hy"]);
     }
 }
