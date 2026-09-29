@@ -221,6 +221,7 @@ impl Setup {
                 ProjectRule::WorldHandlerNamedOutsideList | ProjectRule::WorldHandlerMisplaced => {
                     self.settings.architecture.as_ref().is_some_and(|a| !a.world_handlers.is_empty())
                 }
+                ProjectRule::TestFormNotDeftest => self.settings.architecture.as_ref().is_some_and(|a| a.test_forms.is_some()),
                 ProjectRule::TestKindMismatch => {
                     self.settings.architecture.as_ref().is_some_and(|a| !a.world_handlers.is_empty() && a.edge_mark.is_some())
                 }
