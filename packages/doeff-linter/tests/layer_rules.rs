@@ -2156,6 +2156,19 @@ fn test_forms_other_than_deftest_are_red() {
         ("app/billing/tests/test_good.hy", "(deftest test-one (assert True))\n".to_string()),
         ("app/billing/tests/test_python.py", "import pytest\n\ndef helper():\n    pass\n\ndef test_a():\n    assert True\n\nclass TestB:\n    def test_b(self):\n        assert True\n".to_string()),
         ("app/billing/tests/test_skipped.hy", "(import pytest)\n(pytest.skip \"doeff 側の不足\" :allow-module-level True)\n(deftest test-x (assert True))\n".to_string()),
+        // agora-redesign #1426: 束ねの名と skip の印が別の行に在る複数行の pytestmark(agora の test_local_agora_e2e.hy の形)。
+        (
+            "app/billing/tests/test_marked_multiline.hy",
+            "(import pytest)\n;; module ごとの skip は pytestmark の印で書く(註の中の語は当てない)。\n(val pytestmark\n  (pytest.mark.skip :reason (+ \"理由の 1 行目(括弧も在る)\"\n                              \"理由の 2 行目\")))\n(deftest test-x (assert True))\n"
+                .to_string(),
+        ),
+        ("app/billing/tests/test_marked_multiline.py", "import pytest\n\npytestmark = [\n    pytest.mark.skip(reason=\"x\"),\n]\n".to_string()),
+        // skip でない印の複数行の束ねと、1 行の印は当てない。束ねの後の検ごとの skip も束ねに数えない。
+        (
+            "app/billing/tests/test_marked_real_world.hy",
+            "(import pytest)\n(val pytestmark\n  pytest.mark.real-world)\n(deftest test-x (assert True))\n(deftest test-y (pytest.mark.skip))\n".to_string(),
+        ),
+        ("app/billing/tests/test_marked_one_line.hy", "(import pytest)\n(val pytestmark pytest.mark.real-world)\n(deftest test-x (assert True))\n".to_string()),
         ("scripts/check_things.hy", "(defn main [] 0)\n".to_string()),
         ("app/billing/tests/billing_deftest_runner.hy", "(defn main [] 0)\n".to_string()),
     ];
@@ -2171,6 +2184,8 @@ fn test_forms_other_than_deftest_are_red() {
         keys(&report, "DOEFF135"),
         vec![
             "app/billing/tests/billing_deftest_runner.hy::DOEFF135::runner",
+            "app/billing/tests/test_marked_multiline.hy::DOEFF135::module-skip",
+            "app/billing/tests/test_marked_multiline.py::DOEFF135::module-skip",
             "app/billing/tests/test_python.py::DOEFF135::python-test",
             "app/billing/tests/test_skipped.hy::DOEFF135::module-skip",
             "scripts/check_things.hy::DOEFF135::check-script",
@@ -2178,6 +2193,9 @@ fn test_forms_other_than_deftest_are_red() {
         "{}",
         report
     );
+    // 複数行の束ねは束ねの名の行を指す。
+    let multiline = violation(&report, "app/billing/tests/test_marked_multiline.hy::DOEFF135::module-skip");
+    assert_eq!(multiline["range"]["start"]["line"], 2);
     let python = violation(&report, "app/billing/tests/test_python.py::DOEFF135::python-test");
     assert!(python["message"].as_str().unwrap().contains("def test_* が 2 本"), "{}", python["message"]);
     assert_eq!(python["range"]["start"]["line"], 5);
