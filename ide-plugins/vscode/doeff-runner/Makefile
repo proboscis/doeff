@@ -64,8 +64,10 @@ bundle-indexer:
 build: bundle-indexer
 	@npm run vscode:prepublish
 
+# vsce は devDependencies で版を固定し(package-lock.json)、npm ci で入った手元の物だけを使う — --no-install は
+# registry から取ってこない(版を固定しない `npx --yes @vscode/vsce` は、その時の最新を引いて組み立てが再現しなかった)。
 package: build
-	@npx --yes @vscode/vsce package -o $(VSIX)
+	@npx --no-install vsce package -o $(VSIX)
 	@echo "Packaged $(VSIX)"
 
 install-to-cursor: package
