@@ -171,6 +171,66 @@
   (assert (= (! (status-of by-ticket "t-read")) #(503 "store-unavailable")) by-ticket))
 
 
+;; --- /readyz(agora-redesign #1479)--------------------------------------------------------------------------------------------------
+;; /healthz は生存だけ(liveness)・/readyz は置き場を上限 1 秒で問う(readiness)。固まった置き場で口ごと固まらない。
+
+(defk answers-with [value]
+  {:pre [(: value bool)] :post [(: % Callable)] :tags {:context "records" :role "foundation"}}
+  "直ぐに value を答える置き場の問いの代役を作るため(届く = True・届かない = False)。"
+  (fn [] (answered value)))
+
+
+(defk answered [value]
+  {:pre [(: value bool)] :post [(: % bool)] :tags {:context "records" :role "foundation"}}
+  "置き場の問いの代役の本体: value をそのまま答えるため。"
+  value)
+
+
+(defk hung-probe []
+  {:pre [] :post [(: % bool)] :tags {:context "records" :role "foundation"}}
+  "固まった置き場の問いの代役(仮想の時計で 1 時間答えない — DB の pod の入れ替えで接続が固まった形)。"
+  (<- (Delay 3600.0))
+  True)
+
+
+(defk readyz-status [prepare readiness]
+  {:pre [(: prepare (| Program EffectBase)) (: readiness (| Callable None))] :post [(: % tuple)]
+   :tags {:context "records" :role "foundation"}}
+  "/readyz だけの台本を、readiness を渡した入口で走らせ、その札の答えを読むため。"
+  (val script (HttpScript :arrivals #((! (arrival "t-ready" "GET" "/readyz" None None))
+                                      (! (arrival "t-health" "GET" "/healthz" None None)))
+                          :bodies #()))
+  (val got [])
+  (val parts (ScriptedParts :script script :broken None :note (fn [c] (.append got c))))
+  (val serving (RecordsServing :address (HttpAddress :host "127.0.0.1" :port 0) :schema LAW-SCHEMA :roster (law-roster) :prepare prepare
+                               :request-handlers #() :max-bytes MAX-BYTES :maintenance None :stop-poll-seconds 1.0 :drain-seconds 0.0
+                               :readiness readiness))
+  (val code (run (records-process (fn [body] (scripted-foundation parts body)) serving)))
+  (val by-ticket {})
+  (for [served (if got (get got 0) #())]
+    (.setdefault by-ticket served.ticket [])
+    (.append (get by-ticket served.ticket) served))
+  #(code (! (status-of by-ticket "t-ready")) (! (status-of by-ticket "t-health"))))
+
+
+(deftest test-readyz-asks-the-store-within-one-second
+  (val store (MemoryStore LAW-SCHEMA))
+  ;; 届く置き場 → 200。問いの無い置き場(memory)も用意が済めば 200。
+  (assert (= (get (! (readyz-status (handlers-at-once store) (! (answers-with True)))) 1) #(200 None)))
+  (assert (= (get (! (readyz-status (handlers-at-once store) None)) 1) #(200 None)))
+  ;; 届かない置き場 → 503。
+  (assert (= (get (! (readyz-status (handlers-at-once store) (! (answers-with False)))) 1) #(503 "store-unavailable")))
+  ;; 固まった置き場(1 時間答えない)→ 上限 1 秒で 503、その間も /healthz は 200(反例 = 上限の無い問いは口を固める)。
+  (val hung (! (readyz-status (handlers-at-once store) hung-probe)))
+  (assert (= (get hung 0) 0) hung)
+  (assert (= (get hung 1) #(503 "store-unavailable")) hung)
+  (assert (= (get hung 2) #(200 None)) hung)
+  ;; 用意の前 → 503(/healthz は 200)。
+  (val before (! (readyz-status (handlers-after store 3600.0) (! (answers-with True)))))
+  (assert (= (get before 1) #(503 "store-unavailable")) before)
+  (assert (= (get before 2) #(200 None)) before))
+
+
 (deftest test-a-failed-preparation-ends-the-run-with-the-error
   (<- script HttpScript (served-script))
   (var raised None)

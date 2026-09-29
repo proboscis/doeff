@@ -20,6 +20,8 @@
 ;;;     終わり)で見張る: 用意が落ちれば例外が run を 0 以外で終える(再起動が繋ぎ直す)。止めの合図で loop が先に終われば用意を取り消して
 ;;;     0 で終わる。用意の間も口は開いていて、/healthz = 200・記録の操作 = 503 store-unavailable(用意の済みは prepared-slot の session の値)
 ;;;   - 止めの見張り(watch-stop)は StopRequested を問い、合図で HttpShutdown を撃つ
+;;;   - GET /readyz(#1479)は置き場を問う: 用意の前 = 503・serving.readiness の問いを READINESS-SECONDS の上限で撃ち、True = 200・
+;;;     False か時間切れ = 503 store-unavailable。/healthz は process の生存だけ(liveness が置き場の不調で再起動を繰り返さない)
 ;;;   - 手入れ(serving.maintenance — 無ければ立てない)は用意の後に :daemon True の task で、Delay で拍を刻む
 ;;; 表を用意せずに書けない約束(PreparedStore)は、handler の関数を用意の task だけが作ることで守る(用意の前の要求は prepared-slot が
 ;;; 空なので store-not-prepared が Unreachable で答える)。
@@ -46,8 +48,13 @@
 (import doeff_records.effects [ReadRow ListRows PutRow PutRows WatchChanges AppendEvent ReadEvents ReadStreamEnd])
 (import doeff_records.principals [Roster])
 (import doeff_records.maintenance [maintenance-loop])
-(import doeff_records.service [HttpRequest HttpAnswer RecordsService respond refusal-answer])
-(import doeff_records.wire [ERROR-INTERNAL ERROR-MALFORMED])
+(import doeff_records.service [HttpRequest HttpAnswer RecordsService respond refusal-answer json-answer])
+(import doeff_records.wire [ERROR-INTERNAL ERROR-MALFORMED ERROR-STORE-UNAVAILABLE])
+
+;; 置き場に届くかを問う口(agora-redesign #1479)。/healthz は process の生存だけを答え(liveness — 置き場が落ちている間に再起動を
+;; 繰り返さない)、/readyz は置き場を問う(readiness)。問いの答えを待つ上限の秒 — 超えたら 503(固まった置き場で口を固めない)。
+(val PATH-READYZ "/readyz")
+(val READINESS-SECONDS 1.0)
 
 (val MODULE-TAGS {:context "records" :role "entry"})
 
@@ -80,7 +87,8 @@
   "入口の Program(serve-records)の設定: address = 待ち受けの宛先・schema = 置き場の宣言・roster = 身元の名簿・prepare = 表を用意して
    書き手の名 → 記録の handler の関数を返す Program(1 度だけ走る)・request-handlers = 要求ごとの答えの外側に被せる handler の列(本番は空・
    検は呼び手の仮想の時計)・max-bytes = 要求の本文の上限・maintenance = 手入れの設定(None = 立てない)・stop-poll-seconds /
-   drain-seconds = 止めの見張りの間隔と待ち受けの閉じの流し切りの上限。"
+   drain-seconds = 止めの見張りの間隔と待ち受けの閉じの流し切りの上限・readiness = () → 置き場に届けば True の Program(/readyz が
+   READINESS-SECONDS の上限で撃つ・None = 用意が済めば ready — memory の置き場)。"
   (#^ HttpAddress address)
   (#^ RecordsSchema schema)
   (#^ Roster roster)
@@ -89,7 +97,13 @@
   (#^ int max-bytes)
   (#^ (| MaintenancePlan None) maintenance)
   (#^ float stop-poll-seconds)
-  (#^ float drain-seconds))
+  (#^ float drain-seconds)
+  (setv #^ (| Callable None) readiness None))
+
+
+(defrecord ReadinessTimedOut
+  "/readyz の問いの時計の答え — 置き場の問いが上限の秒の内に答えなかった印(Race で問いの答えと見分けるため)。"
+  (#^ float seconds))
 
 
 (defrecord StorePrepared
@@ -210,11 +224,40 @@
     (HttpBodyFailed :reason reason) (! (refusal-answer ERROR-MALFORMED (.format "本文を読めない: {}" reason)))))
 
 
+(defk readiness-timer [seconds]
+  {:pre [(: seconds float)] :post [(: % ReadinessTimedOut)] :tags {:context "records" :role "entry"}}
+  "/readyz の問いの上限を刻むため(seconds 秒眠って印を返す — Race の片方)。"
+  (<- (Delay seconds))
+  (ReadinessTimedOut :seconds seconds))
+
+
+(defk readiness-answer [serving prepared]
+  {:pre [(: serving RecordsServing) (: prepared (| Callable None))] :post [(: % HttpAnswer)] :tags {:context "records" :role "entry"}}
+  "/readyz に答えるため: 用意の前は 503・問いが無ければ 200・問いを READINESS-SECONDS の上限で撃ち、True なら 200・False か時間切れ
+   なら 503 store-unavailable(問いの task は取り消す — 固まった置き場の問いを待ち続けない)。"
+  (when (is prepared None)
+    (return (! (refusal-answer ERROR-STORE-UNAVAILABLE "表の用意が済んでいない"))))
+  (when (is serving.readiness None)
+    (return (! (json-answer 200 {"status" "ready"}))))
+  (<- probe Task (Spawn (serving.readiness)))
+  (<- timer Task (Spawn (readiness-timer READINESS-SECONDS)))
+  (<- first (| bool ReadinessTimedOut) (Race probe timer))
+  (<- (Cancel probe))
+  (<- (Cancel timer))
+  (match first
+    (ReadinessTimedOut :seconds seconds)
+      (! (refusal-answer ERROR-STORE-UNAVAILABLE (.format "置き場が {} 秒の内に答えない" seconds)))
+    True (! (json-answer 200 {"status" "ready"}))
+    _ (! (refusal-answer ERROR-STORE-UNAVAILABLE "置き場に届かない"))))
+
+
 (defk answer-with [serving request]
   {:pre [(: serving RecordsServing) (: request HttpRequest)] :post [(: % HttpAnswer)] :tags {:context "records" :role "entry"}}
   "要求 1 つを service.respond で答えるため: 用意が済んでいれば置き場の handler、済んでいなければ store-not-prepared の下で撃つ。
-   要求ごとの外側の handler(serving.request-handlers — 検の仮想の時計)を被せる。"
+   要求ごとの外側の handler(serving.request-handlers — 検の仮想の時計)を被せる。GET /readyz は置き場を問う(readiness-answer)。"
   (<- prepared (| Callable None) (PreparedHandlers))
+  (when (and (= request.method "GET") (= request.path PATH-READYZ))
+    (return (! (with-handlers [#* serving.request-handlers] (readiness-answer serving prepared)))))
   (val handler-for (if (is prepared None) (fn [writer] store-not-prepared) prepared))
   (<- answer (with-handlers [#* serving.request-handlers]
                             (respond (RecordsService serving.schema serving.roster handler-for) request)))

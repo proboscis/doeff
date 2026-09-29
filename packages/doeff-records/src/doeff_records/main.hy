@@ -54,6 +54,7 @@
 (import doeff_core_effects.aiohttp_http_server [aiohttp-http-server])
 (import doeff_core_effects.http_server_effects [HttpAddress])
 (import doeff_core_effects.postgres_sql [PostgresConnections PostgresDatabase])
+(import doeff_core_effects.sql_effects [SqlQuery SqlRows])
 (import doeff_core_effects.pooled_postgres_sql [pooled-postgres-sql-handler])
 (import doeff_time [async-time-handler])
 (import doeff_records.values [RecordsSchema])
@@ -216,14 +217,22 @@
                    :maintenance (MaintenancePlan :interval-seconds interval :keep-seconds keep)))
 
 
+(defk store-reachable []
+  {:pre [] :post [(: % bool)] :tags {:context "records" :role "entry"}}
+  "/readyz の問い: PostgreSQL の置き場へ SELECT 1 を撃ち、答えが行なら True(届かない・断られた なら False)— 置き場に届くかを口の外から
+   見分けるため(agora-redesign #1479)。"
+  (<- answer (SqlQuery DATABASE "SELECT 1" #()))
+  (isinstance answer SqlRows))
+
+
 (defk records-serving [schema settings]
   {:pre [(: schema RecordsSchema) (: settings RecordsSettings)] :post [(: % RecordsServing)] :tags {:context "records" :role "entry"}}
   "本体(serve-records)の設定を、表の宣言 schema と設定の値から作るため。表の用意(prepare)は PostgreSQL の置き場 — 答え手は土台の口
-   records-connected が置く。"
+   records-connected が置く。/readyz は store-reachable で置き場を問う。"
   (RecordsServing :address settings.address :schema schema :roster settings.roster
                   :prepare (pg-handlers-of schema settings.prefix settings.origin-host) :request-handlers #()
                   :max-bytes REQUEST-MAX-BYTES :maintenance settings.maintenance
-                  :stop-poll-seconds STOP-POLL-SECONDS :drain-seconds DRAIN-SECONDS))
+                  :stop-poll-seconds STOP-POLL-SECONDS :drain-seconds DRAIN-SECONDS :readiness store-reachable))
 
 
 (defk records-process [foundation serving]
