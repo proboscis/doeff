@@ -175,6 +175,8 @@ pub enum Explain {
     RetiredWord { group: String, spelling: String, instead: String, name: Option<String> },
     /// DOEFF151: 使わないと決めた呼び。
     RetiredCall { group: String, call: String, instead: String },
+    /// DOEFF140: 置き場の外の module への依存(この file の置き場・読む先の module・その file の root からの path)。
+    PlacedDependency { placement: Placement, owner: String, owner_rel: String },
     ServiceUntestedOnSim { service: String, entry: String, definitions: usize, sim: String },
     /// DOEFF106・131 を層の置き場の外の file に当てた当たり(層の説明の主体が無い — message をそのまま主体にする)。
     WorldOutsideLayers { subject: String },
@@ -388,6 +390,10 @@ impl<'a> Narrator<'a> {
             Explain::RetiredCall { group, call, instead } => (
                 format!("呼び ({} …)(使わないと決めた呼び — 群 {})", call, group),
                 format!("この repo は architecture.hy の :retired-calls でこの呼びを退役させた(代わり: {})。退役した物を呼ぶ所が残ると、同じ役の物が 2 つ並び、座標や答えが黙って食い違う。", instead),
+            ),
+            Explain::PlacedDependency { placement, owner, owner_rel } => (
+                format!("import 先 {}(path が {} — 層の置き場の外) — {}", owner, owner_rel, self.file_subject(placement)),
+                format!("置き場の決まっていない module {}({})に依存する。architecture.hy の :placed-dependencies の層は、層の置き場に在る module にだけ依存する — 置き場の外の module は層の規則(向き・タグ・service の境界)の外なので、それを読むとその規則を迂回できる。", owner, owner_rel),
             ),
             Explain::ServiceUntestedOnSim { service, entry, definitions, sim } => (
                 format!("service {} の組み立て {}({} 本の定義)", service, entry, definitions),
@@ -741,6 +747,7 @@ impl<'a> Narrator<'a> {
             ),
             Explain::RetiredWord { instead, .. } => Some(format!("{} に書き換える(規則そのものを述べる行なら :rule-lines の綴りを含めて書く)— 直せない既存の当たりは登録簿に載せる", instead)),
             Explain::RetiredCall { instead, .. } => Some(format!("{} に置き換える — 直せない既存の当たりは登録簿に載せる", instead)),
+            Explain::PlacedDependency { owner_rel, .. } => Some(format!("{} を層の置き場(<root>/<service>/<層>/)へ移すか、要る型を intent へ移して読む — 直せない既存の当たりは登録簿に載せる", owner_rel)),
             Explain::MixedConcerns { .. } => Some("形の検めは protocol の境目で defwire の型に parse し(形が合わなければ解く所で失敗)、この定義は型のある値を受けて判断だけをする".to_string()),
             Explain::ClassRoleDoubt { chosen, .. } if chosen == "external-world" => Some(WORLD_FIX.to_string()),
             Explain::ClassRoleDoubt { .. } => Some(STATE_FIX.to_string()),

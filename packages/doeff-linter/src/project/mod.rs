@@ -834,6 +834,9 @@ fn judge_layer_file(
         let (found, crossed) = judge.service_dependencies(&facts, index, architecture, enabled.contains(&ProjectRule::ServiceDependency));
         drafts.extend(found);
         crossings = crossed;
+        if enabled.contains(&ProjectRule::PlacedDependency) {
+            drafts.extend(judge.placed_dependencies(&facts, index, architecture));
+        }
         if enabled.contains(&ProjectRule::ContextMatchesService) {
             let declared = judge.placement.service.as_deref().is_some_and(|s| architecture.service_by_dir(s).is_some());
             let shared = settings::ServiceSettings {
@@ -1195,6 +1198,49 @@ impl<'a> LayerJudge<'a> {
         (drafts, crossings)
     }
 
+    /// DOEFF140: architecture.hy の :placed-dependencies の層の module(service と shared — 層が先の旧い dir と foundation は外)が、
+    /// root の下の層の置き場の外の module を import する。読む先は import の綴りから file を引いて決める(その file か親の module が
+    /// root の下に在り、層の索引に無く、package の印でない物)— 渡された file の import と置き場だけで判じ、repo 全体の索引は読まない。
+    /// 同じ module を何度読んでも 1 件(最初の import の所)。
+    fn placed_dependencies(&self, facts: &ModuleFacts, index: &HashMap<String, ModuleSite>, architecture: &architecture::Architecture) -> Vec<Draft> {
+        if self.placement.service.is_none() || !architecture.placed_dependencies.iter().any(|l| l == self.layer_name(self.placement.layer)) {
+            return Vec::new();
+        }
+        let mut repo = self.file.file.path.clone();
+        for _ in self.file.file.rel.split('/') {
+            repo.pop();
+        }
+        let root_module = settings::normalize_dir(&architecture.root).replace('/', ".");
+        let mut first: BTreeMap<String, (ByteSpan, String)> = BTreeMap::new();
+        for import in &facts.imports {
+            if resolve_target(&import.target, index).is_some() {
+                continue;
+            }
+            let Some((owner, owner_rel)) = unplaced_owner(&import.target, &root_module, &repo) else { continue };
+            if owner != self.file.module {
+                first.entry(owner).or_insert((import.span, owner_rel));
+            }
+        }
+        first
+            .into_iter()
+            .map(|(owner, (span, owner_rel))| {
+                self.draft(
+                    ProjectRule::PlacedDependency,
+                    self.range(span),
+                    format!(
+                        "{}(層 {})が層の置き場の外の module {}({})を import する — 層の置き場へ移した module だけに依存する",
+                        self.file.file.rel,
+                        self.layer_name(self.placement.layer),
+                        owner,
+                        owner_rel
+                    ),
+                    Some(owner.clone()),
+                    Explain::PlacedDependency { placement: self.placement.clone(), owner, owner_rel },
+                )
+            })
+            .collect()
+    }
+
     /// DOEFF113: タグの :context と dir の service が食い違う(info)。名の `-` と `_` は同じに見る。共有の置き場は見ない。
     fn context_matches_service(&self, facts: &ModuleFacts, contexts: &[String], services: &settings::ServiceSettings) -> Option<Draft> {
         let own = self.placement.service.as_deref()?;
@@ -1403,6 +1449,26 @@ fn resolve_target<'i, 'x>(target: &'i str, index: &'x HashMap<String, ModuleSite
     }
     let (owner, _) = target.rsplit_once('.')?;
     index.get(owner).map(|site| (owner, site))
+}
+
+/// import の綴りが指す root の下の module(その物か親の module)の綴りと file の path — 無い・root の外・package の印なら None。
+/// Hy の綴りの `-` は file の名の `_` に読む。
+fn unplaced_owner(target: &str, root_module: &str, repo: &Path) -> Option<(String, String)> {
+    let target = target.replace('-', "_");
+    let parent = target.rsplit_once('.').map(|(owner, _)| owner.to_string());
+    for candidate in std::iter::once(target.clone()).chain(parent) {
+        if !candidate.starts_with(&format!("{}.", root_module)) {
+            continue;
+        }
+        let base = candidate.replace('.', "/");
+        if ["__init__.py", "__init__.hy"].iter().any(|init| repo.join(&base).join(init).is_file()) {
+            return None;
+        }
+        if let Some(rel) = ["hy", "py"].iter().map(|ext| format!("{}.{}", base, ext)).find(|rel| repo.join(rel).is_file()) {
+            return Some((candidate, rel));
+        }
+    }
+    None
 }
 
 // --- architecture.hy の置き場(DOEFF114・115)と使っていない依存(DOEFF117)---------------
