@@ -524,6 +524,23 @@ pub struct BusinessFakes {
     pub unserved: Option<String>,
 }
 
+/// 組み立ての形の決まり(`:assembly-shape {…}` — DOEFF155・156)。組み立ての層・組の file・業務の module・外の世界の表は
+/// `:business-fakes` から読む(両方を書いた時だけ判じる)。
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+pub struct AssemblyShape {
+    /// 翻訳の列の 1 点の defk の名の型(`*` は 1 つ — 例 `with-*-translation`)。組み立ての層の file の、この名の defk が
+    /// `(with-handlers [#* 列 …] 本体)` で翻訳の列を並べる。
+    pub translation_point: String,
+    /// 退役した組み立ての関数の名(組み立ての層に残れば破れ — 書かなければ見ない)。
+    pub retired_function: Option<String>,
+    /// 翻訳の handler の列の定数の名(翻訳の層の module の直下)。
+    pub translations: String,
+    /// 翻訳の列を置く層の名。
+    pub translation_layer: String,
+    /// 業務の intent の効果を置く層の名(翻訳の handler が出し直してはならない・列の並びの材料)。
+    pub intent_layer: String,
+}
+
 /// architecture.hy の全体。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct Architecture {
@@ -612,6 +629,8 @@ pub struct Architecture {
     pub record_stubs: Option<FileSelection>,
     /// 偽の handler の決まり(書けば DOEFF143 が業務の効果に答える偽の handler を出す — agora-redesign #1375)。
     pub business_fakes: Option<BusinessFakes>,
+    /// 組み立ての形の決まり(書けば DOEFF155・156 が組み立ての形の破れを出す — agora-redesign #1376)。
+    pub assembly_shape: Option<AssemblyShape>,
     #[serde(skip)]
     pub role_descriptions: BTreeMap<String, String>,
     #[serde(skip)]
@@ -952,6 +971,7 @@ impl<'a> Parser<'a> {
             typed_values: None,
             record_stubs: None,
             business_fakes: None,
+            assembly_shape: None,
             role_descriptions: BTreeMap::new(),
             exclude: vec!["tests".into(), "__pycache__".into(), "conftest.py".into()],
             extensions: None,
@@ -1018,6 +1038,7 @@ impl<'a> Parser<'a> {
                 ":typed-values" => arch.typed_values = self.file_selection(value, ":typed-values"),
                 ":record-stubs" => arch.record_stubs = self.file_selection(value, ":record-stubs"),
                 ":business-fakes" => arch.business_fakes = self.business_fakes(value),
+                ":assembly-shape" => arch.assembly_shape = self.assembly_shape(value),
                 ":edge-touches" => {
                     let mut touches = Vec::new();
                     for word in self.names(value, ":edge-touches") {
@@ -1686,6 +1707,40 @@ impl<'a> Parser<'a> {
         }
         if decl.business_modules.is_empty() {
             self.problem(value, ":business-fakes に :business-modules(業務の効果を定義する module)が無い");
+        }
+        Some(decl)
+    }
+
+    /// `:assembly-shape {…}` を読む(:translation-point・:translations・:translation-layer・:intent-layer は要る)。
+    fn assembly_shape(&mut self, value: &Form) -> Option<AssemblyShape> {
+        let shape = ":assembly-shape は {:translation-point \"…-*-…\" :retired-function \"…\" :translations \"…\" :translation-layer \"…\" :intent-layer \"…\"} の辞書";
+        let Some(entries) = self.brace(value) else {
+            self.problem(value, shape);
+            return None;
+        };
+        let mut decl = AssemblyShape::default();
+        for (key, field) in self.pairs(&entries) {
+            match self.text(key) {
+                ":translation-point" => decl.translation_point = self.required_string(field, ":assembly-shape :translation-point").unwrap_or_default(),
+                ":retired-function" => decl.retired_function = self.required_string(field, ":assembly-shape :retired-function").filter(|f| !f.is_empty()),
+                ":translations" => decl.translations = self.required_string(field, ":assembly-shape :translations").unwrap_or_default(),
+                ":translation-layer" => decl.translation_layer = self.required_string(field, ":assembly-shape :translation-layer").unwrap_or_default(),
+                ":intent-layer" => decl.intent_layer = self.required_string(field, ":assembly-shape :intent-layer").unwrap_or_default(),
+                _ => self.unknown_key(key, ":assembly-shape"),
+            }
+        }
+        if !decl.translation_point.is_empty() && decl.translation_point.matches('*').count() != 1 {
+            self.problem(value, ":assembly-shape :translation-point の名の型は `*` をちょうど 1 つ持つ(例 \"with-*-translation\")");
+        }
+        for (name, spelled) in [
+            (":translation-point", &decl.translation_point),
+            (":translations", &decl.translations),
+            (":translation-layer", &decl.translation_layer),
+            (":intent-layer", &decl.intent_layer),
+        ] {
+            if spelled.is_empty() {
+                self.problem(value, &format!(":assembly-shape に {} が無い", name));
+            }
         }
         Some(decl)
     }
@@ -2402,6 +2457,27 @@ mod tests {
         assert!(arch.world_handlers[1].wraps.is_empty() && arch.world_handlers[1].answers.is_empty());
         let line = good.lines().position(|l| l.contains("app.foundation.host:with-host")).unwrap() as u32;
         assert_eq!(host.range.start.line, line);
+    }
+
+    #[test]
+    fn assembly_shape_is_read_and_misreadings_are_errors() {
+        let good = GOOD.replace(
+            ":foundation foundation",
+            r#":foundation foundation
+  :assembly-shape {:translation-point "with-*-translation" :retired-function "handlers-of" :translations "TRANSLATION-HANDLERS"
+                   :translation-layer "protocol" :intent-layer "intent"}"#,
+        );
+        let arch = Architecture::parse(&good, Path::new("architecture.hy")).unwrap();
+        let shape = arch.assembly_shape.unwrap();
+        assert_eq!(
+            (shape.translation_point.as_str(), shape.retired_function.as_deref(), shape.translations.as_str(), shape.intent_layer.as_str()),
+            ("with-*-translation", Some("handlers-of"), "TRANSLATION-HANDLERS", "intent")
+        );
+        let bad = GOOD.replace(":foundation foundation", r#":foundation foundation :assembly-shape {:translation-point "with-translation"}"#);
+        let problems = Architecture::parse(&bad, Path::new("architecture.hy")).unwrap_err().join("\n");
+        for needle in ["`*` をちょうど 1 つ", ":assembly-shape に :translations が無い", ":assembly-shape に :intent-layer が無い"] {
+            assert!(problems.contains(needle), "{} が無い:\n{}", needle, problems);
+        }
     }
 
     #[test]

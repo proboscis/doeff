@@ -50,6 +50,12 @@ pub fn role_of(rel: &str, decl: &BusinessFakes) -> FileRole {
     }
 }
 
+/// 本番の code の file か(本番の code か組み立ての層で、:production を書けばそれに当たる物だけ)。
+pub fn production_code(rel: &str, decl: &BusinessFakes) -> bool {
+    matches!(role_of(rel, decl), FileRole::Production | FileRole::Assembly)
+        && (decl.production.is_empty() || decl.production.iter().any(|p| glob_matches(p, rel)))
+}
+
 /// 組の file の定義か(:sets に当たる file の、名が prefix で始まる定義)。
 pub fn set_member(rel: &str, name: &str, prefix: Option<&str>, decl: &BusinessFakes) -> bool {
     prefix.is_some_and(|p| !p.is_empty() && name.starts_with(p)) && decl.sets.iter().any(|s| glob_matches(s, rel))

@@ -42,6 +42,7 @@ pub mod handler_arguments;
 pub mod typed_values;
 pub mod record_stubs;
 pub mod business_fakes;
+pub mod assembly_shape;
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
@@ -530,6 +531,14 @@ pub fn run_with(root: &Path, settings: &ProjectSettings, enabled: &BTreeSet<Proj
                         drafts.extend(found);
                         report.errors.extend(problems);
                     }
+                    if let (Some(decl), Some(shape)) = (architecture.business_fakes.as_ref(), architecture.assembly_shape.as_ref()) {
+                        if enabled.contains(&ProjectRule::AssemblyShapeBroken) || enabled.contains(&ProjectRule::AssemblyAnswerMisplaced) {
+                            let (found, problems) =
+                                crate::timing::timed("assembly-shape", || judge_assembly_shape(root, architecture, Some(layers), decl, shape, hy, enabled));
+                            drafts.extend(found);
+                            report.errors.extend(problems);
+                        }
+                    }
                     if enabled.contains(&ProjectRule::ServiceUntestedOnSim) {
                         drafts.extend(judge_untested_services(architecture, hy).into_iter().map(|d| Draft { path: root.join(&d.rel), ..d }));
                     }
@@ -969,7 +978,10 @@ fn whole_hy_index(
     // DOEFF133 はテストの file を含む全体の索引で、テストから定義を辿る。
     // 許可名簿を書いた repo は、層の置き場の外の file にも DOEFF106・131 を当てる(#1147)ので、全体の索引を作る。
     // DOEFF136 は模擬の環境の deftest から service の entry の層の定義へ届くかを見る。
-    let wants_tests = (enabled.contains(&ProjectRule::BusinessEffectFake) && settings.architecture.as_ref().is_some_and(|a| a.business_fakes.is_some()))
+    let wants_tests = ((enabled.contains(&ProjectRule::BusinessEffectFake)
+        || enabled.contains(&ProjectRule::AssemblyShapeBroken)
+        || enabled.contains(&ProjectRule::AssemblyAnswerMisplaced))
+        && settings.architecture.as_ref().is_some_and(|a| a.business_fakes.is_some()))
         || (enabled.contains(&ProjectRule::TestKindMismatch) && settings.architecture.as_ref().is_some_and(|a| a.edge_mark.is_some()))
         || (enabled.contains(&ProjectRule::ServiceUntestedOnSim) && settings.architecture.as_ref().is_some_and(|a| a.verification_environment.is_some()))
         || (settings.raw.as_ref().is_some_and(|r| r.world_modules.is_some())
@@ -2427,6 +2439,77 @@ fn judge_test_kinds(root: &Path, architecture: &architecture::Architecture, hy: 
     drafts
 }
 
+/// 定義の辺の図の前向きの辺(callees[n] = n から届く定義)。系の値の中の辺(defsystem の本体・:carriers の引数)も本番では系が回すので
+/// 届く先に数える(DOEFF133 の縁の数えとは別 — #1390)。DOEFF143・155・156 が使う。
+fn forward_edges(graph: &DefinitionGraph) -> Vec<Vec<usize>> {
+    let mut callees: Vec<Vec<usize>> = vec![Vec::new(); graph.nodes.len()];
+    for (callee, (callers, carried)) in graph.callers.iter().zip(&graph.carried).enumerate() {
+        for &caller in callers.iter().chain(carried) {
+            callees[caller].push(callee);
+        }
+    }
+    callees
+}
+
+/// 図の中の effect の節の全部と、その tap(読まない file の節は数えない)。DOEFF143・155・156 が使う。
+fn effect_clauses(root: &Path, graph: &DefinitionGraph, hy: &HashMap<String, HyFileIndex>, decl: &architecture::BusinessFakes) -> Vec<business_fakes::Clause> {
+    use business_fakes::FileRole;
+    let mut clauses: Vec<business_fakes::Clause> = Vec::new();
+    let mut taps: HashMap<&str, HashMap<(String, String), bool>> = HashMap::new();
+    for (node, &(rel, index)) in graph.nodes.iter().enumerate() {
+        let d = &hy[rel].definitions[index];
+        let role = business_fakes::role_of(rel, decl);
+        if d.kind != DefinitionKind::EffectClause || role == FileRole::Skipped {
+            continue;
+        }
+        let Some(effect) = d.handles.as_ref().and_then(|h| h.target.clone()) else { continue };
+        let handler = d.container.clone().unwrap_or_default();
+        let file_taps = taps.entry(rel).or_insert_with(|| std::fs::read_to_string(root.join(rel)).map(|s| business_fakes::taps_in(&s)).unwrap_or_default());
+        let head = d.handles.as_ref().map(|h| h.name.clone()).unwrap_or_default();
+        let tap = file_taps.get(&(handler.clone(), head)).copied().unwrap_or(false);
+        clauses.push(business_fakes::Clause { node, rel: rel.to_string(), handler, effect, tap, test: role == FileRole::Test });
+    }
+    clauses
+}
+
+/// DOEFF155・156: 組み立ての形の破れを知らせにする(判定は assembly_shape — agora-redesign #1376)。全体の索引が要る(全体の実行だけ)。
+fn judge_assembly_shape(
+    root: &Path,
+    architecture: &architecture::Architecture,
+    layers: Option<&LayerSettings>,
+    decl: &architecture::BusinessFakes,
+    shape: &architecture::AssemblyShape,
+    hy: &HashMap<String, HyFileIndex>,
+    enabled: &BTreeSet<ProjectRule>,
+) -> (Vec<Draft>, Vec<String>) {
+    let (breaches, problems) = assembly_shape::find(root, architecture, layers, decl, shape, hy);
+    let drafts = breaches
+        .into_iter()
+        .map(|breach| {
+            let rule = if breach.is_shape() { ProjectRule::AssemblyShapeBroken } else { ProjectRule::AssemblyAnswerMisplaced };
+            let range = breach
+                .at
+                .as_ref()
+                .and_then(|at| hy.get(&breach.rel)?.definitions.iter().find(|d| &d.qualified_name == at).map(|d| d.range))
+                .unwrap_or_else(zero_range);
+            let (subject, reason) = breach.explain(shape);
+            Draft {
+                rule,
+                layer: None,
+                path: root.join(&breach.rel),
+                rel: breach.rel.clone(),
+                range,
+                message: format!("{} — {}", subject, reason),
+                detail: Some(breach.detail()),
+                base: Severity::Error,
+                explain: Explain::AssemblyShape { subject, reason },
+            }
+        })
+        .filter(|draft| enabled.contains(&draft.rule))
+        .collect();
+    (drafts, problems)
+}
+
 /// DOEFF143: 模擬の根と本番の入口から定義の辺の図を前向きに辿り、模擬の根からだけ届く effect の節(偽物)が業務の効果に tap でなく
 /// 答える所と、外の世界の表・反例の表の腐りを出す(agora-redesign #1375)。全体の索引が要る(全体の実行だけ)。読めない表の理由は 2 つ目に返す。
 fn judge_business_fakes(
@@ -2448,13 +2531,7 @@ fn judge_business_fakes(
     let unserved = table(&decl.unserved);
     let graph = definition_graph(architecture, hy);
     let count = graph.nodes.len();
-    let mut callees: Vec<Vec<usize>> = vec![Vec::new(); count];
-    // 系の値の中の辺(defsystem の本体・:carriers の引数)も本番では系が回すので、届く先に数える(DOEFF133 の縁の数えとは別 — #1390)。
-    for (callee, (callers, carried)) in graph.callers.iter().zip(&graph.carried).enumerate() {
-        for &caller in callers.iter().chain(carried) {
-            callees[caller].push(callee);
-        }
-    }
+    let callees = forward_edges(&graph);
     let definition = |node: usize| {
         let (rel, index) = graph.nodes[node];
         &hy[rel].definitions[index]
@@ -2473,10 +2550,7 @@ fn judge_business_fakes(
         })
         .collect();
     // 本番の入口: 本番の code の組の file の本番の組の関数・defsystem・__main__ の節が名指す定義・入口の文字列が指す定義。
-    let production_code = |rel: &str| {
-        matches!(business_fakes::role_of(rel, decl), FileRole::Production | FileRole::Assembly)
-            && (decl.production.is_empty() || decl.production.iter().any(|p| glob_matches(p, rel)))
-    };
+    let production_code = |rel: &str| business_fakes::production_code(rel, decl);
     let mut production_roots: Vec<usize> = (0..count)
         .filter(|&n| {
             let (rel, _) = graph.nodes[n];
@@ -2542,22 +2616,7 @@ fn judge_business_fakes(
     };
     let simulated_nodes = reach(&simulation_roots);
     let produced_nodes = reach(&production_roots);
-    // effect の節(検と読まない file の節は数えない)。
-    let mut clauses: Vec<business_fakes::Clause> = Vec::new();
-    let mut taps: HashMap<&str, HashMap<(String, String), bool>> = HashMap::new();
-    for node in 0..count {
-        let (rel, _) = graph.nodes[node];
-        let d = definition(node);
-        if d.kind != DefinitionKind::EffectClause || role(node) == FileRole::Skipped {
-            continue;
-        }
-        let Some(effect) = d.handles.as_ref().and_then(|h| h.target.clone()) else { continue };
-        let handler = d.container.clone().unwrap_or_default();
-        let file_taps = taps.entry(rel).or_insert_with(|| std::fs::read_to_string(root.join(rel)).map(|s| business_fakes::taps_in(&s)).unwrap_or_default());
-        let head = d.handles.as_ref().map(|h| h.name.clone()).unwrap_or_default();
-        let tap = file_taps.get(&(handler.clone(), head)).copied().unwrap_or(false);
-        clauses.push(business_fakes::Clause { node, rel: rel.to_string(), handler, effect, tap, test: role(node) == FileRole::Test });
-    }
+    let clauses = effect_clauses(root, &graph, hy, decl);
     let simulated: Vec<bool> = clauses.iter().map(|c| simulated_nodes[c.node]).collect();
     let produced: Vec<bool> = clauses.iter().map(|c| produced_nodes[c.node]).collect();
     // 本番の code の Python の handler(索引の図の外)が isinstance で答える効果。
