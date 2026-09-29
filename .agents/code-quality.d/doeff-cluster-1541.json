@@ -2,11 +2,9 @@
   "exclude": [
     "packages/doeff-cluster/src/doeff_cluster/foundation_check.hy",
     "packages/doeff-cluster/src/doeff_cluster/handlers.hy",
-    "packages/doeff-cluster/src/doeff_cluster/host_contract.hy",
     "packages/doeff-cluster/src/doeff_cluster/remote.hy",
     "packages/doeff-cluster/src/doeff_cluster/service_model.hy",
     "packages/doeff-cluster/tests/coordinator_contract_handlers.hy",
-    "packages/doeff-cluster/tests/fixtures/entry_programs.hy",
     "packages/doeff-cluster/tests/fixtures/sim_programs.hy",
     "packages/doeff-cluster/tests/program_rows.hy",
     "packages/doeff-cluster/tests/test_boot_reexec.hy",
@@ -1315,10 +1313,6 @@
       "reason": "検査器がこの Hy を型に写せない — hy:1082: deff の各引数には実型契約が必要（可変長/既定値は未対応）。対応は agora-redesign #1575(let の形は #1574 で写せるようになった)"
     },
     {
-      "path": "packages/doeff-cluster/src/doeff_cluster/host_contract.hy",
-      "reason": "検査器(code-quality e659a3a)がこの Hy を型に写せない — hy:61: defhandler の宣言の辞書の鍵 ['needs'] をこの版の検査器は知らない(知っている鍵 = :effects / :tags)。include の外に置き(変えた時は登録の前と同じ未導入の注意)、対応と取り込みは agora-redesign #1569"
-    },
-    {
       "path": "packages/doeff-cluster/src/doeff_cluster/remote.hy",
       "reason": "検査器(code-quality e659a3a)がこの Hy を型に写せない — hy:23: deff の各引数には実型契約が必要（可変長/既定値は未対応）。include の外に置き(変えた時は登録の前と同じ未導入の注意)、対応と取り込みは agora-redesign #1569"
     },
@@ -1329,10 +1323,6 @@
     {
       "path": "packages/doeff-cluster/tests/coordinator_contract_handlers.hy",
       "reason": "検査器(code-quality e659a3a)がこの Hy を型に写せない — hy:157: deff の各引数には実型契約が必要（可変長/既定値は未対応）。include の外に置き(変えた時は登録の前と同じ未導入の注意)、対応と取り込みは agora-redesign #1569"
-    },
-    {
-      "path": "packages/doeff-cluster/tests/fixtures/entry_programs.hy",
-      "reason": "検査器(code-quality e659a3a)がこの Hy を型に写せない — hy:7: 宣言の無い repo macro: doeff_hy.handle.defhandler(所有 module の contract に macros を宣言する)。include の外に置き(変えた時は登録の前と同じ未導入の注意)、対応と取り込みは agora-redesign #1569"
     },
     {
       "path": "packages/doeff-cluster/tests/fixtures/sim_programs.hy",
