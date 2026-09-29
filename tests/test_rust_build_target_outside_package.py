@@ -7,6 +7,7 @@ build を取り違えない事を、小さな bin の crate を 2 か所に置�
 
 from __future__ import annotations
 
+import ast
 import os
 import subprocess
 import sys
@@ -255,10 +256,14 @@ def test_every_maturin_package_builds_through_the_backend() -> None:
         for package in maturin_packages
         if (package / "doeff_cargo_backend.py").resolve() != BACKEND
     ] == []
-    assert (
-        "from doeff_cargo_backend import cargo_target_dir"
-        in (REPO / "packages" / "doeff-indexer" / "doeff_indexer_build_backend.py").read_text()
-    )
+    indexer_backend = REPO / "packages" / "doeff-indexer" / "doeff_indexer_build_backend.py"
+    imported = {
+        alias.name
+        for node in ast.parse(indexer_backend.read_text()).body
+        if isinstance(node, ast.ImportFrom) and node.module == "doeff_cargo_backend"
+        for alias in node.names
+    }
+    assert "cargo_target_dir" in imported
 
 
 def test_a_failed_build_leaves_no_target(tmp_path: Path) -> None:

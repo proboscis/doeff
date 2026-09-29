@@ -31,12 +31,15 @@ import tempfile
 from collections.abc import Iterator, Mapping
 from contextlib import contextmanager, suppress
 from pathlib import Path
-from typing import Any
+from typing import TypeAlias
 
 import maturin
 
 TARGET_ENV = "CARGO_TARGET_DIR"
 TEMP_PREFIX = "doeff-cargo-target-"
+
+# PEP 517 の config_settings: frontend が渡す「設定の名 → 文字列か文字列の list」。口は中を読まず maturin へ渡す。
+ConfigSettings: TypeAlias = Mapping[str, str | list[str]]
 
 
 def _owner_pid(name: str) -> int | None:
@@ -97,7 +100,7 @@ def cargo_target_dir() -> Iterator[Path]:
 
 def build_wheel(
     wheel_directory: str,
-    config_settings: Mapping[str, Any] | None = None,
+    config_settings: ConfigSettings | None = None,
     metadata_directory: str | None = None,
 ) -> str:
     """uv sync・uv build が wheel を求めた時に、作業木の外の target で組むため。"""
@@ -107,7 +110,7 @@ def build_wheel(
 
 def build_editable(
     wheel_directory: str,
-    config_settings: Mapping[str, Any] | None = None,
+    config_settings: ConfigSettings | None = None,
     metadata_directory: str | None = None,
 ) -> str:
     """uv の workspace の一員を editable で入れる時も、作業木の外の target で組むため。"""
@@ -115,7 +118,7 @@ def build_editable(
         return maturin.build_editable(wheel_directory, config_settings, metadata_directory)
 
 
-def build_sdist(sdist_directory: str, config_settings: Mapping[str, Any] | None = None) -> str:
+def build_sdist(sdist_directory: str, config_settings: ConfigSettings | None = None) -> str:
     """sdist を組む時も、maturin が cargo に作らせる target を作業木の外に置くため。"""
     with cargo_target_dir():
         return maturin.build_sdist(sdist_directory, config_settings)
