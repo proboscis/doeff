@@ -1,10 +1,10 @@
-//! Runtime invariant checks (feature = "invariant-checks").
+//! Runtime invariant checks (turned on at run time — see `invariant_switch`).
 //!
 //! Each check encodes a consistency condition that otherwise exists only as
 //! code shape (see docs/crystallization/invariants.md for the catalogue and
 //! the evidence for each condition). The checks are exhaustive, not fast —
-//! they are meant for the reference build (`cargo test --features
-//! invariant-checks`), never for release.
+//! they are meant for doeff's own test runs and the Rust conformance tests,
+//! never for production (off unless turned on).
 //!
 //! Policy: a violation is a *finding*, not a nuisance. Do not weaken a check
 //! to make a test pass — report it.
@@ -87,7 +87,7 @@ impl VM {
     }
 
     /// Panic with the full violation list. Called after every `step()` when
-    /// the `invariant-checks` feature is enabled. Known tensions do not panic.
+    /// the checks are turned on (`invariant_switch`). Known tensions do not panic.
     pub fn assert_invariants_after_step(&self) {
         if let Err(violations) = self.check_invariants() {
             panic!(

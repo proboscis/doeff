@@ -28,7 +28,8 @@
 - 登録簿は 1 鍵 1 file(``<鍵の sha256 の先頭 12 字>.txt``・1 行目が鍵・2 行目からが理由で空は不可)。鍵は、実行なら
   pytest の nodeid、収集なら rootdir からの file の path。載った鍵は上限を超えても赤にしない。上限の内に戻った鍵は
   終わりの要約に「消せる」と出す(登録簿は縮める向きだけ — 増えたことを赤にするのは利用側の repo の git の検)。
-- 上限は doeff-vm の検査なしの build(uv の build)を基準にする。``make sync`` の build は invariant-checks つきで VM の
+- 上限は doeff-vm の不変条件の検査が無効な走行を基準にする。検査が有効な走行(doeff 自身の pytest — root の
+  conftest.py が有効にする・agora-redesign #980 からはどの build も検査を持ち実行時に切り替える)は VM の
   1 歩ごとに不変条件を検査し、同じ検が十数倍遅い。session の始めに ``doeff_vm.invariant_checks_enabled()`` を 1 回読み、
   検査つきなら ``fail`` でも赤にせず報告に留める(基準の違う build で誤った赤を出さない)。終わりの要約の見出しに
   build の種類を 1 行出す。読めない(import できない・古い VM で関数が無い)時は「不明」と出し、判定は今のまま。

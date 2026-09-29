@@ -49,7 +49,7 @@
     [(rule R1 "enforcement の正典ゲートは既定の `uv run pytest`(testpaths 収集)である。GitHub CI には依存しない。pre-commit / make はこのゲートの別名であってよいが、代替ではない。")
      (rule R2 "testpaths は docs/adr を含む。さらに defadr 収集自己検査(defadr_*.hy のファイル数と収集された ADR モジュール数の一致検査)を doeff-adr パッケージが所有・提供し、全消費リポジトリが継承する(issue doeff-adr-wiring-selfcheck の根本対処)。")
      (rule R3 ".semgrep.yaml のルールは defsemgrep(installed-rule 形式)経由で既定 pytest 収集に載せる。semgrep バイナリ不在は skip ではなく hard fail。semgrep は dev 依存として `make sync` で必ず入る。")
-     (rule R4 "dev ビルドは doeff-vm-core を feature `invariant-checks` + `python_bridge` 有効でビルドする(2026-07-14 B3 裁定)。VM conformance oracle(I1–I8)は pytest から起動される。invariant-checks 無効ビルドでの oracle テストは hard fail(skip 禁止)。")
+     (rule R4 "dev ビルドは doeff-vm-core を feature `invariant-checks` + `python_bridge` 有効でビルドする(2026-07-14 B3 裁定)。VM conformance oracle(I1–I8)は pytest から起動される。invariant-checks 無効ビルドでの oracle テストは hard fail(skip 禁止)。【2026-09-29 追補 — 実行時に有効にする形へ(agora-redesign #980)】cargo feature で build を分けた形は、make sync(検査つき)と素の uv sync(検査なし・venv-run が lock の変化で自動で撃つ)の 2 経路を生み、同じ venv が最後に組んだ経路で 15 倍速くも遅くもした(実測: agora の 1 検で 3.3〜5.7 秒 / 49.8〜62.2 秒)。検査はどの build にも compile し、実行時に有効にする — 環境変数 DOEFF_VM_INVARIANT_CHECKS=1(拡張が最初の step で 1 回読む・0 / 1 以外は panic)か doeff_vm.doeff_vm.set_invariant_checks(True)。doeff の pytest は root の conftest.py が有効にし(子 process は変数を継ぐ)、それ以外(agora と本番)は既定で無効。cargo feature `invariant-checks` は Rust の conformance test(make test-vm-invariants)のために『常に有効』の意味で残す。oracle が無効な pytest の走行は tests/test_vm_invariant_checks_enabled.py が hard fail にする規則は変わらない。無効時の費用は step ごとの atomic の読み 1 回。")
      (rule R5 "anti-drop ratchet: enforcement 台帳(defadr 数・law 数・defsemgrep 数・deftest enforcement 数)が黙って減ったら fail するメタテストを既定収集に置く(orch SpecInventorySpec の pytest 版)。台帳の意図的な削減は台帳ファイルの明示的更新を伴う。")
      (rule R6 "ゲートの壁時計締切は定数でなく機械の過負荷率の関数にする(2026-08-17 追加 — operator 裁定 decision-doeff-land-gate-deadline-2026-08-17.html『A. 締切を直す』)。締切が捕まえるべきものは hang であって busy ではない。外部プロセス(semgrep・CLI・build)を待つ試験の所要は過負荷率に比例して伸びるので、定数の締切は過負荷帯で『正しい仕事に赤を出す装置』へ退化する。係数 = 1 分平均 load / コア数(下限 1.0・上限 env PYTEST_DEADLINE_SCALE_CAP 既定 8 — 上限があるので真の hang は依然として有界時間で落ちる)。無効化は env PYTEST_DEADLINE_SCALE=off(負荷を自分で制御する CI 用)。【2 つの締切は必ず一緒に動かす】pytest-timeout の per-test 締切と、その上に立つ SIGKILL watchdog の両方が同じ係数で伸び、watchdog は常に per-test 締切より厳密に上に居ること — 片方だけ上げると『遅い試験 1 本が赤くなる』が『走行ごと SIGKILL で全損する』に化ける(実測 2026-08-17: PYTEST_TIMEOUT=600 を素の 90 秒 watchdog に当てて全数電池が 45% で即死)。marker の締切(@pytest.mark.timeout)も同じ係数で伸ばす — pytest-timeout は marker を ini より優先するので、ini だけ伸ばすと『自分は遅いと申告した試験』= 外部プロセスを起こす当の試験群が素の締切に取り残される。【伸ばしたことは黙らない】係数が 1 を超えた走行は伸ばした旨と実効値を stderr に出す(伸びた締切は同時に『この機械は過負荷である』の信号でもあり、8 倍かかった走行が黙って緑を返すのは観測の欠落)。【締切は 3 つある】内側 2 つ(per-test・watchdog)に加え、門の走行そのものの持ち時間(.agents/land-queue.toml の gate.timeout_s)が第 3 の締切である。内側を伸ばせば走行の総時間は必然的に伸びる(60 秒で落ちていた試験が数百秒まで走れるようになったのだから当然で、欠陥ではなく設計)ので、第 3 の締切を据え置くと内側の修理は『1 テストの赤』を『走行全体の時間切れ』へ移し替えるだけになる — 実測 2026-08-17: 内側だけ直した便が 2710.7 秒で門の 2700 秒に当たった(内訳 = Rust 再 build 約 12 分 + 電池 33 分超・load 約 100 帯)。第 3 の締切は連邦の機構(dotfiles land.py)が読む静的な宣言で負荷に連動する口を持たないため、係数が上限に張り付いた走行でも終われる値を宣言で置き、その根拠を宣言の隣に書く(2026-08-17 時点 7200)。【2026-09-27 追補 — watchdog の終わり方(agora-redesign #645 課題 6)】上の『SIGKILL watchdog』は 2026-08-17 時点の形の記録。watchdog は #639 の依頼 T で SIGKILL をやめ、止まった検を pytest の短報の形(`FAILED <nodeid> - WATCHDOG: …`)で名指して終了コード 1 で終える形に変わった(signal で終わる走行は着地の道具が『外からの kill』と読み、赤として数えないため)。#645 課題 1 からは、日次の session の書き手(plugin `ai-session-answer`)が据わっていればその口 `answer_stopped` でも止まった検を名乗る。2 つの締切を同じ係数で動かし watchdog を per-test 締切より上に置く規則は変わらない。")
      (rule R7 "R5 の台帳突合は著述時にも走る(2026-08-21 追加 — 日次 verify 赤 doeff-verify-20260821-065005 の根治)。実弾: ADR-DOE-HY-004 新設(f47f0a4b)が defadr +1・deftest +2・law +1 を台帳未更新のまま運んだが、着地の窓は力学のみ(2026-08-17 operator 裁定・mode = \"focus\")で、しかもこの commit は land queue を通らず直接 push で main へ届いた — 窓をどう固くしても捕まらない経路が正規に在る以上、記帳漏れを構造的に止められる検出点は著述時 = git commit 時だけ(どの経路でも commit は必ず著述機の git を通る)。実装: 勘定の定義点は scripts/check_enforcement_ledger.py の 1 点(stdlib 単独 — venv・依存の状態に依らず走る)で、既定 pytest の R5 検査 tests/test_enforcement_ledger.py も同じ家を消費する(第 2 の定義点を作らない — regex が乖離した日から hook 緑 = verify 緑が成立しなくなる)。hook(tracked 原本 = scripts/git-hooks/pre-commit・導入 = make hooks-install・pre-commit framework 機体は .pre-commit-config.yaml の enforcement-ledger)は staged 断面(index)を突合する — working tree 突合は『台帳も直したが stage し忘れた』を素通しする。作り直し(rebase / cherry-pick / sequencer)中は判定しない — 着地の窓の追随・replay を塞がない。正典ゲートは R1 のとおり既定 pytest のまま(hook は R1 の『pre-commit はゲートの別名であってよい』の実装であり代替ではない — hook 未導入の機体と --no-verify は日次 verify が引き続き捕まえる)。")
@@ -124,11 +124,19 @@
                f"docs/adr が testpaths に無い: {testpaths} — ADR-DOE-ENFORCE-001 R2"))
      (deftest test-adr-doe-enforce-001-vm-oracle-wired
        ;; RED(2026-07-14): Makefile に invariant-checks の起動経路が無い。R4 実装で green。
+       ;; 2026-09-29(#980): 配線は root の conftest.py が oracle を実行時に有効にする形。この走行で
+       ;; 有効であること(= 配線が効いていること)と、make sync が build を feature で分けないことを見る。
        (import pathlib [Path])
+       (import doeff_vm.doeff_vm [invariant_checks_enabled])
        (setv root (get (. (Path __file__) parents) 2))
+       (setv conftest (.read-text (/ root "conftest.py")))
        (setv makefile (.read-text (/ root "Makefile")))
-       (assert (in "invariant-checks" makefile)
-               "Makefile に invariant-checks の配線が無い — ADR-DOE-ENFORCE-001 R4(B3 裁定 2026-07-14)"))
+       (assert (in "DOEFF_VM_INVARIANT_CHECKS" conftest)
+               "root の conftest.py が VM の oracle を有効にしていない — ADR-DOE-ENFORCE-001 R4")
+       (assert (invariant_checks_enabled)
+               "この pytest の走行で VM の oracle が無効 — ADR-DOE-ENFORCE-001 R4")
+       (assert (not-in "maturin develop --release --features" makefile)
+               "make sync が VM の build を feature で分けている — 2 経路の build の食い違いに戻る(#980)"))
      (deftest test-adr-doe-enforce-001-deadlines-are-load-scaled
        ;; R6 + law deadline-measures-hang-not-load: 2 つの締切がどちらも
        ;; 係数に掛かっていること、係数の家が 1 つであること、伸ばした事実を

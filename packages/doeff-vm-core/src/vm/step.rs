@@ -31,8 +31,9 @@ impl VM {
             SignalAction::Send(value) => self.step_send(value, error_context),
             SignalAction::Raise(error) => self.step_raise(error, error_context),
         };
-        #[cfg(feature = "invariant-checks")]
-        self.assert_invariants_after_step();
+        if crate::invariant_switch::invariant_checks_enabled() {
+            self.assert_invariants_after_step();
+        }
         result
     }
 

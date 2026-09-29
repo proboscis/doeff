@@ -54,14 +54,15 @@ install:
 
 # Sync dependencies AND rebuild the Rust VM extension.
 # ALWAYS use this instead of bare `uv sync` when Rust sources changed.
-# ADR-DOE-ENFORCE-001 R4 (B3 裁定 2026-07-14): dev ビルドは VM conformance oracle
-# (invariant-checks) を常時有効にする。tests/test_vm_invariant_checks_enabled.py が
-# フラグを hard-fail で検査する(skip 禁止)。
-# maturin は dev の依存(pyproject.toml)で、プロジェクトの環境から呼ぶ — 機体に手で入れた道具に頼らない
-# (Mac で `maturin: command not found` — agora-redesign #645 課題 7)。--no-sync = 直前の uv sync の環境をそのまま使う。
+# ADR-DOE-ENFORCE-001 R4: VM conformance oracle は、どの build にも入っていて実行時に有効にする
+# (agora-redesign #980 — 以前は cargo feature で make sync の build だけが検査つきになり、同じ venv が
+# 最後に組んだ経路で 15 倍速さを変えた)。doeff の pytest は root の conftest.py が有効にし、
+# tests/test_vm_invariant_checks_enabled.py が hard-fail で検査する(skip 禁止)。
+# だから make sync と素の uv sync は同じ build を作る。maturin develop は uv の Rust の変化の見落としに備えた作り直し
+# (maturin は dev の依存・プロジェクトの環境から呼ぶ — agora-redesign #645 課題 7)。
 sync:
 	uv sync --group dev
-	cd packages/doeff-vm && uv run --no-sync maturin develop --release --features invariant-checks
+	cd packages/doeff-vm && uv run --no-sync maturin develop --release
 
 pre-commit-install:
 	uv run pre-commit install
@@ -160,8 +161,8 @@ test-e2e:
 #   tests/conftest.py が集める。doeff-cluster)。渡すと「収集 0 件」の rc 5 で loop が止まり、
 #   後ろの package が 1 本も走らない(2026-09-24 実測)。
 # - 実 API / 実 CLI を撃つ e2e は日次の門(.agents/land-queue.toml gate.full)と同じく除く(-m "not e2e")。
-# - PACKAGE_UV_RUN: 日次の門は make sync の直後に `uv run --no-sync` で呼ぶ(素の uv run の暗黙の再 sync が
-#   invariant-checks の build を上書きしないように — gate.full の頭注と同じ理由)。
+# - PACKAGE_UV_RUN: 日次の門は make sync の直後に `uv run --no-sync` で呼ぶ(素の uv run の暗黙の再 sync で
+#   直前に組んだ VM を組み直さないように)。
 # - package の dir へ cd せず、repo の根から `pytest packages/<p>/tests` を呼ぶ。pytest の要約の FAILED 行は
 #   cwd からの相対なので、package の dir から走らせると `tests/test_cli.py::…` の形になり、同名の test file を
 #   持つ package どうしで失敗名が衝突する(日次の道具は失敗名を repo の根から pytest へそのまま渡す)。

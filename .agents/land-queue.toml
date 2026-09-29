@@ -221,7 +221,7 @@ full_sessions = 1
 #   - `--reinstall-package doeff-vm` = Rust の VM の拡張を今の source から作り直す(uv は .rs の変化を見ないので、
 #     素の uv sync は古い .so を残す — AGENTS.md の Stale Rust VM builds と同じ理由。2026-09-23 22:42〜23:17 の pod の実弾)。
 #     `make sync` にしないのは、uv.lock を書き換え得る `uv sync --group dev`(--frozen なし)と、venv-run の次の同期が
-#     上書きする maturin develop の組だから(invariant-checks の build はこの repo の門が自分の worktree で作る)。
+#     上書きする maturin develop の組だから。#980(2026-09-29)から VM の build は経路に依らず同じ(検査は実行時に有効にする)。
 #   - venv-run の `--exclusive` = 同じ venv の読み手(門・常駐の controller)と排他して作り直す。
 # 上限 1800 秒 = 門の build の段の --sync-timeout 900 の 2 倍(Rust の release build と飽和帯の機体)。
 [follow]

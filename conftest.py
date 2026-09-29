@@ -15,6 +15,31 @@ from typing import NoReturn
 import pytest
 
 # ---------------------------------------------------------------------------
+# VM conformance oracle on (ADR-DOE-ENFORCE-001 R4・agora-redesign #980)
+#
+# Every doeff-vm build carries the per-step invariant checks; they run only
+# when turned on. doeff's own test sessions turn them on here, so the oracle
+# no longer depends on which path last built the extension (`make sync` with
+# the old cargo feature vs `uv sync` without — the same venv ran 15x slower or
+# faster). Subprocesses inherit the variable. An explicit
+# DOEFF_VM_INVARIANT_CHECKS=0 is honoured, and then
+# tests/test_vm_invariant_checks_enabled.py goes red, as it should.
+# ---------------------------------------------------------------------------
+os.environ.setdefault("DOEFF_VM_INVARIANT_CHECKS", "1")  # noqa: DOEFF004 - turns the VM oracle on for doeff's own test sessions (R4)
+
+
+def _turn_vm_oracle_on() -> None:
+    """Make every VM run in this test session check its invariants after each step (R4)."""
+    # The extension reads the variable once, at its first step; set it directly
+    # too in case a plugin ran a program before this conftest was loaded.
+    from doeff_vm.doeff_vm import set_invariant_checks
+
+    set_invariant_checks(os.environ["DOEFF_VM_INVARIANT_CHECKS"] == "1")
+
+
+_turn_vm_oracle_on()
+
+# ---------------------------------------------------------------------------
 # Load-scaled deadlines (ADR-DOE-ENFORCE-001 R6)
 #
 # The two deadlines below (pytest-timeout per test, and the SIGKILL watchdog)

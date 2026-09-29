@@ -77,8 +77,7 @@ impl FiberArena {
     /// instead of stranding until `clear()` at run end (#497).
     pub fn reclaim_dropped_chain_slots(&mut self) {
         for idx in self.slot_reclaim.take_pending() {
-            #[cfg(feature = "invariant-checks")]
-            {
+            if crate::invariant_switch::invariant_checks_enabled() {
                 if !matches!(self.fibers.get(idx), Some(None)) {
                     panic!(
                         "arena: dropped-chain slot {idx} is not vacant-reserved \
@@ -255,7 +254,6 @@ impl FiberArena {
 }
 
 /// Status of an arena slot, as observed by the invariant checker.
-#[cfg(feature = "invariant-checks")]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum SlotStatus {
     /// Slot holds a live fiber.
@@ -269,7 +267,6 @@ pub(crate) enum SlotStatus {
     OutOfRange,
 }
 
-#[cfg(feature = "invariant-checks")]
 impl FiberArena {
     pub(crate) fn slot_status(&self, id: FiberId) -> SlotStatus {
         let idx = id.index();
