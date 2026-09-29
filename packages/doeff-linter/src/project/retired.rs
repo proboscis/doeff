@@ -7,6 +7,7 @@
 //!   * DOEFF150 `:in lines` — 行ごとに、語として単独で在る :words(前後が英字・`_`・`-` でない所)と :patterns の正規表現。
 //!     :rule-lines の綴りを含む行(規則そのものを述べる行)は数えない。註・文字列・文書も数える(語の規則は文書にも効く)。
 //!   * DOEFF150 `:in names` — 定義の名だけ(Hy は `def…` の形と `setv`・`val`・`var` の左辺・Python は def と class の名)。
+//!   * DOEFF150 `:in paths` — file の名だけ(最後の `.` より前・dir の名と中身は見ない)。退役した名の file を置き直さない(#1369)。
 //!   * DOEFF151 — Hy の file の `(呼び …)` の形の呼び(頭の記号が :calls のどれか)。註・文字列・`#_` で読み捨てた form は数えない。
 
 use std::path::{Path, PathBuf};
@@ -243,6 +244,26 @@ fn name_hits(rel: &str, source: &str, group: &RetiredWords, patterns: &[Regex]) 
     out
 }
 
+/// file の名の当たり(:in paths)。名は最後の `.` より前(`.` の無い名はそのまま)で、dir の名は見ない。当たりの位置は file の頭。
+fn path_hits(rel: &str, group: &RetiredWords, patterns: &[Regex]) -> Vec<WordHit> {
+    let file_name = rel.rsplit('/').next().unwrap_or(rel);
+    let stem = file_name.rsplit_once('.').map_or(file_name, |(stem, _)| stem);
+    match_group(stem, group, patterns)
+        .into_iter()
+        .map(|(_, _, spelling, detail)| WordHit {
+            rel: rel.to_string(),
+            start: 0,
+            end: 0,
+            group: group.name.clone(),
+            spelling,
+            detail,
+            instead: group.instead.clone(),
+            place: WordPlace::Paths,
+            name: None,
+        })
+        .collect()
+}
+
 /// Hy の form の木から、頭の記号が calls のどれかの呼びを集める。
 fn hy_calls(source: &str, form: &Form, group: &RetiredCalls, rel: &str, out: &mut Vec<CallHit>) {
     if let Some(head) = form.paren_items().and_then(|items| items.iter().find(|f| !matches!(f.node, Node::Discarded))) {
@@ -297,6 +318,7 @@ fn judge_prepared(rel: &str, source: &str, prepared: &Prepared) -> (Vec<WordHit>
         word_hits.extend(match group.place {
             WordPlace::Lines => line_hits(rel, source, group, patterns),
             WordPlace::Names => name_hits(rel, source, group, patterns),
+            WordPlace::Paths => path_hits(rel, group, patterns),
         });
     }
     let mut call_hits = Vec::new();
@@ -417,6 +439,21 @@ mod tests {
         assert_eq!(names, vec!["attend-conversation", "ConversationRow", "CONVERSATION-KIND"]);
         let (python, _) = judge("controllers/chat/rows.py", "def read_conversation(x):\n    pass\nclass ChatRow:\n    pass\n", &[group], &[]);
         assert_eq!(python.iter().map(|h| h.name.as_deref().unwrap_or("")).collect::<Vec<_>>(), vec!["read_conversation"]);
+    }
+
+    #[test]
+    fn paths_are_file_names_not_dirs_or_contents() {
+        let group = words(&["worker", "design_request"], &[r"^dispatch"], WordPlace::Paths, &[]);
+        let hit = |rel: &str| judge(rel, "(setv worker 1) ; worker の綴りは中身だけ\n", &[group.clone()], &[]).0;
+        let details = |rel: &str| hit(rel).iter().map(|h| h.detail.clone()).collect::<Vec<_>>();
+        assert_eq!(details("controllers/automation/core/worker.hy"), vec!["worker"]);
+        assert_eq!(details("controllers/automation/core/design_request.hy"), vec!["design_request"]);
+        assert_eq!(details("controllers/automation/core/dispatch_probe.hy"), vec!["g"], ":patterns は群の名で鍵を作る");
+        assert!(hit("controllers/automation/core/worker_pool.hy").is_empty(), "別の語の一部は数えない");
+        assert!(hit("controllers/worker/program.hy").is_empty(), "dir の名は見ない");
+        assert!(hit("controllers/automation/core/program.hy").is_empty(), "中身の綴りは見ない");
+        let found = hit("controllers/automation/core/worker.hy");
+        assert_eq!((found[0].start, found[0].end, found[0].place), (0, 0, WordPlace::Paths));
     }
 
     #[test]
