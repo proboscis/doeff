@@ -1,4 +1,4 @@
-"""収集記録のJSON境界が実値の型を確かめる反例（#1468）。"""
+"""収集記録のJSON境界が実値の型を確かめる反例(#1468)。"""
 
 import pytest
 from doeff_hy.pytest_items import (
@@ -21,6 +21,8 @@ from doeff_hy.pytest_items import (
     "text",
     [
         '{"function": "test_x", "args": [], "decorators": [{"parametrize": "x", "values": [{"literal": []}]}]}',
+        '{"function": "test_x", "args": [], "decorators": [{"parametrize": "x", "values": [{"literal": [], "opaque": true}]}]}',
+        '{"function": "test_x", "pytestmark": []}',
         '{"function": 3, "args": [], "decorators": []}',
         '{"function": "test_x", "args": [3], "decorators": []}',
         '{"function": "test_x", "args": "xy", "decorators": []}',
@@ -32,9 +34,9 @@ from doeff_hy.pytest_items import (
         '{"pytestmark": [3]}',
         '{"dynamic": 3, "reason": "unknown"}',
         '{"dynamic": "test_x", "reason": 3}',
-        '[]',
-        'null',
-        '3',
+        "[]",
+        "null",
+        "3",
     ],
 )
 def test_malformed_field_types_are_rejected(text: str) -> None:

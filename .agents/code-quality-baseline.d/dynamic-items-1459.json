@@ -6,34 +6,6 @@
       "reason": "registered-with-legacy",
       "rule": "dynamic-boundary",
       "subject": "importlib.import_module"
-    },
-    {
-      "count": 1,
-      "path": "packages/doeff-adr/src/doeff_adr/lazy_collection.py",
-      "reason": "registered-with-legacy",
-      "rule": "unsafe-type-escape",
-      "subject": "typing.cast"
-    },
-    {
-      "count": 4,
-      "path": "packages/doeff-adr/src/doeff_adr/pytest_plugin.py",
-      "reason": "registered-with-legacy",
-      "rule": "unsafe-type-escape",
-      "subject": "typing.Any"
-    },
-    {
-      "count": 6,
-      "path": "packages/doeff-hy/src/doeff_hy/pytest_items.py",
-      "reason": "registered-with-legacy",
-      "rule": "unsafe-type-escape",
-      "subject": "typing.Any"
-    },
-    {
-      "count": 2,
-      "path": "packages/doeff-hy/src/doeff_hy/pytest_items.py",
-      "reason": "registered-with-legacy",
-      "rule": "unsafe-type-escape",
-      "subject": "typing.cast"
     }
   ],
   "version": 1
