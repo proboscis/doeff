@@ -398,6 +398,42 @@ def test_hy_file_under_a_workspace_package_dir_imports_from_its_package_base(
     result.assert_outcomes(passed=2)
 
 
+def test_a_collected_module_is_importable_by_dotted_name_from_a_later_test(
+    pytester: pytest.Pytester,
+) -> None:
+    """dir ごとの glob(``app/proto/*.hy``)で集めた module を、後で集める test が dotted name で
+    ``(import app.proto.policy :as policy)`` と読んでも落ちない。集める時に module を ``sys.modules`` へ置くだけで、
+    親の package(``app.proto``)を import せず親の属性にも結ばないと、``import a.b.c :as x`` は親の属性を引いて
+    ImportError になる(agora-redesign #1212 — agora-controllers の classifier の protocol の glob で出た)。
+    親を持つ dir と、``__init__`` の無い namespace の dir の両方で確かめる。"""
+    pytester.makepyprojecttoml(
+        """\
+        [tool.pytest.ini_options]
+        doeff_adr_hy_files = ["app/proto/*.hy", "app/loose/*.hy", "app/tests/test_*.hy"]
+        """
+    )
+    for directory in ("app", "app/proto", "app/loose", "app/tests"):
+        pytester.mkdir(directory)
+    pytester.makefile(".py", **{"app/__init__": "", "app/proto/__init__": "", "app/tests/__init__": ""})
+    pytester.makefile(".hy", **{"app/proto/policy": "(setv RULE \"closed\")\n"})
+    pytester.makefile(".hy", **{"app/loose/policy": "(setv RULE \"loose\")\n"})
+    pytester.makefile(
+        ".hy",
+        **{
+            "app/tests/test_cycle": """\
+                (import app.proto.policy :as policy)
+                (import app.loose.policy :as loose)
+                (defn test-package-module [] (assert (= policy.RULE "closed")))
+                (defn test-namespace-module [] (assert (= loose.RULE "loose")))
+                """,
+        },
+    )
+
+    result: pytest.RunResult = pytester.runpytest_subprocess("-q", "-p", "no:cacheprovider")
+
+    result.assert_outcomes(passed=2)
+
+
 def test_parametrize_marks_on_hy_tests_expand_into_items(
     pytester: pytest.Pytester,
 ) -> None:

@@ -389,6 +389,12 @@ def _import_hy_file(path: Path, root: Path) -> Any:
     if existing is not None and Path(getattr(existing, "__file__", "")).resolve() == path:
         return existing
     importlib.invalidate_caches()
+    # Import the parent package first and bind the module on it afterwards, the way the normal
+    # import system does: a module put into ``sys.modules`` with neither step makes a later
+    # ``import a.b.c as x`` fail, because that statement reads ``c`` as an attribute of ``a.b``
+    # (agora-redesign #1212).
+    parent_name, _, child_name = module_name.rpartition(".")
+    parent = importlib.import_module(parent_name) if parent_name else None
     loader = HyLoader(module_name, str(path))
     spec = importlib.util.spec_from_file_location(module_name, path, loader=loader)
     if spec is None:
@@ -396,6 +402,8 @@ def _import_hy_file(path: Path, root: Path) -> Any:
     module = importlib.util.module_from_spec(spec)
     sys.modules[module_name] = module
     loader.exec_module(module)
+    if parent is not None:
+        setattr(parent, child_name, module)
     return module
 
 
