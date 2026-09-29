@@ -7,15 +7,16 @@
 (import doeff [run with_handlers])
 (import doeff_core_effects.scheduler [scheduled])
 (import doeff_time [SimClock sim-time-handler GetTimeEffect])
-(import doeff_records.values [EachEvent ExpectAny Changes Reset Written WrittenRows Conflict RowsConflict RowsRefused])
-(import doeff_records.effects [PutRow PutRows WatchChanges ListRows AppendEvent])
+(import doeff_records.values [EachEvent ExpectAny Changes Reset Written WrittenRows Conflict RowsConflict RowsRefused
+                              StreamEnd StreamEmpty])
+(import doeff_records.effects [PutRow PutRows WatchChanges ListRows AppendEvent ReadStreamEnd])
 (import doeff_records.memory [MemoryStore memory-records-handler])
 (import doeff_records.laws [LAW-SCHEMA LawHarness LawBroken law-stale-put-conflicts law-committed-changes-appear-once-in-order
                             law-epoch-change-resets law-undeclared-writes-are-refused law-operator-paths-need-an-operator
                             law-founders-write-only-at-birth law-transient-rows-expire
                             law-indexed-list-equals-filtered-scan law-append-is-idempotent law-none-removes-a-field
                             law-maintenance-prunes-and-sweeps law-put-rows-is-all-or-nothing
-                            law-grouped-events-expire-together])
+                            law-grouped-events-expire-together law-stream-end-is-the-last-sequence])
 (import doeff_records.maintenance [PruneChanges Pruned])
 
 
@@ -77,6 +78,20 @@
     (<- answer (AppendEvent stream (. (uuid.uuid4) hex) body))
     (resume answer)))
 
+(defk end-over-every-stream []
+  {:pre [] :post [(: % (| StreamEnd StreamEmpty))]}
+  "置き場の全部の列(journal・pairs)の末尾の最大 — 列を問わない handler の顔の答え。"
+  (<- journal (ReadStreamEnd "journal"))
+  (<- pairs (ReadStreamEnd "pairs"))
+  (val ends (lfor end #(journal pairs) :if (isinstance end StreamEnd) end.sequence))
+  (if ends (StreamEnd (max ends)) (StreamEmpty)))
+
+(defhandler end-of-every-stream []
+  ;; 列を問わない handler の顔: どの列の末尾にも、置き場の全部の列の最後の番号を答える。
+  (ReadStreamEnd [stream]
+    (<- answer (end-over-every-stream))
+    (resume answer)))
+
 
 (defn broken-harness [store inner [writer-of None]]
   "writer-of = 書き手の名の替え方(None = そのまま)。inner = memory の handler の内側に被せる包み(None = 無し)。"
@@ -101,7 +116,8 @@
                       #(law-append-is-idempotent (forget-idempotency))
                       #(law-none-removes-a-field (ignore-removals))
                       #(law-maintenance-prunes-and-sweeps (skip-pruning))
-                      #(law-put-rows-is-all-or-nothing (put-rows-one-by-one))]]
+                      #(law-put-rows-is-all-or-nothing (put-rows-one-by-one))
+                      #(law-stream-end-is-the-last-sequence (end-of-every-stream))]]
     (assert (breaks? law (broken-harness (MemoryStore LAW-SCHEMA) inner)) law.__name__))
   ;; 書き手を問わない handler(誰の書きも maker として通す)。
   (assert (breaks? law-undeclared-writes-are-refused (broken-harness (MemoryStore LAW-SCHEMA) None (fn [_] "maker"))))

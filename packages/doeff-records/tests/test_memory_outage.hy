@@ -1,7 +1,7 @@
 ;; 検の口 faults.SetStoreOutage(置き場に届かない状態を起こす・戻す)を memory の置き場が答える形の検。
 ;; 使い手(記録の service の不達・一部の表の断りを筋書きにする業務の検と模擬)は、業務の effect に答える偽の handler を書かず、
 ;; 正典の memory の置き場をこの口で「届かない」にする。
-;;   届かない間: 名に当たる公開 effect 7 つは Unreachable(detail)・置き場は変わらない / 名に当たらない表と列は今までどおり
+;;   届かない間: 名に当たる公開 effect 8 つは Unreachable(detail)・置き場は変わらない / 名に当たらない表と列は今までどおり
 ;;   戻した後: 届かない間に撃った書きは 1 つも残っていない・読み書きは今までどおり
 (require doeff-hy.macros [deftest defk <- val])
 (import doeff [run with_handlers])
@@ -10,7 +10,7 @@
 (import doeff_time [SimClock sim-time-handler])
 (import doeff_hy.frozen [FrozenMap])
 (import doeff_records.values [ExpectAbsent Written Missing Unreachable Appended WatchCursor Changes EventsQuiet])
-(import doeff_records.effects [ReadRow ListRows PutRow PutRows RowWrite WatchChanges WatchEvents AppendEvent ReadEvents])
+(import doeff_records.effects [ReadRow ListRows PutRow PutRows RowWrite WatchChanges WatchEvents AppendEvent ReadEvents ReadStreamEnd])
 (import doeff_records.faults [SetStoreOutage])
 (import doeff_records.memory [MemoryStore memory-records-handler])
 (import doeff_records.laws [LAW-SCHEMA MAKER])
@@ -30,7 +30,7 @@
 
 (defk every-public-effect []
   {:pre [] :post [(: % tuple)]}
-  "公開 effect 7 つを parts と journal へ 1 つずつ撃ち、答えを並べる。"
+  "公開 effect 8 つを parts と journal へ 1 つずつ撃ち、答えを並べる。"
   (<- p1 FrozenMap (part "p1"))
   (<- p2 FrozenMap (part "p2"))
   (<- read (ReadRow "parts" #("p1")))
@@ -40,7 +40,8 @@
   (<- watched (WatchChanges #("parts") (WatchCursor 1 0)))
   (<- appended (AppendEvent "journal" "k1" {"n" 1}))
   (<- events (ReadEvents "journal" 0))
-  #(read listed put rows watched appended events))
+  (<- end (ReadStreamEnd "journal"))
+  #(read listed put rows watched appended events end))
 
 
 (deftest test-an-outage-answers-unreachable-for-every-public-effect-and-changes-nothing
