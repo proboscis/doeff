@@ -2225,6 +2225,39 @@ fn world_handler_needs_a_contract_test_that_runs_interpreters() {
     assert!(stderr.contains("world-handler app.foundation.host:with-exempt の :contract-test は記号 none だけ"), "{}", stderr);
 }
 
+/// #1564: 種つきの疑似乱数を使う性質の検は手元、OS の entropy を使う操作は縁のまま。
+#[test]
+fn test_kind_distinguishes_seeded_random_from_entropy() {
+    let files = [
+        ("app/foundation/host.hy", tags("shared", "foundation") + "(defk with-host [body] body)\n"),
+        ("app/billing/tests/test_random.hy", r#"
+(import random uuid secrets)
+(defk draw [rng] {:pre [(: rng random.Random)]} (.random rng))
+(defk with-seed [seed] (val rng (random.Random seed)) (val alias rng) (draw alias))
+(deftest test-seeded (with-seed 7))
+(deftest test-local-import (import random) (val rng (random.Random 619)) (.randint rng 0 9))
+(deftest test-unseeded (val rng (random.Random)) (.random rng))
+(deftest test-none-seed (random.Random None))
+(deftest test-global (random.random))
+(deftest test-uuid (uuid.uuid4))
+(deftest test-secrets (secrets.token-hex 8))
+"#.to_string()),
+    ];
+    let dir = world_repo_with(&files, "", "[\"DOEFF133\"]");
+    let architecture = dir.path().join("architecture.hy");
+    let text = std::fs::read_to_string(&architecture).unwrap()
+        .replace(":foundation foundation", ":foundation foundation\n  :edge-mark \"real_world\"");
+    std::fs::write(architecture, text).unwrap();
+    let (_, report) = editor(dir.path());
+    assert_eq!(keys(&report, "DOEFF133"), vec![
+        "app/billing/tests/test_random.hy::DOEFF133::test_global::edge",
+        "app/billing/tests/test_random.hy::DOEFF133::test_none_seed::edge",
+        "app/billing/tests/test_random.hy::DOEFF133::test_secrets::edge",
+        "app/billing/tests/test_random.hy::DOEFF133::test_unseeded::edge",
+        "app/billing/tests/test_random.hy::DOEFF133::test_uuid::edge",
+    ], "{report}");
+}
+
 /// agora-redesign #1209: 実 I/O の handler は doeff の目録(data/world_handlers.json)から知る — :wraps は目録に在る物だけ(外は設定の誤り)、
 /// 目録に在り :wraps に無い handler(subprocess-handler)を名簿の外で名指しても DOEFF131、:edge-touches から file を外すと file だけに
 /// 届くテストは手元(決定 B)。
