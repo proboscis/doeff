@@ -1,9 +1,11 @@
 """Pytest plugin for executable ADR Hy files."""
 
 import fnmatch
+import functools
 import importlib
 import importlib.util
 import os
+import re
 import sys
 import types
 import warnings
@@ -362,12 +364,21 @@ def _file_patterns(config: pytest.Config) -> list[str]:
     return [*DEFAULT_FILE_PATTERNS, *config.getini("doeff_adr_hy_files")]
 
 
+@functools.cache
+def _pattern_regex(patterns: tuple[str, ...]) -> re.Pattern[str]:
+    """pattern の並びを 1 つの正規表現にする(並びごとに 1 度だけ)。
+
+    収集と wiring の走査は file ごとに照合するので、pattern ごと・候補の path ごとに fnmatch を呼ぶと 1 回の収集で
+    6 万回近くになっていた(agora-redesign #1334)。意味は fnmatch.fnmatch と同じ(normcase をかけ、全体に当てる)。
+    """
+    return re.compile("|".join(f"(?:{fnmatch.translate(os.path.normcase(p))})" for p in patterns))
+
+
 def _matches_file_patterns(path: Path, root: Path, patterns: Sequence[str]) -> bool:
-    rel = _relative_posix(path, root)
-    candidates = {path.name, rel, path.as_posix()}
-    return any(
-        fnmatch.fnmatch(candidate, pattern) for pattern in patterns for candidate in candidates
-    )
+    """file の名・rootdir からの path・絶対 path のどれかが、executable ADR の pattern に当たるか。"""
+    regex = _pattern_regex(tuple(patterns))
+    candidates = (path.name, _relative_posix(path, root), path.as_posix())
+    return any(regex.match(os.path.normcase(candidate)) for candidate in candidates)
 
 
 def _wiring_mode(config: pytest.Config) -> WiringMode:
