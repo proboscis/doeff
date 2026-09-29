@@ -7,7 +7,7 @@
 ;;;
 ;;; handler は 2 つ(readiness_handlers.hy): readiness-http = coordinator へ送る・readiness-memory = テストの記録。
 ;;; 宣言の readiness の形の検め(readiness-refusal)と入れ替えの期限(handoff-timeout-ms)もここに置く(宣言の側と coordinator の側が使う)。
-(require doeff-hy.macros [val])
+(require doeff-hy.macros [defk val])
 (import dataclasses [dataclass])
 (import doeff [EffectBase])
 
@@ -49,6 +49,24 @@
 (defn #^ int handoff-timeout-ms [readiness]  ; defk にできない: coordinator の純粋な判断(Program の外)が呼ぶ
   "宣言の readiness(None か検めを通った dict)→ 入れ替えの新の世代が Ready になるまで待つ上限(ms)。書かなければ既定。"
   (int (* 1000 (.get (or readiness {}) "handoffTimeoutSeconds" HANDOFF-TIMEOUT-SECONDS))))
+
+
+;; 報告の reason を coordinator が残す長さ(字)。
+(val REASON-KEPT-CHARS 300)
+;; 報告の本文の 1 つの欄の素の値(JSON の値)。
+(val JsonField (| dict list str int float bool None))
+
+
+(defk reported-readiness [ready reason role]
+  ;; 3 つの引数は報告の本文の素の値(旧い版の process は欄を欠き・型も揃わない)— それを読む形に揃えるのがこの関数の役目。
+  {:pre [(: ready JsonField) (: reason JsonField) (: role JsonField)] :post [(: % dict)]
+   :tags {:context "doeff-cluster" :role "judgment"}}
+  "報告の ready・reason・role を coordinator が残す形 {ready reason role} に揃えるため: ready は真偽・reason は文字列の先頭
+   REASON-KEPT-CHARS 字・role は standby 以外(旧い報告の欠けた欄を含む)を active と読む。coordinator(record-readiness)と
+   fake(readiness-memory)が同じ形で残す(定義点はここ 1 つ — 契約テスト tests/test_readiness_contract.hy)。"
+  {"ready" (bool ready)
+   "reason" (cut (str reason) 0 REASON-KEPT-CHARS)
+   "role" (if (= role ROLE-STANDBY) ROLE-STANDBY ROLE-ACTIVE)})
 
 
 (defclass [(dataclass :frozen True)] ReportReady [EffectBase]

@@ -33,10 +33,33 @@ def pytest_collect_file(file_path: Path, parent: pytest.Collector) -> pytest.Col
     return None
 
 
+# 契約テストでない deftest の名: handler は各 deftest が本体の中で被せる。
+PLAIN = "plain"
+
+
 @pytest.fixture
-def doeff_interpreter() -> Callable[[Program], object]:
+def doeff_interpreter_name() -> str:
+    return PLAIN
+
+
+@pytest.fixture
+def doeff_interpreter(doeff_interpreter_name: str) -> Callable[[Program], object]:
+    """deftest の Program を、:interpreters の名の handler の組の下で scheduler つきで 1 回回す。
+
+    契約テストは deftest の ``:interpreters`` で handler を差し替える。名 → 組み立ての表は
+    coordinator_contract_handlers.hy が持ち、ここはその表を引くだけ(名の無い deftest は今までどおり素のまま回す)。
+    """
+    if doeff_interpreter_name == PLAIN:
+        compose: Callable[[Program], Program] = lambda program: program
+    else:
+        import hy  # noqa: F401  - Hy の module を import できるようにする
+
+        from tests.coordinator_contract_handlers import INTERPRETERS
+
+        compose = INTERPRETERS[doeff_interpreter_name]
+
     def interpret(program: Program) -> object:
-        return run(scheduled(program))
+        return run(scheduled(compose(program)))
 
     return interpret
 
