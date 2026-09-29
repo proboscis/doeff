@@ -1,0 +1,96 @@
+{
+  "entries": [
+    {
+      "count": 15,
+      "path": "packages/doeff-agents/src/doeff_agents/sessionhost/host.hy",
+      "reason": "検査器が doeff の repo の Hy を実行できるようになって初めて見えた既存の違反(agora-redesign #1550 — それまで doeff-hy の macro を使う Hy は全部「既知 macro の由来を上書き」で未実行だった)。触った行に足した分だけを赤にし、触った所から直す",
+      "rule": "dependency-not-allowed",
+      "subject": "packages/doeff-agents/src/doeff_agents/sessionhost/effects.hy"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-agents/src/doeff_agents/sessionhost/host.hy",
+      "reason": "検査器が doeff の repo の Hy を実行できるようになって初めて見えた既存の違反(agora-redesign #1550 — それまで doeff-hy の macro を使う Hy は全部「既知 macro の由来を上書き」で未実行だった)。触った行に足した分だけを赤にし、触った所から直す",
+      "rule": "dependency-not-allowed",
+      "subject": "packages/doeff-agents/src/doeff_agents/sessionhost/impls/claude_code.hy"
+    },
+    {
+      "count": 12,
+      "path": "packages/doeff-agents/src/doeff_agents/sessionhost/host.hy",
+      "reason": "検査器が doeff の repo の Hy を実行できるようになって初めて見えた既存の違反(agora-redesign #1550 — それまで doeff-hy の macro を使う Hy は全部「既知 macro の由来を上書き」で未実行だった)。触った行に足した分だけを赤にし、触った所から直す",
+      "rule": "dependency-not-allowed",
+      "subject": "packages/doeff-agents/src/doeff_agents/sessionhost/policy.hy"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-agents/src/doeff_agents/sessionhost/host.hy",
+      "reason": "検査器が doeff の repo の Hy を実行できるようになって初めて見えた既存の違反(agora-redesign #1550 — それまで doeff-hy の macro を使う Hy は全部「既知 macro の由来を上書き」で未実行だった)。触った行に足した分だけを赤にし、触った所から直す",
+      "rule": "dependency-not-allowed",
+      "subject": "packages/doeff-agents/src/doeff_agents/sessionhost/relaymain.py"
+    },
+    {
+      "count": 2,
+      "path": "packages/doeff-agents/src/doeff_agents/sessionhost/host.hy",
+      "reason": "検査器が doeff の repo の Hy を実行できるようになって初めて見えた既存の違反(agora-redesign #1550 — それまで doeff-hy の macro を使う Hy は全部「既知 macro の由来を上書き」で未実行だった)。触った行に足した分だけを赤にし、触った所から直す",
+      "rule": "dependency-not-allowed",
+      "subject": "packages/doeff-agents/src/doeff_agents/sessionhost/store_health.py"
+    },
+    {
+      "count": 2,
+      "path": "packages/doeff-agents/src/doeff_agents/sessionhost/host.hy",
+      "reason": "検査器が doeff の repo の Hy を実行できるようになって初めて見えた既存の違反(agora-redesign #1550 — それまで doeff-hy の macro を使う Hy は全部「既知 macro の由来を上書き」で未実行だった)。触った行に足した分だけを赤にし、触った所から直す",
+      "rule": "dependency-uncontracted",
+      "subject": "packages/doeff-agents/src/doeff_agents/sessionhost/adopt.hy"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-agents/src/doeff_agents/sessionhost/host.hy",
+      "reason": "検査器が doeff の repo の Hy を実行できるようになって初めて見えた既存の違反(agora-redesign #1550 — それまで doeff-hy の macro を使う Hy は全部「既知 macro の由来を上書き」で未実行だった)。触った行に足した分だけを赤にし、触った所から直す",
+      "rule": "dependency-uncontracted",
+      "subject": "packages/doeff-agents/src/doeff_agents/sessionhost/impls/codex.hy"
+    },
+    {
+      "count": 3,
+      "path": "packages/doeff-agents/src/doeff_agents/sessionhost/host.hy",
+      "reason": "検査器が doeff の repo の Hy を実行できるようになって初めて見えた既存の違反(agora-redesign #1550 — それまで doeff-hy の macro を使う Hy は全部「既知 macro の由来を上書き」で未実行だった)。触った行に足した分だけを赤にし、触った所から直す",
+      "rule": "dependency-uncontracted",
+      "subject": "packages/doeff-agents/src/doeff_agents/sessionhost/launch.hy"
+    },
+    {
+      "count": 2,
+      "path": "packages/doeff-agents/src/doeff_agents/sessionhost/host.hy",
+      "reason": "検査器が doeff の repo の Hy を実行できるようになって初めて見えた既存の違反(agora-redesign #1550 — それまで doeff-hy の macro を使う Hy は全部「既知 macro の由来を上書き」で未実行だった)。触った行に足した分だけを赤にし、触った所から直す",
+      "rule": "dependency-uncontracted",
+      "subject": "packages/doeff-agents/src/doeff_agents/sessionhost/schema.hy"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-agents/src/doeff_agents/sessionhost/host.hy",
+      "reason": "検査器が doeff の repo の Hy を実行できるようになって初めて見えた既存の違反(agora-redesign #1550 — それまで doeff-hy の macro を使う Hy は全部「既知 macro の由来を上書き」で未実行だった)。触った行に足した分だけを赤にし、触った所から直す",
+      "rule": "dependency-uncontracted",
+      "subject": "packages/doeff-agents/src/doeff_agents/sessionhost/substrate.hy"
+    },
+    {
+      "count": 2,
+      "path": "packages/doeff-agents/src/doeff_agents/sessionhost/host.hy",
+      "reason": "検査器が doeff の repo の Hy を実行できるようになって初めて見えた既存の違反(agora-redesign #1550 — それまで doeff-hy の macro を使う Hy は全部「既知 macro の由来を上書き」で未実行だった)。触った行に足した分だけを赤にし、触った所から直す",
+      "rule": "dependency-uncontracted",
+      "subject": "packages/doeff-agents/src/doeff_agents/sessionhost/substrate_herdr.hy"
+    },
+    {
+      "count": 3,
+      "path": "packages/doeff-agents/src/doeff_agents/sessionhost/host.hy",
+      "reason": "検査器が doeff の repo の Hy を実行できるようになって初めて見えた既存の違反(agora-redesign #1550 — それまで doeff-hy の macro を使う Hy は全部「既知 macro の由来を上書き」で未実行だった)。触った行に足した分だけを赤にし、触った所から直す",
+      "rule": "dependency-uncontracted",
+      "subject": "packages/doeff-agents/src/doeff_agents/sessionhost/turn.hy"
+    },
+    {
+      "count": 13,
+      "path": "packages/doeff-agents/src/doeff_agents/sessionhost/host.hy",
+      "reason": "検査器が doeff の repo の Hy を実行できるようになって初めて見えた既存の違反(agora-redesign #1550 — それまで doeff-hy の macro を使う Hy は全部「既知 macro の由来を上書き」で未実行だった)。触った行に足した分だけを赤にし、触った所から直す",
+      "rule": "hy-rebind",
+      "subject": "hy:rebind"
+    }
+  ],
+  "version": 1
+}
