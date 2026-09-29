@@ -30,6 +30,7 @@
     "defadr_doeff_hy_005_typecheck_and_record_fences.hy",
     "defadr_doeff_hy_006_val_var_lazy.hy",
     "defadr_doeff_hy_007_def_macros_over_classes.hy",
+    "defadr_doeff_hy_008_hy_is_not_forked.hy",
     "defadr_doeff_preset_001_retirement.hy",
     "defadr_doeff_runner_001_reading_plane.hy"
   ],
@@ -446,6 +447,8 @@
     "ADR-DOE-HY-007 typed-values-are-not-flattened-into-text",
     "ADR-DOE-HY-007 value-classes-are-allowed",
     "ADR-DOE-HY-007 world-touching-classes-become-foundation-handlers",
+    "ADR-DOE-HY-008 dependency-declarations-name-no-hy-fork",
+    "ADR-DOE-HY-008 imports-exist-in-pypi-hy",
     "ADR-DOE-PRESET-001 display-default-owned-by-slog-handler",
     "ADR-DOE-PRESET-001 preset-stays-retired",
     "ADR-DOE-RUNNER-001 reading-plane-is-read-only",
@@ -477,6 +480,7 @@
     "ADR-DOE-AGENTS-013 test-adr-doe-agents-013-fake-home-drives-the-same-program",
     "ADR-DOE-AGENTS-013 test-adr-doe-agents-013-production-home-is-not-empty",
     "ADR-DOE-AGENTS-013 test-adr-doe-agents-013-roster-files-are-in-the-driver-layer",
+    "ADR-DOE-CLUSTER-001 test-adr-doe-cluster-001-one-entry-takes-a-program",
     "ADR-DOE-CLUSTER-001 test-adr-doe-cluster-001-ratchet-measure",
     "ADR-DOE-CLUSTER-001 test-adr-doe-cluster-001-runner-handler-ratchet",
     "ADR-DOE-CORE-002 test-adr-doe-core-002-no-linecache-on-hot-path",
@@ -533,7 +537,11 @@
     "ADR-DOE-HY-006 test-adr-doe-hy-006-session-var-uses-the-state-key",
     "ADR-DOE-HY-006 test-adr-doe-hy-006-val-twice-is-an-expansion-error",
     "ADR-DOE-HY-007 test-adr-doe-hy-007-json-is-parsed-into-a-defwire-type",
-    "ADR-DOE-HY-007 test-adr-doe-hy-007-values-are-made-by-calling-a-defrecord-type"
+    "ADR-DOE-HY-007 test-adr-doe-hy-007-values-are-made-by-calling-a-defrecord-type",
+    "ADR-DOE-HY-008 test-adr-doe-hy-008-dependency-declarations-name-no-hy-fork",
+    "ADR-DOE-HY-008 test-adr-doe-hy-008-exceptions-do-not-outlive-their-cause",
+    "ADR-DOE-HY-008 test-adr-doe-hy-008-imports-exist-in-pypi-hy",
+    "ADR-DOE-HY-008 test-adr-doe-hy-008-judgments-reject-the-counterexamples"
   ],
   "adr_defsemgrep_enforcements": [
     "ADR-DOE-ADR-001 no-silent-off-wiring-default",

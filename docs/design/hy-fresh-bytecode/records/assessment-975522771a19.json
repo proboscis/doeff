@@ -1,0 +1,188 @@
+{
+  "artifacts": [
+    {
+      "path": "artifacts/v1/evidence/focused-tests.log",
+      "sha256": "4143b227ab18fbcf9dbb0715b00413c2ca2443c4d5e377cdff1f31ab69a4f8f8"
+    },
+    {
+      "path": "artifacts/v1/evidence/bytecode-tool-reading.md",
+      "sha256": "c40ac64b343ebe8dd78720b5dfccf228e50cff16c1f98cc02d13c6b28ca2fd2f"
+    }
+  ],
+  "body": {
+    "claims": [
+      {
+        "evidence": [
+          "artifacts/v1/evidence/focused-tests.log"
+        ],
+        "expected": "macro を 1 → 2 に変えても値は 11 のまま",
+        "id": "I1",
+        "mode": "execution",
+        "observed": "11 のまま(緑)",
+        "procedure": "test_pypi_hy_alone_keeps_the_old_expansion(uv run --no-project --isolated --with hy==1.3.1)",
+        "result": "supported",
+        "scenario_ids": [
+          "C1"
+        ],
+        "statement": "PyPI の Hy 1.3.1 だけでは、macro を変えても使う側は古い展開で動く(#1003 の形が再現する)"
+      },
+      {
+        "evidence": [
+          "artifacts/v1/evidence/focused-tests.log"
+        ],
+        "expected": "11 → 12(補助は 11 → 21)",
+        "id": "I2",
+        "mode": "execution",
+        "observed": "緑",
+        "procedure": "test_a_macro_change_recompiles_the_user_on_pypi_hy[before-hy/after-hy]・test_a_change_of_the_helper_a_macro_calls_recompiles_the_user",
+        "result": "supported",
+        "scenario_ids": [
+          "C1",
+          "C2"
+        ],
+        "statement": "包みがあれば、macro と macro が呼ぶ補助の変更の後、使う側は新しい展開で動く(包みを Hy の import の前に入れても後に入れても)"
+      },
+      {
+        "evidence": [
+          "artifacts/v1/evidence/focused-tests.log"
+        ],
+        "expected": "__pycache__ は .pyc だけ・checked は 12 で flags 0b11・unchecked は 11",
+        "id": "I3",
+        "mode": "execution",
+        "observed": "緑",
+        "procedure": "test_the_record_lives_inside_a_standard_pyc・test_a_checked_hash_pyc_is_recompiled_in_the_same_form・test_an_unchecked_hash_pyc_is_trusted_like_python_trusts_it",
+        "result": "supported",
+        "scenario_ids": [
+          "C3"
+        ],
+        "statement": ".pyc は標準の形のまま、記録は code の定数の中。hash 方式の頭の差し替えの後も、checked は作り直し同じ方式で書き直し、unchecked(image の形)は信じる"
+      },
+      {
+        "evidence": [
+          "artifacts/v1/evidence/focused-tests.log"
+        ],
+        "expected": "installed True・hy は未 import",
+        "id": "I4",
+        "mode": "execution",
+        "observed": "緑。起動の上乗せは -X importtime で累計 約 1.4 ms",
+        "procedure": "test_the_venv_installs_the_guard_at_startup_before_hy(worktree の venv・uv sync で doeff-hy を入れ直した後)",
+        "result": "supported",
+        "scenario_ids": [],
+        "statement": "doeff-hy を入れた venv では、起動の時点(Hy の import より前)で包みが入っている"
+      },
+      {
+        "evidence": [
+          "artifacts/v1/evidence/bytecode-tool-reading.md"
+        ],
+        "expected": "記録は足されないか値のまま残り、実行時は unchecked-hash を信じる",
+        "id": "I5",
+        "mode": "analysis",
+        "observed": "コードの読みで一致。image の実際の組み立ては撃っていない",
+        "procedure": "deploy/bytecode.py の compile_source(source_to_code を module の外で呼び unchecked-hash を書く)と canonical_body(値を変えない綴り直し)を読んだ",
+        "result": "supported",
+        "scenario_ids": [
+          "C3"
+        ],
+        "statement": "agora-controllers の image の組み立て(deploy/bytecode.py)で .pyc が変わらず扱える"
+      }
+    ],
+    "findings": [
+      {
+        "category": "evidence_gap",
+        "claim_ids": [],
+        "evidence": [],
+        "id": "J1",
+        "owner": "manager(w3J:pG)",
+        "remedy": "manager が必要と判断すれば、別の担当に design.md と実物の branch を渡して反例を探させる",
+        "severity": "nonblocking",
+        "statement": "新しい文脈の担当による盲検の反例探し(saam)はしていない",
+        "status": "open"
+      },
+      {
+        "category": "evidence_gap",
+        "claim_ids": [
+          "I5"
+        ],
+        "evidence": [],
+        "id": "J2",
+        "owner": "#1290 手順 4 の担当",
+        "remedy": "PyPI の Hy へ戻す変更の image の組み立てで、bytecode.py check が緑であることを確かめる",
+        "severity": "nonblocking",
+        "statement": "image の実際の組み立ては撃っていない(I5 は読みだけ)",
+        "status": "open"
+      }
+    ],
+    "focus": "implementation",
+    "methods": [
+      {
+        "evidence": [
+          "artifacts/v1/design.md"
+        ],
+        "name": "change-cases",
+        "profile": "change-cases-1996-local-v1",
+        "reason": "design-e92cf3ba57de の C1〜C4 を評価軸に使う。対象版は snapshot-879dcd57a7ba",
+        "status": "reused",
+        "steps": []
+      },
+      {
+        "evidence": [],
+        "name": "ddd",
+        "profile": "ddd-evans-2015-local-v1",
+        "reason": "import の仕組みの 1 部品で、業務の言葉の境界を分ける問いが無い",
+        "status": "not_applicable",
+        "steps": []
+      },
+      {
+        "evidence": [],
+        "name": "volatility",
+        "profile": "volatility-righting-software-local-v1",
+        "reason": "部品は 2 つで、分け方は変わりやすさ(記録の形と I/O)で既に分けた",
+        "status": "not_applicable",
+        "steps": []
+      },
+      {
+        "evidence": [],
+        "name": "add",
+        "profile": "add-2.0-local-v1",
+        "reason": "全体の構成を新しく作る依頼ではない",
+        "status": "not_applicable",
+        "steps": []
+      },
+      {
+        "evidence": [],
+        "name": "saam",
+        "profile": "saam-1996-local-v1",
+        "reason": "新しい文脈の担当による盲検の反例探しはしていない(この仕事では subagent を使わない決まり — manager に依頼する)",
+        "status": "pending",
+        "steps": []
+      },
+      {
+        "evidence": [],
+        "name": "c4",
+        "profile": "c4-web-2026-09-14-local-v1",
+        "reason": "1 process の中の import の仕組みだけで、C4 の階層を分ける必要が無い",
+        "status": "not_applicable",
+        "steps": []
+      }
+    ],
+    "subject": "design-e92cf3ba57de",
+    "verdict": "incomplete"
+  },
+  "created_at": "2026-09-29T05:23:03.759389+00:00",
+  "id": "assessment-975522771a19",
+  "inputs": [
+    {
+      "id": "design-e92cf3ba57de",
+      "role": "subject",
+      "sha256": "6fc177363cfdf0507624c32d5d4d99ba82446afb33e6cdf692f6a6da5186cd26"
+    },
+    {
+      "id": "snapshot-879dcd57a7ba",
+      "role": "evidence",
+      "sha256": "9ecd654c8fa5b6a6dbaef90315f0a74423898c63997ecf7160bc951f4905a354"
+    }
+  ],
+  "kind": "assessment",
+  "schema_version": 1,
+  "scope": "Hy の module の bytecode が、展開に使った macro の変更の後に古いまま使われないようにする仕組み(doeff-hy が Python 標準の loader を包む)と、その配り方"
+}

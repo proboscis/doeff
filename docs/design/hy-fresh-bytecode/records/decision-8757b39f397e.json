@@ -1,0 +1,28 @@
+{
+  "artifacts": [],
+  "body": {
+    "actor": "agent",
+    "authority": "internal",
+    "decision": "design",
+    "outcome": "accepted",
+    "scope_of_agreement": "doeff の branch wt/hy-fresh-bytecode の設計(design-e92cf3ba57de)。利用者の合意は「Hy に手を入れず doeff の側で回避する」方針まで(user/inherited)で、案の選択は担当の内部判断",
+    "source": "manager(herdr w3J:pG)の依頼 2026-09-29(/tmp/handoff-0929/pyc-1292.md)と、利用者の決定 2026-09-29 14:0x \"I see, then lets introduce such bypasses and not touch hy at all.\"(agora-redesign #1290 の comment)。CLAUDE.md の戻せる決定の規則で担当が決めた。記録 = agora-redesign #1292 の comment",
+    "statement": "案 b を採る: doeff-hy の新しい package doeff_hy_bytecode_guard が Python 標準の SourceFileLoader の source_to_code と get_code を包み、Hy の module の macro の依存(提供元の file と sha256)を code の定数の末尾に記録し、読む時に照合して古ければ compile し直す。venv の起動時の .pth と import doeff_hy の 2 か所で入れる。戻せる決定(この変更の revert 1 つ)",
+    "subjects": [
+      "design-e92cf3ba57de"
+    ],
+    "supersedes": []
+  },
+  "created_at": "2026-09-29T05:22:48.329990+00:00",
+  "id": "decision-8757b39f397e",
+  "inputs": [
+    {
+      "id": "design-e92cf3ba57de",
+      "role": "subject",
+      "sha256": "6fc177363cfdf0507624c32d5d4d99ba82446afb33e6cdf692f6a6da5186cd26"
+    }
+  ],
+  "kind": "decision",
+  "schema_version": 1,
+  "scope": "Hy の module の bytecode が、展開に使った macro の変更の後に古いまま使われないようにする仕組み(doeff-hy が Python 標準の loader を包む)と、その配り方"
+}

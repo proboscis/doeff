@@ -1,0 +1,21 @@
+{
+  "heads": {
+    "assessment": "assessment-b7ad3f800f1f",
+    "snapshot": "snapshot-fad3bf05c387",
+    "target": "design-e92cf3ba57de"
+  },
+  "records": {
+    "assessment-975522771a19": "a80026e8179c834912446cc0eaf65cfdf09320c4eb7f3c1a3d2354eaace32859",
+    "assessment-b7ad3f800f1f": "9fa36d9e4c60d1078466abb853477e01f3b8fc631807417f05dcce02c40091de",
+    "assessment-c6ecb2c84b80": "78842041294a6f8da199fed8e5669353263423d843104dba1d15d9c08b23dd3c",
+    "assessment-c839ea507a93": "5e1b3c795eff71df19b2c255ec92348a7d3a599e034ab3d6943b223aba51370e",
+    "decision-8757b39f397e": "56a8bf0aea7305be8ef18ded775bcdc49661759eda18b5f5d03fcd719cd84383",
+    "design-e92cf3ba57de": "6fc177363cfdf0507624c32d5d4d99ba82446afb33e6cdf692f6a6da5186cd26",
+    "snapshot-63b1f0720443": "63332ecd9428c5e3e44d96ccef21fc6092910565e394cf2d2cc65f151d68dabf",
+    "snapshot-879dcd57a7ba": "9ecd654c8fa5b6a6dbaef90315f0a74423898c63997ecf7160bc951f4905a354",
+    "snapshot-a452b3f81b34": "f7e70bb80b1a094300186e09852894ac6ffc683598640ac6be6564c49dc2685d",
+    "snapshot-fad3bf05c387": "163e8e2aa40175ea0fa0034d037e7da3bb29f6d89b2345bd6c57e4adfb36d04d"
+  },
+  "schema_version": 1,
+  "scope": "Hy の module の bytecode が、展開に使った macro の変更の後に古いまま使われないようにする仕組み(doeff-hy が Python 標準の loader を包む)と、その配り方"
+}

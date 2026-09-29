@@ -12,10 +12,15 @@ File extensions:
 import importlib.machinery
 import os
 
+import doeff_hy_bytecode_guard
 import hy.importer
 
 from doeff_hy.ast_unparse import install as _install_ast_unparse
 from doeff_hy.light_stack import install as _install_light_stack
+
+# macro が変わった Hy の module の古い bytecode を使わない(agora-redesign #1292)。本来の入れ所は venv の起動時の
+# doeff_hy_bytecode_guard.pth で、ここは .pth が読まれない起動(python -S 等)のための 2 つ目(2 度目は何もしない)。
+doeff_hy_bytecode_guard.install()
 
 # Register .hyk and .hyp as Hy source extensions
 for _ext in (".hyk", ".hyp"):

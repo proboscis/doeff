@@ -1,0 +1,6 @@
+
+deadline scale x1.2 (load/core) — per test 72s, watchdog 107s
+
+test-admission: focused — 8 件(変更箇所の検証)
+........                                                                 [100%]
+8 passed in 2.48s

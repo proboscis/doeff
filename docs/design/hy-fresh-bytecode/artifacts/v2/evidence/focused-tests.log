@@ -1,0 +1,8 @@
+
+deadline scale x1.8 (load/core) — per test 109s, watchdog 162s
+
+test-admission: focused — 16 件(変更箇所の検証)
+doeff-adr: 記録から収集 0 file・収集で import 1 file
+  import: docs/adr/defadr_doeff_hy_008_hy_is_not_forked.hy — 記録なし(pyc が無い・古い)
+................                                                         [100%]
+16 passed in 14.54s

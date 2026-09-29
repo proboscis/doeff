@@ -1,0 +1,31 @@
+{
+  "artifacts": [],
+  "body": {
+    "files": {
+      "docs/adr/defadr_doeff_hy_008_hy_is_not_forked.hy": "24e97d718185fe9210fcbe2c4d1492e8e406efde89343093c99dbf61d0fadbc9",
+      "packages/doeff-hy/pyproject.toml": "f8bb11301d6e7b2339fbce485224910d77a5b5a423e5ead36041eaed6b1b9772",
+      "packages/doeff-hy/src/doeff_hy/__init__.py": "c5b49afc91db55b3c90318c7e98ae3a1b3c989f1a73d60905bc540d29c526c1c",
+      "packages/doeff-hy/src/doeff_hy_bytecode_guard.pth": "affb73c97e19c05fdcda1f24e417b021cbd45be403a68d534dfddfc7ac645ea5",
+      "packages/doeff-hy/src/doeff_hy_bytecode_guard/__init__.py": "c3f658aea61ea6c2ac691654b661a924b630f743baf547784761a12aef35e368",
+      "packages/doeff-hy/src/doeff_hy_bytecode_guard/loader_hooks.py": "08ce1cc9e5d1b8ad6da4a78a169525d568758c002d0c6b1393e94d4fff6bd877",
+      "packages/doeff-hy/src/doeff_hy_bytecode_guard/records.py": "3fef7fd64aa446c43b8acfdd0efcb5b8e91168c3642e6c7fdcb00516033de50f",
+      "packages/doeff-hy/tests/test_bytecode_guard.py": "fdbc6ad9b17df11eeb81c5ce08e13ce6c7e9bc8028865019d18ac3c1e945e166"
+    },
+    "include": [
+      "packages/doeff-hy/src/doeff_hy_bytecode_guard/*.py",
+      "packages/doeff-hy/src/doeff_hy_bytecode_guard.pth",
+      "packages/doeff-hy/src/doeff_hy/__init__.py",
+      "packages/doeff-hy/pyproject.toml",
+      "packages/doeff-hy/tests/test_bytecode_guard.py",
+      "docs/adr/defadr_doeff_hy_008_hy_is_not_forked.hy"
+    ],
+    "label": "wt/hy-fresh-bytecode の出荷する版(pre-commit の semgrep・doeff-linter の指摘を直した後)",
+    "root": "/Users/kento/.worktrees/doeff-wt-hy-fresh-bytecode"
+  },
+  "created_at": "2026-09-29T05:33:46.579676+00:00",
+  "id": "snapshot-a452b3f81b34",
+  "inputs": [],
+  "kind": "snapshot",
+  "schema_version": 1,
+  "scope": "Hy の module の bytecode が、展開に使った macro の変更の後に古いまま使われないようにする仕組み(doeff-hy が Python 標準の loader を包む)と、その配り方"
+}

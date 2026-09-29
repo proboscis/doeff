@@ -1,0 +1,386 @@
+{
+  "artifacts": [
+    {
+      "path": "artifacts/v1/design.md",
+      "sha256": "c9bd6d39211865a93b74f44d56ad920a714169c85bb65b4fd2dc056fddaae618"
+    }
+  ],
+  "body": {
+    "alternatives": [
+      {
+        "options": [
+          {
+            "benefits": "Hy にも import の仕組みにも触らない",
+            "costs": "依存の範囲を起動前に静的に決める必要があり、正しくすると macro の 1 変更で数千 file を全部作り直す。古い置き場が溜まる。環境変数を全 process に配る必要。image の道具(#732)と root の conftest の固定に衝突",
+            "name": "a. bytecode の置き場(PYTHONPYCACHEPREFIX)を macro の提供元の hash で分ける"
+          },
+          {
+            "benefits": "module ごとの実際の依存で判定(作り直すのは依る module だけ)。.pyc は標準の 1 file。起動時の .pth で全ての入口に効く",
+            "costs": "Hy が module に置く macro の表の名(_hy_macros)を読む。標準の loader の口を包む(import の仕組みへの介入)",
+            "name": "b. 標準の loader の 2 つの口を包み、記録を .pyc の中(code の定数)に置く"
+          },
+          {
+            "benefits": "フォークと同じ形で移行が素直",
+            "costs": "file の種類が増え、image の道具が運ばない・検めない。隣の file と .pyc の対応を別に保つ必要",
+            "name": "c. b と同じ包みで、記録は .pyc の隣の file(フォークの .hydeps の移植)"
+          }
+        ],
+        "question": "macro の変更で古い bytecode を使わない仕組みをどこに置くか",
+        "reason": "正しさと速さを両立するのは module ごとの実際の依存の記録だけで、記録を .pyc の中に置けば .pyc は標準の 1 file のまま(image の道具と Python がそのまま扱える)。包むのは Python 標準の口で Hy の関数は置き換えない",
+        "reconsider_when": "Hy の本家が macro の依存による bytecode の無効化を持った時(その時はこの包みを外す)、または Python が .pyc の検証の hook を公開した時",
+        "selected": "b. 標準の loader の 2 つの口を包み、記録を .pyc の中(code の定数)に置く"
+      }
+    ],
+    "change_cases": [
+      {
+        "change": "doeff-hy の macros.hy の macro を変える",
+        "expected_elements": [
+          "loader-hooks",
+          "records"
+        ],
+        "id": "C1",
+        "preserve": [
+          "使う側は次の import で新しい展開"
+        ],
+        "priority": "required",
+        "protected_contracts": [
+          "macro-record"
+        ],
+        "provenance": {
+          "kind": "observed",
+          "source": "#1003(9/28〜29 の 3 commit)"
+        },
+        "rationale": "#1003 の赤そのもの",
+        "verification": "test_a_macro_change_recompiles_the_user_on_pypi_hy"
+      },
+      {
+        "change": "Hy の指定を PyPI の版へ戻す(#1290 手順 4)",
+        "expected_elements": [],
+        "id": "C2",
+        "preserve": [
+          "判定が残る"
+        ],
+        "priority": "required",
+        "protected_contracts": [
+          "macro-record"
+        ],
+        "provenance": {
+          "kind": "user",
+          "source": "#1290"
+        },
+        "rationale": "フォークの .hydeps が消えても同じ正しさ",
+        "verification": "PyPI の Hy 1.3.1 の使い捨ての環境で全テストを回した"
+      },
+      {
+        "change": "image の組み立ての道具が .pyc の body を綴り直す・頭を hash 方式へ替える",
+        "expected_elements": [],
+        "id": "C3",
+        "preserve": [
+          ".pyc は標準の形",
+          "記録の値は変わらない"
+        ],
+        "priority": "required",
+        "protected_contracts": [
+          "macro-record"
+        ],
+        "provenance": {
+          "kind": "observed",
+          "source": "agora-controllers deploy/bytecode.py"
+        },
+        "rationale": "記録は code の定数なので marshal の綴り直しで値が残る",
+        "verification": "test_the_record_lives_inside_a_standard_pyc・test_an_unchecked_hash_pyc_is_trusted_like_python_trusts_it"
+      },
+      {
+        "change": "索引のキャッシュ(#1291)が macro の依存の hash を鍵に使う",
+        "expected_elements": [
+          "records"
+        ],
+        "id": "C4",
+        "preserve": [
+          "依存の辿り方は 1 か所"
+        ],
+        "priority": "prepare",
+        "protected_contracts": [
+          "macro-dependencies"
+        ],
+        "provenance": {
+          "kind": "observed",
+          "source": "#1291 の責務の表(2026-09-29 14:1x)"
+        },
+        "rationale": "同じ辿り方を 2 か所に書かない",
+        "verification": "公開の口 macro_dependencies を置いた(#1291 の担当へ連絡)"
+      }
+    ],
+    "contracts": [
+      {
+        "canonical_source": "packages/doeff-hy/src/doeff_hy_bytecode_guard/records.py",
+        "effects": [],
+        "failures": [
+          "記録が無い・形が違う → None(呼び手は compile し直す)",
+          "file が読めない → 合っていない"
+        ],
+        "id": "macro-record",
+        "invariants": [
+          "記録は code の定数の末尾に 1 つだけ",
+          "末尾に足すので既存の定数の番号は動かない"
+        ],
+        "operations": [
+          "record_of(code) → MacroRecord | None",
+          "with_record(code, record) → code",
+          "record_is_current(record, hy_version, sha256_of) → bool"
+        ],
+        "owner": "records"
+      },
+      {
+        "canonical_source": "packages/doeff-hy/src/doeff_hy_bytecode_guard/loader_hooks.py",
+        "effects": [
+          "file を読む"
+        ],
+        "failures": [
+          "読めない file は sha256 の代わりに印 unreadable(どの sha256 とも合わない)"
+        ],
+        "id": "macro-dependencies",
+        "invariants": [
+          "辿り方は records.macro_provider_files の 1 か所"
+        ],
+        "operations": [
+          "macro_dependencies(module, path) → tuple[MacroDependency, ...]"
+        ],
+        "owner": "loader-hooks"
+      },
+      {
+        "canonical_source": "packages/doeff-hy/src/doeff_hy_bytecode_guard/loader_hooks.py",
+        "effects": [
+          "SourceFileLoader の 2 つの口を書き換える(process に 1 度)"
+        ],
+        "failures": [],
+        "id": "guard-install",
+        "invariants": [
+          "何度呼んでも 1 度だけ包む"
+        ],
+        "operations": [
+          "install()",
+          "installed() → bool"
+        ],
+        "owner": "loader-hooks"
+      }
+    ],
+    "elements": [
+      {
+        "depends_on": [
+          "records"
+        ],
+        "hidden_decisions": [
+          "包みの順(Hy の前でも後でも効く)",
+          "unchecked-hash の .pyc は信じる"
+        ],
+        "id": "loader-hooks",
+        "kind": "internal",
+        "requirement_ids": [
+          "R1",
+          "R2",
+          "R3",
+          "R6"
+        ],
+        "responsibility": "SourceFileLoader の source_to_code と get_code を包み、記録を足す・照合する・古い .pyc を書き直す。file の読み書きはここだけ",
+        "state": [
+          "包んだかどうか(process に 1 つ)",
+          "thread ごとの compile の回数",
+          "file の sha256 の表(path・更新時刻・大きさが鍵)"
+        ]
+      },
+      {
+        "depends_on": [],
+        "hidden_decisions": [
+          "記録の印と形の版",
+          "依存の辿り方(同じ top package の範囲)"
+        ],
+        "id": "records",
+        "kind": "internal",
+        "requirement_ids": [
+          "R1",
+          "R4",
+          "R5"
+        ],
+        "responsibility": "記録の形(code の定数の末尾の組)、依存の辿り方、照合、.pyc の組み立ての純関数",
+        "state": []
+      },
+      {
+        "depends_on": [
+          "loader-hooks"
+        ],
+        "hidden_decisions": [
+          "import doeff_hy とは別の package にして起動時に Hy を読まない"
+        ],
+        "id": "startup-pth",
+        "kind": "internal",
+        "requirement_ids": [
+          "R3",
+          "R6"
+        ],
+        "responsibility": "venv の起動時に install を呼ぶ 1 行(doeff-hy の wheel と editable の install が site-packages に置く)",
+        "state": []
+      }
+    ],
+    "handoff": {
+      "fixed": [
+        "記録は .pyc の中(code の定数)に置き、隣の file を書かない",
+        "Hy の関数を置き換えない"
+      ],
+      "free": [
+        "記録の印の名と形の版",
+        "sha256 の表の持ち方"
+      ],
+      "next": [
+        "main への着地",
+        "#1291 が macro_dependencies を索引の鍵に使う",
+        "#1290 手順 4(PyPI の Hy へ戻す)の後に .hydeps が作られないことを確かめる"
+      ]
+    },
+    "level": "Python の import の仕組み(importlib.machinery.SourceFileLoader)と doeff-hy の配布物",
+    "methods": [
+      {
+        "evidence": [],
+        "name": "ddd",
+        "profile": "ddd-evans-2015-local-v1",
+        "reason": "import の仕組みの 1 部品で、業務の言葉の境界を分ける問いが無い",
+        "status": "not_applicable",
+        "steps": []
+      },
+      {
+        "evidence": [
+          "artifacts/v1/design.md"
+        ],
+        "name": "change-cases",
+        "profile": "change-cases-1996-local-v1",
+        "reason": "候補を今後の変更(C1〜C4)で比べるため",
+        "status": "performed",
+        "steps": [
+          {
+            "result": "変更 C1〜C4 を #1003・#1290・#1291・deploy/bytecode.py から挙げた",
+            "step": "1"
+          },
+          {
+            "result": "各変更が触る部品を loader-hooks・records に割り当てた",
+            "step": "2"
+          },
+          {
+            "result": "案 a は C1 で全 file を作り直し C3 と衝突、案 c は C3 で記録が落ちる。案 b は C1〜C4 を records と loader-hooks に閉じる",
+            "step": "3"
+          },
+          {
+            "result": "C2 は PyPI の Hy の使い捨ての環境、C3 は hash 方式の頭の差し替えで確かめる",
+            "step": "4"
+          },
+          {
+            "result": "C1〜C3 は packages/doeff-hy/tests/test_bytecode_guard.py で実行して緑。C4 は公開の口を置いた所まで",
+            "step": "5"
+          }
+        ]
+      },
+      {
+        "evidence": [],
+        "name": "volatility",
+        "profile": "volatility-righting-software-local-v1",
+        "reason": "部品は 2 つで、分け方は変わりやすさ(記録の形と I/O)で既に分けた",
+        "status": "not_applicable",
+        "steps": []
+      },
+      {
+        "evidence": [],
+        "name": "add",
+        "profile": "add-2.0-local-v1",
+        "reason": "全体の構成を新しく作る依頼ではない",
+        "status": "not_applicable",
+        "steps": []
+      },
+      {
+        "evidence": [],
+        "name": "saam",
+        "profile": "saam-1996-local-v1",
+        "reason": "新しい文脈の担当による盲検の反例探しはしていない(この仕事では subagent を使わない決まり — manager に依頼する)",
+        "status": "pending",
+        "steps": []
+      },
+      {
+        "evidence": [],
+        "name": "c4",
+        "profile": "c4-web-2026-09-14-local-v1",
+        "reason": "1 process の中の import の仕組みだけで、C4 の階層を分ける必要が無い",
+        "status": "not_applicable",
+        "steps": []
+      }
+    ],
+    "open_questions": [],
+    "perspective": "proposed",
+    "purpose": "Hy に手を入れずに、macro を変えた後に使う側の Hy の module が古い展開の bytecode で動かないようにする(#1003 の赤を PyPI の Hy の上で防ぐ)",
+    "requirements": [
+      {
+        "id": "R1",
+        "kind": "functional",
+        "provenance": {
+          "kind": "user",
+          "source": "agora-redesign #1292 本文・#1003"
+        },
+        "statement": "macro の提供元(と macro が展開の時に呼ぶ同じ package の補助)を変えたら、使う側の module は新しい展開で動く"
+      },
+      {
+        "id": "R2",
+        "kind": "constraint",
+        "provenance": {
+          "kind": "user",
+          "source": "利用者 2026-09-29 14:0x \"I see, then lets introduce such bypasses and not touch hy at all.\"(#1290)"
+        },
+        "statement": "Hy に手を入れない。PyPI の Hy に無い名前を hy.* から import しない"
+      },
+      {
+        "id": "R3",
+        "kind": "functional",
+        "provenance": {
+          "kind": "user",
+          "source": "manager の依頼 /tmp/handoff-0929/pyc-1292.md(比べる軸)"
+        },
+        "statement": "pytest・本番の入口・image の組み立て・editor の索引のどこから読んでも効く"
+      },
+      {
+        "id": "R4",
+        "kind": "constraint",
+        "provenance": {
+          "kind": "user",
+          "source": "agora-redesign #1292 の受入"
+        },
+        "statement": "image の組み立ての bytecode の処理が扱う .pyc は標準の形だけ"
+      },
+      {
+        "id": "R5",
+        "kind": "quality",
+        "provenance": {
+          "kind": "user",
+          "source": "manager の依頼(速さの軸)"
+        },
+        "statement": "macro が変わった時に作り直すのは、その macro に依る module だけ"
+      },
+      {
+        "id": "R6",
+        "kind": "quality",
+        "provenance": {
+          "kind": "observed",
+          "source": "起動時の .pth は venv の全ての Python に乗る"
+        },
+        "statement": "起動の上乗せを 1〜2 ms 程度に抑える"
+      }
+    ]
+  },
+  "created_at": "2026-09-29T05:22:25.503501+00:00",
+  "id": "design-e92cf3ba57de",
+  "inputs": [
+    {
+      "id": "snapshot-879dcd57a7ba",
+      "role": "basis",
+      "sha256": "9ecd654c8fa5b6a6dbaef90315f0a74423898c63997ecf7160bc951f4905a354"
+    }
+  ],
+  "kind": "design",
+  "schema_version": 1,
+  "scope": "Hy の module の bytecode が、展開に使った macro の変更の後に古いまま使われないようにする仕組み(doeff-hy が Python 標準の loader を包む)と、その配り方"
+}

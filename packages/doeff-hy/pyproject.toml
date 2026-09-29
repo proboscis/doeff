@@ -24,7 +24,14 @@ dependencies = [
 doeff-hy-check = "doeff_hy.static_check:main"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/doeff_hy"]
+# doeff_hy_bytecode_guard: macro が変わった Hy の module の古い bytecode を使わない包み(agora-redesign #1292)。
+# venv の全ての Python の起動時に .pth から入れる(pytest・本番の入口・索引のどれが最初に Hy の module を読んでも効く)。
+# doeff_hy の中に置かないのは、起動時に doeff_hy/__init__.py(Hy の import)を読まないため。
+packages = ["src/doeff_hy", "src/doeff_hy_bytecode_guard"]
+
+[tool.hatch.build.targets.wheel.force-include]
+# .pth は中身が 1 行の固定文なので、editable の install でも写しが古くならない(hatchling は editable でも force-include を入れる)。
+"src/doeff_hy_bytecode_guard.pth" = "doeff_hy_bytecode_guard.pth"
 
 [tool.uv.sources]
 doeff = { workspace = true }
