@@ -1992,7 +1992,9 @@ fn test_kind_is_derived_from_what_the_test_reaches() {
         (
             "app/billing/tests/test_mark_in_text.hy",
             "(import app.billing.core.calc [add])\n;; 印の綴りの説明: pytestmark = pytest.mark.real_world\n\
-             (deftest test-local-reads-spellings\n  (<- n (add 1 2))\n  (assert (in \"pytest\" \"(val pytestmark pytest.mark.real-world)\")))\n"
+             (deftest test-local-reads-spellings\n  (<- n (add 1 2))\n  (assert (in \"pytest\" \"(val pytestmark pytest.mark.real-world)\")))\n\
+             (deftest test-local-reads-a-marks-spelling\n  (assert (in \"marks\" \"(deftest test-x {:marks [\\\"real_world\\\"]} 1)\")))\n\
+             (deftest test-local-with-fixture-and-doc-marked [tmp-path] \"説明\" {:marks [\"real_world\"]} (<- n (add 1 2)) (assert n))\n"
                 .to_string(),
         ),
     ];
@@ -2010,8 +2012,10 @@ fn test_kind_is_derived_from_what_the_test_reaches() {
             "app/billing/tests/test_kinds.hy::DOEFF133::test_edge_two_steps::edge",
             "app/billing/tests/test_kinds.hy::DOEFF133::test_edge_wrapped::edge",
             "app/billing/tests/test_kinds.hy::DOEFF133::test_local_marked::local",
+            // fixture の並びと docstring の後ろの設定の :marks も印(doeff-hy の deftest と同じ読み方)。
+            "app/billing/tests/test_mark_in_text.hy::DOEFF133::test_local_with_fixture_and_doc_marked::local",
         ],
-        "印の在る縁(:marks と module の pytestmark)と印の無い手元は当てない: {}",
+        "印の在る縁(:marks と module の pytestmark)と印の無い手元は当てない・文字列の中の :marks は印ではない: {}",
         report
     );
     let two_steps = violation(&report, "app/billing/tests/test_kinds.hy::DOEFF133::test_edge_two_steps::edge");
