@@ -567,7 +567,7 @@ pub fn run_with(root: &Path, settings: &ProjectSettings, enabled: &BTreeSet<Proj
                         }));
                     }
                     if !architecture.single_point_vocabulary.is_empty() && enabled.contains(&ProjectRule::VocabularyOutsideSinglePoint) {
-                        drafts.extend(single_point_vocabulary::find(root, &architecture.single_point_vocabulary).into_iter().map(|hit| {
+                        drafts.extend(single_point_vocabulary::find(root, &architecture.single_point_vocabulary, focus).into_iter().map(|hit| {
                             let start = Position { line: hit.line, character: 0 };
                             Draft {
                                 rule: ProjectRule::VocabularyOutsideSinglePoint,
