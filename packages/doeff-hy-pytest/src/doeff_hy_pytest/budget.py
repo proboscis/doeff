@@ -42,6 +42,7 @@
   build の種類を 1 行出す。読めない(import できない・古い VM で関数が無い)時は「不明」と出し、判定は今のまま。
 """
 
+import contextlib
 import hashlib
 import importlib.machinery
 import time
@@ -298,6 +299,9 @@ class CompileCounter:
     ``SourceFileLoader.source_to_code`` はバイトコードのキャッシュに当たらない時だけ呼ばれ、Hy の import も Hy が
     差し替えた同じ口を通る(Hy の差し替えは元の口を呼び直すので、Hy がこの数えの前後どちらで差し替えても数えに乗る)。
     変換の中で別の module の import と変換が起きる(Hy の ``require``)ので、秒は最も外側の区間だけを足す。
+
+    doeff-effect-analyzer が入っていれば、その Hy の展開(展開した構文木の cache に当たらない時だけ走る — 同じく
+    キャッシュ無しの重さ)も同じ数えに足す(``observe_expansions`` の口 — 解析器は誰が数えるかを知らない・agora-redesign #1534)。
     """
 
     def __init__(self) -> None:
@@ -305,10 +309,24 @@ class CompileCounter:
         self._mut_cpu_seconds = 0.0
         self._mut_depth = 0
         self._mut_original: Callable[..., object] | None = None
+        self._mut_stop_observing: Callable[[], None] | None = None
 
     def tally(self) -> CompileTally:
         """今までの数え(区間の前後の差で使う)。"""
         return CompileTally(self._mut_count, self._mut_cpu_seconds)
+
+    @contextlib.contextmanager
+    def converting(self) -> Generator[None]:
+        """キャッシュ無しの変換 1 回の区間 — 回数と、最も外側の区間なら CPU 秒を足すため。"""
+        self._mut_count += 1
+        self._mut_depth += 1
+        started = time.process_time()
+        try:
+            yield
+        finally:
+            self._mut_depth -= 1
+            if self._mut_depth == 0:
+                self._mut_cpu_seconds += time.process_time() - started
 
     def install(self) -> None:
         """数える口を差し込む(session の間だけ — uninstall で戻す)。"""
@@ -317,24 +335,32 @@ class CompileCounter:
         counter = self
 
         def counting_source_to_code(loader: object, *args: object, **kwargs: object) -> object:
-            """元の変換を呼び、回数と(最も外側なら)CPU 秒を足す。"""
-            counter._mut_count += 1
-            counter._mut_depth += 1
-            started = time.process_time()
-            try:
+            """元の変換を呼び、キャッシュ無しの変換の区間として数える。"""
+            with counter.converting():
                 return original(loader, *args, **kwargs)
-            finally:
-                counter._mut_depth -= 1
-                if counter._mut_depth == 0:
-                    counter._mut_cpu_seconds += time.process_time() - started
 
         importlib.machinery.SourceFileLoader.source_to_code = counting_source_to_code  # type: ignore[method-assign]  # 数えるための差し替え(uninstall で戻す)
+        self._mut_stop_observing = observe_analyzer_expansions(self.converting)
 
     def uninstall(self) -> None:
         """install の前の口へ戻す。"""
         if self._mut_original is not None:
             importlib.machinery.SourceFileLoader.source_to_code = self._mut_original  # type: ignore[method-assign]  # install の前へ戻す
             self._mut_original = None
+        if self._mut_stop_observing is not None:
+            self._mut_stop_observing()
+            self._mut_stop_observing = None
+
+
+def observe_analyzer_expansions(
+    converting: Callable[[], contextlib.AbstractContextManager[None]],
+) -> Callable[[], None] | None:
+    """doeff-effect-analyzer の Hy の展開も数えに乗せるため(解析器が入っていない環境では何もしない — None)。"""
+    try:
+        from doeff_effect_analyzer.program_effects import observe_expansions
+    except ImportError:
+        return None
+    return observe_expansions(converting)
 
 
 @dataclass(frozen=True)

@@ -86,3 +86,23 @@ def test_an_unreadable_cache_file_is_expanded_again_and_rewritten(
     assert seen == ["m", "m"]
     assert isinstance(tree, ast.Module)
     assert pe._read_cached_tree(cached) is not None
+
+
+def test_an_observer_sees_only_the_expansions_that_missed_the_cache(cache_dir: Path) -> None:
+    import contextlib
+
+    entered: list[str] = []
+
+    @contextlib.contextmanager
+    def watching():
+        entered.append("expansion")
+        yield
+
+    stop = pe.observe_expansions(watching)
+    try:
+        pe._compile_hy(SOURCE, "/src/m.hy", "m")
+        pe._compile_hy(SOURCE, "/src/m.hy", "m")
+    finally:
+        stop()
+    pe._compile_hy(SOURCE.replace("42", "44"), "/src/m.hy", "m")
+    assert entered == ["expansion"]

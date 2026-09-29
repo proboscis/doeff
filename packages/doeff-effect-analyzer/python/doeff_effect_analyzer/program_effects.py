@@ -45,6 +45,7 @@ treated as handling nothing, so what it might absorb is still reported).
 """
 
 import ast
+import contextlib
 import functools
 import hashlib
 import importlib
@@ -438,10 +439,32 @@ def _compile_hy(source: str, filename: str, module_name: str) -> ast.Module:
         cached = _read_cached_tree(cache_path)
         if cached is not None:
             return cached
-    compiled = _expand_hy(source, filename, module_name)
+    with contextlib.ExitStack() as observed:
+        for observer in tuple(_EXPANSION_OBSERVERS):
+            observed.enter_context(observer())
+        compiled = _expand_hy(source, filename, module_name)
     if cache_path is not None:
         _write_cached_tree(cache_path, compiled)
     return compiled
+
+
+# Who wants to know when an expansion missed the cache. A test-time budget subtracts
+# that time the way it subtracts bytecode compilation (a cold cache is not the test's
+# weight); the analyzer itself does not know who observes.
+ExpansionObserver = Callable[[], contextlib.AbstractContextManager[None]]
+_EXPANSION_OBSERVERS: list[ExpansionObserver] = []
+
+
+def observe_expansions(observer: ExpansionObserver) -> Callable[[], None]:
+    """Run every uncached Hy expansion inside ``observer()``; returns the function that stops it."""
+    _EXPANSION_OBSERVERS.append(observer)
+
+    def stop() -> None:
+        """Remove this observer (idempotent)."""
+        if observer in _EXPANSION_OBSERVERS:
+            _EXPANSION_OBSERVERS.remove(observer)
+
+    return stop
 
 
 def _expand_hy(source: str, filename: str, module_name: str) -> ast.Module:

@@ -500,3 +500,29 @@ def test_unreadable_settings_stop_the_session(
     result = pytester.runpytest("-q")
     assert result.ret == pytest.ExitCode.USAGE_ERROR
     result.stderr.fnmatch_lines([f"*{message}*"])
+
+
+def test_the_analyzers_uncached_expansion_is_subtracted_like_bytecode_compilation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """解析器の Hy の展開(構文木の cache に当たらない時だけ)も数えに乗り、install の外では乗らない(agora-redesign #1534)。"""
+    program_effects = pytest.importorskip("doeff_effect_analyzer.program_effects")
+    monkeypatch.setenv("DOEFF_EFFECT_ANALYZER_CACHE", str(tmp_path / "trees"))
+    source = "(setv answer (+ 1 2))\n"
+    counter = CompileCounter()
+    counter.install()
+    try:
+        before = counter.tally()
+        program_effects._compile_hy(source, "/src/budget_expanded.hy", "budget_expanded")
+        cold = counter.tally().since(before)
+        before = counter.tally()
+        program_effects._compile_hy(source, "/src/budget_expanded.hy", "budget_expanded")
+        cached = counter.tally().since(before)
+    finally:
+        counter.uninstall()
+    before = counter.tally()
+    program_effects._compile_hy(source.replace("2", "3"), "/src/budget_expanded.hy", "budget_expanded")
+    outside = counter.tally().since(before)
+    assert cold.count == 1 and cold.cpu_seconds > 0
+    assert cached.count == 0
+    assert outside.count == 0
