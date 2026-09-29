@@ -102,6 +102,28 @@
    "why": "pool.submit で別 thread の VM"
   },
   {
+   "handler": "doeff_core_effects.process_meter:process-meter-handler",
+   "touches": [
+    "thread",
+    "clock"
+   ],
+   "why": "process に 1 つの計器の置き場を threading.Lock で別の run・thread と共有し、gc.callbacks に繋いだ callback が time.monotonic で GC の停止を測る(process_meter.hy)"
+  },
+  {
+   "handler": "doeff_core_effects.process_latest:process-latest-handler",
+   "touches": [
+    "thread"
+   ],
+   "why": "process に 1 つの最新の値の置き場を別の run・thread と共有する(process_latest.hy)"
+  },
+  {
+   "handler": "doeff_core_effects.gc_freeze:gc-freeze-handler",
+   "touches": [
+    "process"
+   ],
+   "why": "gc.collect・gc.freeze で process の GC の状態を変える(gc_freeze.hy)"
+  },
+  {
    "handler": "doeff_core_effects.handlers:await_handler",
    "touches": [
     "thread"
