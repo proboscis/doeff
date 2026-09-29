@@ -69,10 +69,17 @@ HANDLE_SWEEP_INTERVAL = 1024
 HANDLE_REFS_PRUNE_MIN = 8
 
 
-def _reinstall_boundary(prog, kind, boundary_callable):
+def _reinstall_boundary(
+    prog: object, kind: str, boundary_callable: Callable[..., object]
+) -> _WithHandlerRaw | _WithObserveRaw:
     """Re-wrap prog with one boundary captured at the spawn site."""
     if kind == "handler":
-        return _program_handler(boundary_callable)(prog)
+        # GetBoundaries returns the raw dispatcher already accepted by the VM,
+        # not a Program -> Program installer. Reuse that calling convention:
+        # handler() would repeat its installer Protocol check and allocate a
+        # throwaway closure for every inherited boundary (#1384).
+        # WithHandler still performs the normal VM callable/spec validation.
+        return _WithHandlerRaw(boundary_callable, prog)
     if kind == "observer":
         return _WithObserveRaw(_VmCallable(boundary_callable), prog)
     raise RuntimeError(f"unknown boundary kind: {kind!r}")
