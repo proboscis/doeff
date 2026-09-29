@@ -382,6 +382,50 @@ pub struct ConfinedSpelling {
     pub range: doeff_indexer::hy_index::Range,
 }
 
+/// 決めた数(閉じた 2 つ — `:count N` はちょうど N・`:at-least N` は N 以上)。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub enum WantedCount {
+    Exactly(usize),
+    AtLeast(usize),
+}
+
+impl WantedCount {
+    /// 数えた数 found がこの決まりに合うか。
+    pub fn accepts(self, found: usize) -> bool {
+        match self {
+            WantedCount::Exactly(n) => found == n,
+            WantedCount::AtLeast(n) => found >= n,
+        }
+    }
+
+    /// 知らせの文の綴り(「ちょうど 3」「1 以上」)。
+    pub fn spelling(self) -> String {
+        match self {
+            WantedCount::Exactly(n) => format!("ちょうど {}", n),
+            WantedCount::AtLeast(n) => format!("{} 以上", n),
+        }
+    }
+}
+
+/// 数を決めた綴り 1 つ(`:counted-spellings` の
+/// `(counted-spelling "名" :pattern r"…" :files [..] :within [..] :count N :why "…")` — DOEFF161・agora-redesign #1373・#1437)。
+/// :files に当たる file の本文(Hy と Python は註を落とす・文字列は数える)で :pattern の当たりを数える。:within があれば名指した定義ごとに数える。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct CountedSpelling {
+    /// 宣言の名(登録簿の鍵の細目)。
+    pub name: String,
+    pub pattern: String,
+    pub files: Vec<String>,
+    /// 数える定義の名(空 = :files の全体で 1 つの数)。
+    pub within: Vec<String>,
+    pub wanted: WantedCount,
+    /// なぜこの数か(知らせの文に入れる)。
+    pub why: String,
+    /// architecture.hy の中の位置(数える所が無い時の当たりの位置)。
+    #[serde(skip)]
+    pub range: doeff_indexer::hy_index::Range,
+}
+
 /// architecture.hy の全体。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct Architecture {
@@ -448,6 +492,9 @@ pub struct Architecture {
     /// 書いてよい file を決めた綴り(`:confined-spellings [(confined-spelling …) …]` — 空 = 宣言していない)。書けば DOEFF148 が
     /// :except の外でこの綴りを書く file を出す(agora-redesign #1373・#1436)。
     pub confined_spellings: Vec<ConfinedSpelling>,
+    /// 数を決めた綴り(`:counted-spellings [(counted-spelling …) …]` — 空 = 宣言していない)。書けば DOEFF161 が、:files(か :within の
+    /// 定義)の中の当たりの数が決めた数でない所を出す(agora-redesign #1373・#1437)。
+    pub counted_spellings: Vec<CountedSpelling>,
     /// handler の引数の決まり(書けば DOEFF142 が defhandler の引数の client・可変の店を出す — agora-redesign #1189 / #1366)。
     pub handler_arguments: Option<HandlerArguments>,
     /// 公開面の型の注記を読む file(`:typed-values {:files [..] :except [..]}`)。書けば DOEFF144 が、欄・戻り値・:post の型の素の写像・
@@ -788,6 +835,7 @@ impl<'a> Parser<'a> {
             retired_calls: Vec::new(),
             single_point_vocabulary: Vec::new(),
             confined_spellings: Vec::new(),
+            counted_spellings: Vec::new(),
             handler_arguments: None,
             typed_values: None,
             record_stubs: None,
@@ -849,6 +897,7 @@ impl<'a> Parser<'a> {
                 ":retired-calls" => arch.retired_calls = self.retired_calls(value),
                 ":single-point-vocabulary" => arch.single_point_vocabulary = self.single_point_vocabulary(value),
                 ":confined-spellings" => arch.confined_spellings = self.confined_spellings(value),
+                ":counted-spellings" => arch.counted_spellings = self.counted_spellings(value),
                 ":handler-arguments" => arch.handler_arguments = self.handler_arguments(value),
                 ":typed-values" => arch.typed_values = self.file_selection(value, ":typed-values"),
                 ":record-stubs" => arch.record_stubs = self.file_selection(value, ":record-stubs"),
@@ -1194,6 +1243,76 @@ impl<'a> Parser<'a> {
                 continue;
             }
             out.push(group);
+        }
+        out
+    }
+
+    /// `[(counted-spelling "名" :pattern r"…" :files [..] :within [..] :count N :why "…") …]` を読む(:pattern・:files・:why と、
+    /// :count か :at-least のどちらか 1 つは要る — :within は書かなくてよい = :files の全体で数える)。
+    fn counted_spellings(&mut self, value: &Form) -> Vec<CountedSpelling> {
+        let shape = "(counted-spelling \"名\" :pattern r\"…\" :files [..] :within [..] :count N | :at-least N :why \"…\")";
+        let Some(entries) = self.bracket(value) else {
+            self.problem(value, &format!(":counted-spellings は {} の列", shape));
+            return Vec::new();
+        };
+        let mut out: Vec<CountedSpelling> = Vec::new();
+        for entry in entries {
+            let parts = self.paren(entry).filter(|p| p.first().and_then(|h| self.symbol(h)) == Some("counted-spelling"));
+            let Some((name, head)) = parts.as_ref().and_then(|p| p.get(1)).and_then(|f| self.name(f).map(|n| (n, *f))) else {
+                self.problem(entry, &format!(":counted-spellings の要素は {}", shape));
+                continue;
+            };
+            let parts = parts.unwrap_or_default();
+            let range = self.lines.range(head.span.start, head.span.end);
+            let mut pattern: Option<String> = None;
+            let mut files: Vec<String> = Vec::new();
+            let mut within: Vec<String> = Vec::new();
+            let mut wanted: Vec<WantedCount> = Vec::new();
+            let mut why = String::new();
+            let rest: Vec<&Form> = parts.iter().skip(2).copied().collect();
+            for (key, field) in self.pairs(&rest) {
+                match self.text(key) {
+                    ":pattern" => {
+                        if let Some(text) = self.pattern(field, ":pattern") {
+                            match regex::Regex::new(&text) {
+                                Ok(_) => pattern = Some(text),
+                                Err(error) => self.problem(field, &format!("counted-spelling {} の正規表現 {} を読めない: {}", name, text, error)),
+                            }
+                        }
+                    }
+                    ":files" => files = self.path_globs(field, ":files"),
+                    ":within" => within = self.names(field, ":within"),
+                    key @ (":count" | ":at-least") => match self.text(field).parse::<usize>() {
+                        Ok(n) => wanted.push(if key == ":count" { WantedCount::Exactly(n) } else { WantedCount::AtLeast(n) }),
+                        Err(_) => self.problem(field, &format!("counted-spelling {} の {} は 0 以上の整数", name, key)),
+                    },
+                    ":why" => why = self.required_string(field, ":why").unwrap_or_default(),
+                    _ => self.unknown_key(key, "counted-spelling"),
+                }
+            }
+            let mut complete = true;
+            if pattern.is_none() {
+                self.problem(entry, &format!("counted-spelling {} に :pattern が無い", name));
+                complete = false;
+            }
+            if files.is_empty() {
+                self.problem(entry, &format!("counted-spelling {} に :files が無い(数える file の無い宣言は置かない)", name));
+                complete = false;
+            }
+            if wanted.len() != 1 {
+                self.problem(entry, &format!("counted-spelling {} には :count か :at-least のどちらか 1 つを書く", name));
+                complete = false;
+            }
+            if why.trim().is_empty() {
+                self.problem(entry, &format!("counted-spelling {} に :why(なぜこの数か)が無い", name));
+            }
+            if out.iter().any(|d| d.name == name) {
+                self.problem(entry, &format!("counted-spelling {} が 2 度宣言されている", name));
+                continue;
+            }
+            if let (true, Some(pattern), Some(&wanted)) = (complete, pattern, wanted.first()) {
+                out.push(CountedSpelling { name, pattern, files, within, wanted, why, range });
+            }
         }
         out
     }

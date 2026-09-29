@@ -175,6 +175,8 @@ pub enum Explain {
     VocabularyOutsideSinglePoint { group: String, count: usize, instead: String },
     /// DOEFF148: 書いてよい file を決めた綴り(群の名・理由・当たりの種類)。
     ConfinedSpelling { group: String, why: String, problem: super::confined_spellings::ConfinedProblem },
+    /// DOEFF161: 数を決めた綴り(宣言の名・理由・当たりの種類)。
+    CountedSpelling { group: String, why: String, problem: super::counted_spellings::CountProblem },
     /// DOEFF150: 使わないと決めた綴り(群の名・当たった綴り・代わりの語・:in names なら定義の名)。
     RetiredWord { group: String, spelling: String, instead: String, name: Option<String>, place: super::architecture::WordPlace },
     /// DOEFF151: 使わないと決めた呼び。
@@ -408,6 +410,19 @@ impl<'a> Narrator<'a> {
                 super::confined_spellings::ConfinedProblem::Missing => (
                     format!("綴りの群 {} の :files に当たる file が無い", group),
                     format!("読む file が 1 つも無いと、規則は何も見ずに緑になる(母集団 0 を緑にしない)。理由: {}", why),
+                ),
+            },
+            Explain::CountedSpelling { group, why, problem } => match problem {
+                super::counted_spellings::CountProblem::Mismatch { found, wanted, within } => (
+                    match within {
+                        Some(name) => format!("数を決めた綴り {} が定義 {} の中に {} か所({} のはず)", group, name, found, wanted.spelling()),
+                        None => format!("数を決めた綴り {} が {} か所({} のはず)", group, found, wanted.spelling()),
+                    },
+                    format!("この綴りの数は architecture.hy の :counted-spellings で決めてある。数が変わると、決めた口の外に同じ事をする所が増えたか、決めた口が消えている。理由: {}", why),
+                ),
+                super::counted_spellings::CountProblem::Missing { reason } => (
+                    format!("数を決めた綴り {} の数える所が無い({})", group, reason),
+                    format!("数える file や定義が無いと、規則は何も見ずに緑になる(母集団 0 を緑にしない)。理由: {}", why),
                 ),
             },
             Explain::RetiredWord { group, spelling, instead, name, place } => (

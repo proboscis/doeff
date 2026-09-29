@@ -237,6 +237,7 @@ impl Setup {
                     self.settings.architecture.as_ref().is_some_and(|a| !a.single_point_vocabulary.is_empty())
                 }
                 ProjectRule::SpellingOutsideItsFiles => self.settings.architecture.as_ref().is_some_and(|a| !a.confined_spellings.is_empty()),
+                ProjectRule::SpellingCountDiffers => self.settings.architecture.as_ref().is_some_and(|a| !a.counted_spellings.is_empty()),
                 ProjectRule::PlacedDependency => self.settings.architecture.as_ref().is_some_and(|a| !a.placed_dependencies.is_empty()),
                 ProjectRule::RetiredWord => self.settings.architecture.as_ref().is_some_and(|a| !a.retired_words.is_empty()),
                 ProjectRule::RetiredCall => self.settings.architecture.as_ref().is_some_and(|a| !a.retired_calls.is_empty()),

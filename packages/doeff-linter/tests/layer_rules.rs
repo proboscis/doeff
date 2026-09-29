@@ -2681,6 +2681,73 @@ fn confined_spelling_requires_patterns_files_and_why() {
     assert!(all.contains("confined-spelling b の正規表現 ( を読めない"), "{}", all);
 }
 
+/// agora-redesign #1373・#1437(DOEFF161): :counted-spellings の当たりの数が :count / :at-least に合わなければ 1 件、critical で出す。
+/// :within は名指した定義ごとに数え、無い定義は missing。Hy の註は数えず、yaml は拡張子を問わずそのまま読む。
+#[test]
+fn spelling_count_differs_is_red() {
+    let files = [
+        ("app/foundation/host.hy", tags("shared", "foundation") + "(defk with-host [body] body)\n"),
+        (
+            "app/billing/protocol/peer.hy",
+            "(defk send [x] (Req \"POST\" x)) ; \"POST\" は註\n\n(defk read [x] (Req \"POST\" (Req \"POST\" x)))\n".to_string(),
+        ),
+        ("app/billing/rules.yaml", "rules:\n  - id: one\n".to_string()),
+    ];
+    let dir = world_repo_with(&files, "", "[\"DOEFF161\"]");
+    let arch_path = dir.path().join("architecture.hy");
+    let text = std::fs::read_to_string(&arch_path).unwrap().replace(
+        ":foundation foundation",
+        ":foundation foundation\n  :counted-spellings [(counted-spelling \"posts\" :pattern r\"\\x22POST\\x22\" \
+         :files [\"app/billing/protocol/peer.hy\"] :count 2 :why \"書きは 2 つ\") \
+         (counted-spelling \"seats\" :pattern r\"\\x22POST\\x22\" :files [\"app/billing/protocol/peer.hy\"] \
+         :within [\"send\" \"read\" \"gone\"] :count 1 :why \"座ごとに 1 つ\") \
+         (counted-spelling \"rule-one\" :pattern r\"id: one\" :files [\"app/billing/rules.yaml\"] :at-least 1 :why \"規則の実在\") \
+         (counted-spelling \"rule-two\" :pattern r\"id: two\" :files [\"app/billing/rules.yaml\"] :at-least 1 :why \"規則の実在\")]",
+    );
+    std::fs::write(&arch_path, text).unwrap();
+    let (_, report) = editor(dir.path());
+    assert_eq!(
+        keys(&report, "DOEFF161"),
+        vec![
+            "app/billing/protocol/peer.hy::DOEFF161::posts",
+            "app/billing/protocol/peer.hy::DOEFF161::seats:read",
+            "app/billing/rules.yaml::DOEFF161::rule-two",
+            "architecture.hy::DOEFF161::seats:gone:missing",
+        ],
+        "{}",
+        report
+    );
+    let posts = violation(&report, "app/billing/protocol/peer.hy::DOEFF161::posts");
+    assert!(posts["message"].as_str().unwrap().contains("3 か所(ちょうど 2 のはず)"), "{}", posts["message"]);
+    assert_eq!(posts["level"], "critical");
+    let seat = violation(&report, "app/billing/protocol/peer.hy::DOEFF161::seats:read");
+    assert_eq!(seat["range"]["start"]["line"], 2);
+}
+
+/// :counted-spellings の必須の鍵が無ければ読み取りの誤り。:count と :at-least はどちらか 1 つ。
+#[test]
+fn counted_spelling_requires_pattern_files_one_count_and_why() {
+    let files = [("app/foundation/host.hy", tags("shared", "foundation") + "(defk with-host [body] body)\n")];
+    let dir = world_repo_with(&files, "", "[\"DOEFF161\"]");
+    let arch_path = dir.path().join("architecture.hy");
+    let text = std::fs::read_to_string(&arch_path).unwrap().replace(
+        ":foundation foundation",
+        ":foundation foundation\n  :counted-spellings [(counted-spelling \"a\") \
+         (counted-spelling \"b\" :pattern r\"x\" :files [\"x.hy\"] :count 1 :at-least 1 :why \"y\") \
+         (counted-spelling \"c\" :pattern r\"x\" :files [\"x.hy\"] :count many :why \"y\")]",
+    );
+    std::fs::write(&arch_path, text).unwrap();
+    let (code, stdout, stderr) = run(dir.path(), &["--no-log"], None);
+    let all = format!("{}{}", stdout, stderr);
+    assert_ne!(code, 0, "{}", all);
+    assert!(all.contains("counted-spelling a に :pattern が無い"), "{}", all);
+    assert!(all.contains("counted-spelling a に :files が無い"), "{}", all);
+    assert!(all.contains("counted-spelling a には :count か :at-least のどちらか 1 つを書く"), "{}", all);
+    assert!(all.contains("counted-spelling a に :why(なぜこの数か)が無い"), "{}", all);
+    assert!(all.contains("counted-spelling b には :count か :at-least のどちらか 1 つを書く"), "{}", all);
+    assert!(all.contains("counted-spelling c の :count は 0 以上の整数"), "{}", all);
+}
+
 /// agora-redesign #1318・#1410: 記録の client は HttpRequest の effect を出すだけ(送り方は EffectTransport 1 つ)— 実 HTTP は HttpRequest に
 /// 答える本物の handler(目録の http-production-handler)の側で数える。記録の client の handler(http-records-handler)は目録の「数えない」行。
 /// RecordsEndpoint を値として名指すだけ(型の注釈)の所も数えない。

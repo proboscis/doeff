@@ -1,4 +1,5 @@
-//! 宣言した file の集まりの本文を、註を落として読む共通の部品(DOEFF148 の :confined-spellings — agora-redesign #1373・#1436)。
+//! 宣言した file の集まりの本文を、註を落として読む共通の部品(DOEFF148 の :confined-spellings・DOEFF161 の :counted-spellings —
+//! agora-redesign #1373・#1436・#1437)。
 //!
 //! 群の `:files`(repo の根に錨を下ろした glob)に当たり `:except` に当たらない file を集め、拡張子ごとの註を落とした本文を返す。
 //! 文字列は落とさない — 外の口の動詞 `"POST"` や route の綴り `"/api/intake"` は文字列で書かれるので、文字列を数えない DOEFF146
@@ -15,26 +16,42 @@ const SKIPPED_DIRS: &[&str] = &["node_modules", "target", "__pycache__", "venv",
 /// 読む file の拡張子(Hy・Python・Python の型の宣言)。
 const READ_EXTENSIONS: &[&str] = &["hy", "py", "pyi"];
 
-/// 註の書き方(閉じた 2 つ)。
+/// 読む file の拡張子の選び方(閉じた 2 つ)。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Extensions {
+    /// Hy・Python・Python の型の宣言だけ(glob が dir を名指す群 — 設定や文書を拾わない)。
+    Code,
+    /// glob に当たる file を拡張子を問わず(名指した設定の file — semgrep の yaml など)。
+    Any,
+}
+
+/// 註の書き方(閉じた 3 つ)。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum CommentStyle {
     /// Hy: `;` から行末。文字列は `"…"`。
     Hy,
     /// Python: `#` から行末。文字列は `'…'`・`"…"`・三重の引用符。
     Python,
+    /// 註を落とさない(Hy と Python の外の file はそのまま読む)。
+    Plain,
 }
 
 fn style_of(rel: &str) -> CommentStyle {
     if rel.ends_with(".hy") {
         CommentStyle::Hy
-    } else {
+    } else if rel.ends_with(".py") || rel.ends_with(".pyi") {
         CommentStyle::Python
+    } else {
+        CommentStyle::Plain
     }
 }
 
-/// 註を空白に置き換えた本文(文字列はそのまま・行と列の位置は保つ)。
+/// 註を空白に置き換えた本文(文字列はそのまま・byte の位置と行は保つ — 定義の範囲を元の本文の byte で引くため)。
 pub fn code_text(rel: &str, source: &str) -> String {
     let style = style_of(rel);
+    if style == CommentStyle::Plain {
+        return source.to_string();
+    }
     let chars: Vec<char> = source.chars().collect();
     let mut out = String::with_capacity(source.len());
     // 開いている文字列の閉じの綴り(None = 文字列の外)。
@@ -64,10 +81,11 @@ pub fn code_text(rel: &str, source: &str) -> String {
         let comment = match style {
             CommentStyle::Hy => ch == ';',
             CommentStyle::Python => ch == '#',
+            CommentStyle::Plain => false,
         };
         if comment {
             while index < chars.len() && chars[index] != '\n' {
-                out.push(' ');
+                out.extend(std::iter::repeat_n(' ', chars[index].len_utf8()));
                 index += 1;
             }
             continue;
@@ -75,6 +93,7 @@ pub fn code_text(rel: &str, source: &str) -> String {
         let opens = match style {
             CommentStyle::Hy => ch == '"',
             CommentStyle::Python => ch == '"' || ch == '\'',
+            CommentStyle::Plain => false,
         };
         if opens {
             let triple = style == CommentStyle::Python && chars.get(index + 1) == Some(&ch) && chars.get(index + 2) == Some(&ch);
@@ -99,6 +118,11 @@ fn walk_base(glob: &str) -> String {
 
 /// `:files` に当たり `:except` に当たらない、読む拡張子の file(根からの path・path の順・重なりなし)。
 pub fn selected_files(root: &Path, files: &[String], except: &[String]) -> Vec<String> {
+    selected(root, files, except, Extensions::Code)
+}
+
+/// `:files` に当たり `:except` に当たらない file(拡張子の選び方を名指す)。
+pub fn selected(root: &Path, files: &[String], except: &[String], extensions: Extensions) -> Vec<String> {
     let mut rels: Vec<String> = Vec::new();
     for glob in files {
         let base = root.join(walk_base(glob));
@@ -113,7 +137,9 @@ pub fn selected_files(root: &Path, files: &[String], except: &[String]) -> Vec<S
             walker
                 .filter_map(Result::ok)
                 .filter(|entry| entry.file_type().is_file())
-                .filter(|entry| entry.path().extension().is_some_and(|e| READ_EXTENSIONS.iter().any(|x| e == *x)))
+                .filter(|entry| {
+                    extensions == Extensions::Any || entry.path().extension().is_some_and(|e| READ_EXTENSIONS.iter().any(|x| e == *x))
+                })
                 .filter_map(|entry| relative_path(root, entry.path()))
                 .filter(|rel| glob_matches(glob, rel))
                 .filter(|rel| !except.iter().any(|p| glob_matches(p, rel))),
@@ -150,6 +176,15 @@ mod tests {
         assert!(code.contains("# 中"), "三重の引用符の中は文字列: {}", code);
         assert!(!code.contains("open("), "{}", code);
         assert_eq!(code.lines().count(), 5);
+    }
+
+    #[test]
+    fn byte_positions_are_kept_and_other_files_are_read_as_they_are() {
+        let source = "; 日本語の註\n(f \"POST\")\n";
+        let code = code_text("a.hy", source);
+        assert_eq!(code.len(), source.len());
+        assert_eq!(code.find("\"POST\""), source.find("\"POST\""));
+        assert_eq!(code_text("a.yaml", "id: x # 註\n"), "id: x # 註\n");
     }
 
     #[test]

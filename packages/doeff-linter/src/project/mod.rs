@@ -29,6 +29,7 @@ pub mod test_forms;
 pub mod single_point_vocabulary;
 pub mod spelling_scope;
 pub mod confined_spellings;
+pub mod counted_spellings;
 pub mod retired;
 pub mod blind;
 pub mod allowed_heads;
@@ -312,6 +313,43 @@ pub fn run_with(root: &Path, settings: &ProjectSettings, enabled: &BTreeSet<Proj
                             detail: Some(detail),
                             base: Severity::Error,
                             explain: Explain::ConfinedSpelling { group: found.group, why: found.why, problem: found.problem },
+                            range: found.range,
+                            rel: found.rel,
+                        }
+                    }));
+                    report.errors.extend(errors);
+                }
+                // DOEFF161 も宣言の :files の glob の頭の dir だけを歩く(repo 全体は読まない)。
+                if enabled.contains(&ProjectRule::SpellingCountDiffers) && !architecture.counted_spellings.is_empty() {
+                    let architecture_rel = relative_path(root, &architecture.path).unwrap_or_else(|| "architecture.hy".to_string());
+                    let (found, errors) = crate::timing::timed("counted-spellings", || {
+                        counted_spellings::find(root, &architecture.counted_spellings, &architecture_rel)
+                    });
+                    drafts.extend(found.into_iter().map(|found| {
+                        let message = match &found.problem {
+                            counted_spellings::CountProblem::Mismatch { found: count, wanted, within: Some(name) } => format!(
+                                "{} — 数を決めた綴り {} が定義 {} の中に {} か所({} のはず)",
+                                found.rel,
+                                found.group,
+                                name,
+                                count,
+                                wanted.spelling()
+                            ),
+                            counted_spellings::CountProblem::Mismatch { found: count, wanted, within: None } => {
+                                format!("{} — 数を決めた綴り {} が {} か所({} のはず)", found.rel, found.group, count, wanted.spelling())
+                            }
+                            counted_spellings::CountProblem::Missing { reason } => {
+                                format!("{} — 数を決めた綴り {} の数える所が無い — {}", found.rel, found.group, reason)
+                            }
+                        };
+                        Draft {
+                            rule: ProjectRule::SpellingCountDiffers,
+                            layer: None,
+                            path: root.join(&found.rel),
+                            message,
+                            detail: Some(found.detail),
+                            base: Severity::Error,
+                            explain: Explain::CountedSpelling { group: found.group, why: found.why, problem: found.problem },
                             range: found.range,
                             rel: found.rel,
                         }
