@@ -31,6 +31,8 @@
 ;;; status には変わり続ける文(観測の理由・残り時間)を入れない(拍ごとに版と記録が進むため)。いまの観測は資源の表示で見せる。
 ;;; view(呼び手が作る): {"ready": Ready|NotReady|Unknown  "stopped": 真 / 偽 / None  "specReplicas": 宣言の台数 | None  "reason": …}
 ;;; Deployment の stopped は「宣言 0 かつ Pod 0(終了中を含む)」(api_policy.target-view)。
+;;; spec の検め(validate-target・validate-rollout-spec)は送り手の本文の誤りを BodyInvalid(400 — cluster_model)で断る。
+(import .cluster_model [BodyInvalid])
 
 (setv TERMINAL-PHASES #{"Complete" "RolledBack"})
 (setv DEFAULTS {"readyTimeoutSeconds" 300 "stopTimeoutSeconds" 180 "observeSeconds" 1800 "failAfterSeconds" 30
@@ -43,21 +45,21 @@
 
 
 (defn #^ dict validate-target [target #^ str label]
-  (when (not (isinstance target dict)) (raise (ValueError (+ label " は dict"))))
+  (when (not (isinstance target dict)) (raise (BodyInvalid (+ label " は dict"))))
   (setv kind (.get target "kind"))
   (cond
     (= kind "Service")
-      (do (when (not (isinstance (.get target "name") str)) (raise (ValueError (+ label ".name が要る"))))
+      (do (when (not (isinstance (.get target "name") str)) (raise (BodyInvalid (+ label ".name が要る"))))
           {"kind" "Service" "name" (get target "name")})
     (= kind "Deployment")
       (do (for [k #("namespace" "name")]
-            (when (not (isinstance (.get target k) str)) (raise (ValueError (.format "{}.{} が要る" label k)))))
+            (when (not (isinstance (.get target k) str)) (raise (BodyInvalid (.format "{}.{} が要る" label k)))))
           (setv replicas (.get target "replicas"))
           (when (and (is-not replicas None) (not (and (isinstance replicas int) (>= replicas 1))))
-            (raise (ValueError (+ label ".replicas は 1 以上"))))
+            (raise (BodyInvalid (+ label ".replicas は 1 以上"))))
           {"kind" "Deployment" "namespace" (get target "namespace") "name" (get target "name")
            "replicas" replicas "dryRun" (bool (.get target "dryRun" False))})
-    True (raise (ValueError (.format "{}.kind は Service か Deployment: {!r}" label kind)))))
+    True (raise (BodyInvalid (.format "{}.kind は Service か Deployment: {!r}" label kind)))))
 
 
 (defn #^ str target-key [#^ dict target]
@@ -68,11 +70,11 @@
 
 (defn #^ dict validate-rollout-spec [#^ dict spec]
   (setv from (validate-target (.get spec "from") "from") to (validate-target (.get spec "to") "to"))
-  (when (= (target-key from) (target-key to)) (raise (ValueError "from と to が同じ")))
+  (when (= (target-key from) (target-key to)) (raise (BodyInvalid "from と to が同じ")))
   (setv out (| DEFAULTS {"from" from "to" to "owner" (.get spec "owner")}))
   (for [k TIMEOUT-KEYS]
     (setv v (.get spec k (get DEFAULTS k)))
-    (when (not (and (isinstance v #(int float)) (>= v 0))) (raise (ValueError (+ k " は 0 以上の数"))))
+    (when (not (and (isinstance v #(int float)) (>= v 0))) (raise (BodyInvalid (+ k " は 0 以上の数"))))
     (setv (get out k) v))
   (setv (get out "markDeployment") (bool (.get spec "markDeployment" False))
         (get out "abort") (bool (.get spec "abort" False)))

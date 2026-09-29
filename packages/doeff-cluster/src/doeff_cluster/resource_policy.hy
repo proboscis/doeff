@@ -12,7 +12,7 @@
 (import dataclasses [replace])
 (import json)
 (import .cluster_model [ClusterState ClusterTiming Placement HandoffPhase UnplacedKind NotReadyKind VersionState VersionVerdict
-                        LiveProcess])
+                        LiveProcess BodyInvalid required-field int-field])
 (import .worker_model [spec-hash JobPhase])
 (import .cluster_policy [job-from-json job-to-json alive still-live-somewhere service-rows unplaced-kind unplaced-text task-summary])
 (import .rollout_policy [validate-rollout-spec rollout-targets target-key TERMINAL-PHASES])
@@ -146,8 +146,8 @@
 
 
 (defn #^ dict report-fields [#^ dict body #^ int now]
-  "報告の本文から、送り手の process の世代と時刻を取り出す(readiness と計器で同じ)。"
-  {"worker" (get body "worker") "pid" (.get body "pid") "revision" (get body "revision")
+  "報告の本文から、送り手の process の世代と時刻を取り出す(readiness と計器で同じ)。worker と revision の欠けは BodyInvalid(#1024)。"
+  {"worker" (required-field body "worker") "pid" (.get body "pid") "revision" (required-field body "revision")
    "instance" (.get body "instance") "attempt" (.get body "attempt") "specHash" (.get body "specHash")
    "placement" (.get body "placement") "at" now})
 
@@ -327,7 +327,7 @@
   ;; ready・reason・role の残す形は fake(readiness-memory)と同じ関数で揃える。role = active(仕事をしている)か standby(lease を
   ;; 他が持つ間の待機)。旧い報告は active。
   (setv report (| (report-fields body now)
-                  (run (reported-readiness (get body "ready") (.get body "reason" "") (.get body "role")))))
+                  (run (reported-readiness (required-field body "ready") (.get body "reason" "") (.get body "role")))))
   (replace state :readiness (| state.readiness {name (keep-report (.get state.readiness name) report)})))
 
 
@@ -494,8 +494,8 @@
 
 
 (defn #^ dict events-view [#^ ClusterState state #^ dict query]
-  (setv kind (.get query "kind") name (.get query "name") since (int (.get query "since" 0))
-        limit (min (int (.get query "limit" 200)) 2000))
+  (setv kind (.get query "kind") name (.get query "name") since (int-field query "since" 0)
+        limit (min (int-field query "limit" 200) 2000))
   (setv rows (lfor e state.audit
                    :if (and (> (get e "seq") since) (or (not kind) (= (get e "kind") kind)) (or (not name) (= (get e "name") name)))
                    e))
@@ -520,8 +520,17 @@
                name)))
 
 
+(defn #^ dict spec-of-body [#^ dict body]
+  ;; defk にできない: 資源の書きの口(Program の外の純粋な判断)が呼ぶ
+  "書きの本文の spec(無ければ空)を JSON の object として読むため — object でない spec は BodyInvalid(送り手の誤り・400 — #1024)。"
+  (setv spec (.get body "spec" {}))
+  (when (not (isinstance spec dict))
+    (raise (BodyInvalid (.format "spec は JSON の object: {!r}" spec))))
+  (dict spec))
+
+
 (defn #^ ClusterState create-resource [#^ ClusterState state #^ str kind #^ dict body #^ str actor #^ int now]
-  (setv name (get body "name") spec (dict (.get body "spec" {})))
+  (setv name (required-field body "name") spec (spec-of-body body))
   (when (not (and (isinstance name str) name (not-in "/" name))) (refuse 400 (.format "名前が正しくない: {!r}" name)))
   (setv owner (or (valid-actor (.get spec "owner")) actor))
   (cond
@@ -548,7 +557,7 @@
 
 
 (defn #^ ClusterState update-resource [#^ ClusterState state #^ str kind #^ str name #^ dict body #^ str actor]
-  (setv key (key-of kind name) spec (dict (.get body "spec" {})))
+  (setv key (key-of kind name) spec (spec-of-body body))
   (cond
     (= kind "Service")
       (do (setv current (next (gfor j state.jobs :if (= j.spec.name name) j) None))
@@ -584,7 +593,7 @@
 (defn #^ ClusterState delete-resource [#^ ClusterState state #^ str kind #^ str name #^ dict query #^ str actor
                                       #^ int now #^ ClusterTiming timing]
   (setv key (key-of kind name) force (in (.get query "force" "") #("true" "1"))
-        version (if (in "resourceVersion" query) (int (get query "resourceVersion")) None))
+        version (if (in "resourceVersion" query) (int-field query "resourceVersion" None) None))
   (check-version state key version :required False)
   (cond
     (= kind "Service")
@@ -629,6 +638,15 @@
    - 行に resourceVersion が無ければ、無い Service を作るだけ(在って中身が違えば競合)。中身が同じなら何もしない。
    - 一覧に無い Service は消さない(消すのは DELETE だけ)。返事の untouched に並べる。
    - 1 行でも競合すれば何も書かない(全部か無しか)。返事 409 に行ごとの理由。"
+  ;; 行の列の形の誤り(list でない・object でない行・名の無い行)は送り手の誤り(BodyInvalid・400 — #1024)。
+  (when (not (isinstance rows list))
+    (raise (BodyInvalid (.format "jobs は宣言の行の列: {!r}" rows))))
+  (for [row rows]
+    (when (not (isinstance row dict))
+      (raise (BodyInvalid (.format "jobs の行は JSON の object: {!r}" row))))
+    (setv row-name (required-field row "name"))
+    (when (not (and (isinstance row-name str) row-name))
+      (raise (BodyInvalid (.format "jobs の行の名前は空でない文字列: {!r}" row-name)))))
   (setv current (dfor j state.jobs j.spec.name j) jobs (list state.jobs) conflicts [] results {})
   (for [row rows]
     (setv name (get row "name") have (.get current name) version (.get row "resourceVersion"))

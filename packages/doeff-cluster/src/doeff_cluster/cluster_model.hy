@@ -45,18 +45,18 @@
 (deff capabilities-of [value #^ str what]  ; defk にできない: 宣言・heartbeat・保存の JSON を読む境界(Program の外)が呼ぶ
   {:pre [(: value (| list tuple set frozenset dict str int float bool None)) (: what str)] :post [(: % tuple)] :tags {:context "doeff-cluster" :role "judgment"}}
   "JSON の能力の名の列(list・tuple・frozenset)→ 名の順の重なりの無い tuple(比べる時に順が揃う)。旧い形(label の object)や
-   名として受けられない値は ValueError(what = 誤りの文の欄の名)。"
+   名として受けられない値は BodyInvalid(送り手の誤り — ValueError の子)(what = 誤りの文の欄の名)。"
   (when (isinstance value dict)
-    (raise (ValueError (.format "{} が label の object {!r} — 旧い requires / labels の形は受け付けない。能力の名の列で書く(ADR-DOE-CLUSTER-001 R4b)"
+    (raise (BodyInvalid (.format "{} が label の object {!r} — 旧い requires / labels の形は受け付けない。能力の名の列で書く(ADR-DOE-CLUSTER-001 R4b)"
                                 what value))))
   (when (not (isinstance value #(list tuple set frozenset)))
-    (raise (ValueError (.format "{} は能力の名の列: {!r}" what value))))
+    (raise (BodyInvalid (.format "{} は能力の名の列: {!r}" what value))))
   (for [name value]
     (when (not (isinstance name str))
-      (raise (ValueError (.format "{}: 能力の名は文字列: {!r}" what name))))
+      (raise (BodyInvalid (.format "{}: 能力の名は文字列: {!r}" what name))))
     (setv problem (capability-refusal name))
     (when (is-not problem None)
-      (raise (ValueError (.format "{}: {}" what problem)))))
+      (raise (BodyInvalid (.format "{}: {}" what problem)))))
   (tuple (sorted (set value))))
 
 
@@ -527,6 +527,43 @@
   (setv #^ str peer ""))
 
 
+(defclass BodyInvalid [ValueError]
+  "送り手の要求の本文の誤り(欠けた欄・受けられない値・旧い形)。受け口(api_policy.respond)はこれと resource_policy.Refused だけを
+   400 にし、それ以外の例外は coordinator の中の欠陥(Fault・500 と log の 1 行)にする(#1024 — #1005 では中の
+   TypeError が 400 に畳まれ、log にも出ずに原因の特定が遅れた)。ValueError の子なので、同じ検めを保存の行や起動の引数で呼ぶ所の
+   except ValueError はそのまま受ける。")
+
+
+(deff required-field [#^ dict body #^ str key]  ; defk にできない: 受け口の本文の読み(Program の外の純粋な判断)が呼ぶ
+  {:pre [(: body dict) (: key str)] :post [(: % (| dict list str int float bool None))] :tags {:context "doeff-cluster" :role "judgment"}}
+  "送り手の本文の必須の欄の値 — 欄が無ければ BodyInvalid(送り手の誤り・400)。(get body 欄) の KeyError に頼ると、受け口は
+   送り手の欠けと coordinator の中の KeyError を分けられない(#1024)。値は null でもよい(在ることだけを検める)。"
+  (when (not-in key body)
+    (raise (BodyInvalid (.format "本文に {} が無い" key))))
+  (get body key))
+
+
+(deff int-field [#^ dict fields #^ str key default]  ; defk にできない: 受け口の本文・query の読み(Program の外の純粋な判断)が呼ぶ
+  {:pre [(: fields dict) (: key str) (: default (| int None))] :post [(: % int)] :tags {:context "doeff-cluster" :role "judgment"}}
+  "送り手の本文・query の整数の欄(無ければ default)を int に読む — 読めない値(数でない文字列・object など)は BodyInvalid
+   (送り手の誤り・400)。読み方は int() のまま(小数は切り捨て・数字の文字列は数)。"
+  (setv value (.get fields key default))
+  (try
+    (int value)
+    (except [error [ValueError TypeError]]
+      (raise (BodyInvalid (.format "{} は整数: {!r}" key value))))))
+
+
+(defclass [(dataclass :frozen True)] Fault []
+  "coordinator の中の欠陥(要求の処理の中で上がった、送り手の誤りでない例外)の閉じた答えの形。受け口は 500 と本文
+   {\"error\" …} で返し、coordinator は CoordinatorFault で log に 1 行出す。where = 例外が上がった所(file:行 関数)。"
+  (#^ str method)
+  (#^ str path)
+  (#^ str error-type)
+  (#^ str message)
+  (#^ str where))
+
+
 (defclass [(dataclass :frozen True)] PlainText []
   "JSON でない返事の本文(GET /metrics の Prometheus の text)。HTTP の handler は content-type をそのまま付けて text を返す。"
   (#^ str text)
@@ -546,6 +583,12 @@
   (#^ Request request)
   (#^ int status)
   (#^ object body))
+
+
+(defclass [(dataclass :frozen True)] CoordinatorFault [EffectBase]
+  "coordinator の中の欠陥(Fault)を log に 1 行出す。結果は None。本番の受け口(coordinator_inbox.http-requests)は stderr へ、
+   模擬の受け口(coordinator_handler_sets.queued-requests)は列の faults へ書く。"
+  (#^ Fault fault))
 
 
 (defclass [(dataclass :frozen True)] Persist [EffectBase]

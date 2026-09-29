@@ -27,8 +27,10 @@
 ;;; 書きには header X-Actor(依頼の主体の id・作業係の名・worker の名)が要る。盤と task は無ければ送り元の番地で記録する。
 ;;; 旧い口(PUT /jobs・/heartbeat・/board・/tasks)は残す。PUT /jobs は資源ごとの compare-and-set に写す(resource_policy)。
 (import dataclasses [replace])
+(import os.path [basename])
+(import traceback [extract-tb])
 (import urllib.parse [unquote :as url-unquote])
-(import .cluster_model [ClusterState ClusterTiming ClusterNaming Request PlainText format-refusal])
+(import .cluster_model [ClusterState ClusterTiming ClusterNaming Request PlainText BodyInvalid Fault format-refusal required-field])
 (import .metrics_policy [record-metrics metrics-text])
 (import .cluster_policy [reconcile register-heartbeat heartbeat-reply state-view submit-task poll-task board-write lease-write
                          other-generation-boot])
@@ -282,12 +284,12 @@
       ;; --- 旧い口 ---
       (and (= method "PUT") (= parts ["jobs"]))
         (do (setv actor (require-actor (or request.actor (.get body "actor"))))
-            (setv #(after status reply) (legacy-put-jobs state (get body "jobs") actor))
+            (setv #(after status reply) (legacy-put-jobs state (required-field body "jobs") actor))
             #((if (is after state) state (settle state after actor now timing)) status reply))
       (and (= method "POST") (= parts ["heartbeat"]) (is-not (format-refusal body) None))
         #(state 400 {"error" (format-refusal body)})
       (and (= method "POST") (= parts ["heartbeat"]))
-        (do (setv name (get body "name"))
+        (do (setv name (required-field body "name"))
             (setv after (settle state (register-heartbeat state body now) name now timing))
             #(after 200 (heartbeat-reply after name timing (ready-instances after name now timing) :now now
                                          :boot (.get body "boot") :statuses (.get body "statuses" []))))
@@ -351,5 +353,12 @@
       True #(state 404 {"error" (.format "知らない要求: {} {}" method request.path)}))
     (except [refused Refused]
       #(state refused.status refused.body))
-    (except [error [KeyError TypeError ValueError AttributeError]]
-      #(state 400 {"error" (.format "{}: {}" (. (type error) __name__) error)}))))
+    (except [invalid BodyInvalid]
+      #(state 400 {"error" (str invalid)}))
+    ;; 送り手の誤りの型(Refused・BodyInvalid)でない例外は coordinator の中の欠陥 — 400 に畳まず 500 の Fault で返す。状態は受ける前の
+    ;; まま(途中まで進めた変化を残さない)。log の 1 行は coordinator-step が CoordinatorFault で出す(#1024)。
+    ;; where = 例外が上がった一番内側の所(file:行 関数)。
+    (except [error Exception]
+      (setv inner (get (extract-tb error.__traceback__) -1))
+      #(state 500 (Fault method request.path (. (type error) __name__) (str error)
+                         (.format "{}:{} {}" (basename inner.filename) inner.lineno inner.name))))))
