@@ -4,14 +4,17 @@
 ;;; TDD red first(2026-08-06): このファイルは新契約を assert する — 実装前は
 ;;; module import(新 effect 語彙 TmuxPaneSessionName / SessionStoreListCleanupPending)
 ;;; の時点で失敗する。fake substrate は sessionhost_policy_deftests.hy と同型
-;;; (dict-backed store・台本 tmux・固定 clock)+ pane 帰属台帳(R4)と
+;;; (package の memory の置き場 memory-session-store・台本 tmux・固定 clock)+ pane 帰属台帳(R4)と
 ;;; cleanup-pending 一覧(R5)を加えたもの。
 
 (require doeff-hy.macros [deftest defk deff <- defhandler])
 
-(import dataclasses [replace])
 (import datetime [datetime timezone timedelta])
 (import json)
+(import doeff [Program run with_handlers])
+(import doeff_core_effects.handlers [state])
+(import doeff_agents.sessionhost.store_memory [MemorySessionRows memory-session-store])
+(import memory_store_world [StoreWorld kept-in seeded reported])
 (import os)
 (import shutil)
 (import tempfile)
@@ -25,13 +28,6 @@
   ClassifyPane
   DeliverMessage
   DiscoverConversation
-  SessionStoreListActive
-  SessionStoreListCleanupPending
-  SessionStoreGet
-  SessionStoreUpsert
-  SessionStoreResultPayload
-  SessionStoreRecordEvent
-  SessionStoreKnownConversationIds
   TmuxHasSession
   TmuxPaneCurrentCommand
   TmuxSessionPaneIds
@@ -42,7 +38,6 @@
   ProcRun])
 (import doeff_agents.sessionhost.policy [
   ACTIVE-STATUSES
-  TERMINAL-STATUSES
   RESULT-SOLICITATION-MESSAGE
   tail-chars
   tail-lower
@@ -63,10 +58,12 @@
 ;; fake substrate world(policy deftests と同型 + pane 帰属 + cleanup-pending)
 ;; ---------------------------------------------------------------------------
 
-(defclass FakeWorld []
+(defclass FakeWorld [StoreWorld]
   (defn __init__ [self]
+    ;; 置き場は package の memory-session-store(SQLite の store と同じ契約の fake)。rows / events は走りの後の写し
+    ;; (memory_store_world.hy の remember-store が書く — 検は読むだけ)。
+    (setv self.store (MemorySessionRows))
     (setv self.rows {})
-    (setv self.result-payloads {})
     (setv self.events [])
     (setv self.frames {})
     (setv self.pane-commands {})
@@ -114,7 +111,7 @@
 
 (defn seed [world row #** kw]
   "row を store に置き、tmux session / pane / フレーム / pane 帰属を生かす。"
-  (setv (get world.rows row.session-id) row)
+  (run (seeded world row))
   (.add world.tmux-sessions row.session-name)
   (setv (get world.pane-commands row.pane-id) (.get kw "pane_command" "codex"))
   (setv (get world.pane-sessions row.pane-id) row.session-name)
@@ -148,44 +145,8 @@
 
 
 (defhandler fake-substrate [world]
-  (SessionStoreListActive []
-    (resume (lfor r (list (.values world.rows)) :if (in r.status ACTIVE-STATUSES) r)))
-
-  (SessionStoreListCleanupPending []
-    ;; R5 の対象集合: 終端 ∧ cleaned_at 未刻印 ∧ RTC ∧ 非 adopted。
-    (resume (lfor r (list (.values world.rows))
-                  :if (and (in r.status TERMINAL-STATUSES)
-                           (is r.cleaned-at None)
-                           (= r.lifecycle "run_to_completion")
-                           (not r.adopted))
-                  r)))
-
-  (SessionStoreGet [session-id]
-    (resume (.get world.rows session-id)))
-
-  (SessionStoreUpsert [row]
-    (setv existing (.get world.rows row.session-id))
-    (when (and (is-not existing None)
-               (is-not existing.result-payload None)
-               (is None row.result-payload))
-      (setv row (replace row :result-payload existing.result-payload)))
-    (setv (get world.rows row.session-id) row)
-    (resume None))
-
-  (SessionStoreResultPayload [session-id]
-    (resume (.get world.result-payloads session-id)))
-
-  (SessionStoreKnownConversationIds []
-    (resume (sorted (sfor r (list (.values world.rows))
-                          :if (is-not r.conversation None)
-                          (get r.conversation "session_id")))))
-
   (DiscoverConversation [agent-type params]
     (resume world.discovered))
-
-  (SessionStoreRecordEvent [session-id event-type row]
-    (.append world.events #(session-id event-type))
-    (resume None))
 
   (TmuxHasSession [session-name]
     (.append world.has-session-calls session-name)
@@ -227,10 +188,18 @@
     (resume None)))
 
 
+(defk under-world [world program]
+  {:pre [(: world FakeWorld) (: program Program)] :post [(: % "program の答え(型は program ごと)")]}
+  "fake の土台(fake-substrate)と package の memory の置き場(memory-session-store — SQLite の store と同じ契約の fake)の下で program を
+   走らせ、走った後(落ちた時も)の置き場を world へ写すため。"
+  (<- answer (with_handlers [(state) (memory-session-store world.store) (fake-substrate world)] (kept-in world program)))
+  answer)
+
+
 (defk run-cycle [world knobs]
   {:pre [(: world FakeWorld) (: knobs MonitorKnobs)]
    :post [(: % dict)]}
-  (<- outcomes ((fake-substrate world) (monitor-cycle knobs)))
+  (<- outcomes (under-world world (monitor-cycle knobs)))
   outcomes)
 
 
@@ -531,7 +500,7 @@
   ;; done は同 cycle に kill + cleaned_at 刻印のまま。
   (setv world (FakeWorld))
   (seed world (make-row world) :frame F-ACTIVE-CODEX)
-  (setv (get world.result-payloads "s1") "{\"ok\": true}")
+  (<- (reported world "s1" "{\"ok\": true}"))
   (<- outcomes (run-cycle world (MonitorKnobs)))
   (setv row (get world.rows "s1"))
   (assert (= row.status "done"))

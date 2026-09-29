@@ -1,17 +1,20 @@
 ;;; 直接束縛 deftest: session-host 共有 policy program の全分岐検証(DOE-004 C1)。
 ;;;
-;;; daemon 不要 — fake substrate handler(dict-backed SessionStore・F-* フレーム
-;;; 台本 Tmux・固定 Clock・台本 judge Proc)で policy program を直接束縛して回す。
+;;; daemon 不要 — fake substrate handler(F-* フレーム台本 Tmux・固定 Clock・台本 judge Proc)と
+;;; package の memory の置き場(memory-session-store — SQLite の store と同じ契約の fake)で policy program を直接束縛して回す。
 ;;; フレーム語彙・TerminalCause 表・knob 表・文言は conformance README
 ;;; (packages/doeff-agents/conformance/README.md、CONTRACT FIXED 2026-07-05)から
 ;;; verbatim 転記。oracle: agentd-rust-final:src/main.rs monitor_once。
 
 (require doeff-hy.macros [deftest defk deff <- defhandler])
 
-(import dataclasses [replace])
 (import datetime [datetime timezone timedelta])
 (import json)
 (import pytest)
+(import doeff [Program run with_handlers])
+(import doeff_core_effects.handlers [state])
+(import doeff_agents.sessionhost.store_memory [MemorySessionRows memory-session-store])
+(import memory_store_world [StoreWorld kept-in seeded reported])
 
 (import doeff_agents.sessionhost.effects [
   SessionRow
@@ -26,12 +29,8 @@
   DeliverMessage
   WireResultChannel
   SessionStoreListActive
-  SessionStoreListCleanupPending
   SessionStoreGet
-  SessionStoreUpsert
   SessionStoreResultPayload
-  SessionStoreRecordEvent
-  SessionStoreKnownConversationIds
   DiscoverConversation
   ProbeConversationActivity
   TmuxHasSession
@@ -61,7 +60,6 @@
   proc-run])
 (import doeff_agents.sessionhost.policy [
   ACTIVE-STATUSES
-  TERMINAL-STATUSES
   RESULT-SOLICITATION-MESSAGE
   TERMINAL-CAUSE-RETRYABLE
   make-cause
@@ -98,13 +96,15 @@
 
 
 ;; ---------------------------------------------------------------------------
-;; fake substrate world(dict-backed store・台本 tmux・固定 clock)
+;; fake substrate world(package の memory の置き場・台本 tmux・固定 clock)
 ;; ---------------------------------------------------------------------------
 
-(defclass FakeWorld []
+(defclass FakeWorld [StoreWorld]
   (defn __init__ [self]
+    ;; 置き場は package の memory-session-store(SQLite の store と同じ契約の fake)。rows / events は走りの後の写し
+    ;; (memory_store_world.hy の remember-store が書く — 検は読むだけ)。
+    (setv self.store (MemorySessionRows))
     (setv self.rows {})                ;; session-id -> SessionRow
-    (setv self.result-payloads {})     ;; session-id -> report_result payload(json str)
     (setv self.events [])              ;; [(session-id, event-type)]
     (setv self.frames {})              ;; pane-id -> 現在のフレーム(F-*)
     (setv self.pane-commands {})       ;; pane-id -> foreground command
@@ -160,7 +160,7 @@
 
 (defn seed [world row #** kw]
   "row を store に置き、tmux session / pane / フレーム / pane 帰属を生かす。"
-  (setv (get world.rows row.session-id) row)
+  (run (seeded world row))
   (.add world.tmux-sessions row.session-name)
   (setv (get world.pane-commands row.pane-id) (.get kw "pane_command" "codex"))
   (setv (get world.pane-sessions row.pane-id) row.session-name)
@@ -228,42 +228,8 @@
 
 
 (defhandler fake-substrate [world]
-  "直接束縛用 fake handler: substrate(SessionStore / Tmux / Clock / Proc)+
-   monitor policy が yield する interface effect(ClassifyPane / DeliverMessage)。"
-
-  (SessionStoreListActive []
-    (resume (lfor r (list (.values world.rows)) :if (in r.status ACTIVE-STATUSES) r)))
-
-  (SessionStoreListCleanupPending []
-    ;; ADR-010 R5 の対象集合: 終端 ∧ cleaned_at 未刻印 ∧ RTC ∧ 非 adopted。
-    (resume (lfor r (list (.values world.rows))
-                  :if (and (in r.status TERMINAL-STATUSES)
-                           (is r.cleaned-at None)
-                           (= r.lifecycle "run_to_completion")
-                           (not r.adopted))
-                  r)))
-
-  (SessionStoreGet [session-id]
-    (resume (.get world.rows session-id)))
-
-  (SessionStoreUpsert [row]
-    ;; COALESCE 規律(main.rs:2339): upsert は永続化済み result-payload を消せない
-    (setv existing (.get world.rows row.session-id))
-    (when (and (is-not existing None)
-               (is-not existing.result-payload None)
-               (is None row.result-payload))
-      (setv row (replace row :result-payload existing.result-payload)))
-    (setv (get world.rows row.session-id) row)
-    (resume None))
-
-  (SessionStoreResultPayload [session-id]
-    (resume (.get world.result-payloads session-id)))
-
-  (SessionStoreKnownConversationIds []
-    ;; ADR-006 発見 arm の除外集合。fake world は rows の conversation から導出。
-    (resume (sorted (sfor r (list (.values world.rows))
-                          :if (is-not r.conversation None)
-                          (get r.conversation "session_id")))))
+  "直接束縛用 fake handler: substrate(Tmux / Clock / Proc)+ monitor policy が yield する
+   interface effect(ClassifyPane / DeliverMessage)。SessionStore は外側の memory-session-store が答える(under-world)。"
 
   (DiscoverConversation [agent-type params]
     ;; 発見物理は impls の所有(sessionhost_resume_deftests が実 impl を検査
@@ -276,10 +242,6 @@
     ;; None = probe 不能の fallback 面)。ADR-002 R-conversation-evidence。
     (setv conv (or (.get params "conversation") {}))
     (resume (.get world.conversation-mtimes (.get conv "session_id"))))
-
-  (SessionStoreRecordEvent [session-id event-type row]
-    (.append world.events #(session-id event-type))
-    (resume None))
 
   (TmuxHasSession [session-name]
     (.append world.has-session-calls session-name)
@@ -326,10 +288,18 @@
     (resume None)))
 
 
+(defk under-world [world program]
+  {:pre [(: world FakeWorld) (: program Program)] :post [(: % "program の答え(型は program ごと)")]}
+  "fake の土台(fake-substrate)と package の memory の置き場(memory-session-store — SQLite の store と同じ契約の fake)の下で program を
+   走らせ、走った後(落ちた時も)の置き場を world へ写すため。"
+  (<- answer (with_handlers [(state) (memory-session-store world.store) (fake-substrate world)] (kept-in world program)))
+  answer)
+
+
 (defk run-cycle [world knobs]
   {:pre [(: world FakeWorld) (: knobs MonitorKnobs)]
    :post [(: % dict)]}
-  (<- outcomes ((fake-substrate world) (monitor-cycle knobs)))
+  (<- outcomes (under-world world (monitor-cycle knobs)))
   outcomes)
 
 
@@ -356,7 +326,7 @@
 (deftest test-golden-result-first-done
   (setv world (FakeWorld))
   (seed world (make-row world) :frame F-ACTIVE-CODEX)
-  (setv (get world.result-payloads "s1") "{\"ok\": true}")
+  (<- (reported world "s1" "{\"ok\": true}"))
   (<- outcomes (run-cycle world (MonitorKnobs)))
   (setv row (get world.rows "s1"))
   ;; result-first: turn-end を経ずとも報告済み payload が終端を勝ち取る
@@ -372,7 +342,7 @@
   (setv world (FakeWorld))
   (seed world (make-row world :output-snippet (tail-chars F-IDLE-CODEX 500))
         :frame F-IDLE-CODEX)
-  (setv (get world.result-payloads "s1") "{\"ok\": true}")
+  (<- (reported world "s1" "{\"ok\": true}"))
   (<- outcomes (run-cycle world (MonitorKnobs)))
   (setv row (get world.rows "s1"))
   (assert (= row.status "done"))
@@ -1412,7 +1382,7 @@
   (setv world (FakeWorld))
   (seed world (make-row world) :frame F-IDLE-CODEX)
   (.discard world.tmux-sessions "doeff-s1")
-  (setv (get world.result-payloads "s1") "{\"ok\": true}")
+  (<- (reported world "s1" "{\"ok\": true}"))
   (<- outcomes (run-cycle world (MonitorKnobs)))
   (setv row (get world.rows "s1"))
   (assert (= row.status "done"))
@@ -1586,7 +1556,7 @@
   (seed world (make-row world :session-id "good" :session-name "doeff-good" :pane-id "%2")
         :frame F-ACTIVE-CODEX)
   (.add world.broken-panes "%9")
-  (setv (get world.result-payloads "good") "{\"ok\": true}")
+  (<- (reported world "good" "{\"ok\": true}"))
   (<- outcomes (run-cycle world (MonitorKnobs)))
   (assert (= (get outcomes "bad") "error:RuntimeError"))
   (assert (= (get outcomes "good") "done"))
@@ -1757,10 +1727,10 @@
   ;; (launch の prompt 配送・催促と同じ latch)。既定(false)は今日どおりキー配送だけ。
   (setv world (FakeWorld))
   (seed-warm world)
-  (<- plain ((fake-substrate world) (send-program "s1" "hello" True True False)))
+  (<- plain (under-world world (send-program "s1" "hello" True True False)))
   (assert (= (. (get world.rows "s1") awaiting-response) False))
   (assert (= (len world.sent-keys) 1))
-  (<- armed ((fake-substrate world) (send-program "s1" "hello" True True True)))
+  (<- armed (under-world world (send-program "s1" "hello" True True True)))
   (setv row (get world.rows "s1"))
   (assert (= row.awaiting-response True))
   (assert (= row.awaiting-response-since (iso-at world 0)))

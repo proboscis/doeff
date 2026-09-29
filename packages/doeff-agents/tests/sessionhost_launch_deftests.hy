@@ -22,7 +22,8 @@
 ;;;     可能性 probe の消費と消去。不成立は閉語彙 class つきで終端
 ;;;   - 実効 identity の session 行永続化(S14 の Hy positive 化)
 ;;;
-;;; fake substrate(台本 tmux capture・進む clock・dict store)+ 両 impl を
+;;; fake substrate(台本 tmux capture・進む clock)+ package の memory の置き場(memory-session-store —
+;;; SQLite の store と同じ契約の fake)+ 両 impl を
 ;;; 直接束縛して launch-session を回す。生 IO ゼロ。
 
 (require doeff-hy.macros [deftest defk deff <- defhandler])
@@ -30,13 +31,14 @@
 (import datetime [datetime timezone timedelta])
 (import json)
 (import pytest)
+(import doeff [Program run with_handlers])
+(import doeff_core_effects.handlers [state])
+(import doeff_agents.sessionhost.store_memory [MemorySessionRows ReadMemorySessionRows memory-session-store stored-rows])
+(import memory_store_world [StoreWorld kept-in seeded])
 
 (import doeff_agents.sessionhost.effects [
   SessionRow
-  SessionStoreGet
   SessionStoreUpsert
-  SessionStoreRecordEvent
-  SessionStoreListActive
   TmuxHasSession
   TmuxNewSession
   TmuxCapture
@@ -69,7 +71,6 @@
   EnvGet
   LogLine])
 (import doeff_agents.sessionhost.effects [READY-PROBE-TEXT])
-(import doeff_agents.sessionhost.policy [ACTIVE-STATUSES])
 (import doeff_agents.sessionhost.impls.claude_code [claude-code-impl])
 (import doeff_agents.sessionhost.impls.codex [codex-impl])
 (import doeff_agents.sessionhost.launch [
@@ -82,8 +83,11 @@
 ;; fake world(台本 capture・進む clock・記録一式)
 ;; ---------------------------------------------------------------------------
 
-(defclass LaunchWorld []
+(defclass LaunchWorld [StoreWorld]
   (defn __init__ [self]
+    ;; 置き場は package の memory-session-store。rows / events は走りの後の写し(memory_store_world.hy の
+    ;; remember-store が書く — 検は読むだけ)。
+    (setv self.store (MemorySessionRows))
     (setv self.rows {})
     (setv self.events [])
     (setv self.tmux-sessions (set))
@@ -130,11 +134,6 @@
 
 
 (defhandler fake-launch-substrate [world]
-  (SessionStoreGet [session-id]
-    (resume (.get world.rows session-id)))
-  (SessionStoreListActive []
-    (resume (lfor r (list (.values world.rows))
-                  :if (in r.status ACTIVE-STATUSES) r)))
   (FsListDir [path]
     (resume (sorted (.get world.listings path []))))
   (LogLine [text]
@@ -242,12 +241,9 @@
     (.append world.trace #("file-exists" path))
     (resume (or (in path world.fs) (in path world.links))))
   (SessionStoreUpsert [row]
+    ;; 書きの順を痕跡に残し、書きそのものは外側の memory-session-store へ渡す。
     (.append world.trace #("upsert" row.session-id))
-    (setv (get world.rows row.session-id) row)
-    (resume None))
-  (SessionStoreRecordEvent [session-id event-type row]
-    (.append world.events #(session-id event-type))
-    (resume None))
+    (reperform effect))
   (TmuxHasSession [session-name]
     (resume (in session-name world.tmux-sessions)))
   (TmuxNewSession [session-name work-dir env]
@@ -260,8 +256,10 @@
     ;; しか呼ばれない — capture 時点の store 可視状態({sid: status})を trace に
     ;; 積むと「ready 待ち中に外部から何が見えたか」がそのまま assert できる
     ;; (issue agentd-session-registration-after-ready-gate の観測点)。
+    (<- live MemorySessionRows (ReadMemorySessionRows))
+    (<- visible dict (stored-rows live))
     (.append world.trace
-             #("capture" (dfor [k v] (.items world.rows) k v.status)))
+             #("capture" (dfor [k v] (.items visible) k v.status)))
     (setv world.captures (+ world.captures 1))
     (setv frame (if world.capture-script
                     (if (> (len world.capture-script) 1)
@@ -395,10 +393,18 @@
                               :detail "symlink: ENOSPC No space left on device"))))
 
 
+(defk under-world [world program]
+  {:pre [(: world LaunchWorld) (: program Program)] :post [(: % "program の答え(型は program ごと)")]}
+  "fake の土台(fake-launch-substrate)と package の memory の置き場(memory-session-store — SQLite の store と同じ契約の fake)の
+   下で program を走らせ、走った後(落ちた時も)の置き場を world へ写すため。"
+  (<- answer (with_handlers [(state) (memory-session-store world.store) (fake-launch-substrate world)] (kept-in world program)))
+  answer)
+
+
 (defk run-launch-with-refusing-container [world params]
   {:pre [(: world LaunchWorld) (: params dict)]
    :post [(: % "SessionRow(成功時)")]}
-  (<- row ((fake-launch-substrate world)
+  (<- row (under-world world
            ((refusing-link-artifact)
             ((codex-impl "/opt/doeff-sessionhost")
              ((claude-code-impl "/opt/doeff-sessionhost")
@@ -409,7 +415,7 @@
 (defk run-launch [world params]
   {:pre [(: world LaunchWorld) (: params dict)]
    :post [(: % "SessionRow(成功時)")]}
-  (<- row ((fake-launch-substrate world)
+  (<- row (under-world world
            ((codex-impl "/opt/doeff-sessionhost")
             ((claude-code-impl "/opt/doeff-sessionhost")
              (launch-session params)))))
@@ -685,12 +691,12 @@
           (json.dumps {"workspacesRoot" marker-root "invocationId" "inv_wi_r1_a1"})))
   (setv active-workdir (.get overrides "active_workdir" None))
   (when (is-not active-workdir None)
-    (setv (get world.rows "s-live")
-          (SessionRow :session-id "s-live" :session-name "doeff-live"
-                      :pane-id "%3" :agent-type "codex"
-                      :lifecycle "run_to_completion" :status "running"
-                      :started-at "2026-08-23T05:00:00Z"
-                      :work-dir active-workdir)))
+    (run (seeded world
+                 (SessionRow :session-id "s-live" :session-name "doeff-live"
+                             :pane-id "%3" :agent-type "codex"
+                             :lifecycle "run_to_completion" :status "running"
+                             :started-at "2026-08-23T05:00:00Z"
+                             :work-dir active-workdir))))
   world)
 
 (defn stale-seed [#** overrides]
@@ -987,10 +993,10 @@
 
 (deftest test-launch-rejects-duplicate-session
   (setv world (LaunchWorld))
-  (setv (get world.rows "s1")
-        (SessionRow :session-id "s1" :session-name "doeff-s1" :pane-id "%1"
-                    :agent-type "codex" :lifecycle "run_to_completion"
-                    :status "running" :started-at "2026-07-05T00:00:00+00:00"))
+  (<- (seeded world
+              (SessionRow :session-id "s1" :session-name "doeff-s1" :pane-id "%1"
+                          :agent-type "codex" :lifecycle "run_to_completion"
+                          :status "running" :started-at "2026-07-05T00:00:00+00:00")))
   (setv raised None)
   (try
     (<- _ (run-launch world (launch-params)))
@@ -1051,12 +1057,12 @@
   "容量ガード試験の下地 active 行。adopted=True = session.adopt の観測行
    (実測 2026-08-17 の 32 行はすべてこの形: running・interactive・adopted=1)、
    False = launch 所有行。"
-  (setv (get world.rows sid)
-        (SessionRow :session-id sid :session-name f"doeff-{sid}"
-                    :pane-id f"%{sid}" :agent-type "claude"
-                    :lifecycle "interactive" :status "running"
-                    :started-at "2026-08-17T00:00:00+00:00"
-                    :adopted adopted)))
+  (run (seeded world
+               (SessionRow :session-id sid :session-name f"doeff-{sid}"
+                           :pane-id f"%{sid}" :agent-type "claude"
+                           :lifecycle "interactive" :status "running"
+                           :started-at "2026-08-17T00:00:00+00:00"
+                           :adopted adopted))))
 
 
 (deftest test-launch-capacity-ignores-adopted-rows

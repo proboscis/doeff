@@ -23,11 +23,13 @@
 ;;; (CODEX_HOME / CLAUDE_CONFIG_DIR)を行に永続化する。書き込みは launch の
 ;;; 一度きりなので COALESCE 保護(後続 upsert が識別情報を消さない)。
 
-(require doeff-hy.macros [deff defk <- defhandler])
+(require doeff-hy.macros [deff defk <- defhandler val var])
+(require doeff-hy.record [defenum])
 
 (import doeff [EffectBase Program run])
 
 (import dataclasses [replace])
+(import enum [StrEnum])
 (import datetime [datetime timezone timedelta])
 (import json)
 (import os)
@@ -179,22 +181,85 @@ CREATE INDEX IF NOT EXISTS idx_agent_session_commands_requested
        ;; (成功の終わり・次の手番の送りで NULL)・単一 writer = monitor・素の last-write-wins。
        #("agent_sessions" "turn_error" "TEXT")])
 
-(setv SNAPSHOT-SELECT
-      (+ "SELECT session_id, session_name, pane_id, agent_type, work_dir, lifecycle, status, "
-         "backend_kind, backend_ref_json, started_at, last_observed_at, "
-         "finished_at, cleaned_at, pr_url, output_snippet, "
-         "terminal_cause_json, expected_result_json, retries_used, last_validation_error, "
-         "awaiting_response, observed_active_at, result_payload_json, "
-         "result_solicitations_used, prompt_unblock_attempts, last_output_change_at, "
-         "effective_identity_json, "
-         "conversation_json, generation, resumed_from_session_id, forked_from_session_id, "
-         "launch_overlay_json, "
-         "adopted, turn_holder, turn_since, turn_wait_json, "
-         "api_limit_observed_at, observation_gap_at, "
-         "paste_resubmit_attempts, awaiting_response_since, "
-         "provider_failure_class, provider_failure_observed_at, "
-         "turn_ended_at, turn_error "
-         "FROM agent_sessions"))
+;; agent_sessions の行の列(SELECT と INSERT の列の順 — snapshot-from-db-row の index の契約)。行の値の並び(stored-values)も
+;; この順で、SQLite の store と memory の store(store_memory.hy)が同じ並びを持つ。
+(val STORED-COLUMNS
+     ["session_id" "session_name" "pane_id" "agent_type" "work_dir" "lifecycle" "status"
+      "backend_kind" "backend_ref_json" "started_at" "last_observed_at"
+      "finished_at" "cleaned_at" "pr_url" "output_snippet"
+      "terminal_cause_json" "expected_result_json" "retries_used" "last_validation_error"
+      "awaiting_response" "observed_active_at" "result_payload_json"
+      "result_solicitations_used" "prompt_unblock_attempts" "last_output_change_at"
+      "effective_identity_json"
+      "conversation_json" "generation" "resumed_from_session_id" "forked_from_session_id"
+      "launch_overlay_json"
+      "adopted" "turn_holder" "turn_since" "turn_wait_json"
+      "api_limit_observed_at" "observation_gap_at"
+      "paste_resubmit_attempts" "awaiting_response_since"
+      "provider_failure_class" "provider_failure_observed_at"
+      "turn_ended_at" "turn_error"])
+
+(val SNAPSHOT-SELECT (+ "SELECT " (.join ", " STORED-COLUMNS) " FROM agent_sessions"))
+
+;; 行が在る所へ書いた時の列の重ね方(表に書いていない列 = TAKE-NEW)。SQLite の store は upsert の ON CONFLICT 節
+;; (UPSERT-SNAPSHOT-SQL — この表から作る)で、memory の store は overlaid-values で、同じ表を読む。
+;;   TAKE-NEW       新しい値(None も書く)
+;;   KEEP-FIRST     在る値が勝つ(COALESCE(在る値, 新しい値) — first-write-wins)
+;;   KEEP-ON-NONE   新しい値が勝つが、None では消えない(COALESCE(新しい値, 在る値))
+(defenum ColumnOverlay TAKE-NEW KEEP-FIRST KEEP-ON-NONE)
+(val OVERLAY-RULES
+     ;; oracle :2354/:2360 — 結果と終端の理由は後続の書き戻しで消えない。
+     {"terminal_cause_json" ColumnOverlay.KEEP-FIRST
+      "result_payload_json" ColumnOverlay.KEEP-FIRST
+      ;; C3: launch が一度だけ書く識別情報を後続の書きが消さない。
+      "effective_identity_json" ColumnOverlay.KEEP-FIRST
+      ;; ADR-006: 発見済みの会話 identity を後続の書きが消さない。launch の意図も同じ。
+      "conversation_json" ColumnOverlay.KEEP-FIRST
+      "launch_overlay_json" ColumnOverlay.KEEP-FIRST
+      ;; issue #557: 初回観測時刻が正 — stale な None 書き戻しにも後続観測の再打刻にも動じない。
+      "api_limit_observed_at" ColumnOverlay.KEEP-FIRST
+      ;; ACP ADR 0049 R9 第 3 改訂: provider 失敗の族名と時刻は対で意味を持つので、同じ規律を両方に掛ける。
+      "provider_failure_class" ColumnOverlay.KEEP-FIRST
+      "provider_failure_observed_at" ColumnOverlay.KEEP-FIRST
+      ;; ADR-DOE-AGENTS-009: 観測断の刻印は再検出で前進するが、None 書き戻しでは消えない。
+      "observation_gap_at" ColumnOverlay.KEEP-ON-NONE})
+;; TAKE-NEW の列のうち None の書きが意図の物: turn_* は actor で直列化され、重ねの経路(db-merge-policy-row)が在る値を
+;; 読み直してから重ねるので、stale な書き戻しが巻き戻す隙間は無い(ADR-007)。awaiting_response_since の None は正の作業証拠での
+;; 解除(issue #568)、turn_ended_at / turn_error の None は次の手番が走り出した事実(level-triggered)。
+
+
+(defk column-overlay [column]
+  {:pre [(: column str)] :post [(: % str)] :tags {:context "session-store" :role "foundation"}}
+  "列 1 つの upsert の ON CONFLICT の代入を OVERLAY-RULES から作るため。"
+  (match (.get OVERLAY-RULES column ColumnOverlay.TAKE-NEW)
+    ColumnOverlay.KEEP-FIRST f"{column} = COALESCE(agent_sessions.{column}, excluded.{column})"
+    ColumnOverlay.KEEP-ON-NONE f"{column} = COALESCE(excluded.{column}, agent_sessions.{column})"
+    ColumnOverlay.TAKE-NEW f"{column} = excluded.{column}"))
+
+
+(defk upsert-snapshot-statement []
+  {:pre [] :post [(: % str)] :tags {:context "session-store" :role "foundation"}}
+  "行の upsert の SQL(INSERT … ON CONFLICT DO UPDATE — oracle upsert_snapshot)を STORED-COLUMNS と OVERLAY-RULES から作るため。"
+  (val assignments [])
+  (for [column (cut STORED-COLUMNS 1 None)]
+    (.append assignments (! (column-overlay column))))
+  (+ "INSERT INTO agent_sessions (" (.join ", " STORED-COLUMNS) ") "
+     "VALUES (" (.join ", " (lfor _ STORED-COLUMNS "?")) ") "
+     "ON CONFLICT(session_id) DO UPDATE SET " (.join ", " assignments)))
+
+(val UPSERT-SNAPSHOT-SQL (run (upsert-snapshot-statement)))
+
+
+(defk overlaid-values [existing incoming]
+  {:pre [(: existing tuple) (: incoming tuple) (= (len existing) (len incoming) (len STORED-COLUMNS))]
+   :post [(: % tuple)]
+   :tags {:context "session-store" :role "foundation"}}
+  "在る行の値の並びへ新しい値の並びを OVERLAY-RULES で重ねるため(SQL の ON CONFLICT 節と同じ意味 — memory の store が使う)。"
+  (tuple (gfor #(column old new) (zip STORED-COLUMNS existing incoming)
+               (match (.get OVERLAY-RULES column ColumnOverlay.TAKE-NEW)
+                 ColumnOverlay.KEEP-FIRST (if (is old None) new old)
+                 ColumnOverlay.KEEP-ON-NONE (if (is new None) old new)
+                 ColumnOverlay.TAKE-NEW new))))
 
 
 (deff now-iso []
@@ -295,10 +360,15 @@ CREATE INDEX IF NOT EXISTS idx_agent_session_commands_requested
                      :reason (.get payload "reason")
                      :retryable (bool (.get payload "retryable" False))
                      :observed-at observed-at
-                     :limit-scope (let [scope (.get payload "limit_scope")] (if (isinstance scope str) scope None))
-                     :limit-reason (let [reason (.get payload "limit_reason")] (if (isinstance reason str) reason None))
-                     :limit-resets-at-ms (let [resets (.get payload "limit_resets_at_ms")]
-                                           (if (and (isinstance resets int) (not (isinstance resets bool))) resets None)))
+                     :limit-scope (match (.get payload "limit_scope")
+                                    scope :if (isinstance scope str) scope
+                                    _ None)
+                     :limit-reason (match (.get payload "limit_reason")
+                                     reason :if (isinstance reason str) reason
+                                     _ None)
+                     :limit-resets-at-ms (match (.get payload "limit_resets_at_ms")
+                                           resets :if (and (isinstance resets int) (not (isinstance resets bool))) resets
+                                           _ None))
       None))
 
 (deff snapshot-from-db-row [db-row]
@@ -438,180 +508,112 @@ CREATE INDEX IF NOT EXISTS idx_agent_session_commands_requested
 ;; 行の読み書き(oracle の SQL verbatim + effective_identity_json)
 ;; ---------------------------------------------------------------------------
 
+(defk reactivation-refusal [session-id existing-status incoming-status]
+  {:pre [(: session-id str) (: existing-status str) (: incoming-status str)]
+   :post [(: % (| RuntimeError None))]
+   :tags {:context "session-store" :role "foundation"}}
+  "在る行への書きを断る時の例外を返すため(断らない時は None)。ADR-DOE-AGENTS-006 law conversation-outlives-incarnation の機械面:
+   terminal に達した行は決して active 系へ戻らない(resume は新しい incarnation 行を作る)。SQLite の store(db-upsert-snapshot)と
+   memory の store(store_memory.hy)の書きの入口が呼ぶ — 単一 writer のここが唯一の防衛線。"
+  (if (and (in existing-status TERMINAL-STATUSES)
+           (in incoming-status ACTIVE-STATUSES))
+      (RuntimeError
+        (+ f"terminal session row may not be reactivated: '{session-id}' "
+           f"is '{existing-status}' and cannot move to '{incoming-status}' "
+           "(ADR-DOE-AGENTS-006: resume creates a new incarnation row)"))
+      None))
+
+(defk stored-values [snap]
+  {:pre [(: snap dict)]
+   :post [(: % tuple) (= (len %) (len STORED-COLUMNS))]
+   :tags {:context "session-store" :role "foundation"}}
+  "snapshot dict → 行の値の並び(STORED-COLUMNS の順・JSON の列は文字列・bool は 0 / 1)。SQLite の upsert の引数で、memory の store が
+   持つ行そのもの — 読みはどちらも snapshot-from-db-row(oracle の SQL の値の形 verbatim + effective_identity_json)。"
+  #((get snap "session_id")
+    (get snap "session_name")
+    (get snap "pane_id")
+    (get snap "agent_type")
+    (get snap "work_dir")
+    (get snap "lifecycle")
+    (get snap "status")
+    (get snap "backend_kind")
+    (json.dumps (get snap "backend_ref") :sort-keys True
+                :separators #("," ":"))
+    (get snap "started_at")
+    (get snap "last_observed_at")
+    (get snap "finished_at")
+    (get snap "cleaned_at")
+    (get snap "pr_url")
+    (get snap "output_snippet")
+    (if (is (get snap "terminal_cause") None)
+        None
+        (json.dumps (get snap "terminal_cause") :separators #("," ":")))
+    ;; expected_result は oracle では serde Value(BTreeMap)= key ソート。
+    ;; terminal_cause は struct(宣言順)なのでソートしない。
+    (if (is (get snap "expected_result") None)
+        None
+        (json.dumps (get snap "expected_result") :sort-keys True
+                    :separators #("," ":")))
+    (int (get snap "retries_used"))
+    (get snap "last_validation_error")
+    (int (bool (get snap "awaiting_response")))
+    (get snap "observed_active_at")
+    (get snap "result_payload")
+    (int (get snap "result_solicitations_used"))
+    (int (get snap "prompt_unblock_attempts"))
+    (get snap "last_output_change_at")
+    (if (is (.get snap "effective_identity") None)
+        None
+        (json.dumps (get snap "effective_identity") :sort-keys True
+                    :separators #("," ":")))
+    (if (is (.get snap "conversation") None)
+        None
+        (json.dumps (get snap "conversation") :sort-keys True
+                    :separators #("," ":")))
+    (int (.get snap "generation" 1))
+    (.get snap "resumed_from_session_id")
+    (.get snap "forked_from_session_id")
+    (if (is (.get snap "launch_overlay") None)
+        None
+        (json.dumps (get snap "launch_overlay") :sort-keys True
+                    :separators #("," ":")))
+    ;; .get 既定値: ADR-007 以前の snapshot dict(旧テスト fixture 等)にも
+    ;; additive に振る舞う — 列既定値(adopted=0 / turn_* NULL)と同値。
+    (int (bool (.get snap "adopted" False)))
+    (.get snap "turn_holder")
+    (.get snap "turn_since")
+    (if (is (.get snap "turn_wait") None)
+        None
+        (json.dumps (get snap "turn_wait") :sort-keys True
+                    :separators #("," ":") :ensure-ascii False))
+    ;; .get 既定値: issue #557 以前の snapshot dict にも additive に振る舞う。
+    (.get snap "api_limit_observed_at")
+    ;; ADR-DOE-AGENTS-009 以前の snapshot dict にも additive に振る舞う。
+    (.get snap "observation_gap_at")
+    ;; issue #568(ADR-DOE-AGENTS-010)以前の snapshot dict にも additive。
+    (int (.get snap "paste_resubmit_attempts" 0))
+    (.get snap "awaiting_response_since")
+    ;; ACP ADR 0049 R9 第 3 改訂以前の snapshot dict にも additive に振る舞う。
+    (.get snap "provider_failure_class")
+    (.get snap "provider_failure_observed_at")
+    ;; lane 2b-3 以前の snapshot dict にも additive に振る舞う。
+    (.get snap "turn_ended_at")
+    (.get snap "turn_error")))
+
 (deff db-upsert-snapshot [conn snap]
   {:pre [(: conn sqlite3.Connection) (: snap dict)]
    :post [(: % "None")]}
-  "INSERT … ON CONFLICT DO UPDATE(oracle upsert_snapshot)。COALESCE 保護は
-   terminal_cause_json / result_payload_json(oracle :2354/:2360)+ C3 の
-   effective_identity_json(launch が一度だけ書く識別情報を後続 upsert が
-   消さない)+ ADR-006 の conversation_json(発見済み会話 identity を後続
-   upsert が消さない)。他は excluded の last-write-wins。"
-  ;; ADR-DOE-AGENTS-006 law conversation-outlives-incarnation の機械面:
-  ;; terminal に達した行は決して active 系へ戻らない(resume は新しい
-  ;; incarnation 行を作る)。単一 writer のここが唯一の防衛線。
-  (setv guard-sid (get snap "session_id"))
-  (setv guard-row (.fetchone (.execute conn
-                               "SELECT status FROM agent_sessions WHERE session_id = ?"
-                               #(guard-sid))))
-  (when (is-not guard-row None)
-    (setv existing-status (get guard-row 0))
-    (setv incoming-status (get snap "status"))
-    (when (and (in existing-status TERMINAL-STATUSES)
-               (in incoming-status ACTIVE-STATUSES))
-      (raise (RuntimeError
-               (+ f"terminal session row may not be reactivated: '{guard-sid}' "
-                  f"is '{existing-status}' and cannot move to '{incoming-status}' "
-                  "(ADR-DOE-AGENTS-006: resume creates a new incarnation row)")))))
-  (.execute conn
-    (+ "INSERT INTO agent_sessions ("
-       "session_id, session_name, pane_id, agent_type, work_dir, lifecycle, status, "
-       "backend_kind, backend_ref_json, started_at, last_observed_at, "
-       "finished_at, cleaned_at, pr_url, output_snippet, "
-       "terminal_cause_json, expected_result_json, retries_used, last_validation_error, "
-       "awaiting_response, observed_active_at, result_payload_json, "
-       "result_solicitations_used, prompt_unblock_attempts, last_output_change_at, "
-       "effective_identity_json, "
-       "conversation_json, generation, resumed_from_session_id, forked_from_session_id, "
-       "launch_overlay_json, "
-       "adopted, turn_holder, turn_since, turn_wait_json, "
-       "api_limit_observed_at, observation_gap_at, "
-       "paste_resubmit_attempts, awaiting_response_since, "
-       "provider_failure_class, provider_failure_observed_at, "
-       "turn_ended_at, turn_error"
-       ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
-       "ON CONFLICT(session_id) DO UPDATE SET "
-       "session_name = excluded.session_name, "
-       "pane_id = excluded.pane_id, "
-       "agent_type = excluded.agent_type, "
-       "work_dir = excluded.work_dir, "
-       "lifecycle = excluded.lifecycle, "
-       "status = excluded.status, "
-       "backend_kind = excluded.backend_kind, "
-       "backend_ref_json = excluded.backend_ref_json, "
-       "started_at = excluded.started_at, "
-       "last_observed_at = excluded.last_observed_at, "
-       "finished_at = excluded.finished_at, "
-       "cleaned_at = excluded.cleaned_at, "
-       "pr_url = excluded.pr_url, "
-       "output_snippet = excluded.output_snippet, "
-       "terminal_cause_json = COALESCE(agent_sessions.terminal_cause_json, excluded.terminal_cause_json), "
-       "expected_result_json = excluded.expected_result_json, "
-       "retries_used = excluded.retries_used, "
-       "last_validation_error = excluded.last_validation_error, "
-       "awaiting_response = excluded.awaiting_response, "
-       "observed_active_at = excluded.observed_active_at, "
-       "result_payload_json = COALESCE(agent_sessions.result_payload_json, excluded.result_payload_json), "
-       "result_solicitations_used = excluded.result_solicitations_used, "
-       "prompt_unblock_attempts = excluded.prompt_unblock_attempts, "
-       "last_output_change_at = excluded.last_output_change_at, "
-       "effective_identity_json = COALESCE(agent_sessions.effective_identity_json, excluded.effective_identity_json), "
-       "conversation_json = COALESCE(agent_sessions.conversation_json, excluded.conversation_json), "
-       "generation = excluded.generation, "
-       "resumed_from_session_id = excluded.resumed_from_session_id, "
-       "forked_from_session_id = excluded.forked_from_session_id, "
-       "launch_overlay_json = COALESCE(agent_sessions.launch_overlay_json, excluded.launch_overlay_json), "
-       ;; ADR-007: turn_* も last-write-wins で安全 — 全書き込みが actor で
-       ;; 直列化され、merge 経路(db-merge-policy-row)は actor 内で existing を
-       ;; 再読してから重ねるため、turn RPC の UPDATE を stale な monitor 書き
-       ;; 戻しが巻き戻す隙間は構造的に無い。
-       "adopted = excluded.adopted, "
-       "turn_holder = excluded.turn_holder, "
-       "turn_since = excluded.turn_since, "
-       "turn_wait_json = excluded.turn_wait_json, "
-       ;; issue #557: durable latch は first-write-wins — 初回観測時刻が正で、
-       ;; stale な None 書き戻しにも後続観測の再打刻にも動じない。
-       "api_limit_observed_at = COALESCE(agent_sessions.api_limit_observed_at, excluded.api_limit_observed_at), "
-       ;; ADR-DOE-AGENTS-009: 観測断の刻印は last-write-wins(再検出で前進)
-       ;; だが None 書き戻しでは消えない — COALESCE の引数順が api_limit と
-       ;; 逆(excluded 優先)なのはそのため。
-       "observation_gap_at = COALESCE(excluded.observation_gap_at, agent_sessions.observation_gap_at), "
-       ;; issue #568(ADR-DOE-AGENTS-010): counter は素の last-write-wins、
-       ;; since は None clear が意図的な書き(正の作業証拠での解除)なので
-       ;; COALESCE 保護を持たない — 全書き込みは actor 直列 + merge 経路が
-       ;; existing を再読して重ねるため stale clobber の隙間は無い。
-       "paste_resubmit_attempts = excluded.paste_resubmit_attempts, "
-       "awaiting_response_since = excluded.awaiting_response_since, "
-       ;; ACP ADR 0049 R9 第 3 改訂: 上限族の外の provider 失敗 latch も
-       ;; first-write-wins(api_limit_observed_at と同格)。族名と時刻は対で
-       ;; 意味を持つので、同じ COALESCE 規律を両方に掛ける。
-       "provider_failure_class = COALESCE(agent_sessions.provider_failure_class, excluded.provider_failure_class), "
-       "provider_failure_observed_at = COALESCE(agent_sessions.provider_failure_observed_at, excluded.provider_failure_observed_at), "
-       ;; 温かい session(multi_turn): 手番の終わりの刻印は level-triggered — None の
-       ;; 書きは「次の手番が走り出した」の事実なので COALESCE 保護を持たない
-       ;; (単一 writer = monitor・merge 経路が existing を再読して重ねる)。
-       "turn_ended_at = excluded.turn_ended_at, "
-       ;; 依頼 lt-R79KYTYMJH4ZT9X4KHWKCD23KB(D2): turn_ended_at と対 — 同じ level-triggered の規律。
-       "turn_error = excluded.turn_error")
-    #((get snap "session_id")
-      (get snap "session_name")
-      (get snap "pane_id")
-      (get snap "agent_type")
-      (get snap "work_dir")
-      (get snap "lifecycle")
-      (get snap "status")
-      (get snap "backend_kind")
-      (json.dumps (get snap "backend_ref") :sort-keys True
-                  :separators #("," ":"))
-      (get snap "started_at")
-      (get snap "last_observed_at")
-      (get snap "finished_at")
-      (get snap "cleaned_at")
-      (get snap "pr_url")
-      (get snap "output_snippet")
-      (if (is (get snap "terminal_cause") None)
-          None
-          (json.dumps (get snap "terminal_cause") :separators #("," ":")))
-      ;; expected_result は oracle では serde Value(BTreeMap)= key ソート。
-      ;; terminal_cause は struct(宣言順)なのでソートしない。
-      (if (is (get snap "expected_result") None)
-          None
-          (json.dumps (get snap "expected_result") :sort-keys True
-                      :separators #("," ":")))
-      (int (get snap "retries_used"))
-      (get snap "last_validation_error")
-      (int (bool (get snap "awaiting_response")))
-      (get snap "observed_active_at")
-      (get snap "result_payload")
-      (int (get snap "result_solicitations_used"))
-      (int (get snap "prompt_unblock_attempts"))
-      (get snap "last_output_change_at")
-      (if (is (.get snap "effective_identity") None)
-          None
-          (json.dumps (get snap "effective_identity") :sort-keys True
-                      :separators #("," ":")))
-      (if (is (.get snap "conversation") None)
-          None
-          (json.dumps (get snap "conversation") :sort-keys True
-                      :separators #("," ":")))
-      (int (.get snap "generation" 1))
-      (.get snap "resumed_from_session_id")
-      (.get snap "forked_from_session_id")
-      (if (is (.get snap "launch_overlay") None)
-          None
-          (json.dumps (get snap "launch_overlay") :sort-keys True
-                      :separators #("," ":")))
-      ;; .get 既定値: ADR-007 以前の snapshot dict(旧テスト fixture 等)にも
-      ;; additive に振る舞う — 列既定値(adopted=0 / turn_* NULL)と同値。
-      (int (bool (.get snap "adopted" False)))
-      (.get snap "turn_holder")
-      (.get snap "turn_since")
-      (if (is (.get snap "turn_wait") None)
-          None
-          (json.dumps (get snap "turn_wait") :sort-keys True
-                      :separators #("," ":") :ensure-ascii False))
-      ;; .get 既定値: issue #557 以前の snapshot dict にも additive に振る舞う。
-      (.get snap "api_limit_observed_at")
-      ;; ADR-DOE-AGENTS-009 以前の snapshot dict にも additive に振る舞う。
-      (.get snap "observation_gap_at")
-      ;; issue #568(ADR-DOE-AGENTS-010)以前の snapshot dict にも additive。
-      (int (.get snap "paste_resubmit_attempts" 0))
-      (.get snap "awaiting_response_since")
-      ;; ACP ADR 0049 R9 第 3 改訂以前の snapshot dict にも additive に振る舞う。
-      (.get snap "provider_failure_class")
-      (.get snap "provider_failure_observed_at")
-      ;; lane 2b-3 以前の snapshot dict にも additive に振る舞う。
-      (.get snap "turn_ended_at")
-      (.get snap "turn_error")))
+  "INSERT … ON CONFLICT DO UPDATE(oracle upsert_snapshot)。列の重ね方(COALESCE 保護)は OVERLAY-RULES から作った
+   UPSERT-SNAPSHOT-SQL が持ち、memory の store は同じ表を overlaid-values で読む。terminal の行を active へ戻す書きは
+   reactivation-refusal で断る。"
+  (match (.fetchone (.execute conn
+                              "SELECT status FROM agent_sessions WHERE session_id = ?"
+                              #((get snap "session_id"))))
+    None None
+    #(existing-status) (match (run (reactivation-refusal (get snap "session_id") existing-status (get snap "status")))
+                         None None
+                         refusal (raise refusal)))
+  (.execute conn UPSERT-SNAPSHOT-SQL (run (stored-values snap)))
   None)
 
 (deff db-session-get [conn session-id]
@@ -989,12 +991,12 @@ CREATE INDEX IF NOT EXISTS idx_agent_session_commands_requested
    失敗の路は元の例外に note を添える。SQLite が自分で巻き戻すのは SQLite の失敗の時だけなので、それ以外の
    失敗で transaction が無いのは本体が閉じたから(依頼 lt-A5KGD83R9HQJ2K172V61A6VMG9 の盲検 A の反例)。"
   (.execute conn "BEGIN IMMEDIATE")
-  (setv closed-by-body False)
+  (var closed-by-body False)
   (try
     (<- value body)
     (if conn.in-transaction
         (.execute conn "COMMIT")
-        (setv closed-by-body True))
+        (:= closed-by-body True))
     (except [e Exception]
       (cond
         conn.in-transaction
@@ -1358,14 +1360,30 @@ CREATE INDEX IF NOT EXISTS idx_agent_session_commands_requested
    (changed-policy-patch)。書き手の読みと書きの間に別の書き手が着地しても、書き手が触らなかった
    欄はその着地の値のまま残る — 書き手の読みから書きまでは actor の外なので、全欄を重ねると
    古い読みで他人の書きを消す(2026-09-23 の実弾: 監視の書き戻しが送信の新 pid を旧 pid へ戻した)。"
-  (setv existing (db-session-get conn row.session-id))
-  (if (is existing None)
-      (db-upsert-snapshot conn (snapshot-from-policy-row row))
-      (do
-        (setv merged (dict existing))
-        (.update merged (! (changed-policy-patch row)))
-        (db-upsert-snapshot conn merged)))
+  (<- merged dict (merged-snapshot (db-session-get conn row.session-id) row))
+  (db-upsert-snapshot conn merged)
   None)
+
+(defk merged-snapshot [existing row]
+  {:pre [(: existing (| dict None)) (: row SessionRow)]
+   :post [(: % dict)]
+   :tags {:context "session-store" :role "foundation"}}
+  "SessionStoreUpsert で書く snapshot を決めるため: 行が無ければ policy の行から新しい行(snapshot-from-policy-row)、在れば在る行に
+   changed-policy-patch(読んだ時点から変わった欄だけ)を重ねた行。SQLite の store(db-merge-policy-row)と memory の store
+   (store_memory.hy)の両方が呼ぶ — 列の COALESCE 保護はこの後の書きの側(OVERLAY-RULES)が持つ。"
+  (if (is existing None)
+      (snapshot-from-policy-row row)
+      (| existing (! (changed-policy-patch row)))))
+
+(defk event-payload [snap row]
+  {:pre [(: snap (| dict None)) (: row SessionRow)]
+   :post [(: % dict)]
+   :tags {:context "session-store" :role "foundation"}}
+  "SessionStoreRecordEvent の出来事に載せる行を決めるため: 書いた行を読み直した snapshot の wire 形(oracle は出来事に full snapshot を
+   記録する)、行が無ければ渡された policy の行の欄。SQLite の store と memory の store の両方が呼ぶ。"
+  (if (is snap None)
+      (policy-row-patch row)
+      (snapshot-to-wire-dict snap)))
 
 
 (defhandler sqlite-session-store [actor]
@@ -1403,9 +1421,6 @@ CREATE INDEX IF NOT EXISTS idx_agent_session_commands_requested
     ;; 出しは常に upsert 済みの snapshot を渡す)。fresh read で同じ形にする。
     (.submit actor
              (fn [conn]
-               (setv snap (db-session-get conn session-id))
-               (setv payload (if (is snap None)
-                                 (policy-row-patch row)
-                                 (snapshot-to-wire-dict snap)))
-               (db-record-event conn session-id event-type payload)))
+               (db-record-event conn session-id event-type
+                                (run (event-payload (db-session-get conn session-id) row)))))
     (resume None)))

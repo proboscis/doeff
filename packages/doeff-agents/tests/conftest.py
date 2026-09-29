@@ -25,7 +25,7 @@ from doeff import Program
 
 TESTS_DIR = Path(__file__).resolve().parent
 
-# 契約テストの組み立ての module(driver_io_contract_handlers.hy)を名で import できるようにする
+# 契約テストの組み立ての module(driver_io_contract_handlers.hy・session_store_contract_handlers.hy)を名で import できるようにする
 # (pytest は検の file の dir を遅れて足すので、他の testpaths と一緒に集めた時に備える)。
 if str(TESTS_DIR) not in sys.path:
     sys.path.insert(0, str(TESTS_DIR))
@@ -60,14 +60,16 @@ def doeff_interpreter(doeff_interpreter_name: str) -> Callable[..., object]:
 
     ``:env`` は reader handler 経由で必ず反映する(黙って無視しない)。``:interpreters`` の名
     (契約テスト)は handler の組の組み立てを引いて被せる。名 → 組み立ての
-    表は driver_io_contract_handlers.hy が持ち、表に無い名は KeyError で落とす(黙って素通しに
-    しない — R2)。
+    表は driver_io_contract_handlers.hy・session_store_contract_handlers.hy が持ち、表に無い名は
+    KeyError で落とす(黙って素通しにしない — R2)。
     """
-    from driver_io_contract_handlers import INTERPRETERS
+    from driver_io_contract_handlers import INTERPRETERS as DRIVER_IO_INTERPRETERS
+    from session_store_contract_handlers import INTERPRETERS as SESSION_STORE_INTERPRETERS
 
     compositions: dict[str, Callable[[Program], Program]] = {
         PLAIN: lambda program: program,
-        **INTERPRETERS,
+        **DRIVER_IO_INTERPRETERS,
+        **SESSION_STORE_INTERPRETERS,
     }
     compose = compositions[doeff_interpreter_name]
 

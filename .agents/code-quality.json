@@ -13,6 +13,7 @@
     "packages/doeff-agents/src/doeff_agents/sessionhost/host.pyi",
     "packages/doeff-agents/src/doeff_agents/sessionhost/store.hy",
     "packages/doeff-agents/src/doeff_agents/sessionhost/store.pyi",
+    "packages/doeff-agents/src/doeff_agents/sessionhost/store_memory.hy",
     "packages/doeff-agents/src/doeff_agents/io_root.py",
     "packages/doeff-agents/src/doeff_agents/io_effects.pyi",
     "packages/doeff-agents/src/doeff_agents/io_handlers.pyi",
@@ -161,13 +162,45 @@
       "name": "sessionhost-store",
       "paths": [
         "packages/doeff-agents/src/doeff_agents/sessionhost/store.hy",
-        "packages/doeff-agents/src/doeff_agents/sessionhost/store.pyi"
+        "packages/doeff-agents/src/doeff_agents/sessionhost/store.pyi",
+        "packages/doeff-agents/src/doeff_agents/sessionhost/store_memory.hy"
       ],
-      "responsibility": "sessionhost の store(SQLite actor・既存 — 変えない。依存先として宣言・pyi は検が触る StoreActor だけ)",
+      "responsibility": "sessionhost の行の置き場の答え手 2 つ — SQLite の store(store.hy の sqlite-session-store・書きを直列にする actor・lease)と、その fake の memory の store(store_memory.hy の memory-session-store)。行の値の並び・書きの重ね方(changed-policy-patch と列の OVERLAY-RULES)・terminal の行を戻さない断り・出来事に載せる行は store.hy の defk 1 つずつで、両方が呼ぶ(agora-redesign #1351)。pyi は検が触る StoreActor だけ",
       "layer": "io",
       "public": [
         "packages/doeff-agents/src/doeff_agents/sessionhost/store.hy",
-        "packages/doeff-agents/src/doeff_agents/sessionhost/store.pyi"
+        "packages/doeff-agents/src/doeff_agents/sessionhost/store.pyi",
+        "packages/doeff-agents/src/doeff_agents/sessionhost/store_memory.hy"
+      ],
+      "allow": [
+        "sessionhost-effects",
+        "sessionhost-policy",
+        "sessionhost-store-health"
+      ],
+      "typed": false
+    },
+    {
+      "name": "sessionhost-effects",
+      "paths": [
+        "packages/doeff-agents/src/doeff_agents/sessionhost/effects.hy"
+      ],
+      "responsibility": "session host の effect と行の型(SessionRow・TerminalCause・SessionStore* ほか — ADR-DOE-AGENTS-004 R1)。値と effect の宣言だけで I/O を呼ばない。2026-09-29 に契約を与えた — sessionhost-store が読むのに依存先の契約が無く dependency-uncontracted になっていたため(agora-redesign #1351)",
+      "layer": "pure",
+      "public": [
+        "packages/doeff-agents/src/doeff_agents/sessionhost/effects.hy"
+      ],
+      "allow": [],
+      "typed": false
+    },
+    {
+      "name": "sessionhost-store-health",
+      "paths": [
+        "packages/doeff-agents/src/doeff_agents/sessionhost/store_health.py"
+      ],
+      "responsibility": "store の書き込みの健康(続いた書きの失敗を数えて host の readiness を落とす判断)。値の計算だけ — sqlite3 は失敗の型の名を読むためだけに import する。2026-09-29 に契約を与えた — sessionhost-store が読むのに依存先の契約が無かったため(agora-redesign #1351)",
+      "layer": "pure",
+      "public": [
+        "packages/doeff-agents/src/doeff_agents/sessionhost/store_health.py"
       ],
       "allow": [],
       "typed": false
