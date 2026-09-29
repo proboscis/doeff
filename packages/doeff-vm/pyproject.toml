@@ -1,6 +1,8 @@
 [build-system]
 requires = ["maturin>=1.5,<2"]
-build-backend = "maturin"
+# maturin を包み、cargo の target を作業木の外の一時の dir に置く(tools/doeff_cargo_backend.py・agora-redesign #1493)
+build-backend = "doeff_cargo_backend"
+backend-path = ["."]
 
 [project]
 name = "doeff-vm"
@@ -22,6 +24,9 @@ classifiers = [
 features = ["pyo3/extension-module"]
 module-name = "doeff_vm.doeff_vm"
 python-source = "."
+# sdist は path 依存の crate を持つので crate を doeff-vm/ の下へ移す。build の口は pyproject と同じ根に要る
+# (backend-path = ["."])ので、根に写す — 無いと sdist から組めない(agora-redesign #1493)。
+include = [{ path = "doeff_cargo_backend.py", format = "sdist" }]
 
 # uv が「この package を作り直すか」を決める鍵。uv の既定の鍵は pyproject.toml / setup.py /
 # setup.cfg だけで Rust の source を見ないため、Rust だけが変わった更新の後の `uv sync` /

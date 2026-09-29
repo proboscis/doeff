@@ -1,7 +1,8 @@
 """PEP 517 build backend wrapper for doeff-indexer.
 
 This wraps maturin's backend to ensure the Rust CLI binary is built and bundled into the wheel
-and editable installs.
+and editable installs. Both the CLI build and maturin's build use the cargo target given by
+doeff_cargo_backend.cargo_target_dir (outside the package dir — agora-redesign #1493).
 """
 
 
@@ -9,9 +10,10 @@ import importlib
 import os
 import shutil
 import subprocess
-from functools import lru_cache
 from pathlib import Path
 from typing import Any
+
+from doeff_cargo_backend import cargo_target_dir
 
 _PROJECT_ROOT = Path(__file__).resolve().parent
 _PYTHON_BIN_DIR = _PROJECT_ROOT / "python" / "doeff_indexer" / "bin"
@@ -37,16 +39,16 @@ def _cargo_target() -> str | None:
     return os.environ.get("CARGO_BUILD_TARGET") or None
 
 
-def _binary_source_path(binary_name: str) -> Path:
+def _binary_source_path(target_dir: Path, binary_name: str) -> Path:
     profile_dir = "release"
     target = _cargo_target()
     if target:
-        return _PROJECT_ROOT / "target" / target / profile_dir / f"{binary_name}{_exe_suffix()}"
-    return _PROJECT_ROOT / "target" / profile_dir / f"{binary_name}{_exe_suffix()}"
+        return target_dir / target / profile_dir / f"{binary_name}{_exe_suffix()}"
+    return target_dir / profile_dir / f"{binary_name}{_exe_suffix()}"
 
 
-@lru_cache(maxsize=1)
-def _ensure_cli_binary() -> None:
+def _ensure_cli_binary(target_dir: Path) -> None:
+    """wheel に同梱する CLI の binary を、この build の target(作業木の外)で組んで python/ の下へ写す。"""
     if os.environ.get("DOEFF_INDEXER_SKIP_CLI_BUILD") == "1":
         return
 
@@ -54,7 +56,7 @@ def _ensure_cli_binary() -> None:
     cmd = [_cargo(), "build", "--release", "--no-default-features", "--bin", binary_name]
     subprocess.check_call(cmd, cwd=_PROJECT_ROOT)
 
-    source = _binary_source_path(binary_name)
+    source = _binary_source_path(target_dir, binary_name)
     if not source.exists():
         raise RuntimeError(f"Expected {binary_name} at {source}, but it was not built")
 
@@ -71,8 +73,9 @@ def build_wheel(
     config_settings: dict[str, Any] | None = None,
     metadata_directory: str | None = None,
 ) -> str:
-    _ensure_cli_binary()
-    return _maturin().build_wheel(wheel_directory, config_settings, metadata_directory)
+    with cargo_target_dir() as target_dir:
+        _ensure_cli_binary(target_dir)
+        return _maturin().build_wheel(wheel_directory, config_settings, metadata_directory)
 
 
 def build_editable(
@@ -80,8 +83,9 @@ def build_editable(
     config_settings: dict[str, Any] | None = None,
     metadata_directory: str | None = None,
 ) -> str:
-    _ensure_cli_binary()
-    return _maturin().build_editable(wheel_directory, config_settings, metadata_directory)
+    with cargo_target_dir() as target_dir:
+        _ensure_cli_binary(target_dir)
+        return _maturin().build_editable(wheel_directory, config_settings, metadata_directory)
 
 
 def build_sdist(sdist_directory: str, config_settings: dict[str, Any] | None = None) -> str:

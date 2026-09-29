@@ -60,9 +60,10 @@ install:
 # tests/test_vm_invariant_checks_enabled.py が hard-fail で検査する(skip 禁止)。
 # だから make sync と素の uv sync は同じ build を作る。maturin develop は uv の Rust の変化の見落としに備えた作り直し
 # (maturin は dev の依存・プロジェクトの環境から呼ぶ — agora-redesign #645 課題 7)。
+# maturin develop も uv の build と同じく、cargo の target を作業木の外の一時の dir に置く(agora-redesign #1493)。
 sync:
 	uv sync --group dev
-	cd packages/doeff-vm && uv run --no-sync maturin develop --release
+	cd packages/doeff-vm && uv run --no-sync python doeff_cargo_backend.py maturin develop --release
 
 pre-commit-install:
 	uv run pre-commit install
