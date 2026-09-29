@@ -1,8 +1,9 @@
 ;;; 汎用の SQL の問い合わせの effect(agora-redesign #802 便 3・消費者 = #783 便 2 の記録の service の翻訳)。業務の語を持たない土台の語彙で、
 ;;; HttpRequest(http_effects.hy)・RunProcess(process_effects.hy)と同じ段。答え手は仕組みごとに差し替える:
-;;;   postgres-sql-handler         本物の PostgreSQL(psycopg 3・postgres_sql.hy)。psycopg はその module の中でだけ読む
-;;;   pooled-postgres-sql-handler  同じ本物の PostgreSQL を、接続の許可を scheduler の semaphore で待ち driver の I/O だけを pool の thread で
-;;;                                回して答える版(pooled_postgres_sql.hy)。遅い問い合わせの間も scheduler の他の task が回る
+;;;   postgres-sql-handler         本物の PostgreSQL(psycopg 3・postgres_sql.hy)。psycopg はその module の中でだけ読む。driver の I/O は
+;;;                                呼び 1 つに thread 1 本で回し、遅い問い合わせの間も scheduler の他の task が回る(#1215)
+;;;   pooled-postgres-sql-handler  同じ本物の PostgreSQL を、接続の許可を scheduler の semaphore で待ち driver の I/O だけを呼び手の pool の
+;;;                                thread で回して答える版(pooled_postgres_sql.hy)。thread の数を呼び手が抑える
 ;;;   clickhouse-http-sql-handler  本物の ClickHouse(urllib の HTTP 1 本 = 問い合わせ 1 つ・clickhouse_http_sql.hy)。transaction を持たない
 ;;;   sqlite-sql-handler           I/O なし — stdlib の sqlite3 の memory の DB(sqlite_sql.hy)。仮想の時計の模擬で使う
 ;;; 答え手は自分が宣言した database の名にだけ答え、他の名の effect は外側へ回す(PostgreSQL と ClickHouse の答え手を重ねて置ける)。

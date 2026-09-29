@@ -66,7 +66,7 @@
 
 (defn #^ Callable real-time-runner [#^ PostgresConnections connections]  ; defk にできない: HTTP の口と手入れの係が Program を走らせる関数を作る(Program の外の入口)
   "実時間の時計・PostgreSQL の答え手・scheduler を被せて Program を走らせる関数を作る(要求ごとの thread で 1 回ずつ run する —
-   答え手は同期の postgres-sql-handler。接続は connections から要求ごとに 1 本借りる)。"
+   答え手は postgres-sql-handler — 文の間も scheduler を塞がない。接続は connections から要求ごとに 1 本借りる)。"
   (fn [program] (run (scheduled (with_handlers [(sync-time-handler) (postgres-sql-handler connections)] program)))))
 
 

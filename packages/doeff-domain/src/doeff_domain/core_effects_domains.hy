@@ -261,7 +261,7 @@
   :effects [SqlQuery SqlInsertRows SqlEnsureTables SqlTransaction SetSqlOutage]
   :handlers [postgres-sql-handler pooled-postgres-sql-handler clickhouse-http-sql-handler sqlite-sql-handler]
   :adrs ["ADR-DOE-DOMAIN-001"]
-  :docs "postgres-sql-handler / pooled-postgres-sql-handler(scheduler を塞がない版)/ clickhouse-http-sql-handler(本物)と sqlite-sql-handler(I/O なし)が答える。SqlTransaction の手順は sql_transaction の run-in-transaction を答え手が共有する(それ自体は handler ではない)。SetSqlOutage は模擬の障害を切り替える effect で、答えるのは sqlite-sql-handler だけ。")
+  :docs "postgres-sql-handler(scheduler を塞がない — 呼び 1 つに thread 1 本)/ pooled-postgres-sql-handler(同じく塞がない — 呼び手の pool と scheduler の semaphore)/ clickhouse-http-sql-handler(本物)と sqlite-sql-handler(I/O なし)が答える。SqlTransaction の手順は sql_transaction の run-in-transaction を答え手が共有する(それ自体は handler ではない)。SetSqlOutage は模擬の障害を切り替える effect で、答えるのは sqlite-sql-handler だけ。")
 
 
 (defdomain doeff-process

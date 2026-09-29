@@ -6,6 +6,8 @@
 ;;;     DSN / URL の環境変数(DOEFF_SQL_TEST_POSTGRES_DSN・DOEFF_SQL_TEST_CLICKHOUSE_URL)が無ければ skip する。
 ;;;   - scheduler を塞がない答え手(pooled-postgres-sql-handler — #880 U2)は実 PG で: 同じ筋書きの答え・遅い問い合わせの横で別の task が進む・
 ;;;     transaction の錠の番号が旧い書き方の hashtext と同じ・取り消しで rollback して接続と許可を返す。
+;;;   - postgres-sql-handler も scheduler を塞がない(#1215)ことを実 PG で: 遅い問い合わせの横で別の task が進む・同じ lock-key の transaction
+;;;     だけが直列で、違う鍵は並ぶ。
 (require doeff-hy.macros [deftest defk <- val var with-handler])
 (import os)
 (import json)
@@ -696,3 +698,64 @@
     (val pooled-answer (answer-while-terminated (fn [connections] [(state) (pooled-postgres-sql-handler connections pool)])))
     (finally (.shutdown pool)))
   (assert (isinstance pooled-answer SqlUnreachable) pooled-answer))
+
+
+;; --- postgres-sql-handler も scheduler を塞がない(agora-redesign #1215)。実 PG が要る(環境変数が無ければ skip)-------------------------
+;; 前は driver の呼びを scheduler の thread で同期に撃ったので、遅い文の間は同じ run の他の task(成果物の置き場の /healthz)も待った。
+
+(defk timed-sleep [seconds]
+  {:pre [(: seconds float)] :post [(: % tuple)]
+   :tags {:context "sql" :role "program"}}
+  "transaction の中で、錠を取った後の始まりと終わりの時刻(PG の clock_timestamp の epoch 秒)を眠りを挟んで読むため。"
+  (<- began SqlRows (SqlQuery DB "SELECT extract(epoch FROM clock_timestamp())::float8" #()))
+  (<- (SqlQuery DB "SELECT pg_sleep(:s)" #((SqlParam :name "s" :value seconds))))
+  (<- ended SqlRows (SqlQuery DB "SELECT extract(epoch FROM clock_timestamp())::float8" #()))
+  #((get began.rows 0 0) (get ended.rows 0 0)))
+
+
+(defk locked-pair [first-key second-key]
+  {:pre [(: first-key str) (: second-key str)] :post [(: % tuple)]
+   :tags {:context "sql" :role "program"}}
+  "鍵つきの transaction 2 つを並べて走らせ、その横で別の task が刻めるかを見るため(各 transaction は錠の中で 0.4 秒眠る)。"
+  (val started (time.monotonic))
+  (<- first (Spawn (SqlTransaction :database DB :program (timed-sleep 0.4) :lock-key first-key)))
+  (<- second (Spawn (SqlTransaction :database DB :program (timed-sleep 0.4) :lock-key second-key)))
+  (<- seen (ticks 4 0.05))
+  (<- spans (Gather first second))
+  #((tuple (gfor t seen (- t started))) (tuple spans)))
+
+
+(deftest test-postgres-does-not-block-the-scheduler
+  {:skip-if POOLED-SKIP :skip-reason "DOEFF_SQL_TEST_POSTGRES_DSN が無い(か psycopg が無い)"}
+  ;; 接続 1 本: 遅い問い合わせ(pg_sleep 1 秒)が接続を持ち、2 つ目は接続を待つ。その間も別の task の刻みが遅れない。答え手は
+  ;; postgres-sql-handler 1 つだけ(state も pool も被せない — 組み立ての側は変わらない)。
+  (val connections (PostgresConnections #((PostgresDatabase :name DB :dsn (or POSTGRES-DSN ""))) :size 1))
+  (try
+    (<- answer (with-handler [(postgres-sql-handler connections)] (slow-beside-ticks)))
+    (finally (.close connections)))
+  (val seen (get answer 0))
+  (val slow-done (get answer 1 0))
+  (val queued-done (get answer 1 1))
+  (assert (= (len seen) 5))
+  ;; 刻みは全部、遅い問い合わせ(1 秒)が終わる前に済む(塞ぐ答え手なら刻みは遅い問い合わせの後になる)。
+  (assert (< (max seen) slow-done) #(seen slow-done))
+  ;; 2 つ目は接続(1 本)が返るまで待った。
+  (assert (>= queued-done slow-done) #(queued-done slow-done)))
+
+
+(deftest test-postgres-serializes-only-transactions-with-the-same-lock-key
+  {:skip-if POOLED-SKIP :skip-reason "DOEFF_SQL_TEST_POSTGRES_DSN が無い(か psycopg が無い)"}
+  ;; 接続 2 本: 同じ鍵の transaction 2 つは錠で直列(時刻の区間が重ならない)・違う鍵なら並ぶ(区間が重なる — 直列なのは錠のためで、
+  ;; scheduler が塞がれたためではない)。どちらの間も別の task の刻みは遅れない。
+  (val connections (PostgresConnections #((PostgresDatabase :name DB :dsn (or POSTGRES-DSN ""))) :size 2))
+  (try
+    (<- same (with-handler [(postgres-sql-handler connections)] (locked-pair "doeff-1215-lock" "doeff-1215-lock")))
+    (<- apart (with-handler [(postgres-sql-handler connections)] (locked-pair "doeff-1215-a" "doeff-1215-b")))
+    (finally (.close connections)))
+  (val overlap (fn [spans] (- (min (get spans 0 1) (get spans 1 1)) (max (get spans 0 0) (get spans 1 0)))))
+  (assert (<= (overlap (get same 1)) 0) same)
+  (assert (> (overlap (get apart 1)) 0.2) apart)
+  ;; 刻み(4 回 × 0.05 秒)は始まりから 0.6 秒より前に済む。同じ鍵の 2 つは直列で合わせて 0.8 秒以上かかるので、塞ぐ答え手なら刻みは
+  ;; その後になる。
+  (for [result #(same apart)]
+    (assert (< (max (get result 0)) 0.6) result)))

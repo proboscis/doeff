@@ -10,11 +10,21 @@
 ;;;     services/record/handlers_wire.hy と同じ表)で類の code に。SQLSTATE の無い OperationalError / InterfaceError・接続できない時・
 ;;;     接続の例外の SQLSTATE(class 08 と 57P01・57P02・57P03)は SqlUnreachable(postgres-failure)。
 ;;;   - SqlTransaction = 接続 1 本で BEGIN → lock-key が在れば pg_advisory_xact_lock(hashtext(鍵))→ program → COMMIT(sql_transaction.hy)。
-(require doeff-hy.macros [defhandler defk <- val var])
+;;;   - scheduler を塞がない(agora-redesign #1215): postgres-sql-handler は driver の I/O(接続の許可を待つ・接続を開く・文を流す・COMMIT・
+;;;     ROLLBACK・接続を返す)を scheduler の thread で撃たず、呼び 1 つに thread 1 本(offloaded_call.hy の ThreadPerCall)で回し、撃った task
+;;;     だけが外から完了させる promise で待つ。遅い文の間も同じ run の他の task(待ち受けの /healthz・時計の刻み)は回る。同時に使う接続の
+;;;     上限は PostgresConnections の許可(thread の間の錠)が持ち、許可を待つのも thread の中 — thread の数に上限を置かないので、許可を持つ
+;;;     transaction の次の文が thread の空きを待って詰まることがない。手順(文・値の写し・transaction の段・取り消しの後始末)は
+;;;     pooled-postgres-sql-handler と同じ offloaded-transaction と with-lease を使い、違いは Executor と許可の待ち方だけ(pooled は呼び手の pool と
+;;;     scheduler の semaphore)。外側に scheduled が要る(CreateExternalPromise と Wait)— session の値の置き場(state)は要らない。
+(require doeff-hy.macros [defhandler defk deff <- val var])
 (require doeff-hy.record [defrecord])
 (import queue [Queue Empty])
 (import threading)
+(import concurrent.futures [Executor])
 (import dataclasses [dataclass field])
+(import doeff [Program])
+(import doeff_core_effects.offloaded_call [ThreadPerCall offloaded run-detached keep-nothing])
 (import doeff_core_effects.sql_effects [SqlQuery SqlInsertRows SqlTransaction SqlEnsureTables SqlRows SqlFailed SqlUnreachable
                                         SqlSchemaApplied SqlParam SqlColumnType SqlText SqlPlaceholder split-statement checked-params
                                         checked-identifier checked-identifiers checked-rows normalized-rows])
@@ -32,6 +42,8 @@
 (val UNREACHABLE-SQLSTATES #("57P01" "57P02" "57P03"))
 ;; 同時に貸す接続の既定の上限(database ごと)。
 (val DEFAULT-POOL-SIZE 8)
+;; postgres-sql-handler が driver の I/O を回す Executor(呼び 1 つに thread 1 本 — 頭の註)。持ち物が無いので module に 1 つ。
+(val DRIVER-THREADS (ThreadPerCall))
 
 ;; 宣言の欄の型 → PostgreSQL の型。
 (val POSTGRES-TYPES {SqlColumnType.INTEGER "bigint" SqlColumnType.FLOAT "double precision" SqlColumnType.TEXT "text"
@@ -257,45 +269,77 @@
       (SqlUnreachable :reason (str error)))))
 
 
+(deff lease-now [connections database]  ; defk にできない: driver の thread で回す入口(VM の外)
+  {:pre [(: connections PostgresConnections) (: database str)] :post [(: % "psycopg の接続 | SqlUnreachable")]}
+  "driver の thread で接続を 1 本借りるため(許可を待つのもこの thread — 開けなければ SqlUnreachable)。"
+  (run-detached (postgres-lease connections database)))
+
+
+(deff return-abandoned [connections database leased]  ; defk にできない: driver の thread で回す後始末の入口
+  {:pre [(: connections PostgresConnections) (: database str) (: leased "psycopg の接続 | SqlUnreachable")] :post [(: % "None")]}
+  "取り消された待ち手に届かなかった接続を返すため(借りられなかった答え SqlUnreachable は返す物が無い)。"
+  (when (not (isinstance leased SqlUnreachable))
+    (.release connections database leased)))
+
+
+(deff with-lease [connections database work]  ; defk にできない: driver の thread で回す入口
+  {:pre [(: connections PostgresConnections) (: database str) (: work "(接続) → Program の callable")]
+   :post [(: % "work の答え | SqlUnreachable")]}
+  "driver の thread の仕事 1 つで接続を借り、work(接続 → Program)を流し、必ず返すため(文 1 つの effect の答え)。"
+  (setv leased (lease-now connections database))
+  (if (isinstance leased SqlUnreachable)
+      leased
+      (try
+        (run-detached (work leased))
+        (finally (.release connections database leased)))))
+
+
+(defk offloaded-transaction [connections pool database program lock-key]
+  {:pre [(: connections PostgresConnections) (: pool Executor) (: database str) (: program Program) (: lock-key (| str None))]
+   :post [(: % "program の答え | SqlFailed | SqlUnreachable")]
+   :tags {:context "sql" :role "foundation"}}
+  "接続 1 本を借りて program を 1 つの transaction で回し、必ず接続を返すため(各段の driver の I/O は pool の thread で — 頭の註)。
+   postgres-sql-handler と pooled-postgres-sql-handler が共に使う。"
+  (<- leased (offloaded pool (fn [] (lease-now connections database)) (fn [value] (return-abandoned connections database value))))
+  (if (isinstance leased SqlUnreachable)
+      leased
+      (try
+        (<- answer (run-in-transaction database program
+                                       (fn [request] (offloaded pool (fn [] (run-detached (postgres-query leased request))) keep-nothing))
+                                       (fn [request] (offloaded pool (fn [] (run-detached (postgres-insert leased request))) keep-nothing))
+                                       (fn [] (offloaded pool (fn [] (run-detached (postgres-begin leased lock-key))) keep-nothing))
+                                       (fn [] (offloaded pool (fn [] (run-detached (postgres-control leased "COMMIT"))) keep-nothing))
+                                       (fn [] (offloaded pool (fn [] (run-detached (postgres-control leased "ROLLBACK"))) keep-nothing))))
+        answer
+        (finally
+          (<- (offloaded pool (fn [] (.release connections database leased)) keep-nothing))))))
+
+
+(defk offloaded-statement [connections pool database work]
+  {:pre [(: connections PostgresConnections) (: pool Executor) (: database str) (: work "(接続) → Program の callable")]
+   :post [(: % "work の答え | SqlUnreachable")]
+   :tags {:context "sql" :role "foundation"}}
+  "文 1 つの effect を pool の仕事 1 つ(接続を借りる → 流す → 返す)で答えるため(待つのは撃った task だけ)。"
+  (<- answer (offloaded pool (fn [] (with-lease connections database work)) keep-nothing))
+  answer)
+
+
 (defhandler postgres-sql-handler [#^ PostgresConnections connections]
   ;; 引数に残す理由: 接続の貸し出しは組み立ての側が作って閉じる資源で(DSN と資格を持つ)、答える database の名で ClickHouse の答え手と
   ;; 同じ組に並べ分ける。
-  "本物の PostgreSQL の答え手(頭の註)。connections が宣言した database の名にだけ答える(他の名は外側へ回す)。"
+  "本物の PostgreSQL の答え手(頭の註 — scheduler を塞がない)。connections が宣言した database の名にだけ答える(他の名は外側へ回す)。"
   {:tags {:context "sql" :role "foundation"}}
   (SqlQuery [database statement params] :when (in database (.names connections))
-    (<- leased (postgres-lease connections database))
-    (if (isinstance leased SqlUnreachable)
-        (resume leased)
-        (do (try
-              (<- answer (postgres-query leased (SqlQuery database statement params)))
-              (finally (.release connections database leased)))
-            (resume answer))))
+    (val request (SqlQuery database statement params))
+    (<- answer (offloaded-statement connections DRIVER-THREADS database (fn [leased] (postgres-query leased request))))
+    (resume answer))
   (SqlInsertRows [database table columns rows] :when (in database (.names connections))
-    (<- leased (postgres-lease connections database))
-    (if (isinstance leased SqlUnreachable)
-        (resume leased)
-        (do (try
-              (<- answer (postgres-insert leased (SqlInsertRows database table columns rows)))
-              (finally (.release connections database leased)))
-            (resume answer))))
+    (val request (SqlInsertRows database table columns rows))
+    (<- answer (offloaded-statement connections DRIVER-THREADS database (fn [leased] (postgres-insert leased request))))
+    (resume answer))
   (SqlEnsureTables [database tables] :when (in database (.names connections))
-    (<- leased (postgres-lease connections database))
-    (if (isinstance leased SqlUnreachable)
-        (resume leased)
-        (do (try
-              (<- answer (postgres-ensure-tables leased tables))
-              (finally (.release connections database leased)))
-            (resume answer))))
+    (<- answer (offloaded-statement connections DRIVER-THREADS database (fn [leased] (postgres-ensure-tables leased tables))))
+    (resume answer))
   (SqlTransaction [database program lock-key] :when (in database (.names connections))
-    (<- leased (postgres-lease connections database))
-    (if (isinstance leased SqlUnreachable)
-        (resume leased)
-        (do (try
-              (<- answer (run-in-transaction database program
-                                                (fn [request] (postgres-query leased request))
-                                                (fn [request] (postgres-insert leased request))
-                                                (fn [] (postgres-begin leased lock-key))
-                                                (fn [] (postgres-control leased "COMMIT"))
-                                                (fn [] (postgres-control leased "ROLLBACK"))))
-              (finally (.release connections database leased)))
-            (resume answer)))))
+    (<- answer (offloaded-transaction connections DRIVER-THREADS database program lock-key))
+    (resume answer)))
