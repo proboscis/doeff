@@ -467,7 +467,10 @@ defk {name}: :post type annotation cannot be an empty string.
 
 ;; defk の本体の束ね(<- と !)が open_bind と Pure を引く、module の globals の名 — `__import__` を束ねごとに撃たないため
 ;; (1 回 約 0.2µs・agora-redesign #844 の案 a)。値は _install-guard-globals が defk の module の globals に置く。
-(setv HELPERS-NAME (hy.models.Symbol "_doeff_outcomes"))
+;; model ではなく名の文字列で持つ — Symbol は open-form が差し込むたびに作る。1 つの Symbol を展開のあいだで
+;; 使い回すと、locate-synthesized が最初の展開でそれに付けた位置が残り、後のすべての束ねの式の行がその行へ
+;; ずれる(agora-redesign #1004)。
+(setv HELPERS-NAME "_doeff_outcomes")
 
 (defn _install-guard-globals [wrapped [runtime-globals None]]
   "Install generated-function runtime helpers in the defining module globals.
@@ -487,7 +490,7 @@ defk {name}: :post type annotation cannot be an empty string.
   (.setdefault globals-dict "_guard_statement_value" _guard-statement-value)
   (.setdefault globals-dict "_doeff_check_program_return" _doeff-check-program-return)
   ;; defk の本体の束ねが名で引く outcomes の module(HELPERS-NAME — _expand-bangs の helpers・#844 の案 a)。
-  (.setdefault globals-dict (str HELPERS-NAME) (importlib.import-module "doeff_core_effects.outcomes"))
+  (.setdefault globals-dict HELPERS-NAME (importlib.import-module "doeff_core_effects.outcomes"))
   (for [#(name value) (.items (or runtime-globals {}))]
     (.setdefault globals-dict name value))
   wrapped)

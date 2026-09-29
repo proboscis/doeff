@@ -82,7 +82,7 @@
 
 
 (deff open-form [expr absent [helpers None]]  ; defk にできない: macro の展開の時に呼ぶ関数
-  {:pre [(: expr Object) (: absent (| Object None)) (: helpers (| Symbol None))] :post [(: % Expression)]
+  {:pre [(: expr Object) (: absent (| Object None)) (: helpers (| str None))] :post [(: % Expression)]
    :tags {:context "doeff-hy-outcomes" :role "foundation"}}
   "束ね 1 つの式(R5・R6): `(open-bind expr)` の答えが `Pure` ならその値、それ以外は yield して VM の答え。
    open-bind は効果を出さない @do の呼び(本体に yield の無い defk など)をその場で呼んで答えの `Pure` を返すので、
@@ -94,12 +94,14 @@
    1 回・約 0.3µs(import の文と同じ桁・hy.I は 4µs — 2026-09-28 に測った)。
    helpers = module の globals に在る outcomes の module の名(defk の本体の束ね — defk が globals に置く
    `_doeff_outcomes`・HELPERS-NAME)。在れば `__import__` の代わりにその名で引く(1 回の束ねの `__import__` 約 0.2µs を
-   消す — agora-redesign #844 の案 a)。名が在ると分かっているのは defk の本体だけなので、ほかは None のまま。"
-  (let [module (if (is helpers None) (hy.gensym "outcomes") helpers)
+   消す — agora-redesign #844 の案 a)。名が在ると分かっているのは defk の本体だけなので、ほかは None のまま。
+   helpers は名の文字列で受け、差し込む所ごとに新しい Symbol を作る — 展開のあいだで 1 つの model を使い回すと、
+   locate-synthesized が付けた位置がそれに残り、後の束ねの行がずれる(agora-redesign #1004)。"
+  (let [module (if (is helpers None) (hy.gensym "outcomes") (Symbol helpers))
         bound (hy.gensym "bound")
         imported (if (is helpers None)
                      `(setx ~module (__import__ "doeff_core_effects.outcomes" :fromlist #("open_bind")))
-                     helpers)
+                     (Symbol helpers))
         opened (if (is absent None)
                    `(. ~imported (open_bind ~expr))
                    `(. ~imported (open_bind ~expr (fn [] ~absent))))]
@@ -112,7 +114,7 @@
 
 
 (deff bind-form [form [helpers None]]  ; defk にできない: macro の展開の時に呼ぶ関数
-  {:pre [(: form Expression) (: helpers (| Symbol None))] :post [(: % Object)]
+  {:pre [(: form Expression) (: helpers (| str None))] :post [(: % Object)]
    :tags {:context "doeff-hy-outcomes" :role "foundation"}}
   "(<- …) の form 1 つの展開 — <- の macro と、本体を先に読む macro(do!・defp・deftest・for/do・defhandler の節・defk)が
    共有する 1 点。分け方は macros.hy の _bind-parts、形は _bind-yield。helpers は open-form へ渡す(defk の本体だけ)。"
