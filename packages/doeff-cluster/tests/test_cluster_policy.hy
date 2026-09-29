@@ -309,3 +309,55 @@
     (setv (get old k) row))
   (<- ok bool (check-old-read (state-from-kv old 5000)))
   (assert ok))
+
+
+(deftest test-derived-capabilities-reuse-equal-values
+  ;; 計算で出来る tuple と別の object でも、値が等しければ既存の worker と状態を返す。
+  (val capabilities (tuple [COMPANY]))
+  (val table #(#("doeff.dev/company-machine" "true" COMPANY)))
+  (val state (ClusterState :workers
+    {"observed" (replace (worker "observed" 0) :node "known" :derived capabilities)
+     "plain" (worker "plain" 0)
+     "missing" (replace (worker "missing" 0) :node "missing" :derived capabilities)
+     "error" (replace (worker "error" 0) :node "error" :derived capabilities)}
+    :nodes {"known" {"labels" COMPANY-LABEL "at" 0}
+            "error" {"error" "unavailable" "at" 0}}))
+  (val result (with-derived-capabilities state table))
+  (assert (= result state))
+  (for [#(name original) (.items state.workers)]
+    (assert (is (get result.workers name) original)))
+  (assert (is result state)))
+
+(deftest test-derived-capabilities-copy-only-changed-workers
+  (val table #(#("doeff.dev/company-machine" "true" COMPANY)))
+  (val state (ClusterState :workers
+    {"changed" (replace (worker "changed" 0) :node "known")
+     "same" (worker "same" 0)
+     "stale" (replace (worker "stale" 0) :derived #(COMPANY))}
+    :nodes {"known" {"labels" COMPANY-LABEL "at" 0}}))
+  (val result (with-derived-capabilities state table))
+  (assert (is-not result state))
+  (assert (is (get result.workers "same") (get state.workers "same")))
+  (assert (is-not (get result.workers "changed") (get state.workers "changed")))
+  (assert (= (. (get result.workers "changed") derived) #(COMPANY)))
+  (assert (= (. (get result.workers "stale") derived) #()))
+  (assert (= (. (get state.workers "changed") derived) #()))
+  (assert (= (. (get state.workers "stale") derived) #(COMPANY)))
+  ;; 同じ state でも表が変われば計算し直して、能力を外す。
+  (val removed (with-derived-capabilities result #()))
+  (assert (= (. (get removed.workers "changed") derived) #()))
+  (assert (is (get removed.workers "same") (get result.workers "same"))))
+
+(deftest test-derived-capabilities-still-read-and-check-labels
+  (import pytest)
+  (val table #(#("doeff.dev/company-machine" "true" COMPANY)))
+  (val state (ClusterState :workers
+    {"w" (replace (worker "w" 0) :node "known" :derived #(COMPANY))}
+    :nodes {"known" {"labels" (dict COMPANY-LABEL) "at" 0}}))
+  (with-derived-capabilities state table)
+  ;; node の観測値を更新した次の呼び出しでも、同じ worker の前回の結果を流用しない。
+  (setv (get state.nodes "known" "labels") {})
+  (assert (= (. (get (. (with-derived-capabilities state table) workers) "w") derived) #()))
+  (setv (get state.nodes "known" "labels") None)
+  (with [(pytest.raises AssertionError)]
+    (with-derived-capabilities state table)))
