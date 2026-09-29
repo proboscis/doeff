@@ -16,9 +16,10 @@ use std::collections::BTreeMap;
 use std::path::Path;
 
 use doeff_indexer::hy_index::reader::{Delim, Form, Node, Reader};
-use doeff_indexer::hy_index::{mangle, Range};
+use doeff_indexer::hy_index::Range;
 
 use super::architecture::AllowedHeads;
+use super::top_level;
 use crate::position::LineIndex;
 
 /// 当たりの種類(閉じた 2 つ)。
@@ -97,13 +98,7 @@ fn judge_one(root: &Path, declared: &AllowedHeads, architecture_rel: &str, error
         Err(_) => return missing(format!("module {} の Hy の file({})が repo に無い", declared.definition.module, rel)),
     };
     let top = Reader::new(&source, 0, source.len()).read_all();
-    let wanted = mangle(&declared.definition.name);
-    let symbol = |form: &Form| matches!(form.node, Node::Symbol).then(|| &source[form.span.start..form.span.end]);
-    let defines = |form: &&Form| match form.paren_items() {
-        Some([head, name, ..]) => symbol(head).is_some_and(|h| h.starts_with("def")) && symbol(name).is_some_and(|n| mangle(n) == wanted),
-        _ => false,
-    };
-    let Some(definition) = top.iter().find(defines) else {
+    let Some(definition) = top_level::definition(&source, &top, &declared.definition.name) else {
         return missing(format!("{} に定義 {} が無い", rel, declared.definition.name));
     };
     let mut spans = Vec::new();

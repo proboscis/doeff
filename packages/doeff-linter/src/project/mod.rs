@@ -35,6 +35,8 @@ pub mod retired;
 pub mod blind;
 pub mod allowed_heads;
 pub mod call_sites;
+pub mod broad_catches;
+pub mod top_level;
 pub mod handler_arguments;
 pub mod typed_values;
 pub mod record_stubs;
@@ -398,6 +400,24 @@ pub fn run_with(root: &Path, settings: &ProjectSettings, enabled: &BTreeSet<Proj
                         range: found.range,
                         rel: found.rel,
                     }));
+                }
+                // DOEFF160 も :files の glob の頭の dir だけを歩く(repo 全体は歩かない)。
+                if enabled.contains(&ProjectRule::BroadCatchOutsideCarrier) && !architecture.broad_catches.is_empty() {
+                    let architecture_rel = relative_path(root, &architecture.path).unwrap_or_else(|| "architecture.hy".to_string());
+                    let (found, errors) =
+                        crate::timing::timed("broad-catches", || broad_catches::find(root, &architecture.broad_catches, &architecture_rel));
+                    drafts.extend(found.into_iter().map(|found| Draft {
+                        rule: ProjectRule::BroadCatchOutsideCarrier,
+                        layer: None,
+                        path: root.join(&found.rel),
+                        message: format!("{} — {}", found.rel, broad_catches::describe(&found.group, &found.problem)),
+                        detail: Some(found.detail),
+                        base: Severity::Error,
+                        explain: Explain::BroadCatches { group: found.group, why: found.why, problem: found.problem },
+                        range: found.range,
+                        rel: found.rel,
+                    }));
+                    report.errors.extend(errors);
                 }
                 // DOEFF144・145 も file 1 つで判じる(名指しが在ればその下だけを読む — repo 全体の索引を組まない)。
                 if let Some(selection) = architecture.typed_values.as_ref().filter(|_| enabled.contains(&ProjectRule::UntypedStructuredValue)) {

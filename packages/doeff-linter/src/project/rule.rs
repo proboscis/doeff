@@ -136,6 +136,9 @@ pub enum ProjectRule {
     /// DOEFF159: architecture.hy の :call-sites で呼んでよい場所と回数を決めた頭を、場所の外で呼ぶ・回数や外の form や分岐が宣言と違う
     /// — 閉じ込めた 1 点が黙って 2 つ目を生やす(agora-redesign #1372・#1414)。
     CallOutsideDeclaredSites,
+    /// DOEFF160: 広い例外の捕捉(`(except [] …)`・Exception・BaseException・AssertionError・Python の `except:`)が architecture.hy の
+    /// :broad-catches の :carriers(捕まえた例外を名で束縛し、決めた出来事に載せて運ぶ境界)の外に在る(agora-redesign #1372・#1415)。
+    BroadCatchOutsideCarrier,
     /// DOEFF150: architecture.hy の :retired-words で使わないと決めた綴り(語・正規表現・定義の名)が、宣言の file に在る
     /// (agora-redesign #1193 — 語の表は repo の宣言にだけ在る)。
     RetiredWord,
@@ -208,6 +211,7 @@ impl ProjectRule {
         ProjectRule::BlindDefinitionReads,
         ProjectRule::DefinitionCallsUnlistedHead,
         ProjectRule::CallOutsideDeclaredSites,
+        ProjectRule::BroadCatchOutsideCarrier,
         ProjectRule::RetiredWord,
         ProjectRule::RetiredCall,
         ProjectRule::HandlerArgumentHoldsState,
@@ -266,6 +270,7 @@ impl ProjectRule {
             ProjectRule::BlindDefinitionReads => "DOEFF141",
             ProjectRule::DefinitionCallsUnlistedHead => "DOEFF147",
             ProjectRule::CallOutsideDeclaredSites => "DOEFF159",
+            ProjectRule::BroadCatchOutsideCarrier => "DOEFF160",
             ProjectRule::RetiredWord => "DOEFF150",
             ProjectRule::RetiredCall => "DOEFF151",
             ProjectRule::HandlerArgumentHoldsState => "DOEFF142",
@@ -309,6 +314,7 @@ impl ProjectRule {
             | ProjectRule::DefinitionCallsUnlistedHead
             // 呼んでよい場所と回数を決めた頭が場所の外で呼ばれる(#1414 — #1372 の孫。新しい当たりは critical)。
             | ProjectRule::CallOutsideDeclaredSites
+            | ProjectRule::BroadCatchOutsideCarrier
             // 使わないと決めた綴りと呼び(#1193 の決め — 登録簿に載った既知の当たりは warning、新しい当たりは critical)。
             | ProjectRule::RetiredWord
             | ProjectRule::RetiredCall
@@ -418,6 +424,7 @@ impl ProjectRule {
             | ProjectRule::BlindDefinitionReads
             | ProjectRule::DefinitionCallsUnlistedHead
             | ProjectRule::CallOutsideDeclaredSites
+            | ProjectRule::BroadCatchOutsideCarrier
             | ProjectRule::HandlerArgumentHoldsState
             | ProjectRule::UntypedStructuredValue
             | ProjectRule::RecordStubNotKwOnly => false,
@@ -466,6 +473,7 @@ impl ProjectRule {
             ProjectRule::BlindDefinitionReads => "決めた材料の外を読む判断の定義",
             ProjectRule::DefinitionCallsUnlistedHead => "呼んでよい頭の一覧の外を呼ぶ定義",
             ProjectRule::CallOutsideDeclaredSites => "決めた場所の外で呼ぶ頭",
+            ProjectRule::BroadCatchOutsideCarrier => "運搬の境界の外の広い例外の捕捉",
             ProjectRule::UnusedDependency => "使っていない依存",
             ProjectRule::TestIsDeftest => "deftest でないテスト",
             ProjectRule::ClassWithBehaviour => "処理を持つ class",
@@ -537,6 +545,7 @@ impl ProjectRule {
             | ProjectRule::ServiceUntestedOnSim
             | ProjectRule::DefinitionCallsUnlistedHead
             | ProjectRule::CallOutsideDeclaredSites
+            | ProjectRule::BroadCatchOutsideCarrier
             | ProjectRule::HandlerArgumentHoldsState
             | ProjectRule::UntypedStructuredValue
             | ProjectRule::RecordStubNotKwOnly
@@ -581,6 +590,7 @@ impl ProjectRule {
             ProjectRule::BlindDefinitionReads => "Blind Definition Reads Beyond Its Inputs",
             ProjectRule::DefinitionCallsUnlistedHead => "Definition Calls A Head Outside Its Allowed List",
             ProjectRule::CallOutsideDeclaredSites => "Head Called Outside Its Declared Sites",
+            ProjectRule::BroadCatchOutsideCarrier => "Broad Catch Outside Declared Carriers",
             ProjectRule::UnusedDependency => "Unused Dependency",
             ProjectRule::TestIsDeftest => "Tests Are deftest",
             ProjectRule::ClassWithBehaviour => "Class Touches The World Or Holds State",
@@ -639,6 +649,7 @@ impl ProjectRule {
             ProjectRule::BlindDefinitionReads => "architecture.hy の :blind-definitions の定義は決めた材料だけで判じる — その定義から呼び出しと名指しで推移的に届く repo の Hy の定義の本体(註を除く)に :forbid-words の綴りが無く、:no-imports なら定義の module が import と require を持たない(:allow-requires の module の require は macro の読み込みなので除く)。宣言した定義は実在する",
             ProjectRule::DefinitionCallsUnlistedHead => "architecture.hy の :allowed-heads の定義は、:heads に挙げた頭の form だけを持つ — 定義の form の中(入れ子を含む・文字列と註を除く)の `( … )` の頭の綴り(記号と keyword)が :heads の外なら、その頭ごとに当たる。宣言した定義は実在する",
             ProjectRule::CallOutsideDeclaredSites => "architecture.hy の :call-sites の頭は、:files の Hy の file(:except を除く)の中で :sites の定義の中でだけ呼ぶ — :count を書いた場所はその数ちょうど、:parent を書いた場所の呼びは直ぐ外の form の頭がその綴り、:branch を書いた場所の呼びは条件の form にその記号が在る cond・when・if・unless の枝の中。場所の定義は実在し、:files に当たる file は 1 つ以上",
+            ProjectRule::BroadCatchOutsideCarrier => "architecture.hy の :broad-catches の :files の Hy・Python の file(:except を除く)に広い例外の捕捉(`(except [] …)`・`(except [… Exception …] …)`・BaseException・AssertionError・Python の `except:`・`except Exception:`)を置かない — 許すのは :carriers の定義の中で、捕捉が例外を名で束縛し、その捕捉の中でその名を :event の出来事の引数に渡す物だけ(契約の破れを握りつぶさず、列へ運ぶ境界)。運搬の境界の定義は実在し、:files に当たる file は 1 つ以上",
             ProjectRule::PlacedDependency => "architecture.hy の :placed-dependencies の層の module(service と shared)は、層の置き場(service の層・shared の層・foundation と、層の名の段を持つ dir)に在る module にだけ依存する — root の下の置き場の決まっていない module(service の dir の直下・宣言に無い dir の中)を import しない",
             ProjectRule::UnusedDependency => "宣言した依存(:depends-on)を、その service のどの module も読んでいない(知らせ)",
             ProjectRule::TestIsDeftest => "検の置き場(設定の test_paths)の検は deftest で書く — 名が test- / test_ で始まる defn・deff・defk・fn の束縛を置かない",
@@ -698,6 +709,7 @@ impl ProjectRule {
             ProjectRule::BlindDefinitionReads => "判断に要る材料は定義の引数で受け、語の読みは呼び手の側(判断の外)に置く — 届いた先の helper へ逃がしても推移閉包で当たる。module の import は外し、値は引数で渡す",
             ProjectRule::DefinitionCallsUnlistedHead => "一覧の外の呼びは定義の外(呼び手の側・例外を受け止める境界の中)へ移す — 移せない呼びが本当に例外を上げないなら、理由を :why に書いて :heads に足す",
             ProjectRule::CallOutsideDeclaredSites => "呼びを宣言した場所へ戻す(2 つ目の閉じ込めや断りの座を生やさない)— 場所を広げるのが意図した境界の変更なら、同じ変更で architecture.hy の :sites と :count を直し、理由を :why に書く",
+            ProjectRule::BroadCatchOutsideCarrier => "捕捉を狭くする(ValueError など、起きると分かっている例外だけ)か、捕捉を消して上げる — 例外を列へ運ぶ境界なら、捕まえた例外を名で束縛して :event の出来事に渡し、その定義を同じ変更で :carriers に足して理由を :why に書く",
             ProjectRule::PlacedDependency => "読む先の module を層の置き場(<root>/<service>/<層>/)へ移すか、要る型を intent へ移して読む — 移す前の置き場への依存は移す変更で消す",
             ProjectRule::UnusedDependency => "使っていない依存を :depends-on から外す",
             ProjectRule::TestIsDeftest => "deftest にする(検の値を組む補助は defk にして deftest の中で `(<- …)` で呼ぶ)",
@@ -781,6 +793,7 @@ mod tests {
         ("DOEFF141", RuleFamily::Place),
         ("DOEFF147", RuleFamily::Definition),
         ("DOEFF159", RuleFamily::Definition),
+        ("DOEFF160", RuleFamily::Definition),
         ("DOEFF144", RuleFamily::Definition),
         ("DOEFF145", RuleFamily::Definition),
         ("DOEFF150", RuleFamily::Naming),
