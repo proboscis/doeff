@@ -48,7 +48,8 @@
       "packages/doeff-agents/src",
       "packages/doeff-records/src",
       "packages/doeff-adr/src",
-      "packages/doeff-hy/src"
+      "packages/doeff-hy/src",
+      "packages/doeff-cluster/src"
     ]
   },
   "modules": [

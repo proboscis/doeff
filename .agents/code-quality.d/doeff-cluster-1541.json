@@ -1,0 +1,1436 @@
+{
+  "exclude": [
+    "packages/doeff-cluster/src/doeff_cluster/cluster_policy.hy",
+    "packages/doeff-cluster/src/doeff_cluster/coordinator_http.hy",
+    "packages/doeff-cluster/src/doeff_cluster/detached.hy",
+    "packages/doeff-cluster/src/doeff_cluster/foundation_check.hy",
+    "packages/doeff-cluster/src/doeff_cluster/handlers.hy",
+    "packages/doeff-cluster/src/doeff_cluster/host_contract.hy",
+    "packages/doeff-cluster/src/doeff_cluster/job_entry.hy",
+    "packages/doeff-cluster/src/doeff_cluster/local.hy",
+    "packages/doeff-cluster/src/doeff_cluster/program_policy.hy",
+    "packages/doeff-cluster/src/doeff_cluster/remote.hy",
+    "packages/doeff-cluster/src/doeff_cluster/remote_model.hy",
+    "packages/doeff-cluster/src/doeff_cluster/service_model.hy",
+    "packages/doeff-cluster/tests/coordinator_contract_handlers.hy",
+    "packages/doeff-cluster/tests/fixtures/entry_programs.hy",
+    "packages/doeff-cluster/tests/fixtures/sim_programs.hy",
+    "packages/doeff-cluster/tests/program_rows.hy",
+    "packages/doeff-cluster/tests/test_boot_reexec.hy",
+    "packages/doeff-cluster/tests/test_boundary_recorder.hy",
+    "packages/doeff-cluster/tests/test_detached_runners.hy",
+    "packages/doeff-cluster/tests/test_env_warm.hy",
+    "packages/doeff-cluster/tests/test_handoff_deadline.hy",
+    "packages/doeff-cluster/tests/test_idle_skip.hy",
+    "packages/doeff-cluster/tests/test_job_entry_program.hy",
+    "packages/doeff-cluster/tests/test_local.hy",
+    "packages/doeff-cluster/tests/test_remote.hy",
+    "packages/doeff-cluster/tests/test_runtime_env_sender.hy",
+    "packages/doeff-cluster/tests/test_semaphore.hy",
+    "packages/doeff-cluster/tests/test_service_declaration.hy",
+    "packages/doeff-cluster/tests/test_task_programs.hy"
+  ],
+  "include": [
+    "packages/doeff-cluster/src/doeff_cluster/*.hy",
+    "packages/doeff-cluster/src/doeff_cluster/*.py",
+    "packages/doeff-cluster/tests/*.hy",
+    "packages/doeff-cluster/tests/*.py"
+  ],
+  "modules": [
+    {
+      "allow": [
+        "doeff-cluster-cluster-model",
+        "doeff-cluster-cluster-policy",
+        "doeff-cluster-detached-policy",
+        "doeff-cluster-drain-policy",
+        "doeff-cluster-handoff-policy",
+        "doeff-cluster-metrics-policy",
+        "doeff-cluster-program-policy",
+        "doeff-cluster-resource-policy",
+        "doeff-cluster-rollout-policy",
+        "doeff-cluster-warm-policy"
+      ],
+      "layer": "pure",
+      "name": "doeff-cluster-api-policy",
+      "paths": [
+        "packages/doeff-cluster/src/doeff_cluster/api_policy.hy"
+      ],
+      "public": [
+        "packages/doeff-cluster/src/doeff_cluster/api_policy.hy"
+      ],
+      "responsibility": "coordinator の HTTP の要求 1 件への返事と、Rollout の調停の段取り(純粋な判断・I/O はしない)。",
+      "typed": true
+    },
+    {
+      "allow": [],
+      "layer": "pure",
+      "name": "doeff-cluster-checkout-git-script",
+      "paths": [
+        "packages/doeff-cluster/src/doeff_cluster/checkout_git_script.hy"
+      ],
+      "public": [
+        "packages/doeff-cluster/src/doeff_cluster/checkout_git_script.hy"
+      ],
+      "responsibility": "送り手の手元の checkout の読み(runtime_env の翻訳の handler checkout-reads が出す git の問い)に答える、git の台本(2026-09-27)。",
+      "typed": true
+    },
+    {
+      "allow": [],
+      "layer": "pure",
+      "name": "doeff-cluster-clock",
+      "paths": [
+        "packages/doeff-cluster/src/doeff_cluster/clock.hy"
+      ],
+      "public": [
+        "packages/doeff-cluster/src/doeff_cluster/clock.hy"
+      ],
+      "responsibility": "時計の物差しの換算。",
+      "typed": true
+    },
+    {
+      "allow": [
+        "doeff-cluster-detached",
+        "doeff-cluster-host-contract",
+        "doeff-cluster-job-context",
+        "doeff-cluster-metrics-handlers",
+        "doeff-cluster-readiness-handlers",
+        "doeff-cluster-remote",
+        "doeff-cluster-report-client",
+        "doeff-cluster-runtime-env-model",
+        "doeff-cluster-semaphore-handlers",
+        "doeff-cluster-semaphore-model",
+        "doeff-cluster-shared-handlers"
+      ],
+      "layer": "io",
+      "name": "doeff-cluster-cluster-foundation",
+      "paths": [
+        "packages/doeff-cluster/src/doeff_cluster/cluster_foundation.hy"
+      ],
+      "public": [
+        "packages/doeff-cluster/src/doeff_cluster/cluster_foundation.hy"
+      ],
+      "responsibility": "本番の土台が並べる「coordinator に話す handler の組」(ADR-DOE-CLUSTER-001・計画 2.3)。",
+      "typed": true
+    },
+    {
+      "allow": [
+        "doeff-cluster-worker-model"
+      ],
+      "layer": "domain",
+      "name": "doeff-cluster-cluster-model",
+      "paths": [
+        "packages/doeff-cluster/src/doeff_cluster/cluster_model.hy"
+      ],
+      "public": [
+        "packages/doeff-cluster/src/doeff_cluster/cluster_model.hy"
+      ],
+      "responsibility": "複数の worker に job と task を割り当てる coordinator の型と effect。",
+      "typed": true
+    },
+    {
+      "allow": [
+        "doeff-cluster-cluster-model",
+        "doeff-cluster-readiness-model",
+        "doeff-cluster-runtime-env-model",
+        "doeff-cluster-semaphore-model",
+        "doeff-cluster-worker-model"
+      ],
+      "layer": "pure",
+      "name": "doeff-cluster-cluster-policy",
+      "paths": [
+        "packages/doeff-cluster/src/doeff_cluster/cluster_policy.hy"
+      ],
+      "public": [
+        "packages/doeff-cluster/src/doeff_cluster/cluster_policy.hy"
+      ],
+      "responsibility": "coordinator の純粋な判断。",
+      "typed": true
+    },
+    {
+      "allow": [],
+      "layer": "runtime",
+      "name": "doeff-cluster-code-prepare",
+      "paths": [
+        "packages/doeff-cluster/src/doeff_cluster/code_prepare.hy"
+      ],
+      "public": [
+        "packages/doeff-cluster/src/doeff_cluster/code_prepare.hy"
+      ],
+      "responsibility": "展開したコードの木の bytecode を、木の中だけに「実行時に source の hash を検める」方式で用意する。",
+      "typed": true
+    },
+    {
+      "allow": [
+        "doeff-cluster-api-policy",
+        "doeff-cluster-clock",
+        "doeff-cluster-cluster-model",
+        "doeff-cluster-cluster-policy",
+        "doeff-cluster-coordinator-handler-sets",
+        "doeff-cluster-coordinator-inbox",
+        "doeff-cluster-durable-kv",
+        "doeff-cluster-kube-handlers",
+        "doeff-cluster-kube-model",
+        "doeff-cluster-resource-policy",
+        "doeff-cluster-wal-store"
+      ],
+      "layer": "runtime",
+      "name": "doeff-cluster-coordinator",
+      "paths": [
+        "packages/doeff-cluster/src/doeff_cluster/coordinator.hy"
+      ],
+      "public": [
+        "packages/doeff-cluster/src/doeff_cluster/coordinator.hy"
+      ],
+      "responsibility": "doeff worker の coordinator(実験)。",
+      "typed": true
+    },
+    {
+      "allow": [
+        "doeff-cluster-api-policy",
+        "doeff-cluster-clock",
+        "doeff-cluster-cluster-model",
+        "doeff-cluster-coordinator-inbox",
+        "doeff-cluster-idle-policy",
+        "doeff-cluster-kube-handlers",
+        "doeff-cluster-promise-wait",
+        "doeff-cluster-wal-store"
+      ],
+      "layer": "io",
+      "name": "doeff-cluster-coordinator-handler-sets",
+      "paths": [
+        "packages/doeff-cluster/src/doeff_cluster/coordinator_handler_sets.hy"
+      ],
+      "public": [
+        "packages/doeff-cluster/src/doeff_cluster/coordinator_handler_sets.hy"
+      ],
+      "responsibility": "coordinator の handler の組 — 環境の違いは、ここに並ぶ「handler の組」という値だけで表す(operator 2026-09-25 逐語\"such environmental changes are to be all done via handler swapping\")。",
+      "typed": true
+    },
+    {
+      "allow": [
+        "doeff-cluster-cluster-model",
+        "doeff-cluster-remote-model"
+      ],
+      "layer": "io",
+      "name": "doeff-cluster-coordinator-http",
+      "paths": [
+        "packages/doeff-cluster/src/doeff_cluster/coordinator_http.hy"
+      ],
+      "public": [
+        "packages/doeff-cluster/src/doeff_cluster/coordinator_http.hy"
+      ],
+      "responsibility": "coordinator へ話す HTTP の client を 1 か所で作る(heartbeat・共有の保存・task の 3 つの口の handler が使う)。",
+      "typed": true
+    },
+    {
+      "allow": [
+        "doeff-cluster-cluster-model"
+      ],
+      "layer": "io",
+      "name": "doeff-cluster-coordinator-inbox",
+      "paths": [
+        "packages/doeff-cluster/src/doeff_cluster/coordinator_inbox.hy"
+      ],
+      "public": [
+        "packages/doeff-cluster/src/doeff_cluster/coordinator_inbox.hy"
+      ],
+      "responsibility": "coordinator の HTTP の受付と停止の合図(handler)— 調停ループの Program(coordinator.hy)が出す NextRequests / Reply /CoordinatorStopRequested に、本番の process で答える部品。",
+      "typed": true
+    },
+    {
+      "allow": [
+        "doeff-cluster-runtime-env",
+        "doeff-cluster-runtime-env-model",
+        "doeff-cluster-service-model"
+      ],
+      "layer": "runtime",
+      "name": "doeff-cluster-declare",
+      "paths": [
+        "packages/doeff-cluster/src/doeff_cluster/declare.hy"
+      ],
+      "public": [
+        "packages/doeff-cluster/src/doeff_cluster/declare.hy"
+      ],
+      "responsibility": "系(defsystem の関数)から coordinator に渡す宣言を出す(ADR-DOE-CLUSTER-001)。",
+      "typed": true
+    },
+    {
+      "allow": [
+        "doeff-cluster-cluster-model",
+        "doeff-cluster-coordinator-http",
+        "doeff-cluster-detached-model",
+        "doeff-cluster-process-model",
+        "doeff-cluster-remote-model",
+        "doeff-cluster-runtime-env-model",
+        "doeff-cluster-warm-model"
+      ],
+      "layer": "io",
+      "name": "doeff-cluster-detached",
+      "paths": [
+        "packages/doeff-cluster/src/doeff_cluster/detached.hy"
+      ],
+      "public": [
+        "packages/doeff-cluster/src/doeff_cluster/detached.hy"
+      ],
+      "responsibility": "切り離した task の本番の handler(effect は detached_model.hy)。",
+      "typed": true
+    },
+    {
+      "allow": [
+        "doeff-cluster-cluster-model",
+        "doeff-cluster-remote-model",
+        "doeff-cluster-runtime-env-model"
+      ],
+      "layer": "domain",
+      "name": "doeff-cluster-detached-model",
+      "paths": [
+        "packages/doeff-cluster/src/doeff_cluster/detached_model.hy"
+      ],
+      "public": [
+        "packages/doeff-cluster/src/doeff_cluster/detached_model.hy"
+      ],
+      "responsibility": "切り離した task(呼び手と寿命を切り離した task)の effect と、答えの型(2026-09-25)。",
+      "typed": true
+    },
+    {
+      "allow": [
+        "doeff-cluster-cluster-model",
+        "doeff-cluster-cluster-policy",
+        "doeff-cluster-detached-model"
+      ],
+      "layer": "pure",
+      "name": "doeff-cluster-detached-policy",
+      "paths": [
+        "packages/doeff-cluster/src/doeff_cluster/detached_policy.hy"
+      ],
+      "public": [
+        "packages/doeff-cluster/src/doeff_cluster/detached_policy.hy"
+      ],
+      "responsibility": "切り離した task の HTTP の口の純粋な判断(2026-09-25・effect は detached_model.hy)。",
+      "typed": true
+    },
+    {
+      "allow": [],
+      "layer": "pure",
+      "name": "doeff-cluster-drain-client",
+      "paths": [
+        "packages/doeff-cluster/src/doeff_cluster/drain_client.hy"
+      ],
+      "public": [
+        "packages/doeff-cluster/src/doeff_cluster/drain_client.hy"
+      ],
+      "responsibility": "worker の Pod の側から coordinator に drain を頼み、空くのを待つ Program(2026-09-25)。",
+      "typed": true
+    },
+    {
+      "allow": [
+        "doeff-cluster-coordinator-http",
+        "doeff-cluster-drain-client"
+      ],
+      "layer": "runtime",
+      "name": "doeff-cluster-drain-main",
+      "paths": [
+        "packages/doeff-cluster/src/doeff_cluster/drain_main.hy"
+      ],
+      "public": [
+        "packages/doeff-cluster/src/doeff_cluster/drain_main.hy"
+      ],
+      "responsibility": "worker の Pod の drain の入口(composition root・2026-09-25)。",
+      "typed": true
+    },
+    {
+      "allow": [
+        "doeff-cluster-cluster-model",
+        "doeff-cluster-cluster-policy",
+        "doeff-cluster-resource-policy"
+      ],
+      "layer": "pure",
+      "name": "doeff-cluster-drain-policy",
+      "paths": [
+        "packages/doeff-cluster/src/doeff_cluster/drain_policy.hy"
+      ],
+      "public": [
+        "packages/doeff-cluster/src/doeff_cluster/drain_policy.hy"
+      ],
+      "responsibility": "worker の drain の純粋な判断(2026-09-25)。",
+      "typed": true
+    },
+    {
+      "allow": [
+        "doeff-cluster-cluster-model",
+        "doeff-cluster-cluster-policy"
+      ],
+      "layer": "pure",
+      "name": "doeff-cluster-durable-kv",
+      "paths": [
+        "packages/doeff-cluster/src/doeff_cluster/durable_kv.hy"
+      ],
+      "public": [
+        "packages/doeff-cluster/src/doeff_cluster/durable_kv.hy"
+      ],
+      "responsibility": "coordinator の耐久の状態を「キー → JSON の値」の表として見る形(純粋な関数)。",
+      "typed": true
+    },
+    {
+      "allow": [
+        "doeff-cluster-metrics-model",
+        "doeff-cluster-readiness-model",
+        "doeff-cluster-semaphore-model",
+        "doeff-cluster-shared-model"
+      ],
+      "layer": "pure",
+      "name": "doeff-cluster-effect-codec",
+      "paths": [
+        "packages/doeff-cluster/src/doeff_cluster/effect_codec.hy"
+      ],
+      "public": [
+        "packages/doeff-cluster/src/doeff_cluster/effect_codec.hy"
+      ],
+      "responsibility": "effect の記録と再生(backtest)の符号化 — 型ごとの符号化と復号の定義点はこの file の 1 か所だけ。",
+      "typed": true
+    },
+    {
+      "allow": [
+        "doeff-cluster-env-prepare",
+        "doeff-cluster-runtime-env-model"
+      ],
+      "layer": "runtime",
+      "name": "doeff-cluster-env-handlers",
+      "paths": [
+        "packages/doeff-cluster/src/doeff_cluster/env_handlers.hy"
+      ],
+      "public": [
+        "packages/doeff-cluster/src/doeff_cluster/env_handlers.hy"
+      ],
+      "responsibility": "実行環境(root)の準備の要求を汎用の effect へ訳す handler(env-translation)と、準備の process の入口(2026-09-26・翻訳の形2026-09-27)。",
+      "typed": true
+    },
+    {
+      "allow": [
+        "doeff-cluster-runtime-env-model"
+      ],
+      "layer": "effects",
+      "name": "doeff-cluster-env-prepare",
+      "paths": [
+        "packages/doeff-cluster/src/doeff_cluster/env_prepare.hy"
+      ],
+      "public": [
+        "packages/doeff-cluster/src/doeff_cluster/env_prepare.hy"
+      ],
+      "responsibility": "実行環境(root)の準備の Program と、その effect(2026-09-26)。",
+      "typed": true
+    },
+    {
+      "allow": [],
+      "layer": "pure",
+      "name": "doeff-cluster-env-upkeep",
+      "paths": [
+        "packages/doeff-cluster/src/doeff_cluster/env_upkeep.hy"
+      ],
+      "public": [
+        "packages/doeff-cluster/src/doeff_cluster/env_upkeep.hy"
+      ],
+      "responsibility": "実行環境の root の手入れの純粋な判断(2026-09-26・設計 worker-runtime-env.md 節 3.2 の期限・節 3.6 の掃除と disk の条件)。",
+      "typed": true
+    },
+    {
+      "allow": [
+        "doeff-cluster-env-handlers",
+        "doeff-cluster-runtime-env-model"
+      ],
+      "layer": "io",
+      "name": "doeff-cluster-env-world",
+      "paths": [
+        "packages/doeff-cluster/src/doeff_cluster/env_world.hy"
+      ],
+      "public": [
+        "packages/doeff-cluster/src/doeff_cluster/env_world.hy"
+      ],
+      "responsibility": "実行環境の準備の速い模擬の世界(2026-09-27)— 翻訳 env-translation(本番と同じ 1 つ)の下で、土台の偽物だけが答える:子 process    doeff の scripted-process-handler に渡す台本 git・tar・cp・uv(この module の ScriptedCommand)file system  doeff の memory-file-handler(置き場の中身と空き)時計          呼び手が外側に置く仮想の時計(uv の sync と native の build は台本の中で眠る)準備の判断(env_prepare の prepare-env)も翻訳も本物のまま走る。",
+      "typed": true
+    },
+    {
+      "allow": [],
+      "layer": "pure",
+      "name": "doeff-cluster-foundation-check",
+      "paths": [
+        "packages/doeff-cluster/src/doeff_cluster/foundation_check.hy"
+      ],
+      "public": [
+        "packages/doeff-cluster/src/doeff_cluster/foundation_check.hy"
+      ],
+      "responsibility": "job の Program が本番の土台で閉じているか(答えの無い effect が残らないか)を、実行せずに確かめる(構成のレビューの B の残り)。",
+      "typed": true
+    },
+    {
+      "allow": [
+        "doeff-cluster-cluster-model",
+        "doeff-cluster-code-prepare",
+        "doeff-cluster-coordinator-http",
+        "doeff-cluster-env-prepare",
+        "doeff-cluster-env-upkeep",
+        "doeff-cluster-host-contract",
+        "doeff-cluster-job-context",
+        "doeff-cluster-remote-model",
+        "doeff-cluster-runtime-env-model",
+        "doeff-cluster-semaphore-model",
+        "doeff-cluster-worker-model",
+        "doeff-cluster-worker-policy"
+      ],
+      "layer": "io",
+      "name": "doeff-cluster-handlers",
+      "paths": [
+        "packages/doeff-cluster/src/doeff_cluster/handlers.hy"
+      ],
+      "public": [
+        "packages/doeff-cluster/src/doeff_cluster/handlers.hy"
+      ],
+      "responsibility": "worker の実 I/O。",
+      "typed": true
+    },
+    {
+      "allow": [
+        "doeff-cluster-cluster-model",
+        "doeff-cluster-cluster-policy",
+        "doeff-cluster-readiness-model",
+        "doeff-cluster-resource-policy",
+        "doeff-cluster-worker-model"
+      ],
+      "layer": "pure",
+      "name": "doeff-cluster-handoff-policy",
+      "paths": [
+        "packages/doeff-cluster/src/doeff_cluster/handoff_policy.hy"
+      ],
+      "public": [
+        "packages/doeff-cluster/src/doeff_cluster/handoff_policy.hy"
+      ],
+      "responsibility": "入れ替え(update = handoff)の期限の純粋な判断(2026-09-26)。",
+      "typed": true
+    },
+    {
+      "allow": [
+        "doeff-cluster-job-context"
+      ],
+      "layer": "io",
+      "name": "doeff-cluster-host-contract",
+      "paths": [
+        "packages/doeff-cluster/src/doeff_cluster/host_contract.hy"
+      ],
+      "public": [
+        "packages/doeff-cluster/src/doeff_cluster/host_contract.hy"
+      ],
+      "responsibility": "宿(job の Program を走らせる所)が Program に提供する物の閉じた契約(ADR-DOE-CLUSTER-001・改訂 1 の H)。",
+      "typed": true
+    },
+    {
+      "allow": [
+        "doeff-cluster-api-policy",
+        "doeff-cluster-cluster-model",
+        "doeff-cluster-cluster-policy",
+        "doeff-cluster-resource-policy"
+      ],
+      "layer": "pure",
+      "name": "doeff-cluster-idle-policy",
+      "paths": [
+        "packages/doeff-cluster/src/doeff_cluster/idle_policy.hy"
+      ],
+      "public": [
+        "packages/doeff-cluster/src/doeff_cluster/idle_policy.hy"
+      ],
+      "responsibility": "要求の無い拍を何拍飛ばしても調停が何も変えないか(純粋な判断・I/O はしない)。",
+      "typed": true
+    },
+    {
+      "allow": [],
+      "layer": "runtime",
+      "name": "doeff-cluster-image-contract",
+      "paths": [
+        "packages/doeff-cluster/src/doeff_cluster/image_contract.hy"
+      ],
+      "public": [
+        "packages/doeff-cluster/src/doeff_cluster/image_contract.hy"
+      ],
+      "responsibility": "土台だけの image の約束(設計 worker-runtime-env.md 節 3.5・E13)を Dockerfile の字面で検める。",
+      "typed": true
+    },
+    {
+      "allow": [
+        "doeff-cluster-runtime-env-model",
+        "doeff-cluster-worker-model"
+      ],
+      "layer": "io",
+      "name": "doeff-cluster-job-context",
+      "paths": [
+        "packages/doeff-cluster/src/doeff_cluster/job_context.hy"
+      ],
+      "public": [
+        "packages/doeff-cluster/src/doeff_cluster/job_context.hy"
+      ],
+      "responsibility": "実行先の子 process の文脈(worker が環境変数で渡す RunContext)と、その読み(2026-09-26)。",
+      "typed": true
+    },
+    {
+      "allow": [
+        "doeff-cluster-job-context",
+        "doeff-cluster-remote-model",
+        "doeff-cluster-report-client"
+      ],
+      "layer": "runtime",
+      "name": "doeff-cluster-job-entry",
+      "paths": [
+        "packages/doeff-cluster/src/doeff_cluster/job_entry.hy"
+      ],
+      "public": [
+        "packages/doeff-cluster/src/doeff_cluster/job_entry.hy"
+      ],
+      "responsibility": "worker が起動する子 process の入口(service と task)。",
+      "typed": true
+    },
+    {
+      "allow": [
+        "doeff-cluster-kube-model"
+      ],
+      "layer": "io",
+      "name": "doeff-cluster-kube-handlers",
+      "paths": [
+        "packages/doeff-cluster/src/doeff_cluster/kube_handlers.hy"
+      ],
+      "public": [
+        "packages/doeff-cluster/src/doeff_cluster/kube_handlers.hy"
+      ],
+      "responsibility": "kube_model の effect の handler。",
+      "typed": true
+    },
+    {
+      "allow": [],
+      "layer": "domain",
+      "name": "doeff-cluster-kube-model",
+      "paths": [
+        "packages/doeff-cluster/src/doeff_cluster/kube_model.hy"
+      ],
+      "public": [
+        "packages/doeff-cluster/src/doeff_cluster/kube_model.hy"
+      ],
+      "responsibility": "k8s の Deployment を読む・台数を変える effect(Rollout の reconciler が旧 / 新の片方として本番の Deployment を扱う口)。",
+      "typed": true
+    },
+    {
+      "allow": [
+        "doeff-cluster-clock",
+        "doeff-cluster-cluster-model",
+        "doeff-cluster-cluster-policy",
+        "doeff-cluster-coordinator",
+        "doeff-cluster-coordinator-handler-sets",
+        "doeff-cluster-coordinator-http",
+        "doeff-cluster-coordinator-inbox",
+        "doeff-cluster-declare",
+        "doeff-cluster-detached",
+        "doeff-cluster-detached-model",
+        "doeff-cluster-drain-client",
+        "doeff-cluster-handlers",
+        "doeff-cluster-host-contract",
+        "doeff-cluster-job-context",
+        "doeff-cluster-job-entry",
+        "doeff-cluster-kube-handlers",
+        "doeff-cluster-metrics-model",
+        "doeff-cluster-process-model",
+        "doeff-cluster-promise-wait",
+        "doeff-cluster-readiness-model",
+        "doeff-cluster-remote",
+        "doeff-cluster-remote-model",
+        "doeff-cluster-report-client",
+        "doeff-cluster-runtime-env-model",
+        "doeff-cluster-semaphore-model",
+        "doeff-cluster-service-model",
+        "doeff-cluster-shared-handlers",
+        "doeff-cluster-shared-model",
+        "doeff-cluster-warm-model",
+        "doeff-cluster-worker",
+        "doeff-cluster-worker-model"
+      ],
+      "layer": "io",
+      "name": "doeff-cluster-local",
+      "paths": [
+        "packages/doeff-cluster/src/doeff_cluster/local.hy"
+      ],
+      "public": [
+        "packages/doeff-cluster/src/doeff_cluster/local.hy"
+      ],
+      "responsibility": "手元の runner sim-cluster — 系(defsystem の関数を sim の土台で呼んだ System の値)を、本物の coordinator と本物の worker の上で、1 process・仮想の時計で走らせる(ADR-DOE-CLUSTER-001・計画 2.6・10.2・段 5・5b)。",
+      "typed": true
+    },
+    {
+      "allow": [
+        "doeff-cluster-cluster-model",
+        "doeff-cluster-handlers",
+        "doeff-cluster-job-context",
+        "doeff-cluster-remote-model",
+        "doeff-cluster-worker",
+        "doeff-cluster-worker-model"
+      ],
+      "layer": "runtime",
+      "name": "doeff-cluster-main",
+      "paths": [
+        "packages/doeff-cluster/src/doeff_cluster/main.hy"
+      ],
+      "public": [
+        "packages/doeff-cluster/src/doeff_cluster/main.hy"
+      ],
+      "responsibility": "doeff worker の composition root。",
+      "typed": true
+    },
+    {
+      "allow": [
+        "doeff-cluster-metrics-model",
+        "doeff-cluster-metrics-policy",
+        "doeff-cluster-report-client",
+        "doeff-cluster-resource-policy"
+      ],
+      "layer": "io",
+      "name": "doeff-cluster-metrics-handlers",
+      "paths": [
+        "packages/doeff-cluster/src/doeff_cluster/metrics_handlers.hy"
+      ],
+      "public": [
+        "packages/doeff-cluster/src/doeff_cluster/metrics_handlers.hy"
+      ],
+      "responsibility": "ReportMetrics の handler 2 つ。",
+      "typed": true
+    },
+    {
+      "allow": [],
+      "layer": "domain",
+      "name": "doeff-cluster-metrics-model",
+      "paths": [
+        "packages/doeff-cluster/src/doeff_cluster/metrics_model.hy"
+      ],
+      "public": [
+        "packages/doeff-cluster/src/doeff_cluster/metrics_model.hy"
+      ],
+      "responsibility": "service が自分の計器(Prometheus の counter・gauge・秒の合計と回数)を報告する effect。",
+      "typed": true
+    },
+    {
+      "allow": [
+        "doeff-cluster-cluster-model",
+        "doeff-cluster-cluster-policy",
+        "doeff-cluster-resource-policy"
+      ],
+      "layer": "pure",
+      "name": "doeff-cluster-metrics-policy",
+      "paths": [
+        "packages/doeff-cluster/src/doeff_cluster/metrics_policy.hy"
+      ],
+      "public": [
+        "packages/doeff-cluster/src/doeff_cluster/metrics_policy.hy"
+      ],
+      "responsibility": "worker の service の計器を coordinator が Prometheus の形で出す、純粋な判断。",
+      "typed": true
+    },
+    {
+      "allow": [],
+      "layer": "domain",
+      "name": "doeff-cluster-process-model",
+      "paths": [
+        "packages/doeff-cluster/src/doeff_cluster/process_model.hy"
+      ],
+      "public": [
+        "packages/doeff-cluster/src/doeff_cluster/process_model.hy"
+      ],
+      "responsibility": "job の process の終わりを待つ effect と、答えの型(2026-09-29・proboscis/doeff#631)。",
+      "typed": true
+    },
+    {
+      "allow": [
+        "doeff-cluster-cluster-model",
+        "doeff-cluster-remote-model"
+      ],
+      "layer": "pure",
+      "name": "doeff-cluster-program-policy",
+      "paths": [
+        "packages/doeff-cluster/src/doeff_cluster/program_policy.hy"
+      ],
+      "public": [
+        "packages/doeff-cluster/src/doeff_cluster/program_policy.hy"
+      ],
+      "responsibility": "coordinator の詰めた Program の置き場(ADR-DOE-CLUSTER-001 R3b・改訂 1 の F — 純粋な判断・I/O はしない)。",
+      "typed": true
+    },
+    {
+      "allow": [],
+      "layer": "pure",
+      "name": "doeff-cluster-promise-wait",
+      "paths": [
+        "packages/doeff-cluster/src/doeff_cluster/promise_wait.hy"
+      ],
+      "public": [
+        "packages/doeff-cluster/src/doeff_cluster/promise_wait.hy"
+      ],
+      "responsibility": "書きで起きる待ちの 1 点 — 書き手が満たす Promise を、期限まで待つ(読み直さない)。",
+      "typed": true
+    },
+    {
+      "allow": [
+        "doeff-cluster-readiness-model",
+        "doeff-cluster-report-client"
+      ],
+      "layer": "io",
+      "name": "doeff-cluster-readiness-handlers",
+      "paths": [
+        "packages/doeff-cluster/src/doeff_cluster/readiness_handlers.hy"
+      ],
+      "public": [
+        "packages/doeff-cluster/src/doeff_cluster/readiness_handlers.hy"
+      ],
+      "responsibility": "ReportReady の handler 2 つ。",
+      "typed": true
+    },
+    {
+      "allow": [],
+      "layer": "domain",
+      "name": "doeff-cluster-readiness-model",
+      "paths": [
+        "packages/doeff-cluster/src/doeff_cluster/readiness_model.hy"
+      ],
+      "public": [
+        "packages/doeff-cluster/src/doeff_cluster/readiness_model.hy"
+      ],
+      "responsibility": "service が「準備できた」を報告する effect(process の生存とは別の、業務の条件つきの readiness)。",
+      "typed": true
+    },
+    {
+      "allow": [
+        "doeff-cluster-effect-codec",
+        "doeff-cluster-host-contract",
+        "doeff-cluster-job-context",
+        "doeff-cluster-record-model",
+        "doeff-cluster-remote-model"
+      ],
+      "layer": "io",
+      "name": "doeff-cluster-record-handlers",
+      "paths": [
+        "packages/doeff-cluster/src/doeff_cluster/record_handlers.hy"
+      ],
+      "public": [
+        "packages/doeff-cluster/src/doeff_cluster/record_handlers.hy"
+      ],
+      "responsibility": "effect の記録と再生(backtest)の handler。",
+      "typed": true
+    },
+    {
+      "allow": [
+        "doeff-cluster-effect-codec"
+      ],
+      "layer": "domain",
+      "name": "doeff-cluster-record-model",
+      "paths": [
+        "packages/doeff-cluster/src/doeff_cluster/record_model.hy"
+      ],
+      "public": [
+        "packages/doeff-cluster/src/doeff_cluster/record_model.hy"
+      ],
+      "responsibility": "effect の記録と再生(backtest)の型と純粋な判断。",
+      "typed": true
+    },
+    {
+      "allow": [
+        "doeff-cluster-clock",
+        "doeff-cluster-cluster-model"
+      ],
+      "layer": "pure",
+      "name": "doeff-cluster-record-store",
+      "paths": [
+        "packages/doeff-cluster/src/doeff_cluster/record_store.hy"
+      ],
+      "public": [
+        "packages/doeff-cluster/src/doeff_cluster/record_store.hy"
+      ],
+      "responsibility": "effect の記録の置き場(effect-records)。",
+      "typed": true
+    },
+    {
+      "allow": [
+        "doeff-cluster-cluster-model",
+        "doeff-cluster-coordinator",
+        "doeff-cluster-record-store"
+      ],
+      "layer": "io",
+      "name": "doeff-cluster-record-store-handlers",
+      "paths": [
+        "packages/doeff-cluster/src/doeff_cluster/record_store_handlers.hy"
+      ],
+      "public": [
+        "packages/doeff-cluster/src/doeff_cluster/record_store_handlers.hy"
+      ],
+      "responsibility": "effect の記録の置き場の file の I/O(record_store.hy の effect の handler)。",
+      "typed": true
+    },
+    {
+      "allow": [
+        "doeff-cluster-coordinator",
+        "doeff-cluster-record-store",
+        "doeff-cluster-record-store-handlers"
+      ],
+      "layer": "runtime",
+      "name": "doeff-cluster-record-store-main",
+      "paths": [
+        "packages/doeff-cluster/src/doeff_cluster/record_store_main.hy"
+      ],
+      "public": [
+        "packages/doeff-cluster/src/doeff_cluster/record_store_main.hy"
+      ],
+      "responsibility": "effect の記録の置き場の入口(composition root)。",
+      "typed": true
+    },
+    {
+      "allow": [
+        "doeff-cluster-cluster-model",
+        "doeff-cluster-coordinator-http",
+        "doeff-cluster-remote-model",
+        "doeff-cluster-runtime-env-model"
+      ],
+      "layer": "io",
+      "name": "doeff-cluster-remote",
+      "paths": [
+        "packages/doeff-cluster/src/doeff_cluster/remote.hy"
+      ],
+      "public": [
+        "packages/doeff-cluster/src/doeff_cluster/remote.hy"
+      ],
+      "responsibility": "RemoteJob の本番の handler(remote-cluster — coordinator へ出し、worker の子 process で走らせる)。",
+      "typed": true
+    },
+    {
+      "allow": [
+        "doeff-cluster-cluster-model",
+        "doeff-cluster-runtime-env-model"
+      ],
+      "layer": "domain",
+      "name": "doeff-cluster-remote-model",
+      "paths": [
+        "packages/doeff-cluster/src/doeff_cluster/remote_model.hy"
+      ],
+      "public": [
+        "packages/doeff-cluster/src/doeff_cluster/remote_model.hy"
+      ],
+      "responsibility": "task(呼んだ側に寿命が縛られる短い仕事)の effect と、送る形・戻す形。",
+      "typed": true
+    },
+    {
+      "allow": [
+        "doeff-cluster-job-entry",
+        "doeff-cluster-record-handlers",
+        "doeff-cluster-record-model"
+      ],
+      "layer": "runtime",
+      "name": "doeff-cluster-replay-main",
+      "paths": [
+        "packages/doeff-cluster/src/doeff_cluster/replay_main.hy"
+      ],
+      "public": [
+        "packages/doeff-cluster/src/doeff_cluster/replay_main.hy"
+      ],
+      "responsibility": "再生の道具の入口(ADR-DOE-CLUSTER-001 R5・R5b)。",
+      "typed": true
+    },
+    {
+      "allow": [
+        "doeff-cluster-cluster-model",
+        "doeff-cluster-coordinator-http",
+        "doeff-cluster-job-context"
+      ],
+      "layer": "io",
+      "name": "doeff-cluster-report-client",
+      "paths": [
+        "packages/doeff-cluster/src/doeff_cluster/report_client.hy"
+      ],
+      "public": [
+        "packages/doeff-cluster/src/doeff_cluster/report_client.hy"
+      ],
+      "responsibility": "service の process が coordinator へ自分の様子(readiness・計器)を送る口。",
+      "typed": true
+    },
+    {
+      "allow": [
+        "doeff-cluster-cluster-model",
+        "doeff-cluster-cluster-policy",
+        "doeff-cluster-readiness-model",
+        "doeff-cluster-rollout-policy",
+        "doeff-cluster-worker-model"
+      ],
+      "layer": "pure",
+      "name": "doeff-cluster-resource-policy",
+      "paths": [
+        "packages/doeff-cluster/src/doeff_cluster/resource_policy.hy"
+      ],
+      "public": [
+        "packages/doeff-cluster/src/doeff_cluster/resource_policy.hy"
+      ],
+      "responsibility": "coordinator の資源(Service・Worker・Task・Rollout)の純粋な判断。",
+      "typed": true
+    },
+    {
+      "allow": [
+        "doeff-cluster-cluster-model"
+      ],
+      "layer": "pure",
+      "name": "doeff-cluster-rollout-policy",
+      "paths": [
+        "packages/doeff-cluster/src/doeff_cluster/rollout_policy.hy"
+      ],
+      "public": [
+        "packages/doeff-cluster/src/doeff_cluster/rollout_policy.hy"
+      ],
+      "responsibility": "Rollout の純粋な判断(旧 → 新の切り替えを宣言で表す)。",
+      "typed": true
+    },
+    {
+      "allow": [
+        "doeff-cluster-env-prepare",
+        "doeff-cluster-runtime-env-model"
+      ],
+      "layer": "io",
+      "name": "doeff-cluster-runtime-env",
+      "paths": [
+        "packages/doeff-cluster/src/doeff_cluster/runtime_env.hy"
+      ],
+      "public": [
+        "packages/doeff-cluster/src/doeff_cluster/runtime_env.hy"
+      ],
+      "responsibility": "送り手の側の実行環境の宣言の組み立て(2026-09-26)。",
+      "typed": true
+    },
+    {
+      "allow": [],
+      "layer": "domain",
+      "name": "doeff-cluster-runtime-env-model",
+      "paths": [
+        "packages/doeff-cluster/src/doeff_cluster/runtime_env_model.hy"
+      ],
+      "public": [
+        "packages/doeff-cluster/src/doeff_cluster/runtime_env_model.hy"
+      ],
+      "responsibility": "実行環境の宣言(runtime env)の型・キー・JSON の往復・準備の失敗の型(2026-09-26)。",
+      "typed": true
+    },
+    {
+      "allow": [
+        "doeff-cluster-env-prepare",
+        "doeff-cluster-runtime-env-model"
+      ],
+      "layer": "io",
+      "name": "doeff-cluster-runtime-identity",
+      "paths": [
+        "packages/doeff-cluster/src/doeff_cluster/runtime_identity.hy"
+      ],
+      "public": [
+        "packages/doeff-cluster/src/doeff_cluster/runtime_identity.hy"
+      ],
+      "responsibility": "入口の検め — この process が「宣言した実行環境(RuntimeEnv)の root から、宣言の commit の code を import している」ことを確かめる。",
+      "typed": true
+    },
+    {
+      "allow": [
+        "doeff-cluster-env-prepare",
+        "doeff-cluster-runtime-identity"
+      ],
+      "layer": "io",
+      "name": "doeff-cluster-runtime-identity-process",
+      "paths": [
+        "packages/doeff-cluster/src/doeff_cluster/runtime_identity_process.hy"
+      ],
+      "public": [
+        "packages/doeff-cluster/src/doeff_cluster/runtime_identity_process.hy"
+      ],
+      "responsibility": "入口の検め(runtime_identity.hy)の ReadRuntimeFacts に、この process を読んで答える handler — 環境変数・sys.prefix・root の完成の印・module の置き場・pid を読み、文字列のまま答える(宣言の型への読み戻しと判断は runtime_identity.hy の Program の側)。",
+      "typed": true
+    },
+    {
+      "allow": [
+        "doeff-cluster-clock",
+        "doeff-cluster-semaphore-model",
+        "doeff-cluster-shared-model"
+      ],
+      "layer": "io",
+      "name": "doeff-cluster-semaphore-handlers",
+      "paths": [
+        "packages/doeff-cluster/src/doeff_cluster/semaphore_handlers.hy"
+      ],
+      "public": [
+        "packages/doeff-cluster/src/doeff_cluster/semaphore_handlers.hy"
+      ],
+      "responsibility": "名前付きの semaphore の handler 2 つ。",
+      "typed": true
+    },
+    {
+      "allow": [
+        "doeff-cluster-cluster-model"
+      ],
+      "layer": "domain",
+      "name": "doeff-cluster-semaphore-model",
+      "paths": [
+        "packages/doeff-cluster/src/doeff_cluster/semaphore_model.hy"
+      ],
+      "public": [
+        "packages/doeff-cluster/src/doeff_cluster/semaphore_model.hy"
+      ],
+      "responsibility": "lock は doeff の scheduler の Semaphore の effect(CreateSemaphore / AcquireSemaphore / ReleaseSemaphore)で扱う。",
+      "typed": true
+    },
+    {
+      "allow": [
+        "doeff-cluster-cluster-model",
+        "doeff-cluster-readiness-model",
+        "doeff-cluster-remote-model",
+        "doeff-cluster-runtime-env-model"
+      ],
+      "layer": "domain",
+      "name": "doeff-cluster-service-model",
+      "paths": [
+        "packages/doeff-cluster/src/doeff_cluster/service_model.hy"
+      ],
+      "public": [
+        "packages/doeff-cluster/src/doeff_cluster/service_model.hy"
+      ],
+      "responsibility": "系(System)の宣言の値と、coordinator へ渡す宣言の行(ADR-DOE-CLUSTER-001 の段 3)。",
+      "typed": true
+    },
+    {
+      "allow": [
+        "doeff-cluster-clock",
+        "doeff-cluster-cluster-policy",
+        "doeff-cluster-coordinator-http",
+        "doeff-cluster-semaphore-model",
+        "doeff-cluster-shared-model"
+      ],
+      "layer": "io",
+      "name": "doeff-cluster-shared-handlers",
+      "paths": [
+        "packages/doeff-cluster/src/doeff_cluster/shared_handlers.hy"
+      ],
+      "public": [
+        "packages/doeff-cluster/src/doeff_cluster/shared_handlers.hy"
+      ],
+      "responsibility": "共有の保存の handler 2 つ。",
+      "typed": true
+    },
+    {
+      "allow": [
+        "doeff-cluster-cluster-policy"
+      ],
+      "layer": "domain",
+      "name": "doeff-cluster-shared-model",
+      "paths": [
+        "packages/doeff-cluster/src/doeff_cluster/shared_model.hy"
+      ],
+      "public": [
+        "packages/doeff-cluster/src/doeff_cluster/shared_model.hy"
+      ],
+      "responsibility": "共有の保存(cluster のどの worker で走っても同じ意味になる読み書き)の effect。",
+      "typed": true
+    },
+    {
+      "allow": [],
+      "layer": "runtime",
+      "name": "doeff-cluster-shim",
+      "paths": [
+        "packages/doeff-cluster/src/doeff_cluster/shim.py"
+      ],
+      "public": [
+        "packages/doeff-cluster/src/doeff_cluster/shim.py"
+      ],
+      "responsibility": "job と worker の間に挟む見張り。",
+      "typed": true
+    },
+    {
+      "allow": [
+        "doeff-cluster-api-policy",
+        "doeff-cluster-checkout-git-script",
+        "doeff-cluster-clock",
+        "doeff-cluster-cluster-foundation",
+        "doeff-cluster-cluster-model",
+        "doeff-cluster-cluster-policy",
+        "doeff-cluster-code-prepare",
+        "doeff-cluster-coordinator",
+        "doeff-cluster-coordinator-handler-sets",
+        "doeff-cluster-coordinator-http",
+        "doeff-cluster-coordinator-inbox",
+        "doeff-cluster-declare",
+        "doeff-cluster-detached",
+        "doeff-cluster-detached-model",
+        "doeff-cluster-detached-policy",
+        "doeff-cluster-drain-client",
+        "doeff-cluster-drain-main",
+        "doeff-cluster-durable-kv",
+        "doeff-cluster-effect-codec",
+        "doeff-cluster-env-handlers",
+        "doeff-cluster-env-prepare",
+        "doeff-cluster-env-upkeep",
+        "doeff-cluster-env-world",
+        "doeff-cluster-foundation-check",
+        "doeff-cluster-handlers",
+        "doeff-cluster-host-contract",
+        "doeff-cluster-idle-policy",
+        "doeff-cluster-image-contract",
+        "doeff-cluster-job-context",
+        "doeff-cluster-job-entry",
+        "doeff-cluster-kube-handlers",
+        "doeff-cluster-local",
+        "doeff-cluster-main",
+        "doeff-cluster-metrics-handlers",
+        "doeff-cluster-metrics-model",
+        "doeff-cluster-metrics-policy",
+        "doeff-cluster-process-model",
+        "doeff-cluster-program-policy",
+        "doeff-cluster-readiness-handlers",
+        "doeff-cluster-readiness-model",
+        "doeff-cluster-record-handlers",
+        "doeff-cluster-record-model",
+        "doeff-cluster-record-store",
+        "doeff-cluster-record-store-handlers",
+        "doeff-cluster-remote",
+        "doeff-cluster-remote-model",
+        "doeff-cluster-report-client",
+        "doeff-cluster-resource-policy",
+        "doeff-cluster-rollout-policy",
+        "doeff-cluster-runtime-env",
+        "doeff-cluster-runtime-env-model",
+        "doeff-cluster-runtime-identity",
+        "doeff-cluster-runtime-identity-process",
+        "doeff-cluster-semaphore-handlers",
+        "doeff-cluster-semaphore-model",
+        "doeff-cluster-service-model",
+        "doeff-cluster-shared-handlers",
+        "doeff-cluster-shared-model",
+        "doeff-cluster-wal-store",
+        "doeff-cluster-warm-model",
+        "doeff-cluster-worker",
+        "doeff-cluster-worker-model",
+        "doeff-cluster-worker-policy"
+      ],
+      "layer": "io",
+      "name": "doeff-cluster-tests",
+      "paths": [
+        "packages/doeff-cluster/tests/*.hy",
+        "packages/doeff-cluster/tests/*.py"
+      ],
+      "public": [],
+      "responsibility": "doeff-cluster の検(sim-cluster の筋書き・本物の coordinator の判断の検・子 process の入口の検)と、検どうしが共有する組の部品と見本の Program。",
+      "typed": true
+    },
+    {
+      "allow": [
+        "doeff-cluster-cluster-model"
+      ],
+      "layer": "io",
+      "name": "doeff-cluster-wal-store",
+      "paths": [
+        "packages/doeff-cluster/src/doeff_cluster/wal_store.hy"
+      ],
+      "public": [
+        "packages/doeff-cluster/src/doeff_cluster/wal_store.hy"
+      ],
+      "responsibility": "coordinator の耐久の置き場: 追記の log(wal.jsonl)+ まとめ直した写し(snapshot.json)。",
+      "typed": true
+    },
+    {
+      "allow": [
+        "doeff-cluster-cluster-model",
+        "doeff-cluster-runtime-env-model"
+      ],
+      "layer": "domain",
+      "name": "doeff-cluster-warm-model",
+      "paths": [
+        "packages/doeff-cluster/src/doeff_cluster/warm_model.hy"
+      ],
+      "public": [
+        "packages/doeff-cluster/src/doeff_cluster/warm_model.hy"
+      ],
+      "responsibility": "実行環境の先読み(warm)の effect と型(2026-09-26・設計 worker-runtime-env.md 節 3.2・決定 D9)。",
+      "typed": true
+    },
+    {
+      "allow": [
+        "doeff-cluster-cluster-model",
+        "doeff-cluster-cluster-policy",
+        "doeff-cluster-runtime-env-model",
+        "doeff-cluster-warm-model"
+      ],
+      "layer": "pure",
+      "name": "doeff-cluster-warm-policy",
+      "paths": [
+        "packages/doeff-cluster/src/doeff_cluster/warm_policy.hy"
+      ],
+      "public": [
+        "packages/doeff-cluster/src/doeff_cluster/warm_policy.hy"
+      ],
+      "responsibility": "coordinator の温める表の口の純粋な判断(2026-09-26 — 効果 WarmRuntimeEnv・ReadWarmState の本番の答え)。",
+      "typed": true
+    },
+    {
+      "allow": [
+        "doeff-cluster-clock",
+        "doeff-cluster-worker-model",
+        "doeff-cluster-worker-policy"
+      ],
+      "layer": "pure",
+      "name": "doeff-cluster-worker",
+      "paths": [
+        "packages/doeff-cluster/src/doeff_cluster/worker.hy"
+      ],
+      "public": [
+        "packages/doeff-cluster/src/doeff_cluster/worker.hy"
+      ],
+      "responsibility": "worker の調整ループ。",
+      "typed": true
+    },
+    {
+      "allow": [
+        "doeff-cluster-runtime-env-model"
+      ],
+      "layer": "domain",
+      "name": "doeff-cluster-worker-model",
+      "paths": [
+        "packages/doeff-cluster/src/doeff_cluster/worker_model.hy"
+      ],
+      "public": [
+        "packages/doeff-cluster/src/doeff_cluster/worker_model.hy"
+      ],
+      "responsibility": "doeff worker が管理する job の宣言・観測・判断・effect。",
+      "typed": true
+    },
+    {
+      "allow": [
+        "doeff-cluster-worker-model"
+      ],
+      "layer": "pure",
+      "name": "doeff-cluster-worker-policy",
+      "paths": [
+        "packages/doeff-cluster/src/doeff_cluster/worker_policy.hy"
+      ],
+      "public": [
+        "packages/doeff-cluster/src/doeff_cluster/worker_policy.hy"
+      ],
+      "responsibility": "worker の純粋な判断。",
+      "typed": true
+    }
+  ],
+  "untyped_dependencies": [
+    {
+      "path": "packages/doeff-cluster/src/doeff_cluster/cluster_policy.hy",
+      "reason": "検査器(code-quality e659a3a)がこの Hy を型に写せない — hy:365: 安全な静的投影の対象外の core macro: let。include の外に置き(変えた時は登録の前と同じ未導入の注意)、対応と取り込みは agora-redesign #1569"
+    },
+    {
+      "path": "packages/doeff-cluster/src/doeff_cluster/coordinator_http.hy",
+      "reason": "検査器(code-quality e659a3a)がこの Hy を型に写せない — hy:151: 安全な静的投影の対象外の core macro: let。include の外に置き(変えた時は登録の前と同じ未導入の注意)、対応と取り込みは agora-redesign #1569"
+    },
+    {
+      "path": "packages/doeff-cluster/src/doeff_cluster/detached.hy",
+      "reason": "検査器(code-quality e659a3a)がこの Hy を型に写せない — hy:89: 安全な静的投影の対象外の core macro: let。include の外に置き(変えた時は登録の前と同じ未導入の注意)、対応と取り込みは agora-redesign #1569"
+    },
+    {
+      "path": "packages/doeff-cluster/src/doeff_cluster/foundation_check.hy",
+      "reason": "検査器(code-quality e659a3a)がこの Hy を型に写せない — hy:32: deff の各引数には実型契約が必要（可変長/既定値は未対応）。include の外に置き(変えた時は登録の前と同じ未導入の注意)、対応と取り込みは agora-redesign #1569"
+    },
+    {
+      "path": "packages/doeff-cluster/src/doeff_cluster/handlers.hy",
+      "reason": "検査器(code-quality e659a3a)がこの Hy を型に写せない — hy:64: 安全な静的投影の対象外の core macro: let。include の外に置き(変えた時は登録の前と同じ未導入の注意)、対応と取り込みは agora-redesign #1569"
+    },
+    {
+      "path": "packages/doeff-cluster/src/doeff_cluster/host_contract.hy",
+      "reason": "検査器(code-quality e659a3a)がこの Hy を型に写せない — hy:61: defhandler の宣言の辞書の鍵 ['needs'] をこの版の検査器は知らない(知っている鍵 = :effects / :tags)。include の外に置き(変えた時は登録の前と同じ未導入の注意)、対応と取り込みは agora-redesign #1569"
+    },
+    {
+      "path": "packages/doeff-cluster/src/doeff_cluster/job_entry.hy",
+      "reason": "検査器(code-quality e659a3a)がこの Hy を型に写せない — hy:44: 安全な静的投影の対象外の core macro: let。include の外に置き(変えた時は登録の前と同じ未導入の注意)、対応と取り込みは agora-redesign #1569"
+    },
+    {
+      "path": "packages/doeff-cluster/src/doeff_cluster/local.hy",
+      "reason": "検査器(code-quality e659a3a)がこの Hy を型に写せない — hy:793: 安全な静的投影の対象外の core macro: let。include の外に置き(変えた時は登録の前と同じ未導入の注意)、対応と取り込みは agora-redesign #1569"
+    },
+    {
+      "path": "packages/doeff-cluster/src/doeff_cluster/program_policy.hy",
+      "reason": "検査器(code-quality e659a3a)がこの Hy を型に写せない — hy:58: 安全な静的投影の対象外の core macro: let。include の外に置き(変えた時は登録の前と同じ未導入の注意)、対応と取り込みは agora-redesign #1569"
+    },
+    {
+      "path": "packages/doeff-cluster/src/doeff_cluster/remote.hy",
+      "reason": "検査器(code-quality e659a3a)がこの Hy を型に写せない — hy:23: deff の各引数には実型契約が必要（可変長/既定値は未対応）。include の外に置き(変えた時は登録の前と同じ未導入の注意)、対応と取り込みは agora-redesign #1569"
+    },
+    {
+      "path": "packages/doeff-cluster/src/doeff_cluster/remote_model.hy",
+      "reason": "検査器(code-quality e659a3a)がこの Hy を型に写せない — hy:123: 安全な静的投影の対象外の core macro: let。include の外に置き(変えた時は登録の前と同じ未導入の注意)、対応と取り込みは agora-redesign #1569"
+    },
+    {
+      "path": "packages/doeff-cluster/src/doeff_cluster/service_model.hy",
+      "reason": "検査器(code-quality e659a3a)がこの Hy を型に写せない — hy:113: deff の各引数には実型契約が必要（可変長/既定値は未対応）。include の外に置き(変えた時は登録の前と同じ未導入の注意)、対応と取り込みは agora-redesign #1569"
+    },
+    {
+      "path": "packages/doeff-cluster/tests/coordinator_contract_handlers.hy",
+      "reason": "検査器(code-quality e659a3a)がこの Hy を型に写せない — hy:157: deff の各引数には実型契約が必要（可変長/既定値は未対応）。include の外に置き(変えた時は登録の前と同じ未導入の注意)、対応と取り込みは agora-redesign #1569"
+    },
+    {
+      "path": "packages/doeff-cluster/tests/fixtures/entry_programs.hy",
+      "reason": "検査器(code-quality e659a3a)がこの Hy を型に写せない — hy:7: 宣言の無い repo macro: doeff_hy.handle.defhandler(所有 module の contract に macros を宣言する)。include の外に置き(変えた時は登録の前と同じ未導入の注意)、対応と取り込みは agora-redesign #1569"
+    },
+    {
+      "path": "packages/doeff-cluster/tests/fixtures/sim_programs.hy",
+      "reason": "検査器(code-quality e659a3a)がこの Hy を型に写せない — hy:5: require の macro は未対応: doeff_hy.macros.hyx_doXexclamation_markX。include の外に置き(変えた時は登録の前と同じ未導入の注意)、対応と取り込みは agora-redesign #1569"
+    },
+    {
+      "path": "packages/doeff-cluster/tests/program_rows.hy",
+      "reason": "検査器(code-quality e659a3a)がこの Hy を型に写せない — hy:26: defk の可変長の引数 args には契約 (: args tuple) が必要。include の外に置き(変えた時は登録の前と同じ未導入の注意)、対応と取り込みは agora-redesign #1569"
+    },
+    {
+      "path": "packages/doeff-cluster/tests/test_boot_reexec.hy",
+      "reason": "検査器(code-quality e659a3a)がこの Hy を型に写せない — hy:15: defk の可変長の引数 args には契約 (: args tuple) が必要。include の外に置き(変えた時は登録の前と同じ未導入の注意)、対応と取り込みは agora-redesign #1569"
+    },
+    {
+      "path": "packages/doeff-cluster/tests/test_boundary_recorder.hy",
+      "reason": "検査器(code-quality e659a3a)がこの Hy を型に写せない — hy:95: deff の可変長の引数 args には契約 (: args tuple) が必要。include の外に置き(変えた時は登録の前と同じ未導入の注意)、対応と取り込みは agora-redesign #1569"
+    },
+    {
+      "path": "packages/doeff-cluster/tests/test_detached_runners.hy",
+      "reason": "検査器(code-quality e659a3a)がこの Hy を型に写せない — hy:117: 安全な静的投影の対象外の core macro: let。include の外に置き(変えた時は登録の前と同じ未導入の注意)、対応と取り込みは agora-redesign #1569"
+    },
+    {
+      "path": "packages/doeff-cluster/tests/test_env_warm.hy",
+      "reason": "検査器(code-quality e659a3a)がこの Hy を型に写せない — hy:13: require の macro は未対応: doeff_hy.macros.hyx_doXexclamation_markX。include の外に置き(変えた時は登録の前と同じ未導入の注意)、対応と取り込みは agora-redesign #1569"
+    },
+    {
+      "path": "packages/doeff-cluster/tests/test_handoff_deadline.hy",
+      "reason": "検査器(code-quality e659a3a)がこの Hy を型に写せない — hy:180: defk の各引数には実型契約が必要（可変長/既定値は未対応）。include の外に置き(変えた時は登録の前と同じ未導入の注意)、対応と取り込みは agora-redesign #1569"
+    },
+    {
+      "path": "packages/doeff-cluster/tests/test_idle_skip.hy",
+      "reason": "検査器(code-quality e659a3a)がこの Hy を型に写せない — hy:114: 安全な静的投影の対象外の core macro: let。include の外に置き(変えた時は登録の前と同じ未導入の注意)、対応と取り込みは agora-redesign #1569"
+    },
+    {
+      "path": "packages/doeff-cluster/tests/test_job_entry_program.hy",
+      "reason": "検査器(code-quality e659a3a)がこの Hy を型に写せない — hy:32: defk の可変長の引数 args には契約 (: args tuple) が必要。include の外に置き(変えた時は登録の前と同じ未導入の注意)、対応と取り込みは agora-redesign #1569"
+    },
+    {
+      "path": "packages/doeff-cluster/tests/test_local.hy",
+      "reason": "検査器(code-quality e659a3a)がこの Hy を型に写せない — hy:464: 安全な静的投影の対象外の core macro: let。include の外に置き(変えた時は登録の前と同じ未導入の注意)、対応と取り込みは agora-redesign #1569"
+    },
+    {
+      "path": "packages/doeff-cluster/tests/test_remote.hy",
+      "reason": "検査器(code-quality e659a3a)がこの Hy を型に写せない — hy:54: 入れ子の defk は型投影未対応(doeff-hy の実 macro が未対応)。include の外に置き(変えた時は登録の前と同じ未導入の注意)、対応と取り込みは agora-redesign #1569"
+    },
+    {
+      "path": "packages/doeff-cluster/tests/test_runtime_env_sender.hy",
+      "reason": "検査器(code-quality e659a3a)がこの Hy を型に写せない — hy:7: require の macro は未対応: doeff_hy.macros.handle。include の外に置き(変えた時は登録の前と同じ未導入の注意)、対応と取り込みは agora-redesign #1569"
+    },
+    {
+      "path": "packages/doeff-cluster/tests/test_semaphore.hy",
+      "reason": "検査器(code-quality e659a3a)がこの Hy を型に写せない — hy:177: 入れ子の defk は型投影未対応(doeff-hy の実 macro が未対応)。include の外に置き(変えた時は登録の前と同じ未導入の注意)、対応と取り込みは agora-redesign #1569"
+    },
+    {
+      "path": "packages/doeff-cluster/tests/test_service_declaration.hy",
+      "reason": "検査器(code-quality e659a3a)がこの Hy を型に写せない — hy:50: defk の可変長の引数 argv には契約 (: argv tuple) が必要。include の外に置き(変えた時は登録の前と同じ未導入の注意)、対応と取り込みは agora-redesign #1569"
+    },
+    {
+      "path": "packages/doeff-cluster/tests/test_task_programs.hy",
+      "reason": "検査器(code-quality e659a3a)がこの Hy を型に写せない — hy:205: 安全な静的投影の対象外の core macro: let。include の外に置き(変えた時は登録の前と同じ未導入の注意)、対応と取り込みは agora-redesign #1569"
+    }
+  ]
+}
