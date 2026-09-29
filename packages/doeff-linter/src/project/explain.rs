@@ -171,6 +171,7 @@ pub enum Explain {
     TestKindMismatch { test: String, edge: bool, mark: String, reached: Vec<String> },
     /// DOEFF135: deftest 以外のテストの形。
     TestFormNotDeftest { form: &'static str, detail: String },
+    ServiceUntestedOnSim { service: String, entry: String, definitions: usize, sim: String },
     /// DOEFF106・131 を層の置き場の外の file に当てた当たり(層の説明の主体が無い — message をそのまま主体にする)。
     WorldOutsideLayers { subject: String },
     /// DOEFF107: 定義が呼ぶ定義を通して生の副作用に届く。
@@ -372,6 +373,10 @@ impl<'a> Narrator<'a> {
             Explain::TestFormNotDeftest { form, detail } => (
                 format!("テストの形 {} — {}", form, detail),
                 "テストは deftest だけ。pytest の外で走る検査や pytest の Python の形は、赤になっても誰も気づかない(#1104 の実測 — pytest の外の検査 5 本が赤のまま放置されていた)。".to_string(),
+            ),
+            Explain::ServiceUntestedOnSim { service, entry, definitions, sim } => (
+                format!("service {} の組み立て {}({} 本の定義)", service, entry, definitions),
+                format!("{} の下の deftest から呼び出し・参照を辿っても届かない。本番の組み立てのまま handler だけを差し替えて回していない service は、業務の不変条件を確かめていない(未検証のまま配備しない)。", sim),
             ),
             Explain::WorldOutsideLayers { subject } => (
                 subject.clone(),

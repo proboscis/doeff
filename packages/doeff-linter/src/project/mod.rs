@@ -277,6 +277,9 @@ pub fn run_with(root: &Path, settings: &ProjectSettings, enabled: &BTreeSet<Proj
                     if enabled.contains(&ProjectRule::TestKindMismatch) && !architecture.world_handlers.is_empty() {
                         drafts.extend(judge_test_kinds(root, architecture, hy));
                     }
+                    if enabled.contains(&ProjectRule::ServiceUntestedOnSim) {
+                        drafts.extend(judge_untested_services(architecture, hy).into_iter().map(|d| Draft { path: root.join(&d.rel), ..d }));
+                    }
                     if let Some(raw) = settings.raw.as_ref().filter(|r| r.world_modules.is_some()) {
                         let placed: BTreeSet<&str> = layer_files.iter().map(|f| f.file.rel.as_str()).collect();
                         drafts.extend(judge_unplaced_world(root, architecture, raw, &placed, hy, enabled));
@@ -548,7 +551,9 @@ fn whole_hy_index(
     let wants_classes = (enabled.contains(&ProjectRule::ClassWithBehaviour) || enabled.contains(&ProjectRule::SemanticClassRole)) && settings.definitions.is_some();
     // DOEFF133 はテストの file を含む全体の索引で、テストから定義を辿る。
     // 許可名簿を書いた repo は、層の置き場の外の file にも DOEFF106・131 を当てる(#1147)ので、全体の索引を作る。
+    // DOEFF136 は模擬の環境の deftest から service の entry の層の定義へ届くかを見る。
     let wants_tests = (enabled.contains(&ProjectRule::TestKindMismatch) && settings.architecture.as_ref().is_some_and(|a| a.edge_mark.is_some()))
+        || (enabled.contains(&ProjectRule::ServiceUntestedOnSim) && settings.architecture.as_ref().is_some_and(|a| a.verification_environment.is_some()))
         || (settings.raw.as_ref().is_some_and(|r| r.world_modules.is_some())
             && (enabled.contains(&ProjectRule::RawSideEffectDirect) || enabled.contains(&ProjectRule::WorldHandlerNamedOutsideList)));
     if !(wants_raw && settings.raw.is_some()) && !wants_env && !wants_classes && !wants_tests {
@@ -1641,11 +1646,19 @@ fn carries_edge_mark(source: &str, test: &Definition, mark: &str) -> bool {
     in_marks || lines.iter().any(|line| line.contains("pytestmark") && named(line))
 }
 
-/// DOEFF133: テストの種類を届く先から導く。定義の間の辺(呼び出し・参照・入れ子)を全体の索引から 1 度だけ組み、外の世界の側
-/// (名簿の定義・:wraps の handler を名指す定義・強い生の I/O の証拠を持つ定義)から逆向きに辿って「外の世界に届く定義」の集合を
-/// 求める。deftest がその集合に在れば縁(:edge-mark の印が要る)、無ければ手元(印を持たない)。Python の検は数えない(R6 で deftest へ)。
-fn judge_test_kinds(root: &Path, architecture: &architecture::Architecture, hy: &HashMap<String, HyFileIndex>) -> Vec<Draft> {
-    let Some(mark) = architecture.edge_mark.as_deref() else { return Vec::new() };
+/// 定義の間の辺(呼び出し・参照・入れ子)の図 — 全体の索引から 1 度だけ組む(DOEFF133・136 が使う)。
+struct DefinitionGraph<'h> {
+    rels: Vec<&'h String>,
+    /// 定義 1 つ = 節 1 つ(file の順・file の中の添字の順)。
+    nodes: Vec<(&'h str, usize)>,
+    base: HashMap<&'h str, usize>,
+    /// world[n] = その定義そのものが外の世界に触れる理由(名簿の定義の綴り・:wraps の handler の綴り・生の I/O の証拠の名)。
+    world: Vec<Option<String>>,
+    /// callers[n] = n に届く定義(辺の逆向き)。
+    callers: Vec<Vec<usize>>,
+}
+
+fn definition_graph<'h>(architecture: &architecture::Architecture, hy: &'h HashMap<String, HyFileIndex>) -> DefinitionGraph<'h> {
     let listed: HashMap<String, (String, Vec<architecture::WorldTouch>)> =
         architecture.world_handlers.iter().map(|h| (h.definition.target(), (h.definition.spelling(), h.touches.clone()))).collect();
     let wrapped = architecture.world_targets(world_catalog::WorldCatalog::bundled());
@@ -1719,6 +1732,15 @@ fn judge_test_kinds(root: &Path, architecture: &architecture::Architecture, hy: 
             }
         }
     }
+    DefinitionGraph { rels, nodes, base, world, callers }
+}
+
+/// DOEFF133: テストの種類を届く先から導く。定義の間の辺(呼び出し・参照・入れ子)を全体の索引から 1 度だけ組み、外の世界の側
+/// (名簿の定義・:wraps の handler を名指す定義・強い生の I/O の証拠を持つ定義)から逆向きに辿って「外の世界に届く定義」の集合を
+/// 求める。deftest がその集合に在れば縁(:edge-mark の印が要る)、無ければ手元(印を持たない)。Python の検は数えない(R6 で deftest へ)。
+fn judge_test_kinds(root: &Path, architecture: &architecture::Architecture, hy: &HashMap<String, HyFileIndex>) -> Vec<Draft> {
+    let Some(mark) = architecture.edge_mark.as_deref() else { return Vec::new() };
+    let DefinitionGraph { rels, nodes, base, world, callers } = definition_graph(architecture, hy);
     // 外の世界の側から逆向きに辿る(toward[n] = n から外の世界へ向かう次の節・None なら n 自身が触れる)。
     let mut reaches: Vec<bool> = world.iter().map(Option::is_some).collect();
     let mut toward: Vec<Option<usize>> = vec![None; nodes.len()];
@@ -1778,6 +1800,60 @@ fn judge_test_kinds(root: &Path, architecture: &architecture::Architecture, hy: 
                 explain: Explain::TestKindMismatch { test: test.name.clone(), edge, mark: mark.to_string(), reached },
             });
         }
+    }
+    drafts
+}
+
+/// DOEFF136: service ごとに、entry の層の定義から呼び手を逆向きに辿り、模擬の環境(:verification-environment)の下の deftest に
+/// 1 本も届かなければ、その defservice を出す(agora-redesign #1106 の R5)。entry の層を持たない service は数えない。
+fn judge_untested_services(architecture: &architecture::Architecture, hy: &HashMap<String, HyFileIndex>) -> Vec<Draft> {
+    let Some(place) = architecture.verification_environment.as_deref() else { return Vec::new() };
+    let root = settings::normalize_dir(&architecture.root);
+    let sim = format!("{}/{}", root, place);
+    let graph = definition_graph(architecture, hy);
+    let definition = |node: usize| {
+        let (rel, index) = graph.nodes[node];
+        &hy[rel].definitions[index]
+    };
+    let on_sim = |node: usize| under(graph.nodes[node].0, &sim) && definition(node).kind == DefinitionKind::Deftest;
+    let mut drafts = Vec::new();
+    for service in architecture.services.iter().filter(|s| s.layers.iter().any(|l| l == "entry")) {
+        let entry = format!("{}/{}/entry", root, service.dir);
+        let seeds: Vec<usize> = (0..graph.nodes.len()).filter(|n| under(graph.nodes[*n].0, &entry)).collect();
+        // entry の層を宣言しても定義が 0 本なら、回す組み立てが無い(数えない)。
+        if seeds.is_empty() {
+            continue;
+        }
+        let mut seen = vec![false; graph.nodes.len()];
+        let mut queue: std::collections::VecDeque<usize> = seeds.iter().copied().collect();
+        seeds.iter().for_each(|n| seen[*n] = true);
+        let mut tested = false;
+        while let Some(node) = queue.pop_front() {
+            if on_sim(node) {
+                tested = true;
+                break;
+            }
+            for &caller in &graph.callers[node] {
+                if !seen[caller] {
+                    seen[caller] = true;
+                    queue.push_back(caller);
+                }
+            }
+        }
+        if tested {
+            continue;
+        }
+        drafts.push(Draft {
+            rule: ProjectRule::ServiceUntestedOnSim,
+            layer: None,
+            rel: "architecture.hy".to_string(),
+            path: PathBuf::from("architecture.hy"),
+            range: service.range,
+            message: format!("service {} の entry の層({} 本の定義)に、模擬の環境 {} の deftest が 1 本も届かない", service.name, seeds.len(), sim),
+            detail: Some(service.name.clone()),
+            base: Severity::Error,
+            explain: Explain::ServiceUntestedOnSim { service: service.name.clone(), entry, definitions: seeds.len(), sim: sim.clone() },
+        });
     }
     drafts
 }

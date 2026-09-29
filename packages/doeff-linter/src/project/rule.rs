@@ -109,6 +109,9 @@ pub enum ProjectRule {
     /// DOEFF135: deftest 以外のテストの形(Python の def test_*・module ごとの skip・pytest の外の check script・deftest の runner)—
     /// architecture.hy の :test-forms の綴りの型で file を選ぶ(agora-redesign #1106 の R6)。
     TestFormNotDeftest,
+    /// DOEFF136: service の entry の層の定義に、模擬の環境(:verification-environment)の下の deftest が 1 本も届かない
+    /// — 本番の組み立てを手元で回していない service(agora-redesign #1106 の R5・#1111)。
+    ServiceUntestedOnSim,
     /// DOEFF201(意味・Jev): 翻訳の層の定義が業務の判断をしている。
     SemanticBusinessDecision,
     /// DOEFF202(意味・Jev): 判断の層の定義が通信の手段を知っている。
@@ -158,6 +161,7 @@ impl ProjectRule {
         ProjectRule::WorldHandlerMisplaced,
         ProjectRule::TestKindMismatch,
         ProjectRule::TestFormNotDeftest,
+        ProjectRule::ServiceUntestedOnSim,
         ProjectRule::SemanticBusinessDecision,
         ProjectRule::SemanticTransportKnowledge,
         ProjectRule::SemanticPlainCallable,
@@ -202,6 +206,7 @@ impl ProjectRule {
             ProjectRule::WorldHandlerMisplaced => "DOEFF132",
             ProjectRule::TestKindMismatch => "DOEFF133",
             ProjectRule::TestFormNotDeftest => "DOEFF135",
+            ProjectRule::ServiceUntestedOnSim => "DOEFF136",
             ProjectRule::SemanticBusinessDecision => "DOEFF201",
             ProjectRule::SemanticTransportKnowledge => "DOEFF202",
             ProjectRule::SemanticPlainCallable => "DOEFF203",
@@ -226,6 +231,7 @@ impl ProjectRule {
             | ProjectRule::WorldHandlerMisplaced
             | ProjectRule::TestKindMismatch
             | ProjectRule::TestFormNotDeftest
+            | ProjectRule::ServiceUntestedOnSim
             | ProjectRule::ServiceBoundary
             | ProjectRule::ServiceDependency
             | ProjectRule::TranslationEmitsIntent
@@ -316,7 +322,8 @@ impl ProjectRule {
             | ProjectRule::UnusedDependency
             | ProjectRule::WorldHandlerMisplaced
             | ProjectRule::TestKindMismatch
-            | ProjectRule::TestFormNotDeftest => false,
+            | ProjectRule::TestFormNotDeftest
+            | ProjectRule::ServiceUntestedOnSim => false,
             ProjectRule::EnvironmentName
             | ProjectRule::DefnForbidden
             | ProjectRule::DeffNeedsReason
@@ -374,6 +381,7 @@ impl ProjectRule {
             ProjectRule::WorldHandlerMisplaced => "許可名簿の定義が無い・foundation の外に在る",
             ProjectRule::TestKindMismatch => "テストの種類(手元 / 縁)と印が食い違う",
             ProjectRule::TestFormNotDeftest => "deftest 以外のテストの形",
+            ProjectRule::ServiceUntestedOnSim => "模擬の環境のテストが回さない service",
             ProjectRule::SemanticBusinessDecision => "翻訳の層で業務の判断(Jev)",
             ProjectRule::SemanticTransportKnowledge => "判断の層が通信の手段を知る(Jev)",
             ProjectRule::SemanticPlainCallable => "deff の理由が合わない(Jev)",
@@ -411,6 +419,7 @@ impl ProjectRule {
             | ProjectRule::DefinitionTagsRequired
             | ProjectRule::TestIsDeftest
             | ProjectRule::TestFormNotDeftest
+            | ProjectRule::ServiceUntestedOnSim
             | ProjectRule::DefkCalledBare
             | ProjectRule::EffectsDisagreeWithInference => RuleFamily::Definition,
             ProjectRule::ClassWithBehaviour | ProjectRule::SemanticClassRole => RuleFamily::Class,
@@ -464,6 +473,7 @@ impl ProjectRule {
             ProjectRule::WorldHandlerMisplaced => "World Handler Misplaced",
             ProjectRule::TestKindMismatch => "Test Kind Mismatch",
             ProjectRule::TestFormNotDeftest => "Test Form Not Deftest",
+            ProjectRule::ServiceUntestedOnSim => "Service Untested On Sim",
             ProjectRule::SemanticBusinessDecision => "Business Decision In Translation (Jev)",
             ProjectRule::SemanticTransportKnowledge => "Transport Knowledge In Core (Jev)",
             ProjectRule::SemanticPlainCallable => "Plain Callable Reason (Jev)",
@@ -507,6 +517,7 @@ impl ProjectRule {
             ProjectRule::RebuiltAccumulator => "for / while の中で (:= xs (+ xs #(…))) と蓄えを毎回作り直さない",
             ProjectRule::EffectsDisagreeWithInference => "defk の :effects を書いたなら、本体で撃つ呼び((<- …)・(! …))から推論した effect と同じ集合にする — 宣言に無い effect を起こさず、起こさない effect を宣言しない(:effects の無い defk は対象外)",
             ProjectRule::TestFormNotDeftest => "テストは deftest だけで書き pytest が収集する — Python の def test_*・module ごとの skip・pytest の外で走る check script・deftest を自分で回す runner は置かない(operator 2026-09-27「検は deftest だけ」)。file は architecture.hy の :test-forms の綴りの型で選ぶ",
+            ProjectRule::ServiceUntestedOnSim => "業務の service は、本番の組み立て(entry の層)のまま模擬の環境に載せ、handler の差し替えだけで回して確かめる — 模擬の環境(:verification-environment)の下の deftest がその service の entry の層の定義に 1 本も届かなければ、未検証の service として赤にする",
             ProjectRule::TestKindMismatch => "テストの種類は 2 つだけ — 手元(届く定義に外の世界に触れる handler が無い)/ 縁(名簿の定義・:wraps の handler・生の I/O に届く)。種類は人が決めず届く先から導き、縁のテストだけが architecture.hy の :edge-mark の印を持つ(operator 2026-09-29 \"everything is 'pure' until we apply handler that has real IO\")",
             ProjectRule::WorldHandlerMisplaced => "architecture.hy の :world-handlers に挙げた定義は実在し、層 foundation の module に在る(外の世界に触れてよい定義の置き場は foundation だけ)",
             ProjectRule::WorldHandlerNamedOutsideList => "architecture.hy の :world-handlers の :wraps に挙げた doeff の実 I/O の handler(os-file-handler・http-production-handler …)を名指してよいのは、許可名簿の定義(とその中の入れ子の定義)だけ — 値として渡す所(with-handlers の列)も呼び出しも数える",
@@ -552,6 +563,7 @@ impl ProjectRule {
             ProjectRule::RebuiltAccumulator => "蓄えは内包表記(lfor)で 1 度に作る — ループの中で (+ xs #(…)) の作り直しを重ねない",
             ProjectRule::EffectsDisagreeWithInference => ":effects に起こしている effect を足すか、起こしていない effect を消す(推論は handler で受けた effect を引かない — 本体で受けているなら登録簿に載せる)",
             ProjectRule::TestFormNotDeftest => "deftest に書き直す(判定の関数は同じ process で呼ぶ)— 守る物が消えたなら file ごと消す。module ごとの skip は足りない物を直すか、その検だけを skip する",
+            ProjectRule::ServiceUntestedOnSim => "模擬の環境の tests に、その service の entry の組み立てを handler の差し替えだけで回す deftest を足す",
             ProjectRule::TestKindMismatch => "縁なら印を付け(既定の pytest から外れる)、手元のつもりなら届く先の実 I/O の handler を模擬の handler に替える — 手元なのに印が在れば外す",
             ProjectRule::WorldHandlerMisplaced => "定義を foundation の層(architecture.hy の :foundation の dir)へ移すか、名簿の綴り(module:名)を実物に合わせる — 要らなくなった定義なら名簿から外す",
             ProjectRule::WorldHandlerNamedOutsideList => "名簿の定義(例 with-agora-process)の下で本体を走らせ、自分では実 I/O の handler を被せない — 新しく外の世界に触れる所が要るなら、その定義を foundation の層に置いて名簿に載せる",
@@ -605,6 +617,7 @@ mod tests {
         ("DOEFF132", RuleFamily::Raw),
         ("DOEFF133", RuleFamily::Raw),
         ("DOEFF135", RuleFamily::Definition),
+        ("DOEFF136", RuleFamily::Definition),
         ("DOEFF201", RuleFamily::Jev),
         ("DOEFF202", RuleFamily::Jev),
         ("DOEFF203", RuleFamily::Jev),
