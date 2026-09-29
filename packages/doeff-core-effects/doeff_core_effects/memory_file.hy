@@ -251,10 +251,11 @@
     (<- at str (normal path))
     (<- answer (content-of store at))
     (resume (if (isinstance answer bytes) (.decode answer "utf-8" "replace") answer)))
-  (ReadBytes [path]
+  (ReadBytes [path limit]
     (<- at str (normal path))
     (<- answer (content-of store at))
-    (resume answer))
+    (resume (if (and (isinstance answer bytes) (is-not limit None)) (cut answer 0 limit) answer)))
+  ;; 書きの sync は落とす先が無いので読まない(答えは本物と同じ — file_effects.hy の頭の註)。
   (WriteText [path text mode replace]
     (<- at str (normal path))
     (<- answer (with-file store at (.encode text "utf-8") mode))

@@ -43,19 +43,20 @@
       answer)))
 
 
-(defk write-content [path content mode replace]
-  {:pre [(: path str) (: content (| str bytes)) (: mode (| int None)) (: replace bool)] :post [(: % (| FileFailed None))]}
-  "file を書くため(replace = 同じ dir の別名に書いてから置き換える)。"
+(defk write-content [path content mode replace sync]
+  {:pre [(: path str) (: content (| str bytes)) (: mode (| int None)) (: replace bool) (: sync bool)] :post [(: % (| FileFailed None))]}
+  "file を書くため(replace = 同じ dir の別名に書いてから置き換える・sync = 閉じる前に fsync)。"
   (val binary (isinstance content bytes))
   (try
     (if replace
         (do (val parent (os.path.dirname (os.path.abspath path)))
             (val staged (tempfile.NamedTemporaryFile :mode (if binary "wb" "w") :dir parent :delete False
                                                      #** (if binary {} {"encoding" "utf-8"})))
-            (with [out staged] (.write out content))
+            (with [out staged] (.write out content) (when sync (_sync out)))
             (os.replace staged.name path))
         (with [out (open path (if binary "wb" "w") #** (if binary {} {"encoding" "utf-8"}))]
-          (.write out content)))
+          (.write out content)
+          (when sync (_sync out))))
     (when (is-not mode None)
       (os.chmod path mode))
     None
@@ -154,18 +155,28 @@
       answer)))
 
 
-(defk read-file [path binary]
-  {:pre [(: path str) (: binary bool)] :post [(: % (| str bytes FileFailed))]}
-  "file の中身を読むため(text は UTF-8・読めない byte は置き換え)。"
+(defk read-file [path binary limit]
+  {:pre [(: path str) (: binary bool) (: limit (| int None))] :post [(: % (| str bytes FileFailed))]}
+  "file の中身を読むため(text は UTF-8・読めない byte は置き換え・limit = bytes の先頭の limit byte だけ)。"
   (try
-    (if binary (.read-bytes (Path path)) (.read-text (Path path) :encoding "utf-8" :errors "replace"))
+    (cond
+      (not binary) (.read-text (Path path) :encoding "utf-8" :errors "replace")
+      (is limit None) (.read-bytes (Path path))
+      True (with [handle (open path "rb")] (.read handle limit)))
     (except [error OSError]
       (<- answer FileFailed (failed path error))
       answer)))
 
 
-(defn _append [path text]  ; defk にできない: guarded に渡す callback
-  (with [handle (open path "a" :encoding "utf-8")] (.write handle text)))
+(defn _sync [handle]  ; defk にできない: 書きの with の中から呼ぶ手続き(Program を返すと実行されない)
+  (.flush handle)
+  (os.fsync (.fileno handle)))
+
+
+(defn _append [path text sync]  ; defk にできない: guarded に渡す callback
+  (with [handle (open path "a" :encoding "utf-8")]
+    (.write handle text)
+    (when sync (_sync handle))))
 
 
 (defn _release [held]  ; defk にできない: guarded に渡す callback
@@ -187,19 +198,19 @@
     (<- answer (stat-path path follow-symlinks))
     (resume answer))
   (ReadText [path]
-    (<- answer (read-file path False))
+    (<- answer (read-file path False None))
     (resume answer))
-  (ReadBytes [path]
-    (<- answer (read-file path True))
+  (ReadBytes [path limit]
+    (<- answer (read-file path True limit))
     (resume answer))
-  (WriteText [path text mode replace]
-    (<- answer (write-content path text mode replace))
+  (WriteText [path text mode replace sync]
+    (<- answer (write-content path text mode replace sync))
     (resume answer))
-  (WriteBytes [path content mode replace]
-    (<- answer (write-content path content mode replace))
+  (WriteBytes [path content mode replace sync]
+    (<- answer (write-content path content mode replace sync))
     (resume answer))
-  (AppendText [path text]
-    (<- answer (guarded path (fn [] (_append path text))))
+  (AppendText [path text sync]
+    (<- answer (guarded path (fn [] (_append path text sync))))
     (resume answer))
   (MakeDirectory [path mode]
     (<- answer (make-directory path mode))

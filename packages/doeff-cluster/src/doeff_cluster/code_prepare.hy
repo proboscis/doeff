@@ -24,7 +24,7 @@
 ;;; 焼く範囲(2026-09-26・#664 の実測): --entries <module,…> を渡すと、その module たちの import の閉包(Hy の import / require と
 ;;; Python の import を静的に辿る)だけを焼く。閉包の外の module は子が import した時に作られる(焼く物が減るだけで正しさは変わらない)。
 ;;; 並列数の既定は cgroup の CPU の上限(pod の limits)— node の CPU の数で焼くと、上限 4 の pod で 16 並列になり周期の 97% が絞られた。
-(require doeff-hy.macros [defk defhandler <-])
+(require doeff-hy.macros [defk defhandler <- val var])
 (import argparse)
 (import ast)
 (import math)
@@ -37,9 +37,12 @@
 (import sys)
 (import concurrent.futures [ProcessPoolExecutor])
 (import importlib._bootstrap_external [_code_to_hash_pyc])  ; PEP 552 の頭を組む公式の実装
+(import collections.abc [Callable])
 (import pathlib [Path PurePosixPath])
 (import doeff [EffectBase run])
 (import doeff_time [GetMonotonic sync-time-handler])
+(import doeff_core_effects.file_effects [PathKind PathStat StatPath ReadText ReadBytes WriteText WriteBytes MakeDirectory WalkTree CopyFile
+                                         file-done])
 
 (setv SOURCE-SUFFIXES #(".py" ".hy"))
 (setv DEFAULT-IMPORT-ROOTS #("."))
@@ -234,18 +237,83 @@
 
 ;; --- handler(実 I/O) ------------------------------------------------------------------
 
-(defn #^ (| str None) compile-one [#^ str tree #^ str rel #^ str name]
-  "1 file を焼く。焼けない時は #(相対 path 理由) を返す(import の時に同じ誤りが出るので、ここでは記録だけ)。"
-  (setv source (/ (Path tree) rel) data (.read-bytes source))
+;; --- 本物(local-tree)と fake(files-tree)が同じく通る判断 ------------------------------------------
+
+(defk tree-listing [rels]
+  {:pre [(: rels (| list tuple))] :post [(: % tuple)] :tags {:context "doeff-cluster" :role "judgment"}}
+  "木の中の file の相対 path(posix)の列を、走査の答え #(source の列 .pyc の列)(名の順)にするため。隠し file と隠し dir の下は
+   数えない・.pyc は __pycache__ の直下の物だけ・source は __pycache__ の外の .py / .hy。"
+  (val sources [])
+  (val pycs [])
+  (for [rel rels]
+    (val path (PurePosixPath rel))
+    (val parent path.parent.name)
+    (cond
+      (any (gfor part path.parts (.startswith part "."))) None
+      (and (= parent "__pycache__") (.endswith path.name ".pyc")) (.append pycs rel)
+      (and (!= parent "__pycache__") (.endswith path.name SOURCE-SUFFIXES)) (.append sources rel)))
+  #((sorted sources) (sorted pycs)))
+
+
+(defk compiled-pyc [rel name path data]
+  {:pre [(: rel str) (: name str) (: path str) (: data bytes)] :post [(: % (| bytes tuple))] :tags {:context "doeff-cluster" :role "judgment"}}
+  "source の中身 1 つを、import が検める方式(PEP 552 の checked hash)の .pyc の中身にするため。焼けない時は #(相対 path 理由)
+   (import の時に同じ誤りが出るので、ここでは記録だけ)。path = source の在処(Hy の source かの見分けと、誤りの文に出る名)。"
   (try
-    (setv loader (importlib.machinery.SourceFileLoader name (str source))
-          code (.source-to-code loader data (str source)))
+    (val loader (importlib.machinery.SourceFileLoader name path))
+    (val code (.source-to-code loader data path))
+    (bytes (_code-to-hash-pyc code (importlib.util.source-hash data) True))
     (except [error Exception]
-      (return #(rel (.format "{}: {}" (. (type error) __name__) (cut (str error) 0 200))))))
+      #(rel (.format "{}: {}" (. (type error) __name__) (cut (str error) 0 200))))))
+
+
+(defk marker-text [content]
+  {:pre [(: content dict)] :post [(: % str)] :tags {:context "doeff-cluster" :role "judgment"}}
+  "完成の印の中身を file の text にするため。"
+  (json.dumps content :ensure-ascii False :indent 1))
+
+
+(defk closure-of [sources entries roots read]
+  {:pre [(: sources (| list tuple)) (: entries tuple) (: roots tuple) (: read Callable)] :post [(: % frozenset)]
+   :tags {:context "doeff-cluster" :role "judgment"}}
+  "entries(module 名)から import を静的に辿った閉包に入る source の相対 path を求めるため(焼く範囲を task が読む module に絞る)。
+   package の module を読むと、その上の package の __init__ も読む。木の外の module(標準・第三者)は辿らない。
+   read = 相対 path → source の text(本物は木の file を読み、fake は置き場の中身を渡す)。"
+  (val by-module (dfor s sources :setv m (module-name s roots) :if (is-not m None) m s))
+  (val seen (set))
+  (val queue (list entries))
+  (while queue
+    (val name (.pop queue))
+    (val parts (.split name "."))
+    ;; 上の package も読む(import a.b.c は a と a.b の __init__ を走らせる)。
+    (for [n (range 1 (+ (len parts) 1))]
+      (val m (.join "." (cut parts 0 n)))
+      (when (and (in m by-module) (not-in m seen))
+        (.add seen m)
+        (val rel (get by-module m))
+        (val package (if (.endswith rel #("__init__.py" "__init__.hy")) m (.join "." (cut (.split m ".") 0 -1))))
+        (for [#(dots target names) (imported-names rel (read rel))]
+          (val base (if (> dots 0)
+                        (.join "." (+ (cut (.split package ".") 0 (max 0 (- (len (.split package ".")) (- dots 1)))) (if target [target] [])))
+                        target))
+          (when base
+            (.append queue base)
+            ;; from base import x の x が module なら、それも読む。
+            (for [x names] (.append queue (+ base "." x))))))))
+  (frozenset (gfor m seen (get by-module m))))
+
+
+;; --- 本物の file system の答え手の部品 ------------------------------------------------------------------
+
+(defn #^ (| tuple None) compile-one [#^ str tree #^ str rel #^ str name]
+  "1 file を焼く。焼けない時は #(相対 path 理由) を返す(焼きの判断は compiled-pyc — fake と同じ関数)。"
+  (setv source (/ (Path tree) rel) data (.read-bytes source))
+  (setv compiled (run (compiled-pyc rel name (str source) data)))
+  (when (isinstance compiled tuple) (return compiled))
   (setv cache (Path (importlib.util.cache-from-source (str source))))
   (.mkdir cache.parent :parents True :exist-ok True)
   (setv tmp (.with-suffix cache (.format ".{}.tmp" (os.getpid))))
-  (.write-bytes tmp (_code-to-hash-pyc code (importlib.util.source-hash data) True))
+  (.write-bytes tmp compiled)
   (os.replace tmp cache)
   None)
 
@@ -260,18 +328,21 @@
   (compile-one #* item))
 
 
-(defn #^ tuple scan [#^ str tree]
-  (setv root (Path tree) sources [] pycs [])
+(defk scan [tree]
+  {:pre [(: tree str)] :post [(: % tuple)] :tags {:context "doeff-cluster" :role "foundation"}}
+  "本物の木を走査して #(source の列 .pyc の列) を答えるため(隠し dir の下へは入らない — どれを数えるかの判断は tree-listing)。"
+  (val root (Path tree))
+  (val rels [])
   (for [#(dirpath dirnames filenames) (os.walk root)]
-    (setv (cut dirnames) (lfor d dirnames :if (not (.startswith d ".")) d))
-    (setv rel-dir (.as-posix (.relative-to (Path dirpath) root)))
-    (for [name (sorted filenames)]
-      (when (.startswith name ".") (continue))
-      (setv rel (if (= rel-dir ".") name (+ rel-dir "/" name)))
-      (cond
-        (and (= (. (Path dirpath) name) "__pycache__") (.endswith name ".pyc")) (.append pycs rel)
-        (and (!= (. (Path dirpath) name) "__pycache__") (.endswith name SOURCE-SUFFIXES)) (.append sources rel))))
-  #((sorted sources) (sorted pycs)))
+    (val kept (lfor d dirnames :if (not (.startswith d ".")) d))
+    ;; os.walk は dirnames の list そのものを見て降りる先を決めるので、中身を入れ替える。
+    (.clear dirnames)
+    (.extend dirnames kept)
+    (val rel-dir (.as-posix (.relative-to (Path dirpath) root)))
+    (for [name filenames]
+      (.append rels (if (= rel-dir ".") name (+ rel-dir "/" name)))))
+  (<- listed tuple (tree-listing rels))
+  listed)
 
 
 (defn #^ int cpu-limit-of [#^ (| str None) cpu-max #^ int available]
@@ -334,30 +405,12 @@
   (tuple (gfor #(dots name names) found #(dots name (tuple names)))))
 
 
-(defn #^ frozenset import-closure [#^ str tree #^ (| list tuple) sources #^ tuple entries #^ tuple roots]
-  "entries(module 名)から import を静的に辿った閉包に入る source の相対 path(焼く範囲を task が読む module に絞るため)。
-   package の module を読むと、その上の package の __init__ も読む。木の外の module(標準・第三者)は辿らない。"
-  (setv by-module (dfor s sources :setv m (module-name s roots) :if (is-not m None) m s)
-        seen (set) queue (list entries))
-  (while queue
-    (setv name (.pop queue))
-    (setv parts (.split name "."))
-    ;; 上の package も読む(import a.b.c は a と a.b の __init__ を走らせる)。
-    (for [n (range 1 (+ (len parts) 1))]
-      (setv m (.join "." (cut parts 0 n)))
-      (when (and (in m by-module) (not-in m seen))
-        (.add seen m)
-        (setv rel (get by-module m)
-              package (if (.endswith rel #("__init__.py" "__init__.hy")) m (.join "." (cut (.split m ".") 0 -1))))
-        (for [#(dots target names) (imported-names rel (.read-text (/ (Path tree) rel) :encoding "utf-8" :errors "replace"))]
-          (setv base (if (> dots 0)
-                         (.join "." (+ (cut (.split package ".") 0 (max 0 (- (len (.split package ".")) (- dots 1)))) (if target [target] [])))
-                         target))
-          (when base
-            (.append queue base)
-            ;; from base import x の x が module なら、それも読む。
-            (for [x names] (.append queue (+ base "." x))))))))
-  (frozenset (gfor m seen (get by-module m))))
+(defk import-closure [tree sources entries roots]
+  {:pre [(: tree str) (: sources (| list tuple)) (: entries tuple) (: roots tuple)] :post [(: % frozenset)]
+   :tags {:context "doeff-cluster" :role "foundation"}}
+  "本物の木の file を読んで、entries の import の閉包に入る source の相対 path を求めるため(辿り方の判断は closure-of)。"
+  (<- closure frozenset (closure-of sources entries roots (fn [rel] (.read-text (/ (Path tree) rel) :encoding "utf-8" :errors "replace"))))
+  closure)
 
 
 (defn #^ int link-pycs [#^ str old #^ str new #^ tuple pycs]
@@ -385,19 +438,123 @@
   (lfor r results :if (is-not r None) r))
 
 
-(defn write-marker [#^ str tree #^ dict content]
-  (setv target (/ (Path tree) MARKER) tmp (/ (Path tree) (+ MARKER ".tmp")))
-  (.write-text tmp (json.dumps content :ensure-ascii False :indent 1) :encoding "utf-8")
-  (os.replace tmp target))
+(defk write-marker [tree content]
+  {:pre [(: tree str) (: content dict)] :post [(: % None)] :tags {:context "doeff-cluster" :role "foundation"}}
+  "完成の印を本物の木の根へ置くため(別の file へ書いて置き換える — 書きかけの印を読ませない)。"
+  (val target (/ (Path tree) MARKER))
+  (val tmp (/ (Path tree) (+ MARKER ".tmp")))
+  (<- text str (marker-text content))
+  (.write-text tmp text :encoding "utf-8")
+  (os.replace tmp target)
+  None)
 
 
 (defhandler local-tree []
-  (ScanTree [tree] (resume (scan tree)))
+  ;; 本物: 木の走査・hardlink・焼きを os と process の pool で行う(本番の入口 = 下の main)。
+  (ScanTree [tree]
+    (<- found tuple (scan tree))
+    (resume found))
   (LinkPycs [old new pycs] (resume (link-pycs old new pycs)))
-  (ImportClosure [tree sources entries roots] (resume (import-closure tree sources entries roots)))
+  (ImportClosure [tree sources entries roots]
+    (<- closure frozenset (import-closure tree sources entries roots))
+    (resume closure))
   (CompileSources [tree items jobs roots] (resume (compile-sources tree items jobs roots)))
-  (WriteMarker [tree content] (write-marker tree content) (resume None))
+  (WriteMarker [tree content]
+    (<- (write-marker tree content))
+    (resume None))
   (Note [line] (print line :file sys.stderr :flush True) (resume None)))
+
+
+;; --- fake: file system の effect の上の木(files-tree)--------------------------------------------------
+;; 木の効果に、汎用の file system の effect(doeff_core_effects.file_effects)で答える。模擬の世界では memory-file-handler を外側に
+;; 被せて、I/O なしで焼きの Program(prepare-tree)を走らせる。走査・閉包・焼き・印の中身の判断は本物と同じ関数(tree-listing・
+;; closure-of・compiled-pyc・marker-text)を通る。本物との違い: hardlink の代わりに写す(中身は同じ)・焼きは並列にしない
+;; (jobs を読まない)・焼きの間の import の路を足さない(焼く source の macro が木の中の別の module を require する時は本物だけが解ける)・
+;; Note は捨てる(模擬の世界に stderr は無い)・Hy の source は焼けない(doeff-hy の _could_be_hy_src が os.path.isfile で Hy の source かを
+;; 見るので、disk に無い source は Python として読まれ SyntaxError の失敗になる — 契約テスト test_tree_contract.hy の頭の註)。
+
+(defk tree-file-rels [tree]
+  {:pre [(: tree str)] :post [(: % list)] :tags {:context "doeff-cluster" :role "foundation"}}
+  "木の下の file の相対 path を並べるため(無い木は空 — 本物の os.walk が無い dir で何も出さないのと同じ)。"
+  (<- walked (WalkTree tree))
+  (if (isinstance walked tuple)
+      (lfor entry walked :if (= entry.kind PathKind.FILE) entry.name)
+      []))
+
+
+(defk copy-pycs [old new pycs]
+  {:pre [(: old str) (: new str) (: pycs tuple)] :post [(: % int)] :tags {:context "doeff-cluster" :role "foundation"}}
+  "前の木の .pyc を新しい木の同じ相対 path へ写し、写した数を返すため(写し先が在れば写さない — 本物の hardlink の代わり)。"
+  (var count 0)
+  (for [rel pycs]
+    (val target (os.path.join new rel))
+    (<- (file-done (MakeDirectory (os.path.dirname target))))
+    (<- found (file-done (StatPath target)))
+    (match found
+      (PathStat :kind PathKind.MISSING) (do (<- (file-done (CopyFile (os.path.join old rel) target)))
+                                            (:= count (+ count 1)))
+      _ None))
+  count)
+
+
+(defk source-texts [tree sources]
+  {:pre [(: tree str) (: sources (| list tuple))] :post [(: % dict)] :tags {:context "doeff-cluster" :role "foundation"}}
+  "木の source の相対 path → text を読むため(閉包の辿りに渡す)。"
+  (val texts {})
+  (for [rel sources]
+    (<- text (file-done (ReadText (os.path.join tree rel))))
+    (.update texts {rel text}))
+  texts)
+
+
+(defk place-compiled [tree rel name data]
+  {:pre [(: tree str) (: rel str) (: name str) (: data bytes)] :post [(: % (| tuple None))] :tags {:context "doeff-cluster" :role "foundation"}}
+  "source 1 つの中身を compiled-pyc で焼いて __pycache__ へ置くため(焼けなければ置かずに #(相対 path 理由) を返す)。"
+  (<- compiled (compiled-pyc rel name (os.path.join tree rel) data))
+  (match compiled
+    (bytes) (do (val cache (os.path.join tree (cache-rel rel)))
+                (<- (file-done (MakeDirectory (os.path.dirname cache))))
+                (<- (file-done (WriteBytes cache compiled :replace True)))
+                None)
+    failure failure))
+
+
+(defk compile-in-files [tree items]
+  {:pre [(: tree str) (: items tuple)] :post [(: % list)] :tags {:context "doeff-cluster" :role "foundation"}}
+  "焼く物を読んで place-compiled で焼き、焼けなかった物の #(相対 path 理由) の list を返すため。"
+  (val failures [])
+  (for [#(rel name) items]
+    (<- data (file-done (ReadBytes (os.path.join tree rel))))
+    (match data
+      (bytes) (do (<- failure (place-compiled tree rel name data))
+                  (when (is-not failure None)
+                    (.append failures failure)))
+      other (raise (TypeError (.format "ReadBytes の答えが bytes でない: {!r}" other)))))
+  failures)
+
+
+(defhandler files-tree
+  ;; fake(上の註): 木の効果を file system の effect へ出し直す。
+  (ScanTree [tree]
+    (<- rels list (tree-file-rels tree))
+    (<- listed tuple (tree-listing rels))
+    (resume listed))
+  (LinkPycs [old new pycs]
+    (<- copied int (copy-pycs old new pycs))
+    (resume copied))
+  (ImportClosure [tree sources entries roots]
+    (<- texts dict (source-texts tree sources))
+    (<- closure frozenset (closure-of sources entries roots (fn [rel] (get texts rel))))
+    (resume closure))
+  (CompileSources [tree items jobs roots]
+    (<- failures list (compile-in-files tree items))
+    (resume failures))
+  (WriteMarker [tree content]
+    (<- text str (marker-text content))
+    (<- (file-done (WriteText (os.path.join tree MARKER) text :replace True)))
+    (resume None))
+  (Note [line]
+    (resume None)))
 
 
 (defn main []

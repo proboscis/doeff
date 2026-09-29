@@ -105,6 +105,13 @@
               (ListDirectory (+ root "/a"))
               (RemoveTree (+ root "/t/b"))
               (ListDirectory (+ root "/t"))
+              ;; 答える前に disk へ落とす書き(sync)と、頭だけの読み(limit)— 答えは落とさない書き・全部の読みと同じ形。
+              (AppendText (+ root "/a/log") "3行目\n" :sync True)
+              (WriteBytes (+ root "/a/synced") b"\x01\x02\x03" :replace True :sync True)
+              (WriteText (+ root "/a/b/config") "落とした" :sync True)
+              (ReadBytes (+ root "/a/synced") :limit 2)
+              (ReadBytes (+ root "/a/synced") :limit 10)
+              (ReadText (+ root "/a/log"))
               (AcquireLock (+ root "/a/lock"))
               ;; 本物の file system が断る所。
               (WriteText (+ root "/none/x") "親が無い")
@@ -145,7 +152,8 @@
   (assert (= (lfor e (get answers 19) e.name) ["b" "log" "raw" "renamed"]) answers)
   (assert (= (lfor e (get answers 21) e.name) ["copy" "keep" "log" "raw"]) answers)
   ;; 断りは全部 FileFailed(例外にしない)。
-  (assert (all (gfor a (cut answers 23 None) (isinstance a FileFailed))) (cut answers 23 None)))
+  (assert (= (cut answers 22 28) #(None None None b"\x01\x02" b"\x01\x02\x03" "1行目\n2行目\n3行目\n")) answers)
+  (assert (all (gfor a (cut answers 29 None) (isinstance a FileFailed))) (cut answers 29 None)))
 
 
 (defn test-copy-tree-keeps-symlinks-on-the-real-file-system []

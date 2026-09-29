@@ -7,9 +7,12 @@
 ;;; 失敗は値(FileFailed — path と理由)で答える(例外にしない — 呼び手が型で読む)。成功の答えは effect ごと:
 ;;;   StatPath       path の種類・実の path・大きさ・mtime。答え = PathStat(無い path は kind MISSING — 失敗ではない)。follow-symlinks = False は
 ;;;                  symlink を辿らずに kind SYMLINK で答える(os.lstat — 先が壊れていても)
-;;;   ReadText / ReadBytes    file の中身(text は UTF-8・読めない byte は置き換え)。答え = str / bytes
+;;;   ReadText / ReadBytes    file の中身(text は UTF-8・読めない byte は置き換え)。答え = str / bytes。ReadBytes の limit は先頭の limit byte
+;;;                  だけを読む(None = 全部 — 大きな file の頭の 1 行だけが要る読み手のため)
 ;;;   WriteText / WriteBytes  file を書く。replace = True は別名に書いてから置き換える(書きかけを読ませない)。mode は書いた後に与える。答え = None
 ;;;   AppendText     file の末尾に足す(無ければ作る)。答え = None
+;;;   (書きの 3 つの sync = True は、答える前に中身を disk へ落とす(fsync — replace では置き換える前)。返事を済ませた中身が機体の停止で
+;;;    消えては困る書き手のため。memory の置き場には落とす先が無いので、答えは sync に依らない)
 ;;;   MakeDirectory  dir を親ごと作る(在ってもよい)。mode は新しく作った最後の dir に与える。答え = None
 ;;;   ListDirectory  dir の直下。答え = DirEntry の tuple(名の順)
 ;;;   WalkTree       dir の下の全部(再帰)。答え = DirEntry の tuple(name = dir からの相対 path・/ 区切り・並べた順)
@@ -23,7 +26,7 @@
 ;;;
 ;;; memory の置き場の語彙(本物の file system には無い): MemoryFile / MemoryFiles = 置き場の初めの形と今の中身・ReadMemoryFiles = 今の中身を
 ;;; 読む effect(検と筋書きが置き場を覗くため — memory-file-handler だけが答える)。
-(require doeff-hy.macros [val])
+(require doeff-hy.macros [defk <- val])
 (require doeff-hy.record [defrecord defenum])
 (import dataclasses [dataclass])
 (import enum [StrEnum])
@@ -71,8 +74,9 @@
 
 
 (defclass [(dataclass :frozen True)] ReadBytes [EffectBase]
-  "bytes を読む(頭の註)。"
-  (#^ str path))
+  "bytes を読む(頭の註)。limit = 先頭の limit byte だけ(None = 全部)。"
+  (#^ str path)
+  (setv #^ (| int None) limit None))
 
 
 (defclass [(dataclass :frozen True)] WriteText [EffectBase]
@@ -80,7 +84,8 @@
   (#^ str path)
   (#^ str text)
   (setv #^ (| int None) mode None)
-  (setv #^ bool replace False))
+  (setv #^ bool replace False)
+  (setv #^ bool sync False))
 
 
 (defclass [(dataclass :frozen True)] WriteBytes [EffectBase]
@@ -88,13 +93,15 @@
   (#^ str path)
   (#^ bytes content)
   (setv #^ (| int None) mode None)
-  (setv #^ bool replace False))
+  (setv #^ bool replace False)
+  (setv #^ bool sync False))
 
 
 (defclass [(dataclass :frozen True)] AppendText [EffectBase]
   "text を末尾に足す(頭の註)。"
   (#^ str path)
-  (#^ str text))
+  (#^ str text)
+  (setv #^ bool sync False))
 
 
 (defclass [(dataclass :frozen True)] MakeDirectory [EffectBase]
@@ -165,6 +172,16 @@
   (setv #^ (get tuple #(str ...)) dirs #())
   (setv #^ (get tuple #(str ...)) locks #())
   (setv #^ int free (** 2 40)))
+
+
+(defk file-done [request]
+  {:pre [(: request EffectBase)] :post [(: % (| PathStat LockHeld str bytes tuple int None))] :tags {:context "file-system" :role "foundation"}}
+  "file system の effect を 1 つ出し、断り(FileFailed)は OSError で上げて成功の答えだけを返すため(失敗したら続けられない書き手・
+   読み手が、os の呼び出しを直に書いていた時と同じ例外の型で落ちる)。"
+  (<- answer request)
+  (when (isinstance answer FileFailed)
+    (raise (OSError (.format "{}: {}" answer.path answer.detail))))
+  answer)
 
 
 (defclass [(dataclass :frozen True)] ReadMemoryFiles [EffectBase]

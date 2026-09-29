@@ -1,6 +1,6 @@
 ;; worker の実 I/O。coordinator との連絡・コードの展開(git archive)・子 process・状態の file・停止信号。
 ;; どれもループを塞がない: 展開と子 process は Popen で起動し、結果は ObserveWorld で観測する。
-(require doeff-hy.macros [defhandler deff <-])
+(require doeff-hy.macros [defhandler defk deff <- val])
 (require doeff-hy.record [defrecord])
 (import json os re shutil signal subprocess sys tempfile time uuid)
 (import enum [Enum])
@@ -11,6 +11,7 @@
 (import .coordinator_http [CoordinatorEndpoint REPLY-SECONDS])
 (import .code_prepare [MARKER MARKER-FORMAT marker-problem scan])
 (import doeff [run])
+(import doeff_core_effects.file_effects [MakeDirectory WriteText file-done])
 (import .cluster_model [PROTOCOL-FORMAT environ-pairs])
 (import .host_contract [HOST-CONTRACT])
 (import .job_context [process-context-environ])
@@ -93,7 +94,7 @@
     (setv marker (/ entry MARKER)
           text (if (.exists marker) (.read-text marker :encoding "utf-8") None)
           want-bytecode (is-not self.hy-command None)
-          pycs (if (and want-bytecode (is-not text None)) (len (get (scan (str entry)) 1)) 0)
+          pycs (if (and want-bytecode (is-not text None)) (len (get (run (scan (str entry))) 1)) 0)
           reason (marker-problem text entry.name want-bytecode pycs))
     (setv (get self.checked entry.name) #(#* key reason))
     reason)
@@ -856,13 +857,23 @@
    "codePrepareSeconds" timings
    "jobs" (lfor s statuses (status-row s))})
 
+;; 状態の file の mode(前の形の Path.write-text が umask 022 の下で作った物と同じ — 置き換えの書きの一時 file は 0600 なので明示する)。
+(val STATUS-FILE-MODE 0o644)
+
+
+(defk write-status-file [path content]
+  {:pre [(: path str) (: content dict)] :post [(: % None)] :tags {:context "doeff-cluster" :role "foundation"}}
+  "worker の状態を、外から覗ける 1 つの JSON の file として置くため(親の dir を作り、置き換えで書いて書きかけを読ませない)。
+   file の I/O は file system の effect(本番 = os-file-handler・検 = memory-file-handler)で、断りは OSError で上げる。"
+  (<- (file-done (MakeDirectory (os.path.dirname path))))
+  (<- (file-done (WriteText path (json.dumps content :ensure-ascii False :indent 1) :mode STATUS-FILE-MODE :replace True)))
+  None)
+
+
 (defhandler status-file [#^ str path #^ CodeStore codes]
+  ;; 引数に残す理由: 置き場の path と、焼きの経過の秒を持つ CodeStore(worker の process の資源)は worker ごとの値。
   (PublishStatus [statuses note]
-    (setv target (Path path) tmp (Path f"{path}.tmp"))
-    (.mkdir target.parent :parents True :exist-ok True)
-    (.write-text tmp (json.dumps (status-json statuses note codes.timings) :ensure-ascii False :indent 1)
-                 :encoding "utf-8")
-    (os.replace tmp target)
+    (<- (write-status-file path (status-json statuses note codes.timings)))
     (resume None)))
 
 (setv JOB-ENTRY "doeff_cluster.job_entry")

@@ -14,6 +14,7 @@
 (import pathlib [Path])
 (import doeff [run])
 (import doeff_core_effects.handlers [await-handler slog-handler])
+(import doeff_core_effects.os_file [os-file-handler])
 (import doeff_core_effects.scheduler [scheduled])
 (import doeff_time [async-time-handler])
 (import .handlers [CodeStore EnvStore CoordinatorLink ProcessHost ProbeStore coordinator-desired local-host
@@ -109,7 +110,7 @@
   (setv program (run-worker policy))
   (for [h [(local-host codes host probes envs)
            (coordinator-desired link) (status-to-coordinator link) (lease-release-coordinator link)
-           (status-file (str (/ state-dir "status.json")) codes)
+           (status-file (str (/ state-dir "status.json")) codes) os-file-handler
            (stop-flag stop) slog-handler (async-time-handler) (await-handler)]]
     (setv program (h program)))
   (print "worker: 起動します" :file sys.stderr :flush True)

@@ -47,7 +47,8 @@ def doeff_interpreter(doeff_interpreter_name: str) -> Callable[[Program], object
     """deftest の Program を、:interpreters の名の handler の組の下で scheduler つきで 1 回回す。
 
     契約テストは deftest の ``:interpreters`` で handler を差し替える。名 → 組み立ての表は
-    coordinator_contract_handlers.hy・host_reads_contract_handlers.hy・runtime_facts_contract_handlers.hy が持ち、
+    coordinator_contract_handlers.hy・host_reads_contract_handlers.hy・runtime_facts_contract_handlers.hy・
+    file_contract_handlers.hy・tree_contract_handlers.hy が持ち、
     ここはその表を引くだけ(名の無い deftest は今までどおり素のまま回す)。
     """
     if doeff_interpreter_name == PLAIN:
@@ -56,13 +57,17 @@ def doeff_interpreter(doeff_interpreter_name: str) -> Callable[[Program], object
         import hy  # noqa: F401  - Hy の module を import できるようにする
 
         from tests.coordinator_contract_handlers import INTERPRETERS as COORDINATOR_INTERPRETERS
+        from tests.file_contract_handlers import INTERPRETERS as FILE_INTERPRETERS
         from tests.host_reads_contract_handlers import INTERPRETERS as HOST_READS_INTERPRETERS
         from tests.runtime_facts_contract_handlers import INTERPRETERS as RUNTIME_FACTS_INTERPRETERS
+        from tests.tree_contract_handlers import INTERPRETERS as TREE_INTERPRETERS
 
         compositions: dict[str, Callable[[Program], Program]] = {
             **COORDINATOR_INTERPRETERS,
+            **FILE_INTERPRETERS,
             **HOST_READS_INTERPRETERS,
             **RUNTIME_FACTS_INTERPRETERS,
+            **TREE_INTERPRETERS,
         }
         compose = compositions[doeff_interpreter_name]
 
