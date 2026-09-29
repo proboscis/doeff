@@ -5,6 +5,7 @@ import * as fs from 'fs';
 import { promisify } from 'util';
 import * as path from 'path';
 import { parseGitWorktreeListPorcelain, type GitWorktreeInfo } from './worktrees';
+import { registerFollowNotice } from './follow/register';
 import {
   type PlaylistItemV2,
   type PlaylistV2,
@@ -2924,6 +2925,7 @@ export function activate(context: vscode.ExtensionContext) {
 
   // Store extension context for bundled binary access
   extensionContext = context;
+  registerFollowNotice(context, output); // vsix の追随の報せ(Reload が要る時の通知・組み立ての失敗の警告 — agora-redesign #1043)
 
   // Hy (doeff-hy) navigation: definition / references / outline / workspace symbols / hover.
   const hyNavigation = registerHyNavigation(context, { locateIndexer: () => locateIndexer(), output });
