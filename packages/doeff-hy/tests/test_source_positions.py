@@ -121,3 +121,57 @@ def test_do_block_bind_points_at_the_failing_bind(mod: ModuleType) -> None:
     assert LINE_DO_BAD in [line for _, line in _hy_frames(caught.value, mod)]
 
 
+
+
+# 行番号がずれる最小の Hy(agora-redesign #1004)。defk の本体の束ねはどれも outcomes の module を同じ名で
+# 引く。その名を 1 つの Symbol として展開のあいだで使い回すと、locate-synthesized が最初の展開で付けた位置が
+# その Symbol に残り、後の展開の (! …) の式(失敗が投げ込まれる yield を含む)の始まりがその行へ引き寄せられる。
+# 残る位置は「その process で最初に展開された束ね」の行なので、traceback で見ると検の順で赤にも緑にもなる。
+# だから展開の結果を直に見る: 2 回の展開が model を共有せず、yield が書いた (! …) の行を持つこと。
+FIRST_BANG = "(defk first-bang [] {:pre [] :post [(: % int)]} (! (Pure 1)))"
+SECOND_BANG = """\
+(defk second-bang []
+  {:pre [] :post [(: % int)]}
+  (! (Pure 2)))
+"""
+LINE_SECOND_BANG_IN_SOURCE = 3  # (! (Pure 2))
+
+
+def _expand_defk(source: str) -> object:
+    import hy
+
+    import doeff_hy  # noqa: F401 - Hy の import hook を登録する
+
+    module = ModuleType("doeff_hy_bang_expansion_probe")
+    hy.eval(hy.read("(require doeff-hy.macros [defk])"), module=module)
+    return hy.macroexpand(hy.read(source), module)
+
+
+def _models(tree: object) -> list[object]:
+    from hy.models import Sequence
+
+    children = [model for child in tree for model in _models(child)] if isinstance(tree, Sequence) else []
+    return [tree, *children]
+
+
+def _yields(tree: object) -> list[object]:
+    from hy.models import Expression, Symbol
+
+    return [
+        model
+        for model in _models(tree)
+        if isinstance(model, Expression) and len(model) > 0 and model[0] == Symbol("yield")
+    ]
+
+
+def test_bang_expansions_share_no_model_and_keep_the_written_line() -> None:
+    from hy.models import Object
+
+    first = _expand_defk(FIRST_BANG)
+    second = _expand_defk(SECOND_BANG)
+    first_ids = {id(model) for model in _models(first) if isinstance(model, Object)}
+    shared = [str(model) for model in _models(second) if isinstance(model, Object) and id(model) in first_ids]
+    assert shared == []
+    lines = [getattr(model, "start_line", None) for model in _yields(second)]
+    assert lines != []
+    assert set(lines) == {LINE_SECOND_BANG_IN_SOURCE}
