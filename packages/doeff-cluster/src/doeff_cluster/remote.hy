@@ -21,7 +21,7 @@
 
 (deff task-submit-body [#^ str sha #^ str revision #^ frozenset needs #^ str name #^ float lease-seconds
                         #^ (| RuntimeEnv None) runtime-env #^ dict environ]  ; defk にできない: 本番の client(Program の外の I/O の道具)と sim の宿が同じ形を作る純粋な判断
-  {:pre [(: sha str) (: revision str) (: needs frozenset) (: name str) (: lease-seconds float) (: environ dict)] :post [(: % dict)]
+  {:pre [(: sha str) (: revision str) (: needs frozenset) (: name str) (: lease-seconds float) (: runtime-env (| RuntimeEnv None)) (: environ dict)] :post [(: % dict)]
    :tags {:context "doeff-cluster" :role "protocol"}}
   "POST /tasks の本文を作るため(本番の TaskClient と sim の宿で同じ形)。詰めた Program は先に PUT /programs/<sha> で置き、本文は
    sha だけを運ぶ(service の宣言と同じ運び方 — ADR-DOE-CLUSTER-001 R3b)。environ = 子の環境変数(RemoteJob.environ — 空なら欄を置かない)。"

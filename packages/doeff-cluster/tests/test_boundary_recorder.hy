@@ -93,7 +93,7 @@
    JSON の文字列)を lines に届いた順で積む。"
   (defclass Inbox [BaseHTTPRequestHandler]
     (deff log-message [self #* args]  ; defk にできない: http.server が呼ぶ素の callback
-      {:pre [(: self BaseHTTPRequestHandler)] :post [(: % (type None))] :tags {:context "doeff-cluster-test" :role "foundation"}}
+      {:pre [(: self BaseHTTPRequestHandler) (: args tuple)] :post [(: % (type None))] :tags {:context "doeff-cluster-test" :role "foundation"}}
       None)
     (deff do-POST [self]  ; defk にできない: http.server が呼ぶ素の callback
       {:pre [(: self BaseHTTPRequestHandler)] :post [(: % (type None))] :tags {:context "doeff-cluster-test" :role "foundation"}}

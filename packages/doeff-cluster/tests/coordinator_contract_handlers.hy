@@ -155,7 +155,7 @@
 
 
 (deff latest-report [#^ MemoryCoordinator coordinator #^ str kind]  ; defk にできない: handler の節が Program の外の状態(MemoryCoordinator)から組む純粋な読み
-  {:pre [(: coordinator MemoryCoordinator) (in kind #(METRICS READINESS))] :post [(: % (| dict None))]
+  {:pre [(: coordinator MemoryCoordinator) (: kind str) (in kind #(METRICS READINESS))] :post [(: % (| dict None))]
    :tags {:context "doeff-cluster-test" :role "judgment"}}
   "coordinator の状態に最後に残った kind の報告を、effect の側の形(metrics = 計器の dict・readiness = {ready reason role})にする。"
   (let [reports (.get (getattr coordinator.state kind) SERVICE #())]
