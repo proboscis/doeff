@@ -208,6 +208,21 @@ pub struct BlindDefinition {
     pub range: doeff_indexer::hy_index::Range,
 }
 
+/// 呼んでよい頭を決めた定義 1 つ(`:allowed-heads` の `(allowed-heads "module:名" :heads [..] :why "…")` — DOEFF147・
+/// agora-redesign #1372・#1413)。定義の form の中(入れ子を含む・文字列と註を除く)の `( … )` の頭の綴りが :heads に在ることを求める。
+/// 例外を受け止める境界の外で動く定義(境界そのもの・断りを組む 1 点)に、例外を上げうる呼びを入れないための宣言。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct AllowedHeads {
+    pub definition: DefinitionRef,
+    /// 呼んでよい頭の綴り(記号と keyword — `defk`・`:`・`<-`・`.get` など、form の頭に書く綴りのまま)。
+    pub heads: Vec<String>,
+    /// なぜこの頭だけか(知らせの文に入れる)。
+    pub why: String,
+    /// architecture.hy の中の位置。
+    #[serde(skip)]
+    pub range: doeff_indexer::hy_index::Range,
+}
+
 /// 系の値と系を回す入口(`:systems`)。defsystem の定義は書かなくても系の値。
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
 pub struct Systems {
@@ -335,6 +350,9 @@ pub struct Architecture {
     /// 決めた材料だけで判じる定義(`:blind-definitions [(blind "module:名" :forbid-words [..] :no-imports True …) …]` — 空 = 宣言していない)。
     /// 書けば DOEFF141 が、その定義から呼び出しと名指しで届く定義の本体の使わない語と、定義の module の import を出す(agora-redesign #1368)。
     pub blind_definitions: Vec<BlindDefinition>,
+    /// 呼んでよい頭を決めた定義(`:allowed-heads [(allowed-heads "module:名" :heads [..] :why "…") …]` — 空 = 宣言していない)。
+    /// 書けば DOEFF147 が、その定義の中の一覧の外の頭を出す(agora-redesign #1413)。
+    pub allowed_heads: Vec<AllowedHeads>,
     pub services: Vec<ArchService>,
     /// 素の関数を許す理由の種類の閉じた一覧(DOEFF203 の受け入れる答え)。
     pub plain_callable_reasons: Vec<ReasonKind>,
@@ -694,6 +712,7 @@ impl<'a> Parser<'a> {
             open_layers: Vec::new(),
             placed_dependencies: Vec::new(),
             blind_definitions: Vec::new(),
+            allowed_heads: Vec::new(),
             services: Vec::new(),
             plain_callable_reasons: Vec::new(),
             rejected_plain_callable_reasons: Vec::new(),
@@ -745,6 +764,7 @@ impl<'a> Parser<'a> {
                 }
                 ":placed-dependencies" => arch.placed_dependencies = self.names(value, ":placed-dependencies"),
                 ":blind-definitions" => arch.blind_definitions = self.blind_definitions(value),
+                ":allowed-heads" => arch.allowed_heads = self.allowed_heads(value),
                 ":exclude" => arch.exclude = self.names(value, ":exclude"),
                 ":extensions" => arch.extensions = Some(self.names(value, ":extensions")),
                 ":plain-callable-reasons" => arch.plain_callable_reasons = self.reasons(value, ":plain-callable-reasons"),
@@ -1238,6 +1258,54 @@ impl<'a> Parser<'a> {
                 continue;
             }
             out.push(blind);
+        }
+        out
+    }
+
+    /// `[(allowed-heads "module:名" :heads [..] :why "…") …]` を読む(:heads と :why は要る)。
+    fn allowed_heads(&mut self, value: &Form) -> Vec<AllowedHeads> {
+        let shape = "(allowed-heads \"module:名\" :heads [..] :why \"…\")";
+        let Some(entries) = self.bracket(value) else {
+            self.problem(value, &format!(":allowed-heads は {} の列", shape));
+            return Vec::new();
+        };
+        let mut out: Vec<AllowedHeads> = Vec::new();
+        for entry in entries {
+            let parts = self.paren(entry).filter(|p| p.first().and_then(|h| self.symbol(h)) == Some("allowed-heads"));
+            let Some(parts) = parts else {
+                self.problem(entry, &format!(":allowed-heads の要素は {}", shape));
+                continue;
+            };
+            let Some(head) = parts.get(1) else {
+                self.problem(entry, "allowed-heads に \"module:名\" が無い");
+                continue;
+            };
+            let Some(definition) = self.definition_ref(head, "allowed-heads") else { continue };
+            let range = self.lines.range(head.span.start, head.span.end);
+            let mut declared = AllowedHeads { definition, heads: Vec::new(), why: String::new(), range };
+            let rest: Vec<&Form> = parts.iter().skip(2).copied().collect();
+            for (key, field) in self.pairs(&rest) {
+                match self.text(key) {
+                    ":heads" => declared.heads = self.names(field, ":heads"),
+                    ":why" => declared.why = self.required_string(field, ":why").unwrap_or_default(),
+                    _ => self.unknown_key(key, "allowed-heads"),
+                }
+            }
+            let spelling = declared.definition.spelling();
+            if declared.heads.is_empty() {
+                self.problem(entry, &format!("allowed-heads {} に :heads が無い(何も呼ばない定義は無い — 定義の頭 defk なども挙げる)", spelling));
+            }
+            if declared.heads.iter().any(|h| h.is_empty()) {
+                self.problem(entry, &format!("allowed-heads {} の :heads に空の綴りがある", spelling));
+            }
+            if declared.why.trim().is_empty() {
+                self.problem(entry, &format!("allowed-heads {} に :why(なぜこの頭だけか)が無い", spelling));
+            }
+            if out.iter().any(|d| d.definition == declared.definition) {
+                self.problem(entry, &format!("allowed-heads {} が 2 度宣言されている", spelling));
+                continue;
+            }
+            out.push(declared);
         }
         out
     }

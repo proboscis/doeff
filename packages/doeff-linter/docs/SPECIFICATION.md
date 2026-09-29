@@ -261,6 +261,8 @@ law の対応だけを残す。無ければ TOML の設定で今どおり動く�
   :placed-dependencies [core intent protocol] ; 置き場の決まった module にだけ依存してよい層(DOEFF140 — 書かなければ当てない)
   :blind-definitions [(blind "controllers.screen.core.entrance:entrance-guarantee" :forbid-words ["view.policy" "message-class"]
                         :no-imports True :allow-requires ["doeff-hy.macros"] :why "…")]  ; 決めた材料だけで判じる定義(DOEFF141)
+  :allowed-heads [(allowed-heads "controllers.screen.entry.server:_confined" :heads ["defk" ":" "<-" "Try" "when" "return"]
+                    :why "…")]  ; 呼んでよい頭を決めた定義(DOEFF147)
   :roles {:judgment "業務の判断をする関数" …}   ; role の説明
   :wire-modules ["controllers.foundation.records_client"]  ; JSON の送受信そのものを行う foundation の module(DOEFF120・13 節)
   :edge-mark "real_world"                  ; 縁のテストの pytest の印の名(DOEFF133 — :world-handlers が要る)
@@ -316,6 +318,7 @@ law の対応だけを残す。無ければ TOML の設定で今どおり動く�
 | DOEFF117 | 宣言した依存(A の :depends-on の B)を、A のどの module も読んでいない。info。全体の実行だけ | `A>B` | architecture.hy の defservice の名 |
 | DOEFF140 | `:placed-dependencies` の層の module(service と shared の置き場 — 層が先の旧い dir と foundation は外)が、root の下の層の置き場の外の module(service の dir の直下・宣言に無い dir の中)を import する。読む先は import の綴りの file(無ければ親の module の file)で決め、層の索引に在る物・package の印(`__init__`)・root の外は数えない。渡された file の import と置き場だけで判じる(repo 全体の索引は読まない)。同じ module は 1 件。既定 critical(agora-redesign #1188) | 読む先の module | 最初の import |
 | DOEFF141 | 決めた材料だけで判じる定義 — `:blind-definitions` の定義ごとに、定義から呼び出しと名指し(値として渡す所)で推移的に届く repo の Hy の定義(入れ子を含む・索引が名前を解いた先で、repo に Hy の file が在る module だけ)の本体に、`:forbid-words` の綴りが部分一致で在る(註は除く)と、届いた定義と語ごとに 1 件。`:no-imports True` なら定義の module の import と require(`:allow-requires` の module の require は macro の読み込みなので除く)を module ごとに 1 件。宣言した定義が無ければ architecture.hy の位置で 1 件(母集団 0 を緑にしない)。読むのは宣言の module と届いた先の module の file だけ(repo 全体の索引は組まない)。全体の実行だけ。既定 critical(agora-redesign #1368) | `<届いた定義>:<語>` / `import:<module>` / `missing` | 語の最初の出現・import・architecture.hy の宣言 |
+| DOEFF147 | 呼んでよい頭を決めた定義 — `:allowed-heads` の定義ごとに、定義の form(入れ子を含む)の `( … )` の頭の綴り(記号と keyword — 特殊形式と macro も含む)が `:heads` に無ければ、頭ごとに 1 件。文字列・註・`#_` で読み捨てた form・tuple と `[ … ]`・`{ … }` の要素は頭に数えない。宣言した定義(file の top level の、頭が `def` で始まる form)が無ければ architecture.hy の位置で 1 件(母集団 0 を緑にしない)。読むのは宣言の module の file だけ(索引も組まない)。全体の実行だけ。既定 critical(agora-redesign #1372・#1413) | `<頭>` / `missing` | 頭の最初の出現・architecture.hy の宣言 |
 | DOEFF113 | 宣言した service の中の :context の食い違いは warning に上がる | | |
 
 ### 既存の道具との対応

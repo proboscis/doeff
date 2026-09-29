@@ -179,6 +179,8 @@ pub enum Explain {
     RetiredCall { group: String, call: String, instead: String },
     /// DOEFF141: 決めた材料だけで判じる定義(宣言の綴り・理由・当たりの種類)。
     BlindDefinition { declared: String, why: String, problem: super::blind::BlindProblem },
+    /// DOEFF147: 呼んでよい頭を決めた定義(宣言の綴り・理由・当たりの種類)。
+    AllowedHeads { declared: String, why: String, problem: super::allowed_heads::HeadProblem },
     /// DOEFF140: 置き場の外の module への依存(この file の置き場・読む先の module・その file の root からの path)。
     PlacedDependency { placement: Placement, owner: String, owner_rel: String },
     /// DOEFF144: 公開面の型の注記の素の写像・素の組(どこの注記か・名・赤の理由)。
@@ -420,6 +422,19 @@ impl<'a> Narrator<'a> {
                     ),
                 },
             ),
+            Explain::AllowedHeads { declared, why, problem } => match problem {
+                super::allowed_heads::HeadProblem::Unlisted { head } => (
+                    format!("{} の中の ({} …)(呼んでよい頭の一覧の外)", declared, head),
+                    format!(
+                        "この定義の中で呼んでよい頭は architecture.hy の :allowed-heads で決めてある。一覧の外の呼びが例外を上げると、それを受け止める境界の外で process ごと落ちる。理由: {}",
+                        why
+                    ),
+                ),
+                super::allowed_heads::HeadProblem::Missing { reason } => (
+                    format!("宣言した定義 {}({})", declared, reason),
+                    format!("architecture.hy の :allowed-heads が名指す定義が無いと、規則は何も見ずに緑になる(母集団 0 を緑にしない)。理由: {}", why),
+                ),
+            },
             Explain::RetiredCall { group, call, instead } => (
                 format!("呼び ({} …)(使わないと決めた呼び — 群 {})", call, group),
                 format!("この repo は architecture.hy の :retired-calls でこの呼びを退役させた(代わり: {})。退役した物を呼ぶ所が残ると、同じ役の物が 2 つ並び、座標や答えが黙って食い違う。", instead),

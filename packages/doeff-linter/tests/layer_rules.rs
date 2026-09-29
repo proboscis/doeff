@@ -2685,6 +2685,74 @@ fn blind_declaration_misreadings_are_config_errors() {
     assert!(all.contains("blind の no-colon は \"module.path:名\" の綴り"), "{}", all);
 }
 
+/// agora-redesign #1413(#1372 の孫 1): 呼んでよい頭を決めた定義(:allowed-heads)— 定義の中(入れ子を含む)の `( … )` の頭が一覧の
+/// 外なら、頭ごとに 1 件(最初に現れた所)。文字列・註・`#_`・tuple の中の綴りは頭に数えない。同じ module のほかの定義の頭は見ない。
+/// 名指す定義が無ければ architecture.hy の位置で赤(母集団 0 を緑にしない)。
+#[test]
+fn allowed_heads_confine_what_a_definition_may_call() {
+    let files = [
+        ("app/foundation/host.hy", tags("shared", "foundation") + "(defk with-host [body] body)\n"),
+        (
+            "app/billing/entry/server.hy",
+            "(require doeff-hy.macros [defk <-])\n\
+             (defk confined [conn text]\n  {:pre [(: text str)]}\n  ;; (decode text) は註なので数えない\n  (<- r (Try (on-text conn text)))\n  \"(parse text)\"\n  #_(explode)\n  \
+             (when (isinstance r Err)\n    (return (refuse conn (decode r))))\n  (setv pair #(first second))\n  (decode r))\n\
+             (defk refuse [conn fault] (Send conn fault))\n\
+             (defk other [x] (anything-goes x))\n"
+                .to_string(),
+        ),
+    ];
+    let dir = world_repo_with(&files, "", "[\"DOEFF147\"]");
+    let arch_path = dir.path().join("architecture.hy");
+    let text = std::fs::read_to_string(&arch_path).unwrap().replace(
+        ":foundation foundation",
+        ":foundation foundation\n  :allowed-heads [(allowed-heads \"app.billing.entry.server:confined\"\n                    :heads [\"defk\" \":\" \"<-\" \"Try\" \"on-text\" \"when\" \"isinstance\" \"return\" \"refuse\" \"setv\"]\n                    :why \"Try の外で例外を上げない\")\n                  (allowed-heads \"app.billing.entry.server:refuse\" :heads [\"defk\" \"Send\"] :why \"断りの 1 点\")\n                  (allowed-heads \"app.billing.entry.server:gone\" :heads [\"defk\"] :why \"消えた定義\")]",
+    );
+    std::fs::write(&arch_path, text).unwrap();
+    let (_, report) = editor(dir.path());
+    assert_eq!(
+        keys(&report, "DOEFF147"),
+        vec!["app/billing/entry/server.hy::DOEFF147::decode", "architecture.hy::DOEFF147::missing"],
+        "{}",
+        report
+    );
+    let unlisted = violation(&report, "app/billing/entry/server.hy::DOEFF147::decode");
+    assert_eq!(unlisted["level"], "critical", "{}", unlisted);
+    assert!(unlisted["message"].as_str().unwrap().contains("app.billing.entry.server:confined の中で呼んでよい頭の一覧の外の (decode …)"), "{}", unlisted["message"]);
+    assert_eq!(unlisted["range"]["start"]["line"], 8, "最初に現れた所(when の枝の中): {}", unlisted);
+}
+
+/// 一覧の中の頭だけなら緑。宣言の読み違い(:heads の無い宣言・:why の無い宣言・2 度の宣言・綴りの形)は設定の誤り。
+#[test]
+fn allowed_heads_pass_when_listed_and_misreadings_are_config_errors() {
+    let files = [
+        ("app/foundation/host.hy", tags("shared", "foundation") + "(defk with-host [body] body)\n"),
+        ("app/billing/entry/server.hy", "(defk refuse [conn fault] (Send conn fault))\n".to_string()),
+    ];
+    let dir = world_repo_with(&files, "", "[\"DOEFF147\"]");
+    let arch_path = dir.path().join("architecture.hy");
+    let original = std::fs::read_to_string(&arch_path).unwrap();
+    let clean = original.replace(
+        ":foundation foundation",
+        ":foundation foundation\n  :allowed-heads [(allowed-heads \"app.billing.entry.server:refuse\" :heads [\"defk\" \"Send\"] :why \"断りの 1 点\")]",
+    );
+    std::fs::write(&arch_path, clean).unwrap();
+    let (_, report) = editor(dir.path());
+    assert_eq!(keys(&report, "DOEFF147"), Vec::<String>::new(), "{}", report);
+    let broken = original.replace(
+        ":foundation foundation",
+        ":foundation foundation\n  :allowed-heads [(allowed-heads \"a.b:c\" :why \"x\")\n                  (allowed-heads \"a.b:d\" :heads [\"defk\"])\n                  (allowed-heads \"a.b:e\" :heads [\"defk\"] :why \"x\")\n                  (allowed-heads \"a.b:e\" :heads [\"defk\"] :why \"x\")\n                  (allowed-heads \"no-colon\" :heads [\"defk\"] :why \"x\")]",
+    );
+    std::fs::write(&arch_path, broken).unwrap();
+    let (code, stdout, stderr) = run(dir.path(), &["--no-log"], None);
+    let all = format!("{}{}", stdout, stderr);
+    assert_ne!(code, 0, "{}", all);
+    assert!(all.contains("allowed-heads a.b:c に :heads が無い"), "{}", all);
+    assert!(all.contains("allowed-heads a.b:d に :why"), "{}", all);
+    assert!(all.contains("allowed-heads a.b:e が 2 度宣言されている"), "{}", all);
+    assert!(all.contains("allowed-heads の no-colon は \"module.path:名\" の綴り"), "{}", all);
+}
+
 /// agora-redesign #1390: 系の値(defsystem の定義と :systems の :carriers の引数)が運ぶ土台は、系を回す入口(:systems の :runners)に
 /// 届く検からだけ届く — 系の値を読むだけの検と、道具で組むだけの検は手元。土台を直に呼ぶ検は今までどおり縁。
 #[test]
