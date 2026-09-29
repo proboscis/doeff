@@ -116,15 +116,21 @@ struct Args {
     #[arg(long)]
     no_log: bool,
 
-    /// 意味の規則(DOEFF201・202・203)で Jev に問う — 対象は path の引数の file、無ければ git で変わった file。これが無い実行は cache を読むだけ
+    /// 意味の規則(DOEFF201・202・203)で Jev に問う — 対象は path の引数の file、無ければ git で変わった file(cache に答えの在る定義も問い直す)。
+    /// 旗の無い既定は --semantic-changed と同じ(cache を使い、変わった定義だけ問う — agora-redesign #1160)
     #[arg(long)]
     semantic: bool,
+
+    /// 意味の規則で Jev に問わず、cache を読むだけにする(旧い既定 — 網の無い所で撃たない実行。問えなかった数は数えない)
+    #[arg(long)]
+    semantic_cache_only: bool,
 
     /// 意味の規則で、設定した層の全部の定義を Jev に問う
     #[arg(long)]
     semantic_all: bool,
 
     /// 意味の規則で、対象の file(--semantic と同じ選び方)のうち手元の cache に答えの無い定義(中身が変わった定義)だけを Jev に問う
+    /// (旗の無い既定もこれ — 全体の実行はそのうえで代理の覚えも受け取る)
     #[arg(long)]
     semantic_changed: bool,
 }
@@ -252,7 +258,11 @@ fn semantic_mode(args: &Args, root: &Path, stdin_path: Option<&Path>) -> project
     if args.semantic_all {
         return SemanticMode::AskAll;
     }
-    if !args.semantic && !args.semantic_changed {
+    // 既定 = 全体の実行は cache を使い、変わった定義だけを問う(operator 2026-09-29 "jev involved lints are to be run everywhere every time
+    // with cached by default" — agora-redesign #1160)。1 file の --stdin(書いた直後の hook・エディタ)は既定で cache だけを読む — hook の
+    // 全体 3 秒の上限の中で層の規則の知らせを失わないため(#1190 の決定 A・戻し方 = 下の Some(_) の枝を AskChanged にする)。
+    // cache を読むだけの全体の実行は --semantic-cache-only で名指す。
+    if args.semantic_cache_only || (stdin_path.is_some() && !args.semantic && !args.semantic_changed) {
         return match stdin_path {
             Some(_) => SemanticMode::CacheOnly,
             None => SemanticMode::Peek,
@@ -276,10 +286,11 @@ fn semantic_mode(args: &Args, root: &Path, stdin_path: Option<&Path>) -> project
             targets.insert(rel);
         }
     }
-    if args.semantic_changed {
-        SemanticMode::AskChanged(targets)
-    } else {
-        SemanticMode::Ask(targets)
+    match (args.semantic_changed, args.semantic, stdin_path) {
+        (true, _, _) => SemanticMode::AskChanged(targets),
+        (false, true, _) => SemanticMode::Ask(targets),
+        // 旗の無い全体の実行の既定: 変わった定義だけを問い、代理の覚えも受け取る(1 file の既定は上で cache だけに返した)。
+        (false, false, _) => SemanticMode::PeekThenAskChanged(targets),
     }
 }
 
@@ -631,10 +642,15 @@ fn run_editor(args: &Args) -> ExitCode {
     }
     if report.has_errors() {
         ExitCode::from(1)
+    } else if project_report.semantic.as_ref().is_some_and(|s| s.unmeasured > 0) {
+        ExitCode::from(UNMEASURED_EXIT)
     } else {
         ExitCode::SUCCESS
     }
 }
+
+/// 破れは無いが、意味の規則で問うはずだった定義に答えを得られなかった(測れなかった)時の終了コード(agora-redesign #1160 の決定 2)。
+const UNMEASURED_EXIT: u8 = 3;
 
 fn run_as_hook(args: &Args) -> ExitCode {
     // Read JSON from stdin
@@ -874,6 +890,8 @@ fn run_normal(args: &Args) -> ExitCode {
 
     // Lint files(層の規則の違反も同じ形で足す)
     let mut results = lint_files_parallel(&files, &all_rules);
+    // 意味の規則で問うはずだったのに答えを得られなかった数(0 でなければ、破れが無くても緑と分けて終了コード 3)。
+    let mut unmeasured = 0;
     if setup.has_project_rules() {
         let mut report = project::run_with(&setup.root, &setup.settings, &setup.project_rules(), Target::Whole, &semantic_mode(args, &setup.root, None));
         report.findings.extend(setup.notice_findings());
@@ -882,9 +900,18 @@ fn run_normal(args: &Args) -> ExitCode {
         }
         if let Some(semantic) = &report.semantic {
             eprintln!(
-                "doeff-linter: 意味の規則(Jev {}・{}) — 判定済み {}・未判定 {}・今回撃った {}・代理の覚えから {}・入力のトークン {}・較正 {}",
-                semantic.model, semantic.wire, semantic.judged, semantic.unjudged, semantic.asked, semantic.peeked, semantic.input_tokens, semantic.calibration
+                "doeff-linter: 意味の規則(Jev {}・{}) — 判定済み {}・未判定 {}・今回撃った {}・測れなかった {}・代理の覚えから {}・入力のトークン {}・較正 {}",
+                semantic.model,
+                semantic.wire,
+                semantic.judged,
+                semantic.unjudged,
+                semantic.asked,
+                semantic.unmeasured,
+                semantic.peeked,
+                semantic.input_tokens,
+                semantic.calibration
             );
+            unmeasured = semantic.unmeasured;
             let labeled = &semantic.labeled;
             eprintln!(
                 "doeff-linter: 意味の規則の誤判定 {} 件(一覧に載り、違反から外した)・人の判定との突き合わせ — 正例 {} 件のうち答え {}・当たり {}/反例 {} 件のうち答え {}・当たり {}",
@@ -964,9 +991,12 @@ fn run_normal(args: &Args) -> ExitCode {
         eprintln!("\nNo issues found.");
     }
 
-    // Return exit code
+    // Return exit code(0 = 破れなし・1 = 破れあり・2 = 引数・設定の誤り・3 = 破れは無いが意味の規則を測れなかった定義が在る)
     if error_count > 0 {
         ExitCode::from(1)
+    } else if unmeasured > 0 {
+        eprintln!("doeff-linter: 意味の規則を測れなかった定義が {} 在る(Jev に問えない)— 緑ではない", unmeasured);
+        ExitCode::from(UNMEASURED_EXIT)
     } else {
         ExitCode::SUCCESS
     }

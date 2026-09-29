@@ -1019,6 +1019,9 @@ pub struct SemanticSummary {
     pub judged: usize,
     /// 答えの無い定義の数(未判定 — 合格ではない)。
     pub unjudged: usize,
+    /// 今回問うはずだったのに答えを得られなかった定義の数(Jev に届かない・鍵が無い・較正が撃てない — 「測れなかった」。緑と分けて出す・
+    /// agora-redesign #1160 の決定 2)。
+    pub unmeasured: usize,
     /// 今回 gateway へ撃った数(較正を含む)。
     pub asked: usize,
     /// 今回、代理が覚えていた答えを受け取って手元の cache に書いた数(覚えている時だけの問い — 本物の Jev は呼んでいない)。
@@ -1084,6 +1087,9 @@ pub enum SemanticMode {
     AskChanged(BTreeSet<String>),
     /// 全部の定義を撃つ。
     AskAll,
+    /// 旗の無い全体の実行の既定(agora-redesign #1160): 指定した file の定義のうち手元の cache に答えの無い物だけを撃ち(AskChanged と同じ)、
+    /// 残りの答えの無い定義は代理に「覚えている時だけ」問う(Peek と同じ — 別の worker の答えを受け取る)。
+    PeekThenAskChanged(BTreeSet<String>),
 }
 
 /// 意味の規則の結果(答えのある定義と、要約・理由)。
@@ -1115,7 +1121,9 @@ pub fn evaluate(
                 SemanticMode::CacheOnly | SemanticMode::Peek => false,
                 SemanticMode::AskAll => true,
                 SemanticMode::Ask(targets) => targets.contains(&item.rel),
-                SemanticMode::AskChanged(targets) => targets.contains(&item.rel) && read_cache(root, &item.key).is_none(),
+                SemanticMode::AskChanged(targets) | SemanticMode::PeekThenAskChanged(targets) => {
+                    targets.contains(&item.rel) && read_cache(root, &item.key).is_none()
+                }
             }
     };
     let asking = items.iter().any(wants_ask);
@@ -1191,7 +1199,7 @@ pub fn evaluate(
     };
     // 全体の実行・hook: 手元の cache に無い読める定義を、代理の鍵の束で代理に「覚えている時だけ」問う(本物の Jev は呼ばない)。
     let resolved = match (mode, gateway, &pool, settings.proxy.as_ref()) {
-        (SemanticMode::Peek, Some(gateway), Ok(pool), Some(proxy)) => {
+        (SemanticMode::Peek | SemanticMode::PeekThenAskChanged(_), Some(gateway), Ok(pool), Some(proxy)) => {
             let wanted: Vec<Option<String>> = resolved
                 .iter()
                 .map(|(item, cached)| match cached {
@@ -1237,9 +1245,16 @@ pub fn evaluate(
             Some(Err(reason)) => {
                 summary.asked += 1;
                 summary.unjudged += 1;
+                summary.unmeasured += 1;
                 errors.push(format!("{} の {}: Jev に問えない: {}", item.rel, item.name, reason));
             }
-            None => summary.unjudged += 1,
+            None => {
+                summary.unjudged += 1;
+                // 問うはずだった定義が、gateway・較正・pool のどれかで問えずに終わった(測れなかった)。
+                if wants_ask(&item) {
+                    summary.unmeasured += 1;
+                }
+            }
         }
     }
     SemanticOutcome { answered, summary, errors }

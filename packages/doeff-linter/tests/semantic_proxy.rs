@@ -154,6 +154,12 @@ proxy_token_file = "{token}"
 
 /// editor-json で走らせる(HOME は一時の dir・TypeSafe のキーを env に置く — 代理へ送られないことを見る)。
 fn run(root: &Path, extra: &[&str], stdin: Option<&str>, env: &[(&str, &str)]) -> (Value, Duration) {
+    let (value, elapsed, _) = run_with_code(root, extra, stdin, env);
+    (value, elapsed)
+}
+
+/// run と同じで、終了コードも返す。
+fn run_with_code(root: &Path, extra: &[&str], stdin: Option<&str>, env: &[(&str, &str)]) -> (Value, Duration, i32) {
     let home = tempfile::TempDir::new().unwrap();
     let mut args = vec!["--output-format", "editor-json", "--no-log"];
     args.extend_from_slice(extra);
@@ -181,7 +187,7 @@ fn run(root: &Path, extra: &[&str], stdin: Option<&str>, env: &[(&str, &str)]) -
     let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
     let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
     let value = serde_json::from_str(&stdout).unwrap_or_else(|e| panic!("{}: {}\n{}", e, stdout, stderr));
-    (value, elapsed)
+    (value, elapsed, output.status.code().unwrap_or(-1))
 }
 
 const FILES: &[(&str, &str)] = &[
@@ -249,6 +255,7 @@ fn whole_run_without_a_reachable_proxy_stays_on_the_local_cache() {
 
 #[test]
 fn stdin_plain_run_does_not_ask_the_proxy() {
+    // 1 file の --stdin(書いた直後の hook・エディタ)の既定は cache だけ(agora-redesign #1190 の決定 A — hook の 3 秒の上限)。
     let proxy = fake_proxy();
     let token = token_file();
     let dir = repo(FILES, &proxy.url, token.path());
@@ -256,6 +263,43 @@ fn stdin_plain_run_does_not_ask_the_proxy() {
     let (report, _) = run(dir.path(), &["--stdin", "--path", path.to_str().unwrap()], Some("(defk may-post? [who] (in who permission))\n"), &[]);
     assert!(report["semantic"].is_object());
     assert!(proxy.take().is_empty(), "編集中の決定的な実行は代理にも問わない");
+}
+
+#[test]
+fn stdin_changed_run_asks_only_uncached_definitions() {
+    // --semantic-changed を名指した 1 file の実行は、cache に答えの無い定義だけを問い、答えを cache に書く(2 度目は問わない)。
+    let proxy = fake_proxy();
+    let token = token_file();
+    let dir = repo(FILES, &proxy.url, token.path());
+    let path = dir.path().join("app/protocol/chat.hy");
+    let source = "(defk may-post? [who] (in who permission))\n";
+    let (report, _) = run(dir.path(), &["--stdin", "--path", path.to_str().unwrap(), "--semantic-changed"], Some(source), &[]);
+    let asked: Vec<String> = proxy
+        .take()
+        .into_iter()
+        .filter(|s| !["may-manage?", "classifier-call", "post-json", "wake"].contains(&s.name.as_str()))
+        .map(|s| s.name)
+        .collect();
+    assert_eq!(asked, vec!["may-post?".to_string()], "{}", report["semantic"]);
+    let (_, _) = run(dir.path(), &["--stdin", "--path", path.to_str().unwrap(), "--semantic-changed"], Some(source), &[]);
+    assert!(proxy.take().is_empty(), "答えを cache に書いたので 2 度目は問わない");
+}
+
+#[test]
+fn unreachable_jev_is_unmeasured_and_not_green() {
+    // agora-redesign #1160 の決定 2: 問うはずの定義が Jev に届かず答えを得られなければ「測れなかった」— 破れが無くても終了コード 3。
+    let closed = TcpListener::bind("127.0.0.1:0").unwrap();
+    let url = format!("http://{}/v1/systemone", closed.local_addr().unwrap());
+    drop(closed);
+    let token = token_file();
+    let dir = repo(FILES, &url, token.path());
+    let path = dir.path().join("app/protocol/chat.hy");
+    let (report, _, code) = run_with_code(dir.path(), &["--stdin", "--path", path.to_str().unwrap(), "--semantic-changed"], Some("(defk may-post? [who] (in who permission))\n"), &[]);
+    assert!(report["semantic"]["unmeasured"].as_u64().unwrap() >= 1, "{}", report["semantic"]);
+    assert_eq!(code, 3, "測れなかった時は緑(0)と分ける");
+    let (quiet, _, code) = run_with_code(dir.path(), &["--stdin", "--path", path.to_str().unwrap()], Some("(defk may-post? [who] (in who permission))\n"), &[]);
+    assert_eq!(quiet["semantic"]["unmeasured"], 0, "問わない実行は測れなかったに数えない");
+    assert_eq!(code, 0);
 }
 
 #[test]

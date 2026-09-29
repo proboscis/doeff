@@ -25,6 +25,7 @@
 | 0 | error の違反が無い(warning と info はあってもよい) |
 | 1 | error の違反がある(登録簿に無い新しい破れ) |
 | 2 | 引数の誤り・設定が読めない・設定の名前の食い違い・型の違う値(理由は stderr) |
+| 3 | error の違反は無いが、意味の規則で問うはずだった定義に答えを得られなかった(測れなかった — Jev に届かない・鍵が無い・較正が撃てない。緑ではない・agora-redesign #1160) |
 
 設定(pyproject の `[tool.doeff-linter]` のどの段でも・architecture.hy)に**この binary の知らない鍵**か、この binary に無い形の正しい
 規則の ID(`DOEFF` と 3 桁)がある時は、終了コード 2 で止めない。その鍵(参照)だけを読まずに残りの規則を走らせ、設定の file のその行に
@@ -318,10 +319,14 @@ intent の層は Tach の interfaces に当たる — 別の service が読ん�
 | DOEFF204 | 処理を持つ method のある class が value / external-world / stateful / other のどれか(12 節) | `semantic.class_role` | warning_min 0.7・info_min 0.5 | 重さから |
 | DOEFF205 | judgment / program の定義が形の検めと判断を混ぜているか(14 節) | `semantic.mixed_concerns` | warning_min 0.7・info_min 0.5 | critical |
 
-- **撃つのは `--semantic`(path の引数の file、`--stdin` なら `--path` の file、無ければ git で変わった file)と `--semantic-all`(設定した層の全定義)の時だけ。**
-  `--semantic-changed` を足すと、そのうち手元の cache に答えの無い定義(中身が変わった定義)だけを撃つ(エディタが編集中に打つのが止まった時に使う)。
-  決定的な規則の実行は Jev を呼ばない(キーも要らない): エディタの 1 file(`--stdin`)は cache を読むだけ、全体の実行(hook・text / json)は cache を読み、
-  代理が設定されていれば cache に無い定義を代理に「覚えている時だけ」問う(下の「Jev の呼び出しを覚える代理」)。
+- **全体の実行(text / json / editor-json の repo 全体)の既定は、cache を使い変わった定義だけを撃つ**(operator 2026-09-29 "jev involved lints are to be
+  run everywhere every time with cached by default"・agora-redesign #1160): 対象 = path の引数の file、無ければ git で変わった file。そのうち手元の
+  cache に答えの無い定義だけを撃ち、残りの答えの無い定義は代理が設定されていれば代理に「覚えている時だけ」問う(下の「Jev の呼び出しを覚える代理」)。
+  問うはずだった定義に答えを得られなければ `semantic.unmeasured`(測れなかった)に数え、error の違反が無くても終了コード 3。
+- **1 file の `--stdin`(書いた直後の hook・エディタ)の既定は cache を読むだけ**(hook の全体 3 秒の上限の中で層の規則の知らせを失わないため・#1190 の
+  決定 A)。`--semantic-changed` を名指せば cache に答えの無い定義だけを撃つ。
+- `--semantic` = 対象の定義を cache に答えが在っても撃ち直す・`--semantic-all` = 設定した層の全定義を撃つ・`--semantic-cache-only` = 撃たない(cache を読むだけ・
+  測れなかったに数えない — 網の無い所の実行)。
 - **書きかけで読めない定義(閉じない括弧・対応しない閉じ括弧・閉じない文字列)は、どの実行でも問わない**(未判定に数える)。
 - 問う定義 = 設定した層の Hy の最上位の defn・defk・deff・defp・defpp・defhandler・defeffect・defclass・defrecord・defenum。
 - state = 定義の名・kind・file・申告の `:tags` を消した source(`semantic.source_limit` 字 = 既定 1,800 で切る)・置かれた層の説明(architecture.hy の layer の説明か、
