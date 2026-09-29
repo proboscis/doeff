@@ -157,6 +157,16 @@ client の handler `doeff_records.http_client.http_records_handler(RecordsEndpoi
 Program で、答え = process の終わりの code。本番の土台(`records-foundation`)は scheduler・`await-handler`・`async-time-handler`・
 `os-signal-stop-handler`・`aiohttp-http-server`・`pooled-postgres-sql-handler`(psycopg 3・自動 commit — image に psycopg が要る)。
 
+自分の process の外側(scheduler・`await-handler`・`state`・時計・止めの合図 `StopRequested` の答え手)を持つ系は、単独の入口を使わずに
+割った口を組む(#1280):
+
+- `records-settings dsn-of` — env と file を読んで設定の値 `RecordsSettings`(DSN・名簿・接頭辞・機体の名・接続の数・宛先・手入れ)を作る
+- `records-serving schema settings` — 本体の設定 `RecordsServing` を作る
+- `records-connected settings body` — 土台の口(待ち受け・名乗り・PostgreSQL の答え手。接続と pool を開き、終われば閉じる)。外側は持たない
+- `records-process foundation serving` — 本体。`(records-process (fn [body] (<自分の外側> (records-connected settings body))) serving)` と撃つ
+
+`records-foundation` は単独の入口の土台の全部(外側 + `records-connected`)。
+
 env(接続 URL の file・身元の名簿の file・接頭辞・port・手入れの間隔・変更の列に残す秒)の一覧と既定は `main.hy` の頭の註。
 表は接頭辞(既定 `records_`)つきで、起動時に `CREATE ... IF NOT EXISTS` だけを流す(既存の表を消さない・変えない)。
 SIGTERM / SIGINT で口を閉じて接続を返す。
