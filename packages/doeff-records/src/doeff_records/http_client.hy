@@ -22,12 +22,10 @@
 ;;; 時計は呼び手の時計なので、仮想の時計の下では memory の handler と同じに一瞬で進む。
 ;;;
 ;;; 要求の送り方は endpoint の transport が決める(閉じた 2 種):
-;;;   BlockingTransport        呼び手の thread で urllib の urlopen を撃つ — 同期の run の中の client(送る間は VM が止まる)
+;;;   BlockingTransport(既定)  呼び手の thread で urllib の urlopen を撃つ — 同期の run の中の client(送る間は VM が止まる)
 ;;;   EffectTransport          要求を doeff-core-effects の HttpRequest の effect として出す — 答え手は外側(本番 = 塞がない
 ;;;                            http-production-handler と await-handler)。処理ループと同じ scheduler の task から読む呼び手が、記録の
 ;;;                            service に届かない間も処理ループを止めないため。届かない(HttpFailed)は Unreachable に読む
-;;; 既定の送り方は置かない — endpoint を作る所で必ず書く(どの口が実 HTTP かを呼ぶ側の source から読めるようにする — 実 I/O に触れる
-;;; のは transport の側で、doeff-linter の目録も BlockingTransport を実 HTTP として数える)。
 (require doeff-hy.macros [defhandler defk <- val var])
 (import dataclasses [dataclass])
 (import json)
@@ -61,7 +59,7 @@
 
 
 (defclass [(dataclass :frozen True)] BlockingTransport []
-  "要求を呼び手の thread で urllib の urlopen に撃つ(file の頭の註)。")
+  "要求を呼び手の thread で urllib の urlopen に撃つ(既定 — file の頭の註)。")
 
 
 (defclass [(dataclass :frozen True)] EffectTransport []
@@ -73,9 +71,9 @@
    request-timeout = 要求 1 つの上限の秒 / poll-seconds = WatchChanges の待ちの読み直しの間隔 / transport = 要求の送り方(file の頭の註)。"
   (#^ str base-url)
   (#^ str token)
-  (#^ (| BlockingTransport EffectTransport) transport)
   (setv #^ float request-timeout DEFAULT-REQUEST-TIMEOUT)
-  (setv #^ float poll-seconds DEFAULT-POLL-SECONDS))
+  (setv #^ float poll-seconds DEFAULT-POLL-SECONDS)
+  (setv #^ (| BlockingTransport EffectTransport) transport (BlockingTransport)))
 
 
 (defclass [(dataclass :frozen True)] RawReply []
