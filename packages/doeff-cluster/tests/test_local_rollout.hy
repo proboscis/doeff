@@ -25,6 +25,9 @@
   (<- (Delay 3.0))
   (<- early tuple (KubeCalls))
   (assert (not early) "新が動く前に旧の Deployment を止めた")
+  ;; worker がまだ居ない間に再起動し、Rollout と k8s の初期状態が残ることを確かめる。
+  (<- (StopCoordinator 0.5))
+  (<- (Delay 2.0))
   (<- (StartWorker "w1"))
   (var calls #())
   (var turns 0)
@@ -37,9 +40,10 @@
   (assert (any (gfor p processes (is p.exit-code None))) "旧の停止時に新の process が居ない")
   (<- pending dict (ReadCoordinator "/resources/Rollout/forward"))
   (assert (= (get pending "status" "phase") "StoppingOld") pending)
-  ;; 書いた Rollout と同じ k8s の状態は coordinator の再起動を越えて残る。
-  (<- (StopCoordinator 0.5))
-  (<- (Delay 2.0))
+  (val stopped-at (get pending "status" "lastAction" "at"))
+  (assert (any (gfor p processes (and (<= p.started-ms stopped-at)
+                                      (or (is p.ended-ms None) (> p.ended-ms stopped-at)))))
+          "旧の scale が実行された時刻に新の process が居ない")
   (<- (SettleDeployment "prod" "old-beacon"))
   (<- (Delay 3.0))
   (<- complete dict (ReadCoordinator "/resources/Rollout/forward"))
@@ -53,6 +57,28 @@
   isolated)
 
 
+(defk reverse-scenario []
+  {:pre [] :post [(: % None)] :tags {:context "doeff-cluster-test" :role "program"}}
+  "逆向きも Pod の準備を待つ。ready を明示すれば全台準備済みにはならない。"
+  (<- (rollout-scenario))
+  (<- (DeclareRollout "reverse" (| FORWARD {"from" (get FORWARD "to") "to" (get FORWARD "from")})))
+  (<- (Delay 3.0))
+  (<- (SettleDeployment "prod" "old-beacon" :ready 0))
+  (<- (Delay 3.0))
+  (<- pending dict (ReadCoordinator "/resources/Rollout/reverse"))
+  (assert (= (get pending "status" "phase") "WaitingNewReady") pending)
+  (<- processes tuple (ProcessesOf "beacon"))
+  (assert (any (gfor p processes (is p.exit-code None))))
+  (<- (SettleDeployment "prod" "old-beacon"))
+  (<- (Delay 8.0))
+  (<- complete dict (ReadCoordinator "/resources/Rollout/reverse"))
+  (assert (= (get complete "status" "phase") "Complete") complete)
+  (<- calls tuple (KubeCalls))
+  (assert (= calls #({"op" "scale" "key" DEP "replicas" 0 "dryRun" False}
+                     {"op" "scale" "key" DEP "replicas" 1 "dryRun" False})))
+  None)
+
+
 (deftest test-rollout-waits-for-the-service-before-stopping-the-deployment
   (<- calls tuple (sim-cluster (beacons sim-foundation) (rollout-scenario)
                               :workers WORKERS :deployments DEPLOYMENTS))
@@ -60,7 +86,12 @@
   (assert (= (get DEPLOYMENTS DEP "specReplicas") 1)))
 
 
-(deff stop-old-before-ready [spec status from-view to-view now]
+(deftest test-reverse-rollout-waits-for-the-explicit-pod-readiness
+  (<- (sim-cluster (beacons sim-foundation) (reverse-scenario)
+                  :workers WORKERS :deployments DEPLOYMENTS)))
+
+
+(deff stop-old-before-ready [spec status from-view to-view now]  ; defk にできない: api_policy の純粋な判断の callback を置き換える反例
   {:pre [(: spec dict) (: status dict) (: from-view dict) (: to-view dict) (: now int)]
    :post [(: % tuple)] :tags {:context "doeff-cluster-test" :role "judgment"}}
   "反例: 新の状態にかかわらず、旧を先に 0 台にする誤った順序。"
