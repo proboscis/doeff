@@ -2,10 +2,11 @@
 ;;; HTTP の client はこの module の中に閉じる(業務コードは ReadShared / WriteShared しか知らない)。
 ;;; 要求の形(board-read-request・board-write-request・lease-request)は、この client と手元の sim-cluster の偽の宿(local.hy)が
 ;;; 同じ関数で作る(本文を写さない)。
-(require doeff-hy.macros [defhandler deff <-])
+(require doeff-hy.macros [defhandler deff <- val])
 (import urllib.parse [quote :as url-quote])
 (import doeff_cluster.clock [now-epoch-ms])
-(import .shared_model [ReadShared WriteShared ANY _Any JsonValue cas-allows])
+(import .shared_model [ReadShared WriteShared ANY _Any JsonValue cas-allows json-snapshot])
+(import .cluster_policy [board-ttl-refusal])
 (import .semaphore_model [LeaseOp lease-op semaphore-key])
 (import .coordinator_http [CoordinatorEndpoint send-idempotent REPLY-SECONDS])
 
@@ -35,13 +36,20 @@
   #("POST" (+ "/leases/" (url-quote name :safe "")) {} {"op" op "token" token "permits" permits "ttlMs" ttl-ms}))
 
 
+;; fake の保存。本物(shared-http → coordinator の /board)と同じ契約を tests/test_shared_contract.hy が両方で回す: 値は JSON に通した
+;; 写しで持ち・返し(json-snapshot)、書けない期限は同じ規則で断る(board-ttl-refusal — 本物は 400)。期限そのもの(期限を過ぎた行を
+;; 消す)はまだ持たない — 期限つきの行も残り続ける(本物との食い違い — 契約の外)。
 (defhandler shared-memory [#^ dict store]
   (ReadShared [prefix]
-    (resume (dfor #(k v) (.items store) :if (.startswith k prefix) k v)))
+    (<- rows dict (json-snapshot (dfor #(k v) (.items store) :if (.startswith k prefix) k v)))
+    (resume rows))
   (WriteShared [key value expect ttl-seconds]
-    (setv present (in key store))
-    (setv ok (cas-allows (.get store key) present expect))
-    (when ok (setv (get store key) value))
+    (<- refusal (board-ttl-refusal ttl-seconds))
+    (when (is-not refusal None) (raise (ValueError refusal)))
+    ;; 比べる期待の値も JSON に通す(本物は期待の値も JSON で運ぶ — tuple の期待が list の行と等しくなる)。ANY は運ばない印。
+    (<- written list (json-snapshot [value (if (is expect ANY) None expect)]))
+    (val ok (cas-allows (.get store key) (in key store) (if (is expect ANY) expect (get written 1))))
+    (when ok (.update store {key (get written 0)}))
     (resume ok))
   ;; lease の操作: coordinator と同じ純粋な判断(semaphore_model.lease-op)を、この保存の時計(doeff-time の GetTime)で当てる。
   (LeaseOp [name op token permits ttl-ms]

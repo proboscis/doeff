@@ -1,7 +1,7 @@
 ;;; coordinator の純粋な判断。宣言された job・task・worker の生存・今の割り当て・時刻から、次の割り当てを導く。
 ;;; HTTP の要求 1 件への返事も、状態と要求と時刻から (次の状態 status 本文) を返す純粋な関数にする。I/O はしない。
 ;;; 割り当ては安定させる: 担い手が移し替えの期限内に生きていれば動かさない。
-(require doeff-hy.macros [deff val])
+(require doeff-hy.macros [defk deff val])
 (import dataclasses [replace asdict])
 (import functools)
 (import hashlib)
@@ -1252,14 +1252,25 @@
     True None))
 
 
+(defk board-ttl-refusal [ttl]
+  ;; ttl は要求の本文の欄の素の JSON の値 — 数かどうかを検めるのがこの関数の役目なので、型は JSON の値の全部。
+  {:pre [(: ttl (| dict list str int float bool None))] :post [(: % (| str None))] :tags {:context "doeff-cluster" :role "judgment"}}
+  "盤の行の期限(秒・None = 期限なし)が書けない値なら理由の文、書けるなら None。coordinator の盤(board-write の 400)と
+   fake の保存(shared-memory)が同じ規則で断るため(定義点はここ 1 つ — 契約テスト tests/test_shared_contract.hy)。"
+  (if (or (is ttl None) (and (isinstance ttl #(int float)) (< 0 ttl (+ BOARD-MAX-TTL-SECONDS 1))))
+      None
+      (.format "ttlSeconds は 0 より大きく {} 以下: {!r}" BOARD-MAX-TTL-SECONDS ttl)))
+
+
 (defn #^ tuple board-write [#^ ClusterState state #^ str key #^ dict body #^ int [now 0]]
   "盤の行 1 つの compare-and-set。expect = 値で比べる(従来)・expectVersion = 行の版で比べる(0 = 行が無い時だけ)。
    両方あれば両方を満たす時だけ書く。value が null で delete が真なら行を消す。返事に行の新しい版を載せる。
    ttlSeconds(2026-09-25)= 行の期限。期限を過ぎた行は調停が消す(sweep-board)。付けない書きは期限を外す(ずっと残す)。
    上限(board-capacity-refusal)を越える書きは 507 で断る。"
   (setv ttl (.get body "ttlSeconds"))
-  (when (and (is-not ttl None) (not (and (isinstance ttl #(int float)) (< 0 ttl (+ BOARD-MAX-TTL-SECONDS 1)))))
-    (return #(state 400 {"ok" False "error" (.format "ttlSeconds は 0 より大きく {} 以下: {!r}" BOARD-MAX-TTL-SECONDS ttl)})))
+  (setv ttl-refusal (run (board-ttl-refusal ttl)))
+  (when (is-not ttl-refusal None)
+    (return #(state 400 {"ok" False "error" ttl-refusal})))
   (setv present (in key state.board)
         version (.get state.board-versions key (if present 1 0))
         ok (and (board-allows (.get state.board key) present (in "expect" body) (.get body "expect"))

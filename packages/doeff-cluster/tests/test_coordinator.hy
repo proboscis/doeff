@@ -48,17 +48,8 @@
   (assert (= job.spec.environ #(#("A" "2") #("B" "1"))) "environ は名の順の組"))
 
 
-(deftest test-board-compare-and-set
-  (setv s (ClusterState))
-  (setv #(s status _) (respond s (req "PUT" "/board/turn/c1/0" {"value" {"state" "queued"} "expect" None}) 0 T))
-  (assert (= status 200))
-  ;; 行が在るので「無い時だけ」は断られる
-  (setv #(s status body) (respond s (req "PUT" "/board/turn/c1/0" {"value" {"state" "x"} "expect" None}) 0 T))
-  (assert (= #(status (get body "current")) #(409 {"state" "queued"})))
-  (setv #(s status _) (respond s (req "PUT" "/board/turn/c1/0" {"value" {"state" "running"} "expect" {"state" "queued"}}) 0 T))
-  (assert (= status 200))
-  (setv #(s status body) (respond s (req "GET" "/board" None {"prefix" "turn/"}) 0 T))
-  (assert (= body {"turn/c1/0" {"state" "running"}})))
+;; 盤の compare-and-set(無い時だけ・値が等しい時だけ・prefix の読み)は tests/test_shared_contract.hy が本物の client と fake の
+;; 両方で見る。
 
 
 (defn submit [state now [versions V] [lease 15.0]]

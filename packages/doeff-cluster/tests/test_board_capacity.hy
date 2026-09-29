@@ -44,10 +44,7 @@
   (assert (= s.board-expiry {})))
 
 
-(deftest test-a-bad-ttl-is-refused
-  (for [bad [0 -1 "60" (* 365 24 3600)]]
-    (setv #(_ status _) (put (ClusterState) "k" 1 1000 :ttlSeconds bad))
-    (assert (= status 400) bad)))
+;; 書けない期限(数でない・0 以下・30 日を越える)の断りは tests/test_shared_contract.hy が本物の client と fake の両方で見る。
 
 
 (deftest test-writes-over-the-limits-are-refused-but-shrinking-and-deleting-pass
