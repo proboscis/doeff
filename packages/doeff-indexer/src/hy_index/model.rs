@@ -327,7 +327,7 @@ pub struct Call {
     /// 呼び出しの頭から最後の引数の終わりまで(引数の中の参照を引くため — agora-redesign #1279)。索引の JSON の契約には出さない。
     #[serde(skip)]
     pub form_range: Range,
-    /// 直接の引数として渡した keyword の綴り(`(f a :k v)` の `:k` — 目録の条件つきの行が読む・agora-redesign #1318)。索引の JSON の契約には出さない。
+    /// 直接の引数として渡した keyword の綴り(`(f a :k v)` の `:k`)。索引の JSON の契約には出さない。
     #[serde(skip)]
     pub keywords: Vec<String>,
     /// この呼び出しを含む最も内側の定義の、同じ file の `definitions` の添字。top level の式なら null。

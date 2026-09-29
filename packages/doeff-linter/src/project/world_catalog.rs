@@ -25,9 +25,6 @@ struct CatalogFile {
 struct CatalogEntry {
     handler: String,
     touches: Vec<String>,
-    /// 書けば、呼び出しがこの keyword を渡さない時だけ数える(隠れた既定が実 I/O を選ぶ物 — 例 `RecordsEndpoint` の `:transport`)。
-    #[serde(default)]
-    unless_keyword: Option<String>,
     /// false = 名簿の :wraps には書けるが、実 I/O として数えない(触れる先を別の行へ移した後、repo の :wraps が移るまでの行)。
     #[serde(default = "counted_by_default")]
     counted: bool,
@@ -41,8 +38,6 @@ struct CatalogEntry {
 pub struct CatalogHandler {
     pub definition: DefinitionRef,
     pub touches: Vec<WorldTouch>,
-    /// 呼び出しがこの keyword を渡さない時だけ数える(書いた行は値としての参照を数えない — agora-redesign #1318)。
-    pub unless_keyword: Option<String>,
     /// false = :wraps に書けるが数えない(移行の間の行 — agora-redesign #1318)。
     pub counted: bool,
 }
@@ -52,16 +47,9 @@ fn counted_by_default() -> bool {
 }
 
 impl CatalogHandler {
-    /// 呼び出し(渡した keyword の並び)か値としての参照(None)が、この行の数える所か。
-    pub fn counts(&self, call_keywords: Option<&[String]>) -> bool {
-        if !self.counted {
-            return false;
-        }
-        match (&self.unless_keyword, call_keywords) {
-            (None, _) => true,
-            (Some(keyword), Some(keywords)) => !keywords.iter().any(|k| k == keyword),
-            (Some(_), None) => false,
-        }
+    /// この行を名指す所を実 I/O として数えるか(数えない行は :wraps に書けるだけ)。
+    pub fn counts(&self) -> bool {
+        self.counted
     }
 }
 
@@ -93,10 +81,7 @@ impl WorldCatalog {
             if touches.is_empty() {
                 problems.push(format!("world_handlers.json の {} に touches が無い", entry.handler));
             }
-            if entry.unless_keyword.as_deref().is_some_and(|k| !k.starts_with(':') || k.len() < 2) {
-                problems.push(format!("world_handlers.json の {} の unless_keyword は `:名` の綴り", entry.handler));
-            }
-            if handlers.insert(definition.target(), CatalogHandler { definition, touches, unless_keyword: entry.unless_keyword, counted: entry.counted }).is_some() {
+            if handlers.insert(definition.target(), CatalogHandler { definition, touches, counted: entry.counted }).is_some() {
                 problems.push(format!("world_handlers.json の {} が 2 度載っている", entry.handler));
             }
         }

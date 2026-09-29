@@ -2579,9 +2579,9 @@ fn single_point_vocabulary_requires_patterns_files_except_and_instead() {
     assert!(all.contains("vocabulary-scope a に :instead(直し方)が無い"), "{}", all);
 }
 
-/// agora-redesign #1318: 記録の client の実 HTTP は送り方(transport)の側で数える — 目録は BlockingTransport と、:transport を渡さない
-/// RecordsEndpoint(隠れた既定 = 実 HTTP)を http とし、http-records-handler そのものは載せない。EffectTransport の口と、RecordsEndpoint を
-/// 値として名指すだけ(型の注釈)の所は数えない。
+/// agora-redesign #1318・#1410: 記録の client は HttpRequest の effect を出すだけ(送り方は EffectTransport 1 つ)— 実 HTTP は HttpRequest に
+/// 答える本物の handler(目録の http-production-handler)の側で数える。記録の client の handler(http-records-handler)は目録の「数えない」行。
+/// RecordsEndpoint を値として名指すだけ(型の注釈)の所も数えない。
 #[test]
 fn records_client_is_counted_by_its_transport() {
     let files = [
@@ -2589,18 +2589,17 @@ fn records_client_is_counted_by_its_transport() {
         (
             "app/billing/core/ports.hy",
             tags("billing", "judgment")
-                + "(import doeff_records.http_client [BlockingTransport EffectTransport RecordsEndpoint http-records-handler])\n\
-                   (defk blocking-port [url] (http-records-handler (RecordsEndpoint url \"t\" :transport (BlockingTransport))))\n\
-                   (defk default-port [url] (http-records-handler (RecordsEndpoint url \"t\")))\n\
+                + "(import doeff_records.http_client [EffectTransport RecordsEndpoint http-records-handler])\n\
+                   (import doeff_core_effects.http_handlers [http-production-handler])\n\
                    (defk effect-port [url] (http-records-handler (RecordsEndpoint url \"t\" :transport (EffectTransport))))\n\
+                   (defk answered-port [url body] (with-handlers [(http-production-handler) (effect-port url)] body))\n\
                    (defk named-port [endpoint] {:pre [(: endpoint RecordsEndpoint)]} endpoint)\n",
         ),
         (
             "app/billing/tests/test_ports.hy",
-            "(import app.billing.core.ports [blocking-port default-port effect-port named-port])\n\
-             (deftest test-blocking-port-unmarked (<- h (blocking-port \"http://x\")) (assert h))\n\
-             (deftest test-default-port-unmarked (<- h (default-port \"http://x\")) (assert h))\n\
+            "(import app.billing.core.ports [effect-port answered-port named-port])\n\
              (deftest test-effect-port-unmarked (<- h (effect-port \"http://x\")) (assert h))\n\
+             (deftest test-answered-port-unmarked (<- h (answered-port \"http://x\" 1)) (assert h))\n\
              (deftest test-named-port-unmarked (<- h (named-port 1)) (assert h))\n"
                 .to_string(),
         ),
@@ -2610,17 +2609,9 @@ fn records_client_is_counted_by_its_transport() {
     let text = std::fs::read_to_string(&arch_path).unwrap().replace(":foundation foundation", ":foundation foundation\n  :edge-mark \"real_world\"");
     std::fs::write(&arch_path, text).unwrap();
     let (_, report) = editor(dir.path());
-    assert_eq!(
-        keys(&report, "DOEFF133"),
-        vec![
-            "app/billing/tests/test_ports.hy::DOEFF133::test_blocking_port_unmarked::edge",
-            "app/billing/tests/test_ports.hy::DOEFF133::test_default_port_unmarked::edge",
-        ],
-        "{}",
-        report
-    );
-    let default = violation(&report, "app/billing/tests/test_ports.hy::DOEFF133::test_default_port_unmarked::edge");
-    assert!(default["message"].as_str().unwrap().contains("RecordsEndpoint"), "{}", default["message"]);
+    assert_eq!(keys(&report, "DOEFF133"), vec!["app/billing/tests/test_ports.hy::DOEFF133::test_answered_port_unmarked::edge"], "{}", report);
+    let answered = violation(&report, "app/billing/tests/test_ports.hy::DOEFF133::test_answered_port_unmarked::edge");
+    assert!(answered["message"].as_str().unwrap().contains("http-production-handler"), "{}", answered["message"]);
 }
 
 /// agora-redesign #1318: 目録の「数えない」行(counted: false — 触れる先を別の行へ移した後、repo の :wraps が移るまでの行)は、名簿の

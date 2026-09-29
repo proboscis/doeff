@@ -309,27 +309,12 @@
    "why": "組み立て — 上の列そのもの"
   },
   {
-   "handler": "doeff_records.http_client:BlockingTransport",
-   "touches": [
-    "http"
-   ],
-   "why": "要求を呼び手の thread で urllib.request.urlopen に撃つ送り方(作る = 実 HTTP を選ぶ)。記録の client の handler(http-records-handler・http-table-records-handler)は endpoint の transport に従うだけで、EffectTransport なら HttpRequest を出すだけ — 触れる先は transport の側で数える"
-  },
-  {
-   "handler": "doeff_records.http_client:RecordsEndpoint",
-   "touches": [
-    "http"
-   ],
-   "unless_keyword": ":transport",
-   "why": "transport を書かずに作る endpoint は隠れた既定の BlockingTransport(実 HTTP)を選ぶ。:transport を渡す呼び出しは渡した transport の側で数える(送り方が EffectTransport 1 つに畳まれたら、この行と上の行を消す)"
-  },
-  {
    "handler": "doeff_records.http_client:http-records-handler",
    "touches": [
     "http"
    ],
    "counted": false,
-   "why": "endpoint の transport に従うだけの翻訳 — 実 HTTP は上の BlockingTransport と transport を書かない RecordsEndpoint の側で数える。repo の :wraps がこの handler を挙げている間は :wraps に書けるよう残す(数えない)。:wraps が移ったら消す"
+   "why": "HttpRequest の effect を出すだけの翻訳(送り方は EffectTransport 1 つ)— 実 HTTP は HttpRequest に答える本物の handler(http-production-handler)の側で数える。repo の :wraps がこの handler を挙げている間は :wraps に書けるよう残す(数えない)。:wraps が移ったら消す"
   },
   {
    "handler": "doeff_records.http_client:http-table-records-handler",

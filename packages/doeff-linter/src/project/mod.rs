@@ -2084,11 +2084,11 @@ fn definition_graph<'h>(architecture: &architecture::Architecture, hy: &'h HashM
             .references
             .iter()
             .filter(|r| r.target.as_deref().is_some_and(interesting) && !in_import(&r.range) && !only_read(&r.range))
-            .filter_map(|r| r.target.as_deref().map(|t| (t, innermost_definition(definitions, &r.range), None, in_carrier(&r.range))))
+            .filter_map(|r| r.target.as_deref().map(|t| (t, innermost_definition(definitions, &r.range), in_carrier(&r.range))))
             .chain(file.calls.iter().filter_map(|c| {
-                c.target.as_deref().filter(|t| interesting(t)).map(|t| (t, c.caller, Some(c.keywords.as_slice()), in_carrier(&c.range)))
+                c.target.as_deref().filter(|t| interesting(t)).map(|t| (t, c.caller, in_carrier(&c.range)))
             }));
-        for (target, owner, keywords, inside_carrier) in spots {
+        for (target, owner, inside_carrier) in spots {
             let Some(owner_index) = owner else { continue };
             let owner = first + owner_index;
             // :systems を宣言しない repo は今までどおり(defsystem の中の辺もふつうの辺 — 入口を知らないので、系の中を別に数えない)。
@@ -2098,8 +2098,8 @@ fn definition_graph<'h>(architecture: &architecture::Architecture, hy: &'h HashM
                 continue;
             }
             if let Some((spelling, _, touches)) = wrapped.get(target) {
-                // 目録の条件つきの行(unless_keyword)は、その keyword を渡さない呼び出しだけが外の世界に触れる(agora-redesign #1318)。
-                let counted = catalog.handlers.get(target).is_some_and(|h| h.counts(keywords));
+                // 目録の数えない行(:wraps に書けるだけの移行の間の行 — agora-redesign #1318)は外の世界に触れない。
+                let counted = catalog.handlers.get(target).is_some_and(|h| h.counts());
                 if counted && architecture.counts_as_edge(touches) {
                     let slot = if is_carried { &mut world_carried[owner] } else { &mut world[owner] };
                     if slot.is_none() {
@@ -2315,13 +2315,13 @@ fn world_handler_spots(hy_file: &HyFileIndex, architecture: &architecture::Archi
         .references
         .iter()
         .filter(|r| !in_import(&r.range))
-        .filter_map(|r| r.target.as_ref().map(|t| (t, r.range, None)))
-        .chain(hy_file.calls.iter().filter_map(|c| c.target.as_ref().map(|t| (t, c.range, Some(c.keywords.as_slice())))));
+        .filter_map(|r| r.target.as_ref().map(|t| (t, r.range)))
+        .chain(hy_file.calls.iter().filter_map(|c| c.target.as_ref().map(|t| (t, c.range))));
     let catalog = world_catalog::WorldCatalog::bundled();
     let mut chosen: BTreeMap<(Option<usize>, String), Range> = BTreeMap::new();
-    for (target, range, keywords) in spots {
-        // 目録の条件つきの行(unless_keyword)は、その keyword を渡さない呼び出しだけを数える(agora-redesign #1318)。
-        if !wrapped.contains_key(target) || !catalog.handlers.get(target).is_some_and(|h| h.counts(keywords)) {
+    for (target, range) in spots {
+        // 目録の数えない行(:wraps に書けるだけの移行の間の行 — agora-redesign #1318)は数えない。
+        if !wrapped.contains_key(target) || !catalog.handlers.get(target).is_some_and(|h| h.counts()) {
             continue;
         }
         let inside = |d: &Definition| d.full_range.start <= range.start && range.end <= d.full_range.end;
