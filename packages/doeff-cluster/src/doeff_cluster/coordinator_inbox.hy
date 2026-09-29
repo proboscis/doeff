@@ -12,7 +12,7 @@
 (import time)
 (import http.server [BaseHTTPRequestHandler ThreadingHTTPServer])
 (import urllib.parse [urlsplit parse-qsl])
-(import .cluster_model [Request NextRequests Reply CoordinatorStopRequested PlainText ACCEPTED-FORMATS])
+(import .cluster_model [Request NextRequests Reply CoordinatorFault CoordinatorStopRequested PlainText ACCEPTED-FORMATS])
 
 ;; probe の閾値(秒)。ループは要求が無くても 1 秒ごとに NextRequests を出すので、ふだんの「最後に取りに来てから」は 1 秒 + 1 まとまりの
 ;; 処理(fsync の実測の最大 2.9〜3.6 秒・longhorn の詰まりで最長 13 秒・k8s の読みは 3 秒で打ち切り)。
@@ -128,6 +128,11 @@
       (print (.format "coordinator: 遅い返事 {:.1f} 秒: {} {}" waited request.method request.path) :file sys.stderr :flush True))
     (setv slot.status status slot.body body)
     (.set slot.done)
+    (resume None))
+  ;; coordinator の中の欠陥を 1 行出す(送り手には 500 — 中の欠陥が送り手の誤りに見えないように・#1024)。
+  (CoordinatorFault [fault]
+    (print (.format "coordinator: 中の欠陥: {} {}: {}: {}({})" fault.method fault.path fault.error-type fault.message fault.where)
+           :file sys.stderr :flush True)
     (resume None)))
 
 

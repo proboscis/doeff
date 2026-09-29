@@ -34,7 +34,8 @@
 (import doeff [run with_handlers])
 (import doeff_core_effects.scheduler [scheduled])
 (import doeff_cluster.clock [now-epoch-ms])
-(import .cluster_model [ClusterState ClusterTiming ClusterNaming naming-from-json NextRequests Reply Persist CoordinatorStopRequested])
+(import .cluster_model [ClusterState ClusterTiming ClusterNaming naming-from-json NextRequests Reply Persist CoordinatorStopRequested
+                        Fault CoordinatorFault])
 (import .cluster_policy [state-from-json fresh-task-prefix nodes-to-read with-derived-capabilities])
 (import .durable_kv [durable-kv kv-delta full-kv state-from-kv legacy-key-moves resume-writes])
 (import .wal_store [WalStore wal-store])
@@ -100,6 +101,15 @@
   (replace state :rollout-tick-ms now))
 
 
+(defk fault-reply [fault]
+  {:pre [(: fault Fault)] :post [(: % dict)] :tags {:context "doeff-cluster" :role "judgment"}}
+  ;; coordinator の中の欠陥(api_policy.respond が 500 の Fault で返した例外)を log に 1 行出し、送り手に見せる本文を返す — 本文は
+  ;; 送り手の誤りでないことを名乗る(#1024 — #1005 では中の TypeError が 400 に畳まれ、log にも出なかった)。
+  (<- (CoordinatorFault fault))
+  {"error" (.format "coordinator の中の欠陥: {}: {}({})" fault.error-type fault.message fault.where)
+   "fault" True})
+
+
 (defk coordinator-step [state timing naming]
   {:pre [(: state ClusterState) (: timing ClusterTiming) (: naming ClusterNaming)] :post [(: % tuple)]}
   ;; 1 まとまり = 並んでいる要求を全部受ける(無ければ 1 秒待つ)→ 1 件ずつ判断 → Rollout(1 秒ごと)→ 永続化 → 全員に返事。
@@ -112,6 +122,8 @@
   (setv next (tick state now timing) replies [])
   (for [request batch]
     (setv #(next status body) (respond next request now timing))
+    (when (isinstance body Fault)
+      (<- body dict (fault-reply body)))
     (.append replies #(request status body)))
   (when (>= (- now next.rollout-tick-ms) ROLLOUT-TICK-MS)
     (<- next ClusterState (rollout-tick next timing naming now)))
