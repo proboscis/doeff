@@ -186,6 +186,9 @@ pub struct WorldHandler {
     pub answers: Vec<String>,
     /// 中で動かす doeff の実 I/O の handler(書かなくてよい)。
     pub wraps: Vec<DefinitionRef>,
+    /// 縁の検(`:interpreters` を持つ deftest)を求めない handler か(`:contract-test none` — 書かなければ求める・DOEFF137・
+    /// agora-redesign #1363)。
+    pub contract_test_exempt: bool,
     /// architecture.hy の中の位置。
     #[serde(skip)]
     pub range: doeff_indexer::hy_index::Range,
@@ -2074,7 +2077,8 @@ impl<'a> Parser<'a> {
             };
             let Some(definition) = self.definition_ref(head, "world-handler") else { continue };
             let range = self.lines.range(head.span.start, head.span.end);
-            let mut handler = WorldHandler { definition, touches: Vec::new(), answers: Vec::new(), wraps: Vec::new(), range };
+            let mut handler =
+                WorldHandler { definition, touches: Vec::new(), answers: Vec::new(), wraps: Vec::new(), contract_test_exempt: false, range };
             let mut touches_given = false;
             let rest: Vec<&Form> = parts.iter().skip(2).copied().collect();
             for (key, field) in self.pairs(&rest) {
@@ -2108,6 +2112,14 @@ impl<'a> Parser<'a> {
                             }
                         }
                         None => self.problem(field, ":wraps は [\"module:名\" …] の列"),
+                    },
+                    // 縁の検を求めない handler(DOEFF137)— 値は記号 none だけ(ほかの値は読み違いを黙って通さない)。
+                    ":contract-test" => match self.symbol(field) {
+                        Some("none") => handler.contract_test_exempt = true,
+                        _ => self.problem(
+                            field,
+                            &format!("world-handler {} の :contract-test は記号 none だけ(縁の検を求めない handler)", handler.definition.spelling()),
+                        ),
                     },
                     _ => self.unknown_key(key, "world-handler"),
                 }
@@ -2461,6 +2473,27 @@ mod tests {
         assert!(arch.world_handlers[1].wraps.is_empty() && arch.world_handlers[1].answers.is_empty());
         let line = good.lines().position(|l| l.contains("app.foundation.host:with-host")).unwrap() as u32;
         assert_eq!(host.range.start.line, line);
+        assert!(!host.contract_test_exempt, ":contract-test を書かない handler は縁の検を求める");
+    }
+
+    #[test]
+    fn world_handler_contract_test_accepts_only_none() {
+        // DOEFF137(agora-redesign #1363): :contract-test none の handler は縁の検を求めない。none の外の値は宣言の誤り。
+        let good = GOOD.replace(
+            ":foundation foundation",
+            r#":foundation foundation
+  :world-handlers [(world-handler "app.foundation.host:with-host" :touches [http] :contract-test none)
+                   (world-handler "app.foundation.agent:claude-runtime" :touches [process])]"#,
+        );
+        let arch = Architecture::parse(&good, Path::new("architecture.hy")).unwrap();
+        assert!(arch.notices.is_empty(), "知らない鍵として知らせた: {:?}", arch.notices);
+        assert!(arch.world_handlers[0].contract_test_exempt);
+        assert!(!arch.world_handlers[1].contract_test_exempt);
+        for value in ["always", "\"none\"", "[none]"] {
+            let bad = good.replace(":contract-test none", &format!(":contract-test {}", value));
+            let problems = Architecture::parse(&bad, Path::new("architecture.hy")).unwrap_err().join("\n");
+            assert!(problems.contains("app.foundation.host:with-host の :contract-test は記号 none だけ"), "{} を通した:\n{}", value, problems);
+        }
     }
 
     #[test]

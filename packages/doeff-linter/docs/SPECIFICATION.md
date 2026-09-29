@@ -185,6 +185,7 @@ Jev の規則(201・202・205)は確率で info にも出るが、level は規�
 | DOEFF106・131(層の外) | `:world-handlers` を書いた repo では、層の置き場の外の Hy の file(層の外の dir・`:root` の外で `:raw-io-roots` に挙げた dir — 書かなければ `:root` だけ)にも DOEFF106・131 を当てる。検の file(path の段の :exclude・名が test_ / conftest)・defadr を持つ file・deftest の中の当たりは外す(縁のテストは DOEFF133)。message に「層の置き場の外」(agora-redesign #1147) | DOEFF106・131 と同じ | 同じ |
 | DOEFF132 | `:world-handlers` の定義 1 本ずつ — module が層の置き場に無い(無い module か層の外)・foundation の外の層に在る・Hy の module に定義が無い。全体の実行だけ。既定の重大さ critical(agora-redesign #1106 の R2・#1141) | `<module:名>` | architecture.hy の名簿の要素 |
 | DOEFF133 | テストの種類(手元 / 縁)を届く先から導く — 全体の索引で定義の間の辺(呼び出し・参照・入れ子)を組み、名簿の定義・`:wraps` の handler を名指す定義・強い生の I/O の証拠を持つ定義から逆向きに辿る。届く deftest は縁で `:edge-mark` の印(deftest の `:marks` か module の `pytestmark`)が要り、届かない deftest は印を持たない。食い違いを critical で出し、縁の message に届く道を書く。Python の検は数えない(R6)。`:edge-mark` を書いた時だけ当たる(agora-redesign #1106 の R3・#1142) | `<定義>::edge` / `<定義>::local` | deftest の名 |
+| DOEFF137 | 縁の検の無い許可名簿の handler — `:world-handlers` の handler ごとに、空でない `:interpreters` を持つ deftest(`:interpreters` の要素は file の外の定数の記号なので読み解かず、空でない列かだけを見る — deftest の設定の dict の読みは DOEFF133 の `:marks` と同じ)のうち、DOEFF133 と同じ定義の辺の図(呼び出し・参照・入れ子)を辿ってその handler の定義に届く物が 1 本も無ければ 1 件。`:interpreters` を持たない deftest が届くだけでは数えない。`:contract-test none` の handler は判じない。全体の実行だけ・有効にする条件は DOEFF133 と同じ(`:world-handlers` と `:edge-mark`)。既定の重大さ critical(agora-redesign #1363) | `<module:名>` | architecture.hy の名簿の要素 |
 | DOEFF135 | テストは deftest だけ — `:test-forms {:tests [..] :check-scripts [..] :runners [..]}` の綴りの型で file を選び、:tests の Python の file の `def test_*`(python-test・件数を message に)、:tests の file の module ごとの skip(字下げの無い段の `pytest.skip`・`allow_module_level`・`pytestmark` の `mark.skip` — 束ねの名と印が別の行に在る複数行の束ねも括弧が閉じるまで読み、束ねの名の行を指す・#1426)、:check-scripts の file(check-script)、:runners の file(runner)を file ごとに 1 件。全体の実行だけ。既定の重大さ critical(agora-redesign #1106 の R6・#1144) | `python-test` / `module-skip` / `check-script` / `runner` | file の頭か最初の当たりの行 |
 | DOEFF136 | 模擬の環境で回していない service — `:verification-environment` を書いた repo で、entry の層を持つ service ごとに、その service の entry の層の dir(`<root>/<service の dir>/entry`)の定義から呼び手(呼び出し・参照・入れ子 — DOEFF133 と同じ図)を逆向きに辿り、模擬の環境の dir の下の deftest に 1 本も届かなければ defservice の位置で critical(鍵 = service の名)。entry の層を宣言しても定義が 0 本の service は数えない(回す組み立てが無い)。service の中の tests は模擬の環境の外なので数えない。索引は `defsystem`(doeff-cluster の系の宣言)も定義として読むので、deftest → defsystem → entry の経路も届く(agora-redesign #1143・R5・#1111)。 |
 | DOEFF142 | handler の引数に client・可変の店 — `:handler-arguments {:files [..] :exclude [..] :store-names [..] :store-suffixes [..] :keep-mark "…" :value-types [..]}` の :files に当たる Hy の file の `defhandler`(入れ子も)の引数 1 つずつを分ける: `client`(型の名の末尾が Client / Connection / Pool / Engine・名が client / conn / connection / …-client / …-conn)・`container`(dict / list / set / bytearray / MutableMapping … — `(get dict …)` を含む)・`object`(repo の Hy と Python の class の索引で frozen でない class と、索引に無い型 — frozen の dataclass・frozen の設定・Enum・NamedTuple・defrecord と :value-types は値)・`named`(型の注記が無く名が :store-names / :store-suffixes)。本文(次の最上位の form まで)に :keep-mark の註が在る handler は数えない。判定は渡した file だけで決まり、class の索引は file ごとのキャッシュで引く(1 file の実行でも repo を読み直さない)。既定の重大さ critical(agora-redesign #1189 / #1366) | `<handler>::<引数>` | 引数の位置 |
@@ -301,7 +302,9 @@ law の対応だけを残す。無ければ TOML の設定で今どおり動く�
                     :holders ["ConversationSent"] :why "…")]
   :world-handlers [(world-handler "controllers.foundation.host:with-agora-process"   ; 外の世界に触れてよい定義の許可名簿(下の註)
                      :touches [http file clock env] :answers [HttpRequest ReadText]
-                     :wraps ["doeff_core_effects.os_file:os-file-handler"])]
+                     :wraps ["doeff_core_effects.os_file:os-file-handler"])
+                   (world-handler "controllers.foundation.clock:real-clock" :touches [clock]
+                     :contract-test none)]   ; 縁の検を求めない handler(DOEFF137 — 値は記号 none だけ)
   :exclude ["tests" "__pycache__" "conftest.py"]    ; 既定のまま
   :extensions ["hy" "py"]                           ; 既定 hy・hyk・hyp・py
   :shared "shared")  ; :legacy は廃止(書くと設定の誤り — 宣言の外の module は全部 DOEFF114・115、既存の分は登録簿)
@@ -318,9 +321,10 @@ law の対応だけを残す。無ければ TOML の設定で今どおり動く�
   (in-process で読む近道を止める — 置き場の状態を持つ service が 2 つ目の持ち主を作らせないため・agora-redesign #978)。書かない = in-process。
   値は `http` だけ(他は設定の誤り)。載せられないので、その service の module を import すると DOEFF116 が当たる。
 - `:world-handlers` は、外の世界に触れてよい定義の許可名簿(agora-redesign #1106 — operator 2026-09-29 "only allow small set of handlers to touch
-  actual world")。要素 `(world-handler "module.path:名" :touches [..] :answers [..]? :wraps [..]?)` の欄は、`:touches` = 触れる先(必須・閉じた語
+  actual world")。要素 `(world-handler "module.path:名" :touches [..] :answers [..]? :wraps [..]? :contract-test none?)` の欄は、`:touches` = 触れる先(必須・閉じた語
   http・db・file・process・clock・env・cluster・network・thread)・`:answers` = 答える effect の名・`:wraps` = 中で動かす doeff の実 I/O の handler
-  (`"module:名"`・名簿の定義は書けない)。名簿を書くには `:foundation` が要る。名簿を書いた repo では `[tool.doeff-linter.raw_side_effects]
+  (`"module:名"`・名簿の定義は書けない)・`:contract-test` = 縁の検を求めない handler の印(値は記号 `none` だけ — ほかの値は設定の誤り・
+  書かなければ DOEFF137 が縁の検を求める)。名簿を書くには `:foundation` が要る。名簿を書いた repo では `[tool.doeff-linter.raw_side_effects]
   allowed_layers` は二重の宣言(設定の誤り)— 生の I/O を許す所は名簿だけで決める(規則は agora-redesign #1134 の子で足す)。
   読み違い(綴りが `module:名` でない・語の外・同じ定義や語の 2 度書き・`:touches` の無い要素)は設定の誤り。
 - 実 I/O の handler は doeff の目録 `data/world_handlers.json`(doeff-linter に同梱・agora-redesign #1209)から知る。目録の要素 = `{"handler": "module:名", "touches": [..], "why": "…"}`。`:wraps` は目録に在る物だけ(外は設定の誤り)。DOEFF131 は目録の handler のどれもを相手にし、DOEFF133 は目録の handler・名簿の定義・生の I/O の証拠のうち触れる先が `:edge-touches` に当たる物だけを縁に数える(生の I/O の分類は async・thread → thread、time・random → clock と写す)。

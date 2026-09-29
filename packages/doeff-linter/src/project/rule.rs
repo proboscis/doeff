@@ -106,6 +106,10 @@ pub enum ProjectRule {
     /// DOEFF133: テストの種類(手元 / 縁)を届く先から導き、architecture.hy の :edge-mark の印と食い違う物 — 名簿の定義・:wraps の
     /// handler・生の I/O に届くのに印が無い / 届かないのに印が在る(agora-redesign #1106 の R3)。
     TestKindMismatch,
+    /// DOEFF137: architecture.hy の許可名簿(:world-handlers)の handler に、縁の検(空でない `:interpreters` を持ち、その handler の
+    /// 定義に届く deftest)が 1 本も無い — 本物と模擬が同じ検を通ることを見ていない実 I/O の handler(agora-redesign #1363)。
+    /// `:contract-test none` の handler は判じない。
+    WorldHandlerWithoutContractTest,
     /// DOEFF135: deftest 以外のテストの形(Python の def test_*・module ごとの skip・pytest の外の check script・deftest の runner)—
     /// architecture.hy の :test-forms の綴りの型で file を選ぶ(agora-redesign #1106 の R6)。
     TestFormNotDeftest,
@@ -216,6 +220,7 @@ impl ProjectRule {
         ProjectRule::WorldHandlerNamedOutsideList,
         ProjectRule::WorldHandlerMisplaced,
         ProjectRule::TestKindMismatch,
+        ProjectRule::WorldHandlerWithoutContractTest,
         ProjectRule::TestFormNotDeftest,
         ProjectRule::VocabularyOutsideSinglePoint,
         ProjectRule::SpellingOutsideItsFiles,
@@ -281,6 +286,7 @@ impl ProjectRule {
             ProjectRule::WorldHandlerNamedOutsideList => "DOEFF131",
             ProjectRule::WorldHandlerMisplaced => "DOEFF132",
             ProjectRule::TestKindMismatch => "DOEFF133",
+            ProjectRule::WorldHandlerWithoutContractTest => "DOEFF137",
             ProjectRule::TestFormNotDeftest => "DOEFF135",
             ProjectRule::VocabularyOutsideSinglePoint => "DOEFF146",
             ProjectRule::SpellingOutsideItsFiles => "DOEFF148",
@@ -326,6 +332,8 @@ impl ProjectRule {
             | ProjectRule::WorldHandlerNamedOutsideList
             | ProjectRule::WorldHandlerMisplaced
             | ProjectRule::TestKindMismatch
+            // 縁の検の無い実 I/O の handler(#1363 — 登録簿に載った既知の当たりは warning、新しい当たりは critical)。
+            | ProjectRule::WorldHandlerWithoutContractTest
             | ProjectRule::TestFormNotDeftest
             | ProjectRule::VocabularyOutsideSinglePoint
             // 書いてよい file を決めた綴りが外に在る(#1436 — #1373 の孫。新しい当たりは critical)。
@@ -446,6 +454,7 @@ impl ProjectRule {
             | ProjectRule::UnusedDependency
             | ProjectRule::WorldHandlerMisplaced
             | ProjectRule::TestKindMismatch
+            | ProjectRule::WorldHandlerWithoutContractTest
             | ProjectRule::TestFormNotDeftest
             | ProjectRule::VocabularyOutsideSinglePoint
             | ProjectRule::SpellingOutsideItsFiles
@@ -528,6 +537,7 @@ impl ProjectRule {
             ProjectRule::WorldHandlerNamedOutsideList => "許可名簿の外で実 I/O の handler を名指す",
             ProjectRule::WorldHandlerMisplaced => "許可名簿の定義が無い・foundation の外に在る",
             ProjectRule::TestKindMismatch => "テストの種類(手元 / 縁)と印が食い違う",
+            ProjectRule::WorldHandlerWithoutContractTest => "縁の検の無い許可名簿の handler",
             ProjectRule::TestFormNotDeftest => "deftest 以外のテストの形",
             ProjectRule::VocabularyOutsideSinglePoint => "判定の1点の外で同じ語彙を読んでいる",
             ProjectRule::SpellingOutsideItsFiles => "書いてよい file の外の綴り",
@@ -566,7 +576,8 @@ impl ProjectRule {
                 RuleFamily::Tags
             }
             ProjectRule::RawSideEffectDirect | ProjectRule::RawSideEffectVia | ProjectRule::WorldHandlerNamedOutsideList | ProjectRule::WorldHandlerMisplaced
-            | ProjectRule::TestKindMismatch => {
+            | ProjectRule::TestKindMismatch
+            | ProjectRule::WorldHandlerWithoutContractTest => {
                 RuleFamily::Raw
             }
             ProjectRule::EnvironmentName | ProjectRule::RetiredWord | ProjectRule::RetiredCall | ProjectRule::VocabularyOutsideSinglePoint
@@ -657,6 +668,7 @@ impl ProjectRule {
             ProjectRule::WorldHandlerNamedOutsideList => "World Handler Named Outside The List",
             ProjectRule::WorldHandlerMisplaced => "World Handler Misplaced",
             ProjectRule::TestKindMismatch => "Test Kind Mismatch",
+            ProjectRule::WorldHandlerWithoutContractTest => "World Handler Without Contract Test",
             ProjectRule::TestFormNotDeftest => "Test Form Not Deftest",
             ProjectRule::VocabularyOutsideSinglePoint => "Vocabulary Outside Single Point",
             ProjectRule::SpellingOutsideItsFiles => "Spelling Outside Its Files",
@@ -739,6 +751,7 @@ impl ProjectRule {
             ProjectRule::TestOnlyFake => "検だけの偽物を作らない — 業務の handler は本番の 1 つだけで、検は土台(記録の効果・時計・外の相手)の handler の差し替えで組む。わざと壊した反例の handler は反例の表(:counterexamples)に理由つきで載せる",
             ProjectRule::IntentAnswererNotTranslation => "intent の効果に答えるのは翻訳の層の handler 1 つだけ(本番と模擬で同じ)— 環境ごとの別の答え手や土台の handler で答えず、模擬は土台を差し替える(ADR R9)",
             ProjectRule::TestKindMismatch => "テストの種類は 2 つだけ — 手元(届く定義に外の世界に触れる handler が無い)/ 縁(名簿の定義・:wraps の handler・生の I/O に届く)。種類は人が決めず届く先から導き、縁のテストだけが architecture.hy の :edge-mark の印を持つ(operator 2026-09-29 \"everything is 'pure' until we apply handler that has real IO\")",
+            ProjectRule::WorldHandlerWithoutContractTest => "architecture.hy の :world-handlers の handler には縁の検が 1 本以上在る — 空でない :interpreters を持つ deftest のうち、定義の辺(呼び出し・参照・入れ子 — DOEFF133 と同じ図)を辿ってその handler の定義に届く物。:contract-test none の handler は判じない",
             ProjectRule::WorldHandlerMisplaced => "architecture.hy の :world-handlers に挙げた定義は実在し、層 foundation の module に在る(外の世界に触れてよい定義の置き場は foundation だけ)",
             ProjectRule::WorldHandlerNamedOutsideList => "architecture.hy の :world-handlers の :wraps に挙げた doeff の実 I/O の handler(os-file-handler・http-production-handler …)を名指してよいのは、許可名簿の定義(とその中の入れ子の定義)だけ — 値として渡す所(with-handlers の列)も呼び出しも数える",
             ProjectRule::TranslationEmitsIntent => "翻訳の層(設定の handler_layers)の handler — defhandler と [effect k] を受ける関数 — は doeff の汎用の effect だけを出し、業務の intent(設定の intent_layers の型)を出さない — 本体で実行する呼び((<- …)・(! …))を import した defk の先まで辿る",
@@ -805,6 +818,7 @@ impl ProjectRule {
             ProjectRule::IntentAnswererNotTranslation => "intent の効果の答えを翻訳の層の handler 1 つへまとめ、土台や環境ごとの handler からは外す",
             ProjectRule::ServiceUntestedOnSim => "模擬の環境の tests に、その service の entry の組み立てを handler の差し替えだけで回す deftest を足す",
             ProjectRule::TestKindMismatch => "縁なら印を付け(既定の pytest から外れる)、手元のつもりなら届く先の実 I/O の handler を模擬の handler に替える — 手元なのに印が在れば外す",
+            ProjectRule::WorldHandlerWithoutContractTest => "本物(その handler)と模擬の解釈器を :interpreters に並べた deftest を書き、同じ検を両方に通す — 縁の検を持たない理由が在る handler だけ、名簿の行に :contract-test none を書く",
             ProjectRule::WorldHandlerMisplaced => "定義を foundation の層(architecture.hy の :foundation の dir)へ移すか、名簿の綴り(module:名)を実物に合わせる — 要らなくなった定義なら名簿から外す",
             ProjectRule::WorldHandlerNamedOutsideList => "名簿の定義(例 with-agora-process)の下で本体を走らせ、自分では実 I/O の handler を被せない — 新しく外の世界に触れる所が要るなら、その定義を foundation の層に置いて名簿に載せる",
             ProjectRule::TranslationEmitsIntent => "intent を出す業務の流れは層 core の program に置き、翻訳の handler は受けた intent を doeff の汎用の effect(HttpRequest・記録の読み書き・時計 …)へ出し直すだけにする — 経由した defk が intent を出すなら、その defk を呼ばずに汎用の effect を直に使う",
@@ -856,6 +870,7 @@ mod tests {
         ("DOEFF131", RuleFamily::Raw),
         ("DOEFF132", RuleFamily::Raw),
         ("DOEFF133", RuleFamily::Raw),
+        ("DOEFF137", RuleFamily::Raw),
         ("DOEFF135", RuleFamily::Definition),
         ("DOEFF136", RuleFamily::Definition),
         ("DOEFF140", RuleFamily::Place),

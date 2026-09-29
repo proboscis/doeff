@@ -2163,6 +2163,68 @@ fn test_kind_is_derived_from_what_the_test_reaches() {
     assert_eq!(two_steps["level"], "critical");
 }
 
+/// agora-redesign #1363: 許可名簿の handler ごとに縁の検(空でない :interpreters を持ち、DOEFF133 と同じ図でその handler の定義に
+/// 届く deftest)が要る — 無ければ architecture.hy の名簿の要素で DOEFF137(critical・細目 = 名簿の綴り)。:interpreters の要素は
+/// file の外の定数の記号のまま(読み解かない)。:contract-test none の handler は判じない。
+#[test]
+fn world_handler_needs_a_contract_test_that_runs_interpreters() {
+    let files = [
+        (
+            "app/foundation/host.hy",
+            tags("shared", "foundation")
+                + "(defk with-host [body] body)\n(defk with-clock [body] body)\n(defk with-queue [body] body)\n(defk with-exempt [body] body)\n",
+        ),
+        // 解釈器の組み立ての定数(file の外の記号)が handler を名指す — deftest は :interpreters でこの定数を並べるだけ。
+        (
+            "app/foundation/tests/contract_handlers.hy",
+            "(import app.foundation.host [with-host])\n\
+             (val HOST (+ with-host.__module__ \":\" with-host.__name__))\n(val SIM \"sim-host\")\n"
+                .to_string(),
+        ),
+        (
+            "app/foundation/tests/test_host_contract.hy",
+            "(import app.foundation.tests.contract_handlers [HOST SIM])\n\
+             (deftest test-host-answers\n  \"本物と模擬が同じ検を通る\"\n  {:interpreters [HOST SIM] :marks [\"real_world\"]}\n  (assert True))\n"
+                .to_string(),
+        ),
+        // :interpreters を持たない deftest が届くだけ・空の :interpreters は縁の検に数えない。
+        (
+            "app/foundation/tests/test_clock_plain.hy",
+            "(import app.foundation.host [with-clock with-queue])\n\
+             (deftest test-clock-reached {:marks [\"real_world\"]} (<- n (with-clock 1)) (assert n))\n\
+             (deftest test-queue-empty-interpreters {:interpreters [] :marks [\"real_world\"]} (<- n (with-queue 1)) (assert n))\n"
+                .to_string(),
+        ),
+    ];
+    let extra = r#"
+                   (world-handler "app.foundation.host:with-clock" :touches [clock])
+                   (world-handler "app.foundation.host:with-queue" :touches [thread])
+                   (world-handler "app.foundation.host:with-exempt" :touches [file] :contract-test none)"#;
+    let dir = world_repo_with(&files, extra, "[\"DOEFF137\"]");
+    let arch_path = dir.path().join("architecture.hy");
+    let text = std::fs::read_to_string(&arch_path).unwrap().replace(":foundation foundation", ":foundation foundation\n  :edge-mark \"real_world\"");
+    std::fs::write(&arch_path, &text).unwrap();
+    let (_, report) = editor(dir.path());
+    assert_eq!(
+        keys(&report, "DOEFF137"),
+        vec!["architecture.hy::DOEFF137::app.foundation.host:with-clock", "architecture.hy::DOEFF137::app.foundation.host:with-queue"],
+        "縁の検の届く with-host と :contract-test none の with-exempt は当てない: {}",
+        report
+    );
+    let clock = violation(&report, "architecture.hy::DOEFF137::app.foundation.host:with-clock");
+    assert_eq!(clock["level"], "critical");
+    assert_eq!(clock["severity"], "error");
+    let line = text.lines().position(|l| l.contains("app.foundation.host:with-clock")).unwrap();
+    assert_eq!(clock["range"]["start"]["line"], line);
+
+    // :contract-test の値は記号 none だけ — ほかの値は宣言の誤り(終了コード 2)。
+    let bad = text.replace(":contract-test none", ":contract-test always");
+    std::fs::write(&arch_path, bad).unwrap();
+    let (code, _, stderr) = run(dir.path(), &["--output-format", "editor-json", "--no-log"], None);
+    assert_eq!(code, 2, "{}", stderr);
+    assert!(stderr.contains("world-handler app.foundation.host:with-exempt の :contract-test は記号 none だけ"), "{}", stderr);
+}
+
 /// agora-redesign #1209: 実 I/O の handler は doeff の目録(data/world_handlers.json)から知る — :wraps は目録に在る物だけ(外は設定の誤り)、
 /// 目録に在り :wraps に無い handler(subprocess-handler)を名簿の外で名指しても DOEFF131、:edge-touches から file を外すと file だけに
 /// 届くテストは手元(決定 B)。

@@ -45,7 +45,7 @@ pub mod record_stubs;
 pub mod business_fakes;
 pub mod assembly_shape;
 
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use doeff_indexer::hy_index::{self, Definition, DefinitionKind, HyFileIndex, RawCatalog, RawSettings, RawStrength};
@@ -527,6 +527,9 @@ pub fn run_with(root: &Path, settings: &ProjectSettings, enabled: &BTreeSet<Proj
                     if enabled.contains(&ProjectRule::TestKindMismatch) && !architecture.world_handlers.is_empty() {
                         drafts.extend(judge_test_kinds(root, architecture, hy));
                     }
+                    if enabled.contains(&ProjectRule::WorldHandlerWithoutContractTest) && !architecture.world_handlers.is_empty() {
+                        drafts.extend(crate::timing::timed("contract-tests", || judge_contract_tests(root, architecture, hy)));
+                    }
                     let fake_rules = [ProjectRule::BusinessEffectFake, ProjectRule::TestOnlyFake, ProjectRule::IntentAnswererNotTranslation];
                     if let Some(decl) = architecture.business_fakes.as_ref().filter(|_| fake_rules.iter().any(|r| enabled.contains(r))) {
                         let (found, problems) = crate::timing::timed("business-fakes", || {
@@ -996,7 +999,8 @@ fn whole_hy_index(
         || enabled.contains(&ProjectRule::AssemblyShapeBroken)
         || enabled.contains(&ProjectRule::AssemblyAnswerMisplaced))
         && settings.architecture.as_ref().is_some_and(|a| a.business_fakes.is_some()))
-        || (enabled.contains(&ProjectRule::TestKindMismatch) && settings.architecture.as_ref().is_some_and(|a| a.edge_mark.is_some()))
+        || ((enabled.contains(&ProjectRule::TestKindMismatch) || enabled.contains(&ProjectRule::WorldHandlerWithoutContractTest))
+            && settings.architecture.as_ref().is_some_and(|a| a.edge_mark.is_some()))
         || (enabled.contains(&ProjectRule::ServiceUntestedOnSim) && settings.architecture.as_ref().is_some_and(|a| a.verification_environment.is_some()))
         || (settings.raw.as_ref().is_some_and(|r| r.world_modules.is_some())
             && (enabled.contains(&ProjectRule::RawSideEffectDirect) || enabled.contains(&ProjectRule::WorldHandlerNamedOutsideList)));
@@ -2157,6 +2161,8 @@ fn innermost_definition(definitions: &[Definition], spot: &Range) -> Option<usiz
 struct FileMarks {
     module: Vec<String>,
     deftests: HashMap<usize, String>,
+    /// 空でない `:interpreters` を持つ deftest の始まりの行(DOEFF137)。
+    interpreters: HashSet<usize>,
 }
 
 impl FileMarks {
@@ -2179,6 +2185,7 @@ impl FileMarks {
         let starts: Vec<usize> = std::iter::once(0).chain(source.match_indices('\n').map(|(at, _)| at + 1)).collect();
         let line_of = |form: &Form| starts.partition_point(|start| *start <= form.span.start).saturating_sub(1);
         let mut deftests = HashMap::new();
+        let mut interpreters = HashSet::new();
         let mut stack: Vec<&Form> = forms.iter().collect();
         while let Some(form) = stack.pop() {
             // 入れ子はどの括弧の中にも在る(defadr の :tests [(deftest …) …] の並びの中など)。
@@ -2192,17 +2199,26 @@ impl FileMarks {
                 body = &body[1..];
             }
             let options = body.iter().find(|form| !matches!(form.node, Node::Str { .. }));
-            let marks = options.and_then(|options| match &options.node {
-                Node::Seq { delim: Delim::Brace, items } => {
-                    items.chunks(2).find(|pair| pair.first().is_some_and(|key| text(key) == ":marks")).and_then(|pair| pair.get(1)).map(|m| text(m))
+            let option = |name: &str| match options.map(|options| &options.node) {
+                Some(Node::Seq { delim: Delim::Brace, items }) => {
+                    items.chunks(2).find(|pair| pair.first().is_some_and(|key| text(key) == name)).and_then(|pair| pair.get(1))
                 }
                 _ => None,
-            });
-            if let Some(marks) = marks {
-                deftests.insert(line_of(form), marks);
+            };
+            if let Some(marks) = option(":marks") {
+                deftests.insert(line_of(form), text(marks));
+            }
+            // :interpreters の要素(file の外の定数の記号)は読み解かない — 空でない列かだけを見る(DOEFF137)。
+            if option(":interpreters").is_some_and(|value| matches!(&value.node, Node::Seq { items, .. } if !items.is_empty())) {
+                interpreters.insert(line_of(form));
             }
         }
-        FileMarks { module, deftests }
+        FileMarks { module, deftests, interpreters }
+    }
+
+    /// テストの定義が空でない `:interpreters` を持つか(縁の検 — 本物と模擬の解釈器に同じ検を通す・DOEFF137)。
+    fn runs_interpreters(&self, test: &Definition) -> bool {
+        self.interpreters.contains(&(test.full_range.start.line as usize))
     }
 
     /// テストの定義か module の頭が、縁の印 mark を持つか。印の名は Python の綴り(`real_world`)と Hy の綴り(`real-world`)の両方で読む。
@@ -2344,17 +2360,36 @@ fn definition_graph<'h>(architecture: &architecture::Architecture, hy: &'h HashM
     DefinitionGraph { rels, nodes, base, world, callers, world_carried, carried, runs }
 }
 
-/// DOEFF133: テストの種類を届く先から導く。定義の間の辺(呼び出し・参照・入れ子)を全体の索引から 1 度だけ組み、外の世界の側
-/// (名簿の定義・:wraps の handler を名指す定義・強い生の I/O の証拠を持つ定義)から逆向きに辿って「外の世界に届く定義」の集合を
-/// 求める。deftest がその集合に在れば縁(:edge-mark の印が要る)、無ければ手元(印を持たない)。Python の検は数えない(R6 で deftest へ)。
-fn judge_test_kinds(root: &Path, architecture: &architecture::Architecture, hy: &HashMap<String, HyFileIndex>) -> Vec<Draft> {
-    let Some(mark) = architecture.edge_mark.as_deref() else { return Vec::new() };
-    let DefinitionGraph { rels, nodes, base, world, callers, world_carried, carried, runs } = definition_graph(architecture, hy);
-    // 外の世界の側から逆向きに辿る(toward[n] = n から外の世界へ向かう次の節・None なら n 自身が触れる)。
-    // 2 段: direct = 系の値の中の辺を通らずに届く・via_system = 系の値の中の辺を 1 度でも通って届く(#1390)。
-    let mut direct: Vec<bool> = world.iter().map(Option::is_some).collect();
-    let mut toward: Vec<Option<usize>> = vec![None; nodes.len()];
-    let mut queue: std::collections::VecDeque<usize> = (0..nodes.len()).filter(|n| direct[*n]).collect();
+/// 定義の辺の図の上で、種の節へ届く節(DOEFF133・137 が使う)。reaches[n] = n から種へ届く・toward[n] = n から種へ向かう次の節
+/// (None なら n 自身が種)。
+struct Reach {
+    reaches: Vec<bool>,
+    toward: Vec<Option<usize>>,
+}
+
+/// 系を回す入口(:systems の :runners)に届く定義(入口を名指す定義から、ふつうの辺を逆向きに辿る)。
+fn running_nodes(graph: &DefinitionGraph) -> Vec<bool> {
+    let mut running = graph.runs.clone();
+    let mut queue: std::collections::VecDeque<usize> = (0..graph.nodes.len()).filter(|n| running[*n]).collect();
+    while let Some(node) = queue.pop_front() {
+        for &caller in &graph.callers[node] {
+            if !running[caller] {
+                running[caller] = true;
+                queue.push_back(caller);
+            }
+        }
+    }
+    running
+}
+
+/// 種の節から逆向きに辿る(DOEFF133 の縁の数えと同じ辿り方)。seeds[n] = n そのものが種・carried_seeds[n] = 系の値の中で n が種に触れる。
+/// 2 段: direct = 系の値の中の辺を通らずに届く・via_system = 系の値の中の辺を 1 度でも通って届く(#1390)。届く = 直に届くか、系の値の
+/// 中から届き、しかも系を回す入口にも届く(running)。
+fn reach_seeds(graph: &DefinitionGraph, seeds: &[bool], carried_seeds: &[bool], running: &[bool]) -> Reach {
+    let (callers, carried, count) = (&graph.callers, &graph.carried, graph.nodes.len());
+    let mut direct: Vec<bool> = seeds.to_vec();
+    let mut toward: Vec<Option<usize>> = vec![None; count];
+    let mut queue: std::collections::VecDeque<usize> = (0..count).filter(|n| direct[*n]).collect();
     while let Some(node) = queue.pop_front() {
         for &caller in &callers[node] {
             if !direct[caller] {
@@ -2364,7 +2399,7 @@ fn judge_test_kinds(root: &Path, architecture: &architecture::Architecture, hy: 
             }
         }
     }
-    let mut via_system: Vec<bool> = vec![false; nodes.len()];
+    let mut via_system: Vec<bool> = vec![false; count];
     let mut queue: std::collections::VecDeque<usize> = std::collections::VecDeque::new();
     let mark_via = |node: usize, from: Option<usize>, via_system: &mut Vec<bool>, toward: &mut Vec<Option<usize>>, queue: &mut std::collections::VecDeque<usize>| {
         if !direct[node] && !via_system[node] {
@@ -2373,8 +2408,8 @@ fn judge_test_kinds(root: &Path, architecture: &architecture::Architecture, hy: 
             queue.push_back(node);
         }
     };
-    for node in 0..nodes.len() {
-        if world_carried[node].is_some() {
+    for node in 0..count {
+        if carried_seeds[node] {
             mark_via(node, None, &mut via_system, &mut toward, &mut queue);
         }
         if direct[node] {
@@ -2388,19 +2423,21 @@ fn judge_test_kinds(root: &Path, architecture: &architecture::Architecture, hy: 
             mark_via(caller, Some(node), &mut via_system, &mut toward, &mut queue);
         }
     }
-    // 系を回す入口に届く定義(入口を名指す定義から、ふつうの辺を逆向きに辿る)。
-    let mut running = runs.clone();
-    let mut queue: std::collections::VecDeque<usize> = (0..nodes.len()).filter(|n| running[*n]).collect();
-    while let Some(node) = queue.pop_front() {
-        for &caller in &callers[node] {
-            if !running[caller] {
-                running[caller] = true;
-                queue.push_back(caller);
-            }
-        }
-    }
-    // 検が外の世界に届く = 直に届くか、系の値の中から届き、しかも系を回す入口にも届く。
-    let reaches: Vec<bool> = (0..nodes.len()).map(|n| direct[n] || (via_system[n] && running[n])).collect();
+    let reaches: Vec<bool> = (0..count).map(|n| direct[n] || (via_system[n] && running[n])).collect();
+    Reach { reaches, toward }
+}
+
+/// DOEFF133: テストの種類を届く先から導く。定義の間の辺(呼び出し・参照・入れ子)を全体の索引から 1 度だけ組み、外の世界の側
+/// (名簿の定義・:wraps の handler を名指す定義・強い生の I/O の証拠を持つ定義)から逆向きに辿って「外の世界に届く定義」の集合を
+/// 求める。deftest がその集合に在れば縁(:edge-mark の印が要る)、無ければ手元(印を持たない)。Python の検は数えない(R6 で deftest へ)。
+fn judge_test_kinds(root: &Path, architecture: &architecture::Architecture, hy: &HashMap<String, HyFileIndex>) -> Vec<Draft> {
+    let Some(mark) = architecture.edge_mark.as_deref() else { return Vec::new() };
+    let graph = definition_graph(architecture, hy);
+    let running = running_nodes(&graph);
+    let seeds: Vec<bool> = graph.world.iter().map(Option::is_some).collect();
+    let carried_seeds: Vec<bool> = graph.world_carried.iter().map(Option::is_some).collect();
+    let Reach { reaches, toward } = reach_seeds(&graph, &seeds, &carried_seeds, &running);
+    let DefinitionGraph { rels, nodes, base, world, world_carried, .. } = graph;
     let world: Vec<Option<String>> = world.into_iter().zip(world_carried).map(|(w, c)| w.or(c)).collect();
     let name_of = |node: usize| -> String {
         let (rel, index) = nodes[node];
@@ -2449,6 +2486,66 @@ fn judge_test_kinds(root: &Path, architecture: &architecture::Architecture, hy: 
                 explain: Explain::TestKindMismatch { test: test.name.clone(), edge, mark: mark.to_string(), reached },
             });
         }
+    }
+    drafts
+}
+
+/// DOEFF137: 許可名簿の handler ごとに縁の検が在るかを判じる。縁の検 = 空でない `:interpreters` を持つ deftest のうち、DOEFF133 と
+/// 同じ定義の辺の図を辿ってその handler の定義に届く物(`:interpreters` の要素は file の外の定数の記号なので読み解かない)。
+/// `:contract-test none` の handler は判じない。当たりの位置は architecture.hy の名簿の要素・細目は名簿の綴り(agora-redesign #1363)。
+fn judge_contract_tests(root: &Path, architecture: &architecture::Architecture, hy: &HashMap<String, HyFileIndex>) -> Vec<Draft> {
+    let judged: Vec<&architecture::WorldHandler> = architecture.world_handlers.iter().filter(|h| !h.contract_test_exempt).collect();
+    if judged.is_empty() {
+        return Vec::new();
+    }
+    let graph = definition_graph(architecture, hy);
+    let running = running_nodes(&graph);
+    // 縁の検の節(空でない :interpreters を持つ deftest)— file ごとに 1 度だけ読む。
+    let mut contract_tests: Vec<usize> = Vec::new();
+    for rel in &graph.rels {
+        let file = &hy[*rel];
+        let first = graph.base[rel.as_str()];
+        let tests: Vec<usize> = file.definitions.iter().enumerate().filter(|(_, d)| d.kind == DefinitionKind::Deftest).map(|(i, _)| i).collect();
+        if tests.is_empty() {
+            continue;
+        }
+        let Ok(source) = std::fs::read_to_string(root.join(rel.as_str())) else { continue };
+        let marks = FileMarks::read(&source);
+        contract_tests.extend(tests.into_iter().filter(|index| marks.runs_interpreters(&file.definitions[*index])).map(|index| first + index));
+    }
+    let node_of: HashMap<&str, usize> = graph
+        .nodes
+        .iter()
+        .enumerate()
+        .rev()
+        .map(|(node, (rel, index))| (hy[*rel].definitions[*index].qualified_name.as_str(), node))
+        .collect();
+    let rel = relative_path(root, &architecture.path).unwrap_or_else(|| architecture.path.to_string_lossy().into_owned());
+    let no_carried = vec![false; graph.nodes.len()];
+    let mut drafts = Vec::new();
+    for handler in judged {
+        let target = handler.definition.target();
+        let covered = node_of.get(target.as_str()).is_some_and(|&node| {
+            let mut seeds = vec![false; graph.nodes.len()];
+            seeds[node] = true;
+            let reach = reach_seeds(&graph, &seeds, &no_carried, &running);
+            contract_tests.iter().any(|test| reach.reaches[*test])
+        });
+        if covered {
+            continue;
+        }
+        let spelling = handler.definition.spelling();
+        drafts.push(Draft {
+            rule: ProjectRule::WorldHandlerWithoutContractTest,
+            layer: None,
+            rel: rel.clone(),
+            path: architecture.path.clone(),
+            range: handler.range,
+            message: format!("許可名簿の handler {} に縁の検(空でない :interpreters を持ち、この handler に届く deftest)が無い", spelling),
+            detail: Some(spelling.clone()),
+            base: Severity::Error,
+            explain: Explain::WorldHandlerWithoutContractTest { handler: spelling },
+        });
     }
     drafts
 }

@@ -169,6 +169,8 @@ pub enum Explain {
     WorldHandlerMisplaced { definition: String, problem: String },
     /// DOEFF133: テストの種類と印が食い違う(edge = 縁なのに印が無い / 手元なのに印が在る)。
     TestKindMismatch { test: String, edge: bool, mark: String, reached: Vec<String> },
+    /// DOEFF137: 許可名簿の handler(名簿の綴り)に届く縁の検(空でない :interpreters を持つ deftest)が無い。
+    WorldHandlerWithoutContractTest { handler: String },
     /// DOEFF135: deftest 以外のテストの形。
     TestFormNotDeftest { form: &'static str, detail: String },
     /// DOEFF146: 判定を1か所に閉じ込めた語彙が :except の外に在る。
@@ -403,6 +405,10 @@ impl<'a> Narrator<'a> {
                 } else {
                     "印は縁のテストの目印で、手元のテストに付けると既定の pytest から外れて回らなくなる。".to_string()
                 },
+            ),
+            Explain::WorldHandlerWithoutContractTest { handler } => (
+                format!("許可名簿の handler {} に縁の検が無い", handler),
+                "縁の検 = :interpreters に本物(この handler)と模擬の解釈器を並べ、同じ deftest を両方に通す検。無いと、模擬が本物と同じに答えることを誰も見ておらず、手元の検が緑でも本番の答えは確かめていない。検の要らない handler は名簿の行に :contract-test none を書く。".to_string(),
             ),
             Explain::TestFormNotDeftest { form, detail } => (
                 format!("テストの形 {} — {}", form, detail),
