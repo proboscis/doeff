@@ -8,8 +8,17 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 /// crate の dir で git を撃ち、成功した時の stdout(前後の空白を除く)を返す。
+///
+/// env の `GIT_*` は外す: 別の repo の git の hook の中で組まれると(その repo の hook が `uv run` で環境を同期する時)、git が hook に
+/// 渡す `GIT_DIR` などが `-C` より勝ち、その repo の HEAD を doeff の commit として名乗る(agora-redesign #1481)。
 fn git(dir: &Path, args: &[&str]) -> Option<String> {
-    let out = Command::new("git").arg("-C").arg(dir).args(args).output().ok()?;
+    let mut command = Command::new("git");
+    for (name, _) in std::env::vars_os() {
+        if name.to_string_lossy().starts_with("GIT_") {
+            command.env_remove(&name);
+        }
+    }
+    let out = command.arg("-C").arg(dir).args(args).output().ok()?;
     out.status.success().then(|| String::from_utf8_lossy(&out.stdout).trim().to_string())
 }
 
