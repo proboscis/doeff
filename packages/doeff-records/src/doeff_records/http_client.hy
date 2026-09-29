@@ -21,7 +21,7 @@
 ;;; WatchEvents(列の頭が進むのを待つ — wire に載せない)も client の側で、ReadEvents(limit 1)を poll-seconds ごとに読み直して答える。
 ;;; 時計は呼び手の時計なので、仮想の時計の下では memory の handler と同じに一瞬で進む。
 ;;;
-;;; 要求の送り方は 1 つ(EffectTransport): 要求を doeff-core-effects の HttpRequest の effect として出し、答えるのは呼び手の外側の
+;;; 要求の送り方は 1 つ: 要求を doeff-core-effects の HttpRequest の effect として出し、答えるのは呼び手の外側の
 ;;; handler(本番 = 塞がない http-production-handler と await-handler)。処理ループと同じ scheduler の task から読む呼び手が、記録の
 ;;; service に届かない間も処理ループを止めないため。届かない(HttpFailed)は Unreachable に読む。
 (require doeff-hy.macros [defhandler defk <- val var])
@@ -53,18 +53,13 @@
 (val REASON-MAX-CHARS 300)
 
 
-(defclass [(dataclass :frozen True)] EffectTransport []
-  "要求を HttpRequest の effect として出す(答え手は外側 — file の頭の註)。")
-
-
 (defclass [(dataclass :frozen True)] RecordsEndpoint []
   "記録の service 1 つへの接続の組: base-url = http://host:port / token = 呼び手の身元の token(Bearer)/
-   request-timeout = 要求 1 つの上限の秒 / poll-seconds = WatchChanges の待ちの読み直しの間隔 / transport = 要求の送り方(file の頭の註)。"
+   request-timeout = 要求 1 つの上限の秒 / poll-seconds = WatchChanges の待ちの読み直しの間隔。要求は常に HttpRequest の effect で出す(file の頭の註)。"
   (#^ str base-url)
   (#^ str token)
   (setv #^ float request-timeout DEFAULT-REQUEST-TIMEOUT)
-  (setv #^ float poll-seconds DEFAULT-POLL-SECONDS)
-  (setv #^ EffectTransport transport (EffectTransport)))
+  (setv #^ float poll-seconds DEFAULT-POLL-SECONDS))
 
 
 (defclass [(dataclass :frozen True)] RawReply []
@@ -105,7 +100,7 @@
 
 (defk exchange-by-effect [endpoint operation body]
   {:pre [(: endpoint RecordsEndpoint) (: operation str) (: body dict)] :post [(: % (| RawReply Unreachable))]}
-  "要求 1 つを HttpRequest の effect として出す(EffectTransport)。撃ち直しは呼び手の読みが決めるので 0 回、届かない失敗は値で受けて
+  "要求 1 つを HttpRequest の effect として出す。撃ち直しは呼び手の読みが決めるので 0 回、届かない失敗は値で受けて
    Unreachable にする。"
   (<- url str (service-url endpoint operation))
   (<- headers dict (request-headers endpoint))
@@ -120,9 +115,8 @@
 
 (defk exchange [endpoint operation body]
   {:pre [(: endpoint RecordsEndpoint) (: operation str) (: body dict)] :post [(: % (| RawReply Unreachable))]}
-  "要求 1 つを送り、status と JSON の本文を受ける(HTTP の境界の 1 か所 — 送り方は EffectTransport 1 つ)。届かなければ Unreachable。"
-  (match endpoint.transport
-    (EffectTransport) (! (exchange-by-effect endpoint operation body))))
+  "要求 1 つを送り、status と JSON の本文を受ける(HTTP の境界の 1 か所 — 送り方は HttpRequest の effect 1 つ)。届かなければ Unreachable。"
+  (! (exchange-by-effect endpoint operation body)))
 
 
 (defk refused-reason [payload]

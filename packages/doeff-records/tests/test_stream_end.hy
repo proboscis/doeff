@@ -16,7 +16,7 @@
 (import doeff_records.laws [LAW-SCHEMA MAKER law-stream-end-is-the-last-sequence])
 (import doeff_records.memory [MemoryStore memory-records-handler])
 (import doeff_records.http_server [RecordsServerConfig start-records-server])
-(import doeff_records.http_client [RecordsEndpoint EffectTransport http-records-handler])
+(import doeff_records.http_client [RecordsEndpoint http-records-handler])
 (import tests.interpreters [LAW-TOKENS LawSetup law-roster sim-request-handlers])
 
 (val DETAIL "記録の service が落ちている(筋書き)")
@@ -64,7 +64,7 @@
                                                          :request-handlers (sim-request-handlers clock))))
   (val sent [])
   (try
-    (val endpoint (RecordsEndpoint server.url (get LAW-TOKENS MAKER) :transport (EffectTransport)))
+    (val endpoint (RecordsEndpoint server.url (get LAW-TOKENS MAKER)))
     (val answer (run (scheduled (with_handlers [(await-handler) (http-production-handler) (count-http-requests sent)
                                                 (sim-time-handler :clock clock) (http-records-handler endpoint)]
                                                (ReadStreamEnd "journal")))))
