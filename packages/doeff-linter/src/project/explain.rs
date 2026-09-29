@@ -204,6 +204,8 @@ pub enum Explain {
     ServiceUntestedOnSim { service: String, entry: String, definitions: usize, sim: String },
     /// DOEFF163: code を持つ service の不変条件の宣言の欠け(service の名・欠けの文)。
     ServiceInvariantsMissing { service: String, gap: String },
+    /// DOEFF164: service の反例の無さ(service・entry の dir・反例の表の節の数・その service の effect か土台の effect に答える節の数)。
+    ServiceWithoutCounterexample { service: String, entry: String, counterexamples: usize, candidates: usize },
     /// DOEFF142: defhandler の引数が client・可変の店を取る。
     HandlerArgumentHoldsState { handler: String, param: String, kind: &'static str, type_text: String },
     /// DOEFF143・157・158: 業務の効果の偽物・表の腐り・検だけの偽物・intent の効果の答え手。
@@ -576,6 +578,13 @@ impl<'a> Narrator<'a> {
             Explain::ServiceInvariantsMissing { service, gap } => (
                 format!("service {} の :invariants", service),
                 format!("{}。業務ロジックを「テストした」には、記録を受けて破りの列を返す純粋な不変条件の関数が service ごとに要る(agora-redesign #1155 の定義 1)— 宣言が無い・名指しが外れている・判断でない関数では、何を確かめたかを linter が数えられない。", gap),
+            ),
+            Explain::ServiceWithoutCounterexample { service, entry, counterexamples, candidates } => (
+                format!("service {} の組み立て {}", service, entry),
+                format!(
+                    "反例の表の {} 節のうち、この service の effect か土台の effect に答える節は {} — そのどれに届く deftest も {} に届かない。わざと壊した handler で不変条件が赤になることを確かめていない service は、検が緑でも壊れた答えを見分けられるかが分からない。",
+                    counterexamples, candidates, entry
+                ),
             ),
             Explain::HandlerArgumentHoldsState { handler, param, kind, type_text } => (
                 format!("handler {} の引数 {}({}{})", handler, param, kind, if type_text.is_empty() { String::new() } else { format!(" {}", type_text) }),

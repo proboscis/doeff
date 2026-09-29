@@ -355,6 +355,11 @@ pub fn judge(inputs: &Inputs, decl: &BusinessFakes) -> Vec<Verdict> {
         if clause.tap {
             continue;
         }
+        // 本番から届かない節の鍵が反例の表に在れば、どの効果に答える節でも表の当たりに数える — 土台の効果(記録・時計・外の相手)に
+        // 答える壊した handler も反例の表に載せられる(agora-redesign #1560 の定義 3)。
+        if !produced[i] && counterexamples.contains_key(&clause.key()) {
+            hit_keys.insert(clause.key());
+        }
         if produced[i] {
             served.insert(clause.effect.as_str());
             if intent_effect[i] {
@@ -413,6 +418,42 @@ pub fn judge(inputs: &Inputs, decl: &BusinessFakes) -> Vec<Verdict> {
         }
     }
     out
+}
+
+/// 反例の表の節 1 つ(DOEFF164 の材料): 節の効果の定義元の service(土台の効果なら None)と、節に届く deftest(図の節の添字)。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CounterexampleCase {
+    pub owner: Option<String>,
+    pub tests: std::collections::BTreeSet<usize>,
+}
+
+/// entry の層を持つ service 1 つ(DOEFF164 の材料): 名と、その entry の層の定義に届く deftest(図の節の添字)。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ServiceCase {
+    pub name: String,
+    pub entry_tests: std::collections::BTreeSet<usize>,
+}
+
+/// 反例の無い service 1 つ(DOEFF164 の判定)。candidates = その service の効果か土台の効果に答える反例の節の数。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MissingCounterexample {
+    pub service: usize,
+    pub candidates: usize,
+}
+
+/// DOEFF164: service ごとに、反例の節のうち効果の持ち主がその service か土台の物(候補)を選び、候補に届く deftest の 1 本でも
+/// その service の entry に届けば「反例が有る」。1 本も無い service を返す(候補が 0 の service も返す)。
+pub fn services_without_counterexample(cases: &[CounterexampleCase], services: &[ServiceCase]) -> Vec<MissingCounterexample> {
+    services
+        .iter()
+        .enumerate()
+        .filter_map(|(index, service)| {
+            let candidates: Vec<&CounterexampleCase> =
+                cases.iter().filter(|case| case.owner.as_deref().is_none_or(|owner| owner == service.name)).collect();
+            let covered = candidates.iter().any(|case| !case.tests.is_disjoint(&service.entry_tests));
+            (!covered).then_some(MissingCounterexample { service: index, candidates: candidates.len() })
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -598,5 +639,60 @@ mod tests {
             &decl(),
         );
         assert_eq!(verdicts, vec![Verdict::IntentAnsweredOutside(2), Verdict::IntentAnsweredTwice(0, 2), Verdict::IntentAnsweredTwice(1, 2)]);
+    }
+
+    /// agora-redesign #1560 の定義 3: 土台の効果(業務でも下の層でもない)に答える壊した handler も反例の表に載せられる。
+    /// 本番から届く節は反例ではないので、表に在っても当たらない(腐り)。
+    #[test]
+    fn counterexamples_of_foundation_effects_are_hits() {
+        let clauses = vec![
+            clause(0, "app.clock.Now", false),   // 模擬の土台の壊した handler(turn_counterexamples の型)
+            clause(1, "app.clock.Tick", false),  // 検だけから届く土台の壊した handler
+            clause(2, "app.clock.Sleep", false), // 本番からも届く → 反例でない
+        ];
+        let simulated = vec![true, false, true];
+        let tested = vec![false, true, false];
+        let produced = vec![false, false, true];
+        let flags = vec![false; clauses.len()];
+        let key = |effect: &str| format!("app/sim/fake.hy::fake::{}", effect);
+        let counterexamples: BTreeMap<String, String> =
+            ["app.clock.Now", "app.clock.Tick", "app.clock.Sleep"].iter().map(|e| (key(e), "土台の反例".to_string())).collect();
+        let empty = BTreeMap::new();
+        let python_answered = std::collections::BTreeSet::new();
+        let verdicts = judge(
+            &Inputs {
+                clauses: &clauses,
+                simulated: &simulated,
+                produced: &produced,
+                tested: &tested,
+                intent_effect: &flags,
+                translation_file: &flags,
+                external: &empty,
+                counterexamples: &counterexamples,
+                unserved: &empty,
+                python_answered: &python_answered,
+            },
+            &decl(),
+        );
+        assert_eq!(verdicts, vec![Verdict::StaleCounterexample(key("app.clock.Sleep"))]);
+    }
+
+    /// DOEFF164: 候補(効果の持ち主がその service か土台)に届く deftest の 1 本でも entry に届けば有り。
+    #[test]
+    fn services_without_counterexample_are_found() {
+        let tests = |nodes: &[usize]| nodes.iter().copied().collect::<std::collections::BTreeSet<usize>>();
+        let case = |owner: Option<&str>, nodes: &[usize]| CounterexampleCase { owner: owner.map(str::to_string), tests: tests(nodes) };
+        let service = |name: &str, nodes: &[usize]| ServiceCase { name: name.into(), entry_tests: tests(nodes) };
+        let cases = vec![
+            case(Some("orders"), &[2]), // orders の反例 — orders の entry に届く
+            case(Some("orders"), &[3]), // orders の効果の反例が billing の entry に届いても billing の反例に数えない
+            case(None, &[5]),           // 土台の効果の反例 — 届いた service(stock)の反例に数える
+            case(Some("billing"), &[9]), // billing の効果の反例だが、その検は billing の entry に届かない
+        ];
+        let services = vec![service("orders", &[1, 2]), service("billing", &[3]), service("empty", &[]), service("stock", &[5])];
+        assert_eq!(
+            services_without_counterexample(&cases, &services),
+            vec![MissingCounterexample { service: 1, candidates: 2 }, MissingCounterexample { service: 2, candidates: 1 }]
+        );
     }
 }

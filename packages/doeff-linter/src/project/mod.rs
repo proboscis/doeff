@@ -536,6 +536,7 @@ pub fn run_with(root: &Path, settings: &ProjectSettings, enabled: &BTreeSet<Proj
                         ProjectRule::BusinessEffectFake,
                         ProjectRule::TestOnlyFake,
                         ProjectRule::IntentAnswererNotTranslation,
+                        ProjectRule::ServiceWithoutCounterexample,
                         ProjectRule::IntentEffectUncovered,
                     ];
                     if let Some(decl) = architecture.business_fakes.as_ref().filter(|_| fake_rules.iter().any(|r| enabled.contains(r))) {
@@ -1006,6 +1007,7 @@ fn whole_hy_index(
     let wants_tests = ((enabled.contains(&ProjectRule::BusinessEffectFake)
         || enabled.contains(&ProjectRule::TestOnlyFake)
         || enabled.contains(&ProjectRule::IntentAnswererNotTranslation)
+        || enabled.contains(&ProjectRule::ServiceWithoutCounterexample)
         || enabled.contains(&ProjectRule::IntentEffectUncovered)
         || enabled.contains(&ProjectRule::AssemblyShapeBroken)
         || enabled.contains(&ProjectRule::AssemblyAnswerMisplaced))
@@ -2880,7 +2882,7 @@ fn judge_business_fakes(
                 .collect()
         }
     };
-    let drafts = business_fakes::judge(&inputs, decl)
+    let mut drafts: Vec<Draft> = business_fakes::judge(&inputs, decl)
         .into_iter()
         .map(|verdict| match verdict {
             Verdict::Fake(i) => clause_draft(
@@ -2940,6 +2942,13 @@ fn judge_business_fakes(
         .filter(|draft| enabled.contains(&draft.rule))
         .chain(coverage)
         .collect();
+    if enabled.contains(&ProjectRule::ServiceWithoutCounterexample) {
+        drafts.extend(
+            judge_counterexample_coverage(architecture, &graph, hy, &clauses, &produced, &counterexamples)
+                .into_iter()
+                .map(|d| Draft { path: root.join(&d.rel), ..d }),
+        );
+    }
     (drafts, problems)
 }
 
@@ -3018,6 +3027,92 @@ fn judge_service_invariants(root: &Path, architecture: &architecture::Architectu
                 base: Severity::Error,
                 explain: Explain::ServiceInvariantsMissing { service: service.name.clone(), gap: message.clone() },
                 message,
+            }
+        })
+        .collect()
+}
+
+/// seeds から呼び手を逆向きに辿って届く deftest(DOEFF136 と同じ辺 — 呼び出し・参照・入れ子と、系の値の中の辺)。
+fn deftests_reaching(graph: &DefinitionGraph, hy: &HashMap<String, HyFileIndex>, seeds: &[usize]) -> BTreeSet<usize> {
+    let mut seen = vec![false; graph.nodes.len()];
+    let mut queue: std::collections::VecDeque<usize> = seeds.iter().copied().collect();
+    seeds.iter().for_each(|n| seen[*n] = true);
+    let mut found = BTreeSet::new();
+    while let Some(node) = queue.pop_front() {
+        let (rel, index) = graph.nodes[node];
+        if hy[rel].definitions[index].kind == DefinitionKind::Deftest {
+            found.insert(node);
+        }
+        for &caller in graph.callers[node].iter().chain(graph.carried[node].iter()) {
+            if !seen[caller] {
+                seen[caller] = true;
+                queue.push_back(caller);
+            }
+        }
+    }
+    found
+}
+
+/// DOEFF164: service ごとの壊した handler の反例の有無(agora-redesign #1560)。反例の節 = 反例の表の鍵に当たり本番の入口から届かない節。
+/// 節の効果の定義元の file を含む service の dir が持ち主(どの service の下にも無ければ土台の効果)。反例の節に届く deftest の 1 本でも
+/// その service の entry の層の定義に(DOEFF136 と同じ図を逆向きに)届けば有り。母集団は DOEFF136 と同じ(entry の層に定義を持つ service)。
+fn judge_counterexample_coverage(
+    architecture: &architecture::Architecture,
+    graph: &DefinitionGraph,
+    hy: &HashMap<String, HyFileIndex>,
+    clauses: &[business_fakes::Clause],
+    produced: &[bool],
+    counterexamples: &BTreeMap<String, String>,
+) -> Vec<Draft> {
+    let root = settings::normalize_dir(&architecture.root);
+    let service_dir = |service: &architecture::ArchService| format!("{}/{}", root, service.dir);
+    let mut keys = BTreeSet::new();
+    let mut cases = Vec::new();
+    for (i, clause) in clauses.iter().enumerate() {
+        if clause.tap || produced[i] || !counterexamples.contains_key(&clause.key()) || !keys.insert(clause.key()) {
+            continue;
+        }
+        let base = business_fakes::module_of_effect(&clause.effect).replace('.', "/");
+        let owner = architecture.services.iter().find(|s| under(&base, &service_dir(s))).map(|s| s.name.clone());
+        cases.push(business_fakes::CounterexampleCase { owner, tests: deftests_reaching(graph, hy, &[clause.node]) });
+    }
+    let mut services = Vec::new();
+    let mut entries = Vec::new();
+    for service in architecture.services.iter().filter(|s| s.layers.iter().any(|l| l == "entry")) {
+        let entry = format!("{}/entry", service_dir(service));
+        let seeds: Vec<usize> = (0..graph.nodes.len()).filter(|n| under(graph.nodes[*n].0, &entry)).collect();
+        // entry の層を宣言しても定義が 0 本なら、回す組み立てが無い(DOEFF136 と同じく数えない)。
+        if seeds.is_empty() {
+            continue;
+        }
+        services.push(business_fakes::ServiceCase { name: service.name.clone(), entry_tests: deftests_reaching(graph, hy, &seeds) });
+        entries.push((service, entry));
+    }
+    business_fakes::services_without_counterexample(&cases, &services)
+        .into_iter()
+        .map(|missing| {
+            let (service, entry) = &entries[missing.service];
+            Draft {
+                rule: ProjectRule::ServiceWithoutCounterexample,
+                layer: None,
+                rel: "architecture.hy".to_string(),
+                path: PathBuf::from("architecture.hy"),
+                range: service.range,
+                message: format!(
+                    "service {} に壊した handler の反例が無い(反例の表 {} 節のうち候補 {} 節 — どれに届く deftest も {} に届かない)",
+                    service.name,
+                    cases.len(),
+                    missing.candidates,
+                    entry
+                ),
+                detail: Some(service.name.clone()),
+                base: Severity::Error,
+                explain: Explain::ServiceWithoutCounterexample {
+                    service: service.name.clone(),
+                    entry: entry.clone(),
+                    counterexamples: cases.len(),
+                    candidates: missing.candidates,
+                },
             }
         })
         .collect()
