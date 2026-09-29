@@ -253,7 +253,10 @@ impl Setup {
                 ProjectRule::ServiceInvariantsMissing => self.settings.architecture.is_some(),
                 ProjectRule::HandlerArgumentHoldsState => self.settings.architecture.as_ref().is_some_and(|a| a.handler_arguments.is_some()),
                 ProjectRule::BusinessEffectFake | ProjectRule::TestOnlyFake => self.settings.architecture.as_ref().is_some_and(|a| a.business_fakes.is_some()),
-                ProjectRule::AssemblyShapeBroken | ProjectRule::AssemblyAnswerMisplaced | ProjectRule::IntentAnswererNotTranslation => {
+                ProjectRule::AssemblyShapeBroken
+                | ProjectRule::AssemblyAnswerMisplaced
+                | ProjectRule::IntentAnswererNotTranslation
+                | ProjectRule::IntentEffectUncovered => {
                     self.settings.architecture.as_ref().is_some_and(|a| a.business_fakes.is_some() && a.assembly_shape.is_some())
                 }
                 // DOEFF137 は DOEFF133 と同じ全体の索引と定義の辺の図を使う(有効にする条件も同じ)。
