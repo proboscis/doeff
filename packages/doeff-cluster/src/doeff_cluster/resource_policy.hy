@@ -16,7 +16,8 @@
 (import .worker_model [spec-hash JobPhase])
 (import .cluster_policy [job-from-json job-to-json alive still-live-somewhere service-rows unplaced-kind unplaced-text task-summary])
 (import .rollout_policy [validate-rollout-spec rollout-targets target-key TERMINAL-PHASES])
-(import .readiness_model [handoff-timeout-ms])
+(import doeff [run])
+(import .readiness_model [handoff-timeout-ms reported-readiness])
 
 (setv LEGACY-OWNER "legacy:jobs")        ; 旧い PUT /jobs の頃からの宣言の所有者(誰でも 1 度だけ引き取れる)
 (setv COORDINATOR "coordinator")          ; 調停(割り当て・task の置き先)の送り手
@@ -323,10 +324,10 @@
 (defn #^ ClusterState record-readiness [#^ ClusterState state #^ str name #^ dict body #^ int now]
   (when (not (any (gfor j state.jobs (= j.spec.name name))))
     (refuse 404 (+ "無い Service: " name)))
+  ;; ready・reason・role の残す形は fake(readiness-memory)と同じ関数で揃える。role = active(仕事をしている)か standby(lease を
+  ;; 他が持つ間の待機)。旧い報告は active。
   (setv report (| (report-fields body now)
-                  {"ready" (bool (get body "ready")) "reason" (cut (str (.get body "reason" "")) 0 300)
-                   ;; active(仕事をしている)か standby(lease を他が持つ間の待機)。旧い報告は active。
-                   "role" (if (= (.get body "role") "standby") "standby" "active")}))
+                  (run (reported-readiness (get body "ready") (.get body "reason" "") (.get body "role")))))
   (replace state :readiness (| state.readiness {name (keep-report (.get state.readiness name) report)})))
 
 

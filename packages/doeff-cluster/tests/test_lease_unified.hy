@@ -37,28 +37,8 @@
 
 ;; --- coordinator の時計だけで判じる ------------------------------------------------------------------
 
-(deftest test-the-coordinator-grants-and-expires-leases-by-its-own-clock
-  (setv #(s status answer) (lease (ClusterState) "app-writer" "claim" "a/1/x/1" 1000))
-  (assert (= #(status (get answer "ok")) #(200 True)))
-  (assert (= (get s.board "semaphore/app-writer" "holders") {"a/1/x/1" 16000}))
-  ;; 奪う側の時計がいくら進んでいても、判じるのは coordinator の時刻
-  (setv #(_ _ answer) (lease s "app-writer" "claim" "b/1/y/1" 15999))
-  (assert (not (get answer "ok")))
-  (setv #(s2 _ answer) (lease s "app-writer" "claim" "b/1/y/1" 16000))
-  (assert (get answer "ok"))
-  (assert (= (get s2.board "semaphore/app-writer" "holders") {"b/1/y/1" 31000}))
-  ;; 奪われた持ち主の延長は lost
-  (setv #(_ _ answer) (lease s2 "app-writer" "renew" "a/1/x/1" 16500))
-  (assert (= (get answer "reason") "lost"))
-  ;; 延長は期限を coordinator の時刻 + TTL へ
-  (setv #(s3 _ answer) (lease s "app-writer" "renew" "a/1/x/1" 5000))
-  (assert (= (get s3.board "semaphore/app-writer" "holders" "a/1/x/1") 20000))
-  ;; drop(worker が終わった process の lease を返す)と release
-  (setv #(s4 _ answer) (lease s3 "app-writer" "drop" "a/1/" 6000))
-  (assert (= (get answer "dropped") 1))
-  (assert (= (get s4.board "semaphore/app-writer" "holders") {}))
-  (setv #(_ status _) (lease s "app-writer" "claim" "a/1/x/1" 1000 :ttl 0))
-  (assert (= status 400)))
+;; 取る・期限の前の断り・期限で奪える・奪われた延長は lost・延長は時刻 + TTL・drop・期限 0 の断りは、tests/test_shared_contract.hy が
+;; 本物の client(coordinator の POST /leases)と fake の両方で、coordinator の時計(仮想の時計)で見る。
 
 
 (deftest test-an-old-writer-cannot-evict-a-live-holder-through-the-board
