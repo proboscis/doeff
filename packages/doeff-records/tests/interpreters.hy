@@ -2,7 +2,7 @@
 ;;;
 ;;;   plain   scheduler だけ(純関数の検)。
 ;;;   memory  memory の handler + 仮想の時計(sim-time-handler)。
-;;;   pg      PostgreSQL の handler + 仮想の時計。SQL の effect の答え手は doeff の postgres-sql-handler(同期)。
+;;;   pg      PostgreSQL の handler + 仮想の時計。SQL の effect の答え手は doeff の postgres-sql-handler(呼び 1 つに thread 1 本)。
 ;;;           env DOEFF_RECORDS_TEST_PG_DSN の置き場に、検ごとに乱数の接頭辞の表を作り、終わりに消す。env が無ければ skip
 ;;;           (psycopg は依存に無い — `uv run --with psycopg` で足す)。
 ;;;   pg-pooled
@@ -86,7 +86,7 @@
 
 
 (defn run-sql [connections program]
-  "SQL の答え手(同期の postgres-sql-handler)と仮想の時計の下で program を 1 回走らせる(検の組み立てと後片付け)。"
+  "SQL の答え手(postgres-sql-handler)と仮想の時計の下で program を 1 回走らせる(検の組み立てと後片付け)。"
   (run (scheduled (with_handlers [(sim-time-handler :clock (SimClock)) (postgres-sql-handler connections)] program))))
 
 
