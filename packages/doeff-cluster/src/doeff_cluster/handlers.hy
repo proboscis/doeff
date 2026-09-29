@@ -13,6 +13,7 @@
 (import doeff [run])
 (import .cluster_model [PROTOCOL-FORMAT environ-pairs])
 (import .host_contract [HOST-CONTRACT])
+(import .job_context [process-context-environ])
 (import .remote_model [program-sha])
 (import .runtime_env_model [runtime-env-of-json env-key current-platform EnvFailure EnvFailureKind])
 (import .env_prepare [ENV-MARKER])
@@ -748,13 +749,9 @@
 
   (defn #^ tuple launch [self #^ JobSpec spec #^ str code-path #^ str instance #^ int attempt]
     "子の #(argv cwd 環境変数)。実行環境の job は root の venv の uv run、それ以外は今の形(木の PYTHONPATH)。"
-    (setv worker-env {"DOEFF_WORKER_JOB" spec.name
-                      "DOEFF_WORKER_REVISION" spec.revision
-                      "DOEFF_WORKER_ATTEMPT" (str attempt)
-                      "DOEFF_WORKER_INSTANCE" instance
-                      "DOEFF_WORKER_SPEC_HASH" (spec-hash spec)
-                      "DOEFF_WORKER_PLACEMENT" (if (is spec.placement None) "" (str spec.placement))
-                      "DOEFF_WORKER_PID" (str (os.getpid))}
+    ;; 子の文脈の環境変数は sim の宿(local.run-context-of)と同じ関数 process-context-environ で作る(実行環境の job だけが
+    ;; DOEFF_RUNTIME_ENV・DOEFF_RUNTIME_ENV_KEY を受ける)。pid は本番の子だけが読む欄。
+    (setv worker-env (| (run (process-context-environ spec instance attempt)) {"DOEFF_WORKER_PID" (str (os.getpid))})
           ;; Program の job(改訂 1 の F・H): 詰めた Program の file を引数と環境変数(宿の契約 HOST-CONTRACT)で渡す。
           program-args (if spec.program #("--program" (str (program-file self.program-dir spec.program))) #())
           environ (dict spec.environ))
@@ -772,8 +769,7 @@
               (str work)
               (child-environment (dict os.environ) self.extra-env
                                  (| (dfor v (.get declared "envVars" []) (get v "name") (get v "value")) environ)
-                                 (| worker-env {"DOEFF_RUNTIME_ENV" spec.runtime-env
-                                                "DOEFF_RUNTIME_ENV_KEY" spec.env-key}))))
+                                 worker-env)))
         #([sys.executable "-B" "-m" "doeff_cluster.shim" "10" "--" self.hy-command "-m" spec.entry #* spec.args #* program-args]
           code-path
           (| (dict os.environ) self.extra-env environ {"PYTHONPATH" (.pythonpath self.layout code-path)} worker-env))))

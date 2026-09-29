@@ -22,6 +22,7 @@
 (import .cluster_model [ClusterTiming capabilities-of])
 (import .worker [run-worker])
 (import .worker_model [WorkerPolicy CodeLayout])
+(import .job_context [worker-context-environ])
 
 
 (defclass StopState []
@@ -90,8 +91,7 @@
         ;; 子 process(service の env)が coordinator と自分の名を知る口。資格は渡さない。
         host (ProcessHost (str (/ state-dir "logs")) hy-command
                           (| (run (passed-environment args.pass-env (dict os.environ)))
-                             {"DOEFF_WORKER_NAME" args.name
-                              "DOEFF_WORKER_COORDINATOR" args.coordinator})
+                             (run (worker-context-environ args.coordinator args.name)))
                           :layout layout :uv args.uv)
         ;; 実行環境(runtime env)の root の準備(別の process・worker は再起動しない)。
         envs (EnvStore (str state-dir) hy-command :repo-keys args.repo-keys :uv args.uv :min-free-bytes args.env-min-free)

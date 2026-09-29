@@ -122,7 +122,7 @@
 (import .handlers [declared-job-spec task-spec heartbeat-body status-report desired-when-unreachable env-report env-heartbeat-part
                    warm-env-of-row])
 (import .host_contract [HOST-CONTRACT SIM-PASSABLE environ-reader])
-(import .job_context [RunContext])
+(import .job_context [RunContext worker-context-environ process-context-environ context-of-environ])
 (import .job_entry [decoded-program])
 (import .metrics_model [ReportMetrics])
 (import .readiness_model [ReportReady])
@@ -244,7 +244,8 @@
 (defrecord SimLink
   "coordinator へ話す送り手の口 1 つ(クラスタの約束の答え coordinator-answers の引数)。queue = coordinator の受け口(要求の列)・
    actor = 書きの送り手(X-Actor)・revision = 送り手の版(task の revision)・peer = 送り手の居る所(網の切断は worker の名で数える)・
-   runtime-env = 切り離した task の実行環境の宣言(本番の DetachedClient の runtime-env — None = 送り手の版のコードだけ)。"
+   runtime-env = 送る task(RemoteJob と切り離した task)の実行環境の宣言(本番の TaskClient・DetachedClient の runtime-env — None =
+   送り手の版のコードだけ)。"
   (#^ RequestQueue queue)
   (#^ str actor)
   (#^ str revision)
@@ -653,11 +654,13 @@
 (defk run-context-of [worker spec attempt instance]
   {:pre [(: worker str) (: spec JobSpec) (: attempt int) (: instance str)] :post [(: % RunContext)]
    :tags {:context "doeff-cluster" :role "judgment"}}
-  "起こす process の宿の契約の run-context を作るため(本番の worker が子へ環境変数で渡す欄と同じ値 — 報告の世代が coordinator の
-   report-matches と合う)。"
-  (RunContext SIM-URL worker spec.revision spec.name
-              :instance instance :attempt (str attempt) :spec-hash (spec-hash spec)
-              :placement (if (is spec.placement None) "" (str spec.placement))))
+  "起こす process の宿の契約の run-context を作るため: 本番の worker が子へ渡す環境変数を同じ関数(job_context の
+   worker-context-environ・process-context-environ — 本番の main と ProcessHost.launch が呼ぶ物)で作り、本番の子と同じ読み
+   (context-of-environ)で読む(報告の世代が coordinator の report-matches と合い、実行環境の job の子は宣言とキーを受ける)。"
+  (<- shared dict (worker-context-environ SIM-URL worker))
+  (<- own dict (process-context-environ spec instance attempt))
+  (<- ctx RunContext (context-of-environ (| shared own)))
+  ctx)
 
 
 (defk program-path-of [sha]
@@ -754,12 +757,14 @@
    :post [(: % (| TaskSucceeded TaskFailed))] :tags {:context "doeff-cluster" :role "protocol"}}
   "RemoteJob を本番の remote-cluster と同じ手順で coordinator へ出し、結果を待つため: 詰めた Program を PUT /programs/<sha> で置き、
    POST /tasks(task-submit-body)で出し、問い合わせ(lease を延ばす)を終わるまで続け、抜ける時は task を落とす。送れない値は送る前に
-   断る(encode-program の UnsendableProgram)。版は送り手の版(link.revision)。"
+   断る(encode-program の UnsendableProgram)。版は送り手の版(link.revision)・実行環境の宣言は送り手の宣言(link.runtime-env —
+   本番の TaskClient の runtime-env と同じく本文の runtimeEnv に載せる)。"
   (val blob (encode-program program))
   (val sha (program-sha blob))
   (<- put tuple (send-resent link "PUT" (+ "/programs/" sha) {} {"blob" blob "versions" (current-versions)}))
   (answered-body put "task の Program を置けない")
-  (<- sent tuple (send-request link "POST" "/tasks" {} (task-submit-body sha link.revision needs name TASK-LEASE-SECONDS None environ)))
+  (<- sent tuple (send-request link "POST" "/tasks" {}
+                               (task-submit-body sha link.revision needs name TASK-LEASE-SECONDS link.runtime-env environ)))
   (val id (get (answered-body sent "task を出せない") "task"))
   (var outcome None)
   (try

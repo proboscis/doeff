@@ -1,6 +1,14 @@
 ;; lock は scheduler の Semaphore の effect で扱う。業務の Program は同じまま、handler の組だけで
 ;; (1) scheduled だけ(手元)・(2) 1 つの VM の名前の表・(3) cluster の lease(共有の保存 + 時計)を切り替える。
-(require doeff-hy.macros [deftest defk <-])
+;; 同じ Program を組ごとに回す契約テストは deftest の :interpreters で handler を差し替える(組み立ては coordinator_contract_handlers.hy —
+;; scheduled・named-semaphore-local・cluster-semaphore(fake の保存 shared-memory の上)・cluster-semaphore-http(本物の coordinator の
+;; /leases の上))。契約:
+;;   * 1 つの handle を分け合う task は 1 つずつ入り、待つ task は先の task が返してから入る(cluster は空き待ちの 1 周期の内)
+;;   * permits = 2 の handle は同時に 2 つまで入れ、3 つ目は先の 1 つが返してから入る
+;;   * 名前を見る組(名前の表・cluster)では、別々に名前で作った同じ名前は同じ lock
+;; 片方の組だけの性質は素の deftest のまま: scheduled だけでは別々に作った同じ名前は別物・cluster の worker を越えた排他と延長・
+;; 死んだ worker の lease の期限の後の引き取り・失った lease の知らせ・書きの柵・lease の立場。
+(require doeff-hy.macros [deftest defk <- val])
 (import doeff [with_handlers])
 (import doeff_core_effects.scheduler [Spawn Gather AcquireSemaphore ReleaseSemaphore Semaphore])
 (import doeff_time [Delay SimClock sim-time-handler])
@@ -67,33 +75,65 @@
   peak)
 
 
+;; --- 契約(3 つの組で同じ Program)---------------------------------------------------------------------
+
+;; 待つ task が空きを見つけるまでの遅れの上限(ミリ秒): cluster-semaphore は空き待ちを poll の間隔(0.5 秒)で問い直す(先着順の保証も無い)。
+;; scheduled と名前の表は返した時刻にすぐ入る。
+(val WAKE-MS 500)
+(val HOLD-SECONDS 2)
+(val HOLD-MS (* 1000 HOLD-SECONDS))
+
+
+(defk spans-from [log start]
+  {:pre [(: log list) (: start int)] :post [(: % dict)] :tags {:context "doeff-cluster-test" :role "judgment"}}
+  "log の入った・出た時刻を、Program の始まり start からのミリ秒に直した {who: [#(入 出) …]} にするため(組ごとに時計の起点が違う)。"
+  (dfor #(who spans) (.items (intervals log))
+        who (lfor #(entered left) spans #((- entered start) (- left start)))))
+
+
+(deftest test-tasks-sharing-one-handle-enter-one-at-a-time
+  {:interpreters ["scheduled" "named-semaphore-local" "cluster-semaphore" "cluster-semaphore-http"]}
+  ;; 同じ handle を 2 つの task で分け合えば、どの組でも排他が効く(scheduled だけでも — 新しい effect は要らない)。
+  (val log [])
+  (<- start int (now-epoch-ms))
+  (<- (shared-handle log HOLD-SECONDS))
+  (<- spans dict (spans-from log start))
+  (assert (= (max-concurrency log) 1) log)
+  (assert (= (get spans "a") [#(0 HOLD-MS)]) spans)
+  (val b (get spans "b" 0))
+  (assert (<= HOLD-MS (get b 0) (+ HOLD-MS WAKE-MS)) spans)
+  (assert (= (- (get b 1) (get b 0)) HOLD-MS) spans))
+
+
+(deftest test-a-handle-with-two-permits-admits-two-at-a-time
+  {:interpreters ["scheduled" "named-semaphore-local" "cluster-semaphore" "cluster-semaphore-http"]}
+  (val log [])
+  (<- start int (now-epoch-ms))
+  (<- sem (CreateNamedSemaphore "turn-lock" 2))
+  (<- (run-all (lfor who ["a" "b" "c"] (critical sem who log HOLD-SECONDS))))
+  (<- spans dict (spans-from log start))
+  (assert (= (max-concurrency log) 2) log)
+  (assert (= (sorted spans) ["a" "b" "c"]) spans)
+  ;; 3 つ目は、先の 2 つが返してから(空き待ちの 1 周期の内に)入る。
+  (val third (max (lfor spans-of (.values spans) (get spans-of 0)) :key (fn [span] (get span 0))))
+  (assert (<= HOLD-MS (get third 0) (+ HOLD-MS WAKE-MS)) spans))
+
+
+(deftest test-the-same-name-is-the-same-lock-where-a-handler-reads-names
+  {:interpreters ["named-semaphore-local" "cluster-semaphore" "cluster-semaphore-http"]}
+  (val log [])
+  (<- (run-all [(named-user "a" log HOLD-SECONDS 1) (named-user "b" log HOLD-SECONDS 1)]))
+  (assert (= (max-concurrency log) 1) log))
+
+
 ;; --- (1) scheduled だけ -----------------------------------------------------------------------
 
-(deftest test-named-semaphore-is-a-plain-local-semaphore-under-scheduled-alone
-  ;; 同じ handle を 2 つの task で分け合えば、scheduled だけで排他が効く(新しい effect は要らない)。
-  (setv log [] clock (SimClock))
-  (<- (with_handlers [(sim-time-handler :clock clock)]
-        (shared-handle log 2)))
-  (assert (= (max-concurrency log) 1))
-  (assert (= (clock-ms clock) 4000)))
-
-
 (deftest test-separately-created-names-do-not-exclude-without-a-name-table
-  ;; scheduled だけの下では、名前で別々に作った semaphore は別物(名前を見る handler が無いので)。
+  ;; scheduled だけの下では、名前で別々に作った semaphore は別物(名前を見る handler が無いので — 名前を見る組の契約の反例)。
   (setv log [] clock (SimClock))
   (<- (with_handlers [(sim-time-handler :clock clock)]
         (run-all [(named-user "a" log 2 1) (named-user "b" log 2 1)])))
   (assert (= (max-concurrency log) 2)))
-
-
-;; --- (2) 1 つの VM の名前の表 ------------------------------------------------------------------
-
-(deftest test-name-table-makes-the-same-name-the-same-local-semaphore
-  (setv log [] clock (SimClock))
-  (<- (with_handlers [(sim-time-handler :clock clock) (named-semaphore-local {})]
-        (run-all [(named-user "a" log 2 1) (named-user "b" log 2 1)])))
-  (assert (= (max-concurrency log) 1))
-  (assert (= (clock-ms clock) 4000)))
 
 
 ;; --- (3) cluster(共有の保存の lease) ----------------------------------------------------------
@@ -150,15 +190,6 @@
   (assert (= (get outcome 0) "lost"))
   ;; 他の担い手の行はそのまま(失った側は消さない)。
   (assert (= (get store key "holders") {"thief/1" 999999})))
-
-
-(deftest test-cluster-semaphore-with-two-permits-admits-two-at-a-time
-  (setv log [] clock (SimClock) store {})
-  (setv sessions (lfor w ["a" "b" "c"] (SemaphoreSession (+ "worker-" w) :ttl-seconds 15.0 :poll-seconds 0.5)))
-  (<- (with_handlers [(sim-time-handler :clock clock) (shared-memory store)]
-        (run-all (lfor #(w s) (zip ["a" "b" "c"] sessions) (on-worker s (named-user w log 5 2))))))
-  (assert (= (max-concurrency log) 2))
-  (assert (= (len (intervals log)) 3)))
 
 
 ;; --- 純粋な判断 --------------------------------------------------------------------------------
