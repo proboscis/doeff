@@ -3,6 +3,7 @@
 (require doeff-hy.macros [defhandler defk deff <- val])
 (require doeff-hy.record [defrecord])
 (import json os re shutil signal subprocess sys tempfile time uuid)
+(import httpx)
 (import enum [Enum])
 (import typing [IO])
 (import dataclasses [dataclass replace])
@@ -78,7 +79,7 @@
   "完成品として公開せず、次にその版を求められた時に脇へ退けて作り直す。"
   "tool = 焼く道具の file(既定は worker 自身のコードの code_prepare.hy。準備する版の木の物は使わない)。"
   "layout = 業務の repo の木の形(import の根 — worker_model.CodeLayout)。"
-  (defn __init__ [self #^ str repo #^ str cache #^ (| str None) hy-command [tool TOOL] #^ CodeLayout [layout (CodeLayout)]]
+  (defn #^ None __init__ [self #^ str repo #^ str cache #^ (| str None) hy-command #^ str [tool TOOL] #^ CodeLayout [layout (CodeLayout)]]
     (setv self.repo repo self.cache (Path cache) self.hy-command hy-command self.tool tool self.layout layout
           self.pending {} self.failed {} self.timings {}
           ;; 読む時の検めの答え(dir の名前 → #(inode mtime_ns 理由 or None))。木は rename で現れて以後変えないので、
@@ -110,7 +111,7 @@
     (setv ready (self.ready-dirs))
     (if ready (max ready :key (fn [e] (. (.stat e) st-mtime))) None))
 
-  (defn start [self #^ str revision]
+  (defn #^ None start [self #^ str revision]
     (when (in revision self.pending) (return))
     (setv final (self.final-dir revision) broken None)
     (when (.exists final)
@@ -206,7 +207,7 @@
 (defclass PendingPrepare []
   "走っている準備 1 本の記録(EnvStore の中だけ): process・始めた時刻(epoch 秒)・答えの file・進みの印の file・
    warm = 先読みの準備か(job がその root を求めたら job の準備へ上げる)・cold = 冷たい準備か(引き継げる root が無い)。"
-  (defn __init__ [self process #^ float started #^ Path result #^ Path progress #^ bool warm #^ bool cold]
+  (defn #^ None __init__ [self #^ subprocess.Popen process #^ float started #^ Path result #^ Path progress #^ bool warm #^ bool cold]
     (setv self.process process self.started started self.result result self.progress progress self.warm warm self.cold cold)))
 
 
@@ -220,7 +221,7 @@
    (env_upkeep.prepare-overdue — 先読みは停滞だけ・job は冷たい / 温い)。
    掃除(sweep): 空きが下限(sweep-floor-bytes か volume の SWEEP-FLOOR-RATIO と min-free-bytes の大きい方)を切ったら、固定されていない
    root を消す(選びは env_upkeep.sweep-choice)・uv の cache を prune・7 日使われない wheel を消す。消すのは worker が作った dir だけ。"
-  (defn __init__ [self #^ str state-dir #^ str hy-command #^ str [repo-keys ""] #^ str [uv "uv"] #^ int [min-free-bytes 0]
+  (defn #^ None __init__ [self #^ str state-dir #^ str hy-command #^ str [repo-keys ""] #^ str [uv "uv"] #^ int [min-free-bytes 0]
                   #^ PrepareLimits [limits (PrepareLimits)] #^ int [max-parallel 2] #^ str [tool ENV-TOOL]
                   #^ str [code-prepare TOOL] #^ (| int None) [sweep-floor-bytes None]]
     (setv self.state (Path state-dir) self.hy-command hy-command self.repo-keys repo-keys self.uv uv
@@ -248,7 +249,7 @@
           :setv m (self.marker e) :if (is-not m None)
           {"env" (get m "env") "root" (str e)}))
 
-  (defn start [self #^ str key #^ str runtime-env #^ bool [warm False]]
+  (defn #^ None start [self #^ str key #^ str runtime-env #^ bool [warm False]]
     "root の準備を頼む。job の頼み(warm = False)は、同じ root の先読みが走っていれば job の準備へ上げ、待っていれば前へ出す。"
     (setv pending (.get self.pending key))
     (when (is-not pending None)
@@ -272,7 +273,7 @@
                     (and (= (get (get k "env") "project" "lockSha256") (get project "lockSha256"))
                          (= (get (get k "env") "project" "python") (get project "python")))))))
 
-  (defn launch-waiting [self]
+  (defn #^ None launch-waiting [self]
     ;; 同時の準備を max-parallel 本に絞る(走っている手番の CPU を奪わない)。job の準備を先に起こし、先読みは枠の 1 つを job に残す。
     (setv order (+ (lfor #(k #(_ w)) (.items self.waiting) :if (not w) k) (lfor #(k #(_ w)) (.items self.waiting) :if w k)))
     (for [key order]
@@ -394,7 +395,7 @@
                                :last-used-ms (int (* 1000 used)) :bytes (if owned (tree-bytes entry) 0) :owned owned))))
     out)
 
-  (defn sweep [self #^ frozenset pinned]
+  (defn #^ None sweep [self #^ frozenset pinned]
     "固定の集合を持ち替え、空きが下限を切っていれば掃除する(下限を切っている間は SWEEP-EVERY-SECONDS ごと・固定が変わればすぐ)。"
     (setv changed (!= pinned self.pinned))
     (setv self.pinned pinned)
@@ -736,7 +737,7 @@
    layout = 業務の repo の木の形(子の PYTHONPATH — worker_model.CodeLayout)。
    実行環境の job(spec.runtime-env)は、env の root の venv で `uv run --no-sync --frozen --project <root の project> hy -m …` として
    起こす(PYTHONPATH を置かない・子の環境変数は許可表で組む・cwd = 空の作業 dir <jobs-dir>/<job の名>)。uv = uv の命令。"
-  (defn __init__ [self #^ str log-dir #^ str hy-command [extra-env None] #^ CodeLayout [layout (CodeLayout)]
+  (defn #^ None __init__ [self #^ str log-dir #^ str hy-command #^ (| dict None) [extra-env None] #^ CodeLayout [layout (CodeLayout)]
                   #^ str [uv "uv"] #^ (| str None) [jobs-dir None]]
     (setv self.log-dir (Path log-dir) self.hy-command hy-command self.table {} self.extra-env (or extra-env {})
           self.layout layout self.uv uv
@@ -775,7 +776,7 @@
           code-path
           (| (dict os.environ) self.extra-env environ {"PYTHONPATH" (.pythonpath self.layout code-path)} worker-env))))
 
-  (defn start [self #^ StartJob action]
+  (defn #^ None start [self #^ StartJob action]
     (setv spec action.spec)
     (when (in spec.name self.table) (raise (RuntimeError f"{spec.name} は既に動いています")))
     (.mkdir self.log-dir :parents True :exist-ok True)
@@ -798,7 +799,7 @@
     (setv (get self.table spec.name)
       #(process (ProcessView spec.name spec action.attempt process.pid (int (* (time.time) 1000)) :instance instance))))
 
-  (defn retire [self #^ RetireJob action]
+  (defn #^ None retire [self #^ RetireJob action]
     "入れ替え: 動いている process を止めずに名から外す(表の鍵と観測の名を new-name へ移す)。同じ名で新しい process を起こせる。"
     (setv entry (.get self.table action.name))
     (when (and entry (= (. (get entry 1) pid) action.pid))
@@ -806,12 +807,12 @@
       (setv (get self.table action.new-name)
             #((get entry 0) (replace (get entry 1) :name action.new-name :retired-from action.name)))))
 
-  (defn signal [self #^ SignalJob action]
+  (defn #^ None signal [self #^ SignalJob action]
     (setv sig (if (= action.stage StopStage.TERM) signal.SIGTERM signal.SIGKILL))
     ;; 孫 process まで届くよう process group へ送る(setsid で抜けた孫は届かない)。
     (try (os.killpg action.pid sig) (except [ProcessLookupError] None)))
 
-  (defn reap [self #^ ReapJob action]
+  (defn #^ None reap [self #^ ReapJob action]
     (setv entry (.get self.table action.name))
     (when (and entry (= (. (get entry 1) pid) action.pid))
       ;; 本体の終了後も同じ group の孫が残っていれば KILL で回収する。
@@ -897,8 +898,8 @@
 (defclass CoordinatorLink []
   "coordinator との連絡。heartbeat で生存・版・状態(終わった task の結果を含む)を送り、自分に割り当てられた job と task を受け取る。
    task の blob は task-dir の file に置き、宣言から外れた task の file は消す(この worker が書いた物だけ)。"
-  (defn __init__ [self #^ str url #^ str name #^ tuple provides #^ int capacity #^ int fence-ms
-                  [task-dir None] [versions None] [transport None] #^ (| dict None) [tools None] #^ (| EnvStore None) [envs None]
+  (defn #^ None __init__ [self #^ str url #^ str name #^ tuple provides #^ int capacity #^ int fence-ms
+                  #^ (| str None) [task-dir None] #^ (| dict None) [versions None] #^ (| httpx.BaseTransport None) [transport None] #^ (| dict None) [tools None] #^ (| EnvStore None) [envs None]
                   #^ tuple [exclusive #()] #^ str [node ""]]
     ;; node = この worker の置かれた k8s の node の名(downward API の spec.nodeName・k8s の外の機体は空)。coordinator がその node の
     ;; label から能力(company-machine など)を導く — worker の自己申告にしない(改訂 1 の I)。
@@ -1020,7 +1021,7 @@
       (setv self.told outcome)
       (print line :file sys.stderr :flush True)))
 
-  (defn poll [self]
+  (defn #^ (| DesiredJobs DesiredUnreadable) poll [self]
     (try
       (setv response (.accepted self.endpoint (.request self.endpoint "POST" "/heartbeat"
         :json (| (heartbeat-body :name self.name :provides self.provides :exclusive self.exclusive :node self.node
@@ -1081,7 +1082,8 @@
 
 (deff heartbeat-body [* #^ str name #^ tuple provides #^ tuple exclusive #^ str node #^ int capacity #^ dict versions
                       #^ list statuses #^ str endpoint #^ str boot #^ int boot-at #^ dict tools]  ; defk にできない: worker の I/O の道具(CoordinatorLink)と sim の宿が同じ形を作る純粋な判断
-  {:pre [(: name str) (: provides tuple) (: capacity int) (: statuses list) (: boot str)] :post [(: % dict)]
+  {:pre [(: name str) (: provides tuple) (: exclusive tuple) (: node str) (: capacity int) (: versions dict) (: statuses list)
+         (: endpoint str) (: boot str) (: boot-at int) (: tools dict)] :post [(: % dict)]
    :tags {:context "doeff-cluster" :role "protocol"}}
   "POST /heartbeat の本文(生存・能力・版・状態の報告・世代)を作るため。実行環境の root の名乗り(env-body)は本番の worker だけが足す。"
   {"name" name "provides" (list provides) "exclusive" (list exclusive) "node" node "capacity" capacity "versions" versions
@@ -1132,7 +1134,7 @@
 (defhandler coordinator-desired [#^ CoordinatorLink link]
   (ReadDesired [] (resume (.poll link))))
 
-(defn #^ dict status-row [s]
+(defn #^ dict status-row [#^ JobStatus s]
   {"name" s.name "phase" s.phase.value "desiredRevision" s.desired-revision
    "runningRevision" s.running-revision "pid" s.pid "attempts" s.attempts "detail" s.detail
    ;; 動いている process の世代(coordinator の readiness と計器はこれと一致する報告だけを数える)。
@@ -1150,7 +1152,7 @@
     (<- (PublishStatus statuses note))
     (resume None)))
 
-(defn release-leases [#^ CoordinatorLink link #^ str job #^ str instance]
+(defn #^ None release-leases [#^ CoordinatorLink link #^ str job #^ str instance]
   "終わった process(job の名 job・世代の名 instance)が持っていた lease を返す。token の頭は子が名乗った担い手と同じ定義
    (semaphore_model.lease-holder と holder-tokens-prefix — <job>/<世代の名>/)。外すのは coordinator(POST /leases/<名> の drop —
    2026-09-25)。drop の口を持たない旧い coordinator には、盤の行の compare-and-set で外す(以前の形)。届かない・競合が続く時は
@@ -1190,5 +1192,9 @@
 (defhandler lease-release-coordinator [#^ CoordinatorLink link]
   (ReleaseLeases [job instance] (release-leases link job instance) (resume None)))
 
-(defhandler stop-flag [state]
+(defclass StopState []
+  "worker の止めの印(main の信号の handler が立て、stop-flag が WorkerStopRequested に答える)。"
+  (defn #^ None __init__ [self] (setv self.requested False)))
+
+(defhandler stop-flag [#^ StopState state]
   (WorkerStopRequested [] (resume state.requested)))

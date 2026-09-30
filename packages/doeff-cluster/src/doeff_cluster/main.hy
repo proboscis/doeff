@@ -18,16 +18,12 @@
 (import doeff_core_effects.scheduler [scheduled])
 (import doeff_time [async-time-handler])
 (import .handlers [CodeStore EnvStore CoordinatorLink ProcessHost ProbeStore coordinator-desired local-host
-                   status-file status-to-coordinator stop-flag lease-release-coordinator])
+                   status-file status-to-coordinator stop-flag lease-release-coordinator StopState])
 (import .remote_model [current-versions])
 (import .cluster_model [ClusterTiming capabilities-of])
 (import .worker [run-worker])
 (import .worker_model [WorkerPolicy CodeLayout])
 (import .job_context [worker-context-environ])
-
-
-(defclass StopState []
-  (defn __init__ [self] (setv self.requested False)))
 
 
 (defk passed-environment [names environ]

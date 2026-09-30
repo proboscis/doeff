@@ -13,6 +13,7 @@
 (require doeff-hy.macros [deftest defk deff defhandler <- val var])
 (import collections.abc [Callable])
 (import pathlib [Path])
+(import typing [NoReturn])
 (import httpx)
 (import pytest)
 (import doeff [with_handlers Program])
@@ -45,7 +46,7 @@
 
 (defclass RunnersRig []
   "筋書きを回す組。handlers = 被せる handler の組(外側が先 — sim は使わない)・workers = 担い手の名 → RigWorker(sim は空)。"
-  (defn __init__ [self #^ str kind #^ list handlers #^ dict workers]
+  (defn #^ None __init__ [self #^ str kind #^ list handlers #^ dict workers]
     (setv self.kind kind self.handlers handlers self.workers workers)))
 
 
@@ -57,7 +58,7 @@
 
 (defclass CoordinatorRunners []
   "coordinator の組の担い手の置き場: 名 → RigWorker と、作り直す時の材料(task の dir・transport)。"
-  (defn __init__ [self #^ Path tmp-path transport]
+  (defn #^ None __init__ [self #^ Path tmp-path #^ httpx.BaseTransport transport]
     (setv self.tmp-path tmp-path self.transport transport self.workers {} self.boots 0))
 
   (defn #^ RigWorker fresh [self #^ str name #^ tuple provides #^ tuple exclusive]
@@ -279,7 +280,7 @@
 
 ;; --- 本物の client: coordinator に届かない送りと待ちは値で答える -------------------------------------------------------------
 
-(defn cut-off [request]
+(defn #^ NoReturn cut-off [#^ httpx.Request request]
   "coordinator に届かない transport(接続が断られる)。"
   (raise (httpx.ConnectError "connection refused" :request request)))
 

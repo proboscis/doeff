@@ -318,7 +318,7 @@
 
 
 (defk declare-in [work #* argv]
-  {:pre [(: work Path)] :post [(: % subprocess.CompletedProcess)] :tags {:context "doeff-cluster-test" :role "entry"}}
+  {:pre [(: work Path) (: argv tuple)] :post [(: % subprocess.CompletedProcess)] :tags {:context "doeff-cluster-test" :role "entry"}}
   "work の checkout の中で declare の CLI を子 process で撃つため(import の路 = work — 系の関数の module はそこに在る)。"
   (subprocess.run [sys.executable "-m" "hy" "-m" "doeff_cluster.declare" #* argv]
                   :cwd (str work) :capture-output True :text True :timeout 120

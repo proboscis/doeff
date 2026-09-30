@@ -1,9 +1,4 @@
 {
-  "exclude": [
-    "packages/doeff-cluster/src/doeff_cluster/handlers.hy",
-    "packages/doeff-cluster/tests/test_detached_runners.hy",
-    "packages/doeff-cluster/tests/test_service_declaration.hy"
-  ],
   "include": [
     "packages/doeff-cluster/src/doeff_cluster/*.hy",
     "packages/doeff-cluster/src/doeff_cluster/*.py",
@@ -1289,18 +1284,5 @@
       "typed": true
     }
   ],
-  "untyped_dependencies": [
-    {
-      "path": "packages/doeff-cluster/src/doeff_cluster/handlers.hy",
-      "reason": "検査器がこの Hy を型に写せない — hy:1082: deff の各引数には実型契約が必要（可変長/既定値は未対応）。対応は agora-redesign #1575(let の形は #1574 で写せるようになった)"
-    },
-    {
-      "path": "packages/doeff-cluster/tests/test_detached_runners.hy",
-      "reason": "検査器がこの Hy を型に写せない — hy:289: 入れ子の defk は型投影未対応(doeff-hy の実 macro が未対応)。対応は agora-redesign #1576(let の形は #1574 で写せるようになった)"
-    },
-    {
-      "path": "packages/doeff-cluster/tests/test_service_declaration.hy",
-      "reason": "検査器(code-quality 7d27341)がこの Hy を型に写せない — hy:138: 入れ子の defk は型投影未対応(doeff-hy の実 macro が未対応)。引数の契約の理由(#1575)は直した。include の外に置き(変えた時は登録の前と同じ未導入の注意)、対応と取り込みは agora-redesign #1576"
-    }
-  ]
+  "untyped_dependencies": []
 }
