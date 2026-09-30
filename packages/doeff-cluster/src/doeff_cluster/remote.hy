@@ -10,6 +10,7 @@
 (require doeff-hy.macros [defhandler defk deff <- val])
 (import json)
 (import time)
+(import httpx)
 (import .coordinator_http [CoordinatorEndpoint send-idempotent put-program REPLY-SECONDS IDEMPOTENT-DEADLINE-SECONDS])
 (import doeff_time [Delay])
 (import doeff [run])
@@ -36,7 +37,8 @@
   "coordinator の /tasks との連絡(I/O)。revision = 送り手の commit(受け側はこの版のコードを準備してから復元する)。
    runtime-env = 実行環境の宣言(在れば worker は env の root を準備して、その中の子 process で走らせる — revision は使わない)。
    transport = httpx の transport(DetachedClient・WarmClient と同じ — 検が coordinator の模擬を後ろに置く。既定 None = 網)。"
-  (defn __init__ [self #^ str url #^ str revision [timeout REPLY-SECONDS] #^ (| RuntimeEnv None) [runtime-env None] [transport None]]
+  (defn #^ None __init__ [self #^ str url #^ str revision #^ float [timeout REPLY-SECONDS] #^ (| RuntimeEnv None) [runtime-env None]
+                  #^ (| httpx.BaseTransport None) [transport None]]
     (setv self.revision revision self.runtime-env runtime-env
           self.endpoint (CoordinatorEndpoint url timeout 4 :transport transport)))
 
@@ -56,9 +58,10 @@
     (.raise-for-status response)
     (.json response))
 
-  (defn drop [self #^ str task]
+  (defn #^ None drop [self #^ str task]
     (try (.request self.endpoint "DELETE" (+ "/tasks/" task))
-         (except [Exception] None))))
+         (except [Exception] None))
+    None))
 
 
 (defn #^ (| TaskSucceeded TaskFailed None) outcome-of [#^ dict view #^ str task #^ str revision]
@@ -106,7 +109,7 @@
       (.drop client task))))
 
 
-(defhandler remote-cluster [#^ TaskClient client [poll-seconds 1.0] [lease-seconds 15.0]]
+(defhandler remote-cluster [#^ TaskClient client #^ float [poll-seconds 1.0] #^ float [lease-seconds 15.0]]
   (RemoteJob [program needs name environ]
     ;; 送れない値は送る前に断る(encode-program が UnsendableProgram を投げ、呼び手へ届く)。
     (val blob (encode-program program))

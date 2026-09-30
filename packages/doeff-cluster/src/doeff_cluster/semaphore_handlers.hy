@@ -39,7 +39,7 @@
 (defclass SemaphoreSession []
   "cluster-semaphore の手元の記憶。holder = この process を cluster で一意に指す名(composition root が決める)。
    held = 名前 → 持っている token の列(permit は区別しないので、Release は古い物から返す)。"
-  (defn __init__ [self #^ str holder [ttl-seconds 15.0] [poll-seconds 0.5]]
+  (defn #^ None __init__ [self #^ str holder #^ float [ttl-seconds 15.0] #^ float [poll-seconds 0.5]]
     ;; expires = token → 保存に書けたと確かめた期限(epoch ミリ秒)。lease-fence はこれと時計だけで判じる。
     (setv self.holder holder self.ttl-seconds ttl-seconds self.poll-seconds poll-seconds
           self.seq 0 self.held {} self.lost (set) self.renewers {} self.expires {}
@@ -53,7 +53,7 @@
 
   (defn #^ int ttl-ms [self] (int (* 1000 self.ttl-seconds)))
 
-  (defn hold [self #^ str name #^ str token]
+  (defn #^ None hold [self #^ str name #^ str token]
     (.add self.ever-held name)
     (.append (.setdefault self.held name []) token))
 
@@ -67,11 +67,11 @@
   (defn #^ bool holds [self #^ str token]
     (any (gfor tokens (.values self.held) (in token tokens))))
 
-  (defn take [self #^ str name]
+  (defn #^ (| str None) take [self #^ str name]
     (setv tokens (.get self.held name []))
     (if tokens (.pop tokens 0) None))
 
-  (defn hold-of [self #^ str name]
+  (defn #^ (| dict None) hold-of [self #^ str name]
     "HeldLease の答え: 名前の最も古い token と、その確かめた期限。持っていない・失った = None。"
     (setv tokens (.get self.held name []))
     (when (not tokens) (return None))
@@ -164,7 +164,7 @@
   ;; write-types の effect だけを見る。それ以外は素通し。問い合わせと時計は外側(cluster-semaphore・時計の handler)へ。
   (EffectBase []
     :when (isinstance effect write-types)
-    (<- hold (HeldLease name))
+    (<- hold (| dict None) (HeldLease name))
     (<- now int (now-epoch-ms))
     (setv refusal (fence-verdict hold now margin-ms))
     (when (is-not refusal None)

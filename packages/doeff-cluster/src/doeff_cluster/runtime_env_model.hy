@@ -57,7 +57,7 @@
 
 (defclass RuntimeEnvInvalid [ValueError]
   "宣言が誤っている(呼び手の誤り・送れない)。coordinator は同じ誤りを HTTP 400 で断る。"
-  (defn __init__ [self #^ InvalidKind kind #^ str detail]  ; defk にできない: 例外の class の初期化
+  (defn #^ None __init__ [self #^ InvalidKind kind #^ str detail]  ; defk にできない: 例外の class の初期化
     (.__init__ (super) (.format "{}: {}" kind.value detail))
     (setv self.kind kind self.detail detail)))
 
@@ -91,7 +91,7 @@
   (#^ str name)
   (#^ str url)
   (#^ str commit)
-  (defn __post-init__ [self]  ; defk にできない: dataclass の検査の口
+  (defn #^ None __post-init__ [self]  ; defk にできない: dataclass の検査の口
     (_check-name "repo の名" self.name)
     (when (not (and (isinstance self.url str) self.url (not (any (gfor c self.url (.isspace c))))))
       (_invalid InvalidKind.BAD-URL (.format "repo {} の url: {!r}" self.name self.url)))
@@ -105,7 +105,7 @@
   (#^ str package)
   (#^ str repo)
   (#^ tuple paths)
-  (defn __post-init__ [self]  ; defk にできない: dataclass の検査の口
+  (defn #^ None __post-init__ [self]  ; defk にできない: dataclass の検査の口
     (_check-name "native の package" self.package)
     (_check-name "native の repo" self.repo)
     (_check-tuple "NativeWheel.paths" self.paths str)
@@ -122,7 +122,7 @@
   (#^ str python)
   (setv #^ tuple groups #())
   (setv #^ tuple native #())
-  (defn __post-init__ [self]  ; defk にできない: dataclass の検査の口
+  (defn #^ None __post-init__ [self]  ; defk にできない: dataclass の検査の口
     (_check-name "project の repo" self.repo)
     (_check-relative "project の path" self.path)
     (when (not (and (isinstance self.lock-sha256 str) (.fullmatch SHA256-PATTERN self.lock-sha256)))
@@ -138,7 +138,7 @@
   "worker が名乗る道具(例: 外部の CLI)。version = 版の範囲(空 = 何でもよい)。キーに入らない(置き先の選択で見る)。"
   (#^ str name)
   (setv #^ str version "")
-  (defn __post-init__ [self]  ; defk にできない: dataclass の検査の口
+  (defn #^ None __post-init__ [self]  ; defk にできない: dataclass の検査の口
     (_check-name "道具の名" self.name)))
 
 
@@ -146,7 +146,7 @@
   "子 process に足す環境変数。秘密は置かない(coordinator の状態に残る)。キーに入らない。"
   (#^ str name)
   (#^ str value)
-  (defn __post-init__ [self]  ; defk にできない: dataclass の検査の口
+  (defn #^ None __post-init__ [self]  ; defk にできない: dataclass の検査の口
     (when (not (and (isinstance self.name str) (.fullmatch ENV-VAR-PATTERN self.name)))
       (_invalid InvalidKind.INVALID-NAME (.format "環境変数の名は英大文字・数字・_: {!r}" self.name)))
     (when (or (in self.name RESERVED-ENV-NAMES) (.startswith self.name RESERVED-ENV-PREFIXES))
@@ -159,7 +159,7 @@
       (raise (TypeError (.format "環境変数 {} の値は文字列: {!r}" self.name self.value))))))
 
 
-(defn #^ (| str None) child-environ-refusal [environ]  ; defk にできない: effect の構成子(__post_init__)・coordinator の本文の読み(Program の外)が呼ぶ純粋な判断
+(defn #^ (| str None) child-environ-refusal [#^ object environ]  ; defk にできない: effect の構成子(__post_init__)・coordinator の本文の読み(Program の外)が呼ぶ純粋な判断
   "子の環境変数の組(service の :environ・task の :environ — 名 → 文字列の dict)が受けられない理由(受けられれば None)。
    名と値の規則は EnvVar 1 つ(名の形・worker の予約・秘密の中身の名・文字列の値)— service と task で同じ(2026-09-28)。"
   (when (not (isinstance environ dict))
@@ -187,7 +187,7 @@
   ;; module は子が import した時に作られる。root の file の中身を変えないのでキーに入れない(2026-09-26・#664 の実測: 焼く 1,063 file の
   ;; うち task が読むのは約 2 割)。
   (setv #^ tuple bytecode-entries #())
-  (defn __post-init__ [self]  ; defk にできない: dataclass の検査の口
+  (defn #^ None __post-init__ [self]  ; defk にできない: dataclass の検査の口
     (_check-tuple "RuntimeEnv.repos" self.repos RepoCheckout)
     (_check-tuple "RuntimeEnv.bytecode-entries" self.bytecode-entries str)
     (for [m self.bytecode-entries]
@@ -244,7 +244,7 @@
   (#^ EnvFailureKind kind)
   (#^ str detail)
   (#^ bool retryable)
-  (defn __post-init__ [self]  ; defk にできない: dataclass の検査の口
+  (defn #^ None __post-init__ [self]  ; defk にできない: dataclass の検査の口
     (when (not (isinstance self.kind EnvFailureKind))
       (raise (TypeError (.format "EnvFailure.kind は EnvFailureKind: {!r}" self.kind))))))
 
