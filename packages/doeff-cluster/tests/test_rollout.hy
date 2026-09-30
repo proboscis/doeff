@@ -53,7 +53,7 @@
                                  "spec" {"revision" "r1" "needs" ["net"] "run" SAMPLE-RUN "replicas" 0
                                          "readiness" {"windowSeconds" window}}})))
 
-  (defn call [self method path [body None] [actor "c-test"]]
+  (defn #^ ClusterState call [self #^ str method #^ str path #^ (| dict list str int float bool None) [body None] #^ (| str None) [actor "c-test"]]
     (setv #(state status reply) (respond self.state (http-request method path {} body :actor actor) self.now T))
     (assert (< status 300) #(method path status reply))
     (setv self.state state)
@@ -79,6 +79,7 @@
               "readyReplicas" (len (lfor p live :if (<= (get p "ready-at") self.now) p))}))
 
   (defn proc-phase [self]
+    (assert (is-not self.proc None) "proc-phase は動いている process の段を読む")
     (cond
       (get self.proc "stopping-until") "stopping"
       (>= self.now (+ (get self.proc "since") JOB-START)) "running"
@@ -328,6 +329,7 @@
   ;; dry-run の書き手を動かし、Ready の報告を出させる
   (sim.call "PUT" "/resources/Service/writer-a" {"spec" spec "resourceVersion" (get sim.state.meta "Service/writer-a" "resourceVersion")})
   (for [_ (range 30)] (sim.step))
+  (assert (is-not sim.proc None) "dry-run の書き手が動いている")
   (setv dry-instance (get sim.proc "instance"))
   (assert (in dry-instance sim.first-ready) sim.first-ready)
   ;; 設定だけを変えて(Program の引数 = 同一性だけが変わる・版は同じ)止める(05:10:53)
@@ -339,6 +341,7 @@
   ;; Rollout を作る(05:11:10)
   (sim.rollout "to-worker" (| FORWARD {"readyTimeoutSeconds" 120}))
   (assert (= (sim.run-until "to-worker" #("Observing" "Complete" "RolledBack")) "Observing"))
+  (assert (is-not sim.proc None) "新しい process が動いている")
   (setv new-instance (get sim.proc "instance"))
   (assert (!= new-instance dry-instance))
   (assert (in new-instance sim.first-ready) sim.first-ready)

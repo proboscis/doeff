@@ -54,7 +54,7 @@
     (self.call "POST" "/resources/Service" {"name" "writer-a" "spec" SERVICE})
     None)
 
-  (defn call [self method path [body None] [actor "c-test"]]
+  (defn #^ object call [self #^ str method #^ str path #^ (| dict list str int float bool None) [body None] #^ (| str None) [actor "c-test"]]
     (setv #(state status reply) (respond self.state (http-request method path {} body :actor actor) self.now T))
     (assert (< status 300) #(method path status reply))
     (setv self.state state)

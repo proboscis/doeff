@@ -1,7 +1,7 @@
 ;; coordinator の資源の口: 資源ごとの compare-and-set・送り手と出来事の記録・所有者だけが消せる・旧い PUT /jobs の写し・
 ;; readiness・盤の行ごとの版。
 (require doeff-hy.macros [deftest val var])
-(import doeff_cluster.cluster_model [ClusterTiming ClusterState PlainText])
+(import doeff_cluster.cluster_model [ClusterTiming ClusterState PlainText Request])
 (import doeff_cluster.coordinator_inbox [http-request])
 (import doeff_cluster.cluster_policy [state-to-json state-from-json board-changes job-from-json])
 (import doeff_cluster.worker_model [spec-hash])
@@ -14,10 +14,10 @@
 (setv V {"python" "3.14.0"})
 (setv SPEC {"revision" "r1" "needs" ["net"] "run" SAMPLE-RUN})
 
-(defn req [method path [body None] [query None] [actor "c-me"]]
+(defn #^ Request req [#^ str method #^ str path #^ (| dict list str int float bool None) [body None] #^ (| dict None) [query None] #^ (| str None) [actor "c-me"]]
   (http-request method path (or query {}) body :actor actor :peer "10.0.0.9"))
 
-(defn call [state method path [body None] [query None] [actor "c-me"] [now 1000]]
+(defn #^ tuple call [#^ ClusterState state #^ str method #^ str path #^ (| dict list str int float bool None) [body None] #^ (| dict None) [query None] #^ (| str None) [actor "c-me"] #^ int [now 1000]]
   (respond state (req method path body query actor) now T))
 
 (defn beat [state name now [statuses None]]

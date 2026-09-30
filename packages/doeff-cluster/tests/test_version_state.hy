@@ -62,7 +62,7 @@
 
 ;; --- 本物の respond で状態を作る道具 -------------------------------------------------------------
 
-(defn call [state method path [body None] [now START] [actor "c-me"]]  ; defk にできない: 検の道具(coordinator の純粋な口へ要求を送る)
+(defn #^ ClusterState call [#^ ClusterState state #^ str method #^ str path #^ (| dict list str int float bool None) [body None] #^ int [now START] #^ (| str None) [actor "c-me"]]  ; defk にできない: 検の道具(coordinator の純粋な口へ要求を送る)
   "coordinator の本物の返事(api_policy.respond)へ要求を 1 件送り、次の状態を返す。"
   (setv #(after status reply) (respond state (http-request method path {} body :actor actor) now T))
   (assert (< status 300) #(method path status reply))
@@ -93,7 +93,7 @@
   (beat (declared) "atlas"))
 
 
-(defn reporting [#^ dict [extra None] #^ str [phase "running"]]  ; defk にできない: 検の道具
+(defn #^ ClusterState reporting [#^ (| dict None) [extra None] #^ str [phase "running"]]  ; defk にできない: 検の道具
   "atlas が w の行(phase・差し替えの欄)を報告した状態。"
   (setv s (placed))
   (beat s "atlas" [(row-of s phase extra)]))
