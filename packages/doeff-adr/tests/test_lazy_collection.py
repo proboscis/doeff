@@ -212,6 +212,82 @@ def test_a_record_that_disagrees_fails_the_item_and_is_forgotten(project: pytest
     assert "import: pkg/tests/test_alpha.hy — 記録なし" in out
 
 
+MARKS_CONFTEST = """
+import json
+import os
+
+import pytest
+
+
+@pytest.fixture
+def doeff_interpreter():
+    from doeff import run
+
+    return run
+
+
+def pytest_collection_modifyitems(config, items):
+    # 収集の hook が item と module の node に印を足す(前にも後ろにも・引数つき)。記録からの収集を断る
+    # 未知の makeitem の hook ではないので、2 回目は記録から収集される。
+    modules = []
+    for item in items:
+        item.add_marker(pytest.mark.plugin_first, append=False)
+        item.add_marker(pytest.mark.plugin_mark("arg1", key="v"))
+        if item.parent not in modules:
+            modules.append(item.parent)
+    for module in modules:
+        module.add_marker(pytest.mark.plugin_module)
+
+
+@pytest.hookimpl(trylast=True)
+def pytest_runtest_setup(item):
+    def seen(node):
+        return [
+            [repr((m.name, m.args, m.kwargs)), repr(node.keywords.get(m.name))]
+            for m in node.own_markers
+        ]
+
+    with open(os.environ["MARK_LOG"], "a") as log:
+        log.write(json.dumps([item.nodeid, seen(item), seen(item.parent)]) + "\\n")
+"""
+
+
+def test_marks_added_by_a_collection_hook_survive_the_swap_to_the_real_module(
+    project: pytest.Pytester, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """収集の hook が足した印は、記録から収集した item の setup(実物への置き換え)の後も位置ごと残る。印の並び
+    (名・引数)と keywords は、import して収集した時と記録から収集した時とで同じ(agora-redesign #1553)。
+
+    直す前は、関数の印を実物の印で丸ごと置き直していたので hook の足した印が消え、module の印は実物の印が末尾へ
+    動いていた。
+    """
+    project.makeconftest(MARKS_CONFTEST)
+    log = tmp_path / "marks.log"
+    monkeypatch.setenv("MARK_LOG", str(log))
+
+    def seen() -> list[list[object]]:
+        lines = sorted(json.loads(line) for line in log.read_text().splitlines())
+        log.write_text("")
+        return lines
+
+    project.runpytest_subprocess("-p", "no:cacheprovider").assert_outcomes(passed=18, skipped=3)
+    cold = seen()
+    warm_run = project.runpytest_subprocess("-p", "no:cacheprovider")
+    warm_run.assert_outcomes(passed=18, skipped=3)
+    warm_run.stdout.fnmatch_lines(["*記録から収集 5 file・収集で import 1 file*"])
+    assert seen() == cold
+    slow = next(entry for entry in cold if entry[0].endswith("::test_slow"))
+    assert [shown for shown, _ in slow[1]] == [
+        repr(("plugin_first", (), {})),
+        repr(("slow", (), {})),
+        repr(("plugin_mark", ("arg1",), {"key": "v"})),
+    ]
+    assert [shown for shown, _ in slow[2]] == [
+        repr(("real_world", (), {})),
+        repr(("plugin_module", (), {})),
+    ]
+
+
 def _cache_entry(project: pytest.Pytester, tmp_path: Path, relative: str) -> Path:
     """test file の今の内容の hash から、キャッシュの file の path を引く。"""
     digest = hashlib.sha256((project.path / relative).read_bytes()).hexdigest()

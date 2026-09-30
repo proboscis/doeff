@@ -502,8 +502,7 @@ def swap_in_real_function(item: pytest.Function, real_module: types.ModuleType) 
                     actual.values[0] if isinstance(actual, ParameterSet) else actual
                 )
     item.obj = real
-    callspec_marks = list(callspec.marks) if callspec is not None else []
-    item.own_markers = [*real_marks, *callspec_marks]
+    _replace_stub_marks(item, stub_marks, real_marks)
 
 
 def swap_in_real_module_marks(
@@ -516,8 +515,22 @@ def swap_in_real_module_marks(
         raise RecordMismatch(
             f"{node.nodeid}: module の印が記録と違う — 記録 {[m.name for m in stub_marks]} / 実物 {[m.name for m in real_marks]}"
         )
-    others = [m for m in node.own_markers if not any(m is s for s in stub_marks)]
-    node.own_markers = [*others, *real_marks]
+    _replace_stub_marks(node, stub_marks, real_marks)
+
+
+def _replace_stub_marks(
+    node: pytest.Item | pytest.Collector, stub_marks: list[PytestMark], real_marks: list[PytestMark]
+) -> None:
+    """node の印のうち仮の物(同じ object)だけを、並びの同じ位置の実物の印に替える。
+
+    収集の後に hook(``pytest_collection_modifyitems`` など)が ``add_marker`` で足した印と、parametrize の値の印は、
+    位置ごとそのまま残す — 印の並びと ``keywords`` は import して収集した時と同じになる(agora-redesign #1553)。
+    """
+    real_of = {id(stub): real for stub, real in zip(stub_marks, real_marks, strict=True)}
+    node.own_markers = [real_of.get(id(mark), mark) for mark in node.own_markers]
+    for stub, real in zip(stub_marks, real_marks, strict=True):
+        if node.keywords.get(stub.name) is stub:
+            node.keywords[stub.name] = real
 
 
 def check_no_unrecorded_items(
