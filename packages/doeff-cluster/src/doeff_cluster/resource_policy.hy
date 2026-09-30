@@ -11,7 +11,8 @@
 ;;;   停止の述語(service-stopped — Rollout の相手の観測 api_policy.target-view と共有)を呼んで組み立てる。
 (import dataclasses [replace])
 (import json)
-(import .cluster_model [ClusterState ClusterTiming Placement HandoffPhase UnplacedKind NotReadyKind VersionState VersionVerdict
+(import typing [NoReturn])
+(import .cluster_model [ClusterJob ClusterState ClusterTiming Placement HandoffPhase UnplacedKind NotReadyKind VersionState VersionVerdict
                         LiveProcess BodyInvalid required-field int-field])
 (import .worker_model [spec-hash JobPhase])
 (import .cluster_policy [job-from-json job-to-json alive still-live-somewhere service-rows unplaced-kind unplaced-text task-summary])
@@ -28,12 +29,12 @@
 
 (defclass Refused [Exception]
   "要求を断る(HTTP の status と本文を持つ)。"
-  (defn __init__ [self #^ int status #^ dict body]
+  (defn #^ None __init__ [self #^ int status #^ dict body]
     (.__init__ (super) (.get body "error" ""))
     (setv self.status status self.body body)))
 
 
-(defn refuse [#^ int status #^ str message #** extra]
+(defn #^ NoReturn refuse [#^ int status #^ str message #^ (| str None) #** extra]
   (raise (Refused status (| {"error" message} extra))))
 
 
@@ -45,11 +46,12 @@
   #(kind name))
 
 
-(defn #^ (| str None) valid-actor [actor]
+;; actor は送られてきた値そのもの(header・本文の欄 — 文字列とは限らない)を受けて確かめる。
+(defn #^ (| str None) valid-actor [#^ object actor]
   (if (and (isinstance actor str) (< 0 (len (.strip actor)) 200)) (.strip actor) None))
 
 
-(defn #^ str require-actor [actor]
+(defn #^ str require-actor [#^ object actor]
   (or (valid-actor actor)
       (refuse 400 "送り手が無い。書きには header X-Actor(依頼の主体の id・作業係の名・worker の名)が要る")))
 
@@ -80,7 +82,8 @@
    ok・state・reason の意味は readiness・入れ替えの合図(api_policy.ready-instance)・drain・計器が読むので変えない。
    placement = 見る置き先(既定 = いまの置き先。drain で並べた置き先(surge)の process を見る時はそれを渡す — drain_policy)。"
   (setv job (next (gfor j state.jobs :if (= j.spec.name name) j) None))
-  (defn no [s kind reason #** extra] (| {"ok" False "state" s "kind" kind "reason" reason "job" job} extra))
+  ;; extra = 答えに添える欄(担い手の行 :row)。
+  (defn #^ dict no [#^ str s #^ NotReadyKind kind #^ str reason #^ (| dict None) #** extra] (| {"ok" False "state" s "kind" kind "reason" reason "job" job} extra))
   (when (is job None) (return (no "NotReady" NotReadyKind.NO-DECLARATION "宣言が無い")))
   (when (= job.replicas 0) (return (no "NotReady" NotReadyKind.NO-REPLICAS "replicas 0(置かない)")))
   (setv a (if (is placement None) (.get state.placements name) placement))
@@ -133,12 +136,12 @@
        (= (.get report "placement") (get proc "placement"))))
 
 
-(defn #^ (| dict None) current-report [reports #^ dict proc]
+(defn #^ (| dict None) current-report [#^ (| tuple None) reports #^ dict proc]
   "報告の列(古い順)のうち、今動いている process の最新の物。"
   (next (gfor r (reversed (or reports #())) :if (report-matches r proc) r) None))
 
 
-(defn #^ tuple keep-report [reports #^ dict report]
+(defn #^ tuple keep-report [#^ (| tuple None) reports #^ dict report]
   "世代ごとに最新 1 つ・直近の REPORTS-KEPT 世代だけ残す(古い順)。担い手の heartbeat より先に新しい process の報告が届いても、
    heartbeat が追いついた時にその報告を数えられるよう、1 つに畳まない。"
   (setv others (lfor r (or reports #()) :if (!= (.get r "instance") (.get report "instance")) r))
@@ -156,7 +159,7 @@
                                  #^ (| Placement None) [placement None]]
   "Service が Ready か。state = Ready | NotReady | Unknown(coordinator が起動した直後で報告が揃っていない)。
    placement = 見る置き先(既定 = いまの置き先 — running-process)。"
-  (defn verdict [s reason] {"state" s "reason" reason})
+  (defn #^ dict verdict [#^ str s #^ str reason] {"state" s "reason" reason})
   (setv proc (running-process state name now timing placement))
   (when (not (get proc "ok")) (return (verdict (get proc "state") (get proc "reason"))))
   (setv job (get proc "job"))
@@ -203,7 +206,7 @@
                (LiveProcess :revision (.get row "runningRevision") :retired (= (.get row "retiredFrom") name)))))
 
 
-(defn #^ (| JobPhase None) phase-named [phase]
+(defn #^ (| JobPhase None) phase-named [#^ (| str None) phase]
   ;; defk にできない: coordinator の純粋な判断(Program の外 — version-state)が呼ぶ
   "worker の行の phase の綴り → JobPhase。coordinator の知らない綴り(coordinator より新しい worker の phase)は None —
    呼び手は既定の状態へ倒さず「分からない」と答える。"
@@ -333,7 +336,7 @@
 
 ;; --- 資源の写し(版と記録の比べる単位) ------------------------------------------------------------
 
-(defn #^ dict service-spec [job]
+(defn #^ dict service-spec [#^ ClusterJob job]
   (dfor #(k v) (.items (job-to-json job)) :if (!= k "name") k v))
 
 
@@ -380,12 +383,13 @@
   out)
 
 
-(defn short-value [v]
+;; v は記録の欄の JSON の値(どの形にもなる)— 長い値だけを切った文字列に置き換え、それ以外はそのまま返す。
+(defn #^ object short-value [#^ object v]
   (setv text (json.dumps v :ensure-ascii False :sort-keys True :default str))
   (if (> (len text) 160) (+ (cut text 0 157) "…") v))
 
 
-(defn #^ dict changed-fields [old new]
+(defn #^ dict changed-fields [#^ (| dict None) old #^ (| dict None) new]
   "何が変わったか(spec / status の一段目の欄ごとに前と後。長い値は切る)。"
   (setv out {})
   (for [part #("spec" "status")]
@@ -504,7 +508,7 @@
 
 ;; --- 書きの口(Service と Rollout)--------------------------------------------------------------
 
-(defn check-version [#^ ClusterState state #^ str key version [required True]]
+(defn #^ None check-version [#^ ClusterState state #^ str key #^ (| int None) version #^ bool [required True]]
   (setv current (.get (.get state.meta key {}) "resourceVersion"))
   (cond
     (and required (is version None))
@@ -513,7 +517,7 @@
       (refuse 409 (.format "版が古い: 送られた {}・いまの {}(読み直してから書く)" version current) :current current)))
 
 
-(defn #^ tuple active-rollouts-touching [#^ ClusterState state target-keys [skip None]]
+(defn #^ tuple active-rollouts-touching [#^ ClusterState state #^ list target-keys #^ (| str None) [skip None]]
   (tuple (gfor #(name r) (.items state.rollouts)
                :if (and (!= name skip) (not-in (.get (get r "status") "phase") TERMINAL-PHASES)
                         (& (set target-keys) (sfor t (rollout-targets (get r "spec")) (target-key t))))
@@ -551,7 +555,7 @@
     True (refuse 405 (+ "この kind は API から作れない: " kind))))
 
 
-(defn check-owner-change [current-owner new-owner actor]
+(defn #^ None check-owner-change [#^ (| str None) current-owner #^ (| str None) new-owner #^ str actor]
   (when (and new-owner (!= new-owner current-owner) (!= actor current-owner) (!= current-owner LEGACY-OWNER))
     (refuse 403 (.format "所有者を変えられるのは所有者({})だけ" current-owner))))
 

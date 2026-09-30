@@ -49,20 +49,20 @@
 
 (defclass CreateNamedSemaphore [CreateSemaphore]
   "名前付きの semaphore を作る。cluster の handler の下では、同じ名前 = cluster 全体で同じ lock。"
-  (defn __init__ [self #^ str name [permits 1]]
+  (defn #^ None __init__ [self #^ str name #^ int [permits 1]]
     (.__init__ (super) permits)
     (when (or (not (isinstance name str)) (not name) (in "/" name))
       (raise (ValueError (+ "semaphore の名前は空でない文字列で、/ を含まない: " (repr name)))))
     (setv self.name name))
-  (defn __repr__ [self] (.format "CreateNamedSemaphore({!r}, permits={})" self.name self.permits)))
+  (defn #^ str __repr__ [self] (.format "CreateNamedSemaphore({!r}, permits={})" self.name self.permits)))
 
 
 (defclass ClusterSemaphore [Semaphore]
   "cluster の handler が返す handle。scheduler の Semaphore の子なので、業務コードの型は変わらない。"
-  (defn __init__ [self #^ str name #^ int permits]
+  (defn #^ None __init__ [self #^ str name #^ int permits]
     (.__init__ (super) (+ "cluster:" name))
     (setv self.name name self.permits permits))
-  (defn __repr__ [self] (.format "ClusterSemaphore({!r}, permits={})" self.name self.permits)))
+  (defn #^ str __repr__ [self] (.format "ClusterSemaphore({!r}, permits={})" self.name self.permits)))
 
 
 (defclass LeaseLost [RuntimeError]
@@ -94,7 +94,7 @@
       (.format "柵の余裕 {} ms が TTL {} ms の半分を越える(1 回の延長の遅れで書きが止まる)" margin-ms ttl-ms)
     True None))
 
-(defn fence-verdict [hold #^ int now-ms #^ int margin-ms]
+(defn #^ (| str None) fence-verdict [#^ (| dict None) hold #^ int now-ms #^ int margin-ms]
   "純粋: 書いてよいか。答え = None(通す)か、断る理由の文字列。期限の margin-ms 前で締める(時計のずれと書きの往復の分)。"
   (cond
     (is hold None) "lease を持っていない(取る前か、失った)"
@@ -164,14 +164,14 @@
   (+ SEMAPHORE-PREFIX name))
 
 
-(defn #^ dict live-holders [row #^ int now-ms]
+(defn #^ dict live-holders [#^ (| dict None) row #^ int now-ms]
   "純粋: 行の担い手のうち期限が now より後の物。"
   (if (is row None)
       {}
       (dfor #(token expires) (.items (get row "holders")) :if (> expires now-ms) token expires)))
 
 
-(defn claim [row #^ int permits #^ str token #^ int now-ms #^ int ttl-ms]
+(defn #^ (| dict None) claim [#^ (| dict None) row #^ int permits #^ str token #^ int now-ms #^ int ttl-ms]
   "純粋: permit を 1 つ取った後の行。空きが無ければ None。期限の切れた担い手はこの書きで落とす。
    同じ名前で permits が食い違えば BodyInvalid(要求の誤り・ValueError の子 — 同じ名前は同じ lock でなければならない)。"
   (when (and (is-not row None) (!= (get row "permits") permits))
@@ -182,7 +182,7 @@
       None))
 
 
-(defn renew [row #^ str token #^ int now-ms #^ int ttl-ms]
+(defn #^ (| dict None) renew [#^ (| dict None) row #^ str token #^ int now-ms #^ int ttl-ms]
   "純粋: 期限を延ばした後の行。token が行に無ければ None(= lease を失った)。
    行に残っている間は、期限が過ぎていても他の誰も書いていない(書きは期限切れを落とす)ので延ばしてよい。"
   (if (or (is row None) (not-in token (get row "holders")))
@@ -191,7 +191,7 @@
        "holders" (| (live-holders row now-ms) {token (+ now-ms ttl-ms)})}))
 
 
-(defn release [row #^ str token #^ int now-ms]
+(defn #^ tuple release [#^ (| dict None) row #^ str token #^ int now-ms]
   "純粋: permit を返した後の行と、token が行に在ったか。"
   (if (or (is row None) (not-in token (get row "holders")))
       #(row False)
@@ -200,7 +200,8 @@
         True)))
 
 
-(defn drop-holders [row #^ str prefix]
+;; row は盤の行の値そのもの(形を確かめてから読む — 形の読めない値は触らず None)。
+(defn #^ (| dict None) drop-holders [#^ object row #^ str prefix]
   "純粋: token が prefix で始まる担い手を外した後の行。外す物が無ければ None。終了を確かめた process の lease を、期限を待たずに
    返すために worker が使う(prefix = holder-tokens-prefix(lease-holder job 世代の名) — 頭の註)。
    期限の判断は入れない(外すのは名指した担い手だけで、他の担い手の期限はそのまま)。"
