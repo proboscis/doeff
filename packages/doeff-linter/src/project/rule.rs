@@ -398,15 +398,18 @@ impl ProjectRule {
             | ProjectRule::ServiceBoundary
             | ProjectRule::ServiceDependency
             | ProjectRule::TranslationEmitsIntent
-            | ProjectRule::SemanticBusinessDecision
-            | ProjectRule::SemanticTransportKnowledge
-            | ProjectRule::SemanticMixedConcerns
             // 宣言に無い置き場所(どの層の決まりも当たらない)・defk を素で呼ぶ(Program が値として流れる本物の誤り)・
             // 読めない file(判定が欠け、0 件に見えても合格ではない)。
             | ProjectRule::UndeclaredPlace
             | ProjectRule::UndeclaredDirectory
             | ProjectRule::DefkCalledBare
             | ProjectRule::UnreadableFile => Some(super::settings::RuleLevel::Critical),
+            // Jev の判定(翻訳の層の業務の判断・判断の層の通信の手段・形の検めと判断の混ざり)は、較正が済んで信頼できるまで critical に
+            // しない(operator の決定 B・2026-09-30 — agora-redesign #1762 / #1801。#942 で critical にしたのを戻す)。当たりの重さは
+            // warning なので、宣言が無いと minor になる — 責務の境界の読みとして見落とさないよう major に置く。
+            ProjectRule::SemanticBusinessDecision
+            | ProjectRule::SemanticTransportKnowledge
+            | ProjectRule::SemanticMixedConcerns => Some(super::settings::RuleLevel::Major),
             ProjectRule::UnknownConfigKey
             | ProjectRule::ModuleDeclaresTags
             | ProjectRule::RoleMatchesLayer
@@ -969,6 +972,24 @@ mod tests {
     fn every_rule_has_a_non_empty_label() {
         for rule in ProjectRule::ALL {
             assert!(!rule.label().is_empty(), "{} の label が空", rule.id());
+        }
+    }
+
+    #[test]
+    fn jev_rules_are_not_critical_until_calibrated() {
+        // 決定 B(#1762 / #1801): Jev の 201・202・205 は major。反例 = 責務の境界の規則(DOEFF101・130)は今までどおり critical。
+        use super::super::settings::RuleLevel;
+        for id in ["DOEFF201", "DOEFF202", "DOEFF205"] {
+            let rule = ProjectRule::parse(id).unwrap_or_else(|| panic!("{} は ProjectRule に無い", id));
+            assert_eq!(rule.default_level(), Some(RuleLevel::Major), "{} の既定の重大さ", id);
+        }
+        for id in ["DOEFF101", "DOEFF130"] {
+            let rule = ProjectRule::parse(id).unwrap_or_else(|| panic!("{} は ProjectRule に無い", id));
+            assert_eq!(rule.default_level(), Some(RuleLevel::Critical), "{} の既定の重大さ", id);
+        }
+        for id in ["DOEFF203", "DOEFF204"] {
+            let rule = ProjectRule::parse(id).unwrap_or_else(|| panic!("{} は ProjectRule に無い", id));
+            assert_eq!(rule.default_level(), None, "{} は宣言の無い規則のまま", id);
         }
     }
 
