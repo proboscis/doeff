@@ -7,7 +7,7 @@
 (require doeff-hy.macros [deftest defk <- val var])
 (require doeff-hy.record [defrecord])
 (import dataclasses [dataclass])
-(import doeff [with-handlers DoExpr])
+(import doeff [with-handlers Program])
 (import doeff_cluster.service_model [System])
 (import doeff_time [Delay sim-time-handler])
 (import doeff_cluster.clock [now-epoch-ms])
@@ -96,7 +96,7 @@
 
 
 (defk ended-with-takes [scenario]
-  {:pre [(: scenario DoExpr)] :post [(: % tuple)] :tags {:context "doeff-cluster-test" :role "program"}}
+  {:pre [(: scenario Program)] :post [(: % tuple)] :tags {:context "doeff-cluster-test" :role "program"}}
   "筋書きを回し、その答えと、終わった時の coordinator の拍の数を返すため。"
   (<- answer (| tuple None) scenario)
   (<- link SimLink (ClientLink))
@@ -104,7 +104,7 @@
 
 
 (defk trace-of [system scenario skip-idle * [workers None] [policy None] [deployments None]]
-  {:pre [(: system System) (: scenario DoExpr) (: skip-idle bool) (: workers (| tuple None)) (: policy (| WorkerPolicy None))
+  {:pre [(: system System) (: scenario Program) (: skip-idle bool) (: workers (| tuple None)) (: policy (| WorkerPolicy None))
          (: deployments (| dict None))]
    :post [(: % Trace)] :tags {:context "doeff-cluster-test" :role "program"}}
   "同じ系と筋書きを skip-idle の真偽で回し、置き場の書きの列と筋書きの答えと拍の数を返すため。"

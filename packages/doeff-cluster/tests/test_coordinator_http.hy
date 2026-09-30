@@ -65,7 +65,9 @@
 (defclass FakeNet []
   "宛先ごとに「届く / 接続できない / 読みの途中で切れる」を切り替える偽の網。届いた要求の宛先を記録する。"
   (defn #^ None __init__ [self]
-    (setv self.down #{} self.read-fails #{} self.sent []))
+    (setv #^ (get set str) self.down (set))
+    (setv #^ (get set str) self.read-fails (set))
+    (setv self.sent []))
   (defn #^ httpx.Response handle [self #^ httpx.Request request]
     (setv host request.url.host)
     (when (in host self.down) (raise (httpx.ConnectTimeout "timed out" :request request)))

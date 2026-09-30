@@ -14,7 +14,7 @@
 (val FORWARD {"from" {"kind" "Deployment" "namespace" "prod" "name" "old-beacon"}
               "to" {"kind" "Service" "name" "beacon"}
               "readyTimeoutSeconds" 90 "stopTimeoutSeconds" 30 "observeSeconds" 1})
-(val WORKERS #((SimWorker :name "w1" :provides #{"cluster-net"} :starts-down True)))
+(val WORKERS #((SimWorker :name "w1" :provides (frozenset #{"cluster-net"}) :starts-down True)))
 
 
 (defk rollout-scenario []

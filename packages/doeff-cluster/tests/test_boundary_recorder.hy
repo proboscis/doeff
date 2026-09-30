@@ -25,7 +25,7 @@
 (import threading)
 (import http.server [BaseHTTPRequestHandler ThreadingHTTPServer])
 (import pathlib [Path])
-(import doeff [DoExpr with-handlers])
+(import doeff [Program with-handlers])
 (import doeff_vm [UnhandledEffect])
 (import doeff_core_effects.handlers [reader])
 (import doeff_cluster.host_contract [HOST-CONTRACT environ-reader])
@@ -77,7 +77,7 @@
 
 
 (defk unanswered [program]
-  {:pre [(: program DoExpr)] :post [(: % str)] :tags {:context "doeff-cluster-test" :role "entry"}}
+  {:pre [(: program Program)] :post [(: % str)] :tags {:context "doeff-cluster-test" :role "entry"}}
   "program を走らせ、答えの無い effect で落ちたらその文を返す(落ちなければ AssertionError)。"
   (var message None)
   (try

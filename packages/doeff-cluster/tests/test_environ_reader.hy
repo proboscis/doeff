@@ -16,7 +16,7 @@
 (import pathlib [Path])
 (import httpx)
 (import pytest)
-(import doeff [with-handlers DoExpr])
+(import doeff [with-handlers Program])
 (import doeff_core_effects.effects [Ask])
 (import doeff_core_effects.handlers [env-var-ask])
 (import doeff_time [SimClock])
@@ -53,7 +53,7 @@
 ;; --- 本番の子: job_entry の task 入口の子 process -----------------------------------------------------------------
 
 (defk production-child-outcome [tmp-path program key]
-  {:pre [(: tmp-path Path) (: program DoExpr) (: key str)] :post [(: % (| TaskSucceeded TaskFailed))]
+  {:pre [(: tmp-path Path) (: program Program) (: key str)] :post [(: % (| TaskSucceeded TaskFailed))]
    :tags {:context "doeff-cluster-test" :role "entry"}}
   "本番の形の通しで program を切り離した task として 1 回走らせ、その結末を返すため: DetachedClient が :environ {NAME POLICY} つきで
    送り、本物の coordinator の判断(MemoryCoordinator)が返事に載せ、本物の CoordinatorLink が Program を cache へ取り、ProcessHost が
