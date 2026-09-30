@@ -8,6 +8,7 @@
 ;; 丁寧な模擬(test_env_careful と同じ世界 — 本物の git・fake の uv・本物の EnvStore / ProbeStore / ProcessHost): service を宣言から
 ;;        env の root で起こし、送り手の commit だけ変えた 2 回目の宣言で新しい root の source の値が返り、worker の process は同じ。
 (require doeff-hy.macros [deftest defk <- val var])
+(import inspect)
 (import json)
 (import os)
 (import sys)
@@ -60,9 +61,8 @@
   (<- env-json dict (runtime-env->json declared-env))
   (assert (= (get (get rows 0) "runtimeEnv") env-json) rows)
   (assert (not-in "runtimeEnv" (get (. (system-declaration plain "rev-1" :versions (current-versions)) rows) 0)) "env を渡さない宣言は今の形のまま")
-  (with [(pytest.raises TypeError)]
-    (job "follow" (quiet-program 1.0) :call (CallShape :function quiet-program :args [1.0] :kwargs {}) :needs #{"net"}
-         :base-from {"kind" "Deployment" "namespace" "n" "name" "d"}))
+  ;; job は image の版を追う base-from を受けない — 渡せる名の一覧に base_from が無いことを直に確かめる(わざと誤った呼び出しを書かない)。
+  (assert (not-in "base_from" (. (inspect.signature job) parameters)) "job は base-from を受けない")
   (val with-vars (replace declared-env :env-vars #((EnvVar :name "POLL" :value "1"))))
   (<- clashing System (quiet-system "recreate" None {"POLL" "2"}))
   (with [raised (pytest.raises ValueError)]

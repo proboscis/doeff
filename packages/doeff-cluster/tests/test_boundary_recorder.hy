@@ -93,8 +93,8 @@
   "OpenTelemetry の collector の OTLP/HTTP の log の口(POST /v1/logs)の fake を thread で立てる。届いた log record の body(記録の行の
    JSON の文字列)を lines に届いた順で積む。"
   (defclass Inbox [BaseHTTPRequestHandler]
-    (deff log-message [self #* args]  ; defk にできない: http.server が呼ぶ素の callback
-      {:pre [(: self BaseHTTPRequestHandler) (: args tuple)] :post [(: % (type None))] :tags {:context "doeff-cluster-test" :role "foundation"}}
+    (deff log-message [self format #* args]  ; defk にできない: http.server が呼ぶ素の callback
+      {:pre [(: self BaseHTTPRequestHandler) (: format str) (: args tuple)] :post [(: % (type None))] :tags {:context "doeff-cluster-test" :role "foundation"}}
       None)
     (deff do-POST [self]  ; defk にできない: http.server が呼ぶ素の callback
       {:pre [(: self BaseHTTPRequestHandler)] :post [(: % (type None))] :tags {:context "doeff-cluster-test" :role "foundation"}}
