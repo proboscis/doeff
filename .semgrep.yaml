@@ -5327,3 +5327,32 @@ rules:
       - pattern: $DOC.save()
       - pattern: vscode.workspace.saveAll(...)
       - pattern: workspace.saveAll(...)
+
+  - id: doeff-adr-no-process-wide-pytest-patching
+    languages: [python]
+    severity: ERROR
+    message: >
+      agora-redesign #1551: 記録からの収集は session 内で所有する。
+      pytest の class や module を process 全体で書き換えると、通常の収集と未知 plugin の hook を壊す。
+    pattern-either:
+      - pattern: FixtureManager.$ATTR = $VALUE
+      - pattern: Function.$ATTR = $VALUE
+      - pattern: FunctionDefinition.$ATTR = $VALUE
+      - pattern: Module.$ATTR = $VALUE
+      - pattern: python.$ATTR = $VALUE
+    paths:
+      include:
+        - '**/doeff_adr/*.py'
+
+  - id: doeff-adr-pytest-collection-internals-single-owner
+    languages: [generic]
+    severity: ERROR
+    message: >
+      agora-redesign #1551: pytest の非公開の収集部品は doeff_adr/indexed_pytest.py だけが所有する。
+      他の module は型付きの収集境界を呼び、pytest 更新時の修正先を一か所に保つ。
+    pattern-regex: '\b(Metafunc|FuncFixtureInfo|_fixturemanager)\b|\b_pytest\.python\b'
+    paths:
+      include:
+        - '**/doeff_adr/**'
+      exclude:
+        - '**/doeff_adr/indexed_pytest.py'

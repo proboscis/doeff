@@ -28,6 +28,9 @@ from doeff_hy_bytecode_guard import file_sha256, macro_dependencies
 
 from doeff_adr.source_dependencies import (
     DependencyChecks,
+    ProviderFound,
+    ProviderMissing,
+    ProviderState,
     SourceDependency,
     SourceSnapshot,
     loaded_sources,
@@ -37,7 +40,8 @@ DEFAULT_CACHE_DIR = Path.home() / ".cache" / "doeff-adr" / "pytest-items"
 # 記録の形か鍵の決め方を変えたら上げる(古い版のキャッシュは読まない)。2 = macro の提供元を doeff_hy_bytecode_guard の辿り方で求める。
 # 3 = module の fixture の記録を足す(agora-redesign #1227 の案 B)。
 # 4 = import後の実値・明示idとproject内sourceの状態を保存する(#1459)。
-CACHE_FORMAT = 4
+# fixture の別名も pytest の登録名で保存する (#1551)。古い記録の名前を使わない。
+CACHE_FORMAT = 5
 
 
 @dataclass(frozen=True)
@@ -49,8 +53,11 @@ class MacroDependency:
     digest: str
 
 
-class MalformedCacheEntry(ValueError):
+class MalformedCacheEntryError(ValueError):
     """キャッシュの file の形が違う(版の違う doeff-adr が書いた・書きかけ等)。"""
+
+
+MalformedCacheEntry = MalformedCacheEntryError
 
 
 FixtureScope = Literal["function", "class", "module", "package", "session"]
@@ -135,6 +142,11 @@ def _module_file(name: str) -> Path | None:
     return Path(origin)
 
 
+def _provider_state(name: str) -> ProviderState:
+    source = _module_file(name)
+    return ProviderMissing() if source is None else ProviderFound(file_sha256(str(source)))
+
+
 def _parse_entry(text: str) -> CacheEntry:
     """キャッシュの file の JSON を型へ解く(JSON の境界はここだけ)。形が違えば MalformedCacheEntry。"""
     try:
@@ -200,11 +212,12 @@ def read_cached(source: Path, cache_dir: Path, root: Path, checks: DependencyChe
     if entry.format != CACHE_FORMAT:
         return CacheMiss(f"キャッシュの形の版が違う({entry.format} ≠ {CACHE_FORMAT})")
     for dependency in entry.deps:
-        path = _module_file(dependency.module)
-        if path is None:
-            return CacheMiss(f"macro の提供元 {dependency.module} が見つからない")
-        if file_sha256(str(path)) != dependency.digest:
-            return CacheMiss(f"macro の提供元 {dependency.module} が変わった")
+        match checks.macro_provider(dependency.module, _provider_state):
+            case ProviderMissing():
+                return CacheMiss(f"macro の提供元 {dependency.module} が見つからない")
+            case ProviderFound(digest):
+                if digest != dependency.digest:
+                    return CacheMiss(f"macro の提供元 {dependency.module} が変わった")
     return _read_runtime_entry(entry_path, entry, source, root, checks)
 
 

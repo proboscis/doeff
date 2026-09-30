@@ -21,6 +21,7 @@ import types
 from collections.abc import Callable, Generator, Iterable
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Generic, TypeVar
 
 import pytest
 from _pytest.fixtures import FixtureFunctionDefinition, getfixturemarker
@@ -70,6 +71,8 @@ XUNIT_NAMES = frozenset(
         "setup_function",
         "teardown_function",
         "pytest_plugins",
+        "pytest_generate_tests",
+        "__test__",
     }
 )
 
@@ -127,7 +130,7 @@ def _fixture_record(attribute: str, value: FixtureFunctionDefinition) -> Fixture
     function = inspect.unwrap(value)
     return FixtureRecord(
         attribute=attribute,
-        name=value.name,
+        name=marker.name or attribute,
         scope=scope,
         argnames=tuple(inspect.signature(function).parameters),
         generator=inspect.isgeneratorfunction(function),
@@ -161,32 +164,24 @@ def _resolve_dynamic_records(
     return ResolvedRecords(resolved, problems)
 
 
-def verify_records(real_module: types.ModuleType, name_matches: Callable[[str], bool]) -> Verified:
-    """import後の記録がpytestの集める関数・印・fixtureを全部説明するか確かめる。"""
-    try:
-        records = decode_records(module_record_texts(real_module))
-    except MalformedRecord as exc:
-        return Verified([f"記録の形が違う: {exc}"], ())
-    dynamic: bool = any(isinstance(r, Dynamic) for r in records)
-    resolved = _resolve_dynamic_records(records, real_module)
-    records, problems = resolved.records, resolved.problems
-    functions = [r for r in records if isinstance(r, FunctionItem)]
-    names = {r.name for r in functions}
-    for record in functions:
-        real = getattr(real_module, record.name, None)
-        if real is None:
-            problems.append(f"記録の {record.name} が module に無い")
-            continue
-        stub = _stub_function(record, Path(real_module.__file__ or ""), real_module.__name__)
-        try:
-            _check_marks(get_unpacked_marks(stub), get_unpacked_marks(real), record.name)
-        except (RecordMismatch, UnrecordableError) as exc:
-            problems.append(str(exc))
-    module_marks = [r for r in records if isinstance(r, ModuleMarks)]
-    recorded_marks = [name for r in module_marks for name in r.names]
-    real_marks = [m.name for m in get_unpacked_marks(real_module)]
-    if recorded_marks != real_marks:
-        problems.append(f"module の印が記録と違う — 記録 {recorded_marks} / 実物 {real_marks}")
+def _last_function_records(records: list[Record]) -> list[Record]:
+    # module の代入と同じく、最後の値を最初の挿入位置に残す。Dynamic も同名の関数を置き換える。
+    unique: dict[str, Record] = {}
+    for position, record in enumerate(records):
+        if isinstance(record, FunctionItem):
+            key = record.name
+        elif isinstance(record, Dynamic):
+            key = record.where
+        else:
+            key = f"<module-marks-{position}>"
+        unique[key] = record
+    return list(unique.values())
+
+
+def _verify_module_attributes(
+    real_module: types.ModuleType, names: set[str], name_matches: Callable[[str], bool]
+) -> Verified:
+    problems: list[str] = []
     fixtures: list[FixtureRecord] = []
     for name, value in vars(real_module).items():
         if name in names:
@@ -203,7 +198,47 @@ def verify_records(real_module: types.ModuleType, name_matches: Callable[[str], 
             problems.append(f"fixture の {name} の形が読めない")
         elif name_matches(name) and callable(value):
             problems.append(f"記録に無い test らしい名 {name} がある")
-    return Verified(problems, tuple(fixtures), tuple(records), dynamic)
+    return Verified(problems, tuple(fixtures))
+
+
+def verify_records(real_module: types.ModuleType, name_matches: Callable[[str], bool]) -> Verified:
+    """import後の記録がpytestの集める関数・印・fixtureを全部説明するか確かめる。"""
+    try:
+        records = decode_records(module_record_texts(real_module))
+    except MalformedRecord as exc:
+        return Verified([f"記録の形が違う: {exc}"], ())
+    records = _last_function_records(records)
+    dynamic: bool = any(isinstance(r, Dynamic) for r in records)
+    resolved = _resolve_dynamic_records(records, real_module)
+    records, problems = resolved.records, resolved.problems
+    functions = [r for r in records if isinstance(r, FunctionItem)]
+    names = {r.name for r in functions}
+    for record in functions:
+        real = vars(real_module).get(record.name)
+        if real is None:
+            problems.append(f"記録の {record.name} が module に無い")
+            continue
+        if inspect.iscoroutinefunction(real) or inspect.isasyncgenfunction(real):
+            problems.append(f"非同期の {record.name} は収集で import する")
+        stub = _stub_function(record, Path(real_module.__file__ or ""), real_module.__name__)
+        try:
+            _check_marks(get_unpacked_marks(stub), get_unpacked_marks(real), record.name)
+        except (RecordMismatch, UnrecordableError) as exc:
+            problems.append(str(exc))
+    module_marks = [r for r in records if isinstance(r, ModuleMarks)]
+    recorded_marks = [name for r in module_marks for name in r.names]
+    unpacked_module_marks = get_unpacked_marks(real_module)
+    if any(
+        mark.name not in {"skip", "skipif"} and (mark.args or mark.kwargs)
+        for mark in unpacked_module_marks
+    ):
+        problems.append("module の引数つきの印は収集で import する")
+    real_marks = [m.name for m in unpacked_module_marks]
+    if recorded_marks != real_marks:
+        problems.append(f"module の印が記録と違う — 記録 {recorded_marks} / 実物 {real_marks}")
+    attributes = _verify_module_attributes(real_module, names, name_matches)
+    problems.extend(attributes.problems)
+    return Verified(problems, attributes.fixtures, tuple(records), dynamic)
 
 
 # ---------------------------------------------------------------------------
@@ -234,14 +269,57 @@ def _stub_mark(decorator: Decorator) -> pytest.MarkDecorator:
             return pytest.mark.skipif(False, reason="(条件は import の後に実物の印で評価する)")
 
 
+_StubResult = TypeVar("_StubResult")
+
+
+class SignatureFunction(Generic[_StubResult]):
+    """pytest が読む関数属性を持つ callable。動的属性を辞書越しに設定しない。
+
+    __wrapped__ は元の関数を示す。code と defaults も公開し、inspect の generator 判定を保つ。
+    """
+
+    __signature__: inspect.Signature
+
+    def __init__(self, function: Callable[..., _StubResult]) -> None:
+        if not isinstance(function, types.FunctionType):
+            raise TypeError("仮の関数には Python の function が必要")
+        self.__wrapped__: Callable[..., _StubResult] = function
+        self._function = function
+        self.__name__ = function.__name__
+        self.__qualname__ = function.__qualname__
+        self.__module__ = function.__module__
+        self.__defaults__: tuple[object, ...] | None = function.__defaults__
+        self.__kwdefaults__: dict[str, object] | None = function.__kwdefaults__
+
+    @property
+    def __code__(self) -> types.CodeType:
+        return self._function.__code__
+
+    def locate_source(self, path: Path, name: str) -> None:
+        """pytest の報告位置を、記録の元の test file に合わせる。"""
+        self._function.__code__ = self._function.__code__.replace(
+            co_filename=str(path), co_firstlineno=1, co_name=name
+        )
+
+    def __call__(self, *args: object, **kwargs: object) -> _StubResult:
+        return self.__wrapped__(*args, **kwargs)
+
+
+class RecordedModule(types.ModuleType):
+    """pytest の module marks を直接設定できる、記録由来の module。"""
+
+    pytestmark: list[pytest.MarkDecorator]
+
+
 def _stub_function(item: FunctionItem, path: Path, module_name: str) -> Callable[..., None]:
     """記録の関数 1 つから、同じ名・同じ引数・同じ印の仮の関数を作る(pytest の fixture と parametrize の展開に渡す)。"""
 
-    def stub(*_args: object, **_kwargs: object) -> None:
+    def body(*_args: object, **_kwargs: object) -> None:
         raise RuntimeError(
             f"{module_name}.{item.name}: 記録から作った仮の関数が呼ばれた(setup で実物に替わるはず)"
         )
 
+    stub = SignatureFunction(body)
     # 仮の関数の引数を pytest に見せる口(inspect.signature は __signature__ を読む)。
     stub.__signature__ = inspect.Signature(
         [inspect.Parameter(name, inspect.Parameter.POSITIONAL_OR_KEYWORD) for name in item.argnames]
@@ -249,9 +327,7 @@ def _stub_function(item: FunctionItem, path: Path, module_name: str) -> Callable
     stub.__name__ = stub.__qualname__ = item.name
     stub.__module__ = module_name
     # 報告の位置(pytest の reportinfo)は test file を指す。行は記録に無いので 1。
-    stub.__code__ = stub.__code__.replace(
-        co_filename=str(path), co_firstlineno=1, co_name=item.name
-    )
+    stub.locate_source(path, item.name)
     marked: Callable[..., None] = stub
     for decorator in reversed(item.decorators):
         marked = _stub_mark(decorator)(marked)
@@ -293,13 +369,14 @@ def _stub_fixture(record: FixtureRecord, module_name: str) -> FixtureFunctionDef
                 )
             yield from result
 
-        stub: Callable[..., object] = generator_stub
+        function: Callable[..., object] = generator_stub
     else:
 
         def value_stub(**kwargs: object) -> object:
             return real_function()(**kwargs)
 
-        stub = value_stub
+        function = value_stub
+    stub = SignatureFunction(function)
     # 仮の fixture の引数を pytest に見せる口(inspect.signature は __signature__ を読む)。
     stub.__signature__ = inspect.Signature(
         [
@@ -316,7 +393,7 @@ def stub_module(
     records: tuple[Record, ...], fixtures: tuple[FixtureRecord, ...], path: Path, module_name: str
 ) -> types.ModuleType:
     """記録から仮の module を作る — pytest の Module の収集が読む物(関数・pytestmark・fixture)だけを持つ。"""
-    module = types.ModuleType(module_name)
+    module = RecordedModule(module_name)
     module.__file__ = str(path)
     for fixture in fixtures:
         setattr(module, fixture.attribute, _stub_fixture(fixture, module_name))
@@ -338,8 +415,11 @@ def stub_module(
 # ---------------------------------------------------------------------------
 
 
-class RecordMismatch(Exception):
+class RecordMismatchError(Exception):
     """実物の module が記録と食い違った。"""
+
+
+RecordMismatch = RecordMismatchError
 
 
 def _shape(marks: Iterable[PytestMark]) -> list[tuple[str, object]]:
