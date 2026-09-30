@@ -145,6 +145,7 @@
   (<- every Trace (trace-of (quitters sim-foundation) (kill-then-stop) False :workers TWO-WORKERS :policy QUIET-POLICY))
   (<- skipped Trace (trace-of (quitters sim-foundation) (kill-then-stop) True :workers TWO-WORKERS :policy QUIET-POLICY))
   (assert (> (len every.deltas) 10) (len every.deltas))
+  (assert (is-not every.answer None) "走りは答えを返している")
   (assert (= (len (get every.answer 0)) 2) every.answer)
   (<- breaches list (same-decisions every skipped))
   (assert (= breaches []) breaches)

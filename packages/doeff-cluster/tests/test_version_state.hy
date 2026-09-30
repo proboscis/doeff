@@ -93,7 +93,7 @@
   (beat (declared) "atlas"))
 
 
-(defn #^ ClusterState reporting [#^ dict [extra None] #^ str [phase "running"]]  ; defk にできない: 検の道具
+(defn #^ ClusterState reporting [#^ (| dict None) [extra None] #^ str [phase "running"]]  ; defk にできない: 検の道具
   "atlas が w の行(phase・差し替えの欄)を報告した状態。"
   (setv s (placed))
   (beat s "atlas" [(row-of s phase extra)]))
