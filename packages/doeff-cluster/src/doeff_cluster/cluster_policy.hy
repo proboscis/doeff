@@ -324,6 +324,14 @@
   (<= (- now worker.last-seen-ms) window-ms))
 
 
+(deff note-liveness [#^ ClusterState state #^ int now #^ ClusterTiming timing]  ; defk にできない: 調停の純粋な判断(api_policy.settle — Program の外)が呼ぶ
+  {:pre [(: state ClusterState) (: now int) (: timing ClusterTiming)] :post [(: % ClusterState)] :tags {:context "doeff-cluster" :role "judgment"}}
+  "生きていないと数える worker の名(ClusterState.silent)を今の時刻で求め直すため(#1934)。変わらなければ同じ値を返す(版を進めない)。
+   変われば新しい値 — Worker の資源の status の live が変わり、stamp が版を進めて出来事を 1 行残す(死んだ拍と戻った拍だけ)。"
+  (let [silent (frozenset (gfor w (.values state.workers) :if (not (alive now w timing.lease-ms)) w.name))]
+    (if (= silent state.silent) state (replace state :silent silent))))
+
+
 (deff placeable [#^ tuple needs #^ WorkerInfo worker]  ; defk にできない: coordinator と模擬の置き先の選び(Program の外の純粋な判断)が呼ぶ
   {:pre [(: needs tuple) (: worker WorkerInfo)] :post [(: % bool)] :tags {:context "doeff-cluster" :role "judgment"}}
   "needs の job / task をこの worker に置けるか — 置き場所の規則の定義点はここ 1 つ(ADR-DOE-CLUSTER-001 R4b):

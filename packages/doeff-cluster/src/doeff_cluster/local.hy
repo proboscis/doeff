@@ -34,7 +34,8 @@
 ;;;   - 宿の答え(host-answers — process ごと)= host_contract.HOST-CONTRACT の 3 つ(run-context・Program の path・宣言の environ の名の
 ;;;     Ask — environ は本番の土台と同じ読みの定義 host_contract.environ-reader を子の spec.environ の上に並べる:
 ;;;     値は字面どおり)と ReportReady・ReportMetrics。クラスタの約束の答え(coordinator-answers — 送り手の口 SimLink ごと)= ReadShared / WriteShared・
-;;;     LeaseOp・RemoteJob・SubmitDetached / AwaitDetached / CancelDetached / ReleaseDetached / ReadRunners・WarmRuntimeEnv / ReadWarmState。
+;;;     LeaseOp・RemoteJob・SubmitDetached / AwaitDetached / CancelDetached / ReleaseDetached / ReadRunners / AwaitRunnersChange・WarmRuntimeEnv /
+;;;     ReadWarmState。
 ;;;     本番では土台の HTTP の handler が coordinator へ送る物で、要求の形は本番の送り手と同じ関数(report_client.report-request・
 ;;;     shared_handlers.board-*-request / lease-request・remote.task-submit-body / outcome-of / settled-value・detached.detached-path /
 ;;;     detached-submit-body / detached-refusal / awaited-answer / warm-request-body)。何度送っても同じ意味の要求(読み・lease の claim と
@@ -126,9 +127,9 @@
 (import .declare [create-body spec-for-update])
 (import .detached [detached-path detached-submit-body detached-refusal submit-unreachable awaited-answer runner-facts-of-view
                    runners-unreachable warm-request-body warm-path absent-warm-state SERVER-ERROR warm-unconnected
-                   warm-server-failure])
+                   warm-server-failure runners-change-of watch-query])
 (import .detached_model [SubmitDetached AwaitDetached CancelDetached ReleaseDetached ReadRunners DetachedSubmitted
-                         DetachedSubmitAnswer DetachedAwaited RunnersUnreachable WARMING-PHASE])
+                         DetachedSubmitAnswer DetachedAwaited RunnersUnreachable WARMING-PHASE AwaitRunnersChange RunnersChangeAnswer])
 (import .drain_client [drain-request DRAIN-DEADLINE-SECONDS DRAIN-TTL-MARGIN-SECONDS])
 (import .handlers [declared-job-spec task-spec heartbeat-body status-report desired-when-unreachable env-report env-heartbeat-part
                    warm-env-of-row])
@@ -996,6 +997,15 @@
       (runner-facts-of-view (get (answered-object read "名簿を読めない") "workers"))))
 
 
+(defk await-runners-change [link after timeout-seconds]
+  {:pre [(: link SimLink) (: after int) (: timeout-seconds float)] :post [(: % RunnersChangeAnswer)]
+   :tags {:context "doeff-cluster" :role "protocol"}}
+  "AwaitRunnersChange を本番の DetachedClient.runners-change と同じく GET /watch で 1 回待ち、同じ読み(detached.runners-change-of)で
+   答えるため(#1934)。"
+  (<- answer tuple (send-request link "GET" "/watch" (watch-query after timeout-seconds) None))
+  (runners-change-of (get answer 0) (if (is (get answer 0) None) (unreached-reason answer) (get answer 1))))
+
+
 (deff warm-answer-of [#^ tuple answer #^ str what]  ; defk にできない: 答えの節が返事を Program への答えに変える純粋な判断
   {:pre [(: answer tuple) (: what str)] :post [(: % WarmAnswer)] :tags {:context "doeff-cluster" :role "judgment"}}
   "温める表の返事を、本番の WarmClient と同じ読み(同じ定義 detached.warm-unconnected・warm-server-failure)で答えにするため:
@@ -1166,6 +1176,9 @@
   (ReadRunners []
     (<- runners (read-runners link))
     (resume runners))
+  (AwaitRunnersChange [after timeout-seconds]
+    (<- change (await-runners-change link after (float timeout-seconds)))
+    (resume change))
   (WarmRuntimeEnv [env needs ttl-seconds holder]
     (<- warmed WarmAnswer (warm-write link env needs (float ttl-seconds) holder))
     (resume warmed))

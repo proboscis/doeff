@@ -593,7 +593,12 @@
   (setv #^ int env-cold-starts 0)
   ;; 入れ替え(handoff)の期限の見張り(2026-09-26): Service の名 → HandoffWatch。新の世代が動き出してから期限の間 Ready にならなければ
   ;; 諦めを記録し、heartbeat の返事の job に載せる(worker は新を止めて旧を残す — handoff_policy)。保存する(durable_kv)。
-  (setv #^ dict handoffs (field :default-factory dict)))
+  (setv #^ dict handoffs (field :default-factory dict))
+  ;; 生きていないと数えた worker の名(heartbeat が lease の外 — #1934)。調停の拍ごとに cluster_policy.note-liveness が時刻から
+  ;; 求め直し、変わった拍だけ新しい値にする — Worker の資源の status の live と版は、この欄の変化で進む(時刻そのものを版の比べに
+  ;; 入れると、何も変わらない拍の早い戻り(resource_policy.stamp)で切り替わりを取りこぼす)。保存しない(読み直しの後の最初の拍で
+  ;; 求め直す)。位置の引数で作る呼び手を崩さないよう最後の欄に置く。
+  (setv #^ frozenset silent (frozenset)))
 
 
 ;; --- HTTP の要求と返事 ----------------------------------------------------------

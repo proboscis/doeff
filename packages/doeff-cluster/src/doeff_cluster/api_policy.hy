@@ -32,7 +32,7 @@
 (import traceback [extract-tb])
 (import .cluster_model [ClusterState ClusterTiming ClusterNaming Request PlainText BodyInvalid Fault format-refusal text-field list-field])
 (import .metrics_policy [record-metrics metrics-text])
-(import .cluster_policy [reconcile register-heartbeat heartbeat-reply state-view submit-task poll-task absorb-task-result board-write
+(import .cluster_policy [reconcile register-heartbeat heartbeat-reply state-view submit-task poll-task absorb-task-result board-write note-liveness
                          lease-write other-generation-boot])
 (import .resource_policy [Refused refuse stamp require-actor valid-actor service-readiness service-stopped record-readiness
                           running-process list-resources get-resource events-view create-resource update-resource delete-resource
@@ -57,7 +57,8 @@
         ;; drain(2026-09-25): 割り当ての後に、drain 中の worker の上の入れ替えの Service を並べる・付け替える(readiness を読む)。
         ;; 入れ替えの期限(2026-09-26): 最後に、入れ替えの Service の期限の見張りを進める(heartbeat の返事はこの後の状態から作る)。
         ;; 詰めた Program の置き場(改訂 1 の F): 参照の無くなった物を掃除する。
-        reconciled (sweep-programs (watch-handoffs now (advance-drains now (reconcile now changed timing) timing) timing) now))
+        ;; 生死の切り替わり(#1934): 最後に、生きていないと数える worker の名を今の時刻で求め直す(変われば Worker の status の live と版が進む)。
+        reconciled (note-liveness (sweep-programs (watch-handoffs now (advance-drains now (reconcile now changed timing) timing) timing) now) now timing))
   (stamp changed reconciled COORDINATOR now timing))
 
 

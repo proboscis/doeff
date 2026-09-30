@@ -369,10 +369,14 @@
   (for [w (.values state.workers)]
     (setv (get out (key-of "Worker" w.name))
           {"spec" {"provides" (list w.provides) "exclusive" (list w.exclusive) "node" w.node "capacity" w.capacity "versions" (dict w.versions)}
+           ;; 生きているか(#1934 — heartbeat が lease の内)。生死の切り替わりの拍で版が進み、出来事の記録に 1 行残る — 名簿を写す呼び手が
+           ;; 版の変化の待ち(GET /watch・AwaitRunnersChange)で worker の死と戻りに即座に起きるため。最後の連絡の時刻そのものは変わりやすい
+           ;; 観測なので入れない(生きている間の heartbeat では版は進まない)。
            ;; drain(2026-09-25)の始まりと頼み手(誰が・いつ空けさせたかを出来事の記録に残す)。期限は頼み直すたびに延びるので入れない。
-           "status" (if (in w.name state.drains)
-                        {"drain" {"sinceMs" (. (get state.drains w.name) since-ms) "actor" (. (get state.drains w.name) actor)}}
-                        {})}))
+           "status" (| {"live" (not-in w.name state.silent)}
+                       (if (in w.name state.drains)
+                           {"drain" {"sinceMs" (. (get state.drains w.name) since-ms) "actor" (. (get state.drains w.name) actor)}}
+                           {}))}))
   (for [t (.values state.tasks)]
     (setv (get out (key-of "Task" t.id))
           {"spec" (| {"name" t.name "revision" t.revision "needs" (list t.needs)}

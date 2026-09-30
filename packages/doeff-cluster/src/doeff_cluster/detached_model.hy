@@ -76,6 +76,15 @@
    機体の戻りを待つための読み。答え = RunnerFact の tuple(名の順)か RunnersUnreachable。")
 
 
+(defclass [(dataclass :frozen True)] AwaitRunnersChange [EffectBase]
+  "名簿を写す呼び手が、coordinator の版(資源の spec / status が変わるたびに進む数 — GET /watch)が after から変わるまで待つ(上限
+   timeout-seconds — coordinator の拍の刻で返るので、最大で拍 1 つ分長い)。名簿を周回ごとに読み直さず、変化で起きるための待ち(#1934)。
+   版に入らない変化(worker の生死の切り替わり)は上限で起きて読み直す。答え = RunnersChange(版と変わったか)・RunnersWatchMissing
+   (待つ口の無い旧い coordinator — 呼び手は周回に戻る)・RunnersUnreachable。after は前の答えの revision(最初は 0)。"
+  (#^ int after)
+  (setv #^ float timeout-seconds 1.0))
+
+
 ;; --- 答え --------------------------------------------------------------------------
 
 (defclass [(dataclass :frozen True)] DetachedSubmitted []
@@ -158,6 +167,17 @@
   #^ str detail)
 
 (val RunnersAnswer (| (get tuple #(RunnerFact ...)) RunnersUnreachable))
+
+;; AwaitRunnersChange の答え(#1934): RunnersChange = 待ちが返った(revision = 今の版 — 次の after・changed = after から変わったか。偽は
+;;   上限で返った)・RunnersWatchMissing = 待つ口の無い旧い coordinator(404 — detail = 理由)。
+(defrecord RunnersChange
+  #^ int revision
+  #^ bool changed)
+
+(defrecord RunnersWatchMissing
+  #^ str detail)
+
+(val RunnersChangeAnswer (| RunnersChange RunnersWatchMissing RunnersUnreachable))
 
 
 (setv DetachedOutcome (| DetachedSucceeded DetachedFailed DetachedLost DetachedCancelled DetachedVersionMismatch
