@@ -1,0 +1,216 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>使わないと決めた言葉の検査 — 残り 161 件の片づけ方(短い版・2026-10-01)</title>
+<style>
+  /* 器 = artifact-viz-prerender の references/artifact-template.html(長い版の器を短い版向けに削った物)。
+     図の SVG の var(--…) は svg_postprocess.py と fixcolors.py の置換表と対。
+     ページ側の名前(--bg / --fg / --mut / --line / --card)は図の名前の別名。 */
+  :root {
+    color-scheme: light;
+    --surface-1: #fcfcfb; --page: #f9f9f7; --text-primary: #0b0b0b;
+    --text-secondary: #52514e; --muted: #898781; --grid: #e1e0d9;
+    --baseline: #c3c2b7; --border: rgba(11,11,11,0.12);
+    --series-1: #2a78d6; --series-3: #1baf7a; --series-4: #eda100;
+    --series-5: #e87ba4; --series-6: #008300; --series-7: #4a3aa7;
+    --shadow: rgba(185,185,185,1);
+    --ok-bg: #d8efd8; --ok-line: #3a7d3a; --ok-fg: #1b3d1b;
+    --ng-bg: #f6d6d6; --ng-line: #b03a3a; --ng-fg: #4a1515;
+    --gone-bg: #e3e3e3; --gone-line: #888888; --gone-fg: #333333;
+    --bg: var(--page); --fg: var(--text-primary); --mut: var(--text-secondary);
+    --line: var(--baseline); --card: var(--surface-1);
+    --head-bg: #eeede7; --zebra: #f4f3ee; --code-bg: #ecebe5;
+    --link: #1f5fb0; --accent: #b8860b; --accent-bg: #fff6df; --accent-line: #e0b54a; --note-fg: #4a3a10;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      color-scheme: dark;
+      --surface-1: #1a1a19; --page: #0d0d0d; --text-primary: #f2f2f0;
+      --text-secondary: #c3c2b7; --muted: #898781; --grid: #2c2c2a;
+      --baseline: #4a4a46; --border: rgba(255,255,255,0.14);
+      --series-1: #3987e5; --series-3: #199e70; --series-4: #c98500;
+      --series-5: #d55181; --series-6: #008300; --series-7: #9085e9;
+      --shadow: rgba(0,0,0,0.6);
+      --ok-bg: #173522; --ok-line: #4fae6c; --ok-fg: #d3efd6;
+      --ng-bg: #3d1a1a; --ng-line: #d0605f; --ng-fg: #f6d3d3;
+      --gone-bg: #2a2a28; --gone-line: #7a7a76; --gone-fg: #d6d6d2;
+      --head-bg: #242422; --zebra: #151514; --code-bg: #2a2a27;
+      --link: #86b6f2; --accent: #e3b341; --accent-bg: #2a2310; --accent-line: #8a6d1f; --note-fg: #f3e3b5;
+    }
+    html:not([data-theme="light"]), html:not([data-theme="light"]) body { background: #0d0d0d; color: #f2f2f0; }
+  }
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --surface-1: #1a1a19; --page: #0d0d0d; --text-primary: #f2f2f0;
+    --text-secondary: #c3c2b7; --muted: #898781; --grid: #2c2c2a;
+    --baseline: #4a4a46; --border: rgba(255,255,255,0.14);
+    --series-1: #3987e5; --series-3: #199e70; --series-4: #c98500;
+    --series-5: #d55181; --series-6: #008300; --series-7: #9085e9;
+    --shadow: rgba(0,0,0,0.6);
+    --ok-bg: #173522; --ok-line: #4fae6c; --ok-fg: #d3efd6;
+    --ng-bg: #3d1a1a; --ng-line: #d0605f; --ng-fg: #f6d3d3;
+    --gone-bg: #2a2a28; --gone-line: #7a7a76; --gone-fg: #d6d6d2;
+    --head-bg: #242422; --zebra: #151514; --code-bg: #2a2a27;
+    --link: #86b6f2; --accent: #e3b341; --accent-bg: #2a2310; --accent-line: #8a6d1f; --note-fg: #f3e3b5;
+  }
+  /* 地と字は literal でも書く(sandbox の iframe で変数が読めない時も真っ白・透明にしない) */
+  html, body { background: #f9f9f7; color: #0b0b0b; }
+  html[data-theme="dark"], html[data-theme="dark"] body { background: #0d0d0d; color: #f2f2f0; }
+  html, body { background: var(--bg); color: var(--fg); }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: system-ui, -apple-system, "Segoe UI", "Hiragino Sans", sans-serif;
+    font-size: 15px; line-height: 1.75; padding: 28px 20px 72px; }
+  .wrap { max-width: 1000px; margin: 0 auto; }
+  h1 { font-size: 23px; font-weight: 700; line-height: 1.45; margin: 6px 0 18px; }
+  h2 { font-size: 18px; font-weight: 700; margin: 44px 0 10px; padding-bottom: 4px;
+    border-bottom: 1px solid var(--line); }
+  h3 { font-size: 15.5px; font-weight: 700; margin: 26px 0 8px; }
+  .wrap > p, section > p, details > p { margin: 8px 0; }
+  strong { font-weight: 700; }
+  code { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 0.88em;
+    background: var(--code-bg); color: var(--fg); padding: 1px 5px; border-radius: 4px; }
+  a { color: var(--link); text-decoration: none; }
+  a:hover, a:focus-visible { text-decoration: underline; }
+  a.g { border-bottom: 1px dotted var(--link); }
+  a.g:hover { text-decoration: none; }
+
+  /* 表(幅 1280 で横スクロールが要らないよう、min-width を置かず列の幅で折り返す) */
+  .tw { margin: 10px 0 14px; border: 1px solid var(--line); border-radius: 8px;
+    background: var(--card); overflow: hidden; }
+  table { border-collapse: collapse; width: 100%; table-layout: fixed; font-size: 13.5px; line-height: 1.65;
+    font-variant-numeric: tabular-nums; }
+  th, td { text-align: left; vertical-align: top; padding: 8px 10px; overflow-wrap: anywhere;
+    border-bottom: 1px solid var(--line); border-right: 1px solid var(--grid); }
+  th:last-child, td:last-child { border-right: 0; }
+  tbody tr:last-child td { border-bottom: 0; }
+  thead th { background: var(--head-bg); font-weight: 700; }
+  tbody tr:nth-child(even) td { background: var(--zebra); }
+  td .num { display: block; font-size: 20px; font-weight: 700; line-height: 1.3; }
+  td .sub { display: block; color: var(--mut); font-size: 12.5px; }
+  td ul { margin: 0; padding-left: 1.2em; }
+  td li + li { margin-top: 4px; }
+  td code, p code, li code { overflow-wrap: anywhere; }
+
+  /* 冒頭 */
+  .lead { color: var(--mut); font-size: 13px; margin: -10px 0 18px; }
+  .ask { margin: 14px 0 6px; padding: 10px 16px; border: 2px solid var(--accent-line);
+    border-left-width: 6px; border-radius: 10px; background: var(--accent-bg); color: var(--fg); }
+  .note { font-size: 13.5px; color: var(--mut); margin: 4px 0 10px; }
+  h2 { margin-top: 30px; }
+
+  /* 図(プリレンダーの SVG を直に。width/height は後処理で外してあり、SVG 自身の max-width = 原寸) */
+  figure.fig { margin: 12px 0 14px; padding: 14px 14px 6px; background: var(--card);
+    border: 1px solid var(--border); border-radius: 10px; }
+  .fig svg { display: block; margin: 0 auto; max-width: 100%; height: auto; }
+  figure.fig figcaption { font-size: 12.5px; color: var(--mut); text-align: center; margin-top: 6px; }
+
+  /* 末尾の参照 */
+  .refs { margin-top: 28px; padding-top: 10px; border-top: 1px solid var(--line); font-size: 13px; color: var(--mut); }
+  .refs p { margin: 4px 0; }
+
+  /* テーマの切り替え */
+  .themebar { position: sticky; top: 8px; z-index: 5; display: flex; justify-content: flex-end; }
+  .themebar .tg { display: inline-flex; border: 1px solid var(--border); border-radius: 999px;
+    background: var(--card); overflow: hidden; font-size: 11.5px; }
+  .themebar button { all: unset; padding: 4px 12px; cursor: pointer; color: var(--mut); }
+  .themebar button[aria-pressed="true"] { background: var(--grid); color: var(--fg); font-weight: 700; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<div class="themebar"><span class="tg" role="group" aria-label="テーマ切替">
+  <button data-set="auto" aria-pressed="true">自動</button><button data-set="light" aria-pressed="false">ライト</button><button data-set="dark" aria-pressed="false">ダーク</button>
+</span></div>
+
+<h1>使わないと決めた言葉の検査 — 残り 161 件の片づけ方</h1>
+<p class="lead">短い版・2026-10-01・確認用(9 月 30 日の長い報告を 1 ページにまとめた物)</p>
+
+<h2 id="what">何の話か</h2>
+<p>agora-controllers という repo には、使わないと決めた言葉や呼び出しを code の中から機械で見つける検査(doeff-linter の規則)があります。いまこの検査で「重大(critical)」と出ている物が 161 件残っています。内訳は、<code>mail</code> / <code>letter</code> を code の中の名前に使っている物が 153 件、担当の名前 <code>agora-kanban-dialogue</code> を文字列で直に書いている物が 2 件、時計の呼び出し <code>time.time</code> が 6 件です。9 月 30 日の夜に「mail / letter を code の中の名前に使わない決めは正しい・重大のまま」と決めていただきました。</p>
+<p class="ask"><strong>確認してほしい事:</strong> 下の「決めた事」の表の 4 行は、推奨どおりに採って既に進めています(どれも元に戻せます)。「推奨どおりでよい」か「この行が違う」かを教えてください。</p>
+
+<h2 id="breakdown">161 件はどう片づくか</h2>
+<div class="tw"><table>
+<colgroup><col style="width:14%"><col style="width:43%"><col style="width:43%"></colgroup>
+<thead><tr><th>件数</th><th>中身</th><th>片づけ方</th></tr></thead>
+<tbody>
+<tr><td><span class="num">148 件</span><span class="sub">本当に直す物</span></td>
+<td>code とテストの中の変数・引数・型の欄・補助関数の名前に mail / letter を使っている(146 件)。担当の名前を文字列で直に書いている(2 件)。</td>
+<td>名前を Message 系に変える(例: <code>letter</code> → <code>message-fact</code>)。2 件は定数に置き換える。検査は変えない。別の担当が作業中。</td></tr>
+<tr><td><span class="num">7 件</span><span class="sub">変えられない名前</span></td>
+<td>外部との約束(契約の JSON)で決まっている名前。ACP との契約の欄 <code>carrier.mail</code>(2 件)と、記録の service・画面との通信で使う種類の値 <code>"mail"</code>(5 件)。</td>
+<td>相手と共有している名前なので、こちらだけでは変えられない。検査が契約の JSON を読み、そこに在る名前ちょうどの所を数えなければ消える。</td></tr>
+<tr><td><span class="num">6 件</span><span class="sub">時計</span></td>
+<td>検証用の模擬環境から本物の画面へ実際の socket で繋ぐテスト用の部品が、<code>time.time</code> で壁時計を読んでいる。</td>
+<td>この部品は、生の入出力を禁じる別の検査の設定で「外の世界に触れてよい部品(時計を含む)」として登録済み。時計の検査もこの登録を読み、部品の中だけ数えなければ消える。</td></tr>
+</tbody></table></div>
+<p class="note">契約の件を直すと、今は「特定の文字列を含む行は丸ごと数えない」という除外で隠れている変数 <code>letter</code> が 6 か所見えるようになります。これも名前の変更で片づくので、直す物は合計 154 件です。</p>
+
+<figure class="fig" id="fig-flow"><svg id="mmd-flow" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" class="flowchart" style="max-width: 602.625px; background-color: transparent;" viewBox="4 4 602.625 294" role="graphics-document document" aria-roledescription="flowchart-v2"><style>#mmd-flow{font-family:system-ui,-apple-system,'Hiragino Sans',sans-serif;font-size:14px;fill:var(--text-primary);}@keyframes edge-animation-frame{from{stroke-dashoffset:0;}}@keyframes dash{to{stroke-dashoffset:0;}}#mmd-flow .edge-animation-slow{stroke-dasharray:9,5!important;stroke-dashoffset:900;animation:dash 50s linear infinite;stroke-linecap:round;}#mmd-flow .edge-animation-fast{stroke-dasharray:9,5!important;stroke-dashoffset:900;animation:dash 20s linear infinite;stroke-linecap:round;}#mmd-flow .error-icon{fill:var(--surface-1);}#mmd-flow .error-text{fill:var(--text-primary);stroke:var(--text-primary);}#mmd-flow .edge-thickness-normal{stroke-width:1px;}#mmd-flow .edge-thickness-thick{stroke-width:3.5px;}#mmd-flow .edge-pattern-solid{stroke-dasharray:0;}#mmd-flow .edge-thickness-invisible{stroke-width:0;fill:none;}#mmd-flow .edge-pattern-dashed{stroke-dasharray:3;}#mmd-flow .edge-pattern-dotted{stroke-dasharray:2;}#mmd-flow .marker{fill:var(--muted);stroke:var(--muted);}#mmd-flow .marker.cross{stroke:var(--muted);}#mmd-flow svg{font-family:system-ui,-apple-system,'Hiragino Sans',sans-serif;font-size:14px;}#mmd-flow p{margin:0;}#mmd-flow .label{font-family:system-ui,-apple-system,'Hiragino Sans',sans-serif;color:var(--text-primary);}#mmd-flow .cluster-label text{fill:var(--text-primary);}#mmd-flow .cluster-label span{color:var(--text-primary);}#mmd-flow .cluster-label span p{background-color:transparent;}#mmd-flow .label text,#mmd-flow span{fill:var(--text-primary);color:var(--text-primary);}#mmd-flow .node rect,#mmd-flow .node circle,#mmd-flow .node ellipse,#mmd-flow .node polygon,#mmd-flow .node path{fill:var(--page);stroke:var(--baseline);stroke-width:1px;}#mmd-flow .rough-node .label text,#mmd-flow .node .label text,#mmd-flow .image-shape .label,#mmd-flow .icon-shape .label{text-anchor:middle;}#mmd-flow .node .katex path{fill:#000;stroke:#000;stroke-width:1px;}#mmd-flow .rough-node .label,#mmd-flow .node .label,#mmd-flow .image-shape .label,#mmd-flow .icon-shape .label{text-align:center;}#mmd-flow .node.clickable{cursor:pointer;}#mmd-flow .root .anchor path{fill:var(--muted)!important;stroke-width:0;stroke:var(--muted);}#mmd-flow .arrowheadPath{fill:var(--text-primary);}#mmd-flow .edgePaths .path{stroke:var(--muted);stroke-width:1px;}#mmd-flow .flowchart-link{stroke:var(--muted);fill:none;}#mmd-flow .edgeLabel{background-color:var(--surface-1);text-align:center;}#mmd-flow .edgeLabel p{background-color:var(--surface-1);}#mmd-flow .edgeLabel rect{opacity:0.5;background-color:var(--surface-1);fill:var(--surface-1);}#mmd-flow .labelBkg{background-color:var(--surface-1);}#mmd-flow .cluster rect{fill:var(--surface-1);stroke:var(--baseline);stroke-width:1px;}#mmd-flow .cluster text{fill:var(--text-primary);}#mmd-flow .cluster span{color:var(--text-primary);}#mmd-flow .node .collapsed-indicator{fill:var(--baseline);stroke:none;opacity:0.6;}#mmd-flow .node .collapsed-separator{stroke:var(--baseline);stroke-width:0.75px;}#mmd-flow div.mermaidTooltip{position:absolute;text-align:center;max-width:200px;padding:2px;font-family:system-ui,-apple-system,'Hiragino Sans',sans-serif;font-size:12px;background:var(--surface-1);border:1px solid hsl(60, 0%, 88.6274509804%);border-radius:2px;pointer-events:none;z-index:100;}#mmd-flow .flowchartTitleText{text-anchor:middle;font-size:18px;fill:var(--text-primary);}#mmd-flow rect.text{fill:none;stroke-width:0;}#mmd-flow .icon-shape,#mmd-flow .image-shape{background-color:var(--surface-1);text-align:center;}#mmd-flow .icon-shape p,#mmd-flow .image-shape p{background-color:var(--surface-1);padding:2px;}#mmd-flow .icon-shape .label rect,#mmd-flow .image-shape .label rect{opacity:0.5;background-color:var(--surface-1);fill:var(--surface-1);}#mmd-flow .label-icon{display:inline-block;height:1em;overflow:visible;vertical-align:-0.125em;}#mmd-flow .node .label-icon path{fill:currentColor;stroke:revert;stroke-width:revert;}#mmd-flow .node .neo-node{stroke:var(--baseline);}#mmd-flow [data-look="neo"].node rect,#mmd-flow [data-look="neo"].cluster rect,#mmd-flow [data-look="neo"].node polygon{stroke:url(#mmd-flow-gradient);filter:drop-shadow( 1px 2px 2px var(--shadow));}#mmd-flow [data-look="neo"].swimlane.cluster rect{filter:none;}#mmd-flow [data-look="neo"].node path{stroke:url(#mmd-flow-gradient);stroke-width:1px;}#mmd-flow [data-look="neo"].node .outer-path{filter:drop-shadow( 1px 2px 2px var(--shadow));}#mmd-flow [data-look="neo"].node .neo-line path{stroke:var(--baseline);filter:none;}#mmd-flow [data-look="neo"].node circle{stroke:url(#mmd-flow-gradient);filter:drop-shadow( 1px 2px 2px var(--shadow));}#mmd-flow [data-look="neo"].node circle .state-start{fill:var(--text-primary);}#mmd-flow [data-look="neo"].icon-shape .icon{fill:url(#mmd-flow-gradient);filter:drop-shadow( 1px 2px 2px var(--shadow));}#mmd-flow [data-look="neo"].icon-shape .icon-neo path{stroke:url(#mmd-flow-gradient);filter:drop-shadow( 1px 2px 2px var(--shadow));}#mmd-flow :root{--mermaid-font-family:"trebuchet ms",verdana,arial,sans-serif;}#mmd-flow .pass&gt;*{fill:var(--ok-bg)!important;stroke:var(--ok-line)!important;color:var(--ok-fg)!important;}#mmd-flow .pass span{fill:var(--ok-bg)!important;stroke:var(--ok-line)!important;color:var(--ok-fg)!important;}#mmd-flow .pass tspan{fill:var(--ok-fg)!important;}#mmd-flow .note&gt;*{fill:var(--accent-bg)!important;stroke:var(--accent-line)!important;color:var(--note-fg)!important;}#mmd-flow .note span{fill:var(--accent-bg)!important;stroke:var(--accent-line)!important;color:var(--note-fg)!important;}#mmd-flow .note tspan{fill:var(--note-fg)!important;}#mmd-flow .gone&gt;*{fill:var(--gone-bg)!important;stroke:var(--gone-line)!important;color:var(--gone-fg)!important;}#mmd-flow .gone span{fill:var(--gone-bg)!important;stroke:var(--gone-line)!important;color:var(--gone-fg)!important;}#mmd-flow .gone tspan{fill:var(--gone-fg)!important;}</style><g><marker id="mmd-flow_flowchart-v2-pointEnd" class="marker flowchart-v2" viewBox="0 0 10 10" refX="5" refY="5" markerUnits="userSpaceOnUse" markerWidth="8" markerHeight="8" orient="auto"><path d="M 0 0 L 10 5 L 0 10 z" class="arrowMarkerPath" style="stroke-width: 1; stroke-dasharray: 1, 0;"/></marker><marker id="mmd-flow_flowchart-v2-pointStart" class="marker flowchart-v2" viewBox="0 0 10 10" refX="4.5" refY="5" markerUnits="userSpaceOnUse" markerWidth="8" markerHeight="8" orient="auto"><path d="M 0 5 L 10 10 L 10 0 z" class="arrowMarkerPath" style="stroke-width: 1; stroke-dasharray: 1, 0;"/></marker><marker id="mmd-flow_flowchart-v2-pointEnd-margin" class="marker flowchart-v2" viewBox="0 0 11.5 14" refX="11.5" refY="7" markerUnits="userSpaceOnUse" markerWidth="10.5" markerHeight="14" orient="auto"><path d="M 0 0 L 11.5 7 L 0 14 z" class="arrowMarkerPath" style="stroke-width: 0; stroke-dasharray: 1, 0;"/></marker><marker id="mmd-flow_flowchart-v2-pointStart-margin" class="marker flowchart-v2" viewBox="0 0 11.5 14" refX="1" refY="7" markerUnits="userSpaceOnUse" markerWidth="11.5" markerHeight="14" orient="auto"><polygon points="0,7 11.5,14 11.5,0" class="arrowMarkerPath" style="stroke-width: 0; stroke-dasharray: 1, 0;"/></marker><marker id="mmd-flow_flowchart-v2-circleEnd" class="marker flowchart-v2" viewBox="0 0 10 10" refX="11" refY="5" markerUnits="userSpaceOnUse" markerWidth="11" markerHeight="11" orient="auto"><circle cx="5" cy="5" r="5" class="arrowMarkerPath" style="stroke-width: 1; stroke-dasharray: 1, 0;"/></marker><marker id="mmd-flow_flowchart-v2-circleStart" class="marker flowchart-v2" viewBox="0 0 10 10" refX="-1" refY="5" markerUnits="userSpaceOnUse" markerWidth="11" markerHeight="11" orient="auto"><circle cx="5" cy="5" r="5" class="arrowMarkerPath" style="stroke-width: 1; stroke-dasharray: 1, 0;"/></marker><marker id="mmd-flow_flowchart-v2-circleEnd-margin" class="marker flowchart-v2" viewBox="0 0 10 10" refY="5" refX="12.25" markerUnits="userSpaceOnUse" markerWidth="14" markerHeight="14" orient="auto"><circle cx="5" cy="5" r="5" class="arrowMarkerPath" style="stroke-width: 0; stroke-dasharray: 1, 0;"/></marker><marker id="mmd-flow_flowchart-v2-circleStart-margin" class="marker flowchart-v2" viewBox="0 0 10 10" refX="-2" refY="5" markerUnits="userSpaceOnUse" markerWidth="14" markerHeight="14" orient="auto"><circle cx="5" cy="5" r="5" class="arrowMarkerPath" style="stroke-width: 0; stroke-dasharray: 1, 0;"/></marker><marker id="mmd-flow_flowchart-v2-crossEnd" class="marker cross flowchart-v2" viewBox="0 0 11 11" refX="12" refY="5.2" markerUnits="userSpaceOnUse" markerWidth="11" markerHeight="11" orient="auto"><path d="M 1,1 l 9,9 M 10,1 l -9,9" class="arrowMarkerPath" style="stroke-width: 2; stroke-dasharray: 1, 0;"/></marker><marker id="mmd-flow_flowchart-v2-crossStart" class="marker cross flowchart-v2" viewBox="0 0 11 11" refX="-1" refY="5.2" markerUnits="userSpaceOnUse" markerWidth="11" markerHeight="11" orient="auto"><path d="M 1,1 l 9,9 M 10,1 l -9,9" class="arrowMarkerPath" style="stroke-width: 2; stroke-dasharray: 1, 0;"/></marker><marker id="mmd-flow_flowchart-v2-crossEnd-margin" class="marker cross flowchart-v2" viewBox="0 0 15 15" refX="17.7" refY="7.5" markerUnits="userSpaceOnUse" markerWidth="12" markerHeight="12" orient="auto"><path d="M 1,1 L 14,14 M 1,14 L 14,1" class="arrowMarkerPath" style="stroke-width: 2.5;"/></marker><marker id="mmd-flow_flowchart-v2-crossStart-margin" class="marker cross flowchart-v2" viewBox="0 0 15 15" refX="-3.5" refY="7.5" markerUnits="userSpaceOnUse" markerWidth="12" markerHeight="12" orient="auto"><path d="M 1,1 L 14,14 M 1,14 L 14,1" class="arrowMarkerPath" style="stroke-width: 2.5; stroke-dasharray: 1, 0;"/></marker><g class="root"><g class="clusters"/><g class="edges edgePaths"><path d="M164,144.75L176.92893218813452,144.75Q184,144.75 184,137.67893218813452L184,52.071067811865476Q184,45 191.07106781186548,45L224.1171875,45" id="mmd-flow-L_A_B_0" class="edge-thickness-normal edge-pattern-solid edge-thickness-normal edge-pattern-solid flowchart-link" style="stroke-dasharray: 0 0 150.53883361816406 4; stroke-dashoffset: 0;;" data-edge="true" data-et="edge" data-id="L_A_B_0" data-points="W3sieCI6MTY0LCJ5IjoxNDQuNzV9LHsieCI6MTg0LCJ5IjoxNDQuNzV9LHsieCI6MTg0LCJ5Ijo0NX0seyJ4IjoyMjguMTE3MTg3NSwieSI6NDV9XQ==" data-look="neo" marker-end="url(#mmd-flow_flowchart-v2-pointEnd-margin)"/><path d="M164,151L200,151" id="mmd-flow-L_A_C_0" class="edge-thickness-normal edge-pattern-solid edge-thickness-normal edge-pattern-solid flowchart-link" style="stroke-dasharray: 0 0 32 4; stroke-dashoffset: 0;;" data-edge="true" data-et="edge" data-id="L_A_C_0" data-points="W3sieCI6MTY0LCJ5IjoxNTF9LHsieCI6MjA0LCJ5IjoxNTF9XQ==" data-look="neo" marker-end="url(#mmd-flow_flowchart-v2-pointEnd-margin)"/><path d="M164,157.25L176.92893218813452,157.25Q184,157.25 184,164.32106781186548L184,249.92893218813452Q184,257 191.07106781186548,257L208.3125,257" id="mmd-flow-L_A_D_0" class="edge-thickness-normal edge-pattern-solid edge-thickness-normal edge-pattern-solid flowchart-link" style="stroke-dasharray: 0 0 134.7341766357422 4; stroke-dashoffset: 0;;" data-edge="true" data-et="edge" data-id="L_A_D_0" data-points="W3sieCI6MTY0LCJ5IjoxNTcuMjV9LHsieCI6MTg0LCJ5IjoxNTcuMjV9LHsieCI6MTg0LCJ5IjoyNTd9LHsieCI6MjEyLjMxMjUsInkiOjI1N31d" data-look="neo" marker-end="url(#mmd-flow_flowchart-v2-pointEnd-margin)"/><path d="M382.5078125,45L419.5539321881345,45Q426.625,45 426.625,52.071067811865476L426.625,137.67893218813452Q426.625,144.75 433.6960678118655,144.75L442.625,144.75" id="mmd-flow-L_B_Z_0" class="edge-thickness-normal edge-pattern-solid edge-thickness-normal edge-pattern-solid flowchart-link" style="stroke-dasharray: 0 0 150.5388946533203 4; stroke-dashoffset: 0;;" data-edge="true" data-et="edge" data-id="L_B_Z_0" data-points="W3sieCI6MzgyLjUwNzgxMjUsInkiOjQ1fSx7IngiOjQyNi42MjUsInkiOjQ1fSx7IngiOjQyNi42MjUsInkiOjE0NC43NX0seyJ4Ijo0NDYuNjI1LCJ5IjoxNDQuNzV9XQ==" data-look="neo" marker-end="url(#mmd-flow_flowchart-v2-pointEnd-margin)"/><path d="M406.625,151L442.625,151" id="mmd-flow-L_C_Z_0" class="edge-thickness-normal edge-pattern-solid edge-thickness-normal edge-pattern-solid flowchart-link" style="stroke-dasharray: 0 0 32 4; stroke-dashoffset: 0;;" data-edge="true" data-et="edge" data-id="L_C_Z_0" data-points="W3sieCI6NDA2LjYyNSwieSI6MTUxfSx7IngiOjQ0Ni42MjUsInkiOjE1MX1d" data-look="neo" marker-end="url(#mmd-flow_flowchart-v2-pointEnd-margin)"/><path d="M398.3125,257L419.5539321881345,257Q426.625,257 426.625,249.92893218813452L426.625,164.32106781186548Q426.625,157.25 433.6960678118655,157.25L442.625,157.25" id="mmd-flow-L_D_Z_0" class="edge-thickness-normal edge-pattern-solid edge-thickness-normal edge-pattern-solid flowchart-link" style="stroke-dasharray: 0 0 134.7342071533203 4; stroke-dashoffset: 0;;" data-edge="true" data-et="edge" data-id="L_D_Z_0" data-points="W3sieCI6Mzk4LjMxMjUsInkiOjI1N30seyJ4Ijo0MjYuNjI1LCJ5IjoyNTd9LHsieCI6NDI2LjYyNSwieSI6MTU3LjI1fSx7IngiOjQ0Ni42MjUsInkiOjE1Ny4yNX1d" data-look="neo" marker-end="url(#mmd-flow_flowchart-v2-pointEnd-margin)"/></g><g class="edgeLabels"/><g class="nodes"><g class="node default" id="mmd-flow-flowchart-A-0" data-look="neo" transform="translate(88, 151)"><rect class="basic label-container" style="" x="-76" y="-22.5" width="152" height="45"/><g class="label" style="" transform="translate(-60, -10.5)"><rect/><foreignObject width="120" height="21"><div xmlns="http://www.w3.org/1999/xhtml" style="display: table; white-space: nowrap; line-height: 1.5; max-width: 320px; text-align: center; width: 120px;"><span class="nodeLabel"><p>いま重大 161 件</p></span></div></foreignObject></g></g><g class="node default note" id="mmd-flow-flowchart-B-1" data-look="neo" transform="translate(305.3125, 45)"><rect class="basic label-container" style="fill:var(--accent-bg) !important;stroke:var(--accent-line) !important" x="-77.1953125" y="-33" width="154.390625" height="66"/><g class="label" style="color:var(--note-fg) !important" transform="translate(-61.1953125, -21)"><rect/><foreignObject width="122.390625" height="42"><div style="color: var(--note-fg) !important; display: table-cell; white-space: nowrap; line-height: 1.5; max-width: 320px; text-align: center;" xmlns="http://www.w3.org/1999/xhtml"><span style="color:var(--note-fg) !important" class="nodeLabel"><p>名前を直す 148 件<br />(別の担当が作業中)</p></span></div></foreignObject></g></g><g class="node default gone" id="mmd-flow-flowchart-C-2" data-look="neo" transform="translate(305.3125, 151)"><rect class="basic label-container" style="fill:var(--gone-bg) !important;stroke:var(--gone-line) !important" x="-101.3125" y="-33" width="202.625" height="66"/><g class="label" style="color:var(--gone-fg) !important" transform="translate(-85.3125, -21)"><rect/><foreignObject width="170.625" height="42"><div style="color: var(--gone-fg) !important; display: table-cell; white-space: nowrap; line-height: 1.5; max-width: 320px; text-align: center;" xmlns="http://www.w3.org/1999/xhtml"><span style="color:var(--gone-fg) !important" class="nodeLabel"><p>契約で決まった名前 7 件<br />検査が契約の JSON を読む</p></span></div></foreignObject></g></g><g class="node default gone" id="mmd-flow-flowchart-D-3" data-look="neo" transform="translate(305.3125, 257)"><rect class="basic label-container" style="fill:var(--gone-bg) !important;stroke:var(--gone-line) !important" x="-93" y="-33" width="186" height="66"/><g class="label" style="color:var(--gone-fg) !important" transform="translate(-77, -21)"><rect/><foreignObject width="154" height="42"><div style="color: var(--gone-fg) !important; display: table-cell; white-space: nowrap; line-height: 1.5; max-width: 320px; text-align: center;" xmlns="http://www.w3.org/1999/xhtml"><span style="color:var(--gone-fg) !important" class="nodeLabel"><p>time.time 6 件<br />検査が部品の登録を読む</p></span></div></foreignObject></g></g><g class="node default pass" id="mmd-flow-flowchart-Z-4" data-look="neo" transform="translate(522.625, 151)"><rect class="basic label-container" style="fill:var(--ok-bg) !important;stroke:var(--ok-line) !important" x="-76" y="-22.5" width="152" height="45"/><g class="label" style="color:var(--ok-fg) !important" transform="translate(-60, -10.5)"><rect/><foreignObject width="120" height="21"><div style="color: var(--ok-fg) !important; display: table; white-space: nowrap; line-height: 1.5; max-width: 320px; text-align: center; width: 120px;" xmlns="http://www.w3.org/1999/xhtml"><span style="color:var(--ok-fg) !important" class="nodeLabel"><p>0 件</p></span></div></foreignObject></g></g></g></g></g><defs><filter id="mmd-flow-drop-shadow" height="130%" width="130%"><feDropShadow dx="4" dy="4" stdDeviation="0" flood-opacity="0.06" flood-color="var(--text-primary)"/></filter></defs><defs><filter id="mmd-flow-drop-shadow-small" height="150%" width="150%"><feDropShadow dx="2" dy="2" stdDeviation="0" flood-opacity="0.06" flood-color="var(--text-primary)"/></filter></defs><linearGradient id="mmd-flow-gradient" gradientUnits="objectBoundingBox" x1="0%" y1="0%" x2="100%" y2="0%"><stop offset="0%" stop-color="var(--baseline)" stop-opacity="1"/><stop offset="100%" stop-color="hsl(60, 0%, 88.6274509804%)" stop-opacity="1"/></linearGradient></svg><figcaption>図 — 161 件が 0 件になるまでの 3 つの流れ(黄色 = code を直す・灰色 = 検査の側を直すと消える)</figcaption></figure>
+
+<h2 id="decisions">決めた事と、覆すならここ</h2>
+<div class="tw"><table>
+<colgroup><col style="width:25%"><col style="width:34%"><col style="width:28%"><col style="width:13%"></colgroup>
+<thead><tr><th>決めた事</th><th>理由</th><th>覆す時の別の案</th><th>戻し方</th></tr></thead>
+<tbody>
+<tr><td><strong>契約の欄名の件</strong> — 検査が契約の JSON を読み、そこに在る名前ちょうどの所は数えない。変数・引数・内部の欄は今どおり数える。</td>
+<td>数えない理由が「契約に書いてあるか」になる。今の「特定の文字列を含む行を丸ごと除外」は同じ行の内部の名前まで隠し(6 か所)、改行や並びを変えると黙って効かなくなる。doeff-linter(Rust)の変更で 4〜6 時間。</td>
+<td>除外する文字列を 4〜5 個足す(10 分・隠れる問題は残る)。型の定義に内部の名前と外部の名前を分けて書く(1〜2 日・実行時の変換に触るので危険)。</td>
+<td>契約の JSON の指定を消し、除外の文字列を戻す。</td></tr>
+<tr><td><strong>時計の件</strong> — 時計の検査が「外の世界に触れてよい部品」の登録を読み、その部品の中だけ <code>time.time</code> を数えない。</td>
+<td>今は同じ部品に「時計に触ってよい」と「<code>time.time</code> を呼ばない」の 2 つの設定が逆のことを言い、検査ごとに片方しか読まない。この形なら登録が 1 か所になり、模擬環境のほかの code の <code>time.time</code> は今どおり見張られる。Rust の変更で 2〜3 時間。</td>
+<td>禁止一覧から <code>time.time</code> を外す(30 分)— 生の入出力の検査は模擬環境の code を見ないので、そこの <code>time.time</code> が見張られなくなる。部品を doeff の時計の effect で読む(1〜2 時間・設定の食い違いは残る)。</td>
+<td><code>git revert</code></td></tr>
+<tr><td><strong>テストの file も直す</strong> — 検査の対象のまま名前を変える(74 件・作業中)。</td>
+<td>「テストの補助関数でも使わない」「除外・既知の一覧・重大さの引き下げで通さない」は決め済み。対象から外すと、テストに mail / letter が戻っても気づけない。</td>
+<td>テストを対象から外す(5 分)。テストだけ重大さを下げる(2〜3 時間)。どちらも 9 月 30 日の決めと食い違う。</td>
+<td><code>git revert</code></td></tr>
+<tr><td><strong>ついでに 3 つ</strong><ul><li>検査の助言文を直す</li><li><code>.py</code> / <code>.pyi</code> も対象に足す</li><li>複合語は今は数えない</li></ul></td>
+<td><ul><li><strong>助言文:</strong> まだ「直せない物は既知の一覧に載せる」と勧めている(一覧は廃止済み)。</li><li><strong>.py:</strong> 型の欄 <code>mail</code> は <code>.py</code> に在り、今の検査は読まない。<code>.hy</code> だけ直すと実行時に TypeError。</li><li><strong>複合語:</strong> <code>letters</code>・<code>mail-row</code> など約 1,000 か所。0 件の後に、どこまで改名するかを改めて確認します。</li></ul></td>
+<td>それぞれ、しない。複合語は今すぐ数える。</td>
+<td>それぞれ 1 か所を戻す。</td></tr>
+</tbody></table></div>
+
+<div class="refs">
+<p>詳しい根拠(検査 DOEFF150・151・106 の実装の抜粋、161 件の file と行の一覧、案ごとの見積り)は長い版 <code>discuss-doeff-linter-vocabulary-rules-2026-09-30.html</code>(成果物一覧)にあります。時計の件は、長い版の推奨(禁止一覧から外す)を実物で確かめた後に上の形へ改めました。</p>
+<p>決定の記録: doeff の <code>docs/design/doeff-linter-rule-level/records/decision-8f0100aee2ac.json</code>。追跡の issue: agora-redesign #1876・#1877。</p>
+</div>
+
+
+</div>
+<script>
+"use strict";
+const root = document.documentElement;
+const initial = root.getAttribute("data-theme") || "auto";
+document.querySelectorAll(".themebar button").forEach(b => {
+  b.setAttribute("aria-pressed", String(b.dataset.set === initial));
+  b.addEventListener("click", () => {
+    const v = b.dataset.set;
+    if (v === "auto") root.removeAttribute("data-theme"); else root.setAttribute("data-theme", v);
+    document.querySelectorAll(".themebar button").forEach(x => x.setAttribute("aria-pressed", String(x === b)));
+  });
+});
+// 用語の link・付録の中の節への link を押した時は、折りたたみを開いてから飛ぶ
+function openFor(hash) {
+  if (!hash || hash.length < 2) return;
+  const el = document.getElementById(decodeURIComponent(hash.slice(1)));
+  if (!el) return;
+  const d = el.closest("details");
+  if (d && !d.open) d.open = true;
+  el.scrollIntoView({ block: "center" });
+}
+document.addEventListener("click", e => {
+  const a = e.target.closest('a[href^="#"]');
+  if (!a) return;
+  e.preventDefault();
+  history.replaceState(null, "", a.getAttribute("href"));
+  openFor(a.getAttribute("href"));
+});
+if (location.hash) openFor(location.hash);
+</script>
+</body>
+</html>

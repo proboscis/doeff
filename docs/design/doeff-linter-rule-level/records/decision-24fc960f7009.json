@@ -1,0 +1,45 @@
+{
+  "artifacts": [
+    {
+      "path": "artifacts/v9/discuss-doeff-linter-vocabulary-rules-short-2026-10-01.html",
+      "sha256": "a18771fb536691658dfa667aea3c24cb56434e60394f8660cf35a26bcfdbc65f"
+    }
+  ],
+  "body": {
+    "actor": "agent",
+    "authority": "internal",
+    "decision": "design",
+    "outcome": "accepted",
+    "scope_of_agreement": "旧 decision-8f0100aee2ac の 2 点目(time.time 6 件の直し方)だけを案 A から案 B へ置き換える。1・3〜7 点目は内容を変えず引き継ぐ。旧 decision の同意の範囲(逐語): DOEFF150 / 151(語彙の規則)の側の欠陥 4 つと参考 3 つの扱い(上の 7 点)。design-4e43f6201972 の「規則の側の直し 8 点」のうち 3(DOEFF150 から契約と wire の欄名を外す)の実現の仕方を、行の目印から契約の file を読む形へ改める決定でもある(意図は decision-093208de9eb9 の Q2-3 のまま)。実行許可(decision = execution)は含まない。配布は agora-redesign #1877 の子 issue で行う。operator の明示の応答が後で来て食い違えば、新しい decision で置き換える。 実行許可(decision = execution)は含まない。この記録は実装を起動しない(DOEFF151 の実装は agora-redesign #1894 の担当が行い、doeff の commit fcc00a32c で main に入っている)。operator の明示の応答が後で来て食い違えば、新しい decision で置き換える。",
+    "source": "決めた事 = zeus の coordinator cisco-c8 が、担当 kn-w21 の確かめを受けて 2026-10-01 00:39 JST に案 A から案 B へ変更(agora-redesign #1894 の comment 2 件: 確かめ = issuecomment-5914581331(2026-10-01 00:38 JST)・変更 = issuecomment-5914595009(2026-10-01 00:39 JST))。追跡 = #1894(案 B の実装)・#1896(部品を時計の effect で読む改善・優先低)・親 #1877・#1880。operator の逐語の応答は無い(actor = agent・authority = internal)。短い版の報告 = artifact discuss-doeff-linter-vocabulary-rules-short-2026-10-01.html(sha256 a18771fb536691658dfa667aea3c24cb56434e60394f8660cf35a26bcfdbc65f)・写し = artifacts/v9/discuss-doeff-linter-vocabulary-rules-short-2026-10-01.html。この短い版は時計の件を案 B の形で書いており、末尾の「決定の記録」の欄は旧 decision-8f0100aee2ac を指すが、時計の件の現在の決めはこの decision である(artifact は保存後に変えないので欄はそのまま)。置き換える対象 = decision-8f0100aee2ac(created_at 2026-09-30T15:33:40Z = 2026-10-01 00:33 JST・commit a7fa26a7f)。その source の「2026-10-01 01:2x JST」は created_at と食い違う(実際の記録時刻は 00:33〜00:34 JST)。旧 record は消さず、そのまま残す。",
+    "statement": "zeus の coordinator cisco-c8 が、担当 kn-w21 の確かめを受けて 2026-10-01 00:39 JST に、戻せる決定(two-way door)として、decision-8f0100aee2ac の 7 点のうち 2 点目(欠陥 2 = time.time 6 件の直し方)だけを案 A から案 B へ変えた。この decision はその変更を記録し、decision-8f0100aee2ac を置き換える(supersedes は record 単位なので、変えない 1・3〜7 点目は下に旧 record の文のまま引き継ぐ。この 1 件を読めば現在の 7 点が分かる)。\n\n旧 decision の前文(逐語): 議論の担当(herdr pane linter-discuss・Mac)が、戻せる決定(two-way door)として次の 7 点を採った。operator は根拠の報告を読んでおり、異議は出ていない(明示の賛成の応答ではないので、actor = agent・authority = internal で記録する)。前提の決定(operator 2026-09-30 23:5x 逐語 \"a: correct. b: keep critical c: idk. i want html report around this matter to discuss.\")= a: mail / letter を内部の名でも禁じる語彙の決めは正しい・b: 語彙の規則は critical のまま。c(規則の側の欠陥を直すか)を、報告の §4 の比較(各案の効く件数・実装の場所と規模・副作用)で次のとおり決めた。戻し方はどれも revert。\n1. 欠陥 1(契約で決まった綴りを許す手段が「行の目印」しかない)= 案 2。DOEFF150 が契約の JSON(グループの :contract-files)を読み、契約の欄名と一致する文字列と、wire の型(defwire)の欄の定義を数えない。契約の欄名を許すためだけの :rule-lines は消す(無効の目印 current.letters・previous.letters・\"letters\" \"upsert\" を消すと、隠れていた内部の名 6 行が出る。欄を読む行の目印 carrier.mail・InputCarrier など約 20 行は報告 §4.1 の After のとおり残る)。効く = 7 件消え 6 件出る。実装の場所 = doeff-linter の retired.rs・architecture.rs と agora-controllers の architecture.hy。戻し方 = :contract-files を消し :rule-lines を戻す。\n2. 欠陥 2(time.time を DOEFF106 と DOEFF151 が逆に決める)= 案 B(旧: 案 A)。DOEFF151 が agora-controllers の architecture.hy の :boundary-parts の宣言(:touches に clock を持つ部品)を読み、その部品の module の中の時計の呼び(time.time)だけを当てない。\"time.time\" は :retired-calls に残す。時計を直に呼んでよい場所の宣言が :boundary-parts の 1 か所になり(DOEFF106 と DOEFF151 が同じ宣言を読む)、controllers/agora_sim の(テストでない)module に今後書かれる code への守りも残る。効く = 境目の部品 local_screen_socket_client.hy の 6 件が消える。境目の部品でない module の time.time は今どおり当たる。実装の場所 = doeff-linter の retired.rs・mod.rs と、失敗ケースのテスト(宣言した部品の中は当たらない・宣言の無い module は当たる・:touches に clock の無い部品は当たる)。追跡 = agora-redesign #1894。部品が時計を doeff の effect(GetMonotonic / GetTime)で読む直し(旧案 C)は、後でよい改善として別 issue #1896(優先低・実 socket の待ちを模擬の時計で読んでよいかの確かめが要る)。戻し方 = doeff の DOEFF151 の変更と agora-controllers の pin 上げを revert する。\n3. 欠陥 3(置き換え先を shared/intent から import できない)= 取り下げ。kanban の語彙は shared/intent から import できる(同じ置き場の card_marks.hy が既に import している)。本当の違反 2 件(kind_tables.hy 87・154 行)は code で直す。#1880 で main に入っている。規則の側は変えない。\n4. 欠陥 4(テストの file も対象か)= 対象のまま直す(案 1)。テストの helper 41・変数 27・欄の読み 6(追跡 = #1884)。テストを :except に足す案(案 2)とテストだけ重大さを下げる案(案 3)は、前提の決定 b(例外・引き下げで通さない)に反するので採らない。戻し方 = 改名の revert。\n5. 参考 a(hint の文)= DOEFF150 / 151 の hint の「直せない既存の当たりは登録簿に載せる」を消す(決定 A「critical を既知の一覧で通さない」と逆)。同じ文を持つ規則(DOEFF146・140)も直す。場所 = doeff-linter の explain.rs・rule.rs。\n6. 参考 b(.py / .pyi が対象外)= 型の欄 mail / letter が在る .py / .pyi(BoardView・MessagingView・RequestHistoryView・ViewsView・RecordCache)を規則の対象に足す。欄の改名と同じ変更で、:files に controllers/**/*.py と controllers/**/*.pyi を足す(設定 1 行)。\n7. 参考 c(複合語)= letters・mail-row など約 1,000 か所は今は広げない。DOEFF150 / 151 が 0 件になった後(報告 §6 の順 4)に別に決める。\n実装の配布は zeus の coordinator cisco-c8 が agora-redesign #1877 の子 issue として行う。\n\n旧 2 点目(置き換えた文・逐語): 2. 欠陥 2(time.time を DOEFF106 と DOEFF151 が逆に決める)= 案 A。agora-controllers の architecture.hy の :retired-calls の clock から \"time.time\" を外す(生の時計の一覧は DOEFF106 が持つ・重複)。効く = 6 件消える。境目の部品の外の time.time は今どおり DOEFF106 が critical で出す(失敗ケースのテスト 1 本)。部品を時計の effect で読む直し(案 C)は後の改善。戻し方 = \"time.time\" を戻す。\n\n置き換える理由: 旧案 A(agora-controllers の architecture.hy の :retired-calls から \"time.time\" を外す・生の時計の一覧は DOEFF106 が持つので重複)の前提が、実物では成り立たなかった。担当 kn-w21 が、境目の部品でない module を装った file を置き場の path だけ変えて linter に当てて確かめた(agora-redesign #1894 の comment 5914581331): \"time.time\" を外すと、controllers/shared/core・screen/core・screen/protocol・screen/entry・messaging/protocol・automation/core・record/protocol では DOEFF106 が当たり続けるが、controllers/agora_sim の(テストでない)module では何も当たらなくなる(DOEFF106 は層の無い agora_sim を判じない)。消えるのは今ある違反を捕まえる力ではなく、これから agora_sim に書かれる code への守りである。守りが消えるので案 A は採らない。状況の確認: 実装は doeff の commit fcc00a32c(main・2026-10-01 00:50 JST)で入っている。この commit は、時計の呼びを DOEFF106 と同じ生の副作用の目録で分類し、部品が :touches に宣言した触れる先の呼びだけを部品の中で当てない形で、失敗ケースのテスト 1 本(tests/layer_rules.rs の retired_calls_skip_only_the_raw_calls_a_boundary_part_declares)を伴う。",
+    "subjects": [
+      "design-4e43f6201972"
+    ],
+    "supersedes": [
+      "decision-8f0100aee2ac"
+    ]
+  },
+  "created_at": "2026-09-30T15:59:40.281304+00:00",
+  "id": "decision-24fc960f7009",
+  "inputs": [
+    {
+      "id": "design-4e43f6201972",
+      "role": "subject",
+      "sha256": "3876fd51009ac726b1916d65f696b465a920e1f12dcea2af82d4f7b0e0cc7fcb"
+    },
+    {
+      "id": "decision-8f0100aee2ac",
+      "role": "basis",
+      "sha256": "d690780a88508adac42e0716b6efa21da636598faf1d8060209da20eda28bac0"
+    },
+    {
+      "id": "decision-093208de9eb9",
+      "role": "basis",
+      "sha256": "3d4f56a573e7439e429c576874de80c8246cef55cf6670f93498faecefdf06e5"
+    }
+  ],
+  "kind": "decision",
+  "schema_version": 1,
+  "scope": "doeff-linter の規則の重大さ(level: critical・major・minor・info)— doeff-linter の既定と repo ごとの宣言(agora-controllers の pyproject)。どの規則を critical にするか、LLM で判定する規則の閾値と誤判定の扱い"
+}
