@@ -1,0 +1,43 @@
+{
+  "artifacts": [
+    {
+      "path": "artifacts/v10/analysis-jev-judgments-47-by-lines-2026-10-01.html",
+      "sha256": "4c93c6567287de526780b35fee3d8bac4e4b3102767dbe9cfaed2b98b574ff6a"
+    }
+  ],
+  "body": {
+    "actor": "user",
+    "authority": "direct",
+    "decision": "design",
+    "outcome": "accepted",
+    "scope_of_agreement": "Jev の規則 3 つ(DOEFF201・202・205)の当たりの正誤を決める線引き 5 つの採用と、決められなかった 5 行(行 5・29・36・39・47)の扱いの決定。実行許可(decision = execution)は含まない。この記録は実装を起動しない(線引きを architecture.hy の規則の説明に書くこと・Jev への問いの文の変更・失敗ケースのテスト・人の判定の記録の更新・較正・違反 32 件の直しは、agora-redesign #1808 と親 #1877 の担当が行う)。Jev の規則が warning であること(decision-093208de9eb9)と、それを critical に戻す判断は変えない。operator の明示の応答が後で来て食い違えば、新しい decision で置き換える。",
+    "source": "operator 2026-10-01 04:2x JST・herdr pane linter-discuss(Mac・手動の会話)での返答 'sounds right'(根拠の文書 artifact analysis-jev-judgments-47-by-lines-2026-10-01.html〔sha256 4c93c6567287de526780b35fee3d8bac4e4b3102767dbe9cfaed2b98b574ff6a〕への返事。写し = artifacts/v10/analysis-jev-judgments-47-by-lines-2026-10-01.html・文書の組み立ての元〔gen.py・rows.py〕は手元 /Users/kento/experiments/jev-judgments-47/redo に在り、この記録には写していない)。追跡 = agora-redesign #1808(較正)・親 #1877。dotfiles の記録 = ADR-DOTFILES-027 の条 R-92b5d001。",
+    "statement": "逐語: \"sounds right\"\n\n文脈: 議論の担当(herdr pane linter-discuss・Mac・operator が自分で開いた手動の会話)が、agora-controllers の doeff-linter の Jev の規則 3 つ(DOEFF201 = protocol が業務の判断をしている / DOEFF202 = core が通信の手段を知っている / DOEFF205 = 形の確認と判断が混ざる)の当たり 47 件を、線引きの案 5 つに当てて判定し直した文書を出した(artifact analysis-jev-judgments-47-by-lines-2026-10-01.html・sha256 4c93c6567287de526780b35fee3d8bac4e4b3102767dbe9cfaed2b98b574ff6a・写し = artifacts/v10/analysis-jev-judgments-47-by-lines-2026-10-01.html)。文書の冒頭は operator に「線引きの案 5 つを採るか」と「決められない 5 行」の 2 か所だけを見るよう頼んでおり、operator の返事 \"sounds right\" はその 2 点への同意と読む。元の判定(2026-09-30)は違反 21・誤判定 21・迷い 5 で、どの線引きで決めたかが書かれていなかった。\n\n決まった事(2 点):\nA. 線引き 5 つをすべて採る。規則の説明(agora-controllers の architecture.hy)に次の文をそのまま書く(どれも厳しい側)。\n1. (規則 201・protocol の範囲)protocol の定義がしてよいのは、外から来た値の形の確認(型に読む・欄の有無と形式を確かめる)、読み書き、探した物が無い時のエラー値、判断の関数の答えを値に直すことだけとする。業務の状態(記録の値・期限・持ち主・状態の移り方・もう済んだか)を見て、返す答え(渡す・断る・書く・どの結果か)を決めるのは業務の判断で、core の純粋な関数に置く。(9/30 に architecture.hy に書いた「翻訳の handler は読み書きだけを持ち、判断は core の純粋な関数を呼ぶ」と同じ線。custody には core が無いので、採ると core を作る仕事になる。9/29 に誤判定とした record-end-precondition も違反に変わる。)\n2. (規則 202・core と JSON)core は JSON の綴りを知らない。JSON の文字列を作る・読む(json.dumps・json.loads・dump-json)のは protocol か入口の部品で、core は型の値だけを受け取り、返す。本文の JSON から計算する値(ハッシュ・byte 数)と、手元の契約の文書の読み込みも同じ。\n3. (規則 202・core と HTTP)core は HTTP を知らない。URL・path・query を組む・持つこと、HTTP の method・status・ヘッダーを選ぶ・持つこと、外の相手の URL の形(GitHub の commit の URL など)を知ることは protocol でする。HTTP の中継や他の service の HTTP の契約の確認のように、通信そのものを仕事にする service でも同じで、core は「どこへ」「準備できたか」「どの項目が合わないか」を型の値で持つ。\n4. (規則 205・形の確認の範囲)入力の形の確認とは、型の無い値(dict・JSON の値・生の文字列)から欄を読む・isinstance で型を確かめる・欄の有無・空・長さ・形式・語彙を確かめることを言う。型に読んだ後の欄でも、空・長さ・形式・語彙の確認は形の確認に数える。型の union の枝分けは形の確認に数えない。形の確認は入口(protocol か、型へ読む 1 つの関数)で済ませ、判断の定義には持ち込まない。(9/30 の決定「型に読んだ後の欄の制限は形の確認に数えない」を逆にする。これで行 35・37・44 が誤判定から違反に変わる。)\n5. (規則 205・201・判断の範囲)業務の判断とは、業務の決まりで答えを決めること(誰が何をしてよいか・どの結果にするか・何を書くか)を言う。読めなかった値をどの値として扱うか(既定の値に倒す・飛ばす)と、画面や集計のための組み立て(投影・集計)も業務の判断に数える。(「読めない値を既定に倒すのは判断」は規則 201 にも効く。protocol が読めない値を既定に倒せば違反。)\n\nB. 線引きの文が答えを決める所まで言っていなかった 5 行(行 5・29・36・39・47)は、書き手の案どおりに決める。足りなかった所は 2 つ。(1) 読めない値を「無い(None)」で表して判断の関数へ渡すことは、線引き 5 の「既定の値に倒す」に入れない(行 29・39。「無い」で表すのは型に読む処理の一部で、「無い時にどうするか」は判断の関数の側に書いてある)。(2) コードの中の定数の dict や、自分の集計の控え(外から来ていない作業用の dict)は、線引き 4 の「入力」に数えない(行 5・36・47。205 は外から来た値の確認を入口へ寄せる規則で、定数を dict で持つこと自体は別の決まりで扱う)。5 行はすべて誤判定になる。\n\n結果(47 件): 違反 32・誤判定 15。内訳は、線引き 1 が違反 7・誤判定 2・決められない 1(案どおりなら誤判定)/ 線引き 2 が違反 7 / 線引き 3 が違反 5 / 線引き 4 が違反 11・誤判定 4・決められない 3(案どおりなら誤判定)/ 線引き 5 が違反 2・誤判定 4・決められない 1(案どおりなら誤判定)。決められない 5 行を案どおりにする前の数は、違反 32・誤判定 10・決められない 5。元の判定から答えが変わる行は 16(行 1・2・3・4・5・28・29・30・32・33・35・36・37・39・44・47)。\n\nこの決定の次の順(配布は zeus の coordinator cisco-c8): 線引きを architecture.hy の規則の説明に書く → Jev への問いの文に同じ線引きを入れる → 規則の失敗ケースのテスト(線引きの両側の例)→ 人の判定の記録(scripts/doeff_lint/JEV-JUDGMENTS)を違反 32・誤判定 15 に更新 → 較正(agora-redesign #1808)→ 違反 32 件を直す。\n\n戻し方: この decision の commit を revert する(記録だけの変更)。線引きの中身を変える時は、新しい decision でこの decision を置き換える。\n\n関係: decision-093208de9eb9 の設計(Jev の規則〔DOEFF201〜205〕は較正が済むまで warning で ratchet の対象外 — 決定 B)は変えない。この線引きは、その較正の前に「当たりの正誤を決める基準」を規則の文に置く決定。decision-24fc960f7009 と同じ #1877 の流れ(規則の側の直し)で、DOEFF150 / 151 の語彙の規則の直しとは別の規則(Jev の規則 3 つ)を扱う。dotfiles の ADR-DOTFILES-027 の条 R-92b5d001(この決定の記録)・R-a5a32875(当たりは規則の文に書いた線引きに当てて決める)・R-c59dce34(Jev の規則は較正が済むまで warning)。",
+    "subjects": [
+      "design-4e43f6201972"
+    ],
+    "supersedes": []
+  },
+  "created_at": "2026-09-30T17:04:53.952720+00:00",
+  "id": "decision-96f687ea4b25",
+  "inputs": [
+    {
+      "id": "design-4e43f6201972",
+      "role": "subject",
+      "sha256": "3876fd51009ac726b1916d65f696b465a920e1f12dcea2af82d4f7b0e0cc7fcb"
+    },
+    {
+      "id": "decision-093208de9eb9",
+      "role": "basis",
+      "sha256": "3d4f56a573e7439e429c576874de80c8246cef55cf6670f93498faecefdf06e5"
+    },
+    {
+      "id": "decision-24fc960f7009",
+      "role": "basis",
+      "sha256": "532918c1ae83dcb6ca146ce02202abaf38fc2f1e5d1d2b3b487fe6d40a6381a6"
+    }
+  ],
+  "kind": "decision",
+  "schema_version": 1,
+  "scope": "doeff-linter の規則の重大さ(level: critical・major・minor・info)— doeff-linter の既定と repo ごとの宣言(agora-controllers の pyproject)。どの規則を critical にするか、LLM で判定する規則の閾値と誤判定の扱い"
+}
