@@ -38,6 +38,10 @@
 - 登録簿は 1 鍵 1 file(``<鍵の sha256 の先頭 12 字>.txt``・1 行目が鍵・2 行目からが理由で空は不可)。鍵は、実行なら
   pytest の nodeid、収集なら rootdir からの file の path。載った鍵は上限を超えても赤にしない。上限の内に戻った鍵は
   終わりの要約に「消せる」と出す(登録簿は縮める向きだけ — 増えたことを赤にするのは利用側の repo の git の検)。
+  ``fail`` の形では、載った鍵が上限の ``STALE_RATIO``(半分)以下で終わった時、その検を古い登録として赤にする
+  (消し忘れた行は、同じ検が遅く戻っても黙って通す — agora-redesign #1726・#1706。doeff-linter の DOEFF166 と同じ向き)。
+  上限の半分から上限までの間は報告だけ(CPU 秒の揺れで同じ検の合否が走りごとに変わらないように)。
+  測った検だけを判じる(走らなかった検・別の検査の鍵が同じ dir に在っても判じない)。
 - 上限は doeff-vm の不変条件の検査が無効な走行を基準にする。検査が有効な走行(doeff 自身の pytest — root の
   conftest.py が有効にする・agora-redesign #980 からはどの build も検査を持ち実行時に切り替える)は VM の
   1 歩ごとに不変条件を検査し、同じ検が十数倍遅い。session の始めに ``doeff_vm.invariant_checks_enabled()`` を 1 回読み、
@@ -72,6 +76,8 @@ SetAside = Literal["compile", "import"]
 _BOOTSTRAP_MODULE = "importlib._bootstrap"
 _FIND_AND_LOAD = "_find_and_load"
 Mode = Literal["report", "fail"]
+# 登録簿に載った検を古い登録として赤にする秒の割合(上限 × この値以下で終わった時だけ — 上限の近くの揺れで赤と緑を行き来しない)。
+STALE_RATIO = 0.5
 
 
 @dataclass(frozen=True)
@@ -202,7 +208,20 @@ class RegisteredOverBudget:
     measurement: Measurement
 
 
-Verdict = WithinBudget | OverBudget | RegisteredOverBudget
+@dataclass(frozen=True)
+class RegisteredWithinBudget:
+    """登録簿に載っているが上限の内に終わった(消せる登録)。budget = 判定した上限。"""
+
+    measurement: Measurement
+    budget: float
+
+    @property
+    def stale(self) -> bool:
+        """古い登録として赤にするか — 上限 × STALE_RATIO 以下で終わった時だけ。"""
+        return self.measurement.judged_seconds <= self.budget * STALE_RATIO
+
+
+Verdict = WithinBudget | OverBudget | RegisteredOverBudget | RegisteredWithinBudget
 
 
 class RegistryError(Exception):
@@ -240,6 +259,8 @@ def load_registry(directory: Path) -> dict[str, str]:
 def judge(measurement: Measurement, budget: float, registry: Mapping[str, str]) -> Verdict:
     """測った 1 区間を、変換の CPU 秒を引いた値で上限と登録簿に照らす(キャッシュ無しの重さを検の重さにしない)。"""
     if measurement.judged_seconds <= budget:
+        if measurement.key in registry:
+            return RegisteredWithinBudget(measurement, budget)
         return WithinBudget(measurement)
     if measurement.key in registry:
         return RegisteredOverBudget(measurement)
@@ -318,6 +339,16 @@ def over_budget_message(verdict: OverBudget, registry_dirs: Sequence[str]) -> st
         f"doeff の検の時間の上限を超えた: {m.key} の{what}が {_seconds_text(m)}・上限 CPU {verdict.budget:.3f} 秒。"
         "検を速くする(模擬の世界を小さくする・待ちを書き込みで起こす)か、直せない理由があれば "
         f"{where} に鍵 {m.key!r} の file {registry_file_name(m.key)} を理由つきで足す(登録簿は縮める向きだけ)。"
+    )
+
+
+def stale_registration_message(verdict: RegisteredWithinBudget, registry_dirs: Sequence[str]) -> str:
+    """古い登録を赤にした時の文(どの検が・何秒で・上限のいくらで・どの file を消すか)。"""
+    m = verdict.measurement
+    return (
+        f"{m.key} は登録簿に載っているが、{m.phase} の CPU が上限 {verdict.budget:.3f} 秒の"
+        f"{STALE_RATIO:g} 倍以下({_seconds_text(m)})— 古い登録なので登録簿の file "
+        f"{registry_file_name(m.key)} を消す(登録簿は縮める向きだけ・agora-redesign #1726)"
     )
 
 
@@ -562,13 +593,28 @@ def _relative_key(path: Path, root: Path) -> str:
 def _record(config: pytest.Config, verdict: Verdict) -> bool:
     """判定を session の一覧に足し、赤にするべきかを返す(報告のみの形なら警告だけ出して赤にしない)。"""
     config.stash[_VERDICTS_KEY].append(verdict)
-    if not isinstance(verdict, OverBudget):
-        return False
     budgets = config.stash[_BUDGETS_KEY]
-    if budgets.fails_over_budget:
-        return True
-    warnings.warn(BudgetWarning(over_budget_message(verdict, budgets.registry_dirs)), stacklevel=1)
-    return False
+    match verdict:
+        case OverBudget():
+            if budgets.fails_over_budget:
+                return True
+            warnings.warn(BudgetWarning(over_budget_message(verdict, budgets.registry_dirs)), stacklevel=1)
+            return False
+        case RegisteredWithinBudget():
+            return verdict.stale and budgets.fails_over_budget
+        case WithinBudget() | RegisteredOverBudget():
+            return False
+
+
+def _failure_message(verdict: Verdict, registry_dirs: Sequence[str]) -> str:
+    """赤にした判定の文。"""
+    match verdict:
+        case OverBudget():
+            return over_budget_message(verdict, registry_dirs)
+        case RegisteredWithinBudget():
+            return stale_registration_message(verdict, registry_dirs)
+        case WithinBudget() | RegisteredOverBudget():
+            raise AssertionError(f"赤にしない判定の文を求めた: {verdict}")
 
 
 @pytest.hookimpl(wrapper=True, optionalhook=True)
@@ -595,8 +641,8 @@ def pytest_doeff_import_hy_module(
         imports=counter.import_tally().since(imports_before),
     )
     verdict = judge(measurement, budgets.collect_seconds, budgets.registry)
-    if _record(config, verdict) and isinstance(verdict, OverBudget):
-        pytest.fail(over_budget_message(verdict, budgets.registry_dirs), pytrace=False)
+    if _record(config, verdict):
+        pytest.fail(_failure_message(verdict, budgets.registry_dirs), pytrace=False)
     return module
 
 
@@ -652,9 +698,9 @@ def pytest_runtest_makereport(
         imports=measured.imports,
     )
     verdict = judge(measurement, budget, budgets.registry)
-    if _record(config, verdict) and isinstance(verdict, OverBudget):
+    if _record(config, verdict):
         report.outcome = "failed"
-        report.longrepr = over_budget_message(verdict, budgets.registry_dirs)
+        report.longrepr = _failure_message(verdict, budgets.registry_dirs)
     return report
 
 
@@ -668,13 +714,7 @@ def pytest_terminal_summary(
     budgets = config.stash[_BUDGETS_KEY]
     over = [v for v in verdicts if isinstance(v, OverBudget)]
     registered = [v for v in verdicts if isinstance(v, RegisteredOverBudget)]
-    back_in_budget = sorted(
-        {
-            v.measurement.key
-            for v in verdicts
-            if isinstance(v, WithinBudget) and v.measurement.key in budgets.registry
-        }
-    )
+    back_in_budget = sorted({v.measurement.key for v in verdicts if isinstance(v, RegisteredWithinBudget)})
     if not (over or registered or back_in_budget):
         return
     terminalreporter.section("doeff の検の時間の上限")
