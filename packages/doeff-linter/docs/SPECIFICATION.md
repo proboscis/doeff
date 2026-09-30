@@ -312,6 +312,8 @@ law の対応だけを残す。無ければ TOML の設定で今どおり動く�
                      :wraps ["doeff_core_effects.os_file:os-file-handler"])
                    (world-handler "controllers.foundation.clock:real-clock" :touches [clock]
                      :contract-test none)]   ; 縁の検を求めない handler(DOEFF137 — 値は記号 none だけ)
+  :boundary-parts [(boundary-part "controllers.agora_sim.local_screen_socket_client"   ; 模擬の環境から本物の外の世界へ届く境目の部品(下の註)
+                     :touches [network clock thread] :reason "…")]
   :exclude ["tests" "__pycache__" "conftest.py"]    ; 既定のまま
   :extensions ["hy" "py"]                           ; 既定 hy・hyk・hyp・py
   :shared "shared")  ; :legacy は廃止(書くと設定の誤り — 宣言の外の module は全部 DOEFF114・115、既存の分は登録簿)
@@ -336,6 +338,13 @@ law の対応だけを残す。無ければ TOML の設定で今どおり動く�
   書かなければ DOEFF137 が縁の検を求める)。名簿を書くには `:foundation` が要る。名簿を書いた repo では `[tool.doeff-linter.raw_side_effects]
   allowed_layers` は二重の宣言(設定の誤り)— 生の I/O を許す所は名簿だけで決める(規則は agora-redesign #1134 の子で足す)。
   読み違い(綴りが `module:名` でない・語の外・同じ定義や語の 2 度書き・`:touches` の無い要素)は設定の誤り。
+- `:boundary-parts` は、模擬の環境から本物の外の世界へ届く境目の部品(agora-redesign #1797)— 人が回す入口や縁の台のように、実 I/O
+  そのものが役目で effect に答える handler ではない module を名指す。要素 `(boundary-part "module.path" :touches [..] :reason "…")` の欄は、
+  `:touches` = 許す生の副作用の種類(必須・`:world-handlers` と同じ閉じた語)・`:reason` = なぜ実 I/O そのものが役目か(必須)。宣言した
+  module の中では、触れる先(生の I/O の分類を上と同じく写した物)が `:touches` に入る証拠を DOEFF106 で当てない(層の中の file と層の置き場の
+  外の file の両方)。種類の外の証拠と宣言の無い module は今どおり当たる。証拠は索引に残るので、部品に届く deftest は DOEFF133 が縁と数え
+  `:edge-mark` の印を求める。効くのは `:world-handlers` を書いた repo(許す所を名簿で決める repo)だけ。読み違い(綴りが module の dotted で
+  ない・語の外・同じ module や語の 2 度書き・`:touches` か `:reason` の無い要素)は設定の誤り。
 - 実 I/O の handler は doeff の目録 `data/world_handlers.json`(doeff-linter に同梱・agora-redesign #1209)から知る。目録の要素 = `{"handler": "module:名", "touches": [..], "why": "…"}`。`:wraps` は目録に在る物だけ(外は設定の誤り)。DOEFF131 は目録の handler のどれもを相手にし、DOEFF133 は目録の handler・名簿の定義・生の I/O の証拠のうち触れる先が `:edge-touches` に当たる物だけを縁に数える(生の I/O の分類は async・thread → thread、time・random → clock と写す。種つきの `random.Random` は生の I/O の証拠から外す — 後述「種つきの疑似乱数と外部 I/O」)。
 - 読み違い(知らない鍵・重複した service や層・存在しない層や service の名・:foundation の層が無い)は `architecture.hy:行:列: 理由` の形で
   設定の誤り(終了コード 2)。
