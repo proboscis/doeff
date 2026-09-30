@@ -444,6 +444,8 @@ fn exit_codes_for_arguments_and_broken_config() {
     assert!(stderr.contains("--path"));
     let (code, report) = editor(dir.path());
     assert_eq!(code, 0, "{}", report);
+    // 鳴らない例(agora-redesign #1818): 知っている鍵だけの設定では DOEFF100 は出ない。
+    assert!(keys(&report, "DOEFF100").is_empty(), "{:?}", keys(&report, "DOEFF100"));
 
     // この binary の知らない鍵(設定が binary より新しい・書き違い)は lint 全体を止めず、その鍵だけを読まずに DOEFF100 の warning で
     // 知らせる(agora-redesign #848 — 以前は終了コード 2 でエディタの違反の欄が空になった)。
@@ -2605,6 +2607,54 @@ fn services_without_a_counterexample_are_red() {
     assert!(keys(&report, "DOEFF143").iter().all(|k| !k.contains("counterexample-unused")), "{}", report);
 }
 
+/// agora-redesign #1818(#1810 の子): DOEFF143(模擬の偽物)と DOEFF157(検だけの偽物)を規則の ID で名指して確かめる。
+/// 模擬の環境の fake-charge と検の file の test-charge は業務の効果 Charge に tap でなく答える(鳴る例)。同じ置き場の、効果を出し直す
+/// tap の handler(watch-charge・watch-refund)と、反例の表に在るわざと壊した handler(broken-refund・broken-charge)は鳴らない(鳴らない例)。
+#[test]
+fn simulation_fakes_and_test_only_fakes_are_red_but_taps_and_counterexamples_are_not() {
+    let files = [
+        ("app/foundation/host.hy", tags("shared", "foundation") + "(defk with-host [body] body)\n"),
+        ("app/billing/intent/effects.hy", "(import doeff [EffectBase])\n(defclass Charge [EffectBase])\n(defclass Refund [EffectBase])\n".to_string()),
+        (
+            "app/sim/fake_billing.hy",
+            "(import app.billing.intent.effects [Charge Refund])\n\
+             (defhandler fake-charge (Charge [] (resume 0)))\n\
+             (defhandler watch-charge (Charge [] (resume (Charge))))\n\
+             (defhandler broken-refund (Refund [] (resume 0)))\n"
+                .to_string(),
+        ),
+        (
+            "app/billing/tests/test_fakes.hy",
+            "(import app.billing.intent.effects [Charge Refund])\n\
+             (defhandler test-charge (Charge [] (resume 1)))\n\
+             (defhandler watch-refund (Refund [] (resume (Refund))))\n\
+             (defhandler broken-charge (Charge [] (resume 0)))\n\
+             (deftest test-with-handlers (with-handlers [test-charge watch-refund broken-charge] 1))\n"
+                .to_string(),
+        ),
+        ("tables/COUNTEREXAMPLES/sim_refund.txt", "app/sim/fake_billing.hy::broken-refund::app.billing.intent.effects.Refund\n返金を 0 で返す壊した handler\n".to_string()),
+        (
+            "tables/COUNTEREXAMPLES/test_charge.txt",
+            "app/billing/tests/test_fakes.hy::broken-charge::app.billing.intent.effects.Charge\n請求を 0 で返す壊した handler\n".to_string(),
+        ),
+    ];
+    let dir = world_repo_with(&files, "", "[\"DOEFF143\", \"DOEFF157\"]");
+    let arch_path = dir.path().join("architecture.hy");
+    let fakes = ":foundation foundation\n  :verification-environment \"sim\"\n  :business-fakes {:simulation [\"app/sim/**\"] :assembly [\"app/*/entry/**\"] \
+                 :tests [\"**/tests/**\"] :production [\"app/**\"] :business-modules [\"app.billing\"] :counterexamples \"tables/COUNTEREXAMPLES\"}";
+    let text = std::fs::read_to_string(&arch_path).unwrap().replace(":foundation foundation", fakes);
+    std::fs::write(&arch_path, text).unwrap();
+    let (_, report) = editor(dir.path());
+    assert_eq!(report["errors"], serde_json::json!([]), "{}", report["errors"]);
+    let fake = "app/sim/fake_billing.hy::DOEFF143::fake-charge::app.billing.intent.effects.Charge";
+    assert_eq!(keys(&report, "DOEFF143"), vec![fake], "{}", report);
+    assert!(violation(&report, fake)["message"].as_str().unwrap().contains("偽物(模擬の根からだけ届く)"), "{}", violation(&report, fake));
+    let test_only = "app/billing/tests/test_fakes.hy::DOEFF157::test-charge::app.billing.intent.effects.Charge";
+    assert_eq!(keys(&report, "DOEFF157"), vec![test_only], "{}", report);
+    assert!(violation(&report, test_only)["message"].as_str().unwrap().contains("検だけの偽物"), "{}", violation(&report, test_only));
+    assert_eq!(violation(&report, test_only)["severity"], "error");
+}
+
 /// agora-redesign #1713: DOEFF164 は service に反例が 1 本あれば緑。DOEFF167 は defservice の :clauses の条ごとに、反例の表の行の
 /// `breaks: <service>::<条>` で名乗る壊した handler の反例(節に届く deftest が service の entry にも届く)か、:clause-exemptions の理由を求める。
 /// billing: B1 は反例が有る・B2 は名乗る行が無い(赤)・B3 は理由つきで外した。stock: 土台の効果の反例が S1 を名乗る(有り — 陽性対照)。
@@ -2689,21 +2739,35 @@ fn clauses_without_a_counterexample_are_red() {
 
 /// agora-redesign #1562(K4): intent の効果の網羅の欠け(DOEFF165・K3 の表)は critical で失敗にする。今ある欠けは登録簿
 /// (1 鍵 1 file の dir)に載せ、載った欠けは warning に下がる。Charge と Refund はどちらも検から出さず答え手も無い(欠け)—
-/// Refund だけが登録簿に載っている。
+/// Refund だけが登録簿に載っている。Settle は 3 列がすべて埋まり出ない(鳴らない例・#1818)。
 #[test]
 fn intent_effect_coverage_gaps_are_red_unless_registered() {
     let intent = |name: &str| {
         format!("(defeffect {} \"{}\" {{:fields [amount] :answer int :tags {{:context \"billing\" :role \"intent\"}}}})\n", name, name)
     };
+    // 鳴らない例(agora-redesign #1818): Settle は 3 列がすべて埋まる — deftest が出し、翻訳の層(ここでは entry)の settle-reads が
+    // 模擬の根(組み立ての層の file)からも本番の入口(組の file の production-handlers)からも届く。
     let files = [
         ("app/foundation/host.hy", tags("shared", "foundation") + "(defk with-host [body] body)\n"),
-        ("app/billing/intent/effects.hy", intent("Charge") + &intent("Refund")),
+        ("app/billing/intent/effects.hy", intent("Charge") + &intent("Refund") + &intent("Settle")),
+        (
+            "app/billing/entry/translate.hy",
+            tags("billing", "entry")
+                + "(require doeff-hy.macros [defhandler])\n(import app.billing.intent.effects [Settle])\n\
+                   (defhandler settle-reads []\n  (Settle [amount] (resume amount)))\n",
+        ),
+        (
+            "app/billing/entry/handler_sets.hy",
+            tags("billing", "entry") + "(import app.billing.entry.translate [settle-reads])\n(defk production-handlers [] [settle-reads])\n",
+        ),
+        ("app/billing/tests/test_settle.hy", "(import app.billing.intent.effects [Settle])\n(deftest test-settle (Settle 1))\n".to_string()),
     ];
     let dir = world_repo_with(&files, "", "[\"DOEFF165\"]");
     let arch_path = dir.path().join("architecture.hy");
     let declarations = ":foundation foundation\n  :verification-environment \"sim\"\n  \
                         :business-fakes {:simulation [\"app/sim/**\"] :assembly [\"app/*/entry/**\"] :tests [\"**/tests/**\"] \
-                        :production [\"app/**\"] :business-modules [\"app.billing\"]}\n  \
+                        :production [\"app/**\"] :business-modules [\"app.billing\"] :sets [\"app/*/entry/handler_sets.hy\"] \
+                        :production-prefix \"production\"}\n  \
                         :assembly-shape {:translation-point \"with-*-translation\" :retired-function \"handlers-of\" \
                         :translations \"TRANSLATION-HANDLERS\" :translation-layer \"entry\" :intent-layer \"intent\"}";
     let text = std::fs::read_to_string(&arch_path)
@@ -2725,6 +2789,7 @@ fn intent_effect_coverage_gaps_are_red_unless_registered() {
     let (_, report) = editor(dir.path());
     let charge = "app/billing/intent/effects.hy::DOEFF165::billing::app.billing.intent.effects.Charge";
     let refund = "app/billing/intent/effects.hy::DOEFF165::billing::app.billing.intent.effects.Refund";
+    // 完全一致: 3 列の埋まった Settle は出ない。
     assert_eq!(keys(&report, "DOEFF165"), vec![charge, refund], "{}", report);
     let new_gap = violation(&report, charge);
     assert_eq!(new_gap["severity"], "error", "{}", new_gap);
@@ -3994,4 +4059,66 @@ fn assembly_shape_breaks_are_red() {
     let dir = assembly_repo(&shaped, "[\"DOEFF155\"]");
     let (_, report) = editor(dir.path());
     assert!(keys(&report, "DOEFF155").is_empty(), "{:?}\n{}", keys(&report, "DOEFF155"), report);
+}
+
+/// 翻訳の層(protocol)の翻訳の列 TRANSLATION-HANDLERS を `order` の順に並べた file。charge-reads は Charge に答え、旧い置き場
+/// (intent でない業務の module)の効果 LegacyRow を出し直す。legacy-reads は LegacyRow に答える。refund-reads は Refund に答え、
+/// `refund_body` を本体に持つ。
+fn reissuing_translations(order: &str, refund_body: &str) -> String {
+    tags("billing", "protocol")
+        + "(require doeff-hy.macros [defhandler val])\n\
+           (import app.billing.intent.effects [Charge Refund])\n\
+           (import app.billing.legacy.effects [LegacyRow])\n\
+           (defhandler legacy-reads []\n  (LegacyRow [amount] (resume amount)))\n\
+           (defhandler charge-reads []\n  (Charge [amount] (resume (LegacyRow amount))))\n"
+        + &format!("(defhandler refund-reads []\n  (Refund [amount] (resume {})))\n(val TRANSLATION-HANDLERS [{}])\n", refund_body, order)
+}
+
+/// 翻訳の列の 1 点(組み立ての層)が翻訳の層の列だけを並べる。
+fn translation_point() -> String {
+    tags("billing", "entry")
+        + "(import app.billing.protocol.translate [TRANSLATION-HANDLERS])\n\
+           (defk with-billing-translation [body] (with-handlers [#* TRANSLATION-HANDLERS] body))\n"
+}
+
+const LEGACY_EFFECTS: &str = "(import doeff [EffectBase])\n(defclass LegacyRow [EffectBase])\n";
+
+/// agora-redesign #1818(#1810 の子): DOEFF156(答えの置き場)を規則の ID で名指して確かめる。鳴る例 = 翻訳の handler が intent の効果を
+/// 出し直す(refund-reads → Charge)・出し直した効果に答える同じ列の handler が内側に在る(charge-reads の LegacyRow に答える legacy-reads が
+/// 後ろ)・組の file の組の関数が並べる土台の handler が業務の効果に答える。鳴らない例 = 同じ列の外側(前)の handler が答える intent でない
+/// 効果の出し直し(単体テストの is_shape() == false の行の「出し直してよい」側)。
+#[test]
+fn assembly_answers_in_the_wrong_place_are_red() {
+    let misplaced = [
+        ("app/billing/legacy/effects.hy", LEGACY_EFFECTS.to_string()),
+        ("app/billing/protocol/translate.hy", reissuing_translations("charge-reads legacy-reads refund-reads", "(Charge amount)")),
+        ("app/billing/entry/assembly.hy", translation_point()),
+        ("app/billing/core/answer.hy", charge_handler("judgment", "charge-direct")),
+        ("app/billing/entry/handler_sets.hy", production_set("(import app.billing.core.answer [charge-direct])", "charge-direct")),
+    ];
+    let dir = assembly_repo(&misplaced, "[\"DOEFF156\"]");
+    let (_, report) = editor(dir.path());
+    assert_eq!(report["errors"], serde_json::json!([]), "{}", report["errors"]);
+    let translate = "app/billing/protocol/translate.hy::DOEFF156";
+    assert_eq!(
+        keys(&report, "DOEFF156"),
+        vec![
+            "app/billing/entry/handler_sets.hy::DOEFF156::foundation:production_handlers:charge-direct:app.billing.intent.effects.Charge".to_string(),
+            format!("{}::inner:charge_reads:app.billing.legacy.effects.LegacyRow", translate),
+            format!("{}::target:refund_reads:app.billing.intent.effects.Charge", translate),
+        ],
+        "{}",
+        report
+    );
+    assert!(keys(&report, "DOEFF156").iter().all(|k| violation(&report, k)["severity"] == "error"), "{}", report);
+
+    let placed = [
+        ("app/billing/legacy/effects.hy", LEGACY_EFFECTS.to_string()),
+        ("app/billing/protocol/translate.hy", reissuing_translations("legacy-reads charge-reads refund-reads", "amount")),
+        ("app/billing/entry/assembly.hy", translation_point()),
+    ];
+    let dir = assembly_repo(&placed, "[\"DOEFF156\"]");
+    let (_, report) = editor(dir.path());
+    assert_eq!(report["errors"], serde_json::json!([]), "{}", report["errors"]);
+    assert!(keys(&report, "DOEFF156").is_empty(), "{:?}\n{}", keys(&report, "DOEFF156"), report);
 }
