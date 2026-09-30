@@ -490,8 +490,8 @@ pub struct EnvironmentBranches {
     pub layers: Vec<String>,
 }
 
-/// Jev に問う規則の線引き 1 つ(`:semantic-lines` の `(line "名" :rules [DOEFF201 …] :text "…" :fires ["<code>" …] :silent ["<code>" …])` —
-/// agora-redesign #1909)。どこからが違反かの文と、鳴る例・鳴らない例の code を、その規則の問いの instructions に入れる。文と例は repo の宣言に
+/// Jev に問う規則の線引き 1 つ(`:semantic-lines` の `(line "名" :rules [DOEFF201 …] :text "…" :fires [例 …] :silent [例 …])` —
+/// agora-redesign #1909)。どこからが違反かの文と、鳴る例・鳴らない例を、その規則の問いの instructions に入れる。文と例は repo の宣言に
 /// だけ在り、linter は持たない(定義元は architecture.hy の 1 か所)。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SemanticLine {
@@ -501,10 +501,21 @@ pub struct SemanticLine {
     pub rules: Vec<SemanticQuestion>,
     /// 線引きの文(空にしない)。
     pub text: String,
-    /// この線引きで違反になる code の例(省いてよい)。
-    pub fires: Vec<String>,
-    /// この線引きで違反にならない code の例(省いてよい)。
-    pub silent: Vec<String>,
+    /// この線引きで違反になる例(省いてよい)。
+    pub fires: Vec<LineExample>,
+    /// この線引きで違反にならない例(省いてよい)。
+    pub silent: Vec<LineExample>,
+}
+
+/// 線引きの例 1 つ(`"<code>"` か `{:code "<code>" :why "…"}` — agora-redesign #1995)。why = その例がなぜ鳴る / 鳴らないかの 1 文で、問いに
+/// code と組で載る。例が code だけだと線引きの文の文言に負けた(send-task・list-limit-of・join-chat は自分自身が鳴らない例として問いに
+/// 載りながら高く出た・#1944)。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LineExample {
+    /// 例の code(空にしない)。
+    pub code: String,
+    /// なぜ鳴る / 鳴らないかの 1 文(書かなければ None — 空の文は設定の誤り)。
+    pub why: Option<String>,
 }
 
 /// handler の引数の決まり(`:handler-arguments {:files [..] :exclude [..] :store-names [..] :store-suffixes [..] :keep-mark "…" :value-types [..]}`)
@@ -2037,11 +2048,12 @@ impl<'a> Parser<'a> {
         Some(decl)
     }
 
-    /// `:semantic-lines [(line "名" :rules [DOEFF201 …] :text "…" :fires ["<code>" …]? :silent ["<code>" …]?) …]` を読む(agora-redesign #1909)。
+    /// `:semantic-lines [(line "名" :rules [DOEFF201 …] :text "…" :fires [例 …]? :silent [例 …]?) …]` を読む(agora-redesign #1909)。
+    /// 例 = `"<code>"` か `{:code "<code>" :why "…"}`(#1995)。
     /// 名・:rules・空でない :text は要る。:rules に書けるのは線引きを入れる Jev の問い(SemanticQuestion::LINED)の規則だけで、知らない規則・
-    /// Jev の問いでない規則・線引きを入れない Jev の問いの規則は設定の誤り。同じ名・同じ規則の 2 度書きと空の code の例も誤り。
+    /// Jev の問いでない規則・線引きを入れない Jev の問いの規則は設定の誤り。同じ名・同じ規則の 2 度書きと空の code・空の why の例も誤り。
     fn semantic_lines(&mut self, value: &Form) -> Vec<SemanticLine> {
-        let shape = "(line \"名\" :rules [DOEFF201 …] :text \"…\" :fires [\"<code>\" …]? :silent [\"<code>\" …]?)";
+        let shape = "(line \"名\" :rules [DOEFF201 …] :text \"…\" :fires [\"<code>\" | {:code \"<code>\" :why \"…\"} …]? :silent [ … ]?)";
         let Some(entries) = self.bracket(value) else {
             self.problem(value, &format!(":semantic-lines は {} の列", shape));
             return Vec::new();
@@ -2133,27 +2145,56 @@ impl<'a> Parser<'a> {
         rules
     }
 
-    /// 線引きの例の code の列(文字列の列 — 文字列でない要素と空の code は理由を積んで落とす)。
-    fn line_examples(&mut self, field: &Form, line: &str, key: &str) -> Vec<String> {
+    /// 線引きの例の列(要素 = code の文字列か `{:code "<code>" :why "…"}` の組 — 読めない要素・空の code・空の why は理由を積んで落とす)。
+    fn line_examples(&mut self, field: &Form, line: &str, key: &str) -> Vec<LineExample> {
         let what = format!("線引き {} の {}", line, key);
         let Some(items) = self.bracket(field) else {
-            self.problem(field, &format!("{} は code の文字列の列 [\"…\" …]", what));
+            self.problem(field, &format!("{} は例の列 [\"<code>\" | {{:code \"<code>\" :why \"…\"}} …]", what));
             return Vec::new();
         };
-        items
-            .into_iter()
-            .filter_map(|item| match self.string(item) {
-                Some(code) if !code.trim().is_empty() => Some(code),
-                Some(_) => {
-                    self.problem(item, &format!("{} に空の code がある", what));
-                    None
+        items.into_iter().filter_map(|item| self.line_example(item, &what)).collect()
+    }
+
+    /// 線引きの例 1 つ(`"<code>"` か `{:code "<code>" :why "…"}` — :code は要る・:why は省いてよい)。
+    fn line_example(&mut self, item: &Form, what: &str) -> Option<LineExample> {
+        let (code, why) = match (self.string(item), self.brace(item)) {
+            (Some(code), _) => (Some(code), None),
+            (None, Some(entries)) => {
+                let fields: Vec<(&Form, Option<String>)> = self
+                    .pairs(&entries)
+                    .into_iter()
+                    .filter_map(|(key, value)| match self.text(key) {
+                        ":code" | ":why" => Some((key, self.required_string(value, &format!("{} の {}", what, self.text(key))))),
+                        _ => {
+                            self.unknown_key(key, &format!("{} の例", what));
+                            None
+                        }
+                    })
+                    .collect();
+                let field = |name: &str| fields.iter().find(|(key, _)| self.text(key) == name).and_then(|(_, value)| value.clone());
+                let (code, why) = (field(":code"), field(":why"));
+                if code.is_none() && !fields.iter().any(|(key, _)| self.text(key) == ":code") {
+                    self.problem(item, &format!("{} の例に :code が無い", what));
                 }
-                None => {
-                    self.problem(item, &format!("{} の要素は code の文字列", what));
-                    None
+                if why.as_deref().is_some_and(|why| why.trim().is_empty()) {
+                    self.problem(item, &format!("{} の例の :why が空", what));
+                    return None;
                 }
-            })
-            .collect()
+                (code, why)
+            }
+            (None, None) => {
+                self.problem(item, &format!("{} の要素は code の文字列か {{:code \"<code>\" :why \"…\"}} の組", what));
+                return None;
+            }
+        };
+        match code {
+            Some(code) if !code.trim().is_empty() => Some(LineExample { code, why }),
+            Some(_) => {
+                self.problem(item, &format!("{} に空の code がある", what));
+                None
+            }
+            None => None,
+        }
     }
 
     /// `:assembly-shape {…}` を読む(:translation-point・:translations・:translation-layer・:intent-layer は要る)。
@@ -3216,14 +3257,16 @@ mod tests {
     }
 
     /// agora-redesign #1909: `:semantic-lines` は線引きの名・入れる問い(DOEFF201・202・205)・文・鳴る例・鳴らない例(省いてよい)を読む。
-    /// 例は bracket の文字列(`#[code[…]code]`)でも書ける。書かない宣言は空(問いは今のまま)。
+    /// 例は bracket の文字列(`#[code[…]code]`)でも書け、`{:code "<code>" :why "…"}` の組ならなぜ鳴る / 鳴らないかの 1 文も読む(#1995)。
+    /// 書かない宣言は空(問いは今のまま)。
     #[test]
     fn semantic_lines_are_read_for_the_jev_questions() {
         let good = GOOD.replace(
             ":foundation foundation",
             r##":foundation foundation
   :semantic-lines [(line "線引き 1" :rules [DOEFF201] :text "protocol は判断しない。"
-                     :fires [#[code[(defk f [x] (when (in x "allowed") x))]code]] :silent ["(defk g [x] (h x))"])
+                     :fires [{:code #[code[(defk f [x] (when (in x "allowed") x))]code] :why "許すかをこの定義が決める。"}]
+                     :silent ["(defk g [x] (h x))"])
                    (line 線引き-5 :rules [DOEFF205 doeff201] :text "投影も判断。")]"##,
         );
         let arch = Architecture::parse(&good, Path::new("architecture.hy")).unwrap();
@@ -3235,8 +3278,8 @@ mod tests {
                     name: "線引き 1".into(),
                     rules: vec![SemanticQuestion::BusinessDecision],
                     text: "protocol は判断しない。".into(),
-                    fires: vec!["(defk f [x] (when (in x \"allowed\") x))".into()],
-                    silent: vec!["(defk g [x] (h x))".into()],
+                    fires: vec![LineExample { code: "(defk f [x] (when (in x \"allowed\") x))".into(), why: Some("許すかをこの定義が決める。".into()) }],
+                    silent: vec![LineExample { code: "(defk g [x] (h x))".into(), why: None }],
                 },
                 SemanticLine {
                     name: "線引き-5".into(),
@@ -3264,7 +3307,11 @@ mod tests {
             (r#"(line "a" :rules [] :text "x")"#, "線引き a の :rules に線引きを入れる問いの規則が無い"),
             (r#"(line "a" :rules [DOEFF201 DOEFF201] :text "x")"#, "線引き a の :rules の DOEFF201 が 2 度書かれている"),
             (r#"(line "a" :rules [DOEFF201] :text "x" :fires [""])"#, "線引き a の :fires に空の code がある"),
-            (r#"(line "a" :rules [DOEFF201] :text "x" :silent [code])"#, "線引き a の :silent の要素は code の文字列"),
+            (r#"(line "a" :rules [DOEFF201] :text "x" :silent [code])"#, "線引き a の :silent の要素は code の文字列か"),
+            (r#"(line "a" :rules [DOEFF201] :text "x" :silent [{:why "w"}])"#, "線引き a の :silent の例に :code が無い"),
+            (r#"(line "a" :rules [DOEFF201] :text "x" :fires [{:code "" :why "w"}])"#, "線引き a の :fires に空の code がある"),
+            (r#"(line "a" :rules [DOEFF201] :text "x" :fires [{:code "(f)" :why " "}])"#, "線引き a の :fires の例の :why が空"),
+            (r#"(line "a" :rules [DOEFF201] :text "x" :fires [{:code "(f)" :why why}])"#, "線引き a の :fires の :why は文字列"),
             (r#"(line "a" :rules [DOEFF201] :text "x") (line "a" :rules [DOEFF202] :text "y")"#, "線引き a が 2 度宣言されている"),
             (r#"(line :rules [DOEFF201] :text "x")"#, ":semantic-lines の要素に名が無い"),
             (r#"(rule "a" :rules [DOEFF201] :text "x")"#, ":semantic-lines の要素は (line"),

@@ -324,7 +324,8 @@ law の対応だけを残す。無ければ TOML の設定で今どおり動く�
                     :instead "(GetMonotonic) か (GetTime)")]
   :environment-branches {:values ["production" "emulated"] :flags ["dry-run"] :layers [core intent]}   ; 業務の層の環境の分岐(DOEFF168)
   :semantic-lines [(line "線引き 1" :rules [DOEFF201] :text "protocol の定義がしてよいのは …"   ; Jev の問いに入れる線引き(DOEFF201・202・205・10 節)
-                     :fires [#[code[(defk access-of-held …)]code]] :silent [#[code[(defk send-task …)]code]])]
+                     :fires [{:code #[code[(defk access-of-held …)]code] :why "期限を見て渡すか断るかをこの定義が決める。"}]
+                     :silent [#[code[(defk send-task …)]code]])]
   :handler-arguments {:files ["src/**/*.hy"] :exclude ["**/tests/**"] :store-names ["state" "store"] :store-suffixes ["-store"] :keep-mark "引数に残す理由:"}  ; handler の引数の決まり(DOEFF142)
   :business-fakes {:simulation ["sim/**"] :assembly ["*/entry/**"] :tests ["**/tests/**"] :production ["src/**"] :sets ["**/handler_sets.hy"] :simulation-prefix "emulated" :production-prefix "production" :business-modules ["app.orders"] :external-effects "tables/EXTERNAL-EFFECTS"}  ; 偽の handler の決まり(DOEFF143)
   :assembly-shape {:translation-point "with-*-translation" :retired-function "handlers-of" :translations "TRANSLATION-HANDLERS" :translation-layer "protocol" :intent-layer "intent"}  ; 組み立ての形(DOEFF155・156)
@@ -387,11 +388,13 @@ law の対応だけを残す。無ければ TOML の設定で今どおり動く�
   ない・語の外・同じ module や語の 2 度書き・`:touches` か `:reason` の無い要素)は設定の誤り。
 - 実 I/O の handler は doeff の目録 `data/world_handlers.json`(doeff-linter に同梱・agora-redesign #1209)から知る。目録の要素 = `{"handler": "module:名", "touches": [..], "why": "…"}`。`:wraps` は目録に在る物だけ(外は設定の誤り)。DOEFF131 は目録の handler のどれもを相手にし、DOEFF133 は目録の handler・名簿の定義・生の I/O の証拠のうち触れる先が `:edge-touches` に当たる物だけを縁に数える(生の I/O の分類は async・thread → thread、time・random → clock と写す。種つきの `random.Random` は生の I/O の証拠から外す — 後述「種つきの疑似乱数と外部 I/O」)。
 - `:semantic-lines` は、Jev に問う規則(DOEFF201・202・205)のどこからが違反かの線引き(agora-redesign #1909)。要素
-  `(line "名" :rules [DOEFF201 …] :text "…" :fires ["<code>" …]? :silent ["<code>" …]?)` の欄は、`:rules` = 線引きを入れる問いの規則
-  (DOEFF201・202・205 のどれか・1 つ以上)・`:text` = 線引きの文(空にしない)・`:fires` = この線引きで違反になる code の例・`:silent` = 違反に
-  ならない code の例(どちらも省いてよい・例は bracket の文字列 `#[code[…]code]` で書くと引用符を escape しなくてよい)。文と例は repo の宣言に
+  `(line "名" :rules [DOEFF201 …] :text "…" :fires [例 …]? :silent [例 …]?)` の欄は、`:rules` = 線引きを入れる問いの規則
+  (DOEFF201・202・205 のどれか・1 つ以上)・`:text` = 線引きの文(空にしない)・`:fires` = この線引きで違反になる例・`:silent` = 違反に
+  ならない例(どちらも省いてよい)。例 = code の文字列 `"<code>"` か、code となぜ鳴る / 鳴らないかの 1 文の組 `{:code "<code>" :why "…"}`
+  (agora-redesign #1995 — `:why` は省いてよい。code は bracket の文字列 `#[code[…]code]` で書くと引用符を escape しなくてよい)。文と例は repo の宣言に
   だけ在り、linter は持たない(定義元は architecture.hy の 1 か所)。問いへの入れ方は 10 節。知らない規則・Jev の問いでない規則・線引きを入れない
-  Jev の問い(DOEFF203・204)・空の文・`:rules` か `:text` の欠け・同じ名や同じ規則の 2 度書き・空の code の例は設定の誤り。editor-json の
+  Jev の問い(DOEFF203・204)・空の文・`:rules` か `:text` の欠け・同じ名や同じ規則の 2 度書き・空の code・`:code` の無い組・空の `:why` の例は
+  設定の誤り。editor-json の
   `architecture` には載せない(問いの材料で、editor は読まない)。
 - 読み違い(知らない鍵・重複した service や層・存在しない層や service の名・:foundation の層が無い)は `architecture.hy:行:列: 理由` の形で
   設定の誤り(終了コード 2)。
@@ -454,12 +457,18 @@ intent の層は Tach の interfaces に当たる — 別の service が読ん�
 - state = 定義の名・kind・file・申告の `:tags` を消した source(`semantic.source_limit` 字 = 既定 1,800 で切る)・置かれた層の説明(architecture.hy の layer の説明か、
   `layers.describe`)。
 - **線引き**(agora-redesign #1909): architecture.hy の `:semantic-lines`(9 節)を書いた repo では、DOEFF201・202・205 の問いの `instructions` に、
-  その規則を `:rules` に持つ線引きを宣言の順に入れる — `"lines": [{"name", "text", "violating_examples": [:fires の code …],
-  "complying_examples": [:silent の code …]} …]` と、線引きの読み方と答えの向き `"lines_note"`(英語・`src/project/semantic.rs` の 1 か所 —
-  線引きが一般の説明と違えば線引きに従う・鳴る例に似た code は違反の側 = DOEFF201・202 は true・DOEFF205 は mixed)。DOEFF202 の文字列の
-  `instructions` は `question` の欄に移す。例の code は定義の source と同じく申告の `:tags` を消して渡す。線引きの文は日本語のまま入れ、問いの文は
-  英語のまま。線引きの当たらない問い・宣言の無い repo の問いは今のまま(cache のキーも変わらない)。線引きを足す・変えると、その規則の問いのキーが
-  変わり、定義は答えなしに戻る(問い直しは較正の実行でまとめて行う)。較正の見張りの例も同じ問い(線引きを入れた物)で問う。
+  その規則を `:rules` に持つ線引きを宣言の順に入れる — `"lines": [{"name", "text", "violating_examples": [例 …], "complying_examples": [例 …]} …]`
+  (例 = `{"code": …, "why": …}`・`:why` を書かない例は `{"code": …}` — #1995)と、線引きの読み方と答えの向き `"lines_note"`(英語・
+  `src/project/semantic.rs` の 1 か所 — 線引きが一般の説明と違えば線引きに従う・鳴る例に似た code は違反の側 = DOEFF201・202 は true・DOEFF205 は
+  mixed・例の `why` の理由で判じ、code の見た目の近さで判じない)。
+  **線引きを入れた問いの `instructions` は、1 つの鍵の object を宣言の順に並べた列で送る**(#1995): `[{"question": …}, 一般の例か注 …,
+  {"lines_note": …}, {"lines": […]}]` — DOEFF201 = question・business_decision_examples・not_business_decision_examples、DOEFF202 = question
+  (前の文字列の `instructions`)、DOEFF205 = question・note の後に lines_note・lines。鍵の object で送ると鍵の名の順に並び、DOEFF205 では一般の注が
+  線引きの後ろに来て「上の注と違えば線引きに従え」が逆さに読めた。TypeSafe の `instructions` は string・object・array のどれも受ける
+  (https://docs.typesafe.ai/api — 2026-10-01 に読んだ)。例の code は定義の source と同じく申告の `:tags` を消して渡す。線引きの文と why は
+  日本語のまま入れ、問いの文は英語のまま。線引きの当たらない問い・宣言の無い repo の問いは今のまま(鍵の object・cache のキーも変わらない)。
+  線引きを足す・変えると、その規則の問いのキーが変わり、定義は答えなしに戻る(問い直しは較正の実行でまとめて行う)。較正の見張りの例も同じ問い
+  (線引きを入れた物)で問う。
 - cache = repo の根の `.doeff-linter/semantic-cache/<鍵>.json`(git の外に置く — `.gitignore` に足すかは repo ごと)。鍵 = sha256(model・問いの JSON・層の説明・
   タグを消した source)。申告の役は鍵に入れず、判定の後にコードで比べる。cache の答えが無い定義は違反にせず、最上位の `semantic.unjudged` に数える(合格に倒さない)。
   cache の答えは確率と choice のほかに、答えに載った費用 `reported_cost_usd`(上流が載せた時だけ・載せない答えは null で 0 と区別する)と
@@ -649,6 +658,9 @@ mixed_concerns = { layer = "core", roles = ["judgment", "program"], warning_min 
   defn・defp)に、mixed / shape-only / judgment-only / neither から選ばせる。state = 定義の source(タグを消して `source_limit` で切る)と、
   `layer` の層の説明(summary・knows・does_not_know)。mixed を `warning_min` 以上で warning、`info_min` 以上で info。較正の見張りは
   decide-tag(正例)と card-tags-of(反例)の mixed の確率を比べる。問いの文は `src/project/semantic.rs` の `MixedConcerns` の 1 か所。
+  問いの一般の注(note)は、形の確認を「外から来た型の無い入力の確かめ」と言い、型の union の枝分け・外から来ていない型の無い dict(code の定数・
+  自分の集計の控え)・形の確認を任せた 1 つの関数の答え(問題の文)で断りの値を返すだけの枝を形の確認に数えない(agora-redesign #1995 — 前の注は
+  isinstance と dict の読みを例外なしに形の確認と言い、agora-controllers の線引き 4 と食い違った)。
   architecture.hy の `:semantic-lines` に `:rules [DOEFF205]` の線引きがあれば、問いの `instructions` に線引きの文と鳴る例・鳴らない例を入れる
   (10 節の「線引き」— 何を形の確認に数え、何を判断に数えるかは repo の宣言が決める)。
 

@@ -33,7 +33,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 
-use super::architecture::SemanticLine;
+use super::architecture::{LineExample, SemanticLine};
 use super::settings::{LayerDescription, LayerId};
 
 /// 意味の問いの種類(閉じた集合)。
@@ -70,10 +70,20 @@ impl SemanticQuestion {
     }
 
     /// 線引きを入れた問い(agora-redesign #1909)— architecture.hy の :semantic-lines のうちこの問いに当たる線引きの名・文・鳴る例・鳴らない例を
-    /// instructions の lines に入れ、答えの向きを lines_note に書く。文字列の instructions(DOEFF202)は question の欄に移す。例の code は定義の
-    /// source と同じく :tags を消して渡す(申告に引きずられないため)。当たる線引きが無ければ wire() のまま — 宣言の無い repo の問いと cache の
-    /// キーは変わらない。
+    /// instructions に入れ、線引きの読み方と答えの向きを lines_note に書く。例は `{"code", "why"}` の組(why を書いた例だけ why を持つ・#1995)で、
+    /// code は定義の source と同じく :tags を消して渡す(申告に引きずられないため)。
+    /// instructions は鍵の object ではなく、1 つの鍵の object を宣言の順に並べた列で送る(#1995 — object の鍵は名の順に並び、DOEFF205 では
+    /// 一般の注が線引きの後ろに来ていた): 問いの部品(instruction_parts の順)→ lines_note → lines。線引きが最後に来て一般の文に勝つ順になる。
+    /// 当たる線引きが無ければ wire() のまま — 宣言の無い repo の問いと cache のキーは変わらない。
     pub fn wire_with(self, lines: &[SemanticLine]) -> Value {
+        let examples = |all: &[LineExample]| -> Vec<Value> {
+            all.iter()
+                .map(|example| match &example.why {
+                    Some(why) => json!({"code": strip_tags(&example.code), "why": why}),
+                    None => json!({"code": strip_tags(&example.code)}),
+                })
+                .collect()
+        };
         let mine: Vec<Value> = lines
             .iter()
             .filter(|line| line.rules.contains(&self))
@@ -81,8 +91,8 @@ impl SemanticQuestion {
                 json!({
                     "name": line.name,
                     "text": line.text,
-                    "violating_examples": line.fires.iter().map(|code| strip_tags(code)).collect::<Vec<String>>(),
-                    "complying_examples": line.silent.iter().map(|code| strip_tags(code)).collect::<Vec<String>>(),
+                    "violating_examples": examples(&line.fires),
+                    "complying_examples": examples(&line.silent),
                 })
             })
             .collect();
@@ -90,27 +100,78 @@ impl SemanticQuestion {
         let Some(note) = self.lines_note().filter(|_| !mine.is_empty()) else {
             return question;
         };
-        let mut instructions = match question.get("instructions").cloned() {
-            Some(Value::Object(map)) => map,
-            other => serde_json::Map::from_iter([("question".to_string(), other.unwrap_or(Value::Null))]),
-        };
-        instructions.insert("lines_note".to_string(), Value::String(note.to_string()));
-        instructions.insert("lines".to_string(), Value::Array(mine));
-        question["instructions"] = Value::Object(instructions);
+        let ordered: Vec<Value> = self
+            .instruction_parts()
+            .into_iter()
+            .chain([("lines_note", Value::String(note.to_string())), ("lines", Value::Array(mine))])
+            .map(|(name, content)| Value::Object(serde_json::Map::from_iter([(name.to_string(), content)])))
+            .collect();
+        question["instructions"] = Value::Array(ordered);
         question
+    }
+
+    /// 線引きを入れる問い(LINED)の instructions の部品を宣言の順に(鍵・中身 — 問いの文は英語でここ 1 か所)。wire() は部品を鍵の object に
+    /// して送り(部品が問いの文 1 つだけの DOEFF202 は文そのもの — 線引きを足す前と同じ問いと cache のキー)、wire_with はこの順の列で送る。
+    /// 線引きを入れない問い(DOEFF203・204)の instructions は wire() の 1 か所に在り、ここは空。
+    fn instruction_parts(self) -> Vec<(&'static str, Value)> {
+        match self {
+            SemanticQuestion::BusinessDecision => vec![
+                ("question", json!("Does the code in `definition.source` make a business decision, beyond rephrasing a request into the other party's way of talking?")),
+                (
+                    "business_decision_examples",
+                    json!([
+                        "deciding who is allowed to do something",
+                        "enforcing a domain rule such as which participants a chat may have or where a reply may be posted",
+                        "choosing recipients or a business outcome"
+                    ]),
+                ),
+                (
+                    "not_business_decision_examples",
+                    json!([
+                        "building URLs, headers or request bodies",
+                        "parsing JSON, HTTP status codes or process output into typed values",
+                        "turning transport failures into error values",
+                        "retry and timeout policy",
+                        "checking the shape of a payload or reading configuration"
+                    ]),
+                ),
+            ],
+            SemanticQuestion::TransportKnowledge => vec![(
+                "question",
+                json!("Does the code in `definition.source` know how communication is carried out: URLs or URL paths and query strings, HTTP methods, status codes or headers, JSON wire field names or JSON encoding and decoding, SQL, or network endpoint addresses?"),
+            )],
+            // 注は線引き 4(agora-controllers の architecture.hy)の例外と同じ文(#1995 — 前の注は isinstance と dict の読みを例外なしに形の確認と
+            // 言い、線引きと食い違った: union の枝分けの _on-text・模擬の世界の dict の list-nodes・任せた確認の答えで断る open-chat-room が高く出た)。
+            SemanticQuestion::MixedConcerns => vec![
+                ("question", json!("What does the definition in `definition.source` do? `layer` describes what code in its layer should know and not know.")),
+                (
+                    "note",
+                    json!("Shape checking means validating untyped input that came from outside: reading keys out of dicts or JSON payloads, isinstance checks, and empty, missing, length, format or vocabulary checks on those raw values before they can be used. These are not shape checking: branching on the cases of a typed union (for example isinstance between the declared alternatives of `A | B | None`); reading an untyped dict that did not come from outside (a constant in the code, or the definition's own tally); and a branch that only returns a refusal value built from the answer (the problem text) of one function that the shape check was left to. Business judgment means deciding by business rules (who may do what, which outcome, which write). Comparing already-typed values by a business rule is judgment, not shape checking."),
+                ),
+            ],
+            SemanticQuestion::PlainCallable | SemanticQuestion::ClassRole => Vec::new(),
+        }
+    }
+
+    /// 部品を鍵の object にした instructions(部品が問いの文 1 つだけなら文そのもの)。
+    fn instructions_of(parts: Vec<(&'static str, Value)>) -> Value {
+        match parts.as_slice() {
+            [("question", text)] => text.clone(),
+            _ => Value::Object(parts.into_iter().map(|(name, content)| (name.to_string(), content)).collect()),
+        }
     }
 
     /// 線引きの読み方と答えの向き(問いの文は英語でここ 1 か所)。線引きを入れない問いは None。
     fn lines_note(self) -> Option<&'static str> {
         match self {
             SemanticQuestion::BusinessDecision => Some(
-                "`lines` are the boundaries this repository adopted for this question; where they differ from the general examples above, follow the lines. Code like a line's `violating_examples` makes a business decision (answer true); code like its `complying_examples` does not (answer false).",
+                "`lines` are the boundaries this repository adopted for this question; where they differ from the general examples above, follow the lines. Code like a line's `violating_examples` makes a business decision (answer true); code like its `complying_examples` does not (answer false). An example's `why` says what in the line decides it; judge the definition by that reason, not by how much its code looks like the example.",
             ),
             SemanticQuestion::TransportKnowledge => Some(
-                "`lines` are the boundaries this repository adopted for this question; where they differ from the general wording above, follow the lines. Code like a line's `violating_examples` knows how communication is carried out (answer true); code like its `complying_examples` does not (answer false).",
+                "`lines` are the boundaries this repository adopted for this question; where they differ from the general wording above, follow the lines. Code like a line's `violating_examples` knows how communication is carried out (answer true); code like its `complying_examples` does not (answer false). An example's `why` says what in the line decides it; judge the definition by that reason, not by how much its code looks like the example.",
             ),
             SemanticQuestion::MixedConcerns => Some(
-                "`lines` are the boundaries this repository adopted for this question; where they differ from the note above, follow the lines. Code like a line's `violating_examples` is `mixed`; code like its `complying_examples` is not `mixed`.",
+                "`lines` are the boundaries this repository adopted for this question; where they differ from the note above, follow the lines. Code like a line's `violating_examples` is `mixed`; code like its `complying_examples` is not `mixed`. An example's `why` says what in the line decides it; judge the definition by that reason, not by how much its code looks like the example.",
             ),
             SemanticQuestion::PlainCallable | SemanticQuestion::ClassRole => None,
         }
@@ -144,21 +205,7 @@ impl SemanticQuestion {
         match self {
             SemanticQuestion::BusinessDecision => json!({
                 "type": "noul",
-                "instructions": {
-                    "question": "Does the code in `definition.source` make a business decision, beyond rephrasing a request into the other party's way of talking?",
-                    "business_decision_examples": [
-                        "deciding who is allowed to do something",
-                        "enforcing a domain rule such as which participants a chat may have or where a reply may be posted",
-                        "choosing recipients or a business outcome"
-                    ],
-                    "not_business_decision_examples": [
-                        "building URLs, headers or request bodies",
-                        "parsing JSON, HTTP status codes or process output into typed values",
-                        "turning transport failures into error values",
-                        "retry and timeout policy",
-                        "checking the shape of a payload or reading configuration"
-                    ]
-                },
+                "instructions": Self::instructions_of(self.instruction_parts()),
                 "criteria": {
                     "true": "The code decides a business matter (permission, domain rule, recipient, business outcome).",
                     "false": "The code only translates: it builds or reads the wire form, maps failures, or checks shapes."
@@ -167,10 +214,7 @@ impl SemanticQuestion {
             SemanticQuestion::PlainCallable => Self::plain_callable_wire(&[], &[]),
             SemanticQuestion::MixedConcerns => json!({
                 "type": "choice",
-                "instructions": {
-                    "question": "What does the definition in `definition.source` do? `layer` describes what code in its layer should know and not know.",
-                    "note": "Shape checking means validating untyped input: reading keys out of dicts or JSON payloads, isinstance checks, and empty or missing checks on those raw values before they can be used. Business judgment means deciding by business rules (who may do what, which outcome, which write). Comparing already-typed values by a business rule is judgment, not shape checking."
-                },
+                "instructions": Self::instructions_of(self.instruction_parts()),
                 "criteria": {
                     "mixed": "It both checks the shape of untyped input and makes business decisions in the same definition.",
                     "shape-only": "It only checks or parses the shape of untyped input; it makes no business decision.",
@@ -193,7 +237,7 @@ impl SemanticQuestion {
             }),
             SemanticQuestion::TransportKnowledge => json!({
                 "type": "noul",
-                "instructions": "Does the code in `definition.source` know how communication is carried out: URLs or URL paths and query strings, HTTP methods, status codes or headers, JSON wire field names or JSON encoding and decoding, SQL, or network endpoint addresses?",
+                "instructions": Self::instructions_of(self.instruction_parts()),
                 "criteria": {
                     "true": "The code builds, parses or holds such transport details, for example a URL, a query string, an HTTP request or status code, json.loads or json.dumps of a wire body, or an endpoint URL field.",
                     "false": "The code only works with typed business values and business-level request effects; naming an outside system without its transport details does not count."
@@ -1625,8 +1669,9 @@ mod tests {
         assert_eq!((gateway_env.wire, gateway_env.model.as_str()), (Wire::Direct, DIRECT_MODEL));
     }
 
-    /// architecture.hy に :semantic-lines の無い repo では、問いも cache のキーも線引きを足す前(agora-redesign #1909 の前)と同じ —
-    /// キーの値は線引きを足す前の code で組んだ物(変われば、その repo の全部の定義が「答えなし」に戻る)。
+    /// architecture.hy に :semantic-lines の無い repo では、問いは wire() のまま。DOEFF201・202 の cache のキーは線引きを足す前(agora-redesign
+    /// #1909 の前)と同じ — キーの値は線引きを足す前の code で組んだ物(変われば、その repo の全部の定義が「答えなし」に戻る)。DOEFF205 のキーは
+    /// #1995 で一般の注を線引き 4 の例外と揃えたので変わった(値は #1995 の code で組んだ物)。
     #[test]
     fn without_lines_the_questions_and_keys_stay_as_before() {
         let settings = SemanticSettings::validate(&SemanticSection::default(), &mut |_, _| None, &mut Vec::new());
@@ -1650,42 +1695,58 @@ mod tests {
             [
                 "2801ee2d98aaee9974cea9bc225c176e997ab2a3743765c359bc9e5ef6a1b1d6",
                 "109f1a4aec9b6fc0f116e3c42cd0b5c3f850e72e40ed64226df98342ebe404cd",
-                "73c824534ee0e33e62daf07decf4649edcec89ee51c5b734607deeb82cf3bfd8"
+                "d87343a27410d6d05620233e1bb7ca2998b286adb57c69b148c9d903c16a9050"
             ]
         );
     }
 
-    /// agora-redesign #1909: 線引きはその規則の問いにだけ入る(名・文・鳴る例・鳴らない例・答えの向き)。文字列の instructions(DOEFF202)は
-    /// question の欄に移し、例の code の :tags は消す。線引きを入れた問いは cache のキーも変わる(線引きを変えると答えなしに戻る — 想定どおり)。
-    #[test]
-    fn lines_go_into_the_instructions_of_their_questions_only() {
-        use SemanticQuestion::{BusinessDecision, MixedConcerns, PlainCallable, TransportKnowledge};
-        let line = |name: &str, rules: Vec<SemanticQuestion>| SemanticLine {
+    /// 線引きを入れた問いの instructions の部品(1 つの鍵の object の列)から、鍵 key の中身を引く。
+    fn part<'a>(question: &'a Value, key: &str) -> &'a Value {
+        question["instructions"].as_array().and_then(|parts| parts.iter().find_map(|p| p.get(key))).unwrap_or(&Value::Null)
+    }
+
+    /// 線引きを入れた問いの instructions の部品の鍵(送る順)。
+    fn part_keys(question: &Value) -> Vec<String> {
+        question["instructions"].as_array().map(|parts| parts.iter().filter_map(|p| p.as_object()?.keys().next().cloned()).collect()).unwrap_or_default()
+    }
+
+    /// 線引き 1 つ(鳴る例は why つき・鳴らない例は code だけ)。
+    fn sample_line(name: &str, rules: Vec<SemanticQuestion>) -> SemanticLine {
+        SemanticLine {
             name: name.into(),
             rules,
             text: format!("{} の文", name),
-            fires: vec!["(defk f [x] {:tags {:role \"protocol\"}} (g x))".into()],
-            silent: vec!["(defk h [x] x)".into()],
-        };
+            fires: vec![LineExample { code: "(defk f [x] {:tags {:role \"protocol\"}} (g x))".into(), why: Some(format!("{} で鳴る理由", name)) }],
+            silent: vec![LineExample { code: "(defk h [x] x)".into(), why: None }],
+        }
+    }
+
+    /// agora-redesign #1909: 線引きはその規則の問いにだけ入る(名・文・鳴る例・鳴らない例・答えの向き)。例の code の :tags は消し、why を書いた
+    /// 例は `{"code", "why"}`、書かない例は `{"code"}` で載る(#1995)。線引きを入れた問いは cache のキーも変わる(線引きを変えると答えなしに
+    /// 戻る — 想定どおり)。
+    #[test]
+    fn lines_go_into_the_instructions_of_their_questions_only() {
+        use SemanticQuestion::{BusinessDecision, MixedConcerns, PlainCallable, TransportKnowledge};
+        let line = sample_line;
         let lines = vec![line("一", vec![BusinessDecision]), line("二", vec![TransportKnowledge]), line("五", vec![MixedConcerns, BusinessDecision])];
         let names = |question: &Value| -> Vec<String> {
-            question["instructions"]["lines"].as_array().map(|all| all.iter().filter_map(|l| l["name"].as_str().map(str::to_string)).collect()).unwrap_or_default()
+            part(question, "lines").as_array().map(|all| all.iter().filter_map(|l| l["name"].as_str().map(str::to_string)).collect()).unwrap_or_default()
         };
         let decision = BusinessDecision.wire_with(&lines);
         assert_eq!(names(&decision), ["一", "五"]);
         assert_eq!(
-            decision["instructions"]["lines"][0],
-            json!({"name": "一", "text": "一 の文", "violating_examples": ["(defk f [x] {} (g x))"], "complying_examples": ["(defk h [x] x)"]})
+            part(&decision, "lines")[0],
+            json!({"name": "一", "text": "一 の文", "violating_examples": [{"code": "(defk f [x] {} (g x))", "why": "一 で鳴る理由"}], "complying_examples": [{"code": "(defk h [x] x)"}]})
         );
-        assert_eq!(decision["instructions"]["question"], BusinessDecision.wire()["instructions"]["question"]);
+        assert_eq!(part(&decision, "question"), &BusinessDecision.wire()["instructions"]["question"]);
         assert_eq!(decision["criteria"], BusinessDecision.wire()["criteria"]);
-        assert!(decision["instructions"]["lines_note"].as_str().is_some_and(|note| note.contains("answer true")));
+        assert!(part(&decision, "lines_note").as_str().is_some_and(|note| note.contains("answer true") && note.contains("`why`")));
         let transport = TransportKnowledge.wire_with(&lines);
         assert_eq!(names(&transport), ["二"]);
-        assert_eq!(transport["instructions"]["question"], TransportKnowledge.wire()["instructions"]);
+        assert_eq!(part(&transport, "question"), &TransportKnowledge.wire()["instructions"]);
         let mixed = MixedConcerns.wire_with(&lines);
         assert_eq!(names(&mixed), ["五"]);
-        assert!(mixed["instructions"]["lines_note"].as_str().is_some_and(|note| note.contains("is `mixed`")));
+        assert!(part(&mixed, "lines_note").as_str().is_some_and(|note| note.contains("is `mixed`")));
         // 線引きを入れない問いと、当たる線引きの無い問いは今のまま。
         assert_eq!(PlainCallable.wire_with(&lines), PlainCallable.wire());
         assert_eq!(TransportKnowledge.wire_with(&lines[..1]), TransportKnowledge.wire());
@@ -1699,6 +1760,37 @@ mod tests {
         let (before, after) = (asked(&bare), asked(&lined));
         assert_ne!(before.key, after.key);
         assert_eq!(after.question_json, BusinessDecision.wire_with(&lined.lines));
+    }
+
+    /// agora-redesign #1995: 線引きを入れた問いの instructions は、宣言の順(問いの文 → 一般の例・注 → 線引きの読み方 → 線引き)の列で送る —
+    /// 鍵の object だと鍵の名の順に並び、DOEFF205 の一般の注(note)が線引き(lines)の後ろに来て、「上の注と違えば線引きに従え」が
+    /// 逆さに読めた。送る本文の文字列でも、この順に出る(列は綴りでも順を保つ)。
+    #[test]
+    fn lined_instructions_go_in_the_declared_order_with_the_lines_last() {
+        use SemanticQuestion::{BusinessDecision, MixedConcerns, TransportKnowledge};
+        let lines = vec![sample_line("一", vec![BusinessDecision, TransportKnowledge, MixedConcerns])];
+        for (question, keys) in [
+            (BusinessDecision, vec!["question", "business_decision_examples", "not_business_decision_examples", "lines_note", "lines"]),
+            (TransportKnowledge, vec!["question", "lines_note", "lines"]),
+            (MixedConcerns, vec!["question", "note", "lines_note", "lines"]),
+        ] {
+            let wired = question.wire_with(&lines);
+            assert_eq!(part_keys(&wired), keys, "{} の部品の順", question.id());
+            // 送る本文の綴り(proxy へ送る JSON の文字列)でも、部品の中身は宣言の順に出る。
+            let sent = serde_json::to_string(&wired).unwrap();
+            let at: Vec<usize> = keys.iter().map(|key| sent.find(&format!("\"{}\":", key)).unwrap_or_else(|| panic!("{} が無い: {}", key, sent))).collect();
+            assert!(at.windows(2).all(|pair| pair[0] < pair[1]), "{} の送る順が宣言の順と違う: {:?}\n{}", question.id(), at, sent);
+        }
+    }
+
+    /// agora-redesign #1995: DOEFF205 の一般の注は、線引き 4 の例外(型の union の枝分け・外から来ていない dict・形の確認を任せた関数の答えで
+    /// 断るだけの枝)を同じ向きで言う — 前の注は isinstance と dict の読みを例外なしに形の確認と言い、線引きと食い違った。
+    #[test]
+    fn the_mixed_concerns_note_states_the_exceptions_of_the_lines() {
+        let note = SemanticQuestion::MixedConcerns.wire()["instructions"]["note"].as_str().unwrap_or_default().to_string();
+        for needle in ["untyped input that came from outside", "branching on the cases of a typed union", "did not come from outside", "the shape check was left to"] {
+            assert!(note.contains(needle), "注に {:?} が無い: {}", needle, note);
+        }
     }
 
     #[test]

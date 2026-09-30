@@ -3,7 +3,7 @@
 //! 自動のテストは Jev の宛先を手元の偽の HTTP(127.0.0.1)にし、問いに線引きの文と例が入る事と、問いを組んで答えを受けるまでを確かめる。
 //! 本物の Jev に 10 例を 1 回だけ問うテストは #[ignore](手で走らせる — 下の ask_jev_the_line_examples_once)。
 
-use doeff_linter::project::architecture::{Architecture, SemanticLine};
+use doeff_linter::project::architecture::{Architecture, LineExample, SemanticLine};
 use doeff_linter::project::semantic::{self, Gateway, SemanticQuestion};
 use rayon::prelude::*;
 use serde_json::{json, Value};
@@ -29,11 +29,21 @@ struct FakeJev {
     bodies: Arc<Mutex<Vec<Value>>>,
 }
 
+/// 問いの instructions の部品(1 つの鍵の object の列 — agora-redesign #1995)から、鍵 key の中身を引く。
+fn part<'a>(question: &'a Value, key: &str) -> &'a Value {
+    question["instructions"].as_array().and_then(|parts| parts.iter().find_map(|p| p.get(key))).unwrap_or(&Value::Null)
+}
+
+/// 問いの instructions の部品の鍵(送った順)。
+fn part_keys(question: &Value) -> Vec<String> {
+    question["instructions"].as_array().map(|parts| parts.iter().filter_map(|p| p.as_object()?.keys().next().cloned()).collect()).unwrap_or_default()
+}
+
 /// 問われた定義の source が、問いの線引きの鳴る例か(Some(true))鳴らない例か(Some(false))どちらでもないか(None)。
 fn line_verdict(body: &Value) -> Option<bool> {
     let source = body["state"]["definition"]["source"].as_str()?;
-    let lines = body["questions"]["q"]["instructions"]["lines"].as_array()?;
-    let holds = |line: &Value, key: &str| line[key].as_array().is_some_and(|codes| codes.iter().any(|code| code.as_str() == Some(source)));
+    let lines = part(&body["questions"]["q"], "lines").as_array()?;
+    let holds = |line: &Value, key: &str| line[key].as_array().is_some_and(|examples| examples.iter().any(|example| example["code"].as_str() == Some(source)));
     lines.iter().find_map(|line| {
         if holds(line, "violating_examples") {
             Some(true)
@@ -99,9 +109,27 @@ fn fake_jev() -> FakeJev {
     FakeJev { url, bodies }
 }
 
+/// 例の code の列。
+fn codes(examples: &[LineExample]) -> Vec<String> {
+    examples.iter().map(|example| example.code.clone()).collect()
+}
+
 /// 線引きの鳴る例・鳴らない例の code(宣言の順)。
 fn examples(lines: &[SemanticLine]) -> (Vec<String>, Vec<String>) {
-    (lines.iter().flat_map(|l| l.fires.clone()).collect(), lines.iter().flat_map(|l| l.silent.clone()).collect())
+    (lines.iter().flat_map(|l| codes(&l.fires)).collect(), lines.iter().flat_map(|l| codes(&l.silent)).collect())
+}
+
+/// 例を問いに載る形に(why を書いた例は `{"code", "why"}`・書かない例は `{"code"}`)。
+fn wired(examples: &[LineExample]) -> Value {
+    Value::Array(
+        examples
+            .iter()
+            .map(|example| match &example.why {
+                Some(why) => json!({"code": example.code, "why": why}),
+                None => json!({"code": example.code}),
+            })
+            .collect(),
+    )
 }
 
 /// テストの repo — 宣言の architecture.hy と、線引き 1 の例を protocol の file・残りの例を core の file に 1 定義ずつ置く(定義の本文 = 例の code)。
@@ -122,7 +150,7 @@ fn repo() -> tempfile::TempDir {
     let first = &arch.semantic_lines[0];
     let (protocol, core): (Vec<String>, Vec<String>) = {
         let (fires, silent) = examples(&arch.semantic_lines[1..]);
-        ([first.fires.clone(), first.silent.clone()].concat(), [fires, silent].concat())
+        ([codes(&first.fires), codes(&first.silent)].concat(), [fires, silent].concat())
     };
     let module = |role: &str, codes: &[String]| format!("(val MODULE-TAGS {{:context \"lines\" :role \"{}\"}})\n\n{}\n", role, codes.join("\n\n"));
     for (rel, text) in [("app/lines/protocol/lease.hy", module("protocol", &protocol)), ("app/lines/core/rules.hy", module("judgment", &core))] {
@@ -158,7 +186,7 @@ fn rule_of(body: &Value) -> &'static str {
     let q = &body["questions"]["q"];
     if q["criteria"].get("mixed").is_some() {
         "DOEFF205"
-    } else if q["instructions"]["question"].as_str().is_some_and(|text| text.contains("make a business decision")) {
+    } else if part(q, "question").as_str().is_some_and(|text| text.contains("make a business decision")) {
         "DOEFF201"
     } else {
         "DOEFF202"
@@ -171,14 +199,18 @@ fn finding<'a>(report: &'a Value, rule: &str, mangled: &str) -> Option<&'a Value
 }
 
 /// 線引きごとの鳴る例・鳴らない例(計 10)を問いの JSON に入れ、偽の Jev の答えを受けて違反にする(agora-redesign #1909)。
-/// 問いには、その規則の線引きの名・文(architecture.hy の :text のまま)・鳴る例・鳴らない例(:fires・:silent の code)が入る —
+/// 問いには、その規則の線引きの名・文(architecture.hy の :text のまま)・鳴る例・鳴らない例(:fires・:silent の code と why)が入る —
 /// 線引き 1 と 5 は DOEFF201、2 と 3 は DOEFF202、4 と 5 は DOEFF205。偽の Jev は問いの例に照らして答えるので、線引きの文か例を問いから
 /// 外すと鳴る例の違反が消えてこのテストが落ちる。
+/// #1995: 偽の Jev が受けた本文(実際に送った問い)の instructions は宣言の順の列 — 問いの文 → 一般の例・注 → 線引きの読み方 → 線引き。
+/// 鍵の object に戻すと部品の順が消えてこのテストが落ちる。
 #[test]
 fn line_examples_reach_the_questions_and_the_answers_come_back() {
     let arch = declared();
     assert_eq!(arch.semantic_lines.len(), 5, "線引きは 5 つ");
     assert!(arch.semantic_lines.iter().all(|l| l.fires.len() == 1 && l.silent.len() == 1), "線引きごとに鳴る例・鳴らない例 1 つずつ");
+    let with_why: Vec<&str> = arch.semantic_lines.iter().filter(|l| l.fires.iter().chain(&l.silent).any(|e| e.why.is_some())).map(|l| l.name.as_str()).collect();
+    assert_eq!(with_why, ["線引き 4"], "why を書いた例は線引き 4 の 2 つ");
     let dir = repo();
     let jev = fake_jev();
     let (code, report, stderr) = run(dir.path(), &jev.url);
@@ -193,18 +225,30 @@ fn line_examples_reach_the_questions_and_the_answers_come_back() {
         arch.semantic_lines
             .iter()
             .filter(|line| line.rules.iter().any(|q| q.id() == rule))
-            .map(|line| json!({"name": line.name, "text": line.text, "violating_examples": line.fires, "complying_examples": line.silent}))
+            .map(|line| json!({"name": line.name, "text": line.text, "violating_examples": wired(&line.fires), "complying_examples": wired(&line.silent)}))
             .collect()
     };
-    for rule in ["DOEFF201", "DOEFF202", "DOEFF205"] {
+    for (rule, order) in [
+        ("DOEFF201", vec!["question", "business_decision_examples", "not_business_decision_examples", "lines_note", "lines"]),
+        ("DOEFF202", vec!["question", "lines_note", "lines"]),
+        ("DOEFF205", vec!["question", "note", "lines_note", "lines"]),
+    ] {
         let asked: Vec<&Value> = bodies.iter().filter(|b| rule_of(b) == rule).collect();
         assert!(!asked.is_empty(), "{} の問いが無い", rule);
         for body in asked {
-            let instructions = &body["questions"]["q"]["instructions"];
-            assert_eq!(instructions["lines"], Value::Array(expected(rule)), "{} の問いの線引き", rule);
-            assert!(instructions["lines_note"].as_str().is_some_and(|note| note.contains("violating_examples")), "{} の問いに線引きの読み方が無い", rule);
+            let question = &body["questions"]["q"];
+            assert_eq!(part_keys(question), order, "{} の問いの部品の順(送った本文)", rule);
+            assert_eq!(part(question, "lines"), &Value::Array(expected(rule)), "{} の問いの線引き", rule);
+            assert!(part(question, "lines_note").as_str().is_some_and(|note| note.contains("violating_examples")), "{} の問いに線引きの読み方が無い", rule);
         }
     }
+    // why を書いた例は、送った問いに code と組で載る(線引き 4 の鳴らない例 join-chat)。
+    let join_chat_why = bodies
+        .iter()
+        .filter(|b| rule_of(b) == "DOEFF205")
+        .find_map(|b| part(&b["questions"]["q"], "lines").as_array()?.iter().find_map(|l| l["complying_examples"][0]["why"].as_str().filter(|w| w.contains("join-problem"))))
+        .map(str::to_string);
+    assert_eq!(join_chat_why.as_deref(), Some("形の確認は join-problem に任せ、その答えで断りの値を返すだけ。形の確認が無いので混ざらない。"));
     let names: Vec<(&str, &str)> = arch
         .semantic_lines
         .iter()
