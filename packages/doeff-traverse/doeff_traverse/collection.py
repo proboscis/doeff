@@ -66,6 +66,17 @@ class Collection:
         return [item for item in self._items if item.failed]
 
     @property
+    def errors(self) -> list[BaseException]:
+        """Exceptions of the items that failed, in item order.
+
+        A failed item's value is its exception, except a skipped item (a When guard),
+        whose value is the original item — so failed_items[i].value is only object.
+        Read this to raise or report the first failure with its type known
+        (agora-redesign #2047).
+        """
+        return [item.value for item in self._items if item.failed and isinstance(item.value, BaseException)]
+
+    @property
     def valid_values(self) -> list:
         return [item.value for item in self._items if not item.failed]
 

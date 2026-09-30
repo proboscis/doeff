@@ -12,23 +12,44 @@ Reduce: aggregate a collection. Handler extracts valid items and applies f.
 Zip: item-indexed join of two collections. Handler manages failure union.
 
 Inspect: extract values + per-item history from an opaque collection.
+
+Answer types: each effect declares what its handler answers with (EffectBase[T]),
+so ``coll = yield from Traverse(f, items)`` is typed and a Hy ``(<- coll (for/do ...))``
+reads ``coll.failed_items`` / ``coll.valid_values`` under the type checker
+(agora-redesign #2047). The handlers in handlers.py resume with exactly these values.
+The constructors are annotated too, so pyright does not infer each call from its arguments
+(measured: with doeff's pyrightconfig, doeff-hy's static expansion of a for/do,
+``_doeff_perform(Traverse(step, items, label="n"))`` with a nested ``step``, answered Any
+while ``__init__`` was unannotated, and Collection once annotated).
 """
+
+from collections.abc import Callable, Iterable
+from typing import TYPE_CHECKING, Any, Generic, Never, TypeVar
 
 from doeff_vm import EffectBase
 
+from doeff_traverse.collection import Collection, ItemResult
 
-class Fail(EffectBase):
+if TYPE_CHECKING:
+    from _typeshed import SupportsRichComparison
+
+_Acc = TypeVar("_Acc")
+
+
+class Fail(EffectBase[Any]):
     """Failure effect: report a failure at a yield site.
 
     Handler can Resume(k, substitute_value) to continue,
     or Pass to let it propagate as an exception.
+    The substitute is any value the handler picks (normalize_to_none answers None),
+    so the answer type is Any.
 
     Args:
         cause: the exception or error object
         **context: additional context (e.g., item index, stage name)
     """
 
-    def __init__(self, cause, **context):
+    def __init__(self, cause: object, **context: object) -> None:
         super().__init__()
         self.cause = cause
         self.context = context
@@ -38,7 +59,7 @@ class Fail(EffectBase):
         return f"Fail({self.cause!r}{ctx})"
 
 
-class Traverse(EffectBase):
+class Traverse(EffectBase[Collection]):
     """Applicative traverse: apply f to each element of items.
 
     f must be a callable that returns a DoExpr (e.g., a @do function).
@@ -52,7 +73,7 @@ class Traverse(EffectBase):
         items: iterable of items
     """
 
-    def __init__(self, f, items, label=None):
+    def __init__(self, f: Callable[..., object], items: Iterable[object], label: str | None = None) -> None:
         super().__init__()
         self.f = f
         self.items = items
@@ -63,11 +84,12 @@ class Traverse(EffectBase):
         return f"Traverse({self.f!r}, ...{lbl})"
 
 
-class Reduce(EffectBase):
+class Reduce(EffectBase[_Acc], Generic[_Acc]):
     """Fold a collection using f and init.
 
     f is a kleisli arrow: (acc, item) -> DoExpr[acc].
     Only valid (non-failed) items are folded.
+    Answers the final accumulator, typed as init's type.
 
     Args:
         f: kleisli arrow, (acc, item) -> DoExpr[acc]
@@ -75,7 +97,7 @@ class Reduce(EffectBase):
         collection: a Collection (from Traverse) or plain iterable
     """
 
-    def __init__(self, f, init, collection):
+    def __init__(self, f: Callable[..., object], init: _Acc, collection: Iterable[object]) -> None:
         super().__init__()
         self.f = f
         self.init = init
@@ -85,7 +107,7 @@ class Reduce(EffectBase):
         return f"Reduce({self.f!r}, {self.init!r}, ...)"
 
 
-class Zip(EffectBase):
+class Zip(EffectBase[Collection]):
     """Item-indexed join of two collections.
 
     Items are matched by index. If an item failed in either collection,
@@ -96,7 +118,7 @@ class Zip(EffectBase):
         b: second Collection
     """
 
-    def __init__(self, a, b):
+    def __init__(self, a: Iterable[object], b: Iterable[object]) -> None:
         super().__init__()
         self.a = a
         self.b = b
@@ -105,7 +127,7 @@ class Zip(EffectBase):
         return "Zip(..., ...)"
 
 
-class Inspect(EffectBase):
+class Inspect(EffectBase[list[ItemResult]]):
     """Extract values and per-item history from an opaque Collection.
 
     Returns a list of ItemResult(index, value, history) for post-hoc analysis.
@@ -114,7 +136,7 @@ class Inspect(EffectBase):
         collection: a Collection
     """
 
-    def __init__(self, collection):
+    def __init__(self, collection: Iterable[object]) -> None:
         super().__init__()
         self.collection = collection
 
@@ -122,11 +144,12 @@ class Inspect(EffectBase):
         return "Inspect(...)"
 
 
-class Skip(EffectBase):
+class Skip(EffectBase[Never]):
     """Internal: guard (mzero) for comprehension When clauses.
 
     Emitted by the for/do macro when a When predicate is falsy.
     Caught by the Traverse handler — marks the item as skipped.
+    The handler never resumes the yield site, so the answer type is Never.
     Not intended for direct use.
     """
 
@@ -134,7 +157,7 @@ class Skip(EffectBase):
         return "Skip()"
 
 
-class SortBy(EffectBase):
+class SortBy(EffectBase[Collection]):
     """Sort a Collection by a key function.
 
     key is a plain function: item_value -> comparable.
@@ -146,7 +169,7 @@ class SortBy(EffectBase):
         reverse: sort descending (default False)
     """
 
-    def __init__(self, key, collection, reverse=False):
+    def __init__(self, key: "Callable[..., SupportsRichComparison]", collection: Iterable[object], reverse: bool = False) -> None:
         super().__init__()
         self.key = key
         self.collection = collection
@@ -156,7 +179,7 @@ class SortBy(EffectBase):
         return f"SortBy({self.key!r}, ..., reverse={self.reverse})"
 
 
-class Take(EffectBase):
+class Take(EffectBase[Collection]):
     """Take the first n items from a Collection.
 
     Only valid (non-failed/non-skipped) items are counted.
@@ -167,7 +190,7 @@ class Take(EffectBase):
         collection: a Collection or iterable
     """
 
-    def __init__(self, n, collection):
+    def __init__(self, n: int, collection: Iterable[object]) -> None:
         super().__init__()
         self.n = n
         self.collection = collection
