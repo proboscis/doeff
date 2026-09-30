@@ -485,7 +485,7 @@
   ;; 書く口(handlers.write-ready-file)と読む口(boot.sh の ROLE=ready — sh だけ・hy を起こさない)の往復。
   (setv path (str (/ tmp-path "doeff-worker-ready"))
         boot-sh (str (/ (. (Path __file__) parent parent) "deploy" "boot.sh")))
-  (defn #^ int probe [#^ dict [extra None]]
+  (defn #^ int probe [#^ (| dict None) [extra None]]
     (. (subprocess.run ["sh" boot-sh] :env (| {"PATH" (os.environ.get "PATH" "") "ROLE" "ready" "DOEFF_WORKER_READY_FILE" path}
                                               (or extra {}))
                        :capture-output True) returncode))

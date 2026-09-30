@@ -284,6 +284,8 @@
 (deftest test-a-task-program-reaches-the-worker-and-job-entry-writes-its-result [served-coordinator tmp-path]
   ;; 送り手(TaskClient)が Program を置き場に置いて sha だけの task を出し、worker(本物の CoordinatorLink)が返事の sha の Program を
   ;; cache へ取り、job_entry の task 入口の子 process が走らせて結果の file を書き、終わりの報告で呼び手に結果が届く。
+  ;; fixture の値は検査器から型が見えない(repo の fixture は object)— conftest の served_coordinator の答え(str)をここで確かめる(test_served_program.hy と同じ)。
+  (assert (isinstance served-coordinator str) served-coordinator)
   (val link (CoordinatorLink served-coordinator WORKER #(NEED) 10 60000
                              :task-dir (str (/ tmp-path "state" "tasks")) :versions (current-versions)))
   (val client (TaskClient served-coordinator "r-served"))
