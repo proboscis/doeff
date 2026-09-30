@@ -15,6 +15,10 @@
 //! 素の組(tuple・Tuple)・値の型が object / Any の写像・長さの決まった組 `tuple[A, B]`。赤にしない型: キーで引く索引 `dict[str, Row]`・
 //! 同じ型の列 `tuple[X, ...]`・凍らせた写像。これらの名は Python の型の意味なので linter が持つ。
 //!
+//! 構造を持つ値ではない 3 つの形は、名の形で決めてその種類の赤だけを外す(agora-redesign #1792・#1762 の決定 Q2-2 — Plain・plain_shape):
+//! 並べ替えのキー(名が `…key-of`・`sort-key`・`order-key`)と SQL の引数の並び(`params`・`…-params`)の素の組・組の literal、
+//! キーで引く索引(`…-by-…`)の素の写像。それ以外の名の公開面の素の組・素の写像は今までどおり鳴る。
+//!
 //! `:post` は isinstance の契約で中身の型を書けないので、名に型の注記の在る defk・deff の `:post` は写像だけを赤にする(素の組は同じ型の
 //! 列かもしれない)。名に注記の無い defk・deff の `:post` は唯一の型の宣言なので、素の組も赤にする。
 //!
@@ -72,6 +76,47 @@ const CONTAINERS: &[&str] = &[
 ];
 /// 答えの組を探す時に入らない入れ子の関数の頭。
 const NESTED_FUNCTIONS: &[&str] = &["fn", "defn", "defk", "deff", "fnk"];
+
+/// 構造を持つ値ではない形(record にする意味が無い — agora-redesign #1792・#1762 の決定 Q2-2)。名の最後の段の形で決め、その形の
+/// 赤の種類だけを外す(同じ名でも別の種類の赤は鳴る)。どの形が例外かはこの型と plain_shape の 1 か所にだけ書く。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Plain {
+    /// 並べ替えのキー(`order-key-of`・`sort-key` — `#((- at) subject key)` の類)。素の組と組の literal を外す。
+    SortKey,
+    /// SQL の引数の並び(`params`・`…-params`)。素の組と組の literal を外す。
+    SqlArgs,
+    /// キーで引く索引(`ledger-by-agent` の `…-by-…`)。素の写像を外す(値の型が開いた写像は鳴る)。
+    Index,
+}
+
+impl Plain {
+    /// 赤の理由 problem がこの形の外す種類か。
+    fn covers(self, problem: &str) -> bool {
+        match self {
+            Plain::SortKey | Plain::SqlArgs => problem.starts_with("素の組") || problem.starts_with("長さ"),
+            Plain::Index => problem.starts_with("素の写像"),
+        }
+    }
+}
+
+/// 名(`Class.名` は最後の段)→ 構造を持つ値ではない形(snake の名も kebab に揃えて見る)。
+fn plain_shape(name: &str) -> Option<Plain> {
+    let last = name.rsplit('.').next().unwrap_or(name).replace('_', "-");
+    if last.ends_with("key-of") || ["sort-key", "order-key"].iter().any(|k| last == *k || last.ends_with(&format!("-{}", k))) {
+        Some(Plain::SortKey)
+    } else if last == "params" || last.ends_with("-params") {
+        Some(Plain::SqlArgs)
+    } else if last.contains("-by-") {
+        Some(Plain::Index)
+    } else {
+        None
+    }
+}
+
+/// 名 name の赤の理由 problem を、構造を持つ値ではない形の外す種類なら落とす。
+fn unless_plain(name: &str, problem: String) -> Option<String> {
+    (!plain_shape(name).is_some_and(|shape| shape.covers(&problem))).then_some(problem)
+}
 
 /// 注記の在り場所(登録簿の鍵の細目の種類と、知らせの文の語)。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -576,7 +621,7 @@ fn hy_hits(source: &str) -> Result<Vec<TypedHit>, String> {
     Ok(sites
         .into_iter()
         .filter_map(|site| {
-            let problem = site.problem()?;
+            let problem = unless_plain(&site.name, site.problem()?)?;
             public(&site.name).then(|| TypedHit { start: site.span.0, end: site.span.1, name: site.name, what: site.what, problem })
         })
         .collect())
@@ -594,7 +639,7 @@ fn py_hits(source: &str, rel: &str) -> Result<Vec<TypedHit>, String> {
     let mut out = Vec::new();
     let mut judge = |name: String, what: What, annotation: Option<&Expr>, fallback: (usize, usize)| {
         let Some(node) = annotation else { return };
-        if let Some(problem) = py_type_problem(node).filter(|_| public(&name)) {
+        if let Some(problem) = py_type_problem(node).filter(|_| public(&name)).and_then(|problem| unless_plain(&name, problem)) {
             let range = node.range();
             let span = if range.is_empty() { fallback } else { (range.start().to_usize(), range.end().to_usize()) };
             out.push(TypedHit { start: span.0, end: span.1, name, what, problem });
@@ -781,5 +826,50 @@ mod tests {
         assert!(judge("a.hy", "(defn #^ dict f [] 1").is_err());
         assert!(judge("a.py", "def f(:\n").is_err());
         assert!(judge("a.md", "dict").unwrap().is_empty(), "Hy と Python の file だけを読む");
+    }
+
+    // --- 構造を持つ値ではない形(agora-redesign #1792)---------------------------------------------------------------
+
+    #[test]
+    fn a_sort_key_tuple_is_not_flagged() {
+        // 並べ替えのキーの :post の素の組と、答えの組の literal は鳴らない(Hy・Python とも)。
+        let source = "(defk order-key-of [item]\n  {:pre [] :post [(: % tuple)]}\n  #((- item.at) item.key))\n\
+                      (defk activity-sort-key [item]\n  {:pre [] :post [(: % tuple)]}\n  #(item.at item.key))\n";
+        assert_eq!(details("a.hy", source), Vec::<String>::new());
+        assert_eq!(details("a.py", "def order_key_of(item) -> tuple:\n    return (item.at, item.key)\n"), Vec::<String>::new());
+    }
+
+    #[test]
+    fn sql_arguments_in_order_are_not_flagged() {
+        // SQL の引数の並び(欄 params・…-params の答え)の素の組は鳴らない。
+        let source = "(defrecord InList (#^ str text) (#^ tuple params))\n\
+                      (defk select-params [key]\n  {:pre [] :post [(: % tuple)]}\n  #(key 1))\n";
+        assert_eq!(details("a.hy", source), Vec::<String>::new());
+    }
+
+    #[test]
+    fn an_index_by_key_is_not_flagged() {
+        // キーで引く索引(…-by-…)の素の写像は鳴らない。
+        let source = "(defk ledger-by-agent [entries]\n  {:pre [] :post [(: % dict)]}\n  {})\n";
+        assert_eq!(details("a.hy", source), Vec::<String>::new());
+        assert_eq!(details("a.py", "def rows_by_key(rows) -> dict:\n    return {}\n"), Vec::<String>::new());
+    }
+
+    #[test]
+    fn a_public_return_tuple_and_a_record_field_dict_still_flag() {
+        // 反例: 3 つの形の名でない公開の戻り値の素の組・record の欄の素の写像は今までどおり鳴る。
+        let source = "(defk decide [x]\n  {:pre [] :post [(: % tuple)]}\n  #(x 1))\n\
+                      (defrecord Charge (#^ dict meta))\n";
+        assert_eq!(details("a.hy", source), vec!["field:Charge.meta", "pair:decide", "post:decide"]);
+        assert_eq!(details("a.py", "def load() -> tuple:\n    return (1, 2)\n"), vec!["return:load"]);
+    }
+
+    #[test]
+    fn a_plain_shape_name_still_flags_the_other_kind() {
+        // 反例: 形の名でも、外す種類でない赤は鳴る — 索引の名の素の組・並べ替えの名の素の写像・索引の値の型が開いた写像。
+        let source = "(defk rows-by-key [rows]\n  {:pre [] :post [(: % tuple)]}\n  rows)\n\
+                      (defk order-key-of [item]\n  {:pre [] :post [(: % dict)]}\n  {})\n\
+                      (defrecord View (#^ (get dict #(str object)) items-by-id))\n";
+        assert_eq!(details("a.hy", source), vec!["field:View.items-by-id", "post:order-key-of", "post:rows-by-key"]);
     }
 }
