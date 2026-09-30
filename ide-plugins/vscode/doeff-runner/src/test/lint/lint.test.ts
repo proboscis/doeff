@@ -198,21 +198,56 @@ suite('linter の結果の見せ方', () => {
     // 古い binary が設定を読めず、最初の全体の実行から落ちた — 表は失敗の札だけ
     store.failRoot('/w', reason);
     assert.deepStrictEqual(
-      panelViolationRoots(store.failures(), store.violations(), store.rules()).map(show),
+      panelViolationRoots(store.rootRuns(), store.violations(), store.rules()).map(show),
       [`(linter が失敗(/w): ${reason})`]
     );
     // 成功すれば札は消える
     store.replaceRoot('/w', { ...r, root: '/w' });
     assert.deepStrictEqual(store.failures(), []);
-    assert.strictEqual(panelViolationRoots(store.failures(), store.violations(), store.rules())[0].tag, 'summary');
+    assert.strictEqual(panelViolationRoots(store.rootRuns(), store.violations(), store.rules())[0].tag, 'summary');
     // 成功の後に落ちたら、前の結果の上に札を足す(古い結果と分かるように)
     store.failRoot('/w', reason);
-    const roots = panelViolationRoots(store.failures(), store.violations(), store.rules()).map(show);
+    const roots = panelViolationRoots(store.rootRuns(), store.violations(), store.rules()).map(show);
     assert.strictEqual(roots[0], `(linter が失敗(/w): ${reason})`);
     assert.strictEqual(roots[1], 'summary critical 0');
     // folder を外せば札も消える
     store.removeRoot('/w');
-    assert.deepStrictEqual(panelViolationRoots(store.failures(), store.violations(), store.rules()).map(show), ['(linter の違反はありません)']);
+    assert.deepStrictEqual(panelViolationRoots(store.rootRuns(), store.violations(), store.rules()).map(show), ['(linter の違反はありません)']);
+  });
+
+  test('起動直後の「実行中」は結果が無いだけで「違反はありません」と取り違えない(agora-redesign #1650)', () => {
+    const store = new LintStore();
+    // 最初の全体の実行を始めた直後 — まだ結果が無い。表は「実行中」の札だけで「違反はありません」を出さない
+    store.beginRoot('/w');
+    const running = panelViolationRoots(store.rootRuns(), store.violations(), store.rules()).map(show);
+    assert.deepStrictEqual(running, ['(linter を実行中(/w)…)']);
+    assert.ok(!running.some((line) => line.includes('違反はありません')));
+    // 全体の実行が終わり、違反が本当に 0 件ならそのとおり出す
+    const empty = { ...report('report.json'), root: '/w', violations: [] };
+    store.replaceRoot('/w', empty);
+    assert.deepStrictEqual(
+      panelViolationRoots(store.rootRuns(), store.violations(), store.rules()).map(show),
+      ['(linter の違反はありません)']
+    );
+  });
+
+  test('再実行の間は前の違反を消さない — 先頭が実行中の札、続いて前の summary 行(agora-redesign #1650)', () => {
+    const r = report('report.json');
+    const reason = '終了コード 2: architecture.hy の誤り: :in は lines か names';
+    const store = new LintStore();
+    store.replaceRoot('/w', { ...r, root: '/w' });
+    assert.strictEqual(store.violations().length, 3);
+    // 再実行を始めても、前の違反は波線にも表にも残る(消えない)
+    store.beginRoot('/w');
+    const running = panelViolationRoots(store.rootRuns(), store.violations(), store.rules()).map(show);
+    assert.strictEqual(running[0], '(linter を実行中(/w)…)');
+    assert.strictEqual(running[1], 'summary critical 0');
+    assert.strictEqual(store.violations().length, 3, '実行中も前の違反をそのまま返す');
+    // 実行中に落ちたら、前の結果の上に失敗の札を足す(#1631 の表示のまま)
+    store.failRoot('/w', reason);
+    const failed = panelViolationRoots(store.rootRuns(), store.violations(), store.rules()).map(show);
+    assert.strictEqual(failed[0], `(linter が失敗(/w): ${reason})`);
+    assert.strictEqual(failed[1], 'summary critical 0');
   });
 
   test('束の件数と hover — 重さが混ざれば内訳、law の名と ADR と規則の文は hover に、名の無い古い linter には案内', () => {

@@ -155,8 +155,9 @@ export class LintService implements vscode.Disposable {
     this.diagnostics.clear();
   }
 
-  /** root の全体を linter に聞く。 */
+  /** root の全体を linter に聞く。聞き終わるまで store には「実行中」を置く(agora-redesign #1650)。 */
   private async lintRoot(root: string): Promise<void> {
+    this.store.beginRoot(root);
     this.apply({ tag: 'root', root }, await this.linter.lint({ tag: 'root', root }));
   }
 

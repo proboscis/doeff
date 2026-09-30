@@ -18,7 +18,7 @@ import {
   type StandingCounts
 } from './severity';
 import { LINT_LEVELS, type LintLevel } from './contract';
-import type { LintFailure } from './store';
+import type { RootRunEntry } from './store';
 
 /** 表の値の並びへ 1 件足す(数千件でも線形に束ねる)。 */
 export function pushTo<K, V>(table: Map<K, V[]>, key: K, value: V): void {
@@ -193,22 +193,41 @@ export function violationRoots(
 }
 
 /**
- * 違反の表の最上段 — 全体の実行が失敗した root があれば、その理由の札を先頭に出す。失敗がある間は、違反が 0 件でも
- * 「違反はありません」を出さない(失敗と成功を同じ画面にしない — agora-redesign #1631。古い binary が設定を読めず
- * 終了コード 2 で落ちた時、表が空のまま「違反はありません」と出た)。
+ * 違反の表の最上段 — root ごとの今の全体の実行の状態(running・measured・failed)を先に見る。実行中の root は
+ * 「実行中」の札(agora-redesign #1650 — 起動直後と再実行の間、結果が無いだけで「違反はありません」と出ない
+ * ようにする)、失敗した root は理由の札(#1631)を先頭に出す。実行中か失敗の root が 1 つでもあれば、violations
+ * が 0 件でも「違反はありません」は出さない(前の結果が無ければ札だけ、前の結果があればその violations が summary
+ * 行以下に出る — その violations は store.violations() が running・failed の previous からすでに拾っている)。
+ * 「違反はありません」が出るのは、全 root が measured で violations が 0 件の時だけ。
  */
 export function panelViolationRoots(
-  failures: readonly LintFailure[],
+  runs: readonly RootRunEntry[],
   violations: readonly LintViolation[],
   rules: readonly LintRule[],
   filter: PanelFilter = ALL_VIOLATIONS,
   previous?: SavedTally
 ): LintNode[] {
-  const failed: LintNode[] = failures.map((f) => ({ tag: 'message', label: `linter が失敗(${f.root}): ${f.reason}` }));
-  if (failed.length > 0 && violations.length === 0) {
-    return failed;
+  const header: LintNode[] = [];
+  for (const { root, run } of runs) {
+    switch (run.tag) {
+      case 'running':
+        header.push({ tag: 'message', label: `linter を実行中(${root})…` });
+        break;
+      case 'failed':
+        header.push({ tag: 'message', label: `linter が失敗(${root}): ${run.reason}` });
+        break;
+      case 'measured':
+        break;
+      default: {
+        const unreachable: never = run;
+        throw new Error(`網羅されていない状態: ${JSON.stringify(unreachable)}`);
+      }
+    }
   }
-  return [...failed, ...violationRoots(violations, rules, filter, previous)];
+  if (header.length > 0 && violations.length === 0) {
+    return header;
+  }
+  return [...header, ...violationRoots(violations, rules, filter, previous)];
 }
 
 /** 束の見出し — 規則の ID と短い名(名の無い古い linter の出力は ID だけ)。 */

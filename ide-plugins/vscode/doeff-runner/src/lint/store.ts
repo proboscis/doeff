@@ -15,9 +15,36 @@ export interface FileSignatures {
   readonly bodies: readonly LintBody[];
 }
 
-/** root 1 つの状態 — 直前の全体の結果と、file ごとの差し替え。 */
+/**
+ * root 1 つの全体の実行の状態(agora-redesign #1650) — 実行中(前の結果があれば保つ)・測定済み・失敗(前の結果が
+ * あれば保つ)の閉じた型に畳む。「まだ全体の実行を始めていない」は roots に entry が無い事で表す。
+ */
+export type RootRun =
+  | { readonly tag: 'running'; readonly since: number; readonly previous: LintReport | undefined }
+  | { readonly tag: 'measured'; readonly report: LintReport }
+  | { readonly tag: 'failed'; readonly reason: string; readonly previous: LintReport | undefined };
+
+/** RootRun から今の表示に使う report を取り出す(running・failed は前回の物 — 前回も無ければ undefined)。 */
+function reportOf(run: RootRun): LintReport | undefined {
+  switch (run.tag) {
+    case 'running':
+      return run.previous;
+    case 'measured':
+      return run.report;
+    case 'failed':
+      return run.previous;
+    default: {
+      const unreachable: never = run;
+      throw new Error(`網羅されていない状態: ${JSON.stringify(unreachable)}`);
+    }
+  }
+}
+
+/** root 1 つの状態 — 今の全体の実行の状態(RootRun)と、file ごとの差し替え。 */
 interface RootState {
-  readonly report: LintReport;
+  /** report が 1 度も無い間(初回の running・前の結果の無い failed)に表へ出す root の path。 */
+  readonly root: string;
+  readonly run: RootRun;
   readonly overrides: Map<string, { readonly violations: readonly LintViolation[]; readonly module: LintModule | undefined }>;
 }
 
@@ -30,6 +57,12 @@ function key(filePath: string): string {
 export interface LintFailure {
   readonly root: string;
   readonly reason: string;
+}
+
+/** rootRuns() が返す、root 1 つぶんの今の実行の状態。 */
+export interface RootRunEntry {
+  readonly root: string;
+  readonly run: RootRun;
 }
 
 /** path で引く表。 */
@@ -47,24 +80,39 @@ export class LintStore {
   private readonly signatures = new Map<string, FileSignatures>();
   /** 結果の出どころ(root か file の path)→ 拡張の知らない語(linter の方が新しい) */
   private readonly unknownBySource = new Map<string, readonly string[]>();
-  /** root → 直前の全体の実行の失敗(成功すれば消す) */
-  private readonly rootFailures = new Map<string, LintFailure>();
+
+  /**
+   * root の全体の実行を始めた事を置く(agora-redesign #1650) — 前の結果(measured の report か、failed の previous)
+   * があれば running へ持ち越す。表は「実行中」の札を出しつつ、前の結果があればその違反と波線を保つ(消して 0 件の
+   * 「違反はありません」に見せない — 起動直後と再実行の間の取り違え)。
+   */
+  beginRoot(root: string): void {
+    const k = key(root);
+    const existing = this.roots.get(k);
+    const previous = existing === undefined ? undefined : reportOf(existing.run);
+    this.roots.set(k, {
+      root: existing?.root ?? root,
+      run: { tag: 'running', since: Date.now(), previous },
+      overrides: existing?.overrides ?? new Map()
+    });
+    this.emit();
+  }
 
   /** root の全体の実行の結果で置き換える(それまでの file の差し替えと、失敗の記録は捨てる)。 */
   replaceRoot(root: string, report: LintReport): void {
-    this.roots.set(key(root), { report, overrides: new Map() });
-    this.rootFailures.delete(key(root));
+    this.roots.set(key(root), { root: report.root, run: { tag: 'measured', report }, overrides: new Map() });
     this.noteUnknown(root, report);
     this.emit();
   }
 
   /**
-   * 1 file の実行の結果で、その file の違反と module の要約を差し替える。全体の結果がまだ無い root には何もしない
-   * (規則の一覧と地図は全体の実行から作るため)。
+   * 1 file の実行の結果で、その file の違反と module の要約を差し替える。全体の結果が 1 度も無い root(実行中の
+   * 初回・前の結果の無い失敗)には何もしない(規則の一覧と地図は全体の実行から作るため)。
    */
   replaceFile(root: string, filePath: string, report: LintReport): void {
     const state = this.roots.get(key(root));
-    if (state === undefined) {
+    const base = state === undefined ? undefined : reportOf(state.run);
+    if (state === undefined || base === undefined) {
       return;
     }
     const wanted = key(filePath);
@@ -116,40 +164,64 @@ export class LintStore {
   }
 
   /**
-   * root の全体の実行が失敗した事を置く(前の成功の結果は残す — 表は古い結果と失敗の理由を並べて出す)。表示が失敗を
-   * 「違反はありません」と取り違えないため(agora-redesign #1631)。
+   * root の全体の実行が失敗した事を置く(前の結果は running と同じく持ち越す — 表は古い結果と失敗の理由を並べて
+   * 出す)。表示が失敗を「違反はありません」と取り違えないため(agora-redesign #1631)。同じ理由が続く間は書き換え
+   * ない(実行のたびに毎回 emit しない)。
    */
   failRoot(root: string, reason: string): void {
-    const previous = this.rootFailures.get(key(root));
-    if (previous?.reason !== reason) {
-      this.rootFailures.set(key(root), { root, reason });
-      this.emit();
+    const k = key(root);
+    const existing = this.roots.get(k);
+    if (existing?.run.tag === 'failed' && existing.run.reason === reason) {
+      return;
     }
+    const previous = existing === undefined ? undefined : reportOf(existing.run);
+    this.roots.set(k, {
+      root: existing?.root ?? root,
+      run: { tag: 'failed', reason, previous },
+      overrides: existing?.overrides ?? new Map()
+    });
+    this.emit();
   }
 
-  /** 全体の実行が失敗したままの root と理由の全部。 */
+  /** 全体の実行が失敗したままの root と理由の全部(実体は rootRuns() の failed から導く)。 */
   failures(): LintFailure[] {
-    return [...this.rootFailures.values()];
+    const found: LintFailure[] = [];
+    for (const entry of this.rootRuns()) {
+      if (entry.run.tag === 'failed') {
+        found.push({ root: entry.root, reason: entry.run.reason });
+      }
+    }
+    return found;
+  }
+
+  /** root ごとの今の全体の実行の状態の一覧(running・measured・failed)。表(view.ts の panelViolationRoots)はここから読む。 */
+  rootRuns(): RootRunEntry[] {
+    return [...this.roots.values()].map((state) => ({ root: reportOf(state.run)?.root ?? state.root, run: state.run }));
   }
 
   /** root の結果を落とす(folder が workspace から外れた時・linter を切った時)。 */
   removeRoot(root: string): void {
-    const hadFailure = this.rootFailures.delete(key(root));
-    if (this.roots.delete(key(root)) || hadFailure) {
+    if (this.roots.delete(key(root))) {
       this.emit();
     }
   }
 
-  /** 結果のある root の一覧。 */
+  /** 結果のある root の一覧(実行中で前の結果も無い root はまだ数えない — 測定済みか、前の結果を持ち越した物だけ)。 */
   rootPaths(): string[] {
-    return [...this.roots.values()].map((s) => s.report.root);
+    return [...this.roots.values()]
+      .map((s) => reportOf(s.run)?.root)
+      .filter((r): r is string => r !== undefined);
   }
 
-  /** 今の違反の全部(差し替えた file はその結果、それ以外は全体の結果)。 */
+  /** 今の違反の全部(差し替えた file はその結果、それ以外は全体の結果。前の結果も無い実行中・失敗の root は数えない)。 */
   violations(): LintViolation[] {
     const found: LintViolation[] = [];
     for (const state of this.roots.values()) {
-      found.push(...state.report.violations.filter((v) => !state.overrides.has(key(v.path))));
+      const base = reportOf(state.run);
+      if (base === undefined) {
+        continue;
+      }
+      found.push(...base.violations.filter((v) => !state.overrides.has(key(v.path))));
       for (const override of state.overrides.values()) {
         found.push(...override.violations);
       }
@@ -161,9 +233,13 @@ export class LintStore {
   modules(): Array<{ readonly root: string; readonly module: LintModule }> {
     const found: Array<{ readonly root: string; readonly module: LintModule }> = [];
     for (const state of this.roots.values()) {
-      for (const module of state.report.modules) {
+      const base = reportOf(state.run);
+      if (base === undefined) {
+        continue;
+      }
+      for (const module of base.modules) {
         const override = state.overrides.get(key(module.path));
-        found.push({ root: state.report.root, module: override?.module ?? module });
+        found.push({ root: base.root, module: override?.module ?? module });
       }
     }
     return found;
@@ -173,7 +249,11 @@ export class LintStore {
   rules(): LintRule[] {
     const byId = new Map<string, LintRule>();
     for (const state of this.roots.values()) {
-      for (const rule of state.report.rules) {
+      const base = reportOf(state.run);
+      if (base === undefined) {
+        continue;
+      }
+      for (const rule of base.rules) {
         if (!byId.has(rule.rule)) {
           byId.set(rule.rule, rule);
         }
@@ -186,7 +266,11 @@ export class LintStore {
   layers(): LintLayer[] {
     const byName = new Map<string, LintLayer>();
     for (const state of this.roots.values()) {
-      for (const layer of state.report.layers) {
+      const base = reportOf(state.run);
+      if (base === undefined) {
+        continue;
+      }
+      for (const layer of base.layers) {
         if (!byName.has(layer.name)) {
           byName.set(layer.name, layer);
         }
@@ -229,7 +313,7 @@ export class LintStore {
 
   /** linter 自身が読めなかった file などの理由。 */
   errors(): string[] {
-    return [...this.roots.values()].flatMap((s) => s.report.errors);
+    return [...this.roots.values()].flatMap((s) => reportOf(s.run)?.errors ?? []);
   }
 
   /** 書き換えの知らせを購読する。戻り値で購読をやめる。 */
