@@ -4343,3 +4343,93 @@ fn tests_reaching_a_boundary_part_need_the_edge_mark() {
         report
     );
 }
+
+// ------------------------------------------------------------------ 基点との比べ(--baseline-report・agora-redesign #1803)
+
+/// DOEFF110 を critical にした一時の repo の設定(登録簿は空 — 基点との比べは登録簿に依らない)。
+const CRITICAL_110: &str = "[tool.doeff-linter.rules.DOEFF110]\nlevel = \"critical\"\n";
+
+/// root で editor-json を走らせた出力を基点の file に書き、その path を返す。
+fn baseline_file(root: &Path) -> std::path::PathBuf {
+    let (_, stdout, stderr) = run(root, &["--output-format", "editor-json", "--no-log"], None);
+    assert!(serde_json::from_str::<Value>(&stdout).is_ok(), "基点の出力が JSON でない: {}\n{}", stdout, stderr);
+    let path = root.join("baseline.json");
+    std::fs::write(&path, stdout).unwrap();
+    path
+}
+
+/// 基点の file と比べて editor-json を走らせ、(終了コード・新しい critical の識別子の列)を返す。
+fn against_baseline(root: &Path, baseline: &Path) -> (i32, Vec<String>) {
+    let (code, stdout, stderr) =
+        run(root, &["--output-format", "editor-json", "--no-log", "--baseline-report", baseline.to_str().unwrap()], None);
+    let report: Value = serde_json::from_str(&stdout).unwrap_or_else(|e| panic!("JSON でない({}): {}\n{}", e, stdout, stderr));
+    let fresh = report["new_critical"].as_array().unwrap_or_else(|| panic!("new_critical が無い: {}", report));
+    (code, fresh.iter().map(|v| v.as_str().unwrap().to_string()).collect())
+}
+
+#[test]
+fn baseline_a_new_critical_is_named_and_changes_the_exit_code() {
+    // 増えた: 基点に無い critical の識別子が new_critical に出て、終了コードが 4(新しい critical あり)になる。
+    let dir = definition_repo(&[("app/a.hy", "(defn old [x] x)\n")], CRITICAL_110);
+    let baseline = baseline_file(dir.path());
+    std::fs::write(dir.path().join("app/a.hy"), "(defn old [x] x)\n(defn new-one [x] x)\n").unwrap();
+    let (code, fresh) = against_baseline(dir.path(), &baseline);
+    assert_eq!(fresh, vec!["app/a.hy::DOEFF110::new_one".to_string()]);
+    assert_eq!(code, 4);
+}
+
+#[test]
+fn baseline_fixing_three_and_adding_one_is_still_a_new_critical() {
+    // 件数ではなく識別子の集合で比べる: 3 件直して 1 件足した commit は、件数が減っても赤。
+    let dir = definition_repo(&[("app/a.hy", "(defn a1 [x] x)\n(defn a2 [x] x)\n(defn a3 [x] x)\n")], CRITICAL_110);
+    let baseline = baseline_file(dir.path());
+    std::fs::write(dir.path().join("app/a.hy"), "(defn b1 [x] x)\n").unwrap();
+    let (code, fresh) = against_baseline(dir.path(), &baseline);
+    assert_eq!(fresh, vec!["app/a.hy::DOEFF110::b1".to_string()]);
+    assert_eq!(code, 4);
+}
+
+#[test]
+fn baseline_fewer_or_same_criticals_are_not_new() {
+    // 減った・同じ: new_critical は空で、終了コードは基点の比べの無い時と同じ(ここでは error の違反が在るので 1)。
+    let dir = definition_repo(&[("app/a.hy", "(defn old [x] x)\n(defn gone [x] x)\n")], CRITICAL_110);
+    let baseline = baseline_file(dir.path());
+    let (code, fresh) = against_baseline(dir.path(), &baseline);
+    assert!(fresh.is_empty(), "{:?}", fresh);
+    assert_eq!(code, 1);
+    std::fs::write(dir.path().join("app/a.hy"), "(defn old [x] x)\n").unwrap();
+    let (code, fresh) = against_baseline(dir.path(), &baseline);
+    assert!(fresh.is_empty(), "{:?}", fresh);
+    assert_eq!(code, 1);
+}
+
+#[test]
+fn baseline_a_moved_file_keeps_its_criticals() {
+    // file の移動: 規則と名が同じで path だけ違い、基点の同じ識別子が消えていれば同じ破れとみなす(1 対 1)。
+    let dir = definition_repo(&[("app/a.hy", "(defn old [x] x)\n")], CRITICAL_110);
+    let baseline = baseline_file(dir.path());
+    std::fs::remove_file(dir.path().join("app/a.hy")).unwrap();
+    std::fs::write(dir.path().join("app/b.hy"), "(defn old [x] x)\n").unwrap();
+    let (_, fresh) = against_baseline(dir.path(), &baseline);
+    assert!(fresh.is_empty(), "{:?}", fresh);
+    // 基点の識別子が残ったまま別の path に同じ名が増えたら、移動ではなく新しい破れ。
+    std::fs::write(dir.path().join("app/a.hy"), "(defn old [x] x)\n").unwrap();
+    let (code, fresh) = against_baseline(dir.path(), &baseline);
+    assert_eq!(fresh, vec!["app/b.hy::DOEFF110::old".to_string()]);
+    assert_eq!(code, 4);
+}
+
+#[test]
+fn baseline_only_criticals_are_compared_and_a_bad_file_is_an_argument_error() {
+    // critical でない規則の新しい破れは new_critical に入らない。読めない基点の file は引数の誤り(2)。
+    let dir = definition_repo(&[("app/a.hy", "(defn old [x] x)\n")], "");
+    let baseline = baseline_file(dir.path());
+    std::fs::write(dir.path().join("app/a.hy"), "(defn old [x] x)\n(defn new-one [x] x)\n").unwrap();
+    let (code, fresh) = against_baseline(dir.path(), &baseline);
+    assert!(fresh.is_empty(), "{:?}", fresh);
+    assert_eq!(code, 1);
+    std::fs::write(&baseline, "not json").unwrap();
+    let (code, _, stderr) =
+        run(dir.path(), &["--output-format", "editor-json", "--no-log", "--baseline-report", baseline.to_str().unwrap()], None);
+    assert_eq!(code, 2, "{}", stderr);
+}

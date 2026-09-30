@@ -95,6 +95,11 @@ struct Args {
     #[arg(long)]
     path: Option<PathBuf>,
 
+    /// 基点(main の先端)で走らせた editor-json の出力 file。基点に無い critical を new_critical に出し、在れば終了コード 4
+    /// (editor-json の時だけ・仕様 1 節「基点との比べ」)
+    #[arg(long)]
+    baseline_report: Option<PathBuf>,
+
     /// Show verbose output
     #[arg(short, long)]
     verbose: bool,
@@ -579,12 +584,36 @@ fn main() -> ExitCode {
 
     match OutputFormat::parse(&args.output_format) {
         OutputFormat::EditorJson => run_editor(&args),
+        OutputFormat::Text | OutputFormat::Json if args.baseline_report.is_some() => {
+            eprintln!("doeff-linter: --baseline-report は --output-format editor-json の時だけ使える");
+            ExitCode::from(2)
+        }
         OutputFormat::Text | OutputFormat::Json => run_normal(&args),
     }
 }
 
-/// `--output-format editor-json` — エディタ向けの JSON を 1 つ出す。終了コード 0 = 新しい破れ(error)なし、1 = あり、2 = 引数・設定の誤り。
+/// 基点との比べで新しい critical が在る時の終了コード(仕様 1 節・agora-redesign #1803)。
+const NEW_CRITICAL_EXIT: u8 = 4;
+
+/// `--baseline-report` の file を読み、基点の critical の識別子の集合を返す(無ければ None)。読めない・形が違えば理由。
+fn baseline_identities(args: &Args) -> Result<Option<std::collections::BTreeSet<String>>, String> {
+    let Some(path) = &args.baseline_report else {
+        return Ok(None);
+    };
+    let text = std::fs::read_to_string(path).map_err(|e| format!("--baseline-report {} を読めない: {}", path.display(), e))?;
+    doeff_linter::baseline::read_baseline(&text).map(Some).map_err(|reason| format!("--baseline-report {}: {}", path.display(), reason))
+}
+
+/// `--output-format editor-json` — エディタ向けの JSON を 1 つ出す。終了コード 0 = 新しい破れ(error)なし、1 = あり、2 = 引数・設定の誤り、
+/// 4 = `--baseline-report` の基点に無い critical あり(仕様 1 節の表が正本)。
 fn run_editor(args: &Args) -> ExitCode {
+    let baseline = match baseline_identities(args) {
+        Ok(baseline) => baseline,
+        Err(reason) => {
+            eprintln!("doeff-linter: {}", reason);
+            return ExitCode::from(2);
+        }
+    };
     let setup = match doeff_linter::timing::timed("prepare", || prepare(args)) {
         Ok(setup) => setup,
         Err(reason) => {
@@ -662,7 +691,7 @@ fn run_editor(args: &Args) -> ExitCode {
         };
         Some(doeff_linter::timing::timed("signatures", || project::signatures::file_signatures(world, &setup.root, &rel, source)))
     });
-    let report = doeff_linter::timing::timed("editor-build", || editor::build(&EditorInput {
+    let mut report = doeff_linter::timing::timed("editor-build", || editor::build(&EditorInput {
         root: &setup.root,
         python: &python_results,
         stdin: stdin_file.as_ref().map(|(p, s)| (p.as_path(), s.as_str())),
@@ -674,6 +703,9 @@ fn run_editor(args: &Args) -> ExitCode {
         only: only.as_deref(),
         signatures: signatures.as_ref(),
     }));
+    report.new_critical = baseline.map(|baseline| {
+        doeff_linter::baseline::new_criticals(&baseline, &doeff_linter::baseline::critical_identities(&report.violations))
+    });
     match doeff_linter::timing::timed("editor-serialize", || serde_json::to_string(&report)) {
         Ok(text) => println!("{}", text),
         Err(error) => {
@@ -681,7 +713,9 @@ fn run_editor(args: &Args) -> ExitCode {
             return ExitCode::from(2);
         }
     }
-    if report.has_errors() {
+    if report.new_critical.as_ref().is_some_and(|fresh| !fresh.is_empty()) {
+        ExitCode::from(NEW_CRITICAL_EXIT)
+    } else if report.has_errors() {
         ExitCode::from(1)
     } else if project_report.semantic.as_ref().is_some_and(|s| s.unmeasured > 0) {
         ExitCode::from(UNMEASURED_EXIT)

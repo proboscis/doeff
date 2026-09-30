@@ -140,6 +140,9 @@ pub struct EditorReport {
     pub modules: Vec<EditorModule>,
     pub rules: Vec<EditorRule>,
     pub errors: Vec<String>,
+    /// `--baseline-report` の時: 基点に無い critical の識別子(`<path>::<規則>::<名>`・辞書順)。基点と比べない時は null
+    /// (仕様 1 節「基点との比べ」— 版は上げない欄の追加・agora-redesign #1803)。
+    pub new_critical: Option<Vec<String>>,
 }
 
 impl EditorReport {
@@ -274,6 +277,7 @@ pub fn build(input: &EditorInput) -> EditorReport {
         modules,
         rules: rule_list(input),
         errors,
+        new_critical: None,
     }
 }
 

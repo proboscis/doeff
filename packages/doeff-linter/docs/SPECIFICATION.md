@@ -13,6 +13,7 @@
 | `doeff-linter --output-format editor-json --stdin --path <file> --semantic --semantic-changed` | stdin の内容の定義のうち、中身が変わった定義(cache に答えの無い定義)だけを Jev に問う。書きかけで読めない定義は問わない(エディタが編集中に打つのが止まった時) |
 | `--config <file>` | 設定 file。`[tool.doeff-linter]` を持つ pyproject.toml の形でも、節の中身だけの TOML でもよい |
 | `--root <dir>` | repo の根。層の置き場・登録簿・鍵の path はここからの相対 |
+| `doeff-linter --output-format editor-json --baseline-report <file> [<path>…]` | 基点(main の先端)で走らせた editor-json の出力 `<file>` と比べ、基点に無い critical を `new_critical` に出す(下の「基点との比べ」) |
 
 - 設定を探す順: `--config` があればそれ。無ければ今の dir から上へ、`[tool.doeff-linter]` を持つ pyproject.toml を探す。
 - repo の根: `--root` があればそれ。無ければ見つけた pyproject.toml の dir。`--config` を渡した時は今の dir。
@@ -26,6 +27,23 @@
 | 1 | error の違反がある(登録簿に無い新しい破れ) |
 | 2 | 引数の誤り・設定が読めない・設定の名前の食い違い・型の違う値(理由は stderr) |
 | 3 | error の違反は無いが、意味の規則で問うはずだった定義に答えを得られなかった(測れなかった — Jev に届かない・鍵が無い・較正が撃てない。緑ではない・agora-redesign #1160) |
+| 4 | `--baseline-report` の時だけ: 基点に無い critical がある(新しい critical)。1・3 より先に判じる(2 は常に最優先) |
+
+### 基点との比べ(`--baseline-report`・agora-redesign #1803)
+
+マージ前の検査と commit の hook は、保存した既知の一覧を持たず、基点と commit の両方で linter を走らせ、commit の critical の識別子の集合が
+基点の集合に含まれていれば通す(#1762 の決定 A)。基点の側を走らせるのは呼び手の役で、linter は基点の出力 file を読んで比べるだけ
+(linter が git の木を組み直すと、事実の cache と repo の根の扱いが 2 重になるため)。
+
+- **比べる物**: `level` が `critical` の違反(登録簿に載って warning に下がった物も含む — 重大さは登録簿で下げない)。
+- **識別子**: `<path>::<規則>::<名>`(行番号を含めない)。鍵を持つ違反は `key` そのもの、鍵の無い違反(Python の文ごとの規則)は名の代わりに `message`。
+- **件数ではなく集合**: 3 件直して 1 件足した commit は、件数が減っても新しい critical が 1 件ある。
+- **file の移動・改名**: 規則と名が同じで path だけ違い、基点のその識別子が今は消えている時は、1 対 1 で同じ破れとみなす。
+  基点の識別子が残ったまま別の path に同じ名が増えたら、新しい破れ。
+- **出力**: editor-json の一番上の欄 `new_critical`(識別子の辞書順の列)。基点と比べない時は `null`。版は上げない(欄の追加)。
+- **範囲**: path を名指した実行では、名指しの下の違反だけを比べる。基点の出力も同じ path の名指しで作る(呼び手の役)。
+- **誤り**: 基点の file が読めない・JSON でない・`violations` の列が無い・text / json の出力で使った時は終了コード 2。
+- 戻し方: この欄・引数・`src/baseline.rs` を消す(呼び手が使う前なら影響なし)。
 
 設定(pyproject の `[tool.doeff-linter]` のどの段でも・architecture.hy)に**この binary の知らない鍵**か、この binary に無い形の正しい
 規則の ID(`DOEFF` と 3 桁)がある時は、終了コード 2 で止めない。その鍵(参照)だけを読まずに残りの規則を走らせ、設定の file のその行に
@@ -85,7 +103,8 @@ warning の違反 **DOEFF100**(設定の知らない鍵)を出す(agora-redesign
      "title": "層の向きに逆らう import",      // 短い日本語の名(違反の形)
      "family": "layer"}                       // 規則の家族(layer・tags・raw・naming・place・definition・class・wire・smell・jev・python・law)
   ],
-  "errors": []                               // 読めなかった file・登録簿・目録の理由
+  "errors": [],                              // 読めなかった file・登録簿・目録の理由
+  "new_critical": null                       // --baseline-report の時だけ: 基点に無い critical の識別子の列(1 節「基点との比べ」)
 }
 ```
 
