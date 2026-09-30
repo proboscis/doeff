@@ -164,6 +164,10 @@ warning の違反 **DOEFF100**(設定の知らない鍵)を出す(agora-redesign
 
 `enable`・`disable` は Python の規則と層の規則の両方に効く(`ALL` は両方を含む)。
 
+`--commit-hook` を撃つ linter は、各 repo が pin した doeff の commit の断面から機体で 1 度だけ組んだ物を使う — 組み立ての入口は
+`packages/doeff-linter/scripts/linter_snapshot.py`(`uv run --script <path> <doeff の checkout> <commit>` が置き場の binary の path を
+印字する・組めなければ 1 で終わり、呼び手は自分の環境の linter へ戻る・agora-redesign #1582・#2001)。repo は組み立てを写して持たない。
+
 ### 既定の重大さ(agora-redesign #1041)
 
 責務の境界の違反は、どの repo でも critical(operator 2026-09-29 "responsibility boundary violations are always CRITICAL to make our
