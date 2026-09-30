@@ -87,6 +87,10 @@ pub struct PythonCallable {
     /// effect. Captured once when the handler is installed (WithHandler);
     /// plain `Callable(...)` values used with Apply never carry a filter.
     effect_types: Option<Py<pyo3::types::PyTuple>>,
+    /// Effects the handler passes on untouched (`doeff_vm._effect_types.PassedEffects`):
+    /// an instance of the first tuple that is not an instance of the second. `None` =
+    /// no such declaration. Captured with `effect_types` at install.
+    passed: Option<(Py<pyo3::types::PyTuple>, Py<pyo3::types::PyTuple>)>,
     /// For a `@do` handler: the undecorated generator function and its
     /// tail-resume lines. `call_handler` calls it directly and runs the
     /// generator as the handler stream — the same end state as evaluating the
@@ -103,6 +107,7 @@ impl PythonCallable {
         Self {
             callable,
             effect_types: None,
+            passed: None,
             generator_function: None,
             tail_resume_lines: Vec::new(),
         }
@@ -118,6 +123,10 @@ impl PythonCallable {
         if let Some(types) = &self.effect_types {
             visit_py_field(&visit, types)?;
         }
+        if let Some((passes, keeps)) = &self.passed {
+            visit_py_field(&visit, passes)?;
+            visit_py_field(&visit, keeps)?;
+        }
         if let Some(function) = &self.generator_function {
             visit_py_field(&visit, function)?;
         }
@@ -130,6 +139,7 @@ impl PythonCallable {
         // ("'NoneType' object is not callable").
         self.callable = py.None();
         self.effect_types = None;
+        self.passed = None;
         self.generator_function = None;
     }
 }
@@ -165,9 +175,22 @@ impl PythonCallable {
         let tail_resume_lines = field(2)?
             .extract::<Vec<u32>>()
             .map_err(|e| format!("WithHandler: malformed tail-resume lines: {e}"))?;
+        let passed = field(3)?;
+        let passed = if passed.is_none() {
+            None
+        } else {
+            let tuple = |index: usize| {
+                passed
+                    .get_item(index)
+                    .and_then(|item| Ok(item.downcast_into::<pyo3::types::PyTuple>()?.unbind()))
+                    .map_err(|e| format!("WithHandler: malformed passed effects: {e}"))
+            };
+            Some((tuple(0)?, tuple(1)?))
+        };
         Ok(Self {
             callable: handler.clone().unbind(),
             effect_types,
+            passed,
             generator_function,
             tail_resume_lines,
         })
@@ -335,17 +358,28 @@ impl doeff_vm_core::value::Callable for PythonCallable {
     }
 
     fn accepts(&self, effect: &Value) -> bool {
-        let Some(types) = &self.effect_types else {
+        if self.effect_types.is_none() && self.passed.is_none() {
             return true;
-        };
+        }
         let Value::Opaque(obj) = effect else {
             return true;
         };
         Python::attach(|py| {
-            // isinstance() against the declared tuple. An error (a broken
+            // isinstance() against the declared tuples. An error (a broken
             // __instancecheck__) must not hide the effect: deliver it and let
             // the handler body decide, as without a filter.
-            obj.bind(py).is_instance(types.bind(py)).unwrap_or(true)
+            let effect = obj.bind(py);
+            if let Some((passes, keeps)) = &self.passed {
+                let passed = effect.is_instance(passes.bind(py)).unwrap_or(false)
+                    && !effect.is_instance(keeps.bind(py)).unwrap_or(true);
+                if passed {
+                    return false;
+                }
+            }
+            match &self.effect_types {
+                Some(types) => effect.is_instance(types.bind(py)).unwrap_or(true),
+                None => true,
+            }
         })
     }
 

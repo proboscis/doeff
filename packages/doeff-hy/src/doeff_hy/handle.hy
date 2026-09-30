@@ -594,7 +594,42 @@
   (.append cond-forms 'True)
   (.append cond-forms '(yield (Pass effect k)))
 
-  `(_doeff-do (fn [~@(_effect-parameter (lfor clause clauses (get clause 0))) k] (cond ~@cond-forms))))
+  (setv dispatcher `(_doeff-do (fn [~@(_effect-parameter (lfor clause clauses (get clause 0))) k] (cond ~@cond-forms))))
+  (setv passed (_passed-effects-source clauses (_session-names (or lazy-defs []))))
+  (if (is passed None)
+      dispatcher
+      `((do (import doeff_vm._effect_types [declare-passes :as _doeff-declare-passes]) _doeff-declare-passes)
+        ~dispatcher ~passed)))
+
+
+(defn _passed-effects-source [clauses session-names]
+  "The thunk telling the VM which effects a catch-all handler passes on untouched, or None.
+   A handler whose one EffectBase clause is guarded by (not (isinstance effect X)) — the fence shape: answer
+   everything except X — passes an X effect that no earlier clause names straight to (Pass effect k). The
+   annotation cannot say \"everything except X\", so the VM entered the handler for every effect (agora-redesign
+   #2008 — the doeff-cluster fence and dead-process gate: 18,000 entries in one invariant test). The thunk answers
+   #(X #(earlier clause types)) at install (doeff_vm._effect_types.declare-passes) and the VM skips the handler for
+   an X effect outside those types — the same as the guard failing. Any other guard shape, fields on the clause, or
+   an X that reads a session name (bound only inside the clause) → None (the handler sees every effect)."
+  (setv catch-alls (lfor #(index clause) (enumerate clauses) :if (= (str (get clause 0)) "EffectBase") index))
+  (when (!= (len catch-alls) 1)
+    (return None))
+  (setv index (get catch-alls 0))
+  (setv clause (get clauses index))
+  (setv #(guard _body) (_parse-guard (list (cut clause 2 None))))
+  (setv test (if (and (isinstance guard Expression) (= (len guard) 2) (= (str (get guard 0)) "not"))
+                 (get guard 1)
+                 None))
+  (setv shaped (and (isinstance test Expression)
+                    (= (len test) 3)
+                    (= (str (get test 0)) "isinstance")
+                    (= (str (get test 1)) "effect")
+                    (= (len (get clause 1)) 0)))
+  (when (or (not shaped)
+            (_references-symbol (get test 2) "effect")
+            (any (gfor name session-names (_references-symbol (get test 2) (str name)))))
+    (return None))
+  `(fn [] #(~(get test 2) #(~@(lfor earlier (cut clauses 0 index) (get earlier 0))))))
 
 
 (defn _effect-parameter [etypes]
