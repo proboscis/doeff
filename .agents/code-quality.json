@@ -32,6 +32,7 @@
     "packages/doeff-records/src/doeff_records/http_client.hy",
     "packages/doeff-records/src/doeff_records/http_server.hy",
     "packages/doeff-records/src/doeff_records/maintenance.hy",
+    "packages/doeff-records/src/doeff_records/store_choice.hy",
     "packages/doeff-records/src/doeff_records/main.hy"
   ],
   "exclude": [],
@@ -673,6 +674,19 @@
       "typed": true
     },
     {
+      "name": "records-store-choice",
+      "paths": [
+        "packages/doeff-records/src/doeff_records/store_choice.hy"
+      ],
+      "responsibility": "記録の service の置き場の選びの型 StoreChoice(表の用意の作り手 prepare-of と /readyz の問い readiness の組)。data だけで I/O なし。本体の設定 records-serving が引数で受け、値は置き場の module が持つ(PostgreSQL = main の PG-STORE・memory = memory の memory-store-choice — agora-redesign #1608)",
+      "layer": "domain",
+      "public": [
+        "packages/doeff-records/src/doeff_records/store_choice.hy"
+      ],
+      "allow": [],
+      "typed": true
+    },
+    {
       "name": "records-main",
       "paths": [
         "packages/doeff-records/src/doeff_records/main.hy"
@@ -688,7 +702,8 @@
         "records-http-server",
         "records-values",
         "records-pg",
-        "records-pg-sql"
+        "records-pg-sql",
+        "records-store-choice"
       ],
       "typed": true
     },
@@ -818,7 +833,9 @@
         "records-faults",
         "records-maintenance",
         "records-admission",
-        "records-watching"
+        "records-watching",
+        "records-store-choice",
+        "doeff-hy-frozen"
       ],
       "typed": true
     }

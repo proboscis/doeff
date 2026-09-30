@@ -3,7 +3,8 @@
 ;;; 確かめること:
 ;;;   - 設定の読み records-settings は env と Secret の file を effect(ReadEnvironment・ReadText)で読み、既定を埋めた設定の値を作る。
 ;;;     必須の env が欠ければ起動を止める(黙って既定へ倒さない)
-;;;   - 本体の設定 records-serving は設定の値と表の宣言だけから作る(宛先・名簿・手入れ・本文の上限)
+;;;   - 本体の設定 records-serving は設定の値と表の宣言と置き場の選びだけから作る(宛先・名簿・手入れ・本文の上限)。表の用意と /readyz の
+;;;     問いは置き場の選び(PostgreSQL = PG-STORE・memory = memory-store-choice)が決める(agora-redesign #1608)
 ;;;   - 土台の口 records-connected は外側(scheduler・Await の橋・session の値の置き場・時計・止めの合図)を持たず、呼び手が置いた外側の
 ;;;     内側に差すだけで本体 serve-records が閉じる — 本物の待ち受け(127.0.0.1 の空き port)で口を開き、止めの合図で 0 で終わる
 (require doeff-hy.macros [deftest defhandler defk <- val])
@@ -18,10 +19,10 @@
 (import doeff_core_effects.http_server_effects [HttpAddress])
 (import doeff_time [async-time-handler])
 (import doeff_records.laws [LAW-SCHEMA])
-(import doeff_records.memory [MemoryStore memory-records-handler])
+(import doeff_records.memory [MemoryStore memory-store-choice])
 (import doeff_records.pg_sql [DEFAULT-PREFIX])
 (import doeff_records.http_server [MaintenancePlan RecordsServing REQUEST-MAX-BYTES])
-(import doeff_records.main [RecordsSettings records-settings records-serving records-connected records-process
+(import doeff_records.main [RecordsSettings records-settings records-serving records-connected records-process PG-STORE store-reachable
                             ENV-PG-URL-FILE ENV-PRINCIPALS-FILE ENV-HOSTNAME ENV-HOST ENV-PORT ENV-POOL-SIZE DEFAULT-PORT
                             DEFAULT-POOL-SIZE DEFAULT-MAINTENANCE-SECONDS DEFAULT-KEEP-CHANGES-SECONDS])
 
@@ -99,19 +100,26 @@
 
 (deftest test-serving-is-built-from-the-schema-and-the-settings-only
   (<- settings RecordsSettings (settings-under REQUIRED-ENV))
-  (<- serving RecordsServing (records-serving LAW-SCHEMA settings))
+  (<- serving RecordsServing (records-serving LAW-SCHEMA settings PG-STORE))
   (assert (= serving.address settings.address) serving)
   (assert (is serving.schema LAW-SCHEMA) serving)
   (assert (is serving.roster settings.roster) serving)
   (assert (= serving.maintenance settings.maintenance) serving)
   (assert (= serving.max-bytes REQUEST-MAX-BYTES) serving)
-  (assert (isinstance serving.prepare (| Program EffectBase)) serving))
+  (assert (isinstance serving.prepare (| Program EffectBase)) serving)
+  ;; PostgreSQL の選びは /readyz で置き場を問う。
+  (assert (is serving.readiness store-reachable) serving))
 
 
-(defk handlers-at-once [store]
-  {:pre [(: store MemoryStore)] :post [(: % Callable)] :tags {:context "records" :role "foundation"}}
-  "memory の置き場の用意(I/O なし — PostgreSQL の答え手は差したまま使わない)。"
-  (fn [writer] (memory-records-handler store writer)))
+(deftest test-serving-takes-the-store-from-the-choice
+  ;; 置き場の選びを替えると、表の用意と /readyz の問いがその選びの物になる(PostgreSQL に固定しない — #1608)。memory の選びは
+  ;; /readyz を問わず(用意が済めば ready)、表の用意は memory の置き場の handler の関数を返す(I/O なし)。
+  (<- settings RecordsSettings (settings-under REQUIRED-ENV))
+  (val store (MemoryStore LAW-SCHEMA))
+  (<- serving RecordsServing (records-serving LAW-SCHEMA settings (! (memory-store-choice store))))
+  (assert (is serving.readiness None) serving)
+  (<- handler-for Callable serving.prepare)
+  (assert (callable (handler-for "maker")) handler-for))
 
 
 (defk callers-outer [body]
@@ -123,8 +131,8 @@
 
 (deftest test-the-connected-port-closes-the-entry-program-under-the-callers-outer
   (<- settings RecordsSettings (settings-under (| REQUIRED-ENV {ENV-HOST "127.0.0.1" ENV-PORT "0"})))
-  (<- serving-read RecordsServing (records-serving LAW-SCHEMA settings))
-  ;; 表の用意だけを memory に替える(PostgreSQL に届かない検の機体でも、土台の口と本体の組み立ては本番と同じ)。
-  (val serving (dataclasses.replace serving-read :prepare (handlers-at-once (MemoryStore LAW-SCHEMA)) :maintenance None))
+  ;; 置き場は memory の選びで渡す(PostgreSQL に届かない検の機体でも、土台の口と本体の組み立ては本番と同じ)。手入れは立てない。
+  (<- serving-read RecordsServing (records-serving LAW-SCHEMA settings (! (memory-store-choice (MemoryStore LAW-SCHEMA)))))
+  (val serving (dataclasses.replace serving-read :maintenance None))
   (val code (run (records-process (fn [body] (callers-outer (records-connected settings body))) serving)))
   (assert (= code 0) code))

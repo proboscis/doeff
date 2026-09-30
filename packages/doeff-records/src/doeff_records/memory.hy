@@ -36,6 +36,8 @@
 (import doeff_records.effects [ReadRow ListRows PutRow PutRows WatchChanges WatchEvents AppendEvent ReadEvents ReadStreamEnd])
 (import doeff_records.faults [AdvanceStoreEpoch SetStoreOutage StoreFault StoreOperation AddStoreFault ClearStoreFaults])
 (import doeff_records.maintenance [SweepExpired PruneChanges Swept Pruned])
+(import doeff_records.store_choice [StoreChoice])
+(import functools [partial])
 (import doeff_records.admission [Admitted AppendNew AppendReplay judge-expect judge-put judge-put-rows judge-append
                                  retention-group-of where-refusal row-matches? listed-row key-text next-watch-sequence
                                  epoch-ms terminal-row?])
@@ -712,3 +714,20 @@
     (<- now (GetTime))
     (<- pruned (memory-prune-changes store effect (epoch-ms now)))
     (resume pruned)))
+
+
+;; --- 置き場の選び(records-serving に渡す値 — agora-redesign #1608)----------------------------------------------------------------
+
+(defk memory-prepared [store schema prefix host]
+  {:pre [(: store MemoryStore) (: schema RecordsSchema) (: prefix str) (: host str)] :post [(: % Callable)]
+   :tags {:context "records" :role "foundation"}}
+  "memory の置き場 store で表を用意したことにし、「書き手の名 → 記録の handler の関数」を返すため(表の宣言は置き場が持つ — 接頭辞と
+   機体の名は PostgreSQL の表の名と行の刻みにだけ効くので使わない・I/O なし)。"
+  (partial memory-records-handler store))
+
+
+(defk memory-store-choice [store]
+  {:pre [(: store MemoryStore)] :post [(: % StoreChoice)] :tags {:context "records" :role "foundation"}}
+  "memory の置き場 store を使う置き場の選びを作るため(模擬・手元の 1 process・単体の検が records-serving に渡す。/readyz は用意の済みだけで
+   ready)。PostgreSQL の選びは doeff_records.main の PG-STORE。"
+  (StoreChoice :prepare-of (partial memory-prepared store) :readiness None))

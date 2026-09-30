@@ -161,7 +161,7 @@ Program で、答え = process の終わりの code。本番の土台(`records-f
 割った口を組む(#1280):
 
 - `records-settings dsn-of` — env と file を読んで設定の値 `RecordsSettings`(DSN・名簿・接頭辞・機体の名・接続の数・宛先・手入れ)を作る
-- `records-serving schema settings` — 本体の設定 `RecordsServing` を作る
+- `records-serving schema settings choice` — 本体の設定 `RecordsServing` を作る。`choice` は置き場の選び `StoreChoice`(`doeff_records.store_choice` — 表の用意の作り手と /readyz の問い)で、PostgreSQL は `doeff_records.main` の `PG-STORE`、memory は `doeff_records.memory` の `memory-store-choice`
 - `records-connected settings body` — 土台の口(待ち受け・名乗り・PostgreSQL の答え手。接続と pool を開き、終われば閉じる)。外側は持たない
 - `records-process foundation serving` — 本体。`(records-process (fn [body] (<自分の外側> (records-connected settings body))) serving)` と撃つ
 

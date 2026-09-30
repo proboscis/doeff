@@ -4,7 +4,8 @@
 ;;;
 ;;; 割り方(#1280 — 呼び手の系が自分の process の外側〔scheduler・時計・止めの合図〕の下へ、土台の口だけを差せるように):
 ;;;   records-settings       設定の読み: env と Secret の file を effect(ReadEnvironment・ReadText)で読み、設定の値 RecordsSettings にする
-;;;   records-serving        本体の設定: 表の宣言 schema と設定の値から、入口の Program の設定(RecordsServing)を作る
+;;;   records-serving        本体の設定: 表の宣言 schema と設定の値と置き場の選び(StoreChoice — PostgreSQL = PG-STORE・memory =
+;;;                          doeff_records.memory の memory-store-choice)から、入口の Program の設定(RecordsServing)を作る(#1608)
 ;;;   records-process        本体の組み立て — 土台 foundation を引数で受け、serve-records を土台の下で走らせる(#834 の形・会話の記録の
 ;;;                          service の record-process と同じ)。本番と検が同じ 1 つを通る
 ;;;   records-connected      土台の口(待ち受けと置き場): PostgreSQL の接続の貸し出しと pool を開き、待ち受け(aiohttp-http-server)・名乗りの
@@ -23,7 +24,7 @@
 ;;;   (when (= __name__ "__main__")
 ;;;     (sys.exit (run (with-handlers [subprocess-handler os-file-handler] (serve-records-service SCHEMA dsn-of)))))
 ;;;
-;;; 自分の process の外側を持つ系は、records-settings と records-serving で値を作り、(records-process (fn [body] (<自分の外側>
+;;; 自分の process の外側を持つ系は、records-settings と records-serving(置き場の選びを渡す)で値を作り、(records-process (fn [body] (<自分の外側>
 ;;; (records-connected settings body))) serving) を撃つ(外側に scheduled・await-handler・state・時計・StopRequested の答え手が要る)。
 ;;;
 ;;; dsn-of = 接続 URL の file の中身 → PostgreSQL の DSN の Program(file の綴りは呼び手の系ごとに違う — 例: env の 1 行 KEY=URL)。
@@ -62,6 +63,7 @@
 (import doeff_records.pg [pg-records-handler prepare-records-store DEFAULT-POLL-SECONDS])
 (import doeff_records.pg_sql [DEFAULT-PREFIX])
 (import doeff_records.http_server [MaintenancePlan RecordsServing RecordsListening REQUEST-MAX-BYTES serve-records])
+(import doeff_records.store_choice [StoreChoice])
 
 (val MODULE-TAGS {:context "records" :role "entry"})
 
@@ -225,14 +227,21 @@
   (isinstance answer SqlRows))
 
 
-(defk records-serving [schema settings]
-  {:pre [(: schema RecordsSchema) (: settings RecordsSettings)] :post [(: % RecordsServing)] :tags {:context "records" :role "entry"}}
-  "本体(serve-records)の設定を、表の宣言 schema と設定の値から作るため。表の用意(prepare)は PostgreSQL の置き場 — 答え手は土台の口
-   records-connected が置く。/readyz は store-reachable で置き場を問う。"
+;; PostgreSQL の置き場の選び(表の用意 pg-handlers-of・/readyz の問い store-reachable)— 単独の本番と、PostgreSQL の土台の口を差す呼び手が
+;; records-serving に渡す(答える SQL の答え手は土台の口 records-connected が置く)。
+(val PG-STORE (StoreChoice :prepare-of pg-handlers-of :readiness store-reachable))
+
+
+(defk records-serving [schema settings choice]
+  {:pre [(: schema RecordsSchema) (: settings RecordsSettings) (: choice StoreChoice)] :post [(: % RecordsServing)]
+   :tags {:context "records" :role "entry"}}
+  "本体(serve-records)の設定を、表の宣言 schema と設定の値と置き場の選び choice から作るため。表の用意(prepare)と /readyz の問い
+   (readiness)は choice が決める — PostgreSQL = PG-STORE・memory = doeff_records.memory の memory-store-choice(agora-redesign #1608 —
+   以前は PostgreSQL に固定で、使い手が dataclasses.replace で上書きしていた)。"
   (RecordsServing :address settings.address :schema schema :roster settings.roster
-                  :prepare (pg-handlers-of schema settings.prefix settings.origin-host) :request-handlers #()
+                  :prepare (choice.prepare-of schema settings.prefix settings.origin-host) :request-handlers #()
                   :max-bytes REQUEST-MAX-BYTES :maintenance settings.maintenance
-                  :stop-poll-seconds STOP-POLL-SECONDS :drain-seconds DRAIN-SECONDS :readiness store-reachable))
+                  :stop-poll-seconds STOP-POLL-SECONDS :drain-seconds DRAIN-SECONDS :readiness choice.readiness))
 
 
 (defk records-process [foundation serving]
@@ -249,7 +258,7 @@
    (records-foundation — 接続と pool は土台の口が開いて閉じる)の下で records-process に撃つ。dsn-of = 接続 URL の file の中身 → DSN の
    Program。答え = process の終わりの code(用意の失敗は例外のまま上げる)。"
   (<- settings RecordsSettings (records-settings dsn-of))
-  (<- serving RecordsServing (records-serving schema settings))
+  (<- serving RecordsServing (records-serving schema settings PG-STORE))
   (<- code int (records-process (fn [body] (records-foundation settings body)) serving))
   (print "記録の service: 止まった" :file sys.stderr :flush True)
   code)
