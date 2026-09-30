@@ -401,9 +401,20 @@ def qualified_name(obj: Any) -> str:
 
 
 @dataclass(frozen=True)
+class _WholeTree:
+    """A module tree held whole: a Python module, or a Hy module expanded in this process."""
+
+    tree: ast.Module
+
+    def find(self, function: types.FunctionType) -> "FunctionNode | None":
+        """The def of ``function`` (see ``_find_function``)."""
+        return _find_function(self.tree, function)
+
+
+@dataclass(frozen=True)
 class _ModuleSource:
     module: types.ModuleType
-    tree: ast.Module
+    definitions: "_WholeTree | _ChunkedTree"
     filename: str
 
 
@@ -412,7 +423,7 @@ _MODULE_CACHE: dict[str, _ModuleSource] = {}
 
 def module_ast(module: types.ModuleType) -> ast.Module:
     """The module's AST; Hy modules are macro-expanded with Hy's compiler first."""
-    return _module_source(module).tree
+    return _module_source(module).definitions.tree
 
 
 def _module_source(module: types.ModuleType) -> _ModuleSource:
@@ -423,16 +434,17 @@ def _module_source(module: types.ModuleType) -> _ModuleSource:
     if not filename:
         raise ValueError(f"module {module.__name__} has no source file")
     source = Path(filename).read_text(encoding="utf-8")
+    definitions: _WholeTree | _ChunkedTree
     if filename.endswith(".hy"):
-        tree = _compile_hy(source, filename, module.__name__)
+        definitions = _compile_hy(source, filename, module.__name__)
     else:
-        tree = ast.parse(source, filename=filename)
-    loaded = _ModuleSource(module=module, tree=tree, filename=filename)
+        definitions = _WholeTree(ast.parse(source, filename=filename))
+    loaded = _ModuleSource(module=module, definitions=definitions, filename=filename)
     _MODULE_CACHE[module.__name__] = loaded
     return loaded
 
 
-def _compile_hy(source: str, filename: str, module_name: str) -> ast.Module:
+def _compile_hy(source: str, filename: str, module_name: str) -> "_WholeTree | _ChunkedTree":
     """The macro-expanded tree of a Hy module (from the disk cache when the same inputs were expanded before)."""
     cache_path = _hy_cache_path(source, filename, module_name)
     if cache_path is not None:
@@ -448,7 +460,7 @@ def _compile_hy(source: str, filename: str, module_name: str) -> ast.Module:
         compiled = _expand_hy(source, filename, module_name)
         if cache_path is not None:
             _write_cached_tree(cache_path, compiled)
-    return compiled
+    return _WholeTree(compiled)
 
 
 # Who wants to know when an expansion missed the cache (the expansion and writing the
@@ -532,7 +544,9 @@ def _hy_cache_path(source: str, filename: str, module_name: str) -> Path | None:
 
     key = "\n".join(
         [
-            "v2",  # v2: the tree is stored with what is derived from it alone (_CachedTree)
+            # v2: the tree is stored with what is derived from it alone. v3: cut into top-level
+            # definitions that are built only when followed (_CachedTree — agora-redesign #1591).
+            "v3",
             sys.version,
             hy.__version__,
             module_name,
@@ -545,56 +559,156 @@ def _hy_cache_path(source: str, filename: str, module_name: str) -> Path | None:
 
 
 @dataclass(frozen=True)
-class _CachedTree:
-    """An expanded tree with what is derived from that tree alone, kept in one pickle so the
-    derived values point at the same nodes as the tree.
+class _Definition:
+    """One def / class / lambda of a cached tree: which chunk holds it, its place among the
+    chunk's definitions, and what ``_find_function`` compares — so a candidate is chosen
+    without building any node."""
 
-    Once expansion was cached, rebuilding these in every process was most of an analysis
-    (agora-redesign #1586 — definition index 0.34 s and body facts 0.55 s of 2.1 s for one
-    closure test): the definition index walks the whole module, the body facts walk every
-    followed def. Both depend on the tree only (``_BodyFacts`` does not see the caller)."""
+    chunk: int
+    position: int
+    is_class: bool
+    lines: tuple[int, ...]
+    params: tuple[str, ...]
 
-    tree: ast.Module
-    index: dict[tuple[str, ...], list[ast.AST]]
+
+@dataclass(frozen=True)
+class _Chunk:
+    """One top-level definition of a cached tree with what is derived from it alone: its
+    definitions (itself and the ones nested in it, in index order) and, for every def and
+    lambda in it, the body nodes and body facts. Pickled on its own, so its values point at
+    its own nodes; nothing in it points into another chunk (a def's facts are its own body's)."""
+
+    definitions: tuple[ast.AST, ...]
     body_nodes: tuple[tuple[FunctionNode, tuple[ast.AST, ...]], ...]
     body_facts: tuple[tuple[FunctionNode, _BodyFacts], ...]
 
 
-def _read_cached_tree(path: Path) -> ast.Module | None:
-    """The cached tree, or None when absent or unreadable (the caller expands again).
+@dataclass(frozen=True)
+class _CachedTree:
+    """An expanded tree as it is kept on disk: the definition index, then one pickled chunk per
+    top-level definition, then the whole tree pickled (only ``module_ast`` builds it).
 
-    The derived values stored with it are placed in the per-process memos, keyed by the
-    loaded nodes, so the reader finds them as if it had built them."""
+    agora-redesign #1586 / #1590 stored the derived values (definition index, body nodes and
+    facts) with the tree, since rebuilding them in every process was most of an analysis.
+    What stayed was building the whole tree from the pickle — 0.41–0.45 s of 1.17 s for one
+    closure test — although the reader follows a few definitions of each module (#1591).
+    Bytes are copied, not built, so a chunk no one follows costs nothing but its read."""
+
+    index: dict[tuple[str, ...], tuple[_Definition, ...]]
+    chunks: tuple[bytes, ...]
+    whole: bytes
+
+
+class _ChunkedTree:
+    """A cached tree read one top-level definition at a time: ``find`` chooses the candidate
+    from the index (as ``_find_function`` would) and builds only the chunk that holds it."""
+
+    def __init__(self, cached: _CachedTree) -> None:
+        self._cached = cached
+        self._loaded: dict[int, tuple[ast.AST, ...]] = {}
+        self._tree: ast.Module | None = None
+
+    def find(self, function: types.FunctionType) -> FunctionNode | None:
+        """The def of ``function`` — the same one ``_find_function`` picks from the whole tree."""
+        candidates = [
+            definition
+            for definition in self._cached.index.get(_qualname_path(function), ())
+            if not definition.is_class
+        ]
+        if not candidates:
+            return None
+        chosen = min(candidates, key=lambda d: _closeness(d.lines, d.params, function.__code__))
+        node = self._definitions_of(chosen.chunk)[chosen.position]
+        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
+            raise TypeError(f"cached definition {chosen!r} is a {type(node).__name__}, not a def")
+        return node
+
+    @property
+    def tree(self) -> ast.Module:
+        """The whole tree, built the first time it is asked for (``module_ast``)."""
+        if self._tree is None:
+            tree = pickle.loads(self._cached.whole)
+            if not isinstance(tree, ast.Module):
+                raise TypeError(f"cached tree is a {type(tree).__name__}, not a module")
+            self._tree = tree
+        return self._tree
+
+    def _definitions_of(self, chunk: int) -> tuple[ast.AST, ...]:
+        """Build a chunk once, placing its derived values in the per-process memos (keyed by
+        its nodes) so the reader finds them as if it had built them."""
+        loaded = self._loaded.get(chunk)
+        if loaded is not None:
+            return loaded
+        read = pickle.loads(self._cached.chunks[chunk])
+        if not isinstance(read, _Chunk):
+            raise TypeError(f"cached chunk {chunk} is a {type(read).__name__}")
+        for function, nodes in read.body_nodes:
+            _BODY_NODES[id(function)] = (function, nodes)
+        for function, facts in read.body_facts:
+            _BODY_FACTS[id(function)] = (function, facts)
+        self._loaded[chunk] = read.definitions
+        return read.definitions
+
+
+def _read_cached_tree(path: Path) -> _ChunkedTree | None:
+    """The cached tree, or None when absent or unreadable (the caller expands again)."""
     try:
         with path.open("rb") as handle:
             cached = pickle.load(handle)
     except (OSError, pickle.UnpicklingError, EOFError, AttributeError, ImportError, IndexError):
         return None
-    if not isinstance(cached, _CachedTree) or not isinstance(cached.tree, ast.Module):
+    if not isinstance(cached, _CachedTree):
         return None
-    _DEFINITION_INDEX[id(cached.tree)] = (cached.tree, cached.index)
-    for function, nodes in cached.body_nodes:
-        _BODY_NODES[id(function)] = (function, nodes)
-    for function, facts in cached.body_facts:
-        _BODY_FACTS[id(function)] = (function, facts)
-    return cached.tree
+    return _ChunkedTree(cached)
 
 
 def _derived(tree: ast.Module) -> _CachedTree:
-    """The tree with its definition index and, for every def and lambda, its body nodes and
-    body facts (a def the reader cannot read is left out and read on demand as before)."""
-    functions = [node for node in ast.walk(tree) if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda))]
-    facts: list[tuple[FunctionNode, _BodyFacts]] = []
-    for function in functions:
-        try:
-            facts.append((function, _body_facts(function)))
-        except Exception:  # noqa: BLE001 — a def the reader cannot read now is read (and fails) when followed, as before
-            continue
+    """The tree cut into its top-level definitions, each with its body nodes and body facts
+    (a def the reader cannot read is left out and read on demand as before), and the index
+    that names where each definition is. The index keeps ``_definitions_by_path``'s order,
+    so ties in ``find`` resolve as they do on the whole tree."""
+    index: dict[tuple[str, ...], list[_Definition]] = {}
+    chunks: list[bytes] = []
+    for number, root in enumerate(_direct_definitions(tree.body)):
+        definitions: list[ast.AST] = []
+
+        def walk(definition: ast.AST, path: tuple[str, ...]) -> None:
+            if not isinstance(definition, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda)):
+                return
+            name = "<lambda>" if isinstance(definition, ast.Lambda) else definition.name
+            here = (*path, name)
+            index.setdefault(here, []).append(
+                _Definition(
+                    chunk=number,
+                    position=len(definitions),
+                    is_class=isinstance(definition, ast.ClassDef),
+                    lines=() if isinstance(definition, ast.ClassDef) else _definition_lines(definition),
+                    params=() if isinstance(definition, ast.ClassDef) else _definition_params(definition),
+                )
+            )
+            definitions.append(definition)
+            members = [definition.body] if isinstance(definition, ast.Lambda) else definition.body
+            for inner in _direct_definitions(members):
+                walk(inner, here)
+
+        walk(root, ())
+        functions = [node for node in ast.walk(root) if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda))]
+        facts: list[tuple[FunctionNode, _BodyFacts]] = []
+        for function in functions:
+            try:
+                facts.append((function, _body_facts(function)))
+            except Exception:  # noqa: BLE001 — a def the reader cannot read now is read (and fails) when followed, as before
+                continue
+        chunk = _Chunk(
+            definitions=tuple(definitions),
+            body_nodes=tuple((function, _body_nodes(function)) for function in functions),
+            body_facts=tuple(facts),
+        )
+        chunks.append(pickle.dumps(chunk, protocol=pickle.HIGHEST_PROTOCOL))
     return _CachedTree(
-        tree=tree,
-        index=_definitions_by_path(tree),
-        body_nodes=tuple((function, _body_nodes(function)) for function in functions),
-        body_facts=tuple(facts),
+        index={path: tuple(entries) for path, entries in index.items()},
+        chunks=tuple(chunks),
+        whole=pickle.dumps(tree, protocol=pickle.HIGHEST_PROTOCOL),
     )
 
 
@@ -2295,7 +2409,7 @@ def _locate(function: types.FunctionType, bound: _Bound = _NO_BINDINGS) -> _Loca
         source = _module_source(module)
     except (OSError, ValueError, TypeError, SyntaxError) as error:
         return Unresolved("source unavailable", str(error), _location_of(function))
-    node = _find_function(source.tree, function)
+    node = source.definitions.find(function)
     if node is None:
         return Unresolved(
             "definition not found in source", function.__qualname__, _location_of(function)
@@ -2332,26 +2446,42 @@ def _find_function(tree: ast.Module, function: types.FunctionType) -> FunctionNo
     A ``lambda`` (``<lambda>`` in the qualname — ``defhandler`` compiles a handler whose
     only clause is ``(resume v)`` to one) is matched by line and parameter names.
     """
-    parts = tuple(part for part in function.__qualname__.split(".") if part != "<locals>")
     candidates: list[FunctionNode] = [
         definition
-        for definition in _definitions_by_path(tree).get(parts, ())
+        for definition in _definitions_by_path(tree).get(_qualname_path(function), ())
         if not isinstance(definition, ast.ClassDef)
     ]
     if not candidates:
         return None
     code = function.__code__
-    first_line = code.co_firstlineno
-    params = list(code.co_varnames[: code.co_argcount])
+    return min(
+        candidates,
+        key=lambda node: _closeness(_definition_lines(node), _definition_params(node), code),
+    )
 
-    def distance(node: FunctionNode) -> _Closeness:
-        """How far a candidate is from the code object (line first, then parameters)."""
-        decorators = [] if isinstance(node, ast.Lambda) else node.decorator_list
-        lines = [node.lineno, *(decorator.lineno for decorator in decorators)]
-        same_params = [a.arg for a in (*node.args.posonlyargs, *node.args.args)] == params
-        return _Closeness(min(abs(line - first_line) for line in lines), 0 if same_params else 1)
 
-    return min(candidates, key=distance)
+def _qualname_path(function: types.FunctionType) -> tuple[str, ...]:
+    """The name path a function's def is indexed under (its qualname without ``<locals>``)."""
+    return tuple(part for part in function.__qualname__.split(".") if part != "<locals>")
+
+
+def _definition_lines(node: FunctionNode) -> tuple[int, ...]:
+    """The lines a def may be reported at — its own and its decorators' (a code object's
+    first line is the first decorator's)."""
+    decorators = [] if isinstance(node, ast.Lambda) else node.decorator_list
+    return (node.lineno, *(decorator.lineno for decorator in decorators))
+
+
+def _definition_params(node: FunctionNode) -> tuple[str, ...]:
+    """The positional parameter names a def declares (compared with the code object's)."""
+    return tuple(a.arg for a in (*node.args.posonlyargs, *node.args.args))
+
+
+def _closeness(lines: tuple[int, ...], params: tuple[str, ...], code: types.CodeType) -> "_Closeness":
+    """How far a candidate def is from the code object (line first, then parameters) — the
+    one measure both the whole tree and the cached index choose by."""
+    same_params = params == tuple(code.co_varnames[: code.co_argcount])
+    return _Closeness(min(abs(line - code.co_firstlineno) for line in lines), 0 if same_params else 1)
 
 
 _DEFINITION_INDEX: dict[int, tuple[ast.Module, dict[tuple[str, ...], list[ast.AST]]]] = {}

@@ -9,6 +9,7 @@ one expansion.
 
 import ast
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -50,7 +51,7 @@ def test_the_second_read_of_the_same_source_comes_from_the_cache(
     first = pe._compile_hy(SOURCE, "/src/m.hy", "m")
     second = pe._compile_hy(SOURCE, "/src/m.hy", "m")
     assert seen == ["m"]
-    assert ast.dump(first) == ast.dump(second)
+    assert ast.dump(first.tree) == ast.dump(second.tree)
     assert len(list(cache_dir.glob("*.pickle"))) == 1
 
 
@@ -84,7 +85,7 @@ def test_an_unreadable_cache_file_is_expanded_again_and_rewritten(
     cached.write_bytes(b"not a pickle")
     tree = pe._compile_hy(SOURCE, "/src/m.hy", "m")
     assert seen == ["m", "m"]
-    assert isinstance(tree, ast.Module)
+    assert isinstance(tree.tree, ast.Module)
     assert pe._read_cached_tree(cached) is not None
 
 
@@ -118,33 +119,96 @@ DEFS = """
 """
 
 
-def test_a_cached_tree_brings_its_definition_index_and_body_facts(
-    cache_dir: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """agora-redesign #1586 / #1590: what is derived from the tree alone (the definition index,
-    the body nodes and facts of every def) is stored with it, so a process that reads the
-    cached tree does not walk the module and every def again — and gets the same values."""
-    written = pe._compile_hy(DEFS, "/src/defs.hy", "defs")
-    built_index = {path: [ast.dump(node) for node in nodes] for path, nodes in pe._definitions_by_path(written).items()}
-    functions = [n for n in ast.walk(written) if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda))]
-    built_facts = [(sorted(pe._body_facts(f).names), sorted(pe._body_facts(f).imports)) for f in functions]
-    # A new process: nothing derived is in memory.
+FUNCTIONS = (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)
+
+
+def function_at(qualname: str, *, line: int, params: tuple[str, ...]) -> SimpleNamespace:
+    """A stand-in for the function a def compiles to — ``find`` reads its qualname, its first
+    line and its positional parameter names, nothing else."""
+    return SimpleNamespace(
+        __qualname__=qualname,
+        __code__=SimpleNamespace(co_firstlineno=line, co_varnames=params, co_argcount=len(params)),
+    )
+
+
+def functions_named(tree: ast.Module) -> list[tuple[str, ast.AST]]:
+    """Every def and lambda of ``tree`` with the qualname its function would carry."""
+    return [
+        (".".join(path), node)
+        for path, nodes in pe._definitions_by_path(tree).items()
+        for node in nodes
+        if isinstance(node, FUNCTIONS)
+    ]
+
+
+def a_new_process() -> None:
+    """Forget everything derived in memory, as a new process starts."""
     pe._MODULE_CACHE.clear()
     pe._DEFINITION_INDEX.clear()
     pe._BODY_FACTS.clear()
     pe._BODY_NODES.clear()
+
+
+def test_a_cached_tree_finds_the_same_def_with_its_body_facts_without_walking(
+    cache_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """agora-redesign #1586 / #1590 / #1591: the definition index and the body nodes and facts
+    of every def are stored with the tree, so a process that reads the cached tree does not
+    walk the module and every def again — and chooses the same def, with the same facts, as
+    ``_find_function`` does on the whole tree (nested defs included; the line and the
+    parameters decide between candidates)."""
+    written = pe._compile_hy(DEFS, "/src/defs.hy", "defs").tree
+    named = functions_named(written)
+    assert {qualname for qualname, _ in named} >= {"outer", "outer.inner"}
+    asked = []
+    for qualname, node in named:
+        for line in (node.lineno, node.lineno + 1):
+            for params in (pe._definition_params(node), ("other",)):
+                function = function_at(qualname, line=line, params=params)
+                expected = pe._find_function(written, function)
+                assert expected is not None
+                facts = pe._body_facts(expected)
+                asked.append((function, ast.dump(expected), sorted(facts.names), sorted(facts.imports)))
+    a_new_process()
     walked: list[str] = []
     monkeypatch.setattr(pe, "_read_body_facts", lambda f: walked.append("facts") or (_ for _ in ()).throw(AssertionError("rebuilt")))
     monkeypatch.setattr(pe, "_direct_definitions", lambda m: walked.append("index") or iter(()))
     read = pe._compile_hy(DEFS, "/src/defs.hy", "defs")
-    assert read is not written and ast.dump(read) == ast.dump(written)
-    index = pe._definitions_by_path(read)
-    assert {path: [ast.dump(node) for node in nodes] for path, nodes in index.items()} == built_index
-    read_functions = [n for n in ast.walk(read) if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda))]
-    assert [(sorted(pe._body_facts(f).names), sorted(pe._body_facts(f).imports)) for f in read_functions] == built_facts
+    for function, node, names, imports in asked:
+        found = read.find(function)
+        assert found is not None and ast.dump(found) == node
+        facts = pe._body_facts(found)
+        assert (sorted(facts.names), sorted(facts.imports)) == (names, imports)
     assert walked == [], walked
-    # The stored values point into the read tree (not copies of other nodes).
-    assert all(node in list(ast.walk(read)) for nodes in index.values() for node in nodes)
+    assert ast.dump(read.tree) == ast.dump(written)
+
+
+TWO = """
+(require doeff-hy.macros [defk <-])
+(defk first-one [x] {:pre [(: x int)] :post [(: % int)]} (+ x 1))
+(setv unrelated 1)
+(defk second-one [y] {:pre [(: y int)] :post [(: % int)]}
+  (defk inside [z] {:pre [(: z int)] :post [(: % int)]} (+ z y))
+  y)
+"""
+
+
+def test_a_cached_tree_builds_only_the_definition_it_is_asked_for(cache_dir: Path) -> None:
+    """agora-redesign #1591: building the whole cached tree was most of what was left of an
+    analysis (0.41–0.45 s of 1.17 s for one closure test), although the reader follows a few
+    defs of each module. Finding a def builds only its top-level definition (a nested def
+    comes with it, as the same nodes); the whole tree is built only when asked for."""
+    written = pe._compile_hy(TWO, "/src/two.hy", "two").tree
+    named = dict(functions_named(written))
+    inside, outer = named["second_one.inside"], named["second_one"]
+    a_new_process()
+    read = pe._compile_hy(TWO, "/src/two.hy", "two")
+    found_inside = read.find(function_at("second_one.inside", line=inside.lineno, params=pe._definition_params(inside)))
+    assert found_inside is not None and ast.dump(found_inside) == ast.dump(inside)
+    assert set(read._loaded) == {1}
+    found_outer = read.find(function_at("second_one", line=outer.lineno, params=pe._definition_params(outer)))
+    assert found_outer is not None and any(node is found_inside for node in ast.walk(found_outer))
+    assert set(read._loaded) == {1} and read._tree is None
 
 
 def test_writing_the_cache_entry_is_inside_the_observed_miss(cache_dir: Path, monkeypatch: pytest.MonkeyPatch) -> None:
