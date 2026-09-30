@@ -3793,3 +3793,172 @@ fn registry_keys_that_no_longer_hit_are_errors_only_for_rules_judged_on_the_whol
     let (_, report) = editor(off.path());
     assert!(keys(&report, "DOEFF166").is_empty());
 }
+
+/// DOEFF142 の宣言(:handler-arguments)を architecture.hy に足した一時の repo(agora-redesign #1809・決定 C の失敗ケースの検)。
+fn handler_argument_repo(source: &str) -> tempfile::TempDir {
+    let files = [("app/billing/protocol/answer.hy", tags("billing", "protocol") + source)];
+    let dir = world_repo_with(&files, "", "[\"DOEFF142\"]");
+    let arch_path = dir.path().join("architecture.hy");
+    let declarations = ":foundation foundation\n  :handler-arguments {:files [\"app/**/*.hy\"] :store-names [\"store\"] \
+                        :store-suffixes [\"-store\"] :keep-mark \"handler-state-kept:\" :value-types []}";
+    let text = std::fs::read_to_string(&arch_path).unwrap().replace(":foundation foundation", declarations);
+    std::fs::write(&arch_path, text).unwrap();
+    dir
+}
+
+/// agora-redesign #1809(DOEFF142): defhandler の引数が client・可変の店を取れば赤(鳴る例)。frozen の record の設定を取る handler と、
+/// 残す理由の註(:keep-mark)を書いた handler は鳴らない(鳴らない例)。
+#[test]
+fn handler_arguments_that_hold_a_client_or_a_store_are_red() {
+    let firing = "(import httpx)\n\
+                  (defhandler charge-reads [#^ httpx.AsyncClient client store]\n  (Charge [amount] (resume amount)))\n";
+    let dir = handler_argument_repo(firing);
+    let (_, report) = editor(dir.path());
+    let hits = keys(&report, "DOEFF142");
+    assert_eq!(hits.len(), 2, "client と名の store の 2 つ: {:?}\n{}", hits, report);
+    assert!(hits.iter().all(|k| k.starts_with("app/billing/protocol/answer.hy::DOEFF142::charge-reads::")), "{:?}", hits);
+    assert_eq!(violation(&report, &hits[0])["severity"], "error");
+
+    let quiet = "(require doeff-hy.record [defrecord])\n\
+                 (defrecord ChargeSettings \"請求の設定\" (#^ str currency))\n\
+                 (defhandler charge-reads [#^ ChargeSettings settings]\n  (Charge [amount] (resume amount)))\n\
+                 (defhandler kept-reads [store]\n  ;; handler-state-kept: 検の台だけが渡す記録の箱(本番の組には載らない)\n  (Charge [amount] (resume amount)))\n";
+    let dir = handler_argument_repo(quiet);
+    let (_, report) = editor(dir.path());
+    assert!(keys(&report, "DOEFF142").is_empty(), "{:?}\n{}", keys(&report, "DOEFF142"), report);
+}
+
+/// DOEFF155・158 の宣言(:business-fakes と :assembly-shape)を書いた一時の repo(agora-redesign #1809)。請求の service の層は
+/// core・intent・protocol(翻訳の層)・entry(組み立ての層)。本番の入口 = 組の file(app/*/entry/handler_sets.hy)の名が production で
+/// 始まる定義。intent の効果は Charge と Refund(app/billing/intent/effects.hy)。
+fn assembly_repo(files: &[(&str, String)], enable: &str) -> tempfile::TempDir {
+    let intent = |name: &str| {
+        format!("(defeffect {} \"{}\" {{:fields [amount] :answer int :tags {{:context \"billing\" :role \"intent\"}}}})\n", name, name)
+    };
+    let mut all: Vec<(&str, String)> = vec![
+        ("app/foundation/host.hy", tags("shared", "foundation") + "(defk with-host [body] body)\n"),
+        ("app/billing/intent/effects.hy", intent("Charge") + &intent("Refund")),
+    ];
+    all.extend(files.iter().cloned());
+    let dir = world_repo_with(&all, "", enable);
+    let arch_path = dir.path().join("architecture.hy");
+    let declarations = ":foundation foundation\n  :verification-environment \"sim\"\n  \
+                        :business-fakes {:simulation [\"app/sim/**\"] :assembly [\"app/*/entry/**\"] :tests [\"**/tests/**\"] \
+                        :production [\"app/**\"] :business-modules [\"app.billing\"] :sets [\"app/*/entry/handler_sets.hy\"] \
+                        :production-prefix \"production\" :simulation-prefix \"emulated\"}\n  \
+                        :assembly-shape {:translation-point \"with-*-translation\" :retired-function \"handlers-of\" \
+                        :translations \"TRANSLATION-HANDLERS\" :translation-layer \"protocol\" :intent-layer \"intent\"}";
+    let text = std::fs::read_to_string(&arch_path)
+        .unwrap()
+        .replace(":foundation foundation", declarations)
+        .replace(
+            "(layer entry",
+            "(layer intent :roles [intent] :imports [core intent])\n           (layer protocol :roles [protocol] :imports [intent protocol])\n           (layer entry",
+        )
+        .replace("(defservice billing \"請求\" {:layers [core entry]})", "(defservice billing \"請求\" {:layers [core intent protocol entry]})");
+    std::fs::write(&arch_path, text).unwrap();
+    dir
+}
+
+/// Charge に答える handler charge-reads を置いた file(層の dir の下・請求の文脈)。
+fn charge_handler(layer: &str, name: &str) -> String {
+    tags("billing", layer)
+        + &format!(
+            "(require doeff-hy.macros [defhandler])\n(import app.billing.intent.effects [Charge])\n(defhandler {} []\n  (Charge [amount] (resume amount)))\n",
+            name
+        )
+}
+
+/// 本番の入口(組の file の production-handlers)が handler を並べる。
+fn production_set(imports: &str, handlers: &str) -> String {
+    tags("billing", "entry") + &format!("{}\n(defk production-handlers [] [{}])\n", imports, handlers)
+}
+
+/// agora-redesign #1809(DOEFF158): 本番の入口から届く intent の効果の答え手が、翻訳の層の外に在れば赤・翻訳の層に 2 つ在れば両方赤
+/// (鳴る例)。翻訳の層の handler 1 つだけが答えれば鳴らない(鳴らない例)。
+#[test]
+fn intent_answerers_outside_or_doubled_in_the_translation_layer_are_red() {
+    let outside = [
+        ("app/billing/core/answer.hy", charge_handler("judgment", "charge-reads")),
+        ("app/billing/entry/handler_sets.hy", production_set("(import app.billing.core.answer [charge-reads])", "charge-reads")),
+    ];
+    let dir = assembly_repo(&outside, "[\"DOEFF158\"]");
+    let (_, report) = editor(dir.path());
+    let hits = keys(&report, "DOEFF158");
+    assert_eq!(hits.len(), 1, "{:?}\n{}", hits, report);
+    assert!(hits[0].contains("outside:charge-reads"), "{:?}", hits);
+    assert_eq!(violation(&report, &hits[0])["severity"], "error");
+
+    let doubled = [
+        ("app/billing/protocol/first.hy", charge_handler("protocol", "charge-reads")),
+        ("app/billing/protocol/second.hy", charge_handler("protocol", "charge-again")),
+        (
+            "app/billing/entry/handler_sets.hy",
+            production_set("(import app.billing.protocol.first [charge-reads])\n(import app.billing.protocol.second [charge-again])", "charge-reads charge-again"),
+        ),
+    ];
+    let dir = assembly_repo(&doubled, "[\"DOEFF158\"]");
+    let (_, report) = editor(dir.path());
+    let hits = keys(&report, "DOEFF158");
+    assert_eq!(hits.len(), 2, "{:?}\n{}", hits, report);
+    assert!(hits.iter().all(|k| k.contains("shared:")), "{:?}", hits);
+
+    let single = [
+        ("app/billing/protocol/first.hy", charge_handler("protocol", "charge-reads")),
+        ("app/billing/entry/handler_sets.hy", production_set("(import app.billing.protocol.first [charge-reads])", "charge-reads")),
+    ];
+    let dir = assembly_repo(&single, "[\"DOEFF158\"]");
+    let (_, report) = editor(dir.path());
+    assert!(keys(&report, "DOEFF158").is_empty(), "{:?}\n{}", keys(&report, "DOEFF158"), report);
+}
+
+/// 翻訳の層(protocol)に Charge の翻訳 charge-reads と、その列の定数 TRANSLATION-HANDLERS を置いた file。
+fn translation_module() -> String {
+    charge_handler("protocol", "charge-reads") + "(require doeff-hy.macros [val])\n(val TRANSLATION-HANDLERS [charge-reads])\n"
+}
+
+/// agora-redesign #1809(DOEFF155): 組み立ての層に退役した組み立ての関数(:retired-function)が残る・翻訳の列の 1 点が翻訳の列でない
+/// handler を並べる、のどちらも赤(鳴る例)。翻訳の列の 1 点が翻訳の層の定数の列だけを並べれば鳴らない(鳴らない例)。
+#[test]
+fn assembly_shape_breaks_are_red() {
+    let retired = [
+        ("app/billing/protocol/translate.hy", translation_module()),
+        ("app/billing/entry/assembly.hy", tags("billing", "entry") + "(defk handlers-of [foundation] [foundation])\n"),
+    ];
+    let dir = assembly_repo(&retired, "[\"DOEFF155\"]");
+    let (_, report) = editor(dir.path());
+    let hits = keys(&report, "DOEFF155");
+    assert!(hits.iter().any(|k| k.ends_with("::retired")), "{:?}\n{}", hits, report);
+    assert!(hits.iter().all(|k| violation(&report, k)["severity"] == "error"), "{:?}", hits);
+
+    let stray = [
+        ("app/billing/protocol/translate.hy", translation_module()),
+        (
+            "app/billing/core/answer.hy",
+            charge_handler("judgment", "charge-direct") + "(require doeff-hy.macros [val])\n(val DIRECT-HANDLERS [charge-direct])\n",
+        ),
+        (
+            "app/billing/entry/assembly.hy",
+            tags("billing", "entry")
+                + "(import app.billing.core.answer [DIRECT-HANDLERS])\n\
+                   (defk with-billing-translation [body] (with-handlers [#* DIRECT-HANDLERS] body))\n",
+        ),
+    ];
+    let dir = assembly_repo(&stray, "[\"DOEFF155\"]");
+    let (_, report) = editor(dir.path());
+    let hits = keys(&report, "DOEFF155");
+    assert!(hits.iter().any(|k| k.contains("stray:")), "{:?}\n{}", hits, report);
+
+    let shaped = [
+        ("app/billing/protocol/translate.hy", translation_module()),
+        (
+            "app/billing/entry/assembly.hy",
+            tags("billing", "entry")
+                + "(import app.billing.protocol.translate [TRANSLATION-HANDLERS])\n\
+                   (defk with-billing-translation [body] (with-handlers [#* TRANSLATION-HANDLERS] body))\n",
+        ),
+    ];
+    let dir = assembly_repo(&shaped, "[\"DOEFF155\"]");
+    let (_, report) = editor(dir.path());
+    assert!(keys(&report, "DOEFF155").is_empty(), "{:?}\n{}", keys(&report, "DOEFF155"), report);
+}
