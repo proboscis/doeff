@@ -4376,7 +4376,8 @@ fn stale_registry_repo(dir_keys: &[&str], listed: &str, enable: &str) -> tempfil
 #[test]
 fn registry_keys_that_no_longer_hit_are_errors_only_for_rules_judged_on_the_whole_repo() {
     let enable = "\"DOEFF110\", \"DOEFF111\", \"DOEFF166\"";
-    // 今も当たる鍵(law の名・規則の ID)・当たらなくなった鍵(dir の file と list の行)・判じていない規則の鍵・規則を引けない他の検の鍵。
+    // 今も当たる鍵(law の名・規則の ID)・当たらなくなった鍵(dir の file と list の行)・enable に無い規則の鍵・規則を引けない他の検の鍵。
+    // enable に無い規則(DOEFF119)も、鍵が名指すので同じ実行で当てて判じる(agora-redesign #1999 — 前は判じずに見逃した)。
     let dir = stale_registry_repo(
         &["app/core/x.hy::bare-needs-reason::bare", "app/core/x.hy::bare-needs-reason::gone", "app/core/x.hy::DOEFF119::Old"],
         "app/core/x.hy::DOEFF110::helper\napp/core/x.hy::DOEFF110::removed\nlayer/imports.hy::some-other-checker::x\n",
@@ -4388,8 +4389,10 @@ fn registry_keys_that_no_longer_hit_are_errors_only_for_rules_judged_on_the_whol
         vec![
             "known.txt::DOEFF166::app/core/x.hy::DOEFF110::removed",
             "reg/BREACHES/k1.txt::DOEFF166::app/core/x.hy::bare-needs-reason::gone",
+            "reg/BREACHES/k2.txt::DOEFF166::app/core/x.hy::DOEFF119::Old",
         ]
     );
+    assert!(keys(&report, "DOEFF119").is_empty(), "enable に無い規則の当たりは報告しない: {:?}", keys(&report, "DOEFF119"));
     let gone = violation(&report, "reg/BREACHES/k1.txt::DOEFF166::app/core/x.hy::bare-needs-reason::gone");
     assert_eq!(gone["severity"], "error");
     assert!(gone["message"].as_str().unwrap().contains("DOEFF111"), "{}", gone["message"]);
@@ -4409,6 +4412,44 @@ fn registry_keys_that_no_longer_hit_are_errors_only_for_rules_judged_on_the_whol
     let off = stale_registry_repo(&["app/core/x.hy::bare-needs-reason::gone"], "", "\"DOEFF110\", \"DOEFF111\"");
     let (_, report) = editor(off.path());
     assert!(keys(&report, "DOEFF166").is_empty());
+}
+
+/// repo 全体を editor-json で、`--enable` に rules を渡して走らせる。
+fn editor_enabling(root: &Path, rules: &str) -> (i32, Value) {
+    let (code, stdout, stderr) = run(root, &["--output-format", "editor-json", "--no-log", "--enable", rules], None);
+    let value: Value = serde_json::from_str(&stdout).unwrap_or_else(|e| panic!("JSON でない({}): {}\n{}", e, stdout, stderr));
+    (code, value)
+}
+
+#[test]
+fn registry_rows_are_judged_by_the_rules_they_name_even_when_only_166_is_enabled() {
+    // `--enable DOEFF166` だけでも、登録簿の行が名指す規則(DOEFF110・law bare-needs-reason の DOEFF111)を同じ実行で当てて
+    // 当たらない行を error にする。直す前は名指す規則が走らず、166 は黙って 0 件だった(agora-redesign #1999・#1992 の見逃し)。
+    let dir = stale_registry_repo(
+        &["app/core/x.hy::bare-needs-reason::bare", "app/core/x.hy::bare-needs-reason::gone"],
+        "app/core/x.hy::DOEFF110::helper\napp/core/x.hy::DOEFF110::removed\nlayer/imports.hy::some-other-checker::x\n",
+        "\"DOEFF110\", \"DOEFF111\", \"DOEFF166\"",
+    );
+    let (code, report) = editor_enabling(dir.path(), "DOEFF166");
+    assert_eq!(
+        keys(&report, "DOEFF166"),
+        vec![
+            "known.txt::DOEFF166::app/core/x.hy::DOEFF110::removed",
+            "reg/BREACHES/k1.txt::DOEFF166::app/core/x.hy::bare-needs-reason::gone",
+        ]
+    );
+    assert_eq!(code, 1, "当たらない行は error — 終了コード 1");
+    // 名指す規則は 166 の判じにだけ使う — enable に無い規則の当たり(今も当たる行を含む)は報告しない。
+    assert!(keys(&report, "DOEFF110").is_empty(), "{:?}", keys(&report, "DOEFF110"));
+    assert!(keys(&report, "DOEFF111").is_empty(), "{:?}", keys(&report, "DOEFF111"));
+
+    // enable に在る規則の当たりは、166 を足しても変わらない(名指されて足した 111 の当たりも混ざらない)。
+    let (_, alone) = editor_enabling(dir.path(), "DOEFF110");
+    let (_, with_166) = editor_enabling(dir.path(), "DOEFF110,DOEFF166");
+    assert!(!keys(&alone, "DOEFF110").is_empty(), "{:?}", keys(&alone, "DOEFF110"));
+    assert_eq!(keys(&with_166, "DOEFF110"), keys(&alone, "DOEFF110"));
+    assert!(keys(&with_166, "DOEFF111").is_empty(), "{:?}", keys(&with_166, "DOEFF111"));
+    assert_eq!(keys(&with_166, "DOEFF166"), keys(&report, "DOEFF166"));
 }
 
 /// DOEFF142 の宣言(:handler-arguments)を architecture.hy に足した一時の repo(agora-redesign #1809・決定 C の失敗ケースの検)。
