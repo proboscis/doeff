@@ -428,6 +428,9 @@ intent の層は Tach の interfaces に当たる — 別の service が読ん�
   `layers.describe`)。
 - cache = repo の根の `.doeff-linter/semantic-cache/<鍵>.json`(git の外に置く — `.gitignore` に足すかは repo ごと)。鍵 = sha256(model・問いの JSON・層の説明・
   タグを消した source)。申告の役は鍵に入れず、判定の後にコードで比べる。cache の答えが無い定義は違反にせず、最上位の `semantic.unjudged` に数える(合格に倒さない)。
+  cache の答えは確率と choice のほかに、答えに載った費用 `reported_cost_usd`(上流が載せた時だけ・載せない答えは null で 0 と区別する)と
+  `input_tokens`・`output_tokens`(usage に在る時だけ)を持つ。以前の欄 `cost_usd`(載らない時も 0 と書いていた)は読まない — 前の答えの費用は不明と
+  して読む(agora-redesign #1892)。
 - 重さは warning か info だけ(当たり外れを測り終えるまで error にしない — 設定にも error の欄は無い)。外れは誤判定の一覧に載せる(下の「誤判定の一覧と正例の一覧」)。
 - 宛先・model・キーは doeff の `packages/doeff-jev/src/doeff_jev/target.py` と同じ決め方(Rust に写した — 決め方は 1 つ):
   環境変数 `JEV_BASE_URL` / `JEV_MODEL` / `JEV_WIRE` / `JEV_API_KEY` / `JEV_API_KEY_FILE` → 設定 file `~/.config/jev/client.json` → 既定 = TypeSafe 直
@@ -468,7 +471,10 @@ proxy_peek_timeout_ms = 5000                     # 既定(覚えている時だ�
 
 editor-json: violation の `source`(`linter` = 決定的な規則・`jev` = 意味の判定)と `probability`(Jev の違反だけ)、最上位の `semantic`
 (`model`・`wire`・`judged`・`unjudged`・`unmeasured`(測れなかった数 — Jev に問えなかった定義と、proxy の覚えを読む束が待ち
-`proxy_peek_timeout_ms` の内に返らなかった定義。後者は `unjudged` に入れない・agora-redesign #1885)・`asked`・`peeked`(proxy が覚えていた答えを受け取った数)・`cost_usd`(gateway だけが返す)・`input_tokens`・
+`proxy_peek_timeout_ms` の内に返らなかった定義。後者は `unjudged` に入れない・agora-redesign #1885)・`asked`・`peeked`(proxy が覚えていた答えを受け取った数)・`cost_usd`(上流が答えに費用を載せた回の和 —
+載せるのは Vercel の AI Gateway だけで、TypeSafe 直は載せない)・`cost_unreported`(上流を呼んだのに費用が載っていなかった回の数 — 0 でなければ
+`cost_usd` は下限)・`remembered`(proxy の覚え・相乗りで答えた回の数 — 見出し `x-jev-proxy` が `hit` / `coalesced`。上流を呼んでいないので
+費用と token を数えない)・`input_tokens`・`output_tokens`(上流を呼んだ回の usage の和)・
 `served_model`・`calibration` = not-run / ok / drifted / failed・`false_positives`・`labeled` — 下の節)。`wire` は宛先の形と決め方(例 `direct(default)`・`direct(env)`・`direct(repo)` = repo の代理)。
 
 ### 誤判定の一覧と正例の一覧(agora-redesign #1039)

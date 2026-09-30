@@ -31,8 +31,9 @@ struct FakeProxy {
     seen: Arc<Mutex<Vec<Seen>>>,
 }
 
-/// 本物の Jev の代わりの答え(較正の例は幅に入る・source の語で確率を決める)。
-fn answer_for(body: &Value) -> Value {
+/// 本物の Jev の代わりの答え(較正の例は幅に入る・source の語で確率を決める)。cost が在れば上流が費用を載せた答え(Vercel の AI
+/// Gateway の形 providerMetadata.gateway.cost)、無ければ TypeSafe 直と同じく usage だけの答え。
+fn answer_for(body: &Value, cost: Option<&str>) -> Value {
     let name = body["state"]["definition"]["name"].as_str().unwrap_or("");
     let source = body["state"]["definition"]["source"].as_str().unwrap_or("");
     let p = if ["may-manage?", "classifier-call"].contains(&name) || source.contains("permission") || source.contains("http://") {
@@ -40,10 +41,20 @@ fn answer_for(body: &Value) -> Value {
     } else {
         0.05
     };
-    serde_json::json!({"answers": {"q": {"noul": p}}, "usage": {"input_tokens": 100}, "model": "jev-test-1"})
+    let mut answer = serde_json::json!({"answers": {"q": {"noul": p}}, "usage": {"input_tokens": 100, "output_tokens": 2}, "model": "jev-test-1"});
+    if let Some(cost) = cost {
+        answer["providerMetadata"] = serde_json::json!({"gateway": {"cost": cost}});
+    }
+    answer
 }
 
+/// 上流が費用を載せない(TypeSafe 直と同じ)偽の proxy。
 fn fake_proxy() -> FakeProxy {
+    fake_proxy_with_cost(None)
+}
+
+/// 上流が答えに費用 cost を載せる(載せないなら None)偽の proxy。
+fn fake_proxy_with_cost(cost: Option<&'static str>) -> FakeProxy {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let url = format!("http://{}/v1/systemone", listener.local_addr().unwrap());
     let seen = Arc::new(Mutex::new(Vec::new()));
@@ -91,7 +102,7 @@ fn fake_proxy() -> FakeProxy {
                     let remembered = memory.lock().unwrap().get(&key).cloned();
                     match (cache_control.as_str(), remembered) {
                         ("no-cache", _) | (_, None) => {
-                            let answer = answer_for(&body);
+                            let answer = answer_for(&body, cost);
                             memory.lock().unwrap().insert(key, answer.clone());
                             ("200 OK", "miss", answer)
                         }
@@ -426,4 +437,55 @@ fn proxy_key_matches_the_proxy_key_contract_sample() {
     for case in cases {
         assert_eq!(proxy_key(&case["body"]), case["key"].as_str().unwrap(), "{}", case["body"]);
     }
+}
+
+/// 手元の cache の答え 1 つを読む(どれでもよい — 同じ偽の上流の答えなので費用の欄は同じ)。
+fn one_cached_answer(root: &Path) -> Value {
+    let cache = root.join(".doeff-linter").join("semantic-cache");
+    let first = std::fs::read_dir(&cache).unwrap().next().expect("cache に答えが在る").unwrap().path();
+    serde_json::from_str(&std::fs::read_to_string(first).unwrap()).unwrap()
+}
+
+#[test]
+fn the_cache_records_the_upstream_cost_and_a_remembered_answer_is_not_charged_again() {
+    // agora-redesign #1892: 上流が答えに費用を載せれば、linter は今回の費用に数え、手元の cache の答えにも費用が載る。
+    let proxy = fake_proxy_with_cost(Some("0.00004"));
+    let token = token_file();
+    let first = repo(FILES, &proxy.url, token.path());
+    let (asked, _) = run(first.path(), &["--semantic-all"], None, &[]);
+    let summary = &asked["semantic"];
+    let calls = summary["asked"].as_u64().unwrap();
+    assert!(calls >= 4, "{}", summary);
+    assert!((summary["cost_usd"].as_f64().unwrap() - 0.00004 * calls as f64).abs() < 1e-12, "{}", summary);
+    assert_eq!((summary["cost_unreported"].as_u64(), summary["remembered"].as_u64()), (Some(0), Some(0)), "{}", summary);
+    assert_eq!((summary["input_tokens"].as_u64(), summary["output_tokens"].as_u64()), (Some(100 * calls), Some(2 * calls)), "{}", summary);
+    assert_eq!(one_cached_answer(first.path())["reported_cost_usd"], 0.00004);
+    // 別の worktree が同じ定義を問うと、proxy の覚え(x-jev-proxy: hit)で答える — 上流を呼んでいないので、その回の費用と token は
+    // 数えない(較正は no-cache で上流を呼ぶので数える)。
+    proxy.take();
+    let second = repo(FILES, &proxy.url, token.path());
+    let (again, _) = run(second.path(), &["--semantic-all"], None, &[]);
+    let hits = proxy.take().iter().filter(|s| s.path == "/v1/systemone" && s.cache_control.is_empty()).count() as u64;
+    let summary = &again["semantic"];
+    assert_eq!(summary["remembered"].as_u64(), Some(hits), "{}", summary);
+    assert!(hits >= 4, "{}", summary);
+    let charged = summary["asked"].as_u64().unwrap() - hits;
+    assert!((summary["cost_usd"].as_f64().unwrap() - 0.00004 * charged as f64).abs() < 1e-12, "{}", summary);
+    assert_eq!(summary["input_tokens"].as_u64(), Some(100 * charged), "{}", summary);
+}
+
+#[test]
+fn an_upstream_without_a_cost_is_counted_as_unreported_not_as_zero() {
+    // agora-redesign #1892: TypeSafe 直のように上流が費用を載せない答えは、費用 0 ではなく「不明」に数え、cache にも 0 を書かない。
+    // token 数(usage)は数える。
+    let proxy = fake_proxy();
+    let token = token_file();
+    let dir = repo(FILES, &proxy.url, token.path());
+    let (asked, _) = run(dir.path(), &["--semantic-all"], None, &[]);
+    let summary = &asked["semantic"];
+    let calls = summary["asked"].as_u64().unwrap();
+    assert_eq!(summary["cost_unreported"].as_u64(), Some(calls), "{}", summary);
+    assert_eq!(summary["cost_usd"].as_f64(), Some(0.0), "{}", summary);
+    assert_eq!(summary["input_tokens"].as_u64(), Some(100 * calls), "{}", summary);
+    assert_eq!(one_cached_answer(dir.path())["reported_cost_usd"], Value::Null);
 }

@@ -627,14 +627,21 @@ fn calibration_probability(question: SemanticQuestion, answer: &Answer) -> f64 {
     }
 }
 
-/// Jev の答え(確率・gateway が返した費用 USD・入力のトークン)。
+/// Jev の答え(確率・答えに載った費用 USD と token 数・答えた model)。手元の cache に書く形。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Answer {
     pub probability: f64,
+    /// 答えに載った費用(USD)— 上流が答えに載せた時だけ Some(Vercel の AI Gateway の providerMetadata.gateway.cost)。TypeSafe 直は
+    /// 載せないので None で、0 と区別する(agora-redesign #1892)。以前の cache の欄 cost_usd は、載らない時も 0 と書いていたので読まない
+    /// (読むと「費用 0」と「不明」が混ざる — 前の答えは不明として読む)。
     #[serde(default)]
-    pub cost_usd: f64,
+    pub reported_cost_usd: Option<f64>,
+    /// 入力の token 数(答えの usage に在る時だけ Some — 無い答えを 0 と書かない)。
     #[serde(default)]
-    pub input_tokens: u64,
+    pub input_tokens: Option<u64>,
+    /// 出力の token 数(答えの usage に在る時だけ Some — 単価を掛けて費用を見積もる材料・#1892 の案 B)。
+    #[serde(default)]
+    pub output_tokens: Option<u64>,
     /// 答えた model の版つきの名(direct の答えの model — 例 jev-1.13.0。gateway は返さない)。
     #[serde(default)]
     pub served_model: Option<String>,
@@ -666,8 +673,8 @@ pub enum PeekedMany {
 
 /// Jev へ問う口(本物は HTTP・検では偽物)。
 pub trait Gateway: Sync {
-    /// 1 つの定義に 1 つの問いを撃つ。
-    fn ask(&self, state: &Value, question: &Value, freshness: Freshness) -> Result<Answer, String>;
+    /// 1 つの定義に 1 つの問いを撃つ(答えと、その回が上流に払わせた分)。
+    fn ask(&self, state: &Value, question: &Value, freshness: Freshness) -> Result<Asked, String>;
     /// 問いの本文の代理の鍵(proxy_key)。宛先が代理でなければ None(覚えている時だけの問いは代理にだけ撃つ)。
     fn proxy_key(&self, state: &Value, question: &Value) -> Option<String>;
     /// 代理の鍵の束を代理に「覚えている時だけ」問う(本物の Jev を呼ばない・撃ち直さない)。代理でない宛先は Unreachable。
@@ -863,8 +870,9 @@ impl HttpGateway {
 }
 
 impl Gateway for HttpGateway {
-    /// 1 回問う(429・5xx は 3 回まで間を空けて撃ち直す)。代理には Fresh の時だけ Cache-Control: no-cache を付ける。
-    fn ask(&self, state: &Value, question: &Value, freshness: Freshness) -> Result<Answer, String> {
+    /// 1 回問う(429・5xx は 3 回まで間を空けて撃ち直す)。代理には Fresh の時だけ Cache-Control: no-cache を付ける。代理の答えの
+    /// 見出し x-jev-proxy が覚えた答え・相乗りを名乗れば、その回は上流を呼んでいない(費用と token を数えない)。
+    fn ask(&self, state: &Value, question: &Value, freshness: Freshness) -> Result<Asked, String> {
         let body = self.body(state, question);
         let mut last = String::new();
         for attempt in 0..4u64 {
@@ -883,8 +891,11 @@ impl Gateway for HttpGateway {
             }
             match request.send_string(&body.to_string()) {
                 Ok(ok) => {
+                    let remembered = self.target.proxy && answered_from_memory(ok.header("x-jev-proxy"));
                     let text = ok.into_string().map_err(|e| format!("答えを読めない: {}", e))?;
-                    return parse_answer(&text);
+                    let answer = parse_answer(&text)?;
+                    let charge = charge_of(&answer, remembered);
+                    return Ok(Asked { answer, charge });
                 }
                 Err(ureq::Error::Status(code, answer)) if [429, 500, 502, 503, 504, 529].contains(&code) && attempt < 3 => {
                     last = format!("HTTP {}: {}", code, answer.into_string().unwrap_or_default().chars().take(200).collect::<String>());
@@ -942,14 +953,47 @@ pub fn parse_answer(text: &str) -> Result<Answer, String> {
         None if choice.is_some() => choice.as_ref().and_then(|c| probabilities.as_ref()?.get(c).copied()).unwrap_or(0.0),
         None => return Err(format!("答えに noul の確率も choice も無い: {}", text.chars().take(200).collect::<String>())),
     };
-    let cost_usd = value
-        .pointer("/providerMetadata/gateway/cost")
-        .and_then(|c| c.as_str().and_then(|s| s.parse::<f64>().ok()).or_else(|| c.as_f64()))
-        .unwrap_or(0.0);
+    let reported_cost_usd =
+        value.pointer("/providerMetadata/gateway/cost").and_then(|c| c.as_str().and_then(|s| s.parse::<f64>().ok()).or_else(|| c.as_f64()));
     let usage = value.get("usage");
-    let input_tokens = usage.and_then(|u| u.get("input_tokens").or_else(|| u.get("inputTokens"))).and_then(Value::as_u64).unwrap_or(0);
+    let tokens = |snake: &str, camel: &str| usage.and_then(|u| u.get(snake).or_else(|| u.get(camel))).and_then(Value::as_u64);
+    let input_tokens = tokens("input_tokens", "inputTokens");
+    let output_tokens = tokens("output_tokens", "outputTokens");
     let served_model = value.get("model").and_then(Value::as_str).map(str::to_string);
-    Ok(Answer { probability, cost_usd, input_tokens, served_model, choice, probabilities })
+    Ok(Answer { probability, reported_cost_usd, input_tokens, output_tokens, served_model, choice, probabilities })
+}
+
+/// 1 回の問いが上流に払わせた分(答えの欄とは別 — proxy の覚えた答えは元の問いの費用を本文に持つが、この回は上流を呼んでいない)。
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Charge {
+    /// 上流を呼び、答えに費用が載っていた(USD)。
+    Reported(f64),
+    /// 上流を呼んだが、答えに費用が載っていない(TypeSafe 直 — 0 ではなく不明)。
+    Unreported,
+    /// 上流を呼んでいない(proxy の覚えた答え・同じ問いへの相乗り・覚えている時だけの問い)— この回の費用と token は 0。
+    Remembered,
+}
+
+/// 1 回の問いの答えと、その回の費用。
+#[derive(Debug, Clone, PartialEq)]
+pub struct Asked {
+    pub answer: Answer,
+    pub charge: Charge,
+}
+
+/// proxy の答えの見出し x-jev-proxy が「上流を呼ばずに答えた」印か(hit = 覚えた答え・coalesced = 同じ問いへの相乗り — doeff-jev-proxy の
+/// service.hy の見出しの語)。見出しが無い(proxy でない宛先)・miss・refreshed は上流を呼んだ。
+pub fn answered_from_memory(marker: Option<&str>) -> bool {
+    matches!(marker, Some("hit") | Some("coalesced"))
+}
+
+/// 1 回の問いの費用を決める(純粋): 上流を呼んでいなければ Remembered、呼んで答えに費用が載っていれば Reported、載っていなければ Unreported。
+pub fn charge_of(answer: &Answer, remembered: bool) -> Charge {
+    match (remembered, answer.reported_cost_usd) {
+        (true, _) => Charge::Remembered,
+        (false, Some(cost)) => Charge::Reported(cost),
+        (false, None) => Charge::Unreported,
+    }
 }
 
 /// 代理の覚えている時だけの問いの束の答え {"answers": {鍵: Jev の答えの本文}} を読む(1 つでも読めなければ全体を読めないとする)。
@@ -1026,10 +1070,17 @@ pub struct SemanticSummary {
     pub asked: usize,
     /// 今回、代理が覚えていた答えを受け取って手元の cache に書いた数(覚えている時だけの問い — 本物の Jev は呼んでいない)。
     pub peeked: usize,
-    /// 今回の費用(gateway が返した USD の和 — direct は費用を返さないので 0)。
+    /// 今回の費用(上流が答えに費用を載せた回の USD の和)。載せない回(TypeSafe 直)は cost_unreported に数え、ここに 0 を足さない
+    /// — cost_unreported が 0 でなければ、この和は下限(agora-redesign #1892)。
     pub cost_usd: f64,
-    /// 今回の入力のトークンの和。
+    /// 今回、上流を呼んだのに答えに費用が載っていなかった回の数(費用は不明 — 0 ではない)。
+    pub cost_unreported: usize,
+    /// 今回、proxy が覚えた答え・相乗りで答えた回の数(上流を呼んでいない — 費用と token を数えない)。
+    pub remembered: usize,
+    /// 今回、上流を呼んだ回の入力の token の和(答えに usage が在った回だけ)。
     pub input_tokens: u64,
+    /// 今回、上流を呼んだ回の出力の token の和(答えに usage が在った回だけ)。
+    pub output_tokens: u64,
     /// 今回答えた model の版つきの名(direct だけ・撃たない実行は null)。
     pub served_model: Option<String>,
     /// 較正の見張りの結果(not-run・ok・drifted・failed)。
@@ -1099,6 +1150,26 @@ pub struct SemanticOutcome {
     pub errors: Vec<String>,
 }
 
+impl SemanticSummary {
+    /// 1 回の問いの費用と token を要約に足すため — 上流を呼んでいない回(proxy の覚え)は数えず、費用の載らない回は不明として数える。
+    pub fn tally(&mut self, asked: &Asked) {
+        match asked.charge {
+            Charge::Remembered => {
+                self.remembered += 1;
+                return;
+            }
+            Charge::Reported(cost) => self.cost_usd += cost,
+            Charge::Unreported => self.cost_unreported += 1,
+        }
+        if let Some(tokens) = asked.answer.input_tokens {
+            self.input_tokens += tokens;
+        }
+        if let Some(tokens) = asked.answer.output_tokens {
+            self.output_tokens += tokens;
+        }
+    }
+}
+
 /// 定義の問いを cache から読み、mode が撃つ物は gateway へ撃つ(同時に workers 本)。撃つ実行は先に較正の見張りを撃つ。
 pub fn evaluate(
     root: &Path,
@@ -1131,16 +1202,16 @@ pub fn evaluate(
     if asking {
         match (gateway, &pool) {
             (Some(gateway), Ok(pool)) => {
-                let results: Vec<(bool, Result<Answer, String>)> = pool.install(|| {
+                let results: Vec<(bool, Result<Asked, String>)> = pool.install(|| {
                     calibration.par_iter().map(|(c, expect)| (*expect, gateway.ask(&c.state, &c.question_json, Freshness::Fresh))).collect()
                 });
                 summary.asked += results.len();
                 let mut drifted = Vec::new();
                 for ((expect, result), (example, _)) in results.into_iter().zip(calibration) {
                     match result {
-                        Ok(answer) => {
-                            summary.cost_usd += answer.cost_usd;
-                            summary.input_tokens += answer.input_tokens;
+                        Ok(asked) => {
+                            summary.tally(&asked);
+                            let answer = asked.answer;
                             if answer.served_model.is_some() {
                                 summary.served_model = answer.served_model.clone();
                             }
@@ -1177,23 +1248,26 @@ pub fn evaluate(
         }
     }
     let can_ask = asking && gateway.is_some() && summary.calibration != "failed";
-    let resolved: Vec<(SemanticItem, Option<Result<Answer, String>>)> = match (&pool, gateway) {
+    let resolved: Vec<(SemanticItem, Option<Resolved>)> = match (&pool, gateway) {
         (Ok(pool), Some(gateway)) if can_ask => pool.install(|| {
             items
                 .into_par_iter()
                 .map(|item| {
                     if wants_ask(&item) {
-                        let result = gateway.ask(&item.state, &item.question_json, Freshness::Remembered);
+                        let result = match gateway.ask(&item.state, &item.question_json, Freshness::Remembered) {
+                            Ok(asked) => Resolved::Asked(asked),
+                            Err(reason) => Resolved::Failed(reason),
+                        };
                         (item, Some(result))
                     } else {
-                        let cached = read_cache(root, &item.key).map(Ok);
+                        let cached = read_cache(root, &item.key).map(Resolved::Known);
                         (item, cached)
                     }
                 })
                 .collect()
         }),
         _ => items.into_iter().map(|item| {
-            let cached = read_cache(root, &item.key).map(Ok);
+            let cached = read_cache(root, &item.key).map(Resolved::Known);
             (item, cached)
         }).collect(),
     };
@@ -1226,7 +1300,7 @@ pub fn evaluate(
                         if let Err(reason) = write_cache(root, &item.key, answer) {
                             errors.push(reason);
                         }
-                        ((item, Some(Ok(answer.clone()))), false)
+                        ((item, Some(Resolved::Known(answer.clone()))), false)
                     }
                     None => {
                         let missed = key.as_ref().is_some_and(|k| peeked.missed.contains(k));
@@ -1240,24 +1314,24 @@ pub fn evaluate(
             (resolved, unmissed)
         }
     };
-    let (resolved, peek_missed): (Vec<(SemanticItem, Option<Result<Answer, String>>)>, Vec<bool>) = resolved;
+    let (resolved, peek_missed): (Vec<(SemanticItem, Option<Resolved>)>, Vec<bool>) = resolved;
     let mut answered = Vec::new();
     for ((item, result), missed) in resolved.into_iter().zip(peek_missed) {
-        let asked_now = can_ask && wants_ask(&item);
         match result {
-            Some(Ok(answer)) => {
-                if asked_now {
-                    summary.asked += 1;
-                    summary.cost_usd += answer.cost_usd;
-                    summary.input_tokens += answer.input_tokens;
-                    if let Err(reason) = write_cache(root, &item.key, &answer) {
-                        errors.push(reason);
-                    }
+            Some(Resolved::Asked(asked)) => {
+                summary.asked += 1;
+                summary.tally(&asked);
+                if let Err(reason) = write_cache(root, &item.key, &asked.answer) {
+                    errors.push(reason);
                 }
+                summary.judged += 1;
+                answered.push((item, asked.answer));
+            }
+            Some(Resolved::Known(answer)) => {
                 summary.judged += 1;
                 answered.push((item, answer));
             }
-            Some(Err(reason)) => {
+            Some(Resolved::Failed(reason)) => {
                 summary.asked += 1;
                 summary.unjudged += 1;
                 summary.unmeasured += 1;
@@ -1276,6 +1350,14 @@ pub fn evaluate(
         }
     }
     SemanticOutcome { answered, summary, errors }
+}
+
+/// 定義 1 つの答えの出どころ — 今回問うた答え(費用を数えて手元の cache に書く)・手元の cache か proxy の覚えから読んだ答え(今回は
+/// 上流を呼んでいない — 費用を数えない)・今回問えなかった理由。
+enum Resolved {
+    Asked(Asked),
+    Known(Answer),
+    Failed(String),
 }
 
 /// proxy の覚えを読んだ結果: answers = 覚えていた答え(proxy の鍵 → 答え)/ missed = 束が返らなかった(届かない・時間切れ・撃たずに
@@ -1354,11 +1436,85 @@ mod tests {
         assert_eq!(long.state["definition"]["source"].as_str().unwrap().chars().count(), 1800);
         assert_eq!(
             parse_answer(r#"{"answers":{"q":{"type":"boolean","probability":0.93}},"providerMetadata":{"gateway":{"cost":"0.00006"}},"usage":{"inputTokens":10}}"#).unwrap(),
-            Answer { probability: 0.93, cost_usd: 0.00006, input_tokens: 10, served_model: None, choice: None, probabilities: None }
+            Answer {
+                probability: 0.93,
+                reported_cost_usd: Some(0.00006),
+                input_tokens: Some(10),
+                output_tokens: None,
+                served_model: None,
+                choice: None,
+                probabilities: None
+            }
         );
         assert_eq!(parse_answer(r#"{"answers":{"q":{"noul":0.2}},"usage":{"input_tokens":7},"model":"jev-1"}"#).unwrap().probability, 0.2);
         assert!(parse_answer("{}").is_err());
         assert_eq!(calibration_examples().len(), 8);
+    }
+
+    // ---- 答えの費用(agora-redesign #1892): 上流が答えに載せた時だけ費用が在り、載せない答えは 0 ではなく「不明」----
+
+    /// 費用の在る答え(Vercel の AI Gateway の形)— 費用と token を読み、上流を呼んだ回はその費用を数える。
+    #[test]
+    fn an_answer_with_a_cost_is_charged_that_cost() {
+        let answer = parse_answer(
+            r#"{"answers":{"q":{"type":"boolean","probability":0.9}},"providerMetadata":{"gateway":{"cost":"0.00004"}},"usage":{"inputTokens":900,"outputTokens":3}}"#,
+        )
+        .unwrap();
+        assert_eq!((answer.reported_cost_usd, answer.input_tokens, answer.output_tokens), (Some(0.00004), Some(900), Some(3)));
+        let asked = Asked { charge: charge_of(&answer, false), answer };
+        assert_eq!(asked.charge, Charge::Reported(0.00004));
+        let mut summary = SemanticSummary::default();
+        summary.tally(&asked);
+        assert_eq!((summary.cost_usd, summary.cost_unreported, summary.input_tokens, summary.output_tokens), (0.00004, 0, 900, 3));
+    }
+
+    /// 費用も usage も無い答え — 費用は 0 ではなく不明、token も 0 と書かない。
+    #[test]
+    fn an_answer_without_a_cost_is_unreported_not_zero() {
+        let answer = parse_answer(r#"{"answers":{"q":{"noul":0.2}},"model":"jev-1.13.0"}"#).unwrap();
+        assert_eq!((answer.reported_cost_usd, answer.input_tokens, answer.output_tokens), (None, None, None));
+        let asked = Asked { charge: charge_of(&answer, false), answer };
+        assert_eq!(asked.charge, Charge::Unreported);
+        let mut summary = SemanticSummary::default();
+        summary.tally(&asked);
+        assert_eq!((summary.cost_usd, summary.cost_unreported, summary.input_tokens), (0.0, 1, 0));
+        // cache に書く形でも「費用は無い」のまま(0 を書かない)。
+        let written = serde_json::to_value(&asked.answer).unwrap();
+        assert_eq!(written["reported_cost_usd"], Value::Null);
+    }
+
+    /// usage(token 数)だけの答え(TypeSafe 直の形)— token は数え、費用は不明として数える(単価を掛ける材料 — #1892 の案 B)。
+    #[test]
+    fn a_usage_only_answer_keeps_tokens_and_leaves_the_cost_unreported() {
+        let answer = parse_answer(r#"{"answers":{"q":{"noul":0.7}},"usage":{"input_tokens":1234,"output_tokens":5},"model":"jev-1.13.0"}"#).unwrap();
+        assert_eq!((answer.reported_cost_usd, answer.input_tokens, answer.output_tokens), (None, Some(1234), Some(5)));
+        let asked = Asked { charge: charge_of(&answer, false), answer };
+        let mut summary = SemanticSummary::default();
+        summary.tally(&asked);
+        assert_eq!((summary.cost_usd, summary.cost_unreported, summary.input_tokens, summary.output_tokens), (0.0, 1, 1234, 5));
+    }
+
+    /// proxy が覚えた答え・相乗りで答えた回は上流を呼んでいない — 本文に元の問いの費用が在っても、その回の費用と token は数えない。
+    #[test]
+    fn a_remembered_answer_is_not_charged_again() {
+        assert!(answered_from_memory(Some("hit")) && answered_from_memory(Some("coalesced")));
+        assert!(!answered_from_memory(Some("miss")) && !answered_from_memory(Some("refreshed")) && !answered_from_memory(None));
+        let answer = parse_answer(
+            r#"{"answers":{"q":{"type":"boolean","probability":0.9}},"providerMetadata":{"gateway":{"cost":"0.00004"}},"usage":{"inputTokens":900}}"#,
+        )
+        .unwrap();
+        let asked = Asked { charge: charge_of(&answer, true), answer };
+        assert_eq!(asked.charge, Charge::Remembered);
+        let mut summary = SemanticSummary::default();
+        summary.tally(&asked);
+        assert_eq!((summary.cost_usd, summary.cost_unreported, summary.remembered, summary.input_tokens), (0.0, 0, 1, 0));
+    }
+
+    /// 以前の cache の答え(cost_usd を載らない時も 0 と書いていた)は、費用を「不明」として読む。token 数はそのまま読む。
+    #[test]
+    fn an_old_cache_answer_reads_its_cost_as_unknown() {
+        let old: Answer = serde_json::from_str(r#"{"probability":0.1,"cost_usd":0.0,"input_tokens":1000,"served_model":"jev-1.13.0"}"#).unwrap();
+        assert_eq!((old.reported_cost_usd, old.input_tokens, old.output_tokens), (None, Some(1000), None));
     }
 
     #[test]
