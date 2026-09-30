@@ -221,12 +221,14 @@ impl Config {
                 found
             };
             let mut problems = Vec::new();
-            let semantic = crate::project::semantic::SemanticSettings::validate(section, &mut find, &mut problems);
+            let checked = crate::project::semantic::SemanticSettings::validate(section, &mut find, &mut problems);
             problems.extend(unknown);
             if !problems.is_empty() {
                 return Err(problems);
             }
-            settings.semantic = Some(semantic);
+            // 問いに入れる線引きは architecture.hy の :semantic-lines から取り込む(定義元は architecture.hy の 1 か所・agora-redesign #1909)。
+            let lines = settings.architecture.as_ref().map(|arch| arch.semantic_lines.clone()).unwrap_or_default();
+            settings.semantic = Some(crate::project::semantic::SemanticSettings { lines, ..checked });
         }
         Ok(settings)
     }

@@ -3,6 +3,8 @@
 //! 通信の形(direct = TypeSafe の /v1/systemone・gateway = Vercel AI Gateway の evaluation-model v4)は同じ package の wire.py の写し。
 //!
 //! - 問いの文(instructions・criteria)はこの file の 1 か所の宣言(英語のまま — jev-lint の questions.py の J2・J3 と同じ内容)。
+//!   DOEFF201・202・205 の問いには、repo の architecture.hy の :semantic-lines(どこからが違反かの線引きの文と鳴る例・鳴らない例)を
+//!   instructions の lines に入れる(SemanticQuestion::wire_with — 文と例の定義元は architecture.hy・agora-redesign #1909)。
 //! - gateway を呼ぶのは `--semantic` / `--semantic-all` の時だけ。決定的な規則の実行(エディタの保存ごと・hook)は cache を読むだけ。
 //! - cache の答えが無い定義は違反にせず「未判定」の数に出す(合格に倒さない)。
 //! - 重さは warning か info だけ(当たり外れを測り終えるまで error にしない — 設定でも選べない)。
@@ -31,6 +33,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 
+use super::architecture::SemanticLine;
 use super::settings::{LayerDescription, LayerId};
 
 /// 意味の問いの種類(閉じた集合)。
@@ -51,6 +54,67 @@ pub enum SemanticQuestion {
 impl SemanticQuestion {
     /// 全部の問い。
     pub const ALL: [SemanticQuestion; 2] = [SemanticQuestion::BusinessDecision, SemanticQuestion::TransportKnowledge];
+
+    /// architecture.hy の :semantic-lines で線引きを入れられる問い(DOEFF201・202・205 — agora-redesign #1909)。
+    pub const LINED: [SemanticQuestion; 3] = [SemanticQuestion::BusinessDecision, SemanticQuestion::TransportKnowledge, SemanticQuestion::MixedConcerns];
+
+    /// 規則の ID(DOEFF201 …)。
+    pub fn id(self) -> &'static str {
+        match self {
+            SemanticQuestion::BusinessDecision => "DOEFF201",
+            SemanticQuestion::TransportKnowledge => "DOEFF202",
+            SemanticQuestion::PlainCallable => "DOEFF203",
+            SemanticQuestion::ClassRole => "DOEFF204",
+            SemanticQuestion::MixedConcerns => "DOEFF205",
+        }
+    }
+
+    /// 線引きを入れた問い(agora-redesign #1909)— architecture.hy の :semantic-lines のうちこの問いに当たる線引きの名・文・鳴る例・鳴らない例を
+    /// instructions の lines に入れ、答えの向きを lines_note に書く。文字列の instructions(DOEFF202)は question の欄に移す。例の code は定義の
+    /// source と同じく :tags を消して渡す(申告に引きずられないため)。当たる線引きが無ければ wire() のまま — 宣言の無い repo の問いと cache の
+    /// キーは変わらない。
+    pub fn wire_with(self, lines: &[SemanticLine]) -> Value {
+        let mine: Vec<Value> = lines
+            .iter()
+            .filter(|line| line.rules.contains(&self))
+            .map(|line| {
+                json!({
+                    "name": line.name,
+                    "text": line.text,
+                    "violating_examples": line.fires.iter().map(|code| strip_tags(code)).collect::<Vec<String>>(),
+                    "complying_examples": line.silent.iter().map(|code| strip_tags(code)).collect::<Vec<String>>(),
+                })
+            })
+            .collect();
+        let mut question = self.wire();
+        let Some(note) = self.lines_note().filter(|_| !mine.is_empty()) else {
+            return question;
+        };
+        let mut instructions = match question.get("instructions").cloned() {
+            Some(Value::Object(map)) => map,
+            other => serde_json::Map::from_iter([("question".to_string(), other.unwrap_or(Value::Null))]),
+        };
+        instructions.insert("lines_note".to_string(), Value::String(note.to_string()));
+        instructions.insert("lines".to_string(), Value::Array(mine));
+        question["instructions"] = Value::Object(instructions);
+        question
+    }
+
+    /// 線引きの読み方と答えの向き(問いの文は英語でここ 1 か所)。線引きを入れない問いは None。
+    fn lines_note(self) -> Option<&'static str> {
+        match self {
+            SemanticQuestion::BusinessDecision => Some(
+                "`lines` are the boundaries this repository adopted for this question; where they differ from the general examples above, follow the lines. Code like a line's `violating_examples` makes a business decision (answer true); code like its `complying_examples` does not (answer false).",
+            ),
+            SemanticQuestion::TransportKnowledge => Some(
+                "`lines` are the boundaries this repository adopted for this question; where they differ from the general wording above, follow the lines. Code like a line's `violating_examples` knows how communication is carried out (answer true); code like its `complying_examples` does not (answer false).",
+            ),
+            SemanticQuestion::MixedConcerns => Some(
+                "`lines` are the boundaries this repository adopted for this question; where they differ from the note above, follow the lines. Code like a line's `violating_examples` is `mixed`; code like its `complying_examples` is not `mixed`.",
+            ),
+            SemanticQuestion::PlainCallable | SemanticQuestion::ClassRole => None,
+        }
+    }
 
     /// DOEFF203 の問い(Choice)。criteria は architecture.hy の受け入れる理由・受け入れない理由の型(名 → 説明)と none。問いの文は英語でここ 1 か所。
     pub fn plain_callable_wire(accepted: &[(String, String)], rejected: &[(String, String)]) -> Value {
@@ -275,6 +339,9 @@ pub struct SemanticSettings {
     pub false_positives: Vec<String>,
     /// 人が本当の違反と判定した当たりの一覧の dir(repo の根からの相対)。
     pub true_positives: Vec<String>,
+    /// Jev の問いに入れる線引き(architecture.hy の :semantic-lines — 無ければ空で、問いは今のまま・agora-redesign #1909)。
+    /// TOML の節には書かず、設定の組み立て(config.rs)が architecture.hy から取り込む — 文の定義元は architecture.hy の 1 か所。
+    pub lines: Vec<SemanticLine>,
 }
 
 
@@ -345,6 +412,7 @@ impl SemanticSettings {
             proxy,
             false_positives: section.false_positives.clone(),
             true_positives: section.true_positives.clone(),
+            lines: Vec::new(),
             plain_callable,
             class_role,
             mixed_concerns,
@@ -466,7 +534,7 @@ pub fn proxy_key(body: &Value) -> String {
     hasher.finalize().iter().map(|b| format!("{:02x}", b)).collect()
 }
 
-/// 定義 1 つの state と cache の鍵を作る。鍵 = sha256(model・問いの JSON・層の説明・タグを消した source)。申告の役は鍵に入れない。
+/// 定義 1 つの state と cache の鍵を作る。鍵 = sha256(model・問いの JSON(線引きを入れた物)・層の説明・タグを消した source)。申告の役は鍵に入れない。
 #[allow(clippy::too_many_arguments)]
 pub fn item(
     settings: &SemanticSettings,
@@ -494,13 +562,14 @@ pub fn item(
         "definition": {"name": name, "kind": kind, "file": rel, "source": stripped},
         "layer": layer_json,
     });
+    let question_json = question.wire_with(&settings.lines);
     let mut hasher = Sha256::new();
-    for part in [model.to_string(), canonical(&question.wire()), canonical(&layer_json), stripped] {
+    for part in [model.to_string(), canonical(&question_json), canonical(&layer_json), stripped] {
         hasher.update(part.as_bytes());
         hasher.update(b"\n");
     }
     let key = hasher.finalize().iter().map(|b| format!("{:02x}", b)).collect();
-    SemanticItem { question, question_json: question.wire(), declared: None, rel: rel.to_string(), path: path.to_path_buf(), name: name.to_string(), kind, range, layer, state, key, readable: readable(source) }
+    SemanticItem { question, question_json, declared: None, rel: rel.to_string(), path: path.to_path_buf(), name: name.to_string(), kind, range, layer, state, key, readable: readable(source) }
 }
 
 /// DOEFF203 の定義 1 つの state と cache の鍵を作る(state = 定義・書かれた理由。鍵 = sha256(model・問いの JSON・state))。
@@ -587,7 +656,7 @@ pub fn class_item(
     }
 }
 
-/// DOEFF205 の定義 1 つの state と cache の鍵を作る(state = 定義の source(タグを消して切る)と物差しの層の説明)。
+/// DOEFF205 の定義 1 つの state と cache の鍵を作る(state = 定義の source(タグを消して切る)と物差しの層の説明・問いは線引きを入れた物)。
 #[allow(clippy::too_many_arguments)]
 pub fn mixed_item(
     settings: &SemanticSettings,
@@ -604,7 +673,7 @@ pub fn mixed_item(
 ) -> SemanticItem {
     let stripped = truncate(&strip_tags(source), settings.source_limit);
     let question = SemanticQuestion::MixedConcerns;
-    let question_json = question.wire();
+    let question_json = question.wire_with(&settings.lines);
     let state = json!({
         "definition": {"name": name, "kind": kind, "file": rel, "source": stripped},
         "layer": {"name": layer_name, "summary": description.summary, "knows": description.knows, "does_not_know": description.does_not_know},
@@ -1409,13 +1478,7 @@ fn peek_remembered(gateway: &dyn Gateway, keys: &[String], timeout: Duration, po
 impl SemanticItem {
     /// 問いの ID(較正の知らせの文のため)。
     fn question_id(&self) -> &'static str {
-        match self.question {
-            SemanticQuestion::BusinessDecision => "DOEFF201",
-            SemanticQuestion::TransportKnowledge => "DOEFF202",
-            SemanticQuestion::PlainCallable => "DOEFF203",
-            SemanticQuestion::ClassRole => "DOEFF204",
-            SemanticQuestion::MixedConcerns => "DOEFF205",
-        }
+        self.question.id()
     }
 }
 
@@ -1556,6 +1619,82 @@ mod tests {
         // gateway を名指した環境でも、代理へは direct の形と direct の model で問う。
         let gateway_env = resolve_repo_target(&env(&[("JEV_WIRE", "gateway")]), &token, Some(&proxy));
         assert_eq!((gateway_env.wire, gateway_env.model.as_str()), (Wire::Direct, DIRECT_MODEL));
+    }
+
+    /// architecture.hy に :semantic-lines の無い repo では、問いも cache のキーも線引きを足す前(agora-redesign #1909 の前)と同じ —
+    /// キーの値は線引きを足す前の code で組んだ物(変われば、その repo の全部の定義が「答えなし」に戻る)。
+    #[test]
+    fn without_lines_the_questions_and_keys_stay_as_before() {
+        let settings = SemanticSettings::validate(&SemanticSection::default(), &mut |_, _| None, &mut Vec::new());
+        let description = LayerDescription {
+            summary: Some("翻訳".into()),
+            knows: Some("相手の話し方".into()),
+            does_not_know: Some("本物か模擬か".into()),
+            question: Some("言い換えだけか?".into()),
+        };
+        let range = { let p = doeff_indexer::hy_index::Position { line: 0, character: 0 }; doeff_indexer::hy_index::Range { start: p, end: p } };
+        let source = "(defk f [x] {:tags {:role \"protocol\"}} (when (in x allowed) x))";
+        let layered = |question| item(&settings, "jev-latest", question, "a.hy", Path::new("/r/a.hy"), "f", "defk", range, source, LayerId(0), "protocol", &description);
+        let decision = layered(SemanticQuestion::BusinessDecision);
+        let transport = layered(SemanticQuestion::TransportKnowledge);
+        let mixed = mixed_item(&settings, "jev-latest", "a.hy", Path::new("/r/a.hy"), "f", "defk", range, source, LayerId(0), "core", &description);
+        for one in [&decision, &transport, &mixed] {
+            assert_eq!(one.question_json, one.question.wire(), "線引きの無い問いは今の問いのまま");
+        }
+        assert_eq!(
+            [decision.key.as_str(), transport.key.as_str(), mixed.key.as_str()],
+            [
+                "2801ee2d98aaee9974cea9bc225c176e997ab2a3743765c359bc9e5ef6a1b1d6",
+                "109f1a4aec9b6fc0f116e3c42cd0b5c3f850e72e40ed64226df98342ebe404cd",
+                "73c824534ee0e33e62daf07decf4649edcec89ee51c5b734607deeb82cf3bfd8"
+            ]
+        );
+    }
+
+    /// agora-redesign #1909: 線引きはその規則の問いにだけ入る(名・文・鳴る例・鳴らない例・答えの向き)。文字列の instructions(DOEFF202)は
+    /// question の欄に移し、例の code の :tags は消す。線引きを入れた問いは cache のキーも変わる(線引きを変えると答えなしに戻る — 想定どおり)。
+    #[test]
+    fn lines_go_into_the_instructions_of_their_questions_only() {
+        use SemanticQuestion::{BusinessDecision, MixedConcerns, PlainCallable, TransportKnowledge};
+        let line = |name: &str, rules: Vec<SemanticQuestion>| SemanticLine {
+            name: name.into(),
+            rules,
+            text: format!("{} の文", name),
+            fires: vec!["(defk f [x] {:tags {:role \"protocol\"}} (g x))".into()],
+            silent: vec!["(defk h [x] x)".into()],
+        };
+        let lines = vec![line("一", vec![BusinessDecision]), line("二", vec![TransportKnowledge]), line("五", vec![MixedConcerns, BusinessDecision])];
+        let names = |question: &Value| -> Vec<String> {
+            question["instructions"]["lines"].as_array().map(|all| all.iter().filter_map(|l| l["name"].as_str().map(str::to_string)).collect()).unwrap_or_default()
+        };
+        let decision = BusinessDecision.wire_with(&lines);
+        assert_eq!(names(&decision), ["一", "五"]);
+        assert_eq!(
+            decision["instructions"]["lines"][0],
+            json!({"name": "一", "text": "一 の文", "violating_examples": ["(defk f [x] {} (g x))"], "complying_examples": ["(defk h [x] x)"]})
+        );
+        assert_eq!(decision["instructions"]["question"], BusinessDecision.wire()["instructions"]["question"]);
+        assert_eq!(decision["criteria"], BusinessDecision.wire()["criteria"]);
+        assert!(decision["instructions"]["lines_note"].as_str().is_some_and(|note| note.contains("answer true")));
+        let transport = TransportKnowledge.wire_with(&lines);
+        assert_eq!(names(&transport), ["二"]);
+        assert_eq!(transport["instructions"]["question"], TransportKnowledge.wire()["instructions"]);
+        let mixed = MixedConcerns.wire_with(&lines);
+        assert_eq!(names(&mixed), ["五"]);
+        assert!(mixed["instructions"]["lines_note"].as_str().is_some_and(|note| note.contains("is `mixed`")));
+        // 線引きを入れない問いと、当たる線引きの無い問いは今のまま。
+        assert_eq!(PlainCallable.wire_with(&lines), PlainCallable.wire());
+        assert_eq!(TransportKnowledge.wire_with(&lines[..1]), TransportKnowledge.wire());
+        let bare = SemanticSettings::validate(&SemanticSection::default(), &mut |_, _| None, &mut Vec::new());
+        let lined = SemanticSettings { lines, ..bare.clone() };
+        let description = LayerDescription::default();
+        let range = { let p = doeff_indexer::hy_index::Position { line: 0, character: 0 }; doeff_indexer::hy_index::Range { start: p, end: p } };
+        let asked = |settings: &SemanticSettings| {
+            item(settings, "m", BusinessDecision, "a.hy", Path::new("/r/a.hy"), "f", "defk", range, "(defk f [x] x)", LayerId(0), "protocol", &description)
+        };
+        let (before, after) = (asked(&bare), asked(&lined));
+        assert_ne!(before.key, after.key);
+        assert_eq!(after.question_json, BusinessDecision.wire_with(&lined.lines));
     }
 
     #[test]

@@ -34,6 +34,8 @@ use doeff_indexer::hy_index::LineIndex;
 use serde::Serialize;
 
 use super::names::hy_mangle;
+use super::rule::ProjectRule;
+use super::semantic::SemanticQuestion;
 use super::settings::{normalize_dir, LayerDescription, LayersSection, PathPatterns, RolesSection};
 
 /// 層 1 つの宣言。
@@ -484,6 +486,23 @@ pub struct EnvironmentBranches {
     pub layers: Vec<String>,
 }
 
+/// Jev に問う規則の線引き 1 つ(`:semantic-lines` の `(line "名" :rules [DOEFF201 …] :text "…" :fires ["<code>" …] :silent ["<code>" …])` —
+/// agora-redesign #1909)。どこからが違反かの文と、鳴る例・鳴らない例の code を、その規則の問いの instructions に入れる。文と例は repo の宣言に
+/// だけ在り、linter は持たない(定義元は architecture.hy の 1 か所)。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SemanticLine {
+    /// 線引きの名(問いに名として載る — 例 「線引き 1」)。
+    pub name: String,
+    /// この線引きを入れる問い(DOEFF201・202・205 のどれか — 閉じた集合は SemanticQuestion::LINED)。
+    pub rules: Vec<SemanticQuestion>,
+    /// 線引きの文(空にしない)。
+    pub text: String,
+    /// この線引きで違反になる code の例(省いてよい)。
+    pub fires: Vec<String>,
+    /// この線引きで違反にならない code の例(省いてよい)。
+    pub silent: Vec<String>,
+}
+
 /// handler の引数の決まり(`:handler-arguments {:files [..] :exclude [..] :store-names [..] :store-suffixes [..] :keep-mark "…" :value-types [..]}`)
 /// — DOEFF142 の母集団と、repo の語(店の名・残す理由の註の印・値として扱う外の型)。client・可変の入れ物・値の型の既定は linter が持つ
 /// (Python の一般の名だけ)。
@@ -749,6 +768,10 @@ pub struct Architecture {
     pub retired_calls: Vec<RetiredCalls>,
     /// 業務の層が分岐してはならない環境の名の値と dry-run の印(`:environment-branches {…}` — 書かなければ DOEFF168 は当たらない)。
     pub environment_branches: Option<EnvironmentBranches>,
+    /// Jev に問う規則(DOEFF201・202・205)の線引き(`:semantic-lines [(line …) …]` — 空 = 宣言していない・問いは今のまま)。書けば、その規則の
+    /// 問いの instructions に線引きの文と例が入る(agora-redesign #1909)。問いの材料で editor は読まないので editor-json には載せない。
+    #[serde(skip)]
+    pub semantic_lines: Vec<SemanticLine>,
     /// 判定を 1 か所に閉じ込めた語彙(`:single-point-vocabulary [(vocabulary-scope …) …]` — 空 = 宣言していない)。書けば
     /// DOEFF146 が :except の外でこの語彙を読む file を出す(agora-redesign #1192・#1371)。
     pub single_point_vocabulary: Vec<VocabularyScope>,
@@ -1122,6 +1145,7 @@ impl<'a> Parser<'a> {
             retired_words: Vec::new(),
             retired_calls: Vec::new(),
             environment_branches: None,
+            semantic_lines: Vec::new(),
             single_point_vocabulary: Vec::new(),
             confined_spellings: Vec::new(),
             counted_spellings: Vec::new(),
@@ -1191,6 +1215,7 @@ impl<'a> Parser<'a> {
                 ":retired-words" => arch.retired_words = self.retired_words(value),
                 ":retired-calls" => arch.retired_calls = self.retired_calls(value),
                 ":environment-branches" => arch.environment_branches = self.environment_branches(value),
+                ":semantic-lines" => arch.semantic_lines = self.semantic_lines(value),
                 ":single-point-vocabulary" => arch.single_point_vocabulary = self.single_point_vocabulary(value),
                 ":confined-spellings" => arch.confined_spellings = self.confined_spellings(value),
                 ":counted-spellings" => arch.counted_spellings = self.counted_spellings(value),
@@ -1983,6 +2008,125 @@ impl<'a> Parser<'a> {
             self.problem(value, ":environment-branches に :layers(当てる業務の層)が無い");
         }
         Some(decl)
+    }
+
+    /// `:semantic-lines [(line "名" :rules [DOEFF201 …] :text "…" :fires ["<code>" …]? :silent ["<code>" …]?) …]` を読む(agora-redesign #1909)。
+    /// 名・:rules・空でない :text は要る。:rules に書けるのは線引きを入れる Jev の問い(SemanticQuestion::LINED)の規則だけで、知らない規則・
+    /// Jev の問いでない規則・線引きを入れない Jev の問いの規則は設定の誤り。同じ名・同じ規則の 2 度書きと空の code の例も誤り。
+    fn semantic_lines(&mut self, value: &Form) -> Vec<SemanticLine> {
+        let shape = "(line \"名\" :rules [DOEFF201 …] :text \"…\" :fires [\"<code>\" …]? :silent [\"<code>\" …]?)";
+        let Some(entries) = self.bracket(value) else {
+            self.problem(value, &format!(":semantic-lines は {} の列", shape));
+            return Vec::new();
+        };
+        let lines: Vec<(&Form, SemanticLine)> = entries.into_iter().filter_map(|entry| self.semantic_line(entry, shape).map(|line| (entry, line))).collect();
+        for (index, (entry, line)) in lines.iter().enumerate() {
+            if lines[..index].iter().any(|(_, earlier)| earlier.name == line.name) {
+                self.problem(entry, &format!("線引き {} が 2 度宣言されている", line.name));
+            }
+        }
+        lines.into_iter().map(|(_, line)| line).collect()
+    }
+
+    /// 線引き 1 つ `(line "名" :rules [..] :text "…" :fires [..]? :silent [..]?)` を読む(読めなければ理由を積んで None)。
+    fn semantic_line(&mut self, entry: &Form, shape: &str) -> Option<SemanticLine> {
+        let Some(parts) = self.paren(entry).filter(|p| p.first().and_then(|h| self.symbol(h)) == Some("line")) else {
+            self.problem(entry, &format!(":semantic-lines の要素は {}", shape));
+            return None;
+        };
+        let Some(name) = parts.get(1).and_then(|f| self.name(f)).filter(|n| !n.trim().is_empty()) else {
+            self.problem(entry, &format!(":semantic-lines の要素に名が無い — {}", shape));
+            return None;
+        };
+        let rest: Vec<&Form> = parts.iter().skip(2).copied().collect();
+        let mut rules: Option<Vec<SemanticQuestion>> = None;
+        let mut text: Option<String> = None;
+        let mut fires = Vec::new();
+        let mut silent = Vec::new();
+        for (key, field) in self.pairs(&rest) {
+            match self.text(key) {
+                ":rules" => rules = Some(self.line_rules(field, &name)),
+                ":text" => text = self.required_string(field, &format!("線引き {} の :text", name)),
+                ":fires" => fires = self.line_examples(field, &name, ":fires"),
+                ":silent" => silent = self.line_examples(field, &name, ":silent"),
+                _ => self.unknown_key(key, "line"),
+            }
+        }
+        let rules = match rules {
+            Some(rules) if !rules.is_empty() => Some(rules),
+            Some(_) => {
+                self.problem(entry, &format!("線引き {} の :rules に線引きを入れる問いの規則が無い(DOEFF201・202・205 のどれか)", name));
+                None
+            }
+            None => {
+                self.problem(entry, &format!("線引き {} に :rules が無い(DOEFF201・202・205 のどれか)", name));
+                None
+            }
+        };
+        let text = match text {
+            Some(text) if !text.trim().is_empty() => Some(text),
+            Some(_) => {
+                self.problem(entry, &format!("線引き {} の :text が空", name));
+                None
+            }
+            None => {
+                self.problem(entry, &format!("線引き {} に :text(線引きの文)が無い", name));
+                None
+            }
+        };
+        Some(SemanticLine { name, rules: rules?, text: text?, fires, silent })
+    }
+
+    /// 線引きの :rules を読む — 規則の ID を、線引きを入れる Jev の問いに引く(引けない ID と 2 度書きは理由を積む)。
+    fn line_rules(&mut self, field: &Form, line: &str) -> Vec<SemanticQuestion> {
+        let ids = self.names(field, &format!("線引き {} の :rules", line));
+        let rules: Vec<SemanticQuestion> = ids
+            .iter()
+            .filter_map(|id| {
+                let Some(rule) = ProjectRule::parse(id) else {
+                    self.problem(field, &format!("線引き {} の :rules の {} は知らない規則", line, id));
+                    return None;
+                };
+                let question = SemanticQuestion::LINED.iter().copied().find(|question| question.id() == rule.id());
+                match question {
+                    Some(_) => {}
+                    None if rule.is_semantic() => {
+                        self.problem(field, &format!("線引き {} の :rules の {} には線引きを入れない(入れるのは DOEFF201・202・205 の問いだけ)", line, id))
+                    }
+                    None => self.problem(field, &format!("線引き {} の :rules の {} は Jev の問いでない規則(DOEFF201・202・205 のどれか)", line, id)),
+                }
+                question
+            })
+            .collect();
+        for (index, rule) in rules.iter().enumerate() {
+            if rules[..index].contains(rule) {
+                self.problem(field, &format!("線引き {} の :rules の {} が 2 度書かれている", line, rule.id()));
+            }
+        }
+        rules
+    }
+
+    /// 線引きの例の code の列(文字列の列 — 文字列でない要素と空の code は理由を積んで落とす)。
+    fn line_examples(&mut self, field: &Form, line: &str, key: &str) -> Vec<String> {
+        let what = format!("線引き {} の {}", line, key);
+        let Some(items) = self.bracket(field) else {
+            self.problem(field, &format!("{} は code の文字列の列 [\"…\" …]", what));
+            return Vec::new();
+        };
+        items
+            .into_iter()
+            .filter_map(|item| match self.string(item) {
+                Some(code) if !code.trim().is_empty() => Some(code),
+                Some(_) => {
+                    self.problem(item, &format!("{} に空の code がある", what));
+                    None
+                }
+                None => {
+                    self.problem(item, &format!("{} の要素は code の文字列", what));
+                    None
+                }
+            })
+            .collect()
     }
 
     /// `:assembly-shape {…}` を読む(:translation-point・:translations・:translation-layer・:intent-layer は要る)。
@@ -3016,6 +3160,66 @@ mod tests {
         let no_foundation = r#"(defarchitecture s :root "app" :layers [(layer core)] :world-handlers [(world-handler "app.x:y" :touches [file])])"#;
         let problems = Architecture::parse(no_foundation, Path::new("architecture.hy")).unwrap_err().join("\n");
         assert!(problems.contains(":world-handlers を書くには :foundation が要る"), "{}", problems);
+    }
+
+    /// agora-redesign #1909: `:semantic-lines` は線引きの名・入れる問い(DOEFF201・202・205)・文・鳴る例・鳴らない例(省いてよい)を読む。
+    /// 例は bracket の文字列(`#[code[…]code]`)でも書ける。書かない宣言は空(問いは今のまま)。
+    #[test]
+    fn semantic_lines_are_read_for_the_jev_questions() {
+        let good = GOOD.replace(
+            ":foundation foundation",
+            r##":foundation foundation
+  :semantic-lines [(line "線引き 1" :rules [DOEFF201] :text "protocol は判断しない。"
+                     :fires [#[code[(defk f [x] (when (in x "allowed") x))]code]] :silent ["(defk g [x] (h x))"])
+                   (line 線引き-5 :rules [DOEFF205 doeff201] :text "投影も判断。")]"##,
+        );
+        let arch = Architecture::parse(&good, Path::new("architecture.hy")).unwrap();
+        assert!(arch.notices.is_empty(), "知らない鍵として知らせた: {:?}", arch.notices);
+        assert_eq!(
+            arch.semantic_lines,
+            vec![
+                SemanticLine {
+                    name: "線引き 1".into(),
+                    rules: vec![SemanticQuestion::BusinessDecision],
+                    text: "protocol は判断しない。".into(),
+                    fires: vec!["(defk f [x] (when (in x \"allowed\") x))".into()],
+                    silent: vec!["(defk g [x] (h x))".into()],
+                },
+                SemanticLine {
+                    name: "線引き-5".into(),
+                    rules: vec![SemanticQuestion::MixedConcerns, SemanticQuestion::BusinessDecision],
+                    text: "投影も判断。".into(),
+                    fires: Vec::new(),
+                    silent: Vec::new(),
+                },
+            ]
+        );
+        assert!(Architecture::parse(GOOD, Path::new("architecture.hy")).unwrap().semantic_lines.is_empty());
+    }
+
+    /// 知らない規則・Jev の問いでない規則・線引きを入れない問い・空の文・:rules か :text の欠け・2 度書き・空の例は設定の誤り(黙って問いから落とさない)。
+    #[test]
+    fn semantic_line_misreadings_are_errors() {
+        for (line, needle) in [
+            (r#"(line "a" :rules [DOEFF999] :text "x")"#, "線引き a の :rules の DOEFF999 は知らない規則"),
+            (r#"(line "a" :rules [DOEFF101] :text "x")"#, "線引き a の :rules の DOEFF101 は Jev の問いでない規則"),
+            (r#"(line "a" :rules [DOEFF203] :text "x")"#, "線引き a の :rules の DOEFF203 には線引きを入れない"),
+            (r#"(line "a" :rules [DOEFF201] :text "")"#, "線引き a の :text が空"),
+            (r#"(line "a" :rules [DOEFF201] :text "   ")"#, "線引き a の :text が空"),
+            (r#"(line "a" :rules [DOEFF201])"#, "線引き a に :text(線引きの文)が無い"),
+            (r#"(line "a" :text "x")"#, "線引き a に :rules が無い"),
+            (r#"(line "a" :rules [] :text "x")"#, "線引き a の :rules に線引きを入れる問いの規則が無い"),
+            (r#"(line "a" :rules [DOEFF201 DOEFF201] :text "x")"#, "線引き a の :rules の DOEFF201 が 2 度書かれている"),
+            (r#"(line "a" :rules [DOEFF201] :text "x" :fires [""])"#, "線引き a の :fires に空の code がある"),
+            (r#"(line "a" :rules [DOEFF201] :text "x" :silent [code])"#, "線引き a の :silent の要素は code の文字列"),
+            (r#"(line "a" :rules [DOEFF201] :text "x") (line "a" :rules [DOEFF202] :text "y")"#, "線引き a が 2 度宣言されている"),
+            (r#"(line :rules [DOEFF201] :text "x")"#, ":semantic-lines の要素に名が無い"),
+            (r#"(rule "a" :rules [DOEFF201] :text "x")"#, ":semantic-lines の要素は (line"),
+        ] {
+            let bad = GOOD.replace(":foundation foundation", &format!(":foundation foundation :semantic-lines [{}]", line));
+            let problems = Architecture::parse(&bad, Path::new("architecture.hy")).unwrap_err().join("\n");
+            assert!(problems.contains(needle), "{} を通した:\n{}", line, problems);
+        }
     }
 
     /// agora-redesign #1893: 契約の綴りは、どの深さのオブジェクトのキーの名と、`enum` の文字列の要素・`const` の文字列の値だけ —
