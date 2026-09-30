@@ -2213,7 +2213,7 @@ fn inspecting_a_value_does_not_reach_but_passing_or_calling_it_does() {
 
 /// agora-redesign #1363: 許可名簿の handler ごとに縁の検(空でない :interpreters を持ち、DOEFF133 と同じ図でその handler の定義に
 /// 届く deftest)が要る — 無ければ architecture.hy の名簿の要素で DOEFF137(critical・細目 = 名簿の綴り)。:interpreters の要素は
-/// file の外の定数の記号のまま(読み解かない)。:contract-test none の handler は判じない。
+/// file の外の定数の記号のまま(読み解かない)。理由つきの :contract-test (none …) の handler は判じない・理由の無い none は鳴る(#1796)。
 #[test]
 fn world_handler_needs_a_contract_test_that_runs_interpreters() {
     let files = [
@@ -2247,7 +2247,8 @@ fn world_handler_needs_a_contract_test_that_runs_interpreters() {
     let extra = r#"
                    (world-handler "app.foundation.host:with-clock" :touches [clock])
                    (world-handler "app.foundation.host:with-queue" :touches [thread])
-                   (world-handler "app.foundation.host:with-exempt" :touches [file] :contract-test none)"#;
+                   (world-handler "app.foundation.host:with-exempt" :touches [file]
+                     :contract-test (none :doeff-test "packages/doeff-core-effects/tests/test_os_file.hy::test-os-file-contract"))"#;
     let dir = world_repo_with(&files, extra, "[\"DOEFF137\"]");
     let arch_path = dir.path().join("architecture.hy");
     let text = std::fs::read_to_string(&arch_path).unwrap().replace(":foundation foundation", ":foundation foundation\n  :edge-mark \"real_world\"");
@@ -2256,7 +2257,7 @@ fn world_handler_needs_a_contract_test_that_runs_interpreters() {
     assert_eq!(
         keys(&report, "DOEFF137"),
         vec!["architecture.hy::DOEFF137::app.foundation.host:with-clock", "architecture.hy::DOEFF137::app.foundation.host:with-queue"],
-        "縁の検の届く with-host と :contract-test none の with-exempt は当てない: {}",
+        "縁の検の届く with-host と理由つきの :contract-test (none …) の with-exempt は当てない: {}",
         report
     );
     let clock = violation(&report, "architecture.hy::DOEFF137::app.foundation.host:with-clock");
@@ -2265,12 +2266,36 @@ fn world_handler_needs_a_contract_test_that_runs_interpreters() {
     let line = text.lines().position(|l| l.contains("app.foundation.host:with-clock")).unwrap();
     assert_eq!(clock["range"]["start"]["line"], line);
 
-    // :contract-test の値は記号 none だけ — ほかの値は宣言の誤り(終了コード 2)。
-    let bad = text.replace(":contract-test none", ":contract-test always");
+    // 理由の無い記号 none は鳴る — 縁の検の届く with-host に書いても当てる(#1796)。
+    let bare = text
+        .replace(
+            "\n                     :contract-test (none :doeff-test \"packages/doeff-core-effects/tests/test_os_file.hy::test-os-file-contract\")",
+            " :contract-test none",
+        )
+        .replace("(world-handler \"app.foundation.host:with-clock\"", "(world-handler \"app.foundation.host:with-clock\" :contract-test none");
+    assert_ne!(bare, text);
+    std::fs::write(&arch_path, &bare).unwrap();
+    let (_, report) = editor(dir.path());
+    assert_eq!(
+        keys(&report, "DOEFF137"),
+        vec![
+            "architecture.hy::DOEFF137::app.foundation.host:with-clock",
+            "architecture.hy::DOEFF137::app.foundation.host:with-exempt",
+            "architecture.hy::DOEFF137::app.foundation.host:with-queue"
+        ],
+        "理由の無い none の with-exempt と with-clock を当てる: {}",
+        report
+    );
+    let exempt = violation(&report, "architecture.hy::DOEFF137::app.foundation.host:with-exempt");
+    assert!(exempt["message"].as_str().unwrap().contains(":contract-test none に理由が無い"), "{}", exempt);
+
+    // :contract-test の値は理由つきの (none …) か記号 none だけ — ほかの値は宣言の誤り(終了コード 2)。
+    let bad = bare.replace("with-exempt\" :touches [file] :contract-test none", "with-exempt\" :touches [file] :contract-test (none :doeff-test \"\")");
+    assert_ne!(bad, bare);
     std::fs::write(&arch_path, bad).unwrap();
     let (code, _, stderr) = run(dir.path(), &["--output-format", "editor-json", "--no-log"], None);
     assert_eq!(code, 2, "{}", stderr);
-    assert!(stderr.contains("world-handler app.foundation.host:with-exempt の :contract-test は記号 none だけ"), "{}", stderr);
+    assert!(stderr.contains("world-handler app.foundation.host:with-exempt の :contract-test は (none"), "{}", stderr);
 }
 
 /// #1564: 種つきの疑似乱数を使う性質の検は手元、OS の entropy を使う操作は縁のまま。

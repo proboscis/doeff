@@ -108,7 +108,7 @@ pub enum ProjectRule {
     TestKindMismatch,
     /// DOEFF137: architecture.hy の許可名簿(:world-handlers)の handler に、縁の検(空でない `:interpreters` を持ち、その handler の
     /// 定義に届く deftest)が 1 本も無い — 本物と模擬が同じ検を通ることを見ていない実 I/O の handler(agora-redesign #1363)。
-    /// `:contract-test none` の handler は判じない。
+    /// 理由つきの `:contract-test (none …)` の handler は判じない・理由の無い `:contract-test none` は鳴る(書き方は直し方の文 — #1796)。
     WorldHandlerWithoutContractTest,
     /// DOEFF135: deftest 以外のテストの形(Python の def test_*・module ごとの skip・pytest の外の check script・deftest の runner)—
     /// architecture.hy の :test-forms の綴りの型で file を選ぶ(agora-redesign #1106 の R6)。
@@ -811,7 +811,7 @@ impl ProjectRule {
             ProjectRule::RegistryEntryStale => "既知の破れの登録簿は縮める向きだけ — 載った鍵は今も当たる所見を指す。全体の実行で、鍵の区切り(law の名か規則の ID)が指す規則を判じたのに、どの所見にも当たらない鍵は消し忘れの古い行(agora-redesign #1706)",
             ProjectRule::IntentEffectUncovered => "intent の層の効果は、手元の検から届く定義が出し、模擬の根と本番の入口の両方から届く答え手を持つ — 3 つのどれかが無い効果は、テストしたと言えない業務の操作(agora-redesign #1561・#1155)",
             ProjectRule::TestKindMismatch => "テストの種類は 2 つだけ — 手元(届く定義に外の世界に触れる handler が無い)/ 縁(名簿の定義・:wraps の handler・生の I/O に届く)。種類は人が決めず届く先から導き、縁のテストだけが architecture.hy の :edge-mark の印を持つ(operator 2026-09-29 \"everything is 'pure' until we apply handler that has real IO\")",
-            ProjectRule::WorldHandlerWithoutContractTest => "architecture.hy の :world-handlers の handler には縁の検が 1 本以上在る — 空でない :interpreters を持つ deftest のうち、定義の辺(呼び出し・参照・入れ子 — DOEFF133 と同じ図)を辿ってその handler の定義に届く物。:contract-test none の handler は判じない",
+            ProjectRule::WorldHandlerWithoutContractTest => "architecture.hy の :world-handlers の handler には縁の検が 1 本以上在る — 空でない :interpreters を持つ deftest のうち、定義の辺(呼び出し・参照・入れ子 — DOEFF133 と同じ図)を辿ってその handler の定義に届く物。理由つきの :contract-test (none …) の handler は判じない・理由の無い :contract-test none は鳴る",
             ProjectRule::WorldHandlerMisplaced => "architecture.hy の :world-handlers に挙げた定義は実在し、層 foundation の module に在る(外の世界に触れてよい定義の置き場は foundation だけ)",
             ProjectRule::WorldHandlerNamedOutsideList => "architecture.hy の :world-handlers の :wraps に挙げた doeff の実 I/O の handler(os-file-handler・http-production-handler …)を名指してよいのは、許可名簿の定義(とその中の入れ子の定義)だけ — 値として渡す所(with-handlers の列)も呼び出しも数える",
             ProjectRule::TranslationEmitsIntent => "翻訳の層(設定の handler_layers)の handler — defhandler と [effect k] を受ける関数 — は doeff の汎用の effect だけを出し、業務の intent(設定の intent_layers の型)を出さない — 本体で実行する呼び((<- …)・(! …))を import した defk の先まで辿る",
@@ -883,7 +883,7 @@ impl ProjectRule {
             ProjectRule::ServiceUntestedOnSim => "模擬の環境の tests に、その service の entry の組み立てを handler の差し替えだけで回す deftest を足す",
             ProjectRule::ServiceInvariantsMissing => "defservice に :invariants [\"<module>:<関数>\" …] を足し、関数は :role \"judgment\" の defk で置く(模擬の環境の <service>_invariants.hy など)。既知の欠けは登録簿に理由と持ち主を載せる",
             ProjectRule::TestKindMismatch => "縁なら印を付け(既定の pytest から外れる)、手元のつもりなら届く先の実 I/O の handler を模擬の handler に替える — 手元なのに印が在れば外す",
-            ProjectRule::WorldHandlerWithoutContractTest => "本物(その handler)と模擬の解釈器を :interpreters に並べた deftest を書き、同じ検を両方に通す — 縁の検を持たない理由が在る handler だけ、名簿の行に :contract-test none を書く",
+            ProjectRule::WorldHandlerWithoutContractTest => "本物(その handler)と模擬の解釈器を :interpreters に並べた deftest を書き、同じ検を両方に通す — 縁の検を持たない理由が在る handler だけ、名簿の行に理由のテストの名つきで none を書く: doeff の handler を 1 行で包むだけで契約テストが doeff の側に在るなら :contract-test (none :doeff-test \"packages/<pkg>/tests/<file>.hy::<テストの名>\")(doeff の repo の根からの path)、この repo の別のテストが契約を確かめるなら :contract-test (none :repo-test \"<file>.hy::<テストの名>\")(この repo の根からの path)。理由の無い :contract-test none は鳴る",
             ProjectRule::WorldHandlerMisplaced => "定義を foundation の層(architecture.hy の :foundation の dir)へ移すか、名簿の綴り(module:名)を実物に合わせる — 要らなくなった定義なら名簿から外す",
             ProjectRule::WorldHandlerNamedOutsideList => "名簿の定義(例 with-agora-process)の下で本体を走らせ、自分では実 I/O の handler を被せない — 新しく外の世界に触れる所が要るなら、その定義を foundation の層に置いて名簿に載せる",
             ProjectRule::TranslationEmitsIntent => "intent を出す業務の流れは層 core の program に置き、翻訳の handler は受けた intent を doeff の汎用の effect(HttpRequest・記録の読み書き・時計 …)へ出し直すだけにする — 経由した defk が intent を出すなら、その defk を呼ばずに汎用の effect を直に使う",

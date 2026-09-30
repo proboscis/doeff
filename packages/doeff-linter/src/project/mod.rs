@@ -2521,9 +2521,11 @@ fn judge_test_kinds(root: &Path, architecture: &architecture::Architecture, hy: 
 
 /// DOEFF137: 許可名簿の handler ごとに縁の検が在るかを判じる。縁の検 = 空でない `:interpreters` を持つ deftest のうち、DOEFF133 と
 /// 同じ定義の辺の図を辿ってその handler の定義に届く物(`:interpreters` の要素は file の外の定数の記号なので読み解かない)。
-/// `:contract-test none` の handler は判じない。当たりの位置は architecture.hy の名簿の要素・細目は名簿の綴り(agora-redesign #1363)。
+/// 理由つきの `:contract-test (none …)` の handler は判じない・理由の無い `none` は縁の検が在っても鳴る。当たりの位置は architecture.hy の
+/// 名簿の要素・細目は名簿の綴り(agora-redesign #1363・#1796)。
 fn judge_contract_tests(root: &Path, architecture: &architecture::Architecture, hy: &HashMap<String, HyFileIndex>) -> Vec<Draft> {
-    let judged: Vec<&architecture::WorldHandler> = architecture.world_handlers.iter().filter(|h| !h.contract_test_exempt).collect();
+    let judged: Vec<&architecture::WorldHandler> =
+        architecture.world_handlers.iter().filter(|h| !matches!(h.contract_test, architecture::ContractTest::Waived(_))).collect();
     if judged.is_empty() {
         return Vec::new();
     }
@@ -2554,29 +2556,53 @@ fn judge_contract_tests(root: &Path, architecture: &architecture::Architecture, 
     let mut drafts = Vec::new();
     for handler in judged {
         let target = handler.definition.target();
-        let covered = node_of.get(target.as_str()).is_some_and(|&node| {
-            let mut seeds = vec![false; graph.nodes.len()];
-            seeds[node] = true;
-            let reach = reach_seeds(&graph, &seeds, &no_carried, &running);
-            contract_tests.iter().any(|test| reach.reaches[*test])
-        });
-        if covered {
-            continue;
-        }
+        let covered = || {
+            node_of.get(target.as_str()).is_some_and(|&node| {
+                let mut seeds = vec![false; graph.nodes.len()];
+                seeds[node] = true;
+                let reach = reach_seeds(&graph, &seeds, &no_carried, &running);
+                contract_tests.iter().any(|test| reach.reaches[*test])
+            })
+        };
+        let Some(breach) = contract_test_breach(&handler.contract_test, covered) else { continue };
         let spelling = handler.definition.spelling();
+        let message = match breach {
+            ContractTestBreach::NoEdgeTest => format!("許可名簿の handler {} に縁の検(空でない :interpreters を持ち、この handler に届く deftest)が無い", spelling),
+            ContractTestBreach::NoneWithoutReason => {
+                format!("許可名簿の handler {} の :contract-test none に理由が無い(縁の検を求めない理由のテストの名を書く)", spelling)
+            }
+        };
         drafts.push(Draft {
             rule: ProjectRule::WorldHandlerWithoutContractTest,
             layer: None,
             rel: rel.clone(),
             path: architecture.path.clone(),
             range: handler.range,
-            message: format!("許可名簿の handler {} に縁の検(空でない :interpreters を持ち、この handler に届く deftest)が無い", spelling),
+            message,
             detail: Some(spelling.clone()),
             base: Severity::Error,
-            explain: Explain::WorldHandlerWithoutContractTest { handler: spelling },
+            explain: Explain::WorldHandlerWithoutContractTest { handler: spelling, breach },
         });
     }
     drafts
+}
+
+/// DOEFF137 の当たりの種類。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ContractTestBreach {
+    /// 縁の検を求める handler に、届く縁の検が無い。
+    NoEdgeTest,
+    /// 理由の無い `:contract-test none`。
+    NoneWithoutReason,
+}
+
+/// handler 1 つの縁の検の宣言と、縁の検が届くか(求める時だけ問う)から、DOEFF137 の当たりを決める(agora-redesign #1796)。
+fn contract_test_breach(declared: &architecture::ContractTest, covered: impl FnOnce() -> bool) -> Option<ContractTestBreach> {
+    match declared {
+        architecture::ContractTest::Waived(_) => None,
+        architecture::ContractTest::NoneWithoutReason => Some(ContractTestBreach::NoneWithoutReason),
+        architecture::ContractTest::Required => (!covered()).then_some(ContractTestBreach::NoEdgeTest),
+    }
 }
 
 /// 定義の辺の図の前向きの辺(callees[n] = n から届く定義)。系の値の中の辺(defsystem の本体・:carriers の引数)も本番では系が回すので
@@ -4922,6 +4948,38 @@ pub fn enabled_rules(enabled_ids: Option<&[String]>) -> BTreeSet<ProjectRule> {
     match enabled_ids {
         None => ProjectRule::ALL.iter().copied().collect(),
         Some(ids) => ids.iter().filter_map(|id| ProjectRule::parse(id)).collect(),
+    }
+}
+
+#[cfg(test)]
+mod contract_test_breach_tests {
+    use super::architecture::{ContractTest, ContractTestWaiver, TestNodeId};
+    use super::*;
+
+    fn node(text: &str) -> TestNodeId {
+        TestNodeId::parse(text).unwrap()
+    }
+
+    #[test]
+    fn waived_none_with_doeff_contract_test_passes_without_an_edge_test() {
+        // DOEFF137(agora-redesign #1796): 理由(doeff 側の契約テストの名)つきの none は、縁の検が無くても鳴らない。
+        let waived = ContractTest::Waived(ContractTestWaiver::DoeffContractTest(node("packages/doeff-core-effects/tests/test_http.hy::test-contract")));
+        assert_eq!(contract_test_breach(&waived, || false), None);
+        let covered_here = ContractTest::Waived(ContractTestWaiver::CoveredByRepoTest(node("tests/test_main.hy::test-main")));
+        assert_eq!(contract_test_breach(&covered_here, || false), None);
+    }
+
+    #[test]
+    fn none_without_reason_rings_even_when_an_edge_test_exists() {
+        // 理由の無い none は鳴る — 縁の検が届いていても宣言の誤りとして鳴らす(黙って通さない・#1796)。
+        assert_eq!(contract_test_breach(&ContractTest::NoneWithoutReason, || false), Some(ContractTestBreach::NoneWithoutReason));
+        assert_eq!(contract_test_breach(&ContractTest::NoneWithoutReason, || true), Some(ContractTestBreach::NoneWithoutReason));
+    }
+
+    #[test]
+    fn required_rings_only_without_an_edge_test() {
+        assert_eq!(contract_test_breach(&ContractTest::Required, || false), Some(ContractTestBreach::NoEdgeTest));
+        assert_eq!(contract_test_breach(&ContractTest::Required, || true), None);
     }
 }
 

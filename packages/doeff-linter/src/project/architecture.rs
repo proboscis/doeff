@@ -191,6 +191,56 @@ pub fn mangle_dotted(dotted: &str) -> String {
     dotted.split('.').filter(|part| !part.is_empty()).map(doeff_indexer::hy_index::mangle).collect::<Vec<_>>().join(".")
 }
 
+/// テスト 1 本の名指し(pytest の node id の形 `"path/to/test_x.hy::test-name"` — file は repo の根からの相対の `.hy` か `.py`)。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct TestNodeId {
+    pub file: String,
+    pub name: String,
+}
+
+impl TestNodeId {
+    /// `"file::名"` を読む(file が空・絶対 path・`.hy` / `.py` の外・名が空・空白や `::` を含む綴りは None)。
+    pub fn parse(text: &str) -> Option<TestNodeId> {
+        let (file, name) = text.split_once("::")?;
+        let file_ok = !file.is_empty()
+            && !file.starts_with('/')
+            && !file.contains(char::is_whitespace)
+            && (file.ends_with(".hy") || file.ends_with(".py"))
+            && file.rsplit('/').next().is_some_and(|base| base.len() > 3);
+        let name_ok = !name.is_empty() && !name.contains(char::is_whitespace) && !name.contains("::");
+        (file_ok && name_ok).then(|| TestNodeId { file: file.to_string(), name: name.to_string() })
+    }
+
+    pub fn spelling(&self) -> String {
+        format!("{}::{}", self.file, self.name)
+    }
+}
+
+/// 縁の検を求めない理由(`:contract-test (none :<理由の鍵> "file::名")` — DOEFF137・agora-redesign #1796)。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub enum ContractTestWaiver {
+    /// handler は doeff の handler を包むだけで、契約テストは doeff の側に在る(`:doeff-test` — doeff の repo の中の node id)。
+    DoeffContractTest(TestNodeId),
+    /// 契約はこの repo の別のテストが確かめる(`:repo-test` — 例: process を終える口で、その中身の handler の縁の検が在る)。
+    CoveredByRepoTest(TestNodeId),
+}
+
+impl ContractTestWaiver {
+    /// 理由の鍵の綴り(architecture.hy に書く keyword)。
+    pub const KEYS: [&'static str; 2] = [":doeff-test", ":repo-test"];
+}
+
+/// handler の縁の検の宣言(`:contract-test` — DOEFF137)。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub enum ContractTest {
+    /// 書かない — 縁の検を求める。
+    Required,
+    /// 理由つきの none — 縁の検を求めない。
+    Waived(ContractTestWaiver),
+    /// 理由の無い記号 none — DOEFF137 が鳴る(理由を書くまで求めないことを認めない)。
+    NoneWithoutReason,
+}
+
 /// 外の世界に触れてよい定義 1 つ(`:world-handlers` の `(world-handler "module:名" :touches [..] :answers [..] :wraps [..])`)。
 /// 名簿の定義の下でだけ実 I/O の答え手(Python の生の I/O と、:wraps に挙げた doeff の実 I/O の handler)が動く(agora-redesign #1106)。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -201,9 +251,8 @@ pub struct WorldHandler {
     pub answers: Vec<String>,
     /// 中で動かす doeff の実 I/O の handler(書かなくてよい)。
     pub wraps: Vec<DefinitionRef>,
-    /// 縁の検(`:interpreters` を持つ deftest)を求めない handler か(`:contract-test none` — 書かなければ求める・DOEFF137・
-    /// agora-redesign #1363)。
-    pub contract_test_exempt: bool,
+    /// 縁の検(`:interpreters` を持つ deftest)の宣言(`:contract-test` — 書かなければ求める・DOEFF137・agora-redesign #1363・#1796)。
+    pub contract_test: ContractTest,
     /// architecture.hy の中の位置。
     #[serde(skip)]
     pub range: doeff_indexer::hy_index::Range,
@@ -2134,7 +2183,7 @@ impl<'a> Parser<'a> {
             let Some(definition) = self.definition_ref(head, "world-handler") else { continue };
             let range = self.lines.range(head.span.start, head.span.end);
             let mut handler =
-                WorldHandler { definition, touches: Vec::new(), answers: Vec::new(), wraps: Vec::new(), contract_test_exempt: false, range };
+                WorldHandler { definition, touches: Vec::new(), answers: Vec::new(), wraps: Vec::new(), contract_test: ContractTest::Required, range };
             let mut touches_given = false;
             let rest: Vec<&Form> = parts.iter().skip(2).copied().collect();
             for (key, field) in self.pairs(&rest) {
@@ -2169,14 +2218,13 @@ impl<'a> Parser<'a> {
                         }
                         None => self.problem(field, ":wraps は [\"module:名\" …] の列"),
                     },
-                    // 縁の検を求めない handler(DOEFF137)— 値は記号 none だけ(ほかの値は読み違いを黙って通さない)。
-                    ":contract-test" => match self.symbol(field) {
-                        Some("none") => handler.contract_test_exempt = true,
-                        _ => self.problem(
-                            field,
-                            &format!("world-handler {} の :contract-test は記号 none だけ(縁の検を求めない handler)", handler.definition.spelling()),
-                        ),
-                    },
+                    // 縁の検を求めない handler(DOEFF137)— 値は (none :doeff-test|:repo-test "file::名") か記号 none(理由なし — 判じる時に
+                    // 鳴る)だけ(ほかの値は読み違いを黙って通さない・#1796)。
+                    ":contract-test" => {
+                        if let Some(declared) = self.contract_test(field, &handler.definition.spelling()) {
+                            handler.contract_test = declared;
+                        }
+                    }
                     _ => self.unknown_key(key, "world-handler"),
                 }
             }
@@ -2190,6 +2238,41 @@ impl<'a> Parser<'a> {
             out.push(handler);
         }
         out
+    }
+
+    /// `:contract-test` の値を読む — 記号 none は理由なし、`(none :doeff-test "file::名")` / `(none :repo-test "file::名")` は理由つき。
+    /// ほかの形・鍵の数の違い・node id の形の違いは理由を積んで None(DOEFF137・agora-redesign #1796)。
+    fn contract_test(&mut self, field: &Form, handler: &str) -> Option<ContractTest> {
+        let shape = format!(
+            "world-handler {} の :contract-test は (none {} \"file::テストの名\") か記号 none(理由の無い none は DOEFF137 が鳴る)",
+            handler,
+            ContractTestWaiver::KEYS.join("|")
+        );
+        if self.symbol(field) == Some("none") {
+            return Some(ContractTest::NoneWithoutReason);
+        }
+        let Some(parts) = self.paren(field).filter(|p| p.first().and_then(|h| self.symbol(h)) == Some("none")) else {
+            self.problem(field, &shape);
+            return None;
+        };
+        let rest: Vec<&Form> = parts.iter().skip(1).copied().collect();
+        let pairs = self.pairs(&rest);
+        let [(key, value)] = pairs.as_slice() else {
+            self.problem(field, &format!("{}(理由はちょうど 1 つ)", shape));
+            return None;
+        };
+        let Some(node) = self.string(value).as_deref().and_then(TestNodeId::parse) else {
+            self.problem(value, &format!("{}(テストの名は repo の根からの .hy / .py の path と :: と名 — 例 \"packages/x/tests/test_y.hy::test-z\")", shape));
+            return None;
+        };
+        match self.text(key) {
+            ":doeff-test" => Some(ContractTest::Waived(ContractTestWaiver::DoeffContractTest(node))),
+            ":repo-test" => Some(ContractTest::Waived(ContractTestWaiver::CoveredByRepoTest(node))),
+            _ => {
+                self.problem(key, &shape);
+                None
+            }
+        }
     }
 
     /// 理由の列 `[(reason 名 "説明" :fix "直し方"?) …]` を読む(同じ名が 2 度あれば理由を積む)。
@@ -2595,26 +2678,65 @@ mod tests {
         assert!(arch.world_handlers[1].wraps.is_empty() && arch.world_handlers[1].answers.is_empty());
         let line = good.lines().position(|l| l.contains("app.foundation.host:with-host")).unwrap() as u32;
         assert_eq!(host.range.start.line, line);
-        assert!(!host.contract_test_exempt, ":contract-test を書かない handler は縁の検を求める");
+        assert_eq!(host.contract_test, ContractTest::Required, ":contract-test を書かない handler は縁の検を求める");
     }
 
     #[test]
-    fn world_handler_contract_test_accepts_only_none() {
-        // DOEFF137(agora-redesign #1363): :contract-test none の handler は縁の検を求めない。none の外の値は宣言の誤り。
+    fn world_handler_contract_test_reads_reasoned_and_bare_none() {
+        // DOEFF137(agora-redesign #1363・#1796): 理由つきの none は縁の検を求めない。理由の無い記号 none は読めるが判じる時に鳴る。
         let good = GOOD.replace(
             ":foundation foundation",
             r#":foundation foundation
-  :world-handlers [(world-handler "app.foundation.host:with-host" :touches [http] :contract-test none)
+  :world-handlers [(world-handler "app.foundation.host:with-host" :touches [http]
+                     :contract-test (none :doeff-test "packages/doeff-core-effects/tests/test_http.hy::test-http-contract"))
+                   (world-handler "app.foundation.host:main" :touches [process] :contract-test (none :repo-test "tests/test_main.hy::test-main"))
+                   (world-handler "app.foundation.host:bare" :touches [process] :contract-test none)
                    (world-handler "app.foundation.agent:claude-runtime" :touches [process])]"#,
         );
         let arch = Architecture::parse(&good, Path::new("architecture.hy")).unwrap();
         assert!(arch.notices.is_empty(), "知らない鍵として知らせた: {:?}", arch.notices);
-        assert!(arch.world_handlers[0].contract_test_exempt);
-        assert!(!arch.world_handlers[1].contract_test_exempt);
-        for value in ["always", "\"none\"", "[none]"] {
-            let bad = good.replace(":contract-test none", &format!(":contract-test {}", value));
+        assert_eq!(
+            arch.world_handlers[0].contract_test,
+            ContractTest::Waived(ContractTestWaiver::DoeffContractTest(TestNodeId {
+                file: "packages/doeff-core-effects/tests/test_http.hy".into(),
+                name: "test-http-contract".into()
+            }))
+        );
+        assert_eq!(
+            arch.world_handlers[1].contract_test,
+            ContractTest::Waived(ContractTestWaiver::CoveredByRepoTest(TestNodeId { file: "tests/test_main.hy".into(), name: "test-main".into() }))
+        );
+        assert_eq!(arch.world_handlers[2].contract_test, ContractTest::NoneWithoutReason);
+        assert_eq!(arch.world_handlers[3].contract_test, ContractTest::Required);
+    }
+
+    #[test]
+    fn world_handler_contract_test_misshapen_reasons_are_errors() {
+        // 形の違う値・空の理由・鍵の違い・理由の数の違いは宣言の誤り(黙って通さない・#1796)。
+        let good = GOOD.replace(
+            ":foundation foundation",
+            r#":foundation foundation
+  :world-handlers [(world-handler "app.foundation.host:with-host" :touches [http] :contract-test VALUE)]"#,
+        );
+        for value in [
+            "always",
+            "\"none\"",
+            "[none]",
+            "(none)",
+            "(always :doeff-test \"tests/test_x.hy::test-y\")",
+            "(none :doeff-test \"\")",
+            "(none :doeff-test \"tests/test_x.hy\")",
+            "(none :doeff-test \"tests/test_x.hy::\")",
+            "(none :doeff-test \"/abs/test_x.hy::test-y\")",
+            "(none :doeff-test \"tests/test_x.txt::test-y\")",
+            "(none :doeff-test \"tests/test x.hy::test-y\")",
+            "(none :doeff-test test-y)",
+            "(none :because \"tests/test_x.hy::test-y\")",
+            "(none :doeff-test \"tests/test_x.hy::a\" :repo-test \"tests/test_x.hy::b\")",
+        ] {
+            let bad = good.replace("VALUE", value);
             let problems = Architecture::parse(&bad, Path::new("architecture.hy")).unwrap_err().join("\n");
-            assert!(problems.contains("app.foundation.host:with-host の :contract-test は記号 none だけ"), "{} を通した:\n{}", value, problems);
+            assert!(problems.contains("app.foundation.host:with-host の :contract-test は (none"), "{} を通した:\n{}", value, problems);
         }
     }
 
