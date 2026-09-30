@@ -19,9 +19,10 @@
 ;;; cloudpickle は長期保存の形式ではない。blob には必ず commit と Python / doeff の版を添え、受け側は版が違えば復元せずに断る。
 ;;; 詰めた Program は task の本文に載せず、coordinator の置き場 /programs/<sha>(program-sha)に版と一緒に先に置き、本文は sha だけを運ぶ
 ;;; (service の宣言と同じ運び方 — ADR-DOE-CLUSTER-001 R3b)。
-(require doeff-hy.macros [deff])
+(require doeff-hy.macros [deff val])
 (import base64)
 (import collections)
+(import collections.abc)
 (import io)
 (import dataclasses [dataclass field])
 (import hashlib)
@@ -124,6 +125,13 @@
   (raise (TypeError (.format "file を捕まえている({})。cloudpickle は読みの file を中身の写し(StringIO)に黙って替え、書きの file は受け側で復元できない" (type value)))))
 
 
+;; cloudpickle の規則の表。型の上では Mapping と宣言されているが実物は ChainMap(書き換えられる表)— ChainMap の親に据えるため、
+;; ここで一度だけ MutableMapping と確かめる(cloudpickle の版が表の形を変えたら import の時に名指して落ちる)。
+(val CLOUDPICKLE-DISPATCH cloudpickle.CloudPickler.dispatch-table)
+(assert (isinstance CLOUDPICKLE-DISPATCH collections.abc.MutableMapping)
+        (.format "cloudpickle の dispatch_table が書き換えられる表でない: {}" (type CLOUDPICKLE-DISPATCH)))
+
+
 (defclass StrictPickler [cloudpickle.CloudPickler]
   "cloudpickle の既定から、file を運ぶ規則だけを外した pickler。file は送り手で断る(意味が黙って変わるため)。
    handler の値(doeff.program.handler が作る物 — 印 __doeff_handler_data__)も断る(ADR-DOE-CLUSTER-001 R3b・改訂 1 の D):
@@ -132,7 +140,7 @@
   (setv dispatch-table
     (collections.ChainMap
       (dfor t #(io.TextIOWrapper io.BufferedReader io.BufferedWriter io.BufferedRandom io.FileIO) t _refuse-file)
-      cloudpickle.CloudPickler.dispatch-table))
+      CLOUDPICKLE-DISPATCH))
 
   ;; obj は pickle が詰めようとしている値そのもの(どの値にもなる)。答えは pickle の reduce の組か NotImplemented(cloudpickle の規則)。
   (defn #^ (| tuple NotImplementedType) reducer-override [self #^ object obj]  ; defk にできない: pickle の library が呼ぶ callback
