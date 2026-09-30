@@ -15,7 +15,10 @@
     "packages/doeff-adr/src/doeff_adr/pytest_plugin.py",
     "packages/doeff-adr/tests/test_dynamic_item_cache.py",
     "packages/doeff-adr/tests/test_lazy_collection.py",
-    "packages/doeff-hy/tests/test_pytest_item_types.py"
+    "packages/doeff-hy/tests/test_pytest_item_types.py",
+    "packages/doeff-adr/src/doeff_adr/record_collection.py",
+    "packages/doeff-adr/tests/test_collection_fast_path.py",
+    "packages/doeff-adr/src/doeff_adr/registry.py"
   ],
   "modules": [
     {
@@ -50,7 +53,8 @@
       "allow": [
         "pytest-item-records",
         "pytest-runtime-records",
-        "hy-bytecode-import"
+        "hy-bytecode-import",
+        "adr-runtime"
       ],
       "layer": "io",
       "name": "pytest-item-collection",
@@ -58,13 +62,17 @@
         "packages/doeff-adr/src/doeff_adr/source_dependencies.py",
         "packages/doeff-adr/src/doeff_adr/item_cache.py",
         "packages/doeff-adr/src/doeff_adr/lazy_collection.py",
-        "packages/doeff-adr/src/doeff_adr/pytest_plugin.py"
+        "packages/doeff-adr/src/doeff_adr/pytest_plugin.py",
+        "packages/doeff-adr/src/doeff_adr/record_collection.py",
+        "packages/doeff-adr/src/doeff_adr/__init__.py"
       ],
       "public": [
         "packages/doeff-adr/src/doeff_adr/source_dependencies.py",
         "packages/doeff-adr/src/doeff_adr/item_cache.py",
         "packages/doeff-adr/src/doeff_adr/lazy_collection.py",
-        "packages/doeff-adr/src/doeff_adr/pytest_plugin.py"
+        "packages/doeff-adr/src/doeff_adr/pytest_plugin.py",
+        "packages/doeff-adr/src/doeff_adr/record_collection.py",
+        "packages/doeff-adr/src/doeff_adr/__init__.py"
       ],
       "responsibility": "記録の保存・sourceの照合・pytest収集とsetup時のimportを組み立てる。古い値の実行を拒否する。",
       "typed": true
@@ -95,10 +103,26 @@
       "paths": [
         "packages/doeff-adr/tests/test_dynamic_item_cache.py",
         "packages/doeff-adr/tests/test_lazy_collection.py",
-        "packages/doeff-hy/tests/test_pytest_item_types.py"
+        "packages/doeff-hy/tests/test_pytest_item_types.py",
+        "packages/doeff-adr/tests/test_collection_fast_path.py"
       ],
       "public": [],
       "responsibility": "独立processで収集と実行を照合し、動的値と定数変更の反例を確かめる。",
+      "typed": true
+    },
+    {
+      "name": "adr-runtime",
+      "paths": [
+        "packages/doeff-adr/src/doeff_adr/registry.py",
+        "packages/doeff-adr/src/doeff_adr/semgrep_hy.py",
+        "packages/doeff-adr/src/doeff_adr/hy_expand.py"
+      ],
+      "public": [
+        "packages/doeff-adr/src/doeff_adr/registry.py"
+      ],
+      "responsibility": "ADR の実行時 registry と Semgrep の検査。YAML は設定を読む時にのみ import する。",
+      "layer": "io",
+      "allow": [],
       "typed": true
     }
   ]

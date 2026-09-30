@@ -33,6 +33,7 @@ from doeff_adr.lazy_collection import (
     swap_in_real_module_marks,
     verify_records,
 )
+from doeff_adr.record_collection import collect_recorded_functions, supports_record_collection
 from doeff_adr.source_dependencies import DependencyChecks
 
 DEFAULT_FILE_PATTERNS = (
@@ -160,7 +161,7 @@ class HySourceFinder(importlib.abc.MetaPathFinder):
     spec で見つけると ``ast.parse`` で Python として読み直す。Hy の loader は ``SourceFileLoader`` の子なので、名指しの
     .hy を別の test file が名前で import すると SyntaxError になる(記録から収集した file はまだ読まれていないので
     当たりやすい — agora-redesign #1211 の後の報告)。書き換えより前に置き、.hy の spec はそのまま(Hy の loader)返す。
-    loader そのものには触れない(bytecode の見張り〔#1292〕が包む ``SourceFileLoader`` の口はそのまま効く)。
+    loader そのものには触れない(bytecode の見張り(#1292)が包む ``SourceFileLoader`` の口はそのまま効く)。
     """
 
     def find_spec(
@@ -264,7 +265,7 @@ def pytest_report_collectionfinish(config: pytest.Config) -> list[str]:
 
 @pytest.hookimpl(tryfirst=True)
 def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
-    config.stash[_COLLECTED_FILES_KEY] = frozenset(Path(item.path).resolve() for item in items)
+    config.stash[_COLLECTED_FILES_KEY] = frozenset(path.resolve() for path in {item.path for item in items})
 
 
 def pytest_collection_finish(session: pytest.Session) -> None:
@@ -317,30 +318,38 @@ def wiring_failure_message(
 
 
 class DoeffAdrHyFile(pytest.Module):
-    """Hy の file の検の収集。module の取り込みだけを Hy の loader に替え、項目の生成は pytest の Module に任せる。
+    """記録で説明できる Hy file は setup まで import を遅らせる。
 
-    以前は ``pytest.Function.from_parent`` で関数を 1 つずつ直に作っていたので、deftest の ``:interpreters`` /
-    ``:params`` が付ける ``pytest.mark.parametrize`` が展開されず、parametrize の fixture は既定の値のまま 1 本だけ
-    走っていた(ADR-DOE-HY-002 R2「deftest の params を fixture へ忠実に受け渡す」の違反・2026-09-25 の
-    doeff-claude-code の検で発覚)。Module の収集は parametrize を callspec に展開する。
-
-    収集で import しない(agora-redesign #1211 / #1223): item を作る macro が書いた記録で説明できる file は、記録から
-    作った仮の module を Module の収集に渡し、module の import は item の setup まで待つ(``lazy_collection``)。
-    記録で説明できない file だけ、今までどおり収集で import する。
+    既知の同期関数収集では記録の名から item を作る。parametrize は pytest の Metafunc が
+    展開し、独自 hook がある場合は実 module と通常の Module.collect を使う(#1551)。
     """
 
     _mut_real_module: types.ModuleType | None = None
     # 収集の中で import する理由(キャッシュに無い file)— import の直後の保存がこれを見る。setup の import では None。
     _mut_import_reason: str | None = None
+    _indexed: Indexed | None = None
+
+    def collect(self) -> Sequence[pytest.Item | pytest.Collector]:
+        _ = self.obj  # _getobj が収集計画を決める。
+        indexed = self._indexed
+        if indexed is not None and supports_record_collection(self):
+            return list(collect_recorded_functions(self, indexed.records, fixtures=indexed.fixtures))
+        return list(super().collect())
 
     def _getobj(self) -> types.ModuleType:
-        base = _import_base_for_path(self.path.resolve(), Path(self.config.rootpath).resolve())
-        module_name = _module_name_for_path(self.path.resolve(), base)
+        path = self.path.resolve()
+        root = self.config.rootpath.resolve()
+        base = _import_base_for_path(path, root)
+        module_name = _module_name_for_path(path, base)
         checks = self.config.stash.setdefault(_DEPENDENCY_CHECKS_KEY, DependencyChecks())
-        match plan_collection(self.path.resolve(), items_cache_dir(self.config), Path(self.config.rootpath).resolve(), checks):
-            case Indexed(records, fixtures):
+        plan = plan_collection(path, items_cache_dir(self.config), root, checks)
+        if isinstance(plan, Indexed) and not supports_record_collection(self):
+            plan = NeedsImport("独自の収集 hook は通常の module 収集を使う")
+        match plan:
+            case Indexed(records, fixtures) as indexed:
+                self._indexed = indexed
                 self.config.stash.setdefault(_INDEXED_FILES_KEY, []).append(self.path)
-                return stub_module(records, fixtures, self.path.resolve(), module_name)
+                return stub_module(records, fixtures, path, module_name)
             case NeedsImport(reason):
                 # import が途中で終わる file(module ごと skip する等)も報告に載せるため、import の前に積む。
                 self.config.stash.setdefault(_IMPORTED_FILES_KEY, []).append((self.path, reason))
@@ -485,7 +494,7 @@ def _collected_files(session: pytest.Session) -> frozenset[Path]:
     snapshot = session.config.stash.get(_COLLECTED_FILES_KEY, None)
     if snapshot is not None:
         return snapshot
-    return frozenset(Path(item.path).resolve() for item in session.items)
+    return frozenset(path.resolve() for path in {item.path for item in session.items})
 
 
 def _wiring_verdict(
@@ -527,6 +536,8 @@ def _discover_executable_adrs(
             and not any(fnmatch.fnmatch(name, pattern) for pattern in norecurse)
         )
         for file_name in sorted(file_names):
+            if not file_name.endswith(".hy"):
+                continue
             path = Path(directory, file_name)
             if path.suffix == ".hy" and _matches_file_patterns(path, root, patterns):
                 executable_adrs.add(path.resolve())
@@ -564,8 +575,12 @@ def _relative_posix(path: Path, root: Path) -> str:
     相対にする。symlink の解決(realpath)は外れた時だけ — 毎回解決すると、収集の 1 回で 1 万回近く呼ばれて
     収集の時間の 1 割を占めていた(agora-redesign #1227 の実測)。
     """
-    if path.is_relative_to(root):
-        return path.relative_to(root).as_posix()
+    path_text = path.as_posix()
+    root_prefix = root.as_posix().rstrip("/") + "/"
+    if path_text.startswith(root_prefix):
+        return path_text[len(root_prefix):]
+    if path == root:
+        return "."
     try:
         return path.resolve().relative_to(root.resolve()).as_posix()
     except ValueError:

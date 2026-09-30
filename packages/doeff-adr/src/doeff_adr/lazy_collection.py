@@ -70,6 +70,7 @@ XUNIT_NAMES = frozenset(
         "setup_function",
         "teardown_function",
         "pytest_plugins",
+        "pytest_generate_tests",
     }
 )
 
@@ -96,6 +97,10 @@ def plan_collection(path: Path, cache_dir: Path, root: Path, checks: DependencyC
     """収集で import せずに済むかを、キャッシュだけから決める(保存の時に実物と突き合わせ済みの記録しか入っていない)。"""
     match read_cached(path, cache_dir, root, checks):
         case CacheHit(records, fixtures):
+            if any(isinstance(record, ModuleMarks)
+                   and {"usefixtures", "parametrize"}.intersection(record.names)
+                   for record in records):
+                return NeedsImport("module の fixture / parametrize の印は引数を実物から読む")
             return Indexed(records, fixtures)
         case CacheMiss(reason):
             return NeedsImport(reason)
@@ -142,21 +147,23 @@ def _resolve_dynamic_records(
     records: list[Record], real_module: types.ModuleType
 ) -> ResolvedRecords:
     """動的な記録だけを実値で補い、保存できない形は理由を返す。"""
-    resolved: list[Record] = []
-    problems: list[str] = []
-    for record in records:
-        if isinstance(record, Dynamic):
-            function: object = vars(real_module).get(record.where)
-            if not callable(function):
-                problems.append(f"動的: {record.where} ({record.reason})")
-                continue
-            try:
-                resolved.append(runtime_function_record(record.where, function))
-            except UnrecordableError as exc:
-                problems.append(f"動的: {record.where} ({exc})")
-        else:
-            resolved.append(record)
-    return ResolvedRecords(resolved, problems)
+    resolved = [_resolve_dynamic_record(record, real_module) for record in records]
+    return ResolvedRecords(
+        [record for record in resolved if not isinstance(record, str)],
+        [problem for problem in resolved if isinstance(problem, str)],
+    )
+
+
+def _resolve_dynamic_record(record: Record, real_module: types.ModuleType) -> Record | str:
+    if not isinstance(record, Dynamic):
+        return record
+    function: object = vars(real_module).get(record.where)
+    if not callable(function):
+        return f"動的: {record.where} ({record.reason})"
+    try:
+        return runtime_function_record(record.where, function)
+    except UnrecordableError as exc:
+        return f"動的: {record.where} ({exc})"
 
 
 def verify_records(real_module: types.ModuleType, name_matches: Callable[[str], bool]) -> Verified:
@@ -168,18 +175,9 @@ def verify_records(real_module: types.ModuleType, name_matches: Callable[[str], 
     dynamic: bool = any(isinstance(r, Dynamic) for r in records)
     resolved = _resolve_dynamic_records(records, real_module)
     records, problems = resolved.records, resolved.problems
-    functions = [r for r in records if isinstance(r, FunctionItem)]
+    functions = list({r.name: r for r in records if isinstance(r, FunctionItem)}.values())
     names = {r.name for r in functions}
-    for record in functions:
-        real = getattr(real_module, record.name, None)
-        if real is None:
-            problems.append(f"記録の {record.name} が module に無い")
-            continue
-        stub = _stub_function(record, Path(real_module.__file__ or ""), real_module.__name__)
-        try:
-            _check_marks(get_unpacked_marks(stub), get_unpacked_marks(real), record.name)
-        except (RecordMismatch, UnrecordableError) as exc:
-            problems.append(str(exc))
+    problems.extend(_verify_function_marks(functions, real_module))
     module_marks = [r for r in records if isinstance(r, ModuleMarks)]
     recorded_marks = [name for r in module_marks for name in r.names]
     real_marks = [m.name for m in get_unpacked_marks(real_module)]
@@ -202,6 +200,22 @@ def verify_records(real_module: types.ModuleType, name_matches: Callable[[str], 
         elif name_matches(name) and callable(value):
             problems.append(f"記録に無い test らしい名 {name} がある")
     return Verified(problems, tuple(fixtures), tuple(records), dynamic)
+
+
+def _verify_function_marks(
+    functions: list[FunctionItem], real_module: types.ModuleType,
+) -> Generator[str, None, None]:
+    """同名の最後の記録と、module が公開する実関数の印を照合する。"""
+    for record in functions:
+        real = vars(real_module).get(record.name)
+        if real is None:
+            yield f"記録の {record.name} が module に無い"
+            continue
+        stub = _stub_function(record, Path(real_module.__file__ or ""), real_module.__name__)
+        try:
+            _check_marks(get_unpacked_marks(stub), get_unpacked_marks(real), record.name)
+        except (RecordMismatch, UnrecordableError) as exc:
+            yield str(exc)
 
 
 # ---------------------------------------------------------------------------
@@ -239,7 +253,7 @@ def _stub_function(item: FunctionItem, path: Path, module_name: str) -> Callable
         raise RuntimeError(f"{module_name}.{item.name}: 記録から作った仮の関数が呼ばれた(setup で実物に替わるはず)")
 
     # 仮の関数の引数を pytest に見せる口(inspect.signature は __signature__ を読む)。
-    stub.__signature__ = inspect.Signature([inspect.Parameter(name, inspect.Parameter.POSITIONAL_OR_KEYWORD) for name in item.argnames])
+    stub.__dict__["__signature__"] = inspect.Signature([inspect.Parameter(name, inspect.Parameter.POSITIONAL_OR_KEYWORD) for name in item.argnames])
     stub.__name__ = stub.__qualname__ = item.name
     stub.__module__ = module_name
     # 報告の位置(pytest の reportinfo)は test file を指す。行は記録に無いので 1。
@@ -289,7 +303,7 @@ def _stub_fixture(record: FixtureRecord, module_name: str) -> FixtureFunctionDef
 
         stub = value_stub
     # 仮の fixture の引数を pytest に見せる口(inspect.signature は __signature__ を読む)。
-    stub.__signature__ = inspect.Signature([inspect.Parameter(name, inspect.Parameter.POSITIONAL_OR_KEYWORD) for name in record.argnames])
+    stub.__dict__["__signature__"] = inspect.Signature([inspect.Parameter(name, inspect.Parameter.POSITIONAL_OR_KEYWORD) for name in record.argnames])
     stub.__name__ = stub.__qualname__ = record.attribute
     stub.__module__ = module_name
     return pytest.fixture(scope=record.scope, name=record.name)(stub)
@@ -308,7 +322,7 @@ def stub_module(
             case FunctionItem():
                 setattr(module, record.name, _stub_function(record, path, module_name))
             case ModuleMarks(names):
-                module.pytestmark = [_stub_module_mark(name) for name in names]
+                vars(module)["pytestmark"] = [_stub_module_mark(name) for name in names]
             case Dynamic():
                 raise AssertionError("Dynamic の記録を持つ file は plan_collection が import に回す")
     return module
@@ -319,8 +333,11 @@ def stub_module(
 # ---------------------------------------------------------------------------
 
 
-class RecordMismatch(Exception):
+class RecordMismatchError(Exception):
     """実物の module が記録と食い違った。"""
+
+
+RecordMismatch = RecordMismatchError
 
 
 def _shape(marks: Iterable[PytestMark]) -> list[tuple[str, object]]:

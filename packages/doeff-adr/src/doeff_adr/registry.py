@@ -10,13 +10,11 @@ import json
 import shutil
 import subprocess
 import tempfile
-from collections.abc import Generator
+from collections.abc import Generator, Iterable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
-
-import yaml
 
 AdrStatus = Literal["proposed", "accepted", "superseded", "rejected"]
 EnforcementMode = Literal["green", "expected-red"]
@@ -122,16 +120,12 @@ def _ensure_new_enforcement_id(enforcement_id: str) -> None:
         raise ValueError(f"duplicate ADR enforcement id: {enforcement_id}")
 
 
-def _tuple_of_text(values: Any) -> tuple[str, ...]:
-    if values is None:
-        return ()
-    return tuple(_keyword_to_text(value) for value in values)
+def _text_values(values: Iterable[object] | None) -> Iterator[str]:
+    return map(_keyword_to_text, _values(values))
 
 
-def _tuple_of_any(values: Any) -> tuple[Any, ...]:
-    if values is None:
-        return ()
-    return tuple(values)
+def _values(values: Iterable[object] | None) -> Iterator[object]:
+    return iter(()) if values is None else iter(values)
 
 
 def make_fact(text: str, **extra: Any) -> dict[str, Any]:
@@ -233,18 +227,18 @@ def register_adr(
     if adr_id in _ADRS:
         raise ValueError(f"duplicate ADR id: {adr_id}")
     normalized_status = _normalize_adr_status(status)
-    refs = tuple(_coerce_enforcement_ref(item) for item in _tuple_of_any(enforcement))
+    refs = tuple(_coerce_enforcement_ref(item) for item in _values(enforcement))
     spec = AdrSpec(
         id=adr_id,
         title=title,
         status=normalized_status,  # type: ignore[arg-type]
-        scope=_tuple_of_text(scope),
-        problem=_tuple_of_any(problem),
-        context=_tuple_of_any(context),
-        decision=_tuple_of_any(decision),
-        laws=_tuple_of_any(laws),
+        scope=tuple(_text_values(scope)),
+        problem=tuple(_values(problem)),
+        context=tuple(_values(context)),
+        decision=tuple(_values(decision)),
+        laws=tuple(_values(laws)),
         enforcement=refs,
-        plans=_tuple_of_text(plans),
+        plans=tuple(_text_values(plans)),
         metadata=metadata,
     )
     _ADRS[adr_id] = spec
@@ -557,6 +551,9 @@ def _find_tree_root(start: Path, config: Path) -> Path:
 
 
 def _ensure_installed_rule_exists(config_path: Path, rule_id: str) -> None:
+    # pytest の収集では設定を読まない。公開 API の import は軽い registry だけに留める。
+    import yaml
+
     with config_path.open(encoding="utf-8") as handle:
         payload = yaml.safe_load(handle) or {}
     rules = payload.get("rules") or []

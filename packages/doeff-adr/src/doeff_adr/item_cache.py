@@ -37,7 +37,8 @@ DEFAULT_CACHE_DIR = Path.home() / ".cache" / "doeff-adr" / "pytest-items"
 # 記録の形か鍵の決め方を変えたら上げる(古い版のキャッシュは読まない)。2 = macro の提供元を doeff_hy_bytecode_guard の辿り方で求める。
 # 3 = module の fixture の記録を足す(agora-redesign #1227 の案 B)。
 # 4 = import後の実値・明示idとproject内sourceの状態を保存する(#1459)。
-CACHE_FORMAT = 4
+# 5 = module の pytest_generate_tests は記録から再現できないので保存しない(#1551)。
+CACHE_FORMAT = 5
 
 
 @dataclass(frozen=True)
@@ -49,8 +50,11 @@ class MacroDependency:
     digest: str
 
 
-class MalformedCacheEntry(ValueError):
+class MalformedCacheEntryError(ValueError):
     """キャッシュの file の形が違う(版の違う doeff-adr が書いた・書きかけ等)。"""
+
+
+MalformedCacheEntry = MalformedCacheEntryError
 
 
 FixtureScope = Literal["function", "class", "module", "package", "session"]
