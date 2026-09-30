@@ -228,7 +228,7 @@
   "筋書き 2・4: project の repo の commit だけ変える(同じ lock)→ 新しい root・sync は増えるが download も build も 0・
    変わらない repo のツリーは複製・bytecode は前の root から引き継ぐ。"
   (<- first-env RuntimeEnv (env-of "app-1" "lib-1" LOCK))
-  (<- first (prepare first-env #()))
+  (<- first EnvReady (prepare first-env #()))
   (<- before EnvWorldLog (read-world-log))
   (<- second-env RuntimeEnv (env-of "app-2" "lib-1" LOCK))
   (<- known tuple (known-of first))
@@ -260,7 +260,7 @@
   {:pre [] :post [(: % bool)]}
   "筋書き 3: lock を変える → 新しいキー・増えた package だけ download・bytecode は引き継がない(Hy と doeff-hy が変わり得る)。"
   (<- env-1 RuntimeEnv (env-of "app-1" "lib-1" LOCK))
-  (<- first (prepare env-1 #()))
+  (<- first EnvReady (prepare env-1 #()))
   (<- known tuple (known-of first))
   (<- before EnvWorldLog (read-world-log))
   (<- env-3 RuntimeEnv (env-of "app-3" "lib-1" (+ LOCK "rich==13.9.4 top=rich\n")))
@@ -283,15 +283,15 @@
   {:pre [] :post [(: % bool)]}
   "筋書き 5: native の source を変える → build が 1 回だけ増え、同じ source の次の root は wheel を使い回す。"
   (<- env-1 RuntimeEnv (env-of "app-1" "lib-1" LOCK))
-  (<- first (prepare env-1 #()))
+  (<- first EnvReady (prepare env-1 #()))
   (<- before EnvWorldLog (read-world-log))
   (<- env-lib-2 RuntimeEnv (env-of "app-1" "lib-2" LOCK))
   (<- known-1 tuple (known-of first))
-  (<- changed (prepare env-lib-2 known-1))
+  (<- changed EnvReady (prepare env-lib-2 known-1))
   (<- mid EnvWorldLog (read-world-log))
   (<- env-2 RuntimeEnv (env-of "app-2" "lib-2" LOCK))
   (<- known-2 tuple (known-of first changed))
-  (<- again (prepare env-2 known-2))
+  (<- again EnvReady (prepare env-2 known-2))
   (<- after EnvWorldLog (read-world-log))
   (assert (= (- mid.builds before.builds) 1))
   (assert (= changed.built 1))

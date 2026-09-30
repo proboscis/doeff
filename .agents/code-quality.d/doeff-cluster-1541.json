@@ -11,6 +11,9 @@
       "reason": "CLI の入口(declare)が引数の関数の参照(module:attr)を関数へ解くのが役目の口 — 系の関数と土台の関数は名で渡される(#1692)。"
     }
   ],
+  "exclude": [
+    "packages/doeff-cluster/tests/fixtures/independence/*"
+  ],
   "include": [
     "packages/doeff-cluster/src/doeff_cluster/*.hy",
     "packages/doeff-cluster/src/doeff_cluster/*.py",
@@ -1228,6 +1231,9 @@
         "doeff-cluster-worker-model",
         "doeff-cluster-worker-policy",
         "pytest-item-collection"
+      ],
+      "exclude": [
+        "packages/doeff-cluster/tests/fixtures/independence/*"
       ],
       "layer": "io",
       "name": "doeff-cluster-tests",

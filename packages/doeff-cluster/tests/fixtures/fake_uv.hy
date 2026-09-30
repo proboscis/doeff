@@ -13,24 +13,26 @@
 ;;; native-build-failed)を書くと、その命令を失敗させる。
 (import json os sys zipfile)
 (import pathlib [Path])
+(import typing [NoReturn])
 
 (setv HOME (Path (get os.environ "FAKE_UV_DIR")))
 
 
-(defn log-line [#^ str text]  ; defk にできない: 検の道具の process の入口(Program の外)
-  (with [f (open (/ HOME "log") "a" :encoding "utf-8")] (.write f (+ text "\n"))))
+(defn #^ None log-line [#^ str text]  ; defk にできない: 検の道具の process の入口(Program の外)
+  (with [f (open (/ HOME "log") "a" :encoding "utf-8")] (.write f (+ text "\n")))
+  None)
 
 
-(defn failure [] ; defk にできない: 検の道具の process の入口(Program の外)
+(defn #^ str failure [] ; defk にできない: 検の道具の process の入口(Program の外)
   (setv path (/ HOME "fail"))
   (if (.is-file path) (.strip (.read-text path :encoding "utf-8")) ""))
 
 
-(defn option [#^ list args #^ str flag]  ; defk にできない: 検の道具の process の入口(Program の外)
+(defn #^ str option [#^ list args #^ str flag]  ; defk にできない: 検の道具の process の入口(Program の外)
   (get args (+ (.index args flag) 1)))
 
 
-(defn sync [#^ list args]  ; defk にできない: 検の道具の process の入口(Program の外)
+(defn #^ None sync [#^ list args]  ; defk にできない: 検の道具の process の入口(Program の外)
   (setv kind (failure))
   (cond
     (= kind "lock-stale")
@@ -69,7 +71,7 @@
   (print (.format "Prepared {} packages in 1ms" (len missing)) :file sys.stderr))
 
 
-(defn build [#^ list args]  ; defk にできない: 検の道具の process の入口(Program の外)
+(defn #^ None build [#^ list args]  ; defk にできない: 検の道具の process の入口(Program の外)
   (when (= (failure) "native-build-failed")
     (print "error: could not compile `core` (lib) due to 1 previous error" :file sys.stderr)
     (sys.exit 1))
@@ -80,7 +82,8 @@
   (log-line (.format "build source={}" source)))
 
 
-(defn run-command [#^ list args]  ; defk にできない: 検の道具の process の入口(Program の外)
+;; 答えない: 最後に os.execve でこの process を CMD に置き換える。
+(defn #^ NoReturn run-command [#^ list args]  ; defk にできない: 検の道具の process の入口(Program の外)
   (setv project (Path (option args "--project"))
         rest (cut args (+ (.index args "--project") 2) None)
         python (str (/ project ".venv" "bin" "python"))
@@ -94,7 +97,7 @@
   (os.execve python argv env))
 
 
-(defn main []  ; defk にできない: 検の道具の process の入口(Program の外)
+(defn #^ None main []  ; defk にできない: 検の道具の process の入口(Program の外)
   (setv args (cut sys.argv 1 None) verb (get args 0))
   (cond
     (= verb "sync") (sync args)

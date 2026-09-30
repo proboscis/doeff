@@ -11,13 +11,14 @@
 
 (defclass StorePut [EffectBase]
   "外の系の store に書く(本番は土台の handler が外の系へ送る)。"
-  (defn __init__ [self key value]
+  ;; value は store に置く値そのもの(どの値にもなる)。
+  (defn #^ None __init__ [self #^ str key #^ object value]
     (.__init__ (super))
     (setv self.key key self.value value)))
 
 (defclass StoreGet [EffectBase]
   "外の系の store から読む(無ければ None)。"
-  (defn __init__ [self key]
+  (defn #^ None __init__ [self #^ str key]
     (.__init__ (super))
     (setv self.key key)))
 
