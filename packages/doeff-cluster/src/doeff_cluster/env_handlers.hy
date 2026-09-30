@@ -105,9 +105,10 @@
   "file の effect の答えから失敗(FileFailed)を例外にするため(準備を続けられない I/O の失敗 — 準備の process の失敗として worker が読む)。
    file の effect は答えの型を宣言しない(EffectBase の答えは Any)ので、呼び手は答えを束ねる所で (<- 名 (| 成功の型 FileFailed) effect) と
    型を書く(doeff-hy の _bind-yield が実行時に isinstance で確かめる — #1682)。"
-  (when (isinstance answer FileFailed)
-    (raise (RuntimeError (.format "{}: {} — {}" what answer.path answer.detail))))
-  answer)
+  ;; 型紙の match で FileFailed の欄を取り出す(isinstance では型検査がこの関数の中で答えを狭めない — #1672)。
+  (match answer
+    (FileFailed :path path :detail detail) (raise (RuntimeError (.format "{}: {} — {}" what path detail)))
+    _ answer))
 
 
 (defk outcome-result [outcome]

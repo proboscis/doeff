@@ -171,6 +171,15 @@
   (if (in flag args) (get args (+ (.index args flag) 1)) None))
 
 
+(defk required-option-of [args flag]
+  {:pre [(: args tuple) (: flag str)] :post [(: % str)]}
+  "命令の引数から flag の次の値を読むため(翻訳が必ず添える flag — 無ければ台本が知らない形なので名指しで落とす)。"
+  (<- found (| str None) (option-of args flag))
+  (match found
+    None (raise (ValueError (.format "台本が知らない形: {} の値が無い: {}" flag args)))
+    value value))
+
+
 (defk options-of [args flag]
   {:pre [(: args tuple) (: flag str)] :post [(: % tuple)]}
   "命令の引数から繰り返す flag の値を全部読むため。"
@@ -267,24 +276,27 @@
           (ProcessOutcome :stdout "" :stderr "" :exit-code 0))))
 
 
-(defk git-cat-file [mirror args]
-  {:pre [(: mirror str) (: args tuple)] :post [(: % ProcessOutcome)]}
+(defk git-cat-file [argv args]
+  {:pre [(: argv tuple) (: args tuple)] :post [(: % ProcessOutcome)]}
   "git cat-file -e <sha>^{commit} に答えるため(mirror に取った commit なら 0)。"
+  (<- mirror str (required-option-of argv "-C"))
   (<- fetched str (read-or-empty (posixpath.join mirror "fetched")))
   (val sha (.removesuffix (get args -1) "^{commit}"))
   (if (in sha (.splitlines fetched)) (ProcessOutcome :stdout "" :stderr "" :exit-code 0) (ProcessOutcome :stdout "" :stderr "fatal: Not a valid object name\n" :exit-code 1)))
 
 
-(defk git-config [mirror]
-  {:pre [(: mirror str)] :post [(: % ProcessOutcome)]}
+(defk git-config [argv]
+  {:pre [(: argv tuple)] :post [(: % ProcessOutcome)]}
   "git config --get remote.origin.url に答えるため。"
+  (<- mirror str (required-option-of argv "-C"))
   (<- url str (read-or-empty (posixpath.join mirror "remote-url")))
   (ProcessOutcome :stdout (+ url "\n") :stderr "" :exit-code 0))
 
 
-(defk git-fetch [world mirror args]
-  {:pre [(: world EnvWorld) (: mirror str) (: args tuple)] :post [(: % ProcessOutcome)]}
+(defk git-fetch [world argv args]
+  {:pre [(: world EnvWorld) (: argv tuple) (: args tuple)] :post [(: % ProcessOutcome)]}
   "git fetch origin <sha|+refs/heads/*…> に答えるため(remote に在る commit を mirror に取る・届かない url は本物と同じ語で終わる)。"
+  (<- mirror str (required-option-of argv "-C"))
   (<- url str (read-or-empty (posixpath.join mirror "remote-url")))
   (val ref (get args -1))
   (<- commit (| WorldCommit None) (commit-of world ref))
@@ -303,7 +315,7 @@
 (defk git-archive [world args]
   {:pre [(: world EnvWorld) (: args tuple)] :post [(: % ProcessOutcome)]}
   "git archive -o <archive> <sha> に答えるため(tar の台本が読む形 — path → 中身の JSON — で commit の木を書く)。"
-  (<- archive (| str None) (option-of args "-o"))
+  (<- archive str (required-option-of args "-o"))
   (<- commit (| WorldCommit None) (commit-of world (get args -1)))
   (if (is commit None)
       (ProcessOutcome :stdout "" :stderr "fatal: not a valid object name\n" :exit-code GIT-FATAL)
@@ -330,14 +342,13 @@
   {:pre [(: world EnvWorld) (: commands tuple) (: request RunProcess)] :post [(: % ProcessOutcome)]}
   "翻訳が出す git の問い(clone・cat-file・config・fetch・archive・rev-parse)に世界から答える台本。"
   (val argv (tuple request.argv))
-  (<- mirror (| str None) (option-of argv "-C"))
-  (val args (if (is mirror None) (cut argv 1 None) (cut argv 3 None)))
+  (val args (if (in "-C" argv) (cut argv 3 None) (cut argv 1 None)))
   (<- answer ProcessOutcome
       (match (if args (get args 0) "")
         "clone" (git-clone world args)
-        "cat-file" (git-cat-file mirror args)
-        "config" (git-config mirror)
-        "fetch" (git-fetch world mirror args)
+        "cat-file" (git-cat-file argv args)
+        "config" (git-config argv)
+        "fetch" (git-fetch world argv args)
         "archive" (git-archive world args)
         "rev-parse" (git-rev-parse world args)
         _ (ProcessOutcome :stdout "" :stderr (.format "usage: git の台本が知らない形: {}\n" argv) :exit-code BAD-USAGE)))
@@ -350,8 +361,8 @@
   {:pre [(: commands tuple) (: request RunProcess)] :post [(: % ProcessOutcome)]}
   "tar -xf <archive> -C <dest> に答える台本(git の台本が書いた archive の中身を dest の下へ置く)。"
   (val argv (tuple request.argv))
-  (<- archive (| str None) (option-of argv "-xf"))
-  (<- dest (| str None) (option-of argv "-C"))
+  (<- archive str (required-option-of argv "-xf"))
+  (<- dest str (required-option-of argv "-C"))
   (<- tree dict (read-json archive {}))
   (for [#(path text) (.items tree)]
     (<- (write-file (posixpath.join dest path) text)))
@@ -395,8 +406,8 @@
 (defk uv-sync [world args]
   {:pre [(: world EnvWorld) (: args tuple)] :post [(: % ProcessOutcome)]}
   "uv sync --locked に答える: lock の package のうち cache に無い物を取りに行き(冷たい秒)、venv と editable の .pth を置く。"
-  (<- pdir (| str None) (option-of args "--project"))
-  (<- python (| str None) (option-of args "--python"))
+  (<- pdir str (required-option-of args "--project"))
+  (<- python str (required-option-of args "--python"))
   (<- no-install tuple (options-of args "--no-install-package"))
   (<- failure (| UvFailure None) (uv-failure-now))
   (if (and failure (in failure.fault SYNC-FAULTS))
@@ -431,7 +442,7 @@
       ;; signal での終了は負の終わり、compiler の誤りは 1 — 一時か恒久かは翻訳が本物と同じく終わりで読み分ける。
       (ProcessOutcome :stdout "" :stderr (+ failure.detail "\n") :exit-code (if (= failure.fault UvFault.BUILD-KILLED) -9 1))
       (do (<- (Delay world.cold-seconds))
-          (<- out (| str None) (option-of args "--out-dir"))
+          (<- out str (required-option-of args "--out-dir"))
           (<- (write-file (posixpath.join out (+ (posixpath.basename (get args -1)) ".whl")) ""))
           (<- (bump {"builds" 1}))
           (ProcessOutcome :stdout "" :stderr "" :exit-code 0))))
@@ -440,7 +451,7 @@
 (defk uv-pip [args]
   {:pre [(: args tuple)] :post [(: % ProcessOutcome)]}
   "uv pip install --no-deps --python <venv の python> <wheel>… に答える: venv の wheels/ に入れた印を置く。"
-  (<- python (| str None) (option-of args "--python"))
+  (<- python str (required-option-of args "--python"))
   (val venv (posixpath.dirname (posixpath.dirname python)))
   (val wheels (cut args (+ (.index args python) 1) None))
   (for [w wheels]
@@ -453,7 +464,7 @@
   "uv run … hy <code_prepare> <tree> --import-roots … に答える: 本物の道具と同じく、根の下に焼く source が 1 つも無い木は失敗で返す。"
   (val at (.index args "hy"))
   (val tree (get args (+ at 2)))
-  (<- roots-text (| str None) (option-of args "--import-roots"))
+  (<- roots-text str (required-option-of args "--import-roots"))
   (val roots (tuple (.split roots-text ",")))
   (<- carry (| str None) (option-of args "--from"))
   (<- entries-text (| str None) (option-of args "--entries"))
@@ -473,7 +484,7 @@
 (defk uv-probe [world args]
   {:pre [(: world EnvWorld) (: args tuple)] :post [(: % ProcessOutcome)]}
   "uv run … hy -c <確かめ> <根>… に答える: 根の最上位の名のうち lock の第三者の package の名と重なる物を「根の外に解けた」とする。"
-  (<- pdir (| str None) (option-of args "--project"))
+  (<- pdir str (required-option-of args "--project"))
   (val roots (cut args (+ (.index args "-c") 2) None))
   (<- lock str (read-or-empty (posixpath.join pdir "uv.lock")))
   (<- lines tuple (lock-lines lock))
