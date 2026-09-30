@@ -414,3 +414,37 @@ fn mixed_concerns_asks_jev_only_for_judgment_and_program_definitions() {
     assert!(find(&report, "DOEFF205", "pure").is_none());
     assert!(find(&report, "DOEFF205", "shaped").is_none());
 }
+
+#[test]
+fn mixed_concerns_does_not_ask_definitions_under_excluded_paths() {
+    // agora-redesign #1952: DOEFF205 の母集団(definitions の file)から、層の宣言の exclude に当たる path(検の置き場)を外す。
+    // 反例: exclude が無ければ、検の置き場の judgment の定義も Jev に問われ、業務の判断の当たりに混ざる。
+    let setup = |exclude: &str| {
+        let dir = tempfile::TempDir::new().unwrap();
+        std::fs::write(
+            dir.path().join("pyproject.toml"),
+            format!(
+                "[tool.doeff-linter]\nenable = [\"DOEFF205\"]\n[tool.doeff-linter.definitions]\npaths = [\"app\"]\n[tool.doeff-linter.layers]\norder = [\"core\", \"protocol\"]\npaths = {{ core = \"app/core\", protocol = \"app/protocol\" }}\nexclude = [{}]\n[tool.doeff-linter.layers.describe.core]\nsummary = \"業務の判断\"\nknows = \"業務の判断\"\ndoes_not_know = \"相手の話し方\"\n[tool.doeff-linter.semantic]\nmixed_concerns = {{ layer = \"core\" }}\n",
+                exclude
+            ),
+        )
+        .unwrap();
+        std::fs::create_dir_all(dir.path().join("app/core")).unwrap();
+        std::fs::create_dir_all(dir.path().join("app/tests")).unwrap();
+        let body = "(val MODULE-TAGS {:context \"kanban\" :role \"judgment\"})\n(defk decide [payload] (val s (.get payload \"subject\")) (when (isinstance s str) (return 1)) 2)\n";
+        std::fs::write(dir.path().join("app/core/x.hy"), body).unwrap();
+        std::fs::write(dir.path().join("app/tests/rules.hy"), body.replace("decide", "check")).unwrap();
+        dir
+    };
+    let jev = fake_jev(false);
+    let excluded = setup("\"tests\"");
+    let (_, report, stderr) = run(excluded.path(), &jev.url, &["--semantic-all"]);
+    // 問うのは app/core の decide だけ(較正は 2 例)— app/tests の check は問わない。
+    assert_eq!(report["semantic"]["asked"], 3, "{} {}", report["semantic"], stderr);
+    assert!(find(&report, "DOEFF205", "decide").is_some());
+    assert!(find(&report, "DOEFF205", "check").is_none());
+    let included = setup("");
+    let (_, report, stderr) = run(included.path(), &jev.url, &["--semantic-all"]);
+    assert_eq!(report["semantic"]["asked"], 4, "{} {}", report["semantic"], stderr);
+    assert!(find(&report, "DOEFF205", "check").is_some());
+}

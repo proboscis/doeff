@@ -3810,10 +3810,12 @@ fn judge_semantic(
         }
     }
     // DOEFF205: 役が judgment / program の定義(定義の :tags か module の頭のタグ)に、形の検めと判断が混ざっているかを問う。
+    // 母集団は definitions の file から、層の宣言の exclude(`tests`・`conftest.py` など)に当たる path を除いた物 — DOEFF201・202(層の
+    // file から集める)と同じ外し方にする。除かないと検の置き場の定義まで Jev に問い、業務の判断の当たりに混ざる(agora-redesign #1952)。
     if let (Some(mixed), Some(reading)) = (&settings.mixed_concerns, &plain.tags) {
         if enabled.contains(&ProjectRule::SemanticMixedConcerns) {
             let spec = &layers.layers[mixed.layer.0];
-            for (file, source) in &plain.files {
+            for (file, source) in plain.files.iter().filter(|(file, _)| !file.rel.split('/').any(|part| layers.exclude.contains(part))) {
                 let text = match source {
                     Some(text) => text.clone(),
                     None => match std::fs::read_to_string(&file.path) {
