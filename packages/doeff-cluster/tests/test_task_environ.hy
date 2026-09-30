@@ -177,7 +177,7 @@
 
 
 (deftest test-a-saved-row-with-a-wrongly-typed-field-names-the-field
-  ;; 保存の行の欄は型を確かめて読む(agora-redesign #1662)。以前は #** で辞書を渡していたので、型の違う値(文字列の lease_ms・null の
+  ;; 保存の行の欄は型を確かめて読む(#1662)。以前は #** で辞書を渡していたので、型の違う値(文字列の lease_ms・null の
   ;; revision)が黙って欄に入り、使う所で初めて落ちた。どの欄がどう違うかを名乗る ValueError にする。必須の欄が無い行も同じ。
   (val saved (json.loads (json.dumps (task-record-to-json (TaskRecord "t1" "n" (* "a" 64) "r" #() #("net") 1000 2000 0)))))
   (for [#(key value words) [#("lease_ms" "1000" "lease_ms は整数") #("revision" None "revision は文字列")
