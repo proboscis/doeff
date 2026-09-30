@@ -5,6 +5,7 @@
 (import subprocess)
 (import sys)
 (import time)
+(import pathlib [Path])
 (import datetime [timedelta])
 (import doeff_time [SimClock sim-time-handler])
 (import tests.clock_fixtures [clock-ms])
@@ -24,7 +25,7 @@
 (defn #^ Request req [#^ str method #^ str path #^ (| dict list str int float bool None) [body None] #^ (| dict None) [query None] #^ (| str None) [actor "test"]]
   (http-request method path (or query {}) body :actor actor))
 
-(defn beat [state name now [statuses None] [versions V] [provides None]]
+(defn #^ tuple beat [#^ ClusterState state #^ str name #^ int now #^ (| list None) [statuses None] #^ dict [versions V] #^ (| list None) [provides None]]
   (respond state (req "POST" "/heartbeat" {"name" name "provides" (or provides ["net"]) "capacity" 10
                                            "versions" versions "statuses" (or statuses [])}) now T))
 
@@ -58,7 +59,7 @@
 ;; 両方で見る。
 
 
-(defn submit [state now [versions V] [lease 15.0]]
+(defn #^ tuple submit [#^ ClusterState state #^ int now #^ dict [versions V] #^ float [lease 15.0]]
   ;; 詰めた Program を置き場に(送り手の版 versions と一緒に)置いてから、task の本文は置き場のキーだけを運ぶ。
   (setv #(state sha) (run (program-placed state versions :now now)))
   (setv #(state _ body) (respond state (req "POST" "/tasks" {"program" sha "revision" "r"
@@ -146,12 +147,13 @@
 
 (defclass Script []
   "台本の要求。requests の要素 = 要求 1 件か、要求の list(1 まとまり)。"
-  (defn __init__ [self requests [fail-at None]]
+  (defn #^ None __init__ [self #^ list requests #^ (| int None) [fail-at None]]
     ;; 時刻は doeff-time の仮想の時計(epoch 0 から)。要求を待つ 1 回ごとに 500 ms 進む(台本の NextRequests が時間を使った形)。
     (setv self.requests (list requests) self.replies [] self.saved [] self.clock (SimClock) self.fail-at fail-at))
   (defn [property] #^ int now [self] (clock-ms self.clock))
   (defn #^ None wait-a-little [self]
-    (.set-time self.clock (+ self.clock.current-time (timedelta :milliseconds 500)))))
+    (.set-time self.clock (+ self.clock.current-time (timedelta :milliseconds 500)))
+    None))
 
 (defclass Crashed [Exception])
 
@@ -239,22 +241,22 @@
 
 ;; --- shim(Python のまま残す見張り)-----------------------------------------------------------
 
-(defn shim [#* command]
+(defn #^ subprocess.Popen shim [#^ str #* command]
   ;; worker と同じく、shim を新しい group の先頭として起動し、stdin のパイプを握る。
   (subprocess.Popen [sys.executable "-m" "doeff_cluster.shim" "1" "--" #* command]
                     :stdin subprocess.PIPE :start-new-session True))
 
-(defn test-shim-passes-the-job-exit-code []
+(defn #^ None test-shim-passes-the-job-exit-code []
   (assert (= (.wait (shim sys.executable "-c" "raise SystemExit(3)") :timeout 30) 3)))
 
-(defn test-shim-stops-the-job-when-the-worker-goes-away []
+(defn #^ None test-shim-stops-the-job-when-the-worker-goes-away []
   (setv p (shim sys.executable "-c" "import time; time.sleep(60)"))
   (time.sleep 1.0)
   (.close p.stdin) ; worker が消えた時と同じ(パイプの EOF)
   (assert (!= (.wait p :timeout 30) 0)))
 
 
-(defn test-wal-store-keeps-answered-batches-and-drops-a-torn-tail [tmp-path]
+(defn #^ None test-wal-store-keeps-answered-batches-and-drops-a-torn-tail [#^ Path tmp-path]
   ;; 耐久の置き場: 返事を済ませた(fsync まで終えた)まとまりは読み直しで必ず戻る。fsync の途中で落ちたまとまり(最後の切れた行)は
   ;; 捨てる(その送り手には返事をしていない)。まとめ直しの後も同じ。
   (import doeff_cluster.wal_store [WalStore])

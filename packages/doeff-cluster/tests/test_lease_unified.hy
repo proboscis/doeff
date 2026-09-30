@@ -13,7 +13,7 @@
 (import httpx)
 (import pytest)
 (import doeff [with_handlers])
-(import datetime [timedelta])
+(import datetime [datetime timedelta])
 (import doeff_time [GetTimeEffect SimClock sim-time-handler])
 (import doeff_cluster.shared_handlers [shared-memory])
 (import doeff_cluster.shared_model [WriteShared])
@@ -64,7 +64,7 @@
   ;; この worker の時計だけ offset ms ずれている(保存 = coordinator の時計は外側の本当の時刻)。時刻は持たない — 外側の仮想の時計
   ;; (sim-time-handler)の答えを読み、offset を足して返すだけ。
   (GetTimeEffect []
-    (<- now effect)
+    (<- now datetime effect)
     (resume (+ now (timedelta :milliseconds offset)))))
 
 

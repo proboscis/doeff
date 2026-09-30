@@ -11,7 +11,7 @@
 (import doeff_cluster.code_prepare [ScanTree LinkPycs CompileSources WriteMarker Note MARKER
                         prepare-tree tree-problem marker-problem marker-content cache-rel])
 (import doeff_cluster.handlers [CodeStore])
-(import doeff_cluster.worker_model [CodeState])
+(import doeff_cluster.worker_model [CodeState CodeView])
 
 
 ;; --- 焼きの Program(fake の handler)---------------------------------------------------
@@ -27,7 +27,7 @@
   (Note [line] (resume None)))
 
 
-(defn tree-state [sources after [failures []]]
+(defn #^ dict tree-state [#^ list sources #^ list after #^ list [failures []]]
   {"scans" 0 "sources" sources "after" after "failures" failures "markers" []})
 
 
@@ -74,11 +74,11 @@
 (setv HY (str (/ (. (Path sys.executable) parent) "hy")))
 
 
-(defn git [repo #* args]
+(defn #^ str git [#^ Path repo #^ str #* args]
   (.strip (. (subprocess.run ["git" "-C" (str repo) #* args] :check True :capture-output True :text True) stdout)))
 
 
-(defn make-repo [root]
+(defn #^ tuple make-repo [#^ Path root]
   "焼く道具(code_prepare.hy)を持たない小さな repo — 道具が木の中に無い古い版と同じ形。"
   (setv repo (/ root "repo"))
   (.mkdir (/ repo "pkg") :parents True)
@@ -90,7 +90,7 @@
   #(repo (git repo "rev-parse" "HEAD")))
 
 
-(defn wait-settled [store revision [limit 60]]
+(defn #^ CodeView wait-settled [#^ CodeStore store #^ str revision #^ int [limit 60]]
   (setv deadline (+ (time.monotonic) limit))
   (while (< (time.monotonic) deadline)
     (setv views (lfor v (.observe store) :if (= v.revision revision) v))
@@ -99,7 +99,7 @@
   (raise (TimeoutError revision)))
 
 
-(defn failing-tool [root]
+(defn #^ str failing-tool [#^ Path root]
   "焼きの道具の代わり: 理由を言って 0 でない終了をする(以前の形では、これでも完成品になった)。"
   (setv tool (/ root "fail.sh"))
   (.write-text tool "#!/bin/sh\necho '焼きの道具が見つからない' >&2\nexit 3\n")

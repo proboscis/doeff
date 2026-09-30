@@ -8,7 +8,7 @@
 (require doeff-hy.macros [deftest defk defhandler <- var])
 (import json)
 (import datetime [datetime timedelta timezone])
-(import doeff [EffectBase Pass with_handlers])
+(import doeff [EffectBase Pass with_handlers Program])
 (import doeff_core_effects.handlers [reader])
 (import doeff_core_effects.effects [Ask])
 (import doeff_core_effects.scheduler [Spawn Task Wait Gather])
@@ -102,14 +102,14 @@
   (<- (WriteShared "final" (list box)))
   (list box))
 
-(defn record-system []
+(defn #^ tuple record-system []
   (setv sink (MemorySink) clock (clock-at 1000000) box [] store {})
   (setv log (EffectLog sink {"service" "system" "run" "r1"} :strict True :wall-ms (fn [] (clock-ms clock))))
   (setv result (with-handlers-list [(sim-time-handler :clock clock) (reader {"box" box}) (shared-memory store) (effect-recorder log)]
                                    (system-program)))
   #(sink.lines result store))
 
-(defn with-handlers-list [handlers program]
+(defn #^ Program with-handlers-list [#^ list handlers #^ Program program]
   "handler の list(外側が先)で包む。"
   (with_handlers handlers program))
 

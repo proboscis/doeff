@@ -26,7 +26,7 @@
 (import doeff_cluster.cluster_policy [still-live-somewhere])
 (import doeff_cluster.worker_model [JobSpec CodeView CodeState ProcessView WorldView WorkerPolicy JobRecord
                         PrepareCode StartJob SignalJob ReapJob RetireJob ReleaseLeases StopStage ProbeEntry ProbeView ProbeState
-                        ForgetProbes spec-hash])
+                        ForgetProbes Action spec-hash])
 (import tests.program_rows [SAMPLE-RUN])
 (import doeff_cluster.worker_policy [plan records-after statuses])
 
@@ -41,7 +41,7 @@
 
 
 (defclass Sim []
-  (defn __init__ [self]
+  (defn #^ None __init__ [self]
     (setv self.now 2000000
           self.kube (KubeMemory {})
           self.policy (WorkerPolicy :stop-grace-ms 10000)
@@ -54,25 +54,25 @@
     (self.call "POST" "/resources/Service" {"name" "writer-a" "spec" SERVICE})
     None)
 
-  (defn call [self method path [body None] [actor "c-test"]]
+  (defn #^ dict call [self #^ str method #^ str path #^ (| dict None) [body None] #^ (| str None) [actor "c-test"]]
     (setv #(state status reply) (respond self.state (http-request method path {} body :actor actor) self.now T))
     (assert (< status 300) #(method path status reply))
     (setv self.state state)
     reply)
 
-  (defn redeclare [self revision]
+  (defn #^ dict redeclare [self #^ str revision]
     "宣言し直す(読んだ resourceVersion を付けて版だけを変える — declare の PUT と同じ形)。"
     (setv current (self.call "GET" "/resources/Service/writer-a"))
     (self.call "PUT" "/resources/Service/writer-a"
                {"spec" (| SERVICE {"revision" revision}) "resourceVersion" (get current "resourceVersion")}))
 
-  (defn world [self]
+  (defn #^ WorldView world [self]
     (WorldView (tuple (gfor #(k ready-at) (.items self.codes) :if (<= ready-at self.now)
                             (CodeView k CodeState.READY (+ "/c/" k))))
                (tuple self.processes)
                (tuple (.values self.probes))))
 
-  (defn apply [self action]
+  (defn #^ (| int None) apply [self #^ Action action]
     (cond
       (isinstance action PrepareCode) (.setdefault self.codes action.revision (+ self.now 1000))
       (isinstance action ProbeEntry)
@@ -91,7 +91,7 @@
       (isinstance action ReapJob) (setv self.processes (lfor p self.processes :if (!= p.pid action.pid) p))
       (isinstance action ReleaseLeases) (when (= self.lease action.instance) (setv self.lease None))))
 
-  (defn worker-tick [self]
+  (defn #^ None worker-tick [self]
     (setv world (self.world) actions (plan self.now self.desired world self.records self.policy))
     (for [a actions] (self.apply a))
     (setv self.records (records-after self.now self.records actions self.policy))
@@ -102,7 +102,7 @@
                                              :placement (.get j "placement")
                                              :handoff (bool (.get j "handoff")) :ready-instance (.get j "readyInstance"))))))
 
-  (defn processes-tick [self]
+  (defn #^ None processes-tick [self]
     ;; 空いた lease は待機の process が取る(取りに行く係が 0.5 秒ごとに読み直す)。
     (setv live (lfor p self.processes :if (is p.exit-code None) p))
     (when (and (is self.lease None) live)
@@ -114,7 +114,7 @@
                     "specHash" (spec-hash p.spec) "placement" p.spec.placement "ready" True "reason" "拍を終えた"
                     "role" (if (= self.lease p.instance) "active" "standby")} :actor None))))
 
-  (defn step [self]
+  (defn #^ None step [self]
     (+= self.now 1000)
     (self.worker-tick)
     (self.processes-tick)
@@ -186,7 +186,7 @@
   (assert (= (get later "writer-a") sim.lease) later))
 
 
-(defn test-a-retired-process-still-counts-as-live []
+(defn #^ None test-a-retired-process-still-counts-as-live []
   ;; 入れ替えで退いた process(行の名は <名>#retired-<世代>)が居る間、その job はまだ動いていると数える(他の worker へ置かない)。
   (setv state (ClusterState :workers {} :statuses {}))
   (import doeff_cluster.cluster_model [WorkerInfo])
@@ -196,7 +196,7 @@
   (assert (not (still-live-somewhere 1000 state "b" T))))
 
 
-(defn test-heartbeat-age-per-worker-is-exposed []
+(defn #^ None test-heartbeat-age-per-worker-is-exposed []
   ;; coordinator 自身の alert(DoeffWorkerHeartbeatStale)の材料: worker ごとの最後の heartbeat の古さ(label は worker の名だけ —
   ;; 能力の名乗りは計器の label に写さない)。忘れた worker は出ない。
   (import doeff_cluster.cluster_model [WorkerInfo])

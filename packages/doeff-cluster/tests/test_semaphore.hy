@@ -9,7 +9,7 @@
 ;; 片方の組だけの性質は素の deftest のまま: scheduled だけでは別々に作った同じ名前は別物・cluster の worker を越えた排他と延長・
 ;; 死んだ worker の lease の期限の後の引き取り・失った lease の知らせ・書きの柵・lease の立場。
 (require doeff-hy.macros [deftest defk <- val])
-(import doeff [with_handlers])
+(import doeff [with_handlers Program])
 (import doeff_core_effects.scheduler [Spawn Gather AcquireSemaphore ReleaseSemaphore Semaphore Task])
 (import doeff_time [Delay SimClock sim-time-handler])
 (import doeff_cluster.clock [now-epoch-ms])
@@ -58,7 +58,7 @@
   done)
 
 
-(defn intervals [log]
+(defn #^ dict intervals [#^ list log]
   "log → {who: [(入った時刻 出た時刻) …]}"
   (setv opened {} spans {})
   (for [#(kind who at) log]
@@ -67,7 +67,7 @@
         (.append (.setdefault spans who []) #((.pop opened who) at))))
   spans)
 
-(defn max-concurrency [log]
+(defn #^ int max-concurrency [#^ list log]
   (setv inside 0 peak 0)
   (for [#(kind _ _) log]
     (+= inside (if (= kind "in") 1 -1))
@@ -138,7 +138,7 @@
 
 ;; --- (3) cluster(共有の保存の lease) ----------------------------------------------------------
 
-(defn on-worker [session program]
+(defn #^ Program on-worker [#^ SemaphoreSession session #^ Program program]
   "1 つの worker に見立てる: その worker の cluster-semaphore だけを被せる(保存と時計は共有)。"
   (with_handlers [(cluster-semaphore session)] program))
 
@@ -194,7 +194,7 @@
 
 ;; --- 純粋な判断 --------------------------------------------------------------------------------
 
-(defn test-claim-renew-release-are-pure-row-transitions []
+(defn #^ None test-claim-renew-release-are-pure-row-transitions []
   (setv row (claim None 1 "a/1" 0 15000))
   (assert (= row {"permits" 1 "holders" {"a/1" 15000}}))
   ;; 満ちている間は取れない・期限が切れたら取れる(切れた担い手は落ちる)。
@@ -210,7 +210,7 @@
   (assert (= (release row "b/1" 0) #(row False))))
 
 
-(defn test-named-semaphore-refuses-an-empty-or-slashed-name []
+(defn #^ None test-named-semaphore-refuses-an-empty-or-slashed-name []
   (for [bad ["" "a/b"]]
     (try (CreateNamedSemaphore bad) (assert False) (except [ValueError] None)))
   (assert (= (. (CreateNamedSemaphore "x" 3) permits) 3))
@@ -237,7 +237,7 @@
     (.append log #(who now))
     (resume True)))
 
-(defhandler cut-off-at [clock #^ int at]
+(defhandler cut-off-at [#^ SimClock clock #^ int at]
   ;; この worker から共有の保存へ届かなくなる(tailnet の途絶・coordinator の停止)。書き先への書きの道は生きている。
   (ReadShared [prefix] :when (>= (clock-ms clock) at) (raise (ConnectionError "保存へ届かない")))
   (WriteShared [key value expect ttl-seconds] :when (>= (clock-ms clock) at) (raise (ConnectionError "保存へ届かない")))
@@ -259,12 +259,15 @@
         (.append attempts #(who now "fenced"))))
     (<- (Delay every))))
 
-(defn fenced-worker [session program [cut None] [clock None]]
+(defn #^ Program fenced-worker [#^ SemaphoreSession session #^ Program program #^ (| int None) [cut None] #^ (| SimClock None) [clock None]]
   "1 つの worker: (途絶) → cluster-semaphore → 書きの柵(一番内側)。"
   (setv inner [(cluster-semaphore session) (lease-fence "writer-a" #(FakeWrite) 2000)])
-  (with_handlers (if (is cut None) inner (+ [(cut-off-at clock cut)] inner)) program))
+  (cond
+    (is cut None) (with_handlers inner program)
+    (is clock None) (raise (ValueError "途絶(cut)には仮想の時計(clock)が要る"))
+    True (with_handlers (+ [(cut-off-at clock cut)] inner) program)))
 
-(defn times-of [attempts who outcome]
+(defn #^ list times-of [#^ list attempts #^ str who #^ str outcome]
   (lfor #(w at o) attempts :if (and (= w who) (= o outcome)) at))
 
 
@@ -317,7 +320,7 @@
   (assert (= written [])))
 
 
-(defhandler cut-between [clock #^ int start #^ int end]
+(defhandler cut-between [#^ SimClock clock #^ int start #^ int end]
   ;; 仮想の時計が start〜end の間、保存(盤・lease)へ届かない。
   (ReadShared [prefix] :when (<= start (clock-ms clock) end) (raise (ConnectionError "保存へ届かない")))
   (WriteShared [key value expect ttl-seconds] :when (<= start (clock-ms clock) end) (raise (ConnectionError "保存へ届かない")))
@@ -336,7 +339,7 @@
   (assert (= (len (times-of attempts "a" "ok")) 40)))
 
 
-(defn test-fence-verdict-is-a-pure-check-of-the-hold-and-the-clock []
+(defn #^ None test-fence-verdict-is-a-pure-check-of-the-hold-and-the-clock []
   (assert (is (fence-verdict {"token" "t" "expiresMs" 15000} 12999 2000) None))
   (assert (is-not (fence-verdict {"token" "t" "expiresMs" 15000} 13000 2000) None))
   (assert (is-not (fence-verdict None 0 2000) None)))

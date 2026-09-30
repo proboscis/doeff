@@ -80,8 +80,8 @@
 (defclass Rig []
   "筋書きを回す組。handlers = 筋書きに被せる handler の組(外側が先 — sim は使わない)・worker = 担い手(sim は None)・
    sim-workers = sim の組の worker(SimWorker の tuple — 他の組は None)・slow / lease / poll = 時間の尺度。"
-  (defn __init__ [self #^ str kind #^ list handlers worker #^ float slow #^ float lease #^ float poll [runs None] [close None]
-                  [sim-workers None]]
+  (defn #^ None __init__ [self #^ str kind #^ list handlers #^ (| RigWorker None) worker #^ float slow #^ float lease #^ float poll
+                  #^ (| Callable None) [runs None] #^ (| Callable None) [close None] #^ (| tuple None) [sim-workers None]]
     (setv self.kind kind self.handlers handlers self.worker worker self.slow slow self.lease lease self.poll poll
           self.runs runs self.close (or close (fn [] None)) self.sim-workers sim-workers)))
 
@@ -95,7 +95,7 @@
        :sim-workers #((SimWorker :name RUNNER :provides LOCAL :versions runner-versions))))
 
 
-(defn #^ Rig coordinator-rig [#^ Path tmp-path runner-versions]
+(defn #^ Rig coordinator-rig [#^ Path tmp-path #^ (| dict None) runner-versions]
   (setv clock (SimClock)
         coordinator (MemoryCoordinator clock)
         transport (httpx.MockTransport coordinator.handle)
@@ -106,25 +106,25 @@
        :runs (fn [key] (len (lfor t (.values coordinator.state.tasks) :if (= t.key key) t)))))
 
 
-(defn #^ Rig served-rig [#^ str url #^ Path tmp-path [runner-versions None]]
+(defn #^ Rig served-rig [#^ str url #^ Path tmp-path #^ (| dict None) [runner-versions None]]
   (setv worker (RigWorker url (/ tmp-path "tasks") (or runner-versions (current-versions)))
         client (DetachedClient url "r"))
-  (defn runs [key]
+  (defn #^ int runs [#^ str key]
     (len (lfor t (get (.json (httpx.get (+ url "/state"))) "tasks") :if (= (.get t "key") key) t)))
   ;; 実時間: lease は heartbeat の間隔(0.2 秒)の十倍以上に取る(込んだ機体で heartbeat が遅れても消失と取り違えない)。
   (Rig "served" [(await-handler) (async-time-handler) (rig-runner-loss worker) (detached-cluster client :poll-seconds 0.2)]
        worker 1.0 2.5 0.2 :runs runs))
 
 
-(defn #^ Rig open-sim-rig [#^ Path tmp-path request [runner-versions None]]
+(defn #^ Rig open-sim-rig [#^ Path tmp-path #^ pytest.FixtureRequest request #^ (| dict None) [runner-versions None]]
   (sim-rig runner-versions))
 
 
-(defn #^ Rig open-coordinator-rig [#^ Path tmp-path request [runner-versions None]]
+(defn #^ Rig open-coordinator-rig [#^ Path tmp-path #^ pytest.FixtureRequest request #^ (| dict None) [runner-versions None]]
   (coordinator-rig tmp-path runner-versions))
 
 
-(defn #^ Rig open-served-rig [#^ Path tmp-path request [runner-versions None]]
+(defn #^ Rig open-served-rig [#^ Path tmp-path #^ pytest.FixtureRequest request #^ (| dict None) [runner-versions None]]
   ;; 本物の coordinator の process(conftest の served_coordinator・session で共有)は served の組の検が
   ;; 走る時にだけ起こす(sim と coordinator の組だけを走らせる時は起動の数秒を払わない)。
   (served-rig (.getfixturevalue request "served_coordinator") tmp-path runner-versions))
@@ -491,22 +491,23 @@
 
 (setv T (ClusterTiming) V {"python" "3.14.0" "doeff" "1"})
 
-(defn call [state method path now [body None]]
+(defn #^ tuple call [#^ ClusterState state #^ str method #^ str path #^ int now #^ (| dict None) [body None]]
   (respond state (http-request method path {} body :actor "test") now T))
 
-(defn beat [state name now [boot "b1"] [statuses None] [boot-at None] [provides None]]
+(defn #^ tuple beat [#^ ClusterState state #^ str name #^ int now #^ str [boot "b1"] #^ (| list None) [statuses None]
+           #^ (| int None) [boot-at None] #^ (| list None) [provides None]]
   (call state "POST" "/heartbeat" now (| {"name" name "provides" (or provides ["net"]) "capacity" 10 "versions" V "boot" boot
                                           "statuses" (or statuses [])}
                                          (if (is boot-at None) {} {"bootAt" boot-at}))))
 
-(defn put-detached [state key now [lease 10.0] [retain 100.0]]
+(defn #^ tuple put-detached [#^ ClusterState state #^ str key #^ int now #^ float [lease 10.0] #^ float [retain 100.0]]
   ;; 詰めた Program を置き場に(版 V と一緒に)置いてから、本文は置き場のキーだけを運ぶ(service の宣言と同じ運び方)。
   (setv #(state sha) (run (program-placed state V :now now)))
   (call state "PUT" (+ "/detached/" key) now {"program" sha "revision" "r" "needs" ["net"]
                                               "leaseSeconds" lease "retainSeconds" retain}))
 
 ;; 読みの時刻は coordinator が起きてからの猶予(lease-ms)の後(猶予の内の知らない key は warming — detached_policy.detached-read)。
-(defn phase-of [state key] (get (get (call state "GET" (+ "/detached/" key) (+ state.started-ms T.lease-ms)) 2) "phase"))
+(defn #^ str phase-of [#^ ClusterState state #^ str key] (get (get (call state "GET" (+ "/detached/" key) (+ state.started-ms T.lease-ms)) 2) "phase"))
 
 
 (deftest test-detached-task-goes-to-the-worker-with-its-boot-and-a-detached-flag
@@ -573,7 +574,7 @@
 ;; worker の Pod を消すと、旧 Pod は preStop の drain(約 40 秒)の間も worker の process を動かし、新 Pod の worker は同じ名で名乗る。
 ;; 2 つの process が交互に heartbeat を送る。coordinator は初めて見た世代を新しい世代とし、退いた世代の heartbeat を断る。
 
-(defn alternate [s name now boots [statuses None]]
+(defn #^ tuple alternate [#^ ClusterState s #^ str name #^ int now #^ list boots #^ (| dict None) [statuses None]]
   "boots の順に 50 ms おきに heartbeat を送る。返り値 #(状態 最後の時刻 世代 → 最後の返事)。"
   (setv replies {})
   (for [boot boots]

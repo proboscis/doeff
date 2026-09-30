@@ -23,7 +23,7 @@
 (import tests.fixtures.envs [plain-foundation])
 (import tests.program_rows [SAMPLE-RUN])
 (import doeff_cluster.worker_model [CodeView CodeState ProcessView WorldView WorkerPolicy PrepareCode StartJob SignalJob ReapJob
-                                    RetireJob ProbeEntry ProbeView ProbeState ForgetProbes spec-hash])
+                                    RetireJob ProbeEntry ProbeView ProbeState ForgetProbes Action spec-hash])
 (import doeff_cluster.worker_policy [plan records-after statuses])
 
 (val T (ClusterTiming))
@@ -38,7 +38,7 @@
 
 (defclass Sim []
   "coordinator 1 つと worker 1 台(zeus)と、その上の子 process の模擬の世界(状態を持つ object — 拍ごとに進める)。"
-  (defn __init__ [self #^ dict declaration]  ; defk にできない: 模擬の世界の object の組み立て(class の口)
+  (defn #^ None __init__ [self #^ dict declaration]  ; defk にできない: 模擬の世界の object の組み立て(class の口)
     "declaration = Service writer-a の宣言の spec。"
     (setv self.now 3000000
           self.policy (WorkerPolicy :stop-grace-ms 10000)
@@ -53,21 +53,21 @@
     (self.call "POST" "/resources/Service" {"name" "writer-a" "spec" declaration})
     None)
 
-  (defn call [self #^ str method #^ str path [body None] #^ (| str None) [actor "c-test"]]  ; defk にできない: 模擬の世界の method(coordinator の口へ要求を送る)
+  (defn #^ dict call [self #^ str method #^ str path #^ (| dict None) [body None] #^ (| str None) [actor "c-test"]]  ; defk にできない: 模擬の世界の method(coordinator の口へ要求を送る)
     "coordinator の本物の返事(api_policy.respond)へ要求を 1 件送り、状態を進めて本文を返す。"
     (setv #(state status reply) (respond self.state (http-request method path {} body :actor actor) self.now T))
     (assert (< status 300) #(method path status reply))
     (setv self.state state)
     reply)
 
-  (defn world [self]  ; defk にできない: 模擬の世界の method(worker の観測を作る)
+  (defn #^ WorldView world [self]  ; defk にできない: 模擬の世界の method(worker の観測を作る)
     "worker の観測(準備の済んだ木と、子 process と、入口の検め)。"
     (WorldView (tuple (gfor #(k ready-at) (.items self.codes) :if (<= ready-at self.now)
                             (CodeView k CodeState.READY (+ "/c/" k))))
                (tuple self.processes)
                (tuple (.values self.probes))))
 
-  (defn apply [self action]  ; defk にできない: 模擬の世界の method(worker の action を子 process の世界へ当てる)
+  (defn #^ (| int None) apply [self #^ Action action]  ; defk にできない: 模擬の世界の method(worker の action を子 process の世界へ当てる)
     "worker の action を模擬の世界へ当てる(木の準備は 1 秒・TERM で即座に終わる)。"
     (cond
       (isinstance action PrepareCode) (.setdefault self.codes action.revision (+ self.now 1000))
@@ -88,7 +88,7 @@
         (setv self.processes (lfor p self.processes (if (= p.pid action.pid) (replace p :exit-code -15) p)))
       (isinstance action ReapJob) (setv self.processes (lfor p self.processes :if (!= p.pid action.pid) p))))
 
-  (defn worker-tick [self]  ; defk にできない: 模擬の世界の method(worker の 1 拍)
+  (defn #^ None worker-tick [self]  ; defk にできない: 模擬の世界の method(worker の 1 拍)
     "worker の本物の判断で 1 拍進め、状態を heartbeat で送り、返事を本物の読み(declared-job-spec)で宣言にする。"
     (setv world (self.world) actions (plan self.now self.desired world self.records self.policy))
     (for [a actions] (self.apply a))
@@ -98,7 +98,7 @@
     (.append self.replies (next (gfor j (get reply "jobs") :if (= (get j "name") "writer-a") j) None))
     (setv self.desired (tuple (gfor j (get reply "jobs") (declared-job-spec j)))))
 
-  (defn processes-tick [self]  ; defk にできない: 模擬の世界の method(子 process の拍)
+  (defn #^ None processes-tick [self]  ; defk にできない: 模擬の世界の method(子 process の拍)
     "動いている子 process が JOB-START の後から毎拍 ReportReady を送る(壊れた版は偽と理由)。"
     (for [p self.processes]
       (when (and (is p.exit-code None) (>= self.now (+ p.started-ms JOB-START)))
@@ -108,44 +108,44 @@
                     "specHash" (spec-hash p.spec) "placement" p.spec.placement "ready" healthy
                     "reason" (if healthy "拍を終えた" WARMING) "role" "active"} :actor None))))
 
-  (defn step [self]  ; defk にできない: 模擬の世界の method(1 秒進める)
+  (defn #^ None step [self]  ; defk にできない: 模擬の世界の method(1 秒進める)
     "1 秒進める(worker の拍 → 子 process の報告)。"
     (+= self.now 1000)
     (self.worker-tick)
     (self.processes-tick)
     (.append self.log #(self.now (len (lfor p self.processes :if (is p.exit-code None) p)))))
 
-  (defn mark-broken [self #^ str revision]  ; defk にできない: 模擬の世界の method
+  (defn #^ None mark-broken [self #^ str revision]  ; defk にできない: 模擬の世界の method
     "その版の process が ReportReady(偽)を送るようにする(準備できない新の世代を模す)。"
     (setv self.broken (| self.broken #{revision})))
 
-  (defn steps [self #^ int n]  ; defk にできない: 模擬の世界の method
+  (defn #^ None steps [self #^ int n]  ; defk にできない: 模擬の世界の method
     "n 拍進める。"
     (for [_ (range n)] (self.step)))
 
-  (defn redeclare [self #^ dict declaration]  ; defk にできない: 模擬の世界の method(宣言の書き換え — declare --apply と同じ口)
+  (defn #^ dict redeclare [self #^ dict declaration]  ; defk にできない: 模擬の世界の method(宣言の書き換え — declare --apply と同じ口)
     "Service の宣言を書き換える(読んだ版を付けた PUT)。"
     (setv current (self.call "GET" "/resources/Service/writer-a"))
     (self.call "PUT" "/resources/Service/writer-a" {"spec" declaration "resourceVersion" (get current "resourceVersion")}))
 
-  (defn status [self]  ; defk にできない: 模擬の世界の method(資源の口の読み)
+  (defn #^ dict status [self]  ; defk にできない: 模擬の世界の method(資源の口の読み)
     "Service writer-a の資源の status。"
     (get (self.call "GET" "/resources/Service/writer-a") "status"))
 
-  (defn live [self #^ str revision]  ; defk にできない: 模擬の世界の method
+  (defn #^ list live [self #^ str revision]  ; defk にできない: 模擬の世界の method
     "その版で動いている子 process。"
     (lfor p self.processes :if (and (is p.exit-code None) (= p.spec.revision revision)) p))
 
-  (defn restart-coordinator [self]  ; defk にできない: 模擬の世界の method(作り直し)
+  (defn #^ None restart-coordinator [self]  ; defk にできない: 模擬の世界の method(作り直し)
     "coordinator の作り直し: 耐久の置き場の形から読み直す(worker の報告・readiness は失う)。止まっていた時間は無い。"
     (setv #(state _) (resume-after-downtime (state-from-kv (durable-kv self.state) self.now) self.now))
     (setv self.state state)))
 
 
-(defn handoff-changes [sim]  ; defk にできない: 検の読みの道具(出来事の記録の欄を拾う)
+(defn #^ list handoff-changes [#^ Sim sim]  ; defk にできない: 検の読みの道具(出来事の記録の欄を拾う)
   "出来事の記録のうち、Service writer-a の status.handoff の移り変わり(前後の段)。記録は長い値を切った文字列にする
    (resource_policy.short-value)ので、その時は段の名を文字列から拾う。"
-  (defn phase-of [v]  ; defk にできない: 内包表記の中の読みの道具
+  (defn #^ (| str None) phase-of [#^ (| dict str None) v]  ; defk にできない: 内包表記の中の読みの道具
     (cond (is v None) None
           (isinstance v dict) (get v "phase")
           True (next (gfor p ["WaitingReady" "Abandoned"] :if (in p v) p))))
@@ -154,18 +154,18 @@
         (tuple (gfor v (get e "changes" "status.handoff") (phase-of v)))))
 
 
-(defn gapless [sim]  ; defk にできない: 検の読みの道具
+(defn #^ bool gapless [#^ Sim sim]  ; defk にできない: 検の読みの道具
   "書き手の空白が無いか: 最初の process が起きた後のどの拍も、1 つ以上の process が動いている。"
   (import itertools)
   (all (gfor row (itertools.dropwhile (fn [row] (= (get row 1) 0)) sim.log) (> (get row 1) 0))))
 
 
-(defn started [sim revision]  ; defk にできない: 検の読みの道具
+(defn #^ int started [#^ Sim sim #^ str revision]  ; defk にできない: 検の読みの道具
   "その版で起こした process の数。"
   (len (lfor s sim.starts :if (= (get s 1) revision) s)))
 
 
-(defn abandon-r2 []  ; defk にできない: 検の筋書きの組み立て(模擬の世界を (b) の諦めまで進める)
+(defn #^ Sim abandon-r2 []  ; defk にできない: 検の筋書きの組み立て(模擬の世界を (b) の諦めまで進める)
   "r1 を起こし、Ready にならない r2 へ宣言を変え、期限を越えて諦めるまで進めた世界(筋書き (b) と (c) が使う)。"
   (setv sim (Sim HANDOFF))
   (sim.steps 12)
