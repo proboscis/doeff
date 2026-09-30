@@ -6,8 +6,13 @@ whole reader, so no single part is worth cutting (agora-redesign #1586 / #1645).
 function of what the analysis reads: the sources of the modules it follows, and the runtime values
 (module attributes, handler marks, signatures, the foundation itself) that importing those modules
 made. Both are covered by the files of the modules the process had loaded when the answer was
-computed, so the answer is stored with the (path, mtime, size, inode) of every one of them and
+computed, so the answer is stored with the (module, path, mtime, size, inode) of every one of them and
 reused only while all of them still stat the same — changing one byte of any of them misses.
+
+The files must also be this process's files (agora-redesign #1864): checkouts of one repo share the
+machine's cache and name their modules alike, so an answer computed in one checkout has the same
+key in another, and the first checkout's files stay unchanged. An answer is therefore reused only
+when every module it names that this process has loaded was loaded from the same file.
 
 What the key does not cover (agora-redesign #1645): a value decided at import time from a file that
 is not a module (or from the environment), and a module loaded only in the reading process that
@@ -34,13 +39,16 @@ from doeff_effect_analyzer.program_effects import _EXPANSION_OBSERVERS, _hy_cach
 T = TypeVar("T")
 
 # v1: the answer with the stat of every module file loaded when it was computed.
-_FORMAT = "v1"
+# v2: each file also names its module, so an answer from another checkout is not reused (#1864).
+# A v1 entry has another key and is never read (nothing deletes it).
+_FORMAT = "v2"
 
 
 @dataclass(frozen=True)
 class _Material:
-    """One module file as it was when the answer was computed."""
+    """One module file as it was when the answer was computed, and the module loaded from it."""
 
+    module: str
     path: str
     mtime_ns: int
     size: int
@@ -79,7 +87,8 @@ def cached_result(identity: tuple[str, ...] | None, compute: Callable[[], T]) ->
     if path is None:
         return compute()
     stored = _read_entry(path)
-    if stored is not None and all(_unchanged(material) for material in stored.material):
+    loaded = _loaded_module_paths()
+    if stored is not None and all(_holds(material, loaded) for material in stored.material):
         # The file for this identity was written by this function with this compute (the identity
         # names the analysis), so its value is a T; pickle does not carry the type parameter.
         return cast(T, stored.value)
@@ -102,31 +111,43 @@ def _entry_path(identity: tuple[str, ...] | None) -> Path | None:
     return trees / "results" / f"{hashlib.sha256(key.encode('utf-8')).hexdigest()}.pickle"
 
 
+def _loaded_module_paths() -> dict[str, str]:
+    """The file each module this process has loaded was loaded from (module name → path)."""
+    return {
+        name: filename
+        for name, module in tuple(sys.modules.items())
+        if isinstance(filename := getattr(module, "__file__", None), str)
+    }
+
+
 def _loaded_module_files() -> tuple[_Material, ...]:
-    """Every module file this process has loaded, as it is now."""
+    """Every module file this process has loaded, as it is now, with the module loaded from it."""
     seen: dict[str, _Material] = {}
-    for module in tuple(sys.modules.values()):
-        filename = getattr(module, "__file__", None)
-        if not isinstance(filename, str) or filename in seen:
+    for name, filename in _loaded_module_paths().items():
+        if filename in seen:
             continue
-        material = _stat(filename)
+        material = _stat(name, filename)
         if material is not None:
             seen[filename] = material
     return tuple(sorted(seen.values(), key=lambda m: m.path))
 
 
-def _stat(filename: str) -> _Material | None:
+def _stat(module: str, filename: str) -> _Material | None:
     """The file as the key compares it (None when it is gone — an entry naming it no longer holds)."""
     try:
         status = os.stat(filename)
     except OSError:
         return None
-    return _Material(filename, status.st_mtime_ns, status.st_size, status.st_ino)
+    return _Material(module, filename, status.st_mtime_ns, status.st_size, status.st_ino)
 
 
-def _unchanged(material: _Material) -> bool:
-    """Whether a module file the answer was computed under is still the same file."""
-    return _stat(material.path) == material
+def _holds(material: _Material, loaded: dict[str, str]) -> bool:
+    """Whether a module file the answer was computed under is still the same file, and — when this
+    process has loaded that module — the file it loaded it from (an answer computed in another
+    checkout names that checkout's files, which stay unchanged: #1864)."""
+    if loaded.get(material.module, material.path) != material.path:
+        return False
+    return _stat(material.module, material.path) == material
 
 
 def _read_entry(path: Path) -> "_Entry[object] | None":

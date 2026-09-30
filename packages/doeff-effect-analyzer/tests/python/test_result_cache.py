@@ -71,6 +71,35 @@ def test_one_changed_byte_of_a_loaded_module_analyzes_again(cache_dir: Path, mat
     assert analysis.runs == 2
 
 
+def test_an_answer_from_another_checkout_is_not_reused(
+    cache_dir: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Two checkouts of one repo share the machine's cache and name their modules alike; an answer
+    computed while one checkout's module was loaded must not answer a process that loaded the same
+    module from the other checkout, although the first checkout's file is still unchanged
+    (agora-redesign #1864 — a closure check counted a module only the other checkout had)."""
+    name = "result_cache_checkout"
+    checkouts = {}
+    for label in ("a", "b"):
+        directory = tmp_path / f"checkout_{label}"
+        directory.mkdir()
+        (directory / f"{name}.py").write_text(f"CHECKOUT = {label!r}\n", encoding="utf-8")
+        checkouts[label] = directory
+    try:
+        monkeypatch.syspath_prepend(str(checkouts["a"]))
+        importlib.import_module(name)
+        assert rc.cached_result(IDENTITY, lambda: ("from a",)) == ("from a",)
+        sys.modules.pop(name)
+        sys.path.remove(str(checkouts["a"]))
+        monkeypatch.syspath_prepend(str(checkouts["b"]))
+        importlib.import_module(name)
+        assert rc.cached_result(IDENTITY, lambda: ("from b",)) == ("from b",)
+        # The same checkout still reads its stored answer.
+        assert rc.cached_result(IDENTITY, lambda: ("again",)) == ("from b",)
+    finally:
+        sys.modules.pop(name, None)
+
+
 def test_the_flag_turns_the_answer_cache_off(
     cache_dir: Path, material: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
