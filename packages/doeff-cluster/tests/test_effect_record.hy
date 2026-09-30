@@ -32,6 +32,7 @@
   (json.dumps j)                                       ; JSON にできる
   (setv back (decode-value (json.loads (json.dumps j))))
   (assert (= back v) back)
+  (assert (isinstance back dict) back)
   (assert (isinstance (get back "t") tuple))
   (setv e (decode-error (json.loads (json.dumps (encode-error (KeyError "missing"))))))
   (assert (and (isinstance e KeyError) (= e.args #("missing"))))
@@ -44,6 +45,7 @@
   (for [at [(datetime 2026 9 25 1 2 3 456789 :tzinfo timezone.utc) (datetime 2026 9 25 10 2 3 :tzinfo jst)]]
     (setv back (decode-value (json.loads (json.dumps (encode-value {"at" at "mono" 1790000000.25 "slept" None})))))
     (assert (= back {"at" at "mono" 1790000000.25 "slept" None}) back)
+    (assert (isinstance back dict) back)
     (assert (isinstance (get back "at") datetime))
     (assert (= (.utcoffset (get back "at")) (.utcoffset at))))
   ;; timezone の無い時刻は GetTime が返さない形 — 黙って記録せず断る。

@@ -405,9 +405,11 @@
     (when (is obj None) (return None))
     (if (in "all" patch)
         (do (setv value (decode-value (get patch "all")))
-            (if (isinstance obj dict)
-                (do (.clear obj) (.update obj value))
-                (setv (cut obj None None) value)))
+            ;; 箱と記録の中身は同じ形(dict か list)のはず — 違えば記録と箱の食い違いとして断る。
+            (match #(obj value)
+              #((dict) :as box (dict) :as recorded) (do (.clear box) (.update box recorded))
+              #((list) :as box (list) :as recorded) (setv (cut box None None) recorded)
+              _ (raise (TypeError (.format "共有の箱 {!r} と記録の中身 {!r} の形が違う" obj value)))))
         (do (for [#(k v) (.items (get patch "set"))]
               (setv (get obj k) (decode-value v)))
             (for [k (get patch "del")]
@@ -582,7 +584,11 @@
             (= mode LIVE) (if (is error None) (resume answer) (raise error))
             True
               (do (setv #(ok value) (deliver-recorded state entry codec))
-                  (if ok (resume value) (raise value))))))))
+                  ;; 失敗の答えは decode-error が作った例外(deliver-recorded の約束)— 例外でなければ記録が壊れている。
+                  (match #(ok value)
+                    #(True answer) (resume answer)
+                    #(False (BaseException) :as error) (raise error)
+                    _ (raise (TypeError (.format "記録の失敗の答えが例外でない: {!r}" value))))))))))
 
 
 (defn #^ dict replay-report [#^ ReplayState state #^ str end]
