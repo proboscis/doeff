@@ -248,6 +248,9 @@ impl Setup {
                 ProjectRule::PlacedDependency => self.settings.architecture.as_ref().is_some_and(|a| !a.placed_dependencies.is_empty()),
                 ProjectRule::RetiredWord => self.settings.architecture.as_ref().is_some_and(|a| !a.retired_words.is_empty()),
                 ProjectRule::RetiredCall => self.settings.architecture.as_ref().is_some_and(|a| !a.retired_calls.is_empty()),
+                ProjectRule::EnvironmentBranch => {
+                    self.settings.layers.is_some() && self.settings.architecture.as_ref().is_some_and(|a| a.environment_branches.is_some())
+                }
                 ProjectRule::BlindDefinitionReads => self.settings.architecture.as_ref().is_some_and(|a| !a.blind_definitions.is_empty()),
                 ProjectRule::DefinitionCallsUnlistedHead => self.settings.architecture.as_ref().is_some_and(|a| !a.allowed_heads.is_empty()),
                 ProjectRule::CallOutsideDeclaredSites => self.settings.architecture.as_ref().is_some_and(|a| !a.call_sites.is_empty()),
