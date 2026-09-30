@@ -259,11 +259,17 @@ fn raw_side_effects_outside_allowed_layers() {
                 "app/core/clock.hy",
                 "(val MODULE-TAGS {:context \"billing\" :role \"judgment\"})\n(import time)\n(import pathlib [Path])\n(defn now [] (time.time))\n(defn size [p] (.stat (Path p)))\n(defn later [] (now))\n",
             ),
-            ("app/foundation/clock.hy", "(val MODULE-TAGS {:context \"io\" :role \"foundation\"})\n(import time)\n(defn now [] (time.time))\n"),
+            ("app/foundation/clock.hy", "(val MODULE-TAGS {:context \"io\" :role \"foundation\"})\n(import time)\n(defn now [] (time.time))\n(defn relay [] (now))\n"),
+            // 鳴らない例(DOEFF107): 生の副作用に届かない呼びの連なりと、許された層の中の経由。
+            ("app/core/sum.hy", "(val MODULE-TAGS {:context \"billing\" :role \"judgment\"})\n(defn add [a b] (+ a b))\n(defn total [xs] (add 1 2))\n"),
         ],
         "",
     );
     let (_, report) = editor(dir.path());
+    // DOEFF107 は生の副作用へ届く経由(core の later → now)だけに出て、届かない total と foundation の relay には出ない。
+    let via_keys = keys(&report, "DOEFF107");
+    assert_eq!(via_keys.len(), 1, "{:?}", via_keys);
+    assert!(via_keys[0].starts_with("app/core/clock.hy::DOEFF107::later"), "{:?}", via_keys);
     let direct = keys(&report, "DOEFF106");
     assert!(direct.contains(&"app/core/clock.hy::DOEFF106::now::time.time".to_string()), "{:?}", direct);
     assert!(direct.iter().all(|k| k.starts_with("app/core/")), "foundation は許された層: {:?}", direct);
@@ -986,6 +992,8 @@ fn architecture_declares_services_layers_and_dependencies() {
     assert!(undeclared_dependency["reason"].as_str().unwrap().contains("service custody の依存の宣言(:depends-on = 無し)に billing が無い"), "{}", undeclared_dependency["reason"]);
     // DOEFF117(info): billing は ledger に依存すると宣言したが読んでいない。位置は architecture.hy。
     let unused = violation(&report, "architecture.hy::DOEFF117::billing>ledger");
+    // 鳴らない例: billing が読んでいる依存 custody には出ない(宣言して使っていない ledger の 1 件だけ)。
+    assert_eq!(keys(&report, "DOEFF117"), vec!["architecture.hy::DOEFF117::billing>ledger"]);
     assert_eq!(unused["severity"], "info");
     assert!(unused["path"].as_str().unwrap().ends_with("architecture.hy"));
     // DOEFF113: 宣言した service の中の :context の食い違いは warning。
