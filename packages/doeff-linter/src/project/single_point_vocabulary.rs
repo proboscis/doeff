@@ -8,11 +8,49 @@
 //! 註を落とすのは DOEFF150(:retired-words)と逆の判断 — あちらは「使わないと決めた綴りは文書にも効く」ので註も数えるが、
 //! この規則は「判定の二重化」を見るので、判定でないことを述べる註(例: 「routedTo はここで読まない」)まで赤にしない。
 //! 判定は字面の行で読む(この語彙を使わずに済む形かは linter には分からない — repo の宣言が「これは判定の語彙だ」と決める)。
+//! ただし欄を 1 対 1 で写すだけの行(`:routed-to d.routed-to`・`"routedTo" request.routed-to` — 判断も分岐も無い)は数えない
+//! (agora-redesign #1800・#1762 の決定 Q2)。値をそのまま運ぶ行は判定を持たず、それを数えると判定の 1 点の外で欄を渡すだけの
+//! 行まで「第 2 の判定」になる。
 
 use std::path::{Path, PathBuf};
 
+use once_cell::sync::Lazy;
+use regex::Regex;
+
 use super::architecture::VocabularyScope;
 use super::{glob_matches, relative_path};
+
+/// 判断・分岐の形(註と文字列を落とした行に当てる)— これを含む行は、写すだけの行ではない。
+static JUDGMENT: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(r"\((?:if|when|unless|cond|match|case|and|or|not|is|is-not|in|not-in|=|!=|<|>|<=|>=)[\s)]|:if\b").unwrap()
+});
+
+/// 欄を写す対 1 つ = 鍵(keyword `:名` か文字列の鍵)と、その後ろの属性の読み(`名.欄` — 段は 1 つ以上)。元の行に当てる。
+static COPY_PAIR: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(r#"(?::[A-Za-z][\w-]*|"(?:[^"\\]|\\.)*")\s+[A-Za-z_][\w-]*(?:\.[A-Za-z_][\w-]*)+"#).unwrap()
+});
+
+/// 行の中の byte の位置 → 文字の番号(註と文字列を落とした写しは文字ごとに 1 文字を置くので、元の行と文字の番号がそろう —
+/// byte の位置は多 byte の文字の所でずれる)。
+fn char_index(line: &str, byte: usize) -> usize {
+    line[..byte].chars().count()
+}
+
+/// 欄を 1 対 1 で写すだけの行か: 判断・分岐の形を含まず、語彙の当たりがどれも「鍵 + 属性の読み」の対の中にある(#1800)。
+/// code = 註と文字列を落とした行(当たりはここで探す — 註と文字列の中は数えない)・source = 同じ行の元の字面(文字列の鍵を読む)。
+fn copies_only(code: &str, source: &str, regexes: &[Regex]) -> bool {
+    if JUDGMENT.is_match(code) {
+        return false;
+    }
+    let pairs: Vec<(usize, usize)> =
+        COPY_PAIR.find_iter(source).map(|m| (char_index(source, m.start()), char_index(source, m.end()))).collect();
+    let mut hits = regexes.iter().flat_map(|re| re.find_iter(code)).peekable();
+    hits.peek().is_some()
+        && hits.all(|m| {
+            let (start, end) = (char_index(code, m.start()), char_index(code, m.end()));
+            pairs.iter().any(|&(from, to)| from <= start && end <= to)
+        })
+}
 
 /// 文字列と註(`;` から行末)を空白に置き換える(括弧の対応と行・列の位置は保つ)。
 fn strip_comments(text: &str) -> String {
@@ -104,7 +142,7 @@ pub fn find(root: &Path, scopes: &[VocabularyScope], focus: Option<&[PathBuf]>) 
     let mut out = Vec::new();
     let walked = walked_hy_files(root, focus);
     for scope in scopes {
-        let regexes: Vec<regex::Regex> = scope.patterns.iter().filter_map(|p| regex::Regex::new(p).ok()).collect();
+        let regexes: Vec<Regex> = scope.patterns.iter().filter_map(|p| Regex::new(p).ok()).collect();
         if regexes.is_empty() {
             continue;
         }
@@ -118,8 +156,8 @@ pub fn find(root: &Path, scopes: &[VocabularyScope], focus: Option<&[PathBuf]>) 
             let code = strip_comments(&source);
             let mut first: Option<u32> = None;
             let mut count = 0usize;
-            for (idx, line) in code.lines().enumerate() {
-                if regexes.iter().any(|re| re.is_match(line)) {
+            for (idx, (line, written)) in code.lines().zip(source.lines()).enumerate() {
+                if regexes.iter().any(|re| re.is_match(line)) && !copies_only(line, written, &regexes) {
                     count += 1;
                     if first.is_none() {
                         first = Some(idx as u32);
@@ -180,6 +218,55 @@ mod tests {
         assert_eq!(hits.len(), 1, "{:?}", hits);
         assert_eq!(hits[0].line, 2, "註と文字列の中の当たりは数えない: {:?}", hits);
         assert_eq!(hits[0].count, 1);
+    }
+
+    fn routed_to_scope() -> Vec<VocabularyScope> {
+        vec![VocabularyScope {
+            name: "routed-to".to_string(),
+            patterns: vec![r"\broutedTo\b".to_string(), r"\brouted-to\b".to_string()],
+            files: vec!["glue/**".to_string()],
+            except: vec!["glue/slice.hy".to_string()],
+            instead: "glue/slice.hy の答えを読む".to_string(),
+        }]
+    }
+
+    #[test]
+    fn a_line_that_only_copies_the_field_is_not_counted() {
+        // agora-redesign #1800: 欄を 1 対 1 で写すだけの行(keyword の鍵・文字列の鍵・日本語の註が前に在る行)は数えない。
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(dir.path().join("glue")).unwrap();
+        std::fs::write(
+            dir.path().join("glue/rows.hy"),
+            concat!(
+                ";; 宛先の会話を写す(判定は slice.hy)\n",
+                "(.append requests (HoldingRequest :id ask-id :routed-to mail.routed-to :routed-at mail.routed-at))\n",
+                "{\"routedTo\" request.routed-to \"class\" request.request-class}\n",
+                "(Row :note \"宛先\" :routed-to d.routed-to)\n",
+            ),
+        )
+        .unwrap();
+        assert!(find(dir.path(), &routed_to_scope(), None).is_empty());
+    }
+
+    #[test]
+    fn a_line_that_judges_the_field_is_still_counted() {
+        // 反例(#1800): 同じ欄でも、判断・分岐を持つ行・鍵の無い読み・欄を鍵にして別の値を置く行は写すだけではない — 1 行ずつ数える。
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(dir.path().join("glue")).unwrap();
+        std::fs::write(
+            dir.path().join("glue/joins.hy"),
+            concat!(
+                ":routed-to (if (is d None) None d.routed-to)\n",
+                "(when (= d.routed-to chat) (hold d))\n",
+                "(lfor d rows :if (= d.routed-to chat) d)\n",
+                "(setv target d.routed-to)\n",
+                ":routed-to (pick-carrier d)\n",
+            ),
+        )
+        .unwrap();
+        let hits = find(dir.path(), &routed_to_scope(), None);
+        assert_eq!(hits.len(), 1, "{:?}", hits);
+        assert_eq!((hits[0].line, hits[0].count), (0, 5), "{:?}", hits);
     }
 
     #[test]
