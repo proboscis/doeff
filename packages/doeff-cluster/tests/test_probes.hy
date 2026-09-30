@@ -3,6 +3,7 @@
 (import json)
 (import socket)
 (import urllib.request)
+(import urllib.error)
 (import doeff_cluster.coordinator [probe-verdict RequestInbox READY-STALL-SECONDS LIVE-STALL-SECONDS])
 
 

@@ -164,7 +164,7 @@
   (#^ int client-ms))
 
 
-(defn :async talk [#^ int port]
+(defn :async #^ tuple talk [#^ int port]
   "外の thread の本物の socket の客: ws で繋ぎ、tool を送って 2 通(started・done)を受け、bye を送る。"
   (import aiohttp)
   (with [:async session (aiohttp.ClientSession)]

@@ -7,13 +7,14 @@
 (import sys)
 (import time)
 (import pathlib [Path])
+(import types [FrameType])
 
 (defclass Flag []
-  (defn __init__ [self] (setv self.stopping False)))
+  (defn #^ None __init__ [self] (setv self.stopping False)))
 
-(defn main []
+(defn #^ None main []
   (setv beat (Path (get sys.argv 1)) flag (Flag))
-  (defn on-term [signum frame] (setv flag.stopping True))
+  (defn #^ None on-term [#^ int signum #^ (| FrameType None) frame] (setv flag.stopping True))
   (signal.signal signal.SIGTERM (if (in "--ignore-term" sys.argv) signal.SIG-IGN on-term))
   (when (in "--grandchild" sys.argv)
     ;; 同じ process group に残る孫。worker は group ごと回収する必要がある。
@@ -22,7 +23,8 @@
   (while (not flag.stopping)
     (.write-text beat (.format "{} {}" (time.time) (os.environ.get "DOEFF_WORKER_REVISION")))
     (time.sleep 0.1))
-  (.write-text (Path (+ (str beat) ".stopped")) "clean"))
+  (.write-text (Path (+ (str beat) ".stopped")) "clean")
+  None)
 
 (when (= __name__ "__main__")
   (main))

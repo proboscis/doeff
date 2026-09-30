@@ -47,7 +47,7 @@
 
 (defclass Unloadable []  ; class にする理由: cloudpickle の詰め方(__reduce__ の約束)が class を要求する — 欄も状態も持たない
   "詰めることはできるが、解く時に refuse-to-load を呼んで断る値。"
-  (defn __reduce__ [self]
+  (defn #^ tuple __reduce__ [self]
     #(refuse-to-load #())))
 
 
