@@ -1,12 +1,10 @@
 {
-  "exclude": [
-    "packages/doeff-adr/src/doeff_adr/macros.hy"
-  ],
   "include": [
     "packages/doeff-adr/src/doeff_adr/registry.py",
     "packages/doeff-adr/src/doeff_adr/semgrep_hy.py",
     "packages/doeff-adr/src/doeff_adr/hy_expand.py",
     "packages/doeff-adr/src/doeff_adr/cli.py",
+    "packages/doeff-adr/src/doeff_adr/macros.hy",
     "packages/doeff-adr/tests/test_defadr_macros.py",
     "packages/doeff-adr/tests/test_pytest_item_records.py",
     "packages/doeff-adr/tests/test_registry_isolation.py",
@@ -53,6 +51,12 @@
         "pytest-item-records"
       ],
       "layer": "io",
+      "macros": {
+        "defadr": "fixed",
+        "defsemgrep": "fixed",
+        "law": "fixed",
+        "rule": "fixed"
+      },
       "name": "doeff-adr-macros",
       "paths": [
         "packages/doeff-adr/src/doeff_adr/macros.hy"
@@ -60,7 +64,7 @@
       "public": [
         "packages/doeff-adr/src/doeff_adr/macros.hy"
       ],
-      "responsibility": "defadr の macro — ADR の宣言を登録簿への記録と pytest の検に展開する",
+      "responsibility": "defadr の macro — ADR の宣言を登録簿への記録と pytest の検に展開する。4 つの macro は検査器の固定表(使う所の投影の規則を検査器が持つ ADR の言語)なので fixed と宣言し、定義の本体は投影から落とす。展開の時の補助の関数(quasiquote で形を組む)は型に写して測る(agora-redesign #1743)",
       "typed": true
     },
     {
@@ -84,12 +88,6 @@
       "public": [],
       "responsibility": "doeff-adr の登録簿・Semgrep の実行・macro・命令の入口の検",
       "typed": true
-    }
-  ],
-  "untyped_dependencies": [
-    {
-      "path": "packages/doeff-adr/src/doeff_adr/macros.hy",
-      "reason": "検査器がこの Hy を型に写せない — hy:48: 安全な静的投影の対象外の core macro: quasiquote(defadr の macro の展開の本体)。include の外に置き、対応は agora-redesign #1743"
     }
   ]
 }

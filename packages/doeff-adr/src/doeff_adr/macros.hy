@@ -172,11 +172,13 @@
        (assert-adr-contract ~adr-id))
      ~item-record))
 
-(defn fact [text #** extra]
+(defn #^ (get dict #(str object)) fact [#^ str text #^ object #** extra]
+  "ADR の事実の項を登録簿の形で作るため(defadr の :facts に並べる)。"
   (import doeff_adr.registry [make-fact])
   (make-fact text #** extra))
 
-(defn interpretation [text #** extra]
+(defn #^ (get dict #(str object)) interpretation [#^ str text #^ object #** extra]
+  "ADR の解釈の項を登録簿の形で作るため(defadr の :interpretations に並べる)。"
   (import doeff_adr.registry [make-interpretation])
   (make-interpretation text #** extra))
 
@@ -185,7 +187,8 @@
      (import doeff_adr.registry [make-rule])
      (make-rule ~(hy.models.String (str rule-id)) ~text ~@forms)))
 
-(defn counterexample [text #** extra]
+(defn #^ (get dict #(str object)) counterexample [#^ str text #^ object #** extra]
+  "ADR の反例の項を登録簿の形で作るため(law の :counterexamples に並べる)。"
   (import doeff_adr.registry [make-counterexample])
   (make-counterexample text #** extra))
 
