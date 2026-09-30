@@ -12,7 +12,7 @@
 ;; 直前の失敗の理由を載せる(2026-09-27 — 以前は 17 分 starting のままで、理由は FAILED から撃ち直すまでの 30 秒しか見えなかった)。
 ;; 同じ木の検めを 1 本にまとめる・時間切れで process group ごと止めるのは検めの process の持ち主(handlers.ProbeStore)。
 (import dataclasses [replace])
-(import .worker_model [JobSpec CodeState CodeView ProcessView WorldView StopStage StopProgress ProbeState ProbeView ProbeStatus
+(import .worker_model [Action JobSpec CodeState CodeView ProcessView WorldView StopStage StopProgress ProbeState ProbeView ProbeStatus
   Outcome JobRecord WorkerPolicy JobPhase JobStatus PrepareCode PrepareEnv SweepEnvs StartJob SignalJob ReapJob RetireJob ReleaseLeases
   ProbeEntry ForgetProbes spec-hash code-key probed-job retired-name ready-path RETIRED-MARK ENV-KEY-PREFIX])
 
@@ -249,7 +249,7 @@
                           action)))
   (+ jobs (warm-actions now warm world jobs policy) (sweep-actions desired world warm) (forget-probe-actions desired world)))
 
-(defn #^ JobRecord record-after [#^ int now #^ JobRecord record action [policy (WorkerPolicy)]]
+(defn #^ JobRecord record-after [#^ int now #^ JobRecord record #^ Action action #^ WorkerPolicy [policy (WorkerPolicy)]]
   (cond
     (isinstance action StartJob) (replace record :attempts action.attempt :stopping None :last-start-ms now)
     (isinstance action SignalJob)
@@ -268,7 +268,7 @@
                  :failures (cond (or (not exited) (= action.exit-code 0)) 0 stable 1 True (+ record.failures 1))))
     True record))
 
-(defn #^ dict records-after [#^ int now #^ dict records #^ tuple actions [policy (WorkerPolicy)]]
+(defn #^ dict records-after [#^ int now #^ dict records #^ tuple actions #^ WorkerPolicy [policy (WorkerPolicy)]]
   (setv result (dict records))
   (for [action actions]
     (setv name (cond

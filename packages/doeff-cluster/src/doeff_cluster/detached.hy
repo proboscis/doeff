@@ -18,6 +18,7 @@
 (require doeff-hy.record [defrecord])
 (import dataclasses [dataclass])
 (import urllib.parse [quote :as url-quote])
+(import collections.abc [Callable])
 (import httpx)
 (import doeff [run :as run-program])
 (import doeff_time [Delay])
@@ -152,17 +153,17 @@
   "coordinator の /detached との連絡(I/O)。revision = 送り手の commit(受け側はこの版のコードを準備してから復元する)。
    runtime-env = 実行環境の宣言(在れば worker は env の root を準備して、その中の子 process で走らせる — revision は使わない)。
    送る PUT は key で冪等なので、読みと同じく通信の失敗を越えて送り直す(送り直しで作られていれば created = False が返る)。"
-  (defn __init__ [self #^ str url #^ str revision [timeout REPLY-SECONDS] [transport None]
+  (defn #^ None __init__ [self #^ str url #^ str revision #^ float [timeout REPLY-SECONDS] #^ (| httpx.BaseTransport None) [transport None]
                   #^ (| RuntimeEnv None) [runtime-env None] #^ float [deadline-seconds IDEMPOTENT-DEADLINE-SECONDS]]
     ;; deadline-seconds = 通信の失敗を越えて送り直す期限(過ぎたら「届かない」の答え — 検は短くする)。
     (setv self.revision revision self.runtime-env runtime-env self.deadline-seconds deadline-seconds
           self.endpoint (CoordinatorEndpoint url timeout 4 :transport transport)))
 
-  (defn #^ httpx.Response resend [self send]
+  (defn #^ httpx.Response resend [self #^ Callable send]
     "何度送っても同じ意味の要求を、期限まで送り直す(期限を過ぎた通信の失敗は httpx.TransportError のまま投げる)。"
     (send-idempotent send :deadline-seconds self.deadline-seconds))
 
-  (defn #^ dict answer [self response]
+  (defn #^ dict answer [self #^ httpx.Response response]
     (setv refusal (detached-refusal response.status-code (if (in response.status-code REFUSED-STATUSES) (.json response) None)))
     (when refusal (raise refusal))
     (.raise-for-status response)
@@ -281,7 +282,7 @@
   answer)
 
 
-(defhandler detached-cluster [#^ DetachedClient client [poll-seconds 1.0]]
+(defhandler detached-cluster [#^ DetachedClient client #^ float [poll-seconds 1.0]]
   (SubmitDetached [program key needs name lease-seconds retain-seconds environ]
     ;; 送れない値は送る前に断る(encode-program が UnsendableProgram を投げ、呼び手へ届く)。
     (setv blob (encode-program program))
@@ -307,7 +308,7 @@
    送り直しの期限(deadline-seconds)を過ぎた通信の失敗と coordinator の 5xx は、例外でなく WarmUnreachable で答える
    (2026-09-28 — 拍ごとに温める送り手が coordinator の入れ替えの間に落ちないため)。
    断り(400)は呼び手の誤りなので DetachedRefused のまま投げる。"
-  (defn __init__ [self #^ str url [timeout REPLY-SECONDS] [transport None] #^ str [actor ""]
+  (defn #^ None __init__ [self #^ str url #^ float [timeout REPLY-SECONDS] #^ (| httpx.BaseTransport None) [transport None] #^ str [actor ""]
                   #^ float [deadline-seconds IDEMPOTENT-DEADLINE-SECONDS]]
     ;; deadline-seconds = 通信の失敗を越えて送り直す期限(過ぎたら「届かない」の答え — 検は短くする)。
     (setv self.deadline-seconds deadline-seconds

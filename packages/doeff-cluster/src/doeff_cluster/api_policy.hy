@@ -204,7 +204,7 @@
 
 
 (defn #^ ClusterState record-action [#^ ClusterState state #^ dict action #^ bool ok #^ (| str None) error #^ int now
-                                     [result None]]
+                                     #^ (| int None) [result None]]
   "実行した action の結果を Rollout の status に残す(dry-run の台数は simulated に)。同じ失敗の繰り返しは数だけ進める。"
   (setv name (get action "rollout") r (.get state.rollouts name))
   (when (is r None) (return state))

@@ -28,7 +28,7 @@
     (lfor line h :if (.strip line) (json.loads line))))
 
 
-(defn main []  ; defk にできない: 道具の入口
+(defn #^ None main []  ; defk にできない: 道具の入口
   "記録と Program を読み、再生の mode で走らせて、再生の報告を書く。"
   (setv parser (argparse.ArgumentParser :description "記録の上で job の Program を再生する"))
   (.add-argument parser "--recording" :required True)

@@ -104,7 +104,7 @@
 (deff describe-identity [#^ dict identity]  ; defk にできない: 宣言の値を作る時に呼ぶ純粋な判断
   {:pre [(: identity dict)] :post [(: % str)] :tags {:context "doeff-cluster" :role "judgment"}}
   "identity → 表示の 1 行 `module:qualname(引数, 名=値)`(関数の引数は参照の名で)。"
-  (defn show [v] (if (and (isinstance v dict) (= (list v) ["ref"])) (get v "ref") (json.dumps v :ensure-ascii False :sort-keys True)))
+  (defn #^ str show [#^ object v] (if (and (isinstance v dict) (= (list v) ["ref"])) (get v "ref") (json.dumps v :ensure-ascii False :sort-keys True)))
   (.format "{}({})" (get identity "function")
            (.join ", " (+ (lfor a (get identity "args") (show a))
                           (lfor #(k v) (.items (get identity "kwargs")) (.format "{}={}" k (show v)))))))

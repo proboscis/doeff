@@ -63,7 +63,7 @@
   (#^ frozenset needs)
   (#^ float ttl-seconds)
   (#^ str holder)
-  (defn __post-init__ [self]
+  (defn #^ None __post-init__ [self]
     "needs を作る時に検める(空・旧い形を断る — cluster_model.effect-needs-problem)。"
     (setv problem (effect-needs-problem self.needs))
     (when problem (raise (TypeError (+ "WarmRuntimeEnv.needs: " problem))))))

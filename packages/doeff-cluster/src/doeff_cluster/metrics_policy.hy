@@ -25,15 +25,16 @@
 (setv NAME-CHARS (frozenset "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_:"))
 
 
-(defn #^ bool metric-name? [name]
+;; 以下 3 つは報告の本文の値そのもの(どの JSON の値にもなる)を受けて形を確かめる。
+(defn #^ bool metric-name? [#^ object name]
   (and (isinstance name str) (> (len name) 0) (all (gfor ch name (in ch NAME-CHARS))) (not (in (get name 0) "0123456789"))))
 
 
-(defn #^ bool number? [v]
+(defn #^ bool number? [#^ object v]
   (and (isinstance v #(int float)) (not (isinstance v bool)) (math.isfinite v)))
 
 
-(defn #^ dict checked-metrics [metrics]
+(defn #^ dict checked-metrics [#^ object metrics]
   "報告の metrics を検める(形・名・値)。合わなければ 400 で断る。"
   (when (not (isinstance metrics dict)) (refuse 400 "metrics は dict({counters gauges durations})"))
   (setv counters (.get metrics "counters" {}) gauges (.get metrics "gauges" {}) durations (.get metrics "durations" {}))
@@ -58,7 +59,8 @@
 
 ;; --- 出す ----------------------------------------------------------------------------------------
 
-(defn #^ str escape-label [v]
+;; label の値はどの値でもよい(str にしてから逃がす)。
+(defn #^ str escape-label [#^ object v]
   (.replace (.replace (.replace (str v) "\\" "\\\\") "\n" "\\n") "\"" "\\\""))
 
 
@@ -68,11 +70,11 @@
       ""))
 
 
-(defn #^ str number-text [v]
+(defn #^ str number-text [#^ (| int float) v]
   (if (isinstance v int) (str v) (str (float v))))
 
 
-(defn add-sample [#^ dict families #^ str family #^ str kind #^ str sample #^ dict labels value]
+(defn #^ None add-sample [#^ dict families #^ str family #^ str kind #^ str sample #^ dict labels #^ (| int float) value]
   "family の型が既に別の型で在れば、その sample は捨てる(Prometheus の text は 1 つの名に 1 つの型)。"
   (setv f (.setdefault families family {"type" kind "samples" []}))
   (when (= (get f "type") kind)

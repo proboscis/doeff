@@ -20,14 +20,14 @@
 (import dataclasses [replace])
 (import hashlib)
 (import json)
-(import .cluster_model [ClusterState ClusterTiming HandoffWatch HandoffPhase])
+(import .cluster_model [ClusterJob ClusterState ClusterTiming HandoffWatch HandoffPhase])
 (import .cluster_policy [job-to-json LIVE-PHASES])
 (import .resource_policy [service-readiness])
 (import .readiness_model [handoff-timeout-ms])
 (import .worker_model [spec-hash])
 
 
-(defn #^ str declaration-fingerprint [job]  ; defk にできない: coordinator の純粋な判断(Program の外 — api_policy.settle)が呼ぶ
+(defn #^ str declaration-fingerprint [#^ ClusterJob job]  ; defk にできない: coordinator の純粋な判断(Program の外 — api_policy.settle)が呼ぶ
   "諦めを解く合図にする宣言の指紋: Service の宣言の保存の形(job-to-json)全体の指紋。process の形(spec-hash)に加えて、replicas・
    readiness(期限を延ばす書き換えを含む)・条件の書き換えでも変わる — 宣言を書き換えれば、同じ process の形でも入れ替えを試し直す。"
   (cut (.hexdigest (hashlib.sha256 (.encode (json.dumps (job-to-json job) :sort-keys True :ensure-ascii False :separators #("," ":"))
@@ -63,7 +63,7 @@
         None))
 
 
-(defn #^ (| HandoffWatch None) next-watch [#^ int now #^ ClusterState state job #^ ClusterTiming timing]  ; defk にできない: coordinator の純粋な判断が呼ぶ
+(defn #^ (| HandoffWatch None) next-watch [#^ int now #^ ClusterState state #^ ClusterJob job #^ ClusterTiming timing]  ; defk にできない: coordinator の純粋な判断が呼ぶ
   "Service job の 1 拍後の見張り(持たないなら None)。規則は頭注の 1〜3。"
   (setv name job.spec.name
         fingerprint (declaration-fingerprint job)

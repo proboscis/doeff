@@ -270,7 +270,7 @@
       (WarmEntry #** (| data {"needs" (capabilities-of (.get data "needs" []) "温める表の行の needs")}))))
 
 
-(defn #^ ClusterState state-from-json [#^ dict data #^ int now [board None] [board-versions None]]
+(defn #^ ClusterState state-from-json [#^ dict data #^ int now #^ (| dict None) [board None] #^ (| dict None) [board-versions None]]
   "保存した状態から作り直す。知っていた worker は全員「いま生きていた」とみなす。生存を捨てると、最初に heartbeat を
    送った worker へ全 job が移り、元の担い手がまだ動いていれば二重に動く(実測 2026-09-23)。戻らない worker の job は、
    この時点から移し替えの期限が過ぎた後に移る(その頃には自分で止まっている)。
@@ -578,7 +578,7 @@
   (dfor #(name a) (.items result) :if (in name names) name a))
 
 
-(defn #^ tuple jobs-for [#^ ClusterState state #^ str worker [ready-instances None]]
+(defn #^ tuple jobs-for [#^ ClusterState state #^ str worker #^ (| dict None) [ready-instances None]]
   "worker に割り当てた job の spec。割り当ての世代(placement)を載せる — worker は起こす process へ渡し、process は readiness と
    計器の報告に載せる(比べない欄なので、世代だけが変わっても worker は process を起こし直さない)。
    ready-instances = Service の名 → Ready と数えている process の世代の名(入れ替えの job に載せる・api_policy が求める)。
@@ -901,7 +901,8 @@
 
 ;; --- 盤 --------------------------------------------------------------------------------
 
-(defn #^ bool board-allows [current #^ bool present #^ bool has-expect expect]
+;; current / expect は盤の値そのもの(どの JSON の値にもなる — 等しいかだけを見る)。
+(defn #^ bool board-allows [#^ object current #^ bool present #^ bool has-expect #^ object expect]
   "compare-and-set: expect が無ければ無条件・None なら行が無い時だけ・値ならいまの値がそれと等しい時だけ書いてよい。"
   (cond
     (not has-expect) True
@@ -1189,7 +1190,7 @@
             {"key" w.key "runtimeEnv" w.runtime-env})))
 
 
-(defn #^ dict heartbeat-reply [#^ ClusterState state #^ str name #^ ClusterTiming timing [ready-instances None] #^ int [now 0]
+(defn #^ dict heartbeat-reply [#^ ClusterState state #^ str name #^ ClusterTiming timing #^ (| dict None) [ready-instances None] #^ int [now 0]
                                #^ (| str None) [boot None] #^ (| list None) [statuses None]]
   "heartbeat を送った process に、動かす job・task・温める表・時間の設定・drain の印を返すため。boot = 送った process の世代・
    statuses = その heartbeat の状態の報告。退いた世代(superseded-boot)への返事は superseded-reply。"
@@ -1216,7 +1217,7 @@
 
 
 (defn #^ dict superseded-reply [#^ ClusterState state #^ str name #^ str boot #^ list statuses #^ ClusterTiming timing
-                                [ready-instances None]]
+                                #^ (| dict None) [ready-instances None]]
   "退いた世代の process への heartbeat の返事(2026-09-27)。退く process に新しい仕事を起こさせず、動いている物は安全に畳ませるため:
    jobs = 名の置き先の入れ替え(handoff)の job のうち、その世代が running と報告している物だけ(lease を持ったまま Pod の停止まで
    動かし、新しい世代の process が lease を取る。recreate の job は載せない = 止めて lease を返す。退いた後に置かれた job は、その
@@ -1265,7 +1266,7 @@
               (except [error RuntimeEnvInvalid] (.format "runtimeEnv が誤っている: {}" error)))))
 
 
-(defn #^ tuple submit-task [#^ ClusterState state #^ dict body #^ int now [owner None]]
+(defn #^ tuple submit-task [#^ ClusterState state #^ dict body #^ int now #^ (| str None) [owner None]]
   "POST /tasks: 呼び手の問い合わせに寿命を縛られた task の行を作る。本文は置き場に置いた Program の sha を運ぶ(task-body-refusal)。"
   (setv refusal (or (format-refusal body) (runtime-env-refusal body) (task-body-refusal state body)))
   (when refusal (return #(state 400 {"error" refusal})))

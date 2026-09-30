@@ -10,6 +10,7 @@
 (import argparse)
 (import os)
 (import signal)
+(import types [FrameType])
 (import sys)
 (import pathlib [Path])
 (import doeff [run])
@@ -42,7 +43,7 @@
   (dict (gfor kv (.split text ",") :if kv (.split kv "=" 1))))
 
 
-(defn main []
+(defn #^ None main []
   (setv parser (argparse.ArgumentParser :description "doeff worker(実験)"))
   (.add-argument parser "--coordinator" :required True
                  :help "job を割り当てる coordinator の URL。`,` で並べると前から順に試す(Mac は LAN・tailnet の順)")
@@ -96,7 +97,7 @@
         probes (ProbeStore hy-command :layout layout :uv args.uv :probe-dir (str (/ state-dir "probe")))
         policy (WorkerPolicy :stop-grace-ms (int (* args.stop-grace 1000)))
         stop (StopState))
-  (defn on-signal [signum frame] (setv stop.requested True))
+  (defn #^ None on-signal [#^ int signum #^ (| FrameType None) frame] (setv stop.requested True))
   (signal.signal signal.SIGTERM on-signal)
   (signal.signal signal.SIGINT on-signal)
   (setv link (CoordinatorLink args.coordinator args.name provides args.capacity

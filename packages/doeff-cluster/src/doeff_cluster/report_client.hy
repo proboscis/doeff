@@ -29,15 +29,15 @@
 
 (defclass ServiceReportClient []
   "service = 宣言の名(worker が子 process へ渡す DOEFF_WORKER_JOB)。identity = process の世代(job_entry.RunContext.identity)。"
-  (defn __init__ [self #^ str url #^ str service #^ str worker #^ str revision [identity None] [timeout REPLY-SECONDS]
-                  [transport None]]
+  (defn #^ None __init__ [self #^ str url #^ str service #^ str worker #^ str revision #^ (| dict None) [identity None]
+                  #^ float [timeout REPLY-SECONDS] #^ (| httpx.BaseTransport None) [transport None]]
     (setv self.service service self.worker worker self.revision revision self.identity (or identity {})
           self.failures {} self.endpoint (CoordinatorEndpoint url timeout 1 :transport transport)))
 
   (defn #^ dict sender [self]
     (| {"worker" self.worker "pid" (os.getpid) "revision" self.revision} self.identity))
 
-  (defn send [self #^ str kind #^ dict payload]
+  (defn #^ None send [self #^ str kind #^ dict payload]
     "kind = readiness | metrics → POST /resources/Service/<名>/<kind>。"
     (try
       (setv #(method path _ body) (report-request self.service (.sender self) kind payload))
@@ -53,7 +53,7 @@
                  :file sys.stderr :flush True))))))
 
 
-(defn #^ ServiceReportClient report-client [ctx]
+(defn #^ ServiceReportClient report-client [#^ RunContext ctx]
   "worker の子 process の文脈(job_entry.RunContext)から、世代つきの報告の口を作る。"
   (ServiceReportClient ctx.coordinator-url ctx.job ctx.worker ctx.revision :identity (.identity ctx)))
 

@@ -292,7 +292,7 @@
   (setv #^ int fence-ms 20000)
   (setv #^ int reassign-after-ms 45000) ; 連絡の途絶えた worker の job を他へ移すまで
 
-  (defn __post-init__ [self]
+  (defn #^ None __post-init__ [self]
     (when (<= self.reassign-after-ms self.fence-ms)
       (raise (ValueError "移し替えは worker の自己停止より後でなければならない")))))
 

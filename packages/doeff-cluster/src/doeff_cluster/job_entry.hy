@@ -80,7 +80,7 @@
               (decoded-program (get row "blob")))))))
 
 
-(defn run-service [args]  ; defk にできない: process の入口(Program の外)
+(defn #^ None run-service [#^ argparse.Namespace args]  ; defk にできない: process の入口(Program の外)
   "service の入口: Program を解いて、そのまま走らせる(handler を足さない — R2)。"
   (setv ctx (context-from-env))
   (setv #(program refusal) (read-program args.program (or ctx.env-key "")))
@@ -114,7 +114,7 @@
   (print (.format "probe: {} を解けた" args.program) :file sys.stderr :flush True))
 
 
-(defn run-task [args]  ; defk にできない: process の入口(Program の外)
+(defn #^ None run-task [#^ argparse.Namespace args]  ; defk にできない: process の入口(Program の外)
   "task の入口: 結果を必ず file に書き、終わる前に coordinator へ直に届けてから 0 で終わる(届かなければ worker の heartbeat が file の
    結果を運ぶ)。"
   (setv ctx (context-from-env))
@@ -128,7 +128,7 @@
   (print (.format "task: {} → {}" ctx.job (. (type outcome) __name__)) :file sys.stderr :flush True))
 
 
-(defn main []  ; defk にできない: process の入口
+(defn #^ None main []  ; defk にできない: process の入口
   "子 process の入口の引数を読む。旧い引数(--factory・--env・--config・task の --blob・--versions)は argparse が知らない引数として断る。"
   (setv parser (argparse.ArgumentParser :description "doeff worker の子 process の入口(job = Program の値 1 つ)"))
   (setv sub (.add-subparsers parser :dest "kind" :required True))

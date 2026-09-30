@@ -50,7 +50,7 @@
   ;; 子の環境変数(宣言の :environ・名の順の #(名 値) の tuple — 改訂 1 の G)。比べる欄(変われば入れ替える・spec-hash に入る)。
   (setv #^ tuple environ #())
 
-  (defn __post-init__ [self]
+  (defn #^ None __post-init__ [self]
     (when (or (not self.name) (not self.entry) (not self.revision))
       (raise (ValueError "job には name・entry・revision が必要です")))))
 
@@ -66,7 +66,7 @@
   (setv #^ tuple import-roots #("."))
   (setv #^ tuple base-paths #())
 
-  (defn __post-init__ [self]
+  (defn #^ None __post-init__ [self]
     (when (not self.import-roots)
       (raise (ValueError "import-roots は 1 つ以上")))
     (for [path self.base-paths]
