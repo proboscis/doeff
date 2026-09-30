@@ -1077,7 +1077,7 @@ fn run_normal(args: &Args) -> ExitCode {
     if error_count > 0 {
         ExitCode::from(1)
     } else if unmeasured > 0 {
-        eprintln!("doeff-linter: 意味の規則を測れなかった定義が {} 在る(Jev に問えない)— 緑ではない", unmeasured);
+        eprintln!("doeff-linter: 意味の規則を測れなかった定義が {} 在る(Jev に問えない・proxy の覚えを読む束が返らない)— 緑ではない", unmeasured);
         ExitCode::from(UNMEASURED_EXIT)
     } else {
         ExitCode::SUCCESS
