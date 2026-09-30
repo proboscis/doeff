@@ -16,7 +16,8 @@
 (import dataclasses [replace])
 (import doeff [run with_handlers])
 (import doeff_core_effects.scheduler [scheduled])
-(import doeff_cluster.cluster_model [ClusterTiming ClusterNaming ClusterState Request])
+(import doeff_cluster.cluster_model [ClusterTiming ClusterNaming ClusterState])
+(import doeff_cluster.coordinator_inbox [http-request])
 (import doeff_cluster.api_policy [respond ready-instances])
 (import doeff_cluster.coordinator [rollout-tick])
 (import doeff_cluster.kube_handlers [KubeMemory kube-memory])
@@ -54,7 +55,7 @@
     None)
 
   (defn call [self method path [body None] [actor "c-test"]]
-    (setv #(state status reply) (respond self.state (Request method path {} body :actor actor) self.now T))
+    (setv #(state status reply) (respond self.state (http-request method path {} body :actor actor) self.now T))
     (assert (< status 300) #(method path status reply))
     (setv self.state state)
     reply)

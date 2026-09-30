@@ -25,7 +25,8 @@
 (import doeff_core_effects.scheduler [Spawn Cancel TaskCancelledError])
 (import doeff_time [Delay SimClock sim-time-handler async-time-handler])
 (import tests.clock_fixtures [clock-ms])
-(import doeff_cluster.cluster_model [ClusterState ClusterTiming Request ComponentVersion])
+(import doeff_cluster.cluster_model [ClusterState ClusterTiming ComponentVersion])
+(import doeff_cluster.coordinator_inbox [http-request])
 (import doeff_cluster.detached_policy [Reply submit-detached])
 (import doeff_cluster.api_policy [respond tick])
 (import doeff_cluster.handlers [CoordinatorLink])
@@ -490,7 +491,7 @@
 (setv T (ClusterTiming) V {"python" "3.14.0" "doeff" "1"})
 
 (defn call [state method path now [body None]]
-  (respond state (Request method path {} body :actor "test") now T))
+  (respond state (http-request method path {} body :actor "test") now T))
 
 (defn beat [state name now [boot "b1"] [statuses None] [boot-at None] [provides None]]
   (call state "POST" "/heartbeat" now (| {"name" name "provides" (or provides ["net"]) "capacity" 10 "versions" V "boot" boot

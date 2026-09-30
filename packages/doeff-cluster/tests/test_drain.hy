@@ -5,7 +5,8 @@
 (require doeff-hy.macros [deftest defhandler <-])
 (import dataclasses [replace])
 (import doeff_time [SimClock sim-time-handler])
-(import doeff_cluster.cluster_model [ClusterTiming ClusterState Request Drain])
+(import doeff_cluster.cluster_model [ClusterTiming ClusterState Drain])
+(import doeff_cluster.coordinator_inbox [http-request])
 (import doeff_cluster.cluster_policy [jobs-for])
 (import doeff_cluster.worker_model [spec-hash])
 (import doeff_cluster.api_policy [respond tick])
@@ -37,7 +38,7 @@
 
   (defn #^ object call [self #^ str method #^ str path #^ (| dict None) [body None] #^ (| str None) [actor "c-test"]
             #^ (| int None) [expect 200]]
-    (setv #(state status reply) (respond self.state (Request method path {} body :actor actor) self.now T))
+    (setv #(state status reply) (respond self.state (http-request method path {} body :actor actor) self.now T))
     (when (is-not expect None) (assert (= status expect) #(method path status reply)))
     (setv self.state state)
     reply)
@@ -415,7 +416,7 @@
 (defhandler coordinator-of [#^ Coord coord]
   ;; 読みの要求を Coord の純粋な判断へそのまま渡す(状態は変えない)。
   (CoordinatorCall [method path body]
-    (setv #(_ status reply) (respond coord.state (Request method path {} body :actor "drain@atlas") coord.now T))
+    (setv #(_ status reply) (respond coord.state (http-request method path {} body :actor "drain@atlas") coord.now T))
     (resume {"status" status "body" reply})))
 
 (deftest test-worker-ready-reads-the-coordinator-view

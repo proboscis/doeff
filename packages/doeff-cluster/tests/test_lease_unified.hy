@@ -20,6 +20,7 @@
 (import doeff_cluster.semaphore_model [LeaseOp lease-op semaphore-write-refusal lease-timing-refusal FENCE-MARGIN-MS])
 (import doeff_cluster.semaphore_handlers [SemaphoreSession])
 (import doeff_cluster.cluster_model [ClusterState ClusterTiming Request])
+(import doeff_cluster.coordinator_inbox [http-request])
 (import doeff_cluster.api_policy [respond])
 (import doeff_cluster.worker_model [JobSpec])
 (import doeff_cluster.worker_policy [kept-when-cut-off])
@@ -32,7 +33,7 @@
 
 
 (defn #^ tuple lease [#^ ClusterState state #^ str name #^ str op #^ str token #^ int now #^ int [ttl 15000] #^ int [permits 1]]
-  (respond state (Request "POST" (+ "/leases/" name) {} {"op" op "token" token "permits" permits "ttlMs" ttl} :actor "w") now T))
+  (respond state (http-request "POST" (+ "/leases/" name) {} {"op" op "token" token "permits" permits "ttlMs" ttl} :actor "w") now T))
 
 
 ;; --- coordinator の時計だけで判じる ------------------------------------------------------------------
@@ -46,13 +47,13 @@
   (setv #(s _ _) (lease (ClusterState) "app-writer" "claim" "a/1/x/1" 1000))
   (setv row (get s.board "semaphore/app-writer"))
   (setv stolen {"permits" 1 "holders" {"b/1/y/1" 99999}})
-  (setv #(_ status body) (respond s (Request "PUT" "/board/semaphore/app-writer" {} {"value" stolen "expect" row} :actor "b")
-                                  10000 T))
-  (assert (= status 409) body)
+  (setv #(_ early-status early-body) (respond s (http-request "PUT" "/board/semaphore/app-writer" {} {"value" stolen "expect" row} :actor "b")
+                                              10000 T))
+  (assert (= early-status 409) early-body)
   ;; 切れた後なら通る(旧い版の奪い方も期限の後なら正しい)
-  (setv #(_ status _) (respond s (Request "PUT" "/board/semaphore/app-writer" {} {"value" stolen "expect" row} :actor "b")
-                               16001 T))
-  (assert (= status 200))
+  (setv #(_ late-status _) (respond s (http-request "PUT" "/board/semaphore/app-writer" {} {"value" stolen "expect" row} :actor "b")
+                                    16001 T))
+  (assert (= late-status 200))
   ;; 外すだけの書き(旧い worker の drop)は通す
   (assert (is (semaphore-write-refusal row {"permits" 1 "holders" {}} 2000) None)))
 

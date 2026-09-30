@@ -11,7 +11,8 @@
 (require doeff-hy.macros [deftest defk <- val var])
 (import dataclasses [replace])
 (import pytest)
-(import doeff_cluster.cluster_model [ClusterTiming ClusterState Request])
+(import doeff_cluster.cluster_model [ClusterTiming ClusterState])
+(import doeff_cluster.coordinator_inbox [http-request])
 (import doeff_cluster.api_policy [respond resume-after-downtime])
 (import doeff_cluster.durable_kv [durable-kv state-from-kv])
 (import doeff_cluster.cluster_policy [job-from-json])
@@ -54,7 +55,7 @@
 
   (defn call [self #^ str method #^ str path [body None] #^ (| str None) [actor "c-test"]]  ; defk にできない: 模擬の世界の method(coordinator の口へ要求を送る)
     "coordinator の本物の返事(api_policy.respond)へ要求を 1 件送り、状態を進めて本文を返す。"
-    (setv #(state status reply) (respond self.state (Request method path {} body :actor actor) self.now T))
+    (setv #(state status reply) (respond self.state (http-request method path {} body :actor actor) self.now T))
     (assert (< status 300) #(method path status reply))
     (setv self.state state)
     reply)

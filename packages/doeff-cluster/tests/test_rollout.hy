@@ -9,7 +9,8 @@
 (require doeff-hy.macros [deftest])
 (import doeff [run with_handlers])
 (import doeff_core_effects.scheduler [scheduled])
-(import doeff_cluster.cluster_model [ClusterTiming ClusterNaming ClusterState Request])
+(import doeff_cluster.cluster_model [ClusterTiming ClusterNaming ClusterState])
+(import doeff_cluster.coordinator_inbox [http-request])
 (import doeff_cluster.cluster_policy [state-to-json state-from-json])
 (import doeff_cluster.api_policy [respond])
 (import doeff_cluster.coordinator [rollout-tick])
@@ -53,7 +54,7 @@
                                          "readiness" {"windowSeconds" window}}})))
 
   (defn call [self method path [body None] [actor "c-test"]]
-    (setv #(state status reply) (respond self.state (Request method path {} body :actor actor) self.now T))
+    (setv #(state status reply) (respond self.state (http-request method path {} body :actor actor) self.now T))
     (assert (< status 300) #(method path status reply))
     (setv self.state state)
     state)
@@ -92,7 +93,7 @@
                              "attempts" (get self.proc "attempt") "instance" (get self.proc "instance")
                              "specHash" (spec-hash spec) "placement" spec.placement}])
                        []))
-    (setv #(state _ reply) (respond self.state (Request "POST" "/heartbeat" {}
+    (setv #(state _ reply) (respond self.state (http-request "POST" "/heartbeat" {}
                                                         {"name" "atlas" "provides" ["net"] "capacity" 10 "versions" V
                                                          "statuses" statuses}) self.now T))
     (setv self.state state)
@@ -290,16 +291,16 @@
 (deftest test-rollouts-on-the-same-target-cannot-overlap-and-running-ones-cannot-be-deleted
   (setv sim (Sim))
   (sim.rollout "to-worker" FORWARD)
-  (setv #(_ status body) (respond sim.state (Request "POST" "/resources/Rollout" {} {"name" "second" "spec" FORWARD}
-                                                     :actor "c-test") sim.now T))
-  (assert (= status 409) body)
-  (setv #(_ status body) (respond sim.state (Request "DELETE" "/resources/Rollout/to-worker" {} None :actor "c-test")
-                                  sim.now T))
-  (assert (= status 409) body)
+  (setv #(_ overlap-status overlap-body) (respond sim.state (http-request "POST" "/resources/Rollout" {} {"name" "second" "spec" FORWARD}
+                                                                     :actor "c-test") sim.now T))
+  (assert (= overlap-status 409) overlap-body)
+  (setv #(_ delete-status delete-body) (respond sim.state (http-request "DELETE" "/resources/Rollout/to-worker" {} None :actor "c-test")
+                                                sim.now T))
+  (assert (= delete-status 409) delete-body)
   ;; Rollout が扱っている Service は、所有者でも消せない(force なら消せる)
-  (setv #(_ status body) (respond sim.state (Request "DELETE" "/resources/Service/writer-a" {} None :actor "c-test")
-                                  sim.now T))
-  (assert (= status 409) body))
+  (setv #(_ owned-status owned-body) (respond sim.state (http-request "DELETE" "/resources/Service/writer-a" {} None :actor "c-test")
+                                              sim.now T))
+  (assert (= owned-status 409) owned-body))
 
 
 (deftest test-deploy-flow-reapplying-replicas-while-observing-is-reported-as-drift

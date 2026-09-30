@@ -10,7 +10,8 @@
 ;;   4. 停止の述語は 1 つ: target-view と version-state が同じ関数(service-stopped)を呼ぶ(止まっている・止めている途中)。
 (require doeff-hy.macros [deftest val])
 (import pytest)
-(import doeff_cluster.cluster_model [ClusterTiming ClusterState Request RefusedJob VersionState NotReadyKind UnplacedKind])
+(import doeff_cluster.cluster_model [ClusterTiming ClusterState RefusedJob VersionState NotReadyKind UnplacedKind])
+(import doeff_cluster.coordinator_inbox [http-request])
 (import doeff_cluster.worker_model [JobPhase spec-hash])
 (import doeff_cluster.cluster_policy [unplaced-jobs])
 (import doeff_cluster.api_policy [respond target-view])
@@ -63,7 +64,7 @@
 
 (defn call [state method path [body None] [now START] [actor "c-me"]]  ; defk にできない: 検の道具(coordinator の純粋な口へ要求を送る)
   "coordinator の本物の返事(api_policy.respond)へ要求を 1 件送り、次の状態を返す。"
-  (setv #(after status reply) (respond state (Request method path {} body :actor actor) now T))
+  (setv #(after status reply) (respond state (http-request method path {} body :actor actor) now T))
   (assert (< status 300) #(method path status reply))
   after)
 
@@ -100,7 +101,7 @@
 
 (defn version-of [state [name "w"] [now START]]  ; defk にできない: 検の道具
   "資源の口(GET /resources/Service/<名>)の status.version。"
-  (setv #(_ status reply) (respond state (Request "GET" (+ "/resources/Service/" name) {} None :actor None) now T))
+  (setv #(_ status reply) (respond state (http-request "GET" (+ "/resources/Service/" name) {} None :actor None) now T))
   (assert (= status 200) reply)
   (get reply "status" "version"))
 
@@ -235,7 +236,7 @@
   (assert (any (gfor e current.audit (= (.get (get e "changes") "status.version") [{"state" "Updating"} {"state" "Current"}])))
           (lfor e current.audit (get e "changes")))
   ;; 既存の欄は今までどおり(ready・process)。
-  (val body (get (respond current (Request "GET" "/resources/Service/w" {} None :actor None) START T) 2))
+  (val body (get (respond current (http-request "GET" "/resources/Service/w" {} None :actor None) START T) 2))
   (assert (= (get body "status" "ready") "Ready"))
   (assert (= (get body "status" "process" "runningRevision") "r1"))
   ;; running の母集団は still-live-somewhere と同じ: lease の内に報告した全部の worker の、名が一致する行と退いた行。
@@ -260,7 +261,7 @@
   (val verdict (version-state state "old" START T))
   (assert (= verdict.state VersionState.BLOCKED) verdict)
   (assert (in "旧い形の行" verdict.reason) verdict)
-  (val body (get (respond state (Request "GET" "/resources/Service" {} None :actor None) START T) 2))
+  (val body (get (respond state (http-request "GET" "/resources/Service" {} None :actor None) START T) 2))
   (val item (next (gfor i (get body "items") :if (= (get i "name") "old") i)))
   (assert (= (get item "status" "refused") "旧い形の行"))
   (assert (= (get item "status" "version" "state") "Blocked") item))

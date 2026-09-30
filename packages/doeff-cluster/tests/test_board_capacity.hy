@@ -1,7 +1,8 @@
 ;;; 盤の掃除と容量(2026-09-25): 期限つきの行(ttlSeconds)・上限を越える書きの断り・task の上限・沈黙した worker を忘れる。
 (require doeff-hy.macros [deftest <- val])
 (import dataclasses [replace])
-(import doeff_cluster.cluster_model [ClusterState ClusterTiming Request WorkerInfo TaskRecord])
+(import doeff_cluster.cluster_model [ClusterState ClusterTiming WorkerInfo TaskRecord])
+(import doeff_cluster.coordinator_inbox [http-request])
 (import doeff_cluster.api_policy [respond tick])
 (import doeff_cluster.durable_kv [durable-kv full-kv kv-delta state-from-kv])
 (import doeff_cluster.cluster_policy [BOARD-MAX-VALUE-BYTES BOARD-MAX-ROWS BOARD-MAX-BYTES TASK-MAX-OPEN WORKER-FORGET-MS
@@ -12,8 +13,8 @@
 (setv T (ClusterTiming))
 
 
-(defn #^ tuple call [#^ ClusterState state #^ str method #^ str path #^ object [body None] #^ int [now 1000]]
-  (respond state (Request method path {} body :actor "c-test") now T))
+(defn #^ tuple call [#^ ClusterState state #^ str method #^ str path #^ (| dict list str int float bool None) [body None] #^ int [now 1000]]
+  (respond state (http-request method path {} body :actor "c-test") now T))
 
 
 (defn #^ tuple put [#^ ClusterState state #^ str key #^ object value #^ int [now 1000] #^ object [ttlSeconds None]]

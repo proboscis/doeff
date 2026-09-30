@@ -8,8 +8,8 @@
 (import datetime [timedelta])
 (import doeff_time [SimClock sim-time-handler])
 (import tests.clock_fixtures [clock-ms])
-(import doeff_cluster.cluster_model [ClusterTiming ClusterNaming ClusterState Request NextRequests Reply Persist CoordinatorStopRequested
-                                     CoordinatorFault])
+(import doeff_cluster.cluster_model [ClusterTiming ClusterNaming ClusterState Request NextRequests Reply Persist CoordinatorStopRequested CoordinatorFault])
+(import doeff_cluster.coordinator_inbox [http-request])
 (import doeff_cluster.cluster_policy [reconcile state-to-json state-from-json job-from-json identity-hash])
 (import tests.program_rows [SAMPLE-RUN SAMPLE-PROGRAM SAMPLE-TASK-PROGRAM program-placed])
 (import doeff [run])
@@ -21,7 +21,8 @@
 (setv T (ClusterTiming))
 (setv V {"python" "3.14.0" "doeff" "1"})
 
-(defn req [method path [body None] [query None] [actor "test"]] (Request method path (or query {}) body :actor actor))
+(defn #^ Request req [#^ str method #^ str path #^ (| dict list str int float bool None) [body None] #^ (| dict None) [query None] #^ (| str None) [actor "test"]]
+  (http-request method path (or query {}) body :actor actor))
 
 (defn beat [state name now [statuses None] [versions V] [provides None]]
   (respond state (req "POST" "/heartbeat" {"name" name "provides" (or provides ["net"]) "capacity" 10
@@ -332,3 +333,11 @@
   (assert (= (. (get (. (state-from-json data 0) placements) "a") generation) 4))
   (assert (in "placements" (state-to-json (state-from-json data 0))))
   (assert (not-in "assignments" (state-to-json (state-from-json data 0)))))
+
+
+(deftest test-the-http-intake-splits-the-path-and-undoes-the-percent-code-per-part
+  ;; percent の符号を戻すのは HTTP の境の 1 か所(#1636)。区切りの中の %2F は区切りを増やさずに / へ戻り、path は受けたまま残る。
+  (val request (http-request "PUT" "/board/team%2Fa/b%20c" {} {"value" 1} :actor "c-test"))
+  (assert (= request.parts #("board" "team/a" "b c")) request.parts)
+  (assert (= request.path "/board/team%2Fa/b%20c"))
+  (assert (= request.actor "c-test")))
