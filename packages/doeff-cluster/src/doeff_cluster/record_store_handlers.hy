@@ -287,7 +287,10 @@
         (.put inbox.queue (http-request method split.path (dict (parse-qsl split.query)) body :slot slot
                                    :actor (.get self.headers "X-Actor") :peer (str (get self.client-address 0))))
         (if (.wait slot.done 60.0)
-            (.send self slot.status slot.body)
+            (do (setv reply slot.body)
+                ;; 置き場の答え(record_store.answer-request)の本文は表か PlainText だけ — 別の形なら送る前に名指して落ちる。
+                (assert (isinstance reply #(dict PlainText)) (.format "記録の置き場の返事の本文の形が違う: {}" (type reply)))
+                (.send self slot.status reply))
             (.send self 503 {"error" "置き場の Program が返事をしない"})))
       (defn #^ None send [self #^ int status #^ (| dict PlainText) body]
         (setv #(data content-type)

@@ -140,6 +140,10 @@
       (setv self.buffer []))
     None)
 
+  (defn #^ int post [self #^ list items]
+    "items(buffer の先頭の項)を置き場へ送り、送れた項の数を返す。送り方は子 class が決める(ここは宣言だけ)。"
+    (raise (NotImplementedError (.format "{} は post を定めていない" (. (type self) __name__)))))
+
   (defn #^ int batch-size [self]
     "次の 1 回の送りに載せる行の数(先頭から max-post-bytes まで・最低 1 行)。"
     (setv n 0 size 0)
@@ -385,7 +389,8 @@
                 (var error None)
                 (if (is child None)
                     (try (do (<- performed effect) (:= answer performed)) (except [e Exception] (:= error e)))
-                    (do (<- chain list (GetBoundaries k))
+                    (do (assert (isinstance effect Spawn) "子の名札は Spawn の時だけ付く")
+                        (<- chain list (GetBoundaries k))
                         (try (:= answer !(Spawn (spawn-program log child effect.program chain)
                                                :priority effect.priority :daemon effect.daemon))
                              (except [e Exception] (:= error e)))))
@@ -600,7 +605,8 @@
           (when (= mode LIVE)
             (if (is child None)
                 (try (do (<- performed effect) (:= answer performed)) (except [e Exception] (:= error e)))
-                (do (<- chain list (GetBoundaries k))
+                (do (assert (isinstance effect Spawn) "子の名札は Spawn の時だけ付く")
+                    (<- chain list (GetBoundaries k))
                     (try (:= answer !(Spawn (spawn-program state child effect.program chain)
                                            :priority effect.priority :daemon effect.daemon))
                          (except [e Exception] (:= error e)))))
