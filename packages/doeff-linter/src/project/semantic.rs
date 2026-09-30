@@ -11,7 +11,7 @@
 //! - 較正の見張り: 問いを撃つ実行ごとに、既知の正例と反例(data/semantic_calibration.json)を 1 回ずつ問い、確率が幅の外なら cache を捨てて警告する。
 //! API キーの値は、設定・出力・log・cache の鍵に書かない。
 //!
-//! Jev の呼び出しを覚える代理(doeff の packages/doeff-jev-proxy・agora-redesign #843):
+//! Jev の呼び出しを覚える代理(repo proboscis/jev-proxy — 2026-10-01 に doeff の packages/doeff-jev-proxy から移した・agora-redesign #843・#1919):
 //! - 宛先は repo ごとの設定 `[tool.doeff-linter.semantic] proxy_url` で向ける(機体全体の環境変数にしない — 会社の repo は向けない)。
 //!   env の JEV_BASE_URL が在ればそちらが勝つ。代理へは代理の token(proxy_token_file)だけを送り、TypeSafe のキーは送らない。
 //! - 決定的な規則の全体の実行(hook・引数なしの実行)は、手元の cache に無い定義を代理に「覚えている時だけ」問い、返った答えを手元の
@@ -296,7 +296,7 @@ pub const DEFAULT_PROXY_TOKEN_FILE: &str = "~/.config/jev/proxy-token";
 pub const DEFAULT_PROXY_PEEK_TIMEOUT_MS: u64 = 5000;
 /// 覚えている時だけの問いの束 1 つの鍵の数(代理の上限 20000 の内 — 鍵 1 つは 67 byte 前後)。
 pub const PEEK_BATCH: usize = 1000;
-/// 代理の鍵の決まりの版(doeff の packages/doeff-jev-proxy/src/doeff_jev_proxy/key.hy の KEY-VERSION と同じ)。
+/// 代理の鍵の決まりの版(proboscis/jev-proxy の src/doeff_jev_proxy/key.hy の KEY-VERSION と同じ)。
 pub const PROXY_KEY_VERSION: &str = "jev-proxy-key-1";
 
 /// `[tool.doeff-linter.semantic] plain_callable`(読んだ形)。
@@ -521,11 +521,12 @@ fn canonical(value: &Value) -> String {
     }
 }
 
-/// 問いの本文の代理の鍵(64 桁の小文字の 16 進)= sha256(PROXY_KEY_VERSION + "\n" + 決まった綴りの本文)。代理の決まり(doeff の
-/// packages/doeff-jev-proxy/src/doeff_jev_proxy/key.hy の normalize-request — object の鍵を符号位置の順に並べ・区切りの空白なし・
+/// 問いの本文の代理の鍵(64 桁の小文字の 16 進)= sha256(PROXY_KEY_VERSION + "\n" + 決まった綴りの本文)。代理の決まり(proboscis/jev-proxy
+/// の src/doeff_jev_proxy/key.hy の normalize-request — object の鍵を符号位置の順に並べ・区切りの空白なし・
 /// 文字は UTF-8 のまま)と同じ鍵になる。本文は model を持つこと(代理は model の無い本文に既定の名を足してから綴る)。小数は綴りが
 /// 言語で違うので同じ鍵にならない(外れるだけで、別の問いの答えには当たらない — linter の本文は小数を持たない)。
-/// 同じ鍵になることは、代理の見本(packages/doeff-jev-proxy/tests/key_contract.json)を両方の検が読んで確かめる。
+/// 同じ鍵になることは、代理の見本(正本 = proboscis/jev-proxy の tests/key_contract.json・写し = この package の
+/// tests/proxy_key_contract.json)を両方の repo の検が読んで確かめる。
 pub fn proxy_key(body: &Value) -> String {
     let mut hasher = Sha256::new();
     hasher.update(PROXY_KEY_VERSION.as_bytes());
@@ -1050,7 +1051,7 @@ pub struct Asked {
     pub charge: Charge,
 }
 
-/// proxy の答えの見出し x-jev-proxy が「上流を呼ばずに答えた」印か(hit = 覚えた答え・coalesced = 同じ問いへの相乗り — doeff-jev-proxy の
+/// proxy の答えの見出し x-jev-proxy が「上流を呼ばずに答えた」印か(hit = 覚えた答え・coalesced = 同じ問いへの相乗り — proboscis/jev-proxy の
 /// service.hy の見出しの語)。見出しが無い(proxy でない宛先)・miss・refreshed は上流を呼んだ。
 pub fn answered_from_memory(marker: Option<&str>) -> bool {
     matches!(marker, Some("hit") | Some("coalesced"))

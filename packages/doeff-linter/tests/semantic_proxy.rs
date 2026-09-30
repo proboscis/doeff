@@ -430,9 +430,11 @@ fn whole_run_peeks_thousands_of_definitions_in_a_few_batches() {
 
 #[test]
 fn proxy_key_matches_the_proxy_key_contract_sample() {
-    // 代理(doeff の packages/doeff-jev-proxy)の鍵の決まりの見本を、代理の検(test_key_contract_sample_is_the_proxy_key)と同じ file で読む。
-    // 片方の決まりだけを変えると、どちらかが赤になる。
-    let cases: Vec<Value> = serde_json::from_str(include_str!("../../doeff-jev-proxy/tests/key_contract.json")).unwrap();
+    // proxy(repo proboscis/jev-proxy — 2026-10-01 に doeff から移した・agora-redesign #1923)の鍵の決まりの見本の写しを読む。
+    // 正本は proxy の repo の tests/key_contract.json(proxy の検 test_key_contract_sample_is_the_proxy_key が読む)で、この写しは
+    // 移した時に 1 byte も違わない(sha256 8b4acc8b…)。鍵の決まりを変える時は、2 つの repo の見本と実装を同じ組の変更で直す
+    // (片方の決まりだけを変えると、その側の検が赤になる)。
+    let cases: Vec<Value> = serde_json::from_str(include_str!("proxy_key_contract.json")).unwrap();
     assert!(cases.len() >= 4);
     for case in cases {
         assert_eq!(proxy_key(&case["body"]), case["key"].as_str().unwrap(), "{}", case["body"]);

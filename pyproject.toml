@@ -94,7 +94,6 @@ doeff-cluster = { workspace = true }
 doeff-validation = { workspace = true }
 doeff-claude-code = { workspace = true }
 doeff-records = { workspace = true }
-doeff-jev-proxy = { workspace = true }
 # Hy は PyPI の版(uv.lock が 1.3.1 に固定)を使い、フォークしない(ADR-DOE-HY-008・agora-redesign #1290)。フォークが持っていた
 # 3 つの機能は doeff の側に置いた: テストの索引(doeff-adr item_cache)・macro の変更で古い bytecode を使わない判定
 # (doeff_hy_bytecode_guard)・require の呼び出し元の取り方(doeff_hy.light_stack)。
@@ -189,7 +188,6 @@ dev = [
     "doeff-validation",
     "doeff-claude-code",
     "doeff-records",
-    "doeff-jev-proxy",
     "doeff-docker",
     "doeff-ml-nexus",
     "cloudpickle>=3.0",
