@@ -21,7 +21,10 @@
 - 実行は call の段階だけを測り、setup と teardown(fixture)は含めない。session / module の範囲の fixture の準備は、
   その範囲で最初に走った検 1 本に丸ごと乗るので、含めると検の選び方と並び順で同じ検の合否が変わる。deftest の本体
   (模擬の handler で Program を回す所)は call の段階にある。
-- file の上限は module の import(依存の module の import を含む)を測る。測る所は doeff-adr の hook
+- file の上限は module の import を測り、別の module の初回の import(共有の依存の一度きりの重さ)は変換と同じく引く
+  (2026-09-30・agora-redesign #1752 で改めた — 以前は依存の import を含めて測り、その重さがその process で最初に import した
+  file に乗るので、同じ file の合否が並び順・1 file だけの実行か・テストの索引が冷えているかで変わった。戻し方 =
+  ``CompileCounter.install`` の ``_find_and_load`` の差し替えを外す)。測る所は doeff-adr の hook
   ``pytest_doeff_import_hy_module`` の前後 — doeff-adr は記録で説明できる file を import せずに収集し、module の import を
   item の setup まで待つので(agora-redesign #1211 / #1225)、import は収集の中か setup の中のどちらかで 1 度起きる。
   どちらで起きても同じ hook を通るので、同じ鍵(file の path)で測る。超えて赤にする時は、その場で落とす(収集なら
@@ -45,6 +48,7 @@
 import contextlib
 import hashlib
 import importlib.machinery
+import sys
 import time
 import types
 import warnings
@@ -62,6 +66,11 @@ MODE_INI = "doeff_test_budget_mode"
 REGISTRY_INI = "doeff_test_budget_registry"
 
 Phase = Literal["call", "collect"]
+# 測りから引く区間の種類(CompileCounter)。
+SetAside = Literal["compile", "import"]
+# 別の module の初回の import が通る口(import の機構が呼ぶたびに名で引く — CompileCounter が数えるために差し替える)。
+_BOOTSTRAP_MODULE = "importlib._bootstrap"
+_FIND_AND_LOAD = "_find_and_load"
 Mode = Literal["report", "fail"]
 
 
@@ -143,19 +152,36 @@ class CompileTally:
 
 
 @dataclass(frozen=True)
+class ImportTally:
+    """ある時点までに数えた、別の module の初回の import の回数と、それに使った CPU 秒(最も外側の区間の和)。"""
+
+    count: int
+    cpu_seconds: float
+
+    def since(self, before: "ImportTally") -> "ImportTally":
+        """before からこの時点までの差 — 1 つの測りの区間の中で起きた依存の初回の import。"""
+        return ImportTally(self.count - before.count, self.cpu_seconds - before.cpu_seconds)
+
+
+NO_IMPORTS = ImportTally(0, 0.0)
+
+
+@dataclass(frozen=True)
 class Measurement:
-    """測った 1 区間 — CPU 秒と壁時計の秒(どちらも区間の全体)と、区間の中の変換。"""
+    """測った 1 区間 — CPU 秒と壁時計の秒(どちらも区間の全体)と、区間の中の変換と依存の初回の import。"""
 
     key: str
     phase: Phase
     cpu_seconds: float
     wall_seconds: float
     compile: CompileTally
+    imports: ImportTally = NO_IMPORTS
 
     @property
     def judged_seconds(self) -> float:
-        """判定に使う秒 = 区間の CPU 秒から変換の CPU 秒を引いた値(キャッシュ有りなら区間の CPU 秒そのもの)。"""
-        return self.cpu_seconds - self.compile.cpu_seconds
+        """判定に使う秒 = 区間の CPU 秒から、変換の CPU 秒と依存の初回の import の CPU 秒を引いた値(どちらも無ければ区間の
+        CPU 秒そのもの)。"""
+        return self.cpu_seconds - self.compile.cpu_seconds - self.imports.cpu_seconds
 
 
 @dataclass(frozen=True)
@@ -278,6 +304,8 @@ def _seconds_text(measurement: Measurement) -> str:
     text = f"CPU {measurement.judged_seconds:.3f} 秒(壁時計 {measurement.wall_seconds:.3f} 秒"
     if measurement.compile.count:
         text += f"・キャッシュ無しの変換 {measurement.compile.count} 回の CPU {measurement.compile.cpu_seconds:.3f} 秒を引いた"
+    if measurement.imports.count:
+        text += f"・依存の module の初回の import {measurement.imports.count} 回の CPU {measurement.imports.cpu_seconds:.3f} 秒を引いた"
     return text + ")"
 
 
@@ -294,31 +322,52 @@ def over_budget_message(verdict: OverBudget, registry_dirs: Sequence[str]) -> st
 
 
 class CompileCounter:
-    """source から code への変換の回数と CPU 秒を数える — 測りから変換の時間を引くため。
+    """測りから引く区間(source から code への変換・別の module の初回の import)の回数と CPU 秒を数える — 検の重さに
+    キャッシュ無しの重さと、共有の依存の一度きりの import の重さを入れないため。
 
     ``SourceFileLoader.source_to_code`` はバイトコードのキャッシュに当たらない時だけ呼ばれ、Hy の import も Hy が
     差し替えた同じ口を通る(Hy の差し替えは元の口を呼び直すので、Hy がこの数えの前後どちらで差し替えても数えに乗る)。
-    変換の中で別の module の import と変換が起きる(Hy の ``require``)ので、秒は最も外側の区間だけを足す。
+    変換の中で別の module の import と変換が起きる(Hy の ``require``)ので、秒は最も外側の区間だけを、その区間の種類の
+    欄に足す(依存の import の中の変換は依存の import の欄に 1 度だけ入る — 二重に引かない)。
+
+    別の module の初回の import は ``importlib._bootstrap._find_and_load`` の区間(import 文も ``importlib.import_module`` も、
+    sys.modules に無い名の時にここを通る)。共有の依存の一度きりの重さは、その process で最初に import した検の file に
+    乗るので、引かないと同じ file の合否が並び順・1 file だけの実行か・テストの索引が冷えているかで変わる
+    (agora-redesign #1752 — 索引が冷えた初回の収集だけ赤になっていた)。検の file 自身は doeff-adr が
+    ``module_from_spec`` と ``exec_module`` で読むのでこの区間に入らず、file 自身の本体の重さは測りに残る。
 
     doeff-effect-analyzer が入っていれば、その Hy の展開(展開した構文木の cache に当たらない時だけ走る — 同じく
-    キャッシュ無しの重さ)も同じ数えに足す(``observe_expansions`` の口 — 解析器は誰が数えるかを知らない・agora-redesign #1534)。
+    キャッシュ無しの重さ)も変換の数えに足す(``observe_expansions`` の口 — 解析器は誰が数えるかを知らない・agora-redesign #1534)。
     """
 
     def __init__(self) -> None:
         self._mut_count = 0
         self._mut_cpu_seconds = 0.0
+        self._mut_import_count = 0
+        self._mut_import_cpu_seconds = 0.0
         self._mut_depth = 0
+        self._mut_outer: SetAside | None = None
         self._mut_original: Callable[..., object] | None = None
+        self._mut_original_find_and_load: Callable[..., object] | None = None
         self._mut_stop_observing: Callable[[], None] | None = None
 
     def tally(self) -> CompileTally:
-        """今までの数え(区間の前後の差で使う)。"""
+        """今までの変換の数え(区間の前後の差で使う)。"""
         return CompileTally(self._mut_count, self._mut_cpu_seconds)
 
+    def import_tally(self) -> ImportTally:
+        """今までの依存の初回の import の数え(区間の前後の差で使う)。"""
+        return ImportTally(self._mut_import_count, self._mut_import_cpu_seconds)
+
     @contextlib.contextmanager
-    def converting(self) -> Generator[None]:
-        """キャッシュ無しの変換 1 回の区間 — 回数と、最も外側の区間なら CPU 秒を足すため。"""
-        self._mut_count += 1
+    def _set_aside(self, kind: SetAside) -> Generator[None]:
+        """引く区間 1 回 — 最も外側の区間なら、その CPU 秒をその区間の種類の欄に足すため。"""
+        if kind == "compile":
+            self._mut_count += 1
+        else:
+            self._mut_import_count += 1
+        if self._mut_depth == 0:
+            self._mut_outer = kind
         self._mut_depth += 1
         started = time.process_time()
         try:
@@ -326,7 +375,20 @@ class CompileCounter:
         finally:
             self._mut_depth -= 1
             if self._mut_depth == 0:
-                self._mut_cpu_seconds += time.process_time() - started
+                elapsed = time.process_time() - started
+                if self._mut_outer == "compile":
+                    self._mut_cpu_seconds += elapsed
+                else:
+                    self._mut_import_cpu_seconds += elapsed
+                self._mut_outer = None
+
+    def converting(self) -> contextlib.AbstractContextManager[None]:
+        """キャッシュ無しの変換 1 回の区間。"""
+        return self._set_aside("compile")
+
+    def importing(self) -> contextlib.AbstractContextManager[None]:
+        """別の module の初回の import 1 回の区間。"""
+        return self._set_aside("import")
 
     def install(self) -> None:
         """数える口を差し込む(session の間だけ — uninstall で戻す)。"""
@@ -340,6 +402,19 @@ class CompileCounter:
                 return original(loader, *args, **kwargs)
 
         importlib.machinery.SourceFileLoader.source_to_code = counting_source_to_code  # type: ignore[method-assign]  # 数えるための差し替え(uninstall で戻す)
+        bootstrap = sys.modules[_BOOTSTRAP_MODULE]
+        original_find_and_load = getattr(bootstrap, _FIND_AND_LOAD)
+        self._mut_original_find_and_load = original_find_and_load
+
+        def counting_find_and_load(name: str, import_: object) -> object:
+            """元の import を呼び、sys.modules に無い名なら依存の初回の import の区間として数える。"""
+            if name in sys.modules:
+                return original_find_and_load(name, import_)
+            with counter.importing():
+                return original_find_and_load(name, import_)
+
+        # 数えるための差し替え(uninstall で戻す)— import の機構は呼ぶたびにこの名を module から引くので、import 文にも効く。
+        setattr(bootstrap, _FIND_AND_LOAD, counting_find_and_load)
         self._mut_stop_observing = observe_analyzer_expansions(self.converting)
 
     def uninstall(self) -> None:
@@ -347,6 +422,9 @@ class CompileCounter:
         if self._mut_original is not None:
             importlib.machinery.SourceFileLoader.source_to_code = self._mut_original  # type: ignore[method-assign]  # install の前へ戻す
             self._mut_original = None
+        if self._mut_original_find_and_load is not None:
+            setattr(sys.modules[_BOOTSTRAP_MODULE], _FIND_AND_LOAD, self._mut_original_find_and_load)
+            self._mut_original_find_and_load = None
         if self._mut_stop_observing is not None:
             self._mut_stop_observing()
             self._mut_stop_observing = None
@@ -365,10 +443,11 @@ def observe_analyzer_expansions(
 
 @dataclass(frozen=True)
 class CallMeasured:
-    """call の段階の CPU 秒と変換(makereport で判定するまで item に置く)。"""
+    """call の段階の CPU 秒と、変換と依存の初回の import(makereport で判定するまで item に置く)。"""
 
     cpu_seconds: float
     compile: CompileTally
+    imports: ImportTally
 
 
 _BUDGETS_KEY = pytest.StashKey[Budgets]()
@@ -503,6 +582,7 @@ def pytest_doeff_import_hy_module(
         return (yield)
     counter = config.stash[_COUNTER_KEY]
     compile_before = counter.tally()
+    imports_before = counter.import_tally()
     cpu_started = time.process_time()
     wall_started = time.perf_counter()
     module = yield
@@ -512,6 +592,7 @@ def pytest_doeff_import_hy_module(
         cpu_seconds=time.process_time() - cpu_started,
         wall_seconds=time.perf_counter() - wall_started,
         compile=counter.tally().since(compile_before),
+        imports=counter.import_tally().since(imports_before),
     )
     verdict = judge(measurement, budgets.collect_seconds, budgets.registry)
     if _record(config, verdict) and isinstance(verdict, OverBudget):
@@ -526,6 +607,7 @@ def pytest_runtest_call(item: pytest.Item) -> Generator[None, None, None]:
     if counter is None:
         return (yield)
     compile_before = counter.tally()
+    imports_before = counter.import_tally()
     cpu_started = time.process_time()
     try:
         return (yield)
@@ -533,6 +615,7 @@ def pytest_runtest_call(item: pytest.Item) -> Generator[None, None, None]:
         item.stash[_CALL_MEASURED_KEY] = CallMeasured(
             cpu_seconds=time.process_time() - cpu_started,
             compile=counter.tally().since(compile_before),
+            imports=counter.import_tally().since(imports_before),
         )
 
 
@@ -566,6 +649,7 @@ def pytest_runtest_makereport(
         cpu_seconds=measured.cpu_seconds,
         wall_seconds=call.duration,
         compile=measured.compile,
+        imports=measured.imports,
     )
     verdict = judge(measurement, budget, budgets.registry)
     if _record(config, verdict) and isinstance(verdict, OverBudget):

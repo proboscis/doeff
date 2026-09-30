@@ -13,6 +13,7 @@ from doeff_hy_pytest.budget import (
     Budgets,
     CompileCounter,
     CompileTally,
+    ImportTally,
     Measurement,
     OverBudget,
     RegisteredOverBudget,
@@ -121,8 +122,11 @@ def test_compile_counter_adds_only_the_outermost_window(tmp_path, monkeypatch) -
         import hy  # noqa: F401 - Hy の import の口を差し込む
 
         before = counter.tally()
+        imports_before = counter.import_tally()
         importlib.import_module("budget_outer_mod")
         cold = counter.tally().since(before)
+        # 最も外側の区間は budget_outer_mod の初回の import なので、中の変換の CPU 秒は import の欄に 1 度だけ入る(#1752)。
+        cold_imports = counter.import_tally().since(imports_before)
         for name in ("budget_outer_mod", "budget_inner_mod"):
             sys.modules.pop(name, None)
         importlib.invalidate_caches()
@@ -134,7 +138,8 @@ def test_compile_counter_adds_only_the_outermost_window(tmp_path, monkeypatch) -
         for name in ("budget_outer_mod", "budget_inner_mod"):
             sys.modules.pop(name, None)
     assert cold.count == 2
-    assert cold.cpu_seconds > 0
+    assert cold.cpu_seconds == 0.0
+    assert cold_imports.cpu_seconds > 0
     assert cached == CompileTally(0, 0.0)
 
 
@@ -292,6 +297,68 @@ def test_collect_budget_subtracts_compilation_but_fails_slow_import(
         ]
     )
     assert "test_slow_compile.hy の読み込み(import)" not in result.stdout.str()
+
+
+# 重い依存(本体の実行で CPU を回す Python の module)を import するだけの軽い検の file — 2 本が同じ依存を読む。
+HEAVY_DEPENDENCY = (
+    "import time\n_t0 = time.process_time()\nwhile time.process_time() - _t0 < 0.3:\n    pass\nVALUE = 1\n"
+)
+READS_HEAVY_DEPENDENCY = """\
+(require doeff-hy.macros [deftest])
+(import budget-heavy-dependency [VALUE])
+(deftest test-reads
+  (assert (= VALUE 1)))
+"""
+
+
+def test_collect_budget_does_not_charge_a_shared_dependency_to_the_first_file(
+    pytester: pytest.Pytester,
+) -> None:
+    """共有の依存の一度きりの import の重さは、どの file の import にも乗せない — 並び順・1 file だけの実行で合否を変えない
+    (agora-redesign #1752)。file 自身の本体が重い file は今までどおり赤(上の test_collect_budget_subtracts_…)。"""
+    _project(
+        pytester,
+        'doeff_test_collect_budget_seconds = 0.05\ndoeff_test_budget_mode = "fail"\n',
+        {"test_reads_a": READS_HEAVY_DEPENDENCY, "test_reads_b": READS_HEAVY_DEPENDENCY},
+    )
+    pytester.makeconftest(CONFTEST + PIN_UNCHECKED_VM_BUILD)
+    pytester.makepyfile(budget_heavy_dependency=HEAVY_DEPENDENCY)
+    for args in (("test_reads_a.hy",), ("test_reads_b.hy",), ("test_reads_b.hy", "test_reads_a.hy")):
+        result = pytester.runpytest_subprocess("-q", "-p", "no:cacheprovider", *args)
+        result.assert_outcomes(passed=len(args))
+        assert "の読み込み(import)が" not in result.stdout.str(), args
+
+
+def test_compile_counter_sets_aside_a_first_import_once_and_not_a_loaded_module(tmp_path, monkeypatch) -> None:
+    """別の module の初回の import は import の欄に 1 度だけ入り(中の変換は二重に足さない)、sys.modules に在る module の
+    import は数えない。"""
+    import importlib
+    import sys
+
+    monkeypatch.setattr(sys, "dont_write_bytecode", True)
+    monkeypatch.syspath_prepend(str(tmp_path))
+    (tmp_path / "budget_first_import.py").write_text(HEAVY_DEPENDENCY, encoding="utf-8")
+    bootstrap = sys.modules["importlib._bootstrap"]
+    original_find_and_load = bootstrap._find_and_load
+    counter = CompileCounter()
+    counter.install()
+    try:
+        compile_before = counter.tally()
+        imports_before = counter.import_tally()
+        importlib.import_module("budget_first_import")
+        first_compile = counter.tally().since(compile_before)
+        first_imports = counter.import_tally().since(imports_before)
+        imports_before = counter.import_tally()
+        importlib.import_module("budget_first_import")
+        again = counter.import_tally().since(imports_before)
+    finally:
+        counter.uninstall()
+        sys.modules.pop("budget_first_import", None)
+    assert first_imports.count == 1
+    assert first_imports.cpu_seconds >= 0.3
+    assert first_compile.count == 1 and first_compile.cpu_seconds == 0.0
+    assert again == ImportTally(0, 0.0)
+    assert bootstrap._find_and_load is original_find_and_load
 
 
 def test_import_budget_is_judged_at_setup_when_collected_from_records(
