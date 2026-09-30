@@ -772,9 +772,13 @@ class _Bound:
         mine = tuple(b for b in self.bindings if b.name not in other.names())
         return _Bound(mine + other.bindings)
 
-    @property
+    @functools.cached_property
     def key(self) -> _BindingsKey:
-        """Cache key: a function read with the same bindings is read once."""
+        """Cache key: a function read with the same bindings is read once.
+
+        Built once per ``_Bound`` (the bindings are frozen, and a written value's identity
+        names its scope's key — so rebuilding it walked every enclosing scope again on each
+        read; agora-redesign #1592)."""
         return _BindingsKey(frozenset(_KeyEntry(b.name, _identity(b.value)) for b in self.bindings))
 
     @property
@@ -959,6 +963,15 @@ def _written_identity(value: Imported) -> _Identity | None:
 
 
 @dataclass(frozen=True)
+class _Resolution:
+    """What one expression resolved to in one scope (``_Scope.resolve``'s memo entry).
+    ``value`` is whatever the expression denotes — any object, as ``resolve`` answers."""
+
+    expr: ast.expr
+    value: Any  # the denoted object: a module global, class, function or reader value
+
+
+@dataclass(frozen=True)
 class _Scope:
     """Name resolution inside one function body (and the functions it is nested in)."""
 
@@ -978,10 +991,27 @@ class _Scope:
     # — handlers put back around a Program) → what it was first bound to.
     local_rewraps: dict[str, ast.expr] = field(default_factory=dict)
     bound: _Bound = _NO_BINDINGS
+    # What each expression resolved to in this scope, by id(expr).  Resolution
+    # reads only the frozen fields above and the module's globals, so a scope answers the
+    # same expression the same way; the reader asks about 4 times per expression (#1592).
+    # ``init=False`` so ``dataclasses.replace`` (another ``bound``) starts empty; the expr is
+    # kept beside the value so a reused id never answers for another node.
+    _resolved: "dict[int, _Resolution]" = field(
+        default_factory=dict, init=False, compare=False, repr=False
+    )
 
     def resolve(self, expr: ast.expr) -> Any:
         """The object a Name / Attribute chain denotes (rooted at a module global, at a
         name the function imports itself, or at a bound parameter), or ``UNBOUND``."""
+        known = self._resolved.get(id(expr))
+        if known is not None and known.expr is expr:
+            return known.value
+        value = self._resolve_expr(expr)
+        self._resolved[id(expr)] = _Resolution(expr, value)
+        return value
+
+    def _resolve_expr(self, expr: ast.expr) -> Any:
+        """``resolve`` without the memo (the reading itself)."""
         if isinstance(expr, ast.Name):
             return self._resolve_name(expr.id)
         if isinstance(expr, ast.Attribute):
