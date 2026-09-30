@@ -5,6 +5,7 @@
 (require doeff-hy.macros [deftest val])
 (import json)
 (import pytest)
+(import dataclasses [fields])
 (import doeff_cluster.cluster_model [ClusterNaming naming-from-json])
 (import doeff_cluster.worker_model [CodeLayout])
 (import tests.test_rollout [Sim FORWARD DEP])
@@ -53,8 +54,9 @@
   (assert (= (.roots-arg (CodeLayout :import-roots #("." "vendor/hy"))) ".,vendor/hy"))
   (for [bad [#() #("/abs") #("../up") #("a:b") #("a,b")]]
     (with [(pytest.raises ValueError)] (CodeLayout :import-roots bad)))
-  ;; 以前の重ねる dir(overlay-path — 定義だけを別の commit で重ねる木)は消した。欄が無いので渡せば TypeError。
-  (with [(pytest.raises TypeError)] (CodeLayout :overlay-path "app/wrap")))
+  ;; 以前の重ねる dir(overlay-path — 定義だけを別の commit で重ねる木)は消した。欄の一覧に無いことを直に確かめる(frozen の
+  ;; dataclass なので欄の外の名を渡せば TypeError。無い欄を名指して呼ぶ書き方は型検査が断るので一覧を読む)。
+  (assert (not-in "overlay_path" (lfor f (fields CodeLayout) f.name))))
 
 (deftest test-code-layout-puts-the-base-paths-after-the-tree-roots
   ;; 2026-09-26: host の worker は土台の package(image に焼かない物)の路を宣言する。木の根が先(業務の code は task の版が勝つ)・
