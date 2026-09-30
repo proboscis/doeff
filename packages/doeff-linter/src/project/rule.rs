@@ -189,6 +189,7 @@ pub enum ProjectRule {
     /// ([issue] K3・まず報告だけ = 重さ info。失敗にするのは #1562 K4)。層の名は :assembly-shape。
     IntentEffectUncovered,
     /// DOEFF166: 登録簿の鍵が、全体の実行で判じた規則のどの所見にも当たらない — 当たらなくなった古い行([issue]・#1706)。
+    /// 鍵が名指す規則は enable に無くても同じ実行で当て、当たりは 166 の判じにだけ使う([issue])。
     RegistryEntryStale,
     /// DOEFF201(意味・Jev): 翻訳の層の定義が業務の判断をしている。
     SemanticBusinessDecision,
