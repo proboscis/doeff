@@ -50,7 +50,8 @@
       "packages/doeff-records/src",
       "packages/doeff-adr/src",
       "packages/doeff-hy/src",
-      "packages/doeff-cluster/src"
+      "packages/doeff-cluster/src",
+      "packages/doeff-cluster"
     ]
   },
   "modules": [
