@@ -221,8 +221,13 @@ def _read_runtime_entry(
 
 
 def write_cached(
-    source: Path, module: types.ModuleType, fixtures: tuple[FixtureRecord, ...], cache_dir: Path,
-    records: tuple[Record, ...], root: Path, dynamic: bool,
+    source: Path,
+    module: types.ModuleType,
+    fixtures: tuple[FixtureRecord, ...],
+    cache_dir: Path,
+    records: tuple[Record, ...],
+    root: Path,
+    dynamic: bool,
 ) -> None:
     """照合済みの記録を保存する。動的な値には読込済みのlocal sourceも記録する。"""
     entry_path = _entry_path(source, cache_dir)
@@ -232,7 +237,9 @@ def write_cached(
         for dependency in macro_dependencies(module, module.__file__ or str(source))
     )
     sources: tuple[SourceDependency, ...] = loaded_sources(root).sources if dynamic else ()
-    entry = CacheEntry(CACHE_FORMAT, tuple(encode_records(records)), dependencies, fixtures, sources)
+    entry = CacheEntry(
+        CACHE_FORMAT, tuple(encode_records(records)), dependencies, fixtures, sources
+    )
     _write_entry(entry_path, entry, source)
 
 
