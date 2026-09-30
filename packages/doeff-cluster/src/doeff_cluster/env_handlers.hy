@@ -214,7 +214,7 @@
   (<- got (AcquireLock path))
   (<- held LockHeld (settled got "錠を取れない"))
   (try
-    (<- answer body)
+    (<- answer (| MirrorReady WheelReady EnvFailure) body)
     (finally (<- (ReleaseLock held))))
   answer)
 
