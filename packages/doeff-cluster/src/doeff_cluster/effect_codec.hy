@@ -332,7 +332,7 @@
     (emit h form))
   {"$ref" h})
 
-(defn #^ object resolve-refs [#^ object j #^ dict blobs #^ (| dict None) [memo None]]
+(defn #^ JsonValue resolve-refs [#^ JsonValue j #^ dict blobs #^ (| dict None) [memo None]]
   "intern-json の逆。blobs = h → 畳んだ節(blob の行の v)。無い参照は ValueError(記録が欠けている)。"
   (setv memo (if (is memo None) {} memo))
   (cond

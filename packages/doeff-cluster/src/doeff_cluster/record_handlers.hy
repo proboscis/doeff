@@ -24,15 +24,16 @@
 (import doeff [EffectBase Pass])
 (import doeff.do [do])
 (import doeff.program [handler :as program-handler])
-(import collections.abc [Callable])
-(import typing [Protocol])
-(import doeff_vm [GetBoundaries WithObserve Callable :as VmCallable])
+(import collections.abc [Callable Generator])
+(import typing [Literal Protocol TypeVar])
+(import doeff [Program])
+(import doeff_vm [GetBoundaries K WithHandler WithObserve Callable :as VmCallable])
 (import doeff_core_effects.scheduler [Spawn Wait CreatePromise CompletePromise Promise PRIORITY-IDLE])
 (import doeff_cluster.effect_codec [READ LIVE DECISION OUTPUT LOOSE DIVERGE INTERN-MIN-CHARS BLOB-MEMORY-MAX FORMAT-VERSION BlobMemory
-                                         HandleTable UnencodableValue UnrecordableEffect
+                                         EffectCodec HandleTable UnencodableValue UnrecordableEffect
                                          encode-value encode-error decode-value decode-error canonical intern-json
                                          codec-of mode-of args-of subject-of])
-(import doeff_cluster.record_model [ROOT ReplayFinished ReplayDiverged match-step diff-row summarize])
+(import doeff_cluster.record_model [ROOT ReplayFinished ReplayDiverged Entry Recording match-step diff-row summarize])
 (import doeff_core_effects.effects [Ask])
 (import doeff_cluster.host_contract [HOST-CONTRACT])
 (import doeff_cluster.job_context [RunContext])
@@ -43,10 +44,11 @@
 
 (defclass TaskTap []
   "task の名の記憶。marked = 最後に印を通った effect・marked-label = その task の名。spawns = 親の名 → Spawn した数。"
-  (defn __init__ [self]
-    (setv self.marked None self.marked-label ROOT self.spawns {}))
+  (defn #^ None __init__ [self]
+    (setv #^ (| EffectBase None) self.marked None)
+    (setv self.marked-label ROOT self.spawns {}))
 
-  (defn #^ str current-label [self effect]
+  (defn #^ str current-label [self #^ EffectBase effect]
     (if (is self.marked effect) self.marked-label ROOT))
 
   (defn #^ str child-label [self #^ str parent]
@@ -54,19 +56,25 @@
     (setv (get self.spawns parent) (+ n 1))
     (.format "{}.{}" parent n))
 
-  (defn task-ended [self #^ str label #^ bool ok error] None))
+  (defn #^ None task-ended [self #^ str label #^ bool ok #^ (| BaseException None) error] None))
 
 
-(defn task-marker [#^ TaskTap tap #^ str label]
+(defn #^ (get Callable #([EffectBase K] Pass)) task-marker [#^ TaskTap tap #^ str label]
   "子の Program の一番内側に置く印。自分より内側の印(孫の task)が先に書いた effect は書き換えない。"
-  (defn effect-task-marker [effect k]
+  (defn #^ Pass effect-task-marker [#^ EffectBase effect #^ K k]
     (when (is-not tap.marked effect)
       (setv tap.marked effect tap.marked-label label))
     (Pass effect k))
   effect-task-marker)
 
 
-(defn [do] task-body [#^ TaskTap tap #^ str label program]
+;; 子の Program の答えの型。task-body・rewrap・spawn-program は答えを変えずに包むだけ。
+(val T (TypeVar "T"))
+;; effect の答えの型。記録係の answer は effect とその答えを対で受ける。
+(val A (TypeVar "A"))
+
+
+(defn [do] #^ (get Generator #((get Program T) T T)) task-body [#^ TaskTap tap #^ str label #^ (get Program T) program]
   "子の Program を走らせ、終わった(成功・失敗)ことを記憶に知らせる。"
   (try
     (setv result (yield program))
@@ -77,7 +85,7 @@
   result)
 
 
-(defn rewrap [program #^ list chain]
+(defn #^ (get Program T) rewrap [#^ (get Program T) program #^ list chain]
   "GetBoundaries の並び(内側が先・最後は受けた handler 自身)で program を包み直す(scheduler の Spawn と同じ張り直し)。"
   (setv prog program)
   (for [#(kind cb) chain]
@@ -85,7 +93,7 @@
   prog)
 
 
-(defn spawn-program [#^ TaskTap tap #^ str child program #^ list chain]
+(defn #^ (get Program T) spawn-program [#^ TaskTap tap #^ str child #^ (get Program T) program #^ list chain]
   "Spawn し直す子の Program = 印 → 終わりの知らせ → 受けた handler までの並び。"
   (rewrap (task-body tap child ((program-handler (task-marker tap child)) program)) chain))
 
@@ -94,7 +102,7 @@
 
 (defclass RecordSink [Protocol]
   "記録の係(EffectLog)が置き場に求める口 — 行を書く・溜めた行を送る・届かずに捨てた行の数。実体は MemorySink(検)と
-   BufferedSink の族(HttpSink・OtlpSink)。EffectLog の欄 sink をこの型で宣言する(agora-redesign #1675 — 以前は object で
+   BufferedSink の族(HttpSink・OtlpSink)。EffectLog の欄 sink をこの型で宣言する(#1675 — 以前は object で
    宣言していて、write・flush・lost の読みが型検査で絞れなかった)。"
   #^ int lost
   ;; 本体は説明の文と None(Hy は最後の式を返すので、`...` や文だけだとその値を返し、返りの型 None と食い違う)。
@@ -104,11 +112,11 @@
 
 (defclass MemorySink []
   "テストの置き場。lines = 書いた行(dict)。"
-  (defn __init__ [self] (setv self.lines [] self.lost 0))
-  (defn write [self #^ int chunk #^ dict line]
+  (defn #^ None __init__ [self] (setv self.lines [] self.lost 0))
+  (defn #^ None write [self #^ int chunk #^ dict line]
     ;; JSON を通して持つ(本物の置き場と同じく、JSON にできない物が紛れたらここで落ちる)。chunk は行に添えて残す。
     (.append self.lines (| (json.loads (json.dumps line :ensure-ascii False)) {"_chunk" chunk})))
-  (defn flush [self] None))
+  (defn #^ None flush [self] None))
 
 
 (defclass BufferedSink []
@@ -281,7 +289,7 @@
            (except [Exception] None))
       (print (+ "recorder: 記録を止めた: " why) :file sys.stderr :flush True)))
 
-  (defn request [self #^ str label effect #^ dict args #^ str mode subject]
+  (defn #^ int request [self #^ str label #^ EffectBase effect #^ dict args #^ str mode #^ (| str None) subject]
     "問いを 1 行作って手元に持ち、問いの番号を返す(答えが続けば call の 1 行にまとめる)。"
     (.refresh-watched self)
     (.release-held self)
@@ -304,7 +312,7 @@
             (.check-lost self))
         (.emit self (| {"k" "ans" "e" e "s" s "at" at} fields))))
 
-  (defn answer [self #^ int s effect value #^ dict args child]
+  (defn #^ None answer [self #^ int s #^ (get EffectBase A) effect #^ A value #^ dict args #^ (| str None) child]
     (setv codec (codec-of effect))
     (when (is-not codec.binds None)
       (.bind self.handles value codec.binds (if (= codec.binds "task") child (.format "{}" s))))
@@ -317,17 +325,17 @@
     (.settle self s (| {"ok" True} (.big self "v" encoded)))
     (.check-watched self))
 
-  (defn failed [self #^ int s #^ BaseException error]
+  (defn #^ None failed [self #^ int s #^ BaseException error]
     (.settle self s {"ok" False "err" (encode-error error self.handles)})
     (.check-watched self))
 
-  (defn refresh-watched [self]
+  (defn #^ None refresh-watched [self]
     "問いの直前: 直前までに走ったのは業務コード(この問いを出した task か、その前に動いた task)。業務コード自身の書き換えは
      再生でも業務コードがもう一度するので記録しない — 断面だけ取り直す。"
     (for [row self.watched]
       (setv (get row 2) (encode-value (get row 1) self.handles))))
 
-  (defn check-watched [self]
+  (defn #^ None check-watched [self]
     "答えの直前に走ったのは handler(Ask で渡した共有の箱を handler が書き換える — 書きの計器等)。前の断面から変わった所を
      mut の 1 行(鍵ごとの差分)で書く。再生はその差分を同じ番号の位置で箱に当てる。"
     (for [row self.watched]
@@ -341,7 +349,7 @@
                         {"all" now}))
         (.emit self {"k" "mut" "e" (.next-e self) "ref" ref "at" (self.wall-ms) "patch" patch}))))
 
-  (defn task-ended [self #^ str label #^ bool ok error]
+  (defn #^ None task-ended [self #^ str label #^ bool ok #^ (| BaseException None) error]
     (when (is self.broken None)
       (.emit self {"k" "end" "e" (.next-e self) "t" label "at" (self.wall-ms) "ok" ok}))))
 
@@ -393,7 +401,7 @@
 (defclass ReplayState [TaskTap]
   "再生の記憶。rec = 読んだ記録。cursor = 次に来るべき出来事(rec.events の位置)。skip = 番号より先に済ませた出来事。
    waiting = 出来事の番号 → その番号を待っている task の promise。"
-  (defn __init__ [self rec [from-ms None] [to-ms None] [ordered True]]
+  (defn #^ None __init__ [self #^ Recording rec #^ (| int None) [from-ms None] #^ (| int None) [to-ms None] #^ bool [ordered True]]
     (.__init__ (super))
     ;; ordered = 偽なら番号の順を待たない(テストの対照: 順を揃えない再生が違う結果になることを示すためだけに使う)。
     (setv self.rec rec self.from-ms from-ms self.to-ms to-ms self.ordered ordered
@@ -402,10 +410,10 @@
           self.finished False self.driver-running False self.ended {})
     (.settle self))
 
-  (defn current [self]
+  (defn #^ (| int None) current [self]
     (if (< self.cursor (len self.rec.events)) (get (get self.rec.events self.cursor) 0) None))
 
-  (defn settle [self]
+  (defn #^ None settle [self]
     "cursor を、済んだ出来事・共有の箱の変化(ここで当てる)・task の終わりの上を進める。進み切ったら finished。"
     (while (< self.cursor (len self.rec.events))
       (setv #(e kind owner extra) (get self.rec.events self.cursor))
@@ -417,7 +425,7 @@
     (when (>= self.cursor (len self.rec.events))
       (setv self.finished True)))
 
-  (defn apply-mut [self #^ dict line]
+  (defn #^ None apply-mut [self #^ dict line]
     "handler が共有の箱に加えた変化(鍵ごとの差分)を、再生の箱に同じ位置で当てる。業務コード自身の書き換えは残る。"
     (setv obj (.get self.watched (get line "ref")) patch (get line "patch"))
     (when (is obj None) (return None))
@@ -433,7 +441,7 @@
             (for [k (get patch "del")]
               (.pop obj k None)))))
 
-  (defn #^ list consume [self e]
+  (defn #^ list consume [self #^ (| int None) e]
     "出来事 e を済ませる。番号の順ならその場で進め、先に済んだ物は skip に置く。起こすべき promise の列を返す。"
     (when (is e None) (return []))
     (if (= e (.current self))
@@ -454,7 +462,7 @@
       (setv self.divergence info))
     self.divergence)
 
-  (defn stall [self]
+  (defn #^ None stall [self]
     "他の task が全部止まったのに番号が進まない: 記録の出来事を誰も出さない = 分岐。"
     (setv e (.current self))
     (when (or (is e None) self.finished (is-not self.divergence None)) (return None))
@@ -467,7 +475,7 @@
                     "expected" (if (is entry None) None {"type" entry.type "args" entry.args})
                     "at" (if (is entry None) None entry.at)}))
 
-  (defn task-ended [self #^ str label #^ bool ok error]
+  (defn #^ None task-ended [self #^ str label #^ bool ok #^ (| BaseException None) error]
     (setv (get self.ended label) (if ok True (repr error)))))
 
 
@@ -514,9 +522,13 @@
   None)
 
 
-(defn deliver-recorded [#^ ReplayState state entry codec]
+;; 成功の答えの値は effect_codec.decode-value の答えそのもの(記録した値 — dataclass・例外・handle を含むどの値にもなる)。
+(defn #^ (| (get tuple #((get Literal True) object)) (get tuple #((get Literal False) BaseException))) deliver-recorded [#^ ReplayState state #^ Entry entry #^ EffectCodec codec]
   "記録の答えを業務へ返す値に戻す(handle の札・共有の箱)。例外なら例外の object。"
   (when (not entry.ok)
+    ;; 失敗の答えは err の欄を持つ(read-recording が ok = 偽の答えの行から入れる)— 無ければ記録が壊れている。
+    (when (is entry.error None)
+      (raise (ValueError (.format "記録の失敗の答え(問い {})に err が無い" entry.e))))
     (return #(False (decode-error entry.error))))
   (setv v entry.value)
   (when (and (isinstance v dict) (in "$w" v))
@@ -624,7 +636,7 @@
   (.format "{}-{}-{}" (time.strftime "%Y%m%dT%H%M%SZ" (time.gmtime (/ started-ms 1000))) (or worker "local")
            (or instance (str (os.getpid)))))
 
-(defn recording-handler [#^ dict record #^ str service #^ dict header]
+(defn #^ (get Callable #([Program] WithHandler)) recording-handler [#^ dict record #^ str service #^ dict header]
   "記録の置き場の設定 record → 記録係(境目の記録係 boundary-recorder の record の枝と、cluster の外の process が使う)。
    record = {\"otlp\": collector の URL(か \"store\": 旧い置き場の URL)・
    \"chunkSeconds\"・\"flushSeconds\"}。
