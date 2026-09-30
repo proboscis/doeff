@@ -13,11 +13,12 @@
 (import doeff_cluster.cluster_policy [board-allows])
 
 
-(defclass _Any []
+(defclass AnyExpect []
+  "書きの条件(expect)を付けない印 ANY の型 — 書きの handler が expect の型に書けるよう公開の名にする(以前は内部名・#1692)。"
   (defn #^ str __repr__ [self] "ANY"))
 
 
-(setv ANY (_Any))
+(setv ANY (AnyExpect))
 
 ;; 盤の行の値の型(JSON にできる値 — 本番は coordinator の /board へ JSON で運ぶ)。WriteShared と送り手の要求の形が同じ型を使う。
 (val JsonValue (| dict list str int float bool None))
@@ -30,7 +31,7 @@
 (defclass [(dataclass :frozen True)] WriteShared [EffectBase]
   (#^ str key)
   (#^ JsonValue value)
-  (setv #^ (| JsonValue _Any) expect ANY)
+  (setv #^ (| JsonValue AnyExpect) expect ANY)
   ;; 行の期限(秒)。coordinator は期限を過ぎた行を消す(盤の掃除・2026-09-25)。None = ずっと残す。
   (setv #^ (| int float None) ttl-seconds None))
 

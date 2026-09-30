@@ -19,7 +19,6 @@
 (require doeff-hy.macros [defk deff <- val])
 (import argparse)
 (import collections.abc [Callable])
-(import importlib)
 (import json)
 (import os)
 (import sys)
@@ -30,7 +29,7 @@
 (import .process_versions [current-versions])
 (import .runtime_env [checkout-reads checked-declaring-checkout])
 (import .runtime_env_model [RepoCheckout RuntimeEnvInvalid])
-(import .service_model [resolve system-declaration environ-overlay-refusal foundation-needs-refusal System Declaration])
+(import .service_model [resolve resolve-value system-declaration environ-overlay-refusal foundation-needs-refusal System Declaration])
 
 
 (defn #^ dict spec-for-update [#^ dict row #^ dict current #^ (| int None) [replicas None]]  ; defk にできない: CLI の入口(Program の外)が呼ぶ純粋な判断
@@ -56,7 +55,8 @@
   "宣言してよいかを検めて、断る理由の文を返すため(よければ None — 頭の註の 2 つ)。build = 系の関数(その module の file の在る
    checkout を読む)・foundation = 土台の関数・system = build に foundation を渡した系。"
   (<- needs (| str None) (foundation-needs-refusal system foundation))
-  (val source (getattr (importlib.import-module build.__module__) "__file__" None))
+  ;; build は呼べる関数なので、その module は読み込み済み — 名から import し直さず sys.modules から引く(#1692)。
+  (val source (getattr (.get sys.modules build.__module__) "__file__" None))
   (match #(needs source)
     #(None None) (.format "系の関数 {}:{} の module に file が無い(宣言の版と同じ code かを確かめられない)" build.__module__ build.__qualname__)
     #(None file) (try
@@ -112,9 +112,8 @@
     (.error parser "--config は受け付けない — 設定は Program の中の Ask と、宣言の :environ で読む(ADR-DOE-CLUSTER-001 R4)"))
   (when (is-not args.pin None)
     (.error parser "--pin は受け付けない — Program の job は宣言した commit でだけ解く"))
-  ;; System の値を指す旧い形は、関数に解く(resolve の契約 = Callable)前に見て、理由つきで断る。
-  (setv #(module _ attr) (.partition args.system ":"))
-  (when (and attr (isinstance (getattr (importlib.import-module module) attr None) System))
+  ;; System の値を指す旧い形は、関数として呼ぶ前に見て、理由つきで断る(名を解くのは resolve の 1 か所 — #1692)。
+  (when (and (in ":" args.system) (isinstance (resolve-value args.system) System))
     (.error parser "系の値ではなく、defsystem の関数(土台を受けて系を返す)を指す"))
   (setv build (resolve args.system))
   (setv system (build (resolve args.foundation)))

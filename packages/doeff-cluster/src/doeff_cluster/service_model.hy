@@ -29,6 +29,7 @@
 (import collections.abc [Callable])
 (import dataclasses [dataclass])
 (import importlib)
+(import sys)
 (import json)
 (import doeff [DoExpr Program run])
 (import .cluster_model [capabilities-of])
@@ -76,7 +77,7 @@
     (raise (TypeError (.format "{}: {}.{} は handler の値 — handler は Program の本体の中で関数を呼んで作る" where module qualname))))
   (when (or (not (isinstance module str)) (not (isinstance qualname str)) (in "." qualname) (in "<" qualname))
     (raise (TypeError (.format "{}: 関数 {!r} は module の最上位に置く(module:qualname で引けない)" where function))))
-  (when (is-not (getattr (importlib.import-module module) qualname None) function)
+  (when (is-not (getattr (.get sys.modules module) qualname None) function)
     (raise (TypeError (.format "{}: {}:{} を import しても同じ関数に届かない" where module qualname))))
   (+ module ":" qualname))
 
@@ -247,10 +248,17 @@
   (Declaration :rows rows :programs programs))
 
 
-(deff resolve [#^ str path]  ; defk にできない: CLI の入口(declare)が引数の文字列を解く
-  {:pre [(: path str)] :post [(: % Callable)] :tags {:context "doeff-cluster" :role "entry"}}
-  "`module:attr` の import path を関数に解く(declare の系の関数と土台の関数)。"
+(deff resolve-value [#^ str path]  ; defk にできない: CLI の入口(declare)が引数の文字列を解く
+  {:pre [(: path str)] :post [(: % (| Callable System))] :tags {:context "doeff-cluster" :role "entry"}}
+  "`module:attr` の import path を値に解くため(名を解く口はここ 1 つ — 契約の dynamic_imports で名指す・#1692)。答えは系の関数・
+   土台の関数か、旧い形の系の値(呼び手の declare が形を見て、理由つきで断る)。"
   (when (not-in ":" path)
     (raise (ValueError (+ "関数の参照は module:attr の形で書く: " path))))
   (setv #(module attr) (.split path ":" 1))
   (getattr (importlib.import-module module) attr))
+
+
+(deff resolve [#^ str path]  ; defk にできない: CLI の入口(declare)が引数の文字列を解く
+  {:pre [(: path str)] :post [(: % Callable)] :tags {:context "doeff-cluster" :role "entry"}}
+  "`module:attr` の import path を関数に解く(declare の系の関数と土台の関数)。"
+  (resolve-value path))

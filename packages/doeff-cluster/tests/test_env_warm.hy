@@ -14,6 +14,7 @@
 (require doeff-hy.record [defrecord])
 (import dataclasses [dataclass replace])
 (import json)
+(import pathlib [Path])
 (import doeff [with-handlers])
 (import doeff_time [Delay])
 (import doeff_cluster.clock [now-epoch-ms])
@@ -360,7 +361,7 @@
 (deftest test-the-worker-warms-after-its-jobs-and-retries-a-failed-warm-later
   (<- job-declared dict (declared-of "app-1"))
   (val spec (task-spec {"id" "t1" "revision" "" "versions" {} "program" SAMPLE-TASK-PROGRAM "runtimeEnv" job-declared}
-                       (. (__import__ "pathlib") (Path "/tmp/tasks"))))
+                       (Path "/tmp/tasks")))
   (<- warm WarmEnv (warm-env-of "app-2"))
   (val policy (WorkerPolicy))
   (assert (is-not spec.runtime-env None) spec)
@@ -378,7 +379,7 @@
 (deftest test-the-worker-pins-running-desired-warm-and-preparing-roots-for-the-sweep
   (<- job-declared dict (declared-of "app-1"))
   (val spec (task-spec {"id" "t1" "revision" "" "versions" {} "program" SAMPLE-TASK-PROGRAM "runtimeEnv" job-declared}
-                       (. (__import__ "pathlib") (Path "/tmp/tasks"))))
+                       (Path "/tmp/tasks")))
   (<- warm WarmEnv (warm-env-of "app-2"))
   (val world (WorldView #((CodeView "env-preparing" CodeState.PREPARING)) #() #()
                         :env-disk (EnvDisk :free 10 :floor 100 :pinned (frozenset))))
