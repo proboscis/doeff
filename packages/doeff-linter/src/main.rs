@@ -658,9 +658,9 @@ fn run_editor(args: &Args) -> ExitCode {
                 &built
             }
         };
-        Some(project::signatures::file_signatures(world, &setup.root, &rel, source))
+        Some(doeff_linter::timing::timed("signatures", || project::signatures::file_signatures(world, &setup.root, &rel, source)))
     });
-    let report = editor::build(&EditorInput {
+    let report = doeff_linter::timing::timed("editor-build", || editor::build(&EditorInput {
         root: &setup.root,
         python: &python_results,
         stdin: stdin_file.as_ref().map(|(p, s)| (p.as_path(), s.as_str())),
@@ -671,8 +671,8 @@ fn run_editor(args: &Args) -> ExitCode {
         project_wired: &project_wired,
         only: only.as_deref(),
         signatures: signatures.as_ref(),
-    });
-    match serde_json::to_string(&report) {
+    }));
+    match doeff_linter::timing::timed("editor-serialize", || serde_json::to_string(&report)) {
         Ok(text) => println!("{}", text),
         Err(error) => {
             eprintln!("doeff-linter: 出力を JSON にできない: {}", error);

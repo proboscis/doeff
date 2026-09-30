@@ -3359,6 +3359,10 @@ fn judge_semantic(
         },
     };
     let mut items = Vec::new();
+    // file ごとの Hy の索引は、下の問いの節(層の問い・DOEFF203・DOEFF205)で共有する — 同じ file を節ごとに索引し直すと、1 file の実行で
+    // 34KB の file に約 0.02 秒ずつ 3 回かかっていた(agora-redesign #1632)。どの節も同じ file を同じ中身で読む(1 file の実行は stdin の
+    // 中身・全体の実行は disk)ので、答えは変わらない。
+    let mut indexed: HashMap<String, HyFileIndex> = HashMap::new();
     let mut roles_of: HashMap<String, Vec<String>> = HashMap::new();
     for (file, source) in files {
         if file.file.language != Language::Hy {
@@ -3389,7 +3393,7 @@ fn judge_semantic(
             }
         }
         roles_of.insert(file.file.rel.clone(), roles);
-        let index = hy_index::index_source(root, &file.file.path, &text);
+        let index = &*indexed.entry(file.file.rel.clone()).or_insert_with(|| hy_index::index_source(root, &file.file.path, &text));
         let spec = &layers.layers[file.site.layer.0];
         for definition in index.definitions.iter().filter(|d| d.container.is_none() && semantic_kind(d.kind)) {
             let start = crate::position::offset_of(&text, definition.full_range.start);
@@ -3428,7 +3432,7 @@ fn judge_semantic(
                     }
                 },
             };
-            let index = hy_index::index_source(root, &file.path, &text);
+            let index = &*indexed.entry(file.rel.clone()).or_insert_with(|| hy_index::index_source(root, &file.path, &text));
             for definition in index.definitions.iter().filter(|d| d.container.is_none() && d.kind == DefinitionKind::Deff) {
                 let start = crate::position::offset_of(&text, definition.full_range.start);
                 let (line, previous) = line_and_previous(&text, start);
@@ -3513,7 +3517,7 @@ fn judge_semantic(
                     },
                 };
                 let module_role = read_facts(Language::Hy, &text, &module_of(&file.rel), reading).module_tags.and_then(|t| t.role);
-                let index = hy_index::index_source(root, &file.path, &text);
+                let index = &*indexed.entry(file.rel.clone()).or_insert_with(|| hy_index::index_source(root, &file.path, &text));
                 for definition in index.definitions.iter().filter(|d| d.container.is_none() && is_judgment_kind(d.kind)) {
                     let role = definition.tags.as_ref().and_then(|t| t.get("role").cloned()).or_else(|| module_role.clone());
                     if !role.is_some_and(|r| mixed.roles.contains(&r)) {

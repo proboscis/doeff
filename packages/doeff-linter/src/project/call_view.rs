@@ -854,18 +854,25 @@ fn last_segment(name: &str) -> &str {
 
 /// 置き換えごとに、置き換えた後の文字(中の置き換えも当てた物)を入れ、edit を本文の順に並べる。
 fn fill_texts(reader: &FileReader, rewrites: &mut [Rewrite]) {
-    let offset = |p: crate::position::Position| crate::position::offset_of(reader.hy.src, p);
+    // 位置は行の表から戻す(source の頭から数え直さない)・編集の位置は 1 度だけ戻す(並べ替えの比べのたびに戻さない)— 1 file の
+    // 書き換えと編集の数の分だけ file の長さを数え直し、見出しの 1 回で 0.06〜0.08 秒かかっていた(agora-redesign #1632)。
+    let offset = |p: crate::position::Position| reader.lines.offset(p);
     let spans: Vec<(usize, usize)> = rewrites.iter().map(|r| (offset(r.range.start), offset(r.range.end))).collect();
     let mut all: Vec<(usize, usize, String)> = Vec::new();
     for rewrite in rewrites.iter_mut() {
-        rewrite.edits.sort_by_key(|e| (offset(e.range.start), offset(e.range.end)));
-        all.extend(rewrite.edits.iter().map(|e| (offset(e.range.start), offset(e.range.end), e.text.clone())));
+        let mut keyed: Vec<((usize, usize), RewriteEdit)> =
+            std::mem::take(&mut rewrite.edits).into_iter().map(|e| ((offset(e.range.start), offset(e.range.end)), e)).collect();
+        keyed.sort_by_key(|(at, _)| *at);
+        all.extend(keyed.iter().map(|((s, e), edit)| (*s, *e, edit.text.clone())));
+        rewrite.edits = keyed.into_iter().map(|(_, e)| e).collect();
     }
     all.sort_by_key(|(s, e, _)| (*s, *e));
     for (rewrite, (start, end)) in rewrites.iter_mut().zip(spans) {
         let mut text = String::new();
         let mut at = start;
-        for (s, e, shown) in all.iter().filter(|(s, e, _)| *s >= start && *e <= end) {
+        // all は始まりの順 — 範囲の始まりから二分探索で入り、始まりが範囲の終わりを越えたら止める(書き換えごとに全部の編集をなめない)
+        let first = all.partition_point(|(s, _, _)| *s < start);
+        for (s, e, shown) in all[first..].iter().take_while(|(s, _, _)| *s <= end).filter(|(_, e, _)| *e <= end) {
             if *s < at {
                 continue;
             }

@@ -70,4 +70,19 @@ mod tests {
         assert_eq!(past.start, Position { line: 1, character: 3 });
         assert_eq!(offset_of(src, Position { line: 9, character: 0 }), src.len());
     }
+
+    /// 行の表から戻す `LineIndex::offset`(agora-redesign #1632)は、source の頭から数える `offset_of` と同じ答えを返す —
+    /// 日本語・絵文字の列、行の外の列、source の外の行、末尾の改行の後の行も含めて。
+    #[test]
+    fn line_index_offset_agrees_with_offset_of() {
+        for src in ["(setv 名前 1)\n(import 外.世界 [httpx])\n", "x = \"😀\"; y\nz", "abc\r\ndef", "", "\n\n", "末尾に改行なし"] {
+            let lines = LineIndex::new(src);
+            for line in 0..5u32 {
+                for character in 0..20u32 {
+                    let p = Position { line, character };
+                    assert_eq!(lines.offset(p), offset_of(src, p), "{src:?} の {p:?}");
+                }
+            }
+        }
+    }
 }
