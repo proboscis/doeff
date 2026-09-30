@@ -1,0 +1,53 @@
+{
+  "include": [
+    "packages/doeff-hy-pytest/src/doeff_hy_pytest/__init__.py",
+    "packages/doeff-hy-pytest/src/doeff_hy_pytest/budget.py",
+    "packages/doeff-hy-pytest/tests/test_budget.py",
+    "packages/doeff-hy-pytest/tests/test_plugin_distribution.py"
+  ],
+  "modules": [
+    {
+      "allow": [],
+      "layer": "io",
+      "name": "doeff-hy-pytest-budget",
+      "paths": [
+        "packages/doeff-hy-pytest/src/doeff_hy_pytest/budget.py"
+      ],
+      "public": [
+        "packages/doeff-hy-pytest/src/doeff_hy_pytest/budget.py"
+      ],
+      "responsibility": "検の時間の予算の計器 — 検 1 本の実行と file の収集の CPU を測り、上限を超えた検を登録簿と照らして赤・警告にする pytest の hook(agora-redesign #1742)",
+      "typed": true
+    },
+    {
+      "allow": [
+        "doeff-hy-pytest-budget"
+      ],
+      "layer": "runtime",
+      "name": "doeff-hy-pytest-plugin",
+      "paths": [
+        "packages/doeff-hy-pytest/src/doeff_hy_pytest/__init__.py"
+      ],
+      "public": [
+        "packages/doeff-hy-pytest/src/doeff_hy_pytest/__init__.py"
+      ],
+      "responsibility": "pytest の plugin の入口 — deftest の fixture を配り、予算の計器の hook を pytest へ渡す",
+      "typed": true
+    },
+    {
+      "allow": [
+        "doeff-hy-pytest-budget",
+        "doeff-hy-pytest-plugin"
+      ],
+      "layer": "io",
+      "name": "doeff-hy-pytest-tests",
+      "paths": [
+        "packages/doeff-hy-pytest/tests/test_budget.py",
+        "packages/doeff-hy-pytest/tests/test_plugin_distribution.py"
+      ],
+      "public": [],
+      "responsibility": "予算の計器と plugin の配り方(entry point)の検",
+      "typed": true
+    }
+  ]
+}
