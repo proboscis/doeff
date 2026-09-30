@@ -467,7 +467,8 @@ proxy_peek_timeout_ms = 5000                     # 既定(覚えている時だ�
 - 較正の見張りの問いは `Cache-Control: no-cache`(覚えを使わない — model の中身が変わったことを代理の覚えが隠さないため)。
 
 editor-json: violation の `source`(`linter` = 決定的な規則・`jev` = 意味の判定)と `probability`(Jev の違反だけ)、最上位の `semantic`
-(`model`・`wire`・`judged`・`unjudged`・`asked`・`peeked`(代理が覚えていた答えを受け取った数)・`cost_usd`(gateway だけが返す)・`input_tokens`・
+(`model`・`wire`・`judged`・`unjudged`・`unmeasured`(測れなかった数 — Jev に問えなかった定義と、proxy の覚えを読む束が待ち
+`proxy_peek_timeout_ms` の内に返らなかった定義。後者は `unjudged` に入れない・agora-redesign #1885)・`asked`・`peeked`(proxy が覚えていた答えを受け取った数)・`cost_usd`(gateway だけが返す)・`input_tokens`・
 `served_model`・`calibration` = not-run / ok / drifted / failed・`false_positives`・`labeled` — 下の節)。`wire` は宛先の形と決め方(例 `direct(default)`・`direct(env)`・`direct(repo)` = repo の代理)。
 
 ### 誤判定の一覧と正例の一覧(agora-redesign #1039)

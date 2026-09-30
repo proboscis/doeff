@@ -1208,26 +1208,41 @@ pub fn evaluate(
                 })
                 .collect();
             let keys: Vec<String> = wanted.iter().flatten().cloned().collect::<BTreeSet<String>>().into_iter().collect();
-            let remembered = if keys.is_empty() { BTreeMap::new() } else { peek_remembered(gateway, &keys, proxy.peek_timeout, pool) };
+            let peeked = if keys.is_empty() { Peeked::default() } else { peek_remembered(gateway, &keys, proxy.peek_timeout, pool) };
+            if let Some(reason) = &peeked.missed_reason {
+                errors.push(format!(
+                    "意味の規則: proxy の覚えを読む束が返らなかった({})— 鍵 {} 個の定義を測れなかった(未判定ではない・待ち = semantic.proxy_peek_timeout_ms {} ms)",
+                    reason,
+                    peeked.missed.len(),
+                    proxy.peek_timeout.as_millis()
+                ));
+            }
             resolved
                 .into_iter()
                 .zip(wanted)
-                .map(|((item, cached), key)| match key.and_then(|k| remembered.get(&k)) {
+                .map(|((item, cached), key)| match key.as_ref().and_then(|k| peeked.answers.get(k)) {
                     Some(answer) => {
                         summary.peeked += 1;
                         if let Err(reason) = write_cache(root, &item.key, answer) {
                             errors.push(reason);
                         }
-                        (item, Some(Ok(answer.clone())))
+                        ((item, Some(Ok(answer.clone()))), false)
                     }
-                    None => (item, cached),
+                    None => {
+                        let missed = key.as_ref().is_some_and(|k| peeked.missed.contains(k));
+                        ((item, cached), missed)
+                    }
                 })
-                .collect()
+                .unzip()
         }
-        _ => resolved,
+        _ => {
+            let unmissed = vec![false; resolved.len()];
+            (resolved, unmissed)
+        }
     };
+    let (resolved, peek_missed): (Vec<(SemanticItem, Option<Result<Answer, String>>)>, Vec<bool>) = resolved;
     let mut answered = Vec::new();
-    for (item, result) in resolved {
+    for ((item, result), missed) in resolved.into_iter().zip(peek_missed) {
         let asked_now = can_ask && wants_ask(&item);
         match result {
             Some(Ok(answer)) => {
@@ -1248,6 +1263,9 @@ pub fn evaluate(
                 summary.unmeasured += 1;
                 errors.push(format!("{} の {}: Jev に問えない: {}", item.rel, item.name, reason));
             }
+            // proxy の覚えを読む束が待ちの内に返らなかった(届かない・時間切れ)定義は、答えが在るかどうかを測れていない — 未判定に数えず
+            // 「測れなかった」に数える(agora-redesign #1885: 束が 5 秒を超えた機体で、判定済み 6813 の repo が黙って未判定 7697 と出た)。
+            None if missed => summary.unmeasured += 1,
             None => {
                 summary.unjudged += 1;
                 // 問うはずだった定義が、gateway・較正・pool のどれかで問えずに終わった(測れなかった)。
@@ -1260,30 +1278,47 @@ pub fn evaluate(
     SemanticOutcome { answered, summary, errors }
 }
 
+/// proxy の覚えを読んだ結果: answers = 覚えていた答え(proxy の鍵 → 答え)/ missed = 束が返らなかった(届かない・時間切れ・撃たずに
+/// 止めた)鍵 — 答えが在るかどうかを測れていない / missed_reason = 最初に返らなかった束の理由。
+#[derive(Default)]
+struct Peeked {
+    answers: BTreeMap<String, Answer>,
+    missed: BTreeSet<String>,
+    missed_reason: Option<String>,
+}
+
 /// 代理の鍵の束を PEEK_BATCH 個ずつに分けて並べて代理に「覚えている時だけ」問い、覚えていた答えを集める。全部の束を合わせた時間の
-/// 上限つきで、どれかの束が届かなければ残りの束は撃たない(集まらなかった鍵は手元の cache だけで動く)。
-fn peek_remembered(gateway: &dyn Gateway, keys: &[String], timeout: Duration, pool: &rayon::ThreadPool) -> BTreeMap<String, Answer> {
+/// 上限つきで、どれかの束が届かなければ残りの束は撃たない。返らなかった束の鍵は missed に集める(未判定と分けて数える — #1885)。
+fn peek_remembered(gateway: &dyn Gateway, keys: &[String], timeout: Duration, pool: &rayon::ThreadPool) -> Peeked {
     let deadline = Instant::now() + timeout;
     let unreachable = AtomicBool::new(false);
     let batches: Vec<&[String]> = keys.chunks(PEEK_BATCH).collect();
+    let missed_batch = |batch: &[String], reason: String| Peeked { answers: BTreeMap::new(), missed: batch.iter().cloned().collect(), missed_reason: Some(reason) };
     pool.install(|| {
         batches
             .par_iter()
             .map(|batch| {
                 let left = deadline.saturating_duration_since(Instant::now());
-                if left.is_zero() || unreachable.load(Ordering::Relaxed) {
-                    return BTreeMap::new();
+                if left.is_zero() {
+                    return missed_batch(batch, format!("待ち {} ms を使い切った", timeout.as_millis()));
+                }
+                if unreachable.load(Ordering::Relaxed) {
+                    return missed_batch(batch, "先の束が返らなかったので撃たなかった".to_string());
                 }
                 match gateway.peek_many(batch, left) {
-                    PeekedMany::Remembered(answers) => answers,
-                    PeekedMany::Unreachable(_) => {
+                    PeekedMany::Remembered(answers) => Peeked { answers, ..Peeked::default() },
+                    PeekedMany::Unreachable(reason) => {
                         unreachable.store(true, Ordering::Relaxed);
-                        BTreeMap::new()
+                        missed_batch(batch, reason)
                     }
                 }
             })
-            .reduce(BTreeMap::new, |mut all, part| {
-                all.extend(part);
+            .reduce(Peeked::default, |mut all, part| {
+                all.answers.extend(part.answers);
+                all.missed.extend(part.missed);
+                if all.missed_reason.is_none() {
+                    all.missed_reason = part.missed_reason;
+                }
                 all
             })
     })

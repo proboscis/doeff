@@ -242,15 +242,72 @@ fn whole_run_takes_remembered_answers_from_the_proxy_without_asking_jev() {
 
 #[test]
 fn whole_run_without_a_reachable_proxy_stays_on_the_local_cache() {
+    // 届かない proxy の束は答えの有無を測れていない — 未判定ではなく「測れなかった」(agora-redesign #1885)。止まらずに終わる。
     let closed = TcpListener::bind("127.0.0.1:0").unwrap();
     let url = format!("http://{}/v1/systemone", closed.local_addr().unwrap());
     drop(closed);
     let token = token_file();
     let dir = repo(FILES, &url, token.path());
-    let (report, elapsed) = run(dir.path(), &[], None, &[]);
-    assert_eq!(report["semantic"]["unjudged"], 4, "{}", report["semantic"]);
+    let (report, elapsed, code) = run_with_code(dir.path(), &[], None, &[]);
+    assert_eq!(report["semantic"]["unmeasured"], 4, "{}", report["semantic"]);
+    assert_eq!(report["semantic"]["unjudged"], 0, "{}", report["semantic"]);
     assert_eq!(report["semantic"]["peeked"], 0);
+    assert_eq!(code, 3, "測れなかった定義が在る実行は緑と分ける(終了コード 3)");
     assert!(elapsed < Duration::from_secs(5), "届かない代理で止まらない: {:?}", elapsed);
+}
+
+/// 束を受けてから `delay` 待って答える proxy(答えは空 — 覚えていない)。待ちの内に返らない束の検のため。
+fn slow_proxy(delay: Duration) -> String {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let url = format!("http://{}/v1/systemone", listener.local_addr().unwrap());
+    std::thread::spawn(move || {
+        for stream in listener.incoming() {
+            let Ok(mut stream) = stream else { continue };
+            std::thread::spawn(move || {
+                let mut reader = BufReader::new(stream.try_clone().unwrap());
+                let mut length = 0usize;
+                loop {
+                    let mut line = String::new();
+                    if reader.read_line(&mut line).unwrap_or(0) == 0 || line == "\r\n" {
+                        break;
+                    }
+                    if let Some(value) = line.to_ascii_lowercase().strip_prefix("content-length:") {
+                        length = value.trim().parse().unwrap_or(0);
+                    }
+                }
+                let mut raw = vec![0u8; length];
+                let _ = reader.read_exact(&mut raw);
+                std::thread::sleep(delay);
+                let text = r#"{"answers":{}}"#;
+                let _ = write!(stream, "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{}", text.len(), text);
+            });
+        }
+    });
+    url
+}
+
+#[test]
+fn a_peek_batch_that_does_not_return_in_time_is_unmeasured_not_unjudged() {
+    // agora-redesign #1885: proxy が束に待ち(proxy_peek_timeout_ms)の内に答えないと、linter は束を捨てる。以前はその定義を黙って
+    // 未判定に数え、判定済みの repo が「未判定 7697」と出た。答えの有無を測れていないので「測れなかった」に数え、未判定に入れない。
+    // 反例: 同じ proxy が待ちの内に答えれば(覚えていない = 答えが無い)、それは未判定。
+    let slow = slow_proxy(Duration::from_millis(2000));
+    let token = token_file();
+    let dir = repo(FILES, &slow, token.path());
+    let config = dir.path().join("pyproject.toml");
+    let text = std::fs::read_to_string(&config).unwrap();
+    std::fs::write(&config, format!("{}proxy_peek_timeout_ms = 300\n", text)).unwrap();
+    let (report, elapsed, code) = run_with_code(dir.path(), &[], None, &[]);
+    assert_eq!(report["semantic"]["unmeasured"], 4, "{}", report["semantic"]);
+    assert_eq!(report["semantic"]["unjudged"], 0, "{}", report["semantic"]);
+    assert_eq!(report["semantic"]["judged"], 0, "{}", report["semantic"]);
+    assert_eq!(code, 3);
+    assert!(elapsed < Duration::from_millis(1900), "待ちで束を切る: {:?}", elapsed);
+    let answered = repo(FILES, &slow_proxy(Duration::from_millis(0)), token.path());
+    let (report, _, code) = run_with_code(answered.path(), &[], None, &[]);
+    assert_eq!(report["semantic"]["unjudged"], 4, "待ちの内に答えた束の覚えていない定義は未判定: {}", report["semantic"]);
+    assert_eq!(report["semantic"]["unmeasured"], 0, "{}", report["semantic"]);
+    assert_eq!(code, 0);
 }
 
 #[test]
