@@ -61,6 +61,34 @@ SOURCE = """\
 (defk wrong-counts [n]
   {:pre [(: n int)] :post [(: % (of dict str int))]}
   (tuple (range n)))
+
+;; 途中の return も :post と guard を通る(agora-redesign #1823)。繰り返しの中・分岐の中の return と、入れ子の関数の return(外側の
+;; 出口ではない — 書き換えない)。
+(defk early-names [n]
+  {:pre [(: n int)] :post [(: % (get tuple #(str ...)))]}
+  (for [i (range n)]
+    (when (= i 1) (return (tuple ["early"]))))
+  (tuple (gfor i (range n) (str i))))
+
+(defk early-wrong [n]
+  {:pre [(: n int)] :post [(: % (get tuple #(str ...)))]}
+  (for [i (range n)]
+    (when (= i 1) (return [i])))
+  (tuple []))
+
+(defk early-effect [n]
+  {:pre [(: n int)] :post [(: % (| Names None))]}
+  (when (> n 0) (return (Names n)))
+  None)
+
+(deff early-pure-wrong [n]
+  {:pre [(: n int)] :post [(: % str)]}
+  (if (> n 0) (return n) "zero"))
+
+(deff nested-return-is-not-an-exit [n]
+  {:pre [(: n int)] :post [(: % str)]}
+  (defn inner [] (return 7))
+  (str (+ n (inner))))
 """
 
 
@@ -111,3 +139,21 @@ def test_generic_contract_rejects_the_wrong_outer_type(mod: ModuleType) -> None:
         _run(mod.wrong_names(2))
     with pytest.raises(AssertionError):
         _run(mod.wrong_counts(2))
+
+
+def test_an_early_return_passes_the_post_condition(mod: ModuleType) -> None:
+    # 途中の return の値も :post に合えば通り、入れ子の関数の return は外側の出口ではない(agora-redesign #1823)。
+    assert _run(mod.early_names(3)) == ("early",)
+    assert _run(mod.early_names(1)) == ("0",)
+    assert mod.nested_return_is_not_an_exit(1) == "8"
+
+
+def test_an_early_return_is_checked_like_the_last_form(mod: ModuleType) -> None:
+    # 反例: 途中の return で :post と違う型を返すと落ち、defk の途中の return が撃たない effect を返すと guard が落とす。
+    with pytest.raises(AssertionError):
+        _run(mod.early_wrong(3))
+    with pytest.raises(AssertionError):
+        mod.early_pure_wrong(1)
+    assert mod.early_pure_wrong(0) == "zero"
+    with pytest.raises(RuntimeError, match="unperformed effect"):
+        _run(mod.early_effect(1))

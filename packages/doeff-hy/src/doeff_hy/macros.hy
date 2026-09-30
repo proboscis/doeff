@@ -574,6 +574,29 @@ defk {name}: :post type annotation cannot be an empty string.
       `(setv (annotate ~(_result-symbol last-form) ~(hy.models.String return-source))
              ~last-form)))
 
+;; 本体の中で別の関数・class の出口を作る形と、評価しない形(その中の return は外側の定義の出口ではない)。
+(setv _NESTED-EXIT-HEADS
+  #{"fn" "fn/a" "fnk" "defn" "defn/a" "defk" "deff" "defp" "defpp" "defclass" "defmacro" "defhandler" "deftest"
+    "quote" "quasiquote"})
+
+(defn _route-returns [form exit-forms]
+  "本体の form の中の `(return x)` を、最後の式と同じ出口 — `_contract_result` に入れ、guard と :post の確かめを通してから
+   返す — に書き換える(agora-redesign #1823: 途中の return は確かめの前に関数を抜けていた)。`exit-forms` は結果を
+   `_contract_result` に入れた後に置く文の列。別の関数・class の定義と quote の中は書き換えない(その return は外側の出口ではない)。"
+  (cond
+    (and (isinstance form hy.models.Expression) (> (len form) 0)
+         (isinstance (get form 0) hy.models.Symbol) (= (str (get form 0)) "return"))
+      (.replace `(do (setv _contract_result ~(if (> (len form) 1) (_route-returns (get form 1) exit-forms) 'None))
+                     ~@exit-forms
+                     (return _contract_result))
+                form)
+    (and (isinstance form hy.models.Expression) (> (len form) 0)
+         (isinstance (get form 0) hy.models.Symbol) (in (str (get form 0)) _NESTED-EXIT-HEADS))
+      form
+    (isinstance form (tuple [hy.models.Expression hy.models.List hy.models.Set hy.models.Dict hy.models.Tuple]))
+      (.replace ((type form) (lfor f form (_route-returns f exit-forms))) form)
+    True form))
+
 (defn _build-fn-with-contracts [decorators name params pre-checks post-checks real-body]
   "Build a defn form with pre/post assertion wrappers.
    Works for both plain functions (deff) and generator/kleisli functions (defk).
@@ -604,11 +627,14 @@ defk {name}: :post type annotation cannot be an empty string.
         `(do)))
   (if post-checks
       (let [post-asserts (_contract-code post-checks name "post-condition" kleisli?)
+            ;; 途中の return も最後の式と同じ出口(guard → :post の確かめ)を通す(agora-redesign #1823)。
+            exit-forms [guard-stmt `(let [% _contract_result] ~@post-asserts)]
+            routed (lfor f real-body (_route-returns f exit-forms))
             ;; ADR-DOE-HY-001: kleisli 本体の statement 位置を guard(最終式=返り値は対象外)
             init-forms (if kleisli?
-                           (lfor f (cut real-body 0 -1) (_wrap-statement-guard f name))
-                           (list (cut real-body 0 -1)))
-            last-form (get real-body -1)]
+                           (lfor f (cut routed 0 -1) (_wrap-statement-guard f name))
+                           (list (cut routed 0 -1)))
+            last-form (get routed -1)]
         `(defn ~decorators ~head ~params
            ~@docstring-forms
            ~@pre-code
