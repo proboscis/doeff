@@ -15,8 +15,8 @@
 (import dataclasses [dataclass])
 (import re)
 (import typing [TypeGuard])
-(import sys)
 (import doeff [EffectBase])
+(import doeff_core_effects [slog])
 (import doeff_cluster.clock [now-epoch-ms])
 (import doeff_cluster.cluster_model [Request NextRequests Reply PlainText CoordinatorStopRequested])
 
@@ -135,5 +135,6 @@
       (<- compacted int (CompactRecords now idle-ms))
       (<- pruned list (PruneRecords now retention-ms))
       (when (or compacted pruned)
-        (print (.format "records: 圧縮 {} 区切り・保持を過ぎて消した run {}" compacted pruned) :file sys.stderr :flush True))))
+        ;; 片付けの知らせは log の effect で出す(純粋な層から stderr に直に書かない — 出し先は入口の slog-handler・#1692)。
+        (<- (slog "records: 圧縮と保持の片付け" :compacted compacted :pruned (len pruned))))))
   served)

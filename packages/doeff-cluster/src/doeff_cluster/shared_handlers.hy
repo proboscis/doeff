@@ -6,7 +6,7 @@
 (import urllib.parse [quote :as url-quote])
 (import httpx)
 (import doeff_cluster.clock [now-epoch-ms])
-(import .shared_model [ReadShared WriteShared ANY _Any JsonValue cas-allows json-snapshot])
+(import .shared_model [ReadShared WriteShared ANY AnyExpect JsonValue cas-allows json-snapshot])
 (import .cluster_policy [board-ttl-refusal])
 (import .semaphore_model [LeaseOp lease-op semaphore-key])
 (import .coordinator_http [CoordinatorEndpoint send-idempotent REPLY-SECONDS])
@@ -19,7 +19,7 @@
 
 
 (deff board-write-request [#^ str key value expect #^ (| int float None) ttl-seconds]  ; defk にできない: 本番の client と sim の宿が同じ形を作る純粋な判断
-  {:pre [(: key str) (: value JsonValue) (: expect (| JsonValue _Any))
+  {:pre [(: key str) (: value JsonValue) (: expect (| JsonValue AnyExpect))
          (: ttl-seconds (| int float None))]
    :post [(: % tuple) (= (len %) 4)] :tags {:context "doeff-cluster" :role "protocol"}}
   "WriteShared を盤の compare-and-set の要求 #(method path query 本文) にするため。expect の 3 値を JSON で運ぶ: 欄が無い = 無条件・
@@ -75,7 +75,7 @@
     (.raise-for-status response)
     (.json response))
 
-  (defn #^ bool write [self #^ str key #^ JsonValue value #^ (| JsonValue _Any) expect #^ (| int float None) [ttl-seconds None]]
+  (defn #^ bool write [self #^ str key #^ JsonValue value #^ (| JsonValue AnyExpect) expect #^ (| int float None) [ttl-seconds None]]
     (setv #(method path _ body) (board-write-request key value expect ttl-seconds))
     (setv response (.request self.endpoint method path :json body))
     (when (= response.status-code 409) (return False))

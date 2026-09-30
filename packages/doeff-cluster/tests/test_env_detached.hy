@@ -14,6 +14,7 @@
 (require doeff-hy.record [defrecord])
 (import dataclasses [dataclass replace])
 (import json)
+(import pathlib [Path])
 (import pytest)
 (import doeff [with-handlers])
 (import doeff_cluster.runtime_env_model [RuntimeEnv EnvFailure EnvFailureKind runtime-env->json env-key current-platform])
@@ -239,7 +240,7 @@
   (<- declared dict (runtime-env->json env))
   (val spec (task-spec {"id" "t1" "revision" "" "versions" {} "program" SAMPLE-TASK-PROGRAM
                         "runtimeEnv" declared}
-                       (. (__import__ "pathlib") (Path "/tmp/tasks"))))
+                       (Path "/tmp/tasks")))
   (<- key str (env-key env (current-platform)))
   (assert (= spec.revision (+ "env-" key)))
   (assert (is-not spec.runtime-env None) spec)
