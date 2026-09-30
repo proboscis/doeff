@@ -779,7 +779,7 @@
 
 
 (deff answered-body [#^ tuple answer #^ str what]  ; defk にできない: 答えの節が返事を Program への答えか例外に変える純粋な判断
-  {:pre [(: answer tuple) (: what str)] :post [(: % "返事の本文(形は口ごと)")] :tags {:context "doeff-cluster" :role "judgment"}}
+  {:pre [(: answer tuple) (: what str)] :post [(: % (| dict list str int float bool None PlainText))] :tags {:context "doeff-cluster" :role "judgment"}}
   "返事 #(status 本文) の本文を返すため(300 以上・届かないなら理由つきの RemoteJobFailed — 本番の raise-for-status に当たる)。"
   (when (or (is (get answer 0) None) (>= (get answer 0) 300))
     (raise (RemoteJobFailed (.format "{}: coordinator の返事 {} {}" what (get answer 0) (get answer 1)))))
@@ -787,12 +787,33 @@
 
 
 (deff refused-or-body [#^ tuple answer #^ str what]  ; defk にできない: 答えの節が返事を Program への答えか例外に変える純粋な判断
-  {:pre [(: answer tuple) (: what str)] :post [(: % "返事の本文(形は口ごと)")] :tags {:context "doeff-cluster" :role "judgment"}}
+  {:pre [(: answer tuple) (: what str)] :post [(: % (| dict list str int float bool None PlainText))] :tags {:context "doeff-cluster" :role "judgment"}}
   "切り離した task と温める表の口の返事を読むため: 呼び手の誤り(400・409・413・429)は本番の client と同じ DetachedRefused
    (detached.detached-refusal)、それ以外は answered-body。"
   (let [refusal (detached-refusal (get answer 0) (if (isinstance (get answer 1) dict) (get answer 1) None))]
     (when refusal (raise refusal))
     (answered-body answer what)))
+
+
+(deff object-body [#^ (| dict list str int float bool None PlainText) body #^ str what]  ; defk にできない: 答えの節が返事を Program への答えか例外に変える純粋な判断
+  {:pre [(: body (| dict list str int float bool None PlainText)) (: what str)] :post [(: % dict)] :tags {:context "doeff-cluster" :role "judgment"}}
+  "欄を読む口の本文が JSON の object であることを確かめて dict として返すため(object でない本文は本番の送り手と同じく
+   RemoteJobFailed — 型を持たない本文を添字で読まない)。"
+  (if (isinstance body dict)
+      body
+      (raise (RemoteJobFailed (.format "{}: coordinator の返事の本文が object でない: {!r}" what body)))))
+
+
+(deff answered-object [#^ tuple answer #^ str what]  ; defk にできない: 答えの節が返事を Program への答えか例外に変える純粋な判断
+  {:pre [(: answer tuple) (: what str)] :post [(: % dict)] :tags {:context "doeff-cluster" :role "judgment"}}
+  "欄を読む口の返事 #(status 本文) の本文を dict で返すため(answered-body の後に object であることを確かめる)。"
+  (object-body (answered-body answer what) what))
+
+
+(deff refused-or-object [#^ tuple answer #^ str what]  ; defk にできない: 答えの節が返事を Program への答えか例外に変える純粋な判断
+  {:pre [(: answer tuple) (: what str)] :post [(: % dict)] :tags {:context "doeff-cluster" :role "judgment"}}
+  "切り離した task と温める表の口の返事の本文を dict で返すため(refused-or-body の後に object であることを確かめる)。"
+  (object-body (refused-or-body answer what) what))
 
 
 (deff unreached-reason [#^ tuple answer]  ; defk にできない: 答えの節が返事の理由を読む純粋な判断
@@ -820,7 +841,7 @@
   (answered-body put "task の Program を置けない")
   (<- sent tuple (send-request link "POST" "/tasks" {}
                                (task-submit-body sha link.revision needs name TASK-LEASE-SECONDS link.runtime-env environ)))
-  (val id (get (answered-body sent "task を出せない") "task"))
+  (val id (get (answered-object sent "task を出せない") "task"))
   (var outcome None)
   (try
     (while (is outcome None)
@@ -861,7 +882,7 @@
                                       (detached-submit-body sha link.revision needs name lease-seconds retain-seconds declared environ)))
           (if (is (get sent 0) None)
               (submit-unreachable (unreached-reason sent))
-              (DetachedSubmitted key (get (refused-or-body sent "task を出せない") "created"))))))
+              (DetachedSubmitted key (get (refused-or-object sent "task を出せない") "created"))))))
 
 
 (defk bell-span [view timeout-seconds waited]
@@ -894,8 +915,8 @@
     (<- now int (now-epoch-ms))
     (val waited (/ (- now started) 1000.0))
     (val view (cond (is (get read 0) None) None
-                    (= (get read 0) 503) (get read 1)
-                    True (refused-or-body read "task を読めない")))
+                    (= (get read 0) 503) (object-body (get read 1) "task を読めない")
+                    True (refused-or-object read "task を読めない")))
     (:= answer (awaited-answer view (unreached-reason read) key waited timeout-seconds))
     (when (is answer None)
       (<- span (| float None) (bell-span view timeout-seconds waited))
@@ -933,7 +954,7 @@
   (<- read tuple (send-resent link "GET" "/state" {} None))
   (if (is (get read 0) None)
       (runners-unreachable (unreached-reason read))
-      (runner-facts-of-view (get (answered-body read "名簿を読めない") "workers"))))
+      (runner-facts-of-view (get (answered-object read "名簿を読めない") "workers"))))
 
 
 (deff warm-answer-of [#^ tuple answer #^ str what]  ; defk にできない: 答えの節が返事を Program への答えに変える純粋な判断
@@ -1023,7 +1044,7 @@
   ;; (SIM-PASSABLE — 巻き戻しの Wait・Cancel)は通す。止めの合図(KillOf が None — 優雅な停止)の後の後始末は通す。
   (EffectBase []
     :when (not (isinstance effect SIM-PASSABLE))
-    (<- killed (KillOf pid))
+    (<- killed (| SimExit None) (KillOf pid))
     (if (is killed None)
         (reperform effect)
         (raise (UnhandledEffect (.format "sim: 落ちた process {} の effect {} は届かない(exit {})" pid (. (type effect) __name__)
@@ -1099,10 +1120,10 @@
     (resume awaited))
   (CancelDetached [key]
     (<- answer tuple (send-resent link "POST" (detached-path key "/cancel") {} None))
-    (resume (get (refused-or-body answer "取り消せない") "cancelled")))
+    (resume (get (refused-or-object answer "取り消せない") "cancelled")))
   (ReleaseDetached [key]
     (<- answer tuple (send-resent link "DELETE" (detached-path key "") {} None))
-    (resume (get (refused-or-body answer "保持を解けない") "released")))
+    (resume (get (refused-or-object answer "保持を解けない") "released")))
   (ReadRunners []
     (<- runners (read-runners link))
     (resume runners))
@@ -1584,7 +1605,7 @@
     (<- written tuple (if (= (get current 0) 404)
                           (send-request link "POST" "/resources/Service" {} (create-body row None))
                           (send-request link "PUT" path {}
-                                        (let [body (answered-body current (+ "Service " (get row "name")))]
+                                        (let [body (answered-object current (+ "Service " (get row "name")))]
                                           {"resourceVersion" (get body "resourceVersion") "spec" (spec-for-update row (get body "spec") None)}))))
     (answered-body written (+ "Service " (get row "name"))))
   (tuple (gfor row declaration.rows (get row "name"))))
