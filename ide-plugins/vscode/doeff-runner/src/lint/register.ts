@@ -11,7 +11,7 @@ import { ChildProcessLinter } from './runner';
 import { pauseDelayMs, semanticStatus } from './semantic';
 import { LintService } from './service';
 import { LintStore } from './store';
-import type { MentionsOf } from '../read/locate';
+import { readViolationRef, REVEAL_IN_VIOLATIONS_COMMAND, type MentionsOf } from '../read/locate';
 import {
   ALL_VIOLATIONS,
   filterText,
@@ -175,6 +175,30 @@ export function registerLint(
     vscode.commands.registerCommand('doeff-runner.lint.toggleRules', () => {
       violations.toggleRules();
       violationsView.message = violations.showing === 'rules' ? 'linter の規則の一覧(灰色 = 針なしで見ていない規則)' : undefined;
+    }),
+    // 読む面の違反の吹き出しの「show in violations」— 違反の表の該当の項目を見せる(REVEAL_VIOLATION_COMMAND の逆向き・#1685)。
+    // 規則の一覧を出していれば違反の一覧へ戻し、絞り込みで隠れていれば絞り込みを外してから探す
+    vscode.commands.registerCommand(REVEAL_IN_VIOLATIONS_COMMAND, async (raw: unknown) => {
+      const ref = readViolationRef(raw);
+      if (ref === undefined) {
+        return;
+      }
+      if (violations.showing === 'rules') {
+        violations.toggleRules();
+        violationsView.message = undefined;
+      }
+      const narrowed = violations.filter.level !== 'all' || violations.filter.standing !== 'all';
+      const direct = violations.trailOf(ref);
+      if (direct === undefined && narrowed) {
+        showFilter(ALL_VIOLATIONS);
+      }
+      const trail = direct ?? violations.trailOf(ref);
+      if (trail === undefined) {
+        void vscode.window.showInformationMessage(`違反の表に ${ref.rule}(${ref.place.path}:${ref.place.start.line + 1})の項目がありません — linter の結果が変わった可能性があります`);
+        return;
+      }
+      await vscode.commands.executeCommand('doeff-lint-violations.focus');
+      await violationsView.reveal(trail[trail.length - 1], { select: true, focus: true, expand: true });
     }),
     vscode.workspace.onDidChangeConfiguration((event) => {
       if (event.affectsConfiguration(LINT_COMMAND_SETTING)) {

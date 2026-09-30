@@ -19,6 +19,7 @@ import {
 } from './severity';
 import { LINT_LEVELS, type LintLevel } from './contract';
 import type { RootRunEntry } from './store';
+import type { ViolationRef } from '../read/locate';
 
 /** 表の値の並びへ 1 件足す(数千件でも線形に束ねる)。 */
 export function pushTo<K, V>(table: Map<K, V[]>, key: K, value: V): void {
@@ -397,6 +398,40 @@ export function lintChildren(node: LintNode): LintNode[] {
       throw new Error(`網羅されていない節: ${JSON.stringify(unreachable)}`);
     }
   }
+}
+
+/**
+ * 違反の表の中の、目印(規則の ID と位置)の違反の節までの道 — 束 → file → 違反(読む面の吹き出しの「show in violations」から
+ * 表の項目を見せるため・agora-redesign #1685)。子は渡された口で引く(表が作った同じ節を VS Code の reveal に渡すため)。
+ * 表に無ければ undefined(絞り込みで隠れた・規則の一覧を出している・linter を走らせ直して消えた)。
+ */
+export function violationTrail(
+  roots: readonly LintNode[],
+  ref: ViolationRef,
+  childrenOf: (node: LintNode) => readonly LintNode[]
+): readonly LintNode[] | undefined {
+  const same = (v: LintViolation): boolean =>
+    v.rule === ref.rule &&
+    path.normalize(v.path) === path.normalize(ref.place.path) &&
+    v.range.start.line === ref.place.start.line &&
+    v.range.start.character === ref.place.start.character &&
+    v.range.end.line === ref.place.end.line &&
+    v.range.end.character === ref.place.end.character;
+  for (const group of roots) {
+    if (group.tag !== 'group' || group.rule !== ref.rule || !group.violations.some(same)) {
+      continue;
+    }
+    for (const file of childrenOf(group)) {
+      if (file.tag !== 'file' || path.normalize(file.path) !== path.normalize(ref.place.path)) {
+        continue;
+      }
+      const hit = childrenOf(file).find((n) => n.tag === 'violation' && same(n.violation));
+      if (hit !== undefined) {
+        return [group, file, hit];
+      }
+    }
+  }
+  return undefined;
 }
 
 /** 行の長さが分からない時に、行全体とみなす列(VS Code は行の長さに切り詰める)。 */

@@ -54,12 +54,13 @@ function planePage(): { readonly html: string; readonly graph: CallGraph } {
   });
   const html = renderPage({
     place: 'pkg/plane.hy',
-    state: { tag: 'cards', cards, selection: new Map() },
+    state: { tag: 'cards', band: [], cards, selection: new Map() },
     glyphs: { effect: () => undefined },
     fold: unfoldAll(INITIAL_FOLD, cards.map((c) => cardKey(c.definition))),
     graph,
     tree: undefined,
     coloring: undefined,
+    ruleTitles: new Map(),
     cspSource: 'vscode-resource:',
     nonce: 'n'
   });
@@ -139,12 +140,13 @@ suite('定義を読む面 — チップと本体の名を押せる(v12・U19a)',
     });
     const html = renderPage({
       place: 'pkg/entities.hy',
-      state: { tag: 'cards', cards, selection: new Map() },
+      state: { tag: 'cards', band: [], cards, selection: new Map() },
       glyphs: { effect: () => undefined },
       fold: unfoldAll(INITIAL_FOLD, cards.map((c) => cardKey(c.definition))),
       graph,
       tree: undefined,
       coloring: undefined,
+      ruleTitles: new Map(),
       cspSource: 'vscode-resource:',
       nonce: 'n'
     });
@@ -294,7 +296,7 @@ suite('定義を読む面 — repo 全体の面でも名を押せる(v12・U19c�
   const listedHtml = (pinned: readonly string[]): string => {
     const { cards, graph } = workspace();
     const fold = unfoldAll(INITIAL_FOLD, cards.map((c) => cardKey(c.definition)));
-    return renderWorkspaceCards(state(cards, pinned), { glyphs: { effect: () => undefined }, fold, graph, coloringOf: () => undefined }).html;
+    return renderWorkspaceCards(state(cards, pinned), { glyphs: { effect: () => undefined }, fold, graph, coloringOf: () => undefined, ruleTitles: new Map() }).html;
   };
 
   test('積んだカードの頭のチップ: repo の型(Row)は押せ、組み込みの型(str)は押せない', () => {
@@ -327,6 +329,7 @@ suite('定義を読む面 — repo 全体の面でも名を押せる(v12・U19c�
       graph,
       tree: undefined,
       coloring: undefined,
+      ruleTitles: new Map(),
       cspSource: 'vscode-resource:',
       nonce: 'n'
     });

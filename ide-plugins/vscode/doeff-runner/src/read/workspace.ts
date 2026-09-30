@@ -15,7 +15,19 @@ import { followEntity } from './goto';
 import type { Glyphs } from './html';
 import { LABELS } from './labels';
 import { buildCards, parseAxisKey, SEARCH_KEY, setSearch, toggle, visibleCards, type Card, type Selection } from './model';
-import { COMPARE_NONCE, planeEnabled, READING_PLANE_SETTING, readMessage, REDRAW_DELAY_MS, type FoldMemory, type GraphTable, type PlaneMessage, type ReadingPlaneParts } from './panel';
+import { ruleTitles } from './hover';
+import {
+  COMPARE_NONCE,
+  followViolation,
+  planeEnabled,
+  READING_PLANE_SETTING,
+  readMessage,
+  REDRAW_DELAY_MS,
+  type FoldMemory,
+  type GraphTable,
+  type PlaneMessage,
+  type ReadingPlaneParts
+} from './panel';
 import { lineClasses, renderCard, renderPage, renderTreePart, renderWorkspaceCards, type CardContext, type WorkspaceState } from './render';
 import { buildCallTree, DEFAULT_TREE_DEPTH, relationOf, type CallTree, type TreeQuery } from './tree';
 
@@ -135,7 +147,7 @@ export class WorkspacePlane implements vscode.Disposable {
 
   /** カードを描く材料。 */
   private context(): CardContext {
-    return { glyphs: this.glyphs, fold: this.fold, graph: this.graphs.graph, coloringOf: (card) => this.coloringOf(card) };
+    return { glyphs: this.glyphs, fold: this.fold, graph: this.graphs.graph, coloringOf: (card) => this.coloringOf(card), ruleTitles: ruleTitles(this.lint.rules()) };
   }
 
   /** 木の今の形。 */
@@ -160,6 +172,7 @@ export class WorkspacePlane implements vscode.Disposable {
       graph: this.graphs.graph,
       tree: this.treePart(),
       coloring: undefined,
+      ruleTitles: ruleTitles(this.lint.rules()),
       cspSource: this.panel.webview.cspSource,
       nonce
     });
@@ -340,6 +353,10 @@ export class WorkspacePlane implements vscode.Disposable {
         return;
       case 'ready':
         // repo 全体の面の知らせは頁の操作への答えだけ(頁が読み込めた後にしか送らない)なので、溜めずに済む
+        return;
+      case 'violation-open':
+      case 'violation-list':
+        followViolation(message);
         return;
       default: {
         const unreachable: never = message;

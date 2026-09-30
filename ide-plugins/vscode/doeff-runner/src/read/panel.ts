@@ -27,8 +27,21 @@ import {
 } from './fold';
 import { followEntity } from './goto';
 import { LABELS } from './labels';
-import { locate, parseLocation, REVEAL_ENTITY_COMMAND, REVEAL_VIOLATION_COMMAND, violationAction, type RevealTarget, type ViolationPlace } from './locate';
-import { buildCards, facets, parseAxisKey, SEARCH_KEY, setSearch, toggle, visibleCards, type Card, type Selection } from './model';
+import {
+  locate,
+  parseLocation,
+  readViolationRef,
+  REVEAL_ENTITY_COMMAND,
+  REVEAL_IN_VIOLATIONS_COMMAND,
+  REVEAL_VIOLATION_COMMAND,
+  violationAction,
+  type RevealTarget,
+  type ViolationPlace,
+  type ViolationRef
+} from './locate';
+import { bandViolations, buildCards, facets, parseAxisKey, SEARCH_KEY, setSearch, toggle, visibleCards, type Card, type Selection } from './model';
+import { ruleTitles } from './hover';
+import type { LintViolation } from '../lint/contract';
 import type { Glyphs } from './html';
 import { lineClasses, renderFacets, renderPage, renderTreePart, summaryText, type PlaneState } from './render';
 import { buildCallGraph, buildCallTree, DEFAULT_TREE_DEPTH, relationOf, type CallGraph, type CallTree, type TreeDirection, type TreeQuery } from './tree';
@@ -64,6 +77,10 @@ export type PlaneMessage =
   | { readonly type: 'tree-tests' }
   /** 実体の名を押した(候補の完全修飾名 — 複数なら選ばせる。editor = Cmd / Ctrl を押していた — v12) */
   | { readonly type: 'reveal'; readonly qualifiedNames: readonly string[]; readonly editor: boolean }
+  /** 違反の吹き出しの「open in editor」— 違反の file を editor で開き、範囲を選ぶ(v13・#1685) */
+  | { readonly type: 'violation-open'; readonly ref: ViolationRef }
+  /** 違反の吹き出しの「show in violations」— 違反の表(linter)の該当の項目へ(v13・#1685) */
+  | { readonly type: 'violation-list'; readonly ref: ViolationRef }
   /** 頁が読み込めて知らせを受けられる(html を差し替えた後 — それまで送る知らせは溜める) */
   | { readonly type: 'ready' };
 
@@ -135,8 +152,35 @@ export function readMessage(raw: unknown): PlaneMessage | undefined {
       const field = text('field');
       return field !== undefined ? { type, field } : undefined;
     }
+    case 'violation-open':
+    case 'violation-list': {
+      const ref = readViolationRef(fields.get('ref'));
+      return ref !== undefined ? { type, ref } : undefined;
+    }
     default:
       return undefined;
+  }
+}
+
+/**
+ * 違反の吹き出しのボタンに応える(file の面と repo 全体の面で同じ)— editor で違反の file を開いて範囲を選ぶ(読む面を既定に
+ * した .hy でも text editor で開く)か、違反の表の該当の項目を見せる命令(lint の側が登録)を呼ぶ。
+ */
+export function followViolation(message: Extract<PlaneMessage, { readonly type: 'violation-open' | 'violation-list' }>): void {
+  switch (message.type) {
+    case 'violation-open': {
+      const { path: filePath, start, end } = message.ref.place;
+      const selection = new vscode.Range(start.line, start.character, end.line, end.character);
+      void vscode.window.showTextDocument(vscode.Uri.file(filePath), { selection, preview: false });
+      return;
+    }
+    case 'violation-list':
+      void vscode.commands.executeCommand(REVEAL_IN_VIOLATIONS_COMMAND, message.ref);
+      return;
+    default: {
+      const unreachable: never = message;
+      throw new Error(`網羅されていない知らせ: ${JSON.stringify(unreachable)}`);
+    }
   }
 }
 
@@ -241,6 +285,8 @@ class PlanePanel implements vscode.Disposable {
   /** 開いたら見せる定義(索引がまだ無い時に待つ) */
   private revealWanted: RevealTarget | undefined;
   private cards: readonly Card[] = [];
+  /** どのカードにも置けなかった違反(file の見出しの帯 — v13) */
+  private band: readonly LintViolation[] = [];
   private lastHtml = '';
   private timer: NodeJS.Timeout | undefined;
   private readonly disposables: vscode.Disposable[] = [];
@@ -373,17 +419,19 @@ class PlanePanel implements vscode.Disposable {
       return { tag: 'message', text };
     }
     const seen = this.lint.signaturesFor(filePath);
+    const violations = this.lint.violationsIn(filePath);
     this.cards = buildCards({
       definitions: entry.file.definitions,
       signatures: seen !== undefined && seen.version === this.document.version ? seen.signatures : [],
       bodies: seen !== undefined && seen.version === this.document.version ? seen.bodies : [],
       bindings: seen !== undefined && seen.version === this.document.version ? seen.bindings : [],
-      violations: this.lint.violationsIn(filePath),
+      violations,
       lines: this.document.getText().split(/\r?\n/),
       testsOf: (qn) => relationOf(this.graphs.graph, qn).tests,
       place: path.relative(entry.root, filePath)
     });
-    return { tag: 'cards', cards: this.cards, selection: this.selection };
+    this.band = bandViolations(violations, this.cards);
+    return { tag: 'cards', cards: this.cards, band: this.band, selection: this.selection };
   }
 
   /** 続けて変わる時に 1 度だけ描き直す。 */
@@ -414,6 +462,7 @@ class PlanePanel implements vscode.Disposable {
       graph: this.graphs.graph,
       tree: this.treePart(),
       coloring: this.currentColoring(),
+      ruleTitles: ruleTitles(this.lint.rules()),
       cspSource: this.panel.webview.cspSource,
       nonce
     });
@@ -465,7 +514,7 @@ class PlanePanel implements vscode.Disposable {
 
   /** 送った変化の入った頁を覚え直す(次の描き直しで同じ頁を作り直さないため)。 */
   private remember(): void {
-    this.lastHtml = this.page({ tag: 'cards', cards: this.cards, selection: this.selection }, COMPARE_NONCE);
+    this.lastHtml = this.page({ tag: 'cards', cards: this.cards, band: this.band, selection: this.selection }, COMPARE_NONCE);
   }
 
   /** 選択を変えた結果(札の並び・見せるカード)だけを webview へ送る(頁ごと描き直すと読んでいる位置が飛ぶため)。 */
@@ -572,6 +621,10 @@ class PlanePanel implements vscode.Disposable {
             this.navigator.revealElsewhere(to.path, target);
           }
         });
+        return;
+      case 'violation-open':
+      case 'violation-list':
+        followViolation(message);
         return;
       default: {
         const unreachable: never = message;
