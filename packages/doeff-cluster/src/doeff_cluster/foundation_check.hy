@@ -39,9 +39,19 @@
    出した所で同じ handler の下で数える(以前の既定は名 Spawn だけで、Try と SqlTransaction の中の effect が検の外にあった)。fold = 宣言の外で同じく数える運び手の名(既定なし)。"
   (import doeff_effect_analyzer.program_effects [analyze_program qualified-name runs-where-performed])
   (import doeff_effect_analyzer.handler_effects [check_coverage])
-  (setv report (analyze_program job :bindings (if (is foundation None) None {parameter foundation}))
-        coverage (check_coverage report [] :include (fn [carrier] (or (runs-where-performed carrier)
-                                                                      (in (getattr carrier "__name__" "") fold)))))
-  (FoundationClosure :gaps (tuple (lfor g coverage.gaps (.format "{} ← {}" (qualified-name g.effect) g.origin)))
-                     :unknown (tuple coverage.unknown-handlers)
-                     :unresolved (tuple (lfor u coverage.unresolved (.format "{}: {}({})" u.reason u.text u.location)))))
+  (import doeff_effect_analyzer.result_cache [cached-result importable-name])
+  (setv analyze
+        (fn []
+          (setv report (analyze_program job :bindings (if (is foundation None) None {parameter foundation}))
+                coverage (check_coverage report [] :include (fn [carrier] (or (runs-where-performed carrier)
+                                                                              (in (getattr carrier "__name__" "") fold)))))
+          (FoundationClosure :gaps (tuple (lfor g coverage.gaps (.format "{} ← {}" (qualified-name g.effect) g.origin)))
+                             :unknown (tuple coverage.unknown-handlers)
+                             :unresolved (tuple (lfor u coverage.unresolved (.format "{}: {}({})" u.reason u.text u.location))))))
+  ;; 答えは、読み込んだ module の file が変わらない間 disk から読む(result_cache — 鍵に入る物と入らない物はその module の説明)。job か土台が名で引けない時は鍵が無いので毎回読む。
+  (setv job-name (importable-name job)
+        foundation-name (if (is foundation None) "-" (importable-name foundation)))
+  (cached-result (if (and job-name foundation-name)
+                   #("doeff-cluster.foundation-closure" job-name foundation-name parameter #* (map str fold))
+                   None)
+                 analyze))
