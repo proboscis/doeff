@@ -49,6 +49,8 @@
 
 
 (deftest test-a-declared-program-reaches-the-worker-and-runs-in-job-entry [served-coordinator tmp-path]
+  ;; fixture の答えは coordinator の base URL の文字列(型の無い fixture の値を、ここで str に絞ってから URL を組む)。
+  (assert (isinstance served-coordinator str) served-coordinator)
   (<- declaration Declaration (declaration-for-this-test))
   (val sha (get (get declaration.rows 0) "run" "program"))
   ;; declare: 置き場へ Program を置いてから Service を書く。
