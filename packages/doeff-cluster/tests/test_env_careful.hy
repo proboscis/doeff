@@ -313,6 +313,8 @@
   (.start rig.envs warm.key warm.runtime-env :warm True)
   (<- view (wait-ready rig warm.key))
   (assert (= view.state CodeState.READY) view)
+  ;; 整った木は置き場の path を持つ(READY の約束 — path の無い READY は置き方の誤りなので名指して赤)。
+  (assert (is-not view.path None) view)
   ;; task が来た最初の拍で子を起こす(PrepareEnv を挟まない = 準備が task の待ちに入らない)
   (val tasks (/ rig.state "tasks"))
   (val spec (task-spec {"id" "t8" "revision" "" "versions" (current-versions) "program" SAMPLE-TASK-PROGRAM "runtimeEnv" declared}

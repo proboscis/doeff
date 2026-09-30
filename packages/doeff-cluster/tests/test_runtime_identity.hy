@@ -15,8 +15,8 @@
 (import doeff_core_effects.scheduler [scheduled])
 (import doeff_cluster.runtime_env_model [RuntimeEnv RepoCheckout PythonProject EnvVar runtime-env->json env-key])
 (import doeff_cluster.env_prepare [EnvMarker env-marker->json])
-(import doeff_cluster.runtime_identity [IdentityFailureKind ModuleOrigin ProcessFacts RuntimeIdentity RepoCommit
-                                          check-runtime-identity given-runtime-facts])
+(import doeff_cluster.runtime_identity [IdentityFailureKind ModuleOrigin ProcessFacts RuntimeIdentity RuntimeIdentityMismatch
+                                          RepoCommit check-runtime-identity given-runtime-facts])
 
 (val AC-COMMIT (* "a" 40))
 (val DF-COMMIT (* "d" 40))
@@ -74,8 +74,16 @@
   (done (with_handlers [(given-runtime-facts read)] (check-runtime-identity MODULES))))
 
 
+(defn #^ RuntimeIdentityMismatch mismatch-of [#^ ProcessFacts read]
+  "食い違いの筋書きの答え — 確かめが食い違い(RuntimeIdentityMismatch)を返したことを先に確かめてから、種類と説明を読むため
+   (一致を返した時は、属性の誤りで落ちるのではなく、食い違いを見逃したと名指して赤にする)。"
+  (setv got (judged read))
+  (assert (isinstance got RuntimeIdentityMismatch) (+ "食い違いのはずが一致を返した: " (repr got)))
+  got)
+
+
 (defn kind-of [#^ ProcessFacts read]
-  (. (judged read) kind))
+  (. (mismatch-of read) kind))
 
 
 (defn origins-with [#^ str module #^ str file]
@@ -106,20 +114,20 @@
 
 
 (defn test-unknown-marker-format []
-  (setv got (judged (read-of :marker-json (marker-json DECLARED :format 99))))
+  (setv got (mismatch-of (read-of :marker-json (marker-json DECLARED :format 99))))
   (assert (= got.kind IdentityFailureKind.MARKER-MISMATCH))
   (assert (in "99" got.detail)))
 
 
 (defn test-passed-key-differs-from-declaration []
-  (setv got (judged (read-of :key "k0")))
+  (setv got (mismatch-of (read-of :key "k0")))
   (assert (= got.kind IdentityFailureKind.MARKER-MISMATCH))
   (assert (in "k0" got.detail)))
 
 
 (defn test-root-of-another-commit []
   ;; 反例: 前の commit の root(印の宣言とキーが古い)の上で、新しい宣言を渡されて起きた process。
-  (setv got (judged (read-of :marker-json (marker-json (env-of OTHER-COMMIT)))))
+  (setv got (mismatch-of (read-of :marker-json (marker-json (env-of OTHER-COMMIT)))))
   (assert (= got.kind IdentityFailureKind.MARKER-MISMATCH))
   (assert (in (key-of (env-of OTHER-COMMIT)) got.detail)))
 
@@ -127,7 +135,7 @@
 (defn test-module-from-image-venv-is-outside []
   ;; 反例: 宣言の root で起きたのに、doeff_cluster だけ image の venv から import していた。
   (setv image-file "/opt/app/doeff/.venv/lib/python3.14t/site-packages/doeff_cluster/__init__.py")
-  (setv got (judged (read-of :origins (origins-with "doeff_cluster" image-file))))
+  (setv got (mismatch-of (read-of :origins (origins-with "doeff_cluster" image-file))))
   (assert (= got.kind IdentityFailureKind.MODULE-OUTSIDE-ROOT))
   (assert (in "doeff_cluster" got.detail))
   (assert (in image-file got.detail))
@@ -137,19 +145,19 @@
 (defn test-module-from-the-roots-own-venv-is-outside []
   ;; 反例: root の中でも project の venv(第三者の package の置き場 — editable でない古い wheel)から来た module は数えない。
   (setv venv-file (+ ROOT "/app/.venv/lib/python3.14t/site-packages/doeff_cluster/__init__.py"))
-  (setv got (judged (read-of :origins (origins-with "doeff_cluster" venv-file))))
+  (setv got (mismatch-of (read-of :origins (origins-with "doeff_cluster" venv-file))))
   (assert (= got.kind IdentityFailureKind.MODULE-OUTSIDE-ROOT))
   (assert (in venv-file got.detail)))
 
 
 (defn test-module-in-root-but-outside-declared-repos []
   ;; 反例: root の中でも、宣言の repo の dir の外(例: 名が接頭辞で重なる別の dir)は一致と数えない。
-  (setv got (judged (read-of :origins (origins-with "app_jobs"
+  (setv got (mismatch-of (read-of :origins (origins-with "app_jobs"
                                                     (+ ROOT "/app-old/app_jobs/__init__.py")))))
   (assert (= got.kind IdentityFailureKind.MODULE-OUTSIDE-ROOT)))
 
 
 (defn test-unimportable-module-is-outside []
-  (setv got (judged (read-of :origins (cut IN-ROOT 2))))
+  (setv got (mismatch-of (read-of :origins (cut IN-ROOT 2))))
   (assert (= got.kind IdentityFailureKind.MODULE-OUTSIDE-ROOT))
   (assert (in "import できない" got.detail)))
