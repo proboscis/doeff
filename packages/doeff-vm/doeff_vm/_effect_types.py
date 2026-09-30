@@ -58,6 +58,23 @@ _UNRESOLVED = object()
 _CATCH_ALL = (typing.Any, object, EffectBase)
 
 
+class PassedEffects(NamedTuple):
+    """Effects a catch-all handler passes on untouched: an instance of ``passes``
+    that is not an instance of ``keeps``.
+
+    A handler whose one catch-all clause is guarded by
+    ``(not (isinstance effect X))`` answers nothing for an ``X`` effect that no
+    earlier clause names — it passes it on first thing. ``passes`` is ``X`` and
+    ``keeps`` the types of the clauses before the catch-all (the handler still
+    sees those, whatever their guards say). The VM skips the handler for such
+    an effect without calling into Python — the complement of the annotation
+    filter, which cannot say "everything except X" (agora-redesign #2008).
+    """
+
+    passes: tuple[type, ...]
+    keeps: tuple[type, ...]
+
+
 class HandlerSpec(NamedTuple):
     """What the VM captures once when it installs a handler (WithHandler).
 
@@ -66,14 +83,47 @@ class HandlerSpec(NamedTuple):
     undecorated generator function. The VM calls it directly and runs the
     generator as the handler's stream, instead of evaluating the ``Expand`` the
     ``@do`` wrapper would build for every effect (same end state).
+    ``passed``: the effects the handler passes on untouched (``PassedEffects``),
+    or None.
     """
 
     effect_types: EffectTypes
     generator_function: object
     tail_resume_lines: tuple[int, ...]
+    passed: "PassedEffects | None"
 
 
 _SPEC_ATTR = "__doeff_handler_spec__"
+_PASSES_ATTR = "__doeff_passes__"
+
+
+def declare_passes(handler: types.FunctionType, source: typing.Callable[[], tuple[object, object]]) -> types.FunctionType:
+    """Record on ``handler`` where its passed effects come from; returns ``handler``.
+
+    The defhandler / handle expansion calls this with a thunk answering
+    ``(X, (T1, ...))`` — the guard's type and the earlier clauses' types. The
+    thunk runs once, when the VM first installs the handler (the guard's ``X``
+    is a handler parameter or a module constant, bound once), so a name defined
+    after the handler still resolves.
+    """
+    setattr(handler, _PASSES_ATTR, source)
+    return handler
+
+
+def _passed_effects(handler: types.FunctionType) -> PassedEffects | None:
+    """The effects the VM may skip this handler for — so a catch-all guard does not cost a Python call per effect."""
+    source = handler.__dict__.get(_PASSES_ATTR)
+    if source is None:
+        return None
+    try:
+        passes, keeps = source()
+    except (NameError, AttributeError):
+        # 番の型が install の時に解けない — 今までどおり全部の effect を handler が受ける(番がその場で判じる)
+        return None
+    passes = passes if isinstance(passes, tuple) else (passes,)
+    if not passes or not all(isinstance(t, type) for t in passes + tuple(keeps)):
+        return None
+    return PassedEffects(passes, tuple(keeps))
 
 
 def handler_spec(handler: object) -> HandlerSpec:
@@ -86,6 +136,7 @@ def handler_spec(handler: object) -> HandlerSpec:
             handler_effect_types(handler),
             handler.__dict__.get("__doeff_generator_function__"),
             tuple(handler.__dict__.get("__doeff_tail_resume_lines__", ())),
+            _passed_effects(handler),
         )
         setattr(handler, _SPEC_ATTR, spec)
         return spec
@@ -100,8 +151,9 @@ def handler_spec(handler: object) -> HandlerSpec:
                 handler_effect_types(handler),
                 types.MethodType(generator, handler.__self__),
                 tuple(definition.get("__doeff_tail_resume_lines__", ())),
+                None,
             )
-    return HandlerSpec(handler_effect_types(handler), None, ())
+    return HandlerSpec(handler_effect_types(handler), None, (), None)
 
 
 class _EffectParameter(NamedTuple):

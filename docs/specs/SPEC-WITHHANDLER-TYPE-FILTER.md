@@ -348,3 +348,30 @@ Phases 2-4 mirror the WithIntercept type filtering (VM-DEBT-008, PR #194). The R
 - **Rust-native type registry**: Map Python type objects to Rust-side type IDs at handler registration. Fully GIL-free dispatch.
 
 These are implementation details invisible to users. The isinstance semantic contract established in v1 remains the invariant.
+
+---
+
+## Passed effects — the complement filter (agora-redesign #2008)
+
+An annotation says "only these types". A catch-all handler that answers everything *except* `X` cannot say that, so the
+VM entered it for every effect. `defhandler` / `handle` recognise one shape and hand the complement to the VM:
+
+```hy
+(defhandler fence [passable]
+  (Spawn [] ...)                                   ; earlier clauses: their types are "kept"
+  (EffectBase []
+    :when (not (isinstance effect passable))       ; the one catch-all clause, guarded exactly like this
+    (raise ...)))
+```
+
+For such a handler an effect that is an instance of `X` (`passable`) and of none of the earlier clause types falls
+straight to `(Pass effect k)`. The expansion records a thunk answering `#(X #(earlier clause types))`
+(`doeff_vm._effect_types.declare_passes`); `handler_spec` runs it once at install and stores
+`HandlerSpec.passed = PassedEffects(passes, keeps)`. `PythonCallable::accepts` then skips the handler when
+`isinstance(effect, passes) and not isinstance(effect, keeps)` — the same end state as the guard failing.
+
+- Only that exact guard shape is recognised, with no fields on the catch-all clause and an `X` that reads neither
+  `effect` nor a session name. Anything else → `passed = None` (the handler sees every effect, as before).
+- `X` is read once at install (a handler parameter or a module constant — bound once); a name defined after the
+  handler resolves. An `X` that cannot be resolved there, or that is not a type / tuple of types → `None`.
+- An `isinstance` error never hides an effect: the handler is entered.
