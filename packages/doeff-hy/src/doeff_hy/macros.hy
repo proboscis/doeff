@@ -18,6 +18,8 @@
 ;;;   - fnk:         no contracts (anonymous)
 ;;;   - do!:         :pre/:post optional, supports (: name Type) shorthand
 ;;;   - (: name Type) in :pre/:post expands to (isinstance name Type)
+;;;   - 要素の型つきの総称型も書ける: (: % (get tuple #(X ...))) / (: % (of dict K V))(和の中も可)— 実行時に確かめるのは
+;;;     外側の型(tuple / dict)だけで、要素の型は静的な型検査が見る(_runtime-type・agora-redesign #1790)
 ;;;   - Arbitrary expressions can be mixed with (: ...) in the same list
 
 ;; ---------------------------------------------------------------------------
@@ -284,13 +286,28 @@ defk {name}: :post must include a return type check (: % Type).
    引数に `None` は渡せない(`TypeError: isinstance() arg 2 must be a type ...`)。
    `(: % None)` が実行時に型エラーになっていた(2026-09-23 `sim_clock.hy` の
    `clock-driver` で実測)ので、ここで `None` を `(type None)` へ写す。`#(int None)` の
-   組の中も同じく写す。`(| int None)` は Python 3.10 以降の isinstance がそのまま受ける
-   (`int | None` は types.UnionType)ので触らない。"
+   組の中も同じく写す。
+
+   要素の型つきの総称型 `(get tuple #(X ...))` / `(of tuple X ...)` / `(of dict K V)` /
+   `(get dict #(K V))` は、isinstance が受けない(`TypeError: isinstance() argument 2 cannot be
+   a parameterized generic`)ので外側の型(tuple・dict)へ写す — 実行時に確かめるのは外側の型
+   だけで、要素の型は静的な型検査(doeff-hy-check の注記)が見る(agora-redesign #1790 の決め:
+   要素まで実行時に見ると確かめのたびに全要素を回し、入れ子の型の再帰も要る)。
+   `(| A B)` の中も写す(`(| (get tuple #(str ...)) None)` を `(| tuple (type None))` にする —
+   総称型を含む和も isinstance は断る)。和の中の `None` は Python 3.10 以降の isinstance が
+   そのまま受けるが、写しても同じ意味。"
   (cond
     (and (isinstance tp hy.models.Symbol) (= (str tp) "None"))
       `(type None)
     (isinstance tp hy.models.Tuple)
       (hy.models.Tuple (lfor item tp (_runtime-type item)))
+    (and (isinstance tp hy.models.Expression) (>= (len tp) 2)
+         (isinstance (get tp 0) hy.models.Symbol) (in (str (get tp 0)) #("get" "of"))
+         (isinstance (get tp 1) hy.models.Symbol))
+      (_runtime-type (get tp 1))
+    (and (isinstance tp hy.models.Expression) (>= (len tp) 2)
+         (isinstance (get tp 0) hy.models.Symbol) (= (str (get tp 0)) "|"))
+      (hy.models.Expression (+ [(get tp 0)] (lfor item (cut tp 1 None) (_runtime-type item))))
     True tp))
 
 ;; ---------------------------------------------------------------------------
