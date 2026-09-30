@@ -12,8 +12,10 @@
 //!   * 答えの組: Hy の defn・defk・deff が長さ 2 以上の組の literal `#(a b)` を答えにする形(最後の式か `(return #(a b))`)。
 //!
 //! 赤にする型(union の枝・入れ物の中身も見る): 素の写像(dict・Mapping・MutableMapping と JSON の値の別名 JsonValue・JsonObject …)・
-//! 素の組(tuple・Tuple)・値の型が object / Any の写像・長さの決まった組 `tuple[A, B]`。赤にしない型: キーで引く索引 `dict[str, Row]`・
-//! 同じ型の列 `tuple[X, ...]`・凍らせた写像。これらの名は Python の型の意味なので linter が持つ。
+//! 素の組(tuple・Tuple)・値の型が object / Any の写像・長さの決まった組 `tuple[A, B]`・要素の型が object / Any の組
+//! `tuple[Any, ...]`(型を付けたことにならない)。赤にしない型: キーで引く索引 `dict[str, Row]`・同じ型の列 `tuple[X, ...]`・
+//! 凍らせた写像。これらの名は Python の型の意味なので linter が持つ。Hy の `(get tuple #(X ...))`・`(of tuple X ...)`・`(of dict K V)`・
+//! `(get dict #(K V))` も同じに読む — doeff-hy がこの形を :pre / :post と欄に書けるようにした(agora-redesign #1790・#1791)。
 //!
 //! 構造を持つ値ではない 3 つの形は、名の形で決めてその種類の赤だけを外す(agora-redesign #1792・#1762 の決定 Q2-2 — Plain・plain_shape):
 //! 並べ替えのキー(名が `…key-of`・`sort-key`・`order-key`)と SQL の引数の並び(`params`・`…-params`)の素の組・組の literal、
@@ -353,6 +355,10 @@ fn generic_problem<T>(base: &str, args: &[&T], problem: &dyn Fn(&T) -> Option<St
     if BARE_TUPLES.contains(&base) {
         if args.len() >= 2 && !ellipsis(args[args.len() - 1]) {
             return Some(format!("長さの決まった組 {}[A, B]", base));
+        }
+        // 同じ型の列 tuple[X, ...] でも、要素の型が object / Any なら型を付けたことにならない(agora-redesign #1791)。
+        if args.len() == 2 && open(args[0]) {
+            return Some(format!("要素の型が開いた組 {}[object/Any, ...]", base));
         }
         return args.iter().filter(|a| !ellipsis(a)).find_map(|a| problem(a));
     }
@@ -871,5 +877,40 @@ mod tests {
                       (defk order-key-of [item]\n  {:pre [] :post [(: % dict)]}\n  {})\n\
                       (defrecord View (#^ (get dict #(str object)) items-by-id))\n";
         assert_eq!(details("a.hy", source), vec!["field:View.items-by-id", "post:order-key-of", "post:rows-by-key"]);
+    }
+
+    // --- 要素の型つきの総称型(agora-redesign #1791・doeff-hy の #1790 の形)-------------------------------------------
+
+    #[test]
+    fn element_typed_tuple_in_post_is_not_flagged() {
+        // 鳴らない例: 要素の型つきの同じ型の列を :post に書いた形(get と of の 2 つの綴り・和の中)。
+        let source = "(defk names [n]\n  {:pre [] :post [(: % (get tuple #(str ...)))]}\n  n)\n\
+                      (defk ids [n]\n  {:pre [] :post [(: % (of tuple int ...))]}\n  n)\n\
+                      (defk maybe [n]\n  {:pre [] :post [(: % (| (get tuple #(str ...)) None))]}\n  n)\n";
+        assert_eq!(details("a.hy", source), Vec::<String>::new());
+    }
+
+    #[test]
+    fn key_and_value_typed_dict_field_is_not_flagged() {
+        // 鳴らない例: キーと値の型つきの写像を record の欄と :post に書いた形。
+        let source = "(defrecord Index (#^ (of dict str int) counts) (#^ (get dict #(str Row)) rows))\n\
+                      (defk totals [n]\n  {:pre [] :post [(: % (of dict str int))]}\n  n)\n";
+        assert_eq!(details("a.hy", source), Vec::<String>::new());
+    }
+
+    #[test]
+    fn bare_tuple_in_post_still_flags() {
+        // 鳴る例: 名に注記の無い defk の :post の素の組(要素の型が無い)。
+        let source = "(defk pairs [n]\n  {:pre [] :post [(: % tuple)]}\n  n)\n";
+        assert_eq!(hits("a.hy", source), vec![("post:pairs".to_string(), "素の組 tuple".to_string())]);
+    }
+
+    #[test]
+    fn open_element_generics_still_flag() {
+        // 鳴る例: 要素の型が Any / object の総称型は型を付けたことにならない(組の要素・写像の値)— Hy と Python。
+        let source = "(defk loose [n]\n  {:pre [] :post [(: % (of tuple Any ...))]}\n  n)\n\
+                      (defrecord Bag (#^ (get tuple #(object ...)) items) (#^ (of dict str Any) extra))\n";
+        assert_eq!(details("a.hy", source), vec!["field:Bag.extra", "field:Bag.items", "post:loose"]);
+        assert_eq!(details("a.py", "def load() -> tuple[Any, ...]:\n    return ()\n"), vec!["return:load"]);
     }
 }
