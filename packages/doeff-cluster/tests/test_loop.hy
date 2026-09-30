@@ -17,23 +17,23 @@
 
 (defclass FakeWorld []
   "子 process とコードの展開を模す。TERM を無視する job と、KILL でも死なない job を指定できる。"
-  (defn __init__ [self [ignore-term #()] [unkillable #()]]
+  (defn #^ None __init__ [self #^ tuple [ignore-term #()] #^ tuple [unkillable #()]]
     ;; 時刻は doeff-time の仮想の時計(epoch 0 から)。now = その epoch ミリ秒(記録の刻)。
     (setv self.clock (SimClock) self.codes {} self.procs {} self.next-pid 100 self.events []
           self.ignore-term ignore-term self.unkillable unkillable self.statuses []))
   (defn [property] #^ int now [self] (clock-ms self.clock))
-  (defn observe [self]
+  (defn #^ WorldView observe [self]
     ;; 展開は依頼の次の拍で終わる。
     (setv views (tuple (gfor #(rev state) (.items self.codes)
       (CodeView rev state (when (= state CodeState.READY) f"/c/{rev}")))))
     (for [rev (list self.codes)] (setv (get self.codes rev) CodeState.READY))
     (WorldView views (tuple (.values self.procs))))
-  (defn start [self action]
+  (defn #^ None start [self #^ StartJob action]
     (setv self.next-pid (+ self.next-pid 1))
     (.append self.events #("start" action.spec.name action.spec.revision self.now))
     (setv (get self.procs action.spec.name)
       (ProcessView action.spec.name action.spec action.attempt self.next-pid self.now)))
-  (defn signal [self action]
+  (defn #^ None signal [self #^ SignalJob action]
     (.append self.events #("signal" action.name action.stage.value self.now))
     (setv proc (get self.procs action.name))
     (setv dies (if (= action.stage StopStage.TERM)
@@ -41,7 +41,7 @@
                  (not-in action.name self.unkillable)))
     (when dies
       (setv (get self.procs action.name) (replace proc :exit-code (if (= action.stage StopStage.TERM) 0 -9)))))
-  (defn reap [self action]
+  (defn #^ None reap [self #^ ReapJob action]
     (.append self.events #("reap" action.name action.outcome.value self.now))
     (del (get self.procs action.name))))
 
@@ -64,7 +64,7 @@
   "台本の外側に仮想の時計(world の SimClock)を被せる。拍の間の眠りは仮想の時刻を進めるだけで、実時間は使わない。"
   (fn [program] ((sim-time-handler :clock world.clock) ((fake-host-script world script stop-at) program))))
 
-(defn events-of [world name]
+(defn #^ list events-of [#^ FakeWorld world #^ str name]
   (lfor e world.events :if (= (get e 1) name) (cut e 0 3)))
 
 (deftest test-update-one-job-keeps-the-other-running

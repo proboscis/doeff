@@ -190,12 +190,12 @@
   key)
 
 
-(defn #^ WorkerInfo worker-of [#^ str name #^ tuple provides #^ int seen [ready #()] [capacity "ok"] [load-capacity 2]]
+(defn #^ WorkerInfo worker-of [#^ str name #^ tuple provides #^ int seen #^ tuple [ready #()] #^ str [capacity "ok"] #^ int [load-capacity 2]]
   (WorkerInfo name provides load-capacity seen #() None #() :platform "linux-x86_64" :env-ready (frozenset ready)
               :env-capacity capacity))
 
 
-(defn #^ TaskRecord env-task [#^ str id #^ dict declared [needs #("net")]]
+(defn #^ TaskRecord env-task [#^ str id #^ dict declared #^ tuple [needs #("net")]]
   (TaskRecord id "" SAMPLE-TASK-PROGRAM "" #() needs 60000 60000 0 :runtime-env declared))
 
 

@@ -62,20 +62,20 @@
 
 ;; --- 本物の respond で状態を作る道具 -------------------------------------------------------------
 
-(defn call [state method path [body None] [now START] [actor "c-me"]]  ; defk にできない: 検の道具(coordinator の純粋な口へ要求を送る)
+(defn #^ ClusterState call [#^ ClusterState state #^ str method #^ str path #^ (| dict None) [body None] #^ int [now START] #^ (| str None) [actor "c-me"]]  ; defk にできない: 検の道具(coordinator の純粋な口へ要求を送る)
   "coordinator の本物の返事(api_policy.respond)へ要求を 1 件送り、次の状態を返す。"
   (setv #(after status reply) (respond state (http-request method path {} body :actor actor) now T))
   (assert (< status 300) #(method path status reply))
   after)
 
 
-(defn beat [state worker [rows None] [now START] [capacity 10]]  ; defk にできない: 検の道具
+(defn #^ ClusterState beat [#^ ClusterState state #^ str worker #^ (| list None) [rows None] #^ int [now START] #^ int [capacity 10]]  ; defk にできない: 検の道具
   "worker の heartbeat(rows = 担い手の行)。"
   (call state "POST" "/heartbeat" {"name" worker "provides" ["net"] "capacity" capacity "versions" {} "statuses" (or rows [])}
         :now now :actor None))
 
 
-(defn row-of [state [phase "running"] [extra None] [name "w"]]  ; defk にできない: 検の道具
+(defn #^ dict row-of [#^ ClusterState state #^ str [phase "running"] #^ (| dict None) [extra None] #^ str [name "w"]]  ; defk にできない: 検の道具
   "担い手の行: 今の宣言の spec で起こした process(handlers.status-row と同じ欄)。extra で欄を差し替える。"
   (setv job (next (gfor j state.jobs :if (= j.spec.name name) j)) a (.get state.placements name))
   (| {"name" name "phase" phase "runningRevision" job.spec.revision "desiredRevision" job.spec.revision "pid" 100
@@ -83,46 +83,46 @@
      (or extra {})))
 
 
-(defn declared []  ; defk にできない: 検の道具
+(defn #^ ClusterState declared []  ; defk にできない: 検の道具
   "Service w の宣言だけ(worker はまだ居ない)。"
   (call (ClusterState) "POST" "/resources/Service" {"name" "w" "spec" SPEC}))
 
 
-(defn placed []  ; defk にできない: 検の道具
+(defn #^ ClusterState placed []  ; defk にできない: 検の道具
   "Service w を atlas に置いた状態(atlas はまだ何も動かしていない)。"
   (beat (declared) "atlas"))
 
 
-(defn reporting [#^ dict [extra None] #^ str [phase "running"]]  ; defk にできない: 検の道具
+(defn #^ ClusterState reporting [#^ dict [extra None] #^ str [phase "running"]]  ; defk にできない: 検の道具
   "atlas が w の行(phase・差し替えの欄)を報告した状態。"
   (setv s (placed))
   (beat s "atlas" [(row-of s phase extra)]))
 
 
-(defn version-of [state [name "w"] [now START]]  ; defk にできない: 検の道具
+(defn #^ dict version-of [#^ ClusterState state #^ str [name "w"] #^ int [now START]]  ; defk にできない: 検の道具
   "資源の口(GET /resources/Service/<名>)の status.version。"
   (setv #(_ status reply) (respond state (http-request "GET" (+ "/resources/Service/" name) {} None :actor None) now T))
   (assert (= status 200) reply)
   (get reply "status" "version"))
 
 
-(defn pairs [version]  ; defk にできない: 検の道具
+(defn #^ list pairs [#^ dict version]  ; defk にできない: 検の道具
   "status.version の running → #(版 退いたか) の列(並びを問わない)。"
   (sorted (gfor p (get version "running") #((get p "revision") (get p "retired")))))
 
 
-(defn answer [state [now START]]  ; defk にできない: 検の道具
+(defn #^ tuple answer [#^ ClusterState state #^ int [now START]]  ; defk にできない: 検の道具
   "Service w の #(running-process の理由の種類(ok なら None) version-state の状態)。"
   (setv proc (running-process state "w" now T))
   #((.get proc "kind") (. (version-state state "w" now T) state)))
 
 
-(defn reported-phase [#^ JobPhase phase #^ bool retryable]  ; defk にできない: 検の道具
+(defn #^ ClusterState reported-phase [#^ JobPhase phase #^ bool retryable]  ; defk にできない: 検の道具
   "担い手 atlas が今の宣言の spec の行を phase で報告した状態(ENV-FAILED は失敗の種類と再試行するかを載せる)。"
   (reporting (if (= phase JobPhase.ENV-FAILED) {"failureKind" "sync-failed" "retryable" retryable} {}) phase.value))
 
 
-(defn scaled-to-zero [#^ (| list None) rows]  ; defk にできない: 検の道具
+(defn #^ ClusterState scaled-to-zero [#^ (| list None) rows]  ; defk にできない: 検の道具
   "w を replicas 0 に書き換えた後、atlas が rows(w の process がまだ生きている行・空なら止め終えた)を報告した状態。"
   (setv s (reporting) row (row-of s))
   (setv s (call s "PUT" "/resources/Service/w" {"spec" (| SPEC {"replicas" 0})
@@ -312,7 +312,7 @@
 
 ;; --- 3. drain の模擬 -----------------------------------------------------------------------------
 
-(defn coord-version [#^ Coord c #^ str name]  ; defk にできない: 検の道具
+(defn #^ dict coord-version [#^ Coord c #^ str name]  ; defk にできない: 検の道具
   "drain の模擬の coordinator の、Service name の status.version。"
   (get (c.call "GET" (+ "/resources/Service/" name)) "status" "version"))
 
@@ -360,13 +360,13 @@
   ;; 両方から呼ばれ、止めている途中・止まっている の 2 場面で両方の答えが揃う。
   (assert (is api-policy.service-stopped resource-policy.service-stopped) "target-view が別の停止の述語を持っている")
   (setv calls [] original resource-policy.service-stopped target {"kind" "Service" "name" "w"})
-  (defn spy [#* args]  ; defk にできない: 検の道具(呼ばれた事を数える)
+  (defn #^ bool spy [#^ ClusterState state #^ str name #^ int now #^ ClusterTiming timing]  ; defk にできない: 検の道具(呼ばれた事を数える)
     "停止の述語の代わり: 呼ばれた事を記録して本物を呼ぶ。"
-    (.append calls args)
-    (original #* args))
+    (.append calls #(state name now timing))
+    (original state name now timing))
   (.setattr monkeypatch api-policy "service_stopped" spy)
   (.setattr monkeypatch resource-policy "service_stopped" spy)
-  (defn both [state]  ; defk にできない: 検の道具
+  (defn #^ tuple both [#^ ClusterState state]  ; defk にできない: 検の道具
     "#(target-view の stopped と述語を呼んだ回数 version-state の状態と述語を呼んだ回数)。"
     (.clear calls)
     (setv view (target-view state target {} START T) by-view (len calls))
