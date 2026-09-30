@@ -21,8 +21,15 @@ class SourceDependency:
 
 def snapshot(path: Path, relative: str, digest: str) -> SourceDependency:
     status: os.stat_result = path.stat()
-    return SourceDependency(relative, digest, status.st_size, status.st_mtime_ns,
-                            status.st_ctime_ns, status.st_dev, status.st_ino)
+    return SourceDependency(
+        relative,
+        digest,
+        status.st_size,
+        status.st_mtime_ns,
+        status.st_ctime_ns,
+        status.st_dev,
+        status.st_ino,
+    )
 
 
 @dataclass(frozen=True)
@@ -80,8 +87,18 @@ class DependencyChecks:
             if current is None:
                 self._mut_rebuilds += 1
                 return f"実値の依存sourceが無い: {dependency.path}"
-            if (current.size, current.mtime_ns, current.ctime_ns, current.device, current.inode) == (
-                dependency.size, dependency.mtime_ns, dependency.ctime_ns, dependency.device, dependency.inode
+            if (
+                current.size,
+                current.mtime_ns,
+                current.ctime_ns,
+                current.device,
+                current.inode,
+            ) == (
+                dependency.size,
+                dependency.mtime_ns,
+                dependency.ctime_ns,
+                dependency.device,
+                dependency.inode,
             ):
                 self._mut_stat_hits += 1
                 refreshed.append(dependency)
@@ -92,11 +109,22 @@ class DependencyChecks:
             if digest != dependency.digest:
                 self._mut_rebuilds += 1
                 return f"実値の依存sourceが変わった: {dependency.path}"
-            refreshed.append(SourceDependency(current.path, digest, current.size, current.mtime_ns,
-                                              current.ctime_ns, current.device, current.inode))
+            refreshed.append(
+                SourceDependency(
+                    current.path,
+                    digest,
+                    current.size,
+                    current.mtime_ns,
+                    current.ctime_ns,
+                    current.device,
+                    current.inode,
+                )
+            )
         return SourceSnapshot(tuple(refreshed))
 
     def report(self) -> str:
-        return (f"doeff-adr: 実値の依存照合 {len(self._mut_files)} file・照合 {self._mut_checks} 回・"
-                f"stat一致 {self._mut_stat_hits} 回・hash {len(self._mut_hashes)} file・"
-                f"{self._mut_seconds:.6f} 秒・依存変更で再作成 {self._mut_rebuilds} file")
+        return (
+            f"doeff-adr: 実値の依存照合 {len(self._mut_files)} file・照合 {self._mut_checks} 回・"
+            f"stat一致 {self._mut_stat_hits} 回・hash {len(self._mut_hashes)} file・"
+            f"{self._mut_seconds:.6f} 秒・依存変更で再作成 {self._mut_rebuilds} file"
+        )

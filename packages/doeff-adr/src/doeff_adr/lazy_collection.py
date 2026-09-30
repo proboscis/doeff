@@ -92,7 +92,9 @@ class NeedsImport:
 CollectionPlan = Indexed | NeedsImport
 
 
-def plan_collection(path: Path, cache_dir: Path, root: Path, checks: DependencyChecks) -> CollectionPlan:
+def plan_collection(
+    path: Path, cache_dir: Path, root: Path, checks: DependencyChecks
+) -> CollectionPlan:
     """収集で import せずに済むかを、キャッシュだけから決める(保存の時に実物と突き合わせ済みの記録しか入っていない)。"""
     match read_cached(path, cache_dir, root, checks):
         case CacheHit(records, fixtures):
@@ -236,14 +238,20 @@ def _stub_function(item: FunctionItem, path: Path, module_name: str) -> Callable
     """記録の関数 1 つから、同じ名・同じ引数・同じ印の仮の関数を作る(pytest の fixture と parametrize の展開に渡す)。"""
 
     def stub(*_args: object, **_kwargs: object) -> None:
-        raise RuntimeError(f"{module_name}.{item.name}: 記録から作った仮の関数が呼ばれた(setup で実物に替わるはず)")
+        raise RuntimeError(
+            f"{module_name}.{item.name}: 記録から作った仮の関数が呼ばれた(setup で実物に替わるはず)"
+        )
 
     # 仮の関数の引数を pytest に見せる口(inspect.signature は __signature__ を読む)。
-    stub.__signature__ = inspect.Signature([inspect.Parameter(name, inspect.Parameter.POSITIONAL_OR_KEYWORD) for name in item.argnames])
+    stub.__signature__ = inspect.Signature(
+        [inspect.Parameter(name, inspect.Parameter.POSITIONAL_OR_KEYWORD) for name in item.argnames]
+    )
     stub.__name__ = stub.__qualname__ = item.name
     stub.__module__ = module_name
     # 報告の位置(pytest の reportinfo)は test file を指す。行は記録に無いので 1。
-    stub.__code__ = stub.__code__.replace(co_filename=str(path), co_firstlineno=1, co_name=item.name)
+    stub.__code__ = stub.__code__.replace(
+        co_filename=str(path), co_firstlineno=1, co_name=item.name
+    )
     marked: Callable[..., None] = stub
     for decorator in reversed(item.decorators):
         marked = _stub_mark(decorator)(marked)
@@ -270,7 +278,9 @@ def _stub_fixture(record: FixtureRecord, module_name: str) -> FixtureFunctionDef
         """本物の module の fixture の元の関数(item の setup が先に本物の module を import している)。"""
         real_module = sys.modules.get(module_name)
         if real_module is None:
-            raise RuntimeError(f"{module_name}: 仮の fixture {record.name} が、本物の module の import の前に呼ばれた")
+            raise RuntimeError(
+                f"{module_name}: 仮の fixture {record.name} が、本物の module の import の前に呼ばれた"
+            )
         return inspect.unwrap(vars(real_module)[record.attribute])
 
     if record.generator:
@@ -278,7 +288,9 @@ def _stub_fixture(record: FixtureRecord, module_name: str) -> FixtureFunctionDef
         def generator_stub(**kwargs: object) -> Generator[object, None, None]:
             result: object = real_function()(**kwargs)
             if not isinstance(result, Generator):
-                raise TypeError(f"{module_name}.{record.attribute}: generatorのfixtureがGeneratorを返さなかった")
+                raise TypeError(
+                    f"{module_name}.{record.attribute}: generatorのfixtureがGeneratorを返さなかった"
+                )
             yield from result
 
         stub: Callable[..., object] = generator_stub
@@ -289,7 +301,12 @@ def _stub_fixture(record: FixtureRecord, module_name: str) -> FixtureFunctionDef
 
         stub = value_stub
     # 仮の fixture の引数を pytest に見せる口(inspect.signature は __signature__ を読む)。
-    stub.__signature__ = inspect.Signature([inspect.Parameter(name, inspect.Parameter.POSITIONAL_OR_KEYWORD) for name in record.argnames])
+    stub.__signature__ = inspect.Signature(
+        [
+            inspect.Parameter(name, inspect.Parameter.POSITIONAL_OR_KEYWORD)
+            for name in record.argnames
+        ]
+    )
     stub.__name__ = stub.__qualname__ = record.attribute
     stub.__module__ = module_name
     return pytest.fixture(scope=record.scope, name=record.name)(stub)
@@ -310,7 +327,9 @@ def stub_module(
             case ModuleMarks(names):
                 module.pytestmark = [_stub_module_mark(name) for name in names]
             case Dynamic():
-                raise AssertionError("Dynamic の記録を持つ file は plan_collection が import に回す")
+                raise AssertionError(
+                    "Dynamic の記録を持つ file は plan_collection が import に回す"
+                )
     return module
 
 
@@ -331,8 +350,10 @@ def _shape(marks: Iterable[PytestMark]) -> list[tuple[str, object]]:
             case "parametrize":
                 spec: Parametrize = parametrize_record(mark)
                 # Pythonでは1 == True == 1.0だが、pytestのidと実値の型は異なる。
-                literal_types = tuple(type(value.value) if isinstance(value, LiteralValue) else None
-                                      for value in spec.values)
+                literal_types = tuple(
+                    type(value.value) if isinstance(value, LiteralValue) else None
+                    for value in spec.values
+                )
                 shape.append(("parametrize", (spec, literal_types)))
             case "skipif":
                 shape.append(("skipif", None))
@@ -397,13 +418,17 @@ def swap_in_real_function(item: pytest.Function, real_module: types.ModuleType) 
         for argname, value in list(callspec.params.items()):
             if isinstance(value, OpaqueParam):
                 actual: object = real_values[argname][value.position]
-                callspec.params[argname] = actual.values[0] if isinstance(actual, ParameterSet) else actual
+                callspec.params[argname] = (
+                    actual.values[0] if isinstance(actual, ParameterSet) else actual
+                )
     item.obj = real
     callspec_marks = list(callspec.marks) if callspec is not None else []
     item.own_markers = [*real_marks, *callspec_marks]
 
 
-def swap_in_real_module_marks(node: pytest.Module, stub_module_obj: types.ModuleType, real_module: types.ModuleType) -> None:
+def swap_in_real_module_marks(
+    node: pytest.Module, stub_module_obj: types.ModuleType, real_module: types.ModuleType
+) -> None:
     """module の node の印(仮の module の pytestmark から付いた物)を実物の module の印に替える。名が記録と違えば RecordMismatch。"""
     stub_marks = get_unpacked_marks(stub_module_obj)
     real_marks = get_unpacked_marks(real_module)
@@ -415,12 +440,20 @@ def swap_in_real_module_marks(node: pytest.Module, stub_module_obj: types.Module
     node.own_markers = [*others, *real_marks]
 
 
-def check_no_unrecorded_items(module_names: Iterable[str], real_module: types.ModuleType, name_matches: Callable[[str], bool], where: str) -> None:
+def check_no_unrecorded_items(
+    module_names: Iterable[str],
+    real_module: types.ModuleType,
+    name_matches: Callable[[str], bool],
+    where: str,
+) -> None:
     """実物の module が、記録に無い test らしい名を持たないかを確かめる(あれば、その item は仮の module に欠けていた)。"""
     recorded = set(module_names)
     extra = sorted(
-        name for name, value in vars(real_module).items()
-        if name_matches(name) and callable(value) and name not in recorded
+        name
+        for name, value in vars(real_module).items()
+        if name_matches(name)
+        and callable(value)
+        and name not in recorded
         and getattr(value, "__module__", None) == real_module.__name__
     )
     if extra:

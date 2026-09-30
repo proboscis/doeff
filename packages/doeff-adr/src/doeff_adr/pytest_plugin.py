@@ -337,7 +337,12 @@ class DoeffAdrHyFile(pytest.Module):
         base = _import_base_for_path(self.path.resolve(), Path(self.config.rootpath).resolve())
         module_name = _module_name_for_path(self.path.resolve(), base)
         checks = self.config.stash.setdefault(_DEPENDENCY_CHECKS_KEY, DependencyChecks())
-        match plan_collection(self.path.resolve(), items_cache_dir(self.config), Path(self.config.rootpath).resolve(), checks):
+        match plan_collection(
+            self.path.resolve(),
+            items_cache_dir(self.config),
+            Path(self.config.rootpath).resolve(),
+            checks,
+        ):
             case Indexed(records, fixtures):
                 self.config.stash.setdefault(_INDEXED_FILES_KEY, []).append(self.path)
                 return stub_module(records, fixtures, self.path.resolve(), module_name)
@@ -360,8 +365,15 @@ class DoeffAdrHyFile(pytest.Module):
             imported = self.config.stash[_IMPORTED_FILES_KEY]
             imported[-1] = (self.path, f"{reason} — 保存しない: " + "・".join(verified.problems))
             return
-        write_cached(self.path.resolve(), module, verified.fixtures, items_cache_dir(self.config),
-                     verified.records, Path(self.config.rootpath).resolve(), verified.dynamic)
+        write_cached(
+            self.path.resolve(),
+            module,
+            verified.fixtures,
+            items_cache_dir(self.config),
+            verified.records,
+            Path(self.config.rootpath).resolve(),
+            verified.dynamic,
+        )
 
     def _pytest_collects(self, name: str) -> bool:
         """pytest がこの名を test として集めるか(``python_functions`` / ``python_classes``)。"""
@@ -515,9 +527,7 @@ def _discover_executable_adrs(
     max_dirs: int = DEFAULT_WIRING_MAX_DIRS,
 ) -> set[Path]:
     executable_adrs: set[Path] = set()
-    for dirs_walked, (directory, directory_names, file_names) in enumerate(
-        os.walk(root), start=1
-    ):
+    for dirs_walked, (directory, directory_names, file_names) in enumerate(os.walk(root), start=1):
         if dirs_walked > max_dirs:
             raise WiringWalkBudgetError(dirs_walked)
         directory_names[:] = sorted(
