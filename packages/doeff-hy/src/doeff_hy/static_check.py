@@ -43,7 +43,7 @@ from hy.compiler import hy_compile
 from hy.errors import HyLanguageError
 
 from doeff_hy.binding_forms import Finding, module_findings
-from doeff_hy.static_view import collect_findings, static_view
+from doeff_hy.static_view import STATIC_HELPER_IMPORTS, collect_findings, static_view
 
 _SKIP_DIRS = frozenset({".git", ".venv", "venv", "__pycache__", "node_modules", ".exp"})
 
@@ -167,6 +167,27 @@ def _span(generated: ast.AST, original: ast.AST) -> Span | None:
     return Span((g_line - 1, g_col), (g_end_line - 1, g_end_col), h_line, max(h_col, 1))
 
 
+def with_static_helpers(tree: ast.Module) -> ast.Module:
+    """静的な展開の macro が参照する補助の名の import を、module の頭(`from __future__` の後)に 1 度だけ置く。
+
+    macro は静的な展開では defk / defhandler / `<-` ごとの import を出さない(static_view.STATIC_HELPER_IMPORTS の註 —
+    1 つの名の宣言が 64 を超えると pyright が型の推論をやめる)。置く文は Hy の source に無いので位置を持たせない
+    (_span が組にしない — 補助の import に赤は出ない)。"""
+    helpers: list[ast.stmt] = ast.parse(STATIC_HELPER_IMPORTS).body
+    for statement in helpers:
+        for node in ast.walk(statement):
+            for field in ("lineno", "col_offset", "end_lineno", "end_col_offset"):
+                if field in vars(node):
+                    delattr(node, field)
+    head: int = 0
+    for statement in tree.body:
+        if not (isinstance(statement, ast.ImportFrom) and statement.module == "__future__"):
+            break
+        head += 1
+    tree.body[head:head] = helpers
+    return tree
+
+
 def project(root: Path, roots: list[Path], source: Path) -> Projection | CompileFailure:
     """1 つの .hy を型検査のための展開で Python にし、位置の対応表を作る。"""
     text = source.read_text(encoding="utf-8")
@@ -182,7 +203,7 @@ def project(root: Path, roots: list[Path], source: Path) -> Projection | Compile
         # hy_compile は get_expr=True の時だけ (Module, Expression) の組を返す。
         if not isinstance(compiled, ast.Module):
             raise TypeError(f"hy_compile が module を返さなかった: {type(compiled).__name__}")
-        tree = compiled
+        tree = with_static_helpers(compiled)
     except HyLanguageError as error:
         line = error.lineno if isinstance(error.lineno, int) else 1
         column = error.offset if isinstance(error.offset, int) else 1

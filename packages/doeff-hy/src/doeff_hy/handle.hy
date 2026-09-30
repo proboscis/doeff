@@ -56,7 +56,9 @@
    型が付くと、pyright から見た `_doeff_do` が両者の union になり誤検出を出すため
    (macros.hy の `_helper-imports` と同じ決め)。"
   (if (static-view-enabled)
-      `(import doeff-hy.static-types [do :as _doeff-do])
+      ;; 型付きの do は doeff-hy-check が module の頭に 1 度だけ import する(static_view.py の STATIC_HELPER_IMPORTS —
+      ;; 節ごとに出すと 1 つの名の宣言が 64 を超えた module で pyright が Unknown にする・agora-redesign #1686)。
+      '(do)
       `(import doeff.do [do :as _doeff-do])))
 
 

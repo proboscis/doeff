@@ -527,12 +527,11 @@ defk {name}: :post type annotation cannot be an empty string.
    補助は `_install-guard-globals` が関数の globals へも入れる(class の本体で展開した
    defk の method からも見えるように)ので、import は pyright のための宣言を兼ねる
    (型は macros.pyi)。
-   型検査のための展開(`_static-view?`)では、加えて型付きの `do` と `_doeff_perform` を doeff_hy.static_types から取る(`_doeff_do` を上書きする)。"
+   型検査のための展開(`_static-view?`)では何も出さない — 型付きの `do`・`_doeff_perform` と補助は、doeff-hy-check が
+   module の頭に 1 度だけ import する(doeff_hy/static_view.py の STATIC_HELPER_IMPORTS)。defk ごとに出すと 1 つの名に
+   宣言が積み上がり、64 を超えた module で pyright が `_doeff_do` を Unknown にする(agora-redesign #1686)。"
   (if (_static-view?)
-      `(do
-         (import doeff-hy.static-types [do :as _doeff_do _doeff-perform])
-         (import doeff-hy.macros [_install-guard-globals _guard-performed
-                                  _guard-statement-value _doeff-check-program-return]))
+      '(do)
       `(do
          (import doeff.do [do :as _doeff_do])
          (import doeff-hy.macros [_install-guard-globals _guard-performed
@@ -1082,10 +1081,10 @@ defk {name}: {{:post [...]}} is required.
     ;; controllers/worker で yield を残した形と赤が同じ 57 件であることを確かめた)。
     ;; 実行時の展開はこの枝を通らない(実行時の `(yield e)` は @effectful の書き換えの結果と同じ)。
     (_static-view?)
-      ;; import を形の中に持つ(defhandler の節・利用者の defn など、`_helper-imports` を
-      ;; 出さない所の `<-` でも名前が解けるように。静的な展開は実行しないので費用は無い)。
-      (let [bound `(do (import doeff-hy.static-types [_doeff-perform])
-                       (_doeff-perform ~expr))
+      ;; `_doeff_perform` は doeff-hy-check が module の頭に 1 度だけ import する(STATIC_HELPER_IMPORTS)ので、
+      ;; defhandler の節・利用者の defn など `_helper-imports` を出さない所の `<-` でも名前が解ける。形の中に import を
+      ;; 持つと、`<-` を 65 個持つ関数で pyright が `_doeff_perform` を Unknown にする(agora-redesign #1686)。
+      (let [bound `(_doeff-perform ~expr)
             source (when (is-not tp None) (_type-source tp))]
         (cond
           (is name None) bound

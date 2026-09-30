@@ -1918,8 +1918,8 @@
     (<- last-process (| SimProcess None) (ended-process log job))
     (cond
       (is-not last-process None)
-        (do (<- answer ProcessEnded (ended-answer last-process))
-            (resume answer))
+        (do (<- ended-reply ProcessEnded (ended-answer last-process))
+            (resume ended-reply))
       (and (is-not timeout-seconds None) (<= timeout-seconds 0))
         (resume (ProcessWaitExpired :job job :waited-seconds 0.0))
       True

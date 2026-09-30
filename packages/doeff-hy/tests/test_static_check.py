@@ -180,9 +180,58 @@ def test_static_view_does_not_leak_into_the_runtime_expansion() -> None:
     # 型検査のための展開は Python の @effectful と同じ `x = perform(e)` の形(yield を出さない)
     assert "y: 'int' = _doeff_perform(g(x))" in static
     assert "yield" not in static
+    # 静的な展開は補助の import を出さない — doeff-hy-check が module の頭に 1 度だけ置く(#1686)
+    assert "static_types" not in static
     # 実行時にも型の注記は付く(文字列 = 定義の時に評価しない)
     assert "def f(x: 'int')" in runtime
     assert "_contract_result: 'int' = y" in runtime
+
+
+def _many_definitions(count: int, mistake: bool) -> str:
+    """defk を count 個と、`<-` を count 個持つ defk を 1 つ持つ検体。最後の defk は defk の呼びを Spawn に渡す。"""
+    lines = ["(require doeff-hy.macros [defk <-])", "(import doeff [Spawn Task])", ""]
+    for index in range(count):
+        lines += [
+            f"(defk step-{index} [x]",
+            "  {:pre [(: x int)] :post [(: % int)]}",
+            '  "one step"',
+            "  (+ x 1))",
+            "",
+        ]
+    binds = [f"  (<- v{index} int (step-{index} {'v' + str(index - 1) if index else 'x'}))" for index in range(count)]
+    lines += [
+        "(defk chain [x]",
+        "  {:pre [(: x int)] :post [(: % int)]}",
+        '  "many binds"',
+        *binds,
+        f"  (<- last {'str' if mistake else 'int'} (step-0 v{count - 1}))",
+        "  (<- task Task (Spawn (step-0 x)))",
+        "  x)",
+    ]
+    return "\n".join(lines) + "\n"
+
+
+@needs_pyright
+@pytest.mark.parametrize("mistake", [False, True])
+def test_defk_calls_stay_programs_past_sixty_four_definitions(tmp_path: Path, mistake: bool) -> None:
+    """反例(agora-redesign #1686): 静的な展開が defk / `<-` ごとに補助の import を出していた頃は、1 つの名(`_doeff_do`・
+    `_doeff_perform`)の宣言が 64 を超えた module / 関数で pyright が型の推論をやめて Unknown にし、defk の呼びが Program では
+    なく :post の型に見えた — `(Spawn (defk の呼び))` が reportArgumentType、束ねの型の食い違いは黙って通った。補助の import は
+    module の頭に 1 度だけ(static_check.with_static_helpers)。"""
+    import contextlib
+    import io
+
+    from doeff_hy.static_check import main
+
+    (tmp_path / "many.hy").write_text(_many_definitions(70, mistake), encoding="utf-8")
+    out = io.StringIO()
+    with contextlib.redirect_stdout(out):
+        main(["--root", str(tmp_path), "--json", str(tmp_path / "many.hy")])
+    errors = [(d["rule"], d["message"]) for d in json.loads(out.getvalue()) if d["severity"] == "error"]
+    if mistake:
+        assert [rule for rule, _ in errors] == ["reportAssignmentType"], errors
+    else:
+        assert errors == [], errors
 
 
 BINDINGS = """(require doeff-hy.macros [defk <-])

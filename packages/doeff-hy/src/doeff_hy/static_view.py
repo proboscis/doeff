@@ -32,6 +32,18 @@ from doeff_hy.binding_forms import Finding
 
 _STATIC_VIEW: ContextVar[bool] = ContextVar("doeff_hy_static_view", default=False)
 
+#: 型検査のための展開で、macro が参照する補助の名の import(module の頭に 1 度だけ — doeff-hy-check が置く)。
+#: 実行時の展開は defk / defhandler / `<-` ごとに同じ import を出すが、静的な展開で同じことをすると、1 つの名に
+#: 宣言が積み上がる。pyright は 1 つの名の宣言が 64 を超えると型の推論をやめて Unknown にするので、defk を 65 個
+#: 持つ module では `_doeff_do` が Unknown になり、defk の呼びが Program ではなく :post の型に見えていた
+#: (doeff-cluster の local.hy の `(Spawn (defk の呼び))` 4 か所 — agora-redesign #1686)。静的な展開の macro は
+#: この import を出さない(macros.hy の `_helper-imports`・`_bind-yield`、handle.hy の `_do-import`)。
+STATIC_HELPER_IMPORTS: str = (
+    "from doeff_hy.static_types import do as _doeff_do, _doeff_perform\n"
+    "from doeff_hy.macros import _install_guard_globals, _guard_performed, _guard_statement_value, "
+    "_doeff_check_program_return\n"
+)
+
 
 def static_view_enabled() -> bool:
     return _STATIC_VIEW.get()
