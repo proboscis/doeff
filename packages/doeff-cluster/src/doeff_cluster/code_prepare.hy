@@ -392,7 +392,8 @@
         (except [SyntaxError] None))
       (try
         (import hy)
-        (defn walk [form]
+        ;; form は読んだ Hy の値(Expression だけを読み、列は中へ降りる)。
+        (defn #^ None walk [#^ hy.models.Object form]
           (when (isinstance form hy.models.Expression)
             (when (and form (isinstance (get form 0) hy.models.Symbol) (in (str (get form 0)) #("import" "require")))
               (setv items (list (cut form 1 None)) i 0 current None)
@@ -575,7 +576,7 @@
     (resume None)))
 
 
-(defn main []
+(defn #^ None main []
   (setv parser (argparse.ArgumentParser))
   (.add-argument parser "tree")
   (.add-argument parser "--revision" :required True)

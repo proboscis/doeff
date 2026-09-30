@@ -42,7 +42,7 @@
   (setv #^ float retain-seconds DETACHED-DEFAULT-RETAIN-SECONDS)
   ;; 子の環境変数(名 → 文字列・既定は空 — RemoteJob.environ と同じ意味と規則)。同じ key の送り直しで違えば別の仕事(409)。
   (setv #^ dict environ (field :default-factory dict))
-  (defn __post-init__ [self]
+  (defn #^ None __post-init__ [self]
     "needs が能力の名の frozenset であること・environ が service の :environ と同じ規則を通ることを作る時に検める(旧い Requirement の
      tuple・予約の名・秘密の名を黙って受けない)。"
     (setv problem (effect-needs-problem self.needs))
@@ -174,7 +174,7 @@
 (defclass DetachedRefused [Exception]
   "coordinator が要求を断った(呼び手の誤り): 同じ key の別の仕事(409)・欄の誤り(400)・上限越え(429)・まだ終わっていない task の
    解放(409)。"
-  (defn __init__ [self #^ int status #^ str message]
+  (defn #^ None __init__ [self #^ int status #^ str message]
     (.__init__ (super) (.format "{}: {}" status message))
     (setv self.status status self.message message)))
 

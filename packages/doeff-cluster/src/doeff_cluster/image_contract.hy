@@ -158,7 +158,7 @@
   (tuple out))
 
 
-(defn main []
+(defn #^ None main []
   "image を build する前に Dockerfile を検め、約束を破る image を作らせないための入口(違反が在れば終了コード 1)。"
   (setv paths (cut sys.argv 1 None))
   (when (not paths)

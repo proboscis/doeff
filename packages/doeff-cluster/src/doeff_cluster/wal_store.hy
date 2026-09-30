@@ -18,6 +18,8 @@
 (import sys)
 (import time)
 (import zlib)
+(import collections.abc [Callable])
+(import typing [BinaryIO])
 (import pathlib [Path])
 (import .cluster_model [Persist])
 
@@ -30,7 +32,7 @@
   "置き場の途中が壊れている(返事を済ませた書きを失わずには読めない)。起動を断るために投げる。")
 
 
-(defn write-durably [#^ Path target #^ bytes data]
+(defn #^ None write-durably [#^ Path target #^ bytes data]
   "一時 file に書いて fsync し、rename してから dir を fsync する。"
   (setv tmp (Path (+ (str target) ".tmp")))
   (with [handle (open tmp "wb")]
@@ -41,7 +43,7 @@
   (fsync-dir target.parent))
 
 
-(defn fsync-dir [#^ Path d]
+(defn #^ None fsync-dir [#^ Path d]
   (setv fd (os.open (str d) os.O_RDONLY))
   (try (os.fsync fd) (finally (os.close fd))))
 
@@ -138,7 +140,7 @@
 (defclass WalStore []
   "dir の中の snapshot.json と wal.jsonl。kv = いま耐久になっている全部のキー(まとめ直しに使う)。
    stats = 直近の fsync の時間(秒)の記録(log の遅さを測る)。"
-  (defn __init__ [self #^ str directory [max-log-bytes MAX-LOG-BYTES] [fsync os.fsync]]
+  (defn #^ None __init__ [self #^ str directory #^ int [max-log-bytes MAX-LOG-BYTES] #^ Callable [fsync os.fsync]]
     (setv self.dir (Path directory) self.max-log-bytes max-log-bytes self.fsync fsync
           self.snapshot (/ self.dir "snapshot.json") self.log (/ self.dir "wal.jsonl")
           self.kv {} self.seq 0 self.handle None self.fsync-seconds []
@@ -177,13 +179,13 @@
     (setv self.kv kv self.seq seq)
     kv)
 
-  (defn open-log [self]
+  (defn #^ BinaryIO open-log [self]
     "追記用の handle を返す(まだ開いていなければ開く)。返り値は開いている handle で、None を含まない。"
     (when (is self.handle None)
       (setv self.handle (open self.log "ab")))
     self.handle)
 
-  (defn persist [self #^ dict delta]
+  (defn #^ None persist [self #^ dict delta]
     "1 まとまりを log へ 1 行(checksum つき)で書き、fsync してから戻る。"
     (when (not delta) (return None))
     (setv handle (.open-log self))
@@ -207,7 +209,7 @@
     (when (> (.tell handle) self.max-log-bytes)
       (.checkpoint self)))
 
-  (defn checkpoint [self]
+  (defn #^ None checkpoint [self]
     "全部のキーを snapshot(checksum つき)に書き直し(fsync 済み)、その後で log を空にする。"
     (setv started (time.monotonic))
     (write-durably self.snapshot (sealed {"seq" self.seq "kv" self.kv}))

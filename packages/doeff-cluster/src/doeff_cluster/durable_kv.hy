@@ -92,7 +92,7 @@
    最後の印より後に加わった worker)は、最後の印の時刻(alive-ms)に連絡があったとみなす(ずらすと「いま」になる = 以前の形と同じ。
    生存を捨てると、最初に heartbeat を送った worker へ全 job が移り、元の担い手がまだ動いていれば二重に動く — 実測 2026-09-23)。
    印の時刻も無い置き場は now。"
-  (defn part [prefix] (sorted (gfor #(k v) (.items kv) :if (.startswith k prefix) #((cut k (len prefix) None) v))))
+  (defn #^ list part [#^ str prefix] (sorted (gfor #(k v) (.items kv) :if (.startswith k prefix) #((cut k (len prefix) None) v))))
   (setv counter (.get kv "counter" {}))
   (setv alive-ms (.get counter "aliveMs" 0) unknown-seen (if (> alive-ms 0) alive-ms now))
   ;; 読めない Service の行(旧い宣言の形)は落とさず RefusedJob にする(改訂 1 の C)。

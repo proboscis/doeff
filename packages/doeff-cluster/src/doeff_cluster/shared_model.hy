@@ -14,7 +14,7 @@
 
 
 (defclass _Any []
-  (defn __repr__ [self] "ANY"))
+  (defn #^ str __repr__ [self] "ANY"))
 
 
 (setv ANY (_Any))
@@ -43,6 +43,7 @@
   (json.loads (json.dumps value)))
 
 
-(defn #^ bool cas-allows [current #^ bool present expect]
+;; current / expect は盤の値そのもの(等しいかと ANY かだけを見る)。
+(defn #^ bool cas-allows [#^ object current #^ bool present #^ object expect]
   "純粋: いまの値(無ければ present=False)と期待の値から、書いてよいかを決める。判断は coordinator の /board と同じ関数。"
   (board-allows current present (is-not expect ANY) expect))

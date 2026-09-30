@@ -3,8 +3,16 @@
 (require doeff-hy.macros [defhandler])
 (import json)
 (import pathlib [Path])
+(import typing [TypedDict Unpack])
 (import httpx)
 (import .kube_model [ReadDeployment ScaleDeployment AnnotateDeployment ReadNodeLabels KubeUnavailable])
+
+
+(defclass KubeRequestOptions [TypedDict :total False]
+  "k8s の API への要求で httpx の request にそのまま渡す欄(使う物だけ)。"
+  (#^ dict headers)
+  (#^ dict params)
+  (#^ bytes content))
 
 (setv SA-DIR "/var/run/secrets/kubernetes.io/serviceaccount")
 (setv API-URL "https://kubernetes.default.svc")
@@ -25,23 +33,24 @@
 
 (defclass KubeClient []
   "k8s の API の client。token は要求ごとに file から読む(projected token は期限で入れ替わる)。"
-  (defn __init__ [self [base API-URL] [sa-dir SA-DIR] [timeout 5.0] [transport None]]
+  (defn #^ None __init__ [self #^ str [base API-URL] #^ str [sa-dir SA-DIR] #^ float [timeout 5.0] #^ (| httpx.BaseTransport None) [transport None]]
     (setv self.base base self.sa-dir (Path sa-dir)
           self.client (httpx.Client :timeout timeout :verify (str (/ self.sa-dir "ca.crt")) :trust-env False
-                                    #** (if transport {"transport" transport} {}))))
+                                    :transport transport)))
 
-  (defn [staticmethod] #^ bool available [[sa-dir SA-DIR]]
+  (defn [staticmethod] #^ bool available [#^ str [sa-dir SA-DIR]]
     (.exists (/ (Path sa-dir) "token")))
 
-  (defn #^ dict headers [self [content-type None]]
+  (defn #^ dict headers [self #^ (| str None) [content-type None]]
     (setv token (.strip (.read-text (/ self.sa-dir "token") :encoding "utf-8")))
     (| {"Authorization" (+ "Bearer " token) "Accept" "application/json"}
        (if content-type {"Content-Type" content-type} {})))
 
-  (defn #^ str path [self #^ str namespace #^ str name [sub ""]]
+  (defn #^ str path [self #^ str namespace #^ str name #^ str [sub ""]]
     (.format "{}/apis/apps/v1/namespaces/{}/deployments/{}{}" self.base namespace name sub))
 
-  (defn call [self #^ str method #^ str url #** kwargs]
+  ;; 答えは k8s の API の JSON の本文(object の dict)。
+  (defn #^ dict call [self #^ str method #^ str url #^ (get Unpack KubeRequestOptions) #** kwargs]
     (try
       (setv response (.request self.client method url #** kwargs))
       (except [error httpx.HTTPError]
@@ -64,7 +73,7 @@
                       :content (.encode (json.dumps {"spec" {"replicas" replicas}}) "utf-8")))
     (.get (.get body "spec" {}) "replicas" replicas))
 
-  (defn annotate [self #^ str namespace #^ str name #^ dict annotations]
+  (defn #^ None annotate [self #^ str namespace #^ str name #^ dict annotations]
     (.call self "PATCH" (.path self namespace name)
            :headers (.headers self "application/merge-patch+json")
            :content (.encode (json.dumps {"metadata" {"annotations" annotations}}) "utf-8"))
@@ -89,7 +98,7 @@
   "テストの k8s。deployments = 「ns/名」→ 観測の dict(specReplicas・readyReplicas・annotations …)。
    scale は宣言の台数だけを変える(Pod が立つ・消えるのはテストが .settle で進める)。calls = 受けた書きの記録。
    down = 真の間は全部 KubeUnavailable(API の途絶)。nodes = node の名 → label の dict(能力の導出の検)。"
-  (defn __init__ [self #^ dict deployments #^ (| dict None) [nodes None]]
+  (defn #^ None __init__ [self #^ dict deployments #^ (| dict None) [nodes None]]
     (setv self.deployments deployments self.calls [] self.down False self.nodes (or nodes {})))
 
   (defn #^ dict row [self #^ str namespace #^ str name]
@@ -98,7 +107,7 @@
     (when (not-in key self.deployments) (raise (KubeUnavailable (+ "無い Deployment: " key))))
     (get self.deployments key))
 
-  (defn settle [self #^ str key [ready None]]
+  (defn #^ None settle [self #^ str key #^ (| int None) [ready None]]
     "Pod が宣言の台数に揃った(ready を渡せばその数だけ準備できた)とする。"
     (setv row (get self.deployments key) n (get row "specReplicas"))
     (.update row {"replicas" n "readyReplicas" (if (is ready None) n ready) "availableReplicas" n "updatedReplicas" n})))

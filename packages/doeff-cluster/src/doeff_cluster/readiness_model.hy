@@ -23,12 +23,14 @@
 (val READINESS-KEYS #("windowSeconds" "handoffTimeoutSeconds"))
 
 
-(defn #^ bool positive-number [value]  ; defk にできない: 宣言の検め(module の読み込みの時と coordinator の純粋な判断)が呼ぶ
+;; value は宣言の欄の値そのもの(数かどうかを確かめる)。
+(defn #^ bool positive-number [#^ object value]  ; defk にできない: 宣言の検め(module の読み込みの時と coordinator の純粋な判断)が呼ぶ
   "JSON の正の数か(bool は数に数えない)。"
   (and (isinstance value #(int float)) (not (isinstance value bool)) (> value 0)))
 
 
-(defn #^ (| str None) readiness-refusal [readiness #^ str update]  ; defk にできない: 宣言の検め(module の読み込みの時と coordinator の純粋な判断)が呼ぶ
+;; readiness は宣言の値そのもの(None か dict のはず — 違えば理由を返す)。
+(defn #^ (| str None) readiness-refusal [#^ object readiness #^ str update]  ; defk にできない: 宣言の検め(module の読み込みの時と coordinator の純粋な判断)が呼ぶ
   "宣言の readiness(None か dict)と入れ替えの形 update → 読めなければ理由の文、読めれば None。service の宣言(service_model.service)と
    coordinator の宣言の読み(cluster_policy.job-from-json)の 2 つの入口が同じ規則で検める(定義点はここ 1 つ)。"
   (cond
@@ -46,7 +48,7 @@
     True None))
 
 
-(defn #^ int handoff-timeout-ms [readiness]  ; defk にできない: coordinator の純粋な判断(Program の外)が呼ぶ
+(defn #^ int handoff-timeout-ms [#^ (| dict None) readiness]  ; defk にできない: coordinator の純粋な判断(Program の外)が呼ぶ
   "宣言の readiness(None か検めを通った dict)→ 入れ替えの新の世代が Ready になるまで待つ上限(ms)。書かなければ既定。"
   (int (* 1000 (.get (or readiness {}) "handoffTimeoutSeconds" HANDOFF-TIMEOUT-SECONDS))))
 

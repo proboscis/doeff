@@ -191,7 +191,7 @@
 
 ;; --- 渡した材料で答える handler(検と模擬) ------------------------------------------------------
 
-(defhandler given-runtime-facts [facts]  ;; 引数に残す理由: 検と模擬が渡す材料そのもの(Ask で読む設定ではない)
+(defhandler given-runtime-facts [#^ ProcessFacts facts]  ;; 引数に残す理由: 検と模擬が渡す材料そのもの(Ask で読む設定ではない)
   "渡した材料 facts(ProcessFacts)で ReadRuntimeFacts に答える handler — 問われた module だけを、渡した置き場から答える
    (無い module は import できない物)。"
   (ReadRuntimeFacts [modules]

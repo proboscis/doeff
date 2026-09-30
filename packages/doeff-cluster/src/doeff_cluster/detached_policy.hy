@@ -37,7 +37,8 @@
   None)
 
 
-(defn #^ (| str None) seconds-refusal [#^ str label value #^ float limit]
+;; value は本文の欄の値そのもの(数かどうかを確かめる)。
+(defn #^ (| str None) seconds-refusal [#^ str label #^ object value #^ float limit]
   "純粋: 秒の欄が 0 より大きく limit 以下の数でなければ理由の文。"
   (if (and (isinstance value #(int float)) (not (isinstance value bool)) (< 0 value (+ limit 1)))
       None

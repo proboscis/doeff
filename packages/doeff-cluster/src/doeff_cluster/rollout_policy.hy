@@ -44,7 +44,8 @@
 (setv HISTORY-LIMIT 30)
 
 
-(defn #^ dict validate-target [target #^ str label]
+;; target は本文の値そのもの(dict かを確かめる)。
+(defn #^ dict validate-target [#^ object target #^ str label]
   (when (not (isinstance target dict)) (raise (BodyInvalid (+ label " は dict"))))
   (setv kind (.get target "kind"))
   (cond
@@ -90,7 +91,8 @@
   (if (= (get target "kind") "Service") 1 (or (.get target "replicas") 1)))
 
 
-(defn #^ dict enter [#^ dict status #^ str phase #^ int now [reason ""] #** extra]
+;; extra = status に足す欄(rollbackStep・failure の文字列・startedMs などの時刻と台数)。
+(defn #^ dict enter [#^ dict status #^ str phase #^ int now #^ str [reason ""] #^ (| str int) #** extra]
   "段に入る。Unknown の起点(段ごとの物)は持ち越さない。"
   (setv history (+ (list (.get status "history" [])) [{"phase" phase "at" now "reason" reason}])
         kept (dfor #(k v) (.items status) :if (!= k "unknownSinceMs") k v))
@@ -102,7 +104,7 @@
   (.get spec key (get DEFAULTS key)))
 
 
-(defn scale [#^ dict target #^ int replicas]
+(defn #^ dict scale [#^ dict target #^ int replicas]
   {"op" "scale" "target" target "replicas" replicas})
 
 
@@ -121,7 +123,7 @@
     (return (rollout-step spec (enter status "RollingBack" now "中止の指示(abort)" :rollbackStep "restoreOld"
                                       :failure "中止の指示(abort)")
                           from-view to-view now)))
-  (defn fail [reason]
+  (defn #^ tuple fail [#^ str reason]
     (rollout-step spec (enter status "RollingBack" now reason :rollbackStep "restoreOld" :failure reason) from-view to-view now))
   (cond
     (= phase "Pending")

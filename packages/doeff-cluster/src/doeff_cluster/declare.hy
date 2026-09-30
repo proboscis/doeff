@@ -33,7 +33,7 @@
 (import .service_model [resolve system-declaration environ-overlay-refusal foundation-needs-refusal System Declaration])
 
 
-(defn #^ dict spec-for-update [#^ dict row #^ dict current [replicas None]]  ; defk にできない: CLI の入口(Program の外)が呼ぶ純粋な判断
+(defn #^ dict spec-for-update [#^ dict row #^ dict current #^ (| int None) [replicas None]]  ; defk にできない: CLI の入口(Program の外)が呼ぶ純粋な判断
   "宣言の行 → PUT の spec。所有者と replicas と readiness の無い行の readiness はいまの資源の値を保つ。"
   (setv spec (dfor #(k v) (.items row) :if (!= k "name") k v))
   (| {"readiness" (.get current "readiness")}
@@ -66,7 +66,7 @@
     #(reason _) reason))
 
 
-(defn apply-declaration [#^ str url #^ Declaration declaration #^ str actor [replicas None]]  ; defk にできない: CLI の入口の HTTP の I/O
+(defn #^ None apply-declaration [#^ str url #^ Declaration declaration #^ str actor #^ (| int None) [replicas None]]  ; defk にできない: CLI の入口の HTTP の I/O
   "詰めた Program を置いてから、宣言の行を資源の口で書く(どれかが失敗したら 1 で終わる)。"
   (import httpx)
   (setv client (httpx.Client :base-url (.rstrip url "/") :headers {"X-Actor" actor} :trust-env False :timeout 30))
@@ -94,7 +94,7 @@
   (when failed (sys.exit 1)))
 
 
-(defn main []  ; defk にできない: CLI の入口
+(defn #^ None main []  ; defk にできない: CLI の入口
   "宣言の CLI。旧い引数は理由つきで断る。"
   (setv parser (argparse.ArgumentParser :description "系(defsystem の関数)→ coordinator の宣言"))
   (.add-argument parser "system" :help "module:attr(defsystem の関数の名)")

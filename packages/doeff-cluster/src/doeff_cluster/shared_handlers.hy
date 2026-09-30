@@ -4,6 +4,7 @@
 ;;; 同じ関数で作る(本文を写さない)。
 (require doeff-hy.macros [defhandler deff <- val])
 (import urllib.parse [quote :as url-quote])
+(import httpx)
 (import doeff_cluster.clock [now-epoch-ms])
 (import .shared_model [ReadShared WriteShared ANY _Any JsonValue cas-allows json-snapshot])
 (import .cluster_policy [board-ttl-refusal])
@@ -62,7 +63,7 @@
 
 (defclass SharedClient []
   "coordinator の /board との連絡(I/O)。"
-  (defn __init__ [self #^ str url [timeout REPLY-SECONDS] [transport None]]
+  (defn #^ None __init__ [self #^ str url #^ float [timeout REPLY-SECONDS] #^ (| httpx.BaseTransport None) [transport None]]
     ;; url = 宛先を `,` で並べた物(前ほど優先)。接続は使い回し、接続できない時は次の宛先へ・書きでも送り直す
     ;; (要求が届いていない)— coordinator_http の説明。
     (setv self.endpoint (CoordinatorEndpoint url timeout 4 :transport transport)))

@@ -29,6 +29,7 @@
 (import json)
 (import os)
 (import signal)
+(import types [FrameType])
 (import sys)
 (import time)
 (import pathlib [Path])
@@ -201,7 +202,7 @@
 ;; --- composition root ------------------------------------------------------------------
 
 
-(defn main []
+(defn #^ None main []
   (setv parser (argparse.ArgumentParser :description "doeff worker の coordinator(実験)"))
   (.add-argument parser "--state-file" :required True)
   (.add-argument parser "--port" :type int :default 8080)
@@ -210,7 +211,7 @@
   (setv args (.parse-args parser))
   (setv naming (naming-from-json args.naming))
   (setv stop (StopState))
-  (defn on-signal [signum frame] (setv stop.requested True))
+  (defn #^ None on-signal [#^ int signum #^ (| FrameType None) frame] (setv stop.requested True))
   (signal.signal signal.SIGTERM on-signal)
   (signal.signal signal.SIGINT on-signal)
   (setv store (WalStore (str (/ (. (Path args.state-file) parent) "wal"))))
