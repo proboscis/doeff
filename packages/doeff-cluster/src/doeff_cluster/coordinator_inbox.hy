@@ -3,7 +3,7 @@
 ;;; まとめて取る。k8s の probe(/livez・/readyz)は列を通さずに受付の thread が答える。
 ;;; 2026-09-25 に coordinator.hy から分けた(handler の組 coordinator_handler_sets.hy がこの受付を本番の組に入れ、coordinator.hy の
 ;;; main がその組を選ぶ — 同じ file に置くと組の module と循環する)。coordinator.hy は以前の import の口のためにここの名を再び出す。
-(require doeff-hy.macros [defhandler])
+(require doeff-hy.macros [defhandler deff])
 (import json)
 (import queue)
 (import typing [Callable])
@@ -11,8 +11,19 @@
 (import threading)
 (import time)
 (import http.server [BaseHTTPRequestHandler ThreadingHTTPServer])
-(import urllib.parse [urlsplit parse-qsl])
+(import urllib.parse [urlsplit parse-qsl unquote :as url-unquote])
 (import .cluster_model [Request NextRequests Reply CoordinatorFault CoordinatorStopRequested PlainText ACCEPTED-FORMATS])
+
+
+(deff http-request [#^ str method #^ str path #^ dict query #^ (| dict list str int float bool None) body
+                    #^ object [slot None] #^ (| str None) [actor None] #^ str [peer ""]]  ; defk にできない: 本番の HTTP の受付の thread(Program の外)と sim の宿が同じ形で要求を作る
+  {:pre [(: method str) (: path str) (: query dict) (: body (| dict list str int float bool None)) (: actor (| str None)) (: peer str)]
+   :post [(: % Request)]
+   :tags {:context "doeff-cluster" :role "protocol"}}
+  "受けた HTTP 要求 1 件を Request にするため。path を / で割り、区切りごとに percent の符号を戻して parts に載せる(符号を戻すのは
+   HTTP の境のこの 1 か所 — 受け口の判断 api_policy.respond は parts だけを読む・#1636)。slot = 返事を待つ受付の側の物(判断は見ない)。"
+  (Request method path query body (tuple (gfor p (.split (.strip path "/") "/") (url-unquote p)))
+           :slot slot :actor actor :peer peer))
 
 ;; probe の閾値(秒)。ループは要求が無くても 1 秒ごとに NextRequests を出すので、ふだんの「最後に取りに来てから」は 1 秒 + 1 まとまりの
 ;; 処理(fsync の実測の最大 2.9〜3.6 秒・longhorn の詰まりで最長 13 秒・k8s の読みは 3 秒で打ち切り)。
@@ -80,7 +91,7 @@
           (setv body (if raw (json.loads raw) None))
           (except [error ValueError]
             (return (.send self 400 {"error" (.format "JSON を読めない: {}" error)}))))
-        (.put inbox.queue (Request method split.path (dict (parse-qsl split.query)) body slot
+        (.put inbox.queue (http-request method split.path (dict (parse-qsl split.query)) body :slot slot
                                    :actor (.get self.headers "X-Actor")
                                    :peer (str (get self.client-address 0))))
         (if (.wait slot.done 30.0)

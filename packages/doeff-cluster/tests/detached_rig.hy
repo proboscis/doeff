@@ -15,7 +15,8 @@
 (import doeff_core_effects.scheduler [Spawn Cancel TaskCancelledError])
 (import doeff_time [Delay SimClock])
 (import tests.clock_fixtures [clock-ms])
-(import doeff_cluster.cluster_model [ClusterState ClusterTiming Request])
+(import doeff_cluster.cluster_model [ClusterState ClusterTiming])
+(import doeff_cluster.coordinator_inbox [http-request])
 (import doeff_cluster.api_policy [respond tick])
 (import doeff_cluster.handlers [CoordinatorLink program-file])
 (import doeff_cluster.host_contract [environ-reader])
@@ -130,7 +131,7 @@
           split (urlsplit (str request.url))
           body (if request.content (json.loads request.content) None))
     (setv self.state (tick self.state now self.timing))
-    (setv #(state status reply) (respond self.state (Request request.method split.path (dict (parse-qsl split.query)) body
+    (setv #(state status reply) (respond self.state (http-request request.method split.path (dict (parse-qsl split.query)) body
                                                              :actor (.get request.headers "x-actor"))
                                          now self.timing))
     (setv self.state state)

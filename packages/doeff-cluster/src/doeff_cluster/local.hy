@@ -103,7 +103,7 @@
 (import copy [deepcopy])
 (import dataclasses [dataclass replace])
 (import pathlib [Path])
-(import urllib.parse [quote :as url-quote unquote :as url-unquote])
+(import urllib.parse [quote :as url-quote])
 (import doeff [with-handlers EffectBase UnhandledEffect DoExpr Program])
 (import doeff_core_effects.effects [Ask])
 (import doeff_core_effects.handlers [state :as session-store await-handler])
@@ -117,7 +117,7 @@
 (import .cluster_policy [fresh-task-prefix])
 (import .coordinator [run-coordinator load-state])
 (import .coordinator_http [IDEMPOTENT-DEADLINE-SECONDS RESEND-PAUSE-SECONDS])
-(import .coordinator_inbox [StopState])
+(import .coordinator_inbox [StopState http-request])
 (import .coordinator_handler_sets [RequestQueue MemoryWalStore emulated-handlers enqueue-request nudge-takers])
 (import .promise_wait [promise-or-timeout])
 (import .kube_handlers [KubeMemory])
@@ -671,7 +671,7 @@
   {:pre [(: batch list) (: now int)] :post [(: % tuple)] :tags {:context "doeff-cluster" :role "judgment"}}
   "coordinator が取った要求のうち service の報告(POST /resources/Service/<名>/readiness|metrics)を SimReport にするため。"
   (tuple (gfor r batch
-               :setv parts (lfor p (.split (.strip r.path "/") "/") (url-unquote p))
+               :setv parts r.parts
                :if (and (= r.method "POST") (= (len parts) 4) (= (get parts 0) "resources") (= (get parts 1) "Service")
                         (in (get parts 3) REPORT-KINDS) (isinstance r.body dict))
                (SimReport :job (get parts 2) :kind (get parts 3) :instance (str (.get r.body "instance" "")) :at now
@@ -740,7 +740,7 @@
   (if (not link.queue.up)
       #(None {"error" "coordinator に接続できない(止まっている)"})
       (do (<- promise Promise (CreatePromise))
-          (<- (enqueue-request link.queue (Request method path query body :slot promise :actor link.actor :peer link.peer)))
+          (<- (enqueue-request link.queue (http-request method path query body :slot promise :actor link.actor :peer link.peer)))
           (<- answer tuple (Wait promise.future))
           answer)))
 

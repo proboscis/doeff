@@ -842,6 +842,7 @@
       "allow": [
         "doeff-cluster-cluster-model",
         "doeff-cluster-coordinator",
+        "doeff-cluster-coordinator-inbox",
         "doeff-cluster-record-store"
       ],
       "layer": "io",

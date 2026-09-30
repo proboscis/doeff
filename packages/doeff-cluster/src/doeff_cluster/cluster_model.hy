@@ -517,11 +517,14 @@
 
 (defclass [(dataclass :frozen True :eq False)] Request []
   "受けた HTTP 要求 1 件。slot は返事を待つ handler の側の物(判断は見ない)。
-   actor = 送り手(header X-Actor)。無ければ None(資源の書きは断る・盤と task は送り元の番地で記録する)。"
+   actor = 送り手(header X-Actor)。無ければ None(資源の書きは断る・盤と task は送り元の番地で記録する)。
+   path = 受けたままの path(log と返事の文に使う)・parts = path を / で割り、区切りごとに percent の符号を戻した物。
+   符号を戻すのは HTTP の境(coordinator_inbox.http-request)の仕事で、判断(api_policy.respond)は parts だけを読む(#1636)。"
   (#^ str method)
   (#^ str path)
   (#^ dict query)
   (#^ object body)
+  (#^ tuple parts)
   (setv #^ object slot None)
   (setv #^ (| str None) actor None)
   (setv #^ str peer ""))

@@ -14,7 +14,8 @@
 (import doeff_core_effects.scheduler [Spawn Wait])
 (import doeff_time [Delay sim-time-handler])
 (import doeff_cluster.clock [now-epoch-ms])
-(import doeff_cluster.cluster_model [Request NextRequests])
+(import doeff_cluster.cluster_model [NextRequests])
+(import doeff_cluster.coordinator_inbox [http-request])
 (import doeff_cluster.coordinator_handler_sets [RequestQueue queued-requests enqueue-request])
 (import tests.clock_fixtures [clock-at count-delays])
 
@@ -75,7 +76,7 @@
       (<- (Delay (- write.at-seconds at)))
       (:= at write.at-seconds))
     (for [path write.paths]
-      (<- (enqueue-request queue (Request "GET" path {} None)))))
+      (<- (enqueue-request queue (http-request "GET" path {} None)))))
   None)
 
 
