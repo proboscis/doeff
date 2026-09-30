@@ -119,6 +119,9 @@
       (= kind "broken") (do (setv broken l) (break))
       (= kind "req")
         (do (setv args (refs (if (or (in "a" l) (in "ad" l)) (_resolve l arg-bases "e" "a" "ad" "ab" "ak") {})))
+            ;; 問いの引数は名 → 値の表。記録が壊れて別の形なら、Entry に入れる前にここで名指して断る。
+            (when (not (isinstance args dict))
+              (raise (ValueError (.format "出来事 {} の引数が表でない: {}" e (type args)))))
             (setv mode (if (is mode-of-type None) (get l "m") (mode-of-type (get l "ty") l)))
             (setv (get entries e) (Entry e (get l "t") (get l "at") (get l "ty") args mode :subject (.get l "sj")))
             (.append (.setdefault queues (get l "t") []) e)
