@@ -21,7 +21,8 @@
 (import doeff_cluster.worker_model [CodeState CodeView StartJob ReapJob Outcome WorldView WorkerPolicy PrepareEnv WarmEnv
                                     code-key])
 (import doeff_cluster.worker_policy [plan])
-(import doeff_cluster.remote_model [encode-program decode-outcome current-versions program-sha TaskSucceeded TaskFailed])
+(import doeff_cluster.remote_model [encode-program decode-outcome program-sha TaskSucceeded TaskFailed])
+(import doeff_cluster.process_versions [current-versions])
 
 (val FIXTURES (/ (. (Path __file__) (resolve) parent) "fixtures"))
 (val HY (str (/ (. (Path sys.executable) parent) "hy")))

@@ -27,6 +27,7 @@
 (import doeff [run with_handlers])
 (import doeff_core_effects.os_process [subprocess-handler])
 (import doeff_core_effects.scheduler [scheduled])
+(import .process_versions [current-versions])
 (import .runtime_env [checkout-reads checked-declaring-checkout])
 (import .runtime_env_model [RepoCheckout RuntimeEnvInvalid])
 (import .service_model [resolve system-declaration environ-overlay-refusal foundation-needs-refusal System Declaration])
@@ -126,7 +127,7 @@
         overlay (if args.environ (with [f (open args.environ :encoding "utf-8")] (json.load f)) {})
         refusal (environ-overlay-refusal system overlay)
         _ (when (is-not refusal None) (.error parser refusal))
-        declaration (system-declaration system args.revision :environ overlay)
+        declaration (system-declaration system args.revision :versions (current-versions) :environ overlay)
         rows (lfor row declaration.rows :if (or (not only) (in (get row "name") only)) row)
         declaration (Declaration :rows rows
                                  :programs (dfor row rows :setv sha (get (get row "run") "program")

@@ -16,7 +16,8 @@
 (import .cluster_model [PROTOCOL-FORMAT])
 (import .runtime_env_model [RuntimeEnv runtime-env->json])
 (import .remote_model [RemoteJob RemoteJobFailed EnvUnavailable TaskSucceeded TaskFailed
-                       encode-program decode-outcome current-versions])
+                       encode-program decode-outcome])
+(import .process_versions [current-versions])
 
 
 (deff task-submit-body [#^ str sha #^ str revision #^ frozenset needs #^ str name #^ float lease-seconds

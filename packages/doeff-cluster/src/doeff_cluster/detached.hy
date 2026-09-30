@@ -24,7 +24,8 @@
 (import .coordinator_http [CoordinatorEndpoint send-idempotent put-program REPLY-SECONDS IDEMPOTENT-DEADLINE-SECONDS])
 (import .cluster_model [PROTOCOL-FORMAT])
 (import .runtime_env_model [RuntimeEnv runtime-env->json])
-(import .remote_model [encode-program current-versions])
+(import .remote_model [encode-program])
+(import .process_versions [current-versions])
 (import .warm_model [WarmRuntimeEnv ReadWarmState WarmState WarmUnreachable WarmAnswer warm-state-of-json])
 (import .process_model [AwaitProcessEnded ProcessEnded ProcessWaitExpired])
 (import .detached_model [SubmitDetached AwaitDetached CancelDetached ReleaseDetached ReadRunners WARMING-PHASE

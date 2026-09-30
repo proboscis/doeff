@@ -18,6 +18,7 @@
 (import dataclasses [replace])
 (import doeff_cluster.runtime_env_model [RepoCheckout PythonProject RuntimeEnv EnvVar runtime-env->json env-key current-platform])
 (import doeff_cluster.service_model [CallShape System job system-of system-declaration])
+(import doeff_cluster.process_versions [current-versions])
 (import doeff_cluster.cluster_policy [job-from-json job-to-json spec-json])
 (import doeff_cluster.handlers [declared-job-spec ProbeStore probe-targets program-file])
 (import doeff_cluster.job_entry [RunContext runtime-env-of-context])
@@ -55,21 +56,21 @@
   ;; 断る — 下の検)。子の環境変数の足し口は 1 つ: 実行環境の env-vars と :environ に同じ名が在れば宣言の時点で断る(改訂 1 の G)。
   (<- declared-env RuntimeEnv (sample-env))
   (<- plain System (quiet-system "recreate" None {}))
-  (val rows (. (system-declaration plain "rev-1" :runtime-env declared-env) rows))
+  (val rows (. (system-declaration plain "rev-1" :versions (current-versions) :runtime-env declared-env) rows))
   (<- env-json dict (runtime-env->json declared-env))
   (assert (= (get (get rows 0) "runtimeEnv") env-json) rows)
-  (assert (not-in "runtimeEnv" (get (. (system-declaration plain "rev-1") rows) 0)) "env を渡さない宣言は今の形のまま")
+  (assert (not-in "runtimeEnv" (get (. (system-declaration plain "rev-1" :versions (current-versions)) rows) 0)) "env を渡さない宣言は今の形のまま")
   (with [(pytest.raises TypeError)]
     (job "follow" (quiet-program 1.0) :call (CallShape :function quiet-program :args [1.0] :kwargs {}) :needs #{"net"}
          :base-from {"kind" "Deployment" "namespace" "n" "name" "d"}))
   (val with-vars (replace declared-env :env-vars #((EnvVar :name "POLL" :value "1"))))
   (<- clashing System (quiet-system "recreate" None {"POLL" "2"}))
   (with [raised (pytest.raises ValueError)]
-    (system-declaration clashing "rev-1" :runtime-env with-vars))
+    (system-declaration clashing "rev-1" :versions (current-versions) :runtime-env with-vars))
   (assert (in "POLL" (str raised.value)))
   ;; coordinator も同じ重なりを行で断る(declare を通らない行 — 資源の口へ直に書かれた行)。
   (<- apart System (quiet-system "recreate" None {"POLL" "2"}))
-  (val row (get (. (system-declaration apart "rev-1") rows) 0))
+  (val row (get (. (system-declaration apart "rev-1" :versions (current-versions)) rows) 0))
   (<- vars-json dict (runtime-env->json with-vars))
   (with [raised (pytest.raises ValueError)]
     (job-from-json (| row {"runtimeEnv" vars-json})))
@@ -82,7 +83,7 @@
   (<- declared-env RuntimeEnv (sample-env))
   (<- env-json dict (runtime-env->json declared-env))
   (<- plain System (quiet-system "recreate" None {}))
-  (val row (get (. (system-declaration plain "rev-1" :runtime-env declared-env) rows) 0))
+  (val row (get (. (system-declaration plain "rev-1" :versions (current-versions) :runtime-env declared-env) rows) 0))
   (val job (job-from-json row))
   (assert (= (json.loads job.spec.runtime-env) env-json) job.spec)
   (assert (= (get (job-to-json job) "runtimeEnv") env-json) "coordinator の状態に残る(読み戻しで同じ宣言)")
@@ -120,7 +121,7 @@
   ;; レビューで見つけた欠陥)。版と指紋は両側で同じ・root の鍵だけが worker の中の値。
   (<- declared-env RuntimeEnv (sample-env))
   (<- handoff System (quiet-system "handoff" {"windowSeconds" 30} {"POLL" "5.0"}))
-  (val row (get (. (system-declaration handoff "rev-1" :runtime-env declared-env) rows) 0))
+  (val row (get (. (system-declaration handoff "rev-1" :versions (current-versions) :runtime-env declared-env) rows) 0))
   (val coordinator-spec (. (job-from-json row) spec))
   (val worker-spec (declared-job-spec (spec-json coordinator-spec)))
   (assert (= worker-spec.revision coordinator-spec.revision) #(worker-spec coordinator-spec))
@@ -188,7 +189,7 @@
   (val declared (job "reporter" (appservice.report-service (str out))
                      :call (CallShape :function appservice.report-service :args [(str out)] :kwargs {})
                      :needs #{"net"}))
-  (val declaration (system-declaration (system-of "lab" #(declared)) "rev" :runtime-env env))
+  (val declaration (system-declaration (system-of "lab" #(declared)) "rev" :versions (current-versions) :runtime-env env))
   (val row (get declaration.rows 0))
   (val spec (declared-job-spec (spec-json (. (job-from-json row) spec))))
   ;; worker が /programs/<sha> から取って置くのと同じ file(CoordinatorLink.accept-programs の形)を ProcessHost の cache に置く。

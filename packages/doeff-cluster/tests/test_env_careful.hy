@@ -36,7 +36,8 @@
 (import doeff_cluster.worker_model [CodeState CodeView StartJob ReapJob Outcome WorldView WorkerPolicy PrepareEnv WarmEnv
                                     code-key])
 (import doeff_cluster.worker_policy [plan])
-(import doeff_cluster.remote_model [encode-program decode-outcome current-versions TaskSucceeded TaskFailed])
+(import doeff_cluster.remote_model [encode-program decode-outcome TaskSucceeded TaskFailed])
+(import doeff_cluster.process_versions [current-versions])
 
 
 (import tests.careful_rig [FIXTURES HY LOCK DEADLINE-SECONDS JOB-ENV git push-commit remote-repo url-of app-files Rig make-rig declare fake-log count-log downloads prepare run-task])

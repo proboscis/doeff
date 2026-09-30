@@ -25,11 +25,7 @@
 (import io)
 (import dataclasses [dataclass field])
 (import hashlib)
-(import importlib.metadata)
-(import pathlib [Path])
-(import sys)
 (import traceback)
-(import os)
 (import cloudpickle)
 (import doeff [EffectBase Program])
 (import doeff.do)
@@ -100,29 +96,7 @@
 (setv TaskOutcome (| TaskSucceeded TaskFailed))
 
 
-(defn #^ str _source-fingerprint [#^ str module-name]
-  ;; 同じ dist の版でも source が違えば cloudpickle が値として運ぶ内部の関数(@do の定義の関数等)は食い違う。
-  ;; 版の名だけでは足りないので、その file の hash も添える。
-  (setv module (importlib.import-module module-name) file module.__file__)
-  (when (is file None)
-    (raise (RemoteJobFailed (.format "{} の source の file が無い(版の識別を作れない)" module-name))))
-  (setv path (Path file))
-  (cut (.hexdigest (hashlib.sha256 (.read-bytes path))) 0 12))
-
-
-(defn #^ dict current-versions []
-  "この process の版の識別。送り手が blob に添え、受け側が突き合わせる。"
-  {"python" (.format "{}.{}.{}{}" sys.version-info.major sys.version-info.minor sys.version-info.micro
-                     (if (getattr sys "_is_gil_enabled" None) (if (sys._is-gil-enabled) "" "t") ""))
-   "cloudpickle" cloudpickle.__version__
-   "doeff" (importlib.metadata.version "doeff")
-   "doeff-vm" (importlib.metadata.version "doeff-vm")
-   "doeff-do" (_source-fingerprint "doeff.do")
-   ;; env の root の中の子 process は、その env のキーを名乗る(worker が DOEFF_RUNTIME_ENV_KEY で渡す)。送り手が env の中で動いていれば
-   ;; 送り手も名乗る。両方が名乗る時だけ比べる(version-diffs)。
-   #** (let [key (os.environ.get "DOEFF_RUNTIME_ENV_KEY" "")] (if key {"envKey" key} {}))})
-
-
+;; この process の版の識別(current-versions)を読むのは io の層の process_versions.hy(#1630)。ここは突き合わせの判断だけ。
 (defn #^ tuple version-diffs [#^ dict expected #^ dict actual]  ; defk にできない: 子の入口と coordinator の純粋な判断(Program の外)が呼ぶ
   "送り手の版(expected)と受け側の版(actual)の食い違った欄(VersionDiff の tuple・欄の名の順)。env のキー(envKey)は両方が名乗る
    時だけ比べて先頭に置く(送り手が env の外 — 開発の checkout — で動く時は、残りの欄と宣言の組み立ての「汚れたツリーを断る」が
