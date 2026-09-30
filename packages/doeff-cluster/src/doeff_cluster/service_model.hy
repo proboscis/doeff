@@ -261,5 +261,9 @@
 
 (deff resolve [#^ str path]  ; defk にできない: CLI の入口(declare)が引数の文字列を解く
   {:pre [(: path str)] :post [(: % Callable)] :tags {:context "doeff-cluster" :role "entry"}}
-  "`module:attr` の import path を関数に解く(declare の系の関数と土台の関数)。"
-  (resolve-value path))
+  "`module:attr` の import path を関数に解く(declare の系の関数と土台の関数)。旧い形の系の値(System)は関数ではないので、
+   名指しで断る(declare はその前に理由つきで断るので、ここへ来るのは呼び手の誤り)。"
+  (setv value (resolve-value path))
+  (when (isinstance value System)
+    (raise (TypeError (+ "関数ではなく旧い形の系の値を指している: " path))))
+  value)

@@ -473,7 +473,9 @@
                                  "記録の出来事を再生の業務の Program が出さないまま止まった")
                     "event" e "kind" kind "task" owner
                     "expected" (if (is entry None) None {"type" entry.type "args" entry.args})
-                    "at" (if (is entry None) None entry.at)}))
+                    "at" (if (is entry None) None entry.at)})
+    ;; 分岐は self.divergence に残る。stall は印を付けるだけで、答えは返さない。
+    None)
 
   (defn #^ None task-ended [self #^ str label #^ bool ok #^ (| BaseException None) error]
     (setv (get self.ended label) (if ok True (repr error)))))

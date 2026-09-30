@@ -85,14 +85,13 @@
 
 
 (deftest test-a-job-without-needs-is-refused
-  ;; 要る能力を書かない job(どこにでも置ける仕事)は断る(R4b)。空の集合も、:needs の欠けも同じ。旧い label の形も能力の名にしない。
+  ;; 要る能力を書かない job(どこにでも置ける仕事)は断る(R4b)。空の集合も同じ。旧い label の形も能力の名にしない。
+  ;; :needs の欠けは、job の引数の宣言で必須なので、型の検査が呼び出しの時点で断る(pyright reportCallIssue)。
+  ;; 以前ここに在った「欠けた呼び出しが TypeError になる」の実行の確かめは、型の検査と同じ事を測っていたので外した(#1697)。
   (with [raised (pytest.raises ValueError)]
     (job "nowhere" (tally-program plain-foundation 1) :call TALLY-CALL :needs #{}))
   (assert (in "nowhere" (str raised.value)))
   (assert (in ":needs が空" (str raised.value)))
-  (with [raised (pytest.raises TypeError)]
-    (job "missing" (tally-program plain-foundation 1) :call TALLY-CALL))
-  (assert (in "needs" (str raised.value)))
   (with [raised (pytest.raises ValueError)]
     (job "label" (tally-program plain-foundation 1) :call TALLY-CALL :needs #{"kind=k3s"}))
   (assert (in "kind=k3s" (str raised.value))))
