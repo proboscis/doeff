@@ -1,5 +1,5 @@
 ;;; 盤の掃除と容量(2026-09-25): 期限つきの行(ttlSeconds)・上限を越える書きの断り・task の上限・沈黙した worker を忘れる。
-(require doeff-hy.macros [deftest <- val])
+(require doeff-hy.macros [deftest <- val var])
 (import dataclasses [replace])
 (import doeff_cluster.cluster_model [ClusterState ClusterTiming WorkerInfo TaskRecord])
 (import doeff_cluster.coordinator_inbox [http-request])
@@ -22,9 +22,12 @@
 
 
 (deftest test-a-row-with-a-ttl-is-swept-after-it-expires-and-the-sweep-is-persisted
-  (setv #(s status _) (put (ClusterState) "w/process/atlas/7" {"n" 1} 1000 :ttlSeconds 60))
+  (val reply-1 (put (ClusterState) "w/process/atlas/7" {"n" 1} 1000 :ttlSeconds 60))
+  (var s (get reply-1 0))
+  (val status (get reply-1 1))
   (assert (= status 200))
-  (setv #(s _ _) (put s "w/cycle" {"n" 2} 1000))
+  (val reply-2 (put s "w/cycle" {"n" 2} 1000))
+  (:= s (get reply-2 0))
   (assert (= s.board-expiry {"w/process/atlas/7" 61000}))
   ;; 期限は行と一緒に保存し、読み直しで戻る
   (setv back (state-from-kv (full-kv s) 2000))
@@ -40,8 +43,10 @@
 
 
 (deftest test-a-put-without-ttl-makes-the-row-permanent-again
-  (setv #(s _ _) (put (ClusterState) "k" 1 1000 :ttlSeconds 5))
-  (setv #(s _ _) (put s "k" 2 2000))
+  (val reply-3 (put (ClusterState) "k" 1 1000 :ttlSeconds 5))
+  (var s (get reply-3 0))
+  (val reply-4 (put s "k" 2 2000))
+  (:= s (get reply-4 0))
   (assert (= s.board-expiry {})))
 
 
@@ -50,27 +55,37 @@
 
 (deftest test-writes-over-the-limits-are-refused-but-shrinking-and-deleting-pass
   (setv big (* "x" (+ BOARD-MAX-VALUE-BYTES 1)))
-  (setv #(s status body) (put (ClusterState) "k" big))
+  (val reply-5 (put (ClusterState) "k" big))
+  (val s (get reply-5 0))
+  (var status (get reply-5 1))
+  (var body (get reply-5 2))
   (assert (= status 507))
   (assert (in "1 行の上限" (get body "error")))
   ;; 合計の上限: 上限の直前まで埋まった盤に、大きくする書きは断り、小さくする書きと消す書きは通す
   (setv half (* "y" (- (// BOARD-MAX-VALUE-BYTES 2) 10)))
   (setv full (replace (ClusterState) :board {"a" half} :board-versions {"a" 1}
                       :board-sizes {"a" (- BOARD-MAX-BYTES 100)}))
-  (setv #(_ status body) (put full "b" "zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz"))
+  (val reply-6 (put full "b" "zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz"))
+  (:= status (get reply-6 1))
+  (:= body (get reply-6 2))
   (assert (= status 507))
   (assert (in "合計" (get body "error")))
-  (setv #(shrunk status _) (put full "a" "small"))
+  (val reply-7 (put full "a" "small"))
+  (val shrunk (get reply-7 0))
+  (:= status (get reply-7 1))
   (assert (= status 200))
   (assert (= (get shrunk.board-sizes "a") (value-size "small")))
-  (setv #(_ status _) (call full "PUT" "/board/a" {"value" None "delete" True}))
+  (val reply-8 (call full "PUT" "/board/a" {"value" None "delete" True}))
+  (:= status (get reply-8 1))
   (assert (= status 200))
   ;; 行の数の上限
   (setv many (replace (ClusterState) :board (dfor i (range BOARD-MAX-ROWS) (str i) 1)
                       :board-sizes (dfor i (range BOARD-MAX-ROWS) (str i) 1)))
-  (setv #(_ status _) (put many "new" 1))
+  (val reply-9 (put many "new" 1))
+  (:= status (get reply-9 1))
   (assert (= status 507))
-  (setv #(_ status _) (put many "0" 2))                    ; 在る行の書き直しは通す
+  (val reply-10 (put many "0" 2))
+  (:= status (get reply-10 1))                    ; 在る行の書き直しは通す
   (assert (= status 200)))
 
 
@@ -107,8 +122,9 @@
 
 (deftest test-a-worker-silent-for-a-week-without-work-is-forgotten
   (setv old (WorkerInfo "newmac" #("net") 10 0) busy (WorkerInfo "atlas" #("net") 10 0))
-  (setv s (ClusterState :workers {"newmac" old "atlas" busy}))
-  (setv #(s _ _) (call s "PUT" "/jobs" {"jobs" [{"name" "j" "run" SAMPLE-RUN "revision" "r" "needs" ["net"] "pin" "atlas"}]} 1000))
+  (var s (ClusterState :workers {"newmac" old "atlas" busy}))
+  (val reply-11 (call s "PUT" "/jobs" {"jobs" [{"name" "j" "run" SAMPLE-RUN "revision" "r" "needs" ["net"] "pin" "atlas"}]} 1000))
+  (:= s (get reply-11 0))
   ;; atlas は置き先を持つので忘れない(置き先は移し替えの規則が扱う)
   (assert (in "j" s.placements))
   (setv later (tick s (+ WORKER-FORGET-MS 1) T))

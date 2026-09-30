@@ -1,5 +1,5 @@
 ;; coordinator: 作り直し・盤の compare-and-set・task の一生(置く・結果・期限・版・担い手の沈黙)・調停ループの Program・shim。
-(require doeff-hy.macros [deftest defhandler <- val])
+(require doeff-hy.macros [deftest defhandler <- val var])
 (import collections.abc [Callable])
 (import dataclasses [replace])
 (import subprocess)
@@ -31,13 +31,17 @@
 
 (deftest test-restart-keeps-placements-of-workers-that-have-not-reported-yet
   ;; 作り直した coordinator へ最初に名乗った worker に全 job が寄らないこと(実測 2026-09-23 の欠陥)。
-  (setv #(s _ _) (beat (ClusterState) "a" 0))
-  (setv #(s _ _) (beat s "b" 0))
-  (setv #(s _ _) (respond s (req "PUT" "/jobs" {"jobs" (lfor i (range 4) {"name" f"s{i}" "run" SAMPLE-RUN "revision" "r" "needs" ["net"]})}) 0 T))
+  (val reply-1 (beat (ClusterState) "a" 0))
+  (var s (get reply-1 0))
+  (val reply-2 (beat s "b" 0))
+  (:= s (get reply-2 0))
+  (val reply-3 (respond s (req "PUT" "/jobs" {"jobs" (lfor i (range 4) {"name" f"s{i}" "run" SAMPLE-RUN "revision" "r" "needs" ["net"]})}) 0 T))
+  (:= s (get reply-3 0))
   (setv before (dfor #(k v) (.items s.placements) k v.worker))
   (assert (= (set (.values before)) #{"a" "b"}))
-  (setv second (state-from-json (state-to-json s) 5000))
-  (setv #(second _ _) (beat second "a" 5000)) ; b はまだ名乗っていない
+  (var second (state-from-json (state-to-json s) 5000))
+  (val reply-4 (beat second "a" 5000))
+  (:= second (get reply-4 0)) ; b はまだ名乗っていない
   (assert (= (dfor #(k v) (.items second.placements) k v.worker) before)))
 
 
@@ -63,48 +67,76 @@
 
 
 (deftest test-task-goes-to-a-worker-and-its-result-comes-back
-  (setv #(s _ _) (beat (ClusterState) "w" 0))
-  (setv #(s id) (submit s 100))
-  (setv #(s _ body) (beat s "w" 200))
+  (val reply-5 (beat (ClusterState) "w" 0))
+  (var s (get reply-5 0))
+  (val reply-6 (submit s 100))
+  (:= s (get reply-6 0))
+  (val id (get reply-6 1))
+  (val reply-7 (beat s "w" 200))
+  (:= s (get reply-7 0))
+  (var body (get reply-7 2))
   (assert (= (lfor t (get body "tasks") (get t "id")) [id]))
   ;; 返事は詰めた Program を運ばず、置き場のキーだけ(worker が /programs/<sha> から取る)。
   (assert (= (get body "tasks" 0 "program") SAMPLE-TASK-PROGRAM))
   (assert (not-in "blob" (get body "tasks" 0)))
   ;; worker が終わったと報告する(結果の blob を添えて)
-  (setv #(s _ body) (beat s "w" 300 [{"name" (+ "task/" id) "phase" "finished" "result" "R" "detail" ""}]))
+  (val reply-8 (beat s "w" 300 [{"name" (+ "task/" id) "phase" "finished" "result" "R" "detail" ""}]))
+  (:= s (get reply-8 0))
+  (:= body (get reply-8 2))
   (assert (= (get body "tasks") [])) ; 終わった task はもう送らない = worker は file を片付ける
-  (setv #(s _ view) (respond s (req "GET" (+ "/tasks/" id)) 400 T))
+  (val reply-9 (respond s (req "GET" (+ "/tasks/" id)) 400 T))
+  (:= s (get reply-9 0))
+  (val view (get reply-9 2))
   (assert (= #((get view "phase") (get view "result")) #("finished" "R")))
   ;; 結果は状態の報告(/state)には載せない
   (assert (not-in "result" (get (. s statuses) "w" "jobs" 0))))
 
 
 (deftest test-task-is-dropped-when-the-caller-stops-asking
-  (setv #(s _ _) (beat (ClusterState) "w" 0))
-  (setv #(s id) (submit s 0 :lease 5.0))
-  (setv #(s _ _) (respond s (req "GET" (+ "/tasks/" id)) 4000 T)) ; 問い合わせが lease を 9000 まで延ばす
-  (setv #(s _ body) (beat s "w" 8000))
+  (val reply-10 (beat (ClusterState) "w" 0))
+  (var s (get reply-10 0))
+  (val reply-11 (submit s 0 :lease 5.0))
+  (:= s (get reply-11 0))
+  (val id (get reply-11 1))
+  (val reply-12 (respond s (req "GET" (+ "/tasks/" id)) 4000 T))
+  (:= s (get reply-12 0)) ; 問い合わせが lease を 9000 まで延ばす
+  (val reply-13 (beat s "w" 8000))
+  (:= s (get reply-13 0))
+  (var body (get reply-13 2))
   (assert (= (len (get body "tasks")) 1))
-  (setv #(s _ body) (beat s "w" 9001))
+  (val reply-14 (beat s "w" 9001))
+  (:= s (get reply-14 0))
+  (:= body (get reply-14 2))
   (assert (= (get body "tasks") [])) ; 担い手は次の拍でその子 process を止める
-  (setv #(s _ view) (respond s (req "GET" (+ "/tasks/" id)) 9002 T))
+  (val reply-15 (respond s (req "GET" (+ "/tasks/" id)) 9002 T))
+  (:= s (get reply-15 0))
+  (val view (get reply-15 2))
   (assert (= (get view "phase") "missing")))
 
 
 (deftest test-task-from-a-different-version-is-refused-before-sending
-  (setv #(s _ _) (beat (ClusterState) "w" 0))
-  (setv #(s id) (submit s 10 :versions (| V {"python" "3.9.6"})))
+  (val reply-16 (beat (ClusterState) "w" 0))
+  (var s (get reply-16 0))
+  (val reply-17 (submit s 10 :versions (| V {"python" "3.9.6"})))
+  (:= s (get reply-17 0))
+  (val id (get reply-17 1))
   (setv task (get s.tasks id))
   (assert (= task.phase "failed"))
   (assert (in "python=3.14.0" task.detail))
-  (setv #(s _ body) (beat s "w" 20))
+  (val reply-18 (beat s "w" 20))
+  (:= s (get reply-18 0))
+  (val body (get reply-18 2))
   (assert (= (get body "tasks") [])))
 
 
 (deftest test-task-of-a-silent-worker-fails-and-is-not-rerun
-  (setv #(s _ _) (beat (ClusterState) "w" 0))
-  (setv #(s id) (submit s 0 :lease 100.0))
-  (setv #(s _ _) (beat s "x" (+ T.reassign-after-ms 1000))) ; w は 0 から移し替えの期限を越えて沈黙、x だけが生きている
+  (val reply-19 (beat (ClusterState) "w" 0))
+  (var s (get reply-19 0))
+  (val reply-20 (submit s 0 :lease 100.0))
+  (:= s (get reply-20 0))
+  (val id (get reply-20 1))
+  (val reply-21 (beat s "x" (+ T.reassign-after-ms 1000)))
+  (:= s (get reply-21 0)) ; w は 0 から移し替えの期限を越えて沈黙、x だけが生きている
   (setv task (get s.tasks id))
   (assert (= task.phase "failed"))
   (assert (in "沈黙" task.detail)))

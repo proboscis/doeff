@@ -423,8 +423,8 @@
   (<- ok bool (run-in-world world (fetch-after-mirror-scenario (frozenset #(APP-URL)) EnvFailureKind.REPO-UNREACHABLE True)))
   (assert ok)
   ;; 反例: 届く remote に commit が無い時は、恒久の commit-missing のまま。
-  (<- ok bool (run-in-world world (fetch-after-mirror-scenario (frozenset) EnvFailureKind.COMMIT-MISSING False)))
-  (assert ok))
+  (<- missing-ok bool (run-in-world world (fetch-after-mirror-scenario (frozenset) EnvFailureKind.COMMIT-MISSING False)))
+  (assert missing-ok))
 
 
 ;; --- 宣言の url の綴りと worker の許可表(2026-09-28 の事故 — daily-verify が 10 分落ちた)------------------------------
@@ -441,8 +441,8 @@
     (assert (= identity "github.com/o/lib") (.format "{} → {}" spelling identity)))
   ;; 反例: 別の owner・別の host・別の名は別の repo。
   (for [other ["git@github.com:p/lib.git" "https://gitlab.com/o/lib.git" "git@github.com:o/lib2.git"]]
-    (<- identity str (repo-identity other))
-    (assert (!= identity "github.com/o/lib") other)))
+    (<- other-identity str (repo-identity other))
+    (assert (!= other-identity "github.com/o/lib") other)))
 
 
 (defk https-lib-world []

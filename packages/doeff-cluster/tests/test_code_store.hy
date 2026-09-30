@@ -1,6 +1,6 @@
 ;; コードの準備の失敗を完成品として公開しないこと・壊れた木を作り直すこと。
 ;; 焼きの Program は fake の handler で、CodeStore は手元の小さな git repo と偽の焼きの道具で確かめる。
-(require doeff-hy.macros [defhandler deftest <- val])
+(require doeff-hy.macros [defhandler deftest <- val var])
 (import json)
 (import os)
 (import subprocess)
@@ -40,18 +40,18 @@
   (assert (= (get ok "markers" 0 "pycs") 2))
   ;; 焼きは「成功」と答えたのに .pyc が置かれていない → 印を置かない。
   (setv silent (tree-state ["a/m.py" "a/n.hy"] [(cache-rel "a/m.py")]))
-  (<- summary dict ((sim-time-handler :clock (SimClock)) ((fake-tree silent) (prepare-tree "/t" "rev1" None (frozenset) 1 #(".")))))
-  (assert (in "a/n.hy" (get summary "problem")))
+  (<- silent-summary dict ((sim-time-handler :clock (SimClock)) ((fake-tree silent) (prepare-tree "/t" "rev1" None (frozenset) 1 #(".")))))
+  (assert (in "a/n.hy" (get silent-summary "problem")))
   (assert (= (get silent "markers") []))
   ;; 全部焼けなかった(道具か環境の失敗)→ 印を置かない。
   (setv broken (tree-state ["a/m.py"] [] [#("a/m.py" "ImportError: hy")]))
-  (<- summary dict ((sim-time-handler :clock (SimClock)) ((fake-tree broken) (prepare-tree "/t" "rev1" None (frozenset) 1 #(".")))))
-  (assert (in "全部焼けなかった" (get summary "problem")))
+  (<- broken-summary dict ((sim-time-handler :clock (SimClock)) ((fake-tree broken) (prepare-tree "/t" "rev1" None (frozenset) 1 #(".")))))
+  (assert (in "全部焼けなかった" (get broken-summary "problem")))
   (assert (= (get broken "markers") []))
   ;; 一部の file だけ焼けない(その file の source の誤り)は完成とし、印に理由を残す。
   (setv partial (tree-state ["a/m.py" "a/n.hy"] [(cache-rel "a/m.py")] [#("a/n.hy" "SyntaxError: x")]))
-  (<- summary dict ((sim-time-handler :clock (SimClock)) ((fake-tree partial) (prepare-tree "/t" "rev1" None (frozenset) 1 #(".")))))
-  (assert (is (get summary "problem") None))
+  (<- partial-summary dict ((sim-time-handler :clock (SimClock)) ((fake-tree partial) (prepare-tree "/t" "rev1" None (frozenset) 1 #(".")))))
+  (assert (is (get partial-summary "problem") None))
   (assert (= (get partial "markers" 0 "failed") [{"path" "a/n.hy" "reason" "SyntaxError: x"}])))
 
 
@@ -111,7 +111,7 @@
   (setv #(repo rev) (make-repo tmp-path) cache (/ tmp-path "cache"))
   (setv store (CodeStore (str repo) (str cache) (failing-tool tmp-path)))
   (.start store rev)
-  (setv view (wait-settled store rev))
+  (var view (wait-settled store rev))
   (assert (= view.state CodeState.FAILED))
   (assert (in "焼きの道具が見つからない" view.detail))
   (assert (is-not view.failed-ms None))
@@ -121,7 +121,7 @@
   ;; 次の準備(policy が間を置いて PrepareCode を出した後)は本物の道具で作り直せる。
   (setv store.hy-command HY)
   (.start store rev)
-  (setv view (wait-settled store rev))
+  (:= view (wait-settled store rev))
   (assert (= view.state CodeState.READY) view.detail)
   (assert (.exists (/ cache rev (cache-rel "pkg/m.py"))))
   (setv marker (json.loads (.read-text (/ cache rev MARKER))))

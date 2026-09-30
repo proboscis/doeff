@@ -2,7 +2,7 @@
 ;;   並べる(surge)・並べた先の Ready を待つ・付け替えて旧を宣言から外す・移す先が無ければ並べず旧を止めない・取り消し・
 ;;   入れ替えでない Service は止めて移す・drain 中の worker に新しい置き先を割り当てない・別の世代の heartbeat と期限で解ける・
 ;;   保存と読み直し。時刻は純粋な now の引数(Program の検は doeff-time の SimClock)。
-(require doeff-hy.macros [deftest defhandler <-])
+(require doeff-hy.macros [deftest defhandler <- val var])
 (import dataclasses [replace])
 (import doeff_time [SimClock sim-time-handler])
 (import doeff_cluster.cluster_model [ClusterTiming ClusterState Drain])
@@ -97,7 +97,7 @@
 
 (deftest test-drain-surges-a-handoff-writer-then-moves-it-only-after-the-new-process-is-ready
   (setv c (running-writer))
-  (setv view (c.call "POST" "/workers/atlas/drain" {} :actor "drain@atlas"))
+  (var view (c.call "POST" "/workers/atlas/drain" {} :actor "drain@atlas"))
   ;; 並べる: 置き先は atlas のまま、zeus へ並べた置き先(世代 +1)。zeus の heartbeat の返事に w が載る。atlas にも載ったまま。
   (assert (= #((c.placed "w") (c.surge "w")) #("atlas" "zeus")) c.state.surges)
   (assert (in "w" (c.names-for "zeus")))
@@ -128,7 +128,7 @@
   (assert (= (get (c.call "GET" "/workers/atlas") "drain" "remaining") ["w"]))
   ;; 旧が止まった報告 → drained。
   (c.beat "atlas" [])
-  (setv view (c.call "GET" "/workers/atlas"))
+  (:= view (c.call "GET" "/workers/atlas"))
   (assert (= #((get view "drain" "phase") (get view "drain" "drained")) #("Drained" True)) view)
   ;; 出来事の記録: 並べた・付け替えた。
   (setv notes (lfor e c.state.events :if (in "drain" e) (get e "drain")))

@@ -92,8 +92,8 @@
                (.exists ready) (= (.strip (.read-text ready)) "ready"))
       (return (- (time.monotonic) started)))
     (time.sleep 0.2))
-  (<- text str (logs tmp-path))
-  (raise (AssertionError (.format "worker が {} 秒で名乗らなかった\n{}" REGISTER-SECONDS text))))
+  (<- final-text str (logs tmp-path))
+  (raise (AssertionError (.format "worker が {} 秒で名乗らなかった\n{}" REGISTER-SECONDS final-text))))
 
 
 (defk registers-over-http [tmp-path old-store]

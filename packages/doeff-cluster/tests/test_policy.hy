@@ -43,13 +43,13 @@
   (setv w (world (running A1) :codes #(READY1 READY2)))
   (setv actions (plan 0 #(A2) w {} POLICY))
   (assert (= actions #((SignalJob "a" 10 StopStage.TERM))))
-  (setv records (records-after 0 {"a" (JobRecord "a" :attempts 1)} actions))
+  (var records (records-after 0 {"a" (JobRecord "a" :attempts 1)} actions))
   ;; 猶予の間は待つ。新版は起動しない。
   (assert (= (plan 999 #(A2) w records POLICY) #()))
   ;; 猶予切れで KILL。
   (setv kill (plan 1000 #(A2) w records POLICY))
   (assert (= kill #((SignalJob "a" 10 StopStage.KILL))))
-  (setv records (records-after 1000 records kill))
+  (:= records (records-after 1000 records kill))
   (assert (= (. (get records "a") stopping) (StopProgress 0 StopStage.KILL 1000)))
   ;; KILL の後も終了を観測できない → 置き換えを起動しない・停止未確認と表示する。
   (assert (= (plan 5000 #(A2) w records POLICY) #()))
@@ -58,7 +58,7 @@
   (setv exited (world (replace (running A1) :exit-code -9) :codes #(READY1 READY2)))
   (setv reap (plan 5001 #(A2) exited records POLICY))
   (assert (= reap #((ReapJob "a" 10 Outcome.STOPPED -9))))
-  (setv records (records-after 5001 records reap))
+  (:= records (records-after 5001 records reap))
   (assert (= (plan 5002 #(A2) (world :codes #(READY1 READY2)) records POLICY)
              #((StartJob A2 2 "/c/rev2")))))
 
@@ -78,9 +78,9 @@
 
 (deftest test-requested-stop-exit-is-not-restarted-with-backoff
   ;; 停止を求めて終わった job は、宣言が残っていれば backoff なしで次版を起動する。
-  (setv records {"a" (JobRecord "a" :attempts 1 :stopping (StopProgress 0 StopStage.TERM 0))})
+  (var records {"a" (JobRecord "a" :attempts 1 :stopping (StopProgress 0 StopStage.TERM 0))})
   (setv reap (plan 10 #(A2) (world (replace (running A1) :exit-code 0) :codes #(READY1 READY2)) records POLICY))
-  (setv records (records-after 10 records reap))
+  (:= records (records-after 10 records reap))
   (assert (= (. (get records "a") last-outcome) Outcome.STOPPED))
   (assert (= (plan 11 #(A2) (world :codes #(READY1 READY2)) records POLICY) #((StartJob A2 2 "/c/rev2")))))
 
@@ -97,28 +97,30 @@
   ;; Service は宣言がある限り起こし続ける。続けて落ちるたびに間を倍にし(2・4・8 秒…・上限 60 秒)、
   ;; 長く動いた後に落ちたら 1 回目として数え直す(k8s の CrashLoopBackOff と同じ形)。
   (setv policy (replace POLICY :restart-backoff-max-ms 8000 :stable-run-ms 60000))
-  (setv records {} now 0 starts [])
+  (var records {})
+  (var now 0)
+  (setv starts [])
   (for [round (range 5)]
     ;; 起動できる最初の時刻まで 1 ms ずつではなく、backoff の境目の前後だけを確かめる
     (setv start (plan now #(A1) (world) records policy))
     (assert (= (len start) 1))
     (.append starts now)
-    (setv records (records-after now records start policy))
+    (:= records (records-after now records start policy))
     ;; 1 秒で落ちる
-    (+= now 1000)
+    (:= now (+ now 1000))
     (setv reap (plan now #(A1) (world (replace (running A1) :exit-code 1)) records policy))
-    (setv records (records-after now records reap policy))
+    (:= records (records-after now records reap policy))
     (setv wait (get [2000 4000 8000 8000 8000] round))
     (assert (= (plan (+ now wait -1) #(A1) (world) records policy) #()))
     (assert (= (. (get (statuses (+ now wait -1) #(A1) (world) records policy) 0) phase) JobPhase.BACKOFF))
-    (+= now wait))
+    (:= now (+ now wait)))
   (assert (= (. (get records "a") failures) 5))
   (assert (= (. (get records "a") attempts) 5))
   ;; 長く(stable-run-ms 以上)動いてから落ちたら 1 回目に戻る
-  (setv start (plan now #(A1) (world) records policy))
-  (setv records (records-after now records start policy))
-  (+= now 60000)
-  (setv records (records-after now records (plan now #(A1) (world (replace (running A1) :exit-code 1)) records policy) policy))
+  (setv stable-start (plan now #(A1) (world) records policy))
+  (:= records (records-after now records stable-start policy))
+  (:= now (+ now 60000))
+  (:= records (records-after now records (plan now #(A1) (world (replace (running A1) :exit-code 1)) records policy) policy))
   (assert (= (. (get records "a") failures) 1))
   (assert (= (plan (+ now 2000) #(A1) (world) records policy) #((StartJob A1 7 "/c/rev1")))))
 
