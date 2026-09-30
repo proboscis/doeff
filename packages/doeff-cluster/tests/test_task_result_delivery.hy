@@ -8,6 +8,7 @@
 (require doeff-hy.macros [deftest defk deff <- val])
 (import httpx)
 (import doeff_cluster.cluster_model [ClusterState ClusterTiming Request])
+(import doeff_cluster.coordinator_inbox [http-request])
 (import doeff_cluster.api_policy [respond])
 (import doeff_cluster.job_context [RunContext])
 (import doeff_cluster.report_client [task-result-request deliver-task-result])
@@ -23,7 +24,7 @@
   {:pre [(: state ClusterState) (: method str) (: path str) (: body (| dict None)) (: now int)] :post [(: % tuple)]
    :tags {:context "doeff-cluster-test" :role "foundation"}}
   "coordinator の口 1 つに要求を送った答え #(次の状態 status 本文) を得るため(本物の api_policy.respond)。"
-  (respond state (Request method path {} body :actor "test") now T))
+  (respond state (http-request method path {} body :actor "test") now T))
 
 
 (defk beat-body [worker statuses]

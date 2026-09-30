@@ -254,8 +254,9 @@
 (import http.server [BaseHTTPRequestHandler ThreadingHTTPServer])
 (import threading)
 (import urllib.parse [urlsplit parse-qsl])
-(import doeff_cluster.cluster_model [Request PlainText])
+(import doeff_cluster.cluster_model [PlainText])
 (import doeff_cluster.coordinator [RequestInbox ReplySlot])
+(import doeff_cluster.coordinator_inbox [http-request])
 
 ;; 1 要求の本文の上限。記録係は 1 回の送りを 4 MB で区切る(HttpSink の max-post-bytes)ので、これを超えるのは 1 行が巨大な時だけ。
 ;; 上限が無い最初の版は、古い記録係(1 回 500 行)が起点の一覧を貯めて一度に送った数百 MB の本文を JSON で読み、memory が 1.9 GB に
@@ -283,7 +284,7 @@
           (except [error ValueError]
             (return (.send self 400 {"error" (.format "JSON を読めない: {}" error)}))))
         (setv raw None)
-        (.put inbox.queue (Request method split.path (dict (parse-qsl split.query)) body slot
+        (.put inbox.queue (http-request method split.path (dict (parse-qsl split.query)) body :slot slot
                                    :actor (.get self.headers "X-Actor") :peer (str (get self.client-address 0))))
         (if (.wait slot.done 60.0)
             (.send self slot.status slot.body)

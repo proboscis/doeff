@@ -29,9 +29,7 @@
 ;;; 書きには header X-Actor(依頼の主体の id・作業係の名・worker の名)が要る。盤と task は無ければ送り元の番地で記録する。
 ;;; 旧い口(PUT /jobs・/heartbeat・/board・/tasks)は残す。PUT /jobs は資源ごとの compare-and-set に写す(resource_policy)。
 (import dataclasses [replace])
-(import os.path [basename])
 (import traceback [extract-tb])
-(import urllib.parse [unquote :as url-unquote])
 (import .cluster_model [ClusterState ClusterTiming ClusterNaming Request PlainText BodyInvalid Fault format-refusal required-field])
 (import .metrics_policy [record-metrics metrics-text])
 (import .cluster_policy [reconcile register-heartbeat heartbeat-reply state-view submit-task poll-task absorb-task-result board-write
@@ -253,7 +251,7 @@
 (defn #^ tuple respond [#^ ClusterState state #^ Request request #^ int now #^ ClusterTiming timing]
   "要求 1 件 → #(次の状態 status 本文)。"
   (setv method request.method
-        parts (lfor p (.split (.strip request.path "/") "/") (url-unquote p))
+        parts (list request.parts)
         head (get parts 0))
   (try
     (setv body (request-object request))
@@ -369,4 +367,4 @@
     (except [error Exception]
       (setv inner (get (extract-tb error.__traceback__) -1))
       #(state 500 (Fault method request.path (. (type error) __name__) (str error)
-                         (.format "{}:{} {}" (basename inner.filename) inner.lineno inner.name))))))
+                         (.format "{}:{} {}" (get (.rsplit (.replace inner.filename "\\" "/") "/" 1) -1) inner.lineno inner.name))))))

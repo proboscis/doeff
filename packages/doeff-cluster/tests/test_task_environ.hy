@@ -18,7 +18,8 @@
 (import httpx)
 (import pytest)
 (import doeff_time [SimClock])
-(import doeff_cluster.cluster_model [ClusterState ClusterTiming Request TaskRecord task-record-to-json task-record-from-json])
+(import doeff_cluster.cluster_model [ClusterState ClusterTiming TaskRecord task-record-to-json task-record-from-json])
+(import doeff_cluster.coordinator_inbox [http-request])
 (import doeff_cluster.cluster_policy [adopted-task])
 (import doeff_cluster.api_policy [respond])
 (import doeff_cluster.handlers [CoordinatorLink ProcessHost program-file task-spec])
@@ -50,7 +51,7 @@
   {:pre [(: state ClusterState) (: method str) (: path str) (: body (| dict None)) (: now int)] :post [(: % tuple)]
    :tags {:context "doeff-cluster-test" :role "entry"}}
   "coordinator の純粋な振り分け 1 件(送り手 c-test)→ #(次の状態 status 本文)。"
-  (respond state (Request method path {} body :actor "c-test") now T))
+  (respond state (http-request method path {} body :actor "c-test") now T))
 
 
 (defk beat [state now]
