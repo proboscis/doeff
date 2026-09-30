@@ -274,6 +274,8 @@ impl Setup {
                 }
                 ProjectRule::SemanticMixedConcerns => self.settings.semantic.as_ref().is_some_and(|s| s.mixed_concerns.is_some()),
                 ProjectRule::SemanticClassRole => self.settings.semantic.as_ref().is_some_and(|s| s.class_role.is_some()),
+                // 登録簿の当たらない行は、登録簿を設定した repo でだけ判じる(判じる鍵は、その実行で判じた規則の鍵だけ)。
+                ProjectRule::RegistryEntryStale => !self.settings.registry.dirs.is_empty() || !self.settings.registry.files.is_empty(),
             })
             .collect()
     }

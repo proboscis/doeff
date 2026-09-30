@@ -3651,3 +3651,63 @@ fn broad_catches_empty_population_and_misreadings() {
     assert!(all.contains("broad-catch a に :why(なぜ広い捕捉を置かないか)が無い"), "{}", all);
     assert!(all.contains("broad-catch b が 2 度宣言されている"), "{}", all);
 }
+
+/// DOEFF166 の repo: DOEFF110・111 を判じ(111 は law bare-needs-reason の名で鍵を組む)、登録簿は 1 鍵 1 file の dir と 1 行 1 鍵の file。
+fn stale_registry_repo(dir_keys: &[&str], listed: &str, enable: &str) -> tempfile::TempDir {
+    let dir = tempfile::TempDir::new().unwrap();
+    std::fs::write(dir.path().join("architecture.hy"), "(defarchitecture s :root \"app\" :layers [(layer core)])\n").unwrap();
+    std::fs::write(
+        dir.path().join("pyproject.toml"),
+        format!(
+            "[tool.doeff-linter]\nenable = [{}]\n[tool.doeff-linter.definitions]\n[tool.doeff-linter.registry]\ndirs = [\"reg/BREACHES\"]\nfiles = [\"known.txt\"]\n\n[[tool.doeff-linter.laws]]\nname = \"bare-needs-reason\"\nrules = [\"DOEFF111\"]\nstatement = \"素の関数は理由を書く\"\n",
+            enable
+        ),
+    )
+    .unwrap();
+    std::fs::create_dir_all(dir.path().join("reg/BREACHES")).unwrap();
+    for (i, key) in dir_keys.iter().enumerate() {
+        std::fs::write(dir.path().join(format!("reg/BREACHES/k{}.txt", i)), format!("{}\n理由\n", key)).unwrap();
+    }
+    std::fs::write(dir.path().join("known.txt"), listed).unwrap();
+    std::fs::create_dir_all(dir.path().join("app/core")).unwrap();
+    std::fs::write(dir.path().join("app/core/x.hy"), "(deff bare [row] row)\n(defn helper [] 1)\n").unwrap();
+    dir
+}
+
+#[test]
+fn registry_keys_that_no_longer_hit_are_errors_only_for_rules_judged_on_the_whole_repo() {
+    let enable = "\"DOEFF110\", \"DOEFF111\", \"DOEFF166\"";
+    // 今も当たる鍵(law の名・規則の ID)・当たらなくなった鍵(dir の file と list の行)・判じていない規則の鍵・規則を引けない他の検の鍵。
+    let dir = stale_registry_repo(
+        &["app/core/x.hy::bare-needs-reason::bare", "app/core/x.hy::bare-needs-reason::gone", "app/core/x.hy::DOEFF119::Old"],
+        "app/core/x.hy::DOEFF110::helper\napp/core/x.hy::DOEFF110::removed\nlayer/imports.hy::some-other-checker::x\n",
+        enable,
+    );
+    let (code, report) = editor(dir.path());
+    assert_eq!(
+        keys(&report, "DOEFF166"),
+        vec![
+            "known.txt::DOEFF166::app/core/x.hy::DOEFF110::removed",
+            "reg/BREACHES/k1.txt::DOEFF166::app/core/x.hy::bare-needs-reason::gone",
+        ]
+    );
+    let gone = violation(&report, "reg/BREACHES/k1.txt::DOEFF166::app/core/x.hy::bare-needs-reason::gone");
+    assert_eq!(gone["severity"], "error");
+    assert!(gone["message"].as_str().unwrap().contains("DOEFF111"), "{}", gone["message"]);
+    assert_eq!(code, 1, "当たらない行は error — 終了コード 1");
+    // 今も当たる鍵は今までどおり warning に下がる。
+    assert_eq!(violation(&report, "app/core/x.hy::bare-needs-reason::bare")["severity"], "warning");
+
+    // 反例: 古い行を消せば DOEFF166 は出ない。
+    let clean = stale_registry_repo(&["app/core/x.hy::bare-needs-reason::bare"], "app/core/x.hy::DOEFF110::helper\n", enable);
+    let (_, report) = editor(clean.path());
+    assert!(keys(&report, "DOEFF166").is_empty(), "{:?}", keys(&report, "DOEFF166"));
+
+    // 名指しの file だけの実行と、DOEFF166 を有効にしない実行では判じない。
+    let (_, stdout, _) = run(dir.path(), &["--output-format", "editor-json", "--no-log", "app/core/x.hy"], None);
+    let named: Value = serde_json::from_str(&stdout).unwrap();
+    assert!(keys(&named, "DOEFF166").is_empty(), "{:?}", keys(&named, "DOEFF166"));
+    let off = stale_registry_repo(&["app/core/x.hy::bare-needs-reason::gone"], "", "\"DOEFF110\", \"DOEFF111\"");
+    let (_, report) = editor(off.path());
+    assert!(keys(&report, "DOEFF166").is_empty());
+}

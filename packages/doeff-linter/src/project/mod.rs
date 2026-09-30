@@ -220,6 +220,7 @@ pub fn run_with(root: &Path, settings: &ProjectSettings, enabled: &BTreeSet<Proj
         let base = settings.config_dir.clone().unwrap_or_else(|| root.to_path_buf());
         let extra = Registry::load(&base, &[], &settings.registry.config_files);
         registry.keys.extend(extra.keys);
+        registry.origins.extend(extra.origins);
         registry.problems.extend(extra.problems);
     }
     report.errors.extend(registry.problems.iter().cloned());
@@ -232,6 +233,8 @@ pub fn run_with(root: &Path, settings: &ProjectSettings, enabled: &BTreeSet<Proj
     let mut drafts = Vec::new();
 
     // 読めない Hy の file の知らせ(DOEFF128)の材料 — 全体なら repo の Hy の file の全部、1 file ならその保存前の中身。
+    // 登録簿の当たらない行(DOEFF166)は repo 全体を当てた時だけ判じる(名指しの file だけ・1 file の実行では、当たる所見が範囲の外に在りうる)。
+    let whole_repo = matches!(&target, Target::Whole { focus: None });
     let unreadable_target: Option<(PathBuf, String)> = match &target {
         Target::Whole { .. } => None,
         Target::Single { path, source } => Some((path.clone(), source.to_string())),
@@ -847,6 +850,10 @@ pub fn run_with(root: &Path, settings: &ProjectSettings, enabled: &BTreeSet<Proj
     crate::timing::timed("drop-index", || {
         std::thread::spawn(move || drop(indexes));
     });
+    if whole_repo && enabled.contains(&ProjectRule::RegistryEntryStale) {
+        let stale = crate::timing::timed("stale-registry", || stale_registry_drafts(root, settings, enabled, &registry, &drafts));
+        drafts.extend(stale);
+    }
     let labels = crate::timing::timed("labels", || judged_labels(root, settings, &mut report.errors));
     let (findings, dropped) = crate::timing::timed("finish", || finish(drafts, settings, &registry, &labels.false_positives));
     report.findings = findings;
@@ -4659,6 +4666,61 @@ fn finding_key(law: Option<&LawSpec>, rule: ProjectRule, rel: &str, detail: Opti
         Some(detail) => format!("{}::{}::{}", rel, segment, detail),
         None => format!("{}::{}", rel, segment),
     }
+}
+
+/// 鍵の区切り(`<path>::<law の名か規則の ID>[::<細目>]` の 2 つ目)が指す規則のうち、この実行で判じた物(有効・意味の規則でない・
+/// 照合中でない)。区切りから規則を引けない鍵(登録簿の dir を共用する他の検の鍵)と、判じていない規則の鍵は空。
+fn judged_rules_of(key: &str, settings: &ProjectSettings, enabled: &BTreeSet<ProjectRule>) -> Vec<ProjectRule> {
+    let Some(segment) = key.split("::").nth(1) else { return Vec::new() };
+    let named: Vec<ProjectRule> = match ProjectRule::parse(segment) {
+        Some(rule) => vec![rule],
+        None => settings
+            .laws
+            .iter()
+            .filter(|law| law.name == segment)
+            .flat_map(|law| law.rules.iter())
+            .filter_map(|rule| match rule {
+                settings::ProjectRuleOrExternal::Project(rule) => Some(*rule),
+                settings::ProjectRuleOrExternal::External(_) => None,
+            })
+            .collect(),
+    };
+    named
+        .into_iter()
+        .filter(|rule| enabled.contains(rule) && !rule.is_semantic() && !settings.registry.reconciling.contains(rule))
+        .collect()
+}
+
+/// DOEFF166: 登録簿の鍵のうち、この実行で判じた規則の鍵で、どの下書きの鍵にも当たらない物を下書きにする(鍵の順・鍵の細目 = 登録簿の鍵)。
+fn stale_registry_drafts(root: &Path, settings: &ProjectSettings, enabled: &BTreeSet<ProjectRule>, registry: &Registry, drafts: &[Draft]) -> Vec<Draft> {
+    let found: BTreeSet<String> = drafts
+        .iter()
+        .map(|draft| finding_key(settings.law_for(draft.rule, draft.layer), draft.rule, &draft.rel, draft.detail.as_deref()))
+        .collect();
+    registry
+        .keys
+        .iter()
+        .filter(|key| !found.contains(*key))
+        .filter_map(|key| {
+            let rules = judged_rules_of(key, settings, enabled);
+            if rules.is_empty() {
+                return None;
+            }
+            let source = registry.origins.get(key).cloned().unwrap_or_else(|| "登録簿".to_string());
+            let ids: Vec<String> = rules.iter().map(|rule| rule.id().to_string()).collect();
+            Some(Draft {
+                rule: ProjectRule::RegistryEntryStale,
+                layer: None,
+                path: root.join(&source),
+                rel: source.clone(),
+                range: zero_range(),
+                message: format!("登録簿 {} の鍵 {} はもう当たらない({} を repo 全体に当てた)— 行を消す", source, key, ids.join("・")),
+                detail: Some(key.clone()),
+                base: Severity::Error,
+                explain: Explain::RegistryEntryStale { key: key.clone(), source, rules: ids },
+            })
+        })
+        .collect()
 }
 
 /// 人の判定の一覧(意味の規則の誤判定と正例 — 鍵 → 理由)。
