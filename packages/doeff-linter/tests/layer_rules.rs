@@ -2744,6 +2744,56 @@ fn services_without_declared_invariants_are_red() {
     assert_eq!(known["registered"], true, "{}", known);
 }
 
+/// agora-redesign #1978: 層の dir(`<root>/<dir>/entry/`)を持たない repo(merge-queue のように機能の dir で分けた repo)は、defservice の
+/// `:entry-modules` で code の在りかを宣言する。宣言した service は DOEFF163 の母集団に入る — 宣言の無い形では entry の dir が無いので
+/// 母集団が 0 になり、条を消しても鳴らなかった。
+fn entry_module_repo(queue: &str) -> tempfile::TempDir {
+    let judged = "{:pre [(: writes tuple)] :post [(: % tuple)] :tags {:context \"lease\" :role \"judgment\"}}";
+    let files = [
+        ("app/foundation/host.hy", tags("shared", "foundation") + "(defk with-host [body] body)\n"),
+        ("app/queue/main.hy", "(defk cycle [] 1)\n".to_string()),
+        ("app/queue/lease_invariants.hy", format!("(defk fenced-writes [writes]\n  {}\n  \"柵の条。\"\n  #())\n", judged)),
+    ];
+    let dir = world_repo_with(&files, "", "[\"DOEFF163\"]");
+    let arch_path = dir.path().join("architecture.hy");
+    let text = std::fs::read_to_string(&arch_path).unwrap() + &format!("(defservice queue \"列\" {{:layers [core] {}}})\n", queue);
+    std::fs::write(&arch_path, text).unwrap();
+    dir
+}
+
+/// 失敗ケース 1: `:entry-modules` を宣言し :invariants の無い service は、entry の層の dir が無くても DOEFF163(critical)。
+#[test]
+fn a_service_with_entry_modules_and_no_invariants_is_red() {
+    let dir = entry_module_repo(":entry-modules [\"app.queue.main\"]");
+    let (_, report) = editor(dir.path());
+    assert_eq!(keys(&report, "DOEFF163"), vec!["architecture.hy::DOEFF163::queue"], "{}", report);
+    let found = violation(&report, "architecture.hy::DOEFF163::queue");
+    assert!(found["message"].as_str().unwrap().contains("service queue は :invariants を宣言していない"), "{}", found["message"]);
+    assert_eq!(found["level"], "critical", "{}", found);
+}
+
+/// 失敗ケース 2: `:entry-modules` と judgment の :invariants を宣言した service は緑(条を消すと失敗ケース 1 の形で赤)。
+/// 宣言の無い service(`:entry-modules` も entry の層も無い)は今までどおり数えない。
+#[test]
+fn a_service_with_entry_modules_and_a_judgment_invariant_is_green() {
+    let dir = entry_module_repo(":entry-modules [\"app.queue.main\"] :invariants [\"app.queue.lease_invariants:fenced-writes\"]");
+    let (_, report) = editor(dir.path());
+    assert!(keys(&report, "DOEFF163").is_empty(), "{}", report);
+    let silent = entry_module_repo("");
+    let (_, report) = editor(silent.path());
+    assert!(keys(&report, "DOEFF163").is_empty(), "宣言の無い service を数えた: {}", report);
+}
+
+/// 失敗ケース 3: `:entry-modules` の module の Hy の file が無ければ、綴りの誤りで母集団から黙って外れた形にせず DOEFF163(`entry::<module>`)。
+#[test]
+fn an_entry_module_without_a_file_is_red() {
+    let dir = entry_module_repo(":entry-modules [\"app.queue.mian\"] :invariants [\"app.queue.lease_invariants:fenced-writes\"]");
+    let (_, report) = editor(dir.path());
+    assert_eq!(keys(&report, "DOEFF163"), vec!["architecture.hy::DOEFF163::queue::entry::app.queue.mian"], "{}", report);
+    let found = violation(&report, "architecture.hy::DOEFF163::queue::entry::app.queue.mian");
+    assert!(found["message"].as_str().unwrap().contains("Hy の file(app/queue/mian.hy)が無い"), "{}", found["message"]);
+}
+
 /// agora-redesign #1560(K2): entry の層を持つ service ごとに、壊した handler の反例(反例の表の節に届き、その service の entry にも届く
 /// deftest)が無ければ defservice の位置で DOEFF164(critical)。billing は自分の業務の効果の壊した handler を自分の検で回す(有り)。
 /// stock は土台の効果(どの service の dir の下にも無い効果)の壊した handler を模擬の検で回す(有り — 表の当たりにも数え、腐りにしない)。

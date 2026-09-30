@@ -1,7 +1,9 @@
 //! DOEFF163 — code を持つ service が業務の不変条件の関数を宣言しているか(agora-redesign #1559・#1155 の定義 1 の条 (b))。
 //!
 //! 「code を持つ service」は DOEFF136 と同じ母集団: defservice の :layers に entry があり、root/<dir>/entry の下に Hy の定義が 1 本以上ある
-//! service(tick・chat のように code の無い service と、entry を持たない service は数えない)。その service の defservice に
+//! service(tick・chat のように code の無い service と、entry を持たない service は数えない)。層の dir を持たない repo(merge-queue の
+//! ように機能の dir で分けた repo)は、defservice の `:entry-modules ["pkg.module" …]` で code の在りかを宣言し、宣言した service を
+//! 母集団に入れる(agora-redesign #1978 — 宣言した module の Hy の file が無ければ欠け)。その service の defservice に
 //! `:invariants ["module:関数" …]` が無い・空、名指した関数の定義が repo の Hy の索引に無い、定義の :tags の :role が judgment でない、の
 //! どれかを欠けとして返す。不変条件の関数は「記録を受けて破りの列を返す純粋な判断」なので、置き場は問わず(模擬の環境の
 //! `*_invariants.hy` でもよい)、role で判じる。
@@ -25,14 +27,17 @@ pub enum InvariantGap {
     Missing(DefinitionRef),
     /// 名指した定義の :role が judgment でない(role の無い定義は None)。
     NotJudgment { definition: DefinitionRef, role: Option<String> },
+    /// `:entry-modules` の module の Hy の file が repo に無い(綴りの誤りで母集団から黙って外れた形にしないため — agora-redesign #1978)。
+    EntryModuleMissing(String),
 }
 
 impl InvariantGap {
-    /// 鍵の service の名の後ろの細目(宣言の欠けは無し・関数の欠けは名指しの綴り)。
+    /// 鍵の service の名の後ろの細目(宣言の欠けは無し・関数の欠けは名指しの綴り・入口の欠けは `entry::<module>`)。
     pub fn detail(&self) -> Option<String> {
         match self {
             InvariantGap::Undeclared => None,
             InvariantGap::Missing(definition) | InvariantGap::NotJudgment { definition, .. } => Some(definition.spelling()),
+            InvariantGap::EntryModuleMissing(module) => Some(format!("entry::{}", module)),
         }
     }
 
@@ -50,12 +55,24 @@ impl InvariantGap {
                 role.as_deref().unwrap_or("無い"),
                 JUDGMENT_ROLE
             ),
+            InvariantGap::EntryModuleMissing(module) => {
+                format!("service {} の :entry-modules の {} — Hy の file({})が無い(module の名の誤り)", service, module, module_path(module))
+            }
         }
     }
 }
 
-/// code を持つ service(entry の層に Hy の定義が 1 本以上)か。
+/// module の綴り(`pkg.sub.name`)の Hy の file の repo の根からの path(`pkg/sub/name.hy`)— 入口の宣言を索引の鍵に照らすため。
+fn module_path(module: &str) -> String {
+    format!("{}.hy", module.replace('.', "/"))
+}
+
+/// code を持つ service か。`:entry-modules` を宣言した service は宣言で母集団に入る(在りかの欠けは gaps が出す)。
+/// 宣言の無い service は entry の層に Hy の定義が 1 本以上あるか。
 fn has_code(root: &str, service: &ArchService, hy: &HashMap<String, HyFileIndex>) -> bool {
+    if service.entry_modules.is_some() {
+        return true;
+    }
     if !service.layers.iter().any(|l| l == "entry") {
         return false;
     }
@@ -72,11 +89,16 @@ fn role_of(definition: &DefinitionRef, hy: &HashMap<String, HyFileIndex>) -> Opt
         .map(|d| d.tags.as_ref().and_then(|tags| tags.get("role").cloned()))
 }
 
-/// service ごとの欠け(architecture.hy の宣言の順・service の中は :invariants の順)。
+/// service ごとの欠け(architecture.hy の宣言の順・service の中は :entry-modules・:invariants の順)。
 pub fn gaps<'a>(architecture: &'a Architecture, hy: &HashMap<String, HyFileIndex>) -> Vec<(&'a ArchService, InvariantGap)> {
     let root = normalize_dir(&architecture.root);
     let mut out = Vec::new();
     for service in architecture.services.iter().filter(|s| has_code(&root, s, hy)) {
+        for module in service.entry_modules.iter().flatten() {
+            if !hy.contains_key(&module_path(module)) {
+                out.push((service, InvariantGap::EntryModuleMissing(module.clone())));
+            }
+        }
         match service.invariants.as_deref() {
             None | Some([]) => out.push((service, InvariantGap::Undeclared)),
             Some(refs) => {

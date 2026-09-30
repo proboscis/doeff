@@ -79,6 +79,10 @@ pub struct ArchService {
     pub clauses: Option<Vec<String>>,
     /// 反例を持たない条と理由(`:clause-exemptions {"条" "理由" …}` — 壊した handler では破れない構造の保証など)。条は :clauses の内。
     pub clause_exemptions: Vec<ClauseExemption>,
+    /// service の code の入口の module(`:entry-modules ["pkg.module" …]` — 書かない = None)。層の dir(`<root>/<dir>/entry/`)を持たない
+    /// repo(merge-queue のように機能の dir で分けた repo)が、DOEFF163 の「code を持つ service」をこの module の在りかで判じさせる
+    /// (agora-redesign #1978)。書かない service は今までどおり entry の層の dir で判じる。
+    pub entry_modules: Option<Vec<String>>,
     /// architecture.hy の中の defservice の位置(DOEFF117 の知らせの位置)。
     #[serde(skip)]
     pub range: doeff_indexer::hy_index::Range,
@@ -1348,6 +1352,29 @@ impl<'a> Parser<'a> {
     }
 
     /// defservice の `:clauses`(条の名の列 — 空の名・2 度書いた名は理由を積む)。
+    /// defservice の `:entry-modules ["pkg.module" …]`(空でない列・要素は `.` で区切った module の綴り・同じ module の 2 度書きは誤り)。
+    fn entry_modules(&mut self, value: &Form) -> Vec<String> {
+        let Some(items) = self.bracket(value) else {
+            self.problem(value, ":entry-modules は [\"pkg.module\" …] の列");
+            return Vec::new();
+        };
+        if items.is_empty() {
+            self.problem(value, ":entry-modules が空(書くなら入口の module を 1 つ以上)");
+        }
+        let mut out: Vec<String> = Vec::new();
+        for item in items {
+            let dotted = self
+                .string(item)
+                .filter(|m| !m.is_empty() && m.split('.').all(|seg| !seg.is_empty() && seg.chars().all(|c| c.is_alphanumeric() || c == '_')));
+            match dotted {
+                Some(module) if out.contains(&module) => self.problem(item, &format!(":entry-modules の {} が 2 度書かれている", module)),
+                Some(module) => out.push(module),
+                None => self.problem(item, ":entry-modules の要素は \"pkg.module\" の綴り(`.` で区切った module の名の文字列)"),
+            }
+        }
+        out
+    }
+
     fn clause_names(&mut self, value: &Form) -> Vec<String> {
         let Some(items) = self.bracket(value) else {
             self.problem(value, ":clauses は [\"条の名\" …] の列");
@@ -2736,6 +2763,7 @@ impl<'a> Parser<'a> {
             invariants: None,
             clauses: None,
             clause_exemptions: Vec::new(),
+            entry_modules: None,
             range,
         };
         let mut exemptions_form: Option<&Form> = None;
@@ -2753,6 +2781,7 @@ impl<'a> Parser<'a> {
                             ":dir" => service.dir = self.required_string(value, ":dir").unwrap_or_default(),
                             ":invariants" => service.invariants = Some(self.definition_refs(value, ":invariants")),
                             ":clauses" => service.clauses = Some(self.clause_names(value)),
+                            ":entry-modules" => service.entry_modules = Some(self.entry_modules(value)),
                             ":clause-exemptions" => {
                                 service.clause_exemptions = self.clause_exemptions(value);
                                 exemptions_form = Some(value);
@@ -3014,6 +3043,30 @@ mod tests {
         let scalar = GOOD.replace("{:depends-on [custody] :layers [core intent]}", "{:depends-on [custody] :layers [core intent] :invariants \"a:b\"}");
         let problems = Architecture::parse(&scalar, Path::new("architecture.hy")).unwrap_err().join("\n");
         assert!(problems.contains(":invariants は [\"module:名\" …] の列"), "列でない値を通した:\n{}", problems);
+    }
+
+    #[test]
+    fn entry_modules_are_dotted_module_strings() {
+        // agora-redesign #1978: :entry-modules は "pkg.module" の文字列の空でない列。書かない service は None(entry の層の dir で判じる)。
+        let declared = GOOD.replace(
+            "{:depends-on [custody] :layers [core intent]}",
+            "{:depends-on [custody] :layers [core intent] :entry-modules [\"merge_queue.controller.main\"]}",
+        );
+        let arch = Architecture::parse(&declared, Path::new("architecture.hy")).unwrap();
+        let billing = arch.services.iter().find(|s| s.name == "billing").unwrap();
+        assert_eq!(billing.entry_modules, Some(vec!["merge_queue.controller.main".to_string()]));
+        assert!(arch.services.iter().filter(|s| s.name != "billing").all(|s| s.entry_modules.is_none()));
+
+        let bad = GOOD.replace(
+            "{:depends-on [custody] :layers [core intent]}",
+            "{:depends-on [custody] :layers [core intent] :entry-modules [\"a/b.hy\" \"a.b\" \"a.b\" \"a..b\"]}",
+        );
+        let problems = Architecture::parse(&bad, Path::new("architecture.hy")).unwrap_err().join("\n");
+        assert!(problems.contains(":entry-modules の要素は \"pkg.module\" の綴り"), "綴りの誤りを通した:\n{}", problems);
+        assert!(problems.contains(":entry-modules の a.b が 2 度書かれている"), "重なりを通した:\n{}", problems);
+        let empty = GOOD.replace("{:depends-on [custody] :layers [core intent]}", "{:depends-on [custody] :layers [core intent] :entry-modules []}");
+        let problems = Architecture::parse(&empty, Path::new("architecture.hy")).unwrap_err().join("\n");
+        assert!(problems.contains(":entry-modules が空"), "空の列を通した:\n{}", problems);
     }
 
     #[test]
