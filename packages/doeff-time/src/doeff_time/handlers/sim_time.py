@@ -16,6 +16,7 @@ from doeff_core_effects.scheduler import (
 
 from doeff import Pass, Transfer, do
 from doeff import handler as _program_handler
+from doeff.program import ProgramHandler
 from doeff_time._internals import SimClock, TimeQueue
 from doeff_time.effects import (
     DelayEffect,
@@ -159,7 +160,7 @@ def sim_time_handler(
     start_time: datetime | None = None,
     clock: SimClock | None = None,
     log_formatter: LogFormatter | None = None,
-) -> ProtocolHandler:
+) -> ProgramHandler:
     """Return a virtual-clock handler that delegates core concurrency effects.
 
     Install it inside ``scheduled`` and outside every ``Spawn`` whose tasks

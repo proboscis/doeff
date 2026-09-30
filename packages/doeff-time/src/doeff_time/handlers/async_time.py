@@ -12,6 +12,7 @@ from doeff_core_effects.scheduler import Spawn
 
 from doeff import Pass, Transfer, do
 from doeff import handler as _program_handler
+from doeff.program import ProgramHandler
 from doeff_time.effects import (
     DelayEffect,
     GetMonotonicEffect,
@@ -91,7 +92,7 @@ def async_time_handler(
     now: Callable[[], datetime] = _utc_now,
     sleep: Callable[[float], Awaitable[Any]] = asyncio.sleep,
     monotonic: Callable[[], float] = time.monotonic,
-) -> ProtocolHandler:
+) -> ProgramHandler:
     """Return a protocol handler for wall-clock async time semantics."""
 
     runtime = AsyncTimeRuntime(now=now, sleep=sleep, monotonic=monotonic)
