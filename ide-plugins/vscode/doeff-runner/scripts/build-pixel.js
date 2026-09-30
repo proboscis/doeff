@@ -16,6 +16,7 @@ const ttf2woff = require('ttf2woff');
 const ROOT = path.join(__dirname, '..');
 const { parseGlyphSet } = require(path.join(ROOT, 'out', 'pixel', 'glyphs.js'));
 const { allGlyphs, assetFiles, flagReport, PIXEL_DIR } = require(path.join(ROOT, 'out', 'pixel', 'build.js'));
+const { sameAsset } = require(path.join(ROOT, 'out', 'pixel', 'render.js'));
 const { svgFont, iconContributions, FONT_PATH } = require(path.join(ROOT, 'out', 'pixel', 'font.js'));
 const { previewHtml } = require(path.join(ROOT, 'out', 'pixel', 'sheet.js'));
 const { parseLintJson } = require(path.join(ROOT, 'out', 'lint', 'contract.js'));
@@ -117,7 +118,7 @@ function main() {
     const target = path.join(ROOT, relative);
     const bytes = typeof body === 'string' ? Buffer.from(body, 'utf8') : body;
     const current = fs.existsSync(target) ? fs.readFileSync(target) : null;
-    if (current !== null && current.equals(bytes)) {
+    if (current !== null && sameAsset(relative, current, bytes)) {
       continue;
     }
     if (args.check) {

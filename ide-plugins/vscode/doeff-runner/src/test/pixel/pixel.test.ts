@@ -6,7 +6,7 @@ import { allGlyphs, assetFiles, flagReport, PIXEL_DIR } from '../../pixel/build'
 import { chooseFlag, flagCollisions, flagGlyph } from '../../pixel/flags';
 import { codepoints, FONT_PATH, iconContributions, svgFont } from '../../pixel/font';
 import { lightness, parseGlyphSet, type GlyphSet } from '../../pixel/glyphs';
-import { colorSvg, mergeRects, png } from '../../pixel/render';
+import { colorSvg, mergeRects, png, pngContent, sameAsset } from '../../pixel/render';
 
 const ROOT = path.join(__dirname, '..', '..', '..');
 
@@ -275,10 +275,37 @@ suite('pixel art の icon — 画と字体', () => {
     for (const [relative, body] of assetFiles(glyphSet())) {
       const target = path.join(ROOT, relative);
       const bytes = typeof body === 'string' ? Buffer.from(body, 'utf8') : body;
-      if (!fs.existsSync(target) || !fs.readFileSync(target).equals(bytes)) {
+      if (!fs.existsSync(target) || !sameAsset(relative, fs.readFileSync(target), bytes)) {
         stale.push(relative);
       }
     }
     assert.deepStrictEqual(stale, [], 'npm run pixel で作り直す');
+  });
+
+  test('PNG の生成物は圧縮の byte ではなく画で比べる — 別の zlib で作った同じ画は同じ・1 画素でも違えば違う(agora-redesign #1626)', () => {
+    const doe = allGlyphs(glyphSet()).find((g) => g.name === 'doe');
+    assert.ok(doe !== undefined);
+    const made = png(doe.pixels[32], glyphSet().palette, 4);
+    const content = pngContent(made);
+    assert.ok(content.kind === 'image');
+    // 別の機体の PNG の代わり: 同じ画素の列を別の圧縮の設定で詰め直す(CRC は比べに使わないので 0 のまま)
+    const withIdat = (raw: Buffer, level: number): Buffer => {
+      const data = zlib.deflateSync(raw, { level });
+      const length = Buffer.alloc(4);
+      length.writeUInt32BE(data.length);
+      const start = made.indexOf('IDAT') - 4;
+      const end = made.indexOf('IEND') - 4;
+      return Buffer.concat([made.subarray(0, start), length, Buffer.from('IDAT', 'ascii'), data, Buffer.alloc(4), made.subarray(end)]);
+    };
+    const elsewhere = withIdat(content.raw, 1);
+    assert.ok(!elsewhere.equals(made), '詰め直した PNG の byte が同じでは反例にならない');
+    assert.strictEqual(sameAsset('resources/pixel/png/32/doe.png', elsewhere, made), true);
+    const changed = Buffer.from(content.raw);
+    changed[1] = (changed[1] + 1) % 256;
+    assert.strictEqual(sameAsset('resources/pixel/png/32/doe.png', withIdat(changed, 9), made), false);
+    assert.strictEqual(sameAsset('resources/pixel/png/32/doe.png', Buffer.from('not a png'), made), false);
+    assert.strictEqual(pngContent(Buffer.from('not a png')).kind, 'unreadable');
+    // PNG でない生成物は今までどおり byte で比べる
+    assert.strictEqual(sameAsset('resources/pixel/svg/32/doe.svg', Buffer.from('<svg/>'), Buffer.from('<svg />')), false);
   });
 });

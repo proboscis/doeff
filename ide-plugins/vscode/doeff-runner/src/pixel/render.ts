@@ -123,6 +123,9 @@ function chunk(type: string, data: Buffer): Buffer {
   return Buffer.concat([length, typed, crc]);
 }
 
+/** PNG の file の頭の 8 byte(作る時と読む時が同じ物を使う)。 */
+const PNG_SIGNATURE = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+
 /** 色の番号を色の組で引き、16 進の色(`#RRGGBB`)を 3 つの byte にする。 */
 function rgb(palette: Palette, color: ColorIndex): [number, number, number] {
   const hex = palette[color];
@@ -131,7 +134,8 @@ function rgb(palette: Palette, color: ColorIndex): [number, number, number] {
 
 /**
  * PNG — 1 点を scale × scale の正方形にそのまま拡大する(補間しない・透明は alpha 0)。
- * 画素の値と圧縮の設定が決まっているので、同じ格子からは同じ byte 列になる(生成物の食い違いの検に使う)。
+ * 画素の値は格子で決まるが、圧縮した byte(deflate)は zlib の実装と版で変わる — 生成物の食い違いは byte ではなく
+ * pngContent の画素で比べる(agora-redesign #1626)。
  */
 export function png(pixels: Pixels, palette: Palette, scale: number): Buffer {
   const size = pixels.length;
@@ -157,13 +161,70 @@ export function png(pixels: Pixels, palette: Palette, scale: number): Buffer {
   header.writeUInt32BE(side, 4);
   header[8] = 8;
   header[9] = 6;
-  const signature = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
   return Buffer.concat([
-    signature,
+    PNG_SIGNATURE,
     chunk('IHDR', header),
     chunk('IDAT', zlib.deflateSync(raw, { level: 9 })),
     chunk('IEND', Buffer.alloc(0))
   ]);
+}
+
+/** PNG の中身 — 頭(IHDR)と展開した画素の列。読めない PNG は理由つきの失敗。 */
+export type PngContent =
+  | { readonly kind: 'image'; readonly header: Buffer; readonly raw: Buffer }
+  | { readonly kind: 'unreadable'; readonly reason: string };
+
+/**
+ * PNG を頭と画素の列に戻す — 別の機体(Node・zlib の版の違い)で作って commit した PNG と、ここで作った PNG を、
+ * 圧縮の byte ではなく画そのもので比べるため(agora-redesign #1626)。
+ */
+export function pngContent(bytes: Buffer): PngContent {
+  if (bytes.length < PNG_SIGNATURE.length || !bytes.subarray(0, PNG_SIGNATURE.length).equals(PNG_SIGNATURE)) {
+    return { kind: 'unreadable', reason: 'PNG の署名が無い' };
+  }
+  let header: Buffer | null = null;
+  const data: Buffer[] = [];
+  let at = PNG_SIGNATURE.length;
+  while (at + 8 <= bytes.length) {
+    const length = bytes.readUInt32BE(at);
+    const type = bytes.toString('ascii', at + 4, at + 8);
+    const end = at + 8 + length;
+    if (end + 4 > bytes.length) {
+      return { kind: 'unreadable', reason: `chunk ${type} が途中で切れている` };
+    }
+    const body = bytes.subarray(at + 8, end);
+    if (type === 'IHDR') {
+      header = Buffer.from(body);
+    } else if (type === 'IDAT') {
+      data.push(body);
+    }
+    at = end + 4;
+  }
+  if (header === null) {
+    return { kind: 'unreadable', reason: 'IHDR が無い' };
+  }
+  try {
+    return { kind: 'image', header, raw: zlib.inflateSync(Buffer.concat(data)) };
+  } catch (error) {
+    return { kind: 'unreadable', reason: `IDAT を展開できない: ${String(error)}` };
+  }
+}
+
+/**
+ * commit してある生成物が、ここで作った生成物と同じか — PNG は画(頭と画素)で、ほかは byte で比べる。
+ * 検(生成物は元の定義どおり)と scripts/build-pixel.js の書き出し・--check が同じ物差しを使うため(agora-redesign #1626)。
+ * commit してある PNG が読めなければ「違う」(作り直す側)。
+ */
+export function sameAsset(relative: string, current: Buffer, generated: Buffer): boolean {
+  if (!relative.endsWith('.png')) {
+    return current.equals(generated);
+  }
+  const was = pngContent(current);
+  const now = pngContent(generated);
+  if (now.kind === 'unreadable') {
+    throw new Error(`作った PNG が読めない(${relative}): ${now.reason}`);
+  }
+  return was.kind === 'image' && was.header.equals(now.header) && was.raw.equals(now.raw);
 }
 
 /** 画の data URI(拡張の gutter・hover・見本の HTML が file を置かずに使う)。 */
