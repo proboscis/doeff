@@ -315,6 +315,11 @@ pub struct Reference {
     /// 型注釈・pattern の中の参照。値の実行としては数えない。
     #[serde(skip)]
     pub type_only: bool,
+    /// 値を検めるだけの名指し — 比べの form(`is`・`is-not`・`=`・`!=`・`in`・`not-in`)と `assert` の直接の被演算子(literal の
+    /// 列・辞書・組・集合の中と、被演算子の dotted の属性の読み `(= f.__doeff_needs__ …)` を含む)。名指した値を呼ばず・被せず・
+    /// 他の定義へ渡さないので、届く辺(doeff-linter の定義の図)にしない(agora-redesign #1581)。索引の JSON の契約(版 1)には出さない。
+    #[serde(skip)]
+    pub inspected: bool,
 }
 
 /// 呼び出しへ渡された値の構文上の形。式の評価結果は推測しない。

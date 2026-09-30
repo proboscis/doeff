@@ -2163,6 +2163,46 @@ fn test_kind_is_derived_from_what_the_test_reaches() {
     assert_eq!(two_steps["level"], "critical");
 }
 
+/// agora-redesign #1581: 縁の定義を値として検めるだけの名指し — 比べの form(is・is-not・=・!=・in・not-in)と assert(失敗の時の
+/// 表示の文を含む)の直接の被演算子(literal の列・組の中と、被演算子の dotted の属性の読みを含む)— は届かない(手元・当てない)。呼ぶ・他の定義へ渡す・比べの中で
+/// 呼んだ結果を比べる・比べの外で属性を読む名指しは今までどおり届く(縁・印が無いので当てる — 解釈器の定数が handler を
+/// `f.__module__` で名指す DOEFF137 の形を壊さない)。
+#[test]
+fn inspecting_a_value_does_not_reach_but_passing_or_calling_it_does() {
+    let files = [
+        ("app/foundation/host.hy", tags("shared", "foundation") + "(defk with-host [body] body)\n"),
+        ("app/billing/core/calc.hy", tags("billing", "judgment") + "(defk add [a b] (+ a b))\n"),
+        ("app/billing/core/helpers.hy", tags("billing", "judgment") + "(import app.foundation.host [with-host])\n(defk hosted [body] (with-host body))\n"),
+        (
+            "app/billing/tests/test_inspect.hy",
+            "(import app.billing.core.calc [add])\n(import app.billing.core.helpers [hosted])\n(import app.billing.core [helpers])\n\
+             (deftest test-local-compares-identity (val args [add]) (assert (is-not (get args 0) hosted)))\n\
+             (deftest test-local-compares-a-literal-list (assert (!= [add 1] [hosted 1])) (assert (not-in hosted #(add))))\n\
+             (deftest test-local-compares-a-qualified-name (assert (is helpers.hosted hosted)))\n\
+             (deftest test-local-compares-a-dunder (assert (= hosted.__doeff_needs__ (frozenset)) hosted.__doeff_needs__))\n\
+             (deftest test-edge-passes-the-value (<- n (add hosted 1)) (assert n))\n\
+             (deftest test-edge-compares-a-call-result (assert (= (hosted 1) 1)))\n\
+             (deftest test-edge-reads-a-dunder-outside-a-comparison (val spelling (+ hosted.__module__ \":\")) (assert spelling))\n"
+                .to_string(),
+        ),
+    ];
+    let dir = world_repo_with(&files, "", "[\"DOEFF133\"]");
+    let arch_path = dir.path().join("architecture.hy");
+    let text = std::fs::read_to_string(&arch_path).unwrap().replace(":foundation foundation", ":foundation foundation\n  :edge-mark \"real_world\"");
+    std::fs::write(&arch_path, text).unwrap();
+    let (_, report) = editor(dir.path());
+    assert_eq!(
+        keys(&report, "DOEFF133"),
+        vec![
+            "app/billing/tests/test_inspect.hy::DOEFF133::test_edge_compares_a_call_result::edge",
+            "app/billing/tests/test_inspect.hy::DOEFF133::test_edge_passes_the_value::edge",
+            "app/billing/tests/test_inspect.hy::DOEFF133::test_edge_reads_a_dunder_outside_a_comparison::edge",
+        ],
+        "比べの被演算子と dunder の属性の読みは届かず、他の定義へ渡す名指しと比べの中の呼び出しは届く: {}",
+        report
+    );
+}
+
 /// agora-redesign #1363: 許可名簿の handler ごとに縁の検(空でない :interpreters を持ち、DOEFF133 と同じ図でその handler の定義に
 /// 届く deftest)が要る — 無ければ architecture.hy の名簿の要素で DOEFF137(critical・細目 = 名簿の綴り)。:interpreters の要素は
 /// file の外の定数の記号のまま(読み解かない)。:contract-test none の handler は判じない。
