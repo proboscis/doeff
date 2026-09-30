@@ -33,7 +33,8 @@
 
 
 (defeffect LookupAnswers
-  "鍵の束の覚えた答えを一度に読む。LookupAnswer と同じく、答えた model の版が今の版と違う答えは無いと読む。答え = 覚えていた答えの
+  "鍵の束の覚えた答えを一度に読む(読むだけ — 答えごとの hits を書かない・agora-redesign #1885)。LookupAnswer と同じく、答えた model の
+   版が今の版と違う答えは無いと読む。答え = 覚えていた答えの
    tuple(覚えていない鍵は載らない・並びは決めない)。"
   {:fields [(: keys tuple)]
    :answer tuple

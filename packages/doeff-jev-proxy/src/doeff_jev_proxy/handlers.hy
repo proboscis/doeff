@@ -86,18 +86,17 @@
                 None
                 (StoredAnswer :key (get row 0) :model (get row 1) :served-model (get row 2) :body (bytes (get row 3))
                               :hits (+ (get row 4) 1)))))
+  ;; 覚えている時だけの問いの束は読むだけ — 答えごとの hits を書かない(数は計器 peek-hit が持つ)。書くと 1000 鍵の束が 1000 行の
+  ;; UPDATE と commit になり、Longhorn の volume の上で 1 束 約 5 秒・並べた束は書きの錠で順番待ちになって、linter の待ち(全部の束で
+  ;; 5 秒)に収まらなかった(agora-redesign #1885 — 読み 0.01 秒・JSON 0.01 秒に対し 5.4 秒)。
   (LookupAnswers [keys]
     (with [connection (closing (sqlite3.connect path :timeout BUSY-SECONDS))]
       (val chunks (lfor start (range 0 (len keys) LOOKUP-CHUNK) (cut keys start (+ start LOOKUP-CHUNK))))
       (val rows (lfor chunk chunks
                       row (.fetchall (.execute connection (.format LOOKUP-MANY-SQL (.join "," (* ["?"] (len chunk)))) chunk))
-                      row))
-      (when rows
-        (val now (time.time))
-        (.executemany connection "UPDATE answers SET hits = hits + 1, last_hit_at = ? WHERE key = ?" (lfor row rows #(now (get row 0))))
-        (.commit connection)))
+                      row)))
     (resume (tuple (gfor row rows (StoredAnswer :key (get row 0) :model (get row 1) :served-model (get row 2) :body (bytes (get row 3))
-                                                :hits (+ (get row 4) 1))))))
+                                                :hits (get row 4))))))
   (RememberAnswer [key model served-model request body]
     (with [connection (closing (sqlite3.connect path :timeout BUSY-SECONDS))]
       (val now (time.time))

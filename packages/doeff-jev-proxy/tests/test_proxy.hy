@@ -2,8 +2,10 @@
 ;; 問い直し・答えた model の版が変わった時・置き場が起動をまたいで残ること・覚えている時だけの問いの束・呼び手と同じ鍵の見本。
 ;; 本物の Jev は台本(tests/world.hy)。
 (require doeff-hy.macros [deftest defk <- val var])
+(import contextlib [closing])
 (import json)
 (import pathlib [Path])
+(import sqlite3)
 (import threading)
 (import doeff_jev_proxy.values [ProxyReply UpstreamReply UpstreamUnreachable])
 (import doeff_jev_proxy.key [BadRequest normalize-request])
@@ -197,6 +199,29 @@
   (<- retired (peeking world [ka.key kb.key] WORKER-TOKEN))
   (assert (= (list (.keys (get (json.loads retired.body) "answers"))) [kb.key]) "jev-1 で覚えた a は、今の版 jev-2 では束でも返らない")
   (assert (= (len world.script.calls) 2)))
+
+
+(deftest test-peek-many-only-reads-the-store
+  ;; 覚えている時だけの問いの束は置き場を読むだけ — 答えごとの hits・last_hit_at を書かない(agora-redesign #1885: 書くと 1000 鍵の
+  ;; 束が 1000 行の UPDATE と commit になり、束が 5 秒を超えて linter の待ちに収まらなかった)。数は計器 peek-hit に残る。
+  ;; 反例: 普通の問いが覚えから答えた時は、今までどおり hits を数える。
+  (val answers [(UpstreamReply :status 200 :body (.encode (json.dumps {"answers" {"q" {"noul" 0.3}} "model" "jev-1"}) "utf-8"))])
+  (<- world (open-world (fn [_] (.pop answers 0)) 0.0))
+  (<- a (question "(defk a [] 1)" "jev-latest"))
+  (<- (asking world a None))
+  (<- ka (normalize-request a))
+  (val row-of (fn [] (with [connection (closing (sqlite3.connect world.path))]
+                       (.fetchone (.execute connection "SELECT hits, last_hit_at FROM answers WHERE key = ?" #(ka.key))))))
+  (val before (row-of))
+  (for [_ (range 3)]
+    (<- peeked (peeking world [ka.key] WORKER-TOKEN))
+    (assert (= (list (.keys (get (json.loads peeked.body) "answers"))) [ka.key]) peeked))
+  (assert (= (row-of) before) #("束の問いが置き場に書いた" before (row-of)))
+  (<- stats (stats-of world))
+  (assert (= (get (get stats "events") "peek-hit") 3) stats)
+  (<- (asking world a None))
+  (assert (= (get (row-of) 0) (+ (get before 0) 1)) "普通の問いの覚えからの答えは hits を数える")
+  (assert (= (len world.script.calls) 1) "束の問いも覚えからの答えも本物の Jev を呼ばない"))
 
 
 (deftest test-key-contract-sample-is-the-proxy-key

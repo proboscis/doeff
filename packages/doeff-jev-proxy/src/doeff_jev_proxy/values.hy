@@ -48,7 +48,8 @@
 
 (defrecord StoredAnswer
   "覚えた答え 1 つ: key = 鍵 / model = 呼び手が名指した model / served-model = 答えた model の版つきの名(Jev が名乗らなければ \"\")/
-   body = 本物の Jev の答えの本文(byte 列のまま)/ hits = この答えで答えた回数。"
+   body = 本物の Jev の答えの本文(byte 列のまま)/ hits = この答えで答えた回数(覚えている時だけの問いの束は数えない — 束の数は
+   計器 peek-hit が持つ・agora-redesign #1885)。"
   (#^ str key)
   (#^ str model)
   (#^ str served-model)
