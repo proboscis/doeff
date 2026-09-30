@@ -16,6 +16,11 @@
 
 ;; 受ける本文の上限(byte — Jev の問いは定義 1 つの source と問いの文で数 KB)。
 (val REQUEST-MAX-BYTES (* 4 1024 1024))
+;; 受けの待ち行列の長さ(listen の backlog)。標準の ThreadingHTTPServer の既定は 5 で、linter と commit の hook が同時に新しい接続を張ると
+;; 待ち行列があふれ、接続が 1 byte も読まれずに切られる(呼び手には Connection reset by peer — linter は接続の失敗を問い直さないので、その定義は
+;; 「測れなかった」になり、Jev の規則の件数が実行ごとに揺れる)。本番の 1,000 件の測りで 0.2〜0.7%・手元で同時 50 本・既定 5 で 0.55%・128 で 0
+;; (agora-redesign #1869)。
+(val REQUEST-QUEUE-SIZE 128)
 
 
 (defrecord ProxyServerConfig
@@ -96,8 +101,15 @@
 
 
 (defn #^ RunningServer start-proxy-server [#^ ProxyServerConfig config]  ; defk にできない: thread を立てて口を開く composition root の部品(返す物が開いた口)
-  "HTTP の口を開き、受けの thread を立てる。"
-  (setv server (ThreadingHTTPServer #(config.host config.port) (request-handler-class config)))
+  "HTTP の口を開き、受けの thread を立てる。待ち行列の長さ REQUEST-QUEUE-SIZE は listen の前に置く(作る時に開くと既定の 5 で listen する)。"
+  (setv server (ThreadingHTTPServer #(config.host config.port) (request-handler-class config) :bind-and-activate False))
+  (setv server.request-queue-size REQUEST-QUEUE-SIZE)
+  (try
+    (.server-bind server)
+    (.server-activate server)
+    (except [BaseException]
+      (.server-close server)
+      (raise)))
   (setv server.daemon-threads True)
   (setv thread (threading.Thread :target server.serve-forever :name "jev-proxy-http" :daemon True))
   (.start thread)

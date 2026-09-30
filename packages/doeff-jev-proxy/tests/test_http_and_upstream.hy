@@ -1,6 +1,6 @@
 ;; 本物の Jev への翻訳(jev-upstream-handler)と HTTP の口の反例: キーは本物の Jev への見出しにだけ載り、届かなかった理由の文にも
 ;; 答えにも出ない・再試行は代理でしない(呼び手が撃ち直す)・実の socket の上で 2 回目が当たり、計器に出る。
-(require doeff-hy.macros [deftest defhandler defk <- val var])
+(require doeff-hy.macros [deftest defhandler defk deff <- val var])
 (import collections.abc [Callable])
 (import hashlib)
 (import json)
@@ -22,7 +22,11 @@
 (import doeff_jev_proxy.effects [AskJev PrepareStore])
 (import doeff_jev_proxy.handlers [Flights jev-upstream-handler])
 (import doeff_jev_proxy.main [production-handlers proxy-runner])
-(import doeff_jev_proxy.http_server [ProxyServerConfig start-proxy-server stop-server])
+(import doeff_jev_proxy.http_server [ProxyServerConfig REQUEST-QUEUE-SIZE start-proxy-server stop-server])
+(import doeff_jev_proxy.values [ProxyRequest ProxyReply Header])
+(import collections [Counter])
+(import concurrent.futures [ThreadPoolExecutor])
+(import time)
 (import tests.world [OPERATOR-TOKEN open-world jev-answers question request-of header])
 
 (val SECRET "apikey_for_test_only")
@@ -89,6 +93,38 @@
     (assert (in "jev_proxy_upstream_calls_total 1" text) text)
     (assert (in "jev_proxy_requests_total 2" text) text)
     (assert (= (len world.script.calls) 1))
+    (finally
+      (stop-server running))))
+
+
+(deff slow-reply [request]  ; defk にできない: 口の runner は http.server の要求の thread が素の関数として呼ぶ callback
+  {:pre [(: request ProxyRequest)] :post [(: % ProxyReply)] :tags {:context "jev-proxy" :role "foundation"}}
+  "答えに 20 ms かかる runner(本番の sqlite の書きの代わり — 要求の thread が埋まっている間にも新しい接続が来る形を作るため)。"
+  (time.sleep 0.02)
+  (ProxyReply :status 200 :headers #((Header :name "content-type" :value "application/json")) :body b"{}"))
+
+
+(deff burst-outcome [url]  ; defk にできない: thread の pool(ThreadPoolExecutor.map)が素の関数として呼ぶ callback
+  {:pre [(: url str)] :post [(: % str)] :tags {:context "jev-proxy" :role "foundation"}}
+  "新しい接続で 1 問だけ問い、答えの status か失敗の型の名を返すため。"
+  (try
+    (with [answer (urlopen (Request url :data b"{}" :method "POST") :timeout 30)]
+      (.read answer)
+      (str answer.status))
+    (except [error Exception]
+      (. (type error) __name__))))
+
+
+(deftest test-a-burst-of-new-connections-is-answered-without-resets
+  ;; 反例(agora-redesign #1869): 受けの待ち行列が標準の既定 5 のままだと、同時に張られる新しい接続があふれて Connection reset になる
+  ;; (手元で同時 50 本・1,000 問で数件)。待ち行列を REQUEST-QUEUE-SIZE にした口は、同時 64 本の新しい接続の 1,000 問に全部答える。
+  (val running (start-proxy-server (ProxyServerConfig :runner slow-reply)))
+  (try
+    (assert (= running.server.request-queue-size REQUEST-QUEUE-SIZE) running.server.request-queue-size)
+    (val url (+ running.url "/v1/systemone"))
+    (with [pool (ThreadPoolExecutor :max-workers 64)]
+      (val outcomes (Counter (.map pool burst-outcome (* [url] 1000)))))
+    (assert (= outcomes (Counter {"200" 1000})) outcomes)
     (finally
       (stop-server running))))
 
