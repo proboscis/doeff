@@ -386,7 +386,7 @@
 
 (deftest test-await-drained-asks-again-until-drained
   (setv calls [] clock (SimClock))
-  (<- result ((sim-time-handler :clock clock)
+  (<- result dict ((sim-time-handler :clock clock)
               ((scripted-coordinator [{"error" "ConnectError"} {"status" 503 "body" {}} (drained False) (drained True)] calls)
                (await-drained "atlas" 90.0 2.0))))
   (assert (= (get result "outcome") "drained") result)
@@ -396,11 +396,11 @@
   (assert (= (get result "elapsed") 6.0) result))
 
 (deftest test-await-drained-gives-up-at-the-deadline-and-stops-on-unknown-worker
-  (<- result ((sim-time-handler :clock (SimClock))
+  (<- result dict ((sim-time-handler :clock (SimClock))
               ((scripted-coordinator [(drained False)] []) (await-drained "atlas" 10.0 2.0))))
   (assert (= (get result "outcome") "timeout") result)
   (assert (>= (get result "elapsed") 10.0))
-  (<- gone ((sim-time-handler :clock (SimClock))
+  (<- gone dict ((sim-time-handler :clock (SimClock))
             ((scripted-coordinator [{"status" 404 "body" {}}] []) (await-drained "ghost" 10.0 2.0))))
   (assert (= (get gone "outcome") "unknown-worker")))
 
@@ -434,14 +434,14 @@
   ;; preStop の Program(await-drained)は頼みに自分の世代を載せる。同じ名の新しい世代が名乗った後は、退いた世代の答え
   ;; (その世代の task が無い = drained)で終わる — 新しい世代に drain を付けて 90 秒待たない。
   (setv calls [])
-  (<- sent ((sim-time-handler :clock (SimClock))
+  (<- sent dict ((sim-time-handler :clock (SimClock))
             ((scripted-coordinator [(drained True)] calls) (await-drained "atlas" 90.0 2.0 "old"))))
   (assert (= (get sent "outcome") "drained"))
   (assert (= (get (get (get calls 0) 2) "boot") "old"))
   (setv c (Coord))
   (c.beat "atlas" :boot "old")
   (c.beat "atlas" :boot "new")
-  (<- result ((sim-time-handler :clock (SimClock)) ((coordinator-of c) (await-drained "atlas" 90.0 2.0 "old"))))
+  (<- result dict ((sim-time-handler :clock (SimClock)) ((coordinator-of c) (await-drained "atlas" 90.0 2.0 "old"))))
   (assert (= (get result "outcome") "drained") result)
   (assert (= (get result "elapsed") 0.0) result)
   (assert (get result "last" "body" "drain" "superseded")))

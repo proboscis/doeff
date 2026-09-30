@@ -126,7 +126,17 @@
                 runners.workers)))
 
 
-(val RIGS [(pytest.param sim-runners-rig :id "sim") (pytest.param coordinator-runners-rig :id "coordinator")])
+;; params には組の名を渡し、開く関数は型の付いた表 RIG-OPENERS から引く — params の値は検査器から型が見えない(object)ので、
+;; 関数そのものを渡すと呼ぶ所が型の赤になる(#1731)。検は頭で名が str であることを確かめる。
+(val RIG-OPENERS
+     {"sim" sim-runners-rig "coordinator" coordinator-runners-rig})
+(val RIGS [(pytest.param "sim" :id "sim") (pytest.param "coordinator" :id "coordinator")])
+
+
+(defk open-named [rig-name tmp-path]
+  {:pre [(: rig-name str) (: tmp-path Path)] :post [(: % RunnersRig)] :tags {:context "doeff-cluster-test" :role "foundation"}}
+  "名で表から組を開く関数を引き、組を開くため。"
+  ((get RIG-OPENERS rig-name) tmp-path))
 
 
 (defk rig-body [rig scenario]
@@ -170,9 +180,11 @@
   (assert (= done (DetachedSucceeded 101)) done)
   True)
 
-(deftest test-the-roster-names-live-runners-and-a-task-goes-to-the-runner-with-its-capability [open-rig tmp-path]
-  {:params {"open_rig" RIGS}}
-  (<- ok (run-on (open-rig tmp-path) (roster-and-placement)))
+(deftest test-the-roster-names-live-runners-and-a-task-goes-to-the-runner-with-its-capability [rig-name tmp-path]
+  {:params {"rig_name" RIGS}}
+  (assert (isinstance rig-name str) rig-name)
+  (<- rig RunnersRig (open-named rig-name tmp-path))
+  (<- ok (run-on rig (roster-and-placement)))
   (assert ok))
 
 
@@ -196,9 +208,11 @@
   (assert (. (get facts "b") live) roster)
   True)
 
-(deftest test-a-named-runner-death-loses-only-its-tasks [open-rig tmp-path]
-  {:params {"open_rig" RIGS}}
-  (<- ok (run-on (open-rig tmp-path) (one-runner-dies)))
+(deftest test-a-named-runner-death-loses-only-its-tasks [rig-name tmp-path]
+  {:params {"rig_name" RIGS}}
+  (assert (isinstance rig-name str) rig-name)
+  (<- rig RunnersRig (open-named rig-name tmp-path))
+  (<- ok (run-on rig (one-runner-dies)))
   (assert ok))
 
 
@@ -222,9 +236,11 @@
   (assert (= done (DetachedSucceeded 104)) done)
   True)
 
-(deftest test-a-drained-runner-gets-no-new-task-until-it-returns [open-rig tmp-path]
-  {:params {"open_rig" RIGS}}
-  (<- ok (run-on (open-rig tmp-path) (drain-then-return)))
+(deftest test-a-drained-runner-gets-no-new-task-until-it-returns [rig-name tmp-path]
+  {:params {"rig_name" RIGS}}
+  (assert (isinstance rig-name str) rig-name)
+  (<- rig RunnersRig (open-named rig-name tmp-path))
+  (<- ok (run-on rig (drain-then-return)))
   (assert ok))
 
 
@@ -235,9 +251,11 @@
   (assert (isinstance outcome DetachedUnrunnable) outcome)
   True)
 
-(deftest test-a-task-no-runner-can-take-is-unrunnable [open-rig tmp-path]
-  {:params {"open_rig" RIGS}}
-  (<- ok (run-on (open-rig tmp-path) (no-runner-with-the-capability)))
+(deftest test-a-task-no-runner-can-take-is-unrunnable [rig-name tmp-path]
+  {:params {"rig_name" RIGS}}
+  (assert (isinstance rig-name str) rig-name)
+  (<- rig RunnersRig (open-named rig-name tmp-path))
+  (<- ok (run-on rig (no-runner-with-the-capability)))
   (assert ok))
 
 
