@@ -304,7 +304,7 @@ export class LintViolationsTree implements vscode.TreeDataProvider<LintNode>, vs
       return lintChildren(node);
     }
     return this.mode === 'violations'
-      ? panelViolationRoots(this.store.failures(), this.store.violations(), this.store.rules(), this.filterState, this.previous())
+      ? panelViolationRoots(this.store.rootRuns(), this.store.violations(), this.store.rules(), this.filterState, this.previous())
       : ruleNodes(this.store.rules());
   }
 }
