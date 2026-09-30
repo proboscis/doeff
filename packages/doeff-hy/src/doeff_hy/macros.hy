@@ -285,20 +285,22 @@ defk {name}: :post must include a return type check (: % Type).
    型の注記では `None` は「None という値の型」を意味する(PEP 484)が、isinstance の第 2
    引数に `None` は渡せない(`TypeError: isinstance() arg 2 must be a type ...`)。
    `(: % None)` が実行時に型エラーになっていた(2026-09-23 `sim_clock.hy` の
-   `clock-driver` で実測)ので、ここで `None` を `(type None)` へ写す。`#(int None)` の
-   組の中も同じく写す。
+   `clock-driver` で実測)ので、ここで `None` を `hy.I.types.NoneType` へ写す。`#(int None)` の
+   組の中も同じく写す。写し先は名前空間つきの名にする — 展開は利用者の関数の中に置かれるので、
+   素の名 `type` を呼ぶと局所の名 `type`(例: `(val type (.get value \"type\"))`)に隠されて
+   TypeError になる(agora-redesign #1825 — 2026-09-30 に agora の検 3 本が赤)。
 
    要素の型つきの総称型 `(get tuple #(X ...))` / `(of tuple X ...)` / `(of dict K V)` /
    `(get dict #(K V))` は、isinstance が受けない(`TypeError: isinstance() argument 2 cannot be
    a parameterized generic`)ので外側の型(tuple・dict)へ写す — 実行時に確かめるのは外側の型
    だけで、要素の型は静的な型検査(doeff-hy-check の注記)が見る(agora-redesign #1790 の決め:
    要素まで実行時に見ると確かめのたびに全要素を回し、入れ子の型の再帰も要る)。
-   `(| A B)` の中も写す(`(| (get tuple #(str ...)) None)` を `(| tuple (type None))` にする —
-   総称型を含む和も isinstance は断る)。和の中の `None` は Python 3.10 以降の isinstance が
-   そのまま受けるが、写しても同じ意味。"
+   `(| A B)` の中の総称型も写す(`(| (get tuple #(str ...)) None)` を `(| tuple None)` にする —
+   総称型を含む和も isinstance は断る)。和の中の `None` は写さない(Python 3.10 以降の isinstance
+   が `int | None` をそのまま受ける)。"
   (cond
     (and (isinstance tp hy.models.Symbol) (= (str tp) "None"))
-      `(type None)
+      'hy.I.types.NoneType
     (isinstance tp hy.models.Tuple)
       (hy.models.Tuple (lfor item tp (_runtime-type item)))
     (and (isinstance tp hy.models.Expression) (>= (len tp) 2)
@@ -307,7 +309,10 @@ defk {name}: :post must include a return type check (: % Type).
       (_runtime-type (get tp 1))
     (and (isinstance tp hy.models.Expression) (>= (len tp) 2)
          (isinstance (get tp 0) hy.models.Symbol) (= (str (get tp 0)) "|"))
-      (hy.models.Expression (+ [(get tp 0)] (lfor item (cut tp 1 None) (_runtime-type item))))
+      (hy.models.Expression (+ [(get tp 0)] (lfor item (cut tp 1 None)
+                                              (if (and (isinstance item hy.models.Symbol) (= (str item) "None"))
+                                                  item
+                                                  (_runtime-type item)))))
     True tp))
 
 ;; ---------------------------------------------------------------------------

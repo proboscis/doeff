@@ -44,6 +44,22 @@ SOURCE = """\
 (defk wrong-none [x]
   {:pre [(: x int)] :post [(: % None)]}
   x)
+
+;; 局所の名 type を持つ関数(agora-redesign #1825 — 展開が素の名 type を呼ぶと隠されて TypeError)
+(defk shadowed-union [x]
+  {:pre [(: x (| int None))] :post [(: % (| str None))]}
+  (setv type "kind")
+  (if (is x None) None type))
+
+(defk shadowed-tuple [x]
+  {:pre [(: x #(int None))] :post [(: % #(str None))]}
+  (setv type "kind")
+  (if (is x None) None type))
+
+(defk shadowed-none [x]
+  {:pre [(: x int)] :post [(: % None)]}
+  (setv type "kind")
+  None)
 """
 
 
@@ -81,6 +97,14 @@ def test_none_inside_a_type_tuple_and_union(mod: ModuleType) -> None:
 
 def test_typed_bind_accepts_none(mod: ModuleType) -> None:
     assert _run(mod.answers_none(mod.binds_none())) is None
+
+
+def test_contracts_survive_a_local_name_type(mod: ModuleType) -> None:
+    assert _run(mod.shadowed_union(None)) is None
+    assert _run(mod.shadowed_union(1)) == "kind"
+    assert _run(mod.shadowed_tuple(None)) is None
+    assert _run(mod.shadowed_tuple(1)) == "kind"
+    assert _run(mod.shadowed_none(1)) is None
 
 
 def test_none_return_contract_still_rejects_other_values(mod: ModuleType) -> None:
