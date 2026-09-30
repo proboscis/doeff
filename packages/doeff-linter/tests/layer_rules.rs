@@ -3058,6 +3058,56 @@ fn clauses_without_a_counterexample_are_red() {
     assert_eq!(report["errors"], serde_json::json!([]), "{}", report["errors"]);
 }
 
+/// agora-redesign #1987: 層の dir を持たない repo の service(`:entry-modules` で入口を宣言 — merge-queue の形)も、DOEFF164・167 の母集団に
+/// 入り、反例の節に届く deftest がその入口の module に届けば有り。以前は entry の層の dir だけを母集団にしたので、`:entry-modules` の
+/// service は数えられず(反例の行を消しても鳴らない)、条と反例の結びを確かめられなかった。
+/// `row` = 反例の表の行を置くか。
+fn entry_module_counterexample_repo(row: bool) -> tempfile::TempDir {
+    let mut files = vec![
+        ("app/foundation/host.hy", tags("shared", "foundation") + "(defk with-host [body] body)\n"),
+        ("app/queue/effects.hy", "(import doeff [EffectBase])\n(defclass Put [EffectBase])\n".to_string()),
+        ("app/queue/main.hy", "(import app.queue.effects [Put])\n(defk cycle [] (Put))\n".to_string()),
+        ("app/queue/judge.hy", "(defk fenced [writes] {:pre [] :post [] :tags {:context \"queue\" :role \"judgment\"}} \"条。\" #())\n".to_string()),
+        (
+            "tests/test_fence.hy",
+            "(import app.queue.effects [Put])\n(import app.queue.main [cycle])\n\
+             (defhandler unfenced (Put [] (resume 0)))\n(deftest test-unfenced-breaks-the-fence (with-handlers [unfenced] (cycle)))\n"
+                .to_string(),
+        ),
+    ];
+    if row {
+        files.push(("tables/COUNTEREXAMPLES/queue.txt", "tests/test_fence.hy::unfenced::app.queue.effects.Put\n柵を迂回する書き手\nbreaks: queue::Q1\n".to_string()));
+    }
+    let dir = world_repo_with(&files, "", "[\"DOEFF143\", \"DOEFF163\", \"DOEFF164\", \"DOEFF167\"]");
+    std::fs::create_dir_all(dir.path().join("tables/COUNTEREXAMPLES")).unwrap();
+    let arch_path = dir.path().join("architecture.hy");
+    let fakes = ":foundation foundation\n  :business-fakes {:simulation [\"app/sim/**\"] :tests [\"tests/**\"] :production [\"app/**\"] \
+                 :business-modules [\"app.queue\"] :counterexamples \"tables/COUNTEREXAMPLES\"}";
+    let text = std::fs::read_to_string(&arch_path).unwrap().replace(":foundation foundation", fakes)
+        + "(defservice queue \"列\" {:layers [core] :entry-modules [\"app.queue.main\"] :invariants [\"app.queue.judge:fenced\"] :clauses [\"Q1\"]})\n";
+    std::fs::write(&arch_path, text).unwrap();
+    dir
+}
+
+/// 失敗ケース 1: 反例の行が条 Q1 を名乗り、その節に届く deftest が :entry-modules の module(app/queue/main.hy)に届けば、DOEFF164・167 は緑。
+#[test]
+fn an_entry_module_service_with_a_counterexample_is_green() {
+    let dir = entry_module_counterexample_repo(true);
+    let (_, report) = editor(dir.path());
+    assert_eq!(report["errors"], serde_json::json!([]), "{}", report["errors"]);
+    assert!(keys(&report, "DOEFF164").is_empty(), "{}", report);
+    assert!(keys(&report, "DOEFF167").is_empty(), "{}", report);
+}
+
+/// 失敗ケース 2: 反例の行を消すと、:entry-modules の service が DOEFF164(反例が無い)と DOEFF167(条 Q1 に反例が無い)で赤。
+#[test]
+fn an_entry_module_service_without_its_counterexample_is_red() {
+    let dir = entry_module_counterexample_repo(false);
+    let (_, report) = editor(dir.path());
+    assert_eq!(keys(&report, "DOEFF164"), vec!["architecture.hy::DOEFF164::queue"], "{}", report);
+    assert_eq!(keys(&report, "DOEFF167"), vec!["architecture.hy::DOEFF167::queue::Q1"], "{}", report);
+}
+
 /// agora-redesign #1562(K4): intent の効果の網羅の欠け(DOEFF165・K3 の表)は critical で失敗にする。今ある欠けは登録簿
 /// (1 鍵 1 file の dir)に載せ、載った欠けは warning に下がる。Charge と Refund はどちらも検から出さず答え手も無い(欠け)—
 /// Refund だけが登録簿に載っている。Settle は 3 列がすべて埋まり出ない(鳴らない例・#1818)。

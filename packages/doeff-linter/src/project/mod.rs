@@ -3207,9 +3207,7 @@ fn judge_untested_services(architecture: &architecture::Architecture, hy: &HashM
     };
     let on_sim = |node: usize| under(graph.nodes[node].0, &sim) && definition(node).kind == DefinitionKind::Deftest;
     let mut drafts = Vec::new();
-    for service in architecture.services.iter().filter(|s| s.layers.iter().any(|l| l == "entry")) {
-        let entry = format!("{}/{}/entry", root, service.dir);
-        let seeds: Vec<usize> = (0..graph.nodes.len()).filter(|n| under(graph.nodes[*n].0, &entry)).collect();
+    for (service, seeds, entry) in architecture.services.iter().filter_map(|s| entry_seeds(&root, s, &graph).map(|(n, e)| (s, n, e))) {
         // entry の層を宣言しても定義が 0 本なら、回す組み立てが無い(数えない)。
         if seeds.is_empty() {
             continue;
@@ -3295,6 +3293,24 @@ fn deftests_reaching(graph: &DefinitionGraph, hy: &HashMap<String, HyFileIndex>,
     found
 }
 
+/// service の入口の定義(図の節)と、知らせに書く入口の綴り — DOEFF136・164・167 の母集団と、届くかを辿る種。`:entry-modules` を書いた
+/// service はその module の file の定義(層の dir を持たない repo — DOEFF163 の「code を持つ service」と同じ決め・agora-redesign #1987)、
+/// 書かない service は entry の層の dir(`<root>/<dir>/entry`)の下の定義。どちらも無い service は None(数えない)。
+fn entry_seeds(root: &str, service: &architecture::ArchService, graph: &DefinitionGraph) -> Option<(Vec<usize>, String)> {
+    match &service.entry_modules {
+        Some(modules) => {
+            let files: Vec<String> = modules.iter().map(|m| invariants::module_path(m)).collect();
+            let seeds = (0..graph.nodes.len()).filter(|n| files.iter().any(|f| graph.nodes[*n].0 == f)).collect();
+            Some((seeds, files.join("・")))
+        }
+        None if service.layers.iter().any(|l| l == "entry") => {
+            let entry = format!("{}/{}/entry", root, service.dir);
+            Some(((0..graph.nodes.len()).filter(|n| under(graph.nodes[*n].0, &entry)).collect(), entry))
+        }
+        None => None,
+    }
+}
+
 /// DOEFF164: service ごとの壊した handler の反例の有無(agora-redesign #1560)。反例の節 = 反例の表の鍵に当たり本番の入口から届かない節。
 /// 節の効果の定義元の file を含む service の dir が持ち主(どの service の下にも無ければ土台の効果)。反例の節に届く deftest の 1 本でも
 /// その service の entry の層の定義に(DOEFF136 と同じ図を逆向きに)届けば有り。母集団は DOEFF136 と同じ(entry の層に定義を持つ service)。
@@ -3320,9 +3336,7 @@ fn judge_counterexample_coverage(
     }
     let mut services = Vec::new();
     let mut entries = Vec::new();
-    for service in architecture.services.iter().filter(|s| s.layers.iter().any(|l| l == "entry")) {
-        let entry = format!("{}/entry", service_dir(service));
-        let seeds: Vec<usize> = (0..graph.nodes.len()).filter(|n| under(graph.nodes[*n].0, &entry)).collect();
+    for (service, seeds, entry) in architecture.services.iter().filter_map(|s| entry_seeds(&root, s, graph).map(|(n, e)| (s, n, e))) {
         // entry の層を宣言しても定義が 0 本なら、回す組み立てが無い(DOEFF136 と同じく数えない)。
         if seeds.is_empty() {
             continue;
@@ -3386,9 +3400,7 @@ fn judge_clause_coverage(
     }
     let mut services = Vec::new();
     let mut declared_services = Vec::new();
-    for service in architecture.services.iter().filter(|s| s.layers.iter().any(|l| l == "entry")) {
-        let entry = format!("{}/{}/entry", root, service.dir);
-        let seeds: Vec<usize> = (0..graph.nodes.len()).filter(|n| under(graph.nodes[*n].0, &entry)).collect();
+    for (service, seeds, _) in architecture.services.iter().filter_map(|s| entry_seeds(&root, s, graph).map(|(n, e)| (s, n, e))) {
         // entry の層を宣言しても定義が 0 本なら、回す組み立てが無い(DOEFF164 と同じく数えない)。
         if seeds.is_empty() {
             continue;

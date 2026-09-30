@@ -362,7 +362,8 @@ law の対応だけを残す。無ければ TOML の設定で今どおり動く�
 - `{:entry-modules ["pkg.module" …]}` は、その service の code の入口の module の列(agora-redesign #1978)。層の dir(`<root>/<dir>/entry/`)を
   持たない repo(merge-queue のように機能の dir で分けた repo)が、DOEFF163 の「code を持つ service」をこの宣言で判じさせる — 書いた service は
   母集団に入り、module の Hy の file(`pkg/module.hy`)が repo に無ければ DOEFF163 の欠け(`entry::<module>`)。書かない = None(entry の層の dir で
-  今までどおり判じる)。効くのは DOEFF163 だけ(DOEFF136・164・167 の母集団は entry の層の dir のまま)。空の列・`.` で区切った module の名でない
+  今までどおり判じる)。DOEFF136・164・167 も同じ宣言で母集団と入口を決める(agora-redesign #1987 — 書いた service は、その module の file の
+  定義を entry の層の定義の代わりにし、模擬の環境の deftest・反例の節に届く deftest がそこへ届くかを見る)。空の列・`.` で区切った module の名でない
   綴り・同じ module の 2 度書き・列でない値は設定の誤り。
 - `:world-handlers` は、外の世界に触れてよい定義の許可名簿(agora-redesign #1106 — operator 2026-09-29 "only allow small set of handlers to touch
   actual world")。要素 `(world-handler "module.path:名" :touches [..] :answers [..]? :wraps [..]? :contract-test (none …)?)` の欄は、`:touches` = 触れる先(必須・閉じた語
