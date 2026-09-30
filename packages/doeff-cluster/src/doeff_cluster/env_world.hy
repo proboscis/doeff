@@ -375,7 +375,8 @@
 (defk uv-failure-now []
   {:pre [] :post [(: % (| UvFailure None))] :tags {:context "runtime-env" :role "foundation"}}
   "今の uv の失敗(世界の file から — set-uv-failure で走行の途中に変わる)。"
-  (<- seen (read-json FAILURE-PATH None))
+  ;; 失敗の file は {"fault" … "detail" …} の 1 つの object — list の JSON なら世界の file の形が壊れているので、型を書いた束縛で断る。
+  (<- seen (| dict None) (read-json FAILURE-PATH None))
   (if (is seen None)
       None
       (UvFailure :fault (UvFault (get seen "fault")) :detail (get seen "detail"))))
