@@ -1053,6 +1053,9 @@
         order (generation-order previous boot boot-at)
         state (adopt-running-detached state name boot (.get body "statuses" []) now))
   (when (= order GenerationOrder.OLDER)
+    ;; OLDER は今の世代と boot の両方が在る時だけ(generation-order の最初の枝が、どちらかの無い時を CURRENT にする)。
+    (when (or (is previous None) (is boot None))
+      (raise (RuntimeError (.format "世代の比べが OLDER なのに今の世代か boot が無い: {}" name))))
     (return (absorb-superseded-heartbeat
               (replace state :workers (| state.workers {name (replace previous :retired (retired-with previous.retired boot))}))
               name boot (.get body "statuses" []) now)))
@@ -1190,7 +1193,7 @@
                                #^ (| str None) [boot None] #^ (| list None) [statuses None]]
   "heartbeat を送った process に、動かす job・task・温める表・時間の設定・drain の印を返すため。boot = 送った process の世代・
    statuses = その heartbeat の状態の報告。退いた世代(superseded-boot)への返事は superseded-reply。"
-  (when (superseded-boot state name boot)
+  (when (and (is-not boot None) (superseded-boot state name boot))
     (return (superseded-reply state name boot (or statuses []) timing ready-instances)))
   {"jobs" (lfor s (jobs-for state name ready-instances) (spec-json s))
    "tasks" (tasks-for state name boot)
