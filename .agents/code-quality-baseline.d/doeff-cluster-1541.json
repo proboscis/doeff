@@ -50,48 +50,6 @@
       "subject": "__import__"
     },
     {
-      "count": 3,
-      "path": "packages/doeff-cluster/src/doeff_cluster/code_prepare.hy",
-      "reason": "registered-with-legacy",
-      "rule": "hy-rebind",
-      "subject": "hy:rebind"
-    },
-    {
-      "count": 13,
-      "path": "packages/doeff-cluster/src/doeff_cluster/coordinator.hy",
-      "reason": "registered-with-legacy",
-      "rule": "hy-rebind",
-      "subject": "hy:rebind"
-    },
-    {
-      "count": 16,
-      "path": "packages/doeff-cluster/src/doeff_cluster/record_handlers.hy",
-      "reason": "registered-with-legacy",
-      "rule": "hy-rebind",
-      "subject": "hy:rebind"
-    },
-    {
-      "count": 2,
-      "path": "packages/doeff-cluster/src/doeff_cluster/record_store.hy",
-      "reason": "registered-with-legacy",
-      "rule": "hy-rebind",
-      "subject": "hy:rebind"
-    },
-    {
-      "count": 3,
-      "path": "packages/doeff-cluster/src/doeff_cluster/semaphore_handlers.hy",
-      "reason": "registered-with-legacy",
-      "rule": "hy-rebind",
-      "subject": "hy:rebind"
-    },
-    {
-      "count": 2,
-      "path": "packages/doeff-cluster/src/doeff_cluster/worker.hy",
-      "reason": "registered-with-legacy",
-      "rule": "hy-rebind",
-      "subject": "hy:rebind"
-    },
-    {
       "count": 1,
       "path": "packages/doeff-cluster/tests/fixtures/recorded_programs.hy",
       "reason": "registered-with-legacy",
