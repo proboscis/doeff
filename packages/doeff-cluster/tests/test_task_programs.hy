@@ -293,6 +293,7 @@
     (do
       (<- spec JobSpec (assigned-task link id))
       (assert (= spec.program (program-sha blob)) spec)
+      (assert (is-not spec.program None) spec)
       (val cached (program-file link.program-dir spec.program))
       (assert (= (json.loads (.read-text cached :encoding "utf-8")) {"blob" blob "versions" (current-versions)}))
       ;; 子 process: worker と同じ引数(task --result <file>)に cache の file を --program で渡す(ProcessHost が足すのと同じ)。

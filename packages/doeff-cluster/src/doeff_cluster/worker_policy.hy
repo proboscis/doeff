@@ -14,7 +14,7 @@
 (import dataclasses [replace])
 (import .worker_model [JobSpec CodeState CodeView ProcessView WorldView StopStage StopProgress ProbeState ProbeView ProbeStatus
   Outcome JobRecord WorkerPolicy JobPhase JobStatus PrepareCode PrepareEnv SweepEnvs StartJob SignalJob ReapJob RetireJob ReleaseLeases
-  ProbeEntry ForgetProbes spec-hash code-key probed-job retired-name RETIRED-MARK ENV-KEY-PREFIX])
+  ProbeEntry ForgetProbes spec-hash code-key probed-job retired-name ready-path RETIRED-MARK ENV-KEY-PREFIX])
 
 ;; 自己停止(2026-09-25): coordinator との連絡が fence(ClusterTiming.fence-ms)を越えて途絶えた worker は、自分の job を止めてきた
 ;; (coordinator は 45 秒で他へ移すので、同じ job が 2 つ動かないように)。ただし書き手(入れ替え handoff を宣言した job)は、旧と新が
@@ -45,16 +45,16 @@
     (when (= probe.spec-hash key) (return probe)))
   None)
 
-(defn #^ (| tuple None) probe-actions [#^ int now #^ JobSpec spec #^ CodeView code #^ WorldView world #^ WorkerPolicy policy]
-  "入口の検めの門(木が READY の spec)。通れば None。通れなければ撃つ action — 初回・FAILED の code-retry-ms 後の撃ち直しは
+(defn #^ (| tuple None) probe-actions [#^ int now #^ JobSpec spec #^ str tree #^ WorldView world #^ WorkerPolicy policy]
+  "入口の検めの門(木が READY の spec・tree = READY の木の path)。通れば None。通れなければ撃つ action — 初回・FAILED の code-retry-ms 後の撃ち直しは
    ProbeEntry、走っている間・撃ち直しの間は空(待つ)。検めの対象でない job(task・素の entry)はいつも通る。"
   (when (not (probed-job spec)) (return None))
   (setv probe (probe-of world spec))
   (cond
-    (is probe None) #((ProbeEntry spec code.path))
+    (is probe None) #((ProbeEntry spec tree))
     (= probe.state ProbeState.PASSED) None
     (in probe.state #(ProbeState.RUNNING ProbeState.QUEUED)) #()
-    (>= (- now (or probe.failed-ms 0)) policy.code-retry-ms) #((ProbeEntry spec code.path))
+    (>= (- now (or probe.failed-ms 0)) policy.code-retry-ms) #((ProbeEntry spec tree))
     True #()))
 
 (defn #^ (| ProbeView None) probe-failure [#^ WorldView world #^ JobSpec spec]
@@ -138,34 +138,39 @@
     True #()))
 
 (defn #^ tuple start-actions [#^ int now #^ JobSpec spec #^ WorldView world #^ JobRecord record #^ WorkerPolicy policy]
-  (setv code (code-of world (code-key spec))
-        gate (if (and (is-not code None) (= code.state CodeState.READY)) (probe-actions now spec code world policy) None))
+  (setv tree (ready-path (code-of world (code-key spec))))
   (cond
     ;; task は 1 度だけ走らせる。終わった後は宣言から外れるまで待つ(結果は状態の報告で運ぶ)。
     (and spec.once (is-not record.last-outcome None)) #()
-    (or (is code None) (!= code.state CodeState.READY)) (prepare-actions now spec world policy)
-    ;; 入口の検めが通るまで起こさない。
+    (is tree None) (prepare-actions now spec world policy)
+    True (start-on-ready-tree now spec tree world record policy)))
+
+(defn #^ tuple start-on-ready-tree [#^ int now #^ JobSpec spec #^ str tree #^ WorldView world #^ JobRecord record
+                                    #^ WorkerPolicy policy]
+  "木が READY の job を起こすため: 入口の検めが通るまで起こさず、backoff の間は待つ。"
+  (setv gate (probe-actions now spec tree world policy))
+  (cond
     (is-not gate None) gate
     (in-backoff now record policy) #()
-    True #((StartJob spec (+ record.attempts 1) code.path))))
+    True #((StartJob spec (+ record.attempts 1) tree))))
 
 (defn #^ tuple handoff-actions [#^ int now #^ JobSpec want #^ ProcessView process #^ WorldView world #^ WorkerPolicy policy]
   "入れ替え: 新のコードが揃い、新の入口の検めが通るまでは旧を動かしたまま準備と検めだけ進め、通ったら旧を名から外す
    (次の拍で新を同じ名で起こす)。検めが FAILED の間は旧を外さない(書き手の空白を作らない)。"
-  (setv code (code-of world (code-key want)))
-  (if (and (is-not code None) (= code.state CodeState.READY))
-      (do (setv gate (probe-actions now want code world policy))
+  (setv tree (ready-path (code-of world (code-key want))))
+  (if (is-not tree None)
+      (do (setv gate (probe-actions now want tree world policy))
           (if (is-not gate None)
               gate
               #((RetireJob process.name process.pid (retired-name process.name (or process.instance (str process.pid)))))))
       (prepare-actions now want world policy)))
 
-(defn #^ tuple retired-actions [#^ int now #^ ProcessView process #^ tuple desired #^ WorldView world
+(defn #^ tuple retired-actions [#^ int now #^ ProcessView process #^ str origin #^ tuple desired #^ WorldView world
                                 #^ JobRecord record #^ WorkerPolicy policy]
-  "退いた process: 元の job の新しい process が Ready と数えられたら止める。それまでは動かし続ける(書き手の空白を作らない)。
-   元の job が宣言から消えた・handoff でなくなった時も止める。"
-  (setv want (desired-of desired process.retired-from)
-        current (process-of world process.retired-from))
+  "退いた process(origin = 退く前の job の名): 元の job の新しい process が Ready と数えられたら止める。それまでは動かし続ける
+   (書き手の空白を作らない)。元の job が宣言から消えた・handoff でなくなった時も止める。"
+  (setv want (desired-of desired origin)
+        current (process-of world origin))
   (if (or (is-not record.stopping None)
           (is want None)
           (not want.handoff)
@@ -189,7 +194,7 @@
          ;; 終わった process の lease は、期限を待たずに返す(次の担い手がすぐ取れる)。
          ;; 担い手の名は子が名乗った job の名(起こした spec の名 — 退いた process も元の名)と世代の名。
          (if process.instance #((ReleaseLeases process.spec.name process.instance)) #()))
-    (is-not process.retired-from None) (retired-actions now process desired world record policy)
+    (is-not process.retired-from None) (retired-actions now process process.retired-from desired world record policy)
     ;; 諦めた入れ替え: 今の宣言の spec の新の process を止める(止め始めた process は止め終える)。前の宣言の process(まだ退いて
     ;; いない旧)は名から外さず、そのまま動かす — 新を起こさないので並べる理由が無い。
     abandoned

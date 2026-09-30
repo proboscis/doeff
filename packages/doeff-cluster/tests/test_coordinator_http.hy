@@ -22,7 +22,9 @@
   (.start inbox)
   (setv stop (threading.Event))
   (.start (threading.Thread :target serve :args #(inbox stop) :daemon True))
-  (setv port (get inbox.server.server-address 1) opened [])
+  (setv server inbox.server)
+  (assert (is-not server None) "start の後は HTTP server が在る")
+  (setv port (get server.server-address 1) opened [])
   (defn trace [name info]
     (when (= name "connection.connect_tcp.complete") (.append opened name)))
   (try
@@ -35,7 +37,7 @@
         (assert (= (.json response) {"path" "/board"}))))
     (finally
       (.set stop)
-      (.shutdown inbox.server)))
+      (.shutdown server)))
   (assert (= (len opened) 1)))
 
 

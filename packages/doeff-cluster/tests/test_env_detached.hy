@@ -242,6 +242,7 @@
                        (. (__import__ "pathlib") (Path "/tmp/tasks"))))
   (<- key str (env-key env (current-platform)))
   (assert (= spec.revision (+ "env-" key)))
+  (assert (is-not spec.runtime-env None) spec)
   (assert (= (json.loads spec.runtime-env) declared))
   (val policy (WorkerPolicy))
   (val actions (plan 0 #(spec) (WorldView #() #()) {} policy))
