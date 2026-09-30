@@ -13,8 +13,10 @@
     "packages/doeff-adr/src/doeff_adr/item_cache.py",
     "packages/doeff-adr/src/doeff_adr/lazy_collection.py",
     "packages/doeff-adr/src/doeff_adr/pytest_plugin.py",
+    "packages/doeff-adr/src/doeff_adr/recorded_items.py",
     "packages/doeff-adr/tests/test_dynamic_item_cache.py",
     "packages/doeff-adr/tests/test_lazy_collection.py",
+    "packages/doeff-adr/tests/test_recorded_items.py",
     "packages/doeff-hy/tests/test_pytest_item_types.py"
   ],
   "modules": [
@@ -58,15 +60,17 @@
         "packages/doeff-adr/src/doeff_adr/source_dependencies.py",
         "packages/doeff-adr/src/doeff_adr/item_cache.py",
         "packages/doeff-adr/src/doeff_adr/lazy_collection.py",
-        "packages/doeff-adr/src/doeff_adr/pytest_plugin.py"
+        "packages/doeff-adr/src/doeff_adr/pytest_plugin.py",
+        "packages/doeff-adr/src/doeff_adr/recorded_items.py"
       ],
       "public": [
         "packages/doeff-adr/src/doeff_adr/source_dependencies.py",
         "packages/doeff-adr/src/doeff_adr/item_cache.py",
         "packages/doeff-adr/src/doeff_adr/lazy_collection.py",
-        "packages/doeff-adr/src/doeff_adr/pytest_plugin.py"
+        "packages/doeff-adr/src/doeff_adr/pytest_plugin.py",
+        "packages/doeff-adr/src/doeff_adr/recorded_items.py"
       ],
-      "responsibility": "記録の保存・sourceの照合・pytest収集とsetup時のimportを組み立てる。古い値の実行を拒否する。",
+      "responsibility": "記録の保存・sourceの照合・pytest収集とsetup時のimportを組み立てる。古い値の実行を拒否する。記録からのitemの生成(pytestの内部に触る唯一の口 recorded_items — #1551)。",
       "typed": true
     },
     {
@@ -95,6 +99,7 @@
       "paths": [
         "packages/doeff-adr/tests/test_dynamic_item_cache.py",
         "packages/doeff-adr/tests/test_lazy_collection.py",
+        "packages/doeff-adr/tests/test_recorded_items.py",
         "packages/doeff-hy/tests/test_pytest_item_types.py"
       ],
       "public": [],
