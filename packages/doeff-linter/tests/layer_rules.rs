@@ -2793,6 +2793,27 @@ fn services_without_a_counterexample_are_red() {
     assert!(keys(&report, "DOEFF143").iter().all(|k| !k.contains("counterexample-unused")), "{}", report);
 }
 
+/// agora-redesign #1918: :business-fakes の :unserved(違反を固定する縮める向きの表)の無い dir は空の表として読む(知らせ 1 行・errors に
+/// しない — 最後の行を消すと git は空の dir を持たない)。宣言の一覧(:counterexamples)の無い dir は今までどおり読めない(errors)。
+#[test]
+fn an_absent_unserved_table_is_empty_but_an_absent_declaration_list_is_unreadable() {
+    let files = [("app/foundation/host.hy", tags("shared", "foundation") + "(defk with-host [body] body)\n")];
+    let dir = world_repo_with(&files, "", "[\"DOEFF143\"]");
+    let arch_path = dir.path().join("architecture.hy");
+    let fakes = ":foundation foundation\n  :verification-environment \"sim\"\n  :business-fakes {:simulation [\"app/sim/**\"] :assembly [\"app/*/entry/**\"] \
+                 :tests [\"**/tests/**\"] :production [\"app/**\"] :business-modules [\"app.billing\"] \
+                 :counterexamples \"tables/COUNTEREXAMPLES\" :unserved \"tables/EXTERNAL-UNSERVED\"}";
+    let text = std::fs::read_to_string(&arch_path).unwrap().replace(":foundation foundation", fakes);
+    std::fs::write(&arch_path, text).unwrap();
+    let (_, report) = editor(dir.path());
+    let errors: Vec<&str> = report["errors"].as_array().unwrap().iter().filter_map(Value::as_str).collect();
+    assert!(errors.iter().all(|e| !e.contains("EXTERNAL-UNSERVED")), "無い :unserved の表は読みの誤りにしない: {:?}", errors);
+    assert!(errors.iter().any(|e| e.contains("tables/COUNTEREXAMPLES") && e.contains("読めない")), "無い宣言の一覧は読めない: {:?}", errors);
+    // 知らせは text の出力の stderr に出る(登録簿の無い dir の知らせと同じ口 — #1732)
+    let (_, _, stderr) = run(dir.path(), &["--output-format", "text", "--no-log"], None);
+    assert!(stderr.contains("知らせ") && stderr.contains("tables/EXTERNAL-UNSERVED"), "空と読んだ事を知らせる: {}", stderr);
+}
+
 /// agora-redesign #1818(#1810 の子): DOEFF143(模擬の偽物)と DOEFF157(検だけの偽物)を規則の ID で名指して確かめる。
 /// 模擬の環境の fake-charge と検の file の test-charge は業務の効果 Charge に tap でなく答える(鳴る例)。同じ置き場の、効果を出し直す
 /// tap の handler(watch-charge・watch-refund)と、反例の表に在るわざと壊した handler(broken-refund・broken-charge)は鳴らない(鳴らない例)。

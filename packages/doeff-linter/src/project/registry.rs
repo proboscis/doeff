@@ -82,13 +82,31 @@ pub struct JudgedKeys {
     /// 鍵 → 判定の理由。
     pub reasons: BTreeMap<String, String>,
     pub problems: Vec<String>,
+    /// 読みの誤りではない知らせ(`Absent::Empty` の一覧の無い dir を空として読んだ)。
+    pub notes: Vec<String>,
+}
+
+/// 一覧の dir が無い時の読み方(呼び手が一覧の性質で選ぶ)。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Absent {
+    /// 読めない(errors に出す)— 宣言の一覧(外の世界の効果・反例)と Jev の判定の一覧。無い dir を空と読むと、綴りの誤りで宣言が
+    /// 黙って消える。
+    Unreadable,
+    /// 空の一覧(notes に 1 行)— 違反を固定する縮める向きの表(`:unserved`)。最後の行を消すと git は空の dir を持たないので dir ごと
+    /// 消える — それは正しい操作(登録簿の Registry::read_dir と同じ・agora-redesign #1732・#1918)。空と読んでも判定は厳しい側にしか
+    /// 倒れない(載っていたはずの不足は当たりとして出る)。
+    Empty,
 }
 
 impl JudgedKeys {
-    /// root からの相対の dir を全部読む。
-    pub fn load(root: &Path, dirs: &[String]) -> JudgedKeys {
+    /// root からの相対の dir を全部読む。無い dir は `absent` の読み方で読む。
+    pub fn load(root: &Path, dirs: &[String], absent: Absent) -> JudgedKeys {
         let mut judged = JudgedKeys::default();
         for dir in dirs {
+            if absent == Absent::Empty && !root.join(dir).exists() {
+                judged.notes.push(format!("判定の一覧の dir {} が無い — 空の一覧として読んだ", dir));
+                continue;
+            }
             let files = match txt_files(&root.join(dir)) {
                 Ok(files) => files,
                 Err(error) => {
@@ -171,11 +189,30 @@ mod tests {
         std::fs::create_dir(&list).unwrap();
         std::fs::write(list.join("a.txt"), "a.hy::DOEFF201::f\n行の形を読むだけ\n業務の判断ではない\n").unwrap();
         std::fs::write(list.join("b.txt"), "b.hy::DOEFF201::g\n\n").unwrap();
-        let judged = JudgedKeys::load(dir.path(), &["FALSE".to_string(), "MISSING".to_string()]);
+        let judged = JudgedKeys::load(dir.path(), &["FALSE".to_string(), "MISSING".to_string()], Absent::Unreadable);
         assert_eq!(judged.reasons.get("a.hy::DOEFF201::f").map(String::as_str), Some("行の形を読むだけ 業務の判断ではない"));
         assert_eq!(judged.reasons.len(), 1, "理由の無い判定は読まない");
         assert_eq!(judged.problems.len(), 2);
         assert!(judged.problems.iter().any(|p| p.contains("理由")));
-        assert!(judged.problems.iter().any(|p| p.contains("MISSING")));
+        assert!(judged.problems.iter().any(|p| p.contains("MISSING")), "宣言の一覧の無い dir は読めない");
+        assert!(judged.notes.is_empty());
+    }
+
+    /// agora-redesign #1918: 縮める向きの表(Absent::Empty)の無い dir は空の一覧(知らせ 1 行・読みの誤りにしない)。鍵を 1 つ足せば
+    /// 今までどおり効く。
+    #[test]
+    fn an_absent_shrinking_list_reads_as_empty_and_one_added_key_counts() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let absent = JudgedKeys::load(dir.path(), &["UNSERVED".to_string()], Absent::Empty);
+        assert!(absent.reasons.is_empty());
+        assert!(absent.problems.is_empty(), "{:?}", absent.problems);
+        assert_eq!(absent.notes.len(), 1);
+        assert!(absent.notes[0].contains("UNSERVED"));
+        let list = dir.path().join("UNSERVED");
+        std::fs::create_dir(&list).unwrap();
+        std::fs::write(list.join("a.txt"), "app.orders.intent.Send\n#1 で書く\n").unwrap();
+        let one = JudgedKeys::load(dir.path(), &["UNSERVED".to_string()], Absent::Empty);
+        assert_eq!(one.reasons.get("app.orders.intent.Send").map(String::as_str), Some("#1 で書く"));
+        assert!(one.problems.is_empty() && one.notes.is_empty());
     }
 }

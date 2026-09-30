@@ -553,11 +553,12 @@ pub fn run_with(root: &Path, settings: &ProjectSettings, enabled: &BTreeSet<Proj
                         ProjectRule::IntentEffectUncovered,
                     ];
                     if let Some(decl) = architecture.business_fakes.as_ref().filter(|_| fake_rules.iter().any(|r| enabled.contains(r))) {
-                        let (found, problems) = crate::timing::timed("business-fakes", || {
+                        let judged = crate::timing::timed("business-fakes", || {
                             judge_business_fakes(root, architecture, Some(layers), decl, architecture.assembly_shape.as_ref(), hy, enabled)
                         });
-                        drafts.extend(found);
-                        report.errors.extend(problems);
+                        drafts.extend(judged.drafts);
+                        report.errors.extend(judged.problems);
+                        report.notes.extend(judged.notes);
                     }
                     if let (Some(decl), Some(shape)) = (architecture.business_fakes.as_ref(), architecture.assembly_shape.as_ref()) {
                         if enabled.contains(&ProjectRule::AssemblyShapeBroken) || enabled.contains(&ProjectRule::AssemblyAnswerMisplaced) {
@@ -2837,7 +2838,15 @@ fn judge_assembly_shape(
 }
 
 /// DOEFF143: 模擬の根と本番の入口から定義の辺の図を前向きに辿り、模擬の根からだけ届く effect の節(偽物)が業務の効果に tap でなく
-/// 答える所と、外の世界の表・反例の表の腐りを出す(agora-redesign #1375)。全体の索引が要る(全体の実行だけ)。読めない表の理由は 2 つ目に返す。
+/// 答える所と、外の世界の表・反例の表の腐りを出す(agora-redesign #1375)。全体の索引が要る(全体の実行だけ)。
+/// 判定と、読めない表の理由(errors へ)と、空と読んだ無い表の知らせ(notes へ)。
+struct FakesJudgement {
+    drafts: Vec<Draft>,
+    problems: Vec<String>,
+    notes: Vec<String>,
+}
+
+/// DOEFF143 の判定(`FakesJudgement` を返す)。
 fn judge_business_fakes(
     root: &Path,
     architecture: &architecture::Architecture,
@@ -2846,18 +2855,21 @@ fn judge_business_fakes(
     shape: Option<&architecture::AssemblyShape>,
     hy: &HashMap<String, HyFileIndex>,
     enabled: &BTreeSet<ProjectRule>,
-) -> (Vec<Draft>, Vec<String>) {
+) -> FakesJudgement {
     use business_fakes::{FileRole, Verdict};
     let mut problems = Vec::new();
-    let mut table = |dir: &Option<String>| -> BTreeMap<String, String> {
+    let mut notes = Vec::new();
+    let mut table = |dir: &Option<String>, absent: registry::Absent| -> BTreeMap<String, String> {
         let Some(dir) = dir else { return BTreeMap::new() };
-        let judged = registry::JudgedKeys::load(root, std::slice::from_ref(dir));
+        let judged = registry::JudgedKeys::load(root, std::slice::from_ref(dir), absent);
         problems.extend(judged.problems);
+        notes.extend(judged.notes);
         judged.reasons
     };
-    let external = table(&decl.external_effects);
-    let counterexamples = table(&decl.counterexamples);
-    let unserved = table(&decl.unserved);
+    // 外の世界の表と反例の表は宣言(無い dir は綴りの誤り)・:unserved は違反を固定する縮める向きの表(無い dir = 空 — #1918)
+    let external = table(&decl.external_effects, registry::Absent::Unreadable);
+    let counterexamples = table(&decl.counterexamples, registry::Absent::Unreadable);
+    let unserved = table(&decl.unserved, registry::Absent::Empty);
     let graph = definition_graph(architecture, hy);
     let count = graph.nodes.len();
     let callees = forward_edges(&graph);
@@ -3161,7 +3173,7 @@ fn judge_business_fakes(
         problems.extend(claims.problems);
         problems.extend(claim_problems);
     }
-    (drafts, problems)
+    FakesJudgement { drafts, problems, notes }
 }
 
 /// DOEFF136: service ごとに、entry の層の定義から呼び手を逆向きに辿り、模擬の環境(:verification-environment)の下の deftest に
@@ -5022,8 +5034,8 @@ struct JudgedLabels {
 /// 意味の規則の設定の誤判定の一覧と正例の一覧を読む。両方に載った鍵は食い違いとして理由を積み、どちらとしても読まない。
 fn judged_labels(root: &Path, settings: &ProjectSettings, errors: &mut Vec<String>) -> JudgedLabels {
     let Some(semantic) = &settings.semantic else { return JudgedLabels::default() };
-    let negatives = registry::JudgedKeys::load(root, &semantic.false_positives);
-    let positives = registry::JudgedKeys::load(root, &semantic.true_positives);
+    let negatives = registry::JudgedKeys::load(root, &semantic.false_positives, registry::Absent::Unreadable);
+    let positives = registry::JudgedKeys::load(root, &semantic.true_positives, registry::Absent::Unreadable);
     errors.extend(negatives.problems);
     errors.extend(positives.problems);
     let mut labels = JudgedLabels { false_positives: negatives.reasons, true_positives: positives.reasons };
