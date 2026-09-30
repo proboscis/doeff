@@ -253,6 +253,8 @@ pub enum Explain {
         target_layer: LayerId,
         target_dir: String,
         declared: bool,
+        /// 依存先が既にこの service に依存している(:depends-on に足すと service の間の依存が輪になる)。
+        reverse: bool,
         depends_on: Vec<String>,
         /// この file の層が依存先で読んでよい層(層の :dependency-layers か :open-layers)。
         open_layers: Vec<String>,
@@ -848,7 +850,7 @@ impl<'a> Narrator<'a> {
                     format!("service の中の dir は層(外の世界からの遠さ)だけで切る。{} は宣言した層でないので、中の module の層が決まらない。service の :layers に足すか、層の dir へ移す。", layer),
                 ),
             },
-            Explain::ServiceDependency { placement, own, target, target_service, target_layer, target_dir, declared, depends_on, open_layers, widened } => (
+            Explain::ServiceDependency { placement, own, target, target_service, target_layer, target_dir, declared, depends_on, open_layers, widened, .. } => (
                 format!(
                     "import 先 {} は service {} の{}(path が {}/ の下) — {}",
                     target,
@@ -968,7 +970,11 @@ impl<'a> Narrator<'a> {
             Explain::ClassRoleDoubt { chosen, .. } if chosen == "external-world" => Some(WORLD_FIX.to_string()),
             Explain::ClassRoleDoubt { .. } => Some(STATE_FIX.to_string()),
             Explain::ClassShape { verdict: ClassVerdict::DataOnly, .. } => Some("defrecord にする(:tags で文脈と役・:check で値の検め)".to_string()),
-            Explain::UndeclaredPlace { destination, .. } => Some(format!("{} へ移す(service は :context のタグ、層は今の置き場所か :role のタグから推した案)", destination)),
+            Explain::UndeclaredPlace { destination, .. } => Some(format!("{} へ移す(service は :context のタグ、層は定義の :role のタグから推した案 — 推せない時だけ今の置き場所の層)", destination)),
+            Explain::ServiceDependency { own, target, target_service, declared: false, reverse: true, .. } => Some(format!(
+                "{} は既に {} に依存しているので、:depends-on に足すと service の間の依存が輪になる — {} の型を {} の intent か shared へ移し、{} がそこを読む形にする(既に在る {} → {} の向きに揃える)",
+                target_service, own, target, own, target_service, target_service, own
+            )),
             Explain::JsonValueUse { refusal: JsonValueRefusal::ListedOutsideFoundation { pattern, foundation_dir: Some(dir) }, .. } => Some(format!(
                 "送受信そのものを {}/ の module へ移して :wire-modules はそこを指すか、{} を :wire-modules から外し、この module は defwire の型のある値を使う",
                 dir, pattern

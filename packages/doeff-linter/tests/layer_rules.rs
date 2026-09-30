@@ -979,8 +979,11 @@ fn architecture_declares_services_layers_and_dependencies() {
     );
     // DOEFF115: 宣言に無い service の dir と、service の中の宣言に無い層の dir(dir ごとに 1 件)。
     assert_eq!(keys(&report, "DOEFF115"), vec!["app/billing/scripts::DOEFF115", "app/core::DOEFF115", "app/mystery::DOEFF115", "app/old::DOEFF115"]);
-    // 移し先の案: service は :context のタグ、層は今の path の段の層の名(層が先の dir)か :role のタグ。
-    assert_eq!(violation(&report, "app/core/legacy_core.hy::DOEFF114")["hint"], "app/kanban/core/legacy_core.hy へ移す(service は :context のタグ、層は今の置き場所か :role のタグから推した案)");
+    // 移し先の案: service は :context のタグ、層は :role のタグ(推せなければ今の path の段の層の名)。
+    assert_eq!(
+        violation(&report, "app/core/legacy_core.hy::DOEFF114")["hint"],
+        "app/kanban/core/legacy_core.hy へ移す(service は :context のタグ、層は定義の :role のタグから推した案 — 推せない時だけ今の置き場所の層)"
+    );
     assert!(violation(&report, "app/billing/scripts/tool.hy::DOEFF114")["hint"].as_str().unwrap().starts_with("app/billing/core/tool.hy へ移す"));
     assert!(violation(&report, "app/old/anything.hy::DOEFF114")["hint"].as_str().unwrap().starts_with("app/<service>/<層>/anything.hy へ移す"));
     let undeclared = explanation(&report, "app/mystery::DOEFF115");
@@ -1023,6 +1026,48 @@ fn architecture_declares_services_layers_and_dependencies() {
     assert_eq!(architecture["services"][0]["depends_on"], serde_json::json!(["custody", "ledger"]));
     assert_eq!(architecture["layers"][0]["summary"], "業務の判断");
     assert_eq!(report["layers"][0]["name"], "core");
+}
+
+/// #1799: DOEFF101 と DOEFF116 は同じ import を二重に数えない(層の向きを DOEFF101 が持つ)。DOEFF116 の案内は依存が輪になる時に
+/// 「宣言に足す」と言わない。DOEFF114 の移し先の層は定義の :role から推す(今の置き場所の層は推せない時だけ)。
+#[test]
+fn dependency_and_place_rules_do_not_double_count_or_misguide() {
+    let files = [
+        // intent の層から別の service の core を読む — 層の向き(DOEFF101)で 1 件。宣言に無い依存(DOEFF116)でも数えない。
+        ("app/custody/intent/peek.hy", tags("custody", "intent") + "(import app.billing.core.rate [rate])\n(defclass Peek [])\n"),
+        ("app/billing/core/rate.hy", tags("billing", "judgment") + "(defn rate [] 1)\n"),
+        // billing は custody に依存する — custody が billing を読むのを :depends-on に足すと輪になる。
+        ("app/billing/intent/charge.hy", tags("billing", "intent") + "(defclass Charge [])\n"),
+        ("app/custody/core/uses_billing.hy", tags("custody", "judgment") + "(import app.billing.intent.charge [Charge])\n(defn u [] 1)\n"),
+        // ledger は custody に依存しない — 足す案内のまま。
+        ("app/ledger/intent/entry.hy", tags("ledger", "intent") + "(defclass Entry [])\n"),
+        ("app/custody/core/uses_ledger.hy", tags("custody", "judgment") + "(import app.ledger.intent.entry [Entry])\n(defn v [] 1)\n"),
+        // 層が先の dir の intent/ に置いた判断 — 移し先の層は role(judgment → core)。role が 2 つの層に合う時だけ path の intent。
+        ("app/intent/judge.hy", tags("kanban", "judgment") + "(defn j [] 1)\n"),
+        ("app/intent/shape.hy", tags("kanban", "type") + "(defclass Shape [])\n"),
+    ];
+    let dir = architecture_repo(&files, "");
+    let (_, report) = editor(dir.path());
+    assert_eq!(keys(&report, "DOEFF101"), vec!["app/custody/intent/peek.hy::DOEFF101::app.billing.core.rate.rate"]);
+    assert_eq!(
+        keys(&report, "DOEFF116"),
+        vec![
+            "app/custody/core/uses_billing.hy::DOEFF116::app.billing.intent.charge.Charge",
+            "app/custody/core/uses_ledger.hy::DOEFF116::app.ledger.intent.entry.Entry"
+        ]
+    );
+    let cyclic = violation(&report, "app/custody/core/uses_billing.hy::DOEFF116::app.billing.intent.charge.Charge")["hint"].as_str().unwrap().to_string();
+    assert!(cyclic.contains("輪になる") && cyclic.contains("custody の intent か shared へ移し") && !cyclic.contains(":depends-on に足し、"), "{}", cyclic);
+    let plain = violation(&report, "app/custody/core/uses_ledger.hy::DOEFF116::app.ledger.intent.entry.Entry")["hint"].as_str().unwrap().to_string();
+    assert!(plain.starts_with("依存先を :depends-on に足し"), "{}", plain);
+    assert!(violation(&report, "app/intent/judge.hy::DOEFF114")["hint"].as_str().unwrap().starts_with("app/kanban/core/judge.hy へ移す"));
+    assert!(violation(&report, "app/intent/shape.hy::DOEFF114")["hint"].as_str().unwrap().starts_with("app/kanban/intent/shape.hy へ移す"));
+    // DOEFF101 を切ると、同じ import は DOEFF116 が数える(二重を避けるのは DOEFF101 が判じる時だけ)。
+    let dir = architecture_repo(&files, "");
+    let toml = std::fs::read_to_string(dir.path().join("pyproject.toml")).unwrap().replace("\"DOEFF101\", ", "");
+    std::fs::write(dir.path().join("pyproject.toml"), toml).unwrap();
+    let (_, report) = editor(dir.path());
+    assert!(keys(&report, "DOEFF116").contains(&"app/custody/intent/peek.hy::DOEFF116::app.billing.core.rate.rate".to_string()));
 }
 
 #[test]

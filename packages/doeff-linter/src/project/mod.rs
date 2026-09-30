@@ -1250,7 +1250,13 @@ fn judge_layer_file(
     }
     let mut crossings = Vec::new();
     if let Some(architecture) = &settings.architecture {
-        let (found, crossed) = judge.service_dependencies(&facts, index, architecture, enabled.contains(&ProjectRule::ServiceDependency));
+        let (found, crossed) = judge.service_dependencies(
+            &facts,
+            index,
+            architecture,
+            enabled.contains(&ProjectRule::ServiceDependency),
+            enabled.contains(&ProjectRule::LayerImportDirection),
+        );
         drafts.extend(found);
         crossings = crossed;
         if enabled.contains(&ProjectRule::PlacedDependency) {
@@ -1449,6 +1455,13 @@ impl<'a> LayerJudge<'a> {
             .collect()
     }
 
+    /// DOEFF101 が破れと判じる import の先か — 母集団の module で、この file 自身でなく、層の許した層の外。
+    /// DOEFF116 は同じ import を二重に数えないため、これが真の import を判じない(層の向きの直しが先 — #1799)。
+    fn breaks_direction(&self, target: &str, index: &HashMap<String, ModuleSite>) -> bool {
+        let Some(allowed) = &self.layers.layers[self.layer.0].allowed else { return false };
+        resolve_target(target, index).is_some_and(|(owner, site)| owner != self.file.module && !allowed.contains(&site.layer))
+    }
+
     /// DOEFF101: import の先が母集団の module(かその中の名)で、許された層の外なら破れ。
     fn import_direction(&self, facts: &ModuleFacts, index: &HashMap<String, ModuleSite>) -> Vec<Draft> {
         let spec = &self.layers.layers[self.layer.0];
@@ -1550,6 +1563,7 @@ impl<'a> LayerJudge<'a> {
         index: &HashMap<String, ModuleSite>,
         architecture: &architecture::Architecture,
         judge: bool,
+        direction_judged: bool,
     ) -> (Vec<Draft>, Vec<(String, String)>) {
         let Some(own_dir) = self.placement.service.as_deref() else { return (Vec::new(), Vec::new()) };
         if architecture.shared.as_deref() == Some(own_dir) {
@@ -1571,10 +1585,12 @@ impl<'a> LayerJudge<'a> {
             }
             let other_name = architecture.service_by_dir(other_dir).map(|s| s.name.clone()).unwrap_or_else(|| other_dir.to_string());
             crossings.push((own_name.clone(), other_name.clone()));
-            if !judge {
+            if !judge || (direction_judged && self.breaks_direction(target, index)) {
                 continue;
             }
             let declared = own.is_some_and(|s| s.depends_on.contains(&other_name));
+            // 依存先が既にこの service に依存していれば、:depends-on に足すと service の間の依存が輪になる。
+            let reverse = architecture.services.iter().any(|s| s.name == other_name && s.depends_on.contains(&own_name));
             let readable = architecture.dependency_layers_for(self.layer_name(self.placement.layer));
             let open = readable.iter().any(|l| *l == self.layer_name(site.layer));
             if declared && open {
@@ -1608,6 +1624,7 @@ impl<'a> LayerJudge<'a> {
                     target_layer: site.layer,
                     target_dir: site.dir.clone(),
                     declared,
+                    reverse,
                     depends_on,
                     open_layers: readable.to_vec(),
                     widened: readable != architecture.open_layers.as_slice(),
@@ -1987,7 +2004,7 @@ fn judge_places(
 ) -> Vec<Draft> {
     let _ = root;
     let mut drafts = Vec::new();
-    // 移し先の案: service は :context のタグ(`-` は `_`)、層は今の path の段の層の名か :role のタグから推した層。
+    // 移し先の案: service は :context のタグ(`-` は `_`)、層は :role のタグから推した層か、推せなければ今の path の段の層の名。
     let destination = |file: &SourceFile| -> String {
         let source = match single_source {
             Some(text) => Some(text.to_string()),
@@ -2003,7 +2020,7 @@ fn judge_places(
             .unwrap_or_else(|| "<service>".to_string());
         let parts: Vec<&str> = file.rel.split('/').collect();
         let by_path = layers.layers.iter().find(|l| parts[..parts.len().saturating_sub(1)].contains(&l.name.as_str())).map(|l| l.name.clone());
-        // path の段に層の名が無ければ、:role のタグをすべて許す層がちょうど 1 つの時にその層。
+        // :role のタグをすべて許す層がちょうど 1 つの時にその層。
         let roles: Vec<String> = facts.tag_sets().iter().filter_map(|t| t.role.clone()).filter(|r| !r.is_empty()).collect();
         let by_roles = || {
             let fitting: Vec<&settings::LayerSpec> = layers
@@ -2016,7 +2033,8 @@ fn judge_places(
                 _ => None,
             }
         };
-        let layer = by_path.or_else(by_roles).unwrap_or_else(|| "<層>".to_string());
+        // 層は定義の :role から推し(置き場所が誤っているから DOEFF114 が出る — 今の path の段は案にならない)、推せない時だけ path の段の層の名。
+        let layer = by_roles().or(by_path).unwrap_or_else(|| "<層>".to_string());
         let name = parts.last().copied().unwrap_or("");
         let root_dir = settings::normalize_dir(&architecture.root);
         match architecture.foundation.as_deref() == Some(layer.as_str()) {
