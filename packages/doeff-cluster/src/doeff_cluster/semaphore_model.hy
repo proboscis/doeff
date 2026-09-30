@@ -147,6 +147,7 @@
   "純粋: 盤への直の書き(旧い版の compare-and-set)が、coordinator の時計でまだ切れていない担い手を追い出して新しい担い手を
    足す・permits を越えて足すなら、断る理由の文。外すだけの書き(返す・worker の drop)は通す。形の読めない値は触らない(None)。"
   (defn #^ (| dict None) holders-of [#^ object row] (if (and (isinstance row dict) (isinstance (.get row "holders") dict)) (get row "holders") None))
+  (when (not (isinstance after dict)) (return None))
   (setv old (or (holders-of before) {}) new (holders-of after))
   (when (is new None) (return None))
   (setv added (lfor t new :if (not-in t old) t))

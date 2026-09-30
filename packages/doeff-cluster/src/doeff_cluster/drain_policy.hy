@@ -16,7 +16,7 @@
 ;;; drain は期限(ttlSeconds・頼み直すたびに延びる)で消え、別の process の世代の heartbeat が来ても解ける
 ;;; (cluster_policy.absorb-boot — Pod を作り直した後の worker は空けない)。取り消しは DELETE /workers/<名>/drain。
 (import dataclasses [replace])
-(import .cluster_model [ClusterState ClusterTiming Drain Placement])
+(import .cluster_model [ClusterJob ClusterState ClusterTiming Drain Placement])
 (import .cluster_policy [alive eligible can-take draining-workers load-of other-generation-boot LIVE-PHASES MAX-EVENTS])
 (import .resource_policy [refuse service-readiness])
 
@@ -57,7 +57,7 @@
 
 ;; --- 調停 -----------------------------------------------------------------------------------
 
-(defn #^ (| str None) move-target [#^ int now #^ ClusterState state #^ object job #^ str source #^ ClusterTiming timing
+(defn #^ (| str None) move-target [#^ int now #^ ClusterState state #^ ClusterJob job #^ str source #^ ClusterTiming timing
                                    #^ frozenset draining #^ dict load]
   "入れ替えの job を source から並べて置く先の worker の名(空きの多い順・同点は名前順)。無ければ None。"
   (setv candidates (sorted (lfor w (.values state.workers)
@@ -67,7 +67,7 @@
   (if candidates (. (get candidates 0) name) None))
 
 
-(defn #^ bool surge-holds [#^ int now #^ ClusterState state #^ object job #^ Placement surge #^ ClusterTiming timing
+(defn #^ bool surge-holds [#^ int now #^ ClusterState state #^ ClusterJob job #^ Placement surge #^ ClusterTiming timing
                            #^ frozenset draining]
   "並べた置き先を持ち続けてよいか: 元の置き先が drain 中の worker に在り、並べた先が生きていて条件を満たし、drain 中でない。"
   (setv placed (.get state.placements job.spec.name)

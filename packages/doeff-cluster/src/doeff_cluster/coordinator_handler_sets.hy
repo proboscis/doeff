@@ -152,6 +152,10 @@
     (+= queue.takes 1)
     (resume batch))
   (Reply [request status body]
+    ;; この組の要求の列は、返事の札を CreatePromise で作る(Request.slot は受け口ごとの札 — HTTP の受け口は ReplySlot)。
+    ;; 札が Promise でなければ、別の受け口の要求がこの組に来た誤り — 返事を落とさず名指して落ちる。
+    (when (not (isinstance request.slot Promise))
+      (raise (TypeError (.format "返事の札が Promise でない({}): {} {}" (type request.slot) request.method request.path))))
     (<- (CompletePromise request.slot #(status body)))
     (resume None))
   (CoordinatorFault [fault]

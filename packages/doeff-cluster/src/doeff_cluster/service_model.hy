@@ -42,7 +42,7 @@
 (defrecord CallShape
   "Program を作った呼び出しの形(defsystem の展開が残す — defk の呼び出しの結果からは引数を読めないため)。
    function = 呼んだ関数・args = 位置の引数の値・kwargs = 名の引数の値(Hy の名 → 値)。identity と describe の材料。"
-  (#^ object function)
+  (#^ Callable function)
   (#^ list args)
   (#^ dict kwargs))
 

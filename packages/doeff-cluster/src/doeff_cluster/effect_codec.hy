@@ -313,7 +313,7 @@
     None)
   (defn #^ int __len__ [self] (len self.order)))
 
-(defn #^ object intern-json [#^ object j #^ object seen #^ Callable emit #^ int [min-chars INTERN-MIN-CHARS]]
+(defn #^ object intern-json [#^ object j #^ BlobMemory seen #^ Callable emit #^ int [min-chars INTERN-MIN-CHARS]]
   "JSON の値 j を下から畳む: canonical が min-chars 以上の dict / list の節を {\"$ref\": h} に置き換え、seen に無い h なら
    (emit h 畳んだ節)を呼んで中身を書かせ、seen に足す。子が先に畳まれるので、親の比べる形の長さは子の参照の長さで測る。
    答え = 畳んだ値(小さければ j と同じ形)。"
