@@ -31,6 +31,7 @@
   (val row {"permits" 1 "holders" {token 99 other-job 88 other-instance 77}})
   (val released (ReleaseLeases "writer" "2-7f3a"))
   (val kept (drop-holders row (holder-tokens-prefix (lease-holder released.job released.instance))))
+  (assert (is-not kept None) "他の担い手が残るので行は残る")
   (assert (= (get kept "holders") {other-job 88 other-instance 77}) kept)
   ;; 反例: worker の名で始まる頭(直す前の外し)は、子の名乗った token に当たらない。
   (assert (is (drop-holders row (.format "{}/{}/" ctx.worker ctx.instance)) None)))
