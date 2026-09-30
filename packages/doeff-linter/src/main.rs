@@ -945,6 +945,9 @@ fn run_normal(args: &Args) -> ExitCode {
         for error in &report.errors {
             eprintln!("doeff-linter: {}", error);
         }
+        for note in &report.notes {
+            eprintln!("doeff-linter: 知らせ — {}", note);
+        }
         if let Some(semantic) = &report.semantic {
             eprintln!(
                 "doeff-linter: 意味の規則(Jev {}・{}) — 判定済み {}・未判定 {}・今回撃った {}・測れなかった {}・代理の覚えから {}・入力のトークン {}・較正 {}",
