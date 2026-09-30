@@ -363,9 +363,14 @@ fn prepare(args: &Args) -> Result<Setup, String> {
     } else {
         config::load_config_checked(args.config.as_deref(), &cwd)?
     };
-    let root = match (&args.root, &loaded, &args.config) {
-        (Some(root), _, _) => root.clone(),
-        (None, Some(found), None) => found.path.parent().map(Path::to_path_buf).unwrap_or_else(|| cwd.clone()),
+    // 設定の root(設定 file の dir からの相対 — agora-redesign #1977)。
+    let declared_root = loaded
+        .as_ref()
+        .and_then(|l| l.config.root.as_ref().map(|r| l.path.parent().map(Path::to_path_buf).unwrap_or_else(|| cwd.clone()).join(r)));
+    let root = match (&args.root, declared_root, &loaded, &args.config) {
+        (Some(root), _, _, _) => root.clone(),
+        (None, Some(declared), _, _) => declared,
+        (None, None, Some(found), None) => found.path.parent().map(Path::to_path_buf).unwrap_or_else(|| cwd.clone()),
         _ => cwd.clone(),
     };
     let root = root.canonicalize().map_err(|e| format!("repo の根 {} を読めない: {}", root.display(), e))?;

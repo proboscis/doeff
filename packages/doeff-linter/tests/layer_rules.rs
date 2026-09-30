@@ -2794,6 +2794,70 @@ fn an_entry_module_without_a_file_is_red() {
     assert!(found["message"].as_str().unwrap().contains("Hy の file(app/queue/mian.hy)が無い"), "{}", found["message"]);
 }
 
+/// agora-redesign #1977: monorepo の package(`pkg/pyproject.toml` と `pkg/src/cluster/…`)で、設定の `root = "src"` が module の名を
+/// import の名(`cluster.coord`)に揃える。architecture.hy は package の根(根の外)に置き、設定の `architecture` で名指す。
+/// `invariants` を書くかと `root` を書くかで 3 通りを作る。
+fn package_repo(invariants: bool, root: bool) -> tempfile::TempDir {
+    let dir = tempfile::TempDir::new().unwrap();
+    let settings = format!(
+        "[tool.doeff-linter]\n{}architecture = \"architecture.hy\"\ndisable = [\"DOEFF114\", \"DOEFF115\"]\n",
+        if root { "root = \"src\"\n" } else { "" }
+    );
+    let judged = "{:pre [(: before dict) (: after dict)] :post [(: % tuple)] :tags {:context \"cluster\" :role \"judgment\"}}";
+    let declared = if invariants { " :invariants [\"cluster.coord_invariants:writes-survive\"]" } else { "" };
+    let files = [
+        ("pyproject.toml", settings),
+        (
+            "architecture.hy",
+            format!(
+                "(defarchitecture pkg :root \"cluster\" :layers [(layer foundation :summary \"土台\")] :foundation foundation)\n\
+                 (defservice coord \"調停\" {{:entry-modules [\"cluster.coord\"]{}}})\n",
+                declared
+            ),
+        ),
+        ("src/cluster/coord.hy", "(defk run [] 1)\n".to_string()),
+        ("src/cluster/coord_invariants.hy", format!("(defk writes-survive [before after]\n  {}\n  \"条。\"\n  #())\n", judged)),
+    ];
+    for (rel, text) in files {
+        let path = dir.path().join(rel);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, text).unwrap();
+    }
+    dir
+}
+
+/// 失敗ケース 1: 設定の root = "src" で、:entry-modules と :invariants の名指しが解け、DOEFF163 は緑。
+#[test]
+fn a_package_with_a_source_root_setting_resolves_its_declarations() {
+    let dir = package_repo(true, true);
+    let (_, report) = editor(dir.path());
+    assert_eq!(report["errors"], serde_json::json!([]), "{}", report);
+    assert!(keys(&report, "DOEFF163").is_empty(), "{}", report);
+}
+
+/// 失敗ケース 2: 条(:invariants)を消すと DOEFF163 が赤。鍵は根(src)の外の architecture.hy を `..` の相対で名乗る(機体ごとの絶対 path
+/// を鍵に入れない)。
+#[test]
+fn a_package_without_its_clause_is_red_with_a_relative_key() {
+    let dir = package_repo(false, true);
+    let (_, report) = editor(dir.path());
+    assert_eq!(keys(&report, "DOEFF163"), vec!["../architecture.hy::DOEFF163::coord"], "{}", report);
+    assert_eq!(violation(&report, "../architecture.hy::DOEFF163::coord")["level"], "critical", "{}", report);
+}
+
+/// 失敗ケース 3: root を書かなければ根は設定 file の dir で module の名は `src.cluster.coord` になり、:entry-modules の module が見つからない
+/// (設定の root が効いていることの証拠)。
+#[test]
+fn a_package_without_the_source_root_setting_cannot_find_its_modules() {
+    let dir = package_repo(true, false);
+    let (_, report) = editor(dir.path());
+    assert!(
+        keys(&report, "DOEFF163").contains(&"architecture.hy::DOEFF163::coord::entry::cluster.coord".to_string()),
+        "{}",
+        report
+    );
+}
+
 /// agora-redesign #1560(K2): entry の層を持つ service ごとに、壊した handler の反例(反例の表の節に届き、その service の entry にも届く
 /// deftest)が無ければ defservice の位置で DOEFF164(critical)。billing は自分の業務の効果の壊した handler を自分の検で回す(有り)。
 /// stock は土台の効果(どの service の dir の下にも無い効果)の壊した handler を模擬の検で回す(有り — 表の当たりにも数え、腐りにしない)。

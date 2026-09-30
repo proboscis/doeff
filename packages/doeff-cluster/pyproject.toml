@@ -28,3 +28,12 @@ doeff-core-effects = { workspace = true }
 doeff-hy = { workspace = true }
 doeff-time = { workspace = true }
 
+# doeff-linter の設定 — この dir で linter を走らせた時だけ読む(linter は今の dir から上へ [tool.doeff-linter] を探す。
+# doeff の根で走る hook と make lint-doeff は根の pyproject.toml を読む)。service と不変条件の宣言は同じ dir の architecture.hy。
+# DOEFF013 は根の設定と同じ理由で外す(Optional / None を意図して使う)。この package は層の dir を持たず src/doeff_cluster/ に平たく
+# 置くので、層の置き場の規則 DOEFF114・115 は対象外(分けるかは別に決める。critical を登録簿に載せて通す形にはしない)。
+# root = "src": module の名を import の名(doeff_cluster.x)に揃える(この dir を根にすると src.doeff_cluster.x になる)。
+[tool.doeff-linter]
+root = "src"
+architecture = "architecture.hy"
+disable = ["DOEFF013", "DOEFF114", "DOEFF115"]

@@ -81,6 +81,12 @@ pub struct Config {
     #[serde(default)]
     pub architecture: Option<String>,
 
+    /// repo の根(module の名・層の置き場・登録簿・鍵の path の基準)の path(設定 file の dir からの相対)。書かなければ設定 file の dir。
+    /// `--root` が勝つ。monorepo の package の `src/` の下を根にして、module の名を import の名(`doeff_cluster.x`)に揃えるため
+    /// (agora-redesign #1977 — 設定 file の dir を根にすると `src.doeff_cluster.x` になる)。
+    #[serde(default)]
+    pub root: Option<String>,
+
     /// 意味の規則(DOEFF201・202 — Jev)の層と閾値 — `[tool.doeff-linter.semantic]`
     #[serde(default)]
     pub semantic: Option<crate::project::semantic::SemanticSection>,

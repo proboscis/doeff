@@ -16,7 +16,9 @@
 | `doeff-linter --output-format editor-json --baseline-report <file> [<path>…]` | 基点(main の先端)で走らせた editor-json の出力 `<file>` と比べ、基点に無い critical を `new_critical` に出す(下の「基点との比べ」) |
 
 - 設定を探す順: `--config` があればそれ。無ければ今の dir から上へ、`[tool.doeff-linter]` を持つ pyproject.toml を探す。
-- repo の根: `--root` があればそれ。無ければ見つけた pyproject.toml の dir。`--config` を渡した時は今の dir。
+- repo の根: `--root` があればそれ。無ければ設定の `root = "<設定 file の dir からの相対の path>"`(agora-redesign #1977 — monorepo の
+  package の `src/` を根にして module の名を import の名に揃える)。それも無ければ見つけた pyproject.toml の dir。`--config` を渡した時は
+  今の dir(設定の `root` は `--config` の file の dir から)。
 - `--stdin` と `--path` は editor-json の時だけ使える。`--stdin` に `--path` が無ければ終了コード 2。
 
 ### 終了コード
@@ -275,6 +277,8 @@ agora-controllers の `scripts/module_tags.hy` の `breaches-of` と、DOEFF101�
 ## 9. architecture.hy — service と層の唯一の宣言
 
 repo の一番上の `architecture.hy`(または設定の `architecture = "<設定 file からの相対の path>"`)が、service と層を宣言する唯一の場所。
+宣言の file が根の外(設定の `root` で `src/` を根にした package の根の architecture.hy など)なら、鍵の path は `..` を含む根からの相対
+(`../architecture.hy::DOEFF163::…` — 機体ごとの絶対 path を鍵に入れない・agora-redesign #1977)。
 doeff-linter はこれを **実行せずに** doeff-indexer の Hy の読み取り器で読む。在れば層・role は ここから写し、TOML の
 `[tool.doeff-linter.layers]`・`roles`・`services` は置けない(二重の宣言は設定の誤り)。TOML には規則の入り切り・重さ・登録簿の置き場所・
 law の対応だけを残す。無ければ TOML の設定で今どおり動く。doeff-hy の実行時の macro(defarchitecture・defservice・layer)は未実装。

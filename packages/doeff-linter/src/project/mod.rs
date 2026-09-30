@@ -254,7 +254,7 @@ pub fn run_with(root: &Path, settings: &ProjectSettings, enabled: &BTreeSet<Proj
                 report.errors.extend(errors);
                 // DOEFF141 は宣言した定義の module と、届いた先の module の file だけを読む(名指しに関わらず小さい — repo 全体は読まない)。
                 if enabled.contains(&ProjectRule::BlindDefinitionReads) && !architecture.blind_definitions.is_empty() {
-                    let architecture_rel = relative_path(root, &architecture.path).unwrap_or_else(|| "architecture.hy".to_string());
+                    let architecture_rel = declared_rel(root, &architecture.path);
                     let (found, errors) =
                         crate::timing::timed("blind", || blind::find(root, &architecture.blind_definitions, &raw, &architecture_rel));
                     drafts.extend(found.into_iter().map(|found| Draft {
@@ -282,7 +282,7 @@ pub fn run_with(root: &Path, settings: &ProjectSettings, enabled: &BTreeSet<Proj
                 }
                 // DOEFF147 は宣言した定義の module の file だけを読む(名指しに関わらず小さい — repo 全体は読まない)。
                 if enabled.contains(&ProjectRule::DefinitionCallsUnlistedHead) && !architecture.allowed_heads.is_empty() {
-                    let architecture_rel = relative_path(root, &architecture.path).unwrap_or_else(|| "architecture.hy".to_string());
+                    let architecture_rel = declared_rel(root, &architecture.path);
                     let (found, errors) =
                         crate::timing::timed("allowed-heads", || allowed_heads::find(root, &architecture.allowed_heads, &architecture_rel));
                     drafts.extend(found.into_iter().map(|found| Draft {
@@ -309,7 +309,7 @@ pub fn run_with(root: &Path, settings: &ProjectSettings, enabled: &BTreeSet<Proj
                 }
                 // DOEFF148 は群の :files の glob の頭の dir だけを歩く(repo 全体は読まない)。
                 if enabled.contains(&ProjectRule::SpellingOutsideItsFiles) && !architecture.confined_spellings.is_empty() {
-                    let architecture_rel = relative_path(root, &architecture.path).unwrap_or_else(|| "architecture.hy".to_string());
+                    let architecture_rel = declared_rel(root, &architecture.path);
                     let (found, errors) = crate::timing::timed("confined-spellings", || {
                         confined_spellings::find(root, &architecture.confined_spellings, &architecture_rel, focus)
                     });
@@ -340,7 +340,7 @@ pub fn run_with(root: &Path, settings: &ProjectSettings, enabled: &BTreeSet<Proj
                 }
                 // DOEFF161 も宣言の :files の glob の頭の dir だけを歩く(repo 全体は読まない)。
                 if enabled.contains(&ProjectRule::SpellingCountDiffers) && !architecture.counted_spellings.is_empty() {
-                    let architecture_rel = relative_path(root, &architecture.path).unwrap_or_else(|| "architecture.hy".to_string());
+                    let architecture_rel = declared_rel(root, &architecture.path);
                     let (found, errors) = crate::timing::timed("counted-spellings", || {
                         counted_spellings::find(root, &architecture.counted_spellings, &architecture_rel)
                     });
@@ -377,7 +377,7 @@ pub fn run_with(root: &Path, settings: &ProjectSettings, enabled: &BTreeSet<Proj
                 }
                 // DOEFF162 は宣言の :files の file だけを読む(repo 全体は読まない)。
                 if enabled.contains(&ProjectRule::EffectOutsideCensus) && !architecture.effect_census.is_empty() {
-                    let architecture_rel = relative_path(root, &architecture.path).unwrap_or_else(|| "architecture.hy".to_string());
+                    let architecture_rel = declared_rel(root, &architecture.path);
                     let (found, errors) =
                         crate::timing::timed("effect-census", || effect_census::find(root, &architecture.effect_census, &architecture_rel));
                     drafts.extend(found.into_iter().map(|found| {
@@ -403,7 +403,7 @@ pub fn run_with(root: &Path, settings: &ProjectSettings, enabled: &BTreeSet<Proj
                 }
                 // DOEFF149 も宣言の :files の file だけを読む(repo 全体は読まない)。
                 if enabled.contains(&ProjectRule::FieldHoldersDiffer) && !architecture.field_holders.is_empty() {
-                    let architecture_rel = relative_path(root, &architecture.path).unwrap_or_else(|| "architecture.hy".to_string());
+                    let architecture_rel = declared_rel(root, &architecture.path);
                     let (found, errors) =
                         crate::timing::timed("field-holders", || field_holders::find(root, &architecture.field_holders, &architecture_rel));
                     drafts.extend(found.into_iter().map(|found| {
@@ -433,7 +433,7 @@ pub fn run_with(root: &Path, settings: &ProjectSettings, enabled: &BTreeSet<Proj
                 }
                 // DOEFF159 は :files の glob の字義どおりの頭の dir だけを歩く(名指しに関わらず小さい — repo 全体は歩かない)。
                 if enabled.contains(&ProjectRule::CallOutsideDeclaredSites) && !architecture.call_sites.is_empty() {
-                    let architecture_rel = relative_path(root, &architecture.path).unwrap_or_else(|| "architecture.hy".to_string());
+                    let architecture_rel = declared_rel(root, &architecture.path);
                     let found = crate::timing::timed("call-sites", || call_sites::find(root, &architecture.call_sites, &architecture_rel));
                     drafts.extend(found.into_iter().map(|found| Draft {
                         rule: ProjectRule::CallOutsideDeclaredSites,
@@ -449,7 +449,7 @@ pub fn run_with(root: &Path, settings: &ProjectSettings, enabled: &BTreeSet<Proj
                 }
                 // DOEFF160 も :files の glob の頭の dir だけを歩く(repo 全体は歩かない)。
                 if enabled.contains(&ProjectRule::BroadCatchOutsideCarrier) && !architecture.broad_catches.is_empty() {
-                    let architecture_rel = relative_path(root, &architecture.path).unwrap_or_else(|| "architecture.hy".to_string());
+                    let architecture_rel = declared_rel(root, &architecture.path);
                     let (found, errors) =
                         crate::timing::timed("broad-catches", || broad_catches::find(root, &architecture.broad_catches, &architecture_rel));
                     drafts.extend(found.into_iter().map(|found| Draft {
@@ -1106,6 +1106,24 @@ pub fn relative_path(root: &Path, path: &Path) -> Option<String> {
     };
     let root = root.canonicalize().ok()?;
     canonical.strip_prefix(&root).ok().map(joined)
+}
+
+/// 宣言の file(architecture.hy)の鍵の綴り — 根の下なら根からの相対、根の外なら `..` を含む根からの相対(区切り `/`)。
+/// 設定の root で package の `src/` を根にすると、package の根の architecture.hy は根の外になる。機体ごとに変わる絶対 path や
+/// 置き場を失った file 名だけを鍵に入れず、どの機体でも同じ鍵にするため(agora-redesign #1977)。
+pub fn declared_rel(root: &Path, path: &Path) -> String {
+    if let Some(rel) = relative_path(root, path) {
+        return rel;
+    }
+    let canonical = |p: &Path| p.canonicalize().unwrap_or_else(|_| p.to_path_buf());
+    let (root, path) = (canonical(root), canonical(path));
+    let root_parts: Vec<_> = root.components().collect();
+    let path_parts: Vec<_> = path.components().collect();
+    let common = root_parts.iter().zip(&path_parts).take_while(|(a, b)| a == b).count();
+    std::iter::repeat_n("..".to_string(), root_parts.len() - common)
+        .chain(path_parts[common..].iter().map(|c| c.as_os_str().to_string_lossy().into_owned()))
+        .collect::<Vec<_>>()
+        .join("/")
 }
 
 /// rel が dir の下(または dir そのもの)か。
@@ -2204,7 +2222,7 @@ fn zero_range() -> Range {
 
 /// DOEFF117(info): 宣言した依存を、その service のどの module も読んでいない。位置は architecture.hy の defservice の名。
 fn judge_unused_dependencies(root: &Path, architecture: &architecture::Architecture, crossings: &BTreeSet<(String, String)>) -> Vec<Draft> {
-    let rel = relative_path(root, &architecture.path).unwrap_or_else(|| architecture.path.to_string_lossy().into_owned());
+    let rel = declared_rel(root, &architecture.path);
     let mut drafts = Vec::new();
     for service in &architecture.services {
         for dependency in &service.depends_on {
@@ -2236,7 +2254,7 @@ fn judge_world_handler_places(
     layer_files: &[LayerFile],
     hy: &HashMap<String, HyFileIndex>,
 ) -> Vec<Draft> {
-    let rel = relative_path(root, &architecture.path).unwrap_or_else(|| architecture.path.to_string_lossy().into_owned());
+    let rel = declared_rel(root, &architecture.path);
     let foundation = architecture.foundation.as_deref();
     let mut drafts = Vec::new();
     for handler in &architecture.world_handlers {
@@ -2712,7 +2730,7 @@ fn judge_contract_tests(root: &Path, architecture: &architecture::Architecture, 
         .rev()
         .map(|(node, (rel, index))| (hy[*rel].definitions[*index].qualified_name.as_str(), node))
         .collect();
-    let rel = relative_path(root, &architecture.path).unwrap_or_else(|| architecture.path.to_string_lossy().into_owned());
+    let rel = declared_rel(root, &architecture.path);
     let no_carried = vec![false; graph.nodes.len()];
     let mut drafts = Vec::new();
     for handler in judged {
@@ -3233,7 +3251,7 @@ fn judge_untested_services(architecture: &architecture::Architecture, hy: &HashM
 
 /// DOEFF163: code を持つ service の不変条件の宣言の欠けを、defservice の位置の下書きにする(鍵の細目 = service の名・関数の欠けは `::` と名指し)。
 fn judge_service_invariants(root: &Path, architecture: &architecture::Architecture, hy: &HashMap<String, HyFileIndex>) -> Vec<Draft> {
-    let rel = relative_path(root, &architecture.path).unwrap_or_else(|| architecture.path.to_string_lossy().into_owned());
+    let rel = declared_rel(root, &architecture.path);
     invariants::gaps(architecture, hy)
         .into_iter()
         .map(|(service, gap)| {

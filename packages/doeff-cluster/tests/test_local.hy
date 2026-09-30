@@ -23,6 +23,7 @@
 (import tests.fixtures.sim_programs [beacons beacons-v2 handoff-beacons handoff-beacons-v2 relay flavors fenced gpu-only
                                     holding-unloadable Unloadable spawners quitters pulses detaching context-env-readers])
 (import doeff_cluster.runtime_env_model [RuntimeEnv runtime-env->json])
+(import doeff_cluster.coordinator_invariants [acknowledged-writes-survive])
 (import tests.env_fixtures [LOCK env-of])
 
 
@@ -439,7 +440,11 @@
   (assert (is second.ended-ms None) second)
   (assert (= seen.during.state "Missing") seen.during)
   (assert (= seen.after.readiness.state "Ready") seen.after.readiness)
-  (assert (> (get seen.after.rows "beacon/a" "n") 0) seen.after.rows))
+  (assert (> (get seen.after.rows "beacon/a" "n") 0) seen.after.rows)
+  ;; 条 C1(architecture.hy の :invariants): 止める前に読めた行は作り直した後も残る。
+  (assert seen.before seen)
+  (<- lost tuple (acknowledged-writes-survive seen.before seen.after.rows))
+  (assert (= lost #()) lost))
 
 
 (deftest test-a-coordinator-that-fails-to-persist-drops-its-replies-and-is-recreated
