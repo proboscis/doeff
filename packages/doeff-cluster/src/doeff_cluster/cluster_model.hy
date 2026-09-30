@@ -675,14 +675,60 @@
   (setv #^ str content-type "text/plain; version=0.0.4; charset=utf-8"))
 
 
+;; --- 版の変化を待つ読み(GET /watch — #1933)---------------------------------------------------
+;;
+;; 送り手は最後に知った coordinator 全体の版(ClusterState.revision — 資源の spec / status が変わるたびに進む・生存の時刻や lease の
+;; 期限は入らない)を after で渡し、版がそれと違うようになるか、timeoutSeconds(WATCH-MAX-SECONDS まで)が過ぎるまで返事を待つ。
+;; 答え = {"revision" 今の版 "changed" 変わったか}。worker を名指せば、版が進んでもその worker の heartbeat の返事(温める表を除く)が
+;; 変わらない間は起きない。調停ループ(coordinator.coordinator-step)が待ちの要求を持ち、書きの後(Persist の後)と拍ごとに判じる。
+;; 期限は拍(TICK-MS)の刻で判じる — 期限の後の最初の拍で返す。
+
+;; 待ちの上限(秒)。本番の受付の thread は返事を 30 秒まで待ち、worker の HTTP の client は 15 秒で打ち切る(coordinator_http の
+;; REPLY-SECONDS)ので、その両方より拍 1 つ分以上短くする。
+(val WATCH-MAX-SECONDS 10.0)
+
+
+(defclass [(dataclass :frozen True)] Watcher []
+  "GET /watch の待ち 1 件(調停ループが返事まで持つ)。request = 返事を返す相手の要求・after = 送り手が知っている版・deadline-ms =
+   変わらなくても返す刻(epoch ms)・worker / boot = 名指した worker とその process の世代(None = coordinator 全体の版だけを見る)・
+   mark = 名指した worker の heartbeat の返事の見え方(版 after の時の物 — まだ見ていなければ None)。"
+  (#^ Request request)
+  (#^ int after)
+  (#^ int deadline-ms)
+  (setv #^ (| str None) worker None)
+  (setv #^ (| str None) boot None)
+  (setv #^ (| dict None) mark None))
+
+
+(defclass [(dataclass :frozen True)] WatchRefusal []
+  "GET /watch の問いの読めない形(after の無い・整数でない・timeoutSeconds が数でない)— 400 で断る理由。"
+  (#^ Request request)
+  (#^ str reason))
+
+
+(defclass [(dataclass :frozen True)] WatchAnswer []
+  "GET /watch の答え: revision = 返す時の coordinator の版(送り手が次の after に使う)・changed = after から変わったか(偽 = 期限)。
+   本文の JSON は {\"revision\" … \"changed\" …}(coordinator-step が返事の境で作る)。"
+  (#^ int revision)
+  (#^ bool changed))
+
+
+(defclass [(dataclass :frozen True)] WatchStep []
+  "待ち 1 件を今の状態で判じた答え: answer = 返す答え(まだ待つなら None)・watcher = 待ち続ける時の次の形(版を見直した後の物)。"
+  (#^ (| WatchAnswer None) answer)
+  (#^ Watcher watcher))
+
+
 ;; --- effect ----------------------------------------------------------------------
 
 (defclass [(dataclass :frozen True)] IdleProbe []
   "要求の無い拍を飛ばしてよい長さを、模擬の時計の下の受け口が本番と同じ判断の関数で試すための材料(idle_policy.quiet-ticks —
-   2026-09-30)。state = この拍の前の調停の状態・timing / naming = 調停ループの設定。本番の受け口は読まない。"
+   2026-09-30)。state = この拍の前の調停の状態・timing / naming = 調停ループの設定・wake-ms = 版の変化を待つ要求(GET /watch)の
+   いちばん早い期限(epoch ms — 無ければ None。その刻の後の最初の拍は、待ちに返事をするので飛ばさない)。本番の受け口は読まない。"
   (#^ ClusterState state)
   (#^ ClusterTiming timing)
-  (#^ ClusterNaming naming))
+  (#^ ClusterNaming naming)
+  (setv #^ (| int None) wake-ms None))
 
 
 (defclass [(dataclass :frozen True)] NextRequests [EffectBase]

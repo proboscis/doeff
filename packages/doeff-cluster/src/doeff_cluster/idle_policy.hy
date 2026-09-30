@@ -34,7 +34,7 @@
 (defk quiet-ticks [probe now]
   {:pre [(: probe IdleProbe) (: now int)] :post [(: % int)] :tags {:context "doeff-cluster" :role "judgment"}}
   "要求が無い間に飛ばしてよい拍の数(1 以上 — 1 拍 = TICK-MS)を知るため。1 拍先から 1 拍ずつ、本番の要求の無い拍(tick → 1 秒ごとの Rollout の
-   拍 → mark-alive)を試し、状態が変わる・k8s を読む・action を出す最初の拍までの秒。何も変えない拍は状態を変えないので、次の拍も
+   拍 → mark-alive)を試し、状態が変わる・k8s を読む・action を出す・版の変化の待ちの期限を過ぎる最初の拍までの秒。何も変えない拍は状態を変えないので、次の拍も
    同じ状態から試す(Rollout の拍の刻 rollout-tick-ms だけは、本番と同じく拍ごとに進める — 調停の判断は読まない欄)。"
   (val state probe.state)
   (var last-roll state.rollout-tick-ms)
@@ -42,13 +42,16 @@
   (var found None)
   (while (and (is found None) (<= ticks MAX-QUIET-TICKS))
     (val at (+ now (* ticks TICK-MS)))
+    ;; 版の変化を待つ要求(GET /watch)の期限の後の最初の拍は、待ちに「変わっていない」と返す拍 — 飛ばさない(本番の 1 秒の拍が
+    ;; 返すのと同じ刻・#1933)。
+    (val answers-watch (and (is-not probe.wake-ms None) (>= at probe.wake-ms)))
     (val ticked (tick state at probe.timing))
     (val due (>= (- at last-roll) ROLLOUT-TICK-MS))
     (var rolled ticked)
     (when due
       (<- after (| ClusterState None) (rollout-quiet ticked at probe.timing probe.naming))
       (:= rolled after))
-    (if (and (is-not rolled None) (= (mark-alive rolled at) state))
+    (if (and (not answers-watch) (is-not rolled None) (= (mark-alive rolled at) state))
         (do (when due (:= last-roll at))
             (:= ticks (+ ticks 1)))
         (:= found ticks)))

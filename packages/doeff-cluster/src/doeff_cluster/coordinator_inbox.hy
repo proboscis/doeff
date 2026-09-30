@@ -136,9 +136,10 @@
   (Reply [request status body]
     (setv slot request.slot)
     (assert (isinstance slot ReplySlot) "http-requests の要求の札は ReplySlot")
-    ;; 返事まで 1 秒を超えた要求を 1 行出す(調停ループが何かを待って止まった時の手がかり)。
+    ;; 返事まで 1 秒を超えた要求を 1 行出す(調停ループが何かを待って止まった時の手がかり)。版の変化を待つ読み(GET /watch)は
+    ;; 待つのが仕事なので出さない(#1933)。
     (setv waited (- (time.monotonic) slot.created))
-    (when (> waited 1.0)
+    (when (and (> waited 1.0) (!= (tuple request.parts) #("watch")))
       (print (.format "coordinator: 遅い返事 {:.1f} 秒: {} {}" waited request.method request.path) :file sys.stderr :flush True))
     (setv slot.status status slot.body body)
     (.set slot.done)

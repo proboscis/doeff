@@ -1208,7 +1208,10 @@
    ;; (hy を起こす probe は込んだ node で 10 秒の timeout を越え、両方の Pod が同時に NotReady → DaemonSet が 2 台を同時に消した)。
    "draining" (in name state.drains)
    ;; 受け入れる本文の形の版(2026-09-26 — cluster_model.ACCEPTED-FORMATS)。
-   "formats" (list ACCEPTED-FORMATS)})
+   "formats" (list ACCEPTED-FORMATS)
+   ;; この返事を作った時の coordinator の版(#1933): worker は次の変化を GET /watch?after=<この版> で待つ。欄の無い返事は、待つ口の
+   ;; 無い旧い coordinator の物。
+   "revision" state.revision})
 
 
 (defn #^ frozenset running-names [#^ list statuses]
@@ -1236,7 +1239,8 @@
    "timing" (asdict timing)
    "draining" True
    "superseded" True
-   "formats" (list ACCEPTED-FORMATS)})
+   "formats" (list ACCEPTED-FORMATS)
+   "revision" state.revision})
 
 
 (defn #^ dict state-view [#^ ClusterState state #^ int now #^ ClusterTiming timing]

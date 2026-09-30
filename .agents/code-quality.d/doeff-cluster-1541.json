@@ -155,7 +155,8 @@
         "doeff-cluster-kube-handlers",
         "doeff-cluster-kube-model",
         "doeff-cluster-resource-policy",
-        "doeff-cluster-wal-store"
+        "doeff-cluster-wal-store",
+        "doeff-cluster-watch-policy"
       ],
       "layer": "runtime",
       "name": "doeff-cluster-coordinator",
@@ -1292,6 +1293,23 @@
         "packages/doeff-cluster/src/doeff_cluster/warm_policy.hy"
       ],
       "responsibility": "coordinator の温める表の口の純粋な判断(2026-09-26 — 効果 WarmRuntimeEnv・ReadWarmState の本番の答え)。",
+      "typed": true
+    },
+    {
+      "allow": [
+        "doeff-cluster-api-policy",
+        "doeff-cluster-cluster-model",
+        "doeff-cluster-cluster-policy"
+      ],
+      "layer": "pure",
+      "name": "doeff-cluster-watch-policy",
+      "paths": [
+        "packages/doeff-cluster/src/doeff_cluster/watch_policy.hy"
+      ],
+      "public": [
+        "packages/doeff-cluster/src/doeff_cluster/watch_policy.hy"
+      ],
+      "responsibility": "版の変化を待つ読み(GET /watch)の判断(純粋・I/O はしない — 待ちを起こす条件・期限・worker ごとの見え方)。",
       "typed": true
     },
     {
