@@ -1,0 +1,24 @@
+{
+  "artifacts": [],
+  "body": {
+    "publication": {
+      "reference": "proboscis/agora-redesign #1808(較正の追跡)・#1951(当たりの判定の根拠)",
+      "status": "local"
+    },
+    "purpose": "review",
+    "summary": "doeff-linter の Jev の規則 3 つの閾値を決める較正の結果の記録(2026-10-01 03:5x JST・追跡 = agora-redesign #1808、当たりの判定の根拠 = #1951)。Jev の規則とは、定義の本文を Jev(TypeSafe の判定 model)に送って「規則に反している確率」を返させ、閾値を超えた物を当たりとする規則で、DOEFF201(protocol が業務の判断をしている)・DOEFF202(core が通信の手段を知っている)・DOEFF205(形の確認と判断が混ざる)の 3 本。事実の記録で、この報告が決める物は無い。1. 閾値: DOEFF201 = 0.8・DOEFF202 = 0.6・DOEFF205 = 0.86。2. 費用: 全定義を Jev に問い直す費用は USD 0.738。3. 較正後の当たり: 146 件(DOEFF201 = 13・DOEFF202 = 110・DOEFF205 = 23)。4. 人の判定が付いていなかった 122 件を、採用済みの線引き 5 つ(decision-96f687ea4b25)に当てて判定した結果: 違反 119・誤判定 3(1 件ごとの根拠は #1951)。5. 直す対象は約 150 件で、そのうち DOEFF202 の違反が 98 件(core が JSON を読み書きする = 77・core が HTTP を知っている = 21)。直す作業は 2 時間の単位の issue で約 30 本。",
+    "topics": []
+  },
+  "created_at": "2026-09-30T18:56:20.064230+00:00",
+  "id": "report-002fa698737c",
+  "inputs": [
+    {
+      "id": "decision-96f687ea4b25",
+      "role": "basis",
+      "sha256": "39d6a36ac0efaa97623e338b7df2fa96f890427dee32a7df058b21b179e95a5a"
+    }
+  ],
+  "kind": "report",
+  "schema_version": 1,
+  "scope": "doeff-linter の規則の重大さ(level: critical・major・minor・info)— doeff-linter の既定と repo ごとの宣言(agora-controllers の pyproject)。どの規則を critical にするか、LLM で判定する規則の閾値と誤判定の扱い"
+}
