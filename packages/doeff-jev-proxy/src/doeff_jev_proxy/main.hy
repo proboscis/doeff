@@ -25,6 +25,7 @@
 (import types [NoneType])
 (import signal)
 (import threading)
+(import time)
 (import doeff [run with_handlers])
 (import doeff_core_effects [await_handler try_handler])
 (import doeff_core_effects.http_handlers [http_production_handler])
@@ -34,8 +35,8 @@
 (import doeff_jev_proxy.values [ProxyRequest ProxyReply])
 (import doeff_jev_proxy.service [respond])
 (import doeff_jev_proxy.effects [PrepareStore])
-(import doeff_jev_proxy.handlers [Flights new-flights sqlite-store-handler jev-upstream-handler roster-handler
-                                  single-flight-handler])
+(import doeff_jev_proxy.handlers [Flights new-flights RememberedIndex new-remembered-index sqlite-store-handler
+                                  remembered-index-handler jev-upstream-handler roster-handler single-flight-handler])
 (import doeff_jev_proxy.http_server [ProxyServerConfig RunningServer start-proxy-server stop-server])
 
 (val ENV-DB "JEV_PROXY_DB")
@@ -51,10 +52,11 @@
 
 (defrecord Assembled
   "env から組んだ代理 1 つ: handlers-for = 要求ごとに答え手の組を作る関数 / config = HTTP の口の組(runner・host・port)/
-   path = 覚えた答えの置き場の file / banner = 起動の 1 行。"
+   path = 覚えた答えの置き場の file / index = 覚えた答えの memory の写し(opened が置き場から読む)/ banner = 起動の 1 行。"
   (#^ Callable handlers-for)
   (#^ ProxyServerConfig config)
   (#^ str path)
+  (#^ RememberedIndex index)
   (#^ str banner))
 
 
@@ -73,13 +75,16 @@
     (run (scheduled (with_handlers (+ [(await_handler) try_handler] (handlers-for)) (respond request))))))
 
 
-(defk production-handlers [path target timeout roster admins flights]
-  {:pre [(: path str) (: target JevTarget) (: timeout float) (: roster Roster) (: admins frozenset) (: flights Flights)]
+(defk production-handlers [path target timeout roster admins flights index]
+  {:pre [(: path str) (: target JevTarget) (: timeout float) (: roster Roster) (: admins frozenset) (: flights Flights)
+         (: index RememberedIndex)]
    :post [(: % Callable)]
    :tags {:context "jev-proxy" :role "entry"}}
-  "本番の答え手の組を要求ごとに作る関数を作るため(外側が先: HTTP の実体 → 置き場 → 本物の Jev への翻訳 → 名簿 → 相乗り)。"
+  "本番の答え手の組を要求ごとに作る関数を作るため(外側が先: HTTP の実体 → 置き場 → 覚えた答えの写し → 本物の Jev への翻訳 → 名簿
+   → 相乗り)。"
   (fn [] [(http_production_handler)
           (sqlite-store-handler path)
+          (remembered-index-handler index)
           (jev-upstream-handler target timeout)
           (roster-handler roster admins)
           (single-flight-handler flights)]))
@@ -102,19 +107,20 @@
   (val admins (frozenset (gfor name (.split (.get environ ENV-ADMINS "") ",") :if (.strip name) (.strip name))))
   (val timeout (float (.get environ ENV-UPSTREAM-TIMEOUT DEFAULT-UPSTREAM-TIMEOUT)))
   (<- flights (new-flights))
-  (<- handlers-for (production-handlers path target timeout roster admins flights))
+  (<- index (new-remembered-index))
+  (<- handlers-for (production-handlers path target timeout roster admins flights index))
   (<- runner (proxy-runner handlers-for))
   (val config (ProxyServerConfig :runner runner
                                  :host (.get environ ENV-HOST DEFAULT-HOST)
                                  :port (int (.get environ ENV-PORT DEFAULT-PORT))))
-  (Assembled :handlers-for handlers-for :config config :path path
+  (Assembled :handlers-for handlers-for :config config :path path :index index
              :banner (.format "本物の Jev = {}・model 既定 {}・名簿 {} 名・管理者 {}"
                               target.base-url target.model (len roster.digests) (sorted admins))))
 
 
 (defk opened [assembled]
   {:pre [(: assembled Assembled)] :post [(: % RunningServer)] :tags {:context "jev-proxy" :role "entry"}}
-  "組んだ代理の置き場の表を要求の前に 1 度用意し(同じ組の上で)、HTTP の口を開くため。"
+  "組んだ代理の置き場の表を要求の前に 1 度用意し、覚えた答えを memory の写しへ読み(同じ組の上で — PrepareStore)、HTTP の口を開くため。"
   (run (scheduled (with_handlers (+ [(await_handler) try_handler] (assembled.handlers-for)) (PrepareStore))))
   (start-proxy-server assembled.config))
 
@@ -125,11 +131,14 @@
   (setv assembled (run (assembled-from-env os.environ)))
   (when (isinstance assembled Unassembled)
     (raise (SystemExit assembled.reason)))
-  (setv running (run (opened assembled))
+  (setv started (time.monotonic)
+        running (run (opened assembled))
         stopping (threading.Event))
   (for [sig #(signal.SIGTERM signal.SIGINT)]
     (signal.signal sig (fn [#* _] (.set stopping))))
-  (print (.format "jev-proxy: {} で待ち受け({})" running.url assembled.banner) :flush True)
+  (print (.format "jev-proxy: {} で待ち受け({}・覚えた答え {} 件を memory に写した — {:.2f} 秒)" running.url assembled.banner
+                  (len assembled.index.answers) (- (time.monotonic) started))
+         :flush True)
   (.wait stopping)
   (stop-server running))
 

@@ -9,8 +9,8 @@
 (import threading)
 (import doeff_jev_proxy.values [ProxyReply UpstreamReply UpstreamUnreachable])
 (import doeff_jev_proxy.key [BadRequest normalize-request])
-(import tests.world [OPERATOR-TOKEN WORKER-TOKEN World open-world reopen-world jev-answers question json-bytes request-of header
-                     stats-of])
+(import tests.world [OPERATOR-TOKEN WORKER-TOKEN World open-world reopen-world spied-world jev-answers question json-bytes
+                     request-of header stats-of])
 
 
 (defk asking [world body cache-control]
@@ -222,6 +222,38 @@
   (<- (asking world a None))
   (assert (= (get (row-of) 0) (+ (get before 0) 1)) "普通の問いの覚えからの答えは hits を数える")
   (assert (= (len world.script.calls) 1) "束の問いも覚えからの答えも本物の Jev を呼ばない"))
+
+
+(deftest test-peek-many-is-answered-from-the-memory-copy-not-the-store
+  ;; 束を置き場(SQLite)から引くと、読みの速さが node の page cache 次第になる(agora-redesign #1912: memory の足りない k3s-1 では
+  ;; page cache が 20 秒ほどで捨てられ、1000 鍵の束が約 12 秒になって linter の待ち — 全部の束で 5 秒 — を越えた)。束は proxy の
+  ;; memory の写しから答え、置き場へは届かない。写しは組み直し(Pod の入れ替え)で置き場から読み直し、消した答えは束からも消える。
+  ;; 反例: 写しの無い組(直す前の並び)では、束が毎回置き場へ届く。
+  (<- a (question "(defk a [] 1)" "jev-latest"))
+  (<- b (question "(defk b [] 2)" "jev-latest"))
+  (<- ka (normalize-request a))
+  (<- kb (normalize-request b))
+  (<- spied (spied-world (! (jev-answers 0.4)) True))
+  (val world spied.world)
+  (<- (asking world a None))
+  (<- (asking world b None))
+  (for [_ (range 3)]
+    (<- peeked (peeking world [ka.key kb.key] WORKER-TOKEN))
+    (assert (= (sorted (.keys (get (json.loads peeked.body) "answers"))) (sorted [ka.key kb.key])) peeked))
+  (assert (= spied.reads []) #("束の問いが置き場へ届いた" spied.reads))
+  (<- restarted (reopen-world world))
+  (<- after-restart (peeking restarted [ka.key kb.key] WORKER-TOKEN))
+  (assert (= (sorted (.keys (get (json.loads after-restart.body) "answers"))) (sorted [ka.key kb.key]))
+          "組み直した写しは置き場から前の答えを読む")
+  (val forgot (restarted.run (! (request-of "DELETE" (+ "/v1/answers/" ka.key) b"" OPERATOR-TOKEN None))))
+  (assert (= #(forgot.status (get (json.loads forgot.body) "forgotten")) #(200 True)) forgot)
+  (<- after-forget (peeking restarted [ka.key kb.key] WORKER-TOKEN))
+  (assert (= (list (.keys (get (json.loads after-forget.body) "answers"))) [kb.key]) "消した答えは束からも消える")
+  (<- plain (spied-world (! (jev-answers 0.4)) False))
+  (<- (asking plain.world a None))
+  (for [_ (range 2)]
+    (<- (peeking plain.world [ka.key] WORKER-TOKEN)))
+  (assert (= plain.reads [#(ka.key) #(ka.key)]) #("写しの無い組では束が毎回置き場へ届く" plain.reads)))
 
 
 (deftest test-key-contract-sample-is-the-proxy-key

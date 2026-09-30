@@ -57,6 +57,13 @@
   (#^ int hits))
 
 
+(defrecord Remembered
+  "置き場の覚えた答えの全部(起動の時に proxy の memory の写しを作るため・agora-redesign #1912): answers = StoredAnswer の tuple /
+   served = model → その model の今の版(答えが名乗った served-model — LookupAnswer の版の決まりが読む表)。"
+  (#^ tuple answers)
+  (#^ dict served))
+
+
 (defrecord UpstreamReply
   "本物の Jev が返した答え(status と本文)。"
   (#^ int status)

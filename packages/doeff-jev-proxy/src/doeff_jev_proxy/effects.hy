@@ -3,6 +3,7 @@
 ;;;   PrepareStore      置き場の表を用意する(起動の時に 1 度 — 無ければ作る・在れば触らない)
 ;;;   LookupAnswer      鍵の覚えた答えを読む(今の版の model の答えだけ — 答えた model の版が変わった後の古い答えは無いと読む)
 ;;;   LookupAnswers     鍵の束の覚えた答えを一度に読む(覚えている時だけの問いの束 — LookupAnswer と同じ版の決まり)
+;;;   LoadRemembered    置き場の覚えた答えを全部読む(起動の時に 1 度 — proxy の memory の写しを作るため)
 ;;;   RememberAnswer    本物の Jev の答えを覚える(同じ鍵は置き換える)
 ;;;   ForgetAnswer      覚えた答えを消す(答え = 消したか)
 ;;;   ReadAnswer        覚えた答えを版を問わず読む(管理者が中身を見るため)
@@ -15,7 +16,7 @@
 (require doeff-hy.macros [defeffect])
 (import dataclasses [dataclass])
 (import doeff [EffectBase Program])
-(import doeff_jev_proxy.values [StoredAnswer UpstreamReply UpstreamUnreachable Coalesced Counters Caller Stranger Event])
+(import doeff_jev_proxy.values [StoredAnswer Remembered UpstreamReply UpstreamUnreachable Coalesced Counters Caller Stranger Event])
 
 
 (defeffect PrepareStore
@@ -38,6 +39,14 @@
    tuple(覚えていない鍵は載らない・並びは決めない)。"
   {:fields [(: keys tuple)]
    :answer tuple
+   :tags {:context "jev-proxy" :role "intent"}})
+
+
+(defeffect LoadRemembered
+  "置き場の覚えた答えを版を問わず全部読み、model ごとの今の版と一緒に返す(起動の時に 1 度 — proxy の memory の写しを作るため・
+   agora-redesign #1912)。"
+  {:fields []
+   :answer Remembered
    :tags {:context "jev-proxy" :role "intent"}})
 
 (defeffect RememberAnswer

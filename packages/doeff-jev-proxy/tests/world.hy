@@ -16,8 +16,9 @@
 (import doeff_hy.frozen [FrozenMap])
 (import doeff_records.principals [Roster])
 (import doeff_jev_proxy.values [Header ProxyRequest ProxyReply UpstreamReply])
-(import doeff_jev_proxy.effects [AskJev PrepareStore])
-(import doeff_jev_proxy.handlers [sqlite-store-handler roster-handler single-flight-handler Flights])
+(import doeff_jev_proxy.effects [AskJev LookupAnswers PrepareStore])
+(import doeff_jev_proxy.handlers [sqlite-store-handler remembered-index-handler roster-handler single-flight-handler Flights
+                                  RememberedIndex])
 (import doeff_jev_proxy.main [proxy-runner])
 
 (val OPERATOR-TOKEN "token-of-operator")
@@ -48,12 +49,21 @@
 
 (defk world-handlers [path script]
   {:pre [(: path str) (: script Script)] :post [(: % list)]}
-  "置き場の file と台本の上の答え手の組を作るため(同時の問いの表は組ごとに 1 つ — 本番の起動 1 回と同じ)。"
+  "置き場の file と台本の上の答え手の組を作るため(同時の問いの表と覚えた答えの写しは組ごとに 1 つ — 本番の起動 1 回と同じ・
+   並びも本番の production-handlers と同じ)。"
   (val digest (fn [token] (.hexdigest (hashlib.sha256 (.encode token "utf-8")))))
   [(sqlite-store-handler path)
+   (remembered-index-handler (RememberedIndex :answers {} :served {} :lock (threading.Lock)))
    (scripted-upstream-handler script)
    (roster-handler (Roster (FrozenMap {"operator" (digest OPERATOR-TOKEN) "worker" (digest WORKER-TOKEN)})) (frozenset ["operator"]))
    (single-flight-handler (Flights :table {} :lock (threading.Lock)))])
+
+
+(defk prepared [handlers]
+  {:pre [(: handlers list)] :post [(: % list)]}
+  "答え手の組の上で置き場を用意し、覚えた答えを写しへ読むため(本番の opened と同じ — 要求の前に 1 度)。"
+  (run (scheduled (with_handlers (+ [(await_handler) try_handler] handlers) (PrepareStore))))
+  handlers)
 
 
 (defk open-world [answer delay]
@@ -61,18 +71,46 @@
   "一時の置き場の file(TMPDIR の下)を作り、台本の答え answer で世界を組むため。"
   (val path (os.path.join (tempfile.mkdtemp :prefix "jev-proxy-test-") "answers.sqlite"))
   (val script (Script :calls [] :answer answer :delay delay))
-  (<- handlers (world-handlers path script))
-  (run (scheduled (with_handlers (+ [(await_handler) try_handler] handlers) (PrepareStore))))
+  (<- handlers (prepared (! (world-handlers path script))))
   (<- runner (proxy-runner (fn [] handlers)))
   (World :run runner :script script :path path))
 
 
 (defk reopen-world [world]
   {:pre [(: world World)] :post [(: % World)]}
-  "同じ置き場の file の上に答え手の組を作り直すため(Pod の入れ替えと同じ)。"
-  (<- handlers (world-handlers world.path world.script))
+  "同じ置き場の file の上に答え手の組を作り直すため(Pod の入れ替えと同じ — 写しは置き場から読み直す)。"
+  (<- handlers (prepared (! (world-handlers world.path world.script))))
   (<- runner (proxy-runner (fn [] handlers)))
   (World :run runner :script world.script :path world.path))
+
+
+(defhandler store-reads-handler [reads]
+  ;; 引数に残す理由: 検の本体が控えを読むため、世界の外から渡して共有する
+  ;; 置き場のすぐ内側に置き、置き場へ届いた鍵の束の問い(LookupAnswers)の鍵を控えてから外側(置き場)へ出し直す — 束が置き場を
+  ;; 読んだかを見るための覗き(agora-redesign #1912)。
+  (LookupAnswers [keys]
+    (.append reads keys)
+    (<- found (LookupAnswers keys))
+    (resume found)))
+
+
+(defrecord SpiedWorld
+  "置き場へ届いた束の問いを覗く世界: world = 世界 / reads = 置き場へ届いた束の問いの鍵の控え(届いた順)。"
+  (#^ World world)
+  (#^ list reads))
+
+
+(defk spied-world [answer with-index]
+  {:pre [(: answer Callable) (: with-index bool)] :post [(: % SpiedWorld)]}
+  "置き場のすぐ内側に覗き(store-reads-handler)を置いた世界を組むため。with-index = 覚えた答えの写しを入れるか(入れない組は
+   写しを足す前の本番の並び — 反例に使う)。"
+  (val path (os.path.join (tempfile.mkdtemp :prefix "jev-proxy-test-") "answers.sqlite"))
+  (val script (Script :calls [] :answer answer :delay 0.0))
+  (val reads [])
+  (<- base (world-handlers path script))
+  (<- handlers (prepared (+ [(get base 0) (store-reads-handler reads)] (if with-index [(get base 1)] []) (cut base 2 None))))
+  (<- runner (proxy-runner (fn [] handlers)))
+  (SpiedWorld :world (World :run runner :script script :path path) :reads reads))
 
 
 (defk json-bytes [document]
