@@ -507,7 +507,7 @@ pub fn find(
     let mut problems = Vec::new();
     let external: BTreeMap<String, String> = match &decl.external_effects {
         Some(dir) => {
-            let judged = super::registry::JudgedKeys::load(root, std::slice::from_ref(dir));
+            let judged = super::registry::JudgedKeys::load(root, std::slice::from_ref(dir), super::registry::Absent::Unreadable);
             problems.extend(judged.problems);
             judged.reasons
         }
