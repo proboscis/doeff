@@ -17,6 +17,7 @@ from doeff_hy_pytest.budget import (
     Measurement,
     OverBudget,
     RegisteredOverBudget,
+    RegisteredWithinBudget,
     RegistryError,
     SettingError,
     UncheckedVmBuild,
@@ -253,19 +254,25 @@ def test_unknown_vm_build_is_named_and_judged_as_configured(
     result.stdout.fnmatch_lines(["*doeff-vm の build の種類は不明(*invariant_checks_enabled が無い*"])
 
 
-def test_registered_test_is_not_failed_and_stale_entries_are_reported(
-    pytester: pytest.Pytester,
-) -> None:
-    """登録簿に載った超過は赤にしない。上限の内に戻った登録は「消せる」と出す。"""
+def _registered_project(pytester: pytest.Pytester, mode: str) -> None:
+    """遅い検 test_slow と速い検 test_fast の両方を登録簿に載せた project(上限 0.05 秒)。"""
     _project(
         pytester,
-        'doeff_test_call_budget_seconds = 0.05\ndoeff_test_budget_mode = "fail"\n'
+        f'doeff_test_call_budget_seconds = 0.05\ndoeff_test_budget_mode = "{mode}"\n'
         'doeff_test_budget_registry = "budget-breaches"\n',
         {"test_slow": SLOW_CALL},
     )
+    pytester.makeconftest(CONFTEST + PIN_UNCHECKED_VM_BUILD)
     registry = pytester.mkdir("budget-breaches")
     for key in ("test_slow.hy::test_slow", "test_slow.hy::test_fast"):
         (registry / registry_file_name(key)).write_text(f"{key}\n既存の遅い検\n", encoding="utf-8")
+
+
+def test_registered_test_is_not_failed_and_stale_entries_are_reported(
+    pytester: pytest.Pytester,
+) -> None:
+    """report の形: 登録簿に載った超過は赤にしない。上限の内に戻った登録は「消せる」と出すだけ。"""
+    _registered_project(pytester, "report")
     result = pytester.runpytest("-q")
     result.assert_outcomes(passed=2)
     result.stdout.fnmatch_lines(
@@ -274,6 +281,30 @@ def test_registered_test_is_not_failed_and_stale_entries_are_reported(
             f"*上限の内に戻った登録: test_slow.hy::test_fast — 登録簿の file {registry_file_name('test_slow.hy::test_fast')} を消せる*",
         ]
     )
+
+
+def test_stale_registration_is_red_in_fail_mode(pytester: pytest.Pytester) -> None:
+    """fail の形: 登録簿に載った検が上限の半分以下で終われば、古い登録として赤(消す file を名指す)。載った超過は赤にしない。
+    反例 = 登録を消せば両方とも緑(遅い検は載ったまま)。"""
+    _registered_project(pytester, "fail")
+    result = pytester.runpytest("-q")
+    result.assert_outcomes(passed=1, failed=1)
+    result.stdout.fnmatch_lines(
+        [f"*test_slow.hy::test_fast は登録簿に載っているが*古い登録なので登録簿の file {registry_file_name('test_slow.hy::test_fast')} を消す*"]
+    )
+    (pytester.path / "budget-breaches" / registry_file_name("test_slow.hy::test_fast")).unlink()
+    result = pytester.runpytest("-q")
+    result.assert_outcomes(passed=2)
+
+
+def test_registered_test_near_the_budget_is_reported_not_red() -> None:
+    """上限の半分から上限までの間で終わった載った検は消せると報告するだけ(揺れで合否を行き来しない)。半分以下は古い登録。"""
+    registry = {"t.hy::test": "理由"}
+    near = judge(_measurement(0.8), 1.0, registry)
+    assert isinstance(near, RegisteredWithinBudget) and not near.stale
+    far = judge(_measurement(0.3), 1.0, registry)
+    assert isinstance(far, RegisteredWithinBudget) and far.stale
+    assert isinstance(judge(_measurement(0.3), 1.0, {}), WithinBudget)
 
 
 def test_collect_budget_subtracts_compilation_but_fails_slow_import(
