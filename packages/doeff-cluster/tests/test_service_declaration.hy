@@ -261,9 +261,8 @@
 
 
 (deftest test-entry-3-the-old-service-function-is-gone
-  ;; 入口 3: 旧い関数 service(と、関数の参照 + 設定の宣言を支えた道具)は消えた — import で落ちる。
-  (with [(pytest.raises ImportError)]
-    (import doeff_cluster.service_model [service]))
+  ;; 入口 3: 旧い関数 service(と、関数の参照 + 設定の宣言を支えた道具)は消えた — module に名が無いので import で落ちる
+  ;; (名を import する形で書くと、型検査がその import を解けない誤りとして数える — 名の有無を hasattr で確かめる)。
   (for [name ["service" "ServiceDef" "system_main" "service_program" "config_of" "program_arguments" "settings_left_to_env"
               "RECORD_KEY"]]
     (assert (not (hasattr service-model name)) name)))

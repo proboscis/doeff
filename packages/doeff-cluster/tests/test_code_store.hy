@@ -9,7 +9,7 @@
 (import pathlib [Path])
 (import doeff_time [SimClock sim-time-handler])
 (import doeff_cluster.code_prepare [ScanTree LinkPycs CompileSources WriteMarker Note MARKER
-                        prepare-tree tree-problem marker-problem marker-content cache-rel])
+                        prepare-tree tree-problem marker-problem marker-content cache-rel compiled-pyc])
 (import doeff_cluster.handlers [CodeStore])
 (import doeff_cluster.worker_model [CodeState])
 
@@ -192,3 +192,16 @@
   (assert (= view.state CodeState.READY) view.detail)
   (assert (= (get (json.loads (.read-text (/ cache rev MARKER))) "pycs") 2))
   (assert (.exists (/ cache rev (cache-rel "pkg/n.py")))))
+
+
+(deftest test-compiled-pyc-is-the-checked-hash-pyc-of-py-compile [tmp-path]
+  ;; 焼いた .pyc の中身は、標準の py_compile が checked hash の方式で書く .pyc と 1 byte も違わない(PEP 552 の頭を公開の API で組む —
+  ;; 以前は標準の私的な実装 _code_to_hash_pyc を import していた)。
+  (import py_compile)
+  (val source (/ tmp-path "mod.py"))
+  (.write-text source "ANSWER = 42\n\ndef twice(x):\n    return 2 * x\n" :encoding "utf-8")
+  (val expected (/ tmp-path "mod.pyc"))
+  (py_compile.compile (str source) :cfile (str expected) :doraise True
+                      :invalidation-mode py_compile.PycInvalidationMode.CHECKED_HASH)
+  (<- baked (compiled-pyc "mod.py" "mod" (str source) (.read-bytes source)))
+  (assert (= baked (.read-bytes expected))))
