@@ -471,3 +471,96 @@ def test_parametrize_marks_on_hy_tests_expand_into_items(
 
     result.assert_outcomes(passed=3)
     result.stdout.fnmatch_lines(["*test_flavor?a?*", "*test_flavor?b?*", "*test_flavor?c?*"])
+
+
+def test_wiring_matches_symlinked_files_by_their_resolved_path(
+    pytester: pytest.Pytester,
+) -> None:
+    """symlink の file は解決した path で照合する(agora-redesign #1551 — 走査が Path を作らずに文字列で .hy を選び、
+    root の下の file を root の解決した path から組み立てても、symlink の file は今までどおり解決する)。
+    実体は norecursedirs に当たる隠し dir の中にあり、走査は実体の側を見ない。"""
+    pytester.makepyprojecttoml(
+        """\
+        [tool.pytest.ini_options]
+        testpaths = ["docs/adr"]
+        """
+    )
+    _make_executable_adr(pytester, "WIRING-REAL")
+    pytester.mkdir(".vault")
+    pytester.makefile(
+        ".hy",
+        **{
+            ".vault/defadr_wiring_linked": """\
+                (require doeff-adr.macros [defadr])
+
+                (defadr ADR-WIRING-LINKED
+                  :title "reached through a symlink"
+                  :status "proposed")
+                """,
+        },
+    )
+    (pytester.path / "docs/adr/defadr_wiring_linked.hy").symlink_to(pytester.path / ".vault/defadr_wiring_linked.hy")
+
+    result: pytest.RunResult = pytester.runpytest_subprocess("-q", "-p", "no:cacheprovider", "--doeff-adr-wiring=strict")
+
+    result.assert_outcomes(passed=2)
+
+
+def test_wiring_matches_when_rootdir_itself_is_reached_through_a_symlink(
+    pytester: pytest.Pytester,
+) -> None:
+    """rootdir が symlink の path(``link -> real``)でも、集めた file(symlink の下の path)と走査した file(root の解決した path
+    から組み立てる)は同じ実体に解けて照合が合う(agora-redesign #1551)。"""
+    pytester.mkdir("real")
+    (pytester.path / "real/pyproject.toml").write_text(
+        '[tool.pytest.ini_options]\ntestpaths = ["docs/adr"]\n'
+    )
+    pytester.mkdir("real/docs")
+    pytester.mkdir("real/docs/adr")
+    pytester.makefile(
+        ".hy",
+        **{
+            "real/docs/adr/defadr_wiring_via_link": """\
+                (require doeff-adr.macros [defadr])
+
+                (defadr ADR-WIRING-VIA-LINK
+                  :title "rootdir through a symlink"
+                  :status "proposed")
+                """,
+        },
+    )
+    link = pytester.path / "link"
+    link.symlink_to(pytester.path / "real")
+
+    result: pytest.RunResult = pytester.runpytest_subprocess(
+        "-q", "-p", "no:cacheprovider", "--doeff-adr-wiring=strict", f"--rootdir={link}", str(link / "docs/adr")
+    )
+
+    result.assert_outcomes(passed=1)
+
+
+def test_wiring_discovery_matches_root_relative_globs_and_ignores_lookalikes(
+    pytester: pytest.Pytester,
+) -> None:
+    """rootdir からの相対の glob(``app/*/tests/test_*.hy``)で照合し、名が似ているだけの物(.hy で終わる dir・.hy.bak・
+    pattern の外の dir の同名 file)は executable ADR に数えない(agora-redesign #1551)。.hy で終わる dir の中の
+    ``helper.hy`` は fnmatch の ``*`` が ``/`` にも当たるので pattern に当たり、収集される(検は 0 本)— item の無い file も
+    収集に届いた file として照合する。"""
+    pytester.makepyprojecttoml(
+        """\
+        [tool.pytest.ini_options]
+        testpaths = ["app"]
+        doeff_adr_hy_files = ["app/*/tests/test_*.hy"]
+        """
+    )
+    for directory in ("app", "app/x", "app/x/tests", "app/x/tests/test_dir.hy", "other", "other/x", "other/x/tests"):
+        pytester.mkdir(directory)
+    pytester.makefile(".hy", **{"app/x/tests/test_wired": "(defn test-wired [] (assert True))\n"})
+    pytester.makefile(".hy", **{"other/x/tests/test_unwired": "(defn test-unwired [] (assert False))\n"})
+    (pytester.path / "app/x/tests/test_backup.hy.bak").write_text("(defn test-backup [] (assert False))\n")
+    (pytester.path / "app/x/tests/test_dir.hy/helper.hy").write_text("(setv VALUE 1)\n")
+
+    result: pytest.RunResult = pytester.runpytest_subprocess("-q", "-p", "no:cacheprovider", "--doeff-adr-wiring=strict")
+
+    result.assert_outcomes(passed=1)
+    assert "test_unwired" not in _combined_output(result)
