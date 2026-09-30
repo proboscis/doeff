@@ -1,5 +1,6 @@
 //! 既知の破れの登録簿を読む — 1 鍵 1 file の dir(中の `*.txt` の 1 行目が鍵)と、1 行 1 鍵の file。
-//! 読めない dir・file は止めずに理由を返す(登録簿が読めないことを緑にしないため、呼び手は errors に出す)。
+//! 読めない dir・file は止めずに理由を返す(登録簿が読めないことを緑にしないため、呼び手は errors に出す)。無い dir は空の登録簿
+//! (知らせ notes — 最後の行を消すと git が dir ごと消すため・agora-redesign #1732)。
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
@@ -11,6 +12,8 @@ pub struct Registry {
     /// 鍵 → 載った登録簿の file(root からの綴り — DOEFF166 の当たらない行の知らせが消す file を名指す)。
     pub origins: BTreeMap<String, String>,
     pub problems: Vec<String>,
+    /// 読みの誤りではない知らせ(無い dir を空の登録簿として読んだ)。
+    pub notes: Vec<String>,
 }
 
 impl Registry {
@@ -27,7 +30,15 @@ impl Registry {
     }
 
     /// 1 鍵 1 file の dir を読む(`*.txt` の 1 行目が鍵)。
+    ///
+    /// 無い dir は空の登録簿として読む(知らせを 1 行 — agora-redesign #1732)。登録簿は縮める向きの表で、最後の 1 行を消すと git は
+    /// 空の dir を持たないので dir ごと消える — それは正しい操作なので読めないとしない。登録簿は既知の当たりを緩めるだけの表なので、
+    /// 無い(綴りの誤りを含む)dir を空と読んでも判定は厳しい側にしか倒れない(載っていたはずの当たりは新しい当たりとして出る)。
     fn read_dir(&mut self, path: &Path, shown: &str) {
+        if !path.exists() {
+            self.notes.push(format!("登録簿の dir {} が無い — 空の登録簿として読んだ", shown));
+            return;
+        }
         let files = match txt_files(path) {
             Ok(files) => files,
             Err(error) => {
@@ -125,7 +136,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn reads_dir_and_list_and_reports_missing() {
+    fn reads_dir_and_list_and_reads_a_missing_dir_as_empty() {
         let dir = tempfile::TempDir::new().unwrap();
         let table = dir.path().join("BREACHES");
         std::fs::create_dir(&table).unwrap();
@@ -136,8 +147,21 @@ mod tests {
         assert!(registry.keys.contains("a.hy::rule::x"));
         assert!(registry.keys.contains("b.hy::rule"));
         assert_eq!(registry.keys.len(), 2);
-        assert_eq!(registry.problems.len(), 1);
-        assert!(registry.problems[0].contains("MISSING"));
+        // 最後の行を消して git が dir ごと消した登録簿は、読めないではなく空(知らせ 1 行 — agora-redesign #1732)。
+        assert!(registry.problems.is_empty(), "{:?}", registry.problems);
+        assert_eq!(registry.notes.len(), 1);
+        assert!(registry.notes[0].contains("MISSING"));
+    }
+
+    #[test]
+    fn a_registry_path_that_is_not_a_readable_dir_is_still_a_problem() {
+        // 反例: 在るのに dir として読めない(file が置かれている)登録簿は、空と読まずに読めないとして出す。
+        let dir = tempfile::TempDir::new().unwrap();
+        std::fs::write(dir.path().join("BREACHES"), "a.hy::rule::x\n").unwrap();
+        let registry = Registry::load(dir.path(), &["BREACHES".to_string()], &[]);
+        assert!(registry.keys.is_empty());
+        assert_eq!(registry.problems.len(), 1, "{:?}", registry.problems);
+        assert!(registry.notes.is_empty());
     }
 
     #[test]
