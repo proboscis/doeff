@@ -12,12 +12,22 @@
 (import time)
 (import http.server [BaseHTTPRequestHandler ThreadingHTTPServer])
 (import urllib.parse [urlsplit parse-qsl unquote :as url-unquote])
+(import doeff_core_effects.scheduler [Promise])
 (import .cluster_model [Request NextRequests Reply CoordinatorFault CoordinatorStopRequested PlainText ACCEPTED-FORMATS])
 
 
+(defclass ReplySlot []
+  "server の thread が返事を待つ札。"
+  (defn #^ None __init__ [self]
+    (setv self.done (threading.Event) self.status 500 self.created (time.monotonic))
+    (setv #^ object self.body None)))
+
+
+;; slot = 返事を待つ受付の側の物: 本番の HTTP の受付は ReplySlot、手元の宿(local.hy)は Promise、判断だけを見る検は None。
 (deff http-request [#^ str method #^ str path #^ dict query #^ (| dict list str int float bool None) body
-                    #^ object [slot None] #^ (| str None) [actor None] #^ str [peer ""]]  ; defk にできない: 本番の HTTP の受付の thread(Program の外)と sim の宿が同じ形で要求を作る
-  {:pre [(: method str) (: path str) (: query dict) (: body (| dict list str int float bool None)) (: actor (| str None)) (: peer str)]
+                    #^ (| ReplySlot Promise None) [slot None] #^ (| str None) [actor None] #^ str [peer ""]]  ; defk にできない: 本番の HTTP の受付の thread(Program の外)と sim の宿が同じ形で要求を作る
+  {:pre [(: method str) (: path str) (: query dict) (: body (| dict list str int float bool None))
+         (: slot (| ReplySlot Promise None)) (: actor (| str None)) (: peer str)]
    :post [(: % Request)]
    :tags {:context "doeff-cluster" :role "protocol"}}
   "受けた HTTP 要求 1 件を Request にするため。path を / で割り、区切りごとに percent の符号を戻して parts に載せる(符号を戻すのは
@@ -50,13 +60,6 @@
 
 
 ;; --- handler: HTTP の受付 ---------------------------------------------------------------
-
-(defclass ReplySlot []
-  "server の thread が返事を待つ札。"
-  (defn #^ None __init__ [self]
-    (setv self.done (threading.Event) self.status 500 self.created (time.monotonic))
-    (setv #^ object self.body None)))
-
 
 (defclass RequestInbox []
   "HTTP server(別 thread)が受けた要求を並べる箱。調停ループは 1 件ずつ取り出して返事を置く。"
