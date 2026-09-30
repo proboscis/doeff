@@ -24,6 +24,7 @@
 (import doeff [EffectBase Pass])
 (import doeff.do [do])
 (import doeff.program [handler :as program-handler])
+(import collections.abc [Callable])
 (import doeff_vm [GetBoundaries WithObserve Callable :as VmCallable])
 (import doeff_core_effects.scheduler [Spawn Wait CreatePromise CompletePromise PRIORITY-IDLE])
 (import doeff_cluster.effect_codec [READ LIVE DECISION OUTPUT LOOSE DIVERGE INTERN-MIN-CHARS BLOB-MEMORY-MAX FORMAT-VERSION BlobMemory
@@ -208,7 +209,7 @@
    形の版 2: 大きな値は内容参照(effect_codec.intern-json)にし、中身は run の中で初めて出た時に blob の行で書く。問いの直後に
    (他の出来事を挟まずに)答えが返ったら、問いと答えを 1 行(call)にまとめる — 問いは答えが返るか他の出来事が来るまで手元に持つ。"
   (defn #^ None __init__ [self #^ object sink #^ dict header #^ bool [strict False] #^ float [chunk-seconds 3600.0]
-                          #^ object [wall-ms None] #^ int [intern-min INTERN-MIN-CHARS] #^ int [blob-memory BLOB-MEMORY-MAX]]
+                          #^ (| Callable None) [wall-ms None] #^ int [intern-min INTERN-MIN-CHARS] #^ int [blob-memory BLOB-MEMORY-MAX]]
     (.__init__ (super))
     (setv self.sink sink self.header header self.strict strict self.chunk-ms (int (* 1000 chunk-seconds))
           self.wall-ms (or wall-ms (fn [] (int (* 1000 (time.time)))))

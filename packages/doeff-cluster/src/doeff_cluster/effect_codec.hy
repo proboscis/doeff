@@ -109,14 +109,14 @@
 (defn #^ str type-name [cls]
   (.format "{}:{}" cls.__module__ cls.__qualname__))
 
-(defn resolve-type [#^ str name]
-  "型の名 → class。import できなければ None。"
+(defn #^ (| type None) resolve-type [#^ str name]
+  "型の名 → class。import できないか、名が class を指さなければ None(呼び手は class として呼ぶので module や関数を返さない)。"
   (setv #(module qualname) (.split name ":" 1))
   (try
     (setv obj (importlib.import-module module))
     (for [part (.split qualname ".")]
       (setv obj (getattr obj part)))
-    obj
+    (if (isinstance obj type) obj None)
     (except [e [ImportError AttributeError ValueError]] None)))
 
 
