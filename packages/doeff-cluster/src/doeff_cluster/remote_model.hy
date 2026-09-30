@@ -109,12 +109,15 @@
                (VersionDiff key (.get expected key) (.get actual key)))))
 
 
+(defn #^ str diffs-text [#^ tuple diffs]  ; defk にできない: 子の入口と coordinator の純粋な判断(Program の外)が呼ぶ
+  "版の違いの列(version-diffs の答え)を 1 行で名指す。違いが在ると分かっている呼び手が使う — 答えに None を含まない(#1690)。"
+  (.join "・" (gfor d diffs (.format "{}: 送り手 {} / 受け側 {}" d.field d.sender d.env))))
+
+
 (defn #^ (| str None) version-mismatch [#^ dict expected #^ dict actual]  ; defk にできない: 子の入口と coordinator の純粋な判断(Program の外)が呼ぶ
   "違いを 1 行で名指す。同じなら None。"
   (setv diffs (version-diffs expected actual))
-  (if diffs
-      (.join "・" (gfor d diffs (.format "{}: 送り手 {} / 受け側 {}" d.field d.sender d.env)))
-      None))
+  (if diffs (diffs-text diffs) None))
 
 
 (defn _refuse-file [value]
