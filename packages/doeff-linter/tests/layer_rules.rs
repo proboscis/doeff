@@ -2851,11 +2851,11 @@ fn retired_repo(files: &[(&str, String)]) -> tempfile::TempDir {
     let arch_path = dir.path().join("architecture.hy");
     let declarations = r#":foundation foundation
   :retired-words [(retired-words "vocabulary" :words ["席" "mailbox" "letter" "auth home" "mail" "掃引"]
-                    :files ["README.md" "app/**/*.hy" "app/**/*.md" "app/**/*.json"] :except ["app/terms.json"]
+                    :files ["README.md" "app/**/*.hy" "app/**/*.md" "app/**/*.json" "app/**/*.py" "app/**/*.sh"] :except ["app/terms.json"]
                     :rule-lines ["使わない" "置かない"] :instead "chat・agent・器 / Message / 退役 / 見回り")
                   (retired-words "conversation-means-agent"
                     :patterns [r"会話\s*[（(]\s*(?:意味は|=)\s*agent" r"(?i)\bconversation\s+(?:means|is|=)\s+(?:an?\s+|one\s+)?agent\b"]
-                    :files ["docs/**/*.md"] :instead "会話の id は chat の id、参加者は agent と書く")
+                    :files ["docs/**/*.md" "docs/**/*.txt"] :instead "会話の id は chat の id、参加者は agent と書く")
                   (retired-words "conversation-names" :patterns [r"(?i)conversation"] :files ["app/chat/**/*.hy" "app/chat/**/*.py"]
                     :in names :instead "chat・agent・participation")]
   :retired-calls [(retired-calls "clock" :calls ["Now" "Elapsed" "EpochMillis" "ReadClock" "time.time"]
@@ -2870,12 +2870,12 @@ fn retired_repo(files: &[(&str, String)]) -> tempfile::TempDir {
 #[test]
 fn retired_words_hit_once_per_word_and_skip_rule_lines() {
     let words = ["席", "mailbox", "letter", "auth home", "mail", "掃引"];
-    let mut files: Vec<(String, String)> = words.iter().enumerate().map(|(i, w)| (format!("app/billing/w{}.md", i), format!("# 見出し\n本文に {} を書く\n", w))).collect();
+    let mut files: Vec<(String, String)> = words.iter().enumerate().map(|(i, w)| (format!("app/billing/w{}.hy", i), format!(";; 見出し\n(setv note \"本文に {} を書く\")\n", w))).collect();
     files.extend([
         ("README.md".to_string(), "郵便は Message と書く。email address と mail-box は別の語。\n使わない語 = 席 / mail\n".to_string()),
         ("docs/README.md".to_string(), "mail は根の README ではないので宣言の外\n".to_string()),
         ("app/terms.json".to_string(), "{\"terms\": [{\"term\": \"mail\"}]}\n".to_string()),
-        ("docs/design/turns.md".to_string(), "会話(意味は agent)が chat を受ける\nconversation means agent\n会話は agent の手番の列を持つ\n".to_string()),
+        ("docs/design/turns.txt".to_string(), "会話(意味は agent)が chat を受ける\nconversation means agent\n会話は agent の手番の列を持つ\n".to_string()),
         (
             "app/chat/rows.hy".to_string(),
             "(defrecord ConversationSlice (#^ str chat))\n(setv CHAT-KIND \"conversation\") ; conversation の綴りは値と註だけ\n(defk chat-of [row] row.chat)\n"
@@ -2885,23 +2885,60 @@ fn retired_words_hit_once_per_word_and_skip_rule_lines() {
     let refs: Vec<(&str, String)> = files.iter().map(|(p, t)| (p.as_str(), t.clone())).collect();
     let dir = retired_repo(&refs);
     let (_, report) = editor(dir.path());
-    let mut expected: Vec<String> = words.iter().enumerate().map(|(i, w)| format!("app/billing/w{}.md::DOEFF150::{}", i, w)).collect();
+    let mut expected: Vec<String> = words.iter().enumerate().map(|(i, w)| format!("app/billing/w{}.hy::DOEFF150::{}", i, w)).collect();
     // 意味の綴りは 2 行(日本語の形と英語の形)に当たり、どちらも群の名の鍵になる。
     expected.extend([
         "app/chat/rows.hy::DOEFF150::conversation-names".to_string(),
-        "docs/design/turns.md::DOEFF150::conversation-means-agent".to_string(),
-        "docs/design/turns.md::DOEFF150::conversation-means-agent".to_string(),
+        "docs/design/turns.txt::DOEFF150::conversation-means-agent".to_string(),
+        "docs/design/turns.txt::DOEFF150::conversation-means-agent".to_string(),
     ]);
     expected.sort();
     assert_eq!(keys(&report, "DOEFF150"), expected, "{}", report);
-    let turns: Vec<&Value> = report["violations"].as_array().unwrap().iter().filter(|v| v["key"] == "docs/design/turns.md::DOEFF150::conversation-means-agent").collect();
+    let turns: Vec<&Value> = report["violations"].as_array().unwrap().iter().filter(|v| v["key"] == "docs/design/turns.txt::DOEFF150::conversation-means-agent").collect();
     assert_eq!(turns.len(), 2, "意味の綴りは行ごとに 1 件: {:?}", turns);
-    let mail = violation(&report, "app/billing/w4.md::DOEFF150::mail");
+    let mail = violation(&report, "app/billing/w4.hy::DOEFF150::mail");
     assert_eq!(mail["level"], "critical", "{}", mail);
     assert_eq!(mail["range"]["start"]["line"], 1);
     assert!(mail["message"].as_str().unwrap().contains("使わないと決めた綴り mail(群 vocabulary・代わり:"), "{}", mail["message"]);
     let names = violation(&report, "app/chat/rows.hy::DOEFF150::conversation-names");
     assert!(names["message"].as_str().unwrap().contains("定義の名 ConversationSlice"), "{}", names["message"]);
+}
+
+/// agora-redesign #1794(#1762 の決定 Q2-3): `:in lines` は実際に使う code の中の綴りだけを数える — Hy の記号・欄名・command の
+/// 文字列・ほかの文字列と Python・shell の code は鳴り、註(Hy の `;`・Python と shell の `#`)・定義の docstring・`.md` の本文は鳴らない。
+#[test]
+fn retired_words_count_code_not_comments_docstrings_or_markdown() {
+    let dir = retired_repo(&[
+        ("app/billing/symbol.hy", ";; mail の註\n(setv mail 1)\n".to_string()),
+        ("app/billing/field.hy", "(defrecord Row (#^ str letter))\n".to_string()),
+        ("app/billing/command.hy", "(defk run [] (RunProcess \"cd x && mail -s hi\"))\n".to_string()),
+        ("app/billing/code.py", "\"\"\"mail の module\"\"\"\nimport os  # mail は註\nsend = os.environ[\"mail\"]\n".to_string()),
+        ("app/billing/run.sh", "# mail の註\nexec mail -s hi\n".to_string()),
+        (
+            "app/billing/quiet.hy",
+            ";;; mail の頭の註\n(defk send [x]\n  \"mail を送るため\"\n  x) ; letter は註\n(defclass Box [] \"mail の箱\" (setv n 1))\n\
+             (setv note \"email address と mail-box は別の語\")\n(setv rule \"mail\") ; 使わない語の例\n"
+                .to_string(),
+        ),
+        ("app/billing/prose.md", "# mail\n本文の mail と letter\n```sh\nexec mail -s hi\n```\n".to_string()),
+        ("app/billing/quiet.py", "def f():\n    '''mail の関数'''\n    return 1  # letter\n".to_string()),
+        ("app/billing/quiet.sh", "#!/bin/sh\n# mail の註\necho $# ${#x}  # letter\n".to_string()),
+    ]);
+    let (_, report) = editor(dir.path());
+    assert_eq!(
+        keys(&report, "DOEFF150"),
+        vec![
+            "app/billing/code.py::DOEFF150::mail",
+            "app/billing/command.hy::DOEFF150::mail",
+            "app/billing/field.hy::DOEFF150::letter",
+            "app/billing/run.sh::DOEFF150::mail",
+            "app/billing/symbol.hy::DOEFF150::mail",
+        ],
+        "{}",
+        report
+    );
+    let symbol = violation(&report, "app/billing/symbol.hy::DOEFF150::mail");
+    assert_eq!(symbol["range"]["start"]["line"], 1, "註の行でなく code の行: {}", symbol);
 }
 
 /// agora-redesign #1369: `:in paths` の群は file の名(最後の `.` より前)だけを見る — 退役した名の file は語ごとに 1 件、中身・dir の名・
@@ -2970,13 +3007,13 @@ fn retired_calls_hit_once_per_call() {
 /// 全体の実行は宣言の file を全部読む — 読めない file(UTF-8 でない)が理由に出るかどうかで、読んだ file の母集団を見分ける。
 #[test]
 fn retired_rules_read_only_the_named_files() {
-    let dir = retired_repo(&[("app/billing/named.md", "mail を送る\n".to_string())]);
+    let dir = retired_repo(&[("app/billing/named.hy", "(setv note \"mail を送る\")\n".to_string())]);
     std::fs::write(dir.path().join("app/billing/broken.md"), [0xffu8, 0xfe, b'\n']).unwrap();
     let (_, whole_out, whole_err) = run(dir.path(), &["--no-log"], None);
     assert!(whole_err.contains("app/billing/broken.md: 読めない"), "全体の実行は宣言の file を全部読む: {}\n{}", whole_err, whole_out);
-    let (code, named_out, named_err) = run(dir.path(), &["--no-log", "app/billing/named.md"], None);
+    let (code, named_out, named_err) = run(dir.path(), &["--no-log", "app/billing/named.hy"], None);
     assert!(!named_err.contains("broken.md"), "名指しの実行は名指しの file だけを読む: {}", named_err);
-    assert!(named_out.contains("DOEFF150") && named_out.contains("named.md"), "名指しの file の当たりは出る: {}\n{}", named_out, named_err);
+    assert!(named_out.contains("DOEFF150") && named_out.contains("named.hy"), "名指しの file の当たりは出る: {}\n{}", named_out, named_err);
     assert_ne!(code, 0, "新しい当たりは error");
 }
 

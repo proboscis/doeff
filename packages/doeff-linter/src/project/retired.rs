@@ -5,7 +5,15 @@
 //! 読めば決まるので repo 全体の索引を組まない — 名指しの path(`focus`)が在ればその下の file だけを読み、無ければ宣言の glob の
 //! 頭の dir だけを歩く。
 //!   * DOEFF150 `:in lines` — 行ごとに、語として単独で在る :words(前後が英字・`_`・`-` でない所)と :patterns の正規表現。
-//!     :rule-lines の綴りを含む行(規則そのものを述べる行)は数えない。註・文字列・文書も数える(語の規則は文書にも効く)。
+//!     :rule-lines の綴りを含む行(規則そのものを述べる行)は数えない。数えるのは実際に使う code の中の綴りだけ(agora-redesign
+//!     #1794・#1762 の決定 Q2-3 — 註・docstring・文書の中の綴りは使っているわけではない):
+//!       - `.md` の file は数えない(file ごと)。
+//!       - Hy は `;` の註(文字列の外の `;` から行末)と、`def…` の形の docstring(名と引数の列・任意の {…} の meta の後の最初の
+//!         文字列で、後にまだ form が在る物)を数えない。
+//!       - Python は `#` の註(文字列の外)と docstring(行の最初の非空白から始まる三重引用符の文字列)を数えない。
+//!       - shell・toml・ほかの file は引用符の外の `#` の註(行頭か空白の後の `#` から行末 — `$#`・`${#…}` は註でない)を数えない。
+//!       - どの種類でも、1 行目の shebang(`#!`)の行は数える(退役語 direct-shebang の対象)。
+//!     記号・欄名と、docstring でない文字列は数える — command の文字列(`"cd x && PYTHONPATH=. hy"`)や env の key は実行される綴りなので。
 //!   * DOEFF150 `:in names` — 定義の名だけ(Hy は `def…` の形と `setv`・`val`・`var` の左辺・Python は def と class の名)。
 //!   * DOEFF150 `:in paths` — file の名だけ(最後の `.` より前・dir の名と中身は見ない)。退役した名の file を置き直さない(#1369)。
 //!   * DOEFF151 — Hy の file の `(呼び …)` の形の呼び(頭の記号が :calls のどれか)。註・文字列・`#_` で読み捨てた form は数えない。
@@ -13,7 +21,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
-use doeff_indexer::hy_index::reader::{Form, Node, Reader};
+use doeff_indexer::hy_index::reader::{Form, Node, Reader, StrKind};
 use rayon::prelude::*;
 use regex::Regex;
 use walkdir::WalkDir;
@@ -148,14 +156,249 @@ fn match_group(text: &str, group: &RetiredWords, patterns: &[Regex]) -> Vec<(usi
     out
 }
 
-/// 行ごとの当たり(:in lines)。
-fn line_hits(rel: &str, source: &str, group: &RetiredWords, patterns: &[Regex]) -> Vec<WordHit> {
+/// 1 行目が shebang(`#!`)なら、その行の終わり(註を探し始める所)。shebang の行は、どの種類の file でも数える。
+fn after_shebang(source: &str) -> usize {
+    if source.starts_with("#!") {
+        source.find('\n').map_or(source.len(), |at| at + 1)
+    } else {
+        0
+    }
+}
+
+/// 行の終わり(`\n` の位置か source の終わり)。
+fn line_end(source: &str, from: usize) -> usize {
+    source[from..].find('\n').map_or(source.len(), |at| from + at)
+}
+
+/// Hy の form の木から、文字列の範囲(註を探す時に飛ばす)と定義の docstring の範囲を集める。`#_` で読み捨てた form は読み直す
+/// (読み捨てた文字列の中の `;` を註と取り違えない)。
+fn hy_strings_and_docstrings(source: &str, form: &Form, strings: &mut Vec<(usize, usize)>, docstrings: &mut Vec<(usize, usize)>) {
+    if let Some(items) = form.paren_items() {
+        if let Some(doc) = hy_docstring(source, items) {
+            docstrings.push((doc.span.start, doc.span.end));
+        }
+    }
+    match &form.node {
+        Node::Str { .. } => strings.push((form.span.start, form.span.end)),
+        Node::Seq { items, .. } => items.iter().for_each(|item| hy_strings_and_docstrings(source, item, strings, docstrings)),
+        Node::Prefixed { inner: Some(inner), .. } | Node::Tagged { inner: Some(inner) } => hy_strings_and_docstrings(source, inner, strings, docstrings),
+        Node::Annotated { annotation, target } => [annotation, target].into_iter().flatten().for_each(|part| hy_strings_and_docstrings(source, part, strings, docstrings)),
+        Node::Discarded => {
+            let mut reader = Reader::new(source, form.span.start + 2, form.span.end);
+            for inner in &reader.read_all() {
+                hy_strings_and_docstrings(source, inner, strings, docstrings);
+            }
+        }
+        Node::Prefixed { inner: None, .. } | Node::Tagged { inner: None } | Node::Symbol | Node::Keyword | Node::Number => {}
+    }
+}
+
+/// `def…` の形(頭の記号が def で始まる — defk・defn・deff・defclass・defhandler・deftest・defadr …)の docstring。名の前の decorator の
+/// `[…]`、名(記号か `#^ 型 名`)、名の後の引数の `[…]` 1 つと meta の `{…}` を飛ばした最初の form が、普通の文字列か bracket 文字列で、
+/// その後にまだ form が在る時だけ docstring とする(文字列だけが本体なら、それは答えの値)。
+fn hy_docstring<'f>(source: &str, items: &'f [Form]) -> Option<&'f Form> {
+    let items: Vec<&Form> = items.iter().filter(|f| !matches!(f.node, Node::Discarded)).collect();
+    let (head, rest) = items.split_first()?;
+    let defines = matches!(head.node, Node::Symbol) && source.get(head.span.start..head.span.end).is_some_and(|h| h.starts_with("def"));
+    if !defines {
+        return None;
+    }
+    let mut at = rest.iter().take_while(|f| f.bracket_items().is_some()).count();
+    if !matches!(rest.get(at)?.node, Node::Symbol | Node::Annotated { .. }) {
+        return None;
+    }
+    at += 1;
+    if rest.get(at).is_some_and(|f| f.bracket_items().is_some()) {
+        at += 1;
+    }
+    at += rest[at.min(rest.len())..].iter().take_while(|f| f.is_brace()).count();
+    let doc = rest.get(at)?;
+    let is_doc = matches!(doc.node, Node::Str { kind: StrKind::Plain | StrKind::Bracket, .. }) && rest.len() > at + 1;
+    is_doc.then_some(*doc)
+}
+
+/// Hy の数えない範囲 — `;` の註(文字列の外の `;` から行末まで)と定義の docstring。
+fn hy_uncounted(source: &str) -> Vec<(usize, usize)> {
+    let mut strings = Vec::new();
     let mut out = Vec::new();
+    let mut reader = Reader::new(source, 0, source.len());
+    for form in &reader.read_all() {
+        hy_strings_and_docstrings(source, form, &mut strings, &mut out);
+    }
+    strings.sort();
+    let bytes = source.as_bytes();
+    let mut pos = after_shebang(source);
+    let mut next_string = 0;
+    while pos < bytes.len() {
+        while next_string < strings.len() && strings[next_string].1 <= pos {
+            next_string += 1;
+        }
+        match strings.get(next_string) {
+            Some(&(start, end)) if start <= pos => pos = end,
+            _ if bytes[pos] == b';' => {
+                let end = line_end(source, pos);
+                out.push((pos, end));
+                pos = end;
+            }
+            _ => pos += 1,
+        }
+    }
+    out
+}
+
+/// Python の数えない範囲 — `#` の註(文字列の外)と docstring(行の最初の非空白から始まる三重引用符の文字列 — module・def・class の頭の
+/// 文字列の文)。
+fn python_uncounted(source: &str) -> Vec<(usize, usize)> {
+    let bytes = source.as_bytes();
+    let mut out = Vec::new();
+    let mut pos = after_shebang(source);
+    let mut line_start = pos;
+    while pos < bytes.len() {
+        let b = bytes[pos];
+        if b == b'\n' {
+            pos += 1;
+            line_start = pos;
+        } else if b == b'#' {
+            let end = line_end(source, pos);
+            out.push((pos, end));
+            pos = end;
+        } else if b == b'"' || b == b'\'' || (b.is_ascii_alphabetic() && python_string_prefix(bytes, pos).is_some()) {
+            let start = pos;
+            let quote_at = python_string_prefix(bytes, pos).unwrap_or(pos);
+            let quote = bytes[quote_at];
+            let triple = bytes.get(quote_at..quote_at + 3).is_some_and(|q| q.iter().all(|&c| c == quote));
+            let end = python_string_end(bytes, quote_at, quote, triple);
+            let at_line_head = source[line_start..start].trim().is_empty();
+            if triple && at_line_head {
+                out.push((start, end));
+            }
+            pos = end;
+        } else if b.is_ascii_alphanumeric() || b == b'_' {
+            // 名の途中の英字を文字列の接頭辞と取り違えない(`attr"…"` は無いが、`bar'` のような綴りを飛ばす)。
+            while pos < bytes.len() && (bytes[pos].is_ascii_alphanumeric() || bytes[pos] == b'_') {
+                pos += 1;
+            }
+        } else {
+            pos += 1;
+        }
+    }
+    out
+}
+
+/// pos から始まる Python の文字列の接頭辞(r・b・u・f の 1〜2 字)の後の引用符の位置(文字列でなければ None)。名の途中は呼び手が飛ばす。
+fn python_string_prefix(bytes: &[u8], pos: usize) -> Option<usize> {
+    let prefix = bytes[pos..].iter().take_while(|c| matches!(c, b'r' | b'R' | b'b' | b'B' | b'u' | b'U' | b'f' | b'F')).count();
+    (prefix <= 2 && matches!(bytes.get(pos + prefix), Some(b'"' | b'\''))).then_some(pos + prefix)
+}
+
+/// 引用符 quote_at から始まる Python の文字列の終わり(閉じの後)。一重の文字列は行末で終わる(閉じない時)。
+fn python_string_end(bytes: &[u8], quote_at: usize, quote: u8, triple: bool) -> usize {
+    let mut pos = quote_at + if triple { 3 } else { 1 };
+    while pos < bytes.len() {
+        match bytes[pos] {
+            b'\\' => pos += 2,
+            b'\n' if !triple => return pos,
+            c if c == quote && (!triple || bytes.get(pos..pos + 3).is_some_and(|q| q.iter().all(|&x| x == quote))) => {
+                return pos + if triple { 3 } else { 1 };
+            }
+            _ => pos += 1,
+        }
+    }
+    bytes.len()
+}
+
+/// shell・toml・ほかの file の数えない範囲 — 引用符の外の `#` の註(行頭か空白の後の `#` から行末まで — `$#`・`${#…}`・`a#b` は註でない)。
+/// shell の file(`.sh`)は引用符が行を跨ぎ、here-document(`<<EOF` … `EOF`)の中身は数える。ほかの file の引用符は行の中だけ。
+fn hash_uncounted(rel: &str, source: &str) -> Vec<(usize, usize)> {
+    static HEREDOC: OnceLock<Regex> = OnceLock::new();
+    let heredoc = HEREDOC.get_or_init(|| Regex::new(r#"(?:^|[^<])<<-?[ \t]*['"]?([A-Za-z_][A-Za-z0-9_]*)"#).expect("固定の正規表現"));
+    let shell = rel.ends_with(".sh");
+    let bytes = source.as_bytes();
+    let mut out = Vec::new();
+    let mut pos = after_shebang(source);
+    let mut quote: Option<u8> = None;
+    let mut heredoc_tag: Option<String> = None;
+    let mut line_start = pos;
+    // 今の行の註の頭(here-document の印は註の前の code だけで探す)。
+    let mut comment_at: Option<usize> = None;
+    while pos < bytes.len() {
+        if let Some(tag) = &heredoc_tag {
+            let end = line_end(source, pos);
+            if source[pos..end].trim() == tag {
+                heredoc_tag = None;
+            }
+            pos = end + 1;
+            line_start = pos;
+            continue;
+        }
+        let b = bytes[pos];
+        match (quote, b) {
+            (_, b'\n') => {
+                if shell && quote.is_none() {
+                    heredoc_tag = heredoc.captures(&source[line_start..comment_at.unwrap_or(pos)]).map(|c| c[1].to_string());
+                }
+                comment_at = None;
+                if !shell {
+                    quote = None;
+                }
+                pos += 1;
+                line_start = pos;
+            }
+            (Some(q), c) if c == q => {
+                quote = None;
+                pos += 1;
+            }
+            (Some(b'"'), b'\\') => pos += 2,
+            (Some(_), _) => pos += 1,
+            (None, b'\\') => pos += 2,
+            (None, b'"' | b'\'') => {
+                quote = Some(b);
+                pos += 1;
+            }
+            (None, b'#') if pos == line_start || bytes[pos - 1].is_ascii_whitespace() => {
+                let end = line_end(source, pos);
+                comment_at = Some(pos);
+                out.push((pos, end));
+                pos = end;
+            }
+            (None, _) => pos += 1,
+        }
+    }
+    out
+}
+
+/// :in lines で読む中身 — 数えない範囲(註・docstring)を空白で塗った source(byte の位置と行は元のまま)。`.md` の file は数えないので None。
+fn counted_text(rel: &str, source: &str) -> Option<String> {
+    if rel.ends_with(".md") {
+        return None;
+    }
+    let uncounted = if rel.ends_with(".hy") {
+        hy_uncounted(source)
+    } else if rel.ends_with(".py") {
+        python_uncounted(source)
+    } else {
+        hash_uncounted(rel, source)
+    };
+    let mut bytes = source.as_bytes().to_vec();
+    for (start, end) in uncounted {
+        let end = end.min(bytes.len());
+        // 範囲の境は文字の境目(`;`・`#`・引用符・行末)なので、中を ASCII の空白で塗っても UTF-8 のまま。改行は残す。
+        bytes[start..end].iter_mut().filter(|b| **b != b'\n').for_each(|b| *b = b' ');
+    }
+    Some(String::from_utf8(bytes).expect("文字の境目で塗った"))
+}
+
+/// 行ごとの当たり(:in lines)。註・docstring を塗った中身(counted_text)に当て、:rule-lines は元の行で見る。
+fn line_hits(rel: &str, source: &str, counted: Option<&str>, group: &RetiredWords, patterns: &[Regex]) -> Vec<WordHit> {
+    let mut out = Vec::new();
+    let Some(counted) = counted else {
+        return out;
+    };
     let mut offset = 0;
-    for line in source.split_inclusive('\n') {
+    for (line, masked) in source.split_inclusive('\n').zip(counted.split_inclusive('\n')) {
         let body = line.trim_end_matches(['\n', '\r']);
         if !group.rule_lines.iter().any(|marker| body.contains(marker.as_str())) {
-            for (start, end, spelling, detail) in match_group(body, group, patterns) {
+            for (start, end, spelling, detail) in match_group(masked.trim_end_matches(['\n', '\r']), group, patterns) {
                 out.push(WordHit {
                     rel: rel.to_string(),
                     start: offset + start,
@@ -314,9 +557,11 @@ pub fn judge(rel: &str, source: &str, words: &[RetiredWords], calls: &[RetiredCa
 /// file 1 つを組み終えた群に当てる。
 fn judge_prepared(rel: &str, source: &str, prepared: &Prepared) -> (Vec<WordHit>, Vec<CallHit>) {
     let mut word_hits = Vec::new();
+    // 註・docstring を塗った中身は file ごとに 1 度だけ作る(:in lines の群が在る時だけ)。
+    let mut counted: Option<Option<String>> = None;
     for (group, patterns) in prepared.words.iter().filter(|(g, _)| selected(rel, &g.files, &g.except)) {
         word_hits.extend(match group.place {
-            WordPlace::Lines => line_hits(rel, source, group, patterns),
+            WordPlace::Lines => line_hits(rel, source, counted.get_or_insert_with(|| counted_text(rel, source)).as_deref(), group, patterns),
             WordPlace::Names => name_hits(rel, source, group, patterns),
             WordPlace::Paths => path_hits(rel, group, patterns),
         });
@@ -415,7 +660,7 @@ mod tests {
     fn words_stand_alone_and_rule_lines_are_skipped() {
         let group = words(&["mail", "席", "auth home"], &[], WordPlace::Lines, &["使わない"]);
         let source = "email address\nmail を送る\n使わない語 = mail\n席へ届ける\nmailbox と mail-box\nauth home は退役\n";
-        let (hits, _) = judge("a.md", source, &[group], &[]);
+        let (hits, _) = judge("a.txt", source, &[group], &[]);
         let found: Vec<(&str, &str)> = hits.iter().map(|h| (&source[h.start..h.end], h.detail.as_str())).collect();
         assert_eq!(found, vec![("mail", "mail"), ("席", "席"), ("auth home", "auth home")]);
     }
@@ -423,7 +668,7 @@ mod tests {
     #[test]
     fn patterns_hit_once_per_line_and_key_by_group() {
         let group = words(&[], &[r"会話\s*[（(]\s*(?:意味は|=)\s*agent", r"(?i)semantically\s+agent"], WordPlace::Lines, &[]);
-        let (hits, _) = judge("a.md", "会話(意味は agent)と 会話(= agent)は semantically agent\n会話は agent の手番の列を持つ\n", &[group], &[]);
+        let (hits, _) = judge("a.txt", "会話(意味は agent)と 会話(= agent)は semantically agent\n会話は agent の手番の列を持つ\n", &[group], &[]);
         assert_eq!(hits.len(), 1, "同じ行に 2 つの型が当たっても 1 行と数える");
         assert_eq!(hits[0].detail, "g");
     }
@@ -454,6 +699,77 @@ mod tests {
         assert!(hit("controllers/automation/core/program.hy").is_empty(), "中身の綴りは見ない");
         let found = hit("controllers/automation/core/worker.hy");
         assert_eq!((found[0].start, found[0].end, found[0].place), (0, 0, WordPlace::Paths));
+    }
+
+    /// 当たった綴りの字面の並び(:in lines の群 group を file rel の中身 source に当てる)。
+    fn spelled(rel: &str, source: &str, group: &RetiredWords) -> Vec<String> {
+        judge(rel, source, &[group.clone()], &[]).0.iter().map(|h| source[h.start..h.end].to_string()).collect()
+    }
+
+    /// agora-redesign #1794: 実際に使う code の中の綴り — Hy の記号・欄名・command の文字列・ほかの文字列 — は数える。
+    #[test]
+    fn hy_symbols_fields_and_command_strings_are_counted() {
+        let group = words(&["ACP_CHECKOUT", "mail"], &[r"\bPYTHONPATH=", r#""PYTHONPATH""#], WordPlace::Lines, &[]);
+        let source = "(setv ACP_CHECKOUT 1)\n(defrecord Row (#^ str mail))\n(setv row.mail 2)\n\
+                      (defk run [] (RunProcess \"cd x && PYTHONPATH=. hy\"))\n(setv env {\"PYTHONPATH\" \".\"})\n";
+        assert_eq!(spelled("a.hy", source, &group), vec!["ACP_CHECKOUT", "mail", "mail", "PYTHONPATH=", "\"PYTHONPATH\""]);
+        // 定義の頭の文字列でも、それだけが本体(答えの値)なら docstring ではない。
+        assert_eq!(spelled("a.hy", "(defk mail-of [] \"mail\")\n", &group), vec!["mail"]);
+        // 定義でない form の最初の文字列・keyword の値の文字列は数える。
+        assert_eq!(spelled("a.hy", "(print \"mail\" 1)\n(defadr x :title \"mail の宛先\" :body 1)\n", &group), vec!["mail", "mail"]);
+    }
+
+    /// agora-redesign #1794: 1 行目の shebang は、どの種類の file でも数える(退役語 direct-shebang の対象)。
+    #[test]
+    fn shebang_lines_are_counted_in_every_kind_of_file() {
+        let group = words(&[], &[r"^#!\s*/usr/bin/env\s+(hy|python[0-9.]*)\b"], WordPlace::Lines, &[]);
+        for rel in ["scripts/run.hy", "scripts/run.py", "scripts/run.sh", "scripts/run"] {
+            assert_eq!(spelled(rel, "#!/usr/bin/env hy\n(print 1)\n", &group), vec!["#!/usr/bin/env hy"], "{}", rel);
+        }
+        assert!(spelled("scripts/run.sh", "echo 1\n#!/usr/bin/env hy\n", &group).is_empty(), "2 行目の #! は shell の註");
+    }
+
+    /// agora-redesign #1794: Hy の `;` の註と定義の docstring は数えない(文字列の中の `;` は註でない)。
+    #[test]
+    fn hy_comments_and_docstrings_are_not_counted() {
+        let group = words(&["mail"], &[], WordPlace::Lines, &[]);
+        let source = ";;; mail の頭の註\n(defk send [x]\n  {:pre [(: x int)]}\n  \"mail を送るため\n  (2 行目の mail)\"\n  (setv y x) ; mail は註\n  y)\n\
+                      (defclass [(dataclass)] Box [Base] \"mail の箱\" (#^ int n))\n(defhandler h {:tags {}} \"mail の訳\" (Ask [k] (resume k)))\n\
+                      (deftest test-mail-free \"mail の検\" (assert 1))\n(defn #^ int f [] \"mail\" 1)\n#_(defk g [] \"mail\" 1) ; mail\n";
+        assert!(spelled("a.hy", source, &group).is_empty(), "{:?}", spelled("a.hy", source, &group));
+        // 文字列の中の `;` の後は註でない。
+        assert_eq!(spelled("a.hy", "(setv s \"a ; mail\")\n", &group), vec!["mail"]);
+    }
+
+    /// agora-redesign #1794: `.md` の file は :in lines で数えない(file ごと)。
+    #[test]
+    fn markdown_files_are_not_counted() {
+        let group = words(&["mail", "ACP_CHECKOUT"], &[], WordPlace::Lines, &[]);
+        assert!(spelled("docs/a.md", "# mail\n本文の mail と `ACP_CHECKOUT`\n```sh\nexport ACP_CHECKOUT=1\n```\n", &group).is_empty());
+        // :in paths は md でも file の名を見る(変えない)。
+        let paths = words(&["mail"], &[], WordPlace::Paths, &[]);
+        assert_eq!(judge("docs/mail.md", "", &[paths], &[]).0.len(), 1);
+    }
+
+    /// agora-redesign #1794: Python の `#` の註と docstring(行頭の三重引用符の文字列)は数えない。ほかの文字列と名は数える。
+    #[test]
+    fn python_comments_and_docstrings_are_not_counted() {
+        let group = words(&["mail"], &[], WordPlace::Lines, &[]);
+        let source = "\"\"\"mail の module\n\n2 行目の mail\"\"\"\nimport os  # mail は註\n\ndef f(x):\n    r'''mail の関数'''\n    s = \"# mail\"\n    return x.mail\n\n\
+                      class C:\n    \"\"\"mail の class\"\"\"\n    t = 'it''s # not mail'\n";
+        assert_eq!(spelled("a.py", source, &group), vec!["mail", "mail", "mail"], "文字列の中の # は註でない・属性の名は数える");
+        assert_eq!(spelled("a.py", "x = f(\"\"\"mail\"\"\")\n", &group), vec!["mail"], "行の途中の三重引用符は docstring でない");
+    }
+
+    /// agora-redesign #1794: shell・toml・ほかの file の `#` の註(引用符の外)は数えない。`$#`・`${#…}` と引用符の中の `#` は註でない。
+    #[test]
+    fn hash_comments_are_not_counted_in_shell_and_other_files() {
+        let group = words(&["ACP_CHECKOUT"], &[r"\bPYTHONPATH="], WordPlace::Lines, &[]);
+        let source = "# ACP_CHECKOUT の頭の註\nexport PYTHONPATH=. # ACP_CHECKOUT は註\necho \"# ACP_CHECKOUT\"\necho $# ACP_CHECKOUT\n\
+                      echo ${#ACP_CHECKOUT}\necho a#ACP_CHECKOUT\ncat <<EOF\n# ACP_CHECKOUT は here-document の中身\nEOF\n";
+        assert_eq!(spelled("run.sh", source, &group), vec!["PYTHONPATH=", "ACP_CHECKOUT", "ACP_CHECKOUT", "ACP_CHECKOUT", "ACP_CHECKOUT", "ACP_CHECKOUT"]);
+        let toml = "# ACP_CHECKOUT の註\ncommand = \"PYTHONPATH=. hy x.hy\" # ACP_CHECKOUT\nkey = 'ACP_CHECKOUT'\n";
+        assert_eq!(spelled(".agents/land-queue.toml", toml, &group), vec!["PYTHONPATH=", "ACP_CHECKOUT"]);
     }
 
     #[test]
