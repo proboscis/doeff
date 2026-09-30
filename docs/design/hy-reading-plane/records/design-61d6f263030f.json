@@ -1,0 +1,306 @@
+{
+  "artifacts": [
+    {
+      "path": "artifacts/v13/design.md",
+      "sha256": "2b14bd0ae68edd93bfdc9be829b81973d368f917b77b0681b09c4bb580fa6e1b"
+    }
+  ],
+  "body": {
+    "alternatives": [
+      {
+        "options": [
+          {
+            "benefits": "linter を変えずに今すぐ出る。定義そのものの問題と分かる",
+            "costs": "どの行が原因かは分からない",
+            "name": "頭の名に下線 + 札(案 A)"
+          },
+          {
+            "benefits": "原因の行が分かる",
+            "costs": "linter の変更と較正が要る",
+            "name": "Jev に証拠の行を答えさせ、その行に印(案 B)"
+          }
+        ],
+        "question": "定義の頭に付く違反(Jev 201〜205 など)をどこに出すか",
+        "reason": "operator 2026-09-30 \"sounds good\"",
+        "reconsider_when": "Jev の判定に証拠の行が付いた時",
+        "selected": "頭の名に下線 + 札(案 A)"
+      },
+      {
+        "options": [
+          {
+            "benefits": "作る物が無い",
+            "costs": "1 行・遅い・改行が崩れる・ボタンを置けない",
+            "name": "title 属性(今)"
+          },
+          {
+            "benefits": "全部の欄とボタンを出せる。pixel の見た目(#841)と揃う",
+            "costs": "webview の script が増える",
+            "name": "自前の吹き出し"
+          }
+        ],
+        "question": "hover をどう出すか",
+        "reason": "operator \"show info on hover so i can tell what's wrong why\"",
+        "reconsider_when": "—",
+        "selected": "自前の吹き出し"
+      },
+      {
+        "options": [
+          {
+            "benefits": "読む面に必ず出る",
+            "costs": "違反の配り方を file 全体へ広げる",
+            "name": "file の見出しに帯"
+          },
+          {
+            "benefits": "—",
+            "costs": "101/102/103/114/115/116 が読む面から見えない",
+            "name": "出さない(今)"
+          }
+        ],
+        "question": "file の先頭に付く違反をどう出すか",
+        "reason": "R25(どの種類の違反も必ず出る)",
+        "reconsider_when": "—",
+        "selected": "file の見出しに帯"
+      }
+    ],
+    "change_cases": [
+      {
+        "change": "Jev の規則が証拠の行(どの行が形の検めか)も返すようになる(案 B・#1040 の枠)",
+        "expected_elements": [
+          "violation-marks"
+        ],
+        "id": "C10",
+        "preserve": [
+          "面は range の種類で置き場を決めるだけ"
+        ],
+        "priority": "prepare",
+        "protected_contracts": [
+          "K10"
+        ],
+        "provenance": {
+          "kind": "assumption",
+          "source": "この議論の論点 3"
+        },
+        "rationale": "証拠の行が来れば本体の行の印として同じ道で出る",
+        "verification": "range を本体の行にした DOEFF205 の違反を渡すと本体の行に札が出る(頭の下線は無い)"
+      },
+      {
+        "change": "linter が新しい規則(新しい ID)を足す",
+        "expected_elements": [
+          "violation-hover"
+        ],
+        "id": "C11",
+        "preserve": [
+          "面に規則 ID の表を持たない"
+        ],
+        "priority": "required",
+        "protected_contracts": [
+          "K11"
+        ],
+        "provenance": {
+          "kind": "observed",
+          "source": "doeff-linter 0.2 → 0.6 で規則が 30 本以上増えた"
+        },
+        "rationale": "規則の名と説明は linter の出力から引く",
+        "verification": "未知の ID の違反でも hover に ID・重大さ・message が出る"
+      }
+    ],
+    "contracts": [
+      {
+        "canonical_source": "ide-plugins/vscode/doeff-runner/src/read/(実装の issue で決める)",
+        "effects": [],
+        "failures": [
+          "range が定義の範囲の外で file の先頭でもない(索引と linter の版がずれた時)は file の帯に落とす(消さない)"
+        ],
+        "id": "K10",
+        "invariants": [
+          "linter が出した違反は必ずどこか 1 か所の印に出る(落ちない)",
+          "level の色は lint/severity.ts の 1 つの表から"
+        ],
+        "operations": [
+          "placeOf(violation, definition) -> head | body(line) | file",
+          "markHtml(violations, place) -> html"
+        ],
+        "owner": "violation-marks"
+      },
+      {
+        "canonical_source": "ide-plugins/vscode/doeff-runner/src/read/hover.ts",
+        "effects": [],
+        "failures": [
+          "explanation が null(Jev でない規則)は なぜ の行を出さない",
+          "hint が null は 直し方 の行を出さない"
+        ],
+        "id": "K11",
+        "invariants": [
+          "hover の文は linter の違反の欄だけから組む(面が文を作らない)"
+        ],
+        "operations": [
+          "hoverHtml(violation, ruleTitle) -> html"
+        ],
+        "owner": "violation-hover"
+      }
+    ],
+    "elements": [
+      {
+        "depends_on": [],
+        "hidden_decisions": [
+          "range の種類の判定は linter の range と定義の nameRange / fullRange の比較で決める(linter に新しい欄を足さない)"
+        ],
+        "id": "violation-marks",
+        "kind": "internal",
+        "requirement_ids": [
+          "R25",
+          "R27"
+        ],
+        "responsibility": "違反 1 つを、range の種類(定義の頭 / 本体の行 / file の先頭)で分け、対応する印の HTML(頭の下線 + 札・本体の札・source の下線・file の帯)を組む。level の色は既存の viol-<level> を使う",
+        "state": []
+      },
+      {
+        "depends_on": [
+          "violation-marks"
+        ],
+        "hidden_decisions": [
+          "規則の短い名は linter の rules[].title を store から引く(無ければ ID だけ)"
+        ],
+        "id": "violation-hover",
+        "kind": "internal",
+        "requirement_ids": [
+          "R26"
+        ],
+        "responsibility": "違反の説明の吹き出し(webview の自前の要素)。title 属性ではなく、規則の名・重大さ・standing・p・reason・hint・law を並べ、2 つのボタンを持つ。どの印(頭・本体・source・帯・足)からも同じ吹き出し",
+        "state": [
+          "開いている吹き出し 1 つ(hover を離れるか Esc で閉じる)"
+        ]
+      },
+      {
+        "depends_on": [
+          "violation-marks"
+        ],
+        "hidden_decisions": [],
+        "id": "file-violations",
+        "kind": "internal",
+        "requirement_ids": [
+          "R25"
+        ],
+        "responsibility": "file の先頭に付く違反(どの定義の範囲にも入らない物)を file の見出しへ配る。read/model.ts の within(definition.fullRange) で落ちていた分",
+        "state": []
+      }
+    ],
+    "handoff": {
+      "fixed": [
+        "違反は range の種類ごとに 頭 / 本体の行 / file の先頭 の 3 か所に必ず出る",
+        "hover は自前の吹き出しで linter の全欄(名・重大さ・既知/新規・p・なぜ・直し方・法)+ 2 ボタン",
+        "Jev の規則は定義の頭に付けるだけ(案 A)",
+        "source の箱の印は開いた時だけ"
+      ],
+      "free": [
+        "下線と帯の見た目",
+        "吹き出しの開閉の仕組み",
+        "規則の短い名の引き方"
+      ],
+      "next": [
+        "実装の issue を agora-redesign に起票し(repo:doeff・kind:impl)、ワーカーに渡す"
+      ]
+    },
+    "level": "カードの中の linter の違反の印と説明(hover)の置き場",
+    "methods": [
+      {
+        "evidence": [
+          "design-c6ae8fe5208d の methods",
+          "artifacts/v13/design.md"
+        ],
+        "name": "change-cases",
+        "profile": "change-cases-1996-local-v1",
+        "reason": "v7 の当て方に、証拠の行が付く(C10)・規則が増える(C11)の 2 つを足しただけ",
+        "status": "reused",
+        "steps": []
+      },
+      {
+        "evidence": [],
+        "name": "ddd",
+        "profile": "ddd-evans-2015-local-v1",
+        "reason": "表示の設計",
+        "status": "not_applicable",
+        "steps": []
+      },
+      {
+        "evidence": [],
+        "name": "volatility",
+        "profile": "volatility-righting-software-local-v1",
+        "reason": "change-cases で扱った",
+        "status": "not_applicable",
+        "steps": []
+      },
+      {
+        "evidence": [],
+        "name": "add",
+        "profile": "add-2.0-local-v1",
+        "reason": "要素 3 つ",
+        "status": "not_applicable",
+        "steps": []
+      },
+      {
+        "evidence": [],
+        "name": "saam",
+        "profile": "saam-1996-local-v1",
+        "reason": "alternatives の表で済ませた",
+        "status": "not_applicable",
+        "steps": []
+      },
+      {
+        "evidence": [],
+        "name": "c4",
+        "profile": "c4-web-2026-09-14-local-v1",
+        "reason": "v13 の Before / After の図で足りる",
+        "status": "not_applicable",
+        "steps": []
+      }
+    ],
+    "open_questions": [
+      "頭の下線の見た目(pixel の見た目 #841 との揃え方)は実装の席の既定",
+      "source の箱の下線を範囲(start〜end)で引くか行だけかは実装の席の既定(範囲が 1 行なら同じ)"
+    ],
+    "perspective": "proposed",
+    "purpose": "v13: v7(design-c6ae8fe5208d)以降の面に 1 点を足す。linter の違反を、その range の種類(定義の頭・本体の行・file の先頭)ごとに読む面の対応する場所へ印として出し、hover は linter が持つ説明(規則の名・重大さ・既知か新規か・Jev の p・なぜ・直し方・法)を全部見せる自前の吹き出しにする。今は定義の頭に付く違反(Jev の 201〜205・110/111/119・104/105/108)が足の札にしか出ず、file の先頭に付く違反(101/102/103/114/115/116)は読む面に一切出ない",
+    "requirements": [
+      {
+        "id": "R25",
+        "kind": "functional",
+        "provenance": {
+          "kind": "user",
+          "source": "operator 2026-09-30 \"i want the linted part highlighted in the reading view of the hy file\""
+        },
+        "statement": "linter の違反は、その range が指す場所に印として出る — 定義の頭(名に下線 + 札)・本体の行(札 + source の同じ行に下線)・file の先頭(file の見出しに帯)。どの種類の違反も読む面のどこかに必ず出る"
+      },
+      {
+        "id": "R26",
+        "kind": "functional",
+        "provenance": {
+          "kind": "user",
+          "source": "operator 2026-09-30 \"show info on hover so i can tell what's wrong why\""
+        },
+        "statement": "印の hover は、規則 ID・規則の短い名・重大さ・既知か新規か・Jev の p・なぜ(explanation.reason)・直し方(hint)・法の文(あれば)を見せ、違反の表で見る / editor で開くの 2 つの動作を持つ"
+      },
+      {
+        "id": "R27",
+        "kind": "constraint",
+        "provenance": {
+          "kind": "inherited",
+          "source": "v1 制約 4(問題の欄は source 側のまま)・v3 3 節(source は開閉)"
+        },
+        "statement": "linter の出力は変えない(面は linter の違反を並べるだけ)。source の箱の印は開いた時だけ描く"
+      }
+    ]
+  },
+  "created_at": "2026-09-30T06:45:08.367582+00:00",
+  "id": "design-61d6f263030f",
+  "inputs": [
+    {
+      "id": "design-c6ae8fe5208d",
+      "role": "basis",
+      "sha256": "26fd760976222a158ed6509f39d0b7f569237435d06f863d96f4d419c7840c8c"
+    }
+  ],
+  "kind": "design",
+  "schema_version": 1,
+  "scope": "doeff-hy の code を読む面(VS Code)。単位は file ではなく定義(defk・defrecord・defeffect・defhandler・deftest …)で、Scala 3 の見た目に印字し、tag・effect・呼び出し・型から辿る。source の Hy は編集しない。その先の言語(静的な型・型に載る effect・Python の呼び出し・file に縛られない名前空間)の要件も持つ"
+}

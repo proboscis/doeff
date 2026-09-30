@@ -6,16 +6,18 @@
 
 import type { HyDefinition } from '../hy/contract';
 import { pieceStyle, PLAIN, sliceHighlight, type Piece, type SourceColoring } from '../hy/highlight/spans';
-import type { LintBody, LintBodySegment, LintSignature, LintViolation } from '../lint/contract';
+import { LINT_LEVELS, type LintBody, type LintBodySegment, type LintSignature, type LintViolation } from '../lint/contract';
+import { LEVEL_COLORS } from '../lint/severity';
+import { displayRange, WHOLE_LINE } from '../lint/view';
 import { answerText, headerEffects, typeText } from '../defk/model';
 import { cardKey, LINE_FIELDS, type FoldState, type LineField } from './fold';
 import { docFirstLine, escapeHtml, tagClass, type Glyphs } from './html';
 import { contractRow, declaredEffectChips, decoratorBadges, effectChip, entityLineArgs, entityRows, indexSignatureRows, relationBand, usedByRow, type ChipContext } from './entity';
-import { effectHover, nameHover, nameScope, type NameScope } from './hover';
+import { effectHover, nameHover, nameScope, violationTipHtml, type NameScope, type RuleTitles } from './hover';
 import { effectRef, entityLink, linkPieces, resolveEntity, sourceLinks, typeHtml, type EntityRef } from './resolve';
 import { LABELS } from './labels';
 import { NAMES_ONLY_PARAMS, TALL_SIGNATURE_CHARS, TALL_SIGNATURE_PARAMS } from './layout';
-import { axisKey, axisTitle, facets, SEARCH_KEY, visibleCards, worstLevel, type Card, type Facet, type Selection } from './model';
+import { axisKey, axisTitle, facets, SEARCH_KEY, visibleCards, worstLevel, type Card, type CardPlacement, type Facet, type Selection } from './model';
 import { relationOf, type CallGraph, type CallTree } from './tree';
 import { renderTree, type TreeRenderContext } from './treeRender';
 
@@ -157,6 +159,40 @@ export interface CardContext {
   readonly graph: CallGraph;
   /** カードの file 全体の色(editor と同じ文法・theme・記号ごとの色。まだ塗れていなければ undefined) */
   readonly coloringOf: (card: Card) => SourceColoring | undefined;
+  /** 規則の ID → 短い名(linter の rules[].title — 違反の吹き出しの見出し) */
+  readonly ruleTitles: RuleTitles;
+}
+
+/** 違反の印 1 つが指す違反と、その吹き出しの template の id(同じ違反の印は、どこに描いても同じ吹き出しを指す — v13)。 */
+interface TipMark {
+  readonly violation: LintViolation;
+  readonly tip: string;
+}
+
+/** カードの中の違反の印(置き場つき)。 */
+interface CardMark extends TipMark {
+  readonly place: CardPlacement;
+}
+
+/** 印の並びが指す吹き出しの id(空白で区切る — webview は順に写す)。 */
+function tipIds(marks: readonly TipMark[]): string {
+  return marks.map((m) => m.tip).join(' ');
+}
+
+/** 規則の ID の札(重大さの色・hover で吹き出し)。text を渡せばその文字(file の帯の行番号つき)。 */
+function markBadge(mark: TipMark, text: string = mark.violation.rule): string {
+  return `<span class="viol viol-${mark.violation.level}" data-tip="${escapeHtml(mark.tip)}">${escapeHtml(text)}</span>`;
+}
+
+/** 印の並びの一番重い重さの色で下線を引く(印が無ければそのまま)。 */
+function underlined(html: string, marks: readonly TipMark[]): string {
+  const level = worstLevel(marks.map((m) => m.violation));
+  return level === undefined ? html : `<span class="vmark vm-${level}" data-tip="${escapeHtml(tipIds(marks))}">${html}</span>`;
+}
+
+/** 吹き出しの中身(印 1 つにつき template 1 つ — 中身は hover.ts の純粋な関数が組む)。 */
+function tipTemplates(marks: readonly TipMark[], titles: RuleTitles): string {
+  return marks.map((m) => `<template id="${escapeHtml(m.tip)}">${violationTipHtml(m.violation, titles.get(m.violation.rule) ?? null)}</template>`).join('');
 }
 
 /** 本体の字の役 → 色の class(色は U16 で theme の token の色に寄せる — 今は見本 v3 の色)。 */
@@ -266,26 +302,26 @@ function renderSegment(segment: LintBodySegment, at: LineContext): string {
  * 本体の文字(v2 2.2 節・v3 2 節 — operator 承認 "yeah val var when match is perfect.")— 行番号 = source の行、字下げ = 段、
  * effect を通す束縛(⇐)の行は薄い背景、本体の setv は警告の印。組み立ては linter の bodies(読み方の正本は linter)。
  */
-function bodyBlock(body: LintBody, chips: ChipContext, violations: readonly LintViolation[], scope: NameScope): string {
+function bodyBlock(body: LintBody, chips: ChipContext, marks: readonly CardMark[], scope: NameScope): string {
   if (body.lines.length === 0) {
     return '';
   }
-  // linter の違反は、その source の行を描く本体の行へ(v1 制約 4 — 問題の欄は source 側のまま)
-  const byLine = new Map<number, LintViolation[]>();
-  for (const v of violations) {
-    byLine.set(v.range.start.line, [...(byLine.get(v.range.start.line) ?? []), v]);
+  // 本体の行に置いた違反(placeOf の body)は、その source の行を描く本体の行へ(v1 制約 4 — 問題の欄は source 側のまま)。
+  // 行番号 → その行の印の索引
+  const byLine = new Map<number, CardMark[]>();
+  for (const mark of marks) {
+    if (mark.place.tag === 'body') {
+      byLine.set(mark.place.line, [...(byLine.get(mark.place.line) ?? []), mark]);
+    }
   }
   const lines = body.lines
     .map((line) => {
       const bound = line.segments.some((s) => s.role === 'bind');
       const warning =
         line.warning === null ? '' : `<span class="warn" title="${escapeHtml(line.warning.message)}">⚠ ${escapeHtml(line.warning.kind ?? LABELS.warning)}</span>`;
-      const here = byLine.get(line.line) ?? [];
-      const level = worstLevel(here);
-      const marks =
-        level === undefined ? '' : `<span class="viol viol-${level}" title="${escapeHtml(here.map((v) => `${v.rule}: ${v.message}`).join('\n'))}">${escapeHtml(here.map((v) => v.rule).join(' '))}</span>`;
+      const badges = (byLine.get(line.line) ?? []).map((m) => markBadge(m)).join('');
       const text = `${'  '.repeat(line.depth)}${' '.repeat(line.pad)}${line.segments.map((s) => renderSegment(s, { chips, scope, line: line.line, path: body.path })).join('')}`;
-      return `<div class="${bound ? 'bl bound' : 'bl'}" data-src-line="${line.line + 1}"><span class="ln">${line.line + 1}</span>${text}${warning}${marks}</div>`;
+      return `<div class="${bound ? 'bl bound' : 'bl'}" data-src-line="${line.line + 1}"><span class="ln">${line.line + 1}</span>${text}${warning}${badges}</div>`;
     })
     .join('');
   return `<div class="body">${lines}</div>`;
@@ -297,11 +333,61 @@ function pieceHtml(piece: Piece): string {
   return style === '' ? escapeHtml(piece.text) : `<span style="${style}">${escapeHtml(piece.text)}</span>`;
 }
 
+/** source の 1 行に掛かる違反の下線 1 本(列は UTF-16 の [start, end))。 */
+interface LineMark {
+  readonly start: number;
+  readonly end: number;
+  readonly mark: TipMark;
+}
+
+/**
+ * source の行 line に掛かる違反の下線(v13 の 4 — source の箱の範囲に重大さの色の下線)。範囲が空(file の先頭の置き場の
+ * 違反など)なら行全体、複数行の範囲なら間の行は行全体(違反の表の editor の選択と同じ displayRange)。
+ */
+function marksOnLine(marks: readonly TipMark[], line: number): LineMark[] {
+  return marks.flatMap((mark) => {
+    const range = displayRange(mark.violation.range, undefined);
+    if (line < range.start.line || line > range.end.line) {
+      return [];
+    }
+    const start = line === range.start.line ? range.start.character : 0;
+    const end = line === range.end.line ? range.end.character : WHOLE_LINE;
+    return [{ start, end, mark }];
+  });
+}
+
+/** 色つきの片に、その片に掛かる違反の印を添えた物。 */
+interface MarkedPiece extends Piece {
+  readonly marks: readonly TipMark[];
+}
+
+/**
+ * 1 行の片を下線の境で割り、片ごとに掛かる違反の印を添える(offset = 片の並びの頭の列)— source の箱で、違反の範囲だけに
+ * 下線を引くため(色の片・定義の link の境とは別に割れる)。
+ */
+function splitAtMarks(pieces: readonly Piece[], offset: number, spans: readonly LineMark[]): MarkedPiece[] {
+  const out: MarkedPiece[] = [];
+  let column = offset;
+  for (const piece of pieces) {
+    const from = column;
+    const to = column + piece.text.length;
+    const cuts = [...new Set([from, to, ...spans.flatMap((s) => [s.start, s.end]).filter((c) => c > from && c < to)])].sort((a, b) => a - b);
+    for (let i = 0; i + 1 < cuts.length; i += 1) {
+      const [a, b] = [cuts[i], cuts[i + 1]];
+      const marks = spans.filter((s) => s.start <= a && b <= s.end).map((s) => s.mark);
+      out.push({ text: piece.text.slice(a - from, b - from), color: piece.color, fontStyle: piece.fontStyle, marks });
+    }
+    column = to;
+  }
+  return out;
+}
+
 /**
  * 元の Hy(source の行番号つき・読むだけ)。file 全体の色があれば定義の範囲を切り出して editor と同じ色で描き
  * (記号ごとの色は file 全体の記号の順で決まるので、切り出してから塗らない)、無ければ色なしの文字で描く。
+ * カードの違反(頭・本体の両方)は、その範囲に重大さの色の下線を引く(箱を開いた時だけ見える — v13 の 4)。
  */
-function sourceBox(card: Card, fileLabel: string, coloring: SourceColoring | undefined, graph: CallGraph): string {
+function sourceBox(card: Card, fileLabel: string, coloring: SourceColoring | undefined, graph: CallGraph, marks: readonly TipMark[]): string {
   const lines = card.source.split('\n');
   const last = card.firstLine + lines.length - 1;
   const pieces = coloring === undefined ? undefined : sliceHighlight(coloring.lines, coloring.spans, card.definition.fullRange);
@@ -315,7 +401,8 @@ function sourceBox(card: Card, fileLabel: string, coloring: SourceColoring | und
     const offset = i === 0 ? card.definition.fullRange.start.character : 0;
     const here = links.filter((l) => l.line === line);
     const plain: readonly Piece[] = [{ text, color: null, fontStyle: PLAIN }];
-    return linkPieces(colored === undefined ? plain : colored[i], offset, here, (piece, cut) => pieceHtml({ ...piece, text: cut }));
+    const pieces = splitAtMarks(colored === undefined ? plain : colored[i], offset, marksOnLine(marks, line));
+    return linkPieces(pieces, offset, here, (piece, cut) => underlined(pieceHtml({ text: cut, color: piece.color, fontStyle: piece.fontStyle }), piece.marks));
   };
   // 行の目印 data-hy-line は source の行(1 始まり)— 違反の項目から来た時にその行へ送るため(本体の行の data-src-line とは別の名)
   const numbered = lines.map((text, i) => `<div data-hy-line="${card.firstLine + i}"><span class="ln">${card.firstLine + i}</span>${body(text, i)}</div>`).join('');
@@ -340,7 +427,11 @@ export function renderCard(card: Card, ctx: CardContext, hidden: boolean): strin
   const start = d.fullRange.start;
   const toggle = `<button class="fold" data-fold="${escapeHtml(key)}" title="${escapeHtml(open ? LABELS.fold : LABELS.unfold)}">${open ? '▾' : '▸'}</button>`;
   const buttons = `<span class="srcbar"><button class="btn" data-src="${card.id}">${escapeHtml(LABELS.source)}</button><button class="btn" data-line="${start.line}" data-character="${start.character}">${escapeHtml(LABELS.openInEditor)}</button></span>`;
-  const head = `<div class="hd"><span class="kind k-${escapeHtml(d.kind)}">${escapeHtml(d.kind)}</span><span class="name">${escapeHtml(d.name)}</span>${decoratorBadges(d)}${toggle}${buttons}<span class="chips full-only">${tagChips('chip')}</span></div>`;
+  // 違反の印 — 頭(名に下線と札)・本体の行(札)・source の範囲(下線)・足(数)。どの印も同じ吹き出しを指す(v13)
+  const marks: CardMark[] = card.violations.map((p, i) => ({ violation: p.violation, place: p.place, tip: `tip-${card.id}-${i}` }));
+  const headMarks = marks.filter((m) => m.place.tag === 'head');
+  const name = `${underlined(`<span class="name">${escapeHtml(d.name)}</span>`, headMarks)}${headMarks.map((m) => markBadge(m)).join('')}`;
+  const head = `<div class="hd"><span class="kind k-${escapeHtml(d.kind)}">${escapeHtml(d.kind)}</span>${name}${decoratorBadges(d)}${toggle}${buttons}<span class="chips full-only">${tagChips('chip')}</span></div>`;
   const relation = relationOf(ctx.graph, d.qualifiedName);
   const relationText = `${LABELS.callers} <b>${relation.callers}</b> · ${LABELS.tests} <b>${relation.tests}</b>`;
   // 帯の callers / callees は木の入口(v7 3 節の入口 a)
@@ -367,23 +458,25 @@ export function renderCard(card: Card, ctx: CardContext, hidden: boolean): strin
         : entityRows(card, ctx)) + contractRow(d);
   const docBlock = d.docstring === null ? '' : `<div class="doc">${escapeHtml(d.docstring)}</div>`;
   const usedBy = usedByRow(card, ctx.graph);
-  const body = card.body === undefined ? '' : bodyBlock(card.body, ctx, card.violations, nameScope(card.bindings, card.signature));
-  const level = worstLevel(card.violations);
+  const body = card.body === undefined ? '' : bodyBlock(card.body, ctx, marks, nameScope(card.bindings, card.signature));
+  const level = worstLevel(card.violations.map((p) => p.violation));
   const violations =
     level === undefined
       ? ''
-      : `<span class="viol viol-${level}" title="${escapeHtml(card.violations.map((v) => `${v.rule}: ${v.message}`).join('\n'))}">${escapeHtml(LABELS.violations)} ${card.violations.length}</span>`;
+      : `<span class="viol viol-${level}" data-tip="${escapeHtml(tipIds(marks))}">${escapeHtml(LABELS.violations)} ${card.violations.length}</span>`;
   const foot = `<div class="ft">${band}${violations}<span class="loc">${location}</span></div>`;
   const fileLabel = card.place.split('/').pop() ?? card.place;
   // source を持たないカード(repo 全体の面の索引だけのカード)は、開く・source を押すとその file を読み込む(v3 3 節 — 索引の位置から切り出す)
   const lazy = card.source === '' ? ' data-lazy' : '';
   const classes = open ? 'card open' : 'card';
-  return `<section class="${classes}" id="${card.id}" data-key="${escapeHtml(key)}" data-qn="${qn}"${lazy}${hidden ? ' hidden' : ''}>${head}<div class="line">${line}</div><div class="full">${middle}${docBlock}${usedBy}${body}</div>${sourceBox(card, fileLabel, ctx.coloringOf(card), ctx.graph)}<div class="full">${foot}</div></section>`;
+  // 吹き出しの中身はカードの中に置く(カードだけを描き直して送る時も、印と吹き出しがずれないため)
+  return `<section class="${classes}" id="${card.id}" data-key="${escapeHtml(key)}" data-qn="${qn}"${lazy}${hidden ? ' hidden' : ''}>${head}<div class="line">${line}</div><div class="full">${middle}${docBlock}${usedBy}${body}</div>${sourceBox(card, fileLabel, ctx.coloringOf(card), ctx.graph, marks)}<div class="full">${foot}</div>${tipTemplates(marks, ctx.ruleTitles)}</section>`;
 }
 
 /** 面の状態 — 索引にその file が無い時・設定で切った時は理由を出す。 */
 export type PlaneState =
-  | { readonly tag: 'cards'; readonly cards: readonly Card[]; readonly selection: Selection }
+  /** file 1 つの面 — カードと、どのカードにも置けなかった違反(band — file の見出しの帯・model の bandViolations) */
+  | { readonly tag: 'cards'; readonly cards: readonly Card[]; readonly band: readonly LintViolation[]; readonly selection: Selection }
   | WorkspaceState
   | { readonly tag: 'message'; readonly text: string };
 
@@ -438,10 +531,26 @@ export interface PageInput {
   readonly tree: { readonly tree: CallTree; readonly showTests: boolean } | undefined;
   /** 開いた document の file 全体の色(まだ塗れていなければ undefined — source は色なしで描く) */
   readonly coloring: SourceColoring | undefined;
+  /** 規則の ID → 短い名(linter の rules[].title — 違反の吹き出しの見出し) */
+  readonly ruleTitles: RuleTitles;
   /** webview の CSP の出どころ(`webview.cspSource`) */
   readonly cspSource: string;
   /** script に付ける 1 回限りの数 */
   readonly nonce: string;
+}
+
+/**
+ * file の見出しの帯 — どの定義の範囲にも入らない違反(file の先頭の import の向き・置き場・宣言にない依存と、索引と linter の
+ * 版のずれで範囲に入らない物)の札を並べる(v13 の 1(c) — linter が出した違反を読む面から消さない)。無ければ空。
+ */
+export function renderFileBand(violations: readonly LintViolation[], titles: RuleTitles): string {
+  const level = worstLevel(violations);
+  if (level === undefined) {
+    return '';
+  }
+  const marks: TipMark[] = violations.map((violation, i) => ({ violation, tip: `tip-file-${i}` }));
+  const badges = marks.map((m) => markBadge(m, `${m.violation.rule} :${m.violation.range.start.line + 1}`)).join('');
+  return `<div class="fileband band-${level}"><span class="k">${escapeHtml(LABELS.fileLevel)} ${escapeHtml(LABELS.violations)}</span>${badges}${tipTemplates(marks, titles)}</div>`;
 }
 
 /** 左の欄の下の call tree の根の選び(v7 3 節の入口 b — この file の定義から選ぶ)。 */
@@ -489,19 +598,21 @@ export function renderPage(input: PageInput): string {
     glyphs: input.glyphs,
     fold: input.fold,
     graph: input.graph,
-    coloringOf: input.state.tag === 'workspace' ? input.state.coloringOf : () => input.coloring
+    coloringOf: input.state.tag === 'workspace' ? input.state.coloringOf : () => input.coloring,
+    ruleTitles: input.ruleTitles
   };
   const content = (() => {
     switch (input.state.tag) {
       case 'message':
-        return { axes: '', summary: '', bar: '', picker: '', tree: '', cards: `<p class="message">${escapeHtml(input.state.text)}</p>` };
+        return { axes: '', summary: '', band: '', bar: '', picker: '', tree: '', cards: `<p class="message">${escapeHtml(input.state.text)}</p>` };
       case 'cards': {
-        const { cards, selection } = input.state;
+        const { cards, band, selection } = input.state;
         const shown = new Set(visibleCards(cards, selection).map((c) => c.id));
         const all = facets(cards, selection);
         return {
           axes: renderFacets(all, Number.POSITIVE_INFINITY),
           summary: summaryText(shown.size, cards.length, all),
+          band: renderFileBand(band, input.ruleTitles),
           bar: renderLineBar(input.fold),
           picker: renderTreePicker(cards, input.tree?.tree.root.qualifiedName),
           tree: renderTreePart(cards, input.graph, input.glyphs, input.tree),
@@ -513,6 +624,7 @@ export function renderPage(input: PageInput): string {
         return {
           axes: listed.axes,
           summary: listed.summary,
+          band: '',
           bar: renderLineBar(input.fold),
           picker: '',
           tree: renderTreePart(input.state.cards, input.graph, input.glyphs, input.tree),
@@ -538,6 +650,7 @@ export function renderPage(input: PageInput): string {
 <main class="main">
 <div class="top">
 <div class="crumb"><b>${escapeHtml(input.place)}</b><span id="summary">${escapeHtml(content.summary)}</span><button class="btn" id="clear">${escapeHtml(LABELS.clearFilter)}</button></div>
+${content.band}
 ${content.bar}
 </div>
 <div id="tree">${content.tree}</div>
@@ -547,6 +660,15 @@ ${content.bar}
 </body>
 </html>`;
 }
+
+/**
+ * 重大さの色の CSS — 札の地と字・名と source の範囲の下線・file の帯の縁。色は lint/severity.ts の 1 つの表からだけ引く
+ * (面に色の表を増やさない — agora-redesign #1685 の 5)。
+ */
+const LEVEL_STYLE = LINT_LEVELS.map((level) => {
+  const c = LEVEL_COLORS[level];
+  return `.viol-${level}{background:${c.background};color:${c.foreground}}.vm-${level}{text-decoration:underline wavy ${c.underline};text-decoration-skip-ink:none;text-underline-offset:3px}.band-${level}{border-left:3px solid ${c.underline}}`;
+}).join('\n');
 
 /** 頁の見た目(見本 artifacts/v5/entity.html の色と部品に合わせる)。 */
 const PAGE_STYLE = `
@@ -644,7 +766,23 @@ code{font:12px Menlo,monospace;background:#1b1d21;border:1px solid #3a3f47;borde
 .ft b{color:#e6e9ee}
 .loc{margin-left:auto;color:#7d858f;font:11px Menlo,monospace}
 .viol{font-size:11px;border-radius:4px;padding:1px 6px}
-.viol-critical{background:#5a1d1d;color:#ffb0b0}.viol-major{background:#5a3a1d;color:#ffd0a0}.viol-minor{background:#3a3a1d;color:#e6e0a0}.viol-info{background:#1d3a5a;color:#a0c8ff}
+${LEVEL_STYLE}
+.viol[data-tip],.vmark{cursor:help}
+.hd .viol{font-family:-apple-system,sans-serif}
+.fileband{display:flex;gap:8px;align-items:center;flex-wrap:wrap;background:#22252a;border:1px solid #33383f;border-radius:8px;padding:5px 12px;margin-bottom:10px;font-size:12px}
+.fileband .k{color:#8a9099;font-size:11.5px}
+.vt-pop{position:fixed;z-index:20;max-width:560px;max-height:60vh;overflow-y:auto;box-sizing:border-box;background:#16181c;border:1px solid #454a52;border-radius:8px;box-shadow:0 6px 20px rgba(0,0,0,.55);padding:8px 12px;font:12.5px/1.6 -apple-system,"Hiragino Sans",sans-serif;color:#d6d8dc}
+.vt-pop[hidden]{display:none}
+.vt + .vt{border-top:1px solid #33383f;margin-top:8px;padding-top:8px}
+.vt-h{display:flex;gap:8px;align-items:baseline;flex-wrap:wrap}
+.vt-h b{font:600 12.5px Menlo,monospace;color:#f2e6a8}
+.vt-t{color:#e6e9ee}
+.vt-h .viol{margin-left:auto}
+.vt-m{color:#8a9099;font-size:11.5px}
+.vt-msg{margin-top:4px;white-space:pre-wrap}
+.vt-r{display:grid;grid-template-columns:84px minmax(0,1fr);gap:8px;margin-top:4px;white-space:pre-wrap}
+.vt-r .k{color:#8a9099;font-size:11.5px}
+.vt-b{display:flex;gap:6px;margin-top:8px}
 .message{color:#8a9099;margin-top:24px}
 .rel{background:transparent;border:none;color:#b8bec7;font-size:12px;padding:0;text-decoration:underline dotted #5f6670}
 .rel:hover{color:#dfeeff}
@@ -710,15 +848,58 @@ for (const id of view.sources) {
   if (button !== null) { button.classList.add('on'); }
 }
 window.scrollTo(0, view.scrollY);
+// 違反の印の吹き出し(v13 — 頭・本体・source・帯・足のどの印からも同じ吹き出し)。中身は拡張が組んだ template(印の
+// data-tip が指す id)を写すだけで、ここでは文を作らない。印から吹き出しへ指を動かせるよう、離れてから少し待って閉じる
+const pop = document.createElement('div');
+pop.className = 'vt-pop';
+pop.hidden = true;
+document.body.appendChild(pop);
+let popOwner = null;
+let popTimer;
+function hidePop() { clearTimeout(popTimer); pop.hidden = true; popOwner = null; }
+function showPop(mark) {
+  const html = mark.getAttribute('data-tip').split(' ').map((id) => { const t = document.getElementById(id); return t === null ? '' : t.innerHTML; }).join('');
+  if (html === '') { return; }
+  pop.innerHTML = html;
+  pop.hidden = false;
+  popOwner = mark;
+  const r = mark.getBoundingClientRect();
+  const left = Math.max(8, Math.min(r.left, window.innerWidth - pop.offsetWidth - 8));
+  const above = r.top - pop.offsetHeight - 4;
+  const top = r.bottom + 4 + pop.offsetHeight > window.innerHeight - 8 && above > 8 ? above : r.bottom + 4;
+  pop.style.left = left + 'px';
+  pop.style.top = top + 'px';
+}
+document.addEventListener('mouseover', (event) => {
+  const el = event.target instanceof Element ? event.target : null;
+  const mark = el === null ? null : el.closest('[data-tip]');
+  if (mark !== null) {
+    clearTimeout(popTimer);
+    if (mark !== popOwner) { showPop(mark); }
+    return;
+  }
+  if (el !== null && el.closest('.vt-pop') !== null) { clearTimeout(popTimer); return; }
+  if (popOwner !== null) { clearTimeout(popTimer); popTimer = setTimeout(hidePop, 250); }
+});
 let scrollTimer;
 window.addEventListener('scroll', () => {
+  hidePop();
   clearTimeout(scrollTimer);
   scrollTimer = setTimeout(() => { view.scrollY = window.scrollY; vscode.setState(view); }, 100);
 });
 document.addEventListener('click', (event) => {
-  const target = event.target instanceof Element ? event.target.closest('[data-axis],[data-line],[data-src],[data-fold],[data-tree-root],[data-tree-dir],[data-reveal],[data-node-toggle],#clear,#fold-all,#unfold-all,#tree-more,#tree-close') : null;
+  const target = event.target instanceof Element ? event.target.closest('[data-vopen],[data-vlist],[data-axis],[data-line],[data-src],[data-fold],[data-tree-root],[data-tree-dir],[data-reveal],[data-node-toggle],#clear,#fold-all,#unfold-all,#tree-more,#tree-close') : null;
   if (target === null) { return; }
   event.preventDefault();
+  // 吹き出しのボタン — 違反の目印(拡張が JSON で持たせた物)をそのまま送り返す(open in editor / show in violations)
+  if (target.hasAttribute('data-vopen') || target.hasAttribute('data-vlist')) {
+    const holder = target.closest('[data-vref]');
+    if (holder !== null) {
+      vscode.postMessage({ type: target.hasAttribute('data-vopen') ? 'violation-open' : 'violation-list', ref: JSON.parse(holder.getAttribute('data-vref')) });
+    }
+    hidePop();
+    return;
+  }
   if (target.hasAttribute('data-node-toggle')) {
     const node = target.closest('.tn');
     if (node !== null) { const closed = node.classList.toggle('closed'); target.textContent = closed ? '▸' : '▾'; }

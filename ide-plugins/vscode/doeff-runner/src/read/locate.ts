@@ -4,6 +4,7 @@
 
 import * as path from 'path';
 import type { HyDefinition, HyPosition } from '../hy/contract';
+import type { LintViolation } from '../lint/contract';
 
 /** 面で見せる先 — 定義と、光らせる source の行(0 始まり・無ければ undefined)と、source の箱も開くか(違反の項目から — v10)。 */
 export interface RevealTarget {
@@ -89,6 +90,58 @@ export interface ViolationPlace {
   readonly path: string;
   readonly start: HyPosition;
   readonly end: HyPosition;
+}
+
+/**
+ * 読む面の違反の吹き出しの「show in violations」の命令 — 違反の表(linter)の該当の項目を見せる(REVEAL_VIOLATION_COMMAND の
+ * 逆向き・agora-redesign #1685)。引数は ViolationRef 1 つ。命令は lint の側が登録する。
+ */
+export const REVEAL_IN_VIOLATIONS_COMMAND = 'doeff-runner.lint.revealInViolations';
+
+/** 違反 1 件の目印 — 規則の ID と位置(同じ位置に規則の違う違反が並ぶので、規則でも分ける)。 */
+export interface ViolationRef {
+  readonly rule: string;
+  readonly place: ViolationPlace;
+}
+
+/** 違反の目印(吹き出しのボタンが webview から送り返す物)。 */
+export function violationRef(violation: LintViolation): ViolationRef {
+  const { start, end } = violation.range;
+  return {
+    rule: violation.rule,
+    place: { path: violation.path, start: { line: start.line, character: start.character }, end: { line: end.line, character: end.character } }
+  };
+}
+
+/** 素の値の欄の表(object でなければ undefined)。 */
+function fieldsOf(raw: unknown): ReadonlyMap<string, unknown> | undefined {
+  return typeof raw === 'object' && raw !== null && !Array.isArray(raw) ? new Map<string, unknown>(Object.entries(raw)) : undefined;
+}
+
+/** 0 以上の整数か。 */
+function isIndex(value: unknown): value is number {
+  return typeof value === 'number' && Number.isInteger(value) && value >= 0;
+}
+
+/** 位置を形で確かめて読む(知らない形は undefined)。 */
+function readPosition(raw: unknown): HyPosition | undefined {
+  const fields = fieldsOf(raw);
+  const line = fields?.get('line');
+  const character = fields?.get('character');
+  return isIndex(line) && isIndex(character) ? { line, character } : undefined;
+}
+
+/** webview から届いた違反の目印を形で確かめて読む(知らない形は undefined — JSON の境界の唯一の読み口)。 */
+export function readViolationRef(raw: unknown): ViolationRef | undefined {
+  const fields = fieldsOf(raw);
+  const rule = fields?.get('rule');
+  const place = fieldsOf(fields?.get('place'));
+  const filePath = place?.get('path');
+  const start = readPosition(place?.get('start'));
+  const end = readPosition(place?.get('end'));
+  return typeof rule === 'string' && typeof filePath === 'string' && start !== undefined && end !== undefined
+    ? { rule, place: { path: filePath, start, end } }
+    : undefined;
 }
 
 /** 違反の項目を押した時にすること。 */

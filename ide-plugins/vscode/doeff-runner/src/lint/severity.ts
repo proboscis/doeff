@@ -24,6 +24,24 @@ export const ALL_VIOLATIONS: PanelFilter = { level: 'all', standing: 'all' };
 /** 重大さの順位(小さいほど重い)。 */
 const RANK: Readonly<Record<LintLevel, number>> = { critical: 0, major: 1, minor: 2, info: 3 };
 
+/** 重大さ 1 つの色(読む面の札の地と字・印の下線)。 */
+export interface LevelColors {
+  /** 札の地 */
+  readonly background: string;
+  /** 札の字 */
+  readonly foreground: string;
+  /** 定義の名・source の範囲に引く下線 */
+  readonly underline: string;
+}
+
+/** 重大さの色の表 — 読む面の札・下線・file の帯は、この 1 つの表からだけ色を引く(面に色の表を増やさない・agora-redesign #1685)。 */
+export const LEVEL_COLORS: Readonly<Record<LintLevel, LevelColors>> = {
+  critical: { background: '#5a1d1d', foreground: '#ffb0b0', underline: '#f14c4c' },
+  major: { background: '#5a3a1d', foreground: '#ffd0a0', underline: '#e5a03c' },
+  minor: { background: '#3a3a1d', foreground: '#e6e0a0', underline: '#c9c26a' },
+  info: { background: '#1d3a5a', foreground: '#a0c8ff', underline: '#5aa2ff' }
+};
+
 /** 重大さを比べる(重い方が先)— 違反の欄を critical から並べるため。 */
 export function byLevel(a: LintLevel, b: LintLevel): number {
   return RANK[a] - RANK[b];

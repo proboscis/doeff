@@ -14,6 +14,7 @@ import {
   panelViolationRoots,
   ruleNodes,
   violationCount,
+  violationTrail,
   worstSeverity,
   type LintNode
 } from './view';
@@ -21,7 +22,7 @@ import type { LintStore } from './store';
 import { ALL_VIOLATIONS, summaryDescription, summaryLabel, type PanelFilter, type SavedTally } from './severity';
 import type { IconSource } from '../pixel/icons';
 import { layerGlyph, ruleIcon, serviceGlyph, violationMark } from '../pixel/vocabulary';
-import { mentionLink, REVEAL_ENTITY_COMMAND, REVEAL_VIOLATION_COMMAND, type MentionsOf, type ViolationPlace } from '../read/locate';
+import { mentionLink, REVEAL_ENTITY_COMMAND, REVEAL_VIOLATION_COMMAND, type MentionsOf, type ViolationPlace, type ViolationRef } from '../read/locate';
 
 /**
  * 違反の項目を押した時の命令 — その .hy の読む面で、違反の行を含む定義のカードと source の箱の該当の行へ(v10・#910 U18)。
@@ -251,6 +252,13 @@ export class LintViolationsTree implements vscode.TreeDataProvider<LintNode>, vs
   readonly onDidChangeTreeData = this.changed.event;
   private mode: 'violations' | 'rules' = 'violations';
   private filterState: PanelFilter = ALL_VIOLATIONS;
+  /**
+   * 作った節を出し直すまで使い回す — 読む面から表の項目を見せる時(reveal)に、VS Code に渡した節と同じ物を親から辿れるように
+   * するため(節は値で、作り直すと別の物になる)。最上段は出し直す時に捨て、子と親の表は節の object に結ぶ
+   */
+  private rootNodes: LintNode[] | undefined;
+  private readonly childNodes = new WeakMap<LintNode, LintNode[]>();
+  private readonly parentNodes = new WeakMap<LintNode, LintNode>();
 
   constructor(
     private readonly store: LintStore,
@@ -283,8 +291,9 @@ export class LintViolationsTree implements vscode.TreeDataProvider<LintNode>, vs
     this.refresh();
   }
 
-  /** 出し直す。 */
+  /** 出し直す(作った節を捨てる)。 */
   refresh(): void {
+    this.rootNodes = undefined;
     this.changed.fire(undefined);
   }
 
@@ -298,14 +307,37 @@ export class LintViolationsTree implements vscode.TreeDataProvider<LintNode>, vs
     return lintTreeItem(node, this.store.layers(), this.pixels(), this.mentions);
   }
 
-  /** 節の子(最上段は law の束か規則の一覧)。 */
+  /** 節の子(最上段は law の束か規則の一覧)。出し直すまで同じ節を返す。 */
   getChildren(node?: LintNode): LintNode[] {
-    if (node !== undefined) {
-      return lintChildren(node);
+    if (node === undefined) {
+      if (this.rootNodes === undefined) {
+        this.rootNodes =
+          this.mode === 'violations'
+            ? panelViolationRoots(this.store.rootRuns(), this.store.violations(), this.store.rules(), this.filterState, this.previous())
+            : ruleNodes(this.store.rules());
+      }
+      return this.rootNodes;
     }
-    return this.mode === 'violations'
-      ? panelViolationRoots(this.store.rootRuns(), this.store.violations(), this.store.rules(), this.filterState, this.previous())
-      : ruleNodes(this.store.rules());
+    const known = this.childNodes.get(node);
+    if (known !== undefined) {
+      return known;
+    }
+    const made = lintChildren(node);
+    this.childNodes.set(node, made);
+    for (const child of made) {
+      this.parentNodes.set(child, node);
+    }
+    return made;
+  }
+
+  /** 節の親(最上段は undefined)— VS Code の reveal が親から辿るため。 */
+  getParent(node: LintNode): LintNode | undefined {
+    return this.parentNodes.get(node);
+  }
+
+  /** 目印の違反の節までの道(今の出し方と絞り込みの表に無ければ undefined)— 読む面の吹き出しから表の項目を見せるため。 */
+  trailOf(ref: ViolationRef): readonly LintNode[] | undefined {
+    return this.mode === 'violations' ? violationTrail(this.getChildren(), ref, (n) => this.getChildren(n)) : undefined;
   }
 }
 

@@ -6,8 +6,10 @@ import { parseLintJson, type LintReport, type LintViolation } from '../../lint/c
 import {
   axesOf,
   axisKey,
+  bandViolations,
   buildCards,
   facets,
+  placeOf,
   locationOf,
   NO_VALUE,
   parseAxisKey,
@@ -35,9 +37,10 @@ import {
   type FoldState
 } from '../../read/fold';
 import { LABELS } from '../../read/labels';
-import { locate, parseLocation, violationAction, type ViolationPlace } from '../../read/locate';
+import { locate, parseLocation, readViolationRef, violationAction, violationRef, type ViolationPlace } from '../../read/locate';
 import { decoratorLabel } from '../../read/entity';
-import { effectHover, nameHover, nameScope } from '../../read/hover';
+import { effectHover, nameHover, nameScope, ruleTitles, violationTipHtml } from '../../read/hover';
+import { lintChildren, violationRoots, violationTrail } from '../../lint/view';
 
 // 材料は test-fixtures/read/plane.hy に hy-index と doeff-linter(editor-json・--stdin --path)を当てた実出力
 // (path だけ /repo に置き換えた)。定義を読む面の受け入れの検査 V1・V2・V3・V10(agora-redesign #910)。
@@ -248,12 +251,13 @@ function planePage(selection: Selection, fold?: FoldState): string {
   const cards = planeCards();
   return renderPage({
     place: 'pkg/plane.hy',
-    state: { tag: 'cards', cards, selection },
+    state: { tag: 'cards', band: [], cards, selection },
     glyphs: { effect: (name) => `data:image/svg+xml;fake,${name}` },
     fold: fold ?? unfoldAll(INITIAL_FOLD, cards.map((c) => cardKey(c.definition))),
     graph: buildCallGraph([planeIndex()]),
     tree: undefined,
     coloring: undefined,
+    ruleTitles: new Map(),
     cspSource: 'vscode-resource:',
     nonce: 'n'
   });
@@ -276,6 +280,7 @@ suite('定義を読む面 — 頁(V10・V12・V13)', () => {
       graph: buildCallGraph([]),
       tree: undefined,
       coloring: undefined,
+      ruleTitles: new Map(),
       cspSource: 'vscode-resource:',
       nonce: 'n'
     });
@@ -515,12 +520,13 @@ suite('定義を読む面 — 呼び出しの依存の木(V19・v7 3 節)', () =
     assert.ok(tree !== undefined);
     const html = renderPage({
       place: 'pkg/plane.hy',
-      state: { tag: 'cards', cards, selection: new Map() },
+      state: { tag: 'cards', band: [], cards, selection: new Map() },
       glyphs: { effect: () => undefined },
       fold: INITIAL_FOLD,
       graph: graph(),
       tree: { tree, showTests: false },
       coloring: undefined,
+      ruleTitles: new Map(),
       cspSource: 'vscode-resource:',
       nonce: 'n'
     });
@@ -579,12 +585,13 @@ suite('定義を読む面 — 本体の文字(V6・V11 の一部・U5)', () => {
     const padded = { ...describe, body: { ...describe.body, lines: describe.body.lines.map((l, i) => (i === 1 ? { ...l, pad: 3 } : l)) } };
     const html = renderPage({
       place: 'pkg/plane.hy',
-      state: { tag: 'cards', cards: cards.map((c) => (c === describe ? padded : c)), selection: new Map() },
+      state: { tag: 'cards', band: [], cards: cards.map((c) => (c === describe ? padded : c)), selection: new Map() },
       glyphs: { effect: () => undefined },
       fold: unfoldAll(INITIAL_FOLD, cards.map((c) => cardKey(c.definition))),
       graph: buildCallGraph([planeIndex()]),
       tree: undefined,
       coloring: undefined,
+      ruleTitles: new Map(),
       cspSource: 'vscode-resource:',
       nonce: 'n'
     });
@@ -599,12 +606,13 @@ suite('定義を読む面 — 本体の文字(V6・V11 の一部・U5)', () => {
     const marked = { ...describe, body: { ...describe.body, lines: [{ ...describe.body.lines[0], segments: [lisp] }] } };
     const html = renderPage({
       place: 'pkg/plane.hy',
-      state: { tag: 'cards', cards: cards.map((c) => (c === describe ? marked : c)), selection: new Map() },
+      state: { tag: 'cards', band: [], cards: cards.map((c) => (c === describe ? marked : c)), selection: new Map() },
       glyphs: { effect: () => undefined },
       fold: unfoldAll(INITIAL_FOLD, cards.map((c) => cardKey(c.definition))),
       graph: buildCallGraph([planeIndex()]),
       tree: undefined,
       coloring: undefined,
+      ruleTitles: new Map(),
       cspSource: 'vscode-resource:',
       nonce: 'n'
     });
@@ -626,18 +634,243 @@ suite('定義を読む面 — 違反を本体の行へ(V7・U5)', () => {
     const cards = planeCards([onLine]);
     const html = renderPage({
       place: 'pkg/plane.hy',
-      state: { tag: 'cards', cards, selection: new Map() },
+      state: { tag: 'cards', band: [], cards, selection: new Map() },
       glyphs: { effect: () => undefined },
       fold: unfoldAll(INITIAL_FOLD, cards.map((c) => cardKey(c.definition))),
       graph: buildCallGraph([planeIndex()]),
       tree: undefined,
       coloring: undefined,
+      ruleTitles: new Map(),
       cspSource: 'vscode-resource:',
       nonce: 'n'
     });
     const card = cardHtml(html, 'fetch-row');
-    assert.ok(/<span class="ln">17<\/span>[\s\S]*?<span class="viol viol-major" title="DOEFF142: テストの違反">DOEFF142<\/span><\/div>/.test(card));
+    assert.ok(/<span class="ln">17<\/span>[\s\S]*?<span class="viol viol-major" data-tip="tip-d2-0">DOEFF142<\/span><\/div>/.test(card));
     assert.ok(!/<span class="ln">18<\/span>[^\n]*DOEFF142/.test(card.split('<span class="ln">18</span>')[1]?.split('</div>')[0] ?? ''));
+  });
+});
+
+suite('定義を読む面 — 違反の置き場と吹き出し(v13・agora-redesign #1685)', () => {
+  /** 見本の fetch-row の定義(名 = 13 行目の 6〜15 列・本体の行 = 17・18 行目)。 */
+  const fetchRow = (): HyDefinition => {
+    const found = planeCards().find((c) => c.definition.name === 'fetch-row');
+    assert.ok(found !== undefined);
+    return found.definition;
+  };
+  /** 範囲を差し替えた違反。 */
+  const ranged = (violation: LintViolation, line: number, from: number, endLine: number, to: number): LintViolation => ({
+    ...violation,
+    range: { start: { line, character: from }, end: { line: endLine, character: to } }
+  });
+  /** 違反を渡した見本の頁(全カードを開く — source の箱は hidden のまま描く)と、そのカード。 */
+  const pageWith = (violations: readonly LintViolation[]): { readonly html: string; readonly cards: readonly Card[] } => {
+    const cards = planeCards(violations);
+    const html = renderPage({
+      place: 'pkg/plane.hy',
+      state: { tag: 'cards', band: bandViolations(violations, cards), cards, selection: new Map() },
+      glyphs: { effect: () => undefined },
+      fold: unfoldAll(INITIAL_FOLD, cards.map((c) => cardKey(c.definition))),
+      graph: buildCallGraph([planeIndex()]),
+      tree: undefined,
+      coloring: undefined,
+      ruleTitles: new Map([['DOEFF205', '入力の形の確認と判断が混ざる(Jev)']]),
+      cspSource: 'vscode-resource:',
+      nonce: 'n'
+    });
+    return { html, cards };
+  };
+  /** カードの頭(種類・名・印・ボタン)の HTML。 */
+  const headOf = (card: string): string => card.split('<div class="line">')[0];
+  /** カードの本体の行の HTML。 */
+  const bodyOf = (card: string): string => card.split('<div class="body">')[1]?.split('<div class="srcbox"')[0] ?? '';
+  /** source の箱の 1 行(1 始まり)の HTML。 */
+  const sourceRow = (card: string, line: number): string => card.split(`<div data-hy-line="${line}">`)[1]?.split('</div>')[0] ?? '';
+
+  test('頭の違反(名の範囲 — Jev の 201〜205 など)→ カードの頭の名に下線と規則の札。本体の行には札を出さない', () => {
+    const definition = fetchRow();
+    const head: LintViolation = { ...ranged(violationAt(definition, 'DOEFF205'), 12, 6, 12, 15), level: 'critical' };
+    assert.deepStrictEqual(placeOf(head, definition, planeCards().find((c) => c.definition.name === 'fetch-row')?.body), { tag: 'head' });
+    const card = cardHtml(pageWith([head]).html, 'fetch-row');
+    assert.ok(
+      headOf(card).includes(
+        '<span class="vmark vm-critical" data-tip="tip-d2-0"><span class="name">fetch-row</span></span><span class="viol viol-critical" data-tip="tip-d2-0">DOEFF205</span>'
+      )
+    );
+    assert.ok(bodyOf(card) !== '' && !bodyOf(card).includes('DOEFF205'));
+    // source の箱(開いた時だけ見える)の名の範囲にも下線、足の数も同じ吹き出しを指す。吹き出しの中身は 1 つ
+    assert.ok(card.includes('<div class="srcbox" id="src-d2" hidden>'));
+    assert.ok(sourceRow(card, 13).includes('(defk <span class="vmark vm-critical" data-tip="tip-d2-0">fetch-row</span> [key]'));
+    assert.ok(card.includes('<span class="viol viol-critical" data-tip="tip-d2-0">violations 1</span>'));
+    assert.strictEqual((card.match(/<template id="tip-d2-0">/g) ?? []).length, 1);
+  });
+
+  test('定義の範囲の中で本体のどの行にも当たらない違反(契約の辞書の行)も頭に置く', () => {
+    const definition = fetchRow();
+    const body = planeCards().find((c) => c.definition.name === 'fetch-row')?.body;
+    assert.ok(body !== undefined);
+    assert.deepStrictEqual(placeOf(ranged(violationAt(definition, 'DOEFF110'), 13, 2, 13, 20), definition, body), { tag: 'head' });
+    assert.deepStrictEqual(placeOf(ranged(violationAt(definition, 'DOEFF110'), 13, 2, 13, 20), definition, undefined), { tag: 'head' });
+  });
+
+  test('本体の違反 → 本体のその行に札と、source の箱の同じ行の範囲に下線(頭には札を出さない)', () => {
+    const definition = fetchRow();
+    const onLine = ranged(violationAt(definition, 'DOEFF142'), 16, 2, 16, 30);
+    const body = planeCards().find((c) => c.definition.name === 'fetch-row')?.body;
+    assert.deepStrictEqual(placeOf(onLine, definition, body), { tag: 'body', line: 16 });
+    const card = cardHtml(pageWith([onLine]).html, 'fetch-row');
+    assert.ok(/<span class="ln">17<\/span>[\s\S]*?<span class="viol viol-major" data-tip="tip-d2-0">DOEFF142<\/span><\/div>/.test(bodyOf(card)));
+    assert.ok(!headOf(card).includes('DOEFF142') && !headOf(card).includes('vmark'));
+    assert.ok(sourceRow(card, 17).includes('<span class="vmark vm-major" data-tip="tip-d2-0">(&lt;- row </span>'));
+    assert.ok(!sourceRow(card, 18).includes('vmark') && !sourceRow(card, 13).includes('vmark'));
+  });
+
+  test('file の先頭の違反(どの定義の範囲にも入らない import の向きなど)→ file の見出しの帯。どのカードにも出ない', () => {
+    const importLine = ranged(violationAt(fetchRow(), 'DOEFF101'), 1, 1, 1, 8);
+    const { html, cards } = pageWith([importLine]);
+    assert.ok(cards.every((c) => placeOf(importLine, c.definition, c.body).tag === 'file' && c.violations.length === 0));
+    assert.deepStrictEqual(bandViolations([importLine], cards), [importLine]);
+    assert.ok(
+      html.includes(
+        '<div class="fileband band-major"><span class="k">file-level violations</span><span class="viol viol-major" data-tip="tip-file-0">DOEFF101 :2</span><template id="tip-file-0">'
+      )
+    );
+    assert.ok(!html.split('<div id="cards">')[1].includes('DOEFF101'));
+  });
+
+  test('範囲の外の違反(索引と linter の版のずれで、どの定義にも入らない)も帯に落ちて消えない — 違反は必ず 1 か所に出る', () => {
+    const definition = fetchRow();
+    const head = ranged(violationAt(definition, 'DOEFF205'), 12, 6, 12, 15);
+    const onLine = ranged(violationAt(definition, 'DOEFF142'), 16, 2, 16, 30);
+    const importLine = ranged(violationAt(definition, 'DOEFF101'), 1, 1, 1, 8);
+    const drifted = ranged(violationAt(definition, 'DOEFF124'), 999, 0, 999, 4);
+    const all = [head, onLine, importLine, drifted];
+    const { html, cards } = pageWith(all);
+    assert.deepStrictEqual(bandViolations(all, cards), [importLine, drifted]);
+    const placed = cards.flatMap((c) => c.violations.map((p) => p.violation));
+    assert.deepStrictEqual(placed, [head, onLine]);
+    assert.ok(html.includes('<span class="viol viol-major" data-tip="tip-file-1">DOEFF124 :1000</span>'));
+    assert.ok(html.includes('<template id="tip-file-1">'));
+  });
+
+  test('吹き出し: 規則の ID・短い名・重大さ・立場・Jev の p・文・why・how to fix・law を linter の欄のまま並べ、ボタンは 2 つ', () => {
+    const jev: LintViolation = {
+      ...violationAt(fetchRow(), 'DOEFF205'),
+      level: 'critical',
+      standing: 'registered',
+      source: 'jev',
+      probability: 0.79,
+      hint: '形の検めは境目で parse する',
+      explanation: { subject: '定義 fetch-row(defk)', reason: '形の検めと判断が混ざっている見込み', lawStatement: '判断は型のある値だけを受ける' }
+    };
+    const tip = violationTipHtml(jev, '入力の形の確認と判断が混ざる(Jev)');
+    assert.ok(tip.includes('<div class="vt-h"><b>DOEFF205</b><span class="vt-t">入力の形の確認と判断が混ざる(Jev)</span><span class="viol viol-critical">critical</span></div>'));
+    assert.ok(tip.includes('<div class="vt-m">known (registry) · Jev p=0.79</div>'));
+    assert.ok(tip.includes('<div class="vt-msg">テストの違反</div>'));
+    assert.ok(tip.includes('<span class="k">why</span><span>形の検めと判断が混ざっている見込み</span>'));
+    assert.ok(tip.includes('<span class="k">how to fix</span><span>形の検めは境目で parse する</span>'));
+    assert.ok(tip.includes('<span class="k">law</span><span>判断は型のある値だけを受ける</span>'));
+    assert.ok(tip.includes('<button class="btn" data-vlist>show in violations</button><button class="btn" data-vopen>open in editor</button>'));
+    // 短い名の無い規則は ID だけ、Jev でない違反は p を出さない
+    const plain = violationTipHtml({ ...jev, probability: null, source: 'linter', standing: 'new' }, null);
+    assert.ok(plain.includes('<b>DOEFF205</b><span class="viol viol-critical">'));
+    assert.ok(plain.includes('<div class="vt-m">new</div>'));
+  });
+
+  test('吹き出し: explanation が null なら why と law の行を出さない(面が文を作らない)', () => {
+    const tip = violationTipHtml({ ...violationAt(fetchRow(), 'DOEFF142'), explanation: null, hint: '直す手' }, null);
+    assert.ok(!tip.includes('<span class="k">why</span>'));
+    assert.ok(!tip.includes('<span class="k">law</span>'));
+    assert.ok(tip.includes('<span class="k">how to fix</span><span>直す手</span>'));
+  });
+
+  test('吹き出し: hint が null なら how to fix の行を出さない', () => {
+    const tip = violationTipHtml(
+      { ...violationAt(fetchRow(), 'DOEFF142'), hint: null, explanation: { subject: 's', reason: 'なぜの文', lawStatement: null } },
+      null
+    );
+    assert.ok(!tip.includes('<span class="k">how to fix</span>'));
+    assert.ok(!tip.includes('<span class="k">law</span>'));
+    assert.ok(tip.includes('<span class="k">why</span><span>なぜの文</span>'));
+  });
+
+  test('ボタンの目印: 吹き出しに持たせた JSON を webview が送り返したら readViolationRef で読み戻せ、形の違う値は読まない', () => {
+    const violation = ranged(violationAt(fetchRow(), 'DOEFF142'), 16, 2, 16, 30);
+    const tip = violationTipHtml(violation, null);
+    const attribute = /data-vref="([^"]*)"/.exec(tip)?.[1];
+    assert.ok(attribute !== undefined);
+    const sent: unknown = JSON.parse(attribute.replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&'));
+    assert.deepStrictEqual(readViolationRef(sent), violationRef(violation));
+    assert.deepStrictEqual(readViolationRef(sent), { rule: 'DOEFF142', place: { path: FILE, start: { line: 16, character: 2 }, end: { line: 16, character: 30 } } });
+    assert.strictEqual(readViolationRef({ rule: 'DOEFF142', place: { path: FILE, start: { line: -1, character: 0 }, end: { line: 0, character: 0 } } }), undefined);
+    assert.strictEqual(readViolationRef({ place: { path: FILE, start: { line: 1, character: 0 }, end: { line: 1, character: 0 } } }), undefined);
+    assert.strictEqual(readViolationRef('DOEFF142'), undefined);
+  });
+
+  test('show in violations: 違反の表の 束 → file → 違反 の道を規則と位置で引く(同じ位置の別の規則には当たらない)', () => {
+    const definition = fetchRow();
+    const a = ranged(violationAt(definition, 'DOEFF205'), 12, 6, 12, 15);
+    const b = ranged(violationAt(definition, 'DOEFF110'), 12, 6, 12, 15);
+    const roots = violationRoots([a, b], []);
+    const trail = violationTrail(roots, violationRef(b), lintChildren);
+    assert.ok(trail !== undefined);
+    assert.deepStrictEqual(
+      trail.map((n) => n.tag),
+      ['group', 'file', 'violation']
+    );
+    const last = trail[2];
+    assert.ok(last.tag === 'violation' && last.violation === b);
+    assert.strictEqual(violationTrail(roots, { rule: 'DOEFF205', place: { ...violationRef(a).place, start: { line: 3, character: 0 } } }, lintChildren), undefined);
+  });
+
+  test('実物(agora-controllers の task_attempt.hy に doeff-linter と hy-index を当てた出力): start-turn の DOEFF205 は頭に印、吹き出しに why と how to fix', () => {
+    const index = parseHyIndexJson(fs.readFileSync(path.join(FIXTURES, 'start-turn-index.json'), 'utf8'));
+    const lint = parseLintJson(fs.readFileSync(path.join(FIXTURES, 'start-turn-lint.json'), 'utf8'));
+    assert.ok(index.tag === 'ok' && lint.tag === 'ok');
+    const file = index.document.files[0];
+    // source は頭の 1 行だけ(本体の文字は置き場の repo の物なので写さない — 行の位置だけ合わせる)
+    const lines = Array.from({ length: 434 }, (_, i) => (i === 402 ? '(defk start-turn [assignment row lease refs]' : ''));
+    const cards = buildCards({
+      definitions: file.definitions,
+      signatures: [],
+      bodies: [],
+      bindings: [],
+      violations: lint.report.violations,
+      lines,
+      testsOf: () => 0,
+      place: 'controllers/agent_task/core/task_attempt.hy'
+    });
+    const [violation] = lint.report.violations;
+    assert.strictEqual(violation.rule, 'DOEFF205');
+    assert.deepStrictEqual(placeOf(violation, cards[0].definition, cards[0].body), { tag: 'head' });
+    const band = bandViolations(lint.report.violations, cards);
+    assert.deepStrictEqual(band, []);
+    const html = renderPage({
+      place: 'controllers/agent_task/core/task_attempt.hy',
+      state: { tag: 'cards', band, cards, selection: new Map() },
+      glyphs: { effect: () => undefined },
+      fold: INITIAL_FOLD,
+      graph: buildCallGraph(index.document.files),
+      tree: undefined,
+      coloring: undefined,
+      ruleTitles: ruleTitles(lint.report.rules),
+      cspSource: 'vscode-resource:',
+      nonce: 'n'
+    });
+    const card = cardHtml(html, 'start-turn');
+    // 畳んだカード(1 行)でも頭は見える — 名に critical の下線と DOEFF205 の札
+    assert.ok(
+      headOf(card).includes(
+        '<span class="vmark vm-critical" data-tip="tip-d0-0"><span class="name">start-turn</span></span><span class="viol viol-critical" data-tip="tip-d0-0">DOEFF205</span>'
+      )
+    );
+    const tip = card.split('<template id="tip-d0-0">')[1]?.split('</template>')[0] ?? '';
+    assert.ok(tip.includes('<b>DOEFF205</b><span class="vt-t">入力の形の確認と判断が混ざる(Jev)</span><span class="viol viol-critical">critical</span>'));
+    assert.ok(tip.includes('<div class="vt-m">known (registry) · Jev p=0.79</div>'));
+    assert.ok(tip.includes('<span class="k">why</span><span>Jev の判定 p=0.79: 入力の形の検め(辞書の鍵を読む・isinstance・空の検め)と業務の判断が 1 つの定義に混ざっている見込み。'));
+    assert.ok(tip.includes('<span class="k">how to fix</span><span>形の検めは protocol の境目で defwire の型に parse し(形が合わなければ解く所で失敗)、この定義は型のある値を受けて判断だけをする</span>'));
+    // law の文は linter が出していない(null)ので行ごと出さない
+    assert.ok(!tip.includes('<span class="k">law</span>'));
+    assert.ok(sourceRow(card, 403).includes('(defk <span class="vmark vm-critical" data-tip="tip-d0-0">start-turn</span> [assignment row lease refs]'));
   });
 });
 
@@ -662,12 +895,13 @@ suite('定義を読む面 — 実体の種類ごとの欄と帯(V13・v2 2.1 節
     const page = (fold: FoldState): string =>
       renderPage({
         place: 'pkg/entities.hy',
-        state: { tag: 'cards', cards, selection: new Map() },
+        state: { tag: 'cards', band: [], cards, selection: new Map() },
         glyphs: { effect: () => undefined },
         fold,
         graph: buildCallGraph(parsed.document.files),
         tree: undefined,
         coloring: undefined,
+        ruleTitles: new Map(),
         cspSource: 'vscode-resource:',
         nonce: 'n'
       });
@@ -794,7 +1028,8 @@ suite('定義を読む面 — repo 全体の入口(U9)', () => {
     glyphs: { effect: () => undefined },
     fold,
     graph,
-    coloringOf: () => undefined
+    coloringOf: () => undefined,
+    ruleTitles: new Map()
   });
   const state = (cards: readonly Card[], selection: Selection, pinned: readonly string[], limit: number, facetLimit: number): WorkspaceState => ({
     tag: 'workspace',
@@ -967,12 +1202,13 @@ suite('定義を読む面 — defclass のカード(U17・v9)', () => {
     const page = (fold: FoldState): string =>
       renderPage({
         place: 'pkg/classes.hy',
-        state: { tag: 'cards', cards, selection: new Map() },
+        state: { tag: 'cards', band: [], cards, selection: new Map() },
         glyphs: { effect: () => undefined },
         fold,
         graph: buildCallGraph(parsed.document.files),
         tree: undefined,
         coloring: undefined,
+        ruleTitles: new Map(),
         cspSource: 'vscode-resource:',
         nonce: 'n'
       });

@@ -98,8 +98,8 @@ export interface Card {
   readonly signature: LintSignature | undefined;
   /** defk / deff の本体の文字の行(linter の bodies — 無ければ undefined) */
   readonly body: LintBody | undefined;
-  /** 定義の範囲に入る linter の違反 */
-  readonly violations: readonly LintViolation[];
+  /** 定義の範囲に入る linter の違反と、カードの中の置き場(頭か本体の行 — placeOf) */
+  readonly violations: readonly PlacedViolation[];
   /** 定義の範囲に入る linter の束縛(本体の名の hover に型を出す — v1 2.5 節) */
   readonly bindings: readonly LintBinding[];
   /** 定義の source(書かれたままの lisp) */
@@ -197,6 +197,58 @@ function byPosition(a: HyDefinition, b: HyDefinition): number {
   return a.fullRange.start.line - b.fullRange.start.line || a.fullRange.start.character - b.fullRange.start.character;
 }
 
+/**
+ * 違反の置き場(定義 1 つに対して — agora-redesign #1685 の 1・設計 v13)。linter が出した違反は、この 3 つのどれか 1 か所に
+ * 必ず出す(どのカードにも置けない違反は file の帯へ — bandViolations)。
+ */
+export type ViolationPlacement =
+  /** 定義の頭 — カードの頭の名に重大さの色の下線と規則の ID の札 */
+  | { readonly tag: 'head' }
+  /** 本体の行 — その source の行(0 始まり)を描く本体の行に札(source の箱の同じ範囲にも下線) */
+  | { readonly tag: 'body'; readonly line: number }
+  /** 定義の範囲の外 — file の見出しの帯 */
+  | { readonly tag: 'file' };
+
+/** カードの中の置き場(頭か本体の行)。 */
+export type CardPlacement = Exclude<ViolationPlacement, { readonly tag: 'file' }>;
+
+/** カードに置いた違反 1 件 — 違反と、カードの中の置き場。 */
+export interface PlacedViolation {
+  readonly violation: LintViolation;
+  readonly place: CardPlacement;
+}
+
+/**
+ * 違反の置き場を決める純粋な関数 — 違反の範囲の始まりが、定義の範囲の外 → file(file の先頭の import の向き・置き場・宣言に
+ * ない依存、索引と linter の版のずれ)、定義の名の範囲 → head(Jev の 201〜205 は証拠の行を返さないので頭に付けるだけ)、
+ * 本体(linter の bodies)の行 → body、範囲の中で本体のどの行にも当たらない(契約の辞書・本体の無い kind・linter の本体が
+ * まだ無い)→ head。
+ */
+export function placeOf(violation: LintViolation, definition: HyDefinition, body: LintBody | undefined): ViolationPlacement {
+  const { line, character } = violation.range.start;
+  if (!within(definition.fullRange, line, character)) {
+    return { tag: 'file' };
+  }
+  if (within(definition.range, line, character)) {
+    return { tag: 'head' };
+  }
+  return body !== undefined && body.lines.some((l) => l.line === line) ? { tag: 'body', line } : { tag: 'head' };
+}
+
+/** 定義のカードに置く違反(範囲の外の違反は除く)。 */
+function placedIn(violations: readonly LintViolation[], definition: HyDefinition, body: LintBody | undefined): PlacedViolation[] {
+  return violations.flatMap((violation) => {
+    const place = placeOf(violation, definition, body);
+    return place.tag === 'file' ? [] : [{ violation, place }];
+  });
+}
+
+/** どのカードにも置けなかった違反(file の見出しの帯へ — 消さない)。linter の順のまま。 */
+export function bandViolations(violations: readonly LintViolation[], cards: readonly Card[]): LintViolation[] {
+  const placed = new Set(cards.flatMap((c) => c.violations.map((p) => p.violation)));
+  return violations.filter((v) => !placed.has(v));
+}
+
 /** カードの一覧 — 入れ子でない定義(container の無い物)を source の順に 1 枚ずつ。入れ子の定義はそのカードの部品にする。 */
 export function buildCards(input: PlaneInput): Card[] {
   const top = input.definitions.filter((d) => d.container === null).slice().sort(byPosition);
@@ -205,6 +257,7 @@ export function buildCards(input: PlaneInput): Card[] {
       .filter((d) => d.container === definition.name && within(definition.fullRange, d.fullRange.start.line, d.fullRange.start.character))
       .slice()
       .sort(byPosition);
+    const body = sameDefinition(definition, input.bodies);
     return {
       id: `d${i}`,
       definition,
@@ -217,8 +270,8 @@ export function buildCards(input: PlaneInput): Card[] {
       },
       place: input.place,
       signature: sameDefinition(definition, input.signatures),
-      body: sameDefinition(definition, input.bodies),
-      violations: input.violations.filter((v) => within(definition.fullRange, v.range.start.line, v.range.start.character)),
+      body,
+      violations: placedIn(input.violations, definition, body),
       bindings: input.bindings.filter((b) => within(definition.fullRange, b.range.start.line, b.range.start.character)),
       source: sourceOf(definition.fullRange, input.lines),
       firstLine: definition.fullRange.start.line + 1

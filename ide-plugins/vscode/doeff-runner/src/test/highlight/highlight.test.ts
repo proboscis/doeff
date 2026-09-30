@@ -186,12 +186,13 @@ suite('source の色付け — 読む面の source の箱', () => {
     const page = (coloring: Parameters<typeof renderPage>[0]['coloring']): string =>
       renderPage({
         place: 'sample.hy',
-        state: { tag: 'cards', cards, selection: new Map() },
+        state: { tag: 'cards', band: [], cards, selection: new Map() },
         glyphs: { effect: () => undefined },
         fold: unfoldAll(INITIAL_FOLD, cards.map((c) => cardKey(c.definition))),
         graph: buildCallGraph([file]),
         tree: undefined,
         coloring,
+        ruleTitles: new Map(),
         cspSource: 'vscode-resource:',
         nonce: 'n'
       });

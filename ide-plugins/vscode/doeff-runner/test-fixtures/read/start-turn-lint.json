@@ -1,0 +1,60 @@
+{
+ "version": 2,
+ "linter": {
+  "version": "0.2.0",
+  "commit": "fixture"
+ },
+ "root": "/repo",
+ "layers": [],
+ "semantic": null,
+ "architecture": null,
+ "violations": [
+  {
+   "rule": "DOEFF205",
+   "law": null,
+   "adr": null,
+   "severity": "info",
+   "path": "/repo/controllers/agent_task/core/task_attempt.hy",
+   "range": {
+    "start": {
+     "line": 402,
+     "character": 6
+    },
+    "end": {
+     "line": 402,
+     "character": 16
+    }
+   },
+   "message": "controllers/agent_task/core/task_attempt.hy の start-turn は Jev の判定で形の検めと判断が混ざっている(p=0.79)",
+   "hint": "形の検めは protocol の境目で defwire の型に parse し(形が合わなければ解く所で失敗)、この定義は型のある値を受けて判断だけをする",
+   "key": "controllers/agent_task/core/task_attempt.hy::DOEFF205::start_turn",
+   "registered": true,
+   "base_severity": "warning",
+   "standing": "registered",
+   "level": "critical",
+   "explanation": {
+    "subject": "定義 start-turn(defk)",
+    "reason": "Jev の判定 p=0.79: 入力の形の検め(辞書の鍵を読む・isinstance・空の検め)と業務の判断が 1 つの定義に混ざっている見込み。層 core の定義は型のある値を受けて判断だけをする — 形を検める所が判断の中に散ると、何が入力の形の違いで何が業務の断りかを型で分けられない。(意味の判定 — 外れなら誤判定の一覧に載せる)",
+    "law_statement": null
+   },
+   "source": "jev",
+   "probability": 0.79
+  }
+ ],
+ "signatures": [],
+ "bindings": [],
+ "rewrites": [],
+ "bodies": [],
+ "modules": [],
+ "rules": [
+  {
+   "rule": "DOEFF205",
+   "adr": null,
+   "statement": "役が judgment / program の定義は、入力の形の検めと業務の判断を混ぜない(Jev の判定 — warning か info)",
+   "wired": true,
+   "title": "入力の形の確認と判断が混ざる(Jev)",
+   "family": "smell"
+  }
+ ],
+ "errors": []
+}
