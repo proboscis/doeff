@@ -58,7 +58,8 @@
       "allow": [
         "pytest-item-records",
         "pytest-runtime-records",
-        "hy-bytecode-import"
+        "hy-bytecode-import",
+        "doeff-adr-registry"
       ],
       "layer": "io",
       "name": "pytest-item-collection",
@@ -69,8 +70,7 @@
         "packages/doeff-adr/src/doeff_adr/pytest_plugin.py",
         "packages/doeff-adr/src/doeff_adr/__init__.py",
         "packages/doeff-adr/src/doeff_adr/__init__.pyi",
-        "packages/doeff-adr/src/doeff_adr/indexed_pytest.py",
-        "packages/doeff-adr/src/doeff_adr/registry.py"
+        "packages/doeff-adr/src/doeff_adr/indexed_pytest.py"
       ],
       "public": [
         "packages/doeff-adr/src/doeff_adr/source_dependencies.py",

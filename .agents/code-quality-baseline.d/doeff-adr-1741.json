@@ -1,0 +1,243 @@
+{
+  "entries": [
+    {
+      "count": 1,
+      "path": "packages/doeff-adr/src/doeff_adr/registry.py",
+      "reason": "registered-with-legacy",
+      "rule": "dependency-cycle",
+      "subject": "in-cycle"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-adr/src/doeff_adr/semgrep_hy.py",
+      "reason": "registered-with-legacy",
+      "rule": "dependency-cycle",
+      "subject": "in-cycle"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-adr/tests/test_defadr_macros.py",
+      "reason": "registered-with-legacy",
+      "rule": "dynamic-boundary",
+      "subject": "importlib.import_module"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-adr/tests/test_pytest_item_records.py",
+      "reason": "registered-with-legacy",
+      "rule": "dynamic-boundary",
+      "subject": "importlib.import_module"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-adr/tests/test_semgrep_hy.py",
+      "reason": "registered-with-legacy",
+      "rule": "dynamic-boundary",
+      "subject": "__import__"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-adr/tests/test_semgrep_hy.py",
+      "reason": "registered-with-legacy",
+      "rule": "dynamic-boundary",
+      "subject": "importlib.import_module"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-adr/src/doeff_adr/semgrep_hy.py",
+      "reason": "registered-with-legacy",
+      "rule": "private-symbol",
+      "subject": "packages/doeff-adr/src/doeff_adr/registry.py"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-adr/tests/test_registry_isolation.py",
+      "reason": "registered-with-legacy",
+      "rule": "private-symbol",
+      "subject": "packages/doeff-adr/src/doeff_adr/registry.py"
+    },
+    {
+      "count": 2,
+      "path": "packages/doeff-adr/tests/test_semgrep_runner_tree_only.py",
+      "reason": "registered-with-legacy",
+      "rule": "private-symbol",
+      "subject": "packages/doeff-adr/src/doeff_adr/registry.py"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-adr/src/doeff_adr/registry.py",
+      "reason": "registered-with-legacy",
+      "rule": "type-suppression",
+      "subject": "# type: ignore[arg-type]"
+    },
+    {
+      "count": 2,
+      "path": "packages/doeff-adr/src/doeff_adr/registry.py",
+      "reason": "registered-with-legacy",
+      "rule": "type-suppression",
+      "subject": "# type: ignore[return-value]"
+    },
+    {
+      "count": 41,
+      "path": "packages/doeff-adr/src/doeff_adr/registry.py",
+      "reason": "registered-with-legacy",
+      "rule": "unsafe-type-escape",
+      "subject": "typing.Any"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-adr/tests/test_defadr_macros.py",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "test_accepted_defadr_without_enforcement_fails_contract"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-adr/tests/test_defadr_macros.py",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "test_defadr_accepts_inline_deftest_and_defsemgrep"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-adr/tests/test_defadr_macros.py",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "test_defadr_rejects_duplicate_enforcement_ids"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-adr/tests/test_defadr_macros.py",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "test_defadr_rejects_unknown_status"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-adr/tests/test_defadr_macros.py",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "test_defsemgrep_accepts_installed_rule_fixture_form"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-adr/tests/test_defadr_macros.py",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "test_defsemgrep_installed_rule_allows_same_path_for_hit_and_clean"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-adr/tests/test_defadr_macros.py",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "test_expected_red_defsemgrep_still_validates_rule_fixtures"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-adr/tests/test_defadr_macros.py",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "test_installed_defsemgrep_accepts_an_absolute_config"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-adr/tests/test_defadr_macros.py",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "test_installed_defsemgrep_reads_config_next_to_the_declaring_file"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-adr/tests/test_defadr_macros.py",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "test_installed_defsemgrep_rejects_unknown_options"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-adr/tests/test_defadr_macros.py",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "test_installed_defsemgrep_with_config_names_the_file_it_read"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-adr/tests/test_defadr_macros.py",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "test_installed_defsemgrep_without_config_keeps_the_cwd_ancestor_walk"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-adr/tests/test_defadr_macros.py",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "test_pytest_plugin_collects_defadr_hy_files"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-adr/tests/test_defadr_macros.py",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "tmp_hy_dir"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-adr/tests/test_semgrep_hy.py",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "tree"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-adr/tests/test_semgrep_runner_tree_only.py",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "registry"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-adr/tests/test_semgrep_runner_tree_only.py",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "test_crashing_scanner_is_not_reported_as_rule_not_firing"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-adr/tests/test_semgrep_runner_tree_only.py",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "test_installed_rule_enforcement_runs_on_tree_without_git"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-adr/tests/test_semgrep_runner_tree_only.py",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "test_resolve_config_path_does_not_require_git_metadata"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-adr/tests/test_semgrep_runner_tree_only.py",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "test_resolve_config_path_fails_when_no_tree_carries_the_config"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-adr/tests/test_semgrep_runner_tree_only.py",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "test_run_semgrep_crash_with_exit_1_is_loud_not_empty"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-adr/tests/test_semgrep_runner_tree_only.py",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "test_run_semgrep_empty_stdout_with_exit_0_is_loud"
+    }
+  ],
+  "version": 1
+}
