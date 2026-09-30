@@ -152,7 +152,7 @@
   (<- (AppendRecordLines "svc" "r2" 0 ["{\"e\":1}"]))
   (<- (AppendRecordLines "other" "r3" 0 ["{\"e\":1}"]))
   (<- kept (PruneRecords 0 1000))
-  (<- after-kept (ListRecordRuns None))
+  (<- after-kept list (ListRecordRuns None))
   (<- removed (PruneRecords FAR-FUTURE-MS 0))
   (<- after-removed (ListRecordRuns None))
   (<- text (ReadRecordRun "svc" "r1" None None))

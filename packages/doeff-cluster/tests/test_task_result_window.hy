@@ -8,7 +8,7 @@
 (require doeff-hy.macros [deftest defk <- val])
 (require doeff-hy.record [defrecord])
 (import dataclasses [dataclass])
-(import doeff_core_effects.scheduler [Spawn Wait])
+(import doeff_core_effects.scheduler [Spawn Task Wait])
 (import doeff_time [Delay])
 (import doeff_cluster.clock [now-epoch-ms])
 (import doeff_cluster.local [sim-cluster SimWorker ProcessesOf KillWorker StartWorker ReadCoordinator])
@@ -67,7 +67,7 @@
   {:pre [] :post [(: % WindowRun)] :tags {:context "doeff-cluster-test" :role "program"}}
   "筋書き: 呼び手が task を出し、task の process が 0 で終わった刻に worker を殺して起こし直し、呼び手の答えと task の process の
    記録を読む。"
-  (<- caller (Spawn (remote-caller "once")))
+  (<- caller Task (Spawn (remote-caller "once")))
   (<- (Delay 0.1))
   (<- id str (task-id-named "once"))
   (<- times tuple (kill-after-exit (+ "task/" id)))

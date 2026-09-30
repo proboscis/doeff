@@ -51,7 +51,9 @@
 (defk declare-cli [#* argv]
   {:pre [(: argv tuple)] :post [(: % subprocess.CompletedProcess)] :tags {:context "doeff-cluster-test" :role "entry"}}
   "declare の CLI を子 process で撃つ(cwd = package の根 — tests.fixtures を import する)。"
-  (subprocess.run [sys.executable "-m" "hy" "-m" "doeff_cluster.declare" #* argv]
+  (val words (lfor a argv :if (isinstance a str) a))
+  (assert (= (len words) (len argv)) #("子 process の引数は文字列だけ" argv))
+  (subprocess.run [sys.executable "-m" "hy" "-m" "doeff_cluster.declare" #* words]
                   :cwd (str PACKAGE-ROOT) :capture-output True :text True :timeout 120))
 
 
@@ -298,7 +300,9 @@
 (defk git-in [cwd #* args]
   {:pre [(: cwd Path) (: args tuple)] :post [(: % str)] :tags {:context "doeff-cluster-test" :role "entry"}}
   "検の一時の repo を作る・読むために git を 1 回呼ぶ(標準出力を返す)。"
-  (val done (subprocess.run ["git" "-C" (str cwd) "-c" "user.name=t" "-c" "user.email=t@example.invalid" #* args]
+  (val words (lfor a args :if (isinstance a str) a))
+  (assert (= (len words) (len args)) #("子 process の引数は文字列だけ" args))
+  (val done (subprocess.run ["git" "-C" (str cwd) "-c" "user.name=t" "-c" "user.email=t@example.invalid" #* words]
                             :capture-output True :text True :check True))
   (.strip done.stdout))
 
@@ -321,7 +325,9 @@
 (defk declare-in [work #* argv]
   {:pre [(: work Path) (: argv tuple)] :post [(: % subprocess.CompletedProcess)] :tags {:context "doeff-cluster-test" :role "entry"}}
   "work の checkout の中で declare の CLI を子 process で撃つため(import の路 = work — 系の関数の module はそこに在る)。"
-  (subprocess.run [sys.executable "-m" "hy" "-m" "doeff_cluster.declare" #* argv]
+  (val words (lfor a argv :if (isinstance a str) a))
+  (assert (= (len words) (len argv)) #("子 process の引数は文字列だけ" argv))
+  (subprocess.run [sys.executable "-m" "hy" "-m" "doeff_cluster.declare" #* words]
                   :cwd (str work) :capture-output True :text True :timeout 120
                   :env (| (dict os.environ) {"PYTHONPATH" (str work)})))
 
@@ -422,5 +428,5 @@
                                     :needs #{"cluster-net"}))))
   (<- ok (service-model.foundation-needs-refusal narrow plain-foundation))
   (assert (is ok None) ok)
-  (<- refused (service-model.foundation-needs-refusal wide plain-foundation))
+  (<- refused str (service-model.foundation-needs-refusal wide plain-foundation))
   (assert (and refused (in "wide_foundation" refused)) refused))

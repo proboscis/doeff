@@ -22,7 +22,7 @@
 (import doeff_cluster.local [SharedRows])
 (import doeff_cluster.readiness_model [ReportReady])
 (import doeff_cluster.shared_model [ReadShared WriteShared])
-(import doeff_cluster.detached_model [SubmitDetached AwaitDetached DetachedSucceeded])
+(import doeff_cluster.detached_model [SubmitDetached AwaitDetached DetachedSubmitted DetachedSucceeded])
 (import tests.fixtures.sim_programs [sim-task-foundation])
 
 (val NET (frozenset ["cluster-net"]))
@@ -62,7 +62,7 @@
   "時間のかかる task を 1 本 SubmitDetached で出し、AwaitDetached で答えを待ち、答えと送った・受けた時刻(系の中の時計の epoch ms)を盤の key に
    書いてから、準備できたと報告し続ける。"
   (<- sent int (now-epoch-ms))
-  (<- submitted (SubmitDetached (slow-task sim-task-foundation seconds n) :key "wall-task" :needs NET :name "slow"))
+  (<- submitted DetachedSubmitted (SubmitDetached (slow-task sim-task-foundation seconds n) :key "wall-task" :needs NET :name "slow"))
   (<- outcome (AwaitDetached submitted.key))
   (<- answered int (now-epoch-ms))
   (<- (WriteShared key {"created" submitted.created

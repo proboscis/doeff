@@ -9,7 +9,7 @@
 (import doeff [with-handlers EffectBase Program])
 (import doeff_core_effects.effects [Ask])
 (import doeff_core_effects.handlers [state])
-(import doeff_core_effects.scheduler [AcquireSemaphore])
+(import doeff_core_effects.scheduler [AcquireSemaphore Semaphore])
 (import doeff_time [Delay])
 (import doeff_cluster.clock [now-epoch-ms])
 (import doeff_cluster.cluster_foundation [lease-holder-of])
@@ -42,7 +42,7 @@
    世代と刻を盤に書き、止められるまで lease を返さずに報告を続ける(止めの合図で終わる時も自分では返さない)。"
   (<- ctx RunContext (Ask HOST-CONTRACT.run-context-key))
   (<- (ReportReady True "待機"))
-  (<- lock (CreateNamedSemaphore LOCK))
+  (<- lock Semaphore (CreateNamedSemaphore LOCK))
   (<- (AcquireSemaphore lock))
   (<- at int (now-epoch-ms))
   (<- (WriteShared HOLDER-ROW {"instance" ctx.instance "at" at}))

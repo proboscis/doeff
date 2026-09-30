@@ -11,7 +11,7 @@
 (import collections.abc [Callable])
 (import dataclasses [dataclass])
 (import doeff [with-handlers DoExpr])
-(import doeff_core_effects.scheduler [Spawn Wait])
+(import doeff_core_effects.scheduler [Spawn Task Wait])
 (import doeff_time [Delay sim-time-handler])
 (import doeff_cluster.clock [now-epoch-ms])
 (import doeff_cluster.cluster_model [NextRequests])
@@ -115,8 +115,8 @@
 (defk do-both [taker writer]
   {:pre [(: taker DoExpr) (: writer DoExpr)] :post [(: % tuple)] :tags {:context "doeff-cluster-test" :role "program"}}
   "取り手を先に走らせ(列が空の間に待ちへ入る)、送り手を並べて、両方の終わりを待つため。答え = 取り手の答え。"
-  (<- taking (Spawn taker))
-  (<- writing (Spawn writer))
+  (<- taking Task (Spawn taker))
+  (<- writing Task (Spawn writer))
   (<- takes tuple (Wait taking))
   (<- (Wait writing))
   takes)

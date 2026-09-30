@@ -17,7 +17,7 @@
 (import httpx)
 (import pytest)
 (import doeff [with_handlers Program])
-(import doeff_core_effects.scheduler [Spawn Cancel])
+(import doeff_core_effects.scheduler [Spawn Cancel Task])
 (import doeff_time [Delay SimClock sim-time-handler])
 (import doeff_cluster.process_versions [current-versions])
 (import doeff_cluster.detached_model [SubmitDetached AwaitDetached ReadRunners
@@ -74,7 +74,7 @@
   {:pre [(: worker RigWorker)] :post [(: % bool)]}
   ;; 1 拍名乗らせてから heartbeat のループを走らせる(送った時に置ける worker が在るように)。
   (<- (worker-tick worker))
-  (<- loop (Spawn (worker-loop worker POLL) :daemon True))
+  (<- loop Task (Spawn (worker-loop worker POLL) :daemon True))
   (setv worker.loop loop)
   True)
 
@@ -157,7 +157,7 @@
 (defk roster-and-placement []
   {:pre [] :post [(: % bool)]}
   ;; 名簿は 2 つとも生きていて drain でない。能力 y-tool を要る task は b に置かれ、走っている間の待ちは b を名指す。
-  (<- roster (ReadRunners))
+  (<- roster tuple (ReadRunners))
   (val facts (by-name roster))
   (assert (= (sorted facts) ["a" "b"]) roster)
   (assert (all (gfor f (.values facts) (and f.live (not f.draining)))) roster)
@@ -190,7 +190,7 @@
   (<- on-y (AwaitDetached "k-y"))
   (assert (= on-y (DetachedSucceeded 103)) on-y)
   (<- (Delay AFTER-LEASE))
-  (<- roster (ReadRunners))
+  (<- roster tuple (ReadRunners))
   (val facts (by-name roster))
   (assert (not (. (get facts "a") live)) roster)
   (assert (. (get facts "b") live) roster)
@@ -209,7 +209,7 @@
   (<- asked dict (DrainWorker "a"))
   (assert (= (get asked "status") 200) asked)
   (<- (Delay POLL))
-  (<- roster (ReadRunners))
+  (<- roster tuple (ReadRunners))
   (assert (. (get (by-name roster) "a") draining) roster)
   (<- (SubmitDetached (slow-add SLOW 4) :key "k-drain" :needs ON-X :lease-seconds LEASE))
   (<- (Delay (* 4 POLL)))

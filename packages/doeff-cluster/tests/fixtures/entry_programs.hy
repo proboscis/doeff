@@ -15,6 +15,7 @@
 ;; 子の中で job_entry は __main__ として読まれる。業務の module が doeff_cluster.job_entry から文脈の読みを import しても、文脈の型が
 ;; 1 つのままであることの反例(test_job_context)に使うので、job_entry から import する。
 (import doeff_cluster.job_entry [runtime-env-of-context])
+(import doeff_cluster.runtime_env_model [RuntimeEnv])
 
 
 (defhandler answer-base
@@ -75,7 +76,7 @@
   "宿の契約(HOST-CONTRACT)の run-context と Program の path を土台の host-reader で読み、宣言の repo の名と path を返す。
    handler の値 host-reader を本体で直に参照すると、本体(値で詰まる)が handler の値を捕まえて詰められない — 土台の関数を通す。"
   (<- pair tuple (foundation (host-answers)))
-  (<- declared (runtime-env-of-context (get pair 0)))
+  (<- declared RuntimeEnv (runtime-env-of-context (get pair 0)))
   (.format "{}|{}" (.join "," (lfor r declared.repos r.name)) (get pair 1)))
 
 

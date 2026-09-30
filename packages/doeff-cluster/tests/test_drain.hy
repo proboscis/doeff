@@ -36,11 +36,13 @@
     (for [w workers] (self.beat w))
     None)
 
-  (defn #^ object call [self #^ str method #^ str path #^ (| dict None) [body None] #^ (| str None) [actor "c-test"]
+  (defn #^ dict call [self #^ str method #^ str path #^ (| dict None) [body None] #^ (| str None) [actor "c-test"]
             #^ (| int None) [expect 200]]
+    "答えの本文は JSON の object(dict)と確かめてから返す — 読む側が添字で引く。"
     (setv #(state status reply) (respond self.state (http-request method path {} body :actor actor) self.now T))
     (when (is-not expect None) (assert (= status expect) #(method path status reply)))
     (setv self.state state)
+    (assert (isinstance reply dict) #(method path status reply))
     reply)
 
   (defn #^ (| int None) gen-on [self #^ str worker #^ str name]
@@ -54,7 +56,7 @@
     {"name" name "phase" "running" "runningRevision" job.spec.revision "desiredRevision" job.spec.revision
      "instance" (.format "{}-{}-g{}" worker name gen) "specHash" (spec-hash job.spec) "placement" gen "attempts" 1})
 
-  (defn #^ object beat [self #^ str worker #^ (| list None) [running None] #^ list [provides K3S] #^ (| str None) [boot None]]
+  (defn #^ dict beat [self #^ str worker #^ (| list None) [running None] #^ list [provides K3S] #^ (| str None) [boot None]]
     "heartbeat。running = この worker が動かしていると報告する job の名(置かれている物)。"
     (setv (get self.boots worker) (or boot (.get self.boots worker "b1")))
     (self.call "POST" "/heartbeat" {"name" worker "provides" provides "capacity" 10 "versions" {}
@@ -62,7 +64,7 @@
                                     "statuses" (lfor n (or running []) (self.row worker n))}
                :actor None))
 
-  (defn #^ object ready [self #^ str worker #^ str name #^ bool [ready True] #^ str [role "standby"]]
+  (defn #^ dict ready [self #^ str worker #^ str name #^ bool [ready True] #^ str [role "standby"]]
     (setv row (self.row worker name))
     (self.call "POST" (.format "/resources/Service/{}/readiness" name)
                {"worker" worker "pid" 1 "revision" (get row "runningRevision") "instance" (get row "instance") "attempt" "1"

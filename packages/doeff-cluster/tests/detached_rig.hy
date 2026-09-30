@@ -12,7 +12,7 @@
 (import doeff [with_handlers])
 (import doeff_core_effects.effects [Ask])
 (import doeff_core_effects.handlers [reader])
-(import doeff_core_effects.scheduler [Spawn Cancel TaskCancelledError])
+(import doeff_core_effects.scheduler [Spawn Cancel Task TaskCancelledError])
 (import doeff_time [Delay SimClock])
 (import tests.clock_fixtures [clock-ms])
 (import doeff_cluster.cluster_model [ClusterState ClusterTiming])
@@ -57,7 +57,9 @@
     ;; needs の筋書きを回すため。担い手を 2 つ以上並べる検 test_detached_runners.hy が名指す)。
     (setv self.link (CoordinatorLink url name provides 10 20000 :task-dir (str task-dir) :versions versions :transport transport
                                      :exclusive exclusive)
-          self.handles {} self.dead False self.loop None)
+          self.handles {} self.dead False)
+    ;; heartbeat のループの task(走らせるまでは None)。
+    (setv #^ (| Task None) self.loop None)
     ;; 終えた job の名(型を書く — 空の #{} だけでは要素の型が決まらず、add が型検査で断られる)。
     (setv #^ (get set str) self.done #{})))
 

@@ -21,7 +21,9 @@
 (defk git [cwd #* args]
   {:pre [(: cwd Path) (: args tuple)] :post [(: % str)]}
   "検の repo を作るために git を 1 回呼ぶ。"
-  (val done (subprocess.run ["git" "-C" (str cwd) "-c" "user.name=t" "-c" "user.email=t@example.invalid" #* args]
+  (val words (lfor a args :if (isinstance a str) a))
+  (assert (= (len words) (len args)) #("子 process の引数は文字列だけ" args))
+  (val done (subprocess.run ["git" "-C" (str cwd) "-c" "user.name=t" "-c" "user.email=t@example.invalid" #* words]
                             :capture-output True :text True :check True))
   (.strip done.stdout))
 

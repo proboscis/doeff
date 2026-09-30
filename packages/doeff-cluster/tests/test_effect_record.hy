@@ -11,7 +11,7 @@
 (import doeff [EffectBase Pass with_handlers])
 (import doeff_core_effects.handlers [reader])
 (import doeff_core_effects.effects [Ask])
-(import doeff_core_effects.scheduler [Spawn Wait Gather])
+(import doeff_core_effects.scheduler [Spawn Task Wait Gather])
 (import doeff_time [Delay sim-time-handler])
 (import doeff_cluster.clock [now-epoch-ms])
 (import tests.clock_fixtures [clock-at clock-ms])
@@ -94,9 +94,9 @@
 
 (defk system-program []
   {:pre [] :post [(: % list)]}
-  (<- a (Spawn (worker-task "a" 4 0.3)))
-  (<- b (Spawn (worker-task "b" 3 0.5)))
-  (<- c (Spawn (worker-task "c" 2 0.7)))
+  (<- a Task (Spawn (worker-task "a" 4 0.3)))
+  (<- b Task (Spawn (worker-task "b" 3 0.5)))
+  (<- c Task (Spawn (worker-task "c" 2 0.7)))
   (<- done list (Gather a b c))
   (<- box list (Ask "box"))
   (<- (WriteShared "final" (list box)))

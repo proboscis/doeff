@@ -8,7 +8,7 @@
 (import doeff.program [handler :as program-handler])
 (import doeff_core_effects.effects [Ask Try])
 (import doeff_core_effects.handlers [state try-handler])
-(import doeff_core_effects.scheduler [scheduled Spawn Wait])
+(import doeff_core_effects.scheduler [scheduled Spawn Task Wait])
 (import doeff_time [Delay sync-time-handler])
 
 
@@ -38,18 +38,18 @@
 (defk child []
   {:pre [] :post [(: % int)] :tags {:context "doeff-cluster-test" :role "program"}}
   "子の task(Spawn で運ばれる — 親の handler を持ち運ぶ)。"
-  (<- a (Ping))
+  (<- a int (Ping))
   a)
 
 
 (defk business []
   {:pre [] :post [(: % int)] :tags {:context "doeff-cluster-test" :role "program"}}
   "業務の本体: 業務の effect・時計・設定・子の task を出す。"
-  (<- a (Ping))
+  (<- a int (Ping))
   (<- (Delay 1.0))
   (<- b (Ask "ROUNDS"))
-  (<- t (Spawn (child)))
-  (<- c (Wait t))
+  (<- t Task (Spawn (child)))
+  (<- c int (Wait t))
   (+ a c))
 
 
@@ -77,7 +77,7 @@
 (defk translated-body []
   {:pre [] :post [(: % int)] :tags {:context "doeff-cluster-test" :role "program"}}
   "翻訳の handler を並べた本体。"
-  (<- r (with-handlers [translate] (business)))
+  (<- r int (with-handlers [translate] (business)))
   r)
 
 
