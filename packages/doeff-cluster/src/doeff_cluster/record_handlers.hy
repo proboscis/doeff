@@ -30,7 +30,7 @@
 (import doeff_vm [GetBoundaries K WithHandler WithObserve Callable :as VmCallable])
 (import doeff_core_effects.scheduler [Spawn Wait CreatePromise CompletePromise Promise PRIORITY-IDLE])
 (import doeff_cluster.effect_codec [READ LIVE DECISION OUTPUT LOOSE DIVERGE INTERN-MIN-CHARS BLOB-MEMORY-MAX FORMAT-VERSION BlobMemory
-                                         EffectCodec HandleTable UnencodableValue UnrecordableEffect
+                                         EffectCodec HandleTable UnencodableValue UnrecordableEffect RestoredValue
                                          encode-value encode-error decode-value decode-error canonical intern-json
                                          codec-of mode-of args-of subject-of])
 (import doeff_cluster.record_model [ROOT ReplayFinished ReplayDiverged Entry Recording match-step diff-row summarize])
@@ -522,8 +522,8 @@
   None)
 
 
-;; 成功の答えの値は effect_codec.decode-value の答えそのもの(記録した値 — dataclass・例外・handle を含むどの値にもなる)。
-(defn #^ (| (get tuple #((get Literal True) object)) (get tuple #((get Literal False) BaseException))) deliver-recorded [#^ ReplayState state #^ Entry entry #^ EffectCodec codec]
+;; 成功の答えの値は effect_codec.decode-value の答えそのもの(記録から復元した値 RestoredValue — #1693)。
+(defn #^ (| (get tuple #((get Literal True) RestoredValue)) (get tuple #((get Literal False) BaseException))) deliver-recorded [#^ ReplayState state #^ Entry entry #^ EffectCodec codec]
   "記録の答えを業務へ返す値に戻す(handle の札・共有の箱)。例外なら例外の object。"
   (when (not entry.ok)
     ;; 失敗の答えは err の欄を持つ(read-recording が ok = 偽の答えの行から入れる)— 無ければ記録が壊れている。

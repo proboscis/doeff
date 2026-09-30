@@ -31,6 +31,7 @@
 (import base64)
 (import collections [OrderedDict])
 (import collections.abc [Callable])
+(import typing [ClassVar Protocol])
 (import datetime [datetime])
 (import dataclasses)
 (import hashlib)
@@ -98,6 +99,16 @@
 (defn #^ ReplayHandle handle-for [#^ str kind #^ str ref]
   "記録の handle の印 → 再生の札。semaphore は Semaphore の子の札。"
   (if (in kind #("named-sem" "sem")) (ReplaySemaphore kind ref) (ReplayHandle kind ref)))
+
+
+(defclass DataclassValue [Protocol]
+  "記録から作り直した dataclass の値(どの dataclass も持つ __dataclass_fields__ で名指す — 記録で運ぶ型は実行時に resolve-type で引く)。"
+  #^ (get ClassVar dict) __dataclass_fields__)
+
+
+;; 記録から復元した値(decode-value の答え)の型 — encode-value が受けて印を付けた種類ちょうど(#1693 — 以前は object で宣言していた)。
+;; handle は再生の札 ReplayHandle になり、Task・Promise など生の handle には戻らない。
+(setv RestoredValue (| None bool int float str bytes datetime ReplayHandle list tuple dict BaseException DataclassValue))
 
 
 (defclass RecordedError [Exception]
@@ -198,8 +209,7 @@
       (try (setv (get attrs k) (encode-value x handles)) (except [UnencodableValue] None))))
   {"$e" (type-name (type e)) "args" args "msg" (str e) "attrs" attrs})
 
-;; 答えは記録した値そのもの(dataclass・例外・handle を含むどの値にもなる)なので object。
-(defn #^ object decode-value [#^ JsonValue j]
+(defn #^ RestoredValue decode-value [#^ JsonValue j]
   "encode-value の逆。handle は ReplayHandle(再生の札)になる。"
   (cond
     (isinstance j list) (lfor x j (decode-value x))
