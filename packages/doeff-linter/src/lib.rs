@@ -11,6 +11,7 @@ pub const BUILD_COMMIT: &str = env!("DOEFF_LINTER_COMMIT");
 /// `--version` の文(`<版> (doeff <commit>)`)。
 pub const VERSION_TEXT: &str = concat!(env!("CARGO_PKG_VERSION"), " (doeff ", env!("DOEFF_LINTER_COMMIT"), ")");
 
+pub mod baseline;
 pub mod config;
 pub mod editor;
 pub mod logging;
