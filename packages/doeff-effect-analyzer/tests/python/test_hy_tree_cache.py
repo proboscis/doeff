@@ -145,3 +145,29 @@ def test_a_cached_tree_brings_its_definition_index_and_body_facts(
     assert walked == [], walked
     # The stored values point into the read tree (not copies of other nodes).
     assert all(node in list(ast.walk(read)) for nodes in index.values() for node in nodes)
+
+
+def test_writing_the_cache_entry_is_inside_the_observed_miss(cache_dir: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """agora-redesign #1590: building and writing what is cached with the tree (the derived values)
+    is part of the miss the budget subtracts — outside it, a cold cache would count against the test."""
+    import contextlib
+
+    inside: list[bool] = []
+    state = {"observing": False}
+
+    @contextlib.contextmanager
+    def watching():
+        state["observing"] = True
+        try:
+            yield
+        finally:
+            state["observing"] = False
+
+    real = pe._write_cached_tree
+    monkeypatch.setattr(pe, "_write_cached_tree", lambda path, tree: inside.append(state["observing"]) or real(path, tree))
+    stop = pe.observe_expansions(watching)
+    try:
+        pe._compile_hy(SOURCE, "/src/w.hy", "w")
+    finally:
+        stop()
+    assert inside == [True]

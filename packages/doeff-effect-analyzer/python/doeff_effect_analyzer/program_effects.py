@@ -439,18 +439,22 @@ def _compile_hy(source: str, filename: str, module_name: str) -> ast.Module:
         cached = _read_cached_tree(cache_path)
         if cached is not None:
             return cached
+    # The whole miss is observed: the expansion, and building and writing what is cached
+    # with it (the derived values of _CachedTree — agora-redesign #1590). All of it is paid
+    # once per changed source, so none of it is a test's weight.
     with contextlib.ExitStack() as observed:
         for observer in tuple(_EXPANSION_OBSERVERS):
             observed.enter_context(observer())
         compiled = _expand_hy(source, filename, module_name)
-    if cache_path is not None:
-        _write_cached_tree(cache_path, compiled)
+        if cache_path is not None:
+            _write_cached_tree(cache_path, compiled)
     return compiled
 
 
-# Who wants to know when an expansion missed the cache. A test-time budget subtracts
-# that time the way it subtracts bytecode compilation (a cold cache is not the test's
-# weight); the analyzer itself does not know who observes.
+# Who wants to know when an expansion missed the cache (the expansion and writing the
+# cache entry). A test-time budget subtracts that time the way it subtracts bytecode
+# compilation (a cold cache is not the test's weight); the analyzer itself does not know
+# who observes.
 ExpansionObserver = Callable[[], contextlib.AbstractContextManager[None]]
 _EXPANSION_OBSERVERS: list[ExpansionObserver] = []
 
