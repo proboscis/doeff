@@ -49,6 +49,7 @@ from doeff_adr.item_cache import (
     CacheMiss,
     FixtureRecord,
     MalformedCacheEntry,
+    ProviderChecks,
     fixture_scope,
     read_cached,
 )
@@ -60,7 +61,8 @@ from doeff_adr.runtime_records import (
 )
 from doeff_adr.source_dependencies import DependencyChecks
 
-# pytest の xunit の形の関数(名で意味を持つ — 仮の module は持たないので、あれば import して収集する)。
+# pytest の xunit の形の関数と、module の直下で pytest が名で読む物(仮の module は持たないので、あれば import して収集する)。
+# pytest_generate_tests: pytest の item の生成が module の属性として呼ぶ(記録からの生成もそこを通らない — agora-redesign #1551)。
 XUNIT_NAMES = frozenset(
     {
         "setup_module",
@@ -70,16 +72,44 @@ XUNIT_NAMES = frozenset(
         "setup_function",
         "teardown_function",
         "pytest_plugins",
+        "pytest_generate_tests",
     }
 )
+
+
+@dataclass(frozen=True)
+class RecordedModule:
+    """記録で説明できる file 1 つの、pytest に見せる形 — 仮の module と、記録からの item の生成の両方がここから読む。
+
+    ``functions`` は名 → 記録の索引。同じ名が何度も記録されていれば Python の module と同じく最後の記録を最初の位置に置く
+    (dict の代入がそうなる)。``module_marks`` は module の直下の最後の ``pytestmark`` の印の名。
+    """
+
+    functions: dict[str, FunctionItem]
+    module_marks: tuple[str, ...]
+    fixtures: tuple[FixtureRecord, ...]
+
+
+def recorded_module(records: tuple[Record, ...], fixtures: tuple[FixtureRecord, ...]) -> RecordedModule:
+    """キャッシュから引いた記録の並びを、名で引ける形に直す(Dynamic は plan_collection が import に回すので来ない)。"""
+    functions: dict[str, FunctionItem] = {}
+    module_marks: tuple[str, ...] = ()
+    for record in records:
+        match record:
+            case FunctionItem():
+                functions[record.name] = record
+            case ModuleMarks(names):
+                module_marks = names
+            case Dynamic():
+                raise AssertionError("Dynamic の記録を持つ file は plan_collection が import に回す")
+    return RecordedModule(functions, module_marks, fixtures)
 
 
 @dataclass(frozen=True)
 class Indexed:
     """記録で説明できる file — 仮の module で収集する。"""
 
-    records: tuple[Record, ...]
-    fixtures: tuple[FixtureRecord, ...]
+    recorded: RecordedModule
 
 
 @dataclass(frozen=True)
@@ -92,11 +122,13 @@ class NeedsImport:
 CollectionPlan = Indexed | NeedsImport
 
 
-def plan_collection(path: Path, cache_dir: Path, root: Path, checks: DependencyChecks) -> CollectionPlan:
+def plan_collection(
+    path: Path, cache_dir: Path, root: Path, checks: DependencyChecks, providers: ProviderChecks
+) -> CollectionPlan:
     """収集で import せずに済むかを、キャッシュだけから決める(保存の時に実物と突き合わせ済みの記録しか入っていない)。"""
-    match read_cached(path, cache_dir, root, checks):
+    match read_cached(path, cache_dir, root, checks, providers):
         case CacheHit(records, fixtures):
-            return Indexed(records, fixtures)
+            return Indexed(recorded_module(records, fixtures))
         case CacheMiss(reason):
             return NeedsImport(reason)
 
@@ -295,22 +327,16 @@ def _stub_fixture(record: FixtureRecord, module_name: str) -> FixtureFunctionDef
     return pytest.fixture(scope=record.scope, name=record.name)(stub)
 
 
-def stub_module(
-    records: tuple[Record, ...], fixtures: tuple[FixtureRecord, ...], path: Path, module_name: str
-) -> types.ModuleType:
-    """記録から仮の module を作る — pytest の Module の収集が読む物(関数・pytestmark・fixture)だけを持つ。"""
+def stub_module(recorded: RecordedModule, path: Path, module_name: str) -> types.ModuleType:
+    """記録から仮の module を作る — pytest の収集と fixture の登録が読む物(関数・pytestmark・fixture)だけを持つ。"""
     module = types.ModuleType(module_name)
     module.__file__ = str(path)
-    for fixture in fixtures:
+    for fixture in recorded.fixtures:
         setattr(module, fixture.attribute, _stub_fixture(fixture, module_name))
-    for record in records:
-        match record:
-            case FunctionItem():
-                setattr(module, record.name, _stub_function(record, path, module_name))
-            case ModuleMarks(names):
-                module.pytestmark = [_stub_module_mark(name) for name in names]
-            case Dynamic():
-                raise AssertionError("Dynamic の記録を持つ file は plan_collection が import に回す")
+    for name, record in recorded.functions.items():
+        setattr(module, name, _stub_function(record, path, module_name))
+    if recorded.module_marks:
+        module.pytestmark = [_stub_module_mark(name) for name in recorded.module_marks]
     return module
 
 

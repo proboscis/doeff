@@ -19,7 +19,7 @@ import os
 import sys
 import tempfile
 import types
-from dataclasses import asdict, dataclass, replace
+from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
 from typing import Literal
 
@@ -135,6 +135,21 @@ def _module_file(name: str) -> Path | None:
     return Path(origin)
 
 
+@dataclass
+class ProviderChecks:
+    """収集 1 回の中で、macro の提供元(module 名)の今の file の digest を 1 度だけ引く — 提供元は数個で、記録の file ごとに
+    同じ物を何度も引いていた(agora-redesign #1551)。None = 提供元の module が見つからない。"""
+
+    _mut_digests: dict[str, str | None] = field(default_factory=dict)
+
+    def current_digest(self, module: str) -> str | None:
+        """提供元の module の今の file の sha256(見つからなければ None)。"""
+        if module not in self._mut_digests:
+            path = _module_file(module)
+            self._mut_digests[module] = None if path is None else file_sha256(str(path))
+        return self._mut_digests[module]
+
+
 def _parse_entry(text: str) -> CacheEntry:
     """キャッシュの file の JSON を型へ解く(JSON の境界はここだけ)。形が違えば MalformedCacheEntry。"""
     try:
@@ -186,7 +201,9 @@ def _dump_entry(entry: CacheEntry, source: Path) -> str:
     )
 
 
-def read_cached(source: Path, cache_dir: Path, root: Path, checks: DependencyChecks) -> CacheLookup:
+def read_cached(
+    source: Path, cache_dir: Path, root: Path, checks: DependencyChecks, providers: ProviderChecks
+) -> CacheLookup:
     """source の記録をキャッシュから引く。無い・古い(提供元が変わった・形の版が違う)なら CacheMiss とその理由。"""
     entry_path = _entry_path(source, cache_dir)
     try:
@@ -200,10 +217,10 @@ def read_cached(source: Path, cache_dir: Path, root: Path, checks: DependencyChe
     if entry.format != CACHE_FORMAT:
         return CacheMiss(f"キャッシュの形の版が違う({entry.format} ≠ {CACHE_FORMAT})")
     for dependency in entry.deps:
-        path = _module_file(dependency.module)
-        if path is None:
+        digest = providers.current_digest(dependency.module)
+        if digest is None:
             return CacheMiss(f"macro の提供元 {dependency.module} が見つからない")
-        if file_sha256(str(path)) != dependency.digest:
+        if digest != dependency.digest:
             return CacheMiss(f"macro の提供元 {dependency.module} が変わった")
     return _read_runtime_entry(entry_path, entry, source, root, checks)
 

@@ -11,7 +11,7 @@ import re
 import sys
 import types
 import warnings
-from collections.abc import Generator, Sequence
+from collections.abc import Callable, Generator, Iterator, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
@@ -20,7 +20,7 @@ import doeff_hy  # noqa: F401 - registers Hy import hooks
 import pytest
 from hy.importer import HyLoader
 
-from doeff_adr.item_cache import DEFAULT_CACHE_DIR, forget_cached, write_cached
+from doeff_adr.item_cache import DEFAULT_CACHE_DIR, ProviderChecks, forget_cached, write_cached
 from doeff_adr.lazy_collection import (
     Indexed,
     NeedsImport,
@@ -32,6 +32,14 @@ from doeff_adr.lazy_collection import (
     swap_in_real_function,
     swap_in_real_module_marks,
     verify_records,
+)
+from doeff_adr.recorded_items import (
+    GenerationTally,
+    RecordedCollection,
+    collect_recorded,
+    generate_functions,
+    generate_tests_impls,
+    supported_pytest,
 )
 from doeff_adr.source_dependencies import DependencyChecks
 
@@ -118,6 +126,8 @@ WiringVerdict = WiringVerified | WiringUncollected | WiringWalkAborted
 # reached (the canonical doeff gate itself runs with ``-m 'not e2e'``). The files
 # are therefore snapshotted before any deselection hook runs.
 _COLLECTED_FILES_KEY = pytest.StashKey[frozenset[Path]]()
+# 収集した Hy の file(item の有無によらず — 上の集合の元の 1 つ)。
+_COLLECTED_HY_FILES_KEY = pytest.StashKey[list[Path]]()
 # One measurement per session: the collection-finish report and an in-session
 # gate test read the same verdict instead of walking rootdir twice.
 _WIRING_VERDICT_KEY = pytest.StashKey[WiringVerdict]()
@@ -125,6 +135,10 @@ _WIRING_VERDICT_KEY = pytest.StashKey[WiringVerdict]()
 _INDEXED_FILES_KEY = pytest.StashKey[list[Path]]()
 _IMPORTED_FILES_KEY = pytest.StashKey[list[tuple[Path, str]]]()
 _DEPENDENCY_CHECKS_KEY = pytest.StashKey[DependencyChecks]()
+_PROVIDER_CHECKS_KEY = pytest.StashKey[ProviderChecks]()
+# session につき 1 度だけ用意する path と照合(rootdir の解決・キャッシュの置き場・executable ADR の pattern — agora-redesign #1551)。
+_SESSION_PATHS_KEY = pytest.StashKey["SessionPaths"]()
+_GENERATION_TALLY_KEY = pytest.StashKey[GenerationTally]()
 
 
 class DoeffAdrHookspecs:
@@ -222,13 +236,77 @@ def pytest_addoption(parser: pytest.Parser) -> None:
     )
 
 
+# ---------------------------------------------------------------------------
+# session につき 1 度の path と照合
+# ---------------------------------------------------------------------------
+
+
+def _posix(text: str) -> str:
+    """OS の区切りの path の文字列を posix の形へ(posix ではそのまま)。"""
+    return text if os.sep == "/" else text.replace(os.sep, "/")
+
+
+@dataclass(frozen=True)
+class HyFileMatcher:
+    """executable ADR の pattern と rootdir を 1 度だけ用意した照合。
+
+    候補は fnmatch と同じ意味で、file の名・rootdir からの path・絶対 path の 3 つ(``_matches_file_patterns`` と同じ)。rootdir の下
+    の path は文字列の頭で分かるので、Path の分解と再生成(``relative_to`` — 収集で 1 file ごとに 3 度、走査でも 1 度)を
+    繰り返さない(agora-redesign #1551)。文字の上で rootdir の下に無い path は、今までどおり解決(realpath)して相対にする。
+    """
+
+    root: Path
+    root_prefix: str
+    regex: re.Pattern[str]
+
+    def relative_posix(self, text: str) -> str:
+        """rootdir からの path(照合と報告のため)。文字の上で rootdir の下なら切り出し、そうでなければ解決して相対にする。"""
+        if text.startswith(self.root_prefix):
+            return _posix(text[len(self.root_prefix):])
+        return _relative_posix(Path(text), self.root)
+
+    def matches_text(self, text: str, name: str) -> bool:
+        """``text``(絶対 path の文字列)の file が executable ADR の pattern に当たるか。"""
+        candidates = (name, self.relative_posix(text), _posix(text))
+        return any(self.regex.match(os.path.normcase(candidate)) for candidate in candidates)
+
+    def matches(self, path: Path) -> bool:
+        return self.matches_text(str(path), path.name)
+
+
+@functools.cache
+def _matcher(root_text: str, patterns: tuple[str, ...]) -> HyFileMatcher:
+    """rootdir と pattern の組ごとに 1 度だけ照合を用意する。"""
+    root = Path(root_text)
+    return HyFileMatcher(root, root_text.rstrip(os.sep) + os.sep, _pattern_regex(patterns))
+
+
+@dataclass(frozen=True)
+class SessionPaths:
+    """収集の 1 file ごとに要る path のうち、session で変わらない物(rootdir の解決は 1 度だけ・キャッシュの置き場・照合)。"""
+
+    root: Path
+    root_resolved: Path
+    cache_dir: Path
+    matcher: HyFileMatcher
+
+
+def _session_paths(config: pytest.Config) -> SessionPaths:
+    """session の path と照合(初めて要った時に用意し、stash に置く)。"""
+    paths = config.stash.get(_SESSION_PATHS_KEY, None)
+    if paths is None:
+        root = Path(config.rootpath)
+        paths = SessionPaths(root, root.resolve(), items_cache_dir(config), _matcher(str(root), tuple(_file_patterns(config))))
+        config.stash[_SESSION_PATHS_KEY] = paths
+    return paths
+
+
 def pytest_collect_file(file_path: Path, parent: pytest.Collector) -> pytest.Collector | None:
-    path = file_path
-    if path.suffix != ".hy":
+    if file_path.suffix != ".hy":
         return None
-    if not _should_collect_hy_file(path, parent.config):
+    if not _session_paths(parent.config).matcher.matches(file_path):
         return None
-    return DoeffAdrHyFile.from_parent(parent, path=path)
+    return DoeffAdrHyFile.from_parent(parent, path=file_path)
 
 
 @pytest.hookimpl(wrapper=True)
@@ -239,7 +317,7 @@ def pytest_runtest_setup(item: pytest.Item) -> Generator[None, None, None]:
         try:
             parent.realize(item)
         except RecordMismatch as exc:
-            forget_cached(parent.path.resolve(), items_cache_dir(parent.config))
+            forget_cached(parent.resolved_path(), items_cache_dir(parent.config))
             pytest.fail(
                 f"doeff-adr: 記録と実物が食い違った — 記録を消したので、次の収集はこの file を import して作り直す\n{exc}",
                 pytrace=False,
@@ -256,6 +334,13 @@ def pytest_report_collectionfinish(config: pytest.Config) -> list[str]:
     root = Path(config.rootpath)
     lines = [f"doeff-adr: 記録から収集 {len(indexed)} file・収集で import {len(imported)} file"]
     lines += [f"  import: {_relative_posix(path, root)} — {reason}" for path, reason in imported]
+    tally = config.stash.get(_GENERATION_TALLY_KEY, None)
+    if tally is not None:
+        lines.append(tally.report())
+    if indexed and not supported_pytest():
+        lines.append(
+            f"doeff-adr: pytest {pytest.__version__} は記録からの item の生成の対象外(9.1 系だけ)— 仮の module を pytest の Module の収集に渡した"
+        )
     checks = config.stash.get(_DEPENDENCY_CHECKS_KEY, None)
     if checks is not None:
         lines.append(checks.report())
@@ -264,7 +349,15 @@ def pytest_report_collectionfinish(config: pytest.Config) -> list[str]:
 
 @pytest.hookimpl(tryfirst=True)
 def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
-    config.stash[_COLLECTED_FILES_KEY] = frozenset(Path(item.path).resolve() for item in items)
+    """collection の届いた file の集合(wiring の照合のため)。解決は item ごとでなく file ごとに 1 度(agora-redesign #1551)。
+
+    収集した Hy の file は item が 0 本でも届いている(module ごと skip する file・検を持たない file — 以前は item から
+    file を引いていたので、item の無い file は届いていないと報告されていた)。
+    """
+    paths: dict[Path, None] = dict.fromkeys(config.stash.get(_COLLECTED_HY_FILES_KEY, []))
+    for item in items:
+        paths.setdefault(item.path, None)
+    config.stash[_COLLECTED_FILES_KEY] = frozenset(path.resolve() for path in paths)
 
 
 def pytest_collection_finish(session: pytest.Session) -> None:
@@ -327,20 +420,39 @@ class DoeffAdrHyFile(pytest.Module):
     収集で import しない(agora-redesign #1211 / #1223): item を作る macro が書いた記録で説明できる file は、記録から
     作った仮の module を Module の収集に渡し、module の import は item の setup まで待つ(``lazy_collection``)。
     記録で説明できない file だけ、今までどおり収集で import する。
+
+    記録で説明できる file の item は、記録の名の並びから作る(``recorded_items`` — 属性の走査を省き、fixture の閉包を兄弟の
+    関数で共有し、pytest_generate_tests が何もしないと分かる関数は Function を 1 つ直に作る・agora-redesign #1551)。hook は
+    今までどおり呼ぶ。
     """
 
     _mut_real_module: types.ModuleType | None = None
     # 収集の中で import する理由(キャッシュに無い file)— import の直後の保存がこれを見る。setup の import では None。
     _mut_import_reason: str | None = None
+    # 記録から集める file の、item の生成の状態(import で集める file は None)。
+    _mut_recorded: RecordedCollection | None = None
+    _mut_resolved: Path | None = None
+
+    def resolved_path(self) -> Path:
+        """この file の解決した path(symlink を辿った実体 — 1 度だけ解決する)。"""
+        resolved = self._mut_resolved
+        if resolved is None:
+            resolved = self.path.resolve()
+            self._mut_resolved = resolved
+        return resolved
 
     def _getobj(self) -> types.ModuleType:
-        base = _import_base_for_path(self.path.resolve(), Path(self.config.rootpath).resolve())
-        module_name = _module_name_for_path(self.path.resolve(), base)
+        paths = _session_paths(self.config)
+        source = self.resolved_path()
+        base = _import_base_for_path(source, paths.root_resolved)
+        module_name = _module_name_for_path(source, base)
         checks = self.config.stash.setdefault(_DEPENDENCY_CHECKS_KEY, DependencyChecks())
-        match plan_collection(self.path.resolve(), items_cache_dir(self.config), Path(self.config.rootpath).resolve(), checks):
-            case Indexed(records, fixtures):
+        providers = self.config.stash.setdefault(_PROVIDER_CHECKS_KEY, ProviderChecks())
+        match plan_collection(source, paths.cache_dir, paths.root_resolved, checks, providers):
+            case Indexed(recorded):
                 self.config.stash.setdefault(_INDEXED_FILES_KEY, []).append(self.path)
-                return stub_module(records, fixtures, self.path.resolve(), module_name)
+                self._mut_recorded = RecordedCollection(recorded)
+                return stub_module(recorded, source, module_name)
             case NeedsImport(reason):
                 # import が途中で終わる file(module ごと skip する等)も報告に載せるため、import の前に積む。
                 self.config.stash.setdefault(_IMPORTED_FILES_KEY, []).append((self.path, reason))
@@ -348,6 +460,24 @@ class DoeffAdrHyFile(pytest.Module):
                 module = self.config.hook.pytest_doeff_import_hy_module(collector=self)
                 self._mut_real_module = module
                 return module
+
+    def collect(self) -> Sequence[pytest.Item | pytest.Collector]:
+        """記録で説明できる file は記録の名の並びから item を作り、それ以外(と対象外の pytest の版)は pytest の Module の収集に渡す。"""
+        self.config.stash.setdefault(_COLLECTED_HY_FILES_KEY, []).append(self.path)
+        self.obj  # noqa: B018 — 仮の module か実物の module を先に用意する(_getobj が記録の有無を決める)
+        recorded = self._mut_recorded
+        if recorded is None or not supported_pytest():
+            return list(super().collect())
+        return collect_recorded(self, recorded.recorded)
+
+    def _genfunctions(self, name: str, funcobj: Callable[..., object]) -> Iterator[pytest.Function]:
+        """pytest の item の生成の口(pytest の pytest_pycollect_makeitem が呼ぶ)。記録の関数はこの file の状態で作り、
+        それ以外は pytest に任せる。"""
+        recorded = self._mut_recorded
+        if recorded is None or name not in recorded.recorded.functions or not supported_pytest():
+            return super()._genfunctions(name, funcobj)
+        tally = self.config.stash.setdefault(_GENERATION_TALLY_KEY, GenerationTally())
+        return generate_functions(self, recorded, name, funcobj, generate_tests_impls(self.config), tally)
 
     def after_import(self, module: types.ModuleType) -> None:
         """収集の中で import した直後に、記録が実物を全部説明するなら保存し、説明しないなら理由を報告に足す。"""
@@ -360,16 +490,18 @@ class DoeffAdrHyFile(pytest.Module):
             imported = self.config.stash[_IMPORTED_FILES_KEY]
             imported[-1] = (self.path, f"{reason} — 保存しない: " + "・".join(verified.problems))
             return
-        write_cached(self.path.resolve(), module, verified.fixtures, items_cache_dir(self.config),
-                     verified.records, Path(self.config.rootpath).resolve(), verified.dynamic)
+        paths = _session_paths(self.config)
+        write_cached(self.resolved_path(), module, verified.fixtures, paths.cache_dir,
+                     verified.records, paths.root_resolved, verified.dynamic)
 
     def _pytest_collects(self, name: str) -> bool:
         """pytest がこの名を test として集めるか(``python_functions`` / ``python_classes``)。"""
         return self.funcnamefilter(name) or self.classnamefilter(name)
 
     def realize(self, item: pytest.Function) -> None:
-        """item の setup の前に、この file の module を 1 度だけ import し、item を実物の関数に替える。
+        """item の setup の前に、この file の module を 1 度だけ import し、仮の関数を持つ item を実物の関数に替える。
 
+        替えるのは仮の関数(記録から作った物)を持つ item だけ — plugin が自分の関数で足した item はそのまま。
         実物が記録と食い違えば ``RecordMismatch``(呼ぶ側が item を赤にし、記録を消す)。
         """
         real = self._mut_real_module
@@ -379,7 +511,7 @@ class DoeffAdrHyFile(pytest.Module):
             check_no_unrecorded_items(recorded_names, real, self._pytest_collects, self.nodeid)
             swap_in_real_module_marks(self, self.obj, real)
             self._mut_real_module = real
-        if item.obj is not getattr(real, item.originalname, None):
+        if self._mut_recorded is not None and item.obj is vars(self.obj).get(item.originalname):
             swap_in_real_function(item, real)
 
 
@@ -393,9 +525,7 @@ def items_cache_dir(config: pytest.Config) -> Path:
 
 
 def _should_collect_hy_file(path: Path, config: pytest.Config) -> bool:
-    root = Path(config.rootpath)
-    patterns = _file_patterns(config)
-    return _matches_file_patterns(path, root, patterns)
+    return _session_paths(config).matcher.matches(path)
 
 
 def _file_patterns(config: pytest.Config) -> list[str]:
@@ -414,9 +544,7 @@ def _pattern_regex(patterns: tuple[str, ...]) -> re.Pattern[str]:
 
 def _matches_file_patterns(path: Path, root: Path, patterns: Sequence[str]) -> bool:
     """file の名・rootdir からの path・絶対 path のどれかが、executable ADR の pattern に当たるか。"""
-    regex = _pattern_regex(tuple(patterns))
-    candidates = (path.name, _relative_posix(path, root), path.as_posix())
-    return any(regex.match(os.path.normcase(candidate)) for candidate in candidates)
+    return _matcher(str(root), tuple(patterns)).matches(path)
 
 
 def _wiring_mode(config: pytest.Config) -> WiringMode:
@@ -508,28 +636,60 @@ def _norecurse_dir_patterns(config: pytest.Config) -> list[str]:
     return list(config.getini("norecursedirs"))
 
 
+def _is_directory(entry: os.DirEntry[str]) -> bool:
+    """os.walk と同じ区別: symlink を辿って dir なら dir(辿れない・読めない物は file の側)。"""
+    try:
+        return entry.is_dir()
+    except OSError:
+        return False
+
+
 def _discover_executable_adrs(
     root: Path,
     patterns: Sequence[str],
     norecurse: Sequence[str] = (),
     max_dirs: int = DEFAULT_WIRING_MAX_DIRS,
 ) -> set[Path]:
+    """rootdir の下の executable ADR の file(解決した path)を全部集める。
+
+    os.walk と同じ辿り方(symlink の dir は降りない・読めない dir は飛ばす・dir の数の上限)を scandir で行い、``.hy`` で終わらない
+    名は Path を作る前に除く(agora-redesign #1551 — 1 回の走査で数万の file の Path を作っていた)。rootdir の下の file の
+    解決した path は、rootdir を 1 度だけ解決した物から組み立てる(降りた dir に symlink は無い)。file 自身が symlink なら
+    今までどおり解決する。
+    """
+    matcher = _matcher(str(root), tuple(patterns))
+    prune = _pattern_regex(tuple(norecurse)) if norecurse else None
+    root_resolved = root.resolve()
     executable_adrs: set[Path] = set()
-    for dirs_walked, (directory, directory_names, file_names) in enumerate(
-        os.walk(root), start=1
-    ):
+    pending: list[str] = [str(root)]
+    dirs_walked = 0
+    while pending:
+        directory = pending.pop()
+        try:
+            with os.scandir(directory) as scan:
+                entries = list(scan)
+        except OSError:
+            continue
+        dirs_walked += 1
         if dirs_walked > max_dirs:
             raise WiringWalkBudgetError(dirs_walked)
-        directory_names[:] = sorted(
-            name
-            for name in directory_names
-            if name not in IGNORED_DISCOVERY_DIRECTORIES
-            and not any(fnmatch.fnmatch(name, pattern) for pattern in norecurse)
-        )
-        for file_name in sorted(file_names):
-            path = Path(directory, file_name)
-            if path.suffix == ".hy" and _matches_file_patterns(path, root, patterns):
-                executable_adrs.add(path.resolve())
+        for entry in entries:
+            name = entry.name
+            if _is_directory(entry):
+                if name in IGNORED_DISCOVERY_DIRECTORIES or (prune is not None and prune.match(os.path.normcase(name))):
+                    continue
+                if not entry.is_symlink():
+                    pending.append(entry.path)
+                continue
+            if not name.endswith(".hy"):
+                continue
+            text = entry.path
+            if not matcher.matches_text(text, name):
+                continue
+            if entry.is_symlink() or not text.startswith(matcher.root_prefix):
+                executable_adrs.add(Path(text).resolve())
+            else:
+                executable_adrs.add(root_resolved / text[len(matcher.root_prefix):])
     return executable_adrs
 
 
