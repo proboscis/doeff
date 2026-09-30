@@ -19,7 +19,7 @@ doeff-hy の pytest plugin(entry point `pytest11` の名 `doeff_hy`)だけを持
 |---|---|
 | `doeff_test_call_budget_seconds` | `.hy` の検の file から集めた検 1 本の実行(call の段階・fixture の setup と teardown を含まない)の上限の CPU 秒。印ごとの上限に当たらない検に使う |
 | `doeff_test_call_budget_by_marker` | 印ごとの実行の上限の CPU 秒(list・1 行 = `印=秒`・例 `["real_world=10"]`)。検の印(module の頭の `pytestmark` を含む)に当たる行があればその秒、複数当たれば最も長い秒。当たらなければ `doeff_test_call_budget_seconds`(それも無ければ測らない)。`=` の無い行・数でない秒・0 以下・同じ印の 2 行は起動の時点で止まる |
-| `doeff_test_collect_budget_seconds` | `.hy` の検の file 1 本の収集(import を含む)の上限の CPU 秒。file 単位で印を持たないので 1 つの値 |
+| `doeff_test_collect_budget_seconds` | `.hy` の検の file 1 本の収集(import を含む)の上限の CPU 秒。file 単位で印を持たないので 1 つの値。キャッシュ無しの変換と、別の module の初回の import(共有の依存の一度きりの重さ — 並び順でどの file に乗るかが変わる)の CPU 秒は引いて判定する(実行の上限も同じ) |
 | `doeff_test_budget_mode` | `report`(既定 — 超えても赤にせず、警告と終わりの一覧だけ)か `fail`(超えた検を赤にする) |
 | `doeff_test_budget_registry` | 上限を超えてよい既存の検の登録簿の dir(list・1 行 = 1 dir・`"dir"` の 1 つの値の書き方もそのまま読める)。どの dir も 1 鍵 1 file・`<鍵の sha256 の先頭 12 字>.txt`・1 行目が鍵・2 行目から理由。どの dir に載った鍵も赤にせず報告だけ。超えた時の文が足し先に挙げるのは 1 行目の dir |
 
