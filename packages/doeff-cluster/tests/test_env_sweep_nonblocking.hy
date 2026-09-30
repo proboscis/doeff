@@ -68,6 +68,7 @@
   (.sweep store (frozenset))
   (<- first list (calls tmp-path))
   (assert (= first ["cache prune"]) first)
+  (assert (is-not store.pruning None) "掃除は prune の thread を起こしている")
   (.wait store.pruning)
   ;; 固定の集合を変えて、すぐの掃除を起こす(prune は終わっている)。
   (.sweep store (frozenset #("env-other")))

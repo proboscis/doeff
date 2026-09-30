@@ -39,6 +39,7 @@
                    (+ "service/" SERVICE) {"name" SERVICE "revision" "r1" "needs" ["net"] "replicas" 1 "readiness" None
                                            "owner" None "run" {"kind" "service" "factory" "m:f" "env" "m:e" "config" {}}}
                    (+ "meta/Service/" SERVICE) (| STALE-META {"createdBy" "old-declarer" "updatedBy" "old-declarer"})})
+  (assert (is-not store.handle None) "開いた置き場は log の handle を持つ")
   (.close store.handle)
   None)
 

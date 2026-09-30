@@ -56,17 +56,17 @@
 
 
 (deftest test-tree-and-marker-checks-are-pure
-  (assert (in "source が 1 つも無い" (tree-problem [] (frozenset) (frozenset))))
+  (assert (in "source が 1 つも無い" (or (tree-problem [] (frozenset) (frozenset)) "")))
   (setv marker (json.dumps (marker-content "rev1" True ["a/m.py"] (frozenset [(cache-rel "a/m.py")]) [])))
   (assert (is (marker-problem marker "rev1" True 1) None))
-  (assert (in "印が無い" (marker-problem None "rev1" True 1)))
-  (assert (in "木の名前と違う" (marker-problem marker "rev2" True 1)))
-  (assert (in "1 file のはずが 0 file" (marker-problem marker "rev1" True 0)))
-  (assert (in "読めない" (marker-problem "{" "rev1" True 1)))
+  (assert (in "印が無い" (or (marker-problem None "rev1" True 1) "")))
+  (assert (in "木の名前と違う" (or (marker-problem marker "rev2" True 1) "")))
+  (assert (in "1 file のはずが 0 file" (or (marker-problem marker "rev1" True 0) "")))
+  (assert (in "読めない" (or (marker-problem "{" "rev1" True 1) "")))
   ;; 焼かない worker(--no-warm)は bytecode の無い印でよい。焼く worker はそれを完成品と見ない。
   (setv plain (json.dumps {"format" 1 "revision" "rev1" "bytecode" False}))
   (assert (is (marker-problem plain "rev1" False 0) None))
-  (assert (in "焼かずに" (marker-problem plain "rev1" True 0))))
+  (assert (in "焼かずに" (or (marker-problem plain "rev1" True 0) ""))))
 
 
 ;; --- CodeStore(手元の git repo と偽の焼きの道具)---------------------------------------
@@ -186,7 +186,9 @@
   (git other "-c" "user.name=t" "-c" "user.email=t@t" "commit" "-q" "-m" "other")
   (val rev (git other "rev-parse" "HEAD"))
   (val store (CodeStore (str other) (str cache) HY))
-  (assert (= (. (.latest-ready store) name) (get made 1)) "引き継ぎ元の候補は前の完成品")
+  (val latest (.latest-ready store))
+  (assert (is-not latest None) "前の完成品が在るはず")
+  (assert (= latest.name (get made 1)) "引き継ぎ元の候補は前の完成品")
   (.start store rev)
   (val view (wait-settled store rev))
   (assert (= view.state CodeState.READY) view.detail)

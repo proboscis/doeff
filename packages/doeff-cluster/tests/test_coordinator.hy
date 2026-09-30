@@ -252,6 +252,7 @@
 (defn #^ None test-shim-stops-the-job-when-the-worker-goes-away []
   (setv p (shim sys.executable "-c" "import time; time.sleep(60)"))
   (time.sleep 1.0)
+  (assert (is-not p.stdin None) "shim は stdin をパイプで開く")
   (.close p.stdin) ; worker が消えた時と同じ(パイプの EOF)
   (assert (!= (.wait p :timeout 30) 0)))
 
@@ -312,6 +313,7 @@
                    "service/a" {"name" "a" "revision" "r" "needs" ["net"] "pin" None "replicas" 1 "readiness" None
                                 "owner" None "run" SAMPLE-RUN}
                    (+ LEGACY-PLACEMENT "a") {"job" "a" "worker" "zeus" "generation" 3 "since_ms" 100}})
+  (assert (is-not store.handle None) "開いた置き場は log の handle を持つ")
   (.close store.handle)
   store)
 

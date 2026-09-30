@@ -14,7 +14,7 @@
 
 
 (defn #^ bytes log-bytes [#^ Path tmp-path] (.read-bytes (/ tmp-path "wal.jsonl")))
-(defn #^ None write-log [#^ Path tmp-path #^ bytes data] (.write-bytes (/ tmp-path "wal.jsonl") data))
+(defn #^ None write-log [#^ Path tmp-path #^ bytes data] (.write-bytes (/ tmp-path "wal.jsonl") data) None)
 
 
 (defn #^ None test-every-line-carries-a-checksum-that-is-checked [#^ Path tmp-path]
@@ -39,6 +39,7 @@
   (assert (= (.load again) {"k/1" 1}))
   (assert (= again.seq 1))
   (assert (= (len (log-bytes tmp-path)) first-len))
+  (assert (is-not again.recovered None) "壊れた行を捨てて読み直した記録がある")
   (assert (= (get again.recovered "reason") "checksum が合わない")))
 
 
@@ -66,7 +67,8 @@
   (setv old (.encode (+ (json.dumps {"seq" 2 "delta" {"b" 2}}) "\n") "utf-8"))
   (write-log tmp-path (+ (encode-line 1 {"a" 1}) old (encode-line 3 {"c" 3})))
   (with [(pytest.raises WalCorrupted)]
-    (.load (WalStore (str tmp-path)))))
+    (.load (WalStore (str tmp-path))))
+  None)
 
 
 (defn #^ None test-a-log-written-before-checksums-still-loads [#^ Path tmp-path]

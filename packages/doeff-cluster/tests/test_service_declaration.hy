@@ -64,6 +64,7 @@
   (val system (lab plain-foundation))
   (assert (= system.name "lab"))
   (val tally (job-named system "tally"))
+  (assert (is-not tally None) "lab は tally の job を持つ")
   (assert (= tally.call TALLY-CALL) tally.call)
   (assert (is tally.call.function tally-program))
   (assert (= tally.needs (frozenset ["cluster-net"])))
