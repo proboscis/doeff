@@ -2,7 +2,7 @@
 ;;; env の中で動く子 process なら env のキー(DOEFF_RUNTIME_ENV_KEY)。
 ;;;
 ;;; 送り手は blob に添え、受け側は remote_model.version-diffs で突き合わせる。読むのは process の外の事実(入っている dist の版・
-;;; source の file・環境変数)なので、送る形と判断を置く remote_model.hy(domain)から分けた(agora-redesign #1630 — 純粋な層の
+;;; source の file・環境変数)なので、送る形と判断を置く remote_model.hy(domain)から分けた(#1630 — 純粋な層の
 ;;; module が remote_model 経由で os・pathlib を読んでいた)。呼ぶのは送り手と受け側の入口と io の handler だけで、
 ;;; 宣言の組み立て(service_model.system-declaration)には呼び手がこの値を渡す。
 (import hashlib)
