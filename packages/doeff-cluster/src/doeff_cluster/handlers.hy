@@ -386,7 +386,7 @@
               made (if owned (. (.stat (/ entry ENV-MARKER)) st-mtime) 0.0)
               used-file (/ entry ".last-used")
               used (if (.exists used-file) (. (.stat used-file) st-mtime) made)
-              project (if owned
+              project (if (and owned (is-not marker None))
                           (let [declared (get marker "env") pr (get declared "project")]
                             (.format "{}:{}" (next (gfor r (get declared "repos") :if (= (get r "name") (get pr "repo")) (get r "url")) "")
                                      (get pr "path")))
@@ -690,6 +690,8 @@
      先に死んだ時の本体を残さない — ProcessHost.reap と同じ)。"
     (try (os.killpg run.process.pid signal.SIGKILL) (except [ProcessLookupError] None))
     (when (is code None) (.wait run.process))
+    (when (is run.process.stdin None)
+      (raise (RuntimeError "検めの shim は stdin を pipe で起こしているのに、pipe が無い")))
     (.close run.process.stdin)
     (.seek run.out 0)
     (.seek run.err 0)

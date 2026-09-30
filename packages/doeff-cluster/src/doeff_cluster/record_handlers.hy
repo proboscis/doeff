@@ -448,9 +448,11 @@
       (in (.current self) self.waiting) [(.pop self.waiting (.current self))]
       True []))
 
-  (defn diverge [self #^ dict info]
+  (defn #^ dict diverge [self #^ dict info]
+    "最初の分岐だけを残す。返り値 = 残っている分岐(いまの info か、先に立っていた物)— 呼び手は None を絞らずに読める。"
     (when (is self.divergence None)
-      (setv self.divergence info)))
+      (setv self.divergence info))
+    self.divergence)
 
   (defn stall [self]
     "他の task が全部止まったのに番号が進まない: 記録の出来事を誰も出さない = 分岐。"
@@ -552,12 +554,12 @@
     (cond
       (= verdict "diverge")
         (do (setv entry (if (< pos (len queue)) (get rec.entries (get queue pos)) None))
-            (.diverge state {"reason" (if (is entry None) "記録ではもう問いを出さない task が問いを出した" "問いが記録と食い違った")
+            (val divergence (.diverge state {"reason" (if (is entry None) "記録ではもう問いを出さない task が問いを出した" "問いが記録と食い違った")
                              "task" label "event" (if entry entry.e None) "at" (if entry entry.at None)
                              "expected" (if entry {"type" entry.type "args" entry.args} None)
-                             "actual" {"type" codec.name "args" args}})
+                             "actual" {"type" codec.name "args" args}}))
             (<- (wake (.wakeable state)))
-            (raise (ReplayDiverged (get state.divergence "reason"))))
+            (raise (ReplayDiverged (get divergence "reason"))))
       (or (= verdict "finish") (and (= verdict "extra") state.finished))
         ;; 記録を読み切った後に業務の Program が出した書き・報告は、比べる相手(記録)が無い — 違いに数えずに終わる
         ;; (動いている run の記録は周期の途中で切れるので、再生は切れ目の先の報告まで進むことがある。2026-09-25 実測)。
@@ -568,10 +570,10 @@
             (.append (if (= mode DECISION) state.decisions state.outputs)
                      (diff-row "extra" None codec.name subject label args :at (if (is current-entry None) None (. (get rec.entries current-entry) at))))
             (when (is codec.unexecuted DIVERGE)
-              (.diverge state {"reason" "記録に対の無い書き込み(実行していない時の答えが決まっていない型)" "task" label
-                               "actual" {"type" codec.name "args" args}})
+              (val unpaired-divergence (.diverge state {"reason" "記録に対の無い書き込み(実行していない時の答えが決まっていない型)" "task" label
+                                                "actual" {"type" codec.name "args" args}}))
               (<- (wake (.wakeable state)))
-              (raise (ReplayDiverged (get state.divergence "reason"))))
+              (raise (ReplayDiverged (get unpaired-divergence "reason"))))
             (resume codec.unexecuted))
       True
         (do

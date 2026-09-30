@@ -139,7 +139,7 @@
           #(updated {"ok" present "reason" (if present None "lost") "ttlMs" 0}))
     True
       (do (setv updated (drop-holders row token))
-          (if (is updated None)
+          (if (or (is row None) (is updated None))  ; row が None なら drop-holders は None を返す(外す担い手が無い)
               #(row {"ok" True "reason" None "dropped" 0 "ttlMs" 0})
               #(updated {"ok" True "reason" None "dropped" (- (len (get row "holders")) (len (get updated "holders"))) "ttlMs" 0})))))
 

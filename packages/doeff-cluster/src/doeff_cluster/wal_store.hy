@@ -178,19 +178,21 @@
     kv)
 
   (defn open-log [self]
+    "追記用の handle を返す(まだ開いていなければ開く)。返り値は開いている handle で、None を含まない。"
     (when (is self.handle None)
-      (setv self.handle (open self.log "ab"))))
+      (setv self.handle (open self.log "ab")))
+    self.handle)
 
   (defn persist [self #^ dict delta]
     "1 まとまりを log へ 1 行(checksum つき)で書き、fsync してから戻る。"
     (when (not delta) (return None))
-    (.open-log self)
+    (setv handle (.open-log self))
     (+= self.seq 1)
     (setv line (encode-line self.seq delta))
-    (.write self.handle line)
-    (.flush self.handle)
+    (.write handle line)
+    (.flush handle)
     (setv started (time.monotonic))
-    (self.fsync (.fileno self.handle))
+    (self.fsync (.fileno handle))
     (setv took (- (time.monotonic) started))
     (.append self.fsync-seconds took)
     (setv self.fsync-seconds (cut self.fsync-seconds -200 None))
@@ -202,7 +204,7 @@
     (when (= (% self.seq 200) 0)
       (print (.format "coordinator: fsync {}" (.fsync-stats self)) :file sys.stderr :flush True))
     (apply-delta self.kv delta)
-    (when (> (.tell self.handle) self.max-log-bytes)
+    (when (> (.tell handle) self.max-log-bytes)
       (.checkpoint self)))
 
   (defn checkpoint [self]

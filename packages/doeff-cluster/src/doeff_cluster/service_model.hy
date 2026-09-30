@@ -127,7 +127,8 @@
     (raise (ValueError (.format "job {} の :needs が空 — 要る能力の名を 1 つ以上書く(ADR-DOE-CLUSTER-001 R4b)" name))))
   (when (and (is-not environ None) (not (isinstance environ dict)))
     (raise (TypeError (.format "job {} の :environ は文字列の鍵と値の dict: {!r}" name environ))))
-  (setv env-vars (tuple (gfor k (sorted (or environ {})) (EnvVar :name k :value (get environ k)))))
+  (setv environ-given (if (is environ None) {} environ))
+  (setv env-vars (tuple (gfor k (sorted environ-given) (EnvVar :name k :value (get environ-given k)))))
   (identity-of call (.format "job {}" name))
   (Job :name name :program program :call call :needs (frozenset caps) :readiness readiness :update update :environ env-vars))
 

@@ -14,6 +14,7 @@
 (require doeff-hy.macros [defk <- val var])
 (import dataclasses [dataclass])
 (import re)
+(import typing [TypeGuard])
 (import sys)
 (import doeff [EffectBase])
 (import doeff_cluster.clock [now-epoch-ms])
@@ -56,7 +57,7 @@
 (setv NAME-PATTERN (re.compile r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$"))
 (setv MAINTENANCE-MS 300000)
 
-(defn #^ bool safe-name? [name]
+(defn #^ (get TypeGuard str) safe-name? [#^ object name]
   "path の 1 段に使ってよい名(/ や .. を含まない)。"
   (and (isinstance name str) (is-not (.match NAME-PATTERN name) None) (not-in ".." name)))
 

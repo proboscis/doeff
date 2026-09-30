@@ -1915,10 +1915,10 @@
   (AwaitProcessEnded [job timeout-seconds]
     ;; 待つ相手(job の今の最後の process — まだ無ければ最初に起きる process)が終わっていればすぐ答え、それ以外は Promise を掛けて、
     ;; 世界が process の終わりを書いた時(EndProcess・KillWorker)に起きる。読み直さない(proboscis/doeff#631)。
-    (<- ended (| SimProcess None) (ended-process log job))
+    (<- last-process (| SimProcess None) (ended-process log job))
     (cond
-      (is-not ended None)
-        (do (<- answer ProcessEnded (ended-answer ended))
+      (is-not last-process None)
+        (do (<- answer ProcessEnded (ended-answer last-process))
             (resume answer))
       (and (is-not timeout-seconds None) (<= timeout-seconds 0))
         (resume (ProcessWaitExpired :job job :waited-seconds 0.0))
