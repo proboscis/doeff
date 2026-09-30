@@ -114,7 +114,7 @@ def cache_handler(storage: DurableStorage):
     """
 
     @do
-    def handler(effect, k):
+    def handler(effect: CacheGetEffect | CacheExistsEffect | CachePutEffect | CacheDeleteEffect, k):
         if not isinstance(
             effect,
             (CacheGetEffect, CacheExistsEffect, CachePutEffect, CacheDeleteEffect),
