@@ -100,8 +100,10 @@
     "この貸し出しが答える database の名の並びを読むため。"
     (tuple self.databases))
 
-  (defn connection-options [self]  ; defk にできない: 接続を開く thread の中で読む psycopg への引数(Program を返すと psycopg へ渡せない)
-    "開く接続に付ける上限を libpq の接続の parameter の写像で読むため(connect の keyword に渡す — DSN に同じ名が在ればこちらが勝つ)。"
+  (defn connection-options [self #^ str name]  ; defk にできない: 接続を開く thread の中で読む psycopg への引数(Program を返すと psycopg へ渡せない)
+    "開く接続に付ける上限を libpq の接続の parameter の写像で読むため(connect の keyword に渡す — DSN に同じ名が在ればこちらが勝つ)。
+     ただし options(-c を連ねた 1 本の値)は勝たせず、database name の DSN の options に文の上限の -c を継ぎ足す — 勝たせると DSN の
+     -c search_path などが黙って消える(agora-redesign #1771)。"
     (setv timeouts self.timeouts
           options {"connect_timeout" timeouts.connect-seconds
                    "keepalives" 1
@@ -110,7 +112,14 @@
                    "keepalives_count" timeouts.keepalive-count
                    "tcp_user_timeout" timeouts.unacknowledged-milliseconds})
     (when (is-not timeouts.statement-milliseconds None)
-      (setv (get options "options") (.format "-c statement_timeout={}" timeouts.statement-milliseconds)))
+      (setv bound (.format "-c statement_timeout={}" timeouts.statement-milliseconds)
+            dsn (. (get self.databases name) dsn)
+            declared (when dsn
+                       ;; DSN の読みは libpq の綴り(URI・key=value の両方)なので psycopg の読みに任せる(DSN が空なら読まない —
+                       ;; psycopg は postgres の追加の依存で、接続を開く acquire と同じく使う時だけ読む)。
+                       (import psycopg.conninfo [conninfo-to-dict])
+                       (.get (conninfo-to-dict dsn) "options")))
+      (setv (get options "options") (if declared (+ declared " " bound) bound)))
     options)
 
   (defn acquire [self #^ str name]  ; defk にできない: 資源の貸し出し(thread の間で blocking に待つ)
@@ -123,7 +132,7 @@
         (.get-nowait (get self.idle name))
         (except [Empty]
           (setv connection (psycopg.connect (. (get self.databases name) dsn) :autocommit True
-                                            #** (.connection-options self)))
+                                            #** (.connection-options self name)))
           (.register-loader connection.adapters "json" TextLoader)
           (.register-loader connection.adapters "jsonb" TextLoader)
           connection))

@@ -384,17 +384,17 @@
 (deftest test-postgres-connections-carry-the-timeouts
   ;; 既定の貸し出しは、開く接続に接続・keepalive・送った bytes の返事・文の上限を付ける。
   (val connections (PostgresConnections #((PostgresDatabase :name DB :dsn ""))))
-  (assert (= (.connection-options connections)
+  (assert (= (.connection-options connections DB)
              {"connect_timeout" 5 "keepalives" 1 "keepalives_idle" 10 "keepalives_interval" 5 "keepalives_count" 3
               "tcp_user_timeout" 15000 "options" "-c statement_timeout=60000"})
-          (.connection-options connections))
+          (.connection-options connections DB))
   ;; 文の上限を付けない宣言(None)では options を渡さない(DSN の options を消さない)。
   (val unbounded (PostgresConnections #((PostgresDatabase :name DB :dsn ""))
                                       :timeouts (PostgresTimeouts :connect-seconds 2 :keepalive-idle-seconds 1 :keepalive-interval-seconds 1
                                                                   :keepalive-count 1 :unacknowledged-milliseconds 900
                                                                   :statement-milliseconds None)))
-  (assert (not-in "options" (.connection-options unbounded)))
-  (assert (= (get (.connection-options unbounded) "tcp_user_timeout") 900)))
+  (assert (not-in "options" (.connection-options unbounded DB)))
+  (assert (= (get (.connection-options unbounded DB) "tcp_user_timeout") 900)))
 
 
 (val PSYCOPG-SKIP (is (importlib.util.find-spec "psycopg") None))
@@ -910,3 +910,15 @@
   ;; その後になる。
   (for [result #(same apart)]
     (assert (< (max (get result 0)) 0.6) result)))
+
+
+(deftest test-postgres-connections-keep-the-dsn-options-and-add-the-statement-bound
+  {:skip-if PSYCOPG-SKIP :skip-reason "psycopg が無い"}
+  ;; DSN が options(-c search_path …)を名乗っていれば、文の上限の -c はそれに継ぎ足す(keyword で勝たせると DSN の -c が黙って消え、
+  ;; 表が名指した schema でなく public に作られた — agora-redesign #1771)。名乗らない database は文の上限だけ。
+  (val connections (PostgresConnections #((PostgresDatabase :name DB :dsn "postgresql://u@/d?host=%2Ftmp&options=-c%20search_path%3Ds1")
+                                          (PostgresDatabase :name "plain" :dsn "postgresql://u@/d"))))
+  (assert (= (get (.connection-options connections DB) "options") "-c search_path=s1 -c statement_timeout=60000")
+          (.connection-options connections DB))
+  (assert (= (get (.connection-options connections "plain") "options") "-c statement_timeout=60000")
+          (.connection-options connections "plain")))
