@@ -4038,7 +4038,8 @@ fn judge_semantic(
             layer: layered.then_some(item.layer),
             rel: item.rel.clone(),
             detail: hy_mangle(&item.name),
-            probability: answer.probability,
+            // 選ぶ形の問いは的の語の確率(較正の見張りと同じ読み方 — 選んだ語の確率ではない・agora-redesign #1994)
+            probability: semantic::target_probability(item.question, answer),
             flagged: draft.is_some(),
         });
         drafts.extend(draft);

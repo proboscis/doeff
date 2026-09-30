@@ -688,8 +688,10 @@ pub fn mixed_item(
     SemanticItem { question, question_json, declared: None, rel: rel.to_string(), path: path.to_path_buf(), name: name.to_string(), kind, range, layer, state, key, readable: readable(source) }
 }
 
-/// 較正の見張りで比べる確率 — Noul は答えの確率、DOEFF204 は external-world の確率(正例 = 窓口・反例 = 値の class)。
-fn calibration_probability(question: SemanticQuestion, answer: &Answer) -> f64 {
+/// 閾値と比べる確率 — 較正の見張りと、人の判定との突き合わせ(`labeled`)の 2 か所がこの 1 つを使う。Noul は答えの確率、選ぶ形の問いは
+/// 的の語の確率(DOEFF204 = external-world・DOEFF205 = mixed)。選ぶ形の答えの `probability` は選んだ語の確率なので、そのまま使うと
+/// judgment-only 0.97・mixed 0.02 の答えが 0.97 に見える(agora-redesign #1944・#1994 — 205 の閾値の表がこの読み違いの上で作られた)。
+pub fn target_probability(question: SemanticQuestion, answer: &Answer) -> f64 {
     match question {
         SemanticQuestion::ClassRole => answer.probabilities.as_ref().and_then(|p| p.get("external-world").copied()).unwrap_or(0.0),
         SemanticQuestion::MixedConcerns => answer.probabilities.as_ref().and_then(|p| p.get("mixed").copied()).unwrap_or(0.0),
@@ -1190,6 +1192,7 @@ pub struct LabeledAnswer {
     pub rule: String,
     /// 人の判定(true = 本当の違反・false = 誤判定)。
     pub expect: bool,
+    /// 閾値と比べる確率(`target_probability` — Noul は答えの確率・DOEFF204 は external-world・DOEFF205 は mixed の確率)。
     pub probability: f64,
     /// 今の閾値で当たりになるか。
     pub flagged: bool,
@@ -1285,7 +1288,7 @@ pub fn evaluate(
                             if answer.served_model.is_some() {
                                 summary.served_model = answer.served_model.clone();
                             }
-                            let probability = calibration_probability(example.question, &answer);
+                            let probability = target_probability(example.question, &answer);
                             let inside = if expect { probability >= CALIBRATION_POSITIVE_MIN } else { probability <= CALIBRATION_NEGATIVE_MAX };
                             if !inside {
                                 drifted.push(format!("{} の {}(期待 {})が p={:.2}", example.question_id(), example.name, if expect { "真" } else { "偽" }, probability));

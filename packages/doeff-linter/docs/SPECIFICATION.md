@@ -530,6 +530,9 @@ true_positives = ["scripts/doeff_lint/JEV-TRUE-POSITIVES"]     # 人が本当の
   `positives` / `negatives` = `{listed: 一覧に載った数, judged: そのうち Jev の答えのある数, flagged: そのうち今の閾値で当たりになる数}`、
   `items` = 答えのある判定ごとの `{key, rule, expect(true = 正例), probability, flagged}`(鍵の順)。閾値に届かない答えも載る
   (閾値を決め直す材料)。答えの無い判定(未判定の定義・もう無い定義)は `listed` にだけ数える。
+  `probability` は閾値と比べる確率で、較正の見張りと同じ読み方: yes / no の問いは答えの確率、選ぶ形の問いは**的の語の確率**
+  (DOEFF204 = `external-world`・DOEFF205 = `mixed`)。選んだ語の確率ではない — `judgment-only` 0.97・`mixed` 0.02 の答えは 0.02
+  (agora-redesign #1994。前は選んだ語の確率を載せていて、205 の閾値の表が読み違いの上で作られた — #1944)。
 - 較正の手順: 判定を付けた file を `--semantic <file>…`(か `--semantic-all`)で問い、`semantic.labeled` の正例の `flagged / judged`
   (当たりを拾えた割合)と反例の `flagged / judged`(外れを出す割合)を読む。同梱の較正の見張り(model の中身が変わったかの検め)とは別の物で、
   見張りの幅には入れない(人の判定は閾値の際の物が多く、幅から外れても model の変化とは限らないため)。

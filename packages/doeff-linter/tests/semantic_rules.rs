@@ -41,7 +41,10 @@ fn fake_jev(drifted: bool) -> FakeJev {
             let source = body["state"]["definition"]["source"].as_str().unwrap_or("");
             if body["questions"]["q"]["criteria"].get("mixed").is_some() {
                 // DOEFF205: 文字列の鍵の .get を持つ定義は mixed、それ以外は judgment-only。較正の例もこの規則で幅に入る。
-                let (choice, probabilities) = if source.contains(".get") {
+                // messageId を持つ定義は、本番の convert-project の答え(judgment-only 0.97・mixed 0.02 — agora-redesign #1944)と同じ確率。
+                let (choice, probabilities) = if source.contains("messageId") {
+                    ("judgment-only", serde_json::json!({"mixed": 0.02, "shape-only": 0.0, "judgment-only": 0.97, "neither": 0.01}))
+                } else if source.contains(".get") {
                     ("mixed", serde_json::json!({"mixed": 0.9, "shape-only": 0.05, "judgment-only": 0.04, "neither": 0.01}))
                 } else {
                     ("judgment-only", serde_json::json!({"mixed": 0.03, "shape-only": 0.02, "judgment-only": 0.94, "neither": 0.01}))
@@ -413,6 +416,50 @@ fn mixed_concerns_asks_jev_only_for_judgment_and_program_definitions() {
     assert!(decide["hint"].as_str().unwrap().contains("defwire"));
     assert!(find(&report, "DOEFF205", "pure").is_none());
     assert!(find(&report, "DOEFF205", "shaped").is_none());
+}
+
+#[test]
+fn labeled_probability_of_a_choice_answer_is_the_target_word_not_the_chosen_one() {
+    // 反例(agora-redesign #1944・#1994): 選ぶ形の問い(DOEFF205)の答え judgment-only 0.97・mixed 0.02 を、人の判定との突き合わせが
+    // 選んだ語の確率 0.97 で載せていた(閾値の表では mixed 0.97 に見えた)。載せるのは的の語 mixed の確率 0.02。yes / no の問いの確率は
+    // 変わらない(false_positives_are_not_reported_nor_counted_and_labels_meet_the_answers の read-body = 0.05)。
+    let dir = tempfile::TempDir::new().unwrap();
+    std::fs::write(
+        dir.path().join("pyproject.toml"),
+        "[tool.doeff-linter]\nenable = [\"DOEFF205\"]\n[tool.doeff-linter.definitions]\npaths = [\"app\"]\n[tool.doeff-linter.layers]\norder = [\"core\", \"protocol\"]\npaths = { core = \"app/core\", protocol = \"app/protocol\" }\n[tool.doeff-linter.layers.describe.core]\nsummary = \"業務の判断\"\nknows = \"業務の判断\"\ndoes_not_know = \"相手の話し方\"\n[tool.doeff-linter.semantic]\nmixed_concerns = { layer = \"core\" }\nfalse_positives = [\"FALSE\"]\ntrue_positives = [\"TRUE\"]\n",
+    )
+    .unwrap();
+    std::fs::create_dir_all(dir.path().join("app/core")).unwrap();
+    std::fs::create_dir_all(dir.path().join("FALSE")).unwrap();
+    std::fs::create_dir_all(dir.path().join("TRUE")).unwrap();
+    std::fs::write(
+        dir.path().join("app/core/x.hy"),
+        concat!(
+            "(val MODULE-TAGS {:context \"kanban\" :role \"judgment\"})\n",
+            "(defk decide [payload] (val s (.get payload \"subject\")) (when (isinstance s str) (return 1)) 2)\n",
+            "(defk convert-project [value] (convert-outcome-of value \"messageId\"))\n",
+        ),
+    )
+    .unwrap();
+    let jev = fake_jev(false);
+    let (_, report, stderr) = run(dir.path(), &jev.url, &["--semantic-all"]);
+    let decide = find(&report, "DOEFF205", "decide").unwrap_or_else(|| panic!("decide が出ない: {} {}", report, stderr))["key"].as_str().unwrap().to_string();
+    let convert = decide.replace("decide", "convert_project");
+    write_judgment(dir.path(), "TRUE", "a", &decide, "形の検めと判断が同じ定義に在る");
+    write_judgment(dir.path(), "FALSE", "a", &convert, "判断は呼ぶ先に任せている");
+    let (code, report, stderr) = run(dir.path(), &jev.url, &[]);
+    assert_eq!(code, 0, "{}", stderr);
+    let items = report["semantic"]["labeled"]["items"].as_array().unwrap();
+    let item_of = |key: &str| items.iter().find(|i| i["key"] == key).unwrap_or_else(|| panic!("{} が labeled に無い: {}", key, report["semantic"]["labeled"]));
+    let chosen_other = item_of(&convert);
+    assert_eq!(
+        (chosen_other["expect"].as_bool(), chosen_other["flagged"].as_bool(), chosen_other["probability"].as_f64()),
+        (Some(false), Some(false), Some(0.02)),
+        "judgment-only を選んだ答えは mixed の確率で載る(選んだ語の 0.97 ではない)"
+    );
+    let chosen_mixed = item_of(&decide);
+    assert_eq!((chosen_mixed["expect"].as_bool(), chosen_mixed["flagged"].as_bool(), chosen_mixed["probability"].as_f64()), (Some(true), Some(true), Some(0.9)));
+    assert_eq!(report["semantic"]["labeled"]["negatives"], serde_json::json!({"listed": 1, "judged": 1, "flagged": 0}));
 }
 
 #[test]
