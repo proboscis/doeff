@@ -1295,7 +1295,7 @@ fn judge_layer_file(
         };
         if !allowed_here {
             if enabled.contains(&ProjectRule::RawSideEffectDirect) {
-                drafts.extend(judge.raw_direct(hy_file, raw));
+                drafts.extend(judge.raw_direct(hy_file, raw, &file.module));
             }
             if enabled.contains(&ProjectRule::RawSideEffectVia) {
                 drafts.extend(judge.raw_via(hy_file));
@@ -1702,7 +1702,7 @@ impl<'a> LayerJudge<'a> {
 
     /// DOEFF106: 定義の中の生の副作用の直接の証拠(強い証拠は error、弱い証拠は warning)。入れ子の定義と外の定義で
     /// 同じ証拠が重なる時は、いちばん内側の定義に 1 度だけ数える。
-    fn raw_direct(&self, hy_file: &HyFileIndex, raw: &settings::RawSettingsSpec) -> Vec<Draft> {
+    fn raw_direct(&self, hy_file: &HyFileIndex, raw: &settings::RawSettingsSpec, module: &str) -> Vec<Draft> {
         let definitions = &hy_file.definitions;
         let allowed = match &raw.world_modules {
             Some(_) => "生の副作用に触ってよいのは architecture.hy の :world-handlers(外の世界に触れてよい定義の許可名簿)の定義の module だけ".to_string(),
@@ -1710,6 +1710,7 @@ impl<'a> LayerJudge<'a> {
         };
         innermost_raw_evidence(definitions)
             .into_iter()
+            .filter(|found| !boundary_allows(raw, module, definitions[found.definition].raw.direct[found.evidence].category))
             .map(|found| {
                 let definition = &definitions[found.definition];
                 let evidence = &definition.raw.direct[found.evidence];
@@ -3264,6 +3265,14 @@ fn judge_clause_coverage(
 }
 
 /// 生の副作用の直接の証拠のうち、入れ子で重なる物はいちばん内側の定義に 1 度だけ(DOEFF106 の母集団)。
+/// agora-redesign #1797: 境目の部品(architecture.hy の :boundary-parts)の module の中で、触れる先が宣言に入る生の副作用の証拠か
+/// (DOEFF106 が当たりにしない)。種類の外の証拠と、宣言の無い module の証拠は今どおり当たる。
+fn boundary_allows(raw: &settings::RawSettingsSpec, module: &str, category: hy_index::RawCategory) -> bool {
+    raw.boundary
+        .get(&architecture::mangle_dotted(module))
+        .is_some_and(|touches| touches.contains(&world_catalog::touch_of_raw(category)))
+}
+
 fn innermost_raw_evidence(definitions: &[Definition]) -> Vec<EvidenceRef> {
     let mut chosen: BTreeMap<EvidenceSpot, EvidenceRef> = BTreeMap::new();
     for (definition_index, definition) in definitions.iter().enumerate() {
@@ -3376,7 +3385,11 @@ fn judge_unplaced_world(
             explain: Explain::WorldOutsideLayers { subject: message },
         };
         if enabled.contains(&ProjectRule::RawSideEffectDirect) && !modules.contains(&architecture::mangle_dotted(&file.module)) {
-            for found in innermost_raw_evidence(definitions).into_iter().filter(|f| !in_test(f.definition)) {
+            for found in innermost_raw_evidence(definitions)
+                .into_iter()
+                .filter(|f| !in_test(f.definition))
+                .filter(|f| !boundary_allows(raw, &file.module, definitions[f.definition].raw.direct[f.evidence].category))
+            {
                 let definition = &definitions[found.definition];
                 let evidence = &definition.raw.direct[found.evidence];
                 drafts.push(draft(

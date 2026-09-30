@@ -258,6 +258,22 @@ pub struct WorldHandler {
     pub range: doeff_indexer::hy_index::Range,
 }
 
+/// 模擬の環境から本物の外の世界へ届く境目の部品 1 つ(`:boundary-parts` の `(boundary-part "module" :touches [..] :reason "…")`
+/// — DOEFF106・agora-redesign #1797)。宣言した module の中では、:touches に入る種類の生の副作用(実 socket の客・実時計・thread など)を
+/// DOEFF106 で当たりにしない。種類の外の生の副作用は今どおり当たる。生の副作用の証拠は索引に残るので、この部品に届くテストは
+/// DOEFF133 が縁(:edge-mark の印が要る)と数える。名簿(:world-handlers)と違い、effect に答える handler ではなく、人が回す入口や
+/// 縁の台のように実 I/O そのものが役目の部品を名指す。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct BoundaryPart {
+    /// 部品の module(dotted の綴り・mangle する前)。
+    pub module: String,
+    pub touches: Vec<WorldTouch>,
+    /// なぜ実 I/O そのものが役目か(空は受けない)。
+    pub reason: String,
+    #[serde(skip)]
+    pub range: doeff_indexer::hy_index::Range,
+}
+
 /// 決めた材料だけで判じる定義 1 つ(`:blind-definitions` の `(blind "module:名" :forbid-words [..] :no-imports True :allow-requires [..]
 /// :why "…")` — DOEFF141・agora-redesign #1368)。定義から呼び出しと名指しで推移的に届く repo の Hy の定義(入れ子を含む)の本体に
 /// :forbid-words の綴りが現れない(註は除く・部分一致)こと、:no-imports なら定義の module が import と require を持たない
@@ -651,6 +667,8 @@ pub struct Architecture {
     pub wire_modules: Vec<String>,
     /// 外の世界に触れてよい定義の許可名簿(`:world-handlers` — 空 = 宣言していない)。
     pub world_handlers: Vec<WorldHandler>,
+    /// 模擬の環境から本物の外の世界へ届く境目の部品(`:boundary-parts` — 空 = 宣言していない・DOEFF106・agora-redesign #1797)。
+    pub boundary_parts: Vec<BoundaryPart>,
     /// 許可名簿の規則(DOEFF106・131)を層の置き場の外の file にも当てる dir(repo の根からの綴りの列・`:raw-io-roots ["controllers" "services"]`)。
     /// 書かなければ `:root` だけ(agora-redesign #1147 — :root の外の services/ も名簿で縛る)。
     pub raw_io_roots: Option<Vec<String>>,
@@ -790,6 +808,11 @@ impl Architecture {
     /// 許可名簿の定義の module(mangle した dotted の綴り)— 生の副作用を許す所(DOEFF106)。
     pub fn world_modules(&self) -> BTreeSet<String> {
         self.world_handlers.iter().map(|h| h.definition.mangled_module()).collect()
+    }
+
+    /// 境目の部品の module(mangle した dotted の綴り)→ 許す触れる先(DOEFF106 が種類の内の証拠を当たりにしない)。
+    pub fn boundary_touches(&self) -> BTreeMap<String, Vec<WorldTouch>> {
+        self.boundary_parts.iter().map(|p| (mangle_dotted(&p.module), p.touches.clone())).collect()
     }
 
     /// 縁と数える触れる先(`:edge-touches`・書かなければ全部)。
@@ -1024,6 +1047,7 @@ impl<'a> Parser<'a> {
             rejected_plain_callable_reasons: Vec::new(),
             wire_modules: Vec::new(),
             world_handlers: Vec::new(),
+            boundary_parts: Vec::new(),
             raw_io_roots: None,
             edge_mark: None,
             static_readers: Vec::new(),
@@ -1087,6 +1111,7 @@ impl<'a> Parser<'a> {
                 }
                 ":wire-modules" => arch.wire_modules = self.module_patterns(value, ":wire-modules"),
                 ":world-handlers" => arch.world_handlers = self.world_handlers(value),
+                ":boundary-parts" => arch.boundary_parts = self.boundary_parts(value),
                 ":raw-io-roots" => {
                     let roots = self.names(value, ":raw-io-roots");
                     for root in &roots {
@@ -2273,6 +2298,66 @@ impl<'a> Parser<'a> {
                 None
             }
         }
+    }
+
+    /// 境目の部品の列 `[(boundary-part "module" :touches [..] :reason "…") …]` を読む(agora-redesign #1797)。
+    fn boundary_parts(&mut self, value: &Form) -> Vec<BoundaryPart> {
+        let entries = self.bracket(value).unwrap_or_else(|| {
+            self.problem(value, ":boundary-parts は (boundary-part \"module\" :touches [..] :reason \"…\") の列");
+            Vec::new()
+        });
+        let mut out: Vec<BoundaryPart> = Vec::new();
+        for entry in entries {
+            let parts = self.paren(entry).filter(|p| p.first().and_then(|h| self.symbol(h)) == Some("boundary-part"));
+            let Some(parts) = parts else {
+                self.problem(entry, ":boundary-parts の要素は (boundary-part \"module\" :touches [..] :reason \"…\")");
+                continue;
+            };
+            let Some(head) = parts.get(1) else {
+                self.problem(entry, "boundary-part に \"module\" が無い");
+                continue;
+            };
+            let Some(module) = self.required_string(head, "boundary-part の module") else { continue };
+            if module.is_empty() || module.contains(':') || module.contains('/') {
+                self.problem(head, &format!("boundary-part の {} は module の dotted の綴り(: と / を含まない)", module));
+                continue;
+            }
+            let range = self.lines.range(head.span.start, head.span.end);
+            let mut part = BoundaryPart { module, touches: Vec::new(), reason: String::new(), range };
+            let rest: Vec<&Form> = parts.iter().skip(2).copied().collect();
+            for (key, field) in self.pairs(&rest) {
+                match self.text(key) {
+                    ":touches" => {
+                        for word in self.names(field, ":touches") {
+                            match WorldTouch::parse(&word) {
+                                Some(touch) if part.touches.contains(&touch) => {
+                                    self.problem(field, &format!("boundary-part {} の :touches の {} が 2 度書かれている", part.module, word))
+                                }
+                                Some(touch) => part.touches.push(touch),
+                                None => {
+                                    let words: Vec<&str> = WorldTouch::ALL.iter().map(|t| t.name()).collect();
+                                    self.problem(field, &format!("boundary-part {} の :touches の {} は語の外({} のどれか)", part.module, word, words.join("・")))
+                                }
+                            }
+                        }
+                    }
+                    ":reason" => part.reason = self.required_string(field, "boundary-part の :reason").unwrap_or_default(),
+                    _ => self.unknown_key(key, "boundary-part"),
+                }
+            }
+            if part.touches.is_empty() {
+                self.problem(entry, &format!("boundary-part {} に :touches が無い(許す種類を名指す)", part.module));
+            }
+            if part.reason.trim().is_empty() {
+                self.problem(entry, &format!("boundary-part {} に :reason(なぜ実 I/O そのものが役目か)が無い", part.module));
+            }
+            if out.iter().any(|p| p.module == part.module) {
+                self.problem(entry, &format!("boundary-part {} が 2 度宣言されている", part.module));
+                continue;
+            }
+            out.push(part);
+        }
+        out
     }
 
     /// 理由の列 `[(reason 名 "説明" :fix "直し方"?) …]` を読む(同じ名が 2 度あれば理由を積む)。

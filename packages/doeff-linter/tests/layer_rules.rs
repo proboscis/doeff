@@ -4167,3 +4167,80 @@ fn assembly_answers_in_the_wrong_place_are_red() {
     assert_eq!(report["errors"], serde_json::json!([]), "{}", report["errors"]);
     assert!(keys(&report, "DOEFF156").is_empty(), "{:?}\n{}", keys(&report, "DOEFF156"), report);
 }
+
+/// 境目の部品(:boundary-parts)を宣言した world_repo(`parts` は :boundary-parts の要素の列・`enable` は規則の列)。
+fn boundary_repo(files: &[(&str, String)], parts: &str, enable: &str) -> tempfile::TempDir {
+    let dir = world_repo_with(files, "", enable);
+    let arch_path = dir.path().join("architecture.hy");
+    let text = std::fs::read_to_string(&arch_path)
+        .unwrap()
+        .replace(":foundation foundation", &format!(":foundation foundation\n  :edge-mark \"real_world\"\n  :boundary-parts [{}]", parts));
+    std::fs::write(&arch_path, text).unwrap();
+    dir
+}
+
+/// agora-redesign #1797: 境目の部品(:boundary-parts)の module の中では、宣言した :touches の種類の生の副作用を DOEFF106 で当てない
+/// — 種類の外の生の副作用と、宣言の無い module は今どおり当たる。層の中の file と層の置き場の外の file の両方で同じ。
+#[test]
+fn boundary_parts_allow_only_the_declared_touches() {
+    let bench = "(import socket)\n(import time)\n(import subprocess)\n\
+                 (defn open-one [] (socket.socket))\n(defn now [] (time.time))\n(defn spawn [] (subprocess.run [\"true\"]))\n";
+    let files = [
+        ("app/billing/entry/bench.hy", tags("billing", "entry") + bench),
+        ("app/billing/entry/other.hy", tags("billing", "entry") + "(import socket)\n(defn open-one [] (socket.socket))\n"),
+        ("app/tools/probe.hy", bench.to_string()),
+    ];
+    let parts = r#"(boundary-part "app.billing.entry.bench" :touches [network clock] :reason "本物の待ち受けへ撃つ縁の台")
+                   (boundary-part "app.tools.probe" :touches [network clock] :reason "人が回す入口")"#;
+    let dir = boundary_repo(&files, parts, "[\"DOEFF106\"]");
+    let (_, report) = editor(dir.path());
+    assert_eq!(
+        keys(&report, "DOEFF106"),
+        vec![
+            "app/billing/entry/bench.hy::DOEFF106::spawn::subprocess.run",
+            "app/billing/entry/other.hy::DOEFF106::open_one::socket.socket",
+            "app/tools/probe.hy::DOEFF106::spawn::subprocess.run",
+        ],
+        "宣言した network・clock は当てず、種類の外の process と宣言の無い module は当てる: {}",
+        report
+    );
+}
+
+/// agora-redesign #1797: 境目の部品は許す種類(:touches — 閉じた語彙)と理由(:reason)を名指す。欠けと語の外は設定の誤りで止まる。
+#[test]
+fn boundary_parts_need_touches_and_a_reason() {
+    let files = [("app/billing/entry/bench.hy", tags("billing", "entry") + "(defk run [] 1)\n")];
+    let parts = r#"(boundary-part "app.billing.entry.bench" :touches [network])
+                   (boundary-part "app.billing.entry.other" :touches [socket] :reason "語の外")"#;
+    let dir = boundary_repo(&files, parts, "[\"DOEFF106\"]");
+    let (code, _, stderr) = run(dir.path(), &["--output-format", "editor-json", "--no-log"], None);
+    assert_eq!(code, 2, "{}", stderr);
+    assert!(stderr.contains("boundary-part app.billing.entry.bench に :reason"), "{}", stderr);
+    assert!(stderr.contains("boundary-part app.billing.entry.other の :touches の socket は語の外"), "{}", stderr);
+}
+
+/// agora-redesign #1797: 境目の部品の生の副作用は DOEFF106 で当てないが、索引の証拠としては残るので、部品に届く deftest は縁で
+/// :edge-mark の印が要る(DOEFF133)— 印の無い検は当たり、印の在る検は当たらない。
+#[test]
+fn tests_reaching_a_boundary_part_need_the_edge_mark() {
+    let files = [
+        ("app/billing/entry/bench.hy", tags("billing", "entry") + "(import socket)\n(defk open-one [] (socket.socket))\n"),
+        (
+            "app/billing/tests/test_bench.hy",
+            "(import app.billing.entry.bench [open-one])\n\
+             (deftest test-unmarked (<- s (open-one)) (assert s))\n\
+             (deftest test-marked {:marks [\"real_world\"]} (<- s (open-one)) (assert s))\n"
+                .to_string(),
+        ),
+    ];
+    let parts = r#"(boundary-part "app.billing.entry.bench" :touches [network] :reason "縁の台")"#;
+    let dir = boundary_repo(&files, parts, "[\"DOEFF106\", \"DOEFF133\"]");
+    let (_, report) = editor(dir.path());
+    assert!(keys(&report, "DOEFF106").is_empty(), "宣言した network は当てない: {}", report);
+    assert_eq!(
+        keys(&report, "DOEFF133"),
+        vec!["app/billing/tests/test_bench.hy::DOEFF133::test_unmarked::edge"],
+        "部品に届く印の無い検だけを当てる: {}",
+        report
+    );
+}

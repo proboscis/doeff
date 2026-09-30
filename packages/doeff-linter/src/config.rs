@@ -157,8 +157,10 @@ impl Config {
                 allowed: std::collections::BTreeSet::new(),
                 catalog_extra: None,
                 world_modules: None,
+                boundary: std::collections::BTreeMap::new(),
             });
             raw.world_modules = Some(modules);
+            raw.boundary = arch.boundary_touches();
         }
         // 宣言した置き場所の外の module(層が先の dir など)は、:role のタグから層を推して層の規則をかける。
         if let (Some(arch), Some(layers)) = (&settings.architecture, settings.layers.as_mut()) {
