@@ -1,0 +1,124 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<title>doeff-linter の規則の重大さ — 議論の資料(v1)</title>
+<style>
+  html, body { background: #ffffff; color: #222222; }
+  body { font-family: -apple-system, "Hiragino Sans", sans-serif; max-width: 980px; margin: 2em auto; line-height: 1.7; }
+  table { border-collapse: collapse; width: 100%; margin: 1em 0 2em; }
+  th, td { border: 1px solid #ccc; padding: 6px 10px; text-align: left; vertical-align: top; }
+  th { background: #f3f3f3; }
+  .crit { color: #b00020; font-weight: bold; }
+  .chg { background: #fff5e0; }
+  .note { color: #555; font-size: 0.92em; }
+  .status { border: 1px solid #999; padding: 8px 12px; background: #fafafa; }
+</style>
+</head>
+<body>
+<h1>doeff-linter の規則の重大さ — 議論の資料(v1)</h1>
+<p class="status">状態: <b>決定 1〜3 は合意済み・作業化済み(5 節)</b>。候補 2〜4 は議論中。検証はまだ行っていない。2026-09-29 時点。
+対象の版 = doeff-linter 0.2.0 の仕様、agora-controllers main 13abc393d の pyproject.toml。</p>
+
+<h2>1. 重大さの決まり方</h2>
+<svg width="900" height="170" viewBox="0 0 900 170" xmlns="http://www.w3.org/2000/svg" font-size="13">
+  <rect x="10" y="60" width="170" height="50" rx="6" fill="#eef" stroke="#557"/>
+  <text x="95" y="90" text-anchor="middle">違反が 1 件見つかる</text>
+  <rect x="230" y="60" width="210" height="50" rx="6" fill="#fff" stroke="#557"/>
+  <text x="335" y="82" text-anchor="middle">pyproject に</text>
+  <text x="335" y="100" text-anchor="middle">rules.DOEFFxxx.level がある?</text>
+  <rect x="500" y="10" width="380" height="50" rx="6" fill="#fde" stroke="#a35"/>
+  <text x="690" y="40" text-anchor="middle">ある → その値(critical・major・minor・info)</text>
+  <rect x="500" y="110" width="380" height="50" rx="6" fill="#eee" stroke="#777"/>
+  <text x="690" y="132" text-anchor="middle">ない → 規則の既定の重さから</text>
+  <text x="690" y="150" text-anchor="middle">error = major・warning = minor・info = info</text>
+  <line x1="180" y1="85" x2="230" y2="85" stroke="#333" marker-end="url(#a)"/>
+  <line x1="440" y1="75" x2="500" y2="40" stroke="#333" marker-end="url(#a)"/>
+  <line x1="440" y1="95" x2="500" y2="135" stroke="#333" marker-end="url(#a)"/>
+  <defs><marker id="a" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#333"/></marker></defs>
+</svg>
+<p class="note">既知の違反の一覧に載せると重さ(severity)は下がるが、重大さ(level)は下がらない。エディタの違反の欄は「重大さ × 新しく見つかった分 / 既知の分」で数える。
+LLM で判定する規則(201〜205)は確率の閾値で warning か info のどちらかになるので、宣言が無いと minor か info にしかならない。</p>
+
+<h2>2. 今の重大さの表</h2>
+<table>
+<tr><th>規則の種類</th><th>規則</th><th>今の重大さ</th><th>備考</th></tr>
+<tr><td>宣言にない置き場所</td><td>114・115</td><td class="crit">critical</td><td>宣言済み</td></tr>
+<tr><td>defk を素で呼んで答えに使う</td><td>126</td><td class="crit">critical</td><td>宣言済み</td></tr>
+<tr><td>読めない Hy の file</td><td>128</td><td class="crit">critical</td><td>宣言済み</td></tr>
+<tr class="chg"><td>責務の境界(層の import の向き・禁じた module・型だけの層にある関数・直接の副作用・service をまたぐ import・宣言にない依存)</td><td>101・102・103・106・109・116</td><td>major → <span class="crit">critical</span> に変える作業が進行中</td><td>agora-redesign #942(commit 前)</td></tr>
+<tr class="chg"><td>責務の境界のうち LLM が判定するもの(protocol が業務の判断をする・core が通信の手段を知っている・判断と入力の形の確認が混ざる)</td><td>201・202・205</td><td>minor か info → <span class="crit">critical</span> に変える作業が進行中</td><td>同上</td></tr>
+<tr><td>judgment の関数が effect を起こす</td><td>129</td><td>minor</td><td>31 定義・64 件</td></tr>
+<tr><td>JsonValue を型に変換せずに使う</td><td>120</td><td>major</td><td></td></tr>
+<tr><td>タグ・名前</td><td>104・105・108・112・113</td><td>major〜info</td><td></td></tr>
+<tr><td>定義の書き方</td><td>110・111・119</td><td>major</td><td>既知の分 約 6,250 件</td></tr>
+<tr><td>コードの臭い</td><td>121〜125</td><td>minor</td><td></td></tr>
+<tr><td>LLM が判定するその他の規則</td><td>203(deff にした理由)・204(class の役割)</td><td>minor か info</td><td>203 は 120 件</td></tr>
+<tr><td>情報だけ</td><td>107・117</td><td>info</td><td></td></tr>
+</table>
+<p class="note">#942 が入った後の critical は合計 215 件、そのうち新しく見つかったものは 8 件(残りの大半は 114・115 の既知の分)。
+LLM の規則の件数(cache だけの実行): 201 = warning 8・info 7(p 0.6〜0.93)、202 = warning 6・info 6(p 0.44〜0.85)、205 = 新しい分 5・既知の分 199。
+未判定 4,462 定義・判定済み 2,117 定義。当たり外れを測る仕組みは一度も動いていない。</p>
+
+<h2>3. 決めてほしい事</h2>
+<table>
+<tr><th>番号</th><th>問い</th><th>選択肢</th><th>推奨と理由</th></tr>
+<tr><td>1</td><td>「責務の境界」にどの規則まで含めるか</td>
+<td>A. 今の 9 本のまま<br>B. 129 を足す<br>C. 129・120・203 も足す</td>
+<td><b>A</b>(当初 B を推したが取り下げ)。operator 2026-09-29: "effects are specifically for testability so i dont get why using GetTime would be problematic"。
+judgment が GetTime を起こしても handler を差し替えれば試せるので、テストしやすさの基準では境界の違反ではない。129 は役の分類(#800)の話で、重大さは minor のまま。120・203 は書き方の問題。</td></tr>
+<tr><td>2</td><td>LLM 判定で確率の低い当たりも critical に数えるか(202 は p 0.44 のような、違反でない見込みの方が高いものも出ている)</td>
+<td>A. すべて critical に数える(#942 の今の案)<br>B. 閾値を 1 本にし、超えたら critical・下回ったら出さない</td>
+<td><b>B</b>。確率の低い当たりまで数えると、「残っている critical の件数」を信用できなくなる。</td></tr>
+<tr><td>3</td><td>LLM 判定の当たり外れを測る仕組みを動かすか。誤判定をどう扱うか</td>
+<td>A. 動かさない<br>B. 動かし、誤判定は既知の違反の一覧に載せる(既知の critical として残り続ける)<br>C. 動かし、誤判定は「誤判定」として件数から外す</td>
+<td><b>C</b>。2 の閾値もこの測定の結果で決める。</td></tr>
+<tr><td>4</td><td>この表を doeff-linter の既定にするか</td>
+<td>A. repo ごとの設定のまま<br>B. doeff-linter の既定にし、各 repo には差分だけを書く</td>
+<td><b>B</b>。「責務の境界の違反は critical」は agora に限らず doeff のコード全体に当てはまる原則。</td></tr>
+</table>
+
+<h2>3b. 議論で開いた問い — judgment が effect を起こさない、という決めそのもの(2026-09-29 追記)</h2>
+<p>operator: "effects are specifically for testability so i dont get why using GetTime would be problematic" / "i dontget why judgment is supposed to not produce effect"。</p>
+<table>
+<tr><th>観点</th><th>内容</th></tr>
+<tr><td>決めの出所</td><td>agora-redesign #780 の comment 2026-09-27T07:13:09Z(coordinator の席 cisco-c7 の決定・戻せる)。operator の指示はその時「core→intent→protocol」(層の名前)と「環境ごとの handler を作らない」で、役を judgment / program に分けることは operator の指示ではない。席は core = 「業務の判断と Program」を Functional Core / Imperative Shell に倣って「純粋な判断(judgment)」と「intent を出す Program(program)」の 2 つのタグに分けた(dotfiles の助言 controllers-split-first-by-purity「1 file に純粋な code と I/O を混ぜない」が先にあった)。architecture.hy の :roles = judgment「業務の判断をする純粋な関数」・program「intent を出して業務を進める Program」。#800 の段階 4 で「judgment は :effects []」を規則に、L1464 で法に、DOEFF129 で linter に。</td></tr>
+<tr><td>実物の例</td><td>controllers/kanban/core/tag_judgment.hy の decide-tag(card の状態からタグを決める)、controllers/core/kanban_write_judgment.hy の decide-new(書き込みの依頼から WritePlan を決める)、shared/core の derived-id・epoch-ms-of-time(protocol からも使う小さな純関数)。</td></tr>
+<tr><td>テストしやすさとの関係</td><td><b>無い</b>。judgment が GetTime を起こしても handler の差し替えで試せる。この席が最初に「テストしやすさに直結」と書いたのは誤り。</td></tr>
+<tr><td>実際に効いている理由</td><td>層の import の規則 L1590(#780): protocol は shared/core の <b>型と judgment だけ</b> import してよく、program は不可。judgment が effect を起こせるなら、protocol が judgment 経由で業務の Program を抱え込める。effect の禁止 L1464(law types-and-judgments-yield-no-effects)はこの穴を塞ぐためのもの。</td></tr>
+<tr><td>もう 1 つの理由(弱い)</td><td>値 → 値の関数は表形式の単純なテストで済む(ergonomics)。testability ではない。</td></tr>
+<tr><td>選択肢</td><td>a. 今のまま(judgment = 純粋・program = effect あり。GetTime が要る関数は program と名乗る)<br>b. judgment の名は残すが effect の禁止を外す(129 と L1464 を消す。protocol が judgment を import する規則 L1590 を「型だけ」に縮める必要がある)<br>c. judgment と program を 1 つの役に畳む(b と同じ帰結 + タグの書き換え)</td></tr>
+<tr><td>operator の原則(2026-09-29)</td><td>"what we care is responsibility boundary. not 'program or not'"。effect を起こすかどうかは分類の軸ではない。軸は「どの層がどの責務を持つか」。</td></tr>
+<tr><td>この席の見立て(原則を受けて)</td><td>judgment / program の分け方は責務の境界ではないので linter の対象から外す(129 と L1464 を消す)。L1590 が守りたかったこと(protocol が import した関数を通して業務を抱え込む)は責務の境界で、正しい表し方は「protocol の handler は汎用の effect しか出さない・intent を出さない」— law translation-targets-only-generic-foundation-effects として既に書かれているが、検査が繋がっていない(wired = false)。これを繋ぐことが 129 の置き換えで、繋げば critical の候補。judgment のタグ自体は残しても消してもよい(境界ではないので linter は見ない)。</td></tr>
+</table>
+
+<h2>5. 決定と作業化(2026-09-29 02:xx)</h2>
+<p class="status">状態: <b>合意済み → 作業化済み(実装は未着手)</b>。operator "agree"(この pane・2026-09-29)、manager w3J:p2 が agora-redesign #942 の comment に記録。</p>
+<table>
+<tr><th>番号</th><th>決定</th><th>実装の issue</th><th>戻し方</th></tr>
+<tr><td>1</td><td>DOEFF129 と法 L1464(judgment は effect を起こさない)を消す。judgment のタグは命名として残す(linter は見ない)</td><td>agora-redesign #955(agora-controllers)</td><td>revert</td></tr>
+<tr><td>2</td><td>law translation-targets-only-generic-foundation-effects(protocol の handler は doeff の汎用の effect だけを出し、intent を出さない)を doeff-linter に繋ぎ、level = critical。L1590 は「protocol は shared/core の型と関数を import できる。縛るのは出す effect」に書き換える</td><td>#956(doeff-linter の新規則)→ #957(agora で enable + critical)。L1590 の書き換えは #955</td><td>#956 の規則を enable から外す・#957 は revert</td></tr>
+<tr><td>3</td><td>#942 の 9 本(101/102/103/106/109/116/201/202/205)= critical はそのまま</td><td>#942(L2063)</td><td>pyproject の level の行を消す</td></tr>
+</table>
+<p class="note">独立レビュー(Fable・別の席)の結果は返り次第この資料の次の版と #942 の comment に「採る / 採らない」で足す。反対が出れば 2 だけ保留にできる(1・3 は operator の言葉から直に出る)。<br>
+未決: 候補 2(LLM 判定の低確率の当たりを critical に数えるか)・候補 3(誤判定の扱い)・候補 4(doeff-linter の既定にするか)。</p>
+
+<h2>6. 独立レビューの結果と採否(2026-09-29 02:5x・Fable・設計に関わっていない席)</h2>
+<table>
+<tr><th>レビューの指摘</th><th>採否</th><th>理由・反映先</th></tr>
+<tr><td>「judgment は effect を起こさない」にテストしやすさの価値は無い。残る価値は L1590 経由の穴で、業務の intent に限る。汎用の effect は protocol が既に 35 か所で直接使う</td><td>採る(事実として)</td><td>決定 1 の根拠を強める</td></tr>
+<tr><td>推奨 b' = L1464 / DOEFF129 を消さず「業務の intent を出す judgment だけ赤」に狭める(タグの書き換え 0)</td><td><b>採らない</b></td><td>operator の原則: 見るのは責務の境界であって program かどうかではない。core の judgment が core の intent を出すのは境界の違反ではない。狭めた 129 も命名の検査のまま。穴は protocol の側(決定 2)で塞ぐ</td></tr>
+<tr><td>DOEFF201 は定義の本文しか読まず、translation-targets の今の検査(check_business_fakes.hy 994 行)は名前でしか判じない。import した judgment が自 service の intent を出すと両方をすり抜ける</td><td><b>採る</b></td><td>#956 の規則は import した defk の先まで辿る推論(DOEFF129 の signatures::World と同じ)が必須 — #956 の本文に追記</td></tr>
+<tr><td>反例の実物は本線に無い(judgment が汎用の effect を直接起こす物 0・intent を出す judgment 0)。困る形は検の反例 test_layer_imports.hy 353〜370 行だけ</td><td>採る</td><td>#955 でその検を消し、同じ形を #956 の反例へ移す — #955 の本文に追記</td></tr>
+<tr><td>L1590 を「型だけ」に縮めると protocol → shared/core の judgment の import 20 か所が赤</td><td>採る(既に回避)</td><td>決定 2 の文言は「protocol は shared/core の型と関数を import できる。縛るのは出す effect」で「型だけ」ではない</td></tr>
+</table>
+<p class="note">決定 1〜3 は変えない。#942 の comment に同じ表を残した。</p>
+
+<h2>4. 出所</h2>
+<ul>
+<li>operator 2026-09-29 01:0x: "why aare those doeff 201 /202 etc classified as info, while i believe they are critical" → "responsibility boundary violations are always CRITICAL to make our doeff code testable"</li>
+<li>agora-redesign #942(9 本を critical にする変更・作業中)</li>
+<li>仕様 = doeff/packages/doeff-linter/docs/SPECIFICATION.md、設定 = agora-controllers/pyproject.toml の [tool.doeff-linter]</li>
+</ul>
+</body>
+</html>

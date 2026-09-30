@@ -1,0 +1,25 @@
+{
+  "heads": {
+    "design_validation": "assessment-9b0f59ce23bd",
+    "plan": "plan-fcc59747c6c2",
+    "report": "report-e6a05687c427",
+    "snapshot": "snapshot-283e6dcc668f",
+    "target": "design-4e43f6201972"
+  },
+  "records": {
+    "assessment-9b0f59ce23bd": "8e34258150dc5efe3b1e8223b1524bdbbcd36358b3c359fd162e240bbd99edbd",
+    "decision-093208de9eb9": "3d4f56a573e7439e429c576874de80c8246cef55cf6670f93498faecefdf06e5",
+    "decision-6bdf0132246e": "c74e3afc285c13c46ccec6cebc33d22acd38d550f2ae161b72fcc9ec65b2e726",
+    "decision-c0c910580ce4": "aaa39d84d456dd9f4af9ea0c0be3714aac870726a0445befc7a717ca07da45a2",
+    "design-44a234aca793": "c5d3e17bd965e416b33750200f7dd2fdff8a350506bce9ba6db50cf0d5a25608",
+    "design-4e43f6201972": "3876fd51009ac726b1916d65f696b465a920e1f12dcea2af82d4f7b0e0cc7fcb",
+    "plan-35515b9c6b74": "cacaea0c7ed78b6ed1733871167f7e828b57e9ef0b3813a776a31d059f9c3aad",
+    "plan-fcc59747c6c2": "ab42f851e57cdab27e34aba774f65bcf4554ce93529ef97d6d77c805f89b6e34",
+    "report-995448fd644e": "afd50b4cf896e39dc2ee2662af70c5baebbacf8bfbdf7389f00d321d08b54b47",
+    "report-e6a05687c427": "370b52f86b100e7f48a7e169360af1108af82fa633ca07852548aa9bf68b60a5",
+    "snapshot-283e6dcc668f": "72522fed549fdef183b6bda83feddd17311e9adb35ae86c451ee61358bebe340",
+    "snapshot-c61ae533db31": "e8d3e5a64a4896054a497e6e3080137edaf1988b7626b42f0c1cf6c2350771bc"
+  },
+  "schema_version": 1,
+  "scope": "doeff-linter の規則の重大さ(level: critical・major・minor・info)— doeff-linter の既定と repo ごとの宣言(agora-controllers の pyproject)。どの規則を critical にするか、LLM で判定する規則の閾値と誤判定の扱い"
+}

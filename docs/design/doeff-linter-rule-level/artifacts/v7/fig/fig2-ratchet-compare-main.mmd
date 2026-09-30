@@ -1,0 +1,12 @@
+flowchart LR
+  B[基点 = main の先端] --> LB[linter を実行<br/>critical の集合 A]
+  C[マージしたい commit] --> LC[linter を実行<br/>critical の集合 B]
+  LB --> CMP{B は A に含まれるか<br/>= 新しい critical が無いか}
+  LC --> CMP
+  CMP -- はい --> OK[main へマージ]
+  CMP -- いいえ --> NG[止める<br/>新しい critical を示す]
+  LC --> DAY[日次: 残り N 件・前日比<br/>増えていれば赤]
+  classDef pass fill:#d8efd8,stroke:#3a7d3a,color:#1b3d1b
+  classDef stop fill:#f6d6d6,stroke:#b03a3a,color:#4a1515
+  class OK pass
+  class NG stop

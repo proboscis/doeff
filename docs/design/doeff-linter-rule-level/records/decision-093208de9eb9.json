@@ -1,0 +1,33 @@
+{
+  "artifacts": [
+    {
+      "path": "artifacts/v7/ratchet-and-review.md",
+      "sha256": "0aeda6fa0c572628a5dcb13ab37886512f524f54def559630658159f58ae320d"
+    }
+  ],
+  "body": {
+    "actor": "user",
+    "authority": "direct",
+    "decision": "design",
+    "outcome": "accepted",
+    "scope_of_agreement": "報告の「決めてほしい事」3 問(Q1 ratchet の基点・Q2 規則の側の直し 8 点・Q3 進め方の順)への設計の合意。実装の実行許可(decision = execution)は含まず、実装は agora-redesign #1762 の子 issue で進める。Q1 の合意で、先に決めた A(ratchet の定義)のうち「保存した一覧を持たず main と比べる」が確定した",
+    "source": "operator 2026-09-30 18:2x JST・herdr pane linter-discuss での返答 'I agree with the report'(議論用の報告 artifact discuss-doeff-linter-critical-ratchet-2026-09-30.html〔sha256 4403f8e9141d683b023009b13557315eac01717318ee2a56f2da62693f2246d7〕への返事・追跡 = agora-redesign #1762)",
+    "statement": "逐語 'I agree with the report'。報告の「決めてほしい事」3 問に、推奨どおりで合意した。Q1: ratchet の基点は一覧を持たず main と比べる(案 M)。マージ前の検査と commit の hook は、基点(main の先端)と commit の両方で linter を実行し、critical のキーの集合が増えていなければ通す。critical の規則の既知の一覧(scripts/doeff_lint/*-BREACHES のうち critical の分)は廃止する。Q2: 規則の側の直し 8 点を推奨どおり進める(1. DOEFF144 の対象から模擬環境 agora_sim を外す 2. defk の :post に要素の型を受ける形を doeff 側に足す 3. DOEFF150 から註・docstring・md・契約と wire の欄名・ACP_CHECKOUT を外す 4. DOEFF137 の薄い包み 6 件に :contract-test none を認める 5. DOEFF106 に模擬環境の縁の台を宣言で許す口を足す 6. DOEFF133 の 1 件は印を付ける 7. DOEFF116 の messaging → kanban 8 件は kanban の型を messaging から外す 8. DOEFF101 / 140 の設計の組み替え 7 件は #1108 / #1112 に任せる)。Q3: 進め方の順は 0. 規則の側を直す → 1. ratchet の検査 → 2. critical の既知の一覧を廃止 → 3. 減らす(2 時間の単位の issue を並列・期限なし)。4. Jev の較正と 5. 失敗ケースのテストは 0 と並行",
+    "subjects": [
+      "design-4e43f6201972"
+    ],
+    "supersedes": []
+  },
+  "created_at": "2026-09-30T09:40:07.685762+00:00",
+  "id": "decision-093208de9eb9",
+  "inputs": [
+    {
+      "id": "design-4e43f6201972",
+      "role": "subject",
+      "sha256": "3876fd51009ac726b1916d65f696b465a920e1f12dcea2af82d4f7b0e0cc7fcb"
+    }
+  ],
+  "kind": "decision",
+  "schema_version": 1,
+  "scope": "doeff-linter の規則の重大さ(level: critical・major・minor・info)— doeff-linter の既定と repo ごとの宣言(agora-controllers の pyproject)。どの規則を critical にするか、LLM で判定する規則の閾値と誤判定の扱い"
+}

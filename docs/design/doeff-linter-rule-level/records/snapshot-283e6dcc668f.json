@@ -1,0 +1,19 @@
+{
+  "artifacts": [],
+  "body": {
+    "files": {
+      "pyproject.toml": "6354be76618dfbc8dad729036b614c750368fd37f50a9ae8525baa2276ddfb36"
+    },
+    "include": [
+      "pyproject.toml"
+    ],
+    "label": "agora-controllers main 13abc393d の [tool.doeff-linter](level の宣言と閾値)",
+    "root": "/Users/kento/repos/agora-controllers"
+  },
+  "created_at": "2026-09-28T16:08:26.782915+00:00",
+  "id": "snapshot-283e6dcc668f",
+  "inputs": [],
+  "kind": "snapshot",
+  "schema_version": 1,
+  "scope": "doeff-linter の規則の重大さ(level: critical・major・minor・info)— doeff-linter の既定と repo ごとの宣言(agora-controllers の pyproject)。どの規則を critical にするか、LLM で判定する規則の閾値と誤判定の扱い"
+}

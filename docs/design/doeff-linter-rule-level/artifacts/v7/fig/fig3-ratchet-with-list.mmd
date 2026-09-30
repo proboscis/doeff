@@ -1,0 +1,16 @@
+flowchart LR
+  LIST[(既知の一覧<br/>減るだけ・critical のまま数える)]
+  C[マージしたい commit] --> L[linter を実行] --> V[critical の集合]
+  V --> CHK2{一覧に無い critical があるか}
+  CHK2 -- ある --> NG[止める]
+  CHK2 -- ない --> CHK1{一覧が増えていないか}
+  LIST --> CHK1
+  CHK1 -- 増えた --> NG
+  CHK1 -- 増えていない --> OK[main へマージ]
+  V --> PRUNE[当たりの無い項目を自動で消す]
+  PRUNE --> LIST
+  NEW[新しい規則を入れる時だけ<br/>1 回 増やせる・issue に記録] -.-> LIST
+  classDef pass fill:#d8efd8,stroke:#3a7d3a,color:#1b3d1b
+  classDef stop fill:#f6d6d6,stroke:#b03a3a,color:#4a1515
+  class OK pass
+  class NG stop

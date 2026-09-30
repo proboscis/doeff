@@ -1,0 +1,174 @@
+{
+  "artifacts": [
+    {
+      "path": "artifacts/v4/level-discussion.html",
+      "sha256": "b13598dd725b8f77c16b1dba3dd9fa1c81a5cef2360b2149f6c8bb7f7b6ddcbb"
+    }
+  ],
+  "body": {
+    "claims": [
+      {
+        "evidence": [
+          "controllers/messaging/protocol/chat_program.hy 21〜39 行",
+          "独立レビューの報告(この記録の資料 6 節)"
+        ],
+        "expected": "制約を外しても検の書き方は変わらない",
+        "id": "C1",
+        "mode": "analysis",
+        "observed": "protocol が GetTime 等を 35 か所で直接使い、judgment が汎用 effect を直接起こす実物は core に 0",
+        "procedure": "模擬環境の走り方(仮想時計)と protocol 層の汎用 effect の直接使用(35 か所)を実物で数えた",
+        "result": "supported",
+        "scenario_ids": [],
+        "statement": "「judgment は effect を起こさない」の制約にテストしやすさの価値は無い"
+      },
+      {
+        "evidence": [
+          "scripts/check_business_fakes.hy 994 行",
+          "controllers/agora_sim/tests/test_layer_imports.hy 353〜370 行"
+        ],
+        "expected": "import 先の intent の発出は見えない",
+        "id": "C2",
+        "mode": "analysis",
+        "observed": "見えない。実物の反例は本線に無く、検の反例 test_layer_imports.hy 353〜370 行だけ",
+        "procedure": "DOEFF201 の読む範囲(定義の本文)と scripts/check_business_fakes.hy 994 行の判定(名前だけ)を読んだ",
+        "result": "supported",
+        "scenario_ids": [],
+        "statement": "L1590 経由の穴(protocol が import した関数を通して業務の intent を出す)は DOEFF201 と translation-targets の今の検査をすり抜ける"
+      },
+      {
+        "evidence": [],
+        "expected": "反例が赤",
+        "id": "C3",
+        "mode": "unrun",
+        "observed": "未実装",
+        "procedure": "#956 の実装後に反例(shared/core の関数が ReadBoard を出し protocol が呼ぶ)で確かめる",
+        "result": "unknown",
+        "scenario_ids": [],
+        "statement": "決定 2 の規則(#956)が import した defk の先まで辿れば、決定 1 で 129 と L1464 を消しても穴は残らない"
+      }
+    ],
+    "findings": [
+      {
+        "category": "design_change",
+        "claim_ids": [
+          "C1"
+        ],
+        "evidence": [
+          "#942 comment 5874199148"
+        ],
+        "id": "F1",
+        "owner": "linter-discuss(w3J:pD)",
+        "remedy": "決定 1 のまま。#942 の comment に採否を記録",
+        "severity": "nonblocking",
+        "statement": "レビューの推奨 b'(129 を「intent を出す judgment だけ赤」に狭める)は採らない — operator の原則(責務の境界で分ける・program かどうかではない)に合わない",
+        "status": "resolved"
+      },
+      {
+        "category": "evidence_gap",
+        "claim_ids": [
+          "C2",
+          "C3"
+        ],
+        "evidence": [
+          "proboscis/agora-redesign#956"
+        ],
+        "id": "F2",
+        "owner": "#956 の担当",
+        "remedy": "#956 の本文に推論の要件と反例の fixture を追記した。実装後に C3 を execution で確かめる",
+        "severity": "blocking",
+        "statement": "#956 の規則は推論が import 先まで辿らなければ穴が残る(C2)",
+        "status": "open"
+      },
+      {
+        "category": "intentional_migration",
+        "claim_ids": [
+          "C2"
+        ],
+        "evidence": [
+          "proboscis/agora-redesign#955"
+        ],
+        "id": "F3",
+        "owner": "#955 の担当",
+        "remedy": "#955 の本文に追記した",
+        "severity": "nonblocking",
+        "statement": "検の反例 test_layer_imports.hy 353〜370 行は決定 1 で消え、同じ形を #956 の反例へ移す",
+        "status": "open"
+      }
+    ],
+    "focus": "design",
+    "methods": [
+      {
+        "evidence": [],
+        "name": "ddd",
+        "profile": "ddd-evans-2015-local-v1",
+        "reason": "設計に関わっていない席による読み取りのレビュー(実物の repo の走査)で、六手法の型ではない",
+        "status": "not_applicable",
+        "steps": []
+      },
+      {
+        "evidence": [],
+        "name": "change-cases",
+        "profile": "change-cases-1996-local-v1",
+        "reason": "設計に関わっていない席による読み取りのレビュー(実物の repo の走査)で、六手法の型ではない",
+        "status": "not_applicable",
+        "steps": []
+      },
+      {
+        "evidence": [],
+        "name": "volatility",
+        "profile": "volatility-righting-software-local-v1",
+        "reason": "設計に関わっていない席による読み取りのレビュー(実物の repo の走査)で、六手法の型ではない",
+        "status": "not_applicable",
+        "steps": []
+      },
+      {
+        "evidence": [],
+        "name": "add",
+        "profile": "add-2.0-local-v1",
+        "reason": "設計に関わっていない席による読み取りのレビュー(実物の repo の走査)で、六手法の型ではない",
+        "status": "not_applicable",
+        "steps": []
+      },
+      {
+        "evidence": [],
+        "name": "saam",
+        "profile": "saam-1996-local-v1",
+        "reason": "設計に関わっていない席による読み取りのレビュー(実物の repo の走査)で、六手法の型ではない",
+        "status": "not_applicable",
+        "steps": []
+      },
+      {
+        "evidence": [],
+        "name": "c4",
+        "profile": "c4-web-2026-09-14-local-v1",
+        "reason": "設計に関わっていない席による読み取りのレビュー(実物の repo の走査)で、六手法の型ではない",
+        "status": "not_applicable",
+        "steps": []
+      }
+    ],
+    "subject": "design-44a234aca793",
+    "verdict": "incomplete"
+  },
+  "created_at": "2026-09-28T16:27:38.676668+00:00",
+  "id": "assessment-9b0f59ce23bd",
+  "inputs": [
+    {
+      "id": "design-44a234aca793",
+      "role": "subject",
+      "sha256": "c5d3e17bd965e416b33750200f7dd2fdff8a350506bce9ba6db50cf0d5a25608"
+    },
+    {
+      "id": "snapshot-c61ae533db31",
+      "role": "evidence",
+      "sha256": "e8d3e5a64a4896054a497e6e3080137edaf1988b7626b42f0c1cf6c2350771bc"
+    },
+    {
+      "id": "snapshot-283e6dcc668f",
+      "role": "evidence",
+      "sha256": "72522fed549fdef183b6bda83feddd17311e9adb35ae86c451ee61358bebe340"
+    }
+  ],
+  "kind": "assessment",
+  "schema_version": 1,
+  "scope": "doeff-linter の規則の重大さ(level: critical・major・minor・info)— doeff-linter の既定と repo ごとの宣言(agora-controllers の pyproject)。どの規則を critical にするか、LLM で判定する規則の閾値と誤判定の扱い"
+}

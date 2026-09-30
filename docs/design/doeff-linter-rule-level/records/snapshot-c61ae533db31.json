@@ -1,0 +1,19 @@
+{
+  "artifacts": [],
+  "body": {
+    "files": {
+      "docs/SPECIFICATION.md": "ca91584562d512f21f34d5d9c6c53c8bda1f5925beb7ba327362eeaa5c037b4b"
+    },
+    "include": [
+      "docs/SPECIFICATION.md"
+    ],
+    "label": "doeff-linter 0.2.0 の仕様(規則の表・level の決め方)",
+    "root": "/Users/kento/repos/doeff/packages/doeff-linter"
+  },
+  "created_at": "2026-09-28T16:08:26.688115+00:00",
+  "id": "snapshot-c61ae533db31",
+  "inputs": [],
+  "kind": "snapshot",
+  "schema_version": 1,
+  "scope": "doeff-linter の規則の重大さ(level: critical・major・minor・info)— doeff-linter の既定と repo ごとの宣言(agora-controllers の pyproject)。どの規則を critical にするか、LLM で判定する規則の閾値と誤判定の扱い"
+}

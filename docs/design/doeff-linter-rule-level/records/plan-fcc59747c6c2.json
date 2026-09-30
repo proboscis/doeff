@@ -1,0 +1,182 @@
+{
+  "artifacts": [
+    {
+      "path": "artifacts/v5/level-discussion.html",
+      "sha256": "e88d3f2f4fdd77c092cf02af5be1e264c28f6c2fe1eda156bbb2016994eae26a"
+    }
+  ],
+  "body": {
+    "assessment": null,
+    "blocked_by": [],
+    "design_validation": "assessment-9b0f59ce23bd",
+    "readiness": "draft",
+    "target": "design-44a234aca793",
+    "tasks": [
+      {
+        "acceptance": [
+          "enable に DOEFF129 が無い",
+          "types-and-judgments-yield-no-effects の法と検が無い",
+          "層の検査が緑"
+        ],
+        "depends_on": [],
+        "evidence": [],
+        "external_ref": "proboscis/agora-redesign#955",
+        "id": "a-agora-drop-129",
+        "owner": "manager w3J:p2 が割り当て",
+        "phase": "implementation",
+        "priority": "high",
+        "reason": "決定 1",
+        "scope": [
+          "agora-controllers pyproject の enable",
+          "#780 の法 L1464 の削除",
+          "L1590 の文言"
+        ],
+        "status": "registered",
+        "title": "DOEFF129 と法 L1464 を消し、L1590 を「縛るのは protocol が出す effect」に書き換える"
+      },
+      {
+        "acceptance": [
+          "反例(protocol が intent を出す)が赤・正例が緑",
+          "仕様に節がある"
+        ],
+        "depends_on": [],
+        "evidence": [],
+        "external_ref": "proboscis/agora-redesign#956",
+        "id": "b-linter-protocol-effects",
+        "owner": "manager w3J:p2 が割り当て",
+        "phase": "implementation",
+        "priority": "high",
+        "reason": "決定 2",
+        "scope": [
+          "doeff-linter の新規則",
+          "SPECIFICATION.md の節",
+          "反例と正例の fixture"
+        ],
+        "status": "registered",
+        "title": "doeff-linter に protocol の handler が出す effect の規則を足す"
+      },
+      {
+        "acceptance": [
+          "law translation-targets-only-generic-foundation-effects が wired",
+          "本線の当たりが数えられている"
+        ],
+        "depends_on": [
+          "b-linter-protocol-effects"
+        ],
+        "evidence": [],
+        "external_ref": "proboscis/agora-redesign#957",
+        "id": "c-agora-enable-critical",
+        "owner": "manager w3J:p2 が割り当て",
+        "phase": "implementation",
+        "priority": "high",
+        "reason": "決定 2",
+        "scope": [
+          "agora-controllers pyproject の enable と level",
+          "law の rules"
+        ],
+        "status": "registered",
+        "title": "agora で新規則を enable し level = critical"
+      },
+      {
+        "acceptance": [
+          "201〜205 の info の閾値が warning と同じ",
+          "本線の 201 が 8 件・202 が 6 件(2026-09-29 の数え)"
+        ],
+        "depends_on": [],
+        "evidence": [],
+        "external_ref": "proboscis/agora-redesign#1038",
+        "id": "d-agora-one-threshold",
+        "owner": "manager w3J:p2 が割り当て",
+        "phase": "implementation",
+        "priority": "medium",
+        "reason": "決定 4",
+        "scope": [
+          "agora pyproject [tool.doeff-linter.semantic]"
+        ],
+        "status": "registered",
+        "title": "LLM 判定の規則の閾値を 1 本にする(info = warning)"
+      },
+      {
+        "acceptance": [
+          "一覧に載せた当たりが出ず件数に入らない",
+          "要約に誤判定 N 件が出る"
+        ],
+        "depends_on": [],
+        "evidence": [],
+        "external_ref": "proboscis/agora-redesign#1039",
+        "id": "e1-linter-misjudged-list",
+        "owner": "manager w3J:p2 が割り当て",
+        "phase": "implementation",
+        "priority": "medium",
+        "reason": "決定 5",
+        "scope": [
+          "doeff-linter の semantic の規則",
+          "SPECIFICATION.md §10"
+        ],
+        "status": "registered",
+        "title": "doeff-linter に誤判定の一覧を足す(出さない・数えない・較正の反例)"
+      },
+      {
+        "acceptance": [
+          "27 件すべてに判定がある",
+          "較正の当たり外れの割合が #942 に comment されている"
+        ],
+        "depends_on": [
+          "e1-linter-misjudged-list"
+        ],
+        "evidence": [],
+        "external_ref": "proboscis/agora-redesign#1040",
+        "id": "e2-agora-judge-27",
+        "owner": "manager w3J:p2 が割り当て",
+        "phase": "verification",
+        "priority": "medium",
+        "reason": "決定 5",
+        "scope": [
+          "27 件の判定の表",
+          "誤判定の一覧の file",
+          "較正の実行と #942 への報告"
+        ],
+        "status": "registered",
+        "title": "本線の 201/202 の 27 件に人の判定を付け、誤判定を一覧に載せ、較正を 1 回走らせる"
+      },
+      {
+        "acceptance": [
+          "既定の表がある",
+          "agora の level の宣言が既定と違う所だけ"
+        ],
+        "depends_on": [],
+        "evidence": [],
+        "external_ref": "proboscis/agora-redesign#1041",
+        "id": "f-linter-default-levels",
+        "owner": "manager w3J:p2 が割り当て",
+        "phase": "implementation",
+        "priority": "medium",
+        "reason": "決定 6",
+        "scope": [
+          "doeff-linter の既定の level",
+          "SPECIFICATION.md の規則の表",
+          "agora pyproject の rules.* の level"
+        ],
+        "status": "registered",
+        "title": "level の表を doeff-linter の既定にし、agora は差分だけにする"
+      }
+    ]
+  },
+  "created_at": "2026-09-28T22:34:29.860872+00:00",
+  "id": "plan-fcc59747c6c2",
+  "inputs": [
+    {
+      "id": "design-44a234aca793",
+      "role": "subject",
+      "sha256": "c5d3e17bd965e416b33750200f7dd2fdff8a350506bce9ba6db50cf0d5a25608"
+    },
+    {
+      "id": "assessment-9b0f59ce23bd",
+      "role": "evidence",
+      "sha256": "8e34258150dc5efe3b1e8223b1524bdbbcd36358b3c359fd162e240bbd99edbd"
+    }
+  ],
+  "kind": "plan",
+  "schema_version": 1,
+  "scope": "doeff-linter の規則の重大さ(level: critical・major・minor・info)— doeff-linter の既定と repo ごとの宣言(agora-controllers の pyproject)。どの規則を critical にするか、LLM で判定する規則の閾値と誤判定の扱い"
+}

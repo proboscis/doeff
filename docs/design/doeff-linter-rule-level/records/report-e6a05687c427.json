@@ -1,0 +1,98 @@
+{
+  "artifacts": [
+    {
+      "path": "artifacts/v2/level-discussion.html",
+      "sha256": "9a72adac51bd415be38551a79fcb99b692520dad91ad14b43a0b233fcd195e90"
+    }
+  ],
+  "body": {
+    "publication": {
+      "reference": "herdr w3J:pD(operator との対話)・coordinator w3J:p2 へ agmsg 2026-09-29",
+      "status": "local"
+    },
+    "purpose": "discussion",
+    "summary": "doeff-linter の規則の重大さ(level)を operator と議論中(2026-09-29)。合意はまだ無い。#942(境界の規則 9 本 = critical)は争点になっていない。争点は DOEFF129(judgment が effect を起こす)。operator の原則 = \"what we care is responsibility boundary. not 'program or not'\"。judgment の役は #780 で coordinator の席 cisco-c7 が入れた命名の約束(operator の指示ではない)で、effect の有無で分ける軸は責務の境界ではない。席の提案 = 129 と法 L1464 を消し、代わりに law translation-targets-only-generic-foundation-effects(protocol は汎用の effect しか出さない・既に書かれているが未配線)を linter に繋いで critical にする。独立レビュー(Fable)を待っている。coordinator w3J:p2 に決定を求めた。",
+    "topics": [
+      {
+        "alternatives": [
+          "a. 今のまま(judgment = 純粋・129 と L1464 を保つ)",
+          "b. 129 と L1464 だけ消し、protocol の effect の規則は繋がない(L1590 の穴が残る)"
+        ],
+        "impacts": [
+          "agora の pyproject から DOEFF129 を外す・L1464 の法を消す",
+          "doeff-linter に protocol の出す effect を数える規則を足す(新規)",
+          "L1590 の書き換え(protocol は shared/core の型と関数を import できる。出す effect で縛る)"
+        ],
+        "needed_from": "user",
+        "question": "DOEFF129 と法 L1464(judgment は effect を起こさない)を消し、law translation-targets-only-generic-foundation-effects(protocol の handler は汎用の effect しか出さない)を linter に繋いで critical にするか",
+        "recommendation": "消して置き換える。judgment / program の分け方は責務の境界ではない(operator 2026-09-29)。L1590 が守りたかった穴(protocol が import した関数を通して業務の intent を出す)は protocol の出す effect の規則で塞ぐのが正しい表し方。judgment のタグは残しても消してもよく linter は見ない"
+      },
+      {
+        "alternatives": [
+          "B. 129 を足す(取り下げ)",
+          "C. 129・120・203 も足す"
+        ],
+        "impacts": [
+          "#942 の変更のまま"
+        ],
+        "needed_from": "user",
+        "question": "候補 1: 責務の境界の規則の範囲(#942 の 9 本 = 101/102/103/106/109/116/201/202/205)",
+        "recommendation": "A. 9 本のまま。129 は足さない(operator の指摘で B を取り下げ)。120・203 は書き方の問題"
+      },
+      {
+        "alternatives": [
+          "A. すべて critical に数える(#942 の今の案)"
+        ],
+        "impacts": [
+          "[tool.doeff-linter.semantic] の閾値の変更",
+          "エディタの critical の件数"
+        ],
+        "needed_from": "user",
+        "question": "候補 2: LLM 判定で確率の低い当たり(202 の p 0.44 など)も critical に数えるか",
+        "recommendation": "B. 閾値を 1 本にし、超えたら critical・下回ったら出さない。低確率まで数えると残 critical の件数を信用できない"
+      },
+      {
+        "alternatives": [
+          "A. 動かさない",
+          "B. 動かし、誤判定は既知の違反の一覧に載せる(既知の critical として残る)"
+        ],
+        "impacts": [
+          "較正の実行(Jev の呼び出し費用)",
+          "登録簿とは別の誤判定の置き場"
+        ],
+        "needed_from": "user",
+        "question": "候補 3: LLM 判定の当たり外れを測る仕組みを動かすか・誤判定の扱い",
+        "recommendation": "C. 動かし、誤判定は「誤判定」として件数から外す。候補 2 の閾値もこの結果で決める"
+      },
+      {
+        "alternatives": [
+          "A. repo ごとの設定のまま"
+        ],
+        "impacts": [
+          "doeff-linter の既定の level の表の追加",
+          "agora の pyproject の宣言を差分に縮める"
+        ],
+        "needed_from": "user",
+        "question": "候補 4: 重大さの表を doeff-linter の既定にするか",
+        "recommendation": "B. doeff-linter の既定にし、各 repo には差分だけ書く。責務の境界の違反が critical なのは agora に限らない"
+      }
+    ]
+  },
+  "created_at": "2026-09-28T16:18:44.233741+00:00",
+  "id": "report-e6a05687c427",
+  "inputs": [
+    {
+      "id": "snapshot-c61ae533db31",
+      "role": "evidence",
+      "sha256": "e8d3e5a64a4896054a497e6e3080137edaf1988b7626b42f0c1cf6c2350771bc"
+    },
+    {
+      "id": "snapshot-283e6dcc668f",
+      "role": "evidence",
+      "sha256": "72522fed549fdef183b6bda83feddd17311e9adb35ae86c451ee61358bebe340"
+    }
+  ],
+  "kind": "report",
+  "schema_version": 1,
+  "scope": "doeff-linter の規則の重大さ(level: critical・major・minor・info)— doeff-linter の既定と repo ごとの宣言(agora-controllers の pyproject)。どの規則を critical にするか、LLM で判定する規則の閾値と誤判定の扱い"
+}

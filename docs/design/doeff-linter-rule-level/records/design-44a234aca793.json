@@ -1,0 +1,200 @@
+{
+  "artifacts": [
+    {
+      "path": "artifacts/v3/level-discussion.html",
+      "sha256": "e51a2520d5d91c30cea8d60ea3b13bc0260776a4088dae35a45dc7f86b6f5503"
+    }
+  ],
+  "body": {
+    "alternatives": [
+      {
+        "options": [
+          {
+            "benefits": "protocol が judgment を import しても業務を抱え込まない",
+            "costs": "effect の有無という責務と無関係な軸で分類する・正しいコードが違反になる",
+            "name": "a. 今のまま(129・L1464 を保つ)"
+          },
+          {
+            "benefits": "分類の軸が責務の境界に揃う・穴は境界の側で塞がる",
+            "costs": "doeff-linter に規則を 1 つ足す・L1590 の書き換え",
+            "name": "b. 129 と L1464 を消し、protocol の出す effect の規則で境界を守る"
+          }
+        ],
+        "question": "judgment の役に effect の禁止を課すか",
+        "reason": "operator の原則(R2)。judgment の役は #780 で席が入れた命名の約束で operator の指示ではなかった",
+        "reconsider_when": "protocol の出す effect の規則が推論の限界で穴を残すと分かった時",
+        "selected": "b. 129 と L1464 を消し、protocol の出す effect の規則で境界を守る"
+      }
+    ],
+    "change_cases": [],
+    "contracts": [],
+    "elements": [
+      {
+        "depends_on": [
+          "doeff-linter-rules"
+        ],
+        "hidden_decisions": [
+          "repo ごとの宣言か doeff-linter の既定か(候補 4・未決)"
+        ],
+        "id": "rule-level-config",
+        "kind": "internal",
+        "requirement_ids": [
+          "R1"
+        ],
+        "responsibility": "規則ごとの重大さ(level)の宣言。境界の規則 9 本 + protocol の effect の規則 = critical",
+        "state": []
+      },
+      {
+        "depends_on": [],
+        "hidden_decisions": [
+          "Jev の規則の確率の閾値(候補 2・3・未決)"
+        ],
+        "id": "doeff-linter-rules",
+        "kind": "internal",
+        "requirement_ids": [
+          "R2",
+          "R3"
+        ],
+        "responsibility": "層の import・副作用の置き場・意味の規則(Jev)・protocol の出す effect の検査。DOEFF129 は持たない",
+        "state": []
+      },
+      {
+        "depends_on": [
+          "doeff-linter-rules"
+        ],
+        "hidden_decisions": [],
+        "id": "agora-laws",
+        "kind": "internal",
+        "requirement_ids": [
+          "R2",
+          "R3"
+        ],
+        "responsibility": "agora の法(#780 の L1590 など)。types-and-judgments-yield-no-effects(L1464)は持たない。protocol の import の縛りは出す effect で表す",
+        "state": []
+      }
+    ],
+    "handoff": {
+      "fixed": [
+        "決定 1〜3(#942 の comment・operator 'agree')"
+      ],
+      "free": [
+        "新しい規則の番号と推論の実装(#956)",
+        "L1590 の文言(#955)"
+      ],
+      "next": [
+        "#955 → #956 → #957 の順で実装",
+        "候補 2〜4 の議論"
+      ]
+    },
+    "level": "規則の一覧と設定(doeff-linter の規則・agora の pyproject・agora の法)",
+    "methods": [
+      {
+        "evidence": [],
+        "name": "ddd",
+        "profile": "ddd-evans-2015-local-v1",
+        "reason": "規則の重大さの表の決定で、領域のモデル化ではない",
+        "status": "not_applicable",
+        "steps": []
+      },
+      {
+        "evidence": [],
+        "name": "change-cases",
+        "profile": "change-cases-1996-local-v1",
+        "reason": "設定と規則の一覧の変更で、変更シナリオの分析は行わない",
+        "status": "not_applicable",
+        "steps": []
+      },
+      {
+        "evidence": [],
+        "name": "volatility",
+        "profile": "volatility-righting-software-local-v1",
+        "reason": "同上",
+        "status": "not_applicable",
+        "steps": []
+      },
+      {
+        "evidence": [],
+        "name": "add",
+        "profile": "add-2.0-local-v1",
+        "reason": "同上",
+        "status": "not_applicable",
+        "steps": []
+      },
+      {
+        "evidence": [],
+        "name": "saam",
+        "profile": "saam-1996-local-v1",
+        "reason": "同上",
+        "status": "not_applicable",
+        "steps": []
+      },
+      {
+        "evidence": [],
+        "name": "c4",
+        "profile": "c4-web-2026-09-14-local-v1",
+        "reason": "構成図は資料の 1 節の流れ図で足りる",
+        "status": "not_applicable",
+        "steps": []
+      }
+    ],
+    "open_questions": [
+      "候補 2: LLM 判定の確率の低い当たりも critical に数えるか",
+      "候補 3: 当たり外れを測る仕組みを動かすか・誤判定の扱い",
+      "候補 4: 重大さの表を doeff-linter の既定にするか",
+      "独立レビュー(Fable)の結果"
+    ],
+    "perspective": "proposed",
+    "purpose": "doeff-linter の規則の重大さを「責務の境界の違反 = critical」の原則で決め、判断(judgment)の effect の禁止を規則から外し、protocol が出す effect の規則で境界を守る",
+    "requirements": [
+      {
+        "id": "R1",
+        "kind": "quality",
+        "provenance": {
+          "kind": "user",
+          "source": "operator 2026-09-29 01:0x 'responsibility boundary violations are always CRITICAL to make our doeff code testable'"
+        },
+        "statement": "責務の境界の違反は常に critical(doeff のコードをテストできるようにするため)"
+      },
+      {
+        "id": "R2",
+        "kind": "constraint",
+        "provenance": {
+          "kind": "user",
+          "source": "operator 2026-09-29 'effects are specifically for testability…' / 'it's not even minor. it's correct' / 'what we care is responsibility boundary. not program or not'"
+        },
+        "statement": "判断の関数が effect(GetTime など)を起こすのは違反ではなく正しい。effect の有無は分類の軸ではない"
+      },
+      {
+        "id": "R3",
+        "kind": "functional",
+        "provenance": {
+          "kind": "inherited",
+          "source": "agora-controllers pyproject の law translation-targets-only-generic-foundation-effects(未配線)"
+        },
+        "statement": "protocol 層の handler は doeff の汎用の effect だけを出し、業務の intent を出さない"
+      }
+    ]
+  },
+  "created_at": "2026-09-28T16:21:55.540575+00:00",
+  "id": "design-44a234aca793",
+  "inputs": [
+    {
+      "id": "snapshot-c61ae533db31",
+      "role": "basis",
+      "sha256": "e8d3e5a64a4896054a497e6e3080137edaf1988b7626b42f0c1cf6c2350771bc"
+    },
+    {
+      "id": "snapshot-283e6dcc668f",
+      "role": "basis",
+      "sha256": "72522fed549fdef183b6bda83feddd17311e9adb35ae86c451ee61358bebe340"
+    },
+    {
+      "id": "report-e6a05687c427",
+      "role": "basis",
+      "sha256": "370b52f86b100e7f48a7e169360af1108af82fa633ca07852548aa9bf68b60a5"
+    }
+  ],
+  "kind": "design",
+  "schema_version": 1,
+  "scope": "doeff-linter の規則の重大さ(level: critical・major・minor・info)— doeff-linter の既定と repo ごとの宣言(agora-controllers の pyproject)。どの規則を critical にするか、LLM で判定する規則の閾値と誤判定の扱い"
+}

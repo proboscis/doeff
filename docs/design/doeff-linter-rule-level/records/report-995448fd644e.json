@@ -1,0 +1,99 @@
+{
+  "artifacts": [
+    {
+      "path": "artifacts/v1/level-discussion.html",
+      "sha256": "dade9e1f164cb17b9d0051f7bd38ca4db5f222301dbda7b058a5c8614db8225b"
+    }
+  ],
+  "body": {
+    "publication": {
+      "reference": "herdr w3J:pD(operator との対話)・coordinator w3J:p2 へ agmsg 2026-09-29",
+      "status": "local"
+    },
+    "purpose": "discussion",
+    "summary": "doeff-linter の規則の重大さ(level)を operator と議論中(2026-09-29 01:xx〜)。合意はまだ無い。#942(境界の規則 9 本を critical)は争点になっていない。争点は、この席が候補 1 で「DOEFF129(judgment が effect を起こす)を境界の規則に足す」と推した点で、operator は「effect はテストしやすさのためにあるので judgment が GetTime を起こすのは正しい。問題ですらない」。席は推奨を取り下げ、judgment が effect を起こさないという決め(#780 の役の一覧・L1464・L1590)そのものを問い直す形になった。独立の席に構造上の価値のレビューを頼んでいる。",
+    "topics": [
+      {
+        "alternatives": [
+          "a. 今のまま(GetTime が要る関数は program と名乗る)",
+          "b. judgment の名は残し effect の禁止だけ外す",
+          "c. judgment と program を 1 つの役に畳む"
+        ],
+        "impacts": [
+          "DOEFF129 と L1464 の削除",
+          "L1590(protocol → shared/core の judgment の import)の書き換え",
+          "#800 の段階 4 の規則の変更"
+        ],
+        "needed_from": "user",
+        "question": "judgment の役は effect を起こさない、という決め(#780・L1464・DOEFF129)を保つか",
+        "recommendation": "operator の前提(effect はテストしやすさのための仕組み・judgment が GetTime を起こすのは正しい)を採るなら、DOEFF129 と法 L1464 は消す。judgment / program の違いを effect の有無で定義しない。protocol が judgment を import できる規則 L1590 は「型だけ」に縮めるか、protocol が intent を出さない規則で代える。独立レビューの結果を見てから確定"
+      },
+      {
+        "alternatives": [
+          "B. 129 を足す(取り下げ)",
+          "C. 129・120・203 も足す"
+        ],
+        "impacts": [
+          "#942 の変更のまま"
+        ],
+        "needed_from": "user",
+        "question": "候補 1: 責務の境界の規則の範囲(#942 の 9 本 = 101/102/103/106/109/116/201/202/205)",
+        "recommendation": "A. 9 本のまま。129 は足さない(operator の指摘で B を取り下げ)。120・203 は書き方の問題"
+      },
+      {
+        "alternatives": [
+          "A. すべて critical に数える(#942 の今の案)"
+        ],
+        "impacts": [
+          "[tool.doeff-linter.semantic] の閾値の変更",
+          "エディタの critical の件数"
+        ],
+        "needed_from": "user",
+        "question": "候補 2: LLM 判定で確率の低い当たり(202 の p 0.44 など)も critical に数えるか",
+        "recommendation": "B. 閾値を 1 本にし、超えたら critical・下回ったら出さない。低確率まで数えると残 critical の件数を信用できない"
+      },
+      {
+        "alternatives": [
+          "A. 動かさない",
+          "B. 動かし、誤判定は既知の違反の一覧に載せる(既知の critical として残る)"
+        ],
+        "impacts": [
+          "較正の実行(Jev の呼び出し費用)",
+          "登録簿とは別の誤判定の置き場"
+        ],
+        "needed_from": "user",
+        "question": "候補 3: LLM 判定の当たり外れを測る仕組みを動かすか・誤判定の扱い",
+        "recommendation": "C. 動かし、誤判定は「誤判定」として件数から外す。候補 2 の閾値もこの結果で決める"
+      },
+      {
+        "alternatives": [
+          "A. repo ごとの設定のまま"
+        ],
+        "impacts": [
+          "doeff-linter の既定の level の表の追加",
+          "agora の pyproject の宣言を差分に縮める"
+        ],
+        "needed_from": "user",
+        "question": "候補 4: 重大さの表を doeff-linter の既定にするか",
+        "recommendation": "B. doeff-linter の既定にし、各 repo には差分だけ書く。責務の境界の違反が critical なのは agora に限らない"
+      }
+    ]
+  },
+  "created_at": "2026-09-28T16:14:27.584422+00:00",
+  "id": "report-995448fd644e",
+  "inputs": [
+    {
+      "id": "snapshot-c61ae533db31",
+      "role": "evidence",
+      "sha256": "e8d3e5a64a4896054a497e6e3080137edaf1988b7626b42f0c1cf6c2350771bc"
+    },
+    {
+      "id": "snapshot-283e6dcc668f",
+      "role": "evidence",
+      "sha256": "72522fed549fdef183b6bda83feddd17311e9adb35ae86c451ee61358bebe340"
+    }
+  ],
+  "kind": "report",
+  "schema_version": 1,
+  "scope": "doeff-linter の規則の重大さ(level: critical・major・minor・info)— doeff-linter の既定と repo ごとの宣言(agora-controllers の pyproject)。どの規則を critical にするか、LLM で判定する規則の閾値と誤判定の扱い"
+}

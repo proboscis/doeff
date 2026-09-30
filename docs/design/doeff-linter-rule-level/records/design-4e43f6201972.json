@@ -1,0 +1,338 @@
+{
+  "artifacts": [
+    {
+      "path": "artifacts/v7/ratchet-and-review.md",
+      "sha256": "0aeda6fa0c572628a5dcb13ab37886512f524f54def559630658159f58ae320d"
+    },
+    {
+      "path": "artifacts/v7/fig/fig2-ratchet-compare-main.mmd",
+      "sha256": "e3ea9c1b6a3dc6d961e648b4e060156e13fdd244859803bc60a8dfc64b265636"
+    },
+    {
+      "path": "artifacts/v7/fig/fig3-ratchet-with-list.mmd",
+      "sha256": "0fa50f1aed62d023a8e024ae720ac5f44659da651eb3ad93cac6fd1efeb70a56"
+    },
+    {
+      "path": "artifacts/v7/fig/fig4-burndown-bundles.mmd",
+      "sha256": "fac802f261ac6cc1ec637f1254e30fa1c56553ab0af9d56deb0589f9752d22a6"
+    },
+    {
+      "path": "artifacts/v7/fig/fig5-phases.mmd",
+      "sha256": "a88e48c3d337611c7a593abe8a6681cba2fb8606daad9cd6f6a531da9d7ef9b1"
+    }
+  ],
+  "body": {
+    "alternatives": [
+      {
+        "options": [
+          {
+            "benefits": "1 件ずつ理由を書いた「見える負債の一覧」になる",
+            "costs": "file 1361 本の維持・消し忘れ・conflict が残る。増えてよいのは新しい規則を入れる 1 回だけ(issue に記録)という例外の運用が要る",
+            "name": "案 L: 一覧を残し「減るだけの基点」にする"
+          },
+          {
+            "benefits": "持ち物が無く、conflict も消し忘れも無い。直せば減り、足せば赤になるのが自動で、同じ ratchet になる",
+            "costs": "検査のたびに基点の main でも linter を実行する(今は 1 回 6.2 秒)。名前でキーを作るので、載った定義の中身を書き換えても通る(案 L と同じ弱点)",
+            "name": "案 M: 一覧を持たず main と比べる"
+          }
+        ],
+        "question": "ratchet の基点を、保存した既知の一覧で持つか、main と比べて持つか",
+        "reason": "file 1361 本の維持・消し忘れ・conflict が無くなり、同じ ratchet になる。operator が 2026-09-30 18:2x に 'I agree with the report' で推奨の案 M に合意した",
+        "reconsider_when": "検査のたびに基点でも linter を実行する費用(今は 1 回 6.2 秒)が許容を超えた時、または 1 件ずつ理由を書いた負債の一覧が運用に要ると分かった時",
+        "selected": "案 M: 一覧を持たず main と比べる"
+      }
+    ],
+    "change_cases": [
+      {
+        "change": "違反が main に既に多数ある規則を、doeff-linter に新しく入れる(critical で入れる)",
+        "expected_elements": [
+          "ratchet-gate",
+          "rule-fixes"
+        ],
+        "id": "CC-new-rule",
+        "preserve": [
+          "通る条件はキーの集合の包含で、保存した一覧を持たない",
+          "減らす commit は通る"
+        ],
+        "priority": "prepare",
+        "protected_contracts": [
+          "ratchet-pass-condition"
+        ],
+        "provenance": {
+          "kind": "assumption",
+          "source": "報告 §5.2 の案 L の条件 4 を案 M に当てはめたセッションの仮説(operator の要求ではない)"
+        },
+        "rationale": "案 M は保存した一覧を持たないので、新しい規則が main の既存の code に新しい critical を出すと、ratchet はその規則を入れる commit を含むすべての commit を止める。案 L では「新しい規則を入れる 1 回だけ一覧が増えてよい」という例外があった(報告 §5.2)ので、案 M でその代わりをどう置くかが問いになる",
+        "verification": "違反を 1 件持つ fixture の repo に新しい規則を足す commit を作り、ratchet が止めるかを実行して確かめる。止まった時の入れ方(たとえば warning で入れて違反を直してから critical に上げる)はこの記録では決めず、ratchet の実装の子 issue で決める"
+      },
+      {
+        "change": "較正が済んで信頼できた Jev の規則(DOEFF201〜205)を、warning から critical に戻す",
+        "expected_elements": [
+          "ratchet-gate",
+          "daily-count"
+        ],
+        "id": "CC-jev-back-to-critical",
+        "preserve": [
+          "Jev の規則は warning の間は ratchet の対象外で、critical の件数に混ぜない",
+          "通る条件はキーの集合の包含"
+        ],
+        "priority": "prepare",
+        "protected_contracts": [
+          "ratchet-pass-condition",
+          "daily-remaining-count"
+        ],
+        "provenance": {
+          "kind": "user",
+          "source": "operator 2026-09-30 17:3x 'we need to keep those JEV rules as warning'(較正が済んで信頼できるまで — 決定 B。戻す判断は報告 §7 の較正の後)"
+        },
+        "rationale": "Jev の規則は較正まで warning に留める(決定 B)。critical に戻す commit で level の表が変わると、基点の実行と commit の実行が違う設定を使う場合は、残っている Jev の違反がすべて新しい critical に見えて止まる",
+        "verification": "level を上げる変更を含む commit を fixture の repo で ratchet にかけ、基点と commit の実行が同じ設定を使うかどうかで結果がどう変わるかを実行して確かめる(どちらを採るかはこの記録では決めず、実装の子 issue で決める)"
+      }
+    ],
+    "contracts": [
+      {
+        "canonical_source": "agora-redesign #1762 の comment「A の実装の形の確定 = ratchet」(operator 2026-09-30 17:4x)と、実装先の agora-controllers の scripts/land_lint_gate.hy",
+        "effects": [
+          "保存する既知の一覧を書かない(基点の結果はその場で計算する)"
+        ],
+        "failures": [
+          "B が A に含まれない(新しい critical が 1 件でもある)時は止め、新しい critical を示す"
+        ],
+        "id": "ratchet-pass-condition",
+        "invariants": [
+          "通る条件はキーの集合の包含で、件数の比較ではない(3 件直して 1 件足す commit は赤)",
+          "減らす commit は通る",
+          "Jev の規則(DOEFF201〜205)は warning で対象外"
+        ],
+        "operations": [
+          "基点(main の先端)と commit の両方でその場で linter を実行し、commit の critical のキーの集合 B が基点の集合 A に含まれるかを判定して、含まれる時だけ通す"
+        ],
+        "owner": "ratchet-gate"
+      },
+      {
+        "canonical_source": "agora-redesign #1762 の comment「A の実装の形の確定 = ratchet」と、artifacts/v7/ratchet-and-review.md の §5.1",
+        "effects": [],
+        "failures": [
+          "前日より増えていれば赤にする"
+        ],
+        "id": "daily-remaining-count",
+        "invariants": [
+          "Jev の規則は critical の件数に混ぜない",
+          "0 になった時に終わる(期限は置かない)"
+        ],
+        "operations": [
+          "日次に critical の残り N 件を前日比つきで出す"
+        ],
+        "owner": "daily-count"
+      }
+    ],
+    "elements": [
+      {
+        "depends_on": [],
+        "hidden_decisions": [],
+        "id": "doeff-linter",
+        "kind": "external",
+        "requirement_ids": [],
+        "responsibility": "規則と level の表に従って critical・major・minor・info の違反を出す検査の道具。Jev の規則(DOEFF201〜205)は warning",
+        "state": []
+      },
+      {
+        "depends_on": [
+          "doeff-linter"
+        ],
+        "hidden_decisions": [
+          "キーの作り方(file・規則・定義の名)",
+          "基点の main の先端の決め方",
+          "Jev の規則(warning)を比べる対象から外す判定"
+        ],
+        "id": "ratchet-gate",
+        "kind": "internal",
+        "requirement_ids": [
+          "A-ratchet",
+          "Q1-baseline-main"
+        ],
+        "responsibility": "マージ前の検査(scripts/land_lint_gate.hy)と commit の hook。基点(main の先端)と commit の両方でその場で linter を実行し、critical のキーの集合が基点の集合に含まれる時だけ通す。保存した既知の一覧は持たない",
+        "state": []
+      },
+      {
+        "depends_on": [
+          "doeff-linter"
+        ],
+        "hidden_decisions": [
+          "残り件数の内訳の出し方(規則別・service 別)"
+        ],
+        "id": "daily-count",
+        "kind": "internal",
+        "requirement_ids": [
+          "A-ratchet",
+          "Q3-order"
+        ],
+        "responsibility": "日次に critical の残り N 件(前日比)を出し、増えていれば赤にする。0 で終わる。Jev の規則は warning として別に数え、件数に混ぜない",
+        "state": [
+          "前日の残り件数"
+        ]
+      },
+      {
+        "depends_on": [
+          "doeff-linter"
+        ],
+        "hidden_decisions": [
+          "8 点のうち 1〜6 は規則・宣言・linter の側の直し、7 は code の設計の直し、8 は既に持ち主の issue(#1108 / #1112)に任せる分け方"
+        ],
+        "id": "rule-fixes",
+        "kind": "internal",
+        "requirement_ids": [
+          "Q2-rule-fixes",
+          "Q3-order"
+        ],
+        "responsibility": "見直しで分かった規則の側の直し 8 点(Q2)を先に行い、残りを「直せる違反だけ」にする。873 件が約 500 件になる見込みで、約 12 時間",
+        "state": []
+      }
+    ],
+    "handoff": {
+      "fixed": [
+        "Q1: 一覧を持たず main と比べる(案 M)。critical の既知の一覧は廃止",
+        "Q2: 規則の側の直し 8 点を推奨どおり",
+        "Q3: 進め方の順(規則の側 → ratchet の検査 → 一覧の廃止 → 減らす。Jev の較正と失敗ケースのテストは並行)",
+        "通る条件はキーの集合の包含で、件数の比較ではない",
+        "Jev の規則(DOEFF201〜205)は warning で ratchet の対象外(決定 B)"
+      ],
+      "free": [
+        "ratchet の比較の実装(基点と commit がどの設定で linter を実行するか・キーの作り方)",
+        "8 点の実装の順と担当の切り方",
+        "2 時間の単位の子 issue の切り方(規則 × service)"
+      ],
+      "next": [
+        "agora-redesign #1762 の子 issue を phase(0〜5)ごとに切り、sub-issue として #1762 に結ぶ"
+      ]
+    },
+    "level": "doeff-linter の critical の運用(マージ前の検査・commit の hook・日次の集計)と、規則・宣言の側の直し。個々の critical の違反を直す code の変更は範囲外",
+    "methods": [
+      {
+        "evidence": [],
+        "name": "ddd",
+        "profile": "ddd-evans-2015-local-v1",
+        "reason": "業務領域のモデル化ではなく、検査の比較の向きと規則の直しの設計",
+        "status": "not_applicable",
+        "steps": []
+      },
+      {
+        "evidence": [
+          "artifacts/v7/ratchet-and-review.md の §5.2 と §8",
+          "agora-redesign #1762 の comment(決定 A の ratchet の確定・決定 B)"
+        ],
+        "name": "change-cases",
+        "profile": "change-cases-1996-local-v1",
+        "reason": "新しい規則を入れる時と Jev を critical に戻す時が、案 M の設計を左右する変更なので、2 件を選んで書いた",
+        "status": "performed",
+        "steps": [
+          {
+            "result": "変更候補を報告 §5.2(案 L の条件 4)と §7(Jev を critical へ戻す判断)から集め、新しい規則を入れる・Jev を critical に戻すの 2 件にした",
+            "step": "1"
+          },
+          {
+            "result": "どちらも critical のキーの集合が基点より増える変更で、ratchet が止める。誰が何を入れたいか・影響する振る舞いを change の欄と rationale に書いた",
+            "step": "2"
+          },
+          {
+            "result": "どちらも今回は「備える仮説」(prepare)。新しい規則は AI の仮説(provenance = assumption)、Jev の戻しは operator の決定 B に由来する(provenance = user)",
+            "step": "3"
+          },
+          {
+            "result": "維持する条件は、通る条件がキーの集合の包含であること・保存した一覧を持たないこと・減らす commit は通ること。守る契約は ratchet-pass-condition と daily-remaining-count",
+            "step": "4"
+          },
+          {
+            "result": "fixture の repo で ratchet にかけて止まるかを実行して確かめる方法を固定した。この記録では実行しておらず、実装の子 issue で行う",
+            "step": "5"
+          }
+        ]
+      },
+      {
+        "evidence": [],
+        "name": "volatility",
+        "profile": "volatility-righting-software-local-v1",
+        "reason": "変更の軸は change-cases の 2 件で足り、責務の分解の見直しではない",
+        "status": "not_applicable",
+        "steps": []
+      },
+      {
+        "evidence": [],
+        "name": "add",
+        "profile": "add-2.0-local-v1",
+        "reason": "1 つの検査の比較の向きを決める規模で、アーキテクチャを駆動する設計ではない",
+        "status": "not_applicable",
+        "steps": []
+      },
+      {
+        "evidence": [],
+        "name": "saam",
+        "profile": "saam-1996-local-v1",
+        "reason": "品質シナリオでの構造の評価は行わない",
+        "status": "not_applicable",
+        "steps": []
+      },
+      {
+        "evidence": [],
+        "name": "c4",
+        "profile": "c4-web-2026-09-14-local-v1",
+        "reason": "構成図は artifacts/v7/fig/ の図 2・4・5 で足りる",
+        "status": "not_applicable",
+        "steps": []
+      }
+    ],
+    "open_questions": [],
+    "perspective": "proposed",
+    "purpose": "critical の ratchet(基点は一覧を持たず main と比べる)と規則の側の直し 8 点 — doeff-linter の critical を「増やさない・減らし始める」ために、マージ前の検査と commit の hook を基点 main との比較にし、既知の違反の一覧を廃止する。あわせて、見直しで分かった規則の側の直し 8 点を先に行い、残りを「直せる違反だけ」にする",
+    "requirements": [
+      {
+        "id": "A-ratchet",
+        "kind": "constraint",
+        "provenance": {
+          "kind": "user",
+          "source": "operator 2026-09-30 17:0x / 17:4x 'critical must not be left behind. such known list must not exist to make anything passed' → 'not that they must be 0 NOW. we are to make them never increase and start to reduce'(追跡 = agora-redesign #1762・決定 A)"
+        },
+        "statement": "critical の違反を通すための既知の一覧は持たない。目標は今すぐ 0 にすることではなく、増やさないことと減らし始めること"
+      },
+      {
+        "id": "Q1-baseline-main",
+        "kind": "functional",
+        "provenance": {
+          "kind": "user",
+          "source": "operator 2026-09-30 18:2x 'I agree with the report'(議論用の報告の Q1・推奨の案 M)"
+        },
+        "statement": "ratchet の基点は一覧を持たず main と比べる。マージ前の検査と commit の hook は、基点(main の先端)と commit の両方で linter を実行し、critical のキーの集合が増えていなければ通す。critical の規則の既知の一覧(scripts/doeff_lint/*-BREACHES のうち critical の分)は廃止する"
+      },
+      {
+        "id": "Q2-rule-fixes",
+        "kind": "constraint",
+        "provenance": {
+          "kind": "user",
+          "source": "operator 2026-09-30 18:2x 'I agree with the report'(議論用の報告の Q2・8 点とも推奨どおり)"
+        },
+        "statement": "規則の側の直し 8 点を推奨どおり進める: 1. DOEFF144 の対象から模擬環境 agora_sim を外す 2. defk の :post に要素の型を受ける形を doeff 側に足す 3. DOEFF150 から註・docstring・md・契約と wire の欄名・ACP_CHECKOUT を外す 4. DOEFF137 の薄い包み 6 件に :contract-test none(理由 = doeff 側のテストの名)を認める 5. DOEFF106 に模擬環境の縁の台を宣言で許す口を足す 6. DOEFF133 の 1 件は印を付ける 7. DOEFF116 の messaging → kanban 8 件は kanban の型を messaging から外す 8. DOEFF101 / 140 の設計の組み替え 7 件は #1108 / #1112 に任せる"
+      },
+      {
+        "id": "Q3-order",
+        "kind": "constraint",
+        "provenance": {
+          "kind": "user",
+          "source": "operator 2026-09-30 18:2x 'I agree with the report'(議論用の報告の Q3・推奨の順)"
+        },
+        "statement": "進め方の順は 0. 規則の側を直す → 1. ratchet の検査 → 2. critical の既知の一覧を廃止 → 3. 減らす(規則 × service の 2 時間の単位の issue を並列・期限なし)。4. Jev の較正と 5. 失敗ケースのテストは 0 と並行"
+      }
+    ]
+  },
+  "created_at": "2026-09-30T09:39:55.395108+00:00",
+  "id": "design-4e43f6201972",
+  "inputs": [
+    {
+      "id": "design-44a234aca793",
+      "role": "basis",
+      "sha256": "c5d3e17bd965e416b33750200f7dd2fdff8a350506bce9ba6db50cf0d5a25608"
+    }
+  ],
+  "kind": "design",
+  "schema_version": 1,
+  "scope": "doeff-linter の規則の重大さ(level: critical・major・minor・info)— doeff-linter の既定と repo ごとの宣言(agora-controllers の pyproject)。どの規則を critical にするか、LLM で判定する規則の閾値と誤判定の扱い"
+}

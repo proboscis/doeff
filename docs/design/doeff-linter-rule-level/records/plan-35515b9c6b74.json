@@ -1,0 +1,91 @@
+{
+  "artifacts": [],
+  "body": {
+    "assessment": null,
+    "blocked_by": [
+      "独立レビュー(Fable)の結果が反対なら #956・#957 を保留"
+    ],
+    "design_validation": null,
+    "readiness": "draft",
+    "target": "design-44a234aca793",
+    "tasks": [
+      {
+        "acceptance": [
+          "enable に DOEFF129 が無い",
+          "types-and-judgments-yield-no-effects の法と検が無い",
+          "層の検査が緑"
+        ],
+        "depends_on": [],
+        "evidence": [],
+        "external_ref": "proboscis/agora-redesign#955",
+        "id": "a-agora-drop-129",
+        "owner": "manager w3J:p2 が割り当て",
+        "phase": "implementation",
+        "priority": "high",
+        "reason": "決定 1",
+        "scope": [
+          "agora-controllers pyproject の enable",
+          "#780 の法 L1464 の削除",
+          "L1590 の文言"
+        ],
+        "status": "registered",
+        "title": "DOEFF129 と法 L1464 を消し、L1590 を「縛るのは protocol が出す effect」に書き換える"
+      },
+      {
+        "acceptance": [
+          "反例(protocol が intent を出す)が赤・正例が緑",
+          "仕様に節がある"
+        ],
+        "depends_on": [],
+        "evidence": [],
+        "external_ref": "proboscis/agora-redesign#956",
+        "id": "b-linter-protocol-effects",
+        "owner": "manager w3J:p2 が割り当て",
+        "phase": "implementation",
+        "priority": "high",
+        "reason": "決定 2",
+        "scope": [
+          "doeff-linter の新規則",
+          "SPECIFICATION.md の節",
+          "反例と正例の fixture"
+        ],
+        "status": "registered",
+        "title": "doeff-linter に protocol の handler が出す effect の規則を足す"
+      },
+      {
+        "acceptance": [
+          "law translation-targets-only-generic-foundation-effects が wired",
+          "本線の当たりが数えられている"
+        ],
+        "depends_on": [
+          "b-linter-protocol-effects"
+        ],
+        "evidence": [],
+        "external_ref": "proboscis/agora-redesign#957",
+        "id": "c-agora-enable-critical",
+        "owner": "manager w3J:p2 が割り当て",
+        "phase": "implementation",
+        "priority": "high",
+        "reason": "決定 2",
+        "scope": [
+          "agora-controllers pyproject の enable と level",
+          "law の rules"
+        ],
+        "status": "registered",
+        "title": "agora で新規則を enable し level = critical"
+      }
+    ]
+  },
+  "created_at": "2026-09-28T16:21:55.835446+00:00",
+  "id": "plan-35515b9c6b74",
+  "inputs": [
+    {
+      "id": "design-44a234aca793",
+      "role": "subject",
+      "sha256": "c5d3e17bd965e416b33750200f7dd2fdff8a350506bce9ba6db50cf0d5a25608"
+    }
+  ],
+  "kind": "plan",
+  "schema_version": 1,
+  "scope": "doeff-linter の規則の重大さ(level: critical・major・minor・info)— doeff-linter の既定と repo ごとの宣言(agora-controllers の pyproject)。どの規則を critical にするか、LLM で判定する規則の閾値と誤判定の扱い"
+}
