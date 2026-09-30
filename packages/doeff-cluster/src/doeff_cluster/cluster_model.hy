@@ -426,7 +426,7 @@
         reason (old-task-row-reason (.get data "requires") extra)
         ;; failure = まだ終わっていない旧い形の行を failed にする理由(None = そのまま読む)
         failure (if unended reason None))
-  ;; 欄ごとに型を確かめて読む(#** で辞書を渡すと、型の違う保存の値が黙って欄に入る — agora-redesign #1662)。
+  ;; 欄ごとに型を確かめて読む(#** で辞書を渡すと、型の違う保存の値が黙って欄に入る — #1662)。
   (TaskRecord :id (stored-str data "id")
               :name (stored-str data "name")
               :program (stored-optional-str data "program")
