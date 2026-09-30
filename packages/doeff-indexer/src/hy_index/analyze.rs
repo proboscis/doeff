@@ -103,6 +103,7 @@ pub fn analyze(src: &str) -> FileAnalysis {
         references: Vec::new(),
         calls: Vec::new(),
         call_suppression: 0,
+        inspecting: 0,
     };
     for form in &forms {
         analyzer.visit_top(form);
@@ -233,7 +234,14 @@ struct Analyzer<'a> {
     calls: Vec<Call>,
     /// 0 より大きい間は呼び出しを積まない(型注釈・match の pattern の中)。
     call_suppression: u32,
+    /// 0 より大きい間は、積む参照を値を検めるだけの名指し(`Reference::inspected`)にする(比べの form の被演算子の中)。
+    inspecting: u32,
 }
+
+/// 被演算子を検めるだけの form の頭 — 比べ(同一・等しさ・含み)と `assert`(真偽と失敗の時の表示の文を作るだけ)。
+/// 被演算子の値を呼ばず、他の定義へ渡さない。比べの外の属性の読み(`(+ f.__module__ ":" f.__name__)` で handler を名指す
+/// 解釈器の定数 — DOEFF137)は今までどおり届く。
+const COMPARISONS: &[&str] = &["is", "is-not", "=", "!=", "in", "not-in", "assert"];
 
 impl<'a> Analyzer<'a> {
     /// span の綴りを返す。
@@ -1170,6 +1178,12 @@ impl<'a> Analyzer<'a> {
                 }
                 return;
             }
+            comparison if COMPARISONS.contains(&comparison) => {
+                for operand in rest {
+                    self.walk_inspected(operand);
+                }
+                return;
+            }
             _ => {}
         }
         if !self.is_keyword_head(head) {
@@ -1183,6 +1197,25 @@ impl<'a> Analyzer<'a> {
                 Some(inner) if performed_index == Some(index) => self.walk_list(inner, Quoting::None, true),
                 _ => self.walk(item, Quoting::None),
             }
+        }
+    }
+
+    /// 比べの form の被演算子を歩く: 記号と literal の列・辞書・組・集合の中の記号は値を検めるだけの名指し
+    /// (`Reference::inspected`)。被演算子が呼び出し `( … )` なら、その中はふつうに歩く(呼んだ結果を比べる形 —
+    /// 呼びそのものは届く)。
+    fn walk_inspected(&mut self, operand: &Form) {
+        match &operand.node {
+            Node::Symbol => {
+                self.inspecting += 1;
+                self.reference(operand.span);
+                self.inspecting -= 1;
+            }
+            Node::Seq { delim, items } if *delim != Delim::Paren => {
+                for item in items {
+                    self.walk_inspected(item);
+                }
+            }
+            _ => self.walk(operand, Quoting::None),
         }
     }
 
@@ -1388,6 +1421,7 @@ impl<'a> Analyzer<'a> {
             return;
         }
         let method_head = text.starts_with('.');
+        let inspected = self.inspecting > 0;
         let mut qualifier: Option<String> = None;
         let mut offset = 0;
         for part in text.split('.') {
@@ -1404,6 +1438,7 @@ impl<'a> Analyzer<'a> {
                 member: member || method_head || qualifier.is_some(),
                 target: None,
                 type_only: self.call_suppression > 0,
+                inspected,
             });
             qualifier = Some(match qualifier {
                 Some(prefix) => format!("{}.{}", prefix, part),
