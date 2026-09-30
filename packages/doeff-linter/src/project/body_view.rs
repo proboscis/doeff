@@ -1322,7 +1322,9 @@ impl Printer<'_, '_, '_> {
     fn expression(&mut self, form: &Form, base: u32) {
         let rewrites = expression_rewrites(self.world, self.reader, self.names, form);
         let src = self.reader.hy.src;
-        let offset = |r: &Range| (offset_of(src, r.start), offset_of(src, r.end));
+        let reader = self.reader;
+        let lines = &reader.lines;
+        let offset = |r: &Range| (lines.offset(r.start), lines.offset(r.end));
         let rewritten: HashSet<(usize, usize)> = rewrites.iter().map(|r| offset(&r.range)).collect();
         let mut found = Vec::new();
         find_islands(form, &rewritten, &mut found);

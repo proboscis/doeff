@@ -1335,23 +1335,25 @@ pub fn file_signatures(world: &World, root: &Path, rel: &str, source: &str) -> F
         path: root.join(rel).to_string_lossy().into_owned(),
     };
     let mut out = FileSignatures::default();
-    for form in top_definitions(&reader.hy, &forms) {
-        if let Some(shape) = definition_shape(&reader.hy, form) {
-            out.signatures
-                .push(signature_of(world, &reader, form, &shape));
+    crate::timing::timed("signatures.heads", || {
+        for form in top_definitions(&reader.hy, &forms) {
+            if let Some(shape) = definition_shape(&reader.hy, form) {
+                out.signatures
+                    .push(signature_of(world, &reader, form, &shape));
+            }
+            let mut vars: HashMap<String, Option<TypeRef>> = HashMap::new();
+            collect_bindings(
+                world,
+                &reader,
+                form,
+                Flags::default(),
+                &mut vars,
+                &mut out.bindings,
+            );
         }
-        let mut vars: HashMap<String, Option<TypeRef>> = HashMap::new();
-        collect_bindings(
-            world,
-            &reader,
-            form,
-            Flags::default(),
-            &mut vars,
-            &mut out.bindings,
-        );
-    }
-    out.rewrites = super::call_view::file_rewrites(world, &reader, &forms);
-    out.bodies = super::body_view::file_bodies(world, &reader, &forms, &out.bindings);
+    });
+    out.rewrites = crate::timing::timed("signatures.rewrites", || super::call_view::file_rewrites(world, &reader, &forms));
+    out.bodies = crate::timing::timed("signatures.bodies", || super::body_view::file_bodies(world, &reader, &forms, &out.bindings));
     out
 }
 
