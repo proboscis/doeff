@@ -25,8 +25,9 @@
 (import doeff.do [do])
 (import doeff.program [handler :as program-handler])
 (import collections.abc [Callable])
+(import typing [Protocol])
 (import doeff_vm [GetBoundaries WithObserve Callable :as VmCallable])
-(import doeff_core_effects.scheduler [Spawn Wait CreatePromise CompletePromise PRIORITY-IDLE])
+(import doeff_core_effects.scheduler [Spawn Wait CreatePromise CompletePromise Promise PRIORITY-IDLE])
 (import doeff_cluster.effect_codec [READ LIVE DECISION OUTPUT LOOSE DIVERGE INTERN-MIN-CHARS BLOB-MEMORY-MAX FORMAT-VERSION BlobMemory
                                          HandleTable UnencodableValue UnrecordableEffect
                                          encode-value encode-error decode-value decode-error canonical intern-json
@@ -90,6 +91,16 @@
 
 
 ;; --- 記録の置き場 ------------------------------------------------------------------------------
+
+(defclass RecordSink [Protocol]
+  "記録の係(EffectLog)が置き場に求める口 — 行を書く・溜めた行を送る・届かずに捨てた行の数。実体は MemorySink(検)と
+   BufferedSink の族(HttpSink・OtlpSink)。EffectLog の欄 sink をこの型で宣言する(agora-redesign #1675 — 以前は object で
+   宣言していて、write・flush・lost の読みが型検査で絞れなかった)。"
+  #^ int lost
+  ;; 本体は説明の文と None(Hy は最後の式を返すので、`...` や文だけだとその値を返し、返りの型 None と食い違う)。
+  (defn #^ None write [self #^ int chunk #^ dict line] "行 line を区切り chunk に書く。" None)
+  (defn #^ None flush [self] "溜めた行を送る。" None))
+
 
 (defclass MemorySink []
   "テストの置き場。lines = 書いた行(dict)。"
@@ -208,7 +219,7 @@
   "1 つの process の記録の係。header = run の行の欄(service・run・版・設定 …)。wall-ms = 壁時計(ms)を返す関数。
    形の版 2: 大きな値は内容参照(effect_codec.intern-json)にし、中身は run の中で初めて出た時に blob の行で書く。問いの直後に
    (他の出来事を挟まずに)答えが返ったら、問いと答えを 1 行(call)にまとめる — 問いは答えが返るか他の出来事が来るまで手元に持つ。"
-  (defn #^ None __init__ [self #^ object sink #^ dict header #^ bool [strict False] #^ float [chunk-seconds 3600.0]
+  (defn #^ None __init__ [self #^ RecordSink sink #^ dict header #^ bool [strict False] #^ float [chunk-seconds 3600.0]
                           #^ (| Callable None) [wall-ms None] #^ int [intern-min INTERN-MIN-CHARS] #^ int [blob-memory BLOB-MEMORY-MAX]]
     (.__init__ (super))
     (setv self.sink sink self.header header self.strict strict self.chunk-ms (int (* 1000 chunk-seconds))
@@ -359,7 +370,7 @@
                 (setv answer None error None)
                 (if (is child None)
                     (try (<- answer effect) (except [e Exception] (setv error e)))
-                    (do (<- chain (GetBoundaries k))
+                    (do (<- chain list (GetBoundaries k))
                         (try (<- answer (Spawn (spawn-program log child effect.program chain)
                                                :priority effect.priority :daemon effect.daemon))
                              (except [e Exception] (setv error e)))))
@@ -453,7 +464,7 @@
   {:pre [(: state ReplayState) (: e (| int None))] :post [(: % (type None))]}
   ;; 出来事 e の番が来るまで待つ(e = None なら記録の終わりか分岐まで)。
   (when (and state.ordered (or (is e None) (!= (.current state) e)) (not state.finished) (is state.divergence None))
-    (<- promise (CreatePromise))
+    (<- promise Promise (CreatePromise))
     (setv (get state.waiting (if (is e None) #("end" (id promise)) e)) promise)
     (when (not state.driver-running)
       (setv state.driver-running True)
@@ -563,7 +574,7 @@
           (when (= mode LIVE)
             (if (is child None)
                 (try (<- answer effect) (except [e Exception] (setv error e)))
-                (do (<- chain (GetBoundaries k))
+                (do (<- chain list (GetBoundaries k))
                     (try (<- answer (Spawn (spawn-program state child effect.program chain)
                                            :priority effect.priority :daemon effect.daemon))
                          (except [e Exception] (setv error e)))))
