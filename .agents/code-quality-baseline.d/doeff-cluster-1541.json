@@ -2494,6 +2494,76 @@
     },
     {
       "count": 1,
+      "path": "packages/doeff-cluster/tests/test_semaphore.hy",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "cut_between"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-cluster/tests/test_semaphore.hy",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "cut_off_at"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-cluster/tests/test_semaphore.hy",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "fenced_worker"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-cluster/tests/test_semaphore.hy",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "intervals"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-cluster/tests/test_semaphore.hy",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "max_concurrency"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-cluster/tests/test_semaphore.hy",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "on_worker"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-cluster/tests/test_semaphore.hy",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "test_claim_renew_release_are_pure_row_transitions"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-cluster/tests/test_semaphore.hy",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "test_fence_verdict_is_a_pure_check_of_the_hold_and_the_clock"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-cluster/tests/test_semaphore.hy",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "test_named_semaphore_refuses_an_empty_or_slashed_name"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-cluster/tests/test_semaphore.hy",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "times_of"
+    },
+    {
+      "count": 1,
       "path": "packages/doeff-cluster/tests/test_version_state.hy",
       "reason": "registered-with-legacy",
       "rule": "untyped-boundary",
