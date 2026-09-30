@@ -379,6 +379,8 @@ impl ProjectRule {
             | ProjectRule::TestOnlyFake
             | ProjectRule::IntentAnswererNotTranslation
             | ProjectRule::ServiceWithoutCounterexample
+            // intent の効果の網羅の欠け(#1561 K3 の表を #1562 K4 で失敗に — 登録簿に載った既知の欠けは warning、新しい欠けは critical)。
+            | ProjectRule::IntentEffectUncovered
             | ProjectRule::ServiceBoundary
             | ProjectRule::ServiceDependency
             | ProjectRule::TranslationEmitsIntent
@@ -410,8 +412,6 @@ impl ProjectRule {
             | ProjectRule::FieldsJoinedIntoText
             | ProjectRule::RebuiltAccumulator
             | ProjectRule::EffectsDisagreeWithInference
-            // 網羅の表の欠け(#1561 K3)— まず報告だけで、重さは知らせの info のまま。#1562 K4 が critical へ上げる。
-            | ProjectRule::IntentEffectUncovered
             | ProjectRule::SemanticPlainCallable
             | ProjectRule::SemanticClassRole => None,
         }
