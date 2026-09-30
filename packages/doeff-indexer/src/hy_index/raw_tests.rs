@@ -1,9 +1,10 @@
 //! 生の副作用の証拠のテスト — Hy の source を索引してから証拠まで通す(doeff-runner の raw.test.ts の例を移したもの)。
 
+use std::collections::BTreeSet;
 use std::path::Path;
 
 use super::model::{HyFileIndex, RawStrength};
-use super::raw::{annotate, matches_pattern};
+use super::raw::{annotate, matches_pattern, ViaTrace};
 use super::raw_catalog::RawCatalog;
 use super::index_source;
 
@@ -113,7 +114,7 @@ fn judged(extra: Option<serde_json::Value>) -> Vec<HyFileIndex> {
         Some(value) => bundled.with_extra(&value).0,
         None => bundled,
     };
-    annotate(&mut files, &catalog, true);
+    annotate(&mut files, &catalog, ViaTrace::Through { stops: &BTreeSet::new() });
     files
 }
 
@@ -172,7 +173,7 @@ fn seeded_random_is_local_including_variable_seed_and_instance_alias() {
         let encoded = bincode::serialize(&super::CachedHyFile::of(file)).unwrap();
         let cached: super::CachedHyFile = bincode::deserialize(&encoded).unwrap();
         let mut files = vec![cached.into_file().unwrap()];
-        annotate(&mut files, &RawCatalog::bundled().unwrap(), true);
+        annotate(&mut files, &RawCatalog::bundled().unwrap(), ViaTrace::Through { stops: &BTreeSet::new() });
         assert!(direct(&files, "sample").is_empty(), "{source}: {:?}", direct(&files, "sample"));
     }
 }
@@ -188,7 +189,7 @@ fn entropy_random_stays_external_including_missing_or_none_seed() {
     for call in calls {
         let source = format!("(import random uuid secrets time)\n(defk sample [] {call})");
         let mut files = vec![index_source(Path::new("/r"), Path::new("/r/sample.hy"), &source)];
-        annotate(&mut files, &RawCatalog::bundled().unwrap(), true);
+        annotate(&mut files, &RawCatalog::bundled().unwrap(), ViaTrace::Through { stops: &BTreeSet::new() });
         assert!(!direct(&files, "sample").is_empty(), "{call} の外部 I/O が消えた");
     }
 }
@@ -262,7 +263,7 @@ fn via_follows_calls_through_aliased_imports_across_files() {
             "(import pkg.entry [main :as backtest-main])\n(deftest runs-the-entry (backtest-main))\n",
         ),
     ];
-    annotate(&mut files, &RawCatalog::bundled().expect("目録"), true);
+    annotate(&mut files, &RawCatalog::bundled().expect("目録"), ViaTrace::Through { stops: &BTreeSet::new() });
     assert_eq!(via(&files, "runs-the-entry"), vec!["main time time.sleep"]);
 }
 
@@ -270,7 +271,7 @@ fn via_follows_calls_through_aliased_imports_across_files() {
 fn partial_runs_do_not_compute_via() {
     let root = Path::new("/r");
     let mut files = vec![index_source(root, Path::new("/r/pkg/io_handlers.hy"), IO)];
-    annotate(&mut files, &RawCatalog::bundled().expect("目録"), false);
+    annotate(&mut files, &RawCatalog::bundled().expect("目録"), ViaTrace::Skip);
     assert!(def(&files, "via-handler").raw.via.is_empty());
     assert_eq!(direct(&files, "Fetch"), vec!["http httpx.post"]);
 }

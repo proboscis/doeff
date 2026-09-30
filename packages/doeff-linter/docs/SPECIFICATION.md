@@ -201,7 +201,7 @@ critical にしたのを戻した)。確率で info にも出るが、level は�
 | DOEFF104 | タグの無い定義があって module の頭のタグも無い、または定義が 1 つも無く頭のタグも無い | なし | 最初のタグの無い定義の名 / 1 行目 |
 | DOEFF105 | 実効のタグごとに、role か context が無いか空、または role が `roles.by_layer` の外なら破れ(1 module に同じ鍵が何度も出ることがある) | role(無ければ `None`) | タグの辞書 |
 | DOEFF106 | hy-index 版 3 の定義ごとの直接の証拠(raw.direct)が、`allowed_layers` の外の層の Hy の定義に在れば破れ。architecture.hy に `:world-handlers` を書いた repo では層で許さず、名簿の定義の module の file だけに許す(`allowed_layers` は書けない・raw_side_effects の節が無くても当たる — agora-redesign #1140)。強い証拠は error、弱い証拠は warning。入れ子で重なる証拠は内側の定義に 1 度 | `<定義>::<証拠の名>` | 証拠の記号 |
-| DOEFF107 | 経由の証拠(raw.via — 全体の実行だけ)を info で出す。経路つき。1 定義で経路と証拠の名が同じ物は 1 件 | `<定義>::via::<経路>::<証拠の名>` | 定義の名 |
+| DOEFF107 | 経由の証拠(raw.via — 全体の実行だけ)を info で出す。経路つき。1 定義で経路と証拠の名が同じ物は 1 件。architecture.hy の `:world-handlers` に宣言した定義には入らない(その先の生の副作用はその定義の責務 — agora-redesign #1902)。宣言した定義を通らない別の経路で届けば当たる | `<定義>::via::<経路>::<証拠の名>` | 定義の名 |
 | DOEFF131 | `:world-handlers` の `:wraps` に挙げた doeff の実 I/O の handler を、名簿の定義(とその中の入れ子の定義)の外で名指す。値として渡す参照(`with-handlers` の列)も呼び出しも数え、import の行は数えない。名指しの先は索引の参照の `target`(呼び出しと同じ名前の解決)。同じ定義の同じ handler は 1 件。既定の重大さ critical(agora-redesign #1106 の R1・#1140) | `<定義>::world::<module:名>` | 名指した記号 |
 | DOEFF106・131(層の外) | `:world-handlers` を書いた repo では、層の置き場の外の Hy の file(層の外の dir・`:root` の外で `:raw-io-roots` に挙げた dir — 書かなければ `:root` だけ)にも DOEFF106・131 を当てる。検の file(path の段の :exclude・名が test_ / conftest)・defadr を持つ file・deftest の中の当たりは外す(縁のテストは DOEFF133)。message に「層の置き場の外」(agora-redesign #1147) | DOEFF106・131 と同じ | 同じ |
 | DOEFF132 | `:world-handlers` の定義 1 本ずつ — module が層の置き場に無い(無い module か層の外)・foundation の外の層に在る・Hy の module に定義が無い。全体の実行だけ。既定の重大さ critical(agora-redesign #1106 の R2・#1141) | `<module:名>` | architecture.hy の名簿の要素 |

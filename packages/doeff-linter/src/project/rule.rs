@@ -761,7 +761,7 @@ impl ProjectRule {
             ProjectRule::ModuleDeclaresTags => "層の module の定義は、定義の :tags か module の頭のタグで文脈(context)と役(role)を名乗る",
             ProjectRule::RoleMatchesLayer => "タグの role は、その module の層で許された role の 1 つで、context も名乗る",
             ProjectRule::RawSideEffectDirect => "生の副作用(http・時刻・乱数・file・process・環境変数 …)に直に触る定義は、設定で許した層にだけ置く",
-            ProjectRule::RawSideEffectVia => "呼ぶ定義を通して生の副作用に届く定義の知らせ(違反ではなく事実)",
+            ProjectRule::RawSideEffectVia => "呼ぶ定義を通して生の副作用に届く定義の知らせ(違反ではなく事実)— :world-handlers に宣言した定義の先は辿らない",
             ProjectRule::EnvironmentName => "業務の file・handler・組み立ての関数の名に環境の語を付けない",
             ProjectRule::ServiceBoundary => "ある service の判断と翻訳の層(設定の guarded_layers)は、別の service の同じ層を読まない。読んでよいのは別の service の open_layers と共有の置き場だけ",
             ProjectRule::DefnForbidden => "Hy の定義は defn / defn/a ではなく defk で書く(マクロの展開の時の関数と、設定で除いた置き場は除く)",

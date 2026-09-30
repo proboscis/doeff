@@ -1061,7 +1061,11 @@ fn whole_hy_index(
         (paths.into_iter().collect::<Vec<_>>(), false)
     };
     let mut files = crate::timing::timed("hy-index.read", || cached_hy_files(root, &paths));
-    crate::timing::timed("hy-index.annotate", || hy_index::annotate_raw(&mut files, &raw.catalog, via));
+    // 経由の辿りは、実 I/O を担うと宣言した定義(:world-handlers)に入らない — その先の生の副作用はその定義の責務で、
+    // 呼び手が届くと数える意味が無い(agora-redesign #1902 — DOEFF107 の 39 件がすべてこの形だった)。
+    let stops: BTreeSet<String> = settings.architecture.as_ref().map(|a| a.world_definition_targets().into_keys().collect()).unwrap_or_default();
+    let trace = if via { hy_index::ViaTrace::Through { stops: &stops } } else { hy_index::ViaTrace::Skip };
+    crate::timing::timed("hy-index.annotate", || hy_index::annotate_raw(&mut files, &raw.catalog, trace));
     files.into_iter().filter_map(|file| relative_path(root, Path::new(&file.path)).map(|rel| (rel, file))).collect()
 }
 

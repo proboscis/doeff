@@ -25,6 +25,7 @@ mod contract_tests;
 #[cfg(test)]
 mod qualify_tests;
 
+use std::collections::BTreeSet;
 use std::path::{Component, Path, PathBuf};
 
 pub use analyze::mangle;
@@ -35,7 +36,7 @@ pub use model::{
     TypeNote,
 };
 pub use position::LineIndex;
-pub use raw::{annotate as annotate_raw, matches_pattern};
+pub use raw::{annotate as annotate_raw, matches_pattern, ViaTrace};
 pub use raw_catalog::{RawCatalog, RawCategory};
 
 /// 生の副作用の判定に使う目録と、利用者の追加の中で読めなかった値の理由。
@@ -76,7 +77,7 @@ fn is_hy_file(path: &Path) -> bool {
 pub fn index_root(root: &Path, raw: &RawSettings) -> HyIndex {
     let files = collect_hy_files(root);
     let mut index = read_paths(root, &files);
-    raw::annotate(&mut index.files, &raw.catalog, true);
+    raw::annotate(&mut index.files, &raw.catalog, ViaTrace::Through { stops: &BTreeSet::new() });
     index.raw_via = RawViaScope::Computed;
     index.raw_catalog_problems = raw.problems.clone();
     index
@@ -85,7 +86,7 @@ pub fn index_root(root: &Path, raw: &RawSettings) -> HyIndex {
 /// 指定した file だけを索引する(root は module 名の基準)。生の副作用は直接の証拠だけ(経由は計算しない)。
 pub fn index_paths(root: &Path, paths: &[PathBuf], raw: &RawSettings) -> HyIndex {
     let mut index = read_paths(root, paths);
-    raw::annotate(&mut index.files, &raw.catalog, false);
+    raw::annotate(&mut index.files, &raw.catalog, ViaTrace::Skip);
     index.raw_catalog_problems = raw.problems.clone();
     index
 }
@@ -122,7 +123,7 @@ fn read_paths(root: &Path, paths: &[PathBuf]) -> HyIndex {
 /// 保存前の内容(stdin から読んだもの)を `path` の file として 1 件索引する。生の副作用は直接の証拠だけ。
 pub fn index_stdin_source(root: &Path, path: &Path, source: &str, raw: &RawSettings) -> HyIndex {
     let mut files = vec![index_source(root, path, source)];
-    raw::annotate(&mut files, &raw.catalog, false);
+    raw::annotate(&mut files, &raw.catalog, ViaTrace::Skip);
     HyIndex {
         version: CONTRACT_VERSION,
         root: root.to_string_lossy().into_owned(),

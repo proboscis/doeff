@@ -2112,6 +2112,55 @@ fn world_handler_list_limits_raw_io_and_wrapped_handlers() {
     assert_eq!(found["level"], "critical");
 }
 
+/// agora-redesign #1902: DOEFF107 の経由の辿りは許可名簿(:world-handlers)の定義に入らない。名簿の with-host も名簿に無い
+/// make-client も同じ生の副作用(httpx.AsyncClient)に届く — with-host は中で make-client を呼ぶ。`entry` は entry の module の本文。
+fn via_repo(entry: &str) -> tempfile::TempDir {
+    let files = [
+        ("app/foundation/client.hy", tags("shared", "foundation") + "(import httpx)\n(defk make-client [] (httpx.AsyncClient))\n"),
+        (
+            "app/foundation/host.hy",
+            tags("shared", "foundation") + "(import app.foundation.client [make-client])\n(defk with-host [body] (make-client) body)\n",
+        ),
+        (
+            "app/billing/entry/main.hy",
+            tags("billing", "entry") + "(import app.foundation.host [with-host])\n(import app.foundation.client [make-client])\n" + entry,
+        ),
+    ];
+    world_repo_with(&files, "", "[\"DOEFF107\"]")
+}
+
+/// entry の module の定義 `name` に当たった DOEFF107 の鍵。
+fn via_keys_of(report: &Value, name: &str) -> Vec<String> {
+    keys(report, "DOEFF107").into_iter().filter(|k| k.starts_with(&format!("app/billing/entry/main.hy::DOEFF107::{}::", name))).collect()
+}
+
+#[test]
+fn via_through_a_declared_world_handler_is_not_reported() {
+    let dir = via_repo("(defk run [body] (with-host body))\n");
+    let (_, report) = editor(dir.path());
+    assert!(via_keys_of(&report, "run").is_empty(), "名簿の with-host の先は with-host の責務: {}", report);
+}
+
+#[test]
+fn via_through_an_undeclared_definition_is_reported() {
+    let dir = via_repo("(defk run [] (make-client))\n");
+    let (_, report) = editor(dir.path());
+    let found = via_keys_of(&report, "run");
+    assert_eq!(found.len(), 1, "名簿に無い make-client を通る経路は当たる: {}", report);
+    assert!(found[0].contains("make-client") && found[0].ends_with("httpx.AsyncClient"), "{:?}", found);
+}
+
+#[test]
+fn via_is_reported_when_an_undeclared_path_exists_beside_a_declared_one() {
+    // 名簿の with-host を先に呼ぶので、止めずに辿ると with-host>make-client の経路が先に同じ証拠を取る — 止めた後も、
+    // 名簿を通らない make-client の経路で当たる
+    let dir = via_repo("(defk run [body] (with-host body) (make-client))\n");
+    let (_, report) = editor(dir.path());
+    let found = via_keys_of(&report, "run");
+    assert_eq!(found.len(), 1, "名簿を通らない経路が在れば当たる: {}", report);
+    assert!(!found[0].contains("with-host"), "経路に名簿の定義を含めない: {:?}", found);
+}
+
 /// agora-redesign #1141(R2): 許可名簿の定義は実在し、層 foundation の module に在る(DOEFF132 — 位置は architecture.hy の名簿の要素)。
 #[test]
 fn world_handler_list_entries_exist_in_the_foundation_layer() {

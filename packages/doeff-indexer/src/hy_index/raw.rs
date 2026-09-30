@@ -10,8 +10,10 @@
 //!   属性・method として書かれた区切り(`(.m x)`・`x.m`・`(. x m)`)だけで、名前の引き(局所の束縛・引数・定義の名)は
 //!   method の名と同じ綴りでも数えない(agora-redesign #798)。
 //! - 経由は、同じ file か import で行き先が決まった呼び出しだけを、深さ 4 まで辿る(循環は止め、同じ証拠は 1 度)。
+//! - 呼び手が「止める」と渡した定義(実 I/O を担うと宣言した定義)には入らない — その先の生の副作用はその定義の責務なので、
+//!   呼び手の経由の証拠に数えない(agora-redesign #1902)。止める定義を通らない別の経路で届く証拠は今までどおり数える。
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 
 use super::model::{
     ArgumentValue, HyFileIndex, RawEvidence, RawEvidenceKind, RawMark, RawStep, RawStrength, RawVia, Range, Reference,
@@ -23,6 +25,15 @@ use super::raw_catalog::{RawCatalog, RawCategory};
 pub const RAW_VIA_MAX_DEPTH: usize = 4;
 /// 1 つの定義に持つ経由の証拠の上限。
 pub const RAW_VIA_MAX_ITEMS: usize = 50;
+
+/// 経由の証拠を辿るか。
+#[derive(Debug, Clone, Copy)]
+pub enum ViaTrace<'a> {
+    /// 経由を計算しない(1 file の実行 — 経由は file をまたぐ)。
+    Skip,
+    /// 経由を辿る。`stops`(完全修飾名 — 定義の `qualified_name` と同じ綴り)の定義には入らない。空なら全部を辿る。
+    Through { stops: &'a BTreeSet<String> },
+}
 
 /// 照合用の名前の規則(doeff-runner の mangle と同じ)— `-` を `_` にし、先頭に続く `-` は残す。
 fn match_name(name: &str) -> String {
@@ -357,23 +368,25 @@ struct ViaWorld<'a> {
     by_qualified: HashMap<&'a str, Vec<DefId>>,
     direct: Vec<Vec<Vec<RawEvidence>>>,
     callees: HashMap<DefId, Vec<DefId>>,
+    /// 入らない定義の完全修飾名(`ViaTrace::Through` の `stops`)
+    stops: &'a BTreeSet<String>,
     /// (定義, 残りの段数) → その段数の中で直接の証拠を持つ定義に届き得るか(訪問中の定義を除かない上限の見積もり)
     reachable: HashMap<(DefId, usize), bool>,
 }
 
 impl<'a> ViaWorld<'a> {
     /// 索引全体の引き表を作り、全定義の直接の証拠を計算する。
-    fn new(files: &'a [HyFileIndex], direct: Vec<Vec<Vec<RawEvidence>>>) -> ViaWorld<'a> {
+    fn new(files: &'a [HyFileIndex], direct: Vec<Vec<Vec<RawEvidence>>>, stops: &'a BTreeSet<String>) -> ViaWorld<'a> {
         let mut by_qualified: HashMap<&'a str, Vec<DefId>> = HashMap::new();
         for (fi, file) in files.iter().enumerate() {
             for (di, definition) in file.definitions.iter().enumerate() {
                 by_qualified.entry(definition.qualified_name.as_str()).or_default().push((fi, di));
             }
         }
-        ViaWorld { files, by_qualified, direct, callees: HashMap::new(), reachable: HashMap::new() }
+        ViaWorld { files, by_qualified, direct, callees: HashMap::new(), stops, reachable: HashMap::new() }
     }
 
-    /// 定義の範囲の中の呼び出しが行き着く定義(自分の中の入れ子は除く・書いた順・重ねない)。
+    /// 定義の範囲の中の呼び出しが行き着く定義(自分の中の入れ子と、入らない定義 `stops` は除く・書いた順・重ねない)。
     fn callees_of(&mut self, id: DefId) -> Vec<DefId> {
         if let Some(known) = self.callees.get(&id) {
             return known.clone();
@@ -391,7 +404,8 @@ impl<'a> ViaWorld<'a> {
             for &target in targets {
                 let target_def = &self.files[target.0].definitions[target.1];
                 let inside = target.0 == id.0 && contains(&range, &target_def.range.start);
-                if !inside && !found.contains(&target) {
+                let stopped = self.stops.contains(&target_def.qualified_name);
+                if !inside && !stopped && !found.contains(&target) {
                     found.push(target);
                 }
             }
@@ -489,12 +503,13 @@ fn direct_in_parallel(files: &[HyFileIndex], compiled: &CompiledCatalog) -> Vec<
 }
 
 /// 索引の全 file の定義に、直接の証拠と(`with_via` なら)経由の証拠を埋める。経由は file をまたぐので、
-/// `--root` の全体の実行だけが計算する(1 file や `--file` の実行では空)。
-pub fn annotate(files: &mut [HyFileIndex], catalog: &RawCatalog, with_via: bool) {
+/// `--root` の全体の実行だけが計算する(1 file や `--file` の実行では `ViaTrace::Skip` で空)。
+pub fn annotate(files: &mut [HyFileIndex], catalog: &RawCatalog, trace: ViaTrace) {
     let compiled = CompiledCatalog::new(catalog);
     let direct = direct_in_parallel(files, &compiled);
-    let via: Vec<Vec<Vec<RawVia>>> = if with_via {
-        let mut world = ViaWorld::new(files, direct.clone());
+    let via: Vec<Vec<Vec<RawVia>>> = match trace {
+        ViaTrace::Through { stops } => {
+        let mut world = ViaWorld::new(files, direct.clone(), stops);
         let mut all = Vec::with_capacity(files.len());
         for fi in 0..files.len() {
             let mut per_file = Vec::with_capacity(files[fi].definitions.len());
@@ -506,8 +521,8 @@ pub fn annotate(files: &mut [HyFileIndex], catalog: &RawCatalog, with_via: bool)
             all.push(per_file);
         }
         all
-    } else {
-        files.iter().map(|f| vec![Vec::new(); f.definitions.len()]).collect()
+        }
+        ViaTrace::Skip => files.iter().map(|f| vec![Vec::new(); f.definitions.len()]).collect(),
     };
     for ((file, direct_per_def), via_per_def) in files.iter_mut().zip(direct).zip(via) {
         for ((definition, direct), via) in file.definitions.iter_mut().zip(direct_per_def).zip(via_per_def) {
