@@ -231,6 +231,18 @@ pub fn run_with(root: &Path, settings: &ProjectSettings, enabled: &BTreeSet<Proj
     }
     report.errors.extend(registry.problems.iter().cloned());
     report.notes.extend(registry.notes.iter().cloned());
+    // 登録簿の当たらない行(DOEFF166)は repo 全体を当てた時だけ判じる(名指しの file だけ・1 file の実行では、当たる所見が範囲の外に在りうる)。
+    let whole_repo = matches!(&target, Target::Whole { focus: None });
+    // DOEFF166 が有効な全体の実行では、登録簿の鍵が名指す規則を enable に無くても同じ実行で当てる(lent)— 当たりは 166 の判じにだけ
+    // 使い、報告の前に外す。enable に 166 を含む一部の列だけを渡すと名指された規則が走らず、166 が黙って 0 件になっていた
+    // (agora-redesign #1999・#1992 の見逃し)。
+    let lent: BTreeSet<ProjectRule> = if whole_repo && enabled.contains(&ProjectRule::RegistryEntryStale) {
+        rules_named_by_registry(&registry, settings).difference(enabled).copied().collect()
+    } else {
+        BTreeSet::new()
+    };
+    let widened: BTreeSet<ProjectRule> = enabled.union(&lent).copied().collect();
+    let enabled = &widened;
     let raw = raw_settings(root, settings, &mut report.errors);
     let mut semantic_probes: Vec<SemanticProbe> = Vec::new();
     let wants_raw = enabled.contains(&ProjectRule::RawSideEffectDirect)
@@ -240,8 +252,6 @@ pub fn run_with(root: &Path, settings: &ProjectSettings, enabled: &BTreeSet<Proj
     let mut drafts = Vec::new();
 
     // 読めない Hy の file の知らせ(DOEFF128)の材料 — 全体なら repo の Hy の file の全部、1 file ならその保存前の中身。
-    // 登録簿の当たらない行(DOEFF166)は repo 全体を当てた時だけ判じる(名指しの file だけ・1 file の実行では、当たる所見が範囲の外に在りうる)。
-    let whole_repo = matches!(&target, Target::Whole { focus: None });
     let unreadable_target: Option<(PathBuf, String)> = match &target {
         Target::Whole { .. } => None,
         Target::Single { path, source } => Some((path.clone(), source.to_string())),
@@ -866,6 +876,8 @@ pub fn run_with(root: &Path, settings: &ProjectSettings, enabled: &BTreeSet<Proj
         let stale = crate::timing::timed("stale-registry", || stale_registry_drafts(root, settings, enabled, &registry, &drafts));
         drafts.extend(stale);
     }
+    // 名指されて当てた規則(lent)の当たりは 166 の判じにだけ使った — enable に無い規則の所見は報告しない。
+    drafts.retain(|draft| !lent.contains(&draft.rule));
     let labels = crate::timing::timed("labels", || judged_labels(root, settings, &mut report.errors));
     let (findings, dropped) = crate::timing::timed("finish", || finish(drafts, settings, &registry, &labels.false_positives));
     report.findings = findings;
@@ -5005,6 +5017,17 @@ fn finding_key(law: Option<&LawSpec>, rule: ProjectRule, rel: &str, detail: Opti
 /// 鍵の区切り(`<path>::<law の名か規則の ID>[::<細目>]` の 2 つ目)が指す規則のうち、この実行で判じた物(有効・意味の規則でない・
 /// 照合中でない)。区切りから規則を引けない鍵(登録簿の dir を共用する他の検の鍵)と、判じていない規則の鍵は空。
 fn judged_rules_of(key: &str, settings: &ProjectSettings, enabled: &BTreeSet<ProjectRule>) -> Vec<ProjectRule> {
+    named_rules_of(key, settings).into_iter().filter(|rule| enabled.contains(rule)).collect()
+}
+
+/// 登録簿の鍵のどれかが名指す規則(DOEFF166 が判じられる物)— 166 が有効な全体の実行が、enable に無くても同じ実行で当てる列。
+fn rules_named_by_registry(registry: &Registry, settings: &ProjectSettings) -> BTreeSet<ProjectRule> {
+    registry.keys.iter().flat_map(|key| named_rules_of(key, settings)).collect()
+}
+
+/// 鍵の区切りが名指す規則のうち、DOEFF166 が判じられる物(意味の規則でない・照合中でない — 意味の規則は Jev に問うので自動では
+/// 当てない)。区切りから規則を引けない鍵は空。
+fn named_rules_of(key: &str, settings: &ProjectSettings) -> Vec<ProjectRule> {
     let Some(segment) = key.split("::").nth(1) else { return Vec::new() };
     let named: Vec<ProjectRule> = match ProjectRule::parse(segment) {
         Some(rule) => vec![rule],
@@ -5019,10 +5042,7 @@ fn judged_rules_of(key: &str, settings: &ProjectSettings, enabled: &BTreeSet<Pro
             })
             .collect(),
     };
-    named
-        .into_iter()
-        .filter(|rule| enabled.contains(rule) && !rule.is_semantic() && !settings.registry.reconciling.contains(rule))
-        .collect()
+    named.into_iter().filter(|rule| !rule.is_semantic() && !settings.registry.reconciling.contains(rule)).collect()
 }
 
 /// DOEFF166: 登録簿の鍵のうち、この実行で判じた規則の鍵で、どの下書きの鍵にも当たらない物を下書きにする(鍵の順・鍵の細目 = 登録簿の鍵)。
