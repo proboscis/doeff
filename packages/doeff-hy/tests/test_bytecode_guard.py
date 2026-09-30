@@ -83,13 +83,15 @@ def _edit(path: Path, text: str) -> None:
     os.utime(path, ns=(later, later))
 
 
-def _run_on_pypi_hy(root: Path, guard: str) -> int:
-    """PyPI の Hy の使い捨ての環境で pkg.user を import し、展開された値を返す。"""
+def _run_on_pypi_hy(root: Path, guard: str, store: Path | None = None) -> int:
+    """PyPI の Hy の使い捨ての環境で pkg.user を import し、展開された値を返す。共有の code の置き場は既定で root の下
+    (検どうしで混ざらない)— 作業木をまたぐ検は同じ store を渡す。"""
     uv = shutil.which("uv")
     assert uv is not None, "uv が PATH に無い — PyPI の Hy の使い捨ての環境を作れない"
     script = root / f"load_{guard}.py"
     script.write_text(_LOADER.format(root=str(root), guard=guard, guard_root=str(GUARD_ROOT)))
     env = {key: value for key, value in os.environ.items() if key not in _ENV_NOT_PASSED}
+    env["DOEFF_HY_CODE_STORE"] = str(store if store is not None else root / "code-store")
     python = f"{sys.version_info.major}.{sys.version_info.minor}"
     completed = subprocess.run(
         [
@@ -209,6 +211,56 @@ def test_an_unchecked_hash_pyc_is_trusted_like_python_trusts_it(tmp_path: Path) 
         "(import pkg.helpers [base])\n(defmacro answer [] (+ (base) 2))\n",
     )
     assert _run_on_pypi_hy(tmp_path, "before-hy") == 11
+
+
+def _write_counting_package(root: Path, add: int) -> None:
+    """_write_package と同じ 3 つだが、macro が展開のたびに root の expansions.log へ 1 行書く(変換をやり直したかを数える)。"""
+    _write_package(root)
+    (root / "pkg" / "macros.hy").write_text(
+        "(import pkg.helpers [base])\n"
+        '(defmacro answer [] (with [f (open "expansions.log" "a")] (.write f "x\\n"))'
+        f" (+ (base) {add}))\n"
+    )
+
+
+def _expansions(root: Path) -> int:
+    log = root / "expansions.log"
+    return len(log.read_text().splitlines()) if log.exists() else 0
+
+
+def test_a_new_tree_with_the_same_sources_reuses_the_code_without_expanding(tmp_path: Path) -> None:
+    """新しい作業木(同じ中身・別の絶対 path・.pyc なし)は、共有の置き場の code を使い、macro を展開し直さない
+    (agora-redesign #1753)。記録は新しい木の提供元の file に付け替わり、木の .pyc も書かれる。"""
+    store = tmp_path / "store"
+    first, second = tmp_path / "first", tmp_path / "second"
+    for root in (first, second):
+        root.mkdir()
+        _write_counting_package(root, 1)
+    assert _run_on_pypi_hy(first, "before-hy", store) == 11
+    assert _expansions(first) == 1
+    assert _run_on_pypi_hy(second, "before-hy", store) == 11
+    assert _expansions(second) == 0
+    record = records.record_of(
+        marshal.loads(_user_pyc(second).read_bytes()[records.PYC_HEADER_BYTES :])
+    )
+    assert record is not None
+    assert {Path(dependency.file).parent.parent for dependency in record.dependencies} == {second}
+
+
+def test_a_new_tree_with_a_different_macro_does_not_reuse_the_other_trees_expansion(
+    tmp_path: Path,
+) -> None:
+    """同じ使い手でも macro の中身が違う木は、別の木で作った code を使わない — 記録を作った木の file ではなく、今の木の
+    提供元で照らす(作った木の macro が変わらず残っていても)。"""
+    store = tmp_path / "store"
+    first, other = tmp_path / "first", tmp_path / "other"
+    first.mkdir()
+    other.mkdir()
+    _write_counting_package(first, 1)
+    _write_counting_package(other, 5)
+    assert _run_on_pypi_hy(first, "before-hy", store) == 11
+    assert _run_on_pypi_hy(other, "before-hy", store) == 15
+    assert _expansions(other) == 1
 
 
 def test_the_venv_installs_the_guard_at_startup_before_hy() -> None:

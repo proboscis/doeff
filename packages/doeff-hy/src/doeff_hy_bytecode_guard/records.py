@@ -89,6 +89,54 @@ def record_is_current(
     )
 
 
+#: 作業木をまたいで共有する code の置き場の鍵の印(形を変えたら末尾の番号を上げる — 古い鍵の entry は当たらなくなる)。
+STORE_TAG = "doeff-hy/code-store/1"
+
+
+def store_key(
+    source: bytes, module_name: str, hy_version: str, cache_tag: str, optimize: int
+) -> str:
+    """共有の code の置き場の鍵 — source の中身・module 名・Hy の版・Python の版の印・最適化の段で決まり、source の path に
+    依らない(別の作業木の同じ中身の file が同じ entry に当たるため)。macro の依存は鍵に入れず、当たった entry の記録で
+    確かめる(compile の前には依存が分からない)。"""
+    import hashlib  # 共有の置き場を引く時だけ読む
+
+    digest = hashlib.sha256()
+    for part in (STORE_TAG, module_name, hy_version, cache_tag, str(optimize)):
+        digest.update(part.encode("utf-8"))
+        digest.update(b"\0")
+    digest.update(source)
+    return digest.hexdigest()
+
+
+def rebased_record(
+    record: MacroRecord, current_file_of: Callable[[str], str | None]
+) -> MacroRecord | None:
+    """別の作業木で作った記録の提供元の file を、module 名から今の環境で引き直した path に付け替える(引けない名が
+    1 つでもあれば None)。記録の path は作った作業木の絶対 path なので、そのまま照らすと、別の作業木の macro が同じ
+    中身でも今の作業木の macro が違う時に古い展開を使ってしまう。sha256 は記録の値のまま(照らすのは呼び手)。"""
+    dependencies = []
+    for dependency in record.dependencies:
+        file = current_file_of(dependency.module)
+        if file is None:
+            return None
+        dependencies.append(MacroDependency(dependency.module, file, dependency.sha256))
+    return MacroRecord(record.hy_version, tuple(dependencies))
+
+
+def timestamp_header_matches(header: bytes, *, mtime: int, size: int) -> bool:
+    """timestamp の方式の .pyc の頭が source の更新時刻と大きさに合うか(Python の判定と同じ下位 32 bit)— hash の方式は
+    偽(Python 自身に判定を任せる)。共有の置き場を引くのは、作業木の .pyc が使えない時だけにするため。"""
+    if len(header) < PYC_HEADER_BYTES:
+        return False
+    flags = int.from_bytes(header[4:8], "little")
+    if flags & FLAG_HASH_BASED:
+        return False
+    return header[8:12] == (mtime & 0xFFFFFFFF).to_bytes(4, "little") and header[
+        12:16
+    ] == (size & 0xFFFFFFFF).to_bytes(4, "little")
+
+
 def macro_provider_files(
     module: ModuleType, path: str, modules: Mapping[str, ModuleType]
 ) -> dict[str, str]:
