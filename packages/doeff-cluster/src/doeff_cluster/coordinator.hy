@@ -9,6 +9,9 @@
 ;;;   PUT    /jobs          旧い口。資源ごとの compare-and-set に写す(一覧に無い Service は消さない)
 ;;;   POST   /heartbeat     worker の生存と状態 {name, provides, exclusive, capacity, versions, statuses} → {"jobs": […], "tasks": […], "timing": …}
 ;;;   GET    /state         宣言・worker・割り当て・task・各 worker の最新の状態・直近の出来事
+;;;   GET    /watch?after=<版>&timeoutSeconds=<秒>[&worker=<名>&boot=<世代>]
+;;;                           版(state の revision)が after と違うようになるか期限(10 秒まで)まで待って {"revision" "changed"} を返す
+;;;                           (watch_policy — worker を名指せば、その worker の heartbeat の返事が変わる時だけ起きる・#1933)
 ;;;   GET    /board?prefix=[&withVersions=1]   盤の行(鍵が prefix で始まる物)
 ;;;   PUT    /board/<鍵>     {"value": …, "expect"?: …, "expectVersion"?: …} compare-and-set。合わなければ 409
 ;;;   POST   /tasks · GET /tasks/<id> · DELETE /tasks/<id>   task を出す・問い合わせる(lease を延ばす)・落とす
@@ -23,7 +26,7 @@
 ;;; (Persist = 追記の log に 1 行・fsync 1 回)全員に返事をする(Reply)— group commit。返事を済ませた書き(版の番号を含む)は
 ;;; coordinator が落ちても消えない。永続化に失敗したら返事をせずに落ちる(送り手には失敗として見える)。
 ;;; k8s の Deployment の読みと台数の変更(ReadDeployment / ScaleDeployment)も effect。I/O は handler の中だけ。
-(require doeff-hy.macros [defk <-])
+(require doeff-hy.macros [defk <- val var])
 (import argparse)
 (import dataclasses [replace])
 (import json)
@@ -37,7 +40,8 @@
 (import doeff_core_effects.scheduler [scheduled])
 (import doeff_cluster.clock [now-epoch-ms])
 (import .cluster_model [ClusterState ClusterTiming ClusterNaming IdleProbe naming-from-json NextRequests Reply Persist CoordinatorStopRequested
-                        Fault CoordinatorFault])
+                        Fault CoordinatorFault Request Watcher WatchRefusal WatchAnswer WatchStep])
+(import .watch_policy [watch-of settle-watch earliest-deadline])
 (import .cluster_policy [state-from-json fresh-task-prefix nodes-to-read with-derived-capabilities])
 (import .durable_kv [durable-kv kv-delta full-kv state-from-kv legacy-key-moves resume-writes])
 (import .wal_store [WalStore wal-store])
@@ -111,26 +115,48 @@
    "fault" True})
 
 
-(defk coordinator-step [state timing naming]
-  {:pre [(: state ClusterState) (: timing ClusterTiming) (: naming ClusterNaming)] :post [(: % tuple)]}
+(defk request-reply [state request now timing]
+  {:pre [(: state ClusterState) (: request Request) (: now int) (: timing ClusterTiming)] :post [(: % tuple)]
+   :tags {:context "doeff-cluster" :role "program"}}
+  ;; 版の変化を待つ読み(GET /watch)でない要求 1 件に答えるため: 判断(api_policy.respond)で次の状態と返事を導き、中の欠陥は log に
+  ;; 1 行出して送り手に見せる本文にする。答え = #(次の状態 status 本文)。
+  (val result (respond state request now timing))
+  (val body (get result 2))
+  (if (isinstance body Fault)
+      (do (<- fault-body dict (fault-reply body))
+          #((get result 0) (get result 1) fault-body))
+      result))
+
+
+(defk watch-answer-json [answer]
+  {:pre [(: answer WatchAnswer)] :post [(: % dict)] :tags {:context "doeff-cluster" :role "protocol"}}
+  "GET /watch の答えを返事の本文(JSON の object)にするため。"
+  {"revision" answer.revision "changed" answer.changed})
+
+
+(defk coordinator-step [state timing naming watchers]
+  {:pre [(: state ClusterState) (: timing ClusterTiming) (: naming ClusterNaming) (: watchers tuple)] :post [(: % tuple)]}
   ;; 1 まとまり = 並んでいる要求を全部受ける(無ければ 1 秒待つ)→ 1 件ずつ判断 → Rollout(1 秒ごと)→ 永続化 → 全員に返事。
-  ;; 返り値 = #(次の状態 まとまりの要求の数)。
-  (<- batch list (NextRequests (/ TICK-MS 1000.0) :idle (IdleProbe state timing naming)))
+  ;; watchers = 返事を待たせている版の変化の待ち(Watcher の tuple — watch_policy)。永続化の後に、前からの待ちとこのまとまりで
+  ;; 来た待ちを今の状態で判じ(settle-watch)、起きた物に返事をし、残りを次の拍へ持ち越す。
+  ;; 返り値 = #(次の状態 まとまりの要求の数 待ち続ける待ちの tuple)。
+  (<- wake (| int None) (earliest-deadline watchers))
+  (<- batch list (NextRequests (/ TICK-MS 1000.0) :idle (IdleProbe state timing naming :wake-ms wake)))
   (<- now int (now-epoch-ms))
   ;; 期限の経過(worker の沈黙・task の lease・readiness の window)は、まとまりの有無と無関係に毎拍調停する(2026-09-25)。
   ;; 以前は要求の無い拍だけだったので、読みの要求(GET)が 1 秒より短い間隔で続く間は調停が走らず、担い手の死んだ切り離した task が
   ;; lost にならなかった(読みは状態を変えないので調停しない)。書きの要求は今までどおり要求ごとに調停する(api_policy.settle)。
   (var next (tick state now timing))
-  (val replies [])
+  (var replies #())
+  (var waiting watchers)
   (for [request batch]
-    (val result (respond next request now timing))
-    (:= next (get result 0))
-    (val reply-status (get result 1))
-    (var reply-body (get result 2))
-    (when (isinstance reply-body Fault)
-      (<- fault-body dict (fault-reply reply-body))
-      (:= reply-body fault-body))
-    (.append replies #(request reply-status reply-body)))
+    (<- watch (| Watcher WatchRefusal None) (watch-of request now))
+    (match watch
+      (Watcher) (:= waiting (+ waiting #(watch)))
+      (WatchRefusal) (:= replies (+ replies #(#(request 400 {"error" watch.reason}))))
+      _ (do (<- answered tuple (request-reply next request now timing))
+            (:= next (get answered 0))
+            (:= replies (+ replies #(#(request (get answered 1) (get answered 2))))))))
   (when (>= (- now next.rollout-tick-ms) ROLLOUT-TICK-MS)
     (<- ticked ClusterState (rollout-tick next timing naming now))
     (:= next ticked))
@@ -140,7 +166,25 @@
     (<- (Persist delta)))
   (for [#(request status body) replies]
     (<- (Reply request status body)))
-  #(next (len batch)))
+  ;; 待ちへの返事は永続化の後(返した版の変化は coordinator が落ちても消えない — group commit と同じ)。
+  (var kept #())
+  (for [watcher waiting]
+    (<- judged WatchStep (settle-watch watcher next now timing))
+    (if (is judged.answer None)
+        (:= kept (+ kept #(judged.watcher)))
+        (do (<- body dict (watch-answer-json judged.answer))
+            (<- (Reply watcher.request 200 body)))))
+  #(next (len batch) kept))
+
+
+(defk release-watchers [state watchers]
+  {:pre [(: state ClusterState) (: watchers tuple)] :post [(: % int)] :tags {:context "doeff-cluster" :role "program"}}
+  ;; 止まる調停ループが、待たせている版の変化の待ちに「変わっていない」と今の版で返すため(送り手を受付の打ち切りまで待たせない)。
+  ;; 答え = 返した数。
+  (<- body dict (watch-answer-json (WatchAnswer state.revision False)))
+  (for [watcher watchers]
+    (<- (Reply watcher.request 200 body)))
+  (len watchers))
 
 
 (defk run-coordinator [state timing naming]
@@ -148,11 +192,15 @@
   ;; naming = 外の系と取り交わす名(Rollout の annotation・node の label から導く能力)。composition root(main・模擬環境)が渡す。
   ;; node の label から導く能力の名は、worker の自己申告として受けない(register-heartbeat が provides から外す — 改訂 1 の I)。
   (var current (replace state :derivable (frozenset (gfor row naming.node-capabilities (get row 2)))))
+  (var watchers #())
   (while True
     (<- stopping bool (CoordinatorStopRequested))
-    (when stopping (return current))
-    (<- stepped tuple (coordinator-step current timing naming))
-    (:= current (get stepped 0))))
+    (when stopping
+      (<- (release-watchers current watchers))
+      (return current))
+    (<- stepped tuple (coordinator-step current timing naming watchers))
+    (:= current (get stepped 0))
+    (:= watchers (get stepped 2))))
 
 
 
