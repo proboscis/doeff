@@ -57,6 +57,9 @@
 ;; 既出の中身の記憶の上限(1 つ約 170 byte = 約 35 MB)。大きな一覧を読む書き手の行の数(約 16 万 — 2026-09-25 実測)より大きく取る。
 (setv BLOB-MEMORY-MAX 200000)
 
+;; JSON の値(記録の 1 行の中身)の型。
+(setv JsonValue (| None bool int float str list dict))
+
 (setv READ "read" LIVE "live" DECISION "decision" OUTPUT "output")
 (setv LOOSE #(DECISION OUTPUT))
 
@@ -68,38 +71,38 @@
   "EFFECT-CODECS に登録の無い effect の型。")
 
 (defclass _Diverge []
-  (defn __repr__ [self] "DIVERGE"))
+  (defn #^ str __repr__ [self] "DIVERGE"))
 
 (setv DIVERGE (_Diverge))
 
 
 (defclass ReplayHandle []
   "再生で記録の答えから作る handle(named semaphore 等)。業務コードは受け取って引数に戻すだけなので、同じ名を持つ札で足りる。"
-  (defn __init__ [self #^ str kind ref]
+  (defn #^ None __init__ [self #^ str kind #^ str ref]
     (setv self.kind kind self.ref ref))
-  (defn __eq__ [self other]
+  (defn #^ bool __eq__ [self #^ object other]
     (and (isinstance other ReplayHandle) (= #(self.kind self.ref) #(other.kind other.ref))))
-  (defn __hash__ [self] (hash #("ReplayHandle" self.kind self.ref)))
-  (defn __repr__ [self] (.format "ReplayHandle({!r}, {!r})" self.kind self.ref)))
+  (defn #^ int __hash__ [self] (hash #("ReplayHandle" self.kind self.ref)))
+  (defn #^ str __repr__ [self] (.format "ReplayHandle({!r}, {!r})" self.kind self.ref)))
 
 
 (defclass ReplaySemaphore [ReplayHandle Semaphore]
   "semaphore の札(業務コードの契約が Semaphore の型を求めるので、その子にする)。"
-  (defn __init__ [self #^ str kind ref]
+  (defn #^ None __init__ [self #^ str kind #^ str ref]
     (ReplayHandle.__init__ self kind ref)
     (Semaphore.__init__ self (.format "replay:{}" ref)))
-  (defn __eq__ [self other] (ReplayHandle.__eq__ self other))
-  (defn __hash__ [self] (ReplayHandle.__hash__ self)))
+  (defn #^ bool __eq__ [self #^ object other] (ReplayHandle.__eq__ self other))
+  (defn #^ int __hash__ [self] (ReplayHandle.__hash__ self)))
 
 
-(defn handle-for [#^ str kind ref]
+(defn #^ ReplayHandle handle-for [#^ str kind #^ str ref]
   "記録の handle の印 → 再生の札。semaphore は Semaphore の子の札。"
   (if (in kind #("named-sem" "sem")) (ReplaySemaphore kind ref) (ReplayHandle kind ref)))
 
 
 (defclass RecordedError [Exception]
   "記録の例外の型を今の版で import できない時の代わり(型の名と文を持つ)。"
-  (defn __init__ [self #^ str type-name #^ str message]
+  (defn #^ None __init__ [self #^ str type-name #^ str message]
     (.__init__ (super) (.format "{}: {}" type-name message))
     (setv self.type-name type-name self.message message)))
 
@@ -126,10 +129,11 @@
   "handle(Task・Semaphore・Promise / Future)に記録の中の名を振る表。記録と再生が同じ規則で名付けるので、Wait(task) の引数が
    両方で同じ JSON になる。by-id は object の id → (種類, 名)。object は keep に持って id の使い回しを防ぐ。
    Promise と Future は scheduler の promise の番号で引く(Future は .future のたびに新しい object になる)。"
-  (defn __init__ [self]
+  (defn #^ None __init__ [self]
     (setv self.by-id {} self.keep [] self.promises {}))
 
-  (defn bind [self obj #^ str kind ref]
+  ;; obj はどの値でもよい(handle でなければ名を振らない — 呼び手は Spawn などの答えをそのまま渡す)。
+  (defn #^ None bind [self #^ object obj #^ str kind #^ (| str None) ref]
     (when (isinstance obj ReplayHandle) (return None))
     (if (in kind #("promise"))
         (setv (get self.promises (getattr obj "promise_id" None)) ref)
@@ -137,7 +141,7 @@
             (.append self.keep obj)))
     None)
 
-  (defn name-of [self obj]
+  (defn #^ (| tuple None) name-of [self #^ object obj]
     (cond
       (isinstance obj ReplayHandle) #(obj.kind obj.ref)
       (isinstance obj #(Promise Future))
@@ -151,7 +155,8 @@
 (defn _plain-key? [k]
   (and (isinstance k str) (not (.startswith k "$"))))
 
-(defn encode-value [v [handles None]]
+;; v はどの値でもよい(記録の形にできない型は UnencodableValue で断る — 受ける型を狭めると断る所が型の上に移るだけ)。
+(defn #^ JsonValue encode-value [#^ object v #^ (| HandleTable None) [handles None]]
   "値 → JSON の値。型を落とさない(tuple・bytes・dataclass・例外・handle に印を付ける)。知らない物は UnencodableValue。"
   (cond
     (is v None) None
@@ -166,8 +171,8 @@
           (raise (UnencodableValue (.format "timezone の無い時刻は記録の形にしない: {!r}" v)))
           {"$dt" (.isoformat v)})
     (isinstance v ReplayHandle) {"$h" v.kind "id" v.ref}
-    (and (is-not handles None) (is-not (.name-of handles v) None))
-      (do (setv #(kind ref) (.name-of handles v)) {"$h" kind "id" ref})
+    (and (is-not handles None) (is-not (setx named (.name-of handles v)) None))
+      {"$h" (get named 0) "id" (get named 1)}
     (isinstance v #(Task Semaphore Promise Future))
       (raise (UnencodableValue (.format "名の無い handle: {!r}" v)))
     (isinstance v list) (lfor x v (encode-value x handles))
@@ -182,7 +187,7 @@
        "f" (dfor f (dataclasses.fields v) f.name (encode-value (getattr v f.name) handles))}
     True (raise (UnencodableValue (.format "記録の形にできない値の型: {}" (type-name (type v)))))))
 
-(defn encode-error [#^ BaseException e [handles None]]
+(defn #^ dict encode-error [#^ BaseException e #^ (| HandleTable None) [handles None]]
   "例外 → JSON。型の名・args・文・JSON にできる属性(__ で始まる物を除く — doeff の traceback 等)。"
   (setv args [])
   (for [a e.args]
@@ -193,7 +198,8 @@
       (try (setv (get attrs k) (encode-value x handles)) (except [UnencodableValue] None))))
   {"$e" (type-name (type e)) "args" args "msg" (str e) "attrs" attrs})
 
-(defn decode-value [j]
+;; 答えは記録した値そのもの(dataclass・例外・handle を含むどの値にもなる)なので object。
+(defn #^ object decode-value [#^ JsonValue j]
   "encode-value の逆。handle は ReplayHandle(再生の札)になる。"
   (cond
     (isinstance j list) (lfor x j (decode-value x))
@@ -212,7 +218,7 @@
                     (cls #** (dfor #(k x) (.items (get j "f")) k (decode-value x))))
     True (dfor #(k x) (.items j) k (decode-value x))))
 
-(defn decode-error [j]
+(defn #^ BaseException decode-error [#^ dict j]
   "記録の例外を同じ型・同じ args・同じ属性で作り直す(__init__ は呼ばない — 独自の __init__ を持つ例外も同じ物になる)。
    型を import できなければ RecordedError(型の名と文)。"
   (setv cls (resolve-type (get j "$e")))
@@ -224,7 +230,7 @@
     (try (setattr obj k (decode-value x)) (except [Exception] None)))
   obj)
 
-(defn #^ str canonical [j]
+(defn #^ str canonical [#^ JsonValue j]
   "JSON の値の比べる形(鍵の順を揃えた文字列)。"
   (json.dumps j :sort-keys True :ensure-ascii False :separators #("," ":")))
 
@@ -240,7 +246,7 @@
   (for [#(i x) (enumerate prev)]
     (.append (.setdefault index (canonical x) []) i))
   (setv ops [] run-start None run-len 0)
-  (defn flush []
+  (defn #^ None flush []
     (nonlocal run-start run-len)
     (when (> run-len 0) (.append ops ["r" run-start run-len]))
     (setv run-start None run-len 0))
@@ -254,7 +260,7 @@
   (flush)
   ops)
 
-(defn delta-of [prev new]
+(defn #^ dict delta-of [#^ JsonValue prev #^ JsonValue new]
   "JSON の値 prev から new への差分(どの節も印付きの dict)。"
   (cond
     (= (canonical prev) (canonical new)) {"$=" 1}
@@ -264,17 +270,18 @@
     (and (isinstance prev list) (isinstance new list)) {"$a" (_list-ops prev new)}
     True {"$v" new}))
 
-(defn apply-delta [prev delta]
+(defn #^ JsonValue apply-delta [#^ JsonValue prev #^ dict delta]
   (cond
     (in "$=" delta) prev
     (in "$v" delta) (get delta "$v")
-    (in "$o" delta)
+    ;; dict の差分は前の値も dict、list の差分は前の値も list のはず(違えば下の「読めない」で断る)。
+    (and (in "$o" delta) (isinstance prev dict))
       (do (setv out (dfor #(k x) (.items prev) :if (not-in k (get delta "$del")) k x))
           (for [#(k d) (.items (get delta "$o"))]
             (setv (get out k) (apply-delta (.get prev k) d)))
           ;; 鍵の順は new の順に揃える(比べる形は順を見ないが、復号した dict の順も元に近づける)
           (dfor k (get delta "$o") k (get out k)))
-    (in "$a" delta)
+    (and (in "$a" delta) (isinstance prev list))
       (do (setv out [])
           (for [op (get delta "$a")]
             (if (= (get op 0) "r")
@@ -345,7 +352,9 @@
 ;; --- effect の登録 -----------------------------------------------------------------------------
 
 (defclass EffectCodec []
-  (defn __init__ [self cls mode [args None] [subject None] [unexecuted DIVERGE] [binds None] [watch False]]
+  ;; unexecuted = 記録に対の無い書きへ返す答え(True・None)か DIVERGE(返さずに分岐として止める)。
+  (defn #^ None __init__ [self #^ type cls #^ (| str Callable) mode #^ (| Callable None) [args None] #^ (| Callable None) [subject None]
+                  #^ (| _Diverge bool None) [unexecuted DIVERGE] #^ (| str None) [binds None] #^ bool [watch False]]
     (setv self.cls cls self.name (type-name cls) self.mode mode self.args-fn args self.subject-fn subject
           self.unexecuted unexecuted self.binds binds self.watch watch)))
 
@@ -367,30 +376,31 @@
 
 (setv _REGISTRY {})
 
-(defn register [#^ EffectCodec codec]
+(defn #^ EffectCodec register [#^ EffectCodec codec]
   (setv (get _REGISTRY codec.cls) codec)
   codec)
 
-(defn codec-of [effect]
+;; effect はどの値でもよい(登録の無い型は UnrecordableEffect で断る)。
+(defn #^ EffectCodec codec-of [#^ object effect]
   "effect の登録。型そのもので引く(子 class を親の登録で黙って扱わない)。無ければ UnrecordableEffect。"
   (setv codec (.get _REGISTRY (type effect)))
   (when (is codec None)
     (raise (UnrecordableEffect (.format "effect の型 {} は記録の登録(effect_codec.EFFECT-CODECS)に無い" (type-name (type effect))))))
   codec)
 
-(defn #^ str mode-of [effect handles]
+(defn #^ str mode-of [#^ object effect #^ HandleTable handles]
   (setv mode (. (codec-of effect) mode))
   (if (callable mode) (mode effect handles) mode))
 
-(defn #^ dict args-of [effect handles]
+(defn #^ dict args-of [#^ object effect #^ HandleTable handles]
   (setv codec (codec-of effect))
   (if (is codec.args-fn None) (_fields-args effect handles) (codec.args-fn effect handles)))
 
-(defn subject-of [effect #^ dict args]
+(defn #^ (| str None) subject-of [#^ object effect #^ dict args]
   (setv codec (codec-of effect))
   (if (is codec.subject-fn None) None (codec.subject-fn args)))
 
-(defn registered-types []
+(defn #^ list registered-types []
   "登録済みの型の名の一覧(README とテストの材料)。"
   (sorted (gfor c (.values _REGISTRY) c.name)))
 
