@@ -103,7 +103,20 @@ class SimTimeRuntime:
         yield Wait(promise.future)
 
     @do
-    def handle(self, effect: Any, k: Any):
+    def handle(
+        self,
+        effect: WriterTellEffect
+        | DelayEffect
+        | WaitUntilEffect
+        | GetTimeEffect
+        | GetMonotonicEffect
+        | ScheduleAtEffect
+        | SetTimeEffect,
+        k: Any,
+    ):
+        # The annotation is the clause list below: the VM skips this handler for
+        # every other effect without entering Python (doeff_vm._effect_types),
+        # the same as the trailing Pass.
         # Every clause performs its final Transfer/Pass from THIS frame.
         # Delegating to a sub-@do that transfers (the pre-2026-07-14 shape)
         # leaves this frame suspended mid-`yield` forever, pinning the

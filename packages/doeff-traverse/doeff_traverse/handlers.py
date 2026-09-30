@@ -11,6 +11,11 @@ from doeff.program import handler as _program_handler
 from doeff_traverse.collection import Collection, HistoryEntry, ItemResult
 from doeff_traverse.effects import Fail, Inspect, Reduce, Skip, SortBy, Take, Traverse, Zip
 
+# The effects every collection handler below answers. The VM skips the handler
+# for any other effect without entering Python (doeff_vm._effect_types) — the
+# same as the handler's own trailing Pass.
+CollectionEffect = Skip | Traverse | Reduce | Zip | Inspect | SortBy | Take
+
 # Sentinel for Skip — traverse handler checks identity
 _SKIPPED = object()
 
@@ -31,7 +36,7 @@ def sequential():  # noqa: PLR0915 - baseline cleanup keeps existing control flo
 
     from doeff.handler_utils import get_inner_handlers
     @do
-    def handler(effect, k):  # noqa: PLR0911, PLR0912, PLR0915 - baseline cleanup keeps existing control flow unchanged
+    def handler(effect: CollectionEffect, k):  # noqa: PLR0911, PLR0912, PLR0915 - baseline cleanup keeps existing control flow unchanged
         if isinstance(effect, Skip):
             return _SKIPPED
 
@@ -189,7 +194,7 @@ def parallel(concurrency=10):  # noqa: PLR0915 - baseline cleanup keeps existing
 
     from doeff.handler_utils import get_inner_handlers
     @do
-    def handler(effect, k):  # noqa: PLR0911, PLR0912, PLR0915 - baseline cleanup keeps existing control flow unchanged
+    def handler(effect: CollectionEffect, k):  # noqa: PLR0911, PLR0912, PLR0915 - baseline cleanup keeps existing control flow unchanged
         if isinstance(effect, Skip):
             return _SKIPPED
 
@@ -362,7 +367,7 @@ def parallel_fail_fast(concurrency=10):  # noqa: PLR0915 - baseline cleanup keep
 
     from doeff.handler_utils import get_inner_handlers
     @do
-    def handler(effect, k):  # noqa: PLR0911, PLR0912, PLR0915 - baseline cleanup keeps existing control flow unchanged
+    def handler(effect: CollectionEffect, k):  # noqa: PLR0911, PLR0912, PLR0915 - baseline cleanup keeps existing control flow unchanged
         if isinstance(effect, Skip):
             return _SKIPPED
 
@@ -500,7 +505,7 @@ def parallel_fail_fast(concurrency=10):  # noqa: PLR0915 - baseline cleanup keep
 
 
 @do
-def _fail_handler(effect, k):
+def _fail_handler(effect: Fail, k):
     """Default Fail handler: raises the cause as an exception.
 
     Converts unhandled Fail effects into Python exceptions.
@@ -518,7 +523,7 @@ fail_handler.__qualname__ = "fail_handler"
 
 
 @do
-def _normalize_to_none(effect, k):
+def _normalize_to_none(effect: Fail, k):
     """Fail handler: resume with None at the fail site.
 
     The computation continues with None as the substitute value.
