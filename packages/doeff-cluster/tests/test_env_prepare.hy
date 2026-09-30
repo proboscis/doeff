@@ -18,7 +18,7 @@
 (import doeff_core_effects.os_file [os-file-handler])
 (import doeff_cluster.env_handlers [editable-dirs repo-identity])
 (import doeff_core_effects.handlers [state])
-(import doeff_core_effects.scheduler [Spawn Gather])
+(import doeff_core_effects.scheduler [Spawn Task Gather])
 (import doeff_time [SimClock sim-time-handler GetMonotonic])
 (import doeff_cluster.runtime_env_model [RepoCheckout NativeWheel PythonProject ToolRequirement EnvVar RuntimeEnv
                                          RuntimeEnvInvalid InvalidKind EnvFailure EnvFailureKind env-key key-material
@@ -43,8 +43,12 @@
 
 (defk known-of [#* ready]
   {:pre [(: ready tuple)] :post [(: % tuple)]}
-  "完成した root の列 → 次の準備の known。"
-  (tuple (gfor r ready (KnownRoot :env r.env :root r.root))))
+  "完成した root の列 → 次の準備の known(どれも完成した root(EnvReady)であることを確かめてから読む)。"
+  (var known [])
+  (for [r ready]
+    (assert (isinstance r EnvReady) r)
+    (.append known (KnownRoot :env r.env :root r.root)))
+  (tuple known))
 
 
 ;; --- 宣言の型・キー ------------------------------------------------------------------------
@@ -308,8 +312,8 @@
   (<- before EnvWorldLog (read-world-log))
   (<- env-1 RuntimeEnv (env-of "app-1" "lib-1" LOCK))
   (<- env-2 RuntimeEnv (env-of "app-2" "lib-1" LOCK))
-  (<- one (Spawn (prepare env-1 #())))
-  (<- two (Spawn (prepare env-2 #())))
+  (<- one Task (Spawn (prepare env-1 #())))
+  (<- two Task (Spawn (prepare env-2 #())))
   (<- results list (Gather one two))
   (<- after EnvWorldLog (read-world-log))
   (assert (all (gfor r results (isinstance r EnvReady))) results)

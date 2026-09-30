@@ -54,7 +54,7 @@
 (import doeff_cluster.remote [remote-cluster TaskClient])
 (import doeff_cluster.process_versions [current-versions])
 (import doeff_cluster.detached [warm-cluster WarmClient])
-(import doeff_cluster.local [sim-cluster SimWorker SimLink ClientLink PartsOf StopCoordinator coordinator-answers])
+(import doeff_cluster.local [sim-cluster SimWorker SimLink ClientLink PartsOf SimParts StopCoordinator coordinator-answers])
 (import doeff_cluster.runtime_env_model [RuntimeEnv])
 (import doeff_cluster.semaphore_handlers [named-semaphore-local cluster-semaphore SemaphoreSession])
 (import doeff_cluster.service_model [system-of])
@@ -183,7 +183,7 @@
   {:pre [] :post [(: % ClusterState)] :tags {:context "doeff-cluster-test" :role "program"}}
   "sim-cluster の模擬の coordinator が永続化した置き場から、今の状態を読むため(本物の coordinator が起き直す時と同じ読み — 置き場を
    書き換えない)。"
-  (<- parts (PartsOf))
+  (<- parts SimParts (PartsOf))
   (<- now int (now-epoch-ms))
   (state-from-kv (.load parts.store) now))
 

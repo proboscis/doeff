@@ -10,7 +10,7 @@
 (import pytest)
 (import doeff_cluster.local :as local)
 (import doeff_cluster.local [sim-cluster ProcessesOf SimProcess SimWorker AwaitProcessStarted StartWorker])
-(import doeff_core_effects.scheduler [Spawn Wait])
+(import doeff_core_effects.scheduler [Spawn Task Wait])
 (import doeff_time [Delay])
 (import doeff_cluster.clock [now-epoch-ms])
 (import doeff_cluster.process_model [AwaitProcessEnded ProcessEnded ProcessWaitExpired])
@@ -172,7 +172,7 @@
   {:pre [] :post [(: % StartWait)] :tags {:context "doeff-cluster-test" :role "program"}}
   "筋書き: 止まったまま始まった worker を 60 秒後に起こし、long-quitter の最初の process が起きるまで待つ。"
   (<- started int (now-epoch-ms))
-  (<- starter (Spawn (start-worker-later "late" 60.0)))
+  (<- starter Task (Spawn (start-worker-later "late" 60.0)))
   (<- process SimProcess (AwaitProcessStarted "long-quitter"))
   (<- woke int (now-epoch-ms))
   (<- (Wait starter))

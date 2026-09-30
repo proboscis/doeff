@@ -115,7 +115,9 @@
   {:pre [(: module str) (: environ dict) (: args tuple)] :post [(: % subprocess.CompletedProcess)] :tags {:context "doeff-cluster-test" :role "entry"}}
   "hy -m <module> <args…> を、この検の process の環境から CHILD-OWN-KEYS と宿の文脈(DOEFF_WORKER_*)を外して environ を重ねた環境で起こす。"
   (val base (dfor #(k v) (.items os.environ) :if (not (or (in k CHILD-OWN-KEYS) (.startswith k "DOEFF_WORKER_"))) k v))
-  (subprocess.run [HY "-m" module #* args] :cwd ROOT :env (| base {"PYTHONPATH" ROOT} environ)
+  (val words (lfor a args :if (isinstance a str) a))
+  (assert (= (len words) (len args)) #("子 process の引数は文字列だけ" args))
+  (subprocess.run [HY "-m" module #* words] :cwd ROOT :env (| base {"PYTHONPATH" ROOT} environ)
                   :capture-output True :text True :timeout 120))
 
 

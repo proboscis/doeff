@@ -33,7 +33,9 @@
 (defk entry [module #* args]
   {:pre [(: module str) (: args tuple)] :post [(: % subprocess.CompletedProcess)] :tags {:context "doeff-cluster-test" :role "entry"}}
   "hy -m <module> <args…> を子の文脈(DOEFF_WORKER_JOB)付きで起こす。"
-  (subprocess.run [HY "-m" module #* args]
+  (val words (lfor a args :if (isinstance a str) a))
+  (assert (= (len words) (len args)) #("子 process の引数は文字列だけ" args))
+  (subprocess.run [HY "-m" module #* words]
                   :cwd ROOT :env (| (dict os.environ) {"PYTHONPATH" ROOT "DOEFF_WORKER_JOB" "entry-probe"})
                   :capture-output True :text True :timeout 120))
 

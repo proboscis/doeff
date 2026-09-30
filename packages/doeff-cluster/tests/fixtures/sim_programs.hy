@@ -7,7 +7,7 @@
 (import doeff [with-handlers DoExpr EffectBase Program])
 (import doeff_core_effects.effects [Ask])
 (import doeff_core_effects.handlers [reader])
-(import doeff_core_effects.scheduler [Spawn Wait])
+(import doeff_core_effects.scheduler [Spawn Task Wait])
 (import doeff_time [Delay])
 (import doeff_cluster.clock [now-epoch-ms])
 (import doeff_cluster.local [ProcessesOf])
@@ -15,7 +15,7 @@
 (import doeff_cluster.readiness_model [ReportReady])
 (import doeff_cluster.remote_model [RemoteJob])
 (import doeff_cluster.shared_model [ReadShared WriteShared])
-(import doeff_cluster.detached_model [SubmitDetached AwaitDetached DetachedSucceeded])
+(import doeff_cluster.detached_model [SubmitDetached AwaitDetached DetachedSubmitted DetachedSucceeded])
 (import doeff_cluster.host_contract [HOST-CONTRACT])
 (import doeff_cluster.job_context [RunContext])
 
@@ -106,7 +106,7 @@
   "sim の外側が答える物(scheduler の Spawn / Wait・時計の Delay / GetTime)だけを使う本体: 子の task を起こして待ち、経った時間を
    盤の key に書いてから、準備できたと報告し続ける。"
   (<- started int (now-epoch-ms))
-  (<- child (Spawn (do! (<- (Delay 0.5)) 21)))
+  (<- child Task (Spawn (do! (<- (Delay 0.5)) 21)))
   (<- half int (Wait child))
   (<- ended int (now-epoch-ms))
   (<- (WriteShared key {"answer" (* 2 half) "elapsedMs" (- ended started)}))
@@ -178,7 +178,7 @@
   {:pre [(: n int) (: key str)] :post [(: % int)] :tags {:context "doeff-cluster-test" :role "program"}}
   "切り離した task を 1 本出して待ち(自分の reader を持つ add-task — 答え = 100 + n)、答えを盤の key に書いてから、準備できたと報告
    し続ける(sim の宿が SubmitDetached・AwaitDetached に本番と同じ要求で答えるかを見るため)。"
-  (<- submitted (SubmitDetached (add-task sim-task-foundation n) :key "svc-detached" :needs NET :name "add"))
+  (<- submitted DetachedSubmitted (SubmitDetached (add-task sim-task-foundation n) :key "svc-detached" :needs NET :name "add"))
   (<- outcome (AwaitDetached submitted.key))
   (<- (WriteShared key {"created" submitted.created
                         "value" (if (isinstance outcome DetachedSucceeded) outcome.value None)

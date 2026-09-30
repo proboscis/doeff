@@ -10,7 +10,7 @@
 ;; 死んだ worker の lease の期限の後の引き取り・失った lease の知らせ・書きの柵・lease の立場。
 (require doeff-hy.macros [deftest defk <- val])
 (import doeff [with_handlers])
-(import doeff_core_effects.scheduler [Spawn Gather AcquireSemaphore ReleaseSemaphore Semaphore])
+(import doeff_core_effects.scheduler [Spawn Gather AcquireSemaphore ReleaseSemaphore Semaphore Task])
 (import doeff_time [Delay SimClock sim-time-handler])
 (import doeff_cluster.clock [now-epoch-ms])
 (import tests.clock_fixtures [clock-at clock-ms])
@@ -36,7 +36,7 @@
 (defk named-user [who log hold permits]
   {:pre [(: who str) (: log list) (: hold (| int float)) (: permits int)] :post [(: % (type None))]}
   ;; 各自が名前で作る(同じ名前 = 同じ lock であってほしい)。
-  (<- sem (CreateNamedSemaphore "turn-lock" permits))
+  (<- sem Semaphore (CreateNamedSemaphore "turn-lock" permits))
   (<- (critical sem who log hold))
   None)
 
@@ -45,15 +45,15 @@
   {:pre [(: programs list)] :post [(: % list)]}
   (setv tasks [])
   (for [program programs]
-    (<- task (Spawn program))
+    (<- task Task (Spawn program))
     (.append tasks task))
-  (<- done (Gather #* tasks))
+  (<- done list (Gather #* tasks))
   done)
 
 (defk shared-handle [log hold]
   {:pre [(: log list) (: hold (| int float))] :post [(: % list)]}
   ;; 1 つの handle を 2 つの task で分け合う。
-  (<- sem (CreateNamedSemaphore "turn-lock"))
+  (<- sem Semaphore (CreateNamedSemaphore "turn-lock"))
   (<- done (run-all [(critical sem "a" log hold) (critical sem "b" log hold)]))
   done)
 
@@ -109,7 +109,7 @@
   {:interpreters ["scheduled" "named-semaphore-local" "cluster-semaphore" "cluster-semaphore-http"]}
   (val log [])
   (<- start int (now-epoch-ms))
-  (<- sem (CreateNamedSemaphore "turn-lock" 2))
+  (<- sem Semaphore (CreateNamedSemaphore "turn-lock" 2))
   (<- (run-all (lfor who ["a" "b" "c"] (critical sem who log HOLD-SECONDS))))
   (<- spans dict (spans-from log start))
   (assert (= (max-concurrency log) 2) log)
@@ -185,7 +185,7 @@
       (<- (named-user "a" log 10 1))
       "no-error"
       (except [error LeaseLost] "lost")))
-  (<- outcome (with_handlers [(sim-time-handler :clock clock) (shared-memory store)]
+  (<- outcome list (with_handlers [(sim-time-handler :clock clock) (shared-memory store)]
                 (run-all [(on-worker sa (guarded)) (steal)])))
   (assert (= (get outcome 0) "lost"))
   ;; 他の担い手の行はそのまま(失った側は消さない)。
@@ -247,7 +247,7 @@
   {:pre [(: who str) (: attempts list) (: every (| int float)) (: until int) (: acquire bool)] :post [(: % (type None))]}
   ;; lease を取り(返さない = kill された process と同じ)、every 秒ごとに書こうとする。断られても止まらずに試し続ける。
   (when acquire
-    (<- sem (CreateNamedSemaphore "writer-a"))
+    (<- sem Semaphore (CreateNamedSemaphore "writer-a"))
     (<- (AcquireSemaphore sem)))
   (while True
     (<- now int (now-epoch-ms))
@@ -349,7 +349,7 @@
 (defk standing-story [log]
   {:pre [(: log list)] :post [(: % (type None))]}
   (<- a (LeaseStanding "turn-lock"))
-  (<- sem (CreateNamedSemaphore "turn-lock" 1))
+  (<- sem Semaphore (CreateNamedSemaphore "turn-lock" 1))
   (<- (AcquireSemaphore sem))
   (<- b (LeaseStanding "turn-lock"))
   (<- (ReleaseSemaphore sem))

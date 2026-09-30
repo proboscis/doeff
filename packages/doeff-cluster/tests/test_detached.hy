@@ -22,7 +22,7 @@
 (import doeff [with_handlers Program run])
 (import doeff_core_effects.effects [Ask])
 (import doeff_core_effects.handlers [reader await-handler])
-(import doeff_core_effects.scheduler [Spawn Cancel TaskCancelledError])
+(import doeff_core_effects.scheduler [Spawn Cancel Task TaskCancelledError])
 (import doeff_time [Delay SimClock sim-time-handler async-time-handler])
 (import tests.clock_fixtures [clock-ms])
 (import doeff_cluster.cluster_model [ClusterState ClusterTiming ComponentVersion])
@@ -143,11 +143,12 @@
   (setv worker rig.worker)
   (when worker
     (<- (worker-tick worker))
-    (<- loop (Spawn (worker-loop worker rig.poll) :daemon True))
+    (<- loop Task (Spawn (worker-loop worker rig.poll) :daemon True))
     (setv worker.loop loop))
   (<- scenario)
   (when (and worker (not worker.dead))
     (setv worker.dead True)
+    (assert (is-not worker.loop None) "担い手のループは筋書きの前に走らせた")
     (<- (Cancel worker.loop)))
   True)
 
@@ -241,10 +242,10 @@
 (defk caller-vanishes-and-reconnects [rig]
   {:pre [(: rig Rig)] :post [(: % bool)]}
   ;; 呼び手(送って待つ task)を取り消す = 呼び手が消えた。task は続き、別の呼び手が同じ key で結果を受け取る。
-  (<- caller (Spawn (submit-then-wait "k-vanish" rig.slow rig.lease)))
+  (<- caller Task (Spawn (submit-then-wait "k-vanish" rig.slow rig.lease)))
   (<- (Delay (* rig.slow 0.3)))
   (<- (Cancel caller))
-  (<- early (AwaitDetached "k-vanish" :timeout-seconds 0.0))
+  (<- early DetachedPending (AwaitDetached "k-vanish" :timeout-seconds 0.0))
   (assert (= #(early.key early.phase) #("k-vanish" "assigned")) early)   ; runner は組ごとの担い手の名
   (<- (Delay rig.slow))
   (<- outcome (AwaitDetached "k-vanish"))

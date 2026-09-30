@@ -26,7 +26,7 @@
 (deftest test-the-report-is-kept-in-the-coordinator-form
   {:interpreters ["readiness-memory" "readiness-http"]}
   (<- (ReportReady True (* "理" 400) "leader"))
-  (<- seen (ReportSeen READINESS))
+  (<- seen dict (ReportSeen READINESS))
   (assert (= seen {"ready" True "reason" (* "理" 300) "role" ROLE-ACTIVE})
           (.format "coordinator の形で残らない: reason {} 字・role {}" (len (get seen "reason")) (get seen "role"))))
 
