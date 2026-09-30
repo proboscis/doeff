@@ -421,19 +421,102 @@
    無い欄は捨てて読む(終わった行は Program 無し = program None で読む)。空の requires は needs 無しと同じ。"
   (setv known (sfor f (fields TaskRecord) f.name)
         extra (sorted (gfor k data :if (not-in k known) k))
-        body (dfor #(k v) (.items data) :if (in k known) k v)
-        unended (not-in (.get body "phase" "queued") ENDED-PHASES)
-        reason (old-task-row-reason (.get data "requires") extra))
-  (TaskRecord #** (| {"program" None}
-                     body
-                     {"versions" (component-versions-of (get body "versions"))
-                      "needs" (capabilities-of (.get body "needs" []) "task の needs")
-                      "avoid" (tuple (.get body "avoid" []))
-                      ;; 子の環境変数の欄の無い旧い行は空(欄が無いだけで旧い形とは数えない — 足した欄)。
-                      "environ" (environ-pairs (.get body "environ" {}))}
-                     (if (and reason unended)
-                         {"phase" "failed" "detail" reason}
-                         {}))))
+        phase (stored-str data "phase" "queued")
+        unended (not-in phase ENDED-PHASES)
+        reason (old-task-row-reason (.get data "requires") extra)
+        ;; failure = まだ終わっていない旧い形の行を failed にする理由(None = そのまま読む)
+        failure (if unended reason None))
+  ;; 欄ごとに型を確かめて読む(#** で辞書を渡すと、型の違う保存の値が黙って欄に入る — agora-redesign #1662)。
+  (TaskRecord :id (stored-str data "id")
+              :name (stored-str data "name")
+              :program (stored-optional-str data "program")
+              :revision (stored-str data "revision")
+              :versions (component-versions-of (get data "versions"))
+              :needs (capabilities-of (.get data "needs" []) "task の needs")
+              :lease-ms (stored-int data "lease_ms")
+              :lease-until-ms (stored-int data "lease_until_ms")
+              :submitted-ms (stored-int data "submitted_ms")
+              :phase (if (is failure None) phase "failed")
+              :worker (stored-optional-str data "worker")
+              :result (stored-optional-str data "result")
+              :detail (if (is failure None) (stored-str data "detail" "") failure)
+              :started-ms (stored-optional-int data "started_ms")
+              :finished-ms (stored-optional-int data "finished_ms")
+              :detached (stored-bool data "detached" False)
+              :key (stored-optional-str data "key")
+              :boot (stored-optional-str data "boot")
+              :retain-ms (stored-int data "retain_ms" 0)
+              :runtime-env (stored-optional-dict data "runtime_env")
+              :env-attempts (stored-int data "env_attempts" 0)
+              :avoid (stored-items data "avoid")
+              :failure-kind (stored-str data "failure_kind" "")
+              :retryable (stored-bool data "retryable" False)
+              ;; 子の環境変数の欄の無い旧い行は空(欄が無いだけで旧い形とは数えない — 足した欄)。
+              :environ (environ-pairs (.get data "environ" {}))))
+
+
+;; 保存の行の欄の読み(task-record-from-json)。型の違う値は、どの欄がどう違うかを名乗る ValueError にする(保存の行の壊れ — 送り手の誤りの
+;; BodyInvalid とは別)。無い欄は既定値で読む(既定値が None の欄は必須)。
+
+(deff stored-str [#^ dict data #^ str key #^ (| str None) [default None]]  ; defk にできない: 保存の読み直し(Program の外)が呼ぶ純粋な読み
+  {:pre [(: data dict) (: key str) (: default (| str None))] :post [(: % str)] :tags {:context "doeff-cluster" :role "judgment"}}
+  "保存の行の文字列の欄を str として読むため(無ければ default・default が None なら必須)。"
+  (when (and (not-in key data) (is default None))
+    (raise (ValueError (.format "保存の task の行に {} が無い" key))))
+  (setv value (.get data key default))
+  (when (not (isinstance value str))
+    (raise (ValueError (.format "保存の task の行の {} は文字列: {!r}" key value))))
+  value)
+
+(deff stored-optional-str [#^ dict data #^ str key]  ; defk にできない: 保存の読み直し(Program の外)が呼ぶ純粋な読み
+  {:pre [(: data dict) (: key str)] :post [(: % (| str None))] :tags {:context "doeff-cluster" :role "judgment"}}
+  "保存の行の、無くてよい文字列の欄を str か None として読むため。"
+  (setv value (.get data key None))
+  (when (not (isinstance value #(str (type None))))
+    (raise (ValueError (.format "保存の task の行の {} は文字列か null: {!r}" key value))))
+  value)
+
+(deff stored-int [#^ dict data #^ str key #^ (| int None) [default None]]  ; defk にできない: 保存の読み直し(Program の外)が呼ぶ純粋な読み
+  {:pre [(: data dict) (: key str) (: default (| int None))] :post [(: % int)] :tags {:context "doeff-cluster" :role "judgment"}}
+  "保存の行の整数の欄を int として読むため(無ければ default・default が None なら必須。真偽値は整数と数えない)。"
+  (when (and (not-in key data) (is default None))
+    (raise (ValueError (.format "保存の task の行に {} が無い" key))))
+  (setv value (.get data key default))
+  (when (or (not (isinstance value int)) (isinstance value bool))
+    (raise (ValueError (.format "保存の task の行の {} は整数: {!r}" key value))))
+  value)
+
+(deff stored-optional-int [#^ dict data #^ str key]  ; defk にできない: 保存の読み直し(Program の外)が呼ぶ純粋な読み
+  {:pre [(: data dict) (: key str)] :post [(: % (| int None))] :tags {:context "doeff-cluster" :role "judgment"}}
+  "保存の行の、無くてよい整数の欄を int か None として読むため。"
+  (setv value (.get data key None))
+  (when (or (isinstance value bool) (not (isinstance value #(int (type None)))))
+    (raise (ValueError (.format "保存の task の行の {} は整数か null: {!r}" key value))))
+  value)
+
+(deff stored-bool [#^ dict data #^ str key #^ bool default]  ; defk にできない: 保存の読み直し(Program の外)が呼ぶ純粋な読み
+  {:pre [(: data dict) (: key str) (: default bool)] :post [(: % bool)] :tags {:context "doeff-cluster" :role "judgment"}}
+  "保存の行の真偽値の欄を bool として読むため。"
+  (setv value (.get data key default))
+  (when (not (isinstance value bool))
+    (raise (ValueError (.format "保存の task の行の {} は真偽値: {!r}" key value))))
+  value)
+
+(deff stored-optional-dict [#^ dict data #^ str key]  ; defk にできない: 保存の読み直し(Program の外)が呼ぶ純粋な読み
+  {:pre [(: data dict) (: key str)] :post [(: % (| dict None))] :tags {:context "doeff-cluster" :role "judgment"}}
+  "保存の行の、無くてよい object の欄を dict か None として読むため。"
+  (setv value (.get data key None))
+  (when (not (isinstance value #(dict (type None))))
+    (raise (ValueError (.format "保存の task の行の {} は object か null: {!r}" key value))))
+  value)
+
+(deff stored-items [#^ dict data #^ str key]  ; defk にできない: 保存の読み直し(Program の外)が呼ぶ純粋な読み
+  {:pre [(: data dict) (: key str)] :post [(: % tuple)] :tags {:context "doeff-cluster" :role "judgment"}}
+  "保存の行の配列の欄を tuple として読むため(無ければ空)。JSON を通った行は list、JSON を通らずに渡る行(asdict のまま)は tuple で来る。"
+  (setv value (.get data key #()))
+  (when (not (isinstance value #(list tuple)))
+    (raise (ValueError (.format "保存の task の行の {} は配列: {!r}" key value))))
+  (tuple value))
 
 
 (deff old-task-row-reason [#^ (| dict list None) old #^ list extra]  ; defk にできない: 保存の読み直し(Program の外)が呼ぶ純粋な判断
