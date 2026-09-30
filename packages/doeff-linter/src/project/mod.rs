@@ -33,6 +33,7 @@ pub mod confined_spellings;
 pub mod counted_spellings;
 pub mod effect_census;
 pub mod field_holders;
+pub mod env_branch;
 pub mod retired;
 pub mod blind;
 pub mod allowed_heads;
@@ -1265,6 +1266,12 @@ fn judge_layer_file(
     if enabled.contains(&ProjectRule::LayerImportDirection) {
         drafts.extend(judge.import_direction(&facts, index));
     }
+    // DOEFF168: 宣言の :layers の層の Hy の file だけ(業務の層 — 層の分からない置き場は層の規則の外・agora-redesign #1906)。
+    if let Some(decl) = settings.architecture.as_ref().and_then(|a| a.environment_branches.as_ref()) {
+        if enabled.contains(&ProjectRule::EnvironmentBranch) && file.file.language == Language::Hy && decl.layers.contains(&spec.name) {
+            drafts.extend(judge.environment_branches(decl));
+        }
+    }
     let mut crossings = Vec::new();
     if let Some(architecture) = &settings.architecture {
         let (found, crossed) = judge.service_dependencies(
@@ -1458,6 +1465,27 @@ impl<'a> LayerJudge<'a> {
 
     /// DOEFF102: この層に禁じた module を直に import しない。import の綴りの前方一致で照らす(同じ綴りか、その下位の module / 名 —
     /// `urllib.request` は `urllib.request.urlopen` に当たり、`urllib.parse` には当たらない)。当たった module ごとに 1 件、位置は最初の import。
+    /// DOEFF168: 環境の名の値との比較と dry-run の印での分岐(当たった literal か記号 1 つに 1 件 — 鍵の細目は `value:<綴り>` か `flag:<綴り>`)。
+    fn environment_branches(&self, decl: &architecture::EnvironmentBranches) -> Vec<Draft> {
+        let spec = &self.layers.layers[self.layer.0];
+        env_branch::judge(self.source, decl)
+            .into_iter()
+            .map(|found| {
+                let what = match &found.hit {
+                    env_branch::BranchHit::Value(value) => format!("環境の名の値 \"{}\" と比べて分岐する", value),
+                    env_branch::BranchHit::Flag(flag) => format!("dry-run の印 {} で分岐する", flag),
+                };
+                self.draft(
+                    ProjectRule::EnvironmentBranch,
+                    self.range(ByteSpan { start: found.start, end: found.end }),
+                    format!("{}({})が{} — 業務の層は環境を知らない(環境の違いは handler の組の差し替えで表す)", self.file.file.rel, spec.name, what),
+                    Some(found.hit.detail()),
+                    Explain::EnvironmentBranch { placement: self.placement.clone(), hit: found.hit },
+                )
+            })
+            .collect()
+    }
+
     fn forbidden_modules(&self, facts: &ModuleFacts) -> Vec<Draft> {
         let spec = &self.layers.layers[self.layer.0];
         let mut first: BTreeMap<&str, ByteSpan> = BTreeMap::new();

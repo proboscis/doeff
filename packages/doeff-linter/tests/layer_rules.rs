@@ -4537,6 +4537,34 @@ fn retired_calls_skip_only_the_raw_calls_a_boundary_part_declares() {
     assert_eq!(keys(&single, "DOEFF151"), vec!["app/billing/entry/bench.hy::DOEFF151::Now"], "1 file の実行も部品の宣言を読む: {}", single);
 }
 
+/// agora-redesign #1906: 宣言(:environment-branches)の :layers の層の Hy の定義が、環境の名の値と比べる・dry-run の印で分岐すると
+/// DOEFF168 が critical で当たる。反例 = 環境の名でない値との比較と、:layers に無い層(entry)の同じ形は当たらない。
+#[test]
+fn environment_branches_hit_only_in_the_declared_business_layers() {
+    let files = [
+        ("app/billing/core/rules.hy", tags("billing", "judgment") + "(defk total-of [mode total] (if (= mode \"emulated\") 0 total))\n"),
+        ("app/billing/core/write.hy", tags("billing", "judgment") + "(defk write [dry-run] (when dry-run (return 0)) 1)\n"),
+        ("app/billing/core/kinds.hy", tags("billing", "judgment") + "(defk kind-of [kind] (if (= kind \"message\") 0 1))\n"),
+        ("app/billing/entry/wiring.hy", tags("billing", "entry") + "(defk choose [mode] (if (= mode \"production\") 1 0))\n"),
+    ];
+    let dir = world_repo_with(&files, "", "[\"DOEFF168\"]");
+    let arch_path = dir.path().join("architecture.hy");
+    let text = std::fs::read_to_string(&arch_path).unwrap().replace(
+        ":foundation foundation",
+        ":foundation foundation\n  :environment-branches {:values [\"production\" \"emulated\"] :flags [\"dry-run\"] :layers [core]}",
+    );
+    std::fs::write(&arch_path, text).unwrap();
+    let (_, report) = editor(dir.path());
+    assert_eq!(
+        keys(&report, "DOEFF168"),
+        vec!["app/billing/core/rules.hy::DOEFF168::value:emulated", "app/billing/core/write.hy::DOEFF168::flag:dry-run"],
+        "core の環境の名の値との比較と dry-run の印での分岐は当て、環境の名でない値と entry の層は当てない: {}",
+        report
+    );
+    let hit = violation(&report, "app/billing/core/rules.hy::DOEFF168::value:emulated");
+    assert_eq!(hit["level"], "critical", "{}", hit);
+}
+
 /// agora-redesign #1797: 境目の部品は許す種類(:touches — 閉じた語彙)と理由(:reason)を名指す。欠けと語の外は設定の誤りで止まる。
 #[test]
 fn boundary_parts_need_touches_and_a_reason() {

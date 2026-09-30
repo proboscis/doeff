@@ -472,6 +472,18 @@ pub struct RetiredCalls {
     pub instead: String,
 }
 
+/// 業務の層が分岐してはならない環境の名の値と dry-run の印(`:environment-branches {:values [..] :flags [..] :layers [..]}` — DOEFF168・
+/// agora-redesign #1906)。綴りと当てる層は repo の宣言にだけ在り、linter は持たない。
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+pub struct EnvironmentBranches {
+    /// 環境の名の値(比べる form の引数の文字列の literal と、match の節の型として当てる — 例 production・emulated)。
+    pub values: Vec<String>,
+    /// dry-run の印の名(分岐の条件と match の主語の中の記号 — 点で区切った最後の段を mangle して比べる)。
+    pub flags: Vec<String>,
+    /// 当てる層の名(:layers に宣言した層 — 業務の層)。
+    pub layers: Vec<String>,
+}
+
 /// handler の引数の決まり(`:handler-arguments {:files [..] :exclude [..] :store-names [..] :store-suffixes [..] :keep-mark "…" :value-types [..]}`)
 /// — DOEFF142 の母集団と、repo の語(店の名・残す理由の註の印・値として扱う外の型)。client・可変の入れ物・値の型の既定は linter が持つ
 /// (Python の一般の名だけ)。
@@ -735,6 +747,8 @@ pub struct Architecture {
     pub retired_words: Vec<RetiredWords>,
     /// 使わないと決めた呼び(`:retired-calls [(retired-calls …) …]` — 空 = 宣言していない)。書けば DOEFF151 が当たりを出す(#1193)。
     pub retired_calls: Vec<RetiredCalls>,
+    /// 業務の層が分岐してはならない環境の名の値と dry-run の印(`:environment-branches {…}` — 書かなければ DOEFF168 は当たらない)。
+    pub environment_branches: Option<EnvironmentBranches>,
     /// 判定を 1 か所に閉じ込めた語彙(`:single-point-vocabulary [(vocabulary-scope …) …]` — 空 = 宣言していない)。書けば
     /// DOEFF146 が :except の外でこの語彙を読む file を出す(agora-redesign #1192・#1371)。
     pub single_point_vocabulary: Vec<VocabularyScope>,
@@ -1107,6 +1121,7 @@ impl<'a> Parser<'a> {
             test_forms: None,
             retired_words: Vec::new(),
             retired_calls: Vec::new(),
+            environment_branches: None,
             single_point_vocabulary: Vec::new(),
             confined_spellings: Vec::new(),
             counted_spellings: Vec::new(),
@@ -1175,6 +1190,7 @@ impl<'a> Parser<'a> {
                 ":test-forms" => arch.test_forms = self.test_forms(value),
                 ":retired-words" => arch.retired_words = self.retired_words(value),
                 ":retired-calls" => arch.retired_calls = self.retired_calls(value),
+                ":environment-branches" => arch.environment_branches = self.environment_branches(value),
                 ":single-point-vocabulary" => arch.single_point_vocabulary = self.single_point_vocabulary(value),
                 ":confined-spellings" => arch.confined_spellings = self.confined_spellings(value),
                 ":counted-spellings" => arch.counted_spellings = self.counted_spellings(value),
@@ -1945,6 +1961,30 @@ impl<'a> Parser<'a> {
         Some(decl)
     }
 
+    /// `:environment-branches {:values [..] :flags [..] :layers [..]}` を読む(:layers と、:values か :flags のどちらかは要る)。
+    fn environment_branches(&mut self, value: &Form) -> Option<EnvironmentBranches> {
+        let Some(entries) = self.brace(value) else {
+            self.problem(value, ":environment-branches は {:values [\"…\"] :flags [\"…\"] :layers [層 …]} の辞書");
+            return None;
+        };
+        let mut decl = EnvironmentBranches::default();
+        for (key, field) in self.pairs(&entries) {
+            match self.text(key) {
+                ":values" => decl.values = self.names(field, ":environment-branches :values"),
+                ":flags" => decl.flags = self.names(field, ":environment-branches :flags"),
+                ":layers" => decl.layers = self.names(field, ":environment-branches :layers"),
+                _ => self.unknown_key(key, ":environment-branches"),
+            }
+        }
+        if decl.values.is_empty() && decl.flags.is_empty() {
+            self.problem(value, ":environment-branches に :values(環境の名の値)も :flags(dry-run の印)も無い — 当てる綴りが無い");
+        }
+        if decl.layers.is_empty() {
+            self.problem(value, ":environment-branches に :layers(当てる業務の層)が無い");
+        }
+        Some(decl)
+    }
+
     /// `:assembly-shape {…}` を読む(:translation-point・:translations・:translation-layer・:intent-layer は要る)。
     fn assembly_shape(&mut self, value: &Form) -> Option<AssemblyShape> {
         let shape = ":assembly-shape は {:translation-point \"…-*-…\" :retired-function \"…\" :translations \"…\" :translation-layer \"…\" :intent-layer \"…\"} の辞書";
@@ -2622,6 +2662,11 @@ impl<'a> Parser<'a> {
         if let Some(foundation) = &arch.foundation {
             if !layers.contains(foundation.as_str()) {
                 push(&mut self.problems, format!(":foundation {} と同じ名の層が :layers に無い", foundation));
+            }
+        }
+        if let Some(decl) = &arch.environment_branches {
+            for layer in decl.layers.iter().filter(|layer| !layers.contains(layer.as_str())) {
+                push(&mut self.problems, format!(":environment-branches :layers の {} は :layers に無い", layer));
             }
         }
         if let Some(place) = &arch.verification_environment {

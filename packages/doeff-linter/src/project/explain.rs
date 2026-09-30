@@ -153,6 +153,8 @@ pub enum Explain {
     ImportDirection { placement: Placement, target: String, target_layer: LayerId, target_dir: String },
     /// DOEFF102: 層で禁じた module を import した。
     ForbiddenModule { placement: Placement, module: String },
+    /// DOEFF168: 業務の層の定義が環境の名の値と比べるか dry-run の印で分岐する(当たった綴りの種類)。
+    EnvironmentBranch { placement: Placement, hit: super::env_branch::BranchHit },
     /// DOEFF103: 型だけの層に関数を置いた。
     TypesOnly { placement: Placement, functions: Vec<String> },
     /// DOEFF104: タグの無い定義がある。
@@ -344,6 +346,13 @@ impl<'a> Narrator<'a> {
                     particle(&self.name(placement.layer), "が"),
                     particle(&format!("層 {} の持つ物", self.name(*target_layer)), "")
                 ),
+            ),
+            Explain::EnvironmentBranch { placement, hit } => (
+                match hit {
+                    super::env_branch::BranchHit::Value(value) => format!("環境の名の値 \"{}\" との比較 — {}", value, self.file_subject(placement)),
+                    super::env_branch::BranchHit::Flag(flag) => format!("dry-run の印 {} での分岐 — {}", flag, self.file_subject(placement)),
+                },
+                "業務の層が環境の名や dry-run の印で分岐すると、業務の層が環境を知ることになり、本番と模擬で違う道を通る(模擬で確かめた道が本番の道でなくなる)。環境の違いは handler の組の差し替えだけで表す(architecture.hy の :environment-branches)。".to_string(),
             ),
             Explain::ForbiddenModule { placement, module } => (
                 format!("import 先 {}(層 {} で禁じた I/O の module) — {}", module, self.name(placement.layer), self.file_subject(placement)),
@@ -968,6 +977,7 @@ impl<'a> Narrator<'a> {
                 instead
             )),
             Explain::RetiredCall { instead, .. } => Some(format!("{} に置き換える", instead)),
+            Explain::EnvironmentBranch { .. } => Some("環境で変わる振る舞いを effect にして、環境ごとの handler(本番・模擬・dry-run)に答えさせる — 業務の層の定義は環境の名も dry-run の印も読まない".to_string()),
             Explain::PlacedDependency { owner_rel, .. } => Some(format!("{} を層の置き場(<root>/<service>/<層>/)へ移すか、要る型を intent へ移して読む — 直せない既存の当たりは登録簿に載せる", owner_rel)),
             Explain::MixedConcerns { .. } => Some("形の検めは protocol の境目で defwire の型に parse し(形が合わなければ解く所で失敗)、この定義は型のある値を受けて判断だけをする".to_string()),
             Explain::ClassRoleDoubt { chosen, .. } if chosen == "external-world" => Some(WORLD_FIX.to_string()),

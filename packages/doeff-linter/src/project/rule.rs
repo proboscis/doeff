@@ -97,6 +97,9 @@ pub enum ProjectRule {
     EffectsDisagreeWithInference,
     /// DOEFF130: 翻訳の層の handler が業務の intent(層 intent の型の effect)を出す — import した defk の先まで辿る。
     TranslationEmitsIntent,
+    /// DOEFF168: 業務の層(architecture.hy の :environment-branches の :layers)の Hy の定義が、環境の名の値と比べるか dry-run の印で分岐する
+    /// (agora-redesign #1906 — 業務の層は環境を知らない・環境の違いは handler の組の差し替えだけで表す)。
+    EnvironmentBranch,
     /// DOEFF131: architecture.hy の許可名簿(:world-handlers)の外の定義が、名簿の :wraps に挙げた doeff の実 I/O の handler を名指す
     /// (外の世界に触れてよいのは名簿の定義だけ — agora-redesign #1106 の R1)。
     WorldHandlerNamedOutsideList,
@@ -232,6 +235,7 @@ impl ProjectRule {
         ProjectRule::DefkCalledBare,
         ProjectRule::EffectsDisagreeWithInference,
         ProjectRule::TranslationEmitsIntent,
+        ProjectRule::EnvironmentBranch,
         ProjectRule::WorldHandlerNamedOutsideList,
         ProjectRule::WorldHandlerMisplaced,
         ProjectRule::TestKindMismatch,
@@ -303,6 +307,7 @@ impl ProjectRule {
             ProjectRule::DefkCalledBare => "DOEFF126",
             ProjectRule::EffectsDisagreeWithInference => "DOEFF127",
             ProjectRule::TranslationEmitsIntent => "DOEFF130",
+            ProjectRule::EnvironmentBranch => "DOEFF168",
             ProjectRule::WorldHandlerNamedOutsideList => "DOEFF131",
             ProjectRule::WorldHandlerMisplaced => "DOEFF132",
             ProjectRule::TestKindMismatch => "DOEFF133",
@@ -399,6 +404,8 @@ impl ProjectRule {
             | ProjectRule::ServiceBoundary
             | ProjectRule::ServiceDependency
             | ProjectRule::TranslationEmitsIntent
+            // 業務の層が環境の名や dry-run の印で分岐する(#1906 — 責務の境界の違反)。
+            | ProjectRule::EnvironmentBranch
             // 宣言に無い置き場所(どの層の決まりも当たらない)・defk を素で呼ぶ(Program が値として流れる本物の誤り)・
             // 読めない file(判定が欠け、0 件に見えても合格ではない)。
             | ProjectRule::UndeclaredPlace
@@ -481,6 +488,7 @@ impl ProjectRule {
             | ProjectRule::ServiceDependency
             | ProjectRule::PlacedDependency
             | ProjectRule::TranslationEmitsIntent
+            | ProjectRule::EnvironmentBranch
             | ProjectRule::SemanticBusinessDecision
             | ProjectRule::SemanticTransportKnowledge => true,
             ProjectRule::UnknownConfigKey
@@ -575,6 +583,7 @@ impl ProjectRule {
             ProjectRule::DefkCalledBare => "defk を素で呼んで答えに使う",
             ProjectRule::EffectsDisagreeWithInference => ":effects の宣言が推論と合わない",
             ProjectRule::TranslationEmitsIntent => "翻訳の handler が業務の intent を出す",
+            ProjectRule::EnvironmentBranch => "業務の層が環境の名や dry-run の印で分岐する",
             ProjectRule::WorldHandlerNamedOutsideList => "許可名簿の外で実 I/O の handler を名指す",
             ProjectRule::WorldHandlerMisplaced => "許可名簿の定義が無い・foundation の外に在る",
             ProjectRule::TestKindMismatch => "テストの種類(手元 / 縁)と印が食い違う",
@@ -615,7 +624,8 @@ impl ProjectRule {
             ProjectRule::LayerImportDirection
             | ProjectRule::LayerForbiddenModule
             | ProjectRule::LayerTypesOnly
-            | ProjectRule::TranslationEmitsIntent => {
+            | ProjectRule::TranslationEmitsIntent
+            | ProjectRule::EnvironmentBranch => {
                 RuleFamily::Layer
             }
             ProjectRule::ModuleDeclaresTags | ProjectRule::RoleMatchesLayer | ProjectRule::ContextMatchesService => {
@@ -716,6 +726,7 @@ impl ProjectRule {
             ProjectRule::DefkCalledBare => "defk Called Bare",
             ProjectRule::EffectsDisagreeWithInference => "Effects Disagree With Inference",
             ProjectRule::TranslationEmitsIntent => "Translation Emits Intent",
+            ProjectRule::EnvironmentBranch => "Environment Branch In Business Code",
             ProjectRule::WorldHandlerNamedOutsideList => "World Handler Named Outside The List",
             ProjectRule::WorldHandlerMisplaced => "World Handler Misplaced",
             ProjectRule::TestKindMismatch => "Test Kind Mismatch",
@@ -816,6 +827,7 @@ impl ProjectRule {
             ProjectRule::WorldHandlerMisplaced => "architecture.hy の :world-handlers に挙げた定義は実在し、層 foundation の module に在る(外の世界に触れてよい定義の置き場は foundation だけ)",
             ProjectRule::WorldHandlerNamedOutsideList => "architecture.hy の :world-handlers の :wraps に挙げた doeff の実 I/O の handler(os-file-handler・http-production-handler …)を名指してよいのは、許可名簿の定義(とその中の入れ子の定義)だけ — 値として渡す所(with-handlers の列)も呼び出しも数える",
             ProjectRule::TranslationEmitsIntent => "翻訳の層(設定の handler_layers)の handler — defhandler と [effect k] を受ける関数 — は doeff の汎用の effect だけを出し、業務の intent(設定の intent_layers の型)を出さない — 本体で実行する呼び((<- …)・(! …))を import した defk の先まで辿る",
+            ProjectRule::EnvironmentBranch => "業務の層(architecture.hy の :environment-branches の :layers)の Hy の定義は、環境の名の値(:values — production・emulated …)と比べず(=・!=・is・is-not・in・not-in の引数の文字列の literal と、match の節の型)、dry-run の印(:flags)で分岐しない(if・when・unless・cond の条件と match の主語の中の記号)— 環境の違いは handler の組の差し替えだけで表す(業務の層は環境を知らない)",
             ProjectRule::DefkCalledBare => "defk の定義は Program として渡す所((<- …) の右辺・(! …)・(return …)・Program を受ける呼びの引数)だけで呼ぶ — 素で呼ぶと答えではなく Program が返る",
             ProjectRule::SemanticMixedConcerns => "役が judgment / program の定義は、入力の形の検めと業務の判断を混ぜない(Jev の判定 — warning か info)",
             ProjectRule::SemanticClassRole => "DOEFF119 が何も出さない、処理を持つ method のある class は値の class(欄から計算するだけ)である(Jev の判定 — 外の世界の窓口か状態を持つ物なら warning か info)",
@@ -888,6 +900,7 @@ impl ProjectRule {
             ProjectRule::WorldHandlerMisplaced => "定義を foundation の層(architecture.hy の :foundation の dir)へ移すか、名簿の綴り(module:名)を実物に合わせる — 要らなくなった定義なら名簿から外す",
             ProjectRule::WorldHandlerNamedOutsideList => "名簿の定義(例 with-agora-process)の下で本体を走らせ、自分では実 I/O の handler を被せない — 新しく外の世界に触れる所が要るなら、その定義を foundation の層に置いて名簿に載せる",
             ProjectRule::TranslationEmitsIntent => "intent を出す業務の流れは層 core の program に置き、翻訳の handler は受けた intent を doeff の汎用の effect(HttpRequest・記録の読み書き・時計 …)へ出し直すだけにする — 経由した defk が intent を出すなら、その defk を呼ばずに汎用の effect を直に使う",
+            ProjectRule::EnvironmentBranch => "環境で変わる振る舞いは effect にして、環境ごとの handler(本番・模擬・dry-run)に答えさせる — 業務の層の定義は環境の名も dry-run の印も読まない",
             ProjectRule::DefkCalledBare => "(<- x (f …)) で束ねるか (! (f …)) で答えを受ける — 素の関数の中なら、その関数を defk にして呼び手を Program にする",
             ProjectRule::SemanticMixedConcerns => "形の検めは protocol の境目で defwire の型に parse し(形が合わなければ解く所で失敗)、この定義は型のある値を受けて判断だけをする(Jev の外れなら誤判定の一覧に載せる)",
             ProjectRule::SemanticClassRole => "外の世界の窓口なら土台の handler(資源は (session val …))、状態なら handler の (session var …) 1 か所(Jev の外れなら誤判定の一覧に載せる)",
@@ -933,6 +946,7 @@ mod tests {
         ("DOEFF126", RuleFamily::Definition),
         ("DOEFF127", RuleFamily::Definition),
         ("DOEFF130", RuleFamily::Layer),
+        ("DOEFF168", RuleFamily::Layer),
         ("DOEFF131", RuleFamily::Raw),
         ("DOEFF132", RuleFamily::Raw),
         ("DOEFF133", RuleFamily::Raw),
