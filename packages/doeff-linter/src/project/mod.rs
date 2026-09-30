@@ -2338,10 +2338,12 @@ fn definition_graph<'h>(architecture: &architecture::Architecture, hy: &'h HashM
         let in_carrier = |range: &Range| carrier_forms.iter().any(|form| range_inside(range, form));
         // 辺になる名(索引の定義か :wraps の handler)だけを見る — ほかの名の持ち主の定義は引かない。
         let interesting = |t: &str| by_name.contains_key(t) || wrapped.contains_key(t) || runners.contains(t);
+        // 値を検めるだけの名指し(比べの form と assert の被演算子 — 索引の `Reference::inspected`)は、名指した値を呼ばず・被せず・渡さないので
+        // 辺にしない(agora-redesign #1581)。呼ぶ・with-handlers の列に置く・他の定義の引数に渡す・比べの外で属性を読む名指しは今までどおり辺。
         let spots = file
             .references
             .iter()
-            .filter(|r| r.target.as_deref().is_some_and(interesting) && !in_import(&r.range) && !only_read(&r.range))
+            .filter(|r| r.target.as_deref().is_some_and(interesting) && !in_import(&r.range) && !only_read(&r.range) && !r.inspected)
             .filter_map(|r| r.target.as_deref().map(|t| (t, innermost_definition(definitions, &r.range), in_carrier(&r.range))))
             .chain(file.calls.iter().filter_map(|c| {
                 c.target.as_deref().filter(|t| interesting(t)).map(|t| (t, c.caller, in_carrier(&c.range)))
