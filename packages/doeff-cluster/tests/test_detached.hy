@@ -220,7 +220,7 @@
 (defk submit-then-wait [key seconds lease]
   {:pre [(: key str) (: seconds float) (: lease float)] :post [(: % DetachedSucceeded)]}
   (<- (SubmitDetached (slow-add seconds 3) :needs LOCAL :key key :lease-seconds lease))
-  (<- outcome (AwaitDetached key))
+  (<- outcome DetachedSucceeded (AwaitDetached key))
   outcome)
 
 (defk task-longer-than-the-lease [rig]
@@ -456,7 +456,8 @@
   (import doeff_cluster.remote_model [RemoteJob])
   (import doeff_cluster.warm_model [WarmRuntimeEnv])
   (import tests.env_fixtures [LOCK env-of])
-  (<- env (env-of "app-1" "lib-1" LOCK))
+  (import doeff_cluster.runtime_env_model [RuntimeEnv])
+  (<- env RuntimeEnv (env-of "app-1" "lib-1" LOCK))
   (val makers {"SubmitDetached" (fn [needs] (SubmitDetached (slow-add 0.0 1) :key "k" :needs needs))
                "RemoteJob" (fn [needs] (RemoteJob (slow-add 0.0 1) :needs needs))
                "WarmRuntimeEnv" (fn [needs] (WarmRuntimeEnv env needs 60.0 "tests"))})
@@ -935,8 +936,8 @@
   ;; 要る能力を書かない本文(needs が無い・空)と旧い形の requires の本文は、POST /tasks・PUT /detached・POST /warm のどれでも
   ;; 400 で理由を返し、状態を変えない(ADR-DOE-CLUSTER-001 R4b — どこにでも置ける仕事は無い・label の照合は受け付けない)。
   (import tests.env_fixtures [LOCK env-of])
-  (import doeff_cluster.runtime_env_model [runtime-env->json])
-  (<- env (env-of "app-1" "lib-1" LOCK))
+  (import doeff_cluster.runtime_env_model [runtime-env->json RuntimeEnv])
+  (<- env RuntimeEnv (env-of "app-1" "lib-1" LOCK))
   (<- declared (runtime-env->json env))
   (setv #(s _ _) (beat (ClusterState) "w" 0))
   (setv #(s sha) (run (program-placed s V)))

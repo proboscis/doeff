@@ -67,7 +67,7 @@
   (val host (ProcessHost (str (/ state-dir "logs")) "hy"))
   (val link (CoordinatorLink "http://coord" "zeus" #("net") 1 60000 :task-dir (str (/ state-dir "tasks"))))
   (assert (= host.program-dir link.program-dir (/ state-dir "programs")))
-  (<- spec (service-spec "svc" SHA))
+  (<- spec JobSpec (service-spec "svc" SHA))
   (val launched (.launch host spec (str tmp-path) "1-1" 1))
   (val argv (get launched 0))
   (val cwd (get launched 1))
@@ -78,7 +78,7 @@
   (assert (= (get env "POLL") "5.0") env)
   (assert (= cwd (str tmp-path)))
   ;; 置き場のキーを持たない worker の内部の JobSpec には足さない(宣言の job も task も置き場のキーを持つ — task は test_task_programs.hy)。
-  (<- bare (service-spec "bare" None))
+  (<- bare JobSpec (service-spec "bare" None))
   (val bare-launched (.launch host bare (str tmp-path) "1-1" 1))
   (val bare-argv (get bare-launched 0))
   (val bare-env (get bare-launched 2))

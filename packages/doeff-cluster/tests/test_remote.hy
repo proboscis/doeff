@@ -10,7 +10,7 @@
 (import sys)
 (import threading)
 (import pytest)
-(import doeff [run DoExpr with-handlers])
+(import doeff [run Program with-handlers])
 (import doeff_core_effects.handlers [reader])
 (import doeff_time [Delay])
 (import doeff_cluster.remote_model [RemoteJob UnsendableProgram VersionMismatch RemoteJobFailed
@@ -104,7 +104,7 @@
 
 
 (defk run-task-in-child [tmp-path program versions]
-  {:pre [(: tmp-path Path) (: program DoExpr) (: versions dict)] :post [(: % (| TaskSucceeded TaskFailed))]
+  {:pre [(: tmp-path Path) (: program Program) (: versions dict)] :post [(: % (| TaskSucceeded TaskFailed))]
    :tags {:context "doeff-cluster-test" :role "entry"}}
   "job_entry task を worker と同じ形(--result と、置き場から取った Program の cache の file の --program — --blob・--versions・--env は
    無い)で起こし、結果の file を読む。versions = 詰めた送り手の版(file の中に Program と一緒に置く — service と同じ形)。"

@@ -255,10 +255,12 @@
 (defk lock-change-scenario []
   {:pre [] :post [(: % bool)]}
   "筋書き 3: lock を変える → 新しいキー・増えた package だけ download・bytecode は引き継がない(Hy と doeff-hy が変わり得る)。"
-  (<- first (prepare (! (env-of "app-1" "lib-1" LOCK)) #()))
+  (<- env-1 RuntimeEnv (env-of "app-1" "lib-1" LOCK))
+  (<- first (prepare env-1 #()))
   (<- known tuple (known-of first))
   (<- before EnvWorldLog (read-world-log))
-  (<- changed (prepare (! (env-of "app-3" "lib-1" (+ LOCK "rich==13.9.4 top=rich\n"))) known))
+  (<- env-3 RuntimeEnv (env-of "app-3" "lib-1" (+ LOCK "rich==13.9.4 top=rich\n")))
+  (<- changed (prepare env-3 known))
   (<- after EnvWorldLog (read-world-log))
   (assert (isinstance changed EnvReady) changed)
   (assert (!= changed.key first.key))
@@ -276,11 +278,16 @@
 (defk native-change-scenario []
   {:pre [] :post [(: % bool)]}
   "筋書き 5: native の source を変える → build が 1 回だけ増え、同じ source の次の root は wheel を使い回す。"
-  (<- first (prepare (! (env-of "app-1" "lib-1" LOCK)) #()))
+  (<- env-1 RuntimeEnv (env-of "app-1" "lib-1" LOCK))
+  (<- first (prepare env-1 #()))
   (<- before EnvWorldLog (read-world-log))
-  (<- changed (prepare (! (env-of "app-1" "lib-2" LOCK)) (! (known-of first))))
+  (<- env-lib-2 RuntimeEnv (env-of "app-1" "lib-2" LOCK))
+  (<- known-1 tuple (known-of first))
+  (<- changed (prepare env-lib-2 known-1))
   (<- mid EnvWorldLog (read-world-log))
-  (<- again (prepare (! (env-of "app-2" "lib-2" LOCK)) (! (known-of first changed))))
+  (<- env-2 RuntimeEnv (env-of "app-2" "lib-2" LOCK))
+  (<- known-2 tuple (known-of first changed))
+  (<- again (prepare env-2 known-2))
   (<- after EnvWorldLog (read-world-log))
   (assert (= (- mid.builds before.builds) 1))
   (assert (= changed.built 1))
@@ -299,8 +306,10 @@
   {:pre [] :post [(: % bool)] :tags {:context "runtime-env" :role "program"}}
   "同じ native の source(同じ wheel のキー)の 2 つの準備を並行させる筋: 錠を待つので build は 1 回で、両方とも完成する(#835)。"
   (<- before EnvWorldLog (read-world-log))
-  (<- one (Spawn (prepare (! (env-of "app-1" "lib-1" LOCK)) #())))
-  (<- two (Spawn (prepare (! (env-of "app-2" "lib-1" LOCK)) #())))
+  (<- env-1 RuntimeEnv (env-of "app-1" "lib-1" LOCK))
+  (<- env-2 RuntimeEnv (env-of "app-2" "lib-1" LOCK))
+  (<- one (Spawn (prepare env-1 #())))
+  (<- two (Spawn (prepare env-2 #())))
   (<- results list (Gather one two))
   (<- after EnvWorldLog (read-world-log))
   (assert (all (gfor r results (isinstance r EnvReady))) results)
@@ -372,7 +381,8 @@
   (<- (expect-failure (replace world :denied (frozenset #(LIB-URL))) env EnvFailureKind.REPO-DENIED False))
   (<- (expect-failure (replace world :unreachable (frozenset #(APP-URL))) env EnvFailureKind.REPO-UNREACHABLE True))
   ;; commit を push しない
-  (<- (expect-failure world (! (env-of "app-unpushed" "lib-1" LOCK)) EnvFailureKind.COMMIT-MISSING False))
+  (<- unpushed RuntimeEnv (env-of "app-unpushed" "lib-1" LOCK))
+  (<- (expect-failure world unpushed EnvFailureKind.COMMIT-MISSING False))
   ;; lock の hash を 1 文字変える
   (val h env.project.lock-sha256)
   (val wrong (+ (if (= (get h 0) "0") "1" "0") (cut h 1 None)))
@@ -396,10 +406,12 @@
   {:pre [(: unreachable frozenset) (: expected-kind EnvFailureKind) (: expected-retryable bool)] :post [(: % bool)]
    :tags {:context "runtime-env" :role "program"}}
   "mirror が在る状態で次の commit を取りに行く筋: 1 回目の準備で mirror を作り、届かない url を差し替えて、次の commit の準備の失敗を読む。"
-  (<- first (prepare (! (env-of "app-1" "lib-1" LOCK)) #()))
+  (<- env-1 RuntimeEnv (env-of "app-1" "lib-1" LOCK))
+  (<- first (prepare env-1 #()))
   (assert (isinstance first EnvReady) first)
   (<- (set-unreachable unreachable))
-  (<- failure EnvFailure (failure-of (! (env-of "app-unpushed" "lib-1" LOCK))))
+  (<- unpushed RuntimeEnv (env-of "app-unpushed" "lib-1" LOCK))
+  (<- failure EnvFailure (failure-of unpushed))
   (assert (= failure.kind expected-kind) (.format "{} のはずが {}: {}" expected-kind failure.kind failure.detail))
   (assert (= failure.retryable expected-retryable) failure)
   True)
@@ -473,5 +485,5 @@
 (deftest test-a-third-party-package-shadowing-a-root-is-refused
   ;; 反例: 第三者の package が根と同じ最上位の名(app)を持つと、根の module が隠れるので env-incompatible で断る。
   (<- world EnvWorld (base-world))
-  (<- (expect-failure world (! (env-of "app-shadow" "lib-1" (+ LOCK "vendor-shadow==1.0 top=app\n")))
-                      EnvFailureKind.ENV-INCOMPATIBLE False)))
+  (<- shadow RuntimeEnv (env-of "app-shadow" "lib-1" (+ LOCK "vendor-shadow==1.0 top=app\n")))
+  (<- (expect-failure world shadow EnvFailureKind.ENV-INCOMPATIBLE False)))

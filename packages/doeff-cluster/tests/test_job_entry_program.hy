@@ -13,7 +13,7 @@
 (import subprocess)
 (import sys)
 (import pathlib [Path])
-(import doeff [DoExpr])
+(import doeff [Program])
 (import doeff_cluster.remote_model [encode-program])
 (import doeff_cluster.process_versions [current-versions])
 (import tests.fixtures.envs [plain-foundation])
@@ -24,7 +24,7 @@
 
 
 (defk program-file [path program versions]
-  {:pre [(: path Path) (: program DoExpr) (: versions dict)] :post [(: % str)] :tags {:context "doeff-cluster-test" :role "entry"}}
+  {:pre [(: path Path) (: program Program) (: versions dict)] :post [(: % str)] :tags {:context "doeff-cluster-test" :role "entry"}}
   "worker が /programs/<sha> から取って置くのと同じ形の file を書き、その path を返す。"
   (.write-text path (json.dumps {"blob" (encode-program program) "versions" versions}) :encoding "utf-8")
   (str path))

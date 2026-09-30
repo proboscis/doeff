@@ -943,7 +943,11 @@
   (cond
     (is (get answer 0) None) (warm-unconnected (unreached-reason answer))
     (>= (get answer 0) SERVER-ERROR) (warm-server-failure (get answer 0) (str (get answer 1)))
-    True (warm-state-of-json (refused-or-body answer what))))
+    True (let [body (refused-or-body answer what)]
+           ;; 温める表の口の本文は行の dict(refused-or-body の答えの形は口ごとなので、ここで確かめて絞る)。
+           (if (isinstance body dict)
+               (warm-state-of-json body)
+               (raise (TypeError (.format "{}: 温める表の返事の本文が dict でない: {!r}" what body)))))))
 
 
 (defk warm-write [link env needs ttl-seconds holder]
