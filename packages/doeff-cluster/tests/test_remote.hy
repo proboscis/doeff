@@ -93,6 +93,7 @@
   (val mine (current-versions))
   (assert (is (version-mismatch mine mine) None))
   (val message (version-mismatch (| mine {"doeff" "0.0.0"}) mine))
+  (assert (is-not message None) "版の違う鍵があるのに食い違いの文が無い")
   (assert (in "doeff: 送り手 0.0.0" message))
   (assert (not-in "python" message)))
 
