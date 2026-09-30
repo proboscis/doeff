@@ -272,7 +272,7 @@ pub(super) struct DefinitionFacts {
 }
 
 /// defk の推論の結果。
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 struct Summary {
     effects: BTreeSet<String>,
     absent: bool,
@@ -300,6 +300,41 @@ struct FileFacts {
     definitions: Vec<(String, DefinitionFacts)>,
 }
 
+/// 1 file の事実と、その file の推論の材料の鍵(cache に一緒に置く)。
+#[derive(Clone, Serialize, Deserialize)]
+struct KeyedFacts {
+    facts: FileFacts,
+    inference_key: u64,
+}
+
+impl KeyedFacts {
+    /// 推論の材料の鍵 = file の path と、推論が読む欄だけ(型の名・effect の名と Absent / Raise・定義の名と種類と撃った呼びの列)。
+    /// 位置(定義の場所・呼びの頭の範囲)は推論に効かないので入れない — 本文の書き換えで行がずれても鍵は変わらない。
+    fn of(rel: &str, facts: FileFacts) -> KeyedFacts {
+        use std::hash::{Hash, Hasher};
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        rel.hash(&mut h);
+        for (name, _) in &facts.types {
+            name.hash(&mut h);
+        }
+        for (name, effect) in &facts.effects {
+            name.hash(&mut h);
+            format!("{:?}{:?}", effect.absent, effect.failure).hash(&mut h);
+        }
+        for (name, definition) in &facts.definitions {
+            name.hash(&mut h);
+            (definition.kind == SignatureKind::Defk).hash(&mut h);
+            for site in &definition.sites {
+                site.callee.hash(&mut h);
+                format!("{:?}", site.absent_as_raise).hash(&mut h);
+                site.absent_handled.hash(&mut h);
+                site.raise_handled.hash(&mut h);
+            }
+        }
+        KeyedFacts { facts, inference_key: h.finish() }
+    }
+}
+
 /// 型の名として定義を持つ頭。
 const TYPE_HEADS: &[&str] = &[
     "defrecord",
@@ -322,20 +357,30 @@ impl World {
         let on_disk: Vec<(String, std::path::PathBuf)> =
             files.into_iter().filter(|(rel, _)| overlay.is_none_or(|(o, _)| o != rel)).collect();
         // file ごとの事実はその file の中身だけで決まる(root は path の綴りにしか使わない)ので、変わった file だけ作り直す。
-        let mut facts: Vec<FileFacts> = crate::timing::timed("effect-world.facts", || super::facts_cache::per_file(root, "signature-facts", &on_disk, |rel, path| {
+        // 5MB 余りの事実を JSON で読むと 1 回に約 0.05 秒かかったので、欄の名前を持たない binary の形で置く(agora-redesign #1621)。
+        let mut facts: Vec<KeyedFacts> = crate::timing::timed("effect-world.facts", || super::facts_cache::per_file_compact(root, "signature-facts", &on_disk, |rel, path| {
             let source = std::fs::read_to_string(path).ok()?;
-            source.contains("(def").then(|| file_facts(root, rel, &source))
+            source.contains("(def").then(|| KeyedFacts::of(rel, file_facts(root, rel, &source)))
         }));
         if let Some((rel, source)) = overlay {
-            facts.push(file_facts(root, rel, source));
+            facts.push(KeyedFacts::of(rel, file_facts(root, rel, source)));
         }
+        // 推論の材料の指紋 — file ごとの鍵の和(file の順に依らない)。
+        let key = facts.iter().fold(0u64, |acc, file| acc.wrapping_add(file.inference_key));
         let mut world = World::default();
-        for file in facts {
+        for KeyedFacts { facts: file, .. } in facts {
             world.types.extend(file.types);
             world.effects.extend(file.effects);
             world.definitions.extend(file.definitions);
         }
-        crate::timing::timed("effect-world.infer", || world.infer());
+        // 推論の不動点は材料(位置を除いた事実)だけで決まるので、材料の指紋が前の実行と同じなら前の答えを使う。書き込み直後の 1 回でも、
+        // 書いた file の本文が推論の材料を変えない(行がずれただけ・呼びの列が同じ)なら回さない(agora-redesign #1621・#1033 の案)。
+        world.summaries = crate::timing::timed("effect-world.infer", || {
+            super::facts_cache::keyed_value(root, "signature-summaries", key, || {
+                world.infer();
+                std::mem::take(&mut world.summaries)
+            })
+        });
         world
     }
 
@@ -1961,6 +2006,24 @@ mod tests {
         assert_eq!(
             read_row.absent.iter().map(name_of).collect::<Vec<_>>(),
             vec!["Missing"]
+        );
+    }
+
+    /// 推論の材料の鍵(agora-redesign #1621): 位置だけが変わる書き換え(行が足されてずれる)では変わらず、推論の材料
+    /// (撃つ effect・定義の名・Absent の受け方)が変わると変わる。鍵が同じなら前の推論の答えを使うので、鍵が材料を漏らすと答えが古くなる。
+    #[test]
+    fn inference_key_ignores_positions_and_follows_what_inference_reads() {
+        let key = |source: &str| KeyedFacts::of("core/flow.hy", file_facts(Path::new("/r"), "core/flow.hy", source)).inference_key;
+        let base = "(defk fetch [id]\n  {:pre [(: id str)] :post [(: % Row)]}\n  (<- row Row (ReadRow id))\n  row)\n";
+        let shifted = format!("; 註\n\n{base}");
+        assert_eq!(key(base), key(&shifted), "行がずれただけでは鍵は変わらない");
+        assert_ne!(key(base), key(&base.replace("(ReadRow id)", "(PutRow id)")), "撃つ effect が変われば鍵が変わる");
+        assert_ne!(key(base), key(&base.replace("defk fetch", "defk fetch-row")), "定義の名が変われば鍵が変わる");
+        assert_ne!(key(base), key(&base.replace("(<- row Row (ReadRow id))", "(absent-as None (<- row Row (ReadRow id)))")), "Absent の受け方が変われば鍵が変わる");
+        assert_ne!(
+            KeyedFacts::of("core/a.hy", file_facts(Path::new("/r"), "core/a.hy", base)).inference_key,
+            KeyedFacts::of("core/b.hy", file_facts(Path::new("/r"), "core/b.hy", base)).inference_key,
+            "file の path も鍵に入る(同じ中身の別の file を取り違えない)"
         );
     }
 

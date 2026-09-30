@@ -234,6 +234,50 @@ where
     per_file_at(cache_file(root, kind, Format::Compact).as_deref(), &format!("{}/", identity(kind)), files, compute, Format::Compact)
 }
 
+/// 1 つの値を、呼び手が材料から作った鍵 `key` で覚える(file ごとではなく、repo 全体の事実から導いた値 — 例: effect の推論の不動点)。
+/// 置いた値の鍵が `key` と同じなら読み、違えば(無い・壊れた・linter が組み直された時も)`compute` で作って置き直す。答えは変えない —
+/// 鍵が材料を漏れなく覆うことは呼び手が保つ。形は binary(bincode)。
+pub fn keyed_value<T, F>(root: &Path, kind: &str, key: u64, compute: F) -> T
+where
+    T: Serialize + DeserializeOwned,
+    F: FnOnce() -> T,
+{
+    #[derive(Serialize, Deserialize)]
+    struct Keyed<V> {
+        identity: String,
+        key: u64,
+        value: V,
+    }
+    /// 書く時の形(値を複製せずに借りて綴る — 綴りは `Keyed` と同じ)。
+    #[derive(Serialize)]
+    struct KeyedRef<'a, V> {
+        identity: &'a str,
+        key: u64,
+        value: &'a V,
+    }
+    let Some(file) = cache_file(root, kind, Format::Compact) else { return compute() };
+    let identity = format!("{}/", identity(kind));
+    let cached = crate::timing::timed("facts-cache.load", || {
+        std::fs::read(&file).ok().and_then(|bytes| bincode::deserialize::<Keyed<T>>(&bytes).ok())
+    });
+    if let Some(keyed) = cached.filter(|k| k.identity == identity && k.key == key) {
+        return keyed.value;
+    }
+    let value = compute();
+    crate::timing::timed("facts-cache.save", || {
+        let Some(dir) = file.parent() else { return };
+        if std::fs::create_dir_all(dir).is_err() {
+            return;
+        }
+        let Ok(bytes) = bincode::serialize(&KeyedRef { identity: identity.as_str(), key, value: &value }) else { return };
+        let tmp = dir.join(format!(".{kind}.{}.tmp", std::process::id()));
+        if std::fs::write(&tmp, bytes).is_ok() && std::fs::rename(&tmp, &file).is_err() {
+            let _ = std::fs::remove_file(&tmp);
+        }
+    });
+    value
+}
+
 /// `per_file` の本体 — cache の file の置き場と印と形を受ける(置き場が None = cache を使わない)。
 fn per_file_at<T, F>(file: Option<&Path>, identity: &str, files: &[(String, PathBuf)], compute: F, format: Format) -> Vec<T>
 where
