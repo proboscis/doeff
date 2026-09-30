@@ -2258,6 +2258,68 @@ fn inspecting_a_value_does_not_reach_but_passing_or_calling_it_does() {
     );
 }
 
+/// agora-redesign #1798: deftest が(Hy の定義を通して)名指す repo の中の Python の関数(`.py`)は、その中の子 process
+/// (`subprocess.run`・`os.system`)と、名前で決まる Python の呼び先(同じ module の関数・import した関数・class の構築と
+/// `self.m`)まで辿る — 届けば縁(印が要る)。型の注記と except の型の中の名は値の実行ではない(届かない)。Python の関数から
+/// Hy の定義へ戻る呼びも辿る。構文の壊れた Python の module は黙って手元にせず、報告の誤りに名乗る。
+#[test]
+fn test_kind_follows_python_functions_into_their_subprocesses() {
+    let files = [
+        ("app/foundation/host.hy", tags("shared", "foundation") + "(defk with-host [body] body)\n"),
+        ("app/billing/core/calc.hy", tags("billing", "judgment") + "(defk add [a b] (+ a b))\n"),
+        (
+            "tools/bake.py",
+            "import subprocess\nfrom tools.inner import spawn\nfrom app.foundation.host import with_host\n\n\
+             def launch(argv: list[str]) -> int:\n    return spawn(argv)\n\n\
+             def quiet(done: subprocess.CompletedProcess) -> int:\n    try:\n        return done.returncode\n    except subprocess.TimeoutExpired:\n        return 1\n\n\
+             def hosted(body):\n    return with_host(body)\n\n\
+             class Runner:\n    def __init__(self):\n        self.start()\n    def start(self):\n        import os\n        os.system('true')\n\n\
+             def build():\n    return Runner()\n"
+                .to_string(),
+        ),
+        ("tools/inner.py", "import subprocess as sp\n\ndef spawn(argv):\n    return sp.run(argv, check=False).returncode\n".to_string()),
+        ("tools/broken.py", "def mystery(:\n".to_string()),
+        ("app/billing/core/helpers.hy", tags("billing", "judgment") + "(import tools.bake [launch])\n(defk bake-all [argv] (launch argv))\n"),
+        (
+            "app/billing/tests/test_python.hy",
+            "(import app.billing.core.calc [add])\n(import app.billing.core.helpers [bake-all])\n(import tools.bake [launch quiet hosted build])\n\
+             (import tools.broken [mystery])\n\
+             (deftest test-edge-launch-unmarked (assert (= (launch [\"true\"]) 0)))\n\
+             (deftest test-edge-launch-marked {:marks [\"real_world\"]} (assert (= (launch [\"true\"]) 0)))\n\
+             (deftest test-edge-through-a-hy-helper (assert (= (bake-all [\"true\"]) 0)))\n\
+             (deftest test-edge-through-a-constructor (assert (build)))\n\
+             (deftest test-edge-back-into-hy (assert (hosted 1)))\n\
+             (deftest test-local-quiet (assert (= (quiet (add 1 2)) 3)))\n\
+             (deftest test-local-quiet-marked {:marks [\"real_world\"]} (assert (= (quiet 1) 1)))\n\
+             (deftest test-local-broken-module (assert (mystery)))\n"
+                .to_string(),
+        ),
+    ];
+    let dir = world_repo_with(&files, "", "[\"DOEFF133\"]");
+    let arch_path = dir.path().join("architecture.hy");
+    let text = std::fs::read_to_string(&arch_path).unwrap().replace(":foundation foundation", ":foundation foundation\n  :edge-mark \"real_world\"");
+    std::fs::write(&arch_path, text).unwrap();
+    let (_, report) = editor(dir.path());
+    assert_eq!(
+        keys(&report, "DOEFF133"),
+        vec![
+            "app/billing/tests/test_python.hy::DOEFF133::test_edge_back_into_hy::edge",
+            "app/billing/tests/test_python.hy::DOEFF133::test_edge_launch_unmarked::edge",
+            "app/billing/tests/test_python.hy::DOEFF133::test_edge_through_a_constructor::edge",
+            "app/billing/tests/test_python.hy::DOEFF133::test_edge_through_a_hy_helper::edge",
+            "app/billing/tests/test_python.hy::DOEFF133::test_local_quiet_marked::local",
+        ],
+        "Python の関数の子 process に届く印なしは縁で当たり、印つき・注記と except の型だけの関数は当てない: {}",
+        report
+    );
+    let launch = violation(&report, "app/billing/tests/test_python.hy::DOEFF133::test_edge_launch_unmarked::edge");
+    assert!(launch["message"].as_str().unwrap().contains("tools.bake.launch → tools.inner.spawn → subprocess.run"), "{}", launch["message"]);
+    let helper = violation(&report, "app/billing/tests/test_python.hy::DOEFF133::test_edge_through_a_hy_helper::edge");
+    assert!(helper["message"].as_str().unwrap().contains("bake-all → tools.bake.launch"), "{}", helper["message"]);
+    let errors = report["errors"].as_array().unwrap();
+    assert!(errors.iter().any(|e| e.as_str().unwrap().contains("tools/broken.py")), "構文の壊れた module を名乗る: {}", report);
+}
+
 /// agora-redesign #1363: 許可名簿の handler ごとに縁の検(空でない :interpreters を持ち、DOEFF133 と同じ図でその handler の定義に
 /// 届く deftest)が要る — 無ければ architecture.hy の名簿の要素で DOEFF137(critical・細目 = 名簿の綴り)。:interpreters の要素は
 /// file の外の定数の記号のまま(読み解かない)。理由つきの :contract-test (none …) の handler は判じない・理由の無い none は鳴る(#1796)。

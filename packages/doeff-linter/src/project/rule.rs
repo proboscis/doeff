@@ -105,6 +105,7 @@ pub enum ProjectRule {
     WorldHandlerMisplaced,
     /// DOEFF133: テストの種類(手元 / 縁)を届く先から導き、architecture.hy の :edge-mark の印と食い違う物 — 名簿の定義・:wraps の
     /// handler・生の I/O に届くのに印が無い / 届かないのに印が在る(agora-redesign #1106 の R3)。
+    /// Hy の定義が名指す repo の中の Python の関数の中の生の I/O と呼び先も届く先に数える(agora-redesign #1798・python_reach)。
     TestKindMismatch,
     /// DOEFF137: architecture.hy の許可名簿(:world-handlers)の handler に、縁の検(空でない `:interpreters` を持ち、その handler の
     /// 定義に届く deftest)が 1 本も無い — 本物と模擬が同じ検を通ることを見ていない実 I/O の handler(agora-redesign #1363)。

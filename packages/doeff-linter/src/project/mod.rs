@@ -47,11 +47,12 @@ pub mod intent_coverage;
 pub mod assembly_shape;
 pub mod invariants;
 pub mod clause_coverage;
+pub mod python_reach;
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
-use doeff_indexer::hy_index::{self, Definition, DefinitionKind, HyFileIndex, RawCatalog, RawSettings, RawStrength};
+use doeff_indexer::hy_index::{self, Definition, DefinitionKind, HyFileIndex, RawCatalog, RawCategory, RawSettings, RawStrength};
 use rayon::prelude::*;
 use walkdir::WalkDir;
 
@@ -534,7 +535,9 @@ pub fn run_with(root: &Path, settings: &ProjectSettings, enabled: &BTreeSet<Proj
                         drafts.extend(crate::timing::timed("world-handler-places", || judge_world_handler_places(root, architecture, layers, &layer_files, hy)));
                     }
                     if enabled.contains(&ProjectRule::TestKindMismatch) && !architecture.world_handlers.is_empty() {
-                        drafts.extend(judge_test_kinds(root, architecture, hy));
+                        let (found, errors) = judge_test_kinds(root, architecture, hy, &raw.catalog);
+                        drafts.extend(found);
+                        report.errors.extend(errors);
                     }
                     if enabled.contains(&ProjectRule::WorldHandlerWithoutContractTest) && !architecture.world_handlers.is_empty() {
                         drafts.extend(crate::timing::timed("contract-tests", || judge_contract_tests(root, architecture, hy)));
@@ -2291,9 +2294,21 @@ struct DefinitionGraph<'h> {
     carried: Vec<Vec<usize>>,
     /// runs[n] = その定義が系を回す入口(:systems の :runners)を名指す。
     runs: Vec<bool>,
+    /// 索引の外の名指し(節・名指した完全修飾名・系の値の中か)— 組む時に渡した `foreign` が認めた名だけ(DOEFF133 の
+    /// Python の関数 — agora-redesign #1798)。
+    foreign: Vec<(usize, String, bool)>,
 }
 
 fn definition_graph<'h>(architecture: &architecture::Architecture, hy: &'h HashMap<String, HyFileIndex>) -> DefinitionGraph<'h> {
+    definition_graph_with(architecture, hy, &|_| false)
+}
+
+/// 定義の辺の図を組み、索引の外の名のうち foreign が認めた物の名指しを `foreign` の欄に残す(辺にはしない — 読む側が決める)。
+fn definition_graph_with<'h>(
+    architecture: &architecture::Architecture,
+    hy: &'h HashMap<String, HyFileIndex>,
+    foreign: &dyn Fn(&str) -> bool,
+) -> DefinitionGraph<'h> {
     let listed: HashMap<String, (String, Vec<architecture::WorldTouch>)> =
         architecture.world_handlers.iter().map(|h| (h.definition.target(), (h.definition.spelling(), h.touches.clone()))).collect();
     let catalog = world_catalog::WorldCatalog::bundled();
@@ -2329,6 +2344,7 @@ fn definition_graph<'h>(architecture: &architecture::Architecture, hy: &'h HashM
     let mut world_carried: Vec<Option<String>> = vec![None; nodes.len()];
     let mut carried: Vec<Vec<usize>> = vec![Vec::new(); nodes.len()];
     let mut runs: Vec<bool> = vec![false; nodes.len()];
+    let mut foreign_spots: Vec<(usize, String, bool)> = Vec::new();
     for rel in &rels {
         let file = &hy[*rel];
         let first = base[rel.as_str()];
@@ -2369,7 +2385,8 @@ fn definition_graph<'h>(architecture: &architecture::Architecture, hy: &'h HashM
             file.calls.iter().filter(|c| c.target.as_deref().is_some_and(|t| carriers.contains(t))).map(|c| &c.form_range).collect();
         let in_carrier = |range: &Range| carrier_forms.iter().any(|form| range_inside(range, form));
         // 辺になる名(索引の定義か :wraps の handler)だけを見る — ほかの名の持ち主の定義は引かない。
-        let interesting = |t: &str| by_name.contains_key(t) || wrapped.contains_key(t) || runners.contains(t);
+        let known = |t: &str| by_name.contains_key(t) || wrapped.contains_key(t) || runners.contains(t);
+        let interesting = |t: &str| known(t) || foreign(t);
         // 値を検めるだけの名指し(比べの form と assert の被演算子 — 索引の `Reference::inspected`)は、名指した値を呼ばず・被せず・渡さないので
         // 辺にしない(agora-redesign #1581)。呼ぶ・with-handlers の列に置く・他の定義の引数に渡す・比べの外で属性を読む名指しは今までどおり辺。
         let spots = file
@@ -2385,6 +2402,10 @@ fn definition_graph<'h>(architecture: &architecture::Architecture, hy: &'h HashM
             let owner = first + owner_index;
             // :systems を宣言しない repo は今までどおり(defsystem の中の辺もふつうの辺 — 入口を知らないので、系の中を別に数えない)。
             let is_carried = architecture.systems.is_some() && (inside_carrier || definitions[owner_index].kind == DefinitionKind::Defsystem);
+            if !known(target) {
+                foreign_spots.push((owner, target.to_string(), is_carried));
+                continue;
+            }
             if runners.contains(target) {
                 runs[owner] = true;
                 continue;
@@ -2405,7 +2426,7 @@ fn definition_graph<'h>(architecture: &architecture::Architecture, hy: &'h HashM
             }
         }
     }
-    DefinitionGraph { rels, nodes, base, world, callers, world_carried, carried, runs }
+    DefinitionGraph { rels, nodes, base, world, callers, world_carried, carried, runs, foreign: foreign_spots }
 }
 
 /// 定義の辺の図の上で、種の節へ届く節(DOEFF133・137 が使う)。reaches[n] = n から種へ届く・toward[n] = n から種へ向かう次の節
@@ -2478,9 +2499,41 @@ fn reach_seeds(graph: &DefinitionGraph, seeds: &[bool], carried_seeds: &[bool], 
 /// DOEFF133: テストの種類を届く先から導く。定義の間の辺(呼び出し・参照・入れ子)を全体の索引から 1 度だけ組み、外の世界の側
 /// (名簿の定義・:wraps の handler を名指す定義・強い生の I/O の証拠を持つ定義)から逆向きに辿って「外の世界に届く定義」の集合を
 /// 求める。deftest がその集合に在れば縁(:edge-mark の印が要る)、無ければ手元(印を持たない)。Python の検は数えない(R6 で deftest へ)。
-fn judge_test_kinds(root: &Path, architecture: &architecture::Architecture, hy: &HashMap<String, HyFileIndex>) -> Vec<Draft> {
-    let Some(mark) = architecture.edge_mark.as_deref() else { return Vec::new() };
-    let graph = definition_graph(architecture, hy);
+/// Hy の定義が名指す repo の中の Python の関数は、その中の生の I/O の強い証拠と、名前で決まる呼び先(Python の関数・Hy の定義)まで
+/// 辿る(python_reach — agora-redesign #1798)。読めない Python の module は 2 つ目の答え(報告の誤り)に名乗る。
+fn judge_test_kinds(
+    root: &Path,
+    architecture: &architecture::Architecture,
+    hy: &HashMap<String, HyFileIndex>,
+    catalog: &RawCatalog,
+) -> (Vec<Draft>, Vec<String>) {
+    let Some(mark) = architecture.edge_mark.as_deref() else { return (Vec::new(), Vec::new()) };
+    let python = python_reach::PythonReach::new(root, catalog);
+    let mut graph = definition_graph_with(architecture, hy, &|target| python.names_function(target));
+    let by_name: HashMap<&str, usize> = graph
+        .nodes
+        .iter()
+        .enumerate()
+        .rev()
+        .map(|(node, (rel, index))| (hy[*rel].definitions[*index].qualified_name.as_str(), node))
+        .collect();
+    let edge = |category: RawCategory| architecture.counts_as_edge(&[world_catalog::touch_of_raw(category)]);
+    let mut answers: HashMap<String, python_reach::PythonReached> = HashMap::new();
+    for (owner, target, is_carried) in std::mem::take(&mut graph.foreign) {
+        let reached = answers.entry(target.clone()).or_insert_with(|| python.reach(&target, &edge, &|name| by_name.contains_key(name)));
+        if let Some(trail) = &reached.world {
+            let slot = if is_carried { &mut graph.world_carried[owner] } else { &mut graph.world[owner] };
+            if slot.is_none() {
+                *slot = Some(trail.join(" → "));
+            }
+        }
+        for callee in reached.hy.iter().filter_map(|name| by_name.get(name.as_str())) {
+            if *callee != owner {
+                if is_carried { graph.carried[*callee].push(owner) } else { graph.callers[*callee].push(owner) }
+            }
+        }
+    }
+    let python_errors = python.errors();
     let running = running_nodes(&graph);
     let seeds: Vec<bool> = graph.world.iter().map(Option::is_some).collect();
     let carried_seeds: Vec<bool> = graph.world_carried.iter().map(Option::is_some).collect();
@@ -2535,7 +2588,7 @@ fn judge_test_kinds(root: &Path, architecture: &architecture::Architecture, hy: 
             });
         }
     }
-    drafts
+    (drafts, python_errors)
 }
 
 /// DOEFF137: 許可名簿の handler ごとに縁の検が在るかを判じる。縁の検 = 空でない `:interpreters` を持つ deftest のうち、DOEFF133 と
