@@ -383,9 +383,11 @@
 
 (deftest test-an-old-service-spec-is-refused-by-the-probe-with-its-reason
   (val reason (probe-refusal OLD-SPEC))
+  (assert (is-not reason None) "古い形の service は断る")
   (assert (in "--factory・--env・--config" reason) reason)
   ;; 新しい形でも置き場のキーが無ければ断る。
   (val keyless (probe-refusal (replace S1 :program None)))
+  (assert (is-not keyless None) "置き場のキーの無い service は断る")
   (assert (in "置き場のキー" keyless) keyless)
   ;; 新しい形の service・task・素の entry は断らない。
   (assert (is (probe-refusal S1) None))

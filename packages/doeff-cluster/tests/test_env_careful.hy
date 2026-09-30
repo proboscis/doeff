@@ -157,6 +157,7 @@
   (assert (= view.state CodeState.FAILED) view)
   (<- key str (env-key env (current-platform)))
   (assert (not (.exists (/ (.root-of rig.envs (+ "env-" key)) ENV-MARKER))) "失敗した root に完成マーカーは無い")
+  (assert (is-not view.failure None) "実行環境の準備の失敗は理由の種類を運ぶ")
   view.failure.kind)
 
 
@@ -322,6 +323,7 @@
   (val cold-spec (task-spec {"id" "t9" "revision" "" "versions" (current-versions) "program" SAMPLE-TASK-PROGRAM
                              "runtimeEnv" cold-declared}
                             tasks))
+  (assert (is-not cold-spec.runtime-env None) cold-spec)
   (val cold-first (plan 2 #(cold-spec) (WorldView (.observe rig.envs) #()) {} policy :warm #(warm)))
   (assert (= cold-first #((PrepareEnv (code-key cold-spec) cold-spec.runtime-env))) cold-first))
 

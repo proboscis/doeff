@@ -362,6 +362,7 @@
                        (. (__import__ "pathlib") (Path "/tmp/tasks"))))
   (<- warm WarmEnv (warm-env-of "app-2"))
   (val policy (WorkerPolicy))
+  (assert (is-not spec.runtime-env None) spec)
   (val actions (plan 0 #(spec) (WorldView #() #()) {} policy :warm #(warm)))
   (assert (= actions #((PrepareEnv (code-key spec) spec.runtime-env) (PrepareEnv warm.key warm.runtime-env :warm True)))
           "job の準備が先・温める準備が後")
