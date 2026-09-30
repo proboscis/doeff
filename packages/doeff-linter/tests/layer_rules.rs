@@ -3098,6 +3098,117 @@ fn retired_declaration_misreadings_are_config_errors() {
     assert!(all.contains(":in は lines か names"), "{}", all);
 }
 
+/// 契約の file(wire の欄 carrier.mail と stream の種類の enum の値 mail — agora-controllers の agora-kinds.json・record-service.json の形)。
+/// letter はどこにも無い(契約に無い綴り)。
+const WIRE_CONTRACT: &str = r#"{"comment": "letter と mail の説明の文は集めない",
+  "kinds": {"conversation-input": {"schema": {"properties": {"status": {"properties": {"carrier": {"properties": {"mail": {"type": "string"}, "job": {"type": "string"}}}}}}}}},
+  "$defs": {"storedEvent": {"properties": {"streamKind": {"enum": ["chat", "mail"]}}}},
+  "examples": [{"note": "letter"}]}"#;
+
+/// DOEFF150 の :contract-files を書いた群(と DOEFF151 の呼びの群)の一時の repo。contract_files は :contract-files の中身、contracts は
+/// 置く契約の file(根からの path と中身)。
+fn contract_repo(files: &[(&str, String)], contract_files: &str, contracts: &[(&str, &str)]) -> tempfile::TempDir {
+    let dir = world_repo_with(files, "", "[\"DOEFF150\", \"DOEFF151\"]");
+    let arch_path = dir.path().join("architecture.hy");
+    let declarations = format!(
+        r#":foundation foundation
+  :retired-words [(retired-words "message" :words ["mail" "letter"] :files ["app/**/*.hy" "app/**/*.py"]
+                    :contract-files [{}] :instead "Message")]
+  :retired-calls [(retired-calls "clock" :calls ["Now"] :files ["app/**/*.hy"] :instead "(GetTime)")]"#,
+        contract_files
+    );
+    let text = std::fs::read_to_string(&arch_path).unwrap().replace(":foundation foundation", &declarations);
+    std::fs::write(&arch_path, text).unwrap();
+    for (rel, text) in contracts {
+        let path = dir.path().join(rel);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, text).unwrap();
+    }
+    dir
+}
+
+/// agora-redesign #1893(案 2): :contract-files の契約の綴り(キーの名・enum の値)に在る語は、Hy の文字列で中身がその語ちょうどの物・
+/// defwire の欄の定義の名・Python の文字列で中身がその語ちょうどの物だけを数えない。同じ綴りの内部の名(変数・defrecord の欄・loop の
+/// 変数・Python の名)と、契約に無い語(letter)の文字列は当たる。hint は登録簿を勧めず、契約の file を確かめさせる。
+#[test]
+fn retired_words_skip_contract_strings_and_wire_fields_only() {
+    let dir = contract_repo(
+        &[
+            ("app/billing/wire.hy", "(defwire InputCarrier \"取った印\" {:names :camel} (#^ str job) (#^ str mail))\n".to_string()),
+            ("app/billing/seen.hy", "(defwire InputSeen {:unknown :ignore} (setv #^ (| str None) mail None))\n".to_string()),
+            ("app/billing/stream.hy", "(defk append [record] (.append record \"c\" \"id\" [] \"mail\"))\n".to_string()),
+            ("app/billing/inner.hy", "(setv mail 1)\n".to_string()),
+            ("app/billing/record.hy", "(defrecord Row (#^ str mail))\n".to_string()),
+            ("app/billing/loop.hy", "(setv ids (lfor mail rows mail.id))\n".to_string()),
+            ("app/billing/letter.hy", "(setv kind \"letter\")\n".to_string()),
+            ("app/billing/vocab.py", "MESSAGE_SOURCE_MAIL = \"mail\"\nINPUT_CARRIER_MAIL = 'mail'\nmail = 1\n".to_string()),
+            ("app/billing/clock.hy", "(defk stamp [] (Now))\n".to_string()),
+        ],
+        "\"docs/contracts/wire.json\"",
+        &[("docs/contracts/wire.json", WIRE_CONTRACT)],
+    );
+    let (_, report) = editor(dir.path());
+    assert_eq!(
+        keys(&report, "DOEFF150"),
+        vec![
+            "app/billing/inner.hy::DOEFF150::mail",
+            "app/billing/letter.hy::DOEFF150::letter",
+            "app/billing/loop.hy::DOEFF150::mail",
+            "app/billing/record.hy::DOEFF150::mail",
+            "app/billing/vocab.py::DOEFF150::mail",
+        ],
+        "{}",
+        report
+    );
+    let python = violation(&report, "app/billing/vocab.py::DOEFF150::mail");
+    assert_eq!(python["range"]["start"]["line"], 2, "契約の値の文字列の 2 行でなく、内部の名の行: {}", python);
+    for key in ["app/billing/inner.hy::DOEFF150::mail", "app/billing/clock.hy::DOEFF151::Now"] {
+        let hint = violation(&report, key)["hint"].as_str().unwrap().to_string();
+        assert!(!hint.contains("登録簿に載せる"), "hint が登録簿を勧める: {}", hint);
+        assert!(!hint.contains(":rule-lines"), "hint が目印を足す書き方を誘う: {}", hint);
+    }
+    assert!(violation(&report, "app/billing/inner.hy::DOEFF150::mail")["hint"].as_str().unwrap().contains(":contract-files"));
+}
+
+/// agora-redesign #1893: :contract-files の file が無い・JSON でない・契約の綴りが 1 つも無い・:in lines でない群に書いた時は、黙って空に
+/// せず位置つきの宣言の誤りにし、走らせずに止まる。
+#[test]
+fn contract_files_misreadings_are_config_errors() {
+    let dir = contract_repo(
+        &[("app/billing/inner.hy", "(setv mail 1)\n".to_string())],
+        "\"docs/contracts/missing.json\" \"docs/contracts/broken.json\" \"docs/contracts/empty.json\" \"../outside.json\"",
+        &[("docs/contracts/broken.json", "{\"mail\": "), ("docs/contracts/empty.json", "[1, 2]")],
+    );
+    let (code, stdout, stderr) = run(dir.path(), &["--no-log"], None);
+    let all = format!("{}{}", stdout, stderr);
+    assert_eq!(code, 2, "宣言の誤りは走らせずに止まる: {}", all);
+    for needle in [
+        "retired-words message の :contract-files の docs/contracts/missing.json(",
+        "を読めない",
+        "retired-words message の :contract-files の docs/contracts/broken.json(",
+        "が JSON として読めない",
+        "retired-words message の :contract-files の docs/contracts/empty.json に契約の綴り(キーの名・enum / const の値)が 1 つも無い",
+        "retired-words message の :contract-files の ../outside.json は repo の根からの path",
+    ] {
+        assert!(all.contains(needle), "{} が無い:\n{}", needle, all);
+    }
+    assert!(!all.contains("DOEFF150"), "走らせていない: {}", all);
+    let arch_path = dir.path().join("architecture.hy");
+    let text = std::fs::read_to_string(&arch_path).unwrap();
+    let names = text
+        .replace("\"docs/contracts/missing.json\" \"docs/contracts/broken.json\" \"docs/contracts/empty.json\" \"../outside.json\"", "\"docs/contracts/wire.json\"")
+        .replace(":instead \"Message\")", ":in names :instead \"Message\")");
+    std::fs::write(&arch_path, names).unwrap();
+    std::fs::write(dir.path().join("docs/contracts/wire.json"), WIRE_CONTRACT).unwrap();
+    let (code, stdout, stderr) = run(dir.path(), &["--no-log"], None);
+    assert_eq!(code, 2, "{}{}", stdout, stderr);
+    assert!(stderr.contains("retired-words message の :contract-files は :in lines の時だけ効く"), "{}", stderr);
+    std::fs::write(&arch_path, text.replace(":contract-files [\"docs/contracts/missing.json\" \"docs/contracts/broken.json\" \"docs/contracts/empty.json\" \"../outside.json\"]", ":contract-files []")).unwrap();
+    let (code, _, stderr) = run(dir.path(), &["--no-log"], None);
+    assert_eq!(code, 2, "{}", stderr);
+    assert!(stderr.contains("retired-words message の :contract-files が空"), "{}", stderr);
+}
+
 /// DOEFF144・145 の宣言を architecture.hy に足した一時の repo(読む file の glob は agora-controllers の宣言と同じ形)。
 fn typed_repo(files: &[(&str, String)]) -> tempfile::TempDir {
     let dir = world_repo_with(files, "", "[\"DOEFF144\", \"DOEFF145\"]");

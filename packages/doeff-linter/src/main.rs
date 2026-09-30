@@ -377,7 +377,7 @@ fn prepare(args: &Args) -> Result<Setup, String> {
     };
     let architecture = match architecture_path {
         Some(path) => Some(
-            project::architecture::Architecture::load(&path).map_err(|problems| format!("architecture.hy の誤り:\n  {}", problems.join("\n  ")))?,
+            project::architecture::Architecture::load(&path, &root).map_err(|problems| format!("architecture.hy の誤り:\n  {}", problems.join("\n  ")))?,
         ),
         None => None,
     };

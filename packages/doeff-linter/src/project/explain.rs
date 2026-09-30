@@ -963,8 +963,11 @@ impl<'a> Narrator<'a> {
                 }
                 .to_string(),
             ),
-            Explain::RetiredWord { instead, .. } => Some(format!("{} に書き換える(規則そのものを述べる行なら :rule-lines の綴りを含めて書く)— 直せない既存の当たりは登録簿に載せる", instead)),
-            Explain::RetiredCall { instead, .. } => Some(format!("{} に置き換える — 直せない既存の当たりは登録簿に載せる", instead)),
+            Explain::RetiredWord { instead, .. } => Some(format!(
+                "{} に書き換える。契約の綴り(wire の欄名・契約の値)なら、群の :contract-files の契約の file に在るかを確かめる(在れば文字列と defwire の欄の定義は数えない)",
+                instead
+            )),
+            Explain::RetiredCall { instead, .. } => Some(format!("{} に置き換える", instead)),
             Explain::PlacedDependency { owner_rel, .. } => Some(format!("{} を層の置き場(<root>/<service>/<層>/)へ移すか、要る型を intent へ移して読む — 直せない既存の当たりは登録簿に載せる", owner_rel)),
             Explain::MixedConcerns { .. } => Some("形の検めは protocol の境目で defwire の型に parse し(形が合わなければ解く所で失敗)、この定義は型のある値を受けて判断だけをする".to_string()),
             Explain::ClassRoleDoubt { chosen, .. } if chosen == "external-world" => Some(WORLD_FIX.to_string()),

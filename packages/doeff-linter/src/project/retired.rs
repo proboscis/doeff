@@ -14,6 +14,12 @@
 //!       - shell・toml・ほかの file は引用符の外の `#` の註(行頭か空白の後の `#` から行末 — `$#`・`${#…}` は註でない)を数えない。
 //!       - どの種類でも、1 行目の shebang(`#!`)の行は数える(退役語 direct-shebang の対象)。
 //!     記号・欄名と、docstring でない文字列は数える — command の文字列(`"cd x && PYTHONPATH=. hy"`)や env の key は実行される綴りなので。
+//!     群に :contract-files が在れば、契約の綴り(契約の file のキーの名と enum / const の値)に在る :words の語は、次の 2 か所でだけ
+//!     数えない(agora-redesign #1893 — 契約と wire の欄名は契約の綴りのまま書く):
+//!       - 文字列で中身がその語ちょうどの物 — Hy の普通の文字列(`"mail"`)と、Python(`.py`・`.pyi`)の接頭辞の無い 1 行の文字列
+//!         (`"mail"`・`'mail'`)。
+//!       - Hy の defwire の本体の欄の定義の名(`(#^ str mail)`・`(setv #^ T mail v)` — 欄の読み方は doeff-indexer の hy_index::fields)。
+//!     変数・引数・defrecord / defclass の欄・loop の変数・属性の読み(`x.mail`)は今どおり数え、:patterns は塗らない中身に当てる。
 //!   * DOEFF150 `:in names` — 定義の名だけ(Hy は `def…` の形と `setv`・`val`・`var` の左辺・Python は def と class の名)。
 //!   * DOEFF150 `:in paths` — file の名だけ(最後の `.` より前・dir の名と中身は見ない)。退役した名の file を置き直さない(#1369)。
 //!   * DOEFF151 — Hy の file の `(呼び …)` の形の呼び(頭の記号が :calls のどれか)。註・文字列・`#_` で読み捨てた form は数えない。
@@ -25,6 +31,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
+use doeff_indexer::hy_index::fields::record_field_targets;
 use doeff_indexer::hy_index::reader::{Form, Node, Reader, StrKind};
 use doeff_indexer::hy_index::{matches_pattern, RawCatalog};
 use rayon::prelude::*;
@@ -192,11 +199,12 @@ fn find_word(text: &str, word: &str) -> Option<usize> {
     text.match_indices(word).map(|(at, _)| at).find(|&at| stands_alone(text, at, word))
 }
 
-/// 群を 1 つの行(か定義の名)に当てる。当たりごとに (相対の開始・終了・綴り・細目)。
-fn match_group(text: &str, group: &RetiredWords, patterns: &[Regex]) -> Vec<(usize, usize, String, String)> {
+/// 群を 1 つの行(か定義の名)に当てる。当たりごとに (相対の開始・終了・綴り・細目)。:words は words_text(契約の綴りの所を塗った
+/// 中身 — 塗らない群は text と同じ)に、:patterns は text に当てる。2 つは同じ長さで byte の位置が揃う。
+fn match_group(text: &str, words_text: &str, group: &RetiredWords, patterns: &[Regex]) -> Vec<(usize, usize, String, String)> {
     let mut out = Vec::new();
     for word in &group.words {
-        if let Some(at) = find_word(text, word) {
+        if let Some(at) = find_word(words_text, word) {
             out.push((at, at + word.len(), word.clone(), word.clone()));
         }
     }
@@ -439,17 +447,111 @@ fn counted_text(rel: &str, source: &str) -> Option<String> {
     Some(String::from_utf8(bytes).expect("文字の境目で塗った"))
 }
 
-/// 行ごとの当たり(:in lines)。註・docstring を塗った中身(counted_text)に当て、:rule-lines は元の行で見る。
+/// Hy の form の木から、契約の綴りの候補の範囲を集める — 普通の文字列(`"…"`)の中身と、defwire の本体の欄の定義の名。
+fn hy_contract_sites(source: &str, form: &Form, out: &mut Vec<(usize, usize)>) {
+    if let Some(fields) = form.paren_items().and_then(|items| defwire_fields(source, items)) {
+        out.extend(record_field_targets(source, &fields).into_iter().map(|target| (target.name.start, target.name.end)));
+    }
+    match &form.node {
+        Node::Str { kind: StrKind::Plain, body } => out.push((body.start, body.end)),
+        Node::Seq { items, .. } => items.iter().for_each(|item| hy_contract_sites(source, item, out)),
+        Node::Prefixed { inner: Some(inner), .. } | Node::Tagged { inner: Some(inner) } => hy_contract_sites(source, inner, out),
+        Node::Annotated { annotation, target } => [annotation, target].into_iter().flatten().for_each(|part| hy_contract_sites(source, part, out)),
+        Node::Str { .. } | Node::Prefixed { inner: None, .. } | Node::Tagged { inner: None } | Node::Symbol | Node::Keyword | Node::Number | Node::Discarded => {}
+    }
+}
+
+/// `(defwire 名 [基底]? "doc"? {meta}? 欄 …)` の欄の form の列(defwire でなければ None)— 頭の読み方は hy-index の record_def と同じ。
+fn defwire_fields<'f>(source: &str, items: &'f [Form]) -> Option<Vec<&'f Form>> {
+    let items: Vec<&Form> = items.iter().filter(|f| !matches!(f.node, Node::Discarded)).collect();
+    let (head, rest) = items.split_first()?;
+    if !matches!(head.node, Node::Symbol) || source.get(head.span.start..head.span.end) != Some("defwire") {
+        return None;
+    }
+    let mut rest = rest.get(1..)?;
+    if rest.first().is_some_and(|f| f.bracket_items().is_some()) {
+        rest = &rest[1..];
+    }
+    if rest.first().is_some_and(|f| matches!(f.node, Node::Str { .. })) {
+        rest = &rest[1..];
+    }
+    if rest.first().is_some_and(|f| f.is_brace()) {
+        rest = &rest[1..];
+    }
+    Some(rest.to_vec())
+}
+
+/// Python の、接頭辞の無い 1 行の文字列(`"…"`・`'…'`)の中身の範囲 — 註(`#` から行末)・三重引用符の文字列・接頭辞つきの文字列は除く。
+fn python_contract_sites(source: &str) -> Vec<(usize, usize)> {
+    let bytes = source.as_bytes();
+    let mut out = Vec::new();
+    let mut pos = 0;
+    while pos < bytes.len() {
+        let b = bytes[pos];
+        if b == b'#' {
+            pos = line_end(source, pos);
+        } else if b == b'"' || b == b'\'' || (b.is_ascii_alphabetic() && python_string_prefix(bytes, pos).is_some()) {
+            let quote_at = python_string_prefix(bytes, pos).unwrap_or(pos);
+            let quote = bytes[quote_at];
+            let triple = bytes.get(quote_at..quote_at + 3).is_some_and(|q| q.iter().all(|&c| c == quote));
+            let end = python_string_end(bytes, quote_at, quote, triple);
+            let closed = end >= quote_at + 2 && bytes[end - 1] == quote;
+            if quote_at == pos && !triple && closed {
+                out.push((quote_at + 1, end - 1));
+            }
+            pos = end;
+        } else if b.is_ascii_alphanumeric() || b == b'_' {
+            while pos < bytes.len() && (bytes[pos].is_ascii_alphanumeric() || bytes[pos] == b'_') {
+                pos += 1;
+            }
+        } else {
+            pos += 1;
+        }
+    }
+    out
+}
+
+/// 契約の綴りの語 words を数えない所を空白で塗った中身(counted と同じ長さ・同じ行)— Hy は普通の文字列で中身がその語ちょうどの物と
+/// defwire の本体の欄の定義の名、Python(`.py`・`.pyi`)は接頭辞の無い 1 行の文字列で中身がその語ちょうどの物。契約の綴りの語が無い
+/// 群とほかの種類の file は None(塗らない)。
+fn contract_blanked(rel: &str, source: &str, counted: &str, words: &BTreeSet<&str>) -> Option<String> {
+    if words.is_empty() {
+        return None;
+    }
+    let sites = if rel.ends_with(".hy") {
+        let mut sites = Vec::new();
+        let mut reader = Reader::new(source, 0, source.len());
+        for form in &reader.read_all() {
+            hy_contract_sites(source, form, &mut sites);
+        }
+        sites
+    } else if rel.ends_with(".py") || rel.ends_with(".pyi") {
+        python_contract_sites(source)
+    } else {
+        return None;
+    };
+    let mut bytes = counted.as_bytes().to_vec();
+    for (start, end) in sites.into_iter().filter(|&(start, end)| source.get(start..end).is_some_and(|text| words.contains(text))) {
+        // 範囲は語ちょうど(改行を含まない・文字の境目)なので、ASCII の空白で塗っても UTF-8 のまま。
+        bytes[start..end].iter_mut().for_each(|b| *b = b' ');
+    }
+    Some(String::from_utf8(bytes).expect("語の範囲ごと塗った"))
+}
+
+/// 行ごとの当たり(:in lines)。註・docstring を塗った中身(counted_text)に当て、:rule-lines は元の行で見る。群の :contract-files の
+/// 綴りに在る語は、さらに契約の綴りの所(文字列の中身・defwire の欄の定義の名)を塗った中身で探す(contract_blanked)。
 fn line_hits(rel: &str, source: &str, counted: Option<&str>, group: &RetiredWords, patterns: &[Regex]) -> Vec<WordHit> {
     let mut out = Vec::new();
     let Some(counted) = counted else {
         return out;
     };
+    let blanked = contract_blanked(rel, source, counted, &group.contracts.words_in(&group.words));
+    let words_text = blanked.as_deref().unwrap_or(counted);
     let mut offset = 0;
-    for (line, masked) in source.split_inclusive('\n').zip(counted.split_inclusive('\n')) {
+    for ((line, masked), words_line) in source.split_inclusive('\n').zip(counted.split_inclusive('\n')).zip(words_text.split_inclusive('\n')) {
         let body = line.trim_end_matches(['\n', '\r']);
         if !group.rule_lines.iter().any(|marker| body.contains(marker.as_str())) {
-            for (start, end, spelling, detail) in match_group(masked.trim_end_matches(['\n', '\r']), group, patterns) {
+            for (start, end, spelling, detail) in match_group(masked.trim_end_matches(['\n', '\r']), words_line.trim_end_matches(['\n', '\r']), group, patterns) {
                 out.push(WordHit {
                     rel: rel.to_string(),
                     start: offset + start,
@@ -521,7 +623,7 @@ fn name_hits(rel: &str, source: &str, group: &RetiredWords, patterns: &[Regex]) 
     let mut out = Vec::new();
     for (start, end) in definition_names(rel, source) {
         let name = &source[start..end];
-        for (s, e, spelling, detail) in match_group(name, group, patterns) {
+        for (s, e, spelling, detail) in match_group(name, name, group, patterns) {
             out.push(WordHit {
                 rel: rel.to_string(),
                 start: start + s,
@@ -542,7 +644,7 @@ fn name_hits(rel: &str, source: &str, group: &RetiredWords, patterns: &[Regex]) 
 fn path_hits(rel: &str, group: &RetiredWords, patterns: &[Regex]) -> Vec<WordHit> {
     let file_name = rel.rsplit('/').next().unwrap_or(rel);
     let stem = file_name.rsplit_once('.').map_or(file_name, |(stem, _)| stem);
-    match_group(stem, group, patterns)
+    match_group(stem, stem, group, patterns)
         .into_iter()
         .map(|(_, _, spelling, detail)| WordHit {
             rel: rel.to_string(),
@@ -693,9 +795,55 @@ mod tests {
             files: vec!["**/*".into()],
             except: Vec::new(),
             rule_lines: rule_lines.iter().map(|w| w.to_string()).collect(),
+            contracts: Default::default(),
             place,
             instead: "代わり".into(),
         }
+    }
+
+    /// 契約の綴り contract を持つ :in lines の群(契約の file の path は検の見本 — 綴りは読んだ後の形で渡す)。
+    fn with_contract(words_list: &[&str], contract: &[&str]) -> RetiredWords {
+        let mut group = words(words_list, &[], WordPlace::Lines, &[]);
+        group.contracts = super::super::architecture::ContractSpellings {
+            files: vec!["docs/contracts/wire.json".into()],
+            spellings: contract.iter().map(|s| s.to_string()).collect(),
+        };
+        group
+    }
+
+    /// agora-redesign #1893: 契約の綴りに在る語は、Hy の文字列で中身がその語ちょうどの物と defwire の本体の欄の定義の名だけを数えない。
+    /// 変数・引数・defrecord の欄・loop の変数・属性の読み・語を含む長い文字列は数える。契約に無い語は今どおり数える。
+    #[test]
+    fn contract_spellings_skip_exact_strings_and_defwire_fields_only() {
+        let group = with_contract(&["mail", "letter"], &["mail", "kind"]);
+        let quiet = "(defwire Carrier \"取った印\" {:names :camel} (#^ str job) (#^ str mail))\n\
+                     (defwire Seen {:unknown :ignore} (setv #^ (| str None) mail None))\n\
+                     (.append record chat id rows \"mail\")\n(setv row {\"kind\" \"mail\"})\n";
+        assert!(spelled("a.hy", quiet, &group).is_empty(), "{:?}", spelled("a.hy", quiet, &group));
+        let loud = "(setv mail 1)\n(defk send [mail] mail)\n(defrecord Row (#^ str mail))\n(lfor mail rows mail.id)\n\
+                    (setv s status.carrier.mail)\n(setv t \"mail の宛先\")\n(defwire W (#^ str letter))\n(setv u \"letter\")\n";
+        assert_eq!(spelled("a.hy", loud, &group), vec!["mail", "mail", "mail", "mail", "mail", "mail", "letter", "letter"]);
+        // 同じ行の契約の文字列を飛ばしても、内部の名は数える(最初の当たりが文字列でも、その後の名を探す)。
+        assert_eq!(spelled("a.hy", "(setv mail \"mail\")\n(get row \"mail\" mail)\n", &group), vec!["mail", "mail"]);
+        let hits = judge("a.hy", "(get row \"mail\" mail)\n", &[group.clone()], &[], &PartCalls::default()).0;
+        assert_eq!((hits[0].start, hits[0].end), (16, 20), "位置は文字列の後の名");
+        // 契約の綴りの無い群は、文字列も defwire の欄も今どおり数える。
+        let plain = words(&["mail"], &[], WordPlace::Lines, &[]);
+        assert_eq!(spelled("a.hy", "(defwire C (#^ str mail))\n(f \"mail\")\n", &plain), vec!["mail", "mail"]);
+    }
+
+    /// agora-redesign #1893: Python(.py・.pyi)の接頭辞の無い 1 行の文字列で中身が契約の綴りの語ちょうどの物は数えない。名・属性・欄・
+    /// 接頭辞つきの文字列・語を含む長い文字列は数える。md・json などほかの file は塗らない。
+    #[test]
+    fn contract_spellings_skip_exact_python_strings_only() {
+        let group = with_contract(&["mail"], &["mail"]);
+        let quiet = "MESSAGE_SOURCE_MAIL = \"mail\"\nINPUT_CARRIER_MAIL = 'mail'  # mail は註\nsend(kind=\"mail\")\n";
+        for rel in ["a.py", "a.pyi"] {
+            assert!(spelled(rel, quiet, &group).is_empty(), "{} {:?}", rel, spelled(rel, quiet, &group));
+        }
+        let loud = "mail = 1\nx = row.mail\nclass V:\n    mail: str\ny = f\"mail\"\nz = \"mail box\"\n";
+        assert_eq!(spelled("a.py", loud, &group), vec!["mail", "mail", "mail", "mail", "mail"]);
+        assert_eq!(spelled("a.json", "{\"kind\": \"mail\"}\n", &group), vec!["mail"], "json は塗らない");
     }
 
     #[test]

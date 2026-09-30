@@ -412,9 +412,52 @@ pub struct RetiredWords {
     pub except: Vec<String>,
     /// この綴りを含む行は数えない(規則そのものを述べる行 — :in lines の時だけ効く)。
     pub rule_lines: Vec<String>,
+    /// 契約の file から読んだ綴り(`:contract-files` — :in lines の時だけ効く・agora-redesign #1893)。書かなければ空で、今までどおり数える。
+    pub contracts: ContractSpellings,
     pub place: WordPlace,
     /// 代わりに使う語・直し方(知らせの文に入れる)。
     pub instead: String,
+}
+
+/// retired-words の群の `:contract-files`(repo の根からの path の JSON)と、そこから集めた契約の綴り(agora-redesign #1893)。
+/// 集める物 = どの深さのオブジェクトのキーの名(wire の欄名)と、キー `enum` の配列の文字列の要素・キー `const` の文字列の値(契約の値)。
+/// :words の語がこの綴りに在れば、その語は Hy・Python の文字列で中身がその語ちょうどの物と defwire の本体の欄の定義の名では数えない。
+/// 読むのは architecture.hy を読む時(`Architecture::load`)で、読めない・JSON でない・綴りが 1 つも無い file は宣言の誤りにする。
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+pub struct ContractSpellings {
+    /// 書いた順の契約の file(repo の根からの path)。
+    pub files: Vec<String>,
+    /// 集めた綴り(全部の file の和)。
+    pub spellings: BTreeSet<String>,
+}
+
+impl ContractSpellings {
+    /// 群の語のうち契約の綴りに在る物(文字列と defwire の欄の定義で数えない語)。
+    pub fn words_in<'w>(&self, words: &'w [String]) -> BTreeSet<&'w str> {
+        words.iter().filter(|w| self.spellings.contains(w.as_str())).map(String::as_str).collect()
+    }
+}
+
+/// JSON の値から契約の綴りを集める — どの深さのオブジェクトのキーの名と、キー `enum` の配列の文字列の要素・キー `const` の文字列の値
+/// (JSON Schema の決まった値)。ほかの文字列の値(註・例の中身・説明)は集めない。
+pub fn collect_contract_spellings(value: &serde_json::Value, out: &mut BTreeSet<String>) {
+    match value {
+        serde_json::Value::Object(map) => {
+            for (key, inner) in map {
+                out.insert(key.clone());
+                match (key.as_str(), inner) {
+                    ("enum", serde_json::Value::Array(items)) => out.extend(items.iter().filter_map(|i| i.as_str()).map(str::to_string)),
+                    ("const", serde_json::Value::String(text)) => {
+                        out.insert(text.clone());
+                    }
+                    _ => {}
+                }
+                collect_contract_spellings(inner, out);
+            }
+        }
+        serde_json::Value::Array(items) => items.iter().for_each(|item| collect_contract_spellings(item, out)),
+        serde_json::Value::Null | serde_json::Value::Bool(_) | serde_json::Value::Number(_) | serde_json::Value::String(_) => {}
+    }
 }
 
 /// 使わないと決めた呼びの群 1 つ(`:retired-calls` の `(retired-calls "名" :calls [..] :files [..] :except [..] :instead "…")` — DOEFF151)。
@@ -743,18 +786,24 @@ impl Architecture {
             .unwrap_or(&self.open_layers)
     }
 
-    /// file を読んで宣言にする(読めない・形が違う時は位置つきの理由の列)。
-    pub fn load(path: &Path) -> Result<Architecture, Vec<String>> {
+    /// file を読んで宣言にする(読めない・形が違う時は位置つきの理由の列)。root は repo の根(:contract-files の path の基準)。
+    pub fn load(path: &Path, root: &Path) -> Result<Architecture, Vec<String>> {
         let source = std::fs::read_to_string(path).map_err(|e| vec![format!("{} を読めない: {}", path.display(), e)])?;
-        Architecture::parse(&source, path)
+        Architecture::parse_at(&source, path, root)
     }
 
-    /// source を宣言にする。
+    /// source を宣言にする(architecture.hy の在る dir を repo の根と読む — 既定の置き場)。
     pub fn parse(source: &str, path: &Path) -> Result<Architecture, Vec<String>> {
+        let root = path.parent().filter(|p| !p.as_os_str().is_empty()).unwrap_or(Path::new("."));
+        Architecture::parse_at(source, path, root)
+    }
+
+    /// source を宣言にする(root は repo の根 — :contract-files の契約の file をここから読む)。
+    pub fn parse_at(source: &str, path: &Path, root: &Path) -> Result<Architecture, Vec<String>> {
         let mut reader = Reader::new(source, 0, source.len());
         let forms = reader.read_all();
         let lines = LineIndex::new(source);
-        let mut parser = Parser { src: source, lines: &lines, path, problems: Vec::new(), unknown: Vec::new() };
+        let mut parser = Parser { src: source, lines: &lines, path, root, problems: Vec::new(), unknown: Vec::new() };
         if !reader.issues.is_empty() {
             parser.problems.push(format!("{}: 括弧か文字列が閉じていない所がある", path.display()));
         }
@@ -912,6 +961,8 @@ struct Parser<'a> {
     src: &'a str,
     lines: &'a LineIndex<'a>,
     path: &'a Path,
+    /// repo の根(:contract-files の契約の file を読む基準)。
+    root: &'a Path,
     problems: Vec<String>,
     /// この binary の知らない鍵(byte の位置と、どの形の鍵か)。
     unknown: Vec<(usize, String)>,
@@ -1385,10 +1436,10 @@ impl<'a> Parser<'a> {
         Some(selection)
     }
 
-    /// `[(retired-words "名" :words [..] :patterns [r"…"] :files [..] :except [..] :rule-lines [..] :in lines|names|paths :instead "…") …]` を読む
-    /// (:files と :instead と、:words か :patterns のどちらかは要る)。
+    /// `[(retired-words "名" :words [..] :patterns [r"…"] :files [..] :except [..] :rule-lines [..] :contract-files [..] :in lines|names|paths :instead "…") …]`
+    /// を読む(:files と :instead と、:words か :patterns のどちらかは要る)。
     fn retired_words(&mut self, value: &Form) -> Vec<RetiredWords> {
-        let shape = "(retired-words \"名\" :words [..] :patterns [r\"…\"] :files [..] :except [..]? :rule-lines [..]? :in lines|names|paths? :instead \"…\")";
+        let shape = "(retired-words \"名\" :words [..] :patterns [r\"…\"] :files [..] :except [..]? :rule-lines [..]? :contract-files [..]? :in lines|names|paths? :instead \"…\")";
         let Some(entries) = self.bracket(value) else {
             self.problem(value, &format!(":retired-words は {} の列", shape));
             return Vec::new();
@@ -1408,6 +1459,7 @@ impl<'a> Parser<'a> {
                 files: Vec::new(),
                 except: Vec::new(),
                 rule_lines: Vec::new(),
+                contracts: ContractSpellings::default(),
                 place: WordPlace::Lines,
                 instead: String::new(),
             };
@@ -1430,6 +1482,7 @@ impl<'a> Parser<'a> {
                     ":files" => group.files = self.path_globs(field, ":files"),
                     ":except" => group.except = self.path_globs(field, ":except"),
                     ":rule-lines" => group.rule_lines = self.names(field, ":rule-lines"),
+                    ":contract-files" => group.contracts = self.contract_files(field, &group.name),
                     ":in" => match self.name(field).as_deref() {
                         Some("lines") => group.place = WordPlace::Lines,
                         Some("names") => group.place = WordPlace::Names,
@@ -1455,6 +1508,9 @@ impl<'a> Parser<'a> {
             if group.place != WordPlace::Lines && !group.rule_lines.is_empty() {
                 self.problem(entry, &format!("retired-words {} の :rule-lines は :in lines の時だけ効く", group.name));
             }
+            if group.place != WordPlace::Lines && !group.contracts.files.is_empty() {
+                self.problem(entry, &format!("retired-words {} の :contract-files は :in lines の時だけ効く", group.name));
+            }
             if out.iter().any(|g| g.name == group.name) {
                 self.problem(entry, &format!("retired-words {} が 2 度宣言されている", group.name));
                 continue;
@@ -1462,6 +1518,47 @@ impl<'a> Parser<'a> {
             out.push(group);
         }
         out
+    }
+
+    /// retired-words の群 group の `:contract-files [<repo の根からの path> …]` を読み、契約の file の JSON から綴りを集める
+    /// (collect_contract_spellings)。空の列・根の外の path・読めない file・JSON でない file・綴りが 1 つも無い file は、黙って空にせず
+    /// 位置つきの宣言の誤りにする(agora-redesign #1893)。
+    fn contract_files(&mut self, value: &Form, group: &str) -> ContractSpellings {
+        let mut contracts = ContractSpellings::default();
+        let Some(items) = self.bracket(value) else {
+            self.problem(value, &format!("retired-words {} の :contract-files は [\"<repo の根からの path>\" …] の列", group));
+            return contracts;
+        };
+        if items.is_empty() {
+            self.problem(value, &format!("retired-words {} の :contract-files が空(書かないか、契約の file を挙げる)", group));
+        }
+        for item in items {
+            let Some(rel) = self.name(item) else {
+                self.problem(item, &format!("retired-words {} の :contract-files の要素は path の文字列", group));
+                continue;
+            };
+            if rel.is_empty() || rel.starts_with('/') || rel.split('/').any(|p| p == "..") {
+                self.problem(item, &format!("retired-words {} の :contract-files の {} は repo の根からの path(/ で始めない・.. を含まない)", group, rel));
+                continue;
+            }
+            let path = self.root.join(&rel);
+            let parsed = std::fs::read_to_string(&path)
+                .map_err(|e| format!("を読めない: {}", e))
+                .and_then(|text| serde_json::from_str::<serde_json::Value>(&text).map_err(|e| format!("が JSON として読めない: {}", e)));
+            match parsed {
+                Ok(json) => {
+                    let mut spellings = BTreeSet::new();
+                    collect_contract_spellings(&json, &mut spellings);
+                    if spellings.is_empty() {
+                        self.problem(item, &format!("retired-words {} の :contract-files の {} に契約の綴り(キーの名・enum / const の値)が 1 つも無い", group, rel));
+                    }
+                    contracts.spellings.extend(spellings);
+                }
+                Err(reason) => self.problem(item, &format!("retired-words {} の :contract-files の {}({}){}", group, rel, path.display(), reason)),
+            }
+            contracts.files.push(rel);
+        }
+        contracts
     }
 
     /// `[(confined-spelling "名" :patterns [r"…"] :files [..] :except [..] :why "…") …]` を読む(:patterns・:files・:why は要る —
@@ -2874,5 +2971,23 @@ mod tests {
         let no_foundation = r#"(defarchitecture s :root "app" :layers [(layer core)] :world-handlers [(world-handler "app.x:y" :touches [file])])"#;
         let problems = Architecture::parse(no_foundation, Path::new("architecture.hy")).unwrap_err().join("\n");
         assert!(problems.contains(":world-handlers を書くには :foundation が要る"), "{}", problems);
+    }
+
+    /// agora-redesign #1893: 契約の綴りは、どの深さのオブジェクトのキーの名と、`enum` の文字列の要素・`const` の文字列の値だけ —
+    /// 註・例の値・ほかの配列の文字列(required・deprecated の path)の中身は集めない。
+    #[test]
+    fn contract_spellings_are_keys_and_enum_const_values() {
+        let json: serde_json::Value = serde_json::from_str(
+            r#"{"comment": "mail の説明", "streamKinds": ["letter"], "deprecated": ["a.b"],
+                "$defs": {"Carrier": {"properties": {"mail": {"type": "string"}}, "required": ["job"]},
+                          "Ref": {"properties": {"kind": {"enum": ["mail", 3, "chat"]}, "source": {"const": "ask"}}}},
+                "examples": [{"note": "letter"}]}"#,
+        )
+        .unwrap();
+        let mut spellings = BTreeSet::new();
+        collect_contract_spellings(&json, &mut spellings);
+        let expected = ["$defs", "Carrier", "Ref", "ask", "chat", "comment", "const", "deprecated", "enum", "examples", "kind", "mail", "note", "properties", "required", "source", "streamKinds", "type"];
+        assert_eq!(spellings.iter().map(String::as_str).collect::<Vec<_>>(), expected);
+        assert!(!spellings.contains("letter"), "enum / const でない文字列の値は集めない");
     }
 }
