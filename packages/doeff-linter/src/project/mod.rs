@@ -46,6 +46,7 @@ pub mod business_fakes;
 pub mod intent_coverage;
 pub mod assembly_shape;
 pub mod invariants;
+pub mod clause_coverage;
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -543,6 +544,7 @@ pub fn run_with(root: &Path, settings: &ProjectSettings, enabled: &BTreeSet<Proj
                         ProjectRule::TestOnlyFake,
                         ProjectRule::IntentAnswererNotTranslation,
                         ProjectRule::ServiceWithoutCounterexample,
+                        ProjectRule::ClauseWithoutCounterexample,
                         ProjectRule::IntentEffectUncovered,
                     ];
                     if let Some(decl) = architecture.business_fakes.as_ref().filter(|_| fake_rules.iter().any(|r| enabled.contains(r))) {
@@ -1018,6 +1020,7 @@ fn whole_hy_index(
         || enabled.contains(&ProjectRule::TestOnlyFake)
         || enabled.contains(&ProjectRule::IntentAnswererNotTranslation)
         || enabled.contains(&ProjectRule::ServiceWithoutCounterexample)
+        || enabled.contains(&ProjectRule::ClauseWithoutCounterexample)
         || enabled.contains(&ProjectRule::IntentEffectUncovered)
         || enabled.contains(&ProjectRule::AssemblyShapeBroken)
         || enabled.contains(&ProjectRule::AssemblyAnswerMisplaced))
@@ -2962,6 +2965,16 @@ fn judge_business_fakes(
                 .map(|d| Draft { path: root.join(&d.rel), ..d }),
         );
     }
+    if enabled.contains(&ProjectRule::ClauseWithoutCounterexample) {
+        let claims = match decl.counterexamples.as_deref() {
+            Some(dir) => clause_coverage::ClauseClaims::load(root, dir),
+            None => clause_coverage::ClauseClaims::default(),
+        };
+        let (found, claim_problems) = judge_clause_coverage(architecture, &graph, hy, &clauses, &produced, &counterexamples, &claims);
+        drafts.extend(found.into_iter().map(|d| Draft { path: root.join(&d.rel), ..d }));
+        problems.extend(claims.problems);
+        problems.extend(claim_problems);
+    }
     (drafts, problems)
 }
 
@@ -3129,6 +3142,81 @@ fn judge_counterexample_coverage(
             }
         })
         .collect()
+}
+
+/// DOEFF167: service ごと・条ごとの反例の網羅(agora-redesign #1713)。効く反例の節と母集団は DOEFF164 と同じ(反例の表に在り本番の入口から
+/// 届かない節・entry の層に定義を持つ service)。節が名乗る条は反例の表の行の `breaks:`(claims)から読み、節に届く deftest の 1 本でも
+/// service の entry の層に届けば、その条は有り。返りの 2 つ目 = 宣言に無い service か条を名乗る `breaks:` の理由(表の読めない行)。
+fn judge_clause_coverage(
+    architecture: &architecture::Architecture,
+    graph: &DefinitionGraph,
+    hy: &HashMap<String, HyFileIndex>,
+    clauses: &[business_fakes::Clause],
+    produced: &[bool],
+    counterexamples: &BTreeMap<String, String>,
+    claims: &clause_coverage::ClauseClaims,
+) -> (Vec<Draft>, Vec<String>) {
+    let root = settings::normalize_dir(&architecture.root);
+    let mut keys = BTreeSet::new();
+    let mut cases = Vec::new();
+    for (i, clause) in clauses.iter().enumerate() {
+        if clause.tap || produced[i] || !counterexamples.contains_key(&clause.key()) || !keys.insert(clause.key()) {
+            continue;
+        }
+        let breaks = claims.by_key.get(&clause.key()).cloned().unwrap_or_default();
+        if !breaks.is_empty() {
+            cases.push(clause_coverage::ClauseCase { breaks, tests: deftests_reaching(graph, hy, &[clause.node]) });
+        }
+    }
+    let mut services = Vec::new();
+    let mut declared_services = Vec::new();
+    for service in architecture.services.iter().filter(|s| s.layers.iter().any(|l| l == "entry")) {
+        let entry = format!("{}/{}/entry", root, service.dir);
+        let seeds: Vec<usize> = (0..graph.nodes.len()).filter(|n| under(graph.nodes[*n].0, &entry)).collect();
+        // entry の層を宣言しても定義が 0 本なら、回す組み立てが無い(DOEFF164 と同じく数えない)。
+        if seeds.is_empty() {
+            continue;
+        }
+        services.push(clause_coverage::ServiceClauses {
+            name: service.name.clone(),
+            clauses: service.clauses.clone(),
+            exempt: service.clause_exemptions.iter().map(|e| e.clause.clone()).collect(),
+            entry_tests: deftests_reaching(graph, hy, &seeds),
+        });
+        declared_services.push(service);
+    }
+    let declared: BTreeMap<String, BTreeSet<String>> = architecture
+        .services
+        .iter()
+        .map(|s| (s.name.clone(), s.clauses.iter().flatten().cloned().collect()))
+        .collect();
+    let problems = clause_coverage::unknown_claims(claims, &declared);
+    let drafts = clause_coverage::gaps(&cases, &services)
+        .into_iter()
+        .map(|(index, gap)| {
+            let service = declared_services[index];
+            let message = gap.describe(&service.name);
+            Draft {
+                rule: ProjectRule::ClauseWithoutCounterexample,
+                layer: None,
+                rel: "architecture.hy".to_string(),
+                path: PathBuf::from("architecture.hy"),
+                range: service.range,
+                detail: Some(match gap.detail() {
+                    Some(clause) => format!("{}::{}", service.name, clause),
+                    None => service.name.clone(),
+                }),
+                base: Severity::Error,
+                explain: Explain::ClauseWithoutCounterexample {
+                    service: service.name.clone(),
+                    clause: gap.detail().map(str::to_string),
+                    gap: message.clone(),
+                },
+                message,
+            }
+        })
+        .collect();
+    (drafts, problems)
 }
 
 /// 生の副作用の直接の証拠のうち、入れ子で重なる物はいちばん内側の定義に 1 度だけ(DOEFF106 の母集団)。

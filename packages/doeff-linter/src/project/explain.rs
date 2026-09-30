@@ -206,6 +206,8 @@ pub enum Explain {
     ServiceInvariantsMissing { service: String, gap: String },
     /// DOEFF164: service の反例の無さ(service・entry の dir・反例の表の節の数・その service の effect か土台の effect に答える節の数)。
     ServiceWithoutCounterexample { service: String, entry: String, counterexamples: usize, candidates: usize },
+    /// DOEFF167: 条ごとの反例の欠け(service・条 — 宣言の欠けは None・欠けの文)。
+    ClauseWithoutCounterexample { service: String, clause: Option<String>, gap: String },
     /// DOEFF142: defhandler の引数が client・可変の店を取る。
     HandlerArgumentHoldsState { handler: String, param: String, kind: &'static str, type_text: String },
     /// DOEFF143・157・158: 業務の効果の偽物・表の腐り・検だけの偽物・intent の効果の答え手。
@@ -587,6 +589,13 @@ impl<'a> Narrator<'a> {
                     "反例の表の {} 節のうち、この service の effect か土台の effect に答える節は {} — そのどれに届く deftest も {} に届かない。わざと壊した handler で不変条件が赤になることを確かめていない service は、検が緑でも壊れた答えを見分けられるかが分からない。",
                     counterexamples, candidates, entry
                 ),
+            ),
+            Explain::ClauseWithoutCounterexample { service, clause, gap } => (
+                match clause {
+                    Some(clause) => format!("service {} の条 {}", service, clause),
+                    None => format!("service {} の :clauses", service),
+                },
+                format!("{}。service に反例が 1 本あるだけでは、ほかの条を破る壊れた答えを見分けられるかが分からない — 条ごとに、その条を破る壊した handler の反例(反例の表の行の `breaks:`)か、反例を持たない理由(:clause-exemptions)が要る(agora-redesign #1713・ADR R2)。", gap),
             ),
             Explain::HandlerArgumentHoldsState { handler, param, kind, type_text } => (
                 format!("handler {} の引数 {}({}{})", handler, param, kind, if type_text.is_empty() { String::new() } else { format!(" {}", type_text) }),

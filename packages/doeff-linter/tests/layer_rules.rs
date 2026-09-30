@@ -2572,6 +2572,88 @@ fn services_without_a_counterexample_are_red() {
     assert!(keys(&report, "DOEFF143").iter().all(|k| !k.contains("counterexample-unused")), "{}", report);
 }
 
+/// agora-redesign #1713: DOEFF164 は service に反例が 1 本あれば緑。DOEFF167 は defservice の :clauses の条ごとに、反例の表の行の
+/// `breaks: <service>::<条>` で名乗る壊した handler の反例(節に届く deftest が service の entry にも届く)か、:clause-exemptions の理由を求める。
+/// billing: B1 は反例が有る・B2 は名乗る行が無い(赤)・B3 は理由つきで外した。stock: 土台の効果の反例が S1 を名乗る(有り — 陽性対照)。
+/// ledger: :clauses を書かない(service の名で赤)。notes は entry の層を持たない(数えない)。B9 を名乗る行は設定の誤り。
+#[test]
+fn clauses_without_a_counterexample_are_red() {
+    let files = [
+        ("app/foundation/host.hy", tags("shared", "foundation") + "(defk with-host [body] body)\n"),
+        ("app/foundation/clock_effects.hy", "(import doeff [EffectBase])\n(defclass Now [EffectBase])\n".to_string()),
+        ("app/billing/intent/effects.hy", "(import doeff [EffectBase])\n(defclass Charge [EffectBase])\n".to_string()),
+        ("app/billing/entry/main.hy", tags("billing", "entry") + "(import app.billing.intent.effects [Charge])\n(defk run [] (Charge))\n"),
+        (
+            "app/billing/tests/test_broken.hy",
+            "(import app.billing.intent.effects [Charge])\n(import app.billing.entry.main [run])\n\
+             (defhandler broken-charge (Charge [] (resume 0)))\n(deftest test-broken-charge (with-handlers [broken-charge] (run)))\n"
+                .to_string(),
+        ),
+        ("app/ledger/entry/main.hy", tags("ledger", "entry") + "(defk start [] 2)\n"),
+        ("app/sim/tests/test_ledger.hy", "(import app.ledger.entry.main [start])\n(deftest test-ledger-on-sim (start))\n".to_string()),
+        ("app/stock/entry/main.hy", tags("stock", "entry") + "(import app.foundation.clock_effects [Now])\n(defk tick [] (Now))\n"),
+        ("app/sim/broken_clock.hy", "(import app.foundation.clock_effects [Now])\n(defhandler stopped-clock (Now [] (resume 0)))\n".to_string()),
+        (
+            "app/sim/tests/test_stock.hy",
+            "(import app.sim.broken_clock [stopped-clock])\n(import app.stock.entry.main [tick])\n\
+             (deftest test-stopped-clock (with-handlers [stopped-clock] (tick)))\n"
+                .to_string(),
+        ),
+        (
+            "tables/COUNTEREXAMPLES/billing.txt",
+            "app/billing/tests/test_broken.hy::broken-charge::app.billing.intent.effects.Charge\n請求を 0 で返す壊した handler\nbreaks: billing::B1\n"
+                .to_string(),
+        ),
+        (
+            "tables/COUNTEREXAMPLES/stock.txt",
+            "app/sim/broken_clock.hy::stopped-clock::app.foundation.clock_effects.Now\n止まった時計\nbreaks: stock::S1\n".to_string(),
+        ),
+    ];
+    let dir = world_repo_with(&files, "", "[\"DOEFF143\", \"DOEFF157\", \"DOEFF167\"]");
+    let arch_path = dir.path().join("architecture.hy");
+    let fakes = ":foundation foundation\n  :verification-environment \"sim\"\n  :business-fakes {:simulation [\"app/sim/**\"] :assembly [\"app/*/entry/**\"] \
+                 :tests [\"**/tests/**\"] :production [\"app/**\"] :business-modules [\"app.billing\"] :counterexamples \"tables/COUNTEREXAMPLES\"}";
+    let base = std::fs::read_to_string(&arch_path).unwrap().replace(":foundation foundation", fakes).replace(
+        "(defservice billing \"請求\" {:layers [core entry]})",
+        "(defservice billing \"請求\" {:layers [core entry] :clauses [\"B1\" \"B2\" \"B3\"] :clause-exemptions {\"B3\" \"壊した handler では破れない(構造の保証)\"}})",
+    ) + "(defservice ledger \"台帳\" {:layers [core entry]})\n(defservice stock \"在庫\" {:layers [core entry] :clauses [\"S1\"]})\n\
+         (defservice notes \"覚え書き\" {:layers [core]})\n";
+    assert!(base.contains(":clauses [\"B1\""), "billing の宣言を差し替えられない:\n{}", base);
+    std::fs::write(&arch_path, &base).unwrap();
+    let (_, report) = editor(dir.path());
+    assert_eq!(keys(&report, "DOEFF167"), vec!["architecture.hy::DOEFF167::billing::B2", "architecture.hy::DOEFF167::ledger"], "{}", report);
+    let gap = violation(&report, "architecture.hy::DOEFF167::billing::B2");
+    assert!(gap["message"].as_str().unwrap().contains("service billing の条 B2 に壊した handler の反例が無い"), "{}", gap["message"]);
+    assert_eq!(gap["severity"], "error", "{}", gap);
+    let undeclared = violation(&report, "architecture.hy::DOEFF167::ledger");
+    assert!(undeclared["message"].as_str().unwrap().contains("(:clauses)を宣言していない"), "{}", undeclared["message"]);
+    assert_eq!(report["errors"], serde_json::json!([]), "{}", report["errors"]);
+
+    // 反例: 宣言に無い条を名乗る行は設定の誤り(黙って数えない)。
+    std::fs::write(
+        dir.path().join("tables/COUNTEREXAMPLES/billing.txt"),
+        "app/billing/tests/test_broken.hy::broken-charge::app.billing.intent.effects.Charge\n請求を 0 で返す壊した handler\nbreaks: billing::B1 billing::B9\n",
+    )
+    .unwrap();
+    let (_, report) = editor(dir.path());
+    assert!(report["errors"].to_string().contains("条 B9 は service billing の :clauses に無い"), "{}", report["errors"]);
+
+    // 陽性対照: B2 を名乗り(同じ反例が B1 と B2 を破る)、ledger が条を理由つきで全部外せば、DOEFF167 は 0。
+    std::fs::write(
+        dir.path().join("tables/COUNTEREXAMPLES/billing.txt"),
+        "app/billing/tests/test_broken.hy::broken-charge::app.billing.intent.effects.Charge\n請求を 0 で返す壊した handler\nbreaks: billing::B1 billing::B2\n",
+    )
+    .unwrap();
+    let covered = base.replace(
+        "(defservice ledger \"台帳\" {:layers [core entry]})",
+        "(defservice ledger \"台帳\" {:layers [core entry] :clauses [\"L1\"] :clause-exemptions {\"L1\" \"理由\"}})",
+    );
+    std::fs::write(&arch_path, covered).unwrap();
+    let (_, report) = editor(dir.path());
+    assert!(keys(&report, "DOEFF167").is_empty(), "{:?}", keys(&report, "DOEFF167"));
+    assert_eq!(report["errors"], serde_json::json!([]), "{}", report["errors"]);
+}
+
 /// agora-redesign #1562(K4): intent の効果の網羅の欠け(DOEFF165・K3 の表)は critical で失敗にする。今ある欠けは登録簿
 /// (1 鍵 1 file の dir)に載せ、載った欠けは warning に下がる。Charge と Refund はどちらも検から出さず答え手も無い(欠け)—
 /// Refund だけが登録簿に載っている。

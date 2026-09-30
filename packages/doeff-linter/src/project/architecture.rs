@@ -72,9 +72,21 @@ pub struct ArchService {
     /// 業務の不変条件の関数(`:invariants` — `module:関数` の列・書かない = None)。DOEFF163 が、code を持つ service に宣言・実在・
     /// :role judgment を求める(agora-redesign #1559・#1155 の定義 1)。
     pub invariants: Option<Vec<DefinitionRef>>,
+    /// 不変条件の条の名(`:clauses` — :invariants の関数が返す破りの条の名の列・書かない = None)。DOEFF167 が条ごとに、その条を名乗る
+    /// 壊した handler の反例か外した理由を求める(agora-redesign #1713)。条の名は関数の返す値で静的に読めないので、ここに宣言する。
+    pub clauses: Option<Vec<String>>,
+    /// 反例を持たない条と理由(`:clause-exemptions {"条" "理由" …}` — 壊した handler では破れない構造の保証など)。条は :clauses の内。
+    pub clause_exemptions: Vec<ClauseExemption>,
     /// architecture.hy の中の defservice の位置(DOEFF117 の知らせの位置)。
     #[serde(skip)]
     pub range: doeff_indexer::hy_index::Range,
+}
+
+/// 反例を持たない条 1 つと、持たない理由(`defservice` の `:clause-exemptions` の 1 組)。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct ClauseExemption {
+    pub clause: String,
+    pub reason: String,
 }
 
 /// service の公開の契約の形(`defservice` の `:public-contract`)。
@@ -1169,6 +1181,47 @@ impl<'a> Parser<'a> {
         out
     }
 
+    /// defservice の `:clauses`(条の名の列 — 空の名・2 度書いた名は理由を積む)。
+    fn clause_names(&mut self, value: &Form) -> Vec<String> {
+        let Some(items) = self.bracket(value) else {
+            self.problem(value, ":clauses は [\"条の名\" …] の列");
+            return Vec::new();
+        };
+        let mut out: Vec<String> = Vec::new();
+        for item in items {
+            match self.name(item).filter(|n| !n.is_empty() && !n.contains("::")) {
+                Some(name) if out.contains(&name) => self.problem(item, &format!(":clauses の {} が 2 度書かれている", name)),
+                Some(name) => out.push(name),
+                None => self.problem(item, ":clauses の要素は空でない条の名(記号か文字列・`::` を含まない)"),
+            }
+        }
+        out
+    }
+
+    /// defservice の `:clause-exemptions {"条" "理由" …}`(理由は空でない文字列)。
+    fn clause_exemptions(&mut self, value: &Form) -> Vec<ClauseExemption> {
+        let Some(entries) = self.brace(value) else {
+            self.problem(value, ":clause-exemptions は {\"条\" \"理由\" …} の辞書");
+            return Vec::new();
+        };
+        let mut out: Vec<ClauseExemption> = Vec::new();
+        for pair in entries.chunks(2) {
+            let [key, reason] = pair else {
+                self.problem(pair[0], ":clause-exemptions の条に理由が無い");
+                continue;
+            };
+            match (self.name(key), self.string(reason).filter(|r| !r.trim().is_empty())) {
+                (Some(clause), _) if out.iter().any(|e| e.clause == clause) => {
+                    self.problem(key, &format!(":clause-exemptions の {} が 2 度書かれている", clause))
+                }
+                (Some(clause), Some(reason)) => out.push(ClauseExemption { clause, reason }),
+                (None, _) => self.problem(key, ":clause-exemptions の鍵は条の名(記号か文字列)"),
+                (Some(clause), None) => self.problem(reason, &format!(":clause-exemptions の {} の理由は空でない文字列", clause)),
+            }
+        }
+        out
+    }
+
     /// `"module:名"` の綴り 1 つを読む(読めなければ理由を積む)。
     fn definition_ref(&mut self, form: &Form, what: &str) -> Option<DefinitionRef> {
         let Some(text) = self.name(form) else {
@@ -2232,8 +2285,11 @@ impl<'a> Parser<'a> {
             layers: Vec::new(),
             public_contract: PublicContract::InProcess,
             invariants: None,
+            clauses: None,
+            clause_exemptions: Vec::new(),
             range,
         };
+        let mut exemptions_form: Option<&Form> = None;
         for part in items.iter().skip(2) {
             if let Some(text) = self.string(part) {
                 service.description = Some(text);
@@ -2247,6 +2303,11 @@ impl<'a> Parser<'a> {
                             ":layers" => service.layers = self.names(value, ":layers"),
                             ":dir" => service.dir = self.required_string(value, ":dir").unwrap_or_default(),
                             ":invariants" => service.invariants = Some(self.definition_refs(value, ":invariants")),
+                            ":clauses" => service.clauses = Some(self.clause_names(value)),
+                            ":clause-exemptions" => {
+                                service.clause_exemptions = self.clause_exemptions(value);
+                                exemptions_form = Some(value);
+                            }
                             ":public-contract" => match self.symbol(value) {
                                 Some("http") => service.public_contract = PublicContract::Http,
                                 _ => self.problem(value, ":public-contract は http だけ(書かない = in-process)"),
@@ -2256,6 +2317,14 @@ impl<'a> Parser<'a> {
                     }
                 }
                 None => self.problem(part, "defservice の要素は説明の文字列か {:depends-on … :layers …} の辞書"),
+            }
+        }
+        if let Some(form) = exemptions_form {
+            let declared: &[String] = service.clauses.as_deref().unwrap_or(&[]);
+            let strays: Vec<String> =
+                service.clause_exemptions.iter().filter(|e| !declared.contains(&e.clause)).map(|e| e.clause.clone()).collect();
+            for clause in strays {
+                self.problem(form, &format!(":clause-exemptions の {} は :clauses に無い条", clause));
             }
         }
         Some(service)
@@ -2443,6 +2512,31 @@ mod tests {
         let bad = GOOD.replace("(defservice custody", "(defservice custody {:public-contract grpc})\n(defservice custody-old");
         let problems = Architecture::parse(&bad, Path::new("architecture.hy")).unwrap_err().join("\n");
         assert!(problems.contains(":public-contract は http だけ"), "語彙の外を通した:\n{}", problems);
+    }
+
+    #[test]
+    fn clauses_and_their_exemptions_are_read() {
+        // agora-redesign #1713: :clauses は条の名の列・:clause-exemptions は {"条" "理由"} の辞書で、外す条は :clauses の内。
+        let declared = GOOD.replace(
+            "{:depends-on [custody] :layers [core intent]}",
+            "{:depends-on [custody] :layers [core intent] :clauses [\"C1\" C2] :clause-exemptions {\"C2\" \"構造の保証\"}}",
+        );
+        let arch = Architecture::parse(&declared, Path::new("architecture.hy")).unwrap();
+        let billing = arch.services.iter().find(|s| s.name == "billing").unwrap();
+        assert_eq!(billing.clauses.as_deref(), Some(&["C1".to_string(), "C2".to_string()][..]));
+        assert_eq!(billing.clause_exemptions, vec![ClauseExemption { clause: "C2".into(), reason: "構造の保証".into() }]);
+        assert!(arch.services.iter().filter(|s| s.name != "billing").all(|s| s.clauses.is_none() && s.clause_exemptions.is_empty()));
+        assert!(arch.notices.is_empty(), "知らない鍵として知らせた: {:?}", arch.notices);
+
+        let bad = GOOD.replace(
+            "{:depends-on [custody] :layers [core intent]}",
+            "{:depends-on [custody] :layers [core intent] :clauses [\"C1\" \"C1\" \"a::b\"] :clause-exemptions {\"C9\" \"理由\" \"C1\" \"\"}}",
+        );
+        let problems = Architecture::parse(&bad, Path::new("architecture.hy")).unwrap_err().join("\n");
+        assert!(problems.contains(":clauses の C1 が 2 度書かれている"), "重なりを通した:\n{}", problems);
+        assert!(problems.contains("`::` を含まない"), "区切りを含む名を通した:\n{}", problems);
+        assert!(problems.contains(":clause-exemptions の C1 の理由は空でない文字列"), "空の理由を通した:\n{}", problems);
+        assert!(problems.contains(":clause-exemptions の C9 は :clauses に無い条"), "宣言に無い条を外した:\n{}", problems);
     }
 
     #[test]

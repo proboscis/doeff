@@ -177,6 +177,10 @@ pub enum ProjectRule {
     IntentAnswererNotTranslation,
     /// DOEFF164: entry の層を持つ service に、壊した handler の反例(反例の表の節に届き、その service の entry にも届く deftest)が 1 本も無い(agora-redesign #1560)。宣言は :business-fakes の :counterexamples と :verification-environment。
     ServiceWithoutCounterexample,
+    /// DOEFF167: service の条(defservice の :clauses — :invariants の関数が返す条の名)に、その条を破ると反例の表で名乗る(`breaks:` の行)
+    /// 壊した handler の反例が無く、外した理由(:clause-exemptions)も無い — 条ごとの網羅の欠け(agora-redesign #1713・ADR R2 の「条ごとに」)。
+    /// code を持つ service が :clauses を宣言していなければ service の名で 1 つ。宣言は defservice と :business-fakes の :counterexamples。
+    ClauseWithoutCounterexample,
     /// DOEFF165: intent の層の効果に、手元の検から出す定義・模擬の答え手・本番の答え手のどれかが無い — 網羅の表の欠け
     /// (agora-redesign #1561 K3・まず報告だけ = 重さ info。失敗にするのは #1562 K4)。層の名は :assembly-shape。
     IntentEffectUncovered,
@@ -255,6 +259,7 @@ impl ProjectRule {
         ProjectRule::TestOnlyFake,
         ProjectRule::IntentAnswererNotTranslation,
         ProjectRule::ServiceWithoutCounterexample,
+        ProjectRule::ClauseWithoutCounterexample,
         ProjectRule::IntentEffectUncovered,
         ProjectRule::RegistryEntryStale,
         ProjectRule::SemanticBusinessDecision,
@@ -325,6 +330,7 @@ impl ProjectRule {
             ProjectRule::TestOnlyFake => "DOEFF157",
             ProjectRule::IntentAnswererNotTranslation => "DOEFF158",
             ProjectRule::ServiceWithoutCounterexample => "DOEFF164",
+            ProjectRule::ClauseWithoutCounterexample => "DOEFF167",
             ProjectRule::IntentEffectUncovered => "DOEFF165",
             ProjectRule::RegistryEntryStale => "DOEFF166",
             ProjectRule::SemanticBusinessDecision => "DOEFF201",
@@ -383,6 +389,8 @@ impl ProjectRule {
             | ProjectRule::TestOnlyFake
             | ProjectRule::IntentAnswererNotTranslation
             | ProjectRule::ServiceWithoutCounterexample
+            // 条ごとの反例の欠け(#1713 — 登録簿に載った既知の欠けは warning、新しい欠けは critical)。
+            | ProjectRule::ClauseWithoutCounterexample
             // intent の効果の網羅の欠け(#1561 K3 の表を #1562 K4 で失敗に — 登録簿に載った既知の欠けは warning、新しい欠けは critical)。
             | ProjectRule::IntentEffectUncovered
             // 登録簿の当たらない古い行(縮める向きの登録簿を、消し忘れで緩めたままにしない — #1706)。
@@ -501,7 +509,8 @@ impl ProjectRule {
             | ProjectRule::AssemblyAnswerMisplaced
             | ProjectRule::TestOnlyFake
             | ProjectRule::IntentAnswererNotTranslation
-            | ProjectRule::ServiceWithoutCounterexample => false,
+            | ProjectRule::ServiceWithoutCounterexample
+            | ProjectRule::ClauseWithoutCounterexample => false,
             | ProjectRule::IntentEffectUncovered
             | ProjectRule::RegistryEntryStale => false,
             ProjectRule::EnvironmentName
@@ -585,6 +594,7 @@ impl ProjectRule {
             ProjectRule::TestOnlyFake => "検だけの偽物",
             ProjectRule::IntentAnswererNotTranslation => "intent の効果の答え手が翻訳の 1 つでない",
             ProjectRule::ServiceWithoutCounterexample => "壊した handler の反例が無い service",
+            ProjectRule::ClauseWithoutCounterexample => "反例も外した理由も無い不変条件の条",
             ProjectRule::IntentEffectUncovered => "intent の効果の網羅の欠け",
             ProjectRule::RegistryEntryStale => "登録簿の当たらない古い行",
             ProjectRule::SemanticBusinessDecision => "翻訳の層で業務の判断(Jev)",
@@ -645,6 +655,7 @@ impl ProjectRule {
             | ProjectRule::TestOnlyFake
             | ProjectRule::IntentAnswererNotTranslation
             | ProjectRule::ServiceWithoutCounterexample
+            | ProjectRule::ClauseWithoutCounterexample
             | ProjectRule::IntentEffectUncovered
             | ProjectRule::RegistryEntryStale
             | ProjectRule::DefkCalledBare
@@ -724,6 +735,7 @@ impl ProjectRule {
             ProjectRule::TestOnlyFake => "Test Only Fake",
             ProjectRule::IntentAnswererNotTranslation => "Intent Answerer Not Translation",
             ProjectRule::ServiceWithoutCounterexample => "Service Without Counterexample",
+            ProjectRule::ClauseWithoutCounterexample => "Clause Without Counterexample",
             ProjectRule::IntentEffectUncovered => "Intent Effect Uncovered",
             ProjectRule::RegistryEntryStale => "Registry Entry Stale",
             ProjectRule::SemanticBusinessDecision => "Business Decision In Translation (Jev)",
@@ -792,6 +804,7 @@ impl ProjectRule {
             ProjectRule::TestOnlyFake => "検だけの偽物を作らない — 業務の handler は本番の 1 つだけで、検は土台(記録の効果・時計・外の相手)の handler の差し替えで組む。わざと壊した反例の handler は反例の表(:counterexamples)に理由つきで載せる",
             ProjectRule::IntentAnswererNotTranslation => "intent の効果に答えるのは翻訳の層の handler 1 つだけ(本番と模擬で同じ)— 環境ごとの別の答え手や土台の handler で答えず、模擬は土台を差し替える(ADR R9)",
             ProjectRule::ServiceWithoutCounterexample => "業務の service ごとに、わざと壊した handler の反例を 1 本以上持つ — 反例の表(:counterexamples)の節に届く deftest のうち、その service の entry の層の定義に(DOEFF136 と同じ図を逆向きに)届く物が 1 本も無く、節の効果の定義元がその service か土台でなければ、反例の無い service として赤にする",
+            ProjectRule::ClauseWithoutCounterexample => "業務の不変条件は条ごとに、わざと壊した handler の反例を 1 本以上持つか、持たない理由を宣言する — defservice の :clauses の条ごとに、反例の表(:counterexamples)の行のうち `breaks: <service>::<条>` でその条を名乗り、その節に届く deftest が service の entry の層の定義にも届く物が 1 本も無く、:clause-exemptions の理由も無ければ、網羅の欠けとして赤にする(service に 1 本あれば緑の DOEFF164 を条へ細かくした物・agora-redesign #1713)",
             ProjectRule::RegistryEntryStale => "既知の破れの登録簿は縮める向きだけ — 載った鍵は今も当たる所見を指す。全体の実行で、鍵の区切り(law の名か規則の ID)が指す規則を判じたのに、どの所見にも当たらない鍵は消し忘れの古い行(agora-redesign #1706)",
             ProjectRule::IntentEffectUncovered => "intent の層の効果は、手元の検から届く定義が出し、模擬の根と本番の入口の両方から届く答え手を持つ — 3 つのどれかが無い効果は、テストしたと言えない業務の操作(agora-redesign #1561・#1155)",
             ProjectRule::TestKindMismatch => "テストの種類は 2 つだけ — 手元(届く定義に外の世界に触れる handler が無い)/ 縁(名簿の定義・:wraps の handler・生の I/O に届く)。種類は人が決めず届く先から導き、縁のテストだけが architecture.hy の :edge-mark の印を持つ(operator 2026-09-29 \"everything is 'pure' until we apply handler that has real IO\")",
@@ -861,6 +874,7 @@ impl ProjectRule {
             ProjectRule::TestOnlyFake => "検の組み立てを本番の handler + 土台の差し替えに書き直して偽物を消す — わざと壊した反例なら反例の表に載せる",
             ProjectRule::IntentAnswererNotTranslation => "intent の効果の答えを翻訳の層の handler 1 つへまとめ、土台や環境ごとの handler からは外す",
             ProjectRule::ServiceWithoutCounterexample => "その service の effect(か土台の effect)に答える handler をわざと壊した反例の deftest を模擬の環境に書き、handler を反例の表に理由つきで載せる — 今すぐ書けない service は登録簿に理由と担い手つきで載せる",
+            ProjectRule::ClauseWithoutCounterexample => "その条を破る壊した handler の反例の deftest を模擬の環境に書き、反例の表の行に `breaks: <service>::<条>` を足す — 壊した handler では破れない条(構造の保証)は defservice の :clause-exemptions に理由を書く・今すぐ書けない条は登録簿に理由と担い手つきで載せる",
             ProjectRule::RegistryEntryStale => "当たらなくなった登録簿の行(1 鍵 1 file の dir ならその file・1 行 1 鍵の file ならその行)を消す",
             ProjectRule::IntentEffectUncovered => "欠けた列を埋める — 検から出さないなら模擬の環境の deftest でその業務の操作を通す・答え手が無いなら翻訳の層の handler を組み立てに載せる(使わない効果なら宣言を消す)",
             ProjectRule::ServiceUntestedOnSim => "模擬の環境の tests に、その service の entry の組み立てを handler の差し替えだけで回す deftest を足す",
@@ -937,6 +951,7 @@ mod tests {
         ("DOEFF156", RuleFamily::Definition),
         ("DOEFF157", RuleFamily::Definition),
         ("DOEFF164", RuleFamily::Definition),
+        ("DOEFF167", RuleFamily::Definition),
         ("DOEFF158", RuleFamily::Definition),
         ("DOEFF165", RuleFamily::Definition),
         ("DOEFF166", RuleFamily::Definition),
