@@ -1,13 +1,13 @@
 {
   "dynamic_imports": [
     {
-      "path": "packages/doeff-cluster/src/doeff_cluster/effect_codec.hy",
       "function": "resolve_type",
+      "path": "packages/doeff-cluster/src/doeff_cluster/effect_codec.hy",
       "reason": "記録の中の型の名(module:qualname)を、読み直しの時に class へ解くのが役目の口 — 記録した effect と答えの型は名でしか運べない(#1692)。"
     },
     {
-      "path": "packages/doeff-cluster/src/doeff_cluster/service_model.hy",
       "function": "resolve_value",
+      "path": "packages/doeff-cluster/src/doeff_cluster/service_model.hy",
       "reason": "CLI の入口(declare)が引数の関数の参照(module:attr)を関数へ解くのが役目の口 — 系の関数と土台の関数は名で渡される(#1692)。"
     }
   ],
