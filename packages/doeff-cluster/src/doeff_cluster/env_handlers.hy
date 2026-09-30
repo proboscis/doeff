@@ -435,16 +435,31 @@
   None)
 
 
+(defk asked-text [key]
+  {:pre [(: key str)] :post [(: % str)]}
+  "文字列の設定(runtime-env.state・code-prepare・uv・progress・notes)を読むため。Ask の答えは object なので、ここで str と確かめる
+   (違う型が来たら、使う所ではなく読んだ所で落ちる)。"
+  (<- value str (Ask key))
+  value)
+
+
+(defk asked-repo-keys []
+  {:pre [] :post [(: % dict)]}
+  "許可表(runtime-env.repo-keys = clone してよい URL → deploy key の file)を読むため。Ask の答えは object なので、ここで dict と確かめる。"
+  (<- table dict (Ask "runtime-env.repo-keys"))
+  table)
+
+
 ;; --- handler ------------------------------------------------------------------------------
 
 (defhandler env-translation
   ;; 設定は Ask(runtime-env.*)で読む。state dir・許可表・道具の path はセッションで 1 回読む。
-  (session val state-dir (! (Ask "runtime-env.state")))
-  (session val repo-keys (! (Ask "runtime-env.repo-keys")))
-  (session val code-prepare (! (Ask "runtime-env.code-prepare")))
-  (session val uv (! (Ask "runtime-env.uv")))
-  (session val progress (! (Ask "runtime-env.progress")))
-  (session val notes (! (Ask "runtime-env.notes")))
+  (session val state-dir (! (asked-text "runtime-env.state")))
+  (session val repo-keys (! (asked-repo-keys)))
+  (session val code-prepare (! (asked-text "runtime-env.code-prepare")))
+  (session val uv (! (asked-text "runtime-env.uv")))
+  (session val progress (! (asked-text "runtime-env.progress")))
+  (session val notes (! (asked-text "runtime-env.notes")))
 
   (StageStarted [name]
     ;; 進みの印: worker の EnvStore は印の file の時刻で先読みの停滞を見分ける(空 = 印を書かない)。
