@@ -76,7 +76,7 @@
 (deftest test-worker-adopts-the-fence-announced-by-the-coordinator
   ;; 自己停止の時間の定義点は coordinator の ClusterTiming。worker は heartbeat の返事の timing に合わせる。
   (defclass Reply [BaseHTTPRequestHandler]
-    (defn #^ None log-message [self #^ object #* args] None)
+    (defn #^ None log-message [self #^ str format #^ object #* args] None)
     (defn #^ None do-POST [self]
       (.read self.rfile (int (get self.headers "Content-Length")))
       (setv data (.encode (json.dumps {"jobs" [] "tasks" [] "timing" {"fence_ms" 20000 "reassign_after_ms" 45000}})))
