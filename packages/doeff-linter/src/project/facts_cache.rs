@@ -12,6 +12,8 @@
 //!
 //! 置き場は `$DOEFF_LINTER_CACHE_DIR`・無ければ `$XDG_CACHE_HOME/doeff-linter`・無ければ `~/.cache/doeff-linter` の下の
 //! 根の path の hash の dir に、種類ごとの dir(`<種類>.<形>.d/`)を置き、file の path で決まる SHARDS 個の塊(`00`〜)に分けて置く。
+//! 根の dir には根の絶対 path(`root.path`)を記録し、1 時間ごとに置き場を走査して、記録した根が無くなった dir を消す
+//! (`tend_roots` — agora-redesign #1903。記録の無い dir は消さない)。
 //! 書くのは変わった塊だけ(再計算した file か、消えた file を含む塊)— 1 file を変えた直後の実行が、repo 全体の事実(Hy の索引で
 //! 65MB)を丸ごと書き直していた(zeus で約 0.35 秒・agora-redesign #1523)。読むのは全部の塊を並べて読む。前の形の 1 file
 //! (`<種類>.<形>`)は、新しい形で初めて書く時に消す(読まない — 塊が無ければ作り直すだけで答えは変わらない)。
@@ -127,7 +129,71 @@ fn cache_file(root: &Path, kind: &str, format: Format) -> Option<PathBuf> {
         .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".cache").join("doeff-linter")))?;
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
     root.hash(&mut hasher);
-    Some(base.join(format!("{:016x}", hasher.finish())).join(format!("{kind}.{}", format.extension())))
+    let root_dir = base.join(format!("{:016x}", hasher.finish()));
+    crate::timing::timed("facts-cache.roots", || tend_roots(&base, &root_dir, root));
+    Some(root_dir.join(format!("{kind}.{}", format.extension())))
+}
+
+/// 根の dir の中の、その dir を作った根の path の記録(agora-redesign #1903)。
+const ROOT_RECORD: &str = "root.path";
+/// 置き場の、前に片づけの走査をした時刻(UNIX 秒)の記録。
+const SWEEP_RECORD: &str = ".swept";
+/// 片づけの走査の間隔(秒)— linter は file を書くたびに hook から走るので、毎回は走査しない。
+const SWEEP_INTERVAL_SECONDS: u64 = 3600;
+
+/// 根の dir は根の path の hash で決まるので、作業木や品質検査の一時の写しのように消えた根の dir は、誰も読まないまま残り続けた
+/// (zeus で 4136 dir・21.6G — agora-redesign #1903)。書く側の 1 点で、根の dir に根の path を記録し、間隔を空けて置き場を走査して、
+/// 記録した根がもう無い dir を消す。記録の無い dir(この仕組みより前に作られた dir)は消さない — 消してよいかは別に決める(#1472)。
+/// 時間だけを理由には消さない。消しても答えは変わらない(読めない塊は作り直す — 頭の註)。1 つの実行で 1 度だけ行う。
+fn tend_roots(base: &Path, root_dir: &Path, root: &Path) {
+    static TENDED: std::sync::OnceLock<()> = std::sync::OnceLock::new();
+    TENDED.get_or_init(|| {
+        record_root(root_dir, root);
+        // 時計が 1970 年より前を指す機体では間隔を測れないので走査しない
+        if let Ok(now) = std::time::SystemTime::now().duration_since(UNIX_EPOCH) {
+            sweep_vanished_roots(base, now.as_secs());
+        }
+    });
+}
+
+/// 根の dir に根の絶対 path を記録する(同じ記録が既に在れば書かない)。
+fn record_root(root_dir: &Path, root: &Path) {
+    let Ok(absolute) = std::fs::canonicalize(root) else { return };
+    let Some(text) = absolute.to_str() else { return };
+    let record = root_dir.join(ROOT_RECORD);
+    if std::fs::read_to_string(&record).is_ok_and(|known| known == text) {
+        return;
+    }
+    if std::fs::create_dir_all(root_dir).is_err() {
+        return;
+    }
+    let tmp = root_dir.join(format!(".{ROOT_RECORD}.{}.tmp", std::process::id()));
+    if std::fs::write(&tmp, text).is_ok() && std::fs::rename(&tmp, &record).is_err() {
+        let _ = std::fs::remove_file(&tmp);
+    }
+}
+
+/// 前の走査から間隔が過ぎていれば、置き場の根の dir のうち、記録した根の path が無い(NotFound)dir を消す。記録の無い dir・記録を
+/// 読めない dir・根の有無を確かめられない dir は残す。時刻の記録を先に書き換えるので、並走する実行は同じ間隔の中で重ねて走査しない。
+fn sweep_vanished_roots(base: &Path, now: u64) {
+    let stamp = base.join(SWEEP_RECORD);
+    let last = std::fs::read_to_string(&stamp).ok().and_then(|text| text.trim().parse::<u64>().ok());
+    if last.is_some_and(|last| now.saturating_sub(last) < SWEEP_INTERVAL_SECONDS) {
+        return;
+    }
+    if std::fs::create_dir_all(base).is_err() || std::fs::write(&stamp, now.to_string()).is_err() {
+        return;
+    }
+    let Ok(entries) = std::fs::read_dir(base) else { return };
+    for entry in entries.flatten() {
+        let dir = entry.path();
+        let Ok(recorded) = std::fs::read_to_string(dir.join(ROOT_RECORD)) else { continue };
+        let vanished = matches!(std::fs::symlink_metadata(&recorded), Err(e) if e.kind() == std::io::ErrorKind::NotFound);
+        if vanished {
+            // 消せなければ次の走査でもう一度試す(答えには関わらない)
+            let _ = std::fs::remove_dir_all(&dir);
+        }
+    }
 }
 
 fn load<T: DeserializeOwned + Send>(file: &Path, identity: &str, format: Format) -> HashMap<String, Entry<T>> {
