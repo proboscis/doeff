@@ -17,6 +17,7 @@
                                          runtime-env->json env-key current-platform])
 (import doeff_cluster.runtime_env [LocalCheckout ProjectOfCheckout runtime-env-of-checkouts checkout-reads])
 (import doeff_cluster.env_prepare [ENV-MARKER ROOTS-PTH])
+(import doeff_cluster.service_model [resolve])
 (import doeff_cluster.handlers [EnvStore ProcessHost task-spec write-program-file])
 (import doeff_cluster.worker_model [CodeState CodeView StartJob ReapJob Outcome WorldView WorkerPolicy PrepareEnv WarmEnv
                                     code-key])
@@ -191,12 +192,14 @@
    :post [(: % (| TaskSucceeded TaskFailed))]}
   "準備済みの root で task を 1 本走らせる(worker の task-spec → ProcessHost の子 process → 結果の file)。答え = TaskSucceeded / TaskFailed。
    詰めた Program は worker が置き場から取った cache と同じ形の file(ProcessHost の programs の dir)に、送り手の版 versions と一緒に置く。"
-  (import appjobs)
+  ;; appjobs は rig が env の root に文字列から書き出す利用者の app(型検査の時には無い module)なので、declare と同じ口 resolve で
+  ;; `module:attr` の名から関数を引く。
+  (val report (resolve "appjobs:report"))
   (<- declared dict (runtime-env->json env))
   (val tasks (/ rig.state "tasks"))
   (.mkdir tasks :parents True :exist-ok True)
   (val using (or host rig.host))
-  (val blob (encode-program (appjobs.report)))
+  (val blob (encode-program (report)))
   (val sha (program-sha blob))
   (write-program-file using.program-dir sha blob (or versions (current-versions)))
   (val spec (task-spec {"id" task-id "revision" "" "versions" (or versions (current-versions)) "program" sha

@@ -36,7 +36,8 @@
 (import os)
 (import sys)
 (import concurrent.futures [ProcessPoolExecutor])
-(import importlib._bootstrap_external [_code_to_hash_pyc])  ; PEP 552 の頭を組む公式の実装
+(import marshal)
+(import types)
 (import collections.abc [Callable])
 (import pathlib [Path PurePosixPath])
 (import doeff [EffectBase run])
@@ -264,9 +265,24 @@
   (try
     (val loader (importlib.machinery.SourceFileLoader name path))
     (val code (.source-to-code loader data path))
-    (bytes (_code-to-hash-pyc code (importlib.util.source-hash data) True))
+    (<- pyc bytes (checked-hash-pyc code data))
+    pyc
     (except [error Exception]
       #(rel (.format "{}: {}" (. (type error) __name__) (cut (str error) 0 200))))))
+
+
+;; PEP 552 の hash 方式の .pyc の頭の flags: bit 0 = hash 方式・bit 1 = import の時に source の hash を検める(checked)。
+(val CHECKED-HASH-FLAGS 0b11)
+
+
+(defk checked-hash-pyc [code data]
+  {:pre [(: code types.CodeType) (: data bytes)] :post [(: % bytes)] :tags {:context "doeff-cluster" :role "judgment"}}
+  "焼いた code を、import が source の hash で検める .pyc の中身にするため(PEP 552 — 頭 = magic・flags・source の hash 8 byte、
+   続けて marshal した code)。標準の私的な実装 importlib._bootstrap_external._code_to_hash_pyc と同じ並びを公開の API で組む。"
+  (+ importlib.util.MAGIC-NUMBER
+     (.to-bytes CHECKED-HASH-FLAGS 4 "little")
+     (importlib.util.source-hash data)
+     (marshal.dumps code)))
 
 
 (defk marker-text [content]

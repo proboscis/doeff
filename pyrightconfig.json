@@ -10,6 +10,7 @@
         "packages/doeff-hy/src",
         "packages/doeff-indexer/python",
         "packages/doeff-vm",
-        "packages/doeff-agents/src"
+        "packages/doeff-agents/src",
+        "packages/doeff-effect-analyzer/python"
     ]
 }

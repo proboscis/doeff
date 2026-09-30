@@ -17,7 +17,7 @@
 (import doeff [run])
 (import dataclasses [replace])
 (import doeff_cluster.runtime_env_model [RepoCheckout PythonProject RuntimeEnv EnvVar runtime-env->json env-key current-platform])
-(import doeff_cluster.service_model [CallShape System job system-of system-declaration])
+(import doeff_cluster.service_model [CallShape System job resolve system-of system-declaration])
 (import doeff_cluster.process_versions [current-versions])
 (import doeff_cluster.cluster_policy [job-from-json job-to-json spec-json])
 (import doeff_cluster.handlers [declared-job-spec ProbeStore probe-targets program-file])
@@ -187,9 +187,11 @@
   {:pre [(: rig Rig) (: env RuntimeEnv) (: out Path) (: probes ProbeStore)] :post [(: % list)]}
   "service 1 本を宣言から env の root で起こして終わるまで待つ(宣言 → coordinator → heartbeat の返事 → worker の JobSpec → 準備 →
    入口の検め → 子)。答え = service が out に書いた行。"
-  (import appservice)
-  (val declared (job "reporter" (appservice.report-service (str out))
-                     :call (CallShape :function appservice.report-service :args [(str out)] :kwargs {})
+  ;; appservice はこの検が env の root に文字列から書き出す利用者の app(型検査の時には無い module)なので、declare と同じ口 resolve で
+  ;; `module:attr` の名から関数を引く。
+  (val report-service (resolve "appservice:report_service"))
+  (val declared (job "reporter" (report-service (str out))
+                     :call (CallShape :function report-service :args [(str out)] :kwargs {})
                      :needs #{"net"}))
   (val declaration (system-declaration (system-of "lab" #(declared)) "rev" :versions (current-versions) :runtime-env env))
   (val row (get declaration.rows 0))
