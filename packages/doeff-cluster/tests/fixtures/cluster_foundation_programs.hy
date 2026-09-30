@@ -1,5 +1,6 @@
 ;;; 本番の形の土台(cluster-handlers を並べる)の見本 — クラスタの約束の effect を出す service が、この土台で閉じていることを確かめる。
 (require doeff-hy.macros [defk <- val])
+(import collections.abc [Callable])
 (import doeff [DoExpr with-handlers])
 (import doeff_core_effects.effects [Ask])
 (import doeff_core_effects.handlers [await-handler state])
@@ -31,7 +32,7 @@
 
 
 (defk beacon-job [foundation]
-  {:pre [(: foundation (| type DoExpr))] :post [(: % None)] :tags {:context "doeff-cluster-test" :role "entry"}}
+  {:pre [(: foundation Callable)] :post [(: % None)] :tags {:context "doeff-cluster-test" :role "entry"}}
   "土台で本体を包む job。"
   (<- (foundation (beacon-body)))
   None)

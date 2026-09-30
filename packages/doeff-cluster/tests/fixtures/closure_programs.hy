@@ -3,6 +3,7 @@
 ;;; 本体 = 業務の effect(Ping)・時計(Delay)・設定(Ask)・子の task(Spawn)を出す Program。job の本体が翻訳の handler を並べて Ping を
 ;;; 外の世界の effect(Raw)に訳し、土台(本体を受けて包む defk)が Raw・時計・設定に答え、scheduler が Spawn に答える。
 (require doeff-hy.macros [defk defhandler <- val])
+(import collections.abc [Callable])
 (import doeff [EffectBase DoExpr with-handlers])
 (import doeff.program [handler :as program-handler])
 (import doeff_core_effects.effects [Ask Try])
@@ -60,14 +61,14 @@
 
 
 (defk tried-job [foundation]
-  {:pre [(: foundation (| type DoExpr))] :post [(: % "Ok | Err")] :tags {:context "doeff-cluster-test" :role "entry"}}
+  {:pre [(: foundation Callable)] :post [(: % "Ok | Err")] :tags {:context "doeff-cluster-test" :role "entry"}}
   "翻訳の handler の下で、Try に運ばせた本体を土台で包む job。"
   (<- r (foundation (with-handlers [translate] (tried))))
   r)
 
 
 (defk untranslated-tried-job [foundation]
-  {:pre [(: foundation (| type DoExpr))] :post [(: % "Ok | Err")] :tags {:context "doeff-cluster-test" :role "entry"}}
+  {:pre [(: foundation Callable)] :post [(: % "Ok | Err")] :tags {:context "doeff-cluster-test" :role "entry"}}
   "Try に運ばせた本体の翻訳の handler を並べ忘れた job(本体の業務の effect は Try の中にしか無い)。"
   (<- r (foundation (tried)))
   r)
@@ -81,14 +82,14 @@
 
 
 (defk job [foundation]
-  {:pre [(: foundation (| type DoExpr))] :post [(: % int)] :tags {:context "doeff-cluster-test" :role "entry"}}
+  {:pre [(: foundation Callable)] :post [(: % int)] :tags {:context "doeff-cluster-test" :role "entry"}}
   "土台で翻訳つきの本体を包む job。"
   (<- r (foundation (translated-body)))
   r)
 
 
 (defk untranslated-job [foundation]
-  {:pre [(: foundation (| type DoExpr))] :post [(: % int)] :tags {:context "doeff-cluster-test" :role "entry"}}
+  {:pre [(: foundation Callable)] :post [(: % int)] :tags {:context "doeff-cluster-test" :role "entry"}}
   "翻訳の handler を並べ忘れた job。"
   (<- r (foundation (business)))
   r)
