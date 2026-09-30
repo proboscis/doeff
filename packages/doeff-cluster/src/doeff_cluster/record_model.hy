@@ -15,8 +15,9 @@
 ;;;
 ;;; 並行: 出来事の番号は問いと答えの両方に振る(scheduler が task を切り替える順 = 答えが返った順も再生で同じにするため)。
 ;;; task の名は親の名 + 「.」+ 親の中で何番目に Spawn したか(scheduler の番号に依らないので記録と再生で同じ)。根は "root"。
+(import collections.abc [Callable])
 (import dataclasses [dataclass field])
-(import doeff_cluster.effect_codec [READ LIVE DECISION OUTPUT LOOSE READABLE-FORMATS canonical apply-delta delta-of resolve-refs])
+(import doeff_cluster.effect_codec [READ LIVE DECISION OUTPUT LOOSE READABLE-FORMATS JsonValue canonical apply-delta delta-of resolve-refs])
 
 (setv ROOT "root")
 
@@ -42,8 +43,8 @@
   (setv #^ object ans-e None)
   (setv #^ object ans-at None)
   (setv #^ bool ok True)
-  (setv #^ object value None)
-  (setv #^ object error None))
+  (setv #^ JsonValue value None)
+  (setv #^ (| dict None) error None))
 
 
 (defclass [(dataclass)] Recording []
@@ -87,7 +88,7 @@
   out)
 
 
-(defn #^ Recording read-recording [#^ list lines [until-ms None] [mode-of-type None]]
+(defn #^ Recording read-recording [#^ list lines #^ (| int None) [until-ms None] #^ (| (get Callable #([str dict] str)) None) [mode-of-type None]]
   "記録の行(dict の列・順不同でよい)→ Recording。until-ms = この時刻より後の出来事を捨てる(範囲の終わり)。
    mode-of-type = 型の名 → 登録の mode(再生の側の effect_codec から渡す。無ければ行の mode 欄)。"
   (setv header None broken None events [] entries {} queues {} ended {} arg-bases {} val-bases {} muts [] blobs {} memo {})
@@ -102,7 +103,7 @@
     (raise (ValueError "記録に run の行が無い")))
   (when (not-in (.get header "format") READABLE-FORMATS)
     (raise (ValueError (.format "記録の形の版が違う: {}(読めるのは {})" (.get header "format") READABLE-FORMATS))))
-  (defn #^ object refs [#^ object v] (if blobs (resolve-refs v blobs memo) v))
+  (defn #^ JsonValue refs [#^ JsonValue v] (if blobs (resolve-refs v blobs memo) v))
   (setv seen {})
   (for [l ordered]
     (setv e (get l "e") kind (get l "k"))
@@ -143,7 +144,7 @@
 
 ;; --- 突き合わせ -------------------------------------------------------------------------------
 
-(defn match-step [#^ Recording rec #^ list queue #^ int head #^ str type #^ dict args #^ str mode subject #^ bool task-ended]
+(defn #^ (get tuple #(str int list)) match-step [#^ Recording rec #^ list queue #^ int head #^ str type #^ dict args #^ str mode #^ (| str None) subject #^ bool task-ended]
   "純粋: task の問いの列(queue・head = 次に見る位置)と、いま業務コードが出した問い(型・引数・mode・対の鍵)から、
    何をするかを決める。答え = #(判定 位置 飛ばした問いの番号の列)。判定:
      \"strict\"   記録の問いと同じ(read / live)
@@ -176,7 +177,7 @@
 
 ;; --- 結果 -------------------------------------------------------------------------------------
 
-(defn #^ dict diff-row [#^ str kind entry #^ str type subject #^ str task replayed-args [at None]]
+(defn #^ dict diff-row [#^ str kind #^ (| Entry None) entry #^ str type #^ (| str None) subject #^ str task #^ (| dict None) replayed-args #^ (| int None) [at None]]
   "判断の違い 1 件。kind = changed / missing / extra。recorded = 記録の引数・replayed = 再生の引数・delta = 記録 → 再生の差分。"
   (setv recorded (if (is entry None) None entry.args))
   {"kind" kind "type" type "subject" subject "task" task
@@ -184,10 +185,10 @@
    "recorded" recorded "replayed" replayed-args
    "delta" (if (and (is-not recorded None) (is-not replayed-args None)) (delta-of recorded replayed-args) None)})
 
-(defn #^ dict summarize [#^ Recording rec #^ dict counts #^ list decisions #^ list outputs divergence #^ str end #^ int consumed
-                         [from-ms None] [to-ms None]]
+(defn #^ dict summarize [#^ Recording rec #^ dict counts #^ list decisions #^ list outputs #^ (| dict None) divergence #^ str end #^ int consumed
+                         #^ (| int None) [from-ms None] #^ (| int None) [to-ms None]]
   "再生の結果を 1 つの dict にまとめる。from-ms / to-ms = 報告の範囲(判断の違いを記録の時刻で絞る。再生そのものは run の始まりから)。"
-  (defn in-range [row]
+  (defn #^ bool in-range [#^ dict row]
     (setv at (.get row "at"))
     (or (is at None)
         (and (or (is from-ms None) (>= at from-ms)) (or (is to-ms None) (<= at to-ms)))))

@@ -2,6 +2,7 @@
 (import argparse)
 (import signal)
 (import sys)
+(import types [FrameType])
 (import doeff [run])
 (import doeff_core_effects.handlers [await-handler])
 (import doeff_core_effects.os_file [os-file-handler])
@@ -12,7 +13,7 @@
 (import doeff_cluster.record_store_handlers [record-files RecordInbox])
 
 
-(defn main []
+(defn #^ None main []
   (setv parser (argparse.ArgumentParser :description "effect の記録の置き場"))
   (.add-argument parser "--root" :required True)
   (.add-argument parser "--port" :type int :default 8080)
@@ -20,7 +21,7 @@
   (.add-argument parser "--idle-seconds" :type float :default 900.0)
   (setv args (.parse-args parser))
   (setv stop (StopState))
-  (defn on-signal [signum frame] (setv stop.requested True))
+  (defn #^ None on-signal [#^ int signum #^ (| FrameType None) frame] (setv stop.requested True))
   (signal.signal signal.SIGTERM on-signal)
   (signal.signal signal.SIGINT on-signal)
   (setv inbox (RecordInbox args.port))

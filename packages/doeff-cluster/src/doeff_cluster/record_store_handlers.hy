@@ -266,11 +266,11 @@
 
 (defclass RecordInbox [RequestInbox]
   "coordinator の RequestInbox と同じ箱。違いは本文の上限(超えたら読まずに 413)だけ。"
-  (defn start [self]
+  (defn #^ None start [self]
     (setv inbox self)
     (defclass Handler [BaseHTTPRequestHandler]
       (setv protocol-version "HTTP/1.1" timeout 120)
-      (defn log-message [self #* args] None)
+      (defn #^ None log-message [self #^ str format #^ (| str int) #* args] None)
       (defn _handle [self method]
         (setv split (urlsplit self.path)
               length (int (or (.get self.headers "Content-Length") 0))
@@ -289,7 +289,7 @@
         (if (.wait slot.done 60.0)
             (.send self slot.status slot.body)
             (.send self 503 {"error" "置き場の Program が返事をしない"})))
-      (defn send [self status body]
+      (defn #^ None send [self #^ int status #^ (| dict PlainText) body]
         (setv #(data content-type)
               (if (isinstance body PlainText)
                   #((.encode body.text "utf-8") body.content-type)
@@ -298,9 +298,10 @@
         (.send-header self "Content-Type" content-type)
         (.send-header self "Content-Length" (str (len data)))
         (.end-headers self)
-        (.write self.wfile data))
-      (defn do-GET [self] (._handle self "GET"))
-      (defn do-POST [self] (._handle self "POST")))
+        (.write self.wfile data)
+        None)
+      (defn #^ None do-GET [self] (._handle self "GET"))
+      (defn #^ None do-POST [self] (._handle self "POST")))
     (setv self.server (ThreadingHTTPServer #("0.0.0.0" self.port) Handler))
     (setv self.server.daemon-threads True)
     (.start (threading.Thread :target self.server.serve-forever :daemon True))))

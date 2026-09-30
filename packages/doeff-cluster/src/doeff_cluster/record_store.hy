@@ -56,13 +56,16 @@
 
 (setv NAME-PATTERN (re.compile r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$"))
 (setv MAINTENANCE-MS 300000)
+;; 要求の本文と、その中の欄の値(JSON を読んだ物 — 形はまだ検めていない)。
+(val JsonBody (| dict list str int float bool None))
 
-(defn #^ (get TypeGuard str) safe-name? [#^ object name]
+(defn #^ (get TypeGuard str) safe-name? [#^ JsonBody name]
   "path の 1 段に使ってよい名(/ や .. を含まない)。"
   (and (isinstance name str) (is-not (.match NAME-PATTERN name) None) (not-in ".." name)))
 
-(defn #^ tuple append-plan [body]
-  "POST /append の本文 → #(None エラー文) か #(AppendRecordLines None)。"
+(defn #^ (| (get tuple #(None str)) (get tuple #(AppendRecordLines None))) append-plan [#^ Request request]
+  "POST /append の要求の本文 → #(None エラー文) か #(AppendRecordLines None)。"
+  (setv body request.body)
   (when (not (isinstance body dict)) (return #(None "本文は JSON の object")))
   (setv service (.get body "service") run (.get body "run") chunk (.get body "chunk") lines (.get body "lines"))
   (cond
@@ -73,7 +76,7 @@
       #(None "lines は改行を含まない文字列の list")
     True #((AppendRecordLines service run chunk lines) None)))
 
-(defn optional-int [query key]
+(defn #^ (| int None) optional-int [#^ dict query #^ str key]
   (setv v (.get query key))
   (if (is v None) None (int v)))
 
@@ -84,7 +87,7 @@
   (setv parts (lfor p (.split (.strip request.path "/") "/") :if p p))
   (cond
     (and (= request.method "POST") (= parts ["append"]))
-      (do (setv #(effect error) (append-plan request.body))
+      (do (setv #(effect error) (append-plan request))
           (if (is effect None)
               #(400 {"error" error})
               (do (<- n int (AppendRecordLines effect.service effect.run effect.chunk effect.lines))
