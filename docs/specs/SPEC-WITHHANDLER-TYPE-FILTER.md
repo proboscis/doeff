@@ -32,6 +32,17 @@ after dispatch". The implementation follows that rule:
 
 Tests: `tests/test_handler_effect_type_filter.py`.
 
+Hy `defhandler` / `handle` (2026-10-01・agora-redesign #1931): the macro annotates the
+generated `(fn [effect k] ...)` with the union of its clauses' effect types, so every
+defhandler is filtered by its own clauses — before, the generated function had no
+annotation and every defhandler saw every effect. The clauses already answered only those
+types (anything else fell to `(Pass effect k)`), so answers and order are unchanged; only the
+calls into the handler body go away. On Python 3.14+ the annotation is the type expression
+itself (evaluated lazily — PEP 649); before 3.14 it is written as text and evaluated at install
+in the module's globals (unresolvable → unfiltered with a warning, never an import error).
+A clause on `EffectBase` makes the union mean "everything" (no filter). Tests:
+`packages/doeff-hy/tests/test_defhandler_effect_type_filter.py`.
+
 ## Summary
 
 Add type filtering to `WithHandler` dispatch, derived automatically from the handler function's `effect` parameter type annotation. The Rust VM skips calling a handler for effects that don't match the annotated types. This eliminates Python round-trips for non-matching effects while preserving full isinstance semantics including subclass relationships.

@@ -594,7 +594,25 @@
   (.append cond-forms 'True)
   (.append cond-forms '(yield (Pass effect k)))
 
-  `(_doeff-do (fn [effect k] (cond ~@cond-forms))))
+  `(_doeff-do (fn [~@(_effect-parameter (lfor clause clauses (get clause 0))) k] (cond ~@cond-forms))))
+
+
+(defn _effect-parameter [etypes]
+  "The handler's effect parameter, annotated with the clauses' effect types — the VM reads the annotation
+   once at install (doeff_vm._effect_types・SPEC-WITHHANDLER-TYPE-FILTER) and skips this handler for any
+   other effect without calling into Python, the same as the handler passing it on first thing
+   (agora-redesign #1931 — the handler list walk was 28〜39% of an invariant test's CPU). The clauses
+   already answer only their own types (every other effect falls to (Pass effect k)), so the
+   annotation changes nothing but the cost. On Python 3.14+ the annotation is evaluated lazily (PEP 649),
+   so an effect type defined later or in an enclosing function resolves. Before 3.14 an annotation is
+   evaluated when the function is made, so it is written as text and evaluated at install in the module's
+   globals — a name it cannot resolve there leaves the handler unfiltered (today's behaviour) with a warning,
+   never an import error. No clauses → no annotation."
+  (import sys)
+  (cond
+    (not etypes) ['effect]
+    (>= sys.version-info #(3 14)) [`(annotate effect ~(if (= (len etypes) 1) (get etypes 0) `(| ~@etypes)))]
+    True [`(annotate effect ~(.join " | " (lfor t etypes (.join "." (map hy.mangle (.split (str t) "."))))))]))
 
 
 ;; ---------------------------------------------------------------------------
