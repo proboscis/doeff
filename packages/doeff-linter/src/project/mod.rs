@@ -2870,7 +2870,8 @@ fn judge_business_fakes(
                         range: node.map(|n| definition(n).range).unwrap_or_else(zero_range),
                         message: format!("intent の効果 {} の網羅の欠け: {} — {}", row.facts.effect, row.gap_words(), row.columns()),
                         detail: Some(row.detail()),
-                        base: Severity::Info,
+                        // 欠けは失敗(#1562 K4)。今ある欠けは repo の登録簿に載せ、載った欠けは finish が warning に下げる。
+                        base: Severity::Error,
                         explain: Explain::IntentEffectCoverage {
                             effect: row.facts.effect.clone(),
                             service: row.facts.service.clone().unwrap_or_else(|| "-".to_string()),
