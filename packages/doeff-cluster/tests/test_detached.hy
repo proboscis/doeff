@@ -963,21 +963,21 @@
 
 (deftest test-the-three-effects-have-no-env-or-requires-field
   ;; 入口 12(改訂 1 の J): task の effect は Program の値 1 つと needs だけを持つ。旧い欄 :env(handler の組の import path)と
-  ;; :requires(label の照合)は構成子に無いので TypeError(送る前の作る時点で断る)。
+  ;; :requires(label の照合)は構成子に無い — 欄の一覧に無いことを直に確かめる(frozen の dataclass は欄の外の名の引数を作る時点で
+  ;; TypeError で断る。無い欄を名指して呼ぶ書き方は型検査が呼び出しの誤りとして断るので、欄の一覧を読む)。
+  ;; WarmRuntimeEnv は温める実行の環境そのものを欄 env(RuntimeEnv)に持つ — 旧い :env(import path の文字列)とは別の欄なので、
+  ;; env は型が RuntimeEnv であることを確かめ、requires だけ無いことを確かめる。
+  (import dataclasses [fields])
   (import doeff_cluster.remote_model [RemoteJob])
   (import doeff_cluster.warm_model [WarmRuntimeEnv])
-  (import tests.env_fixtures [LOCK env-of])
-  (<- env (env-of "app-1" "lib-1" LOCK))
-  (val needs (frozenset ["cluster-net"]))
-  (val makers [#("SubmitDetached" "env" (fn [] (SubmitDetached (slow-add 0.0 1) :key "k" :needs needs :env "m:e")))
-               #("SubmitDetached" "requires" (fn [] (SubmitDetached (slow-add 0.0 1) :key "k" :needs needs :requires {"kind" "k3s"})))
-               #("RemoteJob" "env" (fn [] (RemoteJob (slow-add 0.0 1) :needs needs :env "m:e")))
-               #("RemoteJob" "requires" (fn [] (RemoteJob (slow-add 0.0 1) :needs needs :requires {"kind" "k3s"})))
-               #("WarmRuntimeEnv" "env" (fn [] (WarmRuntimeEnv env needs 60.0 "tests" :env "m:e")))
-               #("WarmRuntimeEnv" "requires" (fn [] (WarmRuntimeEnv env needs 60.0 "tests" :requires {"kind" "k3s"})))])
-  (for [#(name field make) makers]
-    (<- refusal (effect-refusal make))
-    (assert (in field refusal) #(name refusal))))
+  (import doeff_cluster.runtime_env_model [RuntimeEnv])
+  (for [#(effect gone) [#(SubmitDetached ["env" "requires"]) #(RemoteJob ["env" "requires"]) #(WarmRuntimeEnv ["requires"])]]
+    (val names (frozenset (gfor f (fields effect) f.name)))
+    (assert (in "needs" names) #(effect.__name__ names))
+    (for [field gone]
+      (assert (not-in field names) #(effect.__name__ field names))))
+  (val warm-env (next (gfor f (fields WarmRuntimeEnv) :if (= f.name "env") f.type)))
+  (assert (is warm-env RuntimeEnv) warm-env))
 
 
 (deftest test-a-heartbeat-with-only-labels-is-refused

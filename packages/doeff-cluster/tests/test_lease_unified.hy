@@ -121,11 +121,16 @@
         (raise (httpx.ConnectError "coordinator を作り直している"))))
   (setv link (CoordinatorLink "http://coord" "atlas" #() 10 20000 :transport (httpx.MockTransport handle)
                               :task-dir (str (/ (Path (tempfile.mkdtemp)) "tasks"))))
-  (assert (= (len (. (.poll link) jobs)) 2))
+  ;; poll の答えは DesiredJobs か DesiredUnreadable — jobs を読む前に DesiredJobs であることを確かめる(読めない答えから jobs を
+  ;; 読めば属性の誤りで落ちるだけで、確かめたい「読めた」を確かめない)。
+  (setv seen (.poll link))
+  (assert (isinstance seen DesiredJobs) seen)
+  (assert (= (len seen.jobs) 2))
   (setv (get up 0) False)
   (assert (isinstance (.poll link) DesiredUnreadable))
   (setv link.last-ok (- (time.monotonic) 21))              ; 途絶が fence(20 秒)を越えた
   (setv desired (.poll link))
+  (assert (isinstance desired DesiredJobs) desired)
   (assert (= (lfor j desired.jobs j.name) ["writer-a"])))
 
 (deftest test-the-worker-returns-a-finished-process-lease-through-the-coordinator

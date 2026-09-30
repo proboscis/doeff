@@ -56,7 +56,9 @@
     ;; needs の筋書きを回すため。担い手を 2 つ以上並べる検 test_detached_runners.hy が名指す)。
     (setv self.link (CoordinatorLink url name provides 10 20000 :task-dir (str task-dir) :versions versions :transport transport
                                      :exclusive exclusive)
-          self.handles {} self.done #{} self.dead False self.loop None)))
+          self.handles {} self.dead False self.loop None)
+    ;; 終えた job の名(型を書く — 空の #{} だけでは要素の型が決まらず、add が型検査で断られる)。
+    (setv #^ (get set str) self.done #{})))
 
 
 (defn #^ dict task-args [#^ tuple args]
