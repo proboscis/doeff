@@ -31,7 +31,7 @@
 
 
 (defclass Sim []
-  (defn __init__ [self [window WINDOW] [first-report-ms 0]]
+  (defn #^ None __init__ [self #^ int [window WINDOW] #^ int [first-report-ms 0]]
     (setv self.naming (ClusterNaming))   ; 外の系と取り交わす名(検が差し替える)
     (setv self.now 1000000
           self.kube (KubeMemory {DEP {"specReplicas" 1 "replicas" 1 "readyReplicas" 1 "availableReplicas" 1
@@ -53,18 +53,18 @@
                                  "spec" {"revision" "r1" "needs" ["net"] "run" SAMPLE-RUN "replicas" 0
                                          "readiness" {"windowSeconds" window}}})))
 
-  (defn call [self method path [body None] [actor "c-test"]]
+  (defn #^ ClusterState call [self #^ str method #^ str path #^ (| dict None) [body None] #^ (| str None) [actor "c-test"]]
     (setv #(state status reply) (respond self.state (http-request method path {} body :actor actor) self.now T))
     (assert (< status 300) #(method path status reply))
     (setv self.state state)
     state)
 
-  (defn rollout [self name spec]
+  (defn #^ ClusterState rollout [self #^ str name #^ dict spec]
     (self.call "POST" "/resources/Rollout" {"name" name "spec" spec}))
 
-  (defn phase [self name] (get self.state.rollouts name "status" "phase"))
+  (defn #^ str phase [self #^ str name] (get self.state.rollouts name "status" "phase"))
 
-  (defn advance-pods [self]
+  (defn #^ None advance-pods [self]
     (setv want (get self.kube.deployments DEP "specReplicas")
           live (lfor p self.pods :if (is (get p "gone-at") None) p))
     (while (< (len live) want)
@@ -78,13 +78,13 @@
              {"replicas" (len live) "updatedReplicas" (len live) "availableReplicas" (len live)
               "readyReplicas" (len (lfor p live :if (<= (get p "ready-at") self.now) p))}))
 
-  (defn proc-phase [self]
+  (defn #^ str proc-phase [self]
     (cond
       (get self.proc "stopping-until") "stopping"
       (>= self.now (+ (get self.proc "since") JOB-START)) "running"
       True "starting"))
 
-  (defn worker-beat [self]
+  (defn #^ None worker-beat [self]
     ;; 状態の行は worker_policy.statuses → handlers.status-row と同じ欄(process の世代を載せる)。
     (setv statuses (if self.proc
                        (do (setv spec (get self.proc "spec"))
@@ -120,9 +120,10 @@
       (self.call "POST" "/resources/Service/writer-a/readiness"
                  {"worker" "atlas" "pid" 1 "revision" spec.revision "instance" (get self.proc "instance")
                   "attempt" (str (get self.proc "attempt")) "specHash" (spec-hash spec) "placement" spec.placement
-                  "ready" True "reason" "拍を終えた"} :actor None)))
+                  "ready" True "reason" "拍を終えた"} :actor None))
+    None)
 
-  (defn step [self]
+  (defn #^ None step [self]
     (+= self.now 1000)
     (self.advance-pods)
     (self.worker-beat)
@@ -133,18 +134,18 @@
     (when (not (or old-up new-up)) (+= self.gaps 1))
     (.append self.log #(self.now (len self.pods) new-up)))
 
-  (defn run-until [self name phases [limit 600]]
+  (defn #^ str run-until [self #^ str name #^ tuple phases #^ int [limit 600]]
     (for [_ (range limit)]
       (self.step)
       (when (in (self.phase name) phases) (return (self.phase name))))
     (raise (AssertionError (.format "{} が {} にならない: {}" name phases (get self.state.rollouts name "status")))))
 
-  (defn restart-coordinator [self]
+  (defn #^ None restart-coordinator [self]
     "coordinator の作り直し: 保存した形から読み直す(worker の報告・readiness・k8s の観測は失う)。"
     (setv self.state (state-from-json (state-to-json self.state) self.now))))
 
 
-(defn assert-old-restored-before-new-stopped [sim name]
+(defn #^ None assert-old-restored-before-new-stopped [#^ Sim sim #^ str name]
   "戻しの順: 新の Service を 0 にした出来事は、旧が Ready に戻った(restoredOldMs)後で、その時 k8s の Pod が ready だった。"
   (setv status (get sim.state.rollouts name "status"))
   (setv stops (lfor e sim.state.audit
@@ -156,7 +157,7 @@
     (assert (> pods-at 0) #(e sim.log))))
 
 
-(defn phases-of [sim name]
+(defn #^ list phases-of [#^ Sim sim #^ str name]
   (lfor h (get sim.state.rollouts name "status" "history") (get h "phase")))
 
 

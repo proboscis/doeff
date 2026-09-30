@@ -1,5 +1,6 @@
 ;; coordinator との HTTP: 接続を使い回すこと・読みは通信の途絶を越えて送り直すこと・宛先の切り替え(2026-09-23 の newmac の件)。
 (require doeff-hy.macros [deftest])
+(import typing [NoReturn])
 (import threading)
 (import httpx)
 (import pytest)
@@ -9,7 +10,7 @@
 (import doeff_cluster.worker_model [DesiredJobs DesiredUnreadable])
 
 
-(defn serve [inbox stop]
+(defn #^ None serve [#^ RequestInbox inbox #^ threading.Event stop]
   (while (not (.is-set stop))
     (for [request (.take inbox 0.1 16)]
       (setv request.slot.status 200 request.slot.body {"path" request.path})
@@ -25,7 +26,7 @@
   (setv server inbox.server)
   (assert (is-not server None) "start の後は HTTP server が在る")
   (setv port (get server.server-address 1) opened [])
-  (defn trace [name info]
+  (defn #^ None trace [#^ str name #^ dict info]
     (when (= name "connection.connect_tcp.complete") (.append opened name)))
   (try
     (setv endpoint (CoordinatorEndpoint f"http://127.0.0.1:{port}" 5.0 0))
@@ -43,7 +44,7 @@
 
 (deftest test-idempotent-read-is-resent-across-a-short-outage
   (setv calls [0])
-  (defn send []
+  (defn #^ httpx.Response send []
     (+= (get calls 0) 1)
     (when (< (get calls 0) 3) (raise (httpx.ConnectTimeout "timed out")))
     (httpx.Response 200 :json {}))
@@ -52,7 +53,7 @@
 
 
 (deftest test-idempotent-read-gives-up-after-the-deadline
-  (defn send [] (raise (httpx.ReadTimeout "timed out")))
+  (defn #^ NoReturn send [] (raise (httpx.ReadTimeout "timed out")))
   (with [(pytest.raises httpx.ReadTimeout)]
     (send-idempotent send :deadline-seconds 0.05 :pause-seconds 0.01)))
 
@@ -63,21 +64,21 @@
 
 (defclass FakeNet []
   "宛先ごとに「届く / 接続できない / 読みの途中で切れる」を切り替える偽の網。届いた要求の宛先を記録する。"
-  (defn __init__ [self]
+  (defn #^ None __init__ [self]
     (setv self.down #{} self.read-fails #{} self.sent []))
-  (defn handle [self request]
+  (defn #^ httpx.Response handle [self #^ httpx.Request request]
     (setv host request.url.host)
     (when (in host self.down) (raise (httpx.ConnectTimeout "timed out" :request request)))
     (when (in host self.read-fails) (raise (httpx.ReadTimeout "timed out" :request request)))
     (.append self.sent #(host request.url.path))
     (httpx.Response 200 :json {"jobs" [] "tasks" [] "host" host}))
-  (defn transport [self] (httpx.MockTransport self.handle)))
+  (defn #^ httpx.MockTransport transport [self] (httpx.MockTransport self.handle)))
 
 (defclass FakeClock []
-  (defn __init__ [self] (setv self.now 0.0))
-  (defn __call__ [self] self.now))
+  (defn #^ None __init__ [self] (setv self.now 0.0))
+  (defn #^ float __call__ [self] self.now))
 
-(defn endpoint [net clock [retries 0]]
+(defn #^ CoordinatorEndpoint endpoint [#^ FakeNet net #^ FakeClock clock #^ int [retries 0]]
   (CoordinatorEndpoint f"{LAN},{TS}" 2.0 retries :transport (.transport net) :clock clock :pause (fn [s] None)))
 
 
@@ -133,10 +134,10 @@
 
 (defclass ScriptedCoordinator []
   "heartbeat への返事を順に返す偽の coordinator(返事が尽きたら最後の返事を繰り返す)。"
-  (defn __init__ [self replies] (setv self.replies (list replies)))
-  (defn handle [self request]
+  (defn #^ None __init__ [self #^ list replies] (setv self.replies (list replies)))
+  (defn #^ httpx.Response handle [self #^ httpx.Request request]
     (if (> (len self.replies) 1) (.pop self.replies 0) (get self.replies 0)))
-  (defn transport [self] (httpx.MockTransport self.handle)))
+  (defn #^ httpx.MockTransport transport [self] (httpx.MockTransport self.handle)))
 
 (deftest test-heartbeat-refusal-and-registration-are-told-at-each-change [capsys]
   ;; 13 回目の本番の切り替え(#1005): coordinator が heartbeat を 400 で断り続けても、worker は「起動します」の後に

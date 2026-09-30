@@ -1,7 +1,7 @@
 ;; coordinator の資源の口: 資源ごとの compare-and-set・送り手と出来事の記録・所有者だけが消せる・旧い PUT /jobs の写し・
 ;; readiness・盤の行ごとの版。
 (require doeff-hy.macros [deftest val var])
-(import doeff_cluster.cluster_model [ClusterTiming ClusterState PlainText])
+(import doeff_cluster.cluster_model [ClusterTiming ClusterState PlainText Request])
 (import doeff_cluster.coordinator_inbox [http-request])
 (import doeff_cluster.cluster_policy [state-to-json state-from-json board-changes job-from-json])
 (import doeff_cluster.worker_model [spec-hash])
@@ -14,17 +14,18 @@
 (setv V {"python" "3.14.0"})
 (setv SPEC {"revision" "r1" "needs" ["net"] "run" SAMPLE-RUN})
 
-(defn req [method path [body None] [query None] [actor "c-me"]]
+(defn #^ Request req [#^ str method #^ str path #^ (| dict None) [body None] #^ (| dict None) [query None] #^ (| str None) [actor "c-me"]]
   (http-request method path (or query {}) body :actor actor :peer "10.0.0.9"))
 
-(defn call [state method path [body None] [query None] [actor "c-me"] [now 1000]]
+(defn #^ tuple call [#^ ClusterState state #^ str method #^ str path #^ (| dict None) [body None] #^ (| dict None) [query None]
+            #^ (| str None) [actor "c-me"] #^ int [now 1000]]
   (respond state (req method path body query actor) now T))
 
-(defn beat [state name now [statuses None]]
+(defn #^ ClusterState beat [#^ ClusterState state #^ str name #^ int now #^ (| list None) [statuses None]]
   (get (call state "POST" "/heartbeat" {"name" name "provides" ["net"] "capacity" 10 "versions" V "statuses" (or statuses [])}
              :actor None :now now) 0))
 
-(defn rv [state kind name]
+(defn #^ int rv [#^ ClusterState state #^ str kind #^ str name]
   (get (. state meta) (+ kind "/" name) "resourceVersion"))
 
 
@@ -210,28 +211,29 @@
 
 ;; --- readiness: 今の宣言で今動いている process の報告だけを数える -----------------------------------------------
 
-(defn hash-of [spec [name "w"]]
+(defn #^ str hash-of [#^ dict spec #^ str [name "w"]]
   "coordinator が今の宣言から計算する spec の指紋(worker が process を起こした時に渡すのと同じ関数)。"
   (spec-hash (. (job-from-json (| spec {"name" name})) spec)))
 
 
-(defn running-row [spec instance [placement 1] [attempts 1] [phase "running"] [name "w"]]
+(defn #^ list running-row [#^ dict spec #^ str instance #^ int [placement 1] #^ int [attempts 1] #^ str [phase "running"] #^ str [name "w"]]
   "worker の heartbeat の状態の行(worker_policy.statuses → handlers.status-row と同じ欄)。"
   [{"name" name "phase" phase "runningRevision" (get spec "revision") "desiredRevision" (get spec "revision")
     "pid" 100 "attempts" attempts "detail" "" "instance" instance "specHash" (hash-of spec name) "placement" placement}])
 
 
-(defn ready-report [spec instance [worker "atlas"] [placement 1] [attempt 1] [ready True] [name "w"]]
+(defn #^ dict ready-report [#^ dict spec #^ str instance #^ str [worker "atlas"] #^ int [placement 1] #^ int [attempt 1] #^ bool [ready True]
+                            #^ str [name "w"]]
   "service の process の ReportReady の本文(report_client.hy と同じ欄 — 子 process が受け取った世代を載せる)。"
   {"worker" worker "pid" 7 "revision" (get spec "revision") "instance" instance "attempt" (str attempt)
    "specHash" (hash-of spec name) "placement" placement "ready" ready "reason" "拍を終えた"})
 
 
-(defn ready-of [state now [name "w"]]
+(defn #^ str ready-of [#^ ClusterState state #^ int now #^ str [name "w"]]
   (get (get (call state "GET" (+ "/resources/Service/" name) :now now) 2) "status" "ready"))
 
 
-(defn report [state body now [name "w"] [kind "readiness"]]
+(defn #^ ClusterState report [#^ ClusterState state #^ dict body #^ int now #^ str [name "w"] #^ str [kind "readiness"]]
   (setv #(s status reply) (call state "POST" (.format "/resources/Service/{}/{}" name kind) body :actor None :now now))
   (assert (= status 200) reply)
   s)
@@ -360,11 +362,11 @@
   (var s (get reply-31 0))
   (:= s (beat s "atlas" 1000))
   (:= s (beat s "atlas" 1500 (running-row spec "1-a")))
-  (defn metrics-body [instance spec writes [attempt 1]]
+  (defn #^ dict metrics-body [#^ str instance #^ dict spec #^ float writes #^ int [attempt 1]]
     (| (ready-report spec instance :attempt attempt)
        {"metrics" {"counters" {"app_condition_writes" writes} "gauges" {"queue_depth" 2.0}
                    "durations" {"reconcile_pass" {"sum" 1.5 "count" 3}}}}))
-  (defn text-of [state now]
+  (defn #^ str text-of [#^ ClusterState state #^ int now]
     (setv #(_ status body) (call state "GET" "/metrics" :now now))
     (assert (= status 200))
     (assert (isinstance body PlainText) body)

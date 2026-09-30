@@ -12,8 +12,8 @@
       READY1 (CodeView "rev1" CodeState.READY "/c/rev1")
       READY2 (CodeView "rev2" CodeState.READY "/c/rev2"))
 
-(defn world [#* processes [codes #(READY1)]] (WorldView codes processes))
-(defn running [spec [pid 10]] (ProcessView spec.name spec 1 pid 0))
+(defn #^ WorldView world [#^ ProcessView #* processes #^ tuple [codes #(READY1)]] (WorldView codes processes))
+(defn #^ ProcessView running [#^ JobSpec spec #^ int [pid 10]] (ProcessView spec.name spec 1 pid 0))
 
 (deftest test-start-waits-for-code
   (assert (= (plan 0 #(A1) (world :codes #()) {} POLICY) #((PrepareCode "rev1"))))
@@ -195,7 +195,7 @@
 (setv H1 (replace A1 :handoff True)
       H2 (replace A1 :revision "rev2" :handoff True))
 
-(defn proc [spec pid instance [retired-from None] [name None]]
+(defn #^ ProcessView proc [#^ JobSpec spec #^ int pid #^ str instance #^ (| str None) [retired-from None] #^ (| str None) [name None]]
   (ProcessView (or name spec.name) spec 1 pid 0 :instance instance :retired-from retired-from))
 
 (deftest test-handoff-prepares-new-code-while-the-old-process-keeps-running

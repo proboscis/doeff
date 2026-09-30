@@ -34,7 +34,7 @@
 (import doeff_cluster.env_prepare [ENV-MARKER ROOTS-PTH])
 (import doeff_cluster.handlers [EnvStore ProcessHost task-spec])
 (import doeff_cluster.worker_model [CodeState CodeView StartJob ReapJob Outcome WorldView WorkerPolicy PrepareEnv WarmEnv
-                                    code-key])
+                                    code-key JobSpec])
 (import doeff_cluster.worker_policy [plan])
 (import doeff_cluster.remote_model [encode-program decode-outcome TaskSucceeded TaskFailed])
 (import doeff_cluster.process_versions [current-versions])
@@ -235,14 +235,14 @@
 
 (defclass LeakyHost [ProcessHost]
   "反例: 実行環境の job の子に PYTHONPATH を残す実装。"
-  (defn launch [self spec code-path instance attempt]  ; defk にできない: ProcessHost の method の差し替え
+  (defn #^ tuple launch [self #^ JobSpec spec #^ str code-path #^ str instance #^ int attempt]  ; defk にできない: ProcessHost の method の差し替え
     (setv #(argv cwd env) (.launch (super) spec code-path instance attempt))
     #(argv cwd (| env {"PYTHONPATH" code-path}))))
 
 
 (defclass RestartingHost [ProcessHost]
   "反例: task ごとに worker の process を作り直して走らせる実装(子が名乗る worker の pid が task ごとに変わる)。"
-  (defn launch [self spec code-path instance attempt]  ; defk にできない: ProcessHost の method の差し替え
+  (defn #^ tuple launch [self #^ JobSpec spec #^ str code-path #^ str instance #^ int attempt]  ; defk にできない: ProcessHost の method の差し替え
     (setv #(argv cwd env) (.launch (super) spec code-path instance attempt))
     #(argv cwd (| env {"DOEFF_WORKER_PID" (.format "restarted-{}" instance)}))))
 

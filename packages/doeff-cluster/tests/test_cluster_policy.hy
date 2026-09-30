@@ -8,8 +8,9 @@
 
 (setv T (ClusterTiming :lease-ms 10000 :fence-ms 10000 :reassign-after-ms 30000))
 
-(defn job [name #** kw] (ClusterJob (JobSpec name "m" #() "rev") #** kw))
-(defn worker [name seen [capacity 10] #* provides] (WorkerInfo name (tuple (sorted provides)) capacity seen))
+(defn #^ ClusterJob job [#^ str name #^ tuple [needs #()] #^ (| str None) [pin None]]
+  (ClusterJob (JobSpec name "m" #() "rev") :needs needs :pin pin))
+(defn #^ WorkerInfo worker [#^ str name #^ int seen #^ int [capacity 10] #^ str #* provides] (WorkerInfo name (tuple (sorted provides)) capacity seen))
 
 (deftest test-spreads-and-respects-capabilities-and-pins
   (setv state (ClusterState
@@ -57,8 +58,8 @@
 (import doeff_cluster.cluster_policy [place-tasks unplaced-jobs])
 
 (setv AGENT "agent-cli")
-(defn mac [name [seen 0]] (replace (worker name seen 10 AGENT "desk") :exclusive #(AGENT)))
-(defn pod [name [seen 0]] (worker name seen 10 "cluster-net"))
+(defn #^ WorkerInfo mac [#^ str name #^ int [seen 0]] (replace (worker name seen 10 AGENT "desk") :exclusive #(AGENT)))
+(defn #^ WorkerInfo pod [#^ str name #^ int [seen 0]] (worker name seen 10 "cluster-net"))
 
 (deftest test-general-job-is-not-placed-on-a-dedicated-worker
   ;; Mac の方が空いていても、専用の印を求めない job は k3s へ
@@ -93,7 +94,7 @@
   (setv stopped (replace state :placements {} :statuses {"mac" {"at" 1500 "jobs" []}}))
   (assert (= (. (get (place-jobs 2000 stopped T) "placer") worker) "atlas")))
 
-(defn task [id needs]
+(defn #^ TaskRecord task [#^ str id #^ tuple needs]
   (TaskRecord id "digest" SAMPLE-TASK-PROGRAM "rev" #((ComponentVersion "python" "3")) needs 15000 20000 0))
 
 (deftest test-task-follows-the-same-dedicated-rule

@@ -51,7 +51,7 @@
 ;; test_remote.hy が通す)。
 
 (defclass RigWorker []
-  (defn __init__ [self #^ str url #^ Path task-dir #^ dict versions [transport None] #^ str [name "w1"]
+  (defn #^ None __init__ [self #^ str url #^ Path task-dir #^ dict versions #^ (| httpx.BaseTransport None) [transport None] #^ str [name "w1"]
                   #^ tuple [provides RIG-PROVIDES] #^ tuple [exclusive #()]]
     ;; name / provides / exclusive = worker の名乗り(既定 = sim の組の worker と同じ能力 local の w1 — sim と coordinator の組で同じ
     ;; needs の筋書きを回すため。担い手を 2 つ以上並べる検 test_detached_runners.hy が名指す)。
@@ -125,10 +125,10 @@
 (defclass MemoryCoordinator []
   "本物の api_policy.respond / tick を httpx の MockTransport の後ろに置く。時刻は仮想の時計。要求の前に tick する(本物の調停
    ループは要求の無い拍に tick する)。"
-  (defn __init__ [self #^ SimClock clock]
+  (defn #^ None __init__ [self #^ SimClock clock]
     (setv self.clock clock self.state (ClusterState) self.timing (ClusterTiming)))
 
-  (defn handle [self request]
+  (defn #^ httpx.Response handle [self #^ httpx.Request request]
     (setv now (clock-ms self.clock)
           split (urlsplit (str request.url))
           body (if request.content (json.loads request.content) None))
