@@ -147,6 +147,8 @@ pub struct ProjectReport {
     pub modules: Vec<ModuleSummary>,
     /// 読めなかった file・登録簿・目録の理由。
     pub errors: Vec<String>,
+    /// 誤りではない知らせ(無い登録簿の dir を空として読んだ — agora-redesign #1732)。
+    pub notes: Vec<String>,
     /// 意味の規則の要約(設定が無ければ None)。
     pub semantic: Option<semantic::SemanticSummary>,
     /// 1 file の実行で組んだ effect の推論の表(組んだ時だけ・書いた file の中身を overlay にした物)。
@@ -224,6 +226,7 @@ pub fn run_with(root: &Path, settings: &ProjectSettings, enabled: &BTreeSet<Proj
         registry.problems.extend(extra.problems);
     }
     report.errors.extend(registry.problems.iter().cloned());
+    report.notes.extend(registry.notes.iter().cloned());
     let raw = raw_settings(root, settings, &mut report.errors);
     let mut semantic_probes: Vec<SemanticProbe> = Vec::new();
     let wants_raw = enabled.contains(&ProjectRule::RawSideEffectDirect)
