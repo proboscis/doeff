@@ -1,0 +1,16 @@
+flowchart LR
+  BP["設定 1<br/>:boundary-parts<br/>clock に触ってよい"]
+  CAT["生の副作用の目録<br/>time.time・monotonic・<br/>perf_counter …"]
+  M["local_screen_<br/>socket_client.hy<br/>time.time 6 か所<br/>perf-counter 3 か所"]
+  RC["設定 2<br/>:retired-calls clock<br/>time.time を呼ばない"]
+  BP --> R106["DOEFF106<br/>部品の :touches<br/>と照らす"]
+  CAT --> R106
+  M --> R106
+  M --> R151["DOEFF151<br/>:files と :except<br/>だけを見る"]
+  RC --> R151
+  R106 --> OK["通す<br/>clock は許した種類"]
+  R151 --> NG["time.time 6 件<br/>critical"]
+  classDef pass fill:#d8efd8,stroke:#3a7d3a,color:#1b3d1b
+  classDef stop fill:#f6d6d6,stroke:#b03a3a,color:#4a1515
+  class OK pass
+  class NG stop

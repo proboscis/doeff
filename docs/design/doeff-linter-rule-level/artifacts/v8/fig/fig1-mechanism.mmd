@@ -1,0 +1,20 @@
+flowchart TB
+  A["architecture.hy の設定<br/>:retired-words(DOEFF150)<br/>:retired-calls(DOEFF151)"] --> F["1. file を選ぶ<br/>:files に当たり<br/>:except に当たらない"]
+  D4["欠陥 4<br/>テストの file を<br/>対象に入れるか"] -.-> F
+  F -- "外れ" --> X1["数えない"]
+  F -- "DOEFF150" --> W["2. 註・docstring・<br/>.md を除く"]
+  F -- "DOEFF151" --> C["2'. Hy の form の頭が<br/>:calls の綴りか"]
+  D2["欠陥 2<br/>境目の部品の設定を<br/>読まない"] -.-> C
+  W --> R["3. 行に :rule-lines の<br/>文字列が含まれるか"]
+  D1["欠陥 1<br/>契約の綴りを許す手段が<br/>行の目印だけ"] -.-> R
+  R -- "含まれる" --> X2["その行の語を<br/>全部数えない"]
+  R -- "含まれない" --> M["4. 語が単独で在るか<br/>前後が英字・_・- でない"]
+  M -- "いいえ" --> X3["数えない<br/>letters・mail-row"]
+  M -- "はい" --> H["検出 critical"]
+  C -- "はい" --> H
+  classDef stop fill:#f6d6d6,stroke:#b03a3a,color:#4a1515
+  classDef gone fill:#e3e3e3,stroke:#888,color:#333
+  classDef note fill:#fff6df,stroke:#e0b54a,color:#4a3a10
+  class H stop
+  class X1,X2,X3 gone
+  class D1,D2,D4 note

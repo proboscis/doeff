@@ -1,0 +1,13 @@
+flowchart LR
+  T["検出 161 件"] --> RS["規則の側を直す<br/>欠陥 1 案 2・欠陥 2 案 A"]
+  RS --> G1["消える 13 件<br/>契約の欄と値 7<br/>時計の呼び出し 6"]
+  RS --> G2["出てくる 6 件<br/>無効の目印 3 個を消し<br/>隠れていた変数 letter"]
+  RS --> L["直す物 154 件<br/>5〜7 時間"]
+  L --> A["まとまり A: core の欄 mail<br/>31 件・.py の型と同時<br/>2〜3 時間"]
+  L --> B["まとまり B: core の変数・引数<br/>51 件・1.5〜2 時間"]
+  L --> C["まとまり C: テストの helper と変数<br/>70 件・1〜1.5 時間"]
+  L --> D["まとまり D: 身分の名の直書き<br/>2 件・0.5 時間"]
+  classDef gone fill:#e3e3e3,stroke:#888,color:#333
+  classDef stop fill:#f6d6d6,stroke:#b03a3a,color:#4a1515
+  class G1 gone
+  class G2 stop

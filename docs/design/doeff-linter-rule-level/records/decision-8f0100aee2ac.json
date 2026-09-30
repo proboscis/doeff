@@ -1,0 +1,54 @@
+{
+  "artifacts": [
+    {
+      "path": "artifacts/v8/vocabulary-rules-report.md",
+      "sha256": "0d38053882036b4377b5d02ff520c58c6c34d8d140a2bbf6824ac76403669cd0"
+    },
+    {
+      "path": "artifacts/v8/fig/fig1-mechanism.mmd",
+      "sha256": "ca610b7c1dc7b1e9296554e97038dc392178c91a9b5a4a97927847c39575dc08"
+    },
+    {
+      "path": "artifacts/v8/fig/fig2-clock-conflict.mmd",
+      "sha256": "3dee70563e7d7212df65db6f8fbac98818709df65834562c273c7249aeda0041"
+    },
+    {
+      "path": "artifacts/v8/fig/fig3-remaining.mmd",
+      "sha256": "4021a339e027456e138ef4b8eb4bea521aebb61a1bd771deeaa9ae4c289bd6be"
+    },
+    {
+      "path": "artifacts/v8/fig/fig4-order.mmd",
+      "sha256": "d1cde3cc311f407772c0880a190dc4f3f5cac6e6e36f9288da38e88707bb5c77"
+    }
+  ],
+  "body": {
+    "actor": "agent",
+    "authority": "internal",
+    "decision": "design",
+    "outcome": "accepted",
+    "scope_of_agreement": "DOEFF150 / 151(語彙の規則)の側の欠陥 4 つと参考 3 つの扱い(上の 7 点)。design-4e43f6201972 の「規則の側の直し 8 点」のうち 3(DOEFF150 から契約と wire の欄名を外す)の実現の仕方を、行の目印から契約の file を読む形へ改める決定でもある(意図は decision-093208de9eb9 の Q2-3 のまま)。実行許可(decision = execution)は含まない。配布は agora-redesign #1877 の子 issue で行う。operator の明示の応答が後で来て食い違えば、新しい decision で置き換える。",
+    "source": "議論の担当の判断 2026-10-01 01:2x JST・herdr pane linter-discuss(Mac)。根拠の報告 = artifact discuss-doeff-linter-vocabulary-rules-2026-09-30.html(sha256 356b0fd95c20dce68241308db5b75a59c965267b37870fad99e065191ed40338)・本文の写し = artifacts/v8/vocabulary-rules-report.md・前提の決定 a・b = operator 2026-09-30 23:5x。追跡 = agora-redesign #1876・#1877。",
+    "statement": "議論の担当(herdr pane linter-discuss・Mac)が、戻せる決定(two-way door)として次の 7 点を採った。operator は根拠の報告を読んでおり、異議は出ていない(明示の賛成の応答ではないので、actor = agent・authority = internal で記録する)。前提の決定(operator 2026-09-30 23:5x 逐語 \"a: correct. b: keep critical c: idk. i want html report around this matter to discuss.\")= a: mail / letter を内部の名でも禁じる語彙の決めは正しい・b: 語彙の規則は critical のまま。c(規則の側の欠陥を直すか)を、報告の §4 の比較(各案の効く件数・実装の場所と規模・副作用)で次のとおり決めた。戻し方はどれも revert。\n1. 欠陥 1(契約で決まった綴りを許す手段が「行の目印」しかない)= 案 2。DOEFF150 が契約の JSON(グループの :contract-files)を読み、契約の欄名と一致する文字列と、wire の型(defwire)の欄の定義を数えない。契約の欄名を許すためだけの :rule-lines は消す(無効の目印 current.letters・previous.letters・\"letters\" \"upsert\" を消すと、隠れていた内部の名 6 行が出る。欄を読む行の目印 carrier.mail・InputCarrier など約 20 行は報告 §4.1 の After のとおり残る)。効く = 7 件消え 6 件出る。実装の場所 = doeff-linter の retired.rs・architecture.rs と agora-controllers の architecture.hy。戻し方 = :contract-files を消し :rule-lines を戻す。\n2. 欠陥 2(time.time を DOEFF106 と DOEFF151 が逆に決める)= 案 A。agora-controllers の architecture.hy の :retired-calls の clock から \"time.time\" を外す(生の時計の一覧は DOEFF106 が持つ・重複)。効く = 6 件消える。境目の部品の外の time.time は今どおり DOEFF106 が critical で出す(失敗ケースのテスト 1 本)。部品を時計の effect で読む直し(案 C)は後の改善。戻し方 = \"time.time\" を戻す。\n3. 欠陥 3(置き換え先を shared/intent から import できない)= 取り下げ。kanban の語彙は shared/intent から import できる(同じ置き場の card_marks.hy が既に import している)。本当の違反 2 件(kind_tables.hy 87・154 行)は code で直す。#1880 で main に入っている。規則の側は変えない。\n4. 欠陥 4(テストの file も対象か)= 対象のまま直す(案 1)。テストの helper 41・変数 27・欄の読み 6(追跡 = #1884)。テストを :except に足す案(案 2)とテストだけ重大さを下げる案(案 3)は、前提の決定 b(例外・引き下げで通さない)に反するので採らない。戻し方 = 改名の revert。\n5. 参考 a(hint の文)= DOEFF150 / 151 の hint の「直せない既存の当たりは登録簿に載せる」を消す(決定 A「critical を既知の一覧で通さない」と逆)。同じ文を持つ規則(DOEFF146・140)も直す。場所 = doeff-linter の explain.rs・rule.rs。\n6. 参考 b(.py / .pyi が対象外)= 型の欄 mail / letter が在る .py / .pyi(BoardView・MessagingView・RequestHistoryView・ViewsView・RecordCache)を規則の対象に足す。欄の改名と同じ変更で、:files に controllers/**/*.py と controllers/**/*.pyi を足す(設定 1 行)。\n7. 参考 c(複合語)= letters・mail-row など約 1,000 か所は今は広げない。DOEFF150 / 151 が 0 件になった後(報告 §6 の順 4)に別に決める。\n実装の配布は zeus の coordinator cisco-c8 が agora-redesign #1877 の子 issue として行う。",
+    "subjects": [
+      "design-4e43f6201972"
+    ],
+    "supersedes": []
+  },
+  "created_at": "2026-09-30T15:33:40.902707+00:00",
+  "id": "decision-8f0100aee2ac",
+  "inputs": [
+    {
+      "id": "design-4e43f6201972",
+      "role": "subject",
+      "sha256": "3876fd51009ac726b1916d65f696b465a920e1f12dcea2af82d4f7b0e0cc7fcb"
+    },
+    {
+      "id": "decision-093208de9eb9",
+      "role": "basis",
+      "sha256": "3d4f56a573e7439e429c576874de80c8246cef55cf6670f93498faecefdf06e5"
+    }
+  ],
+  "kind": "decision",
+  "schema_version": 1,
+  "scope": "doeff-linter の規則の重大さ(level: critical・major・minor・info)— doeff-linter の既定と repo ごとの宣言(agora-controllers の pyproject)。どの規則を critical にするか、LLM で判定する規則の閾値と誤判定の扱い"
+}

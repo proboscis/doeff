@@ -1,0 +1,14 @@
+flowchart TB
+  S["この文書の決め"] --> P1["1. 規則の側の小さい 2 つ<br/>欠陥 2 の案 A・hint の文<br/>約 1 時間"]
+  S --> P2["2. 欠陥 1 の案 2<br/>doeff-linter・4〜6 時間"]
+  N["今すぐ始めてよい<br/>(規則の決めを待たない)"] --> Q1["まとまり B・C・D<br/>#1881・#1880<br/>3〜4 時間"]
+  N --> Q2["まとまり A<br/>.py / .pyi も対象に足す<br/>2〜3 時間"]
+  P1 --> Z["3. main で数え直す<br/>DOEFF150 / 151 の critical 0 件"]
+  P2 --> Z
+  Q1 --> Z
+  Q2 --> Z
+  Z --> F["4. 複合語(letters・mail-row …)を<br/>どこまで改名するか決める"]
+  classDef pass fill:#d8efd8,stroke:#3a7d3a,color:#1b3d1b
+  classDef note fill:#fff6df,stroke:#e0b54a,color:#4a3a10
+  class Z pass
+  class N,S note
