@@ -208,7 +208,7 @@
   "path の file の中身の sha256 を読むため(file でなければ None・在る file を読めなければ例外 — 前の本物の read_bytes と同じ)。"
   (<- stat (StatPath path))
   (if (and (isinstance stat PathStat) (= stat.kind PathKind.FILE))
-      (do (<- content (ReadBytes path))
+      (do (<- content (| bytes FileFailed) (ReadBytes path))
           (when (isinstance content FileFailed)
             (raise (RuntimeError (.format "{} を読めない: {}" content.path content.detail))))
           (.hexdigest (hashlib.sha256 content)))

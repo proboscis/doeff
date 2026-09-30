@@ -102,7 +102,9 @@
 
 (defk settled [answer what]
   {:pre [(: answer FILE-ANSWER) (: what str)] :post [(: % (| PathStat LockHeld str bytes tuple int None))]}
-  "file の effect の答えから失敗(FileFailed)を例外にするため(準備を続けられない I/O の失敗 — 準備の process の失敗として worker が読む)。"
+  "file の effect の答えから失敗(FileFailed)を例外にするため(準備を続けられない I/O の失敗 — 準備の process の失敗として worker が読む)。
+   file の effect は答えの型を宣言しない(EffectBase の答えは Any)ので、呼び手は答えを束ねる所で (<- 名 (| 成功の型 FileFailed) effect) と
+   型を書く(doeff-hy の _bind-yield が実行時に isinstance で確かめる — #1682)。"
   (when (isinstance answer FileFailed)
     (raise (RuntimeError (.format "{}: {} — {}" what answer.path answer.detail))))
   answer)
@@ -202,7 +204,7 @@
 (defk kind-at [path]
   {:pre [(: path str)] :post [(: % PathKind)]}
   "path の種類を読むため(symlink は辿る)。"
-  (<- seen (StatPath path))
+  (<- seen (| PathStat FileFailed) (StatPath path))
   (<- stat PathStat (settled seen "stat できない"))
   stat.kind)
 
@@ -211,7 +213,7 @@
   {:pre [(: path str) (: body Program)] :post [(: % (| MirrorReady WheelReady EnvFailure))]}
   "錠 path を取って body(Program)を走らせ、放してから body の答えを返すため(mirror は URL ごと・wheel はキーごとの排他)。"
   (<- (MakeDirectory (posixpath.dirname path)))
-  (<- got (AcquireLock path))
+  (<- got (| LockHeld FileFailed) (AcquireLock path))
   (<- held LockHeld (settled got "錠を取れない"))
   (try
     (<- answer (| MirrorReady WheelReady EnvFailure) body)
@@ -224,7 +226,7 @@
   "path が在れば中身ごと消すため(書きかけの tmp の片づけ)。"
   (<- kind PathKind (kind-at path))
   (when (!= kind PathKind.MISSING)
-    (<- gone (RemoveTree path))
+    (<- gone (| None FileFailed) (RemoveTree path))
     (<- (settled gone "消せない")))
   None)
 
@@ -242,7 +244,7 @@
           (<- (remove-if-present tmp))
           (<- cloned CommandResult (git #("clone" "--bare" "--quiet" url tmp) env))
           (if (= cloned.code 0)
-              (do (<- moved (RenamePath tmp mirror))
+              (do (<- moved (| None FileFailed) (RenamePath tmp mirror))
                   (<- (settled moved "mirror を置けない"))
                   (MirrorReady :path mirror))
               (do (<- detail str (tail-of cloned))
@@ -275,7 +277,7 @@
 (defk not-carried [dest]
   {:pre [(: dest str)] :post [(: % tuple)]}
   "複製した木のうち持ち越さない物(.venv・__pycache__ の dir と、根の完成マーカー)の path を並べるため(外側の dir を先に・内側は外側と一緒に消える)。"
-  (<- listed (WalkTree dest))
+  (<- listed (| tuple FileFailed) (WalkTree dest))
   (<- entries tuple (settled listed "複製した木を読めない"))
   (var out [])
   (for [entry entries]
@@ -300,7 +302,7 @@
             (raise (RuntimeError (.format "{} を {} へ複製できない: {}" reuse dest copied.stderr))))
           (<- extra tuple (not-carried dest))
           (for [path extra]
-            (<- gone (RemoveTree path))
+            (<- gone (| None FileFailed) (RemoveTree path))
             (<- (settled gone "持ち越さない物を消せない"))))
       (do (val archive (+ dest ".tar"))
           (<- packed CommandResult (git #("-C" mirror "archive" "--format=tar" "-o" archive commit) None))
@@ -310,7 +312,7 @@
           (<- unpacked CommandResult (outcome-result unpack-run))
           (when (!= unpacked.code 0)
             (raise (RuntimeError (.format "{} を展開できない: {}" archive unpacked.stderr))))
-          (<- gone (RemoveTree archive))
+          (<- gone (| None FileFailed) (RemoveTree archive))
           (<- (settled gone "展開の tar を消せない"))))
   None)
 
@@ -321,7 +323,7 @@
   (<- kind PathKind (kind-at path))
   (if (!= kind PathKind.FILE)
       None
-      (do (<- read (ReadBytes path))
+      (do (<- read (| bytes FileFailed) (ReadBytes path))
           (<- content bytes (settled read "読めない"))
           (.hexdigest (hashlib.sha256 content)))))
 
@@ -332,7 +334,7 @@
   (<- kind PathKind (kind-at target))
   (if (!= kind PathKind.DIRECTORY)
       None
-      (do (<- listed (ListDirectory target))
+      (do (<- listed (| tuple FileFailed) (ListDirectory target))
           (<- entries tuple (settled listed "wheel の dir を読めない"))
           (val wheels (lfor e entries :if (.endswith e.name ".whl") e.name))
           (if wheels (posixpath.join target (get wheels 0)) None))))
@@ -352,7 +354,7 @@
           (<- built CommandResult (uv-command #(uv "build" "--wheel" "--out-dir" tmp source-dir) source-dir env))
           (<- made (| str None) (wheel-in tmp))
           (if (and (= built.code 0) (is-not made None))
-              (do (<- moved (RenamePath tmp target))
+              (do (<- moved (| None FileFailed) (RenamePath tmp target))
                   (<- (settled moved "wheel を置けない"))
                   (WheelReady :path (posixpath.join target (posixpath.basename made)) :built True))
               (do (<- detail str (tail-of built))
@@ -367,7 +369,7 @@
   (<- kind PathKind (kind-at lib))
   (if (!= kind PathKind.DIRECTORY)
       None
-      (do (<- listed (ListDirectory lib))
+      (do (<- listed (| tuple FileFailed) (ListDirectory lib))
           (<- entries tuple (settled listed "venv の lib を読めない"))
           (var found None)
           (for [e entries]
@@ -384,21 +386,21 @@
    tuple(editable で入る package の dir — bytecode を焼く範囲に足すため)。symlink は両側を解いて比べる(StatPath の real-path)。
    拾うのは dir の path を書いた .pth(uv・hatchling・maturin の editable の形)だけ。setuptools の finder 型の editable(.pth が
    import の行で finder を入れる形)は dir を書かないので拾えない(その package は焼かれず、import の時に作られる)。"
-  (<- root-seen (StatPath root))
+  (<- root-seen (| PathStat FileFailed) (StatPath root))
   (<- root-stat PathStat (settled root-seen "root を読めない"))
   (val base root-stat.real-path)
-  (<- listed (ListDirectory site))
+  (<- listed (| tuple FileFailed) (ListDirectory site))
   (<- entries tuple (settled listed "site-packages を読めない"))
   (var out [])
   (for [e entries]
     (when (and (.endswith e.name ".pth") (!= e.name ROOTS-PTH))
-      (<- read (ReadText (posixpath.join site e.name)))
+      (<- read (| str FileFailed) (ReadText (posixpath.join site e.name)))
       (<- text str (settled read "pth を読めない"))
       (for [line (.splitlines text)]
         (val entry (.strip line))
         ;; site の規則: 空行と # の行は読まない・import で始まる行は実行される code(dir ではない)。
         (when (and entry (not (.startswith entry "#")) (not (.startswith entry #("import " "import\t"))))
-          (<- seen (StatPath (if (posixpath.isabs entry) entry (posixpath.join site entry))))
+          (<- seen (| PathStat FileFailed) (StatPath (if (posixpath.isabs entry) entry (posixpath.join site entry))))
           (<- stat PathStat (settled seen "pth の dir を読めない"))
           (val real stat.real-path)
           (when (and (= stat.kind PathKind.DIRECTORY) (.startswith real (+ base "/")))
@@ -422,7 +424,7 @@
 (defk interpreter-of [project-dir]
   {:pre [(: project-dir str)] :post [(: % str)]}
   "root の venv の interpreter の実の path(symlink を辿った先)。"
-  (<- seen (StatPath (posixpath.join project-dir ".venv" "bin" "python")))
+  (<- seen (| PathStat FileFailed) (StatPath (posixpath.join project-dir ".venv" "bin" "python")))
   (<- stat PathStat (settled seen "venv の interpreter を読めない"))
   stat.real-path)
 
@@ -430,7 +432,7 @@
 (defk write-replacing [path text]
   {:pre [(: path str) (: text str)] :post [(: % None)]}
   "file を別名に書いてから置き換えるため(書きかけを読ませない)。"
-  (<- written (WriteText path text :replace True))
+  (<- written (| None FileFailed) (WriteText path text :replace True))
   (<- (settled written "書けない"))
   None)
 
@@ -468,7 +470,7 @@
     (resume None))
 
   (DiskFree [path]
-    (<- seen (ReadDiskFree path))
+    (<- seen (| int FileFailed) (ReadDiskFree path))
     (<- free int (settled seen "空きを読めない"))
     (resume free))
 
@@ -543,7 +545,7 @@
     (<- site (| str None) (site-packages project-dir))
     (when (is site None)
       (raise (RuntimeError (.format "{} の venv に site-packages が無い" project-dir))))
-    (<- written (WriteText (posixpath.join site ROOTS-PTH) (+ (.join "\n" roots) "\n")))
+    (<- written (| None FileFailed) (WriteText (posixpath.join site ROOTS-PTH) (+ (.join "\n" roots) "\n")))
     (<- (settled written "import の根の .pth を書けない"))
     (resume None))
 
@@ -581,7 +583,7 @@
     (<- name str (digest16 project-dir))
     (val empty (posixpath.join state-dir "probe" name))
     (<- (remove-if-present empty))
-    (<- made (MakeDirectory empty))
+    (<- made (| None FileFailed) (MakeDirectory empty))
     (<- (settled made "確かめの作業 dir を作れない"))
     (<- result CommandResult (uv-command (+ #(uv "run" "--no-sync" "--frozen" "--project" project-dir "hy" "-c" PROBE-PROGRAM)
                                             (tuple roots))

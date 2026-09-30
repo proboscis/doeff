@@ -182,7 +182,7 @@
 (defk read-json [path default]
   {:pre [(: path str) (: default (| dict list None))] :post [(: % (| dict list None))]}
   "世界の JSON の file を読むため(無ければ default)。"
-  (<- seen (ReadText path))
+  (<- seen (| str FileFailed) (ReadText path))
   (if (isinstance seen FileFailed) default (json.loads seen)))
 
 
@@ -217,14 +217,14 @@
 (defk read-or-empty [path]
   {:pre [(: path str)] :post [(: % str)]}
   "file の中身(無ければ空)。"
-  (<- seen (ReadText path))
+  (<- seen (| str FileFailed) (ReadText path))
   (if (isinstance seen FileFailed) "" seen))
 
 
 (defk sources-under [root]
   {:pre [(: root str)] :post [(: % tuple)]}
   "root の下の source(.py・.hy — venv と __pycache__ の下を除く)の絶対 path の列。"
-  (<- listed (WalkTree root))
+  (<- listed (| tuple FileFailed) (WalkTree root))
   (if (isinstance listed FileFailed)
       #()
       (tuple (gfor e listed
