@@ -43,6 +43,8 @@
   (setv now [1000.0] port (free-port)
         inbox (RequestInbox port :clock (fn [] (get now 0))))
   (.start inbox)
+  (setv server inbox.server)
+  (assert (is-not server None) "start の後は HTTP server が在る")
   (assert (= (get (get-status port "/readyz") 0) 503))    ; まだループが来ていない
   (.take inbox 0.01 10)                                   ; ループが 1 度取りに来た
   (setv (get now 0) 1020.0)                               ; 20 秒 取りに来ない(fsync が遅い)
@@ -54,4 +56,4 @@
   (assert (= (get (get-status port "/livez") 0) 200))
   ;; probe は箱に並ばない(ループの仕事を増やさない)
   (assert (.empty inbox.queue))
-  (.shutdown inbox.server))
+  (.shutdown server))

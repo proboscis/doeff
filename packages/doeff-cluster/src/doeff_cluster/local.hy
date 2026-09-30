@@ -1900,8 +1900,12 @@
       True
         (do (<- promise Promise (CreatePromise))
             (:= end-waiters (| end-waiters {job (+ (.get end-waiters job #()) #(promise))}))
-            (<- answer (promise-or-timeout promise.future timeout-seconds))
-            (resume (if (is answer None) (ProcessWaitExpired :job job :waited-seconds (float timeout-seconds)) answer)))))
+            ;; 上限なしの待ちは時間切れの答えを持たない(ProcessWaitExpired の秒は期限つきの待ちにだけ在る)。
+            (if (is timeout-seconds None)
+                (do (<- ended-later ProcessEnded (Wait promise.future))
+                    (resume ended-later))
+                (do (<- answer (promise-or-timeout promise.future timeout-seconds))
+                    (resume (if (is answer None) (ProcessWaitExpired :job job :waited-seconds (float timeout-seconds)) answer)))))))
   (ReadinessOf [name]
     (<- link SimLink (control-link parts.queue plan.revision))
     (<- answer tuple (send-request link "GET" (+ "/resources/Service/" (url-quote name :safe "")) {} None))

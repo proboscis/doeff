@@ -120,7 +120,17 @@
   (setv #^ str detail "")
   (setv #^ (| int None) failed-ms None)
   ;; 実行環境の root の準備の失敗(env の job だけ)。kind と一時かを coordinator へ運ぶ(置き直しと答えの型)。
-  (setv #^ (| EnvFailure None) failure None))
+  (setv #^ (| EnvFailure None) failure None)
+
+  (defn #^ None __post-init__ [self]
+    ;; 木の置き場は READY の時だけ在る事を、作る時に確かめるため(ready-path がこの対応に頼る)。
+    (when (!= (= self.state CodeState.READY) (is-not self.path None))
+      (raise (ValueError (.format "path は READY の時だけ在る: {} {} path={!r}" self.revision self.state.value self.path))))))
+
+
+(defn #^ (| str None) ready-path [#^ (| CodeView None) code]  ; defk にできない: 純粋な判断の start-actions(Program の外の関数)が呼ぶ
+  "木が READY ならその path、観測が無い・READY でなければ None(CodeView が READY ⇔ path の在る事を作る時に確かめる)。"
+  (if (is code None) None code.path))
 
 
 (defclass [(dataclass :frozen True)] ProcessView []

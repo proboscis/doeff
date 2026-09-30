@@ -85,6 +85,7 @@
   (<- plain System (quiet-system "recreate" None {}))
   (val row (get (. (system-declaration plain "rev-1" :versions (current-versions) :runtime-env declared-env) rows) 0))
   (val job (job-from-json row))
+  (assert (is-not job.spec.runtime-env None) job.spec)
   (assert (= (json.loads job.spec.runtime-env) env-json) job.spec)
   (assert (= (get (job-to-json job) "runtimeEnv") env-json) "coordinator の状態に残る(読み戻しで同じ宣言)")
   (assert (= (job-from-json (job-to-json job)) job) "読み戻しで同じ job")
@@ -110,6 +111,7 @@
   (assert (= spec.revision "rev-1") spec)
   (assert (= spec.env-key key) spec)
   (assert (= (code-key spec) (+ ENV-KEY-PREFIX key)) spec)
+  (assert (is-not spec.runtime-env None) spec)
   (assert (= (json.loads spec.runtime-env) env-json) spec)
   (val plain (declared-job-spec (| wire {"runtimeEnv" None})))
   (assert (and (= plain.revision "rev-1") (is plain.runtime-env None)) plain))
@@ -193,6 +195,7 @@
   (val row (get declaration.rows 0))
   (val spec (declared-job-spec (spec-json (. (job-from-json row) spec))))
   ;; worker が /programs/<sha> から取って置くのと同じ file(CoordinatorLink.accept-programs の形)を ProcessHost の cache に置く。
+  (assert (is-not spec.program None) spec)
   (val cached (program-file rig.host.program-dir spec.program))
   (.mkdir cached.parent :parents True :exist-ok True)
   (.write-text cached (json.dumps {"blob" (get declaration.programs spec.program) "versions" (get row "run" "versions")})
