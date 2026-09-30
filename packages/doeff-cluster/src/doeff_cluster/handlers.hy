@@ -583,8 +583,8 @@
   (#^ (| str None) runtime-env)
   (#^ float started)
   (#^ int started-ms)
-  (#^ (of IO bytes) out)
-  (#^ (of IO bytes) err))
+  (#^ (get IO bytes) out)
+  (#^ (get IO bytes) err))
 
 
 (defclass ProbeStore []
