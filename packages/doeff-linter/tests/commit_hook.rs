@@ -80,6 +80,40 @@ fn hook(root: &Path, extra: &[&str]) -> (i32, String) {
     (output.status.code().unwrap_or(-1), String::from_utf8_lossy(&output.stderr).into_owned())
 }
 
+/// 登録簿の当たらない行の検の設定(#1992 の形)— DOEFF110(defn の残り)は stage した path に当てる規則で、repo 全体の比べの列
+/// (whole_repo_rules)は DOEFF163・166 だけ。
+const REGISTRY_PYPROJECT: &str = r#"[tool.doeff-linter]
+enable = ["DOEFF163", "DOEFF110", "DOEFF166"]
+[tool.doeff-linter.definitions]
+[tool.doeff-linter.registry]
+dirs = ["reg"]
+
+[tool.doeff-linter.commit_hook]
+whole_repo_rules = ["DOEFF163", "DOEFF166"]
+timeout_s = 120
+"#;
+
+/// 失敗ケース(iii・#1992 の形): 登録簿に載った defn を直したのに行を消し忘れた commit は、repo 全体の比べの列が DOEFF163・166 だけでも
+/// 止まる — 166 が行の名指す規則(DOEFF110)を同じ実行で当てる(agora-redesign #1999・#2033)。行も消した commit は通る。
+#[test]
+fn a_registry_row_left_behind_blocks_with_only_the_whole_repo_rules() {
+    let dir = baseline_repo();
+    let root = dir.path();
+    write(root, "pyproject.toml", REGISTRY_PYPROJECT);
+    write(root, "app/core/x.hy", "(defn helper [] 1)\n");
+    write(root, "reg/k1.txt", "app/core/x.hy::DOEFF110::helper\n既存の defn\n");
+    git(root, &["add", "-A"]);
+    git(root, &["commit", "-q", "-m", "登録簿つきの基点"]);
+    write(root, "app/core/x.hy", "(defk helper [] 1)\n");
+    git(root, &["add", "app/core/x.hy"]);
+    let (code, stderr) = hook(root, &[]);
+    assert_eq!(code, 1, "{}", stderr);
+    assert!(stderr.contains("repo 全体の規則の HEAD に無い当たり: reg/k1.txt::DOEFF166::app/core/x.hy::DOEFF110::helper"), "{}", stderr);
+    git(root, &["rm", "-q", "reg/k1.txt"]);
+    let (code, stderr) = hook(root, &[]);
+    assert_eq!(code, 0, "{}", stderr);
+}
+
 /// 基点そのものが緑で、設定の `[tool.doeff-linter.commit_hook]` は知らない鍵(DOEFF100)にならない。
 #[test]
 fn commit_hook_section_is_a_known_key_and_the_baseline_is_clean() {

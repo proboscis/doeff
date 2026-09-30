@@ -7,11 +7,11 @@
 //! 止める物は 3 種:
 //! - stage した source(.hy・.hyk・.hyp・.py)の、critical でない規則の登録簿の外の error(登録簿の既知は linter が warning に下げる)。
 //! - stage した source の critical のうち HEAD の版に無い物(`--baseline-report` の `new_critical`)。
-//! - repo 全体の比べ(意味の規則を除く全部の規則を repo 全体に当てる)の当たりのうち HEAD の木に無い物 — 当たりが変更の外の file
+//! - repo 全体の比べ(設定の `whole_repo_rules` の列を repo 全体に当てる)の当たりのうち HEAD の木に無い物 — 当たりが変更の外の file
 //!   (architecture.hy・登録簿の表)に付く規則は、stage した path に当てても出ない。source を 1 つも stage しない commit(表だけの変更)
-//!   にも当てる。全部の規則で撃つのは、DOEFF166(当たらない登録簿の行)が行の名指す規則を同じ実行で当てた時だけ外れを判じるため
-//!   (設定の `whole_repo_rules` の列だけで撃つと当たらない行を見逃す・agora-redesign #1998)。`whole_repo_rules` は stage した path に
-//!   当てる規則から外す列。
+//!   にも当てる。`whole_repo_rules` は stage した path に当てる規則から外す列。列に DOEFF166(当たらない登録簿の行)が在れば、linter が
+//!   行の名指す規則を enable に無くても同じ実行で当てるので、列だけで当たらない行を見逃さない(agora-redesign #1999・#2033 — それまでは
+//!   全部の規則で撃っていた・#1998)。
 //!
 //! 子の linter は 1 回ごとに上限(既定 20 秒)を持ち、越えたら「測れなかった」と 1 行出して止めない(速さが優先)。
 //! 純粋な部分(規則の分け・鍵の差・止める当たりの選び)は関数に分けて、単体の検で確かめる。
@@ -33,14 +33,11 @@ pub const LINTED_SUFFIXES: [&str; 4] = [".hy", ".hyk", ".hyp", ".py"];
 /// 出す行の頭。
 const PREFIX: &str = "doeff-linter commit-hook: ";
 
-/// 有効な規則を、stage した path に当てる規則(quick)と、stage した path から外す repo 全体の規則(whole)に分けた物。all = 意味の規則を
-/// 除いた全部(repo 全体の比べに当てる列 — DOEFF166 は登録簿の行が名指す規則を同じ実行で当てた時だけ外れを判じるので、whole だけで撃つと
-/// 当たらない行を見逃す・agora-redesign #1998)。
+/// 有効な規則を、stage した path に当てる規則(quick)と、stage した path から外して repo 全体の比べに当てる規則(whole)に分けた物。
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct RuleSplit {
     pub quick: Vec<String>,
     pub whole: Vec<String>,
-    pub all: Vec<String>,
 }
 
 /// 純粋: 有効な規則から意味の規則(DOEFF2xx)を除き、設定の whole_repo_rules に在る物を whole、残りを quick に分ける(順は保つ)。
@@ -48,7 +45,6 @@ pub fn split_rules(enabled: &[String], whole_declared: &[String]) -> RuleSplit {
     let declared: BTreeSet<String> = whole_declared.iter().map(|r| r.to_uppercase()).collect();
     let mut split = RuleSplit::default();
     for rule in enabled.iter().filter(|r| !r.to_uppercase().starts_with(SEMANTIC_PREFIX)) {
-        split.all.push(rule.clone());
         if declared.contains(&rule.to_uppercase()) {
             split.whole.push(rule.clone());
         } else {
@@ -398,9 +394,9 @@ fn judge(options: &CommitHookOptions) -> Result<Blocking, Stop> {
     if staged.is_empty() {
         return Ok(blocking);
     }
-    let RuleSplit { quick, all, .. } = &options.rules;
+    let RuleSplit { quick, whole } = &options.rules;
     let paths = if quick.is_empty() { Vec::new() } else { linted_paths(&staged, |p| root.join(p).exists()) };
-    if paths.is_empty() && all.is_empty() {
+    if paths.is_empty() && whole.is_empty() {
         return Ok(blocking);
     }
     let scratch = Scratch::create().map_err(Stop::Failed)?;
@@ -427,17 +423,17 @@ fn judge(options: &CommitHookOptions) -> Result<Blocking, Stop> {
         blocking.fresh_critical = tip["new_critical"].as_array().into_iter().flatten().filter_map(|v| v.as_str().map(str::to_string)).collect();
     }
 
-    if !all.is_empty() {
+    if !whole.is_empty() {
         let dot = vec![".".to_string()];
         let head = match tree {
             Some(t) => {
-                let mut report = measured(run_linter(&options.linter, t, &lint_args(options, Some(t), all, &[], &dot), options.timeout), "HEAD の木の repo 全体の比べ")?;
+                let mut report = measured(run_linter(&options.linter, t, &lint_args(options, Some(t), whole, &[], &dot), options.timeout), "HEAD の木の repo 全体の比べ")?;
                 rebase_paths(&mut report, &t.to_string_lossy(), &tip_root.to_string_lossy());
                 report
             }
             None => empty_report(),
         };
-        let tip = measured(run_linter(&options.linter, root, &lint_args(options, None, all, &[], &dot), options.timeout), "repo 全体の比べ")?;
+        let tip = measured(run_linter(&options.linter, root, &lint_args(options, None, whole, &[], &dot), options.timeout), "repo 全体の比べ")?;
         blocking.whole = fresh_whole_repo_hits(&head, &tip);
     }
     Ok(blocking)
@@ -457,9 +453,8 @@ mod tests {
         let enabled = ids(&["DOEFF016", "DOEFF163", "DOEFF201", "DOEFF110", "DOEFF205", "doeff166"]);
         let split = split_rules(&enabled, &ids(&["DOEFF163", "DOEFF166", "DOEFF999"]));
         assert_eq!(split.quick, ids(&["DOEFF016", "DOEFF110"]));
+        // repo 全体の比べは whole の列だけ — 列の DOEFF166 が行の名指す規則を同じ実行で当てる(agora-redesign #1999・#2033)。
         assert_eq!(split.whole, ids(&["DOEFF163", "doeff166"]));
-        // repo 全体の比べは意味の規則を除く全部 — whole だけで撃つと DOEFF166 が当たらない登録簿の行を見逃す(agora-redesign #1998)。
-        assert_eq!(split.all, ids(&["DOEFF016", "DOEFF163", "DOEFF110", "doeff166"]));
         // 宣言が無ければ全部 quick(意味の規則は除いたまま)。
         let split = split_rules(&enabled, &[]);
         assert_eq!(split.quick, ids(&["DOEFF016", "DOEFF163", "DOEFF110", "doeff166"]));

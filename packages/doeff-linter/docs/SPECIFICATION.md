@@ -157,7 +157,7 @@ warning の違反 **DOEFF100**(設定の知らない鍵)を出す(agora-redesign
 | `environment_names` | `words`・`paths`・`exclude`・`exclude_parts`・`extensions`・`assembly_files` | extensions = hy・hyk・hyp・py |
 | `laws`(配列) | `name`・`adr`・`statement`・`rules`・`layers` | layers が空なら全部の層 |
 | `translation_effects` | `handler_layers`・`intent_layers`・`max_depth`(DOEFF130 — 21 節) | protocol・intent・8 |
-| `commit_hook` | `whole_repo_rules`(`--commit-hook` が stage した path でなく repo 全体に当て、HEAD の木と比べる規則 — 当たりが変更の外の file に付く物)・`timeout_s`(子の linter 1 回ごとの上限・越えたら測れなかったとして通す・agora-redesign #1989) | なし・20 |
+| `commit_hook` | `whole_repo_rules`(`--commit-hook` が stage した path でなく repo 全体に当て、HEAD の木と比べる規則 — 当たりが変更の外の file に付く物。列に DOEFF166 が在れば、登録簿の行が名指す規則も同じ実行で当てるので、列だけで当たらない行を見逃さない・agora-redesign #2033)・`timeout_s`(子の linter 1 回ごとの上限・越えたら測れなかったとして通す・agora-redesign #1989) | なし・20 |
 | `registry` | `dirs`(1 鍵 1 file の dir)・`files`(1 行 1 鍵)・`config_files`(1 行 1 鍵・設定 file の dir からの相対)・`reconciling` | dirs と files は repo の根から |
 | `rules.<ID>` | `registered_severity`(登録簿に載った破れの重さ: error・warning・info) | warning |
 | `rules.<ID>` | `level`(規則の重大さ: critical・major・minor・info。どの規則でも書ける。登録簿で下げない — エディタが「手つかずの critical」を数える軸) | 下の「既定の重大さ」の表、表に無い規則は規則そのものの重さから(error = major・warning = minor・info = info) |
