@@ -155,6 +155,8 @@ pub enum Explain {
     ForbiddenModule { placement: Placement, module: String },
     /// DOEFF168: 業務の層の定義が環境の名の値と比べるか dry-run の印で分岐する(当たった綴りの種類)。
     EnvironmentBranch { placement: Placement, hit: super::env_branch::BranchHit },
+    /// DOEFF169: match の class pattern の keyword の欄の名に `-` が在る(class と欄の名)。
+    MatchFieldHyphen { placement: Placement, class: String, field: String },
     /// DOEFF103: 型だけの層に関数を置いた。
     TypesOnly { placement: Placement, functions: Vec<String> },
     /// DOEFF104: タグの無い定義がある。
@@ -346,6 +348,10 @@ impl<'a> Narrator<'a> {
                     particle(&self.name(placement.layer), "が"),
                     particle(&format!("層 {} の持つ物", self.name(*target_layer)), "")
                 ),
+            ),
+            Explain::MatchFieldHyphen { placement, class, field } => (
+                format!("match の class pattern ({} :{} …) — {}", class, field, self.file_subject(placement)),
+                "Hy の match は class pattern の keyword を属性名へ mangle しないまま Python の case に出す(`:a-b` は `case Class(a-b=…)`)。属性 `a-b` はどの値にも無いので、その節は値が何でも当たらず、黙って次の節(多くは既定の `_`)に倒れる。".to_string(),
             ),
             Explain::EnvironmentBranch { placement, hit } => (
                 match hit {
@@ -977,6 +983,7 @@ impl<'a> Narrator<'a> {
                 instead
             )),
             Explain::RetiredCall { instead, .. } => Some(format!("{} に置き換える", instead)),
+            Explain::MatchFieldHyphen { field, .. } => Some(format!(":{} を :{} と書く — 直すと今まで当たらなかった節が当たるようになるので、その定義の検を撃つ", field, field.replace('-', "_"))),
             Explain::EnvironmentBranch { .. } => Some("環境で変わる振る舞いを effect にして、環境ごとの handler(本番・模擬・dry-run)に答えさせる — 業務の層の定義は環境の名も dry-run の印も読まない".to_string()),
             Explain::PlacedDependency { owner_rel, .. } => Some(format!("{} を層の置き場(<root>/<service>/<層>/)へ移すか、要る型を intent へ移して読む — 直せない既存の当たりは登録簿に載せる", owner_rel)),
             Explain::MixedConcerns { .. } => Some("形の検めは protocol の境目で defwire の型に parse し(形が合わなければ解く所で失敗)、この定義は型のある値を受けて判断だけをする".to_string()),
