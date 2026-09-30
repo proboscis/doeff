@@ -63,7 +63,7 @@ impl InvariantGap {
 }
 
 /// module の綴り(`pkg.sub.name`)の Hy の file の repo の根からの path(`pkg/sub/name.hy`)— 入口の宣言を索引の鍵に照らすため。
-fn module_path(module: &str) -> String {
+pub(super) fn module_path(module: &str) -> String {
     format!("{}.hy", module.replace('.', "/"))
 }
 
