@@ -31,14 +31,14 @@
 
 (defclass [(dataclass :frozen True)] ListRecordRuns [EffectBase]
   "結果は run の dict の list。service = None なら全部。"
-  (#^ object service))
+  (#^ (| str None) service))
 
 (defclass [(dataclass :frozen True)] ReadRecordRun [EffectBase]
   "結果は JSONL の text(区切りの順)。無ければ None。"
   (#^ str service)
   (#^ str run)
-  (#^ object from-chunk)
-  (#^ object to-chunk))
+  (#^ (| int None) from-chunk)
+  (#^ (| int None) to-chunk))
 
 (defclass [(dataclass :frozen True)] CompactRecords [EffectBase]
   "結果は gzip にした区切りの数。idle-ms 書かれていない .jsonl を圧縮する。"
