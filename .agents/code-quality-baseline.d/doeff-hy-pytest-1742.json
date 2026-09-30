@@ -1,0 +1,61 @@
+{
+  "entries": [
+    {
+      "count": 1,
+      "path": "packages/doeff-hy-pytest/src/doeff_hy_pytest/__init__.py",
+      "reason": "registered-with-legacy",
+      "rule": "dependency-uncontracted",
+      "subject": "packages/doeff-hy/src/doeff_hy/ast_unparse.py"
+    },
+    {
+      "count": 4,
+      "path": "packages/doeff-hy-pytest/tests/test_budget.py",
+      "reason": "registered-with-legacy",
+      "rule": "dynamic-boundary",
+      "subject": "importlib.import_module"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-hy-pytest/src/doeff_hy_pytest/budget.py",
+      "reason": "registered-with-legacy",
+      "rule": "type-suppression",
+      "subject": "# type: ignore[method-assign]  # install の前へ戻す"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-hy-pytest/src/doeff_hy_pytest/budget.py",
+      "reason": "registered-with-legacy",
+      "rule": "type-suppression",
+      "subject": "# type: ignore[method-assign]  # 数えるための差し替え(uninstall で戻す)"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-hy-pytest/tests/test_budget.py",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "test_compile_counter_adds_only_the_outermost_window"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-hy-pytest/tests/test_budget.py",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "test_compile_counter_sets_aside_a_first_import_once_and_not_a_loaded_module"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-hy-pytest/tests/test_budget.py",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "test_registry_file_must_be_named_by_key_hash_and_carry_a_reason"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-hy-pytest/tests/test_budget.py",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "test_test_listed_only_in_the_second_registry_is_reported_not_red"
+    }
+  ],
+  "version": 1
+}
