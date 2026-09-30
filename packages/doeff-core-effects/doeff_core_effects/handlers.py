@@ -45,7 +45,7 @@ def reader(env: Mapping[Any, Any] | None = None) -> ProgramHandler:
         env = {}
 
     @do
-    def handler(effect, k):
+    def handler(effect: Ask, k):
         if isinstance(effect, Ask):
             if effect.key in env:
                 return (yield Transfer(k, env[effect.key]))
@@ -64,7 +64,7 @@ def state(initial: Mapping[Any, Any] | None = None) -> ProgramHandler:
     store = dict(initial) if initial else {}
 
     @do
-    def handler(effect, k):
+    def handler(effect: Get | Put, k):
         if isinstance(effect, Get):
             return (yield Transfer(k, store.get(effect.key)))
         elif isinstance(effect, Put):
@@ -79,7 +79,7 @@ _WRITER_LOG_KEY = "__doeff_writer_log__"
 
 
 @do
-def _writer_handler(effect, k):
+def _writer_handler(effect: WriterTellEffect, k):
     """Writer handler: collects Tell(message) into a log list.
 
     Uses lazy state init via Get/Put + Some (same pattern as Hy
@@ -124,7 +124,7 @@ def writer_log():
 
 
 @do
-def _try_handler(effect, k):
+def _try_handler(effect: Try, k):
     """Try handler: catches errors from Try(program) and returns Ok/Err.
 
     Captures inner handlers (between body and try_handler) via GetHandlers
@@ -174,7 +174,7 @@ def _format_slog_line(effect):
 
 
 @do
-def _slog_handler(effect, k):
+def _slog_handler(effect: Slog, k):
     """Structured log sink: displays each SlogEffect on stderr and consumes it.
 
     Contract (ADR-DOE-CORE-EFFECTS-001 R2): installing this handler makes
@@ -199,7 +199,7 @@ slog_handler.__qualname__ = "slog_handler"
 
 
 @do
-def _slog_discard_handler(effect, k):
+def _slog_discard_handler(effect: Slog, k):
     """Silent sink for SlogEffect: consumes without display (explicit opt-in,
     ADR-DOE-CORE-EFFECTS-001 R5). For assertions, capture via
     Listen(prog, types=(SlogEffect,)) inside the program instead."""
@@ -214,7 +214,7 @@ slog_discard_handler.__qualname__ = "slog_discard_handler"
 
 
 @do
-def _local_handler(effect, k):
+def _local_handler(effect: Local, k):
     """Local handler: scoped env override with pass-on-miss semantics.
 
     Installs a scope reader that handles Ask for overridden keys only,
@@ -237,7 +237,7 @@ def _local_handler(effect, k):
         inner_handlers = yield get_inner_handlers(k)
 
         @do
-        def scope_reader(inner_effect, inner_k):
+        def scope_reader(inner_effect: Ask, inner_k):
             if isinstance(inner_effect, Ask) and inner_effect.key in overrides:
                 return (yield Transfer(inner_k, overrides[inner_effect.key]))
             yield Pass(inner_effect, inner_k)
@@ -261,7 +261,7 @@ local_handler.__qualname__ = "local_handler"
 
 
 @do
-def _listen_handler(effect, k):
+def _listen_handler(effect: Listen, k):
     """Listen handler: collects effects of specified types during program execution.
 
     OCaml 5 semantics: reinstall inner handlers so the inner program
@@ -464,7 +464,7 @@ def await_handler() -> ProgramHandler:
     from doeff_core_effects.scheduler import CreateExternalPromise, Wait
 
     @do
-    def handler(effect, k):
+    def handler(effect: Await, k):
         if isinstance(effect, Await):
             ep = yield CreateExternalPromise(deadline=effect.deadline)
             loop = _get_await_bridge_loop()
@@ -583,7 +583,7 @@ def lazy_ask(env: Mapping[Any, Any] | None = None, *, strict: bool = False) -> P
                 shared_deps[key] = deps
 
         @do
-        def handler(effect, k):  # noqa: PLR0911, PLR0912, PLR0915 - baseline cleanup keeps existing control flow unchanged
+        def handler(effect: Ask | Local, k):  # noqa: PLR0911, PLR0912, PLR0915 - baseline cleanup keeps existing control flow unchanged
             if isinstance(effect, Ask):
                 # Track as dependency if inside a lazy evaluation
                 if eval_stack:
@@ -727,7 +727,7 @@ def env_var_ask(*, prefix: str = "DOEFF_") -> ProgramHandler:
     sems: dict = {}
 
     @do
-    def handler(effect, k):  # noqa: PLR0911 - baseline cleanup keeps existing control flow unchanged
+    def handler(effect: Ask, k):  # noqa: PLR0911 - baseline cleanup keeps existing control flow unchanged
         if not isinstance(effect, Ask):
             yield Pass(effect, k)
             return None
