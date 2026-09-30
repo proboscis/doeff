@@ -23,7 +23,8 @@
                                      describe-identity job-named])
 (import doeff_cluster.cluster_policy [job-from-json identity-hash])
 (import doeff_cluster.host_contract [host-reader])
-(import doeff_cluster.remote_model [encode-program current-versions])
+(import doeff_cluster.remote_model [encode-program])
+(import doeff_cluster.process_versions [current-versions])
 (import doeff_cluster.runtime_env_model [EnvVar RuntimeEnvInvalid])
 (import doeff_cluster.worker_model [spec-hash])
 (import tests.fixtures.services [lab lab-pair tally-program greeter-program holding-program])
@@ -42,7 +43,7 @@
 (defk only-row [system]
   {:pre [(: system System)] :post [(: % dict)] :tags {:context "doeff-cluster-test" :role "entry"}}
   "job 1 つの系の宣言の行。"
-  (val rows (. (system-declaration system "rev1") rows))
+  (val rows (. (system-declaration system "rev1" :versions (current-versions)) rows))
   (assert (= (len rows) 1) rows)
   (get rows 0))
 
@@ -154,7 +155,7 @@
 ;; --- 宣言の行 -----------------------------------------------------------------------------------
 
 (deftest test-the-row-carries-the-identity-the-describe-and-the-program-key
-  (val declaration (system-declaration (lab plain-foundation) "rev1"))
+  (val declaration (system-declaration (lab plain-foundation) "rev1" :versions (current-versions)))
   (assert (isinstance declaration Declaration))
   (val row (get declaration.rows 0))
   (val run (get row "run"))
@@ -182,7 +183,7 @@
 
 (deftest test-every-option-reaches-the-declaration-row
   ;; readiness と handoff は行に残る。recreate(既定)は update を書かない。名の引数(kwargs)も identity と describe に残る。
-  (val declaration (system-declaration (lab-pair plain-foundation) "rev1"))
+  (val declaration (system-declaration (lab-pair plain-foundation) "rev1" :versions (current-versions)))
   (val rows (dfor r declaration.rows (get r "name") r))
   (assert (= (sorted rows) ["greeter" "tally"]))
   (val greeter (get rows "greeter"))
@@ -238,14 +239,14 @@
   ;; system-declaration の規則を使う。宣言に無い名・系に無い job・文字列でない値は断り、上書きは spec-hash に入る。
   (<- one Job (tally-job {"TALLY_BASE" "1"}))
   (val system (system-of "lab" #(one)))
-  (val plain (get (. (system-declaration system "rev1") rows) 0))
-  (val overlaid (get (. (system-declaration system "rev1" :environ {"tally" {"TALLY_BASE" "9"}}) rows) 0))
+  (val plain (get (. (system-declaration system "rev1" :versions (current-versions)) rows) 0))
+  (val overlaid (get (. (system-declaration system "rev1" :versions (current-versions) :environ {"tally" {"TALLY_BASE" "9"}}) rows) 0))
   (assert (= (get overlaid "environ") {"TALLY_BASE" "9"}) overlaid)
   (assert (!= (spec-hash (. (job-from-json plain) spec)) (spec-hash (. (job-from-json overlaid) spec))))
   (for [#(overlay word) [#({"tally" {"UNDECLARED" "x"}} "UNDECLARED") #({"elsewhere" {"TALLY_BASE" "1"}} "elsewhere")
                          #({"tally" {"TALLY_BASE" 9}} "TALLY_BASE")]]
     (with [raised (pytest.raises ValueError)]
-      (system-declaration system "rev1" :environ overlay))
+      (system-declaration system "rev1" :versions (current-versions) :environ overlay))
     (assert (in word (str raised.value)) (str raised.value))))
 
 
@@ -388,7 +389,7 @@
 (deftest test-the-worker-entry-runs-the-declared-program-as-is [tmp-path]
   ;; 宣言が詰めた Program を、worker が /programs から取るのと同じ形の file で job_entry service に渡す。入口は handler を足さず、
   ;; Program が自分で並べた土台の reader が答える(同じ venv で詰めて、子 process で解ける — 版の食い違いが無い)。
-  (val declaration (system-declaration (lab-pair greeting-foundation) "rev1"))
+  (val declaration (system-declaration (lab-pair greeting-foundation) "rev1" :versions (current-versions)))
   (val greeter (next (gfor r declaration.rows :if (= (get r "name") "greeter") r)))
   (val run (get greeter "run"))
   (val program-file (/ tmp-path "program.json"))

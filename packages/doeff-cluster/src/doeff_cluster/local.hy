@@ -136,8 +136,8 @@
 (import .metrics_model [ReportMetrics])
 (import .readiness_model [ReportReady])
 (import .remote [task-submit-body outcome-of settled-value])
-(import .remote_model [RemoteJob RemoteJobFailed TaskSucceeded TaskFailed encode-program encode-outcome failed-from program-sha
-                       current-versions])
+(import .remote_model [RemoteJob RemoteJobFailed TaskSucceeded TaskFailed encode-program encode-outcome failed-from program-sha])
+(import .process_versions [current-versions])
 (import .report_client [report-request task-result-request task-id-of-job])
 (import .runtime_env_model [RuntimeEnv EnvFailure runtime-env->json current-platform])
 (import .semaphore_model [LeaseOp SEMAPHORE-PREFIX drop-holders lease-holder holder-tokens-prefix])
@@ -617,7 +617,7 @@
    (計画 2.7 の H・改訂 1 の M — whole.hy の overrides の置き換え先)。上書きの規則(系に無い job・宣言の :environ に無い名・文字列でない
    値は断る)は本番の declare と同じ 1 つ(service_model.environ-overlay-refusal)。実行環境の宣言は本番の declare の --runtime-env と同じ
    欄に載り、本物の worker が子へ DOEFF_RUNTIME_ENV で渡す(子の run-context の runtime-env)。"
-  (system-declaration system revision :runtime-env runtime-env :environ environ))
+  (system-declaration system revision :versions (current-versions) :runtime-env runtime-env :environ environ))
 
 
 (defk sim-plan [system workers environ revision start-ms timing policy outside store [deployments None] [runtime-env None] [skip-idle False]]

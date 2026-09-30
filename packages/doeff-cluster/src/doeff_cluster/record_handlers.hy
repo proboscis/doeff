@@ -34,7 +34,7 @@
 (import doeff_core_effects.effects [Ask])
 (import doeff_cluster.host_contract [HOST-CONTRACT])
 (import doeff_cluster.job_context [RunContext])
-(import doeff_cluster.remote_model [current-versions])
+(import doeff_cluster.process_versions [current-versions])
 
 
 ;; --- task の名(記録と再生で共通) ---------------------------------------------------------------

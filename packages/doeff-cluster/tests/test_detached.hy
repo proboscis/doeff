@@ -31,7 +31,8 @@
 (import doeff_cluster.handlers [CoordinatorLink])
 
 (import doeff_cluster.worker_model [DesiredJobs JobStatus JobPhase])
-(import doeff_cluster.remote_model [TaskSucceeded decode-program encode-outcome failed-from current-versions])
+(import doeff_cluster.remote_model [TaskSucceeded decode-program encode-outcome failed-from])
+(import doeff_cluster.process_versions [current-versions])
 (import doeff_cluster.detached_model [SubmitDetached AwaitDetached CancelDetached ReleaseDetached
                                       DetachedSubmitted DetachedSucceeded DetachedFailed DetachedLost DetachedCancelled
                                       DetachedVersionMismatch DetachedUnknown DetachedPending DetachedRefused])

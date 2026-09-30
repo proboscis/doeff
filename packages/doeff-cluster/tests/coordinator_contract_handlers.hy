@@ -52,7 +52,7 @@
 (import doeff_cluster.readiness_handlers [readiness-memory readiness-http])
 (import doeff_cluster.report_client [ServiceReportClient])
 (import doeff_cluster.remote [remote-cluster TaskClient])
-(import doeff_cluster.remote_model [current-versions])
+(import doeff_cluster.process_versions [current-versions])
 (import doeff_cluster.detached [warm-cluster WarmClient])
 (import doeff_cluster.local [sim-cluster SimWorker SimLink ClientLink PartsOf StopCoordinator coordinator-answers])
 (import doeff_cluster.runtime_env_model [RuntimeEnv])

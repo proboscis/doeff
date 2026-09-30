@@ -15,7 +15,7 @@
 (import doeff_cluster.service_model [system-declaration Declaration])
 (import doeff_cluster.declare [apply-declaration])
 (import doeff_cluster.handlers [CoordinatorLink program-file])
-(import doeff_cluster.remote_model [current-versions])
+(import doeff_cluster.process_versions [current-versions])
 (import doeff_cluster.worker_model [DesiredJobs JobSpec])
 (import tests.fixtures.services [lab])
 (import tests.fixtures.envs [plain-foundation])
@@ -30,7 +30,7 @@
 (defk declaration-for-this-test []
   {:pre [] :post [(: % Declaration)] :tags {:context "doeff-cluster-test" :role "entry"}}
   "見本の系 lab の宣言(Program を詰めた本物の Declaration)を、名と needs だけこの検の物に替えた宣言。"
-  (val declared (system-declaration (lab plain-foundation) "r-served"))
+  (val declared (system-declaration (lab plain-foundation) "r-served" :versions (current-versions)))
   (Declaration :rows (lfor row declared.rows (| row {"name" JOB "needs" [NEED]})) :programs declared.programs))
 
 

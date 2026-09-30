@@ -14,8 +14,8 @@
 (import doeff_core_effects.handlers [reader])
 (import doeff_time [Delay])
 (import doeff_cluster.remote_model [RemoteJob UnsendableProgram VersionMismatch RemoteJobFailed
-                                          TaskSucceeded TaskFailed encode-program decode-program decode-outcome
-                                          current-versions version-mismatch])
+                                          TaskSucceeded TaskFailed encode-program decode-program decode-outcome version-mismatch])
+(import doeff_cluster.process_versions [current-versions])
 (import doeff_cluster.remote_model [program-sha])
 (import doeff_cluster.handlers [write-program-file])
 (import doeff_cluster.local [sim-cluster SharedRows ProcessesOf])

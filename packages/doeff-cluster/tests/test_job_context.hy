@@ -13,7 +13,8 @@
 (import sys)
 (import pathlib [Path])
 (import doeff_cluster.host_contract [HOST-CONTRACT])
-(import doeff_cluster.remote_model [encode-program current-versions])
+(import doeff_cluster.remote_model [encode-program])
+(import doeff_cluster.process_versions [current-versions])
 (import doeff_cluster.runtime_env_model [RepoCheckout PythonProject RuntimeEnv runtime-env->json])
 (import tests.fixtures.entry_programs [context-program host-foundation])
 
