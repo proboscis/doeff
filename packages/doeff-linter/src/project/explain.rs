@@ -210,6 +210,8 @@ pub enum Explain {
     HandlerArgumentHoldsState { handler: String, param: String, kind: &'static str, type_text: String },
     /// DOEFF143・157・158: 業務の効果の偽物・表の腐り・検だけの偽物・intent の効果の答え手。
     BusinessEffectFake { subject: String, reason: String },
+    /// DOEFF166: 登録簿の鍵(source = 載った登録簿の file・rules = 鍵の区切りが指す、この実行で判じた規則の ID)がどの所見にも当たらない。
+    RegistryEntryStale { key: String, source: String, rules: Vec<String> },
     /// DOEFF165: intent の効果の網羅の表の 1 行(効果・持ち主の service・3 列・欠けの語句)。
     IntentEffectCoverage { effect: String, service: String, columns: String, gaps: String },
     /// DOEFF155・156: 組み立ての形の破れ・翻訳の先か土台の答えが業務の効果。
@@ -591,6 +593,10 @@ impl<'a> Narrator<'a> {
                 "引数で受けた client や店は外側の handler から差し替えも観測もできず、模擬の環境で handler の差し替えだけで回せない。接続先と資格・設定は Ask で読み、client は handler の本文の先頭の (session val client …) で 1 回だけ作り、状態は (session var …) で持つ。".to_string(),
             ),
             Explain::BusinessEffectFake { subject, reason } => (subject.clone(), reason.clone()),
+            Explain::RegistryEntryStale { key, source, rules } => (
+                format!("登録簿 {} の鍵 {}", source, key),
+                format!("この実行で規則 {} を repo 全体に当てたが、この鍵に当たる所見が無い。載った破れを直した後に行を消し忘れると、同じ所に破れが戻っても登録簿が黙って warning に下げる(縮める向きの登録簿が緩んだまま — agora-redesign #1706)。", rules.join("・")),
+            ),
             Explain::IntentEffectCoverage { effect, service, columns, gaps } => (
                 format!("service {} の intent の効果 {}({})", service, effect, gaps),
                 format!("{}。intent の効果は、手元の検から届く定義が出し、模擬の根と本番の入口の両方から届く答え手を持って初めて、手元でテストした業務の操作になる(agora-redesign #1155)。", columns),

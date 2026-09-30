@@ -8,6 +8,8 @@ use std::path::Path;
 #[derive(Debug, Default, Clone)]
 pub struct Registry {
     pub keys: BTreeSet<String>,
+    /// 鍵 → 載った登録簿の file(root からの綴り — DOEFF166 の当たらない行の知らせが消す file を名指す)。
+    pub origins: BTreeMap<String, String>,
     pub problems: Vec<String>,
 }
 
@@ -37,7 +39,9 @@ impl Registry {
             match std::fs::read_to_string(&file) {
                 Ok(text) => match text.lines().next().map(str::trim).filter(|line| !line.is_empty()) {
                     Some(key) => {
+                        let name = file.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
                         self.keys.insert(key.to_string());
+                        self.origins.insert(key.to_string(), format!("{}/{}", shown.trim_end_matches('/'), name));
                     }
                     None => self.problems.push(format!("登録簿の file {} の 1 行目が空", file.display())),
                 },
@@ -52,6 +56,7 @@ impl Registry {
             Ok(text) => {
                 for line in text.lines().map(str::trim).filter(|line| !line.is_empty() && !line.starts_with('#')) {
                     self.keys.insert(line.to_string());
+                    self.origins.insert(line.to_string(), shown.to_string());
                 }
             }
             Err(error) => self.problems.push(format!("登録簿の file {} を読めない: {}", shown, error)),
