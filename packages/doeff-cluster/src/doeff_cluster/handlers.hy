@@ -2,7 +2,7 @@
 ;; どれもループを塞がない: 展開と子 process は Popen で起動し、結果は ObserveWorld で観測する。
 (require doeff-hy.macros [defhandler defk deff <- val])
 (require doeff-hy.record [defrecord])
-(import json os re shutil signal subprocess sys tempfile time uuid)
+(import json os re shutil signal subprocess sys tempfile threading time uuid)
 (import httpx)
 (import enum [Enum])
 (import typing [IO])
@@ -10,6 +10,8 @@
 (import pathlib [Path])
 (import urllib.parse [quote :as url-quote])
 (import .coordinator_http [CoordinatorEndpoint REPLY-SECONDS])
+(import .beat_policy [WatchKind WatchReading beat-interval-ms heartbeat-due watch-params watch-reading reply-revision
+                      WATCH-RETRY-SECONDS WAKE-HOLD-SECONDS])
 (import .code_prepare [MARKER MARKER-FORMAT marker-problem scan])
 (import doeff [run])
 (import doeff_core_effects.file_effects [MakeDirectory WriteText file-done])
@@ -898,12 +900,53 @@
            :environ (environ-pairs (.get task "environ" {}))))
 
 
+(defclass WatchState []
+  "背景の待ちの thread と拍(CoordinatorLink.poll)が分ける状態(#1933 — beat_policy)。after = 次の待ちの版(前の heartbeat の返事の
+   版・lock で守る)・confirmed = 待ちが 1 度答えた(口を確かめた)・unsupported = 待つ口が無い(404)・woken = 待ちが「変わった」と
+   答えた印・beat-done = heartbeat が届いた合図・closing = 止めの合図・failure = thread が止まった理由・told = 最後に出した 1 行の鍵。"
+  (defn #^ None __init__ [self]
+    (setv self.lock (threading.Lock) self.after None self.confirmed False self.unsupported False
+          self.woken (threading.Event) self.beat-done (threading.Event) self.closing (threading.Event)
+          self.failure "" self.told None))
+
+  (defn #^ (| int None) after-now [self]
+    "次の待ちの版を読むため(拍の thread が書き換える)。"
+    (with [self.lock]
+      (setv after self.after))
+    after)
+
+  (defn #^ None beaten [self #^ (| int None) revision]
+    "heartbeat が届いた時に、次の待ちの版を返事の版にし、起こした後の待ちを解くため。"
+    (with [self.lock]
+      (setv self.after revision))
+    (.set self.beat-done))
+
+  (defn #^ None advance [self #^ int after #^ int revision]
+    "「変わっていない」と答えた待ちの版へ進めるため(その間に heartbeat が版を書き換えていれば、そちらを残す)。"
+    (with [self.lock]
+      (when (= self.after after)
+        (setv self.after revision))))
+
+  (defn #^ None confirm [self]
+    "待ちが答えた(待つ口を使える)と記すため。"
+    (setv self.confirmed True))
+
+  (defn #^ None tell-watch [self #^ str key #^ str line]
+    "待ちの結果の変わり目だけを stderr へ 1 行出すため(同じ失敗を拍ごとに繰り返さない)。"
+    (when (!= key self.told)
+      (setv self.told key)
+      (print line :file sys.stderr :flush True))))
+
+
 (defclass CoordinatorLink []
   "coordinator との連絡。heartbeat で生存・版・状態(終わった task の結果を含む)を送り、自分に割り当てられた job と task を受け取る。
    task の blob は task-dir の file に置き、宣言から外れた task の file は消す(この worker が書いた物だけ)。"
   (defn #^ None __init__ [self #^ str url #^ str name #^ tuple provides #^ int capacity #^ int fence-ms
                   #^ (| str None) [task-dir None] #^ (| dict None) [versions None] #^ (| httpx.BaseTransport None) [transport None] #^ (| dict None) [tools None] #^ (| EnvStore None) [envs None]
-                  #^ tuple [exclusive #()] #^ str [node ""]]
+                  #^ tuple [exclusive #()] #^ str [node ""] #^ bool [watch False]]
+    ;; watch = heartbeat を拍から切り離し、desired の変化を名指しの待ち(GET /watch)で受けるか(#1933 — beat_policy)。真なら返事に版を
+    ;; 持つ coordinator に背景の thread で待ちを送り続け、heartbeat は beat_policy.heartbeat-due の時だけ送る。偽(既定 — 検の道具の
+    ;; link)なら今までどおり拍ごとに送る。本番の worker の入口(main.hy)が真にする。
     ;; node = この worker の置かれた k8s の node の名(downward API の spec.nodeName・k8s の外の機体は空)。coordinator がその node の
     ;; label から能力(company-machine など)を導く — worker の自己申告にしない(改訂 1 の I)。
     ;; provides / exclusive = この worker が提供する能力・専用の能力の名(名の順 — cluster_model.capabilities-of・ADR-DOE-CLUSTER-001 R4b)。
@@ -933,7 +976,17 @@
           ;; 走っている task を引き取れるようにする(cluster_policy.adopt-running-detached・2026-09-27)。
           self.task-echo {}
           ;; 最後に stderr へ出した heartbeat の結果(None = まだ出していない・"" = 名乗れた・それ以外 = 名乗れない理由)— tell。
-          self.told None)
+          self.told None
+          ;; --- heartbeat の切り離し(#1933 — beat_policy)---
+          ;; watch-state = 背景の待ちの thread と拍(poll)の間で分ける状態(lock で守る)。last-desired = 前の heartbeat の返事の desired
+          ;; (届かなかったら None — 次の拍で必ず送る)・sent-statuses = 前に届けた状態の報告・beat-interval-ms = 送る間隔。
+          self.watch-enabled watch
+          self.watch-state (WatchState)
+          self.watch-endpoint (CoordinatorEndpoint url REPLY-SECONDS 0 :transport transport :actor name)
+          self.watcher None
+          self.last-desired None
+          self.sent-statuses None
+          self.beat-interval-ms (beat-interval-ms None {}))
     ;; 世代を Pod の中の file へ書く(DOEFF_WORKER_BOOT_FILE)— readinessProbe が「coordinator の見る worker がこの Pod の物か」を
     ;; 比べる(drain_client.ready-of)。同じ node の前の Pod と名が同じなので、名だけでは見分けられない。
     (setv boot-file (os.environ.get "DOEFF_WORKER_BOOT_FILE"))
@@ -1026,11 +1079,84 @@
       (setv self.told outcome)
       (print line :file sys.stderr :flush True)))
 
+  (defn #^ bool watching [self]
+    "待ちの口を使えているか(heartbeat を拍から切り離してよいか): 待ちを使う link で、待ちの thread が生きていて、口を確かめ(最初の
+     待ちが答えた)、404 でない。thread が思わぬ例外で止まっていれば、1 行出して毎拍の heartbeat に戻る。"
+    (setv state self.watch-state)
+    (when (and self.watcher (not (.is-alive self.watcher)) (not state.unsupported) (not (.is-set state.closing)))
+      (.tell-watch state (+ "thread-dead:" state.failure)
+                   (+ "worker: 待ちの thread が止まっている — 拍ごとの heartbeat に戻ります: " state.failure)))
+    (bool (and self.watch-enabled (is-not self.watcher None) (.is-alive self.watcher) state.confirmed (not state.unsupported))))
+
   (defn #^ (| DesiredJobs DesiredUnreadable) poll [self]
+    "拍ごとの ReadDesired に答えるため: heartbeat を送る拍(beat_policy.heartbeat-due)なら送り、それ以外は前の返事の desired を返す。"
+    (setv silent-ms (int (* 1000 (- (time.monotonic) self.last-ok))))
+    (if (heartbeat-due (.watching self) (is-not self.last-desired None) (.is-set self.watch-state.woken)
+                       (!= self.statuses self.sent-statuses) silent-ms self.beat-interval-ms)
+        (.beat self)
+        self.last-desired))
+
+  (defn #^ None start-watch [self]
+    "返事に版を持つ coordinator へ、名指しの待ちを送り続ける背景の thread を 1 度だけ起こすため(待ちを使う link だけ)。"
+    (when (and self.watch-enabled (is self.watcher None) (not self.watch-state.unsupported))
+      (setv self.watcher (threading.Thread :target self.watch-loop :name (+ "watch-" self.name) :daemon True))
+      (.start self.watcher)))
+
+  (defn #^ None close [self]
+    "worker の終わりに待ちの thread を止めるため(次の待ちを送らない — 送っている待ちは daemon の thread ごと捨てる)。"
+    (.set self.watch-state.closing)
+    (.set self.watch-state.beat-done)
+    (when self.watcher
+      (.join self.watcher 0.2)))
+
+  (defn #^ WatchReading watch-once [self #^ int after #^ bool confirmed]
+    "名指しの待ちを 1 回送り、答えを読むため(届かない・読めない返事も WatchReading の FAILED に畳む — thread を例外で落とさない)。"
+    (try
+      (setv response (.request self.watch-endpoint "GET" "/watch" :params (watch-params after self.name self.boot confirmed)))
+      (watch-reading response.status-code (try (.json response) (except [ValueError] response.text)))
+      (except [error Exception]
+        (WatchReading :kind WatchKind.FAILED :detail (repr error)))))
+
+  (defn #^ None watch-loop [self]
+    "背景の thread の本体: 前の heartbeat の版の後の変化を待ち、「変わった」なら拍に heartbeat を送らせ(woken)、その heartbeat が
+     版を進めるまで待ってから次を待つ。404 なら口が無いと記して抜ける(拍ごとの heartbeat に戻る)。届かなければ間を置いて送り直す。
+     思わぬ例外は理由を記して抜ける(拍が watching で気づいて戻る — 黙って待ちを失わない)。"
+    (setv state self.watch-state)
+    (try
+      (while (not (.is-set state.closing))
+        (setv after (.after-now state))
+        (if (is after None)
+            (.wait state.beat-done WATCH-RETRY-SECONDS)
+            (do (setv reading (.watch-once self after state.confirmed))
+                (match reading.kind
+                  WatchKind.UNSUPPORTED
+                    (do (setv state.unsupported True)
+                        (.tell-watch state "unsupported" "worker: coordinator に待ちの口が無い — 拍ごとの heartbeat を続けます")
+                        (return None))
+                  WatchKind.FAILED
+                    (do (.tell-watch state (+ "failed:" reading.detail) (+ "worker: 待ちを送れない(送り直します): " reading.detail))
+                        (.wait state.closing WATCH-RETRY-SECONDS))
+                  WatchKind.CHANGED
+                    (do (.confirm state)
+                        (.clear state.beat-done)
+                        (.set state.woken)
+                        (.wait state.beat-done WAKE-HOLD-SECONDS))
+                  WatchKind.UNCHANGED
+                    (do (.confirm state)
+                        (.advance state after reading.revision))))))
+      (except [error Exception]
+        (setv state.failure (repr error))
+        (print (+ "worker: 待ちの thread が止まりました: " (repr error)) :file sys.stderr :flush True))))
+
+  (defn #^ (| DesiredJobs DesiredUnreadable) beat [self]
+    "heartbeat を 1 回送り、返事の job・task・温める表を desired にするため。届かなければ desired-when-unreachable(fence の判断)。"
+    (setv sending self.statuses)
+    ;; 送る前に起こしの印を下ろす(送った後に来た変化の印を消さない)。
+    (.clear self.watch-state.woken)
     (try
       (setv response (.accepted self.endpoint (.request self.endpoint "POST" "/heartbeat"
         :json (| (heartbeat-body :name self.name :provides self.provides :exclusive self.exclusive :node self.node
-                                 :capacity self.capacity :versions self.versions :statuses self.statuses
+                                 :capacity self.capacity :versions self.versions :statuses sending
                                  :endpoint self.endpoint.url :boot self.boot :boot-at self.boot-at :tools self.tools)
                  (.env-body self)))))
       (setv self.last-ok (time.monotonic))
@@ -1046,9 +1172,18 @@
       (setv self.last-warm (.accept-warm self (.get body "warm" [])))
       ;; 返事を読み終えてから出す(返事の読みが毎回落ちる時に、名乗れた・名乗れないの 2 行を拍ごとに繰り返さない)。
       (.tell self "" (.format "worker: coordinator {} に名乗りました" self.endpoint.url))
-      (DesiredJobs (+ self.last-jobs self.last-tasks) :warm self.last-warm)
+      ;; 次の拍の判断の材料(#1933): 届けた状態の報告・送る間隔・待ちの after(返事の版 — 無ければ旧い coordinator)。
+      (setv self.sent-statuses sending
+            self.beat-interval-ms (beat-interval-ms timing self.task-echo)
+            self.last-desired (DesiredJobs (+ self.last-jobs self.last-tasks) :warm self.last-warm))
+      (.beaten self.watch-state (reply-revision body))
+      (when (is-not (reply-revision body) None)
+        (.start-watch self))
+      self.last-desired
       (except [error Exception]
         (.tell self (repr error) (+ "worker: coordinator に名乗れない: " (repr error)))
+        ;; 届かない間は毎拍送り直す(前の desired を使い続けない — fence の判断を毎拍する)。
+        (setv self.last-desired None)
         (desired-when-unreachable (int (* 1000 (- (time.monotonic) self.last-ok))) self.fence-ms
                                   (+ self.last-jobs self.last-tasks) self.last-warm (repr error))))))
 

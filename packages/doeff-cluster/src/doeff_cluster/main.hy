@@ -103,7 +103,10 @@
   (setv link (CoordinatorLink args.coordinator args.name provides args.capacity
                               (int (* args.fence 1000))
                               :task-dir (str (/ state-dir "tasks")) :versions (current-versions)
-                              :tools (parse-labels args.tools) :envs envs :exclusive exclusive :node args.node))
+                              :tools (parse-labels args.tools) :envs envs :exclusive exclusive :node args.node
+                              ;; heartbeat を拍から切り離し、desired の変化は名指しの待ちで受ける(#1933 — 待つ口の無い coordinator
+                              ;; には拍ごとに送る)。
+                              :watch True))
   (setv program (run-worker policy))
   (for [h [(local-host codes host probes envs)
            (coordinator-desired link) (status-to-coordinator link) (lease-release-coordinator link)
@@ -111,7 +114,11 @@
            (stop-flag stop) slog-handler (async-time-handler) (await-handler)]]
     (setv program (h program)))
   (print "worker: 起動します" :file sys.stderr :flush True)
-  (run (scheduled program))
+  (try
+    (run (scheduled program))
+    (finally
+      ;; 待ちの thread を止める(worker の終わり — 次の待ちを送らない)。
+      (.close link)))
   (print "worker: 全 job を回収しました" :file sys.stderr :flush True))
 
 

@@ -46,6 +46,21 @@
       "typed": true
     },
     {
+      "allow": [
+        "doeff-cluster-cluster-model"
+      ],
+      "layer": "pure",
+      "name": "doeff-cluster-beat-policy",
+      "paths": [
+        "packages/doeff-cluster/src/doeff_cluster/beat_policy.hy"
+      ],
+      "public": [
+        "packages/doeff-cluster/src/doeff_cluster/beat_policy.hy"
+      ],
+      "responsibility": "worker が heartbeat をいつ送るか・名指しの待ち(GET /watch)の問いと答えの読み(純粋な判断・I/O はしない)。",
+      "typed": true
+    },
+    {
       "allow": [],
       "layer": "pure",
       "name": "doeff-cluster-checkout-git-script",
@@ -451,6 +466,7 @@
     },
     {
       "allow": [
+        "doeff-cluster-beat-policy",
         "doeff-cluster-cluster-model",
         "doeff-cluster-code-prepare",
         "doeff-cluster-coordinator-http",
@@ -619,6 +635,7 @@
     },
     {
       "allow": [
+        "doeff-cluster-beat-policy",
         "doeff-cluster-clock",
         "doeff-cluster-cluster-model",
         "doeff-cluster-cluster-policy",
@@ -1168,6 +1185,7 @@
     {
       "allow": [
         "doeff-cluster-api-policy",
+        "doeff-cluster-beat-policy",
         "doeff-cluster-checkout-git-script",
         "doeff-cluster-clock",
         "doeff-cluster-cluster-foundation",

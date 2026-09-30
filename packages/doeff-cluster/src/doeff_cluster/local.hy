@@ -73,6 +73,8 @@
 ;;;   DrainWorker 名 [ttl]      本番の preStop と同じ要求(drain_client.drain-request — 今の世代の boot を載せる)で drain を頼む。
 ;;;                             答え = 本番の CoordinatorCall と同じ形 {status body} / {error}。
 ;;;   PreparationsOf 名         worker が起こした準備の列(SimPreparation — コードの版か env-<キー>・先読みか・始まり・終わり・失敗)。
+;;;   WatchFailuresOf 名        worker の名指しの待ちの task が思わぬ例外で止まった記録の列(SimWatchFailure — 本番の「待ちの thread が
+;;;                             止まった」の 1 行に当たる。止まった世代は拍ごとの heartbeat に戻る — #1933)。
 ;;;   ClientLink                筋書きの送り手の口(SimLink — 置き換えて coordinator-answers を被せれば別の送り手になる)。
 ;;; 仮想の時計の時間を進めるのは scenario の Delay(doeff-time — 壁の時計では実時間で待つ)。scenario が終われば worker を止め(全 job を
 ;;; 止めの手順で回収)、coordinator を止める。
@@ -130,6 +132,8 @@
 (import .drain_client [drain-request DRAIN-DEADLINE-SECONDS DRAIN-TTL-MARGIN-SECONDS])
 (import .handlers [declared-job-spec task-spec heartbeat-body status-report desired-when-unreachable env-report env-heartbeat-part
                    warm-env-of-row])
+(import .beat_policy [WatchKind WatchReading beat-interval-ms heartbeat-due watch-params watch-reading reply-revision
+                      WATCH-RETRY-SECONDS WAKE-HOLD-SECONDS])
 (import .host_contract [HOST-CONTRACT SIM-PASSABLE environ-reader])
 (import .job_context [RunContext worker-context-environ process-context-environ context-of-environ runtime-env-of-context])
 (import .job_entry [decoded-program])
@@ -179,7 +183,8 @@
    versions = 名乗る版(None = 送り手と同じ current-versions — 違えば版の合わない task は置かれない)・prepare-seconds = コードの木と
    実行環境の root の準備にかかる仮想の秒・env-failure = 実行環境の root の準備がこの失敗で終わる worker(None = 揃う)・
    starts-down = 止まったまま始まる(StartWorker で起きる — 後から加わる node)・ignores-fence = 反例の世界だけの壊れた worker
-   (coordinator に届かない間 fence を越えても job を止めない — 本番の worker_policy の判断を使わない)。"
+   (coordinator に届かない間 fence を越えても job を止めない — 本番の worker_policy の判断を使わない)・beat-every-ms = 反例の世界だけの
+   壊れた worker(heartbeat の間隔を本番の beat_policy.beat-interval-ms でなくこの値にする — None = 本番の判断)。"
   (#^ str name)
   (#^ frozenset provides)
   (setv #^ frozenset exclusive (frozenset))
@@ -189,7 +194,8 @@
   (setv #^ float prepare-seconds 0.0)
   (setv #^ (| EnvFailure None) env-failure None)
   (setv #^ bool starts-down False)
-  (setv #^ bool ignores-fence False))
+  (setv #^ bool ignores-fence False)
+  (setv #^ (| int None) beat-every-ms None))
 
 
 (defrecord SimProcess
@@ -241,6 +247,15 @@
   (#^ int started-ms)
   (#^ int ready-ms)
   (#^ (| EnvFailure None) failure))
+
+
+(defrecord SimWatchFailure
+  "worker の名指しの待ちの task が思わぬ例外で止まった記録 1 つ(WatchFailuresOf の答えの要素 — 本番の「待ちの thread が止まった」の
+   1 行に当たる)。boot = 止まった世代・at = 止まった時刻(epoch ms)・reason = 例外の型と文。"
+  (#^ str worker)
+  (#^ str boot)
+  (#^ int at)
+  (#^ str reason))
 
 
 (defrecord SimCoordinatorRun
@@ -398,6 +413,12 @@
    :answer tuple
    :tags {:context "doeff-cluster" :role "intent"}})
 
+(defeffect WatchFailuresOf
+  "検の effect: worker name の名指しの待ちの task が思わぬ例外で止まった記録の列(SimWatchFailure の tuple・起きた順)。"
+  {:fields [(: name str)]
+   :answer tuple
+   :tags {:context "doeff-cluster" :role "intent"}})
+
 (defeffect ClientLink
   "検の effect: 筋書きの送り手の口(SimLink — 送り手 sim-client)。値を置き換えて coordinator-answers を被せれば、実行環境の宣言や版の
    違う送り手として話せる。"
@@ -469,7 +490,12 @@
    codes = 準備(鍵 → SimPreparation)・probes = 入口の検め・statuses = 最後に出した状態の報告(heartbeat の本文)・last-ok-ms =
    coordinator が最後に返事をした時刻・fence-ms = 自己停止の閾値・last-desired / last-warm = 最後に読めた job と task・温める表の行・
    programs = 取った詰めた Program(sha → 文字列)・results = 終わった task の結果(id → 詰めた結果)・task-echo = 切り離した task の
-   返事の行(id → 行)・beats = coordinator が返事をした heartbeat の数・down = 死んだか止まった・stopping = 優雅な停止を頼まれた。"
+   返事の行(id → 行)・beats = coordinator が返事をした heartbeat の数・down = 死んだか止まった・stopping = 優雅な停止を頼まれた。
+   heartbeat の切り離し(#1933 — 本番の CoordinatorLink の WatchState と同じ意味・beat_policy): fresh = 前の heartbeat が届いた・
+   sent-statuses = 前に届けた状態の報告・beat-interval-ms = 送る間隔・watch-after = 次の名指しの待ちの版(返事に版が無ければ None)・
+   watch-confirmed = 待ちが 1 度答えた・watch-unsupported = 待つ口が無い(404)・woken = 待ちが「変わった」と答えた印・beat-bells =
+   heartbeat が届いた時に鳴らす呼び鈴(起こした後の待ちが次の版を待つ)・watch-failure = 待ちの task が思わぬ例外で止まった理由
+   (在れば拍ごとの heartbeat に戻る — 本番の CoordinatorLink.watching が thread の死に気づくのと同じ)。"
   (#^ str boot)
   (#^ int boot-at)
   (#^ tuple processes)
@@ -485,7 +511,16 @@
   (#^ dict task-echo)
   (setv #^ int beats 0)
   (setv #^ bool down False)
-  (setv #^ bool stopping False))
+  (setv #^ bool stopping False)
+  (setv #^ bool fresh False)
+  (setv #^ (| list None) sent-statuses None)
+  (setv #^ int beat-interval-ms (beat-interval-ms None {}))
+  (setv #^ (| int None) watch-after None)
+  (setv #^ bool watch-confirmed False)
+  (setv #^ bool watch-unsupported False)
+  (setv #^ bool woken False)
+  (setv #^ tuple beat-bells #())
+  (setv #^ (| str None) watch-failure None))
 
 
 (defclass WorkerDied [Exception]
@@ -547,6 +582,10 @@
 (defeffect NotePreparation
   "worker の宿が起こした準備を記録する。"
   {:fields [(: preparation SimPreparation)] :answer None :tags {:context "doeff-cluster" :role "intent"}})
+
+(defeffect NoteWatchFailure
+  "worker の世代の名指しの待ちの task が思わぬ例外で止まったことを記録し、その世代(今の世代なら)を拍ごとの heartbeat に戻す。"
+  {:fields [(: failure SimWatchFailure)] :answer None :tags {:context "doeff-cluster" :role "intent"}})
 
 (defeffect WorkersStopping
   "全 worker が止まる時か(scenario が終わった後に真)。"
@@ -1256,6 +1295,8 @@
                                :statuses before.statuses :endpoint (+ "sim://" worker.name) :boot before.boot
                                :boot-at before.boot-at :tools {})
                (env-heartbeat-part (env-report views "ok") (current-platform))))
+  ;; 送る前に起こしの印を下ろす(送った後に来た変化の印を消さない — 本番の CoordinatorLink.beat と同じ)。
+  (<- (PutHostTruth worker.name (replace before :woken False)))
   (<- answer tuple (send-request link "POST" "/heartbeat" {} body))
   (<- now int (now-epoch-ms))
   (if (= (get answer 0) 200)
@@ -1269,15 +1310,24 @@
           ;; 返事を待つ間に他の task が宿の真実を書く — 書く直前に読み直す(その間に世代が終わっていれば抜ける)。
           (<- truth HostTruth (live-truth worker.name boot))
           (val timing (.get reply "timing"))
+          (val echo (dfor t (.get reply "tasks" []) :if (.get t "detached") (get t "id") (dict t)))
           (<- (PutHostTruth worker.name
                             (replace truth :last-ok-ms now :last-desired (+ jobs tasks) :last-warm warm :beats (+ truth.beats 1)
                                      :fence-ms (if (and timing (in "fence_ms" timing)) (int (get timing "fence_ms")) truth.fence-ms)
                                      :programs (| truth.programs fetched)
                                      ;; 返事から外れた task の結果は落とす(本番の accept-tasks が結果の file を消すのと同じ)。
                                      :results (dfor #(k v) (.items truth.results) :if (in k ids) k v)
-                                     :task-echo (dfor t (.get reply "tasks" []) :if (.get t "detached") (get t "id") (dict t)))))
+                                     :task-echo echo
+                                     ;; 次の拍の判断の材料(#1933 — 本番の CoordinatorLink.beat と同じ)。
+                                     :fresh True :sent-statuses before.statuses :beat-interval-ms (beat-interval-ms timing echo)
+                                     :watch-after (reply-revision reply) :beat-bells #())))
+          ;; 起こした後の待ちに、版が進んだことを知らせる。
+          (for [bell truth.beat-bells]
+            (<- (CompletePromise bell None)))
           (DesiredJobs (+ jobs tasks) :warm warm))
       (do (<- truth HostTruth (live-truth worker.name boot))
+          ;; 届かない間は毎拍送り直す(前の desired を使い続けない — fence の判断を毎拍する)。
+          (<- (PutHostTruth worker.name (replace truth :fresh False)))
           (if worker.ignores-fence
               (DesiredJobs truth.last-desired :warm truth.last-warm)
               (desired-when-unreachable (- now truth.last-ok-ms) truth.fence-ms truth.last-desired truth.last-warm
@@ -1341,8 +1391,17 @@
   ;; lease-release-coordinator・stop-flag)。宿の真実は世界の session に在り、HostTruthOf / PutHostTruth で読み書きする。どの節も先に
   ;; 世代が今のものかを確かめ(live-truth)、終わった世代の run-worker をその場で終わらせる。
   (ReadDesired []
-    (<- desired (| DesiredJobs DesiredUnreadable) (heartbeat worker boot))
-    (resume desired))
+    ;; heartbeat は送る拍(beat_policy.heartbeat-due — 本番の CoordinatorLink.poll と同じ判断)だけ送り、それ以外は前の返事の desired。
+    (<- truth HostTruth (live-truth worker.name boot))
+    (<- now int (now-epoch-ms))
+    (val watching (and truth.watch-confirmed (not truth.watch-unsupported) (is-not truth.watch-after None)
+                       (is truth.watch-failure None)))
+    (val due (heartbeat-due watching truth.fresh truth.woken (!= truth.statuses truth.sent-statuses) (- now truth.last-ok-ms)
+                            (if (is worker.beat-every-ms None) truth.beat-interval-ms worker.beat-every-ms)))
+    (if due
+        (do (<- desired (| DesiredJobs DesiredUnreadable) (heartbeat worker boot))
+            (resume desired))
+        (resume (DesiredJobs truth.last-desired :warm truth.last-warm))))
   (ObserveWorld []
     (<- truth HostTruth (live-truth worker.name boot))
     (<- now int (now-epoch-ms))
@@ -1422,6 +1481,75 @@
     (resume (or stopping truth.stopping))))
 
 
+(defk await-beat [name boot]
+  {:pre [(: name str) (: boot str)] :post [(: % None)] :tags {:context "doeff-cluster" :role "program"}}
+  "起こした後の待ち(または版をまだ知らない待ち)が、次の heartbeat が届くまで眠るため(上限 WAKE-HOLD-SECONDS — 同じ版で待ち直して
+   空回りしない)。本番の WatchState.beat-done の待ちに当たる。"
+  (<- truth HostTruth (HostTruthOf name))
+  (when (= truth.boot boot)
+    (<- bell Promise (CreatePromise))
+    (<- (PutHostTruth name (replace truth :beat-bells (+ truth.beat-bells #(bell)))))
+    (<- (promise-or-timeout bell.future WAKE-HOLD-SECONDS)))
+  None)
+
+
+(defk note-watch [name boot after reading]
+  {:pre [(: name str) (: boot str) (: after int) (: reading WatchReading)] :post [(: % bool)]
+   :tags {:context "doeff-cluster" :role "program"}}
+  "待ち 1 回の答えを宿の真実へ写すため(本番の CoordinatorLink.watch-loop の枝と同じ意味)。答え = 待ち続けるか。"
+  (<- truth HostTruth (HostTruthOf name))
+  (if (!= truth.boot boot)
+      False
+      (match reading.kind
+        WatchKind.UNSUPPORTED (do (<- (PutHostTruth name (replace truth :watch-unsupported True)))
+                                  False)
+        WatchKind.FAILED (do (<- (Delay WATCH-RETRY-SECONDS))
+                             True)
+        WatchKind.CHANGED (do (<- (PutHostTruth name (replace truth :watch-confirmed True :woken True)))
+                              True)
+        WatchKind.UNCHANGED (do (<- (PutHostTruth name (replace truth :watch-confirmed True
+                                                                :watch-after (if (= truth.watch-after after) reading.revision
+                                                                                 truth.watch-after))))
+                                True))))
+
+
+(defk watch-desired [worker boot]
+  {:pre [(: worker SimWorker) (: boot str)] :post [(: % str)] :tags {:context "doeff-cluster" :role "program"}}
+  "worker の世代 1 つの名指しの待ち(本番の CoordinatorLink の背景の thread の代役 — worker-keeper が世代ごとに Spawn し、世代の終わりで
+   取り消す): 前の heartbeat の版の後の変化を GET /watch で待ち、「変わった」なら拍に heartbeat を送らせ(woken)、次の heartbeat が
+   届くまで眠る。待つ口が無い(404)・世代が終わったら抜ける。網は worker と同じ(切れていれば届かない)。"
+  (<- parts SimParts (PartsOf))
+  (<- plan SimPlan (PlanOf))
+  (val link (SimLink :queue parts.queue :actor worker.name :revision plan.revision :peer worker.name))
+  (var going True)
+  (while going
+    (<- truth HostTruth (HostTruthOf worker.name))
+    (cond
+      (or truth.down (!= truth.boot boot) truth.watch-unsupported) (:= going False)
+      (or (is truth.watch-after None) truth.woken) (<- (await-beat worker.name boot))
+      True (do (val after truth.watch-after)
+               (<- answer tuple (send-request link "GET" "/watch" (watch-params after worker.name boot truth.watch-confirmed) None))
+               (<- more bool (note-watch worker.name boot after (watch-reading (get answer 0) (get answer 1))))
+               (:= going more))))
+  boot)
+
+
+(defk guarded-watch [worker boot]
+  {:pre [(: worker SimWorker) (: boot str)] :post [(: % str)] :tags {:context "doeff-cluster" :role "program"}}
+  "世代の名指しの待ちの task の本体: watch-desired を回し、思わぬ例外で止まれば理由を世界の記録に残して、その世代を拍ごとの heartbeat に
+   戻すため(本番の「待ちの thread が止まった」の 1 行と watching の気づきに当たる — 模擬で黙って落ちると模擬の検が壊れを隠す)。
+   世代の終わりの取り消しは記録しない。"
+  (try
+    (<- (watch-desired worker boot))
+    (except [cancelled TaskCancelledError]
+      (raise cancelled))
+    (except [error Exception]
+      (<- now int (now-epoch-ms))
+      (<- (NoteWatchFailure (SimWatchFailure :worker worker.name :boot boot :at now
+                                             :reason (.format "{}: {}" (. (type error) __name__) error))))))
+  boot)
+
+
 (defk run-sim-worker [worker policy boot]
   {:pre [(: worker SimWorker) (: policy WorkerPolicy) (: boot str)] :post [(: % str)] :tags {:context "doeff-cluster" :role "program"}}
   "worker の世代 1 つ: 本物の run-worker を偽の宿の上で回す(止まれの合図で全 job を止めの手順で回収して終わる)。"
@@ -1453,7 +1581,10 @@
         (:= going False)
         (do (<- truth HostTruth (HostTruthOf worker.name))
             (<- loop Task (Spawn (run-sim-worker worker policy truth.boot)))
+            ;; 世代ごとの名指しの待ち(本番の CoordinatorLink の背景の thread に当たる — 世代の終わりで取り消す)。
+            (<- watcher Task (Spawn (guarded-watch worker truth.boot)))
             (<- (generation-end loop))
+            (<- (Cancel watcher))
             (<- (WorkerEnded worker.name truth.boot))
             (<- again bool (WorkersStopping))
             (:= going (not again)))))
@@ -1684,6 +1815,7 @@
   (session var downtime None)
   (session var runs #())
   (session var end-waiters {})
+  (session var watch-failures #())
   (session var start-waiters {})
   (PlanOf []
     (resume plan))
@@ -1743,6 +1875,14 @@
     (for [#(promise answer) woken.due]
       (<- (CompletePromise promise answer)))
     (resume None))
+  (NoteWatchFailure [failure]
+    (:= watch-failures (+ watch-failures #(failure)))
+    (val truth (get hosts failure.worker))
+    (when (= truth.boot failure.boot)
+      (:= hosts (| hosts {failure.worker (replace truth :watch-failure failure.reason)})))
+    (resume None))
+  (WatchFailuresOf [name]
+    (resume (tuple (gfor f watch-failures :if (= f.worker name) f))))
   (KillOf [pid]
     (resume (.get kills pid)))
   (NoteReports [batch]
