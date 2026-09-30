@@ -1,0 +1,14 @@
+# ruleid: doeff-adr-pytest-collection-internals-single-owner
+from _pytest.python import FunctionDefinition
+# ruleid: doeff-adr-pytest-collection-internals-single-owner
+from _pytest.fixtures import FuncFixtureInfo
+# ruleid: doeff-adr-pytest-collection-internals-single-owner
+definition = Metafunc(definition=node)
+# ruleid: doeff-adr-pytest-collection-internals-single-owner
+manager = collector.session._fixturemanager
+# ok: doeff-adr-pytest-collection-internals-single-owner
+import pytest
+# ok: doeff-adr-pytest-collection-internals-single-owner
+from doeff_adr.indexed_pytest import IndexedFunctions
+# ok: doeff-adr-pytest-collection-internals-single-owner
+functions = IndexedFunctions(collector, records, fixtures)
