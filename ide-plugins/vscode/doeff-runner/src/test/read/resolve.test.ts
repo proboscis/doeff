@@ -4,8 +4,8 @@ import * as path from 'path';
 import { parseHyIndexJson, type HyFileIndex } from '../../hy/contract';
 import { parseLintJson, type LintReport } from '../../lint/contract';
 import { cardKey, INITIAL_FOLD, unfoldAll } from '../../read/fold';
-import { buildCards } from '../../read/model';
-import { renderPage } from '../../read/render';
+import { buildCards, type Card } from '../../read/model';
+import { renderPage, renderWorkspaceCards, type WorkspaceState } from '../../read/render';
 import { PLAIN } from '../../hy/highlight/spans';
 import { mentionLink } from '../../read/locate';
 import { absoluteModule, destinationOf, entityLink, linkPieces, messageEntities, resolveEntity, sourceLinks } from '../../read/resolve';
@@ -254,5 +254,83 @@ suite('定義を読む面 — 違反の文の中の名から定義へ(v12・U19c
       mentionLink({ name: 'row-text', qualifiedName: 'pkg.plane.row_text' }),
       `[\`row-text\`](command:doeff-runner.read.revealEntity?${encodeURIComponent('["pkg.plane.row_text"]')} "pkg.plane.row_text")`
     );
+  });
+});
+
+suite('定義を読む面 — repo 全体の面でも名を押せる(v12・U19c・#1622)', () => {
+  /**
+   * repo 全体の面(workspace.ts の cards())と同じ作り方: 索引の全 file のカードを file の順の id で作り、読み込んだ file(plane.hy)
+   * だけが linter の見出しと本体と文字を持つ。entities.hy は索引だけのカード。
+   */
+  const workspace = (): { readonly cards: Card[]; readonly graph: CallGraph } => {
+    const files = [...indexFiles('plane-index.json'), ...indexFiles('entities-index.json')];
+    const graph = buildCallGraph(files);
+    const lint = planeLint();
+    const cards = files.flatMap((file, index) => {
+      const hydrated = file.path === '/repo/pkg/plane.hy';
+      return buildCards({
+        definitions: file.definitions,
+        signatures: hydrated ? lint.signatures : [],
+        bodies: hydrated ? lint.bodies : [],
+        bindings: hydrated ? lint.bindings : [],
+        violations: [],
+        lines: hydrated ? fs.readFileSync(path.join(FIXTURES, 'plane.hy'), 'utf8').split(/\r?\n/) : [],
+        testsOf: (qn) => relationOf(graph, qn).tests,
+        place: file.path.replace('/repo/', '')
+      }).map((card) => ({ ...card, id: `f${index}-${card.id}` }));
+    });
+    return { cards, graph };
+  };
+  const state = (cards: readonly Card[], pinned: readonly string[]): WorkspaceState => ({
+    tag: 'workspace',
+    cards,
+    selection: new Map(),
+    pinned,
+    limit: 200,
+    facetLimit: 40,
+    coloringOf: () => undefined
+  });
+  /** 全カードを開いた repo 全体の面の右の列。 */
+  const listedHtml = (pinned: readonly string[]): string => {
+    const { cards, graph } = workspace();
+    const fold = unfoldAll(INITIAL_FOLD, cards.map((c) => cardKey(c.definition)));
+    return renderWorkspaceCards(state(cards, pinned), { glyphs: { effect: () => undefined }, fold, graph, coloringOf: () => undefined }).html;
+  };
+
+  test('積んだカードの頭のチップ: repo の型(Row)は押せ、組み込みの型(str)は押せない', () => {
+    const card = cardHtml(listedHtml(['pkg.plane.fetch_row']), 'fetch-row');
+    assert.ok(card.includes('<span class="ret" title="return type"><span class="ent" data-reveal="pkg.plane.Row">Row</span></span>'));
+    assert.ok(card.includes('<span class="n">key</span><span class="t">str</span>'));
+    assert.ok(!card.includes('data-reveal="builtins'));
+  });
+
+  test('読み込んだ file のカードの本体の文字: 呼び(fetch-row)と型(Row)は押せ、束縛の名は押せない', () => {
+    const shout = cardHtml(listedHtml([]), 'shout');
+    assert.ok(shout.includes('<span class="fn ent" data-reveal="pkg.plane.fetch_row">fetch-row</span>'));
+    assert.ok(shout.includes('<span class="b ent" data-reveal="pkg.plane.Row">Row</span>'));
+    assert.ok(!/data-reveal="[^"]*"><span class="var"[^>]*>row</.test(shout), '局所の束縛 row は押せない');
+  });
+
+  test('索引だけのカード(読み込んでいない別の file)も、宣言した effect と enum の値は押せる', () => {
+    const html = listedHtml([]);
+    assert.ok(/<span class="eff ent" data-reveal="pkg\.entities\.ReadSlot" title="[^"]*">ReadSlot<\/span>/.test(cardHtml(html, 'slot-size')));
+    assert.ok(cardHtml(html, 'Tone').includes('data-reveal="pkg.entities.Tone.LOUD"'));
+  });
+
+  test('repo 全体の頁の script も、名の click を候補の一覧と Cmd / Ctrl の有無ごと面へ送る(受け手は file の面と同じ followEntity)', () => {
+    const { cards, graph } = workspace();
+    const html = renderPage({
+      place: 'all definitions',
+      state: state(cards, []),
+      glyphs: { effect: () => undefined },
+      fold: INITIAL_FOLD,
+      graph,
+      tree: undefined,
+      coloring: undefined,
+      cspSource: 'vscode-resource:',
+      nonce: 'n'
+    });
+    assert.ok(html.includes("vscode.postMessage({ type: 'reveal', qualifiedNames, editor: event.metaKey || event.ctrlKey })"));
+    assert.ok(html.includes('data-reveal="pkg.entities.ReadSlot"'), '頁の最初の描きにも押せる名が載る');
   });
 });
