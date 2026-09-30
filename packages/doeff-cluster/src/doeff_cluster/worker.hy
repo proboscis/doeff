@@ -1,6 +1,6 @@
 ;; worker の調整ループ。毎拍「宣言・観測・記憶」から action を導いて実行する。
 ;; 子 process もコードの準備も観測で追うので、どの job の処理もループ(停止の経路)を塞がない。
-(require doeff-hy.macros [defk <-])
+(require doeff-hy.macros [defk <- val var])
 (import doeff_time [Delay])
 (import doeff_cluster.clock [now-epoch-ms])
 (import .worker_model [WorkerPolicy WorkerState WorldView DesiredJobs DesiredUnreadable
@@ -23,10 +23,10 @@
   (for [action actions] (<- action))
   (setv records (records-after now state.records actions policy))
   ;; 状態の表示は action の後の観測から作る(起動・回収を 1 拍遅れで見せない)。
-  (setv after world)
+  (var after world)
   (when actions
     (<- observed WorldView (ObserveWorld))
-    (setv after observed))
+    (:= after observed))
   (setv report (statuses now desired after records policy))
   (<- (PublishStatus report (if (isinstance read DesiredUnreadable) read.reason "")))
   #((WorkerState (if (isinstance read DesiredJobs) read.jobs state.desired) records warm)
@@ -36,10 +36,11 @@
 (defk run-worker [policy]
   {:pre [(: policy WorkerPolicy)] :post [(: % WorkerState)]}
   ;; worker の停止要求を受けたら宣言を空として扱い、全 job を同じ停止の手順で回収する。
-  (setv state (WorkerState))
+  (var state (WorkerState))
   (while True
     (<- stopping bool (WorkerStopRequested))
     (<- ticked tuple (worker-tick state policy stopping))
-    (setv #(state alive) ticked)
+    (val alive (get ticked 1))
+    (:= state (get ticked 0))
     (when (and stopping (= alive 0)) (return state))
     (<- (Delay policy.tick-seconds))))

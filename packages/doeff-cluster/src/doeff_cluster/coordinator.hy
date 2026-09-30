@@ -65,40 +65,40 @@
       (setv (get observed key) (| row {"at" now}))
       (except [error KubeUnavailable]
         (setv (get observed key) {"at" now "error" (str error)}))))
-  (setv before (replace state :deployments observed))
+  (val observed-state (replace state :deployments observed))
   ;; 1b. 能力の導出(改訂 1 の I): worker の置かれた node の label を読み(古い観測だけ)、node-capabilities の表から derived を作り直す。
-  (setv nodes (dict before.nodes))
-  (for [node (nodes-to-read before now)]
+  (setv nodes (dict observed-state.nodes))
+  (for [node (nodes-to-read observed-state now)]
     (try
       (<- labels dict (ReadNodeLabels node))
       (setv (get nodes node) {"labels" labels "at" now})
       (except [error KubeUnavailable]
         (setv (get nodes node) {"error" (str error) "at" now}))))
-  (setv before (with-derived-capabilities (replace before :nodes nodes) naming.node-capabilities))
+  (val before (with-derived-capabilities (replace observed-state :nodes nodes) naming.node-capabilities))
   ;; 2. 純粋な判断で段を進め、action を出す。
   (setv #(planned actions) (plan-rollouts before now timing naming))
-  (setv state (stamp before planned ROLLOUT-ACTOR now timing))
+  (var current (stamp before planned ROLLOUT-ACTOR now timing))
   ;; 3. action を実行する。Service の台数は状態の書き換え(送り手 = rollout/<名>)、Deployment は k8s の API。
   (for [action actions]
     (setv target (.get action "target") who (+ "rollout/" (get action "rollout")))
     (cond
       (and target (= (get target "kind") "Service"))
-        (do (setv scaled (record-action (scale-service state (get target "name") (get action "replicas")) action True None now))
-            (setv state (stamp state scaled who now timing)))
+        (do (setv scaled (record-action (scale-service current (get target "name") (get action "replicas")) action True None now))
+            (:= current (stamp current scaled who now timing)))
       (= (get action "op") "scale")
         (try
           (<- written int (ScaleDeployment (get target "namespace") (get target "name") (get action "replicas")
                                            :dry-run (get target "dryRun")))
-          (setv state (stamp state (record-action state action True None now written) who now timing))
+          (:= current (stamp current (record-action current action True None now written) who now timing))
           (except [error KubeUnavailable]
-            (setv state (stamp state (record-action state action False (str error) now) who now timing))))
+            (:= current (stamp current (record-action current action False (str error) now) who now timing))))
       (= (get action "op") "annotate")
         (try
           (<- (AnnotateDeployment (get action "namespace") (get action "name") (get action "annotations")))
-          (setv state (stamp state (record-action state action True None now) who now timing))
+          (:= current (stamp current (record-action current action True None now) who now timing))
           (except [error KubeUnavailable]
-            (setv state (stamp state (record-action state action False (str error) now) who now timing))))))
-  (replace state :rollout-tick-ms now))
+            (:= current (stamp current (record-action current action False (str error) now) who now timing))))))
+  (replace current :rollout-tick-ms now))
 
 
 (defk fault-reply [fault]
@@ -119,15 +119,21 @@
   ;; 期限の経過(worker の沈黙・task の lease・readiness の window)は、まとまりの有無と無関係に毎拍調停する(2026-09-25)。
   ;; 以前は要求の無い拍だけだったので、読みの要求(GET)が 1 秒より短い間隔で続く間は調停が走らず、担い手の死んだ切り離した task が
   ;; lost にならなかった(読みは状態を変えないので調停しない)。書きの要求は今までどおり要求ごとに調停する(api_policy.settle)。
-  (setv next (tick state now timing) replies [])
+  (var next (tick state now timing))
+  (val replies [])
   (for [request batch]
-    (setv #(next status body) (respond next request now timing))
-    (when (isinstance body Fault)
-      (<- body dict (fault-reply body)))
-    (.append replies #(request status body)))
+    (val result (respond next request now timing))
+    (:= next (get result 0))
+    (val reply-status (get result 1))
+    (var reply-body (get result 2))
+    (when (isinstance reply-body Fault)
+      (<- fault-body dict (fault-reply reply-body))
+      (:= reply-body fault-body))
+    (.append replies #(request reply-status reply-body)))
   (when (>= (- now next.rollout-tick-ms) ROLLOUT-TICK-MS)
-    (<- next ClusterState (rollout-tick next timing naming now)))
-  (setv next (mark-alive next now))
+    (<- ticked ClusterState (rollout-tick next timing naming now))
+    (:= next ticked))
+  (:= next (mark-alive next now))
   (setv delta (kv-delta (durable-kv state) (durable-kv next) state next))
   (when delta
     (<- (Persist delta)))
@@ -140,12 +146,12 @@
   {:pre [(: state ClusterState) (: timing ClusterTiming) (: naming ClusterNaming)] :post [(: % ClusterState)]}
   ;; naming = 外の系と取り交わす名(Rollout の annotation・node の label から導く能力)。composition root(main・模擬環境)が渡す。
   ;; node の label から導く能力の名は、worker の自己申告として受けない(register-heartbeat が provides から外す — 改訂 1 の I)。
-  (setv state (replace state :derivable (frozenset (gfor row naming.node-capabilities (get row 2)))))
+  (var current (replace state :derivable (frozenset (gfor row naming.node-capabilities (get row 2)))))
   (while True
     (<- stopping bool (CoordinatorStopRequested))
-    (when stopping (return state))
-    (<- stepped tuple (coordinator-step state timing naming))
-    (setv state (get stepped 0))))
+    (when stopping (return current))
+    (<- stepped tuple (coordinator-step current timing naming))
+    (:= current (get stepped 0))))
 
 
 

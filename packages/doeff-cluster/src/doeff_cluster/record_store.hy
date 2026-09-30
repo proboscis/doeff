@@ -11,7 +11,7 @@
 ;;;
 ;;; 入口 = record_store_main.hy(effect の class を __main__ に作らないため入口を分ける)。形は coordinator と同じ: HTTP の受付(別 thread)が要求を箱に並べ、1 本の Program(store-loop)が取り出して判断し、file の I/O は
 ;;; effect(AppendRecordLines 等)として handler(record_store_handlers.hy)が行う。
-(require doeff-hy.macros [defk <-])
+(require doeff-hy.macros [defk <- val var])
 (import dataclasses [dataclass])
 (import re)
 (import sys)
@@ -112,7 +112,8 @@
 (defk store-loop [retention-ms idle-ms]
   {:pre [(: retention-ms int) (: idle-ms int)] :post [(: % int)]}
   ;; 要求を受けて答える。MAINTENANCE-MS ごとに、書き終わった区切りの圧縮と、保持を過ぎた run の削除。
-  (setv last-maintenance 0 served 0)
+  (var last-maintenance 0)
+  (var served 0)
   (while True
     (<- stopping bool (CoordinatorStopRequested))
     (when stopping (return served))
@@ -123,10 +124,10 @@
         (except [e Exception]
           (setv answered #(500 {"error" (.format "{}: {}" (. (type e) __name__) e)}))))
       (<- (Reply request (get answered 0) (get answered 1)))
-      (+= served 1))
+      (:= served (+ served 1)))
     (<- now int (now-epoch-ms))
     (when (>= (- now last-maintenance) MAINTENANCE-MS)
-      (setv last-maintenance now)
+      (:= last-maintenance now)
       (<- compacted int (CompactRecords now idle-ms))
       (<- pruned list (PruneRecords now retention-ms))
       (when (or compacted pruned)

@@ -10,7 +10,7 @@
 ;;;   lease-fence            書きの effect を、名前付きの lease を持っていて期限まで余裕がある間だけ外へ通す。持っていない・
 ;;;                          失った・期限が近い時は外へ出さずに WriteFenced を投げる。問い合わせ(HeldLease)は cluster-semaphore が
 ;;;                          手元の記憶から答える(書きごとに保存を読まない)。cluster-semaphore より内側・書きの handler より内側に置く。
-(require doeff-hy.macros [defhandler defk <-])
+(require doeff-hy.macros [defhandler defk <- val var])
 (import doeff [EffectBase])
 (import doeff_core_effects.scheduler [CreateSemaphore AcquireSemaphore ReleaseSemaphore Spawn Cancel])
 (import doeff_time [Delay])
@@ -104,18 +104,19 @@
   ;; 延ばしたかどうか分からない(返事の前に切れた)時も期限は進めない(柵は早めに締まる側に外れる)。
   (while True
     (<- (Delay (/ session.ttl-seconds 3)))
-    (setv done False)
+    (var done False)
     (while (not done)
       (when (not (.holds session token)) (return None))
       (<- sent int (now-epoch-ms))
-      (setv answer None)
+      (var answer None)
       (try
-        (<- answer dict (LeaseOp semaphore.name "renew" token semaphore.permits (.ttl-ms session)))
-        (except [e Exception] (setv answer None)))
+        (<- renewed dict (LeaseOp semaphore.name "renew" token semaphore.permits (.ttl-ms session)))
+        (:= answer renewed)
+        (except [e Exception] (:= answer None)))
       (cond
         (is answer None) (<- (Delay session.poll-seconds))
         (get answer "ok") (do (setv (get session.expires token) (+ sent (.ttl-ms session)))
-                              (setv done True))
+                              (:= done True))
         True (do (.add session.lost token)
                  (return None))))))
 
