@@ -511,14 +511,6 @@
    "why": "open(\"a\")・time.strftime"
   },
   {
-   "handler": "doeff_jev_proxy.handlers:sqlite-store-handler",
-   "touches": [
-    "db",
-    "clock"
-   ],
-   "why": "sqlite3.connect・time.time"
-  },
-  {
    "handler": "doeff_secret.handlers:env_var_handler",
    "touches": [
     "env"
