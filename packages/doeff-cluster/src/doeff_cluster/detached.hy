@@ -31,7 +31,8 @@
 (import .process_model [AwaitProcessEnded ProcessEnded ProcessWaitExpired])
 (import .detached_model [SubmitDetached AwaitDetached CancelDetached ReleaseDetached ReadRunners WARMING-PHASE
                          DetachedSubmitted DetachedPending DetachedRefused DetachedAwaited DetachedUnreachable
-                         RunnerFact RunnersUnreachable RunnersAnswer outcome-of-view])
+                         RunnerFact RunnersUnreachable RunnersAnswer outcome-of-view
+                         AwaitRunnersChange RunnersChange RunnersWatchMissing RunnersChangeAnswer])
 
 ;; 取り消しに当たる答えの status(本文の error を理由にした DetachedRefused にする)。413 = 詰めた Program が置き場の上限を越える
 ;; (PUT /programs — program_policy.PROGRAM-MAX-BYTES)。
@@ -102,6 +103,24 @@
   (tuple (gfor #(name w) (sorted (.items workers))
                (RunnerFact :name name :provides (tuple (sorted (.get w "provides" []))) :exclusive (tuple (sorted (.get w "exclusive" [])))
                            :live (bool (get w "live")) :draining (bool (get w "draining"))))))
+
+
+(deff runners-change-of [#^ (| int None) status #^ (| dict list str int float bool None) body]  ; defk にできない: 本番の client と sim の宿が同じ読みを使う純粋な判断
+  {:pre [(: status (| int None)) (: body (| dict list str int float bool None))] :post [(: % RunnersChangeAnswer)]
+   :tags {:context "doeff-cluster" :role "judgment"}}
+  "GET /watch の返事(status = None は届かない)を AwaitRunnersChange の答えにするため: 404 = 待つ口の無い旧い coordinator・
+   200 の {revision changed} = 待ちの答え・それ以外は届かないと同じ(呼び手は間を置いて待ち直す)。"
+  (cond
+    (= status 404) (RunnersWatchMissing :detail "coordinator に GET /watch が無い(旧い版)")
+    (and (= status 200) (isinstance body dict) (isinstance (.get body "revision") int) (isinstance (.get body "changed") bool))
+      (RunnersChange :revision (get body "revision") :changed (get body "changed"))
+    True (runners-unreachable (.format "{}: {}" status (cut (str body) 0 200)))))
+
+
+(deff watch-query [#^ int after #^ float timeout-seconds]  ; defk にできない: 本番の client と sim の宿が同じ問いを作る純粋な判断
+  {:pre [(: after int) (: timeout-seconds float)] :post [(: % dict)] :tags {:context "doeff-cluster" :role "protocol"}}
+  "AwaitRunnersChange の GET /watch の問いを作るため(worker を名指さない — coordinator 全体の版)。"
+  {"after" (str (max 0 after)) "timeoutSeconds" (str timeout-seconds)})
 
 
 (deff runners-unreachable [#^ str reason]  ; defk にできない: 本番の client と sim の宿が同じ答えを作る純粋な判断
@@ -203,7 +222,16 @@
       (except [error httpx.TransportError]
         (return (runners-unreachable (str error)))))
     (.raise-for-status response)
-    (runner-facts-of-view (get (.json response) "workers"))))
+    (runner-facts-of-view (get (.json response) "workers")))
+
+  (defn #^ RunnersChangeAnswer runners-change [self #^ int after #^ float timeout-seconds]
+    "coordinator の版が after から変わるまで待つ(GET /watch — AwaitRunnersChange・#1934)。1 回だけ送る(届かなければ呼び手が間を
+     置いて待ち直す — 待ちを送り直しの期限まで重ねない)。"
+    (try
+      (setv response (.request self.endpoint "GET" "/watch" :params (watch-query after timeout-seconds)))
+      (except [error httpx.TransportError]
+        (return (runners-unreachable (str error)))))
+    (runners-change-of response.status-code (try (.json response) (except [ValueError] response.text)))))
 
 
 (defk await-cluster [client key timeout-seconds poll-seconds]
@@ -295,6 +323,7 @@
   (CancelDetached [key] (resume (.cancel client key)))
   (ReleaseDetached [key] (resume (.release client key)))
   (ReadRunners [] (resume (.runners client)))
+  (AwaitRunnersChange [after timeout-seconds] (resume (.runners-change client after (float timeout-seconds))))
   (AwaitProcessEnded [job timeout-seconds]
     (<- ended (await-process-cluster client job timeout-seconds poll-seconds))
     (resume ended)))
