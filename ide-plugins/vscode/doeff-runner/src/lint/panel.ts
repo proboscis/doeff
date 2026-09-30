@@ -11,9 +11,9 @@ import {
   groupTooltipLines,
   lintChildren,
   mapRoots,
+  panelViolationRoots,
   ruleNodes,
   violationCount,
-  violationRoots,
   worstSeverity,
   type LintNode
 } from './view';
@@ -304,7 +304,7 @@ export class LintViolationsTree implements vscode.TreeDataProvider<LintNode>, vs
       return lintChildren(node);
     }
     return this.mode === 'violations'
-      ? violationRoots(this.store.violations(), this.store.rules(), this.filterState, this.previous())
+      ? panelViolationRoots(this.store.failures(), this.store.violations(), this.store.rules(), this.filterState, this.previous())
       : ruleNodes(this.store.rules());
   }
 }

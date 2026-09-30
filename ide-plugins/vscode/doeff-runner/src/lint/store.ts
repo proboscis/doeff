@@ -26,6 +26,12 @@ function key(filePath: string): string {
   return path.normalize(filePath);
 }
 
+/** root の全体の実行が失敗した事と理由(次に成功するまで残す — 失敗を 0 件の結果と見分けるため)。 */
+export interface LintFailure {
+  readonly root: string;
+  readonly reason: string;
+}
+
 /** path で引く表。 */
 interface PathTables {
   readonly modules: ReadonlyMap<string, LintModule>;
@@ -41,10 +47,13 @@ export class LintStore {
   private readonly signatures = new Map<string, FileSignatures>();
   /** 結果の出どころ(root か file の path)→ 拡張の知らない語(linter の方が新しい) */
   private readonly unknownBySource = new Map<string, readonly string[]>();
+  /** root → 直前の全体の実行の失敗(成功すれば消す) */
+  private readonly rootFailures = new Map<string, LintFailure>();
 
-  /** root の全体の実行の結果で置き換える(それまでの file の差し替えは捨てる)。 */
+  /** root の全体の実行の結果で置き換える(それまでの file の差し替えと、失敗の記録は捨てる)。 */
   replaceRoot(root: string, report: LintReport): void {
     this.roots.set(key(root), { report, overrides: new Map() });
+    this.rootFailures.delete(key(root));
     this.noteUnknown(root, report);
     this.emit();
   }
@@ -106,9 +115,27 @@ export class LintStore {
     }
   }
 
-  /** root の結果を落とす(folder が workspace から外れた時)。 */
+  /**
+   * root の全体の実行が失敗した事を置く(前の成功の結果は残す — 表は古い結果と失敗の理由を並べて出す)。表示が失敗を
+   * 「違反はありません」と取り違えないため(agora-redesign #1631)。
+   */
+  failRoot(root: string, reason: string): void {
+    const previous = this.rootFailures.get(key(root));
+    if (previous?.reason !== reason) {
+      this.rootFailures.set(key(root), { root, reason });
+      this.emit();
+    }
+  }
+
+  /** 全体の実行が失敗したままの root と理由の全部。 */
+  failures(): LintFailure[] {
+    return [...this.rootFailures.values()];
+  }
+
+  /** root の結果を落とす(folder が workspace から外れた時・linter を切った時)。 */
   removeRoot(root: string): void {
-    if (this.roots.delete(key(root))) {
+    const hadFailure = this.rootFailures.delete(key(root));
+    if (this.roots.delete(key(root)) || hadFailure) {
       this.emit();
     }
   }

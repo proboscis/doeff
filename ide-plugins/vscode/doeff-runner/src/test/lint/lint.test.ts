@@ -17,6 +17,7 @@ import {
   lintChildren,
   mapRoots,
   OUTSIDE_LAYERS,
+  panelViolationRoots,
   ruleNodes,
   violationCount,
   violationRoots,
@@ -188,6 +189,30 @@ suite('linter の結果の見せ方', () => {
     assert.deepStrictEqual(violationRoots([], r.rules).map(show), ['(linter の違反はありません)']);
     // 規則の一覧がまだ無い(1 file の実行だけ)時も、番号だけの見出しで束ねる
     assert.deepStrictEqual(violationRoots(r.violations, []).slice(4).map(show), ['group major DOEFF201 (1)', 'group minor DOEFF201 (1)', 'group info DOEFF101 (1)']);
+  });
+
+  test('全体の実行の失敗は表に出し、違反 0 件の「違反はありません」と取り違えない(agora-redesign #1631)', () => {
+    const r = report('report.json');
+    const reason = '終了コード 2: architecture.hy の誤り: :in は lines か names';
+    const store = new LintStore();
+    // 古い binary が設定を読めず、最初の全体の実行から落ちた — 表は失敗の札だけ
+    store.failRoot('/w', reason);
+    assert.deepStrictEqual(
+      panelViolationRoots(store.failures(), store.violations(), store.rules()).map(show),
+      [`(linter が失敗(/w): ${reason})`]
+    );
+    // 成功すれば札は消える
+    store.replaceRoot('/w', { ...r, root: '/w' });
+    assert.deepStrictEqual(store.failures(), []);
+    assert.strictEqual(panelViolationRoots(store.failures(), store.violations(), store.rules())[0].tag, 'summary');
+    // 成功の後に落ちたら、前の結果の上に札を足す(古い結果と分かるように)
+    store.failRoot('/w', reason);
+    const roots = panelViolationRoots(store.failures(), store.violations(), store.rules()).map(show);
+    assert.strictEqual(roots[0], `(linter が失敗(/w): ${reason})`);
+    assert.strictEqual(roots[1], 'summary critical 0');
+    // folder を外せば札も消える
+    store.removeRoot('/w');
+    assert.deepStrictEqual(panelViolationRoots(store.failures(), store.violations(), store.rules()).map(show), ['(linter の違反はありません)']);
   });
 
   test('束の件数と hover — 重さが混ざれば内訳、law の名と ADR と規則の文は hover に、名の無い古い linter には案内', () => {

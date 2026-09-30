@@ -198,6 +198,10 @@ export class LintService implements vscode.Disposable {
           this.lastFailure.set(request.root, outcome.reason);
           this.log.appendLine(`[lint] 失敗 (${request.tag === 'root' ? request.root : request.path}): ${outcome.reason}`);
         }
+        // 全体の実行の失敗は表にも出す(Output の 1 行だけだと、表が空の時に「違反はありません」と見分けられない — #1631)
+        if (request.tag === 'root') {
+          this.store.failRoot(request.root, outcome.reason);
+        }
         return;
       }
       case 'ok':

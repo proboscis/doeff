@@ -18,6 +18,7 @@ import {
   type StandingCounts
 } from './severity';
 import { LINT_LEVELS, type LintLevel } from './contract';
+import type { LintFailure } from './store';
 
 /** 表の値の並びへ 1 件足す(数千件でも線形に束ねる)。 */
 export function pushTo<K, V>(table: Map<K, V[]>, key: K, value: V): void {
@@ -189,6 +190,25 @@ export function violationRoots(
       a.group.rule.localeCompare(b.group.rule)
   );
   return [...summaryRows, ...groups.map((g) => g.group)];
+}
+
+/**
+ * 違反の表の最上段 — 全体の実行が失敗した root があれば、その理由の札を先頭に出す。失敗がある間は、違反が 0 件でも
+ * 「違反はありません」を出さない(失敗と成功を同じ画面にしない — agora-redesign #1631。古い binary が設定を読めず
+ * 終了コード 2 で落ちた時、表が空のまま「違反はありません」と出た)。
+ */
+export function panelViolationRoots(
+  failures: readonly LintFailure[],
+  violations: readonly LintViolation[],
+  rules: readonly LintRule[],
+  filter: PanelFilter = ALL_VIOLATIONS,
+  previous?: SavedTally
+): LintNode[] {
+  const failed: LintNode[] = failures.map((f) => ({ tag: 'message', label: `linter が失敗(${f.root}): ${f.reason}` }));
+  if (failed.length > 0 && violations.length === 0) {
+    return failed;
+  }
+  return [...failed, ...violationRoots(violations, rules, filter, previous)];
 }
 
 /** 束の見出し — 規則の ID と短い名(名の無い古い linter の出力は ID だけ)。 */
