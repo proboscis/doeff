@@ -2532,6 +2532,53 @@ fn services_without_a_counterexample_are_red() {
     assert!(keys(&report, "DOEFF143").iter().all(|k| !k.contains("counterexample-unused")), "{}", report);
 }
 
+/// agora-redesign #1562(K4): intent の効果の網羅の欠け(DOEFF165・K3 の表)は critical で失敗にする。今ある欠けは登録簿
+/// (1 鍵 1 file の dir)に載せ、載った欠けは warning に下がる。Charge と Refund はどちらも検から出さず答え手も無い(欠け)—
+/// Refund だけが登録簿に載っている。
+#[test]
+fn intent_effect_coverage_gaps_are_red_unless_registered() {
+    let intent = |name: &str| {
+        format!("(defeffect {} \"{}\" {{:fields [amount] :answer int :tags {{:context \"billing\" :role \"intent\"}}}})\n", name, name)
+    };
+    let files = [
+        ("app/foundation/host.hy", tags("shared", "foundation") + "(defk with-host [body] body)\n"),
+        ("app/billing/intent/effects.hy", intent("Charge") + &intent("Refund")),
+    ];
+    let dir = world_repo_with(&files, "", "[\"DOEFF165\"]");
+    let arch_path = dir.path().join("architecture.hy");
+    let declarations = ":foundation foundation\n  :verification-environment \"sim\"\n  \
+                        :business-fakes {:simulation [\"app/sim/**\"] :assembly [\"app/*/entry/**\"] :tests [\"**/tests/**\"] \
+                        :production [\"app/**\"] :business-modules [\"app.billing\"]}\n  \
+                        :assembly-shape {:translation-point \"with-*-translation\" :retired-function \"handlers-of\" \
+                        :translations \"TRANSLATION-HANDLERS\" :translation-layer \"entry\" :intent-layer \"intent\"}";
+    let text = std::fs::read_to_string(&arch_path)
+        .unwrap()
+        .replace(":foundation foundation", declarations)
+        .replace("(layer entry", "(layer intent :roles [intent] :imports [core intent])\n           (layer entry")
+        .replace("(defservice billing \"請求\" {:layers [core entry]})", "(defservice billing \"請求\" {:layers [core intent entry]})");
+    std::fs::write(&arch_path, text).unwrap();
+    let pyproject = dir.path().join("pyproject.toml");
+    let settings = std::fs::read_to_string(&pyproject).unwrap() + "[tool.doeff-linter.registry]\ndirs = [\"registry/EFFECT-COVERAGE-BREACHES\"]\n";
+    std::fs::write(&pyproject, settings).unwrap();
+    let registry = dir.path().join("registry/EFFECT-COVERAGE-BREACHES");
+    std::fs::create_dir_all(&registry).unwrap();
+    std::fs::write(
+        registry.join("refund.txt"),
+        "app/billing/intent/effects.hy::DOEFF165::billing::app.billing.intent.effects.Refund\n既知の欠け(検の見本)\n",
+    )
+    .unwrap();
+    let (_, report) = editor(dir.path());
+    let charge = "app/billing/intent/effects.hy::DOEFF165::billing::app.billing.intent.effects.Charge";
+    let refund = "app/billing/intent/effects.hy::DOEFF165::billing::app.billing.intent.effects.Refund";
+    assert_eq!(keys(&report, "DOEFF165"), vec![charge, refund], "{}", report);
+    let new_gap = violation(&report, charge);
+    assert_eq!(new_gap["severity"], "error", "{}", new_gap);
+    assert_eq!(new_gap["level"], "critical", "{}", new_gap);
+    let known = violation(&report, refund);
+    assert_eq!(known["severity"], "warning", "{}", known);
+    assert_eq!(known["registered"], true, "{}", known);
+}
+
 /// DOEFF150・151 の宣言を architecture.hy に足した一時の repo。語・呼びは agora-controllers の宣言(#1193 の移し元 check_vocabulary・
 /// check_controller_clock が数えていた物)と同じ綴りを検の材料として書く — linter の本体は語の表を持たない。
 fn retired_repo(files: &[(&str, String)]) -> tempfile::TempDir {
