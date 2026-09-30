@@ -40,6 +40,7 @@ import ast
 import contextvars
 import dataclasses
 import functools
+from collections import deque
 from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from types import FunctionType
@@ -317,29 +318,57 @@ def _handler_function(obj: Any) -> Any:
     return _function_of(obj)
 
 
+_CLAUSE_FUNCTIONS: dict[
+    int, tuple[FunctionNode, tuple[tuple[FunctionNode, tuple[FunctionNode, ...]], ...]]
+] = {}
+
+
 def _clause_functions(
     root: FunctionNode,
+) -> tuple[tuple[FunctionNode, tuple[FunctionNode, ...]], ...]:
+    """``root`` and the functions nested in it that dispatch on a parameter.
+
+    Found once per def node (as ``_body_nodes`` lists a body once): a handler is read again
+    for every Program that installs it, and the tree never changes (agora-redesign #1586)."""
+    cached = _CLAUSE_FUNCTIONS.get(id(root))
+    if cached is not None and cached[0] is root:
+        return cached[1]
+    found = tuple(_walk_clause_functions(root))
+    _CLAUSE_FUNCTIONS[id(root)] = (root, found)
+    return found
+
+
+def _walk_clause_functions(
+    root: FunctionNode,
 ) -> Iterator[tuple[FunctionNode, tuple[FunctionNode, ...]]]:
-    """``root`` and the functions nested in it that dispatch on a parameter."""
+    """Walk the dispatchers under ``root`` for ``_clause_functions``, with the defs enclosing each
+    (their scopes are rebuilt when a clause is read)."""
 
     def walk(
         node: FunctionNode, enclosing: tuple[FunctionNode, ...]
     ) -> Iterator[tuple[FunctionNode, tuple[FunctionNode, ...]]]:
         if _effect_param(node) is not None:
             yield node, enclosing
-        for child in ast.walk(node):
-            if child is node or not isinstance(
-                child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)
-            ):
-                continue
-            if _directly_nested(node, child):
-                yield from walk(child, (*enclosing, node))
+        for child in _nested_functions(node):
+            yield from walk(child, (*enclosing, node))
 
     yield from walk(root, ())
 
 
-def _directly_nested(parent: FunctionNode, child: FunctionNode) -> bool:
-    return any(node is child for node in _body_nodes(parent))
+def _nested_functions(parent: FunctionNode) -> Iterator[FunctionNode]:
+    """The defs and lambdas written directly in ``parent``'s body, in ``ast.walk`` order.
+
+    Breadth-first from the body like ``ast.walk``, but stopping at every def / class / lambda,
+    so each level reads its own body only — walking the whole subtree at every level read a
+    node once per function enclosing it (agora-redesign #1586). Leaving out the other fields
+    (arguments, decorators) and the subtrees below does not reorder the nodes kept."""
+    queue: deque[ast.AST] = deque([parent.body] if isinstance(parent, ast.Lambda) else parent.body)
+    while queue:
+        node = queue.popleft()
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
+            yield node
+        elif not isinstance(node, ast.ClassDef):
+            queue.extend(ast.iter_child_nodes(node))
 
 
 def _effect_param(node: FunctionNode) -> str | None:
