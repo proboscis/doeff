@@ -63,19 +63,25 @@
 
 (defrecord PostgresTimeouts
   "接続の上限(頭の註): 開く時(秒)・keepalive の最初の問いまでの無音(秒)・問いの間隔(秒)・答えの無い問いの数・送った bytes の返事を
-   待つ上限(ミリ秒)・文の上限(ミリ秒 — None = 付けない)。"
+   待つ上限(ミリ秒)・文の上限(ミリ秒 — None = 付けない)・transaction の途中で何もしない上限(ミリ秒 — None = 付けない)。
+   transaction の途中の上限は、BEGIN の後に program が進まなくなった接続(返す finally に届かない — 2026-09-30 の着地の台帳で、
+   pg_advisory_xact_lock を持ったまま 6 分半 idle in transaction で残り、後続の書きが全部 statement timeout で落ちた・agora-redesign #1846)を
+   engine が切り、transaction を戻して錠を外すため。"
   (#^ int connect-seconds)
   (#^ int keepalive-idle-seconds)
   (#^ int keepalive-interval-seconds)
   (#^ int keepalive-count)
   (#^ int unacknowledged-milliseconds)
-  (#^ (| int None) statement-milliseconds))
+  (#^ (| int None) statement-milliseconds)
+  (#^ (| int None) idle-transaction-milliseconds))
 
 
 ;; 既定の上限: 死んだ相手は keepalive で 10 + 5 × 3 = 25 秒・文を送った後は 15 秒で見つかる。文の上限 60 秒は記録の service の文(短い
-;; 読み書きと、錠を待つ表の用意)より十分長い。
+;; 読み書きと、錠を待つ表の用意)より十分長い。transaction の途中で何もしない上限 30 秒は、記録の service の transaction(文の間は純粋な
+;; 計算だけ)より十分長く、錠を持ったまま止まった接続が後続の書きを塞ぐ時間を 30 秒で切る(agora-redesign #1846)。
 (val DEFAULT-TIMEOUTS (PostgresTimeouts :connect-seconds 5 :keepalive-idle-seconds 10 :keepalive-interval-seconds 5 :keepalive-count 3
-                                        :unacknowledged-milliseconds 15000 :statement-milliseconds 60000))
+                                        :unacknowledged-milliseconds 15000 :statement-milliseconds 60000
+                                        :idle-transaction-milliseconds 30000))
 
 
 (defrecord PostgresStatement
@@ -102,7 +108,7 @@
 
   (defn connection-options [self #^ str name]  ; defk にできない: 接続を開く thread の中で読む psycopg への引数(Program を返すと psycopg へ渡せない)
     "開く接続に付ける上限を libpq の接続の parameter の写像で読むため(connect の keyword に渡す — DSN に同じ名が在ればこちらが勝つ)。
-     ただし options(-c を連ねた 1 本の値)は勝たせず、database name の DSN の options に文の上限の -c を継ぎ足す — 勝たせると DSN の
+     ただし options(-c を連ねた 1 本の値)は勝たせず、database name の DSN の options に engine の上限の -c を継ぎ足す — 勝たせると DSN の
      -c search_path などが黙って消える(agora-redesign #1771)。"
     (setv timeouts self.timeouts
           options {"connect_timeout" timeouts.connect-seconds
@@ -111,8 +117,13 @@
                    "keepalives_interval" timeouts.keepalive-interval-seconds
                    "keepalives_count" timeouts.keepalive-count
                    "tcp_user_timeout" timeouts.unacknowledged-milliseconds})
-    (when (is-not timeouts.statement-milliseconds None)
-      (setv bound (.format "-c statement_timeout={}" timeouts.statement-milliseconds)
+    ;; engine の上限(-c を連ねる): 文の上限と、transaction の途中で何もしない上限(agora-redesign #1846)。None の上限は付けない。
+    (setv bounds (lfor [setting value] [#("statement_timeout" timeouts.statement-milliseconds)
+                                        #("idle_in_transaction_session_timeout" timeouts.idle-transaction-milliseconds)]
+                       :if (is-not value None)
+                       (.format "-c {}={}" setting value)))
+    (when bounds
+      (setv bound (.join " " bounds)
             dsn (. (get self.databases name) dsn)
             declared (when dsn
                        ;; DSN の読みは libpq の綴り(URI・key=value の両方)なので psycopg の読みに任せる(DSN が空なら読まない —

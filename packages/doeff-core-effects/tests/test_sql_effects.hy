@@ -386,13 +386,14 @@
   (val connections (PostgresConnections #((PostgresDatabase :name DB :dsn ""))))
   (assert (= (.connection-options connections DB)
              {"connect_timeout" 5 "keepalives" 1 "keepalives_idle" 10 "keepalives_interval" 5 "keepalives_count" 3
-              "tcp_user_timeout" 15000 "options" "-c statement_timeout=60000"})
+              "tcp_user_timeout" 15000 "options" "-c statement_timeout=60000 -c idle_in_transaction_session_timeout=30000"})
           (.connection-options connections DB))
   ;; 文の上限を付けない宣言(None)では options を渡さない(DSN の options を消さない)。
   (val unbounded (PostgresConnections #((PostgresDatabase :name DB :dsn ""))
                                       :timeouts (PostgresTimeouts :connect-seconds 2 :keepalive-idle-seconds 1 :keepalive-interval-seconds 1
                                                                   :keepalive-count 1 :unacknowledged-milliseconds 900
-                                                                  :statement-milliseconds None)))
+                                                                  :statement-milliseconds None
+                                                                  :idle-transaction-milliseconds None)))
   (assert (not-in "options" (.connection-options unbounded DB)))
   (assert (= (get (.connection-options unbounded DB) "tcp_user_timeout") 900)))
 
@@ -409,7 +410,8 @@
   (val connections (PostgresConnections #((PostgresDatabase :name DB :dsn (.format "host=127.0.0.1 port={} dbname=x user=x" port)))
                                         :timeouts (PostgresTimeouts :connect-seconds 2 :keepalive-idle-seconds 1
                                                                     :keepalive-interval-seconds 1 :keepalive-count 1
-                                                                    :unacknowledged-milliseconds 1000 :statement-milliseconds 1000)))
+                                                                    :unacknowledged-milliseconds 1000 :statement-milliseconds 1000
+                                                                    :idle-transaction-milliseconds None)))
   (val started (time.monotonic))
   (try
     (<- answer (with-handler [(postgres-sql-handler connections)] (SqlQuery DB "SELECT 1" #())))
@@ -489,13 +491,52 @@
   (assert (< recovered-in 25) recovered-in))
 
 
+(defk select-one []
+  {:pre [] :post [(: % "SqlQuery の答え")] :tags {:context "sql" :role "program"}}
+  "transaction の中身として 1 行を読むため(錠が取れたかだけを見る)。"
+  (<- answer (SqlQuery DB "SELECT 1" #()))
+  answer)
+
+
+(defk locked-write-after-a-stalled-transaction [idle-milliseconds]
+  {:pre [(: idle-milliseconds (| int None))] :post [(: % "SqlTransaction の答え")]
+   :tags {:context "sql" :role "program"}}
+  "transaction の途中で止まった接続(BEGIN と錠の後に何もしない — 返す finally に届かなかった形)の横で、同じ錠の transaction を撃つため
+   (agora-redesign #1846)。idle-milliseconds = transaction の途中で何もしない上限(None = 付けない)。文の上限は 3 秒。"
+  (val timeouts (PostgresTimeouts :connect-seconds 5 :keepalive-idle-seconds 10 :keepalive-interval-seconds 5 :keepalive-count 3
+                                  :unacknowledged-milliseconds 15000 :statement-milliseconds 3000
+                                  :idle-transaction-milliseconds idle-milliseconds))
+  (val connections (PostgresConnections #((PostgresDatabase :name DB :dsn (or POSTGRES-DSN ""))) :size 2 :timeouts timeouts))
+  (val stalled (.acquire connections DB))
+  (.execute stalled "BEGIN")
+  (.execute stalled "SELECT pg_advisory_xact_lock(hashtext('stalled-1846'))")
+  (try
+    (<- answer (with-handler [(postgres-sql-handler connections)]
+                 (SqlTransaction DB (select-one) "stalled-1846")))
+    answer
+    (finally (.release connections DB stalled) (.close connections))))
+
+
+(deftest test-postgres-cuts-a-stalled-transaction-so-its-lock-is-freed
+  {:skip-if POOLED-SKIP :skip-reason "DOEFF_SQL_TEST_POSTGRES_DSN が無い(か psycopg が無い)"}
+  ;; 実 PG(agora-redesign #1846 の反例): 錠を持ったまま止まった transaction は、上限(0.5 秒)で engine が切って錠を外し、同じ錠の
+  ;; transaction が通る。上限の無い接続では錠が外れず、同じ錠の transaction は文の上限(3 秒)で 57014 に落ちる(2026-09-30 の着地の台帳の
+  ;; 事故の形)。
+  (<- freed (locked-write-after-a-stalled-transaction 500))
+  (assert (= (get freed.rows 0 0) 1) freed)
+  (<- blocked (locked-write-after-a-stalled-transaction None))
+  (assert (isinstance blocked SqlFailed) blocked)
+  (assert (= blocked.sqlstate "57014") blocked))
+
+
 (deftest test-postgres-cuts-a-statement-at-the-statement-timeout
   {:skip-if POOLED-SKIP :skip-reason "DOEFF_SQL_TEST_POSTGRES_DSN が無い(か psycopg が無い)"}
   ;; 実 PG: 文の上限(0.5 秒)を超えた文は engine が取り消し(57014)、SqlFailed で返る。接続は返されて次の文が答える。
   (val connections (PostgresConnections #((PostgresDatabase :name DB :dsn (or POSTGRES-DSN "")))
                                         :timeouts (PostgresTimeouts :connect-seconds 5 :keepalive-idle-seconds 10
                                                                     :keepalive-interval-seconds 5 :keepalive-count 3
-                                                                    :unacknowledged-milliseconds 15000 :statement-milliseconds 500)))
+                                                                    :unacknowledged-milliseconds 15000 :statement-milliseconds 500
+                                                                    :idle-transaction-milliseconds None)))
   (try
     (<- slow (with-handler [(postgres-sql-handler connections)] (SqlQuery DB "SELECT pg_sleep(3)" #())))
     (<- next (with-handler [(postgres-sql-handler connections)] (SqlQuery DB "SELECT 1" #())))
@@ -918,7 +959,7 @@
   ;; 表が名指した schema でなく public に作られた — agora-redesign #1771)。名乗らない database は文の上限だけ。
   (val connections (PostgresConnections #((PostgresDatabase :name DB :dsn "postgresql://u@/d?host=%2Ftmp&options=-c%20search_path%3Ds1")
                                           (PostgresDatabase :name "plain" :dsn "postgresql://u@/d"))))
-  (assert (= (get (.connection-options connections DB) "options") "-c search_path=s1 -c statement_timeout=60000")
+  (assert (= (get (.connection-options connections DB) "options") "-c search_path=s1 -c statement_timeout=60000 -c idle_in_transaction_session_timeout=30000")
           (.connection-options connections DB))
-  (assert (= (get (.connection-options connections "plain") "options") "-c statement_timeout=60000")
+  (assert (= (get (.connection-options connections "plain") "options") "-c statement_timeout=60000 -c idle_in_transaction_session_timeout=30000")
           (.connection-options connections "plain")))
