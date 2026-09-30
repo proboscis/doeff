@@ -3,7 +3,7 @@
 ;;;   - 観察(Observing)の間の Unknown(担い手の heartbeat の途絶)は完了にも失敗にも数えない
 ;;;   - 失敗が続く action は間を空けて出す(毎秒の送り直しをしない)
 ;;;   - 戻し(RollingBack)が終わらない時は stuck の印を出し、新は止めない
-(require doeff-hy.macros [deftest])
+(require doeff-hy.macros [deftest val var])
 (import dataclasses [replace])
 (import doeff_cluster.cluster_model [ClusterState ClusterTiming Request TaskRecord])
 (import doeff_cluster.durable_kv [full-kv state-from-kv])
@@ -47,11 +47,15 @@
 (deftest test-task-leases-survive-coordinator-downtime
   (setv task (TaskRecord "t1" "n" "b" "r" #() #() 15000 (+ 1000 15000) 1000))
   (setv state (ClusterState :tasks {"t1" task} :alive-ms 5000))
-  (setv #(after gap) (resume-after-downtime state 65000))
+  (val reply-1 (resume-after-downtime state 65000))
+  (var after (get reply-1 0))
+  (var gap (get reply-1 1))
   (assert (= gap 60000))
   (assert (= (. (get after.tasks "t1") lease-until-ms) (+ 16000 60000)))
   ;; 生きていた時刻を知らない置き場(2026-09-25 より前)はずらさない
-  (setv #(after gap) (resume-after-downtime (replace state :alive-ms 0) 65000))
+  (val reply-2 (resume-after-downtime (replace state :alive-ms 0) 65000))
+  (:= after (get reply-2 0))
+  (:= gap (get reply-2 1))
   (assert (= gap 0))
   (assert (= after.alive-ms 65000)))
 
@@ -78,16 +82,20 @@
 
 (deftest test-unknown-while-observing-neither-completes-nor-fails
   ;; 観察 60 秒のうち 50 秒を Unknown で過ごしても、完了も失敗もしない。Unknown の長さだけ観察を延ばす。
-  (setv #(status _) (rollout-step SPEC (observing 0) STOPPED READY 10000))
-  (setv #(status _) (rollout-step SPEC status STOPPED UNKNOWN 11000))
+  (val reply-3 (rollout-step SPEC (observing 0) STOPPED READY 10000))
+  (var status (get reply-3 0))
+  (val reply-4 (rollout-step SPEC status STOPPED UNKNOWN 11000))
+  (:= status (get reply-4 0))
   (assert (= (get status "unknownSinceMs") 11000))
   (setv #(again _) (rollout-step SPEC status STOPPED UNKNOWN 70000))
   (assert (= (get again "phase") "Observing"))
   (assert (is again status))                                ; Unknown の間は status を変えない(版が拍ごとに進まない)
-  (setv #(status _) (rollout-step SPEC status STOPPED READY 61000))
+  (val reply-5 (rollout-step SPEC status STOPPED READY 61000))
+  (:= status (get reply-5 0))
   (assert (= (get status "phase") "Observing"))
   (assert (= (get status "phaseSinceMs") 50000))            ; Unknown の 50 秒だけずらした
-  (setv #(status _) (rollout-step SPEC status STOPPED READY 111000))
+  (val reply-6 (rollout-step SPEC status STOPPED READY 111000))
+  (:= status (get reply-6 0))
   (assert (= (get status "phase") "Complete")))
 
 
@@ -119,9 +127,13 @@
 (deftest test-a-rollback-that-does-not-finish-is-marked-stuck-and-keeps-the-new
   (setv status {"phase" "RollingBack" "phaseSinceMs" 0 "rollbackStep" "restoreOld" "fromReplicas" 1 "history" []})
   (setv old-down {"ready" "NotReady" "stopped" False "specReplicas" 1 "reason" "Pod が起きない"})
-  (setv #(s actions) (rollout-step SPEC status old-down READY 1000))
+  (val reply-7 (rollout-step SPEC status old-down READY 1000))
+  (var s (get reply-7 0))
+  (var actions (get reply-7 1))
   (assert (is (.get s "stuck") None))
-  (setv #(s actions) (rollout-step SPEC s old-down READY 601000))
+  (val reply-8 (rollout-step SPEC s old-down READY 601000))
+  (:= s (get reply-8 0))
+  (:= actions (get reply-8 1))
   (assert (= (get s "stuck" "step") "restoreOld"))
   (assert (= actions []))                                   ; 旧の台数は既に 1(命令は出さない)・新は止めない
   (setv #(again _) (rollout-step SPEC s old-down READY 700000))

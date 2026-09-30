@@ -1,5 +1,5 @@
 ;; 調整ループ全体を仮想時計・偽の子 process・台本の宣言で決定的に動かす。
-(require doeff-hy.macros [deftest defhandler <-])
+(require doeff-hy.macros [deftest defhandler <- var])
 (import collections.abc [Callable])
 (import dataclasses [replace])
 (import doeff_time [SimClock sim-time-handler])
@@ -48,8 +48,8 @@
 (defhandler fake-host-script [#^ FakeWorld world #^ tuple script #^ int stop-at]
   (ReadDesired []
     ;; 台本 = #((開始時刻 宣言) ...)。その時刻以前で最後の宣言を返す。
-    (setv current (DesiredJobs #()))
-    (for [#(at desired) script] (when (>= world.now at) (setv current desired)))
+    (var current (DesiredJobs #()))
+    (for [#(at desired) script] (when (>= world.now at) (:= current desired)))
     (resume current))
   (WorkerStopRequested [] (resume (>= world.now stop-at)))
   (ObserveWorld [] (resume (.observe world)))

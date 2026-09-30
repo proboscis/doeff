@@ -5,7 +5,7 @@
 ;;   3. 業務の書き手の記録と再生は業務の側の検が持つ
 ;;   4. 判断を 1 か所変えた版 → 違いはその profile の書きだけ
 ;;   5. 読み方を変えた版 → 分岐として止まる(推測で答えを作らない)
-(require doeff-hy.macros [deftest defk defhandler <-])
+(require doeff-hy.macros [deftest defk defhandler <- var])
 (import json)
 (import datetime [datetime timedelta timezone])
 (import doeff [EffectBase Pass with_handlers])
@@ -47,8 +47,8 @@
     (assert (isinstance (get back "at") datetime))
     (assert (= (.utcoffset (get back "at")) (.utcoffset at))))
   ;; timezone の無い時刻は GetTime が返さない形 — 黙って記録せず断る。
-  (setv raised False)
-  (try (encode-value (datetime 2026 9 25)) (except [TypeError] (setv raised True)))
+  (var raised False)
+  (try (encode-value (datetime 2026 9 25)) (except [TypeError] (:= raised True)))
   (assert raised "timezone の無い時刻は投げる"))
 
 (deftest test-clock-effects-are-recorded-and-replayed
@@ -65,8 +65,8 @@
   (assert (= replayed recorded) #(replayed recorded)))
 
 (deftest test-unknown-values-fail-instead-of-being-dropped
-  (setv raised False)
-  (try (encode-value (object)) (except [TypeError] (setv raised True)))
+  (var raised False)
+  (try (encode-value (object)) (except [TypeError] (:= raised True)))
   (assert raised "知らない値は投げる"))
 
 (deftest test-delta-round-trip

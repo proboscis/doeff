@@ -91,8 +91,8 @@
       (<- counted int (CountVisit name))
       (:= totals (| totals {name counted}))))
   (<- ticket str (DrawTicket "last"))
-  (<- counted int (CountVisit ticket))
-  (| totals {"ticket" counted}))
+  (<- ticket-count int (CountVisit ticket))
+  (| totals {"ticket" ticket-count}))
 
 
 (defk ledger-inside [translation names]

@@ -289,12 +289,12 @@
         (.append workers w)))
   (val tasks [])
   (for [t (get data "tasks")]
-    (<- row dict (to-old-needs t))
-    (.append tasks row))
+    (<- task-row dict (to-old-needs t))
+    (.append tasks task-row))
   (val warms {})
   (for [#(k v) (.items (get data "warms"))]
-    (<- row dict (to-old-needs v))
-    (setv (get warms k) row))
+    (<- warm-row dict (to-old-needs v))
+    (setv (get warms k) warm-row))
   (<- ok bool (check-old-read (state-from-json (| data {"workers" workers "tasks" tasks "warms" warms}) 5000)))
   (assert ok))
 
