@@ -285,6 +285,36 @@ fn raw_side_effects_outside_allowed_layers() {
 }
 
 #[test]
+fn python_env_reads_outside_allowed_layers() {
+    // agora-redesign #1907: 業務の層の `.py` の環境変数の読みも DOEFF106 に当たる(Hy の file だけでなく)。
+    let dir = repo(
+        &[
+            (
+                "app/core/settings.py",
+                "import os\nfrom os import getenv as ge\nMODULE_TAGS = {\"context\": \"billing\", \"role\": \"judgment\"}\n\ndef mode():\n    return os.environ[\"MODE\"]\n\ndef level():\n    return ge(\"LEVEL\")\n",
+            ),
+            // 当たらない例: 許された層(foundation)の読み・文字列と註の中の綴り・別の物の environ 属性。
+            ("app/foundation/env.py", "import os\nMODULE_TAGS = {\"context\": \"io\", \"role\": \"foundation\"}\nX = os.getenv(\"X\")\n"),
+            (
+                "app/core/plain.py",
+                "import os\nMODULE_TAGS = {\"context\": \"billing\", \"role\": \"judgment\"}\n# os.environ\nS = \"os.getenv\"\n\ndef f(request):\n    return os.path.join(request.environ, \"a\")\n",
+            ),
+        ],
+        "",
+    );
+    let (_, report) = editor(dir.path());
+    let direct = keys(&report, "DOEFF106");
+    assert_eq!(
+        direct,
+        vec!["app/core/settings.py::DOEFF106::level::os.getenv".to_string(), "app/core/settings.py::DOEFF106::mode::os.environ".to_string()],
+        "{:?}",
+        direct
+    );
+    let hit = violation(&report, "app/core/settings.py::DOEFF106::mode::os.environ");
+    assert_eq!(hit["severity"], "error");
+}
+
+#[test]
 fn environment_names_in_business_code() {
     let dir = repo(
         &[

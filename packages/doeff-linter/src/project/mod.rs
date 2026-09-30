@@ -44,6 +44,7 @@ pub mod typed_values;
 pub mod record_stubs;
 pub mod business_fakes;
 pub mod intent_coverage;
+pub mod python_env;
 pub mod assembly_shape;
 pub mod invariants;
 pub mod clause_coverage;
@@ -1318,6 +1319,16 @@ fn judge_layer_file(
             }
         }
     }
+    // Python の file の環境変数の読み(agora-redesign #1907)— Hy の索引の外の `.py` にも、許しの判定は Hy の枝と同じ 1 つを使う。
+    if let (Some(raw), Language::Python, true) = (&settings.raw, file.file.language, enabled.contains(&ProjectRule::RawSideEffectDirect)) {
+        let allowed_here = match &raw.world_modules {
+            Some(modules) => modules.contains(&architecture::mangle_dotted(&file.module)),
+            None => raw.allowed.contains(&file.site.layer),
+        };
+        if !allowed_here && !boundary_allows(raw, &file.module, RawCategory::Env) {
+            drafts.extend(judge.python_env_direct(raw));
+        }
+    }
     if let (Some(architecture), Some(hy_file)) = (&settings.architecture, hy_file) {
         if enabled.contains(&ProjectRule::WorldHandlerNamedOutsideList) && !architecture.world_handlers.is_empty() {
             drafts.extend(judge.world_handler_named(hy_file, architecture));
@@ -1718,6 +1729,42 @@ impl<'a> LayerJudge<'a> {
 
     /// DOEFF106: 定義の中の生の副作用の直接の証拠(強い証拠は error、弱い証拠は warning)。入れ子の定義と外の定義で
     /// 同じ証拠が重なる時は、いちばん内側の定義に 1 度だけ数える。
+    /// `.py` の file の環境変数の読みを DOEFF106 の知らせにするため(python_env.rs の env_reads — Hy の raw_direct と同じ文の形)。
+    fn python_env_direct(&self, raw: &settings::RawSettingsSpec) -> Vec<Draft> {
+        let allowed = match &raw.world_modules {
+            Some(_) => "生の副作用に触ってよいのは architecture.hy の :world-handlers(外の世界に触れてよい定義の許可名簿)の定義の module だけ".to_string(),
+            None => format!("生の副作用に触ってよい層は {}", raw.allowed.iter().map(|id| self.layer_name(*id)).collect::<Vec<_>>().join("・")),
+        };
+        python_env::env_reads(self.source)
+            .into_iter()
+            .map(|read| {
+                let mut draft = self.draft(
+                    ProjectRule::RawSideEffectDirect,
+                    self.lines.range(read.start, read.end),
+                    format!(
+                        "定義 {}({})が生の副作用 {}({})に直に触る — {}",
+                        read.definition,
+                        self.layer_name(self.layer),
+                        read.name,
+                        RawCategory::Env.as_str(),
+                        allowed
+                    ),
+                    Some(format!("{}::{}", read.definition, read.name)),
+                    Explain::RawDirect {
+                        placement: self.placement.clone(),
+                        definition: read.definition.clone(),
+                        kind: "def",
+                        evidence: read.name.clone(),
+                        category: RawCategory::Env.as_str(),
+                        weak: false,
+                    },
+                );
+                draft.base = Severity::Error;
+                draft
+            })
+            .collect()
+    }
+
     fn raw_direct(&self, hy_file: &HyFileIndex, raw: &settings::RawSettingsSpec, module: &str) -> Vec<Draft> {
         let definitions = &hy_file.definitions;
         let allowed = match &raw.world_modules {
