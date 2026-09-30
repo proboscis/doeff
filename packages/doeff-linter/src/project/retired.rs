@@ -17,17 +17,24 @@
 //!   * DOEFF150 `:in names` — 定義の名だけ(Hy は `def…` の形と `setv`・`val`・`var` の左辺・Python は def と class の名)。
 //!   * DOEFF150 `:in paths` — file の名だけ(最後の `.` より前・dir の名と中身は見ない)。退役した名の file を置き直さない(#1369)。
 //!   * DOEFF151 — Hy の file の `(呼び …)` の形の呼び(頭の記号が :calls のどれか)。註・文字列・`#_` で読み捨てた form は数えない。
+//!     境目の部品(architecture.hy の `:boundary-parts`)の module の中では、呼びの綴りが生の副作用の目録で分類でき、その分類の
+//!     触れる先を部品が `:touches` に宣言している呼びだけを当てない(agora-redesign #1894 — 生の時計の呼びを通す所は部品の宣言
+//!     1 か所で決まり、DOEFF106 と同じ写し方なので 2 つの規則が食い違わない)。
 
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
 use doeff_indexer::hy_index::reader::{Form, Node, Reader, StrKind};
+use doeff_indexer::hy_index::{matches_pattern, RawCatalog};
 use rayon::prelude::*;
 use regex::Regex;
 use walkdir::WalkDir;
 
-use super::architecture::{RetiredCalls, RetiredWords, WordPlace};
+use super::architecture::{mangle_dotted, RetiredCalls, RetiredWords, WordPlace, WorldTouch};
+use super::names::module_of;
 use super::relative_path;
+use super::world_catalog::touch_of_raw;
 
 /// 歩かない dir(隠し dir と生成物 — 宣言の glob の頭の dir より下で)。
 const SKIPPED_DIRS: &[&str] = &["node_modules", "target", "__pycache__", "venv", "site-packages"];
@@ -68,6 +75,50 @@ pub struct FileHits {
     pub source: String,
     pub words: Vec<WordHit>,
     pub calls: Vec<CallHit>,
+}
+
+/// 境目の部品の中で当てない呼び(DOEFF151・agora-redesign #1894)— 部品の module(mangle した dotted の綴り)→ その中で当てない
+/// 呼びの綴り。呼びの綴りが生の副作用の目録で分類でき、その分類の触れる先(DOEFF106 の boundary_allows と同じ `touch_of_raw`)を
+/// 部品が `:touches` に宣言している時だけ当てない。目録で分類できない呼び(効果の Now など)は、どの部品の中でも当てる。
+#[derive(Debug, Default)]
+pub struct PartCalls {
+    by_module: BTreeMap<String, BTreeSet<String>>,
+}
+
+impl PartCalls {
+    /// 呼びの群・部品の module → 触れる先(`Architecture::boundary_touches`)・生の副作用の目録から組む。
+    pub fn new(calls: &[RetiredCalls], boundary: &BTreeMap<String, Vec<WorldTouch>>, catalog: &RawCatalog) -> PartCalls {
+        let classified: Vec<(&str, WorldTouch)> =
+            calls.iter().flat_map(|group| group.calls.iter()).filter_map(|call| raw_touch(call, catalog).map(|touch| (call.as_str(), touch))).collect();
+        let by_module = boundary
+            .iter()
+            .map(|(module, touches)| {
+                let allowed: BTreeSet<String> =
+                    classified.iter().filter(|(_, touch)| touches.contains(touch)).map(|(call, _)| call.to_string()).collect();
+                (module.clone(), allowed)
+            })
+            .filter(|(_, allowed)| !allowed.is_empty())
+            .collect();
+        PartCalls { by_module }
+    }
+
+    /// file rel(根からの path)の中で呼び call を当てないか。
+    fn allows(&self, rel: &str, call: &str) -> bool {
+        self.by_module.get(&mangle_dotted(&module_of(rel))).is_some_and(|allowed| allowed.contains(call))
+    }
+}
+
+/// 呼びの綴りを生の副作用の目録で分類し、触れる先の語へ写す(dotted の名前の pattern か組み込みの名 — 目録の ignored に当たる名と、
+/// 分類できない名は None)。
+fn raw_touch(call: &str, catalog: &RawCatalog) -> Option<WorldTouch> {
+    if catalog.ignored.iter().any(|pattern| matches_pattern(call, pattern)) {
+        return None;
+    }
+    catalog
+        .categories
+        .iter()
+        .find(|entry| entry.patterns.iter().any(|pattern| matches_pattern(call, pattern)) || entry.builtins.iter().any(|name| name == call))
+        .map(|entry| touch_of_raw(entry.category))
 }
 
 /// glob を repo の根に錨を下ろして当てる(`**` は 0 個以上の段・`*` は段の中の任意の綴り・`/` の無い型は根の直下の file)。
@@ -534,13 +585,14 @@ fn hy_calls(source: &str, form: &Form, group: &RetiredCalls, rel: &str, out: &mu
 pub struct Prepared<'a> {
     words: Vec<(&'a RetiredWords, Vec<Regex>)>,
     calls: &'a [RetiredCalls],
+    parts: &'a PartCalls,
 }
 
 impl<'a> Prepared<'a> {
-    pub fn new(words: &'a [RetiredWords], calls: &'a [RetiredCalls]) -> Prepared<'a> {
+    pub fn new(words: &'a [RetiredWords], calls: &'a [RetiredCalls], parts: &'a PartCalls) -> Prepared<'a> {
         // 読む時(architecture.rs)に確かめた正規表現なので、ここで読めないことは無い。
         let words = words.iter().map(|g| (g, g.patterns.iter().filter_map(|p| Regex::new(p).ok()).collect())).collect();
-        Prepared { words, calls }
+        Prepared { words, calls, parts }
     }
 
     /// file rel をどれかの群が見るか。
@@ -550,8 +602,8 @@ impl<'a> Prepared<'a> {
 }
 
 /// file 1 つ(根からの path rel と中身)を全部の群に当てる(1 file の実行 — 正規表現はここで組む)。
-pub fn judge(rel: &str, source: &str, words: &[RetiredWords], calls: &[RetiredCalls]) -> (Vec<WordHit>, Vec<CallHit>) {
-    judge_prepared(rel, source, &Prepared::new(words, calls))
+pub fn judge(rel: &str, source: &str, words: &[RetiredWords], calls: &[RetiredCalls], parts: &PartCalls) -> (Vec<WordHit>, Vec<CallHit>) {
+    judge_prepared(rel, source, &Prepared::new(words, calls, parts))
 }
 
 /// file 1 つを組み終えた群に当てる。
@@ -576,6 +628,7 @@ fn judge_prepared(rel: &str, source: &str, prepared: &Prepared) -> (Vec<WordHit>
                 hy_calls(source, form, group, rel, &mut call_hits);
             }
         }
+        call_hits.retain(|hit| !prepared.parts.allows(rel, &hit.call));
     }
     word_hits.sort_by_key(|h| (h.start, h.detail.clone()));
     call_hits.sort_by_key(|h| h.start);
@@ -583,8 +636,8 @@ fn judge_prepared(rel: &str, source: &str, prepared: &Prepared) -> (Vec<WordHit>
 }
 
 /// 宣言の群に当たる file を読んで判じる(focus が在ればその下の file だけ)。読めない file は理由を返す。
-pub fn find(root: &Path, words: &[RetiredWords], calls: &[RetiredCalls], focus: Option<&[PathBuf]>) -> (Vec<FileHits>, Vec<String>) {
-    let prepared = Prepared::new(words, calls);
+pub fn find(root: &Path, words: &[RetiredWords], calls: &[RetiredCalls], parts: &PartCalls, focus: Option<&[PathBuf]>) -> (Vec<FileHits>, Vec<String>) {
+    let prepared = Prepared::new(words, calls, parts);
     let globs = words.iter().flat_map(|g| g.files.iter()).chain(calls.iter().flat_map(|g| g.files.iter()));
     judge_files(
         root,
@@ -660,7 +713,7 @@ mod tests {
     fn words_stand_alone_and_rule_lines_are_skipped() {
         let group = words(&["mail", "席", "auth home"], &[], WordPlace::Lines, &["使わない"]);
         let source = "email address\nmail を送る\n使わない語 = mail\n席へ届ける\nmailbox と mail-box\nauth home は退役\n";
-        let (hits, _) = judge("a.txt", source, &[group], &[]);
+        let (hits, _) = judge("a.txt", source, &[group], &[], &PartCalls::default());
         let found: Vec<(&str, &str)> = hits.iter().map(|h| (&source[h.start..h.end], h.detail.as_str())).collect();
         assert_eq!(found, vec![("mail", "mail"), ("席", "席"), ("auth home", "auth home")]);
     }
@@ -668,7 +721,7 @@ mod tests {
     #[test]
     fn patterns_hit_once_per_line_and_key_by_group() {
         let group = words(&[], &[r"会話\s*[（(]\s*(?:意味は|=)\s*agent", r"(?i)semantically\s+agent"], WordPlace::Lines, &[]);
-        let (hits, _) = judge("a.txt", "会話(意味は agent)と 会話(= agent)は semantically agent\n会話は agent の手番の列を持つ\n", &[group], &[]);
+        let (hits, _) = judge("a.txt", "会話(意味は agent)と 会話(= agent)は semantically agent\n会話は agent の手番の列を持つ\n", &[group], &[], &PartCalls::default());
         assert_eq!(hits.len(), 1, "同じ行に 2 つの型が当たっても 1 行と数える");
         assert_eq!(hits[0].detail, "g");
     }
@@ -679,17 +732,17 @@ mod tests {
         let source = "(defk attend-conversation [x] \"conversation\")\n(defclass [(dataclass :frozen True)] ConversationRow [])\n\
                       (setv CONVERSATION-KIND \"conversation\")\n(defn #^ str chat-of [row] row.chat) ; conversation の綴りは註だけ\n\
                       (defrecord ChatSlice (#^ str chat))\n";
-        let (hits, _) = judge("controllers/chat/rows.hy", source, &[group.clone()], &[]);
+        let (hits, _) = judge("controllers/chat/rows.hy", source, &[group.clone()], &[], &PartCalls::default());
         let names: Vec<&str> = hits.iter().map(|h| h.name.as_deref().unwrap_or("")).collect();
         assert_eq!(names, vec!["attend-conversation", "ConversationRow", "CONVERSATION-KIND"]);
-        let (python, _) = judge("controllers/chat/rows.py", "def read_conversation(x):\n    pass\nclass ChatRow:\n    pass\n", &[group], &[]);
+        let (python, _) = judge("controllers/chat/rows.py", "def read_conversation(x):\n    pass\nclass ChatRow:\n    pass\n", &[group], &[], &PartCalls::default());
         assert_eq!(python.iter().map(|h| h.name.as_deref().unwrap_or("")).collect::<Vec<_>>(), vec!["read_conversation"]);
     }
 
     #[test]
     fn paths_are_file_names_not_dirs_or_contents() {
         let group = words(&["worker", "design_request"], &[r"^dispatch"], WordPlace::Paths, &[]);
-        let hit = |rel: &str| judge(rel, "(setv worker 1) ; worker の綴りは中身だけ\n", &[group.clone()], &[]).0;
+        let hit = |rel: &str| judge(rel, "(setv worker 1) ; worker の綴りは中身だけ\n", &[group.clone()], &[], &PartCalls::default()).0;
         let details = |rel: &str| hit(rel).iter().map(|h| h.detail.clone()).collect::<Vec<_>>();
         assert_eq!(details("controllers/automation/core/worker.hy"), vec!["worker"]);
         assert_eq!(details("controllers/automation/core/design_request.hy"), vec!["design_request"]);
@@ -703,7 +756,7 @@ mod tests {
 
     /// 当たった綴りの字面の並び(:in lines の群 group を file rel の中身 source に当てる)。
     fn spelled(rel: &str, source: &str, group: &RetiredWords) -> Vec<String> {
-        judge(rel, source, &[group.clone()], &[]).0.iter().map(|h| source[h.start..h.end].to_string()).collect()
+        judge(rel, source, &[group.clone()], &[], &PartCalls::default()).0.iter().map(|h| source[h.start..h.end].to_string()).collect()
     }
 
     /// agora-redesign #1794: 実際に使う code の中の綴り — Hy の記号・欄名・command の文字列・ほかの文字列 — は数える。
@@ -748,7 +801,7 @@ mod tests {
         assert!(spelled("docs/a.md", "# mail\n本文の mail と `ACP_CHECKOUT`\n```sh\nexport ACP_CHECKOUT=1\n```\n", &group).is_empty());
         // :in paths は md でも file の名を見る(変えない)。
         let paths = words(&["mail"], &[], WordPlace::Paths, &[]);
-        assert_eq!(judge("docs/mail.md", "", &[paths], &[]).0.len(), 1);
+        assert_eq!(judge("docs/mail.md", "", &[paths], &[], &PartCalls::default()).0.len(), 1);
     }
 
     /// agora-redesign #1794: Python の `#` の註と docstring(行頭の三重引用符の文字列)は数えない。ほかの文字列と名は数える。
@@ -776,9 +829,9 @@ mod tests {
     fn calls_are_heads_of_forms_not_comments_or_strings() {
         let group = RetiredCalls { name: "clock".into(), calls: vec!["Now".into(), "time.time".into()], files: vec!["**/*.hy".into()], except: Vec::new(), instead: "x".into() };
         let source = ";; 効果 (Now) は退役した\n(setv a (Now))\n(setv b \"(Now)\")\n(setv c (time.time))\n#_(Now)\n(setv d Now)\n";
-        let (_, hits) = judge("a.hy", source, &[], &[group.clone()]);
+        let (_, hits) = judge("a.hy", source, &[], &[group.clone()], &PartCalls::default());
         assert_eq!(hits.iter().map(|h| h.call.as_str()).collect::<Vec<_>>(), vec!["Now", "time.time"]);
-        let (_, none) = judge("a.py", "Now()\n", &[], &[group]);
+        let (_, none) = judge("a.py", "Now()\n", &[], &[group], &PartCalls::default());
         assert!(none.is_empty(), "Python の file は数えない");
     }
 }

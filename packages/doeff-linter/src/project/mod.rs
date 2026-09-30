@@ -247,7 +247,7 @@ pub fn run_with(root: &Path, settings: &ProjectSettings, enabled: &BTreeSet<Proj
     match target {
         Target::Whole { focus } => {
             if let Some(architecture) = &settings.architecture {
-                let (found, errors) = crate::timing::timed("retired", || judge_retired_files(root, architecture, enabled, focus));
+                let (found, errors) = crate::timing::timed("retired", || judge_retired_files(root, architecture, enabled, &raw.catalog, focus));
                 drafts.extend(found);
                 report.errors.extend(errors);
                 // DOEFF141 は宣言した定義の module と、届いた先の module の file だけを読む(名指しに関わらず小さい — repo 全体は読まない)。
@@ -782,7 +782,8 @@ pub fn run_with(root: &Path, settings: &ProjectSettings, enabled: &BTreeSet<Proj
             }
             if let (Some(architecture), Some(rel)) = (&settings.architecture, &rel) {
                 let (words, calls) = retired_groups(architecture, enabled);
-                let (word_hits, call_hits) = retired::judge(rel, source, words, calls);
+                let parts = retired::PartCalls::new(calls, &architecture.boundary_touches(), &raw.catalog);
+                let (word_hits, call_hits) = retired::judge(rel, source, words, calls, &parts);
                 drafts.extend(retired_drafts(&path, source, word_hits, call_hits));
                 if enabled.contains(&ProjectRule::UntypedStructuredValue) && architecture.typed_values.as_ref().is_some_and(|s| typed_values::wants(rel, s)) {
                     match typed_values::judge(rel, source) {
@@ -881,13 +882,21 @@ fn retired_groups<'a>(architecture: &'a architecture::Architecture, enabled: &BT
     (words, calls)
 }
 
-/// DOEFF150・151 を全体の実行で判じる(focus が在ればその下の file だけを読む)。
-fn judge_retired_files(root: &Path, architecture: &architecture::Architecture, enabled: &BTreeSet<ProjectRule>, focus: Option<&[PathBuf]>) -> (Vec<Draft>, Vec<String>) {
+/// DOEFF150・151 を全体の実行で判じる(focus が在ればその下の file だけを読む)。境目の部品の中の呼びは catalog(DOEFF106 と同じ
+/// 生の副作用の目録)で分類して部品の :touches と照らす(agora-redesign #1894)。
+fn judge_retired_files(
+    root: &Path,
+    architecture: &architecture::Architecture,
+    enabled: &BTreeSet<ProjectRule>,
+    catalog: &RawCatalog,
+    focus: Option<&[PathBuf]>,
+) -> (Vec<Draft>, Vec<String>) {
     let (words, calls) = retired_groups(architecture, enabled);
     if words.is_empty() && calls.is_empty() {
         return (Vec::new(), Vec::new());
     }
-    let (found, errors) = retired::find(root, words, calls, focus);
+    let parts = retired::PartCalls::new(calls, &architecture.boundary_touches(), catalog);
+    let (found, errors) = retired::find(root, words, calls, &parts, focus);
     let drafts = found.into_iter().flat_map(|file| retired_drafts(&file.path, &file.source, file.words, file.calls)).collect();
     (drafts, errors)
 }

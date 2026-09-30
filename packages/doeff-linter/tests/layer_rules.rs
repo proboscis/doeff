@@ -4270,12 +4270,17 @@ fn assembly_answers_in_the_wrong_place_are_red() {
 /// 境目の部品(:boundary-parts)を宣言した world_repo(`parts` は :boundary-parts の要素の列・`enable` は規則の列)。
 fn boundary_repo(files: &[(&str, String)], parts: &str, enable: &str) -> tempfile::TempDir {
     let dir = world_repo_with(files, "", enable);
+    declare_boundary_parts(&dir, parts);
+    dir
+}
+
+/// 一時の repo の architecture.hy に境目の部品(:boundary-parts — `parts` は要素の列)を足す。
+fn declare_boundary_parts(dir: &tempfile::TempDir, parts: &str) {
     let arch_path = dir.path().join("architecture.hy");
     let text = std::fs::read_to_string(&arch_path)
         .unwrap()
         .replace(":foundation foundation", &format!(":foundation foundation\n  :edge-mark \"real_world\"\n  :boundary-parts [{}]", parts));
     std::fs::write(&arch_path, text).unwrap();
-    dir
 }
 
 /// agora-redesign #1797: 境目の部品(:boundary-parts)の module の中では、宣言した :touches の種類の生の副作用を DOEFF106 で当てない
@@ -4303,6 +4308,43 @@ fn boundary_parts_allow_only_the_declared_touches() {
         "宣言した network・clock は当てず、種類の外の process と宣言の無い module は当てる: {}",
         report
     );
+}
+
+/// agora-redesign #1894: 境目の部品(:boundary-parts)の module の中では、:touches に宣言した触れる先の生の呼び(time.time → clock)を
+/// DOEFF151 でも当てない(DOEFF106 と同じ写し方 — 生の時計を通す所は部品の宣言 1 か所)。反例 = 宣言の無い module・:touches に
+/// clock の無い部品・層の置き場の外の宣言の無い file の time.time と、部品の中でも生の副作用でない呼び(効果の Now)は当たる。
+/// 1 file の実行(保存前の中身を stdin で渡す editor の形)も同じ宣言を読む。
+#[test]
+fn retired_calls_skip_only_the_raw_calls_a_boundary_part_declares() {
+    let stamp = "(defk stamp [] (time.time))\n";
+    let files = [
+        ("app/billing/entry/bench.hy", format!("{}(defk later [] (Now))\n", stamp)),
+        ("app/billing/entry/other.hy", stamp.to_string()),
+        ("app/billing/entry/wire.hy", stamp.to_string()),
+        ("app/tools/probe.hy", stamp.to_string()),
+        ("app/tools/loose.hy", stamp.to_string()),
+    ];
+    let parts = r#"(boundary-part "app.billing.entry.bench" :touches [network clock] :reason "本物の待ち受けへ撃つ縁の台")
+                   (boundary-part "app.billing.entry.wire" :touches [network] :reason "時計を読まない縁の台")
+                   (boundary-part "app.tools.probe" :touches [clock] :reason "人が回す入口")"#;
+    let dir = retired_repo(&files);
+    declare_boundary_parts(&dir, parts);
+    let (_, report) = editor(dir.path());
+    assert_eq!(
+        keys(&report, "DOEFF151"),
+        vec![
+            "app/billing/entry/bench.hy::DOEFF151::Now",
+            "app/billing/entry/other.hy::DOEFF151::time.time",
+            "app/billing/entry/wire.hy::DOEFF151::time.time",
+            "app/tools/loose.hy::DOEFF151::time.time",
+        ],
+        "clock を宣言した部品の time.time だけを当てず、宣言の無い module・clock の無い部品の time.time と部品の中の Now は当てる: {}",
+        report
+    );
+    let (_, stdout, stderr) =
+        run(dir.path(), &["--output-format", "editor-json", "--no-log", "--stdin", "--path", "app/billing/entry/bench.hy"], Some(&files[0].1));
+    let single: Value = serde_json::from_str(&stdout).unwrap_or_else(|e| panic!("JSON でない({}): {}\n{}", e, stdout, stderr));
+    assert_eq!(keys(&single, "DOEFF151"), vec!["app/billing/entry/bench.hy::DOEFF151::Now"], "1 file の実行も部品の宣言を読む: {}", single);
 }
 
 /// agora-redesign #1797: 境目の部品は許す種類(:touches — 閉じた語彙)と理由(:reason)を名指す。欠けと語の外は設定の誤りで止まる。
