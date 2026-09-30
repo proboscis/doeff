@@ -108,6 +108,15 @@ struct Args {
     #[arg(long)]
     hook: bool,
 
+    /// git の commit の hook として走る — stage した source と repo 全体の規則(`[tool.doeff-linter.commit_hook] whole_repo_rules`)を
+    /// HEAD と比べ、新しい破れが在れば終了コード 1(agora-redesign #1989)
+    #[arg(long)]
+    commit_hook: bool,
+
+    /// --commit-hook の子の linter 1 回ごとの上限(秒)。設定の commit_hook.timeout_s より勝つ(既定 20)
+    #[arg(long)]
+    commit_hook_timeout_s: Option<u64>,
+
     /// Only lint git-modified files (tracked and untracked)
     #[arg(long)]
     modified: bool,
@@ -579,6 +588,10 @@ fn main() -> ExitCode {
     }
     let args = Args::parse();
 
+    if args.commit_hook {
+        return run_commit_hook(&args);
+    }
+
     // 1 file の実行(--stdin・書き込み直後の hook と editor)は小さな仕事の並びなので、thread を増やしても速くならず、thread の
     // 待ち合わせの CPU だけが増える(#1033 の実測・36 core の機体: 36 本で CPU 0.45 秒 / 4 本で 0.30 秒・壁時計は同じ 0.27 秒)。
     // RAYON_NUM_THREADS が明示されていればそれに従う。
@@ -598,6 +611,45 @@ fn main() -> ExitCode {
         }
         OutputFormat::Text | OutputFormat::Json => run_normal(&args),
     }
+}
+
+/// `--commit-hook` — git の作業木の根(`--root` が勝つ)と設定を決め、本体(doeff_linter::commit_hook)を撃つ。
+/// 終了コード 0 = 通す(測れなかった時を含む)・1 = 止める・2 = 設定・git・linter の誤り。
+fn run_commit_hook(args: &Args) -> ExitCode {
+    let fail = |reason: String| {
+        eprintln!("doeff-linter commit-hook: {}", reason);
+        ExitCode::from(2)
+    };
+    let cwd = match std::env::current_dir() {
+        Ok(cwd) => cwd,
+        Err(error) => return fail(format!("今の dir を読めない: {}", error)),
+    };
+    let root = match &args.root {
+        Some(root) => root.clone(),
+        None => match doeff_linter::commit_hook::git_toplevel(&cwd) {
+            Ok(root) => root,
+            Err(reason) => return fail(reason),
+        },
+    };
+    let root = match root.canonicalize() {
+        Ok(root) => root,
+        Err(error) => return fail(format!("repo の根 {} を読めない: {}", root.display(), error)),
+    };
+    let loaded = if args.no_config {
+        None
+    } else {
+        match config::load_config_checked(args.config.as_deref(), &root) {
+            Ok(loaded) => loaded,
+            Err(reason) => return fail(reason),
+        }
+    };
+    let linter = match std::env::current_exe() {
+        Ok(linter) => linter,
+        Err(error) => return fail(format!("今の binary の path を読めない: {}", error)),
+    };
+    let config = loaded.as_ref().map(|l| (&l.config, l.path.canonicalize().unwrap_or_else(|_| l.path.clone())));
+    let options = doeff_linter::commit_hook::CommitHookOptions::new(root, config, &args.enable, &args.disable, args.commit_hook_timeout_s, linter);
+    ExitCode::from(doeff_linter::commit_hook::run(&options))
 }
 
 /// 基点との比べで新しい critical が在る時の終了コード(仕様 1 節・agora-redesign #1803)。

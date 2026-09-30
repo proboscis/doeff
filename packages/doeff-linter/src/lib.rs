@@ -12,6 +12,7 @@ pub const BUILD_COMMIT: &str = env!("DOEFF_LINTER_COMMIT");
 pub const VERSION_TEXT: &str = concat!(env!("CARGO_PKG_VERSION"), " (doeff ", env!("DOEFF_LINTER_COMMIT"), ")");
 
 pub mod baseline;
+pub mod commit_hook;
 pub mod config;
 pub mod editor;
 pub mod logging;

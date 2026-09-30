@@ -98,6 +98,23 @@ pub struct Config {
     /// 翻訳の handler が出す effect の規則(DOEFF130)の設定 — `[tool.doeff-linter.translation_effects]`
     #[serde(default)]
     pub translation_effects: Option<crate::project::settings::TranslationEffectsSection>,
+
+    /// commit の hook(`--commit-hook`)の設定 — `[tool.doeff-linter.commit_hook]`(agora-redesign #1989)
+    #[serde(default)]
+    pub commit_hook: Option<CommitHookSection>,
+}
+
+/// `[tool.doeff-linter.commit_hook]` — commit の hook の入口(`--commit-hook`)が読む設定(agora-redesign #1989)。
+/// 各 repo が hook の論理を写して持たず、この 1 か所の宣言だけを書く。
+#[derive(Debug, Deserialize, Serialize, Default, Clone)]
+pub struct CommitHookSection {
+    /// 当たりが変更の外の file(architecture.hy・登録簿の表など)に付き得る規則 — stage した path でなく repo 全体に当て、
+    /// HEAD の木と比べて新しい当たりだけで止める。
+    #[serde(default)]
+    pub whole_repo_rules: Vec<String>,
+    /// 子の linter 1 回ごとの上限(秒・既定 20)。越えたら測れなかったとして止めない。
+    #[serde(default)]
+    pub timeout_s: Option<u64>,
 }
 
 impl Config {
