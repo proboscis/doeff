@@ -43,6 +43,13 @@
       "subject": "__import__"
     },
     {
+      "count": 2,
+      "path": "packages/doeff-cluster/tests/test_env_warm.hy",
+      "reason": "registered-with-legacy",
+      "rule": "dynamic-boundary",
+      "subject": "__import__"
+    },
+    {
       "count": 3,
       "path": "packages/doeff-cluster/src/doeff_cluster/code_prepare.hy",
       "reason": "registered-with-legacy",
@@ -1605,6 +1612,13 @@
     },
     {
       "count": 1,
+      "path": "packages/doeff-cluster/tests/fixtures/sim_programs.hy",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "__reduce__"
+    },
+    {
+      "count": 1,
       "path": "packages/doeff-cluster/tests/fixtures/sleeper.hy",
       "reason": "registered-with-legacy",
       "rule": "untyped-boundary",
@@ -1917,6 +1931,20 @@
       "reason": "registered-with-legacy",
       "rule": "untyped-boundary",
       "subject": "launch"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-cluster/tests/test_env_warm.hy",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "env_task"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-cluster/tests/test_env_warm.hy",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "worker_of"
     },
     {
       "count": 1,
