@@ -4791,6 +4791,27 @@ fn environment_branches_hit_only_in_the_declared_business_layers() {
     assert_eq!(hit["level"], "critical", "{}", hit);
 }
 
+/// agora-redesign #2036: match の class pattern の keyword の欄の名に `-` が在れば、層の置き場のどの Hy の file でも critical で当てる
+/// (Hy が keyword を属性名へ mangle しないので決して当たらない節)。`_` で書いた欄・位置引数の pattern・節の本体の keyword は当てない。
+#[test]
+fn hyphenated_fields_in_match_class_patterns_hit_in_every_layer() {
+    let files = [
+        ("app/billing/core/rules.hy", tags("billing", "judgment") + "(defk kind-of [r] (match r (Rec :ended-reason None) 0 _ 1))\n"),
+        ("app/billing/entry/wiring.hy", tags("billing", "entry") + "(defk choose [r] (match r (Rec :a-b 1) 0 _ 1))\n"),
+        ("app/billing/core/fixed.hy", tags("billing", "judgment") + "(defk kind-of [r] (match r (Rec :ended_reason None) 0 (Rec None 1) 2 _ (Rec :a-b 1)))\n"),
+    ];
+    let dir = world_repo_with(&files, "", "[\"DOEFF169\"]");
+    let (_, report) = editor(dir.path());
+    assert_eq!(
+        keys(&report, "DOEFF169"),
+        vec!["app/billing/core/rules.hy::DOEFF169::Rec:ended-reason", "app/billing/entry/wiring.hy::DOEFF169::Rec:a-b"],
+        "`-` の在る欄の名は層を問わず当て、`_` の欄・位置引数・節の本体は当てない: {}",
+        report
+    );
+    let hit = violation(&report, "app/billing/core/rules.hy::DOEFF169::Rec:ended-reason");
+    assert_eq!(hit["level"], "critical", "{}", hit);
+}
+
 /// agora-redesign #1797: 境目の部品は許す種類(:touches — 閉じた語彙)と理由(:reason)を名指す。欠けと語の外は設定の誤りで止まる。
 #[test]
 fn boundary_parts_need_touches_and_a_reason() {

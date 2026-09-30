@@ -222,6 +222,7 @@ impl Setup {
                 ProjectRule::LayerImportDirection
                 | ProjectRule::LayerForbiddenModule
                 | ProjectRule::LayerTypesOnly
+                | ProjectRule::MatchFieldHyphen
                 | ProjectRule::ModuleDeclaresTags
                 | ProjectRule::RoleMatchesLayer => self.settings.layers.is_some(),
                 ProjectRule::RawSideEffectDirect | ProjectRule::RawSideEffectVia => self.settings.raw.is_some(),

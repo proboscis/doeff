@@ -34,6 +34,7 @@ pub mod counted_spellings;
 pub mod effect_census;
 pub mod field_holders;
 pub mod env_branch;
+pub mod match_field_names;
 pub mod retired;
 pub mod blind;
 pub mod allowed_heads;
@@ -1297,6 +1298,10 @@ fn judge_layer_file(
     if enabled.contains(&ProjectRule::LayerImportDirection) {
         drafts.extend(judge.import_direction(&facts, index));
     }
+    // DOEFF169: 層の置き場の Hy の file の全部(設定は要らない — 決して当たらない match の節・agora-redesign #2036)。
+    if enabled.contains(&ProjectRule::MatchFieldHyphen) && file.file.language == Language::Hy {
+        drafts.extend(judge.match_field_hyphens());
+    }
     // DOEFF168: 宣言の :layers の層の Hy の file だけ(業務の層 — 層の分からない置き場は層の規則の外・agora-redesign #1906)。
     if let Some(decl) = settings.architecture.as_ref().and_then(|a| a.environment_branches.as_ref()) {
         if enabled.contains(&ProjectRule::EnvironmentBranch) && file.file.language == Language::Hy && decl.layers.contains(&spec.name) {
@@ -1492,6 +1497,28 @@ impl<'a> LayerJudge<'a> {
             Some("definitions".to_string()),
             Explain::TypesOnly { placement: self.placement.clone(), functions: names.iter().map(|n| n.to_string()).collect() },
         ))
+    }
+
+    /// DOEFF169: match の class pattern の keyword の欄の名に `-` が在る(当たった keyword 1 つに 1 件 — 鍵の細目は `<class>:<欄の名>`)。
+    fn match_field_hyphens(&self) -> Vec<Draft> {
+        match_field_names::judge(self.source)
+            .into_iter()
+            .map(|found| {
+                self.draft(
+                    ProjectRule::MatchFieldHyphen,
+                    self.range(ByteSpan { start: found.start, end: found.end }),
+                    format!(
+                        "{} の match の class pattern ({} :{} …) は決して当たらない — Hy は keyword を属性名へ変換しないので :{} と書く",
+                        self.file.file.rel,
+                        found.class,
+                        found.field,
+                        found.field.replace('-', "_")
+                    ),
+                    Some(format!("{}:{}", found.class, found.field)),
+                    Explain::MatchFieldHyphen { placement: self.placement.clone(), class: found.class, field: found.field },
+                )
+            })
+            .collect()
     }
 
     /// DOEFF102: この層に禁じた module を直に import しない。import の綴りの前方一致で照らす(同じ綴りか、その下位の module / 名 —
