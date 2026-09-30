@@ -99,8 +99,13 @@
 (defn #^ None test-lease-timing-needs-a-margin-longer-than-a-write-and-at-most-half-the-ttl []
   (assert (is (lease-timing-refusal 45.0 12000) None))
   (assert (is (lease-timing-refusal 90.0 12000) None))
-  (assert (in "書きが着くまで" (lease-timing-refusal 15.0 2000)))    ; 以前の組(余裕 2 秒)は断る
-  (assert (in "半分" (lease-timing-refusal 15.0 12000))))
+  ;; 断る組は理由の文を返す(None でないことを先に確かめてから、文の中身を読む)。
+  (setv short-margin (lease-timing-refusal 15.0 2000))    ; 以前の組(余裕 2 秒)は断る
+  (assert (is-not short-margin None))
+  (assert (in "書きが着くまで" short-margin))
+  (setv past-half (lease-timing-refusal 15.0 12000))
+  (assert (is-not past-half None))
+  (assert (in "半分" past-half)))
 
 
 ;; --- coordinator に届かない間も書き手は止めない -----------------------------------------------------
