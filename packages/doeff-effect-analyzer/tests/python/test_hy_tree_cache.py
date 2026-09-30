@@ -106,3 +106,42 @@ def test_an_observer_sees_only_the_expansions_that_missed_the_cache(cache_dir: P
         stop()
     pe._compile_hy(SOURCE.replace("42", "44"), "/src/m.hy", "m")
     assert entered == ["expansion"]
+
+
+DEFS = """
+(require doeff-hy.macros [defk <-])
+(import os.path [join])
+(defk outer [x] {:pre [(: x int)] :post [(: % int)]}
+  (setv y (+ x 1))
+  (defk inner [z] {:pre [(: z int)] :post [(: % int)]} (+ z y))
+  y)
+"""
+
+
+def test_a_cached_tree_brings_its_definition_index_and_body_facts(
+    cache_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """agora-redesign #1586 / #1590: what is derived from the tree alone (the definition index,
+    the body nodes and facts of every def) is stored with it, so a process that reads the
+    cached tree does not walk the module and every def again — and gets the same values."""
+    written = pe._compile_hy(DEFS, "/src/defs.hy", "defs")
+    built_index = {path: [ast.dump(node) for node in nodes] for path, nodes in pe._definitions_by_path(written).items()}
+    functions = [n for n in ast.walk(written) if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda))]
+    built_facts = [(sorted(pe._body_facts(f).names), sorted(pe._body_facts(f).imports)) for f in functions]
+    # A new process: nothing derived is in memory.
+    pe._MODULE_CACHE.clear()
+    pe._DEFINITION_INDEX.clear()
+    pe._BODY_FACTS.clear()
+    pe._BODY_NODES.clear()
+    walked: list[str] = []
+    monkeypatch.setattr(pe, "_read_body_facts", lambda f: walked.append("facts") or (_ for _ in ()).throw(AssertionError("rebuilt")))
+    monkeypatch.setattr(pe, "_direct_definitions", lambda m: walked.append("index") or iter(()))
+    read = pe._compile_hy(DEFS, "/src/defs.hy", "defs")
+    assert read is not written and ast.dump(read) == ast.dump(written)
+    index = pe._definitions_by_path(read)
+    assert {path: [ast.dump(node) for node in nodes] for path, nodes in index.items()} == built_index
+    read_functions = [n for n in ast.walk(read) if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda))]
+    assert [(sorted(pe._body_facts(f).names), sorted(pe._body_facts(f).imports)) for f in read_functions] == built_facts
+    assert walked == [], walked
+    # The stored values point into the read tree (not copies of other nodes).
+    assert all(node in list(ast.walk(read)) for nodes in index.values() for node in nodes)

@@ -528,7 +528,7 @@ def _hy_cache_path(source: str, filename: str, module_name: str) -> Path | None:
 
     key = "\n".join(
         [
-            "v1",
+            "v2",  # v2: the tree is stored with what is derived from it alone (_CachedTree)
             sys.version,
             hy.__version__,
             module_name,
@@ -540,25 +540,70 @@ def _hy_cache_path(source: str, filename: str, module_name: str) -> Path | None:
     return directory / f"{hashlib.sha256(key.encode('utf-8')).hexdigest()}.pickle"
 
 
+@dataclass(frozen=True)
+class _CachedTree:
+    """An expanded tree with what is derived from that tree alone, kept in one pickle so the
+    derived values point at the same nodes as the tree.
+
+    Once expansion was cached, rebuilding these in every process was most of an analysis
+    (agora-redesign #1586 — definition index 0.34 s and body facts 0.55 s of 2.1 s for one
+    closure test): the definition index walks the whole module, the body facts walk every
+    followed def. Both depend on the tree only (``_BodyFacts`` does not see the caller)."""
+
+    tree: ast.Module
+    index: dict[tuple[str, ...], list[ast.AST]]
+    body_nodes: tuple[tuple[FunctionNode, tuple[ast.AST, ...]], ...]
+    body_facts: tuple[tuple[FunctionNode, _BodyFacts], ...]
+
+
 def _read_cached_tree(path: Path) -> ast.Module | None:
-    """The cached tree, or None when absent or unreadable (the caller expands again)."""
+    """The cached tree, or None when absent or unreadable (the caller expands again).
+
+    The derived values stored with it are placed in the per-process memos, keyed by the
+    loaded nodes, so the reader finds them as if it had built them."""
     try:
         with path.open("rb") as handle:
-            tree = pickle.load(handle)
+            cached = pickle.load(handle)
     except (OSError, pickle.UnpicklingError, EOFError, AttributeError, ImportError, IndexError):
         return None
-    return tree if isinstance(tree, ast.Module) else None
+    if not isinstance(cached, _CachedTree) or not isinstance(cached.tree, ast.Module):
+        return None
+    _DEFINITION_INDEX[id(cached.tree)] = (cached.tree, cached.index)
+    for function, nodes in cached.body_nodes:
+        _BODY_NODES[id(function)] = (function, nodes)
+    for function, facts in cached.body_facts:
+        _BODY_FACTS[id(function)] = (function, facts)
+    return cached.tree
+
+
+def _derived(tree: ast.Module) -> _CachedTree:
+    """The tree with its definition index and, for every def and lambda, its body nodes and
+    body facts (a def the reader cannot read is left out and read on demand as before)."""
+    functions = [node for node in ast.walk(tree) if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda))]
+    facts: list[tuple[FunctionNode, _BodyFacts]] = []
+    for function in functions:
+        try:
+            facts.append((function, _body_facts(function)))
+        except Exception:  # noqa: BLE001 — a def the reader cannot read now is read (and fails) when followed, as before
+            continue
+    return _CachedTree(
+        tree=tree,
+        index=_definitions_by_path(tree),
+        body_nodes=tuple((function, _body_nodes(function)) for function in functions),
+        body_facts=tuple(facts),
+    )
 
 
 def _write_cached_tree(path: Path, tree: ast.Module) -> None:
     """Write atomically; a cache that cannot be written only costs the next expansion."""
     try:
+        cached = _derived(tree)
         path.parent.mkdir(parents=True, exist_ok=True)
         handle, temporary = tempfile.mkstemp(dir=path.parent, suffix=".tmp")
         with os.fdopen(handle, "wb") as out:
-            pickle.dump(tree, out, protocol=pickle.HIGHEST_PROTOCOL)
+            pickle.dump(cached, out, protocol=pickle.HIGHEST_PROTOCOL)
         os.replace(temporary, path)
-    except OSError:
+    except (OSError, pickle.PicklingError, RecursionError):
         return
 
 
