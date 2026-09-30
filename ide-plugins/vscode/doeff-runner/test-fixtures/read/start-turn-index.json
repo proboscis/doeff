@@ -1,0 +1,128 @@
+{
+ "version": 6,
+ "root": "/repo",
+ "files": [
+  {
+   "path": "/repo/controllers/agent_task/core/task_attempt.hy",
+   "module": "controllers.agent_task.core.task_attempt",
+   "definitions": [
+    {
+     "name": "start-turn",
+     "mangled": "start_turn",
+     "qualified_name": "controllers.agent_task.core.task_attempt.start_turn",
+     "kind": "defk",
+     "range": {
+      "start": {
+       "line": 402,
+       "character": 6
+      },
+      "end": {
+       "line": 402,
+       "character": 16
+      }
+     },
+     "full_range": {
+      "start": {
+       "line": 402,
+       "character": 0
+      },
+      "end": {
+       "line": 433,
+       "character": 81
+      }
+     },
+     "container": null,
+     "docstring": null,
+     "params": [
+      "assignment",
+      "row",
+      "lease",
+      "refs"
+     ],
+     "bases": [],
+     "raw": {
+      "direct": [],
+      "via": []
+     },
+     "tags": {
+      "context": "agent-task",
+      "role": "program"
+     },
+     "effects": null,
+     "param_types": [
+      {
+       "name": "assignment",
+       "type": {
+        "text": "TaskAssignment",
+        "names": [
+         {
+          "name": "TaskAssignment",
+          "target": "controllers.scheduling.intent.task_types.TaskAssignment"
+         }
+        ]
+       }
+      },
+      {
+       "name": "row",
+       "type": {
+        "text": "TurnRow",
+        "names": [
+         {
+          "name": "TurnRow",
+          "target": "controllers.scheduling.intent.turn_types.TurnRow"
+         }
+        ]
+       }
+      },
+      {
+       "name": "lease",
+       "type": {
+        "text": "Lease",
+        "names": [
+         {
+          "name": "Lease",
+          "target": "controllers.custody.intent.values.Lease"
+         }
+        ]
+       }
+      },
+      {
+       "name": "refs",
+       "type": {
+        "text": "tuple",
+        "names": [
+         {
+          "name": "tuple",
+          "target": null
+         }
+        ]
+       }
+      }
+     ],
+     "answer_type": {
+      "text": "(| Opened TaskResult)",
+      "names": [
+       {
+        "name": "Opened",
+        "target": "controllers.agent_task.core.task_attempt.Opened"
+       },
+       {
+        "name": "TaskResult",
+        "target": "controllers.scheduling.intent.task_types.TaskResult"
+       }
+      ]
+     },
+     "contracts": [],
+     "handles": null,
+     "decorators": []
+    }
+   ],
+   "imports": [],
+   "references": [],
+   "calls": [],
+   "errors": []
+  }
+ ],
+ "raw_via": "not-computed",
+ "raw_catalog_problems": []
+}
