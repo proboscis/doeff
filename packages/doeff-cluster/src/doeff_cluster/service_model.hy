@@ -163,7 +163,8 @@
     (<- found list (callables-in [#* j.call.args #* (.values j.call.kwargs)]))
     (val carried (lfor f (+ [foundation] found) :if (is-not (getattr f "__doeff_needs__" None) None) f))
     (for [f carried]
-      (val missing (- (frozenset f.__doeff_needs__) j.needs))
+      ;; 欄は宣言の道具が関数に付ける印なので getattr で読む(関数の型は欄を持たない — #1690)
+      (val missing (- (frozenset (getattr f "__doeff_needs__")) j.needs))
       (when missing
         (.append short (.format "{} の土台 {}:{}(足りない {})" j.name (getattr f "__module__" "?") (getattr f "__qualname__" "?")
                                 (sorted missing))))))

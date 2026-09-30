@@ -826,10 +826,11 @@
       (del (get self.table action.name))))
 
   (defn #^ tuple observe [self]
+    ;; 終わりの code は内包の :setv で 1 度だけ読む(do の中の setv は内包の外の名への束縛に見え、型検査が束縛を見つけない — #1690)
     (tuple (gfor #(process view) (.values self.table)
-      (do (setv code (.poll process))
-          (if (is code None) view
-              (replace view :exit-code code)))))))
+                 :setv code (.poll process)
+                 (if (is code None) view
+                     (replace view :exit-code code))))))
 
 (defhandler local-host [#^ CodeStore codes #^ ProcessHost host #^ ProbeStore probes #^ (| EnvStore None) [envs None]]
   ;; 引数に残す理由: 4 つとも worker の process が持つ I/O の資源(子 process と準備の process の表)で、同じ組が観測と action の
@@ -1010,10 +1011,12 @@
     "状態の報告。終わった task には結果の file の中身(無ければ None = 結果なし)を添える。切り離した task には置かれた時の返事の行
      (blob を除く — 欄 task)を添える(形は status-report — sim の宿と同じ関数)。"
     (status-report statuses self.task-echo
+                   ;; task の id は 1 度だけ読んで絞る(読み直すと型検査が None を絞れない — #1690)
                    (dfor s statuses
-                         :if (finished-task-id s)
-                         :setv result (/ self.task-dir (+ (finished-task-id s) ".result"))
-                         (finished-task-id s) (if (.exists result) (.read-text result :encoding "ascii") None))))
+                         :setv task-id (finished-task-id s)
+                         :if task-id
+                         :setv result (/ self.task-dir (+ task-id ".result"))
+                         task-id (if (.exists result) (.read-text result :encoding "ascii") None))))
 
   (defn #^ None tell [self #^ str outcome #^ str line]
     "heartbeat の結果の変わり目(初めて名乗れた・名乗れない理由が変わった・戻った)だけを stderr へ 1 行出すため。同じ結果の繰り返しは

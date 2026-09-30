@@ -31,7 +31,7 @@
 (import pathlib [Path])
 (import sys)
 (import doeff [run])
-(import .remote_model [version-mismatch version-diffs decode-program encode-outcome
+(import .remote_model [version-diffs diffs-text decode-program encode-outcome
                        TaskSucceeded TaskFailed failed-from VersionMismatch RemoteJobFailed])
 (import .process_versions [current-versions])
 ;; 子の文脈の型と読みは入口でない module に 1 つだけ置く(job_context の頭の註 — ここは import して、今の名を引けるように残す)。
@@ -74,7 +74,7 @@
               actual (current-versions)
               diffs (version-diffs expected actual)]
           (if diffs
-              #(None (VersionMismatch (+ "版が違うので Program を解かない: " (version-mismatch expected actual)
+              #(None (VersionMismatch (+ "版が違うので Program を解かない: " (diffs-text diffs)
                                          (if env-key (.format "(env {})" env-key) ""))
                                       diffs env-key))
               (decoded-program (get row "blob")))))))

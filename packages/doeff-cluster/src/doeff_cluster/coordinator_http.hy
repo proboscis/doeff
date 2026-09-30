@@ -131,7 +131,10 @@
           (return response)
           (except [error CONNECT-FAILURES]
             (setv last error)))))
-    (raise last))
+    ;; last が None のままなのは、宛先が 1 つも無く 1 度も試さなかった時だけ(#1690 — None を raise しない)
+    (match last
+      None (raise (RuntimeError (.format "coordinator の宛先が無いので {} {} を送れない" method path)))
+      _ (raise last)))
 
   (defn #^ httpx.Response accepted [self #^ httpx.Response response]
     "返事が断り(4xx・5xx)なら CoordinatorRefused(status と本文)を投げ、そうでなければ返事をそのまま返す。"

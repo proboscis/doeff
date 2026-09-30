@@ -640,6 +640,25 @@
       (raise (BodyInvalid (.format "{} は整数: {!r}" key value))))))
 
 
+(deff text-field [#^ dict body #^ str key]  ; defk にできない: 受け口の本文の読み(Program の外の純粋な判断)が呼ぶ
+  {:pre [(: body dict) (: key str)] :post [(: % str)] :tags {:context "doeff-cluster" :role "judgment"}}
+  "送り手の本文の必須の文字列の欄を読むため — 欄が無いか文字列でなければ BodyInvalid(送り手の誤り・400)。str を受ける所へ
+   JSON の値のまま渡すと、型の食い違いが中の TypeError(500)になる(#1690)。"
+  (setv value (required-field body key))
+  (when (not (isinstance value str))
+    (raise (BodyInvalid (.format "{} は文字列: {!r}" key value))))
+  value)
+
+
+(deff list-field [#^ dict body #^ str key]  ; defk にできない: 受け口の本文の読み(Program の外の純粋な判断)が呼ぶ
+  {:pre [(: body dict) (: key str)] :post [(: % list)] :tags {:context "doeff-cluster" :role "judgment"}}
+  "送り手の本文の必須の列の欄を読むため — 欄が無いか列でなければ BodyInvalid(送り手の誤り・400・#1690)。"
+  (setv value (required-field body key))
+  (when (not (isinstance value list))
+    (raise (BodyInvalid (.format "{} は列: {!r}" key value))))
+  value)
+
+
 (defclass [(dataclass :frozen True)] Fault []
   "coordinator の中の欠陥(要求の処理の中で上がった、送り手の誤りでない例外)の閉じた答えの形。受け口は 500 と本文
    {\"error\" …} で返し、coordinator は CoordinatorFault で log に 1 行出す。where = 例外が上がった所(file:行 関数)。"

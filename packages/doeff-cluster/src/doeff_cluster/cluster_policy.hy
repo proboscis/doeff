@@ -262,12 +262,15 @@
   (| (asdict entry) {"needs" (list entry.needs)}))
 
 
-(defn #^ WarmEntry warm-entry-from-json [#^ dict data]
+(defn #^ (| WarmEntry None) warm-entry-from-json [#^ dict data]
   "保存の JSON の形 → 温める表の行(warm-entry-to-json の逆)。旧い形(requires の object)の行は None(読み直しで捨てる — 期限つきの
    頼みなので、頼み手が新しい形で頼み直す)。"
-  (if (in "requires" data)
-      None
-      (WarmEntry #** (| data {"needs" (capabilities-of (.get data "needs" []) "温める表の行の needs")}))))
+  (when (in "requires" data)
+    (return None))
+  ;; needs だけを能力の組に読み替える。(| data {…}) で合わせると値の型に tuple が混ざり、他の欄の型と食い違って見える(#1690)
+  (setv fields (dict data))
+  (setv (get fields "needs") (capabilities-of (.get data "needs" []) "温める表の行の needs"))
+  (WarmEntry #** fields))
 
 
 (defn #^ ClusterState state-from-json [#^ dict data #^ int now #^ (| dict None) [board None] #^ (| dict None) [board-versions None]]
