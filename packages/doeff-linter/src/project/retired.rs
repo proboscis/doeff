@@ -426,6 +426,12 @@ fn hash_uncounted(rel: &str, source: &str) -> Vec<(usize, usize)> {
     out
 }
 
+/// Python の source として読む file か — `.py` と型の宣言の `.pyi`(agora-redesign #1905: 註と docstring の塗り・契約の文字列・定義の名の
+/// 3 か所が別々に拡張子を見ていて、`.pyi` を Python として扱う所と扱わない所が食い違った。判定はこの 1 か所)。
+fn is_python(rel: &str) -> bool {
+    rel.ends_with(".py") || rel.ends_with(".pyi")
+}
+
 /// :in lines で読む中身 — 数えない範囲(註・docstring)を空白で塗った source(byte の位置と行は元のまま)。`.md` の file は数えないので None。
 fn counted_text(rel: &str, source: &str) -> Option<String> {
     if rel.ends_with(".md") {
@@ -433,7 +439,7 @@ fn counted_text(rel: &str, source: &str) -> Option<String> {
     }
     let uncounted = if rel.ends_with(".hy") {
         hy_uncounted(source)
-    } else if rel.ends_with(".py") {
+    } else if is_python(rel) {
         python_uncounted(source)
     } else {
         hash_uncounted(rel, source)
@@ -525,7 +531,7 @@ fn contract_blanked(rel: &str, source: &str, counted: &str, words: &BTreeSet<&st
             hy_contract_sites(source, form, &mut sites);
         }
         sites
-    } else if rel.ends_with(".py") || rel.ends_with(".pyi") {
+    } else if is_python(rel) {
         python_contract_sites(source)
     } else {
         return None;
@@ -609,7 +615,7 @@ fn definition_names(rel: &str, source: &str) -> Vec<(usize, usize)> {
         for form in &reader.read_all() {
             hy_definition_names(source, form, &mut out);
         }
-    } else if rel.ends_with(".py") {
+    } else if is_python(rel) {
         static PYTHON_DEFINITION: OnceLock<Regex> = OnceLock::new();
         let python = PYTHON_DEFINITION.get_or_init(|| Regex::new(r"(?m)^[ \t]*(?:async[ \t]+)?(?:def|class)[ \t]+([A-Za-z_][A-Za-z0-9_]*)").expect("固定の正規表現"));
         out.extend(python.captures_iter(source).filter_map(|c| c.get(1)).map(|m| (m.start(), m.end())));
@@ -960,6 +966,18 @@ mod tests {
                       class C:\n    \"\"\"mail の class\"\"\"\n    t = 'it''s # not mail'\n";
         assert_eq!(spelled("a.py", source, &group), vec!["mail", "mail", "mail"], "文字列の中の # は註でない・属性の名は数える");
         assert_eq!(spelled("a.py", "x = f(\"\"\"mail\"\"\")\n", &group), vec!["mail"], "行の途中の三重引用符は docstring でない");
+    }
+
+    /// agora-redesign #1905: 型の宣言の `.pyi` も Python として読む — docstring と `#` の註の中の語は数えず、欄・変数・定義の名は数える。
+    #[test]
+    fn python_stub_files_are_read_as_python() {
+        let group = words(&["mail"], &[], WordPlace::Lines, &[]);
+        let source = "\"\"\"mail の型の宣言\"\"\"\nfrom typing import Any  # mail は註\n\nclass View:\n    \"\"\"mail の欄を持つ\"\"\"\n    mail: int\n\nmail_default: Any\nmail = 1\n";
+        assert_eq!(spelled("a.pyi", source, &group), vec!["mail", "mail"], "docstring・註は数えず、欄 mail と変数 mail は数える");
+        assert_eq!(spelled("a.pyi", source, &group), spelled("a.py", source, &group), ".pyi と .py は同じに読む");
+        let names = words(&[], &["(?i)conversation"], WordPlace::Names, &[]);
+        let (stub, _) = judge("controllers/chat/rows.pyi", "def read_conversation(x: int) -> None: ...\nclass ChatRow: ...\n", &[names], &[], &PartCalls::default());
+        assert_eq!(stub.iter().map(|h| h.name.as_deref().unwrap_or("")).collect::<Vec<_>>(), vec!["read_conversation"], ".pyi の定義の名も読む");
     }
 
     /// agora-redesign #1794: shell・toml・ほかの file の `#` の註(引用符の外)は数えない。`$#`・`${#…}` と引用符の中の `#` は註でない。
