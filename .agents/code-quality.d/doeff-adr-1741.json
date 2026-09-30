@@ -1,0 +1,95 @@
+{
+  "exclude": [
+    "packages/doeff-adr/src/doeff_adr/macros.hy"
+  ],
+  "include": [
+    "packages/doeff-adr/src/doeff_adr/registry.py",
+    "packages/doeff-adr/src/doeff_adr/semgrep_hy.py",
+    "packages/doeff-adr/src/doeff_adr/hy_expand.py",
+    "packages/doeff-adr/src/doeff_adr/cli.py",
+    "packages/doeff-adr/tests/test_defadr_macros.py",
+    "packages/doeff-adr/tests/test_pytest_item_records.py",
+    "packages/doeff-adr/tests/test_registry_isolation.py",
+    "packages/doeff-adr/tests/test_semgrep_hy.py",
+    "packages/doeff-adr/tests/test_semgrep_runner_tree_only.py",
+    "packages/doeff-adr/tests/test_wiring.py"
+  ],
+  "modules": [
+    {
+      "allow": [],
+      "layer": "io",
+      "name": "doeff-adr-registry",
+      "paths": [
+        "packages/doeff-adr/src/doeff_adr/registry.py",
+        "packages/doeff-adr/src/doeff_adr/semgrep_hy.py",
+        "packages/doeff-adr/src/doeff_adr/hy_expand.py"
+      ],
+      "public": [
+        "packages/doeff-adr/src/doeff_adr/registry.py",
+        "packages/doeff-adr/src/doeff_adr/semgrep_hy.py",
+        "packages/doeff-adr/src/doeff_adr/hy_expand.py"
+      ],
+      "responsibility": "実行できる ADR(defadr)の登録簿と Semgrep の検査の実行 — law・例・検査資産の記録、Hy の source を Python に展開して semgrep に渡す(agora-redesign #1741)",
+      "typed": true
+    },
+    {
+      "allow": [
+        "doeff-adr-registry"
+      ],
+      "layer": "runtime",
+      "name": "doeff-adr-cli",
+      "paths": [
+        "packages/doeff-adr/src/doeff_adr/cli.py"
+      ],
+      "public": [
+        "packages/doeff-adr/src/doeff_adr/cli.py"
+      ],
+      "responsibility": "doeff-adr の命令の入口 — 登録簿を読んで検査を実行し、結果を終わりの code と行で返す",
+      "typed": true
+    },
+    {
+      "allow": [
+        "doeff-adr-registry",
+        "pytest-item-records"
+      ],
+      "layer": "io",
+      "name": "doeff-adr-macros",
+      "paths": [
+        "packages/doeff-adr/src/doeff_adr/macros.hy"
+      ],
+      "public": [
+        "packages/doeff-adr/src/doeff_adr/macros.hy"
+      ],
+      "responsibility": "defadr の macro — ADR の宣言を登録簿への記録と pytest の検に展開する",
+      "typed": true
+    },
+    {
+      "allow": [
+        "doeff-adr-registry",
+        "doeff-adr-cli",
+        "doeff-adr-macros",
+        "pytest-item-records",
+        "hy-bytecode-import"
+      ],
+      "layer": "io",
+      "name": "doeff-adr-tests",
+      "paths": [
+        "packages/doeff-adr/tests/test_defadr_macros.py",
+        "packages/doeff-adr/tests/test_pytest_item_records.py",
+        "packages/doeff-adr/tests/test_registry_isolation.py",
+        "packages/doeff-adr/tests/test_semgrep_hy.py",
+        "packages/doeff-adr/tests/test_semgrep_runner_tree_only.py",
+        "packages/doeff-adr/tests/test_wiring.py"
+      ],
+      "public": [],
+      "responsibility": "doeff-adr の登録簿・Semgrep の実行・macro・命令の入口の検",
+      "typed": true
+    }
+  ],
+  "untyped_dependencies": [
+    {
+      "path": "packages/doeff-adr/src/doeff_adr/macros.hy",
+      "reason": "検査器がこの Hy を型に写せない — hy:48: 安全な静的投影の対象外の core macro: quasiquote(defadr の macro の展開の本体)。include の外に置き、対応は agora-redesign #1743"
+    }
+  ]
+}
