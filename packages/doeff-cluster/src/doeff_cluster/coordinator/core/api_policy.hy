@@ -38,7 +38,7 @@
 (import doeff_cluster.coordinator.core.cluster_rules [format-version-refusal])
 (import doeff_cluster.coordinator.core.metrics_policy [record-metrics metrics-text])
 (import doeff_cluster.coordinator.core.cluster_policy [reconcile register-heartbeat heartbeat-reply state-view submit-task poll-task absorb-task-result board-write note-liveness
-                         lease-write other-generation-boot])
+                         lease-write other-generation-boot alive])
 (import doeff_cluster.coordinator.core.resource_policy [Refused refuse stamp require-actor valid-actor service-readiness service-stopped record-readiness
                           running-process list-resources get-resource events-view create-resource update-resource delete-resource
                           legacy-put-jobs COORDINATOR])
@@ -292,7 +292,26 @@
     True (unknown-request state request)))
 
 
-(defn #^ tuple respond-legacy [#^ ClusterState state #^ Request request #^ object body #^ list parts #^ int now #^ ClusterTiming timing]
+(defn #^ bool quiet-heartbeat [#^ ClusterState before #^ ClusterState heard #^ str name #^ int now #^ ClusterTiming timing]
+  "heartbeat を写した状態 heard が、調停の答えを変えない「静かな heartbeat」か — 静かなら、同じ now で調停を済ませた before の調停を
+   繰り返さずに済ませるため(#2655 — 模擬の 1 拍の費用の大半が、変化の無い heartbeat の歩の調停だった)。静か = 前から知っている
+   worker が now に生きていて沈黙の列に無く、名乗り・job の報告・task が、時刻の欄(最後の連絡の時刻・報告の時刻・task の lease の
+   期限の延長)を除いて前と同じ。調停はこの 3 つの欄を「生きているか・期限を過ぎたか」でしか読まず、before の調停の時点で生きていて
+   期限の内だった物は、延びても同じ判断になる。"
+  (setv prev (.get before.workers name) info (.get heard.workers name)
+        old-report (.get before.statuses name) new-report (.get heard.statuses name))
+  (and (is-not prev None) (is-not info None) (is-not old-report None) (is-not new-report None)
+       (not-in name before.silent)
+       (alive now prev timing.lease-ms)
+       (= (replace info :last-seen-ms prev.last-seen-ms) prev)
+       (= (replace new-report :at old-report.at) old-report)
+       (= (dfor #(k t) (.items heard.tasks) k (replace t :lease-until-ms 0))
+          (dfor #(k t) (.items before.tasks) k (replace t :lease-until-ms 0)))
+       (= (replace heard :workers before.workers :statuses before.statuses :tasks before.tasks) before)))
+
+
+(defn #^ tuple respond-legacy [#^ ClusterState state #^ Request request #^ object body #^ list parts #^ int now #^ ClusterTiming timing
+                               #^ bool [settled False]]
   "旧い口(/jobs・/heartbeat・/state)の要求に答えるため。#(次の状態 status 本文) を返し、知らない形は 404(respond の振り分けの 1 群 — 1 つの cond では型検査が解析をあきらめた・#1690)。"
   (setv method request.method
         head (get parts 0))
@@ -305,8 +324,11 @@
     (and (= method "POST") (= parts ["heartbeat"]) (is-not (format-version-refusal body.format) None))
       #(state 400 (ErrorReply :message (format-version-refusal body.format)))
     (and (= method "POST") (= parts ["heartbeat"]))
-      (do (setv name body.name)
-          (setv after (settle state (register-heartbeat state body now) name now timing))
+      ;; settled = 呼び手が state を同じ now で調停済みと保証する(coordinator の 1 歩の中 — 拍の頭の tick の後)。その時だけ、静かな
+      ;; heartbeat は調停を繰り返さない(quiet-heartbeat・#2655)。
+      (do (setv name body.name
+                heard (register-heartbeat state body now))
+          (setv after (if (and settled (quiet-heartbeat state heard name now timing)) heard (settle state heard name now timing)))
           #(after 200 (heartbeat-reply after name timing (ready-instances after name now timing) :now now
                                        :boot body.boot :statuses body.statuses)))
     (and (= method "GET") (= parts ["state"]))
@@ -404,9 +426,10 @@
     True (unknown-request state request)))
 
 
-(defn #^ tuple respond [#^ ClusterState state #^ Request request #^ int now #^ ClusterTiming timing #^ object body]
+(defn #^ tuple respond [#^ ClusterState state #^ Request request #^ int now #^ ClusterTiming timing #^ object body #^ bool [settled False]]
   "要求 1 件と、その本文を道の型に解いた値(coordinator/protocol/request_bodies の body-of — 型の値・まだ型にしていない道は JSON の
-   object・形が合わなければ BodyMalformed)→ #(次の状態 status 本文)。"
+   object・形が合わなければ BodyMalformed)→ #(次の状態 status 本文)。settled = state を同じ now で調停済みと呼び手が保証する
+   (coordinator の 1 歩の中だけ — 静かな heartbeat の早道 quiet-heartbeat の前提・#2655)。"
   (setv method request.method
         parts (list request.parts)
         head (get parts 0))
@@ -416,7 +439,7 @@
     (match head
       "resources" (respond-resources state request body parts now timing)
       (| "metrics" "events") (respond-observations state request body parts now timing)
-      (| "jobs" "heartbeat" "state") (respond-legacy state request body parts now timing)
+      (| "jobs" "heartbeat" "state") (respond-legacy state request body parts now timing :settled settled)
       "workers" (respond-workers state request body parts now timing)
       (| "board" "leases") (respond-board state request body parts now timing)
       "tasks" (respond-tasks state request body parts now timing)

@@ -101,14 +101,15 @@
   (ErrorReply :message (.format "coordinator の中の欠陥: {}: {}({})" fault.error-type fault.message fault.where) :fault True))
 
 
-(defk request-reply [state request now timing]
-  {:pre [(: state ClusterState) (: request Request) (: now int) (: timing ClusterTiming)] :post [(: % tuple)]
+(defk request-reply [state request now timing [settled False]]
+  {:pre [(: state ClusterState) (: request Request) (: now int) (: timing ClusterTiming) (: settled bool)] :post [(: % tuple)]
    :tags {:context "doeff-cluster" :role "program"}}
   ;; 版の変化を待つ読み(GET /watch)でない要求 1 件に答えるため: 判断(api_policy.respond)で次の状態と返事を導き、中の欠陥は log に
   ;; 1 行出して送り手に見せる本文にする。答え = #(次の状態 status 本文)。
   ;; 本文は道の型に解いてから判断に渡す(答え手 = coordinator/protocol/request_bodies — #2445)。
   (<- read-body (ReadBody request))
-  (val result (respond state request now timing read-body))
+  ;; settled = state が同じ now で調停済み(coordinator-step が拍の頭の tick の答えのままの時に渡す)— 静かな heartbeat の早道の前提(#2655)。
+  (val result (respond state request now timing read-body :settled settled))
   (val body (get result 2))
   (if (isinstance body Fault)
       (do (<- fault-body ErrorReply (fault-reply body))
@@ -134,7 +135,8 @@
   ;; 期限の経過(worker の沈黙・task の lease・readiness の window)は、まとまりの有無と無関係に毎拍調停する(2026-09-25)。
   ;; 以前は要求の無い拍だけだったので、読みの要求(GET)が 1 秒より短い間隔で続く間は調停が走らず、担い手の死んだ切り離した task が
   ;; lost にならなかった(読みは状態を変えないので調停しない)。書きの要求は今までどおり要求ごとに調停する(api_policy.settle)。
-  (var next (tick state now timing))
+  (val tick-answer (tick state now timing))
+  (var next tick-answer)
   (var replies #())
   (var waiting watchers)
   (for [request batch]
@@ -142,7 +144,8 @@
     (match watch
       (Watcher) (:= waiting (+ waiting #(watch)))
       (WatchRefusal) (:= replies (+ replies #(#(request 400 (ErrorReply :message watch.reason)))))
-      _ (do (<- answered tuple (request-reply next request now timing))
+      ;; 状態が拍の頭の tick の答えのままなら、同じ now で調停済み(前の要求が調停を通らずに状態を変えていない)。
+      _ (do (<- answered tuple (request-reply next request now timing (is next tick-answer)))
             (:= next (get answered 0))
             (:= replies (+ replies #(#(request (get answered 1) (get answered 2))))))))
   (when (>= (- now next.rollout-tick-ms) ROLLOUT-TICK-MS)
