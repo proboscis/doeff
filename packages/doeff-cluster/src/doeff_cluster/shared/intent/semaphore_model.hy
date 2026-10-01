@@ -29,6 +29,7 @@
 ;;; この module は型・effect・定数だけを持つ(SDK の型の置き場・#2107)。lease の行の純粋な判断(lease-op・claim・
 ;;; fence-verdict・担い手の名の綴り …)は doeff_cluster.shared.core.lease_rules に在る。
 (require doeff-hy.macros [val])
+(require doeff-hy.record [defwire])
 (val MODULE-TAGS {:context "doeff-cluster" :role "intent"})
 (import dataclasses [dataclass])
 (import doeff [EffectBase])
@@ -75,7 +76,7 @@
 
 ;; lease の操作 1 つ(coordinator の時計で判じる)。op = claim(取る・持っていれば延ばす)| renew(延ばす)| release(返す)|
 ;; drop(token が prefix で始まる担い手を外す — worker が終わった process の lease を返す)。
-;; 答え = {"ok": bool, "reason": str | None, "ttlMs": int}(drop は "dropped" の数も)。
+;; 答え = LeaseAnswer(下 — #2523 で素の dict を型の値にした)。
 (defclass [(dataclass :frozen True)] LeaseOp [EffectBase]
   (#^ str name)
   (#^ str op)
@@ -84,6 +85,18 @@
   (setv #^ int ttl-ms 0))
 
 (setv LEASE-OPS #("claim" "renew" "release" "drop"))
+
+
+(defwire LeaseAnswer
+  "LeaseOp の答え(coordinator の POST /leases/<名> の返事の本文と同じ形 — 欄の綴りは camel): ok = 操作が通ったか・reason = 通らなかった
+   理由(空きが無い・lost — 通れば None)・ttl-ms = 与えた期限(ms — 返す・外すは 0)・dropped = drop で外した担い手の数(ほかの操作は 0)。
+   どの欄も既定値を持たない — 書き出し(doeff_hy.wire の dump)は既定値と同じ欄を省くので、旧い版の読み手(返事の dict の欄を引く)が
+   欄を失わないよう、いつも 4 つとも書く(#2523)。"
+  {:tags {:context "doeff-cluster" :role "type"} :names :camel :unknown :ignore}
+  (#^ bool ok)
+  (#^ (| str None) reason)
+  (#^ int ttl-ms)
+  (#^ int dropped))
 ;; 1 回の取る・延ばすで与える期限の上限(coordinator が断る)。
 (setv LEASE-MAX-TTL-MS (* 10 60 1000))
 

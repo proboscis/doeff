@@ -5,7 +5,7 @@
 (require doeff-hy.macros [deff val])
 (val MODULE-TAGS {:context "doeff-cluster" :role "judgment"})
 (import doeff_cluster.shared.intent.protocol [BodyInvalid])
-(import doeff_cluster.shared.intent.semaphore_model [SEMAPHORE-PREFIX FENCE-MARGIN-MS LEASE-OPS LEASE-MAX-TTL-MS])
+(import doeff_cluster.shared.intent.semaphore_model [SEMAPHORE-PREFIX FENCE-MARGIN-MS LEASE-OPS LEASE-MAX-TTL-MS LeaseAnswer])
 
 
 (deff lease-holder [#^ str job #^ str instance]  ; defk にできない: worker の返し(worker/protocol/lease_release)も呼ぶ純粋な判断
@@ -40,7 +40,7 @@
     True None))
 
 (defn #^ tuple lease-op [#^ (| dict None) row #^ str op #^ str token #^ int permits #^ int ttl-ms #^ int now-ms]
-  "純粋: lease の行と操作 → #(次の行 答え)。行が変わらなければ同じ row を返す。時刻 now-ms は coordinator の時計。
+  "純粋: lease の行と操作 → #(次の行 答え — LeaseAnswer)。行が変わらなければ同じ row を返す。時刻 now-ms は coordinator の時計。
    受けられない操作・期限・token は BodyInvalid(要求の誤り — coordinator の口では 400・ValueError の子)。"
   (when (not-in op LEASE-OPS) (raise (BodyInvalid (+ "知らない lease の操作: " (repr op)))))
   (when (and (in op #("claim" "renew")) (not (< 0 ttl-ms (+ LEASE-MAX-TTL-MS 1))))
@@ -50,21 +50,21 @@
     (= op "claim")
       (do (setv updated (claim row permits token now-ms ttl-ms))
           (if (is updated None)
-              #(row {"ok" False "reason" "空きが無い" "ttlMs" ttl-ms})
-              #(updated {"ok" True "reason" None "ttlMs" ttl-ms})))
+              #(row (LeaseAnswer :ok False :reason "空きが無い" :ttl-ms ttl-ms :dropped 0))
+              #(updated (LeaseAnswer :ok True :reason None :ttl-ms ttl-ms :dropped 0))))
     (= op "renew")
       (do (setv updated (renew row token now-ms ttl-ms))
           (if (is updated None)
-              #(row {"ok" False "reason" "lost" "ttlMs" ttl-ms})
-              #(updated {"ok" True "reason" None "ttlMs" ttl-ms})))
+              #(row (LeaseAnswer :ok False :reason "lost" :ttl-ms ttl-ms :dropped 0))
+              #(updated (LeaseAnswer :ok True :reason None :ttl-ms ttl-ms :dropped 0))))
     (= op "release")
       (do (setv #(updated present) (release row token now-ms))
-          #(updated {"ok" present "reason" (if present None "lost") "ttlMs" 0}))
+          #(updated (LeaseAnswer :ok present :reason (if present None "lost") :ttl-ms 0 :dropped 0)))
     True
       (do (setv updated (drop-holders row token))
           (if (or (is row None) (is updated None))  ; row が None なら drop-holders は None を返す(外す担い手が無い)
-              #(row {"ok" True "reason" None "dropped" 0 "ttlMs" 0})
-              #(updated {"ok" True "reason" None "dropped" (- (len (get row "holders")) (len (get updated "holders"))) "ttlMs" 0})))))
+              #(row (LeaseAnswer :ok True :reason None :ttl-ms 0 :dropped 0))
+              #(updated (LeaseAnswer :ok True :reason None :ttl-ms 0 :dropped (- (len (get row "holders")) (len (get updated "holders")))))))))
 
 (defn #^ (| str None) semaphore-write-refusal [#^ object before #^ object after #^ int now-ms]
   "純粋: 盤への直の書き(旧い版の compare-and-set)が、coordinator の時計でまだ切れていない担い手を追い出して新しい担い手を

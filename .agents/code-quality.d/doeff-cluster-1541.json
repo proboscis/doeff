@@ -177,7 +177,8 @@
         "doeff-cluster-shared-capabilities",
         "doeff-cluster-shared-protocol",
         "doeff-cluster-worker-model",
-        "doeff-cluster-coordinator-request-bodies-model"
+        "doeff-cluster-coordinator-request-bodies-model",
+        "doeff-hy-wire"
       ],
       "layer": "pure",
       "name": "doeff-cluster-cluster-policy",
@@ -791,7 +792,8 @@
         "doeff-cluster-coordinator-request-queue",
         "doeff-cluster-worker-drain-requests",
         "doeff-cluster-worker-coordinator-link",
-        "doeff-cluster-worker-declared"
+        "doeff-cluster-worker-declared",
+        "doeff-hy-wire"
       ],
       "layer": "io",
       "name": "doeff-cluster-local",
@@ -1296,7 +1298,8 @@
         "doeff-cluster-lease-rules",
         "doeff-cluster-semaphore-model",
         "doeff-cluster-shared-model",
-        "doeff-cluster-coordinator-route"
+        "doeff-cluster-coordinator-route",
+        "doeff-hy-wire"
       ],
       "layer": "io",
       "name": "doeff-cluster-shared-handlers",
@@ -1446,7 +1449,8 @@
         "doeff-cluster-coordinator-request-bodies-model",
         "doeff-cluster-coordinator-request-queue",
         "doeff-cluster-worker-drain-requests",
-        "doeff-cluster-worker-declared"
+        "doeff-cluster-worker-declared",
+        "doeff-hy-wire"
       ],
       "exclude": [
         "packages/doeff-cluster/tests/fixtures/independence/*"

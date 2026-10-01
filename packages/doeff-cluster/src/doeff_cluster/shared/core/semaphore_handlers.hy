@@ -20,7 +20,7 @@
 (import doeff_time [Delay])
 (import doeff_cluster.shared.core.clock [now-epoch-ms])
 (import doeff_cluster.shared.intent.semaphore_model [CreateNamedSemaphore ClusterSemaphore LeaseLost HeldLease WriteFenced
-                                                    LeaseStanding LeaseOp STANDBY HELD LOST])
+                                                    LeaseStanding LeaseOp LeaseAnswer STANDBY HELD LOST])
 (import doeff_cluster.shared.core.lease_rules [fence-verdict holder-tokens-prefix])
 
 
@@ -92,8 +92,8 @@
   (setv token (.next-token session))
   (while True
     (<- sent int (now-epoch-ms))
-    (<- answer dict (LeaseOp semaphore.name "claim" token semaphore.permits (.ttl-ms session)))
-    (if (get answer "ok")
+    (<- answer LeaseAnswer (LeaseOp semaphore.name "claim" token semaphore.permits (.ttl-ms session)))
+    (if answer.ok
         (do (setv (get session.expires token) (+ sent (.ttl-ms session)))
             (.hold session semaphore.name token)
             (return token))
@@ -114,12 +114,12 @@
       (<- sent int (now-epoch-ms))
       (var answer None)
       (try
-        (<- renewed dict (LeaseOp semaphore.name "renew" token semaphore.permits (.ttl-ms session)))
+        (<- renewed LeaseAnswer (LeaseOp semaphore.name "renew" token semaphore.permits (.ttl-ms session)))
         (:= answer renewed)
         (except [e Exception] (:= answer None)))
       (cond
         (is answer None) (<- (Delay session.poll-seconds))
-        (get answer "ok") (do (setv (get session.expires token) (+ sent (.ttl-ms session)))
+        answer.ok (do (setv (get session.expires token) (+ sent (.ttl-ms session)))
                               (:= done True))
         True (do (.add session.lost token)
                  (return None))))))
@@ -136,8 +136,8 @@
   (when (in token session.lost)
     (.discard session.lost token)
     (raise (LeaseLost (.format "semaphore {} の lease {} は期限切れで他へ移っていた" semaphore.name token))))
-  (<- answer dict (LeaseOp semaphore.name "release" token semaphore.permits 0))
-  (when (not (get answer "ok"))
+  (<- answer LeaseAnswer (LeaseOp semaphore.name "release" token semaphore.permits 0))
+  (when (not answer.ok)
     (raise (LeaseLost (.format "semaphore {} の lease {} は期限切れで他へ移っていた" semaphore.name token))))
   None)
 

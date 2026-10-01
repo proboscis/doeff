@@ -150,7 +150,8 @@
 (import doeff_cluster.shared.protocol.task_result [task-result-request task-id-of-job])
 (import doeff_cluster.shared.protocol.service_report [report-request])
 (import doeff_cluster.shared.intent.runtime_env_model [RuntimeEnv EnvFailure runtime-env->json current-platform])
-(import doeff_cluster.shared.intent.semaphore_model [LeaseOp SEMAPHORE-PREFIX])
+(import doeff_cluster.shared.intent.semaphore_model [LeaseOp LeaseAnswer SEMAPHORE-PREFIX])
+(import doeff_hy.wire [parse :as parse-wire])
 (import doeff_cluster.shared.core.lease_rules [drop-holders lease-holder holder-tokens-prefix])
 (import doeff_cluster.shared.intent.service_model [System Declaration system-declaration])
 (import doeff_cluster.shared_handlers [board-read-request board-write-request lease-request])
@@ -1168,7 +1169,9 @@
     ;; claim と renew は同じ token で何度送っても同じ意味(本番の shared-http と同じく送り直す)。release・drop は 1 回だけ。
     (val shape (lease-request name op token permits ttl-ms))
     (<- answer tuple (if (in op #("claim" "renew")) (send-shaped-resent link shape) (send-shaped link shape)))
-    (resume (answered-body answer (.format "lease {} の {}" name op))))
+    ;; 本番の shared-http と同じく、返事の本文を LeaseAnswer に解いて答える(#2523)。
+    (<- leased LeaseAnswer (parse-wire LeaseAnswer (answered-body answer (.format "lease {} の {}" name op))))
+    (resume leased))
   (RemoteJob [program needs name environ]
     (<- outcome (remote-outcome link program needs name environ))
     (resume (settled-value outcome)))

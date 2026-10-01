@@ -20,6 +20,7 @@
 (import doeff_cluster.shared.core.lease_rules [lease-op semaphore-write-refusal semaphore-key])
 (import doeff_cluster.shared.core.board_rules [board-allows board-ttl-refusal])
 (import doeff [run])
+(import doeff_hy.wire [dump])
 (import doeff_cluster.shared.intent.runtime_env_model [runtime-env-of-json RuntimeEnvInvalid env-key child-environ-refusal])
 (import doeff_cluster.shared.intent.readiness_model [readiness-refusal])
 
@@ -1313,7 +1314,9 @@
    (版を 1 進める・盤の書きと同じく永続化してから返事をする)。返り値 #(次の状態 status 答え)。"
   ;; 本文の欄の欠け・型の誤りは本文を解く所(coordinator/protocol/request_bodies)が 400 で断る(#1024・#2445)。
   (setv key (semaphore-key name) current (.get state.board key)
-        #(row answer) (lease-op current body.op body.token body.permits body.ttl-ms now))
+        #(row verdict) (lease-op current body.op body.token body.permits body.ttl-ms now)
+        ;; 返事の本文は LeaseAnswer の wire の形(4 つの欄をいつも書く — semaphore_model.LeaseAnswer の註)。
+        answer (run (dump verdict)))
   (if (or (is row current) (is row None))
       #(state 200 answer)
       (do (setv version (.get state.board-versions key (if (is current None) 0 1)))
