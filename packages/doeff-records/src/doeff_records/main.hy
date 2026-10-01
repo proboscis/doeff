@@ -30,15 +30,17 @@
 ;;; dsn-of = 接続 URL の file の中身 → PostgreSQL の DSN の Program(file の綴りは呼び手の系ごとに違う — 例: env の 1 行 KEY=URL)。
 ;;; env の読み(ReadEnvironment)と file の読み(ReadText)は呼び手が外側に置く答え手(doeff_core_effects の subprocess-handler・os-file-handler)が答える。
 ;;;
-;;; 受け取る env(宣言はここ 1 点・既定の宿の literal を持たない):
-;;;   DOEFF_RECORDS_PG_URL_FILE            PostgreSQL の接続 URL の file(必須・Secret の mount)
-;;;   DOEFF_RECORDS_PRINCIPALS_FILE        身元の名簿 principals.json(必須・{version: 1, principals: [{name, tokenSha256}]})
-;;;   DOEFF_RECORDS_PREFIX                 表の名の接頭辞(既定 records_ — 同じ database の別の置き場の表と混ざらない)
-;;;   DOEFF_RECORDS_HOST / _PORT           HTTP の口(既定 0.0.0.0 / 8875)
-;;;   DOEFF_RECORDS_POOL_SIZE              要求に同時に貸す接続の上限(既定 8 — 手入れの係の 1 本を足した数を開く)
-;;;   DOEFF_RECORDS_MAINTENANCE_SECONDS    手入れの間隔(既定 60)
-;;;   DOEFF_RECORDS_KEEP_CHANGES_SECONDS   変更の列に残す秒(既定 604800 = 7 日 — これより遅れた読み手は Reset で一覧から読み直す)
-;;;   DOEFF_RECORDS_ORIGIN_HOST            行に刻む機体の名(既定 = env HOSTNAME — k8s は pod の名を置く。どちらも無ければ起動しない)
+;;; 受け取る env(宣言はここ 1 点・既定の宿の literal を持たない)。名は RECORDS_ で始める — DOEFF_ で始まる名は doeff-cluster が worker の
+;;; 組む環境変数として予約し、job の宣言の :environ に置けない(doeff_cluster/runtime_env_model.hy の RESERVED-ENV-PREFIXES)ので、この service を
+;;; doeff-cluster の job として動かせるよう、以前の DOEFF_RECORDS_* から改めた(2026-10-01)。
+;;;   RECORDS_PG_URL_FILE            PostgreSQL の接続 URL の file(必須・Secret の mount)
+;;;   RECORDS_PRINCIPALS_FILE        身元の名簿 principals.json(必須・{version: 1, principals: [{name, tokenSha256}]})
+;;;   RECORDS_PREFIX                 表の名の接頭辞(既定 records_ — 同じ database の別の置き場の表と混ざらない)
+;;;   RECORDS_HOST / _PORT           HTTP の口(既定 0.0.0.0 / 8875)
+;;;   RECORDS_POOL_SIZE              要求に同時に貸す接続の上限(既定 8 — 手入れの係の 1 本を足した数を開く)
+;;;   RECORDS_MAINTENANCE_SECONDS    手入れの間隔(既定 60)
+;;;   RECORDS_KEEP_CHANGES_SECONDS   変更の列に残す秒(既定 604800 = 7 日 — これより遅れた読み手は Reset で一覧から読み直す)
+;;;   RECORDS_ORIGIN_HOST            行に刻む機体の名(既定 = env HOSTNAME — k8s は pod の名を置く。どちらも無ければ起動しない)
 ;;; 表は起動時に CREATE ... IF NOT EXISTS だけを流す(既存の表を消さない・変えない)。
 (require doeff-hy.macros [defhandler defk <- val])
 (require doeff-hy.record [defrecord])
@@ -67,15 +69,15 @@
 
 (val MODULE-TAGS {:context "records" :role "entry"})
 
-(val ENV-PG-URL-FILE "DOEFF_RECORDS_PG_URL_FILE")
-(val ENV-PRINCIPALS-FILE "DOEFF_RECORDS_PRINCIPALS_FILE")
-(val ENV-PREFIX "DOEFF_RECORDS_PREFIX")
-(val ENV-HOST "DOEFF_RECORDS_HOST")
-(val ENV-PORT "DOEFF_RECORDS_PORT")
-(val ENV-POOL-SIZE "DOEFF_RECORDS_POOL_SIZE")
-(val ENV-MAINTENANCE-SECONDS "DOEFF_RECORDS_MAINTENANCE_SECONDS")
-(val ENV-KEEP-CHANGES-SECONDS "DOEFF_RECORDS_KEEP_CHANGES_SECONDS")
-(val ENV-ORIGIN-HOST "DOEFF_RECORDS_ORIGIN_HOST")
+(val ENV-PG-URL-FILE "RECORDS_PG_URL_FILE")
+(val ENV-PRINCIPALS-FILE "RECORDS_PRINCIPALS_FILE")
+(val ENV-PREFIX "RECORDS_PREFIX")
+(val ENV-HOST "RECORDS_HOST")
+(val ENV-PORT "RECORDS_PORT")
+(val ENV-POOL-SIZE "RECORDS_POOL_SIZE")
+(val ENV-MAINTENANCE-SECONDS "RECORDS_MAINTENANCE_SECONDS")
+(val ENV-KEEP-CHANGES-SECONDS "RECORDS_KEEP_CHANGES_SECONDS")
+(val ENV-ORIGIN-HOST "RECORDS_ORIGIN_HOST")
 (val ENV-HOSTNAME "HOSTNAME")
 (val DEFAULT-HOST "0.0.0.0")
 (val DEFAULT-PORT 8875)
@@ -146,7 +148,7 @@
 
 (defk origin-host []
   {:pre [] :post [(: % str)] :tags {:context "records" :role "entry"}}
-  "行に刻む機体の名を読むため(DOEFF_RECORDS_ORIGIN_HOST → HOSTNAME。どちらも無ければ起動を止める)。"
+  "行に刻む機体の名を読むため(RECORDS_ORIGIN_HOST → HOSTNAME。どちらも無ければ起動を止める)。"
   (<- declared str (env-text ENV-ORIGIN-HOST ""))
   (when (!= declared "")
     (return declared))
