@@ -28,6 +28,8 @@
 (require doeff-hy.record [defrecord])
 (import collections.abc [Callable])
 (import dataclasses [dataclass])
+(import dataclasses)
+(import typing [ClassVar Protocol runtime-checkable])
 (import importlib)
 (import sys)
 (import json)
@@ -82,15 +84,38 @@
   (+ module ":" qualname))
 
 
+(defclass [runtime-checkable] RecordArgument [Protocol]
+  "系の引数に渡せる record(defrecord・dataclass の値)の印 — 欄の宣言 __dataclass_fields__ を持つ値。"
+  (setv #^ (get ClassVar dict) __dataclass_fields__ {}))
+
+
+(deff canonical-record [value #^ str where]  ; defk にできない: 宣言の値を作る時に呼ぶ純粋な判断
+  {:pre [(: value RecordArgument) (: where str)] :post [(: % dict)] :tags {:context "doeff-cluster" :role "judgment"}}
+  "系の引数の record 1 つ → identity の正規の値 {\"record\": \"module:qualname\", \"fields\": {欄: 正規の値}}。土台を欄の名と型を持つ 1 つの
+   値で渡せるようにするため(汎用の模擬のテストが土台の型から模擬の土台を組める)。型は関数と同じく module の最上位に
+   在ること(実行先で import して引く)・凍った record であること(宣言の後に欄が変わると identity が値を表さない)を検める。欄は名で整列し、
+   値は canonical-argument と同じ規則で正規化する — 同じ record は同じ綴りになる。"
+  (setv kind (type value))
+  (when (not (. (getattr kind "__dataclass_params__") frozen))
+    (raise (TypeError (.format "{}: record {}.{} は凍っていない — 系の引数の record は frozen(defrecord)にする"
+                               where kind.__module__ kind.__qualname__))))
+  {"record" (function-reference kind where)
+   "fields" (dfor name (sorted (gfor field (dataclasses.fields value) field.name))
+                  name (canonical-argument (getattr value name) where))})
+
+
 (deff canonical-argument [value #^ str where]  ; defk にできない: 宣言の値を作る時に呼ぶ純粋な判断
-  {:pre [(: value (| Callable str int float bool list dict None)) (: where str)] :post [(: % (| dict str int float bool list None))]
+  {:pre [(: value (| Callable str int float bool list tuple dict RecordArgument None)) (: where str)]
+   :post [(: % (| dict str int float bool list None))]
    :tags {:context "doeff-cluster" :role "judgment"}}
-  "Program の引数 1 つ → identity に載せる正規の値。関数は {\"ref\": \"module:qualname\"}、JSON にできる値はそのまま(dict は鍵を整列)。
-   それ以外(object・handler の値)は断る — identity が引数の値を表せないと、宣言し直すたびの入れ替えの要否を決められない。"
+  "Program の引数 1 つ → identity に載せる正規の値。関数は {\"ref\": \"module:qualname\"}、record は canonical-record、JSON にできる値は
+   そのまま(dict は鍵を整列・tuple は list)。それ以外(object・handler の値)は断る — identity が引数の値を表せないと、宣言し直すたびの
+   入れ替えの要否を決められない。"
   (cond
+    (isinstance value RecordArgument) (canonical-record value where)
     (callable value) {"ref" (function-reference value where)}
     (isinstance value dict) (dfor k (sorted value) k (canonical-argument (get value k) where))
-    (isinstance value list) (lfor v value (canonical-argument v where))
+    (isinstance value #(list tuple)) (lfor v value (canonical-argument v where))
     True value))
 
 
@@ -104,8 +129,13 @@
 
 (deff describe-identity [#^ dict identity]  ; defk にできない: 宣言の値を作る時に呼ぶ純粋な判断
   {:pre [(: identity dict)] :post [(: % str)] :tags {:context "doeff-cluster" :role "judgment"}}
-  "identity → 表示の 1 行 `module:qualname(引数, 名=値)`(関数の引数は参照の名で)。"
-  (defn #^ str show [#^ object v] (if (and (isinstance v dict) (= (list v) ["ref"])) (get v "ref") (json.dumps v :ensure-ascii False :sort-keys True)))
+  "identity → 表示の 1 行 `module:qualname(引数, 名=値)`(関数の引数は参照の名で・record は `module:型(欄=値, …)`)。"
+  (defn #^ str show [#^ object v]
+    (match v
+      {"ref" ref} :if (and (isinstance v dict) (= (len v) 1)) ref
+      {"record" kind "fields" fields} :if (and (isinstance v dict) (= (len v) 2) (isinstance fields dict))
+      (.format "{}({})" kind (.join ", " (lfor #(k f) (.items fields) (.format "{}={}" k (show f)))))
+      _ (json.dumps v :ensure-ascii False :sort-keys True)))
   (.format "{}({})" (get identity "function")
            (.join ", " (+ (lfor a (get identity "args") (show a))
                           (lfor #(k v) (.items (get identity "kwargs")) (.format "{}={}" k (show v)))))))

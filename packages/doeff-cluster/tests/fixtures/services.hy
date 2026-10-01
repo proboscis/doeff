@@ -3,6 +3,8 @@
 ;;; Program は土台(tests.fixtures.envs の module の最上位の関数 — 本体を受けて自分の handler と scheduler の下で走らせる)で本体を包む
 ;;; defk(計画 10.1 — job は自分で scheduled を包まない)。系は defsystem で書き、土台を引数に受ける。
 (require doeff-hy.macros [defk defsystem <-])
+(require doeff-hy.record [defrecord])
+(import dataclasses [dataclass])  ; defrecord の展開が名指す
 (import collections.abc [Callable])
 (import doeff [with-handlers])
 (import doeff_core_effects.effects [Ask])
@@ -50,6 +52,31 @@
   "handler の値を引数に受ける Program(詰めると UnsendableProgram — handler は値として詰めない)。"
   (<- total int (plain-foundation (with-handlers [handler] (tally-body step))))
   total)
+
+
+(defrecord PairFoundation
+  "土台を欄の名と型を持つ 1 つの値で渡す見本(系の引数の record — identity は {record, fields})。main = tally の土台・side = 予備の土台・
+   step = tally の歩み。"
+  (#^ Callable main)
+  (#^ Callable side)
+  (#^ int step))
+
+
+(defclass [(dataclass)] LooseFoundation []
+  "凍っていない record の見本(系の引数にすると宣言が断る)。"
+  (setv #^ (| Callable None) main None))
+
+
+(defk tally-on [foundation]
+  {:pre [(: foundation PairFoundation)] :post [(: % int)] :tags {:context "doeff-cluster-test" :role "entry"}}
+  "土台の record の main で tally-body を包んで走らせる(job の関数が record を受け、中で欄を読む形の見本)。"
+  (<- total int (foundation.main (tally-body foundation.step)))
+  total)
+
+
+(defsystem lab-record [foundation]
+  "見本の系: 土台を record 1 つで受ける"
+  (tally (tally-on foundation) :needs #{"cluster-net"}))
 
 
 (defsystem lab [foundation]
