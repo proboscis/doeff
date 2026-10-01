@@ -25,7 +25,9 @@
 (import doeff_cluster.foundation.host_contract [environ-reader])
 (import doeff_cluster.job_entry [read-program])
 (import doeff_cluster.worker.intent.worker_model [DesiredJobs JobStatus] doeff_cluster.shared.intent.job_model [JobPhase JobSpec])
-(import doeff_cluster.shared.intent.remote_model [TaskSucceeded encode-outcome failed-from])
+(import doeff_cluster.shared.intent.remote_model [TaskSucceeded])
+(import doeff_cluster.shared.protocol.program_codec [encode-outcome])
+(import doeff_cluster.shared.core.remote_rules [failed-from])
 
 
 ;; 担い手の既定の能力(筋書きの task の needs — sim の組・coordinator の組・served の組の担い手が共に提供する)。

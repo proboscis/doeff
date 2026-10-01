@@ -26,8 +26,8 @@
 (import sys)
 (import time)
 (import pathlib [Path])
-(import doeff_cluster.shared.intent.runtime_env_model [RepoCheckout NativeWheel PythonProject RuntimeEnv EnvFailureKind
-                                         runtime-env->json env-key current-platform])
+(import doeff_cluster.shared.intent.runtime_env_model [RepoCheckout NativeWheel PythonProject RuntimeEnv EnvFailureKind])
+(import doeff_cluster.shared.core.runtime_env_rules [runtime-env->json env-key current-platform])
 (import doeff_cluster.shared.intent.checkout_model [LocalCheckout ProjectOfCheckout])
 (import doeff_cluster.shared.core.runtime_env [runtime-env-of-checkouts])
 (import doeff_cluster.shared.protocol.checkout_reads [checkout-reads])
@@ -42,7 +42,8 @@
  SweepEnvs] doeff_cluster.shared.intent.job_model [JobSpec] doeff_cluster.worker.core.worker_rules [code-key])
 (import doeff_cluster.worker.protocol.observations [ObserveEnvs])
 (import doeff_cluster.worker.core.policy [plan])
-(import doeff_cluster.shared.intent.remote_model [encode-program decode-outcome TaskSucceeded TaskFailed])
+(import doeff_cluster.shared.intent.remote_model [TaskSucceeded TaskFailed])
+(import doeff_cluster.shared.protocol.program_codec [encode-program decode-outcome])
 (import doeff_cluster.foundation.process_versions [current-versions])
 
 
@@ -299,7 +300,8 @@
   (assert (any (gfor p (get results "leaky") (in "PYTHONPATH" p))) "子に PYTHONPATH を残すと筋書き 1 が赤")
   (assert (any (gfor p (get results "restarting") (in "worker の pid" p))) "worker の再起動で走らせると筋書き 2 が赤")
   ;; 送り手の版の doeff を 1 つずらす → 子が復元を断り、欄の名と env のキーが載る
-  (import doeff_cluster.shared.intent.detached_model [outcome-from-task-outcome DetachedVersionMismatch])
+  (import doeff_cluster.shared.intent.detached_model [DetachedVersionMismatch])
+  (import doeff_cluster.shared.protocol.detached [outcome-from-task-outcome])
   (<- key str (env-key env (current-platform)))
   (val shifted (| (current-versions) {"doeff" "0.0.0-shifted"}))
   (<- refused (run-task rig env "shifted" :versions shifted))

@@ -12,7 +12,7 @@
 (import dataclasses [replace])
 (import re)
 (import doeff_cluster.coordinator.intent.cluster_model [ClusterState ProgramRow])
-(import doeff_cluster.shared.intent.remote_model [program-sha])
+(import doeff_cluster.shared.core.remote_rules [program-sha])
 (import doeff_cluster.coordinator.intent.request_bodies [ProgramBody])
 
 (setv PROGRAM-KEY (re.compile r"[0-9a-f]{64}"))

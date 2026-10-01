@@ -38,7 +38,7 @@
 (import doeff_cluster.worker.protocol.code_store [CodeSettings code-host PREPARE-TOOL])
 (import doeff_cluster.worker.protocol.world [local-host])
 (import doeff_cluster.worker.protocol.env_store [EnvSettings env-host])
-(import doeff_cluster.shared.intent.runtime_env_model [current-platform])
+(import doeff_cluster.shared.core.runtime_env_rules [current-platform])
 (import doeff_cluster.worker.protocol.status_file [status-file])
 (import doeff_cluster.foundation.host_contract [HOST-CONTRACT])
 (import .job_context [worker-context-environ])

@@ -3,7 +3,8 @@
 ;;; まとめて取る。k8s の probe(/livez・/readyz)は列を通さずに受付の thread が答える。
 ;;; 2026-09-25 に coordinator.hy から分けた(handler の組 coordinator/entry/handler_sets.hy がこの受付を本番の組に入れ、coordinator.hy の
 ;;; main がその組を選ぶ — 同じ file に置くと組の module と循環する)。coordinator.hy は以前の import の口のためにここの名を再び出す。
-(require doeff-hy.macros [defhandler deff])
+(require doeff-hy.macros [defhandler deff val])
+(val MODULE-TAGS {:context "doeff-cluster" :role "foundation"})
 (import json)
 (import queue)
 (import typing [Callable])

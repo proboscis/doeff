@@ -10,6 +10,8 @@
 ;;;
 ;;; 失敗は例外ではなく値(DetachedOutcome)で返す。例外にするのは呼び手の誤り(送れない値 UnsendableProgram・同じ key の別の仕事・
 ;;; 上限越え DetachedRefused)だけ。
+;;; ここは型と定数だけ。子の結果・coordinator の答えから答えの型への換算(outcome-from-task-outcome・decoded-result・
+;;; outcome-of-view)は handler と同じ doeff_cluster.shared.protocol.detached。
 ;;;
 ;;; handler(detached.hy):
 ;;;   detached-cluster … coordinator の /detached の口へ出し、worker がその commit のコードを準備した子 process で走らせる
@@ -20,7 +22,6 @@
 (require doeff-hy.record [defrecord])
 (import dataclasses [dataclass field])
 (import doeff [EffectBase Program])
-(import .remote_model [TaskSucceeded TaskFailed decode-outcome])
 (import doeff_cluster.shared.core.capabilities [effect-needs-problem])
 (import .runtime_env_model [EnvVar])
 
@@ -212,40 +213,3 @@
 ;; GET /detached/<key> の 503 の phase(2026-09-27 — detached_policy.detached-read): coordinator が起きた直後で、行の無い key を
 ;; 知らないと言えない。呼び手は届かないと同じに扱う(DetachedUnreachable・期限の無い待ちは待ち続ける)。
 (setv WARMING-PHASE "warming")
-
-
-(defn #^ DetachedOutcome outcome-from-task-outcome [#^ (| TaskSucceeded TaskFailed) outcome]
-  "子 process の結果(remote_model の TaskSucceeded / TaskFailed)→ 答えの型。子 process が版の違いで復元を断ったら版の不一致。"
-  (cond
-    (isinstance outcome TaskSucceeded) (DetachedSucceeded outcome.value)
-    (= outcome.kind "VersionMismatch")
-      (DetachedVersionMismatch outcome.message
-                               :diffs (getattr outcome.error "diffs" #())
-                               :env-key (getattr outcome.error "env_key" ""))
-    True (DetachedFailed outcome.kind outcome.message outcome.traceback outcome.error)))
-
-
-(defn #^ DetachedOutcome decoded-result [#^ str blob]
-  "結果の blob → 答えの型。呼び手の側で復元できない結果(呼び手に無い例外の型など)は DetachedFailed(kind UndecodableResult)。"
-  (try
-    (setv outcome (decode-outcome blob))
-    (except [error Exception]
-      (return (DetachedFailed "UndecodableResult"
-                              (.format "結果を呼び手の側で復元できない: {}: {}" (. (type error) __name__) error) "" None))))
-  (outcome-from-task-outcome outcome))
-
-
-(defn #^ (| DetachedOutcome None) outcome-of-view [#^ dict view]
-  "純粋: coordinator の GET /detached/<key> の答え → 答えの型(まだ終わっていなければ None)。"
-  (setv phase (get view "phase") detail (.get view "detail" ""))
-  (cond
-    (= phase "unknown") (DetachedUnknown (get view "key"))
-    (in phase OPEN-PHASES) None
-    (and (= phase "finished") (is-not (.get view "result") None)) (decoded-result (get view "result"))
-    (= phase "finished") (DetachedLost (.format "結果が無い({})" detail))
-    (= phase "lost") (DetachedLost detail)
-    (= phase "cancelled") (DetachedCancelled)
-    (= phase "version-mismatch") (DetachedVersionMismatch detail)
-    (= phase "env-failed") (DetachedEnvUnavailable (.get view "failureKind" "") detail (bool (.get view "retryable" False)))
-    (in phase #("failed" "code-failed")) (DetachedUnrunnable detail)
-    True (raise (ValueError (.format "知らない phase: {!r}" phase)))))

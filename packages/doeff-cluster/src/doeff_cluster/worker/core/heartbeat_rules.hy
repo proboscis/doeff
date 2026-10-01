@@ -5,7 +5,7 @@
 (import json)
 (import doeff [run])
 (import doeff_cluster.shared.intent.job_model [JobPhase])
-(import doeff_cluster.shared.intent.runtime_env_model [runtime-env-of-json env-key])
+(import doeff_cluster.shared.core.runtime_env_rules [runtime-env-of-json env-key])
 (import doeff_cluster.worker.intent.worker_model [WarmEnv JobStatus DesiredJobs DesiredUnreadable])
 (import doeff_cluster.worker.core.worker_rules [ENV-KEY-PREFIX])
 (import doeff_cluster.worker.core.policy [kept-when-cut-off])

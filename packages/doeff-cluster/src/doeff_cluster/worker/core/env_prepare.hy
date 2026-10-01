@@ -27,7 +27,9 @@
 (import collections.abc [Callable])
 (import dataclasses [dataclass replace])  ; dataclass は defrecord の展開が使う
 (import doeff_time [GetMonotonic])
-(import doeff_cluster.shared.intent.runtime_env_model [RuntimeEnv RepoCheckout EnvFailure EnvFailureKind env-failure native-key root-split runtime-env->json CHILD-PROTOCOL SUPPORTED-CHILD-PROTOCOLS])
+(import doeff_cluster.shared.intent.runtime_env_model [RuntimeEnv RepoCheckout EnvFailure EnvFailureKind CHILD-PROTOCOL
+                                                       SUPPORTED-CHILD-PROTOCOLS])
+(import doeff_cluster.shared.core.runtime_env_rules [env-failure native-key root-split runtime-env->json])
 (import doeff_cluster.shared.core.runtime_env [project-dir])
 (import doeff_cluster.worker.intent.env_prepare_model [PrepareRequest StageTime MirrorReady FetchState RepoMirror EnvMarker WheelReady SyncReport BytecodeReport ProbeReport EnvReady PrepareState StageStarted PrepareNote DiskFree RepoAllowed EnsureMirror FetchCommit MaterializeTree TreeHash EnsureNativeWheel SyncProject InstallWheels WriteImportRoots ReadEditableRoots CompileTree ProbeImports WriteEnvMarker] doeff_cluster.shared.intent.env_marker_model [ENV-MARKER-FORMAT FileSha256])
 

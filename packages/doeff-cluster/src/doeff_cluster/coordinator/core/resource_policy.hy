@@ -22,7 +22,7 @@
 (import doeff_cluster.coordinator.core.rollout_policy [validate-rollout-spec rollout-targets target-key TERMINAL-PHASES])
 (import doeff [run])
 (import doeff_cluster.coordinator.intent.request_bodies [ReadinessBody MetricsBody ResourceBody StatusRow])
-(import doeff_cluster.shared.intent.readiness_model [handoff-timeout-ms])
+(import doeff_cluster.shared.core.readiness_rules [handoff-timeout-ms])
 (import doeff_cluster.shared.core.readiness_report [reported-readiness])
 
 (setv LEGACY-OWNER "legacy:jobs")        ; 旧い PUT /jobs の頃からの宣言の所有者(誰でも 1 度だけ引き取れる)
