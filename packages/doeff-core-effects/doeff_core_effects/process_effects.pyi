@@ -55,6 +55,28 @@ class WorkingDirectory(EffectBase): ...
 class ProcessAlive(EffectBase):
     pid: int
 
+@dataclass(frozen=True)
+class ReadInterpreter(EffectBase): ...
+
+@dataclass(frozen=True)
+class ResolveModule(EffectBase):
+    name: str
+
+@dataclass(frozen=True, kw_only=True)
+class InterpreterFacts:
+    prefix: str
+    pid: int
+
+@dataclass(frozen=True, kw_only=True)
+class ModuleFound:
+    name: str
+    origin: str | None
+    search_locations: tuple[str, ...]
+
+@dataclass(frozen=True, kw_only=True)
+class ModuleNotFound:
+    name: str
+
 @dataclass(frozen=True, kw_only=True)
 class StartProcess(EffectBase):
     argv: tuple[str, ...]

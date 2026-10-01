@@ -26,9 +26,11 @@
 (import doeff_core_effects.file_effects [MakeDirectory PathKind PathStat ReadText StatPath WriteText])
 (import doeff_core_effects.process_effects [EnvEntry EnvMode ExecutableAt ProcessAlive ProcessOutcome ReadEnvironment RunProcess
                                             WorkingDirectory StartProcess PollProcess StopProcess ProcessStarted ProcessNotStarted
-                                            ProcessRunning ProcessExited ProcessNotChild])
+                                            ProcessRunning ProcessExited ProcessNotChild
+                                            ReadInterpreter ResolveModule InterpreterFacts ModuleFound ModuleNotFound])
 (import process_contract_handlers [BIG-OUTPUT BIG-OUTPUT-TEXT CAT ContractRoot ENV-PROBE FIRST-THEN-WAIT KILLED LEFT-BEHIND LEFT-BEHIND-THEN-WAIT NOT-UTF-8
-                                   NOT-UTF-8-BYTES OUT-ERR OUT-ERR-EXIT OWN-PID PWD TWO-LINES])
+                                   NOT-UTF-8-BYTES OUT-ERR OUT-ERR-EXIT OWN-PID PWD TWO-LINES
+                                   PROBE-MODULE NAMESPACE-MODULE MISSING-MODULE])
 
 (val MISSING-COMMAND "/nonexistent/doeff-command")
 (val GIVEN-ENV #((EnvEntry :name "DOEFF_SHADOWED" :value "足した") (EnvEntry :name "DOEFF_ADDED" :value "足した")))
@@ -170,6 +172,29 @@
   (<- missing-seen bool (ExecutableAt :path (+ root "/none")))
   (assert (= #(root-seen named-dir-seen missing-seen) #(False False False))
           (.format "ExecutableAt の答え(置き場の根・命令と同じ名の dir・無い path){}" #(root-seen named-dir-seen missing-seen))))
+
+
+(deftest test-the-own-interpreter-is-read
+  {:interpreters ["subprocess" "offloaded-subprocess" "scripted-process"]}
+  ;; interpreter の事実(agora-redesign #2347): prefix は在る dir の絶対 path・pid は生きている process。
+  (<- facts InterpreterFacts (ReadInterpreter))
+  (<- seen PathStat (StatPath facts.prefix))
+  (<- alive bool (ProcessAlive facts.pid))
+  (assert (os.path.isabs facts.prefix) facts)
+  (assert (= seen.kind PathKind.DIRECTORY) (.format "prefix {} の種類 {}" facts.prefix seen.kind))
+  (assert alive (.format "pid {} が生きていない" facts.pid)))
+
+
+(deftest test-a-module-name-is-resolved-to-its-place-without-importing-it
+  {:interpreters ["subprocess" "offloaded-subprocess" "scripted-process"]}
+  ;; import が解く置き場(#2347): file の module は file の path・__init__ の無い package は file を持たず探す dir だけ・解けない名は値で。
+  (<- root str (ContractRoot))
+  (<- probe (| ModuleFound ModuleNotFound) (ResolveModule PROBE-MODULE))
+  (<- namespace (| ModuleFound ModuleNotFound) (ResolveModule NAMESPACE-MODULE))
+  (<- missing (| ModuleFound ModuleNotFound) (ResolveModule MISSING-MODULE))
+  (assert (= probe (ModuleFound :name PROBE-MODULE :origin (+ root "/" PROBE-MODULE ".py") :search-locations #())) probe)
+  (assert (= namespace (ModuleFound :name NAMESPACE-MODULE :origin None :search-locations #((+ root "/" NAMESPACE-MODULE)))) namespace)
+  (assert (= missing (ModuleNotFound :name MISSING-MODULE)) missing))
 
 
 (deftest test-the-own-working-directory-is-an-existing-directory

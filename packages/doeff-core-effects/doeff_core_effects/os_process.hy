@@ -12,10 +12,12 @@
 (require doeff-hy.macros [defhandler defk <- val var])
 (import contextlib)
 (import fnmatch)
+(import importlib.util)
 (import io)
 (import os)
 (import signal)
 (import subprocess)
+(import sys)
 (import threading)
 (import time)
 (import doeff_core_effects.file_effects [FileFailed PathKind PathStat])
@@ -24,6 +26,7 @@
 (import doeff_core_effects.process_effects [EnvEntry EnvMode ProcessOutcome RunProcess ExecutableAt ReadEnvironment WorkingDirectory
                                             ProcessAlive StartProcess PollProcess StopProcess ProcessStarted ProcessNotStarted
                                             ProcessRunning ProcessExited ProcessNotChild
+                                            ReadInterpreter ResolveModule InterpreterFacts ModuleFound ModuleNotFound
                                             timed-out-outcome not-started-outcome executable-file-answer])
 
 ;; offloaded-subprocess-handler の thread(呼び 1 つに 1 本 — 同時の数の上限は呼び手が並べる数)。
@@ -81,6 +84,28 @@
         (do (os.kill pid 0) True)
         (except [ProcessLookupError] False)
         (except [PermissionError] True))))
+
+
+(defk os-interpreter-facts []
+  {:pre [] :post [(: % InterpreterFacts)] :tags {:context "process" :role "foundation"}}
+  "自分の process の Python の interpreter の事実(sys.prefix を symlink まで解いた絶対 path・pid)を読むため — venv の上の root を辿る
+   入口の検め(doeff-cluster)が、interpreter の置き場を直に読まずに効果で問う(agora-redesign #2347)。"
+  (InterpreterFacts :prefix (os.path.realpath sys.prefix) :pid (os.getpid)))
+
+
+(defk os-module-location [name]
+  {:pre [(: name str)] :post [(: % (| ModuleFound ModuleNotFound))] :tags {:context "process" :role "foundation"}}
+  "module の名を、この process の import が解く置き場(file・submodule を探す dir — symlink まで解いた絶対 path)にするため — どの木の
+   code を動かしているかを確かめる入口の検め(doeff-cluster)が、import の仕組みを直に読まずに効果で問う(agora-redesign #2347)。
+   import はしない(点の付いた名は親の package を import する — importlib.util.find_spec と同じ)。解けない・名が壊れている・親を読めない
+   = ModuleNotFound。file を持たない module(__init__ の無い package・built-in・frozen)の origin は None。"
+  (val spec (try (importlib.util.find-spec name)
+                 (except [[ImportError ValueError]] None)))
+  (if (is spec None)
+      (ModuleNotFound :name name)
+      (ModuleFound :name name
+                   :origin (if (and spec.origin (not-in spec.origin #("built-in" "frozen"))) (os.path.realpath spec.origin) None)
+                   :search-locations (tuple (gfor d (or spec.submodule-search-locations []) (os.path.realpath d))))))
 
 
 (defk decoded [value]
@@ -357,6 +382,12 @@
   (ProcessAlive [pid]
     (<- alive (os-process-alive pid))
     (resume alive))
+  (ReadInterpreter []
+    (<- facts InterpreterFacts (os-interpreter-facts))
+    (resume facts))
+  (ResolveModule [name]
+    (<- found (| ModuleFound ModuleNotFound) (os-module-location name))
+    (resume found))
   (StartProcess [argv cwd env env-mode env-drop stdout-path stderr-path process-group]
     (<- started (start-child-process argv cwd env env-mode env-drop stdout-path stderr-path process-group))
     (resume started))
@@ -386,6 +417,12 @@
   (ProcessAlive [pid]
     (<- alive (os-process-alive pid))
     (resume alive))
+  (ReadInterpreter []
+    (<- facts InterpreterFacts (os-interpreter-facts))
+    (resume facts))
+  (ResolveModule [name]
+    (<- found (| ModuleFound ModuleNotFound) (os-module-location name))
+    (resume found))
   ;; 立てる・問うは待たないのでその場で答える。止めるは猶予の間だけ待つので thread で回す。
   (StartProcess [argv cwd env env-mode env-drop stdout-path stderr-path process-group]
     (<- started (start-child-process argv cwd env env-mode env-drop stdout-path stderr-path process-group))

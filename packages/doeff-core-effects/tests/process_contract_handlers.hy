@@ -7,13 +7,18 @@
 ;;; 契約の世界は解釈器ごとに同じ形で用意する:
 ;;;   * 置き場の根(ContractRoot の答え): 本物 = 走るたびに新しい一時 dir(実の path)・fake = memory の置き場の MEMORY-ROOT
 ;;;   * 呼び手の環境(INHERITED): 本物 = 走る間だけ os.environ に置き、走った後に前の値へ戻す・fake = ProcessScript の env
+;;;   * import が解く module(ResolveModule — agora-redesign #2347): 本物 = 走る間だけ根に file の module(PROBE-MODULE.py)と __init__ の無い
+;;;     package の dir(NAMESPACE-MODULE)を置いて sys.path の頭に根を足し、走った後に外す・fake = ProcessScript の modules に同じ置き場を書く
+;;;   * interpreter(ReadInterpreter): 本物 = この検の process・fake = ProcessScript の interpreter(prefix = 根・pid 1 = 生きている pid)
 ;;;   * 命令: 本物 = /bin/sh と sleep。fake = 台本の sh と sleep で、契約が使う `sh -c <文>` の文ごとに「本物の sh ならこう答える」を
 ;;;     SHELL-ANSWERS に書く(本物が要求のどの欄 — env・cwd・stdin — から答えを作るかを、台本も同じ欄から作る)
 ;;; 使い手は conftest.py の doeff_interpreter(deftest の :interpreters の名 → INTERPRETERS)。
 (require doeff-hy.macros [defk defhandler <- val var])
 (import collections.abc [Callable])
 (import dataclasses [dataclass])
+(import importlib)
 (import os)
+(import sys)
 (import tempfile)
 (import doeff [EffectBase Program with_handlers])
 (import doeff_core_effects.handlers [state])
@@ -21,7 +26,7 @@
 (import doeff_core_effects.memory_file [memory-file-handler])
 (import doeff_core_effects.os_file [os-file-handler])
 (import doeff_core_effects.os_process [subprocess-handler offloaded-subprocess-handler])
-(import doeff_core_effects.process_effects [EnvEntry ProcessOutcome RunProcess timed-out-outcome])
+(import doeff_core_effects.process_effects [EnvEntry ProcessOutcome RunProcess InterpreterFacts ModuleFound timed-out-outcome])
 (import doeff_core_effects.scripted_process [ScriptedCommand ProcessScript scripted-process-handler])
 
 (val SUBPROCESS "subprocess")
@@ -29,6 +34,10 @@
 (val SCRIPTED-PROCESS "scripted-process")
 (val MEMORY-ROOT "/contract-root")
 
+;; 契約の世界の import が解く module の名(ResolveModule — 頭の註)。どの名も他の検の名と重ならない。
+(val PROBE-MODULE "doeff_contract_probe_module")
+(val NAMESPACE-MODULE "doeff_contract_probe_namespace")
+(val MISSING-MODULE "doeff_contract_probe_missing")
 ;; 契約の世界の呼び手の環境(子が継ぐ・ReadEnvironment が読む)。
 (val INHERITED #((EnvEntry :name "DOEFF_INHERITED" :value "継いだ") (EnvEntry :name "DOEFF_SHADOWED" :value "親")))
 
@@ -211,7 +220,11 @@
 (val SCRIPT (ProcessScript :commands #((ScriptedCommand :name "sh" :run shell-script) (ScriptedCommand :name "sleep" :run sleep-script))
                            :env INHERITED
                            :work-root (+ MEMORY-ROOT "/jobs")
-                           :alive ALIVE))
+                           :alive ALIVE
+                           :interpreter (InterpreterFacts :prefix MEMORY-ROOT :pid 1)
+                           :modules #((ModuleFound :name PROBE-MODULE :origin (+ MEMORY-ROOT "/" PROBE-MODULE ".py") :search-locations #())
+                                      (ModuleFound :name NAMESPACE-MODULE :origin None
+                                                   :search-locations #((+ MEMORY-ROOT "/" NAMESPACE-MODULE))))))
 
 
 (defk restore-environment [saved]
@@ -228,15 +241,21 @@
   {:pre [(: process-handler Callable) (: program Program)] :post [(: % "契約の Program の答え(型は Program ごと)")]
    :tags {:context "process-test" :role "foundation"}}
   "本物の子 process の答え手 process-handler の下で program を走らせる。根は新しい一時 dir(実の path)、呼び手の環境 INHERITED は走る間
-   だけ os.environ に置き、走った後に前の値へ戻す。"
+   だけ os.environ に置き、走った後に前の値へ戻す。import が解く module は走る間だけ根に置き、根を sys.path の頭に足す(頭の註)。"
   (var answer None)
   (with [directory (tempfile.TemporaryDirectory)]
+    (val root (os.path.realpath directory))
     (val saved (dfor e INHERITED e.name (.get os.environ e.name)))
     (.update os.environ (dfor e INHERITED e.name e.value))
+    (with [f (open (os.path.join root (+ PROBE-MODULE ".py")) "w" :encoding "utf-8")] (.write f ""))
+    (os.mkdir (os.path.join root NAMESPACE-MODULE))
+    (.insert sys.path 0 root)
+    (importlib.invalidate-caches)
     (try
-      (<- ran (with_handlers [(contract-root (os.path.realpath directory)) os-file-handler process-handler] program))
+      (<- ran (with_handlers [(contract-root root) os-file-handler process-handler] program))
       (:= answer ran)
       (finally
+        (.remove sys.path root)
         (<- (restore-environment saved)))))
   answer)
 

@@ -39,6 +39,12 @@
 ;;;   ReadEnvironment   自分の process の環境変数のうち names の分。答え = 在る分だけの EnvEntry の tuple(names の順)。
 ;;;   WorkingDirectory  自分の process の作業 dir(絶対 path)。
 ;;;   ProcessAlive      pid の process が生きているか。答え = bool(本物 = signal 0 を送れるか・送る権限が無いだけの process は生きている)。
+;;;   ReadInterpreter   自分の process の Python の interpreter の事実。答え = InterpreterFacts(prefix = sys.prefix を symlink まで解いた絶対
+;;;                     path・pid)(agora-redesign #2347 — 消費者 = doeff-cluster の入口の検め。venv の上の root と、報告に載せる pid を読む)。
+;;;   ResolveModule     module の名を、自分の process の import が解く置き場へ(import はしない — 点の付いた名は親の package を import する
+;;;                     のは importlib.util.find_spec と同じ)。答え = ModuleFound(origin = file の絶対 path・file を持たない module〔__init__ の
+;;;                     無い package・built-in・frozen〕は None / search-locations = submodule を探す dir の絶対 path の tuple)か
+;;;                     ModuleNotFound(解けない・名が壊れている)。path は symlink まで解く(#2347 — どの木の code を動かしているかを確かめる)。
 ;;;
 ;;; 立てたらすぐ返す子(agora-redesign #2223 — 消費者 = merge-queue の controller の配りの腕。拍は子を待たない):
 ;;;   StartProcess      子を立てて、終わりを待たずに返す。答え = ProcessStarted(pid)か ProcessNotStarted(理由の文 — 出力の file が開けない・
@@ -133,6 +139,34 @@
 (defclass [(dataclass :frozen True)] ProcessAlive [EffectBase]
   "pid の process が生きているか(頭の註)。"
   (#^ int pid))
+
+
+(defclass [(dataclass :frozen True)] ReadInterpreter [EffectBase]
+  "自分の process の Python の interpreter の事実を読む(頭の註)。答え = InterpreterFacts。")
+
+
+(defclass [(dataclass :frozen True)] ResolveModule [EffectBase]
+  "module の名を、自分の process の import が解く置き場へ(頭の註)。答え = ModuleFound か ModuleNotFound。"
+  (#^ str name))
+
+
+(defrecord InterpreterFacts
+  "自分の process の Python の interpreter の事実(prefix = sys.prefix を symlink まで解いた絶対 path・pid = この process の id)。"
+  (#^ str prefix)
+  (#^ int pid))
+
+
+(defrecord ModuleFound
+  "import が解いた module の置き場(origin = file の絶対 path か None — file を持たない module・search-locations = submodule を探す dir の
+   絶対 path の tuple — package でなければ空)。"
+  (#^ str name)
+  (#^ (| str None) origin)
+  (#^ (get tuple #(str ...)) search-locations))
+
+
+(defrecord ModuleNotFound
+  "import が解けない module の名(無い・名が壊れている・親の package を読めない)。"
+  (#^ str name))
 
 
 (defclass [(dataclass :frozen True :kw-only True)] StartProcess [EffectBase]

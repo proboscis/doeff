@@ -21,6 +21,8 @@
 ;;;   ExecutableAt      種類は置き場(file の答え手)の StatPath — 置き場に無い path は台本に名(basename)が在れば実行できる file、無ければ無い物。
 ;;;                     実行の許しは台本に名が在ること。判断は本物と同じ executable-file-answer(dir は名が台本に在っても False)。
 ;;;   ReadEnvironment   ProcessScript の env から。
+;;;   ReadInterpreter   ProcessScript の interpreter(agora-redesign #2347)。
+;;;   ResolveModule     ProcessScript の modules の表から名で引く。表に無い名は ModuleNotFound(#2347)。
 ;;;   WorkingDirectory  聞かれるたびに新しい空の dir(<work-root>/job-<n>)を作って答える — worker が job ごとに空の作業 dir を作って子を
 ;;;                     起こすのの代役(同じ VM で task を走らせる模擬では task ごとに 1 回聞かれる)。
 ;;; 並び: file の答え手をこの handler より外側に置く。session の値の置き場(doeff_core_effects の state)はさらに外側に要る。
@@ -34,6 +36,7 @@
 (import doeff_core_effects.process_effects [EnvEntry EnvMode ProcessOutcome RunProcess ExecutableAt ReadEnvironment WorkingDirectory
                                             ProcessAlive StartProcess PollProcess StopProcess ProcessStarted ProcessNotStarted
                                             ProcessRunning ProcessExited ProcessNotChild
+                                            ReadInterpreter ResolveModule InterpreterFacts ModuleFound ModuleNotFound
                                             not-started-outcome start-refusal executable-file-answer])
 (import doeff_core_effects.file_effects [PathKind PathStat StatPath MakeDirectory AppendText FileFailed])
 
@@ -47,11 +50,14 @@
 
 (defrecord ProcessScript
   "scripted-process-handler に渡す世界(commands = ScriptedCommand の tuple・env = 自分の process の環境変数・work-root = job ごとの作業 dir を
-   作る親・alive = 生きている pid の表 — ProcessAlive の答え)。"
+   作る親・alive = 生きている pid の表 — ProcessAlive の答え・interpreter = 自分の process の interpreter の事実 — ReadInterpreter の答え・
+   modules = import が解く module の置き場の表 — ResolveModule の答え。表に無い名は ModuleNotFound)。"
   (#^ (get tuple #(ScriptedCommand ...)) commands)
   (setv #^ (get tuple #(EnvEntry ...)) env #())
   (setv #^ str work-root "/work/jobs")
-  (setv #^ frozenset alive (frozenset)))
+  (setv #^ frozenset alive (frozenset))
+  (setv #^ InterpreterFacts interpreter (InterpreterFacts :prefix "/" :pid 1))
+  (setv #^ (get tuple #(ModuleFound ...)) modules #()))
 
 
 (defk scripted-child-env [inherited env env-mode env-drop]
@@ -171,6 +177,10 @@
     (resume work))
   (ProcessAlive [pid]
     (resume (and (> pid 0) (in pid script.alive))))
+  (ReadInterpreter []
+    (resume script.interpreter))
+  (ResolveModule [name]
+    (resume (next (gfor m script.modules :if (= m.name name) m) (ModuleNotFound :name name))))
   (StartProcess [argv cwd env env-mode env-drop stdout-path stderr-path process-group]
     (<- refused (| ProcessNotStarted None) (scripted-open-outputs #(stdout-path stderr-path)))
     (if (is-not refused None)
