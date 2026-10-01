@@ -87,6 +87,8 @@ class StartProcess(EffectBase):
     stdout_path: str | None = None
     stderr_path: str | None = None
     process_group: bool = False
+    hold_stdin: bool = False
+    reap_group: bool = False
 
 @dataclass(frozen=True)
 class PollProcess(EffectBase):

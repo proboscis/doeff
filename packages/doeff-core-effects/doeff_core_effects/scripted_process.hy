@@ -185,7 +185,8 @@
     (resume script.interpreter))
   (ResolveModule [name]
     (resume (next (gfor m script.modules :if (= m.name name) m) (ModuleNotFound :name name))))
-  (StartProcess [argv cwd env env-mode env-drop stdout-path stderr-path process-group]
+  ;; hold-stdin と reap-group(#2471)は台本の世界に無い(標準入力の pipe と group が無い)— 受けて振る舞いは変えない。
+  (StartProcess [argv cwd env env-mode env-drop stdout-path stderr-path process-group hold-stdin reap-group]
     (<- refused (| ProcessNotStarted None) (scripted-open-outputs #(stdout-path stderr-path)))
     (if (is-not refused None)
         (resume refused)

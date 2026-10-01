@@ -51,6 +51,10 @@
 ;;;                     cwd が無い・命令が無い。RunProcess の起こせない形と同じ文で、出力の file を先に確かめる)。子の標準入力は無し、標準出力と
 ;;;                     標準エラーは stdout-path・stderr-path の file の末尾へ(None = 捨てる)。pipe にしない — 読まずにおくと約 64 KB で子が
 ;;;                     止まる。env・env-mode・env-drop・cwd・process-group は RunProcess と同じ。
+;;;                     hold-stdin(#2471・既定 False): 子の標準入力を pipe にし、書く側を答え手が持つ — 子は答え手の process が死ぬと EOF を
+;;;                     読む(doeff-cluster の worker の shim は EOF で job の group を止める — worker が kill -9 で死んでも job が残らない)。
+;;;                     PollProcess / StopProcess が子を回収した時に閉じる。reap-group(#2471・既定 False): process-group で立てた子の終わりを
+;;;                     回収する時に、その group に残った process(背景に回った孫)へ SIGKILL を送る。
 ;;;   PollProcess       立てた子を待たずに 1 度だけ問う。答え = ProcessRunning・ProcessExited(終了 code — 答えた時に回収し、その pid を忘れる)・
 ;;;                     ProcessNotChild(この答え手が立てた子でない pid)。
 ;;;   StopProcess       立てた子を止めて回収する: process-group なら group へ、そうでなければ子へ SIGTERM → stop-grace 秒待つ → SIGKILL。
@@ -189,7 +193,11 @@
   #^ (| str None) stderr-path
   (setv stderr-path None)
   #^ bool process-group
-  (setv process-group False))
+  (setv process-group False)
+  #^ bool hold-stdin
+  (setv hold-stdin False)
+  #^ bool reap-group
+  (setv reap-group False))
 
 
 (defclass [(dataclass :frozen True)] PollProcess [EffectBase]

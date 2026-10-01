@@ -319,6 +319,35 @@
 
 
 
+;; ---- 標準入力の pipe を握る子と、終わった group の残りを止める子(StartProcess の hold-stdin・reap-group — #2471)----------------------
+;; 消費者 = doeff-cluster の worker の子 process(shim は標準入力の EOF で job の group を止める・終わった job の group の孫を回収する)。
+
+(deftest test-a-child-holding-stdin-keeps-running-until-it-is-collected
+  ;; 台本の世界に標準入力の pipe は無いので本物の答え手だけ。hold-stdin の子は EOF を読まずに走り続け、無い子(DEVNULL)はすぐ EOF で終わる。
+  {:interpreters ["subprocess" "offloaded-subprocess"]}
+  (<- held (StartProcess :argv #("/bin/sh" "-c" "cat >/dev/null; exit 5") :hold-stdin True))
+  (<- free (StartProcess :argv #("/bin/sh" "-c" "cat >/dev/null; exit 5")))
+  (<- (RunProcess :argv #("sleep" "0.3")))
+  (<- held-seen (PollProcess held.pid))
+  (<- free-seen (exited-soon free.pid))
+  (assert (= held-seen (ProcessRunning :pid held.pid)) (.format "標準入力を握った子が EOF を読んだ: {}" held-seen))
+  (assert (= free-seen (ProcessExited :pid free.pid :exit-code 5)) free-seen)
+  (<- stopped (StopProcess :pid held.pid :stop-grace 2.0))
+  (assert (isinstance stopped ProcessExited) stopped))
+
+
+(deftest test-collecting-a-reap-group-child-stops-what-it-left-behind
+  {:interpreters ["subprocess" "offloaded-subprocess" "scripted-process"]}
+  (<- root str (ContractRoot))
+  (val out (+ root "/pid"))
+  (<- started (StartProcess :argv #("/bin/sh" "-c" LEFT-BEHIND) :stdout-path out :process-group True :reap-group True))
+  (assert (isinstance started ProcessStarted) started)
+  (<- grandchild str (first-line-of out))
+  (<- exited (exited-soon started.pid))
+  (assert (= exited (ProcessExited :pid started.pid :exit-code 0)) exited)
+  (<- gone bool (gone-soon (int grandchild)))
+  (assert gone (.format "reap-group の子を回収した後も、背景に回した孫(pid {})が生きている" grandchild)))
+
 ;; ---- 待たずに signal を送る(SignalProcess — #2461)------------------------------------------------------------------------------
 ;; 消費者 = doeff-cluster の worker の段ごとの止め(拍ごとに TERM を送り、止まらなければ KILL・終わりは PollProcess で確かめる)。
 

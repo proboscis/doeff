@@ -35,27 +35,34 @@
 
 
 (defclass StartedChildren []
-  "StartProcess で立てた子の表(pid → #(Popen process-group))を process に 1 つ持つため(agora-redesign #2223 — 子は OS の process ごとの資源で、
+  "StartProcess で立てた子の表(pid → #(Popen process-group reap-group))を process に 1 つ持つため(agora-redesign #2223 — 子は OS の process ごとの資源で、
    答え手を積み直しても同じ子を問える)。Popen を捨てると subprocess の後始末が子を回収して終了 code を奪うので、終わりを答えるまで表で持つ。
    表の読み書きは 1 つの錠の下(offloaded の thread と本体が並んで触る)。"
   (defn __init__ [self]
     (setv self.lock (threading.Lock))
     (setv self.children {}))
 
-  (defn add [self child process-group]
+  (defn add [self child process-group reap-group]
     "立てた子を表に置く。"
     (with [self.lock]
-      (setv (get self.children child.pid) #(child process-group))))
+      (setv (get self.children child.pid) #(child process-group reap-group))))
 
   (defn find [self pid]
-    "pid の子の #(Popen process-group)— 立てていない pid は None。"
+    "pid の子の #(Popen process-group reap-group)— 立てていない pid は None。"
     (with [self.lock]
       (.get self.children pid)))
 
   (defn forget [self pid]
-    "終わりを答えた子を表から外す(この後その pid は ProcessNotChild)。"
+    "終わりを答えた子を表から外す(この後その pid は ProcessNotChild)。答え手が握っていた子の標準入力の pipe(hold-stdin)を閉じ、
+     reap-group の子は group に残った process へ SIGKILL を送る(#2471)。"
     (with [self.lock]
-      (.pop self.children pid None))))
+      (setv found (.pop self.children pid None)))
+    (when (is-not found None)
+      (setv #(child process-group reap-group) found)
+      (when (is-not child.stdin None)
+        (with [(contextlib.suppress OSError)] (.close child.stdin)))
+      (when (and process-group reap-group)
+        (with [(contextlib.suppress ProcessLookupError PermissionError)] (os.killpg pid signal.SIGKILL))))))
 
 
 ;; StartProcess で立てた子の表(process に 1 つ — StartedChildren の註)。
@@ -309,9 +316,9 @@
   outcome)
 
 
-(defk start-child-process [argv cwd env env-mode env-drop stdout-path stderr-path process-group]
+(defk start-child-process [argv cwd env env-mode env-drop stdout-path stderr-path process-group [hold-stdin False] [reap-group False]]
   {:pre [(: argv tuple) (: cwd (| str None)) (: env (| tuple None)) (: env-mode EnvMode) (: env-drop tuple) (: stdout-path (| str None))
-         (: stderr-path (| str None)) (: process-group bool)]
+         (: stderr-path (| str None)) (: process-group bool) (: hold-stdin bool) (: reap-group bool)]
    :post [(: % (| ProcessStarted ProcessNotStarted))] :tags {:context "process" :role "foundation"}}
   "StartProcess に本物の子で答えるため: 出力の file を末尾へ足す形で先に開き(開けなければ立てない)、標準入力の無い子を Popen で立てて
    STARTED-CHILDREN に置き、終わりを待たずに pid を返す。立てられない理由は OSError の文のまま(RunProcess の起こせない形と同じ)。"
@@ -320,9 +327,9 @@
     (with [streams (contextlib.ExitStack)]
       (val out (if (is stdout-path None) subprocess.DEVNULL (.enter-context streams (open stdout-path "ab"))))
       (val err (if (is stderr-path None) subprocess.DEVNULL (.enter-context streams (open stderr-path "ab"))))
-      (val child (subprocess.Popen (list argv) :stdin subprocess.DEVNULL :stdout out :stderr err :cwd cwd :env child-env
-                                   :start-new-session process-group))
-      (.add STARTED-CHILDREN child process-group)
+      (val child (subprocess.Popen (list argv) :stdin (if hold-stdin subprocess.PIPE subprocess.DEVNULL) :stdout out :stderr err :cwd cwd
+                                   :env child-env :start-new-session process-group))
+      (.add STARTED-CHILDREN child process-group reap-group)
       (ProcessStarted :pid child.pid))
     (except [error OSError]
       (ProcessNotStarted :detail (str error)))))
@@ -408,8 +415,8 @@
   (ResolveModule [name]
     (<- found (| ModuleFound ModuleNotFound) (os-module-location name))
     (resume found))
-  (StartProcess [argv cwd env env-mode env-drop stdout-path stderr-path process-group]
-    (<- started (start-child-process argv cwd env env-mode env-drop stdout-path stderr-path process-group))
+  (StartProcess [argv cwd env env-mode env-drop stdout-path stderr-path process-group hold-stdin reap-group]
+    (<- started (start-child-process argv cwd env env-mode env-drop stdout-path stderr-path process-group hold-stdin reap-group))
     (resume started))
   (PollProcess [pid]
     (<- seen (poll-child-process pid))
@@ -447,8 +454,8 @@
     (<- found (| ModuleFound ModuleNotFound) (os-module-location name))
     (resume found))
   ;; 立てる・問うは待たないのでその場で答える。止めるは猶予の間だけ待つので thread で回す。
-  (StartProcess [argv cwd env env-mode env-drop stdout-path stderr-path process-group]
-    (<- started (start-child-process argv cwd env env-mode env-drop stdout-path stderr-path process-group))
+  (StartProcess [argv cwd env env-mode env-drop stdout-path stderr-path process-group hold-stdin reap-group]
+    (<- started (start-child-process argv cwd env env-mode env-drop stdout-path stderr-path process-group hold-stdin reap-group))
     (resume started))
   (PollProcess [pid]
     (<- seen (poll-child-process pid))
