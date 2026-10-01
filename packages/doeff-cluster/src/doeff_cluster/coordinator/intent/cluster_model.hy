@@ -131,6 +131,15 @@
   (#^ int updated-ms))
 
 
+(defrecord RolloutRow
+  "Rollout 1 つ(ClusterState.rollouts の値 — 鍵 = Rollout の名・保存する): spec = 宣言(rollout_policy.validate-rollout-spec が揃えた
+   形 — from / to の相手・owner・abort ほか)・status = 進み具合(phase・history・lastAction・drift ほか — rollout_policy.rollout-step が
+   進める)。#2447 で外側の dict をこの型にした(spec と status の中身の型は続きの切り出し)。保存の JSON の形 {spec status} は
+   cluster_policy の rollout-row-to-json / rollout-row-from-json。"
+  (#^ dict spec)
+  (#^ dict status))
+
+
 (defrecord AuditEvent
   "出来事の記録 1 件(ClusterState.audit の要素 — resource_policy.stamp が資源の版を進めるたびに 1 件): seq = 通し番号・at = 時刻・
    actor = 送り手・verb = create / adopt / update / status / delete・kind / name = 資源・from-version / to-version = 前と後の版
@@ -361,7 +370,7 @@
   (setv #^ int revision 0)                              ; coordinator 全体の版の番号(書きのたびに 1 進む)
   (setv #^ tuple audit #())                             ; 出来事の記録 AuditEvent の列(kind ごとに件数の上限つき・保存する)
   (setv #^ int audit-seq 0)
-  (setv #^ dict rollouts (field :default-factory dict))  ; Rollout の名 → {"spec" … "status" …}
+  (setv #^ dict rollouts (field :default-factory dict))  ; Rollout の名 → RolloutRow
   (setv #^ dict board-versions (field :default-factory dict)) ; 盤の行 → その行の版(行ごとに 1 から増える・行の file と一緒に保存)
   ;; 盤の行 → 期限(epoch ミリ秒)。PUT の ttlSeconds で付き、期限を過ぎた行は調停が消す(2026-09-25・行と一緒に保存)。
   (setv #^ dict board-expiry (field :default-factory dict))

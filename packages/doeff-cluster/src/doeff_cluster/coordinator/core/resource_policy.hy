@@ -15,7 +15,7 @@
 (import json)
 (import typing [NoReturn])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming BodyInvalid])
-(import doeff_cluster.coordinator.intent.cluster_model [ClusterJob ClusterState Placement HandoffPhase UnplacedKind NotReadyKind VersionState VersionVerdict LiveProcess ResourceMeta AuditEvent])
+(import doeff_cluster.coordinator.intent.cluster_model [ClusterJob ClusterState Placement HandoffPhase UnplacedKind NotReadyKind VersionState VersionVerdict LiveProcess ResourceMeta AuditEvent RolloutRow])
 (import doeff_cluster.coordinator.core.cluster_json [required-field int-field])
 (import doeff_cluster.shared.core.job_rules [spec-hash] doeff_cluster.shared.intent.job_model [JobPhase])
 (import doeff_cluster.coordinator.core.cluster_policy [job-from-json job-to-json status-row-to-json audit-event-to-json alive still-live-somewhere service-rows unplaced-kind unplaced-text task-summary resource-version-of])
@@ -388,7 +388,7 @@
                      (if t.detached {"key" t.key} {}))
            "status" {"phase" t.phase "worker" t.worker "detail" t.detail}}))
   (for [#(name r) (.items state.rollouts)]
-    (setv (get out (key-of "Rollout" name)) {"spec" (get r "spec") "status" (get r "status")}))
+    (setv (get out (key-of "Rollout" name)) {"spec" r.spec "status" r.status}))
   out)
 
 
@@ -528,8 +528,8 @@
 
 (defn #^ tuple active-rollouts-touching [#^ ClusterState state #^ list target-keys #^ (| str None) [skip None]]
   (tuple (gfor #(name r) (.items state.rollouts)
-               :if (and (!= name skip) (not-in (.get (get r "status") "phase") TERMINAL-PHASES)
-                        (& (set target-keys) (sfor t (rollout-targets (get r "spec")) (target-key t))))
+               :if (and (!= name skip) (not-in (.get r.status "phase") TERMINAL-PHASES)
+                        (& (set target-keys) (sfor t (rollout-targets r.spec) (target-key t))))
                name)))
 
 
@@ -552,7 +552,7 @@
               (refuse 400 (+ "Rollout の相手の Service が無い(先に作る): " (get t "name")))))
           (setv busy (active-rollouts-touching state (lfor t (rollout-targets spec) (target-key t))))
           (when busy (refuse 409 (+ "同じ相手を扱う Rollout が進行中: " (.join ", " busy))))
-          (replace state :rollouts (| state.rollouts {name {"spec" spec "status" {"phase" "Pending" "createdMs" now}}})))
+          (replace state :rollouts (| state.rollouts {name (RolloutRow :spec spec :status {"phase" "Pending" "createdMs" now})})))
     True (refuse 405 (+ "この kind は API から作れない: " kind))))
 
 
@@ -582,7 +582,7 @@
       (do (setv current (.get state.rollouts name))
           (when (is current None) (refuse 404 (+ "無い Rollout: " name)))
           (check-version state key body.resource-version)
-          (setv old (get current "spec"))
+          (setv old current.spec)
           ;; spec は作った後に変えない。変えてよいのは中止(abort)だけ(旧を先に戻してから新を止める)。
           ;; 送られた spec は作る時と同じ形に揃えてから比べる({"abort": true} だけを送ってもよい)。
           (setv incoming (if (or (in "from" spec) (in "to" spec))
@@ -591,7 +591,7 @@
           (when (!= (dfor #(k v) (.items incoming) :if (!= k "abort") k v)
                     (dfor #(k v) (.items old) :if (!= k "abort") k v))
             (refuse 409 "Rollout の spec は変えられない(変えてよいのは abort だけ。別の向きは新しい Rollout で表す)"))
-          (replace state :rollouts (| state.rollouts {name (| current {"spec" (| old {"abort" (bool (.get spec "abort"))})})})))
+          (replace state :rollouts (| state.rollouts {name (replace current :spec (| old {"abort" (bool (.get spec "abort"))}))})))
     True (refuse 405 (+ "この kind は API から書けない: " kind))))
 
 
@@ -616,10 +616,10 @@
     (= kind "Rollout")
       (do (setv current (.get state.rollouts name))
           (when (is current None) (refuse 404 (+ "無い Rollout: " name)))
-          (setv owner (.get (get current "spec") "owner"))
+          (setv owner (.get current.spec "owner"))
           (when (and (!= actor owner) (not force))
             (refuse 403 (.format "Rollout を消せるのは所有者({})か、明示の force つきの delete だけ" owner)))
-          (when (and (not-in (.get (get current "status") "phase") TERMINAL-PHASES) (not force))
+          (when (and (not-in (.get current.status "phase") TERMINAL-PHASES) (not force))
             (refuse 409 "進行中の Rollout は消せない(中止は abort を書く。旧を先に戻してから新を止める)"))
           (replace state :rollouts (dfor #(k v) (.items state.rollouts) :if (!= k name) k v)))
     (= kind "Worker")

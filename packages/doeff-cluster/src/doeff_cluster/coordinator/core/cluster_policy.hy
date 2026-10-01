@@ -12,7 +12,7 @@
 (import doeff_cluster.shared.intent.job_model [JobSpec])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming Request BodyInvalid])
 (import doeff_cluster.shared.core.capabilities [capabilities-of environ-pairs])
-(import doeff_cluster.coordinator.intent.cluster_model [ClusterJob WorkerInfo AuditEvent WorkerReport GenerationOrder Placement ClusterState TaskRecord Drain EnvFailed WarmEntry HandoffPhase RefusedJob UnplacedKind ACCEPTED-FORMATS PLACED-PHASES ProgramRow ResourceMeta])
+(import doeff_cluster.coordinator.intent.cluster_model [ClusterJob WorkerInfo AuditEvent RolloutRow WorkerReport GenerationOrder Placement ClusterState TaskRecord Drain EnvFailed WarmEntry HandoffPhase RefusedJob UnplacedKind ACCEPTED-FORMATS PLACED-PHASES ProgramRow ResourceMeta])
 (import doeff_cluster.coordinator.core.cluster_rules [component-versions-of format-version-refusal])
 (import doeff_cluster.coordinator.intent.request_bodies [LeaseBody TaskResultBody BoardWrite HeartbeatBody EnvsReport StatusRow TaskBody])
 (import doeff_cluster.coordinator.core.cluster_json [task-record-to-json task-record-from-json handoff-watch-from-json required-field int-field])
@@ -236,7 +236,7 @@
    "revision" state.revision
    "audit" (lfor e state.audit (audit-event-to-json e))
    "auditSeq" state.audit-seq
-   "rollouts" state.rollouts
+   "rollouts" (dfor #(k r) (.items state.rollouts) k (rollout-row-to-json r))
    "drains" (dfor #(k v) (.items state.drains) k (asdict v))
    "surges" (dfor #(k v) (.items state.surges) k (asdict v))
    "warms" (dfor #(k v) (.items state.warms) k (warm-entry-to-json v))
@@ -274,6 +274,16 @@
   (ResourceMeta :resource-version (int (get data "resourceVersion")) :generation (int (get data "generation"))
                 :created-by (str (.get data "createdBy" "")) :created-ms (int (.get data "createdMs" 0))
                 :updated-by (str (.get data "updatedBy" "")) :updated-ms (int (.get data "updatedMs" 0))))
+
+
+(defn #^ dict rollout-row-to-json [#^ RolloutRow row]
+  "Rollout 1 つ → 保存の JSON の形 {spec status}(state file と durable の KV が使う — #2447 の前の形と同じ)。"
+  {"spec" row.spec "status" row.status})
+
+
+(defn #^ RolloutRow rollout-row-from-json [#^ dict data]
+  "保存の JSON の形 → Rollout 1 つ(rollout-row-to-json の逆)。"
+  (RolloutRow :spec (dict (get data "spec")) :status (dict (get data "status"))))
 
 
 (defn #^ dict audit-event-to-json [#^ AuditEvent event]
@@ -368,7 +378,7 @@
     :revision (.get data "revision" 0)
     :audit (tuple (gfor e (.get data "audit" []) (audit-event-from-json e)))
     :audit-seq (.get data "auditSeq" 0)
-    :rollouts (.get data "rollouts" {})
+    :rollouts (dfor #(k r) (.items (.get data "rollouts" {})) k (rollout-row-from-json r))
     ;; drain の欄(2026-09-25)は、それより前の file には無い(空として読む)。
     :drains (dfor #(k v) (.items (.get data "drains" {})) k (Drain #** v))
     :surges (dfor #(k v) (.items (.get data "surges" {})) k (Placement #** v))

@@ -23,7 +23,7 @@
 (import doeff_cluster.coordinator.intent.cluster_model [ClusterState WorkerInfo Placement Drain])
 (import doeff_cluster.coordinator.core.cluster_rules [component-versions-of])
 (import doeff_cluster.coordinator.core.cluster_json [task-record-to-json task-record-from-json handoff-watch-from-json])
-(import doeff_cluster.coordinator.core.cluster_policy [job-to-json job-from-json audit-event-to-json audit-event-from-json read-service-rows board-changes value-size warm-entry-to-json warm-entry-from-json worker-capabilities-of
+(import doeff_cluster.coordinator.core.cluster_policy [job-to-json job-from-json rollout-row-to-json rollout-row-from-json audit-event-to-json audit-event-from-json read-service-rows board-changes value-size warm-entry-to-json warm-entry-from-json worker-capabilities-of
                          worker-generations-json worker-generations-from-json program-row-to-json program-row-from-json resource-meta-to-json resource-meta-from-json])
 
 (setv BOARD "board/")
@@ -57,7 +57,7 @@
 
 
 (defn #^ object as-stored [#^ object value]
-  "そのまま保存する値(JSON の形で持っている行・Rollout)の直列化 = 値そのもの。"
+  "そのまま保存する値(JSON の形で持っている行)の直列化 = 値そのもの。"
   value)
 
 
@@ -74,7 +74,7 @@
     (setv (get out (+ "worker/" w.name)) #(#(w seen) (partial worker-json w seen))))
   (for [t (.values state.tasks)] (setv (get out (+ "task/" t.id)) #(#(t) (partial task-record-to-json t))))
   (for [#(k m) (.items state.meta)] (setv (get out (+ "meta/" k)) #(#(m) (partial resource-meta-to-json m))))
-  (for [#(k r) (.items state.rollouts)] (setv (get out (+ "rollout/" k)) #(#(r) (partial as-stored r))))
+  (for [#(k r) (.items state.rollouts)] (setv (get out (+ "rollout/" k)) #(#(r) (partial rollout-row-to-json r))))
   (for [#(k d) (.items state.drains)] (setv (get out (+ DRAIN k)) #(#(d) (partial asdict d))))
   (for [#(k a) (.items state.surges)] (setv (get out (+ SURGE k)) #(#(a) (partial asdict a))))
   (for [#(k w) (.items state.warms)] (setv (get out (+ WARM k)) #(#(w) (partial warm-entry-to-json w))))
@@ -157,7 +157,7 @@
     :audit-seq (.get counter "auditSeq" 0)
     :alive-ms alive-ms
     :meta (dfor #(k v) (part "meta/") k (resource-meta-from-json v))
-    :rollouts (dict (part "rollout/"))
+    :rollouts (dfor #(k v) (part "rollout/") k (rollout-row-from-json v))
     :drains (dfor #(k v) (part DRAIN) k (Drain #** v))
     :surges (dfor #(k v) (part SURGE) k (Placement #** v))
     :warms (dfor #(k v) (part WARM) :setv entry (warm-entry-from-json v) :if (is-not entry None) k entry)
