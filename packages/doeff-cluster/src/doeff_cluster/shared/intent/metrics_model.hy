@@ -11,13 +11,17 @@
 (val MODULE-TAGS {:context "doeff-cluster" :role "intent"})
 (import dataclasses [dataclass])
 (import doeff [EffectBase])
+(import typing [ClassVar])
+(import doeff_cluster.shared.intent.record_spec [RecordSpec RecordMode Unexecuted])
 
 
 (defclass [(dataclass :frozen True)] ReportMetrics [EffectBase]
   "結果は None。metrics = その時点の累計(counter)と値(gauge)。報告が届かなくても業務は止めない。"
+  (setv #^ (get ClassVar RecordSpec) __record-spec__ (RecordSpec :mode RecordMode.OUTPUT :unexecuted Unexecuted.NOTHING))
   (#^ dict metrics))
 
 
 (defclass [(dataclass :frozen True)] ReadProcessGauges [EffectBase]
   "この process の memory の gauge を読む(答え = {名: float})。名と読み方は handler が決める(例: <書き手>_rss_bytes / _rss_peak_bytes)。/proc の読みなので
-   業務コードは effect で出す。")
+   業務コードは effect で出す。"
+  (setv #^ (get ClassVar RecordSpec) __record-spec__ (RecordSpec :mode RecordMode.READ)))
