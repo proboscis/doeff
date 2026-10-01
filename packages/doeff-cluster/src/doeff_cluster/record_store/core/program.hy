@@ -96,6 +96,10 @@
         (<- answered tuple (answer-request request))
         (except [e Exception]
           (setv answered #(500 {"error" (.format "{}: {}" (. (type e) __name__) e)}))))
+      ;; 置き場の答えの本文は表か PlainText だけ — 別の形なら送る前に名指して落ちる(受付の HTTP の thread にあった検めを、返事を出す
+      ;; この 1 点へ移した — 受付の箱は intent の型を読まない・#2563)。
+      (assert (or (isinstance (get answered 1) dict) (isinstance (get answered 1) PlainText))
+              (.format "記録の置き場の返事の本文の形が違う: {}" (type (get answered 1))))
       (<- (Reply request (get answered 0) (get answered 1)))
       (:= served (+ served 1)))
     (<- now int (now-epoch-ms))

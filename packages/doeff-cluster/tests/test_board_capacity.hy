@@ -3,7 +3,7 @@
 (import dataclasses [replace])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming])
 (import doeff_cluster.coordinator.intent.cluster_model [ClusterState WorkerInfo TaskRecord])
-(import doeff_cluster.foundation.coordinator_inbox [http-request])
+(import doeff_cluster.shared.protocol.inbox [http-request])
 (import doeff_cluster.coordinator.core.api_policy [tick])
 (import doeff_cluster.coordinator.protocol.request_bodies [responded])
 (import doeff_cluster.coordinator.core.durable_kv [durable-kv full-kv durable-delta state-from-kv])

@@ -3,7 +3,7 @@
 (require doeff-hy.macros [deftest val var])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming PlainText Request])
 (import doeff_cluster.coordinator.intent.cluster_model [ClusterState])
-(import doeff_cluster.foundation.coordinator_inbox [http-request])
+(import doeff_cluster.shared.protocol.inbox [http-request])
 (import doeff_cluster.coordinator.core.cluster_policy [state-to-json state-from-json board-changes job-from-json])
 (import doeff_cluster.shared.core.job_rules [spec-hash])
 (import doeff_cluster.coordinator.core.api_policy [tick plan-rollouts])
