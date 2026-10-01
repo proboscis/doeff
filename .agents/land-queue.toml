@@ -142,6 +142,13 @@ join_s = 60
 ".agents/land-queue.toml" = "true"
 
 [policy]
+# 着地する commit の本文へ、依頼が属する追跡先の issue への参照 `Refs: proboscis/agora-redesign#N` を着地の窓が足す
+#   (merge-queue の窓・agora-redesign #2428)。issue の画面から、その issue で入った差分を開けるようにするため。
+#   番号 = 依頼の題が最初に指す番号(`agora-redesign #N` の明記が先)。
+#   裸の `#N` は読まない(この repo は自分の issue / PR の番号を題に書くので、取り違えない)。
+#   戻し方 = この 2 行と註を消す(two-way door・決めた記録 = agora-redesign #2428 の comment)。
+issue_tracker = "proboscis/agora-redesign"
+issue_tracker_bare = false
 # ⚠ 名簿は意味名で書く(dotfiles ADR-DOTFILES-017 R-6f25e8f4)。"machine" は種別の併記(互換)。
 # "land-runner@agora-1" = pod の窓の走行体(下の runner = "pod" と対の二重宣言 — 名簿に無いと pod の窓は開かない)。
 run_executors = ["landrun-doeff", "landrun-rollout", "machine", "land-runner@agora-1"]
