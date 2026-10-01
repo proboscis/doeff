@@ -16,7 +16,7 @@
 (import typing [NamedTuple])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming])
 (import doeff_cluster.shared.core.capabilities [environ-pairs])
-(import doeff_cluster.coordinator.intent.cluster_model [ClusterState TaskRecord ErrorReply])
+(import doeff_cluster.coordinator.intent.cluster_model [ClusterState TaskRecord ErrorReply DetachedSubmitted DetachedProgress DetachedUnknown DetachedWarming DetachedCancelled DetachedReleased])
 (import doeff_cluster.coordinator.core.cluster_rules [format-version-refusal])
 (import doeff_cluster.coordinator.intent.request_bodies [TaskBody])
 (import doeff_cluster.coordinator.core.cluster_policy [DETACHED-TERMINAL TASK-MAX-OPEN end-detached runtime-env-value-refusal task-id task-body-refusal needs-named program-versions])
@@ -30,10 +30,10 @@
 
 (defclass Reply [NamedTuple]
   "要求 1 件への答え: state = 次の状態(変えなければ受けた状態そのもの)・status = HTTP の status・body = 返す本文
-   (成功は JSON の object のまま・断りは ErrorReply — coordinator/protocol/replies が綴る)。"
+   (答えの型の値 — JSON は coordinator/protocol/replies が綴る・#2614)。"
   (#^ ClusterState state)
   (#^ int status)
-  (#^ (| dict ErrorReply) body))
+  (#^ (| DetachedSubmitted DetachedProgress DetachedUnknown DetachedWarming DetachedCancelled DetachedReleased ErrorReply) body))
 
 
 (defn #^ (| TaskRecord None) task-by-key [#^ ClusterState state #^ str key]
@@ -76,7 +76,7 @@
     (return
       (if (= #(existing.name existing.needs existing.runtime-env existing.environ)
              #(body.name needs body.runtime-env environ))
-          (Reply state 200 {"key" key "task" existing.id "created" False "phase" existing.phase})
+          (Reply state 200 (DetachedSubmitted :key key :id existing.id :created False :phase existing.phase))
           (Reply state 409 (ErrorReply :message (.format "key {} は別の仕事(name {!r}・needs {}・environ の名 {})に使われている"
                                         key existing.name (list existing.needs) (lfor #(k _) existing.environ k)))))))
   (setv open-count (len (lfor t (.values state.tasks) :if (in t.phase OPEN-PHASES) t))
@@ -94,7 +94,7 @@
                          :detached True :key key :retain-ms (int (* 1000 retain))
                          :runtime-env body.runtime-env :environ environ))
   (Reply (replace state :tasks (| state.tasks {id task}) :next-task (+ state.next-task 1))
-         200 {"key" key "task" id "created" True "phase" task.phase}))
+         200 (DetachedSubmitted :key key :id id :created True :phase task.phase)))
 
 
 (defn #^ Reply detached-read [#^ ClusterState state #^ str key #^ int now #^ ClusterTiming timing]
@@ -103,19 +103,19 @@
    走っている task を引き取る(cluster_policy.adopt-running-detached)ので、その前の unknown は呼び手に送り直させ、引き取った
    旧い task と並走させる。猶予の内の行の無い key は 503・phase warming(client は届かないと同じに扱う — DetachedUnreachable)。"
   (setv view (detached-view state key))
-  (if (and (= (get view "phase") "unknown") (< (- now state.started-ms) timing.lease-ms))
-      (Reply state 503 {"key" key "phase" WARMING-PHASE
-                        "error" "coordinator が起きた直後で、担い手の報告が揃っていない(行の無い key を知らないと言えない)"})
+  (if (and (isinstance view DetachedUnknown) (< (- now state.started-ms) timing.lease-ms))
+      (Reply state 503 (DetachedWarming :key key :phase WARMING-PHASE
+                                        :reason "coordinator が起きた直後で、担い手の報告が揃っていない(行の無い key を知らないと言えない)"))
       (Reply state 200 view)))
 
 
-(defn #^ dict detached-view [#^ ClusterState state #^ str key]
+(defn #^ (| DetachedProgress DetachedUnknown) detached-view [#^ ClusterState state #^ str key]
   "GET /detached/<key>: いまの phase と(終わっていれば)結果の blob。lease に触らない(呼び手の問い合わせは寿命と無関係)。"
   (setv task (task-by-key state key))
   (if (is task None)
-      {"key" key "phase" "unknown"}
-      {"key" key "task" task.id "phase" task.phase "detail" task.detail "result" task.result "worker" task.worker
-       "failureKind" task.failure-kind "retryable" task.retryable}))
+      (DetachedUnknown :key key)
+      (DetachedProgress :key key :id task.id :phase task.phase :detail task.detail :result task.result :worker task.worker
+                        :failure-kind task.failure-kind :retryable task.retryable)))
 
 
 (defn #^ Reply cancel-detached [#^ ClusterState state #^ str key #^ int now]
@@ -123,18 +123,18 @@
    終わっていれば何もしない(結果は保持)。status は常に 200。"
   (setv task (task-by-key state key))
   (cond
-    (is task None) (Reply state 200 {"key" key "cancelled" False "phase" "unknown"})
-    (in task.phase DETACHED-TERMINAL) (Reply state 200 {"key" key "cancelled" False "phase" task.phase})
+    (is task None) (Reply state 200 (DetachedCancelled :key key :cancelled False :phase "unknown"))
+    (in task.phase DETACHED-TERMINAL) (Reply state 200 (DetachedCancelled :key key :cancelled False :phase task.phase))
     True (Reply (replace state :tasks (| state.tasks {task.id (end-detached task "cancelled" now "取り消された")}))
-                200 {"key" key "cancelled" True "phase" "cancelled"})))
+                200 (DetachedCancelled :key key :cancelled True :phase "cancelled"))))
 
 
 (defn #^ Reply release-detached [#^ ClusterState state #^ str key]
   "DELETE /detached/<key>: 終わった task の行を消す(以後その key は unknown・同じ key で送り直せる)。まだ終わっていなければ 409。"
   (setv task (task-by-key state key))
   (cond
-    (is task None) (Reply state 200 {"key" key "released" False})
+    (is task None) (Reply state 200 (DetachedReleased :key key :released False))
     (not-in task.phase DETACHED-TERMINAL)
       (Reply state 409 (ErrorReply :message (.format "key {} はまだ終わっていない({})— 先に取り消す" key task.phase)))
     True (Reply (replace state :tasks (dfor #(k v) (.items state.tasks) :if (!= k task.id) k v)) 200
-                {"key" key "released" True})))
+                (DetachedReleased :key key :released True))))

@@ -11,7 +11,8 @@
 (import doeff_cluster.coordinator.intent.cluster_model [EventsView StateReply StateView HeartbeatReply TaskOffer DrainPhase DrainProgress WorkerDrainView
                                                        ServiceObserved WorkerObserved TaskObserved RolloutObserved ResourceView ResourceList VersionVerdict ErrorReply RowConflict
                                                        BoardUsage BoardRead BoardWritten BoardConflict BoardRefused
-                                                       TaskRecord TaskAccepted TaskProgress TaskMissing TaskResultTaken TaskDropped])
+                                                       TaskRecord TaskAccepted TaskProgress TaskMissing TaskResultTaken TaskDropped
+                                                       DetachedSubmitted DetachedProgress DetachedUnknown DetachedWarming DetachedCancelled DetachedReleased])
 (import doeff [run])
 (import doeff_hy.wire [dump])
 (import doeff_cluster.shared.intent.semaphore_model [LeaseAnswer])
@@ -176,6 +177,19 @@
     True {"dropped" True}))
 
 
+(defn #^ dict detached-answer-json [#^ (| DetachedSubmitted DetachedProgress DetachedUnknown DetachedWarming DetachedCancelled DetachedReleased) answer]
+  "切り離した task の口の答え → JSON の形(#2614 の前に detached_policy が組んでいた形と同じ)。"
+  (cond
+    (isinstance answer DetachedSubmitted) {"key" answer.key "task" answer.id "created" answer.created "phase" answer.phase}
+    (isinstance answer DetachedProgress)
+      {"key" answer.key "task" answer.id "phase" answer.phase "detail" answer.detail "result" answer.result "worker" answer.worker
+       "failureKind" answer.failure-kind "retryable" answer.retryable}
+    (isinstance answer DetachedUnknown) {"key" answer.key "phase" "unknown"}
+    (isinstance answer DetachedWarming) {"key" answer.key "phase" answer.phase "error" answer.reason}
+    (isinstance answer DetachedCancelled) {"key" answer.key "cancelled" answer.cancelled "phase" answer.phase}
+    True {"key" answer.key "released" answer.released}))
+
+
 (defn #^ object reply-json [#^ object body]  ; defk にできない: 返事の答え手と検の入口 responded(Program の外)が呼ぶ純粋な綴り
   "返事の本文の型の値を、外へ見せる JSON の形にする(#2595 の前に core が組んでいた形と同じ)。型にしていない本文はそのまま返す。"
   (cond
@@ -191,6 +205,7 @@
     ;; lease の答えは wire の型(4 つの欄をいつも書く — semaphore_model.LeaseAnswer の註)。
     (isinstance body LeaseAnswer) (run (dump body))
     (isinstance body #(TaskAccepted TaskProgress TaskMissing TaskResultTaken TaskDropped)) (task-answer-json body)
+    (isinstance body #(DetachedSubmitted DetachedProgress DetachedUnknown DetachedWarming DetachedCancelled DetachedReleased)) (detached-answer-json body)
     (isinstance body ResourceView) (resource-view-json body)
     (isinstance body ResourceList)
       {"kind" body.kind "revision" body.revision "items" (lfor v body.items (resource-view-json v))}

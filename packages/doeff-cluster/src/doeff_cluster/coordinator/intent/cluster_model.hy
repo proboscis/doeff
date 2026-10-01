@@ -639,6 +639,53 @@
   (#^ str id))
 
 
+(defrecord DetachedSubmitted
+  "PUT /detached/<key> の答え(detached_policy.submit-detached — #2614): key・id = task の id・created = この頼みで作ったか(同じ key の
+   行が在れば False)・phase。"
+  (#^ str key)
+  (#^ str id)
+  (#^ bool created)
+  (#^ str phase))
+
+
+(defrecord DetachedProgress
+  "GET /detached/<key> の答え(detached_policy.detached-view): いまの様子 — key・id・phase・detail・result・worker・failure-kind・retryable。"
+  (#^ str key)
+  (#^ str id)
+  (#^ str phase)
+  (#^ str detail)
+  (#^ (| str None) result)
+  (#^ (| str None) worker)
+  (#^ str failure-kind)
+  (#^ bool retryable))
+
+
+(defrecord DetachedUnknown
+  "GET /detached/<key> で key の行が無い答え(JSON は {key phase: unknown})。"
+  (#^ str key))
+
+
+(defrecord DetachedWarming
+  "GET /detached/<key> の 503: coordinator が起きた直後で、行の無い key を知らないと言えない(detached_policy.detached-read)。phase = warming
+   の名(detached_model.WARMING-PHASE)・reason = 理由の文。"
+  (#^ str key)
+  (#^ str phase)
+  (#^ str reason))
+
+
+(defrecord DetachedCancelled
+  "POST /detached/<key>/cancel の答え: cancelled = この頼みで取り消したか・phase = いまの段(行が無ければ unknown)。"
+  (#^ str key)
+  (#^ bool cancelled)
+  (#^ str phase))
+
+
+(defrecord DetachedReleased
+  "DELETE /detached/<key> の答え: released = この頼みで行を消したか(行が無ければ False)。"
+  (#^ str key)
+  (#^ bool released))
+
+
 (defclass [(dataclass :frozen True)] ClusterNaming []
   "クラスタが外の系(k8s の Deployment・Node)と取り交わす名。どれも配備する側(composition root の引数)が決める。
    owner-annotation = Rollout が台数を持つ Deployment に付ける annotation の鍵。
