@@ -583,9 +583,18 @@
             (_build-lazy-init-forms handler-name lname lbody legacy?)))))
 
   ;; Field bindings: (setv field (. effect field))
+  ;; 型検査のための展開(doeff_hy/static_view.py — 走らせず pyright が読むだけ・agora-redesign #2514)では、束ねの直後に
+  ;; `_ = field` を置いて名を「読んだ」ことにする。欄の名で束ねるので、本体が使わない欄(例 `[stored mark]` の mark)は
+  ;; reportUnusedVariable の赤になり、書き手は名を変えられない(`_` で始めると欄に当たらない)。本体が名を参照するかを
+  ;; 記号の走査で決めると `stored.version` のような点つきの記号や macro が作る参照を取り逃がすので、全部の欄に置く。
+  ;; 欄の名の綴りの誤りは `(. effect field)` の属性の読みで今までどおり赤になる。実行時の展開は変えない。
   (setv bindings
     (lfor f fields
-      `(setv ~f (. effect ~(Symbol (str f))))))
+          form (if (static-view-enabled)
+                   [`(setv ~f (. effect ~(Symbol (str f))))
+                    `(setv _ ~f)]
+                   [`(setv ~f (. effect ~(Symbol (str f))))])
+      form))
 
   ;; Rewrite resume/transfer/finish/pass (lazy-prefix is already in yield IR,
   ;; but _rewrite-ops only touches the clause operations — safe to pass through)

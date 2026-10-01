@@ -33,12 +33,16 @@ EFFECTS = """\
 
 (defclass [(dataclass :frozen True)] Name [(get EffectBase str)]
   #^ str prefix)
+
+(defclass [(dataclass :frozen True)] Pair [(get EffectBase int)]
+  #^ int left
+  #^ int right)
 """
 
 PROBE = """\
 (require doeff-hy.macros [defk defhandler <- val])
 (import doeff [EffectBase])
-(import probe_effects [Tick Name])
+(import probe_effects [Tick Name Pair])
 
 (defhandler counting
   "Tick と Name に答える。"
@@ -64,6 +68,11 @@ PROBE = """\
     :when (not (isinstance effect Tick))
     (reperform effect)))
 
+(defhandler left-only
+  "Pair の right を本体で使わない — 欄の名で束ねるので書き手は名を変えられない(agora-redesign #2514)。"
+  (Pair [{PAIR_FIELDS}]
+    (resume left)))
+
 (defk use-handlers [start]
   {:pre [(: start int)] :post [(: % {USE_TYPE})]}
   (<- n (counting ((scaled 3) (only-tick (everything-else (Tick start))))))
@@ -74,7 +83,7 @@ PROBE = """\
   (+ (! (Tick start)) (! (counting (Tick 2)))))
 """
 
-BASE = {"TICK_ANSWER": "(+ doubled 1)", "USE_TYPE": "int"}
+BASE = {"TICK_ANSWER": "(+ doubled 1)", "USE_TYPE": "int", "PAIR_FIELDS": "left right"}
 
 
 def _render(change: dict[str, str]) -> str:
@@ -127,6 +136,25 @@ def test_handled_program_keeps_the_body_answer_type(tmp_path: Path) -> None:
     ], errors
 
 
+@needs_pyright
+def test_field_the_body_does_not_use_is_not_an_unused_variable(tmp_path: Path) -> None:
+    # 節の欄 [left right] の right を本体が使わない。前は型検査のための展開が right = effect.right を束ねるだけで、
+    # strict で reportUnusedVariable の赤になっていた(agora-redesign #2514 — 名は欄の名なので書き手に直せない)。
+    text = _render({})
+    errors = _check(tmp_path, text)
+    assert [d for d in errors if d["rule"] == "reportUnusedVariable"] == [], errors
+
+
+@needs_pyright
+def test_misspelled_field_is_still_caught(tmp_path: Path) -> None:
+    # 使わない欄を「読んだ」ことにしても、欄の名の綴りの誤りは effect の属性の読みで赤のまま。
+    text = _render({"PAIR_FIELDS": "left rihgt"})
+    errors = _check(tmp_path, text)
+    assert ("reportAttributeAccessIssue", _line_of(text, "(Pair [left rihgt]")) in [
+        (d["rule"], d["line"]) for d in errors
+    ], errors
+
+
 def _expand(source: str) -> str:
     # doeff_hy の import が Hy の importer と macro を用意する(副作用のための import)
     importlib.import_module("doeff_hy")
@@ -157,6 +185,11 @@ def test_static_view_annotates_only_the_static_expansion() -> None:
     assert "from doeff_hy.clause_endings import fell_through" in runtime
     for name in ("_doeff_Continuation", "_doeff_ClauseRun", "_doeff_HandlerBody", "_doeff_perform"):
         assert name not in runtime
+    # 欄の束ねの「読んだ」印(_ = 欄)は型検査のための展開だけ(agora-redesign #2514)
+    assert "right = effect.right\n" in static, static
+    assert "_ = right\n" in static, static
+    assert "right = effect.right\n" in runtime, runtime
+    assert "_ = right" not in runtime, runtime
 
 
 def test_every_handler_name_is_declared_in_the_stub() -> None:
