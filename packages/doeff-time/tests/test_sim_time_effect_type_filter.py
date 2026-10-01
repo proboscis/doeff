@@ -7,6 +7,7 @@ VM は handler の effect の引数の型の註を install の時に読み(doeff
 
 import sys
 from collections.abc import Callable
+from dataclasses import dataclass
 from types import CodeType, FrameType
 
 from doeff_core_effects import Ask, WriterTellEffect
@@ -18,6 +19,7 @@ from doeff_time.effects import (
     ScheduleAtEffect,
     SetTimeEffect,
     WaitUntilEffect,
+    WaitWithinEffect,
 )
 from doeff_time.handlers.sim_time import SimTimeRuntime
 from doeff_vm._effect_types import handler_effect_types
@@ -31,7 +33,15 @@ def _raw(installed: object) -> Callable[..., object]:
     return installed.__doeff_handler_data__  # type: ignore[attr-defined] — doeff.program.handler が置く欄(型の無い欄)
 
 
-def _entries(code: CodeType, run: Callable[[], object]) -> tuple[int, object]:
+@dataclass(frozen=True)
+class Entered:
+    """run の間に code の関数が始まった回数(entered)と、run の答え(result)。"""
+
+    entered: int
+    result: object
+
+
+def _entries(code: CodeType, run: Callable[[], object]) -> Entered:
     """run の間に code の関数が始まった回数と、run の答え。本体は generator なので再開ごとにも call の事象が出る — frame の同一性で数える。"""
     frames: dict[int, FrameType] = {}
 
@@ -44,7 +54,7 @@ def _entries(code: CodeType, run: Callable[[], object]) -> tuple[int, object]:
         result = run()
     finally:
         sys.setprofile(None)
-    return len(frames), result
+    return Entered(entered=len(frames), result=result)
 
 
 @do
@@ -68,16 +78,17 @@ def test_the_clock_declares_the_effects_it_answers() -> None:
         GetMonotonicEffect,
         ScheduleAtEffect,
         SetTimeEffect,
+        WaitWithinEffect,
     )
 
 
 def test_an_effect_outside_the_types_does_not_enter_the_clock() -> None:
     # 時計は一番内側: Ask は時計を飛ばして外の reader に届く
-    entered, result = _entries(
+    seen = _entries(
         _HANDLE,
         lambda: run_with_handlers(
             sim_time_handler(start_time=sim_time(7.0))(_asks_then_time()), env={"a": 1, "b": 2, "c": 3}
         ),
     )
-    assert result == (6, sim_time(7.0))
-    assert entered == 1, "時計の本体に入るのは GetTime の 1 回だけ(Ask 3 回は飛ばす)"
+    assert seen.result == (6, sim_time(7.0))
+    assert seen.entered == 1, "時計の本体に入るのは GetTime の 1 回だけ(Ask 3 回は飛ばす)"

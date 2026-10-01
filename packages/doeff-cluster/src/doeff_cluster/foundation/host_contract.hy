@@ -25,6 +25,8 @@
 ;;; Program と宿の答え(HOST-CONTRACT の 3 つとクラスタの約束の effect)のどちらも答えなければ、本番の子と同じ未処理の例外
 ;;; (doeff.UnhandledEffect)で process を落とす — sim の外側(検の handler・sim の世界)が本番には無い答えを黙って返さないため。
 ;;; 時計のうち SetTime(仮想の時計を系ごと動かす)と ScheduleAt(時計の handler が外側で Spawn する = 柵の外で走る)は通さない。
+;;; 期限つきの待ち WaitWithin は通す — 期限は時計の handler が持ち(模擬の時計は列の 1 項・task を起こさない)、待つのは Program の
+;;; future だけ(#2618)。
 ;;; 柵は Program の Spawn を包み直して(process の中の task として覚える — process の終わりで一緒に止める)外へ送り、その包みが出す
 ;;; 登録(local.hy の KeepChild — sim の仕組みの effect)だけは表の外でも通す。
 (require doeff-hy.macros [defhandler val])
@@ -35,7 +37,7 @@
 (import doeff_core_effects.effects [Ask])
 (import doeff_core_effects.scheduler [Spawn TaskCompleted Gather Wait Race Cancel CreatePromise CompletePromise FailPromise
                                       CreateExternalPromise CreateSemaphore AcquireSemaphore ReleaseSemaphore])
-(import doeff_time [DelayEffect GetTimeEffect GetMonotonicEffect WaitUntilEffect])
+(import doeff_time [DelayEffect GetTimeEffect GetMonotonicEffect WaitUntilEffect WaitWithinEffect])
 (import doeff_cluster.job_context [RunContext context-from-env])
 (import doeff_cluster.foundation.process_versions [current-versions])
 
@@ -60,7 +62,7 @@
 ;; sim の柵が外へ通す effect の型(頭の註)。scheduler の effect と doeff-time の時計の effect だけ。
 (val SIM-PASSABLE #(Spawn TaskCompleted Gather Wait Race Cancel CreatePromise CompletePromise FailPromise CreateExternalPromise
                     CreateSemaphore AcquireSemaphore ReleaseSemaphore
-                    DelayEffect GetTimeEffect GetMonotonicEffect WaitUntilEffect))
+                    DelayEffect GetTimeEffect GetMonotonicEffect WaitUntilEffect WaitWithinEffect))
 
 
 (defhandler host-reader

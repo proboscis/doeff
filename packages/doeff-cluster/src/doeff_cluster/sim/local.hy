@@ -126,7 +126,7 @@
 (import doeff_cluster.coordinator.entry.handler_sets [MemoryWalStore emulated-handlers])
 (import doeff_cluster.coordinator.protocol.store [Persist])
 (import doeff_cluster.coordinator.protocol.request_queue [RequestQueue enqueue-request nudge-takers])
-(import doeff_cluster.shared.core.promise_wait [promise-or-timeout promise-or-cutoff])
+(import doeff_cluster.shared.core.promise_wait [promise-or-timeout])
 (import doeff_cluster.coordinator.protocol.kube [KubeMemory])
 (import doeff_cluster.shared.protocol.declaration_requests [create-body spec-for-update])
 (import doeff_cluster.shared.protocol.detached [detached-path detached-submit-body detached-refusal submit-unreachable awaited-answer runner-facts-of-view
@@ -800,7 +800,7 @@
       #(None {"error" "coordinator に接続できない(止まっている)"})
       (do (<- promise Promise (CreatePromise))
           (<- (enqueue-request link.queue (http-request method path query body :slot promise :actor link.actor :peer link.peer)))
-          (<- answer (| tuple None) (promise-or-cutoff promise.future REPLY-SECONDS))
+          (<- answer (| tuple None) (promise-or-timeout promise.future REPLY-SECONDS))
           (if (is answer None)
               #(None {"error" (.format "coordinator の返事が {} 秒で来ない(途中で切れた)" REPLY-SECONDS)})
               answer))))

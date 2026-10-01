@@ -4,10 +4,15 @@
 import math
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any, Generic, TypeVar
 
 from doeff import EffectBase
 from doeff_time._internals.validation import ensure_aware_datetime
+
+if TYPE_CHECKING:
+    from doeff_core_effects.scheduler import Future
+
+_T = TypeVar("_T")
 
 
 def _coerce_finite_float(value: float, *, name: str) -> float:
@@ -71,6 +76,28 @@ class ScheduleAtEffect(EffectBase):
 
 
 @dataclass(frozen=True)
+class WaitWithinEffect(EffectBase, Generic[_T]):
+    """Wait for a scheduler future for at most ``seconds``.
+
+    Answers the future's value, or ``None`` when ``seconds`` pass first — so the
+    future's producer must not complete it with ``None``. One effect replaces the
+    "spawn a sleeping timer task, Race it, cancel it" pattern: the clock handler
+    owns the deadline (``sim_time_handler`` puts it on its virtual time queue and
+    drops it when the future wins — no task is spawned), which keeps a timed wait
+    as cheap as a Delay (agora-redesign #2618).
+    """
+
+    future: "Future[_T]"
+    seconds: float
+
+    def __post_init__(self) -> None:
+        seconds = _coerce_finite_float(self.seconds, name="seconds")
+        if seconds < 0.0:
+            raise ValueError("seconds must be >= 0.0")
+        object.__setattr__(self, "seconds", seconds)
+
+
+@dataclass(frozen=True)
 class SetTimeEffect(EffectBase):
     """Set current timezone-aware datetime (simulation handlers may support this effect)."""
 
@@ -104,6 +131,10 @@ def set_time(time: datetime) -> SetTimeEffect:
     return SetTimeEffect(time=time)
 
 
+def wait_within(future: "Future[_T]", seconds: float) -> "WaitWithinEffect[_T]":
+    return WaitWithinEffect(future=future, seconds=seconds)
+
+
 def Delay(seconds: float) -> EffectBase:  # noqa: N802
     return DelayEffect(seconds=seconds)
 
@@ -126,4 +157,8 @@ def ScheduleAt(time: datetime, program: Any) -> EffectBase:  # noqa: N802
 
 def SetTime(time: datetime) -> EffectBase:  # noqa: N802
     return SetTimeEffect(time=time)
+
+
+def WaitWithin(future: "Future[_T]", seconds: float) -> EffectBase:  # noqa: N802
+    return WaitWithinEffect(future=future, seconds=seconds)
 

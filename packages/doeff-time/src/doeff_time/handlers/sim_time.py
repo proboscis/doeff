@@ -10,6 +10,8 @@ from doeff_core_effects.scheduler import (
     PRIORITY_IDLE,
     CompletePromise,
     CreatePromise,
+    Future,
+    Race,
     Spawn,
     Wait,
 )
@@ -25,6 +27,7 @@ from doeff_time.effects import (
     ScheduleAtEffect,
     SetTimeEffect,
     WaitUntilEffect,
+    WaitWithinEffect,
 )
 
 ProtocolHandler = Callable[[Any, Any], Any]
@@ -103,6 +106,23 @@ class SimTimeRuntime:
         yield Wait(promise.future)
 
     @do
+    def _wait_within(self, future: "Future[object]", seconds: float):
+        """Answer ``future``'s value, or None once ``seconds`` of virtual time pass first.
+
+        The deadline is a promise on this handler's time queue (like a Delay) raced against the
+        future — no timer task is spawned, and a deadline the future beat is withdrawn from the
+        queue so the clock driver never advances to it (agora-redesign #2618).
+        """
+        deadline = yield CreatePromise()
+        sequence = self._time_queue.push(self._clock.current_time + _delay_span(seconds), deadline)
+        _ = yield self._ensure_clock_driver()
+        try:
+            first = yield Race(future, deadline.future)
+        finally:
+            self._time_queue.withdraw(sequence)
+        return first
+
+    @do
     def handle(
         self,
         effect: WriterTellEffect
@@ -111,7 +131,8 @@ class SimTimeRuntime:
         | GetTimeEffect
         | GetMonotonicEffect
         | ScheduleAtEffect
-        | SetTimeEffect,
+        | SetTimeEffect
+        | WaitWithinEffect,
         k: Any,
     ):
         # The annotation is the clause list below: the VM skips this handler for
@@ -150,6 +171,9 @@ class SimTimeRuntime:
             # differences between readings.
             reading = now if isinstance(effect, GetTimeEffect) else now.timestamp()
             return (yield Transfer(k, reading))
+        if isinstance(effect, WaitWithinEffect):
+            first = yield self._wait_within(effect.future, effect.seconds)
+            return (yield Transfer(k, first))
         if isinstance(effect, ScheduleAtEffect):
 
             @do

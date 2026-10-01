@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from doeff_core_effects import Await
-from doeff_core_effects.scheduler import Spawn
+from doeff_core_effects.scheduler import Cancel, Race, Spawn
 
 from doeff import Pass, Transfer, do
 from doeff import handler as _program_handler
@@ -19,6 +19,7 @@ from doeff_time.effects import (
     GetTimeEffect,
     ScheduleAtEffect,
     WaitUntilEffect,
+    WaitWithinEffect,
 )
 
 ProtocolHandler = Callable[[Any, Any], Any]
@@ -51,6 +52,12 @@ class AsyncTimeRuntime:
         self._monotonic = monotonic
 
     @do
+    def _expire_after(self, seconds: float):
+        """The deadline of a timed wait (WaitWithin): sleep ``seconds`` on the wall clock, then answer None."""
+        yield _clock_wait(self._sleep, max(0.0, seconds))
+        return None
+
+    @do
     def handle(self, effect: Any, k: Any):
         # Every clause performs its final Transfer/Pass from THIS frame.
         # Delegating to a sub-@do that transfers (the pre-2026-07-14 shape)
@@ -68,6 +75,15 @@ class AsyncTimeRuntime:
             return (yield Transfer(k, self._now()))
         if isinstance(effect, GetMonotonicEffect):
             return (yield Transfer(k, float(self._monotonic())))
+        if isinstance(effect, WaitWithinEffect):
+            # The deadline is a daemon task sleeping on the wall clock, raced against the future and
+            # cancelled afterwards (daemon: abandoning it at root return is its lifecycle — #501).
+            timer = yield Spawn(self._expire_after(effect.seconds), daemon=True)
+            try:
+                first = yield Race(effect.future, timer)
+            finally:
+                yield Cancel(timer)
+            return (yield Transfer(k, first))
         if isinstance(effect, ScheduleAtEffect):
             wait_seconds = max(0.0, (effect.time - self._now()).total_seconds())
             sleep = self._sleep

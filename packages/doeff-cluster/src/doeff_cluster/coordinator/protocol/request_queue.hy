@@ -68,6 +68,11 @@
     (try
       (<- answer (| bool None) (promise-or-timeout bell.future timeout-seconds))
       (:= woke answer)
+      ;; 積まれて起きたら、同じ刻に続けて積まれる残り(1 つの書き手が続けて積む要求)を待ってから取る — 0 秒の眠りは、同じ刻の
+      ;; 書き手が手を止めるまで取り手を後ろへ回す(模擬の時計は普通の task が全部止まってから進む)。取りのまとまりが書きの途中で
+      ;; 割れない(tests/test_request_queue_wakes の複数の書き・#2618)。
+      (when (is answer True)
+        (<- (Delay 0.0)))
       (finally
         (when (in bell queue.takers)
           (.remove queue.takers bell)))))

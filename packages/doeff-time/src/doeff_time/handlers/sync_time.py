@@ -7,7 +7,7 @@ from collections.abc import Callable
 from datetime import datetime, timezone
 from typing import Any
 
-from doeff_core_effects.scheduler import CreateExternalPromise, Spawn
+from doeff_core_effects.scheduler import CreateExternalPromise, Race, Spawn
 from doeff_core_effects.scheduler import Wait as WaitTask
 
 from doeff import Pass, Transfer, do
@@ -19,6 +19,7 @@ from doeff_time.effects import (
     GetTimeEffect,
     ScheduleAtEffect,
     WaitUntilEffect,
+    WaitWithinEffect,
 )
 
 ProtocolHandler = Callable[[Any, Any], Any]
@@ -59,6 +60,23 @@ class SyncTimeRuntime:
             return (yield Transfer(k, self._now()))
         if isinstance(effect, GetMonotonicEffect):
             return (yield Transfer(k, float(self._monotonic())))
+        if isinstance(effect, WaitWithinEffect):
+            # The deadline is an external promise a wall-clock timer completes (the scheduler knows
+            # when it wakes — #765), raced against the future; the timer is stopped afterwards.
+            seconds = max(0.0, effect.seconds)
+            deadline = yield CreateExternalPromise(deadline=time.monotonic() + seconds)
+
+            def _deadline_passed():
+                deadline.complete(None)
+
+            timer = threading.Timer(seconds, _deadline_passed)
+            timer.daemon = True
+            timer.start()
+            try:
+                first = yield Race(effect.future, deadline.future)
+            finally:
+                timer.cancel()
+            return (yield Transfer(k, first))
         if isinstance(effect, ScheduleAtEffect):
             wait_seconds = max(0.0, (effect.time - self._now()).total_seconds())
 
