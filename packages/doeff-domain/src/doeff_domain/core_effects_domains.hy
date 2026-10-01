@@ -73,17 +73,31 @@
 (import doeff_core_effects.clickhouse-http-sql [clickhouse-http-sql-handler])
 (import doeff_core_effects.sqlite-sql [sqlite-sql-handler])
 (import doeff_core_effects.process-effects [RunProcess ExecutableAt
-                                            ReadEnvironment WorkingDirectory])
-(import doeff_core_effects.os-process [subprocess-handler])
+                                            ReadEnvironment WorkingDirectory
+                                            ProcessAlive ReadInterpreter ResolveModule
+                                            StartProcess PollProcess StopProcess])
+(import doeff_core_effects.os-process [subprocess-handler offloaded-subprocess-handler])
 (import doeff_core_effects.scripted-process [scripted-process-handler])
 (import doeff_core_effects.channel-effects [CreateChannel PutChannel TakeChannel])
 (import doeff_core_effects.scheduler-channel [scheduler-channel-handler])
 (import doeff_core_effects.compute-effects [Compute])
 (import doeff_core_effects.thread-pool-compute [thread-pool-compute-handler])
 (import doeff_core_effects.inline-compute [inline-compute-handler])
-(import doeff_core_effects.stop-signal-effects [StopRequested RaiseStop])
+(import doeff_core_effects.stop-signal-effects [StopRequested AwaitStop RaiseStop])
 (import doeff_core_effects.stop-signal-handlers [os-signal-stop-handler
                                                  scripted-stop-handler])
+(import doeff_core_effects.heap-effects [CollectAndFreeze])
+(import doeff_core_effects.gc-freeze [gc-freeze-handler])
+(import doeff_core_effects.scripted-freeze [scripted-freeze-handler])
+(import doeff_core_effects.latest-effects [PublishLatest ReadLatest])
+(import doeff_core_effects.process-latest [process-latest-handler])
+(import doeff_core_effects.memory-latest [memory-latest-handler])
+(import doeff_core_effects.meter-effects [CountMetric ObserveSeconds SetGauge ReadMeter])
+(import doeff_core_effects.process-meter [process-meter-handler])
+(import doeff_core_effects.memory-meter [memory-meter-handler])
+(import doeff_core_effects.random-effects [RandomBytes])
+(import doeff_core_effects.os-random [os-random-handler])
+(import doeff_core_effects.seeded-random [seeded-random-handler])
 
 
 ;; --- 生 Python handler への後付け注釈(D5)。注釈は「処理に参加する宣言」で
@@ -266,10 +280,12 @@
 
 (defdomain doeff-process
   :title "Process 語彙 — 子 process と自分の環境"
-  :effects [RunProcess ExecutableAt ReadEnvironment WorkingDirectory]
-  :handlers [subprocess-handler scripted-process-handler]
+  :effects [RunProcess ExecutableAt ReadEnvironment WorkingDirectory
+            ProcessAlive ReadInterpreter ResolveModule
+            StartProcess PollProcess StopProcess]
+  :handlers [subprocess-handler offloaded-subprocess-handler scripted-process-handler]
   :adrs ["ADR-DOE-DOMAIN-001"]
-  :docs "subprocess-handler(本物)と scripted-process-handler(I/O なし・台本)が 4 effect 全てに答える。")
+  :docs "subprocess-handler(本物)・offloaded-subprocess-handler(本物)と scripted-process-handler(I/O なし・台本)が 10 effect 全てに答える。")
 
 
 (defdomain doeff-channel
@@ -290,7 +306,39 @@
 
 (defdomain doeff-stop-signal
   :title "Stop signal 語彙 — process の停止の求め"
-  :effects [StopRequested RaiseStop]
+  :effects [StopRequested AwaitStop RaiseStop]
   :handlers [os-signal-stop-handler scripted-stop-handler]
   :adrs ["ADR-DOE-DOMAIN-001"]
-  :docs "os-signal-stop-handler は本物の SIGINT / SIGTERM を StopRequested で読むだけ。RaiseStop で停止を起こすのは I/O なしの scripted-stop-handler だけ。")
+  :docs "os-signal-stop-handler は本物の SIGINT / SIGTERM を StopRequested で読み、AwaitStop で停止まで待つ。RaiseStop で停止を起こすのは I/O なしの scripted-stop-handler だけ。")
+
+
+(defdomain doeff-heap
+  :title "Heap 語彙 — 動き続ける process の heap を集めて凍らせる"
+  :effects [CollectAndFreeze]
+  :handlers [gc-freeze-handler scripted-freeze-handler]
+  :adrs ["ADR-DOE-DOMAIN-001"]
+  :docs "gc-freeze-handler(本物・process の GC に触る)と scripted-freeze-handler(I/O なし・GC に触らず決めた数で答える)が答える。")
+
+
+(defdomain doeff-latest
+  :title "Latest 語彙 — 最新の値を置いて読む"
+  :effects [PublishLatest ReadLatest]
+  :handlers [process-latest-handler memory-latest-handler]
+  :adrs ["ADR-DOE-DOMAIN-001"]
+  :docs "process-latest-handler(本物・process の中の置き場)と memory-latest-handler(I/O なし)が答える。")
+
+
+(defdomain doeff-meter
+  :title "Meter 語彙 — 数・秒・値の計器"
+  :effects [CountMetric ObserveSeconds SetGauge ReadMeter]
+  :handlers [process-meter-handler memory-meter-handler]
+  :adrs ["ADR-DOE-DOMAIN-001"]
+  :docs "process-meter-handler(本物・process の中の計器)と memory-meter-handler(I/O なし)が 4 effect 全てに答える。")
+
+
+(defdomain doeff-random
+  :title "Random 語彙 — 乱数の bytes"
+  :effects [RandomBytes]
+  :handlers [os-random-handler seeded-random-handler]
+  :adrs ["ADR-DOE-DOMAIN-001"]
+  :docs "os-random-handler(本物・os.urandom)と seeded-random-handler(I/O なし・種から決まる)が答える。")
