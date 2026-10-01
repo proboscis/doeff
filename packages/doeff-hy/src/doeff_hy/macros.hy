@@ -285,10 +285,12 @@ defk {name}: :post must include a return type check (: % Type).
    型の注記では `None` は「None という値の型」を意味する(PEP 484)が、isinstance の第 2
    引数に `None` は渡せない(`TypeError: isinstance() arg 2 must be a type ...`)。
    `(: % None)` が実行時に型エラーになっていた(2026-09-23 `sim_clock.hy` の
-   `clock-driver` で実測)ので、ここで `None` を `hy.I.types.NoneType` へ写す。`#(int None)` の
-   組の中も同じく写す。写し先は名前空間つきの名にする — 展開は利用者の関数の中に置かれるので、
+   `clock-driver` で実測)ので、ここで `None` を `None.__class__`(NoneType)へ写す。`#(int None)` の
+   組の中も同じく写す。写し先は名前を引かない形にする — 展開は利用者の関数の中に置かれるので、
    素の名 `type` を呼ぶと局所の名 `type`(例: `(val type (.get value \"type\"))`)に隠されて
-   TypeError になる(agora-redesign #1825 — 2026-09-30 に agora の検 3 本が赤)。
+   TypeError になる(agora-redesign #1825 — 2026-09-30 に agora の検 3 本が赤)。定数 None の属性は
+   局所の名に隠されない。以前の `hy.I.types.NoneType` は確かめのたびに hy.__getattr__ → slashes2dots を
+   通り、automation の検 1 本で約 2 万回・profile の約 4% を使っていた(agora-redesign #1845)。
 
    要素の型つきの総称型 `(get tuple #(X ...))` / `(of tuple X ...)` / `(of dict K V)` /
    `(get dict #(K V))` は、isinstance が受けない(`TypeError: isinstance() argument 2 cannot be
@@ -300,7 +302,7 @@ defk {name}: :post must include a return type check (: % Type).
    が `int | None` をそのまま受ける)。"
   (cond
     (and (isinstance tp hy.models.Symbol) (= (str tp) "None"))
-      'hy.I.types.NoneType
+      '(. None __class__)
     (isinstance tp hy.models.Tuple)
       (hy.models.Tuple (lfor item tp (_runtime-type item)))
     (and (isinstance tp hy.models.Expression) (>= (len tp) 2)
