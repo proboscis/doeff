@@ -128,6 +128,11 @@ struct Args {
     #[arg(long)]
     split_rules: bool,
 
+    /// commit 本文の file(--commit-hook と --split-rules)— 本文に理由つきの `Lint-Baseline: declarations <理由>` の行が在れば、基点を
+    /// 今の宣言(設定 file と architecture.hy)で測る 1 回限りの指定として読む(規則を鳴らし始める commit のため — agora-redesign #2143)
+    #[arg(long)]
+    commit_message: Option<PathBuf>,
+
     /// Only lint git-modified files (tracked and untracked)
     #[arg(long)]
     modified: bool,
@@ -671,13 +676,23 @@ fn run_commit_hook(args: &Args) -> ExitCode {
         Err(error) => return fail(format!("今の binary の path を読めない: {}", error)),
     };
     let config = loaded.as_ref().map(|l| (&l.config, l.path.canonicalize().unwrap_or_else(|_| l.path.clone())));
-    let options = doeff_linter::commit_hook::CommitHookOptions::new(root, config, &args.enable, &args.disable, args.commit_hook_timeout_s, linter);
+    let mut options = doeff_linter::commit_hook::CommitHookOptions::new(root, config, &args.enable, &args.disable, args.commit_hook_timeout_s, linter);
+    if let Some(file) = &args.commit_message {
+        let message = match std::fs::read_to_string(file) {
+            Ok(message) => message,
+            Err(error) => return fail(format!("commit 本文 {} を読めない: {}", file.display(), error)),
+        };
+        options.overlay = doeff_linter::commit_hook::baseline_overlay(&message, &options.declarations);
+    }
     if args.split_rules {
         // 門の口: path の引数を変えた path として、hook と同じ判定の分けを出す(既定の . は変えた path ではない)。
         let changed: Vec<String> = args.paths.iter().filter(|p| p.as_str() != ".").cloned().collect();
         let split = doeff_linter::commit_hook::split_for_change(&options.enabled, &changed, &options.declarations);
         let changed_declaration = doeff_linter::commit_hook::touches_declaration(&changed, &options.declarations);
-        println!("{}", serde_json::json!({ "quick": split.quick, "whole": split.whole, "declaration_changed": changed_declaration }));
+        println!(
+            "{}",
+            serde_json::json!({ "quick": split.quick, "whole": split.whole, "declaration_changed": changed_declaration, "baseline_overlay": options.overlay })
+        );
         return ExitCode::SUCCESS;
     }
     ExitCode::from(doeff_linter::commit_hook::run(&options))

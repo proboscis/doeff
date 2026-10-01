@@ -261,6 +261,61 @@ fn a_declaration_change_blocks_a_new_hit_in_an_unstaged_file() {
     assert_eq!(code, 0, "{}", stderr);
 }
 
+/// 規則を鳴らし始める commit(agora-redesign #2143): 層 core に json を禁じる宣言を足すと、触っていない core の file の既存の import が
+/// 新しい当たりになり、本文に指定の無い commit は止まる(#2127 のまま)。本文に理由つきの `Lint-Baseline: declarations` の行が在れば、
+/// HEAD の木を今の宣言で測るので既存の当たりは基点に在る物になって通る。同じ commit で新しい違反を足せば、指定が在っても止まる。
+#[test]
+fn a_reasoned_baseline_trailer_lets_rules_start_ringing_but_still_blocks_new_hits() {
+    let dir = baseline_repo();
+    let root = dir.path();
+    write(root, "pyproject.toml", &PYPROJECT.replace("enable = [\"DOEFF163\", \"DOEFF016\"]", "enable = [\"DOEFF163\", \"DOEFF016\", \"DOEFF102\"]"));
+    write(root, "app/queue/core/rule.hy", &format!("(val MODULE-TAGS {{:context \"queue\" :role \"judgment\"}})\n(import json)\n(defk parse [text]\n  {}\n  #())\n", JUDGED));
+    git(root, &["add", "-A"]);
+    git(root, &["commit", "-q", "-m", "json を読む core の基点"]);
+    let forbidding = ARCHITECTURE.replace("(layer core :roles [judgment] :imports [core])", "(layer core :roles [judgment] :imports [core] :forbid-modules [json])");
+    write(root, "architecture.hy", &forbidding);
+    git(root, &["add", "architecture.hy"]);
+    let message = root.join("MSG");
+    std::fs::write(&message, "core に json を禁じる\n\nLint-Baseline: declarations — 既存の import は別の変更で直す\n").unwrap();
+    let message_arg = message.to_string_lossy().into_owned();
+    let (code, stderr) = hook(root, &["--commit-message", &message_arg]);
+    assert_eq!(code, 0, "{}", stderr);
+    assert!(stderr.contains("Lint-Baseline: declarations — HEAD の木を今の宣言"), "{}", stderr);
+    // 理由の無い行は効かない。
+    std::fs::write(&message, "core に json を禁じる\n\nLint-Baseline: declarations\n").unwrap();
+    let (code, stderr) = hook(root, &["--commit-message", &message_arg]);
+    assert_eq!(code, 1, "{}", stderr);
+    // 指定が在っても、同じ commit で足した新しい違反は止まる。
+    std::fs::write(&message, "core に json を禁じる\n\nLint-Baseline: declarations — 既存の import は別の変更で直す\n").unwrap();
+    write(root, "app/queue/core/more.hy", &format!("(val MODULE-TAGS {{:context \"queue\" :role \"judgment\"}})\n(import json)\n(defk more [text]\n  {}\n  #())\n", JUDGED));
+    git(root, &["add", "app/queue/core/more.hy"]);
+    let (code, stderr) = hook(root, &["--commit-message", &message_arg]);
+    assert_eq!(code, 1, "{}", stderr);
+    assert!(stderr.contains("app/queue/core/more.hy") && stderr.contains("DOEFF102"), "{}", stderr);
+    assert!(!stderr.contains("app/queue/core/rule.hy::DOEFF102"), "{}", stderr);
+}
+
+/// 門の口 `--split-rules --commit-message <本文>` は、理由つきの Lint-Baseline の行が在る時だけ基点の木へ写す宣言の file を名乗る。
+#[test]
+fn split_rules_names_the_baseline_overlay_only_for_a_reasoned_trailer() {
+    let dir = baseline_repo();
+    let message = dir.path().join("MSG");
+    let split = |text: &str| -> Value {
+        std::fs::write(&message, text).unwrap();
+        let output = Command::new(env!("CARGO_BIN_EXE_doeff-linter"))
+            .args(["--split-rules", "--commit-message"])
+            .arg(&message)
+            .arg("architecture.hy")
+            .current_dir(dir.path())
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+        serde_json::from_slice(&output.stdout).unwrap()
+    };
+    assert_eq!(split("x\n\nLint-Baseline: declarations — 鳴らし始める\n")["baseline_overlay"], serde_json::json!(["pyproject.toml", "architecture.hy"]));
+    assert_eq!(split("x\n")["baseline_overlay"], serde_json::json!([]));
+}
+
 /// 門の口 `--split-rules <変えた path>` は hook と同じ判定の分けを出す — architecture.hy を名指せば file 1 つで判じる規則(DOEFF016)も
 /// whole、source だけなら quick のまま(agora-redesign #2127)。
 #[test]

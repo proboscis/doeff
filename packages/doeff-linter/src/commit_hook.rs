@@ -156,6 +156,24 @@ pub fn effective_rules(config: Option<&Config>, cli_enable: &[String], cli_disab
 pub struct Declarations {
     pub files: Vec<String>,
     pub dirs: Vec<String>,
+    /// 規則の入り切りと層を決める宣言(設定 file と architecture.hy)— 基点を今の宣言で測る 1 回限りの指定(Lint-Baseline)で基点の木へ
+    /// 写す物(登録簿は写さない — 登録簿の変化は今までどおり比べる)。
+    pub switches: Vec<String>,
+}
+
+/// 基点を今の宣言で測る 1 回限りの指定の commit 本文の行(trailer)— `Lint-Baseline: declarations <理由>`。規則を鳴らし始める commit
+/// (enable に足す・層の宣言を足す)は、既存の当たりが全部「基点に無い当たり」になり、その commit 自身が門と hook を通れない。この行の
+/// 在る変更だけ、基点の木を今の宣言(switches)で測り、既存の当たりを基点に在る物として新しい当たりだけを止める(既知の一覧に載せる
+/// 形ではない — agora-redesign #2143・cisco-c8 の決め 2026-10-01)。宣言だけで触っていない file に当たりを付ける変更(#2127)を見逃す
+/// 形なので、理由の無い行は効かない(誰が何のために使ったかを本文に残す)。
+pub const BASELINE_TRAILER: &str = "Lint-Baseline: declarations";
+
+/// 純粋: commit 本文に理由つきの Lint-Baseline の行が在れば、基点の木へ写す宣言の file の列(無ければ空)。
+pub fn baseline_overlay(message: &str, declarations: &Declarations) -> Vec<String> {
+    let requested = message.lines().any(|line| {
+        line.trim_start().strip_prefix(BASELINE_TRAILER).is_some_and(|reason| !reason.trim_matches(|c: char| c.is_whitespace() || c == '—' || c == '-' || c == ':').is_empty())
+    });
+    if requested { declarations.switches.clone() } else { Vec::new() }
 }
 
 /// 設定から宣言の file と dir を集める。architecture.hy の置き場は linter のふだんの実行と同じ決め方(設定の architecture か、根の
@@ -176,7 +194,8 @@ pub fn declarations_of(root: &Path, config: Option<(&Config, &Path)>) -> Declara
         .chain(registry.into_iter().flat_map(|r| r.config_files.iter().map(|f| rel(&config_dir.join(f)))))
         .collect();
     let dirs = registry.map(|r| r.dirs.iter().map(|d| d.trim_end_matches('/').to_string()).collect()).unwrap_or_default();
-    Declarations { files, dirs }
+    let switches = config.map(|(_, path)| rel(path)).into_iter().chain(std::iter::once(rel(&architecture))).collect();
+    Declarations { files, dirs, switches }
 }
 
 /// 純粋: 変えた path(根から)に宣言の file か宣言の dir の下の file が在るか。
@@ -207,6 +226,8 @@ pub struct CommitHookOptions {
     /// 有効な規則(分けは stage した path を見て split_for_change が決める)。
     pub enabled: Vec<String>,
     pub declarations: Declarations,
+    /// 基点(HEAD の木)へ写す今の宣言の file(commit 本文の Lint-Baseline の行が在る時だけ — 空なら写さない)。
+    pub overlay: Vec<String>,
     pub timeout: Duration,
     /// 子として撃つ linter(ふつうは今の binary)。
     pub linter: PathBuf,
@@ -223,6 +244,7 @@ impl CommitHookOptions {
         CommitHookOptions {
             declarations: declarations_of(&root, config.as_ref().map(|(c, path)| (*c, path.as_path()))),
             enabled,
+            overlay: Vec::new(),
             timeout: resolve_timeout(section, cli_timeout),
             config: config.map(|(_, path)| path),
             root,
@@ -462,6 +484,16 @@ fn judge(options: &CommitHookOptions) -> Result<Blocking, Stop> {
     let scratch = Scratch::create().map_err(Stop::Failed)?;
     let tree_dir = scratch.path.join("tree");
     let tree = export_head(root, &tree_dir).map_err(Stop::Failed)?.then_some(tree_dir.as_path());
+    // 1 回限りの指定(Lint-Baseline): HEAD の木を今の宣言で測る — 既存の当たりは基点に在る物になり、新しい当たりだけが止まる。
+    if let (Some(t), false) = (tree, options.overlay.is_empty()) {
+        for rel in &options.overlay {
+            let from = root.join(rel);
+            if from.is_file() {
+                std::fs::copy(&from, t.join(rel)).map_err(|e| Stop::Failed(format!("{} を HEAD の木へ写せない: {}", rel, e)))?;
+            }
+        }
+        eprintln!("{}{} — HEAD の木を今の宣言({})で測る(1 回限り)", PREFIX, BASELINE_TRAILER, options.overlay.join("・"));
+    }
     let tip_root = root.canonicalize().unwrap_or_else(|_| root.clone());
 
     if !paths.is_empty() {
@@ -521,7 +553,11 @@ mod tests {
 
     #[test]
     fn commit_hook_a_declaration_change_moves_every_rule_to_the_whole_repo() {
-        let declarations = Declarations { files: ids(&["pyproject.toml", "architecture.hy"]), dirs: ids(&["scripts/doeff_lint/REG"]) };
+        let declarations = Declarations {
+            files: ids(&["pyproject.toml", "architecture.hy"]),
+            dirs: ids(&["scripts/doeff_lint/REG"]),
+            switches: ids(&["pyproject.toml", "architecture.hy"]),
+        };
         let enabled = ids(&["DOEFF016", "DOEFF102", "DOEFF201", "DOEFF149"]);
         // 宣言に触れない変更は規則の名乗りの分けのまま。
         let plain = split_for_change(&enabled, &ids(&["app/core/x.hy"]), &declarations);
@@ -533,6 +569,18 @@ mod tests {
         }
         // 名の前方一致だけでは触れない(dir の名を頭に持つ別の dir)。
         assert!(!touches_declaration(&ids(&["scripts/doeff_lint/REGISTRY-OTHER/k.txt", "architecture.hy.bak"]), &declarations));
+    }
+
+    #[test]
+    fn commit_hook_baseline_overlay_needs_a_reasoned_trailer() {
+        let declarations = Declarations { files: Vec::new(), dirs: Vec::new(), switches: ids(&["pyproject.toml", "architecture.hy"]) };
+        // 理由つきの行だけが効く(本文のどこに在ってもよい・行の頭の空白は読む)。
+        let reasoned = "規則を鳴らす\n\nLint-Baseline: declarations — DOEFF170〜172 を鳴らし始める(#2143)\nCo-Authored-By: x\n";
+        assert_eq!(baseline_overlay(reasoned, &declarations), ids(&["pyproject.toml", "architecture.hy"]));
+        // 反例: 理由の無い行・行の途中の言及・違う trailer は効かない(基点は HEAD の宣言のまま — #2127 の見逃しを作らない)。
+        for message in ["x\n\nLint-Baseline: declarations\n", "x\n\nLint-Baseline: declarations — \n", "本文で Lint-Baseline: declarations に触れる\n", "Registry-Grows: 1 理由\n"] {
+            assert!(baseline_overlay(message, &declarations).is_empty(), "{:?}", message);
+        }
     }
 
     #[test]
