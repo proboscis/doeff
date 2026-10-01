@@ -7,6 +7,8 @@ frozen.hy は Hy の module なので、pyright は中を読めず、`FrozenMap`
   型引数は値の型 V の 1 つ — `(get FrozenMap TableDecl)` の形)。型引数を書かない `FrozenMap` は FrozenMap[object]
   (中の値を問わない写像 — 実装の注記の多くがこの形)。変えられない写像なので値の型について共変
   (FrozenMap[int] は FrozenMap[object] として渡せる — Mapping と同じ)。
+- freeze-json-text は JSON の文字列を読んで深く凍らせる。答えは常に FrozenJson(json.loads の答えの Any を、読む所で型の付いた
+  JSON に決める — agora-redesign #2628)。
 - freeze-json / thaw-json は JSON の値を深く凍らせる・戻す。JSON の値(JsonIn)を受けた時の答えは型の付いた JSON
   (凍らせる = FrozenJson・戻す = ThawedJson)で、写像の中身の型が消えない(agora-redesign #2613)。JSON でない値は実装が
   そのまま返すので、その時の答えは object(実行の振る舞いは変えない — 宣言だけ)。
@@ -43,6 +45,7 @@ ThawedJson: TypeAlias = dict[str, ThawedJson] | list[ThawedJson] | str | int | f
 def freeze_json(value: JsonIn) -> FrozenJson: ...
 @overload
 def freeze_json(value: object) -> object: ...
+def freeze_json_text(text: str) -> FrozenJson: ...
 @overload
 def thaw_json(value: JsonIn) -> ThawedJson: ...
 @overload

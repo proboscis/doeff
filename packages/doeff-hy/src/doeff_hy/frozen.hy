@@ -12,6 +12,7 @@
 ;;; 等しさ: collections.abc.Mapping の等しさ(同じ鍵と値の組なら dict とも等しい)。hash は中の値が hash できる時だけ
 ;;; (freeze-json で凍らせた JSON の値は常に hash できる)。pickle・copy は作り直しで保つ。
 (import collections.abc [Mapping Iterator])
+(import json)
 (import typing [TypeVar])
 
 (setv V (TypeVar "V"))
@@ -103,6 +104,13 @@
     (isinstance value Mapping) (deep-frozen-map value)
     (isinstance value #(list tuple)) (tuple (gfor item value (freeze-json item)))
     True value))
+
+
+(defn #^ object freeze-json-text [#^ str text]
+  "JSON の文字列を読み、深く凍らせた JSON の値(object → FrozenMap・array → tuple)。読めない文字列は json.JSONDecodeError。
+   json.loads の答えは型が Any なので、読む所でそのまま freeze-json に渡すと型の宣言の多重定義が選べず、答えが Unknown に広がる
+   (agora-redesign #2628)。読むと凍らせるを 1 つにして、答えの型を FrozenJson に決める。"
+  (freeze-json (json.loads text)))
 
 
 (defn #^ object thaw-json [#^ object value]

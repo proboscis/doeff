@@ -8,6 +8,8 @@ FrozenMap を返す定義の答え・FrozenMap の値の読みに、書き手に
   かける(写しは別の名の package — doeff_hy の名のままだと、pyright は写しに無い frozen.pyi を入れた doeff_hy から読む)。外すと FrozenMap と答えが Unknown の赤になり、置くと消える。置いた側では値の型の取り違え(int の値に文字列を
   足す)が赤になる(FrozenMap が値の型を運んでいる)。型引数を書かない `FrozenMap` は FrozenMap[object] で、型引数の
   書き忘れの赤にならない。
+- freeze-json-text(JSON の文字列 → FrozenJson)の答えは FrozenMap に絞れ、絞った値の中身は JSON の値として渡せる(agora-redesign #2628 —
+  json.loads の Any を読む所で型に決める口。stub から外すと検体のその行が赤)。
 - 一致: stub が宣言する名は実行時の module に在り、関数の引数の名は実装と同じ。FrozenMap は実装と同じく
   `Mapping[str, V]`(型引数は値の型 1 つ)。
 """
@@ -37,7 +39,7 @@ PACKAGE = Path(frozen.__file__).parent
 MODULE = """\
 (require doeff-hy.macros [defk <- val])
 (import collections.abc [Mapping])
-(import frozen_copy.frozen [FrozenMap frozen-map-of freeze-json frozen-json-object])
+(import frozen_copy.frozen [FrozenMap frozen-map-of freeze-json frozen-json-object freeze-json-text])
 
 (val SHALLOW (frozen-map-of {"a" 1} "probe"))
 
@@ -70,6 +72,13 @@ MODULE = """\
   {:pre [] :post [(: % None)]}
   (<- (takes-json (freeze-json {"a" [1 2]})))
   (<- (takes-json (get (frozen-json-object {"b" "x"} "probe") "b"))))
+
+(defk text-feeds-json [text]
+  {:pre [(: text str)] :post [(: % None)]}
+  (val parsed (freeze-json-text text))
+  (when (isinstance parsed FrozenMap)
+    (<- (takes-json (get parsed "a"))))
+  None)
 
 (defk wrong-sum []
   {:pre [] :post [(: % int)]}
