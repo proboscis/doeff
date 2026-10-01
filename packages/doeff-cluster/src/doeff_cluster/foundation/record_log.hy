@@ -8,7 +8,7 @@
 ;;;          ty = effect の型の名・a = 引数(大きければ ad = 差分・ab = 元の出来事の番号・ak = 差分の鍵)
 ;;;   ans    答え。s = 問いの e・ok = 真なら v(大きければ vd / vb / vk)、偽なら err(例外の符号)
 ;;;   call   (形の版 2)問いと答えを 1 行にまとめた物。問いの欄に ok・v / err・dt(答えの時刻 - 問いの時刻)を足し、答えの番号は e + 1
-;;;   blob   (形の版 2)内容参照の中身。h = 内容の hash・v = 畳んだ節。a / v の中の {"$ref": h} をこの中身に戻す(effect_codec.resolve-refs)
+;;;   blob   (形の版 2)内容参照の中身。h = 内容の hash・v = 畳んだ節。a / v の中の {"$ref": h} をこの中身に戻す(record_codec.resolve-refs)
 ;;;   mut    業務コードと handler が共有する可変の箱(Ask の答え)の中身が変わった。ref = その箱を渡した問いの e・v = 新しい中身
 ;;;   end    task が終わった(t・ok)
 ;;;   broken 記録の登録に無い型・記録の形にできない値に当たった。ここから先は記録していない(再生は記録の終わりとして扱う)
@@ -16,14 +16,14 @@
 ;;; 並行: 出来事の番号は問いと答えの両方に振る(scheduler が task を切り替える順 = 答えが返った順も再生で同じにするため)。
 ;;; task の名は親の名 + 「.」+ 親の中で何番目に Spawn したか(scheduler の番号に依らないので記録と再生で同じ)。根は "root"。
 (require doeff-hy.macros [val])
-(val MODULE-TAGS {:context "doeff-cluster" :role "judgment"})
+(val MODULE-TAGS {:context "doeff-cluster" :role "foundation"})
 (import collections.abc [Callable])
 (import dataclasses)
 (import dataclasses [dataclass field])
 (import json)
 (import typing [get-args])
 (import doeff_hy.json_value [OpaqueJson])
-(import doeff_cluster.shared.core.effect_codec [READ LIVE DECISION OUTPUT LOOSE READABLE-FORMATS JsonValue canonical apply-delta delta-of resolve-refs
+(import doeff_cluster.foundation.record_codec [READ LIVE DECISION OUTPUT LOOSE READABLE-FORMATS JsonValue canonical apply-delta delta-of resolve-refs
                                                 resolve-type encode-value decode-value])
 
 (setv ROOT "root")
@@ -102,7 +102,7 @@
 
 (defn #^ Recording read-recording [#^ list lines #^ (| int None) [until-ms None] #^ (| (get Callable #([str dict] str)) None) [mode-of-type None]]
   "記録の行(dict の列・順不同でよい)→ Recording。until-ms = この時刻より後の出来事を捨てる(範囲の終わり)。
-   mode-of-type = 型の名 → 登録の mode(再生の側の effect_codec から渡す。無ければ行の mode 欄)。"
+   mode-of-type = 型の名 → 登録の mode(再生の側の record_codec から渡す。無ければ行の mode 欄)。"
   (setv header None broken None events [] entries {} queues {} ended {} arg-bases {} val-bases {} muts [] blobs {} memo {})
   (setv ordered (sorted (_expand-calls (lfor l lines :if (in "e" l) l)) :key (fn [l] (get l "e"))))
   (for [l lines]

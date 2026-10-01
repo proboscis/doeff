@@ -18,7 +18,7 @@
 (import doeff_cluster.shared.intent.shared_model [ReadShared WriteShared])
 (import doeff_time [SimClock sim-time-handler])
 (import tests.board_fake [board-handlers])
-(import doeff_cluster.shared.protocol.record_handlers [boundary-recorder])
+(import doeff_cluster.foundation.record_handlers [boundary-recorder])
 
 
 ;; --- 業務の effect と翻訳 ------------------------------------------------------------------------------

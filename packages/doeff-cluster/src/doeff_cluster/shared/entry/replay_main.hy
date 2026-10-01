@@ -19,8 +19,8 @@
 (import time)
 (import doeff [run with_handlers])
 (import doeff_core_effects.handlers [reader])
-(import doeff_cluster.shared.core.record_model [read-recording ReplayFinished ReplayDiverged])
-(import doeff_cluster.shared.protocol.record_handlers [ReplayState replay-report RECORD-MODE-KEY REPLAY-STATE-KEY])
+(import doeff_cluster.foundation.record_log [read-recording ReplayFinished ReplayDiverged])
+(import doeff_cluster.foundation.record_handlers [ReplayState replay-report RECORD-MODE-KEY REPLAY-STATE-KEY])
 (import doeff_cluster.worker.entry.job_entry [read-program])
 
 

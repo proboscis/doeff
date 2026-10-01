@@ -1,6 +1,6 @@
 ;; この package は業務を知らない(2026-09-25 — 業務の repo から切り出した時の決まり)。業務の系の語が source・検・配備の材料・文書に
 ;; 混ざっていないことを、file の中身と名の両方で確かめる。業務の事情(名・資格・語)は引数や宣言(ClusterNaming・CodeLayout・
-;; effect_codec.register)で業務の側から渡す。
+;; record_codec.register)で業務の側から渡す。
 ;;
 ;; 語の一覧は、切り出す前のこの code に混ざっていた業務の系の語(系の名・業務の資源の名・業務の repo の配置)。大文字小文字を区別しない。
 (require doeff-hy.macros [deftest])
@@ -55,7 +55,7 @@
 (deftest test-the-scan-covers-the-package
   ;; 検める母集団が空で緑にならない: source・検・配備の材料・文書が入っている。
   (setv names (sfor p (scanned-files) (.as-posix (.relative-to p ROOT))))
-  (for [want ["src/doeff_cluster/coordinator/core/program.hy" "src/doeff_cluster/shared/core/effect_codec.hy" "src/doeff_cluster/shim.py"
+  (for [want ["src/doeff_cluster/coordinator/core/program.hy" "src/doeff_cluster/foundation/record_codec.hy" "src/doeff_cluster/shim.py"
               "tests/test_coordinator.hy" "deploy/boot.sh" "deploy/Dockerfile" "README.md" "pyproject.toml"]]
     (assert (in want names) want)))
 

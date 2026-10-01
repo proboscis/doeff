@@ -1,4 +1,4 @@
-;; effect の記録と再生(backtest)のテスト(record_handlers.hy・record_model.hy・effect_codec.hy)。仮想の時計・メモリの盤・fake の書き先。
+;; effect の記録と再生(backtest)のテスト(record_handlers.hy・record_log.hy・record_codec.hy)。仮想の時計・メモリの盤・fake の書き先。
 ;;
 ;;   1. 符号化の往復(値・例外・handle)と差分の往復
 ;;   2. 並行: 3 つの task が眠りと共有の箱でつながる系を記録 → 同じ版で再生すると同じ順・全件一致。順を揃えない再生では違う順になる(対照)
@@ -21,7 +21,7 @@
 (import doeff_hy.json_value [OpaqueJson])
 (import doeff_cluster.shared.intent.shared_model [ReadShared WriteShared ANY])
 (import tests.board_fake [board-handlers])
-(import doeff_cluster.shared.core.effect_codec [BlobMemory intern-json resolve-refs content-hash encode-value decode-value encode-error decode-error delta-of apply-delta canonical
+(import doeff_cluster.foundation.record_codec [BlobMemory intern-json resolve-refs content-hash encode-value decode-value encode-error decode-error delta-of apply-delta canonical
                                          UnrecordableEffect RecordedError HandleTable args-of type-name
                                          EffectCodec MalformedRecordSpec READ LIVE OUTPUT DECISION SPEC-FIELDS codec-of mode-of subject-of can-record
                                          register registered-types])
@@ -29,9 +29,9 @@
 (import doeff_cluster.shared.intent.semaphore_model [CreateNamedSemaphore HeldLease LeaseStanding])
 (import doeff_cluster.shared.intent.readiness_model [ReportReady])
 (import doeff_cluster.shared.intent.metrics_model [ReportMetrics ReadProcessGauges])
-(import doeff_cluster.shared.core.record_model [read-recording ReplayFinished ReplayDiverged LEGACY-ANY CURRENT-ANY])
+(import doeff_cluster.foundation.record_log [read-recording ReplayFinished ReplayDiverged LEGACY-ANY CURRENT-ANY])
 (import pathlib)
-(import doeff_cluster.shared.protocol.record_handlers [MemorySink EffectLog effect-recorder ReplayState effect-replayer replay-report])
+(import doeff_cluster.foundation.record_handlers [MemorySink EffectLog effect-recorder ReplayState effect-replayer replay-report])
 
 
 ;; --- 1. 符号化 ---------------------------------------------------------------------------------
@@ -194,7 +194,7 @@
   (val args (args-of (WriteShared "row/a" (OpaqueJson.of {"n" [1 2]}) (OpaqueJson.of "old") 30) handles))
   (assert (= args {"key" "row/a" "value" {"n" [1 2]} "expect" "old"}) args)
   (assert (= (subject-of (WriteShared "row/a" (OpaqueJson.of 1)) args) "row/a"))
-  ;; ANY は欄の無い値の型の汎用の綴り($c)で、record_model が旧い綴りを揃える先と同じ。復号すると ANY と等しい値。
+  ;; ANY は欄の無い値の型の汎用の綴り($c)で、record_log が旧い綴りを揃える先と同じ。復号すると ANY と等しい値。
   (val any-args (args-of (WriteShared "row/a" (OpaqueJson.of 1)) handles))
   (assert (= (get any-args "expect") (encode-value ANY) CURRENT-ANY) any-args)
   (assert (= (decode-value (get any-args "expect")) ANY))
@@ -204,7 +204,7 @@
 ;; 本番の記録(effect_records.effect_logs・2026-09-26〜10-01 の 1 run)の形を写し、値は伏せた: run の頭・内容参照の中身(blob)2 行・
 ;; WriteShared の call 4 行(旧い型の名 doeff_cluster.shared_model・値の $ref・ANY の旧い綴り {"$any": 1})。区切りの番号は置き場の属性
 ;; chunk を、記録係の書き手(MemorySink)と同じ _chunk の欄にした。名・URL・host・run の id・token は中立の値に替え、blob の h と $ref は
-;; 替えた中身から記録の規則(effect_codec.content-hash)で作り直した。run の頭は読みが使わない欄(factory・env・config など)を除いた。
+;; 替えた中身から記録の規則(record_codec.content-hash)で作り直した。run の頭は読みが使わない欄(factory・env・config など)を除いた。
 ;; 行の列(1 行 1 要素の JSON の配列 — 置き場の *.jsonl は repo の .gitignore が外すので配列にした)。
 (val PRODUCTION-FRAGMENT (/ (. (pathlib.Path __file__) parent) "fixtures" "write_shared_production_record.json"))
 
@@ -229,7 +229,7 @@
 
 ;; ---- 置き場を移した module の旧い型の名を読む(#2105・#2021 の決め 2a)-----------------------------------------
 (deftest test-a-type-name-written-before-the-move-resolves-to-the-type-in-its-new-place
-  (import doeff_cluster.shared.core.effect_codec [resolve-type type-name MOVED-MODULES])
+  (import doeff_cluster.foundation.record_codec [resolve-type type-name MOVED-MODULES])
   (import doeff_cluster.shared.intent.detached_model [SubmitDetached])
   (import doeff_cluster.shared.intent.runtime_env_model [RuntimeEnv])
   ;; 書くのは今の名だけ
@@ -243,15 +243,22 @@
   (assert (is (resolve-type "doeff_cluster.semaphore_model:HeldLease")
               (resolve-type "doeff_cluster.shared.intent.semaphore_model:HeldLease")))
   ;; 記録の綴りと記録の handler(#2108)— shared/core と foundation へ移した型も旧い名で引ける
-  (import doeff_cluster.shared.core.record_model [Entry])
-  (import doeff_cluster.shared.protocol.record_handlers [MemorySink])
+  (import doeff_cluster.foundation.record_log [Entry])
+  (import doeff_cluster.foundation.record_handlers [MemorySink])
   (assert (is (resolve-type "doeff_cluster.record_model:Entry") Entry))
   (assert (is (resolve-type "doeff_cluster.record_handlers:MemorySink") MemorySink))
   (assert (is (resolve-type "doeff_cluster.effect_codec:RecordedError")
               (resolve-type "doeff_cluster.shared.core.effect_codec:RecordedError")))
+  ;; foundation へ移した後(#2580)— shared/core と shared/protocol に在った間の記録の名も、今の置き場の同じ class を引く
+  (import doeff_cluster.foundation.record_codec [RecordedError])
+  (assert (= (type-name Entry) "doeff_cluster.foundation.record_log:Entry"))
+  (assert (is (resolve-type "doeff_cluster.shared.core.effect_codec:RecordedError") RecordedError))
+  (assert (is (resolve-type "doeff_cluster.effect_codec:RecordedError") RecordedError))
+  (assert (is (resolve-type "doeff_cluster.shared.core.record_model:Entry") Entry))
+  (assert (is (resolve-type "doeff_cluster.shared.protocol.record_handlers:MemorySink") MemorySink))
   ;; module の一部の型だけを移した物(#2025 — worker_model の JobSpec・JobPhase を shared/intent/job_model へ)も旧い名で引ける。
   ;; 引く先は表の名で決まる(worker_model が後で別の置き場へ移っても、旧い記録の JobSpec は job_model を引く)。
-  (import doeff_cluster.shared.core.effect_codec [MOVED-TYPES])
+  (import doeff_cluster.foundation.record_codec [MOVED-TYPES])
   (import doeff_cluster.shared.intent.job_model [JobSpec JobPhase])
   (assert (= (type-name JobSpec) "doeff_cluster.shared.intent.job_model:JobSpec"))
   (assert (is (resolve-type "doeff_cluster.worker_model:JobSpec") JobSpec))
@@ -274,7 +281,7 @@
   (assert (is (resolve-type "doeff_cluster.env_prepare:PrepareNote") PrepareNote))
   (assert (is (resolve-type "doeff_cluster.env_prepare:FileSha256") FileSha256))
   (assert (is (resolve-type "doeff_cluster.drain_client:CoordinatorCall") CoordinatorCall))
-  (assert (= (len MOVED-MODULES) 17)))
+  (assert (= (len MOVED-MODULES) 20)))
 
 
 ;; ---- 型の宣言(__record_spec__)で記録する(#2578)--------------------------------------------------------------
