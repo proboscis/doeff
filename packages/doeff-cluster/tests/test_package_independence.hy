@@ -16,8 +16,10 @@
 (setv FIXTURES (/ ROOT "tests" "fixtures" "independence"))
 ;; 標準 library 以外で許す最上位の名(doeff_ で始まる物は別に許す)。
 (setv ALLOWED-THIRD-PARTY (frozenset #("doeff" "hy" "httpx" "cloudpickle")))
-;; package 名を書かない検査の対象 = 実行環境の宣言と準備の code。
-(setv ENV-MODULES #("runtime_env_model.hy" "runtime_env.hy" "env_prepare.hy" "env_world.hy" "env_handlers.hy"))
+;; package 名を書かない検査の対象 = 実行環境の宣言と準備の code(src/doeff_cluster からの path — 移した時はここも直す。
+;; 無い path は検の赤にする: 移しで path が古くなると、検が黙ってその file を読まなくなるため)。
+(setv ENV-MODULES #("shared/intent/runtime_env_model.hy" "shared/core/runtime_env.hy" "env_prepare.hy" "sim/env_world.hy"
+                    "env_handlers.hy"))
 
 (setv HY-IMPORT (re.compile r"\((?:import|require)\s+([A-Za-z_.][A-Za-z0-9_.\-]*)"))
 (setv HY-IMPORT-LIST (re.compile r"\(import\s+\[([^\]]*)\]"))
@@ -64,6 +66,14 @@
   (tuple out))
 
 
+(defk sim-imports [path]
+  {:pre [(: path Path)] :post [(: % (get tuple str))]}
+  "file の中の、模擬の環境(doeff_cluster.sim — architecture.hy の :verification-environment)の import(\"<file>: <名>\")。"
+  (<- names tuple (imported-names (.read-text path :encoding "utf-8") path.suffix))
+  (tuple (lfor n names :if (or (= n "doeff_cluster.sim") (.startswith n "doeff_cluster.sim."))
+               (.format "{}: {}" path.name n))))
+
+
 (defk outside-dependencies [path]
   {:pre [(: path Path)] :post [(: % tuple)]}
   "pyproject.toml の依存のうち許可表の外の物。"
@@ -85,8 +95,9 @@
 
 (defk named-packages [path names]
   {:pre [(: path Path) (: names frozenset)] :post [(: % tuple)]}
-  "file の中の文字列のうち、package の名に等しい物。"
-  (tuple (lfor m (.finditer QUOTED (.read-text path :encoding "utf-8")) :if (in (.group m 1) names)
+  "file の中の文字列のうち、package の名に等しい物(doeff-linter の文脈の宣言 MODULE-TAGS の :context は package の名ではないので外して読む)。"
+  (val text (re.sub r"\(val MODULE-TAGS \{[^}]*\}\)" "" (.read-text path :encoding "utf-8")))
+  (tuple (lfor m (.finditer QUOTED text) :if (in (.group m 1) names)
                (.format "{}: {}" path.name (.group m 1)))))
 
 
@@ -98,11 +109,25 @@
   (assert (= deps #("numpy")) deps)
   (<- names frozenset (package-names))
   (<- named tuple (named-packages (/ FIXTURES "package_name.hy") names))
-  (assert (= named #("package_name.hy: doeff-vm")) named))
+  (assert (= named #("package_name.hy: doeff-vm")) named)
+  (<- sims tuple (sim-imports (/ FIXTURES "imports_sim.hy")))
+  (assert (= sims #("imports_sim.hy: doeff_cluster.sim.local")) sims))
+
+
+(deftest test-production-does-not-import-the-verification-environment
+  ;; 模擬の環境(sim/)は本番の coordinator と worker を読むが、本番の code は sim を読まない。
+  (val files (sorted (lfor f (.rglob SOURCE "*.hy") :if (not (in "sim" (. (.relative-to f SOURCE) parts))) f)))
+  (assert (> (len files) 30) "走査の母集団が空で緑にならない")
+  (var found [])
+  (for [f files]
+    (<- hits tuple (sim-imports f))
+    (.extend found hits))
+  (assert (not found) (.join "\n" found)))
 
 
 (deftest test-the-source-imports-only-allowed-names
-  (val files (sorted (+ (list (.glob SOURCE "*.hy")) (list (.glob SOURCE "*.py")))))
+  ;; 層の dir(shared/<層>・foundation・service/<層>・sim)の下まで読む — 直下だけでは、移しのたびに母集団が黙って減る。
+  (val files (sorted (+ (list (.rglob SOURCE "*.hy")) (list (.rglob SOURCE "*.py")))))
   (assert (> (len files) 30) "走査の母集団が空で緑にならない")
   (var outside [])
   (for [f files]
@@ -119,10 +144,10 @@
 (deftest test-the-environment-code-names-no-package
   (<- names frozenset (package-names))
   (assert (in "doeff-vm" names))
+  (val missing (lfor module ENV-MODULES :if (not (.is-file (/ SOURCE module))) module))
+  (assert (not missing) missing)
   (var named [])
   (for [module ENV-MODULES]
-    (val path (/ SOURCE module))
-    (when (.is-file path)
-      (<- found tuple (named-packages path names))
-      (.extend named found)))
+    (<- found tuple (named-packages (/ SOURCE module) names))
+    (.extend named found))
   (assert (not named) (.join "\n" named)))

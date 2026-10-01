@@ -11,7 +11,7 @@
 (import doeff_core_effects.scheduler [Spawn Task Wait])
 (import doeff_time [Delay])
 (import doeff_cluster.shared.core.clock [now-epoch-ms])
-(import doeff_cluster.local [sim-cluster SimWorker ProcessesOf KillWorker StartWorker ReadCoordinator])
+(import doeff_cluster.sim.local [sim-cluster SimWorker ProcessesOf KillWorker StartWorker ReadCoordinator])
 (import doeff_cluster.shared.intent.process_model [AwaitProcessEnded])
 (import doeff_cluster.shared.intent.remote_model [RemoteJob])
 (import doeff_cluster.shared.intent.detached_model [SubmitDetached AwaitDetached DetachedSucceeded])

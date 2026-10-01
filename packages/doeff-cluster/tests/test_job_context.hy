@@ -56,7 +56,7 @@
 
 (import doeff_cluster.handlers [ProcessHost])
 (import doeff_cluster.job_context [RunContext worker-context-environ context-of-environ])
-(import doeff_cluster.local [run-context-of SIM-URL])
+(import doeff_cluster.sim.local [run-context-of SIM-URL])
 (import doeff_cluster.worker_model [JobSpec])
 
 (val WORKER "w1")

@@ -24,7 +24,7 @@
                                       DetachedSucceeded DetachedLost DetachedUnrunnable DetachedPending DetachedUnreachable
                                       RunnerFact RunnersUnreachable])
 (import doeff_cluster.detached [detached-cluster DetachedClient])
-(import doeff_cluster.local [sim-cluster SimWorker KillWorker DrainWorker StopWorker StartWorker StopCoordinator ProcessesOf
+(import doeff_cluster.sim.local [sim-cluster SimWorker KillWorker DrainWorker StopWorker StartWorker StopCoordinator ProcessesOf
                              ReadCoordinator])
 (import doeff_cluster.shared.intent.service_model [system-of])
 (import tests.detached_rig [slow-add RigWorker MemoryCoordinator worker-tick worker-loop])

@@ -1,4 +1,4 @@
-;; 壁の時計の手元の runner wall-sim-cluster(doeff_cluster.local — #1086・#908)。
+;; 壁の時計の手元の runner wall-sim-cluster(doeff_cluster.sim.local — #1086・#908)。
 ;;
 ;; sim-cluster と同じ本物の coordinator と本物の run-worker(偽の宿)を、仮想の時計ではなく壁の時計(doeff-time の async-time-handler と
 ;; Await の答え手)で回す。検は本物の process の中の実時間で走り、1 本あたり数秒で終わる。
@@ -10,7 +10,7 @@
 (import doeff [with-handlers])
 (import doeff_time [sync-time-handler])
 (import doeff_cluster.shared.core.clock [now-epoch-ms])
-(import doeff_cluster.local [wall-sim-cluster])
+(import doeff_cluster.sim.local [wall-sim-cluster])
 (import tests.fixtures.envs [sim-foundation])
 (import tests.fixtures.wall_programs [wall-io-foundation submitters listeners rows-when-present talk-to-the-listener])
 

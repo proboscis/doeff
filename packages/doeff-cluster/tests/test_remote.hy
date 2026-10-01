@@ -18,7 +18,7 @@
 (import doeff_cluster.process_versions [current-versions])
 (import doeff_cluster.shared.intent.remote_model [program-sha])
 (import doeff_cluster.handlers [write-program-file])
-(import doeff_cluster.local [sim-cluster SharedRows ProcessesOf])
+(import doeff_cluster.sim.local [sim-cluster SharedRows ProcessesOf])
 (import tests.fixtures.envs [sim-foundation])
 (import tests.fixtures.sim_programs [delegating])
 (import tests.fixtures.services [self-contained-program holding-program bare-program])

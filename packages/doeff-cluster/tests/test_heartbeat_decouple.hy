@@ -10,8 +10,8 @@
 (import doeff_time [Delay])
 (import doeff_cluster.shared.core.clock [now-epoch-ms])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming])
-(import doeff_cluster.local :as local)
-(import doeff_cluster.local [sim-cluster SimWorker ReadCoordinator ProcessesOf Redeclare CutWorker FailRoute HostTruthOf HostTruth
+(import doeff_cluster.sim.local :as local)
+(import doeff_cluster.sim.local [sim-cluster SimWorker ReadCoordinator ProcessesOf Redeclare CutWorker FailRoute HostTruthOf HostTruth
                              WatchFailuresOf])
 (import doeff_cluster.beat_policy [WatchReading])
 (import doeff_cluster.shared.intent.detached_model [SubmitDetached AwaitDetached DetachedSucceeded DetachedLost])

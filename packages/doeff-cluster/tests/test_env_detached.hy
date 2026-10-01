@@ -20,7 +20,7 @@
 (import doeff_cluster.shared.intent.runtime_env_model [RuntimeEnv EnvFailure EnvFailureKind runtime-env->json env-key current-platform])
 (import doeff_cluster.shared.intent.detached_model [SubmitDetached AwaitDetached DetachedSucceeded DetachedEnvUnavailable
                                       DetachedVersionMismatch outcome-of-view])
-(import doeff_cluster.local [sim-cluster SimWorker SimLink ClientLink coordinator-answers ReadCoordinator ProcessesOf PreparationsOf])
+(import doeff_cluster.sim.local [sim-cluster SimWorker SimLink ClientLink coordinator-answers ReadCoordinator ProcessesOf PreparationsOf])
 (import doeff_cluster.shared.intent.service_model [system-of])
 (import doeff_cluster.shared.intent.remote_model [version-diffs VersionDiff VersionMismatch failed-from])
 (import doeff_cluster.shared.intent.detached_model [outcome-from-task-outcome])

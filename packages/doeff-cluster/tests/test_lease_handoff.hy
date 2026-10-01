@@ -13,7 +13,7 @@
 (import doeff_cluster.shared.core.semaphore_handlers [SemaphoreSession])
 (import doeff_cluster.shared.core.lease_rules [drop-holders lease-holder holder-tokens-prefix])
 (import doeff_cluster.worker_model [ReleaseLeases])
-(import doeff_cluster.local [sim-cluster Redeclare ProcessesOf SharedRows])
+(import doeff_cluster.sim.local [sim-cluster Redeclare ProcessesOf SharedRows])
 (import tests.fixtures.lease_programs [lease-sim-foundation lease-writers lease-writers-v2 HOLDER-ROW])
 
 ;; 担い手(cluster-semaphore の SemaphoreSession)の既定の TTL(秒)— 外しが効かなければ、新しい版はこの期限まで取れない。

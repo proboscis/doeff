@@ -1,4 +1,4 @@
-;; 手元の runner sim-cluster(doeff_cluster.local — ADR-DOE-CLUSTER-001・計画 2.6・10.2・段 5)。
+;; 手元の runner sim-cluster(doeff_cluster.sim.local — ADR-DOE-CLUSTER-001・計画 2.6・10.2・段 5)。
 ;;
 ;; sim の土台(tests.fixtures.envs の sim-foundation)で作った系の値を、本物の coordinator(emulated-handlers)と本物の run-worker(偽の宿)の
 ;; 上で、仮想の時計で走らせる。検の筋書き(scenario)は同じ scheduler・同じ時計で並んで走り、検の effect(Crash・Redeclare・ReportsOf・
@@ -15,7 +15,7 @@
 (import doeff_cluster.job_context [RunContext])
 (import doeff_cluster.shared.intent.remote_model [UnsendableProgram TaskFailed decode-outcome])
 (import doeff_cluster.worker_model [JobSpec])
-(import doeff_cluster.local [sim-cluster sim-process SimChild SimLink EndProcess SimWorker SimProcess SimReport SimReadiness
+(import doeff_cluster.sim.local [sim-cluster sim-process SimChild SimLink EndProcess SimWorker SimProcess SimReport SimReadiness
                              SimCoordinatorRun Crash Redeclare ReportsOf ReadinessOf ProcessesOf SharedRows ReadCoordinator
                              StopCoordinator CrashCoordinator CoordinatorRuns KillWorker StopWorker StartWorker CutWorker DrainWorker])
 (import doeff_cluster.shared.intent.service_model [System CallShape job system-of])

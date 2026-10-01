@@ -20,7 +20,7 @@
 (import doeff_cluster.shared.core.runtime_env [runtime-env-of-checkouts checked-declaring-checkout])
 (import doeff_cluster.shared.intent.runtime_env_model [RepoCheckout RuntimeEnv RuntimeEnvInvalid InvalidKind])
 (import doeff_cluster.env_prepare [FileSha256])
-(import doeff_cluster.checkout_git_script [GitCheckout GitRemote GitRev git-command])
+(import doeff_cluster.sim.checkout_git_script [GitCheckout GitRemote GitRev git-command])
 (import doeff_core_effects.process_effects [ProcessOutcome RunProcess])
 
 (val LOCK "httpx==0.28.1\n")
