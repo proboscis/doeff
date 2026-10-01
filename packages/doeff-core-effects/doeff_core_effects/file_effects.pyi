@@ -53,6 +53,11 @@ class LockHeld:
     token: int
 
 @dataclass(frozen=True, kw_only=True)
+class SourceNotCompiled:
+    path: str
+    reason: str
+
+@dataclass(frozen=True, kw_only=True)
 class DiskUsage:
     total: int
     free: int
@@ -112,6 +117,13 @@ class WalkTree(EffectBase[tuple[DirEntry, ...] | FileFailed]):
 class CopyFile(EffectBase[FileFailed | None]):
     source: str
     target: str
+
+@dataclass(frozen=True)
+class CompilePythonSources(EffectBase[tuple[SourceNotCompiled, ...]]):
+    tree: str
+    items: tuple[tuple[str, str], ...]
+    jobs: int = 1
+    roots: tuple[str, ...] = (".",)
 
 @dataclass(frozen=True)
 class LinkFile(EffectBase[FileFailed | None]):

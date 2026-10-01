@@ -16,7 +16,8 @@
 (import doeff [EffectBase])
 (import doeff_core_effects.file_effects [FileFailed PathStat LockHeld StatPath ReadText ReadBytes WriteText WriteBytes AppendText
                                          MakeDirectory ListDirectory WalkTree CopyFile CopyTree RenamePath RemoveTree AcquireLock
-                                         ReleaseLock ReadDiskFree DiskUsage ReadDiskUsage MeasureTree LinkFile])
+                                         ReleaseLock ReadDiskFree DiskUsage ReadDiskUsage MeasureTree LinkFile
+                                         CompilePythonSources])
 
 ;; path 1 つを持つ effect と、写し元と写し先の 2 つを持つ effect。
 (val PATH-EFFECTS #(StatPath ReadText ReadBytes WriteText WriteBytes AppendText MakeDirectory ListDirectory WalkTree RemoveTree
@@ -82,6 +83,11 @@
     (resume answer))
   (LinkFile [source target]
     (<- answer (moved root effect))
+    (resume answer))
+  (CompilePythonSources [tree items jobs roots]
+    ;; 答えは木の中の相対 path なので、木の path だけを外側へ写す。
+    (<- outer str (outer-path root tree))
+    (<- answer (CompilePythonSources outer items jobs roots))
     (resume answer))
   (CopyTree [source target]
     (<- answer (moved root effect))

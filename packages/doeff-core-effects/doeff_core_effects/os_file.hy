@@ -10,7 +10,9 @@
 (import pathlib [Path])
 (import doeff_core_effects.file_effects [PathKind FileFailed PathStat DirEntry LockHeld DiskUsage StatPath ReadText ReadBytes WriteText WriteBytes
                                          AppendText MakeDirectory ListDirectory WalkTree CopyFile CopyTree RenamePath RemoveTree
-                                         AcquireLock ReleaseLock ReadDiskFree ReadDiskUsage MeasureTree LinkFile])
+                                         AcquireLock ReleaseLock ReadDiskFree ReadDiskUsage MeasureTree LinkFile
+                                         CompilePythonSources])
+(import doeff_core_effects.python_bytecode [compile-python-sources])
 
 
 (defk failed [path error]
@@ -252,6 +254,8 @@
   (LinkFile [source target]
     (<- answer (guarded source (fn [] (os.link source target))))
     (resume answer))
+  (CompilePythonSources [tree items jobs roots]
+    (resume (compile-python-sources tree items jobs roots)))
   (CopyTree [source target]
     (<- answer (guarded source (fn [] (shutil.copytree source target :symlinks True :dirs-exist-ok True))))
     (resume answer))

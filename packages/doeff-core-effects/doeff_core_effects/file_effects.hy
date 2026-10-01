@@ -17,6 +17,9 @@
 ;;;   ListDirectory  dir の直下。答え = DirEntry の tuple(名の順)
 ;;;   WalkTree       dir の下の全部(再帰)。答え = DirEntry の tuple(name = dir からの相対 path・/ 区切り・並べた順)
 ;;;   CopyFile       file 1 つを写す(写し先は上書き)。答え = None
+;;;   CompilePythonSources  木の source(#(相対 path module 名) の列)を import が検める方式(PEP 552 の checked hash)の .pyc に焼いて
+;;;                  __pycache__ へ置く(本物は jobs 個の process で並列・roots = 焼く間の import の根 — #2463)。答え = 焼けなかった物の
+;;;                  SourceNotCompiled の tuple
 ;;;   LinkFile       file 1 つにもう 1 つの名を付ける(ハードリンク — 写し先が在れば断る・別の file system へは断る・#2462)。答え = None
 ;;;   CopyTree       dir の中身を target の下へ重ねて写す(target は在ってよい・同じ名は上書き・symlink は symlink のまま)。答え = None
 ;;;   RenamePath     path の名を変える(os.replace と同じ — 写し先の file は置き換え・中身の在る dir へは断る)。答え = None
@@ -63,6 +66,12 @@
   "file system の総量と空き(byte — ReadDiskUsage の答え)。"
   (#^ int total)
   (#^ int free))
+
+
+(defrecord SourceNotCompiled
+  "焼けなかった source 1 つ(path = 木の中の相対 path・reason = 理由 — 例外の型と文)。import の時に同じ誤りが出るので、焼きの失敗にはしない。"
+  (#^ str path)
+  (#^ str reason))
 
 
 (defrecord LockHeld
@@ -133,6 +142,14 @@
   "file の中身を写す(頭の註)。"
   (#^ str source)
   (#^ str target))
+
+
+(defclass [(dataclass :frozen True)] CompilePythonSources [EffectBase]
+  "木の source を .pyc に焼く(頭の註)。"
+  (#^ str tree)
+  (#^ tuple items)
+  (setv #^ int jobs 1)
+  (setv #^ tuple roots #(".")))
 
 
 (defclass [(dataclass :frozen True)] LinkFile [EffectBase]

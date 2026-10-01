@@ -14,7 +14,8 @@
 (import doeff_core_effects.file_effects [PathKind FileFailed PathStat DirEntry LockHeld MemoryFile MemoryFiles ReadMemoryFiles StatPath
                                          ReadText ReadBytes WriteText WriteBytes AppendText MakeDirectory ListDirectory WalkTree CopyFile
                                          CopyTree RenamePath RemoveTree AcquireLock ReleaseLock ReadDiskFree DiskUsage ReadDiskUsage
-                                         MeasureTree LinkFile])
+                                         MeasureTree LinkFile CompilePythonSources SourceNotCompiled])
+(import doeff_core_effects.python_bytecode [compiled-pyc pyc-path])
 
 ;; 置き場の根と、断りの文(OSError の文と同じ形)。
 (val ROOT "/")
@@ -123,6 +124,32 @@
       (do (<- content (content-of store source))
           (<- linked (with-file store target content None))
           linked)))
+
+
+(defk compile-in-store [store tree items]
+  {:pre [(: store MemoryFiles) (: tree str) (: items tuple)] :post [(: % tuple)]}
+  "木の source を逐次に焼いて __pycache__ へ置いた置き場と、焼けなかった物の SourceNotCompiled の tuple を返すため(答え = #(置き場 失敗))。
+   焼きの判断は本物と同じ compiled-pyc。Hy の source は焼けない(doeff-hy は disk に在る file かで Hy の source を見分けるので、memory の
+   source は Python として読まれ、SyntaxError の失敗になる)。"
+  (var current store)
+  (var failures #())
+  (for [#(rel name) items]
+    (val source (posixpath.join tree rel))
+    (<- content (content-of current source))
+    (if (isinstance content FileFailed)
+        (:= failures (+ failures #((SourceNotCompiled :path rel :reason content.detail))))
+        (do (<- compiled (compiled-pyc rel name source content))
+            (if (isinstance compiled SourceNotCompiled)
+                (:= failures (+ failures #(compiled)))
+                (do (val cache (pyc-path source))
+                    (<- dirs (with-dirs current (posixpath.dirname cache)))
+                    (if (isinstance dirs FileFailed)
+                        (:= failures (+ failures #((SourceNotCompiled :path rel :reason dirs.detail))))
+                        (do (<- written (with-file dirs cache compiled None))
+                            (if (isinstance written FileFailed)
+                                (:= failures (+ failures #((SourceNotCompiled :path rel :reason written.detail))))
+                                (:= current written)))))))))
+  #(current failures))
 
 
 (defk content-of [store path]
@@ -315,6 +342,11 @@
         (resume content)
         (do (<- answer (with-file store to content None))
             (if (isinstance answer FileFailed) (resume answer) (do (:= store answer) (resume None))))))
+  (CompilePythonSources [tree items jobs roots]
+    (<- at str (normal tree))
+    (<- compiled tuple (compile-in-store store at items))
+    (:= store (get compiled 0))
+    (resume (get compiled 1)))
   (LinkFile [source target]
     (<- from str (normal source))
     (<- to str (normal target))

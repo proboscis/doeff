@@ -17,7 +17,9 @@
 (import doeff_core_effects.process_effects [EnvEntry ProcessOutcome RunProcess ExecutableAt WorkingDirectory])
 (import doeff_core_effects.file_effects [PathKind FileFailed PathStat DirEntry LockHeld MemoryFile MemoryFiles ReadMemoryFiles StatPath ReadDiskFree
                                          ReadText ReadBytes WriteText WriteBytes AppendText MakeDirectory ListDirectory WalkTree CopyFile
-                                         CopyTree RenamePath RemoveTree AcquireLock ReleaseLock DiskUsage ReadDiskUsage MeasureTree LinkFile])
+                                         CopyTree RenamePath RemoveTree AcquireLock ReleaseLock DiskUsage ReadDiskUsage MeasureTree LinkFile
+                                         CompilePythonSources])
+(import doeff_core_effects.python_bytecode [pyc-path])
 (import doeff_core_effects.os_process [subprocess-handler])
 (import doeff_core_effects.os_file [os-file-handler])
 (import doeff_core_effects.memory_file [memory-file-handler])
@@ -309,3 +311,36 @@
   (assert (in "File exists" (get real 2 1)) real)
   (assert (in "No such file" (get real 3 1)) real)
   (assert (in "No such file" (get real 5 1)) real))
+
+
+(defk compile-journey [root]
+  {:pre [(: root str)] :post [(: % tuple)] :tags {:context "file-system" :role "program"}}
+  "Python の source 2 つ(焼ける物と SyntaxError の物)と無い source を焼き(#2463)、失敗の列と焼いた .pyc の中身を返す筋。"
+  (<- (MakeDirectory (+ root "/c/pkg")))
+  (<- (WriteText (+ root "/c/pkg/ok.py") "ANSWER = 42\n"))
+  (<- (WriteText (+ root "/c/pkg/bad.py") "def broken(:\n"))
+  (<- failures (CompilePythonSources (+ root "/c") #(#("pkg/ok.py" "pkg.ok") #("pkg/bad.py" "pkg.bad") #("pkg/none.py" "pkg.none"))))
+  (<- pyc (ReadBytes (+ root "/c/" (pyc-path "pkg/ok.py"))))
+  (<- broken (StatPath (+ root "/c/" (pyc-path "pkg/bad.py"))))
+  #((lfor f failures f.path) (lfor f failures (get (.split f.reason ":") 0)) pyc broken.kind))
+
+
+(defn test-compile-python-sources-answers-the-same-on-the-real-and-memory-file-systems []
+  (import importlib.util)
+  (with [tmp (tempfile.TemporaryDirectory)]
+    (setv root (os.path.realpath tmp))
+    (setv real (on [os-file-handler] (compile-journey root)))
+    ;; 本物の並列(jobs 2)も同じ答え。
+    (setv parallel (on [os-file-handler] (CompilePythonSources (+ root "/c") #(#("pkg/ok.py" "pkg.ok") #("pkg/bad.py" "pkg.bad")) :jobs 2))))
+  (setv memory (on [(state) (memory-file-handler (MemoryFiles :dirs #("/m")))] (compile-journey "/m")))
+  ;; .pyc の中の code は source の path を持つので、中身の比べは頭(magic・flags・source の hash)まで。
+  (assert (= #((get real 0) (get real 1) (cut (get real 2) 0 16) (get real 3))
+             #((get memory 0) (get memory 1) (cut (get memory 2) 0 16) (get memory 3)))
+          #(real memory))
+  (assert (= (get real 0) ["pkg/bad.py" "pkg/none.py"]) real)
+  (assert (= (get real 1) ["SyntaxError" "[Errno 2] No such file or directory"]) real)
+  ;; checked hash の .pyc(PEP 552 — flags 0b11)。
+  (assert (= (cut (get real 2) 0 4) importlib.util.MAGIC-NUMBER) real)
+  (assert (= (int.from-bytes (cut (get real 2) 4 8) "little") 0b11) real)
+  (assert (= (get real 3) PathKind.MISSING) real)
+  (assert (= (lfor f parallel f.path) ["pkg/bad.py"]) parallel))
