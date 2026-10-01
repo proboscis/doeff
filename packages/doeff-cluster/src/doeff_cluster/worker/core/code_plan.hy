@@ -61,10 +61,13 @@
 
 
 (defn #^ list compile-plan [#^ list sources #^ frozenset pycs #^ tuple [roots DEFAULT-IMPORT-ROOTS]]
-  "焼く物 = (相対 path module 名) の列。.pyc が既に在る物と、import の根の外の物は除く。"
+  "焼く物 = (相対 path module 名) の列。import の根の外の物と、.pyc が既に在る Python の source は除く。Hy の source は .pyc が在っても
+   焼く物に入れる — 前の木から引き継いだ .pyc の展開が依った macro は今の木で変わりうるので、焼く所(doeff-core-effects の
+   compile-python-sources)が今の macro と照らし、合う物は焼き直さずに残し、合わない物を焼き直す(#2598 — ここで除くと、
+   macro の変わった版の初回の import が引き継いだ Hy の module を全部 compile し直す)。"
   (lfor source sources
         :setv name (module-name source roots)
-        :if (and (is-not name None) (not-in (cache-rel source) pycs))
+        :if (and (is-not name None) (or (.endswith source ".hy") (not-in (cache-rel source) pycs)))
         #(source name)))
 
 
