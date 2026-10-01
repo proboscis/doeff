@@ -22,6 +22,7 @@ runtime_env_model.pyi と同じ形)。
 RunContext・shared/intent/protocol の PlainText・ClusterTiming ほか)の型は、import すると Unknown に引きずられるので、この module が
 読む欄だけを Protocol(_RequestQueueView ほか)で書く — 実物はその欄の形でこれを満たす。それらの module に宣言を置いたら実物の型へ
 置き換える。読まずに運ぶだけの値(heartbeat の答え・HostTruth の process の観測など)は object と書く。
+job_model の JobSpec と worker_model の WorkerPolicy は宣言(job_model.pyi・worker_model.pyi — #2435)が付いたので実物の型で書く。
 """
 
 from collections.abc import Callable, Mapping
@@ -29,8 +30,10 @@ from collections.abc import Set as AbstractSet
 from dataclasses import dataclass
 from typing import Protocol, TypeVar
 
+from doeff_cluster.shared.intent.job_model import JobSpec
 from doeff_cluster.shared.intent.runtime_env_model import EnvFailure, RuntimeEnv
 from doeff_cluster.shared.intent.service_model import System
+from doeff_cluster.worker.intent.worker_model import WorkerPolicy
 from doeff_core_effects.scheduler import Promise
 from doeff_hy.json_value import JsonValue
 from doeff_vm import WithHandler
@@ -64,27 +67,11 @@ class _RunContextView(Protocol):
     @property
     def instance(self) -> str: ...
 
-class _JobSpecView(Protocol):
-    """起こす process の spec(job_model.JobSpec)の、sim が読む欄。"""
-
-    @property
-    def name(self) -> str: ...
-    @property
-    def once(self) -> bool: ...
-    @property
-    def program(self) -> str | None: ...
-
 class _ClusterTimingView(Protocol):
     """coordinator と worker の時間の設定(protocol.ClusterTiming)の、sim が読む欄。"""
 
     @property
     def fence_ms(self) -> int: ...
-
-class _WorkerPolicyView(Protocol):
-    """worker の判断の設定(worker_model.WorkerPolicy)の、sim が運ぶ欄の代表。"""
-
-    @property
-    def stop_grace_ms(self) -> int: ...
 
 class _PlainTextView(Protocol):
     """JSON でない返事の本文(protocol.PlainText — GET /metrics の text)。"""
@@ -416,7 +403,7 @@ class EndProcess(EffectBase[None]):
 def coordinator_answers(link: SimLink) -> _Handler: ...
 def host_answers(child: SimChild) -> _Handler: ...
 def run_context_of(
-    worker: str, spec: _JobSpecView, attempt: int, instance: str
+    worker: str, spec: JobSpec, attempt: int, instance: str
 ) -> Program[_RunContextView, object]: ...
 def send_request(
     link: SimLink, method: str, path: str, query: dict[str, str], body: dict[str, JsonValue] | None
@@ -425,7 +412,7 @@ def process_outside(
     per_process: Callable[[str, str], ProcessOutside] | None, job: str, worker: str
 ) -> Program[ProcessOutside, object]: ...
 def sim_process(
-    worker: str, spec: _JobSpecView, child: SimChild, blob: str | None
+    worker: str, spec: JobSpec, child: SimChild, blob: str | None
 ) -> Program[None, object]: ...
 def ended_process(log: tuple[SimProcess, ...], job: str) -> Program[SimProcess | None, object]: ...
 def heartbeat(worker: SimWorker, boot: str) -> Program[object, object]: ...
@@ -444,7 +431,7 @@ def sim_cluster(
     revision: str = "sim",
     start_ms: int = ...,
     timing: _ClusterTimingView | None = None,
-    policy: _WorkerPolicyView | None = None,
+    policy: WorkerPolicy | None = None,
     outside: SimOutside | None = None,
     store: Callable[[], _WalStoreView] | None = None,
     deployments: dict[str, dict[str, int]] | None = None,
@@ -459,7 +446,7 @@ def wall_sim_cluster(
     environ: dict[str, dict[str, str]] | None = None,
     revision: str = "sim",
     timing: _ClusterTimingView | None = None,
-    policy: _WorkerPolicyView | None = None,
+    policy: WorkerPolicy | None = None,
     outside: SimOutside | None = None,
     store: Callable[[], _WalStoreView] | None = None,
     deployments: dict[str, dict[str, int]] | None = None,
