@@ -9,16 +9,18 @@
 ;;;   持てば ReportReady の直近の報告の両方で決める。
 ;;; - 版の判定: Service の指定の版が実際に仕事をしているか(version-state — 5 値・status.version)。running-process・入れ替えの見張り・
 ;;;   停止の述語(service-stopped — Rollout の相手の観測 api_policy.target-view と共有)を呼んで組み立てる。
+(require doeff-hy.macros [val])
+(val MODULE-TAGS {:context "coordinator" :role "judgment"})
 (import dataclasses [replace])
 (import json)
 (import typing [NoReturn])
-(import .cluster_model [ClusterJob ClusterState ClusterTiming Placement HandoffPhase UnplacedKind NotReadyKind VersionState VersionVerdict
+(import doeff_cluster.cluster_model [ClusterJob ClusterState ClusterTiming Placement HandoffPhase UnplacedKind NotReadyKind VersionState VersionVerdict
                         LiveProcess BodyInvalid required-field int-field])
-(import .worker_model [spec-hash JobPhase])
-(import .cluster_policy [job-from-json job-to-json alive still-live-somewhere service-rows unplaced-kind unplaced-text task-summary])
-(import .rollout_policy [validate-rollout-spec rollout-targets target-key TERMINAL-PHASES])
+(import doeff_cluster.worker_model [spec-hash JobPhase])
+(import doeff_cluster.coordinator.core.cluster_policy [job-from-json job-to-json alive still-live-somewhere service-rows unplaced-kind unplaced-text task-summary])
+(import doeff_cluster.rollout_policy [validate-rollout-spec rollout-targets target-key TERMINAL-PHASES])
 (import doeff [run])
-(import .readiness_model [handoff-timeout-ms reported-readiness])
+(import doeff_cluster.readiness_model [handoff-timeout-ms reported-readiness])
 
 (setv LEGACY-OWNER "legacy:jobs")        ; 旧い PUT /jobs の頃からの宣言の所有者(誰でも 1 度だけ引き取れる)
 (setv COORDINATOR "coordinator")          ; 調停(割り当て・task の置き先)の送り手

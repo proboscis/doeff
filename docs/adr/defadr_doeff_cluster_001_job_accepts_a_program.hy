@@ -81,7 +81,7 @@
        :evidence "Claude Code の会話(2026-09-27・agora-redesign #829)— coordinator 経由")
      (fact
        "今の置き場所の指定は :requires(鍵と値の組)で、coordinator が worker のラベルと 1 つずつ等しいかを照らす(labels-satisfy)。書かれている値は置き場所の名前で、doeff-cluster の例と検は {\"kind\" \"k3s\"}、agora は {\"role\" \"agent-exp\"}(実験用の namespace の印)。"
-       :evidence "packages/doeff-cluster/src/doeff_cluster/cluster_policy.hy(labels-satisfy)・service_model.hy の頭の註(:requires {\"kind\" \"k3s\"})・packages/doeff-cluster/tests/test_detached.hy・agora-controllers controllers/runtime_env/declare.hy と controllers/agora_sim/tests/test_emulated_runtime_env_sender.hy(Requirement \"role\" \"agent-exp\")")
+       :evidence "packages/doeff-cluster/src/doeff_cluster/coordinator/core/cluster_policy.hy(labels-satisfy)・service_model.hy の頭の註(:requires {\"kind\" \"k3s\"})・packages/doeff-cluster/tests/test_detached.hy・agora-controllers controllers/runtime_env/declare.hy と controllers/agora_sim/tests/test_emulated_runtime_env_sender.hy(Requirement \"role\" \"agent-exp\")")
      (fact
        "operator 裁定 2026-09-27(移行・逐語 2 つ): \"i dont think we want old declarations accepted at all.\" / \"it just makes everything confusing so\""
        :evidence "Claude Code の会話(2026-09-27・agora-redesign #833)— coordinator 経由")

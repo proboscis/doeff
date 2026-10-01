@@ -11,11 +11,11 @@
 (import tests.clock_fixtures [clock-ms])
 (import doeff_cluster.cluster_model [ClusterTiming ClusterNaming ClusterState Request NextRequests Reply Persist CoordinatorStopRequested CoordinatorFault])
 (import doeff_cluster.coordinator_inbox [http-request])
-(import doeff_cluster.cluster_policy [reconcile state-to-json state-from-json job-from-json identity-hash])
+(import doeff_cluster.coordinator.core.cluster_policy [reconcile state-to-json state-from-json job-from-json identity-hash])
 (import tests.program_rows [SAMPLE-RUN SAMPLE-PROGRAM SAMPLE-TASK-PROGRAM program-placed])
 (import doeff [run])
-(import doeff_cluster.api_policy [respond])
-(import doeff_cluster.coordinator [run-coordinator])
+(import doeff_cluster.coordinator.core.api_policy [respond])
+(import doeff_cluster.coordinator.core.program [run-coordinator])
 (import doeff_cluster.wal_store [WalStore])
 (import doeff_cluster.durable_kv [LEGACY-PLACEMENT PLACEMENT])
 
@@ -216,9 +216,9 @@
   ;; 反例(#1024 — #1005 の形): 状態の書きの印(stamp)の中で TypeError が上がる。送り手の誤りの 400 に畳まず 500 で返し、
   ;; log の 1 行(CoordinatorFault)に要求の path・例外の型・上がった所が出る。同じまとまりの送り手の誤り(object でない本文)は 400 のまま。
   ;; 偽の stamp は worker w の名乗りの書きでだけ上げる(毎拍の調停 tick も stamp を通るので、他は本物に渡す)。
-  (import doeff_cluster.api_policy)
-  (val real-stamp doeff_cluster.api_policy.stamp)
-  (monkeypatch.setattr doeff_cluster.api_policy "stamp"
+  (import doeff_cluster.coordinator.core.api_policy)
+  (val real-stamp doeff_cluster.coordinator.core.api_policy.stamp)
+  (monkeypatch.setattr doeff_cluster.coordinator.core.api_policy "stamp"
                        (fn [before after actor #* rest]
                          (if (= actor "w")
                              (raise (TypeError "stamp の引数が合わない(偽の欠陥)"))
@@ -322,7 +322,7 @@
   (import json)
   (import tempfile)
   (import pathlib [Path])
-  (import doeff_cluster.coordinator [load-state])
+  (import doeff_cluster.coordinator.entry.main [load-state])
   (setv d (tempfile.mkdtemp))
   (legacy-store d)
   (setv state (load-state (str (/ (Path d) "absent.json")) (WalStore d) 5000))

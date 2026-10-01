@@ -255,7 +255,7 @@
 (import threading)
 (import urllib.parse [urlsplit parse-qsl])
 (import doeff_cluster.cluster_model [PlainText])
-(import doeff_cluster.coordinator [RequestInbox ReplySlot])
+(import doeff_cluster.coordinator_inbox [RequestInbox ReplySlot])
 (import doeff_cluster.coordinator_inbox [http-request])
 
 ;; 1 要求の本文の上限。記録係は 1 回の送りを 4 MB で区切る(HttpSink の max-post-bytes)ので、これを超えるのは 1 行が巨大な時だけ。
