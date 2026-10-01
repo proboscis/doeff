@@ -20,7 +20,7 @@
 (import doeff_cluster.shared.core.clock [now-epoch-ms])
 (import doeff_cluster.shared.intent.runtime_env_model [RuntimeEnv])
 (import doeff_cluster.shared.core.runtime_env_rules [runtime-env->json runtime-env-of-json env-key current-platform])
-(import doeff_cluster.shared.intent.detached_model [SubmitDetached AwaitDetached DetachedSucceeded])
+(import doeff_cluster.shared.intent.detached_model [AwaitDetached DetachedSucceeded])
 (import httpx)
 (import doeff_cluster.shared.protocol.detached [warm-cluster])
 (import doeff_time [SimClock sim-time-handler])
@@ -28,8 +28,8 @@
 (import doeff_cluster.sim.local [sim-cluster SimWorker SimLink ClientLink coordinator-answers ReadCoordinator ProcessesOf PreparationsOf
                              FailRoute])
 (import doeff_cluster.shared.entry.service_build [system-of])
-(import doeff_cluster.shared.intent.warm_model [WarmRuntimeEnv ReadWarmState WarmState WarmUnreachable WarmAnswer])
-(import doeff_cluster.shared.core.warm_rules [warm-key warm-state-of-json])
+(import doeff_cluster.shared.intent.warm_model [ReadWarmState WarmState WarmUnreachable WarmAnswer])
+(import doeff_cluster.shared.core.warm_rules [warm-key warm-state-of-json warm-runtime-env])
 (import doeff_cluster.worker.core.env_upkeep [RootInfo PrepareLimits sweep-choice prepare-overdue env-capacity])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming Request PlainText])
 (import doeff_cluster.coordinator.intent.cluster_model [ClusterState TaskRecord WorkerInfo ComponentVersion])
@@ -42,6 +42,7 @@
 (import doeff_cluster.worker.core.policy [plan pinned-env-keys])
 (import doeff_cluster.worker.protocol.declared [task-spec])
 (import doeff_cluster.code_prepare [cpu-limit-of])
+(import doeff_cluster.shared.core.detached_rules [submit-detached-task])
 (import tests.env_fixtures [LOCK env-of])
 (import tests.detached_rig [slow-add])
 (import tests.program_rows [SAMPLE-TASK-PROGRAM program-placed heartbeat-of])
@@ -82,7 +83,7 @@
   (<- link SimLink (ClientLink))
   (<- sent int (now-epoch-ms))
   (<- outcome (with-handlers [(coordinator-answers (replace link :runtime-env env))]
-                (do! (<- (SubmitDetached (slow-add 0.0 n) :needs (frozenset ["local"]) :key key))
+                (do! (<- (submit-detached-task (slow-add 0.0 n) :needs (frozenset ["local"]) :key key))
                      (<- awaited (AwaitDetached key))
                      awaited)))
   (assert (= outcome (DetachedSucceeded (+ 100 n))) outcome)
@@ -100,7 +101,7 @@
   {:pre [] :post [(: % Measured)] :tags {:context "doeff-cluster-test" :role "program"}}
   "送る前に温め、準備済みになってから送る。"
   (<- env RuntimeEnv (env-of "app-1" "lib-1" LOCK))
-  (<- first WarmState (WarmRuntimeEnv env (frozenset ["local"]) 600.0 "tests"))
+  (<- first WarmState (warm-runtime-env env (frozenset ["local"]) 600.0 "tests"))
   (<- expected str (warm-key env #("local")))
   (assert (= first.key expected) first)
   (var current first)
@@ -246,7 +247,7 @@
 (defk warm-and-read [env]
   {:pre [(: env RuntimeEnv)] :post [(: % tuple)]}
   "温める頼みと行の読みを 1 回ずつ出し、2 つの答えを返す。"
-  (<- written WarmAnswer (WarmRuntimeEnv env (frozenset ["local"]) 600.0 "tests"))
+  (<- written WarmAnswer (warm-runtime-env env (frozenset ["local"]) 600.0 "tests"))
   (<- key str (warm-key env #("local")))
   (<- read WarmAnswer (ReadWarmState key))
   #(written read))
@@ -282,11 +283,11 @@
    #(故障の間の頼みの答え 行の読み 明けた後の頼みの答え)。"
   (<- env RuntimeEnv (env-of "app-1" "lib-1" LOCK))
   (<- (FailRoute "POST" "/warm" 503 FAULT-SECONDS))
-  (<- failed WarmAnswer (WarmRuntimeEnv env (frozenset ["local"]) 600.0 "tests"))
+  (<- failed WarmAnswer (warm-runtime-env env (frozenset ["local"]) 600.0 "tests"))
   (<- key str (warm-key env #("local")))
   (<- absent WarmAnswer (ReadWarmState key))
   (<- (Delay (+ FAULT-SECONDS 1.0)))
-  (<- again WarmAnswer (WarmRuntimeEnv env (frozenset ["local"]) 600.0 "tests"))
+  (<- again WarmAnswer (warm-runtime-env env (frozenset ["local"]) 600.0 "tests"))
   #(failed absent again))
 
 (deftest test-a-failed-warm-route-answers-unreachable-and-writes-no-row

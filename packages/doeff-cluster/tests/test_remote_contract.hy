@@ -18,9 +18,10 @@
 (import doeff_core_effects.handlers [reader])
 (import doeff_core_effects.scheduler [Spawn Wait Cancel Task TaskCancelledError])
 (import doeff_time [Delay])
-(import doeff_cluster.shared.intent.remote_model [RemoteJob UnsendableProgram])
+(import doeff_cluster.shared.intent.remote_model [UnsendableProgram])
 (import doeff_cluster.shared.intent.runtime_env_model [RuntimeEnv])
 (import doeff_cluster.shared.core.runtime_env_rules [runtime-env->json])
+(import doeff_cluster.shared.core.remote_rules [remote-job])
 (import tests.coordinator_contract_handlers [TasksSeen TaskSeen contract-env])
 (import tests.detached_rig [slow-add RIG-PROVIDES])
 (import tests.fixtures.entry_programs [answer-base based-add boom-program environ-read])
@@ -35,7 +36,7 @@
 
 (deftest test-the-answer-of-the-task-comes-back
   {:interpreters ["remote-cluster" "sim-cluster"]}
-  (<- value int (RemoteJob (based-add 5) :needs LOCAL :name NAME))
+  (<- value int (remote-job (based-add 5) :needs LOCAL :name NAME))
   (assert (= value 105) value))
 
 
@@ -43,7 +44,7 @@
   {:interpreters ["remote-cluster" "sim-cluster"]}
   (var caught None)
   (try
-    (<- (RemoteJob (boom-program) :needs LOCAL :name NAME))
+    (<- (remote-job (boom-program) :needs LOCAL :name NAME))
     (except [error ValueError]
       (:= caught error)))
   (assert (isinstance caught ValueError) caught)
@@ -56,7 +57,7 @@
   ;; (呼び手の handler を継げば黙って 1 + 1 = 2 と答える)。
   (var failure None)
   (try
-    (<- answered (with-handlers [(reader {"base" 1})] (RemoteJob (bare-program 1) :needs LOCAL :name NAME)))
+    (<- answered (with-handlers [(reader {"base" 1})] (remote-job (bare-program 1) :needs LOCAL :name NAME)))
     (:= failure (.format "呼び手の reader が task に届いた: {}" answered))
     (except [error Exception]
       (:= failure error)))
@@ -77,7 +78,7 @@
 
 (deftest test-the-sent-task-sits-on-the-coordinator-in-the-same-shape-and-leaves-when-done
   {:interpreters ["remote-cluster" "sim-cluster"]}
-  (<- task Task (Spawn (RemoteJob (slow-add RUN-SECONDS 1) :needs LOCAL :name NAME :environ {"GREETING" "hi" "A" "1"})))
+  (<- task Task (Spawn (remote-job (slow-add RUN-SECONDS 1) :needs LOCAL :name NAME :environ {"GREETING" "hi" "A" "1"})))
   (<- seen tuple (observe-running-task task))
   (val running (get seen 0))
   (val value (get seen 1))
@@ -92,7 +93,7 @@
 (deftest test-the-environ-reaches-the-task-as-the-literal-value
   {:interpreters ["remote-cluster" "sim-cluster"]}
   (val literal "{\"a\": 1}")
-  (<- value str (RemoteJob (environ-read "GREETING") :needs LOCAL :name NAME :environ {"GREETING" literal}))
+  (<- value str (remote-job (environ-read "GREETING") :needs LOCAL :name NAME :environ {"GREETING" literal}))
   (assert (= value literal) value))
 
 
@@ -100,7 +101,7 @@
   {:interpreters ["remote-cluster" "sim-cluster"]}
   (var refused False)
   (try
-    (<- (RemoteJob (holding-program answer-base 1) :needs LOCAL :name NAME))
+    (<- (remote-job (holding-program answer-base 1) :needs LOCAL :name NAME))
     (except [UnsendableProgram]
       (:= refused True)))
   (<- seen tuple (TasksSeen))
@@ -110,7 +111,7 @@
 
 (deftest test-cancelling-the-caller-drops-the-task
   {:interpreters ["remote-cluster" "sim-cluster"]}
-  (<- task Task (Spawn (RemoteJob (slow-add (* 4 RUN-SECONDS) 1) :needs LOCAL :name NAME)))
+  (<- task Task (Spawn (remote-job (slow-add (* 4 RUN-SECONDS) 1) :needs LOCAL :name NAME)))
   (<- (Delay OBSERVE-AT))
   (<- running tuple (TasksSeen))
   (<- (Cancel task))
@@ -130,7 +131,7 @@
   ;; (置く・走らせるは組ごとに違う — 本物の側の担い手 RigWorker は env を準備しない)。行を読んだら取り消す。
   (<- env RuntimeEnv (contract-env))
   (<- declared dict (runtime-env->json env))
-  (<- task Task (Spawn (RemoteJob (slow-add (* 4 RUN-SECONDS) 1) :needs LOCAL :name NAME)))
+  (<- task Task (Spawn (remote-job (slow-add (* 4 RUN-SECONDS) 1) :needs LOCAL :name NAME)))
   (<- (Delay OBSERVE-AT))
   (<- running tuple (TasksSeen))
   (<- (Cancel task))

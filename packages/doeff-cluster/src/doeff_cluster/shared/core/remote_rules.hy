@@ -1,10 +1,29 @@
 ;;; task(RemoteJob)の純粋な判断: 送り手と受け側の版の突き合わせ・詰めた Program の置き場のキー・例外から失敗の値を作る。
 ;;; 型は doeff_cluster.shared.intent.remote_model、詰める・戻す(cloudpickle)は doeff_cluster.shared.protocol.program_codec。
-(require doeff-hy.macros [deff val])
+(require doeff-hy.macros [defk deff <- val])
 (val MODULE-TAGS {:context "doeff-cluster" :role "judgment"})
+(import dataclasses [replace])
 (import hashlib)
 (import traceback)
-(import doeff_cluster.shared.intent.remote_model [VersionDiff TaskFailed])
+(import doeff [EffectBase Program])
+(import doeff_cluster.shared.intent.remote_model [RemoteJob VersionDiff TaskFailed])
+(import doeff_cluster.shared.core.capabilities [effect-needs-problem])
+
+
+(defk remote-job [program * [needs (frozenset)] [name ""] [environ None]]
+  {:pre [(: program (| Program EffectBase)) (: needs (| frozenset tuple list set dict str None)) (: name str) (: environ (| dict None))]
+   :post [(: % "program の戻り値(型は program ごと)")]
+   :tags {:context "doeff-cluster" :role "judgment"}}
+  "RemoteJob の構築関数 — 作り手はここを通す。needs が能力の名の空でない frozenset でなければ(書き忘れの空・旧い Requirement の
+   tuple・label の形の名)送る前に TypeError で断る(ADR-DOE-CLUSTER-001 R4b)。environ の名の検めは型が作る時に断る(EnvVar の規則 1 つ)。
+   environ = None は子の環境変数を置かない(型の既定の空)。検めた RemoteJob をその場で出し、program の戻り値を返す(defk は作った effect を値として返せない — doeff-hy の _guard-performed)。
+   Spawn に渡す・with-handlers で包む時も、この呼びの値(Program)をそのまま渡す。
+   needs の検めを型(intent)の外のここに置くのは、intent が core の判断を読まないため(#2564)。"
+  (<- problem (effect-needs-problem needs))
+  (when problem (raise (TypeError (+ "RemoteJob.needs: " problem))))
+  (val job (RemoteJob program :needs needs :name name))
+  (<- answer (if (is environ None) job (replace job :environ environ)))
+  answer)
 
 
 ;; この process の版の識別(current-versions)を読むのは io の層の process_versions.hy(#1630)。ここは突き合わせの判断だけ。

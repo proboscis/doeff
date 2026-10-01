@@ -10,14 +10,16 @@
 ;;; 契約の外: 準備済み・準備中の担い手の数(本物の側の担い手は env を準備しない — sim-cluster の上の検 test_env_warm_runners.hy が持つ)・
 ;;; coordinator の 5xx の答え(本物だけの検 test_env_warm.hy)。
 (require doeff-hy.macros [defk deftest <- val var])
+(import pytest)
 (import doeff_time [Delay])
 (import doeff_cluster.shared.core.clock [now-epoch-ms])
 (import doeff_cluster.shared.intent.detached_model [DetachedRefused])
 (import doeff_cluster.shared.intent.runtime_env_model [RuntimeEnv])
 (import doeff_cluster.shared.core.runtime_env_rules [runtime-env->json])
-(import doeff_cluster.shared.intent.warm_model [WarmRuntimeEnv ReadWarmState WarmState WarmUnreachable])
-(import doeff_cluster.shared.core.warm_rules [warm-key])
+(import doeff_cluster.shared.intent.warm_model [ReadWarmState WarmState WarmUnreachable])
+(import doeff_cluster.shared.core.warm_rules [warm-key warm-runtime-env])
 (import tests.coordinator_contract_handlers [WarmsSeen WarmSeen SetReachable contract-env])
+(import tests.env_fixtures [LOCK env-of])
 
 ;; どの担い手も提供しない能力(両方の組で「合う担い手が居ない」行 — 準備済みの数は契約の外)。
 (val NEEDS (frozenset ["contract-gpu"]))
@@ -33,7 +35,7 @@
   (<- declared dict (runtime-env->json env))
   (<- key str (warm-key env (tuple (sorted NEEDS))))
   (<- asked int (now-epoch-ms))
-  (<- written WarmState (WarmRuntimeEnv env NEEDS TTL-SECONDS HOLDER))
+  (<- written WarmState (warm-runtime-env env NEEDS TTL-SECONDS HOLDER))
   (<- answered int (now-epoch-ms))
   (<- read WarmState (ReadWarmState key))
   (<- rows tuple (WarmsSeen))
@@ -50,9 +52,9 @@
 (deftest test-asking-again-extends-the-same-row
   {:interpreters ["warm-cluster" "sim-cluster"]}
   (<- env RuntimeEnv (contract-env))
-  (<- first WarmState (WarmRuntimeEnv env NEEDS TTL-SECONDS HOLDER))
+  (<- first WarmState (warm-runtime-env env NEEDS TTL-SECONDS HOLDER))
   (<- (Delay LATER-SECONDS))
-  (<- again WarmState (WarmRuntimeEnv env NEEDS TTL-SECONDS HOLDER))
+  (<- again WarmState (warm-runtime-env env NEEDS TTL-SECONDS HOLDER))
   (<- rows tuple (WarmsSeen))
   (assert (= again.key first.key) #(first again))
   (assert (= (- again.until-ms first.until-ms) (int (* 1000 LATER-SECONDS))) #(first again))
@@ -71,7 +73,7 @@
   ;; 断りの #(status 理由) — 断られなければ #(None "")。
   (var refusal #(None ""))
   (try
-    (<- (WarmRuntimeEnv env NEEDS 0.0 HOLDER))
+    (<- (warm-runtime-env env NEEDS 0.0 HOLDER))
     (except [error DetachedRefused]
       (:= refusal #(error.status error.message))))
   (<- rows tuple (WarmsSeen))
@@ -85,8 +87,26 @@
   (<- env RuntimeEnv (contract-env))
   (<- key str (warm-key env (tuple (sorted NEEDS))))
   (<- (SetReachable False))
-  (<- written (WarmRuntimeEnv env NEEDS TTL-SECONDS HOLDER))
+  (<- written (warm-runtime-env env NEEDS TTL-SECONDS HOLDER))
   (<- read (ReadWarmState key))
   (for [answer #(written read)]
     (assert (isinstance answer WarmUnreachable) answer)
     (assert (in "接続できない" answer.detail) answer)))
+
+
+(deftest test-warm-runtime-env-refuses-empty-or-old-needs
+  ;; 失敗ケース(#2564): WarmRuntimeEnv は構築関数 warm-runtime-env(core)を通してだけ作る。needs が能力の名の空でない frozenset で
+  ;; なければ(空・旧い Requirement の組の tuple・label の形の名)、頼む前に TypeError で断る(ADR-DOE-CLUSTER-001 R4b)。断るのは
+  ;; 構築関数で、型(intent)は core の判断を読まない。handler を並べないので、断らずに出せば UnhandledEffect になり TypeError に当たらない。
+  (<- env RuntimeEnv (env-of "app-1" "lib-1" LOCK))
+  (with [raised (pytest.raises TypeError)]
+    (<- (warm-runtime-env env (frozenset) TTL-SECONDS HOLDER)))
+  (assert (in "WarmRuntimeEnv.needs" (str raised.value)) raised.value)
+  (assert (in "空" (str raised.value)) raised.value)
+  ;; 旧い形: Requirement の (label value) の組の tuple。
+  (with [raised (pytest.raises TypeError)]
+    (<- (warm-runtime-env env #(#("kind" "k3s")) TTL-SECONDS HOLDER)))
+  (assert (in "frozenset" (str raised.value)) raised.value)
+  (with [raised (pytest.raises TypeError)]
+    (<- (warm-runtime-env env (frozenset ["kind=k3s"]) TTL-SECONDS HOLDER)))
+  (assert (in "kind=k3s" (str raised.value)) raised.value))

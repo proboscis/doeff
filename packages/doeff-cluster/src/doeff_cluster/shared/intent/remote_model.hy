@@ -1,6 +1,6 @@
 ;;; task(呼んだ側に寿命が縛られる短い仕事)の effect と、送る形・戻す形。
 ;;;
-;;;   (<- result (RemoteJob (summarize foundation rows) :needs (frozenset ["net"])))
+;;;   (<- result (remote-job (summarize foundation rows) :needs (frozenset ["net"])))   ; 構築関数(core の remote_rules)が needs を検めて出す
 ;;;
 ;;; RemoteJob は「未実行の Program を走らせ、戻り値(または例外)を返す」効果。Program は自分の handler を中の with-handlers で並べる
 ;;; (ADR-DOE-CLUSTER-001 R1・R2 — 実行先は handler を足さない)。handler の値も I/O の資源も送らない(送れば UnsendableProgram)。
@@ -27,6 +27,7 @@
 (import dataclasses [dataclass field])
 (import doeff [EffectBase Program])
 (import doeff.do)
+(import .runtime_env_model [EnvVar])
 
 
 (defclass [(dataclass :frozen True)] RemoteJob [EffectBase]
@@ -39,11 +40,8 @@
   (setv #^ str name "")
   (setv #^ dict environ (field :default-factory dict))
   (defn #^ None __post-init__ [self]
-    "needs と environ を作る時に検める(needs の空・旧い形・environ の名の形・予約・秘密の名を断る — cluster_model.effect-needs-problem・EnvVar.environ-refusal)。"
-    (import doeff_cluster.shared.core.capabilities [effect-needs-problem])
-    (import doeff_cluster.shared.intent.runtime_env_model [EnvVar])
-    (setv problem (effect-needs-problem self.needs))
-    (when problem (raise (TypeError (+ "RemoteJob.needs: " problem))))
+    "environ を作る時に検める(名の形・予約・秘密の名を断る — EnvVar.environ-refusal)。needs の検め(空・旧い形)は型の外 —
+     作り手は構築関数 doeff_cluster.shared.core.remote_rules.remote-job を通す(intent は core を読まない・#2564)。"
     (setv problem (EnvVar.environ-refusal self.environ))
     (when problem (raise (TypeError (+ "RemoteJob.environ: " problem))))))
 

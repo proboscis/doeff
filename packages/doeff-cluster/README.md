@@ -284,12 +284,15 @@ worker は業務の repo の commit を 1 つ展開して子 process の cwd に
 入れ替わっても続けたい仕事)は、切り離した task として送ります。どちらも Program の値 1 つを送り、Program は自分の土台で包みます。
 
 ```hy
-(import doeff_cluster.shared.intent.remote_model [RemoteJob])
-(import doeff_cluster.shared.intent.detached_model [SubmitDetached AwaitDetached CancelDetached ReleaseDetached
+(import doeff_cluster.shared.core.remote_rules [remote-job])
+(import doeff_cluster.shared.core.detached_rules [submit-detached-task])
+(import doeff_cluster.shared.intent.detached_model [AwaitDetached CancelDetached ReleaseDetached
                                       DetachedSucceeded DetachedFailed DetachedLost])
-(val NET (frozenset ["cluster-net"]))      ; effect の needs は frozenset(空は断る)
-(<- total (RemoteJob (add-task production-foundation n) :needs NET :name "add"))
-(<- submitted (SubmitDetached (summarize production-foundation rows) :key job-id :needs NET :lease-seconds 60.0))
+(val NET (frozenset ["cluster-net"]))      ; effect の needs は frozenset(空は構築関数が断る)
+;; RemoteJob・SubmitDetached・WarmRuntimeEnv は構築関数(remote-job・submit-detached-task・warm-runtime-env)を通して出す。
+;; needs を検めてから effect を出し、答えを返す。
+(<- total (remote-job (add-task production-foundation n) :needs NET :name "add"))
+(<- submitted (submit-detached-task (summarize production-foundation rows) :key job-id :needs NET :lease-seconds 60.0))
 ;; ... 呼び手が消えてもよい。別の process から同じ key で待てる ...
 (<- outcome (AwaitDetached job-id))
 ```

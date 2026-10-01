@@ -2,7 +2,7 @@
 ;;;
 ;;; 送り手(常駐の service 等)は、task を送る前に自分の実行環境を温めるよう頼む:
 ;;;
-;;;   (<- state WarmAnswer (WarmRuntimeEnv env (frozenset ["gpu"]) 600.0 "svc-a@<版>"))
+;;;   (<- state WarmAnswer (warm-runtime-env env (frozenset ["gpu"]) 600.0 "svc-a@<版>"))   ; 構築関数(core の warm_rules)が needs を検めて出す
 ;;;   (<- again WarmAnswer (ReadWarmState state.key))
 ;;;   (> (len again.ready) 0)    ; needs の合う・生きていて drain 中でない worker の 1 台以上で準備済み
 ;;;
@@ -21,7 +21,6 @@
 (import dataclasses [dataclass])
 (import doeff [EffectBase])
 (import .runtime_env_model [RuntimeEnv])
-(import doeff_cluster.shared.core.capabilities [effect-needs-problem])
 
 (val WARM-KEY-LENGTH 24)
 
@@ -62,11 +61,9 @@
   (#^ RuntimeEnv env)
   (#^ frozenset needs)
   (#^ float ttl-seconds)
-  (#^ str holder)
-  (defn #^ None __post-init__ [self]
-    "needs を作る時に検める(空・旧い形を断る — cluster_model.effect-needs-problem)。"
-    (setv problem (effect-needs-problem self.needs))
-    (when problem (raise (TypeError (+ "WarmRuntimeEnv.needs: " problem))))))
+  ;; needs の検め(空・旧い形)は型の外 — 作り手は構築関数 doeff_cluster.shared.core.warm_rules.warm-runtime-env を通す
+  ;; (intent は core を読まない・#2564)。
+  (#^ str holder))
 
 
 (defclass [(dataclass :frozen True)] ReadWarmState [EffectBase]

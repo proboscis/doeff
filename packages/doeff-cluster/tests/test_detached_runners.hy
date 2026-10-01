@@ -20,7 +20,7 @@
 (import doeff_core_effects.scheduler [Spawn Cancel Task])
 (import doeff_time [Delay SimClock sim-time-handler])
 (import doeff_cluster.foundation.process_versions [current-versions])
-(import doeff_cluster.shared.intent.detached_model [SubmitDetached AwaitDetached ReadRunners
+(import doeff_cluster.shared.intent.detached_model [AwaitDetached ReadRunners
                                       DetachedSucceeded DetachedLost DetachedUnrunnable DetachedPending DetachedUnreachable
                                       RunnerFact RunnersUnreachable])
 (import doeff_cluster.shared.protocol.detached [detached-cluster])
@@ -28,6 +28,7 @@
 (import doeff_cluster.sim.local [sim-cluster SimWorker KillWorker DrainWorker StopWorker StartWorker StopCoordinator ProcessesOf
                              ReadCoordinator])
 (import doeff_cluster.shared.entry.service_build [system-of])
+(import doeff_cluster.shared.core.detached_rules [submit-detached-task])
 (import tests.detached_rig [slow-add RigWorker MemoryCoordinator worker-tick worker-loop])
 
 (val RUNNERS #((RunnerFact :name "a" :provides #("x-tool") :exclusive #() :live True :draining False)
@@ -173,7 +174,7 @@
   (assert (= (sorted facts) ["a" "b"]) roster)
   (assert (all (gfor f (.values facts) (and f.live (not f.draining)))) roster)
   (assert (= #((. (get facts "a") provides) (. (get facts "a") exclusive)) #(#("x-tool") #())) roster)
-  (<- (SubmitDetached (slow-add SLOW 1) :key "k-on-y" :needs ON-Y :lease-seconds LEASE))
+  (<- (submit-detached-task (slow-add SLOW 1) :key "k-on-y" :needs ON-Y :lease-seconds LEASE))
   (<- (Delay (* SLOW 0.3)))
   (<- early (AwaitDetached "k-on-y" :timeout-seconds 0.0))
   (assert (and (isinstance early DetachedPending) (= early.phase "assigned") (= early.runner "b")) early)
@@ -193,8 +194,8 @@
   {:pre [] :post [(: % bool)]}
   ;; a だけが死ぬ: a の task は消え(走らせ直さない)、b の task は終わる。lease の後の名簿で a は生きていない。
   ;; 死なせる前に 2 秒待つ(sim の worker が task を起こすのはコードの準備の拍の後)。
-  (<- (SubmitDetached (slow-add (* SLOW 4) 2) :key "k-x" :needs ON-X :lease-seconds LEASE))
-  (<- (SubmitDetached (slow-add (* SLOW 2) 3) :key "k-y" :needs ON-Y :lease-seconds LEASE))
+  (<- (submit-detached-task (slow-add (* SLOW 4) 2) :key "k-x" :needs ON-X :lease-seconds LEASE))
+  (<- (submit-detached-task (slow-add (* SLOW 2) 3) :key "k-y" :needs ON-Y :lease-seconds LEASE))
   (<- (Delay 2.0))
   (<- lost int (KillWorker "a"))
   (assert (= lost 1) lost)
@@ -226,7 +227,7 @@
   (<- (Delay POLL))
   (<- roster tuple (ReadRunners))
   (assert (. (get (by-name roster) "a") draining) roster)
-  (<- (SubmitDetached (slow-add SLOW 4) :key "k-drain" :needs ON-X :lease-seconds LEASE))
+  (<- (submit-detached-task (slow-add SLOW 4) :key "k-drain" :needs ON-X :lease-seconds LEASE))
   (<- (Delay (* 4 POLL)))
   (<- waiting (AwaitDetached "k-drain" :timeout-seconds 0.0))
   (assert (and (isinstance waiting DetachedPending) (= waiting.phase "queued")) waiting)
@@ -247,7 +248,7 @@
 
 (defk no-runner-with-the-capability []
   {:pre [] :post [(: % bool)]}
-  (<- (SubmitDetached (slow-add 0.0 5) :key "k-z" :needs ON-Z :lease-seconds LEASE))
+  (<- (submit-detached-task (slow-add 0.0 5) :key "k-z" :needs ON-Z :lease-seconds LEASE))
   (<- outcome (AwaitDetached "k-z"))
   (assert (isinstance outcome DetachedUnrunnable) outcome)
   True)
@@ -267,7 +268,7 @@
   "筋書き: a に 20 秒の task を出し、走り出した後で coordinator を 120 秒止める。止まっている間は名簿も終わりも読めず、送りも届かない
    (送り手は本番と同じ期限まで送り直してから「届かない」と答える)。作り直した後に、止まっている間に終わった結果が読める。答え = 結果を
    読んだ後の task の process の列。"
-  (<- (SubmitDetached (slow-add 20.0 6) :key "k-cut" :needs ON-X :lease-seconds LEASE))
+  (<- (submit-detached-task (slow-add 20.0 6) :key "k-cut" :needs ON-X :lease-seconds LEASE))
   (<- (Delay 3.0))
   (<- (StopCoordinator 120.0))
   (<- (Delay 1.5))
@@ -276,7 +277,7 @@
   ;; 途絶の間は終わりを読めない(死んだとみなさない — 期限を決めた待ちは「届かない」)・送りも届かない。
   (<- during (AwaitDetached "k-cut" :timeout-seconds (* SLOW 1.5)))
   (assert (isinstance during DetachedUnreachable) during)
-  (<- refused (SubmitDetached (slow-add 0.0 1) :key "k-during" :needs ON-X :lease-seconds LEASE))
+  (<- refused (submit-detached-task (slow-add 0.0 1) :key "k-during" :needs ON-X :lease-seconds LEASE))
   (assert (isinstance refused DetachedUnreachable) refused)
   (<- after (AwaitDetached "k-cut"))
   (assert (= after (DetachedSucceeded 106)) after)
@@ -307,7 +308,7 @@
   ;; 送り直しの期限(deadline-seconds)を過ぎた通信の失敗は、送りも期限を決めた待ちも DetachedUnreachable(sim の宿の途絶と同じ値)。
   (defk scenario []
     {:pre [] :post [(: % bool)]}
-    (<- sent (SubmitDetached (slow-add 0.0 1) :key "k-cut-real" :needs ON-X))
+    (<- sent (submit-detached-task (slow-add 0.0 1) :key "k-cut-real" :needs ON-X))
     (assert (isinstance sent DetachedUnreachable) sent)
     (<- awaited (AwaitDetached "k-cut-real" :timeout-seconds 1.0))
     (assert (isinstance awaited DetachedUnreachable) awaited)

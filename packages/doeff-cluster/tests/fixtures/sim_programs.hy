@@ -13,11 +13,12 @@
 (import doeff_cluster.sim.local [ProcessesOf])
 (import doeff_cluster.shared.intent.metrics_model [ReportMetrics])
 (import doeff_cluster.shared.intent.readiness_model [ReportReady])
-(import doeff_cluster.shared.intent.remote_model [RemoteJob])
 (import doeff_cluster.shared.intent.shared_model [ReadShared WriteShared])
-(import doeff_cluster.shared.intent.detached_model [SubmitDetached AwaitDetached DetachedSubmitted DetachedSucceeded])
+(import doeff_cluster.shared.intent.detached_model [AwaitDetached DetachedSubmitted DetachedSucceeded])
 (import doeff_cluster.foundation.host_contract [HOST-CONTRACT])
 (import doeff_cluster.job_context [RunContext])
+(import doeff_cluster.shared.core.remote_rules [remote-job])
+(import doeff_cluster.shared.core.detached_rules [submit-detached-task])
 
 (val NET (frozenset ["cluster-net"]))
 
@@ -127,10 +128,10 @@
   {:pre [(: n int) (: key str)] :post [(: % int)] :tags {:context "doeff-cluster-test" :role "program"}}
   "RemoteJob で task を 2 つ出す: 自分の reader を持つ add-task(答え = 100 + n)と、reader を持たない orphan-task(呼び手の reader が
    届かなければ失敗する)。呼び手は base = 1 の reader の下で出す。結果を盤の key に書いてから、準備できたと報告し続ける。"
-  (<- sum int (with-handlers [(reader {"base" 1})] (RemoteJob (add-task sim-task-foundation n) :needs NET :name "add")))
+  (<- sum int (with-handlers [(reader {"base" 1})] (remote-job (add-task sim-task-foundation n) :needs NET :name "add")))
   (var orphan "")
   (try
-    (<- got int (with-handlers [(reader {"base" 1})] (RemoteJob (orphan-task sim-task-foundation) :needs NET :name "orphan")))
+    (<- got int (with-handlers [(reader {"base" 1})] (remote-job (orphan-task sim-task-foundation) :needs NET :name "orphan")))
     (:= orphan (+ "答えた " (str got)))
     (except [error Exception]
       (:= orphan (+ "失敗 " (. (type error) __name__) ": " (str error)))))
@@ -178,7 +179,7 @@
   {:pre [(: n int) (: key str)] :post [(: % int)] :tags {:context "doeff-cluster-test" :role "program"}}
   "切り離した task を 1 本出して待ち(自分の reader を持つ add-task — 答え = 100 + n)、答えを盤の key に書いてから、準備できたと報告
    し続ける(sim の宿が SubmitDetached・AwaitDetached に本番と同じ要求で答えるかを見るため)。"
-  (<- submitted DetachedSubmitted (SubmitDetached (add-task sim-task-foundation n) :key "svc-detached" :needs NET :name "add"))
+  (<- submitted DetachedSubmitted (submit-detached-task (add-task sim-task-foundation n) :key "svc-detached" :needs NET :name "add"))
   (<- outcome (AwaitDetached submitted.key))
   (<- (WriteShared key {"created" submitted.created
                         "value" (if (isinstance outcome DetachedSucceeded) outcome.value None)
