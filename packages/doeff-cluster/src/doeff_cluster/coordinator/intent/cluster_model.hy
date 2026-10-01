@@ -171,12 +171,70 @@
   (#^ bool abort))
 
 
+(defrecord RolloutHistory
+  "Rollout の段の移り 1 つ(status.history の要素): phase = 入った段・at = 時刻・reason = 理由。"
+  (#^ str phase)
+  (#^ int at)
+  (#^ str reason))
+
+
+(defrecord RolloutStuck
+  "戻し(RollingBack)が rollbackTimeoutSeconds を過ぎても終わらない印(status.stuck — 人を呼ぶ): step = 戻しの手順
+   (restoreOld / stopNew)・reason = 理由・since-ms = 印を付けた時刻。"
+  (#^ str step)
+  (#^ str reason)
+  (#^ int since-ms))
+
+
+(defrecord RolloutDrift
+  "完了した Rollout が台数を持つ Deployment の、宣言の台数と期待の食い違い(status.drift — 直さずに出すだけ): deployment = 「ns/名」・
+   expected = 期待の台数・observed = 観測した宣言の台数・since-ms = 食い違いを最初に見た時刻・note = 説明の文。"
+  (#^ str deployment)
+  (#^ int expected)
+  (#^ int observed)
+  (#^ int since-ms)
+  (#^ str note))
+
+
+(defrecord RolloutStatus
+  "Rollout の進み具合(RolloutRow.status — rollout_policy.rollout-step が段を進める): phase = 段(Pending から Complete / RolledBack)・
+   phase-since-ms = 段に入った時刻・reason = 今の段の理由・history = 段の移り(直近 30 件)・created-ms / started-ms / completed-ms =
+   作った・新を起こし始めた・終えた時刻・from-replicas = 戻す時の旧の台数・stopped-old-ms = 旧が止まった時刻・not-ready-since-ms /
+   unknown-since-ms = 観察中に新が NotReady / 観測が Unknown になった時刻・rollback-step = 戻しの手順・failure = 戻しに入った理由・
+   restored-old-ms = 旧が Ready に戻った時刻・stuck / stuck-cleared-ms = 戻しが終わらない印とそれが解けた時刻・last-action = 直前に
+   実行した action と結末(op・target の「Kind:名」・ok・error・at・count ほか — action の種類で欄が違うので JSON の object のまま)・
+   simulated = dry-run の相手の記録した台数(「Kind:名」→ 台数)・marked-deployment = 台数の持ち主の annotation を置いた「ns/名」・
+   drift / drift-resolved-ms = 台数の食い違いとそれが解けた時刻。無い欄は None。#2447 で dict をこの型にした。JSON の形(在る欄だけの
+   {phase phaseSinceMs reason history …})は rollout_policy の rollout-status-to-json / rollout-status-from-json。"
+  (setv #^ str phase "Pending")
+  (setv #^ (| int None) phase-since-ms None)
+  (setv #^ (| str None) reason None)
+  (setv #^ (get tuple #(RolloutHistory ...)) history #())
+  (setv #^ (| int None) created-ms None)
+  (setv #^ (| int None) started-ms None)
+  (setv #^ (| int None) from-replicas None)
+  (setv #^ (| int None) stopped-old-ms None)
+  (setv #^ (| int None) not-ready-since-ms None)
+  (setv #^ (| int None) unknown-since-ms None)
+  (setv #^ (| int None) completed-ms None)
+  (setv #^ (| str None) rollback-step None)
+  (setv #^ (| str None) failure None)
+  (setv #^ (| int None) restored-old-ms None)
+  (setv #^ (| RolloutStuck None) stuck None)
+  (setv #^ (| int None) stuck-cleared-ms None)
+  (setv #^ (| dict None) last-action None)
+  (setv #^ (| dict None) simulated None)
+  (setv #^ (| str None) marked-deployment None)
+  (setv #^ (| RolloutDrift None) drift None)
+  (setv #^ (| int None) drift-resolved-ms None))
+
+
 (defrecord RolloutRow
-  "Rollout 1 つ(ClusterState.rollouts の値 — 鍵 = Rollout の名・保存する): spec = 宣言 RolloutSpec・status = 進み具合(phase・history・
-   lastAction・drift ほか — rollout_policy.rollout-step が進める)。#2447 で dict をこの型にした(status の中身の型は続きの切り出し)。
+  "Rollout 1 つ(ClusterState.rollouts の値 — 鍵 = Rollout の名・保存する): spec = 宣言 RolloutSpec・status = 進み具合 RolloutStatus。
+   #2447 で dict をこの型にした。
    保存の JSON の形 {spec status} は cluster_policy の rollout-row-to-json / rollout-row-from-json。"
   (#^ RolloutSpec spec)
-  (#^ dict status))
+  (#^ RolloutStatus status))
 
 
 (defrecord AuditEvent

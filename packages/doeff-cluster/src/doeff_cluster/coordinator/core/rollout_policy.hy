@@ -35,14 +35,13 @@
 (require doeff-hy.macros [val])
 (val MODULE-TAGS {:context "coordinator" :role "judgment"})
 (import doeff_cluster.shared.intent.protocol [BodyInvalid])
-(import doeff_cluster.coordinator.intent.cluster_model [RolloutSpec RolloutTarget])
+(import dataclasses [replace])
+(import doeff_cluster.coordinator.intent.cluster_model [RolloutDrift RolloutHistory RolloutSpec RolloutStatus RolloutStuck RolloutTarget])
 
 (setv TERMINAL-PHASES #{"Complete" "RolledBack"})
 ;; 秒の欄の既定の値(欄が無い本文・この欄が無かった頃に作った Rollout の保存の行)。
 (setv DEFAULTS {"readyTimeoutSeconds" 300 "stopTimeoutSeconds" 180 "observeSeconds" 1800 "failAfterSeconds" 30
                 "rollbackTimeoutSeconds" 600})
-;; 段の時刻の起点(coordinator が止まっていた時間を除く時にずらす欄)。
-(setv CLOCK-FIELDS #("phaseSinceMs" "notReadySinceMs" "unknownSinceMs"))
 (setv RETRY-FIRST-MS 1000 RETRY-MAX-MS 60000)
 (setv HISTORY-LIMIT 30)
 
@@ -117,12 +116,51 @@
   (if (= target.kind "Service") 1 (or target.replicas 1)))
 
 
-;; extra = status に足す欄(rollbackStep・failure の文字列・startedMs などの時刻と台数)。
-(defn #^ dict enter [#^ dict status #^ str phase #^ int now #^ str [reason ""] #^ (| str int) #** extra]
+;; --- status の JSON の形(保存・GET /resources・出来事の記録の差分が読む — #2447 の前の形と同じ欄の名)---------------
+
+;; status の欄 → JSON の名(値が None の欄は JSON に書かない — 以前の status の dict は在る欄だけを持った)。
+(setv STATUS-NAMES #(#("phase" "phase") #("phase_since_ms" "phaseSinceMs") #("reason" "reason") #("created_ms" "createdMs")
+                     #("started_ms" "startedMs") #("from_replicas" "fromReplicas") #("stopped_old_ms" "stoppedOldMs")
+                     #("not_ready_since_ms" "notReadySinceMs") #("unknown_since_ms" "unknownSinceMs") #("completed_ms" "completedMs")
+                     #("rollback_step" "rollbackStep") #("failure" "failure") #("restored_old_ms" "restoredOldMs")
+                     #("stuck_cleared_ms" "stuckClearedMs") #("last_action" "lastAction") #("simulated" "simulated")
+                     #("marked_deployment" "markedDeployment") #("drift_resolved_ms" "driftResolvedMs")))
+
+
+(defn #^ dict rollout-status-to-json [#^ RolloutStatus status]
+  "進み具合 → JSON の形(在る欄だけ)。"
+  (| (dfor #(field name) STATUS-NAMES :setv v (getattr status field) :if (is-not v None) name v)
+     (if status.history
+         {"history" (lfor h status.history {"phase" h.phase "at" h.at "reason" h.reason})}
+         {})
+     (if (is status.stuck None)
+         {}
+         {"stuck" {"step" status.stuck.step "reason" status.stuck.reason "sinceMs" status.stuck.since-ms}})
+     (if (is status.drift None)
+         {}
+         {"drift" {"deployment" status.drift.deployment "expected" status.drift.expected "observed" status.drift.observed
+                   "sinceMs" status.drift.since-ms "note" status.drift.note}})))
+
+
+(defn #^ RolloutStatus rollout-status-from-json [#^ dict data]
+  "保存の JSON の形 → 進み具合(rollout-status-to-json の逆・知らない欄は読まない)。"
+  (setv stuck (.get data "stuck") drift (.get data "drift"))
+  (RolloutStatus
+    #** (dfor #(field name) STATUS-NAMES :if (is-not (.get data name) None) field (get data name))
+    :history (tuple (gfor h (.get data "history" []) (RolloutHistory :phase (get h "phase") :at (get h "at") :reason (.get h "reason" ""))))
+    :stuck (if stuck (RolloutStuck :step (get stuck "step") :reason (get stuck "reason") :since-ms (get stuck "sinceMs")) None)
+    :drift (if drift
+               (RolloutDrift :deployment (get drift "deployment") :expected (get drift "expected") :observed (get drift "observed")
+                             :since-ms (get drift "sinceMs") :note (.get drift "note" ""))
+               None)))
+
+
+;; extra = status に足す欄(rollback-step・failure の文字列・started-ms などの時刻と台数 — RolloutStatus の欄の名)。
+(defn #^ RolloutStatus enter [#^ RolloutStatus status #^ str phase #^ int now #^ str [reason ""] #^ (| str int None) #** extra]
   "段に入る。Unknown の起点(段ごとの物)は持ち越さない。"
-  (setv history (+ (list (.get status "history" [])) [{"phase" phase "at" now "reason" reason}])
-        kept (dfor #(k v) (.items status) :if (!= k "unknownSinceMs") k v))
-  (| kept {"phase" phase "phaseSinceMs" now "reason" reason "history" (cut history (- HISTORY-LIMIT) None)} extra))
+  (replace status :phase phase :phase-since-ms now :reason reason :unknown-since-ms None
+           :history (cut (+ status.history #((RolloutHistory :phase phase :at now :reason reason))) (- HISTORY-LIMIT) None)
+           #** extra))
 
 
 (defn #^ dict scale [#^ RolloutTarget target #^ int replicas]
@@ -135,17 +173,17 @@
   (if (or (is current None) (= current replicas)) [] [(scale target replicas)]))
 
 
-(defn #^ tuple rollout-step [#^ RolloutSpec spec #^ dict status #^ dict from-view #^ dict to-view #^ int now]
+(defn #^ tuple rollout-step [#^ RolloutSpec spec #^ RolloutStatus status #^ dict from-view #^ dict to-view #^ int now]
   "1 拍。返り値 #(次の status action の list)。"
-  (setv phase (.get status "phase" "Pending") since (.get status "phaseSinceMs" now)
+  (setv phase status.phase since (if (is status.phase-since-ms None) now status.phase-since-ms)
         old spec.from-target new spec.to-target)
   (when (in phase TERMINAL-PHASES) (return #(status [])))
   (when (and spec.abort (!= phase "RollingBack"))
-    (return (rollout-step spec (enter status "RollingBack" now "中止の指示(abort)" :rollbackStep "restoreOld"
+    (return (rollout-step spec (enter status "RollingBack" now "中止の指示(abort)" :rollback-step "restoreOld"
                                       :failure "中止の指示(abort)")
                           from-view to-view now)))
   (defn #^ tuple fail [#^ str reason]
-    (rollout-step spec (enter status "RollingBack" now reason :rollbackStep "restoreOld" :failure reason) from-view to-view now))
+    (rollout-step spec (enter status "RollingBack" now reason :rollback-step "restoreOld" :failure reason) from-view to-view now))
   (cond
     (= phase "Pending")
       ;; 旧の今の台数を控える(戻す時の台数)。旧が Deployment で観測が無ければ、spec の replicas か 1。
@@ -156,8 +194,8 @@
                               (is observed None) None
                               True 1))
           (if (is restore None)
-              #((| status {"reason" "旧の台数を観測できるまで待つ"}) [])
-              (rollout-step spec (enter status "WaitingNewReady" now "新を起こす" :fromReplicas restore :startedMs now)
+              #((replace status :reason "旧の台数を観測できるまで待つ") [])
+              (rollout-step spec (enter status "WaitingNewReady" now "新を起こす" :from-replicas restore :started-ms now)
                             from-view to-view now)))
     (= phase "WaitingNewReady")
       (cond
@@ -165,34 +203,34 @@
           (rollout-step spec (enter status "StoppingOld" now "新が Ready になった") from-view to-view now)
         (> (- now since) (* 1000 spec.ready-timeout-seconds))
           (fail (.format "新が {} 秒で Ready にならなかった: {}" spec.ready-timeout-seconds (.get to-view "reason" "")))
-        True #((| status {"reason" "新の Ready を待つ"})
+        True #((replace status :reason "新の Ready を待つ")
                (ensure-replicas new to-view (new-replicas new))))
     (= phase "StoppingOld")
       (cond
         (= (get to-view "ready") "NotReady")
           (fail (+ "旧を止める途中で新が Ready でなくなった: " (.get to-view "reason" "")))
         (.get from-view "stopped")
-          (rollout-step spec (enter status "Observing" now "旧が止まった" :stoppedOldMs now) from-view to-view now)
+          (rollout-step spec (enter status "Observing" now "旧が止まった" :stopped-old-ms now) from-view to-view now)
         ;; 新の観測が Unknown(担い手の heartbeat が途絶えた・coordinator が起動した直後)の間は、旧を止める命令を新しく出さない。
         ;; 失敗とも数えない(時間切れだけは数える)。新が本当に落ちていたら、旧を止めた後で書き手が 0 になるため(2026-09-25)。
         (= (get to-view "ready") "Unknown")
-          #((| status {"reason" "新の観測が Unknown の間は旧を止める命令を控える"}) [])
+          #((replace status :reason "新の観測が Unknown の間は旧を止める命令を控える") [])
         (> (- now since) (* 1000 spec.stop-timeout-seconds))
           (fail (.format "旧が {} 秒で止まらなかった: {}" spec.stop-timeout-seconds (.get from-view "reason" "")))
-        True #((| status {"reason" "旧が止まるのを待つ"})
+        True #((replace status :reason "旧が止まるのを待つ")
                (ensure-replicas old from-view 0)))
     (= phase "Observing")
-      (do (setv state (get to-view "ready") down (.get status "notReadySinceMs") blind (.get status "unknownSinceMs"))
+      (do (setv state (get to-view "ready") down status.not-ready-since-ms blind status.unknown-since-ms)
           ;; 観測が Unknown の間は観察の時間に数えない(完了も失敗もしない)。入った時刻だけを控える(status は入った拍だけ変わる)。
           (when (= state "Unknown")
             (return #((if (is blind None)
-                          (| status {"unknownSinceMs" now "reason" "観察中(観測が Unknown の間は時間を数えない)"})
+                          (replace status :unknown-since-ms now :reason "観察中(観測が Unknown の間は時間を数えない)")
                           status)
                       [])))
           ;; Unknown を抜けた拍: 段の起点(と NotReady の起点)を Unknown の長さだけ後ろへずらす。
           (when (is-not blind None)
             (setv gap (max 0 (- now blind)) since (+ since gap) down (if (is down None) None (+ down gap))
-                  status (| status {"phaseSinceMs" since "notReadySinceMs" down "unknownSinceMs" None})))
+                  status (replace status :phase-since-ms since :not-ready-since-ms down :unknown-since-ms None)))
           (cond
             (= state "Ready") (setv down None)
             (= state "NotReady") (setv down (or down now)))
@@ -200,35 +238,35 @@
             (and down (> (- now down) (* 1000 spec.fail-after-seconds)))
               (fail (.format "観察の間に新が {} 秒 Ready でなかった: {}" (// (- now down) 1000) (.get to-view "reason" "")))
             (and (= state "Ready") (>= (- now since) (* 1000 spec.observe-seconds)))
-              #((enter (| status {"notReadySinceMs" None}) "Complete" now "観察の期間を終えた" :completedMs now) [])
-            True #((| status {"notReadySinceMs" down
-                              "reason" "観察中"})
+              #((enter (replace status :not-ready-since-ms None) "Complete" now "観察の期間を終えた" :completed-ms now) [])
+            True #((replace status :not-ready-since-ms down :reason "観察中")
                    [])))
     (= phase "RollingBack")
-      (do (setv step (.get status "rollbackStep" "restoreOld") restore (or (.get status "fromReplicas") 1)
+      (do (setv step (or status.rollback-step "restoreOld") restore (or status.from-replicas 1)
                 limit spec.rollback-timeout-seconds
                 late (> (- now since) (* 1000 limit)))
           (defn #^ tuple waiting [#^ str reason #^ str stuck-reason #^ list actions]
             ;; 時間切れの後も同じ action を出し続ける(新は止めない)。stuck は印を付けた拍と step が変わった拍だけ変わる。
-            (setv current (.get status "stuck")
+            (setv current status.stuck
                   stuck (cond (not late) None
-                              (and current (= (.get current "step") step)) current
-                              True {"step" step "reason" (.format "戻しが {} 秒で終わらない: {}" limit stuck-reason) "sinceMs" now}))
-            #((| status {"reason" reason} (if (= stuck current) {} {"stuck" stuck})) actions))
+                              (and current (= current.step step)) current
+                              True (RolloutStuck :step step :reason (.format "戻しが {} 秒で終わらない: {}" limit stuck-reason)
+                                                 :since-ms now)))
+            #((replace status :reason reason :stuck stuck) actions))
           (cond
             (= step "restoreOld")
               (if (= (get from-view "ready") "Ready")
-                  (rollout-step spec (| status {"rollbackStep" "stopNew" "restoredOldMs" now}) from-view to-view now)
+                  (rollout-step spec (replace status :rollback-step "stopNew" :restored-old-ms now) from-view to-view now)
                   (waiting "戻し: 旧を元の台数へ戻し Ready を待つ" "旧が Ready に戻らない(新は動かしたまま)"
                            (ensure-replicas old from-view restore)))
             (= step "stopNew")
               (if (.get to-view "stopped")
-                  #((enter status "RolledBack" now (+ "戻した: " (.get status "failure" "")) :completedMs now
-                           #** (if (.get status "stuck") {"stuck" None "stuckClearedMs" now} {}))
+                  #((enter status "RolledBack" now (+ "戻した: " (or status.failure "")) :completed-ms now
+                           #** (if status.stuck {"stuck" None "stuck_cleared_ms" now} {}))
                     [])
                   (waiting "戻し: 新を止め、止まるのを待つ" "新が止まらない" (ensure-replicas new to-view 0)))
             True #(status [])))
-    True #((enter status "RollingBack" now (+ "知らない段: " phase) :rollbackStep "restoreOld") [])))
+    True #((enter status "RollingBack" now (+ "知らない段: " phase) :rollback-step "restoreOld") [])))
 
 
 ;; --- action の送り直しの間(2026-09-25) ------------------------------------------------------------
@@ -248,10 +286,10 @@
   (min RETRY-MAX-MS (* RETRY-FIRST-MS (** 2 (max 0 (- failures 1))))))
 
 
-(defn #^ bool action-due [#^ dict status #^ dict action #^ int now]
+(defn #^ bool action-due [#^ RolloutStatus status #^ dict action #^ int now]
   "純粋: この拍に action を出してよいか。直前の同じ action が失敗していれば、失敗の数に応じた間を空ける(k8s の API が
    断り続ける間、毎秒同じ書きを出して記録と版を進めない)。成功した・違う action は、すぐ出す。"
-  (setv last (.get status "lastAction"))
+  (setv last status.last-action)
   (when (or (not last) (.get last "ok")) (return True))
   (when (!= (action-identity last) (action-identity action)) (return True))
   (>= (- now (.get last "at" 0)) (retry-delay-ms (.get last "count" 1))))
@@ -259,12 +297,15 @@
 
 ;; --- coordinator が止まっていた時間(2026-09-25) --------------------------------------------------
 
-(defn #^ dict shift-clocks [#^ dict status #^ int gap-ms]
-  "純粋: 進行中の Rollout の段の起点を gap-ms だけ後ろへずらした status(coordinator が止まっていた時間を段の時間に数えない)。
-   終わった Rollout・gap が 0 以下はそのまま。"
-  (if (or (<= gap-ms 0) (in (.get status "phase") TERMINAL-PHASES))
+(defn #^ RolloutStatus shift-clocks [#^ RolloutStatus status #^ int gap-ms]
+  "純粋: 進行中の Rollout の段の起点(phase-since-ms・not-ready-since-ms・unknown-since-ms)を gap-ms だけ後ろへずらした status
+   (coordinator が止まっていた時間を段の時間に数えない)。終わった Rollout・gap が 0 以下はそのまま。"
+  (defn #^ (| int None) shifted [#^ (| int None) at]
+    (if (is at None) None (+ at gap-ms)))
+  (if (or (<= gap-ms 0) (in status.phase TERMINAL-PHASES))
       status
-      (| status (dfor k CLOCK-FIELDS :if (is-not (.get status k) None) k (+ (get status k) gap-ms)))))
+      (replace status :phase-since-ms (shifted status.phase-since-ms) :not-ready-since-ms (shifted status.not-ready-since-ms)
+                      :unknown-since-ms (shifted status.unknown-since-ms))))
 
 
 ;; --- 完了の後: 台数の持ち主と食い違い -----------------------------------------------------------
@@ -275,27 +316,27 @@
   (setv best {})
   (for [#(name r) (sorted (.items rollouts))]
     (setv spec r.spec status r.status)
-    (when (in (.get status "phase") #("Observing" "Complete"))
+    (when (in status.phase #("Observing" "Complete"))
       (for [#(side target) #(#("from" spec.from-target) #("to" spec.to-target))]
         (when (and (= target.kind "Deployment") (not target.dry-run))
           (setv key (+ target.namespace "/" target.name)
                 expected (if (= side "from") 0 (new-replicas target))
-                at (.get status "stoppedOldMs" 0))
+                at (or status.stopped-old-ms 0))
           (when (or (not-in key best) (> at (get (get best key) 2)))
             (setv (get best key) #(name expected at)))))))
   (dfor #(k v) (.items best) k #((get v 0) (get v 1))))
 
 
-(defn #^ dict drift-status [#^ dict status #^ str deployment #^ int expected #^ (| dict None) observation #^ int now]
+(defn #^ RolloutStatus drift-status [#^ RolloutStatus status #^ str deployment #^ int expected #^ (| dict None) observation #^ int now]
   "完了した Rollout が台数を持つ Deployment の、宣言の台数と期待の食い違い(本番の配備の流れが replicas を当て直した等)。
    直さない(配備の流れと取り合わない)— status に出すだけ。"
   (setv observed (if (and observation (not-in "error" observation)) (.get observation "specReplicas") None)
-        current (.get status "drift"))
+        current status.drift)
   (cond
     (is observed None) status
     (= observed expected)
-      (if current (| status {"drift" None "driftResolvedMs" now}) status)
-    (and current (= (.get current "observed") observed)) status
-    True (| status {"drift" {"deployment" deployment "expected" expected "observed" observed
-                             "sinceMs" (if current (get current "sinceMs") now)
-                             "note" "Deployment の宣言の台数が Rollout の期待と違う(配備の流れが当て直した等)。直していない"}})))
+      (if current (replace status :drift None :drift-resolved-ms now) status)
+    (and current (= current.observed observed)) status
+    True (replace status :drift (RolloutDrift :deployment deployment :expected expected :observed observed
+                                              :since-ms (if current current.since-ms now)
+                                              :note "Deployment の宣言の台数が Rollout の期待と違う(配備の流れが当て直した等)。直していない"))))

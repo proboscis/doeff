@@ -15,11 +15,11 @@
 (import json)
 (import typing [NoReturn])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming BodyInvalid])
-(import doeff_cluster.coordinator.intent.cluster_model [ClusterJob ClusterState Placement HandoffPhase UnplacedKind NotReadyKind VersionState VersionVerdict LiveProcess ResourceMeta AuditEvent RolloutRow RolloutTarget])
+(import doeff_cluster.coordinator.intent.cluster_model [ClusterJob ClusterState Placement HandoffPhase UnplacedKind NotReadyKind VersionState VersionVerdict LiveProcess ResourceMeta AuditEvent RolloutRow RolloutStatus RolloutTarget])
 (import doeff_cluster.coordinator.core.cluster_json [required-field int-field])
 (import doeff_cluster.shared.core.job_rules [spec-hash] doeff_cluster.shared.intent.job_model [JobPhase])
 (import doeff_cluster.coordinator.core.cluster_policy [job-from-json job-to-json status-row-to-json audit-event-to-json alive still-live-somewhere service-rows unplaced-kind unplaced-text task-summary resource-version-of])
-(import doeff_cluster.coordinator.core.rollout_policy [validate-rollout-spec rollout-spec-to-json rollout-targets target-key TERMINAL-PHASES])
+(import doeff_cluster.coordinator.core.rollout_policy [validate-rollout-spec rollout-spec-to-json rollout-status-to-json rollout-targets target-key TERMINAL-PHASES])
 (import doeff [run])
 (import doeff_cluster.coordinator.intent.request_bodies [ReadinessBody MetricsBody ResourceBody StatusRow])
 (import doeff_cluster.shared.core.readiness_rules [handoff-timeout-ms])
@@ -388,7 +388,7 @@
                      (if t.detached {"key" t.key} {}))
            "status" {"phase" t.phase "worker" t.worker "detail" t.detail}}))
   (for [#(name r) (.items state.rollouts)]
-    (setv (get out (key-of "Rollout" name)) {"spec" (rollout-spec-to-json r.spec) "status" r.status}))
+    (setv (get out (key-of "Rollout" name)) {"spec" (rollout-spec-to-json r.spec) "status" (rollout-status-to-json r.status)}))
   out)
 
 
@@ -528,7 +528,7 @@
 
 (defn #^ tuple active-rollouts-touching [#^ ClusterState state #^ list target-keys #^ (| str None) [skip None]]
   (tuple (gfor #(name r) (.items state.rollouts)
-               :if (and (!= name skip) (not-in (.get r.status "phase") TERMINAL-PHASES)
+               :if (and (!= name skip) (not-in r.status.phase TERMINAL-PHASES)
                         (& (set target-keys) (sfor t (rollout-targets r.spec) (target-key t))))
                name)))
 
@@ -552,7 +552,7 @@
               (refuse 400 (+ "Rollout の相手の Service が無い(先に作る): " t.name))))
           (setv busy (active-rollouts-touching state (lfor t (rollout-targets spec) (target-key t))))
           (when busy (refuse 409 (+ "同じ相手を扱う Rollout が進行中: " (.join ", " busy))))
-          (replace state :rollouts (| state.rollouts {name (RolloutRow :spec spec :status {"phase" "Pending" "createdMs" now})})))
+          (replace state :rollouts (| state.rollouts {name (RolloutRow :spec spec :status (RolloutStatus :created-ms now))})))
     True (refuse 405 (+ "この kind は API から作れない: " kind))))
 
 
@@ -619,7 +619,7 @@
           (setv owner current.spec.owner)
           (when (and (!= actor owner) (not force))
             (refuse 403 (.format "Rollout を消せるのは所有者({})か、明示の force つきの delete だけ" owner)))
-          (when (and (not-in (.get current.status "phase") TERMINAL-PHASES) (not force))
+          (when (and (not-in current.status.phase TERMINAL-PHASES) (not force))
             (refuse 409 "進行中の Rollout は消せない(中止は abort を書く。旧を先に戻してから新を止める)"))
           (replace state :rollouts (dfor #(k v) (.items state.rollouts) :if (!= k name) k v)))
     (= kind "Worker")
