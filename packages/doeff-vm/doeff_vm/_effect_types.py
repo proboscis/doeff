@@ -17,7 +17,14 @@ This module is the single place that turns an annotation into that type tuple.
 The VM calls ``handler_effect_types`` once per ``WithHandler`` it installs; the
 answer is cached on the underlying function, so a handler that is installed
 many times (Spawn re-installs the handler stack in every task) pays the
-annotation read once.
+annotation read once. A handler made afresh for every example (a closure
+returned by a handler factory) is a new function each time, so the resolved
+types are also shared by the function's code, keyed by the annotation value:
+closures of one code whose annotations are equal resolve once, and closures
+whose annotation reads a closure variable with a different value resolve
+their own. Only the annotation resolution is shared — the passed effects
+(``__doeff_passes__``), the generator function and the tail-resume lines are
+read from each function, because they can differ between closures.
 
 Resolution rules (``None`` = no filter = the handler sees every effect):
 
@@ -46,6 +53,7 @@ import functools
 import types
 import typing
 import warnings
+import weakref
 from typing import Annotated, Any, NamedTuple, Union, get_args, get_origin
 
 from doeff_vm.doeff_vm import EffectBase
@@ -219,6 +227,78 @@ def _parameter_types(function: types.FunctionType, index: int) -> EffectTypes:
     if annotation is _UNRESOLVED:
         _warn_unresolved(function, name)
         return None
+    if isinstance(annotation, str):
+        # 文字の註は関数の globals で評価する — code が同じでも globals が違えば答えが違いうるので code で共有しない
+        return _resolved_or_warn(annotation, function, name)
+    return _shared_parameter_types(function, index, name, annotation)
+
+
+class _SharedResolution(NamedTuple):
+    """One code's resolved effect parameter, shared by the closures made from that code.
+
+    ``code`` (weak) and ``index`` say which code and parameter it is for.
+    ``annotation`` is the annotation value the types were resolved from. A
+    closure reuses ``effect_types`` only when its own annotation value is the
+    same (``_same_annotation``) — an annotation that reads a closure variable
+    (evaluated per closure) gives each closure its own value, so two closures
+    of one code that admit different types never share an answer.
+    """
+
+    code: "weakref.ref[types.CodeType]"
+    index: int
+    annotation: object
+    effect_types: EffectTypes
+
+
+# id(code) → the latest resolution for that code. One entry per function definition in
+# the source (not one per closure): a closure whose annotation or parameter differs
+# replaces the entry, and the entry goes when its code is collected (the weak
+# reference's callback). Keyed by id, not by the code: hashing a code object reads
+# its whole contents, and a WeakKeyDictionary lookup builds a weak reference per call.
+_SHARED_BY_CODE: dict[int, _SharedResolution] = {}
+
+
+def _shared_parameter_types(function: types.FunctionType, index: int, name: str, annotation: object) -> EffectTypes:
+    """Resolve once per code — a handler made afresh for every example re-resolves nothing (agora-redesign #2422)."""
+    code = function.__code__
+    shared = _SHARED_BY_CODE.get(id(code))
+    if (
+        shared is not None
+        and shared.code() is code
+        and shared.index == index
+        and _same_annotation(shared.annotation, annotation)
+    ):
+        return shared.effect_types
+    resolved = _types_of(annotation, function)
+    if resolved is _UNRESOLVED:
+        # 解けない註は共有しない — 後で作る閉包では解けうる(後で定義した名前)
+        _warn_unresolved(function, name)
+        return None
+    key = id(code)
+    _SHARED_BY_CODE[key] = _SharedResolution(weakref.ref(code, functools.partial(_forget_code, key)), index, annotation, resolved)
+    return resolved
+
+
+def _forget_code(key: int, code: "weakref.ref[types.CodeType]") -> None:
+    """Drop a collected code's entry, so the shared resolutions never outlive their code (and an id reused later starts clean)."""
+    shared = _SHARED_BY_CODE.get(key)
+    if shared is not None and shared.code is code:
+        del _SHARED_BY_CODE[key]
+
+
+def _same_annotation(shared: object, current: object) -> bool:
+    """The same annotation value: the same object, or an equal one of the same kind with the same members in order.
+
+    ``A | B`` is a new object each time it is evaluated, so identity alone would
+    never share a union; its members (classes) compare by identity in order.
+    """
+    if shared is current:
+        return True
+    return type(shared) is type(current) and shared == current and get_args(shared) == get_args(current)
+
+
+def _resolved_or_warn(annotation: object, function: types.FunctionType, name: str) -> EffectTypes:
+    """Resolve a text annotation for this function alone — an unresolvable one leaves the handler unfiltered, with a warning."""
     resolved = _types_of(annotation, function)
     if resolved is _UNRESOLVED:
         _warn_unresolved(function, name)
