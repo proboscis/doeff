@@ -6,7 +6,10 @@
 ;;; だけを受ける)。置き場所の名ではなく能力を名乗る(ADR-DOE-CLUSTER-001 R4b)。旧い --labels は受け付けない。
 ;;; worker が job を受けるのは coordinator からだけ — 宣言の file から生の entry と args の job を直に起こす口(旧い --desired)は無い
 ;;; (job は Program の値 1 つ・ADR-DOE-CLUSTER-001 R1・R7)。
-(require doeff-hy.macros [defk val])
+;;;
+;;; 入口の組み立ては 2 つに分ける(agora-redesign #2542): handler の組を選ぶ(production-handlers — 本番の組)と、その組の上で worker の
+;;; Program を回す(worker-on)。模擬の環境(sim/local.hy の worker の世代)は、同じ worker-on を偽の宿の組(sim-host)の上で回す。
+(require doeff-hy.macros [defk <- val])
 (import argparse)
 (import os)
 (import signal)
@@ -15,7 +18,7 @@
 (import time)
 (import uuid)
 (import pathlib [Path])
-(import doeff [run])
+(import doeff [run with-handlers])
 (import doeff_core_effects.handlers [await-handler slog-handler state :as session-store])
 (import doeff_core_effects.os_file [os-file-handler])
 (import doeff_core_effects.os_process [subprocess-handler])
@@ -33,7 +36,7 @@
 (import doeff_cluster.shared.intent.protocol [ClusterTiming])
 (import doeff_cluster.shared.core.capabilities [capabilities-of])
 (import doeff_cluster.worker.core.program [run-worker])
-(import doeff_cluster.worker.intent.worker_model [WorkerPolicy CodeLayout])
+(import doeff_cluster.worker.intent.worker_model [WorkerPolicy WorkerState CodeLayout])
 (import doeff_cluster.worker.protocol.process_host [HostSettings process-host])
 (import doeff_cluster.worker.protocol.probes [ProbeSettings probe-host])
 (import doeff_cluster.worker.protocol.code_store [CodeSettings code-host PREPARE-TOOL])
@@ -68,6 +71,27 @@
 
 (defn #^ dict parse-labels [#^ str text]
   (dict (gfor kv (.split text ",") :if kv (.split kv "=" 1))))
+
+
+(defk production-handlers [host probes link link-cell link-options watch-cell lease-cell status-path codes envs stop]
+  {:pre [(: host HostSettings) (: probes ProbeSettings) (: link LinkState) (: link-cell RouteCell) (: link-options RouteOptions)
+         (: watch-cell RouteCell) (: lease-cell RouteCell) (: status-path str) (: codes CodeSettings) (: envs EnvSettings) (: stop StopState)]
+   :post [(: % list)] :tags {:context "worker" :role "main"}}
+  "本番の handler の組(外側が先 — with-handlers の順)。process-host・probe-host・code-host・env-host の session の値(子の表・検めの記録・
+   木と root の準備の記録)は外側の session-store が持つ。status-file は焼きの経過の秒を CodeTimings で問うので、code-host はその外側に
+   置く。coordinator-link は状態の報告を受けた後、同じ効果を外側の status-file へ回す。"
+  [(await-handler) (async-time-handler) (http-production-handler) slog-handler (stop-flag stop) subprocess-handler os-file-handler
+   (session-store) (env-host envs) (code-host codes) (status-file status-path)
+   (lease-release lease-cell link-options) (coordinator-link link link-cell link-options watch-cell)
+   (probe-host probes) (process-host host) local-host])
+
+
+(defk worker-on [handlers policy]
+  {:pre [(: handlers list) (: policy WorkerPolicy)] :post [(: % WorkerState)] :tags {:context "worker" :role "main"}}
+  "handler の組 handlers(外側が先)の上で worker の調整ループ(run-worker)を回すため — 止まれの合図で全 job を回収して終わる。
+   組を選ぶのは composition root(本番 = main の production-handlers・模擬の環境 = sim/local.hy の偽の宿)。"
+  (<- state WorkerState (with-handlers handlers (run-worker policy)))
+  state)
 
 
 (defn #^ None main []
@@ -151,18 +175,12 @@
         watch-cell (RouteCell (run (route-of args.coordinator started-ms)))
         lease-cell (RouteCell (run (route-of args.coordinator started-ms))))
   (write-boot-file (os.environ.get "DOEFF_WORKER_BOOT_FILE") boot)
-  (setv program (run-worker policy))
-  ;; 並びは内側から(先頭が Program に最も近い)。process-host・probe-host・code-host・env-host の session の値(子の表・検めの記録・
-  ;; 木と root の準備の記録)は外側の session-store が持つ。status-file は焼きの経過の秒を CodeTimings で問うので、code-host はその外側に
-  ;; 置く。coordinator-link は状態の報告を受けた後、同じ効果を外側の status-file へ回す。
-  (for [h [local-host (process-host host) (probe-host probes)
-           (coordinator-link link link-cell link-options watch-cell) (lease-release lease-cell link-options)
-           (status-file (str (/ state-dir "status.json"))) (code-host codes) (env-host envs) (session-store) os-file-handler subprocess-handler
-           (stop-flag stop) slog-handler (http-production-handler) (async-time-handler) (await-handler)]]
-    (setv program (h program)))
+  ;; handler の組を選び(本番の組)、その組の上で worker の Program を回す。
+  (setv handlers (run (production-handlers host probes link link-cell link-options watch-cell lease-cell
+                                           (str (/ state-dir "status.json")) codes envs stop)))
   (print "worker: 起動します" :file sys.stderr :flush True)
   (try
-    (run (scheduled program))
+    (run (scheduled (worker-on handlers policy)))
     (finally
       ;; 名指しの待ちの背景の task を止める(worker の終わり — 次の待ちを送らない)。
       (setv link.watch.closing True)))

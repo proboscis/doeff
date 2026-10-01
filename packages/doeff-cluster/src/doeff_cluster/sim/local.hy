@@ -163,7 +163,8 @@
 (import doeff_cluster.shared.intent.shared_model [ReadShared WriteShared ANY])
 (import doeff_cluster.shared.intent.warm_model [WarmRuntimeEnv ReadWarmState WarmState WarmAnswer])
 (import doeff_cluster.shared.core.warm_rules [warm-state-of-json])
-(import doeff_cluster.worker.core.program [run-worker])
+;; worker の世代は入口の組み立て(doeff_cluster.main の worker-on)を偽の宿の組の上で回す(本番の main と同じ口 — agora-redesign #2542)。
+(import doeff_cluster.main [worker-on])
 (import doeff_cluster.worker.intent.worker_model [WorkerPolicy WorkerState WorldView CodeView CodeState ProcessView ProbeView ProbeState
                        DesiredJobs DesiredUnreadable ReadDesired ObserveWorld WorkerStopRequested PublishStatus
                        PrepareCode PrepareEnv SweepEnvs StartJob SignalJob ReapJob RetireJob ProbeEntry ForgetProbes
@@ -1594,8 +1595,9 @@
 
 (defk run-sim-worker [worker policy boot]
   {:pre [(: worker SimWorker) (: policy WorkerPolicy) (: boot str)] :post [(: % str)] :tags {:context "doeff-cluster" :role "program"}}
-  "worker の世代 1 つ: 本物の run-worker を偽の宿の上で回す(止まれの合図で全 job を止めの手順で回収して終わる)。"
-  (<- (with-handlers [(sim-host worker boot)] (run-worker policy)))
+  "worker の世代 1 つ: 本物の run-worker を、本番の入口と同じ組み立て(worker-on)で偽の宿の組の上で回す(止まれの合図で全 job を
+   止めの手順で回収して終わる)。"
+  (<- (worker-on [(sim-host worker boot)] policy))
   boot)
 
 
