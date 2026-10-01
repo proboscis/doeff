@@ -6,7 +6,8 @@
 ;;; 共有の venv・doeff・標準 library には書かない(本番の image の焼き方 deploy/bytecode.py は木の外も歩き、
 ;;; 実行時に検めない方式で焼くので、中身の動く手元の環境には使えない)。
 ;;;
-;;; 形: 判断(module 名・引き継ぐ組・焼く物)は純粋な関数、走査・hardlink・焼きは effect(handler は下の local-tree)。
+;;; 形: 判断(module 名・引き継ぐ組・焼く物)は純粋な関数、走査・hardlink・焼きは木の効果(言い換え = worker/protocol/tree_files の
+;;; tree-files が汎用の file の効果へ出し直し、main が本物の os-file-handler を被せる — #2468)。
 ;;; 経過の秒は doeff-time の GetMonotonic(main が sync-time-handler を被せる)。
 ;;;
 ;;; 完成の印: 焼いた後に木を走査し直し、焼くべき source ごとに .pyc が在ること(焼けなかった file は理由つきで
@@ -24,60 +25,21 @@
 ;;; 焼く範囲(2026-09-26・#664 の実測): --entries <module,…> を渡すと、その module たちの import の閉包(Hy の import / require と
 ;;; Python の import を静的に辿る)だけを焼く。閉包の外の module は子が import した時に作られる(焼く物が減るだけで正しさは変わらない)。
 ;;; 並列数の既定は cgroup の CPU の上限(pod の limits)— node の CPU の数で焼くと、上限 4 の pod で 16 並列になり周期の 97% が絞られた。
-(require doeff-hy.macros [defk defhandler <- val var])
 (import argparse)
-(import ast)
 (import math)
-(import dataclasses [dataclass])
-(import json)
 (import os)
 (import sys)
-(import collections.abc [Callable])
-(import pathlib [Path PurePosixPath])
-(import doeff [EffectBase run])
-(import doeff_time [GetMonotonic sync-time-handler])
-(import doeff_core_effects.file_effects [PathKind PathStat StatPath ReadText WriteText MakeDirectory WalkTree CopyFile CompilePythonSources
-                                         file-done])
-(import doeff_core_effects.python_bytecode [compile-python-sources prepare-compile-path])
-(import doeff_cluster.worker.core.code_plan [MARKER])
-(import doeff_cluster.worker.intent.code_model [ScanTree LinkPycs CompileSources ImportClosure WriteMarker Note])
-(import doeff_cluster.worker.core.code_prepare [prepare-tree tree-listing marker-text closure-of])
+(import pathlib [Path])
+(import doeff [run with-handlers])
+(import doeff_time [sync-time-handler])
+(import doeff_core_effects.handlers [slog-handler])
+(import doeff_core_effects.os_file [os-file-handler])
+(import doeff_core_effects.python_bytecode [prepare-compile-path])
+(import doeff_cluster.worker.core.code_prepare [prepare-tree])
+(import doeff_cluster.worker.protocol.tree_files [tree-files])
 
 
-;; --- 純粋な判断 ------------------------------------------------------------------------
-
-
-;; --- effect ----------------------------------------------------------------------------
-
-
-;; --- Program ---------------------------------------------------------------------------
-
-
-;; --- handler(実 I/O) ------------------------------------------------------------------
-
-;; --- 本物(local-tree)と fake(files-tree)が同じく通る判断 ------------------------------------------
-
-
-;; --- 本物の file system の答え手の部品 ------------------------------------------------------------------
-;; 焼きの部品(compiled-pyc・checked hash の .pyc・process の pool)は doeff_core_effects.python_bytecode(汎用の効果 CompilePythonSources の
-;; 答え手が使う — #2463)。
-
-(defk scan [tree]
-  {:pre [(: tree str)] :post [(: % tuple)] :tags {:context "doeff-cluster" :role "foundation"}}
-  "本物の木を走査して #(source の列 .pyc の列) を答えるため(隠し dir の下へは入らない — どれを数えるかの判断は tree-listing)。"
-  (val root (Path tree))
-  (val rels [])
-  (for [#(dirpath dirnames filenames) (os.walk root)]
-    (val kept (lfor d dirnames :if (not (.startswith d ".")) d))
-    ;; os.walk は dirnames の list そのものを見て降りる先を決めるので、中身を入れ替える。
-    (.clear dirnames)
-    (.extend dirnames kept)
-    (val rel-dir (.as-posix (.relative-to (Path dirpath) root)))
-    (for [name filenames]
-      (.append rels (if (= rel-dir ".") name (+ rel-dir "/" name)))))
-  (<- listed tuple (tree-listing rels))
-  listed)
-
+;; --- 焼きの並列数 -----------------------------------------------------------------------
 
 (defn #^ int cpu-limit-of [#^ (| str None) cpu-max #^ int available]
   "cgroup v2 の cpu.max の中身(\"<quota> <period>\" か \"max <period>\")と使える CPU の数 → 焼きの並列数(pod の上限を越えないため)。"
@@ -92,120 +54,6 @@
   (setv available (if (hasattr os "sched_getaffinity") (len (os.sched-getaffinity 0)) (or (os.cpu-count) 1))
         path (Path "/sys/fs/cgroup/cpu.max"))
   (cpu-limit-of (if (.is-file path) (.read-text path) None) available))
-
-
-(defk import-closure [tree sources entries roots]
-  {:pre [(: tree str) (: sources (| list tuple)) (: entries tuple) (: roots tuple)] :post [(: % frozenset)]
-   :tags {:context "doeff-cluster" :role "foundation"}}
-  "本物の木の file を読んで、entries の import の閉包に入る source の相対 path を求めるため(辿り方の判断は closure-of)。"
-  (<- closure frozenset (closure-of sources entries roots (fn [rel] (.read-text (/ (Path tree) rel) :encoding "utf-8" :errors "replace"))))
-  closure)
-
-
-(defn #^ int link-pycs [#^ str old #^ str new #^ tuple pycs]
-  (setv count 0)
-  (for [rel pycs]
-    (setv target (/ (Path new) rel))
-    (.mkdir target.parent :parents True :exist-ok True)
-    (when (not (.exists target))
-      ;; import が焼き直す時は別 file へ書いて置き換えるので、共有しても壊れない。
-      (os.link (/ (Path old) rel) target)
-      (+= count 1)))
-  count)
-
-
-(defk write-marker [tree content]
-  {:pre [(: tree str) (: content dict)] :post [(: % None)] :tags {:context "doeff-cluster" :role "foundation"}}
-  "完成の印を本物の木の根へ置くため(別の file へ書いて置き換える — 書きかけの印を読ませない)。"
-  (val target (/ (Path tree) MARKER))
-  (val tmp (/ (Path tree) (+ MARKER ".tmp")))
-  (<- text str (marker-text content))
-  (.write-text tmp text :encoding "utf-8")
-  (os.replace tmp target)
-  None)
-
-
-(defhandler local-tree []
-  ;; 本物: 木の走査・hardlink・焼きを os と process の pool で行う(本番の入口 = 下の main)。
-  (ScanTree [tree]
-    (<- found tuple (scan tree))
-    (resume found))
-  (LinkPycs [old new pycs] (resume (link-pycs old new pycs)))
-  (ImportClosure [tree sources entries roots]
-    (<- closure frozenset (import-closure tree sources entries roots))
-    (resume closure))
-  (CompileSources [tree items jobs roots]
-    (resume (lfor f (compile-python-sources tree items jobs roots) #(f.path f.reason))))
-  (WriteMarker [tree content]
-    (<- (write-marker tree content))
-    (resume None))
-  (Note [line] (print line :file sys.stderr :flush True) (resume None)))
-
-
-;; --- fake: file system の effect の上の木(files-tree)--------------------------------------------------
-;; 木の効果に、汎用の file system の effect(doeff_core_effects.file_effects)で答える。模擬の世界では memory-file-handler を外側に
-;; 被せて、I/O なしで焼きの Program(prepare-tree)を走らせる。走査・閉包・焼き・印の中身の判断は本物と同じ関数(tree-listing・
-;; closure-of・marker-text)を通り、焼きは汎用の効果 CompilePythonSources(本物と同じ compiled-pyc)へ出す。本物との違い: hardlink の代わりに写す(中身は同じ)・memory の焼きは並列にしない
-;; (jobs を読まない)・焼きの間の import の路を足さない(焼く source の macro が木の中の別の module を require する時は本物だけが解ける)・
-;; Note は捨てる(模擬の世界に stderr は無い)・Hy の source は焼けない(doeff-hy の _could_be_hy_src が os.path.isfile で Hy の source かを
-;; 見るので、disk に無い source は Python として読まれ SyntaxError の失敗になる — 契約テスト test_tree_contract.hy の頭の註)。
-
-(defk tree-file-rels [tree]
-  {:pre [(: tree str)] :post [(: % list)] :tags {:context "doeff-cluster" :role "foundation"}}
-  "木の下の file の相対 path を並べるため(無い木は空 — 本物の os.walk が無い dir で何も出さないのと同じ)。"
-  (<- walked (WalkTree tree))
-  (if (isinstance walked tuple)
-      (lfor entry walked :if (= entry.kind PathKind.FILE) entry.name)
-      []))
-
-
-(defk copy-pycs [old new pycs]
-  {:pre [(: old str) (: new str) (: pycs tuple)] :post [(: % int)] :tags {:context "doeff-cluster" :role "foundation"}}
-  "前の木の .pyc を新しい木の同じ相対 path へ写し、写した数を返すため(写し先が在れば写さない — 本物の hardlink の代わり)。"
-  (var count 0)
-  (for [rel pycs]
-    (val target (os.path.join new rel))
-    (<- (file-done (MakeDirectory (os.path.dirname target))))
-    (<- found (file-done (StatPath target)))
-    (match found
-      (PathStat :kind PathKind.MISSING) (do (<- (file-done (CopyFile (os.path.join old rel) target)))
-                                            (:= count (+ count 1)))
-      _ None))
-  count)
-
-
-(defk source-texts [tree sources]
-  {:pre [(: tree str) (: sources (| list tuple))] :post [(: % dict)] :tags {:context "doeff-cluster" :role "foundation"}}
-  "木の source の相対 path → text を読むため(閉包の辿りに渡す)。"
-  (val texts {})
-  (for [rel sources]
-    (<- text (file-done (ReadText (os.path.join tree rel))))
-    (.update texts {rel text}))
-  texts)
-
-
-(defhandler files-tree
-  ;; fake(上の註): 木の効果を file system の effect へ出し直す。
-  (ScanTree [tree]
-    (<- rels list (tree-file-rels tree))
-    (<- listed tuple (tree-listing rels))
-    (resume listed))
-  (LinkPycs [old new pycs]
-    (<- copied int (copy-pycs old new pycs))
-    (resume copied))
-  (ImportClosure [tree sources entries roots]
-    (<- texts dict (source-texts tree sources))
-    (<- closure frozenset (closure-of sources entries roots (fn [rel] (get texts rel))))
-    (resume closure))
-  (CompileSources [tree items jobs roots]
-    (<- failures tuple (CompilePythonSources tree items jobs roots))
-    (resume (lfor f failures #(f.path f.reason))))
-  (WriteMarker [tree content]
-    (<- text str (marker-text content))
-    (<- (file-done (WriteText (os.path.join tree MARKER) text :replace True)))
-    (resume None))
-  (Note [line]
-    (resume None)))
 
 
 (defn #^ None main []
@@ -230,7 +78,10 @@
   (setv changed (frozenset (if args.changed (.split (.read-text (Path args.changed))) [])))
   (setv old (if args.old (str (.resolve (Path args.old))) None))
   (setv entries (tuple (gfor e (.split args.entries ",") :if e e)))
-  (setv summary (run ((sync-time-handler) ((local-tree) (prepare-tree tree args.revision old changed args.jobs roots entries)))))
+  ;; 木の効果は言い換え tree-files(worker/protocol/tree_files)が汎用の file の効果へ出し直し、本物の os-file-handler が答える(#2468)。
+  ;; Note の行は slog-handler が stderr へ出す(worker の code-host が失敗の理由に読む)。
+  (setv summary (run (with-handlers [(sync-time-handler) slog-handler os-file-handler tree-files]
+                                    (prepare-tree tree args.revision old changed args.jobs roots entries))))
   (when (is-not (get summary "problem") None)
     (print (+ "準備に失敗: " (get summary "problem")) :file sys.stderr :flush True)
     (sys.exit 1)))
