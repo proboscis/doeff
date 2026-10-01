@@ -120,7 +120,7 @@
 (import doeff_cluster.coordinator.core.cluster_policy [fresh-task-prefix])
 (import doeff_cluster.coordinator.core.program [run-coordinator])
 (import doeff_cluster.coordinator.entry.main [load-state])
-(import doeff_cluster.foundation.coordinator_http [RESEND-PAUSE-SECONDS])
+(import doeff_cluster.foundation.coordinator_http [RESEND-PAUSE-SECONDS REPLY-SECONDS])
 (import doeff_cluster.shared.core.resend [IDEMPOTENT-DEADLINE-SECONDS])
 (import doeff_cluster.foundation.coordinator_inbox [StopState] doeff_cluster.shared.protocol.inbox [http-request])
 (import doeff_cluster.coordinator.entry.handler_sets [MemoryWalStore emulated-handlers])
@@ -793,13 +793,17 @@
   {:pre [(: link SimLink) (: method str) (: path str) (: query dict) (: body (| dict None))]
    :post [(: % tuple)] :tags {:context "doeff-cluster" :role "protocol"}}
   "coordinator の受け口(要求の列)へ 1 件送り、返事 #(status 本文) を待つため。止まっている coordinator には接続の失敗
-   #(None {\"error\" …}) を返す(本番の送り手の接続の失敗に当たる)。"
+   #(None {\"error\" …}) を返す(本番の送り手の接続の失敗に当たる)。返事は本番の HTTP の client と同じ REPLY-SECONDS までしか
+   待たず、来なければ途中で切れた失敗 #(None {\"error\" …}) を返す — 受けたまま返事をしない coordinator(拍の判断が落ち続ける等)の前で
+   送り手を無期限に止めない(止めると worker の拍と止めの手順が終わらず、模擬が仮想の時計を回し続ける・#2596)。"
   (if (not link.queue.up)
       #(None {"error" "coordinator に接続できない(止まっている)"})
       (do (<- promise Promise (CreatePromise))
           (<- (enqueue-request link.queue (http-request method path query body :slot promise :actor link.actor :peer link.peer)))
-          (<- answer tuple (Wait promise.future))
-          answer)))
+          (<- answer (| tuple None) (promise-or-timeout promise.future REPLY-SECONDS))
+          (if (is answer None)
+              #(None {"error" (.format "coordinator の返事が {} 秒で来ない(途中で切れた)" REPLY-SECONDS)})
+              answer))))
 
 
 (defk send-resent [link method path query body]
@@ -1528,12 +1532,16 @@
 (defk await-beat [name boot]
   {:pre [(: name str) (: boot str)] :post [(: % None)] :tags {:context "doeff-cluster" :role "program"}}
   "起こした後の待ち(または版をまだ知らない待ち)が、次の heartbeat が届くまで眠るため(上限 WAKE-HOLD-SECONDS — 同じ版で待ち直して
-   空回りしない)。本番の WatchCell.beats を見る待ちに当たる。"
+   空回りしない)。本番の WatchCell.beats を見る待ちに当たる。起きたら自分の鈴を払う — heartbeat が届かず時間切れで起きた鈴を残すと、
+   届かない間ずっと鈴の列が伸び続ける(#2596)。"
   (<- truth HostTruth (HostTruthOf name))
   (when (= truth.boot boot)
     (<- bell Promise (CreatePromise))
     (<- (PutHostTruth name (replace truth :beat-bells (+ truth.beat-bells #(bell)))))
-    (<- (promise-or-timeout bell.future WAKE-HOLD-SECONDS)))
+    (<- (promise-or-timeout bell.future WAKE-HOLD-SECONDS))
+    (<- woke HostTruth (HostTruthOf name))
+    (when (= woke.boot boot)
+      (<- (PutHostTruth name (replace woke :beat-bells (tuple (gfor b woke.beat-bells :if (is-not b bell) b)))))))
   None)
 
 
