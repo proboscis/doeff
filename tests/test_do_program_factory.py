@@ -1,0 +1,121 @@
+"""``@do`` の 1 回の飾りの費用(``program_factory``)と、その答えが変わらないこと(agora-redesign #2421)。
+
+``@do`` は handler の閉包にも呼びごとに当たる(例ごとに作る handler — #2421 の測りで 1 検 1811 回)。飾るたびに
+``inspect.isgeneratorfunction`` で partialmethod・method・partial を剥がし、関数の中で ``doeff_vm`` を import していた。
+素の関数は code の旗を直に読み、import は module の頭へ移した。ここでは:
+
+- 答えが ``inspect.isgeneratorfunction`` と同じこと(剥がす物のある形も含めて)。
+- 飾った関数の振る舞い(生成器なら本体を走らせる・生成器でなければ値)が変わらないこと。
+- 素の関数を飾る時に ``inspect.isgeneratorfunction`` を呼ばず、``program_factory`` が import しないこと
+  (直しを外すと赤になる数の検)。
+"""
+
+from __future__ import annotations
+
+import dis
+import functools
+import inspect
+from collections.abc import Callable, Generator
+
+import pytest
+
+from doeff import Pure, do, run
+from doeff.do import _is_generator_function, program_factory
+
+
+def _generator(x: int) -> Generator[object, int, int]:
+    value = yield Pure(x)
+    return value + 1
+
+
+def _plain(x: int) -> int:
+    return x + 1
+
+
+def _closure_generator() -> Callable[..., object]:
+    offset = 2
+
+    def inner(x: int) -> Generator[object, int, int]:
+        value = yield Pure(x)
+        return value + offset
+
+    return inner
+
+
+class _Holder:
+    def method(self, x: int) -> Generator[object, int, int]:
+        value = yield Pure(x)
+        return value
+
+    partial_method = functools.partialmethod(method, 1)
+
+    def __call__(self, x: int) -> Generator[object, int, int]:
+        value = yield Pure(x)
+        return value
+
+
+def _function_marked_as_partialmethod() -> Callable[..., object]:
+    """partialmethod の印 ``__partialmethod__`` を持つ素の関数 — inspect は印の先の関数の旗を読む。"""
+
+    def shim(x: int) -> int:
+        return x
+
+    shim.__dict__["__partialmethod__"] = functools.partialmethod(_generator)
+    return shim
+
+
+SHAPES: dict[str, Callable[..., object]] = {
+    "generator function": _generator,
+    "plain function": _plain,
+    "closure generator": _closure_generator(),
+    "lambda": lambda x: x,
+    "partial of a generator": functools.partial(_generator, 1),
+    "bound method": _Holder().method,
+    "partialmethod on an instance": _Holder().partial_method,
+    "callable instance": _Holder(),
+    "builtin": len,
+    "function marked as partialmethod": _function_marked_as_partialmethod(),
+    "wrapped plain function": functools.wraps(_generator)(lambda x: x),
+}
+
+
+@pytest.mark.parametrize("name", sorted(SHAPES))
+def test_generator_flag_agrees_with_inspect(name: str) -> None:
+    fn = SHAPES[name]
+    assert _is_generator_function(fn) is inspect.isgeneratorfunction(fn), name
+
+
+def test_decorated_functions_keep_their_behavior() -> None:
+    assert run(do(_generator)(1)) == 2
+    assert run(do(_plain)(1)) == 2
+    assert run(do(_closure_generator())(1)) == 3
+
+
+def test_decorating_a_plain_function_does_not_unwrap_through_inspect(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """失敗ケースの対(数の検): 素の関数の飾りは ``inspect.isgeneratorfunction`` を通らない。
+
+    直しを外すと(``program_factory`` が ``inspect.isgeneratorfunction`` を呼ぶ形)、閉包を 3 つ飾って 3 回数える。
+    剥がす物のある形(partial)は今までどおり inspect に任せる。
+    """
+    calls = [0]
+    original = inspect.isgeneratorfunction
+
+    def counting(fn: object) -> bool:
+        calls[0] += 1
+        return original(fn)
+
+    monkeypatch.setattr(inspect, "isgeneratorfunction", counting)
+    for _ in range(3):
+        decorated = do(_closure_generator())
+        assert run(decorated(1)) == 3
+    assert calls[0] == 0
+    do(functools.partial(_generator))
+    assert calls[0] == 1
+
+
+def test_program_factory_does_not_import_per_decoration() -> None:
+    """飾るたびに import の機構(``_handle_fromlist``)を通らない — 名は module の頭で 1 度だけ引く。"""
+    opnames = {instruction.opname for instruction in dis.get_instructions(program_factory)}
+    assert "IMPORT_NAME" not in opnames

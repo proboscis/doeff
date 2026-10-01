@@ -81,9 +81,11 @@
 ;;;         (defn __post-init__ [self]
 ;;;           (setv value self.value)
 ;;;           (setv _verdict (CHAT-ID-PATTERN.fullmatch value))
-;;;           (when (isinstance _verdict #(DoExpr EffectBase)) (raise (TypeError "… Program を返した …")))
-;;;           (doeff_hy.record.require-check "ChatId" #("value") "(CHAT-ID-PATTERN.fullmatch value)"
-;;;                                          (bool _verdict) {"value" value})
+;;;           (when (is-not _verdict True)   ; 答えが True そのものなら残りは要らない(#2421)
+;;;             (when (isinstance _verdict #(DoExpr EffectBase)) (raise (TypeError "… Program を返した …")))
+;;;             (when (not _verdict)
+;;;               (doeff_hy.record.require-check "ChatId" #("value") "(CHAT-ID-PATTERN.fullmatch value)"
+;;;                                              (bool _verdict) {"value" value})))
 ;;;           None))
 ;;;       (setattr ChatId "__doeff_tags__" (doeff_hy.declarations.DefinitionTags :context "chat" :role "type"))
 ;;;       (setattr ChatId "__doeff_checks__" #("(CHAT-ID-PATTERN.fullmatch value)")))
@@ -238,13 +240,20 @@
     ;; 結果が Program / effect(defk を :check で呼んだ形)なら TypeError — Program は真に見えて黙って通ってしまうため。
     (setv verdict (hy.gensym "verdict")
           text (.lstrip (hy.repr check) "'"))
+    ;; 検めの多くは真偽の式(`(<= start end)`)で、答えは True そのもの — その時は Program でも偽でもないので、残りの 2 つの
+    ;; 検め(Program の判定・require-check)を飛ばす。record を 1 つ作るたびに検めの数だけ走る所で、Program の判定
+    ;; (DoExpr の isinstance は Python の metaclass を通る)と require-check の呼び(:pre の isinstance 5 つと値の辞書)を
+    ;; 毎回払っていた(agora-redesign #2421)。True でない答え(正規表現の Match など)は今までどおり Program を判定し、
+    ;; 偽の時だけ require-check を呼ぶ — require-check は偽の時にしか何もしない(真なら None を返すだけ)ので、断る物と文言は同じ。
     (.extend statements
       [`(setv ~verdict ~check)
-       `(when (isinstance ~verdict #(doeff_hy.record.DoExpr doeff_hy.record.EffectBase))
-          (raise (TypeError ~(.format "{} の :check の {} が Program を返した — :check は純粋な式で書く(defk は作る時に呼べない)" name text))))
-       `(doeff_hy.record.require-check
-          ~(str name) #(~@(lfor n used (String (hy.unmangle n)))) ~text
-          (bool ~verdict) {~@(sum (lfor n used [(String (hy.unmangle n)) (Symbol n)]) [])})]))
+       `(when (is-not ~verdict True)
+          (when (isinstance ~verdict #(doeff_hy.record.DoExpr doeff_hy.record.EffectBase))
+            (raise (TypeError ~(.format "{} の :check の {} が Program を返した — :check は純粋な式で書く(defk は作る時に呼べない)" name text))))
+          (when (not ~verdict)
+            (doeff_hy.record.require-check
+              ~(str name) #(~@(lfor n used (String (hy.unmangle n)))) ~text
+              (bool ~verdict) {~@(sum (lfor n used [(String (hy.unmangle n)) (Symbol n)]) [])})))]))
   (setv post-init (if statements
                       [`(defn __post-init__ [self]
                           ~@(lfor n bound `(setv ~(Symbol n) (. self ~(Symbol n))))

@@ -16,7 +16,10 @@ import warnings
 from collections.abc import Callable, Generator
 from functools import wraps
 from textwrap import dedent
+from types import FunctionType
 from typing import Any, Never, ParamSpec, TypeVar, overload
+
+from doeff_vm import Call, DoFunction
 
 from doeff.program import Expand
 
@@ -299,6 +302,19 @@ def do(
     return decorate(fn)
 
 
+def _is_generator_function(fn: Callable[..., Any]) -> bool:
+    """``inspect.isgeneratorfunction(fn)`` の答え — 素の関数は code の旗を直に読む。
+
+    ``@do`` は handler の閉包にも呼びごとに当たる(例ごとに作る handler — agora-redesign #2421 の測りで 1 検 1811 回)。
+    ``inspect.isgeneratorfunction`` は partialmethod・method・partial を剥がしてから同じ旗を読むので、剥がす物の無い素の
+    関数(型が ``FunctionType`` ちょうどで、partialmethod の印 ``__partialmethod__`` を持たない)では答えが同じ。それ以外は
+    ``inspect`` に任せる。
+    """
+    if type(fn) is FunctionType and "__partialmethod__" not in fn.__dict__:
+        return bool(fn.__code__.co_flags & inspect.CO_GENERATOR)
+    return inspect.isgeneratorfunction(fn)
+
+
 def program_factory(
     fn: Callable[P, Any],
     tail_resume_lines: tuple[int, ...],  # noqa: DOEFF006 - immutable line-number set for IRStream
@@ -311,9 +327,7 @@ def program_factory(
     here, so a call allocates a single node — not the ``Expand(Apply(Pure(Callable(thunk))))``
     chain and its closure (agora-redesign #844).
     """
-    from doeff_vm import Call, DoFunction
-
-    definition = DoFunction(fn, list(tail_resume_lines), inspect.isgeneratorfunction(fn))
+    definition = DoFunction(fn, list(tail_resume_lines), _is_generator_function(fn))
 
     @wraps(fn)
     def wrapper(*args: P.args, **kwargs: P.kwargs) -> Expand:

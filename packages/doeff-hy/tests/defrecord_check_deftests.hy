@@ -4,7 +4,7 @@
 ;;; 頭の辞書の無い前からの形がそのまま動く・展開の時に断る形・Program を返す検めを止める。
 ;;; 公開は test_defrecord_check.py(包み直さずそのまま公開する — ADR-DOE-HY-002)。
 
-(require doeff-hy.macros [deftest defk <-])
+(require doeff-hy.macros [deftest defk <- val])
 (require doeff-hy.record [defrecord])
 (import dataclasses [dataclass FrozenInstanceError])
 (import re)
@@ -134,6 +134,34 @@
   (with [caught (pytest.raises TypeError)]
     (Misused :value "x"))
   (assert (in "Program を返した" (str caught.value))))
+
+
+(deftest test-a-check-answering-true-skips-the-failure-path
+  (<- _ (Pure None))
+  ;; 数の検(agora-redesign #2421): 答えが True そのものの検めは require-check を呼ばない — record を作るたびの費用
+  ;; (require-check の :pre の isinstance 5 つと値の辞書・DoExpr の metaclass を通る isinstance)を払わない。
+  ;; 直しを外すと(検めごとに require-check を呼ぶ形)、通る Span 1 つで 2 回・通る ChatId で 1 回と数えて赤。
+  ;; 断る物は変わらない: 偽の検めは require-check が ValueError にし、True でない真の答え(Match)は通る。
+  (import doeff_hy.record :as record-module)
+  (val original record-module.require-check)
+  (val calls [0])
+  (setattr record-module "require_check"
+           (fn [#* args]
+             (+= (get calls 0) 1)
+             (original #* args)))
+  (try
+    (Span :start 0 :end 3)
+    (ChatId :value "c-01M2QAJS4JHEH34YQ0T6S9TZXB")
+    (assert (= (get calls 0) 0) (get calls 0))
+    (with [caught (pytest.raises ValueError)]
+      (Span :start 3 :end 1))
+    (assert (= (get calls 0) 1) (get calls 0))
+    (assert (= (str caught.value) "Span の欄 start・end が検め (<= start end) で落ちた: start=3 end=1"))
+    (with [(pytest.raises ValueError)]
+      (ChatId :value "chat-1"))
+    (assert (= (get calls 0) 2) (get calls 0))
+    (finally
+      (setattr record-module "require_check" original))))
 
 
 (deftest test-malformed-headers-are-refused-at-expansion
