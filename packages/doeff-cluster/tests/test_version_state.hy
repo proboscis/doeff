@@ -11,7 +11,7 @@
 (require doeff-hy.macros [deftest val])
 (import pytest)
 (import doeff_cluster.shared.intent.protocol [ClusterTiming])
-(import doeff_cluster.coordinator.intent.cluster_model [ClusterState RefusedJob VersionState NotReadyKind UnplacedKind])
+(import doeff_cluster.coordinator.intent.cluster_model [ClusterState RefusedJob RolloutTarget VersionState NotReadyKind UnplacedKind])
 (import doeff_cluster.foundation.coordinator_inbox [http-request])
 (import doeff_cluster.shared.intent.job_model [JobPhase] doeff_cluster.shared.core.job_rules [spec-hash])
 (import doeff_cluster.coordinator.core.cluster_policy [unplaced-jobs])
@@ -361,7 +361,7 @@
   ;; target-view(Rollout の相手の観測)と version-state が、同じ名前の述語 service-stopped を呼ぶ。述語を差し替えた spy が
   ;; 両方から呼ばれ、止めている途中・止まっている の 2 場面で両方の答えが揃う。
   (assert (is api-policy.service-stopped resource-policy.service-stopped) "target-view が別の停止の述語を持っている")
-  (setv calls [] original resource-policy.service-stopped target {"kind" "Service" "name" "w"})
+  (setv calls [] original resource-policy.service-stopped target (RolloutTarget :kind "Service" :name "w"))
   (defn #^ bool spy [#^ ClusterState state #^ str name #^ int now #^ ClusterTiming timing]  ; defk にできない: 検の道具(呼ばれた事を数える)
     "停止の述語の代わり: 呼ばれた事を記録して本物を呼ぶ。"
     (.append calls #(state name now timing))

@@ -143,12 +143,39 @@
   (#^ int size))
 
 
+(defrecord RolloutTarget
+  "Rollout の相手 1 つ(spec の from / to): kind = Service か Deployment・name・namespace = Deployment の名前空間(Service は None)・
+   replicas = Deployment を新として起こす台数(無ければ None)・dry-run = Deployment を書かずに台数を記録だけする(Service は偽)。
+   JSON の形は rollout_policy の target-to-json(Service は {kind name}・Deployment は {kind namespace name replicas dryRun})。"
+  (#^ str kind)
+  (#^ str name)
+  (setv #^ (| str None) namespace None)
+  (setv #^ (| int None) replicas None)
+  (setv #^ bool dry-run False))
+
+
+(defrecord RolloutSpec
+  "Rollout の宣言(rollout_policy.validate-rollout-spec が送り手の本文から揃えた形 — 欠けた秒の欄は既定の値): from-target / to-target =
+   旧と新・owner = 所有者・*-seconds = 段ごとの期限(新の Ready・旧の停止・観察・観察中の NotReady・戻し)・mark-deployment = 台数の
+   持ち主の annotation を Deployment に付けるか・abort = 中止の指示(作った後に変えてよい唯一の欄)。#2447 で dict をこの型にした。
+   JSON の形 {from to owner readyTimeoutSeconds … markDeployment abort} は rollout_policy の rollout-spec-to-json。"
+  (#^ RolloutTarget from-target)
+  (#^ RolloutTarget to-target)
+  (#^ (| str None) owner)
+  (#^ (| int float) ready-timeout-seconds)
+  (#^ (| int float) stop-timeout-seconds)
+  (#^ (| int float) observe-seconds)
+  (#^ (| int float) fail-after-seconds)
+  (#^ (| int float) rollback-timeout-seconds)
+  (#^ bool mark-deployment)
+  (#^ bool abort))
+
+
 (defrecord RolloutRow
-  "Rollout 1 つ(ClusterState.rollouts の値 — 鍵 = Rollout の名・保存する): spec = 宣言(rollout_policy.validate-rollout-spec が揃えた
-   形 — from / to の相手・owner・abort ほか)・status = 進み具合(phase・history・lastAction・drift ほか — rollout_policy.rollout-step が
-   進める)。#2447 で外側の dict をこの型にした(spec と status の中身の型は続きの切り出し)。保存の JSON の形 {spec status} は
-   cluster_policy の rollout-row-to-json / rollout-row-from-json。"
-  (#^ dict spec)
+  "Rollout 1 つ(ClusterState.rollouts の値 — 鍵 = Rollout の名・保存する): spec = 宣言 RolloutSpec・status = 進み具合(phase・history・
+   lastAction・drift ほか — rollout_policy.rollout-step が進める)。#2447 で dict をこの型にした(status の中身の型は続きの切り出し)。
+   保存の JSON の形 {spec status} は cluster_policy の rollout-row-to-json / rollout-row-from-json。"
+  (#^ RolloutSpec spec)
   (#^ dict status))
 
 
