@@ -43,7 +43,8 @@
 (import doeff_cluster.coordinator.core.cluster_policy [JOB-ENTRY])
 (import tests.program_rows [SAMPLE-TASK-PROGRAM program-placed])
 (import tests.fixtures.entry_programs [based-add])
-(import doeff_cluster.foundation.coordinator_http [IDEMPOTENT-DEADLINE-SECONDS RESEND-PAUSE-SECONDS])
+(import doeff_cluster.foundation.coordinator_http [RESEND-PAUSE-SECONDS])
+(import doeff_cluster.shared.core.resend [IDEMPOTENT-DEADLINE-SECONDS])
 
 (val T (ClusterTiming))
 (val V {"python" "3.14.0" "doeff" "1"})

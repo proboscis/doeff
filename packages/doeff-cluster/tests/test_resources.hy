@@ -226,7 +226,7 @@
 
 (defn #^ dict ready-report [#^ dict spec #^ str instance #^ str [worker "atlas"] #^ int [placement 1] #^ int [attempt 1] #^ bool [ready True]
                             #^ str [name "w"]]
-  "service の process の ReportReady の本文(report_client.hy と同じ欄 — 子 process が受け取った世代を載せる)。"
+  "service の process の ReportReady の本文(shared/protocol/service_report.hy の service-report-of と同じ欄 — 子 process が受け取った世代を載せる)。"
   {"worker" worker "pid" 7 "revision" (get spec "revision") "instance" instance "attempt" (str attempt)
    "specHash" (hash-of spec name) "placement" placement "ready" ready "reason" "拍を終えた"})
 

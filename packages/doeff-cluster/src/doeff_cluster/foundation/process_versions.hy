@@ -15,7 +15,11 @@
 (import sys)
 (import types [MappingProxyType ModuleType])
 (import doeff.do)
-(import doeff_cluster.shared.intent.remote_model [RemoteJobFailed])
+
+
+(defclass SourceUnidentified [RuntimeError]
+  "版の識別に要る module の source の file が無い(frozen の module など)。版を作れないので送りも受けもしない — 呼び手の process を止めるために
+   投げる。前は intent の RemoteJobFailed を投げていたが、層 foundation は intent を読めないので foundation の例外にした(#2566)。")
 
 
 (defn #^ str _source-fingerprint [#^ ModuleType module]
@@ -23,7 +27,7 @@
   ;; 版の名だけでは足りないので、その file の hash も添える。module は静的に import した物を渡す(名から引き直さない)。
   (setv file module.__file__)
   (when (is file None)
-    (raise (RemoteJobFailed (.format "{} の source の file が無い(版の識別を作れない)" module.__name__))))
+    (raise (SourceUnidentified (.format "{} の source の file が無い(版の識別を作れない)" module.__name__))))
   (setv path (Path file))
   (cut (.hexdigest (hashlib.sha256 (.read-bytes path))) 0 12))
 

@@ -67,7 +67,8 @@
 (import tests.env_fixtures [LOCK env-of])
 (import tests.program_rows [SAMPLE-RUN])
 (import tests.board_fake [board-handlers])
-(import doeff_cluster.foundation.coordinator_http [IDEMPOTENT-DEADLINE-SECONDS RESEND-PAUSE-SECONDS])
+(import doeff_cluster.foundation.coordinator_http [RESEND-PAUSE-SECONDS])
+(import doeff_cluster.shared.core.resend [IDEMPOTENT-DEADLINE-SECONDS])
 
 (val COORDINATOR "http://coordinator")
 ;; 報告の送り手が名乗る Service(本物の側では coordinator に宣言してある — 無い Service の報告は coordinator が 404 で断る)。

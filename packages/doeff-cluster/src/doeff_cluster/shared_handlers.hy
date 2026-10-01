@@ -7,7 +7,8 @@
 (import doeff_cluster.shared.intent.shared_model [ReadShared WriteShared ANY])
 (import doeff_cluster.shared.intent.semaphore_model [LeaseOp LeaseAnswer])
 (import doeff_hy.wire [parse])
-(import doeff_cluster.foundation.coordinator_http [IDEMPOTENT-DEADLINE-SECONDS RESEND-PAUSE-SECONDS])
+(import doeff_cluster.foundation.coordinator_http [RESEND-PAUSE-SECONDS])
+(import doeff_cluster.shared.core.resend [IDEMPOTENT-DEADLINE-SECONDS])
 (import doeff_cluster.foundation.board_requests [board-read-request board-write-request lease-request])
 (import doeff_cluster.shared.protocol.coordinator_route [RouteCell RouteOptions RoutedReply routed-request resent-request
                                                          answer-json write-accepted])

@@ -9,7 +9,8 @@
 (import doeff_cluster.shared.protocol.coordinator_route [CoordinatorRoute RouteOptions RoutedReply route-of route-order route-used
                                                          routed-request resent-request])
 (import tests.clock_fixtures [clock-at clock-ms count-delays])
-(import doeff_cluster.foundation.coordinator_http [IDEMPOTENT-DEADLINE-SECONDS RESEND-PAUSE-SECONDS])
+(import doeff_cluster.foundation.coordinator_http [RESEND-PAUSE-SECONDS])
+(import doeff_cluster.shared.core.resend [IDEMPOTENT-DEADLINE-SECONDS])
 
 (val LAN "http://lan:8080")
 (val NET "http://tailnet:8080")
