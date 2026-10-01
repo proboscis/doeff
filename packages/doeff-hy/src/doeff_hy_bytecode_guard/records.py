@@ -142,8 +142,8 @@ def macro_provider_files(
 ) -> dict[str, str]:
     """module の展開が依った source の file の一覧 ``{module 名: file}``(名の順)。
 
-    macro の提供元の module、提供元が参照する同じ top package の module(macro の中から呼ぶ補助の関数)、
-    提供元自身が require した macro の提供元を辿る。Hy 自身(``hy.*``)は記録の Hy の版で覆う。
+    macro の提供元の module、提供元が参照する同じ top package の module(macro の中から呼ぶ補助の関数 — 名前空間の値と、
+    提供元の関数・macro の本体の中の import の両方)、提供元自身が require した macro の提供元を辿る。Hy 自身(``hy.*``)は記録の Hy の版で覆う。
     module 自身の file(``path``)は Python の .pyc の有効判定が覆うので含めない。
     """
     files: dict[str, str] = {}
@@ -163,7 +163,7 @@ def macro_provider_files(
         if file.endswith(_SOURCE_SUFFIXES):
             files[name] = file
         pending.extend(_macro_providers(provider, modules))
-        for other in _referenced_module_names(provider):
+        for other in (*_referenced_module_names(provider), *_imported_module_names(provider)):
             if other not in seen and _top_package(other) == _top_package(name):
                 referenced = modules.get(other)
                 if referenced is not None:
@@ -227,6 +227,33 @@ def _macro_providers(module: ModuleType, modules: Mapping[str, ModuleType]) -> I
             provider = modules.get(macro.__module__)
             if provider is not None:
                 yield provider
+
+
+def _imported_module_names(provider: ModuleType) -> Iterator[str]:
+    """提供元の関数と macro の本体の中で import する module の名を挙げる — 展開の時にだけ import する補助(doeff-hy の
+    defsystem が本体で import する ``doeff_hy.system_form``)は提供元の名前空間に現れないので、code の import の命令から
+    読む(agora-redesign #2373)。提供元で定義された関数だけを読む(import した他所の関数はその提供元の側で辿る)。"""
+    namespace = vars(provider)
+    tables = tuple(
+        table for name in MACRO_TABLES if isinstance(table := namespace.get(name), dict)
+    )
+    functions = (
+        *(value for value in namespace.values() if isinstance(value, FunctionType)),
+        *(macro for table in tables for macro in table.values() if isinstance(macro, FunctionType)),
+    )
+    for function in functions:
+        if function.__module__ == provider.__name__:
+            yield from _imports_in(function.__code__)
+
+
+def _imports_in(code: CodeType) -> Iterator[str]:
+    """code とその入れ子の code(内側の関数・内包表記)の名の表のうち、点を含む名(import の命令が名指す module の名の
+    候補)。命令を逆アセンブルせず名の表だけを読む(doeff_hy.macros で 1 回 130 ms → 名の表なら 1 ms 未満)— 呼び手が
+    読み込み済みの同じ top package の module に絞るので、属性の名などを拾い過ぎても記録には残らない。"""
+    yield from (name for name in code.co_names if "." in name)
+    for constant in code.co_consts:
+        if isinstance(constant, CodeType):
+            yield from _imports_in(constant)
 
 
 def _referenced_module_names(provider: ModuleType) -> Iterator[str]:

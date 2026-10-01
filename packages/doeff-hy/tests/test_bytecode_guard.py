@@ -156,6 +156,25 @@ def test_a_change_of_the_helper_a_macro_calls_recompiles_the_user(tmp_path: Path
     assert _run_on_pypi_hy(tmp_path, "before-hy") == 21
 
 
+def test_a_change_of_the_helper_a_macro_imports_inside_its_body_recompiles_the_user(
+    tmp_path: Path,
+) -> None:
+    """macro が展開の時に関数の中で import する同じ package の補助を変えても、使う側は作り直される(agora-redesign #2373 —
+    doeff-hy の defsystem は展開の中で ``doeff-hy.system-form`` を import する。その補助だけが変わった pin の後、提供元の
+    名前空間に補助が無いので記録から漏れ、古い置き場を import する展開が .pyc に残った)。"""
+    package = tmp_path / "pkg"
+    package.mkdir()
+    (package / "__init__.py").write_text("")
+    (package / "helpers.hy").write_text("(defn base [] 10)\n")
+    (package / "macros.hy").write_text(
+        "(defmacro answer [] (import pkg.helpers [base]) (+ (base) 1))\n"
+    )
+    (package / "user.hy").write_text("(require pkg.macros [answer])\n(setv value (answer))\n")
+    assert _run_on_pypi_hy(tmp_path, "before-hy") == 11
+    _edit(package / "helpers.hy", "(defn base [] 20)\n")
+    assert _run_on_pypi_hy(tmp_path, "before-hy") == 21
+
+
 def test_the_record_lives_inside_a_standard_pyc(tmp_path: Path) -> None:
     """記録は .pyc の中(code の定数)にあり、__pycache__ には標準の .pyc しか無い(.hydeps のような隣の file を書かない)。"""
     _write_package(tmp_path)
