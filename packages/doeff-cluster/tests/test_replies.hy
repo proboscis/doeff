@@ -2,7 +2,7 @@
 ;; JSON の形は coordinator/protocol/replies が綴る。検の入口 responded と、本番と模擬の組の返事の答え手 reply-bodies は同じ綴りを通る。
 (require doeff-hy.macros [deftest val])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming])
-(import doeff_cluster.coordinator.intent.cluster_model [ClusterState EventsView StateReply HeartbeatReply WorkerInfo WorkerDrainView ResourceList ResourceView ErrorReply RowConflict])
+(import doeff_cluster.coordinator.intent.cluster_model [ClusterState EventsView StateReply HeartbeatReply WorkerInfo WorkerDrainView ResourceList ResourceView ErrorReply RowConflict BoardWritten BoardConflict BoardRead])
 (import doeff_cluster.coordinator.core.cluster_policy [heartbeat-reply])
 (import doeff_cluster.coordinator.core.drain_policy [superseded-worker-view])
 (import doeff_cluster.shared.protocol.inbox [http-request])
@@ -98,3 +98,18 @@
   (assert (= (reply-json (ErrorReply :message "版が古い" :current 3 :conflicts #((RowConflict :name "a" :message "x" :current 2)
                                                                                (RowConflict :name "b" :message "y"))))
              {"error" "版が古い" "current" 3 "conflicts" [{"name" "a" "error" "x" "current" 2} {"name" "b" "error" "y"}]})))
+
+
+(deftest test-the-board-answers-are-typed-and-spelled-in-the-old-shape
+  ;; 盤の読みの答えは型の値(BoardRead)で、読みと書きの答えの JSON は前と同じ形(書きは本文を解く入口 responded を通す)。
+  (setv #(s write-status written) (responded (ClusterState) (http-request "PUT" "/board/a" {} {"value" 1} :actor "c") 1000 T))
+  (assert (= #(write-status written) #(200 {"ok" True "resourceVersion" 1})) written)
+  (setv #(_ clash-status clash) (responded s (http-request "PUT" "/board/a" {} {"value" 2 "expectVersion" 5} :actor "c") 1000 T))
+  (assert (= #(clash-status clash) #(409 {"ok" False "current" 1 "resourceVersion" 1})) clash)
+  (setv #(_ _ plain) (respond s (http-request "GET" "/board" {} None) 1000 T {}))
+  (assert (isinstance plain BoardRead) plain)
+  (assert (= (reply-json plain) {"a" 1}))
+  (setv #(_ _ versioned) (respond s (http-request "GET" "/board" {"withVersions" "1"} None) 1000 T {}))
+  (assert (= (reply-json versioned) {"a" {"value" 1 "resourceVersion" 1}}))
+  (assert (= (reply-json (BoardWritten :version None)) {"ok" True "resourceVersion" None}))
+  (assert (= (reply-json (BoardConflict :current 1 :version 1 :reason "x")) {"ok" False "current" 1 "resourceVersion" 1 "error" "x"})))

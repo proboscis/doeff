@@ -402,6 +402,41 @@ class ErrorReply:
     open: int | None = None
     fault: bool = False
 
+@dataclass(frozen=True, kw_only=True)
+class BoardUsage:
+    rows: int
+    bytes: int
+    expiring: int
+    max_rows: int
+    max_bytes: int
+    max_value_bytes: int
+
+@dataclass(frozen=True, kw_only=True)
+class BoardEntryView:
+    key: str
+    value: object
+    version: int
+
+@dataclass(frozen=True, kw_only=True)
+class BoardRead:
+    entries: tuple[BoardEntryView, ...]
+    with_versions: bool
+
+@dataclass(frozen=True, kw_only=True)
+class BoardWritten:
+    version: int | None
+
+@dataclass(frozen=True, kw_only=True)
+class BoardConflict:
+    current: object
+    version: int
+    reason: str | None = None
+
+@dataclass(frozen=True, kw_only=True)
+class BoardRefused:
+    reason: str
+    usage: BoardUsage | None = None
+
 @dataclass(frozen=True)
 class ClusterNaming:
     owner_annotation: str = "doeff-cluster/replicas-owned-by"
