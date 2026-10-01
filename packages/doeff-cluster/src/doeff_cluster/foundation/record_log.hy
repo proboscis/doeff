@@ -16,6 +16,7 @@
 ;;; 並行: 出来事の番号は問いと答えの両方に振る(scheduler が task を切り替える順 = 答えが返った順も再生で同じにするため)。
 ;;; task の名は親の名 + 「.」+ 親の中で何番目に Spawn したか(scheduler の番号に依らないので記録と再生で同じ)。根は "root"。
 (require doeff-hy.macros [val])
+(require doeff-hy.record [defrecord])
 (val MODULE-TAGS {:context "doeff-cluster" :role "foundation"})
 (import collections.abc [Callable])
 (import dataclasses)
@@ -23,8 +24,8 @@
 (import json)
 (import typing [get-args])
 (import doeff_hy.json_value [OpaqueJson])
-(import doeff_cluster.foundation.record_codec [READ LIVE DECISION OUTPUT LOOSE READABLE-FORMATS JsonValue canonical apply-delta delta-of resolve-refs
-                                                resolve-type encode-value decode-value])
+(import doeff_cluster.foundation.record_codec [READ LIVE DECISION OUTPUT LOOSE READABLE-FORMATS JsonValue RestoredValue
+                                                canonical apply-delta delta-of resolve-refs resolve-type encode-value decode-value])
 
 (setv ROOT "root")
 
@@ -43,8 +44,21 @@
 
 ;; --- 記録の読み ---------------------------------------------------------------------------------
 
+(defrecord WatchedRef
+  "記録の答えの印 {\"$w\": n}: 答えは出来事 n の答えと同じ共有の箱(Ask の計器の箱 — 業務コードと handler が同じ object を持つ)。
+   箱そのものは再生が出来事 n の答えを返した時に作るので、記録を読む時には戻せない — 再生の側(record_handlers.deliver-recorded)が
+   その時の箱を引く。entry = 箱を最初に返した問いの出来事の番号。"
+  {:tags {:context "doeff-cluster" :role "foundation"}}
+  (#^ int entry))
+
+;; 読んだ記録の成功の答え(Entry.value)の閉じた和: 記録から戻した値(record_codec.decode-value の答え)か、先の答えの共有の箱の参照(#2581)。
+(val RestoredAnswer (| WatchedRef RestoredValue))
+
+
 (defclass [(dataclass)] Entry []
-  "問い 1 つ(req)と、その答え(ans)。ans-e が None = 記録が終わった時にまだ答えが返っていなかった。"
+  "問い 1 つ(req)と、その答え(ans)。ans-e が None = 記録が終わった時にまだ答えが返っていなかった。
+   value = 成功の答えを read-recording が読む時に戻した値(RestoredAnswer)。再生は業務コードへその写しを渡す
+   (record_handlers.deliver-recorded)ので、同じ Recording を何度再生しても value は書き換わらない。"
   (#^ int e)
   (#^ str task)
   (#^ int at)
@@ -55,7 +69,7 @@
   (setv #^ object ans-e None)
   (setv #^ object ans-at None)
   (setv #^ bool ok True)
-  (setv #^ JsonValue value None)
+  (setv #^ RestoredAnswer value None)
   (setv #^ (| dict None) error None))
 
 
@@ -166,7 +180,17 @@
               (raise (ValueError (.format "答え {} の問い {} が無い" e (get l "s")))))
             (setv entry.ans-e e entry.ans-at (.get l "at") entry.ok (get l "ok"))
             (if entry.ok
-                (setv entry.value (refs (_resolve l val-bases "e" "v" "vd" "vb" "vk")))
+                ;; 答えの値はここで戻す(再生の handler は JSON を読まない — #2581)。差分の元(val-bases)は戻す前の JSON の値。
+                ;; {"$w": n} は WatchedRef、他は decode-value で戻す。戻せない値(import できない型・読めない印・型の欄と合わない中身)は
+                ;; 既定の値に倒さず、問いの番号と effect の型を名指して断る。
+                (setv entry.value
+                      (match (refs (_resolve l val-bases "e" "v" "vd" "vb" "vk"))
+                        {"$w" watched} :if (isinstance watched int) (WatchedRef :entry watched)
+                        raw (try (decode-value raw)
+                                 (except [err [TypeError ValueError KeyError AttributeError]]
+                                   (raise (ValueError (.format "記録の答え(問い {}・effect の型 {})を今の版で戻せない: {}: {}"
+                                                               entry.e entry.type (. (type err) __name__) err))
+                                          :from err)))))
                 (setv entry.error (get l "err")))
             (.append events #(e "ans" entry.task (get l "s"))))
       (= kind "mut") (do (.append events #(e "mut" None l)) (.append muts l))
