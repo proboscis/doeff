@@ -95,9 +95,10 @@ def add(acc: int, item: int) -> Generator[Any, Any, int]:
 
 def widths(texts: list[str]) -> Generator[Any, Any, tuple[int, int, int]]:
     read = yield from Traverse(width, texts, label="width")
-    assert_type(read, Collection)
+    # 答えの Collection は f の答えの型(width の int)を有効な件の値に運ぶ(effects.pyi・agora-redesign #2321)
+    assert_type(read, Collection[int])
     failed: list[ItemResult] = read.failed_items
-    values: list[Any] = read.valid_values
+    values: list[int] = read.valid_values
     errors = read.errors
     if errors:
         raise errors[0]
@@ -174,7 +175,7 @@ FOR_DO_MODULE = """\
         (<- n (From ns :label "n"))
         (<- w (width n))
         w))
-  (assert-type read Collection)
+  (assert-type read (get Collection int))
   (val failed read.failed_items)
   (+ (len failed) (len read.valid_values)))
 """

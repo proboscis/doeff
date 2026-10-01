@@ -4,8 +4,8 @@
 の物(`Expand[T, E]`・`Program[T, E]`・`EffectBase[T]` — docs/23-static-typing.md)を使い、
 ここは Hy の展開の形に合わせた口だけを持つ。
 
-- `do`: defk / defp などの関数を包む。core の `doeff.do.do` と同じ型(`Expand[T, E]`)に、
-  本体に yield の無い関数(yield の無い defk は普通の関数になる)の overload を足した物。
+- `do`: defk / defp などの関数を包む。core の `doeff.do.do` そのもの(本体に yield の無い関数 —
+  yield の無い defk は普通の関数になる — の overload も core が持つ)。
 - `_doeff_perform(e)`: `(<- x e)` の x の型 = e の答えの型(Python の `@effectful` の
   `x = perform(e)` と同じ形・docs/24-effectful-perform.md)。effect は `EffectBase[T]` の T、
   Program(defk を呼んだ結果など)は `Program[T, E]` の T。型の分からない値(`object`・Unknown)
@@ -15,31 +15,33 @@
 - defhandler / handle の展開の型(節を回す関数・handler を被せる関数・節の終わり方の検め・末尾の節)。
 """
 
-from collections.abc import Callable, Generator, Mapping, Sequence
+from collections.abc import Callable, Generator, Iterable, Mapping, Sequence
 from pathlib import Path
-from typing import Any, Never, ParamSpec, Protocol, TypeAlias, TypeVar, overload
+from typing import Any, Protocol, TypeAlias, TypeVar, overload
 
 import pytest
-from doeff_vm import Expand, K, WithHandler
+from doeff_vm import K, WithHandler
 
 from doeff import Program
 
-_P = ParamSpec("_P")
-_T = TypeVar("_T")
-_E = TypeVar("_E")
+# `do` は core の物をそのまま渡し、2 つ目の宣言を持たない(agora-redesign #2321)。for/do を使う module は展開が
+# 名指す `(import doeff [do :as _doeff-do])` を自分で書くので、doeff-hy-check が module の頭に置く `_doeff_do` の後に
+# 利用者の `_doeff_do` が来る。2 つの型が違うと pyright は後の方を取り、yield の無い関数の overload を持たない方で
+# defk の投影(本体の `<-` は `_doeff_perform` になり yield が無い)を読んで、defk を呼んだ答えが Unknown になっていた。
+# 型が 1 つなら、どちらの import が後に来ても同じ型になる。
+from doeff.do import do as do
 
-@overload
-def do(fn: Callable[_P, Generator[_E, Any, _T]], /) -> Callable[_P, Expand[_T, _E]]: ...
-@overload
-def do(fn: Callable[_P, _T], /) -> Callable[_P, Expand[_T, Never]]: ...
-@overload
-def do(
-    *, non_tail: bool = False
-) -> Callable[[Callable[_P, Generator[_E, Any, _T]]], Callable[_P, Expand[_T, _E]]]: ...
+_T = TypeVar("_T")
+
 @overload
 def _doeff_perform(effect: Program[_T, Any], /) -> _T: ...
 @overload
 def _doeff_perform(effect: object, /) -> Any: ...
+
+# for/do・traverse の件の引数の型(agora-redesign #2321)。型検査のための展開(macros.hy の _traverse-form)は、
+# 件ごとの関数の引数を `object` で受け、本体の前で `x = _doeff_traverse_item(items, 件)` と読み直す — 件は items の
+# 要素そのもの(Traverse の handler が items の各件を渡す)なので、答えは items の要素の型。
+def traverse_item(items: Iterable[_T], item: object, /) -> _T: ...
 
 # ---------------------------------------------------------------------------
 # deftest の展開の引数の型(agora-redesign #2214)

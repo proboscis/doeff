@@ -109,6 +109,10 @@ HANDLER_STATIC_NAMES: tuple[str, ...] = (
     "fell_through",
 )
 
+#: for/do・traverse の型検査のための展開が参照する static_types の名(agora-redesign #2321)— 件の引数を items の要素の
+#: 型へ読み直す `traverse_item`(macros.hy の _traverse-form)。展開の中では `_doeff_<名>` で引く。
+TRAVERSE_STATIC_NAMES: tuple[str, ...] = ("traverse_item",)
+
 
 #: 型検査のための展開で、macro が参照する補助の名の import(module の頭に 1 度だけ — doeff-hy-check が置く)。
 #: 実行時の展開は defk / defhandler / `<-` ごとに同じ import を出すが、静的な展開で同じことをすると、1 つの名に
@@ -123,6 +127,7 @@ STATIC_HELPER_IMPORTS: str = (
         for name in (
             *sorted({entry.type_name for entry in DEFTEST_FIXTURE_TYPES}),
             *HANDLER_STATIC_NAMES,
+            *TRAVERSE_STATIC_NAMES,
         )
     )
     + "\n"

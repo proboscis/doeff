@@ -1231,7 +1231,7 @@ defk {name}: {{:post [...]}} is required.
                   inner (_gen-traverse-body rest body-expr)]
               `(do
                  (when (not ~rewritten-pred)
-                   (yield (_doeff_traverse_Skip)))
+                   ~(_skip-form))
                  ~inner))
             ;; Regular binding
             (let [#(name tp expr) (_bind-parts bind)]
@@ -1245,17 +1245,48 @@ defk {name}: {{:post [...]}} is required.
                         param (if (is name None)
                                   (hy.models.Symbol "_unused")
                                   name)]
-                    (if (is-not label None)
-                        `(_doeff_traverse_Traverse
-                           (fn [~param] ((_doeff_do (fn [] (do ~inner-body)))))
-                           ~items
-                           :label ~label)
-                        `(_doeff_traverse_Traverse
-                           (fn [~param] ((_doeff_do (fn [] (do ~inner-body)))))
-                           ~items)))
+                    (_traverse-form param items label inner-body))
                   ;; Non-Iterate: regular bind (typed bind keeps its isinstance)
                   (let [inner (_gen-traverse-body rest body-expr)]
                     `(do ~(_bind-form bind) ~inner))))))))
+
+(defn _skip-form []
+  "When が偽の件を落とす Skip を出すため。実行時は `(yield (_doeff_traverse_Skip))`。型検査のための展開では `<-` と同じく
+   yield を出さず `_doeff_perform` で包む — yield を残すと件ごとの関数が生成器になり、送り返しの型が分からない
+   `Generator[Skip, Unknown, T]` の答えが strict の赤になる(Skip の答えは Never なので、続く文は偽の枝では届かない・
+   agora-redesign #2321)。"
+  (if (_static-view?)
+      '(_doeff_perform (_doeff_traverse_Skip))
+      '(yield (_doeff_traverse_Skip))))
+
+(defn _traverse-form [param items label inner-body]
+  "From / Iterate の 1 つを Traverse の effect にする: 件ごとの関数(param を受け、残りの束縛と本体を do で包む)と items。
+
+   実行時の展開: `(_doeff_traverse_Traverse (fn [param] ((_doeff_do (fn [] (do 本体))))) items)`。
+   型検査のための展開(`_static-view?`)では、件の引数を `#^ object` の別名で受け、本体の前で
+   `(setv param (_doeff_traverse_item items の写し 件))` と件の型へ読み直す — Hy の fn は本体が文を持つと def になり、
+   引数に注記が無いと pyright strict が「引数の型が分からない」と赤にする(書き手は件の型を書く口を持たない)。
+   static_types.pyi の traverse_item は items の要素の型を答えるので、件の引数は items の要素の型に読める
+   (agora-redesign #2321)。items は 1 度だけ名へ置き、関数の中からはその名を引く(展開の写しは走らない)。"
+  (if (_static-view?)
+      (let [item (hy.gensym "item")
+            items-ref (hy.gensym "items")
+            step `(fn [#^ object ~item]
+                    (setv ~param (_doeff_traverse_item ~items-ref ~item))
+                    ((_doeff_do (fn [] (do ~inner-body)))))]
+        (if (is-not label None)
+            `(do (setv ~items-ref ~items)
+                 (_doeff_traverse_Traverse ~step ~items-ref :label ~label))
+            `(do (setv ~items-ref ~items)
+                 (_doeff_traverse_Traverse ~step ~items-ref))))
+      (if (is-not label None)
+          `(_doeff_traverse_Traverse
+             (fn [~param] ((_doeff_do (fn [] (do ~inner-body)))))
+             ~items
+             :label ~label)
+          `(_doeff_traverse_Traverse
+             (fn [~param] ((_doeff_do (fn [] (do ~inner-body)))))
+             ~items))))
 
 (defmacro traverse [#* forms]
   "Applicative traverse — batch processing with handler-injected strategy.
@@ -1300,7 +1331,12 @@ defk {name}: {{:post [...]}} is required.
    Requires:
      (import doeff [do :as _doeff-do])
      (import doeff_traverse [Traverse :as _doeff_traverse_Traverse])
-     (import doeff_traverse [Skip :as _doeff_traverse_Skip])"
+     (import doeff_traverse [Skip :as _doeff_traverse_Skip])   ; only when a (When …) guard is used
+
+   The `_doeff-do` import has the same type as the `do` doeff-hy-check places for defk
+   (doeff_hy/static_types.pyi re-exports doeff.do.do), so it does not change how the type checker
+   reads the module's defk (agora-redesign #2321). Without a When guard the expansion never names
+   Skip, and pyright strict reports its import as unused — leave it out then."
   (setv #(bindings body-expr) (_parse-do-body forms "for/do"))
   (locate-synthesized (_gen-traverse-body bindings body-expr)))
 

@@ -5,6 +5,11 @@ Users should NOT access items directly. Use Traverse, Reduce, Zip, Inspect.
 """
 
 from dataclasses import dataclass, field
+from typing import Generic, TypeVar
+
+#: 有効な件の値の型。型の宣言は collection.pyi が持ち、実行時は `Collection[T]` と書けるようにだけ Generic を継ぐ
+#: (agora-redesign #2321)。
+_V = TypeVar("_V", covariant=True)
 
 
 @dataclass
@@ -25,7 +30,7 @@ class HistoryEntry:
     attempt: int = 1
 
 
-class Collection:
+class Collection(Generic[_V]):
     """Opaque item-indexed collection.
 
     Tracks values and per-item history. Not meant to be accessed directly

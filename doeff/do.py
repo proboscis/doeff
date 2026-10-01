@@ -16,7 +16,7 @@ import warnings
 from collections.abc import Callable, Generator
 from functools import wraps
 from textwrap import dedent
-from typing import Any, ParamSpec, TypeVar, overload
+from typing import Any, Never, ParamSpec, TypeVar, overload
 
 from doeff.program import Expand
 
@@ -248,8 +248,15 @@ def _analyze_resume_yields(fn: Callable[..., Any], *, non_tail: bool) -> tuple[i
     return _remember(tuple(sorted(visitor.tail_resume_lines)))
 
 
+# 生成器の関数は上の overload に先に当たり(overload は上から順に選ばれる)、下の overload は yield の無い関数だけに
+# 当たる。Python の型には「生成器でない関数」を書く口が無いので、pyright は 2 つが重なると見る — 重なりは順で解ける
+# (検 = tests/test_static_typing.py・packages/doeff-hy/tests/test_static_check_for_do.py・agora-redesign #2321)。
 @overload
-def do(fn: Callable[P, Generator[_E, Any, _T]], /) -> Callable[P, Expand[_T, _E]]: ...
+def do(fn: Callable[P, Generator[_E, Any, _T]], /) -> Callable[P, Expand[_T, _E]]: ...  # pyright: ignore[reportOverlappingOverload]  # 順で解ける重なり(上の註)
+
+
+@overload
+def do(fn: Callable[P, _T], /) -> Callable[P, Expand[_T, Never]]: ...
 
 
 @overload
@@ -260,7 +267,7 @@ def do(
 
 
 def do(
-    fn: Callable[P, Generator[Any, Any, Any]] | None = None,
+    fn: Callable[P, Any] | None = None,
     /,
     *,
     non_tail: bool = False,
@@ -273,9 +280,17 @@ def do(
     runs it with ``ok = yield from f(1)`` (``ok: bool``) and must itself declare
     ``ReadShared | WriteShared`` among the effects it yields. Yielding an effect
     that the body's annotation does not list is a type error.
+
+    A function without ``yield`` is accepted too: the VM calls it and its return value
+    becomes the program's value (``program_factory`` — ``DoFunction`` records whether ``fn``
+    is a generator function), so ``f`` is ``Callable[P, Expand[T, Never]]``. This is the
+    one type of ``do``: doeff-hy's type-check expansion (doeff_hy/static_types.pyi) re-exports
+    it instead of declaring a second ``do``, so a module that imports ``do`` as ``_doeff_do``
+    itself (the for/do contract) does not give the name a second, different type
+    (agora-redesign #2321).
     """
 
-    def decorate(fn: Callable[P, Generator[Any, Any, Any]]) -> Callable[P, Expand]:
+    def decorate(fn: Callable[P, Any]) -> Callable[P, Expand]:
         return program_factory(fn, _analyze_resume_yields(fn, non_tail=non_tail))
 
     if fn is None:
