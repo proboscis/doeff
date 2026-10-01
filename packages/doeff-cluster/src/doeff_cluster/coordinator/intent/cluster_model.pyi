@@ -220,11 +220,39 @@ class StateView:
     events: tuple[object, ...]
     revision: int
 
+class DrainPhase(StrEnum):
+    DRAINING = "Draining"
+    DRAINED = "Drained"
+    BLOCKED = "Blocked"
+
+@dataclass(frozen=True, kw_only=True)
+class DrainProgress:
+    worker: str
+    boot: str | None
+    superseded: bool
+    since_ms: int | None
+    until_ms: int | None
+    actor: str | None
+    phase: DrainPhase
+    remaining: tuple[str, ...]
+    moving: dict[str, str]
+    blocked: dict[str, str]
+    moving_ready: dict[str, str]
+
+@dataclass(frozen=True, kw_only=True)
+class WorkerDrainView:
+    info: WorkerInfo
+    alive: bool
+    silent_ms: int
+    superseded: bool
+    drain: DrainProgress | None
+    ready: bool
+
 @dataclass(frozen=True, kw_only=True)
 class StateReply:
     view: StateView
     audit: tuple[AuditEvent, ...]
-    drains: dict[str, object]
+    drains: dict[str, DrainProgress]
 
 @dataclass(frozen=True, kw_only=True)
 class WorkerReport:

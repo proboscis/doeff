@@ -302,13 +302,51 @@
   (#^ int revision))
 
 
+(defenum DrainPhase
+  (DRAINING "Draining")
+  (DRAINED "Drained")
+  (BLOCKED "Blocked"))
+
+;; drain の進みの段。DRAINING = まだ残りが在る・DRAINED = 残りが 0(preStop が終わる)・BLOCKED = 移せない job が在り、どれも移している途中でない。
+
+
+(defrecord DrainProgress
+  "drain の進み 1 つ(drain_policy.drain-view — #2595): worker・boot = drain を頼んだ世代・superseded = 退いた世代の待ちの答えか
+   (superseded-worker-view)・since-ms / until-ms / actor = drain の頼みの記録(退いた世代の答えには無い — None)・phase・remaining = まだ
+   残っている job と task の名・moving(job の名 → 並べた先の worker)・blocked(job の名 → 移せない理由)・moving-ready(job の名 → 並べた先の
+   準備の理由)。対の欄は job の名から引く表なので dict で持つ。JSON の形は coordinator/protocol/replies が綴る。"
+  (#^ str worker)
+  (#^ (| str None) boot)
+  (#^ bool superseded)
+  (#^ (| int None) since-ms)
+  (#^ (| int None) until-ms)
+  (#^ (| str None) actor)
+  (#^ DrainPhase phase)
+  (#^ (get tuple #(str ...)) remaining)
+  (#^ (get dict #(str str)) moving)
+  (#^ (get dict #(str str)) blocked)
+  (#^ (get dict #(str str)) moving-ready))
+
+
+(defrecord WorkerDrainView
+  "GET /workers/<名> と drain の頼みの答え(drain_policy.worker-view・superseded-worker-view — #2595): info = 名乗り・alive = heartbeat が
+   lease の内か・silent-ms・superseded = 退いた世代の待ちの答えか・drain = drain の進み(drain が無ければ None)・ready = 生きていて drain
+   中でない(新しい Pod の readinessProbe が見る)。JSON の形は coordinator/protocol/replies が綴る。"
+  (#^ WorkerInfo info)
+  (#^ bool alive)
+  (#^ int silent-ms)
+  (#^ bool superseded)
+  (#^ (| DrainProgress None) drain)
+  (#^ bool ready))
+
+
 (defrecord StateReply
   "GET /state の答え(#2595): view = 状態の画面(StateView)・audit = 直近の出来事
-   (30 件)・drains = drain の画面(drain_policy.drains-view)。JSON の形(view に audit と drains を足した object)は coordinator/protocol/replies
-   が綴る。"
+   (30 件)・drains = drain の画面(worker の名 → DrainProgress — drain_policy.drains-view)。JSON の形(view に audit と drains を足した
+   object)は coordinator/protocol/replies が綴る。"
   (#^ StateView view)
   (#^ (get tuple #(AuditEvent ...)) audit)
-  (#^ dict drains))
+  (#^ (get dict #(str DrainProgress)) drains))
 
 
 (defrecord WorkerReport
