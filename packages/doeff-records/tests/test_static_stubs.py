@@ -1,5 +1,5 @@
-"""doeff_records の値・effect・memory の置き場の型(values.pyi・effects.pyi・faults.pyi・memory.pyi・store_choice.pyi)の検
-(agora-redesign #2311・#2245)。
+"""doeff_records の値・effect・memory の置き場・行の型の層の型(values.pyi・effects.pyi・faults.pyi・memory.pyi・
+store_choice.pyi・typed.pyi)の検(agora-redesign #2311・#2369・#2245)。
 
 doeff_records の module は Hy なので、型の宣言(.pyi)が無いと pyright は import した名を全部 Unknown として読み、使う側
 (agora の表の宣言・行の読みの答え・変更の欄・memory の置き場の handler)に書き手に直せない reportUnknown* が連なる。
@@ -7,7 +7,10 @@ doeff_records の module は Hy なので、型の宣言(.pyi)が無いと pyrig
 - 失敗ケース: 同じ小さな .hy を、stub を外した写しと stub を置いた写しの 2 通りで doeff-hy-check --strict にかける。
   外すと import した名・`(<- answer (ReadRow …))` の answer・変更の欄が Unknown の赤になり、置くと消える。置いた側では
   型の取り違え(int の版に文字列を足す)が赤になる(stub が型を運んでいる)。
-- 一致: stub が宣言する名は実行時の module に在り、dataclass の欄の名・順・既定値の有無、関数の引数の名、答えの union の
+- 行の型の層(typed.pyi)の失敗ケース: typed.pyi だけを外した写しでは、`typed-change` の答えの `.value` と `list-typed` の頁の
+  `row.value` が Unknown の赤になり、置くと行の型(検体の Seat)に絞れて赤が消える。置いた側では行の型の欄の取り違え(str の名に
+  int を足す)が赤になる。
+- 一致: stub が宣言する名は実行時の module に在り、dataclass の欄の名・順・既定値の有無・__init__ に載るか、関数の引数の名、答えの union の
   型の並びが実装と同じ(宣言だけが先へ行かない)。
 """
 
@@ -27,12 +30,12 @@ import pytest
 
 import doeff_hy  # noqa: F401  # Hy の import hook を有効にする
 from doeff import EffectBase
-from doeff_records import effects, faults, memory, store_choice, values
+from doeff_records import effects, faults, memory, store_choice, typed, values
 
 needs_pyright = pytest.mark.skipif(shutil.which("pyright") is None, reason="pyright が無い")
 
 PACKAGE = Path(values.__file__).parent
-STUBBED: tuple[types.ModuleType, ...] = (values, effects, faults, memory, store_choice)
+STUBBED: tuple[types.ModuleType, ...] = (values, effects, faults, memory, store_choice, typed)
 
 MODULE = """\
 (require doeff-hy.macros [defk <- val])
@@ -83,6 +86,47 @@ UNKNOWN_NAMES: tuple[str, ...] = (
     '"table"',
 )
 
+#: 行の型の層の検体 — 行の型 Seat の表を RowType で宣言し、変更 1 つと頁の行を行の型で読む。
+TYPED_MODULE = """\
+(require doeff-hy.macros [defk <- val])
+(import dataclasses [dataclass])
+(import doeff_records.values [RowChanged RowRemoved])
+(import doeff_records.typed [RowType TypedPage TypedRowChanged list-typed typed-change])
+
+(defclass [(dataclass :frozen True)] Seat []
+  (#^ str name))
+
+(val SEATS (RowType "seats" Seat))
+
+(defk changed-name [change]
+  {:pre [(: change (| RowChanged RowRemoved))] :post [(: % str)]}
+  (setv seen (typed-change SEATS change))
+  (if (isinstance seen TypedRowChanged) seen.value.name ""))
+
+(defk page-names [limit]
+  {:pre [(: limit int)] :post [(: % int)]}
+  (<- answer (list-typed SEATS :limit limit))
+  (if (isinstance answer TypedPage) (len (lfor row answer.rows row.value.name)) 0))
+
+(defk wrong-name [limit]
+  {:pre [(: limit int)] :post [(: % int)]}
+  (<- answer (list-typed SEATS :limit limit))
+  (if (isinstance answer TypedPage) (len (lfor row answer.rows (+ row.value.name 1))) 0))
+"""
+
+#: typed.pyi を外すと Unknown になる名(import の行の名・答えを受けた変数・行の値)。
+TYPED_UNKNOWN_NAMES: tuple[str, ...] = (
+    '"RowType"',
+    '"TypedPage"',
+    '"TypedRowChanged"',
+    '"list_typed"',
+    '"typed_change"',
+    '"seen"',
+    '"answer"',
+    '"row"',
+    '"value"',
+)
+
 
 @dataclass(frozen=True)
 class Run:
@@ -101,13 +145,13 @@ class Run:
         return [e for e in self.errors() if e[0].startswith("reportUnknown")]
 
 
-def _line_of(marker: str) -> int:
+def _line_of(marker: str, module: str = MODULE) -> int:
     """検体の中で marker を含む行の番号(1 から)。"""
-    return next(n for n, line in enumerate(MODULE.splitlines(), start=1) if marker in line)
+    return next(n for n, line in enumerate(module.splitlines(), start=1) if marker in line)
 
 
-def _check(tmp_path: Path, *, with_stubs: bool) -> Run:
-    """doeff_records の写し(.hy と、with_stubs なら .pyi)を import の根に置き、検体を doeff-hy-check --strict にかける。
+def _check(tmp_path: Path, *, with_stubs: bool, module: str = MODULE, omit: tuple[str, ...] = ()) -> Run:
+    """doeff_records の写し(.hy と、with_stubs なら omit に無い .pyi)を import の根に置き、検体を doeff-hy-check --strict にかける。
 
     写しは __init__.py を持つ package にする — 名前空間の package のままだと pyright は写しに無い module を次の根(入れた
     doeff_records)へ探しに行き、外したはずの stub を読む。
@@ -118,11 +162,11 @@ def _check(tmp_path: Path, *, with_stubs: bool) -> Run:
     copy.mkdir(parents=True)
     (copy / "__init__.py").write_text("", encoding="utf-8")
     for source in PACKAGE.iterdir():
-        if source.suffix == ".hy" or (with_stubs and source.suffix == ".pyi"):
+        if source.suffix == ".hy" or (with_stubs and source.suffix == ".pyi" and source.name not in omit):
             shutil.copy(source, copy / source.name)
     root = tmp_path / "root"
     root.mkdir()
-    (root / "probe.hy").write_text(MODULE, encoding="utf-8")
+    (root / "probe.hy").write_text(module, encoding="utf-8")
     (root / "pyrightconfig.json").write_text(json.dumps({"extraPaths": [str(copy.parent)]}), encoding="utf-8")
     out = io.StringIO()
     with contextlib.redirect_stdout(out):
@@ -146,6 +190,29 @@ def test_with_the_stubs_nothing_is_unknown_and_a_wrong_type_is_red(tmp_path: Pat
     assert [e for e in run.errors() if e[1] in right] == [], run.errors()
     # int の版に文字列を足すと赤(stub が答えの型 Row | Missing | Unreachable を運び、Row の版が int と読める)。
     wrong = _line_of('(+ version "x")')
+    assert [e for e in run.errors() if e[1] == wrong and e[0] == "reportOperatorIssue"], run.errors()
+
+
+@needs_pyright
+def test_without_the_typed_stub_the_row_values_are_unknown(tmp_path: Path) -> None:
+    # 他の stub は置き、typed.pyi だけを外す — typed.hy の名と、行の型の値を読む所だけが Unknown になる。
+    unknown = _check(tmp_path, with_stubs=True, module=TYPED_MODULE, omit=("typed.pyi",)).unknown()
+    missing = [name for name in TYPED_UNKNOWN_NAMES if not any(name in e[2] for e in unknown)]
+    assert missing == [], unknown
+    # typed-change の答えの `.value` と list-typed の頁の `row.value` の行が赤。
+    for marker in ("seen.value.name", "row.value.name))"):
+        line = _line_of(marker, TYPED_MODULE)
+        assert [e for e in unknown if e[1] == line], (marker, unknown)
+
+
+@needs_pyright
+def test_with_the_typed_stub_row_values_are_the_row_type(tmp_path: Path) -> None:
+    run = _check(tmp_path, with_stubs=True, module=TYPED_MODULE)
+    # 正しい使い(検体の頭から wrong-name の前まで)には赤が 1 つも無い — 行の値が行の型 Seat に絞れる。
+    right = range(1, _line_of("(defk wrong-name", TYPED_MODULE))
+    assert [e for e in run.errors() if e[1] in right] == [], run.errors()
+    # str の名に int を足すと赤(stub が TypedPage[Seat] を運び、row.value.name が str と読める)。
+    wrong = _line_of("(+ row.value.name 1)", TYPED_MODULE)
     assert [e for e in run.errors() if e[1] == wrong and e[0] == "reportOperatorIssue"], run.errors()
 
 
@@ -182,19 +249,34 @@ def _is_dataclass_stub(node: ast.ClassDef) -> bool:
     )
 
 
-def _stub_fields(node: ast.ClassDef) -> list[tuple[str, bool]]:
-    """dataclass の stub の欄(名・既定値の有無)。"""
+def _stub_field(item: ast.AnnAssign) -> tuple[bool, bool]:
+    """stub の欄 1 つの(既定値の有無・__init__ に載るか)。`= field(…)` は default / default_factory と init の引数で読む。"""
+    match item.value:
+        case ast.Call(func=ast.Name(id="field"), keywords=keywords):
+            given = {k.arg: k.value for k in keywords}
+            init = given.get("init")
+            return (
+                "default" in given or "default_factory" in given,
+                not (isinstance(init, ast.Constant) and init.value is False),
+            )
+        case value:
+            return (value is not None, True)
+
+
+def _stub_fields(node: ast.ClassDef) -> list[tuple[str, bool, bool]]:
+    """dataclass の stub の欄(名・既定値の有無・__init__ に載るか)。"""
     return [
-        (item.target.id, item.value is not None)
+        (item.target.id, *_stub_field(item))
         for item in node.body
         if isinstance(item, ast.AnnAssign) and isinstance(item.target, ast.Name)
     ]
 
 
-def _runtime_fields(fields: tuple[dataclasses.Field[object], ...]) -> list[tuple[str, bool]]:
-    """実装の dataclass の欄(名・既定値の有無)。"""
+def _runtime_fields(fields: tuple[dataclasses.Field[object], ...]) -> list[tuple[str, bool, bool]]:
+    """実装の dataclass の欄(名・既定値の有無・__init__ に載るか)。"""
     return [
-        (f.name, f.default is not dataclasses.MISSING or f.default_factory is not dataclasses.MISSING) for f in fields
+        (f.name, f.default is not dataclasses.MISSING or f.default_factory is not dataclasses.MISSING, f.init)
+        for f in fields
     ]
 
 
@@ -250,6 +332,6 @@ def test_effects_are_effects_and_methods_exist() -> None:
 def test_memory_store_attributes_match() -> None:
     # MemoryStore の stub の欄 = 実装の __init__ が置く欄(検と模擬の世界が直に読む置き場の data)。
     (node,) = [n for n in _stub_of(memory).body if isinstance(n, ast.ClassDef) and n.name == "MemoryStore"]
-    stub = sorted(name for name, _ in _stub_fields(node))
+    stub = sorted(name for name, _, _ in _stub_fields(node))
     assert stub == sorted(vars(memory.MemoryStore(values.RecordsSchema())))
     assert memory.StoreOperation is faults.StoreOperation
