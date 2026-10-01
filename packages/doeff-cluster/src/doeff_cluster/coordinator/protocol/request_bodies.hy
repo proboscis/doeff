@@ -4,8 +4,10 @@
 (val MODULE-TAGS {:context "doeff-cluster" :role "protocol"})
 (import doeff [run])
 (import doeff_hy.wire [parse Malformed])
-(import doeff_cluster.shared.intent.protocol [Request ClusterTiming])
-(import doeff_cluster.coordinator.intent.cluster_model [ClusterState])
+(import doeff_cluster.shared.intent.protocol [Request ClusterTiming BodyInvalid])
+(import doeff_cluster.coordinator.intent.cluster_model [ClusterState ServiceBody LegacyJobRow LegacyJobs])
+(import doeff_cluster.coordinator.core.cluster_policy [job-from-json])
+(import doeff_cluster.coordinator.core.cluster_rules [required-field])
 (import doeff_cluster.coordinator.intent.request_bodies [LeaseBody TaskResultBody DrainBody ReadinessBody MetricsBody ProgramBody BoardWireBody BoardWrite HeartbeatBody ResourceBody TaskBody WarmBody LegacyJobsBody BodyMalformed ReadBody RequestBody])
 (import doeff_cluster.coordinator.core.api_policy [respond])
 
@@ -32,8 +34,39 @@
     True None))
 
 
+(defn #^ (| ServiceBody BodyMalformed) service-body-of [#^ ResourceBody body #^ tuple parts]  ; defk にできない: 本文の解き(body-of)の中の純粋な読み
+  "Service の資源の本文 → 宣言の型(#2448 — 前は core の資源の判断が spec の JSON を job-from-json で読んでいた)。名は PUT なら path の名・POST なら
+   本文の name。宣言の行が読めなければ BodyMalformed(400)。所有者は本文の owner のまま運び、決めるのは判断。"
+  (setv name (if (= (len parts) 3) (get parts 2) body.name)
+        spec (dict (or body.spec {})))
+  (try
+    (ServiceBody :name name :job (job-from-json (| spec {"name" (or name "")})) :owner (.get spec "owner")
+                 :resource-version body.resource-version)
+    (except [error BodyInvalid]
+      (BodyMalformed :reason (str error)))))
+
+
+(defn #^ LegacyJobRow legacy-row-of [#^ dict row]  ; defk にできない: 本文の解き(body-of)の中の純粋な読み
+  "旧い PUT /jobs の行 1 つ → 宣言の型。名の無い・空の行は BodyInvalid。replicas と readiness は行に在るかを印に残す(無ければ判断が今の
+   宣言の値で埋める)。"
+  (setv name (required-field row "name"))
+  (when (not (and (isinstance name str) name))
+    (raise (BodyInvalid (.format "jobs の行の名前は空でない文字列: {!r}" name))))
+  (LegacyJobRow :name name :version (.get row "resourceVersion") :owner (.get row "owner")
+                :job (job-from-json (dfor #(k v) (.items row) :if (!= k "resourceVersion") k v))
+                :replicas-given (in "replicas" row) :readiness-given (in "readiness" row)))
+
+
+(defn #^ (| LegacyJobs BodyMalformed) legacy-jobs-of [#^ LegacyJobsBody body]  ; defk にできない: 本文の解き(body-of)の中の純粋な読み
+  "旧い PUT /jobs の本文 → 行ごとの宣言の型(#2448)。1 行でも読めなければ BodyMalformed(400 — 何も書かない)。"
+  (try
+    (LegacyJobs :rows (tuple (gfor row body.jobs (legacy-row-of row))) :actor body.actor)
+    (except [error BodyInvalid]
+      (BodyMalformed :reason (str error)))))
+
+
 (defk body-of [request]
-  {:pre [(: request Request)] :post [(: % RequestBody)]}
+  {:pre [(: request Request)] :post [(: % (| RequestBody ServiceBody LegacyJobs))]}
   "要求の本文をその道の型に解くため(答えは ReadBody と同じ)。本文が JSON の object でなければ BodyMalformed(口はどれも object の本文を
    読む — 型の外の本文を読み進めない)。"
   (val raw (or request.body {}))
@@ -50,6 +83,9 @@
             ;; 盤の書きは value と expect の『欄が無い』と『null』を分けるので、欄が在ったかの印を添える(この 1 点だけが本文の欄の在否を読む)。
             (isinstance parsed BoardWireBody)
               (BoardWrite :body parsed :value-given (in "value" raw) :expect-given (in "expect" raw))
+            ;; Service の宣言と旧い /jobs の行は、宣言の型に読んでから判断へ渡す(#2448)。
+            (and (isinstance parsed ResourceBody) (= (get request.parts 1) "Service")) (service-body-of parsed (tuple request.parts))
+            (isinstance parsed LegacyJobsBody) (legacy-jobs-of parsed)
             True parsed))))
 
 

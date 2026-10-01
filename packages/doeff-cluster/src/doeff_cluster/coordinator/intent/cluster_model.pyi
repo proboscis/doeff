@@ -190,6 +190,27 @@ class WorkerReport:
     jobs: tuple[object, ...]
 
 @dataclass(frozen=True, kw_only=True)
+class ServiceBody:
+    name: str | None
+    job: ClusterJob
+    owner: object
+    resource_version: int | None
+
+@dataclass(frozen=True, kw_only=True)
+class LegacyJobRow:
+    name: str
+    version: object
+    owner: object
+    job: ClusterJob
+    replicas_given: bool
+    readiness_given: bool
+
+@dataclass(frozen=True, kw_only=True)
+class LegacyJobs:
+    rows: tuple[LegacyJobRow, ...]
+    actor: str | None
+
+@dataclass(frozen=True, kw_only=True)
 class RefusedJob:
     name: str
     row: dict[str, object]
