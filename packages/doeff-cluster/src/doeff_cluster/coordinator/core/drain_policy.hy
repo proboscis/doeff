@@ -19,7 +19,7 @@
 (val MODULE-TAGS {:context "coordinator" :role "judgment"})
 (import dataclasses [replace])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming])
-(import doeff_cluster.coordinator.intent.cluster_model [ClusterJob ClusterState Drain Placement])
+(import doeff_cluster.coordinator.intent.cluster_model [ClusterJob ClusterState Drain Placement DrainPhase DrainProgress WorkerDrainView])
 (import doeff_cluster.coordinator.intent.request_bodies [DrainBody])
 (import doeff_cluster.coordinator.core.cluster_policy [alive eligible can-take draining-workers load-of other-generation-boot LIVE-PHASES MAX-EVENTS])
 (import doeff_cluster.coordinator.core.resource_policy [refuse service-readiness])
@@ -138,7 +138,7 @@
                 (+ "task/" t.id))))
 
 
-(defn #^ (| dict None) drain-view [#^ ClusterState state #^ str name #^ int now #^ ClusterTiming timing]
+(defn #^ (| DrainProgress None) drain-view [#^ ClusterState state #^ str name #^ int now #^ ClusterTiming timing]
   "drain の進み。remaining = まだこの worker に置かれている job と、この worker の上でまだ動いている job と、この worker に置いた
    終わっていない切り離した task(全部が 0 で drained)。
    moving = 並べた先の worker(Ready 待ち)。blocked = 移せない job と理由。drain が無ければ None。"
@@ -159,28 +159,26 @@
       (setv (get blocked n)
             (.format "移す先が無い(要る能力 {}・固定 {}。生きていて drain 中でなく空きの在る別の worker が無い)— 旧を止めずに待つ"
                      (list job.needs) job.pin))))
-  {"worker" name "sinceMs" d.since-ms "untilMs" d.until-ms "boot" d.boot "actor" d.actor
-   "phase" (cond (not remaining) "Drained" (and blocked (not moving)) "Blocked" True "Draining")
-   "drained" (not remaining)
-   "remaining" remaining
-   "moving" moving
-   "blocked" blocked
-   "movingReady" (dfor #(n w) (.items moving)
-                       n (get (service-readiness state n now timing (get state.surges n)) "reason"))})
+  (DrainProgress :worker name :boot d.boot :superseded False :since-ms d.since-ms :until-ms d.until-ms :actor d.actor
+                 :phase (cond (not remaining) DrainPhase.DRAINED (and blocked (not moving)) DrainPhase.BLOCKED True DrainPhase.DRAINING)
+                 :remaining (tuple remaining)
+                 :moving moving
+                 :blocked blocked
+                 :moving-ready (dfor #(n w) (.items moving)
+                                     n (get (service-readiness state n now timing (get state.surges n)) "reason"))))
 
 
-(defn #^ dict worker-view [#^ ClusterState state #^ str name #^ int now #^ ClusterTiming timing]
+(defn #^ WorkerDrainView worker-view [#^ ClusterState state #^ str name #^ int now #^ ClusterTiming timing]
   "GET /workers/<名>: 生存・世代・drain の進み。ready = 生きていて drain 中でない(新しい Pod の readinessProbe が見る)。"
   (setv w (.get state.workers name))
   (when (is w None) (refuse 404 (+ "知らない worker: " name)))
   (setv drain (drain-view state name now timing)
         live (alive now w timing.lease-ms))
-  {"name" name "alive" live "silentMs" (- now w.last-seen-ms) "boot" w.boot "provides" (list w.provides) "exclusive" (list w.exclusive) "derived" (list w.derived) "node" w.node
-   "draining" (is-not drain None) "drain" drain
-   "ready" (and live (is drain None))})
+  (WorkerDrainView :info w :alive live :silent-ms (- now w.last-seen-ms) :superseded False :drain drain
+                   :ready (and live (is drain None))))
 
 
-(defn #^ dict superseded-worker-view [#^ ClusterState state #^ str name #^ str boot #^ int now #^ ClusterTiming timing]
+(defn #^ WorkerDrainView superseded-worker-view [#^ ClusterState state #^ str name #^ str boot #^ int now #^ ClusterTiming timing]
   "退いた世代の process(旧い Pod の preStop)が drain を頼んだ時の答え(2026-09-27)。名の置き先と drain は今の
    世代の物なので、退いた世代が待つのは、その世代に置いてまだ終わっていない切り離した task だけ(0 で drained — preStop が終わる)。
    形は worker-view と同じ(drain_client.drain-outcome が drain.drained を読む)。"
@@ -188,15 +186,14 @@
         remaining (sorted (gfor t (.values state.tasks)
                                 :if (and t.detached (in t.phase #("assigned" "preparing")) (= t.worker name) (= t.boot boot))
                                 (+ "task/" t.id))))
-  {"name" name "alive" (alive now w timing.lease-ms) "silentMs" (- now w.last-seen-ms) "boot" w.boot "provides" (list w.provides) "exclusive" (list w.exclusive) "derived" (list w.derived) "node" w.node
-   "draining" True "superseded" True
-   "drain" {"worker" name "boot" boot "superseded" True
-            "phase" (if remaining "Draining" "Drained") "drained" (not remaining) "remaining" remaining
-            "moving" {} "blocked" {} "movingReady" {}}
-   "ready" False})
+  (WorkerDrainView :info w :alive (alive now w timing.lease-ms) :silent-ms (- now w.last-seen-ms) :superseded True
+                   :drain (DrainProgress :worker name :boot boot :superseded True :since-ms None :until-ms None :actor None
+                                         :phase (if remaining DrainPhase.DRAINING DrainPhase.DRAINED) :remaining (tuple remaining)
+                                         :moving {} :blocked {} :moving-ready {})
+                   :ready False))
 
 
-(defn #^ dict drains-view [#^ ClusterState state #^ int now #^ ClusterTiming timing]
+(defn #^ (get dict #(str DrainProgress)) drains-view [#^ ClusterState state #^ int now #^ ClusterTiming timing]
   "GET /state の drains(worker の名 → drain の進み)。"
   (dfor n (sorted state.drains)
         :setv v (drain-view state n now timing)
