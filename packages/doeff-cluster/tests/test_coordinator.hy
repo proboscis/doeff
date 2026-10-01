@@ -303,7 +303,7 @@
   (setv back (state-from-kv (.load (WalStore d)) 99999))
   (assert (= (durable-kv back) (durable-kv final)))
   (assert (= (. back revision) (. final revision)))
-  (assert (= back.board {"k" 1})))
+  (assert (= (dfor #(k row) (.items back.board) k row.value) {"k" 1})))
 
 
 ;; --- 置き先の鍵の改名(2026-09-25): 改名の前に書いた置き場から起動する --------------------------------------------

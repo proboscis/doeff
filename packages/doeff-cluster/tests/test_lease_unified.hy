@@ -48,7 +48,7 @@
 (deftest test-an-old-writer-cannot-evict-a-live-holder-through-the-board
   ;; 旧い版の process は自分の時計で「切れた」と判じて盤を compare-and-set で書く。coordinator の時計でまだ切れていなければ断る。
   (setv #(s _ _) (lease (ClusterState) "app-writer" "claim" "a/1/x/1" 1000))
-  (setv row (get s.board "semaphore/app-writer"))
+  (setv row (. (get s.board "semaphore/app-writer") value))
   (setv stolen {"permits" 1 "holders" {"b/1/y/1" 99999}})
   (setv #(_ early-status early-body) (responded s (http-request "PUT" "/board/semaphore/app-writer" {} {"value" stolen "expect" row} :actor "b")
                                               10000 T))

@@ -173,7 +173,7 @@
 (defhandler coordinator-side [#^ MemoryCoordinator coordinator #^ dict line]
   ;; 引数に残す理由: 真実は transport の後ろの MemoryCoordinator と線そのもの(組み立てが 1 つ作って transport と共有する)。
   ;; 本物の側の真実: MemoryCoordinator の状態。line = {"up": bool}(transport が読む)。
-  (BoardSeen [] (resume (dict coordinator.state.board)))
+  (BoardSeen [] (resume (dfor #(k row) (.items coordinator.state.board) k row.value)))
   (ReportSeen [kind] (resume (latest-report coordinator kind)))
   (TasksSeen []
     (<- rows tuple (tasks-seen-of coordinator.state))

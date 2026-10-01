@@ -4,7 +4,7 @@
 (import doeff_cluster.shared.intent.protocol [ClusterTiming PlainText Request])
 (import doeff_cluster.coordinator.intent.cluster_model [ClusterState])
 (import doeff_cluster.foundation.coordinator_inbox [http-request])
-(import doeff_cluster.coordinator.core.cluster_policy [state-to-json state-from-json board-changes job-from-json])
+(import doeff_cluster.coordinator.core.cluster_policy [state-to-json state-from-json board-changes board-rows-of job-from-json])
 (import doeff_cluster.shared.core.job_rules [spec-hash])
 (import doeff_cluster.coordinator.core.api_policy [tick plan-rollouts])
 (import doeff_cluster.coordinator.protocol.request_bodies [responded])
@@ -170,7 +170,7 @@
   (assert (= (. (get s.jobs 0) owner) LEGACY-OWNER))
   (assert (is-not (rv s "Service" "turn-runner") None))
   (assert (= (. (get s.audit -1) actor) "migration"))
-  (assert (= s.board-versions {"k" 1}))
+  (assert (= (dfor #(k row) (.items s.board) k row.version) {"k" 1}))
   ;; 新しい形で書き直した物に盤は入らない(盤は行ごとの file)
   (assert (not-in "board" (state-to-json s)))
   ;; 誰でも 1 度だけ所有者を引き取れる。引き取った後は他の送り手が変えられない
@@ -189,7 +189,7 @@
 
 (deftest test-board-rows-have-their-own-versions-and-only-written-rows-are-saved
   (setv big (dfor i (range 16) (.format "shadow-a/rows/{:02x}" i) (* "x" 1000)))
-  (setv s (ClusterState :board big :board-versions (dfor k big k 1)))
+  (setv s (ClusterState :board (board-rows-of big {})))
   (val reply-22 (call s "PUT" "/board/writer-a/cycle" {"value" {"n" 1}} :actor None))
   (val s2 (get reply-22 0))
   (var status (get reply-22 1))
