@@ -308,7 +308,7 @@
       (do (setv name body.name)
           (setv after (settle state (register-heartbeat state body now) name now timing))
           #(after 200 (heartbeat-reply after name timing (ready-instances after name now timing) :now now
-                                       :boot body.boot :statuses (list body.statuses))))
+                                       :boot body.boot :statuses body.statuses)))
     (and (= method "GET") (= parts ["state"]))
       #(state 200 (| (state-view state now timing) {"audit" (list (cut state.audit -30 None))
                                                     "drains" (drains-view state now timing)}))

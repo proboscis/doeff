@@ -23,6 +23,7 @@
 (import doeff_cluster.coordinator.core.cluster_json [task-record-to-json task-record-from-json])
 (import doeff_cluster.foundation.coordinator_inbox [http-request])
 (import doeff_cluster.coordinator.core.cluster_policy [adopted-task])
+(import doeff_cluster.coordinator.intent.request_bodies [StatusRow])
 (import doeff_cluster.coordinator.protocol.request_bodies [responded])
 (import tests.link_rig [LinkRig])
 (import doeff_cluster.worker.protocol.declared [task-spec] doeff_cluster.worker.core.launch [program-file])
@@ -216,7 +217,7 @@
   ;; 状態を失った coordinator が worker の写しから引き取る行も、写しの environ を持つ(担い手の子は同じ環境で走っている)。
   (val echo {"id" "t9" "name" "n" "detached" True "key" "job-z" "leaseMs" 1000 "retainMs" 0 "revision" "r"
              "needs" ["net"] "versions" V "program" (* "a" 64) "environ" {URL-NAME URL}})
-  (val task (adopted-task (ClusterState) "w" "b1" {"name" "task/t9" "phase" "running" "task" echo} 5))
+  (val task (adopted-task (ClusterState) "w" "b1" (StatusRow :name "task/t9" :phase "running" :task echo) 5))
   (assert (is-not task None))
   (assert (= task.environ #(#(URL-NAME URL))) task))
 
