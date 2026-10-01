@@ -128,6 +128,19 @@ struct Args {
     #[arg(long)]
     split_rules: bool,
 
+    /// 変えた path(repo の根から・複数)を直接・間接に import(Hy は require も)する検の file を、距離つきの JSON で出して終わる
+    /// (登記の前の入口が契約の検と変えた検の後ろに足す — agora-redesign #2605)。--test-pattern が要る
+    #[arg(long, num_args = 1.., value_name = "PATH")]
+    affected_tests: Option<Vec<String>>,
+
+    /// --affected-tests が検の file と見なす名の規則(fnmatch・`/` を含まない規則は file の名に当てる・複数回)。呼び手の集め手の定義を渡す
+    #[arg(long, value_name = "GLOB")]
+    test_pattern: Vec<String>,
+
+    /// --affected-tests で、直接の使い手の file がこの数を越える module は通り抜けず hubs に名指す(既定 40)
+    #[arg(long)]
+    max_dependents: Option<usize>,
+
     /// commit 本文の file(--commit-hook と --split-rules)— 本文に理由つきの `Lint-Baseline: declarations <理由>` の行が在れば、基点を
     /// 今の宣言(設定 file と architecture.hy)で測る 1 回限りの指定として読む(規則を鳴らし始める commit のため — agora-redesign #2143)
     #[arg(long)]
@@ -620,6 +633,15 @@ fn main() -> ExitCode {
         return run_commit_hook(&args);
     }
 
+    if let Some(changed) = &args.affected_tests {
+        // 逆依存の問いも小さな仕事(cache の温まった doeff で CPU 0.05 秒)— 負荷 26 の機体で 36 本の thread は sys の時間だけで
+        // 0.9〜11 秒を使い、4 本は冷えて 0.28 秒・温まって 0.07 秒だった(agora-redesign #2605 の実測)。
+        if std::env::var_os("RAYON_NUM_THREADS").is_none() {
+            let _ = rayon::ThreadPoolBuilder::new().num_threads(SINGLE_FILE_THREADS).build_global();
+        }
+        return run_affected_tests(&args, changed);
+    }
+
     // 1 file の実行(--stdin・書き込み直後の hook と editor)は小さな仕事の並びなので、thread を増やしても速くならず、thread の
     // 待ち合わせの CPU だけが増える(#1033 の実測・36 core の機体: 36 本で CPU 0.45 秒 / 4 本で 0.30 秒・壁時計は同じ 0.27 秒)。
     // RAYON_NUM_THREADS が明示されていればそれに従う。
@@ -697,6 +719,46 @@ fn run_commit_hook(args: &Args) -> ExitCode {
         return ExitCode::SUCCESS;
     }
     ExitCode::from(doeff_linter::commit_hook::run(&options))
+}
+
+/// `--affected-tests` — repo の根(`--root` が勝つ・無ければ今の dir の git の作業木の根)の git が知る file から逆依存を辿り、
+/// 答えの JSON(project::affected_tests::AffectedReport)を 1 行で出す。終了コード 0 = 答えた・2 = 引数・git の誤り。
+fn run_affected_tests(args: &Args, changed: &[String]) -> ExitCode {
+    let fail = |reason: String| {
+        eprintln!("doeff-linter affected-tests: {}", reason);
+        ExitCode::from(2)
+    };
+    if args.test_pattern.is_empty() {
+        return fail("検の file の名の規則が無い — --test-pattern で呼び手の集め手の規則を渡す(既定の一覧は持たない)".to_string());
+    }
+    let root = match &args.root {
+        Some(root) => root.clone(),
+        None => match std::env::current_dir().map_err(|e| format!("今の dir を読めない: {}", e)).and_then(|cwd| doeff_linter::commit_hook::git_toplevel(&cwd)) {
+            Ok(root) => root,
+            Err(reason) => return fail(reason),
+        },
+    };
+    let root = match root.canonicalize() {
+        Ok(root) => root,
+        Err(error) => return fail(format!("repo の根 {} を読めない: {}", root.display(), error)),
+    };
+    let files = match project::affected_tests::known_files(&root) {
+        Ok(files) => files,
+        Err(reason) => return fail(reason),
+    };
+    let query = project::affected_tests::Query {
+        changed: changed.to_vec(),
+        test_patterns: args.test_pattern.clone(),
+        max_dependents: args.max_dependents.unwrap_or(project::affected_tests::DEFAULT_MAX_DEPENDENTS),
+    };
+    let report = project::affected_tests::affected_tests(&root, &files, &query);
+    match serde_json::to_string(&report) {
+        Ok(json) => {
+            println!("{}", json);
+            ExitCode::SUCCESS
+        }
+        Err(error) => fail(format!("答えを JSON にできない: {}", error)),
+    }
 }
 
 /// 基点との比べで新しい critical が在る時の終了コード(仕様 1 節・agora-redesign #1803)。

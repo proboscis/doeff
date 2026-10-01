@@ -8,11 +8,16 @@ t135 の形: doeff-core-effects の `.hy` に公開の名を 1 つ足し、隣�
 模型の repo は本物の file の写し(test_hy_module_stubs.py・doeff_core_effects の .hy と .pyi・executable ADR の pattern の
 定義元)と、表だけを書いた pyproject.toml を持つ。模型は自分の環境を持たず、uv の UV_PROJECT_ENVIRONMENT で今の検の
 環境を指す(入口は `uv run --no-sync --project <作業木>` で pytest を走らせる)。指さない時は「環境が無い作業木」になる。
+
+2 便目(逆依存): 入口は doeff-linter の `--affected-tests` に問う。検では実の linter を呼ばず、決めた答えを返す代役の
+命令(`--linter`)に差し替え、契約の組 → 変えた検 → 逆依存(距離の順)に並ぶこと・linter が答えない時に名指して進むことを
+確かめる。linter 側の選び方そのものの失敗ケースは doeff-linter の Rust の検(project::affected_tests)が持つ。
 """
 
 from __future__ import annotations
 
 import importlib.util
+import json
 import os
 import shutil
 import subprocess
@@ -45,10 +50,15 @@ class Row:
 
 @dataclass(frozen=True)
 class Model:
-    """模型の repo と、変える前の commit(入口の分岐点)。"""
+    """模型の repo と、変える前の commit(入口の分岐点)と、空の答えを返す逆依存の代役(実の linter を呼ばない)。"""
 
     root: Path
     base: str
+    linter: Path
+
+
+#: 逆依存の答えの空の形(doeff-linter の `--affected-tests` の JSON)。
+EMPTY_ANSWER = '{"tests": [], "hubs": [], "not_modules": [], "unreadable": [], "files_read": 0, "max_dependents": 40}'
 
 
 @dataclass(frozen=True)
@@ -79,8 +89,33 @@ def _pyproject(rows: tuple[Row, ...]) -> str:
     return '[tool.pytest.ini_options]\nmarkers = ["e2e: model marker"]\n' + table
 
 
-def _make_model(root: Path, rows: tuple[Row, ...]) -> Model:
-    """本物の契約の検と core-effects の .hy / .pyi を写した模型の repo を作り、1 つ目の commit を分岐点にする。"""
+def _fake_linter(place: Path, answer: str, returncode: int = 0) -> Path:
+    """逆依存の代役: 受けた引数を同じ dir の argv に 1 行ずつ書き、決めた答えを返す命令(模型の repo の外に置く — 変えた file に数えない)。"""
+    place.mkdir(parents=True, exist_ok=True)
+    answer_file = place / "answer.json"
+    answer_file.write_text(answer, encoding="utf-8")
+    script = place / "doeff-linter"
+    script.write_text(
+        "#!/bin/sh\n"
+        f'printf "%s\\n" "$@" > "{place / "argv"}"\n'
+        f'cat "{answer_file}"\n'
+        "echo 'fake linter stderr' >&2\n"
+        f"exit {returncode}\n",
+        encoding="utf-8",
+    )
+    script.chmod(0o755)
+    return script
+
+
+def _make_model(
+    tmp_path: Path, rows: tuple[Row, ...], extra: tuple[tuple[str, str], ...] = ()
+) -> Model:
+    """本物の契約の検と core-effects の .hy / .pyi を写した模型の repo を作り、1 つ目の commit を分岐点にする。
+
+    extra = 分岐点に含める file(根からの path と中身)。逆依存の代役は空の答えを返す物を repo の外に置く。
+    """
+    root = tmp_path / "repo"
+    root.mkdir()
     shutil.copytree(
         REPO_ROOT / CORE_EFFECTS,
         root / CORE_EFFECTS,
@@ -94,11 +129,18 @@ def _make_model(root: Path, rows: tuple[Row, ...]) -> Model:
     (root / "tests" / "test_slow.py").write_text(
         "import time\n\n\ndef test_slow():\n    time.sleep(60)\n", encoding="utf-8"
     )
+    for rel, text in extra:
+        (root / rel).parent.mkdir(parents=True, exist_ok=True)
+        (root / rel).write_text(text, encoding="utf-8")
     (root / "pyproject.toml").write_text(_pyproject(rows), encoding="utf-8")
     _git(root, "init", "-q", "-b", "main")
     _git(root, "add", "-A")
     _git(root, "commit", "-q", "-m", "base")
-    return Model(root=root, base=_git(root, "rev-parse", "HEAD"))
+    return Model(
+        root=root,
+        base=_git(root, "rev-parse", "HEAD"),
+        linter=_fake_linter(tmp_path / "linter-empty", EMPTY_ANSWER),
+    )
 
 
 def _add_public_name_without_stub(model: Model) -> None:
@@ -110,10 +152,13 @@ def _add_public_name_without_stub(model: Model) -> None:
     _git(model.root, "commit", "-q", "-am", "add a public name without its stub")
 
 
-def _run(model: Model, *extra: str, with_environment: bool = True) -> RunnerOutput:
+def _run(
+    model: Model, *extra: str, with_environment: bool = True, linter: Path | None = None
+) -> RunnerOutput:
     """入口を `make test-changed` と同じ `uv run --script` で模型の repo に対して走らせる(分岐点は模型の 1 つ目の commit)。
 
     with_environment = 模型の環境として今の検の環境(sys.prefix)を UV_PROJECT_ENVIRONMENT で指すか。
+    linter = 逆依存の代役(既定は模型の空の答え — 実の doeff-linter は呼ばない)。
     """
     env = {
         k: v for k, v in os.environ.items() if k not in {"UV_PROJECT_ENVIRONMENT", "VIRTUAL_ENV"}
@@ -128,6 +173,8 @@ def _run(model: Model, *extra: str, with_environment: bool = True) -> RunnerOutp
             str(model.root),
             "--base",
             model.base,
+            "--linter",
+            str(linter if linter is not None else model.linter),
             *extra,
         ],
         env={**env, "UV_PROJECT_ENVIRONMENT": sys.prefix} if with_environment else env,
@@ -236,3 +283,104 @@ def test_the_repository_table_reads_and_names_existing_tests(
     assert all(
         (REPO_ROOT / test.split("::", 1)[0]).is_file() for row in table.rows for test in row.tests
     )
+
+
+# ---------------------------------------------------------------------------
+# 2 便目: 逆依存(doeff-linter の `--affected-tests`)の検を、契約の組と変えた検の後ろに距離の順で足す
+# ---------------------------------------------------------------------------
+
+PASSING = "def test_it():\n    pass\n"
+
+
+def _affected(path: str, distance: int) -> dict[str, object]:
+    """代役の答えの tests の 1 つ(道は変えた file から検までの 2 段で足りる)。"""
+    return {"path": path, "distance": distance, "via": ["tests/test_changed.py", path]}
+
+
+def test_reverse_dependents_follow_the_contract_set_and_the_changed_test_by_distance(
+    tmp_path: Path,
+) -> None:
+    """並びの失敗ケース: 契約の組 → 変えた検 → 逆依存(距離の近い順・同じ距離は path の順)。代役の答えの順が乱れていても、
+    重なり(契約の組に在る検)・検の file でない物・木に無い物を除いて決まった順に並べ、広すぎた module を名指す。
+    linter には変えた file と、検の file の名の規則(集め手と同じ値)を渡す。"""
+    model = _make_model(
+        tmp_path,
+        (REPO_ROW,),
+        extra=(
+            ("tests/test_near_a.py", PASSING),
+            ("tests/test_near_b.py", PASSING),
+            ("tests/test_far.py", PASSING),
+            ("tests/helper.py", "X = 1\n"),
+        ),
+    )
+    (model.root / "tests" / "test_changed.py").write_text(PASSING, encoding="utf-8")
+    answer = {
+        "tests": [
+            _affected("tests/test_far.py", 2),
+            _affected("tests/test_near_b.py", 1),
+            _affected("tests/test_ok.py", 1),
+            _affected("tests/helper.py", 1),
+            _affected("tests/test_gone.py", 1),
+            _affected("tests/test_near_a.py", 1),
+        ],
+        "hubs": [{"module": "macros", "root": "src", "dependents": 412, "distance": 0}],
+        "not_modules": [],
+        "unreadable": [],
+        "files_read": 9,
+        "max_dependents": 40,
+    }
+    linter = _fake_linter(tmp_path / "linter-answer", json.dumps(answer))
+    output = _run(model, linter=linter)
+    summary = _summary(output)
+    assert output.returncode == 0, output.text[-3000:]
+    assert "走った: 5" in summary, summary
+    ran = [line.strip().split(" — ", 1)[0] for line in summary.splitlines() if " — 1 本" in line]
+    assert ran == [
+        "tests/test_ok.py",
+        "tests/test_changed.py",
+        "tests/test_near_a.py",
+        "tests/test_near_b.py",
+        "tests/test_far.py",
+    ], summary
+    assert (
+        "tests/test_far.py — 1 本(逆依存・距離 2: tests/test_changed.py → tests/test_far.py)"
+        in summary
+    )
+    assert "逆依存: 足した検 3 本" in summary, summary
+    assert "逆依存が広すぎて辿らなかった module: macros(根 src・直接の使い手 412)" in summary, (
+        summary
+    )
+    argv = (linter.parent / "argv").read_text(encoding="utf-8").splitlines()
+    assert argv[argv.index("--affected-tests") + 1] == "tests/test_changed.py", argv
+    patterns = [argv[i + 1] for i, arg in enumerate(argv) if arg == "--test-pattern"]
+    assert patterns[:2] == ["test_*.py", "*_test.py"], argv
+    assert "docs/adr/defadr_*.hy" in patterns, argv
+
+
+@pytest.mark.parametrize(
+    ("case", "answer", "returncode", "named"),
+    [
+        ("無い", None, 0, "が無い"),
+        ("止まった", EMPTY_ANSWER, 2, "rc 2 で止まった — fake linter stderr"),
+        ("読めない", "not json", 0, "linter の答えが読めない"),
+        ("形が違う", '{"tests": [{"path": 1}], "hubs": [], "unreadable": []}', 0, "読めない"),
+    ],
+)
+def test_an_unanswering_linter_is_named_and_the_run_goes_on(
+    tmp_path: Path, case: str, answer: str | None, returncode: int, named: str
+) -> None:
+    """linter が答えない時: 逆依存を足さずに「逆依存を測れなかった」と理由つきで名指し、契約の組は走らせ、赤にしない(rc 0)。"""
+    model = _make_model(tmp_path, (REPO_ROW,))
+    (model.root / "README").write_text("changed\n", encoding="utf-8")
+    linter = (
+        tmp_path / "no-such-linter"
+        if answer is None
+        else _fake_linter(tmp_path / f"linter-{case}", answer, returncode)
+    )
+    output = _run(model, linter=linter)
+    summary = _summary(output)
+    assert output.returncode == 0, output.text[-3000:]
+    assert "tests/test_ok.py — 1 本" in summary, summary
+    assert "赤: 0" in summary, summary
+    assert "逆依存を測れなかった — " in summary, summary
+    assert named in summary, summary
