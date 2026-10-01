@@ -13,7 +13,8 @@
 (import pytest)
 (import doeff [run with_handlers])
 (import doeff_vm [UnhandledEffect])
-(import doeff_core_effects.stop_signal_effects [StopRequested])
+(import doeff_core_effects.stop_signal_effects [AwaitStop StopRequested])
+(import doeff_core_effects.scheduler [Cancel Race Spawn Wait])
 (import stop_contract_handlers [SendStop StopHandlerUnderTest signal-reason])
 
 
@@ -60,3 +61,60 @@
   (<- handler (StopHandlerUnderTest))
   (with [(pytest.raises UnhandledEffect :match "stop-handler/")]
     (run (with_handlers [handler] (ask-twice)))))
+
+
+;; --- AwaitStop(止めまで待つ口 — agora-redesign #2205)-------------------------------------------------------------------
+;; 静かな間に眠る loop が、自分の待ち(表の変化・期限)と AwaitStop を Race して、数秒ごとに起きて StopRequested を問わずに止めに気づく。
+;; 本物と fake が同じ性質を持つ: 既に来た止めにはすぐ答える・待っている間に来た止めで起きる・打ち切った待ちは後の止めを妨げない。
+
+(defk await-stop-once []
+  {:pre [] :post [(: % str)] :tags {:context "stop-signal-test" :role "program"}}
+  "AwaitStop を 1 度待つ(Spawn して Race に渡す task の中身)。"
+  (<- reason str (AwaitStop))
+  reason)
+
+
+(defk quiet-then [value]
+  {:pre [(: value str)] :post [(: % str)] :tags {:context "stop-signal-test" :role "program"}}
+  "止めより先に済む別の待ち(静かな loop の自分の待ちの代わり)。"
+  value)
+
+
+(deftest test-await-stop-answers-a-stop-already-requested
+  {:interpreters ["os-signal" "scripted"]}
+  ;; 本物は止めの合図の口が最初に呼ばれた時に受け手を据えるので、合図を送る前に 1 度問う(上の検と同じ)。
+  (<- (StopRequested))
+  (<- (SendStop signal.SIGTERM))
+  (<- reason str (AwaitStop))
+  (<- wanted str (signal-reason signal.SIGTERM))
+  (assert (= reason wanted) (.format "止めの後の AwaitStop が {!r}(期待 {!r})" reason wanted)))
+
+
+(deftest test-await-stop-wakes-when-the-stop-comes
+  {:interpreters ["os-signal" "scripted"]}
+  (<- (StopRequested))
+  (<- waiter (Spawn (await-stop-once)))
+  ;; 別の task を 1 つ待って scheduler を回し、waiter を AwaitStop で寝かせてから合図を送る(起きることを見るため)。
+  (<- step (Spawn (quiet-then "parked")))
+  (<- (Wait step))
+  (<- (SendStop signal.SIGINT))
+  (<- reason str (Wait waiter))
+  (<- wanted str (signal-reason signal.SIGINT))
+  (assert (= reason wanted) (.format "待っている間の止めで起きた AwaitStop が {!r}(期待 {!r})" reason wanted)))
+
+
+(deftest test-a-cancelled-wait-does-not-keep-a-later-stop-away
+  {:interpreters ["os-signal" "scripted"]}
+  ;; 静かな loop の 1 回: 自分の待ちが先に済み、止めの待ちを打ち切る。後の止めは次の待ちと StopRequested に届く。
+  (<- (StopRequested))
+  (<- waiter (Spawn (await-stop-once)))
+  (<- other (Spawn (quiet-then "changed")))
+  (<- first (Race waiter other))
+  (<- (Cancel waiter))
+  (assert (= first "changed") first)
+  (<- (SendStop signal.SIGTERM))
+  (<- asked (| str None) (StopRequested))
+  (<- later str (AwaitStop))
+  (<- wanted str (signal-reason signal.SIGTERM))
+  (assert (= asked wanted) (.format "打ち切りの後の StopRequested が {!r}" asked))
+  (assert (= later wanted) (.format "打ち切りの後の AwaitStop が {!r}" later)))
