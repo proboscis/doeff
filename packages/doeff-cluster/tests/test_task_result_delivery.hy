@@ -2,7 +2,7 @@
 ;; - coordinator の受け方(cluster_policy.absorb-task-result を本物の api_policy.respond の口で): 置いた worker からの結果で task を終える・
 ;;   終わった task への 2 度目の結果(直の届けの再送・heartbeat が後から運んだ物)は何も変えない・別の worker は 409・知らない task は
 ;;   404・結果の欄の無い本文は 400。
-;; - 本番の子の送り(report_client.deliver-task-result): 本物の coordinator の判断(MemoryCoordinator)に届いて task を終える・断られた /
+;; - 本番の子の送り(task_result.delivered-task-result): 本物の coordinator の判断(MemoryCoordinator)に届いて task を終える・断られた /
 ;;   届かない時は偽を返して file と heartbeat の路に任せる。
 ;; 窓そのもの(exit 0 の直後の worker の死)は sim-cluster の反例 test_task_result_window.hy が通す。
 (require doeff-hy.macros [deftest defk deff <- val])
@@ -12,7 +12,12 @@
 (import doeff_cluster.foundation.coordinator_inbox [http-request])
 (import doeff_cluster.coordinator.core.api_policy [respond])
 (import doeff_cluster.job_context [RunContext])
-(import doeff_cluster.foundation.report_client [task-result-request deliver-task-result])
+(import doeff [run with-handlers])
+(import doeff_core_effects.handlers [slog-discard-handler])
+(import doeff_time [SimClock sim-time-handler])
+(import doeff_core_effects.scheduler [scheduled])
+(import doeff_cluster.shared.protocol.task_result [task-result-request delivered-task-result])
+(import tests.transport_http [transport-http TEST-ROUTE])
 (import tests.clock_fixtures [clock-at])
 (import tests.detached_rig [MemoryCoordinator])
 (import tests.program_rows [program-placed])
@@ -51,7 +56,7 @@
   {:pre [(: state ClusterState) (: id str) (: worker str) (: result str) (: now int)] :post [(: % tuple)]
    :tags {:context "doeff-cluster-test" :role "foundation"}}
   "task id の結果を worker の子 process として coordinator の口へ届けた答え #(次の状態 status 本文) を得るため(本番の子と同じ要求の形
-   report_client.task-result-request)。"
+   task_result.task-result-request)。"
   (val request (task-result-request id worker (+ worker "-p1") result))
   (<- answered tuple (answer state (get request 0) (get request 1) (get request 3) now))
   answered)
@@ -93,17 +98,23 @@
   (assert (= (. (get (. (get bare 0) tasks) id) phase) "assigned") bare))
 
 
+(defn #^ bool delivered [#^ RunContext ctx #^ httpx.BaseTransport transport]  ; defk にできない: 検が Program の外から 1 回走らせる入口
+  "子の届け(delivered-task-result)を、transport の後ろの coordinator への検の HTTP の答え手と模擬の時計の下で走らせる。"
+  (run (scheduled (with-handlers [(transport-http transport) slog-discard-handler (sim-time-handler :clock (SimClock))]
+                                 (delivered-task-result ctx.coordinator-url ctx.job ctx.worker ctx.instance "R" TEST-ROUTE)))))
+
+
 (deftest test-the-child-delivers-its-result-and-leaves-a-refusal-or-an-outage-to-the-heartbeat
-  ;; 本番の子の送り(deliver-task-result)は本物の coordinator の判断に届いて task を終える(真)。coordinator が断る(知らない task)・
+  ;; 本番の子の送り(delivered-task-result)は本物の coordinator の判断に届いて task を終える(真)。coordinator が断る(知らない task)・
   ;; 届かない時は偽を返し、結果は file と worker の heartbeat の路に任せる(子は落ちない)。
   (<- placed tuple (placed-task "w"))
   (val id (get placed 1))
   (val coordinator (MemoryCoordinator (clock-at 300)))
   (setv coordinator.state (get placed 0))
   (val ctx (RunContext "http://coordinator" "w" "r" (+ "task/" id) :instance "w-p1"))
-  (assert (deliver-task-result ctx "R" :transport (httpx.MockTransport coordinator.handle)))
+  (assert (delivered ctx (httpx.MockTransport coordinator.handle)))
   (assert (= #((. (get coordinator.state.tasks id) phase) (. (get coordinator.state.tasks id) result)) #("finished" "R"))
           (get coordinator.state.tasks id))
   (val stray (RunContext "http://coordinator" "w" "r" "task/t-none" :instance "w-p2"))
-  (assert (not (deliver-task-result stray "R" :transport (httpx.MockTransport coordinator.handle))))
-  (assert (not (deliver-task-result ctx "R" :transport (httpx.MockTransport unreachable)))))
+  (assert (not (delivered stray (httpx.MockTransport coordinator.handle))))
+  (assert (not (delivered ctx (httpx.MockTransport unreachable)))))

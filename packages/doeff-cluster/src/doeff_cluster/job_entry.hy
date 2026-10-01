@@ -15,7 +15,7 @@
 ;;; service と task は同じ file を同じ read-program で読む(運び方を分けない — R3b)。--identity は service の宣言の同一性の指紋
 ;;; (spec-hash の材料 — 入口では読まない)。
 ;;; task は結果(TaskSucceeded / TaskFailed)を必ず --result の file に書いてから 0 で終わる。0 以外で終わった = 結果を書けなかった。
-;;; file に書いた後、終わる前に結果を coordinator の POST /tasks/<id>/result へ直に届ける(report_client.deliver-task-result — #1387:
+;;; file に書いた後、終わる前に結果を coordinator の POST /tasks/<id>/result へ直に届ける(shared/protocol/task_result の delivered-task-result — #1387:
 ;;; worker の次の heartbeat だけが運ぶ形では、exit 0 から heartbeat までに worker が死ぬと結果が届かず task が 2 度走った)。
 ;;; 届かなければ今までどおり worker が file を読んで heartbeat で運ぶ(coordinator は 2 度目の結果を冪等に受ける)。
 ;;; 版の違い・file の欠け・解けない Program は、task では TaskFailed(VersionMismatch / RemoteJobFailed)として結果の file に書き、
@@ -36,7 +36,14 @@
 (import doeff_cluster.foundation.process_versions [current-versions])
 ;; 子の文脈の型と読みは入口でない module に 1 つだけ置く(job_context の頭の註 — ここは import して、今の名を引けるように残す)。
 (import .job_context [RunContext context-from-env runtime-env-of-context])
-(import doeff_cluster.foundation.report_client [deliver-task-result])
+(import doeff_cluster.shared.protocol.task_result [delivered-task-result])
+(import doeff_cluster.shared.protocol.coordinator_route [RouteOptions])
+(import doeff_cluster.foundation.coordinator_http [REPLY-SECONDS CONNECT-SECONDS PREFERRED-RECHECK-SECONDS default-actor])
+(import doeff [with-handlers])
+(import doeff_core_effects.handlers [await-handler slog-handler])
+(import doeff_core_effects.http_handlers [http-production-handler])
+(import doeff_core_effects.scheduler [scheduled])
+(import doeff_time [sync-time-handler])
 
 
 (deff program-row [#^ str path]  ; defk にできない: process の入口(Program の外)が file を読む
@@ -124,7 +131,13 @@
   (with [f (open tmp "w" :encoding "utf-8")]
     (.write f encoded))
   (os.replace tmp args.result)
-  (deliver-task-result ctx encoded)
+  ;; 届けは宛先の部品の上の HttpRequest(#2427)— 本物の答え手 http-production-handler と待ちと時計をここで積む。
+  (run (scheduled (with-handlers [(await-handler) slog-handler (http-production-handler) (sync-time-handler)]
+                                 (delivered-task-result ctx.coordinator-url ctx.job ctx.worker ctx.instance encoded
+                                                        ;; 送り直しは接続の段の一巡し直し 1 回だけ(子の終わりを長く止めない)。
+                                                        (RouteOptions :reply-seconds REPLY-SECONDS :connect-seconds CONNECT-SECONDS
+                                                                      :connect-retries 1 :recheck-ms (int (* PREFERRED-RECHECK-SECONDS 1000))
+                                                                      :actor (default-actor))))))
   (print (.format "task: {} → {}" ctx.job (. (type outcome) __name__)) :file sys.stderr :flush True))
 
 
