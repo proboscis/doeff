@@ -4,6 +4,7 @@
 ;;; 名指しの待ちの背景の task は run をまたいで生きない — 待ちの性質は 1 回の run の筋書きで確かめる(test_heartbeat_link)。
 (require doeff-hy.macros [deff val])
 (import os)
+(import typing)
 (import time)
 (import uuid)
 (import pathlib [Path])
@@ -16,6 +17,7 @@
 (import doeff_cluster.shared.protocol.coordinator_route [CoordinatorRoute RouteCell RouteOptions route-of])
 (import doeff_cluster.worker.intent.worker_model [ReadDesired])
 (import doeff_cluster.worker.protocol.coordinator_link [LinkState coordinator-link accepted-tasks fetched-programs status-rows])
+(import doeff_cluster.worker.core.launch [program-file program-file-text])
 (import tests.transport_http [transport-http])
 
 ;; 口の送り方(本番の組み立てと同じく一巡し直さない — 届かない拍は次の拍で送り直す)。
@@ -64,3 +66,13 @@
   (defn #^ str endpoint [self]
     "いま heartbeat を送る宛先。"
     (get self.cell.route.urls self.cell.route.active)))
+
+
+(deff write-program-file [#^ Path program-dir #^ str sha #^ str blob #^ (get dict #(str typing.Any)) versions]  ; defk にできない: 検が Program の外で file を置く道具
+  {:pre [(: program-dir Path) (: sha str) (: blob str) (: versions dict)] :post [(: % Path)] :tags {:context "doeff-cluster-test" :role "foundation"}}
+  "coordinator への口が /programs/<sha> から取って置くのと同じ cache の file を置くため(置き場と中身の形の定義点は worker/core/launch の
+   program-file と program-file-text — handlers.hy の同じ名の道具を #2427 でここへ移した)。"
+  (let [path (program-file program-dir sha)]
+    (.mkdir program-dir :parents True :exist-ok True)
+    (.write-text path (program-file-text blob versions) :encoding "utf-8")
+    path))

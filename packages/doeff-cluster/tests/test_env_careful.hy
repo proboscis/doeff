@@ -34,7 +34,7 @@
 (import doeff_core_effects.os_process [subprocess-handler])
 (import doeff_core_effects.os_file [os-file-handler])
 (import doeff_cluster.worker.intent.env_prepare_model [ROOTS-PTH] doeff_cluster.shared.intent.env_marker_model [ENV-MARKER])
-(import doeff_cluster.handlers [task-spec])
+(import doeff_cluster.worker.protocol.declared [task-spec])
 (import doeff_cluster.worker.protocol.env_store [env-root])
 (import doeff_cluster.worker.protocol.process_host [HostSettings job-work-dir])
 (import doeff_core_effects.process_effects [EnvEntry StartProcess])

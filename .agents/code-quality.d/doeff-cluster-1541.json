@@ -789,7 +789,8 @@
         "doeff-cluster-task-result",
         "doeff-cluster-coordinator-request-queue",
         "doeff-cluster-worker-drain-requests",
-        "doeff-cluster-worker-coordinator-link"
+        "doeff-cluster-worker-coordinator-link",
+        "doeff-cluster-worker-declared"
       ],
       "layer": "io",
       "name": "doeff-cluster-local",
@@ -1443,7 +1444,8 @@
         "doeff-cluster-coordinator-request-bodies",
         "doeff-cluster-coordinator-request-bodies-model",
         "doeff-cluster-coordinator-request-queue",
-        "doeff-cluster-worker-drain-requests"
+        "doeff-cluster-worker-drain-requests",
+        "doeff-cluster-worker-declared"
       ],
       "exclude": [
         "packages/doeff-cluster/tests/fixtures/independence/*"

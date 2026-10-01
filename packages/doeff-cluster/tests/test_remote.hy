@@ -17,7 +17,7 @@
                                           TaskSucceeded TaskFailed encode-program decode-program decode-outcome version-mismatch])
 (import doeff_cluster.foundation.process_versions [current-versions])
 (import doeff_cluster.shared.intent.remote_model [program-sha])
-(import doeff_cluster.handlers [write-program-file])
+(import tests.link_rig [write-program-file])
 (import doeff_cluster.sim.local [sim-cluster SharedRows ProcessesOf])
 (import tests.fixtures.envs [sim-foundation])
 (import tests.fixtures.sim_programs [delegating])

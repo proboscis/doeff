@@ -21,7 +21,7 @@
 (import doeff_cluster.shared.intent.service_model [CallShape System job resolve system-of system-declaration])
 (import doeff_cluster.foundation.process_versions [current-versions])
 (import doeff_cluster.coordinator.core.cluster_policy [job-from-json job-to-json spec-json])
-(import doeff_cluster.handlers [declared-job-spec] doeff_cluster.worker.core.launch [program-file JobLaunch] doeff_cluster.worker.core.probe_rules [probe-targets probe-command])
+(import doeff_cluster.worker.protocol.declared [declared-job-spec] doeff_cluster.worker.core.launch [program-file JobLaunch] doeff_cluster.worker.core.probe_rules [probe-targets probe-command])
 (import doeff_cluster.worker.intent.worker_model [CodeLayout ProbeView])
 (import doeff_cluster.worker.protocol.probes [ProbeSettings])
 (import tests.probe_rig [probe-settings run-probes observed])

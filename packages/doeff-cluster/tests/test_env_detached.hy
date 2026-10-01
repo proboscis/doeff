@@ -31,7 +31,7 @@
 (import doeff_cluster.worker.intent.worker_model [CodeView CodeState WorldView JobRecord WorkerPolicy PrepareEnv
                                     PrepareCode] doeff_cluster.shared.intent.job_model [JobSpec JobPhase] doeff_cluster.worker.core.worker_rules [code-key])
 (import doeff_cluster.worker.core.policy [plan statuses])
-(import doeff_cluster.handlers [task-spec] doeff_cluster.worker.protocol.heartbeat [status-row])
+(import doeff_cluster.worker.protocol.declared [task-spec] doeff_cluster.worker.protocol.heartbeat [status-row])
 (import tests.env_fixtures [LOCK APP-URL LIB-URL env-of])
 (import tests.detached_rig [slow-add])
 (import tests.program_rows [SAMPLE-TASK-PROGRAM program-placed])
