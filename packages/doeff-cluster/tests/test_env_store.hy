@@ -16,7 +16,8 @@
 (import doeff_cluster.worker.protocol.coordinator_link [coordinator-link])
 (import doeff_cluster.worker.protocol.code_store [PREPARE-TOOL])
 (import doeff_cluster.shared.intent.env_marker_model [ENV-MARKER])
-(import doeff_cluster.worker.intent.worker_model [CodeState ObserveEnvs EnvReport ReadDesired DesiredJobs DesiredUnreadable])
+(import doeff_cluster.worker.intent.worker_model [CodeState EnvReport ReadDesired DesiredJobs DesiredUnreadable])
+(import doeff_cluster.worker.protocol.observations [ObserveEnvs])
 (import doeff_cluster.worker.protocol.env_store [EnvSettings env-host])
 
 (val READY-NAME "0123456789abcdef01234567")

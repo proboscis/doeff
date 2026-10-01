@@ -1421,7 +1421,8 @@
         "doeff-cluster-worker-world",
         "doeff-cluster-task-result",
         "doeff-cluster-worker-lease-release",
-        "doeff-cluster-worker-coordinator-link"
+        "doeff-cluster-worker-coordinator-link",
+        "doeff-cluster-worker-observations"
       ],
       "exclude": [
         "packages/doeff-cluster/tests/fixtures/independence/*"
@@ -2017,7 +2018,8 @@
       "allow": [
         "doeff-cluster-clock",
         "doeff-cluster-worker-model",
-        "doeff-cluster-worker-launch"
+        "doeff-cluster-worker-launch",
+        "doeff-cluster-worker-observations"
       ],
       "layer": "io",
       "name": "doeff-cluster-worker-process-host",
@@ -2055,7 +2057,8 @@
         "doeff-cluster-worker-model",
         "doeff-cluster-worker-rules",
         "doeff-cluster-worker-launch",
-        "doeff-cluster-worker-probe-rules"
+        "doeff-cluster-worker-probe-rules",
+        "doeff-cluster-worker-observations"
       ],
       "layer": "io",
       "name": "doeff-cluster-worker-probes",
@@ -2090,7 +2093,8 @@
         "doeff-cluster-worker-model",
         "doeff-cluster-code-plan",
         "doeff-cluster-code-prepare-program",
-        "doeff-cluster-worker-code-rules"
+        "doeff-cluster-worker-code-rules",
+        "doeff-cluster-worker-observations"
       ],
       "layer": "io",
       "name": "doeff-cluster-worker-code-store",
@@ -2106,7 +2110,8 @@
     {
       "allow": [
         "doeff-cluster-worker-model",
-        "doeff-cluster-worker-heartbeat"
+        "doeff-cluster-worker-heartbeat",
+        "doeff-cluster-worker-observations"
       ],
       "layer": "io",
       "name": "doeff-cluster-worker-status-file",
@@ -2143,7 +2148,8 @@
         "doeff-cluster-worker-rules",
         "doeff-cluster-env-upkeep",
         "doeff-cluster-worker-env-rules",
-        "doeff-cluster-worker-heartbeat"
+        "doeff-cluster-worker-heartbeat",
+        "doeff-cluster-worker-observations"
       ],
       "layer": "io",
       "name": "doeff-cluster-worker-env-store",
@@ -2175,7 +2181,8 @@
     },
     {
       "allow": [
-        "doeff-cluster-worker-model"
+        "doeff-cluster-worker-model",
+        "doeff-cluster-worker-observations"
       ],
       "layer": "io",
       "name": "doeff-cluster-worker-world",
@@ -2264,6 +2271,19 @@
         "packages/doeff-cluster/src/doeff_cluster/worker/protocol/coordinator_link.hy"
       ],
       "responsibility": "worker の coordinator への口(heartbeat・Program の取り寄せ・task の file・名指しの待ちを宛先の部品の上の HttpRequest と file の効果へ — #2427)",
+      "typed": true
+    },
+    {
+      "allow": [],
+      "layer": "io",
+      "name": "doeff-cluster-worker-observations",
+      "paths": [
+        "packages/doeff-cluster/src/doeff_cluster/worker/protocol/observations.hy"
+      ],
+      "public": [
+        "packages/doeff-cluster/src/doeff_cluster/worker/protocol/observations.hy"
+      ],
+      "responsibility": "worker の言い換えどうしの問いの効果(コードの木・root・子 process・入口の検めの観測と焼きの秒 — #2031)",
       "typed": true
     }
   ],

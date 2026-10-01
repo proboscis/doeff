@@ -4,8 +4,9 @@
 ;;; worker/protocol/probes(#2465)。I/O を持たない。
 (require doeff-hy.macros [defhandler <- val])
 (val MODULE-TAGS {:context "doeff-cluster" :role "protocol"})
-(import doeff_cluster.worker.intent.worker_model [ObserveWorld WorldView EnvDisk ObserveCode ObserveEnvs ObserveEnvDisk ObserveProcesses
-                                                  ObserveProbes])
+(import doeff_cluster.worker.intent.worker_model [ObserveWorld WorldView EnvDisk 
+])
+(import doeff_cluster.worker.protocol.observations [ObserveProcesses ObserveCode ObserveEnvs ObserveEnvDisk ObserveProbes])
 
 
 (defhandler local-host

@@ -39,7 +39,8 @@
 (import doeff_cluster.worker.protocol.process_host [HostSettings job-work-dir])
 (import doeff_core_effects.process_effects [EnvEntry StartProcess])
 (import doeff_cluster.worker.intent.worker_model [CodeState CodeView StartJob ReapJob Outcome WorldView WorkerPolicy PrepareEnv WarmEnv
-  ObserveEnvs SweepEnvs] doeff_cluster.shared.intent.job_model [JobSpec] doeff_cluster.worker.core.worker_rules [code-key])
+ SweepEnvs] doeff_cluster.shared.intent.job_model [JobSpec] doeff_cluster.worker.core.worker_rules [code-key])
+(import doeff_cluster.worker.protocol.observations [ObserveEnvs])
 (import doeff_cluster.worker.core.policy [plan])
 (import doeff_cluster.shared.intent.remote_model [encode-program decode-outcome TaskSucceeded TaskFailed])
 (import doeff_cluster.foundation.process_versions [current-versions])

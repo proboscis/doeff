@@ -15,7 +15,8 @@
 (import doeff_time [SimClock sim-time-handler sync-time-handler])
 (import doeff_cluster.worker.intent.code_model [ScanTree LinkPycs CompileSources WriteMarker Note] doeff_cluster.worker.core.code_plan [MARKER tree-problem marker-problem marker-content cache-rel] doeff_cluster.worker.core.code_prepare [prepare-tree] doeff_core_effects.python_bytecode [compiled-pyc])
 (import doeff_cluster.worker.protocol.code_store [PREPARE-TOOL])
-(import doeff_cluster.worker.intent.worker_model [CodeLayout CodeState CodeView PrepareCode ObserveCode])
+(import doeff_cluster.worker.intent.worker_model [CodeLayout CodeState CodeView PrepareCode])
+(import doeff_cluster.worker.protocol.observations [ObserveCode])
 (import doeff_cluster.worker.protocol.code_store [CodeSettings code-host])
 
 

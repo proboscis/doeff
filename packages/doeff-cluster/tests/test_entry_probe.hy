@@ -10,7 +10,8 @@
 (import time)
 (import pathlib [Path])
 (import doeff_cluster.worker.intent.worker_model [CodeState CodeView ProcessView WorldView ProbeState ProbeView ProbeStatus JobRecord
-                        WorkerPolicy PrepareCode StartJob RetireJob ProbeEntry ForgetProbes ObserveProbes] doeff_cluster.shared.intent.job_model [JobSpec JobPhase] doeff_cluster.shared.core.job_rules [spec-hash] doeff_cluster.worker.core.worker_rules [probed-job probe-args probe-refusal])
+ WorkerPolicy PrepareCode StartJob RetireJob ProbeEntry ForgetProbes] doeff_cluster.shared.intent.job_model [JobSpec JobPhase] doeff_cluster.shared.core.job_rules [spec-hash] doeff_cluster.worker.core.worker_rules [probed-job probe-args probe-refusal])
+(import doeff_cluster.worker.protocol.observations [ObserveProbes])
 (import doeff_cluster.worker.core.policy [plan statuses])
 (import doeff [run])
 (import doeff_cluster.worker.protocol.heartbeat [status-row] doeff_cluster.worker.core.probe_rules [probe-reason])

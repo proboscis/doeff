@@ -21,7 +21,8 @@
 (import doeff_cluster.shared.core.clock [now-epoch-ms])
 (import doeff_cluster.shared.core.job_rules [spec-hash])
 (import doeff_cluster.shared.intent.job_model [JobSpec])
-(import doeff_cluster.worker.intent.worker_model [CodeLayout ProbeEntry ForgetProbes ObserveProbes ProbeState ProbeView])
+(import doeff_cluster.worker.intent.worker_model [CodeLayout ProbeEntry ForgetProbes ProbeState ProbeView])
+(import doeff_cluster.worker.protocol.observations [ObserveProbes])
 (import doeff_cluster.worker.core.worker_rules [probe-refusal])
 (import doeff_cluster.worker.core.launch [JobLaunch CHILD-ENV-ALLOWED CHILD-ENV-PREFIXES])
 (import doeff_cluster.worker.core.probe_rules [PROBE-SECONDS PROBE-STOP-GRACE probe-targets probe-launches probe-reason probe-results

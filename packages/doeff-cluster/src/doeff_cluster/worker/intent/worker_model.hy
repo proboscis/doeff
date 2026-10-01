@@ -286,43 +286,17 @@
   (#^ str new-name))
 
 
-(defclass [(dataclass :frozen True)] ObserveProcesses [EffectBase]
-  "worker が起こした job の子 process の観測(ProcessView の tuple — 終わりを観測した子は exit-code を持つ)。ObserveWorld の答え手
-   (local-host)が、子 process の言い換え(worker/protocol/process_host)へ問う(#2464)。")
-
 (defclass [(dataclass :frozen True)] ProbeEntry [EffectBase]
   "spec の入口(factory と env)を、code-path の木と worker の実行環境で読み込めるかを試し始める(import と属性の在否だけ・呼ばない)。
    結果は ObserveWorld の ProbeView(鍵 = spec-hash)で観測する。"
   (#^ JobSpec spec)
   (#^ str code-path))
 
-(defclass [(dataclass :frozen True)] ObserveCode [EffectBase]
-  "版ごとのコードの木の観測(CodeView の tuple — 準備中・失敗・完成品)。ObserveWorld の答え手(local-host)が、コードの木の言い換え
-   (worker/protocol/code_store)へ問う。問われた拍に、終わった準備を片づける(#2466)。")
-
-
-(defclass [(dataclass :frozen True)] CodeTimings [EffectBase]
-  "版ごとの木の準備にかかった秒(版 → 秒の写像)。状態の file の答え手(worker/protocol/status_file)が、コードの木の言い換えへ問う(#2466)。")
-
-
-(defclass [(dataclass :frozen True)] ObserveEnvs [EffectBase]
-  "実行環境の root の観測(CodeView の tuple — 準備中・失敗・完成品)。ObserveWorld の答え手(local-host)が、root の言い換え
-   (worker/protocol/env_store)へ問う。問われた拍に、終わった準備を片づけ、待っている準備を起こす(#2467)。")
-
-
-(defclass [(dataclass :frozen True)] ObserveEnvDisk [EffectBase]
-  "実行環境の root の置き場の disk の観測(EnvDisk)。ObserveWorld の答え手(local-host)が、root の言い換えへ問う(#2467)。")
-
 
 (defclass [(dataclass :frozen True)] EnvReport [EffectBase]
   "heartbeat で名乗る root の姿(準備済み・準備中・失敗のキーと disk の条件 — 形は worker/protocol/heartbeat の env-report)。
    拍の Program(worker/core/program の worker-tick)が毎拍 ReadDesired の前に問い、答えを ReadDesired の欄で coordinator への口へ渡す
    (#2467・#2427)。root を扱わない宿は None で答える。")
-
-
-(defclass [(dataclass :frozen True)] ObserveProbes [EffectBase]
-  "入口の検めの観測(ProbeView の tuple — 待ち・走っている・答えの出た検め)。ObserveWorld の答え手(local-host)が、検めの言い換え
-   (worker/protocol/probes)へ問う。問われた拍に、待っている束を起こし・終わった束と時間切れの束を片づける(#2465)。")
 
 
 (defclass [(dataclass :frozen True)] ForgetProbes [EffectBase]
