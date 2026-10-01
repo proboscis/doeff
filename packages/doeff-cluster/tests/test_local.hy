@@ -18,7 +18,7 @@
 (import doeff_cluster.local [sim-cluster sim-process SimChild SimLink EndProcess SimWorker SimProcess SimReport SimReadiness
                              SimCoordinatorRun Crash Redeclare ReportsOf ReadinessOf ProcessesOf SharedRows ReadCoordinator
                              StopCoordinator CrashCoordinator CoordinatorRuns KillWorker StopWorker StartWorker CutWorker DrainWorker])
-(import doeff_cluster.service_model [System CallShape job system-of])
+(import doeff_cluster.shared.intent.service_model [System CallShape job system-of])
 (import tests.fixtures.envs [sim-foundation])
 (import tests.fixtures.sim_programs [beacons beacons-v2 handoff-beacons handoff-beacons-v2 relay flavors fenced gpu-only
                                     holding-unloadable Unloadable spawners quitters pulses detaching context-env-readers])

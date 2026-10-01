@@ -24,7 +24,7 @@
 (import doeff_cluster.detached [WarmClient warm-cluster])
 (import doeff_cluster.local [sim-cluster SimWorker SimLink ClientLink coordinator-answers ReadCoordinator ProcessesOf PreparationsOf
                              FailRoute])
-(import doeff_cluster.service_model [system-of])
+(import doeff_cluster.shared.intent.service_model [system-of])
 (import doeff_cluster.shared.intent.warm_model [WarmRuntimeEnv ReadWarmState WarmState WarmUnreachable WarmAnswer warm-key warm-state-of-json])
 (import doeff_cluster.env_upkeep [RootInfo PrepareLimits sweep-choice prepare-overdue env-capacity])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming Request PlainText])

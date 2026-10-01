@@ -18,8 +18,8 @@
 (import pathlib [Path])
 (import pytest)
 (import doeff_core_effects.handlers [reader])
-(import doeff_cluster.service_model :as service-model)
-(import doeff_cluster.service_model [Job System CallShape Declaration job system-of system-declaration identity-of
+(import doeff_cluster.shared.intent.service_model :as service-model)
+(import doeff_cluster.shared.intent.service_model [Job System CallShape Declaration job system-of system-declaration identity-of
                                      describe-identity job-named])
 (import doeff_cluster.coordinator.core.cluster_policy [job-from-json identity-hash])
 (import doeff_cluster.host_contract [host-reader])

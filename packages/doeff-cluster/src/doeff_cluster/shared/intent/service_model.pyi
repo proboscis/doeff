@@ -1,7 +1,7 @@
 """service_model.hy の公開面の型(型検査のための宣言 — 実行時は service_model.hy を読む)。
 
-service_model.hy は Hy の module なので、pyright は中を読めず、`doeff_cluster.service_model` の名が全部 Unknown になる。
-defsystem の展開は `doeff_cluster.service_model.system_of` / `job` / `CallShape` を呼ぶので、defsystem を
+service_model.hy は Hy の module なので、pyright は中を読めず、`doeff_cluster.shared.intent.service_model` の名が全部 Unknown になる。
+defsystem の展開は `doeff_cluster.shared.intent.service_model.system_of` / `job` / `CallShape` を呼ぶので、defsystem を
 書いた file ごとに、書き手に直せない赤(Return type is unknown・Type of "system_of" is unknown ほか)が
 出ていた。ここで型を宣言する(doeff_hy/wire.pyi と同じ形)。
 

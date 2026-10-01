@@ -31,7 +31,7 @@
 (import doeff_cluster.process_versions [current-versions])
 (import doeff_cluster.shared.intent.detached_model [SubmitDetached AwaitDetached DetachedSubmitted DetachedSucceeded])
 (import doeff_cluster.shared.intent.runtime_env_model [EnvVar RuntimeEnvInvalid InvalidKind])
-(import doeff_cluster.service_model [CallShape job system-of])
+(import doeff_cluster.shared.intent.service_model [CallShape job system-of])
 (import doeff_cluster.worker_model [DesiredJobs JobSpec])
 (import doeff_cluster.local [sim-cluster SimWorker])
 (import tests.detached_rig [MemoryCoordinator RIG-PROVIDES])
