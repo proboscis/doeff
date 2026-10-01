@@ -34,7 +34,7 @@
 ;;; 大きな値の差分(delta-of / apply-delta): 形の版 1 の記録が使った(同じ問いの前の答えとの差)。版 1 の記録を読むためと、
 ;;; backtest の報告(記録 → 再生の差)のために残す。
 (require doeff-hy.macros [deff val])
-(val MODULE-TAGS {:context "doeff-cluster" :role "judgment"})
+(val MODULE-TAGS {:context "doeff-cluster" :role "foundation"})
 (import base64)
 (import collections [OrderedDict])
 (import collections.abc [Callable])
@@ -137,9 +137,13 @@
                            "semaphore_model" "shared_model")
           (+ "doeff_cluster." name) (+ "doeff_cluster.shared.intent." name))
      ;; 記録の綴りと記録の handler(#2108)— 置き場が shared/intent でないので名ごとに書く。
-     {"doeff_cluster.effect_codec" "doeff_cluster.shared.core.effect_codec"
-      "doeff_cluster.record_model" "doeff_cluster.shared.core.record_model"
-      "doeff_cluster.record_handlers" "doeff_cluster.shared.protocol.record_handlers"
+     {"doeff_cluster.effect_codec" "doeff_cluster.foundation.record_codec"
+      "doeff_cluster.record_model" "doeff_cluster.foundation.record_log"
+      "doeff_cluster.record_handlers" "doeff_cluster.foundation.record_handlers"
+      ;; 記録の綴り・形・handler を foundation へ(#2580)— shared/core と shared/protocol に在った間の名。
+      "doeff_cluster.shared.core.effect_codec" "doeff_cluster.foundation.record_codec"
+      "doeff_cluster.shared.core.record_model" "doeff_cluster.foundation.record_log"
+      "doeff_cluster.shared.protocol.record_handlers" "doeff_cluster.foundation.record_handlers"
       ;; worker の型(#2025 の 2 本目)— 観測・記録・effect の型と、拍と掃除の判断の型。
       "doeff_cluster.worker_model" "doeff_cluster.worker.intent.worker_model"
       "doeff_cluster.beat_policy" "doeff_cluster.worker.core.beat_policy"
@@ -415,7 +419,7 @@
 (defn _fields-args [effect handles]
   ;; 欄の名は登録の arg-names(型の宣言の args)か、無ければ dataclass の全部の欄。
   ;; OpaqueJson の欄(形を書き手が決める JSON — 盤の書きの値など)は、包みの型の綴りでなく中の JSON の値で綴る(#2579)。
-  ;; 比べる形が書き手の包み方に依らず、値が素の JSON の値だった旧い記録の行とも同じ綴りになる(旧い行の揃えは record_model.read-recording)。
+  ;; 比べる形が書き手の包み方に依らず、値が素の JSON の値だった旧い記録の行とも同じ綴りになる(旧い行の揃えは record_log.read-recording)。
   (setv names (. (codec-of effect) arg-names))
   (dfor name (if (is names None) (gfor f (dataclasses.fields effect) f.name) names)
         :setv v (getattr effect name)
@@ -455,12 +459,12 @@
 ;; 宣言の値は欄の名(SPEC-FIELDS)と値の綴り(StrEnum の値)で読む(RecordSpec を import しない)。
 
 (deff _spec-subject [#^ str field]  ; defk にできない: 記録係・再生係が登録の subject として呼ぶ callback を作る
-  {:pre [(: field str)] :post [(: % Callable)] :tags {:context "doeff-cluster" :role "judgment"}}
+  {:pre [(: field str)] :post [(: % Callable)] :tags {:context "doeff-cluster" :role "foundation"}}
   "宣言の subject(記録の引数の欄の名)→ 対の鍵を作る関数(その欄の値の文字列)。"
   (fn [args] (str (.get args field))))
 
 (deff _codec-from-spec [#^ type cls]  ; defk にできない: codec-of(記録係・再生係が Program の外で呼ぶ純粋な関数)が呼ぶ
-  {:pre [(: cls type)] :post [(: % EffectCodec)] :tags {:context "doeff-cluster" :role "judgment"}}
+  {:pre [(: cls type)] :post [(: % EffectCodec)] :tags {:context "doeff-cluster" :role "foundation"}}
   "型の宣言の値 → 登録。宣言の欄を検め、読めない値は MalformedRecordSpec で型の名と欄を名指す(黙って既定の扱いへ倒さない)。"
   (setv where (type-name cls)
         spec (get (vars cls) SPEC-ATTRIBUTE))
@@ -492,7 +496,7 @@
                :binds (if (is binds None) None (str binds))))
 
 (deff _declared-codec [#^ type cls]  ; defk にできない: codec-of と can-record(Program の外の純粋な関数)が呼ぶ
-  {:pre [(: cls type)] :post [(: % (| EffectCodec None))] :tags {:context "doeff-cluster" :role "judgment"}}
+  {:pre [(: cls type)] :post [(: % (| EffectCodec None))] :tags {:context "doeff-cluster" :role "foundation"}}
   "型そのものの宣言(__dict__ の __record_spec__ — 親の宣言は継がない)から作った登録。初めて見た時に作って表に入れる。宣言が無ければ None。"
   (setv codec (.get _DECLARED cls))
   (when (is-not codec None)
@@ -505,7 +509,7 @@
   codec)
 
 (deff can-record [#^ type cls]  ; defk にできない: 使い手の repo の登録漏れの検が Program の外で型ごとに問う
-  {:pre [(: cls type)] :post [(: % bool)] :tags {:context "doeff-cluster" :role "judgment"}}
+  {:pre [(: cls type)] :post [(: % bool)] :tags {:context "doeff-cluster" :role "foundation"}}
   "その effect の型を記録できるか(登録表に在るか、型そのものが記録の形の宣言を持つか — 子 class は親の宣言では記録できない)。
    宣言が読めなければ MalformedRecordSpec(記録できるとも、できないとも答えない)。"
   (or (in cls _REGISTRY) (is-not (_declared-codec cls) None)))

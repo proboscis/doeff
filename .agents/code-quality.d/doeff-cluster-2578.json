@@ -10,7 +10,7 @@
       "public": [
         "packages/doeff-cluster/src/doeff_cluster/shared/intent/record_spec.hy"
       ],
-      "responsibility": "effect の型に付ける記録の形の宣言の値と型(RecordSpec・RecordMode・HandleKind・Unexecuted)— 読む処理は effect_codec(#2578)",
+      "responsibility": "effect の型に付ける記録の形の宣言の値と型(RecordSpec・RecordMode・HandleKind・Unexecuted)— 読む処理は foundation の record_codec(#2578)",
       "typed": true
     }
   ]

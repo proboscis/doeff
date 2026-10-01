@@ -57,7 +57,7 @@ Program の中の `with-handlers` で並べます(実行先は handler を 1 つ
 | 手元の runner と検め | `local`(`sim-cluster`)・`foundation_check` |
 | drain と readiness の口 | `drain_client`・`drain_main`・`readiness_*`・`report_client` |
 | effect と handler | `shared_*`(盤)・`semaphore_*`(lease)・`metrics_*`・`kube_*`・`remote*`(task)・`detached*`(切り離した task)・`warm_*` |
-| effect の記録と再生 | `effect_codec`・`record_model`・`record_handlers`・`record_store*`・`replay_main` |
+| effect の記録と再生 | `record_codec`・`record_log`・`record_handlers`・`record_store*`・`replay_main` |
 | 時計の換算 | `clock`(epoch ミリ秒。時計の語彙は doeff-time ちょうど 1 つ) |
 | 配備の材料 | `deploy/boot.sh`・`deploy/Dockerfile`・`deploy/base/Dockerfile`(土台だけの image)・`image_contract`(土台の image の約束の検査) |
 
@@ -73,7 +73,7 @@ Program の中の `with-handlers` で並べます(実行先は handler を 1 つ
 (import doeff_core_effects.scheduler [scheduled])
 (import doeff_time [sync-time-handler])
 (import doeff_cluster.foundation.host_contract [host-reader environ-reader])
-(import doeff_cluster.shared.protocol.record_handlers [boundary-recorder])
+(import doeff_cluster.foundation.record_handlers [boundary-recorder])
 
 ;; 本番の土台: scheduler・時計・実行先の読み・環境変数の読み・クラスタに話す handler を並べる。
 (defk production-foundation [body]
@@ -174,11 +174,11 @@ hy -m doeff_cluster.shared.entry.declare myapp.systems:my_system --foundation my
 
 ### 業務の effect を記録に載せる
 
-記録と再生(下)は effect の型ごとの登録(`effect_codec.register`)を引きます。この package が登録するのは doeff の汎用の型
+記録と再生(下)は effect の型ごとの登録(`record_codec.register`)を引きます。この package が登録するのは doeff の汎用の型
 (`Ask`・doeff-time・scheduler)とこの package の型だけです。業務の型は、job の Program が import する業務の module で登録します。
 
 ```hy
-(import doeff_cluster.shared.core.effect_codec [register EffectCodec READ DECISION OUTPUT])
+(import doeff_cluster.foundation.record_codec [register EffectCodec READ DECISION OUTPUT])
 (import myapp.effects [ReadRows WriteRow])
 (register (EffectCodec ReadRows READ))
 (register (EffectCodec WriteRow DECISION :subject (fn [args] (.get args "key")) :unexecuted True))
@@ -363,7 +363,7 @@ worker が無い・コードを準備できない)・`DetachedUnknown`(知らな
 - 再生は `hy -m doeff_cluster.shared.entry.replay_main --recording FILE --program FILE [--from-ms N] [--to-ms N] --out FILE` です。`--program` は
   記録した job の詰めた Program(`/programs/<sha>` の JSON — header の `program` と同じキー)。版を検めて解き、上の 2 つの Ask にだけ
   外から答えて走らせます。版(Python・cloudpickle・doeff)と記録した commit のコードが揃う間だけ再生でき、違えば理由つきで止まります。
-- 記録の形は `record_model.hy` の先頭、型ごとの扱いは上の表です。
+- 記録の形は `record_log.hy` の先頭、型ごとの扱いは上の表です。
 
 ## 配備の材料
 

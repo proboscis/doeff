@@ -15,7 +15,7 @@
 ;;; handler と同じく scheduler の effect で待つ)、番号が進むとその番号の持ち主を起こす。他の task が全部止まった時だけ動く係
 ;;; (低優先度の daemon)が、それでも番号が進まない = 記録の問いを誰も出さない、を分岐として止める。
 (require doeff-hy.macros [defhandler defk <- val var])
-(val MODULE-TAGS {:context "doeff-cluster" :role "protocol"})
+(val MODULE-TAGS {:context "doeff-cluster" :role "foundation"})
 (import atexit)
 (import json)
 (import os)
@@ -26,17 +26,18 @@
 (import doeff.do [do])
 (import doeff.program [handler :as program-handler])
 (import collections.abc [Callable Generator])
-(import typing [Literal Protocol TypeVar runtime-checkable])
+(import typing [Literal Protocol TypeVar])
 (import doeff [Program])
 (import doeff_vm [GetBoundaries K WithHandler WithObserve Callable :as VmCallable])
 (import doeff_core_effects.scheduler [Spawn Wait CreatePromise CompletePromise Promise PRIORITY-IDLE])
-(import doeff_cluster.shared.core.effect_codec [READ LIVE DECISION OUTPUT LOOSE DIVERGE INTERN-MIN-CHARS BLOB-MEMORY-MAX FORMAT-VERSION BlobMemory
+(import doeff_cluster.foundation.record_codec [READ LIVE DECISION OUTPUT LOOSE DIVERGE INTERN-MIN-CHARS BLOB-MEMORY-MAX FORMAT-VERSION BlobMemory
                                          EffectCodec HandleTable UnencodableValue UnrecordableEffect RestoredValue
                                          encode-value encode-error decode-value decode-error canonical intern-json
                                          codec-of mode-of args-of subject-of])
-(import doeff_cluster.shared.core.record_model [ROOT ReplayFinished ReplayDiverged Entry Recording match-step diff-row summarize])
+(import doeff_cluster.foundation.record_log [ROOT ReplayFinished ReplayDiverged Entry Recording match-step diff-row summarize])
 (import doeff_core_effects.effects [Ask])
 (import doeff_cluster.job_context [RunContext])
+(import doeff_cluster.foundation.host_contract [HostContract])
 
 
 ;; --- task の名(記録と再生で共通) ---------------------------------------------------------------
@@ -228,7 +229,7 @@
 
 (defclass EffectLog [TaskTap]
   "1 つの process の記録の係。header = run の行の欄(service・run・版・設定 …)。wall-ms = 壁時計(ms)を返す関数。
-   形の版 2: 大きな値は内容参照(effect_codec.intern-json)にし、中身は run の中で初めて出た時に blob の行で書く。問いの直後に
+   形の版 2: 大きな値は内容参照(record_codec.intern-json)にし、中身は run の中で初めて出た時に blob の行で書く。問いの直後に
    (他の出来事を挟まずに)答えが返ったら、問いと答えを 1 行(call)にまとめる — 問いは答えが返るか他の出来事が来るまで手元に持つ。"
   (defn #^ None __init__ [self #^ RecordSink sink #^ dict header #^ bool [strict False] #^ float [chunk-seconds 3600.0]
                           #^ (| Callable None) [wall-ms None] #^ int [intern-min INTERN-MIN-CHARS] #^ int [blob-memory BLOB-MEMORY-MAX]]
@@ -528,7 +529,7 @@
   None)
 
 
-;; 成功の答えの値は effect_codec.decode-value の答えそのもの(記録から復元した値 RestoredValue — #1693)。
+;; 成功の答えの値は record_codec.decode-value の答えそのもの(記録から復元した値 RestoredValue — #1693)。
 (defn #^ (| (get tuple #((get Literal True) RestoredValue)) (get tuple #((get Literal False) BaseException))) deliver-recorded [#^ ReplayState state #^ Entry entry #^ EffectCodec codec]
   "記録の答えを業務へ返す値に戻す(handle の札・共有の箱)。例外なら例外の object。"
   (when (not entry.ok)
@@ -692,7 +693,7 @@
 
 
 (defk recording-header [ctx program-path versions]
-  {:pre [(: ctx RunContext) (: program-path str) (: versions dict)] :post [(: % dict)] :tags {:context "doeff-cluster" :role "protocol"}}
+  {:pre [(: ctx RunContext) (: program-path str) (: versions dict)] :post [(: % dict)] :tags {:context "doeff-cluster" :role "foundation"}}
   "記録の run の行に載せる欄 — 宿の契約の run-context(世代)と Program の置き場のキー(path の file の名)と版。再生の道具は
    program のキーで同じ Program を /programs から取り直せる(R3b — 記録は Program の中身を持たない)。"
   (val name (.rsplit program-path "/" 1))
@@ -701,14 +702,8 @@
    "revision" ctx.revision "program" sha "versions" versions})
 
 
-(defclass [runtime-checkable] HostKeys [Protocol]
-  "宿が答える Ask の鍵の形(foundation/host_contract の HostContract — 層 protocol は foundation を読めないので、組み立てる側が
-   HOST-CONTRACT を渡す・#2565)。"
-  (setv #^ str run-context-key "" #^ str program-key "" #^ str versions-key ""))
-
-
 (defk boundary-recorder [contract]
-  {:pre [(: contract HostKeys)] :post [(: % list)] :tags {:context "doeff-cluster" :role "protocol"}}
+  {:pre [(: contract HostContract)] :post [(: % list)] :tags {:context "doeff-cluster" :role "foundation"}}
   "境目の記録係の組(0 か 1 つ)を作る — Ask RECORD-MODE-KEY で off / record / replay を選ぶ。業務の Program が翻訳の handler と
    土台の handler の間に並べる(ADR-DOE-CLUSTER-001 R5)。contract = 宿の契約の鍵(record の header の run-context・Program の path・版を
    Ask で読む鍵)。"
