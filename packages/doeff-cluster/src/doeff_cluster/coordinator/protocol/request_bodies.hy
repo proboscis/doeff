@@ -6,7 +6,7 @@
 (import doeff_hy.wire [parse Malformed])
 (import doeff_cluster.shared.intent.protocol [Request ClusterTiming])
 (import doeff_cluster.coordinator.intent.cluster_model [ClusterState])
-(import doeff_cluster.coordinator.intent.request_bodies [LeaseBody TaskResultBody DrainBody ReadinessBody MetricsBody ProgramBody BodyMalformed ReadBody RequestBody])
+(import doeff_cluster.coordinator.intent.request_bodies [LeaseBody TaskResultBody DrainBody ReadinessBody MetricsBody ProgramBody BoardWireBody BoardWrite BodyMalformed ReadBody RequestBody])
 (import doeff_cluster.coordinator.core.api_policy [respond])
 
 
@@ -21,6 +21,7 @@
     (and (= method "POST") (= (len parts) 4) (= (get parts 0) "resources") (= (get parts 1) "Service") (= (get parts 3) "metrics"))
       MetricsBody
     (and (= method "PUT") (= (len parts) 2) (= (get parts 0) "programs")) ProgramBody
+    (and (= method "PUT") (> (len parts) 1) (= (get parts 0) "board")) BoardWireBody
     True None))
 
 
@@ -36,9 +37,13 @@
     (is wire None) raw
     True
       (do (<- parsed (parse wire raw))
-          (if (isinstance parsed Malformed)
+          (cond
+            (isinstance parsed Malformed)
               (BodyMalformed :reason (.join "・" (gfor f parsed.fields (.format "{}: {}" (or f.field "本文") f.reason))))
-              parsed))))
+            ;; 盤の書きは value と expect の『欄が無い』と『null』を分けるので、欄が在ったかの印を添える(この 1 点だけが本文の欄の在否を読む)。
+            (isinstance parsed BoardWireBody)
+              (BoardWrite :body parsed :value-given (in "value" raw) :expect-given (in "expect" raw))
+            True parsed))))
 
 
 (defhandler request-bodies

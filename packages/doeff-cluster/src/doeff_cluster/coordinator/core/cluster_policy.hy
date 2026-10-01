@@ -14,7 +14,7 @@
 (import doeff_cluster.shared.core.capabilities [capabilities-of environ-pairs])
 (import doeff_cluster.coordinator.intent.cluster_model [ClusterJob WorkerInfo GenerationOrder Placement ClusterState TaskRecord Drain EnvFailed WarmEntry HandoffPhase RefusedJob UnplacedKind ACCEPTED-FORMATS PLACED-PHASES])
 (import doeff_cluster.coordinator.core.cluster_rules [component-versions-of format-refusal format-version-refusal])
-(import doeff_cluster.coordinator.intent.request_bodies [LeaseBody TaskResultBody])
+(import doeff_cluster.coordinator.intent.request_bodies [LeaseBody TaskResultBody BoardWrite])
 (import doeff_cluster.coordinator.core.cluster_json [task-record-to-json task-record-from-json handoff-watch-from-json required-field int-field])
 (import doeff_cluster.shared.intent.semaphore_model [SEMAPHORE-PREFIX])
 (import doeff_cluster.shared.core.lease_rules [lease-op semaphore-write-refusal semaphore-key])
@@ -1359,39 +1359,46 @@
     True None))
 
 
-(defn #^ tuple board-write [#^ ClusterState state #^ str key #^ dict body #^ int [now 0]]
+(defn #^ object written-value [#^ BoardWrite write]
+  "盤の書きの値(欄が無ければ送り手の誤り — 400)。null も値として書く。"
+  (when (not write.value-given)
+    (raise (BodyInvalid "value の欄が無い(消すなら delete: true)")))
+  write.body.value)
+
+
+(defn #^ tuple board-write [#^ ClusterState state #^ str key #^ BoardWrite write #^ int [now 0]]
   "盤の行 1 つの compare-and-set。expect = 値で比べる(従来)・expectVersion = 行の版で比べる(0 = 行が無い時だけ)。
    両方あれば両方を満たす時だけ書く。value が null で delete が真なら行を消す。返事に行の新しい版を載せる。
    ttlSeconds(2026-09-25)= 行の期限。期限を過ぎた行は調停が消す(sweep-board)。付けない書きは期限を外す(ずっと残す)。
    上限(board-capacity-refusal)を越える書きは 507 で断る。"
-  (setv ttl (.get body "ttlSeconds"))
+  (setv body write.body ttl write.body.ttl-seconds)
   (setv ttl-refusal (run (board-ttl-refusal ttl)))
   (when (is-not ttl-refusal None)
     (return #(state 400 {"ok" False "error" ttl-refusal})))
   (setv present (in key state.board)
         version (.get state.board-versions key (if present 1 0))
-        ok (and (board-allows (.get state.board key) present (in "expect" body) (.get body "expect"))
-                (or (not-in "expectVersion" body) (= (get body "expectVersion") version))))
+        ok (and (board-allows (.get state.board key) present write.expect-given body.expect)
+                (or (is body.expect-version None) (= body.expect-version version))))
   (cond
     (not ok) #(state 409 {"ok" False "current" (.get state.board key) "resourceVersion" version})
     ;; lease の行への直の書き(旧い版の process)は、coordinator の時計でまだ切れていない担い手を追い出せない(2026-09-25)。
     ;; 409 = 旧い版は compare-and-set の競合として読み直す。
-    (and (.startswith key SEMAPHORE-PREFIX) (not (.get body "delete"))
-         (is-not (semaphore-write-refusal (.get state.board key) (required-field body "value") now) None))
+    (and (.startswith key SEMAPHORE-PREFIX) (not body.delete)
+         (is-not (semaphore-write-refusal (.get state.board key) (written-value write) now) None))
       #(state 409 {"ok" False "current" (.get state.board key) "resourceVersion" version
-                   "error" (semaphore-write-refusal (.get state.board key) (required-field body "value") now)})
-    (.get body "delete")
+                   "error" (semaphore-write-refusal (.get state.board key) (written-value write) now)})
+    body.delete
       #((replace state :board (dfor #(k v) (.items state.board) :if (!= k key) k v)
                        :board-versions (dfor #(k v) (.items state.board-versions) :if (!= k key) k v)
                        :board-expiry (dfor #(k v) (.items state.board-expiry) :if (!= k key) k v)
                        :board-sizes (dfor #(k v) (.items state.board-sizes) :if (!= k key) k v))
         200 {"ok" True "resourceVersion" None})
     True
-      (do (setv size (value-size (required-field body "value"))
+      (do (setv size (value-size (written-value write))
                 refusal (board-capacity-refusal state key size))
           (if (is-not refusal None)
               #(state 507 {"ok" False "error" refusal "usage" (board-usage state)})
-              #((replace state :board (| state.board {key (required-field body "value")})
+              #((replace state :board (| state.board {key (written-value write)})
                                :board-versions (| state.board-versions {key (+ version 1)})
                                :board-expiry (if (is ttl None)
                                                  (dfor #(k v) (.items state.board-expiry) :if (!= k key) k v)

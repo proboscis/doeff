@@ -7,6 +7,7 @@
 ;;;   ReadinessBody   POST /resources/Service/<名>/readiness   service の process の準備できたの報告
 ;;;   MetricsBody     POST /resources/Service/<名>/metrics     service の process の計器の報告
 ;;;   ProgramBody     PUT /programs/<sha>         詰めた Program の置き
+;;;   BoardWrite      PUT /board/<鍵>             盤の行 1 つの compare-and-set(本文の型 BoardWireBody と、欄が在ったかの印)
 ;;; 知らない欄は読み捨てる(前の直の読みと同じ — 送り手の版が新しい欄を足しても断らない)。
 (require doeff-hy.macros [val])
 (require doeff-hy.record [defwire defrecord])
@@ -96,6 +97,26 @@
   (setv #^ (| (get dict #(str str)) None) versions None))
 
 
+(defwire BoardWireBody
+  "PUT /board/<鍵> の本文の形: value = 書く値・expect = 比べる値(どちらも呼び手の任意の JSON — 盤は値の形を決めない)・expect-version =
+   行の版で比べる(None = 比べない)・delete = 行を消す・ttl-seconds = 行の期限(None = 期限なし — 範囲の検めは board_rules)。"
+  {:tags {:context "doeff-cluster" :role "type"} :names :camel :unknown :ignore}
+  (setv #^ object value None)
+  (setv #^ object expect None)
+  (setv #^ (| int None) expect-version None)
+  (setv #^ bool delete False)
+  (setv #^ (| int float None) ttl-seconds None))
+
+
+(defrecord BoardWrite
+  "盤の書き 1 つ(PUT /board/<鍵> の本文を解いた値): body = 本文の型の値・value-given / expect-given = 本文に value / expect の欄が
+   在ったか(null の値と欄が無いことを分ける — expect が null なら『行が無い時だけ書く』・欄が無ければ比べない)。"
+  {:tags {:context "doeff-cluster" :role "type"}}
+  (#^ BoardWireBody body)
+  (#^ bool value-given)
+  (#^ bool expect-given))
+
+
 (defrecord BodyMalformed
   "道の本文が型の約束の形でない(欠けた欄・型の違う値・JSON の object でない本文)— 受け口は 400 と reason で断る。"
   {:tags {:context "doeff-cluster" :role "type"}}
@@ -103,7 +124,7 @@
 
 
 ;; 道の本文の答えの型の和(ReadBody の答え・判断 respond が受ける本文 — まだ型にしていない道は JSON の object)。
-(setv RequestBody (| LeaseBody TaskResultBody DrainBody ReadinessBody MetricsBody ProgramBody BodyMalformed dict))
+(setv RequestBody (| LeaseBody TaskResultBody DrainBody ReadinessBody MetricsBody ProgramBody BoardWrite BodyMalformed dict))
 
 
 (defclass [(dataclass :frozen True)] ReadBody [EffectBase]
