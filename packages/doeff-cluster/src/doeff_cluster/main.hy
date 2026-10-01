@@ -13,6 +13,7 @@
 (import types [FrameType])
 (import sys)
 (import time)
+(import uuid)
 (import pathlib [Path])
 (import doeff [run])
 (import doeff_core_effects.handlers [await-handler slog-handler state :as session-store])
@@ -21,8 +22,8 @@
 (import doeff_core_effects.process_effects [EnvEntry])
 (import doeff_core_effects.scheduler [scheduled])
 (import doeff_time [async-time-handler])
-(import .handlers [CoordinatorLink coordinator-desired
-                   status-to-coordinator] doeff_cluster.worker.protocol.stop [stop-flag StopState])
+(import doeff_cluster.worker.protocol.stop [stop-flag StopState])
+(import doeff_cluster.worker.protocol.coordinator_link [LinkState coordinator-link])
 (import doeff_core_effects.http_handlers [http-production-handler])
 (import doeff_cluster.foundation.coordinator_http [REPLY-SECONDS CONNECT-SECONDS PREFERRED-RECHECK-SECONDS])
 (import doeff_cluster.shared.protocol.coordinator_route [RouteCell RouteOptions route-of])
@@ -41,6 +42,15 @@
 (import doeff_cluster.worker.protocol.status_file [status-file])
 (import doeff_cluster.foundation.host_contract [HOST-CONTRACT])
 (import .job_context [worker-context-environ])
+
+
+(defn #^ None write-boot-file [#^ (| str None) path #^ str boot]
+  "この process の世代を Pod の中の file へ書く(DOEFF_WORKER_BOOT_FILE — 無ければ書かない)。readinessProbe が「coordinator の見る worker が
+   この Pod の物か」を比べる(drain_client.ready-of)— 同じ node の前の Pod と名が同じなので、名だけでは見分けられない。"
+  (when path
+    (setv tmp (Path (+ path ".tmp")))
+    (.write-text tmp (+ boot "\n") :encoding "utf-8")
+    (os.replace tmp path)))
 
 
 (defk passed-environment [names environ]
@@ -123,24 +133,29 @@
   (defn #^ None on-signal [#^ int signum #^ (| FrameType None) frame] (setv stop.requested True))
   (signal.signal signal.SIGTERM on-signal)
   (signal.signal signal.SIGINT on-signal)
-  (setv link (CoordinatorLink args.coordinator args.name provides args.capacity
-                              (int (* args.fence 1000))
-                              :task-dir (str (/ state-dir "tasks")) :versions (current-versions)
-                              :tools (parse-labels args.tools) :handles-envs True :exclusive exclusive :node args.node
-                              ;; heartbeat を拍から切り離し、desired の変化は名指しの待ちで受ける(#1933 — 待つ口の無い coordinator
-                              ;; には拍ごとに送る)。
-                              :watch True))
-  ;; 終わった process の lease の返しの宛先(heartbeat の宛先と同じ並び — 状態は別の入れ物)と送り方(#2427 — 前は CoordinatorLink の宛先)。
-  ;; 一巡し直さない(前の CoordinatorEndpoint の retries 0 と同じ — 届かなければ期限で切れる)。
-  (setv lease-cell (RouteCell (run (route-of args.coordinator (int (* 1000 (time.time))))))
-        lease-options (RouteOptions :reply-seconds REPLY-SECONDS :connect-seconds CONNECT-SECONDS :connect-retries 0
-                                    :recheck-ms (int (* PREFERRED-RECHECK-SECONDS 1000)) :actor args.name))
+  ;; coordinator への口(worker/protocol/coordinator_link — #2427)。拍から拍へ持ち越す値は入れ物 link に、宛先の状態は heartbeat と
+  ;; 名指しの待ちと lease の返しで別の入れ物に置く(同じ並び)。送り方は一巡し直さない(前の CoordinatorEndpoint の retries 0 と同じ —
+  ;; 届かない拍は次の拍で送り直す)。世代(boot)は起動の時に 1 度だけ決め、Pod の中の file に書く(readinessProbe が比べる)。
+  (setv started-ms (int (* 1000 (time.time)))
+        boot (. (uuid.uuid4) hex)
+        link (LinkState args.name provides args.capacity (int (* args.fence 1000)) (str (/ state-dir "tasks")) boot started-ms started-ms
+                        :versions (current-versions) :tools (parse-labels args.tools) :handles-envs True :exclusive exclusive
+                        :node args.node
+                        ;; heartbeat を拍から切り離し、desired の変化は名指しの待ちで受ける(#1933 — 待つ口の無い coordinator
+                        ;; には拍ごとに送る)。
+                        :watch True)
+        link-options (RouteOptions :reply-seconds REPLY-SECONDS :connect-seconds CONNECT-SECONDS :connect-retries 0
+                                   :recheck-ms (int (* PREFERRED-RECHECK-SECONDS 1000)) :actor args.name)
+        link-cell (RouteCell (run (route-of args.coordinator started-ms)))
+        watch-cell (RouteCell (run (route-of args.coordinator started-ms)))
+        lease-cell (RouteCell (run (route-of args.coordinator started-ms))))
+  (write-boot-file (os.environ.get "DOEFF_WORKER_BOOT_FILE") boot)
   (setv program (run-worker policy))
   ;; 並びは内側から(先頭が Program に最も近い)。process-host・probe-host・code-host・env-host の session の値(子の表・検めの記録・
-  ;; 木と root の準備の記録)は外側の session-store が持つ。status-file は焼きの経過の秒を CodeTimings で、coordinator-desired は root の
-  ;; 名乗りを EnvReport で問うので、code-host と env-host はその外側に置く。
+  ;; 木と root の準備の記録)は外側の session-store が持つ。status-file は焼きの経過の秒を CodeTimings で問うので、code-host はその外側に
+  ;; 置く。coordinator-link は状態の報告を受けた後、同じ効果を外側の status-file へ回す。
   (for [h [local-host (process-host host) (probe-host probes)
-           (coordinator-desired link) (status-to-coordinator link) (lease-release lease-cell lease-options)
+           (coordinator-link link link-cell link-options watch-cell) (lease-release lease-cell link-options)
            (status-file (str (/ state-dir "status.json"))) (code-host codes) (env-host envs) (session-store) os-file-handler subprocess-handler
            (stop-flag stop) slog-handler (http-production-handler) (async-time-handler) (await-handler)]]
     (setv program (h program)))
@@ -148,8 +163,8 @@
   (try
     (run (scheduled program))
     (finally
-      ;; 待ちの thread を止める(worker の終わり — 次の待ちを送らない)。
-      (.close link)))
+      ;; 名指しの待ちの背景の task を止める(worker の終わり — 次の待ちを送らない)。
+      (setv link.watch.closing True)))
   (print "worker: 全 job を回収しました" :file sys.stderr :flush True))
 
 

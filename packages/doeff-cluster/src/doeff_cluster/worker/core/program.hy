@@ -4,13 +4,15 @@
 (import doeff_time [Delay])
 (import doeff_cluster.shared.core.clock [now-epoch-ms])
 (import doeff_cluster.worker.intent.worker_model [WorkerPolicy WorkerState WorldView DesiredJobs DesiredUnreadable
-  ReadDesired ObserveWorld WorkerStopRequested PublishStatus] doeff_cluster.shared.intent.job_model [JobPhase])
+  ReadDesired ObserveWorld WorkerStopRequested PublishStatus EnvReport] doeff_cluster.shared.intent.job_model [JobPhase])
 (import doeff_cluster.worker.core.policy [plan records-after statuses])
 
 (defk worker-tick [state policy stopping]
   {:pre [(: state WorkerState) (: policy WorkerPolicy) (: stopping bool)] :post [(: % tuple)]}
   ;; 結果 = #(次の状態 まだ終了を待つ子 process の数)
-  (<- read (| DesiredJobs DesiredUnreadable) (ReadDesired))
+  ;; heartbeat に載せる root の姿は root の言い換えに問うて、宣言の読みに渡す(#2467・#2427)。
+  (<- env-report (| dict None) (EnvReport))
+  (<- read (| DesiredJobs DesiredUnreadable) (ReadDesired :env-report env-report))
   ;; 読めない宣言を空と読まない。直前に読めた宣言を使い続ける。
   (setv desired (cond
     stopping #()

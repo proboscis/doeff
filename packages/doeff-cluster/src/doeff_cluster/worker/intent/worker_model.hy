@@ -217,7 +217,9 @@
 ;; --- effect ----------------------------------------------------------------------
 
 (defclass [(dataclass :frozen True)] ReadDesired [EffectBase]
-  "結果は DesiredJobs | DesiredUnreadable。")
+  "結果は DesiredJobs | DesiredUnreadable。env-report = heartbeat に載せる root の姿(拍の Program が EnvReport で問うて渡す — None = 実行環境の
+   root を名乗らない。#2427)。"
+  (setv #^ (| dict None) env-report None))
 
 
 (defclass [(dataclass :frozen True)] ObserveWorld [EffectBase]
@@ -314,7 +316,8 @@
 
 (defclass [(dataclass :frozen True)] EnvReport [EffectBase]
   "heartbeat で名乗る root の姿(準備済み・準備中・失敗のキーと disk の条件 — 形は worker/protocol/heartbeat の env-report)。
-   coordinator への口(handlers.hy の coordinator-desired)が heartbeat の前に、root の言い換えへ問う(#2467)。")
+   拍の Program(worker/core/program の worker-tick)が毎拍 ReadDesired の前に問い、答えを ReadDesired の欄で coordinator への口へ渡す
+   (#2467・#2427)。root を扱わない宿は None で答える。")
 
 
 (defclass [(dataclass :frozen True)] ObserveProbes [EffectBase]

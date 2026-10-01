@@ -1116,7 +1116,7 @@
 
 ;; --- 状態を失った coordinator が、走っている切り離した task を止めさせない(2026-09-27) --------------------------
 ;; worker は heartbeat の返事に載らない task の子 process を止め(worker_policy.plan-job — 宣言から消えた job)、その結果の file と
-;; Program の cache を消す(handlers.CoordinatorLink.accept-tasks・accept-programs)。置き場を失った coordinator は task の行を持たないので、最初の返事で
+;; Program の cache を消す(coordinator への口の accepted-tasks・fetched-programs)。置き場を失った coordinator は task の行を持たないので、最初の返事で
 ;; 生きている worker の走っている切り離した task を全部止めさせ、呼び手の key も引けなくなっていた。worker は切り離した task の
 ;; 状態の報告に、置かれた時の返事の行(Program の置き場のキー program・key と lease と保持の長さを含む)を写して添える(欄 task)。coordinator は
 ;; 行を持たない task/<id> を worker が走らせていると報告し、その写しを添えていれば、同じ行を引き取り(担い手 = その worker・

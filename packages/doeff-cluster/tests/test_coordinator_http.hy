@@ -6,7 +6,7 @@
 (import pytest)
 (import doeff_cluster.foundation.coordinator_inbox [RequestInbox])
 (import doeff_cluster.foundation.coordinator_http [CoordinatorEndpoint send-idempotent])
-(import doeff_cluster.handlers [CoordinatorLink])
+(import tests.link_rig [LinkRig])
 (import doeff_cluster.worker.intent.worker_model [DesiredJobs DesiredUnreadable])
 
 
@@ -121,15 +121,15 @@
 (deftest test-heartbeat-silence-is-counted-across-an-address-switch
   ;; 自己停止の数え方(最後に届いた時刻)は宛先と無関係。宛先を替えても続き、替えた先で届けば 0 に戻る。
   (import time)
-  (setv net (FakeNet) link (CoordinatorLink f"{LAN},{TS}" "w" #() 1 20000 :transport (.transport net)))
+  (setv net (FakeNet) link (LinkRig f"{LAN},{TS}" "w" #() 1 20000 :transport (.transport net)))
   (.update net.down #{"lan" "tailnet"})
-  (setv link.last-ok (- (time.monotonic) 5))
+  (setv link.state.last-ok-ms (- (int (* 1000 (time.time))) (int (* 1000 5))))
   (setv first (.poll link))
   (assert (isinstance first DesiredUnreadable))
   (.discard net.down "tailnet")
   (assert (= (.poll link) (DesiredJobs #())))
-  (assert (= link.endpoint.url TS))
-  (assert (< (- (time.monotonic) link.last-ok) 1))
+  (assert (= (.endpoint link) TS))
+  (assert (< (- (int (* 1000 (time.time))) link.state.last-ok-ms) 1000))
   ;; heartbeat は今の宛先を名乗る(coordinator の /state に出る)
   (assert (= (get net.sent -1) #("tailnet" "/heartbeat"))))
 
@@ -148,7 +148,7 @@
   (setv refusal (httpx.Response 400 :json {"error" "TypeError: 'NoneType' object is not subscriptable"})
         accepted (httpx.Response 200 :json {"jobs" [] "tasks" []})
         coordinator (ScriptedCoordinator [refusal refusal accepted accepted])
-        link (CoordinatorLink LAN "w" #() 1 20000 :transport (.transport coordinator)))
+        link (LinkRig LAN "w" #() 1 20000 :transport (.transport coordinator)))
   (setv first (.poll link))
   (assert (isinstance first DesiredUnreadable))
   (assert (in "400" first.reason) first.reason)

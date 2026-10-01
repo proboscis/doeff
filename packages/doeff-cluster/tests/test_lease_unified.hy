@@ -26,7 +26,7 @@
 (import doeff_cluster.coordinator.core.api_policy [respond])
 (import doeff_cluster.shared.intent.job_model [JobSpec])
 (import doeff_cluster.worker.core.policy [kept-when-cut-off])
-(import doeff_cluster.handlers [CoordinatorLink])
+(import tests.link_rig [LinkRig])
 (import tests.transport_http [released-through])
 (import doeff_cluster.worker.intent.worker_model [DesiredJobs DesiredUnreadable])
 (import tests.test_semaphore [lease-writer run-all written-log FakeWrite cut-off-at])
@@ -128,7 +128,7 @@
                                            {"name" "turn-runner" "entry" "m" "args" [] "revision" "r"}]
                                    "tasks" [] "timing" {"fence_ms" 20000}})
         (raise (httpx.ConnectError "coordinator を作り直している"))))
-  (setv link (CoordinatorLink "http://coord" "atlas" #() 10 20000 :transport (httpx.MockTransport handle)
+  (setv link (LinkRig "http://coord" "atlas" #() 10 20000 :transport (httpx.MockTransport handle)
                               :task-dir (str (/ (Path (tempfile.mkdtemp)) "tasks"))))
   ;; poll の答えは DesiredJobs か DesiredUnreadable — jobs を読む前に DesiredJobs であることを確かめる(読めない答えから jobs を
   ;; 読めば属性の誤りで落ちるだけで、確かめたい「読めた」を確かめない)。
@@ -137,7 +137,7 @@
   (assert (= (len seen.jobs) 2))
   (setv (get up 0) False)
   (assert (isinstance (.poll link) DesiredUnreadable))
-  (setv link.last-ok (- (time.monotonic) 21))              ; 途絶が fence(20 秒)を越えた
+  (setv link.state.last-ok-ms (- (int (* 1000 (time.time))) (int (* 1000 21))))              ; 途絶が fence(20 秒)を越えた
   (setv desired (.poll link))
   (assert (isinstance desired DesiredJobs) desired)
   (assert (= (lfor j desired.jobs j.name) ["writer-a"])))

@@ -1,7 +1,7 @@
 ;; 実行環境の root の言い換え(worker/protocol/env_store の env-host — #2467)の観測と名乗りを、準備の process を起こさずに確かめる。
 ;;   * 完成マーカーの在る root だけを READY と観測し、heartbeat の名乗り(EnvReport)に準備済みのキーと disk の条件を載せる。
-;;   * coordinator への口(coordinator-desired)は、実行環境を扱う worker の heartbeat に、送る前に EnvReport で問うた名乗りを載せる。
-;;     扱わない worker は問わない(env-host が無くても回る)。
+;;   * coordinator への口(coordinator-link)は、実行環境を扱う worker の heartbeat に、拍の Program が EnvReport で問うて ReadDesired の欄で
+;;     渡した名乗りを載せる。扱わない worker は載せない。
 (require doeff-hy.macros [defk deftest <- val])
 (import json)
 (import httpx)
@@ -11,10 +11,12 @@
 (import doeff_core_effects.os_file [os-file-handler])
 (import doeff_core_effects.os_process [subprocess-handler])
 (import doeff_time [sync-time-handler])
-(import doeff_cluster.handlers [CoordinatorLink coordinator-desired])
+(import tests.link_rig [LinkRig LINK-ROUTE])
+(import tests.transport_http [transport-http])
+(import doeff_cluster.worker.protocol.coordinator_link [coordinator-link])
 (import doeff_cluster.worker.protocol.code_store [PREPARE-TOOL])
 (import doeff_cluster.shared.intent.env_marker_model [ENV-MARKER])
-(import doeff_cluster.worker.intent.worker_model [CodeState ObserveEnvs EnvReport ReadDesired])
+(import doeff_cluster.worker.intent.worker_model [CodeState ObserveEnvs EnvReport ReadDesired DesiredJobs DesiredUnreadable])
 (import doeff_cluster.worker.protocol.env_store [EnvSettings env-host])
 
 (val READY-NAME "0123456789abcdef01234567")
@@ -57,17 +59,28 @@
   (assert (in "capacity" report) report))
 
 
+(defk desired-with-report []
+  {:pre [] :post [(: % (| DesiredJobs DesiredUnreadable))] :tags {:context "doeff-cluster-test" :role "program"}}
+  "拍の Program(worker/core/program の worker-tick)と同じく、root の姿を問うて宣言の読みに渡すため。"
+  (<- report (EnvReport))
+  (<- desired (ReadDesired :env-report report))
+  desired)
+
+
 (deftest test-the-heartbeat-carries-the-env-report-only-for-env-workers [tmp-path]
   (val sent [])
   (defn #^ httpx.Response handle [#^ httpx.Request request]
     (.append sent (json.loads request.content))
     (httpx.Response 200 :json {"jobs" [] "tasks" [] "warm" []}))
-  (val env-link (CoordinatorLink "http://coord" "w" #() 1 60000 :transport (httpx.MockTransport handle) :handles-envs True))
+  ;; 拍の Program と同じく、root の言い換えに EnvReport を問うてから ReadDesired の欄で口へ渡す。
+  (val env-link (LinkRig "http://coord" "w" #() 1 60000 :task-dir (str (/ tmp-path "tasks")) :transport (httpx.MockTransport handle)
+                         :handles-envs True))
   (<- settings EnvSettings (settings-in tmp-path))
-  (on-envs settings (ReadDesired) [(coordinator-desired env-link)])
+  (on-envs settings (desired-with-report)
+           [(transport-http env-link.transport) (coordinator-link env-link.state env-link.cell LINK-ROUTE env-link.watch-cell)])
   (assert (= (get sent 0 "envs" "ready") [READY-NAME]) sent)
   (assert (in "envCapacity" (get sent 0)) sent)
   ;; 扱わない worker は名乗らず、env-host が無くても heartbeat を送れる。
-  (val plain-link (CoordinatorLink "http://coord" "w" #() 1 60000 :transport (httpx.MockTransport handle)))
-  (run (with-handlers [(coordinator-desired plain-link)] (ReadDesired)))
+  (val plain-link (LinkRig "http://coord" "w" #() 1 60000 :task-dir (str (/ tmp-path "plain-tasks")) :transport (httpx.MockTransport handle)))
+  (.poll plain-link)
   (assert (not-in "envs" (get sent 1)) sent))

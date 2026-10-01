@@ -6,7 +6,7 @@
 (import tests.clock_fixtures [clock-ms])
 (import doeff_cluster.worker.intent.worker_model [CodeState CodeView ProcessView WorldView StopStage
   WorkerPolicy WorkerState DesiredJobs DesiredUnreadable ReadDesired ObserveWorld
-  WorkerStopRequested PublishStatus PrepareCode StartJob SignalJob ReapJob] doeff_cluster.shared.intent.job_model [JobSpec JobPhase])
+  WorkerStopRequested PublishStatus EnvReport PrepareCode StartJob SignalJob ReapJob] doeff_cluster.shared.intent.job_model [JobSpec JobPhase])
 (import doeff_cluster.worker.core.program [run-worker])
 
 (setv POLICY (WorkerPolicy :stop-grace-ms 1000 :kill-grace-ms 500 :restart-backoff-ms 2000
@@ -52,6 +52,7 @@
     (for [#(at desired) script] (when (>= world.now at) (:= current desired)))
     (resume current))
   (WorkerStopRequested [] (resume (>= world.now stop-at)))
+  (EnvReport [] (resume None))
   (ObserveWorld [] (resume (.observe world)))
   (PublishStatus [statuses note] (.append world.statuses #(world.now statuses note)) (resume None))
   (PrepareCode [revision]

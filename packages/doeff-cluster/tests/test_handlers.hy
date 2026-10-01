@@ -3,12 +3,12 @@
 (import time)
 (import httpx)
 (import doeff_cluster.worker.intent.worker_model [DesiredJobs DesiredUnreadable])
-(import doeff_cluster.handlers [CoordinatorLink])
+(import tests.link_rig [LinkRig])
 
 (deftest test-broken-declaration-is-reported-not-raised
   ;; worker が job を受けるのは coordinator の返事からだけ(宣言の file を直に読む口は無い)。読めない返事は例外を上げず「読めない」に
   ;; なる(fence の前は直前の宣言を続ける)。
-  (val link (CoordinatorLink "http://coord" "w" #() 1 60000
+  (val link (LinkRig "http://coord" "w" #() 1 60000
                              :transport (httpx.MockTransport (fn [request] (httpx.Response 200 :text "{")))))
   (val result (.poll link))
   (assert (isinstance result DesiredUnreadable) result)
@@ -16,11 +16,11 @@
 
 (deftest test-unreachable-coordinator-is-unreadable-then-fences
   ;; 閉じた port へ向ける。fence 前は「読めない」(直前の宣言を続ける)、fence を超えたら空(全部止める)。
-  (setv link (CoordinatorLink "http://127.0.0.1:9" "w" #() 1 60000))
+  (setv link (LinkRig "http://127.0.0.1:9" "w" #() 1 60000))
   (setv first (.poll link))
   (assert (isinstance first DesiredUnreadable))
   (assert (in "coordinator に届かない" first.reason))
-  (setv link.fence-ms 0 link.last-ok (- (time.monotonic) 1))
+  (setv link.state.fence-ms 0 link.state.last-ok-ms (- (int (* 1000 (time.time))) (int (* 1000 1))))
   (assert (= (.poll link) (DesiredJobs #()))))
 
 (import pathlib [Path])
@@ -30,7 +30,7 @@
 
 (deftest test-task-files-are-written-reported-and-cleaned [tmp-path]
   (val tasks (/ tmp-path "tasks"))
-  (val link (CoordinatorLink "http://127.0.0.1:9" "w" #() 1 60000 :task-dir (str tasks)))
+  (val link (LinkRig "http://127.0.0.1:9" "w" #() 1 60000 :task-dir (str tasks)))
   (val sha (* "d" 64))
   (val task {"id" "t7" "revision" "r" "versions" {"b" "2" "a" "1"} "program" sha})
   (val specs (.accept-tasks link [task]))
@@ -88,9 +88,9 @@
   (setv server (ThreadingHTTPServer #("127.0.0.1" 0) Reply))
   (.start (threading.Thread :target server.serve-forever :daemon True))
   (try
-    (setv link (CoordinatorLink f"http://127.0.0.1:{(get server.server-address 1)}" "w" #() 1 10000))
+    (setv link (LinkRig f"http://127.0.0.1:{(get server.server-address 1)}" "w" #() 1 10000))
     (assert (= (.poll link) (DesiredJobs #())))
-    (assert (= link.fence-ms 20000))
+    (assert (= link.state.fence-ms 20000))
     (finally (.shutdown server))))
 
 

@@ -814,7 +814,8 @@
         "doeff-cluster-worker-world",
         "doeff-cluster-coordinator-http",
         "doeff-cluster-coordinator-route",
-        "doeff-cluster-worker-lease-release"
+        "doeff-cluster-worker-lease-release",
+        "doeff-cluster-worker-coordinator-link"
       ],
       "layer": "runtime",
       "name": "doeff-cluster-main",
@@ -1419,7 +1420,8 @@
         "doeff-cluster-worker-tree-files",
         "doeff-cluster-worker-world",
         "doeff-cluster-task-result",
-        "doeff-cluster-worker-lease-release"
+        "doeff-cluster-worker-lease-release",
+        "doeff-cluster-worker-coordinator-link"
       ],
       "exclude": [
         "packages/doeff-cluster/tests/fixtures/independence/*"
@@ -2238,6 +2240,30 @@
         "packages/doeff-cluster/src/doeff_cluster/worker/protocol/declared.hy"
       ],
       "responsibility": "coordinator の heartbeat の返事の job と task の行を JobSpec へ読む口(#2427)",
+      "typed": true
+    },
+    {
+      "allow": [
+        "doeff-cluster-clock",
+        "doeff-cluster-remote-model",
+        "doeff-cluster-runtime-env-model",
+        "doeff-cluster-coordinator-route",
+        "doeff-cluster-beat-policy",
+        "doeff-cluster-worker-heartbeat-rules",
+        "doeff-cluster-worker-launch",
+        "doeff-cluster-worker-model",
+        "doeff-cluster-worker-declared",
+        "doeff-cluster-worker-heartbeat"
+      ],
+      "layer": "io",
+      "name": "doeff-cluster-worker-coordinator-link",
+      "paths": [
+        "packages/doeff-cluster/src/doeff_cluster/worker/protocol/coordinator_link.hy"
+      ],
+      "public": [
+        "packages/doeff-cluster/src/doeff_cluster/worker/protocol/coordinator_link.hy"
+      ],
+      "responsibility": "worker の coordinator への口(heartbeat・Program の取り寄せ・task の file・名指しの待ちを宛先の部品の上の HttpRequest と file の効果へ — #2427)",
       "typed": true
     }
   ],

@@ -1,4 +1,4 @@
-;;; heartbeat の返事と途絶の判断 — 温める表の行の読み・終わった task の見分け・coordinator に届かない拍の宣言(本番の CoordinatorLink と
+;;; heartbeat の返事と途絶の判断 — 温める表の行の読み・終わった task の見分け・coordinator に届かない拍の宣言(本番の coordinator への口 と
 ;;; 手元の sim-cluster の宿 sim/local が同じ判断を使う)。handlers.hy から分けた(#2026)。本文の形は worker/protocol/heartbeat。
 (require doeff-hy.macros [deff val])
 (val MODULE-TAGS {:context "doeff-cluster" :role "judgment"})
@@ -11,7 +11,7 @@
 (import doeff_cluster.worker.core.policy [kept-when-cut-off])
 
 
-(deff warm-env-of-row [#^ dict row #^ str platform]  ; defk にできない: worker の I/O の道具(CoordinatorLink)と sim の宿が同じ判断で返事を読む
+(deff warm-env-of-row [#^ dict row #^ str platform]  ; defk にできない: worker の coordinator への口(worker/protocol/coordinator_link)と sim の宿が同じ判断で返事を読む
   {:pre [(: row dict) (: platform str)] :post [(: % WarmEnv)] :tags {:context "doeff-cluster" :role "judgment"}}
   "heartbeat の返事の温める表の行 1 つを、この worker の root のキー(platform で計算した env のキーに env- を付けた物)の WarmEnv に
    するため。"
@@ -19,13 +19,13 @@
            :runtime-env (json.dumps (get row "runtimeEnv") :sort-keys True :ensure-ascii False)))
 
 
-(deff finished-task-id [s]  ; defk にできない: worker の I/O の道具(CoordinatorLink)と sim の宿が状態の行を読む純粋な判断
+(deff finished-task-id [s]  ; defk にできない: worker の coordinator への口(worker/protocol/coordinator_link)と sim の宿が状態の行を読む純粋な判断
   {:pre [(: s JobStatus)] :post [(: % (| str None))] :tags {:context "doeff-cluster" :role "judgment"}}
   "終わった task の状態の行なら task の id(結果を添える相手)、それ以外は None — 結果の file を読む・世界の結果を引く所を 1 つにするため。"
   (if (and (.startswith s.name "task/") (= s.phase JobPhase.FINISHED)) (cut s.name 5 None) None))
 
 
-(deff desired-when-unreachable [#^ int silent-ms #^ int fence-ms #^ tuple last #^ tuple warm #^ str reason]  ; defk にできない: worker の I/O の道具(CoordinatorLink)と sim の宿が同じ判断を使う
+(deff desired-when-unreachable [#^ int silent-ms #^ int fence-ms #^ tuple last #^ tuple warm #^ str reason]  ; defk にできない: worker の coordinator への口(worker/protocol/coordinator_link)と sim の宿が同じ判断を使う
   {:pre [(: silent-ms int) (: fence-ms int) (: last tuple) (: warm tuple) (: reason str)] :post [(: % (| DesiredJobs DesiredUnreadable))]
    :tags {:context "doeff-cluster" :role "judgment"}}
   "coordinator に届かなかった拍の宣言を決めるため。連絡が fence を超えて途絶えたら、lease を持たない job と task を止める(coordinator は

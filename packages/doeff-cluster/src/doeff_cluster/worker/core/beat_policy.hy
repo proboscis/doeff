@@ -1,4 +1,4 @@
-;;; worker が heartbeat をいつ送るか(純粋な判断・I/O はしない — #1933)。本番の CoordinatorLink(handlers.hy)と手元の sim の宿
+;;; worker が heartbeat をいつ送るか(純粋な判断・I/O はしない — #1933)。本番の coordinator への口(worker/protocol/coordinator_link)と手元の sim の宿
 ;;; (local.hy)が同じ関数を使う。
 ;;;
 ;;; worker の拍(WorkerPolicy.tick-seconds・0.5 秒)ごとに ReadDesired が来るが、heartbeat を送るのは次のどれかの時だけ:
@@ -35,7 +35,7 @@
   (setv #^ str detail ""))
 
 
-(deff beat-interval-ms [#^ (| dict None) timing #^ dict task-echo]  ; defk にできない: worker の I/O の道具(CoordinatorLink)と sim の宿が同じ判断を使う
+(deff beat-interval-ms [#^ (| dict None) timing #^ dict task-echo]  ; defk にできない: worker の coordinator への口(worker/protocol/coordinator_link)と sim の宿が同じ判断を使う
   {:pre [(: timing (| dict None)) (: task-echo dict)] :post [(: % int)] :tags {:context "doeff-cluster" :role "judgment"}}
   "heartbeat の返事の timing(lease_ms)と、この worker に置かれた切り離した task の返事の行(leaseMs)から、heartbeat を送る間隔を決める
    ため — coordinator が生存を数える窓と task の lease の中に、届く heartbeat が何度か入る長さ。"
@@ -45,7 +45,7 @@
     (max 1 (min (+ [(// window BEAT-LEASE-DIVISOR)] (lfor ms task-leases (// ms BEAT-TASK-LEASE-DIVISOR)))))))
 
 
-(deff heartbeat-due [#^ bool watching #^ bool fresh #^ bool woken #^ bool statuses-changed #^ int silent-ms #^ int interval-ms]  ; defk にできない: worker の I/O の道具(CoordinatorLink)と sim の宿が同じ判断を使う
+(deff heartbeat-due [#^ bool watching #^ bool fresh #^ bool woken #^ bool statuses-changed #^ int silent-ms #^ int interval-ms]  ; defk にできない: worker の coordinator への口(worker/protocol/coordinator_link)と sim の宿が同じ判断を使う
   {:pre [(: watching bool) (: fresh bool) (: woken bool) (: statuses-changed bool) (: silent-ms int) (: interval-ms int)]
    :post [(: % bool)] :tags {:context "doeff-cluster" :role "judgment"}}
   "この拍で heartbeat を送るかを決めるため。watching = 待ちの口を使えている・fresh = 前の heartbeat が届いた・woken = 待ちが「変わった」
@@ -53,14 +53,14 @@
   (or (not watching) (not fresh) woken statuses-changed (>= silent-ms interval-ms)))
 
 
-(deff watch-params [#^ int after #^ str worker #^ str boot #^ bool confirmed]  ; defk にできない: worker の I/O の道具(CoordinatorLink)と sim の宿が同じ問いを作る
+(deff watch-params [#^ int after #^ str worker #^ str boot #^ bool confirmed]  ; defk にできない: worker の coordinator への口(worker/protocol/coordinator_link)と sim の宿が同じ問いを作る
   {:pre [(: after int) (: worker str) (: boot str) (: confirmed bool)] :post [(: % dict)] :tags {:context "doeff-cluster" :role "protocol"}}
   "名指しの待ちの問い(GET /watch の query)を作るため。まだ口を確かめていない最初の待ちは 0 秒(すぐ答える — 待つ口の有無を確かめ、
    確かめるまで毎拍の heartbeat を続ける)、その後は上限まで待つ。"
   {"after" (str after) "timeoutSeconds" (str (if confirmed WATCH-MAX-SECONDS 0.0)) "worker" worker "boot" boot})
 
 
-(deff watch-reading [#^ (| int None) status #^ (| dict list str int float bool None) body]  ; defk にできない: worker の I/O の道具(CoordinatorLink)と sim の宿が同じ読みを使う
+(deff watch-reading [#^ (| int None) status #^ (| dict list str int float bool None) body]  ; defk にできない: worker の coordinator への口(worker/protocol/coordinator_link)と sim の宿が同じ読みを使う
   {:pre [(: status (| int None)) (: body (| dict list str int float bool None))] :post [(: % WatchReading)]
    :tags {:context "doeff-cluster" :role "judgment"}}
   "GET /watch の返事(status = None は届かない)を待ちの答えの種類に読むため。"
@@ -72,7 +72,7 @@
     True (WatchReading :kind WatchKind.FAILED :detail (.format "{}: {}" status (cut (str body) 0 200)))))
 
 
-(deff reply-revision [#^ dict reply]  ; defk にできない: worker の I/O の道具(CoordinatorLink)と sim の宿が同じ読みを使う
+(deff reply-revision [#^ dict reply]  ; defk にできない: worker の coordinator への口(worker/protocol/coordinator_link)と sim の宿が同じ読みを使う
   {:pre [(: reply dict)] :post [(: % (| int None))] :tags {:context "doeff-cluster" :role "judgment"}}
   "heartbeat の返事の版(次の待ちの after)を読むため。欄の無い返事は待つ口の無い旧い coordinator の物(None)。"
   (let [revision (.get reply "revision")]

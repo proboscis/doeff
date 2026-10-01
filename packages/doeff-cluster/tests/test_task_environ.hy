@@ -24,7 +24,8 @@
 (import doeff_cluster.foundation.coordinator_inbox [http-request])
 (import doeff_cluster.coordinator.core.cluster_policy [adopted-task])
 (import doeff_cluster.coordinator.core.api_policy [respond])
-(import doeff_cluster.handlers [CoordinatorLink task-spec] doeff_cluster.worker.core.launch [program-file])
+(import tests.link_rig [LinkRig])
+(import doeff_cluster.handlers [task-spec] doeff_cluster.worker.core.launch [program-file])
 (import tests.host_rig [host-settings launched])
 (import doeff_cluster.shared.protocol.detached [detached-submitted detached-submit-body])
 (import doeff [with-handlers])
@@ -222,11 +223,11 @@
 
 (deftest test-a-detached-task-child-answers-the-environ-name-through-the-environ-reader [tmp-path]
   ;; 本番の形の通し: 本物の送り手(detached-submitted)が :environ つきで送り、本物の coordinator の判断(MemoryCoordinator)が返事に載せ、本物の
-  ;; CoordinatorLink が Program を cache へ取り、ProcessHost が組んだ子の環境で job_entry の task 入口の子 process が走る。
+  ;; coordinator への口が Program を cache へ取り、ProcessHost が組んだ子の環境で job_entry の task 入口の子 process が走る。
   ;; Program の名の Ask に (environ-reader)(本番の土台の読み)が environ の値で答える。
   (val coordinator (MemoryCoordinator (SimClock)))
   (val transport (httpx.MockTransport coordinator.handle))
-  (val link (CoordinatorLink "http://coordinator" "w1" RIG-PROVIDES 10 60000 :task-dir (str (/ tmp-path "state" "tasks"))
+  (val link (LinkRig "http://coordinator" "w1" RIG-PROVIDES 10 60000 :task-dir (str (/ tmp-path "state" "tasks"))
                              :versions (current-versions) :transport transport))
   (.poll link)
   (<- submitted (with-handlers [(sim-time-handler :clock (SimClock)) (transport-http transport)]
@@ -241,7 +242,7 @@
   (<- planned tuple (launched settings spec (str tmp-path) "1-1" 1))
   (val env (| (get planned 2) {"PYTHONPATH" (str ROOT)}))
   (assert (not-in URL-NAME os.environ))
-  (val done (subprocess.run [HY "-m" spec.entry #* spec.args "--program" (str (program-file link.program-dir spec.program))]
+  (val done (subprocess.run [HY "-m" spec.entry #* spec.args "--program" (str (program-file (.program-dir link) spec.program))]
                             :cwd (str ROOT) :env env :capture-output True :text True :timeout 120))
   (assert (= done.returncode 0) done.stderr)
   (val outcome (decode-outcome (.read-text (Path (get spec.args 2)) :encoding "ascii")))

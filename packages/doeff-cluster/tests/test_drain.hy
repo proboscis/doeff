@@ -13,7 +13,9 @@
 (import doeff_cluster.coordinator.core.api_policy [respond tick])
 (import doeff_cluster.coordinator.core.durable_kv [full-kv state-from-kv DRAIN SURGE])
 (import doeff_cluster.worker.core.drain_client [await-drained worker-ready drain-outcome ready-of] doeff_cluster.worker.intent.drain_model [CoordinatorCall])
-(import doeff_cluster.handlers [CoordinatorLink] doeff_cluster.foundation.ready_file [write-ready-file])
+(import doeff [run with-handlers])
+(import doeff_core_effects.os_file [os-file-handler])
+(import doeff_cluster.worker.protocol.coordinator_link [ready-file-written])
 (import tests.program_rows [SAMPLE-RUN program-placed])
 (import doeff [run])
 (import os)
@@ -462,14 +464,15 @@
   (assert late))
 
 
-(defn #^ None test-the-worker-writes-its-boot-where-the-readiness-probe-reads-it [#^ Path tmp-path #^ pytest.MonkeyPatch monkeypatch]
+(defn #^ None test-the-worker-writes-its-boot-where-the-readiness-probe-reads-it [#^ Path tmp-path]
   ;; worker の世代は起動の時に Pod の中の file(DOEFF_WORKER_BOOT_FILE)へ書かれ、readinessProbe の入口(drain_main.read-boot)が
   ;; 同じ値を読む — 書く口と読む口の綴りが割れると probe は永久に NotReady になる。
   (setv path (/ tmp-path "doeff-worker-boot"))
   (assert (is (read-boot (str path)) None) "起動の前(file が無い)は世代を知らない")
-  (.setenv monkeypatch "DOEFF_WORKER_BOOT_FILE" (str path))
-  (setv link (CoordinatorLink "http://127.0.0.1:1" "atlas" #() 1 30000 :task-dir (str (/ tmp-path "tasks"))))
-  (assert (= (read-boot (str path)) link.boot)))
+  ;; 書く口は worker の入口 main の write-boot-file(起動の時に世代を 1 度だけ決めて書く — #2427 で CoordinatorLink から移した)。
+  (import doeff_cluster.main [write-boot-file])
+  (write-boot-file (str path) "b-1234")
+  (assert (= (read-boot (str path)) "b-1234")))
 
 
 (deftest test-the-heartbeat-reply-names-whether-the-worker-is-draining
@@ -482,14 +485,17 @@
   (assert (is (get during "draining") True) during))
 
 
-(defn #^ None test-the-readiness-probe-reads-the-file-the-worker-writes [#^ Path tmp-path]
-  ;; 書く口(handlers.write-ready-file)と読む口(boot.sh の ROLE=ready — sh だけ・hy を起こさない)の往復。
+(defn #^ None test-the-readiness-probe-reads-the-file-the-worker-writes [#^ Path tmp-path #^ pytest.MonkeyPatch monkeypatch]
+  ;; 書く口(coordinator への口の ready-file-written — 本物の file の答え手の下)と読む口(boot.sh の ROLE=ready — sh だけ・hy を起こさない)の往復。
   (setv path (str (/ tmp-path "doeff-worker-ready"))
         boot-sh (str (/ (. (Path __file__) parent parent) "deploy" "boot.sh")))
   (defn #^ int probe [#^ (| dict None) [extra None]]
     (. (subprocess.run ["sh" boot-sh] :env (| {"PATH" (os.environ.get "PATH" "") "ROLE" "ready" "DOEFF_WORKER_READY_FILE" path}
                                               (or extra {}))
                        :capture-output True) returncode))
+  (.setenv monkeypatch "DOEFF_WORKER_READY_FILE" path)
+  (defn #^ None write-ready-file [#^ str _path #^ bool draining]
+    (run (with-handlers [os-file-handler] (ready-file-written draining))))
   (assert (= (probe) 1) "worker がまだ書いていない(lock 待ち)は NotReady")
   (write-ready-file path False)
   (assert (= (probe) 0))

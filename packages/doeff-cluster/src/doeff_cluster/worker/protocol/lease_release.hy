@@ -1,4 +1,4 @@
-;;; 終わった process の lease の返し(ReleaseLeases)の言い換え lease-release(handlers.hy の release-leases と CoordinatorLink の宛先を
+;;; 終わった process の lease の返し(ReleaseLeases)の言い換え lease-release(handlers.hy の前の lease の返しと宛先を
 ;;; 置き換えた・#2427)— coordinator の盤と lease の口への要求を、宛先の部品(shared/protocol/coordinator_route)の上の汎用の HttpRequest で
 ;;; 出す。本物の I/O は入口が積む http-production-handler。
 ;;;

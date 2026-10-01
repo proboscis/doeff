@@ -6,7 +6,7 @@
 ;;   sim         … 手元の runner sim-cluster(本物の coordinator の調停ループと本物の run-worker — 担い手 a〔能力 x-tool〕と b〔能力 y-tool〕)・
 ;;                 仮想の時計。筋書きは検の側の呼び手として sim の送り手の口で話す
 ;;   coordinator … 本物の coordinator の判断(api_policy.respond / tick — test_detached.hy の MemoryCoordinator)と、同じ名乗りの
-;;                 担い手 2 つ(本物の CoordinatorLink)・本物の detached-cluster・仮想の時計
+;;                 担い手 2 つ(本物の coordinator への口)・本物の detached-cluster・仮想の時計
 ;; coordinator の途絶は sim の組だけで確かめる(本物の送り手の送り直しは実時間の monotonic で数えるので、仮想の時計の coordinator の組
 ;; では途絶が明けない。sim の宿は同じ期限と間を仮想の時計で数える)。
 ;; (2026-09-28 まで sim の組の代わりに同じ VM の模擬 detached-local の組だった — 呼び手の外側の handler を継ぐので消した。)
@@ -108,7 +108,7 @@
     ;; 戻り = 作り直した process(新しい世代)。
     (val old (get runners.workers name))
     (if old.dead
-        (do (<- (start-worker (.fresh runners name old.link.provides old.link.exclusive)))
+        (do (<- (start-worker (.fresh runners name old.link.state.provides old.link.state.exclusive)))
             (resume True))
         (resume False))))
 

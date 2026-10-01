@@ -36,9 +36,14 @@
       (.format "{}/{}/{}" root (get project "repo") (get project "path"))))
 
 
-(defn #^ Path program-file [#^ Path program-dir #^ str sha]  ; defk にできない: worker の I/O の道具(CoordinatorLink)と言い換えの handler が値として呼ぶ
-  "詰めた Program の置き場のキー → この worker の cache の file(CoordinatorLink が取って書き、子へ渡す — 定義点は 1 つ・handlers.hy から移した)。"
+(defn #^ Path program-file [#^ Path program-dir #^ str sha]  ; defk にできない: 検の道具と言い換えの handler が値として呼ぶ
+  "詰めた Program の置き場のキー → この worker の cache の file(coordinator への口が取って書き、子へ渡す — 定義点は 1 つ)。"
   (/ program-dir (+ sha ".json")))
+
+
+(defn #^ str program-file-text [#^ str blob #^ dict versions]  ; defk にできない: 検の道具と言い換えの handler が値として呼ぶ
+  "cache の file の中身(子の入口 job_entry の read-program が読む形 {\"blob\" \"versions\"} — service と task で同じ・定義点は 1 つ)。"
+  (json.dumps {"blob" blob "versions" versions}))
 
 
 (defrecord JobLaunch
