@@ -9,6 +9,8 @@
 ;;;   ProgramBody     PUT /programs/<sha>         詰めた Program の置き
 ;;;   HeartbeatBody   POST /heartbeat             worker の生存・能力・版・状態の報告・実行環境の root の名乗り
 ;;;   ResourceBody    POST /resources/<種類>・PUT /resources/<種類>/<名>   資源の宣言の包み(name・spec・resourceVersion)
+;;;   TaskBody        POST /tasks・PUT /detached/<key>   task と切り離した task の頼み
+;;;   WarmBody        POST /warm                  温める表の行
 ;;;   BoardWrite      PUT /board/<鍵>             盤の行 1 つの compare-and-set(本文の型 BoardWireBody と、欄が在ったかの印)
 ;;; 知らない欄は読み捨てる(前の直の読みと同じ — 送り手の版が新しい欄を足しても断らない)。
 (require doeff-hy.macros [val])
@@ -171,6 +173,38 @@
   (setv #^ (| int None) resource-version None))
 
 
+(defwire TaskBody
+  "POST /tasks と PUT /detached/<key> の本文: program = 置き場に置いた Program の sha・revision = 送り手の commit・name・needs = 要る能力の
+   名の列・runtime-env = 実行環境の宣言(JSON の object)・environ = 子の環境変数(名 → 文字列)・lease-seconds / retain-seconds(None = 道の
+   既定)・format。旧い形の欄(requires・env・blob・versions)は判断が理由つきで断る。欄の中身の規則(sha の形と置き場に在るか・needs の名・
+   環境変数の名・宣言の形)は判断が読む — 判断の理由の文を前のまま保つため、ここでは欄の在否と大きな型だけを決める。"
+  {:tags {:context "doeff-cluster" :role "type"} :names :camel :unknown :ignore}
+  (setv #^ object program None)
+  (setv #^ object revision None)
+  (setv #^ str name "")
+  (setv #^ object needs None)
+  (setv #^ object requires None)
+  (setv #^ object env None)
+  (setv #^ object blob None)
+  (setv #^ object versions None)
+  (setv #^ object runtime-env None)
+  (setv #^ object environ None)
+  (setv #^ object lease-seconds None)
+  (setv #^ object retain-seconds None)
+  (setv #^ object format 1))
+
+
+(defwire WarmBody
+  "POST /warm の本文: runtime-env = 温める実行環境の宣言・ttl-seconds = 行の期限・needs(と旧い requires)= 要る能力・holder = 頼み手
+   (None = 送り手)。中身の規則は warm_policy が読む。"
+  {:tags {:context "doeff-cluster" :role "type"} :names :camel :unknown :ignore}
+  (setv #^ object runtime-env None)
+  (setv #^ object ttl-seconds None)
+  (setv #^ object needs None)
+  (setv #^ object requires None)
+  (setv #^ (| str None) holder None))
+
+
 (defrecord BodyMalformed
   "道の本文が型の約束の形でない(欠けた欄・型の違う値・JSON の object でない本文)— 受け口は 400 と reason で断る。"
   {:tags {:context "doeff-cluster" :role "type"}}
@@ -178,7 +212,7 @@
 
 
 ;; 道の本文の答えの型の和(ReadBody の答え・判断 respond が受ける本文 — まだ型にしていない道は JSON の object)。
-(setv RequestBody (| LeaseBody TaskResultBody DrainBody ReadinessBody MetricsBody ProgramBody BoardWrite HeartbeatBody ResourceBody BodyMalformed dict))
+(setv RequestBody (| LeaseBody TaskResultBody DrainBody ReadinessBody MetricsBody ProgramBody BoardWrite HeartbeatBody ResourceBody TaskBody WarmBody BodyMalformed dict))
 
 
 (defclass [(dataclass :frozen True)] ReadBody [EffectBase]

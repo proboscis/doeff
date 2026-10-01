@@ -17,9 +17,9 @@
 (import doeff_cluster.shared.intent.protocol [ClusterTiming])
 (import doeff_cluster.shared.core.capabilities [environ-pairs])
 (import doeff_cluster.coordinator.intent.cluster_model [ClusterState TaskRecord])
-(import doeff_cluster.coordinator.core.cluster_rules [format-refusal])
-(import doeff_cluster.coordinator.core.cluster_policy [DETACHED-TERMINAL TASK-MAX-OPEN end-detached runtime-env-refusal task-id task-body-refusal request-needs
-                         program-versions])
+(import doeff_cluster.coordinator.core.cluster_rules [format-version-refusal])
+(import doeff_cluster.coordinator.intent.request_bodies [TaskBody])
+(import doeff_cluster.coordinator.core.cluster_policy [DETACHED-TERMINAL TASK-MAX-OPEN end-detached runtime-env-value-refusal task-id task-body-refusal needs-named program-versions])
 (import doeff_cluster.shared.intent.detached_model [DETACHED-DEFAULT-LEASE-SECONDS DETACHED-DEFAULT-RETAIN-SECONDS OPEN-PHASES WARMING-PHASE])
 
 (setv DETACHED-MAX-LEASE-SECONDS 3600)
@@ -57,25 +57,25 @@
     True None))
 
 
-(defn #^ Reply submit-detached [#^ ClusterState state #^ str key #^ dict body #^ int now]
+(defn #^ Reply submit-detached [#^ ClusterState state #^ str key #^ TaskBody body #^ int now]
   "PUT /detached/<key>: 同じ key の行が在ればそれを返す(created = false)。name・needs・実行環境・子の環境変数(environ)が違えば 409
    (同じ job id を別の仕事に使った呼び手の誤り — environ は Program の読む設定なので、違えば別の仕事)。無ければ待ちの行を作る。"
-  (setv lease (.get body "leaseSeconds" DETACHED-DEFAULT-LEASE-SECONDS)
-        retain (.get body "retainSeconds" DETACHED-DEFAULT-RETAIN-SECONDS)
-        refusal (or (format-refusal body)
+  (setv lease (if (is body.lease-seconds None) DETACHED-DEFAULT-LEASE-SECONDS body.lease-seconds)
+        retain (if (is body.retain-seconds None) DETACHED-DEFAULT-RETAIN-SECONDS body.retain-seconds)
+        refusal (or (format-version-refusal body.format)
                     (task-body-refusal state body)
-                    (runtime-env-refusal body)
+                    (runtime-env-value-refusal body.runtime-env)
                     (key-refusal key)
                     (seconds-refusal "leaseSeconds" lease DETACHED-MAX-LEASE-SECONDS)
                     (seconds-refusal "retainSeconds" retain DETACHED-MAX-RETAIN-SECONDS)))
   (when refusal (return (Reply state 400 {"error" refusal})))
-  (setv needs (request-needs body "切り離した task の needs")
-        environ (environ-pairs (.get body "environ" {}))
+  (setv needs (needs-named body.needs body.requires "切り離した task の needs")
+        environ (environ-pairs (or body.environ {}))
         existing (task-by-key state key))
   (when (is-not existing None)
     (return
       (if (= #(existing.name existing.needs existing.runtime-env existing.environ)
-             #((.get body "name" "") needs (.get body "runtimeEnv") environ))
+             #(body.name needs body.runtime-env environ))
           (Reply state 200 {"key" key "task" existing.id "created" False "phase" existing.phase})
           (Reply state 409 {"error" (.format "key {} は別の仕事(name {!r}・needs {}・environ の名 {})に使われている"
                                         key existing.name (list existing.needs) (lfor #(k _) existing.environ k))}))))
@@ -88,11 +88,11 @@
                                           DETACHED-MAX-RECORDS)})))
   (setv id (task-id state)
         lease-ms (int (* 1000 lease))
-        task (TaskRecord id (.get body "name" "") (get body "program") (get body "revision")
-                         (program-versions state (get body "program"))
+        task (TaskRecord id body.name body.program body.revision
+                         (program-versions state body.program)
                          needs lease-ms (+ now lease-ms) now
                          :detached True :key key :retain-ms (int (* 1000 retain))
-                         :runtime-env (.get body "runtimeEnv") :environ environ))
+                         :runtime-env body.runtime-env :environ environ))
   (Reply (replace state :tasks (| state.tasks {id task}) :next-task (+ state.next-task 1))
          200 {"key" key "task" id "created" True "phase" task.phase}))
 

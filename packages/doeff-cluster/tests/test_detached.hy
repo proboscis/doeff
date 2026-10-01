@@ -45,7 +45,7 @@
 (import doeff_cluster.sim.local [sim-cluster SimWorker KillWorker ReadCoordinator])
 (import doeff_cluster.shared.intent.service_model [system-of])
 (import tests.detached_rig [slow-add RigWorker MemoryCoordinator worker-tick worker-loop RIG-PROVIDES])
-(import tests.program_rows [SAMPLE-TASK-PROGRAM program-placed])
+(import tests.program_rows [SAMPLE-TASK-PROGRAM program-placed task-body-of])
 
 (setv OTHER-VERSIONS {"python" "0.0.0" "doeff" "0"})
 ;; 筋書きの task が要る能力: 3 つの組の担い手(sim の worker・RigWorker の既定)が共に提供する local。
@@ -1077,7 +1077,7 @@
   (val reply-80 (run (program-placed s V)))
   (:= s (get reply-80 0))
   (val sha (get reply-80 1))
-  (setv reply (submit-detached s "job-typed" {"program" sha "revision" "r" "needs" ["x-tool" "cluster-net" "x-tool"]}
+  (setv reply (submit-detached s "job-typed" (task-body-of {"program" sha "revision" "r" "needs" ["x-tool" "cluster-net" "x-tool"]})
                                100))
   (assert (isinstance reply Reply))
   (assert (= #(reply.status (get reply.body "created")) #(200 True)))

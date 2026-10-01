@@ -13,8 +13,8 @@
 (import doeff_cluster.shared.intent.protocol [ClusterTiming Request BodyInvalid])
 (import doeff_cluster.shared.core.capabilities [capabilities-of environ-pairs])
 (import doeff_cluster.coordinator.intent.cluster_model [ClusterJob WorkerInfo GenerationOrder Placement ClusterState TaskRecord Drain EnvFailed WarmEntry HandoffPhase RefusedJob UnplacedKind ACCEPTED-FORMATS PLACED-PHASES])
-(import doeff_cluster.coordinator.core.cluster_rules [component-versions-of format-refusal format-version-refusal])
-(import doeff_cluster.coordinator.intent.request_bodies [LeaseBody TaskResultBody BoardWrite HeartbeatBody EnvsReport])
+(import doeff_cluster.coordinator.core.cluster_rules [component-versions-of format-version-refusal])
+(import doeff_cluster.coordinator.intent.request_bodies [LeaseBody TaskResultBody BoardWrite HeartbeatBody EnvsReport TaskBody])
 (import doeff_cluster.coordinator.core.cluster_json [task-record-to-json task-record-from-json handoff-watch-from-json required-field int-field])
 (import doeff_cluster.shared.intent.semaphore_model [SEMAPHORE-PREFIX])
 (import doeff_cluster.shared.core.lease_rules [lease-op semaphore-write-refusal semaphore-key])
@@ -131,13 +131,12 @@
       None))
 
 
-(deff task-environ-refusal [#^ dict body]  ; defk にできない: HTTP の本文を読む境界(Program の外)が呼ぶ純粋な判断
-  {:pre [(: body dict)] :post [(: % (| str None))] :tags {:context "doeff-cluster" :role "judgment"}}
+(deff task-environ-refusal [#^ (| dict list tuple str int float bool None) environ #^ (| dict list tuple str int float bool None) runtime]  ; defk にできない: HTTP の本文を読む境界(Program の外)が呼ぶ純粋な判断
+  {:pre [(: environ (| dict list tuple str int float bool None)) (: runtime (| dict list tuple str int float bool None))] :post [(: % (| str None))] :tags {:context "doeff-cluster" :role "judgment"}}
   "task(POST /tasks・PUT /detached)の本文の environ(子の環境変数 — 無ければ空)が受けられない理由。規則は service の宣言の行と同じ
    environ-refusal 1 つ(2026-09-28)。runtimeEnv の形の誤りは runtime-env-refusal が断るので、ここでは object の時だけ
    env-vars の名と比べる。"
-  (setv environ (.get body "environ" {})
-        runtime (.get body "runtimeEnv"))
+  (setv environ (if (is environ None) {} environ))
   (if (not (isinstance environ dict))
       (.format "environ は環境変数の名 → 文字列の object: {!r}" environ)
       (environ-refusal environ (if (isinstance runtime dict)
@@ -370,39 +369,46 @@
   {:pre [(: body dict) (: what str)] :post [(: % tuple)] :tags {:context "doeff-cluster" :role "judgment"}}
   "送られた宣言・task・温める頼みの本文の needs → 名の順の tuple。旧い形の requires を持つ本文・空の needs は BodyInvalid(理由つき・ValueError の子)—
    旧い宣言は受け付けない(operator 2026-09-27)・要る能力は必ず書く(改訂 1 の I)。"
-  (when (is-not (.get body "requires") None)
+  (needs-named (.get body "needs") (.get body "requires") what))
+
+
+(deff needs-named [#^ (| dict list tuple str int float bool None) needs #^ (| dict list tuple str int float bool None) requires #^ str what]  ; defk にできない: HTTP の本文・宣言の JSON を読む境界(Program の外)が呼ぶ
+  {:pre [(: needs (| dict list tuple str int float bool None)) (: requires (| dict list tuple str int float bool None)) (: what str)] :post [(: % tuple)] :tags {:context "doeff-cluster" :role "judgment"}}
+  "要る能力の名乗り(needs と旧い形の requires の値 — None = 欄が無い)→ 名の順の tuple。宣言の行(request-needs)と本文の型(#2445)が
+   同じ規則で読む: requires は BodyInvalid・空の needs は BodyInvalid。"
+  (when (is-not requires None)
     (raise (BodyInvalid (.format "旧い形の requires {!r} は受け付けない — 要る能力の名の列 needs で書き直す(ADR-DOE-CLUSTER-001 R4b)"
-                                (get body "requires")))))
-  (setv needs (capabilities-of (.get body "needs" []) what))
+                                requires))))
+  (setv needs (capabilities-of (if (is needs None) [] needs) what))
   (when (not needs)
     (raise (BodyInvalid (.format "{} が空 — 要る能力の名を 1 つ以上書く(どこにでも置ける仕事は無い・ADR-DOE-CLUSTER-001 R4b・改訂 1 の I)" what))))
   needs)
 
 
-(deff task-body-refusal [#^ ClusterState state #^ dict body]  ; defk にできない: HTTP の本文を読む境界(Program の外)が呼ぶ純粋な判断
-  {:pre [(: state ClusterState) (: body dict)] :post [(: % (| str None))] :tags {:context "doeff-cluster" :role "judgment"}}
+(deff task-body-refusal [#^ ClusterState state #^ TaskBody body]  ; defk にできない: HTTP の本文を読む境界(Program の外)が呼ぶ純粋な判断
+  {:pre [(: state ClusterState) (: body TaskBody)] :post [(: % (| str None))] :tags {:context "doeff-cluster" :role "judgment"}}
   "task(POST /tasks・PUT /detached)の本文が受けられない理由 — 旧い形の env(handler の組の import path)・旧い形の blob(詰めた
    Program を本文に載せる形)と versions(版の写し)・置き場のキー program の形と置き場に在るか・子の環境変数 environ(service の :environ と同じ規則)・needs の欠け。task も Program の値 1 つで、handler は Program の
    中で並べ(ADR-DOE-CLUSTER-001 R1・R2・改訂 1 の J の 11)、詰めた Program は service の宣言と同じく先に /programs/<sha> に置いて
    本文は sha だけを運ぶ(R3b — service と task で運び方を分けない)。"
-  (let [program (.get body "program")]
+  (let [program body.program]
     (cond
-      (in "env" body)
+      (is-not body.env None)
         (.format "旧い形の env {!r}(handler の組の import path)は受け付けない — handler は task の Program の中の with-handlers で並べる"
-                 (get body "env"))
-      (in "blob" body)
+                 body.env)
+      (is-not body.blob None)
         "旧い形の blob(詰めた Program を本文に載せる形)は受け付けない — 先に PUT /programs/<sha> で置き、本文は program に sha を書く"
       ;; 版は Program と一緒に置いた版 1 つ(program-versions)。本文の写しは置いた版と食い違いうるので受けない(黙って捨てない)。
-      (in "versions" body)
+      (is-not body.versions None)
         "本文の versions は受け付けない — task の版は PUT /programs/<sha> で Program と一緒に置いた版を使う"
       (not (and (isinstance program str) (PROGRAM-SHA.fullmatch program)))
         (.format "program は詰めた Program の置き場のキー(64 桁の sha256): {!r}" program)
       (not-in program state.programs)
         (.format "program {} は置き場に無い — 先に PUT /programs/{} で置く" program program)
       ;; 版(送り手の commit)は行の必須の欄(TaskRecord.revision)— 欠けを行を作る所の KeyError に任せない(#1024)。
-      (not (isinstance (.get body "revision") str))
-        (.format "revision(送り手の commit の文字列)が無い: {!r}" (.get body "revision"))
-      True (or (task-environ-refusal body) (needs-refusal body)))))
+      (not (isinstance body.revision str))
+        (.format "revision(送り手の commit の文字列)が無い: {!r}" body.revision)
+      True (or (task-environ-refusal body.environ body.runtime-env) (needs-refusal body.needs body.requires)))))
 
 
 (deff program-versions [#^ ClusterState state #^ str sha]  ; defk にできない: HTTP の本文を読む境界(Program の外)が呼ぶ純粋な判断
@@ -412,11 +418,11 @@
   (component-versions-of (get state.programs sha "versions")))
 
 
-(deff needs-refusal [#^ dict body]  ; defk にできない: HTTP の本文を読む境界(Program の外)が呼ぶ純粋な判断
-  {:pre [(: body dict)] :post [(: % (| str None))] :tags {:context "doeff-cluster" :role "judgment"}}
+(deff needs-refusal [#^ (| dict list tuple str int float bool None) needs #^ (| dict list tuple str int float bool None) requires]  ; defk にできない: HTTP の本文を読む境界(Program の外)が呼ぶ純粋な判断
+  {:pre [(: needs (| dict list tuple str int float bool None)) (: requires (| dict list tuple str int float bool None))] :post [(: % (| str None))] :tags {:context "doeff-cluster" :role "judgment"}}
   "本文の needs(と旧い形の requires)が受けられない理由(受けられれば None)— 400 の理由の文を 1 か所で作るため。"
   (try
-    (request-needs body "needs")
+    (needs-named needs requires "needs")
     None
     (except [error ValueError]
       (str error))))
@@ -1252,8 +1258,12 @@
 
 
 (defn #^ (| str None) runtime-env-refusal [#^ dict body]
-  "本文の runtimeEnv(在れば)が宣言として読めなければ理由の文(送り手の誤り — 400)。"
-  (setv value (.get body "runtimeEnv"))
+  "宣言の行の runtimeEnv(在れば)が宣言として読めなければ理由の文(送り手の誤り — 400)。"
+  (runtime-env-value-refusal (.get body "runtimeEnv")))
+
+
+(defn #^ (| str None) runtime-env-value-refusal [#^ (| dict list tuple str int float bool None) value]
+  "runtimeEnv の値(None = 無い)が宣言として読めなければ理由の文 — 宣言の行と本文の型(#2445)が同じ規則で読む。"
   (cond
     (is value None) None
     (not (isinstance value dict)) (.format "runtimeEnv は JSON の object: {!r}" (type value))
@@ -1261,12 +1271,12 @@
               (except [error RuntimeEnvInvalid] (.format "runtimeEnv が誤っている: {}" error)))))
 
 
-(defn #^ tuple submit-task [#^ ClusterState state #^ dict body #^ int now #^ (| str None) [owner None]]
+(defn #^ tuple submit-task [#^ ClusterState state #^ TaskBody body #^ int now #^ (| str None) [owner None]]
   "POST /tasks: 呼び手の問い合わせに寿命を縛られた task の行を作る。本文は置き場に置いた Program の sha を運ぶ(task-body-refusal)。"
-  (setv refusal (or (format-refusal body) (runtime-env-refusal body) (task-body-refusal state body)))
+  (setv refusal (or (format-version-refusal body.format) (runtime-env-value-refusal body.runtime-env) (task-body-refusal state body)))
   (when refusal (return #(state 400 {"error" refusal})))
   ;; 数に読めない leaseSeconds は送り手の誤り(float() の ValueError / TypeError を受け口へ漏らさない — #1024)。
-  (setv lease-value (.get body "leaseSeconds" 15.0))
+  (setv lease-value (if (is body.lease-seconds None) 15.0 body.lease-seconds))
   (try
     (setv lease-seconds (float lease-value))
     (except [[ValueError TypeError]]
@@ -1278,12 +1288,12 @@
     (return #(state 429 {"error" (.format "終わっていない task が上限 {} 本に達している" TASK-MAX-OPEN) "open" open-count})))
   (setv id (task-id state)
         lease-ms (int (* 1000 lease-seconds))
-        task (TaskRecord id (.get body "name" "") (get body "program") (get body "revision")
-                         (program-versions state (get body "program"))
-                         (request-needs body "task の needs")
+        task (TaskRecord id body.name body.program body.revision
+                         (program-versions state body.program)
+                         (needs-named body.needs body.requires "task の needs")
                          lease-ms (+ now lease-ms) now
-                         :runtime-env (.get body "runtimeEnv")
-                         :environ (environ-pairs (.get body "environ" {}))))
+                         :runtime-env body.runtime-env
+                         :environ (environ-pairs (or body.environ {}))))
   #((replace state :tasks (| state.tasks {id task}) :next-task (+ state.next-task 1)) 200 {"task" id}))
 
 

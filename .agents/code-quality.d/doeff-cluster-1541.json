@@ -368,7 +368,8 @@
         "doeff-cluster-cluster-rules",
         "doeff-cluster-detached-model",
         "doeff-cluster-shared-capabilities",
-        "doeff-cluster-shared-protocol"
+        "doeff-cluster-shared-protocol",
+        "doeff-cluster-coordinator-request-bodies-model"
       ],
       "layer": "pure",
       "name": "doeff-cluster-detached-policy",
@@ -1499,7 +1500,8 @@
         "doeff-cluster-cluster-policy",
         "doeff-cluster-runtime-env-model",
         "doeff-cluster-shared-protocol",
-        "doeff-cluster-warm-model"
+        "doeff-cluster-warm-model",
+        "doeff-cluster-coordinator-request-bodies-model"
       ],
       "layer": "pure",
       "name": "doeff-cluster-warm-policy",

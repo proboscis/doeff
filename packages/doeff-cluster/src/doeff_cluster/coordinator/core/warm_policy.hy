@@ -10,7 +10,8 @@
 (import doeff [run])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming])
 (import doeff_cluster.coordinator.intent.cluster_model [ClusterState WarmEntry])
-(import doeff_cluster.coordinator.core.cluster_policy [alive placeable request-needs tools-cover root-key-on draining-workers])
+(import doeff_cluster.coordinator.core.cluster_policy [alive placeable needs-named tools-cover root-key-on draining-workers])
+(import doeff_cluster.coordinator.intent.request_bodies [WarmBody])
 (import doeff_cluster.shared.core.board_rules [BOARD-MAX-TTL-SECONDS])
 (import doeff_cluster.shared.intent.runtime_env_model [runtime-env-of-json RuntimeEnvInvalid])
 (import doeff_cluster.shared.intent.warm_model [WarmState WarmFailure warm-key warm-state->json])
@@ -34,9 +35,9 @@
   (WarmState :key entry.key :ready (tuple ready) :preparing (tuple preparing) :failed (tuple failed) :until-ms entry.until-ms))
 
 
-(defn #^ tuple warm-write [#^ ClusterState state #^ dict body #^ int now #^ str actor #^ ClusterTiming timing]
+(defn #^ tuple warm-write [#^ ClusterState state #^ WarmBody body #^ int now #^ str actor #^ ClusterTiming timing]
   "POST /warm: 行を書いて #(次の状態 status 本文) を返す。宣言の誤り・期限の範囲の外は 400。"
-  (setv declared (.get body "runtimeEnv") ttl (.get body "ttlSeconds"))
+  (setv declared body.runtime-env ttl body.ttl-seconds)
   (when (not (isinstance declared dict))
     (return #(state 400 {"error" "runtimeEnv は JSON の object"})))
   (when (not (and (isinstance ttl #(int float)) (< 0 ttl (+ BOARD-MAX-TTL-SECONDS 1))))
@@ -46,11 +47,11 @@
     (except [error RuntimeEnvInvalid]
       (return #(state 400 {"error" (.format "runtimeEnv が誤っている: {}" error)}))))
   (try
-    (setv needs (request-needs body "温める頼みの needs"))
+    (setv needs (needs-named body.needs body.requires "温める頼みの needs"))
     (except [error ValueError]
       (return #(state 400 {"error" (str error)}))))
   (setv key (run (warm-key env needs))
-        entry (WarmEntry key declared needs (+ now (int (* 1000 ttl))) (str (.get body "holder" actor)))
+        entry (WarmEntry key declared needs (+ now (int (* 1000 ttl))) (or body.holder actor))
         after (replace state :warms (| state.warms {key entry})))
   #(after 200 (run (warm-state->json (warm-view after entry now timing)))))
 

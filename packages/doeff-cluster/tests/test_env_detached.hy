@@ -34,7 +34,7 @@
 (import doeff_cluster.worker.protocol.declared [task-spec] doeff_cluster.worker.protocol.heartbeat [status-row])
 (import tests.env_fixtures [LOCK APP-URL LIB-URL env-of])
 (import tests.detached_rig [slow-add])
-(import tests.program_rows [SAMPLE-TASK-PROGRAM program-placed])
+(import tests.program_rows [SAMPLE-TASK-PROGRAM program-placed task-body-of])
 
 ;; --- 手元の runner sim-cluster の筋書き ------------------------------------------------------------
 ;; 本物の coordinator が env の task を置き、本物の run-worker が PrepareEnv で root の準備を撃ち、sim の宿が準備(即座に揃う・env-failure を
@@ -227,9 +227,9 @@
   (val base {"program" (get placed 1) "revision" "" "needs" ["net"] "leaseSeconds" 10})
   (val broken (| declared {"repos" [{"name" "app" "url" APP-URL "commit" "main"}]}))
   (for [body [(| base {"runtimeEnv" broken}) (| base {"format" 99})]]
-    (assert (= (get (submit-task (get placed 0) body 0) 1) 400) body)
-    (assert (= (. (submit-detached (get placed 0) "k" body 0) status) 400) body))
-  (val accepted (submit-task (get placed 0) (| base {"runtimeEnv" declared "format" 1}) 0))
+    (assert (= (get (submit-task (get placed 0) (task-body-of body) 0) 1) 400) body)
+    (assert (= (. (submit-detached (get placed 0) "k" (task-body-of body) 0) status) 400) body))
+  (val accepted (submit-task (get placed 0) (task-body-of (| base {"runtimeEnv" declared "format" 1})) 0))
   (assert (= (get accepted 1) 200) accepted)
   (assert (= (. (get (. (get accepted 0) tasks) "t1") runtime-env) declared)))
 
