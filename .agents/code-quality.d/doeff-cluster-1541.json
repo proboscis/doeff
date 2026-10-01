@@ -1270,6 +1270,7 @@
         "doeff-cluster-code-prepare",
         "doeff-cluster-coordinator",
         "doeff-cluster-coordinator-handler-sets",
+        "doeff-cluster-coordinator-route",
         "doeff-cluster-coordinator-http",
         "doeff-cluster-coordinator-inbox",
         "doeff-cluster-declare",
@@ -1621,6 +1622,21 @@
         "packages/doeff-cluster/src/doeff_cluster/shared/protocol/runtime_facts.hy"
       ],
       "responsibility": "入口の検めの材料に、渡した材料で答える handler(検と模擬)。",
+      "typed": true
+    },
+    {
+      "allow": [
+        "doeff-cluster-clock"
+      ],
+      "layer": "io",
+      "name": "doeff-cluster-coordinator-route",
+      "paths": [
+        "packages/doeff-cluster/src/doeff_cluster/shared/protocol/coordinator_route.hy"
+      ],
+      "public": [
+        "packages/doeff-cluster/src/doeff_cluster/shared/protocol/coordinator_route.hy"
+      ],
+      "responsibility": "coordinator への宛先の部品 — 宛先の順・接続できない時だけ次へ・先頭の試し直し・期限までの送り直しを HttpRequest と時計の効果だけで書く(#2337)。",
       "typed": true
     },
     {
