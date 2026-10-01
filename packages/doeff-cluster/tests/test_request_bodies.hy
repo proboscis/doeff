@@ -19,8 +19,8 @@
   (<- drain (body-of (http-request "POST" "/workers/zeus/drain" {} None)))
   (assert (= drain (DrainBody)) drain)
   ;; まだ型にしていない道は JSON の object のまま。
-  (<- jobs (body-of (http-request "PUT" "/jobs" {} {"jobs" []})))
-  (assert (= jobs {"jobs" []}) jobs))
+  (<- untyped (body-of (http-request "GET" "/state" {} {"x" 1})))
+  (assert (= untyped {"x" 1}) untyped))
 
 
 (deftest test-malformed-bodies-are-refused-with-the-field-before-the-decision
@@ -119,3 +119,11 @@
   (val old (responded (ClusterState) (http-request "POST" "/tasks" {} {"blob" "x" "revision" "r" "needs" ["net"]}) 1000 T))
   (assert (= (get old 1) 400) old)
   (assert (in "blob" (get old 2 "error")) old))
+
+
+(deftest test-the-old-jobs-body-is-read-into-its-type
+  ;; 旧い PUT /jobs の本文(jobs の行の列と送り手)— 列でない jobs は判断の前に 400。
+  (<- jobs (body-of (http-request "PUT" "/jobs" {} {"jobs" [{"name" "a"}] "actor" "me"})))
+  (assert (= #((len jobs.jobs) jobs.actor) #(1 "me")) jobs)
+  (<- single (body-of (http-request "PUT" "/jobs" {} {"jobs" {"name" "a"}})))
+  (assert (in "jobs" single.reason) single))

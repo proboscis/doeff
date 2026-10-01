@@ -174,18 +174,19 @@
     True None))
 
 
-(deff required-field [#^ dict body #^ str key]  ; defk にできない: 受け口の本文の読み(Program の外の純粋な判断)が呼ぶ
+(deff required-field [#^ dict body #^ str key]  ; defk にできない: 宣言と保存の行の読み(Program の外の純粋な判断)が呼ぶ
   {:pre [(: body dict) (: key str)] :post [(: % (| dict list str int float bool None))] :tags {:context "doeff-cluster" :role "judgment"}}
-  "送り手の本文の必須の欄の値 — 欄が無ければ BodyInvalid(送り手の誤り・400)。(get body 欄) の KeyError に頼ると、受け口は
+  "宣言と保存の行(JSON)の必須の欄の値 — 欄が無ければ BodyInvalid(送り手の誤り・400)。受け口の本文は coordinator/protocol/request_bodies
+   が道の型に解く(#2445)ので、ここを通るのは本文の中の宣言の行と保存の行だけ(行の型は #2447)。(get body 欄) の KeyError に頼ると、受け口は
    送り手の欠けと coordinator の中の KeyError を分けられない(#1024)。値は null でもよい(在ることだけを検める)。"
   (when (not-in key body)
     (raise (BodyInvalid (.format "本文に {} が無い" key))))
   (get body key))
 
 
-(deff int-field [#^ dict fields #^ str key default]  ; defk にできない: 受け口の本文・query の読み(Program の外の純粋な判断)が呼ぶ
+(deff int-field [#^ dict fields #^ str key default]  ; defk にできない: query と保存の行の読み(Program の外の純粋な判断)が呼ぶ
   {:pre [(: fields dict) (: key str) (: default (| int None))] :post [(: % int)] :tags {:context "doeff-cluster" :role "judgment"}}
-  "送り手の本文・query の整数の欄(無ければ default)を int に読む — 読めない値(数でない文字列・object など)は BodyInvalid
+  "query と保存の行の整数の欄(無ければ default)を int に読む(受け口の本文は道の型 — #2445) — 読めない値(数でない文字列・object など)は BodyInvalid
    (送り手の誤り・400)。読み方は int() のまま(小数は切り捨て・数字の文字列は数)。"
   (setv value (.get fields key default))
   (try
@@ -194,20 +195,3 @@
       (raise (BodyInvalid (.format "{} は整数: {!r}" key value))))))
 
 
-(deff text-field [#^ dict body #^ str key]  ; defk にできない: 受け口の本文の読み(Program の外の純粋な判断)が呼ぶ
-  {:pre [(: body dict) (: key str)] :post [(: % str)] :tags {:context "doeff-cluster" :role "judgment"}}
-  "送り手の本文の必須の文字列の欄を読むため — 欄が無いか文字列でなければ BodyInvalid(送り手の誤り・400)。str を受ける所へ
-   JSON の値のまま渡すと、型の食い違いが中の TypeError(500)になる(#1690)。"
-  (setv value (required-field body key))
-  (when (not (isinstance value str))
-    (raise (BodyInvalid (.format "{} は文字列: {!r}" key value))))
-  value)
-
-
-(deff list-field [#^ dict body #^ str key]  ; defk にできない: 受け口の本文の読み(Program の外の純粋な判断)が呼ぶ
-  {:pre [(: body dict) (: key str)] :post [(: % list)] :tags {:context "doeff-cluster" :role "judgment"}}
-  "送り手の本文の必須の列の欄を読むため — 欄が無いか列でなければ BodyInvalid(送り手の誤り・400・#1690)。"
-  (setv value (required-field body key))
-  (when (not (isinstance value list))
-    (raise (BodyInvalid (.format "{} は列: {!r}" key value))))
-  value)

@@ -36,7 +36,6 @@
 (import doeff_cluster.shared.intent.protocol [ClusterTiming Request PlainText BodyInvalid])
 (import doeff_cluster.coordinator.intent.cluster_model [ClusterState ClusterNaming Fault])
 (import doeff_cluster.coordinator.core.cluster_rules [format-version-refusal])
-(import doeff_cluster.coordinator.core.cluster_json [text-field list-field])
 (import doeff_cluster.coordinator.core.metrics_policy [record-metrics metrics-text])
 (import doeff_cluster.coordinator.core.cluster_policy [reconcile register-heartbeat heartbeat-reply state-view submit-task poll-task absorb-task-result board-write note-liveness
                          lease-write other-generation-boot])
@@ -300,8 +299,8 @@
   (cond
     ;; --- 旧い口 ---
     (and (= method "PUT") (= parts ["jobs"]))
-      (do (setv actor (require-actor (or request.actor (.get body "actor"))))
-          (setv #(after status reply) (legacy-put-jobs state (list-field body "jobs") actor))
+      (do (setv actor (require-actor (or request.actor body.actor)))
+          (setv #(after status reply) (legacy-put-jobs state (list body.jobs) actor))
           #((if (is after state) state (settle state after actor now timing)) status reply))
     (and (= method "POST") (= parts ["heartbeat"]) (is-not (format-version-refusal body.format) None))
       #(state 400 {"error" (format-version-refusal body.format)})
