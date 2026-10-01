@@ -501,10 +501,10 @@
       "layer": "runtime",
       "name": "doeff-cluster-env-handlers",
       "paths": [
-        "packages/doeff-cluster/src/doeff_cluster/env_handlers.hy"
+        "packages/doeff-cluster/src/doeff_cluster/worker/protocol/env_translation.hy"
       ],
       "public": [
-        "packages/doeff-cluster/src/doeff_cluster/env_handlers.hy"
+        "packages/doeff-cluster/src/doeff_cluster/worker/protocol/env_translation.hy"
       ],
       "responsibility": "実行環境(root)の準備の要求を汎用の effect へ訳す handler(env-translation)と、準備の process の入口(2026-09-26・翻訳の形2026-09-27)。",
       "typed": true
@@ -726,15 +726,16 @@
         "doeff-cluster-coordinator-route",
         "doeff-cluster-coordinator-http",
         "doeff-cluster-program-codec",
-        "doeff-cluster-remote-rules"
+        "doeff-cluster-remote-rules",
+        "doeff-cluster-result-delivery"
       ],
       "layer": "runtime",
       "name": "doeff-cluster-job-entry",
       "paths": [
-        "packages/doeff-cluster/src/doeff_cluster/job_entry.hy"
+        "packages/doeff-cluster/src/doeff_cluster/worker/entry/job_entry.hy"
       ],
       "public": [
-        "packages/doeff-cluster/src/doeff_cluster/job_entry.hy"
+        "packages/doeff-cluster/src/doeff_cluster/worker/entry/job_entry.hy"
       ],
       "responsibility": "worker が起動する子 process の入口(service と task)。",
       "typed": true
@@ -1349,10 +1350,10 @@
       "layer": "runtime",
       "name": "doeff-cluster-shim",
       "paths": [
-        "packages/doeff-cluster/src/doeff_cluster/shim.py"
+        "packages/doeff-cluster/src/doeff_cluster/worker/entry/shim.py"
       ],
       "public": [
-        "packages/doeff-cluster/src/doeff_cluster/shim.py"
+        "packages/doeff-cluster/src/doeff_cluster/worker/entry/shim.py"
       ],
       "responsibility": "job と worker の間に挟む見張り。",
       "typed": true
@@ -2555,6 +2556,85 @@
         "packages/doeff-cluster/src/doeff_cluster/coordinator/protocol/state_json.hy"
       ],
       "responsibility": "coordinator の状態の保存の綴り(state file の JSON と durable の KV の行の値)を型と JSON の間で書き・読む純粋な関数。",
+      "typed": true
+    },
+    {
+      "allow": [
+        "doeff-cluster-env-prepare",
+        "doeff-cluster-env-handlers"
+      ],
+      "layer": "runtime",
+      "name": "doeff-cluster-env-tool",
+      "paths": [
+        "packages/doeff-cluster/src/doeff_cluster/worker/entry/env_tool.hy"
+      ],
+      "public": [
+        "packages/doeff-cluster/src/doeff_cluster/worker/entry/env_tool.hy"
+      ],
+      "responsibility": "実行環境(root)1 つの準備の process の入口(worker が別の process として起こす)。",
+      "typed": true
+    },
+    {
+      "allow": [
+        "doeff-cluster-job-entry"
+      ],
+      "layer": "runtime",
+      "name": "doeff-cluster-job-entry-legacy-path",
+      "paths": [
+        "packages/doeff-cluster/src/doeff_cluster/job_entry.hy"
+      ],
+      "public": [
+        "packages/doeff-cluster/src/doeff_cluster/job_entry.hy"
+      ],
+      "responsibility": "旧い path の子 process の入口(新しい入口 worker/entry/job_entry へ渡すだけ・#2028 の 1 段目・消すのは #2113)。",
+      "typed": true
+    },
+    {
+      "allow": [
+        "doeff-cluster-shim"
+      ],
+      "layer": "runtime",
+      "name": "doeff-cluster-shim-legacy-path",
+      "paths": [
+        "packages/doeff-cluster/src/doeff_cluster/shim.py"
+      ],
+      "public": [
+        "packages/doeff-cluster/src/doeff_cluster/shim.py"
+      ],
+      "responsibility": "旧い path の見張りの入口(新しい入口 worker/entry/shim へ渡すだけ・#2028 の 1 段目・消すのは #2113)。",
+      "typed": true
+    },
+    {
+      "allow": [
+        "doeff-cluster-env-tool"
+      ],
+      "layer": "runtime",
+      "name": "doeff-cluster-env-handlers-legacy-path",
+      "paths": [
+        "packages/doeff-cluster/src/doeff_cluster/env_handlers.hy"
+      ],
+      "public": [
+        "packages/doeff-cluster/src/doeff_cluster/env_handlers.hy"
+      ],
+      "responsibility": "旧い path の実行環境の準備の入口(新しい入口 worker/entry/env_tool へ渡すだけ・#2028 の 1 段目・消すのは #2113)。",
+      "typed": true
+    },
+    {
+      "allow": [
+        "doeff-cluster-job-context",
+        "doeff-cluster-task-result",
+        "doeff-cluster-coordinator-route",
+        "doeff-cluster-coordinator-http"
+      ],
+      "layer": "runtime",
+      "name": "doeff-cluster-result-delivery",
+      "paths": [
+        "packages/doeff-cluster/src/doeff_cluster/worker/entry/result_delivery.hy"
+      ],
+      "public": [
+        "packages/doeff-cluster/src/doeff_cluster/worker/entry/result_delivery.hy"
+      ],
+      "responsibility": "子 process の task の結果を終わる前に coordinator へ直に届ける入口の組み立て。",
       "typed": true
     }
   ],

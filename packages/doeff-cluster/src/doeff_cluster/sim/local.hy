@@ -143,7 +143,7 @@
 (import doeff_cluster.worker.protocol.coordinator_link [watch-params])
 (import doeff_cluster.foundation.host_contract [HOST-CONTRACT SIM-PASSABLE environ-reader])
 (import doeff_cluster.job_context [RunContext worker-context-environ process-context-environ context-of-environ runtime-env-of-context])
-(import doeff_cluster.job_entry [decoded-program])
+(import doeff_cluster.worker.entry.job_entry [decoded-program])
 (import doeff_cluster.shared.intent.metrics_model [ReportMetrics])
 (import doeff_cluster.shared.intent.readiness_model [ReportReady])
 (import doeff_cluster.shared.protocol.remote [task-submit-body outcome-of settled-value])
