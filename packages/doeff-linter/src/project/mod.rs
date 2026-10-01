@@ -1188,6 +1188,11 @@ fn judge_layer_file(
     if enabled.contains(&ProjectRule::MatchFieldHyphen) && file.file.language == Language::Hy {
         drafts.extend(judge.match_field_hyphens());
     }
+    // DOEFF170・171: 値を型だけで渡す層(architecture.hy の層の :wire-free True — agora の core)の Hy の file(agora-redesign #2143)。
+    let wire_free_rules = [ProjectRule::WireInWireFreeLayer, ProjectRule::BareMapInWireFreeLayer];
+    if spec.wire_free && file.file.language == Language::Hy && wire_free_rules.iter().any(|r| enabled.contains(r)) {
+        drafts.extend(judge.wire_free(enabled));
+    }
     // DOEFF168: 宣言の :layers の層の Hy の file だけ(業務の層 — 層の分からない置き場は層の規則の外・agora-redesign #1906)。
     if let Some(decl) = settings.architecture.as_ref().and_then(|a| a.environment_branches.as_ref()) {
         if enabled.contains(&ProjectRule::EnvironmentBranch) && file.file.language == Language::Hy && decl.layers.contains(&spec.name) {
@@ -1383,6 +1388,35 @@ impl<'a> LayerJudge<'a> {
             Some("definitions".to_string()),
             Explain::TypesOnly { placement: self.placement.clone(), functions: names.iter().map(|n| n.to_string()).collect() },
         ))
+    }
+
+    /// DOEFF170・171: 値を型だけで渡す層の defwire と、:pre / :post / 欄の型の写像・型の無い組(鍵の細目は `<種類>:<名>`)。読めない
+    /// file は DOEFF128 が知らせるので、ここは何も出さない。
+    fn wire_free(&self, enabled: &BTreeSet<ProjectRule>) -> Vec<Draft> {
+        let Ok(hits) = typed_values::wire_free_hits(self.source) else { return Vec::new() };
+        let layer = self.layer_name(self.layer);
+        hits.into_iter()
+            .filter_map(|hit| {
+                let wire = hit.what == typed_values::WireFreeWhat::Wire;
+                let rule = if wire { ProjectRule::WireInWireFreeLayer } else { ProjectRule::BareMapInWireFreeLayer };
+                if !enabled.contains(&rule) {
+                    return None;
+                }
+                let message = if wire {
+                    format!("{} の defwire {} — 層 {} は値を型だけで渡す(wire の型は翻訳の層に置く)", self.file.file.rel, hit.name, layer)
+                } else {
+                    format!("{} の {}({})の型が {} — 層 {} は写像も中身の型の無い組・列も受け渡さない", self.file.file.rel, hit.name, hit.what.kind(), hit.problem, layer)
+                };
+                let detail = hit.detail();
+                Some(self.draft(
+                    rule,
+                    self.range(ByteSpan { start: hit.start, end: hit.end }),
+                    message,
+                    Some(detail),
+                    Explain::WireFree { placement: self.placement.clone(), wire, problem: hit.problem },
+                ))
+            })
+            .collect()
     }
 
     /// DOEFF169: match の class pattern の keyword の欄の名に `-` が在る(当たった keyword 1 つに 1 件 — 鍵の細目は `<class>:<欄の名>`)。

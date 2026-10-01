@@ -54,6 +54,9 @@ pub struct ArchLayer {
     pub forbid_modules: Vec<String>,
     #[serde(skip)]
     pub types_only: bool,
+    /// 値を型だけで渡す層(`:wire-free True` — defwire と写像・型の無い組を置かない・DOEFF170・171・agora-redesign #2143)。
+    #[serde(skip)]
+    pub wire_free: bool,
     /// この層の module が、:depends-on に宣言した依存先の service のどの層を読んでよいか(None = :open-layers)。
     /// 例: 組み立ての層 entry は依存先の intent と protocol(翻訳の handler)を読んで全体を組む(operator 2026-09-28 "A okay")。
     #[serde(skip)]
@@ -983,6 +986,7 @@ impl Architecture {
             allow_imports: self.layers.iter().filter_map(|l| l.imports.clone().map(|i| (l.name.clone(), i))).collect(),
             forbid_modules: self.layers.iter().filter(|l| !l.forbid_modules.is_empty()).map(|l| (l.name.clone(), l.forbid_modules.clone())).collect(),
             types_only: self.layers.iter().filter(|l| l.types_only).map(|l| l.name.clone()).collect(),
+            wire_free: self.layers.iter().filter(|l| l.wire_free).map(|l| l.name.clone()).collect(),
             function_definers: None,
             describe: self
                 .layers
@@ -2743,7 +2747,7 @@ impl<'a> Parser<'a> {
         out
     }
 
-    /// `(layer 名 :summary "…" :knows "…" :does-not-know "…" :question "…" :roles [..] :imports [..] :forbid-modules [..] :types-only true)`。
+    /// `(layer 名 :summary "…" :knows "…" :does-not-know "…" :question "…" :roles [..] :imports [..] :forbid-modules [..] :types-only true :wire-free true)`。
     fn layer(&mut self, form: &Form) -> Option<ArchLayer> {
         let Some(items) = self.paren(form).filter(|items| items.first().and_then(|h| self.symbol(h)) == Some("layer")) else {
             self.problem(form, ":layers の要素は (layer 名 …)");
@@ -2763,6 +2767,7 @@ impl<'a> Parser<'a> {
             imports: None,
             forbid_modules: Vec::new(),
             types_only: false,
+            wire_free: false,
             dependency_layers: None,
         };
         let rest: Vec<&Form> = items.iter().skip(2).copied().collect();
@@ -2780,6 +2785,11 @@ impl<'a> Parser<'a> {
                     Some("True" | "true") => layer.types_only = true,
                     Some("False" | "false") => layer.types_only = false,
                     _ => self.problem(value, ":types-only は True か False"),
+                },
+                ":wire-free" => match self.symbol(value) {
+                    Some("True" | "true") => layer.wire_free = true,
+                    Some("False" | "false") => layer.wire_free = false,
+                    _ => self.problem(value, ":wire-free は True か False"),
                 },
                 _ => self.unknown_key(key, "layer"),
             }

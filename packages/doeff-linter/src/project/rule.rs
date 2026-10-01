@@ -102,6 +102,12 @@ pub enum ProjectRule {
     EnvironmentBranch,
     /// DOEFF169: `match` の class pattern の keyword の欄の名に `-` が在る(Hy が属性名へ mangle しないので決して当たらない — agora-redesign #2036)。
     MatchFieldHyphen,
+    /// DOEFF170: 値を型だけで渡す層(architecture.hy の層の `:wire-free True` — agora の core)に defwire の宣言が在る(wire の型 — 欄名の
+    /// 対応を持つ宣言と parse / dump — は翻訳の層に置く・agora-redesign #2143 の (a))。
+    WireInWireFreeLayer,
+    /// DOEFF171: 値を型だけで渡す層の定義の :pre / :post と defclass / defrecord の欄の型に、写像(dict・Mapping・JsonBody・FrozenMap …・
+    /// 型つきの写像も)か中身の型の無い組 / 列(tuple・list)が在る(agora-redesign #2143 の (b))。
+    BareMapInWireFreeLayer,
     /// DOEFF131: architecture.hy の許可名簿(:world-handlers)の外の定義が、名簿の :wraps に挙げた doeff の実 I/O の handler を名指す
     /// (外の世界に触れてよいのは名簿の定義だけ — agora-redesign #1106 の R1)。
     WorldHandlerNamedOutsideList,
@@ -240,6 +246,8 @@ impl ProjectRule {
         ProjectRule::TranslationEmitsIntent,
         ProjectRule::EnvironmentBranch,
         ProjectRule::MatchFieldHyphen,
+        ProjectRule::WireInWireFreeLayer,
+        ProjectRule::BareMapInWireFreeLayer,
         ProjectRule::WorldHandlerNamedOutsideList,
         ProjectRule::WorldHandlerMisplaced,
         ProjectRule::TestKindMismatch,
@@ -313,6 +321,8 @@ impl ProjectRule {
             ProjectRule::TranslationEmitsIntent => "DOEFF130",
             ProjectRule::EnvironmentBranch => "DOEFF168",
             ProjectRule::MatchFieldHyphen => "DOEFF169",
+            ProjectRule::WireInWireFreeLayer => "DOEFF170",
+            ProjectRule::BareMapInWireFreeLayer => "DOEFF171",
             ProjectRule::WorldHandlerNamedOutsideList => "DOEFF131",
             ProjectRule::WorldHandlerMisplaced => "DOEFF132",
             ProjectRule::TestKindMismatch => "DOEFF133",
@@ -413,6 +423,9 @@ impl ProjectRule {
             | ProjectRule::EnvironmentBranch
             // 決して当たらない match の節(#2036 — 黙って既定の枝に倒れる誤り)。
             | ProjectRule::MatchFieldHyphen
+            // 値を型だけで渡す層の defwire と素の写像(operator 2026-10-01 13:0x〜13:2x の決め・#2143)。
+            | ProjectRule::WireInWireFreeLayer
+            | ProjectRule::BareMapInWireFreeLayer
             // 宣言に無い置き場所(どの層の決まりも当たらない)・defk を素で呼ぶ(Program が値として流れる本物の誤り)・
             // 読めない file(判定が欠け、0 件に見えても合格ではない)。
             | ProjectRule::UndeclaredPlace
@@ -521,6 +534,9 @@ impl ProjectRule {
             | ProjectRule::RebuiltAccumulator
             | ProjectRule::EnvironmentBranch
             | ProjectRule::MatchFieldHyphen
+            // file 1 つ(と層の宣言)で決まる。
+            | ProjectRule::WireInWireFreeLayer
+            | ProjectRule::BareMapInWireFreeLayer
             | ProjectRule::WorldHandlerNamedOutsideList
             | ProjectRule::VocabularyOutsideSinglePoint
             | ProjectRule::RetiredWord
@@ -583,6 +599,8 @@ impl ProjectRule {
             | ProjectRule::TranslationEmitsIntent
             | ProjectRule::EnvironmentBranch
             | ProjectRule::MatchFieldHyphen
+            | ProjectRule::WireInWireFreeLayer
+            | ProjectRule::BareMapInWireFreeLayer
             | ProjectRule::SemanticBusinessDecision
             | ProjectRule::SemanticTransportKnowledge => true,
             ProjectRule::UnknownConfigKey
@@ -679,6 +697,8 @@ impl ProjectRule {
             ProjectRule::TranslationEmitsIntent => "翻訳の handler が業務の intent を出す",
             ProjectRule::EnvironmentBranch => "業務の層が環境の名や dry-run の印で分岐する",
             ProjectRule::MatchFieldHyphen => "match の class pattern の欄の名に - が在る(決して当たらない)",
+            ProjectRule::WireInWireFreeLayer => "値を型だけで渡す層に defwire が在る",
+            ProjectRule::BareMapInWireFreeLayer => "値を型だけで渡す層の契約や欄に写像・型の無い組",
             ProjectRule::WorldHandlerNamedOutsideList => "許可名簿の外で実 I/O の handler を名指す",
             ProjectRule::WorldHandlerMisplaced => "許可名簿の定義が無い・foundation の外に在る",
             ProjectRule::TestKindMismatch => "テストの種類(手元 / 縁)と印が食い違う",
@@ -721,7 +741,9 @@ impl ProjectRule {
             | ProjectRule::LayerTypesOnly
             | ProjectRule::TranslationEmitsIntent
             | ProjectRule::EnvironmentBranch
-            | ProjectRule::MatchFieldHyphen => {
+            | ProjectRule::MatchFieldHyphen
+            | ProjectRule::WireInWireFreeLayer
+            | ProjectRule::BareMapInWireFreeLayer => {
                 RuleFamily::Layer
             }
             ProjectRule::ModuleDeclaresTags | ProjectRule::RoleMatchesLayer | ProjectRule::ContextMatchesService => {
@@ -824,6 +846,8 @@ impl ProjectRule {
             ProjectRule::TranslationEmitsIntent => "Translation Emits Intent",
             ProjectRule::EnvironmentBranch => "Environment Branch In Business Code",
             ProjectRule::MatchFieldHyphen => "Hyphenated Field In Match Class Pattern",
+            ProjectRule::WireInWireFreeLayer => "Wire Type In Wire-Free Layer",
+            ProjectRule::BareMapInWireFreeLayer => "Bare Mapping In Wire-Free Layer",
             ProjectRule::WorldHandlerNamedOutsideList => "World Handler Named Outside The List",
             ProjectRule::WorldHandlerMisplaced => "World Handler Misplaced",
             ProjectRule::TestKindMismatch => "Test Kind Mismatch",
@@ -925,6 +949,8 @@ impl ProjectRule {
             ProjectRule::WorldHandlerNamedOutsideList => "architecture.hy の :world-handlers の :wraps に挙げた doeff の実 I/O の handler(os-file-handler・http-production-handler …)を名指してよいのは、許可名簿の定義(とその中の入れ子の定義)だけ — 値として渡す所(with-handlers の列)も呼び出しも数える",
             ProjectRule::TranslationEmitsIntent => "翻訳の層(設定の handler_layers)の handler — defhandler と [effect k] を受ける関数 — は doeff の汎用の effect だけを出し、業務の intent(設定の intent_layers の型)を出さない — 本体で実行する呼び((<- …)・(! …))を import した defk の先まで辿る",
             ProjectRule::EnvironmentBranch => "業務の層(architecture.hy の :environment-branches の :layers)の Hy の定義は、環境の名の値(:values — production・emulated …)と比べず(=・!=・is・is-not・in・not-in の引数の文字列の literal と、match の節の型)、dry-run の印(:flags)で分岐しない(if・when・unless・cond の条件と match の主語の中の記号)— 環境の違いは handler の組の差し替えだけで表す(業務の層は環境を知らない)",
+            ProjectRule::WireInWireFreeLayer => "値を型だけで渡す層(architecture.hy の層の :wire-free True)に defwire を置かない — wire の型(欄名の対応 :names を持つ宣言)と parse / dump は翻訳の層(protocol)に置き、この層は欄名を持たない型(defrecord)だけを持つ",
+            ProjectRule::BareMapInWireFreeLayer => "値を型だけで渡す層(:wire-free True)の defk・defn・deff の :pre / :post と defclass・defrecord の欄の型に、写像(dict・Dict・Mapping・MutableMapping・JsonValue・JsonBody・JsonObject・OpaqueJson・FrozenMap — 中身の型の在る写像も)と中身の型の無い組・列(tuple・list)を書かない — データは型(defrecord)か、キー → 値の関数・効果で受け渡す",
             ProjectRule::MatchFieldHyphen => "match の節の型の class pattern(`(Class :欄 型)`)の keyword の欄の名は、Python の属性名の綴り(`-` でなく `_`)で書く — Hy は class pattern の keyword を mangle しないので `:a-b` は `case Class(a-b=…)` になり、どの値にも当たらない",
             ProjectRule::DefkCalledBare => "defk の定義は Program として渡す所((<- …) の右辺・(! …)・(return …)・Program を受ける呼びの引数)だけで呼ぶ — 素で呼ぶと答えではなく Program が返る",
             ProjectRule::SemanticMixedConcerns => "役が judgment / program の定義は、入力の形の検めと業務の判断を混ぜない(Jev の判定 — warning か info)",
@@ -999,6 +1025,8 @@ impl ProjectRule {
             ProjectRule::WorldHandlerNamedOutsideList => "名簿の定義(例 with-agora-process)の下で本体を走らせ、自分では実 I/O の handler を被せない — 新しく外の世界に触れる所が要るなら、その定義を foundation の層に置いて名簿に載せる",
             ProjectRule::TranslationEmitsIntent => "intent を出す業務の流れは層 core の program に置き、翻訳の handler は受けた intent を doeff の汎用の effect(HttpRequest・記録の読み書き・時計 …)へ出し直すだけにする — 経由した defk が intent を出すなら、その defk を呼ばずに汎用の effect を直に使う",
             ProjectRule::EnvironmentBranch => "環境で変わる振る舞いは effect にして、環境ごとの handler(本番・模擬・dry-run)に答えさせる — 業務の層の定義は環境の名も dry-run の印も読まない",
+            ProjectRule::WireInWireFreeLayer => "defwire の宣言を翻訳の層(protocol)へ移し、この層には欄名を持たない defrecord を置いて、protocol が wire の型から読んで渡す",
+            ProjectRule::BareMapInWireFreeLayer => "写像は欄の名前と型を持つ defrecord にするか、データを引くための写像(索引・表)はキー → 値の関数か効果(例 (ReadRow table key))にする — 写像を組むのが目的の綴りは翻訳の層(protocol)の 1 点に置く",
             ProjectRule::MatchFieldHyphen => "欄の名の `-` を `_` に書き換える(`:ended-reason` → `:ended_reason`)— 直すと今まで当たらなかった節が当たるようになるので、その定義の検を撃って振る舞いの変化を確かめる",
             ProjectRule::DefkCalledBare => "(<- x (f …)) で束ねるか (! (f …)) で答えを受ける — 素の関数の中なら、その関数を defk にして呼び手を Program にする",
             ProjectRule::SemanticMixedConcerns => "形の検めは protocol の境目で defwire の型に parse し(形が合わなければ解く所で失敗)、この定義は型のある値を受けて判断だけをする(Jev の外れなら誤判定の一覧に載せる)",
@@ -1047,6 +1075,8 @@ mod tests {
         ("DOEFF130", RuleFamily::Layer),
         ("DOEFF168", RuleFamily::Layer),
         ("DOEFF169", RuleFamily::Layer),
+        ("DOEFF170", RuleFamily::Layer),
+        ("DOEFF171", RuleFamily::Layer),
         ("DOEFF131", RuleFamily::Raw),
         ("DOEFF132", RuleFamily::Raw),
         ("DOEFF133", RuleFamily::Raw),

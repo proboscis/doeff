@@ -157,6 +157,8 @@ pub enum Explain {
     EnvironmentBranch { placement: Placement, hit: super::env_branch::BranchHit },
     /// DOEFF169: match の class pattern の keyword の欄の名に `-` が在る(class と欄の名)。
     MatchFieldHyphen { placement: Placement, class: String, field: String },
+    /// DOEFF170・171: 値を型だけで渡す層の defwire(wire が真)か、:pre / :post / 欄の型の写像・型の無い組(理由)。
+    WireFree { placement: Placement, wire: bool, problem: String },
     /// DOEFF103: 型だけの層に関数を置いた。
     TypesOnly { placement: Placement, functions: Vec<String> },
     /// DOEFF104: タグの無い定義がある。
@@ -352,6 +354,10 @@ impl<'a> Narrator<'a> {
             Explain::MatchFieldHyphen { placement, class, field } => (
                 format!("match の class pattern ({} :{} …) — {}", class, field, self.file_subject(placement)),
                 "Hy の match は class pattern の keyword を属性名へ mangle しないまま Python の case に出す(`:a-b` は `case Class(a-b=…)`)。属性 `a-b` はどの値にも無いので、その節は値が何でも当たらず、黙って次の節(多くは既定の `_`)に倒れる。".to_string(),
+            ),
+            Explain::WireFree { placement, wire, problem } => (
+                if *wire { format!("defwire の宣言 — {}", self.file_subject(placement)) } else { format!("{} — {}", problem, self.file_subject(placement)) },
+                "この層は値を型だけで受け渡す(operator 2026-10-01 の決め — defwire は core に置かない・データを引く写像は渡さずキー → 値の関数か効果にする)。wire の型と写像を組む綴りは翻訳の層の 1 点に置き、この層は欄の名前と型を持つ型(defrecord)だけを受け取り返す。写像や型の無い組が通ると、どの欄が在るかを読む形の確かめがこの層に入り込む。".to_string(),
             ),
             Explain::EnvironmentBranch { placement, hit } => (
                 match hit {
@@ -984,6 +990,8 @@ impl<'a> Narrator<'a> {
             )),
             Explain::RetiredCall { instead, .. } => Some(format!("{} に置き換える", instead)),
             Explain::MatchFieldHyphen { field, .. } => Some(format!(":{} を :{} と書く — 直すと今まで当たらなかった節が当たるようになるので、その定義の検を撃つ", field, field.replace('-', "_"))),
+            Explain::WireFree { wire: true, .. } => Some("defwire を翻訳の層(protocol)へ移し、この層には欄名を持たない defrecord を置いて protocol が読んで渡す".to_string()),
+            Explain::WireFree { .. } => Some("写像は欄の名前と型を持つ defrecord にするか、データを引く写像(索引・表)はキー → 値の関数か効果にする".to_string()),
             Explain::EnvironmentBranch { .. } => Some("環境で変わる振る舞いを effect にして、環境ごとの handler(本番・模擬・dry-run)に答えさせる — 業務の層の定義は環境の名も dry-run の印も読まない".to_string()),
             Explain::PlacedDependency { owner_rel, .. } => Some(format!("{} を層の置き場(<root>/<service>/<層>/)へ移すか、要る型を intent へ移して読む — 直せない既存の当たりは登録簿に載せる", owner_rel)),
             Explain::MixedConcerns { .. } => Some("形の検めは protocol の境目で defwire の型に parse し(形が合わなければ解く所で失敗)、この定義は型のある値を受けて判断だけをする".to_string()),
@@ -1251,6 +1259,7 @@ mod tests {
             allowed: Some([LayerId(0)].into_iter().collect()),
             forbid_modules: BTreeSet::new(),
             types_only: false,
+            wire_free: false,
             roles: Some(roles.iter().map(|r| r.to_string()).collect()),
             description,
         };

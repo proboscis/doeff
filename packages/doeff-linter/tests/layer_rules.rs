@@ -4812,6 +4812,48 @@ fn hyphenated_fields_in_match_class_patterns_hit_in_every_layer() {
     assert_eq!(hit["level"], "critical", "{}", hit);
 }
 
+/// agora-redesign #2143: 値を型だけで渡す層(層の :wire-free True — ここでは core)では、defwire の宣言(DOEFF170)と、:pre / :post と
+/// defrecord の欄の型の写像(型つきの写像も)・中身の型の無い組(DOEFF171)を critical で当てる。宣言の無い層(entry)の同じ形・型つきの
+/// defrecord と同じ型の列・宣言を外した repo は当てない(判定は層の宣言から入る)。
+#[test]
+fn wire_free_layer_forbids_defwire_and_maps() {
+    let files = [
+        (
+            "app/billing/core/rules.hy",
+            tags("billing", "judgment")
+                + "(defwire InvoiceWire [] (#^ str id))\n(defrecord Invoice (#^ str id) (#^ dict extra))\n\
+                   (defk total [invoices index]\n  {:pre [(: invoices (of list Invoice)) (: index (of dict str Invoice))] :post [(: % int)]}\n  0)\n",
+        ),
+        (
+            "app/billing/core/clean.hy",
+            tags("billing", "judgment") + "(defrecord Line (#^ str id) (#^ (of tuple str ...) tags))\n(defk ids [lines]\n  {:pre [(: lines (of list Line))] :post [(: % (of tuple str ...))]}\n  #())\n",
+        ),
+        (
+            "app/billing/entry/wiring.hy",
+            tags("billing", "entry") + "(defwire PageWire [] (#^ str id))\n(defk serve [body]\n  {:pre [(: body dict)] :post [(: % dict)]}\n  body)\n",
+        ),
+    ];
+    let dir = world_repo_with(&files, "", "[\"DOEFF170\", \"DOEFF171\"]");
+    let path = dir.path().join("architecture.hy");
+    let declared = std::fs::read_to_string(&path).unwrap();
+    std::fs::write(&path, declared.replace("(layer core :roles [judgment] :imports [core])", "(layer core :roles [judgment] :imports [core] :wire-free True)")).unwrap();
+    let (_, report) = editor(dir.path());
+    assert_eq!(keys(&report, "DOEFF170"), vec!["app/billing/core/rules.hy::DOEFF170::wire:InvoiceWire"], "{}", report);
+    assert_eq!(
+        keys(&report, "DOEFF171"),
+        vec!["app/billing/core/rules.hy::DOEFF171::field:Invoice.extra", "app/billing/core/rules.hy::DOEFF171::pre:total:index"],
+        "core の欄の dict と型つきの写像の :pre は当て、型つきの列・同じ型の組と entry の層は当てない: {}",
+        report
+    );
+    for key in ["app/billing/core/rules.hy::DOEFF170::wire:InvoiceWire", "app/billing/core/rules.hy::DOEFF171::pre:total:index"] {
+        assert_eq!(violation(&report, key)["level"], "critical", "{}", key);
+    }
+    // 宣言を外せば同じ file でも当たらない(層の宣言が判定の入口)。
+    std::fs::write(&path, declared).unwrap();
+    let (_, report) = editor(dir.path());
+    assert!(keys(&report, "DOEFF170").is_empty() && keys(&report, "DOEFF171").is_empty(), "{}", report);
+}
+
 /// agora-redesign #1797: 境目の部品は許す種類(:touches — 閉じた語彙)と理由(:reason)を名指す。欠けと語の外は設定の誤りで止まる。
 #[test]
 fn boundary_parts_need_touches_and_a_reason() {

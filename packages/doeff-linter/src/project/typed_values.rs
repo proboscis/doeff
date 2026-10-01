@@ -710,9 +710,208 @@ pub fn find(root: &Path, selection: &FileSelection, focus: Option<&[PathBuf]>) -
     )
 }
 
+// --- 値を型だけで渡す層(DOEFF170・171 — agora-redesign #2143)----------------------------------------------------------
+//
+// 層の宣言 `:wire-free True` の層(agora の core)は、wire の型(defwire)を持たず、写像も中身の型の無い組 / 列も受け渡さない
+// (operator 2026-10-01 13:0x〜13:2x 逐語 "defwire should never live in core right???" / "we never pass dict around if it's not about
+// building the dict itself. if it's for getting data, such must be more like key->data func or such effect")。DOEFF144 と違い、
+// 型つきの写像(`(of dict str Row)`)も鳴る(データを引く写像はキー → 値の関数か効果にする)。写像を組むのが目的の綴りは翻訳の層の
+// 1 点に置くので、この層には例外を置かない — ただし並べ替えのキーの組(Plain::SortKey)は値の受け渡しではないので外す。
+
+/// 写像(中身の型の有無を問わない)— DOEFF144 の素の写像に、JSON の本文の別名と凍らせた写像を足した物。
+const WIRE_FREE_MAPPINGS: &[&str] = &["JsonBody", "JSONBody", "OpaqueJson", "FrozenMap"];
+/// 中身の型が無ければ鳴る列(組は BARE_TUPLES)。
+const BARE_LISTS: &[&str] = &["list", "List", "typing.List"];
+
+/// 当たりの種類。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WireFreeWhat {
+    /// defwire の宣言(DOEFF170)。
+    Wire,
+    /// :pre の引数の型(DOEFF171)。
+    Pre,
+    /// :post の答えの型(DOEFF171)。
+    Post,
+    /// defclass・defrecord の欄の型(DOEFF171)。
+    Field,
+}
+
+impl WireFreeWhat {
+    /// 登録簿の鍵の細目の種類。
+    pub fn kind(self) -> &'static str {
+        match self {
+            WireFreeWhat::Wire => "wire",
+            WireFreeWhat::Pre => "pre",
+            WireFreeWhat::Post => "post",
+            WireFreeWhat::Field => "field",
+        }
+    }
+}
+
+/// 値を型だけで渡す層の当たり 1 つ。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WireFreeHit {
+    pub start: usize,
+    pub end: usize,
+    /// 名(defwire の名・`定義:引数`・`定義`・`Class.欄`)。
+    pub name: String,
+    pub what: WireFreeWhat,
+    /// 赤の理由(defwire は空)。
+    pub problem: String,
+}
+
+impl WireFreeHit {
+    /// 登録簿の鍵の細目(`<種類>:<名>`)。
+    pub fn detail(&self) -> String {
+        format!("{}:{}", self.what.kind(), self.name)
+    }
+}
+
+/// 名 1 つ — 写像か、中身の型の無い組・列。
+fn wire_free_name_problem(name: &str) -> Option<String> {
+    if BARE_MAPPINGS.contains(&name) || WIRE_FREE_MAPPINGS.contains(&name) {
+        Some(format!("写像 {}", name))
+    } else if BARE_TUPLES.contains(&name) || BARE_LISTS.contains(&name) {
+        Some(format!("中身の型の無い {}", name))
+    } else {
+        None
+    }
+}
+
+/// 型の注記 1 つ → 赤の理由(union の枝・入れ物の中身も見る)。写像は中身の型が在っても鳴る。
+fn wire_free_type_problem(node: &Hy) -> Option<String> {
+    match node {
+        Hy::Name { text, .. } => wire_free_name_problem(text),
+        Hy::Text { value, .. } => value.split('|').find_map(|part| wire_free_name_problem(part.trim())),
+        Hy::Form { .. } => {
+            let head = node.head();
+            let items = node.expression()?;
+            if head == "|" {
+                return items[1..].iter().find_map(wire_free_type_problem);
+            }
+            if !((head == "get" || head == "of") && items.len() >= 3) {
+                return None;
+            }
+            let base = items[1].name()?;
+            let args = type_args(items);
+            if BARE_MAPPINGS.contains(&base) || WIRE_FREE_MAPPINGS.contains(&base) {
+                return Some(format!("写像 {}[…](中身の型が在ってもデータを引く写像は渡さない)", base));
+            }
+            if BARE_TUPLES.contains(&base) {
+                if args.len() >= 2 && !hy_ellipsis(args[args.len() - 1]) {
+                    return Some(format!("長さの決まった組 {}[A, B]", base));
+                }
+                if args.first().is_some_and(|a| hy_open(a)) {
+                    return Some(format!("要素の型が開いた組 {}[object/Any, ...]", base));
+                }
+            }
+            if BARE_TUPLES.contains(&base) || BARE_LISTS.contains(&base) || CONTAINERS.contains(&base) {
+                return args.iter().filter(|a| !hy_ellipsis(a)).find_map(|a| wire_free_type_problem(a));
+            }
+            None
+        }
+    }
+}
+
+/// defk・deff の :pre [(: 引数 T) …] の (引数・T) の列。
+fn defk_pres(items: &[Hy]) -> Vec<(String, &Hy)> {
+    let mut out = Vec::new();
+    for part in items {
+        let Some(map) = part.form(Kind::Brace) else { continue };
+        for i in (0..map.len().saturating_sub(1)).step_by(2) {
+            let Some(checks) = map[i + 1].form(Kind::Bracket).filter(|_| map[i].is(":pre")) else { continue };
+            for check in checks {
+                if let Some(parts) = check.expression().filter(|p| check.head() == ":" && p.len() == 3) {
+                    if let Some(arg) = parts[1].name() {
+                        out.push((arg.to_string(), &parts[2]));
+                    }
+                }
+            }
+        }
+    }
+    out
+}
+
+/// 値を型だけで渡す層の Hy の file 1 つを判じる(DOEFF170 の defwire と DOEFF171 の :pre / :post / 欄の型)。読めなければ理由。
+pub fn wire_free_hits(source: &str) -> Result<Vec<WireFreeHit>, String> {
+    let forms = read_hy(source)?;
+    let mut out = Vec::new();
+    let typed = |name: String, what: WireFreeWhat, node: &Hy| -> Option<WireFreeHit> {
+        let problem = wire_free_type_problem(node)?;
+        // 並べ替えのキーの関数(`…key-of`・`sort-key`)の答えの組は値の受け渡しではない(DOEFF144 の Plain::SortKey と同じ名の形)。
+        if what == WireFreeWhat::Post && plain_shape(&name) == Some(Plain::SortKey) && !problem.starts_with("写像") {
+            return None;
+        }
+        let (start, end) = node.span();
+        Some(WireFreeHit { start, end, name, what, problem })
+    };
+    for form in &forms {
+        let Some(items) = form.expression() else { continue };
+        match form.head() {
+            "defwire" => {
+                let class = items.get(1).filter(|n| !matches!(n, Hy::Form { .. })).or_else(|| items.get(2));
+                if let Some(class) = class {
+                    let (start, end) = class.span();
+                    out.push(WireFreeHit { start, end, name: spelled(source, class), what: WireFreeWhat::Wire, problem: String::new() });
+                }
+            }
+            "defclass" | "defrecord" => {
+                for site in hy_class_sites(source, form).into_iter().filter(|s| s.what == What::Field) {
+                    if let Annotation::Hy(node) = site.annotation {
+                        out.extend(typed(site.name, WireFreeWhat::Field, node));
+                    }
+                }
+            }
+            "defk" | "deff" | "defn" if items.len() >= 2 => {
+                let name = annotated(source, &items[1]).map(|(n, _, _)| n).or_else(|| items[1].name().map(str::to_string));
+                let Some(name) = name else { continue };
+                out.extend(defk_pres(items).into_iter().filter_map(|(arg, node)| typed(format!("{}:{}", name, arg), WireFreeWhat::Pre, node)));
+                out.extend(defk_posts(items).into_iter().filter_map(|node| typed(name.clone(), WireFreeWhat::Post, node)));
+            }
+            _ => {}
+        }
+    }
+    out.sort_by(|a, b| (a.start, a.detail()).cmp(&(b.start, b.detail())));
+    Ok(out)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 値を型だけで渡す層の当たりの細目の列。
+    fn wire_free(source: &str) -> Vec<String> {
+        wire_free_hits(source).expect("読める").into_iter().map(|h| h.detail()).collect()
+    }
+
+    #[test]
+    fn wire_free_layer_names_defwire_and_maps_in_contracts_and_fields() {
+        let source = r#"
+(defwire RowWire [] (#^ str name))
+(defrecord Row (#^ str name) (#^ dict extra) (#^ (of tuple str ...) tags) (#^ (of list Row) rows))
+(defk pick [rows index body raw opaque]
+  {:pre [(: rows (of list Row)) (: index (of dict str Row)) (: body JsonBody) (: raw tuple) (: opaque OpaqueJson)]
+   :post [(: % (| dict None))]}
+  rows)
+(defk counted [rows]
+  {:pre [(: rows (of tuple Row ...))] :post [(: % int)]}
+  1)
+(defk order-key-of [row]
+  {:pre [(: row Row)] :post [(: % tuple)]}
+  #(row.name))
+"#;
+        assert_eq!(
+            wire_free(source),
+            vec!["wire:RowWire", "field:Row.extra", "pre:pick:index", "pre:pick:body", "pre:pick:raw", "pre:pick:opaque", "post:pick"]
+        );
+    }
+
+    #[test]
+    fn wire_free_layer_lets_typed_records_and_sequences_through() {
+        // 当たらない例: 型つきの defrecord・同じ型の列・str の引数・並べ替えのキーの組。
+        let source = "(defrecord Row (#^ str name) (#^ (of tuple str ...) tags))\n(defk names [rows]\n  {:pre [(: rows (of list Row))] :post [(: % (of tuple str ...))]}\n  #())\n";
+        assert!(wire_free(source).is_empty(), "{:?}", wire_free(source));
+    }
 
     /// (細目・理由の頭)の列。
     fn hits(rel: &str, source: &str) -> Vec<(String, String)> {
