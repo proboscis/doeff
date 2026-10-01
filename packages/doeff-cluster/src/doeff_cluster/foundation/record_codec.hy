@@ -271,6 +271,10 @@
                     (when (is cls None)
                       (raise (UnencodableValue (+ "記録の dataclass を import できない: " (get j "$c")))))
                     (cls #** (dfor #(k x) (.items (get j "f")) k (decode-value x))))
+    ;; 素の dict は encode-value が「$ で始まらない文字列の鍵だけ」の時に限って書く(他は $d)。知らない $ の鍵は読めない印 —
+    ;; 素の dict として黙って返さない(#2581)。
+    (not (all (gfor k j (_plain-key? k))))
+      (raise (UnencodableValue (+ "記録の値の印を読めない: " (canonical j))))
     True (dfor #(k x) (.items j) k (decode-value x))))
 
 (defn #^ BaseException decode-error [#^ dict j]

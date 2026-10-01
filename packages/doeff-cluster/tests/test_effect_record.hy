@@ -29,7 +29,7 @@
 (import doeff_cluster.shared.intent.semaphore_model [CreateNamedSemaphore HeldLease LeaseStanding])
 (import doeff_cluster.shared.intent.readiness_model [ReportReady])
 (import doeff_cluster.shared.intent.metrics_model [ReportMetrics ReadProcessGauges])
-(import doeff_cluster.foundation.record_log [read-recording ReplayFinished ReplayDiverged LEGACY-ANY CURRENT-ANY])
+(import doeff_cluster.foundation.record_log [read-recording ReplayFinished ReplayDiverged LEGACY-ANY CURRENT-ANY WatchedRef])
 (import pathlib)
 (import doeff_cluster.foundation.record_handlers [MemorySink EffectLog effect-recorder ReplayState effect-replayer replay-report])
 
@@ -137,6 +137,18 @@
   (assert (= (get report "consumed") (get report "events")) report))
 
 
+(deftest test-the-same-recording-replays-twice-to-the-same-history
+  ;; #2581: 値は読む時点で 1 度だけ戻す。業務と再生の共有の箱が書き換えても、同じ Recording の 2 度目の再生は同じ答えを返す
+  ;; (deliver-recorded は Entry.value の写しを渡す — 写しを外すと 2 度目が書き換え済みの箱を受けて赤)。
+  (setv #(lines program store) (record-system))
+  (<- recorded list program)
+  (setv rec (read-recording lines))
+  (<- first list (with-handlers-list [(effect-replayer (ReplayState rec))] (system-program)))
+  (<- second list (with-handlers-list [(effect-replayer (ReplayState rec))] (system-program)))
+  (assert (= first recorded) #(first recorded))
+  (assert (= second recorded) #(second recorded)))
+
+
 (deftest test-replay-without-the-order-gives-a-different-history
   ;; 対照: 出来事の番号の順を待たない再生は、同じ答えを返しても task の交互の順が変わり、共有の箱の中身の順が記録と違う。
   (setv #(lines program store) (record-system))
@@ -225,6 +237,50 @@
     (val replayed (args-of (WriteShared (get l "a" "key") (OpaqueJson.of value)) (HandleTable)))
     (assert (= (canonical entry.args) (canonical replayed)) #(entry.args replayed))
     (assert (= (get entry.args "expect") CURRENT-ANY) entry.args)))
+
+
+;; ---- 答えの値は記録を読む時に戻す — 再生の handler は JSON を読まない(#2581)-------------------------------------------
+;; Entry.value は閉じた和 RestoredAnswer: 戻した値(decode-value の答え)か、先の答えの共有の箱の参照 WatchedRef({"$w": n})。
+
+(deftest test-read-recording-restores-the-recorded-answers
+  ;; 本番の記録の断片(書きの答え)と、時計・共有の箱(Ask の答え)・handle を含む系の記録の両方で、読んだ答えは記録の値を
+  ;; decode-value で戻した物に等しい。JSON の印の付いた値(時刻 $dt・handle $h・tuple $t)は戻した型で持ち、$w は WatchedRef のまま。
+  (setv #(system-lines program store) (record-system))
+  (<- recorded list program)
+  (for [lines [(json.loads (.read-text PRODUCTION-FRAGMENT :encoding "utf-8")) system-lines]]
+    (val blobs (dfor l lines :if (= (.get l "k") "blob") (get l "h") (get l "v")))
+    (val answers (dfor l lines :if (and (in (.get l "k") #("call" "ans")) (.get l "ok") (in "v" l))
+                       (if (= (get l "k") "call") (get l "e") (get l "s")) (resolve-refs (get l "v") blobs)))
+    (assert answers lines)
+    (val rec (read-recording lines))
+    (for [#(e raw) (.items answers)]
+      (val value (. (get rec.entries e) value))
+      (match raw
+        {"$w" n} (assert (= value (WatchedRef :entry n)) #(e raw value))
+        ;; 印の付いた答え($dt・$h)は JSON の dict のまま残らない(decode-value の答えと等しい = 戻した型)
+        _ (assert (= value (decode-value raw)) #(e raw value)))))
+  ;; 系の記録は 3 つの印をすべて含む(検が空振りしない)
+  (val system-answers (json.dumps system-lines))
+  (for [tag ["\"$w\"" "\"$dt\"" "\"$h\""]]
+    (assert (in tag system-answers) tag)))
+
+
+(deftest test-an-answer-that-cannot-be-restored-fails-when-the-recording-is-read
+  ;; 戻せない答え(import できない型・読めない印・壊れた時刻・型の欄と合わない中身)は、読む時に問いの番号と effect の型を名指して断る。
+  ;; 黙って None や JSON の dict のまま Entry に入れない(以前は再生が答えを返す時まで JSON のまま運び、知らない印は素の dict になった)。
+  (val head {"k" "run" "format" 2 "startedMs" 0 "service" "s" "run" "r0"})
+  (for [bad [{"$c" "doeff_cluster.no_such_model:Gone" "f" {}}
+             {"$zz" 1}
+             {"n" {"$unknown" [1]}}
+             {"$dt" "not a time"}
+             {"$c" (type-name WriteShared) "f" {"no_such_field" 1}}]]
+    (val line {"k" "call" "e" 7 "t" "root" "at" 0 "ty" (type-name ReadShared) "m" "read" "a" {"key" "row/a"} "ok" True "v" bad})
+    (var refused None)
+    (try (read-recording [head line])
+         (except [err ValueError] (:= refused (str err))))
+    (assert (is-not refused None) #(bad "読めたことにしてはいけない"))
+    (assert (in "問い 7" refused) refused)
+    (assert (in (type-name ReadShared) refused) refused)))
 
 
 ;; ---- 置き場を移した module の旧い型の名を読む(#2105・#2021 の決め 2a)-----------------------------------------

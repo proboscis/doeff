@@ -17,6 +17,7 @@
 (require doeff-hy.macros [defhandler defk <- val var])
 (val MODULE-TAGS {:context "doeff-cluster" :role "foundation"})
 (import atexit)
+(import copy)
 (import json)
 (import os)
 (import sys)
@@ -34,7 +35,7 @@
                                          EffectCodec HandleTable UnencodableValue UnrecordableEffect RestoredValue
                                          encode-value encode-error decode-value decode-error canonical intern-json
                                          codec-of mode-of args-of subject-of])
-(import doeff_cluster.foundation.record_log [ROOT ReplayFinished ReplayDiverged Entry Recording match-step diff-row summarize])
+(import doeff_cluster.foundation.record_log [ROOT ReplayFinished ReplayDiverged Entry Recording WatchedRef match-step diff-row summarize])
 (import doeff_core_effects.effects [Ask])
 (import doeff_cluster.job_context [RunContext])
 (import doeff_cluster.foundation.host_contract [HostContract])
@@ -529,21 +530,22 @@
   None)
 
 
-;; 成功の答えの値は record_codec.decode-value の答えそのもの(記録から復元した値 RestoredValue — #1693)。
+;; 成功の答えの値は read-recording が記録を読む時に戻した値(record_log.RestoredAnswer — #1693・#2581)。ここは JSON を読まない。
 (defn #^ (| (get tuple #((get Literal True) RestoredValue)) (get tuple #((get Literal False) BaseException))) deliver-recorded [#^ ReplayState state #^ Entry entry #^ EffectCodec codec]
-  "記録の答えを業務へ返す値に戻す(handle の札・共有の箱)。例外なら例外の object。"
+  "記録の答えを業務へ返す値にする(共有の箱の参照は再生の箱へ)。例外なら例外の object。"
   (when (not entry.ok)
     ;; 失敗の答えは err の欄を持つ(read-recording が ok = 偽の答えの行から入れる)— 無ければ記録が壊れている。
     (when (is entry.error None)
       (raise (ValueError (.format "記録の失敗の答え(問い {})に err が無い" entry.e))))
     (return #(False (decode-error entry.error))))
-  (setv v entry.value)
-  (when (and (isinstance v dict) (in "$w" v))
-    (return #(True (get state.watched (get v "$w")))))
-  (setv value (decode-value v))
-  (when (and codec.watch (isinstance value #(dict list)))
-    (setv (get state.watched entry.e) value))
-  #(True value))
+  (match entry.value
+    (WatchedRef :entry watched) #(True (get state.watched watched))
+    ;; 渡すのは読んだ値の写し — 業務と再生の箱が書き換えても Entry.value(記録の読みの答え)は変わらない
+    ;; (以前は渡すたびに JSON から作り直していた。同じ Recording を 2 度再生しても同じ値を返す・#2581)。
+    restored (do (setv value (copy.deepcopy restored))
+                 (when (and codec.watch (isinstance value #(dict list)))
+                   (setv (get state.watched entry.e) value))
+                 #(True value))))
 
 
 (defhandler effect-replayer [#^ ReplayState state]
