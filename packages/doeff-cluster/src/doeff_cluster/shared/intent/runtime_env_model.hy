@@ -15,14 +15,14 @@
 ;;;
 ;;; キー env-key は root の中身を決める物(repos・project・import-roots・format)と platform だけから作る。env-vars と tools は
 ;;; file を変えないのでキーに入れない。準備の手順の版もキーに入れない(coordinator と worker の版が違っても同じ宣言が同じキーになる)。
-(require doeff-hy.macros [defk <- val var])
+;;; ここは型と定数だけ。キー・JSON の往復・失敗の値の組み立て・子の環境変数の組の検め(env-key・runtime-env->json・
+;;; runtime-env-of-json・env-failure・child-environ-refusal・current-platform ほか)は doeff_cluster.shared.core.runtime_env_rules。
+(require doeff-hy.macros [deff val])
 (val MODULE-TAGS {:context "doeff-cluster" :role "intent"})
 (require doeff-hy.record [defenum defrecord])
+(import collections.abc [Callable])
 (import dataclasses [dataclass])
 (import enum [StrEnum])
-(import hashlib)
-(import json)
-(import platform)
 (import re)
 
 (val RUNTIME-ENV-FORMAT 1)
@@ -57,32 +57,27 @@
 
 
 (defclass RuntimeEnvInvalid [ValueError]
-  "宣言が誤っている(呼び手の誤り・送れない)。coordinator は同じ誤りを HTTP 400 で断る。"
+  "宣言が誤っている(呼び手の誤り・送れない)。coordinator は同じ誤りを HTTP 400 で断る。
+   check-name・check-relative・check-tuple = 宣言の型(下の record)が作る時に欄を検め、誤りならこの例外(tuple の形の誤りは TypeError)を
+   投げる口(この型だけの層では module の関数を置けないので、投げる例外の class に置く)。"
   (defn #^ None __init__ [self #^ InvalidKind kind #^ str detail]  ; defk にできない: 例外の class の初期化
     (.__init__ (super) (.format "{}: {}" kind.value detail))
-    (setv self.kind kind self.detail detail)))
+    (setv self.kind kind self.detail detail))
 
+  (defn [staticmethod] #^ None check-name [#^ str what #^ str name]  ; defk にできない: dataclass の __post_init__ から呼ぶ純粋な検査
+    (when (not (and (isinstance name str) (.fullmatch NAME-PATTERN name)))
+      (raise (RuntimeEnvInvalid InvalidKind.INVALID-NAME (.format "{} は英小文字・数字・. _ - の名: {!r}" what name)))))
 
-(defn _invalid [#^ InvalidKind kind #^ str detail]  ; defk にできない: dataclass の __post_init__ から呼ぶ純粋な検査
-  (raise (RuntimeEnvInvalid kind detail)))
+  (defn [staticmethod] #^ None check-relative [#^ str what #^ str path]  ; defk にできない: dataclass の __post_init__ から呼ぶ純粋な検査
+    "repo の中の相対の dir(`.` 可)。絶対 path・`..`・空の部分・`:` と `,` を断る。"
+    (setv parts (.split path "/"))
+    (when (or (not (isinstance path str)) (not path) (.startswith path "/") (in ":" path) (in "," path)
+              (any (gfor p parts (or (= p "") (= p "..")))))
+      (raise (RuntimeEnvInvalid InvalidKind.BAD-PATH (.format "{} は repo の中の相対の dir: {!r}" what path)))))
 
-
-(defn _check-name [#^ str what #^ str name]  ; defk にできない: dataclass の __post_init__ から呼ぶ純粋な検査
-  (when (not (and (isinstance name str) (.fullmatch NAME-PATTERN name)))
-    (_invalid InvalidKind.INVALID-NAME (.format "{} は英小文字・数字・. _ - の名: {!r}" what name))))
-
-
-(defn _check-relative [#^ str what #^ str path]  ; defk にできない: dataclass の __post_init__ から呼ぶ純粋な検査
-  "repo の中の相対の dir(`.` 可)。絶対 path・`..`・空の部分・`:` と `,` を断る。"
-  (setv parts (.split path "/"))
-  (when (or (not (isinstance path str)) (not path) (.startswith path "/") (in ":" path) (in "," path)
-            (any (gfor p parts (or (= p "") (= p "..")))))
-    (_invalid InvalidKind.BAD-PATH (.format "{} は repo の中の相対の dir: {!r}" what path))))
-
-
-(defn _check-tuple [#^ str what value item-type]  ; defk にできない: dataclass の __post_init__ から呼ぶ純粋な検査
-  (when (not (and (isinstance value tuple) (all (gfor v value (isinstance v item-type)))))
-    (raise (TypeError (.format "{} は {} の tuple: {!r}" what item-type.__name__ value)))))
+  (defn [staticmethod] #^ None check-tuple [#^ str what #^ object value #^ type item-type]  ; defk にできない: dataclass の __post_init__ から呼ぶ純粋な検査
+    (when (not (and (isinstance value tuple) (all (gfor v value (isinstance v item-type)))))
+      (raise (TypeError (.format "{} は {} の tuple: {!r}" what item-type.__name__ value))))))
 
 
 ;; --- 宣言の型 -----------------------------------------------------------------------------
@@ -93,11 +88,11 @@
   (#^ str url)
   (#^ str commit)
   (defn #^ None __post-init__ [self]  ; defk にできない: dataclass の検査の口
-    (_check-name "repo の名" self.name)
+    (RuntimeEnvInvalid.check-name "repo の名" self.name)
     (when (not (and (isinstance self.url str) self.url (not (any (gfor c self.url (.isspace c))))))
-      (_invalid InvalidKind.BAD-URL (.format "repo {} の url: {!r}" self.name self.url)))
+      (raise (RuntimeEnvInvalid InvalidKind.BAD-URL (.format "repo {} の url: {!r}" self.name self.url))))
     (when (not (and (isinstance self.commit str) (.fullmatch COMMIT-PATTERN self.commit)))
-      (_invalid InvalidKind.BAD-COMMIT (.format "repo {} の commit は 40 桁の sha: {!r}" self.name self.commit)))))
+      (raise (RuntimeEnvInvalid InvalidKind.BAD-COMMIT (.format "repo {} の commit は 40 桁の sha: {!r}" self.name self.commit))))))
 
 
 (defrecord NativeWheel
@@ -107,11 +102,11 @@
   (#^ str repo)
   (#^ tuple paths)
   (defn #^ None __post-init__ [self]  ; defk にできない: dataclass の検査の口
-    (_check-name "native の package" self.package)
-    (_check-name "native の repo" self.repo)
-    (_check-tuple "NativeWheel.paths" self.paths str)
-    (when (not self.paths) (_invalid InvalidKind.EMPTY (.format "native {} の paths が空" self.package)))
-    (for [p self.paths] (_check-relative (.format "native {} の path" self.package) p))))
+    (RuntimeEnvInvalid.check-name "native の package" self.package)
+    (RuntimeEnvInvalid.check-name "native の repo" self.repo)
+    (RuntimeEnvInvalid.check-tuple "NativeWheel.paths" self.paths str)
+    (when (not self.paths) (raise (RuntimeEnvInvalid InvalidKind.EMPTY (.format "native {} の paths が空" self.package))))
+    (for [p self.paths] (RuntimeEnvInvalid.check-relative (.format "native {} の path" self.package) p))))
 
 
 (defrecord PythonProject
@@ -124,15 +119,15 @@
   (setv #^ tuple groups #())
   (setv #^ tuple native #())
   (defn #^ None __post-init__ [self]  ; defk にできない: dataclass の検査の口
-    (_check-name "project の repo" self.repo)
-    (_check-relative "project の path" self.path)
+    (RuntimeEnvInvalid.check-name "project の repo" self.repo)
+    (RuntimeEnvInvalid.check-relative "project の path" self.path)
     (when (not (and (isinstance self.lock-sha256 str) (.fullmatch SHA256-PATTERN self.lock-sha256)))
-      (_invalid InvalidKind.BAD-SHA256 (.format "lock の sha256 は 16 進 64 桁: {!r}" self.lock-sha256)))
+      (raise (RuntimeEnvInvalid InvalidKind.BAD-SHA256 (.format "lock の sha256 は 16 進 64 桁: {!r}" self.lock-sha256))))
     (when (not (and (isinstance self.python str) self.python))
-      (_invalid InvalidKind.EMPTY "project の python が空"))
-    (_check-tuple "PythonProject.groups" self.groups str)
-    (for [g self.groups] (_check-name "dependency group" g))
-    (_check-tuple "PythonProject.native" self.native NativeWheel)))
+      (raise (RuntimeEnvInvalid InvalidKind.EMPTY "project の python が空")))
+    (RuntimeEnvInvalid.check-tuple "PythonProject.groups" self.groups str)
+    (for [g self.groups] (RuntimeEnvInvalid.check-name "dependency group" g))
+    (RuntimeEnvInvalid.check-tuple "PythonProject.native" self.native NativeWheel)))
 
 
 (defrecord ToolRequirement
@@ -140,7 +135,7 @@
   (#^ str name)
   (setv #^ str version "")
   (defn #^ None __post-init__ [self]  ; defk にできない: dataclass の検査の口
-    (_check-name "道具の名" self.name)))
+    (RuntimeEnvInvalid.check-name "道具の名" self.name)))
 
 
 (defrecord EnvVar
@@ -149,30 +144,29 @@
   (#^ str value)
   (defn #^ None __post-init__ [self]  ; defk にできない: dataclass の検査の口
     (when (not (and (isinstance self.name str) (.fullmatch ENV-VAR-PATTERN self.name)))
-      (_invalid InvalidKind.INVALID-NAME (.format "環境変数の名は英大文字・数字・_: {!r}" self.name)))
+      (raise (RuntimeEnvInvalid InvalidKind.INVALID-NAME (.format "環境変数の名は英大文字・数字・_: {!r}" self.name))))
     (when (or (in self.name RESERVED-ENV-NAMES) (.startswith self.name RESERVED-ENV-PREFIXES))
-      (_invalid InvalidKind.RESERVED-ENV-VAR (.format "worker が組む環境変数は宣言で置けない: {}" self.name)))
+      (raise (RuntimeEnvInvalid InvalidKind.RESERVED-ENV-VAR (.format "worker が組む環境変数は宣言で置けない: {}" self.name))))
     (when (and (.endswith self.name SECRET-ENV-SUFFIXES) (not (.endswith self.name PATH-ENV-SUFFIXES)))
-      (_invalid InvalidKind.SECRET-ENV-VAR
+      (raise (RuntimeEnvInvalid InvalidKind.SECRET-ENV-VAR
                 (.format "秘密の中身を名指す環境変数は置けない(宣言と task は coordinator の状態に残る — 秘密は file の path の名 {} で運ぶ): {}"
-                         (.join "・" PATH-ENV-SUFFIXES) self.name)))
+                         (.join "・" PATH-ENV-SUFFIXES) self.name))))
     (when (not (isinstance self.value str))
-      (raise (TypeError (.format "環境変数 {} の値は文字列: {!r}" self.name self.value))))))
-
-
-(defn #^ (| str None) child-environ-refusal [#^ object environ]  ; defk にできない: effect の構成子(__post_init__)・coordinator の本文の読み(Program の外)が呼ぶ純粋な判断
-  "子の環境変数の組(service の :environ・task の :environ — 名 → 文字列の dict)が受けられない理由(受けられれば None)。
-   名と値の規則は EnvVar 1 つ(名の形・worker の予約・秘密の中身の名・文字列の値)— service と task で同じ(2026-09-28)。"
-  (when (not (isinstance environ dict))
-    (return (.format "environ は環境変数の名 → 文字列の dict: {!r}" environ)))
-  (for [#(k v) (.items environ)]
-    (when (not (isinstance v str))
-      (return (.format "environ の {} の値は文字列: {!r}" k v)))
-    (try
-      (EnvVar :name k :value v)
-      (except [error RuntimeEnvInvalid]
-        (return (.format "environ の {}: {}" k error)))))
-  None)
+      (raise (TypeError (.format "環境変数 {} の値は文字列: {!r}" self.name self.value)))))
+  (defn [staticmethod] #^ (| str None) environ-refusal [#^ object environ]  ; defk にできない: effect の構成子(__post_init__)が呼ぶ純粋な検査
+    "子の環境変数の組(service の :environ・task の :environ — 名 → 文字列の dict)が受けられない理由(受けられれば None)。
+     名と値の規則は EnvVar 1 つ — 型の構成子(RemoteJob)と core の判断(runtime_env_rules.child-environ-refusal)が同じ規則を読むため、
+     型の側に置く(intent が core を読まない)。"
+    (when (not (isinstance environ dict))
+      (return (.format "environ は環境変数の名 → 文字列の dict: {!r}" environ)))
+    (for [#(k v) (.items environ)]
+      (when (not (isinstance v str))
+        (return (.format "environ の {} の値は文字列: {!r}" k v)))
+      (try
+        (EnvVar :name k :value v)
+        (except [error RuntimeEnvInvalid]
+          (return (.format "environ の {}: {}" k error)))))
+    None))
 
 
 (defrecord RuntimeEnv
@@ -189,34 +183,34 @@
   ;; うち task が読むのは約 2 割)。
   (setv #^ tuple bytecode-entries #())
   (defn #^ None __post-init__ [self]  ; defk にできない: dataclass の検査の口
-    (_check-tuple "RuntimeEnv.repos" self.repos RepoCheckout)
-    (_check-tuple "RuntimeEnv.bytecode-entries" self.bytecode-entries str)
+    (RuntimeEnvInvalid.check-tuple "RuntimeEnv.repos" self.repos RepoCheckout)
+    (RuntimeEnvInvalid.check-tuple "RuntimeEnv.bytecode-entries" self.bytecode-entries str)
     (for [m self.bytecode-entries]
       (when (not (all (gfor part (.split m ".") (.isidentifier part))))
-        (_invalid InvalidKind.INVALID-NAME (.format "焼く範囲の入口は module の名(点で区切る): {!r}" m))))
-    (_check-tuple "RuntimeEnv.import-roots" self.import-roots str)
-    (_check-tuple "RuntimeEnv.env-vars" self.env-vars EnvVar)
-    (_check-tuple "RuntimeEnv.tools" self.tools ToolRequirement)
-    (when (not self.repos) (_invalid InvalidKind.EMPTY "repos が空"))
-    (when (not self.import-roots) (_invalid InvalidKind.EMPTY "import の根が空"))
+        (raise (RuntimeEnvInvalid InvalidKind.INVALID-NAME (.format "焼く範囲の入口は module の名(点で区切る): {!r}" m)))))
+    (RuntimeEnvInvalid.check-tuple "RuntimeEnv.import-roots" self.import-roots str)
+    (RuntimeEnvInvalid.check-tuple "RuntimeEnv.env-vars" self.env-vars EnvVar)
+    (RuntimeEnvInvalid.check-tuple "RuntimeEnv.tools" self.tools ToolRequirement)
+    (when (not self.repos) (raise (RuntimeEnvInvalid InvalidKind.EMPTY "repos が空")))
+    (when (not self.import-roots) (raise (RuntimeEnvInvalid InvalidKind.EMPTY "import の根が空")))
     (when (!= self.format RUNTIME-ENV-FORMAT)
-      (_invalid InvalidKind.BAD-JSON (.format "宣言の形の版 {} は扱えない(扱える版 = {})" self.format RUNTIME-ENV-FORMAT)))
+      (raise (RuntimeEnvInvalid InvalidKind.BAD-JSON (.format "宣言の形の版 {} は扱えない(扱える版 = {})" self.format RUNTIME-ENV-FORMAT))))
     (setv names (lfor r self.repos r.name))
     (when (!= (len names) (len (set names)))
-      (_invalid InvalidKind.DUPLICATE-REPO (.format "repo の名が重なる: {}" names)))
+      (raise (RuntimeEnvInvalid InvalidKind.DUPLICATE-REPO (.format "repo の名が重なる: {}" names))))
     (setv known (frozenset names))
     (for [#(what repo) (+ [#("project" self.project.repo)]
                           (lfor w self.project.native #((.format "native {}" w.package) w.repo)))]
       (when (not-in repo known)
-        (_invalid InvalidKind.UNKNOWN-REPO (.format "{} の repo {} が宣言に無い" what repo))))
+        (raise (RuntimeEnvInvalid InvalidKind.UNKNOWN-REPO (.format "{} の repo {} が宣言に無い" what repo)))))
     (for [root self.import-roots]
       (setv #(repo _ rel) (.partition root "/"))
       (when (not-in repo known)
-        (_invalid InvalidKind.UNKNOWN-REPO (.format "import の根 {!r} の repo が宣言に無い" root)))
-      (_check-relative (.format "import の根 {!r} の dir" root) rel))
+        (raise (RuntimeEnvInvalid InvalidKind.UNKNOWN-REPO (.format "import の根 {!r} の repo が宣言に無い" root))))
+      (RuntimeEnvInvalid.check-relative (.format "import の根 {!r} の dir" root) rel))
     (setv env-names (lfor v self.env-vars v.name))
     (when (!= (len env-names) (len (set env-names)))
-      (_invalid InvalidKind.INVALID-NAME (.format "環境変数の名が重なる: {}" env-names)))))
+      (raise (RuntimeEnvInvalid InvalidKind.INVALID-NAME (.format "環境変数の名が重なる: {}" env-names))))))
 
 
 ;; --- 準備の失敗(worker の側・値で返す) ----------------------------------------------------
@@ -248,91 +242,3 @@
   (defn #^ None __post-init__ [self]  ; defk にできない: dataclass の検査の口
     (when (not (isinstance self.kind EnvFailureKind))
       (raise (TypeError (.format "EnvFailure.kind は EnvFailureKind: {!r}" self.kind))))))
-
-
-(defk env-failure [kind detail]
-  {:pre [(: kind EnvFailureKind) (: detail str)] :post [(: % EnvFailure)]}
-  "kind の既定の「一時か」で失敗を作る。"
-  (EnvFailure :kind kind :detail detail :retryable (in kind RETRYABLE-KINDS)))
-
-
-;; --- 純粋な換算 ---------------------------------------------------------------------------
-
-(defk root-split [root]
-  {:pre [(: root str)] :post [(: % tuple)]}
-  "import の根 \"<repo>/<相対の dir>\" → #(repo の名 相対の dir)。"
-  (val parts (.partition root "/"))
-  #((get parts 0) (get parts 2)))
-
-
-(defn #^ str current-platform []  ; defk にできない: worker と送り手の composition(Program の外)が読む
-  "この機体の platform の名(env のキーの材料 — 例 linux-x86_64)。root の中の native の wheel と venv は platform ごとに違う。"
-  (.format "{}-{}" (.lower (platform.system)) (.lower (platform.machine))))
-
-
-(defk key-material [env platform]
-  {:pre [(: env RuntimeEnv) (: platform str)] :post [(: % dict)]}
-  "キーの材料(root の中身を決める物だけ)。env-vars・tools・準備の手順の版は入れない。"
-  {"format" env.format
-   "platform" platform
-   "repos" (lfor r env.repos {"name" r.name "url" r.url "commit" r.commit})
-   "project" {"repo" env.project.repo "path" env.project.path "lockSha256" env.project.lock-sha256
-              "python" env.project.python "groups" (list env.project.groups)
-              "native" (lfor w env.project.native {"package" w.package "repo" w.repo "paths" (list w.paths)})}
-   "importRoots" (list env.import-roots)})
-
-
-(defk env-key [env platform]
-  {:pre [(: env RuntimeEnv) (: platform str)] :post [(: % str) (= (len %) ENV-KEY-LENGTH)]}
-  "env のキー(定義点はここ 1 つ)= 正規化した JSON の sha256 の頭 24 桁。"
-  (<- material dict (key-material env platform))
-  (val text (json.dumps material :sort-keys True :separators #("," ":") :ensure-ascii False))
-  (cut (.hexdigest (hashlib.sha256 (.encode text "utf-8"))) 0 ENV-KEY-LENGTH))
-
-
-(defk native-key [wheel tree-hashes python platform]
-  {:pre [(: wheel NativeWheel) (: tree-hashes tuple) (: python str) (: platform str)
-         (= (len tree-hashes) (len wheel.paths))]
-   :post [(: % str) (= (len %) ENV-KEY-LENGTH)]}
-  "native の wheel のキー(定義点はここ 1 つ)= package・wheel の中身を決める dir ごとの git の tree hash・Python・platform の
-   正規化した JSON の sha256 の頭 24 桁。tree-hashes は wheel.paths と同じ順。"
-  (val material {"package" wheel.package
-                 "trees" (lfor #(path tree) (zip wheel.paths tree-hashes) [path tree])
-                 "python" python "platform" platform})
-  (val text (json.dumps material :sort-keys True :separators #("," ":") :ensure-ascii False))
-  (cut (.hexdigest (hashlib.sha256 (.encode text "utf-8"))) 0 ENV-KEY-LENGTH))
-
-
-(defk runtime-env->json [env]
-  {:pre [(: env RuntimeEnv)] :post [(: % dict)]}
-  "宣言 → 通信の本文と子の環境変数(DOEFF_RUNTIME_ENV)に載せる JSON の値。"
-  (<- material dict (key-material env ""))
-  (del (get material "platform"))
-  (| material
-     {"envVars" (lfor v env.env-vars {"name" v.name "value" v.value})
-      "tools" (lfor t env.tools {"name" t.name "version" t.version})}
-     (if env.bytecode-entries {"bytecodeEntries" (list env.bytecode-entries)} {})))
-
-
-(defk runtime-env-of-json [value]
-  {:pre [(: value dict)] :post [(: % RuntimeEnv)]}
-  "JSON の値 → 宣言。形が違えば RuntimeEnvInvalid(bad-json)、中身の誤りは型の検査の RuntimeEnvInvalid。"
-  (try
-    (val project (get value "project"))
-    (val env (RuntimeEnv
-      :repos (tuple (gfor r (get value "repos")
-                          (RepoCheckout :name (get r "name") :url (get r "url") :commit (get r "commit"))))
-      :project (PythonProject :repo (get project "repo") :path (get project "path")
-                              :lock-sha256 (get project "lockSha256") :python (get project "python")
-                              :groups (tuple (.get project "groups" []))
-                              :native (tuple (gfor w (.get project "native" [])
-                                                   (NativeWheel :package (get w "package") :repo (get w "repo")
-                                                                :paths (tuple (get w "paths"))))))
-      :import-roots (tuple (get value "importRoots"))
-      :env-vars (tuple (gfor v (.get value "envVars" []) (EnvVar :name (get v "name") :value (get v "value"))))
-      :tools (tuple (gfor t (.get value "tools" []) (ToolRequirement :name (get t "name") :version (.get t "version" ""))))
-      :format (.get value "format" RUNTIME-ENV-FORMAT)
-      :bytecode-entries (tuple (.get value "bytecodeEntries" []))))
-    (except [error [KeyError TypeError AttributeError]]
-      (raise (RuntimeEnvInvalid InvalidKind.BAD-JSON (.format "宣言の JSON の形が違う: {}: {}" (. (type error) __name__) error)))))
-  env)

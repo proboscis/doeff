@@ -26,7 +26,7 @@
 (import doeff_cluster.coordinator.intent.cluster_model [ClusterJob ClusterState HandoffWatch HandoffPhase])
 (import doeff_cluster.coordinator.core.cluster_policy [job-to-json LIVE-PHASES])
 (import doeff_cluster.coordinator.core.resource_policy [service-readiness])
-(import doeff_cluster.shared.intent.readiness_model [handoff-timeout-ms])
+(import doeff_cluster.shared.core.readiness_rules [handoff-timeout-ms])
 (import doeff_cluster.shared.core.job_rules [spec-hash])
 
 

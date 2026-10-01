@@ -52,10 +52,12 @@
   ;; 本物の coordinator と worker を 1 process・仮想の時計で走らせる模擬の環境(sim-cluster の local・環境の世界 env_world・git の台本
   ;; checkout_git_script)。全 service の core と entry を読むので、どの service にも属さない(DOEFF114・115 の外・ほかの規則は当たる)。
   ;; 本番の code はこの dir を import しない。
+  :wire-modules ["doeff_cluster.foundation.board_requests"]
   :verification-environment "sim")
 
 (defservice coordinator "worker へ job を割り当てる coordinator(資源と盤の置き場・調停のループ)"
-  {:layers [core intent protocol entry]
+  {:system {:exempt "cluster そのものの process — cluster に置く job ではなく、自分の image の k8s Deployment として動く(operator 2026-10-01 の補足「doeff-cluster の coordinator と worker の image は残る」)。defsystem にすると cluster が自分を job として置く循環になる"}
+   :layers [core intent protocol entry]
    :entry-modules ["doeff_cluster.coordinator.entry.main"]
    :invariants ["doeff_cluster.coordinator.core.coordinator_invariants:acknowledged-writes-survive"]})
 
@@ -65,7 +67,8 @@
 ;; protocol(heartbeat の本文の形と止めの印 — worker/protocol・#2026)。
 ;; #2025・#2026。
 (defservice worker "coordinator から job と task を受けて子 process として走らせる worker"
-  {:layers [core intent protocol]
+  {:system {:exempt "cluster そのものの process — cluster に置く job ではなく、自分の image の k8s Deployment として動く(operator 2026-10-01 の補足「doeff-cluster の coordinator と worker の image は残る」)。defsystem にすると cluster が自分を job として置く循環になる"}
+   :layers [core intent protocol]
    :entry-modules ["doeff_cluster.main"]
    :invariants ["doeff_cluster.worker_invariants:handoff-keeps-a-ready-writer"]})
 
@@ -73,6 +76,7 @@
 ;; ので条にしていない。層の dir(#2030): intent = effect の型・core = 置き場の Program と条・protocol = file の I/O の
 ;; 言い換え(record-files)・entry = 入口。HTTP の受付(RecordInbox)は汎用の I/O なので foundation/record_inbox。
 (defservice record-store "effect の記録の置き場(run ごと・区切りごとの file に追記し、読み・一覧・圧縮・保持を答える)"
-  {:layers [core intent protocol entry]
+  {:system {:exempt "cluster そのものの process — cluster に置く job ではなく、自分の image の k8s Deployment として動く(operator 2026-10-01 の補足「doeff-cluster の coordinator と worker の image は残る」)。defsystem にすると cluster が自分を job として置く循環になる"}
+   :layers [core intent protocol entry]
    :entry-modules ["doeff_cluster.record_store.entry.main"]
    :invariants ["doeff_cluster.record_store.core.invariants:prune-keeps-runs-whole"]})

@@ -181,7 +181,9 @@
         "doeff-cluster-shared-protocol",
         "doeff-cluster-worker-model",
         "doeff-cluster-coordinator-request-bodies-model",
-        "doeff-hy-wire"
+        "doeff-hy-wire",
+        "doeff-cluster-readiness-rules",
+        "doeff-cluster-runtime-env-rules"
       ],
       "layer": "pure",
       "name": "doeff-cluster-cluster-policy",
@@ -336,7 +338,10 @@
         "doeff-cluster-shared-protocol",
         "doeff-cluster-warm-model",
         "doeff-cluster-coordinator-route",
-        "doeff-cluster-remote"
+        "doeff-cluster-remote",
+        "doeff-cluster-program-codec",
+        "doeff-cluster-runtime-env-rules",
+        "doeff-cluster-warm-rules"
       ],
       "layer": "io",
       "name": "doeff-cluster-detached",
@@ -482,7 +487,8 @@
         "doeff-cluster-env-prepare",
         "doeff-cluster-runtime-env-model",
         "doeff-cluster-env-prepare-model",
-        "doeff-cluster-env-marker-model"
+        "doeff-cluster-env-marker-model",
+        "doeff-cluster-runtime-env-rules"
       ],
       "layer": "runtime",
       "name": "doeff-cluster-env-handlers",
@@ -500,7 +506,8 @@
         "doeff-cluster-runtime-env-model",
         "doeff-cluster-runtime-env",
         "doeff-cluster-env-prepare-model",
-        "doeff-cluster-env-marker-model"
+        "doeff-cluster-env-marker-model",
+        "doeff-cluster-runtime-env-rules"
       ],
       "layer": "effects",
       "name": "doeff-cluster-env-prepare",
@@ -606,7 +613,8 @@
         "doeff-cluster-readiness-model",
         "doeff-cluster-resource-policy",
         "doeff-cluster-shared-protocol",
-        "doeff-cluster-worker-model"
+        "doeff-cluster-worker-model",
+        "doeff-cluster-readiness-rules"
       ],
       "layer": "pure",
       "name": "doeff-cluster-handoff-policy",
@@ -687,7 +695,8 @@
         "doeff-cluster-job-model",
         "doeff-cluster-job-rules",
         "doeff-cluster-runtime-env-model",
-        "doeff-cluster-worker-model"
+        "doeff-cluster-worker-model",
+        "doeff-cluster-runtime-env-rules"
       ],
       "layer": "io",
       "name": "doeff-cluster-job-context",
@@ -708,7 +717,9 @@
         "doeff-cluster-report-client",
         "doeff-cluster-task-result",
         "doeff-cluster-coordinator-route",
-        "doeff-cluster-coordinator-http"
+        "doeff-cluster-coordinator-http",
+        "doeff-cluster-program-codec",
+        "doeff-cluster-remote-rules"
       ],
       "layer": "runtime",
       "name": "doeff-cluster-job-entry",
@@ -801,7 +812,12 @@
         "doeff-cluster-worker-drain-requests",
         "doeff-cluster-worker-coordinator-link",
         "doeff-cluster-worker-declared",
-        "doeff-hy-wire"
+        "doeff-hy-wire",
+        "doeff-cluster-program-codec",
+        "doeff-cluster-remote-rules",
+        "doeff-cluster-runtime-env-rules",
+        "doeff-cluster-warm-rules",
+        "doeff-cluster-board-requests"
       ],
       "layer": "io",
       "name": "doeff-cluster-local",
@@ -837,7 +853,8 @@
         "doeff-cluster-coordinator-http",
         "doeff-cluster-coordinator-route",
         "doeff-cluster-worker-lease-release",
-        "doeff-cluster-worker-coordinator-link"
+        "doeff-cluster-worker-coordinator-link",
+        "doeff-cluster-runtime-env-rules"
       ],
       "layer": "runtime",
       "name": "doeff-cluster-main",
@@ -935,7 +952,8 @@
       "allow": [
         "doeff-cluster-cluster-model",
         "doeff-cluster-remote-model",
-        "doeff-cluster-coordinator-request-bodies-model"
+        "doeff-cluster-coordinator-request-bodies-model",
+        "doeff-cluster-remote-rules"
       ],
       "layer": "pure",
       "name": "doeff-cluster-program-policy",
@@ -966,7 +984,8 @@
         "doeff-cluster-readiness-model",
         "doeff-cluster-coordinator-route",
         "doeff-cluster-service-report",
-        "doeff-cluster-readiness-report"
+        "doeff-cluster-readiness-report",
+        "doeff-cluster-readiness-rules"
       ],
       "layer": "io",
       "name": "doeff-cluster-readiness-handlers",
@@ -1090,7 +1109,10 @@
         "doeff-cluster-remote-model",
         "doeff-cluster-runtime-env-model",
         "doeff-cluster-shared-protocol",
-        "doeff-cluster-coordinator-route"
+        "doeff-cluster-coordinator-route",
+        "doeff-cluster-program-codec",
+        "doeff-cluster-remote-rules",
+        "doeff-cluster-runtime-env-rules"
       ],
       "layer": "io",
       "name": "doeff-cluster-remote",
@@ -1107,7 +1129,8 @@
       "allow": [
         "doeff-cluster-cluster-model",
         "doeff-cluster-runtime-env-model",
-        "doeff-cluster-shared-capabilities"
+        "doeff-cluster-shared-capabilities",
+        "doeff-cluster-runtime-env-rules"
       ],
       "layer": "domain",
       "name": "doeff-cluster-remote-model",
@@ -1170,7 +1193,8 @@
         "doeff-cluster-shared-protocol",
         "doeff-cluster-worker-model",
         "doeff-cluster-coordinator-request-bodies-model",
-        "doeff-cluster-readiness-report"
+        "doeff-cluster-readiness-report",
+        "doeff-cluster-readiness-rules"
       ],
       "layer": "pure",
       "name": "doeff-cluster-resource-policy",
@@ -1218,7 +1242,9 @@
       "typed": true
     },
     {
-      "allow": [],
+      "allow": [
+        "doeff-cluster-runtime-env-rules"
+      ],
       "layer": "domain",
       "name": "doeff-cluster-runtime-env-model",
       "paths": [
@@ -1236,7 +1262,8 @@
         "doeff-cluster-runtime-env-model",
         "doeff-cluster-runtime-identity-model",
         "doeff-cluster-env-marker-model",
-        "doeff-cluster-runtime-env"
+        "doeff-cluster-runtime-env",
+        "doeff-cluster-runtime-env-rules"
       ],
       "layer": "domain",
       "name": "doeff-cluster-runtime-identity",
@@ -1301,7 +1328,8 @@
         "doeff-cluster-semaphore-model",
         "doeff-cluster-shared-model",
         "doeff-cluster-coordinator-route",
-        "doeff-hy-wire"
+        "doeff-hy-wire",
+        "doeff-cluster-board-requests"
       ],
       "layer": "io",
       "name": "doeff-cluster-shared-handlers",
@@ -1454,7 +1482,12 @@
         "doeff-cluster-coordinator-request-queue",
         "doeff-cluster-worker-drain-requests",
         "doeff-cluster-worker-declared",
-        "doeff-hy-wire"
+        "doeff-hy-wire",
+        "doeff-cluster-program-codec",
+        "doeff-cluster-readiness-rules",
+        "doeff-cluster-remote-rules",
+        "doeff-cluster-runtime-env-rules",
+        "doeff-cluster-warm-rules"
       ],
       "exclude": [
         "packages/doeff-cluster/tests/fixtures/independence/*"
@@ -1511,7 +1544,9 @@
         "doeff-cluster-runtime-env-model",
         "doeff-cluster-shared-protocol",
         "doeff-cluster-warm-model",
-        "doeff-cluster-coordinator-request-bodies-model"
+        "doeff-cluster-coordinator-request-bodies-model",
+        "doeff-cluster-runtime-env-rules",
+        "doeff-cluster-warm-rules"
       ],
       "layer": "pure",
       "name": "doeff-cluster-warm-policy",
@@ -1948,7 +1983,8 @@
         "doeff-cluster-runtime-env-model",
         "doeff-cluster-worker-model",
         "doeff-cluster-worker-rules",
-        "doeff-cluster-worker-policy"
+        "doeff-cluster-worker-policy",
+        "doeff-cluster-runtime-env-rules"
       ],
       "layer": "domain",
       "name": "doeff-cluster-worker-heartbeat-rules",
@@ -2272,7 +2308,8 @@
         "doeff-cluster-shared-capabilities",
         "doeff-cluster-runtime-env-model",
         "doeff-cluster-job-model",
-        "doeff-cluster-worker-rules"
+        "doeff-cluster-worker-rules",
+        "doeff-cluster-runtime-env-rules"
       ],
       "layer": "io",
       "name": "doeff-cluster-worker-declared",
@@ -2297,7 +2334,9 @@
         "doeff-cluster-worker-model",
         "doeff-cluster-worker-declared",
         "doeff-cluster-worker-heartbeat",
-        "doeff-cluster-shared-protocol"
+        "doeff-cluster-shared-protocol",
+        "doeff-cluster-remote-rules",
+        "doeff-cluster-runtime-env-rules"
       ],
       "layer": "io",
       "name": "doeff-cluster-worker-coordinator-link",
@@ -2372,9 +2411,86 @@
     },
     {
       "allow": [
-        "doeff-cluster-readiness-model",
-        "doeff-cluster-remote-model",
+        "doeff-cluster-readiness-model"
+      ],
+      "layer": "domain",
+      "name": "doeff-cluster-readiness-rules",
+      "paths": [
+        "packages/doeff-cluster/src/doeff_cluster/shared/core/readiness_rules.hy"
+      ],
+      "public": [
+        "packages/doeff-cluster/src/doeff_cluster/shared/core/readiness_rules.hy"
+      ],
+      "responsibility": "service の readiness の判断 — 宣言の readiness の形の検め・入れ替えの期限(純粋な判断)。",
+      "typed": true
+    },
+    {
+      "allow": [
+        "doeff-cluster-remote-model"
+      ],
+      "layer": "domain",
+      "name": "doeff-cluster-remote-rules",
+      "paths": [
+        "packages/doeff-cluster/src/doeff_cluster/shared/core/remote_rules.hy"
+      ],
+      "public": [
+        "packages/doeff-cluster/src/doeff_cluster/shared/core/remote_rules.hy"
+      ],
+      "responsibility": "task の純粋な判断 — 送り手と受け側の版の突き合わせ・詰めた Program の置き場のキー・例外から失敗の値。",
+      "typed": true
+    },
+    {
+      "allow": [
+        "doeff-cluster-remote-model"
+      ],
+      "layer": "domain",
+      "name": "doeff-cluster-program-codec",
+      "paths": [
+        "packages/doeff-cluster/src/doeff_cluster/shared/protocol/program_codec.hy"
+      ],
+      "public": [
+        "packages/doeff-cluster/src/doeff_cluster/shared/protocol/program_codec.hy"
+      ],
+      "responsibility": "task の Program と結果を送れる形(base64 の cloudpickle)に詰める・戻す(I/O の無い変換)。",
+      "typed": true
+    },
+    {
+      "allow": [
+        "doeff-hy-json-value"
+      ],
+      "layer": "io",
+      "name": "doeff-cluster-board-requests",
+      "paths": [
+        "packages/doeff-cluster/src/doeff_cluster/foundation/board_requests.hy"
+      ],
+      "public": [
+        "packages/doeff-cluster/src/doeff_cluster/foundation/board_requests.hy"
+      ],
+      "responsibility": "coordinator の盤(/board)と lease の口(/leases)へ送る要求の形を作る 1 点 — 本番の shared-http と手元の sim-cluster が同じ関数で作る。",
+      "typed": true
+    },
+    {
+      "allow": [
+        "doeff-cluster-runtime-env-model"
+      ],
+      "layer": "domain",
+      "name": "doeff-cluster-runtime-env-rules",
+      "paths": [
+        "packages/doeff-cluster/src/doeff_cluster/shared/core/runtime_env_rules.hy"
+      ],
+      "public": [
+        "packages/doeff-cluster/src/doeff_cluster/shared/core/runtime_env_rules.hy"
+      ],
+      "responsibility": "実行環境の宣言の純粋な判断 — キー・JSON の往復・準備の失敗の値・子の環境変数の組の検め。",
+      "typed": true
+    },
+    {
+      "allow": [
+        "doeff-cluster-program-codec",
+        "doeff-cluster-readiness-rules",
+        "doeff-cluster-remote-rules",
         "doeff-cluster-runtime-env-model",
+        "doeff-cluster-runtime-env-rules",
         "doeff-cluster-service-model",
         "doeff-cluster-service-rules",
         "doeff-cluster-shared-capabilities"
@@ -2388,6 +2504,23 @@
         "packages/doeff-cluster/src/doeff_cluster/shared/entry/service_build.hy"
       ],
       "responsibility": "系の宣言の値を作る構成子(defsystem の展開が呼ぶ job・system-of)と、coordinator へ渡す宣言の行の組み立て。",
+      "typed": true
+    },
+    {
+      "allow": [
+        "doeff-cluster-runtime-env-model",
+        "doeff-cluster-runtime-env-rules",
+        "doeff-cluster-warm-model"
+      ],
+      "layer": "domain",
+      "name": "doeff-cluster-warm-rules",
+      "paths": [
+        "packages/doeff-cluster/src/doeff_cluster/shared/core/warm_rules.hy"
+      ],
+      "public": [
+        "packages/doeff-cluster/src/doeff_cluster/shared/core/warm_rules.hy"
+      ],
+      "responsibility": "実行環境の先読みの純粋な判断 — 温める表の行のキーと、行の今の姿と通信の本文との往復。",
       "typed": true
     }
   ],

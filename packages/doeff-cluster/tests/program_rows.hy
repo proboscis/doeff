@@ -12,7 +12,7 @@
 (import doeff_cluster.coordinator.protocol.request_bodies [body-of])
 (import doeff_cluster.foundation.coordinator_inbox [http-request])
 (import doeff_cluster.shared.intent.protocol [BodyInvalid])
-(import doeff_cluster.shared.intent.remote_model [program-sha])
+(import doeff_cluster.shared.core.remote_rules [program-sha])
 
 ;; 置き場のキーの見本(64 桁の sha256 の形 — coordinator は /programs に在るかを Service の行の受け付けでは確かめない)。
 (val SAMPLE-PROGRAM (* "a" 64))
