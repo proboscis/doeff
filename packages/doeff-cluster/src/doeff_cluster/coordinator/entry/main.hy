@@ -1,4 +1,4 @@
-;;; coordinator の起動の入口(層 entry — agora-redesign #2022 で doeff_cluster/coordinator.hy から移した)。
+;;; coordinator の起動の入口(層 entry — #2022 で doeff_cluster/coordinator.hy から移した)。
 ;;; `hy -m doeff_cluster.coordinator.entry.main`(boot.sh)で撃つ。調停ループの Program は doeff_cluster/coordinator/core/program.hy。
 
 (require doeff-hy.macros [defk <- val var])

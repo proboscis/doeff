@@ -1,4 +1,4 @@
-;;; 送り手の手元の checkout の読みの型と effect(runtime_env から分けた・agora-redesign #2110)。
+;;; 送り手の手元の checkout の読みの型と effect(runtime_env から分けた・#2110)。
 ;;; 組み立ての Program は doeff_cluster.shared.core.runtime_env、汎用の子 process と file の effect へ訳す handler は
 ;;; doeff_cluster.shared.protocol.checkout_reads。宣言そのものの型(RuntimeEnv)は doeff_cluster.shared.intent.runtime_env_model。
 (require doeff-hy.macros [defeffect val])

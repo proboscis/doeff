@@ -1,5 +1,5 @@
 ;;; job の宣言の指紋 spec-hash — worker が起こした process の世代に載せ、coordinator が今の宣言から同じ関数で計算して比べる
-;;; (worker_model から分けた・agora-redesign #2025 の 1 本目・#2021 の決め 1)。型 JobSpec は doeff_cluster.shared.intent.job_model。
+;;; (worker_model から分けた・#2025 の 1 本目・#2021 の決め 1)。型 JobSpec は doeff_cluster.shared.intent.job_model。
 (require doeff-hy.macros [val])
 (val MODULE-TAGS {:context "doeff-cluster" :role "judgment"})
 (import hashlib)

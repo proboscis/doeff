@@ -1,5 +1,5 @@
 ;;; 入口の検め(この process が宣言した実行環境の root の、宣言の commit の code を import しているか)の型と effect
-;;; (runtime_identity から分けた・agora-redesign #2344)。判断の Program は doeff_cluster.shared.core.runtime_identity・
+;;; (runtime_identity から分けた・#2344)。判断の Program は doeff_cluster.shared.core.runtime_identity・
 ;;; 渡した材料で答える handler は doeff_cluster.shared.protocol.runtime_facts。一致の根拠と失敗の kind の表は core の頭の註。
 (require doeff-hy.macros [val])
 (require doeff-hy.record [defenum defrecord])

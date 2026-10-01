@@ -32,7 +32,7 @@
 ;;;   SenderSourceRoot  CheckoutRoot と同じ問いを SENDER-SOURCE-DIR(この module の dir)で
 ;;;   FileSha256        StatPath が file なら ReadBytes の sha256・file でなければ None
 ;;;
-;;; 置き場(agora-redesign #2110): 組み立ての Program はここ(shared/core)・型と effect は doeff_cluster.shared.intent.checkout_model・
+;;; 置き場(#2110): 組み立ての Program はここ(shared/core)・型と effect は doeff_cluster.shared.intent.checkout_model・
 ;;; 翻訳の handler は doeff_cluster.shared.protocol.checkout_reads。
 (require doeff-hy.macros [defk <- val var])
 (val MODULE-TAGS {:context "doeff-cluster" :role "program"})

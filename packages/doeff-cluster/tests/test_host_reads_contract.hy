@@ -52,7 +52,7 @@
 
 
 (deftest test-the-versions-key-answers-this-process-versions
-  ;; 失敗ケース(agora-redesign #2345): 版の識別は宿の契約の鍵 versions-key で答える(本物も sim の宿も同じ current-versions)。
+  ;; 失敗ケース(#2345): 版の識別は宿の契約の鍵 versions-key で答える(本物も sim の宿も同じ current-versions)。
   ;; protocol の層(記録係・送り手の client)は process の版を自分で読まず、この答えを受け取る。
   {:interpreters ["host-process" "sim-host"]}
   (<- versions dict (Ask HOST-CONTRACT.versions-key))

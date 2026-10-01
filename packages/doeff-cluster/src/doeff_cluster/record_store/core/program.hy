@@ -12,7 +12,7 @@
 ;;; 入口 = record_store_main.hy(effect の class を __main__ に作らないため入口を分ける)。形は coordinator と同じ: HTTP の受付(別 thread)が要求を箱に並べ、1 本の Program(store-loop)が取り出して判断し、file の I/O は
 ;;; effect(AppendRecordLines 等)として handler(record_store_handlers.hy)が行う。
 ;;; effect の型は record_store.intent.record_store_model・file の I/O の言い換えは record_store.protocol.record_files・HTTP の受付は
-;;; foundation.record_inbox・入口は record_store.entry.main(agora-redesign #2030 で層の dir へ分けた)。
+;;; foundation.record_inbox・入口は record_store.entry.main(#2030 で層の dir へ分けた)。
 (require doeff-hy.macros [defk <- val var])
 (import re)
 (import typing [TypeGuard])

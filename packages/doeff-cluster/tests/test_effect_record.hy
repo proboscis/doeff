@@ -138,7 +138,7 @@
 
 
 
-;; ---- 置き場を移した module の旧い型の名を読む(agora-redesign #2105・#2021 の決め 2a)-----------------------------------------
+;; ---- 置き場を移した module の旧い型の名を読む(#2105・#2021 の決め 2a)-----------------------------------------
 (deftest test-a-type-name-written-before-the-move-resolves-to-the-type-in-its-new-place
   (import doeff_cluster.shared.core.effect_codec [resolve-type type-name MOVED-MODULES])
   (import doeff_cluster.shared.intent.detached_model [SubmitDetached])
