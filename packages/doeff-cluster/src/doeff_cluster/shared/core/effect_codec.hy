@@ -125,7 +125,7 @@
 (defn #^ str type-name [cls]
   (.format "{}:{}" cls.__module__ cls.__qualname__))
 
-;; 置き場を移した module の旧い名 → 今の名(agora-redesign #2021 の決め 2a・#2105・#2106・#2107)。記録は移しの前に書いた型の名(module:qualname)を
+;; 置き場を移した module の旧い名 → 今の名(#2021 の決め 2a・#2105・#2106・#2107)。記録は移しの前に書いた型の名(module:qualname)を
 ;; 持つので、読みだけがこの表で今の置き場を引く。書くのは今の名だけ(type-name)。旧い module に再輸出は残さない。
 (setv MOVED-MODULES
   (| (dfor name #("runtime_env_model" "readiness_model" "metrics_model" "process_model" "remote_model" "warm_model" "detached_model" "service_model"
@@ -137,7 +137,7 @@
       "doeff_cluster.record_handlers" "doeff_cluster.shared.protocol.record_handlers"}))
 
 ;; module の一部の型だけを別の module へ移した時の旧い名(module:qualname)→ 今の名。module ごと移した物は MOVED-MODULES。
-;; worker_model の JobSpec・JobPhase は coordinator と共有の型なので shared/intent/job_model へ(agora-redesign #2025)。
+;; worker_model の JobSpec・JobPhase は coordinator と共有の型なので shared/intent/job_model へ(#2025)。
 ;; coordinator の受け口の effect NextRequests は shared/intent/protocol へ移し、調停ループが出す形(材料 idle を持つ)は子 class
 ;; IdleNextRequests になった(#2180)— 移しの前の記録の NextRequests は idle の欄を持つので子 class を引く。
 (setv MOVED-TYPES

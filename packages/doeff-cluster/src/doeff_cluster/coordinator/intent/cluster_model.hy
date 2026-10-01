@@ -433,7 +433,7 @@
   "coordinator の調停ループが出す NextRequests(shared の受け口の effect)に、模擬の時計の下の受け口だけが読む材料 idle を足した物
    (要求が無ければ、本番の判断で何も変わらない拍の数だけ一度に眠る — 本番の受け口は NextRequests として受けて idle を読まず、拍の
    間隔は timeout-seconds のまま)。idle は coordinator の状態の全体(ClusterState)を持つので、shared の NextRequests には置かず
-   この子 class に置く(record-store は NextRequests だけを読む・agora-redesign #2180)。"
+   この子 class に置く(record-store は NextRequests だけを読む・#2180)。"
   (setv #^ (| IdleProbe None) idle None))
 
 

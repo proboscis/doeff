@@ -69,7 +69,7 @@
 
 (defn #^ tuple encoded-reply [#^ object body]
   "返事の本文を送る byte と content-type の組にするため(PlainText はそのまま text・ほかは JSON)。受付の箱の HTTP の thread が
-   返事を書く 1 点で、record_inbox の RecordInbox も同じ関数を使う(agora-redesign #2030 で 2 か所の写しを 1 つにした)。"
+   返事を書く 1 点で、record_inbox の RecordInbox も同じ関数を使う(#2030 で 2 か所の写しを 1 つにした)。"
   (if (text-body? body)
       #((.encode body.text "utf-8") body.content-type)
       #((.encode (json.dumps body :ensure-ascii False) "utf-8") "application/json; charset=utf-8")))

@@ -96,7 +96,7 @@
 
 
 (defn #^ dict durable-delta [#^ ClusterState before #^ ClusterState after]
-  "変わったキー → 新しい値(消えたキーは None)— 前と後を丸ごと durable-kv にして比べた答えと 1 字も違わない(agora-redesign #1843)。
+  "変わったキー → 新しい値(消えたキーは None)— 前と後を丸ごと durable-kv にして比べた答えと 1 字も違わない(#1843)。
   元の値が同じ物の鍵は直列化しない(1 拍で変わるのは一握りの鍵なので、拍の費用が状態の大きさに比例しない)。同じ物でない鍵は
   前と後を直列化して比べる(作り直したが中身の同じ値は差分に入れない)。盤は同一性で比べる(cluster_policy.board-changes)。"
   (setv old (durable-sources before))

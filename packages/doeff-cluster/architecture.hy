@@ -3,7 +3,7 @@
 ;;;
 ;;; 読むのは この dir で linter を走らせた時だけ(設定は同じ dir の pyproject.toml の [tool.doeff-linter] — linter は今の dir から上へ設定を
 ;;; 探すので、doeff の根で走る hook と make lint-doeff は根の pyproject.toml を読み、この宣言を読まない)。
-;;; 層の置き場(agora-redesign #1988 の決め・移し方 = #2021 / #1976): service(coordinator・worker・record-store)の dir の下に層
+;;; 層の置き場(#1988 の決め・移し方 = #2021 / #1976): service(coordinator・worker・record-store)の dir の下に層
 ;;; core / intent / protocol / entry、共有の部品は shared/<層>/、本物の I/O は foundation/。移しは子ごとに進め(#2022 で coordinator の core と
 ;;; entry から)、まだ src/doeff_cluster/ に平たく在る module は pyproject.toml で DOEFF114・115 の対象外のまま(#2095 で外す)。
 ;;;
@@ -25,7 +25,7 @@
 
 (defarchitecture doeff-cluster
   :root "doeff_cluster"
-  ;; 層の説明・役・import の向きは agora-controllers の architecture.hy の層の表と同じ(#2021 の決め)。
+  ;; 層の説明・役・import の向きは、使い手の repo の architecture.hy の層の表と同じ(#2021 の決め)。
   :layers [(layer core
              :summary "業務の判断と Program"
              :roles [type judgment program]
@@ -61,14 +61,14 @@
 
 ;; worker の条は W1(入れ替えの間も書き手が居続ける)。消す順などの条は後から足す。:entry-modules は層に分ける前の今の入口
 ;; (doeff_cluster.main)。層に分けた後は :entry-modules を外し、entry 層の dir の定義で「code を持つ service」を数える形に移る。
-;; 層は移しの進みに合わせて足す: 今は core(調整ループ worker/core/program — agora-redesign #2025 の 1 本目)。
+;; 層は移しの進みに合わせて足す: 今は core(調整ループ worker/core/program — #2025 の 1 本目)。
 (defservice worker "coordinator から job と task を受けて子 process として走らせる worker"
   {:layers [core]
    :entry-modules ["doeff_cluster.main"]
    :invariants ["doeff_cluster.worker_invariants:handoff-keeps-a-ready-writer"]})
 
 ;; record-store の条は R1(保持は run を丸ごと)。「追記して fsync してから返事」は file system の性質で、memory の置き場では確かめられない
-;; ので条にしていない。層の dir(agora-redesign #2030): intent = effect の型・core = 置き場の Program と条・protocol = file の I/O の
+;; ので条にしていない。層の dir(#2030): intent = effect の型・core = 置き場の Program と条・protocol = file の I/O の
 ;; 言い換え(record-files)・entry = 入口。HTTP の受付(RecordInbox)は汎用の I/O なので foundation/record_inbox。
 (defservice record-store "effect の記録の置き場(run ごと・区切りごとの file に追記し、読み・一覧・圧縮・保持を答える)"
   {:layers [core intent protocol entry]

@@ -26,7 +26,7 @@
 ;;; worker の返し(handlers.release-leases・sim の local.release-leases)が同じ定義で頭を作って外す。以前は名乗りが <job>/<世代>、外しが
 ;;; <worker>/<世代>/ の頭で食い違い、終わった process の lease が期限まで残った(入れ替えの新しい版が期限まで置けなかった)。
 ;;;
-;;; この module は型・effect・定数だけを持つ(SDK の型の置き場・agora-redesign #2107)。lease の行の純粋な判断(lease-op・claim・
+;;; この module は型・effect・定数だけを持つ(SDK の型の置き場・#2107)。lease の行の純粋な判断(lease-op・claim・
 ;;; fence-verdict・担い手の名の綴り …)は doeff_cluster.shared.core.lease_rules に在る。
 (require doeff-hy.macros [val])
 (val MODULE-TAGS {:context "doeff-cluster" :role "intent"})

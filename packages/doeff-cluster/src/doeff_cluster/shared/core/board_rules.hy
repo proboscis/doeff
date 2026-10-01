@@ -1,5 +1,5 @@
 ;;; 盤(共有の保存)の書きの規則 — coordinator の /board(cluster_policy.board-write)と fake の保存(foundation の shared-memory)が
-;;; 同じ定義で判じる(coordinator の core から移した・agora-redesign #2107。以前は shared_model が coordinator の cluster_policy を import していた)。
+;;; 同じ定義で判じる(coordinator の core から移した・#2107。以前は shared_model が coordinator の cluster_policy を import していた)。
 ;;; 型と effect(ReadShared・WriteShared・ANY)は doeff_cluster.shared.intent.shared_model。
 (require doeff-hy.macros [defk val])
 (val MODULE-TAGS {:context "doeff-cluster" :role "judgment"})

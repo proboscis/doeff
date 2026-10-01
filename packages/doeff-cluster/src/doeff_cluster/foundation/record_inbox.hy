@@ -1,5 +1,5 @@
 ;;; effect の記録の置き場の HTTP の受付(本文の大きさに上限)— coordinator の RequestInbox と同じ箱で、要求を並べて置き場の Program
-;;; (record_store.core.program の store-loop)の NextRequests へ渡す(record_store_handlers.hy から分けた・agora-redesign #2030)。
+;;; (record_store.core.program の store-loop)の NextRequests へ渡す(record_store_handlers.hy から分けた・#2030)。
 (require doeff-hy.macros [val])
 (val MODULE-TAGS {:context "doeff-cluster" :role "foundation"})
 (import json)

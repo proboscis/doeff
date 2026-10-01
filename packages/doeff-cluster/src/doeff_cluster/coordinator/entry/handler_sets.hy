@@ -157,7 +157,7 @@
 
 (defhandler queued-requests [#^ RequestQueue queue]
   ;; 節は上から isinstance で当てるので、材料 idle を持つ子 class(coordinator の調停ループが出す)を先に置き、record-store などが出す
-  ;; 素の NextRequests は材料なしで取る(agora-redesign #2180)。
+  ;; 素の NextRequests は材料なしで取る(#2180)。
   (IdleNextRequests [timeout-seconds limit idle]
     (<- batch list (take-requests queue timeout-seconds limit idle))
     (resume batch))

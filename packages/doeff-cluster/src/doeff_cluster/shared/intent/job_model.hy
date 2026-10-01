@@ -1,5 +1,5 @@
 ;;; job 1 本の宣言(JobSpec)と job の段階(JobPhase)— coordinator(割り当て・入れ替え・資源の勘定)・worker(起動・観測)・SDK の
-;;; 模擬の環境が同じ型を読む共有の部品(worker_model から分けた・agora-redesign #2025 の 1 本目・#2021 の決め 1)。
+;;; 模擬の環境が同じ型を読む共有の部品(worker_model から分けた・#2025 の 1 本目・#2021 の決め 1)。
 ;;; 指紋 spec-hash は doeff_cluster.shared.core.job_rules。worker だけが使う型(観測・記録・action)は doeff_cluster.worker_model。
 (require doeff-hy.macros [val])
 (val MODULE-TAGS {:context "doeff-cluster" :role "type"})

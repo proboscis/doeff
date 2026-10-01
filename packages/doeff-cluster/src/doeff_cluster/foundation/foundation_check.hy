@@ -10,7 +10,7 @@
 ;;; 読めない物は閉じていると数えない: 節を読めない handler(unknown — gap を隠しうる)・analyzer が追えなかった所(unresolved — 束ねて
 ;;; いない土台の引数など)。analyzer は開発の時の道具で、doeff-cluster の実行時の依存ではない(ここだけが import し、呼んだ時に読む)。
 (require doeff-hy.macros [deff val])
-;; 置き場 = foundation(agora-redesign #2110): 解析の道具(doeff-effect-analyzer)を呼んで source を読む口と、その答えの型と読みの組。
+;; 置き場 = foundation(#2110): 解析の道具(doeff-effect-analyzer)を呼んで source を読む口と、その答えの型と読みの組。
 ;; 答えの型と closed? もこの口の値の読みなので、foundation の層の中に閉じる(foundation は foundation 以外を import しない)。
 (val MODULE-TAGS {:context "doeff-cluster" :role "foundation"})
 (require doeff-hy.record [defrecord])

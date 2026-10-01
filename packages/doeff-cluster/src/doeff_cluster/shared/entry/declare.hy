@@ -17,7 +17,7 @@
 ;;;   (replicas は Rollout が持つ。--replicas を付けた時だけ変える)。一覧に無い Service には触らない。
 ;;; 旧い引数(--config・--pin)と、System の値を直に指す旧い形は受け付けない。
 ;;;
-;;; 置き場(agora-redesign #2346): CLI と apply はここ(shared/entry・役 main)・要求の本文の形は doeff_cluster.shared.protocol.declaration_requests・
+;;; 置き場(#2346): CLI と apply はここ(shared/entry・役 main)・要求の本文の形は doeff_cluster.shared.protocol.declaration_requests・
 ;;; 宣言してよいかの判断は doeff_cluster.shared.core.declaring。
 (require doeff-hy.macros [val])
 (val MODULE-TAGS {:context "doeff-cluster" :role "main"})

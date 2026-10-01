@@ -1,4 +1,4 @@
-;;; coordinator の調停ループの Program(層 core — agora-redesign #2022 で doeff_cluster/coordinator.hy から移した)。
+;;; coordinator の調停ループの Program(層 core — #2022 で doeff_cluster/coordinator.hy から移した)。
 ;;; 起動の入口(state の読み・handler の組・main)は doeff_cluster/coordinator/entry/main.hy。
 ;;;
 ;;; doeff worker の coordinator(実験)。資源(Service・Worker・Task・Rollout)と盤を持ち、生きている worker へ割り当てる。

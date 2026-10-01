@@ -1,4 +1,4 @@
-;;; effect の記録の置き場の file の I/O の言い換え(record_store.intent.record_store_model の effect の handler — agora-redesign #2030 で層 protocol へ)。
+;;; effect の記録の置き場の file の I/O の言い換え(record_store.intent.record_store_model の effect の handler — #2030 で層 protocol へ)。
 ;;; 置き方: <root>/<service>/<run>/<区切り 6 桁>.jsonl(書いている区切り)・.jsonl.gz(書き終わって圧縮した区切り)。
 ;;; 追記は 1 要求ごとに fsync してから返す(返事を済ませた行は Pod が落ちても残る)。圧縮した後に遅れて届いた行は .jsonl に
 ;;; 追記され、読みは .jsonl.gz → .jsonl の順につなぐ(同じ区切りの中の順は行の番号 e が持つ — 読む側が並べ直す)。

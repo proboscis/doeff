@@ -6,7 +6,7 @@
 ;;;
 ;;; job は 2 種類: service(once=False・終われば起動し直す常駐)と task(once=True・1 度だけ走らせて結果を返す)。
 ;;; job の宣言 JobSpec と段階 JobPhase は coordinator と共有の部品なので doeff_cluster.shared.intent.job_model、指紋 spec-hash は
-;;; doeff_cluster.shared.core.job_rules に在る(agora-redesign #2025)。
+;;; doeff_cluster.shared.core.job_rules に在る(#2025)。
 (require doeff-hy.record [defrecord])
 (import dataclasses [dataclass field])
 (import enum [Enum])

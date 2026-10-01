@@ -43,7 +43,7 @@
 (defrecord HostContract
   "宿が提供する物の鍵。run-context-key / program-key / versions-key = Ask の鍵・program-env = 子の process に Program の path を渡す
    環境変数の名。versions-key の答え = この process の版の識別(foundation/process_versions.current-versions の dict — 記録係が
-   header に載せる・送り手の client が blob に添える。protocol の層は自分で読まない — agora-redesign #2345)。"
+   header に載せる・送り手の client が blob に添える。protocol の層は自分で読まない — #2345)。"
   {:tags {:context "doeff-cluster" :role "foundation"}}
   (#^ str run-context-key)
   (#^ str program-key)

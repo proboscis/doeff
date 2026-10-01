@@ -27,7 +27,7 @@
 ;;; 宣言の型への読み戻しと判断(judge-identity)は Program の側。印の形式の読み戻しはここ(書き手 = env_prepare の env-marker->json)。
 ;;; 形式の版(ENV-MARKER-FORMAT)が違えば読まずに marker-mismatch で名乗る。
 ;;;
-;;; 置き場(agora-redesign #2344): 判断の Program はここ(shared/core)・型と effect は doeff_cluster.shared.intent.runtime_identity_model・
+;;; 置き場(#2344): 判断の Program はここ(shared/core)・型と effect は doeff_cluster.shared.intent.runtime_identity_model・
 ;;; 渡した材料で答える handler given-runtime-facts は doeff_cluster.shared.protocol.runtime_facts。
 (require doeff-hy.macros [defk <- val])
 (val MODULE-TAGS {:context "doeff-cluster" :role "program"})

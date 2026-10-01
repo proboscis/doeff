@@ -6,7 +6,7 @@
 ;;;   WriteShared key value expect [ttl-seconds] → bool。ttl-seconds を付けた行は期限を過ぎると coordinator が消す。expect = ANY なら無条件・None なら「行が無い時だけ」・値なら「今の値がそれと等しい時だけ」
 ;;;                                     (compare-and-set。複数の実行役が同じ行を取り合わないため)
 ;;; 値は JSON にできる物だけ。handler = shared_handlers.hy(shared-memory はテストの dict・shared-http は coordinator の /board)。
-;;; この module は型と effect だけを持つ(SDK の型の置き場・agora-redesign #2107)。書いてよいかの判断(cas-allows・期限の検め)は
+;;; この module は型と effect だけを持つ(SDK の型の置き場・#2107)。書いてよいかの判断(cas-allows・期限の検め)は
 ;;; doeff_cluster.shared.core.board_rules — coordinator の /board と fake の保存が同じ定義を使う。
 (require doeff-hy.macros [val])
 (val MODULE-TAGS {:context "doeff-cluster" :role "intent"})

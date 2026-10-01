@@ -1,5 +1,5 @@
 ;;; 送り手の手元の checkout の読み(ReadCheckout・CheckoutRoot・SenderSourceRoot・FileSha256)を、doeff の汎用の子 process の effect
-;;; (RunProcess — git を起こす)と file の effect(StatPath・ReadBytes)へ訳す handler(runtime_env から分けた・agora-redesign #2110)。
+;;; (RunProcess — git を起こす)と file の effect(StatPath・ReadBytes)へ訳す handler(runtime_env から分けた・#2110)。
 ;;; I/O を持たない(sha256 は計算だけ)。訳し方・本物と模擬の組は doeff_cluster.shared.core.runtime_env の頭の註。
 ;;; 訳し方(git は `git -C <path> …` の 1 回ずつ・0 でない終わりは読めない checkout として RuntimeError — 前の本物の check=True と同じ):
 ;;;   ReadCheckout      rev-parse HEAD → remote get-url <remote> → status --porcelain --untracked-files=no(空でなければ dirty)→

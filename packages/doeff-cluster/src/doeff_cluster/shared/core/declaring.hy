@@ -1,5 +1,5 @@
 ;;; 宣言してよいかの検め(declare の頭の註の 2 つ — 系の関数の checkout が宣言の版そのものか・土台の :needs が job の :needs の一部か)の
-;;; 判断(declare から分けた・agora-redesign #2346)。checkout の読みは effect で、答えるのは doeff_cluster.shared.protocol.checkout_reads。
+;;; 判断(declare から分けた・#2346)。checkout の読みは effect で、答えるのは doeff_cluster.shared.protocol.checkout_reads。
 ;;; ⚠ 系の関数の module の file の置き場(読み込んだ module の __file__ と、相対 path を絶対にする時の作業 dir)は、まだこの判断の中で
 ;;; process の状態から直に読む(品質検査の登録簿の層は declare の時と同じ runtime)。module の import 先を解く汎用の効果(#2347)が入った後に、
 ;;; その効果を出して読む形へ直す(#2346 の comment)。

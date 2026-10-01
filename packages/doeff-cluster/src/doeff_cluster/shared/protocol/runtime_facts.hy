@@ -1,4 +1,4 @@
-;;; 入口の検めの材料(ReadRuntimeFacts)に答える handler 2 つ(runtime_identity から分けた・agora-redesign #2344)。
+;;; 入口の検めの材料(ReadRuntimeFacts)に答える handler 2 つ(runtime_identity から分けた・#2344)。
 ;;;
 ;;;   process-runtime-facts  この process を読んで答える。ReadRuntimeFacts を doeff の汎用の効果へ言い換えるだけで、I/O を持たない:
 ;;;                            環境変数 DOEFF_RUNTIME_ENV・DOEFF_RUNTIME_ENV_KEY = ReadEnvironment・interpreter の prefix と pid = ReadInterpreter・

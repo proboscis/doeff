@@ -1,4 +1,4 @@
-;;; coordinator の資源の口へ宣言の行を書く要求の本文の形(declare の CLI と手元の sim-cluster で同じ形 — declare から分けた・agora-redesign #2346)。
+;;; coordinator の資源の口へ宣言の行を書く要求の本文の形(declare の CLI と手元の sim-cluster で同じ形 — declare から分けた・#2346)。
 (require doeff-hy.macros [deff val])
 (val MODULE-TAGS {:context "doeff-cluster" :role "protocol"})
 
