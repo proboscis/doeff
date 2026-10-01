@@ -128,7 +128,6 @@
         "doeff-cluster-metrics-handlers",
         "doeff-cluster-readiness-handlers",
         "doeff-cluster-remote",
-        "doeff-cluster-report-client",
         "doeff-cluster-runtime-env-model",
         "doeff-cluster-semaphore-handlers",
         "doeff-cluster-shared-handlers",
@@ -282,12 +281,14 @@
       "layer": "io",
       "name": "doeff-cluster-coordinator-http",
       "paths": [
-        "packages/doeff-cluster/src/doeff_cluster/foundation/coordinator_http.hy"
+        "packages/doeff-cluster/src/doeff_cluster/foundation/coordinator_http.hy",
+        "packages/doeff-cluster/src/doeff_cluster/shared/core/resend.hy"
       ],
       "public": [
-        "packages/doeff-cluster/src/doeff_cluster/foundation/coordinator_http.hy"
+        "packages/doeff-cluster/src/doeff_cluster/foundation/coordinator_http.hy",
+        "packages/doeff-cluster/src/doeff_cluster/shared/core/resend.hy"
       ],
-      "responsibility": "coordinator へ話す HTTP の client を 1 か所で作る(heartbeat・共有の保存・task の 3 つの口の handler が使う)。",
+      "responsibility": "coordinator へ話す口の定数(foundation/coordinator_http)と、ClusterTiming から導く読みの送り直しの期限(shared/core/resend)。",
       "typed": true
     },
     {
@@ -718,7 +719,6 @@
         "doeff-cluster-job-context",
         "doeff-cluster-process-versions",
         "doeff-cluster-remote-model",
-        "doeff-cluster-report-client",
         "doeff-cluster-task-result",
         "doeff-cluster-coordinator-route",
         "doeff-cluster-coordinator-http",
@@ -796,7 +796,6 @@
         "doeff-cluster-readiness-model",
         "doeff-cluster-remote",
         "doeff-cluster-remote-model",
-        "doeff-cluster-report-client",
         "doeff-cluster-runtime-env-model",
         "doeff-cluster-semaphore-model",
         "doeff-cluster-service-build",
@@ -1165,27 +1164,6 @@
     },
     {
       "allow": [
-        "doeff-cluster-cluster-model",
-        "doeff-cluster-coordinator-http",
-        "doeff-cluster-job-context",
-        "doeff-cluster-shared-protocol",
-        "doeff-cluster-service-report",
-        "doeff-cluster-clock",
-        "doeff-cluster-coordinator-route"
-      ],
-      "layer": "io",
-      "name": "doeff-cluster-report-client",
-      "paths": [
-        "packages/doeff-cluster/src/doeff_cluster/foundation/report_client.hy"
-      ],
-      "public": [
-        "packages/doeff-cluster/src/doeff_cluster/foundation/report_client.hy"
-      ],
-      "responsibility": "service の process が coordinator へ自分の様子(readiness・計器)を送る口。",
-      "typed": true
-    },
-    {
-      "allow": [
         "doeff-cluster-cluster-json",
         "doeff-cluster-cluster-model",
         "doeff-cluster-cluster-policy",
@@ -1430,7 +1408,6 @@
         "doeff-cluster-record-store-handlers",
         "doeff-cluster-remote",
         "doeff-cluster-remote-model",
-        "doeff-cluster-report-client",
         "doeff-cluster-resource-policy",
         "doeff-cluster-rollout-policy",
         "doeff-cluster-runtime-env",
@@ -1804,7 +1781,8 @@
     },
     {
       "allow": [
-        "doeff-cluster-coordinator-route"
+        "doeff-cluster-coordinator-route",
+        "doeff-cluster-job-context"
       ],
       "layer": "io",
       "name": "doeff-cluster-service-report",

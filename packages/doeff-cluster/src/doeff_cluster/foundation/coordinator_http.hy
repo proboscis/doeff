@@ -14,10 +14,10 @@
 ;;; - 直し: 接続を使い回す(coordinator の側を HTTP/1.1 にした — `coordinator.hy`)。接続の段の上限を短くし、その段の
 ;;;   失敗だけは書きでも送り直す(要求がまだ相手に届いていない。httpx の transport の retries は ConnectError と
 ;;;   ConnectTimeout だけを送り直す)。何度送っても同じ意味の読みは、切れ方を問わず期限まで送り直す(宛先の部品の resent-request)。
-;;;   自己停止(20 秒)と移し替え(45 秒)の時間は cluster_model の ClusterTiming。
+;;;   自己停止(20 秒)と移し替え(45 秒)の時間は cluster_model の ClusterTiming。読みを送り直す期限 IDEMPOTENT-DEADLINE-SECONDS は
+;;;   その ClusterTiming から導くので shared/core/resend.hy(層 foundation は intent を読まない・#2566)。
 (require doeff-hy.macros [val])
 (val MODULE-TAGS {:context "doeff-cluster" :role "foundation"})
-(import doeff_cluster.shared.intent.protocol [ClusterTiming])
 
 ;; 返事を待つ上限(秒)。coordinator は書きを永続化してから返事をする(group commit)ので、返事は fsync の時間だけ遅れる。longhorn の
 ;; volume の実測(2026-09-24): fsync p50 0.1 秒、ただし 30 分に 1 回ほど 10.4 秒の詰まり(その間の返事は最長 13 秒)。上限はそれより
@@ -27,10 +27,6 @@
 ;; 接続の段の上限(秒)。tailnet の上の往復は数 ms なので、2 秒待って届かない SYN は待つより送り直す方が早い。
 (setv CONNECT-SECONDS 2.0)
 
-;; 何度でも送ってよい要求(読み)を、途中で切れても送り直す時間の上限(秒)。worker の自己停止(fence — cluster_model の
-;; ClusterTiming・20 秒)より 5 秒長くする: fence より短い途絶は service も worker も越え、それより長い途絶では worker の方が
-;; job を止める(読みを先に諦めて service が自分で落ちることはない)。
-(setv IDEMPOTENT-DEADLINE-SECONDS (+ (/ (. (ClusterTiming) fence-ms) 1000) 5.0))
 ;; 送り直しの間(秒)。本番の宛先の部品(resent-request)と手元の sim-cluster の宿(local.hy — sim の時計で眠る)が同じ値を使う。
 (val RESEND-PAUSE-SECONDS 0.5)
 

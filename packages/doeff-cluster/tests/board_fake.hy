@@ -20,7 +20,8 @@
 (import doeff_cluster.shared.intent.protocol [BodyInvalid])
 (import doeff_cluster.shared.protocol.coordinator_route [CoordinatorRoute RouteCell RouteOptions])
 (import doeff_cluster.shared_handlers [shared-http])
-(import doeff_cluster.foundation.coordinator_http [IDEMPOTENT-DEADLINE-SECONDS RESEND-PAUSE-SECONDS])
+(import doeff_cluster.foundation.coordinator_http [RESEND-PAUSE-SECONDS])
+(import doeff_cluster.shared.core.resend [IDEMPOTENT-DEADLINE-SECONDS])
 
 ;; fake の盤の宛先(この URL で始まる要求だけに答える — ほかの HttpRequest は外側へ通す)と、shared-http の送り方。
 (val BOARD-URL "http://board-fake")
