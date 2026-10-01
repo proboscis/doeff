@@ -16,7 +16,7 @@
 (import pathlib [Path])
 (import doeff [Program run with-handlers])
 (import doeff_core_effects.os_file [os-file-handler])
-(import doeff_cluster.env_handlers [editable-dirs repo-identity])
+(import doeff_cluster.worker.protocol.env_translation [editable-dirs repo-identity])
 (import doeff_core_effects.handlers [state])
 (import doeff_core_effects.scheduler [Spawn Task Gather])
 (import doeff_time [SimClock sim-time-handler GetMonotonic])

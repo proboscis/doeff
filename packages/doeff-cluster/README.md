@@ -50,7 +50,7 @@ Program の中の `with-handlers` で並べます(実行先は handler を 1 つ
 | coordinator(composition root・調停ループ) | `coordinator`・`coordinator_handler_sets`・`coordinator_inbox`・`coordinator_http` |
 | coordinator の純粋な判断 | `api_policy`・`cluster_policy`・`resource_policy`・`rollout_policy`・`drain_policy`・`handoff_policy`・`program_policy`・`warm_policy`・`detached_policy`・`metrics_policy` |
 | coordinator の状態と耐久 | `cluster_model`・`durable_kv`・`wal_store` |
-| worker(composition root・判断・I/O) | `main`・`worker`・`worker_policy`・`worker_model`・`handlers`・`code_prepare`・`shim.py` |
+| worker(composition root・判断・I/O) | `main`・`worker`・`worker_policy`・`worker_model`・`handlers`・`code_prepare`・`worker/entry/shim.py`(旧い path の `shim.py` は渡すだけ — #2028) |
 | 実行環境(runtime env)の宣言と準備 | `runtime_env_model`・`runtime_env`(送り手の checkout の読み)・`env_prepare`・`env_handlers`・`env_upkeep`・`env_world` |
 | 子 process の入口と実行先の契約 | `job_entry`・`job_context`・`host_contract` |
 | 宣言 | `service_model`(`Job`・`System`)・`service_build`(`system-declaration`)・`declare` |

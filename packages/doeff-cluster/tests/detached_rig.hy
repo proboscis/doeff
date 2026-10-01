@@ -23,7 +23,7 @@
 (import tests.link_rig [LinkRig])
 (import doeff_cluster.worker.core.launch [program-file])
 (import doeff_cluster.foundation.host_contract [environ-reader])
-(import doeff_cluster.job_entry [read-program])
+(import doeff_cluster.worker.entry.job_entry [read-program])
 (import doeff_cluster.worker.intent.worker_model [DesiredJobs JobStatus] doeff_cluster.shared.intent.job_model [JobPhase JobSpec])
 (import doeff_cluster.shared.intent.remote_model [TaskSucceeded])
 (import doeff_cluster.shared.protocol.program_codec [encode-outcome])

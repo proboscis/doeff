@@ -21,7 +21,7 @@
 (import doeff_core_effects.handlers [reader])
 (import doeff_cluster.shared.core.record_model [read-recording ReplayFinished ReplayDiverged])
 (import doeff_cluster.shared.protocol.record_handlers [ReplayState replay-report RECORD-MODE-KEY REPLAY-STATE-KEY])
-(import doeff_cluster.job_entry [read-program])
+(import doeff_cluster.worker.entry.job_entry [read-program])
 
 
 (defn #^ list read-lines [#^ str path]  ; defk にできない: 道具の入口(Program の外)が file を読む

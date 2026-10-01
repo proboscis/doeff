@@ -15,7 +15,7 @@
 (import doeff_core_effects.handlers [state])
 (import doeff_core_effects.process_effects [EnvEntry])
 (import doeff_core_effects.scripted_process [ProcessScript scripted-process-handler])
-(import doeff_cluster.env_handlers [git-environment])
+(import doeff_cluster.worker.protocol.env_translation [git-environment])
 
 (val BOOT-SH (str (/ (. (Path __file__) (resolve) parent parent) "deploy" "boot.sh")))
 (val PRIVATE-A "git@github.com:owner/private-a.git")
