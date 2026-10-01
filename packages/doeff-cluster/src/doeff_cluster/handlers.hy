@@ -1,5 +1,6 @@
-;; worker の実 I/O。coordinator との連絡・コードの展開(git archive)・子 process・状態の file・停止信号。
-;; どれもループを塞がない: 展開と子 process は Popen で起動し、結果は ObserveWorld で観測する。
+;; worker の coordinator との連絡(CoordinatorLink — heartbeat・名指しの待ち・task と Program の受け取り・lease の返し)と、宣言の job と task を
+;; JobSpec へ読む口。コードの木・実行環境の root・子 process・入口の検め・状態の file・世界の観測のまとめは worker/protocol の言い換えへ移した
+;; (#2464〜#2469)。CoordinatorLink の移しは #2427。
 (require doeff-hy.macros [defhandler defk deff <- val])
 (require doeff-hy.record [defrecord])
 (import json os re sys threading time uuid)
@@ -22,10 +23,8 @@
 (import doeff_cluster.worker.core.heartbeat_rules [warm-env-of-row finished-task-id desired-when-unreachable])
 (import doeff_cluster.foundation.ready_file [write-ready-file])
 (import doeff_cluster.worker.core.launch [program-file])
-(import doeff_cluster.worker.intent.worker_model [ObserveCode ObserveEnvs ObserveEnvDisk EnvReport ObserveProcesses ObserveProbes WorldView
-  DesiredJobs DesiredUnreadable ReadDesired ObserveWorld WorkerStopRequested PublishStatus JobStatus EnvDisk WarmEnv
-  ReleaseLeases
-] doeff_cluster.shared.intent.job_model [JobSpec] doeff_cluster.worker.core.worker_rules [ENV-KEY-PREFIX])
+(import doeff_cluster.worker.intent.worker_model [EnvReport DesiredJobs DesiredUnreadable ReadDesired PublishStatus WarmEnv ReleaseLeases]
+        doeff_cluster.shared.intent.job_model [JobSpec] doeff_cluster.worker.core.worker_rules [ENV-KEY-PREFIX])
 
 (defn #^ tuple env-placement [#^ (| dict None) declared #^ str revision]  ; defk にできない: 宣言の読み(Program の外の I/O の道具)が呼ぶ
   "job の宣言の runtimeEnv(在れば)と版 → #(版 宣言の JSON の正規化した文字列 env のキー)。実行環境の job(task も service も —
@@ -62,22 +61,6 @@
     (.write-text tmp (json.dumps {"blob" blob "versions" versions}) :encoding "utf-8")
     (os.replace tmp path)
     path))
-
-(setv TOOL (str (/ (. (.resolve (Path __file__)) parent) "code_prepare.hy")))
-
-
-(defhandler local-host []
-  ;; ObserveWorld の答え = 各言い換え(外側に置く)の観測のまとめ: 版ごとのコードの木 = worker/protocol/code_store(#2466)・実行環境の
-  ;; root = worker/protocol/env_store(#2467)・job の子 process = worker/protocol/process_host(#2464)・入口の検め =
-  ;; worker/protocol/probes(#2465)。
-  (ObserveWorld []
-    (<- codes tuple (ObserveCode))
-    (<- envs tuple (ObserveEnvs))
-    (<- processes tuple (ObserveProcesses))
-    (<- probed tuple (ObserveProbes))
-    (<- disk EnvDisk (ObserveEnvDisk))
-    (resume (WorldView (+ codes envs) processes probed :env-disk disk))))
-
 
 (setv JOB-ENTRY "doeff_cluster.job_entry")
 

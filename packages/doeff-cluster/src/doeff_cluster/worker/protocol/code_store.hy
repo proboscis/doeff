@@ -14,6 +14,7 @@
 (require doeff-hy.record [defrecord])
 (val MODULE-TAGS {:context "doeff-cluster" :role "protocol"})
 (import dataclasses [dataclass])
+(import pathlib [Path])
 (import doeff_core_effects [slog])
 (import doeff_core_effects.file_effects [PathKind PathStat FileFailed StatPath ReadText ListDirectory WalkTree RenamePath MakeDirectory
                                          RemoveTree file-done])
@@ -23,6 +24,10 @@
 (import doeff_cluster.worker.core.code_plan [MARKER marker-problem])
 (import doeff_cluster.worker.core.code_prepare [tree-listing])
 (import doeff_cluster.worker.core.code_rules [prepare-script])
+
+
+;; 焼く道具の file(worker 自身のコードの code_prepare.hy — 版の木から -m で起動すると、道具を持たない古い版で見つからないので path で起動する)。
+(val PREPARE-TOOL (str (/ (. (Path __file__) (resolve) parent parent parent) "code_prepare.hy")))
 
 
 (defrecord CodeSettings
