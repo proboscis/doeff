@@ -10,7 +10,7 @@
 (import doeff_time [Delay])
 (import doeff_cluster.shared.intent.runtime_env_model [RuntimeEnv])
 (import doeff_cluster.sim.local [sim-cluster SimWorker DrainWorker])
-(import doeff_cluster.shared.intent.service_model [system-of])
+(import doeff_cluster.shared.entry.service_build [system-of])
 (import doeff_cluster.shared.intent.warm_model [WarmRuntimeEnv ReadWarmState WarmState])
 (import tests.env_fixtures [LOCK env-of])
 

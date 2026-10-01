@@ -53,7 +53,7 @@ Program の中の `with-handlers` で並べます(実行先は handler を 1 つ
 | worker(composition root・判断・I/O) | `main`・`worker`・`worker_policy`・`worker_model`・`handlers`・`code_prepare`・`shim.py` |
 | 実行環境(runtime env)の宣言と準備 | `runtime_env_model`・`runtime_env`(送り手の checkout の読み)・`env_prepare`・`env_handlers`・`env_upkeep`・`env_world` |
 | 子 process の入口と実行先の契約 | `job_entry`・`job_context`・`host_contract` |
-| 宣言 | `service_model`(`Job`・`System`・`system-declaration`)・`declare` |
+| 宣言 | `service_model`(`Job`・`System`)・`service_build`(`system-declaration`)・`declare` |
 | 手元の runner と検め | `local`(`sim-cluster`)・`foundation_check` |
 | drain と readiness の口 | `drain_client`・`drain_main`・`readiness_*`・`report_client` |
 | effect と handler | `shared_*`(盤)・`semaphore_*`(lease)・`metrics_*`・`kube_*`・`remote*`(task)・`detached*`(切り離した task)・`warm_*` |

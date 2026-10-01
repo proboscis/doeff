@@ -19,8 +19,10 @@
 (import pytest)
 (import doeff_core_effects.handlers [reader])
 (import doeff_cluster.shared.intent.service_model :as service-model)
-(import doeff_cluster.shared.intent.service_model [Job System CallShape Declaration job system-of system-declaration identity-of
-                                     describe-identity job-named])
+(import doeff_cluster.shared.core.service_rules :as service-rules)
+(import doeff_cluster.shared.core.service_rules [identity-of describe-identity job-named])
+(import doeff_cluster.shared.entry.service_build [job system-of system-declaration])
+(import doeff_cluster.shared.intent.service_model [Job System CallShape Declaration])
 (import doeff_cluster.coordinator.core.cluster_policy [job-from-json identity-hash])
 (import doeff_cluster.foundation.host_contract [host-reader])
 (import doeff_cluster.shared.intent.remote_model [encode-program])
@@ -473,9 +475,9 @@
   (val wide (system-of "two" #((job "tally" (two-foundations-job plain-foundation wide-foundation)
                                     :call (CallShape :function two-foundations-job :args [plain-foundation wide-foundation] :kwargs {})
                                     :needs #{"cluster-net"}))))
-  (<- ok (service-model.foundation-needs-refusal narrow plain-foundation))
+  (<- ok (service-rules.foundation-needs-refusal narrow plain-foundation))
   (assert (is ok None) ok)
-  (<- refused str (service-model.foundation-needs-refusal wide plain-foundation))
+  (<- refused str (service-rules.foundation-needs-refusal wide plain-foundation))
   (assert (and refused (in "wide_foundation" refused)) refused))
 
 
@@ -483,9 +485,9 @@
   ;; 土台を record 1 つで渡す系でも、record の欄の土台の :needs を検める(欄の中を見落とすと、job の置き場に無い能力を名乗る土台が
   ;; 宣言を通る)。欄の土台の :needs が job の :needs に無ければ断り、在れば通す。
   (import tests.fixtures.declared_system [wide-foundation])
-  (<- ok (| str None) (service-model.foundation-needs-refusal (lab-record PAIR) plain-foundation))
+  (<- ok (| str None) (service-rules.foundation-needs-refusal (lab-record PAIR) plain-foundation))
   (assert (is ok None) ok)
   (<- refused (| str None)
-      (service-model.foundation-needs-refusal (lab-record (PairFoundation :main plain-foundation :side wide-foundation :step 2))
+      (service-rules.foundation-needs-refusal (lab-record (PairFoundation :main plain-foundation :side wide-foundation :step 2))
                                               plain-foundation))
   (assert (and (is-not refused None) (in "wide_foundation" refused) (in "tally" refused)) refused))
