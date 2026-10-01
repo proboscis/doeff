@@ -18,9 +18,11 @@
 (import doeff_cluster.foundation.host_contract [HOST-CONTRACT])
 (import .job_context [process-context-environ])
 (import doeff_cluster.shared.intent.remote_model [program-sha])
-(import doeff_cluster.shared.intent.runtime_env_model [runtime-env-of-json env-key current-platform EnvFailure EnvFailureKind])
+(import doeff_cluster.shared.intent.runtime_env_model [runtime-env-of-json env-key current-platform])
 (import doeff_cluster.shared.intent.env_marker_model [ENV-MARKER])
-(import doeff_cluster.worker.core.env_upkeep [RootInfo PrepareLimits sweep-choice prepare-overdue env-capacity SWEEP-FLOOR-RATIO WHEEL-UNUSED-SECONDS])
+(import doeff_cluster.worker.core.env_upkeep [RootInfo PrepareLimits sweep-choice prepare-overdue env-capacity WHEEL-UNUSED-SECONDS])
+(import doeff_cluster.worker.core.env_rules [launch-order cold-for prepare-request prepare-argv prepare-outcome overdue-failure root-project
+                                             floor-bytes])
 (import doeff_cluster.shared.intent.semaphore_model [SEMAPHORE-PREFIX])
 (import doeff_cluster.shared.core.lease_rules [drop-holders lease-holder holder-tokens-prefix])
 (import doeff_cluster.worker.protocol.heartbeat [env-report env-heartbeat-part heartbeat-body status-report status-row])
@@ -141,21 +143,12 @@
     (setv (get self.waiting key) #(runtime-env warm))
     (self.launch-waiting))
 
-  (defn #^ bool cold-for [self #^ dict declared]
-    "準備が冷たいか(同じ lock と Python の完成した root が無い = 依存も bytecode も引き継げない)。job の準備の期限を分けるため。"
-    (setv project (get declared "project"))
-    (not (any (gfor k (self.known)
-                    (and (= (get (get k "env") "project" "lockSha256") (get project "lockSha256"))
-                         (= (get (get k "env") "project" "python") (get project "python")))))))
-
   (defn #^ None launch-waiting [self]
-    ;; 同時の準備を max-parallel 本に絞る(走っている手番の CPU を奪わない)。job の準備を先に起こし、先読みは枠の 1 つを job に残す。
-    (setv order (+ (lfor #(k #(_ w)) (.items self.waiting) :if (not w) k) (lfor #(k #(_ w)) (.items self.waiting) :if w k)))
+    ;; 起こす順と数は env_rules.launch-order(同時の準備は max-parallel 本・先読みは枠の 1 つを job に残す)。
+    (setv order (run (launch-order (tuple (gfor #(k #(_ w)) (.items self.waiting) #(k w))) (len self.pending)
+                                   (len (lfor p (.values self.pending) :if p.warm p)) self.max-parallel)))
     (for [key order]
-      (setv #(runtime-env warm) (get self.waiting key)
-            warm-running (len (lfor p (.values self.pending) :if p.warm p)))
-      (when (>= (len self.pending) self.max-parallel) (break))
-      (when (and warm (>= warm-running (max 1 (- self.max-parallel 1)))) (continue))
+      (setv #(runtime-env warm) (get self.waiting key))
       (del (get self.waiting key))
       (setv root (self.root-of key))
       (when (.exists root)
@@ -168,19 +161,17 @@
             progress (/ requests (+ key ".progress")))
       (.unlink result :missing-ok True)
       (.unlink progress :missing-ok True)
-      (setv cold (.cold-for self declared))
-      (.write-text request (json.dumps {"env" declared "key" (cut key (len ENV-KEY-PREFIX) None)
-                                        "platform" (current-platform) "root" (str root) "known" (self.known)
-                                        "minFreeBytes" self.min-free-bytes}
+      (setv known (tuple (self.known))
+            cold (run (cold-for declared known)))
+      (.write-text request (json.dumps (run (prepare-request declared (cut key (len ENV-KEY-PREFIX) None) (current-platform) (str root)
+                                                             known self.min-free-bytes))
                                        :ensure-ascii False)
                    :encoding "utf-8")
       (+= self.started 1)
       (setv log (open (/ requests (+ key ".log")) "ab"))
       (try
-        (setv process (subprocess.Popen ["nice" "-n" "10" self.hy-command "-m" self.tool "--request" (str request)
-                                         "--result" (str result) "--state" (str self.state)
-                                         "--repo-keys" self.repo-keys "--code-prepare" self.code-prepare "--uv" self.uv
-                                         "--progress" (str progress)]
+        (setv process (subprocess.Popen (list (run (prepare-argv self.hy-command self.tool (str request) (str result) (str self.state)
+                                                                 self.repo-keys self.code-prepare self.uv (str progress))))
                                         :stdout log :stderr subprocess.STDOUT :stdin subprocess.DEVNULL))
         (finally (.close log)))
       (setv (get self.pending key) (PendingPrepare process (time.time) result progress warm cold))))
@@ -197,30 +188,14 @@
         (is-not code None)
           (do (del (get self.pending key))
               (setv answer (try (json.loads (.read-text pending.result :encoding "utf-8")) (except [[OSError ValueError]] None)))
-              (cond
-                (and answer (in "failure" answer))
-                  (do (setv f (get answer "failure"))
-                      (setv (get self.failed key)
-                            #((EnvFailure :kind (EnvFailureKind (get f "kind")) :detail (get f "detail")
-                                          :retryable (get f "retryable"))
-                              now-ms)))
-                (and answer (in "ready" answer)) None
-                True
-                  (setv (get self.failed key)
-                        #((EnvFailure :kind EnvFailureKind.ENV-INCOMPATIBLE :retryable False
-                                      :detail (.format "準備の process が答えを書かずに終わった(終了 {})— log: {}"
-                                                       code (/ self.state "env-requests" (+ key ".log"))))
-                          now-ms))))
+              (setv failure (run (prepare-outcome answer code (str (/ self.state "env-requests" (+ key ".log"))))))
+              (when (is-not failure None)
+                (setv (get self.failed key) #(failure now-ms))))
         (run (prepare-overdue pending.warm pending.cold pending.started (.progressed-at self pending) (time.time) self.limits))
           (do (.kill pending.process)
               (.wait pending.process)
               (del (get self.pending key))
-              (setv (get self.failed key)
-                    #((EnvFailure :kind EnvFailureKind.PREPARE-TIMEOUT :retryable True
-                                  :detail (if pending.warm
-                                              (.format "先読みの準備が {} 秒進まない(止めた)" self.limits.stall-seconds)
-                                              (.format "準備が期限({})を過ぎた(止めた)" (if pending.cold "冷たい" "温い"))))
-                      now-ms)))))
+              (setv (get self.failed key) #((run (overdue-failure pending.warm pending.cold self.limits)) now-ms)))))
     (self.launch-waiting)
     (for [key (+ (list self.pending) (list self.waiting))]
       (.append views (CodeView key CodeState.PREPARING)))
@@ -238,17 +213,11 @@
 
   ;; --- disk と掃除 ---------------------------------------------------------------------
 
-  (defn #^ int floor-bytes [self #^ int total]
-    "掃除を始める空きの下限。"
-    (if (is-not self.sweep-floor-bytes None)
-        self.sweep-floor-bytes
-        (max self.min-free-bytes (int (* SWEEP-FLOOR-RATIO total)))))
-
   (defn #^ EnvDisk disk-view [self]
     "root の置き場の disk の観測(worker の判断が掃除の時を決める)。"
     (.mkdir self.state :parents True :exist-ok True)
     (setv usage (shutil.disk-usage self.state))
-    (EnvDisk :free usage.free :floor (.floor-bytes self usage.total) :pinned self.pinned))
+    (EnvDisk :free usage.free :floor (run (floor-bytes self.sweep-floor-bytes self.min-free-bytes usage.total)) :pinned self.pinned))
 
   (defn #^ list root-infos [self]
     "掃除の候補(roots の直下の dir)。worker が作った root = キーの形の名で完成マーカーを持つ dir。"
@@ -261,11 +230,7 @@
               made (if owned (. (.stat (/ entry ENV-MARKER)) st-mtime) 0.0)
               used-file (/ entry ".last-used")
               used (if (.exists used-file) (. (.stat used-file) st-mtime) made)
-              project (if (and owned (is-not marker None))
-                          (let [declared (get marker "env") pr (get declared "project")]
-                            (.format "{}:{}" (next (gfor r (get declared "repos") :if (= (get r "name") (get pr "repo")) (get r "url")) "")
-                                     (get pr "path")))
-                          ""))
+              project (if (and owned (is-not marker None)) (run (root-project marker)) ""))
         (.append out (RootInfo :key (+ ENV-KEY-PREFIX entry.name) :project project :made-ms (int (* 1000 made))
                                :last-used-ms (int (* 1000 used)) :bytes (if owned (tree-bytes entry) 0) :owned owned))))
     out)
