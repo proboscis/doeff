@@ -17,6 +17,7 @@
 ;;;   ListDirectory  dir の直下。答え = DirEntry の tuple(名の順)
 ;;;   WalkTree       dir の下の全部(再帰)。答え = DirEntry の tuple(name = dir からの相対 path・/ 区切り・並べた順)
 ;;;   CopyFile       file 1 つを写す(写し先は上書き)。答え = None
+;;;   LinkFile       file 1 つにもう 1 つの名を付ける(ハードリンク — 写し先が在れば断る・別の file system へは断る・#2462)。答え = None
 ;;;   CopyTree       dir の中身を target の下へ重ねて写す(target は在ってよい・同じ名は上書き・symlink は symlink のまま)。答え = None
 ;;;   RenamePath     path の名を変える(os.replace と同じ — 写し先の file は置き換え・中身の在る dir へは断る)。答え = None
 ;;;   RemoveTree     file か dir を中身ごと消す(無ければ断る)。答え = None
@@ -130,6 +131,12 @@
 
 (defclass [(dataclass :frozen True)] CopyFile [EffectBase]
   "file の中身を写す(頭の註)。"
+  (#^ str source)
+  (#^ str target))
+
+
+(defclass [(dataclass :frozen True)] LinkFile [EffectBase]
+  "file 1 つにもう 1 つの名を付ける(頭の註)。"
   (#^ str source)
   (#^ str target))
 

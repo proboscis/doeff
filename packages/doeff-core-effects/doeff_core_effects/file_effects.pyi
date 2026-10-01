@@ -114,6 +114,11 @@ class CopyFile(EffectBase[FileFailed | None]):
     target: str
 
 @dataclass(frozen=True)
+class LinkFile(EffectBase[FileFailed | None]):
+    source: str
+    target: str
+
+@dataclass(frozen=True)
 class CopyTree(EffectBase[FileFailed | None]):
     source: str
     target: str
