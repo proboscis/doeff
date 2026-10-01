@@ -35,6 +35,7 @@ STUBBED_MODULES = (
     "random_effects",
     "seeded_random",
     "scripted_http_server",
+    "scripted_process",
 )
 
 #: module の直下で名を定義する Hy の form の頭。

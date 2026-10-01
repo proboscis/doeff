@@ -51,11 +51,13 @@
 (defrecord ProcessScript
   "scripted-process-handler に渡す世界(commands = ScriptedCommand の tuple・env = 自分の process の環境変数・work-root = job ごとの作業 dir を
    作る親・alive = 生きている pid の表 — ProcessAlive の答え・interpreter = 自分の process の interpreter の事実 — ReadInterpreter の答え・
-   modules = import が解く module の置き場の表 — ResolveModule の答え。表に無い名は ModuleNotFound)。"
+   modules = import が解く module の置き場の表 — ResolveModule の答え。表に無い名は ModuleNotFound)。alive の要素は pid(int)— 作る時に
+   確かめる(要素の型が欄の型 frozenset[int] と違う値を黙って持たない)。"
+  {:check [(all (gfor pid alive (isinstance pid int)))]}
   (#^ (get tuple #(ScriptedCommand ...)) commands)
   (setv #^ (get tuple #(EnvEntry ...)) env #())
   (setv #^ str work-root "/work/jobs")
-  (setv #^ frozenset alive (frozenset))
+  (setv #^ (get frozenset int) alive (frozenset))
   (setv #^ InterpreterFacts interpreter (InterpreterFacts :prefix "/" :pid 1))
   (setv #^ (get tuple #(ModuleFound ...)) modules #()))
 
