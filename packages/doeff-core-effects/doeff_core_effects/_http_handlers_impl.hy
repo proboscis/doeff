@@ -21,7 +21,9 @@
   {:pre [(: error httpx.RequestError)] :post [(: % HttpFailureKind)] :tags {:context "http" :role "foundation"}}
   "Name why a request never got a response, as HttpFailureKind, from the transport error's class — never its name or text,
    so an error whose name ends in Timeout without being one (or whose text says \"timed out\") is not read as a timeout."
+  ;; ConnectTimeout is a TimeoutException, but no connection was made — the request never reached the server (#2337).
   (match error
+    (httpx.ConnectTimeout) HttpFailureKind.CONNECT-FAILED
     (httpx.TimeoutException) HttpFailureKind.TIMED-OUT
     (httpx.ConnectError) HttpFailureKind.CONNECT-FAILED
     _ HttpFailureKind.OTHER))

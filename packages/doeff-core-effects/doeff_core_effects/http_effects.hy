@@ -71,8 +71,10 @@
 
 
 ;; Why no response ever arrived, as a closed set (agora-redesign #850). The HTTP handler maps the transport error's class — never
-;; its name or text — to one of these: TIMED-OUT = a time limit ran out (connecting, reading, writing, or waiting for a pooled
-;; connection) · CONNECT-FAILED = no connection was made (refused, DNS, TLS handshake) · OTHER = the rest (the connection dropped
+;; its name or text — to one of these: TIMED-OUT = a time limit ran out after the connection was made, or while waiting for a
+;; pooled connection (reading, writing — the request may have reached the server) · CONNECT-FAILED = no connection was made
+;; (refused, DNS, TLS handshake, or the connect time limit ran out — the request never reached the server, so a caller may resend
+;; it elsewhere; agora-redesign #2337) · OTHER = the rest (the connection dropped
 ;; mid-exchange, a protocol error …).
 (defenum HttpFailureKind TIMED-OUT CONNECT-FAILED OTHER)
 
