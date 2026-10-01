@@ -14,8 +14,9 @@
 (import doeff_time [Delay])
 (import doeff_cluster.shared.core.clock [now-epoch-ms])
 (import doeff_cluster.shared.intent.process_model [AwaitProcessEnded ProcessEnded ProcessWaitExpired])
-(import doeff_cluster.shared.intent.detached_model [SubmitDetached AwaitDetached DetachedSucceeded DetachedPending])
+(import doeff_cluster.shared.intent.detached_model [AwaitDetached DetachedSucceeded DetachedPending])
 (import doeff_cluster.shared.protocol.detached [process-watch-step ProcessWatch])
+(import doeff_cluster.shared.core.detached_rules [submit-detached-task])
 (import tests.fixtures.envs [sim-foundation])
 (import tests.fixtures.sim_programs [long-quitters pulses slow-task sim-task-foundation NET])
 
@@ -96,7 +97,7 @@
 (defk wait-for-slow-task [key timeout-seconds]
   {:pre [(: key str) (: timeout-seconds (| float None))] :post [(: % DetachedWait)] :tags {:context "doeff-cluster-test" :role "program"}}
   "筋書き: SLOW-SECONDS 秒眠る task を key で送り、timeout-seconds まで待って、答えと起きた刻を読む。"
-  (<- (SubmitDetached (slow-task sim-task-foundation SLOW-SECONDS) :key key :needs NET :name "slow"))
+  (<- (submit-detached-task (slow-task sim-task-foundation SLOW-SECONDS) :key key :needs NET :name "slow"))
   (<- started int (now-epoch-ms))
   (<- answer (AwaitDetached key :timeout-seconds timeout-seconds))
   (<- woke int (now-epoch-ms))

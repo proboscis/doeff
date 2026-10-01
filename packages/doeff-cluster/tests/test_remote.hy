@@ -13,9 +13,9 @@
 (import doeff [run Program with-handlers])
 (import doeff_core_effects.handlers [reader])
 (import doeff_time [Delay])
-(import doeff_cluster.shared.intent.remote_model [RemoteJob UnsendableProgram VersionMismatch RemoteJobFailed TaskSucceeded TaskFailed])
+(import doeff_cluster.shared.intent.remote_model [UnsendableProgram VersionMismatch RemoteJobFailed TaskSucceeded TaskFailed])
 (import doeff_cluster.shared.protocol.program_codec [encode-program decode-program decode-outcome])
-(import doeff_cluster.shared.core.remote_rules [version-mismatch])
+(import doeff_cluster.shared.core.remote_rules [version-mismatch remote-job])
 (import doeff_cluster.foundation.process_versions [current-versions])
 (import doeff_cluster.shared.core.remote_rules [program-sha])
 (import tests.link_rig [write-program-file])
@@ -81,7 +81,7 @@
   (assert (in "Program の本体の中で関数を呼んで作る" (str raised.value)) (str raised.value))
   ;; RemoteJob の送り手(本番の remote-cluster と sim の宿が通る 1 か所 encode-program)も同じ。
   (with [(pytest.raises UnsendableProgram)]
-    (encode-program (RemoteJob (holding-program answer-base 1) :needs NET))))
+    (encode-program (remote-job (holding-program answer-base 1) :needs NET))))
 
 
 (deftest test-a-program-that-makes-its-handlers-in-its-body-is-sent-and-runs
@@ -163,3 +163,24 @@
   (assert (isinstance outcome TaskFailed) outcome)
   (assert (= outcome.kind "RemoteJobFailed") outcome)
   (assert (in "Program の file" outcome.message) outcome.message))
+
+
+(deftest test-remote-job-refuses-empty-or-old-needs
+  ;; 失敗ケース(#2564): RemoteJob は構築関数 remote-job(core)を通してだけ作る。needs が能力の名の空でない frozenset でなければ
+  ;; (書き忘れの既定の空・明示の空・旧い Requirement の組の tuple・label の形の名)、送る前に TypeError で断る(ADR-DOE-CLUSTER-001 R4b)。
+  ;; 断るのは構築関数で、型(intent)は core の判断を読まない。handler を並べないので、断らずに出せば UnhandledEffect になり TypeError に
+  ;; 当たらない。
+  (with [raised (pytest.raises TypeError)]
+    (<- (remote-job (based-add 1))))
+  (assert (in "RemoteJob.needs" (str raised.value)) raised.value)
+  (assert (in "空" (str raised.value)) raised.value)
+  (with [raised (pytest.raises TypeError)]
+    (<- (remote-job (based-add 1) :needs (frozenset))))
+  (assert (in "空" (str raised.value)) raised.value)
+  ;; 旧い形: Requirement の (label value) の組の tuple。
+  (with [raised (pytest.raises TypeError)]
+    (<- (remote-job (based-add 1) :needs #(#("kind" "k3s")))))
+  (assert (in "frozenset" (str raised.value)) raised.value)
+  (with [raised (pytest.raises TypeError)]
+    (<- (remote-job (based-add 1) :needs (frozenset ["kind=k3s"]))))
+  (assert (in "kind=k3s" (str raised.value)) raised.value))

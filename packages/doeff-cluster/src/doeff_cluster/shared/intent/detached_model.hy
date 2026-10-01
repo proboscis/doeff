@@ -1,6 +1,6 @@
 ;;; 切り離した task(呼び手と寿命を切り離した task)の effect と、答えの型(2026-09-25)。
 ;;;
-;;;   (<- submitted (SubmitDetached (summarize foundation rows) :key job-id :needs (frozenset ["gpu"]) :environ #((EnvVar :name "ROWS_URL" :value url))))
+;;;   (<- submitted (submit-detached-task (summarize foundation rows) :key job-id :needs (frozenset ["gpu"]) :environ #((EnvVar :name "ROWS_URL" :value url))))   ; 構築関数(core の detached_rules)が needs を検めて出す
 ;;;   ... 呼び手の process が消えてもよい ...
 ;;;   (<- outcome (AwaitDetached job-id))          ; 別の process からでも、同じ key で待てる
 ;;;
@@ -22,7 +22,6 @@
 (require doeff-hy.record [defrecord])
 (import dataclasses [dataclass field])
 (import doeff [EffectBase Program])
-(import doeff_cluster.shared.core.capabilities [effect-needs-problem])
 (import .runtime_env_model [EnvVar])
 
 (setv DETACHED-DEFAULT-LEASE-SECONDS 60.0)       ; 担い手の worker が沈黙してから消失とみなすまで
@@ -46,10 +45,9 @@
   ;; 別の仕事(409)。名 → 値の写像では受けない(呼び手は境目で env-vars-of を通す・coordinator への本文は handler が env-mapping で綴る・#2179)。
   (setv #^ (get tuple #(EnvVar ...)) environ #())
   (defn #^ None __post-init__ [self]
-    "needs が能力の名の frozenset であること・environ が EnvVar の重ならない tuple であることを作る時に検める(旧い Requirement の
-     tuple・名 → 値の写像・名の重なりを黙って受けない。予約の名・秘密の名は EnvVar が作る時に断る)。"
-    (setv problem (effect-needs-problem self.needs))
-    (when problem (raise (TypeError (+ "SubmitDetached.needs: " problem))))
+    "environ が EnvVar の重ならない tuple であることを作る時に検める(名 → 値の写像・名の重なりを黙って受けない。予約の名・秘密の名は
+     EnvVar が作る時に断る)。needs の検め(能力の名の空でない frozenset — 旧い Requirement の tuple を断る)は型の外 — 作り手は構築関数
+     doeff_cluster.shared.core.detached_rules.submit-detached-task を通す(intent は core を読まない・#2564)。"
     (when (not (and (isinstance self.environ tuple) (all (gfor v self.environ (isinstance v EnvVar)))))
       (raise (TypeError (.format "SubmitDetached.environ: EnvVar の tuple(名 → 文字列の写像ではない — env-vars-of で組む): {!r}"
                                  self.environ))))

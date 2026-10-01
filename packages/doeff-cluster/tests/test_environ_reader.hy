@@ -27,12 +27,13 @@
 (import doeff_cluster.shared.protocol.detached [detached-submitted])
 (import doeff_time [sim-time-handler])
 (import tests.transport_http [transport-http route-cell detached-sender TEST-ROUTE])
-(import doeff_cluster.shared.intent.remote_model [RemoteJob TaskSucceeded TaskFailed])
+(import doeff_cluster.shared.intent.remote_model [TaskSucceeded TaskFailed])
 (import doeff_cluster.shared.protocol.program_codec [encode-program decode-outcome])
 (import doeff_cluster.foundation.process_versions [current-versions])
 (import doeff_cluster.shared.entry.service_build [system-of])
 (import doeff_cluster.worker.intent.worker_model [DesiredJobs])
 (import doeff_cluster.sim.local [sim-cluster SimWorker])
+(import doeff_cluster.shared.core.remote_rules [remote-job])
 (import tests.detached_rig [MemoryCoordinator RIG-PROVIDES])
 (import tests.fixtures.entry_programs [environ-read environ-resolved-read])
 
@@ -106,8 +107,8 @@
 (defk sim-reads []
   {:pre [] :post [(: % tuple)] :tags {:context "doeff-cluster-test" :role "program"}}
   "筋書き: 本番の子と同じ 2 つの Program を、同じ :environ で sim の task として走らせ、答えを返すため。"
-  (<- literal str (RemoteJob (environ-read NAME) :needs LOCAL :environ {NAME POLICY}))
-  (<- resolved str (RemoteJob (environ-resolved-read NAME) :needs LOCAL :environ {NAME POLICY}))
+  (<- literal str (remote-job (environ-read NAME) :needs LOCAL :environ {NAME POLICY}))
+  (<- resolved str (remote-job (environ-resolved-read NAME) :needs LOCAL :environ {NAME POLICY}))
   #(literal resolved))
 
 

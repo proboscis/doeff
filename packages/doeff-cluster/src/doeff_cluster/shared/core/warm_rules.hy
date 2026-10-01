@@ -5,8 +5,22 @@
 (import hashlib)
 (import json)
 (import doeff_cluster.shared.intent.runtime_env_model [RuntimeEnv])
-(import doeff_cluster.shared.intent.warm_model [WARM-KEY-LENGTH WarmFailure WarmState])
+(import doeff_cluster.shared.intent.warm_model [WARM-KEY-LENGTH WarmFailure WarmState WarmRuntimeEnv WarmAnswer])
 (import doeff_cluster.shared.core.runtime_env_rules [env-key])
+(import doeff_cluster.shared.core.capabilities [effect-needs-problem])
+
+
+(defk warm-runtime-env [env needs ttl-seconds holder]
+  {:pre [(: env RuntimeEnv) (: needs (| frozenset tuple list set dict str None)) (: ttl-seconds float) (: holder str)]
+   :post [(: % WarmAnswer)]
+   :tags {:context "doeff-cluster" :role "judgment"}}
+  "WarmRuntimeEnv の構築関数 — 作り手はここを通す。needs が能力の名の空でない frozenset でなければ(空・旧い形・label の形の名)
+   頼む前に TypeError で断る。検めた WarmRuntimeEnv をその場で出し、答え(WarmState か WarmUnreachable)を返す(defk は作った effect を
+   値として返せない — doeff-hy の _guard-performed)。needs の検めを型(intent)の外のここに置くのは、intent が core の判断を読まないため(#2564)。"
+  (<- problem (effect-needs-problem needs))
+  (when problem (raise (TypeError (+ "WarmRuntimeEnv.needs: " problem))))
+  (<- answer WarmAnswer (WarmRuntimeEnv env needs ttl-seconds holder))
+  answer)
 
 
 (defk warm-key [env needs]

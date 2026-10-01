@@ -14,7 +14,8 @@
 (import doeff_cluster.sim.local [sim-cluster SimWorker ReadCoordinator ProcessesOf Redeclare CutWorker FailRoute HostTruthOf HostTruth
                              WatchFailuresOf])
 (import doeff_cluster.worker.core.beat_policy [WatchReading])
-(import doeff_cluster.shared.intent.detached_model [SubmitDetached AwaitDetached DetachedSucceeded DetachedLost])
+(import doeff_cluster.shared.intent.detached_model [AwaitDetached DetachedSucceeded DetachedLost])
+(import doeff_cluster.shared.core.detached_rules [submit-detached-task])
 (import tests.fixtures.envs [sim-foundation])
 (import tests.fixtures.sim_programs [beacons beacons-v2 pulses slow-task sim-task-foundation NET])
 
@@ -128,7 +129,7 @@
   {:pre [] :post [(: % (| DetachedSucceeded DetachedLost))] :tags {:context "doeff-cluster-test" :role "program"}}
   "筋書き: lease 3 秒の切り離した task(20 秒眠る)を送り、終わりを待つ。"
   (<- (Delay SETTLE-SECONDS))
-  (<- (SubmitDetached (slow-task sim-task-foundation 20.0) :key "short-lease" :needs NET :name "slow" :lease-seconds 3.0))
+  (<- (submit-detached-task (slow-task sim-task-foundation 20.0) :key "short-lease" :needs NET :name "slow" :lease-seconds 3.0))
   (<- answer (AwaitDetached "short-lease" :timeout-seconds 60.0))
   answer)
 
