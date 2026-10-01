@@ -2,7 +2,7 @@
 (require doeff-hy.macros [deftest <- val])
 (import doeff [with-handlers])
 (import doeff_core_effects.handlers [reader])
-(import doeff_cluster.host_contract [HOST-CONTRACT])
+(import doeff_cluster.foundation.host_contract [HOST-CONTRACT])
 (import doeff_cluster.job_context [RunContext])
 (import doeff_cluster.cluster_foundation [cluster-handlers lease-holder-of])
 (import doeff_cluster.foundation.foundation_check [foundation-closure closed?])

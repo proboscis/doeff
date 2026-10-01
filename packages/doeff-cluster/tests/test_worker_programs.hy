@@ -10,7 +10,7 @@
 (import pathlib [Path])
 (import httpx)
 (import doeff_cluster.handlers [CoordinatorLink ProcessHost program-file])
-(import doeff_cluster.host_contract [HOST-CONTRACT])
+(import doeff_cluster.foundation.host_contract [HOST-CONTRACT])
 (import doeff_cluster.worker_model [JobSpec])
 (import doeff_cluster.coordinator.core.cluster_policy [JOB-ENTRY])
 

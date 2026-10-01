@@ -12,7 +12,7 @@
 (import httpx)
 (import doeff [run])
 (import doeff_time [sync-time-handler])
-(import .coordinator_http [CoordinatorEndpoint])
+(import doeff_cluster.foundation.coordinator_http [CoordinatorEndpoint])
 (import .drain_client [CoordinatorCall await-drained worker-ready DRAIN-DEADLINE-SECONDS DRAIN-INTERVAL-SECONDS])
 
 ;; 要求 1 つの返事を待つ上限(秒)。coordinator の fsync の詰まり(最長 13 秒 — coordinator_http.REPLY-SECONDS)より短くはしない。

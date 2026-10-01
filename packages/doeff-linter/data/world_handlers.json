@@ -1,7 +1,7 @@
 {
  "_about": "doeff の実 I/O の handler の目録(agora-redesign #1209)— 被せると外の世界(HTTP・file・子 process・実時計・socket・DB・環境変数・thread・cluster の coordinator)に触れる handler と組み立て。linter の DOEFF131・DOEFF133 の相手で、:world-handlers の :wraps はここに在る物だけ。載せない物: 値から答えるだけ(memory・fake・sim・再生)・effect を出し直すだけの翻訳・例外の型。",
  "_not_listed": {
-  "doeff_cluster.host_contract:environ-reader": "引数に値の表を渡すと純粋(模擬の宿がそう使う)— 既定の引数だけが os.environ。載せると模擬の宿の名指しが DOEFF131 の誤検出になる",
+  "doeff_cluster.foundation.host_contract:environ-reader": "引数に値の表を渡すと純粋(模擬の宿がそう使う)— 既定の引数だけが os.environ。載せると模擬の宿の名指しが DOEFF131 の誤検出になる",
   "doeff_core_effects.handlers:slog_handler": "stderr へ print するだけ(触れる先の語に stdout・stderr が無い)",
   "doeff_cluster.handlers:status-file": "file system の effect(MakeDirectory・WriteText)を出し直すだけ — 実 I/O は外側の os-file-handler",
   "doeff_cluster.record_store_handlers:record-files": "file system の effect を出し直すだけ — 実 I/O は外側の os-file-handler(record_store_main.hy)",
@@ -184,7 +184,7 @@
    "why": "上の再輸出の綴り"
   },
   {
-   "handler": "doeff_cluster.host_contract:host-reader",
+   "handler": "doeff_cluster.foundation.host_contract:host-reader",
    "touches": [
     "env"
    ],
@@ -214,14 +214,14 @@
    "why": "httpx で kubernetes の API"
   },
   {
-   "handler": "doeff_cluster.readiness_handlers:readiness-http",
+   "handler": "doeff_cluster.shared.protocol.readiness_handlers:readiness-http",
    "touches": [
     "cluster"
    ],
    "why": "coordinator へ httpx で POST"
   },
   {
-   "handler": "doeff_cluster.metrics_handlers:metrics-http",
+   "handler": "doeff_cluster.shared.protocol.metrics_handlers:metrics-http",
    "touches": [
     "cluster"
    ],
@@ -236,21 +236,21 @@
    "why": "coordinator の board・leases へ httpx・time.sleep の再送"
   },
   {
-   "handler": "doeff_cluster.remote:remote-cluster",
+   "handler": "doeff_cluster.shared.protocol.remote:remote-cluster",
    "touches": [
     "cluster"
    ],
    "why": "TaskClient で coordinator へ"
   },
   {
-   "handler": "doeff_cluster.detached:detached-cluster",
+   "handler": "doeff_cluster.shared.protocol.detached:detached-cluster",
    "touches": [
     "cluster"
    ],
    "why": "DetachedClient(httpx)"
   },
   {
-   "handler": "doeff_cluster.detached:warm-cluster",
+   "handler": "doeff_cluster.shared.protocol.detached:warm-cluster",
    "touches": [
     "cluster"
    ],

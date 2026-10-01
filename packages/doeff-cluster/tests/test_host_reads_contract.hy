@@ -9,7 +9,7 @@
 ;;; test_environ_reader.hy と test_job_context.hy。
 (require doeff-hy.macros [deftest <-])
 (import doeff_core_effects.effects [Ask])
-(import doeff_cluster.host_contract [HOST-CONTRACT])
+(import doeff_cluster.foundation.host_contract [HOST-CONTRACT])
 (import doeff_cluster.job_context [RunContext])
 (import tests.host_reads_contract_handlers [Outside CONTEXT PROGRAM-PATH JSON-NAME JSON-VALUE PLAIN-NAME PLAIN-VALUE EMPTY-NAME
                                             MISSING OUTER-NAME OUTSIDE-ANSWER])

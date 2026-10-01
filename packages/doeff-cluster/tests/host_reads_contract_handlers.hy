@@ -18,7 +18,7 @@
 (import os)
 (import doeff [EffectBase Program with_handlers])
 (import doeff_core_effects.handlers [reader state])
-(import doeff_cluster.host_contract [HOST-CONTRACT environ-reader host-reader])
+(import doeff_cluster.foundation.host_contract [HOST-CONTRACT environ-reader host-reader])
 (import doeff_cluster.job_context [RunContext])
 (import doeff_cluster.sim.local [SimChild SimLink host-answers])
 (import doeff_cluster.coordinator.entry.handler_sets [RequestQueue])

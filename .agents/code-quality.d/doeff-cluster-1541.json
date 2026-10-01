@@ -21,6 +21,7 @@
     "packages/doeff-cluster/tests/*.py",
     "packages/doeff-cluster/src/doeff_cluster/shared/intent/*.hy",
     "packages/doeff-cluster/src/doeff_cluster/foundation/*.hy",
+    "packages/doeff-cluster/src/doeff_cluster/shared/protocol/*.hy",
     "packages/doeff-cluster/src/doeff_cluster/coordinator/entry/handler_sets.hy",
     "packages/doeff-cluster/src/doeff_cluster/shared/core/capabilities.hy",
     "packages/doeff-cluster/src/doeff_cluster/shared/core/board_rules.hy",
@@ -253,10 +254,10 @@
       "layer": "io",
       "name": "doeff-cluster-coordinator-http",
       "paths": [
-        "packages/doeff-cluster/src/doeff_cluster/coordinator_http.hy"
+        "packages/doeff-cluster/src/doeff_cluster/foundation/coordinator_http.hy"
       ],
       "public": [
-        "packages/doeff-cluster/src/doeff_cluster/coordinator_http.hy"
+        "packages/doeff-cluster/src/doeff_cluster/foundation/coordinator_http.hy"
       ],
       "responsibility": "coordinator へ話す HTTP の client を 1 か所で作る(heartbeat・共有の保存・task の 3 つの口の handler が使う)。",
       "typed": true
@@ -312,10 +313,10 @@
       "layer": "io",
       "name": "doeff-cluster-detached",
       "paths": [
-        "packages/doeff-cluster/src/doeff_cluster/detached.hy"
+        "packages/doeff-cluster/src/doeff_cluster/shared/protocol/detached.hy"
       ],
       "public": [
-        "packages/doeff-cluster/src/doeff_cluster/detached.hy"
+        "packages/doeff-cluster/src/doeff_cluster/shared/protocol/detached.hy"
       ],
       "responsibility": "切り離した task の本番の handler(effect は detached_model.hy)。",
       "typed": true
@@ -571,10 +572,10 @@
       "layer": "io",
       "name": "doeff-cluster-host-contract",
       "paths": [
-        "packages/doeff-cluster/src/doeff_cluster/host_contract.hy"
+        "packages/doeff-cluster/src/doeff_cluster/foundation/host_contract.hy"
       ],
       "public": [
-        "packages/doeff-cluster/src/doeff_cluster/host_contract.hy"
+        "packages/doeff-cluster/src/doeff_cluster/foundation/host_contract.hy"
       ],
       "responsibility": "宿(job の Program を走らせる所)が Program に提供する物の閉じた契約(ADR-DOE-CLUSTER-001・改訂 1 の H)。",
       "typed": true
@@ -772,10 +773,10 @@
       "layer": "io",
       "name": "doeff-cluster-metrics-handlers",
       "paths": [
-        "packages/doeff-cluster/src/doeff_cluster/metrics_handlers.hy"
+        "packages/doeff-cluster/src/doeff_cluster/shared/protocol/metrics_handlers.hy"
       ],
       "public": [
-        "packages/doeff-cluster/src/doeff_cluster/metrics_handlers.hy"
+        "packages/doeff-cluster/src/doeff_cluster/shared/protocol/metrics_handlers.hy"
       ],
       "responsibility": "ReportMetrics の handler 2 つ。",
       "typed": true
@@ -876,10 +877,10 @@
       "layer": "io",
       "name": "doeff-cluster-readiness-handlers",
       "paths": [
-        "packages/doeff-cluster/src/doeff_cluster/readiness_handlers.hy"
+        "packages/doeff-cluster/src/doeff_cluster/shared/protocol/readiness_handlers.hy"
       ],
       "public": [
-        "packages/doeff-cluster/src/doeff_cluster/readiness_handlers.hy"
+        "packages/doeff-cluster/src/doeff_cluster/shared/protocol/readiness_handlers.hy"
       ],
       "responsibility": "ReportReady の handler 2 つ。",
       "typed": true
@@ -998,10 +999,10 @@
       "layer": "io",
       "name": "doeff-cluster-remote",
       "paths": [
-        "packages/doeff-cluster/src/doeff_cluster/remote.hy"
+        "packages/doeff-cluster/src/doeff_cluster/shared/protocol/remote.hy"
       ],
       "public": [
-        "packages/doeff-cluster/src/doeff_cluster/remote.hy"
+        "packages/doeff-cluster/src/doeff_cluster/shared/protocol/remote.hy"
       ],
       "responsibility": "RemoteJob の本番の handler(remote-cluster — coordinator へ出し、worker の子 process で走らせる)。",
       "typed": true
@@ -1050,10 +1051,10 @@
       "layer": "io",
       "name": "doeff-cluster-report-client",
       "paths": [
-        "packages/doeff-cluster/src/doeff_cluster/report_client.hy"
+        "packages/doeff-cluster/src/doeff_cluster/foundation/report_client.hy"
       ],
       "public": [
-        "packages/doeff-cluster/src/doeff_cluster/report_client.hy"
+        "packages/doeff-cluster/src/doeff_cluster/foundation/report_client.hy"
       ],
       "responsibility": "service の process が coordinator へ自分の様子(readiness・計器)を送る口。",
       "typed": true

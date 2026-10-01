@@ -9,7 +9,7 @@
 (import dataclasses [dataclass replace])
 (import pathlib [Path])
 (import urllib.parse [quote :as url-quote])
-(import .coordinator_http [CoordinatorEndpoint REPLY-SECONDS])
+(import doeff_cluster.foundation.coordinator_http [CoordinatorEndpoint REPLY-SECONDS])
 (import .beat_policy [WatchKind WatchReading beat-interval-ms heartbeat-due watch-params watch-reading reply-revision
                       WATCH-RETRY-SECONDS WAKE-HOLD-SECONDS])
 (import .code_prepare [MARKER MARKER-FORMAT marker-problem scan])
@@ -17,7 +17,7 @@
 (import doeff_core_effects.file_effects [MakeDirectory WriteText file-done])
 (import doeff_cluster.shared.intent.protocol [PROTOCOL-FORMAT])
 (import doeff_cluster.shared.core.capabilities [environ-pairs])
-(import .host_contract [HOST-CONTRACT])
+(import doeff_cluster.foundation.host_contract [HOST-CONTRACT])
 (import .job_context [process-context-environ])
 (import doeff_cluster.shared.intent.remote_model [program-sha])
 (import doeff_cluster.shared.intent.runtime_env_model [runtime-env-of-json env-key current-platform EnvFailure EnvFailureKind])

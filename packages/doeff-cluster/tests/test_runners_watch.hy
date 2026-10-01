@@ -8,7 +8,7 @@
 (import doeff_core_effects.scheduler [Spawn Task Wait])
 (import doeff_time [Delay])
 (import doeff_cluster.shared.core.clock [now-epoch-ms])
-(import doeff_cluster.detached [DetachedClient])
+(import doeff_cluster.shared.protocol.detached [DetachedClient])
 (import doeff_cluster.shared.intent.detached_model [AwaitRunnersChange RunnersChange RunnersWatchMissing RunnersUnreachable])
 (import doeff_cluster.sim.local [sim-cluster SimWorker ReadCoordinator DrainWorker FailRoute KillWorker StartWorker])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming])
