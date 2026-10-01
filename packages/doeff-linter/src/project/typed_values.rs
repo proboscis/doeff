@@ -1065,7 +1065,7 @@ fn body_start(items: &[Hy]) -> usize {
 }
 
 /// 外の形の名(doeff-hy の declarations.hy の SPELLS と同じ閉じた一覧 — 名乗れるのはこのどれか)。
-const BOUNDARY_FORMS: &[&str] = &["json", "http", "env", "schema"];
+const BOUNDARY_FORMS: &[&str] = &["json", "http", "env", "schema", "records"];
 
 /// 契約の :tags の境界の名乗り(:spells = 外の形を綴る 1 点・:reads = 外の形を型へ読む 1 点)の形の名。無いか一覧の外なら None
 /// (agora-redesign #2515 — 以前は :spells の空でない値なら何でも受けた)。
@@ -1267,6 +1267,9 @@ mod tests {
 (defk env-map [x]
   {:pre [(: x int)] :post [(: % int)] :tags {:context "x" :role "entry" :spells "env"}}
   (len {"A" x}))
+(defk where-of [x]
+  {:pre [(: x int)] :post [(: % int)] :tags {:context "x" :role "protocol" :spells "records"}}
+  (len {"a" x}))
 (defk yaml-map [x]
   {:pre [(: x int)] :post [(: % int)] :tags {:context "x" :role "protocol" :spells "yaml"}}
   (len {"a" x}))
@@ -1278,7 +1281,7 @@ mod tests {
         assert_eq!(details(true), vec!["built:yaml-map", "built:empty-reads"], "形の名の名乗りだけが数えない");
         assert_eq!(
             details(false),
-            vec!["built:header-map", "built:read-row", "built:env-map", "built:yaml-map", "built:empty-reads"],
+            vec!["built:header-map", "built:read-row", "built:env-map", "built:where-of", "built:yaml-map", "built:empty-reads"],
             "core では名乗っても数える"
         );
     }

@@ -37,8 +37,9 @@
 ;; :tags の省ける鍵。:spells = その定義が外の形を綴るのが目的の 1 点・:reads = 外の形を型へ読むのが目的の 1 点だという名乗り —
 ;; doeff-linter の DOEFF172(写像の置き場)が『dict を組む事が目的の 1 点』として数えない(agora-redesign #2265 の決め・#2299 で書けるように
 ;; した・#2515 で形の名を json の外へ広げ、読む側の :reads を足した — cisco-c8 の線引きの決め 2026-10-02)。値は SPELLS の閉じた一覧(形の名)。
+;; records = doeff-records の API の形(ListRows の where・RecordsSchema の表の宣言 — 外で決まった形・cisco-c8 の決め 2026-10-02 02:00・#2515)。
 (setv OPTIONAL-TAG-KEYS #(":spells" ":reads"))
-(setv SPELLS #("json" "http" "env" "schema"))
+(setv SPELLS #("json" "http" "env" "schema" "records"))
 
 
 (defclass [(dataclass :frozen True)] DefinitionTags []

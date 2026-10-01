@@ -121,6 +121,16 @@ def test_spells_and_reads_name_any_outer_form() -> None:
     assert ns["env_of"].__doeff_tags__ == DefinitionTags(context="k", role="entry", spells="env", reads="schema")
 
 
+def test_spells_names_the_records_api_form() -> None:
+    # agora-redesign #2515(cisco-c8 の決め 2026-10-02 02:00): doeff-records の API の形(ListRows の where・RecordsSchema)を綴る 1 点は
+    # :spells "records" と名乗る(schema と名乗ると何の境界かが違う)。一覧の外の名は今までどおり断る。
+    ns = evaluate("""
+(defk where-of [x] {:pre [(: x int)] :post [(: % int)] :tags {:context "k" :role "protocol" :spells "records"}} x)
+""")
+    assert ns["where_of"].__doeff_tags__ == DefinitionTags(context="k", role="protocol", spells="records")
+    assert ":spells" in refused('(defk f [x] {:pre [(: x int)] :post [(: % int)] :tags {:context "k" :role "protocol" :spells "record"}} x)')
+
+
 def test_a_defwire_names_its_outer_form_in_tags() -> None:
     # agora-redesign #2515: 契約どおりの外の形の写像の欄を持つ defwire も :tags に :spells / :reads を名乗れる(DOEFF172 が欄を数えない)。
     ns = evaluate("""
