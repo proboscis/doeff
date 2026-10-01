@@ -565,7 +565,8 @@
         "doeff-cluster-worker-heartbeat-rules",
         "doeff-cluster-ready-file",
         "doeff-cluster-code-plan",
-        "doeff-cluster-worker-launch"
+        "doeff-cluster-worker-launch",
+        "doeff-cluster-worker-probe-rules"
       ],
       "layer": "io",
       "name": "doeff-cluster-handlers",
@@ -1387,7 +1388,8 @@
         "doeff-cluster-code-plan",
         "doeff-cluster-code-prepare-program",
         "doeff-cluster-worker-launch",
-        "doeff-cluster-worker-process-host"
+        "doeff-cluster-worker-process-host",
+        "doeff-cluster-worker-probe-rules"
       ],
       "exclude": [
         "packages/doeff-cluster/tests/fixtures/independence/*"
@@ -1994,6 +1996,23 @@
         "packages/doeff-cluster/src/doeff_cluster/worker/protocol/process_host.hy"
       ],
       "responsibility": "worker の job の子 process の言い換え(StartJob・SignalJob・ReapJob・RetireJob・ObserveProcesses を汎用の子 process と file system の効果へ)。",
+      "typed": true
+    },
+    {
+      "allow": [
+        "doeff-cluster-job-model",
+        "doeff-cluster-worker-model",
+        "doeff-cluster-worker-launch"
+      ],
+      "layer": "io",
+      "name": "doeff-cluster-worker-probe-rules",
+      "paths": [
+        "packages/doeff-cluster/src/doeff_cluster/worker/core/probe_rules.hy"
+      ],
+      "public": [
+        "packages/doeff-cluster/src/doeff_cluster/worker/core/probe_rules.hy"
+      ],
+      "responsibility": "worker の入口の検めの判断(検めの本体・束の並べ方・結果の読みと行き先・検めの子の起こし方)。",
       "typed": true
     }
   ],
