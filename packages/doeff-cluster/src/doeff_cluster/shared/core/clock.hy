@@ -4,7 +4,8 @@
 ;;;
 ;;; この module は effect も handler も持たない — クラスタの状態が刻む物差し(epoch ミリ秒)との換算の純関数と、GetTime を 1 回
 ;;; 出してその物差しで答える小さな Program だけ。
-(require doeff-hy.macros [defk <-])
+(require doeff-hy.macros [defk <- val])
+(val MODULE-TAGS {:context "doeff-cluster" :role "program"})
 (import datetime [datetime timedelta timezone])
 (import doeff_time [GetTime])
 

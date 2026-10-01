@@ -113,7 +113,7 @@
 (import doeff_core_effects.scheduler [scheduled CreatePromise CompletePromise Wait Spawn Gather Cancel Promise Task
                                       TaskCancelledError])
 (import doeff_time [Delay sim-time-handler async-time-handler])
-(import doeff_cluster.clock [now-epoch-ms datetime-of-epoch-ms])
+(import doeff_cluster.shared.core.clock [now-epoch-ms datetime-of-epoch-ms])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming Request Reply CoordinatorStopRequested PlainText])
 (import doeff_cluster.coordinator.intent.cluster_model [ClusterState ClusterNaming NextRequests Persist ENDED-PHASES])
 (import doeff_cluster.shared.intent.process_model [AwaitProcessEnded ProcessEnded ProcessWaitExpired])
@@ -123,7 +123,7 @@
 (import .coordinator_http [IDEMPOTENT-DEADLINE-SECONDS RESEND-PAUSE-SECONDS])
 (import doeff_cluster.foundation.coordinator_inbox [StopState http-request])
 (import doeff_cluster.coordinator.entry.handler_sets [RequestQueue MemoryWalStore emulated-handlers enqueue-request nudge-takers])
-(import .promise_wait [promise-or-timeout])
+(import doeff_cluster.shared.core.promise_wait [promise-or-timeout])
 (import doeff_cluster.foundation.kube_handlers [KubeMemory])
 (import .declare [create-body spec-for-update])
 (import .detached [detached-path detached-submit-body detached-refusal submit-unreachable awaited-answer runner-facts-of-view

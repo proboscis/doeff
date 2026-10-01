@@ -6,7 +6,7 @@
 (import json)
 (import urllib.parse [quote :as url-quote])
 (import httpx)
-(import doeff_cluster.clock [now-epoch-ms])
+(import doeff_cluster.shared.core.clock [now-epoch-ms])
 (import doeff_cluster.shared.intent.shared_model [ReadShared WriteShared ANY AnyExpect JsonValue])
 (import doeff_cluster.shared.intent.semaphore_model [LeaseOp])
 (import doeff_cluster.shared.core.board_rules [board-ttl-refusal cas-allows])

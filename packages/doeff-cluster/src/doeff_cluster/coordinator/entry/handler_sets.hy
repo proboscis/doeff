@@ -15,7 +15,7 @@
 (require doeff-hy.macros [defhandler defk <- val var])
 (import copy)
 (import math [ceil])
-(import doeff_cluster.clock [now-epoch-ms])
+(import doeff_cluster.shared.core.clock [now-epoch-ms])
 (import doeff_time [Delay])
 ;; 模擬の列は、要求の無い間に眠る長さを本番の判断の関数で試す(idle_policy — 判断の層を読むのはこのためだけ)。
 (import doeff_cluster.coordinator.core.idle_policy [quiet-ticks])
@@ -28,7 +28,7 @@
 (import doeff_cluster.foundation.wal_store [WalStore MAX-LOG-BYTES wal-store apply-delta])
 (import doeff_cluster.foundation.kube_handlers [KubeMemory kube-memory])
 (import doeff_cluster.foundation.coordinator_inbox [RequestInbox StopState http-requests stop-flag])
-(import doeff_cluster.promise_wait [promise-or-timeout])
+(import doeff_cluster.shared.core.promise_wait [promise-or-timeout])
 
 
 (defn #^ list production-handlers [#^ RequestInbox inbox #^ WalStore store #^ StopState stop #^ object kube]

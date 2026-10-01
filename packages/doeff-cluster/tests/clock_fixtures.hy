@@ -2,7 +2,7 @@
 ;;; 契約の物差し(epoch ミリ秒)で起点を置く・読むための換算と、眠りを数えて外側へ渡すだけの観測の handler。
 (require doeff-hy.macros [defhandler <-])
 (import doeff_time [DelayEffect SimClock])
-(import doeff_cluster.clock [epoch-ms-of datetime-of-epoch-ms])
+(import doeff_cluster.shared.core.clock [epoch-ms-of datetime-of-epoch-ms])
 
 
 (defn #^ SimClock clock-at [#^ int ms]

@@ -4,7 +4,7 @@
 ;;; doeff-effect-analyzer で job の土台の引数に本番の土台を束ねて読み、Program が自分で並べた handler を通した後に残る effect を見る。
 ;;; 読めない handler・追えない所は閉じていると数えない。
 (require doeff-hy.macros [deftest val])
-(import doeff_cluster.foundation_check [foundation-closure closed?])
+(import doeff_cluster.foundation.foundation_check [foundation-closure closed?])
 (import tests.fixtures.closure_programs [job untranslated-job tried-job untranslated-tried-job production-foundation
                                          clockless-foundation unscheduled-foundation opaque-foundation])
 

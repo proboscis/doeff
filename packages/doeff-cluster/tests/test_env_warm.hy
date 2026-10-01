@@ -17,7 +17,7 @@
 (import pathlib [Path])
 (import doeff [with-handlers])
 (import doeff_time [Delay])
-(import doeff_cluster.clock [now-epoch-ms])
+(import doeff_cluster.shared.core.clock [now-epoch-ms])
 (import doeff_cluster.shared.intent.runtime_env_model [RuntimeEnv runtime-env->json runtime-env-of-json env-key current-platform])
 (import doeff_cluster.shared.intent.detached_model [SubmitDetached AwaitDetached DetachedSucceeded])
 (import httpx)

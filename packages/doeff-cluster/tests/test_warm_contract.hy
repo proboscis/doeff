@@ -11,7 +11,7 @@
 ;;; coordinator の 5xx の答え(本物だけの検 test_env_warm.hy)。
 (require doeff-hy.macros [defk deftest <- val var])
 (import doeff_time [Delay])
-(import doeff_cluster.clock [now-epoch-ms])
+(import doeff_cluster.shared.core.clock [now-epoch-ms])
 (import doeff_cluster.shared.intent.detached_model [DetachedRefused])
 (import doeff_cluster.shared.intent.runtime_env_model [RuntimeEnv runtime-env->json])
 (import doeff_cluster.shared.intent.warm_model [WarmRuntimeEnv ReadWarmState WarmState WarmUnreachable warm-key])

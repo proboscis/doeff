@@ -15,7 +15,7 @@
 (import doeff_cluster.shared.intent.shared_model [ReadShared WriteShared ANY])
 (import doeff_cluster.shared.intent.semaphore_model [LeaseOp])
 (import doeff_cluster.shared.core.lease_rules [semaphore-key])
-(import doeff_cluster.clock [now-epoch-ms])
+(import doeff_cluster.shared.core.clock [now-epoch-ms])
 (import tests.coordinator_contract_handlers [BoardSeen])
 
 (val TTL-MS 5000)

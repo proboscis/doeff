@@ -132,7 +132,7 @@ def _short(names) -> set[str]:
 
 def _leaving(report) -> Residual:
     """What leaves the Program with the Programs it spawns folded in — what a closure
-    check reads (``doeff_cluster.foundation_check`` folds carried Programs the same way)."""
+    check reads (``doeff_cluster.foundation.foundation_check`` folds carried Programs the same way)."""
     return report.residual_with(lambda _carrier: True)
 
 

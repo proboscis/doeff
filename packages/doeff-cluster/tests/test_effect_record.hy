@@ -13,7 +13,7 @@
 (import doeff_core_effects.effects [Ask])
 (import doeff_core_effects.scheduler [Spawn Task Wait Gather])
 (import doeff_time [Delay sim-time-handler])
-(import doeff_cluster.clock [now-epoch-ms])
+(import doeff_cluster.shared.core.clock [now-epoch-ms])
 (import tests.clock_fixtures [clock-at clock-ms])
 (import doeff_cluster.shared.intent.shared_model [ReadShared WriteShared])
 (import doeff_cluster.shared_handlers [shared-memory])

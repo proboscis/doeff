@@ -44,7 +44,7 @@
 (import doeff [EffectBase Program with_handlers])
 (import doeff_core_effects.scheduler [Spawn Cancel Task])
 (import doeff_time [SimClock sim-time-handler])
-(import doeff_cluster.clock [now-epoch-ms])
+(import doeff_cluster.shared.core.clock [now-epoch-ms])
 (import doeff_cluster.coordinator.intent.cluster_model [ClusterState])
 (import doeff_cluster.coordinator.core.durable_kv [state-from-kv])
 (import doeff_cluster.shared_handlers [shared-memory shared-http SharedClient])

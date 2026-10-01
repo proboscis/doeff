@@ -18,7 +18,7 @@
                                                 WsTextArrived WsSendText HttpShutdown])
 (import doeff_core_effects.aiohttp_http_server [aiohttp-http-server])
 (import doeff_time [Delay GetMonotonic])
-(import doeff_cluster.clock [now-epoch-ms])
+(import doeff_cluster.shared.core.clock [now-epoch-ms])
 (import doeff_cluster.local [SharedRows])
 (import doeff_cluster.shared.intent.readiness_model [ReportReady])
 (import doeff_cluster.shared.intent.shared_model [ReadShared WriteShared])

@@ -32,7 +32,7 @@
 (require doeff-hy.macros [defk <- val var])
 (val MODULE-TAGS {:context "coordinator" :role "program"})
 (import dataclasses [replace])
-(import doeff_cluster.clock [now-epoch-ms])
+(import doeff_cluster.shared.core.clock [now-epoch-ms])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming Reply CoordinatorStopRequested Request])
 (import doeff_cluster.coordinator.intent.cluster_model [ClusterState ClusterNaming IdleProbe NextRequests Persist Fault CoordinatorFault Watcher WatchRefusal WatchAnswer WatchStep])
 (import doeff_cluster.coordinator.core.watch_policy [watch-of settle-watch earliest-deadline])

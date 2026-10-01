@@ -9,7 +9,7 @@
 (import doeff_core_effects.handlers [reader])
 (import doeff_core_effects.scheduler [Spawn Task Wait])
 (import doeff_time [Delay])
-(import doeff_cluster.clock [now-epoch-ms])
+(import doeff_cluster.shared.core.clock [now-epoch-ms])
 (import doeff_cluster.local [ProcessesOf])
 (import doeff_cluster.shared.intent.metrics_model [ReportMetrics])
 (import doeff_cluster.shared.intent.readiness_model [ReportReady])

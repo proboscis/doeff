@@ -18,7 +18,7 @@
 (import doeff [EffectBase])
 (import doeff_core_effects.scheduler [CreateSemaphore AcquireSemaphore ReleaseSemaphore Spawn Cancel])
 (import doeff_time [Delay])
-(import doeff_cluster.clock [now-epoch-ms])
+(import doeff_cluster.shared.core.clock [now-epoch-ms])
 (import doeff_cluster.shared.intent.semaphore_model [CreateNamedSemaphore ClusterSemaphore LeaseLost HeldLease WriteFenced
                                                     LeaseStanding LeaseOp STANDBY HELD LOST])
 (import doeff_cluster.shared.core.lease_rules [fence-verdict holder-tokens-prefix])

@@ -9,7 +9,10 @@
 ;;;
 ;;; 読めない物は閉じていると数えない: 節を読めない handler(unknown — gap を隠しうる)・analyzer が追えなかった所(unresolved — 束ねて
 ;;; いない土台の引数など)。analyzer は開発の時の道具で、doeff-cluster の実行時の依存ではない(ここだけが import し、呼んだ時に読む)。
-(require doeff-hy.macros [deff])
+(require doeff-hy.macros [deff val])
+;; 置き場 = foundation(agora-redesign #2110): 解析の道具(doeff-effect-analyzer)を呼んで source を読む口と、その答えの型と読みの組。
+;; 答えの型と closed? もこの口の値の読みなので、foundation の層の中に閉じる(foundation は foundation 以外を import しない)。
+(val MODULE-TAGS {:context "doeff-cluster" :role "foundation"})
 (require doeff-hy.record [defrecord])
 (import collections.abc [Callable])
 (import dataclasses [dataclass])
@@ -24,7 +27,7 @@
 
 
 (deff closed? [#^ FoundationClosure closure]  ; defk にできない: 検と CLI が値を読むだけの純粋な判断
-  {:pre [(: closure FoundationClosure)] :post [(: % bool)] :tags {:context "doeff-cluster" :role "judgment"}}
+  {:pre [(: closure FoundationClosure)] :post [(: % bool)] :tags {:context "doeff-cluster" :role "foundation"}}
   "閉じているか — gap・読めない handler・追えない所のどれも無い時だけ真(読めない物を閉じていると数えない)。"
   (not (or closure.gaps closure.unknown closure.unresolved)))
 
@@ -32,7 +35,7 @@
 (deff foundation-closure [#^ Callable job * #^ (| Callable None) [foundation None] #^ str [parameter "foundation"]
                           #^ tuple [fold #()]]  ; defk にできない: 開発の道具(analyzer)を呼ぶ検の入口 — Program の外で source を読む
   {:pre [(: job Callable) (: foundation (| Callable None)) (: parameter str) (: fold tuple)] :post [(: % FoundationClosure)]
-   :tags {:context "doeff-cluster" :role "judgment"}}
+   :tags {:context "doeff-cluster" :role "foundation"}}
   "job の関数(土台を引数 parameter で受けて本体を包む module の最上位の Program 関数)が、土台 foundation で閉じているかを実行せずに
    確かめる。foundation を渡さなければ束ねずに読む(土台の先を追えないので unresolved になる)。運ばれた Program は、運び手の effect が
    「答え手が出した所の handler の下で走らせる」と宣言していれば(__doeff_runs_carried__ — Spawn・Try・Local・Listen・SqlTransaction)、

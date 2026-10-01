@@ -9,7 +9,7 @@
 (require doeff-hy.macros [deftest defk <- val var])
 (import doeff_core_effects.scheduler [Spawn Task Wait])
 (import doeff_time [Delay])
-(import doeff_cluster.clock [now-epoch-ms])
+(import doeff_cluster.shared.core.clock [now-epoch-ms])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming])
 (import doeff_cluster.coordinator.intent.cluster_model [ClusterState ClusterNaming IdleProbe])
 (import doeff_cluster.coordinator.core.cluster_policy [heartbeat-reply])

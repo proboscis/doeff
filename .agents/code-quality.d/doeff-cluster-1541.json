@@ -26,6 +26,9 @@
     "packages/doeff-cluster/src/doeff_cluster/shared/core/board_rules.hy",
     "packages/doeff-cluster/src/doeff_cluster/shared/core/lease_rules.hy",
     "packages/doeff-cluster/src/doeff_cluster/shared/core/semaphore_handlers.hy",
+    "packages/doeff-cluster/src/doeff_cluster/shared/core/clock.hy",
+    "packages/doeff-cluster/src/doeff_cluster/shared/core/promise_wait.hy",
+    "packages/doeff-cluster/src/doeff_cluster/shared/core/image_rules.hy",
     "packages/doeff-cluster/src/doeff_cluster/coordinator/core/cluster_json.hy",
     "packages/doeff-cluster/src/doeff_cluster/coordinator/core/cluster_rules.hy"
   ],
@@ -91,10 +94,10 @@
       "layer": "pure",
       "name": "doeff-cluster-clock",
       "paths": [
-        "packages/doeff-cluster/src/doeff_cluster/clock.hy"
+        "packages/doeff-cluster/src/doeff_cluster/shared/core/clock.hy"
       ],
       "public": [
-        "packages/doeff-cluster/src/doeff_cluster/clock.hy"
+        "packages/doeff-cluster/src/doeff_cluster/shared/core/clock.hy"
       ],
       "responsibility": "時計の物差しの換算。",
       "typed": true
@@ -493,10 +496,10 @@
       "layer": "pure",
       "name": "doeff-cluster-foundation-check",
       "paths": [
-        "packages/doeff-cluster/src/doeff_cluster/foundation_check.hy"
+        "packages/doeff-cluster/src/doeff_cluster/foundation/foundation_check.hy"
       ],
       "public": [
-        "packages/doeff-cluster/src/doeff_cluster/foundation_check.hy"
+        "packages/doeff-cluster/src/doeff_cluster/foundation/foundation_check.hy"
       ],
       "responsibility": "job の Program が本番の土台で閉じているか(答えの無い effect が残らないか)を、実行せずに確かめる(構成のレビューの B の残り)。",
       "typed": true
@@ -605,10 +608,10 @@
       "layer": "pure",
       "name": "doeff-cluster-image-rules",
       "paths": [
-        "packages/doeff-cluster/src/doeff_cluster/image_rules.hy"
+        "packages/doeff-cluster/src/doeff_cluster/shared/core/image_rules.hy"
       ],
       "public": [
-        "packages/doeff-cluster/src/doeff_cluster/image_rules.hy"
+        "packages/doeff-cluster/src/doeff_cluster/shared/core/image_rules.hy"
       ],
       "responsibility": "土台だけの image の約束(設計 worker-runtime-env.md 節 3.5・E13)を Dockerfile の字面で検める純粋な規則。",
       "typed": true
@@ -845,10 +848,10 @@
       "layer": "pure",
       "name": "doeff-cluster-promise-wait",
       "paths": [
-        "packages/doeff-cluster/src/doeff_cluster/promise_wait.hy"
+        "packages/doeff-cluster/src/doeff_cluster/shared/core/promise_wait.hy"
       ],
       "public": [
-        "packages/doeff-cluster/src/doeff_cluster/promise_wait.hy"
+        "packages/doeff-cluster/src/doeff_cluster/shared/core/promise_wait.hy"
       ],
       "responsibility": "書きで起きる待ちの 1 点 — 書き手が満たす Promise を、期限まで待つ(読み直さない)。",
       "typed": true
