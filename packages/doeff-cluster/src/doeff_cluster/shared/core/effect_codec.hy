@@ -143,7 +143,10 @@
 (setv MOVED-TYPES
   (| (dfor name #("JobSpec" "JobPhase")
            (+ "doeff_cluster.worker_model:" name) (+ "doeff_cluster.shared.intent.job_model:" name))
-     {"doeff_cluster.coordinator.intent.cluster_model:NextRequests" "doeff_cluster.coordinator.intent.cluster_model:IdleNextRequests"}))
+     {"doeff_cluster.coordinator.intent.cluster_model:NextRequests" "doeff_cluster.coordinator.intent.cluster_model:IdleNextRequests"}
+     ;; record-store の effect(#2030)— record_store.hy は置き場の Program と effect を一緒に持っていた。effect だけを intent へ分けた。
+     (dfor name #("AppendRecordLines" "ListRecordRuns" "ReadRecordRun" "CompactRecords" "PruneRecords")
+           (+ "doeff_cluster.record_store:" name) (+ "doeff_cluster.record_store.intent.record_store_model:" name))))
 
 (defn #^ (| type None) resolve-type [#^ str name]
   "型の名 → class。import できないか、名が class を指さなければ None(呼び手は class として呼ぶので module や関数を返さない)。

@@ -1,4 +1,4 @@
-;;; effect の記録の置き場の入口(composition root)。hy -m doeff_cluster.record_store_main --root DIR [--port 8080] [--retention-days 30]
+;;; effect の記録の置き場の入口(composition root)。hy -m doeff_cluster.record_store.entry.main --root DIR [--port 8080] [--retention-days 30]
 (import argparse)
 (import signal)
 (import sys)
@@ -9,8 +9,8 @@
 (import doeff_core_effects.scheduler [scheduled])
 (import doeff_time [async-time-handler])
 (import doeff_cluster.foundation.coordinator_inbox [http-requests stop-flag StopState])
-(import doeff_cluster.record_store [store-loop])
-(import doeff_cluster.record_store_handlers [record-files RecordInbox])
+(import doeff_cluster.record_store.core.program [store-loop])
+(import doeff_cluster.record_store.protocol.record_files [record-files] doeff_cluster.foundation.record_inbox [RecordInbox])
 
 
 (defn #^ None main []

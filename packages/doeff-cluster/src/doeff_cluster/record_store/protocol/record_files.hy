@@ -1,10 +1,10 @@
-;;; effect の記録の置き場の file の I/O(record_store.hy の effect の handler)。
+;;; effect の記録の置き場の file の I/O の言い換え(record_store.intent.record_store_model の effect の handler — agora-redesign #2030 で層 protocol へ)。
 ;;; 置き方: <root>/<service>/<run>/<区切り 6 桁>.jsonl(書いている区切り)・.jsonl.gz(書き終わって圧縮した区切り)。
 ;;; 追記は 1 要求ごとに fsync してから返す(返事を済ませた行は Pod が落ちても残る)。圧縮した後に遅れて届いた行は .jsonl に
 ;;; 追記され、読みは .jsonl.gz → .jsonl の順につなぐ(同じ区切りの中の順は行の番号 e が持つ — 読む側が並べ直す)。
 ;;;
 ;;; record-files は自分で os を呼ばない: 置き場の判断(区切りの並び・圧縮と保持の選び・一覧の形)だけを持ち、file の I/O は汎用の file system の
-;;; effect(doeff_core_effects.file_effects)で出す。答え手は外側に被せる — 本番 = os-file-handler(record_store_main.hy)・検 = memory-file-handler。
+;;; effect(doeff_core_effects.file_effects)で出す。答え手は外側に被せる — 本番 = os-file-handler(record_store.entry.main)・検 = memory-file-handler。
 ;;; 本物と fake が同じ判断の関数を通るので、同じ契約テスト(tests/test_record_files_contract.hy)を両方で回せる。
 ;;; file の effect の断り(FileFailed)は OSError で上げる(前の形の os の呼び出しと同じ — store-loop が 500 で答える)。
 (require doeff-hy.macros [defhandler defk <- val var])
@@ -15,7 +15,7 @@
 (import zlib)
 (import doeff_core_effects.file_effects [PathKind PathStat StatPath ReadBytes AppendText WriteBytes MakeDirectory ListDirectory
                                          RemoveTree file-done])
-(import doeff_cluster.record_store [AppendRecordLines ListRecordRuns ReadRecordRun CompactRecords PruneRecords])
+(import doeff_cluster.record_store.intent.record_store_model [AppendRecordLines ListRecordRuns ReadRecordRun CompactRecords PruneRecords])
 
 ;; 区切りの頭の 1 行を探す読みの初めの byte 数(行の終わりが見つからなければ倍にして読み直す — 区切りを丸ごと読まない)。
 (val HEAD-READ-BYTES 65536)
@@ -247,64 +247,3 @@
   (PruneRecords [now-ms retention-ms]
     (<- removed list (prune root now-ms retention-ms))
     (resume removed)))
-
-
-;; --- HTTP の受付(本文の大きさに上限) -------------------------------------------------------------
-
-(import http.server [BaseHTTPRequestHandler ThreadingHTTPServer])
-(import threading)
-(import urllib.parse [urlsplit parse-qsl])
-(import doeff_cluster.shared.intent.protocol [PlainText])
-(import doeff_cluster.foundation.coordinator_inbox [RequestInbox ReplySlot])
-(import doeff_cluster.foundation.coordinator_inbox [http-request])
-
-;; 1 要求の本文の上限。記録係は 1 回の送りを 4 MB で区切る(HttpSink の max-post-bytes)ので、これを超えるのは 1 行が巨大な時だけ。
-;; 上限が無い最初の版は、古い記録係(1 回 500 行)が起点の一覧を貯めて一度に送った数百 MB の本文を JSON で読み、memory が 1.9 GB に
-;; 跳ねて落ちた(2026-09-25 00:19 JST・上限 2Gi の Pod)。
-(setv MAX-BODY-BYTES 64000000)
-
-
-(defclass RecordInbox [RequestInbox]
-  "coordinator の RequestInbox と同じ箱。違いは本文の上限(超えたら読まずに 413)だけ。"
-  (defn #^ None start [self]
-    (setv inbox self)
-    (defclass Handler [BaseHTTPRequestHandler]
-      (setv protocol-version "HTTP/1.1" timeout 120)
-      (defn #^ None log-message [self #^ str format #^ (| str int) #* args] None)
-      (defn _handle [self method]
-        (setv split (urlsplit self.path)
-              length (int (or (.get self.headers "Content-Length") 0))
-              slot (ReplySlot))
-        (when (> length MAX-BODY-BYTES)
-          (setv self.close-connection True)
-          (return (.send self 413 {"error" (.format "本文が大きすぎる: {} byte(上限 {})" length MAX-BODY-BYTES)})))
-        (setv raw (if (> length 0) (.read self.rfile length) b""))
-        (try
-          (setv body (if raw (json.loads raw) None))
-          (except [error ValueError]
-            (return (.send self 400 {"error" (.format "JSON を読めない: {}" error)}))))
-        (setv raw None)
-        (.put inbox.queue (http-request method split.path (dict (parse-qsl split.query)) body :slot slot
-                                   :actor (.get self.headers "X-Actor") :peer (str (get self.client-address 0))))
-        (if (.wait slot.done 60.0)
-            (do (setv reply slot.body)
-                ;; 置き場の答え(record_store.answer-request)の本文は表か PlainText だけ — 別の形なら送る前に名指して落ちる。
-                (assert (isinstance reply #(dict PlainText)) (.format "記録の置き場の返事の本文の形が違う: {}" (type reply)))
-                (.send self slot.status reply))
-            (.send self 503 {"error" "置き場の Program が返事をしない"})))
-      (defn #^ None send [self #^ int status #^ (| dict PlainText) body]
-        (setv #(data content-type)
-              (if (isinstance body PlainText)
-                  #((.encode body.text "utf-8") body.content-type)
-                  #((.encode (json.dumps body :ensure-ascii False) "utf-8") "application/json; charset=utf-8")))
-        (.send-response self status)
-        (.send-header self "Content-Type" content-type)
-        (.send-header self "Content-Length" (str (len data)))
-        (.end-headers self)
-        (.write self.wfile data)
-        None)
-      (defn #^ None do-GET [self] (._handle self "GET"))
-      (defn #^ None do-POST [self] (._handle self "POST")))
-    (setv self.server (ThreadingHTTPServer #("0.0.0.0" self.port) Handler))
-    (setv self.server.daemon-threads True)
-    (.start (threading.Thread :target self.server.serve-forever :daemon True))))

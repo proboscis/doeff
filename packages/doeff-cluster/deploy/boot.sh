@@ -3,7 +3,7 @@
 # クラスタの仕組み(doeff_cluster)は PATH の hy の venv の物を使う。WORKER_DOEFF_COMMIT が在れば、その venv を宣言した doeff の commit
 # から自分で用意する(自己起動・下)。業務のコードは worker が job ごとに用意する(CODE_REPO_URL の版の木か、実行環境の root)。
 #   ROLE=coordinator … 割り当て係(LISTEN_PORT・状態は $WORK_DIR/coord/state.json・CLUSTER_NAMING = 外の系と取り交わす名の JSON)
-#   ROLE=records     … effect の記録の置き場(LISTEN_PORT・RECORDS_ROOT・RECORDS_RETENTION_DAYS — record_store.hy)
+#   ROLE=records     … effect の記録の置き場(LISTEN_PORT・RECORDS_ROOT・RECORDS_RETENTION_DAYS — record_store/core/program.hy)
 #   ROLE=worker      … worker(COORDINATOR_URL = URL を `,` で並べると前から順に試す・WORKER_NAME・WORKER_PROVIDES(提供する能力の名 a,b)・
 #                      WORKER_EXCLUSIVE(専用の能力 — provides の一部)・NODE_NAME(k8s の downward API の spec.nodeName —
 #                      coordinator が node の label から company-machine などの能力を導く)・WORKER_CAPACITY・
@@ -161,7 +161,7 @@ case "$role" in
     exec hy -m doeff_cluster.coordinator.entry.main --state-file "$WORK_DIR/coord/state.json" --port "${LISTEN_PORT:-8080}" \
       --naming "$naming" ;;
   records)
-    exec hy -m doeff_cluster.record_store_main --root "${RECORDS_ROOT:-/records}" --port "${LISTEN_PORT:-8080}" \
+    exec hy -m doeff_cluster.record_store.entry.main --root "${RECORDS_ROOT:-/records}" --port "${LISTEN_PORT:-8080}" \
       --retention-days "${RECORDS_RETENTION_DAYS:-30}" ;;
 esac
 # ROLE=worker

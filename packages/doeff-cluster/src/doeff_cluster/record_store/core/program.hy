@@ -11,49 +11,16 @@
 ;;;
 ;;; 入口 = record_store_main.hy(effect の class を __main__ に作らないため入口を分ける)。形は coordinator と同じ: HTTP の受付(別 thread)が要求を箱に並べ、1 本の Program(store-loop)が取り出して判断し、file の I/O は
 ;;; effect(AppendRecordLines 等)として handler(record_store_handlers.hy)が行う。
+;;; effect の型は record_store.intent.record_store_model・file の I/O の言い換えは record_store.protocol.record_files・HTTP の受付は
+;;; foundation.record_inbox・入口は record_store.entry.main(agora-redesign #2030 で層の dir へ分けた)。
 (require doeff-hy.macros [defk <- val var])
-(import dataclasses [dataclass])
 (import re)
 (import typing [TypeGuard])
-(import doeff [EffectBase])
 (import doeff_core_effects [slog])
 (import doeff_cluster.shared.core.clock [now-epoch-ms])
-(import doeff_cluster.shared.intent.protocol [Request Reply PlainText CoordinatorStopRequested])
-(import doeff_cluster.shared.intent.protocol [NextRequests])
+(import doeff_cluster.shared.intent.protocol [Request Reply PlainText CoordinatorStopRequested NextRequests])
+(import doeff_cluster.record_store.intent.record_store_model [AppendRecordLines ListRecordRuns ReadRecordRun CompactRecords PruneRecords])
 
-
-;; --- effect(file の I/O は handler だけ) ------------------------------------------------------
-
-(defclass [(dataclass :frozen True)] AppendRecordLines [EffectBase]
-  "結果は追記した行の数。fsync してから返る。"
-  (#^ str service)
-  (#^ str run)
-  (#^ int chunk)
-  (#^ list lines))
-
-(defclass [(dataclass :frozen True)] ListRecordRuns [EffectBase]
-  "結果は run の dict の list。service = None なら全部。"
-  (#^ (| str None) service))
-
-(defclass [(dataclass :frozen True)] ReadRecordRun [EffectBase]
-  "結果は JSONL の text(区切りの順)。無ければ None。"
-  (#^ str service)
-  (#^ str run)
-  (#^ (| int None) from-chunk)
-  (#^ (| int None) to-chunk))
-
-(defclass [(dataclass :frozen True)] CompactRecords [EffectBase]
-  "結果は gzip にした区切りの数。idle-ms 書かれていない .jsonl を圧縮する。"
-  (#^ int now-ms)
-  (#^ int idle-ms))
-
-(defclass [(dataclass :frozen True)] PruneRecords [EffectBase]
-  "結果は消した run の #(service run) の list。最後の書きが now-ms - retention-ms より古い run を消す。"
-  (#^ int now-ms)
-  (#^ int retention-ms))
-
-
-;; --- 純粋な判断 --------------------------------------------------------------------------------
 
 (setv NAME-PATTERN (re.compile r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$"))
 (setv MAINTENANCE-MS 300000)

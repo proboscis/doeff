@@ -42,7 +42,8 @@
     "packages/doeff-cluster/src/doeff_cluster/shared/core/declaring.hy",
     "packages/doeff-cluster/src/doeff_cluster/sim/*.hy",
     "packages/doeff-cluster/src/doeff_cluster/worker/core/program.hy",
-    "packages/doeff-cluster/src/doeff_cluster/shared/core/job_rules.hy"
+    "packages/doeff-cluster/src/doeff_cluster/shared/core/job_rules.hy",
+    "packages/doeff-cluster/src/doeff_cluster/record_store/*/*.hy"
   ],
   "modules": [
     {
@@ -949,15 +950,16 @@
       "allow": [
         "doeff-cluster-clock",
         "doeff-cluster-cluster-model",
-        "doeff-cluster-shared-protocol"
+        "doeff-cluster-shared-protocol",
+        "doeff-cluster-record-store-model"
       ],
       "layer": "pure",
       "name": "doeff-cluster-record-store",
       "paths": [
-        "packages/doeff-cluster/src/doeff_cluster/record_store.hy"
+        "packages/doeff-cluster/src/doeff_cluster/record_store/core/program.hy"
       ],
       "public": [
-        "packages/doeff-cluster/src/doeff_cluster/record_store.hy"
+        "packages/doeff-cluster/src/doeff_cluster/record_store/core/program.hy"
       ],
       "responsibility": "effect の記録の置き場(effect-records)。",
       "typed": true
@@ -968,15 +970,16 @@
         "doeff-cluster-coordinator",
         "doeff-cluster-coordinator-inbox",
         "doeff-cluster-record-store",
-        "doeff-cluster-shared-protocol"
+        "doeff-cluster-shared-protocol",
+        "doeff-cluster-record-store-model"
       ],
       "layer": "io",
       "name": "doeff-cluster-record-store-handlers",
       "paths": [
-        "packages/doeff-cluster/src/doeff_cluster/record_store_handlers.hy"
+        "packages/doeff-cluster/src/doeff_cluster/record_store/protocol/record_files.hy"
       ],
       "public": [
-        "packages/doeff-cluster/src/doeff_cluster/record_store_handlers.hy"
+        "packages/doeff-cluster/src/doeff_cluster/record_store/protocol/record_files.hy"
       ],
       "responsibility": "effect の記録の置き場の file の I/O(record_store.hy の effect の handler)。",
       "typed": true
@@ -986,15 +989,16 @@
         "doeff-cluster-coordinator",
         "doeff-cluster-coordinator-inbox",
         "doeff-cluster-record-store",
-        "doeff-cluster-record-store-handlers"
+        "doeff-cluster-record-store-handlers",
+        "doeff-cluster-record-inbox"
       ],
       "layer": "runtime",
       "name": "doeff-cluster-record-store-main",
       "paths": [
-        "packages/doeff-cluster/src/doeff_cluster/record_store_main.hy"
+        "packages/doeff-cluster/src/doeff_cluster/record_store/entry/main.hy"
       ],
       "public": [
-        "packages/doeff-cluster/src/doeff_cluster/record_store_main.hy"
+        "packages/doeff-cluster/src/doeff_cluster/record_store/entry/main.hy"
       ],
       "responsibility": "effect の記録の置き場の入口(composition root)。",
       "typed": true
@@ -1331,7 +1335,8 @@
         "doeff-cluster-worker",
         "doeff-cluster-worker-model",
         "doeff-cluster-worker-policy",
-        "pytest-item-collection"
+        "pytest-item-collection",
+        "doeff-cluster-record-store-model"
       ],
       "exclude": [
         "packages/doeff-cluster/tests/fixtures/independence/*"
@@ -1676,6 +1681,35 @@
         "packages/doeff-cluster/src/doeff_cluster/shared/core/job_rules.hy"
       ],
       "responsibility": "job の宣言の指紋 spec-hash — worker と coordinator が同じ関数で計算して比べる。",
+      "typed": true
+    },
+    {
+      "allow": [],
+      "layer": "domain",
+      "name": "doeff-cluster-record-store-model",
+      "paths": [
+        "packages/doeff-cluster/src/doeff_cluster/record_store/intent/record_store_model.hy"
+      ],
+      "public": [
+        "packages/doeff-cluster/src/doeff_cluster/record_store/intent/record_store_model.hy"
+      ],
+      "responsibility": "effect の記録の置き場(record-store)の effect — 置き場の Program が出し、file の I/O の言い換えが答える。",
+      "typed": true
+    },
+    {
+      "allow": [
+        "doeff-cluster-coordinator-inbox",
+        "doeff-cluster-shared-protocol"
+      ],
+      "layer": "io",
+      "name": "doeff-cluster-record-inbox",
+      "paths": [
+        "packages/doeff-cluster/src/doeff_cluster/foundation/record_inbox.hy"
+      ],
+      "public": [
+        "packages/doeff-cluster/src/doeff_cluster/foundation/record_inbox.hy"
+      ],
+      "responsibility": "effect の記録の置き場の HTTP の受付(本文の大きさに上限)— coordinator の RequestInbox と同じ箱。",
       "typed": true
     }
   ],

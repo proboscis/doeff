@@ -4,7 +4,7 @@
   "doeff_cluster.foundation.host_contract:environ-reader": "引数に値の表を渡すと純粋(模擬の宿がそう使う)— 既定の引数だけが os.environ。載せると模擬の宿の名指しが DOEFF131 の誤検出になる",
   "doeff_core_effects.handlers:slog_handler": "stderr へ print するだけ(触れる先の語に stdout・stderr が無い)",
   "doeff_cluster.handlers:status-file": "file system の effect(MakeDirectory・WriteText)を出し直すだけ — 実 I/O は外側の os-file-handler",
-  "doeff_cluster.record_store_handlers:record-files": "file system の effect を出し直すだけ — 実 I/O は外側の os-file-handler(record_store_main.hy)",
+  "doeff_cluster.record_store.protocol.record_files:record-files": "file system の effect を出し直すだけ — 実 I/O は外側の os-file-handler(record_store.entry.main)",
   "doeff_cluster.code_prepare:files-tree": "木の effect を file system の effect へ出し直すだけ(模擬の世界では memory-file-handler が答える)",
   "doeff_cluster.shared.protocol.record_handlers:effect-recorder": "sink が注入(MemorySink なら値だけ)— 実 I/O は recording-handler が組む sink",
   "doeff_records.pg:pg-records-handler": "SqlQuery の出し直しだけ(実 DB は postgres-sql-handler)",

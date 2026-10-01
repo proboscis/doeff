@@ -62,6 +62,19 @@
 
 ;; --- handler: HTTP の受付 ---------------------------------------------------------------
 
+(defn #^ bool text-body? [#^ object body]
+  "返事の本文が JSON でない text(PlainText)かを、受付の箱(この module と record_inbox の RecordInbox)が同じ判断で知るため。"
+  (isinstance body PlainText))
+
+
+(defn #^ tuple encoded-reply [#^ object body]
+  "返事の本文を送る byte と content-type の組にするため(PlainText はそのまま text・ほかは JSON)。受付の箱の HTTP の thread が
+   返事を書く 1 点で、record_inbox の RecordInbox も同じ関数を使う(agora-redesign #2030 で 2 か所の写しを 1 つにした)。"
+  (if (text-body? body)
+      #((.encode body.text "utf-8") body.content-type)
+      #((.encode (json.dumps body :ensure-ascii False) "utf-8") "application/json; charset=utf-8")))
+
+
 (defclass RequestInbox []
   "HTTP server(別 thread)が受けた要求を並べる箱。調停ループは 1 件ずつ取り出して返事を置く。"
   (defn #^ None __init__ [self #^ int port #^ Callable [clock time.monotonic]]
@@ -102,10 +115,7 @@
             (.send self slot.status slot.body)
             (.send self 503 {"error" "調停ループが返事をしない"})))
       (defn #^ None send [self #^ int status #^ object body]
-        (setv #(data content-type)
-              (if (isinstance body PlainText)
-                  #((.encode body.text "utf-8") body.content-type)
-                  #((.encode (json.dumps body :ensure-ascii False) "utf-8") "application/json; charset=utf-8")))
+        (setv #(data content-type) (encoded-reply body))
         (.send-response self status)
         (.send-header self "Content-Type" content-type)
         (.send-header self "Content-Length" (str (len data)))

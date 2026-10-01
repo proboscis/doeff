@@ -171,6 +171,9 @@
   ;; 受け口の effect(#2180)— 移しの前の記録の NextRequests は調停ループが idle 付きで出した物なので、子 class を引く
   (import doeff_cluster.coordinator.intent.cluster_model [IdleNextRequests])
   (assert (is (resolve-type "doeff_cluster.coordinator.intent.cluster_model:NextRequests") IdleNextRequests))
+  ;; record-store の effect(#2030)— 旧い module の名 doeff_cluster.record_store は今は dir(package)なので、表が無ければ引けない
+  (import doeff_cluster.record_store.intent.record_store_model [AppendRecordLines])
+  (assert (is (resolve-type "doeff_cluster.record_store:AppendRecordLines") AppendRecordLines))
   ;; 表に無い旧い名は引けない(黙って別の型へ倒れない)
   (assert (is (resolve-type "doeff_cluster.no_such_model:SubmitDetached") None))
   (assert (= (len MOVED-MODULES) 13)))
