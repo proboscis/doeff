@@ -28,7 +28,9 @@
 (import pathlib [Path])
 (import doeff_cluster.shared.intent.runtime_env_model [RepoCheckout NativeWheel PythonProject RuntimeEnv EnvFailureKind
                                          runtime-env->json env-key current-platform])
-(import doeff_cluster.runtime_env [LocalCheckout ProjectOfCheckout runtime-env-of-checkouts checkout-reads])
+(import doeff_cluster.shared.intent.checkout_model [LocalCheckout ProjectOfCheckout])
+(import doeff_cluster.shared.core.runtime_env [runtime-env-of-checkouts])
+(import doeff_cluster.shared.protocol.checkout_reads [checkout-reads])
 (import doeff_core_effects.os_process [subprocess-handler])
 (import doeff_core_effects.os_file [os-file-handler])
 (import doeff_cluster.env_prepare [ENV-MARKER ROOTS-PTH])

@@ -15,8 +15,9 @@
 (import doeff_core_effects.file_effects [MemoryFile MemoryFiles ReadBytes])
 (import doeff_core_effects.memory_file [memory-file-handler])
 (import doeff_core_effects.scripted_process [ProcessScript scripted-process-handler])
-(import doeff_cluster.runtime_env [LocalCheckout ProjectOfCheckout CheckoutState ReadCheckout SenderSourceRoot SENDER-SOURCE-DIR
-                                   runtime-env-of-checkouts checkout-reads checkout-state-at checked-declaring-checkout])
+(import doeff_cluster.shared.intent.checkout_model [LocalCheckout ProjectOfCheckout CheckoutState ReadCheckout SenderSourceRoot])
+(import doeff_cluster.shared.protocol.checkout_reads [SENDER-SOURCE-DIR checkout-reads checkout-state-at])
+(import doeff_cluster.shared.core.runtime_env [runtime-env-of-checkouts checked-declaring-checkout])
 (import doeff_cluster.shared.intent.runtime_env_model [RepoCheckout RuntimeEnv RuntimeEnvInvalid InvalidKind])
 (import doeff_cluster.env_prepare [FileSha256])
 (import doeff_cluster.checkout_git_script [GitCheckout GitRemote GitRev git-command])
