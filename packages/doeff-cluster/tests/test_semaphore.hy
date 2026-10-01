@@ -17,7 +17,7 @@
 (import doeff_cluster.shared_handlers [shared-memory])
 (import doeff_cluster.shared.intent.semaphore_model [CreateNamedSemaphore ClusterSemaphore LeaseLost])
 (import doeff_cluster.shared.core.lease_rules [semaphore-key claim renew release])
-(import doeff_cluster.semaphore_handlers [named-semaphore-local cluster-semaphore SemaphoreSession])
+(import doeff_cluster.shared.core.semaphore_handlers [named-semaphore-local cluster-semaphore SemaphoreSession])
 
 
 ;; --- 業務の形の Program(scheduler の effect だけを使う) --------------------------------------
@@ -225,7 +225,7 @@
 (import doeff_cluster.shared.intent.shared_model [ReadShared WriteShared])
 (import doeff_cluster.shared.intent.semaphore_model [HeldLease WriteFenced LeaseOp])
 (import doeff_cluster.shared.core.lease_rules [fence-verdict])
-(import doeff_cluster.semaphore_handlers [lease-fence])
+(import doeff_cluster.shared.core.semaphore_handlers [lease-fence])
 
 (defclass [(dataclass :frozen True)] FakeWrite [EffectBase]
   "柵の向こうの書き(本番では業務の書き先への書き)。"

@@ -10,7 +10,7 @@
 (import doeff_time [Delay])
 (import doeff_cluster.cluster_foundation [lease-holder-of])
 (import doeff_cluster.job_context [RunContext])
-(import doeff_cluster.semaphore_handlers [SemaphoreSession])
+(import doeff_cluster.shared.core.semaphore_handlers [SemaphoreSession])
 (import doeff_cluster.shared.core.lease_rules [drop-holders lease-holder holder-tokens-prefix])
 (import doeff_cluster.worker_model [ReleaseLeases])
 (import doeff_cluster.local [sim-cluster Redeclare ProcessesOf SharedRows])

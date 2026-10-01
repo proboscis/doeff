@@ -19,7 +19,7 @@
 (import doeff_cluster.shared.intent.shared_model [WriteShared])
 (import doeff_cluster.shared.intent.semaphore_model [LeaseOp FENCE-MARGIN-MS])
 (import doeff_cluster.shared.core.lease_rules [lease-op semaphore-write-refusal lease-timing-refusal])
-(import doeff_cluster.semaphore_handlers [SemaphoreSession])
+(import doeff_cluster.shared.core.semaphore_handlers [SemaphoreSession])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming Request])
 (import doeff_cluster.coordinator.intent.cluster_model [ClusterState])
 (import doeff_cluster.foundation.coordinator_inbox [http-request])
@@ -29,7 +29,7 @@
 (import doeff_cluster.handlers [CoordinatorLink release-leases])
 (import doeff_cluster.worker_model [DesiredJobs DesiredUnreadable])
 (import tests.test_semaphore [lease-writer run-all written-log FakeWrite cut-off-at])
-(import doeff_cluster.semaphore_handlers [cluster-semaphore lease-fence])
+(import doeff_cluster.shared.core.semaphore_handlers [cluster-semaphore lease-fence])
 
 (setv T (ClusterTiming))
 
