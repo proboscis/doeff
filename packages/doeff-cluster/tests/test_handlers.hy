@@ -98,7 +98,7 @@
 
 (import json)
 (import httpx)
-(import doeff_cluster.handlers [release-leases])
+(import tests.transport_http [released-through])
 (import doeff_cluster.shared.core.lease_rules [drop-holders])
 
 (deftest test-release-leases-drops-only-the-finished-process-holders-on-an-old-coordinator
@@ -118,8 +118,7 @@
                (if (= (get board key) (get body "expect"))
                    (do (setv (get board key) (get body "value")) (httpx.Response 200 :json {}))
                    (httpx.Response 409 :json {})))))
-  (setv link (CoordinatorLink "http://coord" "zeus" #() 1 60000 :transport (httpx.MockTransport handle)))
-  (release-leases link "app-writer" "1-old")
+  (released-through (httpx.MockTransport handle) "app-writer" "1-old")
   (assert (= (get board "semaphore/app-writer" "holders") {"app-writer/2-new/1" 88}))
   (assert (= (get board "semaphore/other" "holders") {"other-job/1-old/1" 77}) "別の job の同じ名の世代は触らない")
   (assert (= puts ["semaphore/app-writer"]))

@@ -50,3 +50,17 @@
    :tags {:context "doeff-cluster-test" :role "foundation"}}
   "検の切り離した task の送り手(版の識別はこの process の版 — 本番の組み立ては宿の契約の Ask で読む)。"
   (DetachedSender :revision revision :versions (current-versions) :runtime-env runtime-env :deadline-seconds deadline-seconds))
+
+
+(defn #^ None released-through [#^ httpx.BaseTransport transport #^ str job #^ str instance]  ; defk にできない: 検が Program の外から 1 回走らせる入口
+  "終わった process の lease の返し(worker/protocol/lease_release の lease-release — #2427)を、transport の後ろの coordinator への検の
+   HTTP の答え手と模擬の時計の下で 1 回走らせる(行き先の 1 行は捨てる)。"
+  (import doeff [run with-handlers])
+  (import doeff_core_effects.handlers [slog-discard-handler])
+  (import doeff_core_effects.scheduler [scheduled])
+  (import doeff_time [SimClock sim-time-handler])
+  (import doeff_cluster.worker.intent.worker_model [ReleaseLeases])
+  (import doeff_cluster.worker.protocol.lease_release [lease-release])
+  (run (scheduled (with-handlers [(transport-http transport) slog-discard-handler (sim-time-handler :clock (SimClock))
+                                  (lease-release (route-cell) TEST-ROUTE)]
+                                 (ReleaseLeases job instance)))))
