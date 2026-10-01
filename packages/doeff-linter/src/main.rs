@@ -236,6 +236,11 @@ impl Setup {
                 | ProjectRule::MatchFieldHyphen
                 | ProjectRule::ModuleDeclaresTags
                 | ProjectRule::RoleMatchesLayer => self.settings.layers.is_some(),
+                // 値を型だけで渡す層を 1 つも宣言していなければ、判定はつながっていない(0 件を「守れている」と読ませない)。
+                ProjectRule::DictOutsideItsPlace => self.settings.layers.is_some(),
+                ProjectRule::WireInWireFreeLayer | ProjectRule::BareMapInWireFreeLayer => {
+                    self.settings.layers.as_ref().is_some_and(|l| l.layers.iter().any(|spec| spec.wire_free))
+                }
                 ProjectRule::RawSideEffectDirect | ProjectRule::RawSideEffectVia => self.settings.raw.is_some(),
                 ProjectRule::EnvironmentName => self.settings.environment.is_some(),
                 ProjectRule::ServiceBoundary => self.settings.services.is_some(),

@@ -33,6 +33,9 @@ pub struct LayersSection {
     /// 型だけを置く層(関数と handler を定めない)。
     #[serde(default)]
     pub types_only: Vec<String>,
+    /// 値を型だけで渡す層(defwire と写像・型の無い組を置かない — DOEFF170・171・agora-redesign #2143)。
+    #[serde(default)]
+    pub wire_free: Vec<String>,
     /// 型だけの層で数える関数の定義の形(Hy の頭の綴り。既定 defk・deff・defp・defpp・defhandler・defn)。
     #[serde(default)]
     pub function_definers: Option<Vec<String>>,
@@ -403,6 +406,8 @@ pub struct LayerSpec {
     pub allowed: Option<BTreeSet<LayerId>>,
     pub forbid_modules: BTreeSet<String>,
     pub types_only: bool,
+    /// 値を型だけで渡す層か(DOEFF170・171)。
+    pub wire_free: bool,
     /// 許す role(None = role の規則を当てない)。
     pub roles: Option<BTreeSet<String>>,
     /// 層の説明(設定に無ければ欄は全部 None)。
@@ -818,6 +823,7 @@ fn validate_layers(
         ("layers.allow_imports", section.allow_imports.keys().cloned().collect()),
         ("layers.forbid_modules", section.forbid_modules.keys().cloned().collect()),
         ("layers.types_only", section.types_only.clone()),
+        ("layers.wire_free", section.wire_free.clone()),
         ("layers.describe", section.describe.keys().cloned().collect()),
         ("roles.by_layer", roles.map(|r| r.by_layer.keys().cloned().collect()).unwrap_or_default()),
     ] {
@@ -874,6 +880,7 @@ fn validate_layers(
                 allowed,
                 forbid_modules: section.forbid_modules.get(name).map(|m| m.iter().cloned().collect()).unwrap_or_default(),
                 types_only: section.types_only.contains(name),
+                wire_free: section.wire_free.contains(name),
                 roles: layer_roles,
                 description: section.describe.get(name).cloned().unwrap_or_default(),
             }

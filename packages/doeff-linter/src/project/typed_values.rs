@@ -710,9 +710,345 @@ pub fn find(root: &Path, selection: &FileSelection, focus: Option<&[PathBuf]>) -
     )
 }
 
+// --- 値を型だけで渡す層(DOEFF170・171 — agora-redesign #2143)----------------------------------------------------------
+//
+// 層の宣言 `:wire-free True` の層(agora の core)は、wire の型(defwire)を持たず、写像も中身の型の無い組 / 列も受け渡さない
+// (operator 2026-10-01 13:0x〜13:2x 逐語 "defwire should never live in core right???" / "we never pass dict around if it's not about
+// building the dict itself. if it's for getting data, such must be more like key->data func or such effect")。DOEFF144 と違い、
+// 型つきの写像(`(of dict str Row)`)も鳴る(データを引く写像はキー → 値の関数か効果にする)。写像を組むのが目的の綴りは翻訳の層の
+// 1 点に置くので、この層には例外を置かない — ただし並べ替えのキーの組(Plain::SortKey)は値の受け渡しではないので外す。
+
+/// 写像(中身の型の有無を問わない)— DOEFF144 の素の写像に、JSON の本文の別名と凍らせた写像を足した物。
+const WIRE_FREE_MAPPINGS: &[&str] = &["JsonBody", "JSONBody", "OpaqueJson", "FrozenMap"];
+/// 中身の型が無ければ鳴る列(組は BARE_TUPLES)。
+const BARE_LISTS: &[&str] = &["list", "List", "typing.List"];
+
+/// 当たりの種類。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WireFreeWhat {
+    /// defwire の宣言(DOEFF170)。
+    Wire,
+    /// :pre の引数の型(DOEFF171)。
+    Pre,
+    /// :post の答えの型(DOEFF171)。
+    Post,
+    /// defclass・defrecord の欄の型(DOEFF171)。
+    Field,
+}
+
+impl WireFreeWhat {
+    /// 登録簿の鍵の細目の種類。
+    pub fn kind(self) -> &'static str {
+        match self {
+            WireFreeWhat::Wire => "wire",
+            WireFreeWhat::Pre => "pre",
+            WireFreeWhat::Post => "post",
+            WireFreeWhat::Field => "field",
+        }
+    }
+}
+
+/// 値を型だけで渡す層の当たり 1 つ。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WireFreeHit {
+    pub start: usize,
+    pub end: usize,
+    /// 名(defwire の名・`定義:引数`・`定義`・`Class.欄`)。
+    pub name: String,
+    pub what: WireFreeWhat,
+    /// 赤の理由(defwire は空)。
+    pub problem: String,
+}
+
+impl WireFreeHit {
+    /// 登録簿の鍵の細目(`<種類>:<名>`)。
+    pub fn detail(&self) -> String {
+        format!("{}:{}", self.what.kind(), self.name)
+    }
+}
+
+/// 名 1 つ — 写像か、中身の型の無い組・列。
+fn wire_free_name_problem(name: &str) -> Option<String> {
+    if BARE_MAPPINGS.contains(&name) || WIRE_FREE_MAPPINGS.contains(&name) {
+        Some(format!("写像 {}", name))
+    } else if BARE_TUPLES.contains(&name) || BARE_LISTS.contains(&name) {
+        Some(format!("中身の型の無い {}", name))
+    } else {
+        None
+    }
+}
+
+/// 型の注記 1 つ → 赤の理由(union の枝・入れ物の中身も見る)。写像は中身の型が在っても鳴る。
+fn wire_free_type_problem(node: &Hy) -> Option<String> {
+    match node {
+        Hy::Name { text, .. } => wire_free_name_problem(text),
+        Hy::Text { value, .. } => value.split('|').find_map(|part| wire_free_name_problem(part.trim())),
+        Hy::Form { .. } => {
+            let head = node.head();
+            let items = node.expression()?;
+            if head == "|" {
+                return items[1..].iter().find_map(wire_free_type_problem);
+            }
+            if !((head == "get" || head == "of") && items.len() >= 3) {
+                return None;
+            }
+            let base = items[1].name()?;
+            let args = type_args(items);
+            if BARE_MAPPINGS.contains(&base) || WIRE_FREE_MAPPINGS.contains(&base) {
+                return Some(format!("写像 {}[…](中身の型が在ってもデータを引く写像は渡さない)", base));
+            }
+            if BARE_TUPLES.contains(&base) {
+                if args.len() >= 2 && !hy_ellipsis(args[args.len() - 1]) {
+                    return Some(format!("長さの決まった組 {}[A, B]", base));
+                }
+                if args.first().is_some_and(|a| hy_open(a)) {
+                    return Some(format!("要素の型が開いた組 {}[object/Any, ...]", base));
+                }
+            }
+            if BARE_TUPLES.contains(&base) || BARE_LISTS.contains(&base) || CONTAINERS.contains(&base) {
+                return args.iter().filter(|a| !hy_ellipsis(a)).find_map(|a| wire_free_type_problem(a));
+            }
+            None
+        }
+    }
+}
+
+/// defk・deff の :pre [(: 引数 T) …] の (引数・T) の列。
+fn defk_pres(items: &[Hy]) -> Vec<(String, &Hy)> {
+    let mut out = Vec::new();
+    for part in items {
+        let Some(map) = part.form(Kind::Brace) else { continue };
+        for i in (0..map.len().saturating_sub(1)).step_by(2) {
+            let Some(checks) = map[i + 1].form(Kind::Bracket).filter(|_| map[i].is(":pre")) else { continue };
+            for check in checks {
+                if let Some(parts) = check.expression().filter(|p| check.head() == ":" && p.len() == 3) {
+                    if let Some(arg) = parts[1].name() {
+                        out.push((arg.to_string(), &parts[2]));
+                    }
+                }
+            }
+        }
+    }
+    out
+}
+
+/// defclass・defrecord・defwire 1 つの欄の(`Class.欄`・型の注記)の列(method の注記は含めない)。
+fn field_sites<'a>(source: &str, form: &'a Hy) -> Vec<(String, &'a Hy)> {
+    hy_class_sites(source, form)
+        .into_iter()
+        .filter(|site| site.what == What::Field)
+        .filter_map(|site| match site.annotation {
+            Annotation::Hy(node) => Some((site.name, node)),
+            _ => None,
+        })
+        .collect()
+}
+
+/// 値を型だけで渡す層の Hy の file 1 つを判じる(DOEFF170 の defwire と DOEFF171 の :pre / :post / 欄の型)。読めなければ理由。
+pub fn wire_free_hits(source: &str) -> Result<Vec<WireFreeHit>, String> {
+    let forms = read_hy(source)?;
+    let mut out = Vec::new();
+    let typed = |name: String, what: WireFreeWhat, node: &Hy| -> Option<WireFreeHit> {
+        let problem = wire_free_type_problem(node)?;
+        // 並べ替えのキーの関数(`…key-of`・`sort-key`)の答えの組は値の受け渡しではない(DOEFF144 の Plain::SortKey と同じ名の形)。
+        if what == WireFreeWhat::Post && plain_shape(&name) == Some(Plain::SortKey) && !problem.starts_with("写像") {
+            return None;
+        }
+        let (start, end) = node.span();
+        Some(WireFreeHit { start, end, name, what, problem })
+    };
+    for form in &forms {
+        let Some(items) = form.expression() else { continue };
+        match form.head() {
+            "defwire" => {
+                let class = items.get(1).filter(|n| !matches!(n, Hy::Form { .. })).or_else(|| items.get(2));
+                if let Some(class) = class {
+                    let (start, end) = class.span();
+                    out.push(WireFreeHit { start, end, name: spelled(source, class), what: WireFreeWhat::Wire, problem: String::new() });
+                }
+                // defwire の欄の型も defrecord・defclass と同じに見る(operator 2026-10-01 13:5x "defrecord should never had dict as attr
+                // unless they are absolutely necessary" — 欄の dict 系は 3 つの宣言のどれでも)。
+                out.extend(field_sites(source, form).into_iter().filter_map(|(name, node)| typed(name, WireFreeWhat::Field, node)));
+            }
+            "defclass" | "defrecord" => {
+                out.extend(field_sites(source, form).into_iter().filter_map(|(name, node)| typed(name, WireFreeWhat::Field, node)));
+            }
+            "defk" | "deff" | "defn" if items.len() >= 2 => {
+                let name = annotated(source, &items[1]).map(|(n, _, _)| n).or_else(|| items[1].name().map(str::to_string));
+                let Some(name) = name else { continue };
+                out.extend(defk_pres(items).into_iter().filter_map(|(arg, node)| typed(format!("{}:{}", name, arg), WireFreeWhat::Pre, node)));
+                out.extend(defk_posts(items).into_iter().filter_map(|node| typed(name.clone(), WireFreeWhat::Post, node)));
+            }
+            _ => {}
+        }
+    }
+    out.sort_by(|a, b| (a.start, a.detail()).cmp(&(b.start, b.detail())));
+    Ok(out)
+}
+
+// --- 写像の置き場の臭い(DOEFF172 — agora-redesign #2143 の (2))------------------------------------------------------------
+//
+// agora の data は DB に在り効果で読む。memory の写像は cache のためだけで、cache は効果の層(handler)が持つ(operator 2026-10-01 13:3x
+// "since all data on agora is to live on DB via effect, the use of dict should be about caching, and caching is done in effect layer")。
+// だから handler の外で写像を組む定義と、欄に写像を持つ型は臭い(数えるだけ — major・warning)。写像を組むのが目的の定義(:post が
+// 写像 — JSON の境界で綴る 1 点)と defhandler の中は数えない。値を型だけで渡す層の欄の写像は DOEFF171(critical)が見るので、欄の
+// 臭いはそれ以外の層だけ。
+
+/// 写像の置き場の臭いの種類。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DictSmellWhat {
+    /// 欄の型が写像(defclass・defrecord・defwire)。
+    Field,
+    /// handler の外の定義の本体で写像を組む(`{…}`・`(dfor …)`・`(dict …)`)。
+    Built,
+}
+
+/// 写像の置き場の臭い 1 つ。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DictSmellHit {
+    pub start: usize,
+    pub end: usize,
+    /// 名(`Class.欄` か定義の名)。
+    pub name: String,
+    pub what: DictSmellWhat,
+    /// 欄なら型の理由、組む所なら数の文。
+    pub problem: String,
+}
+
+impl DictSmellHit {
+    /// 登録簿の鍵の細目(`field:<Class.欄>`・`built:<定義>`)。
+    pub fn detail(&self) -> String {
+        let kind = match self.what {
+            DictSmellWhat::Field => "field",
+            DictSmellWhat::Built => "built",
+        };
+        format!("{}:{}", kind, self.name)
+    }
+}
+
+/// 型の注記が写像か(中身の型の有無を問わない)。
+fn mapping_problem(node: &Hy) -> Option<String> {
+    wire_free_type_problem(node).filter(|problem| problem.starts_with("写像"))
+}
+
+/// 式の木の中で写像を組む所の数 — `{…}`(`#{…}` の集合は数えない)・`(dfor …)`・`(dict …)`。defhandler の中は数えない。
+fn built_mappings(source: &str, node: &Hy) -> usize {
+    let Hy::Form { kind, items, start, .. } = node else { return 0 };
+    let inner: usize = items.iter().map(|item| built_mappings(source, item)).sum();
+    let head = node.head();
+    if head == "defhandler" {
+        return 0;
+    }
+    let builds = match kind {
+        Kind::Brace => !source.get(*start..).is_some_and(|rest| rest.starts_with("#{")),
+        Kind::Paren => head == "dfor" || head == "dict",
+        _ => false,
+    };
+    inner + usize::from(builds)
+}
+
+/// Hy の file 1 つの写像の置き場の臭い(fields が偽なら欄は見ない — 値を型だけで渡す層の欄は DOEFF171 が見る)。読めなければ理由。
+pub fn dict_smell_hits(source: &str, fields: bool) -> Result<Vec<DictSmellHit>, String> {
+    let forms = read_hy(source)?;
+    let mut out = Vec::new();
+    for form in &forms {
+        let Some(items) = form.expression() else { continue };
+        match form.head() {
+            "defclass" | "defrecord" | "defwire" if fields => {
+                out.extend(field_sites(source, form).into_iter().filter_map(|(name, node)| {
+                    let problem = mapping_problem(node)?;
+                    let (start, end) = node.span();
+                    Some(DictSmellHit { start, end, name, what: DictSmellWhat::Field, problem })
+                }));
+            }
+            "defk" | "deff" | "defn" if items.len() >= 3 => {
+                let name = annotated(source, &items[1]).map(|(n, _, _)| n).or_else(|| items[1].name().map(str::to_string));
+                let Some(name) = name else { continue };
+                // 写像を組むのが目的の定義(:post が写像)は数えない — 綴りの 1 点。
+                if defk_posts(items).into_iter().any(|node| mapping_problem(node).is_some()) {
+                    continue;
+                }
+                // 契約の辞書(引数の列の直後の {…})は写像の値ではない。
+                let body_from = if items.get(3).is_some_and(|item| item.form(Kind::Brace).is_some()) { 4 } else { 3 };
+                let count: usize = items.get(body_from..).unwrap_or(&[]).iter().map(|item| built_mappings(source, item)).sum();
+                if count > 0 {
+                    let (start, end) = items[1].span();
+                    out.push(DictSmellHit { start, end, name, what: DictSmellWhat::Built, problem: format!("handler の外で写像を {} か所で組む", count) });
+                }
+            }
+            _ => {}
+        }
+    }
+    out.sort_by(|a, b| (a.start, a.detail()).cmp(&(b.start, b.detail())));
+    Ok(out)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn dict_smell_counts_built_mappings_and_map_fields_outside_their_place() {
+        let source = r#"
+(defrecord Page (#^ str id) (#^ (of dict str int) counts) (#^ (of tuple str ...) tags))
+(defwire PageWire [] (#^ dict extra))
+(defk index-of [rows]
+  {:pre [(: rows (of list Page))] :post [(: % int)] :tags {:context "x" :role "judgment"}}
+  (val by-id (dfor r rows r.id r))
+  (len {:a 1 :b #{1 2}}))
+(defk dump [page]
+  {:pre [(: page Page)] :post [(: % dict)]}
+  {"id" page.id})
+(defhandler with-cache [effect k]
+  (val cache {})
+  (k cache))
+(defk plain [rows]
+  {:pre [(: rows (of list Page))] :post [(: % int)]}
+  (len #{1 2}))
+"#;
+        let details = |fields: bool| -> Vec<String> { dict_smell_hits(source, fields).expect("読める").into_iter().map(|h| h.detail()).collect() };
+        // 鳴る: 写像の欄(defrecord・defwire)・handler の外で写像を組む定義(dfor と {…} の 2 か所)。
+        // 鳴らない: 型つきの組の欄・:post が写像の dump(綴りの 1 点)・defhandler の中・契約の辞書と :tags・集合 #{…}。
+        assert_eq!(details(true), vec!["field:Page.counts", "field:PageWire.extra", "built:index-of"]);
+        // 値を型だけで渡す層では欄は DOEFF171 が見るので数えない。
+        assert_eq!(details(false), vec!["built:index-of"]);
+        let built = dict_smell_hits(source, false).unwrap();
+        assert!(built[0].problem.contains("2 か所"), "{:?}", built);
+    }
+
+    /// 値を型だけで渡す層の当たりの細目の列。
+    fn wire_free(source: &str) -> Vec<String> {
+        wire_free_hits(source).expect("読める").into_iter().map(|h| h.detail()).collect()
+    }
+
+    #[test]
+    fn wire_free_layer_names_defwire_and_maps_in_contracts_and_fields() {
+        let source = r#"
+(defwire RowWire [] (#^ str name))
+(defrecord Row (#^ str name) (#^ dict extra) (#^ (of tuple str ...) tags) (#^ (of list Row) rows))
+(defk pick [rows index body raw opaque]
+  {:pre [(: rows (of list Row)) (: index (of dict str Row)) (: body JsonBody) (: raw tuple) (: opaque OpaqueJson)]
+   :post [(: % (| dict None))]}
+  rows)
+(defk counted [rows]
+  {:pre [(: rows (of tuple Row ...))] :post [(: % int)]}
+  1)
+(defk order-key-of [row]
+  {:pre [(: row Row)] :post [(: % tuple)]}
+  #(row.name))
+"#;
+        assert_eq!(
+            wire_free(source),
+            vec!["wire:RowWire", "field:Row.extra", "pre:pick:index", "pre:pick:body", "pre:pick:raw", "pre:pick:opaque", "post:pick"]
+        );
+    }
+
+    #[test]
+    fn wire_free_layer_lets_typed_records_and_sequences_through() {
+        // 当たらない例: 型つきの defrecord・同じ型の列・str の引数・並べ替えのキーの組。
+        let source = "(defrecord Row (#^ str name) (#^ (of tuple str ...) tags))\n(defk names [rows]\n  {:pre [(: rows (of list Row))] :post [(: % (of tuple str ...))]}\n  #())\n";
+        assert!(wire_free(source).is_empty(), "{:?}", wire_free(source));
+    }
 
     /// (細目・理由の頭)の列。
     fn hits(rel: &str, source: &str) -> Vec<(String, String)> {
