@@ -64,11 +64,12 @@
 ;; worker の条は W1(入れ替えの間も書き手が居続ける)。消す順などの条は後から足す。:entry-modules は層に分ける前の今の入口
 ;; (doeff_cluster.main)。層に分けた後は :entry-modules を外し、entry 層の dir の定義で「code を持つ service」を数える形に移る。
 ;; 層は移しの進みに合わせて足す: core(調整ループ・判断 — worker/core)・intent(観測・記録・effect の型 — worker/intent)・
-;; protocol(heartbeat の本文の形と止めの印 — worker/protocol・#2026)。
+;; protocol(heartbeat の本文の形と止めの印 — worker/protocol・#2026)・entry(子 process の入口 job_entry・見張り shim・実行環境の準備の入口
+;; env_tool — worker/entry・#2028。worker が送る名は旧い path の入口のまま — 切り替えは #2112・旧い入口を消すのは #2113)。
 ;; #2025・#2026。
 (defservice worker "coordinator から job と task を受けて子 process として走らせる worker"
   {:system {:exempt "cluster そのものの process — cluster に置く job ではなく、自分の image の k8s Deployment として動く(operator 2026-10-01 の補足「doeff-cluster の coordinator と worker の image は残る」)。defsystem にすると cluster が自分を job として置く循環になる"}
-   :layers [core intent protocol]
+   :layers [core intent protocol entry]
    :entry-modules ["doeff_cluster.main"]
    :invariants ["doeff_cluster.worker_invariants:handoff-keeps-a-ready-writer"]})
 

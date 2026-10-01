@@ -27,7 +27,7 @@
 (import doeff_cluster.worker.intent.worker_model [CodeLayout ProbeView])
 (import doeff_cluster.worker.protocol.probes [ProbeSettings])
 (import tests.probe_rig [probe-settings run-probes observed])
-(import doeff_cluster.job_entry [RunContext runtime-env-of-context])
+(import doeff_cluster.job_context [RunContext runtime-env-of-context])
 (import doeff_cluster.worker.intent.worker_model [CodeView ProbeEntry ProbeState StartJob ReapJob Outcome CodeState] doeff_cluster.shared.intent.job_model [JobSpec] doeff_cluster.shared.core.job_rules [spec-hash] doeff_cluster.worker.core.worker_rules [ENV-KEY-PREFIX code-key])
 (import tests.careful_rig [Rig make-rig push-commit app-files declare prepare LOCK HY DEADLINE-SECONDS])
 (import tests.host_rig [job-ended run-on-host])

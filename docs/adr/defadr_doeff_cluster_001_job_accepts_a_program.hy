@@ -36,7 +36,7 @@
    "env-handlers" 0
    "recording-layer" 0})  ; 2026-09-27 に全部 0(agora-redesign #833 段 3 — job_entry は (run program) だけ)
 
-(val JOB-ENTRY "packages/doeff-cluster/src/doeff_cluster/job_entry.hy")
+(val JOB-ENTRY "packages/doeff-cluster/src/doeff_cluster/worker/entry/job_entry.hy")
 
 (defk count-runner-handler-sites [text]
   {:pre [(: text str)]
@@ -50,7 +50,7 @@
 (defadr ADR-DOE-CLUSTER-001
   :title "doeff-cluster の job(service も task も同じ API)が受け取るのは Program の値 1 つ(defk の関数を呼んだ結果)だけ。handler は Program の中の with-handlers で与え、実行器 job_entry は既定の handler を 1 つも足さない(scheduled と env の関数の包みも外す)。service の :env・:config・:env-config をやめ、設定は Program の中の Ask と os.environ を読む handler で読む。宣言が process へ渡す環境変数は宣言の値として持つ"
   :status "accepted"
-  :scope ["packages/doeff-cluster/src/doeff_cluster/job_entry.hy"
+  :scope ["packages/doeff-cluster/src/doeff_cluster/worker/entry/job_entry.hy"
           "packages/doeff-cluster/src/doeff_cluster/shared/intent/service_model.hy"
           "packages/doeff-cluster/src/doeff_cluster/shared/core/service_rules.hy"
           "packages/doeff-cluster/src/doeff_cluster/shared/entry/service_build.hy"
@@ -62,7 +62,7 @@
        :evidence "Claude Code の会話(2026-09-27・agora-redesign #829)— coordinator 経由")
      (fact
        "今の job_entry は service と task で入口が違う: service は --factory(関数の import path)と --config(本体の引数)と --env(handler の組を組む関数の import path)を受け、task は --blob(Program の値)と --env を受ける。どちらも runner が (scheduled (with-handlers <env の handler> program)) で包み、service はさらに記録係(recording-layer)を足す。"
-       :evidence "packages/doeff-cluster/src/doeff_cluster/job_entry.hy(run-service・task-outcome・env-handlers・recording-layer)")
+       :evidence "packages/doeff-cluster/src/doeff_cluster/worker/entry/job_entry.hy(run-service・task-outcome・env-handlers・recording-layer)")
      (fact
        "service の宣言は :env(env の関数の import path)・:config(本体の引数)・:env-config(env だけが読む設定)を持ち、coordinator へは 2 つを重ねた平たい run.config が渡る。"
        :evidence "packages/doeff-cluster/src/doeff_cluster/shared/intent/service_model.hy(ServiceDef の env・config・env-config)")
@@ -71,7 +71,7 @@
        :evidence "Claude Code の会話(2026-09-27・agora-redesign #829)— coordinator 経由")
      (fact
        "今の記録係は job_entry の recording-layer が、run.config の record 欄を見て env の handler の一番内側に足す(recording-handler・record_handlers.hy)。記録係は effect を外へ撃ち直して答えを書き留め、継続を再開する『間に入る handler』の形をしている。"
-       :evidence "packages/doeff-cluster/src/doeff_cluster/job_entry.hy(recording-layer)・packages/doeff-cluster/src/doeff_cluster/shared/protocol/record_handlers.hy")
+       :evidence "packages/doeff-cluster/src/doeff_cluster/worker/entry/job_entry.hy(recording-layer)・packages/doeff-cluster/src/doeff_cluster/shared/protocol/record_handlers.hy")
      (fact
        "operator の問い 2026-09-27(逐語): \"well, but the thing is that if the effect is handled before arrivint to such recorder, the recorder can't have any idea about it. so how do people resolve this with handler?\""
        :evidence "Claude Code の会話(2026-09-27・agora-redesign #829)— coordinator 経由")

@@ -20,7 +20,7 @@
 (import sys)
 (import tempfile)
 (import pathlib [Path])
-(import doeff_cluster.env_handlers [PROBE-PROGRAM CHILD-PROTOCOL-PLACES])
+(import doeff_cluster.worker.protocol.env_translation [PROBE-PROGRAM CHILD-PROTOCOL-PLACES])
 
 (setv HY (str (/ (. (Path sys.executable) parent) "hy"))
       ;; 置き場ごとの版の値(本物の CHILD-PROTOCOL の 1 と重ならない値)。
