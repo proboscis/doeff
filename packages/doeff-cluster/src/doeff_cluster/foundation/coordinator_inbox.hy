@@ -14,7 +14,7 @@
 (import urllib.parse [urlsplit parse-qsl unquote :as url-unquote])
 (import doeff_core_effects.scheduler [Promise])
 (import doeff_cluster.shared.intent.protocol [Request Reply CoordinatorStopRequested PlainText])
-(import doeff_cluster.coordinator.intent.cluster_model [NextRequests CoordinatorFault ACCEPTED-FORMATS])
+(import doeff_cluster.coordinator.intent.cluster_model [CoordinatorFault ACCEPTED-FORMATS] doeff_cluster.shared.intent.protocol [NextRequests])
 
 
 (defclass ReplySlot []

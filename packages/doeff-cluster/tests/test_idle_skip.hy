@@ -12,7 +12,7 @@
 (import doeff_time [Delay sim-time-handler])
 (import doeff_cluster.shared.core.clock [now-epoch-ms])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming])
-(import doeff_cluster.coordinator.intent.cluster_model [ClusterState ClusterNaming IdleProbe NextRequests])
+(import doeff_cluster.coordinator.intent.cluster_model [ClusterState ClusterNaming IdleProbe IdleNextRequests])
 (import doeff_cluster.coordinator.entry.handler_sets [RequestQueue MemoryWalStore queued-requests])
 (import doeff_cluster.foundation.coordinator_inbox [RequestInbox http-requests])
 (import doeff_cluster.coordinator.core.idle_policy [quiet-ticks])
@@ -33,7 +33,7 @@
   "筋書きの取り手: coordinator の拍と同じ NextRequests 1.0(材料 idle 付き)を times 回出し、各回の起きた刻を読むため。"
   (var seen #())
   (for [_ (range times)]
-    (<- (NextRequests 1.0 :idle probe))
+    (<- (IdleNextRequests 1.0 :idle probe))
     (<- woke int (now-epoch-ms))
     (:= seen (+ seen #(woke))))
   seen)

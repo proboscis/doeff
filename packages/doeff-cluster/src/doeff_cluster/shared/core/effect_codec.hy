@@ -138,9 +138,12 @@
 
 ;; module の一部の型だけを別の module へ移した時の旧い名(module:qualname)→ 今の名。module ごと移した物は MOVED-MODULES。
 ;; worker_model の JobSpec・JobPhase は coordinator と共有の型なので shared/intent/job_model へ(agora-redesign #2025)。
+;; coordinator の受け口の effect NextRequests は shared/intent/protocol へ移し、調停ループが出す形(材料 idle を持つ)は子 class
+;; IdleNextRequests になった(#2180)— 移しの前の記録の NextRequests は idle の欄を持つので子 class を引く。
 (setv MOVED-TYPES
-  (dfor name #("JobSpec" "JobPhase")
-        (+ "doeff_cluster.worker_model:" name) (+ "doeff_cluster.shared.intent.job_model:" name)))
+  (| (dfor name #("JobSpec" "JobPhase")
+           (+ "doeff_cluster.worker_model:" name) (+ "doeff_cluster.shared.intent.job_model:" name))
+     {"doeff_cluster.coordinator.intent.cluster_model:NextRequests" "doeff_cluster.coordinator.intent.cluster_model:IdleNextRequests"}))
 
 (defn #^ (| type None) resolve-type [#^ str name]
   "型の名 → class。import できないか、名が class を指さなければ None(呼び手は class として呼ぶので module や関数を返さない)。

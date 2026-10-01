@@ -34,7 +34,7 @@
 (import dataclasses [replace])
 (import doeff_cluster.shared.core.clock [now-epoch-ms])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming Reply CoordinatorStopRequested Request])
-(import doeff_cluster.coordinator.intent.cluster_model [ClusterState ClusterNaming IdleProbe NextRequests Persist Fault CoordinatorFault Watcher WatchRefusal WatchAnswer WatchStep])
+(import doeff_cluster.coordinator.intent.cluster_model [ClusterState ClusterNaming IdleProbe IdleNextRequests Persist Fault CoordinatorFault Watcher WatchRefusal WatchAnswer WatchStep])
 (import doeff_cluster.coordinator.core.watch_policy [watch-of settle-watch earliest-deadline])
 (import doeff_cluster.coordinator.core.cluster_policy [nodes-to-read with-derived-capabilities])
 (import doeff_cluster.coordinator.core.durable_kv [durable-delta])
@@ -128,7 +128,7 @@
   ;; 来た待ちを今の状態で判じ(settle-watch)、起きた物に返事をし、残りを次の拍へ持ち越す。
   ;; 返り値 = #(次の状態 まとまりの要求の数 待ち続ける待ちの tuple)。
   (<- wake (| int None) (earliest-deadline watchers))
-  (<- batch list (NextRequests (/ TICK-MS 1000.0) :idle (IdleProbe state timing naming :wake-ms wake)))
+  (<- batch list (IdleNextRequests (/ TICK-MS 1000.0) :idle (IdleProbe state timing naming :wake-ms wake)))
   (<- now int (now-epoch-ms))
   ;; 期限の経過(worker の沈黙・task の lease・readiness の window)は、まとまりの有無と無関係に毎拍調停する(2026-09-25)。
   ;; 以前は要求の無い拍だけだったので、読みの要求(GET)が 1 秒より短い間隔で続く間は調停が走らず、担い手の死んだ切り離した task が

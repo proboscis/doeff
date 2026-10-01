@@ -20,7 +20,7 @@
 (import typing [NamedTuple])
 (import doeff [EffectBase])
 (import doeff_cluster.shared.intent.job_model [JobSpec])
-(import doeff_cluster.shared.intent.protocol [ClusterTiming Request])
+(import doeff_cluster.shared.intent.protocol [ClusterTiming Request NextRequests])
 
 
 (defclass ComponentVersion [NamedTuple]
@@ -429,12 +429,11 @@
   (setv #^ (| int None) wake-ms None))
 
 
-(defclass [(dataclass :frozen True)] NextRequests [EffectBase]
-  "結果は Request の list。最初の 1 件を timeout-seconds まで待ち(来なければ空 = 期限の経過で割り当てを動かす拍)、
-   その時点で並んでいる要求を limit 件まで一緒に取る(group commit の 1 まとまり)。idle = 模擬の時計の下の受け口だけが読む材料
-   (要求が無ければ、本番の判断で何も変わらない拍の数だけ一度に眠る — 本番の受け口は読まず、拍の間隔は timeout-seconds のまま)。"
-  (#^ float timeout-seconds)
-  (setv #^ int limit 256)
+(defclass [(dataclass :frozen True)] IdleNextRequests [NextRequests]
+  "coordinator の調停ループが出す NextRequests(shared の受け口の effect)に、模擬の時計の下の受け口だけが読む材料 idle を足した物
+   (要求が無ければ、本番の判断で何も変わらない拍の数だけ一度に眠る — 本番の受け口は NextRequests として受けて idle を読まず、拍の
+   間隔は timeout-seconds のまま)。idle は coordinator の状態の全体(ClusterState)を持つので、shared の NextRequests には置かず
+   この子 class に置く(record-store は NextRequests だけを読む・agora-redesign #2180)。"
   (setv #^ (| IdleProbe None) idle None))
 
 

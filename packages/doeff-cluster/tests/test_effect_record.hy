@@ -168,6 +168,9 @@
   (assert (is (resolve-type "doeff_cluster.worker_model:JobSpec") JobSpec))
   (assert (is (resolve-type "doeff_cluster.worker_model:JobPhase") JobPhase))
   (assert (= (get MOVED-TYPES "doeff_cluster.worker_model:JobSpec") "doeff_cluster.shared.intent.job_model:JobSpec"))
+  ;; 受け口の effect(#2180)— 移しの前の記録の NextRequests は調停ループが idle 付きで出した物なので、子 class を引く
+  (import doeff_cluster.coordinator.intent.cluster_model [IdleNextRequests])
+  (assert (is (resolve-type "doeff_cluster.coordinator.intent.cluster_model:NextRequests") IdleNextRequests))
   ;; 表に無い旧い名は引けない(黙って別の型へ倒れない)
   (assert (is (resolve-type "doeff_cluster.no_such_model:SubmitDetached") None))
   (assert (= (len MOVED-MODULES) 13)))

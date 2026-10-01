@@ -24,7 +24,7 @@
 (import doeff_core_effects.scheduler [CreatePromise CompletePromise Promise])
 (import doeff_time [async-time-handler])
 (import doeff_cluster.shared.intent.protocol [Request Reply])
-(import doeff_cluster.coordinator.intent.cluster_model [NextRequests IdleProbe CoordinatorFault])
+(import doeff_cluster.coordinator.intent.cluster_model [IdleProbe IdleNextRequests CoordinatorFault] doeff_cluster.shared.intent.protocol [NextRequests])
 (import doeff_cluster.foundation.wal_store [WalStore MAX-LOG-BYTES wal-store apply-delta])
 (import doeff_cluster.foundation.kube_handlers [KubeMemory kube-memory])
 (import doeff_cluster.foundation.coordinator_inbox [RequestInbox StopState http-requests stop-flag])
@@ -135,22 +135,34 @@
   (- (min quiet-ms (max TICK-MS (* TICK-MS (ceil (/ elapsed-ms TICK-MS))))) elapsed-ms))
 
 
+(defk take-requests [queue timeout-seconds limit idle]
+  {:pre [(: queue RequestQueue) (: timeout-seconds float) (: limit int) (: idle (| IdleProbe None))] :post [(: % list)]
+   :tags {:context "doeff-cluster" :role "program"}}
+  "本番の http-requests と同じ意味で列から要求を取るため: 最初の 1 件を timeout 秒まで待ち、その時点で並んでいる要求を limit 件まで
+   一緒に取る。待ちは列への書き(enqueue-request)で起きる — 本番の受付が要求の届いた瞬間に起きるのと同じ刻。skip-idle の列(模擬の
+   時計の下)は、idle の材料があれば、要求が無い間の何も変えない拍を一度に眠る(await-idle)。
+   要求の無いまま起きた時は、0 秒の Delay を 1 回はさむ: 同じ仮想の刻に来る出来事(筋書きの止めの注入など)を先に全部通してから拍を
+   回す。はさまないと、同じ刻の出来事と拍の順が時計の timer の登録順で決まり、1 秒ごとの拍と飛ばす拍で順が違う(拍の timer の有無が
+   違うため — 2026-09-30 のレビューの再現)。"
+  (if (and queue.skip-idle (is-not idle None) (not queue.pending))
+      (<- (await-idle queue idle))
+      (<- (await-first-request queue timeout-seconds)))
+  (when (not queue.pending)
+    (<- (Delay 0.0)))
+  (val batch (cut queue.pending 0 limit))
+  (setv queue.pending (cut queue.pending limit None))
+  (+= queue.takes 1)
+  batch)
+
+
 (defhandler queued-requests [#^ RequestQueue queue]
-  ;; 本番の http-requests と同じ意味: 最初の 1 件を timeout 秒まで待ち、その時点で並んでいる要求を limit 件まで一緒に取る。待ちは列への
-  ;; 書き(enqueue-request)で起きる — 本番の受付が要求の届いた瞬間に起きるのと同じ刻。skip-idle の列(模擬の時計の下)は、idle の
-  ;; 材料があれば、要求が無い間の何も変えない拍を一度に眠る(await-idle)。
-  ;; 要求の無いまま起きた時は、0 秒の Delay を 1 回はさむ: 同じ仮想の刻に来る出来事(筋書きの止めの注入など)を先に全部通してから拍を
-  ;; 回す。はさまないと、同じ刻の出来事と拍の順が時計の timer の登録順で決まり、1 秒ごとの拍と飛ばす拍で順が違う(拍の timer の有無が
-  ;; 違うため — 2026-09-30 のレビューの再現)。
-  (NextRequests [timeout-seconds limit idle]
-    (if (and queue.skip-idle (is-not idle None) (not queue.pending))
-        (<- (await-idle queue idle))
-        (<- (await-first-request queue timeout-seconds)))
-    (when (not queue.pending)
-      (<- (Delay 0.0)))
-    (setv batch (cut queue.pending 0 limit))
-    (setv queue.pending (cut queue.pending limit None))
-    (+= queue.takes 1)
+  ;; 節は上から isinstance で当てるので、材料 idle を持つ子 class(coordinator の調停ループが出す)を先に置き、record-store などが出す
+  ;; 素の NextRequests は材料なしで取る(agora-redesign #2180)。
+  (IdleNextRequests [timeout-seconds limit idle]
+    (<- batch list (take-requests queue timeout-seconds limit idle))
+    (resume batch))
+  (NextRequests [timeout-seconds limit]
+    (<- batch list (take-requests queue timeout-seconds limit None))
     (resume batch))
   (Reply [request status body]
     ;; この組の要求の列は、返事の札を CreatePromise で作る(Request.slot は受け口ごとの札 — HTTP の受け口は ReplySlot)。
