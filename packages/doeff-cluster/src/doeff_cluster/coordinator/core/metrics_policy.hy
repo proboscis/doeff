@@ -18,7 +18,8 @@
 (val MODULE-TAGS {:context "coordinator" :role "judgment"})
 (import dataclasses [replace])
 (import math)
-(import doeff_cluster.cluster_model [ClusterState ClusterTiming PLACED-PHASES])
+(import doeff_cluster.shared.intent.protocol [ClusterTiming])
+(import doeff_cluster.coordinator.intent.cluster_model [ClusterState PLACED-PHASES])
 (import doeff_cluster.coordinator.core.resource_policy [refuse running-process current-report keep-report report-fields service-readiness])
 (import doeff_cluster.coordinator.core.cluster_policy [unplaced-jobs board-usage])
 

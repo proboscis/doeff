@@ -5,7 +5,8 @@
 ;;; 置き場は保存する(state file の "programs"・durable KV の program/<sha>)。
 (require doeff-hy.macros [deftest defk <- val])
 (import hashlib)
-(import doeff_cluster.cluster_model [ClusterTiming ClusterState])
+(import doeff_cluster.shared.intent.protocol [ClusterTiming])
+(import doeff_cluster.coordinator.intent.cluster_model [ClusterState])
 (import doeff_cluster.coordinator_inbox [http-request])
 (import doeff_cluster.coordinator.core.cluster_policy [state-to-json state-from-json])
 (import doeff_cluster.coordinator.core.durable_kv [full-kv state-from-kv])

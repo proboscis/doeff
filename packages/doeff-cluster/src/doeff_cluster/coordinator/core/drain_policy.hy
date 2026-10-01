@@ -18,7 +18,8 @@
 (require doeff-hy.macros [val])
 (val MODULE-TAGS {:context "coordinator" :role "judgment"})
 (import dataclasses [replace])
-(import doeff_cluster.cluster_model [ClusterJob ClusterState ClusterTiming Drain Placement])
+(import doeff_cluster.shared.intent.protocol [ClusterTiming])
+(import doeff_cluster.coordinator.intent.cluster_model [ClusterJob ClusterState Drain Placement])
 (import doeff_cluster.coordinator.core.cluster_policy [alive eligible can-take draining-workers load-of other-generation-boot LIVE-PHASES MAX-EVENTS])
 (import doeff_cluster.coordinator.core.resource_policy [refuse service-readiness])
 

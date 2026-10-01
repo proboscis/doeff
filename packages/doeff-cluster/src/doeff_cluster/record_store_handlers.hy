@@ -254,7 +254,7 @@
 (import http.server [BaseHTTPRequestHandler ThreadingHTTPServer])
 (import threading)
 (import urllib.parse [urlsplit parse-qsl])
-(import doeff_cluster.cluster_model [PlainText])
+(import doeff_cluster.shared.intent.protocol [PlainText])
 (import doeff_cluster.coordinator_inbox [RequestInbox ReplySlot])
 (import doeff_cluster.coordinator_inbox [http-request])
 

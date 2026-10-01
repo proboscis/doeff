@@ -16,7 +16,8 @@
 (import dataclasses [replace])
 (import doeff [run with_handlers])
 (import doeff_core_effects.scheduler [scheduled])
-(import doeff_cluster.cluster_model [ClusterTiming ClusterNaming ClusterState])
+(import doeff_cluster.shared.intent.protocol [ClusterTiming])
+(import doeff_cluster.coordinator.intent.cluster_model [ClusterNaming ClusterState])
 (import doeff_cluster.coordinator_inbox [http-request])
 (import doeff_cluster.coordinator.core.api_policy [respond ready-instances])
 (import doeff_cluster.coordinator.core.program [rollout-tick])
@@ -189,7 +190,7 @@
 (defn #^ None test-a-retired-process-still-counts-as-live []
   ;; 入れ替えで退いた process(行の名は <名>#retired-<世代>)が居る間、その job はまだ動いていると数える(他の worker へ置かない)。
   (setv state (ClusterState :workers {} :statuses {}))
-  (import doeff_cluster.cluster_model [WorkerInfo])
+  (import doeff_cluster.coordinator.intent.cluster_model [WorkerInfo])
   (setv state (replace state :workers {"zeus" (WorkerInfo "zeus" #("net") 10 1000)}
                              :statuses {"zeus" {"at" 1000 "jobs" [{"name" "a#retired-1-x" "phase" "running" "retiredFrom" "a"}]}}))
   (assert (still-live-somewhere 1000 state "a" T))
@@ -199,7 +200,7 @@
 (defn #^ None test-heartbeat-age-per-worker-is-exposed []
   ;; coordinator 自身の alert(DoeffWorkerHeartbeatStale)の材料: worker ごとの最後の heartbeat の古さ(label は worker の名だけ —
   ;; 能力の名乗りは計器の label に写さない)。忘れた worker は出ない。
-  (import doeff_cluster.cluster_model [WorkerInfo])
+  (import doeff_cluster.coordinator.intent.cluster_model [WorkerInfo])
   (setv state (replace (ClusterState)
                        :workers {"zeus" (WorkerInfo "zeus" #("cluster-net" "net") 10 1000)
                                  "proboscis-mbp" (WorkerInfo "proboscis-mbp" #("agent-cli") 10 61000 :exclusive #("agent-cli"))}))

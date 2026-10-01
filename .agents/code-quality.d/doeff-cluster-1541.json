@@ -18,13 +18,19 @@
     "packages/doeff-cluster/src/doeff_cluster/*.hy",
     "packages/doeff-cluster/src/doeff_cluster/*.py",
     "packages/doeff-cluster/tests/*.hy",
-    "packages/doeff-cluster/tests/*.py"
+    "packages/doeff-cluster/tests/*.py",
+    "packages/doeff-cluster/src/doeff_cluster/shared/intent/protocol.hy",
+    "packages/doeff-cluster/src/doeff_cluster/shared/core/capabilities.hy",
+    "packages/doeff-cluster/src/doeff_cluster/coordinator/core/cluster_json.hy",
+    "packages/doeff-cluster/src/doeff_cluster/coordinator/core/cluster_rules.hy"
   ],
   "modules": [
     {
       "allow": [
+        "doeff-cluster-cluster-json",
         "doeff-cluster-cluster-model",
         "doeff-cluster-cluster-policy",
+        "doeff-cluster-cluster-rules",
         "doeff-cluster-detached-policy",
         "doeff-cluster-drain-policy",
         "doeff-cluster-handoff-policy",
@@ -32,6 +38,7 @@
         "doeff-cluster-program-policy",
         "doeff-cluster-resource-policy",
         "doeff-cluster-rollout-policy",
+        "doeff-cluster-shared-protocol",
         "doeff-cluster-warm-policy"
       ],
       "layer": "pure",
@@ -47,7 +54,8 @@
     },
     {
       "allow": [
-        "doeff-cluster-cluster-model"
+        "doeff-cluster-cluster-model",
+        "doeff-cluster-shared-protocol"
       ],
       "layer": "pure",
       "name": "doeff-cluster-beat-policy",
@@ -113,25 +121,30 @@
     },
     {
       "allow": [
+        "doeff-cluster-shared-protocol",
         "doeff-cluster-worker-model"
       ],
       "layer": "domain",
       "name": "doeff-cluster-cluster-model",
       "paths": [
-        "packages/doeff-cluster/src/doeff_cluster/cluster_model.hy"
+        "packages/doeff-cluster/src/doeff_cluster/coordinator/intent/cluster_model.hy"
       ],
       "public": [
-        "packages/doeff-cluster/src/doeff_cluster/cluster_model.hy"
+        "packages/doeff-cluster/src/doeff_cluster/coordinator/intent/cluster_model.hy"
       ],
       "responsibility": "複数の worker に job と task を割り当てる coordinator の型と effect。",
       "typed": true
     },
     {
       "allow": [
+        "doeff-cluster-cluster-json",
         "doeff-cluster-cluster-model",
+        "doeff-cluster-cluster-rules",
         "doeff-cluster-readiness-model",
         "doeff-cluster-runtime-env-model",
         "doeff-cluster-semaphore-model",
+        "doeff-cluster-shared-capabilities",
+        "doeff-cluster-shared-protocol",
         "doeff-cluster-worker-model"
       ],
       "layer": "pure",
@@ -162,6 +175,7 @@
       "allow": [
         "doeff-cluster-api-policy",
         "doeff-cluster-clock",
+        "doeff-cluster-cluster-json",
         "doeff-cluster-cluster-model",
         "doeff-cluster-cluster-policy",
         "doeff-cluster-coordinator-handler-sets",
@@ -170,6 +184,7 @@
         "doeff-cluster-kube-handlers",
         "doeff-cluster-kube-model",
         "doeff-cluster-resource-policy",
+        "doeff-cluster-shared-protocol",
         "doeff-cluster-wal-store",
         "doeff-cluster-watch-policy"
       ],
@@ -197,6 +212,7 @@
         "doeff-cluster-idle-policy",
         "doeff-cluster-kube-handlers",
         "doeff-cluster-promise-wait",
+        "doeff-cluster-shared-protocol",
         "doeff-cluster-wal-store"
       ],
       "layer": "io",
@@ -213,7 +229,8 @@
     {
       "allow": [
         "doeff-cluster-cluster-model",
-        "doeff-cluster-remote-model"
+        "doeff-cluster-remote-model",
+        "doeff-cluster-shared-protocol"
       ],
       "layer": "io",
       "name": "doeff-cluster-coordinator-http",
@@ -228,7 +245,8 @@
     },
     {
       "allow": [
-        "doeff-cluster-cluster-model"
+        "doeff-cluster-cluster-model",
+        "doeff-cluster-shared-protocol"
       ],
       "layer": "io",
       "name": "doeff-cluster-coordinator-inbox",
@@ -268,6 +286,7 @@
         "doeff-cluster-process-versions",
         "doeff-cluster-remote-model",
         "doeff-cluster-runtime-env-model",
+        "doeff-cluster-shared-protocol",
         "doeff-cluster-warm-model"
       ],
       "layer": "io",
@@ -285,7 +304,8 @@
       "allow": [
         "doeff-cluster-cluster-model",
         "doeff-cluster-remote-model",
-        "doeff-cluster-runtime-env-model"
+        "doeff-cluster-runtime-env-model",
+        "doeff-cluster-shared-capabilities"
       ],
       "layer": "domain",
       "name": "doeff-cluster-detached-model",
@@ -302,7 +322,10 @@
       "allow": [
         "doeff-cluster-cluster-model",
         "doeff-cluster-cluster-policy",
-        "doeff-cluster-detached-model"
+        "doeff-cluster-cluster-rules",
+        "doeff-cluster-detached-model",
+        "doeff-cluster-shared-capabilities",
+        "doeff-cluster-shared-protocol"
       ],
       "layer": "pure",
       "name": "doeff-cluster-detached-policy",
@@ -348,7 +371,8 @@
       "allow": [
         "doeff-cluster-cluster-model",
         "doeff-cluster-cluster-policy",
-        "doeff-cluster-resource-policy"
+        "doeff-cluster-resource-policy",
+        "doeff-cluster-shared-protocol"
       ],
       "layer": "pure",
       "name": "doeff-cluster-drain-policy",
@@ -363,8 +387,10 @@
     },
     {
       "allow": [
+        "doeff-cluster-cluster-json",
         "doeff-cluster-cluster-model",
-        "doeff-cluster-cluster-policy"
+        "doeff-cluster-cluster-policy",
+        "doeff-cluster-cluster-rules"
       ],
       "layer": "pure",
       "name": "doeff-cluster-durable-kv",
@@ -481,6 +507,8 @@
         "doeff-cluster-remote-model",
         "doeff-cluster-runtime-env-model",
         "doeff-cluster-semaphore-model",
+        "doeff-cluster-shared-capabilities",
+        "doeff-cluster-shared-protocol",
         "doeff-cluster-worker-model",
         "doeff-cluster-worker-policy"
       ],
@@ -501,6 +529,7 @@
         "doeff-cluster-cluster-policy",
         "doeff-cluster-readiness-model",
         "doeff-cluster-resource-policy",
+        "doeff-cluster-shared-protocol",
         "doeff-cluster-worker-model"
       ],
       "layer": "pure",
@@ -534,7 +563,8 @@
         "doeff-cluster-api-policy",
         "doeff-cluster-cluster-model",
         "doeff-cluster-cluster-policy",
-        "doeff-cluster-resource-policy"
+        "doeff-cluster-resource-policy",
+        "doeff-cluster-shared-protocol"
       ],
       "layer": "pure",
       "name": "doeff-cluster-idle-policy",
@@ -669,6 +699,7 @@
         "doeff-cluster-service-model",
         "doeff-cluster-shared-handlers",
         "doeff-cluster-shared-model",
+        "doeff-cluster-shared-protocol",
         "doeff-cluster-warm-model",
         "doeff-cluster-worker",
         "doeff-cluster-worker-model"
@@ -691,6 +722,8 @@
         "doeff-cluster-job-context",
         "doeff-cluster-process-versions",
         "doeff-cluster-remote-model",
+        "doeff-cluster-shared-capabilities",
+        "doeff-cluster-shared-protocol",
         "doeff-cluster-worker",
         "doeff-cluster-worker-model"
       ],
@@ -740,7 +773,8 @@
       "allow": [
         "doeff-cluster-cluster-model",
         "doeff-cluster-cluster-policy",
-        "doeff-cluster-resource-policy"
+        "doeff-cluster-resource-policy",
+        "doeff-cluster-shared-protocol"
       ],
       "layer": "pure",
       "name": "doeff-cluster-metrics-policy",
@@ -877,7 +911,8 @@
     {
       "allow": [
         "doeff-cluster-clock",
-        "doeff-cluster-cluster-model"
+        "doeff-cluster-cluster-model",
+        "doeff-cluster-shared-protocol"
       ],
       "layer": "pure",
       "name": "doeff-cluster-record-store",
@@ -895,7 +930,8 @@
         "doeff-cluster-cluster-model",
         "doeff-cluster-coordinator",
         "doeff-cluster-coordinator-inbox",
-        "doeff-cluster-record-store"
+        "doeff-cluster-record-store",
+        "doeff-cluster-shared-protocol"
       ],
       "layer": "io",
       "name": "doeff-cluster-record-store-handlers",
@@ -932,7 +968,8 @@
         "doeff-cluster-coordinator-http",
         "doeff-cluster-process-versions",
         "doeff-cluster-remote-model",
-        "doeff-cluster-runtime-env-model"
+        "doeff-cluster-runtime-env-model",
+        "doeff-cluster-shared-protocol"
       ],
       "layer": "io",
       "name": "doeff-cluster-remote",
@@ -948,7 +985,8 @@
     {
       "allow": [
         "doeff-cluster-cluster-model",
-        "doeff-cluster-runtime-env-model"
+        "doeff-cluster-runtime-env-model",
+        "doeff-cluster-shared-capabilities"
       ],
       "layer": "domain",
       "name": "doeff-cluster-remote-model",
@@ -982,7 +1020,8 @@
       "allow": [
         "doeff-cluster-cluster-model",
         "doeff-cluster-coordinator-http",
-        "doeff-cluster-job-context"
+        "doeff-cluster-job-context",
+        "doeff-cluster-shared-protocol"
       ],
       "layer": "io",
       "name": "doeff-cluster-report-client",
@@ -997,10 +1036,12 @@
     },
     {
       "allow": [
+        "doeff-cluster-cluster-json",
         "doeff-cluster-cluster-model",
         "doeff-cluster-cluster-policy",
         "doeff-cluster-readiness-model",
         "doeff-cluster-rollout-policy",
+        "doeff-cluster-shared-protocol",
         "doeff-cluster-worker-model"
       ],
       "layer": "pure",
@@ -1016,7 +1057,8 @@
     },
     {
       "allow": [
-        "doeff-cluster-cluster-model"
+        "doeff-cluster-cluster-model",
+        "doeff-cluster-shared-protocol"
       ],
       "layer": "pure",
       "name": "doeff-cluster-rollout-policy",
@@ -1109,7 +1151,8 @@
     },
     {
       "allow": [
-        "doeff-cluster-cluster-model"
+        "doeff-cluster-cluster-model",
+        "doeff-cluster-shared-protocol"
       ],
       "layer": "domain",
       "name": "doeff-cluster-semaphore-model",
@@ -1127,7 +1170,8 @@
         "doeff-cluster-cluster-model",
         "doeff-cluster-readiness-model",
         "doeff-cluster-remote-model",
-        "doeff-cluster-runtime-env-model"
+        "doeff-cluster-runtime-env-model",
+        "doeff-cluster-shared-capabilities"
       ],
       "layer": "domain",
       "name": "doeff-cluster-service-model",
@@ -1287,7 +1331,8 @@
     {
       "allow": [
         "doeff-cluster-cluster-model",
-        "doeff-cluster-runtime-env-model"
+        "doeff-cluster-runtime-env-model",
+        "doeff-cluster-shared-capabilities"
       ],
       "layer": "domain",
       "name": "doeff-cluster-warm-model",
@@ -1305,6 +1350,7 @@
         "doeff-cluster-cluster-model",
         "doeff-cluster-cluster-policy",
         "doeff-cluster-runtime-env-model",
+        "doeff-cluster-shared-protocol",
         "doeff-cluster-warm-model"
       ],
       "layer": "pure",
@@ -1322,7 +1368,8 @@
       "allow": [
         "doeff-cluster-api-policy",
         "doeff-cluster-cluster-model",
-        "doeff-cluster-cluster-policy"
+        "doeff-cluster-cluster-policy",
+        "doeff-cluster-shared-protocol"
       ],
       "layer": "pure",
       "name": "doeff-cluster-watch-policy",
@@ -1380,6 +1427,67 @@
         "packages/doeff-cluster/src/doeff_cluster/worker_policy.hy"
       ],
       "responsibility": "worker の純粋な判断。",
+      "typed": true
+    },
+    {
+      "allow": [],
+      "layer": "domain",
+      "name": "doeff-cluster-shared-protocol",
+      "paths": [
+        "packages/doeff-cluster/src/doeff_cluster/shared/intent/protocol.hy"
+      ],
+      "public": [
+        "packages/doeff-cluster/src/doeff_cluster/shared/intent/protocol.hy"
+      ],
+      "responsibility": "coordinator・worker・記録の置き場が取り交わす形 — 本文の版・拍の時間・HTTP の要求と返事の effect・送り手の誤り。",
+      "typed": true
+    },
+    {
+      "allow": [
+        "doeff-cluster-shared-protocol"
+      ],
+      "layer": "domain",
+      "name": "doeff-cluster-shared-capabilities",
+      "paths": [
+        "packages/doeff-cluster/src/doeff_cluster/shared/core/capabilities.hy"
+      ],
+      "public": [
+        "packages/doeff-cluster/src/doeff_cluster/shared/core/capabilities.hy"
+      ],
+      "responsibility": "能力の名の検めと子の環境変数の並べ — job・task・worker・宣言が共に使う純粋な判断。",
+      "typed": true
+    },
+    {
+      "allow": [
+        "doeff-cluster-cluster-model",
+        "doeff-cluster-cluster-rules",
+        "doeff-cluster-shared-capabilities",
+        "doeff-cluster-shared-protocol"
+      ],
+      "layer": "domain",
+      "name": "doeff-cluster-cluster-json",
+      "paths": [
+        "packages/doeff-cluster/src/doeff_cluster/coordinator/core/cluster_json.hy"
+      ],
+      "public": [
+        "packages/doeff-cluster/src/doeff_cluster/coordinator/core/cluster_json.hy"
+      ],
+      "responsibility": "coordinator の保存の行と受け口の本文(JSON)を型へ読み・型から書く純粋な関数。",
+      "typed": true
+    },
+    {
+      "allow": [
+        "doeff-cluster-cluster-model"
+      ],
+      "layer": "domain",
+      "name": "doeff-cluster-cluster-rules",
+      "paths": [
+        "packages/doeff-cluster/src/doeff_cluster/coordinator/core/cluster_rules.hy"
+      ],
+      "public": [
+        "packages/doeff-cluster/src/doeff_cluster/coordinator/core/cluster_rules.hy"
+      ],
+      "responsibility": "coordinator の小さな純粋な判断 — 本文の版の検め・版の組の並べ。",
       "typed": true
     }
   ],

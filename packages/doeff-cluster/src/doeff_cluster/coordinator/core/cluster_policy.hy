@@ -10,9 +10,11 @@
 (import re)
 
 (import doeff_cluster.worker_model [JobSpec])
-(import doeff_cluster.cluster_model [ClusterJob WorkerInfo GenerationOrder Placement ClusterTiming ClusterState TaskRecord Request Drain EnvFailed WarmEntry HandoffPhase RefusedJob UnplacedKind
-                        capabilities-of component-versions-of task-record-to-json task-record-from-json ACCEPTED-FORMATS format-refusal
-                        PLACED-PHASES handoff-watch-from-json environ-pairs BodyInvalid required-field int-field])
+(import doeff_cluster.shared.intent.protocol [ClusterTiming Request BodyInvalid])
+(import doeff_cluster.shared.core.capabilities [capabilities-of environ-pairs])
+(import doeff_cluster.coordinator.intent.cluster_model [ClusterJob WorkerInfo GenerationOrder Placement ClusterState TaskRecord Drain EnvFailed WarmEntry HandoffPhase RefusedJob UnplacedKind ACCEPTED-FORMATS PLACED-PHASES])
+(import doeff_cluster.coordinator.core.cluster_rules [component-versions-of format-refusal])
+(import doeff_cluster.coordinator.core.cluster_json [task-record-to-json task-record-from-json handoff-watch-from-json required-field int-field])
 (import doeff_cluster.semaphore_model [SEMAPHORE-PREFIX lease-op semaphore-write-refusal semaphore-key])
 (import doeff [run])
 (import doeff_cluster.runtime_env_model [runtime-env-of-json RuntimeEnvInvalid env-key child-environ-refusal])

@@ -18,7 +18,8 @@
 (import doeff [EffectBase])
 (import doeff_core_effects [slog])
 (import doeff_cluster.clock [now-epoch-ms])
-(import doeff_cluster.cluster_model [Request NextRequests Reply PlainText CoordinatorStopRequested])
+(import doeff_cluster.shared.intent.protocol [Request Reply PlainText CoordinatorStopRequested])
+(import doeff_cluster.coordinator.intent.cluster_model [NextRequests])
 
 
 ;; --- effect(file の I/O は handler だけ) ------------------------------------------------------

@@ -5,7 +5,8 @@
 ;;;   - 戻し(RollingBack)が終わらない時は stuck の印を出し、新は止めない
 (require doeff-hy.macros [deftest val var])
 (import dataclasses [replace])
-(import doeff_cluster.cluster_model [ClusterState ClusterTiming Request TaskRecord])
+(import doeff_cluster.shared.intent.protocol [ClusterTiming Request])
+(import doeff_cluster.coordinator.intent.cluster_model [ClusterState TaskRecord])
 (import doeff_cluster.coordinator.core.durable_kv [full-kv state-from-kv])
 (import doeff_cluster.coordinator.core.api_policy [respond plan-rollouts resume-after-downtime mark-alive ALIVE-MARK-MS])
 (import doeff_cluster.coordinator.core.rollout_policy [rollout-step action-due retry-delay-ms shift-clocks RETRY-MAX-MS])

@@ -114,8 +114,8 @@
                                       TaskCancelledError])
 (import doeff_time [Delay sim-time-handler async-time-handler])
 (import doeff_cluster.clock [now-epoch-ms datetime-of-epoch-ms])
-(import .cluster_model [ClusterState ClusterTiming ClusterNaming Request NextRequests Reply Persist CoordinatorStopRequested
-                        PlainText ENDED-PHASES])
+(import doeff_cluster.shared.intent.protocol [ClusterTiming Request Reply CoordinatorStopRequested PlainText])
+(import doeff_cluster.coordinator.intent.cluster_model [ClusterState ClusterNaming NextRequests Persist ENDED-PHASES])
 (import .process_model [AwaitProcessEnded ProcessEnded ProcessWaitExpired])
 (import doeff_cluster.coordinator.core.cluster_policy [fresh-task-prefix])
 (import doeff_cluster.coordinator.core.program [run-coordinator])

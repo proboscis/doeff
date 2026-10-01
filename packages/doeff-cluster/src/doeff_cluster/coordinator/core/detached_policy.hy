@@ -14,7 +14,10 @@
 (val MODULE-TAGS {:context "coordinator" :role "judgment"})
 (import dataclasses [replace])
 (import typing [NamedTuple])
-(import doeff_cluster.cluster_model [ClusterState ClusterTiming TaskRecord format-refusal environ-pairs])
+(import doeff_cluster.shared.intent.protocol [ClusterTiming])
+(import doeff_cluster.shared.core.capabilities [environ-pairs])
+(import doeff_cluster.coordinator.intent.cluster_model [ClusterState TaskRecord])
+(import doeff_cluster.coordinator.core.cluster_rules [format-refusal])
 (import doeff_cluster.coordinator.core.cluster_policy [DETACHED-TERMINAL TASK-MAX-OPEN end-detached runtime-env-refusal task-id task-body-refusal request-needs
                          program-versions])
 (import doeff_cluster.detached_model [DETACHED-DEFAULT-LEASE-SECONDS DETACHED-DEFAULT-RETAIN-SECONDS OPEN-PHASES WARMING-PHASE])

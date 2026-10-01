@@ -19,7 +19,7 @@
 (import collections.abc [Callable])
 (import typing [TypedDict Unpack])
 (import httpx)
-(import .cluster_model [ClusterTiming])
+(import doeff_cluster.shared.intent.protocol [ClusterTiming])
 (import .remote_model [program-sha])
 
 ;; 返事を待つ上限(秒)。coordinator は書きを永続化してから返事をする(group commit)ので、返事は fsync の時間だけ遅れる。longhorn の

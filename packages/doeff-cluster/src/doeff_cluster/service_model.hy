@@ -32,7 +32,7 @@
 (import sys)
 (import json)
 (import doeff [DoExpr Program run])
-(import .cluster_model [capabilities-of])
+(import doeff_cluster.shared.core.capabilities [capabilities-of])
 (import .readiness_model [readiness-refusal])
 (import .remote_model [encode-program program-sha])
 (import .runtime_env_model [RuntimeEnv EnvVar runtime-env->json])

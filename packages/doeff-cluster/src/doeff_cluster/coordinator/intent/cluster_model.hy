@@ -12,83 +12,21 @@
 ;;; 各資源は resourceVersion(coordinator 全体で単調に増える番号)と generation(spec が変わるたびに増える)を持ち、
 ;;; 書きは資源 1 つずつの compare-and-set。誰が・いつ・何を・前後の版は出来事の記録(audit)に残る。
 ;;; 版と記録は「前の状態と後の状態の差」から 1 か所(resource_policy.stamp)で付けるので、どの経路の変化も漏れない。
-(require doeff-hy.macros [deff val])
+(require doeff-hy.macros [val])
 (require doeff-hy.record [defenum defrecord])
-(import dataclasses [dataclass field asdict fields])
+(val MODULE-TAGS {:context "coordinator" :role "intent"})
+(import dataclasses [dataclass field])
 (import enum [StrEnum])
-(import re)
 (import typing [NamedTuple])
 (import doeff [EffectBase])
-(import .worker_model [JobSpec])
-
-
-;; --- 実行先の能力と版(task・切り離した task・worker が共に使う) -------------------------------------
-;;
-;; 能力(capability — ADR-DOE-CLUSTER-001 R4b・2026-09-27): job と task は「要る能力の名」の集合(needs)を宣言し、worker は「提供する
-;; 能力の名」の集合(provides)をクラスタの設定(起動の引数)で名乗る。coordinator は needs ⊆ provides の worker にだけ置く。
-;; 置き場所の名(kind=k3s・role=…・機体の名)は書かない。worker の exclusive(provides の一部)は「この能力のどれかを needs に持つ
-;; job / task だけを受ける」の印(以前の label `dedicated=<k>=<v>` の置き換え — 会社の機体・人の機体のように、一般の仕事を置かない担い手)。
-;; 能力の名は小文字・数字・`.`・`-` だけ(`k=v` の旧い label の形を名として受けない)。needs と provides は名の順の tuple で持つ。
-
-(val CAPABILITY-PATTERN (re.compile r"[a-z0-9][a-z0-9.-]*"))
-
-
-(deff capability-refusal [name]  ; defk にできない: 宣言・heartbeat・保存の JSON を読む境界(Program の外)が呼ぶ純粋な判断
-  {:pre [(: name str)] :post [(: % (| str None))] :tags {:context "doeff-cluster" :role "judgment"}}
-  "能力の名 1 つが名として受けられない理由(受けられれば None)— 旧い label の形(`kind=k3s`)を黙って名にしないため。"
-  (cond
-    (in "=" name) (.format "能力の名 {!r} は label の形(鍵=値)— 置き場所ではなく要る能力の名を書く(ADR-DOE-CLUSTER-001 R4b)" name)
-    (not (CAPABILITY-PATTERN.fullmatch name)) (.format "能力の名 {!r} は小文字・数字・`.`・`-` だけで書く" name)
-    True None))
-
-
-(deff capabilities-of [value #^ str what]  ; defk にできない: 宣言・heartbeat・保存の JSON を読む境界(Program の外)が呼ぶ
-  {:pre [(: value (| list tuple set frozenset dict str int float bool None)) (: what str)] :post [(: % tuple)] :tags {:context "doeff-cluster" :role "judgment"}}
-  "JSON の能力の名の列(list・tuple・frozenset)→ 名の順の重なりの無い tuple(比べる時に順が揃う)。旧い形(label の object)や
-   名として受けられない値は BodyInvalid(送り手の誤り — ValueError の子)(what = 誤りの文の欄の名)。"
-  (when (isinstance value dict)
-    (raise (BodyInvalid (.format "{} が label の object {!r} — 旧い requires / labels の形は受け付けない。能力の名の列で書く(ADR-DOE-CLUSTER-001 R4b)"
-                                what value))))
-  (when (not (isinstance value #(list tuple set frozenset)))
-    (raise (BodyInvalid (.format "{} は能力の名の列: {!r}" what value))))
-  (for [name value]
-    (when (not (isinstance name str))
-      (raise (BodyInvalid (.format "{}: 能力の名は文字列: {!r}" what name))))
-    (setv problem (capability-refusal name))
-    (when (is-not problem None)
-      (raise (BodyInvalid (.format "{}: {}" what problem)))))
-  (tuple (sorted (set value))))
-
-
-(deff effect-needs-problem [needs]  ; defk にできない: effect の構成子(dataclass の __post_init__)が呼ぶ純粋な判断
-  {:pre [(: needs (| frozenset tuple list set dict str None))] :post [(: % (| str None))] :tags {:context "doeff-cluster" :role "judgment"}}
-  "effect(RemoteJob・SubmitDetached・WarmRuntimeEnv)の needs が受けられない理由(受けられれば None)— 3 つの構成子が同じ規則で
-   断るため: 能力の名の空でない frozenset(旧い Requirement の tuple・label の組・空は断る — 改訂 1 の I)。"
-  (cond
-    (not (isinstance needs frozenset)) (.format "needs は能力の名の frozenset: {!r}" needs)
-    (not needs) "needs が空 — 要る能力の名を 1 つ以上書く"
-    True (next (gfor n needs
-                     :setv p (if (isinstance n str) (capability-refusal n) (.format "能力の名は文字列: {!r}" n))
-                     :if p p)
-               None)))
-
-
-(deff environ-pairs [#^ dict environ]  ; defk にできない: coordinator の本文の読み・worker の返事の読み(Program の外)が呼ぶ純粋な判断
-  {:pre [(: environ dict)] :post [(: % tuple)] :tags {:context "doeff-cluster" :role "judgment"}}
-  "子の環境変数の dict → 名の順の #(名 値) の tuple(TaskRecord.environ・JobSpec.environ の形)— 行と spec の比べと指紋を
-   名の順 1 つにするため。"
-  (tuple (gfor k (sorted environ) #(k (get environ k)))))
+(import doeff_cluster.worker_model [JobSpec])
+(import doeff_cluster.shared.intent.protocol [ClusterTiming Request])
 
 
 (defclass ComponentVersion [NamedTuple]
   "版 1 つ: 部品の名(python・cloudpickle・doeff)とその版の綴り。task を送れる worker を選ぶのに、送り手と worker の組を比べる。"
   (#^ str component)
   (#^ str version))
-
-
-(defn #^ (get tuple #(ComponentVersion ...)) component-versions-of [#^ dict versions]
-  "JSON の object(部品の名 → 版)→ 名の順の ComponentVersion の tuple。JSON から読む境界で使う。"
-  (tuple (sorted (gfor #(component version) (.items versions) (ComponentVersion component version)))))
 
 
 (defclass [(dataclass :frozen True)] ClusterJob []
@@ -108,6 +46,8 @@
 
 
 (defenum GenerationOrder CURRENT OLDER NEWER)
+
+
 ;; heartbeat の process の世代が、同じ名の今の世代に比べてどれか(cluster_policy.generation-order — 2026-09-27)。
 ;; CURRENT = 今の世代(初めての名・世代を名乗らない旧い worker を含む)・OLDER = 古い世代(名乗りとして受けない)・
 ;; NEWER = 新しい世代(今の世代を退かせる)。
@@ -200,6 +140,8 @@
 (defenum HandoffPhase
   (WAITING "WaitingReady")
   (ABANDONED "Abandoned"))
+
+
 ;; 入れ替え(handoff)の見張りの段。WAITING = 新の世代が動き出し、Ready を待っている(旧は退いて動いている)・
 ;; ABANDONED = 期限の間 Ready にならず、入れ替えを諦めた(worker は新を止めて起こし直さず、旧を動かし続ける)。
 
@@ -236,6 +178,8 @@
 ;; 網羅の match で状態へ写し、文を読んで分けない。
 
 (defenum UnplacedKind WAITING-PREVIOUS-HOLDER NO-ELIGIBLE-WORKER NO-ROOM)
+
+
 ;; 置き先が無い理由(cluster_policy.unplaced-kind)。WAITING-PREVIOUS-HOLDER = 前の担い手が止め終えるのを待っている(drain や
 ;; 入れ替えの正常な途中)・NO-ELIGIBLE-WORKER = 置ける worker が無い・NO-ROOM = 置ける worker に空きが無い。
 
@@ -243,6 +187,8 @@
 (defenum NotReadyKind
   NO-DECLARATION NO-REPLICAS WAITING-PREVIOUS-HOLDER NO-ELIGIBLE-WORKER NO-ROOM CARRIER-SILENT NOT-RUNNING
   REVISION-MISMATCH NO-INSTANCE SPEC-MISMATCH PLACEMENT-MISMATCH)
+
+
 ;; running-process が ok でない理由の種類(答えの dict の "kind")。宣言が無い・replicas 0・置き先が無い 3 種(UnplacedKind と同じ)・
 ;; 担い手の報告が古い(Unknown の間も同じ種類)・担い手の行の phase が running でない・版の違い・process の世代を報告しない・
 ;; 設定の指紋の違い・割り当ての世代の違い。
@@ -254,6 +200,8 @@
   (BLOCKED "Blocked")
   (STOPPED "Stopped")
   (UNKNOWN "Unknown"))
+
+
 ;; 版の判定の 5 値(Service の資源の status.version.state の綴り — 外へ見せる約束)。Current = 指定の版の process が仕事をしていて、
 ;; 退いた旧い process が生きていない(健康 readiness は含まない)・Updating = 指定の版へ移っている途中・Blocked = 待っても指定の版へ
 ;; 進まない・Stopped = 止めている・Unknown = 担い手の報告が途絶えていて分からない。
@@ -273,30 +221,6 @@
   (#^ bool retired))
 
 
-(defn #^ HandoffWatch handoff-watch-from-json [#^ dict data]  ; defk にできない: 保存の読み(coordinator の起動の純粋な関数)が呼ぶ
-  "保存の形 → HandoffWatch(HandoffWatch.to-json の逆)。知らない段は読めない(ValueError — 黙って待ちに戻さない)。"
-  (HandoffWatch :declaration (get data "declaration") :since-ms (get data "sinceMs")
-                :phase (HandoffPhase (get data "phase"))
-                :abandoned-ms (.get data "abandonedMs")
-                :reason (.get data "reason" "")
-                :last-report (.get data "lastReport")))
-
-
-(defclass [(dataclass :frozen True)] ClusterTiming []
-  (setv #^ int lease-ms 10000)          ; これより新しい heartbeat の worker にだけ新しく割り当てる
-  ;; fence は tailnet の実測の途絶(最長 約 13 秒・2026-09-23 newmac)より長く、移し替えは fence より十分長く取る
-  ;; (止めた worker と新しい担い手が同時に動かない)。代償は障害時の移し替えが 45 秒になること。
-  ;; worker は heartbeat の返事の timing から fence を受け取る(この値が唯一の定義点)。
-  ;; worker が連絡の途絶から lease を持たない job と task を止めるまで。書き手(入れ替えを宣言した job)は止めない — 書きは lease の
-  ;; 柵だけが守る(worker_policy.kept-when-cut-off・2026-09-25)。
-  (setv #^ int fence-ms 20000)
-  (setv #^ int reassign-after-ms 45000) ; 連絡の途絶えた worker の job を他へ移すまで
-
-  (defn #^ None __post-init__ [self]
-    (when (<= self.reassign-after-ms self.fence-ms)
-      (raise (ValueError "移し替えは worker の自己停止より後でなければならない")))))
-
-
 (defclass [(dataclass :frozen True)] ClusterNaming []
   "クラスタが外の系(k8s の Deployment・Node)と取り交わす名。どれも配備する側(composition root の引数)が決める。
    owner-annotation = Rollout が台数を持つ Deployment に付ける annotation の鍵。
@@ -309,47 +233,8 @@
   (setv #^ tuple node-capabilities #(#("doeff.dev/company-machine" "true" "company-machine"))))
 
 
-;; image の版を追う係(base-follow)が読んでいた naming の欄(image の LABEL の名)。係は消した(Program の job は宣言した commit でだけ
-;; 解く — 計画 2.2 の E)ので、書かれていれば黙って捨てず、理由つきで断る(coordinator は起動しない)。
-(val RETIRED-NAMING-FIELDS (frozenset #("revisionLabel" "versionLabels")))
-
-
-(defn #^ ClusterNaming naming-from-json [#^ str text]
-  "coordinator の引数(JSON)→ ClusterNaming。欄は ownerAnnotation・ownerScope・nodeCapabilities([{\"label\" \"value\" \"capability\"} …])。
-   書かなかった欄は既定のまま。消した欄(RETIRED-NAMING-FIELDS)と知らない欄は断る。"
-  (import json)
-  (setv data (json.loads text))
-  (when (not (isinstance data dict))
-    (raise (ValueError "naming は JSON の object")))
-  (when (& (set data) RETIRED-NAMING-FIELDS)
-    (raise (ValueError (.format "naming の {} は受け付けない — image の版を追う係は消した(Program の job は宣言した commit でだけ解く)"
-                                (sorted (& (set data) RETIRED-NAMING-FIELDS))))))
-  (setv known #{"ownerAnnotation" "ownerScope" "nodeCapabilities"})
-  (setv unknown (sorted (gfor k data :if (not-in k known) k)))
-  (when unknown
-    (raise (ValueError (+ "naming の知らない欄: " (.join ", " unknown)))))
-  (setv base (ClusterNaming))
-  (ClusterNaming :owner-annotation (.get data "ownerAnnotation" base.owner-annotation)
-                 :owner-scope (.get data "ownerScope" base.owner-scope)
-                 :node-capabilities (if (in "nodeCapabilities" data)
-                                        (tuple (gfor row (get data "nodeCapabilities")
-                                                     #((get row "label") (get row "value") (get row "capability"))))
-                                        base.node-capabilities)))
-
-
-;; HTTP の本文(/tasks・/detached・/heartbeat)の形の版(2026-09-26)。送り手・coordinator・worker は別々の版になり得るので、本文に
-;; format を置き、coordinator は受け入れる範囲を heartbeat の返事と /livez で名乗り、範囲の外の送り手を 400 で断る。format の無い
-;; 本文(この版より前の送り手)は 1 として受ける。
-(setv PROTOCOL-FORMAT 1)
+;; 受け入れる本文の版の範囲(送り手の版 PROTOCOL-FORMAT は shared/intent/protocol.hy)。
 (setv ACCEPTED-FORMATS #(1))
-
-
-(defn #^ (| str None) format-refusal [#^ dict body]  ; defk にできない: coordinator の純粋な判断(Program の外)が呼ぶ
-  "本文の format が受け入れる範囲の外なら理由の文。"
-  (setv form (.get body "format" 1))
-  (if (in form ACCEPTED-FORMATS)
-      None
-      (.format "本文の形の版 {!r} を受け入れない(受け入れる版 = {})" form (list ACCEPTED-FORMATS))))
 
 
 (defclass [(dataclass :frozen True)] TaskRecord []
@@ -404,131 +289,8 @@
 (setv PLACED-PHASES (frozenset #("assigned" "preparing")))
 
 
-(defn #^ dict task-record-to-json [#^ TaskRecord task]
-  "TaskRecord → 保存の JSON の形(版は名 → 値の object・needs は名の list)。保存の 2 つの形(state file と durable の KV)はここだけを使う。"
-  (| (asdict task) {"versions" (dict task.versions) "needs" (list task.needs) "environ" (dict task.environ)}))
-
-
 ;; 終わった task の phase(旧い形の保存の行を読む時に、まだ終わっていない行だけを断る — task-record-from-json)。
 (setv ENDED-PHASES (frozenset #("finished" "code-failed" "failed" "version-mismatch" "lost" "cancelled" "env-failed")))
-
-
-(defn #^ TaskRecord task-record-from-json [#^ dict data]
-  "保存の JSON の形 → TaskRecord(task-record-to-json の逆)。
-   旧い形の行は読み直しで coordinator を落とさず、まだ終わっていない行を failed(理由つき)にする — 旧い形は受け付けない
-   (operator 2026-09-27)。旧い形 = TaskRecord に無い欄を持つ行(今の TaskRecord の欄の集合 1 つで判じる — 消した欄を 1 つずつ数えると、
-   数え漏れた欄 1 つで読み直しが TypeError になり coordinator が起きない。実弾 2026-09-28 の予行: 3880944e の行の env)。
-   無い欄は捨てて読む(終わった行は Program 無し = program None で読む)。空の requires は needs 無しと同じ。"
-  (setv known (sfor f (fields TaskRecord) f.name)
-        extra (sorted (gfor k data :if (not-in k known) k))
-        phase (stored-str data "phase" "queued")
-        unended (not-in phase ENDED-PHASES)
-        reason (old-task-row-reason (.get data "requires") extra)
-        ;; failure = まだ終わっていない旧い形の行を failed にする理由(None = そのまま読む)
-        failure (if unended reason None))
-  ;; 欄ごとに型を確かめて読む(#** で辞書を渡すと、型の違う保存の値が黙って欄に入る — #1662)。
-  (TaskRecord :id (stored-str data "id")
-              :name (stored-str data "name")
-              :program (stored-optional-str data "program")
-              :revision (stored-str data "revision")
-              :versions (component-versions-of (get data "versions"))
-              :needs (capabilities-of (.get data "needs" []) "task の needs")
-              :lease-ms (stored-int data "lease_ms")
-              :lease-until-ms (stored-int data "lease_until_ms")
-              :submitted-ms (stored-int data "submitted_ms")
-              :phase (if (is failure None) phase "failed")
-              :worker (stored-optional-str data "worker")
-              :result (stored-optional-str data "result")
-              :detail (if (is failure None) (stored-str data "detail" "") failure)
-              :started-ms (stored-optional-int data "started_ms")
-              :finished-ms (stored-optional-int data "finished_ms")
-              :detached (stored-bool data "detached" False)
-              :key (stored-optional-str data "key")
-              :boot (stored-optional-str data "boot")
-              :retain-ms (stored-int data "retain_ms" 0)
-              :runtime-env (stored-optional-dict data "runtime_env")
-              :env-attempts (stored-int data "env_attempts" 0)
-              :avoid (stored-items data "avoid")
-              :failure-kind (stored-str data "failure_kind" "")
-              :retryable (stored-bool data "retryable" False)
-              ;; 子の環境変数の欄の無い旧い行は空(欄が無いだけで旧い形とは数えない — 足した欄)。
-              :environ (environ-pairs (.get data "environ" {}))))
-
-
-;; 保存の行の欄の読み(task-record-from-json)。型の違う値は、どの欄がどう違うかを名乗る ValueError にする(保存の行の壊れ — 送り手の誤りの
-;; BodyInvalid とは別)。無い欄は既定値で読む(既定値が None の欄は必須)。
-
-(deff stored-str [#^ dict data #^ str key #^ (| str None) [default None]]  ; defk にできない: 保存の読み直し(Program の外)が呼ぶ純粋な読み
-  {:pre [(: data dict) (: key str) (: default (| str None))] :post [(: % str)] :tags {:context "doeff-cluster" :role "judgment"}}
-  "保存の行の文字列の欄を str として読むため(無ければ default・default が None なら必須)。"
-  (when (and (not-in key data) (is default None))
-    (raise (ValueError (.format "保存の task の行に {} が無い" key))))
-  (setv value (.get data key default))
-  (when (not (isinstance value str))
-    (raise (ValueError (.format "保存の task の行の {} は文字列: {!r}" key value))))
-  value)
-
-(deff stored-optional-str [#^ dict data #^ str key]  ; defk にできない: 保存の読み直し(Program の外)が呼ぶ純粋な読み
-  {:pre [(: data dict) (: key str)] :post [(: % (| str None))] :tags {:context "doeff-cluster" :role "judgment"}}
-  "保存の行の、無くてよい文字列の欄を str か None として読むため。"
-  (setv value (.get data key None))
-  (when (not (isinstance value #(str (type None))))
-    (raise (ValueError (.format "保存の task の行の {} は文字列か null: {!r}" key value))))
-  value)
-
-(deff stored-int [#^ dict data #^ str key #^ (| int None) [default None]]  ; defk にできない: 保存の読み直し(Program の外)が呼ぶ純粋な読み
-  {:pre [(: data dict) (: key str) (: default (| int None))] :post [(: % int)] :tags {:context "doeff-cluster" :role "judgment"}}
-  "保存の行の整数の欄を int として読むため(無ければ default・default が None なら必須。真偽値は整数と数えない)。"
-  (when (and (not-in key data) (is default None))
-    (raise (ValueError (.format "保存の task の行に {} が無い" key))))
-  (setv value (.get data key default))
-  (when (or (not (isinstance value int)) (isinstance value bool))
-    (raise (ValueError (.format "保存の task の行の {} は整数: {!r}" key value))))
-  value)
-
-(deff stored-optional-int [#^ dict data #^ str key]  ; defk にできない: 保存の読み直し(Program の外)が呼ぶ純粋な読み
-  {:pre [(: data dict) (: key str)] :post [(: % (| int None))] :tags {:context "doeff-cluster" :role "judgment"}}
-  "保存の行の、無くてよい整数の欄を int か None として読むため。"
-  (setv value (.get data key None))
-  (when (or (isinstance value bool) (not (isinstance value #(int (type None)))))
-    (raise (ValueError (.format "保存の task の行の {} は整数か null: {!r}" key value))))
-  value)
-
-(deff stored-bool [#^ dict data #^ str key #^ bool default]  ; defk にできない: 保存の読み直し(Program の外)が呼ぶ純粋な読み
-  {:pre [(: data dict) (: key str) (: default bool)] :post [(: % bool)] :tags {:context "doeff-cluster" :role "judgment"}}
-  "保存の行の真偽値の欄を bool として読むため。"
-  (setv value (.get data key default))
-  (when (not (isinstance value bool))
-    (raise (ValueError (.format "保存の task の行の {} は真偽値: {!r}" key value))))
-  value)
-
-(deff stored-optional-dict [#^ dict data #^ str key]  ; defk にできない: 保存の読み直し(Program の外)が呼ぶ純粋な読み
-  {:pre [(: data dict) (: key str)] :post [(: % (| dict None))] :tags {:context "doeff-cluster" :role "judgment"}}
-  "保存の行の、無くてよい object の欄を dict か None として読むため。"
-  (setv value (.get data key None))
-  (when (not (isinstance value #(dict (type None))))
-    (raise (ValueError (.format "保存の task の行の {} は object か null: {!r}" key value))))
-  value)
-
-(deff stored-items [#^ dict data #^ str key]  ; defk にできない: 保存の読み直し(Program の外)が呼ぶ純粋な読み
-  {:pre [(: data dict) (: key str)] :post [(: % tuple)] :tags {:context "doeff-cluster" :role "judgment"}}
-  "保存の行の配列の欄を tuple として読むため(無ければ空)。JSON を通った行は list、JSON を通らずに渡る行(asdict のまま)は tuple で来る。"
-  (setv value (.get data key #()))
-  (when (not (isinstance value #(list tuple)))
-    (raise (ValueError (.format "保存の task の行の {} は配列: {!r}" key value))))
-  (tuple value))
-
-
-(deff old-task-row-reason [#^ (| dict list None) old #^ list extra]  ; defk にできない: 保存の読み直し(Program の外)が呼ぶ純粋な判断
-  {:pre [(: old (| dict list None)) (: extra list)] :post [(: % (| str None))] :tags {:context "doeff-cluster" :role "judgment"}}
-  "保存の task の行が旧い形なら、まだ終わっていない行を failed にする理由の文(新しい形なら None)。old = 行の requires の値・
-   extra = 今の TaskRecord に無い欄の名(requires・blob・env ほか)。"
-  (cond
-    old (.format "旧い形の task(requires {})は受け付けない — 新しい形(needs)で送り直す" old)
-    (in "blob" extra) "旧い形の task(詰めた Program を行に持つ blob)は受け付けない — Program を /programs に置き、その sha で送り直す"
-    (in "env" extra) "旧い形の task(handler の組の import path env)は受け付けない — task の Program が自分の土台で本体を包み、needs で送り直す"
-    extra (.format "旧い形の task(今の形に無い欄 {})は受け付けない — 新しい形で送り直す" extra)
-    True None))
 
 
 (defclass [(dataclass :frozen True)] ClusterState []
@@ -601,69 +363,6 @@
   (setv #^ frozenset silent (frozenset)))
 
 
-;; --- HTTP の要求と返事 ----------------------------------------------------------
-
-(defclass [(dataclass :frozen True :eq False)] Request []
-  "受けた HTTP 要求 1 件。slot は返事を待つ handler の側の物(判断は見ない)。
-   actor = 送り手(header X-Actor)。無ければ None(資源の書きは断る・盤と task は送り元の番地で記録する)。
-   path = 受けたままの path(log と返事の文に使う)・parts = path を / で割り、区切りごとに percent の符号を戻した物。
-   符号を戻すのは HTTP の境(coordinator_inbox.http-request)の仕事で、判断(api_policy.respond)は parts だけを読む(#1636)。"
-  (#^ str method)
-  (#^ str path)
-  (#^ dict query)
-  (#^ object body)
-  (#^ tuple parts)
-  (setv #^ object slot None)
-  (setv #^ (| str None) actor None)
-  (setv #^ str peer ""))
-
-
-(defclass BodyInvalid [ValueError]
-  "送り手の要求の本文の誤り(欠けた欄・受けられない値・旧い形)。受け口(api_policy.respond)はこれと resource_policy.Refused だけを
-   400 にし、それ以外の例外は coordinator の中の欠陥(Fault・500 と log の 1 行)にする(#1024 — #1005 では中の
-   TypeError が 400 に畳まれ、log にも出ずに原因の特定が遅れた)。ValueError の子なので、同じ検めを保存の行や起動の引数で呼ぶ所の
-   except ValueError はそのまま受ける。")
-
-
-(deff required-field [#^ dict body #^ str key]  ; defk にできない: 受け口の本文の読み(Program の外の純粋な判断)が呼ぶ
-  {:pre [(: body dict) (: key str)] :post [(: % (| dict list str int float bool None))] :tags {:context "doeff-cluster" :role "judgment"}}
-  "送り手の本文の必須の欄の値 — 欄が無ければ BodyInvalid(送り手の誤り・400)。(get body 欄) の KeyError に頼ると、受け口は
-   送り手の欠けと coordinator の中の KeyError を分けられない(#1024)。値は null でもよい(在ることだけを検める)。"
-  (when (not-in key body)
-    (raise (BodyInvalid (.format "本文に {} が無い" key))))
-  (get body key))
-
-
-(deff int-field [#^ dict fields #^ str key default]  ; defk にできない: 受け口の本文・query の読み(Program の外の純粋な判断)が呼ぶ
-  {:pre [(: fields dict) (: key str) (: default (| int None))] :post [(: % int)] :tags {:context "doeff-cluster" :role "judgment"}}
-  "送り手の本文・query の整数の欄(無ければ default)を int に読む — 読めない値(数でない文字列・object など)は BodyInvalid
-   (送り手の誤り・400)。読み方は int() のまま(小数は切り捨て・数字の文字列は数)。"
-  (setv value (.get fields key default))
-  (try
-    (int value)
-    (except [error [ValueError TypeError]]
-      (raise (BodyInvalid (.format "{} は整数: {!r}" key value))))))
-
-
-(deff text-field [#^ dict body #^ str key]  ; defk にできない: 受け口の本文の読み(Program の外の純粋な判断)が呼ぶ
-  {:pre [(: body dict) (: key str)] :post [(: % str)] :tags {:context "doeff-cluster" :role "judgment"}}
-  "送り手の本文の必須の文字列の欄を読むため — 欄が無いか文字列でなければ BodyInvalid(送り手の誤り・400)。str を受ける所へ
-   JSON の値のまま渡すと、型の食い違いが中の TypeError(500)になる(#1690)。"
-  (setv value (required-field body key))
-  (when (not (isinstance value str))
-    (raise (BodyInvalid (.format "{} は文字列: {!r}" key value))))
-  value)
-
-
-(deff list-field [#^ dict body #^ str key]  ; defk にできない: 受け口の本文の読み(Program の外の純粋な判断)が呼ぶ
-  {:pre [(: body dict) (: key str)] :post [(: % list)] :tags {:context "doeff-cluster" :role "judgment"}}
-  "送り手の本文の必須の列の欄を読むため — 欄が無いか列でなければ BodyInvalid(送り手の誤り・400・#1690)。"
-  (setv value (required-field body key))
-  (when (not (isinstance value list))
-    (raise (BodyInvalid (.format "{} は列: {!r}" key value))))
-  value)
-
-
 (defclass [(dataclass :frozen True)] Fault []
   "coordinator の中の欠陥(要求の処理の中で上がった、送り手の誤りでない例外)の閉じた答えの形。受け口は 500 と本文
    {\"error\" …} で返し、coordinator は CoordinatorFault で log に 1 行出す。where = 例外が上がった所(file:行 関数)。"
@@ -672,12 +371,6 @@
   (#^ str error-type)
   (#^ str message)
   (#^ str where))
-
-
-(defclass [(dataclass :frozen True)] PlainText []
-  "JSON でない返事の本文(GET /metrics の Prometheus の text)。HTTP の handler は content-type をそのまま付けて text を返す。"
-  (#^ str text)
-  (setv #^ str content-type "text/plain; version=0.0.4; charset=utf-8"))
 
 
 ;; --- 版の変化を待つ読み(GET /watch — #1933)---------------------------------------------------
@@ -745,12 +438,6 @@
   (setv #^ (| IdleProbe None) idle None))
 
 
-(defclass [(dataclass :frozen True)] Reply [EffectBase]
-  (#^ Request request)
-  (#^ int status)
-  (#^ object body))
-
-
 (defclass [(dataclass :frozen True)] CoordinatorFault [EffectBase]
   "coordinator の中の欠陥(Fault)を log に 1 行出す。結果は None。本番の受け口(coordinator_inbox.http-requests)は stderr へ、
    模擬の受け口(coordinator_handler_sets.queued-requests)は列の faults へ書く。"
@@ -761,7 +448,3 @@
   "1 まとまりの変化(キー → 新しい値・消えたキーは None — durable_kv.hy)を耐久の場所へ書き、fsync が終わってから戻る。
    返事(Reply)はこの後にだけ出す: 返事を済ませた書きは coordinator が落ちても消えない。書けなければ例外(返事をせずに落ちる)。"
   (#^ dict delta))
-
-
-(defclass [(dataclass :frozen True)] CoordinatorStopRequested [EffectBase]
-  "結果は bool。")

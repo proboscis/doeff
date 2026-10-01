@@ -29,7 +29,7 @@
 (import dataclasses [dataclass])
 (import doeff [EffectBase])
 (import doeff_core_effects.scheduler [CreateSemaphore Semaphore])
-(import .cluster_model [BodyInvalid])
+(import doeff_cluster.shared.intent.protocol [BodyInvalid])
 
 (setv SEMAPHORE-PREFIX "semaphore/")
 

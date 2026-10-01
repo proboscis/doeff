@@ -24,7 +24,8 @@
 (import doeff_cluster.service_model [system-of])
 (import doeff_cluster.remote_model [version-diffs VersionDiff VersionMismatch failed-from])
 (import doeff_cluster.detached_model [outcome-from-task-outcome])
-(import doeff_cluster.cluster_model [ClusterState ClusterTiming TaskRecord WorkerInfo ComponentVersion])
+(import doeff_cluster.shared.intent.protocol [ClusterTiming])
+(import doeff_cluster.coordinator.intent.cluster_model [ClusterState TaskRecord WorkerInfo ComponentVersion])
 (import doeff_cluster.coordinator.core.cluster_policy [can-run-task absorb-env-failure place-tasks submit-task ENV-RETRIES])
 (import doeff_cluster.coordinator.core.detached_policy [submit-detached])
 (import doeff_cluster.worker_model [JobSpec CodeView CodeState WorldView JobRecord WorkerPolicy JobPhase PrepareEnv

@@ -2,7 +2,8 @@
 
 (import dataclasses [replace])
 (import doeff_cluster.worker_model [JobSpec])
-(import doeff_cluster.cluster_model [ClusterJob WorkerInfo Placement ClusterTiming ClusterState])
+(import doeff_cluster.shared.intent.protocol [ClusterTiming])
+(import doeff_cluster.coordinator.intent.cluster_model [ClusterJob WorkerInfo Placement ClusterState])
 (import doeff_cluster.coordinator.core.cluster_policy [place-jobs jobs-for])
 (import tests.program_rows [SAMPLE-TASK-PROGRAM])
 
@@ -54,7 +55,7 @@
 
 ;; --- 能力と専用の能力(exclusive — 以前の dedicated の印・k8s の taint に当たる) ---------------------------------
 
-(import doeff_cluster.cluster_model [TaskRecord ComponentVersion])
+(import doeff_cluster.coordinator.intent.cluster_model [TaskRecord ComponentVersion])
 (import doeff_cluster.coordinator.core.cluster_policy [place-tasks unplaced-jobs])
 
 (setv AGENT "agent-cli")
@@ -113,7 +114,7 @@
 ;; --- 能力の名乗りの形(ADR-DOE-CLUSTER-001 R4b)-----------------------------------------------------
 
 (import doeff_cluster.coordinator.core.cluster_policy [placeable worker-capabilities-of request-needs])
-(import doeff_cluster.cluster_model [capabilities-of])
+(import doeff_cluster.shared.core.capabilities [capabilities-of])
 
 (deftest test-placeable-is-needs-subset-of-provides-and-respects-exclusive
   (val gpu (replace (worker "g" 0 10 "gpu" "cluster-net") :exclusive #("gpu")))
@@ -147,7 +148,7 @@
 
 (require doeff-hy.macros [defk <- val var])
 (import doeff [with_handlers])
-(import doeff_cluster.cluster_model [ClusterNaming])
+(import doeff_cluster.coordinator.intent.cluster_model [ClusterNaming])
 (import doeff_cluster.coordinator.core.cluster_policy [register-heartbeat with-derived-capabilities NODE-LABELS-TTL-MS])
 (import doeff_cluster.coordinator.core.program [rollout-tick])
 (import doeff_cluster.kube_handlers [KubeMemory kube-memory])
@@ -248,7 +249,7 @@
 ;; coordinator を落とさずに読む: 旧い worker の行(labels)と温める表の行(requires)は捨て(次の heartbeat・頼み直しで作り直す)、
 ;; まだ終わっていない旧い task の行は failed(理由つき)にし、終わった行はそのまま読む。
 
-(import doeff_cluster.cluster_model [WarmEntry])
+(import doeff_cluster.coordinator.intent.cluster_model [WarmEntry])
 (import doeff_cluster.coordinator.core.cluster_policy [state-to-json state-from-json])
 (import doeff_cluster.coordinator.core.durable_kv [full-kv state-from-kv])
 

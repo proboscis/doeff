@@ -11,7 +11,7 @@
 (require doeff-hy.macros [deff])
 (import dataclasses [replace])
 (import re)
-(import doeff_cluster.cluster_model [ClusterState])
+(import doeff_cluster.coordinator.intent.cluster_model [ClusterState])
 (import doeff_cluster.remote_model [program-sha])
 
 (setv PROGRAM-KEY (re.compile r"[0-9a-f]{64}"))

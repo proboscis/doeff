@@ -11,7 +11,7 @@
 (import doeff_cluster.detached [DetachedClient])
 (import doeff_cluster.detached_model [AwaitRunnersChange RunnersChange RunnersWatchMissing RunnersUnreachable])
 (import doeff_cluster.local [sim-cluster SimWorker ReadCoordinator DrainWorker FailRoute KillWorker StartWorker])
-(import doeff_cluster.cluster_model [ClusterTiming])
+(import doeff_cluster.shared.intent.protocol [ClusterTiming])
 (import tests.fixtures.envs [sim-foundation])
 (import tests.fixtures.sim_programs [beacons NET])
 

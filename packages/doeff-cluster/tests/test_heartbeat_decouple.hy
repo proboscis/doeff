@@ -9,7 +9,7 @@
 (import collections [Counter])
 (import doeff_time [Delay])
 (import doeff_cluster.clock [now-epoch-ms])
-(import doeff_cluster.cluster_model [ClusterTiming])
+(import doeff_cluster.shared.intent.protocol [ClusterTiming])
 (import doeff_cluster.local :as local)
 (import doeff_cluster.local [sim-cluster SimWorker ReadCoordinator ProcessesOf Redeclare CutWorker FailRoute HostTruthOf HostTruth
                              WatchFailuresOf])

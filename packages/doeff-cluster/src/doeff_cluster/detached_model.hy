@@ -20,7 +20,7 @@
 (import dataclasses [dataclass field])
 (import doeff [EffectBase Program])
 (import .remote_model [TaskSucceeded TaskFailed decode-outcome])
-(import .cluster_model [effect-needs-problem])
+(import doeff_cluster.shared.core.capabilities [effect-needs-problem])
 (import .runtime_env_model [child-environ-refusal])
 
 (setv DETACHED-DEFAULT-LEASE-SECONDS 60.0)       ; 担い手の worker が沈黙してから消失とみなすまで

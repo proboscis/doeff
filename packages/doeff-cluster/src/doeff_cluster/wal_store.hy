@@ -21,7 +21,7 @@
 (import collections.abc [Callable])
 (import typing [BinaryIO])
 (import pathlib [Path])
-(import .cluster_model [Persist])
+(import doeff_cluster.coordinator.intent.cluster_model [Persist])
 
 (setv MAX-LOG-BYTES (* 32 1024 1024))
 (setv SLOW-FSYNC-SECONDS 0.5)

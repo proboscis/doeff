@@ -21,7 +21,7 @@
 (import json)
 (import doeff [EffectBase])
 (import .runtime_env_model [RuntimeEnv env-key])
-(import .cluster_model [effect-needs-problem])
+(import doeff_cluster.shared.core.capabilities [effect-needs-problem])
 
 (val WARM-KEY-LENGTH 24)
 

@@ -21,7 +21,8 @@
 (import .handlers [CodeStore EnvStore CoordinatorLink ProcessHost ProbeStore coordinator-desired local-host
                    status-file status-to-coordinator stop-flag lease-release-coordinator StopState])
 (import .process_versions [current-versions])
-(import .cluster_model [ClusterTiming capabilities-of])
+(import doeff_cluster.shared.intent.protocol [ClusterTiming])
+(import doeff_cluster.shared.core.capabilities [capabilities-of])
 (import .worker [run-worker])
 (import .worker_model [WorkerPolicy CodeLayout])
 (import .job_context [worker-context-environ])
