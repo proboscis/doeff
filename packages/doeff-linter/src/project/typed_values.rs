@@ -1026,7 +1026,34 @@ fn built_mappings(source: &str, node: &Hy) -> usize {
     inner + usize::from(builds)
 }
 
-/// Hy の file 1 つの写像の置き場の臭い(fields が偽なら欄は見ない — 値を型だけで渡す層の欄は DOEFF171 が見る)。読めなければ理由。
+/// 契約の辞書か(`{:pre …}`・`{:post …}`・`{:tags …}` — 鍵が契約の語で始まる {…})。
+fn contract_map(item: &Hy) -> bool {
+    item.form(Kind::Brace).is_some_and(|map| map.first().is_some_and(|key| key.is(":pre") || key.is(":post") || key.is(":tags")))
+}
+
+/// defk・deff・defn の本体の始まり(名・引数の後の先頭の docstring と契約の辞書を飛ばした位置)。docstring は契約の辞書の前にも後にも
+/// 置けるので、先頭に並ぶ文字列と契約の辞書を順を問わず飛ばす(agora-redesign #2265 — 以前は引数の直後の {…} だけを契約と読み、
+/// docstring の後の契約の辞書を「handler の外で組む写像」と数えていた)。
+fn body_start(items: &[Hy]) -> usize {
+    let mut at = 3;
+    while items.get(at).is_some_and(|item| matches!(item, Hy::Text { .. }) || contract_map(item)) {
+        at += 1;
+    }
+    at
+}
+
+/// 契約の :tags の :spells の値(綴る wire の形の名 — 例 "json")。無ければ None。
+fn spells_of(items: &[Hy]) -> Option<String> {
+    let contract = items.get(3..body_start(items))?.iter().find_map(|item| item.form(Kind::Brace).filter(|_| contract_map(item)))?;
+    let tags = (0..contract.len().saturating_sub(1)).step_by(2).find_map(|i| contract[i + 1].form(Kind::Brace).filter(|_| contract[i].is(":tags")))?;
+    (0..tags.len().saturating_sub(1)).step_by(2).find_map(|i| match &tags[i + 1] {
+        Hy::Text { value, .. } if tags[i].is(":spells") && !value.trim().is_empty() => Some(value.clone()),
+        _ => None,
+    })
+}
+
+/// Hy の file 1 つの写像の置き場の臭い。fields = 値を型だけで渡す層の外か(偽なら欄は見ない — その層の欄は DOEFF171 が見る。:spells の
+/// 名乗りもその層の外だけで効く)。読めなければ理由。
 pub fn dict_smell_hits(source: &str, fields: bool) -> Result<Vec<DictSmellHit>, String> {
     let forms = read_hy(source)?;
     let mut out = Vec::new();
@@ -1047,9 +1074,13 @@ pub fn dict_smell_hits(source: &str, fields: bool) -> Result<Vec<DictSmellHit>, 
                 if defk_posts(items).into_iter().any(|node| mapping_problem(node).is_some()) {
                     continue;
                 }
-                // 契約の辞書(引数の列の直後の {…})は写像の値ではない。
-                let body_from = if items.get(3).is_some_and(|item| item.form(Kind::Brace).is_some()) { 4 } else { 3 };
-                let count: usize = items.get(body_from..).unwrap_or(&[]).iter().map(|item| built_mappings(source, item)).sum();
+                // wire の形を綴るのが目的の 1 点(契約の :tags に :spells "json" 等を名乗る)は数えない — operator の線 (b)「dict を組む事が
+                // 目的の 1 点だけ可」(agora-redesign #2265)。値を型だけで渡す層(core)では名乗っても数える(その層は綴らない)。
+                if fields && spells_of(items).is_some() {
+                    continue;
+                }
+                // 先頭の docstring と契約の辞書は写像の値ではない(順を問わない)。
+                let count: usize = items.get(body_start(items)..).unwrap_or(&[]).iter().map(|item| built_mappings(source, item)).sum();
                 if count > 0 {
                     let (start, end) = items[1].span();
                     out.push(DictSmellHit { start, end, name, what: DictSmellWhat::Built, problem: format!("handler の外で写像を {} か所で組む", count) });
@@ -1093,6 +1124,28 @@ mod tests {
         assert_eq!(details(false), vec!["built:index-of"]);
         let built = dict_smell_hits(source, false).unwrap();
         assert!(built[0].problem.contains("2 か所"), "{:?}", built);
+    }
+
+    #[test]
+    fn dict_smell_skips_the_contract_after_a_docstring_and_honours_spells_outside_core() {
+        // agora-redesign #2265: docstring の後に置いた契約の辞書は写像の値ではない(以前は引数の直後の {…} だけを契約と読み、数えていた)。
+        // 本文で組む写像は docstring の有無を問わず数える。:tags の :spells(wire の形を綴る 1 点の名乗り)は値を型だけで渡す層の外でだけ効く。
+        let source = r#"
+(defk note [n]
+  "docstring が先。"
+  {:pre [(: n int)] :post [(: % str)] :tags {:context "x" :role "judgment"}}
+  f"{n} 件")
+(defk index-of [rows]
+  "docstring が先でも本文の写像は数える。"
+  {:pre [(: rows list)] :post [(: % int)] :tags {:context "x" :role "judgment"}}
+  (len (dfor r rows r.id r)))
+(defk payload-text [row]
+  {:pre [(: row Row)] :post [(: % str)] :tags {:context "x" :role "protocol" :spells "json"}}
+  (json.dumps {"id" row.id}))
+"#;
+        let details = |fields: bool| -> Vec<String> { dict_smell_hits(source, fields).expect("読める").into_iter().map(|h| h.detail()).collect() };
+        assert_eq!(details(true), vec!["built:index-of"], "契約の辞書だけの定義と :spells の名乗りは数えない");
+        assert_eq!(details(false), vec!["built:index-of", "built:payload-text"], "値を型だけで渡す層では :spells を名乗っても数える");
     }
 
     /// 値を型だけで渡す層の当たりの細目の列。

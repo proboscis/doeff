@@ -5095,6 +5095,38 @@ fn dict_smells_count_built_maps_and_map_fields_outside_their_place() {
     assert_eq!(hit["severity"], "warning", "{}", hit);
 }
 
+/// agora-redesign #2265: DOEFF172 の失敗ケース 2 つ — docstring の後に契約の辞書だけを持つ定義は鳴らない(以前は契約の metadata を
+/// 「handler の外で組む写像」と数えた)/ 本文で写像を組む定義は鳴る。:tags の :spells(wire の形を綴る 1 点の名乗り)は core の外(ここでは entry)では
+/// 数えず、値を型だけで渡す層(core)では名乗っても数える。
+#[test]
+fn dict_smells_skip_the_contract_after_a_docstring_and_honour_spells_outside_core() {
+    let files = [
+        (
+            "app/billing/entry/wire.hy",
+            tags("billing", "entry")
+                + "(defk note [n]\n  \"docstring が先。\"\n  {:pre [(: n int)] :post [(: % str)] :tags {:context \"billing\" :role \"entry\"}}\n  (str n))\n\
+                   (defk index-of [rows]\n  \"docstring が先。\"\n  {:pre [(: rows list)] :post [(: % int)] :tags {:context \"billing\" :role \"entry\"}}\n  (len (dfor r rows r r)))\n\
+                   (defk payload-text [n]\n  {:pre [(: n int)] :post [(: % str)] :tags {:context \"billing\" :role \"entry\" :spells \"json\"}}\n  (json.dumps {\"n\" n}))\n",
+        ),
+        (
+            "app/billing/core/rules.hy",
+            tags("billing", "judgment")
+                + "(defk payload-text [n]\n  {:pre [(: n int)] :post [(: % str)] :tags {:context \"billing\" :role \"judgment\" :spells \"json\"}}\n  (json.dumps {\"n\" n}))\n",
+        ),
+    ];
+    let dir = world_repo_with(&files, "", "[\"DOEFF172\"]");
+    let path = dir.path().join("architecture.hy");
+    let declared = std::fs::read_to_string(&path).unwrap();
+    std::fs::write(&path, declared.replace("(layer core :roles [judgment] :imports [core])", "(layer core :roles [judgment] :imports [core] :wire-free True)")).unwrap();
+    let (_, report) = editor(dir.path());
+    assert_eq!(
+        keys(&report, "DOEFF172"),
+        vec!["app/billing/core/rules.hy::DOEFF172::built:payload-text", "app/billing/entry/wire.hy::DOEFF172::built:index-of"],
+        "契約だけの定義と entry の :spells は鳴らず、本文の写像と core の :spells は鳴る: {}",
+        report
+    );
+}
+
 /// agora-redesign #1797: 境目の部品は許す種類(:touches — 閉じた語彙)と理由(:reason)を名指す。欠けと語の外は設定の誤りで止まる。
 #[test]
 fn boundary_parts_need_touches_and_a_reason() {
