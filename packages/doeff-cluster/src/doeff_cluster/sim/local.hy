@@ -1392,7 +1392,7 @@
   {:pre [(: worker SimWorker) (: boot str) (: key str) (: env bool) (: warm bool)] :post [(: % None)]
    :tags {:context "doeff-cluster" :role "protocol"}}
   "コードの木か実行環境の root の準備を起こすため: prepare-seconds の後に揃う(実行環境の root は env-failure を持つ worker なら失敗で
-   終わる)。worker のループは待たない(揃うのは ObserveWorld で観測する)。本番の CodeStore・EnvStore の start と同じく、同じ鍵の準備が
+   終わる)。worker のループは待たない(揃うのは ObserveWorld で観測する)。本番の code-host の PrepareCode・EnvStore の start と同じく、同じ鍵の準備が
    走っている・揃っているなら起こし直さない(先読みの準備を job が頼めば job の準備へ上げる)・失敗した物だけ起こし直す。"
   (<- truth HostTruth (live-truth worker.name boot))
   (<- now int (now-epoch-ms))

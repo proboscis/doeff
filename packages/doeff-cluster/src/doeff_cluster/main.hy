@@ -20,8 +20,8 @@
 (import doeff_core_effects.process_effects [EnvEntry])
 (import doeff_core_effects.scheduler [scheduled])
 (import doeff_time [async-time-handler])
-(import .handlers [CodeStore EnvStore CoordinatorLink coordinator-desired local-host
-                   status-file status-to-coordinator lease-release-coordinator] doeff_cluster.worker.protocol.stop [stop-flag StopState])
+(import .handlers [TOOL EnvStore CoordinatorLink coordinator-desired local-host
+                   status-to-coordinator lease-release-coordinator] doeff_cluster.worker.protocol.stop [stop-flag StopState])
 (import doeff_cluster.foundation.process_versions [current-versions])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming])
 (import doeff_cluster.shared.core.capabilities [capabilities-of])
@@ -29,6 +29,8 @@
 (import doeff_cluster.worker.intent.worker_model [WorkerPolicy CodeLayout])
 (import doeff_cluster.worker.protocol.process_host [HostSettings process-host])
 (import doeff_cluster.worker.protocol.probes [ProbeSettings probe-host])
+(import doeff_cluster.worker.protocol.code_store [CodeSettings code-host])
+(import doeff_cluster.worker.protocol.status_file [status-file])
 (import doeff_cluster.foundation.host_contract [HOST-CONTRACT])
 (import .job_context [worker-context-environ])
 
@@ -91,7 +93,9 @@
                            :base-paths (tuple (gfor p (.split args.base-pythonpath ",") :if p p))))
   (setv state-dir (Path args.state-dir)
         hy-command (str (/ (. (Path sys.executable) parent) "hy"))
-        codes (CodeStore args.repo (str (/ state-dir "code")) (if args.no-warm None hy-command) :layout layout)
+        ;; 版ごとのコードの木の置き場と準備(worker/protocol/code_store の言い換えが読む — #2466)。
+        codes (CodeSettings :repo args.repo :cache (str (/ state-dir "code")) :hy-command (if args.no-warm None hy-command) :tool TOOL
+                            :layout layout)
         ;; 子 process(service の env)が coordinator と自分の名を知る口。資格は渡さない。
         host-env (| (run (passed-environment args.pass-env (dict os.environ)))
                     (run (worker-context-environ args.coordinator args.name)))
@@ -118,10 +122,11 @@
                               ;; には拍ごとに送る)。
                               :watch True))
   (setv program (run-worker policy))
-  ;; 並びは内側から(先頭が Program に最も近い)。process-host と probe-host の session の値(子の表・検めの記録)は外側の session-store が持つ。
-  (for [h [(local-host codes envs) (process-host host) (probe-host probes) (session-store)
+  ;; 並びは内側から(先頭が Program に最も近い)。process-host・probe-host・code-host の session の値(子の表・検めの記録・木の準備の
+  ;; 記録)は外側の session-store が持つ。status-file は焼きの経過の秒を CodeTimings で問うので、code-host はその外側に置く。
+  (for [h [(local-host envs) (process-host host) (probe-host probes)
            (coordinator-desired link) (status-to-coordinator link) (lease-release-coordinator link)
-           (status-file (str (/ state-dir "status.json")) codes) os-file-handler subprocess-handler
+           (status-file (str (/ state-dir "status.json"))) (code-host codes) (session-store) os-file-handler subprocess-handler
            (stop-flag stop) slog-handler (async-time-handler) (await-handler)]]
     (setv program (h program)))
   (print "worker: 起動します" :file sys.stderr :flush True)

@@ -1,16 +1,22 @@
 ;; コードの準備の失敗を完成品として公開しないこと・壊れた木を作り直すこと。
-;; 焼きの Program は fake の handler で、CodeStore は手元の小さな git repo と偽の焼きの道具で確かめる。
-(require doeff-hy.macros [defhandler deftest <- val var])
+;; 焼きの Program は fake の handler で、版ごとのコードの木の言い換え(worker/protocol/code_store の code-host — #2466)は手元の小さな
+;; git repo と偽の焼きの道具で、本物の答え手(subprocess-handler・os-file-handler)の下で確かめる。
+(require doeff-hy.macros [defhandler defk deftest <- val var])
 (import json)
 (import os)
 (import subprocess)
 (import sys)
 (import time)
 (import pathlib [Path])
-(import doeff_time [SimClock sim-time-handler])
+(import doeff [run with-handlers])
+(import doeff_core_effects.handlers [slog-handler state])
+(import doeff_core_effects.os_file [os-file-handler])
+(import doeff_core_effects.os_process [subprocess-handler])
+(import doeff_time [SimClock sim-time-handler sync-time-handler])
 (import doeff_cluster.worker.intent.code_model [ScanTree LinkPycs CompileSources WriteMarker Note] doeff_cluster.worker.core.code_plan [MARKER tree-problem marker-problem marker-content cache-rel] doeff_cluster.worker.core.code_prepare [prepare-tree] doeff_cluster.code_prepare [compiled-pyc])
-(import doeff_cluster.handlers [CodeStore])
-(import doeff_cluster.worker.intent.worker_model [CodeState CodeView])
+(import doeff_cluster.handlers [TOOL])
+(import doeff_cluster.worker.intent.worker_model [CodeLayout CodeState CodeView PrepareCode ObserveCode])
+(import doeff_cluster.worker.protocol.code_store [CodeSettings code-host])
 
 
 ;; --- 焼きの Program(fake の handler)---------------------------------------------------
@@ -68,7 +74,7 @@
   (assert (in "焼かずに" (or (marker-problem plain "rev1" True 0) ""))))
 
 
-;; --- CodeStore(手元の git repo と偽の焼きの道具)---------------------------------------
+;; --- code-host(手元の git repo と偽の焼きの道具)---------------------------------------
 
 (setv HY (str (/ (. (Path sys.executable) parent) "hy")))
 
@@ -89,13 +95,42 @@
   #(repo (git repo "rev-parse" "HEAD")))
 
 
-(defn #^ CodeView wait-settled [#^ CodeStore store #^ str revision #^ int [limit 60]]
-  (setv deadline (+ (time.monotonic) limit))
-  (while (< (time.monotonic) deadline)
-    (setv views (lfor v (.observe store) :if (= v.revision revision) v))
-    (when (and views (!= (. (get views 0) state) CodeState.PREPARING)) (return (get views 0)))
-    (time.sleep 0.1))
-  (raise (TimeoutError revision)))
+(defn #^ CodeSettings code-settings [#^ Path repo #^ Path cache #^ (| str None) hy-command]
+  (CodeSettings :repo (str repo) :cache (str cache) :hy-command hy-command :tool TOOL :layout (CodeLayout)))
+
+
+(defn #^ object run-codes [#^ CodeSettings settings #^ object program]  ; defk にできない: 検が Program の外から本物の答え手の組で 1 回走らせる入口
+  "筋書きの Program を code-host と本物の答え手の下で 1 回の run で回す(with-handlers の並びは先頭が外側 — 準備の記録は外側の state が持つ)。"
+  (run (with-handlers [(state) (sync-time-handler) slog-handler os-file-handler subprocess-handler (code-host settings)] program)))
+
+
+(defk settled [revision]
+  {:pre [(: revision str)] :post [(: % CodeView)] :tags {:context "doeff-cluster-test" :role "program"}}
+  "版の準備が終わる(準備中でない)まで 0.1 秒ずつ観測し、その版の答えを返すため(上限 60 秒)。"
+  (val deadline (+ (time.monotonic) 60))
+  (var found None)
+  (while (and (is found None) (< (time.monotonic) deadline))
+    (<- views tuple (ObserveCode))
+    (for [view views]
+      (when (and (= view.revision revision) (!= view.state CodeState.PREPARING)) (:= found view)))
+    (when (is found None) (time.sleep 0.1)))
+  (when (is found None) (raise (TimeoutError revision)))
+  found)
+
+
+(defk prepared [revision]
+  {:pre [(: revision str)] :post [(: % CodeView)] :tags {:context "doeff-cluster-test" :role "program"}}
+  "版の準備を求め、終わるまで待つため。"
+  (<- (PrepareCode revision))
+  (<- view CodeView (settled revision))
+  view)
+
+
+(defk ready-views []
+  {:pre [] :post [(: % list)] :tags {:context "doeff-cluster-test" :role "program"}}
+  "観測で完成品と答える版の列を返すため。"
+  (<- views tuple (ObserveCode))
+  (lfor v views :if (= v.state CodeState.READY) v))
 
 
 (defn #^ str failing-tool [#^ Path root]
@@ -108,20 +143,18 @@
 
 (deftest test-failed-prepare-is-not-published-and-is-rebuilt [tmp-path]
   (setv #(repo rev) (make-repo tmp-path) cache (/ tmp-path "cache"))
-  (setv store (CodeStore (str repo) (str cache) (failing-tool tmp-path)))
-  (.start store rev)
-  (var view (wait-settled store rev))
+  (var view (run-codes (code-settings repo cache (failing-tool tmp-path)) (prepared rev)))
   (assert (= view.state CodeState.FAILED))
   (assert (in "焼きの道具が見つからない" view.detail))
   (assert (is-not view.failed-ms None))
-  ;; 完成品の dir も途中の dir も残らない。
+  ;; 完成品の dir も途中の dir も、標準エラーの file も残らない。
   (assert (not (.exists (/ cache rev))))
   (assert (= (lfor e (.iterdir cache) :if (not (.startswith e.name ".")) e) []))
+  (assert (= (lfor e (.iterdir cache) :if (.endswith e.name ".err") e) []))
   ;; 次の準備(policy が間を置いて PrepareCode を出した後)は本物の道具で作り直せる。
-  (setv store.hy-command HY)
-  (.start store rev)
-  (:= view (wait-settled store rev))
+  (:= view (run-codes (code-settings repo cache HY) (prepared rev)))
   (assert (= view.state CodeState.READY) view.detail)
+  (assert (= view.path (str (/ cache rev))))
   (assert (.exists (/ cache rev (cache-rel "pkg/m.py"))))
   (setv marker (json.loads (.read-text (/ cache rev MARKER))))
   (assert (= (get marker "revision") rev))
@@ -134,13 +167,11 @@
   (setv old (/ cache rev))
   (.mkdir (/ old "pkg") :parents True)
   (.write-text (/ old "pkg" "m.py") "X = 1\n")
-  (setv store (CodeStore (str repo) (str cache) HY))
-  ;; 完成品として公開しない・引き継ぎ元にもしない。
-  (assert (= (lfor v (.observe store) :if (= v.state CodeState.READY) v) []))
-  (assert (is (.latest-ready store) None))
+  (val settings (code-settings repo cache HY))
+  ;; 完成品として公開しない。
+  (assert (= (run-codes settings (ready-views)) []))
   ;; その版を求められたら脇へ退けて作り直す。
-  (.start store rev)
-  (setv view (wait-settled store rev))
+  (setv view (run-codes settings (prepared rev)))
   (assert (= view.state CodeState.READY) view.detail)
   (assert (.exists (/ cache rev MARKER)))
   (assert (.exists (/ cache rev (cache-rel "pkg/m.py"))))
@@ -150,15 +181,13 @@
 (deftest test-next-revision-carries-from-the-ready-tree [tmp-path]
   ;; 前の完成品から引き継ぐ道(git diff → --from / --changed)も、同じ検めを通って完成品になる。
   (setv #(repo rev1) (make-repo tmp-path) cache (/ tmp-path "cache"))
-  (setv store (CodeStore (str repo) (str cache) HY))
-  (.start store rev1)
-  (assert (= (. (wait-settled store rev1) state) CodeState.READY))
+  (val settings (code-settings repo cache HY))
+  (assert (= (. (run-codes settings (prepared rev1)) state) CodeState.READY))
   (.write-text (/ repo "pkg" "n.py") "Y = 2\n")
   (git repo "add" ".")
   (git repo "-c" "user.name=t" "-c" "user.email=t@t" "commit" "-q" "-m" "c2")
   (setv rev2 (git repo "rev-parse" "HEAD"))
-  (.start store rev2)
-  (setv view (wait-settled store rev2))
+  (setv view (run-codes settings (prepared rev2)))
   (assert (= view.state CodeState.READY) view.detail)
   (setv marker (json.loads (.read-text (/ cache rev2 MARKER))))
   (assert (= (get marker "pycs") 3))
@@ -172,9 +201,7 @@
   ;; 重ねる木を消した)は、引き継がずに全部を焼いて完成品にする。引き継ぎは速さのためだけで、引き継げないことを準備の失敗にしない。
   (val made (make-repo tmp-path))
   (val cache (/ tmp-path "cache"))
-  (val first (CodeStore (str (get made 0)) (str cache) HY))
-  (.start first (get made 1))
-  (assert (= (. (wait-settled first (get made 1)) state) CodeState.READY))
+  (assert (= (. (run-codes (code-settings (get made 0) cache HY) (prepared (get made 1))) state) CodeState.READY))
   ;; 前の木の版(made の commit)を持たない別の履歴の repo で、同じ cache に次の版を準備する。
   (val other (/ tmp-path "other"))
   (.mkdir (/ other "pkg") :parents True)
@@ -184,12 +211,10 @@
   (git other "add" ".")
   (git other "-c" "user.name=t" "-c" "user.email=t@t" "commit" "-q" "-m" "other")
   (val rev (git other "rev-parse" "HEAD"))
-  (val store (CodeStore (str other) (str cache) HY))
-  (val latest (.latest-ready store))
-  (assert (is-not latest None) "前の完成品が在るはず")
-  (assert (= latest.name (get made 1)) "引き継ぎ元の候補は前の完成品")
-  (.start store rev)
-  (val view (wait-settled store rev))
+  (val settings (code-settings other cache HY))
+  ;; 引き継ぎ元の候補 = 前の完成品(観測で完成品と答える唯一の版)。
+  (assert (= (lfor v (run-codes settings (ready-views)) v.revision) [(get made 1)]) "前の完成品が在るはず")
+  (val view (run-codes settings (prepared rev)))
   (assert (= view.state CodeState.READY) view.detail)
   (assert (= (get (json.loads (.read-text (/ cache rev MARKER))) "pycs") 2))
   (assert (.exists (/ cache rev (cache-rel "pkg/n.py")))))

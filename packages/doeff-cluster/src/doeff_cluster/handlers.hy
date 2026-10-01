@@ -12,9 +12,7 @@
 (import doeff_cluster.foundation.coordinator_http [CoordinatorEndpoint REPLY-SECONDS])
 (import doeff_cluster.worker.core.beat_policy [WatchKind WatchReading beat-interval-ms heartbeat-due watch-params watch-reading reply-revision
                       WATCH-RETRY-SECONDS WAKE-HOLD-SECONDS])
-(import .code_prepare [scan] doeff_cluster.worker.core.code_plan [MARKER MARKER-FORMAT marker-problem])
 (import doeff [run])
-(import doeff_core_effects.file_effects [MakeDirectory WriteText file-done])
 (import doeff_cluster.shared.intent.protocol [PROTOCOL-FORMAT])
 (import doeff_cluster.shared.core.capabilities [environ-pairs])
 (import doeff_cluster.foundation.host_contract [HOST-CONTRACT])
@@ -29,10 +27,9 @@
 (import doeff_cluster.worker.core.heartbeat_rules [warm-env-of-row finished-task-id desired-when-unreachable])
 (import doeff_cluster.foundation.ready_file [write-ready-file])
 (import doeff_cluster.worker.core.launch [program-file])
-(import doeff_cluster.worker.core.code_rules [prepare-script])
-(import doeff_cluster.worker.intent.worker_model [ObserveProcesses ObserveProbes CodeState CodeView ProcessView WorldView StopStage ProbeState ProbeView
+(import doeff_cluster.worker.intent.worker_model [ObserveCode ObserveProcesses ObserveProbes CodeState CodeView ProcessView WorldView StopStage ProbeState ProbeView
   DesiredJobs DesiredUnreadable ReadDesired ObserveWorld WorkerStopRequested PublishStatus JobStatus EnvDisk WarmEnv
-  PrepareCode PrepareEnv SweepEnvs ForgetProbes StartJob SignalJob ReapJob RetireJob ReleaseLeases ProbeEntry CodeLayout
+  PrepareEnv SweepEnvs ForgetProbes StartJob SignalJob ReapJob RetireJob ReleaseLeases ProbeEntry
 ] doeff_cluster.shared.intent.job_model [JobSpec JobPhase] doeff_cluster.shared.core.job_rules [spec-hash] doeff_cluster.worker.core.worker_rules [probe-args probe-refusal ENV-KEY-PREFIX])
 
 (defn #^ tuple env-placement [#^ (| dict None) declared #^ str revision]  ; defk にできない: 宣言の読み(Program の外の I/O の道具)が呼ぶ
@@ -73,93 +70,6 @@
 
 (setv TOOL (str (/ (. (.resolve (Path __file__)) parent) "code_prepare.hy")))
 
-
-(defclass CodeStore []
-  "revision ごとに repo のコードを cache へ展開する。展開済みの dir は再利用する。"
-  "hy-command = 焼きに使う hy(None なら bytecode の準備を省く)。"
-  "完成品 = cache の直下の、完成の印(code_prepare の MARKER)が検めを通る dir。印の無い・検めの通らない dir は"
-  "完成品として公開せず、次にその版を求められた時に脇へ退けて作り直す。"
-  "tool = 焼く道具の file(既定は worker 自身のコードの code_prepare.hy。準備する版の木の物は使わない)。"
-  "layout = 業務の repo の木の形(import の根 — worker_model.CodeLayout)。"
-  (defn #^ None __init__ [self #^ str repo #^ str cache #^ (| str None) hy-command #^ str [tool TOOL] #^ CodeLayout [layout (CodeLayout)]]
-    (setv self.repo repo self.cache (Path cache) self.hy-command hy-command self.tool tool self.layout layout
-          self.pending {} self.failed {} self.timings {}
-          ;; 読む時の検めの答え(dir の名前 → #(inode mtime_ns 理由 or None))。木は rename で現れて以後変えないので、
-          ;; 同じ inode と mtime の間は答えを使い回す。
-          self.checked {}))
-
-  (defn #^ Path final-dir [self #^ str revision] (/ self.cache revision))
-
-  (defn #^ (| str None) problem [self #^ Path entry]
-    "cache の直下の dir 1 つの検め。完成品なら None、そうでなければ理由。"
-    (setv st (.stat entry) key #(st.st-ino st.st-mtime-ns) seen (.get self.checked entry.name))
-    (when (and seen (= (cut seen 0 2) key)) (return (get seen 2)))
-    (setv marker (/ entry MARKER)
-          text (if (.exists marker) (.read-text marker :encoding "utf-8") None)
-          want-bytecode (is-not self.hy-command None)
-          pycs (if (and want-bytecode (is-not text None)) (len (get (run (scan (str entry))) 1)) 0)
-          reason (marker-problem text entry.name want-bytecode pycs))
-    (setv (get self.checked entry.name) #(#* key reason))
-    reason)
-
-  (defn #^ list ready-dirs [self]
-    (when (not (.exists self.cache)) (return []))
-    (lfor e (.iterdir self.cache)
-          :if (and (.is-dir e) (not (.startswith e.name ".")) (is (self.problem e) None))
-          e))
-
-  (defn #^ (| Path None) latest-ready [self]
-    ;; 引き継ぎ元 = 最後に完成した版の木(完成品は rename で現れるので mtime が完成の時刻)。
-    (setv ready (self.ready-dirs))
-    (if ready (max ready :key (fn [e] (. (.stat e) st-mtime))) None))
-
-  (defn #^ None start [self #^ str revision]
-    (when (in revision self.pending) (return))
-    (setv final (self.final-dir revision) broken None)
-    (when (.exists final)
-      (setv reason (self.problem final))
-      (when (is reason None) (return))
-      ;; 完成品に見えて検めの通らない木(印の無い古い形・焼きの失敗が完成品になった木)は脇へ退けて作り直す。
-      ;; 名前は . で始まるので、消し終わるまでの間も完成品としては読まれない。
-      (setv broken (/ self.cache f".{revision}.broken.{(time.time-ns)}"))
-      (os.rename final broken)
-      (.pop self.checked revision None)
-      (print f"worker: 版 {revision} の木を作り直します({reason})" :file sys.stderr :flush True))
-    (.pop self.failed revision None)
-    (.mkdir self.cache :parents True :exist-ok True)
-    (setv tmp (/ self.cache f".{revision}.tmp")
-          previous (self.latest-ready))
-    (setv (get self.pending revision)
-      #((subprocess.Popen ["sh" "-c" (self.script revision previous)]
-          :env (| (dict os.environ) {"T" (str tmp) "F" (str final) "B" (if broken (str broken) "")
-                                     "PYTHONPATH" (.pythonpath self.layout (str tmp))})
-          :stdout subprocess.DEVNULL :stderr subprocess.PIPE)
-        (time.monotonic))))
-
-  (defn #^ str script [self #^ str revision #^ (| Path None) previous]
-    "版 1 つの木を準備する sh の script(組み方の判断は worker/core/code_rules の prepare-script — #2466)。"
-    (run (prepare-script self.repo revision (if (is previous None) None (str previous)) :hy-command self.hy-command :tool self.tool
-                         :layout self.layout)))
-
-  (defn #^ tuple observe [self]
-    (setv views [] now-ms (int (* (time.time) 1000)))
-    (for [#(revision #(process started)) (list (.items self.pending))]
-      (setv code (.poll process))
-      (when (is-not code None)
-        (del (get self.pending revision))
-        (setv (get self.timings revision) (- (time.monotonic) started))
-        (when (!= code 0)
-          (setv detail (.strip (.decode (.read process.stderr) "utf-8" "replace")))
-          (setv (get self.failed revision)
-                #((+ f"準備に失敗(終了 {code}): " (cut detail -480 None)) now-ms)))))
-    (for [revision self.pending]
-      (.append views (CodeView revision CodeState.PREPARING)))
-    (for [#(revision #(detail failed-ms)) (.items self.failed)]
-      (.append views (CodeView revision CodeState.FAILED :detail detail :failed-ms failed-ms)))
-    (for [entry (self.ready-dirs)]
-      (when (and (not-in entry.name self.pending) (not-in entry.name self.failed))
-        (.append views (CodeView entry.name CodeState.READY :path (str entry)))))
-    (tuple views)))
 
 (setv ENV-TOOL "doeff_cluster.env_handlers")   ; 準備の process の入口(worker 自身の環境の module — root の路は worker に足さない)
 
@@ -418,17 +328,17 @@
   total)
 
 
-(defhandler local-host [#^ CodeStore codes #^ (| EnvStore None) [envs None]]
-  ;; 引数に残す理由: 2 つとも worker の process が持つ I/O の資源(準備の process の表)で、同じ組が観測と action の両方に答える。
-  ;; envs = 実行環境の root の準備(None = 実行環境の job を扱わない worker — PrepareEnv は断る)。job の子 process は
-  ;; worker/protocol/process_host(#2464)、入口の検めは worker/protocol/probes(#2465)の言い換え(外側に置く)が答え、観測は
-  ;; ObserveProcesses・ObserveProbes で問う。
+(defhandler local-host [#^ (| EnvStore None) [envs None]]
+  ;; 引数に残す理由: worker の process が持つ I/O の資源(準備の process の表)で、同じ組が観測と action の両方に答える。
+  ;; envs = 実行環境の root の準備(None = 実行環境の job を扱わない worker — PrepareEnv は断る)。版ごとのコードの木は
+  ;; worker/protocol/code_store(#2466)、job の子 process は worker/protocol/process_host(#2464)、入口の検めは
+  ;; worker/protocol/probes(#2465)の言い換え(外側に置く)が答え、観測は ObserveCode・ObserveProcesses・ObserveProbes で問う。
   (ObserveWorld []
+    (<- codes tuple (ObserveCode))
     (<- processes tuple (ObserveProcesses))
     (<- probed tuple (ObserveProbes))
-    (resume (WorldView (+ (.observe codes) (if (is envs None) #() (.observe envs))) processes probed
+    (resume (WorldView (+ codes (if (is envs None) #() (.observe envs))) processes probed
                        :env-disk (if (is envs None) None (.disk-view envs)))))
-  (PrepareCode [revision] (.start codes revision) (resume None))
   (PrepareEnv [key runtime-env warm]
     (when (is envs None)
       (raise (RuntimeError "この worker は実行環境の job を扱えない(EnvStore が無い)")))
@@ -438,29 +348,6 @@
     (when (is-not envs None) (.sweep envs pinned))
     (resume None)))
 
-(defn #^ dict status-json [#^ tuple statuses #^ str note #^ dict timings]
-  {"note" note
-   "codePrepareSeconds" timings
-   "jobs" (lfor s statuses (status-row s))})
-
-;; 状態の file の mode(前の形の Path.write-text が umask 022 の下で作った物と同じ — 置き換えの書きの一時 file は 0600 なので明示する)。
-(val STATUS-FILE-MODE 0o644)
-
-
-(defk write-status-file [path content]
-  {:pre [(: path str) (: content dict)] :post [(: % None)] :tags {:context "doeff-cluster" :role "foundation"}}
-  "worker の状態を、外から覗ける 1 つの JSON の file として置くため(親の dir を作り、置き換えで書いて書きかけを読ませない)。
-   file の I/O は file system の effect(本番 = os-file-handler・検 = memory-file-handler)で、断りは OSError で上げる。"
-  (<- (file-done (MakeDirectory (os.path.dirname path))))
-  (<- (file-done (WriteText path (json.dumps content :ensure-ascii False :indent 1) :mode STATUS-FILE-MODE :replace True)))
-  None)
-
-
-(defhandler status-file [#^ str path #^ CodeStore codes]
-  ;; 引数に残す理由: 置き場の path と、焼きの経過の秒を持つ CodeStore(worker の process の資源)は worker ごとの値。
-  (PublishStatus [statuses note]
-    (<- (write-status-file path (status-json statuses note codes.timings)))
-    (resume None)))
 
 (setv JOB-ENTRY "doeff_cluster.job_entry")
 

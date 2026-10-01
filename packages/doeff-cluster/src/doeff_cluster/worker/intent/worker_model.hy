@@ -23,7 +23,7 @@
 ;;                package を image の venv に焼くので空。host の worker(zeus)は共有の venv に入れない土台の package(例 制御面の SDK)を
 ;;                ここで宣言する。業務の code は常に木の根が先に勝つ(同じ名の module は task の版の物)。子の PYTHONPATH は木の根
 ;;                と base-paths だけで、worker の process の PYTHONPATH は継がない(宣言の外の路が黙って混ざらない)。
-;; 定義点はここ 1 つ(worker の CodeStore・ProbeStore・ProcessHost が同じ値を読む。値は worker の composition root が引数から作る)。
+;; 定義点はここ 1 つ(worker のコードの木・入口の検め・子 process の言い換えが同じ値を読む。値は worker の composition root が引数から作る)。
 (defclass [(dataclass :frozen True)] CodeLayout []
   (setv #^ tuple import-roots #("."))
   (setv #^ tuple base-paths #())
@@ -293,6 +293,15 @@
    結果は ObserveWorld の ProbeView(鍵 = spec-hash)で観測する。"
   (#^ JobSpec spec)
   (#^ str code-path))
+
+(defclass [(dataclass :frozen True)] ObserveCode [EffectBase]
+  "版ごとのコードの木の観測(CodeView の tuple — 準備中・失敗・完成品)。ObserveWorld の答え手(local-host)が、コードの木の言い換え
+   (worker/protocol/code_store)へ問う。問われた拍に、終わった準備を片づける(#2466)。")
+
+
+(defclass [(dataclass :frozen True)] CodeTimings [EffectBase]
+  "版ごとの木の準備にかかった秒(版 → 秒の写像)。状態の file の答え手(worker/protocol/status_file)が、コードの木の言い換えへ問う(#2466)。")
+
 
 (defclass [(dataclass :frozen True)] ObserveProbes [EffectBase]
   "入口の検めの観測(ProbeView の tuple — 待ち・走っている・答えの出た検め)。ObserveWorld の答え手(local-host)が、検めの言い換え

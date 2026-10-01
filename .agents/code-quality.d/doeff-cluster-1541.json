@@ -798,7 +798,9 @@
         "doeff-cluster-worker-stop",
         "doeff-cluster-worker-process-host",
         "doeff-cluster-host-contract",
-        "doeff-cluster-worker-probes"
+        "doeff-cluster-worker-probes",
+        "doeff-cluster-worker-code-store",
+        "doeff-cluster-worker-status-file"
       ],
       "layer": "runtime",
       "name": "doeff-cluster-main",
@@ -1393,7 +1395,9 @@
         "doeff-cluster-worker-process-host",
         "doeff-cluster-worker-probe-rules",
         "doeff-cluster-worker-probes",
-        "doeff-cluster-worker-code-rules"
+        "doeff-cluster-worker-code-rules",
+        "doeff-cluster-worker-code-store",
+        "doeff-cluster-worker-status-file"
       ],
       "exclude": [
         "packages/doeff-cluster/tests/fixtures/independence/*"
@@ -2054,6 +2058,41 @@
         "packages/doeff-cluster/src/doeff_cluster/worker/core/code_rules.hy"
       ],
       "responsibility": "worker の版ごとのコードの木の準備の sh の script を組む判断。",
+      "typed": true
+    },
+    {
+      "allow": [
+        "doeff-cluster-clock",
+        "doeff-cluster-worker-model",
+        "doeff-cluster-code-plan",
+        "doeff-cluster-code-prepare-program",
+        "doeff-cluster-worker-code-rules"
+      ],
+      "layer": "io",
+      "name": "doeff-cluster-worker-code-store",
+      "paths": [
+        "packages/doeff-cluster/src/doeff_cluster/worker/protocol/code_store.hy"
+      ],
+      "public": [
+        "packages/doeff-cluster/src/doeff_cluster/worker/protocol/code_store.hy"
+      ],
+      "responsibility": "worker の版ごとのコードの木の準備と観測を、汎用の子 process と file system の効果へ言い換える(#2466)",
+      "typed": true
+    },
+    {
+      "allow": [
+        "doeff-cluster-worker-model",
+        "doeff-cluster-worker-heartbeat"
+      ],
+      "layer": "io",
+      "name": "doeff-cluster-worker-status-file",
+      "paths": [
+        "packages/doeff-cluster/src/doeff_cluster/worker/protocol/status_file.hy"
+      ],
+      "public": [
+        "packages/doeff-cluster/src/doeff_cluster/worker/protocol/status_file.hy"
+      ],
+      "responsibility": "worker の状態を外から覗ける JSON の file に置く(PublishStatus を file system の効果へ言い換える・#2466)",
       "typed": true
     }
   ],
