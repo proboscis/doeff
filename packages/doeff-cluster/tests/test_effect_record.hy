@@ -16,7 +16,7 @@
 (import doeff_cluster.shared.core.clock [now-epoch-ms])
 (import tests.clock_fixtures [clock-at clock-ms])
 (import doeff_cluster.shared.intent.shared_model [ReadShared WriteShared])
-(import doeff_cluster.shared_handlers [shared-memory])
+(import tests.board_fake [board-handlers])
 (import doeff_cluster.shared.core.effect_codec [BlobMemory intern-json resolve-refs encode-value decode-value encode-error decode-error delta-of apply-delta canonical
                                          UnrecordableEffect RecordedError])
 (import doeff_cluster.shared.core.record_model [read-recording ReplayFinished ReplayDiverged])
@@ -105,7 +105,7 @@
 (defn #^ tuple record-system []
   (setv sink (MemorySink) clock (clock-at 1000000) box [] store {})
   (setv log (EffectLog sink {"service" "system" "run" "r1"} :strict True :wall-ms (fn [] (clock-ms clock))))
-  (setv result (with-handlers-list [(sim-time-handler :clock clock) (reader {"box" box}) (shared-memory store) (effect-recorder log)]
+  (setv result (with-handlers-list [(sim-time-handler :clock clock) (reader {"box" box}) #* (board-handlers store) (effect-recorder log)]
                                    (system-program)))
   #(sink.lines result store))
 

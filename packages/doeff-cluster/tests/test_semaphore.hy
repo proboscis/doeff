@@ -1,7 +1,7 @@
 ;; lock は scheduler の Semaphore の effect で扱う。業務の Program は同じまま、handler の組だけで
 ;; (1) scheduled だけ(手元)・(2) 1 つの VM の名前の表・(3) cluster の lease(共有の保存 + 時計)を切り替える。
 ;; 同じ Program を組ごとに回す契約テストは deftest の :interpreters で handler を差し替える(組み立ては coordinator_contract_handlers.hy —
-;; scheduled・named-semaphore-local・cluster-semaphore(fake の保存 shared-memory の上)・cluster-semaphore-http(本物の coordinator の
+;; scheduled・named-semaphore-local・cluster-semaphore(fake の盤 board_fake.hy の上)・cluster-semaphore-http(本物の coordinator の
 ;; /leases の上))。契約:
 ;;   * 1 つの handle を分け合う task は 1 つずつ入り、待つ task は先の task が返してから入る(cluster は空き待ちの 1 周期の内)
 ;;   * permits = 2 の handle は同時に 2 つまで入れ、3 つ目は先の 1 つが返してから入る
@@ -14,7 +14,7 @@
 (import doeff_time [Delay SimClock sim-time-handler])
 (import doeff_cluster.shared.core.clock [now-epoch-ms])
 (import tests.clock_fixtures [clock-at clock-ms])
-(import doeff_cluster.shared_handlers [shared-memory])
+(import tests.board_fake [board-handlers])
 (import doeff_cluster.shared.intent.semaphore_model [CreateNamedSemaphore ClusterSemaphore LeaseLost])
 (import doeff_cluster.shared.core.lease_rules [semaphore-key claim renew release])
 (import doeff_cluster.shared.core.semaphore_handlers [named-semaphore-local cluster-semaphore SemaphoreSession])
@@ -148,7 +148,7 @@
   (setv log [] clock (SimClock) store {})
   (setv sa (SemaphoreSession "worker-a" :ttl-seconds 15.0 :poll-seconds 0.5)
         sb (SemaphoreSession "worker-b" :ttl-seconds 15.0 :poll-seconds 0.5))
-  (<- (with_handlers [(sim-time-handler :clock clock) (shared-memory store)]
+  (<- (with_handlers [(sim-time-handler :clock clock) #* (board-handlers store)]
         (run-all [(on-worker sa (named-user "a" log 20 1)) (on-worker sb (named-user "b" log 20 1))])))
   (assert (= (max-concurrency log) 1))
   (setv spans (intervals log))
@@ -164,7 +164,7 @@
   ;; 死んだ worker の lease(期限 15 秒)が残っている。期限までは待ち、切れたら取る。
   (setv log [] clock (SimClock) store {(semaphore-key "turn-lock") {"permits" 1 "holders" {"dead/1" 15000}}})
   (setv sb (SemaphoreSession "worker-b" :ttl-seconds 15.0 :poll-seconds 0.5))
-  (<- (with_handlers [(sim-time-handler :clock clock) (shared-memory store)]
+  (<- (with_handlers [(sim-time-handler :clock clock) #* (board-handlers store)]
         (on-worker sb (named-user "b" log 1 1))))
   (setv #(b-in b-out) (get (intervals log) "b" 0))
   (assert (<= 15000 b-in 15500)))
@@ -185,7 +185,7 @@
       (<- (named-user "a" log 10 1))
       "no-error"
       (except [error LeaseLost] "lost")))
-  (<- outcome list (with_handlers [(sim-time-handler :clock clock) (shared-memory store)]
+  (<- outcome list (with_handlers [(sim-time-handler :clock clock) #* (board-handlers store)]
                 (run-all [(on-worker sa (guarded)) (steal)])))
   (assert (= (get outcome 0) "lost"))
   ;; 他の担い手の行はそのまま(失った側は消さない)。
@@ -278,7 +278,7 @@
   (setv clock (SimClock) store {} attempts [] written [])
   (setv sa (SemaphoreSession "old" :ttl-seconds 15.0 :poll-seconds 0.5)
         sb (SemaphoreSession "new" :ttl-seconds 15.0 :poll-seconds 0.5))
-  (<- (with_handlers [(sim-time-handler :clock clock) (shared-memory store) (written-log written)]
+  (<- (with_handlers [(sim-time-handler :clock clock) #* (board-handlers store) (written-log written)]
         (run-all [(fenced-worker sa (lease-writer "a" attempts 1 40000) :cut 3000 :clock clock)
                   (fenced-worker sb (lease-writer "b" attempts 1 40000))])))
   (setv a-ok (times-of attempts "a" "ok") a-fenced (times-of attempts "a" "fenced") b-ok (times-of attempts "b" "ok"))
@@ -304,7 +304,7 @@
     (<- (Delay 4))
     (setv (get store key) {"permits" 1 "holders" {"thief/1" 999999999}})
     None)
-  (<- (with_handlers [(sim-time-handler :clock clock) (shared-memory store) (written-log written)]
+  (<- (with_handlers [(sim-time-handler :clock clock) #* (board-handlers store) (written-log written)]
         (run-all [(fenced-worker sa (lease-writer "a" attempts 1 12000)) (steal)])))
   ;; 延長は TTL の 1/3 = 5 秒目。そこで失ったと分かり、5 秒目以降の書きは断られる。
   (assert (= (max (times-of attempts "a" "ok")) 4000) attempts)
@@ -315,7 +315,7 @@
 (deftest test-fence-refuses-writes-before-the-lease-is-taken
   (setv clock (SimClock) store {} attempts [] written [])
   (setv sa (SemaphoreSession "w" :ttl-seconds 15.0 :poll-seconds 0.5))
-  (<- (with_handlers [(sim-time-handler :clock clock) (shared-memory store) (written-log written)]
+  (<- (with_handlers [(sim-time-handler :clock clock) #* (board-handlers store) (written-log written)]
         (fenced-worker sa (lease-writer "a" attempts 1 3000 :acquire False))))
   (assert (= (times-of attempts "a" "fenced") [0 1000 2000]))
   (assert (= written [])))
@@ -333,7 +333,7 @@
   ;; 途絶の間(期限の余裕の内側)は書けて、戻った後も書ける。
   (setv clock (SimClock) store {} attempts [] written [])
   (setv sa (SemaphoreSession "w" :ttl-seconds 15.0 :poll-seconds 0.5))
-  (<- (with_handlers [(sim-time-handler :clock clock) (shared-memory store) (written-log written)]
+  (<- (with_handlers [(sim-time-handler :clock clock) #* (board-handlers store) (written-log written)]
         (with_handlers [(cut-between clock 4000 9000) (cluster-semaphore sa) (lease-fence "writer-a" #(FakeWrite) 2000)]
           (lease-writer "a" attempts 1 40000))))
   (assert (= (times-of attempts "a" "fenced") []) attempts)
@@ -363,6 +363,6 @@
 
 (deftest test-lease-standing-is-standby-until-held-and-lost-after
   (setv log [] store {} clock (clock-at 1000))
-  (<- (with_handlers [(sim-time-handler :clock clock) (shared-memory store) (cluster-semaphore (SemaphoreSession "w"))]
+  (<- (with_handlers [(sim-time-handler :clock clock) #* (board-handlers store) (cluster-semaphore (SemaphoreSession "w"))]
         (standing-story log)))
   (assert (= log [STANDBY HELD LOST]) log))

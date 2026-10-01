@@ -1,6 +1,7 @@
 ;;; coordinator に話す effect の族の契約テストの解釈器(composition root)— 同じ契約の Program を、handler だけ替えて走らせる。
 ;;;
-;;;   shared-memory          fake: shared-memory(同じ process の dict)
+;;;   shared-fake            fake: 本物と同じ shared-http を、HTTP の層の fake の盤(board_fake.hy — 同じ process の dict に coordinator と
+;;;                          同じ純粋な判断で答える)の上で
 ;;;   shared-http            本物: shared-http(宛先の部品の HttpRequest → coordinator の /board・/leases)
 ;;;   metrics-memory         fake: metrics-memory(list に記録)
 ;;;   metrics-http           本物: metrics-http(ServiceReportClient → POST /resources/Service/<名>/metrics)
@@ -14,7 +15,7 @@
 ;;;   sim-cluster-env        同じ・送り手の口が実行環境を宣言する(SimLink の runtime-env = CONTRACT-ENV)
 ;;;   scheduled              semaphore: scheduled だけ(手元の Semaphore — 名前を見る handler が無い)
 ;;;   named-semaphore-local  semaphore: 1 つの VM の名前の表
-;;;   cluster-semaphore      semaphore: cluster-semaphore(LeaseOp)を shared-memory(fake の保存)の上で
+;;;   cluster-semaphore      semaphore: cluster-semaphore(LeaseOp)を fake の盤(board_fake.hy)の上で
 ;;;   cluster-semaphore-http semaphore: cluster-semaphore を shared-http(本物の coordinator の /leases)の上で
 ;;;
 ;;; 本物の側の相手は実の coordinator の process ではなく、test_detached.hy の coordinator の組と同じ MemoryCoordinator(本物の
@@ -47,7 +48,7 @@
 (import doeff_cluster.shared.core.clock [now-epoch-ms])
 (import doeff_cluster.coordinator.intent.cluster_model [ClusterState])
 (import doeff_cluster.coordinator.core.durable_kv [state-from-kv])
-(import doeff_cluster.shared_handlers [shared-memory shared-http])
+(import doeff_cluster.shared_handlers [shared-http])
 (import doeff_cluster.shared.protocol.coordinator_route [CoordinatorRoute RouteCell RouteOptions])
 (import doeff_core_effects.http_effects [HttpRequest HttpResponse HttpFailed HttpFailureKind])
 (import doeff_cluster.shared.protocol.metrics_handlers [metrics-memory metrics-http])
@@ -64,6 +65,7 @@
 (import tests.detached_rig [MemoryCoordinator RigWorker worker-tick worker-loop RIG-PROVIDES])
 (import tests.env_fixtures [LOCK env-of])
 (import tests.program_rows [SAMPLE-RUN])
+(import tests.board_fake [board-handlers])
 
 (val COORDINATOR "http://coordinator")
 ;; 報告の送り手が名乗る Service(本物の側では coordinator に宣言してある — 無い Service の報告は coordinator が 404 で断る)。
@@ -352,7 +354,7 @@
 
 
 (val INTERPRETERS
-  {"shared-memory" (partial under-memory (fn [store reports] [(shared-memory store)]))
+  {"shared-fake" (partial under-memory (fn [store reports] (board-handlers store)))
    "shared-http" (partial under-coordinator (fn [transport] [(shared-http (RouteCell (CoordinatorRoute :urls #(COORDINATOR) :active 0 :switched-at-ms 0)) CONTRACT-ROUTE)]))
    "metrics-memory" (partial under-memory (fn [store reports] [(metrics-memory reports)]))
    "metrics-http" (partial under-coordinator (fn [transport] [(metrics-http (report-client transport))]))
@@ -367,7 +369,7 @@
    "sim-cluster-env" (partial under-sim True)
    "scheduled" (partial under-clock (fn [] []))
    "named-semaphore-local" (partial under-clock (fn [] [(named-semaphore-local {})]))
-   "cluster-semaphore" (partial under-clock (fn [] [(shared-memory {}) (cluster-semaphore (semaphore-session))]))
+   "cluster-semaphore" (partial under-clock (fn [] [#* (board-handlers {}) (cluster-semaphore (semaphore-session))]))
    "cluster-semaphore-http" (partial under-coordinator
                                      (fn [transport] [(shared-http (RouteCell (CoordinatorRoute :urls #(COORDINATOR) :active 0 :switched-at-ms 0)) CONTRACT-ROUTE)
                                                       (cluster-semaphore (semaphore-session))]))})

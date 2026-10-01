@@ -33,7 +33,8 @@
 (import doeff_cluster.shared.intent.remote_model [encode-program program-sha])
 (import doeff_cluster.foundation.process_versions [current-versions])
 (import doeff_cluster.shared.intent.shared_model [ReadShared])
-(import doeff_cluster.shared_handlers [shared-memory])
+(import doeff_time [SimClock sim-time-handler])
+(import tests.board_fake [board-handlers])
 (import doeff_cluster.shared.core.record_model [read-recording])
 (import doeff_cluster.shared.protocol.record_handlers [MemorySink EffectLog effect-recorder ReplayState replay-report
                                        boundary-recorder recording-header RECORD-MODE-KEY RECORD-OTLP-KEY REPLAY-STATE-KEY])
@@ -185,7 +186,7 @@
                                    (boundary-recorder)))
   (assert (= (len handlers) 1) handlers)
   ;; 置き場の口は 500 行たまると送る — 600 の読みで送りを 1 度は試みて断られ、業務の答えはそのまま返る(記録は貯め続ける)。
-  (<- total int (with-handlers [(shared-memory {"row/0" 1 "row/1" 2}) #* handlers] (read-rows 600)))
+  (<- total int (with-handlers [(sim-time-handler :clock (SimClock)) #* (board-handlers {"row/0" 1 "row/1" 2}) #* handlers] (read-rows 600)))
   (assert (= total 400) total)
   (val err (. (.readouterr capsys) err))
   (assert (in "recorder: job-a の effect を記録します" err) err)
@@ -197,11 +198,11 @@
   ;; 渡す状態を作るための記録(record の枝の検ではない — 頭の註)。
   (val sink (MemorySink))
   (val log (EffectLog sink {"service" "rows" "run" "r1"} :strict True))
-  (<- recorded int (with-handlers [(shared-memory {"row/0" 1 "row/1" 2}) (effect-recorder log)] (read-rows 4)))
+  (<- recorded int (with-handlers [(sim-time-handler :clock (SimClock)) #* (board-handlers {"row/0" 1 "row/1" 2}) (effect-recorder log)] (read-rows 4)))
   (val state (ReplayState (read-recording sink.lines)))
   (<- handlers list (with-handlers [(reader {RECORD-MODE-KEY "replay" REPLAY-STATE-KEY state})] (boundary-recorder)))
   (assert (= (len handlers) 1) handlers)
-  ;; 外の世界(shared-memory)を置かずに、記録の答えだけで同じ答えになり、渡した状態の出来事を使い切る。
+  ;; 外の世界(fake の盤)を置かずに、記録の答えだけで同じ答えになり、渡した状態の出来事を使い切る。
   (<- replayed int (with-handlers handlers (read-rows 4)))
   (assert (= replayed recorded) #(replayed recorded))
   (assert state.finished)

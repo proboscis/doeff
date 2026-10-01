@@ -15,7 +15,7 @@
 (import doeff [with_handlers])
 (import datetime [datetime timedelta])
 (import doeff_time [GetTimeEffect SimClock sim-time-handler])
-(import doeff_cluster.shared_handlers [shared-memory])
+(import tests.board_fake [board-handlers])
 (import doeff_cluster.shared.intent.shared_model [WriteShared])
 (import doeff_cluster.shared.intent.semaphore_model [LeaseOp FENCE-MARGIN-MS])
 (import doeff_cluster.shared.core.lease_rules [lease-op semaphore-write-refusal lease-timing-refusal])
@@ -79,7 +79,7 @@
     ;; 本番の書き手と同じ柵の余裕(FENCE-MARGIN-MS)。
     (with_handlers (+ outer [(cluster-semaphore session) (lease-fence "writer-a" #(FakeWrite) FENCE-MARGIN-MS)])
       (lease-writer who attempts 1 90000)))
-  #((with_handlers [(sim-time-handler :clock clock) (shared-memory store) (written-log written)]
+  #((with_handlers [(sim-time-handler :clock clock) #* (board-handlers store) (written-log written)]
       (run-all [(fenced sa "a" [(cut-off-at clock 3000) (skewed-clock a-offset)])
                 (fenced sb "b" [(skewed-clock b-offset)])]))
     attempts written))

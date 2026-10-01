@@ -1,5 +1,6 @@
 ;;; 共有の保存の契約テスト — 同じ effect(ReadShared・WriteShared・LeaseOp)に答える本物(shared-http → coordinator)と
-;;; fake(shared-memory)が、同じ deftest を通る。解釈器の組み立ては coordinator_contract_handlers.hy。
+;;; fake(同じ shared-http を HTTP の層の fake の盤 tests/board_fake.hy の上で)が、同じ deftest を通る。解釈器の組み立ては
+;;; coordinator_contract_handlers.hy。
 ;;;
 ;;;   * 書いた値が読める(prefix で始まる行だけ・無い prefix は空の dict)・coordinator の側の盤に同じ値で残る
 ;;;   * 書いた値と読んだ値は写し(書いた後・読んだ後に手元の値を変えても保存の値は変わらない)・JSON の形で戻る
@@ -8,8 +9,8 @@
 ;;;   * lease: 取る / 他の持ち主が持つ間の断り / 延ばす / 持っていない延長は lost / 返す / 2 度目の返しは lost / 担い手の頭で外す
 ;;;   * lease の期限は保存の時計: 期限の前は他が取れず、期限で取れ、奪われた持ち主の延長は lost
 ;;;   * 形の悪い lease の操作(知らない操作・期限が 0 か上限を越える・token が無い)は例外で断り、行を変えない
-;;; 契約の外: 断りの例外の型(fake は ValueError・本物は HTTP の断り)・盤の容量の上限(本物だけが 507 で断る)・期限つきの行が期限で
-;;; 消えること(fake は期限を持たず行が残る — shared_handlers.hy の shared-memory の註)。
+;;; 契約の外: 盤の容量の上限(本物だけが 507 で断る)・期限つきの行が期限で消えること(fake は期限を持たず行が残る)ほか —
+;;; tests/board_fake.hy の頭の註。
 (require doeff-hy.macros [defk deftest <- val])
 (import doeff_time [Delay])
 (import doeff_cluster.shared.intent.shared_model [ReadShared WriteShared ANY])
@@ -23,7 +24,7 @@
 
 
 (deftest test-a-written-value-is-read-back-and-kept-on-the-coordinator
-  {:interpreters ["shared-memory" "shared-http"]}
+  {:interpreters ["shared-fake" "shared-http"]}
   (val rows {"app/a" {"n" 1 "nested" {"xs" [1 2.5 "s" True None]}}
              "app/b" [1 2 3]
              "app/c" "text"
@@ -43,7 +44,7 @@
 
 
 (deftest test-written-and-read-values-are-copies
-  {:interpreters ["shared-memory" "shared-http"]}
+  {:interpreters ["shared-fake" "shared-http"]}
   (val value {"items" [1]})
   (<- (WriteShared "copy/row" value))
   (.append (get value "items") 2)
@@ -55,7 +56,7 @@
 
 
 (deftest test-values-come-back-in-json-form
-  {:interpreters ["shared-memory" "shared-http"]}
+  {:interpreters ["shared-fake" "shared-http"]}
   ;; 本物は値を JSON で運ぶので、dict の鍵は文字列・tuple は list で戻る。期待の値も同じ形で比べる。
   (<- (WriteShared "form/row" {1 #(1 2)}))
   (<- read dict (ReadShared "form/"))
@@ -65,7 +66,7 @@
 
 
 (deftest test-a-row-lifetime-out-of-range-is-refused-and-changes-nothing
-  {:interpreters ["shared-memory" "shared-http"]}
+  {:interpreters ["shared-fake" "shared-http"]}
   (<- (WriteShared "life/row" "kept"))
   (val refused [])
   (for [ttl [0 -1 "60" (* 31 24 3600)]]
@@ -79,7 +80,7 @@
 
 
 (deftest test-compare-and-set-writes-only-when-the-expectation-holds
-  {:interpreters ["shared-memory" "shared-http"]}
+  {:interpreters ["shared-fake" "shared-http"]}
   (<- absent-only bool (WriteShared "cas/k" "v1" None))
   (<- absent-again bool (WriteShared "cas/k" "v2" None))
   (<- stale bool (WriteShared "cas/k" "v3" "v0"))
@@ -107,7 +108,7 @@
 
 
 (deftest test-a-lease-is-claimed-refused-renewed-and-released
-  {:interpreters ["shared-memory" "shared-http"]}
+  {:interpreters ["shared-fake" "shared-http"]}
   (<- start int (now-epoch-ms))
   (<- claimed dict (lease "claim" "a/1/x/1"))
   (<- refused dict (lease "claim" "b/1/y/1"))
@@ -137,7 +138,7 @@
 
 
 (deftest test-a-lease-expires-by-the-store-clock
-  {:interpreters ["shared-memory" "shared-http"]}
+  {:interpreters ["shared-fake" "shared-http"]}
   (<- (lease "claim" "a/1/x/1"))
   (<- (Delay (/ (- TTL-MS 100) 1000)))
   (<- before dict (lease "claim" "b/1/y/1"))
@@ -153,7 +154,7 @@
 
 
 (deftest test-a-malformed-lease-op-is-refused-and-changes-nothing
-  {:interpreters ["shared-memory" "shared-http"]}
+  {:interpreters ["shared-fake" "shared-http"]}
   (<- (lease "claim" "a/1/x/1"))
   (<- before dict (holders))
   (val refused [])
