@@ -26,7 +26,7 @@
 (import doeff_cluster.detached_model [outcome-from-task-outcome])
 (import doeff_cluster.cluster_model [ClusterState ClusterTiming TaskRecord WorkerInfo ComponentVersion])
 (import doeff_cluster.coordinator.core.cluster_policy [can-run-task absorb-env-failure place-tasks submit-task ENV-RETRIES])
-(import doeff_cluster.detached_policy [submit-detached])
+(import doeff_cluster.coordinator.core.detached_policy [submit-detached])
 (import doeff_cluster.worker_model [JobSpec CodeView CodeState WorldView JobRecord WorkerPolicy JobPhase PrepareEnv
                                     PrepareCode code-key])
 (import doeff_cluster.worker_policy [plan statuses])

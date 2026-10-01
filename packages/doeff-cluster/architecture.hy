@@ -8,7 +8,7 @@
 ;;; entry から)、まだ src/doeff_cluster/ に平たく在る module は pyproject.toml で DOEFF114・115 の対象外のまま(#2095 で外す)。
 ;;;
 ;;; 条と確かめる検:
-;;;   C1 acknowledged-writes-survive(doeff_cluster.coordinator_invariants:acknowledged-writes-survive)— 返事を返した盤の行は、coordinator が
+;;;   C1 acknowledged-writes-survive(doeff_cluster.coordinator.core.coordinator_invariants:acknowledged-writes-survive)— 返事を返した盤の行は、coordinator が
 ;;;   止まり置き場から作り直された後も残る。確かめるのは tests/test_local.hy の
 ;;;   test-a-stopped-coordinator-is-recreated-from-its-store-after-the-downtime(止める前の行と作り直した後の行を判断に渡す)。
 ;;;   壊した置き場の反例を deftest で結ぶ形(DOEFF167)は別に足す。
@@ -53,7 +53,7 @@
 (defservice coordinator "worker へ job を割り当てる coordinator(資源と盤の置き場・調停のループ)"
   {:layers [core intent protocol entry]
    :entry-modules ["doeff_cluster.coordinator.entry.main"]
-   :invariants ["doeff_cluster.coordinator_invariants:acknowledged-writes-survive"]})
+   :invariants ["doeff_cluster.coordinator.core.coordinator_invariants:acknowledged-writes-survive"]})
 
 ;; worker の条は W1(入れ替えの間も書き手が居続ける)。消す順などの条は後から足す。:entry-modules は層に分ける前の今の入口
 ;; (doeff_cluster.main)。層に分けた後は :entry-modules を外し、entry 層の dir の定義で「code を持つ service」を数える形に移る。

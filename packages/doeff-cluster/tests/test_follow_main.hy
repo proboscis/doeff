@@ -22,7 +22,7 @@
 (import doeff_cluster.coordinator.core.program [rollout-tick])
 (import doeff_cluster.kube_handlers [KubeMemory kube-memory])
 (import doeff_cluster.handlers [status-row])
-(import doeff_cluster.metrics_policy [metrics-text])
+(import doeff_cluster.coordinator.core.metrics_policy [metrics-text])
 (import doeff_cluster.coordinator.core.cluster_policy [still-live-somewhere])
 (import doeff_cluster.worker_model [JobSpec CodeView CodeState ProcessView WorldView WorkerPolicy JobRecord
                         PrepareCode StartJob SignalJob ReapJob RetireJob ReleaseLeases StopStage ProbeEntry ProbeView ProbeState
