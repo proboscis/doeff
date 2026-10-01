@@ -287,7 +287,7 @@
 
 (import doeff_cluster.coordinator.intent.cluster_model [WarmEntry])
 (import doeff_cluster.coordinator.core.cluster_policy [state-to-json state-from-json])
-(import doeff_cluster.coordinator.core.durable_kv [full-kv state-from-kv])
+(import doeff_cluster.coordinator.protocol.durable_kv [full-kv state-from-kv])
 
 (setv SAVED (ClusterState :workers {"old" (worker "old" 0 10 "net") "new" (worker "new" 0 10 "net")}
                          :tasks {"t1" (task "t1" #("net")) "t2" (replace (task "t2" #("net")) :phase "finished")}

@@ -10,7 +10,7 @@
 (import doeff_time [SimClock sim-time-handler])
 (import tests.clock_fixtures [clock-ms])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming Request Reply CoordinatorStopRequested])
-(import doeff_cluster.coordinator.intent.cluster_model [ClusterNaming ClusterState Persist CoordinatorFault] doeff_cluster.shared.intent.protocol [NextRequests])
+(import doeff_cluster.coordinator.intent.cluster_model [ClusterNaming ClusterState CoordinatorFault] doeff_cluster.shared.intent.protocol [NextRequests])
 (import doeff_cluster.shared.protocol.inbox [http-request])
 (import doeff_cluster.coordinator.core.cluster_policy [reconcile state-view state-to-json state-from-json job-from-json identity-hash])
 (import tests.program_rows [SAMPLE-RUN SAMPLE-PROGRAM SAMPLE-TASK-PROGRAM program-placed])
@@ -18,8 +18,9 @@
 (import doeff_cluster.coordinator.protocol.request_bodies [responded])
 (import doeff_cluster.coordinator.core.program [run-coordinator])
 (import doeff_cluster.coordinator.protocol.request_bodies [request-bodies])
+(import doeff_cluster.coordinator.protocol.store [Persist durable-states])
 (import doeff_cluster.foundation.wal_store [WalStore])
-(import doeff_cluster.coordinator.core.durable_kv [LEGACY-PLACEMENT PLACEMENT])
+(import doeff_cluster.coordinator.protocol.durable_kv [LEGACY-PLACEMENT PLACEMENT])
 
 (setv T (ClusterTiming))
 (setv V {"python" "3.14.0" "doeff" "1"})
@@ -174,7 +175,7 @@
 
 (defn #^ Callable scripted [#^ Script script]
   "台本の外側に仮想の時計(script の SimClock)を被せる。"
-  (fn [program] ((sim-time-handler :clock script.clock) ((scripted-requests script) (request-bodies program)))))
+  (fn [program] ((sim-time-handler :clock script.clock) ((scripted-requests script) (request-bodies (durable-states program))))))
 
 (deftest test-coordinator-loop-answers-after-persisting
   (setv script (Script [(req "POST" "/heartbeat" {"name" "w" "provides" ["net"] "capacity" 10 "versions" V})
@@ -197,7 +198,7 @@
   ;; 3 件が 1 まとまり: 永続化は 1 回、返事は 3 件とも永続化の後。
   (setv order [])
   (setv script (Script [[(req "PUT" "/board/a" {"value" 1}) (req "PUT" "/board/b" {"value" 2}) (req "GET" "/board")]]))
-  (<- final ClusterState ((scripted script) ((recording order) (run-coordinator (ClusterState) T (ClusterNaming)))))
+  (<- final ClusterState ((scripted script) ((recording order) (durable-states (run-coordinator (ClusterState) T (ClusterNaming))))))
   (assert (= order ["persist" "reply /board/a" "reply /board/b" "reply /board"]) order)
   (assert (= (len script.saved) 1)))
 
@@ -294,12 +295,12 @@
   ;; 資源の書き(版つき)を追記の log へ永続化し、読み直した状態の資源の版と宣言が同じ。
   (import tempfile)
   (import doeff_cluster.foundation.wal_store [WalStore] doeff_cluster.coordinator.protocol.store [wal-store])
-  (import doeff_cluster.coordinator.core.durable_kv [durable-kv state-from-kv])
+  (import doeff_cluster.coordinator.protocol.durable_kv [durable-kv state-from-kv])
   (setv d (tempfile.mkdtemp) store (WalStore d))
   (.load store)
   (setv script (Script [(req "POST" "/resources/Service" {"name" "a" "spec" {"revision" "r" "needs" ["net"] "run" SAMPLE-RUN}})
                         (req "PUT" "/board/k" {"value" 1})]))
-  (<- final ClusterState ((sim-time-handler :clock script.clock) ((no-persist-script script) ((wal-store store) (request-bodies (run-coordinator (ClusterState) T (ClusterNaming)))))))
+  (<- final ClusterState ((sim-time-handler :clock script.clock) ((no-persist-script script) ((wal-store store) (request-bodies (durable-states (run-coordinator (ClusterState) T (ClusterNaming))))))))
   (setv back (state-from-kv (.load (WalStore d)) 99999))
   (assert (= (durable-kv back) (durable-kv final)))
   (assert (= (. back revision) (. final revision)))
@@ -352,7 +353,7 @@
 
 
 (deftest test-the-new-placement-key-wins-over-the-legacy-one-and-is-not-overwritten
-  (import doeff_cluster.coordinator.core.durable_kv [state-from-kv legacy-key-moves])
+  (import doeff_cluster.coordinator.protocol.durable_kv [state-from-kv legacy-key-moves])
   (setv kv {(+ LEGACY-PLACEMENT "a") {"job" "a" "worker" "old" "generation" 1 "since_ms" 0}
             (+ PLACEMENT "a") {"job" "a" "worker" "new" "generation" 2 "since_ms" 10}
             (+ LEGACY-PLACEMENT "b") {"job" "b" "worker" "zeus" "generation" 5 "since_ms" 0}})

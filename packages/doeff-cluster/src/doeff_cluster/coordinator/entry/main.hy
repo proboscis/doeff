@@ -16,7 +16,7 @@
 (import doeff_cluster.coordinator.intent.cluster_model [ClusterState ACCEPTED-FORMATS])
 (import doeff_cluster.coordinator.core.cluster_json [naming-from-json])
 (import doeff_cluster.coordinator.core.cluster_policy [state-from-json fresh-task-prefix])
-(import doeff_cluster.coordinator.core.durable_kv [full-kv state-from-kv legacy-key-moves resume-writes])
+(import doeff_cluster.coordinator.protocol.durable_kv [full-kv state-from-kv legacy-key-moves resume-writes])
 (import doeff_cluster.foundation.wal_store [WalStore])
 (import doeff_cluster.coordinator.core.api_policy [resume-after-downtime])
 (import doeff_cluster.coordinator.core.resource_policy [adopt-legacy])

@@ -461,10 +461,10 @@
       "layer": "pure",
       "name": "doeff-cluster-durable-kv",
       "paths": [
-        "packages/doeff-cluster/src/doeff_cluster/coordinator/core/durable_kv.hy"
+        "packages/doeff-cluster/src/doeff_cluster/coordinator/protocol/durable_kv.hy"
       ],
       "public": [
-        "packages/doeff-cluster/src/doeff_cluster/coordinator/core/durable_kv.hy"
+        "packages/doeff-cluster/src/doeff_cluster/coordinator/protocol/durable_kv.hy"
       ],
       "responsibility": "coordinator の耐久の状態を「キー → JSON の値」の表として見る形(純粋な関数)。",
       "typed": true
@@ -821,7 +821,8 @@
         "doeff-cluster-remote-rules",
         "doeff-cluster-runtime-env-rules",
         "doeff-cluster-warm-rules",
-        "doeff-cluster-board-requests"
+        "doeff-cluster-board-requests",
+        "doeff-cluster-wal-store"
       ],
       "layer": "io",
       "name": "doeff-cluster-local",
@@ -1489,7 +1490,8 @@
     },
     {
       "allow": [
-        "doeff-cluster-cluster-model"
+        "doeff-cluster-cluster-model",
+        "doeff-cluster-durable-kv"
       ],
       "layer": "io",
       "name": "doeff-cluster-wal-store",

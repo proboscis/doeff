@@ -26,7 +26,7 @@
 ;;;
 ;;; 形: 調停ループは doeff の Program(run-coordinator)。並んでいる要求をまとめて受け(NextRequests)、純粋な判断
 ;;; (api_policy.respond / tick / plan-rollouts)で 1 件ずつ次の状態と返事を導き、まとまりの変化を 1 回で永続化してから
-;;; (Persist = 追記の log に 1 行・fsync 1 回)全員に返事をする(Reply)— group commit。返事を済ませた書き(版の番号を含む)は
+;;; (SaveState — 答え手の protocol が KV の差分に綴り、追記の log に 1 行・fsync 1 回)全員に返事をする(Reply)— group commit。返事を済ませた書き(版の番号を含む)は
 ;;; coordinator が落ちても消えない。永続化に失敗したら返事をせずに落ちる(送り手には失敗として見える)。
 ;;; k8s の Deployment の読みと台数の変更(ReadDeployment / ScaleDeployment)も effect。I/O は handler の中だけ。
 (require doeff-hy.macros [defk <- val var])
@@ -34,10 +34,9 @@
 (import dataclasses [replace])
 (import doeff_cluster.shared.core.clock [now-epoch-ms])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming Reply CoordinatorStopRequested Request])
-(import doeff_cluster.coordinator.intent.cluster_model [ClusterState ClusterNaming IdleProbe IdleNextRequests Persist Fault CoordinatorFault Watcher WatchRefusal WatchAnswer WatchStep])
+(import doeff_cluster.coordinator.intent.cluster_model [ClusterState ClusterNaming IdleProbe IdleNextRequests SaveState Fault CoordinatorFault Watcher WatchRefusal WatchAnswer WatchStep])
 (import doeff_cluster.coordinator.core.watch_policy [watch-of settle-watch earliest-deadline])
 (import doeff_cluster.coordinator.core.cluster_policy [nodes-to-read with-derived-capabilities])
-(import doeff_cluster.coordinator.core.durable_kv [durable-delta])
 (import doeff_cluster.coordinator.core.api_policy [respond tick plan-rollouts deployments-to-observe scale-service record-action mark-alive ROLLOUT-ACTOR ROLLOUT-TICK-MS TICK-MS])
 (import doeff_cluster.coordinator.core.resource_policy [stamp])
 (import doeff_cluster.coordinator.intent.request_bodies [ReadBody])
@@ -151,9 +150,7 @@
     (<- ticked ClusterState (rollout-tick next timing naming now))
     (:= next ticked))
   (:= next (mark-alive next now))
-  (setv delta (durable-delta state next))
-  (when delta
-    (<- (Persist delta)))
+  (<- (SaveState state next))
   (for [#(request status body) replies]
     (<- (Reply request status body)))
   ;; 待ちへの返事は永続化の後(返した版の変化は coordinator が落ちても消えない — group commit と同じ)。

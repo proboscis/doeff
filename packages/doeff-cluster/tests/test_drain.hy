@@ -12,7 +12,7 @@
 (import doeff_cluster.shared.core.job_rules [spec-hash])
 (import doeff_cluster.coordinator.core.api_policy [tick])
 (import doeff_cluster.coordinator.protocol.request_bodies [responded])
-(import doeff_cluster.coordinator.core.durable_kv [full-kv state-from-kv DRAIN SURGE])
+(import doeff_cluster.coordinator.protocol.durable_kv [full-kv state-from-kv DRAIN SURGE])
 (import doeff_cluster.worker.core.drain_client [await-drained worker-ready drain-outcome ready-of] doeff_cluster.worker.intent.drain_model [CoordinatorCall AskDrain])
 (import doeff_cluster.worker.protocol.drain_requests [drain-request])
 (import doeff [run with-handlers])

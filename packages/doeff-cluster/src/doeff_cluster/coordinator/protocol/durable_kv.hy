@@ -17,7 +17,7 @@
 ;;; 旧い接頭辞(LEGACY-PLACEMENT)の鍵が残っているので、読みは両方を読み(同じ名なら新しい鍵が勝つ)、起動時に
 ;;; legacy-key-moves の 2 つの書きで新しい鍵へ移す — 新しい鍵を書き終えてから旧い鍵を消す。
 (require doeff-hy.macros [val])
-(val MODULE-TAGS {:context "coordinator" :role "judgment"})
+(val MODULE-TAGS {:context "coordinator" :role "protocol"})
 (import dataclasses [asdict replace])
 (import functools [partial])
 (import doeff_cluster.coordinator.intent.cluster_model [ClusterState WorkerInfo Placement Drain BoardRow])

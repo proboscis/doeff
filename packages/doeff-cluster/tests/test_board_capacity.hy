@@ -6,7 +6,7 @@
 (import doeff_cluster.shared.protocol.inbox [http-request])
 (import doeff_cluster.coordinator.core.api_policy [tick])
 (import doeff_cluster.coordinator.protocol.request_bodies [responded])
-(import doeff_cluster.coordinator.core.durable_kv [durable-kv full-kv durable-delta state-from-kv])
+(import doeff_cluster.coordinator.protocol.durable_kv [durable-kv full-kv durable-delta state-from-kv])
 (import doeff_cluster.coordinator.core.cluster_policy [BOARD-MAX-VALUE-BYTES BOARD-MAX-ROWS BOARD-MAX-BYTES TASK-MAX-OPEN WORKER-FORGET-MS
                           board-rows-of board-usage value-size])
 (import doeff_cluster.coordinator.core.metrics_policy [metrics-text])

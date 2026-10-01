@@ -19,14 +19,15 @@
 (import doeff_core_effects.handlers [await-handler])
 (import doeff_time [async-time-handler])
 (import doeff_cluster.coordinator.protocol.request_queue [RequestQueue queued-requests])
-(import doeff_cluster.foundation.wal_store [WalStore MAX-LOG-BYTES apply-delta] doeff_cluster.coordinator.protocol.store [wal-store])
+(import doeff_cluster.foundation.wal_store [WalStore MAX-LOG-BYTES apply-delta] doeff_cluster.coordinator.protocol.store [durable-states wal-store])
 (import doeff_cluster.coordinator.protocol.kube [KubeMemory kube-memory])
 (import doeff_cluster.foundation.coordinator_inbox [RequestInbox StopState] doeff_cluster.shared.protocol.inbox [http-requests stop-flag] doeff_cluster.coordinator.protocol.faults [coordinator-faults])
 
 
 (defn #^ list production-handlers [#^ RequestInbox inbox #^ WalStore store #^ StopState stop #^ object kube]
   "本番の組(外側が先)。kube = kube-api か kube-unavailable(資格の有無は composition root が決める)。"
-  [(await-handler) (async-time-handler) (stop-flag stop) (wal-store store) (http-requests inbox) coordinator-faults kube request-bodies])
+  [(await-handler) (async-time-handler) (stop-flag stop) (wal-store store) (http-requests inbox) coordinator-faults kube request-bodies
+   durable-states])
 
 
 ;; --- まねた環境 -------------------------------------------------------------------------------
@@ -57,7 +58,8 @@
   (defn #^ None checkpoint [self] None))
 
 
-(defn #^ list emulated-handlers [#^ RequestQueue queue #^ MemoryWalStore store #^ StopState stop #^ KubeMemory kube]
+(defn #^ list emulated-handlers [#^ RequestQueue queue #^ MemoryWalStore store #^ StopState stop #^ KubeMemory kube #^ list [watchers []]]
   "まねた環境の組(外側が先)。時計は持たない — 外側の sim の時計(sim-time-handler か async-time-handler)が答える。stop = 停止の合図
-   (coordinator_inbox.StopState)。"
-  [(stop-flag stop) (wal-store store) (queued-requests queue) (kube-memory kube) request-bodies])
+   (coordinator_inbox.StopState)。watchers = 置き場への書き(Persist)と要求の受け渡しを見張る handler の列(sim の落ちの注入と呼び鈴 —
+   本番の組と同じく保存の綴り durable-states をいちばん内側に置くので、見張りはその外で KV の差分を見る)。"
+  [(stop-flag stop) (wal-store store) (queued-requests queue) (kube-memory kube) request-bodies #* watchers durable-states])
