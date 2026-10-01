@@ -477,7 +477,6 @@
         "doeff-cluster-metrics-model",
         "doeff-cluster-readiness-model",
         "doeff-cluster-semaphore-model",
-        "doeff-cluster-shared-model",
         "doeff-hy-json-value"
       ],
       "layer": "pure",
@@ -1046,7 +1045,8 @@
     },
     {
       "allow": [
-        "doeff-cluster-effect-codec"
+        "doeff-cluster-effect-codec",
+        "doeff-hy-json-value"
       ],
       "layer": "domain",
       "name": "doeff-cluster-record-model",

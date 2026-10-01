@@ -21,7 +21,7 @@
 (import doeff_hy.json_value [OpaqueJson])
 (import doeff_cluster.shared.intent.shared_model [ReadShared WriteShared ANY])
 (import tests.board_fake [board-handlers])
-(import doeff_cluster.shared.core.effect_codec [BlobMemory intern-json resolve-refs encode-value decode-value encode-error decode-error delta-of apply-delta canonical
+(import doeff_cluster.shared.core.effect_codec [BlobMemory intern-json resolve-refs content-hash encode-value decode-value encode-error decode-error delta-of apply-delta canonical
                                          UnrecordableEffect RecordedError HandleTable args-of type-name
                                          EffectCodec MalformedRecordSpec READ LIVE OUTPUT DECISION SPEC-FIELDS codec-of mode-of subject-of can-record
                                          register registered-types])
@@ -29,7 +29,8 @@
 (import doeff_cluster.shared.intent.semaphore_model [CreateNamedSemaphore HeldLease LeaseStanding])
 (import doeff_cluster.shared.intent.readiness_model [ReportReady])
 (import doeff_cluster.shared.intent.metrics_model [ReportMetrics ReadProcessGauges])
-(import doeff_cluster.shared.core.record_model [read-recording ReplayFinished ReplayDiverged])
+(import doeff_cluster.shared.core.record_model [read-recording ReplayFinished ReplayDiverged LEGACY-ANY CURRENT-ANY])
+(import pathlib)
 (import doeff_cluster.shared.protocol.record_handlers [MemorySink EffectLog effect-recorder ReplayState effect-replayer replay-report])
 
 
@@ -179,6 +180,51 @@
   (assert (= replayed recorded) #(replayed recorded))
   (assert (= (get report "outputDiffCounts") {"changed" 0 "missing" 0 "extra" 0}) report)
   (assert (get report "identical") report))
+
+
+;; ---- WriteShared の記録は型の宣言から・OpaqueJson の欄は中の JSON の値で・ANY は値の汎用の綴りで(#2579)----------------------
+
+(deftest test-write-shared-is-recorded-from-its-declaration
+  (val handles (HandleTable))
+  (assert (not-in (type-name WriteShared) (registered-types)))
+  (assert (can-record WriteShared))
+  (val codec (codec-of (WriteShared "row/a" (OpaqueJson.of 1))))
+  (assert (= #(codec.mode codec.unexecuted codec.binds) #(OUTPUT True None)) codec)
+  ;; OpaqueJson の欄は中の JSON の値で綴る(包みの型の $c にしない)・期限(ttl-seconds)は問いを見分けない
+  (val args (args-of (WriteShared "row/a" (OpaqueJson.of {"n" [1 2]}) (OpaqueJson.of "old") 30) handles))
+  (assert (= args {"key" "row/a" "value" {"n" [1 2]} "expect" "old"}) args)
+  (assert (= (subject-of (WriteShared "row/a" (OpaqueJson.of 1)) args) "row/a"))
+  ;; ANY は欄の無い値の型の汎用の綴り($c)で、record_model が旧い綴りを揃える先と同じ。復号すると ANY と等しい値。
+  (val any-args (args-of (WriteShared "row/a" (OpaqueJson.of 1)) handles))
+  (assert (= (get any-args "expect") (encode-value ANY) CURRENT-ANY) any-args)
+  (assert (= (decode-value (get any-args "expect")) ANY))
+  (assert (is (get (args-of (WriteShared "row/a" (OpaqueJson.of 1) None) handles) "expect") None)))
+
+
+;; 本番の記録(effect_records.effect_logs・2026-09-26〜10-01 の 1 run)の形を写し、値は伏せた: run の頭・内容参照の中身(blob)2 行・
+;; WriteShared の call 4 行(旧い型の名 doeff_cluster.shared_model・値の $ref・ANY の旧い綴り {"$any": 1})。区切りの番号は置き場の属性
+;; chunk を、記録係の書き手(MemorySink)と同じ _chunk の欄にした。名・URL・host・run の id・token は中立の値に替え、blob の h と $ref は
+;; 替えた中身から記録の規則(effect_codec.content-hash)で作り直した。run の頭は読みが使わない欄(factory・env・config など)を除いた。
+;; 行の列(1 行 1 要素の JSON の配列 — 置き場の *.jsonl は repo の .gitignore が外すので配列にした)。
+(val PRODUCTION-FRAGMENT (/ (. (pathlib.Path __file__) parent) "fixtures" "write_shared_production_record.json"))
+
+(deftest test-a-production-write-shared-record-reads-as-the-current-form
+  (val lines (json.loads (.read-text PRODUCTION-FRAGMENT :encoding "utf-8")))
+  (val calls (lfor l lines :if (= (.get l "k") "call") l))
+  (assert (= (len calls) 4) lines)
+  (assert (all (gfor l lines (in "_chunk" l))))
+  (assert (any (gfor l calls (in "$ref" (get l "a" "value")))) calls)
+  (assert (all (gfor l calls (= (get l "a" "expect") LEGACY-ANY))) calls)
+  (val blobs (dfor l lines :if (= (.get l "k") "blob") (get l "h") (get l "v")))
+  ;; 伏せた中身の blob の h は記録の規則どおり(内容の hash)
+  (assert (all (gfor #(h v) (.items blobs) (= (content-hash (canonical v)) h))) blobs)
+  (val rec (read-recording lines))
+  (for [l calls]
+    (val entry (get rec.entries (get l "e")))
+    (val value (resolve-refs (get l "a" "value") blobs))
+    (val replayed (args-of (WriteShared (get l "a" "key") (OpaqueJson.of value)) (HandleTable)))
+    (assert (= (canonical entry.args) (canonical replayed)) #(entry.args replayed))
+    (assert (= (get entry.args "expect") CURRENT-ANY) entry.args)))
 
 
 ;; ---- 置き場を移した module の旧い型の名を読む(#2105・#2021 の決め 2a)-----------------------------------------
@@ -358,7 +404,7 @@
     (assert (is codec.unexecuted previous.unexecuted) #(effect codec.unexecuted previous.unexecuted))
     (assert (= codec.binds previous.binds) effect)
     (assert (or (is codec.binds None) (is (type codec.binds) str)) "handle の印は素の文字列")
-    (assert (= #(codec.name codec.watch codec.recorded-fn) #(previous.name previous.watch previous.recorded-fn)) effect)))
+    (assert (= #(codec.name codec.watch) #(previous.name previous.watch)) effect)))
 
 
 (defk read-after-writes []

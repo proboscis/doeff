@@ -18,11 +18,20 @@
 (require doeff-hy.macros [val])
 (val MODULE-TAGS {:context "doeff-cluster" :role "judgment"})
 (import collections.abc [Callable])
+(import dataclasses)
 (import dataclasses [dataclass field])
+(import json)
+(import typing [get-args])
+(import doeff_hy.json_value [OpaqueJson])
 (import doeff_cluster.shared.core.effect_codec [READ LIVE DECISION OUTPUT LOOSE READABLE-FORMATS JsonValue canonical apply-delta delta-of resolve-refs
-                                                recorded-args])
+                                                resolve-type encode-value decode-value])
 
 (setv ROOT "root")
+
+;; 旧い記録の綴りを今の綴りへ揃える(#2543・#2579 — 揃え方を知るのは read-recording だけ)。書きの条件を付けない印 ANY は、欄の無い値の型
+;; (shared_model.AnyExpect)にする前は {"$any": 1} と綴っていた。今は値の汎用の綴り(encode-value の $c — 一致は tests/test_effect_record.hy が縛る)。
+(val LEGACY-ANY {"$any" 1})
+(val CURRENT-ANY {"$c" "doeff_cluster.shared.intent.shared_model:AnyExpect" "f" {}})
 
 
 (defclass ReplayFinished [Exception]
@@ -107,6 +116,8 @@
   (when (not-in (.get header "format") READABLE-FORMATS)
     (raise (ValueError (.format "記録の形の版が違う: {}(読めるのは {})" (.get header "format") READABLE-FORMATS))))
   (defn #^ JsonValue refs [#^ JsonValue v] (if blobs (resolve-refs v blobs memo) v))
+  ;; 型の名 → その型の OpaqueJson の欄の名(型ごとに 1 度だけ引く — 型を import できない名は揃える欄を持たない)。
+  (setv opaque-fields {})
   (setv seen {})
   (for [l ordered]
     (setv e (get l "e") kind (get l "k"))
@@ -127,8 +138,26 @@
             (when (not (isinstance args dict))
               (raise (ValueError (.format "出来事 {} の引数が表でない: {}" e (type args)))))
             (setv mode (if (is mode-of-type None) (get l "m") (mode-of-type (get l "ty") l)))
-            ;; 引数の形を変えた型(WriteShared の OpaqueJson・#2543)の旧い記録の行は、今の版の比べる形へ揃えて持つ(差分の元は揃える前の値)。
-            (setv (get entries e) (Entry e (get l "t") (get l "at") (get l "ty") (recorded-args (get l "ty") args) mode :subject (.get l "sj")))
+            ;; 旧い記録の行の引数を今の版の比べる形へ揃えて持つ(差分の元は揃える前の値)— 型ごとの関数を持たない汎用の正規化(#2579)。
+            ;; 型の OpaqueJson の欄(形を書き手が決める JSON)は、今の codec が中の JSON の値で綴る。値が素の値だった旧い行
+            ;; (tuple は $t・文字列でない鍵は $d)は JSON に運んだ値(list・文字列の鍵)に直して綴り直し、旧い ANY の綴りは今の綴りへ替える。
+            ;; 欄が JSON でない値(ANY の $c)を持つ行はそのまま。今の形の行は同じ綴りに戻る。
+            (setv ty (get l "ty"))
+            (when (not-in ty opaque-fields)
+              (setv cls (resolve-type ty))
+              (setv (get opaque-fields ty)
+                    (if (and (is-not cls None) (dataclasses.is-dataclass cls))
+                        (frozenset (gfor f (dataclasses.fields cls) :if (or (is f.type OpaqueJson) (in OpaqueJson (get-args f.type))) f.name))
+                        (frozenset))))
+            (setv fields (get opaque-fields ty))
+            (setv current (if fields
+                              (dfor #(k v) (.items args)
+                                    k (cond (not-in k fields) v
+                                            (= v LEGACY-ANY) CURRENT-ANY
+                                            (and (isinstance v dict) (in "$c" v)) v
+                                            True (encode-value (json.loads (. (OpaqueJson.of (decode-value v)) text)))))
+                              args))
+            (setv (get entries e) (Entry e (get l "t") (get l "at") ty current mode :subject (.get l "sj")))
             (.append (.setdefault queues (get l "t") []) e)
             (.append events #(e "req" (get l "t") e)))
       (= kind "ans")

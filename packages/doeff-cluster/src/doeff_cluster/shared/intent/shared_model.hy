@@ -15,12 +15,13 @@
 (import dataclasses [dataclass])
 (import doeff [EffectBase])
 (import typing [ClassVar])
-(import doeff_cluster.shared.intent.record_spec [RecordSpec RecordMode])
+(import doeff_cluster.shared.intent.record_spec [RecordSpec RecordMode Unexecuted])
 (import doeff_hy.json_value [OpaqueJson])
 
 
-(defclass AnyExpect []
-  "書きの条件(expect)を付けない印 ANY の型 — 書きの handler が expect の型に書けるよう公開の名にする(以前は内部名・#1692)。"
+(defclass [(dataclass :frozen True)] AnyExpect []
+  "書きの条件(expect)を付けない印 ANY の型 — 書きの handler が expect の型に書けるよう公開の名にする(以前は内部名・#1692)。
+   欄の無い値の型(dataclass)なので、記録は値の汎用の綴りで残る(#2579)。"
   (defn #^ str __repr__ [self] "ANY"))
 
 
@@ -32,6 +33,9 @@
 
 
 (defclass [(dataclass :frozen True)] WriteShared [EffectBase]
+  ;; 記録: 判断の外への報告(output)。対の鍵は行の鍵・記録に対の無い書きは「着地した」と答える・期限(ttl-seconds)は問いを見分けない(#2579)。
+  (setv #^ (get ClassVar RecordSpec) __record-spec__
+        (RecordSpec :mode RecordMode.OUTPUT :subject "key" :args #("key" "value" "expect") :unexecuted Unexecuted.LANDED))
   (#^ str key)
   (#^ OpaqueJson value)
   ;; ANY = 無条件・None = 行が無い時だけ・OpaqueJson = 今の値がそれと(解いた値で)等しい時だけ。

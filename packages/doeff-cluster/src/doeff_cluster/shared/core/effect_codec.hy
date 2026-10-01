@@ -50,7 +50,6 @@
                                       CreateSemaphore AcquireSemaphore ReleaseSemaphore Task Promise Future Semaphore])
 (import doeff_time [GetTimeEffect GetMonotonicEffect DelayEffect])
 (import doeff_hy.json_value [OpaqueJson])
-(import doeff_cluster.shared.intent.shared_model [WriteShared ANY])
 
 (setv FORMAT-VERSION 2)
 ;; 読める形の版(1 = 差分・2 = 内容参照と問いと答えの 1 行)。
@@ -405,20 +404,22 @@
 
 (defclass EffectCodec []
   ;; unexecuted = 記録に対の無い書きへ返す答え(True・None)か DIVERGE(返さずに分岐として止める)。
-  ;; recorded = 記録の行の引数(args の答えの形)を今の版の比べる形へ揃える関数 — 引数の形を変えた型が旧い記録を読むため(None = そのまま)。
   ;; arg-names = args の関数を持たない型の、記録の引数に載せる欄の名(型の宣言の args — None = dataclass の全部の欄)。
   (defn #^ None __init__ [self #^ type cls #^ (| str Callable) mode #^ (| Callable None) [args None] #^ (| Callable None) [subject None]
                   #^ (| _Diverge bool None) [unexecuted DIVERGE] #^ (| str None) [binds None] #^ bool [watch False]
-                  #^ (| Callable None) [recorded None] #^ (| tuple None) [arg-names None]]
+                  #^ (| tuple None) [arg-names None]]
     (setv self.cls cls self.name (type-name cls) self.mode mode self.args-fn args self.subject-fn subject
-          self.unexecuted unexecuted self.binds binds self.watch watch self.recorded-fn recorded self.arg-names arg-names)))
+          self.unexecuted unexecuted self.binds binds self.watch watch self.arg-names arg-names)))
 
 
 (defn _fields-args [effect handles]
   ;; 欄の名は登録の arg-names(型の宣言の args)か、無ければ dataclass の全部の欄。
+  ;; OpaqueJson の欄(形を書き手が決める JSON — 盤の書きの値など)は、包みの型の綴りでなく中の JSON の値で綴る(#2579)。
+  ;; 比べる形が書き手の包み方に依らず、値が素の JSON の値だった旧い記録の行とも同じ綴りになる(旧い行の揃えは record_model.read-recording)。
   (setv names (. (codec-of effect) arg-names))
   (dfor name (if (is names None) (gfor f (dataclasses.fields effect) f.name) names)
-        name (encode-value (getattr effect name) handles)))
+        :setv v (getattr effect name)
+        name (encode-value (if (isinstance v OpaqueJson) (json.loads v.text) v) handles)))
 
 (defn _loose-value [v handles]
   "live の effect の引数・答えは順番の突き合わせと報告にしか使わないので、JSON にできない値は repr の印にする。"
@@ -429,28 +430,6 @@
   (fn [effect handles]
     (setv named (.name-of handles (getattr effect attr)))
     (if (and (is-not named None) (= (get named 0) "named-sem")) READ LIVE)))
-
-(defn _key-subject [args] (str (.get args "key")))
-
-(defn #^ object _board-json [#^ OpaqueJson opaque #^ (| HandleTable None) handles]
-  "盤の書きの値(OpaqueJson)を記録の比べる形にするため: 盤が持つ JSON の値を encode-value で綴る(#2543)。値が素の JSON の値だった
-   旧い記録の行と同じ綴りになり、記録と再生の突き合わせが書きの形の違いを「違う」と数えない。"
-  (encode-value (json.loads opaque.text) handles))
-
-(defn #^ object _recorded-board-json [#^ object j]
-  "記録の行の盤の書きの値を新しい形(盤が持つ JSON の値の綴り)へ揃えるため: 旧い形は素の値を encode-value で綴った物で、tuple は
-   $t・文字列でない鍵は $d を持つ — 盤へ JSON で運べば list・文字列の鍵になるので、その JSON の値に直して綴り直す。新しい形の行は
-   そのままの綴りに戻る(同じ JSON の値を 2 度綴るだけ)。"
-  (_board-json (OpaqueJson.of (decode-value j)) None))
-
-(deff _recorded-write-args [#^ dict args]  ; defk にできない: 記録の読み(read-recording — Program の外の純粋な関数)が型の登録から呼ぶ callback
-  {:pre [(: args dict)] :post [(: % dict)] :tags {:context "doeff-cluster" :role "judgment"}}
-  "WriteShared の記録の行の引数を、新旧どちらの形で書かれていても同じ綴りで読むため(#2543)。expect の ANY({\"$any\": 1})と
-   None(行が無い時だけ)は値ではないので揃えない。"
-  (setv expect (.get args "expect"))
-  (| args
-     {"value" (_recorded-board-json (.get args "value"))
-      "expect" (if (or (is expect None) (= expect {"$any" 1})) expect (_recorded-board-json expect))}))
 
 ;; 宣言の属性の名(effect の class の ClassVar — shared/intent/record_spec.hy)。
 (setv SPEC-ATTRIBUTE "__record_spec__")
@@ -464,24 +443,13 @@
 (setv _REGISTRY {})
 ;; 型の宣言から作った登録(型 → 登録)。登録表(register)とは分けて持つ — registered-types は register の行だけを答える。
 (setv _DECLARED {})
-;; 記録の型の名(今の名)→ 登録。記録の行の引数を今の版の比べる形へ揃える時に、行の型の名で引く(recorded-args — 旧い名は
-;; MOVED-TYPES・MOVED-MODULES で今の名へ揃える)。宣言から作った登録は初めて見た時に入る。
-(setv _BY-NAME {})
 
 (defn #^ EffectCodec register [#^ EffectCodec codec]
   ;; 登録表と型の宣言の両方を持つ型は、どちらが効くかを読み手が取り違えるので登録の時に止める。
   (when (in SPEC-ATTRIBUTE (vars codec.cls))
     (raise (MalformedRecordSpec (.format "{} は記録の宣言(__record_spec__)を持つので登録表に足さない(片方だけにする)" codec.name))))
   (setv (get _REGISTRY codec.cls) codec)
-  (setv (get _BY-NAME codec.name) codec)
   codec)
-
-(defn #^ dict recorded-args [#^ str name #^ dict args]
-  "記録の行の問いの引数を、今の版の比べる形で読むため: 型の登録が旧い記録の形を読む関数(recorded)を持てば通す(#2543 —
-   WriteShared の値が OpaqueJson になる前の記録)。型の名は置き場を移す前の名でもよい(MOVED-TYPES・MOVED-MODULES で今の名へ引く)。"
-  (setv #(written qualname) (.split (.get MOVED-TYPES name name) ":" 1))
-  (setv codec (.get _BY-NAME (.format "{}:{}" (.get MOVED-MODULES written written) qualname)))
-  (if (or (is codec None) (is codec.recorded-fn None)) args (codec.recorded-fn args)))
 
 ;; --- 型の宣言(__record_spec__)を読む ----------------------------------------------------------------
 ;; 宣言の値は欄の名(SPEC-FIELDS)と値の綴り(StrEnum の値)で読む(RecordSpec を import しない)。
@@ -534,7 +502,6 @@
     (return None))
   (setv codec (_codec-from-spec cls))
   (setv (get _DECLARED cls) codec)
-  (setv (get _BY-NAME codec.name) codec)
   codec)
 
 (deff can-record [#^ type cls]  ; defk にできない: 使い手の repo の登録漏れの検が Program の外で型ごとに問う
@@ -587,17 +554,9 @@
 (register (EffectCodec CreatePromise LIVE :args (fn [e h] {}) :binds "promise"))
 (register (EffectCodec CompletePromise LIVE :args (fn [e h] {"promise" (_loose-value e.promise h) "value" (_loose-value e.value h)})))
 (register (EffectCodec FailPromise LIVE :args (fn [e h] {"promise" (_loose-value e.promise h) "error" (_loose-value e.error h)})))
-;; 盤の書き: 値と expect の値は OpaqueJson(#2543)。記録の比べる形は盤が持つ JSON の値の綴り(_board-json)で、OpaqueJson の
-;; dataclass の綴りにしない — 値が素の JSON の値だった旧い記録の行も、読む時に同じ綴りへ揃える(_recorded-write-args)。
-(register (EffectCodec WriteShared OUTPUT :subject _key-subject :unexecuted True
-                       :args (fn [e h] {"key" e.key "value" (_board-json e.value h)
-                                        "expect" (cond (is e.expect ANY) {"$any" 1}
-                                                       (is e.expect None) None
-                                                       True (_board-json e.expect h))})
-                       :recorded _recorded-write-args))
 
-;; 盤の読み・lease の問い・名前付きの semaphore・readiness と計器の報告・process の gauge の読み(shared/intent の 7 型)は、型の宣言
-;; (__record_spec__)で記録する(#2578 — 登録表の行は持たない)。
+;; 盤の読み書き・lease の問い・名前付きの semaphore・readiness と計器の報告・process の gauge の読み(shared/intent の 8 型)は、型の宣言
+;; (__record_spec__)で記録する(#2578・#2579 — 登録表の行は持たない)。
 
 ;; --- 業務コードの effect ------------------------------------------------------------------------------
 ;; 業務の effect の型は、業務の側の module が import の時に register で足す(この package は業務の型を知らない)。
