@@ -32,7 +32,9 @@
 ;;; view(呼び手が作る): {"ready": Ready|NotReady|Unknown  "stopped": 真 / 偽 / None  "specReplicas": 宣言の台数 | None  "reason": …}
 ;;; Deployment の stopped は「宣言 0 かつ Pod 0(終了中を含む)」(api_policy.target-view)。
 ;;; spec の検め(validate-target・validate-rollout-spec)は送り手の本文の誤りを BodyInvalid(400 — cluster_model)で断る。
-(import .cluster_model [BodyInvalid])
+(require doeff-hy.macros [val])
+(val MODULE-TAGS {:context "coordinator" :role "judgment"})
+(import doeff_cluster.cluster_model [BodyInvalid])
 
 (setv TERMINAL-PHASES #{"Complete" "RolledBack"})
 (setv DEFAULTS {"readyTimeoutSeconds" 300 "stopTimeoutSeconds" 180 "observeSeconds" 1800 "failAfterSeconds" 30

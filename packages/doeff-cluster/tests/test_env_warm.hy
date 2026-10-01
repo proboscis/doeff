@@ -31,7 +31,7 @@
 (import doeff_cluster.coordinator_inbox [http-request])
 (import doeff_cluster.coordinator.core.cluster_policy [place-tasks register-heartbeat heartbeat-reply load-of tasks-for])
 (import doeff_cluster.coordinator.core.api_policy [respond])
-(import doeff_cluster.metrics_policy [metrics-text])
+(import doeff_cluster.coordinator.core.metrics_policy [metrics-text])
 (import doeff_cluster.worker_model [JobSpec CodeView CodeState WorldView WorkerPolicy PrepareEnv StartJob SweepEnvs WarmEnv
                                     EnvDisk code-key])
 (import doeff_cluster.worker_policy [plan pinned-env-keys])

@@ -7,7 +7,7 @@
 ;;; 版を比べるのは等しいか(大小ではない — 置き場を失って起き直した coordinator の版が送り手の知る版より小さくても、変わったと答える)。
 (require doeff-hy.macros [defk <- val var])
 (import dataclasses [replace])
-(import .cluster_model [ClusterState ClusterTiming Request Watcher WatchRefusal WatchAnswer WatchStep WATCH-MAX-SECONDS])
+(import doeff_cluster.cluster_model [ClusterState ClusterTiming Request Watcher WatchRefusal WatchAnswer WatchStep WATCH-MAX-SECONDS])
 (import doeff_cluster.coordinator.core.cluster_policy [heartbeat-reply])
 (import doeff_cluster.coordinator.core.api_policy [ready-instances])
 

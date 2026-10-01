@@ -17,7 +17,7 @@
 (import doeff_cluster.coordinator.core.api_policy [respond])
 (import doeff_cluster.coordinator.core.program [run-coordinator])
 (import doeff_cluster.wal_store [WalStore])
-(import doeff_cluster.durable_kv [LEGACY-PLACEMENT PLACEMENT])
+(import doeff_cluster.coordinator.core.durable_kv [LEGACY-PLACEMENT PLACEMENT])
 
 (setv T (ClusterTiming))
 (setv V {"python" "3.14.0" "doeff" "1"})
@@ -291,7 +291,7 @@
   ;; 資源の書き(版つき)を追記の log へ永続化し、読み直した状態の資源の版と宣言が同じ。
   (import tempfile)
   (import doeff_cluster.wal_store [WalStore wal-store])
-  (import doeff_cluster.durable_kv [durable-kv state-from-kv])
+  (import doeff_cluster.coordinator.core.durable_kv [durable-kv state-from-kv])
   (setv d (tempfile.mkdtemp) store (WalStore d))
   (.load store)
   (setv script (Script [(req "POST" "/resources/Service" {"name" "a" "spec" {"revision" "r" "needs" ["net"] "run" SAMPLE-RUN}})
@@ -349,7 +349,7 @@
 
 
 (deftest test-the-new-placement-key-wins-over-the-legacy-one-and-is-not-overwritten
-  (import doeff_cluster.durable_kv [state-from-kv legacy-key-moves])
+  (import doeff_cluster.coordinator.core.durable_kv [state-from-kv legacy-key-moves])
   (setv kv {(+ LEGACY-PLACEMENT "a") {"job" "a" "worker" "old" "generation" 1 "since_ms" 0}
             (+ PLACEMENT "a") {"job" "a" "worker" "new" "generation" 2 "since_ms" 10}
             (+ LEGACY-PLACEMENT "b") {"job" "b" "worker" "zeus" "generation" 5 "since_ms" 0}})

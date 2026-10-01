@@ -15,8 +15,10 @@
 ;;;
 ;;; drain は期限(ttlSeconds・頼み直すたびに延びる)で消え、別の process の世代の heartbeat が来ても解ける
 ;;; (cluster_policy.absorb-boot — Pod を作り直した後の worker は空けない)。取り消しは DELETE /workers/<名>/drain。
+(require doeff-hy.macros [val])
+(val MODULE-TAGS {:context "coordinator" :role "judgment"})
 (import dataclasses [replace])
-(import .cluster_model [ClusterJob ClusterState ClusterTiming Drain Placement])
+(import doeff_cluster.cluster_model [ClusterJob ClusterState ClusterTiming Drain Placement])
 (import doeff_cluster.coordinator.core.cluster_policy [alive eligible can-take draining-workers load-of other-generation-boot LIVE-PHASES MAX-EVENTS])
 (import doeff_cluster.coordinator.core.resource_policy [refuse service-readiness])
 

@@ -23,7 +23,7 @@
 (import tests.fixtures.sim_programs [beacons beacons-v2 handoff-beacons handoff-beacons-v2 relay flavors fenced gpu-only
                                     holding-unloadable Unloadable spawners quitters pulses detaching context-env-readers])
 (import doeff_cluster.runtime_env_model [RuntimeEnv runtime-env->json])
-(import doeff_cluster.coordinator_invariants [acknowledged-writes-survive])
+(import doeff_cluster.coordinator.core.coordinator_invariants [acknowledged-writes-survive])
 (import doeff_cluster.worker_invariants [handoff-keeps-a-ready-writer])
 (import tests.env_fixtures [LOCK env-of])
 

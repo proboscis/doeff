@@ -46,7 +46,7 @@
 (import doeff_time [SimClock sim-time-handler])
 (import doeff_cluster.clock [now-epoch-ms])
 (import doeff_cluster.cluster_model [ClusterState])
-(import doeff_cluster.durable_kv [state-from-kv])
+(import doeff_cluster.coordinator.core.durable_kv [state-from-kv])
 (import doeff_cluster.shared_handlers [shared-memory shared-http SharedClient])
 (import doeff_cluster.metrics_handlers [metrics-memory metrics-http])
 (import doeff_cluster.readiness_handlers [readiness-memory readiness-http])

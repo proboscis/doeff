@@ -6,7 +6,7 @@
 ;;; task を受けるので、task の検は先に program-placed で置いてから送る(置き場の版が task の版になる)。
 (require doeff-hy.macros [defk val])
 (import doeff_cluster.cluster_model [ClusterState])
-(import doeff_cluster.program_policy [program-write])
+(import doeff_cluster.coordinator.core.program_policy [program-write])
 (import doeff_cluster.remote_model [program-sha])
 
 ;; 置き場のキーの見本(64 桁の sha256 の形 — coordinator は /programs に在るかを Service の行の受け付けでは確かめない)。

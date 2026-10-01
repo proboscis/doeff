@@ -2,7 +2,7 @@
 ;;; metrics-memory = list に記録する(テスト)。HTTP の client は report_client.hy に閉じる(報告には送り手の process の世代が載る)。
 (require doeff-hy.macros [defhandler])
 (import .metrics_model [ReportMetrics])
-(import .metrics_policy [checked-metrics])
+(import doeff_cluster.coordinator.core.metrics_policy [checked-metrics])
 (import doeff_cluster.coordinator.core.resource_policy [Refused])
 (import .report_client [ServiceReportClient])
 

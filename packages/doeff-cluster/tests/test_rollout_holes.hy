@@ -6,10 +6,10 @@
 (require doeff-hy.macros [deftest val var])
 (import dataclasses [replace])
 (import doeff_cluster.cluster_model [ClusterState ClusterTiming Request TaskRecord])
-(import doeff_cluster.durable_kv [full-kv state-from-kv])
+(import doeff_cluster.coordinator.core.durable_kv [full-kv state-from-kv])
 (import doeff_cluster.coordinator.core.api_policy [respond plan-rollouts resume-after-downtime mark-alive ALIVE-MARK-MS])
-(import doeff_cluster.rollout_policy [rollout-step action-due retry-delay-ms shift-clocks RETRY-MAX-MS])
-(import doeff_cluster.metrics_policy [metrics-text])
+(import doeff_cluster.coordinator.core.rollout_policy [rollout-step action-due retry-delay-ms shift-clocks RETRY-MAX-MS])
+(import doeff_cluster.coordinator.core.metrics_policy [metrics-text])
 (import tests.test_rollout [Sim FORWARD DEP phases-of])
 
 (setv T (ClusterTiming))
