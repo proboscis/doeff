@@ -13,6 +13,7 @@
 ;;; 組は with_handlers に渡す list(外側が先)。選ぶのは composition root(coordinator.main・業務の側の模擬環境)だけ。
 ;;; 本番の受付の handler は foundation/coordinator_inbox.hy(coordinator.hy から分けた — この module と coordinator.hy の循環を作らない)。
 (require doeff-hy.macros [defhandler defk <- val var])
+(import doeff_cluster.coordinator.protocol.request_bodies [request-bodies])
 (import copy)
 (import math [ceil])
 (import doeff_cluster.shared.core.clock [now-epoch-ms])
@@ -33,7 +34,7 @@
 
 (defn #^ list production-handlers [#^ RequestInbox inbox #^ WalStore store #^ StopState stop #^ object kube]
   "本番の組(外側が先)。kube = kube-api か kube-unavailable(資格の有無は composition root が決める)。"
-  [(await-handler) (async-time-handler) (stop-flag stop) (wal-store store) (http-requests inbox) kube])
+  [(await-handler) (async-time-handler) (stop-flag stop) (wal-store store) (http-requests inbox) kube request-bodies])
 
 
 ;; --- まねた環境 -------------------------------------------------------------------------------
@@ -205,4 +206,4 @@
 (defn #^ list emulated-handlers [#^ RequestQueue queue #^ MemoryWalStore store #^ StopState stop #^ KubeMemory kube]
   "まねた環境の組(外側が先)。時計は持たない — 外側の sim の時計(sim-time-handler か async-time-handler)が答える。stop = 停止の合図
    (coordinator_inbox.StopState)。"
-  [(stop-flag stop) (wal-store store) (queued-requests queue) (kube-memory kube)])
+  [(stop-flag stop) (wal-store store) (queued-requests queue) (kube-memory kube) request-bodies])

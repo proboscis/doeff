@@ -40,6 +40,7 @@
 (import doeff_cluster.coordinator.core.durable_kv [durable-delta])
 (import doeff_cluster.coordinator.core.api_policy [respond tick plan-rollouts deployments-to-observe scale-service record-action mark-alive ROLLOUT-ACTOR ROLLOUT-TICK-MS TICK-MS])
 (import doeff_cluster.coordinator.core.resource_policy [stamp])
+(import doeff_cluster.coordinator.intent.request_bodies [ReadBody])
 (import doeff_cluster.coordinator.intent.kube_model [ReadDeployment ScaleDeployment AnnotateDeployment ReadNodeLabels KubeUnavailable])
 
 
@@ -107,7 +108,9 @@
    :tags {:context "doeff-cluster" :role "program"}}
   ;; 版の変化を待つ読み(GET /watch)でない要求 1 件に答えるため: 判断(api_policy.respond)で次の状態と返事を導き、中の欠陥は log に
   ;; 1 行出して送り手に見せる本文にする。答え = #(次の状態 status 本文)。
-  (val result (respond state request now timing))
+  ;; 本文は道の型に解いてから判断に渡す(答え手 = coordinator/protocol/request_bodies — #2445)。
+  (<- read-body (ReadBody request))
+  (val result (respond state request now timing read-body))
   (val body (get result 2))
   (if (isinstance body Fault)
       (do (<- fault-body dict (fault-reply body))

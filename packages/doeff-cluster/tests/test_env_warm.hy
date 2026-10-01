@@ -33,7 +33,7 @@
 (import doeff_cluster.coordinator.intent.cluster_model [ClusterState TaskRecord WorkerInfo ComponentVersion])
 (import doeff_cluster.foundation.coordinator_inbox [http-request])
 (import doeff_cluster.coordinator.core.cluster_policy [place-tasks register-heartbeat heartbeat-reply load-of tasks-for])
-(import doeff_cluster.coordinator.core.api_policy [respond])
+(import doeff_cluster.coordinator.protocol.request_bodies [responded])
 (import doeff_cluster.coordinator.core.metrics_policy [metrics-text])
 (import doeff_cluster.worker.intent.worker_model [CodeView CodeState WorldView WorkerPolicy PrepareEnv StartJob SweepEnvs WarmEnv
                                     EnvDisk] doeff_cluster.shared.intent.job_model [JobSpec] doeff_cluster.worker.core.worker_rules [code-key])
@@ -207,7 +207,7 @@
   (<- declared dict (declared-of "app-1"))
   (<- key-linux str (key-on declared "linux-x86_64"))
   (val body {"runtimeEnv" declared "needs" ["agent-cli"] "ttlSeconds" 600 "holder" "svc-a"})
-  (val written (respond (ClusterState) (http-request "POST" "/warm" {} body :actor "svc-a") 1000 TIMING))
+  (val written (responded (ClusterState) (http-request "POST" "/warm" {} body :actor "svc-a") 1000 TIMING))
   (val after (get written 0))
   (assert (= (get written 1) 200) written)
   (val warmed (warm-state-of-json (get written 2)))
@@ -225,12 +225,12 @@
           "専用の能力(gpu)を持つ worker には、その能力を要らない行を配らない")
   (assert (= (get (heartbeat-reply s2 "w1" TIMING :now 700000) "warm") []) "期限を過ぎた行は配らない")
   ;; 読む: w1 は準備中 → 準備済みを名乗った後は ready
-  (val read-1 (get (respond s2 (http-request "GET" (+ "/warm/" warmed.key) {} None) 2000 TIMING) 2))
+  (val read-1 (get (responded s2 (http-request "GET" (+ "/warm/" warmed.key) {} None) 2000 TIMING) 2))
   (assert (= (. (warm-state-of-json read-1) preparing) #("w1")) read-1)
   (val s3 (register-heartbeat s2 (| hb {"envs" {"ready" [key-linux] "preparing" [] "failed" []}}) 3000))
-  (val read-2 (get (respond s3 (http-request "GET" (+ "/warm/" warmed.key) {} None) 3000 TIMING) 2))
+  (val read-2 (get (responded s3 (http-request "GET" (+ "/warm/" warmed.key) {} None) 3000 TIMING) 2))
   (assert (= (. (warm-state-of-json read-2) ready) #("w1")) read-2)
-  (val missing (respond s3 (http-request "GET" "/warm/000000000000000000000000" {} None) 3000 TIMING))
+  (val missing (responded s3 (http-request "GET" "/warm/000000000000000000000000" {} None) 3000 TIMING))
   (assert (= (get missing 1) 404) missing))
 
 
@@ -330,7 +330,7 @@
   (<- placed tuple (program-placed (ClusterState :workers {"w1" (worker-of "w1" #("net") 0)} :tasks {"t1" (env-task "t1" declared)}
                                                  :next-task 2)
                                    {} :now 10))
-  (val submitted (respond (get placed 0) (http-request "POST" "/tasks" {}
+  (val submitted (responded (get placed 0) (http-request "POST" "/tasks" {}
                                                   {"program" (get placed 1) "revision" "" "needs" ["net"] "leaseSeconds" 60
                                                    "runtimeEnv" declared})
                           10 TIMING))

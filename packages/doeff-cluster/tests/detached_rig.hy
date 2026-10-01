@@ -18,7 +18,8 @@
 (import doeff_cluster.shared.intent.protocol [ClusterTiming])
 (import doeff_cluster.coordinator.intent.cluster_model [ClusterState])
 (import doeff_cluster.foundation.coordinator_inbox [http-request])
-(import doeff_cluster.coordinator.core.api_policy [respond tick])
+(import doeff_cluster.coordinator.core.api_policy [tick])
+(import doeff_cluster.coordinator.protocol.request_bodies [responded])
 (import tests.link_rig [LinkRig])
 (import doeff_cluster.worker.core.launch [program-file])
 (import doeff_cluster.foundation.host_contract [environ-reader])
@@ -135,7 +136,7 @@
           split (urlsplit (str request.url))
           body (if request.content (json.loads request.content) None))
     (setv self.state (tick self.state now self.timing))
-    (setv #(state status reply) (respond self.state (http-request request.method split.path (dict (parse-qsl split.query)) body
+    (setv #(state status reply) (responded self.state (http-request request.method split.path (dict (parse-qsl split.query)) body
                                                              :actor (.get request.headers "x-actor"))
                                          now self.timing))
     (setv self.state state)

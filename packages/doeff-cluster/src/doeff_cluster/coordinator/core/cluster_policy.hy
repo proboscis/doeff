@@ -13,7 +13,8 @@
 (import doeff_cluster.shared.intent.protocol [ClusterTiming Request BodyInvalid])
 (import doeff_cluster.shared.core.capabilities [capabilities-of environ-pairs])
 (import doeff_cluster.coordinator.intent.cluster_model [ClusterJob WorkerInfo GenerationOrder Placement ClusterState TaskRecord Drain EnvFailed WarmEntry HandoffPhase RefusedJob UnplacedKind ACCEPTED-FORMATS PLACED-PHASES])
-(import doeff_cluster.coordinator.core.cluster_rules [component-versions-of format-refusal])
+(import doeff_cluster.coordinator.core.cluster_rules [component-versions-of format-refusal format-version-refusal])
+(import doeff_cluster.coordinator.intent.request_bodies [LeaseBody TaskResultBody])
 (import doeff_cluster.coordinator.core.cluster_json [task-record-to-json task-record-from-json handoff-watch-from-json required-field int-field])
 (import doeff_cluster.shared.intent.semaphore_model [SEMAPHORE-PREFIX])
 (import doeff_cluster.shared.core.lease_rules [lease-op semaphore-write-refusal semaphore-key])
@@ -883,7 +884,7 @@
   tasks)
 
 
-(defn #^ tuple absorb-task-result [#^ ClusterState state #^ str id #^ dict body #^ int now]
+(defn #^ tuple absorb-task-result [#^ ClusterState state #^ str id #^ TaskResultBody body #^ int now]
   "POST /tasks/<id>/result: task の子 process が終わる前に直に届けた結果を task の記録へ写す(#1387 — 結果の運び手を worker の
    heartbeat だけにすると、子の exit 0 から次の heartbeat までに worker が死んだ時に結果が届かず、起き直した worker が同じ task を
    もう 1 度走らせた)。本文 = {worker instance result format}(shared/protocol/task_result の task-result-request)。返り値 #(次の状態 status 答え)。
@@ -893,11 +894,10 @@
    - 別の worker に置いた task → 409(古い送り手)。知らない task(呼び手が落とした・lease 切れ)→ 404。
    切り離した task も置いた worker の名だけで比べる: 子は worker の process の世代を知らず、切り離した task は置いた世代の process にしか
    渡らない(tasks-for)ので、同じ名の worker の子が届ける結果はその task を走らせた process の物。"
-  (setv refusal (format-refusal body))
+  ;; 欄の欠けと型の誤りは本文を解く所(coordinator/protocol/request_bodies)が 400 で断る。ここで見るのは形の版だけ。
+  (setv refusal (format-version-refusal body.format))
   (when refusal (return #(state 400 {"error" refusal})))
-  (setv worker (required-field body "worker") result (required-field body "result"))
-  (when (not (isinstance worker str)) (raise (BodyInvalid (.format "worker は文字列: {!r}" worker))))
-  (when (not (isinstance result str)) (raise (BodyInvalid (.format "result は詰めた結果の文字列: {!r}" (type result)))))
+  (setv worker body.worker result body.result)
   (setv task (.get state.tasks id))
   (cond
     (is task None)
@@ -908,7 +908,7 @@
       #(state 409 {"error" (.format "task {} は worker {} に置いてある(送り手 {})" id task.worker worker)})
     True
       #((replace state :tasks (| state.tasks {id (task-finished task now (.format "子 process {} が終わる前に届けた"
-                                                                                 (.get body "instance" "")) result)}))
+                                                                                 body.instance) result)}))
         200 {"accepted" True "phase" "finished"})))
 
 
@@ -1320,15 +1320,12 @@
      "failureKind" task.failure-kind "retryable" task.retryable}))
 
 
-(defn #^ tuple lease-write [#^ ClusterState state #^ str name #^ dict body #^ int now]
+(defn #^ tuple lease-write [#^ ClusterState state #^ str name #^ LeaseBody body #^ int now]
   "POST /leases/<名>: lease の操作 1 つを coordinator の時計で当てる(lease_rules.lease-op)。行が変われば盤へ書く
    (版を 1 進める・盤の書きと同じく永続化してから返事をする)。返り値 #(次の状態 status 答え)。"
-  ;; 本文の欄の欠け・型の誤りは送り手の誤り(BodyInvalid・400)— KeyError や int() の例外を受け口へ漏らさない(#1024)。
-  (setv op (required-field body "op") token (required-field body "token"))
-  (when (not (isinstance op str)) (raise (BodyInvalid (.format "op は文字列: {!r}" op))))
-  (when (not (isinstance token str)) (raise (BodyInvalid (.format "token は文字列: {!r}" token))))
+  ;; 本文の欄の欠け・型の誤りは本文を解く所(coordinator/protocol/request_bodies)が 400 で断る(#1024・#2445)。
   (setv key (semaphore-key name) current (.get state.board key)
-        #(row answer) (lease-op current op token (int-field body "permits" 1) (int-field body "ttlMs" 0) now))
+        #(row answer) (lease-op current body.op body.token body.permits body.ttl-ms now))
   (if (or (is row current) (is row None))
       #(state 200 answer)
       (do (setv version (.get state.board-versions key (if (is current None) 0 1)))

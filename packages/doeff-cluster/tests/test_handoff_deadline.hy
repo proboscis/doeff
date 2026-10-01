@@ -14,7 +14,8 @@
 (import doeff_cluster.shared.intent.protocol [ClusterTiming])
 (import doeff_cluster.coordinator.intent.cluster_model [ClusterState])
 (import doeff_cluster.foundation.coordinator_inbox [http-request])
-(import doeff_cluster.coordinator.core.api_policy [respond resume-after-downtime])
+(import doeff_cluster.coordinator.core.api_policy [resume-after-downtime])
+(import doeff_cluster.coordinator.protocol.request_bodies [responded])
 (import doeff_cluster.coordinator.core.durable_kv [durable-kv state-from-kv])
 (import doeff_cluster.coordinator.core.cluster_policy [job-from-json])
 (import doeff_cluster.handlers [declared-job-spec] doeff_cluster.worker.protocol.heartbeat [status-row])
@@ -56,7 +57,7 @@
 
   (defn #^ dict call [self #^ str method #^ str path #^ (| dict None) [body None] #^ (| str None) [actor "c-test"]]  ; defk にできない: 模擬の世界の method(coordinator の口へ要求を送る)
     "coordinator の本物の返事(api_policy.respond)へ要求を 1 件送り、状態を進めて本文を返す。"
-    (setv #(state status reply) (respond self.state (http-request method path {} body :actor actor) self.now T))
+    (setv #(state status reply) (responded self.state (http-request method path {} body :actor actor) self.now T))
     (assert (< status 300) #(method path status reply))
     (setv self.state state)
     reply)

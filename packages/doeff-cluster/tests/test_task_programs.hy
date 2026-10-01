@@ -21,7 +21,8 @@
 (import doeff_cluster.foundation.coordinator_inbox [http-request])
 (import doeff_cluster.coordinator.core.cluster_policy [state-to-json state-from-json])
 (import doeff_cluster.coordinator.core.durable_kv [full-kv state-from-kv])
-(import doeff_cluster.coordinator.core.api_policy [respond tick])
+(import doeff_cluster.coordinator.core.api_policy [tick])
+(import doeff_cluster.coordinator.protocol.request_bodies [responded])
 (import doeff_cluster.coordinator.core.program_policy [PROGRAM-GRACE-MS])
 (import tests.host_rig [host-settings launched])
 (import tests.link_rig [LinkRig])
@@ -51,7 +52,7 @@
   {:pre [(: state ClusterState) (: method str) (: path str) (: body (| dict None)) (: now int)] :post [(: % tuple)]
    :tags {:context "doeff-cluster-test" :role "entry"}}
   "coordinator の純粋な振り分け 1 件(送り手 c-test)→ #(次の状態 status 本文)。"
-  (respond state (http-request method path {} body :actor "c-test") now T))
+  (responded state (http-request method path {} body :actor "c-test") now T))
 
 
 (defk beat [state now statuses]

@@ -19,7 +19,8 @@
 (import doeff_cluster.shared.intent.protocol [ClusterTiming])
 (import doeff_cluster.coordinator.intent.cluster_model [ClusterNaming ClusterState])
 (import doeff_cluster.foundation.coordinator_inbox [http-request])
-(import doeff_cluster.coordinator.core.api_policy [respond ready-instances])
+(import doeff_cluster.coordinator.core.api_policy [ready-instances])
+(import doeff_cluster.coordinator.protocol.request_bodies [responded])
 (import doeff_cluster.coordinator.core.program [rollout-tick])
 (import doeff_cluster.foundation.kube_handlers [KubeMemory kube-memory])
 (import doeff_cluster.worker.protocol.heartbeat [status-row])
@@ -56,7 +57,7 @@
     None)
 
   (defn #^ dict call [self #^ str method #^ str path #^ (| dict None) [body None] #^ (| str None) [actor "c-test"]]
-    (setv #(state status reply) (respond self.state (http-request method path {} body :actor actor) self.now T))
+    (setv #(state status reply) (responded self.state (http-request method path {} body :actor actor) self.now T))
     (assert (< status 300) #(method path status reply))
     (setv self.state state)
     reply)
