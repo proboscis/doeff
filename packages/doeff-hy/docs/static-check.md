@@ -41,8 +41,12 @@ macro の展開が型のために持つ形:
 | `deff` の戻り値 | `-> 'T'` | 同じ |
 | 本体の結果 | `_contract_result: 'T' = 最後の式`(局所変数の注記は実行時に評価されない) | 同じ |
 | `(<- x T e)` | `x = yield e` + isinstance の検査 | `x: 'T' = _doeff_perform(e)`(Python の `@effectful` の `x = perform(e)` と同じ形・yield を出さない — docs/24-effectful-perform.md) |
+| `(! e)` | `yield e`(open-bind を通す) | `_doeff_perform(e)`(`<-` と同じ — 注記の無い generator の yield の値は Unknown・agora-redesign #2279) |
 | defk を呼んだ結果 | `doeff.do.do` | 同じ型(core の `Expand[T, E]`)に、yield の無い関数の overload を足した `doeff_hy/static_types.pyi` の `do` |
 | `defhandler` の `(resume v)` / `(transfer v)` | `Resume(k, v)` / `Transfer(k, v)` | core の `typed_resume(effect, k, v)` / `typed_transfer`(v を effect の答えの型と突き合わせる) |
+| `defhandler` / `handle` の節を回す関数 | `(effect: '節の型の和', k)`(VM の絞り込みのための注記) | `(effect: object, k: _doeff_Continuation) -> _doeff_ClauseRun`(節の `isinstance` が型を絞る)。import は `Pass` と `WithHandler` だけ(agora-redesign #2279) |
+| `defhandler` の本文を受ける関数 | `def __doeff_handler_fn__(__doeff_body__):` | `(__doeff_body__: _doeff_HandlerBody[_doeff_HandledAnswer]) -> _doeff_HandledScope[_doeff_HandledAnswer]`(本文の答えの型をそのまま運ぶ・型 = `static_types.pyi`・名の表 = `static_view.py` の `HANDLER_STATIC_NAMES`) |
+| 節の終わり方の検め | `doeff_hy.clause_endings` から import | module の頭で型付きの `static_types` の同じ名を import(clause_endings は .hy なので型が見えない) |
 | 文の位置の式 | `_guard_statement_value(form, …)` | `_guard_statement_value(reveal_type(form), …)` |
 | 関数への属性 | `setattr(f, '__doeff_body__', …)` | 同じ |
 | `deftest` の関数 | `def test_x(doeff_interpreter, tmp_path):` + `return doeff_interpreter(…)` | `def test_x(doeff_interpreter: _doeff_DeftestInterpreter, tmp_path: _doeff_TmpPath) -> None:`(fixture の名 → 型の表 = `static_view.py` の `DEFTEST_FIXTURE_TYPES`・型 = `static_types.pyi`。表に無い名は書き手の `#^ T 名` を写し、無ければ `object`)。decorator の pytest は module の頭の `_doeff_pytest`(agora-redesign #2214) |

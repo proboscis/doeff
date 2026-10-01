@@ -1407,9 +1407,11 @@ the effect in the enclosing do-context.
                          (_bang-comprehension-msg owner head node)
                          (_bang-nested-fn-msg owner head node)))))
           ;; 実行時は <- と同じ open-bind を通す(宣言を持つ effect の不在・失敗を Absent / Raise に変え、
-          ;; Result / Maybe の値を開く — ADR-DOE-CORE-EFFECTS-003 R6)。型検査のための展開は今までの形。
+          ;; Result / Maybe の値を開く — ADR-DOE-CORE-EFFECTS-003 R6)。型検査のための展開は `<-` と同じ
+          ;; `_doeff_perform`(式の答えの型 — _bind-yield の静的な枝)。前は `(yield e)` で、注記の無い generator の
+          ;; yield の値は Unknown なので、(! …) を使う所ごとに書き手に直せない Unknown の赤が出ていた(agora-redesign #2279)。
           (if (_static-view?)
-              `(yield ~(walk (get node 1) ctx))
+              `(_doeff-perform ~(walk (get node 1) ctx))
               (do (import doeff-hy.outcome-forms [open-form])
                   (open-form (walk (get node 1) ctx) None helpers))))
 

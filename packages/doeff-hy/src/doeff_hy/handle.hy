@@ -62,6 +62,40 @@
       `(import doeff.do [do :as _doeff-do])))
 
 
+(defn _clause-endings-import [name alias]
+  "節の終わり方の検め(clause_endings.hy の name)を alias で引く import。型検査のための展開では、型付きの
+   doeff_hy.static_types の同じ名を doeff-hy-check が module の頭に 1 度だけ import する(static_view.py の
+   HANDLER_STATIC_NAMES — clause_endings は .hy なので pyright から型が見えない・agora-redesign #2279)。"
+  (if (static-view-enabled)
+      '(do)
+      `(import doeff-hy.clause-endings [~name :as ~alias])))
+
+
+(defn _vm-imports []
+  "handler の展開が使う doeff の node の import。型検査のための展開の resume / transfer は typed-resume /
+   typed-transfer になり Resume / Transfer を使わないので、Pass と WithHandler だけを出す(使わない import は strict の
+   赤 — agora-redesign #2279)。"
+  (if (static-view-enabled)
+      '(do (import doeff [Pass])
+           (import doeff_vm [WithHandler]))
+      '(do (import doeff [Resume Transfer Pass])
+           (import doeff_vm [WithHandler]))))
+
+
+(defn _handler-fn-form [endings-check]
+  "handler を本文に被せる関数 __doeff-handler-fn__ の定義。型検査のための展開では、本文を
+   `HandlerBody[HandledAnswer]`、答えを `HandledScope[HandledAnswer]`(本文の答えの型をそのまま運ぶ)と注記する
+   (doeff_hy/static_types.pyi・agora-redesign #2279)。実行時の展開は注記を付けない。"
+  (if (static-view-enabled)
+      `(defn #^ (get _doeff_HandledScope _doeff_HandledAnswer) __doeff-handler-fn__
+             [#^ (get _doeff_HandlerBody _doeff_HandledAnswer) __doeff-body__]
+         ~endings-check
+         (WithHandler __doeff-handler-data__ __doeff-body__))
+      `(defn __doeff-handler-fn__ [__doeff-body__]
+         ~endings-check
+         (WithHandler __doeff-handler-data__ __doeff-body__))))
+
+
 ;; ---------------------------------------------------------------------------
 ;; Lazy clause support — per-session effectful lazy init via Get/Put + Some
 ;; ---------------------------------------------------------------------------
@@ -556,7 +590,7 @@
          (setv _doeff_clause_value (do ~@rewritten))
          (if _doeff_clause_resumed
              _doeff_clause_value
-             (raise (do (import doeff-hy.clause-endings [fell-through :as _doeff-fell-through])
+             (raise (do ~(_clause-endings-import 'fell-through '_doeff-fell-through)
                         (_doeff-fell-through ~(if (is handler-name None) "handle" (str handler-name))
                                              ~(str etype)))))))
 
@@ -594,7 +628,13 @@
   (.append cond-forms 'True)
   (.append cond-forms '(yield (Pass effect k)))
 
-  (setv dispatcher `(_doeff-do (fn [~@(_effect-parameter (lfor clause clauses (get clause 0))) k] (cond ~@cond-forms))))
+  ;; 型検査のための展開(agora-redesign #2279): effect は object(節の isinstance が節ごとの型へ絞る — 節の型の和で
+  ;; 注記すると最後の節の isinstance が「いつも真」の赤になる)、k は続き、答えは ClauseRun(doeff_hy/static_types.pyi)。
+  ;; 実行時の展開は VM の型の絞り込みのために effect を節の型で注記する(_effect-parameter)。
+  (setv dispatcher
+    (if (static-view-enabled)
+        `(_doeff-do (fn #^ _doeff_ClauseRun [#^ object effect #^ _doeff_Continuation k] (cond ~@cond-forms)))
+        `(_doeff-do (fn [~@(_effect-parameter (lfor clause clauses (get clause 0))) k] (cond ~@cond-forms)))))
   (setv passed (_passed-effects-source clauses (_session-names (or lazy-defs []))))
   (if (is passed None)
       dispatcher
@@ -672,9 +712,8 @@
   (setv h-expr (_build-handler-expr clauses :module-names (_module-names _hy-compiler) :specs specs))
   (locate-synthesized `(do
      ~(_do-import)
-     (import doeff [Resume Transfer Pass])
-     (import doeff_vm [WithHandler])
-     (import doeff-hy.clause-endings [check-clause-endings :as _doeff-check-clause-endings])
+     ~(_vm-imports)
+     ~(_clause-endings-import 'check-clause-endings '_doeff-check-clause-endings)
      (_doeff-check-clause-endings "handle" [~@specs])
      (WithHandler ~h-expr ~body))))
 
@@ -811,17 +850,14 @@
   (locate-synthesized (if (is params None)
       `(do
          ~(_do-import)
-         (import doeff [Resume Transfer Pass])
-         (import doeff_vm [WithHandler])
-         (import doeff-hy.clause-endings [check-clause-endings-once :as _doeff-check-clause-endings-once])
+         ~(_vm-imports)
+         ~(_clause-endings-import 'check-clause-endings-once '_doeff-check-clause-endings-once)
          ~lazy-imports
          (setv ~name
            ((fn []
               (setv __doeff-handler-data__ ~handler-expr)
               (setv __doeff-clause-endings__ (fn [] [~@specs]))
-              (defn __doeff-handler-fn__ [__doeff-body__]
-                ~endings-check
-                (WithHandler __doeff-handler-data__ __doeff-body__))
+              ~(_handler-fn-form endings-check)
               (setattr __doeff-handler-fn__ "__doc__" ~docstring)
               (setattr __doeff-handler-fn__ "_doeff_is_handler_fn" True)
               (setattr __doeff-handler-fn__ "__doeff_handler_data__"
@@ -832,16 +868,13 @@
          ~@declared)
       `(do
          ~(_do-import)
-         (import doeff [Resume Transfer Pass])
-         (import doeff_vm [WithHandler])
-         (import doeff-hy.clause-endings [check-clause-endings-once :as _doeff-check-clause-endings-once])
+         ~(_vm-imports)
+         ~(_clause-endings-import 'check-clause-endings-once '_doeff-check-clause-endings-once)
          ~lazy-imports
          (defn ~name [~@params]
            (setv __doeff-handler-data__ ~handler-expr)
            (setv __doeff-clause-endings__ (fn [] [~@specs]))
-           (defn __doeff-handler-fn__ [__doeff-body__]
-             ~endings-check
-             (WithHandler __doeff-handler-data__ __doeff-body__))
+           ~(_handler-fn-form endings-check)
            (setattr __doeff-handler-fn__ "__doc__" ~docstring)
            (setattr __doeff-handler-fn__ "_doeff_is_handler_fn" True)
            (setattr __doeff-handler-fn__ "__doeff_handler_data__"

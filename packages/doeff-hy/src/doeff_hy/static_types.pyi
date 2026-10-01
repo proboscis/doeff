@@ -12,14 +12,15 @@
   は Any として通す — 誤検出を出さないことを優先する。Hy には effect の集合を宣言する口が
   まだ無いので、`perform: Effects[E]` の E の突き合わせはしない。
 - deftest の引数の型(`DeftestInterpreter` と pytest の組み込みの fixture の型・下の節)。
+- defhandler / handle の展開の型(節を回す関数・handler を被せる関数・節の終わり方の検め・末尾の節)。
 """
 
-from collections.abc import Callable, Generator, Mapping
+from collections.abc import Callable, Generator, Mapping, Sequence
 from pathlib import Path
 from typing import Any, Never, ParamSpec, Protocol, TypeAlias, TypeVar, overload
 
 import pytest
-from doeff_vm import Expand
+from doeff_vm import Expand, K, WithHandler
 
 from doeff import Program
 
@@ -74,3 +75,31 @@ PytestCache: TypeAlias = pytest.Cache
 Subtests: TypeAlias = pytest.Subtests
 RecordProperty: TypeAlias = Callable[[str, object], None]
 DoctestNamespace: TypeAlias = dict[str, object]
+
+# ---------------------------------------------------------------------------
+# defhandler / handle の展開の型(agora-redesign #2279)
+# ---------------------------------------------------------------------------
+# 型検査のための展開(doeff_hy/handle.hy)が、名を doeff_hy/static_view.py の HANDLER_STATIC_NAMES から
+# `_doeff_<名>` として引く。実行時の展開は注記を付けず、節の終わり方の検めは clause_endings.hy から import する。
+
+#: handler を被せる本文の答えの型。被せた結果は同じ答えの型を運ぶ(handler は本文の答えを変えない)。
+HandledAnswer = TypeVar("HandledAnswer")
+
+#: 節を回す関数の答え: effect・Pass・Resume / Transfer などの node を出し、送り返される値は続きの答えか
+#: 外の handler の答えで、節の答えは handler を置いたスコープの答え(finish)— どれも型の決まらない値なので object。
+ClauseRun: TypeAlias = Generator[object, object, object]
+#: 節を回す関数の引数 k(続き)。
+Continuation: TypeAlias = K
+#: handler を被せる本文(どの Program・effect も受ける — Program は答えと effect の両方で共変)。
+HandlerBody: TypeAlias = Program[HandledAnswer, object]
+#: handler を被せた結果(本文と同じ答えの型)。
+HandledScope: TypeAlias = WithHandler[HandledAnswer]
+
+#: 節 1 つの記述: (effect の型・使う操作の名・終える理由があるか)— handle.hy の ending-spec-form が作る組。
+_ClauseEnding: TypeAlias = tuple[object, tuple[str, ...], bool]
+
+def check_clause_endings(handler: str, clauses: Sequence[_ClauseEnding], /) -> None: ...
+def check_clause_endings_once(
+    data: Callable[..., object], handler: str, specs: Callable[[], Sequence[_ClauseEnding]], /
+) -> None: ...
+def fell_through(handler: str, effect_label: str, /) -> RuntimeError: ...

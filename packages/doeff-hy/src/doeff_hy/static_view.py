@@ -14,6 +14,11 @@
   (呼んだ結果が core の `Expand[T, E]` = 答えの型 T を持つ Program になる)
 - defhandler の `resume` / `transfer`: core の `typed_resume` / `typed_transfer`
   (答えの値を effect の `EffectBase[T]` の T と突き合わせる)
+- defhandler / handle の関数(agora-redesign #2279 — handle.hy): 節を回す関数の引数 `effect: object`
+  (節の `isinstance` が型を絞る)・`k: Continuation`・答え `ClauseRun`、handler を被せる関数の
+  本文 `HandlerBody[HandledAnswer]` → `HandledScope[HandledAnswer]`、節の終わり方の検めは型付きの
+  static_types の名(HANDLER_STATIC_NAMES)から引く。`from doeff import Pass` だけを出す(Resume / Transfer は
+  typed_resume / typed_transfer が代わるので使わない)
 - deftest の関数: 引数に fixture の型の注記(DEFTEST_FIXTURE_TYPES)・返り値 None・decorator の pytest は
   `_doeff_pytest`(agora-redesign #2214 — 実行時の展開は注記なしで interpreter の答えを返す)
 
@@ -84,6 +89,24 @@ def deftest_fixture_annotation(fixture: str) -> str:
     return deftest_annotation_name(found[0]) if found else "object"
 
 
+#: defhandler / handle の型検査のための展開が参照する static_types の名(agora-redesign #2279)— 展開の中では
+#: `_doeff_<名>` で引き、doeff-hy-check が module の頭で 1 度だけ import する(STATIC_HELPER_IMPORTS)。
+#: - 型: 節を回す関数の答え `ClauseRun`・続き `Continuation`・handler を被せる本文 `HandlerBody[HandledAnswer]` と
+#:   被せた結果 `HandledScope[HandledAnswer]`(本文の答えの型をそのまま運ぶ型変数)。
+#: - 関数: 節の終わり方の検め(clause_endings.hy の check-clause-endings・check-clause-endings-once・fell-through)。
+#:   実体は .hy なので pyright から型が見えない — 実行時の展開は今までどおり clause_endings から import する。
+HANDLER_STATIC_NAMES: tuple[str, ...] = (
+    "ClauseRun",
+    "Continuation",
+    "HandledAnswer",
+    "HandledScope",
+    "HandlerBody",
+    "check_clause_endings",
+    "check_clause_endings_once",
+    "fell_through",
+)
+
+
 #: 型検査のための展開で、macro が参照する補助の名の import(module の頭に 1 度だけ — doeff-hy-check が置く)。
 #: 実行時の展開は defk / defhandler / `<-` ごとに同じ import を出すが、静的な展開で同じことをすると、1 つの名に
 #: 宣言が積み上がる。pyright は 1 つの名の宣言が 64 を超えると型の推論をやめて Unknown にするので、defk を 65 個
@@ -94,7 +117,10 @@ STATIC_HELPER_IMPORTS: str = (
     "from doeff_hy.static_types import do as _doeff_do, _doeff_perform"
     + "".join(
         f", {name} as {deftest_annotation_name(name)}"
-        for name in sorted({entry.type_name for entry in DEFTEST_FIXTURE_TYPES})
+        for name in (
+            *sorted({entry.type_name for entry in DEFTEST_FIXTURE_TYPES}),
+            *HANDLER_STATIC_NAMES,
+        )
     )
     + "\n"
     "from doeff_hy.macros import _install_guard_globals, _guard_performed, _guard_statement_value, "
