@@ -230,7 +230,7 @@ fn line_examples_reach_the_questions_and_the_answers_come_back() {
     };
     for (rule, order) in [
         ("DOEFF201", vec!["question", "business_decision_examples", "not_business_decision_examples", "lines_note", "lines"]),
-        ("DOEFF202", vec!["question", "lines_note", "lines"]),
+        ("DOEFF202", vec!["question", "note", "transport_knowledge_examples", "not_transport_knowledge_examples", "lines_note", "lines"]),
         ("DOEFF205", vec!["question", "note", "lines_note", "lines"]),
     ] {
         let asked: Vec<&Value> = bodies.iter().filter(|b| rule_of(b) == rule).collect();
