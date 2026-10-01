@@ -1099,9 +1099,12 @@ fn relays_opaque_json(node: &Hy) -> bool {
     match node {
         Hy::Name { text, .. } => text == "OpaqueJson" || text.ends_with(".OpaqueJson"),
         _ => match node.expression() {
+            // 和は、少なくとも 1 枝が中継で、残りの枝が None か写像でない型(record など)なら中継(#2629 — `(| OpaqueJson Record)`)。
+            // 写像の枝(dict 等)を含む和は今までどおり数える。
             Some(items) if node.head() == "|" => {
                 let parts = &items[1..];
-                parts.iter().any(|part| !part.is("None")) && parts.iter().all(|part| part.is("None") || relays_opaque_json(part))
+                parts.iter().any(relays_opaque_json)
+                    && parts.iter().all(|part| part.is("None") || relays_opaque_json(part) || mapping_problem(part).is_none())
             }
             Some(items) if (node.head() == "get" || node.head() == "of") && items.len() >= 3 => {
                 let elements: Vec<&Hy> = type_args(items).into_iter().filter(|arg| !hy_ellipsis(arg)).collect();
@@ -1138,8 +1141,12 @@ fn py_relays_opaque_json(node: &Expr) -> bool {
             };
             RELAY_SEQUENCES.contains(&base.as_str()) && !elements.is_empty() && elements.into_iter().all(py_relays_opaque_json)
         }
+        // 和は、少なくとも 1 枝が中継で、他の枝が None か写像でない型(record など)なら中継(#2629)。写像の枝を含む和は数える。
         _ => is_bit_or(node).is_some_and(|(l, r)| {
-            (py_relays_opaque_json(l) || is_none(l)) && (py_relays_opaque_json(r) || is_none(r)) && !(is_none(l) && is_none(r))
+            let other_ok = |expr: &Expr| {
+                py_relays_opaque_json(expr) || is_none(expr) || py_wire_free_type_problem(expr).is_none_or(|problem| !problem.starts_with("写像"))
+            };
+            (py_relays_opaque_json(l) || py_relays_opaque_json(r)) && other_ok(l) && other_ok(r)
         }),
     }
 }
@@ -1332,6 +1339,21 @@ mod tests {
         let py = "class Docs:\n    documents: tuple[OpaqueJson, ...]\n    listed: list[OpaqueJson]\n    maybe: 'tuple[OpaqueJson, ...] | None'\n    index: dict[str, int]\n    mixed: tuple[OpaqueJson | dict, ...]\n";
         let py_found: Vec<String> = py_dict_smell_hits(py, "x.py").expect("読める").into_iter().map(|h| h.detail()).collect();
         assert_eq!(py_found, vec!["field:Docs.index", "field:Docs.mixed"]);
+    }
+
+    #[test]
+    fn dict_smell_does_not_count_unions_of_opaque_json_and_records() {
+        // agora-redesign #2629(#2587 の IntakeSettled.result・PostSettled.result): 中継の型 OpaqueJson と写像でない型(record)の和は
+        // 写像と数えない。写像の枝を含む和と、中継の枝の無い写像の和は今までどおり数える(失敗ケース)。
+        let source = r#"
+(defrecord Settled (#^ (| OpaqueJson IntakeRecord) result) (#^ (| OpaqueJson IntakeRecord None) maybe) (#^ (| IntakeRecord OpaqueJson) flipped)
+  (#^ (| OpaqueJson dict) mixed) (#^ (| IntakeRecord dict) plain))
+"#;
+        let found: Vec<String> = dict_smell_hits(source, true).expect("読める").into_iter().map(|h| h.detail()).collect();
+        assert_eq!(found, vec!["field:Settled.mixed", "field:Settled.plain"]);
+        let py = "class Settled:\n    result: OpaqueJson | IntakeRecord\n    maybe: 'OpaqueJson | IntakeRecord | None'\n    flipped: IntakeRecord | OpaqueJson\n    mixed: OpaqueJson | dict[str, int]\n    plain: IntakeRecord | dict[str, int]\n";
+        let py_found: Vec<String> = py_dict_smell_hits(py, "x.py").expect("読める").into_iter().map(|h| h.detail()).collect();
+        assert_eq!(py_found, vec!["field:Settled.mixed", "field:Settled.plain"]);
     }
 
     #[test]
