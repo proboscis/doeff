@@ -149,15 +149,19 @@
                  :call ~(call-shape-form program)
                  ~@(sum (lfor #(k v) (.items values) [(Keyword (hy.mangle (cut k 1 None))) v]) []))))
   (setv static {"name" system "params" param-names "jobs" (lfor j jobs (get j 3))})
+  ;; 静的な記述は setattr 1 回で置く(param_types も同じ式の中で足す)。置いた後に関数の属性 __doeff_system__ を読み直す文を
+  ;; 展開に出さない — 関数の型は欄を持たず、型検査の展開で reportFunctionMemberAccess になり書き手に直せない(agora-redesign #2291)。
+  ;; setattr の記帳は doeff-hy-check が型検査の展開から外す(static_check._bookkeeping_statement)。
+  (setv description
+        (if typed
+            `(| ~(hy.models.as-model static)
+                {"param_types" {~@(sum (lfor #(n t) typed [(String n) `(+ (. ~t __module__) ":" (. ~t __qualname__))]) [])}})
+            (hy.models.as-model static)))
   `(do
      (import doeff_cluster.service_model)
      (import doeff_hy.declarations)
      (defn ~name [~@params]
        ~@(if (is doc None) [] [doc])
        (doeff_cluster.service_model.system-of ~(String system) #(~@job-forms)))
-     (setattr ~name "__doeff_system__" ~(hy.models.as-model static))
-     ~@(if typed
-           [`(setv (get (. ~name __doeff_system__) "param_types")
-                   {~@(sum (lfor #(n t) typed [(String n) `(+ (. ~t __module__) ":" (. ~t __qualname__))]) [])})]
-           [])
+     (setattr ~name "__doeff_system__" ~description)
      (setattr ~name "__doeff_tags__" (doeff_hy.declarations.DefinitionTags :context ~(String system) :role "entry"))))
