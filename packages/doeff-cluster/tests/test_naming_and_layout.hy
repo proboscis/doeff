@@ -7,7 +7,7 @@
 (import pytest)
 (import dataclasses [fields])
 (import doeff_cluster.coordinator.intent.cluster_model [ClusterNaming])
-(import doeff_cluster.coordinator.core.cluster_json [naming-from-json])
+(import doeff_cluster.coordinator.protocol.cluster_json [naming-from-json])
 (import os)
 (import time)
 (import pathlib [Path])

@@ -16,7 +16,7 @@
 (import typing [NoReturn])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming BodyInvalid])
 (import doeff_cluster.coordinator.intent.cluster_model [ClusterJob ClusterState Placement HandoffPhase UnplacedKind NotReadyKind VersionState VersionVerdict LiveProcess ResourceMeta AuditEvent RolloutRow RolloutStatus RolloutTarget])
-(import doeff_cluster.coordinator.core.cluster_json [required-field int-field])
+(import doeff_cluster.coordinator.core.cluster_rules [required-field int-field])
 (import doeff_cluster.shared.core.job_rules [spec-hash] doeff_cluster.shared.intent.job_model [JobPhase])
 (import doeff_cluster.coordinator.core.cluster_policy [job-from-json job-to-json status-row-to-json audit-event-to-json alive still-live-somewhere service-rows unplaced-kind unplaced-text task-summary resource-version-of])
 (import doeff_cluster.coordinator.core.rollout_policy [validate-rollout-spec rollout-spec-to-json rollout-status-to-json rollout-targets target-key TERMINAL-PHASES])
