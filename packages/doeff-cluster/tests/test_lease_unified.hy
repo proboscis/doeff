@@ -21,7 +21,7 @@
 (import doeff_cluster.semaphore_handlers [SemaphoreSession])
 (import doeff_cluster.cluster_model [ClusterState ClusterTiming Request])
 (import doeff_cluster.coordinator_inbox [http-request])
-(import doeff_cluster.api_policy [respond])
+(import doeff_cluster.coordinator.core.api_policy [respond])
 (import doeff_cluster.worker_model [JobSpec])
 (import doeff_cluster.worker_policy [kept-when-cut-off])
 (import doeff_cluster.handlers [CoordinatorLink release-leases])

@@ -37,10 +37,10 @@
       "layer": "pure",
       "name": "doeff-cluster-api-policy",
       "paths": [
-        "packages/doeff-cluster/src/doeff_cluster/api_policy.hy"
+        "packages/doeff-cluster/src/doeff_cluster/coordinator/core/api_policy.hy"
       ],
       "public": [
-        "packages/doeff-cluster/src/doeff_cluster/api_policy.hy"
+        "packages/doeff-cluster/src/doeff_cluster/coordinator/core/api_policy.hy"
       ],
       "responsibility": "coordinator の HTTP の要求 1 件への返事と、Rollout の調停の段取り(純粋な判断・I/O はしない)。",
       "typed": true
@@ -137,10 +137,10 @@
       "layer": "pure",
       "name": "doeff-cluster-cluster-policy",
       "paths": [
-        "packages/doeff-cluster/src/doeff_cluster/cluster_policy.hy"
+        "packages/doeff-cluster/src/doeff_cluster/coordinator/core/cluster_policy.hy"
       ],
       "public": [
-        "packages/doeff-cluster/src/doeff_cluster/cluster_policy.hy"
+        "packages/doeff-cluster/src/doeff_cluster/coordinator/core/cluster_policy.hy"
       ],
       "responsibility": "coordinator の純粋な判断。",
       "typed": true
@@ -176,10 +176,14 @@
       "layer": "runtime",
       "name": "doeff-cluster-coordinator",
       "paths": [
-        "packages/doeff-cluster/src/doeff_cluster/coordinator.hy"
+        "packages/doeff-cluster/src/doeff_cluster/coordinator/__main__.hy",
+        "packages/doeff-cluster/src/doeff_cluster/coordinator/core/program.hy",
+        "packages/doeff-cluster/src/doeff_cluster/coordinator/entry/main.hy"
       ],
       "public": [
-        "packages/doeff-cluster/src/doeff_cluster/coordinator.hy"
+        "packages/doeff-cluster/src/doeff_cluster/coordinator/__main__.hy",
+        "packages/doeff-cluster/src/doeff_cluster/coordinator/core/program.hy",
+        "packages/doeff-cluster/src/doeff_cluster/coordinator/entry/main.hy"
       ],
       "responsibility": "doeff worker の coordinator(実験)。",
       "typed": true
@@ -907,6 +911,7 @@
     {
       "allow": [
         "doeff-cluster-coordinator",
+        "doeff-cluster-coordinator-inbox",
         "doeff-cluster-record-store",
         "doeff-cluster-record-store-handlers"
       ],
@@ -1001,10 +1006,10 @@
       "layer": "pure",
       "name": "doeff-cluster-resource-policy",
       "paths": [
-        "packages/doeff-cluster/src/doeff_cluster/resource_policy.hy"
+        "packages/doeff-cluster/src/doeff_cluster/coordinator/core/resource_policy.hy"
       ],
       "public": [
-        "packages/doeff-cluster/src/doeff_cluster/resource_policy.hy"
+        "packages/doeff-cluster/src/doeff_cluster/coordinator/core/resource_policy.hy"
       ],
       "responsibility": "coordinator の資源(Service・Worker・Task・Rollout)の純粋な判断。",
       "typed": true

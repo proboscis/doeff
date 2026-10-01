@@ -10,7 +10,7 @@
 (import dataclasses [dataclass])
 (import json)
 (import doeff [EffectBase])
-(import doeff_cluster.cluster_policy [board-allows])
+(import doeff_cluster.coordinator.core.cluster_policy [board-allows])
 
 
 (defclass AnyExpect []

@@ -3,9 +3,9 @@
 ;;;
 ;;; 読むのは この dir で linter を走らせた時だけ(設定は同じ dir の pyproject.toml の [tool.doeff-linter] — linter は今の dir から上へ設定を
 ;;; 探すので、doeff の根で走る hook と make lint-doeff は根の pyproject.toml を読み、この宣言を読まない)。
-;;; この package は層の dir(<root>/<service>/entry/ など)を持たず src/doeff_cluster/ に平たく置くので、code の在りかは :entry-modules で
-;;; 宣言する(DOEFF163 がそれで「code を持つ service」を判じる — doeff 042c1fa83)。層の置き場の規則 DOEFF114・115 は pyproject.toml で
-;;; 対象外(分けるかは別に決める)。
+;;; 層の置き場(agora-redesign #1988 の決め・移し方 = #2021 / #1976): service(coordinator・worker・record-store)の dir の下に層
+;;; core / intent / protocol / entry、共有の部品は shared/<層>/、本物の I/O は foundation/。移しは子ごとに進め(#2022 で coordinator の core と
+;;; entry から)、まだ src/doeff_cluster/ に平たく在る module は pyproject.toml で DOEFF114・115 の対象外のまま(#2095 で外す)。
 ;;;
 ;;; 条と確かめる検:
 ;;;   C1 acknowledged-writes-survive(doeff_cluster.coordinator_invariants:acknowledged-writes-survive)— 返事を返した盤の行は、coordinator が
@@ -25,11 +25,34 @@
 
 (defarchitecture doeff-cluster
   :root "doeff_cluster"
-  :layers [(layer foundation :summary "coordinator・worker・土台の handler(src/doeff_cluster/ に平たく置く — 層の置き場へ分けるかは別に決める)")]
+  ;; 層の説明・役・import の向きは agora-controllers の architecture.hy の層の表と同じ(#2021 の決め)。
+  :layers [(layer core
+             :summary "業務の判断と Program"
+             :roles [type judgment program]
+             :imports [core intent])
+           (layer intent
+             :summary "core が外へ求める事の型"
+             :roles [intent type]
+             :imports [intent]
+             :types-only True)
+           (layer protocol
+             :summary "intent を相手の話し方へ訳す handler"
+             :roles [protocol]
+             :imports [protocol intent core])
+           (layer foundation
+             :summary "汎用の I/O(環境で差し替えるのはここだけ)— まだ src/doeff_cluster/ に平たく在る coordinator・worker・土台の handler は移しの子で分ける"
+             :roles [foundation]
+             :imports [foundation])
+           (layer entry
+             :summary "入口 — 系の宣言・handler の並び・薄い main"
+             :roles [system process main]
+             :imports [core intent protocol foundation entry])]
+  :shared "shared"
   :foundation foundation)
 
 (defservice coordinator "worker へ job を割り当てる coordinator(資源と盤の置き場・調停のループ)"
-  {:entry-modules ["doeff_cluster.coordinator"]
+  {:layers [core intent protocol entry]
+   :entry-modules ["doeff_cluster.coordinator.entry.main"]
    :invariants ["doeff_cluster.coordinator_invariants:acknowledged-writes-survive"]})
 
 ;; worker の条は W1(入れ替えの間も書き手が居続ける)。消す順などの条は後から足す。:entry-modules は層に分ける前の今の入口

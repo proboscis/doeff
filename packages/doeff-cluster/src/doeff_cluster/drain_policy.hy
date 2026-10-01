@@ -17,8 +17,8 @@
 ;;; (cluster_policy.absorb-boot — Pod を作り直した後の worker は空けない)。取り消しは DELETE /workers/<名>/drain。
 (import dataclasses [replace])
 (import .cluster_model [ClusterJob ClusterState ClusterTiming Drain Placement])
-(import .cluster_policy [alive eligible can-take draining-workers load-of other-generation-boot LIVE-PHASES MAX-EVENTS])
-(import .resource_policy [refuse service-readiness])
+(import doeff_cluster.coordinator.core.cluster_policy [alive eligible can-take draining-workers load-of other-generation-boot LIVE-PHASES MAX-EVENTS])
+(import doeff_cluster.coordinator.core.resource_policy [refuse service-readiness])
 
 (setv DRAIN-DEFAULT-TTL-SECONDS 300)          ; 頼み直さない drain が消えるまで(preStop は数秒ごとに頼み直す)
 (setv DRAIN-MAX-TTL-SECONDS (* 24 3600))

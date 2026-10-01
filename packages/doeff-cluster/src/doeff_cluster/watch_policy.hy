@@ -8,8 +8,8 @@
 (require doeff-hy.macros [defk <- val var])
 (import dataclasses [replace])
 (import .cluster_model [ClusterState ClusterTiming Request Watcher WatchRefusal WatchAnswer WatchStep WATCH-MAX-SECONDS])
-(import .cluster_policy [heartbeat-reply])
-(import .api_policy [ready-instances])
+(import doeff_cluster.coordinator.core.cluster_policy [heartbeat-reply])
+(import doeff_cluster.coordinator.core.api_policy [ready-instances])
 
 ;; worker の見え方に入れない返事の欄: 温める表(期限で変わる先読み — 次の heartbeat で届けば足りる)と版(版が進むたびに変わる)。
 (val UNWATCHED-REPLY-FIELDS (frozenset #("warm" "revision")))

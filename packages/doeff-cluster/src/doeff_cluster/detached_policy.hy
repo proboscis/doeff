@@ -13,7 +13,7 @@
 (import dataclasses [replace])
 (import typing [NamedTuple])
 (import .cluster_model [ClusterState ClusterTiming TaskRecord format-refusal environ-pairs])
-(import .cluster_policy [DETACHED-TERMINAL TASK-MAX-OPEN end-detached runtime-env-refusal task-id task-body-refusal request-needs
+(import doeff_cluster.coordinator.core.cluster_policy [DETACHED-TERMINAL TASK-MAX-OPEN end-detached runtime-env-refusal task-id task-body-refusal request-needs
                          program-versions])
 (import .detached_model [DETACHED-DEFAULT-LEASE-SECONDS DETACHED-DEFAULT-RETAIN-SECONDS OPEN-PHASES WARMING-PHASE])
 
