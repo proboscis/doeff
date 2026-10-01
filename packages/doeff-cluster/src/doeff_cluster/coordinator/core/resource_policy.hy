@@ -15,7 +15,7 @@
 (import json)
 (import typing [NoReturn])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming BodyInvalid])
-(import doeff_cluster.coordinator.intent.cluster_model [ClusterJob ClusterState ErrorReply RowConflict Placement HandoffPhase UnplacedKind NotReadyKind VersionState VersionVerdict LiveProcess ResourceMeta AuditEvent EventsView ServiceBody ServiceObserved WorkerObserved TaskObserved RolloutObserved ResourceView ResourceList LegacyJobRow RolloutRow RolloutStatus RolloutTarget])
+(import doeff_cluster.coordinator.intent.cluster_model [ClusterJob ClusterState ErrorReply RowConflict Placement HandoffPhase UnplacedKind NotReadyKind VersionState VersionVerdict LiveProcess ResourceMeta AuditEvent EventsView ServiceBody ServiceObserved WorkerObserved TaskObserved RolloutObserved ResourceView ResourceList LegacyJobRow RolloutRow RolloutStatus RolloutTarget RefusedJob WorkerInfo TaskRecord])
 (import doeff_cluster.coordinator.core.cluster_rules [int-field])
 (import doeff_cluster.shared.core.job_rules [spec-hash] doeff_cluster.shared.intent.job_model [JobPhase])
 (import doeff_cluster.coordinator.core.cluster_policy [job-to-json alive still-live-somewhere service-rows unplaced-kind unplaced-text resource-version-of])
@@ -339,51 +339,129 @@
   (dfor #(k v) (.items (job-to-json job)) :if (!= k "name") k v))
 
 
+(defn #^ dict service-row [#^ ClusterState state #^ ClusterJob job #^ int now #^ ClusterTiming timing]
+  "宣言した Service 1 つの {spec status}(snapshot の行)。"
+  (setv a (.get state.placements job.spec.name))
+  {"spec" (service-spec job)
+   "status" (| {"worker" (if a a.worker None) "placement" (if a a.generation None)
+                "ready" (get (service-readiness state job.spec.name now timing) "state")
+                ;; 版の判定の状態(2026-09-29 — ready と同じく、変わった時に出来事と resourceVersion を進める)。理由と動いている
+                ;; 版の列は変わりやすい観測なので入れない(observed-of が組む)。
+                "version" {"state" (. (version-state state job.spec.name now timing) state value)}}
+               ;; drain で並べた置き先(2026-09-25)。在る間だけ載せる(無い Service の status の形・版は以前と同じ)。
+               (if (in job.spec.name state.surges)
+                   {"surge" (. (get state.surges job.spec.name) worker)}
+                   {})
+               ;; 入れ替えの期限の見張り(2026-09-26 — handoff_policy)。Ready を待つ間と諦めた間だけ載せる: 段・起点・期限、
+               ;; 諦めたなら時刻と理由(期限と最後の NotReady の理由)と新の世代の最後の ReportReady(偽)の reason。
+               (if (in job.spec.name state.handoffs)
+                   {"handoff" (.status-json (get state.handoffs job.spec.name) (handoff-timeout-ms job.readiness))}
+                   {}))})
+
+
+(defn #^ dict refused-row [#^ ClusterState state #^ RefusedJob r #^ int now #^ ClusterTiming timing]
+  "受け付けない Service の行(改訂 1 の C): spec は元の行のまま・status に理由。版の判定は DELETE で消すまで Blocked。"
+  {"spec" (dfor #(k v) (.items r.row) :if (!= k "name") k v)
+   "status" {"refused" r.reason "version" {"state" (. (version-state state r.name now timing) state value)}}})
+
+
+(defn #^ dict worker-row [#^ ClusterState state #^ WorkerInfo w]
+  "worker 1 つの {spec status}。"
+  {"spec" {"provides" (list w.provides) "exclusive" (list w.exclusive) "node" w.node "capacity" w.capacity "versions" (dict w.versions)}
+   ;; 生きているか(#1934 — heartbeat が lease の内)。生死の切り替わりの拍で版が進み、出来事の記録に 1 行残る — 名簿を写す呼び手が
+   ;; 版の変化の待ち(GET /watch・AwaitRunnersChange)で worker の死と戻りに即座に起きるため。最後の連絡の時刻そのものは変わりやすい
+   ;; 観測なので入れない(生きている間の heartbeat では版は進まない)。
+   ;; drain(2026-09-25)の始まりと頼み手(誰が・いつ空けさせたかを出来事の記録に残す)。期限は頼み直すたびに延びるので入れない。
+   "status" (| {"live" (not-in w.name state.silent)}
+               (if (in w.name state.drains)
+                   {"drain" {"sinceMs" (. (get state.drains w.name) since-ms) "actor" (. (get state.drains w.name) actor)}}
+                   {}))})
+
+
+(defn #^ dict task-row [#^ TaskRecord t]
+  "task 1 つの {spec status}。"
+  {"spec" (| {"name" t.name "revision" t.revision "needs" (list t.needs)}
+             (if t.detached {"key" t.key} {}))
+   "status" {"phase" t.phase "worker" t.worker "detail" t.detail}})
+
+
+(defn #^ dict rollout-row [#^ RolloutRow r]
+  "Rollout 1 つの {spec status}。"
+  {"spec" (rollout-spec-to-json r.spec) "status" (rollout-status-to-json r.status)})
+
+
 (defn #^ dict snapshot [#^ ClusterState state #^ int now #^ ClusterTiming timing]
-  "資源ごとの {spec status}。比べて版を進める単位。変わりやすい観測(生存の時刻・lease の期限)は入れない。"
-  (setv out {})
-  (for [job state.jobs]
-    (setv a (.get state.placements job.spec.name))
-    (setv (get out (key-of "Service" job.spec.name))
-          {"spec" (service-spec job)
-           "status" (| {"worker" (if a a.worker None) "placement" (if a a.generation None)
-                        "ready" (get (service-readiness state job.spec.name now timing) "state")
-                        ;; 版の判定の状態(2026-09-29 — ready と同じく、変わった時に出来事と resourceVersion を進める)。理由と動いている
-                        ;; 版の列は変わりやすい観測なので入れない(observed-of が組む)。
-                        "version" {"state" (. (version-state state job.spec.name now timing) state value)}}
-                       ;; drain で並べた置き先(2026-09-25)。在る間だけ載せる(無い Service の status の形・版は以前と同じ)。
-                       (if (in job.spec.name state.surges)
-                           {"surge" (. (get state.surges job.spec.name) worker)}
-                           {})
-                       ;; 入れ替えの期限の見張り(2026-09-26 — handoff_policy)。Ready を待つ間と諦めた間だけ載せる: 段・起点・期限、
-                       ;; 諦めたなら時刻と理由(期限と最後の NotReady の理由)と新の世代の最後の ReportReady(偽)の reason。
-                       (if (in job.spec.name state.handoffs)
-                           {"handoff" (.status-json (get state.handoffs job.spec.name) (handoff-timeout-ms job.readiness))}
-                           {}))}))
-  ;; 受け付けない Service の行(改訂 1 の C): spec は元の行のまま・status に理由。版の判定は DELETE で消すまで Blocked。
-  (for [r (.values state.refused)]
-    (setv (get out (key-of "Service" r.name))
-          {"spec" (dfor #(k v) (.items r.row) :if (!= k "name") k v)
-           "status" {"refused" r.reason "version" {"state" (. (version-state state r.name now timing) state value)}}}))
-  (for [w (.values state.workers)]
-    (setv (get out (key-of "Worker" w.name))
-          {"spec" {"provides" (list w.provides) "exclusive" (list w.exclusive) "node" w.node "capacity" w.capacity "versions" (dict w.versions)}
-           ;; 生きているか(#1934 — heartbeat が lease の内)。生死の切り替わりの拍で版が進み、出来事の記録に 1 行残る — 名簿を写す呼び手が
-           ;; 版の変化の待ち(GET /watch・AwaitRunnersChange)で worker の死と戻りに即座に起きるため。最後の連絡の時刻そのものは変わりやすい
-           ;; 観測なので入れない(生きている間の heartbeat では版は進まない)。
-           ;; drain(2026-09-25)の始まりと頼み手(誰が・いつ空けさせたかを出来事の記録に残す)。期限は頼み直すたびに延びるので入れない。
-           "status" (| {"live" (not-in w.name state.silent)}
-                       (if (in w.name state.drains)
-                           {"drain" {"sinceMs" (. (get state.drains w.name) since-ms) "actor" (. (get state.drains w.name) actor)}}
-                           {}))}))
-  (for [t (.values state.tasks)]
-    (setv (get out (key-of "Task" t.id))
-          {"spec" (| {"name" t.name "revision" t.revision "needs" (list t.needs)}
-                     (if t.detached {"key" t.key} {}))
-           "status" {"phase" t.phase "worker" t.worker "detail" t.detail}}))
-  (for [#(name r) (.items state.rollouts)]
-    (setv (get out (key-of "Rollout" name)) {"spec" (rollout-spec-to-json r.spec) "status" (rollout-status-to-json r.status)}))
-  out)
+  "資源ごとの {spec status}。比べて版を進める単位。変わりやすい観測(生存の時刻・lease の期限)は入れない。同じ名の宣言と受け付けない
+   行が両方在れば受け付けない行(後に書く)が勝つ — row-of と同じ順。"
+  (| (dfor job state.jobs (key-of "Service" job.spec.name) (service-row state job now timing))
+     (dfor r (.values state.refused) (key-of "Service" r.name) (refused-row state r now timing))
+     (dfor w (.values state.workers) (key-of "Worker" w.name) (worker-row state w))
+     (dfor t (.values state.tasks) (key-of "Task" t.id) (task-row t))
+     (dfor #(name r) (.items state.rollouts) (key-of "Rollout" name) (rollout-row r))))
+
+
+(defn #^ (| dict None) row-of [#^ ClusterState state #^ dict jobs #^ str key #^ int now #^ ClusterTiming timing]
+  "鍵 1 つの snapshot の行(資源が無ければ None)。jobs = 宣言の名 → ClusterJob(呼び手が 1 度だけ作る)。"
+  (setv #(kind name) (split-key key))
+  (match kind
+    "Service" (cond (in name state.refused) (refused-row state (get state.refused name) now timing)
+                    (in name jobs) (service-row state (get jobs name) now timing)
+                    True None)
+    "Worker" (if (in name state.workers) (worker-row state (get state.workers name)) None)
+    "Task" (if (in name state.tasks) (task-row (get state.tasks name)) None)
+    "Rollout" (if (in name state.rollouts) (rollout-row (get state.rollouts name)) None)
+    _ (raise (ValueError (+ "snapshot の鍵の種類を知らない: " key)))))
+
+
+(defn #^ frozenset moved-names [#^ dict before #^ dict after]
+  "2 つの写像で、値が同じ物(is)でない鍵 — 足した・消した・置き換えた鍵。状態は置き換えで進む(replace)ので、触らない値は同じ物のまま。"
+  (frozenset (gfor k (| (set before) (set after)) :if (is-not (.get before k) (.get after k)) k)))
+
+
+(defn #^ frozenset status-row-names [#^ ClusterState state #^ str worker]
+  "worker の最新の報告に載る job の名(退いた process の元の名を含む — service-rows の母集団に入る名)。"
+  (setv st (.get state.statuses worker))
+  (if (is st None)
+      (frozenset)
+      (frozenset (+ (lfor row st.jobs row.name) (lfor row st.jobs :if row.retired-from row.retired-from)))))
+
+
+(defn #^ frozenset dirty-keys [#^ ClusterState before #^ ClusterState after #^ dict jobs-before #^ dict jobs-after]
+  "before → after で行が変わりうる資源の鍵(snapshot の行の材料が変わった資源の上集合)と、版の記録の無い資源の鍵(adopt — 行が
+   同じでも版を振る)。stamp はこの鍵の行だけを組んで比べる。行は同じ now で組むので、材料の値が同じ物のままの資源の行は前後で等しい
+   (時刻だけで変わる観測は snapshot に入れない・生死は note-liveness が silent に写して材料にする)。材料:
+   - Service: 宣言・置き先・並べた置き先・入れ替えの見張り・readiness の報告・受け付けない行(名ごと)/ 置き先か並べた置き先の
+     worker、または報告に名が載る worker の報告と生存(service-rows・running-process)/ 置き先の無い Service は全 worker の生存と
+     能力(unplaced-kind)/ drain の集合と起動の時刻(全 Service — まれ)。
+   - Worker: 記録・沈黙の集合の出入り・drain。Task・Rollout: 自分の行。"
+  (setv names-moved (| (moved-names jobs-before jobs-after) (moved-names before.placements after.placements)
+                       (moved-names before.surges after.surges) (moved-names before.handoffs after.handoffs)
+                       (moved-names before.readiness after.readiness) (moved-names before.refused after.refused))
+        workers-moved (| (moved-names before.workers after.workers) (moved-names before.statuses after.statuses))
+        all-services (| (frozenset jobs-before) (frozenset jobs-after) (frozenset before.refused) (frozenset after.refused))
+        global-moved (or (!= before.started-ms after.started-ms) (is-not before.drains after.drains))
+        carried (frozenset (gfor state #(before after)
+                                 placed #((.items state.placements) (.items state.surges))
+                                 #(name p) placed
+                                 :if (in p.worker workers-moved)
+                                 name))
+        reported (frozenset (gfor state #(before after) w workers-moved name (status-row-names state w) name))
+        unplaced (if workers-moved
+                     (frozenset (gfor name all-services :if (or (not-in name before.placements) (not-in name after.placements)) name))
+                     (frozenset))
+        services (if global-moved all-services (| names-moved carried reported unplaced))
+        silent-moved (^ (frozenset before.silent) (frozenset after.silent))
+        workers (| (moved-names before.workers after.workers) (moved-names before.drains after.drains) silent-moved)
+        moved (| (frozenset (gfor n services (key-of "Service" n)))
+                 (frozenset (gfor n workers (key-of "Worker" n)))
+                 (frozenset (gfor n (moved-names before.tasks after.tasks) (key-of "Task" n)))
+                 (frozenset (gfor n (moved-names before.rollouts after.rollouts) (key-of "Rollout" n))))
+        present (| (frozenset (gfor n all-services :if (or (in n jobs-after) (in n after.refused)) (key-of "Service" n)))
+                   (frozenset (gfor n after.workers (key-of "Worker" n)))
+                   (frozenset (gfor n after.tasks (key-of "Task" n)))
+                   (frozenset (gfor n after.rollouts (key-of "Rollout" n))))
+        unversioned (frozenset (gfor k present :if (not-in k after.meta) k)))
+  (| moved unversioned))
 
 
 ;; v は記録の欄の JSON の値(どの形にもなる)— 長い値だけを切った文字列に置き換え、それ以外はそのまま返す。
@@ -421,9 +499,13 @@
    記録を generation 1 から始める。読み直しは読めない旧い形の行(labels だけの worker)を捨て、その版の記録 meta/<種類>/<名> を
    置き場に残す — 以前は同じ名の資源を書くたびに TypeError になり、新しい形の worker が名乗れなかった(2026-09-29・#1005)。"
   (when (is before after) (return after))
-  (setv b (snapshot before now timing) a (snapshot after now timing)
+  ;; 比べるのは行が変わりうる資源だけ(dirty-keys — 全体の snapshot を前後で組まない・#2615)。行の形・出来事の順(鍵の順)は前と同じ。
+  (setv jobs-before (dfor j before.jobs j.spec.name j) jobs-after (dfor j after.jobs j.spec.name j)
+        keys (dirty-keys before after jobs-before jobs-after)
+        b (dfor k keys :setv row (row-of before jobs-before k now timing) :if (is-not row None) k row)
+        a (dfor k keys :setv row (row-of after jobs-after k now timing) :if (is-not row None) k row)
         meta (dict after.meta) audit (list after.audit) rev after.revision seq after.audit-seq)
-  (for [key (sorted (| (set a) (set b)))]
+  (for [key (sorted keys)]
     (setv old (.get b key) new (.get a key))
     (when (and (= old new) (or (is new None) (in key meta))) (continue))
     (+= rev 1)
