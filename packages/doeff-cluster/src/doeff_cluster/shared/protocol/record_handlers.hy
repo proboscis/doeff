@@ -693,7 +693,7 @@
 
 
 (defk recording-header [ctx program-path versions]
-  {:pre [(: ctx RunContext) (: program-path str) (: versions dict)] :post [(: % dict)] :tags {:context "doeff-cluster" :role "judgment"}}
+  {:pre [(: ctx RunContext) (: program-path str) (: versions dict)] :post [(: % dict)] :tags {:context "doeff-cluster" :role "protocol"}}
   "記録の run の行に載せる欄 — 宿の契約の run-context(世代)と Program の置き場のキー(path の file の名)と版。再生の道具は
    program のキーで同じ Program を /programs から取り直せる(R3b — 記録は Program の中身を持たない)。"
   (val name (.rsplit program-path "/" 1))
@@ -703,7 +703,7 @@
 
 
 (defk boundary-recorder []
-  {:pre [] :post [(: % list)] :tags {:context "doeff-cluster" :role "foundation"}}
+  {:pre [] :post [(: % list)] :tags {:context "doeff-cluster" :role "protocol"}}
   "境目の記録係の組(0 か 1 つ)を作る — Ask RECORD-MODE-KEY で off / record / replay を選ぶ。業務の Program が翻訳の handler と
    土台の handler の間に並べる(ADR-DOE-CLUSTER-001 R5)。"
   (<- mode str (Ask RECORD-MODE-KEY))
