@@ -135,8 +135,7 @@
                          DetachedSubmitAnswer DetachedAwaited RunnersUnreachable WARMING-PHASE AwaitRunnersChange RunnersChangeAnswer])
 (import doeff_cluster.worker.core.drain_client [DRAIN-DEADLINE-SECONDS DRAIN-TTL-MARGIN-SECONDS])
 (import doeff_cluster.worker.protocol.drain_requests [drain-request])
-(import doeff_cluster.handlers [declared-job-spec task-spec
-] doeff_cluster.worker.protocol.heartbeat [heartbeat-body status-report env-report env-heartbeat-part] doeff_cluster.worker.core.heartbeat_rules [desired-when-unreachable warm-env-of-row])
+(import doeff_cluster.worker.protocol.declared [declared-job-spec task-spec] doeff_cluster.worker.protocol.heartbeat [heartbeat-body status-report env-report env-heartbeat-part] doeff_cluster.worker.core.heartbeat_rules [desired-when-unreachable warm-env-of-row])
 (import doeff_cluster.worker.core.beat_policy [WatchKind WatchReading beat-interval-ms heartbeat-due watch-reading reply-revision
                       WATCH-RETRY-SECONDS WAKE-HOLD-SECONDS])
 (import doeff_cluster.worker.protocol.coordinator_link [watch-params])
