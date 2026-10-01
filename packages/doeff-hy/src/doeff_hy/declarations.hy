@@ -34,17 +34,24 @@
 ;; 頭の辞書に :pre / :post を持たない定義(defhandler)が受ける鍵。
 (setv DECLARATION-KEYS #(":effects" ":tags" ":needs"))
 (setv TAG-KEYS #(":context" ":role"))
+;; :tags の省ける鍵。:spells = その定義が wire の形を綴る(読む)のが目的の 1 点だという名乗り — doeff-linter の DOEFF172(写像の置き場)が
+;; 『dict を組む事が目的の 1 点』として数えない(agora-redesign #2265 の決め・#2299 で書けるようにした)。値は SPELLS の閉じた一覧。
+(setv OPTIONAL-TAG-KEYS #(":spells"))
+(setv SPELLS #("json"))
 
 
 (defclass [(dataclass :frozen True)] DefinitionTags []
-  "定義の文脈と役。context = 文脈の名(空でない文字列)・role = ROLES の 1 つ。"
+  "定義の文脈と役。context = 文脈の名(空でない文字列)・role = ROLES の 1 つ・spells = 綴る wire の形(SPELLS の 1 つ・名乗らなければ None)。"
   (#^ str context)
   (#^ str role)
+  (setv #^ (| str None) spells None)
   (defn #^ None __post_init__ [self]
     (when (or (not (isinstance self.context str)) (not self.context))
       (raise (ValueError (.format "DefinitionTags.context は空でない文字列: {!r}" self.context))))
     (when (not-in self.role ROLES)
-      (raise (ValueError (.format "DefinitionTags.role は {} のどれか: {!r}" (.join " / " ROLES) self.role))))))
+      (raise (ValueError (.format "DefinitionTags.role は {} のどれか: {!r}" (.join " / " ROLES) self.role))))
+    (when (and (is-not self.spells None) (not-in self.spells SPELLS))
+      (raise (ValueError (.format "DefinitionTags.spells は {} のどれか: {!r}" (.join " / " SPELLS) self.spells))))))
 
 
 (defn #^ None refuse-unknown-keys [#^ Dict contract #^ tuple allowed #^ str where]  ; defk にできない: macro の展開の時に呼ぶ関数
@@ -133,10 +140,12 @@
   (when (not (isinstance form Dict))
     (raise (SyntaxError (.format "{}: :tags は {{:context \"…\" :role \"…\"}} の辞書: {}" where (hy.repr form)))))
   (setv keys (lfor k (cut form None None 2) (str k)))
-  (when (!= (sorted keys) (sorted TAG-KEYS))
-    (raise (SyntaxError (.format "{}: :tags の鍵は :context と :role ちょうど: {}" where (.join " " keys)))))
+  (when (!= (sorted (lfor k keys :if (not-in k OPTIONAL-TAG-KEYS) k)) (sorted TAG-KEYS))
+    (raise (SyntaxError (.format "{}: :tags の鍵は :context と :role ちょうど(省ける鍵は {}): {}" where (.join " " OPTIONAL-TAG-KEYS)
+                                 (.join " " keys)))))
   (setv context (declared-value form ":context")
-        role (declared-value form ":role"))
+        role (declared-value form ":role")
+        spells (declared-value form ":spells"))
   (for [#(name value) [#(":context" context) #(":role" role)]]
     (when (not (isinstance value String))
       (raise (SyntaxError (.format "{}: :tags の {} は文字列の literal: {}" where name (hy.repr value))))))
@@ -144,7 +153,11 @@
     (raise (SyntaxError (.format "{}: :tags の :context が空" where))))
   (when (not-in (str role) ROLES)
     (raise (SyntaxError (.format "{}: :tags の :role {!r} は {} のどれでもない" where (str role) (.join " / " ROLES)))))
-  `(doeff_hy.declarations.DefinitionTags :context ~context :role ~role))
+  (when (and (is-not spells None) (not (and (isinstance spells String) (in (str spells) SPELLS))))
+    (raise (SyntaxError (.format "{}: :tags の :spells は {} のどれかの文字列の literal: {}" where (.join " / " SPELLS) (hy.repr spells)))))
+  (if (is spells None)
+      `(doeff_hy.declarations.DefinitionTags :context ~context :role ~role)
+      `(doeff_hy.declarations.DefinitionTags :context ~context :role ~role :spells ~spells)))
 
 
 ;; defeffect の頭の辞書が受ける鍵(:answer と :tags は必須・:fields は無ければ欄なし・:pre は作る時の検め)。

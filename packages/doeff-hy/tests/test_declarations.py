@@ -88,6 +88,27 @@ def test_the_tags_are_checked_when_compiling() -> None:
     assert ":effects" in refused('(defk f [x] {:pre [(: x int)] :post [(: % int)] :effects ReadRow} x)')
 
 
+def test_the_spells_tag_names_a_wire_spelling_point() -> None:
+    # agora-redesign #2299: :tags の省ける鍵 :spells(wire の形を綴る 1 点の名乗り — DOEFF172 が数えない形・#2265)。
+    # 以前は :context と :role の外の鍵として SyntaxError で、名乗りを書けなかった(反例)。
+    ns = evaluate("""
+(defk payload-text [x] {:pre [(: x int)] :post [(: % str)] :tags {:context "kanban" :role "protocol" :spells "json"}} (str x))
+(defhandler spell-rows {:tags {:context "kanban" :role "protocol" :spells "json"}} (ReadRow [] (resume 1)))
+""")
+    assert ns["payload_text"].__doeff_tags__ == DefinitionTags(context="kanban", role="protocol", spells="json")
+    assert ns["spell_rows"].__doeff_tags__.spells == "json"
+    assert DefinitionTags(context="kanban", role="protocol").spells is None
+
+
+def test_the_spells_tag_takes_only_a_known_spelling_literal() -> None:
+    # 失敗ケース: 文字列でない値・閉じた一覧の外の語・:context と :role の欠けは、名乗りを付けても SyntaxError のまま。
+    assert ":spells" in refused('(defk f [x] {:pre [(: x int)] :post [(: % int)] :tags {:context "k" :role "protocol" :spells 1}} x)')
+    assert ":spells" in refused('(defk f [x] {:pre [(: x int)] :post [(: % int)] :tags {:context "k" :role "protocol" :spells "yaml"}} x)')
+    assert ":role" in refused('(defk f [x] {:pre [(: x int)] :post [(: % int)] :tags {:context "k" :spells "json"}} x)')
+    with pytest.raises(ValueError):
+        DefinitionTags(context="k", role="protocol", spells="yaml")
+
+
 def test_effects_must_name_effect_types_or_effect_makers() -> None:
     # #800: 前は :effects が名の list であることしか検めず、関数や effect でない class を書いても黙って通した(反例)。
     # 定義の時(module を読む時)に、書けない名と理由を名指して断る。
