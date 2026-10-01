@@ -27,7 +27,10 @@ doeff-hy-check = "doeff_hy.static_check:main"
 # doeff_hy_bytecode_guard: macro が変わった Hy の module の古い bytecode を使わない包み(agora-redesign #1292)。
 # venv の全ての Python の起動時に .pth から入れる(pytest・本番の入口・索引のどれが最初に Hy の module を読んでも効く)。
 # doeff_hy の中に置かないのは、起動時に doeff_hy/__init__.py(Hy の import)を読まないため。
-packages = ["src/doeff_hy", "src/doeff_hy_bytecode_guard"]
+# hy-stubs: hy の部分の stub(PEP 561 の stub だけの package・py.typed は partial)。Hy の展開が必ず出す `import hy`・
+# `import hy.models` を pyright strict が型の宣言なしと赤にしないため、doeff-hy-check を使う repo へ doeff-hy と一緒に配る
+# (agora-redesign #2313)。
+packages = ["src/doeff_hy", "src/doeff_hy_bytecode_guard", "src/hy-stubs"]
 
 [tool.hatch.build.targets.wheel.force-include]
 # .pth は中身が 1 行の固定文なので、editable の install でも写しが古くならない(hatchling は editable でも force-include を入れる)。
