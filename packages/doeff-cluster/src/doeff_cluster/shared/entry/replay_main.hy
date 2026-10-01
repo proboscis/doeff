@@ -1,6 +1,6 @@
 ;;; 再生の道具の入口(ADR-DOE-CLUSTER-001 R5・R5b)。業務の側の backtest の道具が起こす。
 ;;;
-;;;   hy -m doeff_cluster.replay_main --recording FILE --program FILE [--from-ms N] [--to-ms N] --out FILE
+;;;   hy -m doeff_cluster.shared.entry.replay_main --recording FILE --program FILE [--from-ms N] [--to-ms N] --out FILE
 ;;;
 ;;; --program = 記録した job の詰めた Program の file(coordinator の /programs/<sha> から取った JSON {"blob" "versions"} — 記録の
 ;;; header の program が同じキー)。版を検めて Program を解き、再生の mode で走らせるだけ: Program の中の境目の記録係
@@ -11,14 +11,16 @@
 ;;;
 ;;; 詰めた Program を運ぶので、記録を再生できるのは同じ版(Python・cloudpickle・doeff)と、記録した commit の code が揃う間だけ
 ;;; (改訂 1 の O — R3b の代償)。版が違えば理由つきで止まる。結果(一致・判断の違い・分岐)を JSON で書く。
+(require doeff-hy.macros [val])
+(val MODULE-TAGS {:context "doeff-cluster" :role "main"})
 (import argparse)
 (import json)
 (import sys)
 (import time)
 (import doeff [run with_handlers])
 (import doeff_core_effects.handlers [reader])
-(import doeff_cluster.record_model [read-recording ReplayFinished ReplayDiverged])
-(import doeff_cluster.record_handlers [ReplayState replay-report RECORD-MODE-KEY REPLAY-STATE-KEY])
+(import doeff_cluster.shared.core.record_model [read-recording ReplayFinished ReplayDiverged])
+(import doeff_cluster.shared.protocol.record_handlers [ReplayState replay-report RECORD-MODE-KEY REPLAY-STATE-KEY])
 (import doeff_cluster.job_entry [read-program])
 
 

@@ -73,7 +73,7 @@ Program の中の `with-handlers` で並べます(実行先は handler を 1 つ
 (import doeff_core_effects.scheduler [scheduled])
 (import doeff_time [sync-time-handler])
 (import doeff_cluster.host_contract [host-reader environ-reader])
-(import doeff_cluster.record_handlers [boundary-recorder])
+(import doeff_cluster.shared.protocol.record_handlers [boundary-recorder])
 
 ;; 本番の土台: scheduler・時計・実行先の読み・環境変数の読み・クラスタに話す handler を並べる。
 (defk production-foundation [body]
@@ -178,7 +178,7 @@ hy -m doeff_cluster.declare myapp.systems:my_system --foundation myapp.foundatio
 (`Ask`・doeff-time・scheduler)とこの package の型だけです。業務の型は、job の Program が import する業務の module で登録します。
 
 ```hy
-(import doeff_cluster.effect_codec [register EffectCodec READ DECISION OUTPUT])
+(import doeff_cluster.shared.core.effect_codec [register EffectCodec READ DECISION OUTPUT])
 (import myapp.effects [ReadRows WriteRow])
 (register (EffectCodec ReadRows READ))
 (register (EffectCodec WriteRow DECISION :subject (fn [args] (.get args "key")) :unexecuted True))
@@ -357,7 +357,7 @@ worker が無い・コードを準備できない)・`DetachedUnknown`(知らな
 
 - 記録係より内側の handler(翻訳の handler・業務の handler)は決定的でなければなりません。時計・乱数・I/O は汎用の effect にして
   土台の handler に答えさせます(破れは再生の分岐として出ます)。
-- 再生は `hy -m doeff_cluster.replay_main --recording FILE --program FILE [--from-ms N] [--to-ms N] --out FILE` です。`--program` は
+- 再生は `hy -m doeff_cluster.shared.entry.replay_main --recording FILE --program FILE [--from-ms N] [--to-ms N] --out FILE` です。`--program` は
   記録した job の詰めた Program(`/programs/<sha>` の JSON — header の `program` と同じキー)。版を検めて解き、上の 2 つの Ask にだけ
   外から答えて走らせます。版(Python・cloudpickle・doeff)と記録した commit のコードが揃う間だけ再生でき、違えば理由つきで止まります。
 - 記録の形は `record_model.hy` の先頭、型ごとの扱いは上の表です。

@@ -34,8 +34,8 @@
 (import doeff_cluster.process_versions [current-versions])
 (import doeff_cluster.shared.intent.shared_model [ReadShared])
 (import doeff_cluster.shared_handlers [shared-memory])
-(import doeff_cluster.record_model [read-recording])
-(import doeff_cluster.record_handlers [MemorySink EffectLog effect-recorder ReplayState replay-report
+(import doeff_cluster.shared.core.record_model [read-recording])
+(import doeff_cluster.shared.protocol.record_handlers [MemorySink EffectLog effect-recorder ReplayState replay-report
                                        boundary-recorder recording-header RECORD-MODE-KEY RECORD-OTLP-KEY REPLAY-STATE-KEY])
 (import tests.fixtures.recorded_programs [ledger-program world-foundation ledger-translation-layer drifting-translation-layer])
 
@@ -159,7 +159,7 @@
   (.write-text recording (.join "" (gfor text texts (+ text "\n"))) :encoding "utf-8")
   (val out (/ tmp-path "report.json"))
   (<- replayed subprocess.CompletedProcess
-      (child "doeff_cluster.replay_main" {} "--recording" (str recording) "--program" (str path) "--out" (str out)))
+      (child "doeff_cluster.shared.entry.replay_main" {} "--recording" (str recording) "--program" (str path) "--out" (str out)))
   (Cycle :recorded recorded
          :lines (lfor text texts (json.loads text))
          :sha sha
