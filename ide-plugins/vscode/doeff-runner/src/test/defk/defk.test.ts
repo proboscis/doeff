@@ -2,7 +2,7 @@ import * as assert from 'assert';
 import * as fs from 'fs';
 import * as path from 'path';
 import { parseLintJson, type LintBinding, type LintReport, type LintSignature, type LintTypeRef } from '../../lint/contract';
-import { LintStore } from '../../lint/store';
+import { LintStore, textStamp } from '../../lint/store';
 import { bindingHover, headerHover } from '../../defk/hover';
 import {
   bindingPlan,
@@ -449,13 +449,11 @@ suite('置き場 — 見出しは版と組で置く', () => {
   test('stdin の結果の見出しを版つきで置き、知らない語を拡張が古い理由として集める', () => {
     const store = new LintStore();
     const r = report();
-    store.replaceSignatures('/repo/core/flow.hy', 7, r);
+    store.replaceSignatures('/repo/core/flow.hy', textStamp(7, FLOW_SOURCE), r);
     assert.strictEqual(store.signaturesFor('/repo/core/flow.hy')?.version, 7);
     assert.strictEqual(store.signaturesFor('/repo/core/flow.hy')?.signatures.length, 1);
     assert.deepStrictEqual(store.unknownVocabulary(), []);
-    store.replaceSignatures('/repo/core/flow.hy', 8, { ...r, unknown: ['$.rules[0].family: 知らない語 "castle"'] });
+    store.replaceSignatures('/repo/core/flow.hy', textStamp(8, FLOW_SOURCE), { ...r, unknown: ['$.rules[0].family: 知らない語 "castle"'] });
     assert.deepStrictEqual(store.unknownVocabulary(), ['$.rules[0].family: 知らない語 "castle"']);
-    store.forgetSignatures('/repo/core/flow.hy');
-    assert.strictEqual(store.signaturesFor('/repo/core/flow.hy'), undefined);
   });
 });

@@ -75,6 +75,7 @@ export class PixelGutter implements vscode.Disposable {
   /** 置き場・見えている editor・設定の変化で出し直し始める。 */
   start(): void {
     const offHy = this.hy.onDidChange(() => this.refresh());
+    // gutter の絵が読むのは違反と module だけ — linter の置き場の違反の側の知らせだけを聞く
     const offLint = this.lint.onDidChange(() => this.refresh());
     this.disposables.push(
       { dispose: offHy },
@@ -150,6 +151,7 @@ export class DoeStatusBar implements vscode.Disposable {
     private readonly icons: IconSource
   ) {
     this.item.command = 'doeff-lint-violations.focus';
+    // 状態バーの絵が読むのは root と違反だけ — linter の置き場の違反の側の知らせだけを聞く
     const off = lint.onDidChange(() => this.refresh());
     this.disposables.push(
       { dispose: off },

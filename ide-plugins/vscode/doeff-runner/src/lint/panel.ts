@@ -11,6 +11,7 @@ import {
   groupTooltipLines,
   lintChildren,
   mapRoots,
+  nodeId,
   panelViolationRoots,
   ruleNodes,
   violationCount,
@@ -136,9 +137,13 @@ function pixelIcon(node: LintNode, icons: IconSource): vscode.Uri | undefined {
   }
 }
 
-/** 節を VS Code の TreeItem にする(pixel art の icon があればそれ、無ければ codicon)。 */
+/**
+ * 節を VS Code の TreeItem にする(pixel art の icon があればそれ、無ければ codicon)。id は view.ts の nodeId の写し — 出し直しても
+ * 同じ節は同じ id なので、VS Code が展開と選択を保つ(#2162)。
+ */
 export function lintTreeItem(node: LintNode, layers: readonly LintLayer[], icons?: IconSource, mentions?: MentionsOf): vscode.TreeItem {
   const item = codiconTreeItem(node, layers, mentions);
+  item.id = nodeId(node);
   const pixel = icons === undefined ? undefined : pixelIcon(node, icons);
   if (pixel !== undefined) {
     item.iconPath = pixel;

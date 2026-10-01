@@ -4,7 +4,7 @@
 
 import * as vscode from 'vscode';
 import type { LintBinding, LintLocation, LintSignature } from '../lint/contract';
-import type { LintStore } from '../lint/store';
+import { stampOf, type LintStore } from '../lint/store';
 import { dataUri } from '../pixel/render';
 import {
   bindingPlan,
@@ -187,7 +187,8 @@ export class DefkView implements vscode.Disposable {
     this.tags = vscode.window.createTextEditorDecorationType({});
     this.operator = vscode.window.createTextEditorDecorationType({});
     this.dimmed = vscode.window.createTextEditorDecorationType({ opacity: '0.4' });
-    const offStore = store.onDidChange(() => this.schedule());
+    // 描くのは見出しと束縛だけ — linter の置き場の見出しの知らせだけを聞く(違反の変化では描き直さない)
+    const offStore = store.onDidChangeSignatures(() => this.schedule());
     this.disposables.push(
       { dispose: offStore },
       vscode.window.onDidChangeVisibleTextEditors(() => this.refreshAll()),
@@ -257,8 +258,9 @@ export class DefkView implements vscode.Disposable {
     if (!isHyDocument(document)) {
       return undefined;
     }
-    const found = this.store.signaturesFor(document.uri.fsPath);
-    if (found === undefined || found.version !== document.version) {
+    // 印(版と中身の hash)が今の document と同じ見出しだけ — 閉じて開き直した document の版 1 を前の版 1 と取り違えない
+    const found = this.store.currentSignatures(document.uri.fsPath, stampOf(document));
+    if (found === undefined) {
       return undefined;
     }
     const lines = lineSource(document);
