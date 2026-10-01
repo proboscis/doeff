@@ -5,7 +5,7 @@
 (require doeff-hy.macros [deftest <- val])
 (import pytest)
 (import doeff_cluster.main [passed-environment])
-(import doeff_cluster.handlers [child-environment])
+(import doeff_cluster.worker.core.launch [child-environment])
 
 
 (deftest test-named-worker-settings-reach-the-child

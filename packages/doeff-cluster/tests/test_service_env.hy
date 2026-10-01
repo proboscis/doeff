@@ -5,7 +5,7 @@
 ;;
 ;; 速い検: 宣言の行が runtimeEnv を運ぶ・image の版を追う欄(baseFrom)を持つ行を断る・coordinator が spec と heartbeat の返事に載せる・worker が版を
 ;;        env のキーへ置き換える・入口の検めを root の venv で撃つ・子の文脈から自分の env を読む。
-;; 丁寧な模擬(test_env_careful と同じ世界 — 本物の git・fake の uv・本物の EnvStore / ProbeStore / ProcessHost): service を宣言から
+;; 丁寧な模擬(test_env_careful と同じ世界 — 本物の git・fake の uv・本物の EnvStore と、検めと子 process の言い換え〔probe-host・process-host〕): service を宣言から
 ;;        env の root で起こし、送り手の commit だけ変えた 2 回目の宣言で新しい root の source の値が返り、worker の process は同じ。
 (require doeff-hy.macros [deftest defk <- val var])
 (import inspect)
@@ -21,7 +21,10 @@
 (import doeff_cluster.shared.intent.service_model [CallShape System job resolve system-of system-declaration])
 (import doeff_cluster.foundation.process_versions [current-versions])
 (import doeff_cluster.coordinator.core.cluster_policy [job-from-json job-to-json spec-json])
-(import doeff_cluster.handlers [declared-job-spec ProbeStore] doeff_cluster.worker.core.launch [program-file] doeff_cluster.worker.core.probe_rules [probe-targets])
+(import doeff_cluster.handlers [declared-job-spec] doeff_cluster.worker.core.launch [program-file JobLaunch] doeff_cluster.worker.core.probe_rules [probe-targets probe-command])
+(import doeff_cluster.worker.intent.worker_model [CodeLayout ProbeView])
+(import doeff_cluster.worker.protocol.probes [ProbeSettings])
+(import tests.probe_rig [probe-settings run-probes observed])
 (import doeff_cluster.job_entry [RunContext runtime-env-of-context])
 (import doeff_cluster.worker.intent.worker_model [CodeView ProbeEntry ProbeState StartJob ReapJob Outcome CodeState] doeff_cluster.shared.intent.job_model [JobSpec] doeff_cluster.shared.core.job_rules [spec-hash] doeff_cluster.worker.core.worker_rules [ENV-KEY-PREFIX code-key])
 (import tests.careful_rig [Rig make-rig push-commit app-files declare prepare LOCK HY DEADLINE-SECONDS])
@@ -140,19 +143,19 @@
   (<- env-json dict (runtime-env->json declared-env))
   (val spec (JobSpec "quiet" "doeff_cluster.job_entry" #("service" "--identity" "0123456789abcdef")
                      "env-k" :runtime-env (json.dumps env-json :sort-keys True) :program (* "a" 64)))
-  ;; probe-dir は既に在る dir(mkdir が何も作らない — argv の形だけを見る)。
-  (val probes (ProbeStore "/worker/bin/hy" :uv "/bin/uv" :probe-dir (str tmp-path)))
-  (val command (.command probes "/state/roots/env-k" spec.runtime-env (probe-targets spec)))
-  (val argv (get command 0))
-  (val cwd (get command 1))
-  (val environment (get command 2))
+  ;; 検めの子の起こし方の判断(probe-command — #2465)を、子を起こさずに見る。
+  (<- plan JobLaunch (probe-command "/state/roots/env-k" spec.runtime-env (tuple (probe-targets spec)) :hy-command "/worker/bin/hy" :uv "/bin/uv"
+                                    :layout (CodeLayout) :allowed-env {} :probe-dir (str tmp-path)))
+  (val argv (list plan.argv))
+  (val cwd plan.cwd)
+  (val environment (dfor e plan.env e.name e.value))
   (assert (= (cut argv 0 6) ["/bin/uv" "run" "--no-sync" "--frozen" "--project" "/state/roots/env-k/app"]) argv)
   ;; Program の job の検めは入口の module の import だけ(詰めた Program の版と復元は起こした子が検める)。
   (assert (= (probe-targets spec) ["doeff_cluster.job_entry"]))
   (assert (in "doeff_cluster.job_entry" argv) argv)
   (assert (not-in "/worker/bin/hy" argv) "worker の hy では検めない")
   (assert (not-in "PYTHONPATH" environment) "PYTHONPATH を置かない")
-  (assert (= cwd (str probes.probe-dir)) cwd))
+  (assert (= cwd (str tmp-path)) cwd))
 
 
 (deftest test-a-job-reads-its-own-runtime-env-from-the-context
@@ -185,8 +188,16 @@
   (| files {"appservice.hy" SERVICE-MODULE}))
 
 
+(defk probe-entered [spec code-path]
+  {:pre [(: spec JobSpec) (: code-path str)] :post [(: % ProbeView)] :tags {:context "doeff-cluster-test" :role "program"}}
+  "入口の検めを積み、答えを返すため。"
+  (<- (ProbeEntry spec code-path))
+  (<- view ProbeView (observed spec))
+  view)
+
+
 (defk run-service [rig env out probes]
-  {:pre [(: rig Rig) (: env RuntimeEnv) (: out Path) (: probes ProbeStore)] :post [(: % list)]}
+  {:pre [(: rig Rig) (: env RuntimeEnv) (: out Path) (: probes ProbeSettings)] :post [(: % list)]}
   "service 1 本を宣言から env の root で起こして終わるまで待つ(宣言 → coordinator → heartbeat の返事 → worker の JobSpec → 準備 →
    入口の検め → 子)。答え = service が out に書いた行。"
   ;; appservice はこの検が env の root に文字列から書き出す利用者の app(型検査の時には無い module)なので、declare と同じ口 resolve で
@@ -208,15 +219,9 @@
   (assert (= view.state CodeState.READY) view)
   (assert (is-not view.path None) view)
   (assert (= (code-key spec) view.revision) "worker の置き場の鍵は準備した root と同じ env のキー")
-  (.start probes (ProbeEntry spec view.path))
   (val deadline (+ (time.monotonic) DEADLINE-SECONDS))
-  (var probed None)
-  (while (is probed None)
-    (when (> (time.monotonic) deadline) (raise (AssertionError "入口の検めが終わらない")))
-    ;; この spec の検めだけを見る(同じ ProbeStore の前の spec の答えを取り違えない)・待ち(QUEUED)も終わっていない。
-    (for [p (.observe probes)]
-      (when (and (= p.spec-hash (spec-hash spec)) (not-in p.state #(ProbeState.RUNNING ProbeState.QUEUED))) (:= probed p)))
-    (when (is probed None) (time.sleep 0.1)))
+  ;; 入口の検めを probe-host と本物の答え手の下で回す(この spec の答えだけを見る — observed は spec-hash で引く)。
+  (val probed (run-probes probes (probe-entered spec view.path)))
   (assert (= probed.state ProbeState.PASSED) probed)
   (val ended (run-on-host rig.host (job-ended spec view.path (max 1.0 (- deadline (time.monotonic))))))
   (assert (.is-file out) (.format "service が書かなかった(終了 {})— log: {}" ended.exit-code
@@ -230,7 +235,8 @@
   (<- a1 str (push-commit rig.app (! (service-files 1)) "app 1"))
   (<- l1 str (push-commit rig.lib {"native/core/lib.rs" "fn a() {}\n" "native/core/Cargo.toml" "[package]\n"} "lib 1"))
   (.insert sys.path 0 (str rig.app))
-  (val probes (ProbeStore HY :uv (str (/ rig.fake "uv")) :probe-dir (str (/ rig.state "probe"))))
+  (val probes (ProbeSettings :python sys.executable :hy-command HY :uv (str (/ rig.fake "uv")) :layout (CodeLayout)
+                             :probe-dir (str (/ rig.state "probe"))))
   ;; 1 回目: 宣言の root で起こす
   (<- env-1 RuntimeEnv (declare rig a1 l1 LOCK))
   (<- lines-1 list (run-service rig env-1 (/ tmp-path "out-1") probes))
