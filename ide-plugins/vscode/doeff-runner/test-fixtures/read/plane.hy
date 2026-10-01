@@ -18,7 +18,7 @@
   row)
 
 
-(deff row-text [row]
+(deff row-text [row]  ; defk にできない: 定義を読む面の検(src/test/read/model.test.ts)が種類 deff のカードの見本として読む定義 — 種類が deff であること自体が検の材料
   {:pre [(: row Row)] :post [(: % str)] :tags {:context "messaging" :role "judgment"}}
   "行の文字を返すため。"
   row.text)

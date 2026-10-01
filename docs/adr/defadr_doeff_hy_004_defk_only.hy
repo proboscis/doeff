@@ -20,7 +20,7 @@
 
 (require doeff-adr.macros [defadr rule law])
 (import doeff-adr.macros [fact interpretation counterexample])
-(require doeff-hy.macros [deftest defk <-])
+(require doeff-hy.macros [deftest defk <- val var])
 (import doeff [run])
 (import os)
 (import re)
@@ -49,6 +49,10 @@
 ;; 2026-09-27 の改訂から、同じ行に「; defk にできない: <理由>」の註がある deff は
 ;; 数えない(R1 の逃げ道 — 理由を名乗った deff は台帳の外で許す)。台帳の数は
 ;; 改訂の時点で理由の註を持つ deff が 0 だったので変わらない。
+;; 2026-10-01(agora-redesign #1201): 「同じ行」は deff の定義の行 = `(deff` から引数の並びが閉じる行まで
+;; (doeff-linter の DOEFF111 が註を探す範囲と同じ)。引数を複数の行に折った deff は註を並びの閉じる行に置くので、
+;; `(deff` の 1 行目だけを見ると註のある deff を数えていた(doeff-cluster の 6 定義・日次の root の赤)。
+;; 直前の註だけの行は今までどおり数える(linter はそこも受けるが、この台帳は定義の行に限る)。
 ;; ---------------------------------------------------------------------------
 
 (setv DEFF-ROSTER
@@ -85,16 +89,42 @@
     "dist" ".mypy_cache" ".pytest_cache" "scratchpad"})
 
 (setv DEFF-REASON-MARK "defk にできない")
-(setv DEFF-LINE-PATTERN (re.compile r"\(deff\s[^\n]*"))
+(setv DEFF-HEAD-PATTERN (re.compile r"\(deff\s"))
+;; 引数の並びの括弧を数える時の字句: 文字列と註はまとめて 1 つ(中の括弧を数えない)・括弧は 1 字ずつ。
+(setv DEFF-HEAD-TOKEN (re.compile r"\"(?:\\.|[^\"\\])*\"|;[^\n]*|[\[\]]"))
+
+(defk deff-head [text start]
+  {:pre [(: text str) (: start int)]
+   :post [(: % str)]
+   :tags {:context "doeff-hy-adr" :role "judgment"}}
+  "deff の定義の行 — `(deff` から引数の並びが閉じる行の終わりまで — を切り出すため(doeff-linter の DOEFF111 が註を探す
+   『定義の行(頭から引数の終わりまで)』と同じ範囲。引数が多い deff は並びを複数の行に折り、註を並びの閉じる行に置く)。
+   引数の並びが `(deff` の行で開かない時(註や文の中の『(deff』の字面)は、その 1 行だけ。"
+  (val newline (.find text "\n" start))
+  (val line-end (if (= newline -1) (len text) newline))
+  (val open (.find text "[" start line-end))
+  (var close None)
+  (var depth 0)
+  (when (!= open -1)
+    (for [m (.finditer DEFF-HEAD-TOKEN text open)]
+      (:= depth (+ depth (match (.group m) "[" 1 "]" -1 _ 0)))
+      (when (= depth 0)
+        (:= close (.start m))
+        (break))))
+  (val head-end (if (is close None) line-end (.find text "\n" close)))
+  (cut text start (if (= head-end -1) (len text) head-end)))
 
 (defk count-unexcused-deff [text]
   {:pre [(: text str)]
    :post [(: % int)]
    :tags {:context "doeff-hy-adr" :role "judgment"}}
-  "理由の註(同じ行の「defk にできない」)を持たない deff の定義の数 — 台帳の物差し。"
-  (len (lfor line (.findall DEFF-LINE-PATTERN text)
-             :if (not-in DEFF-REASON-MARK line)
-             line)))
+  "理由の註(定義の行の「defk にできない」)を持たない deff の定義の数 — 台帳の物差し。"
+  (var n 0)
+  (for [m (.finditer DEFF-HEAD-PATTERN text)]
+    (<- head (deff-head text (.start m)))
+    (when (not-in DEFF-REASON-MARK head)
+      (:= n (+ n 1))))
+  n)
 
 (defk scan-deff-counts [repo-root]
   {:pre [(: repo-root Path)]
@@ -189,7 +219,7 @@
        :enforced-by ["doeff-linter DOEFF110"]
        :wiring "未配線(2026-09-27)— DOEFF110 は doeff-linter へ別の担当が足している最中で本線に未着地。着地までこの law を機械で検める針は無い")
      (law deff-names-its-reason
-       :statement "for_all deff 定義 d: 同じ行に『; defk にできない: <理由>』がある、または d が DEFF-ROSTER の凍結分に数えられている"
+       :statement "for_all deff 定義 d: 定義の行(`(deff` から引数の並びが閉じる行まで — doeff-linter の DOEFF111 と同じ範囲)に『; defk にできない: <理由>』がある、または d が DEFF-ROSTER の凍結分に数えられている"
        :counterexamples
          [(counterexample "外の library の callback を理由の註なしの deff で新設する — 理由を名乗らない deff は defk にできる物と見分けられない")]
        :enforced-by ["doeff-linter DOEFF111" "test-adr-doe-hy-004-deff-ratchet"]
@@ -240,14 +270,30 @@
                (+ "台帳の削り忘れ(ADR-DOE-HY-004 R3 — 変換便は DEFF-ROSTER を"
                   "同便で削る): " (str stale))))
      (deftest test-adr-doe-hy-004-reasoned-deff-is-outside-the-roster
-       ;; R1 の逃げ道: 同じ行に理由の註を持つ deff は台帳の物差しに数えない。
-       ;; 註の無い deff と、別の行に註がある deff は数える。
+       ;; R1 の逃げ道: 定義の行(`(deff` から引数の並びが閉じる行まで)に理由の註を持つ deff は台帳の物差しに数えない。
+       ;; 註の無い deff と、定義の行の外(直前の行・契約や本体の行)に註がある deff は数える。
        (setv reasoned (+ "(" "deff on-sort-key [row]  ; defk にできない: sorted の key は Program を実行しない\n"))
        (setv bare (+ "(" "deff on-sort-key [row]\n"))
        (setv detached (+ "; defk にできない: 別の行の註\n(" "deff on-sort-key [row]\n"))
        (assert (= (run (count-unexcused-deff reasoned)) 0))
        (assert (= (run (count-unexcused-deff bare)) 1))
-       (assert (= (run (count-unexcused-deff detached)) 1)))
+       (assert (= (run (count-unexcused-deff detached)) 1))
+       ;; 引数の並びを折った deff: 並びの閉じる行の註は定義の行の註(#1201 — doeff-cluster の 6 定義の形)。
+       (setv folded (+ "(" "deff on-sort-key [#^ str key\n"
+                       "                  #^ int rank]  ; defk にできない: sorted の key は Program を実行しない\n"
+                       "  {:pre [(: key str)] :post [(: % str)]}\n  key)\n"))
+       (assert (= (run (count-unexcused-deff folded)) 0))
+       ;; 並びが閉じた後の行(契約の辞書・本体)の註は定義の行の外。
+       (setv late (+ "(" "deff on-sort-key [#^ str key\n                  #^ int rank]\n"
+                     "  {:pre [(: key str)]}  ; defk にできない: 並びの後の行\n  key)\n"))
+       (assert (= (run (count-unexcused-deff late)) 1))
+       ;; 文字列と註の中の括弧は並びの閉じに数えない — 既定値の "]" で頭を早く切らない。
+       (setv quoted (+ "(" "deff on-sort-key [#^ str [key \"]\"]\n"
+                       "                  #^ int rank]  ; defk にできない: sorted の key は Program を実行しない\n  key)\n"))
+       (assert (= (run (count-unexcused-deff quoted)) 0))
+       ;; 並びが開かない字面(註の文の中の『(deff』の字面)はその 1 行だけを見る — 次の行の註を拾わない。
+       (setv prose (+ ";; 旧い (" "deff 呼びの説明\n(" "deff on-sort-key [row]  ; defk にできない: sorted の key\n"))
+       (assert (= (run (count-unexcused-deff prose)) 1)))
      (deftest test-adr-doe-hy-004-pure-logic-lives-in-defk
        ;; 移行レシピの実演: 純粋検証は defk の退化形で書け、handler ゼロの
        ;; run で直接回る — deff にしか書けない形は無い。
