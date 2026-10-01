@@ -17,6 +17,11 @@
 ;;;   test-redeclaring-a-handoff-service-stops-the-old-process-only-after-the-new-one-is-ready(世代ごとの最初の Ready と終わりを判断に渡す)。
 ;;;   失敗ケースは同じ file の test-a-counterexample-worker-that-stops-the-old-process-on-retire-breaks-w1(sim の宿の RetireJob の handler を
 ;;;   「外すと同時に旧を止める」形に壊した worker — SimWorker の retire-stops — で、同じ筋書きに W1 の空白が出る)。
+;;;   R1 prune-keeps-runs-whole(doeff_cluster.record_store_invariants:prune-keeps-runs-whole)— record-store の保持は run を丸ごと消すか
+;;;   丸ごと残し、run の途中だけを残さない(再生は run の始まりから走らせる)。確かめるのは tests/test_record_files_contract.hy の
+;;;   test-prune-removes-or-keeps-each-run-whole(区切りを複数持つ run の消す前と後の text を判断に渡す — 本物と memory の file system の両方)。
+;;;   失敗ケースは同じ file の test-a-counterexample-remove-that-leaves-part-of-a-run-breaks-r1(保持が使う file system の RemoveTree の答え手を
+;;;   「頭の区切りだけを消す」形に壊すと、R1 が 2 つの run を名指す)。
 
 (defarchitecture doeff-cluster
   :root "doeff_cluster"
@@ -32,3 +37,10 @@
 (defservice worker "coordinator から job と task を受けて子 process として走らせる worker"
   {:entry-modules ["doeff_cluster.main"]
    :invariants ["doeff_cluster.worker_invariants:handoff-keeps-a-ready-writer"]})
+
+;; record-store の条は R1(保持は run を丸ごと)。「追記して fsync してから返事」は file system の性質で、memory の置き場では確かめられない
+;; ので条にしていない。:entry-modules は層に分ける前の今の入口(doeff_cluster.record_store_main)。層に分けた後は :entry-modules を外し、
+;; entry 層の dir の定義で数える形に移る。
+(defservice record-store "effect の記録の置き場(run ごと・区切りごとの file に追記し、読み・一覧・圧縮・保持を答える)"
+  {:entry-modules ["doeff_cluster.record_store_main"]
+   :invariants ["doeff_cluster.record_store_invariants:prune-keeps-runs-whole"]})
