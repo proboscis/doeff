@@ -107,13 +107,30 @@
   `(doeff_cluster.service_model.CallShape :function ~(get program 0) :args [~@positional] :kwargs {~@named}))
 
 
+(defn param-parts [param #^ str system]  ; defk にできない: macro の展開の時に呼ぶ関数
+  "系の引数 1 つ → #(名の記号 型の記号か None)。引数は素の記号か、型の注記つき #^ T foundation(読み取り器の (annotate foundation T))。
+   型は module の最上位の型の名(記号・点つきの記号)だけを受ける — 静的な記述に型の module:qualname を残し、汎用の模擬の検が型から
+   模擬の土台を引くため。"
+  (cond
+    (isinstance param Symbol) #(param None)
+    (and (isinstance param Expression) (= (len param) 3) (= (str (get param 0)) "annotate") (isinstance (get param 1) Symbol))
+      (do (when (not (isinstance (get param 2) Symbol))
+            (raise (SyntaxError (.format "defsystem {}: 引数 {} の型は module の最上位の型の名(記号): {}"
+                                         system (get param 1) (hy.repr (get param 2))))))
+          #((get param 1) (get param 2)))
+    True (raise (SyntaxError (.format "defsystem {}: 引数は記号か #^ 型 記号([foundation] か [#^ T foundation] の形): {}"
+                                      system (hy.repr param))))))
+
+
 (defn defsystem-form [name params body]  ; defk にできない: macro の展開の時に呼ぶ関数
   "defsystem の展開: 土台を受けて doeff_cluster.service_model.system-of を呼ぶ関数と、静的な記述 __doeff_system__・
-   __doeff_tags__(役 entry)を置く form を作るため。"
+   __doeff_tags__(役 entry)を置く form を作るため。引数に型の注記が在れば、記述の param_types(名 → 型の module:qualname)に残す。"
   (setv system (str name))
-  (when (not (and (isinstance params List) (all (gfor p params (isinstance p Symbol)))))
-    (raise (SyntaxError (.format "defsystem {}: 引数は記号の list([foundation] の形): {}" system (hy.repr params)))))
-  (setv param-names (lfor p params (str p))
+  (when (not (isinstance params List))
+    (raise (SyntaxError (.format "defsystem {}: 引数は list([foundation] か [#^ T foundation] の形): {}" system (hy.repr params)))))
+  (setv parts (lfor p params (param-parts p system))
+        param-names (lfor #(p _) parts (str p))
+        typed (lfor #(p t) parts :if (is-not t None) #((str p) t))
         rows (list body)
         doc None)
   (when (and rows (isinstance (get rows 0) String))
@@ -139,4 +156,8 @@
        ~@(if (is doc None) [] [doc])
        (doeff_cluster.service_model.system-of ~(String system) #(~@job-forms)))
      (setattr ~name "__doeff_system__" ~(hy.models.as-model static))
+     ~@(if typed
+           [`(setv (get (. ~name __doeff_system__) "param_types")
+                   {~@(sum (lfor #(n t) typed [(String n) `(+ (. ~t __module__) ":" (. ~t __qualname__))]) [])})]
+           [])
      (setattr ~name "__doeff_tags__" (doeff_hy.declarations.DefinitionTags :context ~(String system) :role "entry"))))
