@@ -1089,8 +1089,12 @@ fn wire_boundary_form(items: &[Hy]) -> Option<String> {
     items.get(2..)?.iter().filter(|item| !matches!(item, Hy::Text { .. })).take(1).find_map(|item| item.form(Kind::Brace)).and_then(tags_boundary_form)
 }
 
+/// 列の型の名か(要素の型が中継の型なら、列も中を読まずに運ぶ — agora-redesign #2586)。
+const RELAY_SEQUENCES: [&str; 4] = ["tuple", "list", "typing.Tuple", "typing.List"];
+
 /// 欄の型が中を読まない中継の型 OpaqueJson ちょうどか(None との和を含む)— DOEFF172 は写像と数えない(agora-redesign #2515 — #2077・
-/// #2211・#2068 で採った中継の形。OpaqueJson と他の写像の和は数える)。
+/// #2211・#2068 で採った中継の形。OpaqueJson と他の写像の和は数える)。要素の型が中継の型の tuple / list(`(get tuple #(OpaqueJson ...))`・
+/// `(of tuple OpaqueJson ...)`・`(get list OpaqueJson)`)も、中継を 0 個以上運ぶだけなので数えない(#2586)。
 fn relays_opaque_json(node: &Hy) -> bool {
     match node {
         Hy::Name { text, .. } => text == "OpaqueJson" || text.ends_with(".OpaqueJson"),
@@ -1098,6 +1102,12 @@ fn relays_opaque_json(node: &Hy) -> bool {
             Some(items) if node.head() == "|" => {
                 let parts = &items[1..];
                 parts.iter().any(|part| !part.is("None")) && parts.iter().all(|part| part.is("None") || relays_opaque_json(part))
+            }
+            Some(items) if (node.head() == "get" || node.head() == "of") && items.len() >= 3 => {
+                let elements: Vec<&Hy> = type_args(items).into_iter().filter(|arg| !hy_ellipsis(arg)).collect();
+                items[1].name().is_some_and(|base| RELAY_SEQUENCES.contains(&base))
+                    && !elements.is_empty()
+                    && elements.into_iter().all(relays_opaque_json)
             }
             _ => false,
         },
@@ -1117,7 +1127,16 @@ fn py_relays_opaque_json(node: &Expr) -> bool {
             _ => false,
         },
         Expr::Subscript(subscript) => {
-            matches!(py_dotted(&subscript.value).as_str(), "Optional" | "typing.Optional") && py_relays_opaque_json(&subscript.slice)
+            let base = py_dotted(&subscript.value);
+            if matches!(base.as_str(), "Optional" | "typing.Optional") {
+                return py_relays_opaque_json(&subscript.slice);
+            }
+            // tuple[OpaqueJson, ...]・list[OpaqueJson] — 要素の型が中継の型の列も数えない(#2586)。
+            let elements: Vec<&Expr> = match subscript.slice.as_ref() {
+                Expr::Tuple(tuple) => tuple.elts.iter().filter(|elt| !py_ellipsis(elt)).collect(),
+                single => vec![single],
+            };
+            RELAY_SEQUENCES.contains(&base.as_str()) && !elements.is_empty() && elements.into_iter().all(py_relays_opaque_json)
         }
         _ => is_bit_or(node).is_some_and(|(l, r)| {
             (py_relays_opaque_json(l) || is_none(l)) && (py_relays_opaque_json(r) || is_none(r)) && !(is_none(l) && is_none(r))
@@ -1298,6 +1317,21 @@ mod tests {
         let py = "class Relay:\n    body: OpaqueJson\n    extra: OpaqueJson | None\n    later: 'Optional[OpaqueJson]'\n    index: dict[str, int]\n    mixed: OpaqueJson | dict\n";
         let py_found: Vec<String> = py_dict_smell_hits(py, "x.py").expect("読める").into_iter().map(|h| h.detail()).collect();
         assert_eq!(py_found, vec!["field:Relay.index", "field:Relay.mixed"]);
+    }
+
+    #[test]
+    fn dict_smell_does_not_count_sequences_of_opaque_json_relays() {
+        // agora-redesign #2586: 要素の型が中継の型 OpaqueJson の tuple / list(中を読まない JSON を 0 個以上運ぶだけ)は写像と数えない。
+        // 写像の欄と、要素の型が OpaqueJson と写像の和の列は今までどおり数える(失敗ケース)。
+        let source = r#"
+(defrecord Docs (#^ (get tuple #(OpaqueJson ...)) documents) (#^ (of tuple OpaqueJson ...) more) (#^ (get list OpaqueJson) listed)
+  (#^ (| (get tuple #(OpaqueJson ...)) None) maybe) (#^ dict index) (#^ (get tuple #((| OpaqueJson dict) ...)) mixed))
+"#;
+        let found: Vec<String> = dict_smell_hits(source, true).expect("読める").into_iter().map(|h| h.detail()).collect();
+        assert_eq!(found, vec!["field:Docs.index", "field:Docs.mixed"]);
+        let py = "class Docs:\n    documents: tuple[OpaqueJson, ...]\n    listed: list[OpaqueJson]\n    maybe: 'tuple[OpaqueJson, ...] | None'\n    index: dict[str, int]\n    mixed: tuple[OpaqueJson | dict, ...]\n";
+        let py_found: Vec<String> = py_dict_smell_hits(py, "x.py").expect("読める").into_iter().map(|h| h.detail()).collect();
+        assert_eq!(py_found, vec!["field:Docs.index", "field:Docs.mixed"]);
     }
 
     #[test]
