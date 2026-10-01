@@ -58,6 +58,7 @@ pub mod spans;
 pub mod contract_breach;
 pub mod assembly_shape;
 pub mod invariants;
+pub mod system_decls;
 pub mod clause_coverage;
 pub mod python_reach;
 
@@ -526,6 +527,9 @@ pub fn run_with(root: &Path, settings: &ProjectSettings, enabled: &BTreeSet<Proj
                     }
                     if enabled.contains(&ProjectRule::ServiceInvariantsMissing) {
                         drafts.extend(judge_service_invariants(root, architecture, hy));
+                    }
+                    if enabled.contains(&ProjectRule::ServiceSystemMissing) {
+                        drafts.extend(judge_service_systems(root, architecture, hy));
                     }
                     if let Some(raw) = settings.raw.as_ref().filter(|r| r.world_modules.is_some()) {
                         let placed: BTreeSet<&str> = layer_files.iter().map(|f| f.file.rel.as_str()).collect();
@@ -1010,6 +1014,7 @@ fn whole_hy_index(
             && settings.architecture.as_ref().is_some_and(|a| a.edge_mark.is_some()))
         || (enabled.contains(&ProjectRule::ServiceUntestedOnSim) && settings.architecture.as_ref().is_some_and(|a| a.verification_environment.is_some()))
         || (enabled.contains(&ProjectRule::ServiceInvariantsMissing) && settings.architecture.is_some())
+        || (enabled.contains(&ProjectRule::ServiceSystemMissing) && settings.architecture.is_some())
         || (settings.raw.as_ref().is_some_and(|r| r.world_modules.is_some())
             && (enabled.contains(&ProjectRule::RawSideEffectDirect) || enabled.contains(&ProjectRule::WorldHandlerNamedOutsideList)));
     if !(wants_raw && settings.raw.is_some()) && !wants_env && !wants_classes && !wants_tests {
@@ -3289,6 +3294,31 @@ fn judge_service_invariants(root: &Path, architecture: &architecture::Architectu
                 }),
                 base: Severity::Error,
                 explain: Explain::ServiceInvariantsMissing { service: service.name.clone(), gap: message.clone() },
+                message,
+            }
+        })
+        .collect()
+}
+
+/// DOEFF173: code を持つ service の系の宣言の欠けを、defservice の位置の下書きにする(鍵の細目 = service の名・系の欠けは `::` と名指し)。
+fn judge_service_systems(root: &Path, architecture: &architecture::Architecture, hy: &HashMap<String, HyFileIndex>) -> Vec<Draft> {
+    let rel = declared_rel(root, &architecture.path);
+    system_decls::gaps(root, architecture, hy)
+        .into_iter()
+        .map(|(service, gap)| {
+            let message = gap.describe(&service.name);
+            Draft {
+                rule: ProjectRule::ServiceSystemMissing,
+                layer: None,
+                rel: rel.clone(),
+                path: architecture.path.clone(),
+                range: service.range,
+                detail: Some(match gap.detail() {
+                    Some(spelling) => format!("{}::{}", service.name, spelling),
+                    None => service.name.clone(),
+                }),
+                base: Severity::Error,
+                explain: Explain::ServiceSystemMissing { service: service.name.clone(), gap: message.clone() },
                 message,
             }
         })

@@ -69,7 +69,7 @@ pub(super) fn module_path(module: &str) -> String {
 
 /// code を持つ service か。`:entry-modules` を宣言した service は宣言で母集団に入る(在りかの欠けは gaps が出す)。
 /// 宣言の無い service は entry の層に Hy の定義が 1 本以上あるか。
-fn has_code(root: &str, service: &ArchService, hy: &HashMap<String, HyFileIndex>) -> bool {
+pub(super) fn has_code(root: &str, service: &ArchService, hy: &HashMap<String, HyFileIndex>) -> bool {
     if service.entry_modules.is_some() {
         return true;
     }

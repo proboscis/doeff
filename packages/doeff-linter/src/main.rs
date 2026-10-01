@@ -290,6 +290,7 @@ impl Setup {
                 ProjectRule::RecordStubNotKwOnly => self.settings.architecture.as_ref().is_some_and(|a| a.record_stubs.is_some()),
                 ProjectRule::ServiceUntestedOnSim => self.settings.architecture.as_ref().is_some_and(|a| a.verification_environment.is_some()),
                 ProjectRule::ServiceInvariantsMissing => self.settings.architecture.is_some(),
+                ProjectRule::ServiceSystemMissing => self.settings.architecture.is_some(),
                 ProjectRule::HandlerArgumentHoldsState => self.settings.architecture.as_ref().is_some_and(|a| a.handler_arguments.is_some()),
                 ProjectRule::BusinessEffectFake | ProjectRule::TestOnlyFake => self.settings.architecture.as_ref().is_some_and(|a| a.business_fakes.is_some()),
                 ProjectRule::ServiceWithoutCounterexample | ProjectRule::ClauseWithoutCounterexample => {
