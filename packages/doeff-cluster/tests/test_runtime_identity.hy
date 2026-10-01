@@ -1,4 +1,4 @@
-;; 入口の検め(doeff_cluster/runtime_identity.hy)の検。
+;; 入口の検め(doeff_cluster/shared/core/runtime_identity.hy)の検。
 ;;
 ;;   * 宣言・印・キー・module の置き場が揃えば一致を答え、宣言の repo と commit と pid を返す。
 ;;   * env-vars だけ違う宣言が同じ root(同じキー)を使い回しても一致(キーの材料は root の中身を決める欄だけ)。
@@ -15,8 +15,9 @@
 (import doeff_core_effects.scheduler [scheduled])
 (import doeff_cluster.shared.intent.runtime_env_model [RuntimeEnv RepoCheckout PythonProject EnvVar runtime-env->json env-key])
 (import doeff_cluster.env_prepare [EnvMarker env-marker->json])
-(import doeff_cluster.runtime_identity [IdentityFailureKind ModuleOrigin ProcessFacts RuntimeIdentity RuntimeIdentityMismatch
-                                          RepoCommit check-runtime-identity given-runtime-facts])
+(import doeff_cluster.shared.intent.runtime_identity_model [IdentityFailureKind ModuleOrigin ProcessFacts RuntimeIdentity RuntimeIdentityMismatch RepoCommit])
+(import doeff_cluster.shared.core.runtime_identity [check-runtime-identity])
+(import doeff_cluster.shared.protocol.runtime_facts [given-runtime-facts])
 
 (val AC-COMMIT (* "a" 40))
 (val DF-COMMIT (* "d" 40))
