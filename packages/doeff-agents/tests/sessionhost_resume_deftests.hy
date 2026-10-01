@@ -20,6 +20,8 @@
 
 (import json)
 
+(import doeff [run])
+(import doeff_agents.sessionhost.store_memory [with-row])
 (import doeff_agents.sessionhost.effects [SessionRow])
 (import doeff_agents.sessionhost.impls.claude_code [
   claude-code-impl
@@ -30,7 +32,7 @@
 (import doeff_agents.sessionhost.launch [
   RESULT-PROTOCOL-INSTRUCTION
   resume-session])
-(import sessionhost_launch_deftests [LaunchWorld fake-launch-substrate])
+(import sessionhost_launch_deftests [LaunchWorld fake-launch-substrate under-world])
 
 
 ;; ---------------------------------------------------------------------------
@@ -53,6 +55,9 @@
                 "generation" 1})
   (.update fields overrides)
   (setv row (SessionRow #** fields))
+  ;; 置き場は memory-session-store(under-world が重ねる)— SessionStoreUpsert と同じ書きの判断で置き場へ書き、検が読む写しにも置く
+  ;; (agora-redesign #2409 — 09-29 の 8c560886c で置き場を分けた後、蘇生元の行が置き場に無く SessionStoreGet が答えを持たなかった)。
+  (setv world.store (run (with-row world.store row)))
   (setv (get world.rows row.session-id) row)
   row)
 
@@ -75,7 +80,7 @@
 (defk run-resume [world params]
   {:pre [(: world LaunchWorld) (: params dict)]
    :post [(: % "SessionRow(成功時)")]}
-  (<- row ((fake-launch-substrate world)
+  (<- row (under-world world
            ((codex-impl "/opt/doeff-sessionhost")
             ((claude-code-impl "/opt/doeff-sessionhost")
              (resume-session params)))))
