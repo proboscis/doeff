@@ -30,7 +30,7 @@
   {:pre [(: method str) (: path str) (: query dict) (: body (| dict list str int float bool None))
          (: slot (| ReplySlot Promise None)) (: actor (| str None)) (: peer str)]
    :post [(: % Request)]
-   :tags {:context "doeff-cluster" :role "protocol"}}
+   :tags {:context "doeff-cluster" :role "foundation"}}
   "受けた HTTP 要求 1 件を Request にするため。path を / で割り、区切りごとに percent の符号を戻して parts に載せる(符号を戻すのは
    HTTP の境のこの 1 か所 — 受け口の判断 api_policy.respond は parts だけを読む・#1636)。slot = 返事を待つ受付の側の物(判断は見ない)。"
   (Request method path query body (tuple (gfor p (.split (.strip path "/") "/") (url-unquote p)))
