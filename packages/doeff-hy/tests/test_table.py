@@ -169,3 +169,30 @@ def test_rows_follow_the_keys_after_writes_and_removals() -> None:
     assert [draft.row(key) for key in draft.keys()] == list(draft.rows())
     # 失敗ケースの照らし: 消した行(k2・k4)の値を列に残す読み手なら、数えが表の size と食い違う。
     assert len(table.rows()) == table.size() and len(draft.rows()) == draft.freeze().size()
+
+
+# ------------------------------------------------------------------ 値としての扱い(agora-redesign #2254)
+
+
+def test_tables_compare_by_rows_not_by_layout() -> None:
+    import copy
+
+    written = table_of(_rows(3)).with_writes((TableWrite(key="k1", value=10),))
+    built = table_of((TableWrite(key="k0", value=0), TableWrite(key="k1", value=10), TableWrite(key="k2", value=2)))
+    # 基と差分の分け方が違っても、行が同じなら等しい。
+    assert written == built
+    assert written != built.with_writes((TableWrite(key="k2", value=None),))
+    assert written != built.with_writes((TableWrite(key="k2", value=3),))
+    # 写し(copy・deepcopy)は作る口を通して作り直され、元と等しい(欄の書きを断る表でも写せる)。
+    assert copy.deepcopy(written) == written
+    assert copy.copy(written) == written
+    assert copy.deepcopy(written) is not written
+
+
+def test_the_counterexample_an_identity_compared_table_breaks_the_snapshot_check() -> None:
+    import copy
+
+    # 失敗ケースの照らし: 比べが同一性(既定の object.__eq__)なら、中身の同じ写しが「違う」と読まれ、畳みの前後の断面の検が赤になる。
+    table = table_of(_rows(2))
+    assert object.__eq__(copy.deepcopy(table), table) is NotImplemented
+    assert copy.deepcopy(table) == table

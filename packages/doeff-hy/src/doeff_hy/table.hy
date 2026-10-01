@@ -82,6 +82,20 @@
   (defn #^ str __repr__ [self]
     (.format "Table(size={})" self._size))
 
+  (defn #^ bool __eq__ [self #^ object other]
+    "行の中身で比べる(鍵の集合が同じで、鍵ごとの行が等しい)— 表は値なので、写しと元の表は中身が同じなら等しい(基と差分の分け方は
+     問わない)。表を欄に持つ凍った記録の等しさ(畳みの前後の cache の比べ)のため。"
+    (when (not (isinstance other (type self)))
+      (return False))
+    (and (= self._size (.size other))
+         (all (gfor #(key value) (zip (.keys self) (.rows self)) (= (.row other key) value)))))
+
+  ;; 中身で比べる表は辞書の鍵にしない(書き換えない表でも、比べに全行を読む)— __eq__ だけを持つ class の __hash__ は Python が None にする。
+
+  (defn #^ (get tuple #((get type "Table[V]") (get tuple #((get dict #(str V)) (get dict #(str V)) (get frozenset str))))) __reduce__ [self]
+    "写し(copy.copy・copy.deepcopy)と pickle のため — 欄の書きを断る表を、作る口(__init__)を通して作り直す。"
+    #(Table #(self._base self._delta self._removed)))
+
   (defn __setattr__ [self #^ str name #^ object value]
     (raise (AttributeError (.format "Table は変えられない(欄 {!r} を書こうとした)" name)))))
 
