@@ -1,7 +1,7 @@
 ;; 名前付きの lease の担い手の名乗りと、終わった process の lease の外しが同じ定義であること(2026-09-29)。
 ;;
 ;; 担い手の名 = lease_rules.lease-holder(<job>/<process の世代の名>)・token = holder-tokens-prefix(担い手) + 番号。子の土台
-;; (cluster_foundation.lease-holder-of → SemaphoreSession.next-token)が名乗り、worker(本番の handlers.release-leases・sim の
+;; (cluster_foundation.lease-holder-of → SemaphoreSession.next-token)が名乗り、worker(本番の worker/protocol/lease_release・sim の
 ;; local.release-leases)が worker_policy の ReleaseLeases(job 世代の名)から同じ定義で頭を作って外す。
 ;;
 ;; 反例(直す前): 名乗りは <job>/<世代>、外しは <worker>/<世代>/ の頭だったので、終わった process の lease は外れず期限まで残った —

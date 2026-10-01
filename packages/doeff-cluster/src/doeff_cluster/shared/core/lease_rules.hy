@@ -8,7 +8,7 @@
 (import doeff_cluster.shared.intent.semaphore_model [SEMAPHORE-PREFIX FENCE-MARGIN-MS LEASE-OPS LEASE-MAX-TTL-MS])
 
 
-(deff lease-holder [#^ str job #^ str instance]  ; defk にできない: worker の返し(Program の外の本番の手続き handlers.release-leases)も呼ぶ純粋な判断
+(deff lease-holder [#^ str job #^ str instance]  ; defk にできない: worker の返し(worker/protocol/lease_release)も呼ぶ純粋な判断
   {:pre [(: job str) (: instance str)] :post [(: % str)] :tags {:context "doeff-cluster" :role "judgment"}}
   "名前付きの lease の担い手の名を、名乗る側(子の土台)と外す側(worker)が同じ綴りで作るため: <job>/<process の世代の名>。"
   (.format "{}/{}" job instance))
@@ -16,7 +16,7 @@
 
 (deff holder-tokens-prefix [#^ str holder]  ; defk にできない: SemaphoreSession(手元の記憶の class)と worker の返し(Program の外)が呼ぶ純粋な判断
   {:pre [(: holder str)] :post [(: % str)] :tags {:context "doeff-cluster" :role "judgment"}}
-  "担い手 holder の token の頭(<担い手>/)を、token を作る側(SemaphoreSession.next-token)と担い手の token を全部外す側(release-leases)が
+  "担い手 holder の token の頭(<担い手>/)を、token を作る側(SemaphoreSession.next-token)と担い手の token を全部外す側(worker/protocol/lease_release)が
    同じ綴りで作るため。"
   (+ holder "/"))
 

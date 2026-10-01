@@ -810,7 +810,10 @@
         "doeff-cluster-worker-status-file",
         "doeff-cluster-worker-env-store",
         "doeff-cluster-runtime-env-model",
-        "doeff-cluster-worker-world"
+        "doeff-cluster-worker-world",
+        "doeff-cluster-coordinator-http",
+        "doeff-cluster-coordinator-route",
+        "doeff-cluster-worker-lease-release"
       ],
       "layer": "runtime",
       "name": "doeff-cluster-main",
@@ -1414,7 +1417,8 @@
         "doeff-cluster-worker-env-store",
         "doeff-cluster-worker-tree-files",
         "doeff-cluster-worker-world",
-        "doeff-cluster-task-result"
+        "doeff-cluster-task-result",
+        "doeff-cluster-worker-lease-release"
       ],
       "exclude": [
         "packages/doeff-cluster/tests/fixtures/independence/*"
@@ -2197,6 +2201,24 @@
         "packages/doeff-cluster/src/doeff_cluster/shared/protocol/task_result.hy"
       ],
       "responsibility": "task の子 process が終わる前に結果を coordinator へ直に届ける口(宛先の部品の上の HttpRequest — #1387・#2427)",
+      "typed": true
+    },
+    {
+      "allow": [
+        "doeff-cluster-semaphore-model",
+        "doeff-cluster-lease-rules",
+        "doeff-cluster-coordinator-route",
+        "doeff-cluster-worker-model"
+      ],
+      "layer": "io",
+      "name": "doeff-cluster-worker-lease-release",
+      "paths": [
+        "packages/doeff-cluster/src/doeff_cluster/worker/protocol/lease_release.hy"
+      ],
+      "public": [
+        "packages/doeff-cluster/src/doeff_cluster/worker/protocol/lease_release.hy"
+      ],
+      "responsibility": "終わった process の lease の返し(ReleaseLeases)を宛先の部品の上の HttpRequest へ言い換える(#2427)",
       "typed": true
     }
   ],

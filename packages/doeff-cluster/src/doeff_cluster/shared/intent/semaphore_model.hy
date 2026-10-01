@@ -23,7 +23,7 @@
 ;;;
 ;;; 担い手の名と token の綴り(2026-09-29 に 1 つにした): 担い手 = lease-holder(<job>/<process の世代の名> — cluster で一意・同じ job の
 ;;; 新旧の世代を分ける)・token = <担い手>/<番号>。子の土台(cluster_foundation.lease-holder-of → SemaphoreSession.next-token)が名乗り、
-;;; worker の返し(handlers.release-leases・sim の local.release-leases)が同じ定義で頭を作って外す。以前は名乗りが <job>/<世代>、外しが
+;;; worker の返し(worker/protocol/lease_release・sim の local.release-leases)が同じ定義で頭を作って外す。以前は名乗りが <job>/<世代>、外しが
 ;;; <worker>/<世代>/ の頭で食い違い、終わった process の lease が期限まで残った(入れ替えの新しい版が期限まで置けなかった)。
 ;;;
 ;;; この module は型・effect・定数だけを持つ(SDK の型の置き場・#2107)。lease の行の純粋な判断(lease-op・claim・

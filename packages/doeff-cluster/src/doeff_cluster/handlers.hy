@@ -6,7 +6,6 @@
 (import json os re sys threading time uuid)
 (import httpx)
 (import pathlib [Path])
-(import urllib.parse [quote :as url-quote])
 (import doeff_cluster.foundation.coordinator_http [CoordinatorEndpoint REPLY-SECONDS])
 (import doeff_cluster.worker.core.beat_policy [WatchKind WatchReading beat-interval-ms heartbeat-due watch-params watch-reading reply-revision
                       WATCH-RETRY-SECONDS WAKE-HOLD-SECONDS])
@@ -17,13 +16,11 @@
 (import .job_context [process-context-environ])
 (import doeff_cluster.shared.intent.remote_model [program-sha])
 (import doeff_cluster.shared.intent.runtime_env_model [runtime-env-of-json env-key current-platform])
-(import doeff_cluster.shared.intent.semaphore_model [SEMAPHORE-PREFIX])
-(import doeff_cluster.shared.core.lease_rules [drop-holders lease-holder holder-tokens-prefix])
 (import doeff_cluster.worker.protocol.heartbeat [env-heartbeat-part heartbeat-body status-report status-row])
 (import doeff_cluster.worker.core.heartbeat_rules [warm-env-of-row finished-task-id desired-when-unreachable])
 (import doeff_cluster.foundation.ready_file [write-ready-file])
 (import doeff_cluster.worker.core.launch [program-file])
-(import doeff_cluster.worker.intent.worker_model [EnvReport DesiredJobs DesiredUnreadable ReadDesired PublishStatus WarmEnv ReleaseLeases]
+(import doeff_cluster.worker.intent.worker_model [EnvReport DesiredJobs DesiredUnreadable ReadDesired PublishStatus WarmEnv]
         doeff_cluster.shared.intent.job_model [JobSpec] doeff_cluster.worker.core.worker_rules [ENV-KEY-PREFIX])
 
 (defn #^ tuple env-placement [#^ (| dict None) declared #^ str revision]  ; defk にできない: 宣言の読み(Program の外の I/O の道具)が呼ぶ
@@ -385,45 +382,5 @@
     (setv link.statuses (.report link statuses))
     (<- (PublishStatus statuses note))
     (resume None)))
-
-(defn #^ None release-leases [#^ CoordinatorLink link #^ str job #^ str instance]
-  "終わった process(job の名 job・世代の名 instance)が持っていた lease を返す。token の頭は子が名乗った担い手と同じ定義
-   (lease_rules.lease-holder と holder-tokens-prefix — <job>/<世代の名>/)。外すのは coordinator(POST /leases/<名> の drop —
-   2026-09-25)。drop の口を持たない旧い coordinator には、盤の行の compare-and-set で外す(以前の形)。届かない・競合が続く時は
-   あきらめる(期限で切れる)。"
-  (setv prefix (holder-tokens-prefix (lease-holder job instance)))
-  (try
-    (setv response (.request link.endpoint "GET" "/board" :params {"prefix" SEMAPHORE-PREFIX}))
-    (.raise-for-status response)
-    (for [#(key row) (.items (.json response))]
-      (when (is (drop-holders row prefix) None) (continue))
-      (setv name (cut key (len SEMAPHORE-PREFIX) None))
-      (setv dropped (.request link.endpoint "POST" (+ "/leases/" (url-quote name :safe ""))
-                              :json {"op" "drop" "token" prefix}))
-      (cond
-        (< dropped.status-code 300)
-          (print (.format "worker: 終わった process {} の lease を返しました({})" instance key) :file sys.stderr :flush True)
-        (= dropped.status-code 404) (release-by-board link key row prefix instance)
-        True (print (.format "worker: lease を返せなかった({}・{}): {}" instance key dropped.status-code) :file sys.stderr :flush True)))
-    (except [error Exception]
-      (print (.format "worker: lease を返せなかった({}): {!r}" instance error) :file sys.stderr :flush True))))
-
-(defn #^ None release-by-board [#^ CoordinatorLink link #^ str key #^ dict row #^ str prefix #^ str instance]
-  "旧い coordinator(/leases の口が無い)へ: 盤の行の compare-and-set で担い手を外す。"
-  (for [attempt (range 3)]
-    (setv updated (drop-holders row prefix))
-    (when (is updated None) (break))
-    (setv put (.request link.endpoint "PUT" (+ "/board/" key) :json {"value" updated "expect" row}))
-    (when (< put.status-code 300)
-      (print (.format "worker: 終わった process {} の lease を返しました({})" instance key) :file sys.stderr :flush True)
-      (break))
-    (when (!= put.status-code 409) (break))
-    ;; 競合(延長と重なった)は読み直す。
-    (setv again (.request link.endpoint "GET" "/board" :params {"prefix" key}))
-    (setv row (.get (.json again) key))
-    (when (is row None) (break))))
-
-(defhandler lease-release-coordinator [#^ CoordinatorLink link]
-  (ReleaseLeases [job instance] (release-leases link job instance) (resume None)))
 
 

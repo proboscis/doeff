@@ -12,6 +12,7 @@
 (import signal)
 (import types [FrameType])
 (import sys)
+(import time)
 (import pathlib [Path])
 (import doeff [run])
 (import doeff_core_effects.handlers [await-handler slog-handler state :as session-store])
@@ -21,7 +22,11 @@
 (import doeff_core_effects.scheduler [scheduled])
 (import doeff_time [async-time-handler])
 (import .handlers [CoordinatorLink coordinator-desired
-                   status-to-coordinator lease-release-coordinator] doeff_cluster.worker.protocol.stop [stop-flag StopState])
+                   status-to-coordinator] doeff_cluster.worker.protocol.stop [stop-flag StopState])
+(import doeff_core_effects.http_handlers [http-production-handler])
+(import doeff_cluster.foundation.coordinator_http [REPLY-SECONDS CONNECT-SECONDS PREFERRED-RECHECK-SECONDS])
+(import doeff_cluster.shared.protocol.coordinator_route [RouteCell RouteOptions route-of])
+(import doeff_cluster.worker.protocol.lease_release [lease-release])
 (import doeff_cluster.foundation.process_versions [current-versions])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming])
 (import doeff_cluster.shared.core.capabilities [capabilities-of])
@@ -125,14 +130,19 @@
                               ;; heartbeat を拍から切り離し、desired の変化は名指しの待ちで受ける(#1933 — 待つ口の無い coordinator
                               ;; には拍ごとに送る)。
                               :watch True))
+  ;; 終わった process の lease の返しの宛先(heartbeat の宛先と同じ並び — 状態は別の入れ物)と送り方(#2427 — 前は CoordinatorLink の宛先)。
+  ;; 一巡し直さない(前の CoordinatorEndpoint の retries 0 と同じ — 届かなければ期限で切れる)。
+  (setv lease-cell (RouteCell (run (route-of args.coordinator (int (* 1000 (time.time))))))
+        lease-options (RouteOptions :reply-seconds REPLY-SECONDS :connect-seconds CONNECT-SECONDS :connect-retries 0
+                                    :recheck-ms (int (* PREFERRED-RECHECK-SECONDS 1000)) :actor args.name))
   (setv program (run-worker policy))
   ;; 並びは内側から(先頭が Program に最も近い)。process-host・probe-host・code-host・env-host の session の値(子の表・検めの記録・
   ;; 木と root の準備の記録)は外側の session-store が持つ。status-file は焼きの経過の秒を CodeTimings で、coordinator-desired は root の
   ;; 名乗りを EnvReport で問うので、code-host と env-host はその外側に置く。
   (for [h [local-host (process-host host) (probe-host probes)
-           (coordinator-desired link) (status-to-coordinator link) (lease-release-coordinator link)
+           (coordinator-desired link) (status-to-coordinator link) (lease-release lease-cell lease-options)
            (status-file (str (/ state-dir "status.json"))) (code-host codes) (env-host envs) (session-store) os-file-handler subprocess-handler
-           (stop-flag stop) slog-handler (async-time-handler) (await-handler)]]
+           (stop-flag stop) slog-handler (http-production-handler) (async-time-handler) (await-handler)]]
     (setv program (h program)))
   (print "worker: 起動します" :file sys.stderr :flush True)
   (try
