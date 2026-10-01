@@ -882,6 +882,7 @@ pub fn py_dict_smell_hits(source: &str, rel: &str) -> Result<Vec<DictSmellHit>, 
     let Mod::Module(module) = module else { return Ok(Vec::new()) };
     let mut out: Vec<DictSmellHit> = py_field_sites(&module.body)
         .into_iter()
+        .filter(|(_, node)| !py_relays_opaque_json(node))
         .filter_map(|(name, node)| {
             let problem = py_wire_free_type_problem(node).filter(|problem| problem.starts_with("写像"))?;
             let range = node.range();
@@ -1063,14 +1064,65 @@ fn body_start(items: &[Hy]) -> usize {
     at
 }
 
-/// 契約の :tags の :spells の値(綴る wire の形の名 — 例 "json")。無ければ None。
-fn spells_of(items: &[Hy]) -> Option<String> {
+/// 外の形の名(doeff-hy の declarations.hy の SPELLS と同じ閉じた一覧 — 名乗れるのはこのどれか)。
+const BOUNDARY_FORMS: &[&str] = &["json", "http", "env", "schema"];
+
+/// 契約の :tags の境界の名乗り(:spells = 外の形を綴る 1 点・:reads = 外の形を型へ読む 1 点)の形の名。無いか一覧の外なら None
+/// (agora-redesign #2515 — 以前は :spells の空でない値なら何でも受けた)。
+fn boundary_form_of(items: &[Hy]) -> Option<String> {
     let contract = items.get(3..body_start(items))?.iter().find_map(|item| item.form(Kind::Brace).filter(|_| contract_map(item)))?;
-    let tags = (0..contract.len().saturating_sub(1)).step_by(2).find_map(|i| contract[i + 1].form(Kind::Brace).filter(|_| contract[i].is(":tags")))?;
+    tags_boundary_form(contract)
+}
+
+/// 頭の辞書(契約の辞書・defwire の頭の辞書)の :tags の境界の名乗りの形の名。
+fn tags_boundary_form(head: &[Hy]) -> Option<String> {
+    let tags = (0..head.len().saturating_sub(1)).step_by(2).find_map(|i| head[i + 1].form(Kind::Brace).filter(|_| head[i].is(":tags")))?;
     (0..tags.len().saturating_sub(1)).step_by(2).find_map(|i| match &tags[i + 1] {
-        Hy::Text { value, .. } if tags[i].is(":spells") && !value.trim().is_empty() => Some(value.clone()),
+        Hy::Text { value, .. } if (tags[i].is(":spells") || tags[i].is(":reads")) && BOUNDARY_FORMS.contains(&value.as_str()) => Some(value.clone()),
         _ => None,
     })
+}
+
+/// defwire の頭の辞書(名前と docstring の後の {…})の境界の名乗りの形の名(agora-redesign #2515 — 契約どおりの外の形の写像の欄を持つ
+/// wire の型は、何の境界かを :spells / :reads で名乗れば欄を数えない。defrecord は値の型なので名乗りを効かせない)。
+fn wire_boundary_form(items: &[Hy]) -> Option<String> {
+    items.get(2..)?.iter().filter(|item| !matches!(item, Hy::Text { .. })).take(1).find_map(|item| item.form(Kind::Brace)).and_then(tags_boundary_form)
+}
+
+/// 欄の型が中を読まない中継の型 OpaqueJson ちょうどか(None との和を含む)— DOEFF172 は写像と数えない(agora-redesign #2515 — #2077・
+/// #2211・#2068 で採った中継の形。OpaqueJson と他の写像の和は数える)。
+fn relays_opaque_json(node: &Hy) -> bool {
+    match node {
+        Hy::Name { text, .. } => text == "OpaqueJson" || text.ends_with(".OpaqueJson"),
+        _ => match node.expression() {
+            Some(items) if node.head() == "|" => {
+                let parts = &items[1..];
+                parts.iter().any(|part| !part.is("None")) && parts.iter().all(|part| part.is("None") || relays_opaque_json(part))
+            }
+            _ => false,
+        },
+    }
+}
+
+/// Python の注記が OpaqueJson ちょうどか(`OpaqueJson | None`・`Optional[OpaqueJson]`・文字列の注記を含む)。
+fn py_relays_opaque_json(node: &Expr) -> bool {
+    let is_none = |expr: &Expr| matches!(expr, Expr::Constant(constant) if matches!(constant.value, Constant::None)) || py_dotted(expr) == "None";
+    match node {
+        Expr::Name(_) | Expr::Attribute(_) => {
+            let dotted = py_dotted(node);
+            dotted == "OpaqueJson" || dotted.ends_with(".OpaqueJson")
+        }
+        Expr::Constant(constant) => match &constant.value {
+            Constant::Str(text) => matches!(parse(text, Mode::Expression, "<annotation>"), Ok(Mod::Expression(expression)) if py_relays_opaque_json(&expression.body)),
+            _ => false,
+        },
+        Expr::Subscript(subscript) => {
+            matches!(py_dotted(&subscript.value).as_str(), "Optional" | "typing.Optional") && py_relays_opaque_json(&subscript.slice)
+        }
+        _ => is_bit_or(node).is_some_and(|(l, r)| {
+            (py_relays_opaque_json(l) || is_none(l)) && (py_relays_opaque_json(r) || is_none(r)) && !(is_none(l) && is_none(r))
+        }),
+    }
 }
 
 /// Hy の file 1 つの写像の置き場の臭い。fields = 値を型だけで渡す層の外か(偽なら欄は見ない — その層の欄は DOEFF171 が見る。:spells の
@@ -1081,8 +1133,9 @@ pub fn dict_smell_hits(source: &str, fields: bool) -> Result<Vec<DictSmellHit>, 
     for form in &forms {
         let Some(items) = form.expression() else { continue };
         match form.head() {
+            "defwire" if fields && wire_boundary_form(items).is_some() => {}
             "defclass" | "defrecord" | "defwire" if fields => {
-                out.extend(field_sites(source, form).into_iter().filter_map(|(name, node)| {
+                out.extend(field_sites(source, form).into_iter().filter(|(_, node)| !relays_opaque_json(node)).filter_map(|(name, node)| {
                     let problem = mapping_problem(node)?;
                     let (start, end) = node.span();
                     Some(DictSmellHit { start, end, name, what: DictSmellWhat::Field, problem })
@@ -1095,9 +1148,9 @@ pub fn dict_smell_hits(source: &str, fields: bool) -> Result<Vec<DictSmellHit>, 
                 if defk_posts(items).into_iter().any(|node| mapping_problem(node).is_some()) {
                     continue;
                 }
-                // wire の形を綴るのが目的の 1 点(契約の :tags に :spells "json" 等を名乗る)は数えない — operator の線 (b)「dict を組む事が
-                // 目的の 1 点だけ可」(agora-redesign #2265)。値を型だけで渡す層(core)では名乗っても数える(その層は綴らない)。
-                if fields && spells_of(items).is_some() {
+                // 外の形を綴る・読むのが目的の 1 点(契約の :tags に :spells / :reads を形の名で名乗る)は数えない — operator の線 (b)「dict を
+                // 組む事が目的の 1 点だけ可」(agora-redesign #2265・#2515)。値を型だけで渡す層(core)では名乗っても数える(その層は綴らない)。
+                if fields && boundary_form_of(items).is_some() {
                     continue;
                 }
                 // 先頭の docstring と契約の辞書は写像の値ではない(順を問わない)。
@@ -1198,6 +1251,64 @@ mod tests {
         let details = |fields: bool| -> Vec<String> { dict_smell_hits(source, fields).expect("読める").into_iter().map(|h| h.detail()).collect() };
         assert_eq!(details(true), vec!["built:index-of"], "契約の辞書だけの定義と :spells の名乗りは数えない");
         assert_eq!(details(false), vec!["built:index-of", "built:payload-text"], "値を型だけで渡す層では :spells を名乗っても数える");
+    }
+
+    #[test]
+    fn dict_smell_honours_spells_and_reads_with_a_form_name_only() {
+        // agora-redesign #2515: :spells / :reads の値は外の形の名(json / http / env / schema)。形の名の無い名乗りは数える(失敗ケース 1)・
+        // core(値を型だけで渡す層)では形の名で名乗っても数える(失敗ケース 2)。
+        let source = r#"
+(defk header-map [x]
+  {:pre [(: x int)] :post [(: % str)] :tags {:context "x" :role "protocol" :spells "http"}}
+  (str {"a" x}))
+(defk read-row [x]
+  {:pre [(: x int)] :post [(: % int)] :tags {:context "x" :role "protocol" :reads "json"}}
+  (len {"a" x}))
+(defk env-map [x]
+  {:pre [(: x int)] :post [(: % int)] :tags {:context "x" :role "entry" :spells "env"}}
+  (len {"A" x}))
+(defk yaml-map [x]
+  {:pre [(: x int)] :post [(: % int)] :tags {:context "x" :role "protocol" :spells "yaml"}}
+  (len {"a" x}))
+(defk empty-reads [x]
+  {:pre [(: x int)] :post [(: % int)] :tags {:context "x" :role "protocol" :reads ""}}
+  (len {"a" x}))
+"#;
+        let details = |fields: bool| -> Vec<String> { dict_smell_hits(source, fields).expect("読める").into_iter().map(|h| h.detail()).collect() };
+        assert_eq!(details(true), vec!["built:yaml-map", "built:empty-reads"], "形の名の名乗りだけが数えない");
+        assert_eq!(
+            details(false),
+            vec!["built:header-map", "built:read-row", "built:env-map", "built:yaml-map", "built:empty-reads"],
+            "core では名乗っても数える"
+        );
+    }
+
+    #[test]
+    fn dict_smell_does_not_count_opaque_json_relay_fields() {
+        // agora-redesign #2515: 中を読まない中継の型 OpaqueJson の欄(None との和を含む)は写像と数えない。OpaqueJson 以外の写像の欄・
+        // OpaqueJson と他の写像の和は数える(失敗ケース 3)。
+        let source = r#"
+(defrecord Relay (#^ OpaqueJson body) (#^ (| OpaqueJson None) extra) (#^ dict index) (#^ (| OpaqueJson dict) mixed) (#^ JsonBody raw))
+"#;
+        let found: Vec<String> = dict_smell_hits(source, true).expect("読める").into_iter().map(|h| h.detail()).collect();
+        assert_eq!(found, vec!["field:Relay.index", "field:Relay.mixed", "field:Relay.raw"]);
+        let py = "class Relay:\n    body: OpaqueJson\n    extra: OpaqueJson | None\n    later: 'Optional[OpaqueJson]'\n    index: dict[str, int]\n    mixed: OpaqueJson | dict\n";
+        let py_found: Vec<String> = py_dict_smell_hits(py, "x.py").expect("読める").into_iter().map(|h| h.detail()).collect();
+        assert_eq!(py_found, vec!["field:Relay.index", "field:Relay.mixed"]);
+    }
+
+    #[test]
+    fn dict_smell_honours_a_boundary_named_defwire_only() {
+        // agora-redesign #2515(kn-w21 の #2505 の知らせ): 契約どおりの外の形の写像の欄を持つ defwire は、頭の辞書の :tags に :spells /
+        // :reads を形の名で名乗れば欄を数えない。名乗らない defwire・形の名でない名乗り・defrecord の欄は数える。
+        let source = r#"
+(defwire Usage "公開する自由なキーの索引。" {:tags {:context "x" :role "type" :spells "json"} :names :camel} (#^ (of dict str int) counts))
+(defwire Plain "名乗りなし。" {:tags {:context "x" :role "type"} :names :camel} (#^ (of dict str int) counts))
+(defwire Yaml "形の名でない。" {:tags {:context "x" :role "type" :spells "yaml"}} (#^ (of dict str int) counts))
+(defrecord Rec "値の型。" {:tags {:context "x" :role "type" :spells "json"}} (#^ (of dict str int) counts))
+"#;
+        let found: Vec<String> = dict_smell_hits(source, true).expect("読める").into_iter().map(|h| h.detail()).collect();
+        assert_eq!(found, vec!["field:Plain.counts", "field:Yaml.counts", "field:Rec.counts"]);
     }
 
     /// 値を型だけで渡す層の当たりの細目の列。

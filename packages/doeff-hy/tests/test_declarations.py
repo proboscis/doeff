@@ -109,6 +109,37 @@ def test_the_spells_tag_takes_only_a_known_spelling_literal() -> None:
         DefinitionTags(context="k", role="protocol", spells="yaml")
 
 
+def test_spells_and_reads_name_any_outer_form() -> None:
+    # agora-redesign #2515: :spells の値は外の形の名(json / http / env / schema)・読む側の名乗り :reads も同じ一覧を受ける。
+    ns = evaluate("""
+(defk header-of [x] {:pre [(: x int)] :post [(: % str)] :tags {:context "k" :role "protocol" :spells "http"}} (str x))
+(defk row-of [x] {:pre [(: x int)] :post [(: % int)] :tags {:context "k" :role "protocol" :reads "json"}} x)
+(defk env-of [x] {:pre [(: x int)] :post [(: % int)] :tags {:context "k" :role "entry" :spells "env" :reads "schema"}} x)
+""")
+    assert ns["header_of"].__doeff_tags__ == DefinitionTags(context="k", role="protocol", spells="http")
+    assert ns["row_of"].__doeff_tags__ == DefinitionTags(context="k", role="protocol", reads="json")
+    assert ns["env_of"].__doeff_tags__ == DefinitionTags(context="k", role="entry", spells="env", reads="schema")
+
+
+def test_a_defwire_names_its_outer_form_in_tags() -> None:
+    # agora-redesign #2515: 契約どおりの外の形の写像の欄を持つ defwire も :tags に :spells / :reads を名乗れる(DOEFF172 が欄を数えない)。
+    ns = evaluate("""
+(require doeff-hy.record [defwire])
+(import dataclasses [dataclass])
+(import pydantic [ConfigDict TypeAdapter])
+(defwire UsageWire "公開する自由なキーの索引。" {:tags {:context "k" :role "type" :spells "json"} :names :camel} (#^ int input))
+""")
+    assert ns["UsageWire"].__doeff_tags__ == DefinitionTags(context="k", role="type", spells="json")
+
+
+def test_reads_takes_only_a_known_form_literal() -> None:
+    # 失敗ケース: 形の名でない :reads(文字列でない・一覧の外)は :spells と同じく SyntaxError・作る時は ValueError。
+    assert ":reads" in refused('(defk f [x] {:pre [(: x int)] :post [(: % int)] :tags {:context "k" :role "protocol" :reads 1}} x)')
+    assert ":reads" in refused('(defk f [x] {:pre [(: x int)] :post [(: % int)] :tags {:context "k" :role "protocol" :reads "yaml"}} x)')
+    with pytest.raises(ValueError):
+        DefinitionTags(context="k", role="protocol", reads="yaml")
+
+
 def test_effects_must_name_effect_types_or_effect_makers() -> None:
     # #800: 前は :effects が名の list であることしか検めず、関数や effect でない class を書いても黙って通した(反例)。
     # 定義の時(module を読む時)に、書けない名と理由を名指して断る。

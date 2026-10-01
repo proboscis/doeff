@@ -31,11 +31,12 @@ OUTCOME_KEYS: tuple[str, ...]
 
 @dataclass(frozen=True)
 class DefinitionTags:
-    """定義の文脈と役(context = 文脈の名・role = ROLES の 1 つ・spells = 綴る wire の形か None)。"""
+    """定義の文脈と役(context = 文脈の名・role = ROLES の 1 つ・spells = 綴る外の形か None・reads = 型へ読む外の形か None)。"""
 
     context: str
     role: str
     spells: str | None = None
+    reads: str | None = None
 
 def refuse_unknown_keys(contract: Dict, allowed: tuple[str, ...], where: str) -> None: ...
 def field_targets(forms: Iterable[Object]) -> list[Symbol]: ...
