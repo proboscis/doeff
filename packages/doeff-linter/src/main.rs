@@ -784,7 +784,7 @@ fn run_editor(args: &Args) -> ExitCode {
                 &built
             }
         };
-        Some(doeff_linter::timing::timed("signatures", || project::signatures::file_signatures(world, &setup.root, &rel, source)))
+        Some(doeff_linter::timing::timed("signatures", || project::file_view::file_signatures(world, &setup.root, &rel, source)))
     });
     let mut report = doeff_linter::timing::timed("editor-build", || editor::build(&EditorInput {
         root: &setup.root,

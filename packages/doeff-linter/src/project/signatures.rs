@@ -197,15 +197,11 @@ pub struct Binding {
     pub raises: Vec<TypeRef>,
 }
 
-/// 1 file の見出しと束縛。
+/// 1 file の見出しと束縛(置き換えと本体を足して 1 file の読みに組むのは `file_view.rs`)。
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
-pub struct FileSignatures {
+pub struct FileHeads {
     pub signatures: Vec<Signature>,
     pub bindings: Vec<Binding>,
-    /// 定義の本体の呼びを `f(a, b)` の形で見せる表示の置き換え(`call_view.rs`)。
-    pub rewrites: Vec<super::call_view::Rewrite>,
-    /// 定義ごとの本体の文字の行(`body_view.rs` — 読む面が描く)。
-    pub bodies: Vec<super::body_view::Body>,
 }
 
 // --- repo の表 ---------------------------------------------------------------------------
@@ -1320,8 +1316,16 @@ fn reach_intents(
 
 // --- 1 file の見出しと束縛 -----------------------------------------------------------------
 
-/// 1 file の見出しと束縛を読む(表は `World::build` で、この file の同じ中身を overlay にして作った物)。
-pub fn file_signatures(world: &World, root: &Path, rel: &str, source: &str) -> FileSignatures {
+/// 1 file の見出しと束縛を読み、読みの道具(reader・form の列)と組で `then` に渡す(表は `World::build` で、この file の同じ中身を
+/// overlay にして作った物)。reader は file の中身と束縛を借りるので、続きの読み(置き換え・本体 — `file_view.rs`)は `then` の中で読む。
+/// 見出しの読みは置き換えと本体の読みを知らない(agora-redesign #2125)。
+pub(super) fn read_file<T>(
+    world: &World,
+    root: &Path,
+    rel: &str,
+    source: &str,
+    then: impl FnOnce(&FileReader, &[Form], FileHeads) -> T,
+) -> T {
     let forms = Reader::new(source, 0, source.len()).read_all();
     let module = module_of(rel);
     let bindings = form_bindings(&forms, source, &module);
@@ -1334,7 +1338,7 @@ pub fn file_signatures(world: &World, root: &Path, rel: &str, source: &str) -> F
         },
         path: root.join(rel).to_string_lossy().into_owned(),
     };
-    let mut out = FileSignatures::default();
+    let mut out = FileHeads::default();
     crate::timing::timed("signatures.heads", || {
         for form in top_definitions(&reader.hy, &forms) {
             if let Some(shape) = definition_shape(&reader.hy, form) {
@@ -1352,9 +1356,7 @@ pub fn file_signatures(world: &World, root: &Path, rel: &str, source: &str) -> F
             );
         }
     });
-    out.rewrites = crate::timing::timed("signatures.rewrites", || super::call_view::file_rewrites(world, &reader, &forms));
-    out.bodies = crate::timing::timed("signatures.bodies", || super::body_view::file_bodies(world, &reader, &forms, &out.bindings));
-    out
+    then(&reader, &forms, out)
 }
 
 /// defk / deff 1 つの見出し。
@@ -1842,7 +1844,7 @@ mod tests {
     use super::*;
 
     /// 根に file を並べて表を作り、1 file の見出しと束縛を読む。
-    fn read(files: &[(&str, &str)], target: &str) -> FileSignatures {
+    fn read(files: &[(&str, &str)], target: &str) -> FileHeads {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path().canonicalize().unwrap();
         for (rel, text) in files {
@@ -1852,7 +1854,7 @@ mod tests {
         }
         let source = files.iter().find(|(rel, _)| *rel == target).unwrap().1;
         let world = World::build(&root, Some((target, source)));
-        file_signatures(&world, &root, target, source)
+        read_file(&world, &root, target, source, |_, _, heads| heads)
     }
 
     fn name_of(t: &TypeRef) -> String {

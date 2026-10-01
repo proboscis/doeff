@@ -27,6 +27,7 @@ pub mod layers;
 pub mod law;
 pub mod raw_settings;
 pub mod signatures;
+pub mod file_view;
 pub mod call_view;
 pub mod body_view;
 pub mod world_catalog;
