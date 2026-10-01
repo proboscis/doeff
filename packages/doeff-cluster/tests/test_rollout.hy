@@ -15,7 +15,7 @@
 (import doeff_cluster.coordinator.core.cluster_policy [state-to-json state-from-json])
 (import doeff_cluster.coordinator.protocol.request_bodies [responded])
 (import doeff_cluster.coordinator.core.program [rollout-tick])
-(import doeff_cluster.foundation.kube_handlers [KubeMemory kube-memory])
+(import doeff_cluster.coordinator.protocol.kube [KubeMemory kube-memory])
 (import doeff_cluster.shared.intent.job_model [JobSpec] doeff_cluster.shared.core.job_rules [spec-hash])
 (import tests.program_rows [SAMPLE-RUN program-run])
 

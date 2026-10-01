@@ -1,4 +1,4 @@
-;;; coordinator の耐久の置き場: 追記の log(wal.jsonl)+ まとめ直した写し(snapshot.json)。Persist の handler。
+;;; coordinator の耐久の置き場: 追記の log(wal.jsonl)+ まとめ直した写し(snapshot.json)。Persist に答える handler は coordinator/protocol/store.hy(この module は intent の型を読まない)。
 ;;;
 ;;; - Persist 1 回 = log へ 1 行(変わったキーだけ)を追記して fsync 1 回。調停ループはこれが戻ってから返事をする(group commit:
 ;;;   fsync の間に届いた要求は次のまとまりに入り、まとめて 1 回の fsync で済む)。
@@ -14,7 +14,6 @@
 ;;; I/O はこの module の中だけ(調停ループの Program は Persist の effect しか知らない)。scheduler の外の thread は作らない。
 (require doeff-hy.macros [val])
 (val MODULE-TAGS {:context "doeff-cluster" :role "foundation"})
-(require doeff-hy.macros [defhandler])
 (import json)
 (import os)
 (import sys)
@@ -23,7 +22,6 @@
 (import collections.abc [Callable])
 (import typing [BinaryIO])
 (import pathlib [Path])
-(import doeff_cluster.coordinator.intent.cluster_model [Persist])
 
 (setv MAX-LOG-BYTES (* 32 1024 1024))
 (setv SLOW-FSYNC-SECONDS 0.5)
@@ -227,16 +225,3 @@
     (if xs
         {"count" (len xs) "p50" (get xs (// (len xs) 2)) "max" (get xs -1)}
         {"count" 0})))
-
-
-(defhandler wal-store [#^ WalStore store]
-  (Persist [delta]
-    (.persist store delta)
-    (resume None)))
-
-
-(defhandler memory-store [#^ list log]
-  ;; テスト: まとまりごとの delta を list に積む(耐久の置き場の代わり)。
-  (Persist [delta]
-    (.append log delta)
-    (resume None)))
