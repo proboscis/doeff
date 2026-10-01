@@ -3,7 +3,7 @@
 - sqlite-sql-handler(Python の名 sqlite_sql_handler)は答える database の名の tuple を受け、本文の Program に被せる関数を返す
   (defhandler の展開と同じ形: 本文の答えの型をそのまま運ぶ WithHandler)。
 - defk は呼ぶと Program を返す(答えの型は Program の 1 つ目の引数)。
-- 実装との食い違いは packages/doeff-core-effects/tests/test_sql_stubs.py が検める。
+- 実装との食い違いは packages/doeff-core-effects/tests/test_hy_module_stubs.py が検める。
 """
 
 import sqlite3

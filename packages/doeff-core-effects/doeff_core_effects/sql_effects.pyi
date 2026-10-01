@@ -7,7 +7,7 @@ sql_effects.hy は Hy の module なので、型の宣言が無いと pyright �
 - defeffect は位置でも渡せる frozen の dataclass で、`EffectBase[答えの型]` の下位の型。`(<- x (SqlQuery …))` の x は答えの型
   (SqlRows | SqlFailed | SqlUnreachable)を受ける。SqlTransaction の答えは中の program の答えの型 T と失敗の値の和。
 - defk は呼ぶと Program を返す(答えの型は Program の 1 つ目の引数)。
-- 実装との食い違いは packages/doeff-core-effects/tests/test_sql_stubs.py が名・欄の名と順・既定値の有無・引数の名で検める。
+- 実装との食い違いは packages/doeff-core-effects/tests/test_hy_module_stubs.py が名・欄の名と順・既定値の有無・引数の名で検める。
 """
 
 import re

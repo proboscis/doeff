@@ -1,4 +1,5 @@
-"""sql_effects.pyi・sqlite_sql.pyi(Hy の module の隣の型の宣言)と実装の食い違いの失敗ケース(agora-redesign #2320)。
+"""Hy の module の隣の型の宣言(.pyi)と実装の食い違いの失敗ケース(agora-redesign #2320 で sql_effects.pyi・sqlite_sql.pyi に作り、
+#2323 で http_server_effects・file_effects・memory_file・random_effects・seeded_random へ広げた)。
 
 型の宣言は手書きなので、.hy の側で欄を足す・消す・並べ替える・関数の引数を変えると、宣言だけが古いまま黙って残る。
 ここで .hy の source を読み、module の直下で定義した公開の名と宣言の名を照らし、さらに:
@@ -24,7 +25,15 @@ import pytest
 PACKAGE = Path(__file__).resolve().parent.parent / "doeff_core_effects"
 
 #: 型の宣言を持つ Hy の module(宣言を足したらここへ並べる)。
-STUBBED_MODULES = ("sql_effects", "sqlite_sql")
+STUBBED_MODULES = (
+    "sql_effects",
+    "sqlite_sql",
+    "http_server_effects",
+    "file_effects",
+    "memory_file",
+    "random_effects",
+    "seeded_random",
+)
 
 #: module の直下で名を定義する Hy の form の頭。
 DEFINING_HEADS = frozenset(
@@ -60,6 +69,14 @@ def _defined_name(form: object) -> str | None:
             and isinstance(form[1], hy.models.Symbol)
         ):
             return hy.mangle(str(form[1]))
+        # 飾りの付いた class(`(defclass [(dataclass :frozen True)] 名 [EffectBase] …)`)は名が 3 つ目に来る。
+        case hy.models.Expression() if (
+            len(form) >= 3
+            and str(form[0]) == "defclass"
+            and isinstance(form[1], hy.models.List)
+            and isinstance(form[2], hy.models.Symbol)
+        ):
+            return hy.mangle(str(form[2]))
         case _:
             return None
 
@@ -217,3 +234,11 @@ def test_a_dropped_stub_field_is_found() -> None:
     # 宣言の SqlRows から欄 rowcount を 1 つ消すと、欄の食い違いとして見つかる(検が黙って通らない)。
     broken = _without_field(_stub_tree("sql_effects"), "SqlRows", "rowcount")
     assert [m for m in _mismatches("sql_effects", broken) if m.startswith("SqlRows の欄が違う")]
+
+
+def test_a_dropped_effect_field_is_found() -> None:
+    # 宣言の effect HttpListen(defclass の dataclass)から欄 ws_send_max_bytes を消すと、欄の食い違いとして見つかる。
+    broken = _without_field(_stub_tree("http_server_effects"), "HttpListen", "ws_send_max_bytes")
+    assert [
+        m for m in _mismatches("http_server_effects", broken) if m.startswith("HttpListen の欄が違う")
+    ]

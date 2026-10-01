@@ -245,8 +245,9 @@
   (session var waiters #())
   (StatPath [path follow-symlinks]
     (<- at str (normal path))
-    (<- answer PathStat (stat-in store at))
-    (resume answer))
+    ;; 名を answer にしない: 節は全部 1 つの関数に展開されるので、型を付けた answer は他の節の answer まで PathStat と宣言する。
+    (<- stat PathStat (stat-in store at))
+    (resume stat))
   (ReadText [path]
     (<- at str (normal path))
     (<- answer (content-of store at))
