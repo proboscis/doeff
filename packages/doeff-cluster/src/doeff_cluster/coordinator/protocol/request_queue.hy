@@ -6,7 +6,7 @@
 (import doeff_cluster.shared.core.clock [now-epoch-ms])
 (import doeff_time [Delay])
 ;; 模擬の列は、要求の無い間に眠る長さを本番の判断の関数で試す(idle_policy)。
-(import doeff_cluster.coordinator.core.idle_policy [quiet-ticks rest-to-tick])
+(import doeff_cluster.coordinator.core.idle_policy [quiet-tick rest-to-tick MAX-QUIET-TICKS])
 (import doeff_cluster.coordinator.core.api_policy [TICK-MS])
 (import doeff_core_effects.scheduler [CreatePromise CompletePromise Promise])
 (import doeff_cluster.shared.intent.protocol [Request Reply])
@@ -81,16 +81,20 @@
 
 (defk await-idle [queue probe]
   {:pre [(: queue RequestQueue) (: probe IdleProbe)] :post [(: % None)] :tags {:context "doeff-cluster" :role "protocol"}}
-  "要求の無い間の眠りを、調停が何も変えない拍の数(idle_policy.quiet-ticks — 本番の判断の関数で試した数)だけ一度に取るため。
+  "要求の無い間の眠りを、調停が何も変えない拍の間だけ取るため(本番の判断の関数 idle_policy.quiet-tick で拍ごとに試す)。
    要求が積まれればすぐ起きる(本番と同じ刻)。要求ではない出来事で起こされたら、本番の 1 秒の拍がそれに気づく刻(眠り始めから
    整数秒 — 1 秒以上)まで眠り直す。飛ばした拍は本番でも何も変えないので、起きる刻とそこでの判断は 1 秒ごとの拍と同じ。
    判断を試すのは、要求の来ないまま最初の 1 拍が過ぎた時だけ(要求が 1 秒より短い間隔で続く系では、飛ばせる拍が無いのに状態の
    大きい判断を拍ごとに試すことになり、1 秒ごとの拍より遅くなった — 使い手の模擬の全体の検の実測 49.5 秒 → 60 秒超)。要求では
-   ない出来事で起こされた後は試さない(本番の 1 秒の拍が、その出来事に気づく拍で返す)。"
+   ない出来事で起こされた後は試さない(本番の 1 秒の拍が、その出来事に気づく拍で返す)。
+   拍は眠りながら 1 拍ずつ試す(idle_policy.quiet-tick — 拍の刻に着くたびにその拍だけ)。以前は最初の拍で上限まで先の拍を一度に
+   試していたが、要求が来て眠りが破られると、先まで試した拍は捨てられていた(#2664 — 模擬の検の実測で確かめ 1 回あたり 5 拍・
+   要求は約 1.25 秒ごと)。起きる刻は同じ: 何かを変える最初の拍か、上限 MAX-QUIET-TICKS の拍か、要求が来た時。"
   (<- started int (now-epoch-ms))
   (var limit-ms TICK-MS)
-  (var probed False)
   (var nudged False)
+  (var ticks 1)
+  (var last-roll probe.state.rollout-tick-ms)
   (var left-ms TICK-MS)
   (while (and (not queue.pending) (> left-ms 0))
     (<- woke (| bool None) (await-first-request queue (/ left-ms 1000.0)))
@@ -100,11 +104,15 @@
       (is woke False) (do (<- rest int (rest-to-tick elapsed limit-ms))
                           (:= nudged True)
                           (:= left-ms rest))
-      (and (is woke None) (not probed) (not nudged) (not queue.pending))
-        (do (<- quiet int (quiet-ticks probe started))
-            (:= probed True)
-            (:= limit-ms (* TICK-MS quiet))
-            (:= left-ms (- limit-ms elapsed)))
+      ;; 拍 ticks の刻に着いた(要求も出来事も無いまま): その拍だけを試し、何も変えなければ次の拍まで眠る。
+      (and (is woke None) (not nudged) (not queue.pending))
+        (do (<- next-roll (| int None) (quiet-tick probe (+ started (* ticks TICK-MS)) last-roll))
+            (if (or (is next-roll None) (>= ticks MAX-QUIET-TICKS))
+                (:= left-ms 0)
+                (do (:= last-roll next-roll)
+                    (:= ticks (+ ticks 1))
+                    (:= limit-ms (* TICK-MS ticks))
+                    (:= left-ms (- limit-ms elapsed)))))
       True (:= left-ms 0)))
   None)
 
