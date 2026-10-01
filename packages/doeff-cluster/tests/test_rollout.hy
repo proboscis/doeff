@@ -16,7 +16,7 @@
 (import doeff_cluster.coordinator.core.api_policy [respond])
 (import doeff_cluster.coordinator.core.program [rollout-tick])
 (import doeff_cluster.foundation.kube_handlers [KubeMemory kube-memory])
-(import doeff_cluster.worker_model [JobSpec spec-hash])
+(import doeff_cluster.shared.intent.job_model [JobSpec] doeff_cluster.shared.core.job_rules [spec-hash])
 (import tests.program_rows [SAMPLE-RUN program-run])
 
 (setv T (ClusterTiming))

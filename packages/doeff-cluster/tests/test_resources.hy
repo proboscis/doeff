@@ -5,7 +5,7 @@
 (import doeff_cluster.coordinator.intent.cluster_model [ClusterState])
 (import doeff_cluster.foundation.coordinator_inbox [http-request])
 (import doeff_cluster.coordinator.core.cluster_policy [state-to-json state-from-json board-changes job-from-json])
-(import doeff_cluster.worker_model [spec-hash])
+(import doeff_cluster.shared.core.job_rules [spec-hash])
 (import doeff_cluster.coordinator.core.api_policy [respond tick plan-rollouts])
 (import doeff_cluster.coordinator.core.resource_policy [LEGACY-OWNER adopt-legacy])
 (import tests.program_rows [SAMPLE-RUN program-placed program-run])

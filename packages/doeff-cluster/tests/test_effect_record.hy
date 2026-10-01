@@ -160,6 +160,14 @@
   (assert (is (resolve-type "doeff_cluster.record_handlers:MemorySink") MemorySink))
   (assert (is (resolve-type "doeff_cluster.effect_codec:RecordedError")
               (resolve-type "doeff_cluster.shared.core.effect_codec:RecordedError")))
+  ;; module の一部の型だけを移した物(#2025 — worker_model の JobSpec・JobPhase を shared/intent/job_model へ)も旧い名で引ける。
+  ;; 引く先は表の名で決まる(worker_model が後で別の置き場へ移っても、旧い記録の JobSpec は job_model を引く)。
+  (import doeff_cluster.shared.core.effect_codec [MOVED-TYPES])
+  (import doeff_cluster.shared.intent.job_model [JobSpec JobPhase])
+  (assert (= (type-name JobSpec) "doeff_cluster.shared.intent.job_model:JobSpec"))
+  (assert (is (resolve-type "doeff_cluster.worker_model:JobSpec") JobSpec))
+  (assert (is (resolve-type "doeff_cluster.worker_model:JobPhase") JobPhase))
+  (assert (= (get MOVED-TYPES "doeff_cluster.worker_model:JobSpec") "doeff_cluster.shared.intent.job_model:JobSpec"))
   ;; 表に無い旧い名は引けない(黙って別の型へ倒れない)
   (assert (is (resolve-type "doeff_cluster.no_such_model:SubmitDetached") None))
   (assert (= (len MOVED-MODULES) 13)))

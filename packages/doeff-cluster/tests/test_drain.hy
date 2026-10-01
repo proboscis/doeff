@@ -9,7 +9,7 @@
 (import doeff_cluster.coordinator.intent.cluster_model [ClusterState Drain])
 (import doeff_cluster.foundation.coordinator_inbox [http-request])
 (import doeff_cluster.coordinator.core.cluster_policy [jobs-for])
-(import doeff_cluster.worker_model [spec-hash])
+(import doeff_cluster.shared.core.job_rules [spec-hash])
 (import doeff_cluster.coordinator.core.api_policy [respond tick])
 (import doeff_cluster.coordinator.core.durable_kv [full-kv state-from-kv DRAIN SURGE])
 (import doeff_cluster.drain_client [CoordinatorCall await-drained worker-ready drain-outcome ready-of])

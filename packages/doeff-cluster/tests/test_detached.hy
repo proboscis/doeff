@@ -32,7 +32,7 @@
 (import doeff_cluster.coordinator.core.api_policy [respond tick])
 (import doeff_cluster.handlers [CoordinatorLink])
 
-(import doeff_cluster.worker_model [DesiredJobs JobStatus JobPhase])
+(import doeff_cluster.worker_model [DesiredJobs JobStatus] doeff_cluster.shared.intent.job_model [JobPhase])
 (import doeff_cluster.shared.intent.remote_model [TaskSucceeded decode-program encode-outcome failed-from])
 (import doeff_cluster.process_versions [current-versions])
 (import doeff_cluster.shared.intent.detached_model [SubmitDetached AwaitDetached CancelDetached ReleaseDetached
@@ -523,7 +523,7 @@
 (import doeff_cluster.coordinator.core.cluster_policy [state-to-json state-from-json])
 (import doeff_cluster.coordinator.entry.main [load-state])
 (import doeff_cluster.foundation.wal_store [WalStore])
-(import doeff_cluster.worker_model [JobSpec])
+(import doeff_cluster.shared.intent.job_model [JobSpec])
 (import doeff_cluster.worker_policy [kept-when-cut-off])
 (import doeff_cluster.handlers [task-spec])
 

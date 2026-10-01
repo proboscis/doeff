@@ -9,7 +9,7 @@
 (import doeff [with_handlers])
 (import doeff_core_effects.file_effects [ReadText ListDirectory])
 (import doeff_cluster.handlers [CodeStore status-file status-json])
-(import doeff_cluster.worker_model [JobStatus JobPhase PublishStatus])
+(import doeff_cluster.worker_model [JobStatus PublishStatus] doeff_cluster.shared.intent.job_model [JobPhase])
 (import tests.file_contract_handlers [FilesRoot])
 
 (val TIMINGS {"rev-1" 1.5})

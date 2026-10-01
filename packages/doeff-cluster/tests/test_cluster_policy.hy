@@ -1,7 +1,7 @@
 (require doeff-hy.macros [deftest])
 
 (import dataclasses [replace])
-(import doeff_cluster.worker_model [JobSpec])
+(import doeff_cluster.shared.intent.job_model [JobSpec])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming])
 (import doeff_cluster.coordinator.intent.cluster_model [ClusterJob WorkerInfo Placement ClusterState])
 (import doeff_cluster.coordinator.core.cluster_policy [place-jobs jobs-for])

@@ -28,7 +28,7 @@
 (import doeff_cluster.remote [TaskClient])
 (import doeff_cluster.shared.intent.remote_model [TaskSucceeded encode-program decode-outcome program-sha])
 (import doeff_cluster.process_versions [current-versions])
-(import doeff_cluster.worker_model [DesiredJobs JobSpec JobStatus JobPhase])
+(import doeff_cluster.worker_model [DesiredJobs JobStatus] doeff_cluster.shared.intent.job_model [JobSpec JobPhase])
 (import doeff_cluster.coordinator.core.cluster_policy [JOB-ENTRY])
 (import tests.program_rows [SAMPLE-TASK-PROGRAM program-placed])
 (import tests.fixtures.entry_programs [based-add])

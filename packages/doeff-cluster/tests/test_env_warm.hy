@@ -33,8 +33,8 @@
 (import doeff_cluster.coordinator.core.cluster_policy [place-tasks register-heartbeat heartbeat-reply load-of tasks-for])
 (import doeff_cluster.coordinator.core.api_policy [respond])
 (import doeff_cluster.coordinator.core.metrics_policy [metrics-text])
-(import doeff_cluster.worker_model [JobSpec CodeView CodeState WorldView WorkerPolicy PrepareEnv StartJob SweepEnvs WarmEnv
-                                    EnvDisk code-key])
+(import doeff_cluster.worker_model [CodeView CodeState WorldView WorkerPolicy PrepareEnv StartJob SweepEnvs WarmEnv
+                                    EnvDisk code-key] doeff_cluster.shared.intent.job_model [JobSpec])
 (import doeff_cluster.worker_policy [plan pinned-env-keys])
 (import doeff_cluster.handlers [task-spec])
 (import doeff_cluster.code_prepare [cpu-limit-of])

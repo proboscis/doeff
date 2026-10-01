@@ -36,7 +36,7 @@
 (import doeff_cluster.env_prepare [ENV-MARKER ROOTS-PTH])
 (import doeff_cluster.handlers [EnvStore ProcessHost task-spec])
 (import doeff_cluster.worker_model [CodeState CodeView StartJob ReapJob Outcome WorldView WorkerPolicy PrepareEnv WarmEnv
-                                    code-key JobSpec])
+                                    code-key] doeff_cluster.shared.intent.job_model [JobSpec])
 (import doeff_cluster.worker_policy [plan])
 (import doeff_cluster.shared.intent.remote_model [encode-program decode-outcome TaskSucceeded TaskFailed])
 (import doeff_cluster.process_versions [current-versions])

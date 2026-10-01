@@ -1,8 +1,8 @@
 (require doeff-hy.macros [deftest val var])
 
 (import dataclasses [replace])
-(import doeff_cluster.worker_model [JobSpec CodeState CodeView ProcessView WorldView StopStage StopProgress
-  Outcome JobRecord WorkerPolicy JobPhase PrepareCode StartJob SignalJob ReapJob])
+(import doeff_cluster.worker_model [CodeState CodeView ProcessView WorldView StopStage StopProgress
+  Outcome JobRecord WorkerPolicy PrepareCode StartJob SignalJob ReapJob] doeff_cluster.shared.intent.job_model [JobSpec JobPhase])
 (import doeff_cluster.worker_policy [plan records-after statuses])
 
 (setv POLICY (WorkerPolicy :stop-grace-ms 1000 :kill-grace-ms 500 :restart-backoff-ms 2000)

@@ -4,10 +4,10 @@
 (import dataclasses [replace])
 (import doeff_time [SimClock sim-time-handler])
 (import tests.clock_fixtures [clock-ms])
-(import doeff_cluster.worker_model [JobSpec CodeState CodeView ProcessView WorldView StopStage JobPhase
+(import doeff_cluster.worker_model [CodeState CodeView ProcessView WorldView StopStage
   WorkerPolicy WorkerState DesiredJobs DesiredUnreadable ReadDesired ObserveWorld
-  WorkerStopRequested PublishStatus PrepareCode StartJob SignalJob ReapJob])
-(import doeff_cluster.worker [run-worker])
+  WorkerStopRequested PublishStatus PrepareCode StartJob SignalJob ReapJob] doeff_cluster.shared.intent.job_model [JobSpec JobPhase])
+(import doeff_cluster.worker.core.program [run-worker])
 
 (setv POLICY (WorkerPolicy :stop-grace-ms 1000 :kill-grace-ms 500 :restart-backoff-ms 2000
                            :tick-seconds 0.1)
