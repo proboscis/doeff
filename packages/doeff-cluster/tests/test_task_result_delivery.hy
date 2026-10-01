@@ -9,7 +9,7 @@
 (import httpx)
 (import doeff_cluster.shared.intent.protocol [ClusterTiming Request])
 (import doeff_cluster.coordinator.intent.cluster_model [ClusterState])
-(import doeff_cluster.foundation.coordinator_inbox [http-request])
+(import doeff_cluster.shared.protocol.inbox [http-request])
 (import doeff_cluster.coordinator.protocol.request_bodies [responded])
 (import doeff_cluster.job_context [RunContext])
 (import doeff [run with-handlers])

@@ -3,7 +3,7 @@
 (require doeff-hy.macros [deftest])
 (import threading)
 (import httpx)
-(import doeff_cluster.foundation.coordinator_inbox [RequestInbox])
+(import doeff_cluster.foundation.coordinator_inbox [RequestInbox json-reply])
 (import tests.link_rig [LinkRig])
 (import doeff_cluster.worker.intent.worker_model [DesiredJobs DesiredUnreadable])
 
@@ -11,7 +11,9 @@
 (defn #^ None serve [#^ RequestInbox inbox #^ threading.Event stop]
   (while (not (.is-set stop))
     (for [request (.take inbox 0.1 16)]
-      (setv request.slot.status 200 request.slot.body {"path" request.path})
+      ;; 箱が並べるのは生の要求(RawRequest)— 返事は送る byte と content-type にして札に置く(#2563)。
+      (setv #(data content-type) (json-reply {"path" request.path}))
+      (setv request.slot.status 200 request.slot.data data request.slot.content-type content-type)
       (.set request.slot.done))))
 
 

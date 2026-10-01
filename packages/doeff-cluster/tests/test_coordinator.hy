@@ -11,7 +11,7 @@
 (import tests.clock_fixtures [clock-ms])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming Request Reply CoordinatorStopRequested])
 (import doeff_cluster.coordinator.intent.cluster_model [ClusterNaming ClusterState Persist CoordinatorFault] doeff_cluster.shared.intent.protocol [NextRequests])
-(import doeff_cluster.foundation.coordinator_inbox [http-request])
+(import doeff_cluster.shared.protocol.inbox [http-request])
 (import doeff_cluster.coordinator.core.cluster_policy [reconcile state-view state-to-json state-from-json job-from-json identity-hash])
 (import tests.program_rows [SAMPLE-RUN SAMPLE-PROGRAM SAMPLE-TASK-PROGRAM program-placed])
 (import doeff [run])

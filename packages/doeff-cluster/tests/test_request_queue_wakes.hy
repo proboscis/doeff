@@ -15,7 +15,7 @@
 (import doeff_time [Delay sim-time-handler])
 (import doeff_cluster.shared.core.clock [now-epoch-ms])
 (import doeff_cluster.shared.intent.protocol [NextRequests])
-(import doeff_cluster.foundation.coordinator_inbox [http-request])
+(import doeff_cluster.shared.protocol.inbox [http-request])
 (import doeff_cluster.coordinator.protocol.request_queue [RequestQueue queued-requests enqueue-request])
 (import tests.clock_fixtures [clock-at count-delays])
 
