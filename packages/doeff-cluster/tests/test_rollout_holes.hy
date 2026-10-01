@@ -10,7 +10,7 @@
 (import doeff_cluster.coordinator.core.durable_kv [full-kv state-from-kv])
 (import doeff_cluster.coordinator.core.api_policy [plan-rollouts resume-after-downtime mark-alive ALIVE-MARK-MS])
 (import doeff_cluster.coordinator.protocol.request_bodies [responded])
-(import doeff_cluster.coordinator.core.rollout_policy [rollout-step action-due retry-delay-ms shift-clocks RETRY-MAX-MS])
+(import doeff_cluster.coordinator.core.rollout_policy [validate-rollout-spec rollout-step action-due retry-delay-ms shift-clocks RETRY-MAX-MS])
 (import doeff_cluster.coordinator.core.metrics_policy [metrics-text])
 (import tests.test_rollout [Sim FORWARD DEP phases-of])
 
@@ -69,10 +69,10 @@
   (assert (= (. (mark-alive s (+ 10000 ALIVE-MARK-MS)) alive-ms) (+ 10000 ALIVE-MARK-MS))))
 
 
-(setv SPEC {"from" {"kind" "Deployment" "namespace" "ns" "name" "old" "replicas" None "dryRun" False}
-            "to" {"kind" "Service" "name" "new"}
-            "readyTimeoutSeconds" 300 "stopTimeoutSeconds" 180 "observeSeconds" 60 "failAfterSeconds" 30
-            "rollbackTimeoutSeconds" 600 "markDeployment" False "abort" False})
+(setv SPEC (validate-rollout-spec {"from" {"kind" "Deployment" "namespace" "ns" "name" "old" "replicas" None "dryRun" False}
+                                   "to" {"kind" "Service" "name" "new"}
+                                   "readyTimeoutSeconds" 300 "stopTimeoutSeconds" 180 "observeSeconds" 60 "failAfterSeconds" 30
+                                   "rollbackTimeoutSeconds" 600 "markDeployment" False "abort" False}))
 (setv STOPPED {"ready" "NotReady" "stopped" True "specReplicas" 0 "reason" "止まっている"})
 (setv READY {"ready" "Ready" "stopped" False "specReplicas" 1 "reason" ""})
 (setv UNKNOWN {"ready" "Unknown" "stopped" None "specReplicas" None "reason" "担い手の報告が古い"})
@@ -115,7 +115,7 @@
 
 
 (deftest test-a-failing-action-is-retried-with-growing-gaps
-  (setv action {"op" "scale" "target" (get SPEC "from") "replicas" 0})
+  (setv action {"op" "scale" "target" SPEC.from-target "replicas" 0})
   (setv failed {"lastAction" {"op" "scale" "target" "Deployment:ns/old" "replicas" 0 "ok" False "error" "403" "at" 1000 "count" 3}})
   (assert (= (retry-delay-ms 3) 4000))
   (assert (not (action-due failed action 4999)))
