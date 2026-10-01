@@ -36,6 +36,10 @@ STUBBED_MODULES = (
     "seeded_random",
     "scripted_http_server",
     "scripted_process",
+    "meter_effects",
+    "memory_meter",
+    "memory_latest",
+    "os_file",
 )
 
 #: module の直下で名を定義する Hy の form の頭。
