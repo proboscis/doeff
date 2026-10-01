@@ -25,6 +25,7 @@
     "packages/doeff-cluster/src/doeff_cluster/shared/core/capabilities.hy",
     "packages/doeff-cluster/src/doeff_cluster/shared/core/board_rules.hy",
     "packages/doeff-cluster/src/doeff_cluster/shared/core/lease_rules.hy",
+    "packages/doeff-cluster/src/doeff_cluster/shared/core/semaphore_handlers.hy",
     "packages/doeff-cluster/src/doeff_cluster/coordinator/core/cluster_json.hy",
     "packages/doeff-cluster/src/doeff_cluster/coordinator/core/cluster_rules.hy"
   ],
@@ -1149,10 +1150,10 @@
       "layer": "io",
       "name": "doeff-cluster-semaphore-handlers",
       "paths": [
-        "packages/doeff-cluster/src/doeff_cluster/semaphore_handlers.hy"
+        "packages/doeff-cluster/src/doeff_cluster/shared/core/semaphore_handlers.hy"
       ],
       "public": [
-        "packages/doeff-cluster/src/doeff_cluster/semaphore_handlers.hy"
+        "packages/doeff-cluster/src/doeff_cluster/shared/core/semaphore_handlers.hy"
       ],
       "responsibility": "名前付きの semaphore の handler 2 つ。",
       "typed": true

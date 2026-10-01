@@ -16,7 +16,7 @@
 (import doeff_cluster.host_contract [HOST-CONTRACT])
 (import doeff_cluster.job_context [RunContext])
 (import doeff_cluster.shared.intent.readiness_model [ReportReady])
-(import doeff_cluster.semaphore_handlers [cluster-semaphore SemaphoreSession])
+(import doeff_cluster.shared.core.semaphore_handlers [cluster-semaphore SemaphoreSession])
 (import doeff_cluster.shared.intent.semaphore_model [CreateNamedSemaphore])
 (import doeff_cluster.shared.intent.shared_model [WriteShared])
 

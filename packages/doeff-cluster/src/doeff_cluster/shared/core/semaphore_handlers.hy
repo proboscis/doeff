@@ -10,7 +10,11 @@
 ;;;   lease-fence            書きの effect を、名前付きの lease を持っていて期限まで余裕がある間だけ外へ通す。持っていない・
 ;;;                          失った・期限が近い時は外へ出さずに WriteFenced を投げる。問い合わせ(HeldLease)は cluster-semaphore が
 ;;;                          手元の記憶から答える(書きごとに保存を読まない)。cluster-semaphore より内側・書きの handler より内側に置く。
+;;;
+;;; 置き場 = shared/core・役 program(agora-redesign #2332): scheduler の Semaphore を lease の約束(LeaseOp・HeldLease・LeaseStanding)で
+;;; 果たす業務の流れで、業務の intent を出す。protocol(受けた intent を汎用の効果へ出し直すだけ — doeff-linter DOEFF130)ではない。
 (require doeff-hy.macros [defhandler defk <- val var])
+(val MODULE-TAGS {:context "doeff-cluster" :role "program"})
 (import doeff [EffectBase])
 (import doeff_core_effects.scheduler [CreateSemaphore AcquireSemaphore ReleaseSemaphore Spawn Cancel])
 (import doeff_time [Delay])

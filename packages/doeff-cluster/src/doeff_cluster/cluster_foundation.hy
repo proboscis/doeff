@@ -22,7 +22,7 @@
 (import .readiness_handlers [readiness-http])
 (import .metrics_handlers [metrics-http])
 (import .shared_handlers [shared-http SharedClient])
-(import .semaphore_handlers [cluster-semaphore SemaphoreSession])
+(import doeff_cluster.shared.core.semaphore_handlers [cluster-semaphore SemaphoreSession])
 (import doeff_cluster.shared.core.lease_rules [lease-holder])
 (import .remote [remote-cluster TaskClient])
 (import .detached [detached-cluster DetachedClient warm-cluster WarmClient])
