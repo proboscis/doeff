@@ -28,6 +28,8 @@
 ;;;
 ;;; 大きな値の差分(delta-of / apply-delta): 形の版 1 の記録が使った(同じ問いの前の答えとの差)。版 1 の記録を読むためと、
 ;;; backtest の報告(記録 → 再生の差)のために残す。
+(require doeff-hy.macros [val])
+(val MODULE-TAGS {:context "doeff-cluster" :role "judgment"})
 (import base64)
 (import collections [OrderedDict])
 (import collections.abc [Callable])
@@ -126,9 +128,13 @@
 ;; 置き場を移した module の旧い名 → 今の名(agora-redesign #2021 の決め 2a・#2105・#2106・#2107)。記録は移しの前に書いた型の名(module:qualname)を
 ;; 持つので、読みだけがこの表で今の置き場を引く。書くのは今の名だけ(type-name)。旧い module に再輸出は残さない。
 (setv MOVED-MODULES
-  (dfor name #("runtime_env_model" "readiness_model" "metrics_model" "process_model" "remote_model" "warm_model" "detached_model" "service_model"
-                         "semaphore_model" "shared_model")
-        (+ "doeff_cluster." name) (+ "doeff_cluster.shared.intent." name)))
+  (| (dfor name #("runtime_env_model" "readiness_model" "metrics_model" "process_model" "remote_model" "warm_model" "detached_model" "service_model"
+                           "semaphore_model" "shared_model")
+          (+ "doeff_cluster." name) (+ "doeff_cluster.shared.intent." name))
+     ;; 記録の綴りと記録の handler(#2108)— 置き場が shared/intent でないので名ごとに書く。
+     {"doeff_cluster.effect_codec" "doeff_cluster.shared.core.effect_codec"
+      "doeff_cluster.record_model" "doeff_cluster.shared.core.record_model"
+      "doeff_cluster.record_handlers" "doeff_cluster.shared.protocol.record_handlers"}))
 
 (defn #^ (| type None) resolve-type [#^ str name]
   "型の名 → class。import できないか、名が class を指さなければ None(呼び手は class として呼ぶので module や関数を返さない)。

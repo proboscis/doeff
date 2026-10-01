@@ -2,7 +2,7 @@
   "dynamic_imports": [
     {
       "function": "resolve_type",
-      "path": "packages/doeff-cluster/src/doeff_cluster/effect_codec.hy",
+      "path": "packages/doeff-cluster/src/doeff_cluster/shared/core/effect_codec.hy",
       "reason": "記録の中の型の名(module:qualname)を、読み直しの時に class へ解くのが役目の口 — 記録した effect と答えの型は名でしか運べない(#1692)。"
     },
     {
@@ -426,10 +426,10 @@
       "layer": "pure",
       "name": "doeff-cluster-effect-codec",
       "paths": [
-        "packages/doeff-cluster/src/doeff_cluster/effect_codec.hy"
+        "packages/doeff-cluster/src/doeff_cluster/shared/core/effect_codec.hy"
       ],
       "public": [
-        "packages/doeff-cluster/src/doeff_cluster/effect_codec.hy"
+        "packages/doeff-cluster/src/doeff_cluster/shared/core/effect_codec.hy"
       ],
       "responsibility": "effect の記録と再生(backtest)の符号化 — 型ごとの符号化と復号の定義点はこの file の 1 か所だけ。",
       "typed": true
@@ -900,10 +900,10 @@
       "layer": "io",
       "name": "doeff-cluster-record-handlers",
       "paths": [
-        "packages/doeff-cluster/src/doeff_cluster/record_handlers.hy"
+        "packages/doeff-cluster/src/doeff_cluster/shared/protocol/record_handlers.hy"
       ],
       "public": [
-        "packages/doeff-cluster/src/doeff_cluster/record_handlers.hy"
+        "packages/doeff-cluster/src/doeff_cluster/shared/protocol/record_handlers.hy"
       ],
       "responsibility": "effect の記録と再生(backtest)の handler。",
       "typed": true
@@ -915,10 +915,10 @@
       "layer": "domain",
       "name": "doeff-cluster-record-model",
       "paths": [
-        "packages/doeff-cluster/src/doeff_cluster/record_model.hy"
+        "packages/doeff-cluster/src/doeff_cluster/shared/core/record_model.hy"
       ],
       "public": [
-        "packages/doeff-cluster/src/doeff_cluster/record_model.hy"
+        "packages/doeff-cluster/src/doeff_cluster/shared/core/record_model.hy"
       ],
       "responsibility": "effect の記録と再生(backtest)の型と純粋な判断。",
       "typed": true
@@ -1023,10 +1023,10 @@
       "layer": "runtime",
       "name": "doeff-cluster-replay-main",
       "paths": [
-        "packages/doeff-cluster/src/doeff_cluster/replay_main.hy"
+        "packages/doeff-cluster/src/doeff_cluster/shared/entry/replay_main.hy"
       ],
       "public": [
-        "packages/doeff-cluster/src/doeff_cluster/replay_main.hy"
+        "packages/doeff-cluster/src/doeff_cluster/shared/entry/replay_main.hy"
       ],
       "responsibility": "再生の道具の入口(ADR-DOE-CLUSTER-001 R5・R5b)。",
       "typed": true
