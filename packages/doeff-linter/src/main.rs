@@ -216,7 +216,7 @@ impl Setup {
     /// 知らせ(DOEFF100)の違反。`enable` の一覧に載っていなくても出す(一覧は DOEFF100 より古い設定にも在り、そこで黙ると
     /// 知らない鍵を黙って読み飛ばす形に戻る)。止めるのは `disable` に DOEFF100 を名指した時だけ(prepare が notices を空にする)。
     fn notice_findings(&self) -> Vec<project::Finding> {
-        project::notice::findings(&self.notices, &self.root)
+        project::notice_findings::findings(&self.notices, &self.root)
     }
 
     /// 有効な層の規則(`enable`・`disable` を当てた後)。

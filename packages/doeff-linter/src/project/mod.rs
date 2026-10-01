@@ -15,6 +15,7 @@ pub mod names;
 pub mod param_calls;
 pub mod registry;
 pub mod notice;
+pub mod notice_findings;
 pub mod rule;
 pub mod bare_calls;
 pub mod defn_to_defk;
@@ -2405,7 +2406,7 @@ fn definition_graph_with<'h>(
     let listed: HashMap<String, (String, Vec<architecture::WorldTouch>)> =
         architecture.world_handlers.iter().map(|h| (h.definition.target(), (h.definition.spelling(), h.touches.clone()))).collect();
     let catalog = world_catalog::WorldCatalog::bundled();
-    let wrapped = architecture.world_targets(catalog);
+    let wrapped = catalog.world_targets(architecture);
     let static_readers: BTreeSet<String> = architecture.static_readers.iter().map(|r| r.target()).collect();
     // 系の値を組む物 = :carriers と、索引の defsystem の定義(その呼び出しの引数の土台は系の値として運ばれる)。
     let carriers: BTreeSet<String> = architecture
@@ -3477,7 +3478,7 @@ struct WorldSpot {
 /// 目録の実 I/O の handler を、名簿の定義(とその中の入れ子の定義)の外で名指す所(参照と呼び出し — import の行は数えない)。
 /// 同じ定義の同じ handler は 1 件。
 fn world_handler_spots(hy_file: &HyFileIndex, architecture: &architecture::Architecture) -> Vec<WorldSpot> {
-    let wrapped = architecture.world_targets(world_catalog::WorldCatalog::bundled());
+    let wrapped = world_catalog::WorldCatalog::bundled().world_targets(architecture);
     let listed = architecture.world_definition_targets();
     let definitions = &hy_file.definitions;
     let in_import = |range: &Range| hy_file.imports.iter().any(|imp| imp.range.start <= range.start && range.end <= imp.range.end);
