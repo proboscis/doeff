@@ -5095,6 +5095,21 @@ fn dict_smells_count_built_maps_and_map_fields_outside_their_place() {
     assert_eq!(hit["severity"], "warning", "{}", hit);
 }
 
+/// agora-redesign #2310: DOEFF172 の失敗ケース 2 つ — match の型の位置に {…} を書いた定義は鳴らない(型は値を組まない — 以前は
+/// 「写像を組む」と数えた)/ 同じ match の本体で写像を組む定義は鳴る。
+#[test]
+fn dict_smells_skip_match_patterns() {
+    let files = [(
+        "app/billing/entry/codec.hy",
+        tags("billing", "entry")
+            + "(defk detail-of [value]\n  {:pre [(: value dict)] :post [(: % str)] :tags {:context \"billing\" :role \"entry\"}}\n  (match value\n    {\"type\" \"call\"} \"call\"\n    _ \"other\"))\n\
+               (defk counted [value]\n  {:pre [(: value dict)] :post [(: % int)] :tags {:context \"billing\" :role \"entry\"}}\n  (match value\n    {\"type\" \"call\"} (len {\"a\" 1})\n    _ 0))\n",
+    )];
+    let dir = world_repo_with(&files, "", "[\"DOEFF172\"]");
+    let (_, report) = editor(dir.path());
+    assert_eq!(keys(&report, "DOEFF172"), vec!["app/billing/entry/codec.hy::DOEFF172::built:counted"], "型の {{…}} は数えず本体の写像は数える: {}", report);
+}
+
 /// agora-redesign #2265: DOEFF172 の失敗ケース 2 つ — docstring の後に契約の辞書だけを持つ定義は鳴らない(以前は契約の metadata を
 /// 「handler の外で組む写像」と数えた)/ 本文で写像を組む定義は鳴る。:tags の :spells(wire の形を綴る 1 点の名乗り)は core の外(ここでは entry)では
 /// 数えず、値を型だけで渡す層(core)では名乗っても数える。

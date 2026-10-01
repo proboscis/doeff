@@ -1010,14 +1010,35 @@ fn mapping_problem(node: &Hy) -> Option<String> {
     wire_free_type_problem(node).filter(|problem| problem.starts_with("写像"))
 }
 
-/// 式の木の中で写像を組む所の数 — `{…}`(`#{…}` の集合は数えない)・`(dfor …)`・`(dict …)`。defhandler の中は数えない。
+/// `(match 主 型 本体 型 :if 守り 本体 …)` の、型の位置を除いた項(主・守り・本体)— 型の `{…}` は値を組まず形を照らすだけなので数えない
+/// (agora-redesign #2310 — 以前は `{"type" "call"}` の型を「写像を組む」と数えていた)。
+fn match_evaluated(items: &[Hy]) -> Vec<&Hy> {
+    let mut out: Vec<&Hy> = items.get(1).into_iter().collect();
+    let mut at = 2;
+    while at < items.len() {
+        // items[at] は型 — 飛ばす。続く `:if 守り` の守りと、その後の本体は式なので数える。
+        at += 1;
+        if items.get(at).is_some_and(|item| item.is(":if")) {
+            out.extend(items.get(at + 1));
+            at += 2;
+        }
+        out.extend(items.get(at));
+        at += 1;
+    }
+    out
+}
+
+/// 式の木の中で写像を組む所の数 — `{…}`(`#{…}` の集合は数えない)・`(dfor …)`・`(dict …)`。defhandler の中と match の型の位置は数えない。
 fn built_mappings(source: &str, node: &Hy) -> usize {
     let Hy::Form { kind, items, start, .. } = node else { return 0 };
-    let inner: usize = items.iter().map(|item| built_mappings(source, item)).sum();
     let head = node.head();
     if head == "defhandler" {
         return 0;
     }
+    if head == "match" && matches!(kind, Kind::Paren) {
+        return match_evaluated(items).into_iter().map(|item| built_mappings(source, item)).sum();
+    }
+    let inner: usize = items.iter().map(|item| built_mappings(source, item)).sum();
     let builds = match kind {
         Kind::Brace => !source.get(*start..).is_some_and(|rest| rest.starts_with("#{")),
         Kind::Paren => head == "dfor" || head == "dict",
@@ -1124,6 +1145,37 @@ mod tests {
         assert_eq!(details(false), vec!["built:index-of"]);
         let built = dict_smell_hits(source, false).unwrap();
         assert!(built[0].problem.contains("2 か所"), "{:?}", built);
+    }
+
+    #[test]
+    fn dict_smell_skips_match_patterns_but_counts_the_subject_guard_and_body() {
+        // agora-redesign #2310: match の型の位置の {…} は値を組まず形を照らすだけ(以前は「写像を組む」と数えた — turn_event_codec の
+        // detail-of-json)。主・`:if` の守り・本体で組む写像は今までどおり数える。
+        let source = r#"
+(defk detail-of [value]
+  {:pre [(: value dict)] :post [(: % str)] :tags {:context "x" :role "protocol"}}
+  (match value
+    {"type" "call"} "call"
+    {"type" "outcome"} :if (> (len value) 1) "outcome"
+    _ "other"))
+(defk built-in-the-body [value]
+  {:pre [(: value dict)] :post [(: % int)] :tags {:context "x" :role "protocol"}}
+  (match value
+    {"type" "call"} (len {"a" 1})
+    _ 0))
+(defk built-in-the-guard [value]
+  {:pre [(: value dict)] :post [(: % int)] :tags {:context "x" :role "protocol"}}
+  (match value
+    {"type" "call"} :if (in "a" (dfor k value k 1)) 1
+    _ 0))
+(defk built-in-the-subject [rows]
+  {:pre [(: rows list)] :post [(: % int)] :tags {:context "x" :role "protocol"}}
+  (match (dfor r rows r r)
+    {} 0
+    _ 1))
+"#;
+        let found: Vec<String> = dict_smell_hits(source, true).expect("読める").into_iter().map(|h| h.detail()).collect();
+        assert_eq!(found, vec!["built:built-in-the-body", "built:built-in-the-guard", "built:built-in-the-subject"]);
     }
 
     #[test]
