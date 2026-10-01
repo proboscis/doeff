@@ -8,7 +8,8 @@
 (setv BOARD-MAX-TTL-SECONDS (* 30 24 3600))
 
 
-;; current / expect は盤の値そのもの(どの JSON の値にもなる — 等しいかだけを見る)。
+;; current / expect は盤の値そのもの(どの JSON の値にもなる — 等しいかだけを見る)。どちらも要求の本文から解いた JSON の値で比べる —
+;; WriteShared が運ぶ OpaqueJson の文字列(欄の順まで含む)では比べない(#2543 — 欄の順だけが違う expect も合う)。
 (defn #^ bool board-allows [#^ object current #^ bool present #^ bool has-expect #^ object expect]
   "compare-and-set: expect が無ければ無条件・None なら行が無い時だけ・値ならいまの値がそれと等しい時だけ書いてよい。"
   (cond

@@ -10,6 +10,7 @@
 (import doeff_cluster.foundation.host_contract [host-reader environ-reader])
 (import doeff_cluster.cluster_foundation [with-cluster-handlers])
 (import doeff_cluster.shared.intent.readiness_model [ReportReady])
+(import doeff_hy.json_value [OpaqueJson])
 (import doeff_cluster.shared.intent.shared_model [ReadShared WriteShared])
 
 
@@ -26,7 +27,7 @@
   {:pre [] :post [(: % None)] :tags {:context "doeff-cluster-test" :role "program"}}
   "盤に書き、読み、準備できたと報告して眠る(クラスタの約束の effect と時計と設定を出す)。"
   (<- rounds (Ask "BEACON_ROUNDS"))
-  (<- (WriteShared "beacon/n" 1))
+  (<- (WriteShared "beacon/n" (OpaqueJson.of 1)))
   (<- rows (ReadShared "beacon/"))
   (<- (ReportReady True "ok" "active"))
   (<- (Delay 1.0))

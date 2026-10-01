@@ -14,6 +14,7 @@
 (import doeff_core_effects.handlers [state])
 (import doeff_core_effects.scheduler [scheduled])
 (import doeff_cluster.foundation.host_contract [HOST-CONTRACT host-reader environ-reader])
+(import doeff_hy.json_value [OpaqueJson])
 (import doeff_cluster.shared.intent.shared_model [ReadShared WriteShared])
 (import doeff_time [SimClock sim-time-handler])
 (import tests.board_fake [board-handlers])
@@ -43,7 +44,7 @@
     (val key (+ "visits/" name))
     (<- rows dict (ReadShared key))
     (val counted (+ 1 (.get rows key 0)))
-    (<- (WriteShared key counted))
+    (<- (WriteShared key (OpaqueJson.of counted)))
     (resume counted))
   (DrawTicket [label]
     (resume (+ "ticket-" label))))

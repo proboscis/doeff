@@ -15,10 +15,11 @@
 (import doeff_time [Delay sim-time-handler])
 (import doeff_cluster.shared.core.clock [now-epoch-ms])
 (import tests.clock_fixtures [clock-at clock-ms])
-(import doeff_cluster.shared.intent.shared_model [ReadShared WriteShared])
+(import doeff_hy.json_value [OpaqueJson])
+(import doeff_cluster.shared.intent.shared_model [ReadShared WriteShared ANY])
 (import tests.board_fake [board-handlers])
 (import doeff_cluster.shared.core.effect_codec [BlobMemory intern-json resolve-refs encode-value decode-value encode-error decode-error delta-of apply-delta canonical
-                                         UnrecordableEffect RecordedError])
+                                         UnrecordableEffect RecordedError HandleTable args-of type-name])
 (import doeff_cluster.shared.core.record_model [read-recording ReplayFinished ReplayDiverged])
 (import doeff_cluster.shared.protocol.record_handlers [MemorySink EffectLog effect-recorder ReplayState effect-replayer replay-report])
 
@@ -89,7 +90,7 @@
     (<- (Delay nap))
     (<- now int (now-epoch-ms))
     (.append box (.format "{}{}@{}" name i now))
-    (<- (WriteShared (+ "log/" name) (list box))))
+    (<- (WriteShared (+ "log/" name) (OpaqueJson.of (list box)))))
   steps)
 
 (defk system-program []
@@ -99,7 +100,7 @@
   (<- c Task (Spawn (worker-task "c" 2 0.7)))
   (<- done list (Gather a b c))
   (<- box list (Ask "box"))
-  (<- (WriteShared "final" (list box)))
+  (<- (WriteShared "final" (OpaqueJson.of (list box))))
   (list box))
 
 (defn #^ tuple record-system []
@@ -136,6 +137,39 @@
   (assert (> (get (get (replay-report state "program-returned") "outputDiffCounts") "changed") 0)))
 
 
+
+
+;; ---- 盤の書き(WriteShared)の値は OpaqueJson — 値が素の JSON の値だった旧い記録も同じ値に読む(#2543)-----------------
+;; 旧い形 = value・expect が素の JSON の値を encode-value で綴った物(tuple は $t・文字列でない鍵は $d)。新しい形 = OpaqueJson の中の
+;; JSON の値。盤が持つ JSON の値が同じ書きは、記録から読んだ引数も同じ値になる(記録の突き合わせが「違う」を出さない)。
+
+(deftest test-an-old-write-shared-record-reads-as-the-new-form
+  (val cases [#({"n" 1 "xs" #(1 2) "m" {3 "x"}} {"n" 1 "xs" [1 2] "m" {"3" "x"}})
+              #("text" "text") #(None None) #([1 2.5 True] [1 2.5 True]) #(#("a" #(1)) ["a" [1]])])
+  (val expects [#({"$any" 1} ANY) #(None None) #((encode-value #("v" 0)) (OpaqueJson.of ["v" 0]))])
+  (for [#(old new) cases]
+    (for [#(old-expect new-expect) expects]
+      (val line {"k" "call" "e" 0 "t" "root" "at" 0 "ty" (type-name WriteShared) "m" "output" "sj" "row/a"
+                 "a" {"key" "row/a" "value" (encode-value old) "expect" old-expect} "ok" True "v" True})
+      (val rec (read-recording [{"k" "run" "format" 2 "startedMs" 0 "service" "s" "run" "r0"} line]))
+      (val replayed (args-of (WriteShared "row/a" (OpaqueJson.of new) new-expect) (HandleTable)))
+      (assert (= (canonical (. (get rec.entries 0) args)) (canonical replayed)) #(old old-expect (. (get rec.entries 0) args) replayed)))))
+
+
+(deftest test-a-recording-mixing-old-and-new-write-shared-forms-replays-without-differences
+  ;; 1 つおきの WriteShared の行を旧い版の業務コードが tuple で書いた形にする(盤の JSON では同じ list)。
+  (setv #(lines program store) (record-system))
+  (<- recorded list program)
+  (val writes (lfor l lines :if (= (.get l "ty") (type-name WriteShared)) l))
+  (assert (> (len writes) 4) (len writes))
+  (for [l (cut writes 0 None 2)]
+    (setv (get l "a" "value") {"$t" (get l "a" "value")}))
+  (setv state (ReplayState (read-recording lines)))
+  (<- replayed list (with-handlers-list [(effect-replayer state)] (system-program)))
+  (setv report (replay-report state "program-returned"))
+  (assert (= replayed recorded) #(replayed recorded))
+  (assert (= (get report "outputDiffCounts") {"changed" 0 "missing" 0 "extra" 0}) report)
+  (assert (get report "identical") report))
 
 
 ;; ---- 置き場を移した module の旧い型の名を読む(#2105・#2021 の決め 2a)-----------------------------------------

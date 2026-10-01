@@ -19,7 +19,8 @@
 (val MODULE-TAGS {:context "doeff-cluster" :role "judgment"})
 (import collections.abc [Callable])
 (import dataclasses [dataclass field])
-(import doeff_cluster.shared.core.effect_codec [READ LIVE DECISION OUTPUT LOOSE READABLE-FORMATS JsonValue canonical apply-delta delta-of resolve-refs])
+(import doeff_cluster.shared.core.effect_codec [READ LIVE DECISION OUTPUT LOOSE READABLE-FORMATS JsonValue canonical apply-delta delta-of resolve-refs
+                                                recorded-args])
 
 (setv ROOT "root")
 
@@ -126,7 +127,8 @@
             (when (not (isinstance args dict))
               (raise (ValueError (.format "出来事 {} の引数が表でない: {}" e (type args)))))
             (setv mode (if (is mode-of-type None) (get l "m") (mode-of-type (get l "ty") l)))
-            (setv (get entries e) (Entry e (get l "t") (get l "at") (get l "ty") args mode :subject (.get l "sj")))
+            ;; 引数の形を変えた型(WriteShared の OpaqueJson・#2543)の旧い記録の行は、今の版の比べる形へ揃えて持つ(差分の元は揃える前の値)。
+            (setv (get entries e) (Entry e (get l "t") (get l "at") (get l "ty") (recorded-args (get l "ty") args) mode :subject (.get l "sj")))
             (.append (.setdefault queues (get l "t") []) e)
             (.append events #(e "req" (get l "t") e)))
       (= kind "ans")
