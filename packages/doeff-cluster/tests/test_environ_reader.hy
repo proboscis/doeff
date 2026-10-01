@@ -28,7 +28,7 @@
 (import doeff_cluster.shared.intent.remote_model [RemoteJob TaskSucceeded TaskFailed encode-program decode-outcome])
 (import doeff_cluster.foundation.process_versions [current-versions])
 (import doeff_cluster.shared.intent.service_model [system-of])
-(import doeff_cluster.worker_model [DesiredJobs])
+(import doeff_cluster.worker.intent.worker_model [DesiredJobs])
 (import doeff_cluster.sim.local [sim-cluster SimWorker])
 (import tests.detached_rig [MemoryCoordinator RIG-PROVIDES])
 (import tests.fixtures.entry_programs [environ-read environ-resolved-read])

@@ -7,7 +7,7 @@
 (import doeff_cluster.foundation.coordinator_inbox [RequestInbox])
 (import doeff_cluster.foundation.coordinator_http [CoordinatorEndpoint send-idempotent])
 (import doeff_cluster.handlers [CoordinatorLink])
-(import doeff_cluster.worker_model [DesiredJobs DesiredUnreadable])
+(import doeff_cluster.worker.intent.worker_model [DesiredJobs DesiredUnreadable])
 
 
 (defn #^ None serve [#^ RequestInbox inbox #^ threading.Event stop]

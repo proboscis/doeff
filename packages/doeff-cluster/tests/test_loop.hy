@@ -4,7 +4,7 @@
 (import dataclasses [replace])
 (import doeff_time [SimClock sim-time-handler])
 (import tests.clock_fixtures [clock-ms])
-(import doeff_cluster.worker_model [CodeState CodeView ProcessView WorldView StopStage
+(import doeff_cluster.worker.intent.worker_model [CodeState CodeView ProcessView WorldView StopStage
   WorkerPolicy WorkerState DesiredJobs DesiredUnreadable ReadDesired ObserveWorld
   WorkerStopRequested PublishStatus PrepareCode StartJob SignalJob ReapJob] doeff_cluster.shared.intent.job_model [JobSpec JobPhase])
 (import doeff_cluster.worker.core.program [run-worker])

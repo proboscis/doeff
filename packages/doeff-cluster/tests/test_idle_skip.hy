@@ -18,7 +18,7 @@
 (import doeff_cluster.coordinator.core.idle_policy [quiet-ticks])
 (import doeff_cluster.sim.local [sim-cluster ProcessesOf SharedRows StopCoordinator CoordinatorRuns KillWorker ReadCoordinator ClientLink SimLink
                              SimWorker])
-(import doeff_cluster.worker_model [WorkerPolicy])
+(import doeff_cluster.worker.intent.worker_model [WorkerPolicy])
 (import tests.fixtures.envs [sim-foundation])
 (import tests.fixtures.sim_programs [quitters beacons])
 (import tests.test_local_rollout [reverse-scenario DEPLOYMENTS WORKERS :as ROLLOUT-WORKERS])

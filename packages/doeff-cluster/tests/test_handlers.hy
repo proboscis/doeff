@@ -2,7 +2,7 @@
 (require doeff-hy.macros [deftest val])
 (import time)
 (import httpx)
-(import doeff_cluster.worker_model [DesiredJobs DesiredUnreadable])
+(import doeff_cluster.worker.intent.worker_model [DesiredJobs DesiredUnreadable])
 (import doeff_cluster.handlers [CoordinatorLink])
 
 (deftest test-broken-declaration-is-reported-not-raised
@@ -24,7 +24,7 @@
   (assert (= (.poll link) (DesiredJobs #()))))
 
 (import pathlib [Path])
-(import doeff_cluster.worker_model [JobStatus] doeff_cluster.shared.intent.job_model [JobPhase])
+(import doeff_cluster.worker.intent.worker_model [JobStatus] doeff_cluster.shared.intent.job_model [JobPhase])
 (import doeff_cluster.handlers [task-spec])
 (import doeff_cluster.code_prepare [module-name carry-pairs compile-plan cache-rel])
 

@@ -8,7 +8,7 @@
 (require doeff-hy.macros [defk <- val var])
 (import dataclasses [replace])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming Request])
-(import doeff_cluster.coordinator.intent.cluster_model [ClusterState Watcher WatchRefusal WatchAnswer WatchStep WATCH-MAX-SECONDS])
+(import doeff_cluster.coordinator.intent.cluster_model [ClusterState Watcher WatchRefusal WatchAnswer WatchStep] doeff_cluster.shared.intent.protocol [WATCH-MAX-SECONDS])
 (import doeff_cluster.coordinator.core.cluster_policy [heartbeat-reply])
 (import doeff_cluster.coordinator.core.api_policy [ready-instances])
 

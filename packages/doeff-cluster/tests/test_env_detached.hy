@@ -28,9 +28,9 @@
 (import doeff_cluster.coordinator.intent.cluster_model [ClusterState TaskRecord WorkerInfo ComponentVersion])
 (import doeff_cluster.coordinator.core.cluster_policy [can-run-task absorb-env-failure place-tasks submit-task ENV-RETRIES])
 (import doeff_cluster.coordinator.core.detached_policy [submit-detached])
-(import doeff_cluster.worker_model [CodeView CodeState WorldView JobRecord WorkerPolicy PrepareEnv
-                                    PrepareCode code-key] doeff_cluster.shared.intent.job_model [JobSpec JobPhase])
-(import doeff_cluster.worker_policy [plan statuses])
+(import doeff_cluster.worker.intent.worker_model [CodeView CodeState WorldView JobRecord WorkerPolicy PrepareEnv
+                                    PrepareCode] doeff_cluster.shared.intent.job_model [JobSpec JobPhase] doeff_cluster.worker.core.worker_rules [code-key])
+(import doeff_cluster.worker.core.policy [plan statuses])
 (import doeff_cluster.handlers [task-spec status-row])
 (import tests.env_fixtures [LOCK APP-URL LIB-URL env-of])
 (import tests.detached_rig [slow-add])
