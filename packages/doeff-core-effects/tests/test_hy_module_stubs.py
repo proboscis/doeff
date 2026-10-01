@@ -33,6 +33,7 @@ STUBBED_MODULES = (
     "memory_file",
     "random_effects",
     "seeded_random",
+    "scripted_http_server",
 )
 
 #: module の直下で名を定義する Hy の form の頭。
@@ -240,5 +241,33 @@ def test_a_dropped_effect_field_is_found() -> None:
     # 宣言の effect HttpListen(defclass の dataclass)から欄 ws_send_max_bytes を消すと、欄の食い違いとして見つかる。
     broken = _without_field(_stub_tree("http_server_effects"), "HttpListen", "ws_send_max_bytes")
     assert [
-        m for m in _mismatches("http_server_effects", broken) if m.startswith("HttpListen の欄が違う")
+        m
+        for m in _mismatches("http_server_effects", broken)
+        if m.startswith("HttpListen の欄が違う")
+    ]
+
+
+def test_a_dropped_arrival_remote_is_found() -> None:
+    # 台本が運ぶ出来事 HttpRequestArrived の宣言から送り元の欄 remote を消すと、欄の食い違いとして見つかる(agora-redesign #2233)。
+    broken = _without_field(_stub_tree("http_server_effects"), "HttpRequestArrived", "remote")
+    assert [
+        m
+        for m in _mismatches("http_server_effects", broken)
+        if m.startswith("HttpRequestArrived の欄が違う")
+    ]
+
+
+def test_a_dropped_handler_parameter_is_found() -> None:
+    # 宣言の scripted_http_server から引数 script を消すと、引数の食い違いとして見つかる(agora-redesign #2233)。
+    broken = copy.deepcopy(_stub_tree("scripted_http_server"))
+    for node in broken.body:
+        match node:
+            case ast.FunctionDef(name="scripted_http_server"):
+                node.args.args = []
+            case _:
+                pass
+    assert [
+        m
+        for m in _mismatches("scripted_http_server", broken)
+        if m.startswith("scripted_http_server の引数が違う")
     ]
