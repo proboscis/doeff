@@ -8,8 +8,7 @@
 (import time)
 (import pathlib [Path])
 (import doeff_time [SimClock sim-time-handler])
-(import doeff_cluster.code_prepare [ScanTree LinkPycs CompileSources WriteMarker Note MARKER
-                        prepare-tree tree-problem marker-problem marker-content cache-rel compiled-pyc])
+(import doeff_cluster.worker.intent.code_model [ScanTree LinkPycs CompileSources WriteMarker Note] doeff_cluster.worker.core.code_plan [MARKER tree-problem marker-problem marker-content cache-rel] doeff_cluster.worker.core.code_prepare [prepare-tree] doeff_cluster.code_prepare [compiled-pyc])
 (import doeff_cluster.handlers [CodeStore])
 (import doeff_cluster.worker.intent.worker_model [CodeState CodeView])
 
