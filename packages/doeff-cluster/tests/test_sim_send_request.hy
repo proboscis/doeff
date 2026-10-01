@@ -105,12 +105,12 @@
   (assert (= at (int (* REPLY-SECONDS 1000))) read))
 
 
-(deftest test-a-send-starts-only-one-daemon-timer
-  ;; 送り 1 件が起こす task は期限の鳴らしの 1 つ(daemon)だけ — 模擬の 1 本の検で送りは数千回あり、待ち 1 回の費用が検の時間に効く
-  ;; (#2596: 片付けの task を起こして待つ promise-or-timeout の形では、使い手の模擬の検 2 本が時間の上限を越えた)。
-  ;; 前の形(promise-or-timeout)では起こす task が 2 つ(期限の鳴らしと片付け・どちらも daemon でない)で赤になる。
+(deftest test-a-send-starts-no-timer-task
+  ;; 送り 1 件は期限の task を起こさない — 期限は時計の handler が持つ(WaitWithin・模擬の時計の列の 1 項)。模擬の 1 本の検で送りは
+  ;; 数千回あり、待ち 1 回の費用が検の時間に効く(#2596: 期限の task と片付けの task を起こす形では、使い手の模擬の検 2 本が時間の
+  ;; 上限を越えた・#2618)。期限の task を Spawn する形(daemon の鳴らし 1 つでも)では spawns が空でなく赤になる。
   (<- counted tuple (send-counting 2.0))
   (val read (get counted 0))
   (val spawns (get counted 1))
   (assert (= read #(#(200 {"ok" True}) 2000)) read)
-  (assert (= spawns #(True)) spawns))
+  (assert (= spawns #()) spawns))

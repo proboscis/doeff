@@ -13,12 +13,15 @@ from doeff_time.effects.time import SetTime as SetTime
 from doeff_time.effects.time import SetTimeEffect as SetTimeEffect
 from doeff_time.effects.time import WaitUntil as WaitUntil
 from doeff_time.effects.time import WaitUntilEffect as WaitUntilEffect
+from doeff_time.effects.time import WaitWithin as WaitWithin
+from doeff_time.effects.time import WaitWithinEffect as WaitWithinEffect
 from doeff_time.effects.time import delay as delay
 from doeff_time.effects.time import get_monotonic as get_monotonic
 from doeff_time.effects.time import get_time as get_time
 from doeff_time.effects.time import schedule_at as schedule_at
 from doeff_time.effects.time import set_time as set_time
 from doeff_time.effects.time import wait_until as wait_until
+from doeff_time.effects.time import wait_within as wait_within
 from doeff_time.handlers.async_time import async_time_handler as async_time_handler
 from doeff_time.handlers.sim_time import sim_time_handler as sim_time_handler
 from doeff_time.handlers.sync_time import sync_time_handler as sync_time_handler
