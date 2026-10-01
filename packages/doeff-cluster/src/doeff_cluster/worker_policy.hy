@@ -11,6 +11,7 @@
 ;; 検めの間(走っている・同じ木の検めの終わりを待っている)は starting ではなく probing と出し、状態の行の probe に経過の秒・回数・
 ;; 直前の失敗の理由を載せる(2026-09-27 — 以前は 17 分 starting のままで、理由は FAILED から撃ち直すまでの 30 秒しか見えなかった)。
 ;; 同じ木の検めを 1 本にまとめる・時間切れで process group ごと止めるのは検めの process の持ち主(handlers.ProbeStore)。
+(require doeff-hy.macros [defk val])
 (import dataclasses [replace])
 (import .worker_model [Action JobSpec CodeState CodeView ProcessView WorldView StopStage StopProgress ProbeState ProbeView ProbeStatus
   Outcome JobRecord WorkerPolicy JobPhase JobStatus PrepareCode PrepareEnv SweepEnvs StartJob SignalJob ReapJob RetireJob ReleaseLeases
@@ -305,6 +306,20 @@
           (is-not (probe-in-flight world want) None) JobPhase.PROBING
           (in-backoff now record policy) JobPhase.BACKOFF
           True JobPhase.STARTING))))
+
+;; 時刻だけでは答えの変わらない相(#2264): 走っている(止めの途中でない)・止めた・終わった・入れ替えを諦めた。準備中・検め中・
+;; 失敗の撃ち直し待ち・再起動待ち・止めの途中は、次の拍の答えが時刻で変わるので落ち着いていない。
+(val SETTLED-PHASES (frozenset [JobPhase.RUNNING JobPhase.STOPPED JobPhase.FINISHED JobPhase.HANDOFF-ABANDONED]))
+
+(defk settled [actions report world]
+  {:pre [(: actions tuple) (: report tuple) (: world WorldView)] :post [(: % bool)]
+   :tags {:context "doeff-cluster" :role "judgment"}}
+  "純粋: この拍の後、宿の外から何かが変わるまで次の拍の判断が同じになるか(#2264 — worker のループの WorkerRest の quiet)。撃つ action
+   が無く、どの job も SETTLED-PHASES にいて、揃っていない木(準備中・撃ち直しの刻を持つ失敗)と終わっていない検めが無い時だけ真。"
+  (and (not actions)
+       (all (gfor status report (in status.phase SETTLED-PHASES)))
+       (all (gfor code world.codes (= code.state CodeState.READY)))
+       (all (gfor probe world.probes (in probe.state #(ProbeState.PASSED ProbeState.FAILED))))))
 
 (defn #^ tuple statuses [#^ int now #^ tuple desired #^ WorldView world #^ dict records #^ WorkerPolicy policy]
   (tuple (gfor name (job-names desired world)

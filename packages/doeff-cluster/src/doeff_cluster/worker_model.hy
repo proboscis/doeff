@@ -346,6 +346,14 @@
   (setv #^ str note ""))
 
 
+(defclass [(dataclass :frozen True)] WorkerRest [EffectBase]
+  "拍と拍の間の休み(#2264)。結果は None。seconds = 拍の間隔(WorkerPolicy.tick-seconds)・quiet = この拍が撃つ action を
+   持たず、どの job も時間で答えの変わる相にいない(worker_policy.settled)。本番の答え手は quiet を問わず seconds だけ眠る(今までの
+   Delay と同じ)。手元の sim の宿は、quiet の拍だけ宿の真実が変わるか heartbeat の期限まで眠ってよい(拍の数を減らす — 判断は変えない)。"
+  (#^ float seconds)
+  (#^ bool quiet))
+
+
 ;; --- action(判断の結果。そのまま effect として実行する) -------------------------
 
 (defclass [(dataclass :frozen True)] PrepareCode [EffectBase]

@@ -153,7 +153,7 @@
 (import .warm_model [WarmRuntimeEnv ReadWarmState WarmState WarmAnswer warm-state-of-json])
 (import .worker [run-worker])
 (import .worker_model [JobSpec WorkerPolicy WorkerState WorldView CodeView CodeState ProcessView ProbeView ProbeState
-                       DesiredJobs DesiredUnreadable ReadDesired ObserveWorld WorkerStopRequested PublishStatus
+                       DesiredJobs DesiredUnreadable ReadDesired ObserveWorld WorkerStopRequested PublishStatus WorkerRest
                        PrepareCode PrepareEnv SweepEnvs StartJob SignalJob ReapJob RetireJob ProbeEntry ForgetProbes
                        ReleaseLeases spec-hash])
 
@@ -548,6 +548,11 @@
 (defeffect PutHostTruth
   "worker name の宿の真実を置き直す。"
   {:fields [(: name str) (: truth HostTruth)] :answer None :tags {:context "doeff-cluster" :role "intent"}})
+
+(defeffect AwaitHostChange
+  "worker name の世代 boot の宿の真実が書き換わるか、seconds 秒が経つまで待つ(落ち着いた worker の拍の間の休み — #2264)。世代が
+   もう終わっていればすぐ答える。宿の真実を書く世界の節(PutHostTruth・EndProcess・KillWorker ほか)と全 worker の止めが起こす。"
+  {:fields [(: name str) (: boot str) (: seconds float)] :answer None :tags {:context "doeff-cluster" :role "intent"}})
 
 (defeffect NextPid
   "次の process の番号(sim の中で重ならない)。"
@@ -1498,7 +1503,31 @@
   (WorkerStopRequested []
     (<- truth HostTruth (live-truth worker.name boot))
     (<- stopping bool (WorkersStopping))
-    (resume (or stopping truth.stopping))))
+    (resume (or stopping truth.stopping)))
+  (WorkerRest [seconds quiet]
+    ;; 落ち着いた拍(#2264)の後は、宿の真実が書き換わる(待ちの起こし・process の終わり・死・止め)か、次の heartbeat の期限
+    ;; (beat_policy.heartbeat-due と同じ間隔)まで眠る。heartbeat を次の拍で送る事情(待ちの口が使えない・届いていない・起こされた・
+    ;; 状態が変わった)が 1 つでもあれば、本番と同じく拍の間隔だけ眠る。判断は変えない — 次に答えの変わる拍を飛ばさない。
+    (<- truth HostTruth (live-truth worker.name boot))
+    (<- now int (now-epoch-ms))
+    (<- stopping bool (WorkersStopping))
+    (val watching (and truth.watch-confirmed (not truth.watch-unsupported) (is-not truth.watch-after None)
+                       (is truth.watch-failure None)))
+    (val interval (if (is worker.beat-every-ms None) truth.beat-interval-ms worker.beat-every-ms))
+    (val beat-now (heartbeat-due watching truth.fresh truth.woken (!= truth.statuses truth.sent-statuses) 0 interval))
+    (if (or (not quiet) stopping truth.stopping beat-now)
+        (<- (Delay seconds))
+        (<- (AwaitHostChange worker.name boot (max seconds (/ (- (+ truth.last-ok-ms interval) now) 1000.0)))))
+    (resume None)))
+
+
+(defk ring-rest-bells [bells]
+  {:pre [(: bells tuple)] :post [(: % None)] :tags {:context "doeff-cluster" :role "program"}}
+  "宿の真実が書き換わった worker の、落ち着いた拍の間の休み(AwaitHostChange)を起こすため(#2264)。期限で先に起きた待ちの鈴を
+   鳴らしても何も起きない。"
+  (for [bell bells]
+    (<- (CompletePromise bell None)))
+  None)
 
 
 (defk await-beat [name boot]
@@ -1837,6 +1866,8 @@
   (session var end-waiters {})
   (session var watch-failures #())
   (session var start-waiters {})
+  ;; 落ち着いた worker の拍の間の休みの呼び鈴(worker の名 → Promise の組 — #2264)。宿の真実を書く節が鳴らして空にする。
+  (session var rest-bells {})
   (PlanOf []
     (resume plan))
   (PartsOf []
@@ -1845,7 +1876,18 @@
     (resume (get hosts name)))
   (PutHostTruth [name truth]
     (:= hosts (| hosts {name truth}))
+    (val ringing (.get rest-bells name #()))
+    (:= rest-bells (| rest-bells {name #()}))
+    (<- (ring-rest-bells ringing))
     (resume None))
+  (AwaitHostChange [name boot seconds]
+    (val truth (get hosts name))
+    (if (or truth.down (!= truth.boot boot))
+        (resume None)
+        (do (<- bell Promise (CreatePromise))
+            (:= rest-bells (| rest-bells {name (+ (.get rest-bells name #()) #(bell))}))
+            (<- (promise-or-timeout bell.future seconds))
+            (resume None))))
   (NextPid []
     (:= next-pid (+ next-pid 1))
     (resume next-pid))
@@ -1886,6 +1928,8 @@
     (:= handles (dfor #(k v) (.items handles) :if (!= k pid) k v))
     (:= children (dfor #(k v) (.items children) :if (!= k pid) k v))
     (:= finished (| finished (frozenset [pid])))
+    (val resting (.get rest-bells worker #()))
+    (:= rest-bells (| rest-bells {worker #()}))
     ;; 待つ相手の process が終わった AwaitProcessEnded の待ち手を起こす(読み直さない — 書きで起こす)。
     (<- woken DueWaiters (due-end-waiters log end-waiters))
     (:= end-waiters woken.remaining)
@@ -1894,12 +1938,16 @@
       (<- (Cancel task)))
     (for [#(promise answer) woken.due]
       (<- (CompletePromise promise answer)))
+    (<- (ring-rest-bells resting))
     (resume None))
   (NoteWatchFailure [failure]
     (:= watch-failures (+ watch-failures #(failure)))
     (val truth (get hosts failure.worker))
+    (val resting (.get rest-bells failure.worker #()))
     (when (= truth.boot failure.boot)
-      (:= hosts (| hosts {failure.worker (replace truth :watch-failure failure.reason)})))
+      (:= hosts (| hosts {failure.worker (replace truth :watch-failure failure.reason)}))
+      (:= rest-bells (| rest-bells {failure.worker #()}))
+      (<- (ring-rest-bells resting)))
     (resume None))
   (WatchFailuresOf [name]
     (resume (tuple (gfor f watch-failures :if (= f.worker name) f))))
@@ -1915,10 +1963,13 @@
     (resume stopping))
   (StopWorkers []
     (val waiting (list (.values revivals)))
+    (val resting (tuple (gfor bells (.values rest-bells) bell bells bell)))
     (:= stopping True)
     (:= revivals {})
+    (:= rest-bells {})
     (for [promise waiting]
       (<- (CompletePromise promise None)))
+    (<- (ring-rest-bells resting))
     (resume None))
   (WorkerEnded [name boot]
     (val truth (get hosts name))
@@ -1983,6 +2034,8 @@
     (val killed (SimExit :code KILLED-CODE :result None :detail "worker が死んだ(node ごと止まった)"))
     (:= kills (| kills (dfor pid victims pid killed)))
     (:= hosts (| hosts {name (replace truth :down True)}))
+    (val resting (.get rest-bells name #()))
+    (:= rest-bells (| rest-bells {name #()}))
     ;; 記録の終わりはここで書く(走り出す前に取り消された process は EndProcess を書かない — 動いているように見せない)。
     (:= log (tuple (gfor r log (if (in r.pid victims) (replace r :ended-ms now :exit-code killed.code :detail killed.detail) r))))
     (<- woken DueWaiters (due-end-waiters log end-waiters))
@@ -1993,6 +2046,7 @@
         (<- (Cancel (get handles pid)))))
     (for [#(promise answer) woken.due]
       (<- (CompletePromise promise answer)))
+    (<- (ring-rest-bells resting))
     (resume (len victims)))
   (StopWorker [name]
     (val truth (get hosts name))
@@ -2001,6 +2055,9 @@
         (do (<- promise Promise (CreatePromise))
             (:= hosts (| hosts {name (replace truth :stopping True)}))
             (:= stop-waiters (| stop-waiters {name (+ (.get stop-waiters name #()) #(promise))}))
+            (val resting (.get rest-bells name #()))
+            (:= rest-bells (| rest-bells {name #()}))
+            (<- (ring-rest-bells resting))
             (<- (Wait promise.future))
             (resume None))))
   (StartWorker [name]

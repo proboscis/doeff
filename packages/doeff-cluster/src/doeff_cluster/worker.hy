@@ -1,15 +1,14 @@
 ;; worker の調整ループ。毎拍「宣言・観測・記憶」から action を導いて実行する。
 ;; 子 process もコードの準備も観測で追うので、どの job の処理もループ(停止の経路)を塞がない。
 (require doeff-hy.macros [defk <- val var])
-(import doeff_time [Delay])
 (import doeff_cluster.clock [now-epoch-ms])
 (import .worker_model [WorkerPolicy WorkerState WorldView DesiredJobs DesiredUnreadable
-  ReadDesired ObserveWorld WorkerStopRequested PublishStatus JobPhase])
-(import .worker_policy [plan records-after statuses])
+  ReadDesired ObserveWorld WorkerStopRequested PublishStatus WorkerRest JobPhase])
+(import .worker_policy [plan records-after statuses settled])
 
 (defk worker-tick [state policy stopping]
   {:pre [(: state WorkerState) (: policy WorkerPolicy) (: stopping bool)] :post [(: % tuple)]}
-  ;; 結果 = #(次の状態 まだ終了を待つ子 process の数)
+  ;; 結果 = #(次の状態 まだ終了を待つ子 process の数 落ち着いたか — worker_policy.settled・#2264)
   (<- read (| DesiredJobs DesiredUnreadable) (ReadDesired))
   ;; 読めない宣言を空と読まない。直前に読めた宣言を使い続ける。
   (setv desired (cond
@@ -29,9 +28,11 @@
     (:= after observed))
   (setv report (statuses now desired after records policy))
   (<- (PublishStatus report (if (isinstance read DesiredUnreadable) read.reason "")))
+  (<- quiet bool (settled actions report after))
   #((WorkerState (if (isinstance read DesiredJobs) read.jobs state.desired) records warm)
     ;; 停止を確認できない process は待ち続けない(状態表示に残す)。
-    (len (lfor s report :if (in s.phase #(JobPhase.RUNNING JobPhase.STOPPING)) s))))
+    (len (lfor s report :if (in s.phase #(JobPhase.RUNNING JobPhase.STOPPING)) s))
+    quiet))
 
 (defk run-worker [policy]
   {:pre [(: policy WorkerPolicy)] :post [(: % WorkerState)]}
@@ -43,4 +44,5 @@
     (val alive (get ticked 1))
     (:= state (get ticked 0))
     (when (and stopping (= alive 0)) (return state))
-    (<- (Delay policy.tick-seconds))))
+    ;; 止めの途中の拍は落ち着いていても休みを短くしない(止めの手順は毎拍進める)。
+    (<- (WorkerRest policy.tick-seconds (and (get ticked 2) (not stopping))))))

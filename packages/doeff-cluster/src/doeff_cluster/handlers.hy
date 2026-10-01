@@ -2,6 +2,7 @@
 ;; どれもループを塞がない: 展開と子 process は Popen で起動し、結果は ObserveWorld で観測する。
 (require doeff-hy.macros [defhandler defk deff <- val])
 (require doeff-hy.record [defrecord])
+(import doeff_time [Delay])
 (import json os re shutil signal subprocess sys tempfile threading time uuid)
 (import httpx)
 (import enum [Enum])
@@ -26,7 +27,7 @@
 (import .semaphore_model [SEMAPHORE-PREFIX drop-holders lease-holder holder-tokens-prefix])
 (import .worker_policy [kept-when-cut-off])
 (import .worker_model [JobSpec CodeState CodeView ProcessView WorldView StopStage ProbeState ProbeView
-  DesiredJobs DesiredUnreadable ReadDesired ObserveWorld WorkerStopRequested PublishStatus JobPhase JobStatus EnvDisk WarmEnv
+  DesiredJobs DesiredUnreadable ReadDesired ObserveWorld WorkerStopRequested PublishStatus WorkerRest JobPhase JobStatus EnvDisk WarmEnv
   PrepareCode PrepareEnv SweepEnvs ForgetProbes StartJob SignalJob ReapJob RetireJob ReleaseLeases ProbeEntry spec-hash probe-args probe-refusal CodeLayout
   ENV-KEY-PREFIX])
 
@@ -1338,4 +1339,8 @@
   (defn #^ None __init__ [self] (setv self.requested False)))
 
 (defhandler stop-flag [#^ StopState state]
-  (WorkerStopRequested [] (resume state.requested)))
+  (WorkerStopRequested [] (resume state.requested))
+  ;; 拍の間の休み(#2264): 本番は quiet を問わず拍の間隔だけ眠る(止めの印は次の拍の頭で読む — 今までの Delay と同じ)。
+  (WorkerRest [seconds quiet]
+    (<- (Delay seconds))
+    (resume None)))
