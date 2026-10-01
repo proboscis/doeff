@@ -566,7 +566,8 @@
         "doeff-cluster-ready-file",
         "doeff-cluster-code-plan",
         "doeff-cluster-worker-launch",
-        "doeff-cluster-worker-probe-rules"
+        "doeff-cluster-worker-probe-rules",
+        "doeff-cluster-worker-code-rules"
       ],
       "layer": "io",
       "name": "doeff-cluster-handlers",
@@ -1391,7 +1392,8 @@
         "doeff-cluster-worker-launch",
         "doeff-cluster-worker-process-host",
         "doeff-cluster-worker-probe-rules",
-        "doeff-cluster-worker-probes"
+        "doeff-cluster-worker-probes",
+        "doeff-cluster-worker-code-rules"
       ],
       "exclude": [
         "packages/doeff-cluster/tests/fixtures/independence/*"
@@ -2036,6 +2038,22 @@
         "packages/doeff-cluster/src/doeff_cluster/worker/protocol/probes.hy"
       ],
       "responsibility": "worker の入口の検めの言い換え(ProbeEntry・ForgetProbes・ObserveProbes を汎用の子 process と file system の効果へ)。",
+      "typed": true
+    },
+    {
+      "allow": [
+        "doeff-cluster-worker-model",
+        "doeff-cluster-code-plan"
+      ],
+      "layer": "io",
+      "name": "doeff-cluster-worker-code-rules",
+      "paths": [
+        "packages/doeff-cluster/src/doeff_cluster/worker/core/code_rules.hy"
+      ],
+      "public": [
+        "packages/doeff-cluster/src/doeff_cluster/worker/core/code_rules.hy"
+      ],
+      "responsibility": "worker の版ごとのコードの木の準備の sh の script を組む判断。",
       "typed": true
     }
   ],

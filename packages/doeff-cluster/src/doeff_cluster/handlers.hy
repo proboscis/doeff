@@ -29,6 +29,7 @@
 (import doeff_cluster.worker.core.heartbeat_rules [warm-env-of-row finished-task-id desired-when-unreachable])
 (import doeff_cluster.foundation.ready_file [write-ready-file])
 (import doeff_cluster.worker.core.launch [program-file])
+(import doeff_cluster.worker.core.code_rules [prepare-script])
 (import doeff_cluster.worker.intent.worker_model [ObserveProcesses ObserveProbes CodeState CodeView ProcessView WorldView StopStage ProbeState ProbeView
   DesiredJobs DesiredUnreadable ReadDesired ObserveWorld WorkerStopRequested PublishStatus JobStatus EnvDisk WarmEnv
   PrepareCode PrepareEnv SweepEnvs ForgetProbes StartJob SignalJob ReapJob RetireJob ReleaseLeases ProbeEntry CodeLayout
@@ -136,46 +137,9 @@
         (time.monotonic))))
 
   (defn #^ str script [self #^ str revision #^ (| Path None) previous]
-    ;; 展開 → bytecode の準備(木の中だけ・実行時に検める方式・前の版から引き継ぐ・検めて完成の印を置く)→ rename。
-    ;; どの命令も単独の文にして set -e を効かせる(`a && b` の a の失敗は set -e が拾わない — 以前はそれで
-    ;; 焼きの失敗が完成品になった)。git archive は pipe にせず file へ書く(pipe の失敗は最後の tar しか見えない)。
-    ;; rename が最後で、その前に印が在ることを確かめるので、final の在る dir は常に完成品。
-    ;; 焼く道具そのもの(Hy)の import が timestamp 方式の .pyc を木へ書かないよう、PYTHONDONTWRITEBYTECODE を立てる。
-    ;; revision = worker_model.code-key = 1 つの commit(木の全体がその commit — 以前の「<base>~<重ねる commit>」の重ねる木は
-    ;; 2026-09-28 に消した)。前の木から引き継ぐ時の「変わった file」は前の木の名(版)と revision の git diff。前の木の版を
-    ;; この repo で解けない時(以前の重ねる木の名・履歴から消えた commit)は引き継がずに全部を焼く — 引き継ぎは速さのためだけで、
-    ;; 引き継げないことを準備の失敗にしない(set -e は if の条件の失敗を拾わない)。
-    (setv repo self.repo
-          tool (+ f"PYTHONDONTWRITEBYTECODE=1 \"{self.hy-command}\" \"{self.tool}\" \"$T\" --revision \"{revision}\""
-                  f" --import-roots \"{(.roots-arg self.layout)}\"")
-          prepare (cond
-            (not self.hy-command)
-              (+ f"printf '{{\"format\": {MARKER-FORMAT}, \"revision\": \"%s\", \"bytecode\": false}}\\n' "
-                 f"\"{revision}\" > \"$T/{MARKER}\"\n")
-            (is previous None) f"{tool}\n"
-            True
-              (+ f"if git -C \"{repo}\" diff --name-only \"{previous.name}\" \"{revision}\" > \"$T.changed\" 2>/dev/null; then\n"
-                 f"  {tool} --from \"{previous}\" --changed \"$T.changed\"\n"
-                 "else\n"
-                 f"  echo \"前の木 {previous.name} の版をこの repo で解けない — 引き継がずに全部を焼く\" >&2\n"
-                 f"  {tool}\n"
-                 "fi\n")))
-    (+ "set -eu\n"
-       "if [ -n \"$B\" ]; then rm -rf \"$B\"; fi\n"
-       "rm -rf \"$T\" \"$T.tar\" \"$T.changed\"\n"
-       "mkdir -p \"$T\"\n"
-       ;; 手元に無い版なら先に fetch する(Pod の mirror は起動時の版しか持たない)。
-       f"if ! git -C \"{repo}\" cat-file -e \"{revision}^{{commit}}\" 2>/dev/null; then\n"
-       f"  git -C \"{repo}\" fetch -q origin '+refs/heads/*:refs/heads/*'\n"
-       "fi\n"
-       f"git -C \"{repo}\" archive --format=tar -o \"$T.tar\" \"{revision}\"\n"
-       "tar -x -C \"$T\" -f \"$T.tar\"\n"
-       "rm -f \"$T.tar\"\n"
-       "cd \"$T\"\n"
-       prepare
-       f"test -f \"$T/{MARKER}\" || {{ echo \"完成の印が置かれていない\" >&2; exit 1; }}\n"
-       "rm -f \"$T.changed\"\n"
-       "mv \"$T\" \"$F\"\n"))
+    "版 1 つの木を準備する sh の script(組み方の判断は worker/core/code_rules の prepare-script — #2466)。"
+    (run (prepare-script self.repo revision (if (is previous None) None (str previous)) :hy-command self.hy-command :tool self.tool
+                         :layout self.layout)))
 
   (defn #^ tuple observe [self]
     (setv views [] now-ms (int (* (time.time) 1000)))
