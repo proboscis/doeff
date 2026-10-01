@@ -73,6 +73,29 @@
   (assert (= land.__doeff_tags__.role "entry")))
 
 
+(deftest test-defsystem-keeps-the-type-of-a-typed-foundation
+  ;; 型の注記つきの引数 [#^ T foundation] は展開でき(前は SyntaxError)、記述の params は名の列のまま・型は param_types(名 →
+  ;; module:qualname)に残り、系の関数の引数にも注記が付く — 汎用の模擬の検が系を呼ばずに土台の型を読むため。
+  ;; 型の無い引数は param_types に載らない(型の無い系の記述は上の検のとおり今と同じ)。
+  (<- ns (evaluate "
+(defk notice [foundation poll] {:pre [(: foundation Ping) (: poll float)] :post [(: % int)]} 1)
+(defsystem land [#^ Ping foundation extra]
+  (land-notice (notice foundation 5.0)))
+"))
+  (val land (get ns "land"))
+  (assert (= (get land.__doeff_system__ "params") ["foundation" "extra"]) land.__doeff_system__)
+  (assert (= (get land.__doeff_system__ "param_types") {"foundation" "defsystem_probe:Ping"}) land.__doeff_system__)
+  (assert (is (get land.__annotations__ "foundation") (get ns "Ping")) land.__annotations__))
+
+
+(deftest test-defsystem-refuses-a-type-that-is-not-a-name
+  ;; 反例: 型の注記は module の最上位の型の名だけ — 和の型などの式は記述に module:qualname を残せないので展開の時に断る。
+  (<- a (refusal "(defsystem s [#^ (| Ping None) foundation] (job (make foundation)))"))
+  (assert (in "の型は module の最上位の型の名" a) a)
+  (<- b (refusal "(defsystem s [\"foundation\"] (job (make foundation)))"))
+  (assert (in "引数は記号か #^ 型 記号" b) b))
+
+
 (deftest test-defsystem-refuses-forms-that-are-not-static
   (<- a (refusal "(defsystem s [foundation] (job (make (compute foundation))))"))
   (assert (in "Program の引数は系の引数" a) a)
