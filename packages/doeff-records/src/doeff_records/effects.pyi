@@ -1,4 +1,4 @@
-"""effects.hy の公開面の型(型検査のための宣言 — 実行時は effects.hy を読む・agora-redesign #2311・#2245)。
+"""effects.hy の公開面の型(型検査のための宣言 — 実行時は effects.hy を読む)。
 
 effect は `EffectBase[答えの型]` の部分型として宣言する — `(<- answer (ReadRow table key))` の answer は型検査の展開で
 `_doeff_perform(ReadRow(...))`(doeff_hy/static_types.pyi)になり、答えの型(values.pyi の ReadRowAnswer など)を受ける。

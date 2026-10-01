@@ -1,4 +1,4 @@
-"""store_choice.hy の公開面の型(型検査のための宣言 — 実行時は store_choice.hy を読む・agora-redesign #2311)。
+"""store_choice.hy の公開面の型(型検査のための宣言 — 実行時は store_choice.hy を読む)。
 
 prepare-of = (schema prefix host) → 「書き手の名 → 記録の handler」の関数を返す Program を作る関数・readiness = () → 置き場に
 届けば True の Program を作る関数(None = 用意が済めば ready)。実装の注記は素の Callable なので、ここも引数と答えを問わない

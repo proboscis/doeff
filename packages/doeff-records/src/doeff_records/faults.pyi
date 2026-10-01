@@ -1,4 +1,4 @@
-"""faults.hy の公開面の型(型検査のための宣言 — 実行時は faults.hy を読む・agora-redesign #2311)。
+"""faults.hy の公開面の型(型検査のための宣言 — 実行時は faults.hy を読む)。
 
 検の口の effect(置き場の版の更新・届かない状態・断りの故障)。答えの型は実装の頭の註のとおり
 (AdvanceStoreEpoch = 新しい epoch・ほかは None)。

@@ -1,8 +1,8 @@
 """doeff_records の値・effect・memory の置き場・行の型の層の型(values.pyi・effects.pyi・faults.pyi・memory.pyi・
-store_choice.pyi・typed.pyi)の検(agora-redesign #2311・#2369・#2245)。
+store_choice.pyi・typed.pyi)の検。
 
 doeff_records の module は Hy なので、型の宣言(.pyi)が無いと pyright は import した名を全部 Unknown として読み、使う側
-(agora の表の宣言・行の読みの答え・変更の欄・memory の置き場の handler)に書き手に直せない reportUnknown* が連なる。
+(使い手の表の宣言・行の読みの答え・変更の欄・memory の置き場の handler)に書き手に直せない reportUnknown* が連なる。
 
 - 失敗ケース: 同じ小さな .hy を、stub を外した写しと stub を置いた写しの 2 通りで doeff-hy-check --strict にかける。
   外すと import した名・`(<- answer (ReadRow …))` の answer・変更の欄が Unknown の赤になり、置くと消える。置いた側では

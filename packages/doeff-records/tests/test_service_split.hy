@@ -4,7 +4,7 @@
 ;;;   - 設定の読み records-settings は env と Secret の file を effect(ReadEnvironment・ReadText)で読み、既定を埋めた設定の値を作る。
 ;;;     必須の env が欠ければ起動を止める(黙って既定へ倒さない)
 ;;;   - 本体の設定 records-serving は設定の値と表の宣言と置き場の選びだけから作る(宛先・名簿・手入れ・本文の上限)。表の用意と /readyz の
-;;;     問いは置き場の選び(PostgreSQL = PG-STORE・memory = memory-store-choice)が決める(agora-redesign #1608)
+;;;     問いは置き場の選び(PostgreSQL = PG-STORE・memory = memory-store-choice)が決める
 ;;;   - 土台の口 records-connected は外側(scheduler・Await の橋・session の値の置き場・時計・止めの合図)を持たず、呼び手が置いた外側の
 ;;;     内側に差すだけで本体 serve-records が閉じる — 本物の待ち受け(127.0.0.1 の空き port)で口を開き、止めの合図で 0 で終わる
 (require doeff-hy.macros [deftest defhandler defk <- val])

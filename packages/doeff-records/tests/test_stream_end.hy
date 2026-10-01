@@ -1,4 +1,4 @@
-;; 列の末尾の読み ReadStreamEnd(agora-redesign #1037): 列の最後の出来事の番号を 1 回で答え、空の列は StreamEmpty で答える。
+;; 列の末尾の読み ReadStreamEnd: 列の最後の出来事の番号を 1 回で答え、空の列は StreamEmpty で答える。
 ;;   - 法(doeff_records.laws の law-stream-end-is-the-last-sequence)を memory・PostgreSQL・HTTP の口越し(送り方 2 つ・置き場 2 つ)で回す
 ;;     — 空の列・積んだ後・別の列を数えない・再送で動かない・保持で一部 / 全部刈った後。
 ;;   - HTTP の口越しの読みは要求 1 つで答える(使い手の前の形 = ReadEvents の倍々の先読みと二分は、列の長さに応じて要求が増えた)。

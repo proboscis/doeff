@@ -716,7 +716,7 @@
     (resume pruned)))
 
 
-;; --- 置き場の選び(records-serving に渡す値 — agora-redesign #1608)----------------------------------------------------------------
+;; --- 置き場の選び(records-serving に渡す値)----------------------------------------------------------------
 
 (defk memory-prepared [store schema prefix host]
   {:pre [(: store MemoryStore) (: schema RecordsSchema) (: prefix str) (: host str)] :post [(: % Callable)]

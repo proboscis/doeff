@@ -1,4 +1,4 @@
-;;; 記録の service の入口の Program(main.hy の records-process — 本番と同じ組み立て)を、I/O なしの土台で走らせる検(agora-redesign #880 U7)。
+;;; 記録の service の入口の Program(main.hy の records-process — 本番と同じ組み立て)を、I/O なしの土台で走らせる検。
 ;;; 土台だけを差す: 待ち受け = 台本の scripted-http-server・置き場 = memory・時計 = 仮想の時計・止めの合図 = scripted-stop-handler。
 ;;; 本番の土台(records-foundation)との違いは土台の関数だけ。
 ;;;
@@ -171,7 +171,7 @@
   (assert (= (! (status-of by-ticket "t-read")) #(503 "store-unavailable")) by-ticket))
 
 
-;; --- /readyz(agora-redesign #1479)--------------------------------------------------------------------------------------------------
+;; --- /readyz --------------------------------------------------------------------------------------------------
 ;; /healthz は生存だけ(liveness)・/readyz は置き場を上限 1 秒で問う(readiness)。固まった置き場で口ごと固まらない。
 
 (defk answers-with [value]

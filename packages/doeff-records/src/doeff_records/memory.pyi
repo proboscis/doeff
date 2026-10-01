@@ -1,4 +1,4 @@
-"""memory.hy の公開面の型(型検査のための宣言 — 実行時は memory.hy を読む・agora-redesign #2311・#2245)。
+"""memory.hy の公開面の型(型検査のための宣言 — 実行時は memory.hy を読む)。
 
 memory.hy は Hy の module なので、pyright は中を読めず、置き場 MemoryStore と handler memory-records-handler が Unknown になる
 (handler を組む関数の答えが `Unknown | ((...) -> object)` になる等)。ここで型を宣言する。

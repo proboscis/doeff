@@ -1,4 +1,4 @@
-"""values.hy の公開面の型(型検査のための宣言 — 実行時は values.hy を読む・agora-redesign #2311・#2245)。
+"""values.hy の公開面の型(型検査のための宣言 — 実行時は values.hy を読む)。
 
 values.hy は Hy の module なので、pyright は中を読めず、`from doeff_records.values import RecordsSchema` の名が全部 Unknown に
 なる(使う側の表の宣言・行の読みの答え・変更の欄の読みに、書き手に直せない reportUnknown* が出る)。ここで型を宣言する。

@@ -22,7 +22,7 @@
       OP-APPEND-EVENT "append-event" OP-READ-EVENTS "read-events")
 ;; 複数行を全部か 0 で書く操作(本文 = {writes: [{table key value expect} …]})— 前の 6 つの綴りは変えずに足した。
 (val OP-PUT-ROWS "put-rows")
-;; 追記の列の末尾の番号を 1 回で読む操作(本文 = {stream} — agora-redesign #1037)。前の 7 つの綴りは変えずに足した。
+;; 追記の列の末尾の番号を 1 回で読む操作(本文 = {stream})。前の 7 つの綴りは変えずに足した。
 (val OP-READ-STREAM-END "read-stream-end")
 (setv OPERATIONS #(OP-READ-ROW OP-LIST-ROWS OP-PUT-ROW OP-WATCH-CHANGES OP-APPEND-EVENT OP-READ-EVENTS OP-PUT-ROWS OP-READ-STREAM-END))
 

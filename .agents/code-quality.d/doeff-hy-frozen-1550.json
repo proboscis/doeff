@@ -8,6 +8,11 @@
         "doeff-hy-frozen"
       ]
     },
+    "records-effects": {
+      "allow": [
+        "doeff-hy-frozen"
+      ]
+    },
     "records-principals": {
       "allow": [
         "doeff-hy-frozen"

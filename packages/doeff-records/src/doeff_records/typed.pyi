@@ -1,4 +1,4 @@
-"""typed.hy の公開面の型(型検査のための宣言 — 実行時は typed.hy を読む・agora-redesign #2369・#2245)。
+"""typed.hy の公開面の型(型検査のための宣言 — 実行時は typed.hy を読む)。
 
 typed.hy は Hy の module なので、pyright は中を読めず、`from doeff_records.typed import RowType` の名・`typed-change` の答え・
 `list-typed` の頁の行が全部 Unknown になる(使う側が行の型の値 `.value` を読む所に、書き手に直せない reportUnknown* が出る)。

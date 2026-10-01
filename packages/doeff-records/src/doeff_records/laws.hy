@@ -592,7 +592,7 @@
    :tags {:context "records" :role "program"}}
   "列の末尾の法: ReadStreamEnd は列の最後の出来事の番号を StreamEnd で答え(別の列に後から積んだ出来事は数えない・同じ冪等キーの再送は
    末尾を動かさない)、出来事が 1 つも無い列は StreamEmpty で答える。保持で刈った後は残る出来事の最後の番号・全部刈れば StreamEmpty。
-   使い手が列の末尾を ReadEvents の倍々の先読みと二分で探さずに 1 回で読むため(出自の issue は agora-redesign #1037)。"
+   使い手が列の末尾を ReadEvents の倍々の先読みと二分で探さずに 1 回で読むため。"
   (val law "ReadStreamEnd は列の最後の出来事の番号を答え、空の列は StreamEmpty")
   (<- empty (as-writer harness MAKER (ReadStreamEnd "journal")))
   (require-law (= empty (StreamEmpty)) law (.format "空の列: {!r}" empty))

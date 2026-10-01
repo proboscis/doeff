@@ -1,4 +1,4 @@
-;;; 記録の service の待ち受けの Program と、検の殻(agora-redesign #880 U7 — 待ち受けを doeff の汎用の HTTP の effect へ移した)。
+;;; 記録の service の待ち受けの Program と、検の殻(待ち受けを doeff の汎用の HTTP の effect へ移した)。
 ;;;
 ;;; process は 1 つの run・1 つの scheduler で動く。要求ごとに run を撃つ形(標準の http.server・要求ごとの thread と 1 本の thread の
 ;;; 切り替え・時計と scheduler を被せて run する runner・要求ごとに handler の組を借りる lease)は退役した。
@@ -7,11 +7,11 @@
 ;;;                        止めの見張りの task を立てて待つ。形は下の「入口の形」
 ;;;   answer-arrival       要求 1 つに答える task の本体: 本文を読み(HttpReadBody)→ service.respond → 答えを送る(HttpRespond)
 ;;;   start-records-server 検の殻: 入口の Program を別の thread の run で回し、結んだ宛先の url と止める close を持つ RunningServer を返す
-;;;                        (agora の検と模擬が使う口 — 置き場は呼び手が渡す)。止めの合図は殻の合図(threading.Event)を
-;;;                        shell-control が StopRequested の答えにする(agora-controllers の controllers/screen/entry/probes.hy の stopping と同じ形)
+;;;                        (使い手の検と模擬が使う口 — 置き場は呼び手が渡す)。止めの合図は殻の合図(threading.Event)を
+;;;                        shell-control が StopRequested の答えにする。
 ;;; 本番の土台と env の読みは main.hy。
 ;;;
-;;; 入口の形(#880 のレビューの A2・会話の記録の service の services/record/main.hy と同じ形):
+;;; 入口の形(他の記録の service の入口と同じ形):
 ;;;   - 受けの loop(receive-requests)は HttpNextRequest で受け、要求ごとに Spawn した task(answer-arrival)が答える。loop は走り中の要求の
 ;;;     Task を持ち(request-ledger)、HttpServerClosed の後に Gather で待ってから返る(答え途中の要求を捨てない)
 ;;;   - 要求の task は例外でも必ず HttpRespond で終わる(try / finally — 答えていなければ 500 internal)。台本の検
@@ -51,7 +51,7 @@
 (import doeff_records.service [HttpRequest HttpAnswer RecordsService respond refusal-answer json-answer])
 (import doeff_records.wire [ERROR-INTERNAL ERROR-MALFORMED ERROR-STORE-UNAVAILABLE])
 
-;; 置き場に届くかを問う口(agora-redesign #1479)。/healthz は process の生存だけを答え(liveness — 置き場が落ちている間に再起動を
+;; 置き場に届くかを問う口。/healthz は process の生存だけを答え(liveness — 置き場が落ちている間に再起動を
 ;; 繰り返さない)、/readyz は置き場を問う(readiness)。問いの答えを待つ上限の秒 — 超えたら 503(固まった置き場で口を固めない)。
 (val PATH-READYZ "/readyz")
 (val READINESS-SECONDS 1.0)

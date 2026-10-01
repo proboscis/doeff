@@ -1,5 +1,5 @@
 ;;; 記録の service の composition root — env と Secret の file を読み、身元の名簿・PostgreSQL の答え手・待ち受けを組んで、入口の Program
-;;; (http_server.hy の serve-records)を本番の土台の下で走らせる(agora-redesign #880 U7)。判断はここに無い(流れ = service.hy・
+;;; (http_server.hy の serve-records)を本番の土台の下で走らせる。判断はここに無い(流れ = service.hy・
 ;;; 判断 = admission.hy・綴り = wire.hy・待ち受けの形 = http_server.hy)。
 ;;;
 ;;; 割り方(#1280 — 呼び手の系が自分の process の外側〔scheduler・時計・止めの合図〕の下へ、土台の口だけを差せるように):
@@ -224,7 +224,7 @@
 (defk store-reachable []
   {:pre [] :post [(: % bool)] :tags {:context "records" :role "entry"}}
   "/readyz の問い: PostgreSQL の置き場へ SELECT 1 を撃ち、答えが行なら True(届かない・断られた なら False)— 置き場に届くかを口の外から
-   見分けるため(agora-redesign #1479)。"
+   見分けるため。"
   (<- answer (SqlQuery DATABASE "SELECT 1" #()))
   (isinstance answer SqlRows))
 
@@ -238,8 +238,8 @@
   {:pre [(: schema RecordsSchema) (: settings RecordsSettings) (: choice StoreChoice)] :post [(: % RecordsServing)]
    :tags {:context "records" :role "entry"}}
   "本体(serve-records)の設定を、表の宣言 schema と設定の値と置き場の選び choice から作るため。表の用意(prepare)と /readyz の問い
-   (readiness)は choice が決める — PostgreSQL = PG-STORE・memory = doeff_records.memory の memory-store-choice(agora-redesign #1608 —
-   以前は PostgreSQL に固定で、使い手が dataclasses.replace で上書きしていた)。"
+   (readiness)は choice が決める — PostgreSQL = PG-STORE・memory = doeff_records.memory の memory-store-choice。
+   以前は PostgreSQL に固定で、使い手が dataclasses.replace で上書きしていた。"
   (RecordsServing :address settings.address :schema schema :roster settings.roster
                   :prepare (choice.prepare-of schema settings.prefix settings.origin-host) :request-handlers #()
                   :max-bytes REQUEST-MAX-BYTES :maintenance settings.maintenance

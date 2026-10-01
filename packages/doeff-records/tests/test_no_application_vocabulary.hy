@@ -26,7 +26,7 @@
 ;; 宣言の欄の名 size-budget(設計の綴り・行の byte の上限)は業務の書き手の名 budget ではない — 語を調べる前に外す。
 (setv ALLOWED (re.compile "(?i)size[-_]budget"))
 (setv PATTERN (re.compile (+ "(?i)(?<![a-z])(" (.join "|" (gfor w FORBIDDEN (re.escape w))) ")")))
-(setv SUFFIXES #(".hy" ".py" ".md" ".sh" ".toml" ".yaml" ".yml" ".json" ".sql" ".xml"))
+(setv SUFFIXES #(".hy" ".py" ".pyi" ".md" ".sh" ".toml" ".yaml" ".yml" ".json" ".sql" ".xml"))
 
 
 (defn #^ list scanned-files []
@@ -58,11 +58,12 @@
 
 
 (deftest test-the-scan-covers-the-package
-  ;; 検める母集団が空で緑にならない: source・検・配備の材料・文書が入っている。
+  ;; 検める母集団が空で緑にならない: source・型の stub(.pyi)・検・配備の材料・文書が入っている。
   (setv names (sfor p (scanned-files) (.as-posix (.relative-to p ROOT))))
   (for [want ["src/doeff_records/effects.hy" "src/doeff_records/values.hy" "src/doeff_records/memory.hy"
               "src/doeff_records/pg.hy" "src/doeff_records/pg_sql.hy" "src/doeff_records/laws.hy"
-              "tests/test_laws.hy" "tests/conftest.py" "README.md" "pyproject.toml"]]
+              "tests/test_laws.hy" "tests/conftest.py" "README.md" "pyproject.toml"
+              "src/doeff_records/values.pyi"]]
     (assert (in want names) want)))
 
 

@@ -1,6 +1,6 @@
 ;;; 記録の仕組みの公開 effect 8 つ(lease は既存の doeff-cluster の LeaseOp / HeldLease を使い、ここには作らない)。
 ;;; 7 つ目の PutRows は複数行を全部か 0 で書く(書きの束の 1 行 = RowWrite — PutRow と同じ欄)。
-;;; 8 つ目の ReadStreamEnd は追記の列の末尾の番号を 1 回で読む(空の列は StreamEmpty — 出自の issue は agora-redesign #1037)。
+;;; 8 つ目の ReadStreamEnd は追記の列の末尾の番号を 1 回で読む(空の列は StreamEmpty)。
 ;;; 公開 effect の外に、追記の列の頭が進むのを待つ WatchEvents を置く(wire には載せない — 置き場の handler が自分の待ち方で答える:
 ;;; memory = 列の呼び鈴・PostgreSQL と HTTP の口の client = ReadEvents の読み直し。出自の issue は #1019)。
 ;;;
@@ -162,8 +162,8 @@
 
 
 (defclass [(dataclass :frozen True)] ReadStreamEnd [EffectBase]
-  "追記の列 stream の末尾(今ある最後の出来事の番号)を 1 回で読む — 使い手が末尾を ReadEvents の先読みと二分で探さないため
-   (出自の issue は agora-redesign #1037)。答え = StreamEnd(sequence)| StreamEmpty(出来事が 1 つも無い)| Unreachable。"
+  "追記の列 stream の末尾(今ある最後の出来事の番号)を 1 回で読む — 使い手が末尾を ReadEvents の先読みと二分で探さないため。
+   答え = StreamEnd(sequence)| StreamEmpty(出来事が 1 つも無い)| Unreachable。"
   (#^ str stream)
   (defn #^ None __post_init__ [self]
     (checked-table-name self.stream "ReadStreamEnd.stream")))
