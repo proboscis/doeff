@@ -1,7 +1,8 @@
-//! DOEFF173 — code を持つ service が cluster に置く系(defsystem)を宣言し、その系が汎用の模擬 cluster のテストに載る形か
-//! (agora-redesign #2187・DOEFF136 と対)。
+//! DOEFF173 — architecture.hy の defservice ごとに、cluster に置く系(defsystem)を宣言し、その系が汎用の模擬 cluster のテストに
+//! 載る形か(agora-redesign #2187・DOEFF136 と対)。
 //!
-//! 母集団は DOEFF163 と同じ「code を持つ service」(entry の層に Hy の定義が 1 本以上、か `:entry-modules` の宣言)。defservice の
+//! 母集団は architecture.hy の全 defservice(entry の層を持たない service も数える — operator の決め「全 service に defsystem か
+//! 理由つきの例外」を、entry の層の無い service が黙って抜けないように・agora-redesign #2221)。defservice の
 //! `:system "module:名"`(列も可)を読み、次のどれかを欠けとして返す:
 //! - `:system` を書いていない・空の列。
 //! - `:system {:exempt "理由"}` の理由が空(例外は旧い経路に残す service か、process を持たない部品の service — 理由の中身は判じない)。
@@ -22,7 +23,7 @@ use doeff_indexer::hy_index::reader::{Delim, Form, Node, Reader};
 use doeff_indexer::hy_index::{Definition, DefinitionKind, HyFileIndex};
 
 use super::architecture::{ArchService, Architecture, DefinitionRef, SystemDecl};
-use super::invariants::{has_code, module_path};
+use super::invariants::module_path;
 use super::layers::normalize_dir;
 
 /// 土台の型として受けない型の頭(汎用のテストが型から土台を組めない物)。
@@ -280,11 +281,9 @@ fn system_gaps(
 
 /// service ごとの欠け(architecture.hy の宣言の順・service の中は :system の順)。
 pub fn gaps<'a>(root_path: &Path, architecture: &'a Architecture, hy: &HashMap<String, HyFileIndex>) -> Vec<(&'a ArchService, SystemGap)> {
-    let root = normalize_dir(&architecture.root);
     architecture
         .services
         .iter()
-        .filter(|s| has_code(&root, s, hy))
         .flat_map(|service| {
             let found: Vec<SystemGap> = match service.system.as_ref() {
                 None => vec![SystemGap::Undeclared],

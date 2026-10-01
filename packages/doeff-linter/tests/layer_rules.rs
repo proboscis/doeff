@@ -2760,7 +2760,8 @@ fn services_without_declared_invariants_are_red() {
 /// 鳴る例: 宣言なし・定義なし・defsystem でない・引数 2 つ・土台の型が Callable・型なし・entry の外・他の service の entry の系・空の理由の例外。
 /// 鳴る例(part-of): 指す系が無い・指す物が defsystem でない。
 /// 鳴らない例: 宣言あり + 型つきの土台 1 つ・他の service の entry の系を指す part-of・理由つきの例外(旧い経路に残す service と、
-/// process を持たない部品の service — agent-catalog の形)・code の無い service。
+/// process を持たない部品の service — agent-catalog の形)。entry の層を持たない service も数える(#2221): :system なしは鳴り、
+/// part-of・理由つきの例外は鳴らない。
 #[test]
 fn services_without_a_declared_system_are_red() {
     let job = |name: &str, ty: Option<&str>| match ty {
@@ -2820,7 +2821,9 @@ fn services_without_a_declared_system_are_red() {
            (defservice agents \"担い手\" {:layers [core entry] :system {:part-of \"app.billing.entry.system:billing-system\"}})\n\
            (defservice helpers \"手伝い\" {:layers [core entry] :system {:part-of \"app.billing.entry.system:nowhere\"}})\n\
            (defservice jobs \"仕事\" {:layers [core entry] :system {:part-of \"app.orders.entry.main:take\"}})\n\
-           (defservice notes \"覚え書き\" {:layers [core]})\n";
+           (defservice notes \"覚え書き\" {:layers [core]})\n\
+           (defservice vault \"預かり\" {:layers [core] :system {:part-of \"app.billing.entry.system:billing-system\"}})\n\
+           (defservice parts \"部品\" {:layers [core] :system {:exempt \"process を持たない部品 — 他の service が読むだけ\"}})\n";
     std::fs::write(&arch_path, text).unwrap();
     let (_, report) = editor(dir.path());
     assert_eq!(
@@ -2830,6 +2833,8 @@ fn services_without_a_declared_system_are_red() {
             "architecture.hy::DOEFF173::helpers::app.billing.entry.system:nowhere",
             "architecture.hy::DOEFF173::jobs::app.orders.entry.main:take",
             "architecture.hy::DOEFF173::ledger",
+            // entry の層を持たない service も数える(agora-redesign #2221 — custody の形)。vault(part-of)と parts(理由つきの例外)は鳴らない。
+            "architecture.hy::DOEFF173::notes",
             "architecture.hy::DOEFF173::orders::app.orders.entry.main:take",
             "architecture.hy::DOEFF173::orders::app.orders.entry.system:gone",
             "architecture.hy::DOEFF173::orders::app.orders.entry.system:orders-bare::bare-job",
