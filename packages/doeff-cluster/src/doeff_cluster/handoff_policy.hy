@@ -21,8 +21,8 @@
 (import hashlib)
 (import json)
 (import .cluster_model [ClusterJob ClusterState ClusterTiming HandoffWatch HandoffPhase])
-(import .cluster_policy [job-to-json LIVE-PHASES])
-(import .resource_policy [service-readiness])
+(import doeff_cluster.coordinator.core.cluster_policy [job-to-json LIVE-PHASES])
+(import doeff_cluster.coordinator.core.resource_policy [service-readiness])
 (import .readiness_model [handoff-timeout-ms])
 (import .worker_model [spec-hash])
 

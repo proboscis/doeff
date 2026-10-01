@@ -8,7 +8,7 @@
 (import doeff_core_effects.os_file [os-file-handler])
 (import doeff_core_effects.scheduler [scheduled])
 (import doeff_time [async-time-handler])
-(import doeff_cluster.coordinator [http-requests stop-flag StopState])
+(import doeff_cluster.coordinator_inbox [http-requests stop-flag StopState])
 (import doeff_cluster.record_store [store-loop])
 (import doeff_cluster.record_store_handlers [record-files RecordInbox])
 

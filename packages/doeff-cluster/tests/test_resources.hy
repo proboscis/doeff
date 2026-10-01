@@ -3,10 +3,10 @@
 (require doeff-hy.macros [deftest val var])
 (import doeff_cluster.cluster_model [ClusterTiming ClusterState PlainText Request])
 (import doeff_cluster.coordinator_inbox [http-request])
-(import doeff_cluster.cluster_policy [state-to-json state-from-json board-changes job-from-json])
+(import doeff_cluster.coordinator.core.cluster_policy [state-to-json state-from-json board-changes job-from-json])
 (import doeff_cluster.worker_model [spec-hash])
-(import doeff_cluster.api_policy [respond tick plan-rollouts])
-(import doeff_cluster.resource_policy [LEGACY-OWNER adopt-legacy])
+(import doeff_cluster.coordinator.core.api_policy [respond tick plan-rollouts])
+(import doeff_cluster.coordinator.core.resource_policy [LEGACY-OWNER adopt-legacy])
 (import tests.program_rows [SAMPLE-RUN program-placed program-run])
 (import doeff [run])
 

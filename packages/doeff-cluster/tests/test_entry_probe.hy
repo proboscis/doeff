@@ -14,7 +14,7 @@
 (import doeff_cluster.worker_policy [plan statuses])
 (import doeff_cluster.handlers [ProbeStore probe-reason status-row])
 (import tests.program_rows [SAMPLE-RUN SAMPLE-PROGRAM])
-(import doeff_cluster.cluster_policy [JOB-ENTRY LIVE-PHASES spec-of-declaration])
+(import doeff_cluster.coordinator.core.cluster_policy [JOB-ENTRY LIVE-PHASES spec-of-declaration])
 
 (setv POLICY (WorkerPolicy :code-retry-ms 30000)
       S1 (spec-of-declaration {"name" "w" "revision" "rev1" "run" SAMPLE-RUN "update" "handoff"})

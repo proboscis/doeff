@@ -3,7 +3,7 @@
 (require doeff-hy.macros [defhandler])
 (import .metrics_model [ReportMetrics])
 (import .metrics_policy [checked-metrics])
-(import .resource_policy [Refused])
+(import doeff_cluster.coordinator.core.resource_policy [Refused])
 (import .report_client [ServiceReportClient])
 
 

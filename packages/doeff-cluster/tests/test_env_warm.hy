@@ -29,8 +29,8 @@
 (import doeff_cluster.env_upkeep [RootInfo PrepareLimits sweep-choice prepare-overdue env-capacity])
 (import doeff_cluster.cluster_model [ClusterState ClusterTiming TaskRecord WorkerInfo ComponentVersion Request PlainText])
 (import doeff_cluster.coordinator_inbox [http-request])
-(import doeff_cluster.cluster_policy [place-tasks register-heartbeat heartbeat-reply load-of tasks-for])
-(import doeff_cluster.api_policy [respond])
+(import doeff_cluster.coordinator.core.cluster_policy [place-tasks register-heartbeat heartbeat-reply load-of tasks-for])
+(import doeff_cluster.coordinator.core.api_policy [respond])
 (import doeff_cluster.metrics_policy [metrics-text])
 (import doeff_cluster.worker_model [JobSpec CodeView CodeState WorldView WorkerPolicy PrepareEnv StartJob SweepEnvs WarmEnv
                                     EnvDisk code-key])

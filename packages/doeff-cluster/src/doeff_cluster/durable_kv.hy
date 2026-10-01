@@ -20,7 +20,7 @@
 (import dataclasses [asdict replace])
 (import .cluster_model [ClusterState WorkerInfo Placement Drain component-versions-of task-record-to-json
                         task-record-from-json handoff-watch-from-json])
-(import .cluster_policy [job-to-json job-from-json read-service-rows board-changes value-size warm-entry-to-json warm-entry-from-json worker-capabilities-of
+(import doeff_cluster.coordinator.core.cluster_policy [job-to-json job-from-json read-service-rows board-changes value-size warm-entry-to-json warm-entry-from-json worker-capabilities-of
                          worker-generations-json worker-generations-from-json])
 
 (setv BOARD "board/")

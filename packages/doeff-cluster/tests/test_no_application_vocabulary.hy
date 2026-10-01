@@ -55,7 +55,7 @@
 (deftest test-the-scan-covers-the-package
   ;; 検める母集団が空で緑にならない: source・検・配備の材料・文書が入っている。
   (setv names (sfor p (scanned-files) (.as-posix (.relative-to p ROOT))))
-  (for [want ["src/doeff_cluster/coordinator.hy" "src/doeff_cluster/effect_codec.hy" "src/doeff_cluster/shim.py"
+  (for [want ["src/doeff_cluster/coordinator/core/program.hy" "src/doeff_cluster/effect_codec.hy" "src/doeff_cluster/shim.py"
               "tests/test_coordinator.hy" "deploy/boot.sh" "deploy/Dockerfile" "README.md" "pyproject.toml"]]
     (assert (in want names) want)))
 

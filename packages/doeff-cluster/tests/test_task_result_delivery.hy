@@ -9,7 +9,7 @@
 (import httpx)
 (import doeff_cluster.cluster_model [ClusterState ClusterTiming Request])
 (import doeff_cluster.coordinator_inbox [http-request])
-(import doeff_cluster.api_policy [respond])
+(import doeff_cluster.coordinator.core.api_policy [respond])
 (import doeff_cluster.job_context [RunContext])
 (import doeff_cluster.report_client [task-result-request deliver-task-result])
 (import tests.clock_fixtures [clock-at])

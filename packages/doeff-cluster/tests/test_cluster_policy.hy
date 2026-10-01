@@ -3,7 +3,7 @@
 (import dataclasses [replace])
 (import doeff_cluster.worker_model [JobSpec])
 (import doeff_cluster.cluster_model [ClusterJob WorkerInfo Placement ClusterTiming ClusterState])
-(import doeff_cluster.cluster_policy [place-jobs jobs-for])
+(import doeff_cluster.coordinator.core.cluster_policy [place-jobs jobs-for])
 (import tests.program_rows [SAMPLE-TASK-PROGRAM])
 
 (setv T (ClusterTiming :lease-ms 10000 :fence-ms 10000 :reassign-after-ms 30000))
@@ -55,7 +55,7 @@
 ;; --- 能力と専用の能力(exclusive — 以前の dedicated の印・k8s の taint に当たる) ---------------------------------
 
 (import doeff_cluster.cluster_model [TaskRecord ComponentVersion])
-(import doeff_cluster.cluster_policy [place-tasks unplaced-jobs])
+(import doeff_cluster.coordinator.core.cluster_policy [place-tasks unplaced-jobs])
 
 (setv AGENT "agent-cli")
 (defn #^ WorkerInfo mac [#^ str name #^ int [seen 0]] (replace (worker name seen 10 AGENT "desk") :exclusive #(AGENT)))
@@ -112,7 +112,7 @@
 
 ;; --- 能力の名乗りの形(ADR-DOE-CLUSTER-001 R4b)-----------------------------------------------------
 
-(import doeff_cluster.cluster_policy [placeable worker-capabilities-of request-needs])
+(import doeff_cluster.coordinator.core.cluster_policy [placeable worker-capabilities-of request-needs])
 (import doeff_cluster.cluster_model [capabilities-of])
 
 (deftest test-placeable-is-needs-subset-of-provides-and-respects-exclusive
@@ -148,8 +148,8 @@
 (require doeff-hy.macros [defk <- val var])
 (import doeff [with_handlers])
 (import doeff_cluster.cluster_model [ClusterNaming])
-(import doeff_cluster.cluster_policy [register-heartbeat with-derived-capabilities NODE-LABELS-TTL-MS])
-(import doeff_cluster.coordinator [rollout-tick])
+(import doeff_cluster.coordinator.core.cluster_policy [register-heartbeat with-derived-capabilities NODE-LABELS-TTL-MS])
+(import doeff_cluster.coordinator.core.program [rollout-tick])
 (import doeff_cluster.kube_handlers [KubeMemory kube-memory])
 
 (setv COMPANY "company-machine")
@@ -249,7 +249,7 @@
 ;; まだ終わっていない旧い task の行は failed(理由つき)にし、終わった行はそのまま読む。
 
 (import doeff_cluster.cluster_model [WarmEntry])
-(import doeff_cluster.cluster_policy [state-to-json state-from-json])
+(import doeff_cluster.coordinator.core.cluster_policy [state-to-json state-from-json])
 (import doeff_cluster.durable_kv [full-kv state-from-kv])
 
 (val SAVED (ClusterState :workers {"old" (worker "old" 0 10 "net") "new" (worker "new" 0 10 "net")}

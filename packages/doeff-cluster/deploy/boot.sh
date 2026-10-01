@@ -158,7 +158,7 @@ case "$role" in
     mkdir -p "$WORK_DIR/coord"
     naming=${CLUSTER_NAMING:-}
     [ -n "$naming" ] || naming='{}'
-    exec hy -m doeff_cluster.coordinator --state-file "$WORK_DIR/coord/state.json" --port "${LISTEN_PORT:-8080}" \
+    exec hy -m doeff_cluster.coordinator.entry.main --state-file "$WORK_DIR/coord/state.json" --port "${LISTEN_PORT:-8080}" \
       --naming "$naming" ;;
   records)
     exec hy -m doeff_cluster.record_store_main --root "${RECORDS_ROOT:-/records}" --port "${LISTEN_PORT:-8080}" \

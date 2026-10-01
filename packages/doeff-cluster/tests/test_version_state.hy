@@ -13,11 +13,11 @@
 (import doeff_cluster.cluster_model [ClusterTiming ClusterState RefusedJob VersionState NotReadyKind UnplacedKind])
 (import doeff_cluster.coordinator_inbox [http-request])
 (import doeff_cluster.worker_model [JobPhase spec-hash])
-(import doeff_cluster.cluster_policy [unplaced-jobs])
-(import doeff_cluster.api_policy [respond target-view])
-(import doeff_cluster.api_policy :as api-policy)
-(import doeff_cluster.resource_policy :as resource-policy)
-(import doeff_cluster.resource_policy [version-state running-process live-processes not-ready-version phase-version
+(import doeff_cluster.coordinator.core.cluster_policy [unplaced-jobs])
+(import doeff_cluster.coordinator.core.api_policy [respond target-view])
+(import doeff_cluster.coordinator.core.api_policy :as api-policy)
+(import doeff_cluster.coordinator.core.resource_policy :as resource-policy)
+(import doeff_cluster.coordinator.core.resource_policy [version-state running-process live-processes not-ready-version phase-version
                                        unplaced-not-ready snapshot])
 (import tests.program_rows [SAMPLE-RUN])
 (import tests.test_handoff_deadline [Sim HANDOFF RECREATE TIMEOUT-SECONDS])

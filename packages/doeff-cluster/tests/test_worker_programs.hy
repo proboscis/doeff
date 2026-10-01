@@ -12,7 +12,7 @@
 (import doeff_cluster.handlers [CoordinatorLink ProcessHost program-file])
 (import doeff_cluster.host_contract [HOST-CONTRACT])
 (import doeff_cluster.worker_model [JobSpec])
-(import doeff_cluster.cluster_policy [JOB-ENTRY])
+(import doeff_cluster.coordinator.core.cluster_policy [JOB-ENTRY])
 
 (val BLOB "cHJvZ3JhbQ==")
 (val SHA (.hexdigest (hashlib.sha256 (.encode BLOB "ascii"))))
