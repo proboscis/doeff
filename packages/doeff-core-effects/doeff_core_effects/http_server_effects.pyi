@@ -47,6 +47,7 @@ class HttpRequestArrived:
     headers: tuple[HttpHeader, ...]
     upgrade: bool
     received_at: float | None = None
+    remote: str | None = None
 
 @dataclass(frozen=True, kw_only=True)
 class WsOpened:

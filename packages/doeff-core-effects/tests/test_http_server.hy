@@ -52,7 +52,8 @@
 
 (defn arrival [n path #** fields]
   (HttpRequestArrived :ticket (str n) :method (.get fields "method" "GET") :path path :target (.get fields "target" path)
-                      :headers (.get fields "headers" #()) :upgrade (.get fields "upgrade" False)))
+                      :headers (.get fields "headers" #()) :upgrade (.get fields "upgrade" False)
+                      :remote (.get fields "remote" None)))
 
 
 (defk served-after [site upstream]
@@ -161,6 +162,21 @@
   (assert (= outcome (HttpBodyFailed :reason "相手が途中で切った")) outcome))
 
 
+(defk two-arrivals []
+  {:pre [] :post [(: % tuple)] :tags {:context "http-server" :role "program"}}
+  "台本の要求を 2 つ受けるため(答え = 受けた 2 つの出来事)。"
+  (<- first HttpRequestArrived (HttpNextRequest))
+  (<- second HttpRequestArrived (HttpNextRequest))
+  #(first second))
+
+
+(deftest test-the-scripted-server-hands-over-the-remote-the-script-names
+  ;; 送り元の address は台本の書き手が載せた値のまま届き、載せなければ None(名乗れない)。
+  (val script (HttpScript :arrivals #((arrival 1 "/a" :remote "203.0.113.7") (arrival 2 "/b"))))
+  (<- events tuple (with-handler [(state) (scripted-http-server script)] (two-arrivals)))
+  (assert (= (lfor e events e.remote) ["203.0.113.7" None]) events))
+
+
 ;; --- 本物の答え手 --------------------------------------------------------------------------------------------------------------
 
 (defn free-port []
@@ -251,5 +267,7 @@
   (setv [_bound #* events report] (.get result :timeout 30))
   ;; 出来事は受けた拍の単調時計を持つ(台本の答え手は書き手が載せた値のまま)。
   (assert (all (gfor e events :if (not (isinstance e HttpServerClosed)) (isinstance e.received-at float))) events)
+  ;; 要求は送り元の address(接続の相手 = 127.0.0.1)を持つ。
+  (assert (= (lfor e events :if (isinstance e HttpRequestArrived) e.remote) ["127.0.0.1"]) events)
   (assert (= (. (get events -1) reason) "検が閉じた"))
   (assert (>= report.flushed-bytes (len "echo:hi"))))

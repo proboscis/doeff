@@ -3,7 +3,7 @@
 ;;; (何をどう送るかは呼び手の Program が HttpRespond の値で決める)。aiohttp は extra `http-server` の依存。
 ;;;
 ;;;   待ち受け      aiohttp の server を await-handler の共有の event loop の上に立てる(HttpListen)。要求ごとに札を振り、出来事
-;;;                 HttpRequestArrived(頭を含む)を列へ並べ、命令(札つき)を待ってから実 I/O を撃つ — 呼び手は撃つだけで待たないので、
+;;;                 HttpRequestArrived(頭と、送り元の address = request.remote を含む)を列へ並べ、命令(札つき)を待ってから実 I/O を撃つ — 呼び手は撃つだけで待たないので、
 ;;;                 長い中継が他の要求を止めない
 ;;;   本文の読み    HttpReadBody で札の要求の本文を request.content から塊で流しながら読む(aiohttp の request.read の既定の上限 1 MiB は
 ;;;                 通らない — 上限は effect の max-bytes だけ)。宣言の Content-Length が上限を超えれば読まずに断り、宣言が無い(chunked)・
@@ -223,7 +223,8 @@
     (await (.put self.queue (HttpRequestArrived :ticket ticket :method request.method :path request.path :target request.raw-path
                                          :upgrade (upgrade-asked request)
                                          :headers (tuple (gfor [name value] (.items request.headers) (HttpHeader :name name :value value)))
-                                         :received-at (time.monotonic))))
+                                         :received-at (time.monotonic)
+                                         :remote request.remote)))
     (setv command (await waiting))
     ;; 命令を受けた札の本文はもう読ませない。本文を上限で断った札は、答えを送った後に接続を閉じる。
     (.pop self.unread ticket None)

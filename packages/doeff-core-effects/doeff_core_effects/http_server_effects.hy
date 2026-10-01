@@ -5,7 +5,7 @@
 ;;;
 ;;;   HttpListen       待ち受けを開く(address・ws の 1 通の上限・ws の接続ごとの送りの上限)。答え = 実際に結んだ宛先 HttpAddress
 ;;;                    (port 0 を渡せば空いている port を結ぶ — 結んだ port はこの答えで知る)
-;;;   HttpNextRequest  次の出来事。答え = HttpEvent: HttpRequestArrived(札・method・path・target・頭・ws への Upgrade を求めたか)・
+;;;   HttpNextRequest  次の出来事。答え = HttpEvent: HttpRequestArrived(札・method・path・target・頭・ws への Upgrade を求めたか・送り元の address)・
 ;;;                    ws の出来事(WsOpened・WsTextArrived・WsBinaryArrived・WsClosed — WsAccept で ws に上げた札だけ)・HttpServerClosed
 ;;;   HttpRespond      札の要求へ status・頭・本文(HttpBodyBytes / HttpBodyFileRange / HttpNoBody)を送る。答え = None
 ;;;   HttpForward      札の要求を url へ HTTP で中継する(本文は両向き streaming・hop-by-hop の頭を落とし X-Forwarded-Proto / -For を足す・
@@ -27,6 +27,8 @@
 ;;;                    消費者が自分の計器へ積むための材料で、答え手は消費者の計器を知らない
 ;;; 出来事の received-at = 答え手がその出来事を受けた拍の単調時計の秒(time.monotonic と同じ物差し — 消費者の待ちの計器の起点)。時計を
 ;;; 持たない台本の答え手では、台本の書き手が載せた値のまま(載せなければ None)。
+;;; 要求の remote = 送り元の address(IP の綴り)。本物の答え手は接続の相手(aiohttp の request.remote)を載せ、名乗れない時は None。
+;;; 台本の答え手では、台本の書き手が HttpRequestArrived に載せた値のまま(載せなければ None)。
 ;;; 要求の本文を読む effect(agora-redesign #880 U1 — 記録の service は POST の本文が本体):
 ;;;   HttpReadBody     札の要求の本文を max-bytes まで読む。答え = HttpBodyOutcome:
 ;;;                      HttpBodyRead(data)          本文の全部(本文なしは b"")
@@ -80,14 +82,16 @@
 
 
 (defrecord HttpRequestArrived
-  "届いた要求 1 つ: 札・method・path(query なし)・target(query つき)・頭の列・ws への Upgrade を求めたか・受けた拍(頭の註)。"
+  "届いた要求 1 つ: 札・method・path(query なし)・target(query つき)・頭の列・ws への Upgrade を求めたか・受けた拍(頭の註)・
+   remote = 送り元の address(IP の綴り — 答え手が名乗れない時は None)。"
   (#^ str ticket)
   (#^ str method)
   (#^ str path)
   (#^ str target)
   (#^ (get tuple #(HttpHeader ...)) headers)
   (#^ bool upgrade)
-  (setv #^ (| float None) received-at None))
+  (setv #^ (| float None) received-at None
+        #^ (| str None) remote None))
 
 
 (defrecord WsOpened
