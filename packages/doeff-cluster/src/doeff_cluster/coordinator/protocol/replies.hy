@@ -10,12 +10,22 @@
 (import doeff_cluster.shared.intent.job_model [JobSpec])
 (import doeff_cluster.coordinator.intent.cluster_model [EventsView StateReply StateView HeartbeatReply TaskOffer DrainPhase DrainProgress WorkerDrainView
                                                        ServiceObserved WorkerObserved TaskObserved RolloutObserved ResourceView ResourceList VersionVerdict ErrorReply RowConflict
-                                                       BoardUsage BoardRead BoardWritten BoardConflict BoardRefused])
+                                                       BoardUsage BoardRead BoardWritten BoardConflict BoardRefused
+                                                       TaskRecord TaskAccepted TaskProgress TaskMissing TaskResultTaken TaskDropped])
 (import doeff [run])
 (import doeff_hy.wire [dump])
 (import doeff_cluster.shared.intent.semaphore_model [LeaseAnswer])
-(import doeff_cluster.coordinator.core.cluster_policy [job-to-json task-summary status-row-to-json])
+(import doeff_cluster.coordinator.core.cluster_policy [job-to-json status-row-to-json])
 (import doeff_cluster.coordinator.protocol.state_json [audit-event-to-json])
+
+
+(defn #^ dict task-summary [#^ TaskRecord task]
+  "task の行 → 状態の画面と資源の画面の JSON の形(結果は大きいので載せない — #2614 で core から移した)。切り離した task だけ呼び手の job id を足す
+   (RemoteJob の task の形は以前と同じ)。"
+  (| {"id" task.id "name" task.name "revision" task.revision "phase" task.phase
+      "worker" task.worker "detail" task.detail "submittedMs" task.submitted-ms
+      "startedMs" task.started-ms "finishedMs" task.finished-ms "leaseUntilMs" task.lease-until-ms}
+     (if task.detached {"detached" True "key" task.key} {})))
 
 
 (defn #^ dict spec-json [#^ JobSpec spec]
@@ -154,6 +164,18 @@
          (if (is answer.usage None) {} {"usage" (board-usage-json answer.usage)}))))
 
 
+(defn #^ dict task-answer-json [#^ (| TaskAccepted TaskProgress TaskMissing TaskResultTaken TaskDropped) answer]
+  "task の口の答え → JSON の形(#2614 の前に cluster_policy の submit-task・poll-task・absorb-task-result と api_policy が組んでいた形と同じ)。"
+  (cond
+    (isinstance answer TaskAccepted) {"task" answer.id}
+    (isinstance answer TaskMissing) {"phase" "missing"}
+    (isinstance answer TaskProgress)
+      {"phase" answer.phase "worker" answer.worker "detail" answer.detail "result" answer.result
+       "failureKind" answer.failure-kind "retryable" answer.retryable}
+    (isinstance answer TaskResultTaken) {"accepted" answer.accepted "phase" answer.phase}
+    True {"dropped" True}))
+
+
 (defn #^ object reply-json [#^ object body]  ; defk にできない: 返事の答え手と検の入口 responded(Program の外)が呼ぶ純粋な綴り
   "返事の本文の型の値を、外へ見せる JSON の形にする(#2595 の前に core が組んでいた形と同じ)。型にしていない本文はそのまま返す。"
   (cond
@@ -168,6 +190,7 @@
     (isinstance body #(BoardRead BoardWritten BoardConflict BoardRefused)) (board-answer-json body)
     ;; lease の答えは wire の型(4 つの欄をいつも書く — semaphore_model.LeaseAnswer の註)。
     (isinstance body LeaseAnswer) (run (dump body))
+    (isinstance body #(TaskAccepted TaskProgress TaskMissing TaskResultTaken TaskDropped)) (task-answer-json body)
     (isinstance body ResourceView) (resource-view-json body)
     (isinstance body ResourceList)
       {"kind" body.kind "revision" body.revision "items" (lfor v body.items (resource-view-json v))}

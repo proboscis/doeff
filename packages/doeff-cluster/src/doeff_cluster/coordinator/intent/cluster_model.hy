@@ -607,6 +607,38 @@
   (setv #^ (| BoardUsage None) usage None))
 
 
+(defrecord TaskAccepted
+  "POST /tasks の答え(cluster_policy.submit-task — #2614): id = 作った task の id。"
+  (#^ str id))
+
+
+(defrecord TaskProgress
+  "GET /tasks/<id> の答え(cluster_policy.poll-task): いまの様子 — phase・worker・detail・result・failure-kind・retryable(TaskRecord の欄)。"
+  (#^ str phase)
+  (#^ (| str None) worker)
+  (#^ str detail)
+  (#^ (| str None) result)
+  (#^ str failure-kind)
+  (#^ bool retryable))
+
+
+(defrecord TaskMissing
+  "GET /tasks/<id> で task を知らない答え(呼び手が落とした・lease が切れた): id = 問われた id。JSON は {phase: missing}。"
+  (#^ str id))
+
+
+(defrecord TaskResultTaken
+  "POST /tasks/<id>/result の答え(cluster_policy.absorb-task-result): accepted = この届けで結果を写したか(終わった task への 2 度目の
+   届けは False)・phase = task のいまの段。"
+  (#^ bool accepted)
+  (#^ str phase))
+
+
+(defrecord TaskDropped
+  "DELETE /tasks/<id> の答え: id = 取り下げた task の id(知らない id でも答えは同じ)。"
+  (#^ str id))
+
+
 (defclass [(dataclass :frozen True)] ClusterNaming []
   "クラスタが外の系(k8s の Deployment・Node)と取り交わす名。どれも配備する側(composition root の引数)が決める。
    owner-annotation = Rollout が台数を持つ Deployment に付ける annotation の鍵。

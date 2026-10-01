@@ -2,7 +2,7 @@
 ;; JSON の形は coordinator/protocol/replies が綴る。検の入口 responded と、本番と模擬の組の返事の答え手 reply-bodies は同じ綴りを通る。
 (require doeff-hy.macros [deftest val])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming])
-(import doeff_cluster.coordinator.intent.cluster_model [ClusterState EventsView StateReply HeartbeatReply WorkerInfo WorkerDrainView ResourceList ResourceView ErrorReply RowConflict BoardWritten BoardConflict BoardRead])
+(import doeff_cluster.coordinator.intent.cluster_model [ClusterState EventsView StateReply HeartbeatReply WorkerInfo WorkerDrainView ResourceList ResourceView ErrorReply RowConflict BoardWritten BoardConflict BoardRead TaskAccepted TaskProgress TaskMissing TaskResultTaken TaskDropped])
 (import doeff_cluster.coordinator.core.cluster_policy [heartbeat-reply])
 (import doeff_cluster.coordinator.core.drain_policy [superseded-worker-view])
 (import doeff_cluster.shared.protocol.inbox [http-request])
@@ -113,3 +113,15 @@
   (assert (= (reply-json versioned) {"a" {"value" 1 "resourceVersion" 1}}))
   (assert (= (reply-json (BoardWritten :version None)) {"ok" True "resourceVersion" None}))
   (assert (= (reply-json (BoardConflict :current 1 :version 1 :reason "x")) {"ok" False "current" 1 "resourceVersion" 1 "error" "x"})))
+
+
+(deftest test-the-task-answers-are-typed-and-spelled-in-the-old-shape
+  ;; task の口の答えは型の値で、JSON は前と同じ形(知らない task の問いは {phase: missing})。
+  (setv #(_ _ missing) (respond (ClusterState) (http-request "GET" "/tasks/t9" {} None) 1000 T {}))
+  (assert (isinstance missing TaskMissing) missing)
+  (assert (= (reply-json missing) {"phase" "missing"}))
+  (assert (= (reply-json (TaskAccepted :id "t1")) {"task" "t1"}))
+  (assert (= (reply-json (TaskResultTaken :accepted False :phase "finished")) {"accepted" False "phase" "finished"}))
+  (assert (= (reply-json (TaskDropped :id "t1")) {"dropped" True}))
+  (assert (= (sorted (reply-json (TaskProgress :phase "queued" :worker None :detail "" :result None :failure-kind "" :retryable False)))
+             ["detail" "failureKind" "phase" "result" "retryable" "worker"])))

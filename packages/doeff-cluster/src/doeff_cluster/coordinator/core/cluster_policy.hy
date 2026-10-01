@@ -12,7 +12,7 @@
 (import doeff_cluster.shared.intent.job_model [JobSpec])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming Request BodyInvalid])
 (import doeff_cluster.shared.core.capabilities [capabilities-of environ-pairs])
-(import doeff_cluster.coordinator.intent.cluster_model [ClusterJob ErrorReply BoardUsage BoardWritten BoardConflict BoardRefused WorkerInfo TaskOffer WarmOffer HeartbeatReply ServiceView WorkerView StatusView StateView BoardRow WorkerReport GenerationOrder Placement ClusterState TaskRecord EnvFailed HandoffPhase UnplacedKind ACCEPTED-FORMATS PLACED-PHASES])
+(import doeff_cluster.coordinator.intent.cluster_model [ClusterJob ErrorReply TaskAccepted TaskProgress TaskMissing TaskResultTaken BoardUsage BoardWritten BoardConflict BoardRefused WorkerInfo TaskOffer WarmOffer HeartbeatReply ServiceView WorkerView StatusView StateView BoardRow WorkerReport GenerationOrder Placement ClusterState TaskRecord EnvFailed HandoffPhase UnplacedKind ACCEPTED-FORMATS PLACED-PHASES])
 (import doeff_cluster.coordinator.core.cluster_rules [component-versions-of format-version-refusal])
 (import doeff_cluster.coordinator.intent.request_bodies [LeaseBody TaskResultBody BoardWrite HeartbeatBody EnvsReport StatusRow TaskBody])
 (import doeff_cluster.coordinator.core.cluster_rules [required-field int-field])
@@ -179,15 +179,6 @@
                  (if job.spec.environ {"environ" (dict job.spec.environ)} {})))
   ;; 受け付けた job は Program の job だけ(run を持つ — spec-of-declaration)。行は run を運ぶ(entry と args は worker の内部の形)。
   (| base extra {"run" job.run}))
-
-
-(defn #^ dict task-summary [#^ TaskRecord task]
-  "状態表示と保存に使う形(結果は大きいので保存の時だけ別に足す)。切り離した task だけ呼び手の job id を足す
-   (RemoteJob の task の形は以前と同じ)。"
-  (| {"id" task.id "name" task.name "revision" task.revision "phase" task.phase
-      "worker" task.worker "detail" task.detail "submittedMs" task.submitted-ms
-      "startedMs" task.started-ms "finishedMs" task.finished-ms "leaseUntilMs" task.lease-until-ms}
-     (if task.detached {"detached" True "key" task.key} {})))
 
 
 (defn #^ (| int None) boot-at-of [#^ dict body]
@@ -795,13 +786,13 @@
     (is task None)
       #(state 404 (ErrorReply :message (.format "task {} を知らない(呼び手が落とした・lease が切れた)" id)))
     (not-in task.phase PLACED-PHASES)
-      #(state 200 {"accepted" False "phase" task.phase})
+      #(state 200 (TaskResultTaken :accepted False :phase task.phase))
     (!= task.worker worker)
       #(state 409 (ErrorReply :message (.format "task {} は worker {} に置いてある(送り手 {})" id task.worker worker)))
     True
       #((replace state :tasks (| state.tasks {id (task-finished task now (.format "子 process {} が終わる前に届けた"
                                                                                  body.instance) result)}))
-        200 {"accepted" True "phase" "finished"})))
+        200 (TaskResultTaken :accepted True :phase "finished"))))
 
 
 (defn #^ dict renew-detached [#^ dict tasks #^ str worker #^ (| str None) boot #^ int now]
@@ -1156,18 +1147,18 @@
                          lease-ms (+ now lease-ms) now
                          :runtime-env body.runtime-env
                          :environ (environ-pairs (or body.environ {}))))
-  #((replace state :tasks (| state.tasks {id task}) :next-task (+ state.next-task 1)) 200 {"task" id}))
+  #((replace state :tasks (| state.tasks {id task}) :next-task (+ state.next-task 1)) 200 (TaskAccepted :id id)))
 
 
 (defn #^ tuple poll-task [#^ ClusterState state #^ str id #^ int now]
   "呼び手の問い合わせ。lease を延ばし、いまの様子を返す。"
   (setv task (.get state.tasks id))
   (when (is task None)
-    (return #(state 200 {"phase" "missing"})))
+    (return #(state 200 (TaskMissing :id id))))
   (setv task (replace task :lease-until-ms (+ now task.lease-ms)))
   #((replace state :tasks (| state.tasks {id task})) 200
-    {"phase" task.phase "worker" task.worker "detail" task.detail "result" task.result
-     "failureKind" task.failure-kind "retryable" task.retryable}))
+    (TaskProgress :phase task.phase :worker task.worker :detail task.detail :result task.result
+                  :failure-kind task.failure-kind :retryable task.retryable)))
 
 
 (defn #^ tuple lease-write [#^ ClusterState state #^ str name #^ LeaseBody body #^ int now]

@@ -34,7 +34,7 @@
 (import traceback [extract-tb])
 (import doeff_cluster.coordinator.intent.request_bodies [BodyMalformed])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming Request PlainText BodyInvalid])
-(import doeff_cluster.coordinator.intent.cluster_model [ClusterState ErrorReply BoardRead BoardEntryView ClusterNaming Fault RolloutStatus RolloutTarget StateReply])
+(import doeff_cluster.coordinator.intent.cluster_model [ClusterState ErrorReply TaskDropped BoardRead BoardEntryView ClusterNaming Fault RolloutStatus RolloutTarget StateReply])
 (import doeff_cluster.coordinator.core.cluster_rules [format-version-refusal])
 (import doeff_cluster.coordinator.core.metrics_policy [record-metrics metrics-text])
 (import doeff_cluster.coordinator.core.cluster_policy [reconcile register-heartbeat heartbeat-reply state-view submit-task poll-task absorb-task-result board-write note-liveness
@@ -371,7 +371,7 @@
     (and (= method "DELETE") (= head "tasks") (= (len parts) 2))
       #((settle state (replace state :tasks (dfor #(k v) (.items state.tasks) :if (!= k (get parts 1)) k v))
                 (loose-actor request) now timing)
-        200 {"dropped" True})
+        200 (TaskDropped :id (get parts 1)))
     True (unknown-request state request)))
 
 
