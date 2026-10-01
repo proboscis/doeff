@@ -1,11 +1,11 @@
 ;; 土台だけの image の約束(設計 worker-runtime-env.md 節 3.5・E13)の検。
 ;;
 ;;   deploy/base/Dockerfile が約束を守ること(作り直す理由の 2 種類・表に載せた OS の package だけ・Python の package も venv も無い)と、
-;;   約束を破る変更(反例)を doeff_cluster.image_contract が赤にすることを確かめる。反例は本物の Dockerfile を 1 か所だけ変えて作る
+;;   約束を破る変更(反例)を doeff_cluster.shared.entry.image_contract(判断は shared.core.image_rules)が赤にすることを確かめる。反例は本物の Dockerfile を 1 か所だけ変えて作る
 ;;   (fixture を別に持つと本物とずれるため)。
 (require doeff-hy.macros [deftest defk <- val var])
 (import pathlib [Path])
-(import doeff_cluster.image_contract [image-contract-violations])
+(import doeff_cluster.shared.core.image_rules [image-contract-violations])
 
 (val ROOT (. (Path __file__) (resolve) parent parent))
 (val BASE-DOCKERFILE (/ ROOT "deploy" "base" "Dockerfile"))

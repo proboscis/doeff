@@ -8,13 +8,6 @@
       "subject": "packages/doeff-adr/src/doeff_adr/pytest_plugin.py"
     },
     {
-      "count": 2,
-      "path": "packages/doeff-cluster/src/doeff_cluster/declare.hy",
-      "reason": "registered-with-legacy",
-      "rule": "dynamic-boundary",
-      "subject": "importlib.import_module"
-    },
-    {
       "count": 1,
       "path": "packages/doeff-cluster/src/doeff_cluster/effect_codec.hy",
       "reason": "registered-with-legacy",

@@ -1,6 +1,6 @@
 ;;; 系(defsystem の関数)から coordinator に渡す宣言を出す(ADR-DOE-CLUSTER-001)。
 ;;;
-;;;   hy -m doeff_cluster.declare <module>:<系の関数> --foundation <module>:<土台の関数> --revision <commit>
+;;;   hy -m doeff_cluster.shared.entry.declare <module>:<系の関数> --foundation <module>:<土台の関数> --revision <commit>
 ;;;       [--only 'job,…'] [--environ FILE] [--apply URL --actor <送り手>] [--replicas 0|1]
 ;;;
 ;;; 系の関数に土台の関数を渡して System の値を作り、job ごとに Program を詰める(service_model.system-declaration)。
@@ -16,55 +16,23 @@
 ;;;   (読んでから書くまでに誰かが書いていれば 409 で止まる — 他の作業係の変更を消さない)。所有者と replicas はいまの値を保つ
 ;;;   (replicas は Rollout が持つ。--replicas を付けた時だけ変える)。一覧に無い Service には触らない。
 ;;; 旧い引数(--config・--pin)と、System の値を直に指す旧い形は受け付けない。
-(require doeff-hy.macros [defk deff <- val])
+;;;
+;;; 置き場(agora-redesign #2346): CLI と apply はここ(shared/entry・役 main)・要求の本文の形は doeff_cluster.shared.protocol.declaration_requests・
+;;; 宣言してよいかの判断は doeff_cluster.shared.core.declaring。
+(require doeff-hy.macros [val])
+(val MODULE-TAGS {:context "doeff-cluster" :role "main"})
 (import argparse)
-(import collections.abc [Callable])
 (import json)
-(import os)
 (import sys)
 (import urllib.parse [quote :as url-quote])
 (import doeff [run with_handlers])
 (import doeff_core_effects.os_process [subprocess-handler])
 (import doeff_core_effects.scheduler [scheduled])
-(import .process_versions [current-versions])
+(import doeff_cluster.process_versions [current-versions])
 (import doeff_cluster.shared.protocol.checkout_reads [checkout-reads])
-(import doeff_cluster.shared.core.runtime_env [checked-declaring-checkout])
-(import doeff_cluster.shared.intent.runtime_env_model [RepoCheckout RuntimeEnvInvalid])
-(import doeff_cluster.shared.intent.service_model [resolve resolve-value system-declaration environ-overlay-refusal foundation-needs-refusal System Declaration])
-
-
-(defn #^ dict spec-for-update [#^ dict row #^ dict current #^ (| int None) [replicas None]]  ; defk にできない: CLI の入口(Program の外)が呼ぶ純粋な判断
-  "宣言の行 → PUT の spec。所有者と replicas と readiness の無い行の readiness はいまの資源の値を保つ。"
-  (setv spec (dfor #(k v) (.items row) :if (!= k "name") k v))
-  (| {"readiness" (.get current "readiness")}
-     spec
-     {"owner" (.get current "owner")
-      "replicas" (if (is replicas None) (.get current "replicas" 1) replicas)}))
-
-
-(deff create-body [#^ dict row #^ (| int None) replicas]  ; defk にできない: CLI の入口(Program の外)と sim-cluster の宣言が同じ形を作る純粋な判断
-  {:pre [(: row dict) (: replicas (| int None))] :post [(: % dict)] :tags {:context "doeff-cluster" :role "protocol"}}
-  "まだ無い Service を作る POST /resources/Service の本文を作るため(declare の CLI と手元の sim-cluster で同じ形)。replicas を付けなければ 1。"
-  {"name" (get row "name")
-   "spec" (| (dfor #(k v) (.items row) :if (!= k "name") k v)
-             {"replicas" (if (is replicas None) 1 replicas)})})
-
-
-(defk declaring-refusal [build foundation system revision]
-  {:pre [(: build Callable) (: foundation Callable) (: system System) (: revision str)] :post [(: % (| str None))]
-   :tags {:context "doeff-cluster" :role "judgment"}}
-  "宣言してよいかを検めて、断る理由の文を返すため(よければ None — 頭の註の 2 つ)。build = 系の関数(その module の file の在る
-   checkout を読む)・foundation = 土台の関数・system = build に foundation を渡した系。"
-  (<- needs (| str None) (foundation-needs-refusal system foundation))
-  ;; build は呼べる関数なので、その module は読み込み済み — 名から import し直さず sys.modules から引く(#1692)。
-  (val source (getattr (.get sys.modules build.__module__) "__file__" None))
-  (match #(needs source)
-    #(None None) (.format "系の関数 {}:{} の module に file が無い(宣言の版と同じ code かを確かめられない)" build.__module__ build.__qualname__)
-    #(None file) (try
-                   (<- _ RepoCheckout (checked-declaring-checkout (os.path.dirname (os.path.abspath file)) revision))
-                   None
-                   (except [error RuntimeEnvInvalid] (str error)))
-    #(reason _) reason))
+(import doeff_cluster.shared.protocol.declaration_requests [spec-for-update create-body])
+(import doeff_cluster.shared.core.declaring [declaring-refusal])
+(import doeff_cluster.shared.intent.service_model [resolve resolve-value system-declaration environ-overlay-refusal System Declaration])
 
 
 (defn #^ None apply-declaration [#^ str url #^ Declaration declaration #^ str actor #^ (| int None) [replicas None]]  ; defk にできない: CLI の入口の HTTP の I/O

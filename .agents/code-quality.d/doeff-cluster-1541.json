@@ -34,7 +34,11 @@
     "packages/doeff-cluster/src/doeff_cluster/shared/core/runtime_env.hy",
     "packages/doeff-cluster/src/doeff_cluster/shared/protocol/checkout_reads.hy",
     "packages/doeff-cluster/src/doeff_cluster/shared/core/runtime_identity.hy",
-    "packages/doeff-cluster/src/doeff_cluster/shared/protocol/runtime_facts.hy"
+    "packages/doeff-cluster/src/doeff_cluster/shared/protocol/runtime_facts.hy",
+    "packages/doeff-cluster/src/doeff_cluster/shared/entry/declare.hy",
+    "packages/doeff-cluster/src/doeff_cluster/shared/entry/image_contract.hy",
+    "packages/doeff-cluster/src/doeff_cluster/shared/protocol/declaration_requests.hy",
+    "packages/doeff-cluster/src/doeff_cluster/shared/core/declaring.hy"
   ],
   "modules": [
     {
@@ -276,18 +280,18 @@
     {
       "allow": [
         "doeff-cluster-checkout-reads",
+        "doeff-cluster-declaration-requests",
+        "doeff-cluster-declaring",
         "doeff-cluster-process-versions",
-        "doeff-cluster-runtime-env",
-        "doeff-cluster-runtime-env-model",
         "doeff-cluster-service-model"
       ],
       "layer": "runtime",
       "name": "doeff-cluster-declare",
       "paths": [
-        "packages/doeff-cluster/src/doeff_cluster/declare.hy"
+        "packages/doeff-cluster/src/doeff_cluster/shared/entry/declare.hy"
       ],
       "public": [
-        "packages/doeff-cluster/src/doeff_cluster/declare.hy"
+        "packages/doeff-cluster/src/doeff_cluster/shared/entry/declare.hy"
       ],
       "responsibility": "系(defsystem の関数)から coordinator に渡す宣言を出す(ADR-DOE-CLUSTER-001)。",
       "typed": true
@@ -600,10 +604,10 @@
       "layer": "runtime",
       "name": "doeff-cluster-image-contract",
       "paths": [
-        "packages/doeff-cluster/src/doeff_cluster/image_contract.hy"
+        "packages/doeff-cluster/src/doeff_cluster/shared/entry/image_contract.hy"
       ],
       "public": [
-        "packages/doeff-cluster/src/doeff_cluster/image_contract.hy"
+        "packages/doeff-cluster/src/doeff_cluster/shared/entry/image_contract.hy"
       ],
       "responsibility": "Dockerfile を読み、土台だけの image の約束への違反を出す入口(判断は image_rules.hy)。",
       "typed": true
@@ -693,6 +697,7 @@
         "doeff-cluster-coordinator-handler-sets",
         "doeff-cluster-coordinator-http",
         "doeff-cluster-coordinator-inbox",
+        "doeff-cluster-declaration-requests",
         "doeff-cluster-declare",
         "doeff-cluster-detached",
         "doeff-cluster-detached-model",
@@ -1281,6 +1286,7 @@
         "doeff-cluster-host-contract",
         "doeff-cluster-idle-policy",
         "doeff-cluster-image-contract",
+        "doeff-cluster-image-rules",
         "doeff-cluster-job-context",
         "doeff-cluster-job-entry",
         "doeff-cluster-kube-handlers",
@@ -1603,6 +1609,36 @@
         "packages/doeff-cluster/src/doeff_cluster/shared/protocol/runtime_facts.hy"
       ],
       "responsibility": "入口の検めの材料に、渡した材料で答える handler(検と模擬)。",
+      "typed": true
+    },
+    {
+      "allow": [],
+      "layer": "io",
+      "name": "doeff-cluster-declaration-requests",
+      "paths": [
+        "packages/doeff-cluster/src/doeff_cluster/shared/protocol/declaration_requests.hy"
+      ],
+      "public": [
+        "packages/doeff-cluster/src/doeff_cluster/shared/protocol/declaration_requests.hy"
+      ],
+      "responsibility": "coordinator の資源の口へ宣言の行を書く要求の本文の形。",
+      "typed": true
+    },
+    {
+      "allow": [
+        "doeff-cluster-runtime-env",
+        "doeff-cluster-runtime-env-model",
+        "doeff-cluster-service-model"
+      ],
+      "layer": "runtime",
+      "name": "doeff-cluster-declaring",
+      "paths": [
+        "packages/doeff-cluster/src/doeff_cluster/shared/core/declaring.hy"
+      ],
+      "public": [
+        "packages/doeff-cluster/src/doeff_cluster/shared/core/declaring.hy"
+      ],
+      "responsibility": "宣言してよいかの検めの判断。",
       "typed": true
     }
   ],
