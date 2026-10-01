@@ -25,9 +25,9 @@
 (import doeff_cluster.foundation.coordinator_inbox [http-request])
 (import doeff_cluster.coordinator.core.api_policy [respond])
 (import doeff_cluster.shared.intent.job_model [JobSpec])
-(import doeff_cluster.worker_policy [kept-when-cut-off])
+(import doeff_cluster.worker.core.policy [kept-when-cut-off])
 (import doeff_cluster.handlers [CoordinatorLink release-leases])
-(import doeff_cluster.worker_model [DesiredJobs DesiredUnreadable])
+(import doeff_cluster.worker.intent.worker_model [DesiredJobs DesiredUnreadable])
 (import tests.test_semaphore [lease-writer run-all written-log FakeWrite cut-off-at])
 (import doeff_cluster.shared.core.semaphore_handlers [cluster-semaphore lease-fence])
 

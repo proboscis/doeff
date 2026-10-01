@@ -56,6 +56,12 @@
   (setv #^ str content-type "text/plain; version=0.0.4; charset=utf-8"))
 
 
+;; 版の変化を待つ読み(GET /watch)の待ちの上限(秒)— worker が問いの timeoutSeconds に載せ、coordinator が頭打ちにする取り交わしの値。
+;; 本番の受付の thread は返事を 30 秒まで待ち、worker の HTTP の client は 15 秒で打ち切る(coordinator_http の REPLY-SECONDS)ので、
+;; その両方より拍 1 つ分以上短くする(coordinator/intent/cluster_model から移した・#2025)。
+(val WATCH-MAX-SECONDS 10.0)
+
+
 (defclass [(dataclass :frozen True)] NextRequests [EffectBase]
   "受付に並んだ要求をまとめて取る(coordinator と record-store の受け口の effect)。結果は Request の list。最初の 1 件を
    timeout-seconds まで待ち(来なければ空 = 期限の経過で次の拍へ進む)、その時点で並んでいる要求を limit 件まで一緒に取る

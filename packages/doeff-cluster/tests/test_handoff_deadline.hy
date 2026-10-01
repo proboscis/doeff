@@ -23,9 +23,9 @@
 (import tests.fixtures.services [tally-program])
 (import tests.fixtures.envs [plain-foundation])
 (import tests.program_rows [SAMPLE-RUN])
-(import doeff_cluster.worker_model [CodeView CodeState ProcessView WorldView WorkerPolicy PrepareCode StartJob SignalJob ReapJob
+(import doeff_cluster.worker.intent.worker_model [CodeView CodeState ProcessView WorldView WorkerPolicy PrepareCode StartJob SignalJob ReapJob
                                     RetireJob ProbeEntry ProbeView ProbeState ForgetProbes Action] doeff_cluster.shared.core.job_rules [spec-hash])
-(import doeff_cluster.worker_policy [plan records-after statuses])
+(import doeff_cluster.worker.core.policy [plan records-after statuses])
 
 (val T (ClusterTiming))
 (val V {"python" "3.14.0"})

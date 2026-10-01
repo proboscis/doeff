@@ -23,7 +23,7 @@
 (import doeff_cluster.coordinator.core.cluster_policy [job-from-json job-to-json spec-json])
 (import doeff_cluster.handlers [declared-job-spec ProbeStore probe-targets program-file])
 (import doeff_cluster.job_entry [RunContext runtime-env-of-context])
-(import doeff_cluster.worker_model [CodeView ProbeEntry ProbeState StartJob ReapJob Outcome CodeState ENV-KEY-PREFIX code-key] doeff_cluster.shared.intent.job_model [JobSpec] doeff_cluster.shared.core.job_rules [spec-hash])
+(import doeff_cluster.worker.intent.worker_model [CodeView ProbeEntry ProbeState StartJob ReapJob Outcome CodeState] doeff_cluster.shared.intent.job_model [JobSpec] doeff_cluster.shared.core.job_rules [spec-hash] doeff_cluster.worker.core.worker_rules [ENV-KEY-PREFIX code-key])
 (import tests.careful_rig [Rig make-rig push-commit app-files declare prepare LOCK HY DEADLINE-SECONDS])
 
 (val SHA-A (* "a" 40))

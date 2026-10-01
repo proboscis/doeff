@@ -1,4 +1,4 @@
-;;; doeff worker が管理する job の宣言・観測・判断・effect。
+;;; doeff worker が管理する job の観測・記録・effect の型(判断の関数は worker/core/worker_rules — #2025 で分けた)。
 ;;;
 ;;; worker は「あるべき job の一覧」と「実際の子 process とコードの準備状況」を毎拍観測し、
 ;;; 差を埋める action を返す。action はそのまま effect として実行する。worker の記憶
@@ -44,16 +44,6 @@
     "code_prepare の --import-roots の値。"
     (.join "," self.import-roots)))
 
-(setv ENV-KEY-PREFIX "env-")
-
-(defn #^ str code-key [#^ JobSpec spec]
-  "展開する木の鍵(cache の dir の名前・完成の印の版)。revision そのもの(1 つの commit の木)。
-   実行環境の job は \"env-<キー>\"(worker が宣言から計算した env-key)が root の鍵。"
-  (if spec.runtime-env
-      (+ ENV-KEY-PREFIX (or spec.env-key (raise (ValueError (+ "実行環境の job に env-key が無い: " spec.name)))))
-      spec.revision))
-
-
 
 (defclass CodeState [Enum]
   (setv PREPARING "preparing" READY "ready" FAILED "failed"))
@@ -75,11 +65,6 @@
       (raise (ValueError (.format "path は READY の時だけ在る: {} {} path={!r}" self.revision self.state.value self.path))))))
 
 
-(defn #^ (| str None) ready-path [#^ (| CodeView None) code]  ; defk にできない: 純粋な判断の start-actions(Program の外の関数)が呼ぶ
-  "木が READY ならその path、観測が無い・READY でなければ None(CodeView が READY ⇔ path の在る事を作る時に確かめる)。"
-  (if (is code None) None code.path))
-
-
 (defclass [(dataclass :frozen True)] ProcessView []
   "worker が起動した子 process 1 本の観測。exit-code が None なら終了を観測していない。"
   (#^ str name)
@@ -94,11 +79,6 @@
   ;; 入れ替え(handoff)で退いた process: 元の job の名。退いた process は名を「<元の名>#retired-<世代の名>」へ移して動かし続け、
   ;; 新しい process が Ready と数えられた後に止める。None = 退いていない。
   (setv #^ (| str None) retired-from None))
-
-(setv RETIRED-MARK "#retired-")
-
-(defn #^ str retired-name [#^ str name #^ str instance]
-  (+ name RETIRED-MARK instance))
 
 
 (defclass ProbeState [Enum]
@@ -127,32 +107,6 @@
   (#^ int elapsed-seconds)
   (#^ int attempts)
   (#^ str last-failure))
-
-
-(defn #^ bool probed-job [#^ JobSpec spec]
-  "入口の検めの対象: service の job(args の先頭が \"service\" — job_entry の service 入口)。task(once)と素の entry は対象外。"
-  (and (not spec.once) (> (len spec.args) 0) (= (get spec.args 0) "service")))
-
-
-(defn #^ tuple probe-args [#^ JobSpec spec]
-  "検めの対象の job の入口を検める引数(spec.entry の probe 口へ渡す)。Program の job(2026-09-27)は入口の module を import できるか
-   だけを検める — 詰めた Program の版と復元は起こした子が検め、理由つきで落ちる(job_entry.read-program)。"
-  #("probe"))
-
-;; 旧い service の spec の引数(2026-09-27 より前の job_entry service の形 — 関数の参照 + handler の組の import path + 設定)。
-(setv OLD-SERVICE-FLAGS #("--factory" "--env" "--config"))
-
-(defn #^ (| str None) probe-refusal [#^ JobSpec spec]
-  "検めの対象の spec を検める前に断る理由(断らなければ None)。Program の job の service は詰めた Program の置き場のキー(spec.program)を
-   持ち、旧い引数(--factory・--env・--config)を持たない。旧い coordinator の返事の spec は入口の module の import だけなら通ってしまい、
-   子の job_entry が argparse で落ちて起こし直しを繰り返すので、検めの段で理由つきに止める(計画 2.8 の入口 15)。"
-  (setv old (lfor flag OLD-SERVICE-FLAGS :if (in flag spec.args) flag))
-  (cond
-    (not (probed-job spec)) None
-    old (.format "旧い service の spec の引数 {} は受け付けない — Program の job(service --identity と詰めた Program)で宣言し直す"
-                 (.join "・" old))
-    (not spec.program) "service の spec に詰めた Program の置き場のキー(program)が無い — Program の job で宣言し直す"
-    True None))
 
 
 (defclass [(dataclass :frozen True)] EnvDisk []
@@ -223,7 +177,6 @@
   ;; コードの準備に失敗した版を作り直すまでの間(失敗が続く版で git と焼きを毎拍撃たない)。
   (setv #^ int code-retry-ms 30000)
   (setv #^ float tick-seconds 0.5))
-
 
 
 (defclass [(dataclass :frozen True)] JobStatus []

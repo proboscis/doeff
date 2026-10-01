@@ -43,7 +43,8 @@
     "packages/doeff-cluster/src/doeff_cluster/sim/*.hy",
     "packages/doeff-cluster/src/doeff_cluster/worker/core/program.hy",
     "packages/doeff-cluster/src/doeff_cluster/shared/core/job_rules.hy",
-    "packages/doeff-cluster/src/doeff_cluster/record_store/*/*.hy"
+    "packages/doeff-cluster/src/doeff_cluster/record_store/*/*.hy",
+    "packages/doeff-cluster/src/doeff_cluster/worker/*/*.hy"
   ],
   "modules": [
     {
@@ -81,10 +82,10 @@
       "layer": "pure",
       "name": "doeff-cluster-beat-policy",
       "paths": [
-        "packages/doeff-cluster/src/doeff_cluster/beat_policy.hy"
+        "packages/doeff-cluster/src/doeff_cluster/worker/core/beat_policy.hy"
       ],
       "public": [
-        "packages/doeff-cluster/src/doeff_cluster/beat_policy.hy"
+        "packages/doeff-cluster/src/doeff_cluster/worker/core/beat_policy.hy"
       ],
       "responsibility": "worker が heartbeat をいつ送るか・名指しの待ち(GET /watch)の問いと答えの読み(純粋な判断・I/O はしない)。",
       "typed": true
@@ -489,10 +490,10 @@
       "layer": "pure",
       "name": "doeff-cluster-env-upkeep",
       "paths": [
-        "packages/doeff-cluster/src/doeff_cluster/env_upkeep.hy"
+        "packages/doeff-cluster/src/doeff_cluster/worker/core/env_upkeep.hy"
       ],
       "public": [
-        "packages/doeff-cluster/src/doeff_cluster/env_upkeep.hy"
+        "packages/doeff-cluster/src/doeff_cluster/worker/core/env_upkeep.hy"
       ],
       "responsibility": "実行環境の root の手入れの純粋な判断(2026-09-26・設計 worker-runtime-env.md 節 3.2 の期限・節 3.6 の掃除と disk の条件)。",
       "typed": true
@@ -545,7 +546,8 @@
         "doeff-cluster-shared-capabilities",
         "doeff-cluster-shared-protocol",
         "doeff-cluster-worker-model",
-        "doeff-cluster-worker-policy"
+        "doeff-cluster-worker-policy",
+        "doeff-cluster-worker-rules"
       ],
       "layer": "io",
       "name": "doeff-cluster-handlers",
@@ -1348,7 +1350,8 @@
         "doeff-cluster-worker-policy",
         "pytest-item-collection",
         "doeff-cluster-record-store-model",
-        "doeff-cluster-service-report"
+        "doeff-cluster-service-report",
+        "doeff-cluster-worker-rules"
       ],
       "exclude": [
         "packages/doeff-cluster/tests/fixtures/independence/*"
@@ -1459,10 +1462,10 @@
       "layer": "domain",
       "name": "doeff-cluster-worker-model",
       "paths": [
-        "packages/doeff-cluster/src/doeff_cluster/worker_model.hy"
+        "packages/doeff-cluster/src/doeff_cluster/worker/intent/worker_model.hy"
       ],
       "public": [
-        "packages/doeff-cluster/src/doeff_cluster/worker_model.hy"
+        "packages/doeff-cluster/src/doeff_cluster/worker/intent/worker_model.hy"
       ],
       "responsibility": "doeff worker が管理する job の宣言・観測・判断・effect。",
       "typed": true
@@ -1471,15 +1474,16 @@
       "allow": [
         "doeff-cluster-job-model",
         "doeff-cluster-job-rules",
-        "doeff-cluster-worker-model"
+        "doeff-cluster-worker-model",
+        "doeff-cluster-worker-rules"
       ],
       "layer": "pure",
       "name": "doeff-cluster-worker-policy",
       "paths": [
-        "packages/doeff-cluster/src/doeff_cluster/worker_policy.hy"
+        "packages/doeff-cluster/src/doeff_cluster/worker/core/policy.hy"
       ],
       "public": [
-        "packages/doeff-cluster/src/doeff_cluster/worker_policy.hy"
+        "packages/doeff-cluster/src/doeff_cluster/worker/core/policy.hy"
       ],
       "responsibility": "worker の純粋な判断。",
       "typed": true
@@ -1752,6 +1756,22 @@
         "packages/doeff-cluster/src/doeff_cluster/foundation/record_inbox.hy"
       ],
       "responsibility": "effect の記録の置き場の HTTP の受付(本文の大きさに上限)— coordinator の RequestInbox と同じ箱。",
+      "typed": true
+    },
+    {
+      "allow": [
+        "doeff-cluster-job-model",
+        "doeff-cluster-worker-model"
+      ],
+      "layer": "domain",
+      "name": "doeff-cluster-worker-rules",
+      "paths": [
+        "packages/doeff-cluster/src/doeff_cluster/worker/core/worker_rules.hy"
+      ],
+      "public": [
+        "packages/doeff-cluster/src/doeff_cluster/worker/core/worker_rules.hy"
+      ],
+      "responsibility": "worker の job の判断の小さな関数(木の鍵・READY の木の path・退いた process の名・入口の検めの対象と断り)。",
       "typed": true
     }
   ],

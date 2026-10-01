@@ -1,9 +1,9 @@
 (require doeff-hy.macros [deftest val var])
 
 (import dataclasses [replace])
-(import doeff_cluster.worker_model [CodeState CodeView ProcessView WorldView StopStage StopProgress
+(import doeff_cluster.worker.intent.worker_model [CodeState CodeView ProcessView WorldView StopStage StopProgress
   Outcome JobRecord WorkerPolicy PrepareCode StartJob SignalJob ReapJob] doeff_cluster.shared.intent.job_model [JobSpec JobPhase])
-(import doeff_cluster.worker_policy [plan records-after statuses])
+(import doeff_cluster.worker.core.policy [plan records-after statuses])
 
 (setv POLICY (WorkerPolicy :stop-grace-ms 1000 :kill-grace-ms 500 :restart-backoff-ms 2000)
       A1 (JobSpec "a" "jobs.a" #() "rev1")
@@ -190,7 +190,7 @@
 
 ;; --- 入れ替え(handoff・2026-09-24): 新が Ready と数えられてから旧を止める ---------------------------------------
 
-(import doeff_cluster.worker_model [RetireJob ReleaseLeases retired-name])
+(import doeff_cluster.worker.intent.worker_model [RetireJob ReleaseLeases] doeff_cluster.worker.core.worker_rules [retired-name])
 
 (setv H1 (replace A1 :handoff True)
       H2 (replace A1 :revision "rev2" :handoff True))

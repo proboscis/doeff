@@ -11,7 +11,7 @@
 (import doeff_cluster.code_prepare [ScanTree LinkPycs CompileSources WriteMarker Note MARKER
                         prepare-tree tree-problem marker-problem marker-content cache-rel compiled-pyc])
 (import doeff_cluster.handlers [CodeStore])
-(import doeff_cluster.worker_model [CodeState CodeView])
+(import doeff_cluster.worker.intent.worker_model [CodeState CodeView])
 
 
 ;; --- 焼きの Program(fake の handler)---------------------------------------------------

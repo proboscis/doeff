@@ -15,7 +15,7 @@
 (import doeff_cluster.coordinator.core.cluster_policy [heartbeat-reply])
 (import doeff_cluster.coordinator.core.idle_policy [quiet-ticks])
 (import doeff_cluster.sim.local [sim-cluster send-request ClientLink SimLink SimWorker ReadCoordinator DrainWorker StopCoordinator])
-(import doeff_cluster.worker_model [WorkerPolicy])
+(import doeff_cluster.worker.intent.worker_model [WorkerPolicy])
 (import tests.fixtures.envs [sim-foundation])
 (import tests.fixtures.sim_programs [beacons quitters])
 

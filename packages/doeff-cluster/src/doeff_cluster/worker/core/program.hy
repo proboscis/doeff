@@ -3,9 +3,9 @@
 (require doeff-hy.macros [defk <- val var])
 (import doeff_time [Delay])
 (import doeff_cluster.shared.core.clock [now-epoch-ms])
-(import doeff_cluster.worker_model [WorkerPolicy WorkerState WorldView DesiredJobs DesiredUnreadable
+(import doeff_cluster.worker.intent.worker_model [WorkerPolicy WorkerState WorldView DesiredJobs DesiredUnreadable
   ReadDesired ObserveWorld WorkerStopRequested PublishStatus] doeff_cluster.shared.intent.job_model [JobPhase])
-(import doeff_cluster.worker_policy [plan records-after statuses])
+(import doeff_cluster.worker.core.policy [plan records-after statuses])
 
 (defk worker-tick [state policy stopping]
   {:pre [(: state WorkerState) (: policy WorkerPolicy) (: stopping bool)] :post [(: % tuple)]}

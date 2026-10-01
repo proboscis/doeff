@@ -35,9 +35,9 @@
 (import doeff_core_effects.os_file [os-file-handler])
 (import doeff_cluster.env_prepare [ENV-MARKER ROOTS-PTH])
 (import doeff_cluster.handlers [EnvStore ProcessHost task-spec])
-(import doeff_cluster.worker_model [CodeState CodeView StartJob ReapJob Outcome WorldView WorkerPolicy PrepareEnv WarmEnv
-                                    code-key] doeff_cluster.shared.intent.job_model [JobSpec])
-(import doeff_cluster.worker_policy [plan])
+(import doeff_cluster.worker.intent.worker_model [CodeState CodeView StartJob ReapJob Outcome WorldView WorkerPolicy PrepareEnv WarmEnv
+] doeff_cluster.shared.intent.job_model [JobSpec] doeff_cluster.worker.core.worker_rules [code-key])
+(import doeff_cluster.worker.core.policy [plan])
 (import doeff_cluster.shared.intent.remote_model [encode-program decode-outcome TaskSucceeded TaskFailed])
 (import doeff_cluster.foundation.process_versions [current-versions])
 

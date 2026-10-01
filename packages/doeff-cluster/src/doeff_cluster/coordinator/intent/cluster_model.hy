@@ -381,9 +381,7 @@
 ;; 変わらない間は起きない。調停ループ(coordinator.coordinator-step)が待ちの要求を持ち、書きの後(Persist の後)と拍ごとに判じる。
 ;; 期限は拍(TICK-MS)の刻で判じる — 期限の後の最初の拍で返す。
 
-;; 待ちの上限(秒)。本番の受付の thread は返事を 30 秒まで待ち、worker の HTTP の client は 15 秒で打ち切る(coordinator_http の
-;; REPLY-SECONDS)ので、その両方より拍 1 つ分以上短くする。
-(val WATCH-MAX-SECONDS 10.0)
+;; 待ちの上限 WATCH-MAX-SECONDS は worker も問いに載せる取り交わしの値なので shared/intent/protocol に在る(#2025)。
 
 
 (defclass [(dataclass :frozen True)] Watcher []

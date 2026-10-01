@@ -165,9 +165,9 @@
   (import doeff_cluster.shared.core.effect_codec [MOVED-TYPES])
   (import doeff_cluster.shared.intent.job_model [JobSpec JobPhase])
   (assert (= (type-name JobSpec) "doeff_cluster.shared.intent.job_model:JobSpec"))
-  (assert (is (resolve-type "doeff_cluster.worker_model:JobSpec") JobSpec))
-  (assert (is (resolve-type "doeff_cluster.worker_model:JobPhase") JobPhase))
-  (assert (= (get MOVED-TYPES "doeff_cluster.worker_model:JobSpec") "doeff_cluster.shared.intent.job_model:JobSpec"))
+  (assert (is (resolve-type "doeff_cluster.worker.intent.worker_model:JobSpec") JobSpec))
+  (assert (is (resolve-type "doeff_cluster.worker.intent.worker_model:JobPhase") JobPhase))
+  (assert (= (get MOVED-TYPES "doeff_cluster.worker.intent.worker_model:JobSpec") "doeff_cluster.shared.intent.job_model:JobSpec"))
   ;; 受け口の effect(#2180)— 移しの前の記録の NextRequests は調停ループが idle 付きで出した物なので、子 class を引く
   (import doeff_cluster.coordinator.intent.cluster_model [IdleNextRequests])
   (assert (is (resolve-type "doeff_cluster.coordinator.intent.cluster_model:NextRequests") IdleNextRequests))
@@ -176,4 +176,7 @@
   (assert (is (resolve-type "doeff_cluster.record_store:AppendRecordLines") AppendRecordLines))
   ;; 表に無い旧い名は引けない(黙って別の型へ倒れない)
   (assert (is (resolve-type "doeff_cluster.no_such_model:SubmitDetached") None))
-  (assert (= (len MOVED-MODULES) 13)))
+  ;; worker の型(#2025 の 2 本目)— 記録に残る worker の effect(StartJob など)の旧い名
+  (import doeff_cluster.worker.intent.worker_model [StartJob])
+  (assert (is (resolve-type "doeff_cluster.worker_model:StartJob") StartJob))
+  (assert (= (len MOVED-MODULES) 16)))
