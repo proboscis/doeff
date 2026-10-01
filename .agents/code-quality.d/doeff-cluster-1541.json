@@ -2374,7 +2374,9 @@
         "doeff-cluster-cluster-model",
         "doeff-cluster-coordinator-request-bodies-model",
         "doeff-cluster-api-policy",
-        "doeff-hy-wire"
+        "doeff-hy-wire",
+        "doeff-cluster-cluster-policy",
+        "doeff-cluster-cluster-rules"
       ],
       "layer": "io",
       "name": "doeff-cluster-coordinator-request-bodies",

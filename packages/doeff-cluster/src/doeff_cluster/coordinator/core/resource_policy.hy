@@ -15,14 +15,14 @@
 (import json)
 (import typing [NoReturn])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming BodyInvalid])
-(import doeff_cluster.coordinator.intent.cluster_model [ClusterJob ClusterState Placement HandoffPhase UnplacedKind NotReadyKind VersionState VersionVerdict LiveProcess ResourceMeta AuditEvent RolloutRow RolloutStatus RolloutTarget])
-(import doeff_cluster.coordinator.core.cluster_rules [required-field int-field])
+(import doeff_cluster.coordinator.intent.cluster_model [ClusterJob ClusterState Placement HandoffPhase UnplacedKind NotReadyKind VersionState VersionVerdict LiveProcess ResourceMeta AuditEvent ServiceBody LegacyJobRow RolloutRow RolloutStatus RolloutTarget])
+(import doeff_cluster.coordinator.core.cluster_rules [int-field])
 (import doeff_cluster.shared.core.job_rules [spec-hash] doeff_cluster.shared.intent.job_model [JobPhase])
-(import doeff_cluster.coordinator.core.cluster_policy [job-from-json job-to-json status-row-to-json audit-event-to-json alive still-live-somewhere service-rows unplaced-kind unplaced-text task-summary resource-version-of])
+(import doeff_cluster.coordinator.core.cluster_policy [job-to-json status-row-to-json audit-event-to-json alive still-live-somewhere service-rows unplaced-kind unplaced-text task-summary resource-version-of])
 (import doeff_cluster.coordinator.core.rollout_policy [validate-rollout-spec rollout-spec-to-json rollout-status-to-json rollout-targets target-key TERMINAL-PHASES])
 (import doeff [run])
 (import doeff_cluster.coordinator.intent.request_bodies [ReadinessBody MetricsBody ResourceBody StatusRow])
-(import doeff_cluster.shared.core.readiness_rules [handoff-timeout-ms])
+(import doeff_cluster.shared.core.readiness_rules [handoff-timeout-ms readiness-refusal])
 (import doeff_cluster.shared.core.readiness_report [reported-readiness])
 
 (setv LEGACY-OWNER "legacy:jobs")        ; 旧い PUT /jobs の頃からの宣言の所有者(誰でも 1 度だけ引き取れる)
@@ -533,20 +533,20 @@
                name)))
 
 
-(defn #^ ClusterState create-resource [#^ ClusterState state #^ str kind #^ ResourceBody body #^ str actor #^ int now]
-  ;; 包みの形(name は文字列・spec は object)は本文を解く所(coordinator/protocol/request_bodies — #2445)が検めた。
-  (setv name body.name spec (dict (or body.spec {})))
+(defn #^ ClusterState create-resource [#^ ClusterState state #^ str kind #^ (| ResourceBody ServiceBody) body #^ str actor #^ int now]
+  ;; 包みの形(name は文字列・spec は object)と Service の宣言の行は、本文を解く所(coordinator/protocol/request_bodies — #2445・#2448)が読んだ。
+  (setv name body.name)
   (when (not (and name (not-in "/" name))) (refuse 400 (.format "名前が正しくない: {!r}" name)))
-  (setv owner (or (valid-actor (.get spec "owner")) actor))
   (cond
-    (= kind "Service")
+    (isinstance body ServiceBody)
       (do (when (any (gfor j state.jobs (= j.spec.name name))) (refuse 409 (+ "もう在る Service: " name)))
-          (setv job (job-from-json (| spec {"name" name "owner" owner})))
+          (setv job (replace body.job :owner (or (valid-actor body.owner) actor)))
           ;; 受け付けない行(RefusedJob)と同じ名なら、新しい形の宣言で置き換える(改訂 1 の C)。
           (replace state :jobs (+ state.jobs #(job)) :refused (dfor #(k v) (.items state.refused) :if (!= k name) k v)))
     (= kind "Rollout")
       (do (when (in name state.rollouts) (refuse 409 (+ "もう在る Rollout: " name)))
-          (setv spec (validate-rollout-spec (| spec {"owner" owner})))
+          (setv raw (dict (or body.spec {}))
+                spec (validate-rollout-spec (| raw {"owner" (or (valid-actor (.get raw "owner")) actor)})))
           (for [t (rollout-targets spec)]
             (when (and (= t.kind "Service") (not (any (gfor j state.jobs (= j.spec.name t.name)))))
               (refuse 400 (+ "Rollout の相手の Service が無い(先に作る): " t.name))))
@@ -561,25 +561,25 @@
     (refuse 403 (.format "所有者を変えられるのは所有者({})だけ" current-owner))))
 
 
-(defn #^ ClusterState update-resource [#^ ClusterState state #^ str kind #^ str name #^ ResourceBody body #^ str actor]
-  (setv key (key-of kind name) spec (dict (or body.spec {})))
+(defn #^ ClusterState update-resource [#^ ClusterState state #^ str kind #^ str name #^ (| ResourceBody ServiceBody) body #^ str actor]
+  (setv key (key-of kind name))
   (cond
-    (= kind "Service")
+    (isinstance body ServiceBody)
       (do (setv current (next (gfor j state.jobs :if (= j.spec.name name) j) None))
           ;; 受け付けない行(RefusedJob)は、新しい形の宣言の PUT で受け付けた job に置き換える(改訂 1 の C)。
           (when (and (is current None) (in name state.refused))
             (check-version state key body.resource-version)
-            (setv job (job-from-json (| spec {"name" name "owner" (or (valid-actor (.get spec "owner"))
-                                                                    (.get (. (get state.refused name) row) "owner") actor)})))
+            (setv job (replace body.job :owner (or (valid-actor body.owner)
+                                                   (.get (. (get state.refused name) row) "owner") actor)))
             (return (replace state :jobs (+ state.jobs #(job))
                                    :refused (dfor #(k v) (.items state.refused) :if (!= k name) k v))))
           (when (is current None) (refuse 404 (+ "無い Service: " name)))
           (check-version state key body.resource-version)
-          (check-owner-change current.owner (.get spec "owner") actor)
-          (setv job (job-from-json (| spec {"name" name "owner" (or (valid-actor (.get spec "owner")) current.owner)})))
+          (check-owner-change current.owner body.owner actor)
+          (setv job (replace body.job :owner (or (valid-actor body.owner) current.owner)))
           (replace state :jobs (tuple (gfor j state.jobs (if (= j.spec.name name) job j)))))
     (= kind "Rollout")
-      (do (setv current (.get state.rollouts name))
+      (do (setv current (.get state.rollouts name) spec (dict (or body.spec {})))
           (when (is current None) (refuse 404 (+ "無い Rollout: " name)))
           (check-version state key body.resource-version)
           (setv old current.spec old-json (rollout-spec-to-json old))
@@ -637,28 +637,24 @@
 
 ;; --- 旧い PUT /jobs(移行の間だけ)-------------------------------------------------------------
 
-(defn #^ tuple legacy-put-jobs [#^ ClusterState state #^ list rows #^ str actor]
+(defn #^ tuple legacy-put-jobs [#^ ClusterState state #^ (get tuple #(LegacyJobRow ...)) rows #^ str actor]
   "旧い口 PUT /jobs を資源ごとの compare-and-set に写す(2026-09-24 決定)。
    - 行に resourceVersion があれば、その版の時だけその Service を書き換える。
    - 行に resourceVersion が無ければ、無い Service を作るだけ(在って中身が違えば競合)。中身が同じなら何もしない。
    - 一覧に無い Service は消さない(消すのは DELETE だけ)。返事の untouched に並べる。
    - 1 行でも競合すれば何も書かない(全部か無しか)。返事 409 に行ごとの理由。"
-  ;; 行の列の形の誤り(list でない・object でない行・名の無い行)は送り手の誤り(BodyInvalid・400 — #1024)。
-  (when (not (isinstance rows list))
-    (raise (BodyInvalid (.format "jobs は宣言の行の列: {!r}" rows))))
-  (for [row rows]
-    (when (not (isinstance row dict))
-      (raise (BodyInvalid (.format "jobs の行は JSON の object: {!r}" row))))
-    (setv row-name (required-field row "name"))
-    (when (not (and (isinstance row-name str) row-name))
-      (raise (BodyInvalid (.format "jobs の行の名前は空でない文字列: {!r}" row-name)))))
+  ;; 行の形の誤り(名の無い行・読めない宣言)は本文を解く所(coordinator/protocol/request_bodies.legacy-jobs-of — #2448)が 400 で断った。
   (setv current (dfor j state.jobs j.spec.name j) jobs (list state.jobs) conflicts [] results {})
   (for [row rows]
-    (setv name (get row "name") have (.get current name) version (.get row "resourceVersion"))
-    (setv owner (if have have.owner (or (valid-actor (.get row "owner")) actor)))
-    (setv job (job-from-json (| {"replicas" (if have have.replicas 1) "readiness" (if have have.readiness None)}
-                                (dfor #(k v) (.items row) :if (!= k "resourceVersion") k v)
-                                {"owner" owner})))
+    (setv name row.name have (.get current name) version row.version)
+    (setv owner (if have have.owner (or (valid-actor row.owner) actor)))
+    ;; 行に無い replicas と readiness は今の宣言の値(無ければ既定)で埋め、埋めた形を宣言と同じ規則で検め直す。
+    (setv job (replace row.job :owner owner
+                       :replicas (if row.replicas-given row.job.replicas (if have have.replicas 1))
+                       :readiness (if row.readiness-given row.job.readiness (if have have.readiness None))))
+    (setv readiness-problem (readiness-refusal job.readiness job.update))
+    (when (is-not readiness-problem None)
+      (raise (BodyInvalid readiness-problem)))
     (cond
       (is have None)
         (if (is-not version None)
@@ -671,12 +667,12 @@
       (!= version (resource-version-of state (key-of "Service" name)))
         (.append conflicts {"name" name "error" "版が古い"
                             "current" (resource-version-of state (key-of "Service" name))})
-      (and (!= (.get row "owner" have.owner) have.owner) (!= actor have.owner) (!= have.owner LEGACY-OWNER))
+      (and (is-not row.owner None) (!= row.owner have.owner) (!= actor have.owner) (!= have.owner LEGACY-OWNER))
         (.append conflicts {"name" name "error" (.format "所有者を変えられるのは所有者({})だけ" have.owner)})
       True
         (do (setv jobs (lfor j jobs (if (= j.spec.name name) job j)))
             (setv (get results name) "updated"))))
-  (setv untouched (lfor n (sorted current) :if (not-in n (sfor r rows (get r "name"))) n))
+  (setv untouched (lfor n (sorted current) :if (not-in n (sfor r rows r.name)) n))
   (if conflicts
       #(state 409 {"error" "競合した行がある(何も書いていない)" "conflicts" conflicts})
       #((replace state :jobs (tuple jobs)) 200 {"jobs" (len rows) "results" results "untouched" untouched
