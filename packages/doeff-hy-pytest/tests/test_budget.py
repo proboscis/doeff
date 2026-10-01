@@ -111,6 +111,10 @@ def test_compile_counter_adds_only_the_outermost_window(tmp_path, monkeypatch) -
     import sys
 
     monkeypatch.setattr(sys, "dont_write_bytecode", False)
+    # 初回の import が本当にキャッシュ無しの変換になるよう、doeff-hy の作業木をまたぐ code の置き場(環境変数
+    # DOEFF_HY_CODE_STORE — doeff_hy_bytecode_guard/loader_hooks.py)をこの検の空の dir にする。既定の利用者の cache の
+    # 置き場は process をまたいで残るので、同じ中身のこの module を 2 度目に走らせると置き場に当たって変換が 0 回になる。
+    monkeypatch.setenv("DOEFF_HY_CODE_STORE", str(tmp_path / "code-store"))
     monkeypatch.syspath_prepend(str(tmp_path))
     (tmp_path / "budget_inner_mod.py").write_text("VALUE = 1\n", encoding="utf-8")
     (tmp_path / "budget_outer_mod.hy").write_text(

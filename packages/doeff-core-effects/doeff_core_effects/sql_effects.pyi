@@ -25,6 +25,8 @@ MODULE_TAGS: dict[Keyword, str]
 T = TypeVar("T")
 
 SQL_VALUE_TYPES: tuple[type, ...]
+#: 値の型そのもの(subclass を含まない)が閉じた集合の型である印。
+PLAIN_VALUE_TYPES: frozenset[type]
 
 #: 引数と行の値の閉じた集合。
 SqlValue: TypeAlias = int | float | str | bytes | bool | None
@@ -128,6 +130,10 @@ class SqlText:
 @dataclass(frozen=True, kw_only=True)
 class SqlPlaceholder:
     name: str
+
+#: 文の割りの覚え(文 → 割った並び)と、覚える文の数の上限。
+SPLIT_MEMO_LIMIT: int
+SPLIT_MEMO: dict[str, tuple[SqlText | SqlPlaceholder, ...]]
 
 def split_statement(statement: str) -> Program[tuple[SqlText | SqlPlaceholder, ...], Any]: ...
 def checked_params(
