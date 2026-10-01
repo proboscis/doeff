@@ -4,7 +4,8 @@
 (import doeff_cluster.shared.intent.protocol [ClusterTiming])
 (import doeff_cluster.coordinator.intent.cluster_model [ClusterState WorkerInfo TaskRecord])
 (import doeff_cluster.foundation.coordinator_inbox [http-request])
-(import doeff_cluster.coordinator.core.api_policy [respond tick])
+(import doeff_cluster.coordinator.core.api_policy [tick])
+(import doeff_cluster.coordinator.protocol.request_bodies [responded])
 (import doeff_cluster.coordinator.core.durable_kv [durable-kv full-kv durable-delta state-from-kv])
 (import doeff_cluster.coordinator.core.cluster_policy [BOARD-MAX-VALUE-BYTES BOARD-MAX-ROWS BOARD-MAX-BYTES TASK-MAX-OPEN WORKER-FORGET-MS
                           board-usage value-size])
@@ -15,7 +16,7 @@
 
 
 (defn #^ tuple call [#^ ClusterState state #^ str method #^ str path #^ (| dict list str int float bool None) [body None] #^ int [now 1000]]
-  (respond state (http-request method path {} body :actor "c-test") now T))
+  (responded state (http-request method path {} body :actor "c-test") now T))
 
 
 (defn #^ tuple put [#^ ClusterState state #^ str key #^ object value #^ int [now 1000] #^ object [ttlSeconds None]]

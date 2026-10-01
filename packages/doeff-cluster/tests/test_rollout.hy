@@ -13,7 +13,7 @@
 (import doeff_cluster.coordinator.intent.cluster_model [ClusterNaming ClusterState])
 (import doeff_cluster.foundation.coordinator_inbox [http-request])
 (import doeff_cluster.coordinator.core.cluster_policy [state-to-json state-from-json])
-(import doeff_cluster.coordinator.core.api_policy [respond])
+(import doeff_cluster.coordinator.protocol.request_bodies [responded])
 (import doeff_cluster.coordinator.core.program [rollout-tick])
 (import doeff_cluster.foundation.kube_handlers [KubeMemory kube-memory])
 (import doeff_cluster.shared.intent.job_model [JobSpec] doeff_cluster.shared.core.job_rules [spec-hash])
@@ -55,7 +55,7 @@
                                          "readiness" {"windowSeconds" window}}})))
 
   (defn #^ ClusterState call [self #^ str method #^ str path #^ (| dict None) [body None] #^ (| str None) [actor "c-test"]]
-    (setv #(state status reply) (respond self.state (http-request method path {} body :actor actor) self.now T))
+    (setv #(state status reply) (responded self.state (http-request method path {} body :actor actor) self.now T))
     (assert (< status 300) #(method path status reply))
     (setv self.state state)
     state)
@@ -95,7 +95,7 @@
                              "attempts" (get self.proc "attempt") "instance" (get self.proc "instance")
                              "specHash" (spec-hash spec) "placement" spec.placement}])
                        []))
-    (setv #(state _ reply) (respond self.state (http-request "POST" "/heartbeat" {}
+    (setv #(state _ reply) (responded self.state (http-request "POST" "/heartbeat" {}
                                                         {"name" "atlas" "provides" ["net"] "capacity" 10 "versions" V
                                                          "statuses" statuses}) self.now T))
     (setv self.state state)
@@ -294,14 +294,14 @@
 (deftest test-rollouts-on-the-same-target-cannot-overlap-and-running-ones-cannot-be-deleted
   (setv sim (Sim))
   (sim.rollout "to-worker" FORWARD)
-  (setv #(_ overlap-status overlap-body) (respond sim.state (http-request "POST" "/resources/Rollout" {} {"name" "second" "spec" FORWARD}
+  (setv #(_ overlap-status overlap-body) (responded sim.state (http-request "POST" "/resources/Rollout" {} {"name" "second" "spec" FORWARD}
                                                                      :actor "c-test") sim.now T))
   (assert (= overlap-status 409) overlap-body)
-  (setv #(_ delete-status delete-body) (respond sim.state (http-request "DELETE" "/resources/Rollout/to-worker" {} None :actor "c-test")
+  (setv #(_ delete-status delete-body) (responded sim.state (http-request "DELETE" "/resources/Rollout/to-worker" {} None :actor "c-test")
                                                 sim.now T))
   (assert (= delete-status 409) delete-body)
   ;; Rollout が扱っている Service は、所有者でも消せない(force なら消せる)
-  (setv #(_ owned-status owned-body) (respond sim.state (http-request "DELETE" "/resources/Service/writer-a" {} None :actor "c-test")
+  (setv #(_ owned-status owned-body) (responded sim.state (http-request "DELETE" "/resources/Service/writer-a" {} None :actor "c-test")
                                               sim.now T))
   (assert (= owned-status 409) owned-body))
 

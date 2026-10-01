@@ -29,7 +29,8 @@
 (import doeff_cluster.coordinator.intent.cluster_model [ClusterState ComponentVersion])
 (import doeff_cluster.foundation.coordinator_inbox [http-request])
 (import doeff_cluster.coordinator.core.detached_policy [Reply submit-detached])
-(import doeff_cluster.coordinator.core.api_policy [respond tick])
+(import doeff_cluster.coordinator.core.api_policy [tick])
+(import doeff_cluster.coordinator.protocol.request_bodies [responded])
 (import tests.link_rig [LinkRig])
 
 (import doeff_cluster.worker.intent.worker_model [DesiredJobs JobStatus] doeff_cluster.shared.intent.job_model [JobPhase])
@@ -534,7 +535,7 @@
 (setv T (ClusterTiming) V {"python" "3.14.0" "doeff" "1"})
 
 (defn #^ tuple call [#^ ClusterState state #^ str method #^ str path #^ int now #^ (| dict None) [body None]]
-  (respond state (http-request method path {} body :actor "test") now T))
+  (responded state (http-request method path {} body :actor "test") now T))
 
 (defn #^ tuple beat [#^ ClusterState state #^ str name #^ int now #^ str [boot "b1"] #^ (| list None) [statuses None]
            #^ (| int None) [boot-at None] #^ (| list None) [provides None]]

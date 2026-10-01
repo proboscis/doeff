@@ -15,8 +15,9 @@
 (import doeff_cluster.coordinator.core.cluster_policy [reconcile state-to-json state-from-json job-from-json identity-hash])
 (import tests.program_rows [SAMPLE-RUN SAMPLE-PROGRAM SAMPLE-TASK-PROGRAM program-placed])
 (import doeff [run])
-(import doeff_cluster.coordinator.core.api_policy [respond])
+(import doeff_cluster.coordinator.protocol.request_bodies [responded])
 (import doeff_cluster.coordinator.core.program [run-coordinator])
+(import doeff_cluster.coordinator.protocol.request_bodies [request-bodies])
 (import doeff_cluster.foundation.wal_store [WalStore])
 (import doeff_cluster.coordinator.core.durable_kv [LEGACY-PLACEMENT PLACEMENT])
 
@@ -27,7 +28,7 @@
   (http-request method path (or query {}) body :actor actor))
 
 (defn #^ tuple beat [#^ ClusterState state #^ str name #^ int now #^ (| list None) [statuses None] #^ dict [versions V] #^ (| list None) [provides None]]
-  (respond state (req "POST" "/heartbeat" {"name" name "provides" (or provides ["net"]) "capacity" 10
+  (responded state (req "POST" "/heartbeat" {"name" name "provides" (or provides ["net"]) "capacity" 10
                                            "versions" versions "statuses" (or statuses [])}) now T))
 
 
@@ -37,7 +38,7 @@
   (var s (get reply-1 0))
   (val reply-2 (beat s "b" 0))
   (:= s (get reply-2 0))
-  (val reply-3 (respond s (req "PUT" "/jobs" {"jobs" (lfor i (range 4) {"name" f"s{i}" "run" SAMPLE-RUN "revision" "r" "needs" ["net"]})}) 0 T))
+  (val reply-3 (responded s (req "PUT" "/jobs" {"jobs" (lfor i (range 4) {"name" f"s{i}" "run" SAMPLE-RUN "revision" "r" "needs" ["net"]})}) 0 T))
   (:= s (get reply-3 0))
   (setv before (dfor #(k v) (.items s.placements) k v.worker))
   (assert (= (set (.values before)) #{"a" "b"}))
@@ -63,7 +64,7 @@
 (defn #^ tuple submit [#^ ClusterState state #^ int now #^ dict [versions V] #^ float [lease 15.0]]
   ;; 詰めた Program を置き場に(送り手の版 versions と一緒に)置いてから、task の本文は置き場のキーだけを運ぶ。
   (setv #(state sha) (run (program-placed state versions :now now)))
-  (setv #(state _ body) (respond state (req "POST" "/tasks" {"program" sha "revision" "r"
+  (setv #(state _ body) (responded state (req "POST" "/tasks" {"program" sha "revision" "r"
                                                               "needs" ["net"] "name" "n" "leaseSeconds" lease}) now T))
   #(state (get body "task")))
 
@@ -86,7 +87,7 @@
   (:= s (get reply-8 0))
   (:= body (get reply-8 2))
   (assert (= (get body "tasks") [])) ; 終わった task はもう送らない = worker は file を片付ける
-  (val reply-9 (respond s (req "GET" (+ "/tasks/" id)) 400 T))
+  (val reply-9 (responded s (req "GET" (+ "/tasks/" id)) 400 T))
   (:= s (get reply-9 0))
   (val view (get reply-9 2))
   (assert (= #((get view "phase") (get view "result")) #("finished" "R")))
@@ -100,7 +101,7 @@
   (val reply-11 (submit s 0 :lease 5.0))
   (:= s (get reply-11 0))
   (val id (get reply-11 1))
-  (val reply-12 (respond s (req "GET" (+ "/tasks/" id)) 4000 T))
+  (val reply-12 (responded s (req "GET" (+ "/tasks/" id)) 4000 T))
   (:= s (get reply-12 0)) ; 問い合わせが lease を 9000 まで延ばす
   (val reply-13 (beat s "w" 8000))
   (:= s (get reply-13 0))
@@ -110,7 +111,7 @@
   (:= s (get reply-14 0))
   (:= body (get reply-14 2))
   (assert (= (get body "tasks") [])) ; 担い手は次の拍でその子 process を止める
-  (val reply-15 (respond s (req "GET" (+ "/tasks/" id)) 9002 T))
+  (val reply-15 (responded s (req "GET" (+ "/tasks/" id)) 9002 T))
   (:= s (get reply-15 0))
   (val view (get reply-15 2))
   (assert (= (get view "phase") "missing")))
@@ -172,7 +173,7 @@
 
 (defn #^ Callable scripted [#^ Script script]
   "台本の外側に仮想の時計(script の SimClock)を被せる。"
-  (fn [program] ((sim-time-handler :clock script.clock) ((scripted-requests script) program))))
+  (fn [program] ((sim-time-handler :clock script.clock) ((scripted-requests script) (request-bodies program)))))
 
 (deftest test-coordinator-loop-answers-after-persisting
   (setv script (Script [(req "POST" "/heartbeat" {"name" "w" "provides" ["net"] "capacity" 10 "versions" V})
@@ -297,7 +298,7 @@
   (.load store)
   (setv script (Script [(req "POST" "/resources/Service" {"name" "a" "spec" {"revision" "r" "needs" ["net"] "run" SAMPLE-RUN}})
                         (req "PUT" "/board/k" {"value" 1})]))
-  (<- final ClusterState ((sim-time-handler :clock script.clock) ((no-persist-script script) ((wal-store store) (run-coordinator (ClusterState) T (ClusterNaming))))))
+  (<- final ClusterState ((sim-time-handler :clock script.clock) ((no-persist-script script) ((wal-store store) (request-bodies (run-coordinator (ClusterState) T (ClusterNaming)))))))
   (setv back (state-from-kv (.load (WalStore d)) 99999))
   (assert (= (durable-kv back) (durable-kv final)))
   (assert (= (. back revision) (. final revision)))

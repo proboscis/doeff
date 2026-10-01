@@ -23,7 +23,7 @@
 (import doeff_cluster.shared.intent.protocol [ClusterTiming Request])
 (import doeff_cluster.coordinator.intent.cluster_model [ClusterState])
 (import doeff_cluster.foundation.coordinator_inbox [http-request])
-(import doeff_cluster.coordinator.core.api_policy [respond])
+(import doeff_cluster.coordinator.protocol.request_bodies [responded])
 (import doeff_cluster.shared.intent.job_model [JobSpec])
 (import doeff_cluster.worker.core.policy [kept-when-cut-off])
 (import tests.link_rig [LinkRig])
@@ -36,7 +36,7 @@
 
 
 (defn #^ tuple lease [#^ ClusterState state #^ str name #^ str op #^ str token #^ int now #^ int [ttl 15000] #^ int [permits 1]]
-  (respond state (http-request "POST" (+ "/leases/" name) {} {"op" op "token" token "permits" permits "ttlMs" ttl} :actor "w") now T))
+  (responded state (http-request "POST" (+ "/leases/" name) {} {"op" op "token" token "permits" permits "ttlMs" ttl} :actor "w") now T))
 
 
 ;; --- coordinator の時計だけで判じる ------------------------------------------------------------------
@@ -50,11 +50,11 @@
   (setv #(s _ _) (lease (ClusterState) "app-writer" "claim" "a/1/x/1" 1000))
   (setv row (get s.board "semaphore/app-writer"))
   (setv stolen {"permits" 1 "holders" {"b/1/y/1" 99999}})
-  (setv #(_ early-status early-body) (respond s (http-request "PUT" "/board/semaphore/app-writer" {} {"value" stolen "expect" row} :actor "b")
+  (setv #(_ early-status early-body) (responded s (http-request "PUT" "/board/semaphore/app-writer" {} {"value" stolen "expect" row} :actor "b")
                                               10000 T))
   (assert (= early-status 409) early-body)
   ;; 切れた後なら通る(旧い版の奪い方も期限の後なら正しい)
-  (setv #(_ late-status _) (respond s (http-request "PUT" "/board/semaphore/app-writer" {} {"value" stolen "expect" row} :actor "b")
+  (setv #(_ late-status _) (responded s (http-request "PUT" "/board/semaphore/app-writer" {} {"value" stolen "expect" row} :actor "b")
                                     16001 T))
   (assert (= late-status 200))
   ;; 外すだけの書き(旧い worker の drop)は通す
