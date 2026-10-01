@@ -2,7 +2,8 @@
 ;; JSON の形は coordinator/protocol/replies が綴る。検の入口 responded と、本番と模擬の組の返事の答え手 reply-bodies は同じ綴りを通る。
 (require doeff-hy.macros [deftest val])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming])
-(import doeff_cluster.coordinator.intent.cluster_model [ClusterState EventsView StateReply])
+(import doeff_cluster.coordinator.intent.cluster_model [ClusterState EventsView StateReply HeartbeatReply])
+(import doeff_cluster.coordinator.core.cluster_policy [heartbeat-reply])
 (import doeff_cluster.shared.protocol.inbox [http-request])
 (import doeff_cluster.coordinator.core.api_policy [respond])
 (import doeff_cluster.coordinator.protocol.request_bodies [responded])
@@ -42,3 +43,12 @@
 (deftest test-a-body-that-is-not-a-reply-type-passes-unchanged
   (val raw {"ok" True})
   (assert (is (reply-json raw) raw)))
+
+
+(deftest test-the-heartbeat-reply-is-typed-and-spelled-in-the-old-shape
+  ;; heartbeat の返事は型の値(HeartbeatReply)で、JSON の欄は前と同じ — superseded は退いた世代への返事の時だけ書く。
+  (val reply (heartbeat-reply (ClusterState :revision 3) "w1" T))
+  (assert (isinstance reply HeartbeatReply) reply)
+  (val body (reply-json reply))
+  (assert (= (sorted body) ["draining" "formats" "jobs" "revision" "tasks" "timing" "warm"]) body)
+  (assert (= #((get body "revision") (get body "jobs") (get body "tasks") (get body "warm")) #(3 [] [] [])) body))

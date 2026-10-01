@@ -12,7 +12,7 @@
 (import doeff_cluster.shared.intent.job_model [JobSpec])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming Request BodyInvalid])
 (import doeff_cluster.shared.core.capabilities [capabilities-of environ-pairs])
-(import doeff_cluster.coordinator.intent.cluster_model [ClusterJob WorkerInfo AuditEvent BoardRow WorkerReport GenerationOrder Placement ClusterState TaskRecord EnvFailed HandoffPhase UnplacedKind ACCEPTED-FORMATS PLACED-PHASES])
+(import doeff_cluster.coordinator.intent.cluster_model [ClusterJob WorkerInfo TaskOffer WarmOffer HeartbeatReply BoardRow WorkerReport GenerationOrder Placement ClusterState TaskRecord EnvFailed HandoffPhase UnplacedKind ACCEPTED-FORMATS PLACED-PHASES])
 (import doeff_cluster.coordinator.core.cluster_rules [component-versions-of format-version-refusal])
 (import doeff_cluster.coordinator.intent.request_bodies [LeaseBody TaskResultBody BoardWrite HeartbeatBody EnvsReport StatusRow TaskBody])
 (import doeff_cluster.coordinator.core.cluster_rules [required-field int-field])
@@ -180,20 +180,6 @@
                  (if job.spec.environ {"environ" (dict job.spec.environ)} {})))
   ;; 受け付けた job は Program の job だけ(run を持つ — spec-of-declaration)。行は run を運ぶ(entry と args は worker の内部の形)。
   (| base extra {"run" job.run}))
-
-
-(defn #^ dict spec-json [#^ JobSpec spec]
-  (| {"name" spec.name "entry" spec.entry "args" (list spec.args) "revision" spec.revision "once" spec.once}
-     ;; Program の job だけ(改訂 1 の F・G): 詰めた Program の置き場のキー(worker が /programs/<sha> から取る)と子の環境変数。
-     (if spec.program {"program" spec.program} {})
-     (if spec.environ {"environ" (dict spec.environ)} {})
-     (if (is spec.placement None) {} {"placement" spec.placement})
-     ;; 実行環境の job だけ: 宣言の JSON(worker が env の root を準備し、版を env のキーへ置き換える)。
-     (if (is spec.runtime-env None) {} {"runtimeEnv" (json.loads spec.runtime-env)})
-     ;; 入れ替え(handoff)の job だけ: 形と、coordinator が Ready と数えている process の世代の名(worker は旧をこの後に止める)。
-     (if spec.handoff {"handoff" True "readyInstance" spec.ready-instance} {})
-     ;; 入れ替えを諦めた job だけ(2026-09-26 — handoff_policy の期限): worker は新を止めて起こし直さず、旧を動かし続ける。
-     (if (and spec.handoff spec.handoff-abandoned) {"handoffAbandoned" True} {})))
 
 
 (defn #^ dict task-summary [#^ TaskRecord task]
@@ -737,23 +723,18 @@
       (end-env-failed failed now detail)))
 
 
-(defn #^ list tasks-for [#^ ClusterState state #^ str worker #^ (| str None) [boot None]]
+(defn #^ tuple tasks-for [#^ ClusterState state #^ str worker #^ (| str None) [boot None]]
   "heartbeat の返事で worker の process へ走らせる task を渡すため。切り離した task は、置いた時と同じ process の世代にだけ送る
    (作り直した worker の process で走らせ直さない)。boot = 返事を受ける process の世代(渡さなければ coordinator の見る今の世代)。"
   (setv boot (if (is boot None) (. (.get state.workers worker (WorkerInfo worker #() 0 0)) boot) boot))
-  (lfor task (sorted (.values state.tasks) :key (fn [t] t.id))
-        :if (and (in task.phase PLACED-PHASES) (= task.worker worker) (same-boot task boot))
-        ;; 詰めた Program は置き場のキー(sha)だけを運ぶ — worker が /programs/<sha> から取る(service の job と同じ・改訂 1 の F)。
-        (| {"id" task.id "name" task.name "revision" task.revision
-            "versions" (dict task.versions) "program" task.program}
-           ;; 切り離した task は、状態を失った coordinator が引き取れるだけの欄を持つ(worker が状態の報告に写す —
-           ;; adopt-running-detached・2026-09-27)。
-           (if task.detached {"detached" True "key" task.key "leaseMs" task.lease-ms "retainMs" task.retain-ms
-                              "needs" (list task.needs)} {})
-           (if (is-not task.runtime-env None) {"runtimeEnv" task.runtime-env} {})
-           ;; 子の環境変数(service の job の行の environ と同じ欄 — worker は同じ路で子の環境に置く)。切り離した task は写しにも残る
-           ;; (引き取る時に同じ environ で行を作り直す)。
-           (if task.environ {"environ" (dict task.environ)} {}))))
+  ;; 詰めた Program は置き場のキー(sha)だけを運ぶ — worker が /programs/<sha> から取る(service の job と同じ・改訂 1 の F)。
+  ;; 切り離した task は、状態を失った coordinator が引き取れるだけの欄を持つ(worker が状態の報告に写す — adopt-running-detached・
+  ;; 2026-09-27)。子の環境変数は service の job の行の environ と同じ欄(切り離した task は写しにも残る)。JSON は protocol/replies。
+  (tuple (gfor task (sorted (.values state.tasks) :key (fn [t] t.id))
+               :if (and (in task.phase PLACED-PHASES) (= task.worker worker) (same-boot task boot))
+               (TaskOffer :id task.id :name task.name :revision task.revision :versions task.versions :program task.program
+                          :detached task.detached :key task.key :lease-ms task.lease-ms :retain-ms task.retain-ms :needs task.needs
+                          :runtime-env task.runtime-env :environ task.environ))))
 
 
 (defn #^ TaskRecord task-finished [#^ TaskRecord task #^ int now #^ str detail #^ (| str None) result]
@@ -1069,36 +1050,31 @@
                t)))
 
 
-(defn #^ list warms-for [#^ ClusterState state #^ str worker #^ int now]
+(defn #^ tuple warms-for [#^ ClusterState state #^ str worker #^ int now]
   "worker に配る温める表の行(期限の内・能力(専用の能力を含む)と宣言の道具が合う行)。heartbeat の返事の warm。"
   (setv info (.get state.workers worker))
   (if (is info None)
-      []
-      (lfor w (sorted (.values state.warms) :key (fn [w] w.key))
-            :if (and (> w.until-ms now) (placeable w.needs info)
-                     (tools-cover w.runtime-env info))
-            {"key" w.key "runtimeEnv" w.runtime-env})))
+      #()
+      (tuple (gfor w (sorted (.values state.warms) :key (fn [w] w.key))
+                   :if (and (> w.until-ms now) (placeable w.needs info)
+                            (tools-cover w.runtime-env info))
+                   (WarmOffer :key w.key :runtime-env w.runtime-env)))))
 
 
-(defn #^ dict heartbeat-reply [#^ ClusterState state #^ str name #^ ClusterTiming timing #^ (| dict None) [ready-instances None] #^ int [now 0]
+(defn #^ HeartbeatReply heartbeat-reply [#^ ClusterState state #^ str name #^ ClusterTiming timing #^ (| dict None) [ready-instances None] #^ int [now 0]
                                #^ (| str None) [boot None] #^ (| tuple None) [statuses None]]
   "heartbeat を送った process に、動かす job・task・温める表・時間の設定・drain の印を返すため。boot = 送った process の世代・
    statuses = その heartbeat の状態の報告。退いた世代(superseded-boot)への返事は superseded-reply。"
   (when (and (is-not boot None) (superseded-boot state name boot))
     (return (superseded-reply state name boot (or statuses #()) timing ready-instances)))
-  {"jobs" (lfor s (jobs-for state name ready-instances) (spec-json s))
-   "tasks" (tasks-for state name boot)
-   ;; 温める表のうち、この worker に合う行(2026-09-26 — worker は job の準備より低い優先度で準備する)。
-   "warm" (warms-for state name now)
-   "timing" (asdict timing)
-   ;; この worker が drain 中か(2026-09-25): worker は返事ごとに Pod の中の ready の file へ写し、readinessProbe は sh でそれを読む
-   ;; (hy を起こす probe は込んだ node で 10 秒の timeout を越え、両方の Pod が同時に NotReady → DaemonSet が 2 台を同時に消した)。
-   "draining" (in name state.drains)
-   ;; 受け入れる本文の形の版(2026-09-26 — cluster_model.ACCEPTED-FORMATS)。
-   "formats" (list ACCEPTED-FORMATS)
-   ;; この返事を作った時の coordinator の版(#1933): worker は次の変化を GET /watch?after=<この版> で待つ。欄の無い返事は、待つ口の
-   ;; 無い旧い coordinator の物。
-   "revision" state.revision})
+  ;; warm = 温める表のうち、この worker に合う行(2026-09-26 — worker は job の準備より低い優先度で準備する)。
+  ;; draining = この worker が drain 中か(2026-09-25): worker は返事ごとに Pod の中の ready の file へ写し、readinessProbe は sh でそれを読む
+  ;; (hy を起こす probe は込んだ node で 10 秒の timeout を越え、両方の Pod が同時に NotReady → DaemonSet が 2 台を同時に消した)。
+  ;; formats = 受け入れる本文の形の版(2026-09-26 — cluster_model.ACCEPTED-FORMATS)。
+  ;; revision = この返事を作った時の coordinator の版(#1933): worker は次の変化を GET /watch?after=<この版> で待つ。
+  (HeartbeatReply :jobs (tuple (jobs-for state name ready-instances)) :tasks (tasks-for state name boot) :warm (warms-for state name now)
+                  :timing timing :draining (in name state.drains) :superseded False :formats (tuple ACCEPTED-FORMATS)
+                  :revision state.revision))
 
 
 (defn #^ frozenset running-names [#^ tuple statuses]
@@ -1109,7 +1085,7 @@
                    (or row.retired-from row.name))))
 
 
-(defn #^ dict superseded-reply [#^ ClusterState state #^ str name #^ str boot #^ tuple statuses #^ ClusterTiming timing
+(defn #^ HeartbeatReply superseded-reply [#^ ClusterState state #^ str name #^ str boot #^ tuple statuses #^ ClusterTiming timing
                                 #^ (| dict None) [ready-instances None]]
   "退いた世代の process への heartbeat の返事(2026-09-27)。退く process に新しい仕事を起こさせず、動いている物は安全に畳ませるため:
    jobs = 名の置き先の入れ替え(handoff)の job のうち、その世代が running と報告している物だけ(lease を持ったまま Pod の停止まで
@@ -1117,17 +1093,13 @@
    世代が動かしていないので載らない)。tasks = task.boot がその世代と等しい切り離した task だけ(最後まで走らせる。RemoteJob の
    task は世代を記録しないので載せない)。温める表は載せない。draining = 真(ready の file を draining にする)・superseded = 真。"
   (setv running (running-names statuses))
-  {"jobs" (lfor s (jobs-for state name ready-instances) :if (and s.handoff (in s.name running)) (spec-json s))
-   "tasks" (lfor row (tasks-for state name boot)
-                 :setv task (get state.tasks (get row "id"))
-                 :if (and task.detached (= task.boot boot))
-                 row)
-   "warm" []
-   "timing" (asdict timing)
-   "draining" True
-   "superseded" True
-   "formats" (list ACCEPTED-FORMATS)
-   "revision" state.revision})
+  (HeartbeatReply :jobs (tuple (gfor s (jobs-for state name ready-instances) :if (and s.handoff (in s.name running)) s))
+                  :tasks (tuple (gfor offer (tasks-for state name boot)
+                                      :setv task (get state.tasks offer.id)
+                                      :if (and task.detached (= task.boot boot))
+                                      offer))
+                  :warm #() :timing timing :draining True :superseded True :formats (tuple ACCEPTED-FORMATS)
+                  :revision state.revision))
 
 
 (defn #^ dict state-view [#^ ClusterState state #^ int now #^ ClusterTiming timing]

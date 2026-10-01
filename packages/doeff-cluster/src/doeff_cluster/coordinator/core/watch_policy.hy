@@ -8,12 +8,12 @@
 (require doeff-hy.macros [defk <- val var])
 (import dataclasses [replace])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming Request])
-(import doeff_cluster.coordinator.intent.cluster_model [ClusterState Watcher WatchRefusal WatchAnswer WatchStep] doeff_cluster.shared.intent.protocol [WATCH-MAX-SECONDS])
+(import doeff_cluster.coordinator.intent.cluster_model [ClusterState HeartbeatReply Watcher WatchRefusal WatchAnswer WatchStep] doeff_cluster.shared.intent.protocol [WATCH-MAX-SECONDS])
 (import doeff_cluster.coordinator.core.cluster_policy [heartbeat-reply])
 (import doeff_cluster.coordinator.core.api_policy [ready-instances])
 
 ;; worker の見え方に入れない返事の欄: 温める表(期限で変わる先読み — 次の heartbeat で届けば足りる)と版(版が進むたびに変わる)。
-(val UNWATCHED-REPLY-FIELDS (frozenset #("warm" "revision")))
+;; 見え方に数えない返事の欄 = 温める表(warm)と版(revision)— worker-mark が空にして比べる。
 
 
 (defk query-revision [value]
@@ -54,12 +54,12 @@
 
 
 (defk worker-mark [state worker boot now timing]
-  {:pre [(: state ClusterState) (: worker str) (: boot (| str None)) (: now int) (: timing ClusterTiming)] :post [(: % dict)]
+  {:pre [(: state ClusterState) (: worker str) (: boot (| str None)) (: now int) (: timing ClusterTiming)] :post [(: % HeartbeatReply)]
    :tags {:context "doeff-cluster" :role "judgment"}}
-  "名指した worker の見え方(その世代の heartbeat の返事から温める表と版の欄を除いた物)を、返事と同じ関数で作るため — 待ちが起きる
+  "名指した worker の見え方(その世代の heartbeat の返事から温める表と版の欄を空にした物)を、返事と同じ関数で作るため — 待ちが起きる
    条件と worker が受け取る物の定義を 2 つにしない。"
   (val reply (heartbeat-reply state worker timing (ready-instances state worker now timing) :now now :boot boot))
-  (dfor #(k v) (.items reply) :if (not-in k UNWATCHED-REPLY-FIELDS) k v))
+  (replace reply :warm #() :revision 0))
 
 
 (defk watch-deadline [watcher state now]
@@ -81,10 +81,10 @@
     (and moved (or (is watcher.worker None) (is watcher.mark None))) (:= woke True)
     (is watcher.worker None) None
     (is watcher.mark None)
-      (do (<- first dict (worker-mark state watcher.worker watcher.boot now timing))
+      (do (<- first HeartbeatReply (worker-mark state watcher.worker watcher.boot now timing))
           (:= kept (replace watcher :mark first)))
     moved
-      (do (<- seen dict (worker-mark state watcher.worker watcher.boot now timing))
+      (do (<- seen HeartbeatReply (worker-mark state watcher.worker watcher.boot now timing))
           (if (!= seen watcher.mark)
               (:= woke True)
               (:= kept (replace watcher :after state.revision)))))

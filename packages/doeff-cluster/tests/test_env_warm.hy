@@ -220,13 +220,13 @@
   (val hb {"name" "w1" "provides" ["agent-cli"] "capacity" 2 "versions" {} "boot" "b1" "platform" "linux-x86_64"
            "envs" {"ready" [] "preparing" [key-linux] "failed" []} "envCapacity" "ok"})
   (val s1 (register-heartbeat after (heartbeat-of hb) 2000))
-  (assert (= (lfor e (get (heartbeat-reply s1 "w1" TIMING :now 2000) "warm") (get e "runtimeEnv")) [declared]))
+  (assert (= (lfor e (. (heartbeat-reply s1 "w1" TIMING :now 2000) warm) e.runtime-env) [declared]))
   (val s2 (register-heartbeat s1 (heartbeat-of (| hb {"name" "w2" "provides" ["net"]})) 2000))
-  (assert (= (get (heartbeat-reply s2 "w2" TIMING :now 2000) "warm") []) "能力の足りない worker には配らない")
+  (assert (= (. (heartbeat-reply s2 "w2" TIMING :now 2000) warm) #()) "能力の足りない worker には配らない")
   (val with-gpu (register-heartbeat s2 (heartbeat-of (| hb {"name" "w3" "provides" ["agent-cli" "gpu"] "exclusive" ["gpu"]})) 2000))
-  (assert (= (get (heartbeat-reply with-gpu "w3" TIMING :now 2000) "warm") [])
+  (assert (= (. (heartbeat-reply with-gpu "w3" TIMING :now 2000) warm) #())
           "専用の能力(gpu)を持つ worker には、その能力を要らない行を配らない")
-  (assert (= (get (heartbeat-reply s2 "w1" TIMING :now 700000) "warm") []) "期限を過ぎた行は配らない")
+  (assert (= (. (heartbeat-reply s2 "w1" TIMING :now 700000) warm) #()) "期限を過ぎた行は配らない")
   ;; 読む: w1 は準備中 → 準備済みを名乗った後は ready
   (val read-1 (get (responded s2 (http-request "GET" (+ "/warm/" warmed.key) {} None) 2000 TIMING) 2))
   (assert (= (. (warm-state-of-json read-1) preparing) #("w1")) read-1)
@@ -320,7 +320,7 @@
   (assert (= #(cold.phase cold.worker) #("preparing" "w1")) cold)
   (val after (replace cold-state :tasks {"t1" cold}))
   (assert (= (get (load-of after {}) "w1") 1) "preparing の task も担い手の数に入る")
-  (assert (= (lfor t (tasks-for after "w1") (get t "id")) ["t1"]) "preparing の task も worker へ送る")
+  (assert (= (lfor t (tasks-for after "w1") t.id) ["t1"]) "preparing の task も worker へ送る")
   ;; worker が準備済みを名乗った拍に assigned へ進む
   (val hb {"name" "w1" "provides" ["net"] "capacity" 2 "versions" {} "boot" None "platform" "linux-x86_64"
            "envs" {"ready" [key] "preparing" [] "failed" []} "envCapacity" "ok"})

@@ -374,6 +374,37 @@ class Fault:
     message: str
     where: str
 
+@dataclass(frozen=True, kw_only=True)
+class TaskOffer:
+    id: str
+    name: str
+    revision: str
+    versions: tuple[ComponentVersion, ...]
+    program: str | None
+    detached: bool
+    key: str | None
+    lease_ms: int
+    retain_ms: int
+    needs: tuple[str, ...]
+    runtime_env: dict[str, object] | None
+    environ: tuple[tuple[str, str], ...]
+
+@dataclass(frozen=True, kw_only=True)
+class WarmOffer:
+    key: str
+    runtime_env: dict[str, object]
+
+@dataclass(frozen=True, kw_only=True)
+class HeartbeatReply:
+    jobs: tuple[JobSpec, ...]
+    tasks: tuple[TaskOffer, ...]
+    warm: tuple[WarmOffer, ...]
+    timing: object
+    draining: bool
+    superseded: bool
+    formats: tuple[int, ...]
+    revision: int
+
 @dataclass(frozen=True)
 class Watcher:
     request: object
@@ -381,7 +412,7 @@ class Watcher:
     deadline_ms: int
     worker: str | None = None
     boot: str | None = None
-    mark: dict[str, object] | None = None
+    mark: HeartbeatReply | None = None
 
 @dataclass(frozen=True)
 class WatchRefusal:

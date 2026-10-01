@@ -580,6 +580,45 @@
 ;; 待ちの上限 WATCH-MAX-SECONDS は worker も問いに載せる取り交わしの値なので shared/intent/protocol に在る(#2025)。
 
 
+(defrecord TaskOffer
+  "heartbeat の返事で worker の process へ渡す task 1 つ(cluster_policy.tasks-for — 返事に載せる欄だけを TaskRecord から写す。lease の期限の
+   ような拍ごとに変わる欄を持たないので、返事の等しさで worker の見え方を比べられる — watch_policy.worker-mark): id・name・revision・
+   versions = 送り手の版・program = 詰めた Program の置き場のキー・detached / key / lease-ms / retain-ms / needs = 切り離した task が
+   引き取りのために運ぶ欄(切り離していなければ使わない)・runtime-env = 実行環境の宣言(無ければ None)・environ = 子の環境変数。"
+  (#^ str id)
+  (#^ str name)
+  (#^ str revision)
+  (#^ (get tuple #(ComponentVersion ...)) versions)
+  (#^ (| str None) program)
+  (#^ bool detached)
+  (#^ (| str None) key)
+  (#^ int lease-ms)
+  (#^ int retain-ms)
+  (#^ tuple needs)
+  (#^ (| dict None) runtime-env)
+  (#^ tuple environ))
+
+
+(defrecord WarmOffer
+  "heartbeat の返事で worker へ配る温める表の行 1 つ(cluster_policy.warms-for): key = 行のキー・runtime-env = 宣言の JSON。"
+  (#^ str key)
+  (#^ dict runtime-env))
+
+
+(defrecord HeartbeatReply
+  "heartbeat の返事(cluster_policy.heartbeat-reply・superseded-reply — #2595): jobs = 動かす job の spec・tasks = 走らせる task・warm =
+   温める表の行・timing = 時間の設定・draining = drain 中か・superseded = 退いた世代への返事か・formats = 受け入れる本文の形の版・
+   revision = 返事を作った時の coordinator の版。JSON の形は coordinator/protocol/replies が綴る(superseded は真の時だけ書く)。"
+  (#^ (get tuple #(JobSpec ...)) jobs)
+  (#^ (get tuple #(TaskOffer ...)) tasks)
+  (#^ (get tuple #(WarmOffer ...)) warm)
+  (#^ ClusterTiming timing)
+  (#^ bool draining)
+  (#^ bool superseded)
+  (#^ tuple formats)
+  (#^ int revision))
+
+
 (defclass [(dataclass :frozen True)] Watcher []
   "GET /watch の待ち 1 件(調停ループが返事まで持つ)。request = 返事を返す相手の要求・after = 送り手が知っている版・deadline-ms =
    変わらなくても返す刻(epoch ms)・worker / boot = 名指した worker とその process の世代(None = coordinator 全体の版だけを見る)・
@@ -589,7 +628,7 @@
   (#^ int deadline-ms)
   (setv #^ (| str None) worker None)
   (setv #^ (| str None) boot None)
-  (setv #^ (| dict None) mark None))
+  (setv #^ (| HeartbeatReply None) mark None))
 
 
 (defclass [(dataclass :frozen True)] WatchRefusal []

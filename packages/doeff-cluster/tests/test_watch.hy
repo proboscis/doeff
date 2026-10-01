@@ -13,6 +13,7 @@
 (import doeff_cluster.shared.intent.protocol [ClusterTiming])
 (import doeff_cluster.coordinator.intent.cluster_model [ClusterState ClusterNaming IdleProbe])
 (import doeff_cluster.coordinator.core.cluster_policy [heartbeat-reply])
+(import doeff_cluster.coordinator.protocol.replies [reply-json])
 (import doeff_cluster.coordinator.core.idle_policy [quiet-ticks])
 (import doeff_cluster.sim.local [sim-cluster send-request ClientLink SimLink SimWorker ReadCoordinator DrainWorker StopCoordinator])
 (import doeff_cluster.worker.intent.worker_model [WorkerPolicy])
@@ -186,4 +187,5 @@
 
 (deftest test-the-heartbeat-reply-carries-the-revision-to-watch-after
   (val reply (heartbeat-reply (ClusterState :revision 7) "w1" (ClusterTiming)))
-  (assert (= (get reply "revision") 7) reply))
+  (assert (= reply.revision 7) reply)
+  (assert (= (get (reply-json reply) "revision") 7) reply))
