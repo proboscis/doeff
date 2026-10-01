@@ -86,9 +86,24 @@ pub struct ArchService {
     /// repo(merge-queue のように機能の dir で分けた repo)が、DOEFF163 の「code を持つ service」をこの module の在りかで判じさせる
     /// (agora-redesign #1978)。書かない service は今までどおり entry の層の dir で判じる。
     pub entry_modules: Option<Vec<String>>,
+    /// cluster に置く系の宣言(`:system "module:defsystem の名"`・系が複数なら列・置かない理由は `{:exempt "理由"}` — 書かない = None)。
+    /// DOEFF173 が、code を持つ service に宣言・entry の層の defsystem の実在・引数が型つきの土台 1 つを求める(agora-redesign #2187)。
+    pub system: Option<SystemDecl>,
     /// architecture.hy の中の defservice の位置(DOEFF117 の知らせの位置)。
     #[serde(skip)]
     pub range: doeff_indexer::hy_index::Range,
+}
+
+/// defservice の `:system` の宣言(閉じた集合)。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum SystemDecl {
+    /// 系の defsystem(`"module:名"` の 1 つか列)。
+    Systems(Vec<DefinitionRef>),
+    /// その service の code が別の service の系の中で走る(`{:part-of "module:名"}` — 指す系はどこかの service の entry の層の defsystem)。
+    PartOf(DefinitionRef),
+    /// 系を置かない理由(`{:exempt "理由"}` — 旧い経路に残す service か、process を持たない部品の service。理由の中身は判じない・空の理由は DOEFF173 が赤にする)。
+    Exempt(String),
 }
 
 /// 反例を持たない条 1 つと、持たない理由(`defservice` の `:clause-exemptions` の 1 組)。
@@ -1363,6 +1378,36 @@ impl<'a> Parser<'a> {
             }
         }
         out
+    }
+
+    /// defservice の `:system`: `"module:名"` 1 つ・その列・`{:part-of "module:名"}`・`{:exempt "理由"}` のどれか(他の形は理由を積む)。
+    fn system_decl(&mut self, value: &Form) -> Option<SystemDecl> {
+        if self.bracket(value).is_some() {
+            return Some(SystemDecl::Systems(self.definition_refs(value, ":system")));
+        }
+        if let Some(entries) = self.brace(value) {
+            return match entries.as_slice() {
+                [key, reason] if self.text(key) == ":exempt" => match self.string(reason) {
+                    Some(text) => Some(SystemDecl::Exempt(text)),
+                    None => {
+                        self.problem(reason, ":system の :exempt は理由の文字列");
+                        None
+                    }
+                },
+                [key, target] if self.text(key) == ":part-of" => self.definition_ref(target, ":system の :part-of").map(SystemDecl::PartOf),
+                _ => {
+                    self.problem(value, ":system の辞書は {:part-of \"module:名\"} か {:exempt \"理由\"} だけ");
+                    None
+                }
+            };
+        }
+        match self.string(value) {
+            Some(_) => self.definition_ref(value, ":system").map(|found| SystemDecl::Systems(vec![found])),
+            None => {
+                self.problem(value, ":system は \"module:名\"・その列・{:part-of \"module:名\"}・{:exempt \"理由\"} のどれか");
+                None
+            }
+        }
     }
 
     /// defservice の `:clause-exemptions {"条" "理由" …}`(理由は空でない文字列)。
@@ -2774,6 +2819,7 @@ impl<'a> Parser<'a> {
             clauses: None,
             clause_exemptions: Vec::new(),
             entry_modules: None,
+            system: None,
             range,
         };
         let mut exemptions_form: Option<&Form> = None;
@@ -2792,6 +2838,7 @@ impl<'a> Parser<'a> {
                             ":invariants" => service.invariants = Some(self.definition_refs(value, ":invariants")),
                             ":clauses" => service.clauses = Some(self.clause_names(value)),
                             ":entry-modules" => service.entry_modules = Some(self.entry_modules(value)),
+                            ":system" => service.system = self.system_decl(value),
                             ":clause-exemptions" => {
                                 service.clause_exemptions = self.clause_exemptions(value);
                                 exemptions_form = Some(value);

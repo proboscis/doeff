@@ -2755,6 +2755,112 @@ fn services_without_declared_invariants_are_red() {
     assert_eq!(known["registered"], true, "{}", known);
 }
 
+/// agora-redesign #2187(DOEFF136 と対): code を持つ service は defservice に :system(cluster に置く系の defsystem)を宣言し、その系は
+/// entry の層に在る defsystem で、引数は型つきの土台 1 つ(土台を受ける job の関数の引数の型が素の Callable・写像・組でない)。
+/// 鳴る例: 宣言なし・定義なし・defsystem でない・引数 2 つ・土台の型が Callable・型なし・entry の外・他の service の entry の系・空の理由の例外。
+/// 鳴る例(part-of): 指す系が無い・指す物が defsystem でない。
+/// 鳴らない例: 宣言あり + 型つきの土台 1 つ・他の service の entry の系を指す part-of・理由つきの例外(旧い経路に残す service と、
+/// process を持たない部品の service — agent-catalog の形)・code の無い service。
+#[test]
+fn services_without_a_declared_system_are_red() {
+    let job = |name: &str, ty: Option<&str>| match ty {
+        Some(ty) => format!("(defk {} [foundation]\n  {{:pre [(: foundation {})] :post [(: % int)] :tags {{:context \"app\" :role \"entry\"}}}}\n  \"job。\"\n  1)\n", name, ty),
+        None => format!("(defk {} [foundation]\n  {{:post [(: % int)] :tags {{:context \"app\" :role \"entry\"}}}}\n  \"job。\"\n  1)\n", name),
+    };
+    let files = [
+        ("app/foundation/host.hy", tags("shared", "foundation") + "(defk with-host [body] body)\n"),
+        (
+            "app/billing/entry/system.hy",
+            tags("billing", "entry")
+                + &job("billing-job", Some("BillingFoundation"))
+                + "(defsystem billing-system [foundation]\n  \"請求の系\"\n  (billing (billing-job foundation) :needs #{\"pg\"}))\n",
+        ),
+        ("app/ledger/entry/main.hy", tags("ledger", "entry") + "(defk start [] 2)\n"),
+        (
+            "app/orders/entry/system.hy",
+            tags("orders", "entry")
+                + &job("orders-job", Some("OrdersFoundation"))
+                + &job("plain-job", Some("(of Callable [str] int)"))
+                + &job("bare-job", None)
+                + "(defsystem orders-system [foundation programs]\n  (orders (orders-job foundation)))\n\
+                   (defsystem orders-plain [foundation]\n  (plain (plain-job foundation)))\n\
+                   (defsystem orders-bare [foundation]\n  (bare (bare-job foundation)))\n",
+        ),
+        ("app/orders/entry/main.hy", tags("orders", "entry") + "(defk take [] 3)\n"),
+        ("app/stock/entry/main.hy", tags("stock", "entry") + "(defk count-all [] 4)\n"),
+        (
+            "app/sim/systems.hy",
+            tags("sim", "entry") + &job("stock-job", Some("StockFoundation")) + "(defsystem stock-system [foundation]\n  (stock (stock-job foundation)))\n",
+        ),
+        ("app/archive/entry/main.hy", tags("archive", "entry") + "(defk keep [] 5)\n"),
+        ("app/reports/entry/main.hy", tags("reports", "entry") + "(defk send [] 6)\n"),
+        ("app/tasks/entry/main.hy", tags("tasks", "entry") + "(defk run-task [] 7)\n"),
+        ("app/agents/entry/main.hy", tags("agents", "entry") + "(defk act [] 8)\n"),
+        ("app/helpers/entry/main.hy", tags("helpers", "entry") + "(defk help [] 9)\n"),
+        ("app/jobs/entry/main.hy", tags("jobs", "entry") + "(defk work [] 10)\n"),
+        ("app/catalog/entry/main.hy", tags("catalog", "entry") + "(defk allowed [] 11)\n"),
+    ];
+    let dir = world_repo_with(&files, "", "[\"DOEFF173\"]");
+    let arch_path = dir.path().join("architecture.hy");
+    let text = std::fs::read_to_string(&arch_path)
+        .unwrap()
+        .replace("{:layers [core entry]})", "{:layers [core entry] :system \"app.billing.entry.system:billing-system\"})")
+        + "(defservice ledger \"台帳\" {:layers [core entry]})\n\
+           (defservice orders \"注文\" {:layers [core entry] :system [\"app.orders.entry.system:orders-system\" \"app.orders.entry.system:orders-plain\"\n\
+             \"app.orders.entry.system:orders-bare\" \"app.orders.entry.main:take\" \"app.orders.entry.system:gone\"]})\n\
+           (defservice stock \"在庫\" {:layers [core entry] :system \"app.sim.systems:stock-system\"})\n\
+           (defservice archive \"保管\" {:layers [core entry] :system {:exempt \"\"}})\n\
+           (defservice reports \"報告\" {:layers [core entry] :system {:exempt \"旧い経路に残す — 機体ごとの起動で cluster の系に載せない\"}})\n\
+           (defservice catalog \"許可名簿\" {:layers [core entry] :system {:exempt \"process を持たない部品 — main も deploy も無く、読むだけで他の service が使う\"}})\n\
+           (defservice tasks \"作業\" {:layers [core entry] :system \"app.billing.entry.system:billing-system\"})\n\
+           (defservice agents \"担い手\" {:layers [core entry] :system {:part-of \"app.billing.entry.system:billing-system\"}})\n\
+           (defservice helpers \"手伝い\" {:layers [core entry] :system {:part-of \"app.billing.entry.system:nowhere\"}})\n\
+           (defservice jobs \"仕事\" {:layers [core entry] :system {:part-of \"app.orders.entry.main:take\"}})\n\
+           (defservice notes \"覚え書き\" {:layers [core]})\n";
+    std::fs::write(&arch_path, text).unwrap();
+    let (_, report) = editor(dir.path());
+    assert_eq!(
+        keys(&report, "DOEFF173"),
+        vec![
+            "architecture.hy::DOEFF173::archive::exempt",
+            "architecture.hy::DOEFF173::helpers::app.billing.entry.system:nowhere",
+            "architecture.hy::DOEFF173::jobs::app.orders.entry.main:take",
+            "architecture.hy::DOEFF173::ledger",
+            "architecture.hy::DOEFF173::orders::app.orders.entry.main:take",
+            "architecture.hy::DOEFF173::orders::app.orders.entry.system:gone",
+            "architecture.hy::DOEFF173::orders::app.orders.entry.system:orders-bare::bare-job",
+            "architecture.hy::DOEFF173::orders::app.orders.entry.system:orders-plain::plain-job",
+            "architecture.hy::DOEFF173::orders::app.orders.entry.system:orders-system::params",
+            "architecture.hy::DOEFF173::stock::app.sim.systems:stock-system",
+            "architecture.hy::DOEFF173::tasks::app.billing.entry.system:billing-system",
+        ],
+        "{}",
+        report
+    );
+    // 他の service の entry の系を指す宣言も赤(:system はその service 自身の entry の層の系 — cisco-c8 と #2188 の決め)。
+    let borrowed = violation(&report, "architecture.hy::DOEFF173::tasks::app.billing.entry.system:billing-system");
+    assert!(borrowed["message"].as_str().unwrap().contains("entry の層に無い"), "{}", borrowed["message"]);
+    // part-of(その service の code が別の service の系の中で走る): 他の service の entry の系を指してよい(agents は鳴らない)。
+    // 指す先が無い・defsystem でないなら赤。
+    let nowhere = violation(&report, "architecture.hy::DOEFF173::helpers::app.billing.entry.system:nowhere");
+    assert!(nowhere["message"].as_str().unwrap().contains("定義が無い"), "{}", nowhere["message"]);
+    let not_system = violation(&report, "architecture.hy::DOEFF173::jobs::app.orders.entry.main:take");
+    assert!(not_system["message"].as_str().unwrap().contains("defsystem でない"), "{}", not_system["message"]);
+    let missing = violation(&report, "architecture.hy::DOEFF173::ledger");
+    assert!(missing["message"].as_str().unwrap().contains("service ledger は :system"), "{}", missing["message"]);
+    assert_eq!(missing["level"], "critical", "{}", missing);
+    let two = violation(&report, "architecture.hy::DOEFF173::orders::app.orders.entry.system:orders-system::params");
+    assert!(two["message"].as_str().unwrap().contains("引数が土台 1 つでない([foundation programs])"), "{}", two["message"]);
+    let plain = violation(&report, "architecture.hy::DOEFF173::orders::app.orders.entry.system:orders-plain::plain-job");
+    assert!(plain["message"].as_str().unwrap().contains("(of Callable [str] int)"), "{}", plain["message"]);
+    let bare = violation(&report, "architecture.hy::DOEFF173::orders::app.orders.entry.system:orders-bare::bare-job");
+    assert!(bare["message"].as_str().unwrap().contains("書かれていない"), "{}", bare["message"]);
+    let take = violation(&report, "architecture.hy::DOEFF173::orders::app.orders.entry.main:take");
+    assert!(take["message"].as_str().unwrap().contains("defsystem でない"), "{}", take["message"]);
+    let outside = violation(&report, "architecture.hy::DOEFF173::stock::app.sim.systems:stock-system");
+    assert!(outside["message"].as_str().unwrap().contains("entry の層に無い"), "{}", outside["message"]);
+}
+
 /// agora-redesign #1978: 層の dir(`<root>/<dir>/entry/`)を持たない repo(merge-queue のように機能の dir で分けた repo)は、defservice の
 /// `:entry-modules` で code の在りかを宣言する。宣言した service は DOEFF163 の母集団に入る — 宣言の無い形では entry の dir が無いので
 /// 母集団が 0 になり、条を消しても鳴らなかった。

@@ -149,6 +149,10 @@ pub enum ProjectRule {
     /// DOEFF163: code を持つ service(entry の層に定義が 1 本以上)が defservice に :invariants を宣言していない・名指した関数が実在しない・
     /// その関数の :role が judgment でない(agora-redesign #1559・#1155 の定義 1 — 業務ロジックを「テストした」の条 (b))。
     ServiceInvariantsMissing,
+    /// DOEFF173: code を持つ service が defservice に :system(cluster に置く系の defsystem)を宣言していない・名指した module が
+    /// その service の entry の層に無い・名が defsystem でない・defsystem の引数が型つきの土台 1 つでない(agora-redesign #2187 —
+    /// DOEFF136 と対。defsystem が在れば汎用の模擬 cluster のテストに自動で載るので、規則が求めるのは宣言と形だけ)。
+    ServiceSystemMissing,
     /// DOEFF140: architecture.hy の :placed-dependencies の層の module(service と shared)が、root の下の層の置き場の外の module を
     /// import する — 置き場の決まっていない module への依存(agora-redesign #1188)。
     PlacedDependency,
@@ -264,6 +268,7 @@ impl ProjectRule {
         ProjectRule::FieldHoldersDiffer,
         ProjectRule::ServiceUntestedOnSim,
         ProjectRule::ServiceInvariantsMissing,
+        ProjectRule::ServiceSystemMissing,
         ProjectRule::PlacedDependency,
         ProjectRule::BlindDefinitionReads,
         ProjectRule::DefinitionCallsUnlistedHead,
@@ -340,6 +345,7 @@ impl ProjectRule {
             ProjectRule::FieldHoldersDiffer => "DOEFF149",
             ProjectRule::ServiceUntestedOnSim => "DOEFF136",
             ProjectRule::ServiceInvariantsMissing => "DOEFF163",
+            ProjectRule::ServiceSystemMissing => "DOEFF173",
             ProjectRule::PlacedDependency => "DOEFF140",
             ProjectRule::BlindDefinitionReads => "DOEFF141",
             ProjectRule::DefinitionCallsUnlistedHead => "DOEFF147",
@@ -393,6 +399,7 @@ impl ProjectRule {
             | ProjectRule::FieldHoldersDiffer
             | ProjectRule::ServiceUntestedOnSim
             | ProjectRule::ServiceInvariantsMissing
+            | ProjectRule::ServiceSystemMissing
             // 置き場の外の module への依存(#1188 — 登録簿に載った既知の当たりは warning、新しい当たりは critical)。
             | ProjectRule::PlacedDependency
             // 決めた材料だけで判じる定義に、ほかの材料が入り込む(#1368 — #1188 の子。新しい当たりは critical)。
@@ -504,6 +511,7 @@ impl ProjectRule {
             | ProjectRule::SpellingCountDiffers
             | ProjectRule::EffectOutsideCensus
             | ProjectRule::ServiceInvariantsMissing
+            | ProjectRule::ServiceSystemMissing
             | ProjectRule::RegistryEntryStale
             // テストと本番の届き(定義の graph)を辿る: テストの種類・模擬で回さない service・縁の検・偽物・組み立て・反例・網羅。
             | ProjectRule::TestKindMismatch
@@ -634,6 +642,7 @@ impl ProjectRule {
             | ProjectRule::CallOutsideDeclaredSites
             | ProjectRule::BroadCatchOutsideCarrier
             | ProjectRule::ServiceInvariantsMissing
+            | ProjectRule::ServiceSystemMissing
             | ProjectRule::RegistryEntryStale
             // 定義の graph(テストと本番の届き)を repo 全体で辿る。
             | ProjectRule::WorldHandlerMisplaced
@@ -723,6 +732,7 @@ impl ProjectRule {
             | ProjectRule::FieldHoldersDiffer
             | ProjectRule::ServiceUntestedOnSim
             | ProjectRule::ServiceInvariantsMissing
+            | ProjectRule::ServiceSystemMissing
             | ProjectRule::RetiredWord
             | ProjectRule::RetiredCall
             | ProjectRule::BlindDefinitionReads
@@ -816,6 +826,7 @@ impl ProjectRule {
             ProjectRule::FieldHoldersDiffer => "一覧と食い違う型の欄の持ち手",
             ProjectRule::ServiceUntestedOnSim => "模擬の環境のテストが回さない service",
             ProjectRule::ServiceInvariantsMissing => "不変条件を宣言していない service",
+            ProjectRule::ServiceSystemMissing => "系を宣言していない service",
             ProjectRule::RetiredWord => "使わないと決めた綴り",
             ProjectRule::RetiredCall => "使わないと決めた呼び",
             ProjectRule::HandlerArgumentHoldsState => "handler の引数が client・可変の店を取る",
@@ -880,6 +891,7 @@ impl ProjectRule {
             | ProjectRule::TestFormNotDeftest
             | ProjectRule::ServiceUntestedOnSim
             | ProjectRule::ServiceInvariantsMissing
+            | ProjectRule::ServiceSystemMissing
             | ProjectRule::DefinitionCallsUnlistedHead
             | ProjectRule::CallOutsideDeclaredSites
             | ProjectRule::BroadCatchOutsideCarrier
@@ -967,6 +979,7 @@ impl ProjectRule {
             ProjectRule::FieldHoldersDiffer => "Field Holders Differ",
             ProjectRule::ServiceUntestedOnSim => "Service Untested On Sim",
             ProjectRule::ServiceInvariantsMissing => "Service Invariants Missing",
+            ProjectRule::ServiceSystemMissing => "Service System Missing",
             ProjectRule::RetiredWord => "Retired Word",
             ProjectRule::RetiredCall => "Retired Call",
             ProjectRule::HandlerArgumentHoldsState => "Handler Argument Holds State",
@@ -1040,6 +1053,7 @@ impl ProjectRule {
             ProjectRule::RecordStubNotKwOnly => "architecture.hy の :record-stubs の型の宣言(.pyi)は、同じ dir の同じ名の .hy の実行時の形を偽らない — .hy で欄を名でしか受けない record(defrecord か、飾りに (dataclass … :kw-only True …) を持つ defclass)を @dataclass で宣言するなら kw_only=True を書く",
             ProjectRule::ServiceUntestedOnSim => "業務の service は、本番の組み立て(entry の層)のまま模擬の環境に載せ、handler の差し替えだけで回して確かめる — 模擬の環境(:verification-environment)の下の deftest がその service の entry の層の定義に 1 本も届かなければ、未検証の service として赤にする",
             ProjectRule::ServiceInvariantsMissing => "code を持つ業務の service(entry の層に定義が 1 本以上)は、architecture.hy の defservice に :invariants(業務の不変条件の関数 `module:関数` の列)を宣言する — 名指した関数は実在し、:tags の :role が judgment(記録を受けて破りの列を返す純粋な判断)。宣言の無い service・実在しない関数・判断でない関数は赤",
+            ProjectRule::ServiceSystemMissing => "code を持つ業務の service(entry の層に定義が 1 本以上)は、architecture.hy の defservice に :system(cluster に置く系 `module:defsystem の名`・系が複数なら列)を宣言する — 名指した module はその service の entry の層に在り、名は defsystem で定義され、引数は型つきの土台 1 つ(土台を受ける job の関数の引数の型が書かれ、素の Callable・写像・組でない)。defsystem が在れば汎用の模擬 cluster のテストに自動で載る。その service の code が別の service の系の中で走るなら {:part-of \"module:defsystem の名\"}(指す系はどこかの service の entry の層)、旧い経路に残す service と process を持たない部品の service(main も deploy も無く他の service が読むだけ)は {:exempt \"理由\"} と理由を書く(理由の中身は判じない・空の理由は赤)",
             ProjectRule::HandlerArgumentHoldsState => "handler は接続の object や書き換える店を引数で受け取らない — 接続先と資格・設定は Ask で読み、client は本文の先頭の (session val client …) で 1 回だけ作り、状態は (session var …) で持つ(外側の handler が差し替え・観測できる)。引数に残す物は本文に architecture.hy の :handler-arguments の :keep-mark の註で理由を書く",
             ProjectRule::BusinessEffectFake => "業務の効果に答える偽物を作らない — 偽物は外の世界に触れる効果だけ(operator 2026-09-26 \"we only need fake for effects that access external world\")。業務の操作は下の層の効果を出す defk で書き、検査は外の世界の handler だけを差し替える。模擬の根と本番の入口と業務の module は architecture.hy の :business-fakes で宣言する",
             ProjectRule::AssemblyShapeBroken => "組み立ては 1 点 — 組み立ての層の関数(引数 = 土台の値)が、土台の handler の列 1 つと、各 service の翻訳の層の翻訳の列の定数を並べるだけ。本番と模擬の違いは渡す土台の値だけで、組の file は残さない。翻訳の列は自分の service の翻訳だけを持ち、別の service の効果を出し直す列の外側にはそれに答える列を並べる。名前は architecture.hy の :assembly-shape で宣言する",
@@ -1127,6 +1141,7 @@ impl ProjectRule {
             ProjectRule::IntentEffectUncovered => "欠けた列を埋める — 検から出さないなら模擬の環境の deftest でその業務の操作を通す・答え手が無いなら翻訳の層の handler を組み立てに載せる(使わない効果なら宣言を消す)",
             ProjectRule::ServiceUntestedOnSim => "模擬の環境の tests に、その service の entry の組み立てを handler の差し替えだけで回す deftest を足す",
             ProjectRule::ServiceInvariantsMissing => "defservice に :invariants [\"<module>:<関数>\" …] を足し、関数は :role \"judgment\" の defk で置く(模擬の環境の <service>_invariants.hy など)。既知の欠けは登録簿に理由と持ち主を載せる",
+            ProjectRule::ServiceSystemMissing => "defservice に :system \"<module>:<defsystem の名>\" を足し、defsystem はその service の entry の層に (defsystem 名 [foundation] …) の形で置く。土台を受ける job の関数は :pre に土台の型(defrecord)を書く。旧い経路に残す service と process を持たない部品の service は :system {:exempt \"理由\"}",
             ProjectRule::TestKindMismatch => "縁なら印を付け(既定の pytest から外れる)、手元のつもりなら届く先の実 I/O の handler を模擬の handler に替える — 手元なのに印が在れば外す",
             ProjectRule::WorldHandlerWithoutContractTest => "本物(その handler)と模擬の解釈器を :interpreters に並べた deftest を書き、同じ検を両方に通す — 縁の検を持たない理由が在る handler だけ、名簿の行に理由のテストの名つきで none を書く: doeff の handler を 1 行で包むだけで契約テストが doeff の側に在るなら :contract-test (none :doeff-test \"packages/<pkg>/tests/<file>.hy::<テストの名>\")(doeff の repo の根からの path)、この repo の別のテストが契約を確かめるなら :contract-test (none :repo-test \"<file>.hy::<テストの名>\")(この repo の根からの path)。理由の無い :contract-test none は鳴る",
             ProjectRule::WorldHandlerMisplaced => "定義を foundation の層(architecture.hy の :foundation の dir)へ移すか、名簿の綴り(module:名)を実物に合わせる — 要らなくなった定義なら名簿から外す",
@@ -1227,6 +1242,7 @@ mod tests {
         ("DOEFF135", RuleFamily::Definition),
         ("DOEFF136", RuleFamily::Definition),
         ("DOEFF163", RuleFamily::Definition),
+        ("DOEFF173", RuleFamily::Definition),
         ("DOEFF140", RuleFamily::Place),
         ("DOEFF141", RuleFamily::Place),
         ("DOEFF147", RuleFamily::Definition),
