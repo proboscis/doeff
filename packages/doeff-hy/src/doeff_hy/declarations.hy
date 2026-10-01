@@ -38,6 +38,7 @@
 ;; doeff-linter の DOEFF172(写像の置き場)が『dict を組む事が目的の 1 点』として数えない(agora-redesign #2265 の決め・#2299 で書けるように
 ;; した・#2515 で形の名を json の外へ広げ、読む側の :reads を足した — cisco-c8 の線引きの決め 2026-10-02)。値は SPELLS の閉じた一覧(形の名)。
 ;; records = doeff-records の API の形(ListRows の where・RecordsSchema の表の宣言 — 外で決まった形・cisco-c8 の決め 2026-10-02 02:00・#2515)。
+;; env = 環境の形(doeff の Local が受ける reader の環境の写像・子 process の environ — 写像しか受けない外の API・cisco-c8 の決め 2026-10-02 05:3x・#2610)。
 (setv OPTIONAL-TAG-KEYS #(":spells" ":reads"))
 (setv SPELLS #("json" "http" "env" "schema" "records"))
 
