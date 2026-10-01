@@ -24,6 +24,7 @@
                                     holding-unloadable Unloadable spawners quitters pulses detaching context-env-readers])
 (import doeff_cluster.runtime_env_model [RuntimeEnv runtime-env->json])
 (import doeff_cluster.coordinator_invariants [acknowledged-writes-survive])
+(import doeff_cluster.worker_invariants [handoff-keeps-a-ready-writer])
 (import tests.env_fixtures [LOCK env-of])
 
 
@@ -150,7 +151,31 @@
   (val new-ready (lfor r changed.after.reports :if (and (= r.instance new.instance) (= r.kind "readiness") r.ready) r.at))
   (assert new-ready changed.after.reports)
   (assert (<= (min new-ready) old.ended-ms) #(new-ready old))
-  (assert (= changed.after.readiness.state "Ready") changed.after.readiness))
+  (assert (= changed.after.readiness.state "Ready") changed.after.readiness)
+  ;; 条 W1(architecture.hy の worker の :invariants): 入れ替えの間も Ready の書き手が途切れない。
+  (<- lifetimes tuple (writer-lifetimes changed.after))
+  (<- gaps tuple (handoff-keeps-a-ready-writer lifetimes))
+  (assert (= gaps #()) #(gaps lifetimes)))
+
+
+(defk writer-lifetimes [seen]
+  {:pre [(: seen Seen)] :post [(: % tuple)] :tags {:context "doeff-cluster-test" :role "judgment"}}
+  "条 W1 の判断に渡す記録: 世代ごとの #(最初の Ready の報告の時刻 終わった時刻)(筋書きが読んだ process と報告から組むため)。"
+  (tuple (gfor p seen.processes
+               #((min (gfor r seen.reports :if (and (= r.instance p.instance) (= r.kind "readiness") r.ready) r.at) :default None)
+                 p.ended-ms))))
+
+
+(deftest test-a-counterexample-worker-that-stops-the-old-process-on-retire-breaks-w1
+  ;; 反例(条 W1): 入れ替えで旧を名から外す handler(RetireJob)が外すと同時に旧を止める壊れた worker(retire-stops)では、新が Ready に
+  ;; なるまで Ready の書き手が居ない区間ができ、W1 の判断が空白を返す — 本物の handler が旧を動かし続けていることの裏返し。
+  (val workers #((SimWorker :name "w1" :provides (frozenset ["cluster-net"]) :retire-stops True)))
+  (<- changed Changed (sim-cluster (handoff-beacons sim-foundation)
+                                   (redeclare-and-watch (handoff-beacons-v2 sim-foundation) "beacon" "beacon/" 15.0)
+                                   :workers workers))
+  (<- lifetimes tuple (writer-lifetimes changed.after))
+  (<- gaps tuple (handoff-keeps-a-ready-writer lifetimes))
+  (assert gaps lifetimes))
 
 
 (defk watch-rows [seconds prefix]

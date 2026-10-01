@@ -12,6 +12,11 @@
 ;;;   止まり置き場から作り直された後も残る。確かめるのは tests/test_local.hy の
 ;;;   test-a-stopped-coordinator-is-recreated-from-its-store-after-the-downtime(止める前の行と作り直した後の行を判断に渡す)。
 ;;;   壊した置き場の反例を deftest で結ぶ形(DOEFF167)は別に足す。
+;;;   W1 handoff-keeps-a-ready-writer(doeff_cluster.worker_invariants:handoff-keeps-a-ready-writer)— 入れ替え(handoff)を宣言した Service
+;;;   は、入れ替えの間も Ready の書き手が途切れない(旧は新が Ready になった後にだけ止める)。確かめるのは tests/test_local.hy の
+;;;   test-redeclaring-a-handoff-service-stops-the-old-process-only-after-the-new-one-is-ready(世代ごとの最初の Ready と終わりを判断に渡す)。
+;;;   失敗ケースは同じ file の test-a-counterexample-worker-that-stops-the-old-process-on-retire-breaks-w1(sim の宿の RetireJob の handler を
+;;;   「外すと同時に旧を止める」形に壊した worker — SimWorker の retire-stops — で、同じ筋書きに W1 の空白が出る)。
 
 (defarchitecture doeff-cluster
   :root "doeff_cluster"
@@ -22,6 +27,8 @@
   {:entry-modules ["doeff_cluster.coordinator"]
    :invariants ["doeff_cluster.coordinator_invariants:acknowledged-writes-survive"]})
 
-;; worker の条(入れ替えの間も書き手が居続ける・消す順など)はまだ無い。:entry-modules(doeff_cluster.main)は最初の条と同じ変更で足す — 足せば DOEFF163 が
-;; 条の欠けを数え始める(条の無いまま足すと critical の欠けを置くだけになる)。
-(defservice worker "coordinator から job と task を受けて子 process として走らせる worker" {})
+;; worker の条は W1(入れ替えの間も書き手が居続ける)。消す順などの条は後から足す。:entry-modules は層に分ける前の今の入口
+;; (doeff_cluster.main)。層に分けた後は :entry-modules を外し、entry 層の dir の定義で「code を持つ service」を数える形に移る。
+(defservice worker "coordinator から job と task を受けて子 process として走らせる worker"
+  {:entry-modules ["doeff_cluster.main"]
+   :invariants ["doeff_cluster.worker_invariants:handoff-keeps-a-ready-writer"]})
