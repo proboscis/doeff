@@ -6,7 +6,8 @@
 (import json)
 (import os)
 (import doeff_core_effects.file_effects [MakeDirectory WriteText file-done])
-(import doeff_cluster.worker.intent.worker_model [PublishStatus CodeTimings])
+(import doeff_cluster.worker.intent.worker_model [PublishStatus])
+(import doeff_cluster.worker.protocol.observations [CodeTimings])
 (import doeff_cluster.worker.protocol.heartbeat [status-row])
 
 

@@ -16,7 +16,8 @@
 (import doeff_time [sync-time-handler])
 (import doeff_cluster.foundation.host_contract [HOST-CONTRACT])
 (import doeff_cluster.shared.intent.job_model [JobSpec])
-(import doeff_cluster.worker.intent.worker_model [CodeLayout StartJob ReapJob ObserveProcesses Outcome ProcessView])
+(import doeff_cluster.worker.intent.worker_model [CodeLayout StartJob ReapJob Outcome ProcessView])
+(import doeff_cluster.worker.protocol.observations [ObserveProcesses])
 (import doeff_cluster.worker.core.launch [JobLaunch job-launch program-file CHILD-ENV-ALLOWED CHILD-ENV-PREFIXES])
 (import doeff_cluster.worker.protocol.process_host [HostSettings process-host])
 

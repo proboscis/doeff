@@ -2,8 +2,9 @@
 ;; root・子 process・入口の検め・root の置き場の disk)を問うて 1 つの WorldView で答える。言い換えは小さな答え手で代える。
 (require doeff-hy.macros [defhandler deftest <- val])
 (import doeff [run with-handlers])
-(import doeff_cluster.worker.intent.worker_model [CodeState CodeView EnvDisk ObserveWorld ObserveCode ObserveEnvs ObserveEnvDisk
-                                                  ObserveProcesses ObserveProbes WorldView])
+(import doeff_cluster.worker.intent.worker_model [CodeState CodeView EnvDisk ObserveWorld 
+ WorldView])
+(import doeff_cluster.worker.protocol.observations [ObserveProcesses ObserveCode ObserveEnvs ObserveEnvDisk ObserveProbes])
 (import doeff_cluster.worker.protocol.world [local-host])
 
 (val CODE (CodeView "rev1" CodeState.READY :path "/c/rev1"))

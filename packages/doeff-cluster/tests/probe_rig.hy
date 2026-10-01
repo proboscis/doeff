@@ -14,7 +14,8 @@
 (import doeff_time [sync-time-handler])
 (import doeff_cluster.shared.core.job_rules [spec-hash])
 (import doeff_cluster.shared.intent.job_model [JobSpec])
-(import doeff_cluster.worker.intent.worker_model [CodeLayout ObserveProbes ProbeState ProbeView])
+(import doeff_cluster.worker.intent.worker_model [CodeLayout ProbeState ProbeView])
+(import doeff_cluster.worker.protocol.observations [ObserveProbes])
 (import doeff_cluster.worker.core.probe_rules [PROBE-SECONDS])
 (import doeff_cluster.worker.protocol.probes [ProbeSettings probe-host])
 
