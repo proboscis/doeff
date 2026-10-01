@@ -92,7 +92,7 @@
   (val view (get reply-9 2))
   (assert (= #((get view "phase") (get view "result")) #("finished" "R")))
   ;; 結果は状態の報告(/state)には載せない
-  (assert (not-in "result" (get (. s statuses) "w" "jobs" 0))))
+  (assert (not-in "result" (get (. (get (. s statuses) "w") jobs) 0))))
 
 
 (deftest test-task-is-dropped-when-the-caller-stops-asking

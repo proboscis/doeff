@@ -251,7 +251,7 @@
   (val old (sim.live "r1"))
   (assert (and (= (len old) 1) (= (. (get old 0) retired-from) "writer-a")) old)
   (assert (.get (get sim.replies -1) "handoffAbandoned") (get sim.replies -1))
-  (val row (next (gfor r (get sim.state.statuses "zeus" "jobs") :if (= (get r "name") "writer-a") r)))
+  (val row (next (gfor r (. (get sim.state.statuses "zeus") jobs) :if (= (get r "name") "writer-a") r)))
   (assert (= (get row "phase") "handoff-abandoned") row)
   ;; 起こし直さない: 時間が経っても、coordinator を作り直しても(諦めは保存される)、r2 は起きない。
   (val starts-r2 (started sim "r2"))
