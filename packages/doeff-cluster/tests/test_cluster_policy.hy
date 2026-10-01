@@ -4,6 +4,7 @@
 (import doeff_cluster.shared.intent.job_model [JobSpec])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming])
 (import doeff_cluster.coordinator.intent.cluster_model [ClusterJob WorkerInfo WorkerReport Placement ClusterState])
+(import doeff_cluster.coordinator.intent.request_bodies [StatusRow])
 (import doeff_cluster.coordinator.core.cluster_policy [place-jobs jobs-for])
 (import tests.program_rows [SAMPLE-TASK-PROGRAM])
 
@@ -89,7 +90,7 @@
   ;; 止め終えた報告の後で k3s へ置く(同じ job を 2 つ動かさない)。
   (setv state (ClusterState #((job "placer")) {"mac" (mac "mac") "atlas" (pod "atlas")}
                             {"placer" (Placement "placer" "mac" 2 0)}
-                            :statuses {"mac" (WorkerReport :at 0 :endpoint None :jobs #({"name" "placer" "phase" "running"}))}))
+                            :statuses {"mac" (WorkerReport :at 0 :endpoint None :jobs #((StatusRow :name "placer" :phase "running")))}))
   (assert (= (place-jobs 1000 state T) {}))
   (assert (= (get (unplaced-jobs 1000 (replace state :placements {}) T) "placer") "前の担い手が止め終えるのを待っている"))
   (setv stopped (replace state :placements {} :statuses {"mac" (WorkerReport :at 1500 :endpoint None :jobs #())}))

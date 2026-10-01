@@ -192,9 +192,10 @@
   ;; 入れ替えで退いた process(行の名は <名>#retired-<世代>)が居る間、その job はまだ動いていると数える(他の worker へ置かない)。
   (setv state (ClusterState :workers {} :statuses {}))
   (import doeff_cluster.coordinator.intent.cluster_model [WorkerInfo WorkerReport])
+  (import doeff_cluster.coordinator.intent.request_bodies [StatusRow])
   (setv state (replace state :workers {"zeus" (WorkerInfo "zeus" #("net") 10 1000)}
                              :statuses {"zeus" (WorkerReport :at 1000 :endpoint None
-                                                             :jobs #({"name" "a#retired-1-x" "phase" "running" "retiredFrom" "a"}))}))
+                                                             :jobs #((StatusRow :name "a#retired-1-x" :phase "running" :retired-from "a")))}))
   (assert (still-live-somewhere 1000 state "a" T))
   (assert (not (still-live-somewhere 1000 state "b" T))))
 

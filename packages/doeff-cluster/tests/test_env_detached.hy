@@ -27,6 +27,7 @@
 (import doeff_cluster.shared.intent.protocol [ClusterTiming])
 (import doeff_cluster.coordinator.intent.cluster_model [ClusterState TaskRecord WorkerInfo ComponentVersion])
 (import doeff_cluster.coordinator.core.cluster_policy [can-run-task absorb-env-failure place-tasks submit-task ENV-RETRIES])
+(import doeff_cluster.coordinator.intent.request_bodies [StatusRow])
 (import doeff_cluster.coordinator.core.detached_policy [submit-detached])
 (import doeff_cluster.worker.intent.worker_model [CodeView CodeState WorldView JobRecord WorkerPolicy PrepareEnv
                                     PrepareCode] doeff_cluster.shared.intent.job_model [JobSpec JobPhase] doeff_cluster.worker.core.worker_rules [code-key])
@@ -197,7 +198,7 @@
 (deftest test-a-temporary-env-failure-is-placed-again-at-most-twice
   (<- env RuntimeEnv (env-of "app-1" "lib-1" LOCK))
   (<- task TaskRecord (env-task env))
-  (val report {"name" "task/t1" "phase" "env-failed" "detail" "届かない" "failureKind" "repo-unreachable" "retryable" True})
+  (val report (StatusRow :name "task/t1" :phase "env-failed" :detail "届かない" :failure-kind "repo-unreachable" :retryable True))
   (var current (replace task :phase "assigned" :worker "w1"))
   (for [n (range ENV-RETRIES)]
     (:= current (absorb-env-failure current (.format "w{}" (+ n 1)) report 10))
@@ -207,7 +208,7 @@
   (assert (= last.phase "env-failed") last)
   (assert (= last.avoid #("w1" "w2")))
   (val permanent (absorb-env-failure (replace task :phase "assigned" :worker "w1")
-                                     "w1" (| report {"failureKind" "lock-mismatch" "retryable" False}) 10))
+                                     "w1" (replace report :failure-kind "lock-mismatch" :retryable False) 10))
   (assert (= permanent.phase "env-failed") "恒久の失敗は置き直さない")
   ;; 置き直せる別の worker が無ければ、最後の失敗で終える
   (val timing (ClusterTiming))

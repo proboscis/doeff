@@ -12,7 +12,7 @@
 (import doeff_cluster.shared.intent.protocol [ClusterTiming Request Reply CoordinatorStopRequested])
 (import doeff_cluster.coordinator.intent.cluster_model [ClusterNaming ClusterState Persist CoordinatorFault] doeff_cluster.shared.intent.protocol [NextRequests])
 (import doeff_cluster.foundation.coordinator_inbox [http-request])
-(import doeff_cluster.coordinator.core.cluster_policy [reconcile state-to-json state-from-json job-from-json identity-hash])
+(import doeff_cluster.coordinator.core.cluster_policy [reconcile state-view state-to-json state-from-json job-from-json identity-hash])
 (import tests.program_rows [SAMPLE-RUN SAMPLE-PROGRAM SAMPLE-TASK-PROGRAM program-placed])
 (import doeff [run])
 (import doeff_cluster.coordinator.protocol.request_bodies [responded])
@@ -92,7 +92,8 @@
   (val view (get reply-9 2))
   (assert (= #((get view "phase") (get view "result")) #("finished" "R")))
   ;; 結果は状態の報告(/state)には載せない
-  (assert (not-in "result" (get (. (get (. s statuses) "w") jobs) 0))))
+  (assert (is (. (get (. (get (. s statuses) "w") jobs) 0) result) None))
+  (assert (not-in "result" (get (state-view s 400 T) "statuses" "w" "jobs" 0))))
 
 
 (deftest test-task-is-dropped-when-the-caller-stops-asking
