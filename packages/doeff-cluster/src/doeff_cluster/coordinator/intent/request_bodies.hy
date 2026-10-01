@@ -4,6 +4,8 @@
 ;;;   LeaseBody       POST /leases/<名>           lease の操作 1 つ(lease_rules.lease-op)
 ;;;   TaskResultBody  POST /tasks/<id>/result     task の子 process が直に届ける結果(#1387)
 ;;;   DrainBody       POST /workers/<名>/drain    worker の Pod の drain の頼み
+;;;   ReadinessBody   POST /resources/Service/<名>/readiness   service の process の準備できたの報告
+;;;   MetricsBody     POST /resources/Service/<名>/metrics     service の process の計器の報告
 ;;; 知らない欄は読み捨てる(前の直の読みと同じ — 送り手の版が新しい欄を足しても断らない)。
 (require doeff-hy.macros [val])
 (require doeff-hy.record [defwire defrecord])
@@ -40,6 +42,52 @@
   (setv #^ (| str None) boot None))
 
 
+(defwire DurationRow
+  "計器の報告の duration 1 つ: sum = 合計の秒・count = 回数。"
+  {:tags {:context "doeff-cluster" :role "type"} :names :camel :unknown :ignore}
+  (#^ (| int float) sum)
+  (#^ (| int float) count))
+
+
+(defwire MetricsPayload
+  "計器の報告の中身: counters・gauges = 名 → 値・durations = 名 → DurationRow(None = 欄が無い — 空と読む・名の綴りと数の上限の
+   検めは metrics_policy)。"
+  {:tags {:context "doeff-cluster" :role "type"} :names :camel :unknown :ignore}
+  (setv #^ (| (get dict #(str (| int float))) None) counters None)
+  (setv #^ (| (get dict #(str (| int float))) None) gauges None)
+  (setv #^ (| (get dict #(str DurationRow)) None) durations None))
+
+
+(defwire ReadinessBody
+  "POST /resources/Service/<名>/readiness の本文: 送り手の process の世代(worker・revision・pid・instance・attempt・spec-hash・
+   placement — job_context.RunContext の identity と同じ欄)と、ready = 準備できたか・reason = 理由・role = active か standby
+   (None = 旧い報告 — active と読む)。"
+  {:tags {:context "doeff-cluster" :role "type"} :names :camel :unknown :ignore}
+  (#^ str worker)
+  (#^ str revision)
+  (#^ bool ready)
+  (setv #^ (| int None) pid None)
+  (setv #^ (| str None) instance None)
+  (setv #^ (| str int None) attempt None)
+  (setv #^ (| str None) spec-hash None)
+  (setv #^ (| int None) placement None)
+  (setv #^ str reason "")
+  (setv #^ (| str None) role None))
+
+
+(defwire MetricsBody
+  "POST /resources/Service/<名>/metrics の本文: 送り手の process の世代(ReadinessBody と同じ欄)と metrics = 計器の中身。"
+  {:tags {:context "doeff-cluster" :role "type"} :names :camel :unknown :ignore}
+  (#^ str worker)
+  (#^ str revision)
+  (#^ MetricsPayload metrics)
+  (setv #^ (| int None) pid None)
+  (setv #^ (| str None) instance None)
+  (setv #^ (| str int None) attempt None)
+  (setv #^ (| str None) spec-hash None)
+  (setv #^ (| int None) placement None))
+
+
 (defrecord BodyMalformed
   "道の本文が型の約束の形でない(欠けた欄・型の違う値・JSON の object でない本文)— 受け口は 400 と reason で断る。"
   {:tags {:context "doeff-cluster" :role "type"}}
@@ -47,7 +95,7 @@
 
 
 ;; 道の本文の答えの型の和(ReadBody の答え・判断 respond が受ける本文 — まだ型にしていない道は JSON の object)。
-(setv RequestBody (| LeaseBody TaskResultBody DrainBody BodyMalformed dict))
+(setv RequestBody (| LeaseBody TaskResultBody DrainBody ReadinessBody MetricsBody BodyMalformed dict))
 
 
 (defclass [(dataclass :frozen True)] ReadBody [EffectBase]

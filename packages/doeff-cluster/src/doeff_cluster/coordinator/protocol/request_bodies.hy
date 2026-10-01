@@ -6,7 +6,7 @@
 (import doeff_hy.wire [parse Malformed])
 (import doeff_cluster.shared.intent.protocol [Request ClusterTiming])
 (import doeff_cluster.coordinator.intent.cluster_model [ClusterState])
-(import doeff_cluster.coordinator.intent.request_bodies [LeaseBody TaskResultBody DrainBody BodyMalformed ReadBody RequestBody])
+(import doeff_cluster.coordinator.intent.request_bodies [LeaseBody TaskResultBody DrainBody ReadinessBody MetricsBody BodyMalformed ReadBody RequestBody])
 (import doeff_cluster.coordinator.core.api_policy [respond])
 
 
@@ -16,6 +16,10 @@
     (and (= method "POST") (= (len parts) 2) (= (get parts 0) "leases")) LeaseBody
     (and (= method "POST") (= (len parts) 3) (= (get parts 0) "tasks") (= (get parts 2) "result")) TaskResultBody
     (and (= method "POST") (= (len parts) 3) (= (get parts 0) "workers") (= (get parts 2) "drain")) DrainBody
+    (and (= method "POST") (= (len parts) 4) (= (get parts 0) "resources") (= (get parts 1) "Service") (= (get parts 3) "readiness"))
+      ReadinessBody
+    (and (= method "POST") (= (len parts) 4) (= (get parts 0) "resources") (= (get parts 1) "Service") (= (get parts 3) "metrics"))
+      MetricsBody
     True None))
 
 

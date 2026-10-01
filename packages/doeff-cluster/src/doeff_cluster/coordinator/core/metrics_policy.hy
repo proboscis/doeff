@@ -20,6 +20,7 @@
 (import math)
 (import doeff_cluster.shared.intent.protocol [ClusterTiming])
 (import doeff_cluster.coordinator.intent.cluster_model [ClusterState PLACED-PHASES])
+(import doeff_cluster.coordinator.intent.request_bodies [MetricsBody MetricsPayload])
 (import doeff_cluster.coordinator.core.resource_policy [refuse running-process current-report keep-report report-fields service-readiness])
 (import doeff_cluster.coordinator.core.cluster_policy [unplaced-jobs board-usage])
 
@@ -37,12 +38,10 @@
   (and (isinstance v #(int float)) (not (isinstance v bool)) (math.isfinite v)))
 
 
-(defn #^ dict checked-metrics [#^ object metrics]
-  "報告の metrics を検める(形・名・値)。合わなければ 400 で断る。"
-  (when (not (isinstance metrics dict)) (refuse 400 "metrics は dict({counters gauges durations})"))
-  (setv counters (.get metrics "counters" {}) gauges (.get metrics "gauges" {}) durations (.get metrics "durations" {}))
-  (when (not (and (isinstance counters dict) (isinstance gauges dict) (isinstance durations dict)))
-    (refuse 400 "metrics の counters・gauges・durations は dict"))
+(defn #^ dict checked-metrics [#^ MetricsPayload metrics]
+  "報告の metrics(道の型に解いた値 — 形は解く所が検めた・#2445)の名と値を検める。合わなければ 400 で断る。"
+  (setv counters (or metrics.counters {}) gauges (or metrics.gauges {})
+        durations (dfor #(name row) (.items (or metrics.durations {})) name {"sum" row.sum "count" row.count}))
   (when (> (+ (len counters) (len gauges) (len durations)) MAX-NAMES)
     (refuse 400 (.format "metrics の名が多すぎる(上限 {})" MAX-NAMES)))
   (for [#(name v) (+ (list (.items counters)) (list (.items gauges)))]
@@ -53,10 +52,10 @@
   {"counters" (dict counters) "gauges" (dict gauges) "durations" (dict durations)})
 
 
-(defn #^ ClusterState record-metrics [#^ ClusterState state #^ str name #^ dict body #^ int now]
+(defn #^ ClusterState record-metrics [#^ ClusterState state #^ str name #^ MetricsBody body #^ int now]
   (when (not (any (gfor j state.jobs (= j.spec.name name))))
     (refuse 404 (+ "無い Service: " name)))
-  (setv report (| (report-fields body now) {"metrics" (checked-metrics (.get body "metrics"))}))
+  (setv report (| (report-fields body now) {"metrics" (checked-metrics body.metrics)}))
   (replace state :metrics (| state.metrics {name (keep-report (.get state.metrics name) report)})))
 
 
