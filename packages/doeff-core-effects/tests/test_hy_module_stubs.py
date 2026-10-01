@@ -28,6 +28,7 @@ PACKAGE = Path(__file__).resolve().parent.parent / "doeff_core_effects"
 STUBBED_MODULES = (
     "sql_effects",
     "sqlite_sql",
+    "sqlite_file_sql",
     "http_server_effects",
     "file_effects",
     "memory_file",

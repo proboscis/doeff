@@ -13,6 +13,7 @@
 (require doeff-hy.record [defrecord])
 (import sqlite3)
 (import dataclasses [dataclass])
+(import doeff [Program])
 (import doeff_core_effects.sql_effects [SqlQuery SqlInsertRows SqlTransaction SqlEnsureTables SetSqlOutage SqlRows SqlFailed SqlUnreachable
                                         SqlSchemaApplied SqlColumnType SqlText SqlPlaceholder split-statement checked-params param-value
                                         checked-identifier checked-identifiers checked-rows normalized-rows])
@@ -46,7 +47,7 @@
 
 
 (defrecord SqliteConnection
-  "database の名と、その memory の DB の接続 1 本(session の値)。"
+  "database の名と、その DB の接続 1 本(memory の DB の答え手では session の値・file の DB の答え手では SqliteFiles の中身)。"
   (#^ str name)
   (#^ sqlite3.Connection connection))
 
@@ -162,16 +163,22 @@
   (if (isinstance answer SqlRows) None answer))
 
 
+(defk sqlite-connection [target uri]
+  {:pre [(: target str) (: uri bool)] :post [(: % sqlite3.Connection)]
+   :tags {:context "sql" :role "foundation"}}
+  "答え手の接続を開くため(memory の DB と file の DB の答え手が同じ設定を使う): 自動 commit(transaction は BEGIN IMMEDIATE で明示)・
+   scheduler の thread の外からも使える・宣言の型を読む(BOOLEAN の読み戻し)。target = `:memory:` か URI(uri = True)。"
+  (sqlite3.connect target :check-same-thread False :isolation-level None :detect-types sqlite3.PARSE-DECLTYPES :uri uri))
+
+
 (defk with-connection [connections database]
   {:pre [(: connections tuple) (: database str)] :post [(: % tuple)]
    :tags {:context "sql" :role "foundation"}}
   "database の memory の DB の接続が置き場に在ることを確かめ、無ければ開いて足した置き場を返すため。session の値は同じ答え手の全部で
-   分け合う(鍵が module と答え手の名で決まる)ので、答え手ごとではなく database の名ごとに 1 本を持つ。宣言の型を読むのは BOOLEAN の読み戻しのため。"
+   分け合う(鍵が module と答え手の名で決まる)ので、答え手ごとではなく database の名ごとに 1 本を持つ。"
   (if (any (gfor c connections (= c.name database)))
       connections
-      (+ connections #((SqliteConnection :name database
-                                         :connection (sqlite3.connect ":memory:" :check-same-thread False :isolation-level None
-                                                                      :detect-types sqlite3.PARSE-DECLTYPES))))))
+      (+ connections #((SqliteConnection :name database :connection (! (sqlite-connection ":memory:" False)))))))
 
 
 (defk connection-of [connections database]
@@ -181,6 +188,76 @@
   (next (gfor c connections :if (= c.name database) c.connection)))
 
 
+(defk outage-marked [unreachable database down]
+  {:pre [(: unreachable tuple) (: database str) (: down bool)] :post [(: % tuple)]
+   :tags {:context "sql" :role "foundation"}}
+  "SetSqlOutage 1 つを不達の database の名の並びへ写すため(down = True で足し・False で外す)。"
+  (if down
+      (tuple (sorted (| (set unreachable) #{database})))
+      (tuple (gfor name unreachable :if (!= name database) name))))
+
+
+(defk outage-of [unreachable database]
+  {:pre [(: unreachable tuple) (: database str)] :post [(: % (| SqlUnreachable None))]
+   :tags {:context "sql" :role "foundation"}}
+  "不達の印のある database への effect の答え(SqlUnreachable)を作るため。印が無ければ None。"
+  (if (in database unreachable) (SqlUnreachable :reason (.format "模擬の不達: {}" database)) None))
+
+
+;; 以下の 4 つは effect 1 つに接続 1 本で答える道(memory の DB と file の DB の答え手が同じ道を通る)。不達の印のある database は
+;; SqlUnreachable。effect ごとに分けるのは、答えの型を effect の答えの型のまま運ぶため。
+
+(defk sqlite-answer-query [connection unreachable request]
+  {:pre [(: connection sqlite3.Connection) (: unreachable tuple) (: request SqlQuery)] :post [(: % (| SqlRows SqlFailed SqlUnreachable))]
+   :tags {:context "sql" :role "foundation"}}
+  "SqlQuery 1 つに答えるため(不達の印を見てから)。"
+  (<- down (outage-of unreachable request.database))
+  (when (is-not down None)
+    (return down))
+  (<- answer (sqlite-query connection request))
+  answer)
+
+
+(defk sqlite-answer-insert [connection unreachable request]
+  {:pre [(: connection sqlite3.Connection) (: unreachable tuple) (: request SqlInsertRows)] :post [(: % (| SqlRows SqlFailed SqlUnreachable))]
+   :tags {:context "sql" :role "foundation"}}
+  "SqlInsertRows 1 つに答えるため(不達の印を見てから)。"
+  (<- down (outage-of unreachable request.database))
+  (when (is-not down None)
+    (return down))
+  (<- answer (sqlite-insert connection request))
+  answer)
+
+
+(defk sqlite-answer-tables [connection unreachable database tables]
+  {:pre [(: connection sqlite3.Connection) (: unreachable tuple) (: database str) (: tables tuple)]
+   :post [(: % (| SqlSchemaApplied SqlFailed SqlUnreachable))]
+   :tags {:context "sql" :role "foundation"}}
+  "SqlEnsureTables 1 つに答えるため(不達の印を見てから)。"
+  (<- down (outage-of unreachable database))
+  (when (is-not down None)
+    (return down))
+  (<- answer (sqlite-ensure-tables connection tables))
+  answer)
+
+
+(defk sqlite-answer-transaction [connection unreachable database program]
+  {:pre [(: connection sqlite3.Connection) (: unreachable tuple) (: database str) (: program Program)]
+   :post [(: % "program の答え | SqlFailed | SqlUnreachable")]
+   :tags {:context "sql" :role "foundation"}}
+  "SqlTransaction 1 つを接続 1 本の BEGIN IMMEDIATE … COMMIT / ROLLBACK で答えるため(不達の印を見てから・手順は sql_transaction.hy)。"
+  (<- down (outage-of unreachable database))
+  (when (is-not down None)
+    (return down))
+  (<- answer (run-in-transaction database program
+                                 (fn [request] (sqlite-query connection request))
+                                 (fn [request] (sqlite-insert connection request))
+                                 (fn [] (sqlite-control connection "BEGIN IMMEDIATE"))
+                                 (fn [] (sqlite-control connection "COMMIT"))
+                                 (fn [] (sqlite-control connection "ROLLBACK"))))
+  answer)
+
+
 (defhandler sqlite-sql-handler [#^ tuple databases]
   ;; 引数に残す理由: 答える database の名で PostgreSQL / ClickHouse の答え手と同じ組に並べ分ける(Ask では組の中の区別が付かない)。
   "I/O なしの SQL の答え手(頭の註)。databases = 答える database の名の tuple(他の名の effect は外側へ回す)。"
@@ -188,44 +265,30 @@
   (session var connections #())
   (session var unreachable #())
   (SetSqlOutage [database down] :when (in database databases)
-    (:= unreachable (if down
-                        (tuple (sorted (| (set unreachable) #{database})))
-                        (tuple (gfor name unreachable :if (!= name database) name))))
+    (<- marked (outage-marked unreachable database down))
+    (:= unreachable marked)
     (resume None))
   (SqlQuery [database statement params] :when (in database databases)
     (<- opened (with-connection connections database))
     (:= connections opened)
-    (if (in database unreachable)
-        (resume (SqlUnreachable :reason (.format "模擬の不達: {}" database)))
-        (do (<- connection (connection-of connections database))
-            (<- answer (sqlite-query connection (SqlQuery database statement params)))
-            (resume answer))))
+    (<- connection (connection-of connections database))
+    (<- answer (sqlite-answer-query connection unreachable (SqlQuery database statement params)))
+    (resume answer))
   (SqlInsertRows [database table columns rows] :when (in database databases)
     (<- opened (with-connection connections database))
     (:= connections opened)
-    (if (in database unreachable)
-        (resume (SqlUnreachable :reason (.format "模擬の不達: {}" database)))
-        (do (<- connection (connection-of connections database))
-            (<- answer (sqlite-insert connection (SqlInsertRows database table columns rows)))
-            (resume answer))))
+    (<- connection (connection-of connections database))
+    (<- answer (sqlite-answer-insert connection unreachable (SqlInsertRows database table columns rows)))
+    (resume answer))
   (SqlEnsureTables [database tables] :when (in database databases)
     (<- opened (with-connection connections database))
     (:= connections opened)
-    (if (in database unreachable)
-        (resume (SqlUnreachable :reason (.format "模擬の不達: {}" database)))
-        (do (<- connection (connection-of connections database))
-            (<- answer (sqlite-ensure-tables connection tables))
-            (resume answer))))
+    (<- connection (connection-of connections database))
+    (<- answer (sqlite-answer-tables connection unreachable database tables))
+    (resume answer))
   (SqlTransaction [database program lock-key] :when (in database databases)
     (<- opened (with-connection connections database))
     (:= connections opened)
-    (if (in database unreachable)
-        (resume (SqlUnreachable :reason (.format "模擬の不達: {}" database)))
-        (do (<- connection (connection-of connections database))
-            (<- answer (run-in-transaction database program
-                                           (fn [request] (sqlite-query connection request))
-                                           (fn [request] (sqlite-insert connection request))
-                                           (fn [] (sqlite-control connection "BEGIN IMMEDIATE"))
-                                           (fn [] (sqlite-control connection "COMMIT"))
-                                           (fn [] (sqlite-control connection "ROLLBACK"))))
-            (resume answer)))))
+    (<- connection (connection-of connections database))
+    (<- answer (sqlite-answer-transaction connection unreachable database program))
+    (resume answer)))

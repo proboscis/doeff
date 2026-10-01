@@ -67,12 +67,38 @@ def sqlite_ensure_tables(
 def sqlite_control(
     connection: sqlite3.Connection, statement: str
 ) -> Program[SqlFailed | SqlUnreachable | None, Any]: ...
+def sqlite_connection(target: str, uri: bool) -> Program[sqlite3.Connection, Any]: ...
 def with_connection(
     connections: tuple[SqliteConnection, ...], database: str
 ) -> Program[tuple[SqliteConnection, ...], Any]: ...
 def connection_of(
     connections: tuple[SqliteConnection, ...], database: str
 ) -> Program[sqlite3.Connection, Any]: ...
+
+def outage_marked(
+    unreachable: tuple[str, ...], database: str, down: bool
+) -> Program[tuple[str, ...], Any]: ...
+def outage_of(
+    unreachable: tuple[str, ...], database: str
+) -> Program[SqlUnreachable | None, Any]: ...
+def sqlite_answer_query(
+    connection: sqlite3.Connection, unreachable: tuple[str, ...], request: SqlQuery
+) -> Program[SqlRows | SqlFailed | SqlUnreachable, Any]: ...
+def sqlite_answer_insert(
+    connection: sqlite3.Connection, unreachable: tuple[str, ...], request: SqlInsertRows
+) -> Program[SqlRows | SqlFailed | SqlUnreachable, Any]: ...
+def sqlite_answer_tables(
+    connection: sqlite3.Connection,
+    unreachable: tuple[str, ...],
+    database: str,
+    tables: tuple[SqlTable, ...],
+) -> Program[SqlSchemaApplied | SqlFailed | SqlUnreachable, Any]: ...
+def sqlite_answer_transaction(
+    connection: sqlite3.Connection,
+    unreachable: tuple[str, ...],
+    database: str,
+    program: Program[_A, Any],
+) -> Program[_A | SqlFailed | SqlUnreachable, Any]: ...
 
 class _SqliteSqlHandler(Protocol):
     """本文の Program に handler を被せる関数(答えの型は本文のまま)。"""
