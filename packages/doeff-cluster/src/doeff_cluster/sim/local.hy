@@ -43,7 +43,7 @@
 ;;;     在るので世界の effect を出さず、要求の列を値で受けて scheduler と時計の effect だけで coordinator と話す。
 ;;;   - 柵(fence)= host_contract.SIM-PASSABLE(scheduler と doeff-time の時計の effect)だけを外へ通し、それ以外を本番の子と同じ
 ;;;     doeff.UnhandledEffect で Program へ投げ返す — sim の外側(検の handler・sim の世界)が本番には無い答えを黙って返さない。
-;;;   - 筋書き(scenario)は検の側の呼び手(本番の DetachedClient などを持つ機体の外の process)として、同じ coordinator-answers(送り手 sim-client)
+;;;   - 筋書き(scenario)は検の側の呼び手(本番の detached-cluster などを積む機体の外の process)として、同じ coordinator-answers(送り手 sim-client)
 ;;;     の下で走る。別の送り手(実行環境の宣言・版の違う呼び手)が要る筋書きは ClientLink の値を置き換えて coordinator-answers を自分で被せる。
 ;;;
 ;;; 検の effect(sim の世界が答える — scenario の中で出す。service の Program が出すと柵で落ちる):
@@ -276,7 +276,7 @@
 (defrecord SimLink
   "coordinator へ話す送り手の口 1 つ(クラスタの約束の答え coordinator-answers の引数)。queue = coordinator の受け口(要求の列)・
    actor = 書きの送り手(X-Actor)・revision = 送り手の版(task の revision)・peer = 送り手の居る所(網の切断は worker の名で数える)・
-   runtime-env = 送る task(RemoteJob と切り離した task)の実行環境の宣言(本番の TaskSender・DetachedClient の runtime-env — None =
+   runtime-env = 送る task(RemoteJob と切り離した task)の実行環境の宣言(本番の TaskSender・DetachedSender の runtime-env — None =
    送り手の版のコードだけ)。"
   (#^ RequestQueue queue)
   (#^ str actor)
@@ -914,7 +914,7 @@
   {:pre [(: link SimLink) (: program (| Program EffectBase)) (: key str) (: needs frozenset) (: name str) (: lease-seconds float)
          (: retain-seconds float) (: environ dict)]
    :post [(: % DetachedSubmitAnswer)] :tags {:context "doeff-cluster" :role "protocol"}}
-  "SubmitDetached を本番の DetachedClient と同じ手順で送るため: 詰めた Program を版と一緒に PUT /programs/<sha> に置き、PUT /detached/<key>
+  "SubmitDetached を本番の detached-cluster(detached-submitted)と同じ手順で送るため: 詰めた Program を版と一緒に PUT /programs/<sha> に置き、PUT /detached/<key>
    (detached-submit-body)で出す。どちらも何度送っても同じ意味なので期限まで送り直し、届かなければ DetachedUnreachable(送れたかは
    分からない — key で冪等)。送れない値は送る前に断る(UnsendableProgram)・呼び手の誤りは DetachedRefused。"
   (val blob (encode-program program))
@@ -996,7 +996,7 @@
 
 (defk read-runners [link]
   {:pre [(: link SimLink)] :post [(: % (| tuple RunnersUnreachable))] :tags {:context "doeff-cluster" :role "protocol"}}
-  "ReadRunners を本番の DetachedClient.runners と同じく GET /state の workers から読むため(届かなければ RunnersUnreachable)。"
+  "ReadRunners を本番の detached.runners-read と同じく GET /state の workers から読むため(届かなければ RunnersUnreachable)。"
   (<- read tuple (send-resent link "GET" "/state" {} None))
   (if (is (get read 0) None)
       (runners-unreachable (unreached-reason read))
@@ -1006,7 +1006,7 @@
 (defk await-runners-change [link after timeout-seconds]
   {:pre [(: link SimLink) (: after int) (: timeout-seconds float)] :post [(: % RunnersChangeAnswer)]
    :tags {:context "doeff-cluster" :role "protocol"}}
-  "AwaitRunnersChange を本番の DetachedClient.runners-change と同じく GET /watch で 1 回待ち、同じ読み(detached.runners-change-of)で
+  "AwaitRunnersChange を本番の detached.runners-changed と同じく GET /watch で 1 回待ち、同じ読み(detached.runners-change-of)で
    答えるため(#1934)。"
   (<- answer tuple (send-request link "GET" "/watch" (watch-query after timeout-seconds) None))
   (runners-change-of (get answer 0) (if (is (get answer 0) None) (unreached-reason answer) (get answer 1))))
@@ -1014,7 +1014,7 @@
 
 (deff warm-answer-of [#^ tuple answer #^ str what]  ; defk にできない: 答えの節が返事を Program への答えに変える純粋な判断
   {:pre [(: answer tuple) (: what str)] :post [(: % WarmAnswer)] :tags {:context "doeff-cluster" :role "judgment"}}
-  "温める表の返事を、本番の WarmClient と同じ読み(同じ定義 detached.warm-unconnected・warm-server-failure)で答えにするため:
+  "温める表の返事を、本番の warm-cluster と同じ読み(同じ定義 detached.warm-unconnected・warm-server-failure)で答えにするため:
    期限まで届かない = WarmUnreachable・coordinator の 5xx = WarmUnreachable・断り(400 ほか)= DetachedRefused・それ以外 = 行の姿。"
   (cond
     (is (get answer 0) None) (warm-unconnected (unreached-reason answer))
@@ -1029,7 +1029,7 @@
 (defk warm-write [link env needs ttl-seconds holder]
   {:pre [(: link SimLink) (: env RuntimeEnv) (: needs frozenset) (: ttl-seconds float) (: holder str)] :post [(: % WarmAnswer)]
    :tags {:context "doeff-cluster" :role "protocol"}}
-  "WarmRuntimeEnv を本番の WarmClient.write と同じ本文(warm-request-body)で POST /warm に書き、今の姿を読むため(届かない・coordinator の
+  "WarmRuntimeEnv を本番の warm-cluster(warm-written)と同じ本文(warm-request-body)で POST /warm に書き、今の姿を読むため(届かない・coordinator の
    5xx は本番と同じ WarmUnreachable)。"
   (<- declared dict (runtime-env->json env))
   (<- written tuple (send-resent link "POST" "/warm" {} (warm-request-body declared needs ttl-seconds holder)))
@@ -1038,7 +1038,7 @@
 
 (defk warm-read [link key]
   {:pre [(: link SimLink) (: key str)] :post [(: % WarmAnswer)] :tags {:context "doeff-cluster" :role "protocol"}}
-  "ReadWarmState を本番の WarmClient.read と同じく GET /warm/<キー> で読むため(表に無い行 = 404 は空の姿・届かない・coordinator の
+  "ReadWarmState を本番の warm-cluster(warm-read)と同じく GET /warm/<キー> で読むため(表に無い行 = 404 は空の姿・届かない・coordinator の
    5xx は本番と同じ WarmUnreachable)。"
   (<- read tuple (send-resent link "GET" (warm-path key) {} None))
   (if (= (get read 0) 404)
@@ -1463,7 +1463,7 @@
                                  :spec-hash (spec-hash spec) :started-ms now)))
     ;; 節の中から Spawn する — 新しい task は節の外側の handler(世界・時計)だけを持ち、run-worker の中の handler を持たない。
     (<- program-path str (program-path-of spec.program))
-    ;; 子の送り手の口は本番の子の TaskSender・DetachedClient と同じく run-context の実行環境の宣言を持つ(cluster_foundation の組)。
+    ;; 子の送り手の口は本番の子の TaskSender・DetachedSender と同じく run-context の実行環境の宣言を持つ(cluster_foundation の組)。
     (<- child-env (| RuntimeEnv None) (runtime-env-of-context ctx))
     (val link (SimLink :queue parts.queue :actor spec.name :revision spec.revision :peer worker.name :runtime-env child-env))
     (<- plan SimPlan (PlanOf))

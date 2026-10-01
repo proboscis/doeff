@@ -4,7 +4,7 @@
 ;;   sim         … 手元の runner sim-cluster(本物の coordinator の調停ループと本物の run-worker・偽の宿が task の Program を柵の中で
 ;;                 走らせる — 筋書きは検の側の呼び手として sim の送り手の口で話す)・仮想の時計。担い手の死は KillWorker
 ;;                 (2026-09-28 まで同じ VM の模擬 detached-local の組だった — 呼び手の外側の handler を継ぐので消した)
-;;   coordinator … 本物の coordinator の判断(api_policy.respond / tick)を httpx.MockTransport の後ろに置き、本物の DetachedClient と
+;;   coordinator … 本物の coordinator の判断(api_policy.respond / tick)を httpx.MockTransport の後ろに置き、本物の detached-cluster と
 ;;                 本物の CoordinatorLink(heartbeat・task の file・結果の報告)で話す。担い手は同じ VM で Program を走らせる・仮想の時計
 ;;   served      … 本物の coordinator の process(hy -m doeff_cluster.coordinator.entry.main・HTTP・追記の log。conftest の served_coordinator が
 ;;                 検の間で 1 つを共有する)・同じ担い手・実時間
@@ -38,7 +38,9 @@
 (import doeff_cluster.shared.intent.detached_model [SubmitDetached AwaitDetached CancelDetached ReleaseDetached
                                       DetachedSubmitted DetachedSucceeded DetachedFailed DetachedLost DetachedCancelled
                                       DetachedVersionMismatch DetachedUnknown DetachedPending DetachedRefused])
-(import doeff_cluster.shared.protocol.detached [detached-cluster DetachedClient])
+(import doeff_cluster.shared.protocol.detached [detached-cluster])
+(import doeff_core_effects.http_handlers [http-production-handler])
+(import tests.transport_http [transport-http route-cell detached-sender TEST-ROUTE])
 (import doeff_cluster.sim.local [sim-cluster SimWorker KillWorker ReadCoordinator])
 (import doeff_cluster.shared.intent.service_model [system-of])
 (import tests.detached_rig [slow-add RigWorker MemoryCoordinator worker-tick worker-loop RIG-PROVIDES])
@@ -101,19 +103,21 @@
         coordinator (MemoryCoordinator clock)
         transport (httpx.MockTransport coordinator.handle)
         worker (RigWorker "http://coordinator" (/ tmp-path "tasks") (or runner-versions (current-versions)) :transport transport)
-        client (DetachedClient "http://coordinator" "r" (current-versions) :transport transport))
-  (Rig "coordinator" [(sim-time-handler :clock clock) (rig-runner-loss worker) (detached-cluster client :poll-seconds 0.5)]
+        sender (detached-sender "r"))
+  (Rig "coordinator" [(sim-time-handler :clock clock) (transport-http transport) (rig-runner-loss worker)
+                      (detached-cluster (route-cell) TEST-ROUTE sender :poll-seconds 0.5)]
        worker 3.0 5.0 0.5
        :runs (fn [key] (len (lfor t (.values coordinator.state.tasks) :if (= t.key key) t)))))
 
 
 (defn #^ Rig served-rig [#^ str url #^ Path tmp-path #^ (| dict None) [runner-versions None]]
   (setv worker (RigWorker url (/ tmp-path "tasks") (or runner-versions (current-versions)))
-        client (DetachedClient url "r" (current-versions)))
+        sender (detached-sender "r"))
   (defn #^ int runs [#^ str key]
     (len (lfor t (get (.json (httpx.get (+ url "/state"))) "tasks") :if (= (.get t "key") key) t)))
   ;; 実時間: lease は heartbeat の間隔(0.2 秒)の十倍以上に取る(込んだ機体で heartbeat が遅れても消失と取り違えない)。
-  (Rig "served" [(await-handler) (async-time-handler) (rig-runner-loss worker) (detached-cluster client :poll-seconds 0.2)]
+  (Rig "served" [(await-handler) (async-time-handler) (http-production-handler) (rig-runner-loss worker)
+                 (detached-cluster (route-cell url) TEST-ROUTE sender :poll-seconds 0.2)]
        worker 1.0 2.5 0.2 :runs runs))
 
 
@@ -952,8 +956,9 @@
         coordinator (MemoryCoordinator clock)
         transport (httpx.MockTransport coordinator.handle)
         worker (RigWorker "http://coordinator" (/ tmp-path "tasks") (current-versions) :transport transport)
-        client (DetachedClient "http://coordinator" "r" (current-versions) :transport transport)
-        rig (Rig "coordinator" [(sim-time-handler :clock clock) (rig-runner-loss worker) (detached-cluster client :poll-seconds 0.5)]
+        sender (detached-sender "r")
+        rig (Rig "coordinator" [(sim-time-handler :clock clock) (transport-http transport) (rig-runner-loss worker)
+                                (detached-cluster (route-cell) TEST-ROUTE sender :poll-seconds 0.5)]
                  worker 3.0 5.0 0.5))
   (<- ok (run-on rig (amnesia-scenario coordinator)))
   (assert ok))

@@ -25,7 +25,10 @@
 (import doeff_cluster.coordinator.core.cluster_policy [adopted-task])
 (import doeff_cluster.coordinator.core.api_policy [respond])
 (import doeff_cluster.handlers [CoordinatorLink ProcessHost program-file task-spec])
-(import doeff_cluster.shared.protocol.detached [DetachedClient detached-submit-body])
+(import doeff_cluster.shared.protocol.detached [detached-submitted detached-submit-body])
+(import doeff [with-handlers])
+(import doeff_time [sim-time-handler])
+(import tests.transport_http [transport-http route-cell detached-sender TEST-ROUTE])
 (import doeff_cluster.shared.protocol.remote [task-submit-body])
 (import doeff_cluster.shared.intent.remote_model [RemoteJob TaskSucceeded encode-program decode-outcome])
 (import doeff_cluster.foundation.process_versions [current-versions])
@@ -216,7 +219,7 @@
 
 
 (deftest test-a-detached-task-child-answers-the-environ-name-through-the-environ-reader [tmp-path]
-  ;; 本番の形の通し: DetachedClient が :environ つきで送り、本物の coordinator の判断(MemoryCoordinator)が返事に載せ、本物の
+  ;; 本番の形の通し: 本物の送り手(detached-submitted)が :environ つきで送り、本物の coordinator の判断(MemoryCoordinator)が返事に載せ、本物の
   ;; CoordinatorLink が Program を cache へ取り、ProcessHost が組んだ子の環境で job_entry の task 入口の子 process が走る。
   ;; Program の名の Ask に (environ-reader)(本番の土台の読み)が environ の値で答える。
   (val coordinator (MemoryCoordinator (SimClock)))
@@ -224,9 +227,10 @@
   (val link (CoordinatorLink "http://coordinator" "w1" RIG-PROVIDES 10 60000 :task-dir (str (/ tmp-path "state" "tasks"))
                              :versions (current-versions) :transport transport))
   (.poll link)
-  (val client (DetachedClient "http://coordinator" "r" (current-versions) :transport transport))
-  (val submitted (.submit client "job-env" (encode-program (environ-read URL-NAME)) LOCAL "env" 60.0 600.0 {URL-NAME URL}))
-  (assert (get submitted "created") submitted)
+  (<- submitted (with-handlers [(sim-time-handler :clock (SimClock)) (transport-http transport)]
+                  (detached-submitted (route-cell) TEST-ROUTE (detached-sender "r") "job-env" (encode-program (environ-read URL-NAME)) LOCAL
+                                      "env" 60.0 600.0 {URL-NAME URL})))
+  (assert submitted.created submitted)
   (val desired (.poll link))
   (assert (isinstance desired DesiredJobs) desired)
   (val spec (next (gfor j desired.jobs :if (.startswith j.name "task/") j)))

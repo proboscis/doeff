@@ -6,7 +6,7 @@
 ;;   sim         … 手元の runner sim-cluster(本物の coordinator の調停ループと本物の run-worker — 担い手 a〔能力 x-tool〕と b〔能力 y-tool〕)・
 ;;                 仮想の時計。筋書きは検の側の呼び手として sim の送り手の口で話す
 ;;   coordinator … 本物の coordinator の判断(api_policy.respond / tick — test_detached.hy の MemoryCoordinator)と、同じ名乗りの
-;;                 担い手 2 つ(本物の CoordinatorLink)・本物の DetachedClient・仮想の時計
+;;                 担い手 2 つ(本物の CoordinatorLink)・本物の detached-cluster・仮想の時計
 ;; coordinator の途絶は sim の組だけで確かめる(本物の送り手の送り直しは実時間の monotonic で数えるので、仮想の時計の coordinator の組
 ;; では途絶が明けない。sim の宿は同じ期限と間を仮想の時計で数える)。
 ;; (2026-09-28 まで sim の組の代わりに同じ VM の模擬 detached-local の組だった — 呼び手の外側の handler を継ぐので消した。)
@@ -23,7 +23,8 @@
 (import doeff_cluster.shared.intent.detached_model [SubmitDetached AwaitDetached ReadRunners
                                       DetachedSucceeded DetachedLost DetachedUnrunnable DetachedPending DetachedUnreachable
                                       RunnerFact RunnersUnreachable])
-(import doeff_cluster.shared.protocol.detached [detached-cluster DetachedClient])
+(import doeff_cluster.shared.protocol.detached [detached-cluster])
+(import tests.transport_http [transport-http route-cell detached-sender TEST-ROUTE])
 (import doeff_cluster.sim.local [sim-cluster SimWorker KillWorker DrainWorker StopWorker StartWorker StopCoordinator ProcessesOf
                              ReadCoordinator])
 (import doeff_cluster.shared.intent.service_model [system-of])
@@ -114,15 +115,15 @@
 
 (deff coordinator-runners-rig [tmp-path]  ; defk にできない: pytest の params が渡す組を開く関数で、deftest が Program の外で呼ぶ
   {:pre [(: tmp-path Path)] :post [(: % RunnersRig)] :tags {:context "doeff-cluster-test" :role "foundation"}}
-  "coordinator の組を開くため(担い手 a・b の RigWorker と、本物の DetachedClient・operator の口)。"
+  "coordinator の組を開くため(担い手 a・b の RigWorker と、本物の detached-cluster・operator の口)。"
   (let [clock (SimClock)
         coordinator (MemoryCoordinator clock)
         transport (httpx.MockTransport coordinator.handle)
         runners (CoordinatorRunners tmp-path transport)
         operator (httpx.Client :transport transport :base-url "http://coordinator" :headers {"x-actor" "operator"})]
     (for [fact RUNNERS] (.fresh runners fact.name fact.provides fact.exclusive))
-    (RunnersRig "coordinator" [(sim-time-handler :clock clock) (rig-runners runners operator)
-                               (detached-cluster (DetachedClient "http://coordinator" "r" (current-versions) :transport transport) :poll-seconds POLL)]
+    (RunnersRig "coordinator" [(sim-time-handler :clock clock) (transport-http transport) (rig-runners runners operator)
+                               (detached-cluster (route-cell) TEST-ROUTE (detached-sender "r") :poll-seconds POLL)]
                 runners.workers)))
 
 
@@ -304,7 +305,6 @@
 
 (deftest test-the-real-client-answers-unreachable-as-a-value
   ;; 送り直しの期限(deadline-seconds)を過ぎた通信の失敗は、送りも期限を決めた待ちも DetachedUnreachable(sim の宿の途絶と同じ値)。
-  (val client (DetachedClient "http://coordinator" "r" (current-versions) :transport (httpx.MockTransport cut-off) :deadline-seconds 0.2))
   (defk scenario []
     {:pre [] :post [(: % bool)]}
     (<- sent (SubmitDetached (slow-add 0.0 1) :key "k-cut-real" :needs ON-X))
@@ -312,5 +312,7 @@
     (<- awaited (AwaitDetached "k-cut-real" :timeout-seconds 1.0))
     (assert (isinstance awaited DetachedUnreachable) awaited)
     True)
-  (<- ok bool (with-handlers [(sim-time-handler :clock (SimClock)) (detached-cluster client :poll-seconds POLL)] (scenario)))
+  (<- ok bool (with-handlers [(sim-time-handler :clock (SimClock)) (transport-http (httpx.MockTransport cut-off))
+                                   (detached-cluster (route-cell) TEST-ROUTE (detached-sender "r" :deadline-seconds 0.2) :poll-seconds POLL)]
+                                  (scenario)))
   (assert ok))

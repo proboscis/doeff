@@ -82,7 +82,7 @@
 
 (defk runtime-env-of-context [ctx]
   {:pre [(: ctx RunContext)] :post [(: % (| RuntimeEnv None))]}
-  ;; この process が走っている実行環境の宣言(無ければ None)— env の組み立てが送り手(remote-cluster の TaskSender・DetachedClient)へ渡し、
+  ;; この process が走っている実行環境の宣言(無ければ None)— env の組み立てが送り手(remote-cluster の TaskSender・DetachedSender)へ渡し、
   ;; service や task がさらに送る task を同じ env で走らせるため(2026-09-26 — 送り手の版が image に固定されない)。
   (if ctx.runtime-env
       (do (<- env RuntimeEnv (runtime-env-of-json (json.loads ctx.runtime-env))) env)

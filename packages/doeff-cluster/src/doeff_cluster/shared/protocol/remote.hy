@@ -42,18 +42,18 @@
   (#^ (| RuntimeEnv None) runtime-env))
 
 
-(defk program-put [cell options blob versions]
-  {:pre [(: cell RouteCell) (: options RouteOptions) (: blob str) (: versions dict)] :post [(: % str)]
-   :tags {:context "doeff-cluster" :role "protocol"}}
+(defk program-put [cell options blob versions deadline-seconds]
+  {:pre [(: cell RouteCell) (: options RouteOptions) (: blob str) (: versions dict) (: deadline-seconds float)]
+   :post [(: % tuple) (= (len %) 2)] :tags {:context "doeff-cluster" :role "protocol"}}
   "task を送る前に、詰めた Program を coordinator の置き場 PUT /programs/<sha> に版と一緒に置くため(task の本文は sha だけを運ぶ —
-   service の宣言と同じ運び方・ADR-DOE-CLUSTER-001 R3b)。同じ中身は同じキーの同じ行なので、何度送っても同じ意味 — 失敗は期限まで
-   送り直す(resent-request)。答え = sha。断りは RouteRefused・届かないは RouteUnreachable(answer-json)。"
+   service の宣言と同じ運び方・ADR-DOE-CLUSTER-001 R3b)。同じ中身は同じキーの同じ行なので、何度送っても同じ意味 — 失敗は
+   deadline-seconds まで送り直す(resent-request)。答え = #(sha 答え)(答えの読みは呼び手 — 断りの型は口ごとに違う: remote-cluster は
+   answer-json・detached-cluster は detached-refusal)。"
   (val sha (program-sha blob))
   (<- reply RoutedReply (resent-request cell.route "PUT" (+ "/programs/" sha) options None {"blob" blob "versions" versions}
-                                        IDEMPOTENT-DEADLINE-SECONDS RESEND-PAUSE-SECONDS))
+                                        deadline-seconds RESEND-PAUSE-SECONDS))
   (setv cell.route reply.route)
-  (<- _stored (answer-json reply.answer))
-  sha)
+  #(sha reply.answer))
 
 
 (defk task-submitted [cell options sender blob needs name lease-seconds environ]
@@ -62,7 +62,9 @@
    :post [(: % str)] :tags {:context "doeff-cluster" :role "protocol"}}
   "task を 1 本出すため: 詰めた Program を置き場に先に置き(program-put)、本文は sha だけを運ぶ POST /tasks を送る。書きなので送り直しは
    接続の段だけ(routed-request)。答え = coordinator の振った task の id。"
-  (<- sha str (program-put cell options blob sender.versions))
+  (<- put tuple (program-put cell options blob sender.versions IDEMPOTENT-DEADLINE-SECONDS))
+  (setv #(sha stored) put)
+  (<- _stored (answer-json stored))
   (val body (task-submit-body sha sender.revision needs name lease-seconds sender.runtime-env environ))
   (<- reply RoutedReply (routed-request cell.route "POST" "/tasks" options None body))
   (setv cell.route reply.route)

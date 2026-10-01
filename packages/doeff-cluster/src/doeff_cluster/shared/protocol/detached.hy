@@ -18,11 +18,13 @@
 (require doeff-hy.record [defrecord])
 (import dataclasses [dataclass])
 (import urllib.parse [quote :as url-quote])
-(import collections.abc [Callable])
-(import httpx)
-(import doeff [run :as run-program])
+(import json)
 (import doeff_time [Delay])
-(import doeff_cluster.foundation.coordinator_http [CoordinatorEndpoint send-idempotent put-program REPLY-SECONDS IDEMPOTENT-DEADLINE-SECONDS])
+(import doeff_core_effects.http_effects [HttpResponse HttpFailed])
+(import doeff_cluster.foundation.coordinator_http [IDEMPOTENT-DEADLINE-SECONDS RESEND-PAUSE-SECONDS])
+(import doeff_cluster.shared.protocol.coordinator_route [RouteCell RouteOptions RoutedReply routed-request resent-request
+                                                         answer-json])
+(import doeff_cluster.shared.protocol.remote [program-put])
 (import doeff_cluster.shared.intent.protocol [PROTOCOL-FORMAT])
 (import doeff_cluster.shared.core.capabilities [env-mapping])
 (import doeff_cluster.shared.intent.runtime_env_model [RuntimeEnv runtime-env->json])
@@ -30,8 +32,8 @@
 (import doeff_cluster.shared.intent.warm_model [WarmRuntimeEnv ReadWarmState WarmState WarmUnreachable WarmAnswer warm-state-of-json])
 (import doeff_cluster.shared.intent.process_model [AwaitProcessEnded ProcessEnded ProcessWaitExpired])
 (import doeff_cluster.shared.intent.detached_model [SubmitDetached AwaitDetached CancelDetached ReleaseDetached ReadRunners WARMING-PHASE
-                         DetachedSubmitted DetachedPending DetachedRefused DetachedAwaited DetachedUnreachable
-                         RunnerFact RunnersUnreachable RunnersAnswer outcome-of-view
+                         DetachedSubmitted DetachedPending DetachedRefused DetachedAwaited DetachedUnreachable DetachedSubmitAnswer
+                         RunnerFact RunnersUnreachable outcome-of-view
                          AwaitRunnersChange RunnersChange RunnersWatchMissing RunnersChangeAnswer])
 
 ;; 取り消しに当たる答えの status(本文の error を理由にした DetachedRefused にする)。413 = 詰めた Program が置き場の上限を越える
@@ -39,7 +41,7 @@
 (val REFUSED-STATUSES #(400 409 413 429))
 
 
-;; --- 要求の形と答えの読み(本番の DetachedClient・WarmClient と sim の宿が同じ関数を使う — 本文を写さない)-----------------------
+;; --- 要求の形と答えの読み(本番の detached-cluster・warm-cluster と sim の宿が同じ関数を使う — 本文を写さない)-----------------------
 
 (deff detached-path [#^ str key #^ str suffix]  ; defk にできない: 本番の client(Program の外の I/O の道具)と sim の宿が同じ形を作る純粋な判断
   {:pre [(: key str) (: suffix str)] :post [(: % str)] :tags {:context "doeff-cluster" :role "protocol"}}
@@ -168,85 +170,127 @@
 ;; --- handler: coordinator の /detached の口へ出し、worker の子 process で走らせる ------------------------
 
 
-(defclass DetachedClient []
-  "coordinator の /detached との連絡(I/O)。revision = 送り手の commit(受け側はこの版のコードを準備してから復元する)。
-   runtime-env = 実行環境の宣言(在れば worker は env の root を準備して、その中の子 process で走らせる — revision は使わない)。
-   送る PUT は key で冪等なので、読みと同じく通信の失敗を越えて送り直す(送り直しで作られていれば created = False が返る)。"
-  (defn #^ None __init__ [self #^ str url #^ str revision #^ dict versions #^ float [timeout REPLY-SECONDS]
-                  #^ (| httpx.BaseTransport None) [transport None]
-                  #^ (| RuntimeEnv None) [runtime-env None] #^ float [deadline-seconds IDEMPOTENT-DEADLINE-SECONDS]]
-    ;; deadline-seconds = 通信の失敗を越えて送り直す期限(過ぎたら「届かない」の答え — 検は短くする)。versions = 送り手の版の識別
-    ;; (blob に添える — 組み立てが宿の契約の Ask versions-key で読んで渡す・この層は読まない #2345)。
-    (setv self.revision revision self.versions versions self.runtime-env runtime-env self.deadline-seconds deadline-seconds
-          self.endpoint (CoordinatorEndpoint url timeout 4 :transport transport)))
-
-  (defn #^ httpx.Response resend [self #^ Callable send]
-    "何度送っても同じ意味の要求を、期限まで送り直す(期限を過ぎた通信の失敗は httpx.TransportError のまま投げる)。"
-    (send-idempotent send :deadline-seconds self.deadline-seconds))
-
-  (defn #^ dict answer [self #^ httpx.Response response]
-    (setv refusal (detached-refusal response.status-code (if (in response.status-code REFUSED-STATUSES) (.json response) None)))
-    (when refusal (raise refusal))
-    (.raise-for-status response)
-    (.json response))
-
-  (defn #^ dict submit [self #^ str key #^ str blob #^ frozenset needs #^ str name
-                        #^ float lease-seconds
-                        #^ float retain-seconds #^ (| dict None) [environ None]]
-    "切り離した task を 1 本出す: 詰めた Program を版と一緒に置き場 /programs/<sha> に先に置き、本文は sha だけを運ぶ(service の宣言と
-     同じ運び方 — ADR-DOE-CLUSTER-001 R3b)。置きも送りも何度送っても同じ意味なので、通信の失敗を越えて送り直す。"
-    (setv #(sha put) (put-program self.endpoint blob self.versions self.deadline-seconds))
-    (.answer self put)
-    (setv body (detached-submit-body sha self.revision needs name lease-seconds retain-seconds
-                                     (if (is self.runtime-env None) None (run-program (runtime-env->json self.runtime-env)))
-                                     (or environ {})))
-    (.answer self (.resend self (fn [] (.request self.endpoint "PUT" (detached-path key "") :json body)))))
-
-  (defn #^ dict read [self #^ str key]
-    ;; 503 = coordinator が起きた直後で行の無い key を知らないと言えない(phase warming — detached_policy.detached-read)。本文を返し、
-    ;; 待ちの側(awaited-answer)が届かないと同じに扱う。
-    (setv response (.resend self (fn [] (.request self.endpoint "GET" (detached-path key "")))))
-    (if (= response.status-code 503)
-        (.json response)
-        (.answer self response)))
-
-  (defn #^ bool cancel [self #^ str key]
-    ;; 取り消しは何度送っても同じ意味(終わりの phase は変わらない)。
-    (get (.answer self (.resend self (fn [] (.request self.endpoint "POST" (detached-path key "/cancel"))))) "cancelled"))
-
-  (defn #^ bool release [self #^ str key]
-    (get (.answer self (.resend self (fn [] (.request self.endpoint "DELETE" (detached-path key ""))))) "released"))
-
-  (defn #^ RunnersAnswer runners [self]
-    "担い手の名簿(coordinator の GET /state の workers — live と draining は coordinator の判断)。届かなければ RunnersUnreachable。"
-    (try
-      (setv response (.resend self (fn [] (.request self.endpoint "GET" "/state"))))
-      (except [error httpx.TransportError]
-        (return (runners-unreachable (str error)))))
-    (.raise-for-status response)
-    (runner-facts-of-view (get (.json response) "workers")))
-
-  (defn #^ RunnersChangeAnswer runners-change [self #^ int after #^ float timeout-seconds]
-    "coordinator の版が after から変わるまで待つ(GET /watch — AwaitRunnersChange・#1934)。1 回だけ送る(届かなければ呼び手が間を
-     置いて待ち直す — 待ちを送り直しの期限まで重ねない)。"
-    (try
-      (setv response (.request self.endpoint "GET" "/watch" :params (watch-query after timeout-seconds)))
-      (except [error httpx.TransportError]
-        (return (runners-unreachable (str error)))))
-    (runners-change-of response.status-code (try (.json response) (except [ValueError] response.text)))))
+(defrecord DetachedSender
+  "切り離した task の送り手: revision = 送り手の commit(受け側はこの版のコードを準備してから復元する)・versions = 送り手の版の識別
+   (blob に添える — 組み立てが宿の契約の Ask versions-key で読んで渡す・この層は読まない #2345)・runtime-env = 実行環境の宣言(在れば
+   worker は env の root を準備して、その中の子 process で走らせる — revision は使わない)・deadline-seconds = 何度送っても同じ意味の
+   要求を、通信の失敗を越えて送り直す期限(過ぎたら「届かない」の答え — 検は短くする)。"
+  {:tags {:context "doeff-cluster" :role "protocol"}}
+  (#^ str revision)
+  (#^ dict versions)
+  (#^ (| RuntimeEnv None) runtime-env)
+  (#^ float deadline-seconds))
 
 
-(defk await-cluster [client key timeout-seconds poll-seconds]
-  {:pre [(: client DetachedClient) (: key str) (: timeout-seconds (| float int None)) (: poll-seconds float)]
-   :post [(: % DetachedAwaited)]}
-  ;; 終わるまで問い合わせる。問い合わせは lease に触らず、抜けても(呼び手の Cancel・process の消失)何も落とさない。
-  ;; 眠りは Delay(外側の doeff-time の handler)なので同じ VM の他の task を塞がない。1 拍の読みは awaited-answer(sim の宿と同じ判断)。
+(defk resent-answer [cell options method path params body deadline-seconds]
+  {:pre [(: cell RouteCell) (: options RouteOptions) (: method str) (: path str) (: params (| dict None)) (: body (| dict None))
+         (: deadline-seconds float)]
+   :post [(: % (| HttpResponse HttpFailed None))] :tags {:context "doeff-cluster" :role "protocol"}}
+  "何度送っても同じ意味の要求 1 つを、通信の失敗を越えて deadline-seconds まで送り直し、答え(返事か最後の失敗)を返すため。
+   宛先の状態は cell に書き戻す(切り離した task の口は、置き・送り・読み・取り消し・解放がどれも key で冪等)。"
+  (<- reply RoutedReply (resent-request cell.route method path options params body deadline-seconds RESEND-PAUSE-SECONDS))
+  (setv cell.route reply.route)
+  reply.answer)
+
+
+(defk detached-json [answer]
+  {:pre [(: answer (| HttpResponse HttpFailed None))] :post [(: % (| dict list str int float bool None))]
+   :tags {:context "doeff-cluster" :role "protocol"}}
+  "切り離した task の口の答えを本文にするため: 呼び手の誤り(REFUSED-STATUSES)は DetachedRefused・ほかの断りは RouteRefused・
+   届かないは RouteUnreachable(answer-json と同じ)。"
+  (match answer
+    (HttpResponse :status status) :if (in status REFUSED-STATUSES)
+      (raise (detached-refusal status (json.loads answer.text)))
+    _ (do (<- body (answer-json answer))
+          body)))
+
+
+(defk detached-submitted [cell options sender key blob needs name lease-seconds retain-seconds environ]
+  {:pre [(: cell RouteCell) (: options RouteOptions) (: sender DetachedSender) (: key str) (: blob str) (: needs frozenset) (: name str)
+         (: lease-seconds float) (: retain-seconds float) (: environ dict)]
+   :post [(: % DetachedSubmitAnswer)] :tags {:context "doeff-cluster" :role "protocol"}}
+  "切り離した task を 1 本出すため: 詰めた Program を版と一緒に置き場 /programs/<sha> に先に置き、本文は sha だけを運ぶ(service の宣言と
+   同じ運び方 — ADR-DOE-CLUSTER-001 R3b)。置きも送りも何度送っても同じ意味なので、通信の失敗を越えて送り直し、期限まで届かなければ
+   DetachedUnreachable(送れたかは分からない — key で冪等)。呼び手の誤りは DetachedRefused。"
+  (<- put tuple (program-put cell options blob sender.versions sender.deadline-seconds))
+  (setv #(sha stored) put)
+  (when (isinstance stored HttpFailed)
+    (return (submit-unreachable stored.detail)))
+  (<- _stored (detached-json stored))
+  (var declared None)
+  (when (is-not sender.runtime-env None)
+    (<- env-json dict (runtime-env->json sender.runtime-env))
+    (:= declared env-json))
+  (val body (detached-submit-body sha sender.revision needs name lease-seconds retain-seconds declared environ))
+  (<- sent (resent-answer cell options "PUT" (detached-path key "") None body sender.deadline-seconds))
+  (when (isinstance sent HttpFailed)
+    (return (submit-unreachable sent.detail)))
+  (<- answer dict (detached-json sent))
+  (DetachedSubmitted key (get answer "created")))
+
+
+(defk detached-view [cell options sender key]
+  {:pre [(: cell RouteCell) (: options RouteOptions) (: sender DetachedSender) (: key str)] :post [(: % (| dict str))]
+   :tags {:context "doeff-cluster" :role "protocol"}}
+  "切り離した task の今の行を読むため(GET /detached/<key>)。答え = 行の本文か、届かなかった理由の文。503 = coordinator が起きた直後で
+   行の無い key を知らないと言えない(phase warming — detached_policy.detached-read)— 本文を返し、待ちの側(awaited-answer)が届かないと
+   同じに扱う。"
+  (<- read (resent-answer cell options "GET" (detached-path key "") None None sender.deadline-seconds))
+  (match read
+    (HttpFailed :detail detail) detail
+    (HttpResponse :status 503) (json.loads read.text)
+    _ (do (<- view dict (detached-json read))
+          view)))
+
+
+(defk detached-flag [cell options sender method suffix key field]
+  {:pre [(: cell RouteCell) (: options RouteOptions) (: sender DetachedSender) (: method str) (: suffix str) (: key str) (: field str)]
+   :post [(: % bool)] :tags {:context "doeff-cluster" :role "protocol"}}
+  "取り消し(POST /detached/<key>/cancel — cancelled)・解放(DELETE /detached/<key> — released)を送り、答えの真偽の欄を読むため。
+   どちらも何度送っても同じ意味(終わりの phase は変わらない)なので期限まで送り直す。届かなければ RouteUnreachable を投げる。"
+  (<- answer (resent-answer cell options method (detached-path key suffix) None None sender.deadline-seconds))
+  (<- body dict (detached-json answer))
+  (get body field))
+
+
+(defk runners-read [cell options sender]
+  {:pre [(: cell RouteCell) (: options RouteOptions) (: sender DetachedSender)] :post [(: % (| tuple RunnersUnreachable))]
+   :tags {:context "doeff-cluster" :role "protocol"}}
+  "担い手の名簿を読むため(coordinator の GET /state の workers — live と draining は coordinator の判断)。届かなければ RunnersUnreachable。"
+  (<- read (resent-answer cell options "GET" "/state" None None sender.deadline-seconds))
+  (when (isinstance read HttpFailed)
+    (return (runners-unreachable read.detail)))
+  (<- state dict (answer-json read))
+  (runner-facts-of-view (get state "workers")))
+
+
+(defk runners-changed [cell options after timeout-seconds]
+  {:pre [(: cell RouteCell) (: options RouteOptions) (: after int) (: timeout-seconds float)] :post [(: % RunnersChangeAnswer)]
+   :tags {:context "doeff-cluster" :role "protocol"}}
+  "coordinator の版が after から変わるまで待つため(GET /watch — AwaitRunnersChange・#1934)。1 回だけ送る(接続の段だけ送り直す —
+   届かなければ呼び手が間を置いて待ち直す。待ちを送り直しの期限まで重ねない)。"
+  (<- reply RoutedReply (routed-request cell.route "GET" "/watch" options (watch-query after timeout-seconds) None))
+  (setv cell.route reply.route)
+  (val answer reply.answer)
+  (match answer
+    (HttpFailed :detail detail) (runners-unreachable detail)
+    (HttpResponse :status status)
+      (runners-change-of status (try (json.loads answer.text) (except [ValueError] answer.text)))
+    _ (runners-unreachable "coordinator の宛先が無い")))
+
+
+(defk await-cluster [cell options sender key timeout-seconds poll-seconds]
+  {:pre [(: cell RouteCell) (: options RouteOptions) (: sender DetachedSender) (: key str) (: timeout-seconds (| float int None))
+         (: poll-seconds float)]
+   :post [(: % DetachedAwaited)] :tags {:context "doeff-cluster" :role "protocol"}}
+  "切り離した task が終わるまで問い合わせるため。問い合わせは lease に触らず、抜けても(呼び手の Cancel・process の消失)何も落とさない。
+   眠りは Delay(外側の doeff-time の handler)なので同じ VM の他の task を塞がない。1 拍の読みは awaited-answer(sim の宿と同じ判断)。"
   (var waited 0.0)
   (var answer None)
   (while (is answer None)
-    (val read (try (.read client key) (except [error httpx.TransportError] error)))
-    (:= answer (if (isinstance read httpx.TransportError)
-                   (awaited-answer None (str read) key waited timeout-seconds)
+    (<- read (detached-view cell options sender key))
+    (:= answer (if (isinstance read str)
+                   (awaited-answer None read key waited timeout-seconds)
                    (awaited-answer read "" key waited timeout-seconds)))
     (when (is answer None)
       (<- (Delay poll-seconds))
@@ -288,8 +332,9 @@
     True (ProcessWatch :watched None :ended None)))
 
 
-(defk await-process-cluster [client job timeout-seconds poll-seconds]
-  {:pre [(: client DetachedClient) (: job str) (: timeout-seconds (| float int None)) (: poll-seconds float)]
+(defk await-process-cluster [cell options sender job timeout-seconds poll-seconds]
+  {:pre [(: cell RouteCell) (: options RouteOptions) (: sender DetachedSender) (: job str) (: timeout-seconds (| float int None))
+         (: poll-seconds float)]
    :post [(: % (| ProcessEnded ProcessWaitExpired))] :tags {:context "doeff-cluster" :role "protocol"}}
   "AwaitProcessEnded の本番の答え: coordinator の GET /state を poll-seconds ごとに読み、process-watch-step で終わりを決める(本番の
    coordinator は長い待ちの読みを持たないので読み直す — 契約の答え)。届かない読みは次の拍で読み直す。timeout-seconds を過ぎたら
@@ -298,10 +343,9 @@
   (var watched None)
   (var answer None)
   (while (is answer None)
-    (val read (try (.resend client (fn [] (.request client.endpoint "GET" "/state")))
-                   (except [error httpx.TransportError] None)))
-    (when (and (is-not read None) (= read.status-code 200))
-      (<- step ProcessWatch (process-watch-step (.get (.json read) "statuses" {}) job watched))
+    (<- read (resent-answer cell options "GET" "/state" None None sender.deadline-seconds))
+    (when (and (isinstance read HttpResponse) (= read.status 200))
+      (<- step ProcessWatch (process-watch-step (.get (json.loads read.text) "statuses" {}) job watched))
       (:= watched step.watched)
       (:= answer step.ended))
     (when (and (is answer None) (is-not timeout-seconds None) (>= waited timeout-seconds))
@@ -312,73 +356,81 @@
   answer)
 
 
-(defhandler detached-cluster [#^ DetachedClient client #^ float [poll-seconds 1.0]]
+;; 本物の切り離した task: coordinator の /programs・/detached・/state・/watch へ、汎用の HttpRequest で話す(#2337 の 4c — httpx を直に
+;; 持っていた DetachedClient を替えた)。宛先の順・切り替え・送り直しは宛先の部品(coordinator_route.hy)— 宛先の状態は組み立てが渡す
+;; 入れ物(RouteCell)。出す HttpRequest に答える本物の I/O の答え手は、process の組み立ての根が外側に積む。
+(defhandler detached-cluster [#^ RouteCell cell #^ RouteOptions options #^ DetachedSender sender #^ float [poll-seconds 1.0]]
   (SubmitDetached [program key needs name lease-seconds retain-seconds environ]
     ;; 送れない値は送る前に断る(encode-program が UnsendableProgram を投げ、呼び手へ届く)。
     (setv blob (encode-program program))
     ;; effect の EnvVar の tuple を、coordinator への本文の形(名 → 値の object)へ綴る(#2179)。
     (<- environ-body dict (env-mapping environ))
-    (resume (try (DetachedSubmitted key (get (.submit client key blob needs name (float lease-seconds) (float retain-seconds) environ-body) "created"))
-                 (except [error httpx.TransportError]
-                   (submit-unreachable (str error))))))
+    (<- submitted (detached-submitted cell options sender key blob needs name (float lease-seconds) (float retain-seconds) environ-body))
+    (resume submitted))
   (AwaitDetached [key timeout-seconds]
-    (<- outcome (await-cluster client key timeout-seconds poll-seconds))
+    (<- outcome (await-cluster cell options sender key timeout-seconds poll-seconds))
     (resume outcome))
-  (CancelDetached [key] (resume (.cancel client key)))
-  (ReleaseDetached [key] (resume (.release client key)))
-  (ReadRunners [] (resume (.runners client)))
-  (AwaitRunnersChange [after timeout-seconds] (resume (.runners-change client after (float timeout-seconds))))
+  (CancelDetached [key]
+    (<- cancelled bool (detached-flag cell options sender "POST" "/cancel" key "cancelled"))
+    (resume cancelled))
+  (ReleaseDetached [key]
+    (<- released bool (detached-flag cell options sender "DELETE" "" key "released"))
+    (resume released))
+  (ReadRunners []
+    (<- runners (runners-read cell options sender))
+    (resume runners))
+  (AwaitRunnersChange [after timeout-seconds]
+    (<- change (runners-changed cell options after (float timeout-seconds)))
+    (resume change))
   (AwaitProcessEnded [job timeout-seconds]
-    (<- ended (await-process-cluster client job timeout-seconds poll-seconds))
+    (<- ended (await-process-cluster cell options sender job timeout-seconds poll-seconds))
     (resume ended)))
 
 
 ;; --- 温める表(2026-09-26): coordinator の /warm の口 -------------------------------------------------
 
 
-(defclass WarmClient []
-  "coordinator の /warm との連絡(I/O)。書きは同じ行への頼み直しが同じ意味なので、通信の失敗を越えて送り直す。
-   送り直しの期限(deadline-seconds)を過ぎた通信の失敗と coordinator の 5xx は、例外でなく WarmUnreachable で答える
-   (2026-09-28 — 拍ごとに温める送り手が coordinator の入れ替えの間に落ちないため)。
-   断り(400)は呼び手の誤りなので DetachedRefused のまま投げる。"
-  (defn #^ None __init__ [self #^ str url #^ float [timeout REPLY-SECONDS] #^ (| httpx.BaseTransport None) [transport None] #^ str [actor ""]
-                  #^ float [deadline-seconds IDEMPOTENT-DEADLINE-SECONDS]]
-    ;; deadline-seconds = 通信の失敗を越えて送り直す期限(過ぎたら「届かない」の答え — 検は短くする)。
-    (setv self.deadline-seconds deadline-seconds
-          self.endpoint (CoordinatorEndpoint url timeout 4 :transport transport :actor (or actor None))))
+(defk warm-answer [answer key]
+  {:pre [(: answer (| HttpResponse HttpFailed None)) (: key (| str None))] :post [(: % WarmAnswer)]
+   :tags {:context "doeff-cluster" :role "protocol"}}
+  "温める表の口の答えを WarmAnswer にするため: 送り直しの期限まで届かない = WarmUnreachable・coordinator の 5xx = WarmUnreachable
+   (2026-09-28 — 拍ごとに温める送り手が coordinator の入れ替えの間に落ちないため)・400 = 呼び手の誤り(DetachedRefused を投げる)・
+   読みの 404 = 表に無い行(key を渡した時だけ — 空の姿)・それ以外 = 行の姿。"
+  (match answer
+    (HttpFailed :detail detail) (warm-unconnected detail)
+    (HttpResponse :status 400) (raise (DetachedRefused 400 (.get (json.loads answer.text) "error" "")))
+    (HttpResponse :status 404) :if (is-not key None) (absent-warm-state key)
+    (HttpResponse :status status) :if (>= status SERVER-ERROR) (warm-server-failure status answer.text)
+    _ (do (<- row dict (answer-json answer))
+          (warm-state-of-json row))))
 
-  (defn #^ WarmAnswer write [self #^ RuntimeEnv env #^ frozenset needs #^ float ttl-seconds #^ str holder]
-    "行を書いて今の姿を読む(届かなければ WarmUnreachable)。"
-    (setv body (warm-request-body (run-program (runtime-env->json env)) needs ttl-seconds holder))
-    (try
-      (setv response (send-idempotent (fn [] (.request self.endpoint "POST" "/warm" :json body))
-                                      :deadline-seconds self.deadline-seconds))
-      (except [error httpx.TransportError]
-        (return (warm-unconnected (str error)))))
-    (when (= response.status-code 400)
-      (raise (DetachedRefused 400 (.get (.json response) "error" ""))))
-    (when (>= response.status-code SERVER-ERROR)
-      (return (warm-server-failure response.status-code response.text)))
-    (.raise-for-status response)
-    (warm-state-of-json (.json response)))
 
-  (defn #^ WarmAnswer read [self #^ str key]
-    "行の今の姿を読む(表に無い行は ready も preparing も空・期限 0 — 届かなければ WarmUnreachable)。"
-    (try
-      (setv response (send-idempotent (fn [] (.request self.endpoint "GET" (warm-path key)))
-                                      :deadline-seconds self.deadline-seconds))
-      (except [error httpx.TransportError]
-        (return (warm-unconnected (str error)))))
-    (cond
-      (= response.status-code 404) (absent-warm-state key)
-      (>= response.status-code SERVER-ERROR) (warm-server-failure response.status-code response.text)
-      True (do (.raise-for-status response)
-               (warm-state-of-json (.json response))))))
+(defk warm-written [cell options deadline-seconds env needs ttl-seconds holder]
+  {:pre [(: cell RouteCell) (: options RouteOptions) (: deadline-seconds float) (: env RuntimeEnv) (: needs frozenset)
+         (: ttl-seconds float) (: holder str)]
+   :post [(: % WarmAnswer)] :tags {:context "doeff-cluster" :role "protocol"}}
+  "温める表の行を書いて今の姿を読むため(POST /warm — 同じ行への頼み直しは同じ意味なので、通信の失敗を越えて送り直す)。"
+  (<- declared dict (runtime-env->json env))
+  (<- answer (resent-answer cell options "POST" "/warm" None (warm-request-body declared needs ttl-seconds holder) deadline-seconds))
+  (<- state (warm-answer answer None))
+  state)
 
-(defhandler warm-cluster [#^ WarmClient client]
-  ;; 引数に残す理由: client は coordinator への接続(I/O の資源)で、composition root が url から 1 つ作る。
-  ;; 答えは WarmAnswer(coordinator に届かなければ WarmUnreachable — 例外で呼び手を落とさない)。
+
+(defk warm-read [cell options deadline-seconds key]
+  {:pre [(: cell RouteCell) (: options RouteOptions) (: deadline-seconds float) (: key str)] :post [(: % WarmAnswer)]
+   :tags {:context "doeff-cluster" :role "protocol"}}
+  "温める表の行の今の姿を読むため(GET /warm/<key> — 表に無い行は ready も preparing も空・期限 0)。"
+  (<- answer (resent-answer cell options "GET" (warm-path key) None None deadline-seconds))
+  (<- state (warm-answer answer key))
+  state)
+
+
+;; 本物の温める表: coordinator の /warm へ、汎用の HttpRequest で話す(#2337 の 4c — httpx を直に持っていた WarmClient を替えた)。
+;; 答えは WarmAnswer(coordinator に届かなければ WarmUnreachable — 例外で呼び手を落とさない)。書きの送り手の名は options の actor。
+(defhandler warm-cluster [#^ RouteCell cell #^ RouteOptions options #^ float [deadline-seconds IDEMPOTENT-DEADLINE-SECONDS]]
   (WarmRuntimeEnv [env needs ttl-seconds holder]
-    (resume (.write client env needs (float ttl-seconds) holder)))
+    (<- state (warm-written cell options deadline-seconds env needs (float ttl-seconds) holder))
+    (resume state))
   (ReadWarmState [key]
-    (resume (.read client key))))
+    (<- state (warm-read cell options deadline-seconds key))
+    (resume state)))

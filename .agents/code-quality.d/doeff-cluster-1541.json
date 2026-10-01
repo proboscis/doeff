@@ -317,7 +317,9 @@
         "doeff-cluster-runtime-env-model",
         "doeff-cluster-shared-capabilities",
         "doeff-cluster-shared-protocol",
-        "doeff-cluster-warm-model"
+        "doeff-cluster-warm-model",
+        "doeff-cluster-coordinator-route",
+        "doeff-cluster-remote"
       ],
       "layer": "io",
       "name": "doeff-cluster-detached",

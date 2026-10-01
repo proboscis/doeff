@@ -9,7 +9,7 @@
 ;;;   readiness-http         本物: readiness-http(宛先の部品の HttpRequest → POST /resources/Service/<名>/readiness)
 ;;;   remote-cluster         本物: remote-cluster(宛先の部品の HttpRequest → coordinator の /programs・/tasks)と担い手(RigWorker)
 ;;;   remote-cluster-env     同じ・送り手が実行環境を宣言する(TaskSender の runtime-env = CONTRACT-ENV)
-;;;   warm-cluster           本物: warm-cluster(WarmClient → coordinator の /warm)
+;;;   warm-cluster           本物: warm-cluster(宛先の部品の HttpRequest → coordinator の /warm)
 ;;;   sim-cluster            fake: 手元の runner sim-cluster(筋書きの送り手の口 coordinator-answers が RemoteJob・WarmRuntimeEnv・
 ;;;                          ReadWarmState に答える — 本物の coordinator の調停ループと本物の run-worker・偽の宿)
 ;;;   sim-cluster-env        同じ・送り手の口が実行環境を宣言する(SimLink の runtime-env = CONTRACT-ENV)
@@ -57,7 +57,7 @@
 (import doeff_core_effects.handlers [slog-handler])
 (import doeff_cluster.shared.protocol.remote [remote-cluster TaskSender])
 (import doeff_cluster.foundation.process_versions [current-versions])
-(import doeff_cluster.shared.protocol.detached [warm-cluster WarmClient])
+(import doeff_cluster.shared.protocol.detached [warm-cluster])
 (import doeff_cluster.sim.local [sim-cluster SimWorker SimLink ClientLink PartsOf SimParts StopCoordinator coordinator-answers])
 (import doeff_cluster.shared.intent.runtime_env_model [RuntimeEnv])
 (import doeff_cluster.shared.core.semaphore_handlers [named-semaphore-local cluster-semaphore SemaphoreSession])
@@ -371,8 +371,7 @@
    "remote-cluster" (partial under-rig False)
    "remote-cluster-env" (partial under-rig True)
    "warm-cluster" (partial under-coordinator
-                           (fn [transport] [(warm-cluster (WarmClient COORDINATOR :transport transport
-                                                                      :deadline-seconds WARM-DEADLINE-SECONDS))]))
+                           (fn [transport] [(warm-cluster (contract-route) CONTRACT-ROUTE WARM-DEADLINE-SECONDS)]))
    "sim-cluster" (partial under-sim False)
    "sim-cluster-env" (partial under-sim True)
    "scheduled" (partial under-clock (fn [] []))
