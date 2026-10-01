@@ -162,6 +162,57 @@ external = ["PINJ", "DOEFF"]  # doeff-linter codes in `# noqa: DOEFFnnn`
 [tool.doeff-linter]
 disable = ["DOEFF013"]  # Prefer Maybe Monad - intentionally using Optional/None patterns
 
+# 契約の検の固定の組(agora-redesign #2605): 登記の前の入口 `make test-changed`(scripts/run_changed_tests.py)は、変えた file が
+# 接頭辞に当たる行の検を、変えた検の file より先に必ず走らせる。stub の突き合わせ・dogfood の登録・母集団の検は module を文字列で
+# 持つか木を歩くので、import の逆依存では選べない(t135 の 5 commit は、これが無いと登記の前に赤にならなかった)。
+# 読み手は scripts/run_changed_tests.py の read_contract_table の 1 か所 — 鍵は prefix と tests だけ・書いた検の file が木に無いと止める。
+# prefix = 接頭辞(dir は `/` で終える・"" は repo 全体)。tests = path か `path::検の名`(冊の検は 1 本に絞る)。
+# 註の秒は 1 file ずつ走らせた壁時計(起動を含む・2026-10-02 zeus・合計の上限は 60 秒)。行を足す時も 1 file ずつ測って書く。
+[[tool.doeff.contract-tests]]
+prefix = "packages/doeff-core-effects/"
+tests = [
+    "packages/doeff-core-effects/tests/test_hy_module_stubs.py",  # 2.4 秒 — .hy と隣の .pyi の名・欄・引数
+    "packages/doeff-domain/tests/test_domain_dogfood.py",  # 2.8 秒 — core-effects の語彙の domain 宣言と孤児の走査
+    "docs/adr/defadr_doeff_domain_001_vocabulary_cohesion.hy::test_adr_doe_domain_001_dogfood_core_effects_green",  # 2.2 秒
+]
+
+[[tool.doeff.contract-tests]]
+prefix = "packages/doeff-domain/"
+tests = [
+    "packages/doeff-domain/tests/test_domain_dogfood.py",  # 2.8 秒
+    "docs/adr/defadr_doeff_domain_001_vocabulary_cohesion.hy::test_adr_doe_domain_001_dogfood_core_effects_green",  # 2.2 秒
+]
+
+[[tool.doeff.contract-tests]]
+prefix = "packages/doeff-cluster/"
+tests = [
+    "packages/doeff-cluster/tests/test_service_model_stubs.py",  # 1.5 秒 — 系の宣言の 3 module と .pyi
+]
+
+[[tool.doeff.contract-tests]]
+prefix = "packages/doeff-records/"
+tests = [
+    "packages/doeff-records/tests/test_static_stubs.py",  # 12.2 秒 — doeff_records の .pyi と実装・pyright の strict
+]
+
+[[tool.doeff.contract-tests]]
+prefix = "packages/doeff-hy/"
+tests = [
+    "packages/doeff-hy/tests/test_hy_stubs.py",  # 6.6 秒 — 配る hy の stub と実行時の hy
+]
+
+[[tool.doeff.contract-tests]]
+prefix = "packages/doeff-vm/"
+tests = [
+    "packages/doeff-vm/tests/test_package_exports.py",  # 1.0 秒 — doeff-vm の公開の名
+]
+
+[[tool.doeff.contract-tests]]
+prefix = ""
+tests = [
+    "tests/test_daily_test_population.py",  # 7.5 秒 — 検の file の置き場と集め手(日次の母集団)
+]
+
 [dependency-groups]
 dev = [
     # make sync builds the Rust VM with maturin — declared here so every machine gets it

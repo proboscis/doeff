@@ -3,7 +3,7 @@
 # Centralized commands for development, testing, and linting.
 
 .PHONY: help install sync lint lint-ruff lint-pyright lint-semgrep lint-semgrep-docs lint-doeff lint-packages \
-        test test-unit test-e2e test-packages print-package-extra-test-roots test-rust test-all test-spec-audit-sa002 bench-smoke format check check-repo-hygiene \
+        test test-unit test-e2e test-changed test-packages print-package-extra-test-roots test-rust test-all test-spec-audit-sa002 bench-smoke format check check-repo-hygiene \
         pre-commit-install hooks-install enforcement-ledger clean install-opencode-spec-gap-tdd
 
 # Default target
@@ -30,6 +30,7 @@ help:
 	@echo "  make test              Run core tests"
 	@echo "  make test-unit         Run unit tests only (exclude e2e)"
 	@echo "  make test-e2e          Run e2e tests only"
+	@echo "  make test-changed      Run contract tests + changed tests before ai land request (60 s budget)"
 	@echo "  make test-packages     Run tests in all subpackages"
 	@echo "  make test-rust         Run cargo test in every Rust crate"
 	@echo "  make test-all          Run ALL tests (core + packages + Rust crates)"
@@ -154,6 +155,14 @@ test-unit:
 
 test-e2e:
 	$(PYTEST_MEMORY_ENV) uv run pytest -m "e2e"
+
+# 登記(ai land request)の前に手元で走らせる変えた所の検(agora-redesign #2605)。分岐点(既定 git merge-base HEAD origin/main)から
+# 作業木までに変えた file が当たる契約の検の組(root の pyproject.toml の [[tool.doeff.contract-tests]])を先頭に、変えた検の file を
+# 1 回の pytest で走らせ、合計 60 秒で打ち切る。終わらなかった file は「未測」と名指し、赤だけ rc 1。commit の hook では走らせない
+# (#1122・#794)。分岐点を変える: make test-changed TEST_CHANGED_ARGS="--base <rev>"。
+TEST_CHANGED_ARGS ?=
+test-changed:
+	uv run --script scripts/run_changed_tests.py $(TEST_CHANGED_ARGS)
 
 # Run tests in all subpackages that have tests/ directories
 # - tests/ に Python の検が 1 本も無い package(doeff-indexer / doeff-linter — 検は Rust の cargo test、
