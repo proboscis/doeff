@@ -3,12 +3,12 @@
 ;;;   hy -m doeff_cluster.shared.entry.declare <module>:<系の関数> --foundation <module>:<土台の関数> --revision <commit>
 ;;;       [--only 'job,…'] [--environ FILE] [--apply URL --actor <送り手>] [--replicas 0|1]
 ;;;
-;;; 系の関数に土台の関数を渡して System の値を作り、job ごとに Program を詰める(service_model.system-declaration)。
+;;; 系の関数に土台の関数を渡して System の値を作り、job ごとに Program を詰める(service_build.system-declaration)。
 ;;; 宣言の前に 2 つを検め、外れれば理由つきで終了 2(argparse の error と同じ — 計画 2.2 の E・9 節の P):
 ;;;   - 系の関数の module の在る git の checkout が汚れておらず push 済みで、HEAD が --revision と同じ commit(詰める Program が参照する
 ;;;     code と、実行先が --revision で展開する code を一致させる — runtime_env.checked-declaring-checkout。checkout の読みは effect で、
 ;;;     答えるのは runtime_env の翻訳の handler checkout-reads と汎用の子 process の handler)
-;;;   - 土台の関数の頭の :needs(__doeff_needs__)が各 job の :needs の一部(service_model.foundation-needs-refusal。土台が :needs を
+;;;   - 土台の関数の頭の :needs(__doeff_needs__)が各 job の :needs の一部(service_rules.foundation-needs-refusal。土台が :needs を
 ;;;     名乗らなければ検めない)
 ;;; 付けなければ宣言の行(と job ごとの describe = 呼んだ関数と引数)を印字するだけ。
 ;;; --apply を付けると、先に詰めた Program を PUT /programs/<sha> で置き(改訂 1 の F)、次に Service ごとに資源の口で書く:
@@ -32,7 +32,9 @@
 (import doeff_cluster.shared.protocol.checkout_reads [checkout-reads])
 (import doeff_cluster.shared.protocol.declaration_requests [spec-for-update create-body])
 (import doeff_cluster.shared.core.declaring [declaring-refusal])
-(import doeff_cluster.shared.intent.service_model [resolve resolve-value system-declaration environ-overlay-refusal System Declaration])
+(import doeff_cluster.shared.core.service_rules [environ-overlay-refusal])
+(import doeff_cluster.shared.entry.service_build [resolve resolve-value system-declaration])
+(import doeff_cluster.shared.intent.service_model [System Declaration])
 
 
 (defn #^ None apply-declaration [#^ str url #^ Declaration declaration #^ str actor #^ (| int None) [replicas None]]  ; defk にできない: CLI の入口の HTTP の I/O

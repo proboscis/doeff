@@ -1,11 +1,12 @@
-"""defsystem の展開と doeff_cluster.shared.intent.service_model の型(service_model.pyi)の失敗ケース(agora-redesign #2291・#2279 の対)。
+"""defsystem の展開と doeff_cluster.shared.intent.service_model・doeff_cluster.shared.entry.service_build の型(service_model.pyi・
+service_build.pyi)の失敗ケース(agora-redesign #2291・#2279 の対。構成子の置き場は #2540 で service_build へ移した)。
 
-defsystem は `doeff_cluster.shared.intent.service_model.system_of` / `job` / `CallShape` を呼ぶ関数に展開する。service_model.hy は Hy の
-module で、型の宣言(service_model.pyi)が無いと pyright はこれらを Unknown として読み、系の関数の戻りまで Unknown に
+defsystem は `doeff_cluster.shared.entry.service_build.system_of` / `job` と `doeff_cluster.shared.intent.service_model.CallShape` を
+呼ぶ関数に展開する。どちらも Hy の module で、型の宣言(service_build.pyi・service_model.pyi)が無いと pyright はこれらを Unknown として読み、系の関数の戻りまで Unknown に
 引きずられる(書き手に直せない赤)。また、引数に型の注記を持つ系の展開が、置いた後の関数の属性 `__doeff_system__` を
 読み直していた所は reportFunctionMemberAccess になっていた。宣言と展開の直しが在れば:
 
-- defsystem を書いた file に、service_model の名と系の関数の戻りの reportUnknown*・reportFunctionMemberAccess が出ない。
+- defsystem を書いた file に、service_model・service_build の名と系の関数の戻りの reportUnknown*・reportFunctionMemberAccess が出ない。
 - 系の関数の答えは System で、欄の型の取り違え(str の欄 name に 1 を足す)は赤になる。
 """
 
@@ -39,8 +40,8 @@ MODULE = """\
 (val wrong (+ declared.name 1))
 """
 
-#: 型が見えないと Unknown になる名(service_model の名・系の関数・その答え)。
-WATCHED = ('"service_model"', '"system_of"', '"job"', '"CallShape"', '"declared"', '"first_name"')
+#: 型が見えないと Unknown になる名(service_model・service_build の名・系の関数・その答え)。
+WATCHED = ('"service_model"', '"service_build"', '"system_of"', '"job"', '"CallShape"', '"declared"', '"first_name"')
 
 
 @dataclass(frozen=True)
@@ -78,7 +79,7 @@ def test_the_system_expansion_has_no_unknown_or_function_member_reads(probe: Pat
     errors = _check(probe).errors()
     # 展開が関数の属性 __doeff_system__ を読む文を出さない(型の注記つきの引数 = param_types の道)。
     assert not [e for e in errors if e[0] == "reportFunctionMemberAccess"], errors
-    # service_model の名・系の関数の答えに「型が分からない」の赤が出ない(service_model.pyi が無いと Unknown)。
+    # service_model・service_build の名・系の関数の答えに「型が分からない」の赤が出ない(.pyi が無いと Unknown)。
     unknown = [e for e in errors if e[0].startswith("reportUnknown")]
     assert not [e for e in unknown if any(n in e[2] for n in WATCHED)], unknown
     # 系の宣言の行(10〜12 行目)と答えの読み(14・15 行目)には赤が 1 つも無い。
@@ -93,7 +94,7 @@ def test_a_system_field_used_as_the_wrong_type_is_red(probe: Path) -> None:
 
 
 #: 空の :needs と空でない :needs の系(agora-redesign #2396)。空の #{} は展開で frozenset([]) になる。frozenset([]) を変数に
-#: 置けば frozenset[Unknown] だが、展開は job の名の引数 needs に直に渡すので、service_model.pyi の注記
+#: 置けば frozenset[Unknown] だが、展開は job の名の引数 needs に直に渡すので、service_build.pyi の注記
 #: (frozenset[str] | set[str] | …)から双方向の推論で frozenset[str] と読まれる。注記が消えるか、展開が値を一度変数に置く形に
 #: 変われば、書き手に直せない赤になる — その退行をここで止める。
 EMPTY_NEEDS = """\

@@ -10,7 +10,8 @@
 (import sys)
 (import doeff_cluster.shared.core.runtime_env [checked-declaring-checkout])
 (import doeff_cluster.shared.intent.runtime_env_model [RepoCheckout RuntimeEnvInvalid])
-(import doeff_cluster.shared.intent.service_model [foundation-needs-refusal System])
+(import doeff_cluster.shared.core.service_rules [foundation-needs-refusal])
+(import doeff_cluster.shared.intent.service_model [System])
 
 
 (defk declaring-refusal [build foundation system revision]

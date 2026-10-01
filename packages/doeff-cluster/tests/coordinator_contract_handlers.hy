@@ -61,7 +61,7 @@
 (import doeff_cluster.sim.local [sim-cluster SimWorker SimLink ClientLink PartsOf SimParts StopCoordinator coordinator-answers])
 (import doeff_cluster.shared.intent.runtime_env_model [RuntimeEnv])
 (import doeff_cluster.shared.core.semaphore_handlers [named-semaphore-local cluster-semaphore SemaphoreSession])
-(import doeff_cluster.shared.intent.service_model [system-of])
+(import doeff_cluster.shared.entry.service_build [system-of])
 (import doeff_time [Delay])
 (import tests.detached_rig [MemoryCoordinator RigWorker worker-tick worker-loop RIG-PROVIDES])
 (import tests.env_fixtures [LOCK env-of])

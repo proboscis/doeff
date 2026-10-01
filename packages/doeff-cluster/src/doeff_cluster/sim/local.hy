@@ -153,7 +153,8 @@
 (import doeff_cluster.shared.intent.semaphore_model [LeaseOp LeaseAnswer SEMAPHORE-PREFIX])
 (import doeff_hy.wire [parse :as parse-wire])
 (import doeff_cluster.shared.core.lease_rules [drop-holders lease-holder holder-tokens-prefix])
-(import doeff_cluster.shared.intent.service_model [System Declaration system-declaration])
+(import doeff_cluster.shared.entry.service_build [system-declaration])
+(import doeff_cluster.shared.intent.service_model [System Declaration])
 (import doeff_cluster.shared_handlers [board-read-request board-write-request lease-request])
 (import doeff_cluster.shared.intent.shared_model [ReadShared WriteShared])
 (import doeff_cluster.shared.intent.warm_model [WarmRuntimeEnv ReadWarmState WarmState WarmAnswer warm-state-of-json])
@@ -664,7 +665,7 @@
    :tags {:context "doeff-cluster" :role "judgment"}}
   "系 → coordinator へ渡す宣言(本番の declare と同じ system-declaration)に、job ごとの environ の上書きと実行環境の宣言を重ねるため
    (計画 2.7 の H・改訂 1 の M — whole.hy の overrides の置き換え先)。上書きの規則(系に無い job・宣言の :environ に無い名・文字列でない
-   値は断る)は本番の declare と同じ 1 つ(service_model.environ-overlay-refusal)。実行環境の宣言は本番の declare の --runtime-env と同じ
+   値は断る)は本番の declare と同じ 1 つ(service_rules.environ-overlay-refusal)。実行環境の宣言は本番の declare の --runtime-env と同じ
    欄に載り、本物の worker が子へ DOEFF_RUNTIME_ENV で渡す(子の run-context の runtime-env)。"
   (system-declaration system revision :versions (current-versions) :runtime-env runtime-env :environ environ))
 

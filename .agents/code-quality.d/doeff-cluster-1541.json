@@ -7,7 +7,7 @@
     },
     {
       "function": "resolve_value",
-      "path": "packages/doeff-cluster/src/doeff_cluster/shared/intent/service_model.hy",
+      "path": "packages/doeff-cluster/src/doeff_cluster/shared/entry/service_build.hy",
       "reason": "CLI の入口(declare)が引数の関数の参照(module:attr)を関数へ解くのが役目の口 — 系の関数と土台の関数は名で渡される(#1692)。"
     }
   ],
@@ -44,7 +44,9 @@
     "packages/doeff-cluster/src/doeff_cluster/worker/core/program.hy",
     "packages/doeff-cluster/src/doeff_cluster/shared/core/job_rules.hy",
     "packages/doeff-cluster/src/doeff_cluster/record_store/*/*.hy",
-    "packages/doeff-cluster/src/doeff_cluster/worker/*/*.hy"
+    "packages/doeff-cluster/src/doeff_cluster/worker/*/*.hy",
+    "packages/doeff-cluster/src/doeff_cluster/shared/core/service_rules.hy",
+    "packages/doeff-cluster/src/doeff_cluster/shared/entry/service_build.hy"
   ],
   "modules": [
     {
@@ -306,7 +308,9 @@
         "doeff-cluster-declaration-requests",
         "doeff-cluster-declaring",
         "doeff-cluster-process-versions",
-        "doeff-cluster-service-model"
+        "doeff-cluster-service-build",
+        "doeff-cluster-service-model",
+        "doeff-cluster-service-rules"
       ],
       "layer": "runtime",
       "name": "doeff-cluster-declare",
@@ -779,6 +783,7 @@
         "doeff-cluster-report-client",
         "doeff-cluster-runtime-env-model",
         "doeff-cluster-semaphore-model",
+        "doeff-cluster-service-build",
         "doeff-cluster-service-model",
         "doeff-cluster-shared-capabilities",
         "doeff-cluster-shared-handlers",
@@ -1274,13 +1279,7 @@
       "typed": true
     },
     {
-      "allow": [
-        "doeff-cluster-cluster-model",
-        "doeff-cluster-readiness-model",
-        "doeff-cluster-remote-model",
-        "doeff-cluster-runtime-env-model",
-        "doeff-cluster-shared-capabilities"
-      ],
+      "allow": [],
       "layer": "domain",
       "name": "doeff-cluster-service-model",
       "paths": [
@@ -1289,7 +1288,7 @@
       "public": [
         "packages/doeff-cluster/src/doeff_cluster/shared/intent/service_model.hy"
       ],
-      "responsibility": "系(System)の宣言の値と、coordinator へ渡す宣言の行(ADR-DOE-CLUSTER-001 の段 3)。",
+      "responsibility": "系(System)の宣言の値の型(CallShape・Job・System・Declaration — ADR-DOE-CLUSTER-001 の段 3)。",
       "typed": true
     },
     {
@@ -1410,7 +1409,9 @@
         "doeff-cluster-runtime-identity-model",
         "doeff-cluster-semaphore-handlers",
         "doeff-cluster-semaphore-model",
+        "doeff-cluster-service-build",
         "doeff-cluster-service-model",
+        "doeff-cluster-service-rules",
         "doeff-cluster-shared-capabilities",
         "doeff-cluster-shared-handlers",
         "doeff-cluster-shared-model",
@@ -1794,7 +1795,8 @@
       "allow": [
         "doeff-cluster-runtime-env",
         "doeff-cluster-runtime-env-model",
-        "doeff-cluster-service-model"
+        "doeff-cluster-service-model",
+        "doeff-cluster-service-rules"
       ],
       "layer": "runtime",
       "name": "doeff-cluster-declaring",
@@ -2350,6 +2352,41 @@
         "packages/doeff-cluster/src/doeff_cluster/coordinator/protocol/request_bodies.hy"
       ],
       "responsibility": "coordinator の受け口の要求の本文を道ごとの型に解く 1 点(#2445)",
+      "typed": true
+    },
+    {
+      "allow": [
+        "doeff-cluster-service-model"
+      ],
+      "layer": "domain",
+      "name": "doeff-cluster-service-rules",
+      "paths": [
+        "packages/doeff-cluster/src/doeff_cluster/shared/core/service_rules.hy"
+      ],
+      "public": [
+        "packages/doeff-cluster/src/doeff_cluster/shared/core/service_rules.hy"
+      ],
+      "responsibility": "系の宣言の値の identity と検めの判断(呼び出しの形の正規 JSON と表示・job の引き・土台の :needs・environ の上書き)。",
+      "typed": true
+    },
+    {
+      "allow": [
+        "doeff-cluster-readiness-model",
+        "doeff-cluster-remote-model",
+        "doeff-cluster-runtime-env-model",
+        "doeff-cluster-service-model",
+        "doeff-cluster-service-rules",
+        "doeff-cluster-shared-capabilities"
+      ],
+      "layer": "domain",
+      "name": "doeff-cluster-service-build",
+      "paths": [
+        "packages/doeff-cluster/src/doeff_cluster/shared/entry/service_build.hy"
+      ],
+      "public": [
+        "packages/doeff-cluster/src/doeff_cluster/shared/entry/service_build.hy"
+      ],
+      "responsibility": "系の宣言の値を作る構成子(defsystem の展開が呼ぶ job・system-of)と、coordinator へ渡す宣言の行の組み立て。",
       "typed": true
     }
   ],

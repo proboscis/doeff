@@ -12,7 +12,7 @@
 ;;;   job の行 = (名の記号 (関数の記号 引数…) :鍵 値 …)。引数は系の引数の記号か literal(文字列・数・keyword・True/False/None と、
 ;;;   それを入れた list と dict)。:needs は文字列の集合の literal、:readiness は文字列の鍵と数の dict、:environ は
 ;;;   文字列の鍵と文字列の値の dict、:update は "recreate" か "handoff"。外れれば展開の時の SyntaxError。
-;;; 値の意味(readiness の窓の形・environ の名の衝突など)は doeff-cluster の service_model.system-of が呼ばれた時に検める。
+;;; 値の意味(readiness の窓の形・environ の名の衝突など)は doeff-cluster の service_build.system-of が呼ばれた時に検める。
 (import hy)
 (import hy.models [Dict Expression Float Integer Keyword List Set String Symbol])
 (import doeff-hy.declarations [needs-names])
@@ -123,7 +123,7 @@
 
 
 (defn defsystem-form [name params body]  ; defk にできない: macro の展開の時に呼ぶ関数
-  "defsystem の展開: 土台を受けて doeff_cluster.shared.intent.service_model.system-of を呼ぶ関数と、静的な記述 __doeff_system__・
+  "defsystem の展開: 土台を受けて doeff_cluster.shared.entry.service_build.system-of を呼ぶ関数と、静的な記述 __doeff_system__・
    __doeff_tags__(役 entry)を置く form を作るため。引数に型の注記が在れば、記述の param_types(名 → 型の module:qualname)に残す。"
   (setv system (str name))
   (when (not (isinstance params List))
@@ -144,7 +144,7 @@
       (raise (SyntaxError (.format "defsystem {}: job の名 {} が 2 回ある" system n)))))
   (setv job-forms
         (lfor #(job-name program values _) jobs
-              `(doeff_cluster.shared.intent.service_model.job
+              `(doeff_cluster.shared.entry.service_build.job
                  ~(String job-name) ~program
                  :call ~(call-shape-form program)
                  ~@(sum (lfor #(k v) (.items values) [(Keyword (hy.mangle (cut k 1 None))) v]) []))))
@@ -159,9 +159,10 @@
             (hy.models.as-model static)))
   `(do
      (import doeff_cluster.shared.intent.service_model)
+     (import doeff_cluster.shared.entry.service_build)
      (import doeff_hy.declarations)
      (defn ~name [~@params]
        ~@(if (is doc None) [] [doc])
-       (doeff_cluster.shared.intent.service_model.system-of ~(String system) #(~@job-forms)))
+       (doeff_cluster.shared.entry.service_build.system-of ~(String system) #(~@job-forms)))
      (setattr ~name "__doeff_system__" ~description)
      (setattr ~name "__doeff_tags__" (doeff_hy.declarations.DefinitionTags :context ~(String system) :role "entry"))))

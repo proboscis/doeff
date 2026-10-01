@@ -52,6 +52,8 @@
   :status "accepted"
   :scope ["packages/doeff-cluster/src/doeff_cluster/job_entry.hy"
           "packages/doeff-cluster/src/doeff_cluster/shared/intent/service_model.hy"
+          "packages/doeff-cluster/src/doeff_cluster/shared/core/service_rules.hy"
+          "packages/doeff-cluster/src/doeff_cluster/shared/entry/service_build.hy"
           "packages/doeff-cluster/src/doeff_cluster/shared/intent/remote_model.hy"
           "docs/adr/defadr_doeff_cluster_001_job_accepts_a_program.hy"]
   :problem
@@ -138,7 +140,7 @@
           (counterexample "agora の宣言に role=agent-exp を書いて実験用の namespace を選ぶ — 置き場所の選び方がコードに入る")
           (counterexample "会社の資格を読む土台の handler を並べた Program が :needs に company-machine を書かない — 会社でない機体の worker に置かれ、会社の資格の境界が破れる(linter の違反)")]
        :enforced-by ["coordinator の置き方 cluster_policy.placeable(packages/doeff-cluster/tests/test_cluster_policy.hy)"
-                     "declare の土台の :needs の検め service_model.foundation-needs-refusal(packages/doeff-cluster/tests/test_service_declaration.hy)"
+                     "declare の土台の :needs の検め service_rules.foundation-needs-refusal(packages/doeff-cluster/tests/test_service_declaration.hy)"
                      "doeff-linter(土台が並べる handler の :needs の照らし — 規則の番号は未定)"]
        :wiring "一部配線(2026-09-28・agora-redesign #833)— :needs の宣言(defk・defhandler・defsystem)・coordinator の needs ⊆ provides ∪ derived の置き方・company-machine を worker の自己申告でなく node の label から導く所・declare の土台の :needs ⊆ job の :needs は実装と検がある。土台が並べる handler の :needs の照らし(linter)は未配線")
      (law old-declarations-are-refused
