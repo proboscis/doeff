@@ -1,6 +1,6 @@
 ;;; 実行環境の root の手入れの純粋な判断(2026-09-26・設計 worker-runtime-env.md 節 3.2 の期限・節 3.6 の掃除と disk の条件)。
 ;;;
-;;; worker の EnvStore(handlers.hy)が観測を集めて、ここで決め、実 I/O(dir の削除・準備の process の停止)を行う。
+;;; worker の root の言い換え(worker/protocol/env_store の env-host)が観測を集めて、ここで決め、I/O(dir の削除・準備の process の停止)を汎用の効果で出す。
 ;;;   sweep-choice     空きが下限を切った時に消す root の列(固定・project ごとの最新・worker が作っていない dir は消さない)
 ;;;   prepare-overdue  準備の期限: 先読みは停滞(処理ステージが進まない)だけ・job の準備は冷たい / 温いで別の期限
 ;;;   env-capacity     heartbeat で名乗る disk の条件(準備を始める空きが無ければ exhausted)

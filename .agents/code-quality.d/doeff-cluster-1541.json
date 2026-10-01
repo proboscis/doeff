@@ -801,7 +801,9 @@
         "doeff-cluster-host-contract",
         "doeff-cluster-worker-probes",
         "doeff-cluster-worker-code-store",
-        "doeff-cluster-worker-status-file"
+        "doeff-cluster-worker-status-file",
+        "doeff-cluster-worker-env-store",
+        "doeff-cluster-runtime-env-model"
       ],
       "layer": "runtime",
       "name": "doeff-cluster-main",
@@ -1399,7 +1401,8 @@
         "doeff-cluster-worker-code-rules",
         "doeff-cluster-worker-code-store",
         "doeff-cluster-worker-status-file",
-        "doeff-cluster-worker-env-rules"
+        "doeff-cluster-worker-env-rules",
+        "doeff-cluster-worker-env-store"
       ],
       "exclude": [
         "packages/doeff-cluster/tests/fixtures/independence/*"
@@ -2111,6 +2114,27 @@
         "packages/doeff-cluster/src/doeff_cluster/worker/core/env_rules.hy"
       ],
       "responsibility": "worker の実行環境の root の準備の判断(起こす順・頼みの形・答えの読み・期限切れの理由・掃除の下限 — #2467)",
+      "typed": true
+    },
+    {
+      "allow": [
+        "doeff-cluster-clock",
+        "doeff-cluster-env-marker-model",
+        "doeff-cluster-worker-model",
+        "doeff-cluster-worker-rules",
+        "doeff-cluster-env-upkeep",
+        "doeff-cluster-worker-env-rules",
+        "doeff-cluster-worker-heartbeat"
+      ],
+      "layer": "io",
+      "name": "doeff-cluster-worker-env-store",
+      "paths": [
+        "packages/doeff-cluster/src/doeff_cluster/worker/protocol/env_store.hy"
+      ],
+      "public": [
+        "packages/doeff-cluster/src/doeff_cluster/worker/protocol/env_store.hy"
+      ],
+      "responsibility": "worker の実行環境の root の準備・掃除・観測と heartbeat の名乗りを、汎用の子 process と file system の効果へ言い換える(#2467)",
       "typed": true
     }
   ],

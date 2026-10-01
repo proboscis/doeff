@@ -1,5 +1,5 @@
 ;;; worker の実行環境の root の準備の判断 — 起こす順・準備の頼みの JSON と起こし方・準備の答えの読み・期限切れの理由・掃除の候補の形・
-;;; 掃除の下限(handlers.hy の EnvStore から分けた・#2467)。I/O は呼び手(EnvStore — 後に worker/protocol の言い換え)が行う。
+;;; 掃除の下限(handlers.hy の EnvStore から分けた・#2467)。I/O は呼び手(worker/protocol/env_store の env-host)が行う。
 ;;; 期限そのもの・掃除の選び・disk の条件は env_upkeep。
 (require doeff-hy.macros [defk <- val var])
 (val MODULE-TAGS {:context "doeff-cluster" :role "judgment"})

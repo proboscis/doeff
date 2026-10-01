@@ -40,7 +40,7 @@
 ;; 本物の coordinator が env の task を置き、本物の run-worker が PrepareEnv で root の準備を撃ち、sim の宿が準備(即座に揃う・env-failure を
 ;; 持つ worker は失敗で終わる)を記録する。送る task の実行環境の宣言は送り手の口(ClientLink を置き換えた SimLink の runtime-env — 本番の
 ;; DetachedSender の runtime-env)が運ぶ。root の中身(新しい commit は新しい root・同じ lock の download 0・同じキーの準備は 1 本の本物の
-;; 答え手)は準備の層の検(test_env_prepare.hy — env_world の模擬の世界)と丁寧な模擬(test_env_careful.hy — 本物の EnvStore)が持つ。
+;; 答え手)は準備の層の検(test_env_prepare.hy — env_world の模擬の世界)と丁寧な模擬(test_env_careful.hy — 本物の env-host)が持つ。
 
 (val NO-JOBS (system-of "env-scenarios" #()))
 (val LOCAL (frozenset ["local"]))

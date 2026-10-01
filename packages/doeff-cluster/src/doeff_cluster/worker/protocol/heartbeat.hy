@@ -8,7 +8,7 @@
 (import doeff_cluster.worker.core.heartbeat_rules [finished-task-id])
 
 
-(deff env-report [#^ tuple views #^ str capacity]  ; defk にできない: worker の I/O の道具(EnvStore)と sim の宿が同じ形を作る純粋な判断
+(deff env-report [#^ tuple views #^ str capacity]  ; defk にできない: worker の root の言い換え(env-host)と sim の宿が同じ形を作る純粋な判断
   {:pre [(: views tuple) (: capacity str)] :post [(: % dict)] :tags {:context "doeff-cluster" :role "protocol"}}
   "実行環境の root の観測(CodeView — 鍵が env- で始まる物だけを読む)と disk の条件を、heartbeat で名乗る root の姿(準備済み・準備中・
    失敗のキーを env- を外して・disk の条件)にするため。"

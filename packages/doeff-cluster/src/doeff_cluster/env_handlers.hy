@@ -1,7 +1,7 @@
 ;;; 実行環境(root)の準備の要求を汎用の effect へ訳す handler(env-translation)と、準備の process の入口(2026-09-26・翻訳の形
 ;;; 2026-09-27)。
 ;;;
-;;; worker(handlers.hy の EnvStore)は root 1 つの準備を、worker 自身の環境のこの module を別の process として起こす
+;;; worker(worker/protocol/env_store の env-host)は root 1 つの準備を、worker 自身の環境のこの module を別の process として起こす
 ;;; (worker のループは待たない・worker の process は変わらない):
 ;;;
 ;;;   hy -m doeff_cluster.env_handlers --request <要求の JSON> --result <答えの JSON> --state <state dir>
@@ -470,7 +470,7 @@
   (session val notes (! (asked-text "runtime-env.notes")))
 
   (StageStarted [name]
-    ;; 進みの印: worker の EnvStore は印の file の時刻で先読みの停滞を見分ける(空 = 印を書かない)。
+    ;; 進みの印: worker の env-host は印の file の時刻で先読みの停滞を見分ける(空 = 印を書かない)。
     (when progress
       (<- (write-replacing progress (+ name "\n"))))
     (resume None))
@@ -613,7 +613,7 @@
 
 (defk request-of-json [data]
   {:pre [(: data dict)] :post [(: % PrepareRequest)]}
-  "要求の JSON(worker の EnvStore が書く)→ PrepareRequest。"
+  "要求の JSON(worker の env-host が書く)→ PrepareRequest。"
   (<- env RuntimeEnv (runtime-env-of-json (get data "env")))
   (var known [])
   (for [k (.get data "known" [])]
@@ -625,7 +625,7 @@
 
 (defk answer-json [answer]
   {:pre [(: answer (| EnvReady EnvFailure))] :post [(: % dict)]}
-  "準備の答え → 答えの JSON(worker の EnvStore が読む)。"
+  "準備の答え → 答えの JSON(worker の env-host が読む)。"
   (match answer
     (EnvFailure) {"failure" {"kind" answer.kind.value "detail" answer.detail "retryable" answer.retryable}}
     _ {"ready" {"key" answer.key "root" answer.root "interpreter" answer.interpreter

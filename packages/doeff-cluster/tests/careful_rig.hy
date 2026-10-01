@@ -1,4 +1,5 @@
-;; 実行環境の丁寧な模擬の世界(本物の git の bare repo と file:// の URL・PATH の先頭の fake の uv・本物の EnvStore と ProcessHost)を組む道具。
+;; 実行環境の丁寧な模擬の世界(本物の git の bare repo と file:// の URL・PATH の先頭の fake の uv・本物の root の言い換え env-host と
+;; 子 process の言い換え process-host)を組む道具。
 ;; test_env_careful.hy と test_service_env.hy が共有する(test の名でない module に置く — test の module を別の検から import すると、
 ;; pytest の書き換えの hook がそれを Python として読もうとして、走る順によって収集が落ちる)。
 (require doeff-hy.macros [deftest defk <- val var])
@@ -13,6 +14,11 @@
 (import sys)
 (import time)
 (import pathlib [Path])
+(import doeff [run with-handlers])
+(import doeff_core_effects.handlers [slog-handler state])
+(import doeff_core_effects.os_file [os-file-handler])
+(import doeff_core_effects.os_process [subprocess-handler])
+(import doeff_time [sync-time-handler])
 (import doeff_cluster.shared.intent.runtime_env_model [RepoCheckout NativeWheel PythonProject RuntimeEnv EnvFailureKind
                                          runtime-env->json env-key current-platform])
 (import doeff_cluster.shared.intent.checkout_model [LocalCheckout ProjectOfCheckout])
@@ -20,11 +26,12 @@
 (import doeff_cluster.shared.protocol.checkout_reads [checkout-reads])
 (import doeff_cluster.worker.intent.env_prepare_model [ROOTS-PTH] doeff_cluster.shared.intent.env_marker_model [ENV-MARKER])
 (import doeff_cluster.shared.intent.service_model [resolve])
-(import doeff_cluster.handlers [EnvStore task-spec write-program-file])
+(import doeff_cluster.handlers [TOOL task-spec write-program-file])
+(import doeff_cluster.worker.protocol.env_store [EnvSettings env-host env-root])
 (import doeff_cluster.worker.protocol.process_host [HostSettings])
 (import tests.host_rig [host-settings job-ended run-on-host])
 (import doeff_cluster.worker.intent.worker_model [CodeState CodeView StartJob ReapJob Outcome WorldView WorkerPolicy PrepareEnv WarmEnv
-] doeff_cluster.worker.core.worker_rules [code-key])
+  ObserveEnvs] doeff_cluster.worker.core.worker_rules [code-key])
 (import doeff_cluster.worker.core.policy [plan])
 (import doeff_cluster.shared.intent.remote_model [encode-program decode-outcome program-sha TaskSucceeded TaskFailed])
 (import doeff_cluster.foundation.process_versions [current-versions])
@@ -100,12 +107,12 @@
 
 
 (defrecord Rig
-  "丁寧な模擬の 1 組: 検の dir・worker の state・fake の uv の dir・準備の EnvStore・子 process の言い換えの設定(host — process-host・
-   #2464)・remote の checkout。"
+  "丁寧な模擬の 1 組: 検の dir・worker の state・fake の uv の dir・root の準備の設定(envs — env-host・#2467)・子 process の言い換えの
+   設定(host — process-host・#2464)・remote の checkout。"
   (#^ Path base)
   (#^ Path state)
   (#^ Path fake)
-  (#^ EnvStore envs)
+  (#^ EnvSettings envs)
   (#^ HostSettings host)
   (#^ Path app)
   (#^ Path lib))
@@ -113,7 +120,7 @@
 
 (defk make-rig [base [min-free-bytes 0] [allowed None]]
   {:pre [(: base Path) (: min-free-bytes int) (: allowed (| tuple None))] :post [(: % Rig)]}
-  "worker の組(EnvStore・子 process の言い換えの設定)と、fake の uv を PATH の先頭に置く包みと、app と lib の remote を作る。"
+  "worker の組(root の準備と子 process の言い換えの設定)と、fake の uv を PATH の先頭に置く包みと、app と lib の remote を作る。"
   (val fake (/ base "fake-uv"))
   (.mkdir fake :parents True)
   (val site (next (gfor p sys.path :if (.endswith p "site-packages") p)))
@@ -136,7 +143,8 @@
   (<- host (host-settings state :hy-command HY :extra-env {"DOEFF_WORKER_NAME" "careful" "PYTHONDONTWRITEBYTECODE" "1"}
                          :uv (str wrapper)))
   (Rig :base base :state state :fake fake :app app :lib lib
-       :envs (EnvStore (str state) HY :repo-keys (str keys) :uv (str wrapper) :min-free-bytes min-free-bytes)
+       :envs (EnvSettings :state (str state) :hy-command HY :platform (current-platform) :code-prepare TOOL :repo-keys (str keys)
+                          :uv (str wrapper) :min-free-bytes min-free-bytes)
        :host host))
 
 
@@ -176,21 +184,41 @@
   (sum (gfor line lines :if (.startswith line "sync ") (int (get (.split line "downloads=") 1)))))
 
 
-(defk prepare [rig env]
-  {:pre [(: rig Rig) (: env RuntimeEnv)] :post [(: % CodeView)]}
-  "worker と同じ口(EnvStore.start)で root を準備し、READY か FAILED の観測(CodeView)まで待つ。"
-  (<- key str (env-key env (current-platform)))
-  (<- declared dict (runtime-env->json env))
-  (.start rig.envs (+ "env-" key) (json.dumps declared :sort-keys True :ensure-ascii False))
+(defn #^ object run-envs [#^ EnvSettings settings #^ object program]  ; defk にできない: 検が Program の外から本物の答え手の組で 1 回走らせる入口
+  "筋書きの Program を env-host と本物の答え手の下で 1 回の run で回す(with-handlers の並びは先頭が外側 — 準備の記録は外側の state が持つ)。"
+  (run (with-handlers [(state) (sync-time-handler) slog-handler os-file-handler subprocess-handler (env-host settings)] program)))
+
+
+(defk settled-env [key]
+  {:pre [(: key str)] :post [(: % CodeView)]}
+  "root の観測で key が READY か FAILED になるまで待つため(準備は起こさない・上限 DEADLINE-SECONDS)。"
   (val deadline (+ (time.monotonic) DEADLINE-SECONDS))
   (var found None)
   (while (is found None)
     (when (> (time.monotonic) deadline) (raise (AssertionError (.format "準備が {} 秒で終わらない" DEADLINE-SECONDS))))
-    (for [view (.observe rig.envs)]
-      (when (and (= view.revision (+ "env-" key)) (in view.state #(CodeState.READY CodeState.FAILED)))
+    (<- views tuple (ObserveEnvs))
+    (for [view views]
+      (when (and (= view.revision key) (in view.state #(CodeState.READY CodeState.FAILED)))
         (:= found view)))
     (when (is found None) (time.sleep 0.2)))
   found)
+
+
+(defk prepared-env [key text [times 1]]
+  {:pre [(: key str) (: text str) (: times int)] :post [(: % CodeView)]}
+  "worker と同じ口(PrepareEnv)で root の準備を times 回頼み、READY か FAILED の観測まで待つため。"
+  (for [_ (range times)]
+    (<- (PrepareEnv key text)))
+  (<- view CodeView (settled-env key))
+  view)
+
+
+(defk prepare [rig env]
+  {:pre [(: rig Rig) (: env RuntimeEnv)] :post [(: % CodeView)]}
+  "worker と同じ口(PrepareEnv)で root を準備し、READY か FAILED の観測(CodeView)まで待つ。"
+  (<- key str (env-key env (current-platform)))
+  (<- declared dict (runtime-env->json env))
+  (run-envs rig.envs (prepared-env (+ "env-" key) (json.dumps declared :sort-keys True :ensure-ascii False))))
 
 
 (defk run-task [rig env task-id [versions None] [around #()]]
@@ -212,7 +240,8 @@
                         "runtimeEnv" declared}
                        tasks))
   (<- key str (env-key env (current-platform)))
-  (val ended (run-on-host rig.host (job-ended spec (str (.root-of rig.envs (+ "env-" key))) DEADLINE-SECONDS) :around around))
+  (<- root str (env-root rig.envs (+ "env-" key)))
+  (val ended (run-on-host rig.host (job-ended spec root DEADLINE-SECONDS) :around around))
   (val result (/ tasks (+ task-id ".result")))
   (assert (.is-file result) (.format "子が結果を書かなかった(終了 {})— log: {}" ended.exit-code
                                      (.read-text (next (.glob (/ rig.state "logs") (+ "task_" task-id "*"))) :errors "replace")))

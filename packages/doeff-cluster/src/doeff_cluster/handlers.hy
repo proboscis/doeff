@@ -2,11 +2,8 @@
 ;; どれもループを塞がない: 展開と子 process は Popen で起動し、結果は ObserveWorld で観測する。
 (require doeff-hy.macros [defhandler defk deff <- val])
 (require doeff-hy.record [defrecord])
-(import json os re shutil subprocess sys threading time uuid)
+(import json os re sys threading time uuid)
 (import httpx)
-(import enum [Enum])
-(import typing [IO])
-(import dataclasses [dataclass replace])
 (import pathlib [Path])
 (import urllib.parse [quote :as url-quote])
 (import doeff_cluster.foundation.coordinator_http [CoordinatorEndpoint REPLY-SECONDS])
@@ -19,20 +16,16 @@
 (import .job_context [process-context-environ])
 (import doeff_cluster.shared.intent.remote_model [program-sha])
 (import doeff_cluster.shared.intent.runtime_env_model [runtime-env-of-json env-key current-platform])
-(import doeff_cluster.shared.intent.env_marker_model [ENV-MARKER])
-(import doeff_cluster.worker.core.env_upkeep [RootInfo PrepareLimits sweep-choice prepare-overdue env-capacity WHEEL-UNUSED-SECONDS])
-(import doeff_cluster.worker.core.env_rules [launch-order cold-for prepare-request prepare-argv prepare-outcome overdue-failure root-project
-                                             floor-bytes])
 (import doeff_cluster.shared.intent.semaphore_model [SEMAPHORE-PREFIX])
 (import doeff_cluster.shared.core.lease_rules [drop-holders lease-holder holder-tokens-prefix])
-(import doeff_cluster.worker.protocol.heartbeat [env-report env-heartbeat-part heartbeat-body status-report status-row])
+(import doeff_cluster.worker.protocol.heartbeat [env-heartbeat-part heartbeat-body status-report status-row])
 (import doeff_cluster.worker.core.heartbeat_rules [warm-env-of-row finished-task-id desired-when-unreachable])
 (import doeff_cluster.foundation.ready_file [write-ready-file])
 (import doeff_cluster.worker.core.launch [program-file])
-(import doeff_cluster.worker.intent.worker_model [ObserveCode ObserveProcesses ObserveProbes CodeState CodeView ProcessView WorldView StopStage ProbeState ProbeView
+(import doeff_cluster.worker.intent.worker_model [ObserveCode ObserveEnvs ObserveEnvDisk EnvReport ObserveProcesses ObserveProbes WorldView
   DesiredJobs DesiredUnreadable ReadDesired ObserveWorld WorkerStopRequested PublishStatus JobStatus EnvDisk WarmEnv
-  PrepareEnv SweepEnvs ForgetProbes StartJob SignalJob ReapJob RetireJob ReleaseLeases ProbeEntry
-] doeff_cluster.shared.intent.job_model [JobSpec JobPhase] doeff_cluster.shared.core.job_rules [spec-hash] doeff_cluster.worker.core.worker_rules [probe-args probe-refusal ENV-KEY-PREFIX])
+  ReleaseLeases
+] doeff_cluster.shared.intent.job_model [JobSpec] doeff_cluster.worker.core.worker_rules [ENV-KEY-PREFIX])
 
 (defn #^ tuple env-placement [#^ (| dict None) declared #^ str revision]  ; defk にできない: 宣言の読み(Program の外の I/O の道具)が呼ぶ
   "job の宣言の runtimeEnv(在れば)と版 → #(版 宣言の JSON の正規化した文字列 env のキー)。実行環境の job(task も service も —
@@ -73,245 +66,17 @@
 (setv TOOL (str (/ (. (.resolve (Path __file__)) parent) "code_prepare.hy")))
 
 
-(setv ENV-TOOL "doeff_cluster.env_handlers")   ; 準備の process の入口(worker 自身の環境の module — root の路は worker に足さない)
-
-
-(setv ROOT-NAME-PATTERN (re.compile r"[0-9a-f]{24}"))
-(setv SWEEP-EVERY-SECONDS 30)   ; 空きが下限を切っている間の掃除の間隔(固定の集合が変わった時はすぐ)
-(setv PRUNE-EVERY-SECONDS 1800)  ; uv の cache の prune を起こし直す間隔の下限(node の disk を他の物が使うと掃除では下限に戻らず、拍ごとに起き続けるため)
-
-
-(defclass PendingPrepare []
-  "走っている準備 1 本の記録(EnvStore の中だけ): process・始めた時刻(epoch 秒)・答えの file・進みの印の file・
-   warm = 先読みの準備か(job がその root を求めたら job の準備へ上げる)・cold = 冷たい準備か(引き継げる root が無い)。"
-  (defn #^ None __init__ [self #^ subprocess.Popen process #^ float started #^ Path result #^ Path progress #^ bool warm #^ bool cold]
-    (setv self.process process self.started started self.result result self.progress progress self.warm warm self.cold cold)))
-
-
-(defclass EnvStore []
-  "実行環境(runtime env)の root を env のキーごとに準備する(2026-09-26)。準備は worker 自身の code の env_handlers.hy を別の
-   process として起こし(worker のループは待たない)、完成マーカーの在る root だけを READY として観測する。
-   root は state/roots/<キー> の最終の path に作る(venv が絶対 path を持つので rename しない)。マーカーの無い root は次に
-   求められた時に脇へ退けて作り直す。準備は同時に max-parallel 本まで・同じキーは 1 本。
-   repo-keys = 許可表の JSON の file(clone してよい URL → deploy key)・uv = uv の命令・min-free-bytes = 準備を始める空きの下限。
-   先読み(warm・2026-09-26): 温める表の root は job の準備より後に起こし、同時の枠の 1 つを job に残す。期限は limits
-   (env_upkeep.prepare-overdue — 先読みは停滞だけ・job は冷たい / 温い)。
-   掃除(sweep): 空きが下限(sweep-floor-bytes か volume の SWEEP-FLOOR-RATIO と min-free-bytes の大きい方)を切ったら、固定されていない
-   root を消す(選びは env_upkeep.sweep-choice)・uv の cache を prune・7 日使われない wheel を消す。消すのは worker が作った dir だけ。"
-  (defn #^ None __init__ [self #^ str state-dir #^ str hy-command #^ str [repo-keys ""] #^ str [uv "uv"] #^ int [min-free-bytes 0]
-                  #^ PrepareLimits [limits (PrepareLimits)] #^ int [max-parallel 2] #^ str [tool ENV-TOOL]
-                  #^ str [code-prepare TOOL] #^ (| int None) [sweep-floor-bytes None]]
-    (setv self.state (Path state-dir) self.hy-command hy-command self.repo-keys repo-keys self.uv uv
-          self.min-free-bytes min-free-bytes self.limits limits self.max-parallel max-parallel
-          self.tool tool self.code-prepare code-prepare self.sweep-floor-bytes sweep-floor-bytes
-          self.pending {} self.failed {} self.waiting {} self.started 0
-          self.pinned (frozenset) self.swept-at 0.0 self.views None
-          ;; 走っている uv の cache の prune(待たない — 下の sweep)。
-          self.pruning None self.pruned-at 0.0))
-
-  (defn #^ Path root-of [self #^ str key]
-    (/ self.state "roots" (cut key (len ENV-KEY-PREFIX) None)))
-
-  (defn #^ (| dict None) marker [self #^ Path root]
-    "root の完成マーカーの中身(無い・読めなければ None)。"
-    (setv path (/ root ENV-MARKER))
-    (when (not (.is-file path)) (return None))
-    (try (json.loads (.read-text path :encoding "utf-8")) (except [ValueError] None)))
-
-  (defn #^ list known [self]
-    "完成した root の列(展開の複製と bytecode の引き継ぎの元)— 要求の JSON の形。"
-    (setv roots (/ self.state "roots"))
-    (when (not (.is-dir roots)) (return []))
-    (lfor e (sorted (.iterdir roots)) :if (and (.is-dir e) (not (.startswith e.name ".")))
-          :setv m (self.marker e) :if (is-not m None)
-          {"env" (get m "env") "root" (str e)}))
-
-  (defn #^ None start [self #^ str key #^ str runtime-env #^ bool [warm False]]
-    "root の準備を頼む。job の頼み(warm = False)は、同じ root の先読みが走っていれば job の準備へ上げ、待っていれば前へ出す。"
-    (setv pending (.get self.pending key))
-    (when (is-not pending None)
-      (when (and pending.warm (not warm))
-        ;; 先読みの準備を job の準備へ上げる: 期限は job の物(始めた時刻から数える)になる。
-        (setv pending.warm False))
-      (return))
-    (when (in key self.waiting)
-      (when (not warm) (setv (get self.waiting key) #(runtime-env False)))
-      (return))
-    (setv root (self.root-of key))
-    (when (is-not (self.marker root) None) (return))
-    (.pop self.failed key None)
-    (setv (get self.waiting key) #(runtime-env warm))
-    (self.launch-waiting))
-
-  (defn #^ None launch-waiting [self]
-    ;; 起こす順と数は env_rules.launch-order(同時の準備は max-parallel 本・先読みは枠の 1 つを job に残す)。
-    (setv order (run (launch-order (tuple (gfor #(k #(_ w)) (.items self.waiting) #(k w))) (len self.pending)
-                                   (len (lfor p (.values self.pending) :if p.warm p)) self.max-parallel)))
-    (for [key order]
-      (setv #(runtime-env warm) (get self.waiting key))
-      (del (get self.waiting key))
-      (setv root (self.root-of key))
-      (when (.exists root)
-        ;; マーカーの無い root(途中で止まった準備)は脇へ退ける。名は . で始まるので完成品としては読まれない。
-        (os.rename root (/ root.parent (.format ".{}.broken.{}" root.name (time.time-ns)))))
-      (setv requests (/ self.state "env-requests"))
-      (.mkdir requests :parents True :exist-ok True)
-      (setv declared (json.loads runtime-env)
-            request (/ requests (+ key ".json")) result (/ requests (+ key ".result.json"))
-            progress (/ requests (+ key ".progress")))
-      (.unlink result :missing-ok True)
-      (.unlink progress :missing-ok True)
-      (setv known (tuple (self.known))
-            cold (run (cold-for declared known)))
-      (.write-text request (json.dumps (run (prepare-request declared (cut key (len ENV-KEY-PREFIX) None) (current-platform) (str root)
-                                                             known self.min-free-bytes))
-                                       :ensure-ascii False)
-                   :encoding "utf-8")
-      (+= self.started 1)
-      (setv log (open (/ requests (+ key ".log")) "ab"))
-      (try
-        (setv process (subprocess.Popen (list (run (prepare-argv self.hy-command self.tool (str request) (str result) (str self.state)
-                                                                 self.repo-keys self.code-prepare self.uv (str progress))))
-                                        :stdout log :stderr subprocess.STDOUT :stdin subprocess.DEVNULL))
-        (finally (.close log)))
-      (setv (get self.pending key) (PendingPrepare process (time.time) result progress warm cold))))
-
-  (defn #^ float progressed-at [self #^ PendingPrepare pending]
-    "準備の最後の進み(処理ステージの頭の印の時刻・印が無ければ始めた時刻)。"
-    (try (max pending.started (. (.stat pending.progress) st-mtime)) (except [OSError] pending.started)))
-
-  (defn #^ tuple observe [self]
-    (setv views [] now-ms (int (* (time.time) 1000)))
-    (for [#(key pending) (list (.items self.pending))]
-      (setv code (.poll pending.process))
-      (cond
-        (is-not code None)
-          (do (del (get self.pending key))
-              (setv answer (try (json.loads (.read-text pending.result :encoding "utf-8")) (except [[OSError ValueError]] None)))
-              (setv failure (run (prepare-outcome answer code (str (/ self.state "env-requests" (+ key ".log"))))))
-              (when (is-not failure None)
-                (setv (get self.failed key) #(failure now-ms))))
-        (run (prepare-overdue pending.warm pending.cold pending.started (.progressed-at self pending) (time.time) self.limits))
-          (do (.kill pending.process)
-              (.wait pending.process)
-              (del (get self.pending key))
-              (setv (get self.failed key) #((run (overdue-failure pending.warm pending.cold self.limits)) now-ms)))))
-    (self.launch-waiting)
-    (for [key (+ (list self.pending) (list self.waiting))]
-      (.append views (CodeView key CodeState.PREPARING)))
-    (for [#(key #(failure failed-ms)) (.items self.failed)]
-      (.append views (CodeView key CodeState.FAILED :detail failure.detail :failed-ms failed-ms :failure failure)))
-    (setv roots (/ self.state "roots"))
-    (when (.is-dir roots)
-      (for [entry (sorted (.iterdir roots))]
-        (setv key (+ ENV-KEY-PREFIX entry.name))
-        (when (and (.is-dir entry) (not (.startswith entry.name ".")) (not-in key self.pending) (not-in key self.failed)
-                   (is-not (self.marker entry) None))
-          (.append views (CodeView key CodeState.READY :path (str entry))))))
-    (setv self.views (tuple views))
-    (tuple views))
-
-  ;; --- disk と掃除 ---------------------------------------------------------------------
-
-  (defn #^ EnvDisk disk-view [self]
-    "root の置き場の disk の観測(worker の判断が掃除の時を決める)。"
-    (.mkdir self.state :parents True :exist-ok True)
-    (setv usage (shutil.disk-usage self.state))
-    (EnvDisk :free usage.free :floor (run (floor-bytes self.sweep-floor-bytes self.min-free-bytes usage.total)) :pinned self.pinned))
-
-  (defn #^ list root-infos [self]
-    "掃除の候補(roots の直下の dir)。worker が作った root = キーの形の名で完成マーカーを持つ dir。"
-    (setv roots (/ self.state "roots") out [])
-    (when (not (.is-dir roots)) (return out))
-    (for [entry (sorted (.iterdir roots))]
-      (when (and (.is-dir entry) (not (.startswith entry.name ".")))
-        (setv marker (self.marker entry)
-              owned (and (is-not marker None) (bool (ROOT-NAME-PATTERN.fullmatch entry.name)))
-              made (if owned (. (.stat (/ entry ENV-MARKER)) st-mtime) 0.0)
-              used-file (/ entry ".last-used")
-              used (if (.exists used-file) (. (.stat used-file) st-mtime) made)
-              project (if (and owned (is-not marker None)) (run (root-project marker)) ""))
-        (.append out (RootInfo :key (+ ENV-KEY-PREFIX entry.name) :project project :made-ms (int (* 1000 made))
-                               :last-used-ms (int (* 1000 used)) :bytes (if owned (tree-bytes entry) 0) :owned owned))))
-    out)
-
-  (defn #^ None sweep [self #^ frozenset pinned]
-    "固定の集合を持ち替え、空きが下限を切っていれば掃除する(下限を切っている間は SWEEP-EVERY-SECONDS ごと・固定が変わればすぐ)。"
-    (setv changed (!= pinned self.pinned))
-    (setv self.pinned pinned)
-    (setv disk (.disk-view self) now (time.time))
-    (when (or (>= disk.free disk.floor) (and (not changed) (< (- now self.swept-at) SWEEP-EVERY-SECONDS) (> self.swept-at 0)))
-      (return))
-    (setv self.swept-at now)
-    ;; 固定には走っている準備(pending と waiting)も足す(判断の側の観測より新しいので)。
-    (setv busy (| pinned (frozenset self.pending) (frozenset self.waiting)))
-    (setv chosen (run (sweep-choice (tuple (.root-infos self)) busy disk.free disk.floor)))
-    (for [key chosen]
-      (setv root (self.root-of key))
-      (print (.format "worker: 掃除 — 固定されていない root {} を消す(空き {} byte < 下限 {} byte)" root.name disk.free disk.floor)
-             :file sys.stderr :flush True)
-      (shutil.rmtree root :ignore-errors True))
-    ;; 途中で止まった準備の残り(.<キー>.broken.<時刻>)は worker が退けた物なので消してよい。
-    (setv roots (/ self.state "roots"))
-    (when (.is-dir roots)
-      (for [entry (.iterdir roots)]
-        (when (and (.startswith entry.name ".") (in ".broken." entry.name)) (shutil.rmtree entry :ignore-errors True))))
-    ;; 7 日使われない native の wheel(使うたびに dir の中の印の file を置き換えて dir の時刻を進める — env_handlers の EnsureNativeWheel)。
-    (setv wheels (/ self.state "wheels"))
-    (when (.is-dir wheels)
-      (for [entry (.iterdir wheels)]
-        (when (and (.is-dir entry) (> (- now (. (.stat entry) st-mtime)) WHEEL-UNUSED-SECONDS))
-          (shutil.rmtree entry :ignore-errors True))))
-    ;; まだ下限を切っていれば uv の cache を prune する(venv の中の file は hardlink なので残る)。prune は uv の cache の lock を取るので、
-    ;; 待つと root の準備の uv run が終わるまで worker のループ(heartbeat)が止まる — 別の process として起こして待たない。前の prune が
-    ;; 走っている間と、root の準備が走っている間と、前の prune から PRUNE-EVERY-SECONDS の間は起こさない(準備と lock を競わない・
-    ;; 他の物が使う node の disk では prune で下限に戻らないので、拍ごとに起こし続けない)。
-    (when (and (is-not self.pruning None) (is-not (.poll self.pruning) None))
-      (setv self.pruning None))
-    (when (and (< (. (.disk-view self) free) disk.floor) (is self.pruning None) (not self.pending) (not self.waiting)
-               (or (= self.pruned-at 0.0) (>= (- now self.pruned-at) PRUNE-EVERY-SECONDS)))
-      (setv self.pruned-at now)
-      (setv self.pruning (subprocess.Popen [self.uv "cache" "prune"]
-                                           :env (| (dict os.environ) {"UV_CACHE_DIR" (str (/ self.state "uv-cache"))})
-                                           :stdin subprocess.DEVNULL :stdout subprocess.DEVNULL :stderr subprocess.DEVNULL
-                                           :start-new-session True))))
-
-  (defn #^ dict report [self]
-    "heartbeat で名乗る root の姿(coordinator の置き先と温める表の読みが使う): 準備済み・準備中・失敗のキー(env- を外した物)と
-     disk の条件(形は env-report — sim の宿と同じ関数)。"
-    (setv views (if (is self.views None) (.observe self) self.views)
-          free (. (.disk-view self) free))
-    (env-report (tuple views) (run (env-capacity free self.min-free-bytes)))))
-
-
-(defn #^ int tree-bytes [#^ Path root]  ; defk にできない: EnvStore(Program の外の I/O の道具)が呼ぶ
-  "dir の下の file の大きさの合計(掃除で空く量の見積り — hardlink は重ねて数える)。"
-  (setv total 0)
-  (for [#(dirpath _ filenames) (os.walk root)]
-    (for [name filenames]
-      (try (+= total (. (os.lstat (os.path.join dirpath name)) st-size)) (except [OSError] None))))
-  total)
-
-
-(defhandler local-host [#^ (| EnvStore None) [envs None]]
-  ;; 引数に残す理由: worker の process が持つ I/O の資源(準備の process の表)で、同じ組が観測と action の両方に答える。
-  ;; envs = 実行環境の root の準備(None = 実行環境の job を扱わない worker — PrepareEnv は断る)。版ごとのコードの木は
-  ;; worker/protocol/code_store(#2466)、job の子 process は worker/protocol/process_host(#2464)、入口の検めは
-  ;; worker/protocol/probes(#2465)の言い換え(外側に置く)が答え、観測は ObserveCode・ObserveProcesses・ObserveProbes で問う。
+(defhandler local-host []
+  ;; ObserveWorld の答え = 各言い換え(外側に置く)の観測のまとめ: 版ごとのコードの木 = worker/protocol/code_store(#2466)・実行環境の
+  ;; root = worker/protocol/env_store(#2467)・job の子 process = worker/protocol/process_host(#2464)・入口の検め =
+  ;; worker/protocol/probes(#2465)。
   (ObserveWorld []
     (<- codes tuple (ObserveCode))
+    (<- envs tuple (ObserveEnvs))
     (<- processes tuple (ObserveProcesses))
     (<- probed tuple (ObserveProbes))
-    (resume (WorldView (+ codes (if (is envs None) #() (.observe envs))) processes probed
-                       :env-disk (if (is envs None) None (.disk-view envs)))))
-  (PrepareEnv [key runtime-env warm]
-    (when (is envs None)
-      (raise (RuntimeError "この worker は実行環境の job を扱えない(EnvStore が無い)")))
-    (.start envs key runtime-env :warm warm)
-    (resume None))
-  (SweepEnvs [pinned]
-    (when (is-not envs None) (.sweep envs pinned))
-    (resume None)))
+    (<- disk EnvDisk (ObserveEnvDisk))
+    (resume (WorldView (+ codes envs) processes probed :env-disk disk))))
 
 
 (setv JOB-ENTRY "doeff_cluster.job_entry")
@@ -374,7 +139,7 @@
   "coordinator との連絡。heartbeat で生存・版・状態(終わった task の結果を含む)を送り、自分に割り当てられた job と task を受け取る。
    task の blob は task-dir の file に置き、宣言から外れた task の file は消す(この worker が書いた物だけ)。"
   (defn #^ None __init__ [self #^ str url #^ str name #^ tuple provides #^ int capacity #^ int fence-ms
-                  #^ (| str None) [task-dir None] #^ (| dict None) [versions None] #^ (| httpx.BaseTransport None) [transport None] #^ (| dict None) [tools None] #^ (| EnvStore None) [envs None]
+                  #^ (| str None) [task-dir None] #^ (| dict None) [versions None] #^ (| httpx.BaseTransport None) [transport None] #^ (| dict None) [tools None] #^ bool [handles-envs False]
                   #^ tuple [exclusive #()] #^ str [node ""] #^ bool [watch False]]
     ;; watch = heartbeat を拍から切り離し、desired の変化を名指しの待ち(GET /watch)で受けるか(#1933 — beat_policy)。真なら返事に版を
     ;; 持つ coordinator に背景の thread で待ちを送り続け、heartbeat は beat_policy.heartbeat-due の時だけ送る。偽(既定 — 検の道具の
@@ -383,8 +148,10 @@
     ;; label から能力(company-machine など)を導く — worker の自己申告にしない(改訂 1 の I)。
     ;; provides / exclusive = この worker が提供する能力・専用の能力の名(名の順 — cluster_model.capabilities-of・ADR-DOE-CLUSTER-001 R4b)。
     ;; tools = この worker が名乗る道具(名 → 版 — 実行環境の宣言の tools と照らして置き先を選ぶ)。
-    ;; envs = 実行環境の root の置き場(在れば、準備済み・準備中・失敗の root と disk の条件を heartbeat で名乗り、温める表を受ける)。
-    (setv self.name name self.provides provides self.exclusive exclusive self.node node self.capacity capacity self.tools (or tools {}) self.envs envs
+    ;; handles-envs = 実行環境の job を扱う worker か(真なら、準備済み・準備中・失敗の root と disk の条件を heartbeat で名乗り、温める表を
+    ;; 受ける)。名乗りの中身 env-report は、拍ごとに coordinator-desired が root の言い換えへ EnvReport で問うて置く(#2467)。
+    (setv self.name name self.provides provides self.exclusive exclusive self.node node self.capacity capacity self.tools (or tools {})
+          self.handles-envs handles-envs self.env-report None
           self.last-warm #() self.warm-keys {}
           self.fence-ms fence-ms self.statuses []
           ;; 宛先は `,` で並べた物(前ほど優先)。毎拍やり直すので一巡以上は送り直さない(拍を塞がない)・接続は使い回す。
@@ -476,14 +243,14 @@
   (defn #^ dict env-body [self]
     "heartbeat に足す root の名乗り(実行環境を扱う worker だけ): platform・準備済み / 準備中 / 失敗の root・disk の条件
      (形は env-heartbeat-part — sim の宿と同じ関数)。"
-    (if (is self.envs None)
+    (if (or (not self.handles-envs) (is self.env-report None))
         {}
-        (env-heartbeat-part (.report self.envs) (current-platform))))
+        (env-heartbeat-part self.env-report (current-platform))))
 
   (defn #^ tuple accept-warm [self #^ list rows]
     "heartbeat の返事の温める表の行 → この worker の root のキーの WarmEnv(キーは行ごとに 1 度だけ計算する — 計算は warm-env-of-row、
      sim の宿と同じ関数)。"
-    (when (is self.envs None) (return #()))
+    (when (not self.handles-envs) (return #()))
     (setv out [])
     (for [row rows]
       (setv text (json.dumps (get row "runtimeEnv") :sort-keys True :ensure-ascii False))
@@ -621,7 +388,12 @@
 
 
 (defhandler coordinator-desired [#^ CoordinatorLink link]
-  (ReadDesired [] (resume (.poll link))))
+  ;; heartbeat に載せる root の名乗りは、送る前に root の言い換え(worker/protocol/env_store)へ問う(#2467)。
+  (ReadDesired []
+    (when link.handles-envs
+      (<- report dict (EnvReport))
+      (setv link.env-report report))
+    (resume (.poll link))))
 
 
 (defhandler status-to-coordinator [#^ CoordinatorLink link]

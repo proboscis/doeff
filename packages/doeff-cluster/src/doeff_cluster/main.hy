@@ -20,7 +20,7 @@
 (import doeff_core_effects.process_effects [EnvEntry])
 (import doeff_core_effects.scheduler [scheduled])
 (import doeff_time [async-time-handler])
-(import .handlers [TOOL EnvStore CoordinatorLink coordinator-desired local-host
+(import .handlers [TOOL CoordinatorLink coordinator-desired local-host
                    status-to-coordinator lease-release-coordinator] doeff_cluster.worker.protocol.stop [stop-flag StopState])
 (import doeff_cluster.foundation.process_versions [current-versions])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming])
@@ -30,6 +30,8 @@
 (import doeff_cluster.worker.protocol.process_host [HostSettings process-host])
 (import doeff_cluster.worker.protocol.probes [ProbeSettings probe-host])
 (import doeff_cluster.worker.protocol.code_store [CodeSettings code-host])
+(import doeff_cluster.worker.protocol.env_store [EnvSettings env-host])
+(import doeff_cluster.shared.intent.runtime_env_model [current-platform])
 (import doeff_cluster.worker.protocol.status_file [status-file])
 (import doeff_cluster.foundation.host_contract [HOST-CONTRACT])
 (import .job_context [worker-context-environ])
@@ -105,7 +107,8 @@
                            :extra-env (tuple (gfor k (sorted host-env) (EnvEntry :name k :value (get host-env k)))) :layout layout
                            :program-env HOST-CONTRACT.program-env)
         ;; 実行環境(runtime env)の root の準備(別の process・worker は再起動しない)。
-        envs (EnvStore (str state-dir) hy-command :repo-keys args.repo-keys :uv args.uv :min-free-bytes args.env-min-free)
+        envs (EnvSettings :state (str state-dir) :hy-command hy-command :platform (current-platform) :code-prepare TOOL
+                          :repo-keys args.repo-keys :uv args.uv :min-free-bytes args.env-min-free)
         ;; 入口の検め(service の job の木を worker の実行環境で読み込めるか — 起こす前に試す)。
         probes (ProbeSettings :python sys.executable :hy-command hy-command :uv args.uv :layout layout
                               :probe-dir (str (/ state-dir "probe")))
@@ -117,16 +120,17 @@
   (setv link (CoordinatorLink args.coordinator args.name provides args.capacity
                               (int (* args.fence 1000))
                               :task-dir (str (/ state-dir "tasks")) :versions (current-versions)
-                              :tools (parse-labels args.tools) :envs envs :exclusive exclusive :node args.node
+                              :tools (parse-labels args.tools) :handles-envs True :exclusive exclusive :node args.node
                               ;; heartbeat を拍から切り離し、desired の変化は名指しの待ちで受ける(#1933 — 待つ口の無い coordinator
                               ;; には拍ごとに送る)。
                               :watch True))
   (setv program (run-worker policy))
-  ;; 並びは内側から(先頭が Program に最も近い)。process-host・probe-host・code-host の session の値(子の表・検めの記録・木の準備の
-  ;; 記録)は外側の session-store が持つ。status-file は焼きの経過の秒を CodeTimings で問うので、code-host はその外側に置く。
-  (for [h [(local-host envs) (process-host host) (probe-host probes)
+  ;; 並びは内側から(先頭が Program に最も近い)。process-host・probe-host・code-host・env-host の session の値(子の表・検めの記録・
+  ;; 木と root の準備の記録)は外側の session-store が持つ。status-file は焼きの経過の秒を CodeTimings で、coordinator-desired は root の
+  ;; 名乗りを EnvReport で問うので、code-host と env-host はその外側に置く。
+  (for [h [(local-host) (process-host host) (probe-host probes)
            (coordinator-desired link) (status-to-coordinator link) (lease-release-coordinator link)
-           (status-file (str (/ state-dir "status.json"))) (code-host codes) (session-store) os-file-handler subprocess-handler
+           (status-file (str (/ state-dir "status.json"))) (code-host codes) (env-host envs) (session-store) os-file-handler subprocess-handler
            (stop-flag stop) slog-handler (async-time-handler) (await-handler)]]
     (setv program (h program)))
   (print "worker: 起動します" :file sys.stderr :flush True)
