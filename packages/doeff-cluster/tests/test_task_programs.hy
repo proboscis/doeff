@@ -27,7 +27,7 @@
 (import doeff_cluster.foundation.host_contract [HOST-CONTRACT])
 (import doeff_cluster.shared.protocol.remote [TaskClient])
 (import doeff_cluster.shared.intent.remote_model [TaskSucceeded encode-program decode-outcome program-sha])
-(import doeff_cluster.process_versions [current-versions])
+(import doeff_cluster.foundation.process_versions [current-versions])
 (import doeff_cluster.worker_model [DesiredJobs JobStatus] doeff_cluster.shared.intent.job_model [JobSpec JobPhase])
 (import doeff_cluster.coordinator.core.cluster_policy [JOB-ENTRY])
 (import tests.program_rows [SAMPLE-TASK-PROGRAM program-placed])
@@ -289,7 +289,7 @@
   (assert (isinstance served-coordinator str) served-coordinator)
   (val link (CoordinatorLink served-coordinator WORKER #(NEED) 10 60000
                              :task-dir (str (/ tmp-path "state" "tasks")) :versions (current-versions)))
-  (val client (TaskClient served-coordinator "r-served"))
+  (val client (TaskClient served-coordinator "r-served" (current-versions)))
   ;; 担い手を先に名乗らせる(置ける worker の無い task は置かれずに失敗する)。
   (.poll link)
   (val blob (encode-program (based-add 3)))

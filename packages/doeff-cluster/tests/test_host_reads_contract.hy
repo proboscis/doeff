@@ -10,6 +10,7 @@
 (require doeff-hy.macros [deftest <-])
 (import doeff_core_effects.effects [Ask])
 (import doeff_cluster.foundation.host_contract [HOST-CONTRACT])
+(import doeff_cluster.foundation.process_versions [current-versions])
 (import doeff_cluster.job_context [RunContext])
 (import tests.host_reads_contract_handlers [Outside CONTEXT PROGRAM-PATH JSON-NAME JSON-VALUE PLAIN-NAME PLAIN-VALUE EMPTY-NAME
                                             MISSING OUTER-NAME OUTSIDE-ANSWER])
@@ -48,6 +49,14 @@
   (<- path str (Ask HOST-CONTRACT.program-key))
   (assert (= context CONTEXT) context)
   (assert (= path PROGRAM-PATH) path))
+
+
+(deftest test-the-versions-key-answers-this-process-versions
+  ;; 失敗ケース(agora-redesign #2345): 版の識別は宿の契約の鍵 versions-key で答える(本物も sim の宿も同じ current-versions)。
+  ;; protocol の層(記録係・送り手の client)は process の版を自分で読まず、この答えを受け取る。
+  {:interpreters ["host-process" "sim-host"]}
+  (<- versions dict (Ask HOST-CONTRACT.versions-key))
+  (assert (= versions (current-versions)) versions))
 
 
 (deftest test-an-effect-other-than-ask-goes-outward

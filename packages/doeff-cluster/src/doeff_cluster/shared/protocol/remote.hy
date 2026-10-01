@@ -18,7 +18,6 @@
 (import doeff_cluster.shared.intent.runtime_env_model [RuntimeEnv runtime-env->json])
 (import doeff_cluster.shared.intent.remote_model [RemoteJob RemoteJobFailed EnvUnavailable TaskSucceeded TaskFailed
                        encode-program decode-outcome])
-(import doeff_cluster.process_versions [current-versions])
 
 
 (deff task-submit-body [#^ str sha #^ str revision #^ frozenset needs #^ str name #^ float lease-seconds
@@ -37,9 +36,10 @@
   "coordinator の /tasks との連絡(I/O)。revision = 送り手の commit(受け側はこの版のコードを準備してから復元する)。
    runtime-env = 実行環境の宣言(在れば worker は env の root を準備して、その中の子 process で走らせる — revision は使わない)。
    transport = httpx の transport(DetachedClient・WarmClient と同じ — 検が coordinator の模擬を後ろに置く。既定 None = 網)。"
-  (defn #^ None __init__ [self #^ str url #^ str revision #^ float [timeout REPLY-SECONDS] #^ (| RuntimeEnv None) [runtime-env None]
-                  #^ (| httpx.BaseTransport None) [transport None]]
-    (setv self.revision revision self.runtime-env runtime-env
+  (defn #^ None __init__ [self #^ str url #^ str revision #^ dict versions #^ float [timeout REPLY-SECONDS]
+                  #^ (| RuntimeEnv None) [runtime-env None] #^ (| httpx.BaseTransport None) [transport None]]
+    ;; versions = 送り手の版の識別(blob に添える — 組み立てが宿の契約の Ask versions-key で読んで渡す・この層は読まない #2345)。
+    (setv self.revision revision self.versions versions self.runtime-env runtime-env
           self.endpoint (CoordinatorEndpoint url timeout 4 :transport transport)))
 
   (defn #^ str submit [self #^ str blob #^ frozenset needs #^ dict versions #^ str name #^ float lease-seconds #^ (| dict None) [environ None]]
@@ -113,6 +113,6 @@
   (RemoteJob [program needs name environ]
     ;; 送れない値は送る前に断る(encode-program が UnsendableProgram を投げ、呼び手へ届く)。
     (val blob (encode-program program))
-    (val task (.submit client blob needs (current-versions) name lease-seconds environ))
+    (val task (.submit client blob needs client.versions name lease-seconds environ))
     (<- outcome (wait-outcome client task poll-seconds))
     (resume (settled-value outcome))))

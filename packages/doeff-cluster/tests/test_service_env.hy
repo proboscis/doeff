@@ -19,7 +19,7 @@
 (import dataclasses [replace])
 (import doeff_cluster.shared.intent.runtime_env_model [RepoCheckout PythonProject RuntimeEnv EnvVar runtime-env->json env-key current-platform])
 (import doeff_cluster.shared.intent.service_model [CallShape System job resolve system-of system-declaration])
-(import doeff_cluster.process_versions [current-versions])
+(import doeff_cluster.foundation.process_versions [current-versions])
 (import doeff_cluster.coordinator.core.cluster_policy [job-from-json job-to-json spec-json])
 (import doeff_cluster.handlers [declared-job-spec ProbeStore probe-targets program-file])
 (import doeff_cluster.job_entry [RunContext runtime-env-of-context])

@@ -144,7 +144,7 @@
 (import doeff_cluster.shared.intent.readiness_model [ReportReady])
 (import doeff_cluster.shared.protocol.remote [task-submit-body outcome-of settled-value])
 (import doeff_cluster.shared.intent.remote_model [RemoteJob RemoteJobFailed TaskSucceeded TaskFailed encode-program encode-outcome failed-from program-sha])
-(import doeff_cluster.process_versions [current-versions])
+(import doeff_cluster.foundation.process_versions [current-versions])
 (import doeff_cluster.foundation.report_client [report-request task-result-request task-id-of-job])
 (import doeff_cluster.shared.intent.runtime_env_model [RuntimeEnv EnvFailure runtime-env->json current-platform])
 (import doeff_cluster.shared.intent.semaphore_model [LeaseOp SEMAPHORE-PREFIX])
@@ -1137,8 +1137,11 @@
   ;; 同じ本文で答える。宣言の :environ は、本番の土台と同じ読みの定義 environ-reader を子の spec.environ の上に並べて
   ;; 答える(run-fenced — ここで第 2 の読みを持たない)。
   (Ask [key]
-    :when (in key #(HOST-CONTRACT.run-context-key HOST-CONTRACT.program-key))
-    (resume (if (= key HOST-CONTRACT.run-context-key) child.ctx child.program-path)))
+    :when (in key #(HOST-CONTRACT.run-context-key HOST-CONTRACT.program-key HOST-CONTRACT.versions-key))
+    (resume (match key
+              HOST-CONTRACT.run-context-key child.ctx
+              HOST-CONTRACT.program-key child.program-path
+              _ (current-versions))))
   (ReportReady [ready reason role]
     (<- (send-report child "readiness" {"ready" ready "reason" reason "role" role}))
     (resume None))

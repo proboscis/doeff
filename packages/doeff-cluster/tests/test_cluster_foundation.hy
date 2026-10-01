@@ -11,7 +11,7 @@
 
 (deftest test-the-cluster-handlers-are-made-from-the-run-context
   (val ctx (RunContext "http://coordinator:8080" "w1" "abc" "beacon" :instance "w1-p3"))
-  (<- handlers list (with-handlers [(reader {HOST-CONTRACT.run-context-key ctx})] (cluster-handlers)))
+  (<- handlers list (with-handlers [(reader {HOST-CONTRACT.run-context-key ctx HOST-CONTRACT.versions-key {"doeff" "9.9.9"}})] (cluster-handlers)))
   (assert (= (len handlers) 7) handlers)
   (<- holder str (lease-holder-of ctx))
   (assert (= holder "beacon/w1-p3")))

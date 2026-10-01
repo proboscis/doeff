@@ -28,7 +28,7 @@
 (import doeff [run with_handlers])
 (import doeff_core_effects.os_process [subprocess-handler])
 (import doeff_core_effects.scheduler [scheduled])
-(import doeff_cluster.process_versions [current-versions])
+(import doeff_cluster.foundation.process_versions [current-versions])
 (import doeff_cluster.shared.protocol.checkout_reads [checkout-reads])
 (import doeff_cluster.shared.protocol.declaration_requests [spec-for-update create-body])
 (import doeff_cluster.shared.core.declaring [declaring-refusal])

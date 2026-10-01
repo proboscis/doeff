@@ -24,7 +24,7 @@
 (import doeff_cluster.handlers [CoordinatorLink ProcessHost program-file])
 (import doeff_cluster.shared.protocol.detached [DetachedClient])
 (import doeff_cluster.shared.intent.remote_model [RemoteJob TaskSucceeded TaskFailed encode-program decode-outcome])
-(import doeff_cluster.process_versions [current-versions])
+(import doeff_cluster.foundation.process_versions [current-versions])
 (import doeff_cluster.shared.intent.service_model [system-of])
 (import doeff_cluster.worker_model [DesiredJobs])
 (import doeff_cluster.sim.local [sim-cluster SimWorker])
@@ -64,7 +64,7 @@
   (val link (CoordinatorLink "http://coordinator" "w1" RIG-PROVIDES 10 60000 :task-dir (str (/ base "state" "tasks"))
                              :versions (current-versions) :transport transport))
   (.poll link)
-  (val client (DetachedClient "http://coordinator" "r" :transport transport))
+  (val client (DetachedClient "http://coordinator" "r" (current-versions) :transport transport))
   (val submitted (.submit client key (encode-program program) LOCAL "env" 60.0 600.0 {NAME POLICY}))
   (assert (get submitted "created") submitted)
   (val desired (.poll link))
@@ -115,6 +115,6 @@
 (deftest test-the-host-contract-keys-are-not-environ-names
   ;; 宿の契約の Ask の鍵(run-context と Program の path)は environ の名の形([A-Z][A-Z0-9_]*)に当たらない — environ-reader と
   ;; 宿の答え(host-reader・sim の host-answers)が同じ Ask を取り合わない。
-  (for [key #(HOST-CONTRACT.run-context-key HOST-CONTRACT.program-key)]
+  (for [key #(HOST-CONTRACT.run-context-key HOST-CONTRACT.program-key HOST-CONTRACT.versions-key)]
     (assert (not (.isupper key)) key)
     (assert (in "." key) key)))

@@ -8,6 +8,7 @@
 (import doeff_core_effects.scheduler [Spawn Task Wait])
 (import doeff_time [Delay])
 (import doeff_cluster.shared.core.clock [now-epoch-ms])
+(import doeff_cluster.foundation.process_versions [current-versions])
 (import doeff_cluster.shared.protocol.detached [DetachedClient])
 (import doeff_cluster.shared.intent.detached_model [AwaitRunnersChange RunnersChange RunnersWatchMissing RunnersUnreachable])
 (import doeff_cluster.sim.local [sim-cluster SimWorker ReadCoordinator DrainWorker FailRoute KillWorker StartWorker])
@@ -71,11 +72,11 @@
 
 
 (deftest test-the-production-client-reads-the-watch-the-same-way
-  (val changed (DetachedClient "http://coord" "r" :transport (httpx.MockTransport (fn [request] (httpx.Response 200 :json {"revision" 9 "changed" True})))))
+  (val changed (DetachedClient "http://coord" "r" (current-versions) :transport (httpx.MockTransport (fn [request] (httpx.Response 200 :json {"revision" 9 "changed" True})))))
   (assert (= (.runners-change changed 3 1.0) (RunnersChange :revision 9 :changed True)))
-  (val missing (DetachedClient "http://coord" "r" :transport (httpx.MockTransport (fn [request] (httpx.Response 404 :json {"error" "知らない"})))))
+  (val missing (DetachedClient "http://coord" "r" (current-versions) :transport (httpx.MockTransport (fn [request] (httpx.Response 404 :json {"error" "知らない"})))))
   (assert (isinstance (.runners-change missing 3 1.0) RunnersWatchMissing))
-  (val cut (DetachedClient "http://coord" "r" :transport (httpx.MockTransport (fn [request] (raise (httpx.ConnectError "切れた" :request request))))))
+  (val cut (DetachedClient "http://coord" "r" (current-versions) :transport (httpx.MockTransport (fn [request] (raise (httpx.ConnectError "切れた" :request request))))))
   (assert (isinstance (.runners-change cut 3 1.0) RunnersUnreachable)))
 
 

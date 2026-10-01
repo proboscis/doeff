@@ -39,7 +39,7 @@
                                     code-key] doeff_cluster.shared.intent.job_model [JobSpec])
 (import doeff_cluster.worker_policy [plan])
 (import doeff_cluster.shared.intent.remote_model [encode-program decode-outcome TaskSucceeded TaskFailed])
-(import doeff_cluster.process_versions [current-versions])
+(import doeff_cluster.foundation.process_versions [current-versions])
 
 
 (import tests.careful_rig [FIXTURES HY LOCK DEADLINE-SECONDS JOB-ENV git push-commit remote-repo url-of app-files Rig make-rig declare fake-log count-log downloads prepare run-task])

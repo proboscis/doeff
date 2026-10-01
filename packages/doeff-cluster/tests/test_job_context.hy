@@ -14,7 +14,7 @@
 (import pathlib [Path])
 (import doeff_cluster.foundation.host_contract [HOST-CONTRACT])
 (import doeff_cluster.shared.intent.remote_model [encode-program])
-(import doeff_cluster.process_versions [current-versions])
+(import doeff_cluster.foundation.process_versions [current-versions])
 (import doeff_cluster.shared.intent.runtime_env_model [RepoCheckout PythonProject RuntimeEnv runtime-env->json])
 (import tests.fixtures.entry_programs [context-program host-foundation])
 

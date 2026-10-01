@@ -38,7 +38,6 @@
 (import doeff_core_effects.effects [Ask])
 (import doeff_cluster.foundation.host_contract [HOST-CONTRACT])
 (import doeff_cluster.job_context [RunContext])
-(import doeff_cluster.process_versions [current-versions])
 
 
 ;; --- task の名(記録と再生で共通) ---------------------------------------------------------------
@@ -693,14 +692,14 @@
 (val RECORD-MODES #("off" "record" "replay"))
 
 
-(defk recording-header [ctx program-path]
-  {:pre [(: ctx RunContext) (: program-path str)] :post [(: % dict)] :tags {:context "doeff-cluster" :role "judgment"}}
+(defk recording-header [ctx program-path versions]
+  {:pre [(: ctx RunContext) (: program-path str) (: versions dict)] :post [(: % dict)] :tags {:context "doeff-cluster" :role "judgment"}}
   "記録の run の行に載せる欄 — 宿の契約の run-context(世代)と Program の置き場のキー(path の file の名)と版。再生の道具は
    program のキーで同じ Program を /programs から取り直せる(R3b — 記録は Program の中身を持たない)。"
   (val name (.rsplit program-path "/" 1))
   (val sha (if program-path (.removesuffix (get name -1) ".json") ""))
   {"worker" ctx.worker "instance" ctx.instance "attempt" ctx.attempt "specHash" ctx.spec-hash "placement" ctx.placement
-   "revision" ctx.revision "program" sha "versions" (current-versions)})
+   "revision" ctx.revision "program" sha "versions" versions})
 
 
 (defk boundary-recorder []
@@ -713,7 +712,8 @@
     "record" (do (<- url str (Ask RECORD-OTLP-KEY))
                  (<- ctx RunContext (Ask HOST-CONTRACT.run-context-key))
                  (<- program-path str (Ask HOST-CONTRACT.program-key))
-                 (<- header dict (recording-header ctx program-path))
+                 (<- versions dict (Ask HOST-CONTRACT.versions-key))
+                 (<- header dict (recording-header ctx program-path versions))
                  [(recording-handler {"otlp" url} ctx.job header)])
     "replay" (do (<- state ReplayState (Ask REPLAY-STATE-KEY))
                  [(effect-replayer state)])

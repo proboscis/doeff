@@ -27,7 +27,6 @@
 (import doeff_cluster.shared.core.capabilities [env-mapping])
 (import doeff_cluster.shared.intent.runtime_env_model [RuntimeEnv runtime-env->json])
 (import doeff_cluster.shared.intent.remote_model [encode-program])
-(import doeff_cluster.process_versions [current-versions])
 (import doeff_cluster.shared.intent.warm_model [WarmRuntimeEnv ReadWarmState WarmState WarmUnreachable WarmAnswer warm-state-of-json])
 (import doeff_cluster.shared.intent.process_model [AwaitProcessEnded ProcessEnded ProcessWaitExpired])
 (import doeff_cluster.shared.intent.detached_model [SubmitDetached AwaitDetached CancelDetached ReleaseDetached ReadRunners WARMING-PHASE
@@ -173,10 +172,12 @@
   "coordinator の /detached との連絡(I/O)。revision = 送り手の commit(受け側はこの版のコードを準備してから復元する)。
    runtime-env = 実行環境の宣言(在れば worker は env の root を準備して、その中の子 process で走らせる — revision は使わない)。
    送る PUT は key で冪等なので、読みと同じく通信の失敗を越えて送り直す(送り直しで作られていれば created = False が返る)。"
-  (defn #^ None __init__ [self #^ str url #^ str revision #^ float [timeout REPLY-SECONDS] #^ (| httpx.BaseTransport None) [transport None]
+  (defn #^ None __init__ [self #^ str url #^ str revision #^ dict versions #^ float [timeout REPLY-SECONDS]
+                  #^ (| httpx.BaseTransport None) [transport None]
                   #^ (| RuntimeEnv None) [runtime-env None] #^ float [deadline-seconds IDEMPOTENT-DEADLINE-SECONDS]]
-    ;; deadline-seconds = 通信の失敗を越えて送り直す期限(過ぎたら「届かない」の答え — 検は短くする)。
-    (setv self.revision revision self.runtime-env runtime-env self.deadline-seconds deadline-seconds
+    ;; deadline-seconds = 通信の失敗を越えて送り直す期限(過ぎたら「届かない」の答え — 検は短くする)。versions = 送り手の版の識別
+    ;; (blob に添える — 組み立てが宿の契約の Ask versions-key で読んで渡す・この層は読まない #2345)。
+    (setv self.revision revision self.versions versions self.runtime-env runtime-env self.deadline-seconds deadline-seconds
           self.endpoint (CoordinatorEndpoint url timeout 4 :transport transport)))
 
   (defn #^ httpx.Response resend [self #^ Callable send]
@@ -194,7 +195,7 @@
                         #^ float retain-seconds #^ (| dict None) [environ None]]
     "切り離した task を 1 本出す: 詰めた Program を版と一緒に置き場 /programs/<sha> に先に置き、本文は sha だけを運ぶ(service の宣言と
      同じ運び方 — ADR-DOE-CLUSTER-001 R3b)。置きも送りも何度送っても同じ意味なので、通信の失敗を越えて送り直す。"
-    (setv #(sha put) (put-program self.endpoint blob (current-versions) self.deadline-seconds))
+    (setv #(sha put) (put-program self.endpoint blob self.versions self.deadline-seconds))
     (.answer self put)
     (setv body (detached-submit-body sha self.revision needs name lease-seconds retain-seconds
                                      (if (is self.runtime-env None) None (run-program (runtime-env->json self.runtime-env)))

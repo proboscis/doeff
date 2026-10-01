@@ -15,7 +15,7 @@
 (import doeff_cluster.shared.intent.service_model [system-declaration Declaration])
 (import doeff_cluster.shared.entry.declare [apply-declaration])
 (import doeff_cluster.handlers [CoordinatorLink program-file])
-(import doeff_cluster.process_versions [current-versions])
+(import doeff_cluster.foundation.process_versions [current-versions])
 (import doeff_cluster.worker_model [DesiredJobs] doeff_cluster.shared.intent.job_model [JobSpec])
 (import tests.fixtures.services [lab])
 (import tests.fixtures.envs [plain-foundation])

@@ -37,17 +37,23 @@
                                       CreateExternalPromise CreateSemaphore AcquireSemaphore ReleaseSemaphore])
 (import doeff_time [DelayEffect GetTimeEffect GetMonotonicEffect WaitUntilEffect])
 (import doeff_cluster.job_context [RunContext context-from-env])
+(import doeff_cluster.foundation.process_versions [current-versions])
 
 
 (defrecord HostContract
-  "宿が提供する物の鍵。run-context-key / program-key = Ask の鍵・program-env = 子の process に Program の path を渡す環境変数の名。"
+  "宿が提供する物の鍵。run-context-key / program-key / versions-key = Ask の鍵・program-env = 子の process に Program の path を渡す
+   環境変数の名。versions-key の答え = この process の版の識別(foundation/process_versions.current-versions の dict — 記録係が
+   header に載せる・送り手の client が blob に添える。protocol の層は自分で読まない — agora-redesign #2345)。"
+  {:tags {:context "doeff-cluster" :role "foundation"}}
   (#^ str run-context-key)
   (#^ str program-key)
+  (#^ str versions-key)
   (#^ str program-env))
 
 
 (val HOST-CONTRACT (HostContract :run-context-key "doeff.cluster.run-context"
                                  :program-key "doeff.cluster.program"
+                                 :versions-key "doeff.cluster.versions"
                                  :program-env "DOEFF_WORKER_PROGRAM"))
 
 
@@ -63,9 +69,13 @@
   ;; 記録係の下に置く)。環境変数は process の間で変わらないので session で 1 回だけ読む。
   (session val context (context-from-env))
   (session val program-path (os.environ.get HOST-CONTRACT.program-env ""))
+  ;; 版の識別は env のキー(DOEFF_RUNTIME_ENV_KEY)を毎回読む(current-versions の註 — 版そのものは 1 度だけ読んで持つ)。
   (Ask [key]
-    :when (in key #(HOST-CONTRACT.run-context-key HOST-CONTRACT.program-key))
-    (resume (if (= key HOST-CONTRACT.run-context-key) context program-path))))
+    :when (in key #(HOST-CONTRACT.run-context-key HOST-CONTRACT.program-key HOST-CONTRACT.versions-key))
+    (resume (match key
+              HOST-CONTRACT.run-context-key context
+              HOST-CONTRACT.program-key program-path
+              _ (current-versions)))))
 
 
 (defhandler environ-reader [#^ Mapping [environ os.environ]]
