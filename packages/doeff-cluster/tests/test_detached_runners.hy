@@ -19,7 +19,7 @@
 (import doeff [with_handlers Program])
 (import doeff_core_effects.scheduler [Spawn Cancel Task])
 (import doeff_time [Delay SimClock sim-time-handler])
-(import doeff_cluster.process_versions [current-versions])
+(import doeff_cluster.foundation.process_versions [current-versions])
 (import doeff_cluster.shared.intent.detached_model [SubmitDetached AwaitDetached ReadRunners
                                       DetachedSucceeded DetachedLost DetachedUnrunnable DetachedPending DetachedUnreachable
                                       RunnerFact RunnersUnreachable])
@@ -122,7 +122,7 @@
         operator (httpx.Client :transport transport :base-url "http://coordinator" :headers {"x-actor" "operator"})]
     (for [fact RUNNERS] (.fresh runners fact.name fact.provides fact.exclusive))
     (RunnersRig "coordinator" [(sim-time-handler :clock clock) (rig-runners runners operator)
-                               (detached-cluster (DetachedClient "http://coordinator" "r" :transport transport) :poll-seconds POLL)]
+                               (detached-cluster (DetachedClient "http://coordinator" "r" (current-versions) :transport transport) :poll-seconds POLL)]
                 runners.workers)))
 
 
@@ -304,7 +304,7 @@
 
 (deftest test-the-real-client-answers-unreachable-as-a-value
   ;; 送り直しの期限(deadline-seconds)を過ぎた通信の失敗は、送りも期限を決めた待ちも DetachedUnreachable(sim の宿の途絶と同じ値)。
-  (val client (DetachedClient "http://coordinator" "r" :transport (httpx.MockTransport cut-off) :deadline-seconds 0.2))
+  (val client (DetachedClient "http://coordinator" "r" (current-versions) :transport (httpx.MockTransport cut-off) :deadline-seconds 0.2))
   (defk scenario []
     {:pre [] :post [(: % bool)]}
     (<- sent (SubmitDetached (slow-add 0.0 1) :key "k-cut-real" :needs ON-X))

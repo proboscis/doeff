@@ -25,7 +25,7 @@
                                     code-key])
 (import doeff_cluster.worker_policy [plan])
 (import doeff_cluster.shared.intent.remote_model [encode-program decode-outcome program-sha TaskSucceeded TaskFailed])
-(import doeff_cluster.process_versions [current-versions])
+(import doeff_cluster.foundation.process_versions [current-versions])
 
 (val FIXTURES (/ (. (Path __file__) (resolve) parent) "fixtures"))
 (val HY (str (/ (. (Path sys.executable) parent) "hy")))

@@ -31,7 +31,7 @@
 (import doeff_cluster.foundation.host_contract [HOST-CONTRACT environ-reader])
 (import doeff_cluster.job_context [RunContext])
 (import doeff_cluster.shared.intent.remote_model [encode-program program-sha])
-(import doeff_cluster.process_versions [current-versions])
+(import doeff_cluster.foundation.process_versions [current-versions])
 (import doeff_cluster.shared.intent.shared_model [ReadShared])
 (import doeff_cluster.shared_handlers [shared-memory])
 (import doeff_cluster.shared.core.record_model [read-recording])
@@ -180,7 +180,8 @@
   (<- ctx RunContext (sample-context))
   (<- handlers list (with-handlers [(reader {RECORD-MODE-KEY "record" RECORD-OTLP-KEY url
                                              HOST-CONTRACT.run-context-key ctx
-                                             HOST-CONTRACT.program-key (+ "/state/programs/" SAMPLE-SHA ".json")})]
+                                             HOST-CONTRACT.program-key (+ "/state/programs/" SAMPLE-SHA ".json")
+                                             HOST-CONTRACT.versions-key {"doeff" "9.9.9"}})]
                                    (boundary-recorder)))
   (assert (= (len handlers) 1) handlers)
   ;; 置き場の口は 500 行たまると送る — 600 の読みで送りを 1 度は試みて断られ、業務の答えはそのまま返る(記録は貯め続ける)。
@@ -235,12 +236,14 @@
 
 (deftest test-the-recording-header-carries-the-run-context-and-the-program-key-and-versions
   (<- ctx RunContext (sample-context))
-  (<- header dict (recording-header ctx (+ "/state/programs/" SAMPLE-SHA ".json")))
+  ;; 版は引数で受ける(宿の契約の Ask versions-key の答えを記録係が渡す — 判断の関数は process の版を自分で読まない #2345)。
+  (val versions {"doeff" "9.9.9" "envKey" "k-1"})
+  (<- header dict (recording-header ctx (+ "/state/programs/" SAMPLE-SHA ".json") versions))
   (assert (= header {"worker" "w-1" "instance" "i-7" "attempt" "2" "specHash" "f00d" "placement" "3" "revision" "rev-9"
-                     "program" SAMPLE-SHA "versions" (current-versions)})
+                     "program" SAMPLE-SHA "versions" versions})
           header)
   ;; 宿が Program の path を渡していない(空)なら program も空(記録は Program の中身を持たない — キーだけ)。
-  (<- bare dict (recording-header ctx ""))
+  (<- bare dict (recording-header ctx "" versions))
   (assert (= (get bare "program") "") bare))
 
 

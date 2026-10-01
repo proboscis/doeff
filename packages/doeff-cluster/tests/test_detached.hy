@@ -34,7 +34,7 @@
 
 (import doeff_cluster.worker_model [DesiredJobs JobStatus] doeff_cluster.shared.intent.job_model [JobPhase])
 (import doeff_cluster.shared.intent.remote_model [TaskSucceeded decode-program encode-outcome failed-from])
-(import doeff_cluster.process_versions [current-versions])
+(import doeff_cluster.foundation.process_versions [current-versions])
 (import doeff_cluster.shared.intent.detached_model [SubmitDetached AwaitDetached CancelDetached ReleaseDetached
                                       DetachedSubmitted DetachedSucceeded DetachedFailed DetachedLost DetachedCancelled
                                       DetachedVersionMismatch DetachedUnknown DetachedPending DetachedRefused])
@@ -101,7 +101,7 @@
         coordinator (MemoryCoordinator clock)
         transport (httpx.MockTransport coordinator.handle)
         worker (RigWorker "http://coordinator" (/ tmp-path "tasks") (or runner-versions (current-versions)) :transport transport)
-        client (DetachedClient "http://coordinator" "r" :transport transport))
+        client (DetachedClient "http://coordinator" "r" (current-versions) :transport transport))
   (Rig "coordinator" [(sim-time-handler :clock clock) (rig-runner-loss worker) (detached-cluster client :poll-seconds 0.5)]
        worker 3.0 5.0 0.5
        :runs (fn [key] (len (lfor t (.values coordinator.state.tasks) :if (= t.key key) t)))))
@@ -109,7 +109,7 @@
 
 (defn #^ Rig served-rig [#^ str url #^ Path tmp-path #^ (| dict None) [runner-versions None]]
   (setv worker (RigWorker url (/ tmp-path "tasks") (or runner-versions (current-versions)))
-        client (DetachedClient url "r"))
+        client (DetachedClient url "r" (current-versions)))
   (defn #^ int runs [#^ str key]
     (len (lfor t (get (.json (httpx.get (+ url "/state"))) "tasks") :if (= (.get t "key") key) t)))
   ;; 実時間: lease は heartbeat の間隔(0.2 秒)の十倍以上に取る(込んだ機体で heartbeat が遅れても消失と取り違えない)。
@@ -952,7 +952,7 @@
         coordinator (MemoryCoordinator clock)
         transport (httpx.MockTransport coordinator.handle)
         worker (RigWorker "http://coordinator" (/ tmp-path "tasks") (current-versions) :transport transport)
-        client (DetachedClient "http://coordinator" "r" :transport transport)
+        client (DetachedClient "http://coordinator" "r" (current-versions) :transport transport)
         rig (Rig "coordinator" [(sim-time-handler :clock clock) (rig-runner-loss worker) (detached-cluster client :poll-seconds 0.5)]
                  worker 3.0 5.0 0.5))
   (<- ok (run-on rig (amnesia-scenario coordinator)))
