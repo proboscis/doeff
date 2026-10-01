@@ -155,6 +155,29 @@ fn removing_invariants_from_the_architecture_blocks() {
     assert!(stderr.contains("repo 全体の規則の HEAD に無い当たり: architecture.hy::DOEFF163::queue"), "{}", stderr);
 }
 
+/// 失敗ケース(agora-redesign #2377): 目録(data/world_handlers.json)に無い :wraps を宣言した architecture.hy は設定の誤り — linter は
+/// 0 件に見せず終了コード 2 で名指し、hook も 2 で止めて、誤った :wraps を名指す(1 行目の「設定の誤り:」の見出しだけにしない)。
+#[test]
+fn a_wraps_outside_the_catalog_is_named_and_stops() {
+    let dir = baseline_repo();
+    let root = dir.path();
+    let stale = "doeff_cluster.host_contract:host-reader";
+    write(root, "architecture.hy", &ARCHITECTURE.replace("doeff_core_effects.os_file:os-file-handler", stale));
+    let output = Command::new(env!("CARGO_BIN_EXE_doeff-linter"))
+        .args(["--output-format", "editor-json", "--no-log"])
+        .current_dir(root)
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(output.status.code(), Some(2), "{}", stderr);
+    assert!(output.stdout.is_empty(), "設定の誤りで 0 件の報告を出さない: {}", String::from_utf8_lossy(&output.stdout));
+    assert!(stderr.contains(&format!(":wraps の {} は doeff の実 I/O の handler の目録", stale)), "{}", stderr);
+    git(root, &["add", "architecture.hy"]);
+    let (code, stderr) = hook(root, &[]);
+    assert_eq!(code, 2, "{}", stderr);
+    assert!(stderr.contains(stale), "hook が誤った :wraps を名指さない: {}", stderr);
+}
+
 /// 失敗ケース(ii): きれいな変更は 0 で通す。stage した path に当てる規則の新しい error(DOEFF016)は 1 で止める。
 #[test]
 fn a_clean_change_passes_and_a_staged_error_blocks() {

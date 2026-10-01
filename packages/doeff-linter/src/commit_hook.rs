@@ -308,7 +308,9 @@ pub fn run_linter(linter: &Path, cwd: &Path, args: &[String], timeout: Duration)
     };
     let out = stdout.join().unwrap_or_default();
     let err = stderr.join().unwrap_or_default();
-    let err_line = String::from_utf8_lossy(&err).lines().find(|l| !l.trim().is_empty()).unwrap_or("").to_string();
+    // 子の stderr は全部の行を理由に運ぶ(設定の誤りは 1 行目が「設定の誤り:」の見出しだけで、名指しは次の行から — 1 行目だけでは
+    // どの宣言が誤りかが消える・agora-redesign #2377)。
+    let err_line = String::from_utf8_lossy(&err).lines().map(str::trim).filter(|l| !l.is_empty()).collect::<Vec<_>>().join(" / ");
     match status.code() {
         Some(0 | 1 | 3 | 4) => match serde_json::from_slice::<Value>(&out) {
             Ok(value) => Measured::Report(value),
