@@ -74,6 +74,8 @@ def _build_env(temp_root: Path, target_dir: Path | None) -> dict[str, str]:
     """build の process の env: 一時の dir の置き場を temp_root に向け、CARGO_TARGET_DIR は渡す時だけ置く。"""
     env = {name: value for name, value in os.environ.items() if name != "CARGO_TARGET_DIR"}
     env["TMPDIR"] = str(temp_root)
+    # wheel の置き場も検ごとの dir に(利用者の ~/.cache に書かず、検どうしで同じ source の wheel を引き合わない — agora-redesign #2364)。
+    env["DOEFF_WHEEL_CACHE"] = str(temp_root / "wheel-cache")
     match target_dir:
         case None:
             pass
@@ -365,3 +367,41 @@ def test_every_maturin_package_sdist_carries_the_backend_at_its_root(tmp_path: P
         "doeff-vm",
     ]
     assert _leftovers(temp_root) == []
+
+
+def _build_logged(package: Path, wheel_dir: Path, env: dict[str, str]) -> tuple[Path, str]:
+    """build_wheel を呼び、出来た wheel の path と口の stderr(使った / 組んだの 1 行)を返す。"""
+    process = _start_build(package, wheel_dir, env)
+    out, err = process.communicate(timeout=BUILD_TIMEOUT_SECONDS)
+    assert process.returncode == 0, err
+    return wheel_dir / out.strip().splitlines()[-1], err
+
+
+def test_the_same_source_in_a_fresh_checkout_reuses_the_wheel(tmp_path: Path) -> None:
+    """失敗ケース(agora-redesign #2364): pin を上げて作り直した作業木は、中身が同じでも file の時刻と path が違う — 口は中身の hash で
+    前の wheel を引き、cargo を撃たない(2 回目に「組んだ」が出ない・一時の target を作らない)。"""
+    temp_root = tmp_path / "tmp"
+    temp_root.mkdir()
+    env = _build_env(temp_root, None)
+    first = _write_checkout(tmp_path / "wt-first", "same")
+    _age(first, 3600)
+    wheel, log = _build_logged(first, tmp_path / "wheels-first", env)
+    assert "wheel を組んだ" in log, log
+    fresh = _write_checkout(tmp_path / "wt-fresh", "same")
+    again, log_again = _build_logged(fresh, tmp_path / "wheels-fresh", env)
+    assert "同じ source の wheel を使う(組まない)" in log_again, log_again
+    assert "wheel を組んだ" not in log_again, log_again
+    assert again.name == wheel.name
+    assert _greeting(again, tmp_path / "scratch") == "same"
+    assert _leftovers(temp_root) == []
+
+
+def test_a_changed_source_builds_again(tmp_path: Path) -> None:
+    """source の中身が変われば hash が変わり、組み直して新しい中身の wheel を返す(前の wheel を黙って使わない)。"""
+    temp_root = tmp_path / "tmp"
+    temp_root.mkdir()
+    env = _build_env(temp_root, None)
+    _build_logged(_write_checkout(tmp_path / "wt-old", "before"), tmp_path / "wheels-old", env)
+    changed, log = _build_logged(_write_checkout(tmp_path / "wt-new", "after"), tmp_path / "wheels-new", env)
+    assert "wheel を組んだ" in log, log
+    assert _greeting(changed, tmp_path / "scratch") == "after"

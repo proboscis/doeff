@@ -19,15 +19,27 @@ CARGO_TARGET_DIR が config の build.target-dir(と CARGO_BUILD_TARGET_DIR)に�
 正本は tools/doeff_cargo_backend.py。各 package の doeff_cargo_backend.py はこの file への symlink
 (backend-path は package の dir の中しか指せない — PEP 517)。`python doeff_cargo_backend.py <命令…>` は
 命令を同じ扱いの target の中で走らせる(文書が勧める maturin develop)。
+
+wheel は source の中身の hash で引く(agora-redesign #2364): 一時の target では毎回すべてを組み直す(doeff-linter で 8〜10 分)。
+uv は path の依存を file の時刻(tool.uv.cache-keys)で見るので、pin を上げて作業木を作り直す・checkout し直すと、中身の同じ
+source でも口を呼ぶ。口は build を始める前に、組みに効く物(tool.uv.cache-keys の file の中身と相対 path・rustc と maturin の版・
+機体・build の設定)の hash で `$XDG_CACHE_HOME/doeff-cargo-wheels/<package>/<hash>/` を見て、在ればその wheel を写して返す
+(cargo を撃たない)。無ければ組んで置く。どちらも stderr に 1 行(使った / 組んだ秒)。置き場は env DOEFF_WHEEL_CACHE で替えられる。
+editable と sdist は引かない(editable は作業木を指すので中身で共有できない)。
 """
 
 from __future__ import annotations
 
+import glob
+import hashlib
 import os
+import platform
 import shutil
 import subprocess
 import sys
 import tempfile
+import time
+import tomllib
 from collections.abc import Iterator, Mapping
 from contextlib import contextmanager, suppress
 from pathlib import Path
@@ -37,6 +49,9 @@ import maturin
 
 TARGET_ENV = "CARGO_TARGET_DIR"
 TEMP_PREFIX = "doeff-cargo-target-"
+WHEEL_CACHE_ENV = "DOEFF_WHEEL_CACHE"
+# tool.uv.cache-keys の file を宣言しない package の、組みに効く file の既定(package の dir からの glob)。
+DEFAULT_SOURCE_GLOBS = ("pyproject.toml", "Cargo.toml", "Cargo.lock", "build.rs", "src/**/*")
 
 # PEP 517 の config_settings: frontend が渡す「設定の名 → 文字列か文字列の list」。口は中を読まず maturin へ渡す。
 ConfigSettings: TypeAlias = Mapping[str, str | list[str]]
@@ -103,9 +118,56 @@ def build_wheel(
     config_settings: ConfigSettings | None = None,
     metadata_directory: str | None = None,
 ) -> str:
-    """uv sync・uv build が wheel を求めた時に、作業木の外の target で組むため。"""
+    """uv sync・uv build が wheel を求めた時に、同じ中身の source の wheel が置いてあればそれを写し、無ければ作業木の外の target で
+    組んで置くため(頭の註)。"""
+    slot = _wheel_slot(Path.cwd(), config_settings)
+    found = sorted(slot.glob("*.whl"))
+    if found:
+        shutil.copy2(found[0], Path(wheel_directory) / found[0].name)
+        print(f"doeff_cargo_backend: 同じ source の wheel を使う(組まない)— {found[0].name}・{slot}", file=sys.stderr)
+        return found[0].name
+    started = time.monotonic()
     with cargo_target_dir():
-        return maturin.build_wheel(wheel_directory, config_settings, metadata_directory)
+        name = maturin.build_wheel(wheel_directory, config_settings, metadata_directory)
+    _store_wheel(slot, Path(wheel_directory) / name)
+    print(f"doeff_cargo_backend: wheel を組んだ({time.monotonic() - started:.0f} 秒)— {name}・{slot} に置いた", file=sys.stderr)
+    return name
+
+
+def _source_files(package: Path) -> list[Path]:
+    """組みに効く file(package の tool.uv.cache-keys の file の glob か既定 — uv が組み直しを判じる集合と同じ)を相対 path の順で並べる。"""
+    declared = tomllib.loads((package / "pyproject.toml").read_text(encoding="utf-8")).get("tool", {}).get("uv", {}).get("cache-keys", [])
+    globs = [key["file"] for key in declared if isinstance(key, dict) and isinstance(key.get("file"), str)] or list(DEFAULT_SOURCE_GLOBS)
+    matched = {Path(hit) for pattern in globs for hit in glob.glob(str(package / pattern), recursive=True)}
+    return sorted((path for path in matched if path.is_file()), key=lambda path: os.path.relpath(path, package))
+
+
+def _tool_versions() -> str:
+    """組みに効く道具の版(rustc と maturin)— 道具が替われば同じ source でも wheel を組み直すため。"""
+    rustc = subprocess.run(["rustc", "-V"], capture_output=True, text=True, check=False).stdout.strip()
+    return f"rustc={rustc} maturin={getattr(maturin, '__version__', '?')}"
+
+
+def _wheel_slot(package: Path, config_settings: ConfigSettings | None) -> Path:
+    """source の中身・道具の版・機体・build の設定の hash で、wheel を置く dir を決めるため(file の時刻と作業木の path に依らない)。"""
+    digest = hashlib.sha256()
+    for line in (_tool_versions(), sys.platform, platform.machine(), repr(sorted((config_settings or {}).items()))):
+        digest.update(line.encode("utf-8") + b"\0")
+    for path in _source_files(package):
+        digest.update(os.path.relpath(path, package).encode("utf-8") + b"\0")
+        digest.update(path.read_bytes() + b"\0")
+    base = os.environ.get(WHEEL_CACHE_ENV) or str(Path(os.environ.get("XDG_CACHE_HOME") or Path.home() / ".cache") / "doeff-cargo-wheels")
+    # 置き場の名は package の名(作業木の dir の名は作業木ごとに違うので使わない)。
+    project = tomllib.loads((package / "pyproject.toml").read_text(encoding="utf-8")).get("project", {}).get("name", "unnamed")
+    return Path(base) / str(project) / digest.hexdigest()[:32]
+
+
+def _store_wheel(slot: Path, built: Path) -> None:
+    """組んだ wheel を置き場へ写すため(一時の名で書いてから名を替える — 同じ hash を同時に組んだ別の build と混ざらない)。"""
+    slot.mkdir(parents=True, exist_ok=True)
+    staged = slot / f".{built.name}.{os.getpid()}.part"
+    shutil.copy2(built, staged)
+    os.replace(staged, slot / built.name)
 
 
 def build_editable(
