@@ -1,7 +1,6 @@
 """doeff-claude-code の検の実行環境(収集と解釈器の口だけ — 中身は interpreters.hy)。
 
-- 検は Hy の ``test_*.hy``(deftest)。doeff-adr の Hy の file の収集(``DoeffAdrHyFile``)をこの dir の中だけで使う
-  (doeff-cluster の tests/conftest.py と同じ形)。
+- 検は Hy の ``test_*.hy``(deftest)。集め手は root の ini の ``doeff_hy_test_files``(doeff-adr の plugin の 1 点)— この conftest は集めない。
 - 解釈器は 3 つ(``fake`` / ``stub`` / ``real``)。``real``(本物の claude)は印 ``e2e`` を付け、env
   ``DOEFF_CLAUDE_CODE_REAL_CONFIG_DIR`` が無ければ skip する。
 """
@@ -13,15 +12,8 @@ from pathlib import Path
 
 import hy  # noqa: F401  - Hy の module を import できるようにする
 import pytest
-from doeff_adr.pytest_plugin import DoeffAdrHyFile
 
 from doeff import Program
-
-
-def pytest_collect_file(file_path: Path, parent: pytest.Collector) -> pytest.Collector | None:
-    if file_path.suffix == ".hy" and file_path.name.startswith("test_"):
-        return DoeffAdrHyFile.from_parent(parent, path=file_path)
-    return None
 
 
 def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
