@@ -264,6 +264,34 @@
   (#^ (get tuple #(StatusRow ...)) jobs))
 
 
+(defrecord ServiceBody
+  "POST /resources/Service・PUT /resources/Service/<名> の本文を Service の宣言に解いた値(本文を解く所 coordinator/protocol/request_bodies が
+   作る — #2448): name = 資源の名(POST は本文の name・PUT は path の名)・job = 宣言の行を読んだ job(owner は本文の owner のまま —
+   所有者を決めるのは判断)・owner = 本文の owner(無ければ None・形は判断が valid-actor で検める)・resource-version = 読んだ時の版(PUT)。"
+  (#^ (| str None) name)
+  (#^ ClusterJob job)
+  (#^ object owner)
+  (#^ (| int None) resource-version))
+
+
+(defrecord LegacyJobRow
+  "旧い PUT /jobs の行 1 つを Service の宣言に解いた値: name = Service の名・version = 行の resourceVersion(無ければ None)・owner = 行の
+   owner(無ければ None)・job = 行を読んだ job(replicas と readiness は行に在る時だけ行の値 — 無ければ判断が今の宣言の値で埋める)・
+   replicas-given / readiness-given = 行にその欄が在ったか。"
+  (#^ str name)
+  (#^ object version)
+  (#^ object owner)
+  (#^ ClusterJob job)
+  (#^ bool replicas-given)
+  (#^ bool readiness-given))
+
+
+(defrecord LegacyJobs
+  "旧い PUT /jobs の本文を解いた値: rows = 行の列(LegacyJobRow)・actor = 送り手(header X-Actor が無い時)。"
+  (#^ (get tuple #(LegacyJobRow ...)) rows)
+  (#^ (| str None) actor))
+
+
 (defrecord RefusedJob
   "受け付けない Service の行(2026-09-27・改訂 1 の C)。旧い宣言の形の行を読み直した時と、読めない行を、coordinator を落とさずに
    持っておく: name = Service の名・row = 元の行(保存と表示のため JSON のまま)・reason = 理由。置き先・Rollout・drain・計器は

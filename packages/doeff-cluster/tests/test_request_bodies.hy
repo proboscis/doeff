@@ -7,6 +7,7 @@
 (import doeff_cluster.coordinator.intent.request_bodies [LeaseBody TaskResultBody DrainBody BoardWrite BodyMalformed])
 (import doeff_cluster.coordinator.protocol.request_bodies [body-of responded])
 (import doeff_cluster.shared.protocol.inbox [http-request])
+(import tests.program_rows [SAMPLE-RUN])
 
 (val T (ClusterTiming))
 
@@ -94,11 +95,17 @@
 
 
 (deftest test-a-resource-declaration-envelope-is-read-into-its-type
-  ;; 資源の宣言の包み(name・spec・resourceVersion)— object でない spec・数の名・文字列の版は判断の前に 400。spec の中身は判断が読む。
-  (<- made (body-of (http-request "POST" "/resources/Service" {} {"name" "web" "spec" {"revision" "r"}})))
-  (assert (= #(made.name made.spec made.resource-version) #("web" {"revision" "r"} None)) made)
-  (<- edited (body-of (http-request "PUT" "/resources/Service/web" {} {"spec" {} "resourceVersion" 3})))
-  (assert (= edited.resource-version 3) edited)
+  ;; 資源の宣言の包み(name・spec・resourceVersion)— object でない spec・数の名・文字列の版は判断の前に 400。Service の spec は宣言の型
+  ;; (ServiceBody の job)に読む — 名は POST なら本文の name・PUT なら path の名。読めない宣言も判断の前に 400(#2448)。
+  (val spec {"revision" "r" "run" SAMPLE-RUN "needs" ["net"]})
+  (<- made (body-of (http-request "POST" "/resources/Service" {} {"name" "web" "spec" spec})))
+  (assert (= #(made.name made.job.spec.name made.job.spec.revision made.resource-version) #("web" "web" "r" None)) made)
+  (<- edited (body-of (http-request "PUT" "/resources/Service/web" {} {"spec" spec "resourceVersion" 3})))
+  (assert (= #(edited.name edited.resource-version) #("web" 3)) edited)
+  (<- unreadable (body-of (http-request "POST" "/resources/Service" {} {"name" "web" "spec" {"revision" "r" "replicas" 2}})))
+  (assert (isinstance unreadable BodyMalformed) unreadable)
+  (<- rollout (body-of (http-request "POST" "/resources/Rollout" {} {"name" "move" "spec" {"from" {}}})))
+  (assert (= #(rollout.name rollout.spec) #("move" {"from" {}})) rollout)
   (<- listed (body-of (http-request "POST" "/resources/Service" {} {"name" "web" "spec" ["r"]})))
   (assert (in "spec" listed.reason) listed)
   (<- numbered (body-of (http-request "POST" "/resources/Service" {} {"name" 7})))
@@ -123,7 +130,12 @@
 
 (deftest test-the-old-jobs-body-is-read-into-its-type
   ;; 旧い PUT /jobs の本文(jobs の行の列と送り手)— 列でない jobs は判断の前に 400。
-  (<- jobs (body-of (http-request "PUT" "/jobs" {} {"jobs" [{"name" "a"}] "actor" "me"})))
-  (assert (= #((len jobs.jobs) jobs.actor) #(1 "me")) jobs)
+  ;; 行は宣言の型(LegacyJobRow)に読み、replicas と readiness が行に在ったかを残す。名の無い行・読めない行も判断の前に 400(#2448)。
+  (<- jobs (body-of (http-request "PUT" "/jobs" {} {"jobs" [{"name" "a" "revision" "r" "run" SAMPLE-RUN "needs" ["net"] "resourceVersion" 4}]
+                                                    "actor" "me"})))
+  (val row (get jobs.rows 0))
+  (assert (= #((len jobs.rows) jobs.actor row.name row.version row.replicas-given row.readiness-given) #(1 "me" "a" 4 False False)) jobs)
+  (<- nameless (body-of (http-request "PUT" "/jobs" {} {"jobs" [{"revision" "r"}]})))
+  (assert (in "name" nameless.reason) nameless)
   (<- single (body-of (http-request "PUT" "/jobs" {} {"jobs" {"name" "a"}})))
   (assert (in "jobs" single.reason) single))

@@ -300,7 +300,7 @@
     ;; --- 旧い口 ---
     (and (= method "PUT") (= parts ["jobs"]))
       (do (setv actor (require-actor (or request.actor body.actor)))
-          (setv #(after status reply) (legacy-put-jobs state (list body.jobs) actor))
+          (setv #(after status reply) (legacy-put-jobs state body.rows actor))
           #((if (is after state) state (settle state after actor now timing)) status reply))
     (and (= method "POST") (= parts ["heartbeat"]) (is-not (format-version-refusal body.format) None))
       #(state 400 {"error" (format-version-refusal body.format)})
