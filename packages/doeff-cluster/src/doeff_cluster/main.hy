@@ -20,7 +20,7 @@
 (import doeff_core_effects.process_effects [EnvEntry])
 (import doeff_core_effects.scheduler [scheduled])
 (import doeff_time [async-time-handler])
-(import .handlers [TOOL CoordinatorLink coordinator-desired local-host
+(import .handlers [CoordinatorLink coordinator-desired
                    status-to-coordinator lease-release-coordinator] doeff_cluster.worker.protocol.stop [stop-flag StopState])
 (import doeff_cluster.foundation.process_versions [current-versions])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming])
@@ -29,7 +29,8 @@
 (import doeff_cluster.worker.intent.worker_model [WorkerPolicy CodeLayout])
 (import doeff_cluster.worker.protocol.process_host [HostSettings process-host])
 (import doeff_cluster.worker.protocol.probes [ProbeSettings probe-host])
-(import doeff_cluster.worker.protocol.code_store [CodeSettings code-host])
+(import doeff_cluster.worker.protocol.code_store [CodeSettings code-host PREPARE-TOOL])
+(import doeff_cluster.worker.protocol.world [local-host])
 (import doeff_cluster.worker.protocol.env_store [EnvSettings env-host])
 (import doeff_cluster.shared.intent.runtime_env_model [current-platform])
 (import doeff_cluster.worker.protocol.status_file [status-file])
@@ -96,7 +97,7 @@
   (setv state-dir (Path args.state-dir)
         hy-command (str (/ (. (Path sys.executable) parent) "hy"))
         ;; 版ごとのコードの木の置き場と準備(worker/protocol/code_store の言い換えが読む — #2466)。
-        codes (CodeSettings :repo args.repo :cache (str (/ state-dir "code")) :hy-command (if args.no-warm None hy-command) :tool TOOL
+        codes (CodeSettings :repo args.repo :cache (str (/ state-dir "code")) :hy-command (if args.no-warm None hy-command) :tool PREPARE-TOOL
                             :layout layout)
         ;; 子 process(service の env)が coordinator と自分の名を知る口。資格は渡さない。
         host-env (| (run (passed-environment args.pass-env (dict os.environ)))
@@ -107,7 +108,7 @@
                            :extra-env (tuple (gfor k (sorted host-env) (EnvEntry :name k :value (get host-env k)))) :layout layout
                            :program-env HOST-CONTRACT.program-env)
         ;; 実行環境(runtime env)の root の準備(別の process・worker は再起動しない)。
-        envs (EnvSettings :state (str state-dir) :hy-command hy-command :platform (current-platform) :code-prepare TOOL
+        envs (EnvSettings :state (str state-dir) :hy-command hy-command :platform (current-platform) :code-prepare PREPARE-TOOL
                           :repo-keys args.repo-keys :uv args.uv :min-free-bytes args.env-min-free)
         ;; 入口の検め(service の job の木を worker の実行環境で読み込めるか — 起こす前に試す)。
         probes (ProbeSettings :python sys.executable :hy-command hy-command :uv args.uv :layout layout
@@ -128,7 +129,7 @@
   ;; 並びは内側から(先頭が Program に最も近い)。process-host・probe-host・code-host・env-host の session の値(子の表・検めの記録・
   ;; 木と root の準備の記録)は外側の session-store が持つ。status-file は焼きの経過の秒を CodeTimings で、coordinator-desired は root の
   ;; 名乗りを EnvReport で問うので、code-host と env-host はその外側に置く。
-  (for [h [(local-host) (process-host host) (probe-host probes)
+  (for [h [local-host (process-host host) (probe-host probes)
            (coordinator-desired link) (status-to-coordinator link) (lease-release-coordinator link)
            (status-file (str (/ state-dir "status.json"))) (code-host codes) (env-host envs) (session-store) os-file-handler subprocess-handler
            (stop-flag stop) slog-handler (async-time-handler) (await-handler)]]

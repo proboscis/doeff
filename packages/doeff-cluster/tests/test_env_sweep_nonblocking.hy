@@ -11,7 +11,7 @@
 (import os)
 (import time)
 (import pathlib [Path])
-(import doeff_cluster.handlers [TOOL])
+(import doeff_cluster.worker.protocol.code_store [PREPARE-TOOL])
 (import doeff_cluster.worker.intent.worker_model [PrepareEnv SweepEnvs])
 (import doeff_cluster.worker.protocol.env_store [EnvSettings])
 (import tests.careful_rig [run-envs])
@@ -37,7 +37,7 @@
 
 (defn #^ EnvSettings sweeping [#^ Path tmp #^ str uv #^ str [hy-command "hy"]]
   "下限を disk の大きさより上に置いて、必ず掃除させる設定。"
-  (EnvSettings :state (str (/ tmp "state")) :hy-command hy-command :platform "test" :code-prepare TOOL :uv uv :sweep-floor-bytes (** 10 18)))
+  (EnvSettings :state (str (/ tmp "state")) :hy-command hy-command :platform "test" :code-prepare PREPARE-TOOL :uv uv :sweep-floor-bytes (** 10 18)))
 
 
 (defk sweep-twice [pinned]
