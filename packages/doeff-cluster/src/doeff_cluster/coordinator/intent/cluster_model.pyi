@@ -437,6 +437,32 @@ class BoardRefused:
     reason: str
     usage: BoardUsage | None = None
 
+@dataclass(frozen=True, kw_only=True)
+class TaskAccepted:
+    id: str
+
+@dataclass(frozen=True, kw_only=True)
+class TaskProgress:
+    phase: str
+    worker: str | None
+    detail: str
+    result: str | None
+    failure_kind: str
+    retryable: bool
+
+@dataclass(frozen=True, kw_only=True)
+class TaskMissing:
+    id: str
+
+@dataclass(frozen=True, kw_only=True)
+class TaskResultTaken:
+    accepted: bool
+    phase: str
+
+@dataclass(frozen=True, kw_only=True)
+class TaskDropped:
+    id: str
+
 @dataclass(frozen=True)
 class ClusterNaming:
     owner_annotation: str = "doeff-cluster/replicas-owned-by"
