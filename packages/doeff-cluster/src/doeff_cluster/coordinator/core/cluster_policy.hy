@@ -440,7 +440,9 @@
   ;; 1. 続けてよい割り当てを残す(宣言に在り・replicas 1・条件を満たし・担い手が移し替えの期限内)。
   ;;    drain 中の worker の上の入れ替えでない job は、他に置ける worker が在る時だけ外す(止めて移す)。置ける先が無ければ残す
   ;;    (空白を作らない)。入れ替えの job は残す(drain_policy が並べてから付け替える)。
-  (setv current-load (load-of state state.placements))
+  ;; いまの負荷は drain 中の worker の上の job を外すかの判断だけが読む — drain 中の worker が無ければ求めない(#2655 — 調停の 1 周
+  ;; ごとの費用)。
+  (setv current-load (if draining (load-of state state.placements) {}))
   (for [job jobs]
     (setv current (.get state.placements job.spec.name))
     (when (is-not current None)
@@ -457,7 +459,8 @@
   ;;    元の担い手が止め終えたと報告してから置く)。drain 中の worker には置かない。
   ;;    drain で並べた置き先(surge)を持つ job は、その置き先へ付け替える(そこで動いている process をそのまま使う — 旧い担い手が
   ;;    沈黙して外れた時)。
-  (setv load (load-of state kept))
+  ;; 置いた後の負荷は担い手の無い job を置く時だけ読む — 全部の job が割り当てを保っていれば求めない(#2655)。
+  (setv load (if (all (gfor job jobs (in job.spec.name kept))) {} (load-of state kept)))
   (setv result (dict kept))
   (for [job (sorted jobs :key (fn [j] j.spec.name))]
     (when (in job.spec.name result) (continue))
