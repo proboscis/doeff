@@ -6,7 +6,7 @@ import * as vscode from 'vscode';
 import type { LintSeverity } from './contract';
 import type { Linter, LintOutcome, LintRequest } from './runner';
 import { SemanticJudge, SYSTEM_CLOCK, type OpenDocument, type SemanticState, type SemanticTriggers } from './semantic';
-import type { LintStore } from './store';
+import { needsSignatures, stampOf, textStamp, type LintStore } from './store';
 import { diagnosticsByPath, displayRange } from './view';
 
 const EDIT_DEBOUNCE_MS = 800;
@@ -87,6 +87,7 @@ export class LintService implements vscode.Disposable {
 
   /** event の購読を始め、各 folder の全体を linter に聞く。 */
   start(): void {
+    // 波線が読むのは違反だけ — 違反の側の知らせだけを聞く(見出しの変化では出し直さない)
     const unsubscribe = this.store.onDidChange(() => this.publishDiagnostics());
     this.disposables.push(
       { dispose: unsubscribe },
@@ -101,9 +102,10 @@ export class LintService implements vscode.Disposable {
           this.judge.edited(event.document.uri.fsPath);
         }
       }),
-      // 開いて見えた Hy の file は、見出しと束縛の型(契約 版 2)を 1 度聞く(編集と保存の時は上の 2 つが聞き直す)
+      // 開いて見えた Hy の file は、見出しと束縛の型(契約 版 2)を 1 度聞く(編集と保存の時は上の 2 つが聞き直す)。
+      // document が閉じても見出しは捨てない — 置き場の見出しは印(版と中身の hash)つきなので、開き直した document の印が同じなら
+      // 聞き直さない(捨てていた頃は、読む面の tab を開き直すたびに 1 file の実行が走り、木が出し直されていた — #2162)
       vscode.window.onDidChangeVisibleTextEditors((editors) => this.lintUnseen(editors.map((e) => e.document))),
-      vscode.workspace.onDidCloseTextDocument((document) => this.store.forgetSignatures(document.uri.fsPath)),
       vscode.workspace.onDidChangeWorkspaceFolders((event) => {
         for (const removed of event.removed) {
           this.store.removeRoot(removed.uri.fsPath);
@@ -125,11 +127,13 @@ export class LintService implements vscode.Disposable {
     this.lintUnseen([document]);
   }
 
-  /** 見出しをまだ聞いていない(か、版が古い)Hy の document を聞く。 */
+  /** 見出しをまだ聞いていない(か、印 = 版と中身の hash が今の document と違う)Hy の document を聞く。 */
   private lintUnseen(documents: readonly vscode.TextDocument[]): void {
     for (const document of documents) {
-      const seen = this.store.signaturesFor(document.uri.fsPath);
-      if (isLintedDocument(document) && !document.uri.fsPath.endsWith('.py') && seen?.version !== document.version) {
+      if (!isLintedDocument(document) || document.uri.fsPath.endsWith('.py')) {
+        continue;
+      }
+      if (needsSignatures(this.store.signaturesFor(document.uri.fsPath), stampOf(document))) {
         this.scheduleDocument(document, 0);
       }
     }
@@ -227,13 +231,12 @@ export class LintService implements vscode.Disposable {
         this.store.replaceRoot(request.root, outcome.report);
         this.log.appendLine(`[lint] ${request.root}: 違反 ${outcome.report.violations.length} 件`);
         return;
+      // 違反(前と同じなら鳴らない)と見出し(見出しの側だけ鳴る)は別の知らせなので、1 回の実行で木の購読者が呼ばれるのは多くて 1 回
       case 'stdin':
-        this.store.replaceFile(request.root, request.path, outcome.report);
-        this.store.replaceSignatures(request.path, request.version, outcome.report);
+        this.store.replaceFileRun(request.root, request.path, textStamp(request.version, request.text), outcome.report);
         return;
       case 'semantic-change':
-        this.store.replaceFile(request.root, request.path, outcome.report);
-        this.store.replaceSignatures(request.path, request.version, outcome.report);
+        this.store.replaceFileRun(request.root, request.path, textStamp(request.version, request.text), outcome.report);
         return;
       case 'semantic':
         this.store.replaceFile(request.root, request.path, outcome.report);

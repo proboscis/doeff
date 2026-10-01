@@ -176,18 +176,47 @@ export function valueCounts(items: readonly BrowseItem[], axis: Axis, ctx: Brows
   return [...counts.entries()].map(([value, count]) => ({ value, count })).sort((a, b) => b.count - a.count || a.value.localeCompare(b.value));
 }
 
-/** 閲覧の木の節。 */
+/**
+ * 閲覧の木の節。束と定義の parentId = 親の束の id(最上段は TOP_PARENT)— 定義は持つ値の数だけの束に入り、同じ値の束も
+ * 違う親の下に出るので、id は親の id から作る。
+ */
 export type BrowseNode =
   | {
       readonly tag: 'group';
+      readonly parentId: string;
       readonly axis: Axis;
       readonly value: string;
       /** order の何段目か(0 始まり) */
       readonly depth: number;
       readonly items: readonly BrowseItem[];
     }
-  | { readonly tag: 'item'; readonly item: BrowseItem }
+  | { readonly tag: 'item'; readonly parentId: string; readonly item: BrowseItem }
   | { readonly tag: 'message'; readonly label: string; readonly tooltip?: string; readonly command?: string };
+
+/** 最上段の節の親の id。 */
+const TOP_PARENT = '';
+
+/**
+ * 節の固定の id — 同じ定義の一覧と見方から 2 度作った節は同じ id、違う節は違う id(木の中で重ならない)。VS Code の TreeView は
+ * id の同じ節の展開と選択を出し直しの後も保つ(linter の結果が変わるたびに木を出し直すため — agora-redesign #2162)。
+ * 件数・違反の数は入れない(変わっても同じ節のまま)。
+ */
+export function browseNodeId(node: BrowseNode): string {
+  switch (node.tag) {
+    case 'group':
+      return JSON.stringify(['group', node.parentId, axisId(node.axis), node.value]);
+    case 'item': {
+      const d = node.item.definition;
+      return JSON.stringify(['item', node.parentId, node.item.path, d.qualifiedName, d.kind, d.range.start.line, d.range.start.character]);
+    }
+    case 'message':
+      return JSON.stringify(['message', node.label]);
+    default: {
+      const unreachable: never = node;
+      throw new Error(`網羅されていない節: ${JSON.stringify(unreachable)}`);
+    }
+  }
+}
 
 /** 値の並べ方 — 名前の順、「(不明)」と「なし」は最後。 */
 function valueOrder(a: string, b: string): number {
@@ -195,8 +224,8 @@ function valueOrder(a: string, b: string): number {
   return last(a) - last(b) || a.localeCompare(b);
 }
 
-/** 1 段分の束を作る(定義は持つ値の数だけの束に入る)。 */
-function groupsAt(items: readonly BrowseItem[], order: readonly Axis[], depth: number, ctx: BrowseContext): BrowseNode[] {
+/** 1 段分の束を作る(定義は持つ値の数だけの束に入る)。parentId = 親の束の id。 */
+function groupsAt(items: readonly BrowseItem[], order: readonly Axis[], depth: number, ctx: BrowseContext, parentId: string): BrowseNode[] {
   const axis = order[depth];
   const byValue = new Map<string, BrowseItem[]>();
   for (const item of items) {
@@ -211,14 +240,14 @@ function groupsAt(items: readonly BrowseItem[], order: readonly Axis[], depth: n
   }
   return [...byValue.keys()]
     .sort(valueOrder)
-    .map((value) => ({ tag: 'group', axis, value, depth, items: byValue.get(value) ?? [] }));
+    .map((value) => ({ tag: 'group', parentId, axis, value, depth, items: byValue.get(value) ?? [] }));
 }
 
-/** 末端の定義を並べる(file の path・行の順)。 */
-function itemNodes(items: readonly BrowseItem[]): BrowseNode[] {
+/** 末端の定義を並べる(file の path・行の順)。parentId = 親の束の id。 */
+function itemNodes(items: readonly BrowseItem[], parentId: string): BrowseNode[] {
   return [...items]
     .sort((a, b) => a.path.localeCompare(b.path) || a.definition.range.start.line - b.definition.range.start.line)
-    .map((item) => ({ tag: 'item', item }));
+    .map((item) => ({ tag: 'item', parentId, item }));
 }
 
 /** 木の最上段 — 絞り込んでから、軸の順の 1 段目で束ねる(軸が無ければ定義を並べる)。 */
@@ -227,14 +256,16 @@ export function browseRoots(items: readonly BrowseItem[], view: BrowseView, ctx:
   if (filtered.length === 0) {
     return [{ tag: 'message', label: '条件に合う定義はありません' }];
   }
-  return view.order.length === 0 ? itemNodes(filtered) : groupsAt(filtered, view.order, 0, ctx);
+  return view.order.length === 0 ? itemNodes(filtered, TOP_PARENT) : groupsAt(filtered, view.order, 0, ctx, TOP_PARENT);
 }
 
 /** 節の子(展開した時に作る)— 次の軸があればその束、無ければ定義。 */
 export function browseChildren(node: BrowseNode, view: BrowseView, ctx: BrowseContext): BrowseNode[] {
   switch (node.tag) {
-    case 'group':
-      return node.depth + 1 < view.order.length ? groupsAt(node.items, view.order, node.depth + 1, ctx) : itemNodes(node.items);
+    case 'group': {
+      const id = browseNodeId(node);
+      return node.depth + 1 < view.order.length ? groupsAt(node.items, view.order, node.depth + 1, ctx, id) : itemNodes(node.items, id);
+    }
     case 'item':
     case 'message':
       return [];

@@ -7,6 +7,7 @@ import {
   axisId,
   axisLabel,
   browseChildren,
+  browseNodeId,
   browseRoots,
   DEFAULT_BROWSE_VIEWS,
   describeView,
@@ -91,8 +92,15 @@ export class BrowseTree implements vscode.TreeDataProvider<BrowseNode>, vscode.D
     this.changed.dispose();
   }
 
-  /** 節の表示 — 束は件数と違反の数、定義は押すと移動して範囲を選ぶ。 */
+  /** 節の表示。id は browse.ts の browseNodeId の写し — 出し直しても同じ節は同じ id なので、VS Code が展開と選択を保つ(#2162)。 */
   getTreeItem(node: BrowseNode): vscode.TreeItem {
+    const item = this.itemOf(node);
+    item.id = browseNodeId(node);
+    return item;
+  }
+
+  /** 節の見た目 — 束は件数と違反の数、定義は押すと移動して範囲を選ぶ。 */
+  private itemOf(node: BrowseNode): vscode.TreeItem {
     switch (node.tag) {
       case 'group': {
         const item = new vscode.TreeItem(node.value, vscode.TreeItemCollapsibleState.Collapsed);
@@ -183,6 +191,7 @@ export function registerBrowse(
   };
   describe();
   const unsubscribeHy = hy.onDidChange(() => tree.refresh());
+  // linter の置き場は違反の側だけを聞く(木が読むのは module と違反だけ — 見出しの変化では出し直さない・#2162)
   const unsubscribeLint = lint.onDidChange(() => tree.refresh());
   const unsubscribeStatus = status.onDidChangeStatus(() => tree.refresh());
   // 木の pixel art の icon の入り切りで出し直す

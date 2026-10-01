@@ -1,12 +1,171 @@
 // linter の結果の置き場 — workspace の root ごとに直前の全体の実行の結果を持ち、編集中の file は 1 file の実行の結果で
 // 差し替える。表示(波線・パネル・地図)はすべてここから読む。外の世界には触らない。
+// 知らせは 2 種類 — 違反の側(違反・module・規則・層・root の実行の状態・知らない語)が変わった時の onDidChange と、見出しの側
+// (1 file の見出し・束縛・置き換え・本体の行)が変わった時の onDidChangeSignatures。木は違反の側だけを聞く(見出しだけの変化や
+// 前と同じ違反の差し替えで木を出し直すと、展開と選択が初期に戻る — agora-redesign #2162)。
 
 import * as path from 'path';
-import type { LintBinding, LintBody, LintLayer, LintModule, LintReport, LintRewrite, LintRule, LintSignature, LintViolation } from './contract';
+import type {
+  LintBinding,
+  LintBody,
+  LintExplanation,
+  LintLayer,
+  LintModule,
+  LintPosition,
+  LintRange,
+  LintReport,
+  LintRewrite,
+  LintRule,
+  LintSignature,
+  LintViolation
+} from './contract';
 
-/** 1 file の見出しと束縛(linter に渡した document の版つき — 版が進んだら古い位置なので描かない)。 */
-export interface FileSignatures {
+/**
+ * 見出しを聞いた時の document の印 — 版と中身の短い hash。VS Code は document を閉じて開き直すと版を 1 から数え直すので、
+ * 版だけでは「閉じる前の版 1」と「開き直した版 1」の別の中身を見分けられない(閉じても見出しを捨てないため、両方で比べる)。
+ */
+export interface DocumentStamp {
   readonly version: number;
+  readonly hash: string;
+}
+
+/** 文字の短い hash(FNV-1a 32 bit を 16 進 8 桁)— 同じ版の別の中身を見分ける・違反の文を節の id に縮める。暗号の強さは要らない。 */
+export function contentHash(text: string): string {
+  let hash = 0x811c9dc5;
+  for (let i = 0; i < text.length; i++) {
+    hash ^= text.charCodeAt(i);
+    hash = Math.imul(hash, 0x01000193);
+  }
+  return (hash >>> 0).toString(16).padStart(8, '0');
+}
+
+/** 印を取れる document の面(VS Code の TextDocument はこの形を満たす)。 */
+export interface StampSource {
+  readonly version: number;
+  getText(): string;
+}
+
+/**
+ * document の object ごとの直前の印 — 1 つの document の object の中身は版が同じ間は変わらないので、同じ版なら hash を
+ * 数え直さない(editor の飾りは cursor が動くたびに印を問う)。
+ */
+const stamps = new WeakMap<StampSource, DocumentStamp>();
+
+/** 版と中身の文字から印を作る(linter に渡した stdin の文字の印)。 */
+export function textStamp(version: number, text: string): DocumentStamp {
+  return { version, hash: contentHash(text) };
+}
+
+/** document の今の印(版と中身の hash)。 */
+export function stampOf(document: StampSource): DocumentStamp {
+  const known = stamps.get(document);
+  if (known !== undefined && known.version === document.version) {
+    return known;
+  }
+  const stamp = textStamp(document.version, document.getText());
+  stamps.set(document, stamp);
+  return stamp;
+}
+
+/** 2 つの印が同じ中身を指すか(版と hash の両方が同じ)。 */
+export function sameStamp(a: DocumentStamp, b: DocumentStamp): boolean {
+  return a.version === b.version && a.hash === b.hash;
+}
+
+/** 見出しを聞き直すか — まだ聞いていないか、置いた見出しの印が document の今の印と違う時だけ。 */
+export function needsSignatures(seen: FileSignatures | undefined, now: DocumentStamp): boolean {
+  return seen === undefined || !sameStamp(seen, now);
+}
+
+/** 欄ごとの比べ方の表 — 契約の型に欄を 1 つ足すと、ここに比べ方を書くまで compile が通らない(比べ忘れを型で塞ぐ)。 */
+type FieldEquality<T> = { readonly [K in keyof T]-?: (a: T[K], b: T[K]) => boolean };
+
+/** 値で比べる(文字列・数・真偽・null・閉じた集合の語)。 */
+function sameValue<V>(a: V, b: V): boolean {
+  return a === b;
+}
+
+/** 欄の表の全部の欄が同じか。 */
+function sameByFields<T>(fields: FieldEquality<T>, a: T, b: T): boolean {
+  for (const name in fields) {
+    if (!fields[name](a[name], b[name])) {
+      return false;
+    }
+  }
+  return true;
+}
+
+/** null を許す欄の比べ方(両方 null なら同じ・片方だけ null なら違う)。 */
+function nullable<V>(equal: (a: V, b: V) => boolean): (a: V | null, b: V | null) => boolean {
+  return (a, b) => (a === null || b === null ? a === b : equal(a, b));
+}
+
+const POSITION_FIELDS: FieldEquality<LintPosition> = { line: sameValue, character: sameValue };
+const RANGE_FIELDS: FieldEquality<LintRange> = {
+  start: (a, b) => sameByFields(POSITION_FIELDS, a, b),
+  end: (a, b) => sameByFields(POSITION_FIELDS, a, b)
+};
+const EXPLANATION_FIELDS: FieldEquality<LintExplanation> = { subject: sameValue, reason: sameValue, lawStatement: sameValue };
+const VIOLATION_FIELDS: FieldEquality<LintViolation> = {
+  rule: sameValue,
+  law: sameValue,
+  adr: sameValue,
+  severity: sameValue,
+  path: sameValue,
+  range: (a, b) => sameByFields(RANGE_FIELDS, a, b),
+  message: sameValue,
+  hint: sameValue,
+  key: sameValue,
+  registered: sameValue,
+  baseSeverity: sameValue,
+  standing: sameValue,
+  level: sameValue,
+  explanation: nullable((a, b) => sameByFields(EXPLANATION_FIELDS, a, b)),
+  source: sameValue,
+  probability: sameValue
+};
+const MODULE_FIELDS: FieldEquality<LintModule> = {
+  path: sameValue,
+  layer: sameValue,
+  service: sameValue,
+  context: sameValue,
+  role: sameValue,
+  violations: sameValue,
+  layerReason: sameValue
+};
+
+/** 違反の列が構造として同じか(契約の型の欄を全部・順も含めて比べる)。 */
+export function sameViolations(a: readonly LintViolation[], b: readonly LintViolation[]): boolean {
+  return a.length === b.length && a.every((violation, i) => sameByFields(VIOLATION_FIELDS, violation, b[i]));
+}
+
+/** module の要約が構造として同じか(両方無ければ同じ)。 */
+export function sameModule(a: LintModule | undefined, b: LintModule | undefined): boolean {
+  return a === undefined || b === undefined ? a === b : sameByFields(MODULE_FIELDS, a, b);
+}
+
+/** 1 file の差し替えの中身 — その file の違反と module の要約。 */
+interface FileOverride {
+  readonly violations: readonly LintViolation[];
+  readonly module: LintModule | undefined;
+}
+
+/** 1 file の差し替えの中身が同じか。 */
+function sameOverride(a: FileOverride, b: FileOverride): boolean {
+  return sameModule(a.module, b.module) && sameViolations(a.violations, b.violations);
+}
+
+/** 文字の列が同じか(順も含めて)。 */
+function sameStrings(a: readonly string[], b: readonly string[]): boolean {
+  return a.length === b.length && a.every((s, i) => s === b[i]);
+}
+
+/**
+ * 1 file の見出しと束縛(linter に渡した document の印つき — 印が document の今の印と違えば古い位置なので描かない)。
+ * 閉じた file の分も捨てずに持つ — 持つのは開いたことのある file の数だけで、1 file は file の文字と同じ程度の大きさ
+ * (見出し・束縛・置き換え・本体の行)。捨てると読む面の tab を開き直すたびに linter に聞き直し、木が出し直されていた(#2162)。
+ */
+export interface FileSignatures extends DocumentStamp {
   readonly signatures: readonly LintSignature[];
   readonly bindings: readonly LintBinding[];
   /** 呼びを `f(a, b)` の形で見せる置き換え(parent は この列の中の番号) */
@@ -45,7 +204,7 @@ interface RootState {
   /** report が 1 度も無い間(初回の running・前の結果の無い failed)に表へ出す root の path。 */
   readonly root: string;
   readonly run: RootRun;
-  readonly overrides: Map<string, { readonly violations: readonly LintViolation[]; readonly module: LintModule | undefined }>;
+  readonly overrides: Map<string, FileOverride>;
 }
 
 /** path の比べ方を 1 つに決める。 */
@@ -71,10 +230,13 @@ interface PathTables {
   readonly violations: ReadonlyMap<string, readonly LintViolation[]>;
 }
 
-/** linter の結果の置き場。書き換えのたびに購読者へ知らせる。 */
+/** linter の結果の置き場。書き換えのたびに、変わった側(違反か見出し)の購読者へ知らせる。 */
 export class LintStore {
   private readonly roots = new Map<string, RootState>();
+  /** 違反の側の購読者 */
   private readonly listeners = new Set<() => void>();
+  /** 見出しの側の購読者 */
+  private readonly signatureListeners = new Set<() => void>();
   private pathTables: PathTables | undefined;
   /** path → 直前の 1 file の実行の見出しと束縛(契約 版 2) */
   private readonly signatures = new Map<string, FileSignatures>();
@@ -107,7 +269,9 @@ export class LintStore {
 
   /**
    * 1 file の実行の結果で、その file の違反と module の要約を差し替える。全体の結果が 1 度も無い root(実行中の
-   * 初回・前の結果の無い失敗)には何もしない(規則の一覧と地図は全体の実行から作るため)。
+   * 初回・前の結果の無い失敗)には何もしない(規則の一覧と地図は全体の実行から作るため)。差し替えの中身が今その file に
+   * 出している物と構造として同じなら(知らない語も同じなら)違反の側の購読者へ知らせない — 読む面を開いた時の 1 file の
+   * 実行が前と同じ違反を返すたびに木が出し直されていた(#2162)。
    */
   replaceFile(root: string, filePath: string, report: LintReport): void {
     const state = this.roots.get(key(root));
@@ -116,37 +280,61 @@ export class LintStore {
       return;
     }
     const wanted = key(filePath);
-    state.overrides.set(wanted, {
+    const shown: FileOverride = state.overrides.get(wanted) ?? {
+      violations: base.violations.filter((v) => key(v.path) === wanted),
+      module: base.modules.find((m) => key(m.path) === wanted)
+    };
+    const next: FileOverride = {
       violations: report.violations.filter((v) => key(v.path) === wanted),
       module: report.modules.find((m) => key(m.path) === wanted)
-    });
-    this.noteUnknown(filePath, report);
+    };
+    state.overrides.set(wanted, next);
+    const unknownChanged = this.noteUnknown(filePath, report);
+    if (sameOverride(shown, next) && !unknownChanged) {
+      // 見せる物は同じ — path で引く表だけ新しい object で作り直させ、購読者は起こさない
+      this.pathTables = undefined;
+      return;
+    }
     this.emit();
   }
 
-  /** 1 file の実行(stdin)の見出しと束縛を、渡した document の版と組で置く(全体の結果が無い root でも置く)。 */
-  replaceSignatures(filePath: string, version: number, report: LintReport): void {
+  /**
+   * 1 file の実行(stdin)の見出しと束縛を、渡した document の印(版と中身の hash)と組で置く(全体の結果が無い root でも
+   * 置く)。知らせは見出しの側だけ(違反の側の購読者 = 木・波線は起こさない)。
+   */
+  replaceSignatures(filePath: string, stamp: DocumentStamp, report: LintReport): void {
     // 1 file の実行(stdin)の結果は全部その file の物 — path では絞らない。linter は symlink を解いた path を名乗り
     // (macOS の /tmp は /private/tmp)、絞ると見出しが 1 つも出なかった(実測 2026-09-28)
     this.signatures.set(key(filePath), {
-      version,
+      version: stamp.version,
+      hash: stamp.hash,
       signatures: report.signatures,
       bindings: report.bindings,
       rewrites: report.rewrites,
       bodies: report.bodies
     });
     this.noteUnknown(filePath, report);
-    this.emit();
+    this.emitSignatures();
   }
 
-  /** file の見出しと束縛(まだ聞いていなければ undefined)。 */
+  /**
+   * 1 file の実行(stdin)の結果を置く — 違反と module の差し替え(前と同じなら鳴らない)と、見出しの差し替え(見出しの側だけ
+   * 鳴る)。1 回の実行で違反の側の購読者(木・波線)が呼ばれるのは多くて 1 回(#2162 — 前は 2 回鳴っていた)。
+   */
+  replaceFileRun(root: string, filePath: string, stamp: DocumentStamp, report: LintReport): void {
+    this.replaceFile(root, filePath, report);
+    this.replaceSignatures(filePath, stamp, report);
+  }
+
+  /** file の見出しと束縛(まだ聞いていなければ undefined — 印は document の今の印と違うことがある)。 */
   signaturesFor(filePath: string): FileSignatures | undefined {
     return this.signatures.get(key(filePath));
   }
 
-  /** 閉じた file の見出しを捨てる。 */
-  forgetSignatures(filePath: string): void {
-    this.signatures.delete(key(filePath));
+  /** document の今の印(版と中身の hash)で聞いた見出しと束縛(無い・古ければ undefined)— 描く側はここから読む。 */
+  currentSignatures(filePath: string, now: DocumentStamp): FileSignatures | undefined {
+    const seen = this.signatures.get(key(filePath));
+    return seen !== undefined && sameStamp(seen, now) ? seen : undefined;
   }
 
   /** 拡張の知らない語の全部(空なら拡張は linter に追いついている)。 */
@@ -154,13 +342,15 @@ export class LintStore {
     return [...new Set([...this.unknownBySource.values()].flat())];
   }
 
-  /** 出どころごとの知らない語を置き換える。 */
-  private noteUnknown(source: string, report: LintReport): void {
+  /** 出どころごとの知らない語を置き換える(前と変わったかを返す)。 */
+  private noteUnknown(source: string, report: LintReport): boolean {
+    const before = this.unknownBySource.get(key(source)) ?? [];
     if (report.unknown.length === 0) {
       this.unknownBySource.delete(key(source));
     } else {
       this.unknownBySource.set(key(source), report.unknown);
     }
+    return !sameStrings(before, report.unknown);
   }
 
   /**
@@ -316,16 +506,32 @@ export class LintStore {
     return [...this.roots.values()].flatMap((s) => reportOf(s.run)?.errors ?? []);
   }
 
-  /** 書き換えの知らせを購読する。戻り値で購読をやめる。 */
+  /**
+   * 違反の側(違反・module・規則・層・root の実行の状態・知らない語)の書き換えの知らせを購読する。戻り値で購読をやめる。
+   * 見出しだけの変化では鳴らない(見出しも読む購読者は onDidChangeSignatures も聞く)。
+   */
   onDidChange(listener: () => void): () => void {
     this.listeners.add(listener);
     return () => this.listeners.delete(listener);
   }
 
-  /** 購読者へ書き換えを知らせる。 */
+  /** 見出しの側(1 file の見出し・束縛・置き換え・本体の行)の書き換えの知らせを購読する。戻り値で購読をやめる。 */
+  onDidChangeSignatures(listener: () => void): () => void {
+    this.signatureListeners.add(listener);
+    return () => this.signatureListeners.delete(listener);
+  }
+
+  /** 違反の側の購読者へ書き換えを知らせる。 */
   private emit(): void {
     this.pathTables = undefined;
     for (const listener of this.listeners) {
+      listener();
+    }
+  }
+
+  /** 見出しの側の購読者へ書き換えを知らせる。 */
+  private emitSignatures(): void {
+    for (const listener of this.signatureListeners) {
       listener();
     }
   }

@@ -2,7 +2,7 @@ import * as assert from 'assert';
 import * as fs from 'fs';
 import * as path from 'path';
 import { parseLintJson, type LintReport } from '../../lint/contract';
-import { LintStore } from '../../lint/store';
+import { LintStore, textStamp } from '../../lint/store';
 import { callMarks, effectHeadSpans, rewriteAt, rewriteHover, shownRewrites } from '../../defk/calls';
 import type { LineSource } from '../../defk/model';
 
@@ -149,7 +149,7 @@ suite('呼びを f(a, b) の形で見せる表示(editor-json の rewrites)', ()
 
   test('置き場は 1 file の実行の rewrites を版と一緒に持つ', () => {
     const store = new LintStore();
-    store.replaceSignatures('/repo/demo/core.hy', 3, report());
+    store.replaceSignatures('/repo/demo/core.hy', textStamp(3, '(defk core [])'), report());
     const found = store.signaturesFor('/repo/demo/core.hy');
     assert.strictEqual(found?.version, 3);
     assert.strictEqual(found?.rewrites.length, 8);

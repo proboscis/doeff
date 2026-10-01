@@ -1,5 +1,5 @@
-// linter の結果の見せ方を決める純粋な関数 — 波線の中身、違反の木(law → file → 違反)、規則の一覧、層の地図の木。
-// 判定はしない(何が違反かも、地図の層・色も linter の出力のまま)。VS Code には触らない。
+// linter の結果の見せ方を決める純粋な関数 — 波線の中身、違反の木(law → file → 違反)、規則の一覧、層の地図の木と、木の節の
+// 固定の id。判定はしない(何が違反かも、地図の層・色も linter の出力のまま)。VS Code には触らない。
 
 import * as path from 'path';
 import type { LintModule, LintRange, LintRule, LintRuleFamily, LintSeverity, LintViolation } from './contract';
@@ -18,7 +18,7 @@ import {
   type StandingCounts
 } from './severity';
 import { LINT_LEVELS, type LintLevel } from './contract';
-import type { RootRunEntry } from './store';
+import { contentHash, type RootRunEntry } from './store';
 import type { ViolationRef } from '../read/locate';
 
 /** 表の値の並びへ 1 件足す(数千件でも線形に束ねる)。 */
@@ -97,17 +97,72 @@ export type LintNode =
       readonly summary: RuleSummary;
       readonly violations: readonly LintViolation[];
     }
-  /** 束の中の file */
-  | { readonly tag: 'file'; readonly path: string; readonly label: string; readonly violations: readonly LintViolation[] }
-  | { readonly tag: 'violation'; readonly violation: LintViolation }
+  /** 束の中の file(束の重大さと規則を持つ — 違う束の同じ file を別の節にするため) */
+  | {
+      readonly tag: 'file';
+      readonly level: LintLevel;
+      readonly rule: string;
+      readonly path: string;
+      readonly label: string;
+      readonly violations: readonly LintViolation[];
+    }
+  /**
+   * 違反 1 件。parentId = 親の節(束の file か地図の module)の id、occurrence = 同じ親の下で同じ規則・位置・文の違反の
+   * 何番目か(linter が同じ違反を 2 度出しても id を重ねないため)
+   */
+  | { readonly tag: 'violation'; readonly violation: LintViolation; readonly parentId: string; readonly occurrence: number }
   | { readonly tag: 'rule'; readonly rule: LintRule }
   /** 地図の層の束 */
   | { readonly tag: 'layer'; readonly label: string; readonly entries: readonly MapEntry[] }
-  /** 地図の dir */
-  | { readonly tag: 'dir'; readonly label: string; readonly prefix: string; readonly entries: readonly MapEntry[] }
+  /** 地図の dir(layer = その dir の層の束の名 — 違う層の同じ dir を別の節にするため) */
+  | { readonly tag: 'dir'; readonly layer: string; readonly label: string; readonly prefix: string; readonly entries: readonly MapEntry[] }
   /** 地図の file(module) */
-  | { readonly tag: 'module'; readonly entry: MapEntry }
+  | { readonly tag: 'module'; readonly layer: string; readonly entry: MapEntry }
   | { readonly tag: 'message'; readonly label: string };
+
+/**
+ * 節の固定の id — 同じ置き場から 2 度作った節は同じ id、違う節は違う id(1 つの木の中で重ならない)。VS Code の TreeView は
+ * id の同じ節の展開と選択を出し直しの後も保つ(id が無いと、出し直すたびに全部畳まれ選択も消えた — agora-redesign #2162)。
+ * 数や文の変わる欄(件数・前回からの増減・束の見出しの名)は入れない — 変わっても同じ節のまま。
+ */
+export function nodeId(node: LintNode): string {
+  switch (node.tag) {
+    case 'summary':
+      return idOf('summary', [node.level]);
+    case 'group':
+      return idOf('group', [node.level, node.rule]);
+    case 'file':
+      return idOf('file', [node.level, node.rule, node.path]);
+    case 'violation':
+      return idOf('violation', [...violationKey(node.parentId, node.violation), node.occurrence]);
+    case 'rule':
+      return idOf('rule', [node.rule.rule]);
+    case 'layer':
+      return idOf('layer', [node.label]);
+    case 'dir':
+      return idOf('dir', [node.layer, node.prefix]);
+    case 'module':
+      // relative も入れる — 入れ子の workspace の folder では同じ file が 2 つの root の下に(違う relative で)出る
+      return idOf('module', [node.layer, node.entry.relative, node.entry.module.path]);
+    case 'message':
+      return idOf('message', [node.label]);
+    default: {
+      const unreachable: never = node;
+      throw new Error(`網羅されていない節: ${JSON.stringify(unreachable)}`);
+    }
+  }
+}
+
+/** 節の種類と欄から id を作る(欄の区切りは JSON の配列の綴り — path に `:` や `/` があっても別の欄と混ざらない)。 */
+function idOf(tag: LintNode['tag'], parts: ReadonlyArray<string | number>): string {
+  return JSON.stringify([tag, ...parts]);
+}
+
+/** 違反の節の id の欄のうち、何番目か(occurrence)の前まで — 親・規則・path・範囲・文の hash。 */
+function violationKey(parentId: string, v: LintViolation): ReadonlyArray<string | number> {
+  const { start, end } = v.range;
+  return [parentId, v.rule, v.path, start.line, start.character, end.line, end.character, contentHash(v.message)];
+}
 
 /** 地図の 1 file — root からの相対 path と linter の要約。 */
 export interface MapEntry {
@@ -333,8 +388,8 @@ export function mapRoots(
     .map((label) => ({ tag: 'layer', label, entries: byLayer.get(label) ?? [] }));
 }
 
-/** dir の中身 — 直下の dir(名前の順)と直下の file(名前の順)。 */
-function dirChildren(prefix: string, entries: readonly MapEntry[]): LintNode[] {
+/** dir の中身 — 直下の dir(名前の順)と直下の file(名前の順)。layer = この dir の層の束の名。 */
+function dirChildren(layer: string, prefix: string, entries: readonly MapEntry[]): LintNode[] {
   const subdirs = new Map<string, MapEntry[]>();
   const files: MapEntry[] = [];
   for (const entry of entries) {
@@ -348,21 +403,29 @@ function dirChildren(prefix: string, entries: readonly MapEntry[]): LintNode[] {
   }
   const dirs: LintNode[] = [...subdirs.keys()].sort().map((name) => ({
     tag: 'dir',
+    layer,
     label: name,
     prefix: prefix === '' ? name : path.join(prefix, name),
     entries: subdirs.get(name) ?? []
   }));
   const modules: LintNode[] = files
     .sort((a, b) => a.relative.localeCompare(b.relative))
-    .map((entry) => ({ tag: 'module', entry }));
+    .map((entry) => ({ tag: 'module', layer, entry }));
   return [...dirs, ...modules];
 }
 
-/** 違反を行の順の節にする(file の子・地図の file の子)。 */
-function violationsByLine(violations: readonly LintViolation[]): LintNode[] {
+/** 違反を行の順の節にする(file の子・地図の file の子)。parentId = 親の節の id。 */
+function violationsByLine(violations: readonly LintViolation[], parentId: string): LintNode[] {
+  const seen = new Map<string, number>();
   return [...violations]
     .sort((a, b) => a.range.start.line - b.range.start.line || a.range.start.character - b.range.start.character)
-    .map((violation) => ({ tag: 'violation', violation }));
+    .map((violation) => {
+      // 同じ親の下で id の欄(規則・範囲・文の hash)が同じ違反の何番目か — 文の hash が偶然重なっても id は重ならない
+      const same = idOf('violation', violationKey(parentId, violation));
+      const occurrence = seen.get(same) ?? 0;
+      seen.set(same, occurrence + 1);
+      return { tag: 'violation', violation, parentId, occurrence };
+    });
 }
 
 /** 節の子を作る(展開した時に呼ぶ)。 */
@@ -375,19 +438,21 @@ export function lintChildren(node: LintNode): LintNode[] {
       }
       return [...byFile.keys()].sort().map((filePath) => ({
         tag: 'file',
+        level: node.level,
+        rule: node.rule,
         path: filePath,
         label: path.basename(filePath),
         violations: byFile.get(filePath) ?? []
       }));
     }
     case 'file':
-      return violationsByLine(node.violations);
+      return violationsByLine(node.violations, nodeId(node));
     case 'module':
-      return violationsByLine(node.entry.violations);
+      return violationsByLine(node.entry.violations, nodeId(node));
     case 'layer':
-      return dirChildren('', node.entries);
+      return dirChildren(node.label, '', node.entries);
     case 'dir':
-      return dirChildren(node.prefix, node.entries);
+      return dirChildren(node.layer, node.prefix, node.entries);
     case 'violation':
     case 'summary':
     case 'rule':

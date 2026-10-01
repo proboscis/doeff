@@ -11,7 +11,7 @@ import type { SourceColoring } from '../hy/highlight/spans';
 import type { HyIndexStatusView } from '../hy/indexService';
 import { emptyIndexLines } from '../hy/indexStatus';
 import type { HyIndexStore } from '../hy/store';
-import type { LintStore } from '../lint/store';
+import { stampOf, type LintStore } from '../lint/store';
 import type { IconSource } from '../pixel/icons';
 import { effectGlyph } from '../pixel/vocabulary';
 import {
@@ -318,11 +318,14 @@ class PlanePanel implements vscode.Disposable {
     navigator.register(document.uri.fsPath, this);
     panel.webview.options = { enableScripts: true };
     const offHy = hy.onDidChange(() => this.schedule());
+    // 面は違反と見出しの両方を描く — linter の置き場の 2 つの知らせを両方聞く(続けて鳴っても schedule が 1 度にまとめる)
     const offLint = lint.onDidChange(() => this.schedule());
+    const offSignatures = lint.onDidChangeSignatures(() => this.schedule());
     const offStatus = status.onDidChangeStatus(() => this.schedule());
     this.disposables.push(
       { dispose: offHy },
       { dispose: offLint },
+      { dispose: offSignatures },
       { dispose: offStatus },
       vscode.workspace.onDidChangeTextDocument((event) => {
         if (event.document === document) {
@@ -418,13 +421,14 @@ class PlanePanel implements vscode.Disposable {
               .join(' / ');
       return { tag: 'message', text };
     }
-    const seen = this.lint.signaturesFor(filePath);
+    // 見出しは document の今の印(版と中身の hash)で聞いた物だけ — 古い位置の見出しは描かない
+    const seen = this.lint.currentSignatures(filePath, stampOf(this.document));
     const violations = this.lint.violationsIn(filePath);
     this.cards = buildCards({
       definitions: entry.file.definitions,
-      signatures: seen !== undefined && seen.version === this.document.version ? seen.signatures : [],
-      bodies: seen !== undefined && seen.version === this.document.version ? seen.bodies : [],
-      bindings: seen !== undefined && seen.version === this.document.version ? seen.bindings : [],
+      signatures: seen?.signatures ?? [],
+      bodies: seen?.bodies ?? [],
+      bindings: seen?.bindings ?? [],
       violations,
       lines: this.document.getText().split(/\r?\n/),
       testsOf: (qn) => relationOf(this.graphs.graph, qn).tests,

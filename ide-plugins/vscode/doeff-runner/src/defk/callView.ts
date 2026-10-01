@@ -4,7 +4,7 @@
 
 import * as vscode from 'vscode';
 import type { LintRewrite } from '../lint/contract';
-import type { LintStore } from '../lint/store';
+import { stampOf, type LintStore } from '../lint/store';
 import { effectGlyph } from '../pixel/vocabulary';
 import { callMarks, effectHeadSpans, rewriteAt, rewriteHover, shownRewrites } from './calls';
 import { OPEN_LOCATION_COMMAND } from './hover';
@@ -67,7 +67,8 @@ export class CallSyntaxView implements vscode.Disposable {
     // 元の文字は表示だけ消す(文書の文字・選択・コピーは元のまま)。見せる文字は置いた範囲ごとの before / after
     this.hidden = vscode.window.createTextEditorDecorationType({ textDecoration: 'none; display: none' });
     this.inserted = vscode.window.createTextEditorDecorationType({});
-    const offStore = store.onDidChange(() => this.schedule());
+    // 描くのは見出しの置き換えだけ — linter の置き場の見出しの知らせだけを聞く(違反の変化では描き直さない)
+    const offStore = store.onDidChangeSignatures(() => this.schedule());
     this.disposables.push(
       { dispose: offStore },
       vscode.window.onDidChangeVisibleTextEditors(() => this.refreshAll()),
@@ -136,11 +137,12 @@ export class CallSyntaxView implements vscode.Disposable {
   /** editor 1 つを描き直す。 */
   private refresh(editor: vscode.TextEditor): void {
     const document = editor.document;
-    const found = this.enabled && isHyDocument(document) ? this.store.signaturesFor(document.uri.fsPath) : undefined;
+    // 印(版と中身の hash)が今の document と同じ見出しだけ — 閉じて開き直した document の版 1 を前の版 1 と取り違えない
+    const found = this.enabled && isHyDocument(document) ? this.store.currentSignatures(document.uri.fsPath, stampOf(document)) : undefined;
     const hidden: vscode.DecorationOptions[] = [];
     const inserted: vscode.DecorationOptions[] = [];
     let shown: Shown | undefined;
-    if (found !== undefined && found.version === document.version) {
+    if (found !== undefined) {
       const indices = shownRewrites(found.rewrites, cursorLines(editor), lineSource(document));
       const color = new vscode.ThemeColor('editor.foreground');
       for (const mark of callMarks(found.rewrites, indices)) {
