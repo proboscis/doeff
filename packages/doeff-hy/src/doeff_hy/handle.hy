@@ -244,11 +244,20 @@
         `(setv ~(Symbol (str lazy-name)) ~val-var)]))
 
   ;; Build full lazy init sequence
-  [`(setv ~key-var ~key-expr)
-   `(setv ~cached-var (yield (Get ~key-var)))
-   `(if (isinstance ~cached-var Some)
-        (setv ~(Symbol (str lazy-name)) (. ~cached-var value))
-        (do ~@else-body))])
+  ;; 型検査のための展開(doeff_hy/static_view.py — 走らせず pyright が読むだけ・agora-redesign #2293): 名は初期化の式の値に
+  ;; 束ねる。実行時は Get の答え(Some の中身)か初期化の値のどちらかだが、状態に置くのは同じ初期化の値なので型は同じ —
+  ;; Get の答えは型を持たないので、そのまま写すと名とそれを使う式が全部 Unknown になり、書き手に直せない赤が出ていた。
+  ;; キーの名は := の Put が引くので残す。
+  (if (static-view-enabled)
+      (+ [`(setv ~key-var ~key-expr)]
+         init-forms
+         [`(setv ~val-var ~value-expr)
+          `(setv ~(Symbol (str lazy-name)) ~val-var)])
+      [`(setv ~key-var ~key-expr)
+       `(setv ~cached-var (yield (Get ~key-var)))
+       `(if (isinstance ~cached-var Some)
+            (setv ~(Symbol (str lazy-name)) (. ~cached-var value))
+            (do ~@else-body))]))
 
 
 ;; ---------------------------------------------------------------------------
@@ -837,12 +846,19 @@
   (setv quoted-body (_quoted-forms clauses))
 
   ;; Extra imports needed when lazy is used
+  ;; 型検査のための展開では Get を使わない(名は初期化の値に束ねる — _build-lazy-init-forms)。Put と Some は session var の := だけが
+  ;; 使うので、使わない handler で「import が使われていない」の赤にならない再輸出の綴り(X :as X)で取る(agora-redesign #2293)。
   (setv lazy-imports
-    (if lazy-defs
+    (cond
+      (not lazy-defs) `(do)
+      (static-view-enabled)
+        `(do (import doeff [Some :as Some])
+             (import doeff_core_effects.effects [Put :as Put])
+             (import doeff-hy.session [session-key :as _doeff-session-key]))
+      True
         `(do (import doeff [Some])
              (import doeff_core_effects.effects [Get Put])
-             (import doeff-hy.session [session-key :as _doeff-session-key]))
-        `(do)))
+             (import doeff-hy.session [session-key :as _doeff-session-key]))))
 
   ;; defhandler produces a Program -> Program function instead of exposing a
   ;; raw handler dispatcher. The inner dispatcher is stored for introspection
