@@ -255,8 +255,8 @@
 (import threading)
 (import urllib.parse [urlsplit parse-qsl])
 (import doeff_cluster.shared.intent.protocol [PlainText])
-(import doeff_cluster.coordinator_inbox [RequestInbox ReplySlot])
-(import doeff_cluster.coordinator_inbox [http-request])
+(import doeff_cluster.foundation.coordinator_inbox [RequestInbox ReplySlot])
+(import doeff_cluster.foundation.coordinator_inbox [http-request])
 
 ;; 1 要求の本文の上限。記録係は 1 回の送りを 4 MB で区切る(HttpSink の max-post-bytes)ので、これを超えるのは 1 行が巨大な時だけ。
 ;; 上限が無い最初の版は、古い記録係(1 回 500 行)が起点の一覧を貯めて一度に送った数百 MB の本文を JSON で読み、memory が 1.9 GB に

@@ -12,7 +12,7 @@
 (import pytest)
 (import doeff_cluster.shared.intent.protocol [ClusterTiming])
 (import doeff_cluster.coordinator.intent.cluster_model [ClusterState RefusedJob VersionState NotReadyKind UnplacedKind])
-(import doeff_cluster.coordinator_inbox [http-request])
+(import doeff_cluster.foundation.coordinator_inbox [http-request])
 (import doeff_cluster.worker_model [JobPhase spec-hash])
 (import doeff_cluster.coordinator.core.cluster_policy [unplaced-jobs])
 (import doeff_cluster.coordinator.core.api_policy [respond target-view])

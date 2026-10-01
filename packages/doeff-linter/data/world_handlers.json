@@ -207,7 +207,7 @@
    "why": "OTLP / HTTP の sink を urlopen で組む"
   },
   {
-   "handler": "doeff_cluster.kube_handlers:kube-api",
+   "handler": "doeff_cluster.foundation.kube_handlers:kube-api",
    "touches": [
     "http"
    ],
@@ -294,7 +294,7 @@
    "why": "subprocess.Popen・os.rename・signal"
   },
   {
-   "handler": "doeff_cluster.coordinator_inbox:http-requests",
+   "handler": "doeff_cluster.foundation.coordinator_inbox:http-requests",
    "touches": [
     "network",
     "clock",
@@ -303,7 +303,7 @@
    "why": "本物の HTTP server の thread と queue.get(timeout)"
   },
   {
-   "handler": "doeff_cluster.wal_store:wal-store",
+   "handler": "doeff_cluster.foundation.wal_store:wal-store",
    "touches": [
     "file"
    ],

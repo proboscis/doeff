@@ -1,6 +1,6 @@
 ;;; k8s の Deployment を読む・台数を変える effect(Rollout の reconciler が旧 / 新の片方として本番の Deployment を扱う口)。
 ;;;
-;;; 触るのは台数(scale の subresource)だけ。kubectl ではなく k8s の API を handler(kube_handlers.hy)経由で叩く。
+;;; 触るのは台数(scale の subresource)だけ。kubectl ではなく k8s の API を handler(foundation/kube_handlers.hy)経由で叩く。
 ;;; 権限は coordinator の ServiceAccount に、対象の Deployment の get と scale だけを許す Role で与える(deploy/cluster.yaml)。
 (require doeff-hy.macros [val])
 (val MODULE-TAGS {:context "coordinator" :role "intent"})

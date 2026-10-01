@@ -29,7 +29,7 @@
 (import doeff_cluster.env_upkeep [RootInfo PrepareLimits sweep-choice prepare-overdue env-capacity])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming Request PlainText])
 (import doeff_cluster.coordinator.intent.cluster_model [ClusterState TaskRecord WorkerInfo ComponentVersion])
-(import doeff_cluster.coordinator_inbox [http-request])
+(import doeff_cluster.foundation.coordinator_inbox [http-request])
 (import doeff_cluster.coordinator.core.cluster_policy [place-tasks register-heartbeat heartbeat-reply load-of tasks-for])
 (import doeff_cluster.coordinator.core.api_policy [respond])
 (import doeff_cluster.coordinator.core.metrics_policy [metrics-text])

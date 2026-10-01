@@ -21,7 +21,7 @@
 (import doeff_cluster.shared.intent.protocol [ClusterTiming])
 (import doeff_cluster.coordinator.intent.cluster_model [ClusterState TaskRecord])
 (import doeff_cluster.coordinator.core.cluster_json [task-record-to-json task-record-from-json])
-(import doeff_cluster.coordinator_inbox [http-request])
+(import doeff_cluster.foundation.coordinator_inbox [http-request])
 (import doeff_cluster.coordinator.core.cluster_policy [adopted-task])
 (import doeff_cluster.coordinator.core.api_policy [respond])
 (import doeff_cluster.handlers [CoordinatorLink ProcessHost program-file task-spec])

@@ -11,7 +11,7 @@
 (import pytest)
 (import doeff [with-handlers])
 (import doeff_time [Delay])
-(import doeff_cluster.coordinator_handler_sets [RequestQueue MemoryWalStore])
+(import doeff_cluster.coordinator.entry.handler_sets [RequestQueue MemoryWalStore])
 (import doeff_cluster.job_context [RunContext])
 (import doeff_cluster.remote_model [UnsendableProgram TaskFailed decode-outcome])
 (import doeff_cluster.worker_model [JobSpec])
