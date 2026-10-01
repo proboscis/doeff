@@ -68,10 +68,16 @@
 
 ;; 準備の確かめ(処理ステージ 10)の本体。root の venv の hy で、cwd = 空の作業 dir から起こす(子と同じ起こし方)。
 ;; 出力 = JSON 1 行 {"childProtocol" 版 "misplaced" [根の外に解けた最上位の名]}。
+;; 子の入口の約束の版は root の新旧の両方の置き場から読む — 新しい置き場(shared/intent・c56fa8634 から)を先に、無ければ旧い置き場
+;; (それより前の doeff で宣言した root)。片方だけを読むと、worker の版と root の版の組によって約束の版を 0 と読み、起こせる root を
+;; env-failed にする(issue #2413 — 2026-10-01 22:20 に service の宣言 1 つが env-failed)。旧い doeff の root が無くなったら旧い置き場を外す。
+(val CHILD-PROTOCOL-PLACES #("doeff_cluster.shared.intent.runtime_env_model" "doeff_cluster.runtime_env_model"))
 (val PROBE-PROGRAM (.join "\n" [
-  "(import importlib.util json os sys)"
+  "(import importlib importlib.util json os sys)"
   "(setv protocol 0)"
-  "(try (do (import doeff_cluster.shared.intent.runtime_env_model [CHILD-PROTOCOL]) (setv protocol CHILD-PROTOCOL)) (except [Exception] None))"
+  (.format "(for [place [{}]]" (.join " " (gfor p CHILD-PROTOCOL-PLACES (.format "\"{}\"" p))))
+  "  (when (= protocol 0)"
+  "    (try (setv protocol (getattr (importlib.import-module place) \"CHILD_PROTOCOL\")) (except [Exception] None))))"
   "(defn has-source [d] (any (gfor #(p ds fs) (os.walk d) f fs (.endswith f #(\".py\" \".hy\")))))"
   "(setv misplaced [])"
   "(for [root (cut sys.argv 1 None)]"
