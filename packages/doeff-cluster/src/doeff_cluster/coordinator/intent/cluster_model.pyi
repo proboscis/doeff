@@ -388,6 +388,20 @@ class ResourceList:
     revision: int
     items: tuple[ResourceView, ...]
 
+@dataclass(frozen=True, kw_only=True)
+class RowConflict:
+    name: str
+    message: str
+    current: int | None = None
+
+@dataclass(frozen=True, kw_only=True)
+class ErrorReply:
+    message: str
+    current: int | None = None
+    conflicts: tuple[RowConflict, ...] | None = None
+    open: int | None = None
+    fault: bool = False
+
 @dataclass(frozen=True)
 class ClusterNaming:
     owner_annotation: str = "doeff-cluster/replicas-owned-by"
