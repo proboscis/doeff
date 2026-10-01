@@ -66,7 +66,7 @@
 
 (defrecord WireShape
   "defwire の型 1 つの wire の形: names = Python の欄の名 → wire の欄の名(欄を全部・名で引く索引)/ unknown = 知らない欄の扱い
-   (\"reject\" / \"ignore\")/ adapter = その型の解き手(pydantic の TypeAdapter — 最初に使う時に組む)。"
+   (\"reject\" / \"ignore\")/ adapter = その型の解き手(pydantic の TypeAdapter — 型を定義した時に組む。後で定義する型を欄に持つ型だけは最初に使う時)。"
   {:tags {:context "wire" :role "type"}
    :check [(in unknown UNKNOWN-FIELDS)]}
   (#^ (get dict #(str str)) names)
@@ -84,14 +84,15 @@
    :post [(: % dict)]
    :tags {:context "wire" :role "judgment"}}
   "defwire の型の pydantic の設定(型の __pydantic_config__ に置く): 欄の名は names の写しだけを受けて書き、知らない欄は unknown に
-   従い、型の検めは厳しく、解き手は最初に使う時に組む(後で定義する型を欄に書けるため)。"
+   従い、型の検めは厳しい。解き手は型を定義した時(module の読み込み)に組む — 最初の parse / dump の呼び手(検の実行・本番の最初の
+   要求)が組み立ての費用を払わないため(agora-redesign #2420・前例 #2327)。欄にまだ定義していない型(後で定義する型)を書いた型だけは
+   その時に組めないので、pydantic の既定どおり最初に使う時に組む(defer-build を置かない = 組めれば組み、組めなければ後へ回す)。"
   (ConfigDict :alias-generator (. names __getitem__)
               :validate-by-alias True
               :validate-by-name False
               :serialize-by-alias True
               :extra (get UNKNOWN-FIELDS unknown)
-              :strict True
-              :defer-build True))
+              :strict True))
 
 
 (deff wire-shape [wire-type names unknown]  ; defk にできない: defwire の展開が module を読む時に呼ぶ(Program を実行できない所)

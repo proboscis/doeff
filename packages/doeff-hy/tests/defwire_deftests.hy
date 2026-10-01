@@ -242,3 +242,66 @@
   (<- row (parse GroupedRow {"laneId" "L1" "landedAt" 3 "note" "x"}))
   (assert (= #(row.landed-at row.note) #(3 "x"))))
 
+
+
+;; --- 解き手を組む時期(agora-redesign #2420・前例 #2327)----------------------------------------------------------------------------
+;; 解き手(pydantic の TypeAdapter の validator と serializer)は型を定義した時(module の読み込み)に組む。最初の parse / dump の呼び手
+;; (検の実行・本番の最初の要求)が組み立ての費用を払わない。この 2 型は他の検が使わない(使う前の解き手を写すため)。
+
+(defwire BuiltAtDefinition
+  "定義した時に組める型(欄の型は全部この行より前に定義してある)"
+  {:names :camel}
+  (#^ str lane-id)
+  (setv #^ (get tuple #(Note ...)) notes #()))
+
+(defwire AheadOfItsField
+  "まだ定義していない型を欄に書いた型 — 定義した時には組めず、最初に使う時に組む"
+  {:names :camel}
+  (#^ DefinedLater later))
+
+(defwire DefinedLater
+  "AheadOfItsField の欄の型(AheadOfItsField より後で定義する)"
+  {:names :camel}
+  (#^ int count))
+
+
+(defk rebuilds-of [snapshots]
+  {:pre [(: snapshots tuple)] :post [(: % int)] :tags {:context "wire" :role "judgment"}}
+  "解き手を使う前後で写した (validator serializer) の列から、組み直しの回数を数える計器 — 隣り合う写しで validator か serializer が
+   別の物に替わった回数(pydantic は組む時に両方を新しく作る)。"
+  (sum (gfor #(before after) (zip snapshots (cut snapshots 1 None))
+             :if (or (is-not (get before 0) (get after 0)) (is-not (get before 1) (get after 1)))
+             1)))
+
+
+(deftest test-the-solver-is-built-when-the-type-is-defined-and-never-rebuilt-by-use
+  {:tags {:context "wire" :role "judgment"}}
+  (val adapter BuiltAtDefinition.__doeff_wire__.adapter)
+  ;; 定義した時に組み上がっている(使う前)。
+  (assert adapter.pydantic-complete)
+  (val at-definition #(adapter.validator adapter.serializer))
+  (<- first (parse BuiltAtDefinition {"laneId" "L1" "notes" [{"noteText" "x"}]}))
+  (val after-first #(adapter.validator adapter.serializer))
+  (<- text (dump-json first))
+  (<- second (parse-json BuiltAtDefinition text))
+  (<- _ (dump second))
+  (val after-uses #(adapter.validator adapter.serializer))
+  (assert (= second first))
+  ;; 最初の使用も 2 回目以降の使用も組み直さない。
+  (<- rebuilds (rebuilds-of #(at-definition after-first after-uses)))
+  (assert (= rebuilds 0)))
+
+
+(deftest test-a-type-ahead-of-its-field-type-is-built-at-first-use-and-not-rebuilt-after
+  {:tags {:context "wire" :role "judgment"}}
+  ;; 欄の型が後で定義される型は定義した時には組めない — 最初に使う時に 1 度だけ組み、2 回目以降は組み直さない。
+  (<- first (parse AheadOfItsField {"later" {"count" 1}}))
+  (val adapter AheadOfItsField.__doeff_wire__.adapter)
+  (assert adapter.pydantic-complete)
+  (val after-first #(adapter.validator adapter.serializer))
+  (<- second (parse AheadOfItsField {"later" {"count" 2}}))
+  (<- _ (dump-json second))
+  (val after-uses #(adapter.validator adapter.serializer))
+  (assert (= #(first.later.count second.later.count) #(1 2)))
+  (<- rebuilds (rebuilds-of #(after-first after-uses)))
+  (assert (= rebuilds 0)))
