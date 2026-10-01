@@ -498,6 +498,10 @@ class DetachedCancelled:
     phase: str
 
 @dataclass(frozen=True, kw_only=True)
+class ProgramStored:
+    sha: str
+
+@dataclass(frozen=True, kw_only=True)
 class DetachedReleased:
     key: str
     released: bool

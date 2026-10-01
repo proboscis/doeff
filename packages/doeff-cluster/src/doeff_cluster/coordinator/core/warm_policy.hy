@@ -16,7 +16,7 @@
 (import doeff_cluster.shared.intent.runtime_env_model [RuntimeEnvInvalid])
 (import doeff_cluster.shared.core.runtime_env_rules [runtime-env-of-json])
 (import doeff_cluster.shared.intent.warm_model [WarmState WarmFailure])
-(import doeff_cluster.shared.core.warm_rules [warm-key warm-state->json])
+(import doeff_cluster.shared.core.warm_rules [warm-key])
 
 
 (defn #^ WarmState warm-view [#^ ClusterState state #^ WarmEntry entry #^ int now #^ ClusterTiming timing]
@@ -55,7 +55,7 @@
   (setv key (run (warm-key env needs))
         entry (WarmEntry key declared needs (+ now (int (* 1000 ttl))) (or body.holder actor))
         after (replace state :warms (| state.warms {key entry})))
-  #(after 200 (run (warm-state->json (warm-view after entry now timing)))))
+  #(after 200 (warm-view after entry now timing)))
 
 
 (defn #^ tuple warm-read [#^ ClusterState state #^ str key #^ int now #^ ClusterTiming timing]
@@ -63,4 +63,5 @@
   (setv entry (.get state.warms key))
   (if (is entry None)
       #(state 404 (ErrorReply :message (.format "温める表に行 {} が無い(期限で消えたか、書かれていない)" key)))
-      #(state 200 (run (warm-state->json (warm-view state entry now timing))))))
+      ;; 行の今の姿(JSON は coordinator/protocol/replies が warm-state->json で綴る — #2614)。
+      #(state 200 (warm-view state entry now timing))))

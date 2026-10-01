@@ -680,6 +680,11 @@
   (#^ str phase))
 
 
+(defrecord ProgramStored
+  "PUT /programs/<sha> の答え(program_policy.program-write — #2614): sha = 置いた Program のキー。"
+  (#^ str sha))
+
+
 (defrecord DetachedReleased
   "DELETE /detached/<key> の答え: released = この頼みで行を消したか(行が無ければ False)。"
   (#^ str key)

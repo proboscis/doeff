@@ -2,7 +2,8 @@
 ;; JSON の形は coordinator/protocol/replies が綴る。検の入口 responded と、本番と模擬の組の返事の答え手 reply-bodies は同じ綴りを通る。
 (require doeff-hy.macros [deftest val])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming])
-(import doeff_cluster.coordinator.intent.cluster_model [ClusterState EventsView StateReply HeartbeatReply WorkerInfo WorkerDrainView ResourceList ResourceView ErrorReply RowConflict BoardWritten BoardConflict BoardRead TaskAccepted TaskProgress TaskMissing TaskResultTaken TaskDropped DetachedUnknown DetachedWarming DetachedSubmitted DetachedCancelled DetachedReleased])
+(import doeff_cluster.coordinator.intent.cluster_model [ClusterState EventsView StateReply HeartbeatReply WorkerInfo WorkerDrainView ResourceList ResourceView ErrorReply RowConflict BoardWritten BoardConflict BoardRead TaskAccepted TaskProgress TaskMissing TaskResultTaken TaskDropped DetachedUnknown DetachedWarming DetachedSubmitted DetachedCancelled DetachedReleased ProgramStored ProgramRow])
+(import doeff_cluster.shared.intent.warm_model [WarmState])
 (import doeff_cluster.coordinator.core.cluster_policy [heartbeat-reply])
 (import doeff_cluster.coordinator.core.drain_policy [superseded-worker-view])
 (import doeff_cluster.shared.protocol.inbox [http-request])
@@ -139,3 +140,11 @@
              {"key" "k" "task" "t1" "created" True "phase" "queued"}))
   (assert (= (reply-json (DetachedCancelled :key "k" :cancelled False :phase "unknown")) {"key" "k" "cancelled" False "phase" "unknown"}))
   (assert (= (reply-json (DetachedReleased :key "k" :released True)) {"key" "k" "released" True})))
+
+
+(deftest test-the-program-and-warm-answers-are-typed-and-spelled-in-the-old-shape
+  ;; Program の置き場の答えは型の値(ProgramStored・置いた行 ProgramRow)、温める表の答えは WarmState で、JSON は前と同じ形。
+  (assert (= (reply-json (ProgramStored :sha "ab")) {"program" "ab"}))
+  (assert (= (reply-json (ProgramRow :blob "b" :versions {"doeff" "1"} :put-ms 5)) {"blob" "b" "versions" {"doeff" "1"}}))
+  (setv warm (reply-json (WarmState :key "k" :ready #("w1") :preparing #() :failed #() :until-ms 9)))
+  (assert (and (isinstance warm dict) (= (get warm "key") "k")) warm))

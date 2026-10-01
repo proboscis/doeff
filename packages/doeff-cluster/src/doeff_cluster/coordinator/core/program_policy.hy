@@ -11,7 +11,7 @@
 (require doeff-hy.macros [deff])
 (import dataclasses [replace])
 (import re)
-(import doeff_cluster.coordinator.intent.cluster_model [ClusterState ProgramRow ErrorReply])
+(import doeff_cluster.coordinator.intent.cluster_model [ClusterState ProgramRow ProgramStored ErrorReply])
 (import doeff_cluster.shared.core.remote_rules [program-sha])
 (import doeff_cluster.coordinator.intent.request_bodies [ProgramBody])
 
@@ -32,7 +32,7 @@
     (!= (program-sha blob) sha)
       #(state 400 (ErrorReply :message "blob の sha256 がキーと合わない"))
     True #((replace state :programs (| state.programs {sha (ProgramRow :blob blob :versions versions :put-ms now)}))
-           200 {"program" sha})))
+           200 (ProgramStored :sha sha))))
 
 
 (deff program-read [#^ ClusterState state #^ str sha]  ; defk にできない: coordinator の要求の振り分け(Program の外の純粋な判断)が呼ぶ
@@ -41,7 +41,8 @@
   (setv row (.get state.programs sha))
   (if (is row None)
       #(state 404 (ErrorReply :message (.format "Program {} は置かれていない(宣言・task の前に送り手が置く)" sha)))
-      #(state 200 {"blob" row.blob "versions" row.versions})))
+      ;; 置いた行そのもの(JSON の {blob versions} は coordinator/protocol/replies が綴る — #2614)。
+      #(state 200 row)))
 
 
 (deff program-refs [#^ ClusterState state]  ; defk にできない: coordinator の調停(Program の外の純粋な判断)が呼ぶ

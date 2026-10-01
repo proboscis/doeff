@@ -12,7 +12,10 @@
                                                        ServiceObserved WorkerObserved TaskObserved RolloutObserved ResourceView ResourceList VersionVerdict ErrorReply RowConflict
                                                        BoardUsage BoardRead BoardWritten BoardConflict BoardRefused
                                                        TaskRecord TaskAccepted TaskProgress TaskMissing TaskResultTaken TaskDropped
-                                                       DetachedSubmitted DetachedProgress DetachedUnknown DetachedWarming DetachedCancelled DetachedReleased])
+                                                       DetachedSubmitted DetachedProgress DetachedUnknown DetachedWarming DetachedCancelled DetachedReleased
+                                                       ProgramRow ProgramStored])
+(import doeff_cluster.shared.intent.warm_model [WarmState])
+(import doeff_cluster.shared.core.warm_rules [warm-state->json])
 (import doeff [run])
 (import doeff_hy.wire [dump])
 (import doeff_cluster.shared.intent.semaphore_model [LeaseAnswer])
@@ -204,6 +207,9 @@
     (isinstance body #(BoardRead BoardWritten BoardConflict BoardRefused)) (board-answer-json body)
     ;; lease の答えは wire の型(4 つの欄をいつも書く — semaphore_model.LeaseAnswer の註)。
     (isinstance body LeaseAnswer) (run (dump body))
+    (isinstance body WarmState) (run (warm-state->json body))
+    (isinstance body ProgramStored) {"program" body.sha}
+    (isinstance body ProgramRow) {"blob" body.blob "versions" body.versions}
     (isinstance body #(TaskAccepted TaskProgress TaskMissing TaskResultTaken TaskDropped)) (task-answer-json body)
     (isinstance body #(DetachedSubmitted DetachedProgress DetachedUnknown DetachedWarming DetachedCancelled DetachedReleased)) (detached-answer-json body)
     (isinstance body ResourceView) (resource-view-json body)
