@@ -167,9 +167,9 @@
               state.env-cold-starts)
   ;; 戻し(RollingBack)が rollbackTimeoutSeconds を過ぎても終わらない Rollout(status.stuck・2026-09-25)。1 = 人が見る。
   (for [#(name r) (sorted (.items state.rollouts))]
-    (when (not-in (.get (get r "status") "phase") #("Complete" "RolledBack"))
+    (when (not-in (.get r.status "phase") #("Complete" "RolledBack"))
       (add-sample families "doeff_worker_rollout_stuck" "gauge" "doeff_worker_rollout_stuck" {"rollout" name}
-                  (if (.get (get r "status") "stuck") 1.0 0.0))))
+                  (if (.get r.status "stuck") 1.0 0.0))))
   (for [#(name worker report) (current-metrics state now timing)]
     (setv labels {"service" name "worker" worker})
     (add-sample families "doeff_worker_service_metrics_age_seconds" "gauge" "doeff_worker_service_metrics_age_seconds" labels

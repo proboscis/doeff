@@ -250,12 +250,12 @@
 
 ;; --- 完了の後: 台数の持ち主と食い違い -----------------------------------------------------------
 
-(defn #^ dict deployment-owners [#^ dict rollouts]
+(defn #^ dict deployment-owners [#^ dict rollouts]  ; rollouts = Rollout の名 → RolloutRow
   "Deployment ごとに台数を持つ Rollout(その Deployment を扱った、旧を止め終えた — Observing か Complete の — 最後の物)。
    dry-run の相手は持たない。返り値 = 「ns/名」→ #(Rollout の名 期待する台数)。旧として止めたなら 0・新として起こしたなら replicas。"
   (setv best {})
   (for [#(name r) (sorted (.items rollouts))]
-    (setv spec (get r "spec") status (get r "status"))
+    (setv spec r.spec status r.status)
     (when (in (.get status "phase") #("Observing" "Complete"))
       (for [#(side target) #(#("from" (get spec "from")) #("to" (get spec "to")))]
         (when (and (= (get target "kind") "Deployment") (not (get target "dryRun")))

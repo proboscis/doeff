@@ -98,7 +98,7 @@
   (if (= gap 0)
       #((replace state :alive-ms now) 0)
       #((replace state
-                 :rollouts (dfor #(k r) (.items state.rollouts) k (| r {"status" (shift-clocks (get r "status") gap)}))
+                 :rollouts (dfor #(k r) (.items state.rollouts) k (replace r :status (shift-clocks r.status gap)))
                  :tasks (dfor #(k t) (.items state.tasks) k (replace t :lease-until-ms (+ t.lease-until-ms gap)))
                  :workers (dfor #(k w) (.items state.workers) k (replace w :last-seen-ms (min now (+ w.last-seen-ms gap))))
                  :seen-marks (dfor #(k v) (.items state.seen-marks) k (min now (+ v gap)))
@@ -158,8 +158,8 @@
   "読むべき Deployment の「ns/名」: 進行中の Rollout の相手は毎拍、台数を持つ(Observing / Complete の)相手は 10 秒ごと。"
   (setv keys [])
   (for [r (.values state.rollouts)]
-    (when (not-in (.get (get r "status") "phase") TERMINAL-PHASES)
-      (for [t #((get (get r "spec") "from") (get (get r "spec") "to"))]
+    (when (not-in (.get r.status "phase") TERMINAL-PHASES)
+      (for [t #((get r.spec "from") (get r.spec "to"))]
         (when (= (get t "kind") "Deployment")
           (.append keys (+ (get t "namespace") "/" (get t "name")))))))
   (for [key (deployment-owners state.rollouts)]
@@ -174,30 +174,30 @@
    naming = 台数の持ち主の annotation の鍵と値の頭(配備する側が決める — cluster_model.ClusterNaming)。"
   (setv rollouts (dict state.rollouts) actions [])
   (for [#(name r) (sorted (.items state.rollouts))]
-    (setv spec (get r "spec") status (get r "status"))
+    (setv spec r.spec status r.status)
     (when (not-in (.get status "phase") TERMINAL-PHASES)
       (setv #(status acts) (rollout-step spec status (target-view state (get spec "from") status now timing)
                                          (target-view state (get spec "to") status now timing) now))
-      (setv (get rollouts name) (| r {"status" status}))
+      (setv (get rollouts name) (replace r :status status))
       ;; 失敗が続く action は間を空けて出す(action-due — 1 秒から倍々・上限 60 秒)。
       (.extend actions (gfor a acts :if (action-due status a now) (| a {"rollout" name})))))
   ;; 台数の持ち主と食い違い。進行中の Rollout が扱っている Deployment は、台数が動くのが意図どおりなので数えない。
   ;; 持ち主でなくなった(後の Rollout へ移った・進行中の Rollout が扱い始めた)Rollout の食い違いは消す。
   ;; Observing の Rollout は旧を止め終えて台数を持つ側なので、ここでは「進行中」に数えない(2026-09-24 の実弾: 数えていたので
   ;; 観察の間に本番の配備の流れが replicas を 1 へ戻したのを食い違いとして出せなかった)。
-  (setv busy (sfor r (.values rollouts) :if (not-in (.get (get r "status") "phase") (| TERMINAL-PHASES #{"Observing"}))
-                   t #((get (get r "spec") "from") (get (get r "spec") "to")) :if (= (get t "kind") "Deployment")
+  (setv busy (sfor r (.values rollouts) :if (not-in (.get r.status "phase") (| TERMINAL-PHASES #{"Observing"}))
+                   t #((get r.spec "from") (get r.spec "to")) :if (= (get t "kind") "Deployment")
                    (+ (get t "namespace") "/" (get t "name")))
         owners (dfor #(k v) (.items (deployment-owners rollouts)) :if (not-in k busy) k v)
         owning (sfor v (.values owners) (get v 0)))
   (for [#(name r) (.items rollouts)]
-    (when (and (.get (get r "status") "drift") (not-in name owning))
-      (setv (get rollouts name) (| r {"status" (| (get r "status") {"drift" None "driftResolvedMs" now})}))))
+    (when (and (.get r.status "drift") (not-in name owning))
+      (setv (get rollouts name) (replace r :status (| r.status {"drift" None "driftResolvedMs" now})))))
   (for [#(key #(name expected)) (.items owners)]
-    (setv r (get rollouts name) status (get r "status"))
+    (setv r (get rollouts name) status r.status)
     (setv status (drift-status status key expected (.get state.deployments key) now))
-    (setv (get rollouts name) (| r {"status" status}))
-    (when (and (get (get r "spec") "markDeployment") (!= (.get status "markedDeployment") key))
+    (setv (get rollouts name) (replace r :status status))
+    (when (and (get r.spec "markDeployment") (!= (.get status "markedDeployment") key))
       (setv #(ns dep) (.split key "/" 1))
       (.append actions {"rollout" name "op" "annotate" "namespace" ns "name" dep
                         "annotations" {naming.owner-annotation (.format "{}/Rollout/{} replicas={}" naming.owner-scope name expected)}})))
@@ -214,7 +214,7 @@
   "実行した action の結果を Rollout の status に残す(dry-run の台数は simulated に)。同じ失敗の繰り返しは数だけ進める。"
   (setv name (get action "rollout") r (.get state.rollouts name))
   (when (is r None) (return state))
-  (setv status (dict (get r "status"))
+  (setv status (dict r.status)
         what (dfor #(k v) (.items action) :if (not-in k #("rollout" "target")) k v)
         target (.get action "target"))
   (when target (setv (get what "target") (target-key target)))
@@ -228,7 +228,7 @@
     (setv (get status "simulated") (| (.get status "simulated" {}) {(target-key target) (if (is result None) (get action "replicas") result)})))
   (when (and ok (= (get action "op") "annotate"))
     (setv (get status "markedDeployment") (+ (get action "namespace") "/" (get action "name"))))
-  (replace state :rollouts (| state.rollouts {name (| r {"status" status})})))
+  (replace state :rollouts (| state.rollouts {name (replace r :status status)})))
 
 
 ;; --- 要求の振り分け ---------------------------------------------------------------------------
