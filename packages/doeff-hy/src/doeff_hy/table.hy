@@ -6,7 +6,7 @@
 ;;;   (3) 読み手の層は写像(dict・Mapping)を受け渡さず、鍵 → 値を引く関数で引く(agora の線引き 2 の (b))。
 ;;; Table は 3 つを満たす: 内側は「基 + 差分」の 2 層で、基は作った後に決して書き換えない。with-writes は差分だけを写して新しい
 ;;; Table を返す(写すのは差分だけ)。差分が基の 1/COMPACT-RATIO を超えたら、基と差分を合わせた新しい基を作る(その書きだけ O(n)・
-;;; 均すと小さい)。読みは差分 → 基の 2 回引き。Table は Mapping ではない(写像として受け渡さない)— 引くのは row・keys・size だけ。
+;;; 均すと小さい)。読みは差分 → 基の 2 回引き。Table は Mapping ではない(写像として受け渡さない)— 引くのは row・keys・rows・size だけ。
 ;;;
 ;;; 1 拍の中で書いた行を読み直す書き手は、下書き(TableDraft — 下の節)で書きを貯め、拍の終わりに 1 回だけ with-writes を当てる。
 ;;;
@@ -30,7 +30,7 @@
 
 
 (defclass Table [(get Generic V)]
-  "書き換えない表(頭の註)。作るのは table-of。引くのは row・keys・size、書きは with-writes(新しい Table を返す)。"
+  "書き換えない表(頭の註)。作るのは table-of。引くのは row・keys・rows・size、書きは with-writes(新しい Table を返す)。"
   (setv __slots__ #("_base" "_delta" "_removed" "_size"))
   (#^ (get dict #(str V)) _base)
   (#^ (get dict #(str V)) _delta)
@@ -54,6 +54,11 @@
     "鍵の列(並びは決めない)。"
     (+ (tuple (gfor key self._base :if (and (not-in key self._removed) (not-in key self._delta)) key))
        (tuple self._delta)))
+
+  (defn #^ (get tuple #(V ...)) rows [self]
+    "行の値の列(並びは決めない — 鍵の列 keys と同じ並び)。全行を読む読み手(数え・一覧)のため。"
+    (+ (tuple (gfor #(key value) (.items self._base) :if (and (not-in key self._removed) (not-in key self._delta)) value))
+       (tuple (.values self._delta))))
 
   (defn #^ int size [self]
     "行の数。"
@@ -95,7 +100,7 @@
 ;;; 下書きは書き換える物なので、作った書き手の外へ出さない(外へ渡すのは freeze の答えの Table)。元の表は下書きの書きで変わらない。
 
 (defclass TableDraft [(get Generic V)]
-  "Table への書きの下書き(上の註)。作るのは draft-of。引くのは row・keys、書きは put・remove、拍の終わりに freeze。"
+  "Table への書きの下書き(上の註)。作るのは draft-of。引くのは row・keys・rows、書きは put・remove、拍の終わりに freeze。"
   (setv __slots__ #("_table" "_writes"))
   (#^ (get Table V) _table)
   (#^ (get dict #(str (| V None))) _writes)
@@ -114,6 +119,11 @@
     "鍵の列(この下書きの書きを当てた後・並びは決めない)。"
     (+ (tuple (gfor key (.keys self._table) :if (not-in key self._writes) key))
        (tuple (gfor #(key value) (.items self._writes) :if (is-not value None) key))))
+
+  (defn #^ (get tuple #(V ...)) rows [self]
+    "行の値の列(この下書きの書きを当てた後・並びは決めない — 鍵の列 keys と同じ並び)。"
+    (+ (tuple (gfor #(key value) (zip (.keys self._table) (.rows self._table)) :if (not-in key self._writes) value))
+       (tuple (gfor value (.values self._writes) :if (is-not value None) value))))
 
   (defn #^ None put [self #^ str key #^ V value]
     "鍵 key の行を value にする。"

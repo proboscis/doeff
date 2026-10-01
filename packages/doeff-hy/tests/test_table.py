@@ -150,3 +150,22 @@ def test_the_counterexample_a_read_through_draft_misses_its_own_writes() -> None
     draft = _ReadThroughDraft(table_of(_rows(2)))
     draft.put("k0", 100)
     assert draft.row("k0") == 0  # 同じ拍の中で書いた行が読めない — TableDraft はこれを起こさない(上の検)
+
+
+# ------------------------------------------------------------------ 値の列 rows(agora-redesign #2254)
+
+
+def test_rows_follow_the_keys_after_writes_and_removals() -> None:
+    from doeff_hy.table import draft_of
+
+    table = table_of(_rows(5)).with_writes((TableWrite(key="k1", value=100), TableWrite(key="k2", value=None), TableWrite(key="x", value=7)))
+    assert sorted(table.rows()) == sorted([0, 100, 3, 4, 7])
+    assert [table.row(key) for key in table.keys()] == list(table.rows())
+    draft = draft_of(table)
+    draft.put("k3", 30)
+    draft.remove("k4")
+    draft.put("y", 8)
+    assert sorted(draft.rows()) == sorted([0, 100, 30, 7, 8])
+    assert [draft.row(key) for key in draft.keys()] == list(draft.rows())
+    # 失敗ケースの照らし: 消した行(k2・k4)の値を列に残す読み手なら、数えが表の size と食い違う。
+    assert len(table.rows()) == table.size() and len(draft.rows()) == draft.freeze().size()
