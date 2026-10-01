@@ -15,7 +15,7 @@
                                          ReadText ReadBytes WriteText WriteBytes AppendText MakeDirectory ListDirectory WalkTree CopyFile
                                          CopyTree RenamePath RemoveTree AcquireLock ReleaseLock ReadDiskFree DiskUsage ReadDiskUsage
                                          MeasureTree LinkFile CompilePythonSources SourceNotCompiled])
-(import doeff_core_effects.python_bytecode [compiled-pyc pyc-path])
+(import doeff_core_effects.python_bytecode [compiled-pyc kept-pyc pyc-path])
 
 ;; 置き場の根と、断りの文(OSError の文と同じ形)。
 (val ROOT "/")
@@ -129,26 +129,32 @@
 (defk compile-in-store [store tree items]
   {:pre [(: store MemoryFiles) (: tree str) (: items tuple)] :post [(: % tuple)]}
   "木の source を逐次に焼いて __pycache__ へ置いた置き場と、焼けなかった物の SourceNotCompiled の tuple を返すため(答え = #(置き場 失敗))。
-   焼きの判断は本物と同じ compiled-pyc。Hy の source は焼けない(doeff-hy は disk に在る file かで Hy の source を見分けるので、memory の
-   source は Python として読まれ、SyntaxError の失敗になる)。"
+   焼きの判断は本物と同じ kept-pyc(既に在る .pyc が今の source に合えば焼き直さない)と compiled-pyc。Hy の source は焼けない(doeff-hy は
+   disk に在る file かで Hy の source を見分けるので、memory の source は Python として読まれ、SyntaxError の失敗になる)。"
   (var current store)
   (var failures #())
   (for [#(rel name) items]
     (val source (posixpath.join tree rel))
     (<- content (content-of current source))
+    (<- existing (content-of current (pyc-path source)))
+    (var kept False)
+    (when (and (isinstance content bytes) (isinstance existing bytes))
+      (<- current-pyc bool (kept-pyc source content existing))
+      (:= kept current-pyc))
     (if (isinstance content FileFailed)
         (:= failures (+ failures #((SourceNotCompiled :path rel :reason content.detail))))
-        (do (<- compiled (compiled-pyc rel name source content))
-            (if (isinstance compiled SourceNotCompiled)
-                (:= failures (+ failures #(compiled)))
-                (do (val cache (pyc-path source))
-                    (<- dirs (with-dirs current (posixpath.dirname cache)))
-                    (if (isinstance dirs FileFailed)
-                        (:= failures (+ failures #((SourceNotCompiled :path rel :reason dirs.detail))))
-                        (do (<- written (with-file dirs cache compiled None))
-                            (if (isinstance written FileFailed)
-                                (:= failures (+ failures #((SourceNotCompiled :path rel :reason written.detail))))
-                                (:= current written)))))))))
+        (when (not kept)
+          (<- compiled (compiled-pyc rel name source content))
+          (if (isinstance compiled SourceNotCompiled)
+              (:= failures (+ failures #(compiled)))
+              (do (val cache (pyc-path source))
+                  (<- dirs (with-dirs current (posixpath.dirname cache)))
+                  (if (isinstance dirs FileFailed)
+                      (:= failures (+ failures #((SourceNotCompiled :path rel :reason dirs.detail))))
+                      (do (<- written (with-file dirs cache compiled None))
+                          (if (isinstance written FileFailed)
+                              (:= failures (+ failures #((SourceNotCompiled :path rel :reason written.detail))))
+                              (:= current written)))))))))
   #(current failures))
 
 

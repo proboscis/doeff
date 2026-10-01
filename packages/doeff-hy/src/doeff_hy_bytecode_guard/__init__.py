@@ -14,7 +14,8 @@ Python 標準の ``importlib.machinery.SourceFileLoader`` の 2 つの口を包�
   物なので、別の木から引き継いだ .pyc も今の木の macro で照らす — agora-redesign #2598)。
 
 import の外で bytecode を前もって作る道具は :func:`source_to_code_as_import` で compile する(import と同じく module を
-置いた中で compile し、記録を付ける — 記録の無い .pyc は読みの口が compile し直す)。
+置いた中で compile し、記録を付ける — 記録の無い .pyc は読みの口が compile し直す)。前の木から引き継いだ .pyc を
+焼き直すかは :func:`bytecode_is_current`(読みの口と同じ照らし方)で決める。
 
 入れる所は venv の起動時(doeff-hy が配る ``doeff_hy_bytecode_guard.pth``)と ``import doeff_hy`` の 2 か所。
 どちらも :func:`install` を呼ぶだけで、何度呼んでも 1 度しか包まない。Hy の import の前でも後でも効く
@@ -25,6 +26,7 @@ import の外で bytecode を前もって作る道具は :func:`source_to_code_a
 :mod:`doeff_hy_bytecode_guard.records` にあり、Hy の module を初めて読む時にだけ import する。
 """
 
+from doeff_hy_bytecode_guard.loader_hooks import bytecode_is_current as bytecode_is_current
 from doeff_hy_bytecode_guard.loader_hooks import file_sha256 as file_sha256
 from doeff_hy_bytecode_guard.loader_hooks import install as install
 from doeff_hy_bytecode_guard.loader_hooks import installed as installed

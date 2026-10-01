@@ -2,6 +2,7 @@
 ;;; (file_effects.hy)の答え手(os_file.hy の本物・memory_file.hy の memory)が同じ判断を通る。
 ;;;   compiled-pyc         source の中身 1 つ → .pyc の中身(焼けなければ SourceNotCompiled)
 ;;;   checked-hash-pyc     焼いた code → .pyc の中身(PEP 552 の頭 + marshal)
+;;;   kept-pyc             木に既に在る .pyc(前の木から引き継いだ物)を焼き直さずに残すか(今の source と今の macro に合う時だけ)
 ;;;   pyc-path             source の path → 同じ dir の __pycache__ の .pyc の path
 ;;;   compile-python-sources  本物: 木の source を process の pool で並列に焼いて __pycache__ へ置く(fork — Hy の macro 展開が大半)
 ;;;   prepare-compile-path    焼く process の import の路に木の中の根を足す(焼く source の macro が木の中の別の module を require するため)
@@ -16,7 +17,7 @@
 (import types)
 (import concurrent.futures [ProcessPoolExecutor])
 (import doeff [run])
-(import doeff_hy_bytecode_guard [source-to-code-as-import])
+(import doeff_hy_bytecode_guard [bytecode-is-current source-to-code-as-import])
 (import doeff_core_effects.file_effects [SourceNotCompiled])
 
 
@@ -49,6 +50,13 @@
       (SourceNotCompiled :path rel :reason (.format "{}: {}" (. (type error) __name__) (cut (str error) 0 200))))))
 
 
+(defk kept-pyc [path data existing]
+  {:pre [(: path str) (: data bytes) (: existing bytes)] :post [(: % bool)]}
+  "木に既に在る .pyc の中身 existing(前の木から引き継いだ物)を焼き直さずに残すか — 今の source data と今の環境の macro にそのまま
+   使える時だけ残すため(doeff-hy の古さの検めと同じ照らし方・agora-redesign #2598)。path = source の在処(Hy の source かの見分け)。"
+  (bytecode-is-current path existing data))
+
+
 (defn #^ str pyc-path [#^ str source]  ; defk にできない: 内包表記と process の pool の中で呼ぶ path の計算
   "source の path → 同じ dir の __pycache__ の .pyc の path(import が探す名 — <名>.<cache の印>.pyc)。"
   (setv #(head tail) (posixpath.split source))
@@ -62,9 +70,14 @@
     (with [f (open source "rb")] (setv data (.read f)))
     (except [error OSError]
       (return (SourceNotCompiled :path rel :reason (str error)))))   ; 読めない source の文は file の効果の断りと同じ形(OSError の文)
+  (setv cache (pyc-path source))
+  ;; 前の木から引き継いだ .pyc が今の source と今の環境の macro に合えば焼き直さない(agora-redesign #2598 — 合わない物はここで焼き直す。
+  ;; 焼き直しは別の file へ書いて置き換えるので、hardlink の先の前の木の .pyc は変わらない)。
+  (when (os.path.isfile cache)
+    (with [f (open cache "rb")] (setv existing (.read f)))
+    (when (run (kept-pyc source data existing)) (return None)))
   (setv compiled (run (compiled-pyc rel name source data)))
   (when (isinstance compiled SourceNotCompiled) (return compiled))
-  (setv cache (pyc-path source))
   (os.makedirs (posixpath.dirname cache) :exist-ok True)
   (setv tmp (.format "{}.{}.tmp" cache (os.getpid)))
   (with [f (open tmp "wb")] (.write f compiled))

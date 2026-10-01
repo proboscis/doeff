@@ -175,12 +175,7 @@ def _checking_get_code(previous: GetCode):
             return code  # 今 compile した物 — 依った macro は今の file
         from doeff_hy_bytecode_guard import records  # Hy の source に当たった時だけ読む
 
-        record = records.record_of(code)
-        # 記録の path は作った木の絶対 path。別の木で作った .pyc(実行環境の準備が前の root から hardlink で引き継ぐ物)の記録を
-        # そのまま照らすと、作った木の macro が残っている限り、今の木の macro が変わっても古い展開を使う(agora-redesign #2598)。
-        # 共有の置き場の code と同じく、提供元の file を module 名から今の環境で引き直して照らす。
-        current = None if record is None else records.rebased_record(record, _current_file_of)
-        if current is not None and records.record_is_current(current, _hy_version(), file_sha256):
+        if _record_is_current_here(code):
             return code
         header = _bytecode_header(self, path)
         if header is not None and not records.python_checks_source(
@@ -194,6 +189,44 @@ def _checking_get_code(previous: GetCode):
         return recompiled
 
     return get_code
+
+
+def _record_is_current_here(code: CodeType) -> bool:
+    """code に載った記録が、今の Hy の版と今の環境の macro の file に合うか(記録が無ければ偽)。
+
+    記録の path は作った木の絶対 path。別の木で作った .pyc(実行環境の準備が前の root から hardlink で引き継ぐ物)の記録を
+    そのまま照らすと、作った木の macro が残っている限り、今の木の macro が変わっても古い展開を使う(agora-redesign #2598)。
+    共有の置き場の code と同じく、提供元の file を module 名から今の環境で引き直して照らす。"""
+    from doeff_hy_bytecode_guard import records  # Hy の source に当たった時だけ読む
+
+    record = records.record_of(code)
+    current = None if record is None else records.rebased_record(record, _current_file_of)
+    return current is not None and records.record_is_current(current, _hy_version(), file_sha256)
+
+
+def bytecode_is_current(path: str, pyc: bytes, source: bytes) -> bool:
+    """木に既に在る .pyc の中身 pyc を、今の source と今の環境の macro にそのまま使えるか — bytecode を前もって作る道具が、前の木から
+    引き継いだ .pyc を焼き直さずに残すかを決めるため(agora-redesign #2598)。
+
+    使えるのは、頭に source の hash を持つ PEP 552 の hash 方式の .pyc で、その hash が今の source と同じ物だけ。Hy の source の
+    .pyc は、さらに記録が今の環境の macro に合うこと(読みの口と同じ照らし方)。前もって作る道具がここで焼き直さないと、
+    macro の変わった版の初回の import が、引き継いだ Hy の module を全部 compile し直す。"""
+    from doeff_hy_bytecode_guard import records  # 道具が引き継いだ .pyc に当たった時だけ読む
+
+    if len(pyc) < records.PYC_HEADER_BYTES or pyc[:4] != importlib.util.MAGIC_NUMBER:
+        return False
+    flags = int.from_bytes(pyc[4:8], "little")
+    if not flags & records.FLAG_HASH_BASED or pyc[8:16] != importlib.util.source_hash(source):
+        return False
+    if not is_hy_source(path):
+        return True
+    import marshal  # Hy の .pyc に当たった時だけ読む
+
+    try:
+        code = marshal.loads(pyc[records.PYC_HEADER_BYTES :])
+    except (EOFError, ValueError, TypeError):
+        return False  # 中身の壊れた .pyc は使えない(焼き直す)
+    return isinstance(code, CodeType) and _record_is_current_here(code)
 
 
 #: 共有の code の置き場を指す環境変数(値 = dir の path・``off`` = 使わない。無ければ利用者の cache の dir の下)。
