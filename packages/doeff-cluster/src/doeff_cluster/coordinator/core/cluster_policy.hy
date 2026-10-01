@@ -14,7 +14,7 @@
 (import doeff_cluster.shared.core.capabilities [capabilities-of environ-pairs])
 (import doeff_cluster.coordinator.intent.cluster_model [ClusterJob WorkerInfo WorkerReport GenerationOrder Placement ClusterState TaskRecord Drain EnvFailed WarmEntry HandoffPhase RefusedJob UnplacedKind ACCEPTED-FORMATS PLACED-PHASES ProgramRow ResourceMeta])
 (import doeff_cluster.coordinator.core.cluster_rules [component-versions-of format-version-refusal])
-(import doeff_cluster.coordinator.intent.request_bodies [LeaseBody TaskResultBody BoardWrite HeartbeatBody EnvsReport TaskBody])
+(import doeff_cluster.coordinator.intent.request_bodies [LeaseBody TaskResultBody BoardWrite HeartbeatBody EnvsReport StatusRow TaskBody])
 (import doeff_cluster.coordinator.core.cluster_json [task-record-to-json task-record-from-json handoff-watch-from-json required-field int-field])
 (import doeff_cluster.shared.intent.semaphore_model [SEMAPHORE-PREFIX])
 (import doeff_cluster.shared.core.lease_rules [lease-op semaphore-write-refusal semaphore-key])
@@ -291,6 +291,17 @@
   (ProgramRow :blob (get data "blob") :versions (dict (.get data "versions" {})) :put-ms (int (get data "putMs"))))
 
 
+(defn #^ dict status-row-to-json [#^ StatusRow row]
+  "worker の状態の報告の行 → 見せる JSON の形(GET /state の statuses と Service の status.process — worker/protocol/heartbeat の
+   status-row と同じ欄。準備の失敗と入口の検めの欄は在る時だけ・結果と task の写しは持ち続けないので載せない)。"
+  (| {"name" row.name "phase" row.phase "desiredRevision" row.desired-revision "runningRevision" row.running-revision
+      "pid" row.pid "attempts" row.attempts "detail" row.detail "instance" row.instance "specHash" row.spec-hash
+      "placement" row.placement "retiredFrom" row.retired-from}
+     (if (is row.failure-kind None) {} {"failureKind" row.failure-kind "retryable" row.retryable})
+     (if (is row.probe None) {} {"probe" {"state" row.probe.state "elapsedSeconds" row.probe.elapsed-seconds
+                                          "attempts" row.probe.attempts "lastFailure" row.probe.last-failure}})))
+
+
 (defn #^ dict warm-entry-to-json [#^ WarmEntry entry]
   "温める表の行 → 保存の JSON の形(state file と durable の KV が使う)。"
   (| (asdict entry) {"needs" (list entry.needs)}))
@@ -476,7 +487,7 @@
                :setv w (.get state.workers wname)
                :if (and (is-not w None) (alive now w timing.lease-ms))
                row st.jobs
-               :if (or (= (.get row "name") name) (= (.get row "retiredFrom") name))
+               :if (or (= row.name name) (= row.retired-from name))
                row)))
 
 
@@ -484,7 +495,7 @@
   "生きている worker の最新の報告に、その job がまだ動いている形で載っているか。載っている間は他へ置かない
    (動いている担い手から移す時、元の担い手が止め終えるまで新しい担い手を起動しない = 同じ job を 2 つ動かさない)。
    入れ替えで退いた process も、その job がまだ動いていると数える(母集団は service-rows)。"
-  (any (gfor row (service-rows now state name timing) (in (.get row "phase") LIVE-PHASES))))
+  (any (gfor row (service-rows now state name timing) (in row.phase LIVE-PHASES))))
 
 
 ;; --- drain(2026-09-25) -----------------------------------------------------------------
@@ -856,11 +867,11 @@
       (replace task :phase "env-failed" :finished-ms now :detail detail)))
 
 
-(defn #^ TaskRecord absorb-env-failure [#^ TaskRecord task #^ str worker #^ dict status #^ int now]
+(defn #^ TaskRecord absorb-env-failure [#^ TaskRecord task #^ str worker #^ StatusRow status #^ int now]
   "純粋: worker の「実行環境を準備できない」の報告 → 一時の失敗で置き直しの回数が残れば、その worker を避けて待ちへ戻す。
    それ以外は終える。どちらも子 process を起こす前(Program は走っていない)。"
-  (setv kind (.get status "failureKind" "") retryable (bool (.get status "retryable" False))
-        detail (.format "worker {} で実行環境を準備できない({}): {}" worker kind (.get status "detail" ""))
+  (setv kind (or status.failure-kind "") retryable (is status.retryable True)
+        detail (.format "worker {} で実行環境を準備できない({}): {}" worker kind status.detail)
         failed (replace task :failure-kind kind :retryable retryable :detail detail))
   (if (and retryable (< task.env-attempts ENV-RETRIES))
       (replace failed :phase "queued" :worker None :boot None :started-ms None
@@ -895,35 +906,35 @@
       (replace task :phase "finished" :finished-ms now :result result :detail detail)))
 
 
-(defn #^ TaskRecord absorb-detached-report [#^ TaskRecord task #^ dict status #^ int now]
+(defn #^ TaskRecord absorb-detached-report [#^ TaskRecord task #^ StatusRow status #^ int now]
   "切り離した task の終わりの報告 → 終わりの phase。結果を書かずに終わった子 process は lost(結果が無い = 消失)。"
-  (setv phase (.get status "phase") detail (.get status "detail" ""))
+  (setv phase status.phase detail status.detail)
   (cond
-    (and (= phase "finished") (is-not (.get status "result") None))
-      (task-finished task now detail (get status "result"))
+    (and (= phase "finished") (is-not status.result None))
+      (task-finished task now detail status.result)
     (= phase "finished")
       (end-detached task "lost" now (.format "子 process が結果を書かずに終わった({})" detail))
     (= phase "code-failed") (end-detached task "code-failed" now detail)
     True task))
 
 
-(defn #^ dict absorb-task-reports [#^ ClusterState state #^ str worker #^ list statuses #^ int now #^ (| str None) [boot None]]
+(defn #^ dict absorb-task-reports [#^ ClusterState state #^ str worker #^ tuple statuses #^ int now #^ (| str None) [boot None]]
   "worker の状態の報告のうち、task の終わりを task の記録へ写す。切り離した task は置いた時と同じ process の世代の報告だけ。"
   (setv tasks (dict state.tasks))
   (for [status statuses]
-    (setv name (.get status "name" ""))
+    (setv name status.name)
     (when (.startswith name "task/")
       (setv id (cut name 5 None) task (.get tasks id))
       (when (and task (in task.phase PLACED-PHASES) (= task.worker worker) (same-boot task boot))
-        (setv phase (.get status "phase"))
+        (setv phase status.phase)
         (cond
           (= phase "env-failed") (setv (get tasks id) (absorb-env-failure task worker status now))
           task.detached (setv (get tasks id) (absorb-detached-report task status now))
           (= phase "finished")
-            (setv (get tasks id) (task-finished task now (.get status "detail" "") (.get status "result")))
+            (setv (get tasks id) (task-finished task now status.detail status.result))
           (= phase "code-failed")
             (setv (get tasks id) (replace task :phase "code-failed" :finished-ms now
-                                          :detail (.get status "detail" "")))))))
+                                          :detail status.detail))))))
   tasks)
 
 
@@ -1079,7 +1090,7 @@
    列に載せ、その世代に置いた task の終わりの報告と lease の延長だけを写す(absorb-superseded-heartbeat)。
    知らない切り離した task をその process が走らせていれば、先に引き取る(adopt-running-detached — 状態を失った coordinator)。
    本文の形の誤りは本文を解く所(coordinator/protocol/request_bodies — #2445)が 400 で断る。"
-  (setv name body.name boot body.boot boot-at body.boot-at statuses (list body.statuses)
+  (setv name body.name boot body.boot boot-at body.boot-at statuses body.statuses
         previous (.get state.workers name)
         order (generation-order previous boot boot-at)
         state (adopt-running-detached state name boot statuses now))
@@ -1116,13 +1127,12 @@
         state (replace (absorb-boot state name boot)
                 :workers (| state.workers {name info})
                 :statuses (| state.statuses {name (WorkerReport :at now :endpoint body.endpoint
-                                                               :jobs (tuple (gfor s statuses (dfor #(k v) (.items s)
-                                                                                                   :if (not-in k #("result" "task")) k v))))})))
+                                                               :jobs (tuple (gfor s statuses (replace s :result None :task None))))})))
   (replace state :tasks (promote-prepared (renew-detached (absorb-task-reports state name statuses now boot) name boot now)
                                          info)))
 
 
-(defn #^ ClusterState absorb-superseded-heartbeat [#^ ClusterState state #^ str name #^ str boot #^ list statuses #^ int now]
+(defn #^ ClusterState absorb-superseded-heartbeat [#^ ClusterState state #^ str name #^ str boot #^ tuple statuses #^ int now]
   "退いた世代の process がまだ走らせている切り離した task を最後まで見届けるため: その世代に置いた task の終わりの報告と
    lease の延長だけを写す。worker の名乗り(生存・label・容量・版・世代)・job の状態の報告・drain は今の世代の物なので触らない。"
   (replace state :tasks (renew-detached (absorb-task-reports state name statuses now boot) name boot now)))
@@ -1159,11 +1169,11 @@
   (.format "t{:x}-" now))
 
 
-(defn #^ (| TaskRecord None) adopted-task [#^ ClusterState state #^ str worker #^ (| str None) boot #^ dict status #^ int now]
+(defn #^ (| TaskRecord None) adopted-task [#^ ClusterState state #^ str worker #^ (| str None) boot #^ StatusRow status #^ int now]
   "純粋: 状態の報告 1 行 → 引き取る切り離した task の行(引き取らない時は None)。"
-  (setv row-name (.get status "name" "") echo (.get status "task"))
-  (when (or (not (.startswith row-name "task/")) (not (isinstance echo dict))
-            (not-in (.get status "phase") ADOPTABLE-PHASES))
+  (setv row-name status.name echo status.task)
+  (when (or (not (.startswith row-name "task/")) (is echo None)
+            (not-in status.phase ADOPTABLE-PHASES))
     (return None))
   (setv id (cut row-name 5 None) key (.get echo "key") lease-ms (.get echo "leaseMs")
         revision (.get echo "revision") needs (.get echo "needs" []) program (.get echo "program")
@@ -1184,7 +1194,7 @@
               :detail (.format "coordinator の置き場に行が無く、担い手 {} が走らせていた task を引き取った" worker)))
 
 
-(defn #^ ClusterState adopt-running-detached [#^ ClusterState state #^ str worker #^ (| str None) boot #^ list statuses #^ int now]
+(defn #^ ClusterState adopt-running-detached [#^ ClusterState state #^ str worker #^ (| str None) boot #^ tuple statuses #^ int now]
   "純粋: heartbeat の状態の報告のうち、行を持たない走っている切り離した task を引き取った状態(引き取る物が無ければ同じ object)。
    次に振る task の番号は引き取った id より後へ進める(同じ id を別の task に振らない)。"
   (setv adopted {})
@@ -1218,11 +1228,11 @@
 
 
 (defn #^ dict heartbeat-reply [#^ ClusterState state #^ str name #^ ClusterTiming timing #^ (| dict None) [ready-instances None] #^ int [now 0]
-                               #^ (| str None) [boot None] #^ (| list None) [statuses None]]
+                               #^ (| str None) [boot None] #^ (| tuple None) [statuses None]]
   "heartbeat を送った process に、動かす job・task・温める表・時間の設定・drain の印を返すため。boot = 送った process の世代・
    statuses = その heartbeat の状態の報告。退いた世代(superseded-boot)への返事は superseded-reply。"
   (when (and (is-not boot None) (superseded-boot state name boot))
-    (return (superseded-reply state name boot (or statuses []) timing ready-instances)))
+    (return (superseded-reply state name boot (or statuses #()) timing ready-instances)))
   {"jobs" (lfor s (jobs-for state name ready-instances) (spec-json s))
    "tasks" (tasks-for state name boot)
    ;; 温める表のうち、この worker に合う行(2026-09-26 — worker は job の準備より低い優先度で準備する)。
@@ -1238,15 +1248,15 @@
    "revision" state.revision})
 
 
-(defn #^ frozenset running-names [#^ list statuses]
+(defn #^ frozenset running-names [#^ tuple statuses]
   "退いた世代の報告のうち、いま running の job の名(入れ替えで退いた process の行は元の名で数える)。退いた世代に動かし続けさせて
    よい job を選ぶため。"
   (frozenset (gfor row statuses
-                   :if (= (.get row "phase") "running")
-                   (or (.get row "retiredFrom") (.get row "name") ""))))
+                   :if (= row.phase "running")
+                   (or row.retired-from row.name))))
 
 
-(defn #^ dict superseded-reply [#^ ClusterState state #^ str name #^ str boot #^ list statuses #^ ClusterTiming timing
+(defn #^ dict superseded-reply [#^ ClusterState state #^ str name #^ str boot #^ tuple statuses #^ ClusterTiming timing
                                 #^ (| dict None) [ready-instances None]]
   "退いた世代の process への heartbeat の返事(2026-09-27)。退く process に新しい仕事を起こさせず、動いている物は安全に畳ませるため:
    jobs = 名の置き先の入れ替え(handoff)の job のうち、その世代が running と報告している物だけ(lease を持ったまま Pod の停止まで
@@ -1279,7 +1289,7 @@
    "placements" (dfor #(k v) (.items state.placements) k (asdict v))
    "unplaced" (unplaced-jobs now state timing)
    ;; 沈黙した worker の最後の報告は「いま動いている」の証拠にならない。古さを付けて返す。
-   "statuses" (dfor #(n st) (.items state.statuses) n {"at" st.at "endpoint" st.endpoint "jobs" (list st.jobs)
+   "statuses" (dfor #(n st) (.items state.statuses) n {"at" st.at "endpoint" st.endpoint "jobs" (lfor row st.jobs (status-row-to-json row))
                                                        "stale" (> (- now st.at) timing.lease-ms)})
    "tasks" (lfor t (sorted (.values state.tasks) :key (fn [t] t.id)) (task-summary t))
    "boardKeys" (len state.board)

@@ -131,6 +131,41 @@
   (setv #^ bool retryable False))
 
 
+(defwire ProbeRow
+  "状態の報告の行の入口の検めの姿(検めが通っていない間だけ載る — worker/protocol/heartbeat の status-row の probe): state = 検めの
+   状態・elapsed-seconds = 今の検めの経過の秒・attempts = 回数・last-failure = 直前の失敗の理由。"
+  {:tags {:context "doeff-cluster" :role "type"} :names :camel :unknown :ignore}
+  (#^ str state)
+  (setv #^ int elapsed-seconds 0)
+  (setv #^ int attempts 0)
+  (setv #^ str last-failure ""))
+
+
+(defwire StatusRow
+  "heartbeat の状態の報告の行 1 つ(worker/protocol/heartbeat の status-row と同じ形 — #2447 で dict からこの型にした): name = job の名
+   (task は task/<id>)・phase・desired-revision / running-revision・pid・attempts・detail・instance = process の世代・spec-hash・
+   placement = 割り当ての世代・retired-from = 入れ替えで退いた process の元の名・failure-kind / retryable = 実行環境の準備の失敗
+   (env-failed の行だけ)・probe = 入口の検めの姿・result = 終わった task の詰めた結果・task = 切り離した task の写し(引き取りが
+   読む — 形の検めは cluster_policy.adopted-task)。worker の載せない欄は None(黙って既定の値へ倒さない)。"
+  {:tags {:context "doeff-cluster" :role "type"} :names :camel :unknown :ignore}
+  (setv #^ str name "")
+  (setv #^ (| str None) phase None)
+  (setv #^ (| str None) desired-revision None)
+  (setv #^ (| str None) running-revision None)
+  (setv #^ (| int None) pid None)
+  (setv #^ int attempts 0)
+  (setv #^ str detail "")
+  (setv #^ (| str None) instance None)
+  (setv #^ (| str None) spec-hash None)
+  (setv #^ (| int None) placement None)
+  (setv #^ (| str None) retired-from None)
+  (setv #^ (| str None) failure-kind None)
+  (setv #^ (| bool None) retryable None)
+  (setv #^ (| ProbeRow None) probe None)
+  (setv #^ (| str None) result None)
+  (setv #^ (| dict None) task None))
+
+
 (defwire EnvsReport
   "heartbeat の実行環境の root の名乗り: ready・preparing = env のキーの列・failed = 失敗の行の列(worker/protocol/heartbeat の
    env-heartbeat-part と同じ形)。"
@@ -143,7 +178,7 @@
 (defwire HeartbeatBody
   "POST /heartbeat の本文(worker/protocol/heartbeat の heartbeat-body と env-heartbeat-part と同じ形): name = worker の名(空でない)・
    provides / exclusive = 能力の名の列(labels = 旧い形の名乗り — 判断が断る)・node・capacity・versions / tools = 名 → 版・platform・
-   envs = root の名乗り・env-capacity = disk の条件・statuses = 状態の報告の行の列(行の形は判断が読む — 状態の欄の型は #2447)・
+   envs = root の名乗り・env-capacity = disk の条件・statuses = 状態の報告の行の列(StatusRow)・
    endpoint・boot = process の世代・boot-at = 起動時刻(epoch ms)・format = 本文の形の版。"
   {:tags {:context "doeff-cluster" :role "type"} :names :camel :unknown :ignore :check [(> (len name) 0)]}
   (#^ str name)
@@ -157,7 +192,7 @@
   (setv #^ str platform "")
   (setv #^ (| EnvsReport None) envs None)
   (setv #^ str env-capacity "ok")
-  (setv #^ (get tuple #(dict ...)) statuses #())
+  (setv #^ (get tuple #(StatusRow ...)) statuses #())
   (setv #^ (| str None) endpoint None)
   (setv #^ (| str None) boot None)
   (setv #^ (| int None) boot-at None)

@@ -50,12 +50,12 @@
 
 (defn #^ bool retired-live [#^ tuple rows #^ str name]  ; defk にできない: coordinator の純粋な判断が呼ぶ
   "担い手の行に、Service name の退いた旧の process(retiredFrom = name)が動いている形で在るか(戻る先が在るか)。"
-  (any (gfor row rows (and (= (.get row "retiredFrom") name) (in (.get row "phase") LIVE-PHASES)))))
+  (any (gfor row rows (and (= row.retired-from name) (in row.phase LIVE-PHASES)))))
 
 
 (defn #^ bool new-generation-live [#^ tuple rows #^ str name #^ str want]  ; defk にできない: coordinator の純粋な判断が呼ぶ
   "担い手の行に、今の宣言の spec(指紋 want)で起こした Service name の process が動いている形で在るか(期限の起点)。"
-  (any (gfor row rows (and (= (.get row "name") name) (= (.get row "specHash") want) (in (.get row "phase") LIVE-PHASES)))))
+  (any (gfor row rows (and (= row.name name) (= row.spec-hash want) (in row.phase LIVE-PHASES)))))
 
 
 (defn #^ (| str None) last-refusal [#^ ClusterState state #^ str name #^ str want]  ; defk にできない: coordinator の純粋な判断が呼ぶ

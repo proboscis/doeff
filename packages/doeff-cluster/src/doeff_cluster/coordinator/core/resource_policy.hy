@@ -18,10 +18,10 @@
 (import doeff_cluster.coordinator.intent.cluster_model [ClusterJob ClusterState Placement HandoffPhase UnplacedKind NotReadyKind VersionState VersionVerdict LiveProcess ResourceMeta])
 (import doeff_cluster.coordinator.core.cluster_json [required-field int-field])
 (import doeff_cluster.shared.core.job_rules [spec-hash] doeff_cluster.shared.intent.job_model [JobPhase])
-(import doeff_cluster.coordinator.core.cluster_policy [job-from-json job-to-json alive still-live-somewhere service-rows unplaced-kind unplaced-text task-summary resource-version-of])
+(import doeff_cluster.coordinator.core.cluster_policy [job-from-json job-to-json status-row-to-json alive still-live-somewhere service-rows unplaced-kind unplaced-text task-summary resource-version-of])
 (import doeff_cluster.coordinator.core.rollout_policy [validate-rollout-spec rollout-targets target-key TERMINAL-PHASES])
 (import doeff [run])
-(import doeff_cluster.coordinator.intent.request_bodies [ReadinessBody MetricsBody ResourceBody])
+(import doeff_cluster.coordinator.intent.request_bodies [ReadinessBody MetricsBody ResourceBody StatusRow])
 (import doeff_cluster.shared.intent.readiness_model [handoff-timeout-ms])
 (import doeff_cluster.shared.core.readiness_report [reported-readiness])
 
@@ -63,11 +63,11 @@
 
 ;; --- readiness -------------------------------------------------------------------------------
 
-(defn #^ (| dict None) job-status-row [#^ ClusterState state #^ str worker #^ str name]
+(defn #^ (| StatusRow None) job-status-row [#^ ClusterState state #^ str worker #^ str name]
   (setv st (.get state.statuses worker))
   (when (is st None) (return None))
   (for [row st.jobs]
-    (when (= (.get row "name") name) (return row)))
+    (when (= row.name name) (return row)))
   None)
 
 
@@ -106,29 +106,29 @@
     (return (no (if (or warming silent) "Unknown" "NotReady") NotReadyKind.CARRIER-SILENT
                 (.format "担い手 {} の報告が無い・古い" a.worker))))
   (setv row (job-status-row state a.worker name))
-  (when (or (is row None) (!= (.get row "phase") "running"))
+  (when (or (is row None) (!= row.phase "running"))
     (return (no "NotReady" NotReadyKind.NOT-RUNNING
-                (.format "担い手 {} の上で {}" a.worker (if row (.get row "phase") "まだ起動していない"))
+                (.format "担い手 {} の上で {}" a.worker (if row row.phase "まだ起動していない"))
                 :row row)))
   ;; 担い手の行の detail(入れ替えの途中・新の入口を読み込めない理由 — worker_policy.statuses)を添える: Service の status.readyReason
   ;; から「なぜ新が起きないか」が読める(2026-09-25)。
-  (setv note (if (.get row "detail") (+ ":" (get row "detail")) ""))
-  (when (!= (.get row "runningRevision") job.spec.revision)
+  (setv note (if row.detail (+ ":" row.detail) ""))
+  (when (!= row.running-revision job.spec.revision)
     (return (no "NotReady" NotReadyKind.REVISION-MISMATCH
-                (.format "版が違う(動いている版 {}・宣言 {}){}" (.get row "runningRevision") job.spec.revision note))))
+                (.format "版が違う(動いている版 {}・宣言 {}){}" row.running-revision job.spec.revision note))))
   (setv want (spec-hash job.spec))
-  (when (not (.get row "instance"))
+  (when (not row.instance)
     (return (no "NotReady" NotReadyKind.NO-INSTANCE
                 (.format "担い手 {} が process の世代を報告しない(世代を知らない古い worker)" a.worker))))
-  (when (!= (.get row "specHash") want)
+  (when (!= row.spec-hash want)
     (return (no "NotReady" NotReadyKind.SPEC-MISMATCH
                 (.format "動いている process は前の宣言(設定か版)で起こした物(指紋 {}・宣言 {})— 起こし直しを待っている{}"
-                         (.get row "specHash") want note))))
-  (when (and (is-not (.get row "placement") None) (!= (.get row "placement") a.generation))
+                         row.spec-hash want note))))
+  (when (and (is-not row.placement None) (!= row.placement a.generation))
     (return (no "NotReady" NotReadyKind.PLACEMENT-MISMATCH
-                (.format "動いている process は前の割り当ての世代 {} で起こした物(いま {})" (.get row "placement") a.generation))))
-  {"ok" True "job" job "worker" a.worker "row" row "instance" (get row "instance") "attempt" (str (.get row "attempts"))
-   "specHash" want "placement" (.get row "placement")})
+                (.format "動いている process は前の割り当ての世代 {} で起こした物(いま {})" row.placement a.generation))))
+  {"ok" True "job" job "worker" a.worker "row" row "instance" row.instance "attempt" (str row.attempts)
+   "specHash" want "placement" row.placement})
 
 
 (defn #^ bool report-matches [#^ dict report #^ dict proc]
@@ -206,9 +206,9 @@
   "Service name の process が生きている行の版と、入れ替えで退いた旧い process か(status.version.running — 事実の列で、判定ではない)。
    母集団は still-live-somewhere と同じ(cluster_policy.service-rows)で、phase は PROCESS-PHASES。drain で並べた置き先の process も入る。"
   (tuple (gfor row (service-rows now state name timing)
-               :if (in (.get row "phase") PROCESS-PHASES)
+               :if (in row.phase PROCESS-PHASES)
                ;; 版は process を持つ行なら worker が必ず載せる(worker_policy.statuses)。載せない行は None のまま運ぶ(黙って埋めない)。
-               (LiveProcess :revision (.get row "runningRevision") :retired (= (.get row "retiredFrom") name)))))
+               (LiveProcess :revision row.running-revision :retired (= row.retired-from name)))))
 
 
 (defn #^ (| JobPhase None) phase-named [#^ (| str None) phase]
@@ -283,10 +283,10 @@
    持つ時は Unknown(既定の状態へ倒さない)。"
   ;; row は種類が NOT-RUNNING の答えだけが持つ(担い手の行 — 行に載っていなければ None)。
   (setv row (.get proc "row") reason (get proc "reason")
-        phase (if (is row None) None (phase-named (.get row "phase"))))
+        phase (if (is row None) None (phase-named row.phase)))
   (if (and (is-not row None) (is phase None))
       (VersionVerdict :state VersionState.UNKNOWN :reason (+ "担い手が coordinator の知らない phase を報告した: " reason))
-      (VersionVerdict :state (not-ready-version (get proc "kind") phase (and (is-not row None) (is (.get row "retryable") True)))
+      (VersionVerdict :state (not-ready-version (get proc "kind") phase (and (is-not row None) (is row.retryable True)))
                       :reason reason)))
 
 
@@ -469,10 +469,11 @@
   (cond
     (= kind "Service")
       (do (setv a (.get state.placements name) verdict (service-readiness state name now timing)
-                reports (.get state.readiness name))
+                reports (.get state.readiness name)
+                process (if a (job-status-row state a.worker name) None))
           (.update status {"readyReason" (get verdict "reason")
                            "lastReadiness" (if reports (get reports -1) None)
-                           "process" (if a (job-status-row state a.worker name) None)
+                           "process" (if (is process None) None (status-row-to-json process))
                            ;; 版の判定(state は snapshot と同じ値)と、その理由・動いている版の列(2026-09-29)。
                            "version" (version-json (version-state state name now timing) (live-processes state name now timing))}))
     (= kind "Worker")

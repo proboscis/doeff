@@ -150,6 +150,7 @@
     },
     {
       "allow": [
+        "doeff-cluster-coordinator-request-bodies-model",
         "doeff-cluster-job-model",
         "doeff-cluster-shared-protocol",
         "doeff-cluster-worker-model"

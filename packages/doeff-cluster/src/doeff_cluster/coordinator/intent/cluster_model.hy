@@ -21,6 +21,7 @@
 (import doeff [EffectBase])
 (import doeff_cluster.shared.intent.job_model [JobSpec])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming Request NextRequests])
+(import doeff_cluster.coordinator.intent.request_bodies [StatusRow])
 
 
 (defclass ComponentVersion [NamedTuple]
@@ -132,11 +133,11 @@
 
 (defrecord WorkerReport
   "worker 1 つの最新の状態の報告(ClusterState.statuses の値 — 鍵 = worker の名・保存しない): at = 受けた時刻(epoch ms)・endpoint =
-   worker が名乗った宛先(名乗らない旧い worker は None)・jobs = job の行の列(heartbeat の statuses から結果の欄 result / task を除いた
-   dict — 行の欄は worker/protocol/heartbeat の status-row)。#2447 で外側の dict をこの型にした(行の型は続きの切り出し)。"
+   worker が名乗った宛先(名乗らない旧い worker は None)・jobs = job の行の列(heartbeat の statuses の行 StatusRow から、結果の
+   欄 result と task の写しを外した物 — 持ち続けるのは process の姿だけ)。#2447 で dict をこの型にした。"
   (#^ int at)
   (#^ (| str None) endpoint)
-  (#^ tuple jobs))
+  (#^ (get tuple #(StatusRow ...)) jobs))
 
 
 (defrecord RefusedJob
