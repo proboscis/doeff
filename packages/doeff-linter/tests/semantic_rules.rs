@@ -495,3 +495,60 @@ fn mixed_concerns_does_not_ask_definitions_under_excluded_paths() {
     assert_eq!(report["semantic"]["asked"], 4, "{} {}", report["semantic"], stderr);
     assert!(find(&report, "DOEFF205", "check").is_some());
 }
+
+#[test]
+fn semantic_with_several_files_asks_every_named_definition() {
+    // 鳴らない例: 1 回の --semantic に file を 2 つ名指すと、両方の定義を問う(plan.hy 2 + chat.hy 3 + 較正の 4 例 — agora-redesign #2075)。
+    let dir = repo(FILES, SEMANTIC);
+    let jev = fake_jev(false);
+    let (code, report, stderr) = run(dir.path(), &jev.url, &["--semantic", "app/core/plan.hy", "app/protocol/chat.hy"]);
+    assert_eq!(code, 0, "{}", stderr);
+    assert_eq!(report["semantic"]["asked"], 9, "{} {}", report["semantic"], stderr);
+    assert_eq!(report["semantic"]["calibration"], "ok");
+    assert_eq!(jev.hits.load(Ordering::SeqCst), 9);
+}
+
+#[test]
+fn semantic_refuses_a_named_path_that_does_not_exist() {
+    // 鳴る例: 2 つの path が空白で繋がった 1 つの引数(zsh の引用符の無い $FILES)は無い path — 何も問わずに 0 と緑を名乗らず、
+    // 理由を名乗って終了コード 2 で止める(以前は「今回撃った 0・較正 not-run」で終了コード 0 — agora-redesign #2075)。
+    let dir = repo(FILES, SEMANTIC);
+    let jev = fake_jev(false);
+    let home = tempfile::TempDir::new().unwrap();
+    for format in ["editor-json", "json"] {
+        let output = Command::new(env!("CARGO_BIN_EXE_doeff-linter"))
+            .args(["--output-format", format, "--no-log", "--semantic", "app/core/plan.hy app/protocol/chat.hy"])
+            .current_dir(dir.path())
+            .env_clear()
+            .env("PATH", std::env::var("PATH").unwrap_or_default())
+            .env("HOME", home.path())
+            .env("JEV_BASE_URL", &jev.url)
+            .env("JEV_MODEL", "jev-test")
+            .stdin(Stdio::null())
+            .output()
+            .unwrap();
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert_eq!(output.status.code(), Some(2), "{}: {}", format, stderr);
+        assert!(stderr.contains("名指した path が無い") && stderr.contains("app/core/plan.hy app/protocol/chat.hy"), "{}: {}", format, stderr);
+    }
+    assert_eq!(jev.hits.load(Ordering::SeqCst), 0, "止めた実行は Jev を呼ばない");
+}
+
+#[test]
+fn semantic_names_a_file_that_has_nothing_to_ask() {
+    // 鳴る例: 名指しの file が問いの層の外なら、問う数 0 の理由を名乗る(黙って 0 にしない)。層の中の file と一緒なら、その分は問う。
+    let mut files = FILES.to_vec();
+    files.push(("app/entry/main.hy", "(defk main [] 0)\n"));
+    let dir = repo(&files, SEMANTIC);
+    let jev = fake_jev(false);
+    let (code, report, stderr) = run(dir.path(), &jev.url, &["--semantic", "app/entry/main.hy", "app/core/plan.hy"]);
+    assert_eq!(code, 0, "{}", stderr);
+    assert_eq!(report["semantic"]["asked"], 6, "{} {}", report["semantic"], stderr);
+    let errors = report["errors"].as_array().unwrap();
+    assert!(
+        errors.iter().any(|e| e.as_str().unwrap().contains("問いになる定義が無い") && e.as_str().unwrap().contains("app/entry/main.hy")),
+        "{}",
+        report["errors"]
+    );
+    assert!(!errors.iter().any(|e| e.as_str().unwrap().contains("app/core/plan.hy")), "{}", report["errors"]);
+}

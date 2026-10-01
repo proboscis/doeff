@@ -668,6 +668,10 @@ fn baseline_identities(args: &Args) -> Result<Option<std::collections::BTreeSet<
 /// `--output-format editor-json` — エディタ向けの JSON を 1 つ出す。終了コード 0 = 新しい破れ(error)なし、1 = あり、2 = 引数・設定の誤り、
 /// 4 = `--baseline-report` の基点に無い critical あり(仕様 1 節の表が正本)。
 fn run_editor(args: &Args) -> ExitCode {
+    if let Some(reason) = missing_semantic_targets(args) {
+        eprintln!("doeff-linter: {}", reason);
+        return ExitCode::from(2);
+    }
     let baseline = match baseline_identities(args) {
         Ok(baseline) => baseline,
         Err(reason) => {
@@ -958,9 +962,31 @@ fn build_followup_message(grouped: &BTreeMap<String, Vec<ViolationSummary>>) -> 
     message
 }
 
+/// `--semantic` / `--semantic-changed` で名指した path のうち、disk に無い物を断る理由(全部在れば None)。名指しの path は問う対象の
+/// 組(SemanticMode の targets)の鍵になるので、無い path は どの定義にも当たらず、問う数 0・較正 not-run・終了コード 0 で黙って終わっていた
+/// (agora-redesign #2075 — 3 人が「問う数が多いと黙って 0」と読んだ実例は、zsh が引用符の無い `$FILES` を分けず、11 個の path が空白で
+/// 繋がった 1 つの無い path として届いていた)。問うと名指した実行が何も問わずに緑を名乗らないよう、引数の誤りとして終了コード 2 で止める。
+fn missing_semantic_targets(args: &Args) -> Option<String> {
+    if !(args.semantic || args.semantic_changed) || args.stdin {
+        return None;
+    }
+    let missing: Vec<&str> = args.paths.iter().filter(|p| p.as_str() != "." && !editor::normalize_path(Path::new(p)).exists()).map(String::as_str).collect();
+    if missing.is_empty() {
+        return None;
+    }
+    Some(format!(
+        "--semantic で名指した path が無い — 問う対象を決められないので止める(空白を含む 1 つの引数に繋がっていないか — zsh は引用符の無い $VAR を語に分けない): {}",
+        missing.iter().map(|p| format!("{:?}", p)).collect::<Vec<_>>().join("・")
+    ))
+}
+
 fn run_normal(args: &Args) -> ExitCode {
     if args.stdin || args.path.is_some() {
         eprintln!("doeff-linter: --stdin と --path は --output-format editor-json の時だけ使う");
+        return ExitCode::from(2);
+    }
+    if let Some(reason) = missing_semantic_targets(args) {
+        eprintln!("doeff-linter: {}", reason);
         return ExitCode::from(2);
     }
     // Load config(読めない設定は黙って捨てず、理由を出して終了コード 2)

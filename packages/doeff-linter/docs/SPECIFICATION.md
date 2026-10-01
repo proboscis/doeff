@@ -453,6 +453,10 @@ intent の層は Tach の interfaces に当たる — 別の service が読ん�
   決定 A)。`--semantic-changed` を名指せば cache に答えの無い定義だけを撃つ。
 - `--semantic` = 対象の定義を cache に答えが在っても撃ち直す・`--semantic-all` = 設定した層の全定義を撃つ・`--semantic-cache-only` = 撃たない(cache を読むだけ・
   測れなかったに数えない — 網の無い所の実行)。
+- **`--semantic` / `--semantic-changed` で名指した path が disk に無ければ、問わずに終了コード 2**(理由の 1 行に無い path を引用符つきで並べる —
+  agora-redesign #2075: zsh が引用符の無い `$FILES` を語に分けず、全部の path が空白で繋がった 1 つの無い path として届き、以前は問う数 0・較正 not-run・
+  終了コード 0 で黙って終わっていた)。名指しの Hy の file に問いになる定義が 1 つも無い(問いの層の外・最上位の定義なし・書きかけ)時は、その file を
+  `errors` の 1 行に名乗る(終了コードは変えない — 問う物が無いのは誤りではないが、なぜ 0 かを黙らない)。
 - **書きかけで読めない定義(閉じない括弧・対応しない閉じ括弧・閉じない文字列)は、どの実行でも問わない**(未判定に数える)。
 - 問う定義 = 設定した層の Hy の最上位の defn・defk・deff・defp・defpp・defhandler・defeffect・defclass・defrecord・defenum。
 - state = 定義の名・kind・file・申告の `:tags` を消した source(`semantic.source_limit` 字 = 既定 1,800 で切る)・置かれた層の説明(architecture.hy の layer の説明か、

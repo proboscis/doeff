@@ -1336,6 +1336,22 @@ pub fn evaluate(
             }
     };
     let asking = items.iter().any(wants_ask);
+    // 問うと名指した Hy の file のうち、問いになる定義が 1 つも無い物を名乗る(問いの層の外・最上位の定義なし・書きかけ)— 名指しが
+    // どの問いにもならずに「今回撃った 0」で終わる時、なぜ 0 かを黙らない(agora-redesign #2075)。
+    if let SemanticMode::Ask(targets) | SemanticMode::AskChanged(targets) = mode {
+        let silent: Vec<&str> = targets
+            .iter()
+            .filter(|rel| rel.ends_with(".hy") && !items.iter().any(|item| item.readable && &item.rel == *rel))
+            .map(String::as_str)
+            .collect();
+        if !silent.is_empty() {
+            errors.push(format!(
+                "意味の規則: 名指しの file のうち {} 個には問いになる定義が無い(問いの層の外・最上位の定義なし・書きかけ)— 今回撃った数に入らない: {}",
+                silent.len(),
+                silent.join("・")
+            ));
+        }
+    }
     let pool = rayon::ThreadPoolBuilder::new().num_threads(settings.workers).build();
     if asking {
         match (gateway, &pool) {
