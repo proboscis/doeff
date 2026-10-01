@@ -1,5 +1,6 @@
-;;; coordinator へ話す HTTP の client を 1 か所で作る(heartbeat・共有の保存・task の 3 つの口の handler が使う)。
-;;; HTTP の client はこの module と、それを持つ handler の中だけに閉じる(業務コードは effect しか知らない)。
+;;; coordinator へ話す口の定数(返事と接続の上限・読みを送り直す期限と間・先頭の宛先を試し直す間)と、書きの送り手の既定の名。
+;;; 送り方そのもの(宛先の順・切り替え・送り直し)は shared/protocol/coordinator_route.hy の宛先の部品(汎用の HttpRequest の上)— 前は
+;;; この module が httpx の client を持つ口を持っていた(#2427 で退役)。下の実測と直しの理由は宛先の部品の振る舞いの出自。
 ;;;
 ;;; 2026-09-23 の実測(newmac の `turn-runner` が `GET /board` の `ConnectTimeout` で 5 回落ちた件):
 ;;;
@@ -12,13 +13,9 @@
 ;;;   1 回の失敗で例外を業務の Program へ投げ、service の process ごと落ちた。
 ;;; - 直し: 接続を使い回す(coordinator の側を HTTP/1.1 にした — `coordinator.hy`)。接続の段の上限を短くし、その段の
 ;;;   失敗だけは書きでも送り直す(要求がまだ相手に届いていない。httpx の transport の retries は ConnectError と
-;;;   ConnectTimeout だけを送り直す)。何度送っても同じ意味の読みは、切れ方を問わず期限まで送り直す(`send-idempotent`)。
+;;;   ConnectTimeout だけを送り直す)。何度送っても同じ意味の読みは、切れ方を問わず期限まで送り直す(宛先の部品の resent-request)。
 ;;;   自己停止(20 秒)と移し替え(45 秒)の時間は cluster_model の ClusterTiming。
 (require doeff-hy.macros [val])
-(import time)
-(import collections.abc [Callable])
-(import typing [TypedDict Unpack])
-(import httpx)
 (import doeff_cluster.shared.intent.protocol [ClusterTiming])
 
 ;; 返事を待つ上限(秒)。coordinator は書きを永続化してから返事をする(group commit)ので、返事は fsync の時間だけ遅れる。longhorn の
@@ -33,14 +30,9 @@
 ;; ClusterTiming・20 秒)より 5 秒長くする: fence より短い途絶は service も worker も越え、それより長い途絶では worker の方が
 ;; job を止める(読みを先に諦めて service が自分で落ちることはない)。
 (setv IDEMPOTENT-DEADLINE-SECONDS (+ (/ (. (ClusterTiming) fence-ms) 1000) 5.0))
-;; 送り直しの間(秒)。本番の send-idempotent と手元の sim-cluster の宿(local.hy — sim の時計で眠る)が同じ値を使う。
+;; 送り直しの間(秒)。本番の宛先の部品(resent-request)と手元の sim-cluster の宿(local.hy — sim の時計で眠る)が同じ値を使う。
 (val RESEND-PAUSE-SECONDS 0.5)
 
-
-(import sys)
-
-;; 次の宛先へ回るのは接続できない時だけ(接続の時間切れ・拒否 = 要求はまだ相手に届いていない)。
-(setv CONNECT-FAILURES #(httpx.ConnectError httpx.ConnectTimeout))
 ;; 先の宛先(LAN)から後ろ(tailnet)へ回った後、先の宛先を試し直すまでの秒。
 (setv PREFERRED-RECHECK-SECONDS 60.0)
 
@@ -53,105 +45,3 @@
                   (.format "{}@{}/{}" job worker (os.getpid))
                   (.format "{}@{}" (os.getpid) (socket.gethostname))))
   (.decode (.encode actor "ascii" "replace") "ascii"))
-
-
-(defclass CoordinatorRefused [Exception]
-  "coordinator が要求を断った(4xx・5xx)。status と coordinator の返した本文(先頭 500 字)を持つ。httpx の raise-for-status の例外は
-   本文を持たず、断りの理由(coordinator の {\"error\": …})が worker の log と状態の note に出なかった(2026-09-29・#1005)。"
-  (defn #^ None __init__ [self #^ int status #^ str body]
-    (.__init__ (super) status body)
-    (setv self.status status self.body body))
-  (defn #^ str __repr__ [self]
-    (.format "coordinator が断った({}): {}" self.status self.body)))
-
-
-(defn #^ tuple parse-urls [#^ str spec]
-  "宛先の指定 = URL を `,` で並べた文字列。前ほど優先(Mac なら LAN の宛先・tailnet の宛先の順)。"
-  (setv urls (tuple (gfor u (.split spec ",") :if (.strip u) (.rstrip (.strip u) "/"))))
-  (when (not urls) (raise (ValueError f"coordinator の宛先が無い: {spec !r}")))
-  urls)
-
-
-(defclass RequestOptions [TypedDict :total False]
-  "coordinator への要求で httpx の request にそのまま渡す欄(使う物だけ)。json は本文の JSON の値そのもの。
-   extensions は httpx の拡張(検が接続の trace を仕掛ける)。"
-  (#^ object json)
-  (#^ dict params)
-  (#^ dict headers)
-  (#^ dict extensions))
-
-
-(defclass CoordinatorEndpoint []
-  "coordinator へ話す口(heartbeat・共有の保存・task の 3 つが使う)。宛先を複数持ち、前から順に試す。
-   - 接続は使い回す(httpx の pool は宛先ごと)。
-   - 接続できない時だけ次の宛先へ回る。読みや返事の途中の失敗では回らない(宛先の問題と限らない)。
-   - 回った後も PREFERRED-RECHECK-SECONDS ごとに先頭の宛先を先に試し、届けば戻る。
-   - 全部の宛先に届かなければ connect-retries 回まで間を置いて一巡し直し、最後の接続の失敗を投げる。
-   heartbeat の連続性(自己停止の数え方)は使い手(coordinator への口)が宛先と無関係に持つので、宛先を替えても壊れない。"
-  (defn #^ None __init__ [self #^ str spec #^ float timeout #^ int connect-retries
-                  #^ (| httpx.BaseTransport None) [transport None] #^ Callable [clock time.monotonic]
-                  #^ Callable [pause (fn [seconds] (time.sleep seconds))]
-                  #^ (| int float) [recheck-seconds PREFERRED-RECHECK-SECONDS] #^ (| str None) [actor None]]
-    ;; actor = 書きの送り手(header X-Actor)。coordinator は誰が・いつ・何を書いたかを出来事の記録に残す。
-    (setv self.urls (parse-urls spec) self.active 0 self.switched-at (clock)
-          self.connect-retries connect-retries self.clock clock self.pause pause self.recheck-seconds recheck-seconds
-          self.actor (or actor (default-actor))
-          self.client (httpx.Client :timeout (httpx.Timeout timeout :connect (min timeout CONNECT-SECONDS))
-                                    :transport (or transport (httpx.HTTPTransport :retries 0))
-                                    :headers {"X-Actor" self.actor}
-                                    :trust-env False)))
-
-  (defn [property] #^ str url [self]
-    "いま使っている宛先。"
-    (get self.urls self.active))
-
-  (defn #^ list order [self]
-    "試す順。先頭以外にいる間は、最後に先頭を試した時(回った時・試し直した時)から recheck-seconds ごとに先頭から試す。"
-    (setv rest (lfor i (range (len self.urls)) :if (!= i self.active) i))
-    (if (and (!= self.active 0) (>= (- (self.clock) self.switched-at) self.recheck-seconds))
-        (do (setv self.switched-at (self.clock))
-            (list (range (len self.urls))))
-        (+ [self.active] rest)))
-
-  (defn #^ None use [self #^ int index]
-    (when (!= index self.active)
-      (print (.format "coordinator の宛先を {} から {} へ切り替えました" (get self.urls self.active) (get self.urls index))
-             :file sys.stderr :flush True)
-      (setv self.active index self.switched-at (self.clock))))
-
-  (defn #^ httpx.Response request [self #^ str method #^ str path #^ (get Unpack RequestOptions) #** kwargs]
-    (setv last None)
-    (for [round (range (+ self.connect-retries 1))]
-      (when (> round 0) (self.pause (* 0.25 (** 2 (- round 1)))))
-      (for [index (.order self)]
-        (try
-          (setv response (.request self.client method (+ (get self.urls index) path) #** kwargs))
-          (.use self index)
-          (return response)
-          (except [error CONNECT-FAILURES]
-            (setv last error)))))
-    ;; last が None のままなのは、宛先が 1 つも無く 1 度も試さなかった時だけ(#1690 — None を raise しない)
-    (match last
-      None (raise (RuntimeError (.format "coordinator の宛先が無いので {} {} を送れない" method path)))
-      _ (raise last)))
-
-  (defn #^ httpx.Response accepted [self #^ httpx.Response response]
-    "返事が断り(4xx・5xx)なら CoordinatorRefused(status と本文)を投げ、そうでなければ返事をそのまま返す。"
-    (when (>= response.status-code 400)
-      (raise (CoordinatorRefused response.status-code (cut response.text 0 500))))
-    response))
-
-
-(defn #^ httpx.Response send-idempotent [#^ Callable send #^ float [deadline-seconds IDEMPOTENT-DEADLINE-SECONDS] #^ float [pause-seconds RESEND-PAUSE-SECONDS]]
-  "何度送っても同じ意味の要求(GET)を、通信の失敗(接続・読み・切断)なら期限まで送り直す。
-   書きの要求には使わない: 返事を読む前に切れた書きは、相手に届いたかどうかが分からない。書きの送り直しは
-   CoordinatorEndpoint の接続の段(要求がまだ届いていない段)だけに限る。"
-  (setv started (time.monotonic))
-  (while True
-    (try
-      (return (send))
-      (except [httpx.TransportError]
-        (when (> (+ (- (time.monotonic) started) pause-seconds) deadline-seconds)
-          (raise))
-        (time.sleep pause-seconds)))))
-

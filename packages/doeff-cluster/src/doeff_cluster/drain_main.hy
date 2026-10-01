@@ -37,7 +37,7 @@
 
 
 (defhandler coordinator-calls [#^ RouteCell cell #^ RouteOptions options]
-  ;; 引数に残す理由: 宛先の状態(cell)は要求から要求へ持ち越す入れ物・送り方は CLI の mode ごとの値(#2427 — 前は CoordinatorEndpoint)。
+  ;; 引数に残す理由: 宛先の状態(cell)は要求から要求へ持ち越す入れ物・送り方は CLI の mode ごとの値(#2427 — 前は httpx の client を持つ口)。
   ;; 送り直しは接続の段の宛先の回りだけ(一巡し直しは options の connect-retries)— drain の Program が間を置いて問い直す。
   (CoordinatorCall [method path body]
     (<- reply RoutedReply (routed-request cell.route method path options None body))

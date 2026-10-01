@@ -134,7 +134,7 @@
   (signal.signal signal.SIGTERM on-signal)
   (signal.signal signal.SIGINT on-signal)
   ;; coordinator への口(worker/protocol/coordinator_link — #2427)。拍から拍へ持ち越す値は入れ物 link に、宛先の状態は heartbeat と
-  ;; 名指しの待ちと lease の返しで別の入れ物に置く(同じ並び)。送り方は一巡し直さない(前の CoordinatorEndpoint の retries 0 と同じ —
+  ;; 名指しの待ちと lease の返しで別の入れ物に置く(同じ並び)。送り方は一巡し直さない(前の httpx の client を持つ口と同じ —
   ;; 届かない拍は次の拍で送り直す)。世代(boot)は起動の時に 1 度だけ決め、Pod の中の file に書く(readinessProbe が比べる)。
   (setv started-ms (int (* 1000 (time.time)))
         boot (. (uuid.uuid4) hex)

@@ -1,14 +1,14 @@
 ;;; coordinator への宛先の部品 — 宛先の順・切り替え・送り直しを、汎用の効果(doeff-core-effects の HttpRequest を failures-as-values で・
 ;;; doeff-time の GetTime / Delay)だけで書く(#2337 の 1 本目)。
 ;;;
-;;; 振る舞いは foundation/coordinator_http.hy の CoordinatorEndpoint・send-idempotent と同じ(2026-09-23 の tailnet の経路の揺れの実測と
-;;; 直しの理由はそちらの頭の註):
+;;; 振る舞いの出自(2026-09-23 の tailnet の経路の揺れの実測と直しの理由)は foundation/coordinator_http.hy の頭の註(前は同じ振る舞いを
+;;; httpx の client を持つ口が持っていた — #2427 で退役):
 ;;;   - 宛先を前から順に試す。接続できない時(HttpFailed の kind = CONNECT-FAILED — 接続の段の時間切れを含む・要求はまだ相手に
 ;;;     届いていない)だけ次の宛先へ回る。読みや返事の途中の失敗(TIMED-OUT・OTHER)では回らない(宛先の問題と限らない)。
 ;;;   - 回った後も recheck-ms ごとに先頭の宛先を先に試し、届けば戻る。
 ;;;   - 全部の宛先に届かなければ connect-retries 回まで間を置いて一巡し直し、最後の接続の失敗を答える。
 ;;;   - 何度送っても同じ意味の要求(resent-request)は、答えが失敗なら期限まで間を置いて送り直す。書きは接続の段だけ(上の一巡)。
-;;; CoordinatorEndpoint と違い、宛先の状態は object に持たず値(CoordinatorRoute)で返す — 使い手(handler)が次の要求へ渡す。
+;;; 宛先の状態は object に持たず値(CoordinatorRoute)で返す — 使い手(handler)が次の要求へ渡す。
 ;;; 本物の I/O は入口が積む汎用の答え手(http-production-handler)が持ち、この module は socket も時計も直に読まない。
 ;;; 使い手の付け替え(shared-http・heartbeat・task・readiness の口)は #2337 の 2・4 本目。
 (require doeff-hy.macros [defk <- val var])
@@ -21,7 +21,7 @@
 
 (val MODULE-TAGS {:context "doeff-cluster" :role "protocol"})
 
-;; 一巡し直す前の間(秒)の物差し: 1 回目 0.25・2 回目 0.5 …(CoordinatorEndpoint と同じ)。
+;; 一巡し直す前の間(秒)の物差し: 1 回目 0.25・2 回目 0.5 …。
 (val ROUND-PAUSE-SECONDS 0.25)
 
 
@@ -149,7 +149,7 @@
 
 (defclass RouteRefused [Exception]
   "coordinator が要求を断った(4xx・5xx)— status と coordinator の返した本文(先頭 500 字)。断りの理由(coordinator の {\"error\": …})を
-   worker の log と状態の note に出すため本文を持つ(foundation/coordinator_http.hy の CoordinatorRefused と同じ読み)。"
+   worker の log と状態の note に出すため本文を持つ(前の httpx の client を持つ口の断りと同じ読み)。"
   (defn #^ None __init__ [self #^ int status #^ str body]
     (.__init__ (super) status body)
     (setv self.status status self.body body))

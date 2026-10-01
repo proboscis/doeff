@@ -1,11 +1,9 @@
-;; coordinator との HTTP: 接続を使い回すこと・読みは通信の途絶を越えて送り直すこと・宛先の切り替え(2026-09-23 の newmac の件)。
+;; coordinator との HTTP: coordinator が接続を使い回させること・heartbeat の途絶の数えが宛先の切り替えをまたぐこと(2026-09-23 の newmac の件)。
+;; 宛先の切り替えと読みの送り直しの性質は宛先の部品の検(test_coordinator_route — #2427 で httpx の client を持つ口を退役させた)。
 (require doeff-hy.macros [deftest])
-(import typing [NoReturn])
 (import threading)
 (import httpx)
-(import pytest)
 (import doeff_cluster.foundation.coordinator_inbox [RequestInbox])
-(import doeff_cluster.foundation.coordinator_http [CoordinatorEndpoint send-idempotent])
 (import tests.link_rig [LinkRig])
 (import doeff_cluster.worker.intent.worker_model [DesiredJobs DesiredUnreadable])
 
@@ -29,10 +27,9 @@
   (defn #^ None trace [#^ str name #^ dict info]
     (when (= name "connection.connect_tcp.complete") (.append opened name)))
   (try
-    (setv endpoint (CoordinatorEndpoint f"http://127.0.0.1:{port}" 5.0 0))
-    (do
+    (with [client (httpx.Client :base-url f"http://127.0.0.1:{port}" :timeout 5.0)]
       (for [_ (range 3)]
-        (setv response (.request endpoint "GET" "/board" :extensions {"trace" trace}))
+        (setv response (.get client "/board" :extensions {"trace" trace}))
         (assert (= response.status-code 200))
         (assert (= response.http-version "HTTP/1.1"))
         (assert (= (.json response) {"path" "/board"}))))
@@ -42,23 +39,7 @@
   (assert (= (len opened) 1)))
 
 
-(deftest test-idempotent-read-is-resent-across-a-short-outage
-  (setv calls [0])
-  (defn #^ httpx.Response send []
-    (+= (get calls 0) 1)
-    (when (< (get calls 0) 3) (raise (httpx.ConnectTimeout "timed out")))
-    (httpx.Response 200 :json {}))
-  (assert (= (. (send-idempotent send :deadline-seconds 5.0 :pause-seconds 0.01) status-code) 200))
-  (assert (= (get calls 0) 3)))
-
-
-(deftest test-idempotent-read-gives-up-after-the-deadline
-  (defn #^ NoReturn send [] (raise (httpx.ReadTimeout "timed out")))
-  (with [(pytest.raises httpx.ReadTimeout)]
-    (send-idempotent send :deadline-seconds 0.05 :pause-seconds 0.01)))
-
-
-;; --- 宛先の切り替え(fake の transport = httpx.MockTransport で、LAN の宛先が届く / 届かないを作る) ---------------------
+;; --- 宛先の切り替えをまたぐ heartbeat(fake の transport = httpx.MockTransport で、LAN の宛先が届く / 届かないを作る) -------------
 
 (setv LAN "http://lan:30881" TS "http://tailnet:30881")
 
@@ -75,48 +56,6 @@
     (.append self.sent #(host request.url.path))
     (httpx.Response 200 :json {"jobs" [] "tasks" [] "host" host}))
   (defn #^ httpx.MockTransport transport [self] (httpx.MockTransport self.handle)))
-
-(defclass FakeClock []
-  (defn #^ None __init__ [self] (setv self.now 0.0))
-  (defn #^ float __call__ [self] self.now))
-
-(defn #^ CoordinatorEndpoint endpoint [#^ FakeNet net #^ FakeClock clock #^ int [retries 0]]
-  (CoordinatorEndpoint f"{LAN},{TS}" 2.0 retries :transport (.transport net) :clock clock :pause (fn [s] None)))
-
-
-(deftest test-endpoint-prefers-the-first-address
-  (setv net (FakeNet) ep (endpoint net (FakeClock)))
-  (assert (= (get (.json (.request ep "GET" "/board")) "host") "lan"))
-  (assert (= ep.url LAN)))
-
-(deftest test-endpoint-falls-back-when-the-first-address-cannot-connect-and-stays
-  (setv net (FakeNet) clock (FakeClock) ep (endpoint net clock))
-  (.add net.down "lan")
-  (assert (= (get (.json (.request ep "GET" "/board")) "host") "tailnet"))
-  (assert (= ep.url TS))
-  ;; 回った後は tailnet を先に試す(毎回 LAN の接続の時間切れを払わない)
-  (.discard net.down "lan")
-  (setv clock.now 30.0)
-  (.request ep "GET" "/board")
-  (assert (= (get net.sent -1) #("tailnet" "/board")))
-  ;; 試し直しの時間が過ぎたら先頭(LAN)を先に試し、届けば戻る
-  (setv clock.now 61.0)
-  (.request ep "GET" "/board")
-  (assert (= (get net.sent -1) #("lan" "/board")))
-  (assert (= ep.url LAN)))
-
-(deftest test-endpoint-does-not-switch-on-a-failure-after-connecting
-  ;; 接続した後の失敗(読みの時間切れ)は宛先の問題と限らないので、次の宛先へ回らずに投げる
-  (setv net (FakeNet) ep (endpoint net (FakeClock)))
-  (.add net.read-fails "lan")
-  (with [(pytest.raises httpx.ReadTimeout)] (.request ep "GET" "/board"))
-  (assert (= ep.url LAN))
-  (assert (= net.sent [])))
-
-(deftest test-endpoint-raises-the-connect-failure-when-no-address-is-reachable
-  (setv net (FakeNet) ep (endpoint net (FakeClock) :retries 2))
-  (.update net.down #{"lan" "tailnet"})
-  (with [(pytest.raises httpx.ConnectTimeout)] (.request ep "GET" "/board")))
 
 (deftest test-heartbeat-silence-is-counted-across-an-address-switch
   ;; 自己停止の数え方(最後に届いた時刻)は宛先と無関係。宛先を替えても続き、替えた先で届けば 0 に戻る。

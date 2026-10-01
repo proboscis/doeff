@@ -39,7 +39,7 @@
 ;;;     本番では土台の HTTP の handler が coordinator へ送る物で、要求の形は本番の送り手と同じ関数(service_report.report-request・
 ;;;     shared_handlers.board-*-request / lease-request・remote.task-submit-body / outcome-of / settled-value・detached.detached-path /
 ;;;     detached-submit-body / detached-refusal / awaited-answer / warm-request-body)。何度送っても同じ意味の要求(読み・lease の claim と
-;;;     renew・切り離した task の口・温める表)は、本番の send-idempotent と同じ期限と間で、sim の時計で送り直す。どちらの答えも柵の内側に
+;;;     renew・切り離した task の口・温める表)は、本番の宛先の部品(resent-request)と同じ期限と間で、sim の時計で送り直す。どちらの答えも柵の内側に
 ;;;     在るので世界の effect を出さず、要求の列を値で受けて scheduler と時計の effect だけで coordinator と話す。
 ;;;   - 柵(fence)= host_contract.SIM-PASSABLE(scheduler と doeff-time の時計の effect)だけを外へ通し、それ以外を本番の子と同じ
 ;;;     doeff.UnhandledEffect で Program へ投げ返す — sim の外側(検の handler・sim の世界)が本番には無い答えを黙って返さない。
@@ -87,7 +87,7 @@
 ;;;   - 土台の関数の :needs が中の handler の :needs を漏らしていても見つからない(計画 9 の P — doeff-linter の照合は別便)。
 ;;;   - sim の土台は scheduler と時計を含まないので、本番の土台に scheduler を入れ忘れてもここでは見つからない(計画 7)。
 ;;;   - coordinator に届かない・断られた時の例外の型は RemoteJobFailed(本番は httpx の例外)。書きの要求は 1 回だけ送る(本番の
-;;;     CoordinatorEndpoint は接続の段の失敗だけを間を置いて 4 回まで送り直す)。
+;;;     宛先の部品の routed-request は接続の段の失敗だけを間を置いて 4 回まで送り直す)。
 ;;;   - 実行環境の root は準備の中身(git・uv・disk)を模擬しない(prepare-seconds の後に揃うか env-failure で終わる)。disk は常に ok。
 ;;;   - process の中で Spawn した task は 1 段の包み(tracked-child)の task として起きる(Program が受ける把手は包みの物 — 取り消し・待ち・
 ;;;     答えは同じ)。
@@ -794,7 +794,7 @@
 (defk send-resent [link method path query body]
   {:pre [(: link SimLink) (: method str) (: path str) (: query dict) (: body (| dict None))]
    :post [(: % tuple)] :tags {:context "doeff-cluster" :role "protocol"}}
-  "何度送っても同じ意味の要求を、届かなければ本番の send-idempotent と同じ期限(IDEMPOTENT-DEADLINE-SECONDS)と間(RESEND-PAUSE-SECONDS)で
+  "何度送っても同じ意味の要求を、届かなければ本番の宛先の部品(resent-request)と同じ期限(IDEMPOTENT-DEADLINE-SECONDS)と間(RESEND-PAUSE-SECONDS)で
    送り直すため(sim の時計で眠る)。答え = 最後の返事(期限を過ぎても届かなければ接続の失敗)。"
   (<- started int (now-epoch-ms))
   (var answer #(None {"error" "送っていない"}))
@@ -893,7 +893,7 @@
     (while (is outcome None)
       (<- (Delay TASK-POLL-SECONDS))
       (<- polled tuple (send-request link "GET" (+ "/tasks/" id) {} None))
-      ;; 届かない問い合わせは次の拍で送り直す(本番の send-idempotent と同じく、読みは何度送っても同じ意味)。
+      ;; 届かない問い合わせは次の拍で送り直す(本番の宛先の部品(resent-request)と同じく、読みは何度送っても同じ意味)。
       (when (= (get polled 0) 200)
         (:= outcome (outcome-of (get polled 1) id link.revision))))
     (finally
