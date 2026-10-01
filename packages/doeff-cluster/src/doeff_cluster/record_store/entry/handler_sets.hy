@@ -1,5 +1,5 @@
 ;;; record-store の handler の組 — 環境の違いは、ここに並ぶ「handler の組」という値だけで表す(coordinator の
-;;; coordinator/entry/handler_sets.hy と同じ形・agora-redesign #2542)。置き場の Program(record_store.core.program の store-loop)は環境を
+;;; coordinator/entry/handler_sets.hy と同じ形)。置き場の Program(record_store.core.program の store-loop)は環境を
 ;;; 知らない。
 ;;;
 ;;;   production-handlers  本番: HTTP の受付(RecordInbox — 別 thread の HTTP server)・本物の file system(os-file-handler)・

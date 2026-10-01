@@ -114,6 +114,19 @@ testpaths = [
     "packages/doeff-vm/tests",
     "packages/doeff-vm-core/tests",
 ]
+# Hy の検の file の集め手の 1 点(doeff-adr の pytest plugin が rootdir の下のどこでも集める・agora-redesign #2591)。
+# test を定義する file は関数ごとの item、定義しない「上から順に実行する script」は file ごと 1 つの item になる。
+# 日次の母集団の検(tests/test_daily_test_population.py)も同じこの値を読む — package ごとの conftest.py に条件を写さない。
+doeff_hy_test_files = ["test_*.hy"]
+# 外す一覧の 1 点: 今 緑でない Hy の検の file を、import せずに理由つきの skip として報告する(日次を赤にしない・
+# 外した数は走行の要約の skipped に毎回出る)。形は '<rootdir からの path> | <理由>'。直したら行を消す。
+doeff_hy_test_skips = [
+    "packages/doeff-hy/tests/test_defpipeline.hy | 赤(2026-10-02 実測): mock の handler を (defk mock-ohlc [effect k] …) で書き、defk が handler の形の引数を拒む(defhandler へ書き換えが要る・持ち主へ回した — agora-redesign #2591)",
+    "packages/doeff-hy/tests/test_duplicate_stages.hy | 赤(2026-10-02 実測): mock の handler を (defk mock [effect k] …) で書き、defk が handler の形の引数を拒む(defhandler へ書き換えが要る・持ち主へ回した — agora-redesign #2591)",
+    "packages/doeff-hy/tests/test_multimod.hy | 赤(2026-10-02 実測): mock の handler を (defk mock-price-handler [effect k] …) で書き、defk が handler の形の引数を拒む(defhandler へ書き換えが要る・持ち主へ回した — agora-redesign #2591)",
+    "packages/doeff-hy/tests/test_python_interop.hy | 赤(2026-10-02 実測): tests.multimod を名で import するが packages/doeff-hy/tests に __init__.py が無く ModuleNotFoundError(持ち主へ回した — agora-redesign #2591)",
+    "packages/doeff-hy/tests/test_stage_of.hy | 赤(2026-10-02 実測): mock の handler を (defk mock-ohlc [effect k] …) で書き、defk が handler の形の引数を拒む(defhandler へ書き換えが要る・持ち主へ回した — agora-redesign #2591)",
+]
 markers = [
     "e2e: tests that exercise external integrations and may require real API keys",
     "requires_opencode: tests that require a running OpenCode server",

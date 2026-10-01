@@ -1,5 +1,5 @@
 ;;; effect の記録の置き場の入口(composition root)。hy -m doeff_cluster.record_store.entry.main --root DIR [--port 8080] [--retention-days 30]
-;;; 入口の組み立ては 2 つに分ける(agora-redesign #2542): handler の組を選ぶ(handler_sets の production-handlers / emulated-handlers)と、
+;;; 入口の組み立ては 2 つに分ける: handler の組を選ぶ(handler_sets の production-handlers / emulated-handlers)と、
 ;;; その組の上で置き場の Program を回す(record-store-on)。模擬の環境は同じ record-store-on を emulated-handlers の上で回す。
 (require doeff-hy.macros [defk <- val])
 (val MODULE-TAGS {:context "record-store" :role "main"})

@@ -2,6 +2,7 @@
 
 - Hy import hook を有効化する(``*_deftests.hy`` の import に必要)。
 - deftest の実行時 interpreter fixture を供給する。
+- Hy の ``test_*.hy`` の集め手は root の ini の ``doeff_hy_test_files``(doeff-adr の plugin の 1 点)— この conftest は集めない(``*_deftests.hy`` は名が ``test_`` で始まらないので集まらず、従来どおり ``test_*.py`` が公開する)。
 
 責務境界(ADR-DOE-HY-002 R2/R3): deftest params の受け渡しは doeff-hy が、
 収集は doeff-adr の pytest plugin が所有し、**実行時 fixture は消費側**
@@ -29,20 +30,6 @@ TESTS_DIR = Path(__file__).resolve().parent
 # (pytest は検の file の dir を遅れて足すので、他の testpaths と一緒に集めた時に備える)。
 if str(TESTS_DIR) not in sys.path:
     sys.path.insert(0, str(TESTS_DIR))
-
-
-def pytest_collect_file(file_path: Path, parent: pytest.Collector) -> pytest.Collector | None:
-    """Hy の ``test_*.hy`` をこの dir の中だけで直に集める(doeff-cluster の tests と同じ形)。
-
-    Python の包み直しの file を足さずに Hy の deftest を公開する(agora-redesign #608)。
-    ``*_deftests.hy`` は従来どおり ``test_*.py`` が公開する — 名が ``test_`` で始まらない
-    ので、ここでは集めない。
-    """
-    if file_path.suffix == ".hy" and file_path.name.startswith("test_"):
-        from doeff_adr.pytest_plugin import DoeffAdrHyFile
-
-        return DoeffAdrHyFile.from_parent(parent, path=file_path)
-    return None
 
 
 # 契約テストでない deftest の名: handler は各 deftest が本体の中で被せる。

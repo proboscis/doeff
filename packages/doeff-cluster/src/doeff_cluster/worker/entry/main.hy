@@ -7,7 +7,7 @@
 ;;; worker が job を受けるのは coordinator からだけ — 宣言の file から生の entry と args の job を直に起こす口(旧い --desired)は無い
 ;;; (job は Program の値 1 つ・ADR-DOE-CLUSTER-001 R1・R7)。
 ;;;
-;;; 入口の組み立ては 2 つに分ける(agora-redesign #2542): handler の組を選ぶ(production-handlers — 本番の組)と、その組の上で worker の
+;;; 入口の組み立ては 2 つに分ける: handler の組を選ぶ(production-handlers — 本番の組)と、その組の上で worker の
 ;;; Program を回す(worker-on)。模擬の環境(sim/local.hy の worker の世代)は、同じ worker-on を偽の宿の組(sim-host)の上で回す。
 (require doeff-hy.macros [defk <- val])
 (val MODULE-TAGS {:context "worker" :role "main"})
