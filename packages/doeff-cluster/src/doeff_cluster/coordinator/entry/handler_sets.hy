@@ -11,7 +11,7 @@
 ;;;                        持たない。
 ;;;
 ;;; 組は with_handlers に渡す list(外側が先)。選ぶのは composition root(coordinator.main・業務の側の模擬環境)だけ。
-;;; 本番の受付の handler は foundation/coordinator_inbox.hy(coordinator.hy から分けた — この module と coordinator.hy の循環を作らない)。
+;;; 本番の受付の handler は shared/protocol/inbox.hy(箱は foundation/coordinator_inbox.hy・CoordinatorFault は coordinator/protocol/faults.hy — coordinator.hy から分けた — この module と coordinator.hy の循環を作らない)。
 (require doeff-hy.macros [defhandler defk <- val var])
 (import doeff_cluster.coordinator.protocol.request_bodies [request-bodies])
 (val MODULE-TAGS {:context "coordinator" :role "main"})
@@ -21,12 +21,12 @@
 (import doeff_cluster.coordinator.protocol.request_queue [RequestQueue queued-requests])
 (import doeff_cluster.foundation.wal_store [WalStore MAX-LOG-BYTES apply-delta] doeff_cluster.coordinator.protocol.store [wal-store])
 (import doeff_cluster.coordinator.protocol.kube [KubeMemory kube-memory])
-(import doeff_cluster.foundation.coordinator_inbox [RequestInbox StopState http-requests stop-flag])
+(import doeff_cluster.foundation.coordinator_inbox [RequestInbox StopState] doeff_cluster.shared.protocol.inbox [http-requests stop-flag] doeff_cluster.coordinator.protocol.faults [coordinator-faults])
 
 
 (defn #^ list production-handlers [#^ RequestInbox inbox #^ WalStore store #^ StopState stop #^ object kube]
   "本番の組(外側が先)。kube = kube-api か kube-unavailable(資格の有無は composition root が決める)。"
-  [(await-handler) (async-time-handler) (stop-flag stop) (wal-store store) (http-requests inbox) kube request-bodies])
+  [(await-handler) (async-time-handler) (stop-flag stop) (wal-store store) (http-requests inbox) coordinator-faults kube request-bodies])
 
 
 ;; --- まねた環境 -------------------------------------------------------------------------------

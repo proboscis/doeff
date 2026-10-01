@@ -6,7 +6,7 @@
 (import doeff_cluster.coordinator.intent.cluster_model [ClusterState])
 (import doeff_cluster.coordinator.intent.request_bodies [LeaseBody TaskResultBody DrainBody BoardWrite BodyMalformed])
 (import doeff_cluster.coordinator.protocol.request_bodies [body-of responded])
-(import doeff_cluster.foundation.coordinator_inbox [http-request])
+(import doeff_cluster.shared.protocol.inbox [http-request])
 
 (val T (ClusterTiming))
 

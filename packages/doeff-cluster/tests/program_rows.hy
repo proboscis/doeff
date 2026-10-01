@@ -10,7 +10,7 @@
 (import doeff [run])
 (import doeff_cluster.coordinator.intent.request_bodies [ProgramBody HeartbeatBody TaskBody BodyMalformed])
 (import doeff_cluster.coordinator.protocol.request_bodies [body-of])
-(import doeff_cluster.foundation.coordinator_inbox [http-request])
+(import doeff_cluster.shared.protocol.inbox [http-request])
 (import doeff_cluster.shared.intent.protocol [BodyInvalid])
 (import doeff_cluster.shared.intent.remote_model [program-sha])
 
