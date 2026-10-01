@@ -2,7 +2,7 @@
 ;; JSON の形は coordinator/protocol/replies が綴る。検の入口 responded と、本番と模擬の組の返事の答え手 reply-bodies は同じ綴りを通る。
 (require doeff-hy.macros [deftest val])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming])
-(import doeff_cluster.coordinator.intent.cluster_model [ClusterState EventsView StateReply HeartbeatReply WorkerInfo WorkerDrainView])
+(import doeff_cluster.coordinator.intent.cluster_model [ClusterState EventsView StateReply HeartbeatReply WorkerInfo WorkerDrainView ResourceList ResourceView])
 (import doeff_cluster.coordinator.core.cluster_policy [heartbeat-reply])
 (import doeff_cluster.coordinator.core.drain_policy [superseded-worker-view])
 (import doeff_cluster.shared.protocol.inbox [http-request])
@@ -70,3 +70,20 @@
              ["blocked" "boot" "drained" "moving" "movingReady" "phase" "remaining" "superseded" "worker"])
           old)
   (assert (= #((get old "drain" "phase") (get old "drain" "drained") (get old "drain" "boot")) #("Drained" True "b1")) old))
+
+
+(deftest test-the-resources-are-typed-and-spelled-in-the-old-shape
+  ;; 資源の一覧と 1 つは型の値(ResourceList・ResourceView)で、status は比べる単位の status に種類ごとの観測を足した物。
+  (setv s (ClusterState :workers {"w1" (WorkerInfo :name "w1" :provides #("cpu") :capacity 1 :last-seen-ms 1000 :boot "b2")}))
+  (setv #(_ _ answer) (respond s (http-request "GET" "/resources/Worker" {} None) 2000 T {}))
+  (assert (isinstance answer ResourceList) answer)
+  (assert (all (gfor v answer.items (isinstance v ResourceView))) answer)
+  (setv body (reply-json answer))
+  (assert (= (sorted body) ["items" "kind" "revision"]) body)
+  (setv item (get body "items" 0))
+  (assert (= (sorted item) ["createdBy" "createdMs" "generation" "kind" "name" "owner" "resourceVersion" "spec" "status" "updatedBy"
+                            "updatedMs"])
+          item)
+  (assert (= #((get item "name") (get item "status" "live") (get item "status" "alive") (get item "status" "silentMs"))
+             #("w1" True True 1000))
+          item))

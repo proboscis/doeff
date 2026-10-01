@@ -15,10 +15,10 @@
 (import json)
 (import typing [NoReturn])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming BodyInvalid])
-(import doeff_cluster.coordinator.intent.cluster_model [ClusterJob ClusterState Placement HandoffPhase UnplacedKind NotReadyKind VersionState VersionVerdict LiveProcess ResourceMeta AuditEvent EventsView ServiceBody LegacyJobRow RolloutRow RolloutStatus RolloutTarget])
+(import doeff_cluster.coordinator.intent.cluster_model [ClusterJob ClusterState Placement HandoffPhase UnplacedKind NotReadyKind VersionState VersionVerdict LiveProcess ResourceMeta AuditEvent EventsView ServiceBody ServiceObserved WorkerObserved TaskObserved RolloutObserved ResourceView ResourceList LegacyJobRow RolloutRow RolloutStatus RolloutTarget])
 (import doeff_cluster.coordinator.core.cluster_rules [int-field])
 (import doeff_cluster.shared.core.job_rules [spec-hash] doeff_cluster.shared.intent.job_model [JobPhase])
-(import doeff_cluster.coordinator.core.cluster_policy [job-to-json status-row-to-json alive still-live-somewhere service-rows unplaced-kind unplaced-text task-summary resource-version-of])
+(import doeff_cluster.coordinator.core.cluster_policy [job-to-json alive still-live-somewhere service-rows unplaced-kind unplaced-text resource-version-of])
 (import doeff_cluster.coordinator.core.rollout_policy [validate-rollout-spec rollout-spec-to-json rollout-status-to-json rollout-targets target-key TERMINAL-PHASES])
 (import doeff [run])
 (import doeff_cluster.coordinator.intent.request_bodies [ReadinessBody MetricsBody ResourceBody StatusRow])
@@ -202,7 +202,7 @@
 
 
 (defn #^ tuple live-processes [#^ ClusterState state #^ str name #^ int now #^ ClusterTiming timing]
-  ;; defk にできない: coordinator の純粋な判断(Program の外 — resource-json と version-state)が呼ぶ
+  ;; defk にできない: coordinator の純粋な判断(Program の外 — observed-of と version-state)が呼ぶ
   "Service name の process が生きている行の版と、入れ替えで退いた旧い process か(status.version.running — 事実の列で、判定ではない)。
    母集団は still-live-somewhere と同じ(cluster_policy.service-rows)で、phase は PROCESS-PHASES。drain で並べた置き先の process も入る。"
   (tuple (gfor row (service-rows now state name timing)
@@ -291,7 +291,7 @@
 
 
 (defn #^ VersionVerdict version-state [#^ ClusterState state #^ str name #^ int now #^ ClusterTiming timing]
-  ;; defk にできない: coordinator の純粋な判断(Program の外 — snapshot と resource-json)が呼ぶ
+  ;; defk にできない: coordinator の純粋な判断(Program の外 — snapshot と observed-of)が呼ぶ
   "Service name の指定の版が実際に仕事をしているか(status.version)。上から順に判定する:
    受け付けていない宣言 → Blocked・止まっている(service-stopped)→ Stopped・担い手の報告が途絶えている(running-process の
    Unknown)→ Unknown・入れ替えを諦めた → Blocked・running-process が ok でない → 理由の種類と phase で Updating / Blocked・
@@ -322,13 +322,6 @@
     True (VersionVerdict :state VersionState.CURRENT :reason "")))
 
 
-(defn #^ dict version-json [#^ VersionVerdict verdict #^ tuple live]
-  ;; defk にできない: 資源の見せる形(Program の外 — resource-json)が呼ぶ JSON の境界
-  "status.version の JSON の形(資源の口の境界): {state reason running: [{revision retired}]}。"
-  {"state" verdict.state.value "reason" verdict.reason
-   "running" (lfor p live {"revision" p.revision "retired" p.retired})})
-
-
 (defn #^ ClusterState record-readiness [#^ ClusterState state #^ str name #^ ReadinessBody body #^ int now]
   (when (not (any (gfor j state.jobs (= j.spec.name name))))
     (refuse 404 (+ "無い Service: " name)))
@@ -355,7 +348,7 @@
            "status" (| {"worker" (if a a.worker None) "placement" (if a a.generation None)
                         "ready" (get (service-readiness state job.spec.name now timing) "state")
                         ;; 版の判定の状態(2026-09-29 — ready と同じく、変わった時に出来事と resourceVersion を進める)。理由と動いている
-                        ;; 版の列は変わりやすい観測なので入れない(resource-json が組む)。
+                        ;; 版の列は変わりやすい観測なので入れない(observed-of が組む)。
                         "version" {"state" (. (version-state state job.spec.name now timing) state value)}}
                        ;; drain で並べた置き先(2026-09-25)。在る間だけ載せる(無い Service の status の形・版は以前と同じ)。
                        (if (in job.spec.name state.surges)
@@ -463,47 +456,48 @@
 
 ;; --- 見せる形 --------------------------------------------------------------------------------
 
-(defn #^ dict resource-json [#^ ClusterState state #^ str key #^ dict snap #^ int now #^ ClusterTiming timing]
-  (setv #(kind name) (split-key key) m (.get state.meta key) row (get snap key))
-  (setv status (dict (get row "status")))
+(defn #^ (| ServiceObserved WorkerObserved TaskObserved RolloutObserved None) observed-of
+  [#^ ClusterState state #^ str kind #^ str name #^ int now #^ ClusterTiming timing]
+  "資源の種類ごとの変わりやすい観測(比べる単位 snapshot に入れない物 — 資源の画面に足す)。"
   (cond
     (= kind "Service")
-      (do (setv a (.get state.placements name) verdict (service-readiness state name now timing)
-                reports (.get state.readiness name)
-                process (if a (job-status-row state a.worker name) None))
-          (.update status {"readyReason" (get verdict "reason")
-                           "lastReadiness" (if reports (get reports -1) None)
-                           "process" (if (is process None) None (status-row-to-json process))
+      (do (setv a (.get state.placements name) reports (.get state.readiness name))
+          (ServiceObserved :ready-reason (get (service-readiness state name now timing) "reason")
+                           :last-readiness (if reports (get reports -1) None)
+                           :process (if a (job-status-row state a.worker name) None)
                            ;; 版の判定(state は snapshot と同じ値)と、その理由・動いている版の列(2026-09-29)。
-                           "version" (version-json (version-state state name now timing) (live-processes state name now timing))}))
+                           :version (version-state state name now timing)
+                           :running (live-processes state name now timing)))
     (= kind "Worker")
       (do (setv w (get state.workers name))
-          (.update status {"silentMs" (- now w.last-seen-ms) "alive" (alive now w timing.lease-ms)}))
-    (= kind "Task") (.update status (task-summary (get state.tasks name)))
+          (WorkerObserved :silent-ms (- now w.last-seen-ms) :alive (alive now w timing.lease-ms)))
+    (= kind "Task") (TaskObserved :task (get state.tasks name))
     (= kind "Rollout")
-      (.update status {"observed" (dfor t (rollout-targets (. (get state.rollouts name) spec))
-                                        :if (= t.kind "Deployment")
-                                        (target-key t) (.get state.deployments (+ t.namespace "/" t.name)))}))
-  {"kind" kind "name" name
-   "resourceVersion" (if m m.resource-version None) "generation" (if m m.generation None)
-   "owner" (.get (get row "spec") "owner")
-   "createdBy" (if m m.created-by None) "createdMs" (if m m.created-ms None)
-   "updatedBy" (if m m.updated-by None) "updatedMs" (if m m.updated-ms None)
-   "spec" (get row "spec") "status" status})
+      (RolloutObserved :observed (dfor t (rollout-targets (. (get state.rollouts name) spec))
+                                       :if (= t.kind "Deployment")
+                                       (target-key t) (.get state.deployments (+ t.namespace "/" t.name))))
+    True None))
 
 
-(defn #^ dict list-resources [#^ ClusterState state #^ str kind #^ int now #^ ClusterTiming timing]
+(defn #^ ResourceView resource-view [#^ ClusterState state #^ str key #^ dict snap #^ int now #^ ClusterTiming timing]
+  "資源 1 つの画面(JSON は coordinator/protocol/replies が綴る — #2595)。"
+  (setv #(kind name) (split-key key) row (get snap key))
+  (ResourceView :kind kind :name name :meta (.get state.meta key) :spec (get row "spec") :status (get row "status")
+                :observed (observed-of state kind name now timing)))
+
+
+(defn #^ ResourceList list-resources [#^ ClusterState state #^ str kind #^ int now #^ ClusterTiming timing]
   (when (not-in kind KINDS) (refuse 404 (+ "知らない kind: " kind)))
   (setv snap (snapshot state now timing))
-  {"kind" kind "revision" state.revision
-   "items" (lfor key (sorted snap) :if (.startswith key (+ kind "/")) (resource-json state key snap now timing))})
+  (ResourceList :kind kind :revision state.revision
+                :items (tuple (gfor key (sorted snap) :if (.startswith key (+ kind "/")) (resource-view state key snap now timing)))))
 
 
-(defn #^ dict get-resource [#^ ClusterState state #^ str kind #^ str name #^ int now #^ ClusterTiming timing]
+(defn #^ ResourceView get-resource [#^ ClusterState state #^ str kind #^ str name #^ int now #^ ClusterTiming timing]
   (when (not-in kind KINDS) (refuse 404 (+ "知らない kind: " kind)))
   (setv snap (snapshot state now timing) key (key-of kind name))
   (when (not-in key snap) (refuse 404 (+ "無い資源: " key)))
-  (resource-json state key snap now timing))
+  (resource-view state key snap now timing))
 
 
 (defn #^ EventsView events-view [#^ ClusterState state #^ dict query]

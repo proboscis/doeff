@@ -499,6 +499,51 @@
   (#^ bool retired))
 
 
+(defrecord ServiceObserved
+  "資源の画面の Service の観測(resource_policy.resource-view — #2595): ready-reason = 準備の判定の理由・last-readiness = 最後の準備の報告
+   (状態の readiness の行のまま)・process = 置き先の worker の最後の報告の行・version = 版の判定・running = 生きている process の版の列。"
+  (#^ str ready-reason)
+  (#^ (| dict None) last-readiness)
+  (#^ (| StatusRow None) process)
+  (#^ VersionVerdict version)
+  (#^ (get tuple #(LiveProcess ...)) running))
+
+
+(defrecord WorkerObserved
+  "資源の画面の Worker の観測: silent-ms = 最後の連絡からの長さ・alive = heartbeat が lease の内か。"
+  (#^ int silent-ms)
+  (#^ bool alive))
+
+
+(defrecord TaskObserved
+  "資源の画面の Task の観測: task = task の行(要約の JSON は protocol が綴る)。"
+  (#^ TaskRecord task))
+
+
+(defrecord RolloutObserved
+  "資源の画面の Rollout の観測: observed = 相手の Deployment の鍵 → 最後に見た Deployment の観測(状態の deployments の行のまま・無ければ None)。"
+  (#^ (get dict #(str (| dict None))) observed))
+
+
+(defrecord ResourceView
+  "GET /resources/<種類>/<名> の資源 1 つ(resource_policy.resource-view — #2595): kind・name・meta = 版の記録(無ければ None)・spec と status =
+   版を進める比べる単位(resource_policy.snapshot の行 — 差分が出来事の記録の changes に JSON の値のまま残るので、ここも JSON の値で持つ)・
+   observed = 種類ごとの変わりやすい観測(比べる単位に入れない物)。JSON の形は coordinator/protocol/replies が綴る。"
+  (#^ str kind)
+  (#^ str name)
+  (#^ (| ResourceMeta None) meta)
+  (#^ dict spec)
+  (#^ dict status)
+  (#^ (| ServiceObserved WorkerObserved TaskObserved RolloutObserved None) observed))
+
+
+(defrecord ResourceList
+  "GET /resources/<種類> の答え: kind・revision = coordinator 全体の版・items = 資源の画面の列(鍵の順)。"
+  (#^ str kind)
+  (#^ int revision)
+  (#^ (get tuple #(ResourceView ...)) items))
+
+
 (defclass [(dataclass :frozen True)] ClusterNaming []
   "クラスタが外の系(k8s の Deployment・Node)と取り交わす名。どれも配備する側(composition root の引数)が決める。
    owner-annotation = Rollout が台数を持つ Deployment に付ける annotation の鍵。
