@@ -36,7 +36,7 @@
 (import doeff_core_effects.scheduler [Spawn TaskCompleted Gather Wait Race Cancel CreatePromise CompletePromise FailPromise
                                       CreateExternalPromise CreateSemaphore AcquireSemaphore ReleaseSemaphore])
 (import doeff_time [DelayEffect GetTimeEffect GetMonotonicEffect WaitUntilEffect])
-(import .job_context [RunContext context-from-env])
+(import doeff_cluster.job_context [RunContext context-from-env])
 
 
 (defrecord HostContract

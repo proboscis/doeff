@@ -23,7 +23,7 @@
 (import doeff_cluster.shared.intent.detached_model [SubmitDetached AwaitDetached ReadRunners
                                       DetachedSucceeded DetachedLost DetachedUnrunnable DetachedPending DetachedUnreachable
                                       RunnerFact RunnersUnreachable])
-(import doeff_cluster.detached [detached-cluster DetachedClient])
+(import doeff_cluster.shared.protocol.detached [detached-cluster DetachedClient])
 (import doeff_cluster.sim.local [sim-cluster SimWorker KillWorker DrainWorker StopWorker StartWorker StopCoordinator ProcessesOf
                              ReadCoordinator])
 (import doeff_cluster.shared.intent.service_model [system-of])

@@ -15,7 +15,7 @@
 (import doeff_cluster.shared.core.clock [now-epoch-ms])
 (import doeff_cluster.shared.intent.process_model [AwaitProcessEnded ProcessEnded ProcessWaitExpired])
 (import doeff_cluster.shared.intent.detached_model [SubmitDetached AwaitDetached DetachedSucceeded DetachedPending])
-(import doeff_cluster.detached [process-watch-step ProcessWatch])
+(import doeff_cluster.shared.protocol.detached [process-watch-step ProcessWatch])
 (import tests.fixtures.envs [sim-foundation])
 (import tests.fixtures.sim_programs [long-quitters pulses slow-task sim-task-foundation NET])
 
