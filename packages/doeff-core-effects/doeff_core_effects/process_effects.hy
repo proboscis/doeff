@@ -36,7 +36,9 @@
 ;;;   RunProcess        子 process を 1 回走らせて終わりを待つ。答え = ProcessOutcome。
 ;;;   ExecutableAt      その path に実行できる file が在るか。答え = bool。symlink は辿った先で判じ、dir・無い path・file でない物は実行の bit が
 ;;;                     あっても False(判断は executable-file-answer の 1 か所 — 本物と I/O なしの答え手が同じ関数を呼ぶ)。
-;;;   ReadEnvironment   自分の process の環境変数のうち names の分。答え = 在る分だけの EnvEntry の tuple(names の順)。
+;;;   ReadEnvironment   自分の process の環境変数のうち names の分。答え = 在る分だけの EnvEntry の tuple(names の順)。prefixes(#2472・
+;;;                     既定 #())= 頭がどれかで始まる名も拾う(LC_* など — 名を前もって知らない一族)。拾った分は names の分の後に名の順で続く。
+;;;                     答えを組むのは本物と台本が同じ関数 environment-answer。
 ;;;   WorkingDirectory  自分の process の作業 dir(絶対 path)。
 ;;;   ProcessAlive      pid の process が生きているか。答え = bool(本物 = signal 0 を送れるか・送る権限が無いだけの process は生きている)。
 ;;;   ReadInterpreter   自分の process の Python の interpreter の事実。答え = InterpreterFacts(prefix = sys.prefix を symlink まで解いた絶対
@@ -136,8 +138,21 @@
 
 
 (defclass [(dataclass :frozen True)] ReadEnvironment [EffectBase]
-  "自分の process の環境変数のうち names の分を読む(頭の註)。"
-  (#^ (get tuple #(str ...)) names))
+  "自分の process の環境変数のうち names の分と、prefixes のどれかで始まる名の分を読む(頭の註)。"
+  (#^ (get tuple #(str ...)) names)
+  (setv #^ (get tuple #(str ...)) prefixes #()))
+
+
+(defk environment-answer [present names prefixes]
+  {:pre [(: present tuple) (: names tuple) (: prefixes tuple)] :post [(: % tuple)] :tags {:context "process" :role "judgment"}}
+  "ReadEnvironment の答えを、本物(os.environ)と台本(ProcessScript の env)が同じ規則で組むため(#2472): present = 在る環境変数の
+   #(名 値) の列。答え = names の順に在る分、続けて prefixes のどれかで始まる名(names に無い物)を名の順に — 同じ名は 1 度だけ。"
+  (val values (dict present))
+  (val named (tuple (gfor name names :if (in name values) (EnvEntry :name name :value (get values name)))))
+  (val prefixed (tuple (gfor name (sorted values)
+                             :if (and (not-in name names) (any (gfor p prefixes (.startswith name p))))
+                             (EnvEntry :name name :value (get values name)))))
+  (+ named prefixed))
 
 
 (defclass [(dataclass :frozen True)] WorkingDirectory [EffectBase]

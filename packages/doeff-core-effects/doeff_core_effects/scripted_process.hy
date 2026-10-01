@@ -39,7 +39,7 @@
                                             ProcessAlive StartProcess PollProcess StopProcess ProcessStarted ProcessNotStarted
                                             ProcessRunning ProcessExited ProcessNotChild SignalProcess ProcessSignal ProcessSignalled
                                             ReadInterpreter ResolveModule InterpreterFacts ModuleFound ModuleNotFound
-                                            not-started-outcome start-refusal executable-file-answer])
+                                            not-started-outcome start-refusal executable-file-answer environment-answer])
 (import doeff_core_effects.file_effects [PathKind PathStat StatPath MakeDirectory AppendText FileFailed])
 
 
@@ -170,8 +170,9 @@
   (ExecutableAt [path]
     (<- found bool (scripted-executable-at script.commands path))
     (resume found))
-  (ReadEnvironment [names]
-    (resume (tuple (gfor name names e script.env :if (= e.name name) e))))
+  (ReadEnvironment [names prefixes]
+    (<- found tuple (environment-answer (tuple (gfor e script.env #(e.name e.value))) names prefixes))
+    (resume found))
   (WorkingDirectory []
     (:= jobs (+ jobs 1))
     (val work (posixpath.join script.work-root (.format "job-{}" jobs)))

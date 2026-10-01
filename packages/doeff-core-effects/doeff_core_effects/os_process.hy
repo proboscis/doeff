@@ -28,7 +28,7 @@
                                             ProcessAlive StartProcess PollProcess StopProcess ProcessStarted ProcessNotStarted
                                             ProcessRunning ProcessExited ProcessNotChild SignalProcess ProcessSignal ProcessSignalled
                                             ReadInterpreter ResolveModule InterpreterFacts ModuleFound ModuleNotFound
-                                            timed-out-outcome not-started-outcome executable-file-answer])
+                                            timed-out-outcome not-started-outcome executable-file-answer environment-answer])
 
 ;; offloaded-subprocess-handler の thread(呼び 1 つに 1 本 — 同時の数の上限は呼び手が並べる数)。
 (val PROCESS-THREADS (ThreadPerCall))
@@ -402,8 +402,9 @@
   (ExecutableAt [path]
     (<- found (os-executable-at path))
     (resume found))
-  (ReadEnvironment [names]
-    (resume (tuple (gfor name names :if (in name os.environ) (EnvEntry :name name :value (get os.environ name))))))
+  (ReadEnvironment [names prefixes]
+    (<- found tuple (environment-answer (tuple (.items os.environ)) names prefixes))
+    (resume found))
   (WorkingDirectory []
     (resume (os.getcwd)))
   (ProcessAlive [pid]
@@ -440,8 +441,9 @@
   (ExecutableAt [path]
     (<- found (os-executable-at path))
     (resume found))
-  (ReadEnvironment [names]
-    (resume (tuple (gfor name names :if (in name os.environ) (EnvEntry :name name :value (get os.environ name))))))
+  (ReadEnvironment [names prefixes]
+    (<- found tuple (environment-answer (tuple (.items os.environ)) names prefixes))
+    (resume found))
   (WorkingDirectory []
     (resume (os.getcwd)))
   (ProcessAlive [pid]
