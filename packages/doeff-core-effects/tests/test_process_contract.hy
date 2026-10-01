@@ -95,6 +95,15 @@
   (assert (= seen #((EnvEntry :name "DOEFF_SHADOWED" :value "親") (EnvEntry :name "DOEFF_INHERITED" :value "継いだ"))) seen))
 
 
+
+(deftest test-the-own-environment-is-read-by-prefix
+  ;; prefixes(#2472)は頭で始まる名も拾う — names の分の後に名の順で続き、names に在る名は 2 度出さない。
+  {:interpreters ["subprocess" "offloaded-subprocess" "scripted-process"]}
+  (<- seen tuple (ReadEnvironment #("DOEFF_SHADOWED") :prefixes #("DOEFF_INHERIT" "DOEFF_SHADOW")))
+  (assert (= seen #((EnvEntry :name "DOEFF_SHADOWED" :value "親") (EnvEntry :name "DOEFF_INHERITED" :value "継いだ"))) seen)
+  (<- none tuple (ReadEnvironment #() :prefixes #("DOEFF_NO_SUCH_")))
+  (assert (= none #()) none))
+
 (deftest test-the-child-runs-in-the-given-directory
   {:interpreters ["subprocess" "offloaded-subprocess" "scripted-process"]}
   (<- root str (ContractRoot))

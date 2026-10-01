@@ -47,6 +47,7 @@ class ExecutableAt(EffectBase):
 @dataclass(frozen=True)
 class ReadEnvironment(EffectBase):
     names: tuple[str, ...]
+    prefixes: tuple[str, ...] = ()
 
 @dataclass(frozen=True)
 class WorkingDirectory(EffectBase): ...
