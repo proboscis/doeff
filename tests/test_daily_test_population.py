@@ -5,10 +5,12 @@ pytest(`make test-packages`)・Rust crate ごとの cargo test(`make test-rust`)
 (母集団ごとに別の処理ステージ)は ADR の deftest
 test-adr-doe-enforce-001-daily-populations-are-separate-stages が持ち、ここは挙動の本体を持つ:
 
-- package の loop は期待の集合を全部訪ね、赤の後も続け、最後に失敗の package を名指す。
+- package の loop は期待の集合と package の tests/ の外の根(Makefile の PACKAGE_EXTRA_TEST_ROOTS)を
+  全部訪ね、赤の後も続け、最後に失敗の package を名指す。
 - package の失敗名は repo の根からの相対で、package をまたいで衝突しない(日次の道具は失敗名を
   要約の行から逐語で取り、repo の根から pytest へそのまま渡す)。
-- test 名の file はどれかの母集団の根の下か、理由つきの除外の表に在る。
+- 検の file(`.py` と `.hy` — 定義は `_test_file_patterns` の 1 点)はどれかの母集団の根の下か、
+  理由つきの除外の表に在る。
 - package は自分の pytest の設定を持たない(持つと root の ini と conftest が効かなくなる)。
 
 反例の実弾: 2026-09-24 の日次(断面 f271ae39)は root の赤 3 本で `&&` が止まり、package と
@@ -25,14 +27,47 @@ import os
 import re
 import subprocess
 import sys
+from collections.abc import Iterator
 from pathlib import Path
+from typing import Any
 
+import pytest
 import tomllib
+from doeff_adr.pytest_plugin import DEFAULT_FILE_PATTERNS as ADR_FILE_PATTERNS
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
-# pytest の既定の収集規則(root の ini は python_files を変えていない)。
-_TEST_FILE_NAME = re.compile(r"(^|/)(test_[^/]*|[^/]*_test)\.py$")
+# pytest の既定の python_files(root の ini が python_files を書けば、そちらを読む)。
+_PYTEST_PYTHON_FILES = ("test_*.py", "*_test.py")
+# Hy の deftest の file。各 package の conftest.py の pytest_collect_file が DoeffAdrHyFile で集める条件
+# (`file_path.suffix == ".hy" and file_path.name.startswith("test_")`)と同じ。
+_HY_TEST_FILES = ("test_*.hy",)
+
+
+def _test_file_patterns(repo: Path) -> tuple[str, ...]:
+    """「何が検の file か」の定義の 1 点 — pytest が集める 3 つの経路の名の規則。
+
+    - Python の検: root の ini の python_files(既定は pytest の既定)。
+    - Hy の deftest の file: test_*.hy(各 conftest.py の収集の条件)。
+    - executable ADR: doeff-adr の plugin の既定の pattern と root の ini の doeff_adr_hy_files。
+
+    `.py` だけを数えていた時は、母集団の外の `.hy` の検が日次で走らなくても赤にならなかった
+    (#2542 の packages/doeff-cluster/src/doeff_cluster/sim/test_entries_on_sim.hy・agora-redesign #2577)。
+    """
+    ini = _root_ini(repo)
+    return (
+        *ini.get("python_files", _PYTEST_PYTHON_FILES),
+        *_HY_TEST_FILES,
+        *ADR_FILE_PATTERNS,
+        *ini.get("doeff_adr_hy_files", ()),
+    )
+
+
+def _is_test_file(rel: str, patterns: tuple[str, ...]) -> bool:
+    """pytest の照合と同じ: `/` を含まない pattern は file の名に、含む pattern は repo の根からの path に当てる。"""
+    name = rel.rsplit("/", 1)[-1]
+    return any(fnmatch.fnmatchcase(rel if "/" in p else name, p) for p in patterns)
+
 
 # 歩かない dir = pytest の既定の norecursedirs + build の出力(target・__pycache__)。
 # 日次の遠隔の検査の木には .git が無く(remote_check は git の名簿の file だけを送る)、
@@ -74,37 +109,41 @@ EXCLUDED: dict[str, str] = {
 
 
 def _expected_packages(repo: Path) -> list[str]:
-    """package の母集団の期待 — `packages/<p>/tests` の下に fixtures 以外の test_*.py か test_*.hy が在る p の全部。
+    """package の母集団の期待 — `packages/<p>/tests` の下に fixtures 以外の検の file が在る p の全部。
 
     Makefile の実走からは取らない: 期待を実装から取ると、Makefile が母集団を縮めた時に
     訪ねた集合と期待が一緒に縮んで緑のまま残る(盲検 B の反例)。
     """
+    files = _test_named_files(repo)
     return sorted(
-        tests_dir.parent.name
-        for tests_dir in (repo / "packages").glob("*/tests")
-        if tests_dir.is_dir()
-        and any(
-            "fixtures" not in path.relative_to(tests_dir).parts
-            for pattern in ("test_*.py", "test_*.hy")
-            for path in tests_dir.rglob(pattern)
-        )
+        {
+            parts[1]
+            for parts in (path.split("/") for path in files)
+            if len(parts) > 3 and parts[0] == "packages" and parts[2] == "tests"
+        }
     )
 
 
 def _test_named_files(repo: Path) -> list[str]:
-    """repo の test 名の file(fixtures の下を除く)の repo の根からの相対 path。"""
-    found: list[str] = []
+    """repo の検の file(`_test_file_patterns` に当たる・fixtures の下を除く)の repo の根からの相対 path。"""
+    patterns = _test_file_patterns(repo)
+    return sorted(
+        rel
+        for current, dirs, files in _walk(repo)
+        for rel in (Path(current, name).relative_to(repo).as_posix() for name in files)
+        if _is_test_file(rel, patterns) and "fixtures" not in rel.split("/")
+    )
+
+
+def _walk(repo: Path) -> Iterator[tuple[str, list[str], list[str]]]:
+    """`_NOT_WALKED` の dir へ降りない os.walk。"""
     for current, dirs, files in os.walk(repo):
         dirs[:] = sorted(
             name
             for name in dirs
             if not any(fnmatch.fnmatchcase(name, pattern) for pattern in _NOT_WALKED)
         )
-        for name in files:
-            rel = Path(current, name).relative_to(repo).as_posix()
-            if _TEST_FILE_NAME.search(rel) and "fixtures" not in rel.split("/"):
-                found.append(rel)
-    return sorted(found)
+        yield current, dirs, files
 
 
 def _is_under(path: str, root: str) -> bool:
@@ -115,9 +154,62 @@ def _is_excluded(path: str, row: str) -> bool:
     return path == row or (row.endswith("/") and path.startswith(row))
 
 
-def _root_testpaths(repo: Path) -> list[str]:
+def _root_ini(repo: Path) -> dict[str, Any]:
     config = tomllib.loads((repo / "pyproject.toml").read_text(encoding="utf-8"))
-    return list(config["tool"]["pytest"]["ini_options"]["testpaths"])
+    return config["tool"]["pytest"]["ini_options"]
+
+
+def _root_testpaths(repo: Path) -> list[str]:
+    return list(_root_ini(repo)["testpaths"])
+
+
+def _package_extra_test_roots(repo: Path, overrides: tuple[str, ...] = ()) -> list[str]:
+    """`make test-packages` が package の tests/ の外で走らせる根 — 定義は Makefile の PACKAGE_EXTRA_TEST_ROOTS の 1 点。
+
+    検の側に一覧を写さず、本物の Makefile に名を聞く(overrides は make の命令行の変数の上書き)。
+    """
+    proc = subprocess.run(
+        [
+            "make",
+            "-s",
+            "--no-print-directory",
+            "-f",
+            str(REPO_ROOT / "Makefile"),
+            "-C",
+            str(repo),
+            "print-package-extra-test-roots",
+            *overrides,
+        ],
+        capture_output=True,
+        text=True,
+        timeout=60,
+        check=True,
+    )
+    return proc.stdout.split()
+
+
+def _population_roots(repo: Path, overrides: tuple[str, ...] = ()) -> list[str]:
+    """日次の母集団の根 — root の testpaths・package ごとの tests・package の tests の外の根。"""
+    return [
+        *_root_testpaths(repo),
+        *(f"packages/{package}/tests" for package in _expected_packages(repo)),
+        *_package_extra_test_roots(repo, overrides),
+    ]
+
+
+def _assert_every_test_file_belongs_to_a_daily_population(repo: Path, roots: list[str]) -> None:
+    orphans = [
+        path
+        for path in _test_named_files(repo)
+        if not any(_is_under(path, root) for root in roots)
+        and not any(_is_excluded(path, row) for row in EXCLUDED)
+    ]
+    assert not orphans, (
+        f"日次のどの母集団にも除外の表にも無い検の file が {len(orphans)} 本: {orphans}"
+        " — 母集団の根の下へ置くか(package の tests/ の外の根は Makefile の PACKAGE_EXTRA_TEST_ROOTS へ足す)、"
+        "tests/test_daily_test_population.py の EXCLUDED に理由つきで載せる(呼び手の無い木の緑は日次に見えない)"
+        "— ADR-DOE-ENFORCE-001 R8"
+    )
 
 
 def _named_failed_packages(output: str) -> list[str] | None:
@@ -189,6 +281,13 @@ def test_make_test_packages_visits_every_package_after_a_red(tmp_path: Path) -> 
         f" / 余り {sorted(reached - set(expected))}(runner が呼ばれた回数 {len(calls)}・"
         f"最初の {first} だけを赤にした)— 欠けた package は日次で 1 本も走らない(赤の後で"
         f"止めた・または母集団から外した)— ADR-DOE-ENFORCE-001 R8\n{output[-2000:]}"
+    )
+    extra_roots = _package_extra_test_roots(REPO_ROOT)
+    passed = {Path(call["cwd"], arg).resolve() for call in calls for arg in call["argv"]}
+    missed_roots = [root for root in extra_roots if (REPO_ROOT / root).resolve() not in passed]
+    assert not missed_roots, (
+        f"make test-packages が package の tests/ の外の根 {missed_roots} を訪ねていない(最初の {first}"
+        f" だけを赤にした)— その根の検は日次で 1 本も走らない — R8\n{output[-2000:]}"
     )
     assert proc.returncode != 0, (
         f"最初の package {first} を赤にしたのに make test-packages の rc が 0 — R8\n{output[-2000:]}"
@@ -264,22 +363,38 @@ def test_package_failure_names_are_repo_root_relative(tmp_path: Path) -> None:
 
 
 def test_every_test_file_belongs_to_a_daily_population() -> None:
-    """test 名の file は root の testpaths か package の母集団の根の下か、除外の表に在る。"""
-    population_roots = [
-        *_root_testpaths(REPO_ROOT),
-        *(f"packages/{package}/tests" for package in _expected_packages(REPO_ROOT)),
-    ]
-    orphans = [
-        path
-        for path in _test_named_files(REPO_ROOT)
-        if not any(_is_under(path, root) for root in population_roots)
-        and not any(_is_excluded(path, row) for row in EXCLUDED)
-    ]
-    assert not orphans, (
-        f"日次のどの母集団にも除外の表にも無い test 名の file が {len(orphans)} 本: {orphans}"
-        " — 母集団の根の下へ置くか、tests/test_daily_test_population.py の EXCLUDED に理由つきで"
-        "載せる(呼び手の無い木の緑は日次に見えない)— ADR-DOE-ENFORCE-001 R8"
+    """検の file(.py・.hy)は日次の母集団の根(root の testpaths・package の tests・Makefile の
+    PACKAGE_EXTRA_TEST_ROOTS)の下か、除外の表に在る。"""
+    _assert_every_test_file_belongs_to_a_daily_population(REPO_ROOT, _population_roots(REPO_ROOT))
+
+
+def test_hy_test_outside_every_population_is_red_until_its_root_is_declared(
+    tmp_path: Path,
+) -> None:
+    """失敗ケース: package の tests/ の外に `.hy` の検だけを持つ dir を置くと赤、その dir を本物の
+    Makefile の PACKAGE_EXTRA_TEST_ROOTS に入れると緑(#2542 の sim の dir の形・agora-redesign #2577)。
+
+    `.py` だけを数えていた時の規則では、この `.hy` は検の file に数えられず、母集団の外でも緑だった。
+    """
+    (tmp_path / "pyproject.toml").write_text(
+        '[tool.pytest.ini_options]\ntestpaths = ["tests"]\n', encoding="utf-8"
     )
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "tests" / "test_ok.py").write_text("def test_ok():\n    pass\n", encoding="utf-8")
+    sim = "packages/demo/src/demo/sim"
+    hy_test = tmp_path / sim / "test_on_sim.hy"
+    hy_test.parent.mkdir(parents=True)
+    hy_test.write_text("(deftest test-on-sim (assert True))\n", encoding="utf-8")
+
+    assert f"{sim}/test_on_sim.hy" in _test_named_files(tmp_path), (
+        "母集団の外の `.hy` の検が検の file に数えられていない — R8"
+    )
+    # Makefile の既定の根(doeff-cluster の sim)は模型の木に無い — この dir は母集団の外。
+    with pytest.raises(AssertionError, match=re.escape(f"{sim}/test_on_sim.hy")):
+        _assert_every_test_file_belongs_to_a_daily_population(tmp_path, _population_roots(tmp_path))
+    declared = _population_roots(tmp_path, (f"PACKAGE_EXTRA_TEST_ROOTS={sim}",))
+    assert sim in declared
+    _assert_every_test_file_belongs_to_a_daily_population(tmp_path, declared)
 
 
 def test_exclusion_table_has_no_stale_rows() -> None:

@@ -3,7 +3,7 @@
 # Centralized commands for development, testing, and linting.
 
 .PHONY: help install sync lint lint-ruff lint-pyright lint-semgrep lint-semgrep-docs lint-doeff lint-packages \
-        test test-unit test-e2e test-packages test-rust test-all test-spec-audit-sa002 bench-smoke format check check-repo-hygiene \
+        test test-unit test-e2e test-packages print-package-extra-test-roots test-rust test-all test-spec-audit-sa002 bench-smoke format check check-repo-hygiene \
         pre-commit-install hooks-install enforcement-ledger clean install-opencode-spec-gap-tdd
 
 # Default target
@@ -175,6 +175,10 @@ PACKAGE_UV_RUN ?= uv run
 # - packages/doeff-cluster/src/doeff_cluster/sim: 模擬の環境の下の deftest(各 service の入口の組み立てを模擬の handler の組で回す
 #   検 — doeff-linter の DOEFF136 は検がこの dir の下に在ることを求める・集め方は同じ dir の conftest.py・agora-redesign #2542)。
 PACKAGE_EXTRA_TEST_ROOTS = packages/doeff-cluster/src/doeff_cluster/sim
+# 母集団の根の定義はこの変数の 1 点。置き場の検(tests/test_daily_test_population.py)は下の target で読む
+# (検の側に 2 つ目の一覧を書かない — 書くと、根を足した時に片方だけが古くなる・agora-redesign #2577)。
+print-package-extra-test-roots:
+	@echo $(PACKAGE_EXTRA_TEST_ROOTS)
 test-packages:
 	@echo "Running tests in subpackages..."
 	@failed=""; \
