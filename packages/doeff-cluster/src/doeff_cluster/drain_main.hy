@@ -13,7 +13,7 @@
 (import doeff [run])
 (import doeff_time [sync-time-handler])
 (import doeff_cluster.foundation.coordinator_http [CoordinatorEndpoint])
-(import .drain_client [CoordinatorCall await-drained worker-ready DRAIN-DEADLINE-SECONDS DRAIN-INTERVAL-SECONDS])
+(import doeff_cluster.worker.core.drain_client [await-drained worker-ready DRAIN-DEADLINE-SECONDS DRAIN-INTERVAL-SECONDS] doeff_cluster.worker.intent.drain_model [CoordinatorCall])
 
 ;; 要求 1 つの返事を待つ上限(秒)。coordinator の fsync の詰まり(最長 13 秒 — coordinator_http.REPLY-SECONDS)より短くはしない。
 ;; readinessProbe は timeoutSeconds の内で終わるよう短くする。

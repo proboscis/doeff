@@ -8,22 +8,14 @@
 ;;; - readinessProbe(worker-ready): 自分が coordinator から見て生きていて drain 中でないか(新しい Pod が heartbeat を送り始め、
 ;;;   前の Pod の drain が解けた後にだけ Ready — DaemonSet は Ready を待って次の node の Pod を入れ替える)。
 (require doeff-hy.macros [defk deff <- val])
-(import dataclasses [dataclass])
-(import doeff [EffectBase])
 (import doeff_time [Delay GetMonotonic])
+(import doeff_cluster.worker.intent.drain_model [CoordinatorCall])
 
 ;; preStop の既定(秒)。上限は cluster.yaml の terminationGracePeriodSeconds より、worker の子の停止(stop-grace 10 秒 + KILL の
 ;; 猶予 5 秒)の分以上短くする。drain の期限は上限より長く取り、諦めた後もしばらく空けたままにする(次の世代の heartbeat で解ける)。
 (setv DRAIN-DEADLINE-SECONDS 90.0)
 (setv DRAIN-INTERVAL-SECONDS 2.0)
 (setv DRAIN-TTL-MARGIN-SECONDS 60.0)
-
-
-(defclass [(dataclass :frozen True)] CoordinatorCall [EffectBase]
-  "coordinator へ要求を 1 つ送る。結果 = {\"status\" int \"body\" dict}、届かなければ {\"error\" 理由の文}。"
-  (#^ str method)
-  (#^ str path)
-  (setv #^ (| dict None) body None))
 
 
 (defn #^ str worker-path [#^ str name]

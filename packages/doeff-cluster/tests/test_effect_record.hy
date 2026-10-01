@@ -165,9 +165,9 @@
   (import doeff_cluster.shared.core.effect_codec [MOVED-TYPES])
   (import doeff_cluster.shared.intent.job_model [JobSpec JobPhase])
   (assert (= (type-name JobSpec) "doeff_cluster.shared.intent.job_model:JobSpec"))
-  (assert (is (resolve-type "doeff_cluster.worker.intent.worker_model:JobSpec") JobSpec))
-  (assert (is (resolve-type "doeff_cluster.worker.intent.worker_model:JobPhase") JobPhase))
-  (assert (= (get MOVED-TYPES "doeff_cluster.worker.intent.worker_model:JobSpec") "doeff_cluster.shared.intent.job_model:JobSpec"))
+  (assert (is (resolve-type "doeff_cluster.worker_model:JobSpec") JobSpec))
+  (assert (is (resolve-type "doeff_cluster.worker_model:JobPhase") JobPhase))
+  (assert (= (get MOVED-TYPES "doeff_cluster.worker_model:JobSpec") "doeff_cluster.shared.intent.job_model:JobSpec"))
   ;; 受け口の effect(#2180)— 移しの前の記録の NextRequests は調停ループが idle 付きで出した物なので、子 class を引く
   (import doeff_cluster.coordinator.intent.cluster_model [IdleNextRequests])
   (assert (is (resolve-type "doeff_cluster.coordinator.intent.cluster_model:NextRequests") IdleNextRequests))
@@ -179,4 +179,10 @@
   ;; worker の型(#2025 の 2 本目)— 記録に残る worker の effect(StartJob など)の旧い名
   (import doeff_cluster.worker.intent.worker_model [StartJob])
   (assert (is (resolve-type "doeff_cluster.worker_model:StartJob") StartJob))
-  (assert (= (len MOVED-MODULES) 16)))
+  ;; 実行環境の準備と drain の型(#2025 の 3 本目)
+  (import doeff_cluster.worker.intent.env_prepare_model [PrepareNote] doeff_cluster.shared.intent.env_marker_model [FileSha256]
+          doeff_cluster.worker.intent.drain_model [CoordinatorCall])
+  (assert (is (resolve-type "doeff_cluster.env_prepare:PrepareNote") PrepareNote))
+  (assert (is (resolve-type "doeff_cluster.env_prepare:FileSha256") FileSha256))
+  (assert (is (resolve-type "doeff_cluster.drain_client:CoordinatorCall") CoordinatorCall))
+  (assert (= (len MOVED-MODULES) 17)))

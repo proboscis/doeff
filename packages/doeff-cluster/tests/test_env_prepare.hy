@@ -23,7 +23,7 @@
 (import doeff_cluster.shared.intent.runtime_env_model [RepoCheckout NativeWheel PythonProject ToolRequirement EnvVar RuntimeEnv
                                          RuntimeEnvInvalid InvalidKind EnvFailure EnvFailureKind env-key key-material
                                          runtime-env->json runtime-env-of-json])
-(import doeff_cluster.env_prepare [PrepareRequest KnownRoot EnvReady prepare-env ENV-MARKER ROOTS-PTH])
+(import doeff_cluster.worker.core.env_prepare [prepare-env] doeff_cluster.worker.intent.env_prepare_model [PrepareRequest KnownRoot EnvReady ROOTS-PTH] doeff_cluster.shared.intent.env_marker_model [ENV-MARKER])
 (import doeff_cluster.sim.env_world [env-world EnvWorld EnvWorldLog WorldRemote WorldCommit WorldFile read-world-log world-files
                                 set-uv-failure set-unreachable UvFailure UvFault])
 

@@ -33,7 +33,7 @@
 (import doeff_cluster.shared.protocol.checkout_reads [checkout-reads])
 (import doeff_core_effects.os_process [subprocess-handler])
 (import doeff_core_effects.os_file [os-file-handler])
-(import doeff_cluster.env_prepare [ENV-MARKER ROOTS-PTH])
+(import doeff_cluster.worker.intent.env_prepare_model [ROOTS-PTH] doeff_cluster.shared.intent.env_marker_model [ENV-MARKER])
 (import doeff_cluster.handlers [EnvStore ProcessHost task-spec])
 (import doeff_cluster.worker.intent.worker_model [CodeState CodeView StartJob ReapJob Outcome WorldView WorkerPolicy PrepareEnv WarmEnv
 ] doeff_cluster.shared.intent.job_model [JobSpec] doeff_cluster.worker.core.worker_rules [code-key])
