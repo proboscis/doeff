@@ -255,6 +255,23 @@
   (#^ dict changes))
 
 
+(defrecord EventsView
+  "GET /events の答え(resource_policy.events-view — #2595): revision = coordinator 全体の版・seq = 出来事の通し番号の今の値・events = 問いの
+   kind / name / since に合う出来事(古い順・limit 件まで)。JSON の形 {revision seq events} は coordinator/protocol/replies が綴る。"
+  (#^ int revision)
+  (#^ int seq)
+  (#^ (get tuple #(AuditEvent ...)) events))
+
+
+(defrecord StateReply
+  "GET /state の答え(#2595): view = 状態の画面(cluster_policy.state-view の JSON の object — 型は続きの切り出し)・audit = 直近の出来事
+   (30 件)・drains = drain の画面(drain_policy.drains-view)。JSON の形(view に audit と drains を足した object)は coordinator/protocol/replies
+   が綴る。"
+  (#^ dict view)
+  (#^ (get tuple #(AuditEvent ...)) audit)
+  (#^ dict drains))
+
+
 (defrecord WorkerReport
   "worker 1 つの最新の状態の報告(ClusterState.statuses の値 — 鍵 = worker の名・保存しない): at = 受けた時刻(epoch ms)・endpoint =
    worker が名乗った宛先(名乗らない旧い worker は None)・jobs = job の行の列(heartbeat の statuses の行 StatusRow から、結果の

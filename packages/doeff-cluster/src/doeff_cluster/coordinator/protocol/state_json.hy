@@ -8,7 +8,7 @@
 (import doeff_cluster.coordinator.core.cluster_rules [component-versions-of])
 (import doeff_cluster.coordinator.protocol.cluster_json [task-record-to-json task-record-from-json handoff-watch-from-json])
 (import doeff_cluster.coordinator.core.rollout_policy [validate-rollout-spec rollout-spec-to-json rollout-status-to-json rollout-status-from-json])
-(import doeff_cluster.coordinator.core.cluster_policy [job-from-json job-to-json named-capabilities value-size audit-event-to-json boot-at-of])
+(import doeff_cluster.coordinator.core.cluster_policy [job-from-json job-to-json named-capabilities value-size boot-at-of])
 (import doeff_cluster.shared.core.capabilities [capabilities-of])
 
 
@@ -85,6 +85,12 @@
 (defn #^ RolloutRow rollout-row-from-json [#^ dict data]
   "保存の JSON の形 → Rollout 1 つ(rollout-row-to-json の逆)。"
   (RolloutRow :spec (validate-rollout-spec (get data "spec")) :status (rollout-status-from-json (get data "status"))))
+
+
+(defn #^ dict audit-event-to-json [#^ AuditEvent event]
+  "出来事の記録 1 件 → 保存と見せる JSON の形(state file・durable の KV・GET /events と /state — #2447 の前の形と同じ)。"
+  {"seq" event.seq "at" event.at "actor" event.actor "verb" event.verb "kind" event.kind "name" event.name
+   "fromVersion" event.from-version "toVersion" event.to-version "generation" event.generation "changes" event.changes})
 
 
 (defn #^ AuditEvent audit-event-from-json [#^ dict data]

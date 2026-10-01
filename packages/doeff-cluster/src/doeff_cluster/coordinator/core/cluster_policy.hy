@@ -211,12 +211,6 @@
   (if (and (isinstance value int) (not (isinstance value bool))) value None))
 
 
-(defn #^ dict audit-event-to-json [#^ AuditEvent event]
-  "出来事の記録 1 件 → 保存と見せる JSON の形(state file・durable の KV・GET /events と /state — #2447 の前の形と同じ)。"
-  {"seq" event.seq "at" event.at "actor" event.actor "verb" event.verb "kind" event.kind "name" event.name
-   "fromVersion" event.from-version "toVersion" event.to-version "generation" event.generation "changes" event.changes})
-
-
 (defn #^ (| int None) resource-version-of [#^ ClusterState state #^ str key]
   "資源 key(<種類>/<名>)の今の版(版の記録が無ければ None)。"
   (setv meta (.get state.meta key))
