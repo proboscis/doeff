@@ -783,6 +783,15 @@
                                 (.format "宣言の道具 {} を名乗る worker が無い"
                                          (lfor t (.get task.runtime-env "tools" []) (.format "{}{}" (get t "name")
                                                                                              (if (.get t "version") (+ "=" (get t "version")) ""))))))
+        ;; 能力と版の合う worker は登録されているが、いま連絡していない(coordinator を起こし直した直後・worker の Recreate の入れ替えの間・
+        ;; 能力を持つ worker が 1 台だけの時の一瞬の沈黙)。待っても晴れない理由ではないので、失敗にせず待つ(#2440)。待ちの上限は
+        ;; task の lease: 切り離していない task は呼び手が問い合わせを止めると上で落ち、切り離した task は積んだ時の lease の期限まで。
+        ;; 登録された worker のどれも能力と版が合わない時は、今どおり下の枝で失敗にする(待っても晴れない)。
+        (and (not able) (<= now task.lease-until-ms) (any (gfor w (.values state.workers) (can-run-task task w))))
+          (setv (get tasks id)
+                (replace task :detail (.format "要る能力 {} の worker {} がいま連絡していない — 連絡が戻るまで待つ"
+                                               (list task.needs)
+                                               (.join "・" (sorted (gfor w (.values state.workers) :if (can-run-task task w) w.name))))))
         (and (not able) task.detached)
           (setv (get tasks id) (end-detached task (unplaceable-phase task state now timing) now
                                              (versions-note task state now timing)))

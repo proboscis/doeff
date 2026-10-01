@@ -111,13 +111,47 @@
   (assert (in "agent-cli" failed.detail)))
 
 
+;; --- 能力の合う worker の一時の沈黙では task を失敗にしない(#2440)----------------------------------------------------------
+;; 2026-10-01 22:54 に coordinator を入れ替えた直後の最初の判定で、worker 5 台が live でないとされ、待っていた task が「能力の合う
+;; worker が無い」で即 失敗した。worker の Recreate の入れ替えの間(約 70 秒)も同じ。待っても晴れない理由(能力と版の合う worker が
+;; 登録されていない)だけで失敗にし、登録された worker がいま黙っているだけなら task の lease の間は待つ。
+
+(defn #^ ClusterState silent-verify-state [#^ int seen #^ bool detached]
+  ;; 能力 verify を持つ唯一の worker(最後の連絡 = seen)と、それを要る待っている task 1 本(lease の期限 20000)の状態。
+  (setv v (replace (worker "verify-1" seen 1 "verify") :versions #((ComponentVersion "python" "3")) :exclusive #("verify")))
+  (ClusterState #() {"verify-1" v} {} {"t1" (replace (task "t1" #("verify")) :detached detached)}))
+
+(deftest test-a-queued-task-waits-while-its-only-capable-worker-is-silent
+  ;; 失敗ケース(直す前の形では failed): 唯一の能力の合う worker の最後の連絡が生存の窓(lease-ms 10 秒)より古い — 入れ替えの間の沈黙。
+  (for [detached [False True]]
+    (setv waiting (get (place-tasks 15000 (silent-verify-state 0 detached) {} T) "t1"))
+    (assert (= waiting.phase "queued") #(detached waiting.phase waiting.detail))
+    (assert (in "verify-1" waiting.detail) waiting.detail)
+    (assert (in "いま連絡していない" waiting.detail) waiting.detail)
+    ;; worker が連絡し直すと(最後の連絡が新しい)置かれる。
+    (setv placed (get (place-tasks 15000 (silent-verify-state 14000 detached) {} T) "t1"))
+    (assert (= #(placed.phase placed.worker) #("assigned" "verify-1")) #(detached placed.phase))))
+
+(deftest test-a-queued-task-fails-when-no-registered-worker-can-ever-run-it
+  ;; 待っても晴れない理由は今どおり失敗: 能力の合う worker が 1 台も登録されていない(上の test-task-follows-the-same-dedicated-rule と
+  ;; 同じ)・登録された worker の版が違う・切り離した task の lease の期限を過ぎた。
+  (setv other (replace (worker "atlas" 0 10 "cluster-net") :versions #((ComponentVersion "python" "3"))))
+  (setv none (get (place-tasks 15000 (ClusterState #() {"atlas" other} {} {"t1" (task "t1" #("verify"))}) {} T) "t1"))
+  (assert (= none.phase "failed") none.phase)
+  (setv old (replace (worker "verify-1" 0 1 "verify") :versions #((ComponentVersion "python" "2")) :exclusive #("verify")))
+  (setv mismatch (get (place-tasks 15000 (ClusterState #() {"verify-1" old} {} {"t1" (task "t1" #("verify"))}) {} T) "t1"))
+  (assert (= mismatch.phase "failed") mismatch.phase)
+  (setv expired (get (place-tasks 25000 (silent-verify-state 0 True) {} T) "t1"))
+  (assert (= expired.phase "failed") expired.phase))
+
+
 ;; --- 能力の名乗りの形(ADR-DOE-CLUSTER-001 R4b)-----------------------------------------------------
 
 (import doeff_cluster.coordinator.core.cluster_policy [placeable worker-capabilities-of request-needs])
 (import doeff_cluster.shared.core.capabilities [capabilities-of])
 
 (deftest test-placeable-is-needs-subset-of-provides-and-respects-exclusive
-  (val gpu (replace (worker "g" 0 10 "gpu" "cluster-net") :exclusive #("gpu")))
+  (setv gpu (replace (worker "g" 0 10 "gpu" "cluster-net") :exclusive #("gpu")))
   (assert (placeable #("gpu") gpu))
   (assert (placeable #("cluster-net" "gpu") gpu))
   ;; 専用の能力を要らない一般の仕事は、提供されていても置かない
@@ -186,21 +220,21 @@
   (assert (= (. (get s.workers "at-home") provides) #("net")))
   (assert (= (. (get s.workers "at-work") node) "node-company"))
   ;; label を読む前は、どちらにも company-machine を要る job を置かない。
-  (val secret (ClusterState #((job "secret" :needs #(COMPANY "net"))) s.workers))
+  (setv secret (ClusterState #((job "secret" :needs #(COMPANY "net"))) s.workers))
   (assert (= (place-jobs 1000 secret T) {}))
   ;; derivable に無い能力は、今までどおり名乗りのまま受ける。
   (<- plain ClusterState (beat-as (ClusterState) "w" "" 1000))
   (assert (= (. (get plain.workers "w") provides) #(COMPANY "net"))))
 
 (deftest test-only-the-worker-on-a-labelled-node-derives-company-machine
-  (val kube (KubeMemory {} :nodes {"node-company" COMPANY-LABEL "node-home" {"kubernetes.io/hostname" "home"}}))
+  (setv kube (KubeMemory {} :nodes {"node-company" COMPANY-LABEL "node-home" {"kubernetes.io/hostname" "home"}}))
   (<- start ClusterState (company-state 1000))
   (<- ticked ClusterState (tick-with start kube 1000))
   (assert (= (. (get ticked.workers "at-work") derived) #(COMPANY)))
   (assert (= (. (get ticked.workers "at-home") derived) #()))
   ;; company-machine を要る job は会社の node の worker にだけ置く。一般の job はどちらにも置ける。
-  (val secret (replace ticked :jobs #((job "secret" :needs #(COMPANY "net")) (job "other" :needs #(COMPANY)))))
-  (val placed (place-jobs 1000 secret T))
+  (setv secret (replace ticked :jobs #((job "secret" :needs #(COMPANY "net")) (job "other" :needs #(COMPANY)))))
+  (setv placed (place-jobs 1000 secret T))
   (assert (= (sorted placed) ["other" "secret"]) placed)
   (assert (= (sfor p (.values placed) p.worker) #{"at-work"}) placed)
   ;; 同じ node の間の heartbeat は導いた能力を引き継ぐ(次の読みまで外さない)。
@@ -211,19 +245,19 @@
   (assert (= (. (get moved.workers "at-work") derived) #())))
 
 (deftest test-derived-capabilities-are-kept-while-node-labels-cannot-be-read
-  (val kube (KubeMemory {} :nodes {"node-company" COMPANY-LABEL "node-home" {}}))
+  (setv kube (KubeMemory {} :nodes {"node-company" COMPANY-LABEL "node-home" {}}))
   (<- start ClusterState (company-state 1000))
   (<- ticked ClusterState (tick-with start kube 1000))
   ;; k8s の API が途絶えた間(label を読み直す間隔を過ぎても)、前の derived を保つ — 届かない間に足しも外しもしない。
   (setv kube.down True)
-  (val later (+ 1000 NODE-LABELS-TTL-MS 1))
+  (setv later (+ 1000 NODE-LABELS-TTL-MS 1))
   (<- work-beaten ClusterState (beat-as ticked "at-work" "node-company" later))
   (<- beaten ClusterState (beat-as work-beaten "at-home" "node-home" later))
   (<- cut-off ClusterState (tick-with beaten kube later))
   (assert (in "error" (get cut-off.nodes "node-company")) cut-off.nodes)
   (assert (= (. (get cut-off.workers "at-work") derived) #(COMPANY)))
   (assert (= (. (get cut-off.workers "at-home") derived) #()))
-  (val secret (replace cut-off :jobs #((job "secret" :needs #(COMPANY "net")))))
+  (setv secret (replace cut-off :jobs #((job "secret" :needs #(COMPANY "net")))))
   (assert (= (. (get (place-jobs later secret T) "secret") worker) "at-work"))
   ;; 読めるようになり label が外れていれば、次の読みで外す。
   (setv kube.down False)
@@ -233,13 +267,13 @@
 
 (deftest test-with-derived-capabilities-reads-the-naming-table
   ;; 表(ClusterNaming の node-capabilities)の label と値が合う行の能力だけを足す。node を名乗らない worker は空。
-  (val table #(#("doeff.dev/company-machine" "true" COMPANY) #("example.org/gpu" "a100" "gpu")))
-  (val s (replace (ClusterState :workers {"a" (replace (worker "a" 0 10 "net") :node "n1")
+  (setv table #(#("doeff.dev/company-machine" "true" COMPANY) #("example.org/gpu" "a100" "gpu")))
+  (setv s (replace (ClusterState :workers {"a" (replace (worker "a" 0 10 "net") :node "n1")
                                           "b" (replace (worker "b" 0 10 "net") :node "n2")
                                           "c" (replace (worker "c" 0 10 "net") :derived #("stale"))})
                   :nodes {"n1" {"labels" {"doeff.dev/company-machine" "true" "example.org/gpu" "a100"} "at" 0}
                           "n2" {"labels" {"doeff.dev/company-machine" "false"} "at" 0}}))
-  (val out (with-derived-capabilities s table))
+  (setv out (with-derived-capabilities s table))
   (assert (= (. (get out.workers "a") derived) #(COMPANY "gpu")))
   (assert (= (. (get out.workers "b") derived) #()))
   (assert (= (. (get out.workers "c") derived) #())))
@@ -253,7 +287,7 @@
 (import doeff_cluster.coordinator.core.cluster_policy [state-to-json state-from-json])
 (import doeff_cluster.coordinator.core.durable_kv [full-kv state-from-kv])
 
-(val SAVED (ClusterState :workers {"old" (worker "old" 0 10 "net") "new" (worker "new" 0 10 "net")}
+(setv SAVED (ClusterState :workers {"old" (worker "old" 0 10 "net") "new" (worker "new" 0 10 "net")}
                          :tasks {"t1" (task "t1" #("net")) "t2" (replace (task "t2" #("net")) :phase "finished")}
                          :warms {"k1" (WarmEntry "k1" {"repos" []} #("net") 999999 "svc-a")}
                          :next-task 3))
@@ -273,7 +307,7 @@
   "旧い行を読んだ状態: 旧い worker と温める表の行は捨て、終わっていない task は failed(理由つき)、終わった task はそのまま。"
   (assert (= (sorted state.workers) ["new"]) state.workers)
   (assert (= state.warms {}) state.warms)
-  (val open (get state.tasks "t1"))
+  (setv open (get state.tasks "t1"))
   (assert (= open.phase "failed") open)
   (assert (in "旧い形の task" open.detail) open.detail)
   (assert (= open.needs #()) open)
@@ -281,19 +315,19 @@
   True)
 
 (deftest test-old-saved-rows-in-the-state-file-are-read-without-crashing
-  (val data (state-to-json SAVED))
+  (setv data (state-to-json SAVED))
   (assert (get data "warms") "state file に温める表の行が在る(旧い形へ書き換える対象)")
-  (val workers [])
+  (setv workers [])
   (for [w (get data "workers")]
     (if (= (get w "name") "old")
         (do (<- row dict (to-old-worker w))
             (.append workers row))
         (.append workers w)))
-  (val tasks [])
+  (setv tasks [])
   (for [t (get data "tasks")]
     (<- task-row dict (to-old-needs t))
     (.append tasks task-row))
-  (val warms {})
+  (setv warms {})
   (for [#(k v) (.items (get data "warms"))]
     (<- warm-row dict (to-old-needs v))
     (setv (get warms k) warm-row))
@@ -301,9 +335,9 @@
   (assert ok))
 
 (deftest test-old-saved-rows-in-the-durable-kv-are-read-without-crashing
-  (val kv (full-kv SAVED))
+  (setv kv (full-kv SAVED))
   (assert (in "warm/k1" kv) (sorted kv))
-  (val old (dict kv))
+  (setv old (dict kv))
   (<- worker-row dict (to-old-worker (get kv "worker/old")))
   (setv (get old "worker/old") worker-row)
   (for [k (lfor k kv :if (or (.startswith k "task/") (.startswith k "warm/")) k)]
@@ -315,29 +349,29 @@
 
 (deftest test-derived-capabilities-reuse-equal-values
   ;; 計算で出来る tuple と別の object でも、値が等しければ既存の worker と状態を返す。
-  (val capabilities (tuple [COMPANY]))
-  (val table #(#("doeff.dev/company-machine" "true" COMPANY)))
-  (val state (ClusterState :workers
+  (setv capabilities (tuple [COMPANY]))
+  (setv table #(#("doeff.dev/company-machine" "true" COMPANY)))
+  (setv state (ClusterState :workers
     {"observed" (replace (worker "observed" 0) :node "known" :derived capabilities)
      "plain" (worker "plain" 0)
      "missing" (replace (worker "missing" 0) :node "missing" :derived capabilities)
      "error" (replace (worker "error" 0) :node "error" :derived capabilities)}
     :nodes {"known" {"labels" COMPANY-LABEL "at" 0}
             "error" {"error" "unavailable" "at" 0}}))
-  (val result (with-derived-capabilities state table))
+  (setv result (with-derived-capabilities state table))
   (assert (= result state))
   (for [#(name original) (.items state.workers)]
     (assert (is (get result.workers name) original)))
   (assert (is result state)))
 
 (deftest test-derived-capabilities-copy-only-changed-workers
-  (val table #(#("doeff.dev/company-machine" "true" COMPANY)))
-  (val state (ClusterState :workers
+  (setv table #(#("doeff.dev/company-machine" "true" COMPANY)))
+  (setv state (ClusterState :workers
     {"changed" (replace (worker "changed" 0) :node "known")
      "same" (worker "same" 0)
      "stale" (replace (worker "stale" 0) :derived #(COMPANY))}
     :nodes {"known" {"labels" COMPANY-LABEL "at" 0}}))
-  (val result (with-derived-capabilities state table))
+  (setv result (with-derived-capabilities state table))
   (assert (is-not result state))
   (assert (is (get result.workers "same") (get state.workers "same")))
   (assert (is-not (get result.workers "changed") (get state.workers "changed")))
@@ -346,14 +380,14 @@
   (assert (= (. (get state.workers "changed") derived) #()))
   (assert (= (. (get state.workers "stale") derived) #(COMPANY)))
   ;; 同じ state でも表が変われば計算し直して、能力を外す。
-  (val removed (with-derived-capabilities result #()))
+  (setv removed (with-derived-capabilities result #()))
   (assert (= (. (get removed.workers "changed") derived) #()))
   (assert (is (get removed.workers "same") (get result.workers "same"))))
 
 (deftest test-derived-capabilities-still-read-and-check-labels
   (import pytest)
-  (val table #(#("doeff.dev/company-machine" "true" COMPANY)))
-  (val state (ClusterState :workers
+  (setv table #(#("doeff.dev/company-machine" "true" COMPANY)))
+  (setv state (ClusterState :workers
     {"w" (replace (worker "w" 0) :node "known" :derived #(COMPANY))}
     :nodes {"known" {"labels" (dict COMPANY-LABEL) "at" 0}}))
   (with-derived-capabilities state table)
