@@ -29,7 +29,8 @@
 (import doeff_cluster)
 (import doeff_cluster.shared.intent.runtime_env_model [RuntimeEnv RepoCheckout PythonProject runtime-env->json env-key])
 (import doeff_cluster.env_prepare [ENV-MARKER EnvMarker env-marker->json])
-(import doeff_cluster.runtime_identity [ModuleOrigin ProcessFacts ReadRuntimeFacts given-runtime-facts])
+(import doeff_cluster.shared.intent.runtime_identity_model [ModuleOrigin ProcessFacts ReadRuntimeFacts])
+(import doeff_cluster.shared.protocol.runtime_facts [given-runtime-facts])
 (import doeff_cluster.runtime_identity_process [process-runtime-facts])
 
 (val PROCESS-RUNTIME-FACTS "process-runtime-facts")
