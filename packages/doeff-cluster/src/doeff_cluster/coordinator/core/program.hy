@@ -34,7 +34,7 @@
 (import dataclasses [replace])
 (import doeff_cluster.shared.core.clock [now-epoch-ms])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming Reply CoordinatorStopRequested Request])
-(import doeff_cluster.coordinator.intent.cluster_model [ClusterState ClusterNaming IdleProbe IdleNextRequests SaveState Fault CoordinatorFault Watcher WatchRefusal WatchAnswer WatchStep])
+(import doeff_cluster.coordinator.intent.cluster_model [ClusterState ErrorReply ClusterNaming IdleProbe IdleNextRequests SaveState Fault CoordinatorFault Watcher WatchRefusal WatchAnswer WatchStep])
 (import doeff_cluster.coordinator.core.watch_policy [watch-of settle-watch earliest-deadline])
 (import doeff_cluster.coordinator.core.cluster_policy [nodes-to-read with-derived-capabilities])
 (import doeff_cluster.coordinator.core.api_policy [respond tick plan-rollouts deployments-to-observe scale-service record-action mark-alive ROLLOUT-ACTOR ROLLOUT-TICK-MS TICK-MS])
@@ -94,12 +94,11 @@
 
 
 (defk fault-reply [fault]
-  {:pre [(: fault Fault)] :post [(: % dict)] :tags {:context "doeff-cluster" :role "judgment"}}
+  {:pre [(: fault Fault)] :post [(: % ErrorReply)] :tags {:context "doeff-cluster" :role "judgment"}}
   ;; coordinator の中の欠陥(api_policy.respond が 500 の Fault で返した例外)を log に 1 行出し、送り手に見せる本文を返す — 本文は
   ;; 送り手の誤りでないことを名乗る(#1024 — #1005 では中の TypeError が 400 に畳まれ、log にも出なかった)。
   (<- (CoordinatorFault fault))
-  {"error" (.format "coordinator の中の欠陥: {}: {}({})" fault.error-type fault.message fault.where)
-   "fault" True})
+  (ErrorReply :message (.format "coordinator の中の欠陥: {}: {}({})" fault.error-type fault.message fault.where) :fault True))
 
 
 (defk request-reply [state request now timing]
@@ -112,7 +111,7 @@
   (val result (respond state request now timing read-body))
   (val body (get result 2))
   (if (isinstance body Fault)
-      (do (<- fault-body dict (fault-reply body))
+      (do (<- fault-body ErrorReply (fault-reply body))
           #((get result 0) (get result 1) fault-body))
       result))
 
@@ -142,7 +141,7 @@
     (<- watch (| Watcher WatchRefusal None) (watch-of request now))
     (match watch
       (Watcher) (:= waiting (+ waiting #(watch)))
-      (WatchRefusal) (:= replies (+ replies #(#(request 400 {"error" watch.reason}))))
+      (WatchRefusal) (:= replies (+ replies #(#(request 400 (ErrorReply :message watch.reason)))))
       _ (do (<- answered tuple (request-reply next request now timing))
             (:= next (get answered 0))
             (:= replies (+ replies #(#(request (get answered 1) (get answered 2))))))))

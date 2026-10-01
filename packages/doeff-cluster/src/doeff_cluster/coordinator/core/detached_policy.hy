@@ -16,7 +16,7 @@
 (import typing [NamedTuple])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming])
 (import doeff_cluster.shared.core.capabilities [environ-pairs])
-(import doeff_cluster.coordinator.intent.cluster_model [ClusterState TaskRecord])
+(import doeff_cluster.coordinator.intent.cluster_model [ClusterState TaskRecord ErrorReply])
 (import doeff_cluster.coordinator.core.cluster_rules [format-version-refusal])
 (import doeff_cluster.coordinator.intent.request_bodies [TaskBody])
 (import doeff_cluster.coordinator.core.cluster_policy [DETACHED-TERMINAL TASK-MAX-OPEN end-detached runtime-env-value-refusal task-id task-body-refusal needs-named program-versions])
@@ -30,10 +30,10 @@
 
 (defclass Reply [NamedTuple]
   "要求 1 件への答え: state = 次の状態(変えなければ受けた状態そのもの)・status = HTTP の status・body = 返す本文
-   (JSON の object のまま — HTTP の境界で綴る)。"
+   (成功は JSON の object のまま・断りは ErrorReply — coordinator/protocol/replies が綴る)。"
   (#^ ClusterState state)
   (#^ int status)
-  (#^ dict body))
+  (#^ (| dict ErrorReply) body))
 
 
 (defn #^ (| TaskRecord None) task-by-key [#^ ClusterState state #^ str key]
@@ -68,7 +68,7 @@
                     (key-refusal key)
                     (seconds-refusal "leaseSeconds" lease DETACHED-MAX-LEASE-SECONDS)
                     (seconds-refusal "retainSeconds" retain DETACHED-MAX-RETAIN-SECONDS)))
-  (when refusal (return (Reply state 400 {"error" refusal})))
+  (when refusal (return (Reply state 400 (ErrorReply :message refusal))))
   (setv needs (needs-named body.needs body.requires "切り離した task の needs")
         environ (environ-pairs (or body.environ {}))
         existing (task-by-key state key))
@@ -77,15 +77,15 @@
       (if (= #(existing.name existing.needs existing.runtime-env existing.environ)
              #(body.name needs body.runtime-env environ))
           (Reply state 200 {"key" key "task" existing.id "created" False "phase" existing.phase})
-          (Reply state 409 {"error" (.format "key {} は別の仕事(name {!r}・needs {}・environ の名 {})に使われている"
-                                        key existing.name (list existing.needs) (lfor #(k _) existing.environ k))}))))
+          (Reply state 409 (ErrorReply :message (.format "key {} は別の仕事(name {!r}・needs {}・environ の名 {})に使われている"
+                                        key existing.name (list existing.needs) (lfor #(k _) existing.environ k)))))))
   (setv open-count (len (lfor t (.values state.tasks) :if (in t.phase OPEN-PHASES) t))
         detached-count (len (lfor t (.values state.tasks) :if t.detached t)))
   (when (>= open-count TASK-MAX-OPEN)
-    (return (Reply state 429 {"error" (.format "終わっていない task が上限 {} 本に達している" TASK-MAX-OPEN) "open" open-count})))
+    (return (Reply state 429 (ErrorReply :message (.format "終わっていない task が上限 {} 本に達している" TASK-MAX-OPEN) :open open-count))))
   (when (>= detached-count DETACHED-MAX-RECORDS)
-    (return (Reply state 429 {"error" (.format "切り離した task の行(保持中を含む)が上限 {} 本に達している — 終わった物を解放する"
-                                          DETACHED-MAX-RECORDS)})))
+    (return (Reply state 429 (ErrorReply :message (.format "切り離した task の行(保持中を含む)が上限 {} 本に達している — 終わった物を解放する"
+                                          DETACHED-MAX-RECORDS)))))
   (setv id (task-id state)
         lease-ms (int (* 1000 lease))
         task (TaskRecord id body.name body.program body.revision
@@ -135,6 +135,6 @@
   (cond
     (is task None) (Reply state 200 {"key" key "released" False})
     (not-in task.phase DETACHED-TERMINAL)
-      (Reply state 409 {"error" (.format "key {} はまだ終わっていない({})— 先に取り消す" key task.phase)})
+      (Reply state 409 (ErrorReply :message (.format "key {} はまだ終わっていない({})— 先に取り消す" key task.phase)))
     True (Reply (replace state :tasks (dfor #(k v) (.items state.tasks) :if (!= k task.id) k v)) 200
                 {"key" key "released" True})))
