@@ -26,7 +26,7 @@
 (import doeff_core_effects.file_effects [MakeDirectory PathKind PathStat ReadText StatPath WriteText])
 (import doeff_core_effects.process_effects [EnvEntry EnvMode ExecutableAt ProcessAlive ProcessOutcome ReadEnvironment RunProcess
                                             WorkingDirectory StartProcess PollProcess StopProcess ProcessStarted ProcessNotStarted
-                                            ProcessRunning ProcessExited ProcessNotChild
+                                            ProcessRunning ProcessExited ProcessNotChild SignalProcess ProcessSignal ProcessSignalled
                                             ReadInterpreter ResolveModule InterpreterFacts ModuleFound ModuleNotFound])
 (import process_contract_handlers [BIG-OUTPUT BIG-OUTPUT-TEXT CAT ContractRoot ENV-PROBE FIRST-THEN-WAIT KILLED LEFT-BEHIND LEFT-BEHIND-THEN-WAIT NOT-UTF-8
                                    NOT-UTF-8-BYTES OUT-ERR OUT-ERR-EXIT OWN-PID PWD TWO-LINES
@@ -317,6 +317,44 @@
   (assert (= stopped (ProcessExited :pid started.pid :exit-code -15)) (.format "SIGTERM で止めた子の答え {}" stopped))
   (assert (= again (ProcessNotChild :pid started.pid)) again))
 
+
+
+;; ---- 待たずに signal を送る(SignalProcess — #2461)------------------------------------------------------------------------------
+;; 消費者 = doeff-cluster の worker の段ごとの止め(拍ごとに TERM を送り、止まらなければ KILL・終わりは PollProcess で確かめる)。
+
+(deftest test-a-signalled-child-ends-and-is-collected-by-poll
+  {:interpreters ["subprocess" "offloaded-subprocess" "scripted-process"]}
+  (for [#(sent code) [#(ProcessSignal.TERM -15) #(ProcessSignal.KILL -9)]]
+    (<- started (StartProcess :argv #("sleep" "30")))
+    (assert (isinstance started ProcessStarted) started)
+    (<- answer (SignalProcess :pid started.pid :signal sent))
+    (assert (= answer (ProcessSignalled :pid started.pid :delivered True)) #(sent answer))
+    ;; 送るだけで待たない — 終わりは PollProcess が答えて回収する。
+    (<- exited (exited-soon started.pid))
+    (assert (= exited (ProcessExited :pid started.pid :exit-code code)) #(sent exited))
+    (<- again (SignalProcess :pid started.pid :signal sent))
+    (assert (= again (ProcessNotChild :pid started.pid)) again)))
+
+
+(deftest test-an-ended-child-is-not-signalled-and-its-end-is-kept-for-poll
+  {:interpreters ["subprocess" "offloaded-subprocess" "scripted-process"]}
+  (<- started (StartProcess :argv #("/bin/sh" "-c" OUT-ERR-EXIT)))  ; 出力して 3 で終わる台本
+  (assert (isinstance started ProcessStarted) started)
+  ;; 本物の子が終わるのを待つ(問うと回収してしまうので、問わずに待つ)。
+  (<- (RunProcess :argv #("sleep" "0.3")))
+  (<- answer (SignalProcess :pid started.pid :signal ProcessSignal.TERM))
+  (<- exited (PollProcess started.pid))
+  (assert (= answer (ProcessSignalled :pid started.pid :delivered False)) answer)
+  (assert (= exited (ProcessExited :pid started.pid :exit-code 3)) exited))
+
+
+(deftest test-a-pid-that-is-not-a-started-child-is-not-signalled
+  {:interpreters ["subprocess" "offloaded-subprocess" "scripted-process"]}
+  ;; 立てていない pid(init = 1)には送らない — 他人の process を止めない。
+  (<- answer (SignalProcess :pid 1 :signal ProcessSignal.KILL))
+  (<- init bool (ProcessAlive 1))
+  (assert (= answer (ProcessNotChild :pid 1)) answer)
+  (assert init "init(pid 1)が生きていない答え"))
 
 (deftest test-stopping-a-group-stops-what-the-child-left-behind
   {:interpreters ["subprocess" "offloaded-subprocess" "scripted-process"]}
