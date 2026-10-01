@@ -284,8 +284,8 @@ worker は業務の repo の commit を 1 つ展開して子 process の cwd に
 入れ替わっても続けたい仕事)は、切り離した task として送ります。どちらも Program の値 1 つを送り、Program は自分の土台で包みます。
 
 ```hy
-(import doeff_cluster.remote_model [RemoteJob])
-(import doeff_cluster.detached_model [SubmitDetached AwaitDetached CancelDetached ReleaseDetached
+(import doeff_cluster.shared.intent.remote_model [RemoteJob])
+(import doeff_cluster.shared.intent.detached_model [SubmitDetached AwaitDetached CancelDetached ReleaseDetached
                                       DetachedSucceeded DetachedFailed DetachedLost])
 (val NET (frozenset ["cluster-net"]))      ; effect の needs は frozenset(空は断る)
 (<- total (RemoteJob (add-task production-foundation n) :needs NET :name "add"))

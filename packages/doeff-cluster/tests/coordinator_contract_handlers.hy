@@ -55,7 +55,7 @@
 (import doeff_cluster.process_versions [current-versions])
 (import doeff_cluster.detached [warm-cluster WarmClient])
 (import doeff_cluster.local [sim-cluster SimWorker SimLink ClientLink PartsOf SimParts StopCoordinator coordinator-answers])
-(import doeff_cluster.runtime_env_model [RuntimeEnv])
+(import doeff_cluster.shared.intent.runtime_env_model [RuntimeEnv])
 (import doeff_cluster.semaphore_handlers [named-semaphore-local cluster-semaphore SemaphoreSession])
 (import doeff_cluster.service_model [system-of])
 (import doeff_time [Delay])

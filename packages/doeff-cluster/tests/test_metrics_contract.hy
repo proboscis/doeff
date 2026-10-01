@@ -6,7 +6,7 @@
 ;;;   * coordinator へ届かない間も答えは None(業務を止めない)・届くようになった後の報告は残る
 ;;; 報告の送り手の世代(worker・pid・版)は本物だけが載せる欄なので契約の外(test_resources.hy)。
 (require doeff-hy.macros [deftest <- val])
-(import doeff_cluster.metrics_model [ReportMetrics])
+(import doeff_cluster.shared.intent.metrics_model [ReportMetrics])
 (import tests.coordinator_contract_handlers [ReportSeen SetReachable METRICS])
 
 (val FIRST {"counters" {"writes" 3.0} "gauges" {"queue_depth" 2.0} "durations" {"write_seconds" {"sum" 1.5 "count" 3}}})

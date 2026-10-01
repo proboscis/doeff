@@ -12,9 +12,9 @@
 (import doeff_time [Delay])
 (import doeff_cluster.clock [now-epoch-ms])
 (import doeff_cluster.local [sim-cluster SimWorker ProcessesOf KillWorker StartWorker ReadCoordinator])
-(import doeff_cluster.process_model [AwaitProcessEnded])
-(import doeff_cluster.remote_model [RemoteJob])
-(import doeff_cluster.detached_model [SubmitDetached AwaitDetached DetachedSucceeded])
+(import doeff_cluster.shared.intent.process_model [AwaitProcessEnded])
+(import doeff_cluster.shared.intent.remote_model [RemoteJob])
+(import doeff_cluster.shared.intent.detached_model [SubmitDetached AwaitDetached DetachedSucceeded])
 (import tests.fixtures.envs [sim-foundation])
 (import tests.fixtures.sim_programs [pulses slow-task sim-task-foundation NET])
 

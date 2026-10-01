@@ -2,7 +2,7 @@
 ;; project の repo(app)と native の source を持つ repo(lib)の 2 つを並べる宣言と、その commit の remote。
 (require doeff-hy.macros [defk <- val var])
 (import hashlib)
-(import doeff_cluster.runtime_env_model [RepoCheckout NativeWheel PythonProject RuntimeEnv])
+(import doeff_cluster.shared.intent.runtime_env_model [RepoCheckout NativeWheel PythonProject RuntimeEnv])
 (import doeff_cluster.env_world [EnvWorld WorldRemote WorldCommit WorldFile])
 
 (val LOCK "httpx==0.28.1 top=httpx\nhy==1.1.0 top=hy\nclick==8.1.8 top=click\n")

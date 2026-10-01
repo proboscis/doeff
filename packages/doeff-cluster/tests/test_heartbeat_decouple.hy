@@ -14,7 +14,7 @@
 (import doeff_cluster.local [sim-cluster SimWorker ReadCoordinator ProcessesOf Redeclare CutWorker FailRoute HostTruthOf HostTruth
                              WatchFailuresOf])
 (import doeff_cluster.beat_policy [WatchReading])
-(import doeff_cluster.detached_model [SubmitDetached AwaitDetached DetachedSucceeded DetachedLost])
+(import doeff_cluster.shared.intent.detached_model [SubmitDetached AwaitDetached DetachedSucceeded DetachedLost])
 (import tests.fixtures.envs [sim-foundation])
 (import tests.fixtures.sim_programs [beacons beacons-v2 pulses slow-task sim-task-foundation NET])
 

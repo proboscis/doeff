@@ -15,7 +15,7 @@
 ;; 子の中で job_entry は __main__ として読まれる。業務の module が doeff_cluster.job_entry から文脈の読みを import しても、文脈の型が
 ;; 1 つのままであることの反例(test_job_context)に使うので、job_entry から import する。
 (import doeff_cluster.job_entry [runtime-env-of-context])
-(import doeff_cluster.runtime_env_model [RuntimeEnv])
+(import doeff_cluster.shared.intent.runtime_env_model [RuntimeEnv])
 
 
 (defhandler answer-base

@@ -15,8 +15,8 @@
 (import doeff_time [Delay])
 (import doeff [run])
 (import doeff_cluster.shared.intent.protocol [PROTOCOL-FORMAT])
-(import .runtime_env_model [RuntimeEnv runtime-env->json])
-(import .remote_model [RemoteJob RemoteJobFailed EnvUnavailable TaskSucceeded TaskFailed
+(import doeff_cluster.shared.intent.runtime_env_model [RuntimeEnv runtime-env->json])
+(import doeff_cluster.shared.intent.remote_model [RemoteJob RemoteJobFailed EnvUnavailable TaskSucceeded TaskFailed
                        encode-program decode-outcome])
 (import .process_versions [current-versions])
 

@@ -23,9 +23,9 @@
                                      describe-identity job-named])
 (import doeff_cluster.coordinator.core.cluster_policy [job-from-json identity-hash])
 (import doeff_cluster.host_contract [host-reader])
-(import doeff_cluster.remote_model [encode-program])
+(import doeff_cluster.shared.intent.remote_model [encode-program])
 (import doeff_cluster.process_versions [current-versions])
-(import doeff_cluster.runtime_env_model [EnvVar RuntimeEnvInvalid])
+(import doeff_cluster.shared.intent.runtime_env_model [EnvVar RuntimeEnvInvalid])
 (import doeff_cluster.worker_model [spec-hash])
 (import tests.fixtures.services [lab lab-pair lab-record tally-program greeter-program holding-program tally-on PairFoundation
                                  LooseFoundation])

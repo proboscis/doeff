@@ -17,13 +17,13 @@
 (import pathlib [Path])
 (import pytest)
 (import doeff [with-handlers])
-(import doeff_cluster.runtime_env_model [RuntimeEnv EnvFailure EnvFailureKind runtime-env->json env-key current-platform])
-(import doeff_cluster.detached_model [SubmitDetached AwaitDetached DetachedSucceeded DetachedEnvUnavailable
+(import doeff_cluster.shared.intent.runtime_env_model [RuntimeEnv EnvFailure EnvFailureKind runtime-env->json env-key current-platform])
+(import doeff_cluster.shared.intent.detached_model [SubmitDetached AwaitDetached DetachedSucceeded DetachedEnvUnavailable
                                       DetachedVersionMismatch outcome-of-view])
 (import doeff_cluster.local [sim-cluster SimWorker SimLink ClientLink coordinator-answers ReadCoordinator ProcessesOf PreparationsOf])
 (import doeff_cluster.service_model [system-of])
-(import doeff_cluster.remote_model [version-diffs VersionDiff VersionMismatch failed-from])
-(import doeff_cluster.detached_model [outcome-from-task-outcome])
+(import doeff_cluster.shared.intent.remote_model [version-diffs VersionDiff VersionMismatch failed-from])
+(import doeff_cluster.shared.intent.detached_model [outcome-from-task-outcome])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming])
 (import doeff_cluster.coordinator.intent.cluster_model [ClusterState TaskRecord WorkerInfo ComponentVersion])
 (import doeff_cluster.coordinator.core.cluster_policy [can-run-task absorb-env-failure place-tasks submit-task ENV-RETRIES])

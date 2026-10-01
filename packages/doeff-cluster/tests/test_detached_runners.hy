@@ -20,7 +20,7 @@
 (import doeff_core_effects.scheduler [Spawn Cancel Task])
 (import doeff_time [Delay SimClock sim-time-handler])
 (import doeff_cluster.process_versions [current-versions])
-(import doeff_cluster.detached_model [SubmitDetached AwaitDetached ReadRunners
+(import doeff_cluster.shared.intent.detached_model [SubmitDetached AwaitDetached ReadRunners
                                       DetachedSucceeded DetachedLost DetachedUnrunnable DetachedPending DetachedUnreachable
                                       RunnerFact RunnersUnreachable])
 (import doeff_cluster.detached [detached-cluster DetachedClient])

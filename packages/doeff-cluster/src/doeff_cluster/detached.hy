@@ -24,12 +24,12 @@
 (import doeff_time [Delay])
 (import .coordinator_http [CoordinatorEndpoint send-idempotent put-program REPLY-SECONDS IDEMPOTENT-DEADLINE-SECONDS])
 (import doeff_cluster.shared.intent.protocol [PROTOCOL-FORMAT])
-(import .runtime_env_model [RuntimeEnv runtime-env->json])
-(import .remote_model [encode-program])
+(import doeff_cluster.shared.intent.runtime_env_model [RuntimeEnv runtime-env->json])
+(import doeff_cluster.shared.intent.remote_model [encode-program])
 (import .process_versions [current-versions])
-(import .warm_model [WarmRuntimeEnv ReadWarmState WarmState WarmUnreachable WarmAnswer warm-state-of-json])
-(import .process_model [AwaitProcessEnded ProcessEnded ProcessWaitExpired])
-(import .detached_model [SubmitDetached AwaitDetached CancelDetached ReleaseDetached ReadRunners WARMING-PHASE
+(import doeff_cluster.shared.intent.warm_model [WarmRuntimeEnv ReadWarmState WarmState WarmUnreachable WarmAnswer warm-state-of-json])
+(import doeff_cluster.shared.intent.process_model [AwaitProcessEnded ProcessEnded ProcessWaitExpired])
+(import doeff_cluster.shared.intent.detached_model [SubmitDetached AwaitDetached CancelDetached ReleaseDetached ReadRunners WARMING-PHASE
                          DetachedSubmitted DetachedPending DetachedRefused DetachedAwaited DetachedUnreachable
                          RunnerFact RunnersUnreachable RunnersAnswer outcome-of-view
                          AwaitRunnersChange RunnersChange RunnersWatchMissing RunnersChangeAnswer])

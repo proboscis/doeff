@@ -17,7 +17,7 @@
 (import doeff_cluster.coordinator.core.cluster_policy [state-to-json state-from-json])
 (import doeff_cluster.coordinator.core.durable_kv [full-kv state-from-kv])
 (import doeff_cluster.coordinator.core.api_policy [respond])
-(import doeff_cluster.runtime_env_model [RepoCheckout PythonProject RuntimeEnv EnvVar runtime-env->json])
+(import doeff_cluster.shared.intent.runtime_env_model [RepoCheckout PythonProject RuntimeEnv EnvVar runtime-env->json])
 (import tests.program_rows [SAMPLE-RUN program-run])
 
 (val T (ClusterTiming))

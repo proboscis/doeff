@@ -11,7 +11,7 @@
 (import json)
 (import os)
 (import doeff [run])
-(import .runtime_env_model [RuntimeEnv runtime-env-of-json])
+(import doeff_cluster.shared.intent.runtime_env_model [RuntimeEnv runtime-env-of-json])
 (import .worker_model [JobSpec spec-hash])
 
 

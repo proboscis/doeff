@@ -32,7 +32,7 @@
 (import enum [StrEnum])
 (import json)
 (import doeff [EffectBase])
-(import doeff_cluster.runtime_env_model [RuntimeEnv runtime-env-of-json env-key])
+(import doeff_cluster.shared.intent.runtime_env_model [RuntimeEnv runtime-env-of-json env-key])
 (import doeff_cluster.env_prepare [ENV-MARKER-FORMAT project-dir])
 
 

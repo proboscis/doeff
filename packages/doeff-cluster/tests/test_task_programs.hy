@@ -26,7 +26,7 @@
 (import doeff_cluster.handlers [CoordinatorLink ProcessHost program-file write-program-file])
 (import doeff_cluster.host_contract [HOST-CONTRACT])
 (import doeff_cluster.remote [TaskClient])
-(import doeff_cluster.remote_model [TaskSucceeded encode-program decode-outcome program-sha])
+(import doeff_cluster.shared.intent.remote_model [TaskSucceeded encode-program decode-outcome program-sha])
 (import doeff_cluster.process_versions [current-versions])
 (import doeff_cluster.worker_model [DesiredJobs JobSpec JobStatus JobPhase])
 (import doeff_cluster.coordinator.core.cluster_policy [JOB-ENTRY])

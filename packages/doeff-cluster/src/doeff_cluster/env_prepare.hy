@@ -28,7 +28,7 @@
 (import enum [StrEnum])
 (import doeff [EffectBase])
 (import doeff_time [GetMonotonic])
-(import .runtime_env_model [RuntimeEnv RepoCheckout NativeWheel EnvFailure EnvFailureKind env-failure native-key root-split
+(import doeff_cluster.shared.intent.runtime_env_model [RuntimeEnv RepoCheckout NativeWheel EnvFailure EnvFailureKind env-failure native-key root-split
                             runtime-env->json CHILD-PROTOCOL SUPPORTED-CHILD-PROTOCOLS])
 
 (val ENV-MARKER ".doeff-env-ready.json")

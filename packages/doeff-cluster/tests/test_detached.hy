@@ -33,9 +33,9 @@
 (import doeff_cluster.handlers [CoordinatorLink])
 
 (import doeff_cluster.worker_model [DesiredJobs JobStatus JobPhase])
-(import doeff_cluster.remote_model [TaskSucceeded decode-program encode-outcome failed-from])
+(import doeff_cluster.shared.intent.remote_model [TaskSucceeded decode-program encode-outcome failed-from])
 (import doeff_cluster.process_versions [current-versions])
-(import doeff_cluster.detached_model [SubmitDetached AwaitDetached CancelDetached ReleaseDetached
+(import doeff_cluster.shared.intent.detached_model [SubmitDetached AwaitDetached CancelDetached ReleaseDetached
                                       DetachedSubmitted DetachedSucceeded DetachedFailed DetachedLost DetachedCancelled
                                       DetachedVersionMismatch DetachedUnknown DetachedPending DetachedRefused])
 (import doeff_cluster.detached [detached-cluster DetachedClient])
@@ -493,10 +493,10 @@
 (deftest test-the-three-effects-refuse-empty-or-old-needs
   ;; SubmitDetached・RemoteJob・WarmRuntimeEnv は needs を能力の名の空でない frozenset でだけ作れる(ADR-DOE-CLUSTER-001 R4b)。
   ;; 空(書き忘れ)・旧い Requirement の組の tuple・label の形の名は、送る前の作る時点で TypeError。
-  (import doeff_cluster.remote_model [RemoteJob])
-  (import doeff_cluster.warm_model [WarmRuntimeEnv])
+  (import doeff_cluster.shared.intent.remote_model [RemoteJob])
+  (import doeff_cluster.shared.intent.warm_model [WarmRuntimeEnv])
   (import tests.env_fixtures [LOCK env-of])
-  (import doeff_cluster.runtime_env_model [RuntimeEnv])
+  (import doeff_cluster.shared.intent.runtime_env_model [RuntimeEnv])
   (<- env RuntimeEnv (env-of "app-1" "lib-1" LOCK))
   (val makers {"SubmitDetached" (fn [needs] (SubmitDetached (slow-add 0.0 1) :key "k" :needs needs))
                "RemoteJob" (fn [needs] (RemoteJob (slow-add 0.0 1) :needs needs))
@@ -1106,7 +1106,7 @@
   ;; 要る能力を書かない本文(needs が無い・空)と旧い形の requires の本文は、POST /tasks・PUT /detached・POST /warm のどれでも
   ;; 400 で理由を返し、状態を変えない(ADR-DOE-CLUSTER-001 R4b — どこにでも置ける仕事は無い・label の照合は受け付けない)。
   (import tests.env_fixtures [LOCK env-of])
-  (import doeff_cluster.runtime_env_model [runtime-env->json RuntimeEnv])
+  (import doeff_cluster.shared.intent.runtime_env_model [runtime-env->json RuntimeEnv])
   (<- env RuntimeEnv (env-of "app-1" "lib-1" LOCK))
   (<- declared (runtime-env->json env))
   (val reply-86 (beat (ClusterState) "w" 0))
@@ -1143,9 +1143,9 @@
   ;; WarmRuntimeEnv は温める実行の環境そのものを欄 env(RuntimeEnv)に持つ — 旧い :env(import path の文字列)とは別の欄なので、
   ;; env は型が RuntimeEnv であることを確かめ、requires だけ無いことを確かめる。
   (import dataclasses [fields])
-  (import doeff_cluster.remote_model [RemoteJob])
-  (import doeff_cluster.warm_model [WarmRuntimeEnv])
-  (import doeff_cluster.runtime_env_model [RuntimeEnv])
+  (import doeff_cluster.shared.intent.remote_model [RemoteJob])
+  (import doeff_cluster.shared.intent.warm_model [WarmRuntimeEnv])
+  (import doeff_cluster.shared.intent.runtime_env_model [RuntimeEnv])
   (for [#(effect gone) [#(SubmitDetached ["env" "requires"]) #(RemoteJob ["env" "requires"]) #(WarmRuntimeEnv ["requires"])]]
     (val names (frozenset (gfor f (fields effect) f.name)))
     (assert (in "needs" names) #(effect.__name__ names))

@@ -13,7 +13,7 @@
 (import sys)
 (import time)
 (import pathlib [Path])
-(import doeff_cluster.runtime_env_model [RepoCheckout NativeWheel PythonProject RuntimeEnv EnvFailureKind
+(import doeff_cluster.shared.intent.runtime_env_model [RepoCheckout NativeWheel PythonProject RuntimeEnv EnvFailureKind
                                          runtime-env->json env-key current-platform])
 (import doeff_cluster.runtime_env [LocalCheckout ProjectOfCheckout runtime-env-of-checkouts checkout-reads])
 (import doeff_cluster.env_prepare [ENV-MARKER ROOTS-PTH])
@@ -22,7 +22,7 @@
 (import doeff_cluster.worker_model [CodeState CodeView StartJob ReapJob Outcome WorldView WorkerPolicy PrepareEnv WarmEnv
                                     code-key])
 (import doeff_cluster.worker_policy [plan])
-(import doeff_cluster.remote_model [encode-program decode-outcome program-sha TaskSucceeded TaskFailed])
+(import doeff_cluster.shared.intent.remote_model [encode-program decode-outcome program-sha TaskSucceeded TaskFailed])
 (import doeff_cluster.process_versions [current-versions])
 
 (val FIXTURES (/ (. (Path __file__) (resolve) parent) "fixtures"))

@@ -17,7 +17,7 @@
 (import doeff_core_effects.scripted_process [ProcessScript scripted-process-handler])
 (import doeff_cluster.runtime_env [LocalCheckout ProjectOfCheckout CheckoutState ReadCheckout SenderSourceRoot SENDER-SOURCE-DIR
                                    runtime-env-of-checkouts checkout-reads checkout-state-at checked-declaring-checkout])
-(import doeff_cluster.runtime_env_model [RepoCheckout RuntimeEnv RuntimeEnvInvalid InvalidKind])
+(import doeff_cluster.shared.intent.runtime_env_model [RepoCheckout RuntimeEnv RuntimeEnvInvalid InvalidKind])
 (import doeff_cluster.env_prepare [FileSha256])
 (import doeff_cluster.checkout_git_script [GitCheckout GitRemote GitRev git-command])
 (import doeff_core_effects.process_effects [ProcessOutcome RunProcess])

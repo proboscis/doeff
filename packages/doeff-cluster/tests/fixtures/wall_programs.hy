@@ -20,9 +20,9 @@
 (import doeff_time [Delay GetMonotonic])
 (import doeff_cluster.clock [now-epoch-ms])
 (import doeff_cluster.local [SharedRows])
-(import doeff_cluster.readiness_model [ReportReady])
+(import doeff_cluster.shared.intent.readiness_model [ReportReady])
 (import doeff_cluster.shared_model [ReadShared WriteShared])
-(import doeff_cluster.detached_model [SubmitDetached AwaitDetached DetachedSubmitted DetachedSucceeded])
+(import doeff_cluster.shared.intent.detached_model [SubmitDetached AwaitDetached DetachedSubmitted DetachedSucceeded])
 (import tests.fixtures.sim_programs [sim-task-foundation])
 
 (val NET (frozenset ["cluster-net"]))

@@ -31,7 +31,7 @@
 (import pathlib [Path])
 (import sys)
 (import doeff [run])
-(import .remote_model [version-diffs diffs-text decode-program encode-outcome
+(import doeff_cluster.shared.intent.remote_model [version-diffs diffs-text decode-program encode-outcome
                        TaskSucceeded TaskFailed failed-from VersionMismatch RemoteJobFailed])
 (import .process_versions [current-versions])
 ;; 子の文脈の型と読みは入口でない module に 1 つだけ置く(job_context の頭の註 — ここは import して、今の名を引けるように残す)。

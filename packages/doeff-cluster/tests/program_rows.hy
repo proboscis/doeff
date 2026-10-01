@@ -7,7 +7,7 @@
 (require doeff-hy.macros [defk val])
 (import doeff_cluster.coordinator.intent.cluster_model [ClusterState])
 (import doeff_cluster.coordinator.core.program_policy [program-write])
-(import doeff_cluster.remote_model [program-sha])
+(import doeff_cluster.shared.intent.remote_model [program-sha])
 
 ;; 置き場のキーの見本(64 桁の sha256 の形 — coordinator は /programs に在るかを Service の行の受け付けでは確かめない)。
 (val SAMPLE-PROGRAM (* "a" 64))
