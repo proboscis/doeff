@@ -36,7 +36,7 @@
                                          codec-of mode-of args-of subject-of])
 (import doeff_cluster.shared.core.record_model [ROOT ReplayFinished ReplayDiverged Entry Recording match-step diff-row summarize])
 (import doeff_core_effects.effects [Ask])
-(import doeff_cluster.host_contract [HOST-CONTRACT])
+(import doeff_cluster.foundation.host_contract [HOST-CONTRACT])
 (import doeff_cluster.job_context [RunContext])
 (import doeff_cluster.process_versions [current-versions])
 

@@ -15,17 +15,17 @@
 (require doeff-hy.macros [defk <- val])
 (import doeff [Program EffectBase with-handlers])
 (import doeff_core_effects.effects [Ask])
-(import .host_contract [HOST-CONTRACT])
+(import doeff_cluster.foundation.host_contract [HOST-CONTRACT])
 (import .job_context [RunContext runtime-env-of-context])
 (import doeff_cluster.shared.intent.runtime_env_model [RuntimeEnv])
-(import .report_client [report-client])
-(import .readiness_handlers [readiness-http])
-(import .metrics_handlers [metrics-http])
+(import doeff_cluster.foundation.report_client [report-client])
+(import doeff_cluster.shared.protocol.readiness_handlers [readiness-http])
+(import doeff_cluster.shared.protocol.metrics_handlers [metrics-http])
 (import .shared_handlers [shared-http SharedClient])
 (import doeff_cluster.shared.core.semaphore_handlers [cluster-semaphore SemaphoreSession])
 (import doeff_cluster.shared.core.lease_rules [lease-holder])
-(import .remote [remote-cluster TaskClient])
-(import .detached [detached-cluster DetachedClient warm-cluster WarmClient])
+(import doeff_cluster.shared.protocol.remote [remote-cluster TaskClient])
+(import doeff_cluster.shared.protocol.detached [detached-cluster DetachedClient warm-cluster WarmClient])
 
 
 (defk lease-holder-of [ctx]

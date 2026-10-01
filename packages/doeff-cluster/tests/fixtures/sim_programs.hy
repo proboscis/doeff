@@ -16,7 +16,7 @@
 (import doeff_cluster.shared.intent.remote_model [RemoteJob])
 (import doeff_cluster.shared.intent.shared_model [ReadShared WriteShared])
 (import doeff_cluster.shared.intent.detached_model [SubmitDetached AwaitDetached DetachedSubmitted DetachedSucceeded])
-(import doeff_cluster.host_contract [HOST-CONTRACT])
+(import doeff_cluster.foundation.host_contract [HOST-CONTRACT])
 (import doeff_cluster.job_context [RunContext])
 
 (val NET (frozenset ["cluster-net"]))

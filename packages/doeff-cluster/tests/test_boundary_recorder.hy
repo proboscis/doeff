@@ -28,7 +28,7 @@
 (import doeff [Program with-handlers])
 (import doeff_vm [UnhandledEffect])
 (import doeff_core_effects.handlers [reader])
-(import doeff_cluster.host_contract [HOST-CONTRACT environ-reader])
+(import doeff_cluster.foundation.host_contract [HOST-CONTRACT environ-reader])
 (import doeff_cluster.job_context [RunContext])
 (import doeff_cluster.shared.intent.remote_model [encode-program program-sha])
 (import doeff_cluster.process_versions [current-versions])

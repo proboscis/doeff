@@ -38,7 +38,7 @@
 (import doeff_cluster.shared.intent.detached_model [SubmitDetached AwaitDetached CancelDetached ReleaseDetached
                                       DetachedSubmitted DetachedSucceeded DetachedFailed DetachedLost DetachedCancelled
                                       DetachedVersionMismatch DetachedUnknown DetachedPending DetachedRefused])
-(import doeff_cluster.detached [detached-cluster DetachedClient])
+(import doeff_cluster.shared.protocol.detached [detached-cluster DetachedClient])
 (import doeff_cluster.sim.local [sim-cluster SimWorker KillWorker ReadCoordinator])
 (import doeff_cluster.shared.intent.service_model [system-of])
 (import tests.detached_rig [slow-add RigWorker MemoryCoordinator worker-tick worker-loop RIG-PROVIDES])

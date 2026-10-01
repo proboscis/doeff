@@ -13,7 +13,7 @@
 (import doeff_core_effects.effects [Ask])
 (import doeff_core_effects.handlers [state])
 (import doeff_core_effects.scheduler [scheduled])
-(import doeff_cluster.host_contract [host-reader environ-reader])
+(import doeff_cluster.foundation.host_contract [host-reader environ-reader])
 (import doeff_cluster.shared.intent.shared_model [ReadShared WriteShared])
 (import doeff_cluster.shared_handlers [shared-memory])
 (import doeff_cluster.shared.protocol.record_handlers [boundary-recorder])

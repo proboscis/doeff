@@ -20,7 +20,7 @@
 (import doeff_cluster.foundation.coordinator_inbox [http-request])
 (import doeff_cluster.coordinator.core.api_policy [respond tick])
 (import doeff_cluster.handlers [CoordinatorLink program-file])
-(import doeff_cluster.host_contract [environ-reader])
+(import doeff_cluster.foundation.host_contract [environ-reader])
 (import doeff_cluster.job_entry [read-program])
 (import doeff_cluster.worker_model [DesiredJobs JobStatus] doeff_cluster.shared.intent.job_model [JobPhase JobSpec])
 (import doeff_cluster.shared.intent.remote_model [TaskSucceeded encode-outcome failed-from])

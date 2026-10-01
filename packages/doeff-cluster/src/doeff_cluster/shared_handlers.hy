@@ -11,7 +11,7 @@
 (import doeff_cluster.shared.intent.semaphore_model [LeaseOp])
 (import doeff_cluster.shared.core.board_rules [board-ttl-refusal cas-allows])
 (import doeff_cluster.shared.core.lease_rules [lease-op semaphore-key])
-(import doeff_cluster.coordinator_http [CoordinatorEndpoint send-idempotent REPLY-SECONDS])
+(import doeff_cluster.foundation.coordinator_http [CoordinatorEndpoint send-idempotent REPLY-SECONDS])
 
 
 (defk json-snapshot [value]

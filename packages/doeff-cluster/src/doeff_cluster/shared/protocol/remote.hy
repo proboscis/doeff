@@ -11,14 +11,14 @@
 (import json)
 (import time)
 (import httpx)
-(import .coordinator_http [CoordinatorEndpoint send-idempotent put-program REPLY-SECONDS IDEMPOTENT-DEADLINE-SECONDS])
+(import doeff_cluster.foundation.coordinator_http [CoordinatorEndpoint send-idempotent put-program REPLY-SECONDS IDEMPOTENT-DEADLINE-SECONDS])
 (import doeff_time [Delay])
 (import doeff [run])
 (import doeff_cluster.shared.intent.protocol [PROTOCOL-FORMAT])
 (import doeff_cluster.shared.intent.runtime_env_model [RuntimeEnv runtime-env->json])
 (import doeff_cluster.shared.intent.remote_model [RemoteJob RemoteJobFailed EnvUnavailable TaskSucceeded TaskFailed
                        encode-program decode-outcome])
-(import .process_versions [current-versions])
+(import doeff_cluster.process_versions [current-versions])
 
 
 (deff task-submit-body [#^ str sha #^ str revision #^ frozenset needs #^ str name #^ float lease-seconds

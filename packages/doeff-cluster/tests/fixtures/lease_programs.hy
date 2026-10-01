@@ -13,7 +13,7 @@
 (import doeff_time [Delay])
 (import doeff_cluster.shared.core.clock [now-epoch-ms])
 (import doeff_cluster.cluster_foundation [lease-holder-of])
-(import doeff_cluster.host_contract [HOST-CONTRACT])
+(import doeff_cluster.foundation.host_contract [HOST-CONTRACT])
 (import doeff_cluster.job_context [RunContext])
 (import doeff_cluster.shared.intent.readiness_model [ReportReady])
 (import doeff_cluster.shared.core.semaphore_handlers [cluster-semaphore SemaphoreSession])

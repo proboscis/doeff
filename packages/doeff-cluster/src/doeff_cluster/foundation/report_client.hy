@@ -15,8 +15,8 @@
 (import urllib.parse [quote :as url-quote])
 (import httpx)
 (import doeff_cluster.shared.intent.protocol [PROTOCOL-FORMAT])
-(import .coordinator_http [CoordinatorEndpoint REPLY-SECONDS])
-(import .job_context [RunContext])
+(import doeff_cluster.foundation.coordinator_http [CoordinatorEndpoint REPLY-SECONDS])
+(import doeff_cluster.job_context [RunContext])
 
 
 (deff report-request [#^ str service #^ dict sender #^ str kind #^ dict payload]  ; defk にできない: 本番の client(Program の外の I/O の道具)と sim の宿が同じ形を作る純粋な判断

@@ -21,7 +21,7 @@
 (import doeff_cluster.shared.intent.runtime_env_model [RuntimeEnv runtime-env->json runtime-env-of-json env-key current-platform])
 (import doeff_cluster.shared.intent.detached_model [SubmitDetached AwaitDetached DetachedSucceeded])
 (import httpx)
-(import doeff_cluster.detached [WarmClient warm-cluster])
+(import doeff_cluster.shared.protocol.detached [WarmClient warm-cluster])
 (import doeff_cluster.sim.local [sim-cluster SimWorker SimLink ClientLink coordinator-answers ReadCoordinator ProcessesOf PreparationsOf
                              FailRoute])
 (import doeff_cluster.shared.intent.service_model [system-of])

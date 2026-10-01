@@ -36,7 +36,7 @@
 (import .process_versions [current-versions])
 ;; 子の文脈の型と読みは入口でない module に 1 つだけ置く(job_context の頭の註 — ここは import して、今の名を引けるように残す)。
 (import .job_context [RunContext context-from-env runtime-env-of-context])
-(import .report_client [deliver-task-result])
+(import doeff_cluster.foundation.report_client [deliver-task-result])
 
 
 (deff program-row [#^ str path]  ; defk にできない: process の入口(Program の外)が file を読む
