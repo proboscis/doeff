@@ -44,7 +44,7 @@
   (setv #^ dict environ (field :default-factory dict))
   (defn #^ None __post-init__ [self]
     "needs と environ を作る時に検める(needs の空・旧い形・environ の名の形・予約・秘密の名を断る — cluster_model.effect-needs-problem・runtime_env_model.child-environ-refusal)。"
-    (import doeff_cluster.cluster_model [effect-needs-problem])
+    (import doeff_cluster.shared.core.capabilities [effect-needs-problem])
     (import doeff_cluster.runtime_env_model [child-environ-refusal])
     (setv problem (effect-needs-problem self.needs))
     (when problem (raise (TypeError (+ "RemoteJob.needs: " problem))))

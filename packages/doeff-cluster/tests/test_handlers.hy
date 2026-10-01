@@ -66,7 +66,7 @@
 (import json)
 (import threading)
 (import http.server [BaseHTTPRequestHandler ThreadingHTTPServer])
-(import doeff_cluster.cluster_model [ClusterTiming])
+(import doeff_cluster.shared.intent.protocol [ClusterTiming])
 
 (deftest test-default-timing-outlasts-the-measured-tailnet-outage
   ;; 2026-09-23 の newmac の tailnet の途絶は最長 約 13 秒。自己停止はそれより長く、移し替えは自己停止より十分長い。

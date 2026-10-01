@@ -11,7 +11,8 @@
 ;;; 変えないので、起きる刻と、そこでの判断は 1 秒ごとの拍と同じになる(同値の検 = tests/test_idle_skip.hy)。
 (require doeff-hy.macros [defk <- val var])
 (import dataclasses [replace])
-(import doeff_cluster.cluster_model [ClusterState ClusterTiming ClusterNaming IdleProbe])
+(import doeff_cluster.shared.intent.protocol [ClusterTiming])
+(import doeff_cluster.coordinator.intent.cluster_model [ClusterState ClusterNaming IdleProbe])
 (import doeff_cluster.coordinator.core.cluster_policy [nodes-to-read with-derived-capabilities])
 (import doeff_cluster.coordinator.core.resource_policy [stamp])
 (import doeff_cluster.coordinator.core.api_policy [tick plan-rollouts deployments-to-observe mark-alive ROLLOUT-ACTOR ROLLOUT-TICK-MS TICK-MS])

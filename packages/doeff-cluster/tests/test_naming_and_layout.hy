@@ -6,7 +6,8 @@
 (import json)
 (import pytest)
 (import dataclasses [fields])
-(import doeff_cluster.cluster_model [ClusterNaming naming-from-json])
+(import doeff_cluster.coordinator.intent.cluster_model [ClusterNaming])
+(import doeff_cluster.coordinator.core.cluster_json [naming-from-json])
 (import doeff_cluster.worker_model [CodeLayout])
 (import tests.test_rollout [Sim FORWARD DEP])
 

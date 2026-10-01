@@ -1,7 +1,8 @@
 ;; coordinator の資源の口: 資源ごとの compare-and-set・送り手と出来事の記録・所有者だけが消せる・旧い PUT /jobs の写し・
 ;; readiness・盤の行ごとの版。
 (require doeff-hy.macros [deftest val var])
-(import doeff_cluster.cluster_model [ClusterTiming ClusterState PlainText Request])
+(import doeff_cluster.shared.intent.protocol [ClusterTiming PlainText Request])
+(import doeff_cluster.coordinator.intent.cluster_model [ClusterState])
 (import doeff_cluster.coordinator_inbox [http-request])
 (import doeff_cluster.coordinator.core.cluster_policy [state-to-json state-from-json board-changes job-from-json])
 (import doeff_cluster.worker_model [spec-hash])

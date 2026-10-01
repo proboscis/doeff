@@ -13,7 +13,8 @@
 (import http.server [BaseHTTPRequestHandler ThreadingHTTPServer])
 (import urllib.parse [urlsplit parse-qsl unquote :as url-unquote])
 (import doeff_core_effects.scheduler [Promise])
-(import .cluster_model [Request NextRequests Reply CoordinatorFault CoordinatorStopRequested PlainText ACCEPTED-FORMATS])
+(import doeff_cluster.shared.intent.protocol [Request Reply CoordinatorStopRequested PlainText])
+(import doeff_cluster.coordinator.intent.cluster_model [NextRequests CoordinatorFault ACCEPTED-FORMATS])
 
 
 (defclass ReplySlot []

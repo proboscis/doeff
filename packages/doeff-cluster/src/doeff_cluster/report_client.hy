@@ -14,7 +14,7 @@
 (import sys)
 (import urllib.parse [quote :as url-quote])
 (import httpx)
-(import .cluster_model [PROTOCOL-FORMAT])
+(import doeff_cluster.shared.intent.protocol [PROTOCOL-FORMAT])
 (import .coordinator_http [CoordinatorEndpoint REPLY-SECONDS])
 (import .job_context [RunContext])
 

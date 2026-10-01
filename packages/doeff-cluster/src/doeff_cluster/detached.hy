@@ -23,7 +23,7 @@
 (import doeff [run :as run-program])
 (import doeff_time [Delay])
 (import .coordinator_http [CoordinatorEndpoint send-idempotent put-program REPLY-SECONDS IDEMPOTENT-DEADLINE-SECONDS])
-(import .cluster_model [PROTOCOL-FORMAT])
+(import doeff_cluster.shared.intent.protocol [PROTOCOL-FORMAT])
 (import .runtime_env_model [RuntimeEnv runtime-env->json])
 (import .remote_model [encode-program])
 (import .process_versions [current-versions])

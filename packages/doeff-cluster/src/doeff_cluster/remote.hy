@@ -14,7 +14,7 @@
 (import .coordinator_http [CoordinatorEndpoint send-idempotent put-program REPLY-SECONDS IDEMPOTENT-DEADLINE-SECONDS])
 (import doeff_time [Delay])
 (import doeff [run])
-(import .cluster_model [PROTOCOL-FORMAT])
+(import doeff_cluster.shared.intent.protocol [PROTOCOL-FORMAT])
 (import .runtime_env_model [RuntimeEnv runtime-env->json])
 (import .remote_model [RemoteJob RemoteJobFailed EnvUnavailable TaskSucceeded TaskFailed
                        encode-program decode-outcome])
