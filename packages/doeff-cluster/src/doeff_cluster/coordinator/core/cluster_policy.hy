@@ -14,7 +14,7 @@
 (import doeff_cluster.shared.core.capabilities [capabilities-of environ-pairs])
 (import doeff_cluster.coordinator.intent.cluster_model [ClusterJob WorkerInfo GenerationOrder Placement ClusterState TaskRecord Drain EnvFailed WarmEntry HandoffPhase RefusedJob UnplacedKind ACCEPTED-FORMATS PLACED-PHASES])
 (import doeff_cluster.coordinator.core.cluster_rules [component-versions-of format-refusal format-version-refusal])
-(import doeff_cluster.coordinator.intent.request_bodies [LeaseBody TaskResultBody BoardWrite])
+(import doeff_cluster.coordinator.intent.request_bodies [LeaseBody TaskResultBody BoardWrite HeartbeatBody EnvsReport])
 (import doeff_cluster.coordinator.core.cluster_json [task-record-to-json task-record-from-json handoff-watch-from-json required-field int-field])
 (import doeff_cluster.shared.intent.semaphore_model [SEMAPHORE-PREFIX])
 (import doeff_cluster.shared.core.lease_rules [lease-op semaphore-write-refusal semaphore-key])
@@ -345,18 +345,25 @@
        (or (not worker.exclusive) (bool (& (set needs) (set worker.exclusive))))))
 
 
-(deff worker-capabilities-of [#^ dict body #^ str what]  ; defk にできない: heartbeat と保存の JSON を読む境界(Program の外)が呼ぶ
-  {:pre [(: body dict) (: what str)] :post [(: % tuple) (= (len %) 2)] :tags {:context "doeff-cluster" :role "judgment"}}
-  "worker の名乗り(heartbeat の本文・保存の行)→ #(provides exclusive)。exclusive は provides の一部でなければならない。
-   旧い形(labels だけで provides の無い名乗り)は BodyInvalid(送り手の誤り — ValueError の子) — label の等しさの照合は受け付けない(ADR-DOE-CLUSTER-001 R4b)。"
-  (when (and (in "labels" body) (not-in "provides" body))
-    (raise (BodyInvalid (.format "{}: 旧い形の labels {!r} は受け付けない — worker は --provides と --exclusive で能力を名乗る"
-                                what (get body "labels")))))
-  (setv provides (capabilities-of (.get body "provides" []) (+ what " の provides")))
-  (setv exclusive (capabilities-of (.get body "exclusive" []) (+ what " の exclusive")))
+(deff named-capabilities [#^ (| tuple list None) provides #^ (| tuple list None) exclusive #^ bool old-labels #^ str what]  ; defk にできない: heartbeat の本文と保存の JSON を読む境界(Program の外)が呼ぶ
+  {:pre [(: provides (| tuple list None)) (: exclusive (| tuple list None)) (: old-labels bool) (: what str)] :post [(: % tuple) (= (len %) 2)] :tags {:context "doeff-cluster" :role "judgment"}}
+  "worker の能力の名乗り(provides・exclusive の名の列 — None = 欄が無い)→ #(provides exclusive)。exclusive は provides の一部でなければ
+   ならない。旧い形(labels だけで provides の無い名乗り — old-labels)は BodyInvalid(ADR-DOE-CLUSTER-001 R4b)。heartbeat の本文の型
+   (#2445)と保存の行(worker-capabilities-of)が同じ規則で読む。"
+  (when (and old-labels (is provides None))
+    (raise (BodyInvalid (.format "{}: 旧い形の labels は受け付けない — worker は --provides と --exclusive で能力を名乗る" what))))
+  (setv provides (capabilities-of (list (or provides [])) (+ what " の provides")))
+  (setv exclusive (capabilities-of (list (or exclusive [])) (+ what " の exclusive")))
   (when (not (<= (set exclusive) (set provides)))
     (raise (BodyInvalid (.format "{}: exclusive {} は provides {} の一部で名乗る" what (list exclusive) (list provides)))))
   #(provides exclusive))
+
+
+(deff worker-capabilities-of [#^ dict body #^ str what]  ; defk にできない: heartbeat と保存の JSON を読む境界(Program の外)が呼ぶ
+  {:pre [(: body dict) (: what str)] :post [(: % tuple) (= (len %) 2)] :tags {:context "doeff-cluster" :role "judgment"}}
+  "保存の worker の行(JSON)の名乗り → #(provides exclusive)。規則は heartbeat の本文と同じ named-capabilities(旧い labels・exclusive は
+   provides の一部 — ADR-DOE-CLUSTER-001 R4b)。"
+  (named-capabilities (.get body "provides") (.get body "exclusive") (in "labels" body) what))
 
 
 (deff request-needs [#^ dict body #^ str what]  ; defk にできない: HTTP の本文・宣言の JSON を読む境界(Program の外)が呼ぶ
@@ -1030,64 +1037,36 @@
   (and (isinstance value dict) (all (gfor #(k v) (.items value) (and (isinstance k str) (isinstance v str))))))
 
 
-(deff heartbeat-body-refusal [#^ dict body]  ; defk にできない: HTTP の本文を読む境界(Program の外)が呼ぶ純粋な判断
-  {:pre [(: body dict)] :post [(: % (| str None))] :tags {:context "doeff-cluster" :role "judgment"}}
-  "heartbeat の本文の形が受けられない理由(受けられれば None)— 送り手の本文の欠け・型の誤りを、写す途中の KeyError・TypeError・
-   AttributeError(受け口では coordinator の中の欠陥と区別できない — #1024)にしないため、写す前に 1 か所で検める。
-   能力の名乗り(provides・exclusive)の検めは worker-capabilities-of が持つ。"
-  (setv name (.get body "name") statuses (.get body "statuses" []) envs (.get body "envs" {}))
-  (cond
-    (not (and (isinstance name str) name)) (.format "name(worker の名の文字列)が無い: {!r}" name)
-    (not (and (isinstance statuses list) (all (gfor s statuses (isinstance s dict)))))
-      (.format "statuses は状態の報告の object の列: {!r}" statuses)
-    (not (isinstance envs dict)) (.format "envs は object: {!r}" envs)
-    (not (all (gfor k #("ready" "preparing")
-                    :setv keys (.get envs k [])
-                    (and (isinstance keys list) (all (gfor x keys (isinstance x str)))))))
-      "envs.ready・envs.preparing は env のキーの文字列の列"
-    (not (and (isinstance (.get envs "failed" []) list)
-              (all (gfor f (.get envs "failed" []) (and (isinstance f dict) (in "key" f) (in "kind" f))))))
-      "envs.failed は {key kind detail? retryable?} の object の列"
-    (not (text-map? (.get body "versions" {}))) "versions は部品の名 → 版の文字列の object"
-    (not (text-map? (.get body "tools" {}))) "tools は道具の名 → 版の文字列の object"
-    (not (isinstance (.get body "platform" "") str)) (.format "platform は文字列: {!r}" (.get body "platform"))
-    True None))
-
-
-(defn #^ ClusterState register-heartbeat [#^ ClusterState state #^ dict body #^ int now]
+(defn #^ ClusterState register-heartbeat [#^ ClusterState state #^ HeartbeatBody body #^ int now]
   "heartbeat の中身(worker の能力・容量・版と、各 job / task の状態)を状態へ写す。割り当ての調停はしない(呼び手が別の送り手
    = coordinator として調停する)。古い世代の heartbeat(generation-order が OLDER)は名乗りとして受けず、その世代を退いた世代の
    列に載せ、その世代に置いた task の終わりの報告と lease の延長だけを写す(absorb-superseded-heartbeat)。
    知らない切り離した task をその process が走らせていれば、先に引き取る(adopt-running-detached — 状態を失った coordinator)。
-   本文の形の誤り(heartbeat-body-refusal)は BodyInvalid(送り手の誤り・400)。"
-  (setv refusal (heartbeat-body-refusal body))
-  (when (is-not refusal None) (raise (BodyInvalid refusal)))
-  (setv name (get body "name") boot (.get body "boot") boot-at (boot-at-of body)
+   本文の形の誤りは本文を解く所(coordinator/protocol/request_bodies — #2445)が 400 で断る。"
+  (setv name body.name boot body.boot boot-at body.boot-at statuses (list body.statuses)
         previous (.get state.workers name)
         order (generation-order previous boot boot-at)
-        state (adopt-running-detached state name boot (.get body "statuses" []) now))
+        state (adopt-running-detached state name boot statuses now))
   (when (= order GenerationOrder.OLDER)
     ;; OLDER は今の世代と boot の両方が在る時だけ(generation-order の最初の枝が、どちらかの無い時を CURRENT にする)。
     (when (or (is previous None) (is boot None))
       (raise (RuntimeError (.format "世代の比べが OLDER なのに今の世代か boot が無い: {}" name))))
     (return (absorb-superseded-heartbeat
               (replace state :workers (| state.workers {name (replace previous :retired (retired-with previous.retired boot))}))
-              name boot (.get body "statuses" []) now)))
-  (setv envs (.get body "envs" {})
-        caps (worker-capabilities-of body (.format "worker {} の名乗り" name))
-        node (str (.get body "node" ""))
+              name boot statuses now)))
+  (setv envs (or body.envs (EnvsReport))
+        caps (named-capabilities body.provides body.exclusive (is-not body.labels None) (.format "worker {} の名乗り" name))
+        node body.node
         info (WorkerInfo name (tuple (gfor c (get caps 0) :if (not-in c state.derivable) c))
-                         (int-field body "capacity" 10) now
-                         (component-versions-of (.get body "versions" {}))
+                         body.capacity now
+                         (component-versions-of (or body.versions {}))
                          boot
-                         (component-versions-of (.get body "tools" {}))
-                         :platform (.get body "platform" "")
-                         :env-ready (frozenset (.get envs "ready" []))
-                         :env-preparing (frozenset (.get envs "preparing" []))
-                         :env-failed (tuple (gfor f (.get envs "failed" [])
-                                                  (EnvFailed (get f "key") (get f "kind") (.get f "detail" "")
-                                                             (bool (.get f "retryable" False)))))
-                         :env-capacity (.get body "envCapacity" "ok")
+                         (component-versions-of (or body.tools {}))
+                         :platform body.platform
+                         :env-ready (frozenset envs.ready)
+                         :env-preparing (frozenset envs.preparing)
+                         :env-failed (tuple (gfor f envs.failed (EnvFailed f.key f.kind f.detail f.retryable)))
+                         :env-capacity body.env-capacity
                          :retired (retired-after previous boot)
                          ;; 同じ世代が起動時刻を名乗らなくなっても(版を戻した worker)、知っている起動時刻は捨てない。
                          :boot-at (if (and (is boot-at None) (= order GenerationOrder.CURRENT) (is-not previous None)
@@ -1098,10 +1077,9 @@
                          ;; node の label から導いた能力は、同じ node の間だけ前の観測を引き継ぐ(次の調停で読み直す)。
                          :node node
                          :derived (if (and (is-not previous None) (= previous.node node)) previous.derived #()))
-        statuses (.get body "statuses" [])
         state (replace (absorb-boot state name boot)
                 :workers (| state.workers {name info})
-                :statuses (| state.statuses {name {"at" now "endpoint" (.get body "endpoint")
+                :statuses (| state.statuses {name {"at" now "endpoint" body.endpoint
                                                   "jobs" (lfor s statuses (dfor #(k v) (.items s)
                                                                                 :if (not-in k #("result" "task")) k v))}})))
   (replace state :tasks (promote-prepared (renew-detached (absorb-task-reports state name statuses now boot) name boot now)
