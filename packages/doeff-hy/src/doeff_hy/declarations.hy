@@ -238,9 +238,25 @@
   (sorted (sfor item form (hy.mangle (str item)))))
 
 
+(defn answer-value-form [answer]  ; defk にできない: macro の展開の時に呼ぶ関数
+  "defeffect の本体の __doeff_answer__ に置く値の form を作るため。実行時は :answer の式そのもの(handler が resume で返す値の型)。
+   型検査の展開(doeff_hy/static_view.py)では `cast(object, (A, B, …))`(:answer の union の要素の tuple・union でなければ
+   要素 1 つ)にする: pyright は値の位置の `A | B` も型として評価し、素の総称(`dict | X` — reportMissingTypeArgument)や
+   `Callable | None`(reportOperatorIssue)を赤にするが、要素を並べた tuple なら名を読むだけ。cast は、要素に型の分からない名
+   (stub の無い module から import した名)があっても属性の型を Unknown にしない(agora-redesign #2322)。
+   cast の別名 _doeff-cast は defeffect-form が import する。"
+  (import doeff_hy.static_view [static-view-enabled])
+  (if (static-view-enabled)
+      `(_doeff-cast object
+                    #(~@(if (and (isinstance answer hy.models.Expression) (> (len answer) 0) (= (str (get answer 0)) "|"))
+                            (cut answer 1 None)
+                            [answer])))
+      answer))
+
+
 (defn defeffect-form [name docstring #^ Dict contract #^ str where pre-code]  ; defk にできない: macro の展開の時に呼ぶ関数
-  "defeffect の展開: EffectBase を継ぐ frozen の dataclass と、属性 __doeff_answer__(handler が resume で返す値の型)・
-   __doeff_tags__・__doeff_defeffect__(defeffect で作った印 — defk の :effects の検めが読む)を置く form を作るため。
+  "defeffect の展開: EffectBase を継ぐ frozen の dataclass(本体に ClassVar の __doeff_answer__ = handler が resume で返す
+   値の型)と、属性 __doeff_tags__・__doeff_defeffect__(defeffect で作った印 — defk の :effects の検めが読む)を置く form を作るため。
    pre-code = :pre を defk と同じ規則で文にした列(macros.hy の _contract-code が作る)。空でなければ __post_init__ に置き、
    欄の名前をその場の名前として読めるようにする(閉じた語彙・要素の型の検めを、作る時に断る)。"
   (refuse-unknown-keys contract EFFECT-KEYS where)
@@ -277,11 +293,18 @@
      (import dataclasses [dataclass :as _doeff-dataclass])
      (import doeff [EffectBase :as _doeff-effect-base])
      (import doeff_hy.declarations)
+     ;; 答えの型は class の本体の `__doeff_answer__: ClassVar[object] = …` で置く(agora-redesign #2322)。型検査の展開は
+     ;; 記帳の setattr(`__doeff_…__`)を外すので、setattr で置くと :answer の式が型検査から消え、答えの型のためだけに
+     ;; import した名が reportUnusedImport の赤になっていた(消すと実行時に壊れるので書き手は直せない)。本体の代入は
+     ;; 記帳ではないので型検査に残り、その名は使われた import と読まれる。注記は object なので、答えの型の読み方
+     ;; (`<-` の束ねの型・handler の resume の型)は変えない。ClassVar は dataclass の欄にならない(pyright・実行時とも)。
+     ;; from-import の別名の作法は defwire と同じ(record.hy)。
+     (import typing [ClassVar :as _doeff-ClassVar cast :as _doeff-cast])
      (defclass [(_doeff-dataclass :frozen True)] ~name [_doeff-effect-base]
        ~@(if (is docstring None) [] [docstring])
+       (setv #^ (get _doeff-ClassVar object) __doeff-answer__ ~(answer-value-form answer))
        ~@fields
        ~@post-init)
-     (setattr ~name "__doeff_answer__" ~answer)
      (setattr ~name "__doeff_tags__" ~(tags-form tags where))
      (setattr ~name "__doeff_defeffect__" True)
      ~@(if runs-carried

@@ -47,6 +47,7 @@ macro の展開が型のために持つ形:
 | `defhandler` の `(resume v)` / `(transfer v)` | `Resume(k, v)` / `Transfer(k, v)` | core の `typed_resume(effect, k, v)` / `typed_transfer`(v を effect の答えの型と突き合わせる) |
 | `defhandler` / `handle` の節を回す関数 | `(effect: '節の型の和', k)`(VM の絞り込みのための注記) | `(effect: object, k: _doeff_Continuation) -> _doeff_ClauseRun`(節の `isinstance` が型を絞る)。import は `Pass` と `WithHandler` だけ(agora-redesign #2279) |
 | `defhandler` の本文を受ける関数 | `def __doeff_handler_fn__(__doeff_body__):` | `(__doeff_body__: _doeff_HandlerBody[_doeff_HandledAnswer]) -> _doeff_HandledScope[_doeff_HandledAnswer]`(本文の答えの型をそのまま運ぶ・型 = `static_types.pyi`・名の表 = `static_view.py` の `HANDLER_STATIC_NAMES`) |
+| `defeffect` の `:answer` | class の本体の `__doeff_answer__: ClassVar[object] = A \| B`(答えの型の式そのもの) | `__doeff_answer__: ClassVar[object] = cast(object, (A, B))`(union の要素の tuple — 値の位置の `A \| B` を pyright が型として評価して出す赤を避け、名を読むだけにする。記帳の setattr に置くと型検査から消え、答えの型のためだけの import が reportUnusedImport になっていた。`<-` の束ねの型は変えない・agora-redesign #2322) |
 | 節の終わり方の検め | `doeff_hy.clause_endings` から import | module の頭で型付きの `static_types` の同じ名を import(clause_endings は .hy なので型が見えない) |
 | 文の位置の式 | `_guard_statement_value(form, …)` | `_guard_statement_value(reveal_type(form), …)` |
 | 関数への属性 | `setattr(f, '__doeff_body__', …)` | 同じ |
