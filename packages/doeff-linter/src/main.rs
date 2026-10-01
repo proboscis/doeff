@@ -601,7 +601,7 @@ fn main() -> ExitCode {
     let args = Args::parse();
 
     if args.list_rules {
-        println!("{}", doeff_linter::rules::rule_list_json());
+        println!("{}", doeff_linter::config::rule_list_json());
         return ExitCode::SUCCESS;
     }
 
