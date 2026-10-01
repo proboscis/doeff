@@ -151,11 +151,11 @@
   "戻しの順: 新の Service を 0 にした出来事は、旧が Ready に戻った(restoredOldMs)後で、その時 k8s の Pod が ready だった。"
   (setv status (get sim.state.rollouts name "status"))
   (setv stops (lfor e sim.state.audit
-                    :if (and (= (get e "kind") "Service") (= (.get (get e "changes") "spec.replicas") [1 0])) e))
+                    :if (and (= e.kind "Service") (= (.get e.changes "spec.replicas") [1 0])) e))
   (assert stops "新を止めていない")
   (for [e stops]
-    (assert (>= (get e "at") (get status "restoredOldMs")) #(e status))
-    (setv pods-at (next (gfor #(at pods _) sim.log :if (= at (get e "at")) pods)))
+    (assert (>= e.at (get status "restoredOldMs")) #(e status))
+    (setv pods-at (next (gfor #(at pods _) sim.log :if (= at e.at) pods)))
     (assert (> pods-at 0) #(e sim.log))))
 
 
@@ -175,7 +175,7 @@
   (setv stop-old (next (gfor c sim.kube.calls :if (= (get c "replicas") 0) c)))
   (assert (= stop-old {"op" "scale" "key" DEP "replicas" 0 "dryRun" False}))
   ;; 出来事の記録: 新を起こしたのは rollout/to-worker(送り手)
-  (assert (in "rollout/to-worker" (lfor e sim.state.audit :if (= (get e "kind") "Service") (get e "actor")))))
+  (assert (in "rollout/to-worker" (lfor e sim.state.audit :if (= e.kind "Service") e.actor))))
 
 
 (deftest test-new-that-never-becomes-ready-is-rolled-back-without-touching-the-deployment
