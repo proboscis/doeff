@@ -19,6 +19,7 @@
 (require doeff-hy.macros [val])
 (val MODULE-TAGS {:context "coordinator" :role "judgment"})
 (import dataclasses [asdict replace])
+(import functools [partial])
 (import doeff_cluster.coordinator.intent.cluster_model [ClusterState WorkerInfo Placement Drain])
 (import doeff_cluster.coordinator.core.cluster_rules [component-versions-of])
 (import doeff_cluster.coordinator.core.cluster_json [task-record-to-json task-record-from-json handoff-watch-from-json])
@@ -40,40 +41,75 @@
      (if (is expires None) {} {"expiresMs" expires})))
 
 
-(defn #^ dict durable-kv [#^ ClusterState state]
-  "盤を除いた耐久の状態のキーの表。"
-  (setv kv {"counter" (| {"nextTask" state.next-task "revision" state.revision "auditSeq" state.audit-seq "aliveMs" state.alive-ms}
-                         ;; task の id の頭(以前からの "t" は書かない — 以前の形と同じ)。
-                         (if (= state.task-prefix "t") {} {"taskPrefix" state.task-prefix}))})
-  (for [j state.jobs] (setv (get kv (+ "service/" j.spec.name)) (job-to-json j)))
-  (for [r (.values state.refused)] (setv (get kv (+ "service/" r.name)) r.row))
-  (for [#(k a) (.items state.placements)] (setv (get kv (+ PLACEMENT k)) (asdict a)))
+(defn #^ dict counter-json [#^ ClusterState state]
+  "鍵 counter の値。"
+  (| {"nextTask" state.next-task "revision" state.revision "auditSeq" state.audit-seq "aliveMs" state.alive-ms}
+     ;; task の id の頭(以前からの "t" は書かない — 以前の形と同じ)。
+     (if (= state.task-prefix "t") {} {"taskPrefix" state.task-prefix})))
+
+
+(defn #^ dict worker-json [#^ WorkerInfo w #^ (| int None) seen]
+  "鍵 worker/<名> の値。"
+  (| {"name" w.name "provides" (list w.provides) "exclusive" (list w.exclusive) "node" w.node "capacity" w.capacity
+      "versions" (dict w.versions)}
+     (worker-generations-json w)
+     (if (is seen None) {} {"lastSeenMs" seen})))
+
+
+(defn #^ object as-stored [#^ object value]
+  "そのまま保存する値(JSON の形で持っている行・meta・Rollout・Program・監査の行)の直列化 = 値そのもの。"
+  value)
+
+
+(defn #^ dict durable-sources [#^ ClusterState state]
+  "盤を除いた耐久の状態の鍵 → #(元の値の tuple 直列化の関数)。鍵と値の形の定義はここ 1 か所(durable-kv も durable-delta もここから作る)。
+  元の値 = 鍵の値を決める状態の部品(dataclass・dict・数)。状態は replace で作り直すので、前と後で同じ物の部品は変わっていない。
+  同じ鍵を 2 度書く所(service/ — 宣言の行の後に断った行)は、後の書きが勝つ(以前の形と同じ順)。"
+  (setv out {"counter" #(#(state.next-task state.revision state.audit-seq state.alive-ms state.task-prefix) (partial counter-json state))})
+  (for [j state.jobs] (setv (get out (+ "service/" j.spec.name)) #(#(j) (partial job-to-json j))))
+  (for [r (.values state.refused)] (setv (get out (+ "service/" r.name)) #(#(r.row) (partial as-stored r.row))))
+  (for [#(k a) (.items state.placements)] (setv (get out (+ PLACEMENT k)) #(#(a) (partial asdict a))))
   (for [w (.values state.workers)]
     (setv seen (.get state.seen-marks w.name))
-    (setv (get kv (+ "worker/" w.name)) (| {"name" w.name "provides" (list w.provides) "exclusive" (list w.exclusive) "node" w.node "capacity" w.capacity
-                                            "versions" (dict w.versions)}
-                                           (worker-generations-json w)
-                                           (if (is seen None) {} {"lastSeenMs" seen}))))
-  (for [t (.values state.tasks)]
-    (setv (get kv (+ "task/" t.id)) (task-record-to-json t)))
-  (for [#(k m) (.items state.meta)] (setv (get kv (+ "meta/" k)) m))
-  (for [#(k r) (.items state.rollouts)] (setv (get kv (+ "rollout/" k)) r))
-  (for [#(k d) (.items state.drains)] (setv (get kv (+ DRAIN k)) (asdict d)))
-  (for [#(k a) (.items state.surges)] (setv (get kv (+ SURGE k)) (asdict a)))
-  (for [#(k w) (.items state.warms)] (setv (get kv (+ WARM k)) (warm-entry-to-json w)))
-  (for [#(k p) (.items state.programs)] (setv (get kv (+ PROGRAM k)) p))
-  (for [#(k w) (.items state.handoffs)] (setv (get kv (+ HANDOFF k)) (.to-json w)))
-  (for [e state.audit] (setv (get kv (.format "audit/{:010d}" (get e "seq"))) e))
-  kv)
+    (setv (get out (+ "worker/" w.name)) #(#(w seen) (partial worker-json w seen))))
+  (for [t (.values state.tasks)] (setv (get out (+ "task/" t.id)) #(#(t) (partial task-record-to-json t))))
+  (for [#(k m) (.items state.meta)] (setv (get out (+ "meta/" k)) #(#(m) (partial as-stored m))))
+  (for [#(k r) (.items state.rollouts)] (setv (get out (+ "rollout/" k)) #(#(r) (partial as-stored r))))
+  (for [#(k d) (.items state.drains)] (setv (get out (+ DRAIN k)) #(#(d) (partial asdict d))))
+  (for [#(k a) (.items state.surges)] (setv (get out (+ SURGE k)) #(#(a) (partial asdict a))))
+  (for [#(k w) (.items state.warms)] (setv (get out (+ WARM k)) #(#(w) (partial warm-entry-to-json w))))
+  (for [#(k p) (.items state.programs)] (setv (get out (+ PROGRAM k)) #(#(p) (partial as-stored p))))
+  (for [#(k w) (.items state.handoffs)] (setv (get out (+ HANDOFF k)) #(#(w) w.to-json)))
+  (for [e state.audit] (setv (get out (.format "audit/{:010d}" (get e "seq"))) #(#(e) (partial as-stored e))))
+  out)
 
 
-(defn #^ dict kv-delta [#^ dict before-kv #^ dict after-kv #^ ClusterState before #^ ClusterState after]
-  "変わったキー → 新しい値(消えたキーは None)。盤は同一性で比べる(cluster_policy.board-changes)。"
+(defn #^ dict durable-kv [#^ ClusterState state]
+  "盤を除いた耐久の状態のキーの表。"
+  (dfor #(k #(_ encode)) (.items (durable-sources state)) k (encode)))
+
+
+(defn #^ bool same-parts [#^ tuple before #^ tuple after]
+  "元の値の tuple が部品ごとに同じ物か(同一性 — 等しさではない。等しいが別の物なら直列化して比べる側へ回す)。"
+  (and (= (len before) (len after))
+       (all (gfor #(x y) (zip before after) (is x y)))))
+
+
+(defn #^ dict durable-delta [#^ ClusterState before #^ ClusterState after]
+  "変わったキー → 新しい値(消えたキーは None)— 前と後を丸ごと durable-kv にして比べた答えと 1 字も違わない(agora-redesign #1843)。
+  元の値が同じ物の鍵は直列化しない(1 拍で変わるのは一握りの鍵なので、拍の費用が状態の大きさに比例しない)。同じ物でない鍵は
+  前と後を直列化して比べる(作り直したが中身の同じ値は差分に入れない)。盤は同一性で比べる(cluster_policy.board-changes)。"
+  (setv old (durable-sources before))
+  (setv new (durable-sources after))
   (setv delta {})
-  (for [#(k v) (.items after-kv)]
-    (when (!= (.get before-kv k) v) (setv (get delta k) v)))
-  (for [k before-kv]
-    (when (not-in k after-kv) (setv (get delta k) None)))
+  (for [#(k #(parts encode)) (.items new)]
+    (setv prior (.get old k))
+    (cond (is prior None) (setv (get delta k) (encode))
+          (same-parts (get prior 0) parts) None
+          True (do (setv value (encode))
+                   (when (!= ((get prior 1)) value) (setv (get delta k) value)))))
+  (for [k old]
+    (when (not-in k new) (setv (get delta k) None)))
   (for [key (board-changes before after)]
     (setv (get delta (+ BOARD key))
           (if (in key after.board)

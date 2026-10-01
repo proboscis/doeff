@@ -5,7 +5,7 @@
 (import doeff_cluster.coordinator.intent.cluster_model [ClusterState WorkerInfo TaskRecord])
 (import doeff_cluster.foundation.coordinator_inbox [http-request])
 (import doeff_cluster.coordinator.core.api_policy [respond tick])
-(import doeff_cluster.coordinator.core.durable_kv [durable-kv full-kv kv-delta state-from-kv])
+(import doeff_cluster.coordinator.core.durable_kv [durable-kv full-kv durable-delta state-from-kv])
 (import doeff_cluster.coordinator.core.cluster_policy [BOARD-MAX-VALUE-BYTES BOARD-MAX-ROWS BOARD-MAX-BYTES TASK-MAX-OPEN WORKER-FORGET-MS
                           board-usage value-size])
 (import doeff_cluster.coordinator.core.metrics_policy [metrics-text])
@@ -39,7 +39,7 @@
   (assert (in "w/process/atlas/7" s1.board))
   (assert (not-in "w/process/atlas/7" s2.board))
   (assert (in "w/cycle" s2.board))
-  (setv delta (kv-delta (durable-kv s) (durable-kv s2) s s2))
+  (setv delta (durable-delta s s2))
   (assert (= (get delta "board/w/process/atlas/7") None)))
 
 
@@ -131,3 +131,47 @@
   (setv later (tick s (+ WORKER-FORGET-MS 1) T))
   (assert (not-in "newmac" later.workers))
   (assert (in "atlas" later.workers)))
+
+
+;; ---- 耐久の差分は丸ごとの直列化と同じ答え(agora-redesign #1843)----------------------------------------------------------
+;; durable-delta は元の値が同じ物の鍵を直列化しない。差分の中身(Persist に渡す物)が、前と後を丸ごと durable-kv にして比べた答えと
+;; 1 字も違わない事を、worker・Service・task・盤・監査の行が動く拍の並びで確かめる。
+
+(defn #^ dict delta-by-full-serialization [#^ ClusterState before #^ ClusterState after]
+  "以前の形の差分(盤を除く): 前と後を丸ごと直列化して比べる。"
+  (setv old (durable-kv before) new (durable-kv after))
+  (| (dfor #(k v) (.items new) :if (!= (.get old k) v) k v)
+     (dfor k old :if (not-in k new) k None)))
+
+
+(defn #^ dict without-board [#^ dict delta]
+  (dfor #(k v) (.items delta) :if (not (.startswith k "board/")) k v))
+
+
+(deftest test-the-durable-delta-equals-the-delta-of-the-full-serialization
+  (val steps [#("POST" "/heartbeat" {"name" "atlas" "provides" ["net"] "capacity" 2 "statuses" []} 1000)
+              #("POST" "/resources/Service" {"name" "a" "spec" {"revision" "r" "needs" ["net"] "run" SAMPLE-RUN}} 1500)
+              #("PUT" "/board/k" {"value" 1} 2000)
+              #("GET" "/state" None 2500)
+              #("POST" "/heartbeat" {"name" "atlas" "provides" ["net"] "capacity" 2 "statuses" []} 3000)
+              #("POST" "/heartbeat" {"name" "zeus" "provides" ["net" "gpu"] "capacity" 1 "statuses" []} 3500)
+              #("PUT" "/board/k" {"value" 2} 4000)
+              #("POST" "/heartbeat" {"name" "atlas" "provides" ["net"] "capacity" 2 "statuses" []} 70000)])
+  (var s (ClusterState))
+  (var compared 0)
+  (for [#(method path body now) steps]
+    (val reply (call s method path body now))
+    (val after (get reply 0))
+    (assert (= (without-board (durable-delta s after)) (delta-by-full-serialization s after)) #(method path))
+    (:= compared (+ compared 1))
+    (:= s after))
+  (assert (= compared (len steps)))
+  ;; 作り直したが中身の同じ部品(別の物で等しい)は、直列化して比べる側へ回り、差分に入らない。
+  (val rebuilt (replace s :tasks (dfor #(k t) (.items s.tasks) k (replace t))
+                          :workers (dfor #(k w) (.items s.workers) k (replace w))))
+  (assert (= (without-board (durable-delta s rebuilt)) {}))
+  ;; 中身の違う部品は差分に入る(同一性だけで黙って落とさない)。
+  (val changed (replace s :workers (dfor #(k w) (.items s.workers) k (replace w :capacity (+ w.capacity 1)))))
+  (val got (without-board (durable-delta s changed)))
+  (assert (= got (delta-by-full-serialization s changed)))
+  (assert (and got (all (gfor k got (.startswith k "worker/"))))))

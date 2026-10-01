@@ -37,7 +37,7 @@
 (import doeff_cluster.coordinator.intent.cluster_model [ClusterState ClusterNaming IdleProbe NextRequests Persist Fault CoordinatorFault Watcher WatchRefusal WatchAnswer WatchStep])
 (import doeff_cluster.coordinator.core.watch_policy [watch-of settle-watch earliest-deadline])
 (import doeff_cluster.coordinator.core.cluster_policy [nodes-to-read with-derived-capabilities])
-(import doeff_cluster.coordinator.core.durable_kv [durable-kv kv-delta])
+(import doeff_cluster.coordinator.core.durable_kv [durable-delta])
 (import doeff_cluster.coordinator.core.api_policy [respond tick plan-rollouts deployments-to-observe scale-service record-action mark-alive ROLLOUT-ACTOR ROLLOUT-TICK-MS TICK-MS])
 (import doeff_cluster.coordinator.core.resource_policy [stamp])
 (import doeff_cluster.coordinator.intent.kube_model [ReadDeployment ScaleDeployment AnnotateDeployment ReadNodeLabels KubeUnavailable])
@@ -148,7 +148,7 @@
     (<- ticked ClusterState (rollout-tick next timing naming now))
     (:= next ticked))
   (:= next (mark-alive next now))
-  (setv delta (kv-delta (durable-kv state) (durable-kv next) state next))
+  (setv delta (durable-delta state next))
   (when delta
     (<- (Persist delta)))
   (for [#(request status body) replies]
