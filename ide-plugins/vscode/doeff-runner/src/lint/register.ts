@@ -99,7 +99,8 @@ export function registerLint(
   const staleStatus = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 38);
   staleStatus.text = '$(warning) doeff: 拡張が古い';
   staleStatus.backgroundColor = new vscode.ThemeColor('statusBarItem.warningBackground');
-  const offStale = store.onDidChange(() => {
+  // 「拡張が古い」の札を、今の知らない語の有無に合わせる(拡張を入れ直す時を知らせるため)
+  const showStale = (): void => {
     const unknown = store.unknownVocabulary();
     if (unknown.length === 0) {
       staleStatus.hide();
@@ -107,8 +108,11 @@ export function registerLint(
     }
     staleStatus.tooltip = `linter の出力に、この拡張の知らない語がある(その項目だけ一般の見た目にした)。拡張を入れ直すと直る:\n${unknown.slice(0, 10).join('\n')}`;
     staleStatus.show();
-  });
-  context.subscriptions.push(staleStatus, { dispose: offStale });
+  };
+  // 知らない語は違反の結果からも見出しの結果からも来る — 両方の知らせを聞く
+  const offStale = store.onDidChange(showStale);
+  const offStaleSignatures = store.onDidChangeSignatures(showStale);
+  context.subscriptions.push(staleStatus, { dispose: offStale }, { dispose: offStaleSignatures });
   // 前回 = この workspace で前に開いていた時の最後の数(起動の時に 1 度だけ読み、以後は今の数を書き続ける)
   const previous = readSavedTally(context.workspaceState.get(LEVEL_TALLY_KEY));
   const violations = new LintViolationsTree(store, pixel.tree, () => previous, mentions);
@@ -125,7 +129,8 @@ export function registerLint(
     violations.setFilter(filter);
     violationsView.description = filter.level === 'all' && filter.standing === 'all' ? undefined : filterText(filter);
   };
-  // 置き場が変わったら木を出し直し、重大さの数え(状態バー・欄の badge・覚えておく値)を更新する(波線は係が出し直す)
+  // 置き場の違反の側が変わったら木を出し直し、重大さの数え(状態バー・欄の badge・覚えておく値)を更新する(波線は係が出し直す)。
+  // 木が読むのは違反・module・規則・層・root の実行の状態だけ — 見出しの知らせは聞かない(#2162)
   const unsubscribe = store.onDidChange(() => {
     violations.refresh();
     map.refresh();

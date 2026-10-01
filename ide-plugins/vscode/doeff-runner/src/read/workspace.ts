@@ -9,7 +9,7 @@ import * as vscode from 'vscode';
 import type { SourceHighlighter } from '../hy/highlight/host';
 import type { SourceColoring } from '../hy/highlight/spans';
 import type { HyIndexStore } from '../hy/store';
-import type { LintStore } from '../lint/store';
+import { stampOf, type LintStore } from '../lint/store';
 import { cardKey, foldAll, parseLineField, toggleLineField, toggleOpen, unfoldAll, type FoldState } from './fold';
 import { followEntity } from './goto';
 import type { Glyphs } from './html';
@@ -81,14 +81,18 @@ export class WorkspacePlane implements vscode.Disposable {
     });
     this.panel = panel;
     const offHy = this.hy.onDidChange(() => this.schedule(false));
-    const offLint = this.lint.onDidChange(() => {
+    // 読み込んだ file のカードは違反と見出しの両方を描く — linter の置き場の 2 つの知らせを両方聞く(schedule が 1 度にまとめる)
+    const onLint = (): void => {
       if (this.hydrated.size > 0) {
         this.schedule(true);
       }
-    });
+    };
+    const offLint = this.lint.onDidChange(onLint);
+    const offSignatures = this.lint.onDidChangeSignatures(onLint);
     this.disposables.push(
       { dispose: offHy },
       { dispose: offLint },
+      { dispose: offSignatures },
       this.highlighter.onDidChange(() => {
         this.hydrated.clear();
         this.schedule(false);
@@ -111,8 +115,8 @@ export class WorkspacePlane implements vscode.Disposable {
     const graph = this.graphs.graph;
     return this.hy.entries().flatMap((entry, index) => {
       const hydrated = this.hydrated.get(path.normalize(entry.file.path));
-      const seen = hydrated === undefined ? undefined : this.lint.signaturesFor(entry.file.path);
-      const fresh = seen !== undefined && hydrated !== undefined && seen.version === hydrated.document.version ? seen : undefined;
+      // 見出しは読み込んだ document の今の印(版と中身の hash)で聞いた物だけ — 古い位置の見出しは描かない
+      const fresh = hydrated === undefined ? undefined : this.lint.currentSignatures(entry.file.path, stampOf(hydrated.document));
       return buildCards({
         definitions: entry.file.definitions,
         signatures: fresh?.signatures ?? [],

@@ -73,6 +73,7 @@ export class LintDecorations implements vscode.Disposable {
 
   /** 置き場・見えている editor・設定の変化で出し直し始める。 */
   start(): void {
+    // 行末の文と印が読むのは違反だけ — 違反の側の知らせだけを聞く(見出しの変化では出し直さない)
     const unsubscribe = this.store.onDidChange(() => this.refresh());
     this.disposables.push(
       { dispose: unsubscribe },

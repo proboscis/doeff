@@ -21,6 +21,7 @@ export class LayerFileDecorations implements vscode.FileDecorationProvider, vsco
   private readonly unsubscribe: () => void;
 
   constructor(private readonly store: LintStore) {
+    // 印が読むのは module と層だけ — 違反の側の知らせだけを聞く(見出しの変化では出し直さない)
     this.unsubscribe = store.onDidChange(() => this.changed.fire(undefined));
   }
 
@@ -48,6 +49,7 @@ export class LayerStatusBar implements vscode.Disposable {
 
   constructor(private readonly store: LintStore) {
     this.item.command = 'doeff-runner.lint.showLayers';
+    // 層の札が読むのは module と層だけ — 違反の側の知らせだけを聞く
     const unsubscribe = store.onDidChange(() => this.refresh());
     this.disposables.push({ dispose: unsubscribe }, vscode.window.onDidChangeActiveTextEditor(() => this.refresh()));
     this.refresh();

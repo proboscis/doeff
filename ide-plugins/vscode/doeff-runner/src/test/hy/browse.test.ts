@@ -5,6 +5,7 @@ import {
   axisId,
   axisValues,
   browseChildren,
+  browseNodeId,
   browseRoots,
   DEFAULT_BROWSE_VIEWS,
   describeView,
@@ -153,6 +154,26 @@ suite('タグで閲覧 — 並べ方と絞り込み', () => {
     const kinds = browseChildren(file, view, ctx);
     assert.deepStrictEqual(kinds.map(show), ['defhandler (1)', 'effect-clause (1)']);
     assert.deepStrictEqual(browseChildren(kinds[0], view, ctx).map(show), ['file-handler']);
+  });
+
+  test('木の節の固定の id — 同じ一覧と見方から 2 度作れば同じ id、同じ値の束も親が違えば別の id(agora-redesign #2162)', () => {
+    const ctx = context();
+    const view: BrowseView = { name: 'x', order: [axis('raw'), axis('kind')], filters: [] };
+    const walk = (nodes: readonly BrowseNode[]): BrowseNode[] => nodes.flatMap((n) => [n, ...walk(browseChildren(n, view, ctx))]);
+    const first = walk(browseRoots(items(), view, ctx));
+    const ids = first.map(browseNodeId);
+    assert.deepStrictEqual(walk(browseRoots(items(), view, ctx)).map(browseNodeId), ids, '作り直しても同じ id');
+    assert.strictEqual(new Set(ids).size, ids.length, '重なる id がある');
+    // 2 段目の defhandler の束は 1 段目の束(file・time …)ごとに出る — 見出しが同じでも別の節
+    const handlers = first.filter((n) => n.tag === 'group' && n.depth === 1 && n.value === 'defhandler');
+    assert.ok(handlers.length > 1, `defhandler の束が 1 つしかない(${handlers.length})`);
+    assert.strictEqual(new Set(handlers.map(browseNodeId)).size, handlers.length);
+    // 違反の数が変わっても(linter の結果が変わっても)束と定義の id は同じ
+    const quiet: BrowseContext = { ...ctx, lintViolations: () => [] };
+    const byKind: BrowseView = { name: 'x', order: [axis('kind')], filters: [] };
+    const kindIds = (c: BrowseContext): string[] =>
+      browseRoots(items(), byKind, c).flatMap((n) => [browseNodeId(n), ...browseChildren(n, byKind, c).map(browseNodeId)]);
+    assert.deepStrictEqual(kindIds(quiet), kindIds(ctx));
   });
 
   test('絞り込みは軸 = 値 の AND、合う物が無ければ札', () => {

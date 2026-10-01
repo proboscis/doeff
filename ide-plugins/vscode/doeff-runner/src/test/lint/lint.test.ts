@@ -1,9 +1,9 @@
 import * as assert from 'assert';
 import * as fs from 'fs';
 import * as path from 'path';
-import { parseLintJson, type LintReport } from '../../lint/contract';
+import { parseLintJson, type LintReport, type LintViolation } from '../../lint/contract';
 import { binaryCandidates, lintArgs, splitCommand } from '../../lint/runner';
-import { LintStore } from '../../lint/store';
+import { LintStore, needsSignatures, sameViolations, stampOf, textStamp } from '../../lint/store';
 import {
   atLeast,
   diagnosticOf,
@@ -16,6 +16,7 @@ import {
   inlineAnnotations,
   lintChildren,
   mapRoots,
+  nodeId,
   OUTSIDE_LAYERS,
   panelViolationRoots,
   ruleNodes,
@@ -364,5 +365,226 @@ suite('linter の違反が数千件の時の出し方', () => {
     assert.strictEqual(parseMinSeverity('info'), 'info');
     assert.strictEqual(parseMinSeverity('fatal'), undefined);
     assert.strictEqual(parseMinSeverity(undefined), undefined);
+  });
+});
+
+/** 違反の木と地図の例に使う file。 */
+const GOAL = '/repo/controllers/kanban/core/goal.hy';
+
+/** 木の全部の節を上から順に(展開した時の子も全部)。 */
+function walk(roots: readonly LintNode[]): LintNode[] {
+  return roots.flatMap((node) => [node, ...walk(lintChildren(node))]);
+}
+
+/** 置き場から違反の木・規則の一覧・層の地図の全部の節を作る(パネルと同じ作り方)。 */
+function allTrees(store: LintStore): Record<'violations' | 'rules' | 'map', LintNode[]> {
+  return {
+    violations: walk(panelViolationRoots(store.rootRuns(), store.violations(), store.rules())),
+    rules: walk(ruleNodes(store.rules())),
+    map: walk(mapRoots(store.modules(), store.violations()))
+  };
+}
+
+/** 違反の木の束(要約の行を除く)。 */
+function groupsOf(roots: readonly LintNode[]): LintNode[] {
+  return roots.filter((n) => n.tag === 'group');
+}
+
+suite('木の節の固定の id(agora-redesign #2162)', () => {
+  test('同じ置き場から 2 度作った節の id は等しく、1 つの木の中で重ならない(違反の木・規則の一覧・層の地図)', () => {
+    const store = new LintStore();
+    store.replaceRoot('/repo', report('report.json'));
+    const first = allTrees(store);
+    const second = allTrees(store);
+    for (const name of ['violations', 'rules', 'map'] as const) {
+      const ids = first[name].map(nodeId);
+      assert.ok(ids.length > 1, `${name}: 節がある`);
+      assert.deepStrictEqual(second[name].map(nodeId), ids, `${name}: 作り直しても同じ id`);
+      assert.strictEqual(new Set(ids).size, ids.length, `${name}: 重なる id がある`);
+    }
+  });
+
+  test('件数が変わっても、残った要約の行・束・file・違反の id は同じ(展開を保つ)', () => {
+    const store = new LintStore();
+    store.replaceRoot('/repo', report('report.json'));
+    const before = allTrees(store).violations;
+    // 1 file の実行で goal.hy の違反が 1 件(行 3 の minor)に減った
+    store.replaceFile('/repo', GOAL, report('single-file.json'));
+    const after = allTrees(store).violations.map(nodeId);
+    const kept = before.filter((n) => after.includes(nodeId(n))).map(show);
+    // 消えたのは行 12 の major の束とその中だけ(要約の行は数が変わっても同じ id)
+    assert.deepStrictEqual(kept, [
+      'summary critical 0',
+      'summary major 1',
+      'summary minor 1',
+      'summary info 1',
+      'group minor DOEFF201 層の向きに逆らう import (1)',
+      'file goal.hy (1)',
+      'violation 3 warning',
+      'group info DOEFF101 (1)',
+      'file effects.hy (1)',
+      'violation 0 info'
+    ]);
+  });
+
+  test('違う違反は違う id — 同じ file の同じ規則でも位置・文が違えば別、全部同じ違反が 2 つ並んでも重ならない', () => {
+    const [, known] = report('report.json').violations;
+    const moved = { ...known, range: { start: { line: 4, character: 0 }, end: { line: 4, character: 0 } } };
+    const reworded = { ...known, message: '別の文' };
+    const build = (list: readonly LintViolation[]): string[] => {
+      const [group] = groupsOf(violationRoots(list, []));
+      const [file] = lintChildren(group);
+      return lintChildren(file).map(nodeId);
+    };
+    const ids = build([known, moved, reworded, { ...known }]);
+    assert.strictEqual(ids.length, 4);
+    assert.strictEqual(new Set(ids).size, 4, '重なる id がある');
+    // 違反の object を作り直しても(linter を走らせ直しても)id は同じ
+    assert.deepStrictEqual(build([{ ...known }, { ...moved }, { ...reworded }, { ...known }]), ids);
+  });
+
+  test('層の地図 — 違う層の同じ dir、入れ子の workspace の folder で 2 つの root に出る同じ file も id が重ならない', () => {
+    const r = report('report.json');
+    const [goal, plan] = r.modules;
+    const modules = [
+      ...r.modules.map((module) => ({ root: '/repo', module })),
+      // 入れ子の folder — 同じ goal.hy がもう 1 つの root の下にも出る
+      { root: '/repo/controllers', module: goal },
+      // 層 intent にも controllers/kanban/core の dir が出る
+      { root: '/repo', module: { ...plan, path: '/repo/controllers/kanban/core/plan2.hy', layer: 'intent' } }
+    ];
+    const nodes = walk(mapRoots(modules, r.violations));
+    const ids = nodes.map(nodeId);
+    assert.strictEqual(new Set(ids).size, ids.length, '重なる id がある');
+    // goal.hy の違反 2 件は、2 つの module の節の下にそれぞれ出る(4 つの節・別の id)
+    assert.strictEqual(nodes.filter((n) => n.tag === 'violation' && n.violation.path === GOAL).length, 4);
+  });
+});
+
+suite('置き場の知らせ — 違反の側と見出しの側を分ける(agora-redesign #2162)', () => {
+  /** 置き場の 2 つの知らせの回数を数える。 */
+  function counted(store: LintStore): { violations: number; signatures: number } {
+    const calls = { violations: 0, signatures: 0 };
+    store.onDidChange(() => {
+      calls.violations += 1;
+    });
+    store.onDidChangeSignatures(() => {
+      calls.signatures += 1;
+    });
+    return calls;
+  }
+
+  test('前と同じ違反の 1 file の差し替えでは違反の知らせが鳴らない(構造で比べる — 読み直した別の object でも同じ)', () => {
+    const store = new LintStore();
+    store.replaceRoot('/repo', report('report.json'));
+    const calls = counted(store);
+    // 全体の結果と同じ中身(読み直した別の object)で差し替える
+    store.replaceFile('/repo', GOAL, report('report.json'));
+    assert.strictEqual(calls.violations, 0);
+    // 中身が変わった差し替えは鳴る
+    store.replaceFile('/repo', GOAL, report('single-file.json'));
+    assert.strictEqual(calls.violations, 1);
+    // 前の差し替えと同じ中身なら鳴らない
+    store.replaceFile('/repo', GOAL, report('single-file.json'));
+    assert.strictEqual(calls.violations, 1);
+    assert.deepStrictEqual(
+      store.violations().map((v) => `${path.basename(v.path)}:${v.range.start.line}`).sort(),
+      ['effects.hy:0', 'goal.hy:3'],
+      '鳴らなくても置き場は差し替えの中身を返す'
+    );
+    assert.strictEqual(calls.signatures, 0);
+  });
+
+  test('見出しだけの変化では違反の側の購読者(木)が呼ばれない', () => {
+    const store = new LintStore();
+    store.replaceRoot('/repo', report('report.json'));
+    const calls = counted(store);
+    store.replaceSignatures(GOAL, textStamp(1, '(defk a [])'), report('single-file.json'));
+    store.replaceSignatures(GOAL, textStamp(2, '(defk a [b])'), report('single-file.json'));
+    assert.deepStrictEqual(calls, { violations: 0, signatures: 2 });
+  });
+
+  test('1 回の stdin の実行(違反と見出しの差し替え)で違反の側の購読者が呼ばれるのは多くて 1 回', () => {
+    const store = new LintStore();
+    store.replaceRoot('/repo', report('report.json'));
+    const calls = counted(store);
+    // 違反が変わる実行 — 違反の知らせ 1 回・見出しの知らせ 1 回
+    store.replaceFileRun('/repo', GOAL, textStamp(1, 'x'), report('single-file.json'));
+    assert.deepStrictEqual(calls, { violations: 1, signatures: 1 });
+    // 違反が同じ実行(読む面を開き直した・保存した)— 違反の知らせは鳴らない
+    store.replaceFileRun('/repo', GOAL, textStamp(2, 'y'), report('single-file.json'));
+    assert.deepStrictEqual(calls, { violations: 1, signatures: 2 });
+  });
+
+  test('sameViolations は契約の欄を全部比べる(1 欄でも違えば別・順も数も比べる)', () => {
+    const [v, w] = report('report.json').violations;
+    assert.ok(sameViolations([v, w], report('report.json').violations.slice(0, 2)), '読み直した別の object は同じ');
+    assert.ok(v.explanation !== null);
+    const changes: ReadonlyArray<readonly [keyof LintViolation, LintViolation]> = [
+      ['rule', { ...v, rule: 'DOEFF999' }],
+      ['law', { ...v, law: null }],
+      ['adr', { ...v, adr: null }],
+      ['severity', { ...v, severity: 'info' }],
+      ['path', { ...v, path: '/repo/other.hy' }],
+      ['range', { ...v, range: { ...v.range, start: { ...v.range.start, character: v.range.start.character + 1 } } }],
+      ['range', { ...v, range: { ...v.range, end: { ...v.range.end, line: v.range.end.line + 1 } } }],
+      ['message', { ...v, message: '別の文' }],
+      ['hint', { ...v, hint: '別の直し方' }],
+      ['key', { ...v, key: '別の鍵' }],
+      ['registered', { ...v, registered: !v.registered }],
+      ['baseSeverity', { ...v, baseSeverity: 'info' }],
+      ['standing', { ...v, standing: 'reconciling' }],
+      ['level', { ...v, level: 'critical' }],
+      ['explanation', { ...v, explanation: null }],
+      ['explanation', { ...v, explanation: { ...v.explanation, subject: '別のもの' } }],
+      ['explanation', { ...v, explanation: { ...v.explanation, reason: '別の理由' } }],
+      ['explanation', { ...v, explanation: { ...v.explanation, lawStatement: '別の文' } }],
+      ['source', { ...v, source: 'jev' }],
+      ['probability', { ...v, probability: 0.5 }]
+    ];
+    assert.deepStrictEqual(new Set(changes.map(([field]) => field)), new Set(Object.keys(v)), '契約の欄を全部変えてみる');
+    for (const [field, changed] of changes) {
+      assert.ok(!sameViolations([v], [changed]), `欄 ${field} の違いを見落とした`);
+    }
+    assert.ok(!sameViolations([v, w], [w, v]), '順も比べる');
+    assert.ok(!sameViolations([v], [v, w]), '数も比べる');
+  });
+});
+
+suite('見出しは閉じても捨てず、印(版と中身の hash)が同じなら聞き直さない(agora-redesign #2162)', () => {
+  test('置いた見出しは残り、印が同じ document には聞き直さない・開き直して版が 1 に戻っても中身が違えば聞き直す', () => {
+    const store = new LintStore();
+    const text = '(defk a [] 1)';
+    assert.ok(needsSignatures(store.signaturesFor(GOAL), textStamp(1, text)), 'まだ聞いていない');
+    store.replaceSignatures(GOAL, textStamp(1, text), report('single-file.json'));
+    // 読む面の tab を閉じて開き直した — 同じ中身の document は版 1 から(置き場には見出しを捨てる口が無く、見出しは残る)
+    const reopened = { version: 1, getText: () => text };
+    assert.strictEqual(needsSignatures(store.signaturesFor(GOAL), stampOf(reopened)), false, '聞き直さない');
+    assert.strictEqual(store.currentSignatures(GOAL, stampOf(reopened))?.version, 1);
+    // 閉じている間に中身が変わった file を開き直した — 版は同じ 1 でも hash が違う
+    const changed = { version: 1, getText: () => '(defk a [] 2)' };
+    assert.ok(needsSignatures(store.signaturesFor(GOAL), stampOf(changed)), '聞き直す');
+    assert.strictEqual(store.currentSignatures(GOAL, stampOf(changed)), undefined, '古い見出しを描かない');
+    // 編集で版が進んだ
+    assert.ok(needsSignatures(store.signaturesFor(GOAL), textStamp(2, text)));
+  });
+
+  test('document の印は版が同じ間は hash を数え直さず、版が進めば新しい中身の hash', () => {
+    let text = 'a';
+    let reads = 0;
+    const document = {
+      version: 1,
+      getText: (): string => {
+        reads += 1;
+        return text;
+      }
+    };
+    assert.deepStrictEqual(stampOf(document), textStamp(1, 'a'));
+    assert.deepStrictEqual(stampOf(document), textStamp(1, 'a'));
+    assert.strictEqual(reads, 1, '同じ版は数え直さない');
+    text = 'b';
+    document.version = 2;
+    assert.deepStrictEqual(stampOf(document), textStamp(2, 'b'));
+    assert.notStrictEqual(textStamp(1, 'a').hash, textStamp(1, 'b').hash);
   });
 });
