@@ -30,7 +30,25 @@ use doeff_indexer::hy_index::{HyFileIndex, Range};
 use super::architecture::{Architecture, AssemblyShape, BusinessFakes};
 use super::business_fakes::{self, FileRole};
 use super::names::{absolute_module, hy_mangle, module_of};
-use super::settings::LayerSettings;
+use super::paths::glob_matches;
+use super::spans::innermost_definition;
+
+/// 判定の材料のうち、全体の定義の図から組む物(組むのは呼び手 — project/mod.rs の judge_assembly_shape)。図の型と組み立てを
+/// mod.rs に置いたまま、この module が mod.rs を読み戻さない形で受け取るため(読み戻すと依存の輪になる — agora-redesign #2121)。
+pub struct GraphInputs<'h> {
+    /// 図の file の並び(定義の節の順)。
+    pub rels: Vec<&'h String>,
+    /// file → その file の最初の定義の節の番号。
+    pub base: HashMap<&'h str, usize>,
+    /// 定義の節の数。
+    pub nodes: usize,
+    /// callees[n] = 節 n から届く節(辺の順向き)。
+    pub callees: Vec<Vec<usize>>,
+    /// effect の条(業務の偽物の宣言から組んだ物)。
+    pub clauses: Vec<business_fakes::Clause>,
+    /// file → (層の名・service の名)。層の置き場の外の file は載らない。
+    pub layers: HashMap<String, (String, Option<String>)>,
+}
 
 /// 最上位の定義 1 つ(判定の材料)。
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -495,14 +513,14 @@ fn import_names(file: &HyFileIndex) -> HashMap<String, String> {
     names
 }
 
-/// 索引から判定の材料を組んで判じる(全体の実行だけ)。読めない表の理由は 2 つ目に返す。
+/// 索引と、呼び手が定義の図から組んだ材料 graph から判じる(全体の実行だけ)。読めない表の理由は 2 つ目に返す。
 pub fn find(
     root: &Path,
     architecture: &Architecture,
-    layers: Option<&LayerSettings>,
     decl: &BusinessFakes,
     shape: &AssemblyShape,
     hy: &HashMap<String, HyFileIndex>,
+    graph: GraphInputs,
 ) -> (Vec<Breach>, Vec<String>) {
     let mut problems = Vec::new();
     let external: BTreeMap<String, String> = match &decl.external_effects {
@@ -513,23 +531,21 @@ pub fn find(
         }
         None => BTreeMap::new(),
     };
-    let graph = super::definition_graph(architecture, hy);
-    let callees = super::forward_edges(&graph);
-    let clauses = super::effect_clauses(root, &graph, hy, decl);
+    let GraphInputs { rels, base, nodes, callees, clauses, layers } = graph;
     let arch_root = super::settings::normalize_dir(&architecture.root);
     // 節ごとに最上位の定義(同じ file の、範囲がほかの定義に含まれない定義)へ畳む。
-    let mut top_of: Vec<usize> = vec![0; graph.nodes.len()];
+    let mut top_of: Vec<usize> = vec![0; nodes];
     let mut model = Model { shared: architecture.shared.clone(), ..Model::default() };
-    for rel in &graph.rels {
+    for rel in &rels {
         let file = &hy[rel.as_str()];
-        let first = graph.base[rel.as_str()];
+        let first = base[rel.as_str()];
         let mut order: Vec<usize> = (0..file.definitions.len()).collect();
         order.sort_by(|a, b| {
             let (a, b) = (&file.definitions[*a].full_range, &file.definitions[*b].full_range);
             a.start.cmp(&b.start).then(b.end.cmp(&a.end))
         });
         let production = business_fakes::role_of(rel, decl) != FileRole::Skipped && business_fakes::production_code(rel, decl);
-        let layer = layers.and_then(|l| super::classify_layer_file(rel, l).map(|(site, _)| (l.layers[site.layer.0].name.clone(), site.service)));
+        let layer = layers.get(rel.as_str()).cloned();
         let service_dir = rel
             .strip_prefix(&format!("{}/", arch_root))
             .and_then(|rest| rest.split_once('/'))
@@ -565,7 +581,7 @@ pub fn find(
         // 本体が名指す名(参照と呼び出し)を最上位の定義へ。
         for reference in &file.references {
             let Some(target) = reference.target.as_ref() else { continue };
-            if let Some(owner) = super::innermost_definition(&file.definitions, &reference.range) {
+            if let Some(owner) = innermost_definition(&file.definitions, &reference.range) {
                 model.tops[top_of[first + owner]].refs.insert(target.clone());
             }
         }
@@ -573,7 +589,7 @@ pub fn find(
             let (Some(target), Some(owner)) = (call.target.as_ref(), call.caller) else { continue };
             model.tops[top_of[first + owner]].refs.insert(target.clone());
         }
-        if production && decl.sets.iter().any(|s| super::glob_matches(s, rel)) {
+        if production && decl.sets.iter().any(|s| glob_matches(s, rel)) {
             model.set_files.insert(rel.to_string());
         }
     }
@@ -594,7 +610,7 @@ pub fn find(
     // 組み立ての層の file(検を除く)の退役した関数と翻訳の列の 1 点。
     let mut retired = Vec::new();
     let mut points = Vec::new();
-    let assembly: Vec<&String> = graph.rels.iter().copied().filter(|r| business_fakes::role_of(r, decl) == FileRole::Assembly).collect();
+    let assembly: Vec<&String> = rels.iter().copied().filter(|r| business_fakes::role_of(r, decl) == FileRole::Assembly).collect();
     for rel in &assembly {
         if let Some(function) = &shape.retired_function {
             let qualified = format!("{}.{}", module_of(rel), hy_mangle(function));

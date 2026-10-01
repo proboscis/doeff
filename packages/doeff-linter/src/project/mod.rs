@@ -49,6 +49,7 @@ pub mod intent_coverage;
 pub mod python_env;
 pub mod paths;
 pub mod report;
+pub mod spans;
 pub mod contract_breach;
 pub mod assembly_shape;
 pub mod invariants;
@@ -64,7 +65,7 @@ use walkdir::WalkDir;
 
 use crate::models::Severity;
 use crate::position::{first_line_range, LineIndex, Position, Range};
-use explain::{Explain, Explanation, NameSubject, Narrator, Placement};
+use explain::{Explain, NameSubject, Narrator, Placement};
 use facts::{read_facts, ByteSpan, Language, ModuleFacts};
 use names::{environment_words_of, hy_mangle, is_upper_name, module_of};
 use registry::Registry;
@@ -76,6 +77,7 @@ pub use paths::{declared_rel, glob_matches, relative_path};
 pub use contract_breach::ContractTestBreach;
 pub use report::{Finding, FindingOrigin, ModuleSummary, ProjectReport, Standing};
 use paths::segments_match;
+use spans::innermost_definition;
 use settings::{EnvironmentSettings, LawSpec, LayerId, LayerSettings, ProjectSettings};
 
 /// 何を判じるか — repo 全体か、保存前の内容の 1 file。
@@ -2225,15 +2227,6 @@ fn range_inside(inner: &Range, outer: &Range) -> bool {
     outer.start <= inner.start && inner.end <= outer.end && inner != outer
 }
 
-/// 位置 spot を含む、いちばん内側の定義の添字(無ければ None)。
-fn innermost_definition(definitions: &[Definition], spot: &Range) -> Option<usize> {
-    definitions
-        .iter()
-        .enumerate()
-        .filter(|(_, d)| d.full_range.start <= spot.start && spot.end <= d.full_range.end)
-        .max_by_key(|(_, d)| d.full_range.start)
-        .map(|(index, _)| index)
-}
 
 /// 1 つの test file の印の読み(file ごとに Hy の reader で 1 度だけ読む — deftest ごとに読み直さない・agora-redesign #1352)。
 /// module の印 = 最上位の `(val pytestmark 値)` / `(setv pytestmark 値)` の値の綴り。deftest の印 = deftest の始まりの行 → :marks の並びの
@@ -2743,7 +2736,25 @@ fn judge_assembly_shape(
     hy: &HashMap<String, HyFileIndex>,
     enabled: &BTreeSet<ProjectRule>,
 ) -> (Vec<Draft>, Vec<String>) {
-    let (breaches, problems) = assembly_shape::find(root, architecture, layers, decl, shape, hy);
+    // 定義の図から判定の材料を組んで渡す(図の型と組み立ては mod.rs に在り、assembly_shape は mod.rs を読まない — #2121)。
+    let graph = definition_graph(architecture, hy);
+    let inputs = assembly_shape::GraphInputs {
+        callees: forward_edges(&graph),
+        clauses: effect_clauses(root, &graph, hy, decl),
+        layers: layers
+            .map(|l| {
+                graph
+                    .rels
+                    .iter()
+                    .filter_map(|rel| classify_layer_file(rel, l).map(|(site, _)| (rel.to_string(), (l.layers[site.layer.0].name.clone(), site.service))))
+                    .collect()
+            })
+            .unwrap_or_default(),
+        nodes: graph.nodes.len(),
+        base: graph.base,
+        rels: graph.rels,
+    };
+    let (breaches, problems) = assembly_shape::find(root, architecture, decl, shape, hy, inputs);
     let drafts = breaches
         .into_iter()
         .map(|breach| {
