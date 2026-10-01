@@ -8,7 +8,7 @@
 (import doeff_cluster.shared.intent.remote_model [RemoteJobFailed])
 (import tests.fixtures.envs [sim-foundation])
 (import tests.fixtures.sim_programs [beacons])
-(import doeff_cluster.coordinator.intent.cluster_model [RolloutSpec RolloutStatus])
+(import doeff_cluster.coordinator.intent.cluster_model [RolloutSpec RolloutStatus TargetView])
 
 (val DEP "prod/old-beacon")
 (val DEPLOYMENTS {DEP {"specReplicas" 1 "replicas" 1 "readyReplicas" 1}})
@@ -93,7 +93,7 @@
 
 
 (deff stop-old-before-ready [spec status from-view to-view now]  ; defk にできない: api_policy の純粋な判断の callback を置き換える反例
-  {:pre [(: spec RolloutSpec) (: status RolloutStatus) (: from-view dict) (: to-view dict) (: now int)]
+  {:pre [(: spec RolloutSpec) (: status RolloutStatus) (: from-view TargetView) (: to-view TargetView) (: now int)]
    :post [(: % tuple)] :tags {:context "doeff-cluster-test" :role "judgment"}}
   "反例: 新の状態にかかわらず、旧を先に 0 台にする誤った順序。"
   #(status [{"op" "scale" "target" spec.from-target "replicas" 0}]))
