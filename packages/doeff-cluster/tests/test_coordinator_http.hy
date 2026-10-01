@@ -4,7 +4,7 @@
 (import threading)
 (import httpx)
 (import pytest)
-(import doeff_cluster.coordinator_inbox [RequestInbox])
+(import doeff_cluster.foundation.coordinator_inbox [RequestInbox])
 (import doeff_cluster.coordinator_http [CoordinatorEndpoint send-idempotent])
 (import doeff_cluster.handlers [CoordinatorLink])
 (import doeff_cluster.worker_model [DesiredJobs DesiredUnreadable])

@@ -21,7 +21,7 @@
 (import doeff_cluster.semaphore_handlers [SemaphoreSession])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming Request])
 (import doeff_cluster.coordinator.intent.cluster_model [ClusterState])
-(import doeff_cluster.coordinator_inbox [http-request])
+(import doeff_cluster.foundation.coordinator_inbox [http-request])
 (import doeff_cluster.coordinator.core.api_policy [respond])
 (import doeff_cluster.worker_model [JobSpec])
 (import doeff_cluster.worker_policy [kept-when-cut-off])

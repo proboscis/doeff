@@ -4,7 +4,7 @@
 (import socket)
 (import urllib.request)
 (import urllib.error)
-(import doeff_cluster.coordinator_inbox [probe-verdict RequestInbox READY-STALL-SECONDS LIVE-STALL-SECONDS])
+(import doeff_cluster.foundation.coordinator_inbox [probe-verdict RequestInbox READY-STALL-SECONDS LIVE-STALL-SECONDS])
 
 
 (defn #^ None test-probe-verdict-before-the-loop-starts []

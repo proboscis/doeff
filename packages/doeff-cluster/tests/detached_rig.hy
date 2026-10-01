@@ -17,7 +17,7 @@
 (import tests.clock_fixtures [clock-ms])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming])
 (import doeff_cluster.coordinator.intent.cluster_model [ClusterState])
-(import doeff_cluster.coordinator_inbox [http-request])
+(import doeff_cluster.foundation.coordinator_inbox [http-request])
 (import doeff_cluster.coordinator.core.api_policy [respond tick])
 (import doeff_cluster.handlers [CoordinatorLink program-file])
 (import doeff_cluster.host_contract [environ-reader])

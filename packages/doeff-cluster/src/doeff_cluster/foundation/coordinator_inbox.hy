@@ -1,7 +1,7 @@
 ;;; coordinator の HTTP の受付と停止の合図(handler)— 調停ループの Program(coordinator.hy)が出す NextRequests / Reply /
 ;;; CoordinatorStopRequested に、本番の process で答える部品。別 thread の HTTP server が受けた要求を列に並べ、調停ループが
 ;;; まとめて取る。k8s の probe(/livez・/readyz)は列を通さずに受付の thread が答える。
-;;; 2026-09-25 に coordinator.hy から分けた(handler の組 coordinator_handler_sets.hy がこの受付を本番の組に入れ、coordinator.hy の
+;;; 2026-09-25 に coordinator.hy から分けた(handler の組 coordinator/entry/handler_sets.hy がこの受付を本番の組に入れ、coordinator.hy の
 ;;; main がその組を選ぶ — 同じ file に置くと組の module と循環する)。coordinator.hy は以前の import の口のためにここの名を再び出す。
 (require doeff-hy.macros [defhandler deff])
 (import json)

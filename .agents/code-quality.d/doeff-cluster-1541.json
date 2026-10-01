@@ -218,10 +218,10 @@
       "layer": "io",
       "name": "doeff-cluster-coordinator-handler-sets",
       "paths": [
-        "packages/doeff-cluster/src/doeff_cluster/coordinator_handler_sets.hy"
+        "packages/doeff-cluster/src/doeff_cluster/coordinator/entry/handler_sets.hy"
       ],
       "public": [
-        "packages/doeff-cluster/src/doeff_cluster/coordinator_handler_sets.hy"
+        "packages/doeff-cluster/src/doeff_cluster/coordinator/entry/handler_sets.hy"
       ],
       "responsibility": "coordinator の handler の組 — 環境の違いは、ここに並ぶ「handler の組」という値だけで表す(operator 2026-09-25 逐語\"such environmental changes are to be all done via handler swapping\")。",
       "typed": true
@@ -251,10 +251,10 @@
       "layer": "io",
       "name": "doeff-cluster-coordinator-inbox",
       "paths": [
-        "packages/doeff-cluster/src/doeff_cluster/coordinator_inbox.hy"
+        "packages/doeff-cluster/src/doeff_cluster/foundation/coordinator_inbox.hy"
       ],
       "public": [
-        "packages/doeff-cluster/src/doeff_cluster/coordinator_inbox.hy"
+        "packages/doeff-cluster/src/doeff_cluster/foundation/coordinator_inbox.hy"
       ],
       "responsibility": "coordinator の HTTP の受付と停止の合図(handler)— 調停ループの Program(coordinator.hy)が出す NextRequests / Reply /CoordinatorStopRequested に、本番の process で答える部品。",
       "typed": true
@@ -646,10 +646,10 @@
       "layer": "io",
       "name": "doeff-cluster-kube-handlers",
       "paths": [
-        "packages/doeff-cluster/src/doeff_cluster/kube_handlers.hy"
+        "packages/doeff-cluster/src/doeff_cluster/foundation/kube_handlers.hy"
       ],
       "public": [
-        "packages/doeff-cluster/src/doeff_cluster/kube_handlers.hy"
+        "packages/doeff-cluster/src/doeff_cluster/foundation/kube_handlers.hy"
       ],
       "responsibility": "kube_model の effect の handler。",
       "typed": true
@@ -1238,6 +1238,7 @@
         "doeff-cluster-checkout-git-script",
         "doeff-cluster-clock",
         "doeff-cluster-cluster-foundation",
+        "doeff-cluster-cluster-json",
         "doeff-cluster-cluster-model",
         "doeff-cluster-cluster-policy",
         "doeff-cluster-code-prepare",
@@ -1293,6 +1294,8 @@
         "doeff-cluster-service-model",
         "doeff-cluster-shared-handlers",
         "doeff-cluster-shared-model",
+        "doeff-cluster-shared-capabilities",
+        "doeff-cluster-shared-protocol",
         "doeff-cluster-wal-store",
         "doeff-cluster-warm-model",
         "doeff-cluster-worker",
@@ -1320,10 +1323,10 @@
       "layer": "io",
       "name": "doeff-cluster-wal-store",
       "paths": [
-        "packages/doeff-cluster/src/doeff_cluster/wal_store.hy"
+        "packages/doeff-cluster/src/doeff_cluster/foundation/wal_store.hy"
       ],
       "public": [
-        "packages/doeff-cluster/src/doeff_cluster/wal_store.hy"
+        "packages/doeff-cluster/src/doeff_cluster/foundation/wal_store.hy"
       ],
       "responsibility": "coordinator の耐久の置き場: 追記の log(wal.jsonl)+ まとめ直した写し(snapshot.json)。",
       "typed": true

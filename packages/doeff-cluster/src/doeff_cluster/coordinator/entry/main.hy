@@ -17,13 +17,13 @@
 (import doeff_cluster.coordinator.core.cluster_json [naming-from-json])
 (import doeff_cluster.coordinator.core.cluster_policy [state-from-json fresh-task-prefix])
 (import doeff_cluster.coordinator.core.durable_kv [full-kv state-from-kv legacy-key-moves resume-writes])
-(import doeff_cluster.wal_store [WalStore])
+(import doeff_cluster.foundation.wal_store [WalStore])
 (import doeff_cluster.coordinator.core.api_policy [resume-after-downtime])
 (import doeff_cluster.coordinator.core.resource_policy [adopt-legacy])
-(import doeff_cluster.kube_handlers [kube-api kube-unavailable KubeClient])
+(import doeff_cluster.foundation.kube_handlers [kube-api kube-unavailable KubeClient])
 ;; HTTP の受付と停止の合図(coordinator_inbox — 以前の coordinator.hy の再輸出は #2022 で消した)。
-(import doeff_cluster.coordinator_inbox [RequestInbox StopState])
-(import doeff_cluster.coordinator_handler_sets [production-handlers])
+(import doeff_cluster.foundation.coordinator_inbox [RequestInbox StopState])
+(import doeff_cluster.coordinator.entry.handler_sets [production-handlers])
 
 
 

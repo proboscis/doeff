@@ -4,7 +4,7 @@
 (import json)
 (import pytest)
 (import pathlib [Path])
-(import doeff_cluster.wal_store [WalStore WalCorrupted encode-line read-line-record scan-log sealed read-snapshot])
+(import doeff_cluster.foundation.wal_store [WalStore WalCorrupted encode-line read-line-record scan-log sealed read-snapshot])
 
 
 (defn #^ WalStore fresh [#^ Path tmp-path]

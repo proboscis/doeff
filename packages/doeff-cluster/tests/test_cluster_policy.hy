@@ -151,7 +151,7 @@
 (import doeff_cluster.coordinator.intent.cluster_model [ClusterNaming])
 (import doeff_cluster.coordinator.core.cluster_policy [register-heartbeat with-derived-capabilities NODE-LABELS-TTL-MS])
 (import doeff_cluster.coordinator.core.program [rollout-tick])
-(import doeff_cluster.kube_handlers [KubeMemory kube-memory])
+(import doeff_cluster.foundation.kube_handlers [KubeMemory kube-memory])
 
 (setv COMPANY "company-machine")
 (setv COMPANY-LABEL {"doeff.dev/company-machine" "true"})

@@ -121,10 +121,10 @@
 (import doeff_cluster.coordinator.core.program [run-coordinator])
 (import doeff_cluster.coordinator.entry.main [load-state])
 (import .coordinator_http [IDEMPOTENT-DEADLINE-SECONDS RESEND-PAUSE-SECONDS])
-(import .coordinator_inbox [StopState http-request])
-(import .coordinator_handler_sets [RequestQueue MemoryWalStore emulated-handlers enqueue-request nudge-takers])
+(import doeff_cluster.foundation.coordinator_inbox [StopState http-request])
+(import doeff_cluster.coordinator.entry.handler_sets [RequestQueue MemoryWalStore emulated-handlers enqueue-request nudge-takers])
 (import .promise_wait [promise-or-timeout])
-(import .kube_handlers [KubeMemory])
+(import doeff_cluster.foundation.kube_handlers [KubeMemory])
 (import .declare [create-body spec-for-update])
 (import .detached [detached-path detached-submit-body detached-refusal submit-unreachable awaited-answer runner-facts-of-view
                    runners-unreachable warm-request-body warm-path absent-warm-state SERVER-ERROR warm-unconnected

@@ -11,11 +11,11 @@
 (import doeff_core_effects.scheduler [scheduled])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming])
 (import doeff_cluster.coordinator.intent.cluster_model [ClusterNaming ClusterState])
-(import doeff_cluster.coordinator_inbox [http-request])
+(import doeff_cluster.foundation.coordinator_inbox [http-request])
 (import doeff_cluster.coordinator.core.cluster_policy [state-to-json state-from-json])
 (import doeff_cluster.coordinator.core.api_policy [respond])
 (import doeff_cluster.coordinator.core.program [rollout-tick])
-(import doeff_cluster.kube_handlers [KubeMemory kube-memory])
+(import doeff_cluster.foundation.kube_handlers [KubeMemory kube-memory])
 (import doeff_cluster.worker_model [JobSpec spec-hash])
 (import tests.program_rows [SAMPLE-RUN program-run])
 

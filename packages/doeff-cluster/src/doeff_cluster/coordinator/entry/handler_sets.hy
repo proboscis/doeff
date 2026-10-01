@@ -11,7 +11,7 @@
 ;;;                        持たない。
 ;;;
 ;;; 組は with_handlers に渡す list(外側が先)。選ぶのは composition root(coordinator.main・業務の側の模擬環境)だけ。
-;;; 本番の受付の handler は coordinator_inbox.hy(coordinator.hy から分けた — この module と coordinator.hy の循環を作らない)。
+;;; 本番の受付の handler は foundation/coordinator_inbox.hy(coordinator.hy から分けた — この module と coordinator.hy の循環を作らない)。
 (require doeff-hy.macros [defhandler defk <- val var])
 (import copy)
 (import math [ceil])
@@ -25,10 +25,10 @@
 (import doeff_time [async-time-handler])
 (import doeff_cluster.shared.intent.protocol [Request Reply])
 (import doeff_cluster.coordinator.intent.cluster_model [NextRequests IdleProbe CoordinatorFault])
-(import .wal_store [WalStore MAX-LOG-BYTES wal-store apply-delta])
-(import .kube_handlers [KubeMemory kube-memory])
-(import .coordinator_inbox [RequestInbox StopState http-requests stop-flag])
-(import .promise_wait [promise-or-timeout])
+(import doeff_cluster.foundation.wal_store [WalStore MAX-LOG-BYTES wal-store apply-delta])
+(import doeff_cluster.foundation.kube_handlers [KubeMemory kube-memory])
+(import doeff_cluster.foundation.coordinator_inbox [RequestInbox StopState http-requests stop-flag])
+(import doeff_cluster.promise_wait [promise-or-timeout])
 
 
 (defn #^ list production-handlers [#^ RequestInbox inbox #^ WalStore store #^ StopState stop #^ object kube]

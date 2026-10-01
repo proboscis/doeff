@@ -13,7 +13,7 @@
 (import pytest)
 (import doeff_cluster.shared.intent.protocol [ClusterTiming])
 (import doeff_cluster.coordinator.intent.cluster_model [ClusterState])
-(import doeff_cluster.coordinator_inbox [http-request])
+(import doeff_cluster.foundation.coordinator_inbox [http-request])
 (import doeff_cluster.coordinator.core.api_policy [respond resume-after-downtime])
 (import doeff_cluster.coordinator.core.durable_kv [durable-kv state-from-kv])
 (import doeff_cluster.coordinator.core.cluster_policy [job-from-json])

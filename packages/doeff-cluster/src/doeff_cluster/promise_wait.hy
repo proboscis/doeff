@@ -2,7 +2,7 @@
 ;;;
 ;;; 模擬の世界(local.hy)の process の始まり・終わりの待ちと切り離した task の呼び鈴(proboscis/doeff#631)、模擬の coordinator の要求の列の
 ;;; 待ち(coordinator_handler_sets.queued-requests)が使う。local.hy から分けたのは、handler の組の module
-;;; (coordinator_handler_sets.hy)が local.hy を import すると循環するため(local.hy が組の module を import する)。
+;;; (coordinator/entry/handler_sets.hy)が local.hy を import すると循環するため(local.hy が組の module を import する)。
 ;;; 時計は doeff-time の Delay(外側の sim-time-handler か async-time-handler が答える)。
 (require doeff-hy.macros [defk <-])
 (import doeff_core_effects.scheduler [Spawn Wait Cancel Race Task Future TaskCancelledError])
