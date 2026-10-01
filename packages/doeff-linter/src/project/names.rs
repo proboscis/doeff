@@ -44,7 +44,7 @@ fn is_identifier_continue(c: char) -> bool {
 }
 
 /// 文字列が Python の識別子か。
-fn is_identifier(text: &str) -> bool {
+pub(crate) fn is_identifier(text: &str) -> bool {
     let mut chars = text.chars();
     match chars.next() {
         Some(first) => is_identifier_start(first) && chars.all(is_identifier_continue),
