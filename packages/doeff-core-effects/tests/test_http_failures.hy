@@ -40,7 +40,7 @@
 
 
 (deftest test-the-failure-kind-comes-from-the-transport-error-class
-  (for [#(error-class kind) [#(httpx.ConnectTimeout HttpFailureKind.TIMED-OUT)
+  (for [#(error-class kind) [#(httpx.ConnectTimeout HttpFailureKind.CONNECT-FAILED)
                             #(httpx.ReadTimeout HttpFailureKind.TIMED-OUT)
                             #(httpx.WriteTimeout HttpFailureKind.TIMED-OUT)
                             #(httpx.PoolTimeout HttpFailureKind.TIMED-OUT)
