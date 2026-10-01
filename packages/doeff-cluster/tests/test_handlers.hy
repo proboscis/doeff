@@ -99,10 +99,10 @@
 (import json)
 (import httpx)
 (import doeff_cluster.handlers [release-leases])
-(import doeff_cluster.semaphore_model [drop-holders])
+(import doeff_cluster.shared.core.lease_rules [drop-holders])
 
 (deftest test-release-leases-drops-only-the-finished-process-holders-on-an-old-coordinator
-  ;; 盤の semaphore の行から、token が子の名乗った担い手の頭「<job>/<世代の名>/」(semaphore_model.lease-holder)で始まる担い手だけを
+  ;; 盤の semaphore の行から、token が子の名乗った担い手の頭「<job>/<世代の名>/」(lease_rules.lease-holder)で始まる担い手だけを
   ;; 外す(他の process の lease は残す)。
   (setv board {"semaphore/app-writer" {"permits" 1 "holders" {"app-writer/1-old/1" 99 "app-writer/2-new/1" 88}}
                "semaphore/other" {"permits" 1 "holders" {"other-job/1-old/1" 77}}}

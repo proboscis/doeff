@@ -17,8 +17,8 @@
 (import doeff_cluster.job_context [RunContext])
 (import doeff_cluster.shared.intent.readiness_model [ReportReady])
 (import doeff_cluster.semaphore_handlers [cluster-semaphore SemaphoreSession])
-(import doeff_cluster.semaphore_model [CreateNamedSemaphore])
-(import doeff_cluster.shared_model [WriteShared])
+(import doeff_cluster.shared.intent.semaphore_model [CreateNamedSemaphore])
+(import doeff_cluster.shared.intent.shared_model [WriteShared])
 
 ;; 担い手が取る lease の名と、取った世代と刻を書く盤の行。
 (setv LOCK "writer-lock")

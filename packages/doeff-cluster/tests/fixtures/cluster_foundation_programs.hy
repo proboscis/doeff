@@ -9,7 +9,7 @@
 (import doeff_cluster.host_contract [host-reader environ-reader])
 (import doeff_cluster.cluster_foundation [with-cluster-handlers])
 (import doeff_cluster.shared.intent.readiness_model [ReportReady])
-(import doeff_cluster.shared_model [ReadShared WriteShared])
+(import doeff_cluster.shared.intent.shared_model [ReadShared WriteShared])
 
 
 (defk production-foundation [body]

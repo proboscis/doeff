@@ -2,14 +2,24 @@
 ;;; HTTP の client はこの module の中に閉じる(業務コードは ReadShared / WriteShared しか知らない)。
 ;;; 要求の形(board-read-request・board-write-request・lease-request)は、この client と手元の sim-cluster の偽の宿(local.hy)が
 ;;; 同じ関数で作る(本文を写さない)。
-(require doeff-hy.macros [defhandler deff <- val])
+(require doeff-hy.macros [defhandler defk deff <- val])
+(import json)
 (import urllib.parse [quote :as url-quote])
 (import httpx)
 (import doeff_cluster.clock [now-epoch-ms])
-(import .shared_model [ReadShared WriteShared ANY AnyExpect JsonValue cas-allows json-snapshot])
-(import doeff_cluster.coordinator.core.cluster_policy [board-ttl-refusal])
-(import .semaphore_model [LeaseOp lease-op semaphore-key])
-(import .coordinator_http [CoordinatorEndpoint send-idempotent REPLY-SECONDS])
+(import doeff_cluster.shared.intent.shared_model [ReadShared WriteShared ANY AnyExpect JsonValue])
+(import doeff_cluster.shared.intent.semaphore_model [LeaseOp])
+(import doeff_cluster.shared.core.board_rules [board-ttl-refusal cas-allows])
+(import doeff_cluster.shared.core.lease_rules [lease-op semaphore-key])
+(import doeff_cluster.coordinator_http [CoordinatorEndpoint send-idempotent REPLY-SECONDS])
+
+
+(defk json-snapshot [value]
+  {:pre [(: value JsonValue)] :post [(: % JsonValue)] :tags {:context "doeff-cluster" :role "judgment"}}
+  "盤の値を JSON に通した写しにするため: fake の保存(shared-memory)が、本物(coordinator の /board へ JSON で運ぶ)と同じく
+   書いた・読んだ値を呼び手の object と切り離し、同じ形(dict の鍵は文字列・tuple は list)で返す。JSON にできない値は TypeError
+   (本物の client が本文を JSON にする時と同じ)。"
+  (json.loads (json.dumps value)))
 
 
 (deff board-read-request [#^ str prefix]  ; defk にできない: 本番の client(Program の外の I/O の道具)と sim の宿が同じ形を作る純粋な判断
@@ -52,7 +62,7 @@
     (val ok (cas-allows (.get store key) (in key store) (if (is expect ANY) expect (get written 1))))
     (when ok (.update store {key (get written 0)}))
     (resume ok))
-  ;; lease の操作: coordinator と同じ純粋な判断(semaphore_model.lease-op)を、この保存の時計(doeff-time の GetTime)で当てる。
+  ;; lease の操作: coordinator と同じ純粋な判断(lease_rules.lease-op)を、この保存の時計(doeff-time の GetTime)で当てる。
   (LeaseOp [name op token permits ttl-ms]
     (<- now int (now-epoch-ms))
     (setv key (semaphore-key name)

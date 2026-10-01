@@ -1,6 +1,6 @@
 ;; 名前付きの lease の担い手の名乗りと、終わった process の lease の外しが同じ定義であること(2026-09-29)。
 ;;
-;; 担い手の名 = semaphore_model.lease-holder(<job>/<process の世代の名>)・token = holder-tokens-prefix(担い手) + 番号。子の土台
+;; 担い手の名 = lease_rules.lease-holder(<job>/<process の世代の名>)・token = holder-tokens-prefix(担い手) + 番号。子の土台
 ;; (cluster_foundation.lease-holder-of → SemaphoreSession.next-token)が名乗り、worker(本番の handlers.release-leases・sim の
 ;; local.release-leases)が worker_policy の ReleaseLeases(job 世代の名)から同じ定義で頭を作って外す。
 ;;
@@ -11,7 +11,7 @@
 (import doeff_cluster.cluster_foundation [lease-holder-of])
 (import doeff_cluster.job_context [RunContext])
 (import doeff_cluster.semaphore_handlers [SemaphoreSession])
-(import doeff_cluster.semaphore_model [drop-holders lease-holder holder-tokens-prefix])
+(import doeff_cluster.shared.core.lease_rules [drop-holders lease-holder holder-tokens-prefix])
 (import doeff_cluster.worker_model [ReleaseLeases])
 (import doeff_cluster.local [sim-cluster Redeclare ProcessesOf SharedRows])
 (import tests.fixtures.lease_programs [lease-sim-foundation lease-writers lease-writers-v2 HOLDER-ROW])

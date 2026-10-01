@@ -15,7 +15,7 @@
 (import doeff_time [Delay sim-time-handler])
 (import doeff_cluster.clock [now-epoch-ms])
 (import tests.clock_fixtures [clock-at clock-ms])
-(import doeff_cluster.shared_model [ReadShared WriteShared])
+(import doeff_cluster.shared.intent.shared_model [ReadShared WriteShared])
 (import doeff_cluster.shared_handlers [shared-memory])
 (import doeff_cluster.effect_codec [BlobMemory intern-json resolve-refs encode-value decode-value encode-error decode-error delta-of apply-delta canonical
                                          UnrecordableEffect RecordedError])
@@ -149,6 +149,10 @@
   (assert (is (resolve-type "doeff_cluster.detached_model:SubmitDetached") SubmitDetached))
   (assert (is (resolve-type "doeff_cluster.runtime_env_model:RuntimeEnv") RuntimeEnv))
   (assert (is (resolve-type (type-name SubmitDetached)) SubmitDetached))
+  ;; 盤と lease の effect(#2107)— 記録に最も多く残る型
+  (assert (is (resolve-type "doeff_cluster.shared_model:WriteShared") WriteShared))
+  (assert (is (resolve-type "doeff_cluster.semaphore_model:HeldLease")
+              (resolve-type "doeff_cluster.shared.intent.semaphore_model:HeldLease")))
   ;; 表に無い旧い名は引けない(黙って別の型へ倒れない)
   (assert (is (resolve-type "doeff_cluster.no_such_model:SubmitDetached") None))
-  (assert (= (len MOVED-MODULES) 8)))
+  (assert (= (len MOVED-MODULES) 10)))

@@ -20,7 +20,7 @@ composition root で渡す。書き手の名は effect の引数ではなく、h
 | `PutRows(writes)` | 書きの束 = `RowWrite(table, key, value, expect)`(欄と意味は `PutRow` と同じ)の空でない tuple。同じ表の同じキーが 2 度出る束は作る時に `ValueError` | `WrittenRows(items)`(束の順の `Written`) | `RowsConflict(index, table, key, current)`・`RowsRefused(index, table, key, reason)`・`Unreachable` |
 
 lease(取る・延ばす・返す・書きの柵)はこの package に作らない。doeff-cluster の `LeaseOp` / `HeldLease`
-(`doeff_cluster.semaphore_model`)をそのまま使う。
+(`doeff_cluster.shared.intent.semaphore_model`)をそのまま使う。
 
 型は `doeff_records.values`(定義・期待・答え)と `doeff_records.effects`(effect)にある。
 
