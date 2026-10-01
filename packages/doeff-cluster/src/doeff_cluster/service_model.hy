@@ -206,13 +206,16 @@
 
 (defk callables-in [values]
   {:pre [(: values list)] :post [(: % list)] :tags {:context "doeff-cluster" :role "judgment"}}
-  "呼び出しの引数の値の中の関数(list と dict の中も)を並べるため — 土台の :needs の検めが、系の引数に渡した土台の全部を見る。"
+  "呼び出しの引数の値の中の関数(list と dict と土台の record の欄の中も)を並べるため — 土台の :needs の検めが、系の引数に渡した土台の
+   全部を見る(土台を record 1 つで渡す系でも、欄の土台を見落とさない)。"
   (var found [])
   (for [v values]
     (match v
       (list) (do (<- inner list (callables-in v)) (:= found (+ found inner)))
       (tuple) (do (<- inner list (callables-in (list v))) (:= found (+ found inner)))
       (dict) (do (<- inner list (callables-in (list (.values v)))) (:= found (+ found inner)))
+      (RecordArgument) (do (<- inner list (callables-in (lfor field (dataclasses.fields v) (getattr v field.name))))
+                           (:= found (+ found inner)))
       _ (when (callable v) (:= found (+ found [v])))))
   found)
 

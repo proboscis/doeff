@@ -477,3 +477,15 @@
   (assert (is ok None) ok)
   (<- refused str (service-model.foundation-needs-refusal wide plain-foundation))
   (assert (and refused (in "wide_foundation" refused)) refused))
+
+
+(deftest test-a-foundation-inside-a-foundation-record-is-checked-against-its-needs
+  ;; 土台を record 1 つで渡す系でも、record の欄の土台の :needs を検める(欄の中を見落とすと、job の置き場に無い能力を名乗る土台が
+  ;; 宣言を通る)。欄の土台の :needs が job の :needs に無ければ断り、在れば通す。
+  (import tests.fixtures.declared_system [wide-foundation])
+  (<- ok (| str None) (service-model.foundation-needs-refusal (lab-record PAIR) plain-foundation))
+  (assert (is ok None) ok)
+  (<- refused (| str None)
+      (service-model.foundation-needs-refusal (lab-record (PairFoundation :main plain-foundation :side wide-foundation :step 2))
+                                              plain-foundation))
+  (assert (and (is-not refused None) (in "wide_foundation" refused) (in "tally" refused)) refused))
