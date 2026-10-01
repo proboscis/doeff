@@ -10,13 +10,14 @@
 ;;;   * 保持: 最後の書きが期限より古い run を丸ごと消し、消した [service run] を答える
 ;;; 契約の外(本物だけの性質): file の mtime(memory の置き場は 0 で答える)— 「まだ書いている区切りは圧縮しない」「期限の中の run を
 ;;; 残す」は mtime の読みの性質で、ここでは十分に先の時刻(全部が古い)と 0(全部が新しい)で比べる・fsync の効き目。
-(require doeff-hy.macros [defk deftest <- val])
+(require doeff-hy.macros [defk defhandler deftest <- val])
 (import gzip)
 (import json)
 (import doeff [with_handlers])
-(import doeff_core_effects.file_effects [ReadText ReadBytes ListDirectory])
+(import doeff_core_effects.file_effects [ReadText ReadBytes ListDirectory RemoveTree file-done])
 (import doeff_cluster.record_store [AppendRecordLines ListRecordRuns ReadRecordRun CompactRecords PruneRecords])
 (import doeff_cluster.record_store_handlers [record-files HEAD-READ-BYTES])
+(import doeff_cluster.record_store_invariants [prune-keeps-runs-whole])
 (import tests.file_contract_handlers [FilesRoot])
 
 (val HEADER (json.dumps {"k" "run" "run" "r1" "startedMs" 1000} :ensure-ascii False))
@@ -166,3 +167,60 @@
   (assert (= answers [[] 3 [["other" "r3"] ["svc" "r1"] ["svc" "r2"]] [] None]) answers)
   (<- left tuple (ListDirectory (+ root "/records/svc")))
   (assert (= left #()) left))
+
+
+;; --- 条 R1(architecture.hy の record-store の :invariants): 保持は run を丸ごと消すか丸ごと残す --------------------------------
+
+(defk run-texts []
+  {:pre [] :post [(: % dict)] :tags {:context "doeff-cluster-test" :role "program"}}
+  "条 R1 の判断に渡す記録: 筋が書く 2 つの run の鍵 \"service/run\" → 読めた記録の text(無い run は None)。"
+  (<- first (ReadRecordRun "svc" "r1" None None))
+  (<- second (ReadRecordRun "other" "r3" None None))
+  {"svc/r1" first "other/r3" second})
+
+
+(defk prunes-runs-of-several-chunks [now-ms]
+  {:pre [(: now-ms int)] :post [(: % tuple)] :tags {:context "doeff-cluster-test" :role "program"}}
+  "区切りを 3 つと 2 つ持つ run を書き、消す前の text を読み、時刻 now-ms(期限 0)で保持を出し、消した後の text を読む筋。"
+  (<- (AppendRecordLines "svc" "r1" 0 [HEADER "{\"e\":1}"]))
+  (<- (AppendRecordLines "svc" "r1" 1 ["{\"e\":2}"]))
+  (<- (AppendRecordLines "svc" "r1" 2 ["{\"e\":3}"]))
+  (<- (AppendRecordLines "other" "r3" 0 ["{\"e\":1}"]))
+  (<- (AppendRecordLines "other" "r3" 1 ["{\"e\":2}"]))
+  (<- before dict (run-texts))
+  (<- (PruneRecords now-ms 0))
+  (<- after dict (run-texts))
+  #(before after))
+
+
+(deftest test-prune-removes-or-keeps-each-run-whole
+  {:interpreters ["os-files" "memory-files"]}
+  ;; 期限の外(十分に先の時刻)では 2 つの run が丸ごと消え、期限の中(時刻 0)では丸ごと残る — どちらも R1 の破りは空。
+  (<- root str (FilesRoot))
+  (<- removed tuple (with_handlers [(record-files (+ root "/records-removed"))] (prunes-runs-of-several-chunks FAR-FUTURE-MS)))
+  (<- kept tuple (with_handlers [(record-files (+ root "/records-kept"))] (prunes-runs-of-several-chunks 0)))
+  (assert (= (get removed 1) {"svc/r1" None "other/r3" None}) removed)
+  (assert (= (get kept 1) (get kept 0)) kept)
+  (<- broken-removed tuple (prune-keeps-runs-whole #* removed))
+  (<- broken-kept tuple (prune-keeps-runs-whole #* kept))
+  (assert (= #(broken-removed broken-kept) #(#() #())) #(broken-removed broken-kept)))
+
+
+(defhandler remove-tree-removes-the-first-chunk-only
+  ;; 壊した file system の答え手(条 R1 の失敗ケース): 「中身ごと消す」頼みで、dir の最初の 1 つ(頭の区切り)だけを消す。
+  (RemoveTree [path]
+    (<- entries tuple (file-done (ListDirectory path)))
+    (val first (min (gfor entry entries entry.name)))
+    (<- (file-done (RemoveTree (+ path "/" first))))
+    (resume None)))
+
+
+(deftest test-a-counterexample-remove-that-leaves-part-of-a-run-breaks-r1
+  {:interpreters ["os-files" "memory-files"]}
+  ;; 反例(条 R1): 保持の handler が使う RemoveTree の答え手を、頭の区切りだけを消す形に壊すと、run の残りの区切りが残り(再生できない
+  ;; run)、R1 の判断が 2 つの run を名指す — 本物の答え手が run を丸ごと消していることの裏返し。
+  (<- root str (FilesRoot))
+  (<- seen tuple (with_handlers [remove-tree-removes-the-first-chunk-only (record-files (+ root "/records"))]
+                   (prunes-runs-of-several-chunks FAR-FUTURE-MS)))
+  (<- broken tuple (prune-keeps-runs-whole #* seen))
+  (assert (= broken #("other/r3" "svc/r1")) seen))
