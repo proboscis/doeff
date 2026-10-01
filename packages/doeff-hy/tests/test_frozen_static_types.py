@@ -36,7 +36,8 @@ PACKAGE = Path(frozen.__file__).parent
 
 MODULE = """\
 (require doeff-hy.macros [defk <- val])
-(import frozen_copy.frozen [FrozenMap frozen-map-of freeze-json])
+(import collections.abc [Mapping])
+(import frozen_copy.frozen [FrozenMap frozen-map-of freeze-json frozen-json-object])
 
 (val SHALLOW (frozen-map-of {"a" 1} "probe"))
 
@@ -60,6 +61,15 @@ MODULE = """\
 (defk frozen-of [text]
   {:pre [(: text str)] :post [(: % str)]}
   (str (freeze-json text)))
+
+(defk takes-json [v]
+  {:pre [(: v (| str int float bool None (get Mapping #(str object)) (get tuple #(object ...))))] :post [(: % None)]}
+  None)
+
+(defk frozen-feeds-json []
+  {:pre [] :post [(: % None)]}
+  (<- (takes-json (freeze-json {"a" [1 2]})))
+  (<- (takes-json (get (frozen-json-object {"b" "x"} "probe") "b"))))
 
 (defk wrong-sum []
   {:pre [] :post [(: % int)]}

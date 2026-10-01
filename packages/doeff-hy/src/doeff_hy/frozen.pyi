@@ -7,15 +7,17 @@ frozen.hy は Hy の module なので、pyright は中を読めず、`FrozenMap`
   型引数は値の型 V の 1 つ — `(get FrozenMap TableDecl)` の形)。型引数を書かない `FrozenMap` は FrozenMap[object]
   (中の値を問わない写像 — 実装の注記の多くがこの形)。変えられない写像なので値の型について共変
   (FrozenMap[int] は FrozenMap[object] として渡せる — Mapping と同じ)。
-- freeze-json / thaw-json は JSON の値を深く凍らせる・戻す(どちらも値の形を問わず受けて返す — 答えは object)。
-- frozen-json-object は写像を深く凍らせた FrozenMap(中の値は凍らせた JSON の値 — object)。
+- freeze-json / thaw-json は JSON の値を深く凍らせる・戻す。JSON の値(JsonIn)を受けた時の答えは型の付いた JSON
+  (凍らせる = FrozenJson・戻す = ThawedJson)で、写像の中身の型が消えない(agora-redesign #2613)。JSON でない値は実装が
+  そのまま返すので、その時の答えは object(実行の振る舞いは変えない — 宣言だけ)。
+- frozen-json-object は写像を深く凍らせた FrozenMap。JSON の写像を受けた時の中身は FrozenJson。
 - frozen-map-of は写像を浅く写し取る(中の値はそのまま — 写像の値の型を運ぶ)。写像でない値は実行時に TypeError。
 """
 
-from collections.abc import Iterable, Iterator, Mapping
+from collections.abc import Iterable, Iterator, Mapping, Sequence
 from typing import overload
 
-from typing_extensions import TypeVar
+from typing_extensions import TypeAlias, TypeVar
 
 _V = TypeVar("_V", covariant=True, default=object)
 _W = TypeVar("_W")
@@ -30,8 +32,24 @@ class FrozenMap(Mapping[str, _V]):
     def __hash__(self) -> int: ...
     def updated(self, changes: Mapping[str, _W]) -> FrozenMap[_V | _W]: ...
 
+#: freeze-json が受ける JSON の値(写像 = 文字列の鍵・列 = list / tuple・葉)。
+JsonIn: TypeAlias = Mapping[str, JsonIn] | Sequence[JsonIn] | str | int | float | bool | None
+#: freeze-json の答え: 写像は FrozenMap・列は tuple に深く凍った JSON の値。
+FrozenJson: TypeAlias = FrozenMap[FrozenJson] | tuple[FrozenJson, ...] | str | int | float | bool | None
+#: thaw-json の答え: json.dumps が受ける dict / list の JSON の値。
+ThawedJson: TypeAlias = dict[str, ThawedJson] | list[ThawedJson] | str | int | float | bool | None
+
+@overload
+def freeze_json(value: JsonIn) -> FrozenJson: ...
+@overload
 def freeze_json(value: object) -> object: ...
+@overload
+def thaw_json(value: JsonIn) -> ThawedJson: ...
+@overload
 def thaw_json(value: object) -> object: ...
+@overload
+def frozen_json_object(value: Mapping[str, JsonIn], what: str) -> FrozenMap[FrozenJson]: ...
+@overload
 def frozen_json_object(value: object, what: str) -> FrozenMap[object]: ...
 @overload
 def frozen_map_of(value: Mapping[str, _W], what: str) -> FrozenMap[_W]: ...
