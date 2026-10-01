@@ -636,6 +636,10 @@
         (setv (get tasks id) (replace task :phase "failed" :finished-ms now
                                       :detail (.format "担い手の worker {} が沈黙した(task は走らせ直さない)" task.worker)))
       True (setv (get tasks id) task)))
+  ;; 待っている task が無ければ、置く判断(負荷・drain 中の worker・状態の写し)を組まない — 調停の 1 周ごとに状態全体を写す費用が
+  ;; 模擬の拍の大半だった(#2655 の profile: replace 135,053 回・2.3 秒)。
+  (when (not (any (gfor t (.values tasks) (= t.phase "queued"))))
+    (return tasks))
   (setv placed (replace state :tasks tasks))
   (setv load (load-of placed placements)
         draining (draining-workers state now))
