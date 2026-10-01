@@ -4,7 +4,7 @@
 ;; URL)は job の宣言ではなく worker の持ち物なので、worker が名で宣言して子へ渡す。名乗った名が無ければ起動を止める。
 (require doeff-hy.macros [deftest <- val])
 (import pytest)
-(import doeff_cluster.main [passed-environment])
+(import doeff_cluster.worker.entry.main [passed-environment])
 (import doeff_cluster.worker.core.launch [child-environment])
 
 
