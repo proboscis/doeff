@@ -2,7 +2,7 @@
 ;;; readiness-memory = list に記録する(テスト)。HTTP の client は report_client.hy に閉じる(報告には送り手の process の世代が載る)。
 (require doeff-hy.macros [defhandler <-])
 (import doeff_cluster.shared.intent.readiness_model [ReportReady reported-readiness])
-(import .report_client [ServiceReportClient report-client])
+(import doeff_cluster.foundation.report_client [ServiceReportClient report-client])
 
 
 ;; fake。本物(readiness-http → coordinator)と同じ契約を tests/test_readiness_contract.hy が両方で回す: coordinator が残す形

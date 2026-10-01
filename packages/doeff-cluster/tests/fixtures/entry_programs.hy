@@ -10,7 +10,7 @@
 (import doeff_core_effects.effects [Ask])
 (import doeff_core_effects.handlers [reader state env-var-ask])
 (import doeff_core_effects.scheduler [scheduled])
-(import doeff_cluster.host_contract [HOST-CONTRACT host-reader environ-reader])
+(import doeff_cluster.foundation.host_contract [HOST-CONTRACT host-reader environ-reader])
 (import tests.fixtures.envs [scheduler-foundation])
 ;; 子の中で job_entry は __main__ として読まれる。業務の module が doeff_cluster.job_entry から文脈の読みを import しても、文脈の型が
 ;; 1 つのままであることの反例(test_job_context)に使うので、job_entry から import する。

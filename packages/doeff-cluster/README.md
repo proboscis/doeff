@@ -72,7 +72,7 @@ Program の中の `with-handlers` で並べます(実行先は handler を 1 つ
 (import doeff_core_effects.handlers [state])
 (import doeff_core_effects.scheduler [scheduled])
 (import doeff_time [sync-time-handler])
-(import doeff_cluster.host_contract [host-reader environ-reader])
+(import doeff_cluster.foundation.host_contract [host-reader environ-reader])
 (import doeff_cluster.shared.protocol.record_handlers [boundary-recorder])
 
 ;; 本番の土台: scheduler・時計・実行先の読み・環境変数の読み・クラスタに話す handler を並べる。

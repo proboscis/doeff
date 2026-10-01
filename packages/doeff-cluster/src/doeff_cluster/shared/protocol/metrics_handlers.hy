@@ -4,7 +4,7 @@
 (import doeff_cluster.shared.intent.metrics_model [ReportMetrics])
 (import doeff_cluster.coordinator.core.metrics_policy [checked-metrics])
 (import doeff_cluster.coordinator.core.resource_policy [Refused])
-(import .report_client [ServiceReportClient])
+(import doeff_cluster.foundation.report_client [ServiceReportClient])
 
 
 ;; fake。本物(metrics-http → coordinator)と同じ契約を tests/test_metrics_contract.hy が両方で回す: coordinator と同じ検め
