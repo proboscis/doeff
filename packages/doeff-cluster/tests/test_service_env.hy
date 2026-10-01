@@ -5,7 +5,7 @@
 ;;
 ;; 速い検: 宣言の行が runtimeEnv を運ぶ・image の版を追う欄(baseFrom)を持つ行を断る・coordinator が spec と heartbeat の返事に載せる・worker が版を
 ;;        env のキーへ置き換える・入口の検めを root の venv で撃つ・子の文脈から自分の env を読む。
-;; 丁寧な模擬(test_env_careful と同じ世界 — 本物の git・fake の uv・本物の EnvStore と、検めと子 process の言い換え〔probe-host・process-host〕): service を宣言から
+;; 丁寧な模擬(test_env_careful と同じ世界 — 本物の git・fake の uv・本物の root の言い換え env-host と、検めと子 process の言い換え〔probe-host・process-host〕): service を宣言から
 ;;        env の root で起こし、送り手の commit だけ変えた 2 回目の宣言で新しい root の source の値が返り、worker の process は同じ。
 (require doeff-hy.macros [deftest defk <- val var])
 (import inspect)

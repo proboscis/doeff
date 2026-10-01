@@ -11,7 +11,10 @@
 (import os)
 (import time)
 (import pathlib [Path])
-(import doeff_cluster.handlers [EnvStore])
+(import doeff_cluster.handlers [TOOL])
+(import doeff_cluster.worker.intent.worker_model [PrepareEnv SweepEnvs])
+(import doeff_cluster.worker.protocol.env_store [EnvSettings])
+(import tests.careful_rig [run-envs])
 
 
 (defk sleeping-uv [tmp]
@@ -32,28 +35,48 @@
   (if (.exists path) (.splitlines (.read-text path :encoding "utf-8")) []))
 
 
+(defn #^ EnvSettings sweeping [#^ Path tmp #^ str uv #^ str [hy-command "hy"]]
+  "下限を disk の大きさより上に置いて、必ず掃除させる設定。"
+  (EnvSettings :state (str (/ tmp "state")) :hy-command hy-command :platform "test" :code-prepare TOOL :uv uv :sweep-floor-bytes (** 10 18)))
+
+
+(defk sweep-twice [pinned]
+  {:pre [(: pinned frozenset)] :post [(: % float)]}
+  "掃除を 1 回して、かかった秒を返し、固定の集合を pinned に変えてすぐの掃除をもう 1 回起こすため(同じ記録の上で)。"
+  (val started (time.monotonic))
+  (<- (SweepEnvs (frozenset)))
+  (val took (- (time.monotonic) started))
+  (time.sleep 0.5)
+  (<- (SweepEnvs pinned))
+  took)
+
+
 (deftest test-the-prune-does-not-block-the-worker-loop [tmp-path]
   (<- uv str (sleeping-uv tmp-path))
-  ;; 下限を disk の大きさより上に置いて、必ず掃除させる。
-  (val store (EnvStore (str (/ tmp-path "state")) "hy" :uv uv :sweep-floor-bytes (** 10 18)))
-  (val started (time.monotonic))
-  (.sweep store (frozenset))
-  (assert (< (- (time.monotonic) started) 5) "掃除は prune を待たずに返る")
-  (<- first list (calls tmp-path))
-  (assert (= first ["cache prune"]) first)
   ;; 前の prune が走っている間は次を起こさない(固定の集合を変えて、すぐの掃除を起こしても)。
-  (.sweep store (frozenset #("env-other")))
+  (val took (run-envs (sweeping tmp-path uv) (sweep-twice (frozenset #("env-other")))))
+  (assert (< took 5) "掃除は prune を待たずに返る")
   (time.sleep 0.3)
   (<- again list (calls tmp-path))
   (assert (= again ["cache prune"]) again))
 
 
+(defk preparing-then-sweep [declared]
+  {:pre [(: declared str)] :post [(: % None)]}
+  "root の準備を 1 本起こし、走っている間に掃除するため。"
+  (<- (PrepareEnv "env-0123456789abcdef01234567" declared))
+  (<- (SweepEnvs (frozenset)))
+  None)
+
+
 (deftest test-the-prune-waits-while-a-root-is-being-prepared [tmp-path]
   (<- uv str (sleeping-uv tmp-path))
-  (val store (EnvStore (str (/ tmp-path "state")) "hy" :uv uv :sweep-floor-bytes (** 10 18)))
-  ;; 準備が 1 本走っている(pending に在る)間は prune を起こさない。
-  (setv (get store.pending "env-preparing") None)
-  (.sweep store (frozenset))
+  ;; 準備が 1 本走っている間は prune を起こさない(準備の process の代わりに眠る script を起こす)。
+  (val preparer (/ tmp-path "slow-prepare"))
+  (.write-text preparer "#!/bin/sh\nsleep 5\n" :encoding "utf-8")
+  (os.chmod preparer 0o755)
+  (val declared "{\"project\": {\"lockSha256\": \"L\", \"python\": \"3.12\"}}")
+  (run-envs (sweeping tmp-path uv (str preparer)) (preparing-then-sweep declared))
   (time.sleep 0.5)
   (assert (not (.exists (/ tmp-path "uv-calls"))) "準備の間は prune を起こさない"))
 
@@ -64,14 +87,8 @@
   (val script (/ tmp-path "fake-uv"))
   (.write-text script (.format "#!/bin/sh\necho \"$@\" >> {}\n" (/ tmp-path "uv-calls")) :encoding "utf-8")
   (os.chmod script 0o755)
-  (val store (EnvStore (str (/ tmp-path "state")) "hy" :uv (str script) :sweep-floor-bytes (** 10 18)))
-  (.sweep store (frozenset))
-  (<- first list (calls tmp-path))
-  (assert (= first ["cache prune"]) first)
-  (assert (is-not store.pruning None) "掃除は prune の thread を起こしている")
-  (.wait store.pruning)
-  ;; 固定の集合を変えて、すぐの掃除を起こす(prune は終わっている)。
-  (.sweep store (frozenset #("env-other")))
+  ;; 1 回目の掃除の prune はすぐ終わる。固定の集合を変えて、すぐの掃除を起こす(prune は終わっている)。
+  (run-envs (sweeping tmp-path (str script)) (sweep-twice (frozenset #("env-other"))))
   (time.sleep 0.3)
   (<- again list (calls tmp-path))
   (assert (= again ["cache prune"]) again))

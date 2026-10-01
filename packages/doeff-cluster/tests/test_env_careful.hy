@@ -1,4 +1,4 @@
-;; 実行環境(runtime env)の丁寧な模擬 — 本物の EnvStore(準備の process = env_handlers の翻訳 env-translation と本物の答え手)・手元の bare repo と file:// の URL・
+;; 実行環境(runtime env)の丁寧な模擬 — 本物の root の言い換え env-host(準備の process = env_handlers の翻訳 env-translation と本物の答え手)・手元の bare repo と file:// の URL・
 ;; PATH の先頭の fake の uv(tests/fixtures/fake_uv.hy)・本物の ProcessHost(子 process と shim)・実時間。
 ;;
 ;; 筋書き(設計 worker-runtime-env.md 節 5):
@@ -34,17 +34,19 @@
 (import doeff_core_effects.os_process [subprocess-handler])
 (import doeff_core_effects.os_file [os-file-handler])
 (import doeff_cluster.worker.intent.env_prepare_model [ROOTS-PTH] doeff_cluster.shared.intent.env_marker_model [ENV-MARKER])
-(import doeff_cluster.handlers [EnvStore task-spec])
+(import doeff_cluster.handlers [task-spec])
+(import doeff_cluster.worker.protocol.env_store [env-root])
 (import doeff_cluster.worker.protocol.process_host [HostSettings job-work-dir])
 (import doeff_core_effects.process_effects [EnvEntry StartProcess])
 (import doeff_cluster.worker.intent.worker_model [CodeState CodeView StartJob ReapJob Outcome WorldView WorkerPolicy PrepareEnv WarmEnv
-] doeff_cluster.shared.intent.job_model [JobSpec] doeff_cluster.worker.core.worker_rules [code-key])
+  ObserveEnvs SweepEnvs] doeff_cluster.shared.intent.job_model [JobSpec] doeff_cluster.worker.core.worker_rules [code-key])
 (import doeff_cluster.worker.core.policy [plan])
 (import doeff_cluster.shared.intent.remote_model [encode-program decode-outcome TaskSucceeded TaskFailed])
 (import doeff_cluster.foundation.process_versions [current-versions])
 
 
-(import tests.careful_rig [FIXTURES HY LOCK DEADLINE-SECONDS JOB-ENV git push-commit remote-repo url-of app-files Rig make-rig declare fake-log count-log downloads prepare run-task])
+(import tests.careful_rig [FIXTURES HY LOCK DEADLINE-SECONDS JOB-ENV git push-commit remote-repo url-of app-files Rig make-rig declare fake-log count-log downloads prepare run-task run-envs
+                         settled-env prepared-env])
 (import tests.program_rows [SAMPLE-TASK-PROGRAM])
 
 ;; --- 筋書き ---------------------------------------------------------------------------------
@@ -149,11 +151,10 @@
   (<- key str (env-key env (current-platform)))
   (<- declared dict (runtime-env->json env))
   (val text (json.dumps declared :sort-keys True :ensure-ascii False))
-  (.start rig.envs (+ "env-" key) text)
-  (.start rig.envs (+ "env-" key) text)
-  (<- view CodeView (prepare rig env))
+  (val view (run-envs rig.envs (prepared-env (+ "env-" key) text :times 2)))
   (assert (= view.state CodeState.READY) view)
-  (assert (= rig.envs.started 1) "同じキーの準備は 1 本")
+  (<- syncs int (count-log rig "sync"))
+  (assert (= syncs 1) "同じキーの準備は 1 本")
   (<- first TaskSucceeded (run-task rig env "t1"))
   (<- second TaskSucceeded (run-task rig env "t2"))
   (<- first-answer tuple (child-answer first))
@@ -178,7 +179,8 @@
   (<- view CodeView (prepare rig env))
   (assert (= view.state CodeState.FAILED) view)
   (<- key str (env-key env (current-platform)))
-  (assert (not (.exists (/ (.root-of rig.envs (+ "env-" key)) ENV-MARKER))) "失敗した root に完成マーカーは無い")
+  (<- root str (env-root rig.envs (+ "env-" key)))
+  (assert (not (.exists (/ (Path root) ENV-MARKER))) "失敗した root に完成マーカーは無い")
   (assert (is-not view.failure None) "実行環境の準備の失敗は理由の種類を運ぶ")
   view.failure.kind)
 
@@ -230,8 +232,7 @@
   (assert (= kind-5 EnvFailureKind.REPO-DENIED) kind-5)
   ;; 空きが下限を切る
   (.write-text (/ rig.base "repo-keys.json") (json.dumps {app-url "" (! (url-of rig.base "lib")) ""}))
-  (val full (EnvStore (str rig.state) HY :repo-keys (str (/ rig.base "repo-keys.json")) :uv (str (/ rig.fake "uv"))
-                      :min-free-bytes (** 10 18)))
+  (val full (replace rig.envs :min-free-bytes (** 10 18)))
   (<- kind-6 EnvFailureKind (failure-kind (replace rig :envs full) env))
   (assert (= kind-6 EnvFailureKind.DISK-FULL) kind-6))
 
@@ -310,18 +311,12 @@
 
 ;; --- 筋書き 8・9(先読みと掃除) --------------------------------------------------------------------
 
-(defk wait-ready [rig key]
-  {:pre [(: rig Rig) (: key str)] :post [(: % CodeView)]}
-  "EnvStore の観測で key が READY か FAILED になるまで待つ(準備は起こさない)。"
-  (val deadline (+ (time.monotonic) DEADLINE-SECONDS))
-  (var found None)
-  (while (is found None)
-    (when (> (time.monotonic) deadline) (raise (AssertionError (.format "準備が {} 秒で終わらない" DEADLINE-SECONDS))))
-    (for [view (.observe rig.envs)]
-      (when (and (= view.revision key) (in view.state #(CodeState.READY CodeState.FAILED)))
-        (:= found view)))
-    (when (is found None) (time.sleep 0.2)))
-  found)
+(defk warmed [warm]
+  {:pre [(: warm WarmEnv)] :post [(: % CodeView)]}
+  "温める表の行の root を先読みとして準備し、READY か FAILED の観測まで待つため(worker の判断が出す PrepareEnv と同じ)。"
+  (<- (PrepareEnv warm.key warm.runtime-env :warm True))
+  (<- view CodeView (settled-env warm.key))
+  view)
 
 
 (deftest test-careful-scenario-8-a-warmed-root-starts-the-task-on-the-first-tick [tmp-path monkeypatch]
@@ -337,10 +332,9 @@
   (val warm (WarmEnv :key (+ "env-" key) :runtime-env (json.dumps declared :sort-keys True :ensure-ascii False)))
   (val policy (WorkerPolicy))
   ;; 温める表を受けた worker は、job が無くても準備を起こす(先読み)
-  (val warming (plan 0 #() (WorldView (.observe rig.envs) #()) {} policy :warm #(warm)))
+  (val warming (plan 0 #() (WorldView (run-envs rig.envs (ObserveEnvs)) #()) {} policy :warm #(warm)))
   (assert (= warming #((PrepareEnv warm.key warm.runtime-env :warm True))) warming)
-  (.start rig.envs warm.key warm.runtime-env :warm True)
-  (<- view (wait-ready rig warm.key))
+  (val view (run-envs rig.envs (warmed warm)))
   (assert (= view.state CodeState.READY) view)
   ;; 整った木は置き場の path を持つ(READY の約束 — path の無い READY は置き方の誤りなので名指して赤)。
   (assert (is-not view.path None) view)
@@ -348,7 +342,7 @@
   (val tasks (/ rig.state "tasks"))
   (val spec (task-spec {"id" "t8" "revision" "" "versions" (current-versions) "program" SAMPLE-TASK-PROGRAM "runtimeEnv" declared}
                        tasks))
-  (val first (plan 1 #(spec) (WorldView (.observe rig.envs) #()) {} policy :warm #(warm)))
+  (val first (plan 1 #(spec) (WorldView (run-envs rig.envs (ObserveEnvs)) #()) {} policy :warm #(warm)))
   (assert (= first #((StartJob spec 1 view.path))) first)
   (<- outcome TaskSucceeded (run-task rig env "t8"))
   (<- answer tuple (child-answer outcome))
@@ -362,15 +356,15 @@
                              "runtimeEnv" cold-declared}
                             tasks))
   (assert (is-not cold-spec.runtime-env None) cold-spec)
-  (val cold-first (plan 2 #(cold-spec) (WorldView (.observe rig.envs) #()) {} policy :warm #(warm)))
+  (val cold-first (plan 2 #(cold-spec) (WorldView (run-envs rig.envs (ObserveEnvs)) #()) {} policy :warm #(warm)))
   (assert (= cold-first #((PrepareEnv (code-key cold-spec) cold-spec.runtime-env))) cold-first))
 
 
 (deftest test-careful-scenario-9-the-sweep-keeps-pinned-latest-and-foreign-dirs [tmp-path monkeypatch]
   (.setenv monkeypatch "PYTHONDONTWRITEBYTECODE" "1")
-  (<- rig Rig (make-rig tmp-path))
+  (<- made Rig (make-rig tmp-path))
   ;; 空きの下限を空きより上に置く(下限を切った状態を作る)
-  (setv rig.envs.sweep-floor-bytes (** 2 62))
+  (val rig (replace made :envs (replace made.envs :sweep-floor-bytes (** 2 62))))
   (<- l1 str (push-commit rig.lib {"native/core/lib.rs" "fn a() {}\n"} "lib 1"))
   (var views [])
   (for [n [1 2 3]]
@@ -394,7 +388,7 @@
   (.write-text (/ foreign "keep.txt") "not ours\n")
   (val notes (/ rig.state "roots" "notes"))
   (.mkdir notes)
-  (.sweep rig.envs (frozenset #((+ "env-" a.name))))
+  (run-envs rig.envs (SweepEnvs (frozenset #((+ "env-" a.name)))))
   (assert (.exists a) "固定された root は残る")
   (assert (not (.exists b)) "固定されていない古い root は消える")
   (assert (.exists c) "project ごとの最新の root(bytecode の引き継ぎ元)は残る")
