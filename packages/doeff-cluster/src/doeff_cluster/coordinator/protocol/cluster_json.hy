@@ -1,10 +1,9 @@
-;;; coordinator の保存の行と受け口の本文(JSON)を型へ読み・型から書く純粋な関数(cluster_model から移した・#2023)。core の policy がこれを呼んで JSON を読んでいる — JSON の読みを protocol へ移すのは別の issue(この変更は置き場の移しだけ)。
+;;; coordinator の保存の行と受け口の本文(JSON)を型へ読み・型から書く純粋な関数(cluster_model から移した・#2023 → 保存の綴りとして protocol へ移した・#2448)。
 (require doeff-hy.macros [deff val])
-(val MODULE-TAGS {:context "coordinator" :role "judgment"})
+(val MODULE-TAGS {:context "coordinator" :role "protocol"})
 (import dataclasses [asdict fields])
 (import doeff_cluster.coordinator.core.cluster_rules [component-versions-of])
 (import doeff_cluster.coordinator.intent.cluster_model [HandoffPhase HandoffWatch ClusterNaming TaskRecord ENDED-PHASES])
-(import doeff_cluster.shared.intent.protocol [BodyInvalid])
 (import doeff_cluster.shared.core.capabilities [capabilities-of environ-pairs])
 
 
@@ -96,7 +95,7 @@
 ;; BodyInvalid とは別)。無い欄は既定値で読む(既定値が None の欄は必須)。
 
 (deff stored-str [#^ dict data #^ str key #^ (| str None) [default None]]  ; defk にできない: 保存の読み直し(Program の外)が呼ぶ純粋な読み
-  {:pre [(: data dict) (: key str) (: default (| str None))] :post [(: % str)] :tags {:context "doeff-cluster" :role "judgment"}}
+  {:pre [(: data dict) (: key str) (: default (| str None))] :post [(: % str)] :tags {:context "doeff-cluster" :role "protocol"}}
   "保存の行の文字列の欄を str として読むため(無ければ default・default が None なら必須)。"
   (when (and (not-in key data) (is default None))
     (raise (ValueError (.format "保存の task の行に {} が無い" key))))
@@ -107,7 +106,7 @@
 
 
 (deff stored-optional-str [#^ dict data #^ str key]  ; defk にできない: 保存の読み直し(Program の外)が呼ぶ純粋な読み
-  {:pre [(: data dict) (: key str)] :post [(: % (| str None))] :tags {:context "doeff-cluster" :role "judgment"}}
+  {:pre [(: data dict) (: key str)] :post [(: % (| str None))] :tags {:context "doeff-cluster" :role "protocol"}}
   "保存の行の、無くてよい文字列の欄を str か None として読むため。"
   (setv value (.get data key None))
   (when (not (isinstance value #(str (type None))))
@@ -116,7 +115,7 @@
 
 
 (deff stored-int [#^ dict data #^ str key #^ (| int None) [default None]]  ; defk にできない: 保存の読み直し(Program の外)が呼ぶ純粋な読み
-  {:pre [(: data dict) (: key str) (: default (| int None))] :post [(: % int)] :tags {:context "doeff-cluster" :role "judgment"}}
+  {:pre [(: data dict) (: key str) (: default (| int None))] :post [(: % int)] :tags {:context "doeff-cluster" :role "protocol"}}
   "保存の行の整数の欄を int として読むため(無ければ default・default が None なら必須。真偽値は整数と数えない)。"
   (when (and (not-in key data) (is default None))
     (raise (ValueError (.format "保存の task の行に {} が無い" key))))
@@ -127,7 +126,7 @@
 
 
 (deff stored-optional-int [#^ dict data #^ str key]  ; defk にできない: 保存の読み直し(Program の外)が呼ぶ純粋な読み
-  {:pre [(: data dict) (: key str)] :post [(: % (| int None))] :tags {:context "doeff-cluster" :role "judgment"}}
+  {:pre [(: data dict) (: key str)] :post [(: % (| int None))] :tags {:context "doeff-cluster" :role "protocol"}}
   "保存の行の、無くてよい整数の欄を int か None として読むため。"
   (setv value (.get data key None))
   (when (or (isinstance value bool) (not (isinstance value #(int (type None)))))
@@ -136,7 +135,7 @@
 
 
 (deff stored-bool [#^ dict data #^ str key #^ bool default]  ; defk にできない: 保存の読み直し(Program の外)が呼ぶ純粋な読み
-  {:pre [(: data dict) (: key str) (: default bool)] :post [(: % bool)] :tags {:context "doeff-cluster" :role "judgment"}}
+  {:pre [(: data dict) (: key str) (: default bool)] :post [(: % bool)] :tags {:context "doeff-cluster" :role "protocol"}}
   "保存の行の真偽値の欄を bool として読むため。"
   (setv value (.get data key default))
   (when (not (isinstance value bool))
@@ -145,7 +144,7 @@
 
 
 (deff stored-optional-dict [#^ dict data #^ str key]  ; defk にできない: 保存の読み直し(Program の外)が呼ぶ純粋な読み
-  {:pre [(: data dict) (: key str)] :post [(: % (| dict None))] :tags {:context "doeff-cluster" :role "judgment"}}
+  {:pre [(: data dict) (: key str)] :post [(: % (| dict None))] :tags {:context "doeff-cluster" :role "protocol"}}
   "保存の行の、無くてよい object の欄を dict か None として読むため。"
   (setv value (.get data key None))
   (when (not (isinstance value #(dict (type None))))
@@ -154,7 +153,7 @@
 
 
 (deff stored-items [#^ dict data #^ str key]  ; defk にできない: 保存の読み直し(Program の外)が呼ぶ純粋な読み
-  {:pre [(: data dict) (: key str)] :post [(: % tuple)] :tags {:context "doeff-cluster" :role "judgment"}}
+  {:pre [(: data dict) (: key str)] :post [(: % tuple)] :tags {:context "doeff-cluster" :role "protocol"}}
   "保存の行の配列の欄を tuple として読むため(無ければ空)。JSON を通った行は list、JSON を通らずに渡る行(asdict のまま)は tuple で来る。"
   (setv value (.get data key #()))
   (when (not (isinstance value #(list tuple)))
@@ -163,7 +162,7 @@
 
 
 (deff old-task-row-reason [#^ (| dict list None) old #^ list extra]  ; defk にできない: 保存の読み直し(Program の外)が呼ぶ純粋な判断
-  {:pre [(: old (| dict list None)) (: extra list)] :post [(: % (| str None))] :tags {:context "doeff-cluster" :role "judgment"}}
+  {:pre [(: old (| dict list None)) (: extra list)] :post [(: % (| str None))] :tags {:context "doeff-cluster" :role "protocol"}}
   "保存の task の行が旧い形なら、まだ終わっていない行を failed にする理由の文(新しい形なら None)。old = 行の requires の値・
    extra = 今の TaskRecord に無い欄の名(requires・blob・env ほか)。"
   (cond
@@ -172,26 +171,3 @@
     (in "env" extra) "旧い形の task(handler の組の import path env)は受け付けない — task の Program が自分の土台で本体を包み、needs で送り直す"
     extra (.format "旧い形の task(今の形に無い欄 {})は受け付けない — 新しい形で送り直す" extra)
     True None))
-
-
-(deff required-field [#^ dict body #^ str key]  ; defk にできない: 宣言と保存の行の読み(Program の外の純粋な判断)が呼ぶ
-  {:pre [(: body dict) (: key str)] :post [(: % (| dict list str int float bool None))] :tags {:context "doeff-cluster" :role "judgment"}}
-  "宣言と保存の行(JSON)の必須の欄の値 — 欄が無ければ BodyInvalid(送り手の誤り・400)。受け口の本文は coordinator/protocol/request_bodies
-   が道の型に解く(#2445)ので、ここを通るのは本文の中の宣言の行と保存の行だけ(行の型は #2447)。(get body 欄) の KeyError に頼ると、受け口は
-   送り手の欠けと coordinator の中の KeyError を分けられない(#1024)。値は null でもよい(在ることだけを検める)。"
-  (when (not-in key body)
-    (raise (BodyInvalid (.format "本文に {} が無い" key))))
-  (get body key))
-
-
-(deff int-field [#^ dict fields #^ str key default]  ; defk にできない: query と保存の行の読み(Program の外の純粋な判断)が呼ぶ
-  {:pre [(: fields dict) (: key str) (: default (| int None))] :post [(: % int)] :tags {:context "doeff-cluster" :role "judgment"}}
-  "query と保存の行の整数の欄(無ければ default)を int に読む(受け口の本文は道の型 — #2445) — 読めない値(数でない文字列・object など)は BodyInvalid
-   (送り手の誤り・400)。読み方は int() のまま(小数は切り捨て・数字の文字列は数)。"
-  (setv value (.get fields key default))
-  (try
-    (int value)
-    (except [error [ValueError TypeError]]
-      (raise (BodyInvalid (.format "{} は整数: {!r}" key value))))))
-
-

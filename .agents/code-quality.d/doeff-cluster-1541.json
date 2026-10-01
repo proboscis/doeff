@@ -230,7 +230,8 @@
         "doeff-cluster-shared-protocol",
         "doeff-cluster-wal-store",
         "doeff-cluster-watch-policy",
-        "doeff-cluster-coordinator-request-bodies-model"
+        "doeff-cluster-coordinator-request-bodies-model",
+        "doeff-cluster-state-json"
       ],
       "layer": "runtime",
       "name": "doeff-cluster-coordinator",
@@ -456,7 +457,8 @@
         "doeff-cluster-cluster-json",
         "doeff-cluster-cluster-model",
         "doeff-cluster-cluster-policy",
-        "doeff-cluster-cluster-rules"
+        "doeff-cluster-cluster-rules",
+        "doeff-cluster-state-json"
       ],
       "layer": "pure",
       "name": "doeff-cluster-durable-kv",
@@ -822,7 +824,8 @@
         "doeff-cluster-runtime-env-rules",
         "doeff-cluster-warm-rules",
         "doeff-cluster-board-requests",
-        "doeff-cluster-wal-store"
+        "doeff-cluster-wal-store",
+        "doeff-cluster-main"
       ],
       "layer": "io",
       "name": "doeff-cluster-local",
@@ -1177,7 +1180,8 @@
         "doeff-cluster-worker-model",
         "doeff-cluster-coordinator-request-bodies-model",
         "doeff-cluster-readiness-report",
-        "doeff-cluster-readiness-rules"
+        "doeff-cluster-readiness-rules",
+        "doeff-cluster-cluster-rules"
       ],
       "layer": "pure",
       "name": "doeff-cluster-resource-policy",
@@ -1473,7 +1477,8 @@
         "doeff-cluster-runtime-env-rules",
         "doeff-cluster-warm-rules",
         "doeff-cluster-detached-rules",
-        "doeff-hy-json-value"
+        "doeff-hy-json-value",
+        "doeff-cluster-state-json"
       ],
       "exclude": [
         "packages/doeff-cluster/tests/fixtures/independence/*"
@@ -1654,17 +1659,18 @@
       "layer": "domain",
       "name": "doeff-cluster-cluster-json",
       "paths": [
-        "packages/doeff-cluster/src/doeff_cluster/coordinator/core/cluster_json.hy"
+        "packages/doeff-cluster/src/doeff_cluster/coordinator/protocol/cluster_json.hy"
       ],
       "public": [
-        "packages/doeff-cluster/src/doeff_cluster/coordinator/core/cluster_json.hy"
+        "packages/doeff-cluster/src/doeff_cluster/coordinator/protocol/cluster_json.hy"
       ],
       "responsibility": "coordinator の保存の行と受け口の本文(JSON)を型へ読み・型から書く純粋な関数。",
       "typed": true
     },
     {
       "allow": [
-        "doeff-cluster-cluster-model"
+        "doeff-cluster-cluster-model",
+        "doeff-cluster-shared-protocol"
       ],
       "layer": "domain",
       "name": "doeff-cluster-cluster-rules",
@@ -2527,6 +2533,26 @@
         "packages/doeff-cluster/src/doeff_cluster/shared/core/warm_rules.hy"
       ],
       "responsibility": "実行環境の先読みの純粋な判断 — WarmRuntimeEnv の構築関数(needs の検め)・温める表の行のキーと、行の今の姿と通信の本文との往復。",
+      "typed": true
+    },
+    {
+      "allow": [
+        "doeff-cluster-cluster-model",
+        "doeff-cluster-cluster-rules",
+        "doeff-cluster-cluster-json",
+        "doeff-cluster-rollout-policy",
+        "doeff-cluster-cluster-policy",
+        "doeff-cluster-shared-capabilities"
+      ],
+      "layer": "pure",
+      "name": "doeff-cluster-state-json",
+      "paths": [
+        "packages/doeff-cluster/src/doeff_cluster/coordinator/protocol/state_json.hy"
+      ],
+      "public": [
+        "packages/doeff-cluster/src/doeff_cluster/coordinator/protocol/state_json.hy"
+      ],
+      "responsibility": "coordinator の状態の保存の綴り(state file の JSON と durable の KV の行の値)を型と JSON の間で書き・読む純粋な関数。",
       "typed": true
     }
   ],
