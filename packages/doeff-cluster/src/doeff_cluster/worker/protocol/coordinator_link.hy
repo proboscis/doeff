@@ -21,8 +21,8 @@
 (import doeff_core_effects.scheduler [Spawn])
 (import doeff_time [Delay])
 (import doeff_cluster.shared.core.clock [now-epoch-ms])
-(import doeff_cluster.shared.intent.remote_model [program-sha])
-(import doeff_cluster.shared.intent.runtime_env_model [current-platform])
+(import doeff_cluster.shared.core.remote_rules [program-sha])
+(import doeff_cluster.shared.core.runtime_env_rules [current-platform])
 (import doeff_cluster.shared.protocol.coordinator_route [CoordinatorRoute RouteCell RouteOptions RoutedReply routed-request answer-json])
 (import doeff_cluster.worker.core.beat_policy [WatchKind WatchReading beat-interval-ms heartbeat-due watch-params watch-reading reply-revision
                                                WATCH-RETRY-SECONDS WAKE-HOLD-SECONDS])

@@ -20,8 +20,9 @@
 (import doeff_cluster.shared.core.lease_rules [lease-op semaphore-write-refusal semaphore-key])
 (import doeff_cluster.shared.core.board_rules [board-allows board-ttl-refusal])
 (import doeff [run])
-(import doeff_cluster.shared.intent.runtime_env_model [runtime-env-of-json RuntimeEnvInvalid env-key child-environ-refusal])
-(import doeff_cluster.shared.intent.readiness_model [readiness-refusal])
+(import doeff_cluster.shared.intent.runtime_env_model [RuntimeEnvInvalid])
+(import doeff_cluster.shared.core.runtime_env_rules [runtime-env-of-json env-key child-environ-refusal])
+(import doeff_cluster.shared.core.readiness_rules [readiness-refusal])
 
 (setv JOB-ENTRY "doeff_cluster.job_entry")
 (setv MAX-EVENTS 200)
@@ -121,7 +122,7 @@
 
 (deff environ-refusal [#^ dict environ #^ list declared]  ; defk にできない: 宣言の読み(coordinator の純粋な判断)が呼ぶ
   {:pre [(: environ dict) (: declared list)] :post [(: % (| str None))] :tags {:context "doeff-cluster" :role "judgment"}}
-  "宣言の行・task の本文の environ が受けられない理由。名と値は実行環境の env-vars と同じ検め(runtime_env_model.child-environ-refusal —
+  "宣言の行・task の本文の environ が受けられない理由。名と値は実行環境の env-vars と同じ検め(runtime_env_rules.child-environ-refusal —
    EnvVar の名の形・worker の予約・秘密の中身の名)で、env-vars と同じ名は断る(子の環境変数の足し口を 1 つにする — 改訂 1 の G)。"
   (setv problem (child-environ-refusal environ))
   (when problem (return problem))
@@ -152,7 +153,7 @@
   (setv update (.get item "update" "recreate"))
   (when (not-in update #("recreate" "handoff"))
     (raise (BodyInvalid (.format "update は recreate か handoff: {!r}" update))))
-  ;; readiness の形(windowSeconds・入れ替えの期限 handoffTimeoutSeconds)は宣言の側と同じ規則(readiness_model.readiness-refusal)。
+  ;; readiness の形(windowSeconds・入れ替えの期限 handoffTimeoutSeconds)は宣言の側と同じ規則(readiness_rules.readiness-refusal)。
   (setv readiness-problem (readiness-refusal readiness update))
   (when (is-not readiness-problem None)
     (raise (BodyInvalid readiness-problem)))

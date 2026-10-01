@@ -13,7 +13,8 @@
 (import doeff_time [Delay])
 (import doeff_cluster.coordinator.entry.handler_sets [RequestQueue MemoryWalStore])
 (import doeff_cluster.job_context [RunContext])
-(import doeff_cluster.shared.intent.remote_model [UnsendableProgram TaskFailed decode-outcome])
+(import doeff_cluster.shared.intent.remote_model [UnsendableProgram TaskFailed])
+(import doeff_cluster.shared.protocol.program_codec [decode-outcome])
 (import doeff_cluster.shared.intent.job_model [JobSpec])
 (import doeff_cluster.sim.local [sim-cluster sim-process SimChild SimLink EndProcess SimWorker SimProcess SimReport SimReadiness
                              SimCoordinatorRun Crash Redeclare ReportsOf ReadinessOf ProcessesOf SharedRows ReadCoordinator
@@ -22,7 +23,8 @@
 (import tests.fixtures.envs [sim-foundation])
 (import tests.fixtures.sim_programs [beacons beacons-v2 handoff-beacons handoff-beacons-v2 relay flavors fenced gpu-only
                                     holding-unloadable Unloadable spawners quitters pulses detaching context-env-readers])
-(import doeff_cluster.shared.intent.runtime_env_model [RuntimeEnv runtime-env->json])
+(import doeff_cluster.shared.intent.runtime_env_model [RuntimeEnv])
+(import doeff_cluster.shared.core.runtime_env_rules [runtime-env->json])
 (import doeff_cluster.coordinator.core.coordinator_invariants [acknowledged-writes-survive])
 (import doeff_cluster.worker_invariants [handoff-keeps-a-ready-writer])
 (import tests.env_fixtures [LOCK env-of])

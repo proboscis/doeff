@@ -143,17 +143,21 @@
 (import doeff_cluster.shared.intent.metrics_model [ReportMetrics])
 (import doeff_cluster.shared.intent.readiness_model [ReportReady])
 (import doeff_cluster.shared.protocol.remote [task-submit-body outcome-of settled-value])
-(import doeff_cluster.shared.intent.remote_model [RemoteJob RemoteJobFailed TaskSucceeded TaskFailed encode-program encode-outcome failed-from program-sha])
+(import doeff_cluster.shared.intent.remote_model [RemoteJob RemoteJobFailed TaskSucceeded TaskFailed])
+(import doeff_cluster.shared.protocol.program_codec [encode-program encode-outcome])
+(import doeff_cluster.shared.core.remote_rules [failed-from program-sha])
 (import doeff_cluster.foundation.process_versions [current-versions])
 (import doeff_cluster.shared.protocol.task_result [task-result-request task-id-of-job])
 (import doeff_cluster.shared.protocol.service_report [report-request])
-(import doeff_cluster.shared.intent.runtime_env_model [RuntimeEnv EnvFailure runtime-env->json current-platform])
+(import doeff_cluster.shared.intent.runtime_env_model [RuntimeEnv EnvFailure])
+(import doeff_cluster.shared.core.runtime_env_rules [runtime-env->json current-platform])
 (import doeff_cluster.shared.intent.semaphore_model [LeaseOp SEMAPHORE-PREFIX])
 (import doeff_cluster.shared.core.lease_rules [drop-holders lease-holder holder-tokens-prefix])
 (import doeff_cluster.shared.intent.service_model [System Declaration system-declaration])
-(import doeff_cluster.shared_handlers [board-read-request board-write-request lease-request])
-(import doeff_cluster.shared.intent.shared_model [ReadShared WriteShared])
-(import doeff_cluster.shared.intent.warm_model [WarmRuntimeEnv ReadWarmState WarmState WarmAnswer warm-state-of-json])
+(import doeff_cluster.foundation.board_requests [board-read-request board-write-request lease-request])
+(import doeff_cluster.shared.intent.shared_model [ReadShared WriteShared ANY])
+(import doeff_cluster.shared.intent.warm_model [WarmRuntimeEnv ReadWarmState WarmState WarmAnswer])
+(import doeff_cluster.shared.core.warm_rules [warm-state-of-json])
 (import doeff_cluster.worker.core.program [run-worker])
 (import doeff_cluster.worker.intent.worker_model [WorkerPolicy WorkerState WorldView CodeView CodeState ProcessView ProbeView ProbeState
                        DesiredJobs DesiredUnreadable ReadDesired ObserveWorld WorkerStopRequested PublishStatus
@@ -1160,7 +1164,7 @@
     (<- answer tuple (send-shaped-resent link (board-read-request prefix)))
     (resume (answered-body answer "盤を読めない")))
   (WriteShared [key value expect ttl-seconds]
-    (<- answer tuple (send-shaped link (board-write-request key value expect ttl-seconds)))
+    (<- answer tuple (send-shaped link (board-write-request key value (is-not expect ANY) (if (is expect ANY) None expect) ttl-seconds)))
     (resume (board-written answer)))
   (LeaseOp [name op token permits ttl-ms]
     ;; claim と renew は同じ token で何度送っても同じ意味(本番の shared-http と同じく送り直す)。release・drop は 1 回だけ。

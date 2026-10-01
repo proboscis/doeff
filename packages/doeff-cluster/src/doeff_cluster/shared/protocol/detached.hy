@@ -28,14 +28,57 @@
 (import doeff_cluster.shared.protocol.remote [program-put])
 (import doeff_cluster.shared.intent.protocol [PROTOCOL-FORMAT])
 (import doeff_cluster.shared.core.capabilities [env-mapping])
-(import doeff_cluster.shared.intent.runtime_env_model [RuntimeEnv runtime-env->json])
-(import doeff_cluster.shared.intent.remote_model [encode-program])
-(import doeff_cluster.shared.intent.warm_model [WarmRuntimeEnv ReadWarmState WarmState WarmUnreachable WarmAnswer warm-state-of-json])
+(import doeff_cluster.shared.intent.runtime_env_model [RuntimeEnv])
+(import doeff_cluster.shared.core.runtime_env_rules [runtime-env->json])
+(import doeff_cluster.shared.intent.warm_model [WarmRuntimeEnv ReadWarmState WarmState WarmUnreachable WarmAnswer])
+(import doeff_cluster.shared.core.warm_rules [warm-state-of-json])
 (import doeff_cluster.shared.intent.process_model [AwaitProcessEnded ProcessEnded ProcessWaitExpired])
 (import doeff_cluster.shared.intent.detached_model [SubmitDetached AwaitDetached CancelDetached ReleaseDetached ReadRunners WARMING-PHASE
                          DetachedSubmitted DetachedPending DetachedRefused DetachedAwaited DetachedUnreachable DetachedSubmitAnswer
-                         RunnerFact RunnersUnreachable outcome-of-view
+                         RunnerFact RunnersUnreachable OPEN-PHASES DetachedOutcome DetachedSucceeded DetachedFailed DetachedLost
+                         DetachedCancelled DetachedVersionMismatch DetachedUnrunnable DetachedEnvUnavailable DetachedUnknown
                          AwaitRunnersChange RunnersChange RunnersWatchMissing RunnersChangeAnswer])
+(import doeff_cluster.shared.intent.remote_model [TaskSucceeded TaskFailed])
+(import doeff_cluster.shared.protocol.program_codec [encode-program decode-outcome])
+
+;; --- 子の結果・coordinator の答え → 答えの型(純粋な換算) -------------------------------------------
+
+(defn #^ DetachedOutcome outcome-from-task-outcome [#^ (| TaskSucceeded TaskFailed) outcome]
+  "子 process の結果(remote_model の TaskSucceeded / TaskFailed)→ 答えの型。子 process が版の違いで復元を断ったら版の不一致。"
+  (cond
+    (isinstance outcome TaskSucceeded) (DetachedSucceeded outcome.value)
+    (= outcome.kind "VersionMismatch")
+      (DetachedVersionMismatch outcome.message
+                               :diffs (getattr outcome.error "diffs" #())
+                               :env-key (getattr outcome.error "env_key" ""))
+    True (DetachedFailed outcome.kind outcome.message outcome.traceback outcome.error)))
+
+
+(defn #^ DetachedOutcome decoded-result [#^ str blob]
+  "結果の blob → 答えの型。呼び手の側で復元できない結果(呼び手に無い例外の型など)は DetachedFailed(kind UndecodableResult)。"
+  (try
+    (setv outcome (decode-outcome blob))
+    (except [error Exception]
+      (return (DetachedFailed "UndecodableResult"
+                              (.format "結果を呼び手の側で復元できない: {}: {}" (. (type error) __name__) error) "" None))))
+  (outcome-from-task-outcome outcome))
+
+
+(defn #^ (| DetachedOutcome None) outcome-of-view [#^ dict view]
+  "純粋: coordinator の GET /detached/<key> の答え → 答えの型(まだ終わっていなければ None)。"
+  (setv phase (get view "phase") detail (.get view "detail" ""))
+  (cond
+    (= phase "unknown") (DetachedUnknown (get view "key"))
+    (in phase OPEN-PHASES) None
+    (and (= phase "finished") (is-not (.get view "result") None)) (decoded-result (get view "result"))
+    (= phase "finished") (DetachedLost (.format "結果が無い({})" detail))
+    (= phase "lost") (DetachedLost detail)
+    (= phase "cancelled") (DetachedCancelled)
+    (= phase "version-mismatch") (DetachedVersionMismatch detail)
+    (= phase "env-failed") (DetachedEnvUnavailable (.get view "failureKind" "") detail (bool (.get view "retryable" False)))
+    (in phase #("failed" "code-failed")) (DetachedUnrunnable detail)
+    True (raise (ValueError (.format "知らない phase: {!r}" phase)))))
+
 
 ;; 取り消しに当たる答えの status(本文の error を理由にした DetachedRefused にする)。413 = 詰めた Program が置き場の上限を越える
 ;; (PUT /programs — program_policy.PROGRAM-MAX-BYTES)。

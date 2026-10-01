@@ -6,7 +6,7 @@
 (import pathlib [Path])
 (import doeff [run])
 (import doeff_cluster.shared.core.capabilities [environ-pairs])
-(import doeff_cluster.shared.intent.runtime_env_model [runtime-env-of-json env-key current-platform])
+(import doeff_cluster.shared.core.runtime_env_rules [runtime-env-of-json env-key current-platform])
 (import doeff_cluster.shared.intent.job_model [JobSpec])
 (import doeff_cluster.worker.core.worker_rules [ENV-KEY-PREFIX])
 

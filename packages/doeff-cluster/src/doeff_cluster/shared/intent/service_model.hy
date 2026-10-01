@@ -36,9 +36,11 @@
 (import json)
 (import doeff [DoExpr Program run])
 (import doeff_cluster.shared.core.capabilities [capabilities-of])
-(import doeff_cluster.shared.intent.readiness_model [readiness-refusal])
-(import doeff_cluster.shared.intent.remote_model [encode-program program-sha])
-(import doeff_cluster.shared.intent.runtime_env_model [RuntimeEnv EnvVar runtime-env->json])
+(import doeff_cluster.shared.core.readiness_rules [readiness-refusal])
+(import doeff_cluster.shared.protocol.program_codec [encode-program])
+(import doeff_cluster.shared.core.remote_rules [program-sha])
+(import doeff_cluster.shared.intent.runtime_env_model [RuntimeEnv EnvVar])
+(import doeff_cluster.shared.core.runtime_env_rules [runtime-env->json])
 
 (val UPDATE-FORMS #("recreate" "handoff"))
 

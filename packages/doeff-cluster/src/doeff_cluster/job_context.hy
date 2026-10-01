@@ -11,7 +11,8 @@
 (import json)
 (import os)
 (import doeff [run])
-(import doeff_cluster.shared.intent.runtime_env_model [RuntimeEnv runtime-env-of-json])
+(import doeff_cluster.shared.intent.runtime_env_model [RuntimeEnv])
+(import doeff_cluster.shared.core.runtime_env_rules [runtime-env-of-json])
 (import doeff_cluster.shared.intent.job_model [JobSpec] doeff_cluster.shared.core.job_rules [spec-hash])
 
 

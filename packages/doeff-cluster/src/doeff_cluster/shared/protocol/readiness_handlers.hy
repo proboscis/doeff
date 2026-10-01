@@ -4,7 +4,8 @@
 (require doeff-hy.macros [val])
 (val MODULE-TAGS {:context "doeff-cluster" :role "protocol"})
 (require doeff-hy.macros [defhandler <-])
-(import doeff_cluster.shared.intent.readiness_model [ReportReady reported-readiness])
+(import doeff_cluster.shared.intent.readiness_model [ReportReady])
+(import doeff_cluster.shared.core.readiness_rules [reported-readiness])
 (import doeff_cluster.shared.protocol.coordinator_route [RouteCell RouteOptions])
 (import doeff_cluster.shared.protocol.service_report [ServiceReport sent-report])
 
