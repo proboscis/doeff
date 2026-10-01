@@ -148,7 +148,7 @@
 
 ;; --- 能力の名乗りの形(ADR-DOE-CLUSTER-001 R4b)-----------------------------------------------------
 
-(import doeff_cluster.coordinator.core.cluster_policy [placeable worker-capabilities-of request-needs])
+(import doeff_cluster.coordinator.core.cluster_policy [placeable request-needs] doeff_cluster.coordinator.protocol.state_json [worker-capabilities-of])
 (import doeff_cluster.shared.core.capabilities [capabilities-of])
 
 (deftest test-placeable-is-needs-subset-of-provides-and-respects-exclusive
@@ -286,7 +286,7 @@
 ;; まだ終わっていない旧い task の行は failed(理由つき)にし、終わった行はそのまま読む。
 
 (import doeff_cluster.coordinator.intent.cluster_model [WarmEntry])
-(import doeff_cluster.coordinator.core.cluster_policy [state-to-json state-from-json])
+(import doeff_cluster.coordinator.protocol.state_json [state-to-json state-from-json])
 (import doeff_cluster.coordinator.protocol.durable_kv [full-kv state-from-kv])
 
 (setv SAVED (ClusterState :workers {"old" (worker "old" 0 10 "net") "new" (worker "new" 0 10 "net")}
