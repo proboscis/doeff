@@ -1,5 +1,5 @@
-"""doeff_records の値・effect・memory の置き場・行の型の層の型(values.pyi・effects.pyi・faults.pyi・memory.pyi・
-store_choice.pyi・typed.pyi)の検。
+"""doeff_records の値・effect・memory の置き場・行の型の層・HTTP の口の型(values.pyi・effects.pyi・faults.pyi・memory.pyi・
+store_choice.pyi・typed.pyi・principals.pyi・service.pyi)の検。
 
 doeff_records の module は Hy なので、型の宣言(.pyi)が無いと pyright は import した名を全部 Unknown として読み、使う側
 (使い手の表の宣言・行の読みの答え・変更の欄・memory の置き場の handler)に書き手に直せない reportUnknown* が連なる。
@@ -10,6 +10,9 @@ doeff_records の module は Hy なので、型の宣言(.pyi)が無いと pyrig
 - 行の型の層(typed.pyi)の失敗ケース: typed.pyi だけを外した写しでは、`typed-change` の答えの `.value` と `list-typed` の頁の
   `row.value` が Unknown の赤になり、置くと行の型(検体の Seat)に絞れて赤が消える。置いた側では行の型の欄の取り違え(str の名に
   int を足す)が赤になる。
+- HTTP の口の層(service.pyi・principals.pyi)の失敗ケース: 2 つを外した写しでは、口の組 RecordsService・入口 respond と、
+  respond の答えの `.status` が Unknown の赤になり、置くと消える。置いた側では答えの欄の取り違え(int の status に文字列を足す)が赤に
+  なる(agora の模擬の記録の service の相手役が RecordsService を受け、respond の答えを読む形 — agora-redesign #2405)。
 - 一致: stub が宣言する名は実行時の module に在り、dataclass の欄の名・順・既定値の有無・__init__ に載るか、関数の引数の名、答えの union の
   型の並びが実装と同じ(宣言だけが先へ行かない)。
 """
@@ -30,12 +33,12 @@ import pytest
 
 import doeff_hy  # noqa: F401  # Hy の import hook を有効にする
 from doeff import EffectBase
-from doeff_records import effects, faults, memory, store_choice, typed, values
+from doeff_records import effects, faults, memory, principals, service, store_choice, typed, values
 
 needs_pyright = pytest.mark.skipif(shutil.which("pyright") is None, reason="pyright が無い")
 
 PACKAGE = Path(values.__file__).parent
-STUBBED: tuple[types.ModuleType, ...] = (values, effects, faults, memory, store_choice, typed)
+STUBBED: tuple[types.ModuleType, ...] = (values, effects, faults, memory, store_choice, typed, principals, service)
 
 MODULE = """\
 (require doeff-hy.macros [defk <- val])
@@ -127,6 +130,30 @@ TYPED_UNKNOWN_NAMES: tuple[str, ...] = (
     '"value"',
 )
 
+#: HTTP の口の層の検体 — 口の組 RecordsService を受けて要求 1 つを respond に渡し、答えの status を読む。
+SERVICE_MODULE = """\
+(require doeff-hy.macros [defk <-])
+(import doeff_records.service [HttpRequest RecordsService respond])
+
+(defk status-of [service]
+  {:pre [(: service RecordsService)] :post [(: % int)]}
+  (<- answer (respond service (HttpRequest "GET" "/healthz" None b"")))
+  answer.status)
+
+(defk wrong-status [service]
+  {:pre [(: service RecordsService)] :post [(: % int)]}
+  (<- answer (respond service (HttpRequest "GET" "/healthz" None b"")))
+  (+ answer.status "x"))
+"""
+
+#: service.pyi・principals.pyi を外すと Unknown になる名(import の行の名・答えを受けた変数)。
+SERVICE_UNKNOWN_NAMES: tuple[str, ...] = (
+    '"RecordsService"',
+    '"HttpRequest"',
+    '"respond"',
+    '"answer"',
+)
+
 
 @dataclass(frozen=True)
 class Run:
@@ -213,6 +240,28 @@ def test_with_the_typed_stub_row_values_are_the_row_type(tmp_path: Path) -> None
     assert [e for e in run.errors() if e[1] in right] == [], run.errors()
     # str の名に int を足すと赤(stub が TypedPage[Seat] を運び、row.value.name が str と読める)。
     wrong = _line_of("(+ row.value.name 1)", TYPED_MODULE)
+    assert [e for e in run.errors() if e[1] == wrong and e[0] == "reportOperatorIssue"], run.errors()
+
+
+@needs_pyright
+def test_without_the_service_stub_the_service_is_unknown(tmp_path: Path) -> None:
+    # 他の stub は置き、HTTP の口の層の 2 つだけを外す — 口の組・入口と、入口の答えを読む所が Unknown になる。
+    omit = ("service.pyi", "principals.pyi")
+    unknown = _check(tmp_path, with_stubs=True, module=SERVICE_MODULE, omit=omit).unknown()
+    missing = [name for name in SERVICE_UNKNOWN_NAMES if not any(name in e[2] for e in unknown)]
+    assert missing == [], unknown
+    line = _line_of("  answer.status)", SERVICE_MODULE)
+    assert [e for e in unknown if e[1] == line], unknown
+
+
+@needs_pyright
+def test_with_the_service_stub_the_answer_is_an_http_answer(tmp_path: Path) -> None:
+    run = _check(tmp_path, with_stubs=True, module=SERVICE_MODULE)
+    # 正しい使い(検体の頭から wrong-status の前まで)には赤が 1 つも無い — respond の答えが HttpAnswer と読める。
+    right = range(1, _line_of("(defk wrong-status", SERVICE_MODULE))
+    assert [e for e in run.errors() if e[1] in right] == [], run.errors()
+    # int の status に文字列を足すと赤(stub が Program[HttpAnswer, …] を運ぶ)。
+    wrong = _line_of('(+ answer.status "x")', SERVICE_MODULE)
     assert [e for e in run.errors() if e[1] == wrong and e[0] == "reportOperatorIssue"], run.errors()
 
 
