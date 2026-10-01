@@ -84,6 +84,22 @@ pub fn get_all_rule_ids() -> Vec<String> {
         .collect()
 }
 
+/// 規則の ID が、当たりを判じるのに repo 全体が要る規則か(agora-redesign #2090)。Python の文ごとの規則(DOEFF001〜031)は file 1 つで
+/// 判じるので偽。層の規則は ProjectRule::needs_whole_repo の名乗り。知らない ID は偽(有効な規則の一覧には載らない — DOEFF100 が知らせる)。
+pub fn needs_whole_repo(id: &str) -> bool {
+    crate::project::rule::ProjectRule::parse(id).is_some_and(|rule| rule.needs_whole_repo())
+}
+
+/// `--list-rules` の出力 — 全部の規則の ID と、repo 全体が要るかの名乗り(門と hook が repo 全体の比べの規則を選ぶ 1 か所)。
+pub fn rule_list_json() -> serde_json::Value {
+    serde_json::Value::Array(
+        get_all_rule_ids()
+            .into_iter()
+            .map(|id| serde_json::json!({ "id": id, "whole_repo": needs_whole_repo(&id) }))
+            .collect(),
+    )
+}
+
 /// Get rules filtered by enabled IDs
 pub fn get_enabled_rules(enabled_ids: Option<&[String]>) -> Vec<Box<dyn LintRule>> {
     let all_rules = get_all_rules();

@@ -1,15 +1,16 @@
 //! commit の hook の入口(`doeff-linter --commit-hook`・agora-redesign #1989)。
 //!
 //! 各 repo(agora-controllers・merge-queue ほか)が hook の論理を写して持たず、この 1 か所を呼ぶ。repo が書くのは設定の
-//! `[tool.doeff-linter.commit_hook]`(repo 全体に当てる規則の列と上限の秒)だけ。元の実装 = agora-controllers の
+//! `[tool.doeff-linter.commit_hook]`(上限の秒)だけ。元の実装 = agora-controllers の
 //! `scripts/commit_hook.hy`(lint-staged・whole-repo-fresh)。
 //!
 //! 止める物は 3 種:
 //! - stage した source(.hy・.hyk・.hyp・.py)の、critical でない規則の登録簿の外の error(登録簿の既知は linter が warning に下げる)。
 //! - stage した source の critical のうち HEAD の版に無い物(`--baseline-report` の `new_critical`)。
-//! - repo 全体の比べ(設定の `whole_repo_rules` の列を repo 全体に当てる)の当たりのうち HEAD の木に無い物 — 当たりが変更の外の file
-//!   (architecture.hy・登録簿の表)に付く規則は、stage した path に当てても出ない。source を 1 つも stage しない commit(表だけの変更)
-//!   にも当てる。`whole_repo_rules` は stage した path に当てる規則から外す列。列に DOEFF166(当たらない登録簿の行)が在れば、linter が
+//! - repo 全体の比べ(repo 全体が要ると規則が名乗る列 — `ProjectRule::needs_whole_repo`・agora-redesign #2090 — を repo 全体に当てる)の
+//!   当たりのうち HEAD の木に無い物 — 当たりが変更の外の file(architecture.hy・登録簿の表・別の source)に付きうる規則は、stage した
+//!   path に当てても出ない。source を 1 つも stage しない commit(表だけの変更)にも当てる。この列は stage した path に当てる規則から
+//!   外す(以前は設定の手の一覧 whole_repo_rules — 足し忘れた DOEFF149・161 がどちらにも掛からなかった)。列に DOEFF166(当たらない登録簿の行)が在れば、linter が
 //!   行の名指す規則を enable に無くても同じ実行で当てるので、列だけで当たらない行を見逃さない(agora-redesign #1999・#2033 — それまでは
 //!   全部の規則で撃っていた・#1998)。
 //!
@@ -40,18 +41,23 @@ pub struct RuleSplit {
     pub whole: Vec<String>,
 }
 
-/// 純粋: 有効な規則から意味の規則(DOEFF2xx)を除き、設定の whole_repo_rules に在る物を whole、残りを quick に分ける(順は保つ)。
-pub fn split_rules(enabled: &[String], whole_declared: &[String]) -> RuleSplit {
-    let declared: BTreeSet<String> = whole_declared.iter().map(|r| r.to_uppercase()).collect();
-    let mut split = RuleSplit::default();
-    for rule in enabled.iter().filter(|r| !r.to_uppercase().starts_with(SEMANTIC_PREFIX)) {
-        if declared.contains(&rule.to_uppercase()) {
-            split.whole.push(rule.clone());
-        } else {
-            split.quick.push(rule.clone());
-        }
-    }
-    split
+/// 純粋: 有効な規則から意味の規則(DOEFF2xx)を除き、規則が repo 全体が要ると名乗る物(rules::needs_whole_repo)を whole、残りを
+/// quick に分ける(順は保つ)。以前は設定の手の一覧 whole_repo_rules で分けていて、一覧に足し忘れた規則(DOEFF149・161)の当たりが
+/// どちらの段にも掛からず main に入った(agora-redesign #2090)。
+pub fn split_rules(enabled: &[String]) -> RuleSplit {
+    let (whole, quick): (Vec<String>, Vec<String>) = enabled
+        .iter()
+        .filter(|r| !r.to_uppercase().starts_with(SEMANTIC_PREFIX))
+        .cloned()
+        .partition(|r| crate::rules::needs_whole_repo(r));
+    RuleSplit { quick, whole }
+}
+
+/// 純粋: 退役した設定の鍵 whole_repo_rules が残っている時の知らせ(読まない — 規則の名乗りで分ける・agora-redesign #2090)。
+pub fn retired_whole_repo_rules_note(section: Option<&CommitHookSection>) -> Option<String> {
+    section.filter(|s| !s.whole_repo_rules.is_empty()).map(|_| {
+        "設定の whole_repo_rules は退役した鍵で読まない — repo 全体の比べの規則は linter の規則が名乗る(`doeff-linter --list-rules`)。鍵を消す".to_string()
+    })
 }
 
 /// 純粋: stage した path のうち、作業木に在り(exists)linter が読む物。
@@ -162,9 +168,11 @@ impl CommitHookOptions {
     pub fn new(root: PathBuf, config: Option<(&Config, PathBuf)>, cli_enable: &[String], cli_disable: &[String], cli_timeout: Option<u64>, linter: PathBuf) -> Self {
         let section = config.as_ref().and_then(|(c, _)| c.commit_hook.as_ref());
         let enabled = effective_rules(config.as_ref().map(|(c, _)| *c), cli_enable, cli_disable);
-        let whole: &[String] = section.map(|s| s.whole_repo_rules.as_slice()).unwrap_or(&[]);
+        if let Some(note) = retired_whole_repo_rules_note(section) {
+            eprintln!("{}{}", PREFIX, note);
+        }
         CommitHookOptions {
-            rules: split_rules(&enabled, whole),
+            rules: split_rules(&enabled),
             timeout: resolve_timeout(section, cli_timeout),
             config: config.map(|(_, path)| path),
             root,
@@ -450,15 +458,21 @@ mod tests {
 
     #[test]
     fn commit_hook_split_rules_drops_semantic_and_separates_whole_repo_rules() {
-        let enabled = ids(&["DOEFF016", "DOEFF163", "DOEFF201", "DOEFF110", "DOEFF205", "doeff166"]);
-        let split = split_rules(&enabled, &ids(&["DOEFF163", "DOEFF166", "DOEFF999"]));
-        assert_eq!(split.quick, ids(&["DOEFF016", "DOEFF110"]));
-        // repo 全体の比べは whole の列だけ — 列の DOEFF166 が行の名指す規則を同じ実行で当てる(agora-redesign #1999・#2033)。
-        assert_eq!(split.whole, ids(&["DOEFF163", "doeff166"]));
-        // 宣言が無ければ全部 quick(意味の規則は除いたまま)。
-        let split = split_rules(&enabled, &[]);
-        assert_eq!(split.quick, ids(&["DOEFF016", "DOEFF163", "DOEFF110", "doeff166"]));
-        assert!(split.whole.is_empty());
+        let enabled = ids(&["DOEFF016", "DOEFF163", "DOEFF201", "DOEFF110", "DOEFF149", "DOEFF205", "doeff166", "DOEFF999"]);
+        let split = split_rules(&enabled);
+        // 知らない ID(DOEFF999)は file 1 つの側 — 有効な規則の一覧には載らず、DOEFF100 が知らせる。
+        assert_eq!(split.quick, ids(&["DOEFF016", "DOEFF110", "DOEFF999"]));
+        // repo 全体の比べは規則が名乗る列 — 手の一覧に無かった DOEFF149 も入る(agora-redesign #2090)。列の DOEFF166 が行の名指す規則を
+        // 同じ実行で当てる(agora-redesign #1999・#2033)。
+        assert_eq!(split.whole, ids(&["DOEFF163", "DOEFF149", "doeff166"]));
+    }
+
+    #[test]
+    fn commit_hook_names_a_retired_hand_list() {
+        let kept = CommitHookSection { whole_repo_rules: ids(&["DOEFF163"]), timeout_s: None };
+        assert!(retired_whole_repo_rules_note(Some(&kept)).is_some_and(|line| line.contains("退役")));
+        assert_eq!(retired_whole_repo_rules_note(Some(&CommitHookSection::default())), None);
+        assert_eq!(retired_whole_repo_rules_note(None), None);
     }
 
     #[test]

@@ -26,7 +26,6 @@ const PYPROJECT: &str = r#"[tool.doeff-linter]
 enable = ["DOEFF163", "DOEFF016"]
 
 [tool.doeff-linter.commit_hook]
-whole_repo_rules = ["DOEFF163"]
 timeout_s = 120
 "#;
 
@@ -81,7 +80,7 @@ fn hook(root: &Path, extra: &[&str]) -> (i32, String) {
 }
 
 /// 登録簿の当たらない行の検の設定(#1992 の形)— DOEFF110(defn の残り)は stage した path に当てる規則で、repo 全体の比べの列
-/// (whole_repo_rules)は DOEFF163・166 だけ。
+/// (規則が repo 全体が要ると名乗る物 — agora-redesign #2090)は DOEFF163・166 だけ。
 const REGISTRY_PYPROJECT: &str = r#"[tool.doeff-linter]
 enable = ["DOEFF163", "DOEFF110", "DOEFF166"]
 [tool.doeff-linter.definitions]
@@ -89,7 +88,6 @@ enable = ["DOEFF163", "DOEFF110", "DOEFF166"]
 dirs = ["reg"]
 
 [tool.doeff-linter.commit_hook]
-whole_repo_rules = ["DOEFF163", "DOEFF166"]
 timeout_s = 120
 "#;
 
@@ -173,6 +171,71 @@ fn a_clean_change_passes_and_a_staged_error_blocks() {
     let (code, stderr) = hook(root, &[]);
     assert_eq!(code, 1, "{}", stderr);
     assert!(stderr.contains("doeff-linter commit-hook: stage した file の破れ: app/queue/tool.py:1: DOEFF016"), "{}", stderr);
+}
+
+/// 失敗ケース(agora-redesign #2090・L3137 の形): 数を決めた綴り(DOEFF161)の当たりは、:files のうち最初に当たった file に付く。
+/// stage した file(more.hy)に 2 つ目の綴りを足すと、当たりは stage していない main.hy に付く — stage した path だけに当てると出ない。
+/// 規則が repo 全体が要ると名乗るので、設定に手の一覧が無くても repo 全体の比べが拾って 1 で止める。綴りを 1 つに戻せば通る。
+#[test]
+fn a_rule_that_needs_the_whole_repo_blocks_without_a_hand_list() {
+    let dir = baseline_repo();
+    let root = dir.path();
+    write(root, "pyproject.toml", &PYPROJECT.replace("enable = [\"DOEFF163\", \"DOEFF016\"]", "enable = [\"DOEFF163\", \"DOEFF016\", \"DOEFF161\"]"));
+    write(
+        root,
+        "architecture.hy",
+        &ARCHITECTURE.replace(
+            ":foundation foundation",
+            ":foundation foundation\n  :counted-spellings [(counted-spelling \"cycles\" :pattern r\"defk cycle\" \
+             :files [\"app/queue/main.hy\" \"app/queue/more.hy\"] :count 1 :why \"周りの 1 点\")]",
+        ),
+    );
+    write(root, "app/queue/more.hy", "(defk other [] 1)\n");
+    git(root, &["add", "-A"]);
+    git(root, &["commit", "-q", "-m", "数を決めた綴りつきの基点"]);
+    write(root, "app/queue/more.hy", "(defk other [] 1)\n(defk cycle-again [] 2)\n");
+    git(root, &["add", "app/queue/more.hy"]);
+    let (code, stderr) = hook(root, &[]);
+    assert_eq!(code, 1, "{}", stderr);
+    assert!(stderr.contains("repo 全体の規則の HEAD に無い当たり: app/queue/main.hy::DOEFF161::cycles"), "{}", stderr);
+    write(root, "app/queue/more.hy", "(defk other [] 1)\n");
+    git(root, &["add", "app/queue/more.hy"]);
+    let (code, stderr) = hook(root, &[]);
+    assert_eq!(code, 0, "{}", stderr);
+}
+
+/// 退役した設定の鍵 whole_repo_rules が残っていれば、読まずに 1 行で名乗る(規則の分けは規則の名乗りのまま — 一覧に 163 を書かず
+/// 110 を書いても、163 の当たりは repo 全体の比べが拾う)。
+#[test]
+fn a_retired_hand_list_is_named_and_not_read() {
+    let dir = baseline_repo();
+    let root = dir.path();
+    write(root, "pyproject.toml", &PYPROJECT.replace("timeout_s = 120", "whole_repo_rules = [\"DOEFF110\"]\ntimeout_s = 120"));
+    git(root, &["add", "pyproject.toml"]);
+    git(root, &["commit", "-q", "-m", "退役した鍵"]);
+    write(root, "app/queue/lease_invariants.hy", &format!("(defk fenced-writes-renamed [writes]\n  {}\n  \"柵の条。\"\n  #())\n", JUDGED));
+    git(root, &["add", "app/queue/lease_invariants.hy"]);
+    let (code, stderr) = hook(root, &[]);
+    assert_eq!(code, 1, "{}", stderr);
+    assert!(stderr.contains("whole_repo_rules は退役した鍵で読まない"), "{}", stderr);
+    assert!(stderr.contains("repo 全体の規則の HEAD に無い当たり: architecture.hy::DOEFF163::queue"), "{}", stderr);
+}
+
+/// `--list-rules` は全部の規則の ID と repo 全体が要るかの名乗りを出す(門と hook が選ぶ 1 か所)。Python の文ごとの規則は file 1 つ。
+#[test]
+fn list_rules_names_which_rules_need_the_whole_repo() {
+    let output = Command::new(env!("CARGO_BIN_EXE_doeff-linter")).arg("--list-rules").output().unwrap();
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    let listed: Value = serde_json::from_slice(&output.stdout).unwrap();
+    let whole = |id: &str| {
+        listed.as_array().unwrap().iter().find(|r| r["id"] == id).unwrap_or_else(|| panic!("{} が無い", id))["whole_repo"].as_bool().unwrap()
+    };
+    for id in ["DOEFF149", "DOEFF161", "DOEFF163", "DOEFF166"] {
+        assert!(whole(id), "{} は repo 全体が要る", id);
+    }
+    for id in ["DOEFF016", "DOEFF110", "DOEFF169"] {
+        assert!(!whole(id), "{} は file 1 つで判じる", id);
+    }
 }
 
 /// 何も stage していなければ linter を撃たずに 0。

@@ -108,8 +108,8 @@ pub struct Config {
 /// 各 repo が hook の論理を写して持たず、この 1 か所の宣言だけを書く。
 #[derive(Debug, Deserialize, Serialize, Default, Clone)]
 pub struct CommitHookSection {
-    /// 当たりが変更の外の file(architecture.hy・登録簿の表など)に付き得る規則 — stage した path でなく repo 全体に当て、
-    /// HEAD の木と比べて新しい当たりだけで止める。
+    /// 退役した鍵(agora-redesign #2090)— 以前は repo 全体に当てる規則の手の一覧。今は読まず、残っていれば hook が 1 行で名乗る
+    /// (規則の分けは `ProjectRule::needs_whole_repo` の名乗り)。古い設定を読めなくしないために形だけ残す。
     #[serde(default)]
     pub whole_repo_rules: Vec<String>,
     /// 子の linter 1 回ごとの上限(秒・既定 20)。越えたら測れなかったとして止めない。

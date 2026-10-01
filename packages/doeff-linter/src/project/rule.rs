@@ -449,6 +449,92 @@ impl ProjectRule {
         }
     }
 
+    /// 当たりを判じるのに repo 全体が要るか(agora-redesign #2090)— file F に付く当たりの有無が、F の外の source の中身・存在・置き場で
+    /// 変わりうる規則(repo 全体の表 — module の索引・定義の graph・推論の世界・名の一覧 — を引く・複数の file を数えて突き合わせる・
+    /// 当たりを architecture.hy や登録簿の行に付ける・「無ければ出す」当たりを持つ)は真。変えた path だけに当てても出ないので、門と
+    /// commit の hook はこの名乗りで repo 全体の比べに当てる規則を選ぶ(以前は repo の手の一覧 — 足し忘れた DOEFF149・161 の新しい
+    /// error が main に入った・L3137)。偽 = F の中身と設定だけで決まる。新しい規則はどちらかに置く(網羅の match)。
+    pub fn needs_whole_repo(self) -> bool {
+        match self {
+            // module の索引(import 先の置き場・存在)を引く: 層の向き・service の境界と依存・翻訳の intent・置き場の外の依存。
+            ProjectRule::LayerImportDirection
+            | ProjectRule::ServiceBoundary
+            | ProjectRule::ServiceDependency
+            | ProjectRule::TranslationEmitsIntent
+            | ProjectRule::PlacedDependency
+            // 呼びを他の file の定義まで辿る・repo 全体の名や型や推論を引く: 生の副作用の経由・class の外の基底・失敗の型・
+            // defk の名・effect の推論・handler の引数の class の索引・.pyi の隣の .hy。
+            | ProjectRule::RawSideEffectVia
+            | ProjectRule::ClassWithBehaviour
+            | ProjectRule::FailureRethrow
+            | ProjectRule::DefkCalledBare
+            | ProjectRule::EffectsDisagreeWithInference
+            | ProjectRule::HandlerArgumentHoldsState
+            | ProjectRule::RecordStubNotKwOnly
+            // 当たりが dir・architecture.hy・登録簿の行に付く・複数の file を突き合わせる・宣言した物が無ければ出す。
+            | ProjectRule::UndeclaredDirectory
+            | ProjectRule::UnusedDependency
+            | ProjectRule::WorldHandlerMisplaced
+            | ProjectRule::BlindDefinitionReads
+            | ProjectRule::DefinitionCallsUnlistedHead
+            | ProjectRule::SpellingOutsideItsFiles
+            | ProjectRule::FieldHoldersDiffer
+            | ProjectRule::CallOutsideDeclaredSites
+            | ProjectRule::BroadCatchOutsideCarrier
+            | ProjectRule::SpellingCountDiffers
+            | ProjectRule::EffectOutsideCensus
+            | ProjectRule::ServiceInvariantsMissing
+            | ProjectRule::RegistryEntryStale
+            // テストと本番の届き(定義の graph)を辿る: テストの種類・模擬で回さない service・縁の検・偽物・組み立て・反例・網羅。
+            | ProjectRule::TestKindMismatch
+            | ProjectRule::ServiceUntestedOnSim
+            | ProjectRule::WorldHandlerWithoutContractTest
+            | ProjectRule::BusinessEffectFake
+            | ProjectRule::AssemblyShapeBroken
+            | ProjectRule::AssemblyAnswerMisplaced
+            | ProjectRule::TestOnlyFake
+            | ProjectRule::IntentAnswererNotTranslation
+            | ProjectRule::ServiceWithoutCounterexample
+            | ProjectRule::ClauseWithoutCounterexample
+            | ProjectRule::IntentEffectUncovered
+            // F の中身と宣言だけで決まるが、architecture.hy の宣言(置き場・テストの形の glob)を変えた commit で別の file に当たりが
+            // 付く — repo の手の一覧が #1983 で足した理由のまま、repo 全体の側に置く。
+            | ProjectRule::UndeclaredPlace
+            | ProjectRule::TestFormNotDeftest => true,
+            ProjectRule::UnknownConfigKey
+            | ProjectRule::UnreadableFile
+            | ProjectRule::LayerForbiddenModule
+            | ProjectRule::LayerTypesOnly
+            | ProjectRule::ModuleDeclaresTags
+            | ProjectRule::RoleMatchesLayer
+            | ProjectRule::RawSideEffectDirect
+            | ProjectRule::EnvironmentName
+            | ProjectRule::DefnForbidden
+            | ProjectRule::DeffNeedsReason
+            | ProjectRule::DefinitionTagsRequired
+            | ProjectRule::ContextMatchesService
+            | ProjectRule::TestIsDeftest
+            | ProjectRule::JsonValueOutsideWire
+            | ProjectRule::ShapeCheckInJudgment
+            | ProjectRule::BindThenReturn
+            | ProjectRule::FieldsJoinedIntoText
+            | ProjectRule::RebuiltAccumulator
+            | ProjectRule::EnvironmentBranch
+            | ProjectRule::MatchFieldHyphen
+            | ProjectRule::WorldHandlerNamedOutsideList
+            | ProjectRule::VocabularyOutsideSinglePoint
+            | ProjectRule::RetiredWord
+            | ProjectRule::RetiredCall
+            | ProjectRule::UntypedStructuredValue
+            // Jev に問う意味の規則は門と hook が当てない(定義ごとに問う — 判じる単位は定義)。
+            | ProjectRule::SemanticBusinessDecision
+            | ProjectRule::SemanticTransportKnowledge
+            | ProjectRule::SemanticPlainCallable
+            | ProjectRule::SemanticClassRole
+            | ProjectRule::SemanticMixedConcerns => false,
+        }
+    }
+
     /// 臭いの規則(DOEFF121〜125 — 既定の重さ warning・設定の severity で info に下げられる)か。
     pub fn is_smell(self) -> bool {
         matches!(

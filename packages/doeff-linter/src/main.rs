@@ -117,6 +117,11 @@ struct Args {
     #[arg(long)]
     commit_hook_timeout_s: Option<u64>,
 
+    /// 規則の一覧を JSON で出して終わる — 各規則の ID と、当たりを判じるのに repo 全体が要るか(whole_repo)。門と hook は repo 全体の
+    /// 比べに当てる規則をこの名乗りで選ぶ(手で保つ一覧を持たない — agora-redesign #2090)
+    #[arg(long)]
+    list_rules: bool,
+
     /// Only lint git-modified files (tracked and untracked)
     #[arg(long)]
     modified: bool,
@@ -588,6 +593,11 @@ fn main() -> ExitCode {
         return run_fix(&argv);
     }
     let args = Args::parse();
+
+    if args.list_rules {
+        println!("{}", doeff_linter::rules::rule_list_json());
+        return ExitCode::SUCCESS;
+    }
 
     if args.commit_hook {
         return run_commit_hook(&args);
