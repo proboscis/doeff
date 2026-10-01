@@ -13,6 +13,7 @@
 (import doeff_cluster.sim.local [ProcessesOf])
 (import doeff_cluster.shared.intent.metrics_model [ReportMetrics])
 (import doeff_cluster.shared.intent.readiness_model [ReportReady])
+(import doeff_hy.json_value [OpaqueJson])
 (import doeff_cluster.shared.intent.shared_model [ReadShared WriteShared])
 (import doeff_cluster.shared.intent.detached_model [AwaitDetached DetachedSubmitted DetachedSucceeded])
 (import doeff_cluster.foundation.host_contract [HOST-CONTRACT])
@@ -68,7 +69,7 @@
   (var n 0)
   (while True
     (:= n (+ n 1))
-    (<- written bool (WriteShared key {"step" step "n" n}))
+    (<- written bool (WriteShared key (OpaqueJson.of {"step" step "n" n})))
     (<- (ReportReady written "書けた"))
     (<- (ReportMetrics {"counters" {"beats" (float n)}}))
     (<- (Delay every)))
@@ -82,7 +83,7 @@
   (while True
     (<- rows dict (ReadShared source))
     (when (in source rows)
-      (<- (WriteShared target (get rows source)))
+      (<- (WriteShared target (OpaqueJson.of (get rows source))))
       (:= copies (+ copies 1)))
     (<- (ReportReady True "読んだ"))
     (<- (Delay every)))
@@ -95,7 +96,7 @@
   (var n 0)
   (while True
     (<- taste str (Flavor))
-    (<- (WriteShared key taste))
+    (<- (WriteShared key (OpaqueJson.of taste)))
     (<- (ReportReady True taste))
     (:= n (+ n 1))
     (<- (Delay every)))
@@ -110,7 +111,7 @@
   (<- child Task (Spawn (do! (<- (Delay 0.5)) 21)))
   (<- half int (Wait child))
   (<- ended int (now-epoch-ms))
-  (<- (WriteShared key {"answer" (* 2 half) "elapsedMs" (- ended started)}))
+  (<- (WriteShared key (OpaqueJson.of {"answer" (* 2 half) "elapsedMs" (- ended started)})))
   (while True
     (<- (ReportReady True "通った"))
     (<- (Delay 1.0)))
@@ -135,7 +136,7 @@
     (:= orphan (+ "答えた " (str got)))
     (except [error Exception]
       (:= orphan (+ "失敗 " (. (type error) __name__) ": " (str error)))))
-  (<- (WriteShared key {"sum" sum "orphan" orphan}))
+  (<- (WriteShared key (OpaqueJson.of {"sum" sum "orphan" orphan})))
   (while True
     (<- (ReportReady True "出した"))
     (<- (Delay 1.0)))
@@ -148,7 +149,7 @@
   (var n 0)
   (while True
     (:= n (+ n 1))
-    (<- (WriteShared (+ prefix instance) {"n" n}))
+    (<- (WriteShared (+ prefix instance) (OpaqueJson.of {"n" n})))
     (<- (Delay 1.0)))
   n)
 
@@ -181,9 +182,9 @@
    し続ける(sim の宿が SubmitDetached・AwaitDetached に本番と同じ要求で答えるかを見るため)。"
   (<- submitted DetachedSubmitted (submit-detached-task (add-task sim-task-foundation n) :key "svc-detached" :needs NET :name "add"))
   (<- outcome (AwaitDetached submitted.key))
-  (<- (WriteShared key {"created" submitted.created
-                        "value" (if (isinstance outcome DetachedSucceeded) outcome.value None)
-                        "outcome" (. (type outcome) __name__)}))
+  (<- (WriteShared key (OpaqueJson.of {"created" submitted.created
+                                       "value" (if (isinstance outcome DetachedSucceeded) outcome.value None)
+                                       "outcome" (. (type outcome) __name__)})))
   (while True
     (<- (ReportReady True "出した"))
     (<- (Delay 1.0)))

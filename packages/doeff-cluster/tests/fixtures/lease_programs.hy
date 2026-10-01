@@ -18,6 +18,7 @@
 (import doeff_cluster.shared.intent.readiness_model [ReportReady])
 (import doeff_cluster.shared.core.semaphore_handlers [cluster-semaphore SemaphoreSession])
 (import doeff_cluster.shared.intent.semaphore_model [CreateNamedSemaphore])
+(import doeff_hy.json_value [OpaqueJson])
 (import doeff_cluster.shared.intent.shared_model [WriteShared])
 
 ;; 担い手が取る lease の名と、取った世代と刻を書く盤の行。
@@ -45,7 +46,7 @@
   (<- lock Semaphore (CreateNamedSemaphore LOCK))
   (<- (AcquireSemaphore lock))
   (<- at int (now-epoch-ms))
-  (<- (WriteShared HOLDER-ROW {"instance" ctx.instance "at" at}))
+  (<- (WriteShared HOLDER-ROW (OpaqueJson.of {"instance" ctx.instance "at" at})))
   (var beats 0)
   (while True
     (:= beats (+ beats 1))
