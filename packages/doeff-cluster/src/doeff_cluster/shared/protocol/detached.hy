@@ -66,7 +66,7 @@
 
 (deff detached-refusal [#^ (| int None) status #^ (| dict None) body]  ; defk にできない: 本番の client と sim の宿が同じ判断で返事を読む
   {:pre [(: status (| int None)) (: body (| dict None))] :post [(: % (| DetachedRefused None))]
-   :tags {:context "doeff-cluster" :role "judgment"}}
+   :tags {:context "doeff-cluster" :role "protocol"}}
   "返事が呼び手の誤り(400・409・413・429 — 形の誤り・同じ key の別の仕事・上限越え)なら、呼び手へ投げる DetachedRefused を作るため
    (それ以外は None)。"
   (if (in status REFUSED-STATUSES)
@@ -75,14 +75,14 @@
 
 
 (deff submit-unreachable [#^ str reason]  ; defk にできない: 本番の client と sim の宿が同じ答えを作る純粋な判断
-  {:pre [(: reason str)] :post [(: % DetachedUnreachable)] :tags {:context "doeff-cluster" :role "judgment"}}
+  {:pre [(: reason str)] :post [(: % DetachedUnreachable)] :tags {:context "doeff-cluster" :role "protocol"}}
   "送りが coordinator に届かなかった時の答えを作るため(送れたかは分からない — key で冪等なので呼び手が送り直してよい)。"
   (DetachedUnreachable :detail (.format "coordinator に届かない(送れたかは分からない — key で冪等): {}" reason)))
 
 
 (deff awaited-answer [#^ (| dict None) view #^ str reason #^ str key #^ float waited #^ (| float int None) timeout-seconds]  ; defk にできない: 本番の client と sim の宿が同じ判断で待ちの 1 拍を読む
   {:pre [(: view (| dict None)) (: reason str) (: key str) (: waited float) (: timeout-seconds (| float int None))]
-   :post [(: % (| DetachedAwaited None))] :tags {:context "doeff-cluster" :role "judgment"}}
+   :post [(: % (| DetachedAwaited None))] :tags {:context "doeff-cluster" :role "protocol"}}
   "待ちの 1 拍の読み(view = GET /detached/<key> の本文・届かなければ None と理由 reason)から、答えるか(DetachedAwaited)・待ち続けるか
    (None)を決めるため。届かない読みと、起きた直後の coordinator の「まだ分からない」(phase warming)は、期限を決めた待ちなら
    DetachedUnreachable で返し、期限の無い待ちは届くまで待つ(task の死とみなさない・知らない key と読んで送り直さない)。"
@@ -101,7 +101,7 @@
 
 
 (deff runner-facts-of-view [#^ dict workers]  ; defk にできない: 本番の client と sim の宿が同じ読みを使う純粋な判断
-  {:pre [(: workers dict)] :post [(: % tuple)] :tags {:context "doeff-cluster" :role "judgment"}}
+  {:pre [(: workers dict)] :post [(: % tuple)] :tags {:context "doeff-cluster" :role "protocol"}}
   "coordinator の GET /state の workers(名 → {provides exclusive live draining …})を名簿の断面(RunnerFact の tuple・名の順)にするため。"
   (tuple (gfor #(name w) (sorted (.items workers))
                (RunnerFact :name name :provides (tuple (sorted (.get w "provides" []))) :exclusive (tuple (sorted (.get w "exclusive" [])))
@@ -110,7 +110,7 @@
 
 (deff runners-change-of [#^ (| int None) status #^ (| dict list str int float bool None) body]  ; defk にできない: 本番の client と sim の宿が同じ読みを使う純粋な判断
   {:pre [(: status (| int None)) (: body (| dict list str int float bool None))] :post [(: % RunnersChangeAnswer)]
-   :tags {:context "doeff-cluster" :role "judgment"}}
+   :tags {:context "doeff-cluster" :role "protocol"}}
   "GET /watch の返事(status = None は届かない)を AwaitRunnersChange の答えにするため: 404 = 待つ口の無い旧い coordinator・
    200 の {revision changed} = 待ちの答え・それ以外は届かないと同じ(呼び手は間を置いて待ち直す)。"
   (cond
@@ -127,7 +127,7 @@
 
 
 (deff runners-unreachable [#^ str reason]  ; defk にできない: 本番の client と sim の宿が同じ答えを作る純粋な判断
-  {:pre [(: reason str)] :post [(: % RunnersUnreachable)] :tags {:context "doeff-cluster" :role "judgment"}}
+  {:pre [(: reason str)] :post [(: % RunnersUnreachable)] :tags {:context "doeff-cluster" :role "protocol"}}
   "名簿の読みが coordinator に届かなかった時の答えを作るため。"
   (RunnersUnreachable :detail (.format "coordinator に届かない: {}" reason)))
 
@@ -146,7 +146,7 @@
 
 
 (deff absent-warm-state [#^ str key]  ; defk にできない: 本番の client と sim の宿が同じ答えを作る純粋な判断
-  {:pre [(: key str)] :post [(: % WarmState)] :tags {:context "doeff-cluster" :role "judgment"}}
+  {:pre [(: key str)] :post [(: % WarmState)] :tags {:context "doeff-cluster" :role "protocol"}}
   "表に無い行(404 — 期限で消えたか、書かれていない)の答えを作るため: ready も preparing も空・期限 0。"
   (WarmState :key key :ready #() :preparing #() :failed #() :until-ms 0))
 
@@ -156,14 +156,14 @@
 
 
 (deff warm-unconnected [#^ str reason]  ; defk にできない: 本番の client と sim の宿が同じ答えを作る純粋な判断
-  {:pre [(: reason str)] :post [(: % WarmUnreachable)] :tags {:context "doeff-cluster" :role "judgment"}}
+  {:pre [(: reason str)] :post [(: % WarmUnreachable)] :tags {:context "doeff-cluster" :role "protocol"}}
   "温める表の頼みか読みが送り直しの期限まで coordinator に届かなかった時の答えを作るため(温まったかは分からない — 呼び手は温まって
    いないと同じに読み、次の拍で頼み直す)。"
   (WarmUnreachable :detail (.format "coordinator の /warm に接続できない: {}" reason)))
 
 
 (deff warm-server-failure [#^ int status #^ str text]  ; defk にできない: 本番の client と sim の宿が同じ答えを作る純粋な判断
-  {:pre [(: status int) (: text str)] :post [(: % WarmUnreachable)] :tags {:context "doeff-cluster" :role "judgment"}}
+  {:pre [(: status int) (: text str)] :post [(: % WarmUnreachable)] :tags {:context "doeff-cluster" :role "protocol"}}
   "coordinator が温める表の口で 5xx(SERVER-ERROR 以上)を返した時の答えを作るため(呼び手の誤りではない — 届かないと同じに読む)。"
   (WarmUnreachable :detail (.format "coordinator の /warm が {} を返した: {}" status text)))
 
@@ -315,7 +315,7 @@
 
 (defk process-watch-step [statuses job watched]
   {:pre [(: statuses dict) (: job str) (: watched (| ProcessEnded None))] :post [(: % ProcessWatch)]
-   :tags {:context "doeff-cluster" :role "judgment"}}
+   :tags {:context "doeff-cluster" :role "protocol"}}
   "coordinator の GET /state の statuses(worker の名 → 最後の状態の報告 {jobs stale …})の 1 回の読みから、job の待つ相手の process が
    終わったかを決めるため。沈黙した worker(stale)の報告は数えない。見張っている process が動いている行から消えれば終わり・まだ
    見張っていなければ、動いている行を見張り始めるか、終わった姿の行(動いていない・起きる前でもない)ならすぐ終わり。"
