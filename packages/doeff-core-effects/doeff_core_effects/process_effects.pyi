@@ -55,6 +55,47 @@ class WorkingDirectory(EffectBase): ...
 class ProcessAlive(EffectBase):
     pid: int
 
+@dataclass(frozen=True, kw_only=True)
+class StartProcess(EffectBase):
+    argv: tuple[str, ...]
+    cwd: str | None = None
+    env: tuple[EnvEntry, ...] | None = None
+    env_mode: EnvMode = EnvMode.REPLACE
+    env_drop: tuple[str, ...] = ()
+    stdout_path: str | None = None
+    stderr_path: str | None = None
+    process_group: bool = False
+
+@dataclass(frozen=True)
+class PollProcess(EffectBase):
+    pid: int
+
+@dataclass(frozen=True, kw_only=True)
+class StopProcess(EffectBase):
+    pid: int
+    stop_grace: float = 10.0
+
+@dataclass(frozen=True, kw_only=True)
+class ProcessStarted:
+    pid: int
+
+@dataclass(frozen=True, kw_only=True)
+class ProcessNotStarted:
+    detail: str
+
+@dataclass(frozen=True, kw_only=True)
+class ProcessRunning:
+    pid: int
+
+@dataclass(frozen=True, kw_only=True)
+class ProcessExited:
+    pid: int
+    exit_code: int
+
+@dataclass(frozen=True, kw_only=True)
+class ProcessNotChild:
+    pid: int
+
 def timed_out_outcome(stdout: str, stderr: str) -> Program[ProcessOutcome, Any]: ...
 def not_started_outcome(detail: str) -> Program[ProcessOutcome, Any]: ...
 def start_refusal(error_number: int, path: str) -> Program[str, Any]: ...
