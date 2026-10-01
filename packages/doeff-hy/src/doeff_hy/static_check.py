@@ -246,19 +246,57 @@ def _bound_name(alias: ast.alias) -> str:
     return alias.asname or alias.name.split(".")[0]
 
 
-def _bookkeeping_import(statement: ast.stmt, used: frozenset[str]) -> bool:
-    """記帳だけが使う module の import で、束縛する名がもう読まれていない物か。"""
+def _dotted(node: ast.expr) -> str | None:
+    """名か名から始まる属性の連なりの綴り(`a.b.c`)— それ以外の式は None。"""
+    match node:
+        case ast.Name(id=name):
+            return name
+        case ast.Attribute(value=value, attr=attr):
+            base = _dotted(value)
+            return None if base is None else f"{base}.{attr}"
+        case _:
+            return None
+
+
+def _referenced_paths(statements: list[ast.stmt]) -> frozenset[str]:
+    """文の中で読まれている名と属性の連なり(`a.b.c` を読めば `a`・`a.b`・`a.b.c` の全部)— `import a.b` が読まれているかを
+    module の綴りで決めるため。`import doeff_hy.declarations` と `import doeff_hy.record` は同じ根の名 `doeff_hy` を束縛するので、
+    根の名だけでは片方しか読まれていない時に両方を残してしまう(defrecord の :check の展開 — agora-redesign #2252)。"""
+    return frozenset(
+        path
+        for statement in statements
+        for node in ast.walk(statement)
+        if isinstance(node, (ast.Name, ast.Attribute))
+        if (path := _dotted(node)) is not None
+    )
+
+
+def _alias_read(alias: ast.alias, used: frozenset[str]) -> bool:
+    """import の 1 つの名が読まれているか(`as` があればその名・無ければ書いた綴り — `import a.b` は連なり `a.b`・
+    `from m import x` は `x`)。"""
+    return (alias.asname or alias.name) in used
+
+
+def _without_unused_bookkeeping(statement: ast.stmt, used: frozenset[str]) -> ast.stmt | None:
+    """記帳だけが使う module(BOOKKEEPING_MODULES)の import から、もう読まれていない名を 1 つずつ外す。名が 1 つも残らなければ
+    文ごと外す(None)。1 つの文が読まれる名と読まれない名を並べる形(`import doeff_hy.declarations, doeff_hy.record` — defrecord の
+    展開)で、読まれない側だけが strict の reportUnusedImport になっていた(agora-redesign #2252)。"""
     match statement:
         case ast.Import(names=names):
-            return all(
-                alias.name in BOOKKEEPING_MODULES and _bound_name(alias) not in used for alias in names
-            )
-        case ast.ImportFrom(module=str(module), level=0, names=names):
-            return module in BOOKKEEPING_MODULES and all(
-                _bound_name(alias) not in used for alias in names
-            )
+            kept = [a for a in names if a.name not in BOOKKEEPING_MODULES or _alias_read(a, used)]
+            narrowed: ast.stmt = ast.Import(names=kept)
+        case ast.ImportFrom(module=str(module), level=0, names=names) if module in BOOKKEEPING_MODULES:
+            kept = [a for a in names if _alias_read(a, used)]
+            narrowed = ast.ImportFrom(module=module, names=kept, level=0)
         case _:
-            return False
+            return statement
+    match kept:
+        case []:
+            return None
+        case _ if len(kept) == len(names):
+            return statement
+        case _:
+            return ast.copy_location(narrowed, statement)
 
 
 def _doeff_hy_import(statement: ast.stmt) -> bool:
@@ -278,7 +316,8 @@ def without_bookkeeping(tree: ast.Module) -> ast.Module:
 
     - 定義の記帳と `hy.macros.require` の残り(_bookkeeping_statement)を外す。
     - module の直下で同じ doeff-hy の import の文が繰り返されたら最初の 1 つだけを残す(macro が定義ごとに出す import)。
-    - 記帳だけが使う module(BOOKKEEPING_MODULES)の import と Hy の `import hy` で、もう読まれない物を外す。
+    - 記帳だけが使う module(BOOKKEEPING_MODULES)の import の名(1 つの文に並んだ名も 1 つずつ)と Hy の `import hy` で、
+      もう読まれない物を外す。
     消費 repo の利用者が書いた式は外さない(外すのは macro が合成した文の形だけ)。"""
     kept = [statement for statement in tree.body if not _bookkeeping_statement(statement)]
     imports = (ast.Import, ast.ImportFrom)
@@ -288,9 +327,12 @@ def without_bookkeeping(tree: ast.Module) -> ast.Module:
         for index, statement in enumerate(kept)
         if seen_keys[index] is None or seen_keys[index] not in seen_keys[:index]
     ]
-    used = _referenced_roots([s for s in first if not isinstance(s, imports)])
+    used = _referenced_paths([s for s in first if not isinstance(s, imports)])
     tree.body = [
-        s for s in first if not (_bookkeeping_import(s, used) or _unused_hy_import(s, used))
+        narrowed
+        for s in first
+        if not _unused_hy_import(s, used)
+        if (narrowed := _without_unused_bookkeeping(s, used)) is not None
     ]
     return tree
 
