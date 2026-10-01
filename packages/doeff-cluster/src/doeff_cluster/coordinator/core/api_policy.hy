@@ -34,10 +34,10 @@
 (import traceback [extract-tb])
 (import doeff_cluster.coordinator.intent.request_bodies [BodyMalformed])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming Request PlainText BodyInvalid])
-(import doeff_cluster.coordinator.intent.cluster_model [ClusterState ClusterNaming Fault RolloutStatus RolloutTarget])
+(import doeff_cluster.coordinator.intent.cluster_model [ClusterState ClusterNaming Fault RolloutStatus RolloutTarget StateReply])
 (import doeff_cluster.coordinator.core.cluster_rules [format-version-refusal])
 (import doeff_cluster.coordinator.core.metrics_policy [record-metrics metrics-text])
-(import doeff_cluster.coordinator.core.cluster_policy [audit-event-to-json reconcile register-heartbeat heartbeat-reply state-view submit-task poll-task absorb-task-result board-write note-liveness
+(import doeff_cluster.coordinator.core.cluster_policy [reconcile register-heartbeat heartbeat-reply state-view submit-task poll-task absorb-task-result board-write note-liveness
                          lease-write other-generation-boot])
 (import doeff_cluster.coordinator.core.resource_policy [Refused refuse stamp require-actor valid-actor service-readiness service-stopped record-readiness
                           running-process list-resources get-resource events-view create-resource update-resource delete-resource
@@ -310,8 +310,8 @@
           #(after 200 (heartbeat-reply after name timing (ready-instances after name now timing) :now now
                                        :boot body.boot :statuses body.statuses)))
     (and (= method "GET") (= parts ["state"]))
-      #(state 200 (| (state-view state now timing) {"audit" (lfor e (cut state.audit -30 None) (audit-event-to-json e))
-                                                    "drains" (drains-view state now timing)}))
+      #(state 200 (StateReply :view (state-view state now timing) :audit (tuple (cut state.audit -30 None))
+                              :drains (drains-view state now timing)))
     True (unknown-request state request)))
 
 

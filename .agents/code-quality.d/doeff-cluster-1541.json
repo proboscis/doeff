@@ -260,7 +260,8 @@
         "doeff-cluster-shared-protocol",
         "doeff-cluster-wal-store",
         "doeff-cluster-coordinator-request-bodies",
-        "doeff-cluster-coordinator-request-queue"
+        "doeff-cluster-coordinator-request-queue",
+        "doeff-cluster-coordinator-replies"
       ],
       "layer": "io",
       "name": "doeff-cluster-coordinator-handler-sets",
@@ -1479,7 +1480,8 @@
         "doeff-cluster-warm-rules",
         "doeff-cluster-detached-rules",
         "doeff-hy-json-value",
-        "doeff-cluster-state-json"
+        "doeff-cluster-state-json",
+        "doeff-cluster-coordinator-replies"
       ],
       "exclude": [
         "packages/doeff-cluster/tests/fixtures/independence/*"
@@ -2377,7 +2379,8 @@
         "doeff-cluster-api-policy",
         "doeff-hy-wire",
         "doeff-cluster-cluster-policy",
-        "doeff-cluster-cluster-rules"
+        "doeff-cluster-cluster-rules",
+        "doeff-cluster-coordinator-replies"
       ],
       "layer": "io",
       "name": "doeff-cluster-coordinator-request-bodies",
@@ -2665,6 +2668,23 @@
         "packages/doeff-cluster/src/doeff_cluster/drain_main.hy"
       ],
       "responsibility": "旧い path の drain の入口(新しい入口 worker/entry/drain_main へ渡すだけ・#2029 の 1 段目・消すのは #2113)。",
+      "typed": true
+    },
+    {
+      "allow": [
+        "doeff-cluster-shared-protocol",
+        "doeff-cluster-cluster-model",
+        "doeff-cluster-state-json"
+      ],
+      "layer": "pure",
+      "name": "doeff-cluster-coordinator-replies",
+      "paths": [
+        "packages/doeff-cluster/src/doeff_cluster/coordinator/protocol/replies.hy"
+      ],
+      "public": [
+        "packages/doeff-cluster/src/doeff_cluster/coordinator/protocol/replies.hy"
+      ],
+      "responsibility": "coordinator の返事の本文の型を外へ見せる JSON の形に綴る 1 点(返事の答え手 reply-bodies と検の入口が通る)。",
       "typed": true
     }
   ],
