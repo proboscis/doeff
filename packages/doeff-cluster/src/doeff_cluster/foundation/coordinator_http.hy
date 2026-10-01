@@ -16,6 +16,7 @@
 ;;;   ConnectTimeout だけを送り直す)。何度送っても同じ意味の読みは、切れ方を問わず期限まで送り直す(宛先の部品の resent-request)。
 ;;;   自己停止(20 秒)と移し替え(45 秒)の時間は cluster_model の ClusterTiming。
 (require doeff-hy.macros [val])
+(val MODULE-TAGS {:context "doeff-cluster" :role "foundation"})
 (import doeff_cluster.shared.intent.protocol [ClusterTiming])
 
 ;; 返事を待つ上限(秒)。coordinator は書きを永続化してから返事をする(group commit)ので、返事は fsync の時間だけ遅れる。longhorn の

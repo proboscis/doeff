@@ -1,4 +1,6 @@
 ;;; effect の記録の置き場の入口(composition root)。hy -m doeff_cluster.record_store.entry.main --root DIR [--port 8080] [--retention-days 30]
+(require doeff-hy.macros [val])
+(val MODULE-TAGS {:context "record-store" :role "main"})
 (import argparse)
 (import signal)
 (import sys)

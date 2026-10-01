@@ -25,6 +25,7 @@
 ;;;   - describe = identity から作る表示の 1 行(coordinator は業務の code を持たず Program を解けないので、表示は宣言が運ぶ)。
 ;;; 旧い宣言(:env・:config・:env-config・:requires・関数の参照 + 設定)は受け付けない(operator 2026-09-27)。
 (require doeff-hy.macros [defk deff <- val var])
+(val MODULE-TAGS {:context "doeff-cluster" :role "intent"})
 (require doeff-hy.record [defrecord])
 (import collections.abc [Callable])
 (import dataclasses [dataclass])

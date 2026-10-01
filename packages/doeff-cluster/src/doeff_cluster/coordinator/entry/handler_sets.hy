@@ -14,6 +14,7 @@
 ;;; 本番の受付の handler は foundation/coordinator_inbox.hy(coordinator.hy から分けた — この module と coordinator.hy の循環を作らない)。
 (require doeff-hy.macros [defhandler defk <- val var])
 (import doeff_cluster.coordinator.protocol.request_bodies [request-bodies])
+(val MODULE-TAGS {:context "coordinator" :role "main"})
 (import copy)
 (import math [ceil])
 (import doeff_cluster.shared.core.clock [now-epoch-ms])

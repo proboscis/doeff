@@ -8,6 +8,7 @@
 ;;; handler は 2 つ(readiness_handlers.hy): readiness-http = coordinator へ送る・readiness-memory = テストの記録。
 ;;; 宣言の readiness の形の検め(readiness-refusal)と入れ替えの期限(handoff-timeout-ms)もここに置く(宣言の側と coordinator の側が使う)。
 (require doeff-hy.macros [defk val])
+(val MODULE-TAGS {:context "doeff-cluster" :role "intent"})
 (import dataclasses [dataclass])
 (import doeff [EffectBase])
 

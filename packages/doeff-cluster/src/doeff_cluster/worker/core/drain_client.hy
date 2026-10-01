@@ -8,6 +8,7 @@
 ;;; - readinessProbe(worker-ready): 自分が coordinator から見て生きていて drain 中でないか(新しい Pod が heartbeat を送り始め、
 ;;;   前の Pod の drain が解けた後にだけ Ready — DaemonSet は Ready を待って次の node の Pod を入れ替える)。
 (require doeff-hy.macros [defk deff <- val])
+(val MODULE-TAGS {:context "worker" :role "program"})
 (import doeff_time [Delay GetMonotonic])
 (import doeff_cluster.worker.intent.drain_model [CoordinatorCall])
 

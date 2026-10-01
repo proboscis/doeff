@@ -1,6 +1,7 @@
 ;; worker の調整ループ。毎拍「宣言・観測・記憶」から action を導いて実行する。
 ;; 子 process もコードの準備も観測で追うので、どの job の処理もループ(停止の経路)を塞がない。
 (require doeff-hy.macros [defk <- val var])
+(val MODULE-TAGS {:context "worker" :role "program"})
 (import doeff_time [Delay])
 (import doeff_cluster.shared.core.clock [now-epoch-ms])
 (import doeff_cluster.worker.intent.worker_model [WorkerPolicy WorkerState WorldView DesiredJobs DesiredUnreadable

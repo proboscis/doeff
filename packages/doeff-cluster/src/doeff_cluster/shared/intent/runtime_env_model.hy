@@ -16,6 +16,7 @@
 ;;; キー env-key は root の中身を決める物(repos・project・import-roots・format)と platform だけから作る。env-vars と tools は
 ;;; file を変えないのでキーに入れない。準備の手順の版もキーに入れない(coordinator と worker の版が違っても同じ宣言が同じキーになる)。
 (require doeff-hy.macros [defk <- val var])
+(val MODULE-TAGS {:context "doeff-cluster" :role "intent"})
 (require doeff-hy.record [defenum defrecord])
 (import dataclasses [dataclass])
 (import enum [StrEnum])

@@ -14,6 +14,7 @@
 ;;; effect の型は record_store.intent.record_store_model・file の I/O の言い換えは record_store.protocol.record_files・HTTP の受付は
 ;;; foundation.record_inbox・入口は record_store.entry.main(#2030 で層の dir へ分けた)。
 (require doeff-hy.macros [defk <- val var])
+(val MODULE-TAGS {:context "record-store" :role "program"})
 (import re)
 (import typing [TypeGuard])
 (import doeff_core_effects [slog])

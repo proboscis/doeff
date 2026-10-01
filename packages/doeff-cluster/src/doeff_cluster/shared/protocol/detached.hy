@@ -15,6 +15,7 @@
 ;;; 外側の handler を継ぎ、Program に足りない handler を黙って補っていた(ADR-DOE-CLUSTER-001 R1・R2 に反する)。模擬の担い手の筋書き
 ;;; (担い手の死・drain・戻り・coordinator の途絶)は sim-cluster の検の effect(KillWorker・DrainWorker・StartWorker・StopCoordinator)が持つ。
 (require doeff-hy.macros [defhandler defk deff <- val var])
+(val MODULE-TAGS {:context "doeff-cluster" :role "protocol"})
 (require doeff-hy.record [defrecord])
 (import dataclasses [dataclass])
 (import urllib.parse [quote :as url-quote])

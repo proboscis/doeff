@@ -7,6 +7,8 @@
 ;;;
 ;;; metrics の形:
 ;;;   {"counters": {名: float}, "gauges": {名: float}, "durations": {名: {"sum": float "count": int}}}
+(require doeff-hy.macros [val])
+(val MODULE-TAGS {:context "doeff-cluster" :role "intent"})
 (import dataclasses [dataclass])
 (import doeff [EffectBase])
 

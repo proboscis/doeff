@@ -22,6 +22,7 @@
 ;;; 時計は doeff-time の GetMonotonic(各処理ステージの秒をマーカーと答えに載せる)。
 ;;; 各処理ステージの頭で StageStarted を出す(worker は進みの印で先読みの停滞を見分ける — env_upkeep.prepare-overdue)。
 (require doeff-hy.macros [defk defeffect <- val var])
+(val MODULE-TAGS {:context "worker" :role "program"})
 (require doeff-hy.record [defenum defrecord])
 (import collections.abc [Callable])
 (import dataclasses [dataclass replace])  ; dataclass は defrecord の展開が使う

@@ -1,6 +1,8 @@
 ;;; ReportReady の handler 2 つ。readiness-http = coordinator の POST /resources/Service/<名>/readiness へ送る(クラスタ)・
 ;;; readiness-memory = list に記録する(テスト)。送り方は service_report.hy(宛先の部品の上の HttpRequest — 報告には送り手の process の
 ;;; 世代が載る・#2337 の 4a)。
+(require doeff-hy.macros [val])
+(val MODULE-TAGS {:context "doeff-cluster" :role "protocol"})
 (require doeff-hy.macros [defhandler <-])
 (import doeff_cluster.shared.intent.readiness_model [ReportReady reported-readiness])
 (import doeff_cluster.shared.protocol.coordinator_route [RouteCell RouteOptions])

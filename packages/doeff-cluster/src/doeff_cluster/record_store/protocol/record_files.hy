@@ -8,6 +8,7 @@
 ;;; 本物と fake が同じ判断の関数を通るので、同じ契約テスト(tests/test_record_files_contract.hy)を両方で回せる。
 ;;; file の effect の断り(FileFailed)は OSError で上げる(前の形の os の呼び出しと同じ — store-loop が 500 で答える)。
 (require doeff-hy.macros [defhandler defk <- val var])
+(val MODULE-TAGS {:context "record-store" :role "protocol"})
 (import gzip)
 (import io)
 (import json)

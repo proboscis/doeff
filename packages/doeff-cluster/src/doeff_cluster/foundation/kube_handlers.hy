@@ -1,5 +1,7 @@
 ;;; kube_model の effect の handler。kube-api = Pod の中から k8s の API へ(ServiceAccount の token)・kube-memory = テストの dict・
 ;;; kube-unavailable = 資格の無い所(手元の coordinator)で全部 KubeUnavailable を返す。HTTP の client はこの module の中に閉じる。
+(require doeff-hy.macros [val])
+(val MODULE-TAGS {:context "doeff-cluster" :role "foundation"})
 (require doeff-hy.macros [defhandler])
 (import json)
 (import pathlib [Path])

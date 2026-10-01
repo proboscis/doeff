@@ -11,6 +11,7 @@
 ;;; それ以外の拍は、前の heartbeat の返事の desired を使い続ける。lease と fence の判断(coordinator の lease-ms・reassign-after-ms、
 ;;; worker の fence-ms)は変えない — どれも最後に届いた heartbeat から数える。
 (require doeff-hy.macros [deff val])
+(val MODULE-TAGS {:context "worker" :role "judgment"})
 (require doeff-hy.record [defenum defrecord])
 (import enum [StrEnum])
 (import dataclasses [dataclass])

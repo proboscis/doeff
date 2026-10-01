@@ -5,6 +5,7 @@
 ;;;   prepare-overdue  準備の期限: 先読みは停滞(処理ステージが進まない)だけ・job の準備は冷たい / 温いで別の期限
 ;;;   env-capacity     heartbeat で名乗る disk の条件(準備を始める空きが無ければ exhausted)
 (require doeff-hy.macros [defk <- val var])
+(val MODULE-TAGS {:context "worker" :role "program"})
 (require doeff-hy.record [defrecord])
 (import dataclasses [dataclass])
 
