@@ -721,12 +721,14 @@
       "layer": "io",
       "name": "doeff-cluster-kube-handlers",
       "paths": [
-        "packages/doeff-cluster/src/doeff_cluster/foundation/kube_handlers.hy"
+        "packages/doeff-cluster/src/doeff_cluster/coordinator/protocol/kube.hy",
+        "packages/doeff-cluster/src/doeff_cluster/foundation/kube_client.hy"
       ],
       "public": [
-        "packages/doeff-cluster/src/doeff_cluster/foundation/kube_handlers.hy"
+        "packages/doeff-cluster/src/doeff_cluster/coordinator/protocol/kube.hy",
+        "packages/doeff-cluster/src/doeff_cluster/foundation/kube_client.hy"
       ],
-      "responsibility": "kube_model の effect の handler。",
+      "responsibility": "kube_model の effect の handler(coordinator/protocol/kube)と、その handler が呼ぶ k8s の API の client(foundation/kube_client)。",
       "typed": true
     },
     {
@@ -1467,12 +1469,14 @@
       "layer": "io",
       "name": "doeff-cluster-wal-store",
       "paths": [
+        "packages/doeff-cluster/src/doeff_cluster/coordinator/protocol/store.hy",
         "packages/doeff-cluster/src/doeff_cluster/foundation/wal_store.hy"
       ],
       "public": [
+        "packages/doeff-cluster/src/doeff_cluster/coordinator/protocol/store.hy",
         "packages/doeff-cluster/src/doeff_cluster/foundation/wal_store.hy"
       ],
-      "responsibility": "coordinator の耐久の置き場: 追記の log(wal.jsonl)+ まとめ直した写し(snapshot.json)。",
+      "responsibility": "coordinator の耐久の置き場: 追記の log(wal.jsonl)+ まとめ直した写し(snapshot.json)と、Persist に答える handler(coordinator/protocol/store)。",
       "typed": true
     },
     {

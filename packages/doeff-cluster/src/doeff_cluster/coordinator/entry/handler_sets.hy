@@ -19,8 +19,8 @@
 (import doeff_core_effects.handlers [await-handler])
 (import doeff_time [async-time-handler])
 (import doeff_cluster.coordinator.protocol.request_queue [RequestQueue queued-requests])
-(import doeff_cluster.foundation.wal_store [WalStore MAX-LOG-BYTES wal-store apply-delta])
-(import doeff_cluster.foundation.kube_handlers [KubeMemory kube-memory])
+(import doeff_cluster.foundation.wal_store [WalStore MAX-LOG-BYTES apply-delta] doeff_cluster.coordinator.protocol.store [wal-store])
+(import doeff_cluster.coordinator.protocol.kube [KubeMemory kube-memory])
 (import doeff_cluster.foundation.coordinator_inbox [RequestInbox StopState http-requests stop-flag])
 
 

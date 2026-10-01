@@ -292,7 +292,7 @@
 (deftest test-state-survives-a-restart-through-the-log-with-the-same-versions
   ;; 資源の書き(版つき)を追記の log へ永続化し、読み直した状態の資源の版と宣言が同じ。
   (import tempfile)
-  (import doeff_cluster.foundation.wal_store [WalStore wal-store])
+  (import doeff_cluster.foundation.wal_store [WalStore] doeff_cluster.coordinator.protocol.store [wal-store])
   (import doeff_cluster.coordinator.core.durable_kv [durable-kv state-from-kv])
   (setv d (tempfile.mkdtemp) store (WalStore d))
   (.load store)
