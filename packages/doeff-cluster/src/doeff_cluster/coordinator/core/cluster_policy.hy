@@ -16,6 +16,7 @@
 (import doeff_cluster.coordinator.core.cluster_rules [component-versions-of format-version-refusal])
 (import doeff_cluster.coordinator.intent.request_bodies [LeaseBody TaskResultBody BoardWrite HeartbeatBody EnvsReport StatusRow TaskBody])
 (import doeff_cluster.coordinator.core.cluster_json [task-record-to-json task-record-from-json handoff-watch-from-json required-field int-field])
+(import doeff_cluster.coordinator.core.rollout_policy [validate-rollout-spec rollout-spec-to-json])
 (import doeff_cluster.shared.intent.semaphore_model [SEMAPHORE-PREFIX])
 (import doeff_cluster.shared.core.lease_rules [lease-op semaphore-write-refusal semaphore-key])
 (import doeff_cluster.shared.core.board_rules [board-allows board-ttl-refusal])
@@ -278,12 +279,12 @@
 
 (defn #^ dict rollout-row-to-json [#^ RolloutRow row]
   "Rollout 1 つ → 保存の JSON の形 {spec status}(state file と durable の KV が使う — #2447 の前の形と同じ)。"
-  {"spec" row.spec "status" row.status})
+  {"spec" (rollout-spec-to-json row.spec) "status" row.status})
 
 
 (defn #^ RolloutRow rollout-row-from-json [#^ dict data]
   "保存の JSON の形 → Rollout 1 つ(rollout-row-to-json の逆)。"
-  (RolloutRow :spec (dict (get data "spec")) :status (dict (get data "status"))))
+  (RolloutRow :spec (validate-rollout-spec (get data "spec")) :status (dict (get data "status"))))
 
 
 (defn #^ dict audit-event-to-json [#^ AuditEvent event]

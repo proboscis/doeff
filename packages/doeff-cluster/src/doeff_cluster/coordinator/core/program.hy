@@ -75,13 +75,13 @@
   (for [action actions]
     (setv target (.get action "target") who (+ "rollout/" (get action "rollout")))
     (cond
-      (and target (= (get target "kind") "Service"))
-        (do (setv scaled (record-action (scale-service current (get target "name") (get action "replicas")) action True None now))
+      (and target (= target.kind "Service"))
+        (do (setv scaled (record-action (scale-service current target.name (get action "replicas")) action True None now))
             (:= current (stamp current scaled who now timing)))
       (= (get action "op") "scale")
         (try
-          (<- written int (ScaleDeployment (get target "namespace") (get target "name") (get action "replicas")
-                                           :dry-run (get target "dryRun")))
+          (<- written int (ScaleDeployment target.namespace target.name (get action "replicas")
+                                           :dry-run target.dry-run))
           (:= current (stamp current (record-action current action True None now written) who now timing))
           (except [error KubeUnavailable]
             (:= current (stamp current (record-action current action False (str error) now) who now timing))))

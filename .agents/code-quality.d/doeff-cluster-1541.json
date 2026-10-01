@@ -183,7 +183,8 @@
         "doeff-cluster-coordinator-request-bodies-model",
         "doeff-hy-wire",
         "doeff-cluster-readiness-rules",
-        "doeff-cluster-runtime-env-rules"
+        "doeff-cluster-runtime-env-rules",
+        "doeff-cluster-rollout-policy"
       ],
       "layer": "pure",
       "name": "doeff-cluster-cluster-policy",
