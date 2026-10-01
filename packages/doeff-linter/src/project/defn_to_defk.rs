@@ -40,7 +40,7 @@ use serde::Serialize;
 use super::bare_calls;
 use super::facts::{hy_bindings, ByteSpan};
 use super::names::{absolute_module, hy_mangle, module_of};
-use super::relative_path;
+use super::paths::relative_path;
 use super::smells::{children, live, live_items, span_of, Hy, Scope};
 
 /// 既定で除く path(repo の根からの前方一致)— ACP の client の写しと、設計の検証の見本。

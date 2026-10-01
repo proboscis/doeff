@@ -264,7 +264,7 @@ pub fn build(input: &EditorInput) -> EditorReport {
         .collect();
     EditorReport {
         version: EDITOR_CONTRACT_VERSION,
-        linter: EditorLinter { version: env!("CARGO_PKG_VERSION").to_string(), commit: crate::BUILD_COMMIT.to_string() },
+        linter: EditorLinter { version: env!("CARGO_PKG_VERSION").to_string(), commit: crate::build_info::BUILD_COMMIT.to_string() },
         root: input.root.to_string_lossy().into_owned(),
         layers: layer_list(input.settings),
         architecture: input.settings.architecture.clone(),

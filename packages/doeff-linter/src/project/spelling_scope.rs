@@ -8,7 +8,7 @@
 
 use std::path::Path;
 
-use super::{glob_matches, relative_path};
+use super::paths::{glob_matches, relative_path};
 
 /// 歩かない dir(隠し dir と生成物)。
 const SKIPPED_DIRS: &[&str] = &["node_modules", "target", "__pycache__", "venv", "site-packages"];

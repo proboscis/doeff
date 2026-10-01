@@ -18,7 +18,7 @@ use once_cell::sync::Lazy;
 use regex::Regex;
 
 use super::architecture::VocabularyScope;
-use super::{glob_matches, relative_path};
+use super::paths::{glob_matches, relative_path};
 
 /// 判断・分岐の形(註と文字列を落とした行に当てる)— これを含む行は、写すだけの行ではない。
 static JUDGMENT: Lazy<Regex> = Lazy::new(|| {

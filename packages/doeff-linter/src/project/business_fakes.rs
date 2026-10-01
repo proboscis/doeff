@@ -24,7 +24,7 @@ use doeff_indexer::hy_index::reader::{Delim, Form, Node, Reader};
 use regex::Regex;
 
 use super::architecture::BusinessFakes;
-use super::glob_matches;
+use super::paths::glob_matches;
 use super::names::hy_mangle;
 
 /// file の役(宣言の綴りの型から決める)。

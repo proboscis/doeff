@@ -24,7 +24,7 @@ use walkdir::WalkDir;
 
 use super::architecture::HandlerArguments;
 use super::facts::ByteSpan;
-use super::glob_matches;
+use super::paths::glob_matches;
 
 /// 引数の種類(閉じた集合)。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -242,7 +242,7 @@ fn walk(root: &Path, extensions: &[&str]) -> Vec<(String, PathBuf)> {
         .filter_map(Result::ok)
         .filter(|entry| entry.file_type().is_file())
         .filter(|entry| entry.path().extension().and_then(|e| e.to_str()).is_some_and(|e| extensions.contains(&e)))
-        .filter_map(|entry| super::relative_path(root, entry.path()).map(|rel| (rel, entry.path().to_path_buf())))
+        .filter_map(|entry| super::paths::relative_path(root, entry.path()).map(|rel| (rel, entry.path().to_path_buf())))
         .collect();
     out.sort();
     out
