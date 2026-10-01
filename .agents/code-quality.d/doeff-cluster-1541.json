@@ -839,7 +839,9 @@
         "doeff-cluster-metrics-policy",
         "doeff-cluster-resource-policy",
         "doeff-cluster-coordinator-route",
-        "doeff-cluster-service-report"
+        "doeff-cluster-service-report",
+        "doeff-cluster-coordinator-request-bodies-model",
+        "doeff-hy-wire"
       ],
       "layer": "io",
       "name": "doeff-cluster-metrics-handlers",
@@ -870,7 +872,8 @@
         "doeff-cluster-cluster-model",
         "doeff-cluster-cluster-policy",
         "doeff-cluster-resource-policy",
-        "doeff-cluster-shared-protocol"
+        "doeff-cluster-shared-protocol",
+        "doeff-cluster-coordinator-request-bodies-model"
       ],
       "layer": "pure",
       "name": "doeff-cluster-metrics-policy",
@@ -1146,7 +1149,8 @@
         "doeff-cluster-readiness-model",
         "doeff-cluster-rollout-policy",
         "doeff-cluster-shared-protocol",
-        "doeff-cluster-worker-model"
+        "doeff-cluster-worker-model",
+        "doeff-cluster-coordinator-request-bodies-model"
       ],
       "layer": "pure",
       "name": "doeff-cluster-resource-policy",

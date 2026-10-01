@@ -21,6 +21,7 @@
 (import doeff_cluster.coordinator.core.cluster_policy [job-from-json job-to-json alive still-live-somewhere service-rows unplaced-kind unplaced-text task-summary])
 (import doeff_cluster.coordinator.core.rollout_policy [validate-rollout-spec rollout-targets target-key TERMINAL-PHASES])
 (import doeff [run])
+(import doeff_cluster.coordinator.intent.request_bodies [ReadinessBody MetricsBody])
 (import doeff_cluster.shared.intent.readiness_model [handoff-timeout-ms reported-readiness])
 
 (setv LEGACY-OWNER "legacy:jobs")        ; 旧い PUT /jobs の頃からの宣言の所有者(誰でも 1 度だけ引き取れる)
@@ -151,11 +152,11 @@
   (tuple (cut (+ others [report]) (- REPORTS-KEPT) None)))
 
 
-(defn #^ dict report-fields [#^ dict body #^ int now]
-  "報告の本文から、送り手の process の世代と時刻を取り出す(readiness と計器で同じ)。worker と revision の欠けは BodyInvalid(#1024)。"
-  {"worker" (required-field body "worker") "pid" (.get body "pid") "revision" (required-field body "revision")
-   "instance" (.get body "instance") "attempt" (.get body "attempt") "specHash" (.get body "specHash")
-   "placement" (.get body "placement") "at" now})
+(defn #^ dict report-fields [#^ (| ReadinessBody MetricsBody) body #^ int now]
+  "報告の本文(道の型に解いた値 — #2445)から、送り手の process の世代と時刻を残す形にする(readiness と計器で同じ)。"
+  {"worker" body.worker "pid" body.pid "revision" body.revision
+   "instance" body.instance "attempt" body.attempt "specHash" body.spec-hash
+   "placement" body.placement "at" now})
 
 
 (defn #^ dict service-readiness [#^ ClusterState state #^ str name #^ int now #^ ClusterTiming timing
@@ -327,13 +328,13 @@
    "running" (lfor p live {"revision" p.revision "retired" p.retired})})
 
 
-(defn #^ ClusterState record-readiness [#^ ClusterState state #^ str name #^ dict body #^ int now]
+(defn #^ ClusterState record-readiness [#^ ClusterState state #^ str name #^ ReadinessBody body #^ int now]
   (when (not (any (gfor j state.jobs (= j.spec.name name))))
     (refuse 404 (+ "無い Service: " name)))
   ;; ready・reason・role の残す形は fake(readiness-memory)と同じ関数で揃える。role = active(仕事をしている)か standby(lease を
   ;; 他が持つ間の待機)。旧い報告は active。
   (setv report (| (report-fields body now)
-                  (run (reported-readiness (required-field body "ready") (.get body "reason" "") (.get body "role")))))
+                  (run (reported-readiness body.ready body.reason body.role))))
   (replace state :readiness (| state.readiness {name (keep-report (.get state.readiness name) report)})))
 
 

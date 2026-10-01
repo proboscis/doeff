@@ -37,3 +37,20 @@
   (assert (is (get answer 0) state) answer)
   (assert (= (get answer 1) 400) answer)
   (assert (in "result" (get answer 2 "error")) answer))
+
+
+(deftest test-service-reports-read-their-sender-and-payload-into-types
+  ;; readiness と計器の報告(送り手の process の世代と中身)— 欠けた worker・型の違う ready・数でない計器は判断の前に断る。
+  (<- ready (body-of (http-request "POST" "/resources/Service/web/readiness" {}
+                                   {"worker" "w" "revision" "r" "ready" True "pid" 7 "specHash" "h" "attempt" "1"})))
+  (assert (= #(ready.worker ready.ready ready.pid ready.spec-hash ready.attempt ready.role) #("w" True 7 "h" "1" None)) ready)
+  (<- metered (body-of (http-request "POST" "/resources/Service/web/metrics" {}
+                                     {"worker" "w" "revision" "r" "metrics" {"counters" {"done" 3} "durations" {"turn" {"sum" 1.5 "count" 2}}}})))
+  (assert (= (. metered metrics counters) {"done" 3}) metered)
+  (assert (= (. (get (. metered metrics durations) "turn") count) 2) metered)
+  (<- unnamed (body-of (http-request "POST" "/resources/Service/web/readiness" {} {"revision" "r" "ready" True})))
+  (assert (in "worker" unnamed.reason) unnamed)
+  (<- worded (body-of (http-request "POST" "/resources/Service/web/readiness" {} {"worker" "w" "revision" "r" "ready" "yes"})))
+  (assert (in "ready" worded.reason) worded)
+  (<- textual (body-of (http-request "POST" "/resources/Service/web/metrics" {} {"worker" "w" "revision" "r" "metrics" {"gauges" {"g" "1"}}})))
+  (assert (in "gauges" textual.reason) textual))
