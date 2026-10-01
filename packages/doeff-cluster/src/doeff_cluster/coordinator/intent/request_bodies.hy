@@ -6,6 +6,7 @@
 ;;;   DrainBody       POST /workers/<名>/drain    worker の Pod の drain の頼み
 ;;;   ReadinessBody   POST /resources/Service/<名>/readiness   service の process の準備できたの報告
 ;;;   MetricsBody     POST /resources/Service/<名>/metrics     service の process の計器の報告
+;;;   ProgramBody     PUT /programs/<sha>         詰めた Program の置き
 ;;; 知らない欄は読み捨てる(前の直の読みと同じ — 送り手の版が新しい欄を足しても断らない)。
 (require doeff-hy.macros [val])
 (require doeff-hy.record [defwire defrecord])
@@ -88,6 +89,13 @@
   (setv #^ (| int None) placement None))
 
 
+(defwire ProgramBody
+  "PUT /programs/<sha> の本文: blob = 詰めた Program(base64 の文字列)・versions = 詰めた送り手の版(名 → 版)。"
+  {:tags {:context "doeff-cluster" :role "type"} :names :camel :unknown :ignore}
+  (#^ str blob)
+  (setv #^ (| (get dict #(str str)) None) versions None))
+
+
 (defrecord BodyMalformed
   "道の本文が型の約束の形でない(欠けた欄・型の違う値・JSON の object でない本文)— 受け口は 400 と reason で断る。"
   {:tags {:context "doeff-cluster" :role "type"}}
@@ -95,7 +103,7 @@
 
 
 ;; 道の本文の答えの型の和(ReadBody の答え・判断 respond が受ける本文 — まだ型にしていない道は JSON の object)。
-(setv RequestBody (| LeaseBody TaskResultBody DrainBody ReadinessBody MetricsBody BodyMalformed dict))
+(setv RequestBody (| LeaseBody TaskResultBody DrainBody ReadinessBody MetricsBody ProgramBody BodyMalformed dict))
 
 
 (defclass [(dataclass :frozen True)] ReadBody [EffectBase]

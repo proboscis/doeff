@@ -13,22 +13,22 @@
 (import re)
 (import doeff_cluster.coordinator.intent.cluster_model [ClusterState])
 (import doeff_cluster.shared.intent.remote_model [program-sha])
+(import doeff_cluster.coordinator.intent.request_bodies [ProgramBody])
 
 (setv PROGRAM-KEY (re.compile r"[0-9a-f]{64}"))
 (setv PROGRAM-MAX-BYTES (* 4 1024 1024))       ; 詰めた Program 1 つの上限(base64 の文字列の長さ)
 (setv PROGRAM-GRACE-MS (* 10 60 1000))          ; 参照の無い Program を残す長さ(置いてから)
 
 
-(deff program-write [#^ ClusterState state #^ str sha #^ dict body #^ int now]  ; defk にできない: coordinator の要求の振り分け(Program の外の純粋な判断)が呼ぶ
-  {:pre [(: state ClusterState) (: sha str) (: body dict) (: now int)] :post [(: % tuple) (= (len %) 3)]
+(deff program-write [#^ ClusterState state #^ str sha #^ ProgramBody body #^ int now]  ; defk にできない: coordinator の要求の振り分け(Program の外の純粋な判断)が呼ぶ
+  {:pre [(: state ClusterState) (: sha str) (: body ProgramBody) (: now int)] :post [(: % tuple) (= (len %) 3)]
    :tags {:context "doeff-cluster" :role "judgment"}}
-  "PUT /programs/<sha>: 形と中身の sha256 を確かめて置き、#(次の状態 status 本文) を返す。同じキーを置き直すと期限だけ延びる。"
-  (setv blob (.get body "blob") versions (.get body "versions" {}))
+  "PUT /programs/<sha>: キーの形と大きさと中身の sha256 を確かめて置き、#(次の状態 status 本文) を返す。同じキーを置き直すと期限だけ
+   延びる。本文の欄の型は解く所(coordinator/protocol/request_bodies — #2445)が検めた。"
+  (setv blob body.blob versions (or body.versions {}))
   (cond
     (not (PROGRAM-KEY.fullmatch sha)) #(state 400 {"error" (.format "キーは 64 桁の sha256: {!r}" sha)})
-    (not (isinstance blob str)) #(state 400 {"error" "blob は詰めた Program の文字列"})
     (> (len blob) PROGRAM-MAX-BYTES) #(state 413 {"error" (.format "詰めた Program が上限 {} byte を越える" PROGRAM-MAX-BYTES)})
-    (not (isinstance versions dict)) #(state 400 {"error" "versions は詰めた送り手の版の object"})
     (!= (program-sha blob) sha)
       #(state 400 {"error" "blob の sha256 がキーと合わない"})
     True #((replace state :programs (| state.programs {sha {"blob" blob "versions" versions "putMs" now}}))

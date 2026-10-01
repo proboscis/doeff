@@ -917,7 +917,8 @@
     {
       "allow": [
         "doeff-cluster-cluster-model",
-        "doeff-cluster-remote-model"
+        "doeff-cluster-remote-model",
+        "doeff-cluster-coordinator-request-bodies-model"
       ],
       "layer": "pure",
       "name": "doeff-cluster-program-policy",

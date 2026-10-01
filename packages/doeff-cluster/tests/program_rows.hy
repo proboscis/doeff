@@ -7,6 +7,7 @@
 (require doeff-hy.macros [defk val])
 (import doeff_cluster.coordinator.intent.cluster_model [ClusterState])
 (import doeff_cluster.coordinator.core.program_policy [program-write])
+(import doeff_cluster.coordinator.intent.request_bodies [ProgramBody])
 (import doeff_cluster.shared.intent.remote_model [program-sha])
 
 ;; 置き場のキーの見本(64 桁の sha256 の形 — coordinator は /programs に在るかを Service の行の受け付けでは確かめない)。
@@ -40,6 +41,6 @@
    versions = 詰めた送り手の版(task の版になる — 置く worker の版と比べられる)。版の違う task を並べる検は blob を変える。
    now = 置いた時刻(参照の無い Program は置いてから 10 分で掃除される — 検の時計に合わせる)。"
   (val sha (program-sha blob))
-  (val placed (program-write state sha {"blob" blob "versions" versions} now))
+  (val placed (program-write state sha (ProgramBody :blob blob :versions versions) now))
   (assert (= (get placed 1) 200) placed)
   #((get placed 0) sha))
