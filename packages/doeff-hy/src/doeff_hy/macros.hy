@@ -352,8 +352,27 @@ defk {name}: :post must include a return type check (: % Type).
     ;; DeprecationWarning になるので、module として compile して最後の式を取る。
     ;; 呼び出しの形(`(type x)` など)は型の注記として書けないので注記にしない。
     True
-      (let [node (. (get (. (hy-compile tp "__main__" :import-stdlib False) body) -1) value)]
-        (if (isinstance node ast.Call) None (ast.unparse node)))))
+      (let [node (. (get (. (hy-compile (_of-as-get tp) "__main__" :import-stdlib False) body) -1) value)]
+        (if (or (isinstance node ast.Call) (_has-call? node)) None (ast.unparse node)))))
+
+(defn _has-call? [node]
+  "注記の式の中に呼び出しが残るか(`int | of(...)` のような注記として嘘の文字列を作らないため)。"
+  (import ast)
+  (any (gfor sub (ast.walk node) (isinstance sub ast.Call))))
+
+(defn _of-as-get [tp]
+  "型の式の中の `(of base arg …)` を、同じ意味の `(get base arg)` / `(get base #(arg …))` へ写す(入れ子と `|` の中も)。
+   `of` は macro なので、macro を持たない hy-compile に直に渡すと呼び出し `of(tuple, X, ...)` になり、`(of tuple X ...)` と
+   書いた契約の引数が注記を失っていた(`|` の中では `of(...) | None` という嘘の注記になっていた — agora-redesign #2535)。"
+  (cond
+    (not (isinstance tp hy.models.Expression)) tp
+    (and (> (len tp) 1) (isinstance (get tp 0) hy.models.Symbol) (= (str (get tp 0)) "of"))
+      (let [base (_of-as-get (get tp 1))
+            args (lfor arg (cut tp 2 None) (_of-as-get arg))]
+        (if (= (len args) 1)
+            (hy.models.Expression [(hy.models.Symbol "get") base (get args 0)])
+            (hy.models.Expression [(hy.models.Symbol "get") base (hy.models.Tuple args)])))
+    True (hy.models.Expression (lfor part tp (_of-as-get part)))))
 
 (defn _contract-types [checks]
   "契約の `(: name T)` から {name: T の source} を作る(説明だけの型は除く)。"
