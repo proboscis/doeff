@@ -20,6 +20,8 @@
 (import doeff_vm [Call Err Ok WithHandler])
 (import doeff_core_effects.effects [Absent Raise])
 (import doeff_core_effects.outcomes [maybe result open-bind Outcomes])
+(import doeff_core_effects [outcomes])
+(import unittest [mock])
 
 
 (defclass [(dataclass :frozen True)] Row []
@@ -192,6 +194,22 @@
   (<- plain-none (table-rows (read-plain "none")))
   (assert (= #(plain-missing plain-down plain-none) #((Missing "zz") (Unreachable "網が落ちた") None))
           #(plain-missing plain-down plain-none)))
+
+
+(deftest test-yielding-defk-bind-skips-the-python-dispatch
+  ;; #2449: 効果を出す defk の呼び(Call)を :absent なしで束ねると、open-bind は doeff-vm の中でその呼びそのものを
+  ;; 返し、Python の振り分け(_opened)へ入らない。答えは振り分けの答えと同じ物。遅い形 = 束ねごとに
+  ;; _open-bind → _opened → _settled を通り、呼びをそのまま返していた(預かり所の契約の例で 13.8k 回)。
+  (val program (read-plain "a"))
+  (assert (is (outcomes._open-bind program) program) "Python の振り分けの答えも呼びそのもの")
+  (with [spy (mock.patch.object outcomes "_opened" :wraps outcomes._opened)]
+    (assert (is (open-bind program) program) "束ねは呼びそのものを yield する")
+    (assert (= spy.call-count 0) f"効果を出す defk の呼びは Python の振り分けへ入らない: {spy.call-count}")
+    (val effect (PlainRead "a"))
+    (assert (is (open-bind effect) effect) "ほかの物は今までどおり振り分けへ渡し、同じ物を yield する")
+    (assert (= spy.call-count 1) spy.call-count))
+  (<- got (table-rows (read-plain "a")))
+  (assert (= got (Row "A")) got))
 
 
 (defk judge-row [x]
