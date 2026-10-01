@@ -130,6 +130,15 @@
   (#^ int updated-ms))
 
 
+(defrecord WorkerReport
+  "worker 1 つの最新の状態の報告(ClusterState.statuses の値 — 鍵 = worker の名・保存しない): at = 受けた時刻(epoch ms)・endpoint =
+   worker が名乗った宛先(名乗らない旧い worker は None)・jobs = job の行の列(heartbeat の statuses から結果の欄 result / task を除いた
+   dict — 行の欄は worker/protocol/heartbeat の status-row)。#2447 で外側の dict をこの型にした(行の型は続きの切り出し)。"
+  (#^ int at)
+  (#^ (| str None) endpoint)
+  (#^ tuple jobs))
+
+
 (defrecord RefusedJob
   "受け付けない Service の行(2026-09-27・改訂 1 の C)。旧い宣言の形の行を読み直した時と、読めない行を、coordinator を落とさずに
    持っておく: name = Service の名・row = 元の行(保存と表示のため JSON のまま)・reason = 理由。置き先・Rollout・drain・計器は
@@ -326,7 +335,7 @@
   ;; 残り、子 process が走っているかもしれない)を振り直さない。保存する(counter の taskPrefix)。
   (setv #^ str task-prefix "t")
   (setv #^ dict board (field :default-factory dict))
-  (setv #^ dict statuses (field :default-factory dict))  ; worker 名 → {"at" ms "jobs" [...]}(保存しない)
+  (setv #^ dict statuses (field :default-factory dict))  ; worker 名 → WorkerReport(保存しない)
   (setv #^ tuple events #())                            ; 割り当ての移り変わり(直近 200 件・保存しない)
   ;; --- 資源(2026-09-24) ---
   (setv #^ dict meta (field :default-factory dict))      ; "Kind/名" → 資源の版の欄(resourceVersion・generation・作った / 書いた送り手と時刻)

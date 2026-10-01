@@ -38,22 +38,22 @@
        0 16))
 
 
-(defn #^ (| list None) carrier-rows [#^ ClusterState state #^ str name #^ int now #^ ClusterTiming timing]  ; defk にできない: coordinator の純粋な判断が呼ぶ
+(defn #^ (| tuple None) carrier-rows [#^ ClusterState state #^ str name #^ int now #^ ClusterTiming timing]  ; defk にできない: coordinator の純粋な判断が呼ぶ
   "Service name の担い手の worker が報告した job の行(報告が lease-ms より新しい時だけ)。置き先が無い・
    報告が無い・古い時は None(判じない — 作り直しの直後に「旧が居ない」と取り違えて諦めを捨てないため)。"
   (setv placed (.get state.placements name)
         st (if (is placed None) None (.get state.statuses placed.worker)))
-  (if (or (is st None) (> (- now (get st "at")) timing.lease-ms))
+  (if (or (is st None) (> (- now st.at) timing.lease-ms))
       None
-      (.get st "jobs" [])))
+      st.jobs))
 
 
-(defn #^ bool retired-live [#^ list rows #^ str name]  ; defk にできない: coordinator の純粋な判断が呼ぶ
+(defn #^ bool retired-live [#^ tuple rows #^ str name]  ; defk にできない: coordinator の純粋な判断が呼ぶ
   "担い手の行に、Service name の退いた旧の process(retiredFrom = name)が動いている形で在るか(戻る先が在るか)。"
   (any (gfor row rows (and (= (.get row "retiredFrom") name) (in (.get row "phase") LIVE-PHASES)))))
 
 
-(defn #^ bool new-generation-live [#^ list rows #^ str name #^ str want]  ; defk にできない: coordinator の純粋な判断が呼ぶ
+(defn #^ bool new-generation-live [#^ tuple rows #^ str name #^ str want]  ; defk にできない: coordinator の純粋な判断が呼ぶ
   "担い手の行に、今の宣言の spec(指紋 want)で起こした Service name の process が動いている形で在るか(期限の起点)。"
   (any (gfor row rows (and (= (.get row "name") name) (= (.get row "specHash") want) (in (.get row "phase") LIVE-PHASES)))))
 

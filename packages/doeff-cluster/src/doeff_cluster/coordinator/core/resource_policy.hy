@@ -66,7 +66,7 @@
 (defn #^ (| dict None) job-status-row [#^ ClusterState state #^ str worker #^ str name]
   (setv st (.get state.statuses worker))
   (when (is st None) (return None))
-  (for [row (.get st "jobs" [])]
+  (for [row st.jobs]
     (when (= (.get row "name") name) (return row)))
   None)
 
@@ -100,7 +100,7 @@
   ;; 担い手の報告が古い: 移し替えの期限(reassign-after-ms)の内なら「分からない」(Unknown — 途絶の間。Rollout は失敗と数えない)。
   ;; 期限を過ぎた担い手からは job を他へ移すので NotReady(2026-09-25: 以前は heartbeat が 10 秒途絶えただけで NotReady と言い、
   ;; 書き手が書き先へ書けているのに Rollout が戻しに入りえた)。
-  (when (or (is st None) (> (- now (get st "at")) timing.lease-ms))
+  (when (or (is st None) (> (- now st.at) timing.lease-ms))
     (setv carrier (.get state.workers a.worker)
           silent (and carrier (alive now carrier timing.reassign-after-ms)))
     (return (no (if (or warming silent) "Unknown" "NotReady") NotReadyKind.CARRIER-SILENT
