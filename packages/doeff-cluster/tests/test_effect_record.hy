@@ -17,10 +17,10 @@
 (import tests.clock_fixtures [clock-at clock-ms])
 (import doeff_cluster.shared.intent.shared_model [ReadShared WriteShared])
 (import doeff_cluster.shared_handlers [shared-memory])
-(import doeff_cluster.effect_codec [BlobMemory intern-json resolve-refs encode-value decode-value encode-error decode-error delta-of apply-delta canonical
+(import doeff_cluster.shared.core.effect_codec [BlobMemory intern-json resolve-refs encode-value decode-value encode-error decode-error delta-of apply-delta canonical
                                          UnrecordableEffect RecordedError])
-(import doeff_cluster.record_model [read-recording ReplayFinished ReplayDiverged])
-(import doeff_cluster.record_handlers [MemorySink EffectLog effect-recorder ReplayState effect-replayer replay-report])
+(import doeff_cluster.shared.core.record_model [read-recording ReplayFinished ReplayDiverged])
+(import doeff_cluster.shared.protocol.record_handlers [MemorySink EffectLog effect-recorder ReplayState effect-replayer replay-report])
 
 
 ;; --- 1. 符号化 ---------------------------------------------------------------------------------
@@ -140,7 +140,7 @@
 
 ;; ---- 置き場を移した module の旧い型の名を読む(agora-redesign #2105・#2021 の決め 2a)-----------------------------------------
 (deftest test-a-type-name-written-before-the-move-resolves-to-the-type-in-its-new-place
-  (import doeff_cluster.effect_codec [resolve-type type-name MOVED-MODULES])
+  (import doeff_cluster.shared.core.effect_codec [resolve-type type-name MOVED-MODULES])
   (import doeff_cluster.shared.intent.detached_model [SubmitDetached])
   (import doeff_cluster.shared.intent.runtime_env_model [RuntimeEnv])
   ;; 書くのは今の名だけ
@@ -153,6 +153,13 @@
   (assert (is (resolve-type "doeff_cluster.shared_model:WriteShared") WriteShared))
   (assert (is (resolve-type "doeff_cluster.semaphore_model:HeldLease")
               (resolve-type "doeff_cluster.shared.intent.semaphore_model:HeldLease")))
+  ;; 記録の綴りと記録の handler(#2108)— shared/core と foundation へ移した型も旧い名で引ける
+  (import doeff_cluster.shared.core.record_model [Entry])
+  (import doeff_cluster.shared.protocol.record_handlers [MemorySink])
+  (assert (is (resolve-type "doeff_cluster.record_model:Entry") Entry))
+  (assert (is (resolve-type "doeff_cluster.record_handlers:MemorySink") MemorySink))
+  (assert (is (resolve-type "doeff_cluster.effect_codec:RecordedError")
+              (resolve-type "doeff_cluster.shared.core.effect_codec:RecordedError")))
   ;; 表に無い旧い名は引けない(黙って別の型へ倒れない)
   (assert (is (resolve-type "doeff_cluster.no_such_model:SubmitDetached") None))
-  (assert (= (len MOVED-MODULES) 10)))
+  (assert (= (len MOVED-MODULES) 13)))

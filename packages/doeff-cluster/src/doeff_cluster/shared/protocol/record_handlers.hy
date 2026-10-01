@@ -15,6 +15,7 @@
 ;;; handler と同じく scheduler の effect で待つ)、番号が進むとその番号の持ち主を起こす。他の task が全部止まった時だけ動く係
 ;;; (低優先度の daemon)が、それでも番号が進まない = 記録の問いを誰も出さない、を分岐として止める。
 (require doeff-hy.macros [defhandler defk <- val var])
+(val MODULE-TAGS {:context "doeff-cluster" :role "protocol"})
 (import atexit)
 (import json)
 (import os)
@@ -29,11 +30,11 @@
 (import doeff [Program])
 (import doeff_vm [GetBoundaries K WithHandler WithObserve Callable :as VmCallable])
 (import doeff_core_effects.scheduler [Spawn Wait CreatePromise CompletePromise Promise PRIORITY-IDLE])
-(import doeff_cluster.effect_codec [READ LIVE DECISION OUTPUT LOOSE DIVERGE INTERN-MIN-CHARS BLOB-MEMORY-MAX FORMAT-VERSION BlobMemory
+(import doeff_cluster.shared.core.effect_codec [READ LIVE DECISION OUTPUT LOOSE DIVERGE INTERN-MIN-CHARS BLOB-MEMORY-MAX FORMAT-VERSION BlobMemory
                                          EffectCodec HandleTable UnencodableValue UnrecordableEffect RestoredValue
                                          encode-value encode-error decode-value decode-error canonical intern-json
                                          codec-of mode-of args-of subject-of])
-(import doeff_cluster.record_model [ROOT ReplayFinished ReplayDiverged Entry Recording match-step diff-row summarize])
+(import doeff_cluster.shared.core.record_model [ROOT ReplayFinished ReplayDiverged Entry Recording match-step diff-row summarize])
 (import doeff_core_effects.effects [Ask])
 (import doeff_cluster.host_contract [HOST-CONTRACT])
 (import doeff_cluster.job_context [RunContext])
