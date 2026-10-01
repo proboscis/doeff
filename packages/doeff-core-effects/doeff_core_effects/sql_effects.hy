@@ -57,6 +57,9 @@
 ;; 引数と行の値の閉じた集合(bool は int の下位の型なので先に並べる)。
 (val SQL-VALUE-TYPES #(bool int float str bytes (type None)))
 
+;; 同じ閉じた集合の型の別名(呼び手が注記に使う名 — 型の宣言 sql_effects.pyi の SqlValue と同じ物)。
+(val SqlValue (| int float str bytes bool None))
+
 ;; 中立の記法の字句: 文字列の literal・引用した名・注釈・$$ の本文・`::` はそのまま文、`:name` は引数、他は 1 字ずつ文。
 (val TOKEN (re.compile r"(?P<text>'(?:[^']|'')*'|\"(?:[^\"]|\"\")*\"|--[^\n]*|/\*.*?\*/|\$\$.*?\$\$|::)|:(?P<name>[A-Za-z_][A-Za-z0-9_]*)|(?P<plain>[^'\"\-/:$]+|.)"
                        re.DOTALL))
