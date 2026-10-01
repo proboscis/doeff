@@ -96,6 +96,19 @@ pub enum Target<'a> {
     Single { path: PathBuf, source: &'a str },
 }
 
+impl Target<'_> {
+    /// この実行が規則を判じるか(agora-redesign #2163)— 全体の実行は有効な規則の全部(名指しの path が在る時は DOEFF166 を除く —
+    /// 当たる所見が名指しの外に在りうる)、1 file の実行は 1 file で判じると規則が名乗る物(`ProjectRule::judged_on_one_file`)だけ。
+    /// 判じない規則は有効でも走らせず、報告の `judged` に載せない(エディタがその規則の違反を全体の実行の結果のまま残す)。
+    pub fn judges(&self, rule: ProjectRule) -> bool {
+        match self {
+            Target::Whole { focus: None } => true,
+            Target::Whole { focus: Some(_) } => rule != ProjectRule::RegistryEntryStale,
+            Target::Single { .. } => rule.judged_on_one_file(),
+        }
+    }
+}
+
 /// 違反の下書き(law と登録簿を当てる前)。
 struct Draft {
     rule: ProjectRule,
@@ -159,17 +172,19 @@ pub fn run_with(root: &Path, settings: &ProjectSettings, enabled: &BTreeSet<Proj
     }
     report.errors.extend(registry.problems.iter().cloned());
     report.notes.extend(registry.notes.iter().cloned());
-    // 登録簿の当たらない行(DOEFF166)は repo 全体を当てた時だけ判じる(名指しの file だけ・1 file の実行では、当たる所見が範囲の外に在りうる)。
-    let whole_repo = matches!(&target, Target::Whole { focus: None });
-    // DOEFF166 が有効な全体の実行では、登録簿の鍵が名指す規則を enable に無くても同じ実行で当てる(lent)— 当たりは 166 の判じにだけ
+    // この実行が判じる規則(`Target::judges`)。判じない規則は有効でも走らせない — 登録簿の当たらない行(DOEFF166)は repo 全体を当てた
+    // 時だけ判じ(名指しの file だけ・1 file の実行では、当たる所見が範囲の外に在りうる)、1 file の実行は 1 file で判じると名乗る規則
+    // だけを走らせる(agora-redesign #2163)。
+    let judged_rules: BTreeSet<ProjectRule> = enabled.iter().copied().filter(|rule| target.judges(*rule)).collect();
+    // DOEFF166 を判じる全体の実行では、登録簿の鍵が名指す規則を enable に無くても同じ実行で当てる(lent)— 当たりは 166 の判じにだけ
     // 使い、報告の前に外す。enable に 166 を含む一部の列だけを渡すと名指された規則が走らず、166 が黙って 0 件になっていた
     // (agora-redesign #1999・#1992 の見逃し)。
-    let lent: BTreeSet<ProjectRule> = if whole_repo && enabled.contains(&ProjectRule::RegistryEntryStale) {
-        rules_named_by_registry(&registry, settings).difference(enabled).copied().collect()
+    let lent: BTreeSet<ProjectRule> = if judged_rules.contains(&ProjectRule::RegistryEntryStale) {
+        rules_named_by_registry(&registry, settings).difference(&judged_rules).copied().collect()
     } else {
         BTreeSet::new()
     };
-    let widened: BTreeSet<ProjectRule> = enabled.union(&lent).copied().collect();
+    let widened: BTreeSet<ProjectRule> = judged_rules.union(&lent).copied().collect();
     let enabled = &widened;
     let raw = raw_settings(root, settings, &mut report.errors);
     let mut semantic_probes: Vec<SemanticProbe> = Vec::new();
@@ -692,6 +707,15 @@ pub fn run_with(root: &Path, settings: &ProjectSettings, enabled: &BTreeSet<Proj
                     report.errors.extend(judged.errors);
                 }
             }
+            // 層の置き場の外の Hy の file にも許可名簿の規則(DOEFF106・131)を当てる — 全体の実行の judge_unplaced_world と同じ判定を
+            // この file 1 つに(1 file の実行がこの 2 つを判じると名乗るため・agora-redesign #2163)。索引は上で組んだこの file の物だけ。
+            if let (Some(architecture), Some(layers), Some(raw_spec), Some(rel)) =
+                (&settings.architecture, &settings.layers, settings.raw.as_ref().filter(|r| r.world_modules.is_some()), &rel)
+            {
+                if classify_layer_file(rel, layers).or_else(|| infer_layer_site(rel, source, layers)).is_none() {
+                    drafts.extend(judge_unplaced_world(root, architecture, raw_spec, &BTreeSet::new(), &indexes, enabled));
+                }
+            }
             if let (Some(architecture), Some(layers), Some(rel)) = (&settings.architecture, &settings.layers, &rel) {
                 if is_architecture_file(rel, architecture, layers) {
                     let file = SourceFile { rel: rel.clone(), path: path.clone(), language: language_of(&path).unwrap_or(Language::Hy) };
@@ -800,7 +824,7 @@ pub fn run_with(root: &Path, settings: &ProjectSettings, enabled: &BTreeSet<Proj
     crate::timing::timed("drop-index", || {
         std::thread::spawn(move || drop(indexes));
     });
-    if whole_repo && enabled.contains(&ProjectRule::RegistryEntryStale) {
+    if judged_rules.contains(&ProjectRule::RegistryEntryStale) {
         let stale = crate::timing::timed("stale-registry", || stale_registry_drafts(root, settings, enabled, &registry, &drafts));
         drafts.extend(stale);
     }
@@ -815,6 +839,8 @@ pub fn run_with(root: &Path, settings: &ProjectSettings, enabled: &BTreeSet<Proj
     }
     // 読めない Hy の file は、有効な規則の一覧に関わらず知らせる(違反が欠けているのを黙らせない — DOEFF128)。
     report.findings.extend(unreadable_findings(root, settings, &unreadable_target));
+    report.judged = judged_rules;
+    report.judged.insert(ProjectRule::UnreadableFile);
     report
 }
 
@@ -5192,5 +5218,52 @@ mod reason_comment_tests {
         );
         assert_eq!(parse_reason_comment("; defk にできない: 同上", marker), Some(ReasonComment { kind: None, detail: "同上".into() }));
         assert_eq!(parse_reason_comment("(deff k [x] x)", marker), None);
+    }
+}
+
+#[cfg(test)]
+mod judged_rules_tests {
+    use super::*;
+
+    #[test]
+    fn a_single_file_run_does_not_judge_rules_judged_only_on_the_whole_repo() {
+        // agora-redesign #2163: 1 file の実行は DOEFF166(登録簿の当たらない行)などの repo 全体でだけ判じる規則を判じない。全体の実行は
+        // 判じ、名指しの path の全体の実行は 166 だけを判じない(当たる所見が名指しの外に在りうる)。
+        let single = Target::Single { path: PathBuf::from("/repo/app/core/x.hy"), source: "" };
+        let whole = Target::Whole { focus: None };
+        let focus = [PathBuf::from("/repo/app/core/x.hy")];
+        let named = Target::Whole { focus: Some(&focus) };
+        assert!(!single.judges(ProjectRule::RegistryEntryStale));
+        assert!(whole.judges(ProjectRule::RegistryEntryStale));
+        assert!(!named.judges(ProjectRule::RegistryEntryStale));
+        // repo 全体を歩く規則(DOEFF141・162)は 1 file では判じない。1 file の枝を持つ規則(DOEFF101・106・110)は判じる。
+        for rule in [ProjectRule::BlindDefinitionReads, ProjectRule::EffectOutsideCensus, ProjectRule::VocabularyOutsideSinglePoint] {
+            assert!(!single.judges(rule), "{}", rule.id());
+            assert!(whole.judges(rule) && named.judges(rule), "{}", rule.id());
+        }
+        for rule in [ProjectRule::LayerImportDirection, ProjectRule::RawSideEffectDirect, ProjectRule::DefnForbidden] {
+            assert!(single.judges(rule) && whole.judges(rule) && named.judges(rule), "{}", rule.id());
+        }
+        // 全体の実行は有効な規則を全部判じる(名指しの実行は 166 の 1 つだけを除く)。
+        assert!(ProjectRule::ALL.iter().all(|rule| whole.judges(*rule)));
+        let not_named: Vec<&str> = ProjectRule::ALL.iter().filter(|rule| !named.judges(**rule)).map(|rule| rule.id()).collect();
+        assert_eq!(not_named, vec!["DOEFF166"]);
+    }
+
+    #[test]
+    fn the_report_names_only_judged_rules_and_runs_nothing_else_on_a_single_file() {
+        // 1 file の実行の報告は、有効でも 1 file で判じない規則を judged に載せず、有効な規則に関わらず出す DOEFF128 は載せる。
+        let root = tempfile::TempDir::new().unwrap();
+        let settings = ProjectSettings::default();
+        let enabled: BTreeSet<ProjectRule> = [ProjectRule::RegistryEntryStale, ProjectRule::DefnForbidden].into_iter().collect();
+        let path = root.path().join("x.hy");
+        let single = run(root.path(), &settings, &enabled, Target::Single { path, source: "(defn f [] 1)\n" });
+        assert_eq!(single.judged, [ProjectRule::UnreadableFile, ProjectRule::DefnForbidden].into_iter().collect::<BTreeSet<_>>());
+        assert!(single.findings.iter().all(|f| single.judged.contains(&f.rule)), "{:?}", single.findings);
+        let whole = run(root.path(), &settings, &enabled, Target::Whole { focus: None });
+        assert_eq!(
+            whole.judged,
+            [ProjectRule::UnreadableFile, ProjectRule::DefnForbidden, ProjectRule::RegistryEntryStale].into_iter().collect::<BTreeSet<_>>()
+        );
     }
 }

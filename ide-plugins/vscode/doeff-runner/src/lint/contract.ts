@@ -138,7 +138,7 @@ export interface LintModule {
 export const LINT_RULE_FAMILIES = ['layer', 'tags', 'raw', 'naming', 'place', 'definition', 'class', 'wire', 'smell', 'jev', 'python', 'law'] as const;
 export type LintRuleFamily = (typeof LINT_RULE_FAMILIES)[number];
 
-/** 走らせた規則の一覧の 1 件(何を見ているか・何を見ていないか)。 */
+/** 有効な規則の一覧の 1 件(何を見ているか・何を見ていないか)。この実行で判じたかは LintReport.judgedRules が名乗る(更新 8)。 */
 export interface LintRule {
   readonly rule: string;
   readonly adr: string | null;
@@ -346,6 +346,12 @@ export interface LintReport {
   readonly rewrites: readonly LintRewrite[];
   /** `--stdin` の file の定義ごとの本体の文字の行(版 2 への欄の追加 — 古い linter の出力には無く []) */
   readonly bodies: readonly LintBody[];
+  /**
+   * この実行で判じた規則の ID(更新 8・agora-redesign #2163)。1 file の実行(stdin)は repo 全体でだけ判じる規則(DOEFF166・141 など)を
+   * 走らせないので、置き場はこの規則の違反だけを 1 file の結果で差し替え、ほかの規則の違反は全体の実行の結果のまま残す。古い linter の
+   * 出力には無く null(その時は今までどおり file の違反を全部差し替える)。
+   */
+  readonly judgedRules: readonly string[] | null;
   /** linter 自身が読めなかった file など */
   readonly errors: readonly string[];
   /** 拡張の知らない語(linter の方が新しい)— その項目だけ既定の見た目にした理由。空なら無し */
@@ -873,6 +879,7 @@ export function parseLintJson(stdout: string): LintParseResult {
         bodies: Object.prototype.hasOwnProperty.call(obj, 'bodies')
           ? present(list(obj, 'bodies', '$', (v, at) => body(v, at, notes, bindingIndex)))
           : [],
+        judgedRules: Object.prototype.hasOwnProperty.call(obj, 'judged_rules') ? list(obj, 'judged_rules', '$', text) : null,
         errors: list(obj, 'errors', '$', text),
         unknown: notes.unknown
       }

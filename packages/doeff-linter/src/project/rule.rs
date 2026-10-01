@@ -559,6 +559,101 @@ impl ProjectRule {
         }
     }
 
+    /// 1 file の実行(`Target::Single` — エディタの `--stdin --path`)がこの規則を判じるか(agora-redesign #2163)。真の規則は
+    /// `run_with` の `Target::Single` の枝に判定を持ち、その file についての当たりを出し切る。偽の規則は repo 全体の実行
+    /// (`Target::Whole`)だけが判じる — 1 file の実行では走らせず(`run_with` が有効な規則からこの名乗りで外す)、editor-json の
+    /// `judged_rules` に載らないので、エディタはその規則の違反を全体の実行の結果のまま残す(以前は 1 file の実行の結果で file の違反を
+    /// 全部差し替え、DOEFF166・141 などの違反がその file から消えていた)。
+    ///
+    /// `needs_whole_repo`(当たりが F の外の source で変わりうるか — 門と commit の hook の分け)とは別の問い: DOEFF101 は repo 全体の
+    /// module の索引を引くが 1 file の実行も索引を組んで判じる(ここでは真)、DOEFF146 は file 1 つで決まるが 1 file の実行の枝を
+    /// 持たない(ここでは偽)。新しい規則はどちらかに置く(網羅の match)。
+    pub fn judged_on_one_file(self) -> bool {
+        match self {
+            // 設定の知らない鍵(main が両方の実行で足す)・読めない Hy の file(1 file ならその保存前の中身)。
+            ProjectRule::UnknownConfigKey
+            | ProjectRule::UnreadableFile
+            // 層の module 1 つの判定(judge_layer_file — 1 file の実行も repo の層の module の索引を組んで当てる)。
+            | ProjectRule::LayerImportDirection
+            | ProjectRule::LayerForbiddenModule
+            | ProjectRule::LayerTypesOnly
+            | ProjectRule::ModuleDeclaresTags
+            | ProjectRule::RoleMatchesLayer
+            | ProjectRule::ServiceBoundary
+            | ProjectRule::ContextMatchesService
+            | ProjectRule::ServiceDependency
+            | ProjectRule::PlacedDependency
+            | ProjectRule::EnvironmentBranch
+            | ProjectRule::MatchFieldHyphen
+            | ProjectRule::WireInWireFreeLayer
+            | ProjectRule::BareMapInWireFreeLayer
+            | ProjectRule::DictOutsideItsPlace
+            // 生の副作用の許可名簿 — 層の file は judge_layer_file、層の置き場の外の file は judge_unplaced_world を 1 file にも当てる。
+            | ProjectRule::RawSideEffectDirect
+            | ProjectRule::RawSideEffectVia
+            | ProjectRule::WorldHandlerNamedOutsideList
+            | ProjectRule::TranslationEmitsIntent
+            // 置き場(DOEFF115 は 1 file ではその file に出す — PlaceScope::Single)。
+            | ProjectRule::UndeclaredPlace
+            | ProjectRule::UndeclaredDirectory
+            // 定義・臭い・素の呼び・effect の食い違い(定義の file 1 つずつ)。
+            | ProjectRule::DefnForbidden
+            | ProjectRule::DeffNeedsReason
+            | ProjectRule::DefinitionTagsRequired
+            | ProjectRule::TestIsDeftest
+            | ProjectRule::ClassWithBehaviour
+            | ProjectRule::ShapeCheckInJudgment
+            | ProjectRule::FailureRethrow
+            | ProjectRule::BindThenReturn
+            | ProjectRule::FieldsJoinedIntoText
+            | ProjectRule::RebuiltAccumulator
+            | ProjectRule::DefkCalledBare
+            | ProjectRule::EffectsDisagreeWithInference
+            // file 1 つずつの宣言の規則。
+            | ProjectRule::JsonValueOutsideWire
+            | ProjectRule::EnvironmentName
+            | ProjectRule::HandlerArgumentHoldsState
+            | ProjectRule::RetiredWord
+            | ProjectRule::RetiredCall
+            | ProjectRule::UntypedStructuredValue
+            | ProjectRule::RecordStubNotKwOnly
+            // 意味の規則(1 file の実行は cache を読む — 定義ごと)。
+            | ProjectRule::SemanticBusinessDecision
+            | ProjectRule::SemanticTransportKnowledge
+            | ProjectRule::SemanticPlainCallable
+            | ProjectRule::SemanticClassRole
+            | ProjectRule::SemanticMixedConcerns => true,
+            // 当たりが architecture.hy・登録簿の行・宣言した :files の群に付くか、複数の file を数えて突き合わせる。
+            ProjectRule::UnusedDependency
+            | ProjectRule::BlindDefinitionReads
+            | ProjectRule::DefinitionCallsUnlistedHead
+            | ProjectRule::SpellingOutsideItsFiles
+            | ProjectRule::SpellingCountDiffers
+            | ProjectRule::EffectOutsideCensus
+            | ProjectRule::FieldHoldersDiffer
+            | ProjectRule::CallOutsideDeclaredSites
+            | ProjectRule::BroadCatchOutsideCarrier
+            | ProjectRule::ServiceInvariantsMissing
+            | ProjectRule::RegistryEntryStale
+            // 定義の graph(テストと本番の届き)を repo 全体で辿る。
+            | ProjectRule::WorldHandlerMisplaced
+            | ProjectRule::TestKindMismatch
+            | ProjectRule::WorldHandlerWithoutContractTest
+            | ProjectRule::ServiceUntestedOnSim
+            | ProjectRule::BusinessEffectFake
+            | ProjectRule::AssemblyShapeBroken
+            | ProjectRule::AssemblyAnswerMisplaced
+            | ProjectRule::TestOnlyFake
+            | ProjectRule::IntentAnswererNotTranslation
+            | ProjectRule::ServiceWithoutCounterexample
+            | ProjectRule::ClauseWithoutCounterexample
+            | ProjectRule::IntentEffectUncovered
+            // file 1 つで決まるが、1 file の実行の枝をまだ持たない(全体の実行が file の群を歩く)。
+            | ProjectRule::TestFormNotDeftest
+            | ProjectRule::VocabularyOutsideSinglePoint => false,
+        }
+    }
+
     /// 臭いの規則(DOEFF121〜125 — 既定の重さ warning・設定の severity で info に下げられる)か。
     pub fn is_smell(self) -> bool {
         matches!(

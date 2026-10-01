@@ -1,6 +1,7 @@
 //! 層の規則の結果の型(違反 1 件・立場・出どころ・module の要約・結果の全部)。読み手(editor.rs・notice.rs・unreadable.rs)は
 //! ここを直に読む — 組み立ての project/mod.rs を読み戻すと、mod.rs が宣言する子の module と依存の輪になる(agora-redesign #2121)。
 
+use std::collections::BTreeSet;
 use std::path::PathBuf;
 
 use crate::models::Severity;
@@ -100,4 +101,8 @@ pub struct ProjectReport {
     pub semantic: Option<semantic::SemanticSummary>,
     /// 1 file の実行で組んだ effect の推論の表(組んだ時だけ・書いた file の中身を overlay にした物)。
     pub world: Option<signatures::World>,
+    /// この実行が判じた層の規則(agora-redesign #2163)— 当たりを出し切った規則で、0 件の規則も含む。全体の実行は有効な規則の全部、
+    /// 1 file の実行は `ProjectRule::judged_on_one_file` の規則だけ。findings の規則はどれもこの集合に入る。editor-json の
+    /// `judged_rules` の材料(エディタは判じた規則の違反だけを 1 file の結果で差し替える)。
+    pub judged: BTreeSet<ProjectRule>,
 }

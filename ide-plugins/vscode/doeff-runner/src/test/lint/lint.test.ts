@@ -41,6 +41,38 @@ function report(name: string): LintReport {
   return parsed.report;
 }
 
+/** fixture の JSON を書き換えてから契約の入口で読む(欄の在る出力・無い出力を同じ fixture から作る)。 */
+function edited(name: string, edit: (json: { [key: string]: unknown }) => void): LintReport {
+  const json = JSON.parse(readFixture(name)) as { [key: string]: unknown };
+  edit(json);
+  const parsed = parseLintJson(JSON.stringify(json));
+  if (parsed.tag !== 'ok') {
+    assert.fail(`書き換えた fixture ${name} を読めない: ${parsed.reason}`);
+  }
+  return parsed.report;
+}
+
+/** 全体の実行の結果に、1 file の実行が判じない規則(登録簿の当たらない行 DOEFF166)の違反を goal.hy に 1 件足す。 */
+function wholeWithStaleRegistryRow(): LintReport {
+  return edited('report.json', (json) => {
+    const violations = json.violations as Array<{ [key: string]: unknown }>;
+    violations.push({
+      ...violations[0],
+      rule: 'DOEFF166',
+      law: null,
+      adr: null,
+      range: { start: { line: 0, character: 0 }, end: { line: 0, character: 0 } },
+      key: 'controllers/kanban/core/goal.hy::DOEFF166::old-row'
+    });
+    const modules = json.modules as Array<{ [key: string]: unknown }>;
+    const goal = modules.find((m) => String(m.path).endsWith('goal.hy'));
+    if (goal !== undefined) {
+      goal.violations = 3;
+    }
+    json.judged_rules = ['DOEFF101', 'DOEFF166', 'DOEFF201'];
+  });
+}
+
 /** 節を短い文字列にする(木の形を比べる用)。 */
 function show(node: LintNode): string {
   switch (node.tag) {
@@ -87,6 +119,19 @@ suite('linter の出力の契約の読み込み', () => {
     assert.strictEqual(castle.tag, 'ok');
     assert.strictEqual(castle.tag === 'ok' ? castle.report.rules[0].family : 'x', null);
     assert.match(castle.tag === 'ok' ? castle.report.unknown.join('\n') : '', /rules\[0\]\.family: 知らない語 "castle"/);
+  });
+
+  test('この実行で判じた規則(更新 8・#2163)— 出ていれば読み、古い linter の出力(欄なし)は null・形が違えば理由つきで捨てる', () => {
+    const judged = edited('single-file.json', (json) => {
+      json.judged_rules = ['DOEFF101', 'DOEFF201'];
+    });
+    assert.deepStrictEqual(judged.judgedRules, ['DOEFF101', 'DOEFF201']);
+    assert.strictEqual(report('single-file.json').judgedRules, null);
+    const json = JSON.parse(readFixture('single-file.json')) as { [key: string]: unknown };
+    json.judged_rules = 'DOEFF101';
+    const broken = parseLintJson(JSON.stringify(json));
+    assert.strictEqual(broken.tag, 'rejected');
+    assert.match(broken.tag === 'rejected' ? broken.reason : '', /judged_rules: 配列でない/);
   });
 
   test('版違い・欄の欠け・契約に無い重さ・壊れた JSON は理由つきで捨てる', () => {
@@ -150,6 +195,35 @@ suite('linter の結果の置き場', () => {
     assert.strictEqual(store.rules().length, 3);
     store.replaceRoot('/repo', report('report.json'));
     assert.strictEqual(store.violations().length, 3, '全体の実行で差し替えは捨てる');
+  });
+
+  test('1 file の実行が判じた規則の違反だけを差し替え、判じていない規則(DOEFF166)の違反は全体の結果のまま残す(#2163)', () => {
+    const goalPath = '/repo/controllers/kanban/core/goal.hy';
+    const store = new LintStore();
+    store.replaceRoot('/repo', wholeWithStaleRegistryRow());
+    // 1 file の実行は DOEFF166 を判じない(judged_rules に無い)— goal.hy の DOEFF201 は 2 件から 1 件(line 3)に差し替わる。
+    store.replaceFile('/repo', goalPath, edited('single-file.json', (json) => {
+      json.judged_rules = ['DOEFF101', 'DOEFF201'];
+    }));
+    const shown = (): string[] => store.violations().map((v) => `${path.basename(v.path)}:${v.rule}:${v.range.start.line}`).sort();
+    assert.deepStrictEqual(shown(), ['effects.hy:DOEFF101:0', 'goal.hy:DOEFF166:0', 'goal.hy:DOEFF201:3']);
+    assert.deepStrictEqual(store.violationsIn(goalPath).map((v) => v.rule).sort(), ['DOEFF166', 'DOEFF201']);
+    // file の要約の数は合成した違反の数(1 file の結果の 1 件 + 残した DOEFF166 の 1 件)。
+    assert.strictEqual(store.modules().find((m) => m.module.path === goalPath)?.module.violations, 2);
+    assert.strictEqual(store.moduleFor(goalPath)?.violations, 2);
+
+    // 判じた規則の違反が 1 file の実行で 0 件なら、全体の結果のその規則の違反は消える(DOEFF166 は残る)。
+    store.replaceFile('/repo', goalPath, edited('single-file.json', (json) => {
+      json.judged_rules = ['DOEFF101', 'DOEFF201'];
+      json.violations = [];
+    }));
+    assert.deepStrictEqual(shown(), ['effects.hy:DOEFF101:0', 'goal.hy:DOEFF166:0']);
+    assert.strictEqual(store.moduleFor(goalPath)?.violations, 1);
+
+    // 欄の無い古い linter の出力は今までどおり file の違反を全部差し替える(DOEFF166 も消える)。
+    store.replaceFile('/repo', goalPath, report('single-file.json'));
+    assert.deepStrictEqual(shown(), ['effects.hy:DOEFF101:0', 'goal.hy:DOEFF201:3']);
+    assert.strictEqual(store.moduleFor(goalPath)?.violations, 1);
   });
 });
 
@@ -493,6 +567,28 @@ suite('置き場の知らせ — 違反の側と見出しの側を分ける(agor
       '鳴らなくても置き場は差し替えの中身を返す'
     );
     assert.strictEqual(calls.signatures, 0);
+  });
+
+  test('判じた規則だけの差し替えも、見せる物(残した DOEFF166 との合成)が前と同じなら鳴らない(#2163 と #2162 の比べ)', () => {
+    const store = new LintStore();
+    store.replaceRoot('/repo', wholeWithStaleRegistryRow());
+    const calls = counted(store);
+    // 判じた規則の違反が全体の結果と同じ 1 file の実行 — 合成は残した DOEFF166 を先に並べるが、見せる物は同じ
+    const same = edited('report.json', (json) => {
+      json.judged_rules = ['DOEFF101', 'DOEFF201'];
+    });
+    store.replaceFile('/repo', GOAL, same);
+    assert.strictEqual(calls.violations, 0);
+    assert.deepStrictEqual(store.violationsIn(GOAL).map((v) => v.rule).sort(), ['DOEFF166', 'DOEFF201', 'DOEFF201']);
+    assert.strictEqual(store.moduleFor(GOAL)?.violations, 3);
+    // 判じた規則の違反が変わる実行は 1 回鳴り、同じ中身の繰り返しは鳴らない
+    const changed = edited('single-file.json', (json) => {
+      json.judged_rules = ['DOEFF101', 'DOEFF201'];
+    });
+    store.replaceFile('/repo', GOAL, changed);
+    store.replaceFile('/repo', GOAL, changed);
+    assert.strictEqual(calls.violations, 1);
+    assert.deepStrictEqual(store.violationsIn(GOAL).map((v) => v.rule).sort(), ['DOEFF166', 'DOEFF201']);
   });
 
   test('見出しだけの変化では違反の側の購読者(木)が呼ばれない', () => {

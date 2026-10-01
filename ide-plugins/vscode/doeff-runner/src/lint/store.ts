@@ -144,15 +144,32 @@ export function sameModule(a: LintModule | undefined, b: LintModule | undefined)
   return a === undefined || b === undefined ? a === b : sameByFields(MODULE_FIELDS, a, b);
 }
 
-/** 1 file の差し替えの中身 — その file の違反と module の要約。 */
-interface FileOverride {
+/** file 1 つに見せる物 — その file の違反と module の要約。 */
+interface FileView {
   readonly violations: readonly LintViolation[];
   readonly module: LintModule | undefined;
 }
 
-/** 1 file の差し替えの中身が同じか。 */
-function sameOverride(a: FileOverride, b: FileOverride): boolean {
+/** file 1 つに見せる物が同じか。 */
+function sameView(a: FileView, b: FileView): boolean {
   return sameModule(a.module, b.module) && sameViolations(a.violations, b.violations);
+}
+
+/**
+ * 違反を位置・規則・鍵・文の順に並べた写し。1 file の差し替えの合成は残した違反(判じていない規則の分)を先に並べるので、
+ * 全体の結果と同じ中身でも linter の順(file ごとに位置と規則の順)と違いうる — 見せる物が変わったかは順を揃えてから比べる(#2163)。
+ */
+function inPositionOrder(view: FileView): FileView {
+  const text = (value: string | null): string => value ?? '';
+  const ordered = [...view.violations].sort(
+    (a, b) =>
+      a.range.start.line - b.range.start.line ||
+      a.range.start.character - b.range.start.character ||
+      a.rule.localeCompare(b.rule) ||
+      text(a.key).localeCompare(text(b.key)) ||
+      a.message.localeCompare(b.message)
+  );
+  return { violations: ordered, module: view.module };
 }
 
 /** 文字の列が同じか(順も含めて)。 */
@@ -199,6 +216,32 @@ function reportOf(run: RootRun): LintReport | undefined {
   }
 }
 
+/**
+ * 1 file の実行の結果が差し替える範囲(agora-redesign #2163) — linter が判じた規則を名乗れば(judged_rules)その規則の違反だけ、
+ * 名乗らない古い linter の出力は file の違反の全部。名乗らない規則(repo 全体でだけ判じる DOEFF166 など)の違反は、全体の実行の
+ * 結果のまま残す(以前は全部を差し替え、項目を押した・保存した file からその違反が次の全体の実行まで消えていた)。
+ */
+type FileScope = { readonly tag: 'every-rule' } | { readonly tag: 'judged'; readonly rules: ReadonlySet<string> };
+
+/** 範囲が規則 rule の違反を差し替えるか。 */
+function replaces(scope: FileScope, rule: string): boolean {
+  switch (scope.tag) {
+    case 'every-rule':
+      return true;
+    case 'judged':
+      return scope.rules.has(rule);
+    default: {
+      const unreachable: never = scope;
+      throw new Error(`網羅されていない範囲: ${JSON.stringify(unreachable)}`);
+    }
+  }
+}
+
+/** file 1 つの差し替え — 範囲と、その file の範囲の規則の違反(1 file の実行の結果)と module の要約。 */
+interface FileOverride extends FileView {
+  readonly scope: FileScope;
+}
+
 /** root 1 つの状態 — 今の全体の実行の状態(RootRun)と、file ごとの差し替え。 */
 interface RootState {
   /** report が 1 度も無い間(初回の running・前の結果の無い failed)に表へ出す root の path。 */
@@ -210,6 +253,30 @@ interface RootState {
 /** path の比べ方を 1 つに決める。 */
 function key(filePath: string): string {
   return path.normalize(filePath);
+}
+
+/** root 1 つの今の違反 — 全体の結果のうち差し替えの範囲の外の物と、差し替えた file の 1 file の結果。 */
+function composedViolations(base: LintReport, overrides: ReadonlyMap<string, FileOverride>): LintViolation[] {
+  const kept = base.violations.filter((v) => {
+    const override = overrides.get(key(v.path));
+    return override === undefined || !replaces(override.scope, v.rule);
+  });
+  return [...kept, ...[...overrides.values()].flatMap((override) => override.violations)];
+}
+
+/**
+ * file 1 つに今見せる物 — 差し替えが無ければ全体の結果の物、在れば範囲の外の規則の違反を全体の結果から残して 1 file の結果と
+ * 合成した物。module の要約は 1 file の結果の物(無ければ全体の物)に合成した違反の数を載せる — 判じていない規則の違反は全体の
+ * 結果に残るので、1 file の結果の数では足りない(#2163)。全体の結果に module の無い file は要約を見せない(modules() と同じ)。
+ */
+function shownFile(base: LintReport, wanted: string, override: FileOverride | undefined): FileView {
+  const whole = base.violations.filter((v) => key(v.path) === wanted);
+  const module = base.modules.find((m) => key(m.path) === wanted);
+  if (override === undefined) {
+    return { violations: whole, module };
+  }
+  const violations = [...whole.filter((v) => !replaces(override.scope, v.rule)), ...override.violations];
+  return { violations, module: module === undefined ? undefined : { ...(override.module ?? module), violations: violations.length } };
 }
 
 /** root の全体の実行が失敗した事と理由(次に成功するまで残す — 失敗を 0 件の結果と見分けるため)。 */
@@ -268,10 +335,11 @@ export class LintStore {
   }
 
   /**
-   * 1 file の実行の結果で、その file の違反と module の要約を差し替える。全体の結果が 1 度も無い root(実行中の
-   * 初回・前の結果の無い失敗)には何もしない(規則の一覧と地図は全体の実行から作るため)。差し替えの中身が今その file に
-   * 出している物と構造として同じなら(知らない語も同じなら)違反の側の購読者へ知らせない — 読む面を開いた時の 1 file の
-   * 実行が前と同じ違反を返すたびに木が出し直されていた(#2162)。
+   * 1 file の実行の結果で、その file の違反と module の要約を差し替える(違反は 1 file の実行が判じた規則の分だけ — 判じて
+   * いない規則の違反は全体の結果のまま残す・#2163)。全体の結果が 1 度も無い root(実行中の初回・前の結果の無い失敗)には
+   * 何もしない(規則の一覧と地図は全体の実行から作るため)。差し替えた後にその file に見せる物が今見せている物と構造として
+   * 同じなら(知らない語も同じなら)違反の側の購読者へ知らせない — 読む面を開いた時の 1 file の実行が前と同じ違反を返す
+   * たびに木が出し直されていた(#2162)。
    */
   replaceFile(root: string, filePath: string, report: LintReport): void {
     const state = this.roots.get(key(root));
@@ -280,17 +348,16 @@ export class LintStore {
       return;
     }
     const wanted = key(filePath);
-    const shown: FileOverride = state.overrides.get(wanted) ?? {
-      violations: base.violations.filter((v) => key(v.path) === wanted),
-      module: base.modules.find((m) => key(m.path) === wanted)
-    };
+    const scope: FileScope = report.judgedRules === null ? { tag: 'every-rule' } : { tag: 'judged', rules: new Set(report.judgedRules) };
+    const shown = shownFile(base, wanted, state.overrides.get(wanted));
     const next: FileOverride = {
-      violations: report.violations.filter((v) => key(v.path) === wanted),
+      scope,
+      violations: report.violations.filter((v) => key(v.path) === wanted && replaces(scope, v.rule)),
       module: report.modules.find((m) => key(m.path) === wanted)
     };
     state.overrides.set(wanted, next);
     const unknownChanged = this.noteUnknown(filePath, report);
-    if (sameOverride(shown, next) && !unknownChanged) {
+    if (sameView(inPositionOrder(shown), inPositionOrder(shownFile(base, wanted, next))) && !unknownChanged) {
       // 見せる物は同じ — path で引く表だけ新しい object で作り直させ、購読者は起こさない
       this.pathTables = undefined;
       return;
@@ -403,7 +470,10 @@ export class LintStore {
       .filter((r): r is string => r !== undefined);
   }
 
-  /** 今の違反の全部(差し替えた file はその結果、それ以外は全体の結果。前の結果も無い実行中・失敗の root は数えない)。 */
+  /**
+   * 今の違反の全部(差し替えた file は 1 file の結果が判じた規則の分をその結果、判じていない規則の分と ほかの file は全体の結果。
+   * 前の結果も無い実行中・失敗の root は数えない)。
+   */
   violations(): LintViolation[] {
     const found: LintViolation[] = [];
     for (const state of this.roots.values()) {
@@ -411,10 +481,7 @@ export class LintStore {
       if (base === undefined) {
         continue;
       }
-      found.push(...base.violations.filter((v) => !state.overrides.has(key(v.path))));
-      for (const override of state.overrides.values()) {
-        found.push(...override.violations);
-      }
+      found.push(...composedViolations(base, state.overrides));
     }
     return found;
   }
@@ -428,8 +495,10 @@ export class LintStore {
         continue;
       }
       for (const module of base.modules) {
-        const override = state.overrides.get(key(module.path));
-        found.push({ root: base.root, module: override?.module ?? module });
+        const k = key(module.path);
+        const override = state.overrides.get(k);
+        // 差し替えた file の要約は合成した物(違反の数は全体の結果に残した分を含む — shownFile)。
+        found.push({ root: base.root, module: override === undefined ? module : (shownFile(base, k, override).module ?? module) });
       }
     }
     return found;
