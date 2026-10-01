@@ -106,4 +106,4 @@ def test_the_stub_matches_declarations_hy() -> None:
             inspect.signature(getattr(declarations, function.name)).parameters
         ), function.name
     assert classes == ["DefinitionTags"]
-    assert [f.name for f in fields(declarations.DefinitionTags)] == ["context", "role", "spells"]
+    assert [f.name for f in fields(declarations.DefinitionTags)] == ["context", "role", "spells", "reads"]
