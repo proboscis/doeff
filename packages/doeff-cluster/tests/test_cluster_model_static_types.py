@@ -6,7 +6,6 @@ cluster_model.hy は Hy の module で型の宣言が無かったので、Rollou
 """
 
 import ast
-import importlib
 import inspect
 import json
 import shutil
@@ -18,9 +17,9 @@ from pathlib import Path
 
 import pytest
 
-# cluster_model は .hy の module — 先に hy を読んで import hook を有効にしてから読む。
-importlib.import_module("hy")
-model = importlib.import_module("doeff_cluster.coordinator.intent.cluster_model")
+# cluster_model は .hy の module — 先に hy を読んで import hook を有効にしてから読む(検だけを単独で走らせても読めるように)。
+import hy  # noqa: F401
+from doeff_cluster.coordinator.intent import cluster_model as model
 
 needs_pyright = pytest.mark.skipif(shutil.which("pyright") is None, reason="pyright が無い")
 
