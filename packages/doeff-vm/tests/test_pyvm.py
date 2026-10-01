@@ -114,8 +114,11 @@ def test_bind_opener_calls_a_non_yielding_call_in_place_and_hands_the_rest_to_it
     The slow shape: every bind of a defk judgment went through the Python dispatch
     `open_bind` → `_opened` → `_settled` — the largest cost left per bind (a screen row
     binds 10–16 judgments). The hot path (no `absent`, a `Call` whose definition does not
-    yield) must answer `Pure(answer)` without touching the fallback; everything else must
-    reach the fallback with the same arguments.
+    yield) must answer `Pure(answer)` without touching the fallback. A `Call` whose
+    definition yields, with no `absent`, must answer the call itself without touching the
+    fallback (agora-redesign #2449 — the Python dispatch handed it back unchanged, at the
+    cost of three Python calls per bind). Everything else must reach the fallback with the
+    same arguments.
     """
     seen: list[tuple] = []
 
@@ -157,11 +160,13 @@ def test_bind_opener_calls_a_non_yielding_call_in_place_and_hands_the_rest_to_it
     yielding = asks(1)
     marker = object()
     absent = lambda: "why"  # noqa: E731
-    assert opener(yielding) == ("fallback", (yielding,))
+    assert opener(yielding) is yielding
+    assert seen == []
     assert opener(marker) == ("fallback", (marker,))
     assert opener(marker, None) == ("fallback", (marker,))
     assert opener(judge(1), absent)[0] == "fallback"
-    assert [len(args) for args in seen] == [1, 1, 1, 2]
+    assert opener(yielding, absent) == ("fallback", (yielding, absent))
+    assert [len(args) for args in seen] == [1, 1, 2, 2]
 
 
 def test_apply_resolves_doexpr_args() -> None:

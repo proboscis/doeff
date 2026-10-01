@@ -319,7 +319,10 @@ def _generator_program(value: GeneratorType) -> object:
 # 束ねの 1 点。熱い道(``absent`` 無しで、効果を出さない @do の呼び ``Call`` を束ねる — defk の判断)は doeff-vm の
 # ``BindOpener`` が Rust の中でその場で呼んで ``Pure`` を返し、それ以外は ``_open_bind`` へ渡す(答えは同じ・
 # agora-redesign #844 — 画面の 1 行で 10〜16 回束ねる判断で、Python の振り分け open_bind → _opened → _settled が
-# 1 回の束ねの一番大きい残りの費用だった)。doeff-hy の <- の展開と effect-analyzer は、この object を名で引く。
+# 1 回の束ねの一番大きい残りの費用だった)。``absent`` 無しで効果を出す @do の呼び(本体に yield の在る ``Call``)も
+# ``BindOpener`` がその呼びそのものを返す — ``_settled`` が呼びをそのまま返すのと同じ答え(agora-redesign #2449 —
+# 預かり所の契約の例で Python の振り分けへ来た束ね 16.3k 回のうち 13.8k 回がこの形だった)。
+# doeff-hy の <- の展開と effect-analyzer は、この object を名で引く。
 open_bind = BindOpener(_open_bind, _generator_program)
 
 

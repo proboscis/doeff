@@ -59,8 +59,18 @@ class OpaqueJson:
 
     @classmethod
     def of(cls, value: "JsonValue") -> "OpaqueJson":
-        """JSON の値(dict / list / 文字列 / 数 / 真偽 / None・凍らせた JSON の FrozenMap / tuple も)を包む。"""
-        return cls(json.dumps(value, ensure_ascii=False, separators=(",", ":"), default=_thawed))
+        """JSON の値(dict / list / 文字列 / 数 / 真偽 / None・凍らせた JSON の FrozenMap / tuple も)を包む。
+
+        文字列は ``json.dumps`` が今書いた物なので ``json.loads`` で必ず読める(書けない値は ``json.dumps`` が
+        TypeError / ValueError で断る — 受ける値・断る値・綴りは ``cls(text)`` を通した時と同じ)。その文字列を
+        ``__post_init__`` でもう一度解くのは同じ答えを 2 度出すだけなので、ここでは解かずに包む(agora-redesign #2449 —
+        預かり所の契約の例 124 で 4.2k 回・``of`` の費用の 4 割が、書いた直後の文字列を解き直す ``json.loads`` だった)。
+        外から渡る文字列(``cls(text)`` を直に呼ぶ所)は今までどおり ``__post_init__`` が解いて確かめる。
+        """
+        text = json.dumps(value, ensure_ascii=False, separators=(",", ":"), default=_thawed)
+        opaque = object.__new__(cls)
+        object.__setattr__(opaque, "text", text)
+        return opaque
 
     @classmethod
     def from_text(cls, text: str | bytes) -> "OpaqueJson":

@@ -400,8 +400,14 @@ impl PyCall {
 /// #844 — a screen row binds such judgments 10–16 times, and the Python dispatch
 /// `open_bind` → `_opened` → `_settled` was the largest cost left per bind). An answer
 /// that is itself a generator runs as a program, as the VM would run it:
-/// `generator_program(gen)`. Everything else (an `absent`, a yielding definition, any
-/// other operand) goes to `fallback(expr[, absent])`, the Python dispatch, unchanged.
+/// `generator_program(gen)`. A `Call` of a definition whose body yields, with no
+/// `absent`, is answered here too: the operand itself, the same object
+/// `outcomes._open_bind` returns for it (`_settled` hands such a call back unchanged and
+/// no `absent` wraps it) — the VM runs it when the bind yields it (agora-redesign #2449:
+/// such calls were 13.8k of the 16.3k binds of the custody contract examples that
+/// reached the Python dispatch, each paying `_open_bind` → `_opened` → `_settled` for an
+/// answer that is the operand). Everything else (an `absent`, any other operand) goes to
+/// `fallback(expr[, absent])`, the Python dispatch, unchanged.
 #[pyclass(name = "BindOpener", frozen, module = "doeff_vm.doeff_vm")]
 pub struct PyBindOpener {
     #[pyo3(get)]
@@ -449,6 +455,8 @@ impl PyBindOpener {
                     )?
                     .into_any());
                 }
+                // A yielding definition: the bind yields the call itself and the VM runs it.
+                return Ok(expr.clone().unbind());
             }
         }
         match absent {
