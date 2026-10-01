@@ -19,7 +19,7 @@
 (import doeff_cluster.coordinator.intent.cluster_model [ClusterState])
 (import doeff_cluster.foundation.coordinator_inbox [http-request])
 (import doeff_cluster.coordinator.core.api_policy [respond tick])
-(import doeff_cluster.handlers [CoordinatorLink program-file])
+(import doeff_cluster.handlers [CoordinatorLink] doeff_cluster.worker.core.launch [program-file])
 (import doeff_cluster.foundation.host_contract [environ-reader])
 (import doeff_cluster.job_entry [read-program])
 (import doeff_cluster.worker.intent.worker_model [DesiredJobs JobStatus] doeff_cluster.shared.intent.job_model [JobPhase JobSpec])

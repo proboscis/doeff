@@ -14,17 +14,21 @@
 (import sys)
 (import pathlib [Path])
 (import doeff [run])
-(import doeff_core_effects.handlers [await-handler slog-handler])
+(import doeff_core_effects.handlers [await-handler slog-handler state :as session-store])
 (import doeff_core_effects.os_file [os-file-handler])
+(import doeff_core_effects.os_process [subprocess-handler])
+(import doeff_core_effects.process_effects [EnvEntry])
 (import doeff_core_effects.scheduler [scheduled])
 (import doeff_time [async-time-handler])
-(import .handlers [CodeStore EnvStore CoordinatorLink ProcessHost ProbeStore coordinator-desired local-host
+(import .handlers [CodeStore EnvStore CoordinatorLink ProbeStore coordinator-desired local-host
                    status-file status-to-coordinator lease-release-coordinator] doeff_cluster.worker.protocol.stop [stop-flag StopState])
 (import doeff_cluster.foundation.process_versions [current-versions])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming])
 (import doeff_cluster.shared.core.capabilities [capabilities-of])
 (import doeff_cluster.worker.core.program [run-worker])
 (import doeff_cluster.worker.intent.worker_model [WorkerPolicy CodeLayout])
+(import doeff_cluster.worker.protocol.process_host [HostSettings process-host])
+(import doeff_cluster.foundation.host_contract [HOST-CONTRACT])
 (import .job_context [worker-context-environ])
 
 
@@ -88,10 +92,13 @@
         hy-command (str (/ (. (Path sys.executable) parent) "hy"))
         codes (CodeStore args.repo (str (/ state-dir "code")) (if args.no-warm None hy-command) :layout layout)
         ;; 子 process(service の env)が coordinator と自分の名を知る口。資格は渡さない。
-        host (ProcessHost (str (/ state-dir "logs")) hy-command
-                          (| (run (passed-environment args.pass-env (dict os.environ)))
-                             (run (worker-context-environ args.coordinator args.name)))
-                          :layout layout :uv args.uv)
+        host-env (| (run (passed-environment args.pass-env (dict os.environ)))
+                    (run (worker-context-environ args.coordinator args.name)))
+        ;; job の子 process の置き場と起こし方(worker/protocol/process_host の言い換えが読む — #2464)。
+        host (HostSettings :log-dir (str (/ state-dir "logs")) :jobs-dir (str (/ state-dir "jobs"))
+                           :program-dir (str (/ state-dir "programs")) :python sys.executable :hy-command hy-command :uv args.uv
+                           :extra-env (tuple (gfor k (sorted host-env) (EnvEntry :name k :value (get host-env k)))) :layout layout
+                           :program-env HOST-CONTRACT.program-env)
         ;; 実行環境(runtime env)の root の準備(別の process・worker は再起動しない)。
         envs (EnvStore (str state-dir) hy-command :repo-keys args.repo-keys :uv args.uv :min-free-bytes args.env-min-free)
         ;; 入口の検め(service の job の木を worker の実行環境で読み込めるか — 起こす前に試す)。
@@ -109,9 +116,10 @@
                               ;; には拍ごとに送る)。
                               :watch True))
   (setv program (run-worker policy))
-  (for [h [(local-host codes host probes envs)
+  ;; 並びは内側から(先頭が Program に最も近い)。process-host の session の値(子の表)は外側の session-store が持つ。
+  (for [h [(local-host codes probes envs) (process-host host) (session-store)
            (coordinator-desired link) (status-to-coordinator link) (lease-release-coordinator link)
-           (status-file (str (/ state-dir "status.json")) codes) os-file-handler
+           (status-file (str (/ state-dir "status.json")) codes) os-file-handler subprocess-handler
            (stop-flag stop) slog-handler (async-time-handler) (await-handler)]]
     (setv program (h program)))
   (print "worker: 起動します" :file sys.stderr :flush True)

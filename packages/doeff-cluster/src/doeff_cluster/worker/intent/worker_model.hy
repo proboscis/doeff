@@ -7,7 +7,9 @@
 ;;; job は 2 種類: service(once=False・終われば起動し直す常駐)と task(once=True・1 度だけ走らせて結果を返す)。
 ;;; job の宣言 JobSpec と段階 JobPhase は coordinator と共有の部品なので doeff_cluster.shared.intent.job_model、指紋 spec-hash は
 ;;; doeff_cluster.shared.core.job_rules に在る(#2025)。
+(require doeff-hy.macros [val])
 (require doeff-hy.record [defrecord])
+(val MODULE-TAGS {:context "doeff-cluster" :role "intent"})
 (import dataclasses [dataclass field])
 (import enum [Enum])
 (import doeff [EffectBase])
@@ -280,6 +282,11 @@
   (#^ str name)
   (#^ int pid)
   (#^ str new-name))
+
+
+(defclass [(dataclass :frozen True)] ObserveProcesses [EffectBase]
+  "worker が起こした job の子 process の観測(ProcessView の tuple — 終わりを観測した子は exit-code を持つ)。ObserveWorld の答え手
+   (local-host)が、子 process の言い換え(worker/protocol/process_host)へ問う(#2464)。")
 
 (defclass [(dataclass :frozen True)] ProbeEntry [EffectBase]
   "spec の入口(factory と env)を、code-path の木と worker の実行環境で読み込めるかを試し始める(import と属性の在否だけ・呼ばない)。

@@ -2,14 +2,15 @@
 ;;
 ;; - CoordinatorLink.accept-programs: 宣言の job の置き場のキー(spec.program)の Program を coordinator の GET /programs/<sha> から取り、
 ;;   state dir の programs/<sha>.json に書く。中身の sha256 がキーと合わない物・取れない物は書かない。在る物は取り直さない。
-;; - ProcessHost.launch: 子の引数に `--program <その file>`、子の環境に HOST-CONTRACT の program-env と宣言の environ を足す。
-;;   CoordinatorLink と ProcessHost は main の置き方(state dir の logs・tasks)で同じ programs の dir を指す。
+;; - 子 process の言い換えの起こし方(job-launch): 子の引数に `--program <その file>`、子の環境に HOST-CONTRACT の program-env と宣言の environ を足す。
+;;   CoordinatorLink と子 process の言い換えは main の置き方(state dir の logs・tasks)で同じ programs の dir を指す。
 (require doeff-hy.macros [deftest defk deff <- val])
 (import hashlib)
 (import json)
 (import pathlib [Path])
 (import httpx)
-(import doeff_cluster.handlers [CoordinatorLink ProcessHost program-file])
+(import doeff_cluster.handlers [CoordinatorLink] doeff_cluster.worker.core.launch [program-file])
+(import tests.host_rig [host-settings launched])
 (import doeff_cluster.foundation.host_contract [HOST-CONTRACT])
 (import doeff_cluster.shared.intent.job_model [JobSpec])
 (import doeff_cluster.coordinator.core.cluster_policy [JOB-ENTRY])
@@ -64,22 +65,22 @@
 (deftest test-the-host-hands-the-program-file-and-the-environ-to-the-child [tmp-path]
   (val state-dir (/ tmp-path "state"))
   ;; main と同じ置き方(state dir の logs・tasks)で、取る側と渡す側が同じ programs の dir を指す。
-  (val host (ProcessHost (str (/ state-dir "logs")) "hy"))
+  (<- host (host-settings state-dir))
   (val link (CoordinatorLink "http://coord" "zeus" #("net") 1 60000 :task-dir (str (/ state-dir "tasks"))))
-  (assert (= host.program-dir link.program-dir (/ state-dir "programs")))
+  (assert (= (Path host.program-dir) link.program-dir (/ state-dir "programs")))
   (<- spec JobSpec (service-spec "svc" SHA))
-  (val launched (.launch host spec (str tmp-path) "1-1" 1))
-  (val argv (get launched 0))
-  (val cwd (get launched 1))
-  (val env (get launched 2))
-  (val file (str (program-file host.program-dir SHA)))
+  (<- planned tuple (launched host spec (str tmp-path) "1-1" 1))
+  (val argv (get planned 0))
+  (val cwd (get planned 1))
+  (val env (get planned 2))
+  (val file (str (program-file (Path host.program-dir) SHA)))
   (assert (= (list (cut argv -5 None)) ["service" "--identity" (* "0" 16) "--program" file]) argv)
   (assert (= (get env HOST-CONTRACT.program-env) file) env)
   (assert (= (get env "POLL") "5.0") env)
   (assert (= cwd (str tmp-path)))
   ;; 置き場のキーを持たない worker の内部の JobSpec には足さない(宣言の job も task も置き場のキーを持つ — task は test_task_programs.hy)。
   (<- bare JobSpec (service-spec "bare" None))
-  (val bare-launched (.launch host bare (str tmp-path) "1-1" 1))
+  (<- bare-launched tuple (launched host bare (str tmp-path) "1-1" 1))
   (val bare-argv (get bare-launched 0))
   (val bare-env (get bare-launched 2))
   (assert (not-in "--program" bare-argv) bare-argv)

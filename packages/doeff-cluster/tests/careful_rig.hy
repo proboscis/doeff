@@ -20,7 +20,9 @@
 (import doeff_cluster.shared.protocol.checkout_reads [checkout-reads])
 (import doeff_cluster.worker.intent.env_prepare_model [ROOTS-PTH] doeff_cluster.shared.intent.env_marker_model [ENV-MARKER])
 (import doeff_cluster.shared.intent.service_model [resolve])
-(import doeff_cluster.handlers [EnvStore ProcessHost task-spec write-program-file])
+(import doeff_cluster.handlers [EnvStore task-spec write-program-file])
+(import doeff_cluster.worker.protocol.process_host [HostSettings])
+(import tests.host_rig [host-settings job-ended run-on-host])
 (import doeff_cluster.worker.intent.worker_model [CodeState CodeView StartJob ReapJob Outcome WorldView WorkerPolicy PrepareEnv WarmEnv
 ] doeff_cluster.worker.core.worker_rules [code-key])
 (import doeff_cluster.worker.core.policy [plan])
@@ -98,19 +100,20 @@
 
 
 (defrecord Rig
-  "丁寧な模擬の 1 組: 検の dir・worker の state・fake の uv の dir・準備の EnvStore・子の ProcessHost・remote の checkout。"
+  "丁寧な模擬の 1 組: 検の dir・worker の state・fake の uv の dir・準備の EnvStore・子 process の言い換えの設定(host — process-host・
+   #2464)・remote の checkout。"
   (#^ Path base)
   (#^ Path state)
   (#^ Path fake)
   (#^ EnvStore envs)
-  (#^ ProcessHost host)
+  (#^ HostSettings host)
   (#^ Path app)
   (#^ Path lib))
 
 
 (defk make-rig [base [min-free-bytes 0] [allowed None]]
   {:pre [(: base Path) (: min-free-bytes int) (: allowed (| tuple None))] :post [(: % Rig)]}
-  "worker の組(EnvStore・ProcessHost)と、fake の uv を PATH の先頭に置く包みと、app と lib の remote を作る。"
+  "worker の組(EnvStore・子 process の言い換えの設定)と、fake の uv を PATH の先頭に置く包みと、app と lib の remote を作る。"
   (val fake (/ base "fake-uv"))
   (.mkdir fake :parents True)
   (val site (next (gfor p sys.path :if (.endswith p "site-packages") p)))
@@ -129,11 +132,12 @@
   (<- tools-url str (url-of base "tools"))
   (.write-text keys (json.dumps (dfor u (or allowed #(app-url lib-url tools-url)) u "")))
   (val state (/ base "state"))
+  ;; 検の子 process は checkout の中に bytecode を書かない(root の中に準備した bytecode は読むだけ)。
+  (<- host (host-settings state :hy-command HY :extra-env {"DOEFF_WORKER_NAME" "careful" "PYTHONDONTWRITEBYTECODE" "1"}
+                         :uv (str wrapper)))
   (Rig :base base :state state :fake fake :app app :lib lib
        :envs (EnvStore (str state) HY :repo-keys (str keys) :uv (str wrapper) :min-free-bytes min-free-bytes)
-       ;; 検の子 process は checkout の中に bytecode を書かない(root の中に準備した bytecode は読むだけ)。
-       :host (ProcessHost (str (/ state "logs")) HY {"DOEFF_WORKER_NAME" "careful" "PYTHONDONTWRITEBYTECODE" "1"}
-                          :uv (str wrapper))))
+       :host host))
 
 
 (defk declare [rig app-sha lib-sha lock [roots #("app/.")] [extra-repos #()]]
@@ -189,34 +193,26 @@
   found)
 
 
-(defk run-task [rig env task-id [versions None] [host None]]
-  {:pre [(: rig Rig) (: env RuntimeEnv) (: task-id str) (: versions (| dict None)) (: host (| ProcessHost None))]
+(defk run-task [rig env task-id [versions None] [around #()]]
+  {:pre [(: rig Rig) (: env RuntimeEnv) (: task-id str) (: versions (| dict None)) (: around tuple)]
    :post [(: % (| TaskSucceeded TaskFailed))]}
-  "準備済みの root で task を 1 本走らせる(worker の task-spec → ProcessHost の子 process → 結果の file)。答え = TaskSucceeded / TaskFailed。
-   詰めた Program は worker が置き場から取った cache と同じ形の file(ProcessHost の programs の dir)に、送り手の版 versions と一緒に置く。"
+  "準備済みの root で task を 1 本走らせる(worker の task-spec → 子 process の言い換え process-host と本物の答え手 → 結果の file)。
+   答え = TaskSucceeded / TaskFailed。詰めた Program は worker が置き場から取った cache と同じ形の file(programs の dir)に、送り手の版
+   versions と一緒に置く。around = process-host と本物の答え手の間に置く handler(反例の壊した handler)。"
   ;; appjobs は rig が env の root に文字列から書き出す利用者の app(型検査の時には無い module)なので、declare と同じ口 resolve で
   ;; `module:attr` の名から関数を引く。
   (val report (resolve "appjobs:report"))
   (<- declared dict (runtime-env->json env))
   (val tasks (/ rig.state "tasks"))
   (.mkdir tasks :parents True :exist-ok True)
-  (val using (or host rig.host))
   (val blob (encode-program (report)))
   (val sha (program-sha blob))
-  (write-program-file using.program-dir sha blob (or versions (current-versions)))
+  (write-program-file (Path rig.host.program-dir) sha blob (or versions (current-versions)))
   (val spec (task-spec {"id" task-id "revision" "" "versions" (or versions (current-versions)) "program" sha
                         "runtimeEnv" declared}
                        tasks))
   (<- key str (env-key env (current-platform)))
-  (.start using (StartJob spec 1 (str (.root-of rig.envs (+ "env-" key)))))
-  (val deadline (+ (time.monotonic) DEADLINE-SECONDS))
-  (var ended None)
-  (while (is ended None)
-    (when (> (time.monotonic) deadline) (raise (AssertionError "task が終わらない")))
-    (for [view (.observe using)]
-      (when (and (= view.name spec.name) (is-not view.exit-code None)) (:= ended view)))
-    (when (is ended None) (time.sleep 0.1)))
-  (.reap using (ReapJob spec.name ended.pid Outcome.EXITED ended.exit-code))
+  (val ended (run-on-host rig.host (job-ended spec (str (.root-of rig.envs (+ "env-" key))) DEADLINE-SECONDS) :around around))
   (val result (/ tasks (+ task-id ".result")))
   (assert (.is-file result) (.format "子が結果を書かなかった(終了 {})— log: {}" ended.exit-code
                                      (.read-text (next (.glob (/ rig.state "logs") (+ "task_" task-id "*"))) :errors "replace")))

@@ -28,8 +28,8 @@
 (import doeff_cluster.worker.protocol.heartbeat [env-report env-heartbeat-part heartbeat-body status-report status-row])
 (import doeff_cluster.worker.core.heartbeat_rules [warm-env-of-row finished-task-id desired-when-unreachable])
 (import doeff_cluster.foundation.ready_file [write-ready-file])
-(import doeff_cluster.worker.core.launch [job-launch child-environment env-project-dir])
-(import doeff_cluster.worker.intent.worker_model [CodeState CodeView ProcessView WorldView StopStage ProbeState ProbeView
+(import doeff_cluster.worker.core.launch [child-environment env-project-dir program-file])
+(import doeff_cluster.worker.intent.worker_model [ObserveProcesses CodeState CodeView ProcessView WorldView StopStage ProbeState ProbeView
   DesiredJobs DesiredUnreadable ReadDesired ObserveWorld WorkerStopRequested PublishStatus JobStatus EnvDisk WarmEnv
   PrepareCode PrepareEnv SweepEnvs ForgetProbes StartJob SignalJob ReapJob RetireJob ReleaseLeases ProbeEntry CodeLayout
 ] doeff_cluster.shared.intent.job_model [JobSpec JobPhase] doeff_cluster.shared.core.job_rules [spec-hash] doeff_cluster.worker.core.worker_rules [probe-args probe-refusal ENV-KEY-PREFIX])
@@ -57,12 +57,6 @@
            ;; Program の job(改訂 1 の F・G): 詰めた Program の置き場のキーと、子の環境変数。
            :program (.get job "program")
            :environ (environ-pairs (.get job "environ" {}))))
-
-
-(deff program-file [#^ Path program-dir #^ str sha]  ; defk にできない: worker の I/O の道具(CoordinatorLink・ProcessHost)が呼ぶ純粋な読み
-  {:pre [(: program-dir Path) (: sha str)] :post [(: % Path)] :tags {:context "doeff-cluster" :role "judgment"}}
-  "詰めた Program の置き場のキー → この worker の cache の file(CoordinatorLink が取って書き、ProcessHost が子へ渡す — 定義点は 1 つ)。"
-  (/ program-dir (+ sha ".json")))
 
 
 (deff write-program-file [#^ Path program-dir #^ str sha #^ str blob #^ dict versions]  ; defk にできない: worker の I/O の道具(CoordinatorLink)が呼ぶ
@@ -720,99 +714,14 @@
               (list (.values self.done))))))
 
 
-(defclass ProcessHost []
-  "job ごとに子 process を 1 本、専用の process group で起動する。extra-env = 子へ渡す worker の文脈(名前・coordinator)。
-   layout = 業務の repo の木の形(子の PYTHONPATH — worker_model.CodeLayout)。
-   実行環境の job(spec.runtime-env)は、env の root の venv で `uv run --no-sync --frozen --project <root の project> hy -m …` として
-   起こす(PYTHONPATH を置かない・子の環境変数は許可表で組む・cwd = 空の作業 dir <jobs-dir>/<job の名>)。uv = uv の命令。"
-  (defn #^ None __init__ [self #^ str log-dir #^ str hy-command #^ (| dict None) [extra-env None] #^ CodeLayout [layout (CodeLayout)]
-                  #^ str [uv "uv"] #^ (| str None) [jobs-dir None]]
-    (setv self.log-dir (Path log-dir) self.hy-command hy-command self.table {} self.extra-env (or extra-env {})
-          self.layout layout self.uv uv
-          self.jobs-dir (if jobs-dir (Path jobs-dir) (/ (. (Path log-dir) parent) "jobs"))
-          ;; 詰めた Program の cache(CoordinatorLink が /programs/<sha> から取って書く — 既定は同じ state dir の programs)。
-          self.program-dir (/ (. (Path log-dir) parent) "programs")))
-
-  (defn #^ Path work-dir [self #^ str name]
-    "実行環境の job の子の cwd(job の名ごとの空の dir)。"
-    (/ self.jobs-dir (.replace name "/" "_")))
-
-  (defn #^ tuple launch [self #^ JobSpec spec #^ str code-path #^ str instance #^ int attempt]
-    "子の #(argv cwd 環境変数)。起こし方の判断は worker/core/launch の job-launch(#2464)— ここは worker の process の値を渡し、
-     実行環境の job の使った印と空の作業 dir を作る I/O だけを行う。"
-    (setv program-path (if spec.program (str (program-file self.program-dir spec.program)) None)
-          plan (run (job-launch spec code-path instance attempt :python sys.executable :hy-command self.hy-command :uv self.uv
-                                :extra-env self.extra-env :layout self.layout :base-env (dict os.environ) :worker-pid (os.getpid)
-                                :program-path program-path :program-env HOST-CONTRACT.program-env
-                                :work-dir (str (self.work-dir spec.name)))))
-    (when plan.last-used
-      ;; 使った印(掃除は最後に使った時刻の古い root から消す — env_upkeep.sweep-choice)。
-      (.touch (Path plan.last-used)))
-    (when plan.work-dir
-      (setv work (Path plan.work-dir))
-      (when (.exists work) (shutil.rmtree work))
-      (.mkdir work :parents True))
-    #((list plan.argv) plan.cwd (dfor e plan.env e.name e.value)))
-
-  (defn #^ None start [self #^ StartJob action]
-    (setv spec action.spec)
-    (when (in spec.name self.table) (raise (RuntimeError f"{spec.name} は既に動いています")))
-    (.mkdir self.log-dir :parents True :exist-ok True)
-    (setv log-name (.replace spec.name "/" "_"))  ; task の名前は task/<id>
-    (setv log (open (/ self.log-dir f"{log-name}.{action.attempt}.log") "ab"))
-    ;; process の世代の名: 起こすたびに新しく振る(試行の番号は worker の再起動で 1 に戻るので、それだけでは前の process と重なる)。
-    (setv instance f"{action.attempt}-{(cut (. (uuid.uuid4) hex) 0 12)}")
-    (setv #(argv cwd env) (.launch self spec action.code-path instance action.attempt))
-    (try
-      ;; shim を group の先頭に置き、stdin のパイプを worker が握る。worker が死ぬとパイプが閉じ、
-      ;; shim が job の group を止める(kill -9 された worker の job が残って二重に動くのを防ぐ)。
-      (setv process (subprocess.Popen argv :cwd cwd :env env :stdout log :stderr subprocess.STDOUT
-                                      :stdin subprocess.PIPE :start-new-session True))
-      (finally (.close log)))
-    ;; 起こした job の記録(2026-09-26 — 「新しい版の job は worker を再起動せず、worker が展開した版の木の子 process で走る」を
-    ;; worker の記録で示すため): job の名・版・木の path・子の pid・worker の pid を 1 行。env と引数の値は書かない(資格を運びうる)。
-    (.write sys.stderr (.format "worker: job-start name={} revision={} tree={} pid={} worker-pid={}\n"
-                                spec.name spec.revision action.code-path process.pid (os.getpid)))
-    (.flush sys.stderr)
-    (setv (get self.table spec.name)
-      #(process (ProcessView spec.name spec action.attempt process.pid (int (* (time.time) 1000)) :instance instance))))
-
-  (defn #^ None retire [self #^ RetireJob action]
-    "入れ替え: 動いている process を止めずに名から外す(表の鍵と観測の名を new-name へ移す)。同じ名で新しい process を起こせる。"
-    (setv entry (.get self.table action.name))
-    (when (and entry (= (. (get entry 1) pid) action.pid))
-      (del (get self.table action.name))
-      (setv (get self.table action.new-name)
-            #((get entry 0) (replace (get entry 1) :name action.new-name :retired-from action.name)))))
-
-  (defn #^ None signal [self #^ SignalJob action]
-    (setv sig (if (= action.stage StopStage.TERM) signal.SIGTERM signal.SIGKILL))
-    ;; 孫 process まで届くよう process group へ送る(setsid で抜けた孫は届かない)。
-    (try (os.killpg action.pid sig) (except [ProcessLookupError] None)))
-
-  (defn #^ None reap [self #^ ReapJob action]
-    (setv entry (.get self.table action.name))
-    (when (and entry (= (. (get entry 1) pid) action.pid))
-      ;; 本体の終了後も同じ group の孫が残っていれば KILL で回収する。
-      (try (os.killpg action.pid signal.SIGKILL) (except [ProcessLookupError] None))
-      (.close (. (get entry 0) stdin))
-      ;; 実行環境の job の作業 dir(worker が作った物だけ)は、終わった後に消す。
-      (when (. (get entry 1) spec runtime-env)
-        (shutil.rmtree (self.work-dir action.name) :ignore-errors True))
-      (del (get self.table action.name))))
-
-  (defn #^ tuple observe [self]
-    ;; 終わりの code は内包の :setv で 1 度だけ読む(do の中の setv は内包の外の名への束縛に見え、型検査が束縛を見つけない — #1690)
-    (tuple (gfor #(process view) (.values self.table)
-                 :setv code (.poll process)
-                 (if (is code None) view
-                     (replace view :exit-code code))))))
-
-(defhandler local-host [#^ CodeStore codes #^ ProcessHost host #^ ProbeStore probes #^ (| EnvStore None) [envs None]]
-  ;; 引数に残す理由: 4 つとも worker の process が持つ I/O の資源(子 process と準備の process の表)で、同じ組が観測と action の
-  ;; 両方に答える。envs = 実行環境の root の準備(None = 実行環境の job を扱わない worker — PrepareEnv は断る)。
-  (ObserveWorld [] (resume (WorldView (+ (.observe codes) (if (is envs None) #() (.observe envs))) (.observe host) (.observe probes)
-                                      :env-disk (if (is envs None) None (.disk-view envs)))))
+(defhandler local-host [#^ CodeStore codes #^ ProbeStore probes #^ (| EnvStore None) [envs None]]
+  ;; 引数に残す理由: 3 つとも worker の process が持つ I/O の資源(準備の process の表)で、同じ組が観測と action の両方に答える。
+  ;; envs = 実行環境の root の準備(None = 実行環境の job を扱わない worker — PrepareEnv は断る)。job の子 process は
+  ;; worker/protocol/process_host の言い換え(外側に置く)が StartJob・SignalJob・ReapJob・RetireJob に答え、観測は ObserveProcesses で問う(#2464)。
+  (ObserveWorld []
+    (<- processes tuple (ObserveProcesses))
+    (resume (WorldView (+ (.observe codes) (if (is envs None) #() (.observe envs))) processes (.observe probes)
+                       :env-disk (if (is envs None) None (.disk-view envs)))))
   (PrepareCode [revision] (.start codes revision) (resume None))
   (PrepareEnv [key runtime-env warm]
     (when (is envs None)
@@ -823,14 +732,7 @@
     (when (is-not envs None) (.sweep envs pinned))
     (resume None))
   (ProbeEntry [spec code-path] (.start probes (ProbeEntry spec code-path)) (resume None))
-  (ForgetProbes [keep] (.forget probes keep) (resume None))
-  (StartJob [spec attempt code-path]
-    (.start host (StartJob spec attempt code-path)) (resume None))
-  (SignalJob [name pid stage] (.signal host (SignalJob name pid stage)) (resume None))
-  (ReapJob [name pid outcome exit-code]
-    (.reap host (ReapJob name pid outcome exit-code)) (resume None))
-  (RetireJob [name pid new-name]
-    (.retire host (RetireJob name pid new-name)) (resume None)))
+  (ForgetProbes [keep] (.forget probes keep) (resume None)))
 
 (defn #^ dict status-json [#^ tuple statuses #^ str note #^ dict timings]
   {"note" note

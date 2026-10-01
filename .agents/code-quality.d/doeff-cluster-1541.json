@@ -793,7 +793,9 @@
         "doeff-cluster-shared-protocol",
         "doeff-cluster-worker",
         "doeff-cluster-worker-model",
-        "doeff-cluster-worker-stop"
+        "doeff-cluster-worker-stop",
+        "doeff-cluster-worker-process-host",
+        "doeff-cluster-host-contract"
       ],
       "layer": "runtime",
       "name": "doeff-cluster-main",
@@ -1384,7 +1386,8 @@
         "doeff-cluster-code-model",
         "doeff-cluster-code-plan",
         "doeff-cluster-code-prepare-program",
-        "doeff-cluster-worker-launch"
+        "doeff-cluster-worker-launch",
+        "doeff-cluster-worker-process-host"
       ],
       "exclude": [
         "packages/doeff-cluster/tests/fixtures/independence/*"
@@ -1974,6 +1977,23 @@
         "packages/doeff-cluster/src/doeff_cluster/worker/core/launch.hy"
       ],
       "responsibility": "worker が job の子 process を起こす形の判断(命令の並び・cwd・子の環境変数・作業 dir と使った印)。",
+      "typed": true
+    },
+    {
+      "allow": [
+        "doeff-cluster-clock",
+        "doeff-cluster-worker-model",
+        "doeff-cluster-worker-launch"
+      ],
+      "layer": "io",
+      "name": "doeff-cluster-worker-process-host",
+      "paths": [
+        "packages/doeff-cluster/src/doeff_cluster/worker/protocol/process_host.hy"
+      ],
+      "public": [
+        "packages/doeff-cluster/src/doeff_cluster/worker/protocol/process_host.hy"
+      ],
+      "responsibility": "worker の job の子 process の言い換え(StartJob・SignalJob・ReapJob・RetireJob・ObserveProcesses を汎用の子 process と file system の効果へ)。",
       "typed": true
     }
   ],
