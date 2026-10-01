@@ -168,14 +168,16 @@
        (setv behavioral (/ root "tests/test_deadline_load_scaling.py"))
        (assert (.exists behavioral)
                "R6 の挙動本体 tests/test_deadline_load_scaling.py が消えている")
-       ;; 第 3 の締切(門の走行そのものの持ち時間)が、内側を上限まで
+       ;; 第 3 の締切(全部のテストを撃つ走行そのものの持ち時間)が、内側を上限まで
        ;; 伸ばした走行を収容できること — 据え置くと赤の場所が移るだけになる。
+       ;; 全部のテストは日次の全体検証([gate].full)だけが撃つので、持ち時間はその予算の鍵
+       ;; full_timeout_s(agora-redesign #2589 — 窓の門の上限 timeout_s とは別の鍵になった)。
        (import tomllib)
        (setv land-cfg (tomllib.loads (.read-text (/ root ".agents/land-queue.toml")
                                                  :encoding "utf-8")))
-       (setv gate-budget (get land-cfg "gate" "timeout_s"))
+       (setv gate-budget (get land-cfg "gate" "full_timeout_s"))
        (assert (>= gate-budget 7200)
-               f"門の持ち時間 {gate-budget}s は内側を上限まで伸ばした走行を収容できない — ADR-DOE-ENFORCE-001 R6(締切は 3 つあり族として直す)"))
+               f"日次の全体検証の持ち時間 {gate-budget}s は内側を上限まで伸ばした走行を収容できない — ADR-DOE-ENFORCE-001 R6(締切は 3 つあり族として直す)"))
      (deftest test-adr-doe-enforce-001-ledger-authoring-guard-wired
        ;; R7 + law ledger-checked-at-authoring-time: 台帳突合の著述時配線の実在 pin。
        ;; 挙動の実体は tests/test_enforcement_ledger_hook.py(勘定の一致・staged 断面・
