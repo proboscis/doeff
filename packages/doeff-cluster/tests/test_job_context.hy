@@ -50,11 +50,11 @@
 
 
 ;; --- 本番の worker と sim の宿が子へ渡す文脈は同じ(2026-09-29)------------------------------------------------------
-;; 本番の ProcessHost.launch は子の環境変数(job_context.worker-context-environ・process-context-environ)を置き、子は context-from-env
+;; 本番の子 process の言い換え(process-host — 起こし方は worker/core/launch の job-launch)は子の環境変数(job_context.worker-context-environ・process-context-environ)を置き、子は context-from-env
 ;; で読む。sim の宿(local.run-context-of)は同じ関数で作った dict を同じ読み(context-of-environ)で読む。実行環境の job の子は宣言と
 ;; キー(DOEFF_RUNTIME_ENV・DOEFF_RUNTIME_ENV_KEY)を受け、そうでない job の子は空で受ける(以前の sim の宿は env の job でも空で渡した)。
 
-(import doeff_cluster.handlers [ProcessHost])
+(import tests.host_rig [host-settings launched])
 (import doeff_cluster.job_context [RunContext worker-context-environ context-of-environ])
 (import doeff_cluster.sim.local [run-context-of SIM-URL])
 (import doeff_cluster.shared.intent.job_model [JobSpec])
@@ -65,13 +65,13 @@
 
 (defk launched-context [tmp-path spec]
   {:pre [(: tmp-path Path) (: spec JobSpec)] :post [(: % RunContext)] :tags {:context "doeff-cluster-test" :role "program"}}
-  "本番の ProcessHost.launch が子へ渡す環境変数を、子の読み(context-of-environ)で RunContext にするため(子 process は起こさない)。"
+  "本番の process-host が子へ渡す環境変数を、子の読み(context-of-environ)で RunContext にするため(子 process は起こさない)。"
   (<- shared dict (worker-context-environ SIM-URL WORKER))
-  (val host (ProcessHost (str (/ tmp-path "logs")) HY shared))
+  (<- settings (host-settings tmp-path :hy-command HY :extra-env shared))
   (val root (/ tmp-path "root"))
   (.mkdir root :parents True :exist-ok True)
-  (val launched (.launch host spec (str root) INSTANCE 1))
-  (<- ctx RunContext (context-of-environ (get launched 2)))
+  (<- plan tuple (launched settings spec (str root) INSTANCE 1))
+  (<- ctx RunContext (context-of-environ (get plan 2)))
   ctx)
 
 

@@ -6,7 +6,7 @@
 ;;   送り手    … task-submit-body・detached-submit-body が本文の environ に載せる(空なら欄を置かない)。
 ;;   coordinator … TaskRecord.environ に持ち、heartbeat の返事の task の行に載せる。切り離した task の同じ key の送り直しは environ も
 ;;               比べる(違えば 409)。worker の写しから引き取る時も environ を持つ。欄の無い旧い行は空の environ で読む。
-;;   worker    … task-spec が JobSpec.environ に写し、ProcessHost.launch が service と同じ路で子の環境変数に置く。
+;;   worker    … task-spec が JobSpec.environ に写し、子 process の言い換え(job-launch)が service と同じ路で子の環境変数に置く。
 ;;   sim       … sim の宿が spec.environ の名の Ask に、本番の土台と同じ読みの定義(host_contract.environ-reader)で答える
 ;;               (本番の土台の (environ-reader) が外へ通した Ask)。値の字面どおりの読みの契約は test_environ_reader.hy。
 (require doeff-hy.macros [deftest defk <- val var])
@@ -24,7 +24,8 @@
 (import doeff_cluster.foundation.coordinator_inbox [http-request])
 (import doeff_cluster.coordinator.core.cluster_policy [adopted-task])
 (import doeff_cluster.coordinator.core.api_policy [respond])
-(import doeff_cluster.handlers [CoordinatorLink ProcessHost program-file task-spec])
+(import doeff_cluster.handlers [CoordinatorLink task-spec] doeff_cluster.worker.core.launch [program-file])
+(import tests.host_rig [host-settings launched])
 (import doeff_cluster.shared.protocol.detached [detached-submitted detached-submit-body])
 (import doeff [with-handlers])
 (import doeff_time [sim-time-handler])
@@ -160,8 +161,9 @@
   (assert (not-in "environ" (get rows (get plain 2 "task"))) rows)
   (val spec (task-spec (get rows (get remote 2 "task")) (/ tmp-path "tasks")))
   (assert (= spec.environ #(#(URL-NAME URL))) spec)
-  (val launched (.launch (ProcessHost (str (/ tmp-path "logs")) "hy") spec (str tmp-path) "1-1" 1))
-  (assert (= (get (get launched 2) URL-NAME) URL)))
+  (<- settings (host-settings tmp-path))
+  (<- plan tuple (launched settings spec (str tmp-path) "1-1" 1))
+  (assert (= (get (get plan 2) URL-NAME) URL)))
 
 
 (deftest test-the-same-key-with-another-environ-is-other-work
@@ -235,8 +237,9 @@
   (assert (isinstance desired DesiredJobs) desired)
   (val spec (next (gfor j desired.jobs :if (.startswith j.name "task/") j)))
   (assert (= spec.environ #(#(URL-NAME URL))) spec)
-  (val launched (.launch (ProcessHost (str (/ tmp-path "state" "logs")) "hy") spec (str tmp-path) "1-1" 1))
-  (val env (| (get launched 2) {"PYTHONPATH" (str ROOT)}))
+  (<- settings (host-settings (/ tmp-path "state")))
+  (<- planned tuple (launched settings spec (str tmp-path) "1-1" 1))
+  (val env (| (get planned 2) {"PYTHONPATH" (str ROOT)}))
   (assert (not-in URL-NAME os.environ))
   (val done (subprocess.run [HY "-m" spec.entry #* spec.args "--program" (str (program-file link.program-dir spec.program))]
                             :cwd (str ROOT) :env env :capture-output True :text True :timeout 120))

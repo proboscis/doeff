@@ -14,7 +14,7 @@
 ;;     固定されていない古い root が消える
 ;; 反例: 子に PYTHONPATH を残す / worker の再起動で走らせる実装 / 根と同じ最上位の名の第三者の package / 送り手の版の doeff をずらす /
 ;;       節 3.6 の失敗の組(許可表に無い URL・push していない commit・lock の hash の 1 文字・fake の uv の失敗・空きが足りない)。
-(require doeff-hy.macros [deftest defk <- val var])
+(require doeff-hy.macros [deftest defk defhandler <- val var])
 (require doeff-hy.record [defrecord])
 (import dataclasses [dataclass])
 (import dataclasses [replace])
@@ -34,7 +34,9 @@
 (import doeff_core_effects.os_process [subprocess-handler])
 (import doeff_core_effects.os_file [os-file-handler])
 (import doeff_cluster.worker.intent.env_prepare_model [ROOTS-PTH] doeff_cluster.shared.intent.env_marker_model [ENV-MARKER])
-(import doeff_cluster.handlers [EnvStore ProcessHost task-spec])
+(import doeff_cluster.handlers [EnvStore task-spec])
+(import doeff_cluster.worker.protocol.process_host [HostSettings job-work-dir])
+(import doeff_core_effects.process_effects [EnvEntry StartProcess])
 (import doeff_cluster.worker.intent.worker_model [CodeState CodeView StartJob ReapJob Outcome WorldView WorkerPolicy PrepareEnv WarmEnv
 ] doeff_cluster.shared.intent.job_model [JobSpec] doeff_cluster.worker.core.worker_rules [code-key])
 (import doeff_cluster.worker.core.policy [plan])
@@ -81,8 +83,9 @@
   (val prefix-1 (get answer-1 5))
   (assert (= value-1 1))
   (assert (is pythonpath None) "子の環境変数に PYTHONPATH が無い")
-  (assert (= cwd (str (.work-dir rig.host "task/t1"))) "子の cwd は空の作業 dir")
-  (assert (not (.exists (.work-dir rig.host "task/t1"))) "作業 dir は回収の後に消す")
+  (<- work-1 str (job-work-dir rig.host "task/t1"))
+  (assert (= cwd work-1) "子の cwd は空の作業 dir")
+  (assert (not (.exists (Path work-1))) "作業 dir は回収の後に消す")
   (<- key-1-want str (env-key env-1 (current-platform)))
   (assert (= key-1 key-1-want))
   (assert (= prefix-1 (str (/ (Path view-1.path) "app" ".venv"))) "子は root の venv で走った")
@@ -235,27 +238,36 @@
 
 ;; --- 反例: 子の環境と worker の process ----------------------------------------------------
 
-(defclass LeakyHost [ProcessHost]
-  "反例: 実行環境の job の子に PYTHONPATH を残す実装。"
-  (defn #^ tuple launch [self #^ JobSpec spec #^ str code-path #^ str instance #^ int attempt]  ; defk にできない: ProcessHost の method の差し替え
-    (setv #(argv cwd env) (.launch (super) spec code-path instance attempt))
-    #(argv cwd (| env {"PYTHONPATH" code-path}))))
+;; 反例は、子 process の言い換え(process-host)と本物の答え手の間に置く壊した handler — StartProcess の子の環境変数を書き換えてから
+;; 本物へ渡す(#2464 — 以前は ProcessHost.launch を書き換えた子 class)。
+(defhandler leaky-start
+  ;; 反例: 実行環境の job の子に PYTHONPATH を残す実装。
+  (StartProcess [argv cwd env env-mode env-drop stdout-path stderr-path process-group hold-stdin reap-group]
+    (<- answer (StartProcess :argv argv :cwd cwd :env (+ env #((EnvEntry :name "PYTHONPATH" :value cwd))) :env-mode env-mode
+                             :env-drop env-drop :stdout-path stdout-path :stderr-path stderr-path :process-group process-group
+                             :hold-stdin hold-stdin :reap-group reap-group))
+    (resume answer)))
 
 
-(defclass RestartingHost [ProcessHost]
-  "反例: task ごとに worker の process を作り直して走らせる実装(子が名乗る worker の pid が task ごとに変わる)。"
-  (defn #^ tuple launch [self #^ JobSpec spec #^ str code-path #^ str instance #^ int attempt]  ; defk にできない: ProcessHost の method の差し替え
-    (setv #(argv cwd env) (.launch (super) spec code-path instance attempt))
-    #(argv cwd (| env {"DOEFF_WORKER_PID" (.format "restarted-{}" instance)}))))
+(defhandler restarting-start
+  ;; 反例: task ごとに worker の process を作り直して走らせる実装(子が名乗る worker の pid が task ごとに変わる)。
+  ;; 子が名乗る worker の pid を task ごとに違う値にする(task ごとに違う出力の file の path を混ぜる — task は別々の run で回るので数えない)。
+  (StartProcess [argv cwd env env-mode env-drop stdout-path stderr-path process-group hold-stdin reap-group]
+    (<- answer (StartProcess :argv argv :cwd cwd
+                             :env (tuple (gfor e env (if (= e.name "DOEFF_WORKER_PID") (EnvEntry :name e.name :value f"restarted-{stdout-path}") e)))
+                             :env-mode env-mode :env-drop env-drop :stdout-path stdout-path :stderr-path stderr-path
+                             :process-group process-group :hold-stdin hold-stdin :reap-group reap-group))
+    (resume answer)))
 
 
-(defk child-problems [outcomes host]
-  {:pre [(: outcomes tuple) (: host ProcessHost)] :post [(: % list)]}
+(defk child-problems [outcomes settings]
+  {:pre [(: outcomes tuple) (: settings HostSettings)] :post [(: % list)]}
   "筋書き 1・2 の子の確かめ: PYTHONPATH が無い・cwd が作業 dir・どの task も同じ worker の process から起きた。破れた所の列。"
   (var problems [])
   (for [#(name outcome) outcomes]
     (when (is-not (get outcome.value 1) None) (.append problems (.format "{}: 子に PYTHONPATH が在る" name)))
-    (when (!= (get outcome.value 2) (str (.work-dir host name))) (.append problems (.format "{}: cwd が作業 dir でない" name))))
+    (<- work str (job-work-dir settings name))
+    (when (!= (get outcome.value 2) work) (.append problems (.format "{}: cwd が作業 dir でない" name))))
   (when (!= (len (set (gfor #(_ o) outcomes (get o.value 4)))) 1)
     (.append problems "task ごとに worker の pid が違う(worker の process を作り直した)"))
   problems)
@@ -271,19 +283,15 @@
   (<- env RuntimeEnv (declare rig a1 l1 LOCK))
   (<- view CodeView (prepare rig env))
   (assert (= view.state CodeState.READY) view)
-  (val extra {"DOEFF_WORKER_NAME" "careful" "PYTHONDONTWRITEBYTECODE" "1"})
-  (val uv (str (/ rig.fake "uv")))
   (var results {})
-  (for [#(label host) [#("real" rig.host)
-                       #("leaky" (LeakyHost (str (/ rig.state "logs")) HY extra :uv uv))
-                       #("restarting" (RestartingHost (str (/ rig.state "logs")) HY extra :uv uv))]]
+  (for [#(label around) [#("real" #()) #("leaky" #(leaky-start)) #("restarting" #(restarting-start))]]
     (var outcomes [])
     (for [n [1 2]]
       (val task-id (.format "{}-{}" label n))
-      (<- outcome (run-task rig env task-id :host host))
+      (<- outcome (run-task rig env task-id :around around))
       (assert (isinstance outcome TaskSucceeded) outcome)
       (.append outcomes #(f"task/{task-id}" outcome)))
-    (<- problems list (child-problems (tuple outcomes) host))
+    (<- problems list (child-problems (tuple outcomes) rig.host))
     (setv (get results label) problems))
   (assert (= (get results "real") []) (get results "real"))
   (assert (any (gfor p (get results "leaky") (in "PYTHONPATH" p))) "子に PYTHONPATH を残すと筋書き 1 が赤")

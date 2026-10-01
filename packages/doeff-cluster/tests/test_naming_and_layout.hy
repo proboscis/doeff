@@ -2,13 +2,18 @@
 ;;   - ClusterNaming: Rollout が Deployment に付ける持ち主の annotation と、node の label から導く能力は配備する側が決める。
 ;;     image の版を追う係の欄(revisionLabel・versionLabels — 2026-09-28 に係ごと消した)は理由つきで断る
 ;;   - CodeLayout: 子 process の PYTHONPATH の根と土台の import の路は worker の引数が決める
-(require doeff-hy.macros [deftest val])
+(require doeff-hy.macros [deftest defk <- val var])
 (import json)
 (import pytest)
 (import dataclasses [fields])
 (import doeff_cluster.coordinator.intent.cluster_model [ClusterNaming])
 (import doeff_cluster.coordinator.core.cluster_json [naming-from-json])
-(import doeff_cluster.worker.intent.worker_model [CodeLayout])
+(import os)
+(import time)
+(import pathlib [Path])
+(import doeff_cluster.worker.intent.worker_model [CodeLayout StartJob ReapJob ObserveProcesses Outcome])
+(import doeff_cluster.shared.intent.job_model [JobSpec])
+(import tests.host_rig [host-settings run-on-host])
 (import tests.test_rollout [Sim FORWARD DEP])
 
 
@@ -68,21 +73,31 @@
   (for [bad ["relative/sdk" "/a:/b" "/a,/b"]]
     (with [(pytest.raises ValueError)] (CodeLayout :base-paths #(bad)))))
 
+(defk started-and-reaped [spec tree out]
+  {:pre [(: spec JobSpec) (: tree Path) (: out Path)] :post [(: % int)] :tags {:context "doeff-cluster-test" :role "program"}}
+  "job を 1 本起こし、子が out を書くまで待って回収し、子の pid を返すため(子の表は process-host の session の値 — 1 本の Program で回す)。"
+  (<- (StartJob spec 1 (str tree)))
+  (<- views tuple (ObserveProcesses))
+  (val pid (. (get views 0) pid))
+  (var ended None)
+  (for [_ (range 200)]
+    (<- seen tuple (ObserveProcesses))
+    (when (and (.exists out) (is-not (. (get seen 0) exit-code) None)) (:= ended (get seen 0)) (break))
+    (time.sleep 0.05))
+  (<- (ReapJob spec.name pid Outcome.EXITED (if ended ended.exit-code 0)))
+  pid)
+
+
 (deftest test-process-host-records-the-tree-and-pid-of-each-started-job [tmp-path capfd]
   ;; 2026-09-26: worker は起こした job ごとに、版・木の path・子の pid・worker の pid を記録に 1 行書く(新しい版の job を
   ;; worker の再起動なしに版の木の子 process で走らせたことを、worker の記録で示すため)。子の PYTHONPATH は木の根 → 土台の路。
-  (import os)
-  (import time)
-  (import doeff_cluster.handlers [ProcessHost])
-  (import doeff_cluster.worker.intent.worker_model [StartJob] doeff_cluster.shared.intent.job_model [JobSpec])
+  ;; 子 process の言い換え process-host(#2464)を本物の答え手の下で回す。
   (setv tree (/ tmp-path "tree") out (/ tmp-path "seen"))
   (.mkdir tree)
   (.write-text (/ tree "probe_entry.py")
                (+ "import os, pathlib\npathlib.Path(" (repr (str out)) ").write_text(os.environ['PYTHONPATH'] + '|' + os.getcwd())\n"))
-  (setv host (ProcessHost (str (/ tmp-path "logs")) "hy" :layout (CodeLayout :base-paths #("/opt/base"))))
-  (.start host (StartJob (JobSpec "task/t1" "probe_entry" #() "rev-a" :once True) 1 (str tree)))
-  (setv pid (. (get (.observe host) 0) pid))
-  (for [_ (range 200)] (when (.exists out) (break)) (time.sleep 0.05))
+  (<- settings (host-settings tmp-path :layout (CodeLayout :base-paths #("/opt/base"))))
+  (setv pid (run-on-host settings (started-and-reaped (JobSpec "task/t1" "probe_entry" #() "rev-a" :once True) tree out)))
   (setv [pythonpath cwd] (.split (.read-text out) "|"))
   (assert (= pythonpath (+ (str tree) ":/opt/base")))
   (assert (= cwd (str tree)))

@@ -21,10 +21,12 @@
 (import doeff_cluster.shared.intent.service_model [CallShape System job resolve system-of system-declaration])
 (import doeff_cluster.foundation.process_versions [current-versions])
 (import doeff_cluster.coordinator.core.cluster_policy [job-from-json job-to-json spec-json])
-(import doeff_cluster.handlers [declared-job-spec ProbeStore probe-targets program-file])
+(import doeff_cluster.handlers [declared-job-spec ProbeStore probe-targets] doeff_cluster.worker.core.launch [program-file])
 (import doeff_cluster.job_entry [RunContext runtime-env-of-context])
 (import doeff_cluster.worker.intent.worker_model [CodeView ProbeEntry ProbeState StartJob ReapJob Outcome CodeState] doeff_cluster.shared.intent.job_model [JobSpec] doeff_cluster.shared.core.job_rules [spec-hash] doeff_cluster.worker.core.worker_rules [ENV-KEY-PREFIX code-key])
 (import tests.careful_rig [Rig make-rig push-commit app-files declare prepare LOCK HY DEADLINE-SECONDS])
+(import tests.host_rig [job-ended run-on-host])
+(import doeff_cluster.worker.protocol.process_host [job-work-dir])
 
 (val SHA-A (* "a" 40))
 (val SHA-B (* "b" 40))
@@ -196,9 +198,9 @@
   (val declaration (system-declaration (system-of "lab" #(declared)) "rev" :versions (current-versions) :runtime-env env))
   (val row (get declaration.rows 0))
   (val spec (declared-job-spec (spec-json (. (job-from-json row) spec))))
-  ;; worker が /programs/<sha> から取って置くのと同じ file(CoordinatorLink.accept-programs の形)を ProcessHost の cache に置く。
+  ;; worker が /programs/<sha> から取って置くのと同じ file(CoordinatorLink.accept-programs の形)を子 process の言い換えが読む cache に置く。
   (assert (is-not spec.program None) spec)
-  (val cached (program-file rig.host.program-dir spec.program))
+  (val cached (program-file (Path rig.host.program-dir) spec.program))
   (.mkdir cached.parent :parents True :exist-ok True)
   (.write-text cached (json.dumps {"blob" (get declaration.programs spec.program) "versions" (get row "run" "versions")})
                :encoding "utf-8")
@@ -216,14 +218,7 @@
       (when (and (= p.spec-hash (spec-hash spec)) (not-in p.state #(ProbeState.RUNNING ProbeState.QUEUED))) (:= probed p)))
     (when (is probed None) (time.sleep 0.1)))
   (assert (= probed.state ProbeState.PASSED) probed)
-  (.start rig.host (StartJob spec 1 view.path))
-  (var ended None)
-  (while (is ended None)
-    (when (> (time.monotonic) deadline) (raise (AssertionError "service が終わらない")))
-    (for [p (.observe rig.host)]
-      (when (and (= p.name spec.name) (is-not p.exit-code None)) (:= ended p)))
-    (when (is ended None) (time.sleep 0.1)))
-  (.reap rig.host (ReapJob spec.name ended.pid Outcome.EXITED ended.exit-code))
+  (val ended (run-on-host rig.host (job-ended spec view.path (max 1.0 (- deadline (time.monotonic))))))
   (assert (.is-file out) (.format "service が書かなかった(終了 {})— log: {}" ended.exit-code
                                   (.read-text (next (.glob (/ rig.state "logs") "reporter*")) :errors "replace")))
   (.splitlines (.read-text out :encoding "utf-8")))
@@ -243,7 +238,8 @@
   (assert (= (get lines-1 0) "1") lines-1)
   (assert (= (get lines-1 1) key-1) "service は宣言の env の root で走った")
   (assert (= (get lines-1 3) "None") "子に PYTHONPATH が無い")
-  (assert (= (get lines-1 4) (str (.work-dir rig.host "reporter"))) "子の cwd は空の作業 dir")
+  (<- work-1 str (job-work-dir rig.host "reporter"))
+  (assert (= (get lines-1 4) work-1) "子の cwd は空の作業 dir")
   ;; 2 回目: 送り手の commit だけ変えた宣言 → 新しい root の source の値・worker の process は同じ
   (<- a2 str (push-commit rig.app (! (service-files 2)) "app 2"))
   (<- env-2 RuntimeEnv (declare rig a2 l1 LOCK))
