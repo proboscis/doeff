@@ -297,12 +297,16 @@
       "layer": "io",
       "name": "doeff-cluster-coordinator-inbox",
       "paths": [
-        "packages/doeff-cluster/src/doeff_cluster/foundation/coordinator_inbox.hy"
+        "packages/doeff-cluster/src/doeff_cluster/coordinator/protocol/faults.hy",
+        "packages/doeff-cluster/src/doeff_cluster/foundation/coordinator_inbox.hy",
+        "packages/doeff-cluster/src/doeff_cluster/shared/protocol/inbox.hy"
       ],
       "public": [
-        "packages/doeff-cluster/src/doeff_cluster/foundation/coordinator_inbox.hy"
+        "packages/doeff-cluster/src/doeff_cluster/coordinator/protocol/faults.hy",
+        "packages/doeff-cluster/src/doeff_cluster/foundation/coordinator_inbox.hy",
+        "packages/doeff-cluster/src/doeff_cluster/shared/protocol/inbox.hy"
       ],
-      "responsibility": "coordinator の HTTP の受付と停止の合図(handler)— 調停ループの Program(coordinator.hy)が出す NextRequests / Reply /CoordinatorStopRequested に、本番の process で答える部品。",
+      "responsibility": "coordinator と記録の置き場の HTTP の受付 — 生の要求を並べる箱(foundation/coordinator_inbox)・要求を Request に解き NextRequests / Reply / CoordinatorStopRequested に答える handler(shared/protocol/inbox)・CoordinatorFault の handler(coordinator/protocol/faults)。",
       "typed": true
     },
     {

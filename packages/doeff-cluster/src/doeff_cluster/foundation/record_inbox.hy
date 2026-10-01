@@ -7,8 +7,9 @@
 (import http.server [BaseHTTPRequestHandler ThreadingHTTPServer])
 (import threading)
 (import urllib.parse [urlsplit parse-qsl])
-;; 返事の本文の形の判断と書き出しは coordinator の受付と同じ関数(text-body?・encoded-reply)— この module は intent の型を読まない。
-(import doeff_cluster.foundation.coordinator_inbox [RequestInbox ReplySlot http-request text-body? encoded-reply])
+;; 生の要求の並べ方と返事の byte の書き方は coordinator の受付と同じ(RawRequest・json-reply)— 要求を解く・返事の本文を byte にする
+;; のは shared/protocol/inbox.hy の http-requests(この module は intent の型を読まない・#2563)。
+(import doeff_cluster.foundation.coordinator_inbox [RequestInbox ReplySlot RawRequest json-reply])
 
 ;; 1 要求の本文の上限。記録係は 1 回の送りを 4 MB で区切る(HttpSink の max-post-bytes)ので、これを超えるのは 1 行が巨大な時だけ。
 ;; 上限が無い最初の版は、古い記録係(1 回 500 行)が起点の一覧を貯めて一度に送った数百 MB の本文を JSON で読み、memory が 1.9 GB に
@@ -29,23 +30,20 @@
               slot (ReplySlot))
         (when (> length MAX-BODY-BYTES)
           (setv self.close-connection True)
-          (return (.send self 413 {"error" (.format "本文が大きすぎる: {} byte(上限 {})" length MAX-BODY-BYTES)})))
+          (return (.send self 413 #* (json-reply {"error" (.format "本文が大きすぎる: {} byte(上限 {})" length MAX-BODY-BYTES)}))))
         (setv raw (if (> length 0) (.read self.rfile length) b""))
         (try
           (setv body (if raw (json.loads raw) None))
           (except [error ValueError]
-            (return (.send self 400 {"error" (.format "JSON を読めない: {}" error)}))))
+            (return (.send self 400 #* (json-reply {"error" (.format "JSON を読めない: {}" error)})))))
         (setv raw None)
-        (.put inbox.queue (http-request method split.path (dict (parse-qsl split.query)) body :slot slot
-                                   :actor (.get self.headers "X-Actor") :peer (str (get self.client-address 0))))
+        (.put inbox.queue (RawRequest method split.path (dict (parse-qsl split.query)) body slot
+                                      (.get self.headers "X-Actor") (str (get self.client-address 0))))
+        ;; 置き場の答えの本文の形(表か PlainText だけ)は、返事を出す record_store/core/program.hy の store-loop が検める。
         (if (.wait slot.done 60.0)
-            (do (setv reply slot.body)
-                ;; 置き場の答え(record_store.answer-request)の本文は表か PlainText だけ — 別の形なら送る前に名指して落ちる。
-                (assert (or (isinstance reply dict) (text-body? reply)) (.format "記録の置き場の返事の本文の形が違う: {}" (type reply)))
-                (.send self slot.status reply))
-            (.send self 503 {"error" "置き場の Program が返事をしない"})))
-      (defn #^ None send [self #^ int status #^ object body]
-        (setv #(data content-type) (encoded-reply body))
+            (.send self slot.status slot.data slot.content-type)
+            (.send self 503 #* (json-reply {"error" "置き場の Program が返事をしない"}))))
+      (defn #^ None send [self #^ int status #^ bytes data #^ str content-type]
         (.send-response self status)
         (.send-header self "Content-Type" content-type)
         (.send-header self "Content-Length" (str (len data)))

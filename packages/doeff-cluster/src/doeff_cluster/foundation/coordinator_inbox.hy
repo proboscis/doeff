@@ -1,41 +1,38 @@
-;;; coordinator の HTTP の受付と停止の合図(handler)— 調停ループの Program(coordinator.hy)が出す NextRequests / Reply /
-;;; CoordinatorStopRequested に、本番の process で答える部品。別 thread の HTTP server が受けた要求を列に並べ、調停ループが
-;;; まとめて取る。k8s の probe(/livez・/readyz)は列を通さずに受付の thread が答える。
-;;; 2026-09-25 に coordinator.hy から分けた(handler の組 coordinator/entry/handler_sets.hy がこの受付を本番の組に入れ、coordinator.hy の
-;;; main がその組を選ぶ — 同じ file に置くと組の module と循環する)。coordinator.hy は以前の import の口のためにここの名を再び出す。
-(require doeff-hy.macros [defhandler deff val])
+;;; coordinator と記録の置き場の HTTP の受付(汎用の I/O)— 別 thread の HTTP server が受けた要求を、まだ解かない生の形(RawRequest)で
+;;; 列に並べ、置かれた返事の byte をそのまま書き返す。k8s の probe(/livez・/readyz)は列を通さずに受付の thread が答える。
+;;; 要求を Request に解く・返事の本文を byte にする・NextRequests / Reply / CoordinatorStopRequested に答える handler は
+;;; shared/protocol/inbox.hy(層 foundation は intent の型を読まない — #2563・#2445 の「protocol の 1 点で解く」と同じ形)。
+;;; 2026-09-25 に coordinator.hy から分けた(handler の組 coordinator/entry/handler_sets.hy がこの受付を本番の組に入れる)。
+(require doeff-hy.macros [val])
 (val MODULE-TAGS {:context "doeff-cluster" :role "foundation"})
 (import json)
 (import queue)
 (import typing [Callable])
-(import sys)
 (import threading)
 (import time)
 (import http.server [BaseHTTPRequestHandler ThreadingHTTPServer])
-(import urllib.parse [urlsplit parse-qsl unquote :as url-unquote])
-(import doeff_core_effects.scheduler [Promise])
-(import doeff_cluster.shared.intent.protocol [Request Reply CoordinatorStopRequested PlainText])
-(import doeff_cluster.coordinator.intent.cluster_model [CoordinatorFault ACCEPTED-FORMATS] doeff_cluster.shared.intent.protocol [NextRequests])
+(import urllib.parse [urlsplit parse-qsl])
 
 
 (defclass ReplySlot []
-  "server の thread が返事を待つ札。"
+  "server の thread が返事を待つ札。返事の本文は protocol が送る byte(data)と content-type にして置く。"
   (defn #^ None __init__ [self]
     (setv self.done (threading.Event) self.status 500 self.created (time.monotonic))
-    (setv #^ object self.body None)))
+    (setv #^ bytes self.data b"" #^ str self.content-type "application/json; charset=utf-8")))
 
 
-;; slot = 返事を待つ受付の側の物: 本番の HTTP の受付は ReplySlot、手元の宿(local.hy)は Promise、判断だけを見る検は None。
-(deff http-request [#^ str method #^ str path #^ dict query #^ (| dict list str int float bool None) body
-                    #^ (| ReplySlot Promise None) [slot None] #^ (| str None) [actor None] #^ str [peer ""]]  ; defk にできない: 本番の HTTP の受付の thread(Program の外)と sim の宿が同じ形で要求を作る
-  {:pre [(: method str) (: path str) (: query dict) (: body (| dict list str int float bool None))
-         (: slot (| ReplySlot Promise None)) (: actor (| str None)) (: peer str)]
-   :post [(: % Request)]
-   :tags {:context "doeff-cluster" :role "foundation"}}
-  "受けた HTTP 要求 1 件を Request にするため。path を / で割り、区切りごとに percent の符号を戻して parts に載せる(符号を戻すのは
-   HTTP の境のこの 1 か所 — 受け口の判断 api_policy.respond は parts だけを読む・#1636)。slot = 返事を待つ受付の側の物(判断は見ない)。"
-  (Request method path query body (tuple (gfor p (.split (.strip path "/") "/") (url-unquote p)))
-           :slot slot :actor actor :peer peer))
+(defclass RawRequest []
+  "受付が受けた HTTP 要求 1 件のまだ解かない形(method・path・query・JSON を読んだ本文・返事の札・名乗り・相手)。
+   調停ループ(と記録の置き場の Program)へは shared/protocol/inbox.hy の http-requests が Request に解いて渡す。"
+  (defn #^ None __init__ [self #^ str method #^ str path #^ dict query #^ object body #^ ReplySlot slot
+                          #^ (| str None) actor #^ str peer]
+    (setv self.method method self.path path self.query query self.body body self.slot slot self.actor actor self.peer peer)))
+
+
+(defn #^ tuple json-reply [#^ object body]
+  "受付の thread が自分で答える返事(probe・読めない本文・時間切れ)を、送る byte と content-type の組にするため。"
+  #((.encode (json.dumps body :ensure-ascii False) "utf-8") "application/json; charset=utf-8"))
+
 
 ;; probe の閾値(秒)。ループは要求が無くても 1 秒ごとに NextRequests を出すので、ふだんの「最後に取りに来てから」は 1 秒 + 1 まとまりの
 ;; 処理(fsync の実測の最大 2.9〜3.6 秒・longhorn の詰まりで最長 13 秒・k8s の読みは 3 秒で打ち切り)。
@@ -61,32 +58,19 @@
     True #(200 {"ok" True "stalledSeconds" (round stalled-seconds 1)})))
 
 
-;; --- handler: HTTP の受付 ---------------------------------------------------------------
-
-(defn #^ bool text-body? [#^ object body]
-  "返事の本文が JSON でない text(PlainText)かを、受付の箱(この module と record_inbox の RecordInbox)が同じ判断で知るため。"
-  (isinstance body PlainText))
-
-
-(defn #^ tuple encoded-reply [#^ object body]
-  "返事の本文を送る byte と content-type の組にするため(PlainText はそのまま text・ほかは JSON)。受付の箱の HTTP の thread が
-   返事を書く 1 点で、record_inbox の RecordInbox も同じ関数を使う(#2030 で 2 か所の写しを 1 つにした)。"
-  (if (text-body? body)
-      #((.encode body.text "utf-8") body.content-type)
-      #((.encode (json.dumps body :ensure-ascii False) "utf-8") "application/json; charset=utf-8")))
-
-
 (defclass RequestInbox []
-  "HTTP server(別 thread)が受けた要求を並べる箱。調停ループは 1 件ずつ取り出して返事を置く。"
-  (defn #^ None __init__ [self #^ int port #^ Callable [clock time.monotonic]]
+  "HTTP server(別 thread)が受けた要求を生の形で並べる箱。調停ループは 1 件ずつ取り出して返事を置く。
+   formats = probe が名乗る本文の形の版の受け入れる範囲(coordinator の entry が cluster_model の ACCEPTED-FORMATS を渡す — この
+   module は intent の型を読まない)。"
+  (defn #^ None __init__ [self #^ int port #^ Callable [clock time.monotonic] #^ tuple [formats #()]]
     ;; last-take = 調停ループが最後に要求を取りに来た時刻(単調時計)。probe はこれだけで答える(ループを通さない)。
-    (setv self.queue (queue.Queue) self.port port self.server None self.clock clock self.last-take None))
+    (setv self.queue (queue.Queue) self.port port self.server None self.clock clock self.last-take None self.formats formats))
 
   (defn #^ tuple probe [self #^ str path]
     "k8s の probe(/livez・/readyz)の答え。HTTP の thread が直に答える — 調停ループの遅れ(fsync・k8s の API)に巻き込まれない。"
-    ;; 本文の形の版の受け入れる範囲も名乗る(送り手と worker が自分の版を合わせられるように — cluster_model.ACCEPTED-FORMATS)。
+    ;; 本文の形の版の受け入れる範囲も名乗る(送り手と worker が自分の版を合わせられるように)。
     (setv #(status body) (probe-verdict path (if (is self.last-take None) None (- (self.clock) self.last-take))))
-    #(status (| body {"formats" (list ACCEPTED-FORMATS)})))
+    #(status (| body {"formats" (list self.formats)})))
 
   (defn #^ None start [self]
     (setv inbox self)
@@ -101,22 +85,20 @@
         ;; probe は並べずに答える(調停ループが fsync や k8s の読みで数秒止まっても、probe が時間切れにならない)。
         (when (and (= method "GET") (in split.path #("/livez" "/readyz")))
           (setv #(status body) (.probe inbox split.path))
-          (return (.send self status body)))
+          (return (.send self status #* (json-reply body))))
         (setv length (int (or (.get self.headers "Content-Length") 0))
               raw (if (> length 0) (.read self.rfile length) b"")
               slot (ReplySlot))
         (try
           (setv body (if raw (json.loads raw) None))
           (except [error ValueError]
-            (return (.send self 400 {"error" (.format "JSON を読めない: {}" error)}))))
-        (.put inbox.queue (http-request method split.path (dict (parse-qsl split.query)) body :slot slot
-                                   :actor (.get self.headers "X-Actor")
-                                   :peer (str (get self.client-address 0))))
+            (return (.send self 400 #* (json-reply {"error" (.format "JSON を読めない: {}" error)})))))
+        (.put inbox.queue (RawRequest method split.path (dict (parse-qsl split.query)) body slot
+                                      (.get self.headers "X-Actor") (str (get self.client-address 0))))
         (if (.wait slot.done 30.0)
-            (.send self slot.status slot.body)
-            (.send self 503 {"error" "調停ループが返事をしない"})))
-      (defn #^ None send [self #^ int status #^ object body]
-        (setv #(data content-type) (encoded-reply body))
+            (.send self slot.status slot.data slot.content-type)
+            (.send self 503 #* (json-reply {"error" "調停ループが返事をしない"}))))
+      (defn #^ None send [self #^ int status #^ bytes data #^ str content-type]
         (.send-response self status)
         (.send-header self "Content-Type" content-type)
         (.send-header self "Content-Length" (str (len data)))
@@ -132,7 +114,7 @@
     (.start (threading.Thread :target self.server.serve-forever :daemon True)))
 
   (defn #^ list take [self #^ float timeout #^ int limit]
-    "最初の 1 件を timeout 秒まで待ち、その時点で並んでいる要求を limit 件まで一緒に取る。"
+    "最初の 1 件を timeout 秒まで待ち、その時点で並んでいる生の要求を limit 件まで一緒に取る。"
     (setv self.last-take (self.clock))
     (try (setv first (.get self.queue :timeout timeout))
          (except [queue.Empty] (return [])))
@@ -143,31 +125,8 @@
     batch))
 
 
-(defhandler http-requests [#^ RequestInbox inbox]
-  (NextRequests [timeout-seconds limit] (resume (.take inbox timeout-seconds limit)))
-  (Reply [request status body]
-    (setv slot request.slot)
-    (assert (isinstance slot ReplySlot) "http-requests の要求の札は ReplySlot")
-    ;; 返事まで 1 秒を超えた要求を 1 行出す(調停ループが何かを待って止まった時の手がかり)。版の変化を待つ読み(GET /watch)は
-    ;; 待つのが仕事なので出さない(#1933)。
-    (setv waited (- (time.monotonic) slot.created))
-    (when (and (> waited 1.0) (!= (tuple request.parts) #("watch")))
-      (print (.format "coordinator: 遅い返事 {:.1f} 秒: {} {}" waited request.method request.path) :file sys.stderr :flush True))
-    (setv slot.status status slot.body body)
-    (.set slot.done)
-    (resume None))
-  ;; coordinator の中の欠陥を 1 行出す(送り手には 500 — 中の欠陥が送り手の誤りに見えないように・#1024)。
-  (CoordinatorFault [fault]
-    (print (.format "coordinator: 中の欠陥: {} {}: {}: {}({})" fault.method fault.path fault.error-type fault.message fault.where)
-           :file sys.stderr :flush True)
-    (resume None)))
-
-
-;; --- 停止・読み込み --------------------------------------------------------------------------
+;; --- 停止 --------------------------------------------------------------------------------------
 
 (defclass StopState []
+  "停止の合図(SIGTERM の handler が requested を立て、shared/protocol/inbox.hy の stop-flag が読む)。"
   (defn #^ None __init__ [self] (setv self.requested False)))
-
-
-(defhandler stop-flag [#^ StopState state]
-  (CoordinatorStopRequested [] (resume state.requested)))

@@ -13,7 +13,7 @@
 (import doeff [run with_handlers])
 (import doeff_core_effects.scheduler [scheduled])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming])
-(import doeff_cluster.coordinator.intent.cluster_model [ClusterState])
+(import doeff_cluster.coordinator.intent.cluster_model [ClusterState ACCEPTED-FORMATS])
 (import doeff_cluster.coordinator.core.cluster_json [naming-from-json])
 (import doeff_cluster.coordinator.core.cluster_policy [state-from-json fresh-task-prefix])
 (import doeff_cluster.coordinator.core.durable_kv [full-kv state-from-kv legacy-key-moves resume-writes])
@@ -90,7 +90,7 @@
   (signal.signal signal.SIGINT on-signal)
   (setv store (WalStore (str (/ (. (Path args.state-file) parent) "wal"))))
   (setv state (load-state args.state-file store (int (* 1000 (time.time)))))
-  (setv inbox (RequestInbox args.port))
+  (setv inbox (RequestInbox args.port :formats ACCEPTED-FORMATS))
   (.start inbox)
   ;; k8s の API は Pod の ServiceAccount の token が在る時だけ(手元の coordinator では Rollout の Deployment の観測が Unknown のまま)。
   ;; 読みも台数の変更も 3 秒で打ち切る(読むのは進行中の Rollout の相手だけ・1 秒に 1 回)。

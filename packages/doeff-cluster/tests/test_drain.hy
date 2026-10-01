@@ -7,7 +7,7 @@
 (import doeff_time [SimClock sim-time-handler])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming])
 (import doeff_cluster.coordinator.intent.cluster_model [ClusterState Drain])
-(import doeff_cluster.foundation.coordinator_inbox [http-request])
+(import doeff_cluster.shared.protocol.inbox [http-request])
 (import doeff_cluster.coordinator.core.cluster_policy [jobs-for])
 (import doeff_cluster.shared.core.job_rules [spec-hash])
 (import doeff_cluster.coordinator.core.api_policy [tick])

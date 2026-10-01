@@ -1,5 +1,5 @@
 ;;; coordinator の要求の受付の、まねた環境の言い換え — process の中の列(RequestQueue)で intent の NextRequests / IdleNextRequests・
-;;; Reply・CoordinatorFault に答える(本番の答え手は foundation/coordinator_inbox.hy の http-requests)。handler の組
+;;; Reply・CoordinatorFault に答える(本番の答え手は shared/protocol/inbox.hy の http-requests と coordinator/protocol/faults.hy の coordinator-faults)。handler の組
 ;;; (coordinator/entry/handler_sets.hy の emulated-handlers)が並べる。entry の層から移した(DOEFF105・agora-redesign #2541)。
 (require doeff-hy.macros [defhandler defk <- val var])
 (val MODULE-TAGS {:context "doeff-cluster" :role "protocol"})
