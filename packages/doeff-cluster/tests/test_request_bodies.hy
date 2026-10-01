@@ -4,7 +4,7 @@
 (require doeff-hy.macros [deftest <- val])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming])
 (import doeff_cluster.coordinator.intent.cluster_model [ClusterState])
-(import doeff_cluster.coordinator.intent.request_bodies [LeaseBody TaskResultBody DrainBody BodyMalformed])
+(import doeff_cluster.coordinator.intent.request_bodies [LeaseBody TaskResultBody DrainBody BoardWrite BodyMalformed])
 (import doeff_cluster.coordinator.protocol.request_bodies [body-of responded])
 (import doeff_cluster.foundation.coordinator_inbox [http-request])
 
@@ -19,8 +19,8 @@
   (<- drain (body-of (http-request "POST" "/workers/zeus/drain" {} None)))
   (assert (= drain (DrainBody)) drain)
   ;; まだ型にしていない道は JSON の object のまま。
-  (<- board (body-of (http-request "PUT" "/board/k" {} {"value" 1})))
-  (assert (= board {"value" 1}) board))
+  (<- jobs (body-of (http-request "PUT" "/jobs" {} {"jobs" []})))
+  (assert (= jobs {"jobs" []}) jobs))
 
 
 (deftest test-malformed-bodies-are-refused-with-the-field-before-the-decision
@@ -54,3 +54,25 @@
   (assert (in "ready" worded.reason) worded)
   (<- textual (body-of (http-request "POST" "/resources/Service/web/metrics" {} {"worker" "w" "revision" "r" "metrics" {"gauges" {"g" "1"}}})))
   (assert (in "gauges" textual.reason) textual))
+
+
+
+(deftest test-a-board-write-tells-a-missing-expect-from-a-null-expect
+  ;; expect の欄が無ければ比べない・null なら「行が無い時だけ書く」— 本文の型の既定値では分けられないので、解く所が欄の在否を印にする。
+  (<- free (body-of (http-request "PUT" "/board/k" {} {"value" {"n" 1}})))
+  (assert (isinstance free BoardWrite) free)
+  (assert (= #(free.value-given free.expect-given free.body.value) #(True False {"n" 1})) free)
+  (<- fresh (body-of (http-request "PUT" "/board/k" {} {"value" 2 "expect" None})))
+  (assert (= #(fresh.expect-given fresh.body.expect) #(True None)) fresh)
+  (<- dropping (body-of (http-request "PUT" "/board/k" {} {"delete" True})))
+  (assert (= #(dropping.value-given dropping.body.delete) #(False True)) dropping)
+  (<- wordy (body-of (http-request "PUT" "/board/k" {} {"value" 1 "ttlSeconds" "60"})))
+  (assert (in "ttlSeconds" wordy.reason) wordy)
+  ;; 判断へ: null の expect は行が在れば 409・行が無ければ書く。値の無い書きは 400。
+  (val state (ClusterState))
+  (val first (responded state (http-request "PUT" "/board/k" {} {"value" 1 "expect" None}) 1000 T))
+  (assert (= (get first 1) 200) first)
+  (val again (responded (get first 0) (http-request "PUT" "/board/k" {} {"value" 2 "expect" None}) 1000 T))
+  (assert (= (get again 1) 409) again)
+  (val empty (responded state (http-request "PUT" "/board/k" {} {"ttlSeconds" 5}) 1000 T))
+  (assert (= (get empty 1) 400) empty))
