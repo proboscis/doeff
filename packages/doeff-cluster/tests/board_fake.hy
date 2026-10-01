@@ -16,6 +16,7 @@
 (import doeff_cluster.shared.core.clock [now-epoch-ms])
 (import doeff_cluster.shared.core.board_rules [board-allows board-ttl-refusal])
 (import doeff_cluster.shared.core.lease_rules [lease-op semaphore-key])
+(import doeff_hy.wire [dump])
 (import doeff_cluster.shared.intent.protocol [BodyInvalid])
 (import doeff_cluster.shared.protocol.coordinator_route [CoordinatorRoute RouteCell RouteOptions])
 (import doeff_cluster.shared_handlers [shared-http])
@@ -56,8 +57,10 @@
       (do (val lease-key (semaphore-key (url-unquote (get parts 1))))
           (val current (.get rows lease-key))
           (try
-            (setv #(row answer) (lease-op current (get body "op") (get body "token") (int (.get body "permits" 1))
-                                          (int (.get body "ttlMs" 0)) now-ms))
+            (setv #(row verdict) (lease-op current (get body "op") (get body "token") (int (.get body "permits" 1))
+                                           (int (.get body "ttlMs" 0)) now-ms))
+            ;; 返事の本文は coordinator と同じく LeaseAnswer の wire の形(lease-write の dump と同じ)。
+            (<- answer dict (dump verdict))
             (BoardReply :status 200 :answer answer
                         :written (if (or (is row current) (is row None)) None #(lease-key row)))
             (except [refused BodyInvalid]

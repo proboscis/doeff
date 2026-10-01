@@ -14,7 +14,7 @@
 (require doeff-hy.macros [defk deftest <- val])
 (import doeff_time [Delay])
 (import doeff_cluster.shared.intent.shared_model [ReadShared WriteShared ANY])
-(import doeff_cluster.shared.intent.semaphore_model [LeaseOp])
+(import doeff_cluster.shared.intent.semaphore_model [LeaseOp LeaseAnswer])
 (import doeff_cluster.shared.core.lease_rules [semaphore-key])
 (import doeff_cluster.shared.core.clock [now-epoch-ms])
 (import tests.coordinator_contract_handlers [BoardSeen])
@@ -94,9 +94,9 @@
 
 
 (defk lease [op token]
-  {:pre [(: op str) (: token str)] :post [(: % dict)] :tags {:context "doeff-cluster-test" :role "program"}}
+  {:pre [(: op str) (: token str)] :post [(: % LeaseAnswer)] :tags {:context "doeff-cluster-test" :role "program"}}
   "契約の lease(permits 1・TTL-MS)の操作 1 つ。"
-  (<- answer dict (LeaseOp LEASE op token 1 TTL-MS))
+  (<- answer LeaseAnswer (LeaseOp LEASE op token 1 TTL-MS))
   answer)
 
 
@@ -110,30 +110,30 @@
 (deftest test-a-lease-is-claimed-refused-renewed-and-released
   {:interpreters ["shared-fake" "shared-http"]}
   (<- start int (now-epoch-ms))
-  (<- claimed dict (lease "claim" "a/1/x/1"))
-  (<- refused dict (lease "claim" "b/1/y/1"))
+  (<- claimed LeaseAnswer (lease "claim" "a/1/x/1"))
+  (<- refused LeaseAnswer (lease "claim" "b/1/y/1"))
   (<- held dict (holders))
   (<- read dict (ReadShared "semaphore/"))
   (<- (Delay 1.0))
-  (<- renewed dict (lease "renew" "a/1/x/1"))
-  (<- stranger dict (lease "renew" "b/1/y/1"))
+  (<- renewed LeaseAnswer (lease "renew" "a/1/x/1"))
+  (<- stranger LeaseAnswer (lease "renew" "b/1/y/1"))
   (<- renewed-holders dict (holders))
-  (<- released dict (lease "release" "a/1/x/1"))
-  (<- released-again dict (lease "release" "a/1/x/1"))
-  (<- taken dict (lease "claim" "b/1/y/1"))
-  (<- dropped dict (lease "drop" "b/1/"))
+  (<- released LeaseAnswer (lease "release" "a/1/x/1"))
+  (<- released-again LeaseAnswer (lease "release" "a/1/x/1"))
+  (<- taken LeaseAnswer (lease "claim" "b/1/y/1"))
+  (<- dropped LeaseAnswer (lease "drop" "b/1/"))
   (<- after-drop dict (holders))
-  (assert (= claimed {"ok" True "reason" None "ttlMs" TTL-MS}) claimed)
-  (assert (= refused {"ok" False "reason" "空きが無い" "ttlMs" TTL-MS}) refused)
+  (assert (= claimed (LeaseAnswer :ok True :reason None :ttl-ms TTL-MS :dropped 0)) claimed)
+  (assert (= refused (LeaseAnswer :ok False :reason "空きが無い" :ttl-ms TTL-MS :dropped 0)) refused)
   (assert (= held {"a/1/x/1" (+ start TTL-MS)}) held)
   (assert (= read {(semaphore-key LEASE) {"permits" 1 "holders" held}}) (.format "lease の行が ReadShared で読めない: {}" read))
-  (assert (= renewed {"ok" True "reason" None "ttlMs" TTL-MS}) renewed)
-  (assert (= stranger {"ok" False "reason" "lost" "ttlMs" TTL-MS}) stranger)
+  (assert (= renewed (LeaseAnswer :ok True :reason None :ttl-ms TTL-MS :dropped 0)) renewed)
+  (assert (= stranger (LeaseAnswer :ok False :reason "lost" :ttl-ms TTL-MS :dropped 0)) stranger)
   (assert (= renewed-holders {"a/1/x/1" (+ start 1000 TTL-MS)}) renewed-holders)
-  (assert (= released {"ok" True "reason" None "ttlMs" 0}) released)
-  (assert (= released-again {"ok" False "reason" "lost" "ttlMs" 0}) released-again)
-  (assert (get taken "ok") taken)
-  (assert (= dropped {"ok" True "reason" None "dropped" 1 "ttlMs" 0}) dropped)
+  (assert (= released (LeaseAnswer :ok True :reason None :ttl-ms 0 :dropped 0)) released)
+  (assert (= released-again (LeaseAnswer :ok False :reason "lost" :ttl-ms 0 :dropped 0)) released-again)
+  (assert taken.ok taken)
+  (assert (= dropped (LeaseAnswer :ok True :reason None :ttl-ms 0 :dropped 1)) dropped)
   (assert (= after-drop {}) after-drop))
 
 
@@ -141,15 +141,15 @@
   {:interpreters ["shared-fake" "shared-http"]}
   (<- (lease "claim" "a/1/x/1"))
   (<- (Delay (/ (- TTL-MS 100) 1000)))
-  (<- before dict (lease "claim" "b/1/y/1"))
+  (<- before LeaseAnswer (lease "claim" "b/1/y/1"))
   (<- (Delay 0.1))
-  (<- at-expiry dict (lease "claim" "b/1/y/1"))
-  (<- robbed dict (lease "renew" "a/1/x/1"))
+  (<- at-expiry LeaseAnswer (lease "claim" "b/1/y/1"))
+  (<- robbed LeaseAnswer (lease "renew" "a/1/x/1"))
   (<- now int (now-epoch-ms))
   (<- held dict (holders))
-  (assert (not (get before "ok")) (.format "期限の前に他が取れた: {}" before))
-  (assert (get at-expiry "ok") (.format "期限で取れない: {}" at-expiry))
-  (assert (= (get robbed "reason") "lost") robbed)
+  (assert (not before.ok) (.format "期限の前に他が取れた: {}" before))
+  (assert at-expiry.ok (.format "期限で取れない: {}" at-expiry))
+  (assert (= robbed.reason "lost") robbed)
   (assert (= held {"b/1/y/1" (+ now TTL-MS)}) held))
 
 

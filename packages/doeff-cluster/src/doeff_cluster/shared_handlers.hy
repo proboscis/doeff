@@ -6,7 +6,8 @@
 (require doeff-hy.macros [defhandler deff <- val])
 (import urllib.parse [quote :as url-quote])
 (import doeff_cluster.shared.intent.shared_model [ReadShared WriteShared ANY AnyExpect JsonValue])
-(import doeff_cluster.shared.intent.semaphore_model [LeaseOp])
+(import doeff_cluster.shared.intent.semaphore_model [LeaseOp LeaseAnswer])
+(import doeff_hy.wire [parse])
 (import doeff_cluster.foundation.coordinator_http [IDEMPOTENT-DEADLINE-SECONDS RESEND-PAUSE-SECONDS])
 (import doeff_cluster.shared.protocol.coordinator_route [RouteCell RouteOptions RoutedReply routed-request resent-request
                                                          answer-json write-accepted])
@@ -63,5 +64,7 @@
                             True (resent-request cell.route method path options None body IDEMPOTENT-DEADLINE-SECONDS RESEND-PAUSE-SECONDS)
                             False (routed-request cell.route method path options None body)))
     (setv cell.route reply.route)
-    (<- answer dict (answer-json reply.answer))
+    (<- answered dict (answer-json reply.answer))
+    ;; 返事の本文を LeaseAnswer に解く(形が違えば Malformed — 業務へ素の dict を渡さない・#2523)。
+    (<- answer LeaseAnswer (parse LeaseAnswer answered))
     (resume answer)))
