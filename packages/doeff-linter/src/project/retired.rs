@@ -40,7 +40,7 @@ use walkdir::WalkDir;
 
 use super::architecture::{mangle_dotted, RetiredCalls, RetiredWords, WordPlace, WorldTouch};
 use super::names::module_of;
-use super::relative_path;
+use super::paths::relative_path;
 use super::world_catalog::touch_of_raw;
 
 /// 歩かない dir(隠し dir と生成物 — 宣言の glob の頭の dir より下で)。
@@ -132,7 +132,7 @@ fn raw_touch(call: &str, catalog: &RawCatalog) -> Option<WorldTouch> {
 fn anchored(glob: &str, rel: &str) -> bool {
     let parts: Vec<&str> = glob.split('/').filter(|p| !p.is_empty()).collect();
     let path: Vec<&str> = rel.split('/').collect();
-    super::segments_match(&parts, &path)
+    super::paths::segments_match(&parts, &path)
 }
 
 pub(super) fn selected(rel: &str, files: &[String], except: &[String]) -> bool {
