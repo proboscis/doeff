@@ -185,7 +185,8 @@
    実行環境の root の準備にかかる仮想の秒・env-failure = 実行環境の root の準備がこの失敗で終わる worker(None = 揃う)・
    starts-down = 止まったまま始まる(StartWorker で起きる — 後から加わる node)・ignores-fence = 反例の世界だけの壊れた worker
    (coordinator に届かない間 fence を越えても job を止めない — 本番の worker_policy の判断を使わない)・beat-every-ms = 反例の世界だけの
-   壊れた worker(heartbeat の間隔を本番の beat_policy.beat-interval-ms でなくこの値にする — None = 本番の判断)。"
+   壊れた worker(heartbeat の間隔を本番の beat_policy.beat-interval-ms でなくこの値にする — None = 本番の判断)・retire-stops = 反例の
+   世界だけの壊れた worker(入れ替えで旧を名から外す RetireJob の handler が、外すと同時に旧を止める — 条 W1 の反例)。"
   (#^ str name)
   (#^ frozenset provides)
   (setv #^ frozenset exclusive (frozenset))
@@ -196,7 +197,8 @@
   (setv #^ (| EnvFailure None) env-failure None)
   (setv #^ bool starts-down False)
   (setv #^ bool ignores-fence False)
-  (setv #^ (| int None) beat-every-ms None))
+  (setv #^ (| int None) beat-every-ms None)
+  (setv #^ bool retire-stops False))
 
 
 (defrecord SimProcess
@@ -1477,6 +1479,10 @@
     (<- (PutHostTruth worker.name
                       (replace truth :processes (tuple (gfor p truth.processes
                                                              (if (= p.pid pid) (replace p :name new-name :retired-from name) p))))))
+    (when worker.retire-stops
+      (<- handle (| Task None) (HandleOf pid))
+      (when (is-not handle None)
+        (<- (Cancel handle))))
     (resume None))
   (ReleaseLeases [job instance]
     (<- (live-truth worker.name boot))

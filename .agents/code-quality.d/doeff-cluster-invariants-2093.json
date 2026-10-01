@@ -1,0 +1,24 @@
+{
+  "module_extensions": {
+    "doeff-cluster-tests": {
+      "allow": [
+        "doeff-cluster-worker-invariants"
+      ]
+    }
+  },
+  "modules": [
+    {
+      "allow": [],
+      "layer": "pure",
+      "name": "doeff-cluster-worker-invariants",
+      "paths": [
+        "packages/doeff-cluster/src/doeff_cluster/worker_invariants.hy"
+      ],
+      "public": [
+        "packages/doeff-cluster/src/doeff_cluster/worker_invariants.hy"
+      ],
+      "responsibility": "worker の業務の不変条件(packages/doeff-cluster/architecture.hy の defservice worker の :invariants が名指す判断)— 条 W1: 入れ替え(handoff)の間も Ready の書き手が途切れない。記録(世代ごとの最初の Ready の時刻と終わった時刻)を受けて空白の区間の列を返す純関数(agora-redesign #2093)",
+      "typed": true
+    }
+  ]
+}
