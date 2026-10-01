@@ -125,7 +125,7 @@
 (import doeff_cluster.coordinator.entry.handler_sets [MemoryWalStore emulated-handlers])
 (import doeff_cluster.coordinator.protocol.request_queue [RequestQueue enqueue-request nudge-takers])
 (import doeff_cluster.shared.core.promise_wait [promise-or-timeout])
-(import doeff_cluster.foundation.kube_handlers [KubeMemory])
+(import doeff_cluster.coordinator.protocol.kube [KubeMemory])
 (import doeff_cluster.shared.protocol.declaration_requests [create-body spec-for-update])
 (import doeff_cluster.shared.protocol.detached [detached-path detached-submit-body detached-refusal submit-unreachable awaited-answer runner-facts-of-view
                    runners-unreachable warm-request-body warm-path absent-warm-state SERVER-ERROR warm-unconnected
