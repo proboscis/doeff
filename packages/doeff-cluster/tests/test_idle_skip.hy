@@ -13,7 +13,8 @@
 (import doeff_cluster.shared.core.clock [now-epoch-ms])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming])
 (import doeff_cluster.coordinator.intent.cluster_model [ClusterState ClusterNaming IdleProbe IdleNextRequests])
-(import doeff_cluster.coordinator.entry.handler_sets [RequestQueue MemoryWalStore queued-requests])
+(import doeff_cluster.coordinator.entry.handler_sets [MemoryWalStore])
+(import doeff_cluster.coordinator.protocol.request_queue [RequestQueue queued-requests])
 (import doeff_cluster.foundation.coordinator_inbox [RequestInbox http-requests])
 (import doeff_cluster.coordinator.core.idle_policy [quiet-ticks])
 (import doeff_cluster.sim.local [sim-cluster ProcessesOf SharedRows StopCoordinator CoordinatorRuns KillWorker ReadCoordinator ClientLink SimLink
