@@ -1,8 +1,9 @@
 ;;; 能力の名の検めと子の環境変数の並べ — job・task・worker・宣言が共に使う純粋な判断(coordinator の cluster_model から移した・#2023)。
-(require doeff-hy.macros [deff val])
+(require doeff-hy.macros [defk deff val])
 (val MODULE-TAGS {:context "doeff-cluster" :role "judgment"})
 (import re)
 (import doeff_cluster.shared.intent.protocol [BodyInvalid])
+(import doeff_cluster.shared.intent.runtime_env_model [EnvVar])
 
 
 ;; --- 実行先の能力と版(task・切り離した task・worker が共に使う) -------------------------------------
@@ -61,3 +62,21 @@
   "子の環境変数の dict → 名の順の #(名 値) の tuple(TaskRecord.environ・JobSpec.environ の形)— 行と spec の比べと指紋を
    名の順 1 つにするため。"
   (tuple (gfor k (sorted environ) #(k (get environ k)))))
+
+
+;; --- 切り離した task の子の環境変数の型(SubmitDetached.environ — EnvVar の tuple・#2179) -----------------------------
+;; effect は名 → 値の写像でなく EnvVar の tuple で受ける(呼び手の core が写像を組まずに済む)。名と値の規則は EnvVar を作る時に
+;; 走る(runtime_env_model の EnvVar 1 つ)。組の形(EnvVar の tuple・名が重ならない)は SubmitDetached を作る時に検める。
+;; coordinator への本文(wire)は名 → 値の object のままなので、handler が env-mapping で綴る。
+
+
+(defk env-vars-of [environ]
+  {:pre [(: environ (get dict #(str str)))] :post [(: % (get tuple #(EnvVar ...)))] :tags {:context "doeff-cluster" :role "judgment"}}
+  "名 → 文字列の写像を名の順の EnvVar の tuple に写す — 宣言の :environ を読んだ境目が、effect に渡す型の組を 1 か所で作るため。"
+  (tuple (gfor k (sorted environ) (EnvVar :name k :value (get environ k)))))
+
+
+(defk env-mapping [env-vars]
+  {:pre [(: env-vars (get tuple #(EnvVar ...)))] :post [(: % (get dict #(str str)))] :tags {:context "doeff-cluster" :role "judgment"}}
+  "EnvVar の tuple を coordinator への本文の形(名 → 文字列の object)へ綴る — wire の形は変えずに effect の型だけを変えるため。"
+  (dfor v env-vars v.name v.value))
