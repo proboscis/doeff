@@ -6,6 +6,11 @@
 //! `rules` の各項目には短い日本語の名(`title`)と規則の家族(`family`)を持たせる — エディタが規則ごとの行に
 //! 名を添え、家族で行の絵を変えるため。名と家族の正本は linter 側(層の規則は `project::rule::ProjectRule`・
 //! Python の規則は `rule_info::RuleInfo`)にあり、エディタは写しを持たない。版は上げない(欄の追加だけ — 契約の更新 6)。
+//!
+//! 一番上の `judged_rules` は、この実行で判じた規則の ID(契約の更新 8・agora-redesign #2163)。1 file の実行(`--stdin`)は repo 全体で
+//! だけ判じる規則(DOEFF166・141 など — `ProjectRule::judged_on_one_file` が偽の規則)を走らせないので、エディタは 1 file の結果で
+//! この列の規則の違反だけを差し替え、ほかの規則の違反は全体の実行の結果のまま残す。版は上げない(欄の追加 — 欄の無い古い出力を読む
+//! エディタは今までどおり全部差し替え、版を上げると版 2 だけを読む古いエディタが出力の全体を捨てる)。
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
@@ -96,7 +101,7 @@ pub struct EditorLayer {
     pub question: Option<String>,
 }
 
-/// 走らせた規則(と、ADR に在って針の無い law)の 1 件。
+/// 有効な規則(と、ADR に在って針の無い law)の 1 件。この実行で判じたかは `EditorReport::judged_rules` が名乗る(#2163)。
 #[derive(Debug, Clone, Serialize)]
 pub struct EditorRule {
     pub rule: String,
@@ -140,6 +145,11 @@ pub struct EditorReport {
     pub bodies: Vec<crate::project::body_view::Body>,
     pub modules: Vec<EditorModule>,
     pub rules: Vec<EditorRule>,
+    /// この実行で判じた規則の ID(辞書順・重ねない — 契約の更新 8・agora-redesign #2163)。当たりを出し切った規則で、0 件の規則も載る。
+    /// `rules[]` の欄(`judged`)にしないのは、`rules[]` が有効な規則の一覧で、その外で出る違反の規則(noqa の知らせ NOQA001・enable に
+    /// 無くても出す DOEFF100 / DOEFF128)を持たないため — 判じたかは実行の性質で、report の一番上で名乗る。`violations` の規則はどれも
+    /// この列に入る。
+    pub judged_rules: Vec<String>,
     pub errors: Vec<String>,
     /// `--baseline-report` の時: 基点に無い critical の識別子(`<path>::<規則>::<名>`・辞書順)。基点と比べない時は null
     /// (仕様 1 節「基点との比べ」— 版は上げない欄の追加・agora-redesign #1803)。
@@ -277,9 +287,19 @@ pub fn build(input: &EditorInput) -> EditorReport {
         bodies: input.signatures.map(|s| s.bodies.clone()).unwrap_or_default(),
         modules,
         rules: rule_list(input),
+        judged_rules: judged_rule_ids(input),
         errors,
         new_critical: None,
     }
+}
+
+/// この実行で判じた規則の ID(辞書順)。Python の文ごとの規則は file 1 つで決まるので、全体の実行でも 1 file の実行でも有効な物の全部と、
+/// それを走らせる時に必ず出しうる noqa の知らせ(NOQA001)。層の規則は project の実行が判じた物(`ProjectReport::judged`)。
+fn judged_rule_ids(input: &EditorInput) -> Vec<String> {
+    let noqa = (!input.python_rules.is_empty()).then(|| crate::noqa::NOQA_RULE_ID.to_string());
+    let project = input.project.judged.iter().map(|rule| rule.id().to_string());
+    let ids: BTreeSet<String> = input.python_rules.iter().cloned().chain(noqa).chain(project).collect();
+    ids.into_iter().collect()
 }
 
 /// 層の順と説明(層の設定が無ければ空)。
@@ -424,12 +444,35 @@ mod tests {
     }
 
     #[test]
+    fn judged_rules_name_python_rules_noqa_and_the_project_judged_rules_only() {
+        // agora-redesign #2163: judged_rules は Python の規則(と NOQA001)と project の実行が判じた規則だけ — 1 file の実行で判じない
+        // DOEFF166 は有効でも載らない(rules[] には有効な規則として載ったまま)。
+        let python_rules = vec!["DOEFF016".to_string()];
+        let project_rules: BTreeSet<ProjectRule> = [ProjectRule::DefnForbidden, ProjectRule::RegistryEntryStale].into_iter().collect();
+        let project_wired = project_rules.clone();
+        let project = ProjectReport { judged: [ProjectRule::DefnForbidden, ProjectRule::UnreadableFile].into_iter().collect(), ..ProjectReport::default() };
+        let settings = ProjectSettings::default();
+        let input = build_input(&python_rules, &project_rules, &project_wired, &project, &settings);
+
+        let report = build(&input);
+
+        assert_eq!(report.judged_rules, vec!["DOEFF016", "DOEFF110", "DOEFF128", "NOQA001"]);
+        assert!(report.rules.iter().any(|r| r.rule == "DOEFF166"), "rules[] は有効な規則の一覧のまま");
+        // Python の規則が無ければ NOQA001 も出ない(lint_source を走らせない)。
+        let input = build_input(&[], &project_rules, &project_wired, &project, &settings);
+        assert_eq!(build(&input).judged_rules, vec!["DOEFF110", "DOEFF128"]);
+        // JSON では一番上の欄 judged_rules。
+        let json = serde_json::to_value(build(&input)).unwrap();
+        assert_eq!(json["judged_rules"], serde_json::json!(["DOEFF110", "DOEFF128"]));
+    }
+
+    #[test]
     fn rule_list_has_title_and_family_for_layer_python_and_law_entries() {
         let python_rules = vec!["DOEFF001".to_string()];
         let mut project_rules = BTreeSet::new();
         project_rules.insert(ProjectRule::DefnForbidden); // DOEFF110
         let project_wired = BTreeSet::new();
-        let project = ProjectReport { findings: Vec::new(), modules: Vec::new(), errors: Vec::new(), notes: Vec::new(), semantic: None, world: None };
+        let project = ProjectReport::default();
         let mut settings = ProjectSettings::default();
         settings.laws.push(LawSpec {
             name: "no-針-law".to_string(),

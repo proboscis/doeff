@@ -8,7 +8,7 @@
 | 呼び出し | 意味 |
 |---|---|
 | `doeff-linter --output-format editor-json [<path>…]` | repo 全体を判じる。path を渡すと、その下の file の違反と module だけを出す(判定は全体で行う) |
-| `doeff-linter --output-format editor-json --stdin --path <file>` | stdin の内容を `<file>` として判じる(保存前の内容)。出すのはその file の違反と module だけ |
+| `doeff-linter --output-format editor-json --stdin --path <file>` | stdin の内容を `<file>` として判じる(保存前の内容)。出すのはその file の違反と module だけ。repo 全体でだけ判じる規則は走らせない(判じた規則は `judged_rules` が名乗る — 2 節) |
 | `doeff-linter --output-format editor-json --semantic <file>` | 保存した `<file>` の定義を Jev に問うて判じる(意味の規則 — 10 節) |
 | `doeff-linter --output-format editor-json --stdin --path <file> --semantic --semantic-changed` | stdin の内容の定義のうち、中身が変わった定義(cache に答えの無い定義)だけを Jev に問う。書きかけで読めない定義は問わない(エディタが編集中に打つのが止まった時) |
 | `--config <file>` | 設定 file。`[tool.doeff-linter]` を持つ pyproject.toml の形でも、節の中身だけの TOML でもよい |
@@ -100,11 +100,12 @@ warning の違反 **DOEFF100**(設定の知らない鍵)を出す(agora-redesign
      "service": "kanban",                     // 置き場の `*` の段に当たった service(層が先の形なら null)
      "layer_reason": "path の置き場所で決めた — controllers/core/ の下は層 core(…)。タグの role = program もこの層の役"}
   ],
-  "rules": [                                 // 走らせた規則と、針の無い law
+  "rules": [                                 // 有効な規則と、針の無い law(この実行で判じたかは judged_rules)
     {"rule": "DOEFF101", "adr": "ADR-…", "statement": "core-imports-only-intent: …", "wired": true,
      "title": "層の向きに逆らう import",      // 短い日本語の名(違反の形)
      "family": "layer"}                       // 規則の家族(layer・tags・raw・naming・place・definition・class・wire・smell・jev・python・law)
   ],
+  "judged_rules": ["DOEFF016", "DOEFF101", "NOQA001"],  // この実行で判じた規則の ID(辞書順・契約の更新 8)— 下の説明
   "errors": [],                              // 読めなかった file・登録簿・目録の理由
   "new_critical": null                       // --baseline-report の時だけ: 基点に無い critical の識別子の列(1 節「基点との比べ」)
 }
@@ -124,6 +125,20 @@ warning の違反 **DOEFF100**(設定の知らない鍵)を出す(agora-redesign
 - `severity` は下げた後の重さ、`base_severity` は規則そのものの重さ。登録簿に載った error は `registered_severity`(既定 warning)、
   載った warning は info、照合中の規則は info に下がる。エディタはこの 2 つと `standing` で「重い規則の破れが新しい分・既知の分で何件残るか」
   を数える(下げた理由の判定は linter が持つ)。Python の文ごとの規則は下げないので 2 つは同じで `standing` は `new`。
+
+- `judged_rules`(契約の更新 8・agora-redesign #2163): この実行で判じた規則の ID(辞書順・重ねない)。判じた = その規則の当たりを
+  出し切った(0 件の規則も載る)。`violations` の規則はどれもこの列に入る。
+  - 全体の実行: 有効な規則の全部。path を名指した全体の実行は DOEFF166(登録簿の当たらない行)だけを除く(当たる所見が名指しの外に在りうる)。
+  - 1 file の実行(`--stdin --path`): Python の文ごとの規則の全部と、層の規則のうち 1 file で判じると規則が名乗る物
+    (`ProjectRule::judged_on_one_file`)。偽の規則 — 当たりが architecture.hy・登録簿の行・宣言した `:files` の群に付く規則
+    (DOEFF117・141・147〜149・159〜163・166)、定義の graph を repo 全体で辿る規則(DOEFF132・133・136・137・143・155〜158・164・165・167)、
+    1 file の枝をまだ持たない規則(DOEFF135・146)— は走らせず、この列に載らない。
+  - Python の規則を走らせる実行は noqa の書き方の知らせ `NOQA001` も載せる。設定の知らない鍵 DOEFF100 と読めない Hy の file DOEFF128 は、
+    有効な規則の一覧に関わらず両方の実行で載る。
+  - エディタは 1 file の実行の結果で、この列の規則の違反だけをその file について差し替え、列に無い規則の違反は全体の実行の結果のまま残す。
+    欄の無い古い出力は今までどおり file の違反を全部差し替える。
+  - `rules[]` の欄にしないのは、`rules[]` が有効な規則の一覧で、その外で出る違反の規則(NOQA001・enable に無くても出す DOEFF100 / DOEFF128)
+    を持たないため。版は上げない(欄の追加 — 版を上げると、版 1・2 だけを読む古いエディタが出力の全体を捨てて違反の欄が空になる)。
 
 - `signatures`・`bindings`(版 2): `--stdin` の Hy の file の defk / deff の見出しと束縛の型。全体の実行では空の列。形と読み方は 16 節。
 - `rewrites`(版 2 への欄の追加): `--stdin` の Hy の file の、定義の本体の呼びを `f(a, b)` の形で見せる表示の置き換え。全体の実行では空の列。17 節。

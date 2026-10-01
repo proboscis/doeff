@@ -2654,6 +2654,17 @@ fn world_handler_rules_cover_files_outside_the_layers() {
     let found = violation(&report, "services/record/main.hy::DOEFF131::run::world::doeff_core_effects.os_file:os-file-handler");
     assert!(found["message"].as_str().unwrap().contains("層の置き場の外"), "{}", found["message"]);
     assert_eq!(found["level"], "critical");
+
+    // agora-redesign #2163: 1 file の実行(--stdin)も層の置き場の外の file に 106・131 を当て、全体の実行と同じ当たりを出す — 1 file の
+    // 実行がこの 2 つを判じると名乗る(judged_rules)ので、エディタは全体の結果をこの結果で差し替える。
+    let main = dir.path().join("services/record/main.hy");
+    let text = std::fs::read_to_string(&main).unwrap();
+    let (_, stdout, stderr) = run(dir.path(), &["--output-format", "editor-json", "--no-log", "--stdin", "--path", main.to_str().unwrap()], Some(&text));
+    let single: Value = serde_json::from_str(&stdout).unwrap_or_else(|e| panic!("JSON でない({}): {}\n{}", e, stdout, stderr));
+    assert_eq!(keys(&single, "DOEFF106"), vec!["services/record/main.hy::DOEFF106::serve::threading.Thread"], "{}", single);
+    assert_eq!(keys(&single, "DOEFF131"), keys(&report, "DOEFF131"), "{}", single);
+    let judged: Vec<&str> = single["judged_rules"].as_array().unwrap().iter().map(|r| r.as_str().unwrap()).collect();
+    assert!(judged.contains(&"DOEFF106") && judged.contains(&"DOEFF131"), "{:?}", judged);
 }
 
 /// agora-redesign #1143(R5): service の entry の層の定義に、模擬の環境(:verification-environment)の下の deftest が 1 本も届かなければ
@@ -4412,6 +4423,45 @@ fn registry_keys_that_no_longer_hit_are_errors_only_for_rules_judged_on_the_whol
     let off = stale_registry_repo(&["app/core/x.hy::bare-needs-reason::gone"], "", "\"DOEFF110\", \"DOEFF111\"");
     let (_, report) = editor(off.path());
     assert!(keys(&report, "DOEFF166").is_empty());
+}
+
+/// editor-json の一番上の欄 judged_rules(この実行で判じた規則の ID)を読む。
+fn judged_rules(report: &Value) -> Vec<String> {
+    report["judged_rules"].as_array().unwrap_or_else(|| panic!("judged_rules が無い: {}", report)).iter().map(|r| r.as_str().unwrap().to_string()).collect()
+}
+
+#[test]
+fn a_single_file_run_names_the_rules_it_judged_and_leaves_out_rules_judged_only_on_the_whole_repo() {
+    // agora-redesign #2163: 1 file の実行(--stdin --path)は DOEFF166 を判じない — judged_rules に載せず、エディタはその違反を全体の
+    // 実行の結果のまま残す。全体の実行は載せる。どちらの実行も、出した違反の規則は全部 judged_rules に在る。
+    let dir = stale_registry_repo(&["app/core/x.hy::bare-needs-reason::gone"], "", "\"DOEFF110\", \"DOEFF111\", \"DOEFF166\"");
+    let (_, whole) = editor(dir.path());
+    assert!(!keys(&whole, "DOEFF166").is_empty(), "全体の実行は当たらない行を出す: {}", whole);
+    let whole_judged = judged_rules(&whole);
+    for rule in ["DOEFF110", "DOEFF111", "DOEFF166"] {
+        assert!(whole_judged.iter().any(|r| r == rule), "全体の実行は {} を判じる: {:?}", rule, whole_judged);
+    }
+
+    let path = dir.path().join("app/core/x.hy");
+    let text = std::fs::read_to_string(&path).unwrap();
+    let (_, stdout, stderr) = run(dir.path(), &["--output-format", "editor-json", "--no-log", "--stdin", "--path", path.to_str().unwrap()], Some(&text));
+    let single: Value = serde_json::from_str(&stdout).unwrap_or_else(|e| panic!("JSON でない({}): {}\n{}", e, stdout, stderr));
+    let single_judged = judged_rules(&single);
+    assert!(!single_judged.iter().any(|r| r == "DOEFF166"), "1 file の実行は 166 を判じない: {:?}", single_judged);
+    assert!(single_judged.iter().any(|r| r == "DOEFF110") && single_judged.iter().any(|r| r == "DOEFF111"), "{:?}", single_judged);
+    assert!(!keys(&single, "DOEFF110").is_empty(), "1 file の実行も 110 を判じて出す: {}", single);
+    // rules[] は有効な規則の一覧のまま(166 も wired で載る)— 判じたかは judged_rules が名乗る。
+    assert!(single["rules"].as_array().unwrap().iter().any(|r| r["rule"] == "DOEFF166" && r["wired"] == true), "{}", single["rules"]);
+    // 名指しの path の全体の実行も 166 だけを判じない。
+    let (_, stdout, _) = run(dir.path(), &["--output-format", "editor-json", "--no-log", "app/core/x.hy"], None);
+    let named: Value = serde_json::from_str(&stdout).unwrap();
+    assert!(!judged_rules(&named).iter().any(|r| r == "DOEFF166"), "{:?}", judged_rules(&named));
+    for report in [&whole, &single, &named] {
+        let judged = judged_rules(report);
+        for v in report["violations"].as_array().unwrap() {
+            assert!(judged.iter().any(|r| r == v["rule"].as_str().unwrap()), "違反の規則 {} が judged_rules に無い: {:?}", v["rule"], judged);
+        }
+    }
 }
 
 /// repo 全体を editor-json で、`--enable` に rules を渡して走らせる。

@@ -67,7 +67,7 @@ pub fn lint_source(
     for warning in &noqa.warnings {
         let offset = line_to_offset(source, warning.line);
         result.violations.push(Violation::new(
-            "NOQA001".to_string(),
+            noqa::NOQA_RULE_ID.to_string(),
             format!("{}\n  Suggestion: {}", warning.message, warning.suggestion),
             offset,
             file_path.to_string(),
