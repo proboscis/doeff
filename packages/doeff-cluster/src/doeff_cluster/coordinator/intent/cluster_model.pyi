@@ -190,8 +190,39 @@ class EventsView:
     events: tuple[AuditEvent, ...]
 
 @dataclass(frozen=True, kw_only=True)
+class ServiceView:
+    job: ClusterJob
+    resource_version: int | None
+
+@dataclass(frozen=True, kw_only=True)
+class WorkerView:
+    info: WorkerInfo
+    silent_ms: int
+    live: bool
+    draining: bool
+
+@dataclass(frozen=True, kw_only=True)
+class StatusView:
+    report: WorkerReport
+    stale: bool
+
+@dataclass(frozen=True, kw_only=True)
+class StateView:
+    now: int
+    services: tuple[ServiceView, ...]
+    workers: tuple[WorkerView, ...]
+    placements: dict[str, Placement]
+    unplaced: dict[str, str]
+    statuses: dict[str, StatusView]
+    tasks: tuple[TaskRecord, ...]
+    board_keys: int
+    surges: dict[str, Placement]
+    events: tuple[object, ...]
+    revision: int
+
+@dataclass(frozen=True, kw_only=True)
 class StateReply:
-    view: dict[str, object]
+    view: StateView
     audit: tuple[AuditEvent, ...]
     drains: dict[str, object]
 
