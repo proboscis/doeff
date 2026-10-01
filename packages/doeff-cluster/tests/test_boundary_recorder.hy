@@ -172,7 +172,7 @@
 ;; --- 1. mode ごとの記録係 ---------------------------------------------------------------------------
 
 (deftest test-off-mode-places-no-recorder
-  (<- handlers list (with-handlers [(reader {RECORD-MODE-KEY "off"})] (boundary-recorder)))
+  (<- handlers list (with-handlers [(reader {RECORD-MODE-KEY "off"})] (boundary-recorder HOST-CONTRACT)))
   (assert (= handlers []) handlers))
 
 
@@ -184,7 +184,7 @@
                                              HOST-CONTRACT.run-context-key ctx
                                              HOST-CONTRACT.program-key (+ "/state/programs/" SAMPLE-SHA ".json")
                                              HOST-CONTRACT.versions-key {"doeff" "9.9.9"}})]
-                                   (boundary-recorder)))
+                                   (boundary-recorder HOST-CONTRACT)))
   (assert (= (len handlers) 1) handlers)
   ;; 置き場の口は 500 行たまると送る — 600 の読みで送りを 1 度は試みて断られ、業務の答えはそのまま返る(記録は貯め続ける)。
   (<- total int (with-handlers [(sim-time-handler :clock (SimClock)) #* (board-handlers {"row/0" 1 "row/1" 2}) #* handlers] (read-rows 600)))
@@ -201,7 +201,7 @@
   (val log (EffectLog sink {"service" "rows" "run" "r1"} :strict True))
   (<- recorded int (with-handlers [(sim-time-handler :clock (SimClock)) #* (board-handlers {"row/0" 1 "row/1" 2}) (effect-recorder log)] (read-rows 4)))
   (val state (ReplayState (read-recording sink.lines)))
-  (<- handlers list (with-handlers [(reader {RECORD-MODE-KEY "replay" REPLAY-STATE-KEY state})] (boundary-recorder)))
+  (<- handlers list (with-handlers [(reader {RECORD-MODE-KEY "replay" REPLAY-STATE-KEY state})] (boundary-recorder HOST-CONTRACT)))
   (assert (= (len handlers) 1) handlers)
   ;; 外の世界(fake の盤)を置かずに、記録の答えだけで同じ答えになり、渡した状態の出来事を使い切る。
   (<- replayed int (with-handlers handlers (read-rows 4)))
@@ -214,7 +214,7 @@
 (deftest test-an-unknown-mode-is-refused-with-the-known-modes
   (var refused None)
   (try
-    (<- (with-handlers [(reader {RECORD-MODE-KEY "sideways"})] (boundary-recorder)))
+    (<- (with-handlers [(reader {RECORD-MODE-KEY "sideways"})] (boundary-recorder HOST-CONTRACT)))
     (except [error ValueError]
       (:= refused (str error))))
   (assert (is-not refused None) "知らない mode は ValueError")
@@ -226,11 +226,11 @@
   ;; 本番の土台が environ を読む handler((environ-reader) — 環境に無い鍵は外へ通す)で答える形。宣言の :environ に RECORD-MODE-KEY が
   ;; 無ければ、黙って off にせず答えの無い effect で落ちる。
   (.delenv monkeypatch RECORD-MODE-KEY :raising False)
-  (<- no-mode str (unanswered (with-handlers [(environ-reader)] (boundary-recorder))))
+  (<- no-mode str (unanswered (with-handlers [(environ-reader)] (boundary-recorder HOST-CONTRACT))))
   (assert (in RECORD-MODE-KEY no-mode) no-mode)
   ;; replay を選んでも、状態(REPLAY-STATE-KEY)に答えるのは再生の道具だけ — 本番の宿で replay を選ぶと落ちる。
   (.setenv monkeypatch RECORD-MODE-KEY "replay")
-  (<- no-state str (unanswered (with-handlers [(environ-reader)] (boundary-recorder))))
+  (<- no-state str (unanswered (with-handlers [(environ-reader)] (boundary-recorder HOST-CONTRACT))))
   (assert (in REPLAY-STATE-KEY no-state) no-state))
 
 

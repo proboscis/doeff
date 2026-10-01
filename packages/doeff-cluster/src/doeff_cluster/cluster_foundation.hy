@@ -26,7 +26,7 @@
 (import .shared_handlers [shared-http])
 (import doeff_cluster.shared.core.clock [now-epoch-ms])
 (import doeff_cluster.shared.protocol.coordinator_route [CoordinatorRoute RouteCell RouteOptions route-of])
-(import doeff_cluster.foundation.coordinator_http [REPLY-SECONDS CONNECT-SECONDS PREFERRED-RECHECK-SECONDS IDEMPOTENT-DEADLINE-SECONDS default-actor])
+(import doeff_cluster.foundation.coordinator_http [REPLY-SECONDS CONNECT-SECONDS PREFERRED-RECHECK-SECONDS IDEMPOTENT-DEADLINE-SECONDS RESEND-PAUSE-SECONDS default-actor])
 (import doeff_cluster.shared.core.semaphore_handlers [cluster-semaphore SemaphoreSession])
 (import doeff_cluster.shared.core.lease_rules [lease-holder])
 (import doeff_cluster.shared.protocol.remote [remote-cluster TaskSender])
@@ -43,7 +43,7 @@
 (defk coordinator-route-options []
   {:pre [] :post [(: % RouteOptions)] :tags {:context "doeff-cluster" :role "foundation"}}
   "coordinator への宛先の部品の送り方(返事の上限・一巡し直す回数・先頭を試し直す間・書きの送り手)を、この process の値で作るため。"
-  (RouteOptions :reply-seconds REPLY-SECONDS :connect-seconds CONNECT-SECONDS :connect-retries 4 :recheck-ms (int (* PREFERRED-RECHECK-SECONDS 1000))
+  (RouteOptions :reply-seconds REPLY-SECONDS :connect-seconds CONNECT-SECONDS :resend-deadline-seconds IDEMPOTENT-DEADLINE-SECONDS :resend-pause-seconds RESEND-PAUSE-SECONDS :connect-retries 4 :recheck-ms (int (* PREFERRED-RECHECK-SECONDS 1000))
                 :actor (default-actor)))
 
 

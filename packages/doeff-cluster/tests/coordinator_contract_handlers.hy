@@ -67,6 +67,7 @@
 (import tests.env_fixtures [LOCK env-of])
 (import tests.program_rows [SAMPLE-RUN])
 (import tests.board_fake [board-handlers])
+(import doeff_cluster.foundation.coordinator_http [IDEMPOTENT-DEADLINE-SECONDS RESEND-PAUSE-SECONDS])
 
 (val COORDINATOR "http://coordinator")
 ;; 報告の送り手が名乗る Service(本物の側では coordinator に宣言してある — 無い Service の報告は coordinator が 404 で断る)。
@@ -235,7 +236,7 @@
                 (HttpResponse answer.status-code (dict answer.headers) answer.content answer.text url 0.0)))))
 
 
-(val CONTRACT-ROUTE (RouteOptions :reply-seconds 15.0 :connect-seconds 2.0 :connect-retries 4 :recheck-ms 60000 :actor "c-contract"))
+(val CONTRACT-ROUTE (RouteOptions :reply-seconds 15.0 :connect-seconds 2.0 :resend-deadline-seconds IDEMPOTENT-DEADLINE-SECONDS :resend-pause-seconds RESEND-PAUSE-SECONDS :connect-retries 4 :recheck-ms 60000 :actor "c-contract"))
 
 
 (deff declared-coordinator [#^ SimClock clock]  ; defk にできない: 組み立て(Program を走らせる前)が呼ぶ Program の外の準備
@@ -371,7 +372,7 @@
    "remote-cluster" (partial under-rig False)
    "remote-cluster-env" (partial under-rig True)
    "warm-cluster" (partial under-coordinator
-                           (fn [transport] [(warm-cluster (contract-route) CONTRACT-ROUTE WARM-DEADLINE-SECONDS)]))
+                           (fn [transport] [(warm-cluster (contract-route) (replace CONTRACT-ROUTE :resend-deadline-seconds WARM-DEADLINE-SECONDS))]))
    "sim-cluster" (partial under-sim False)
    "sim-cluster-env" (partial under-sim True)
    "scheduled" (partial under-clock (fn [] []))

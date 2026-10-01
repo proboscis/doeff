@@ -11,7 +11,6 @@
 (val MODULE-TAGS {:context "doeff-cluster" :role "protocol"})
 (require doeff-hy.record [defrecord])
 (import dataclasses [dataclass])  ; defrecord の展開が名指す
-(import doeff_cluster.foundation.coordinator_http [IDEMPOTENT-DEADLINE-SECONDS RESEND-PAUSE-SECONDS])
 (import doeff_cluster.shared.protocol.coordinator_route [RouteCell RouteOptions RoutedReply routed-request resent-request answer-json])
 (import doeff_time [Delay])
 (import doeff [run])
@@ -54,7 +53,7 @@
    answer-json・detached-cluster は detached-refusal)。"
   (val sha (program-sha blob))
   (<- reply RoutedReply (resent-request cell.route "PUT" (+ "/programs/" sha) options None {"blob" blob "versions" versions}
-                                        deadline-seconds RESEND-PAUSE-SECONDS))
+                                        deadline-seconds options.resend-pause-seconds))
   (setv cell.route reply.route)
   #(sha reply.answer))
 
@@ -65,7 +64,7 @@
    :post [(: % str)] :tags {:context "doeff-cluster" :role "protocol"}}
   "task を 1 本出すため: 詰めた Program を置き場に先に置き(program-put)、本文は sha だけを運ぶ POST /tasks を送る。書きなので送り直しは
    接続の段だけ(routed-request)。答え = coordinator の振った task の id。"
-  (<- put tuple (program-put cell options blob sender.versions IDEMPOTENT-DEADLINE-SECONDS))
+  (<- put tuple (program-put cell options blob sender.versions options.resend-deadline-seconds))
   (setv #(sha stored) put)
   (<- _stored (answer-json stored))
   (val body (task-submit-body sha sender.revision needs name lease-seconds sender.runtime-env environ))
@@ -80,7 +79,7 @@
   "task の今の様子を問い合わせるため(GET /tasks/<id> — 問い合わせが lease を延ばす。呼び手が止まれば問い合わせも止まり、coordinator が
    task を落とす)。読みなので失敗は期限まで送り直す。"
   (<- reply RoutedReply (resent-request cell.route "GET" (+ "/tasks/" task) options None None
-                                        IDEMPOTENT-DEADLINE-SECONDS RESEND-PAUSE-SECONDS))
+                                        options.resend-deadline-seconds options.resend-pause-seconds))
   (setv cell.route reply.route)
   (<- view dict (answer-json reply.answer))
   view)

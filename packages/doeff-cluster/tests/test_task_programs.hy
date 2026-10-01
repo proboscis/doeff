@@ -43,6 +43,7 @@
 (import doeff_cluster.coordinator.core.cluster_policy [JOB-ENTRY])
 (import tests.program_rows [SAMPLE-TASK-PROGRAM program-placed])
 (import tests.fixtures.entry_programs [based-add])
+(import doeff_cluster.foundation.coordinator_http [IDEMPOTENT-DEADLINE-SECONDS RESEND-PAUSE-SECONDS])
 
 (val T (ClusterTiming))
 (val V {"python" "3.14.0" "doeff" "1"})
@@ -281,7 +282,7 @@
   found)
 
 
-(val SEND-OPTIONS (RouteOptions :reply-seconds 15.0 :connect-seconds 2.0 :connect-retries 4 :recheck-ms 60000 :actor "served-task-program"))
+(val SEND-OPTIONS (RouteOptions :reply-seconds 15.0 :connect-seconds 2.0 :resend-deadline-seconds IDEMPOTENT-DEADLINE-SECONDS :resend-pause-seconds RESEND-PAUSE-SECONDS :connect-retries 4 :recheck-ms 60000 :actor "served-task-program"))
 
 
 (defk over-network [program]
