@@ -22,7 +22,7 @@
 (import doeff_core_effects.effects [Get])
 (import doeff_core_effects.sql_effects [SqlQuery SqlInsertRows SqlTransaction SqlEnsureTables SetSqlOutage SqlParam SqlRows SqlFailed
                                         SqlUnreachable SqlSchemaApplied SqlTransactionMisuse SqlTable SqlColumn SqlColumnType SqlIndex
-                                        normalized-value])
+                                        normalized-value normalized-rows split-statement])
 (import doeff_core_effects.sqlite_sql [sqlite-sql-handler sqlite-statement sqlite-failure])
 (import doeff_core_effects.postgres_sql [postgres-sql-handler postgres-statement postgres-insert-statement postgres-failure
                                          postgres-schema-statements PostgresDatabase PostgresConnections PostgresTimeouts])
@@ -111,6 +111,32 @@
     (assert False "閉じた集合の外の値が通った")
     (except [TypeError]))
   (assert (= (! (normalized-value (Decimal "2"))) 2)))
+
+
+(deftest test-a-remembered-split-still-checks-each-call-and-keeps-values-in-order
+  ;; 同じ文の 2 度目は覚えた割り(同じ tuple)を使う — それでも呼びごとの params は検め、値は `?` の順に並ぶ(agora-redesign #2423)。
+  (val statement "SELECT :b, :a, :b, ':a' -- :c")
+  (<- first (split-statement statement))
+  (<- again (split-statement statement))
+  (assert (is first again) "同じ文の 2 度目が覚えた割りを返していない")
+  (<- bound (sqlite-statement statement #((SqlParam :name "a" :value 1) (SqlParam :name "b" :value "x"))))
+  (assert (= #(bound.text bound.values) #("SELECT ?, ?, ?, ':a' -- :c" #("x" 1 "x"))) bound)
+  (try
+    (<- (sqlite-statement statement #((SqlParam :name "a" :value 1))))
+    (assert False "覚えた文で params の欠けが通った")
+    (except [ValueError])))
+
+
+(deftest test-plain-rows-pass-through-and-other-values-are-still-normalized
+  ;; 値の型が閉じた集合そのものの行は写すだけ・それ以外の型が混じる行は今までどおり normalized-value を通る(agora-redesign #2423)。
+  (<- plain (normalized-rows [#(1 "a" 1.5 b"x" True None)]))
+  (assert (= plain #(#(1 "a" 1.5 b"x" True None))) plain)
+  (<- mixed (normalized-rows [#(1 (Decimal "2.5") (bytearray b"y"))]))
+  (assert (= mixed #(#(1 2.5 b"y"))) mixed)
+  (try
+    (<- (normalized-rows [#(1 (object))]))
+    (assert False "写す決まりの無い型が通った")
+    (except [TypeError])))
 
 
 ;; --- 失敗の 2 型 ------------------------------------------------------------------------------------------------------------

@@ -56,6 +56,9 @@
 
 ;; 引数と行の値の閉じた集合(bool は int の下位の型なので先に並べる)。
 (val SQL-VALUE-TYPES #(bool int float str bytes (type None)))
+;; 値の型そのもの(subclass を含まない)が閉じた集合の型である印 — normalized-rows が呼びを省く判定に使う(enum の値のような subclass は
+;; normalized-value の match へ回す)。
+(val PLAIN-VALUE-TYPES (frozenset SQL-VALUE-TYPES))
 
 ;; 同じ閉じた集合の型の別名(呼び手が注記に使う名 — 型の宣言 sql_effects.pyi の SqlValue と同じ物)。
 (val SqlValue (| int float str bytes bool None))
@@ -185,21 +188,35 @@
   (#^ str name))
 
 
+;; 文の割りの覚え(文 → 割った並び)。割りは文だけで決まる純粋な計算で、答えは凍った record の tuple なので同じ物を何度返しても
+;; 呼び手は書き換えられない。問い合わせの文は code の literal でほぼ決まった数なので、SPLIT-MEMO-LIMIT 個で覚えるのを止める(組み立てた
+;; 文が限りなく増えても memory は増えない — 止めた後は毎回割る)。dict の get / 代入は 1 つずつ不可分なので、thread が重なっても同じ文を
+;; 2 度割るだけで食い違わない(agora-redesign #2423 — SqlQuery 1 つ約 100 µs のうち割りが約 2 割)。
+(val SPLIT-MEMO-LIMIT 4096)
+(val SPLIT-MEMO {})
+
+
 (defk split-statement [statement]
   {:pre [(: statement str)] :post [(: % tuple)]
    :tags {:context "sql" :role "foundation"}}
-  "中立の記法の文を、文の部分(SqlText)と引数(SqlPlaceholder)の並びに割るため(文字列の literal・引用した名・注釈・`::` は文の部分)。"
-  (var parts [])
+  "中立の記法の文を、文の部分(SqlText)と引数(SqlPlaceholder)の並びに割るため(文字列の literal・引用した名・注釈・`::` は文の部分)。
+   同じ文の 2 度目からは覚えた並びを返す(SPLIT-MEMO の註)。"
+  (val remembered (.get SPLIT-MEMO statement))
+  (when (is-not remembered None)
+    (return remembered))
+  (var parts #())
   (var pending "")
   (for [found (.finditer TOKEN statement)]
     (val name (.group found "name"))
     (if (is name None)
         (:= pending (+ pending (.group found 0)))
-        (do (when pending (.append parts (SqlText :text pending)))
+        (do (when pending (:= parts (+ parts #((SqlText :text pending)))))
             (:= pending "")
-            (.append parts (SqlPlaceholder :name name)))))
-  (when pending (.append parts (SqlText :text pending)))
-  (tuple parts))
+            (:= parts (+ parts #((SqlPlaceholder :name name)))))))
+  (when pending (:= parts (+ parts #((SqlText :text pending)))))
+  (when (< (len SPLIT-MEMO) SPLIT-MEMO-LIMIT)
+    (setv (get SPLIT-MEMO statement) parts))
+  parts)
 
 
 (defk checked-params [parts params]
@@ -276,7 +293,10 @@
 (defk normalized-rows [rows]
   {:pre [(: rows #(list tuple))] :post [(: % tuple)]
    :tags {:context "sql" :role "foundation"}}
-  "driver の行の列を SqlRows の rows(値を正規化した tuple の tuple)へ写すため。"
+  "driver の行の列を SqlRows の rows(値を正規化した tuple の tuple)へ写すため。全部の値の型が閉じた集合の型そのもの
+   (PLAIN-VALUE-TYPES — normalized-value でも同じ値のまま)なら、値 1 つごとに呼ばずに写す(sqlite の答えはいつもこの形・agora-redesign #2423)。"
+  (when (all (gfor row rows (all (gfor value row (in (type value) PLAIN-VALUE-TYPES)))))
+    (return (tuple (gfor row rows (tuple row)))))
   (var normalized [])
   (for [row rows]
     (var values [])

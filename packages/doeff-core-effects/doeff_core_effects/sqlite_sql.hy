@@ -55,17 +55,13 @@
 (defk sqlite-statement [statement params]
   {:pre [(: statement str) (: params tuple)] :post [(: % SqliteStatement)]
    :tags {:context "sql" :role "foundation"}}
-  "中立の記法の文を sqlite の `?` の文へ書き換えるため(引数の名の食い違いは ValueError)。"
+  "中立の記法の文を sqlite の `?` の文へ書き換えるため(引数の名の食い違いは ValueError)。値は名から 1 度で引く表で `?` の順に並べる
+   (checked-params の後なので、文の引数の名は全部 params に在る — 引数 1 つごとに param-value を呼ぶ費用を省く・agora-redesign #2423)。"
   (<- parts (split-statement statement))
   (<- (checked-params parts params))
-  (var text "")
-  (var values [])
-  (for [part parts]
-    (match part
-      (SqlText :text piece) (:= text (+ text piece))
-      (SqlPlaceholder :name name) (do (:= text (+ text "?"))
-                                      (.append values (! (param-value params name))))))
-  (SqliteStatement :text text :values (tuple values)))
+  (val by-name (dfor p params p.name p.value))
+  (SqliteStatement :text (.join "" (gfor part parts (if (isinstance part SqlPlaceholder) "?" part.text)))
+                   :values (tuple (gfor part parts :if (isinstance part SqlPlaceholder) (get by-name part.name)))))
 
 
 (defk sqlite-failure [class-names message]
@@ -264,31 +260,33 @@
   {:tags {:context "sql" :role "foundation"}}
   (session var connections #())
   (session var unreachable #())
+  ;; 接続の置き場は開いた時だけ書き直す — with-connection は接続が在れば同じ tuple を返すので、毎回の書き(session の値の Put)は要らない
+  ;; (agora-redesign #2423)。
   (SetSqlOutage [database down] :when (in database databases)
     (<- marked (outage-marked unreachable database down))
     (:= unreachable marked)
     (resume None))
   (SqlQuery [database statement params] :when (in database databases)
     (<- opened (with-connection connections database))
-    (:= connections opened)
+    (when (is-not opened connections) (:= connections opened))
     (<- connection (connection-of connections database))
     (<- answer (sqlite-answer-query connection unreachable (SqlQuery database statement params)))
     (resume answer))
   (SqlInsertRows [database table columns rows] :when (in database databases)
     (<- opened (with-connection connections database))
-    (:= connections opened)
+    (when (is-not opened connections) (:= connections opened))
     (<- connection (connection-of connections database))
     (<- answer (sqlite-answer-insert connection unreachable (SqlInsertRows database table columns rows)))
     (resume answer))
   (SqlEnsureTables [database tables] :when (in database databases)
     (<- opened (with-connection connections database))
-    (:= connections opened)
+    (when (is-not opened connections) (:= connections opened))
     (<- connection (connection-of connections database))
     (<- answer (sqlite-answer-tables connection unreachable database tables))
     (resume answer))
   (SqlTransaction [database program lock-key] :when (in database databases)
     (<- opened (with-connection connections database))
-    (:= connections opened)
+    (when (is-not opened connections) (:= connections opened))
     (<- connection (connection-of connections database))
     (<- answer (sqlite-answer-transaction connection unreachable database program))
     (resume answer)))
