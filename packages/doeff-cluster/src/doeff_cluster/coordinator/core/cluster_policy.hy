@@ -12,7 +12,7 @@
 (import doeff_cluster.shared.intent.job_model [JobSpec])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming Request BodyInvalid])
 (import doeff_cluster.shared.core.capabilities [capabilities-of environ-pairs])
-(import doeff_cluster.coordinator.intent.cluster_model [ClusterJob WorkerInfo GenerationOrder Placement ClusterState TaskRecord Drain EnvFailed WarmEntry HandoffPhase RefusedJob UnplacedKind ACCEPTED-FORMATS PLACED-PHASES ProgramRow])
+(import doeff_cluster.coordinator.intent.cluster_model [ClusterJob WorkerInfo GenerationOrder Placement ClusterState TaskRecord Drain EnvFailed WarmEntry HandoffPhase RefusedJob UnplacedKind ACCEPTED-FORMATS PLACED-PHASES ProgramRow ResourceMeta])
 (import doeff_cluster.coordinator.core.cluster_rules [component-versions-of format-version-refusal])
 (import doeff_cluster.coordinator.intent.request_bodies [LeaseBody TaskResultBody BoardWrite HeartbeatBody EnvsReport TaskBody])
 (import doeff_cluster.coordinator.core.cluster_json [task-record-to-json task-record-from-json handoff-watch-from-json required-field int-field])
@@ -231,7 +231,7 @@
    "tasks" (lfor t (.values state.tasks) (task-record-to-json t))
    "nextTask" state.next-task
    "taskPrefix" state.task-prefix
-   "meta" state.meta
+   "meta" (dfor #(k m) (.items state.meta) k (resource-meta-to-json m))
    "revision" state.revision
    "audit" (list state.audit)
    "auditSeq" state.audit-seq
@@ -260,6 +260,25 @@
   "heartbeat の本文・保存の形の bootAt(process の起動時刻・epoch ms)。整数でない値(欄の無い旧い worker を含む)は知らない = None。"
   (setv value (.get body "bootAt"))
   (if (and (isinstance value int) (not (isinstance value bool))) value None))
+
+
+(defn #^ dict resource-meta-to-json [#^ ResourceMeta meta]
+  "資源の版の記録 → 保存の JSON の形(state file と durable の KV が使う — #2447 の前の形と同じ)。"
+  {"resourceVersion" meta.resource-version "generation" meta.generation "createdBy" meta.created-by "createdMs" meta.created-ms
+   "updatedBy" meta.updated-by "updatedMs" meta.updated-ms})
+
+
+(defn #^ ResourceMeta resource-meta-from-json [#^ dict data]
+  "保存の JSON の形 → 資源の版の記録(resource-meta-to-json の逆)。"
+  (ResourceMeta :resource-version (int (get data "resourceVersion")) :generation (int (get data "generation"))
+                :created-by (str (.get data "createdBy" "")) :created-ms (int (.get data "createdMs" 0))
+                :updated-by (str (.get data "updatedBy" "")) :updated-ms (int (.get data "updatedMs" 0))))
+
+
+(defn #^ (| int None) resource-version-of [#^ ClusterState state #^ str key]
+  "資源 key(<種類>/<名>)の今の版(版の記録が無ければ None)。"
+  (setv meta (.get state.meta key))
+  (if (is meta None) None meta.resource-version))
 
 
 (defn #^ dict program-row-to-json [#^ ProgramRow row]
@@ -319,7 +338,7 @@
     :board (if (is board None) (.get data "board" {}) board)
     :board-versions (or board-versions (dfor k (.get data "board" {}) k 1))
     :board-sizes (dfor #(k v) (.items (if (is board None) (.get data "board" {}) board)) k (value-size v))
-    :meta (.get data "meta" {})
+    :meta (dfor #(k v) (.items (.get data "meta" {})) k (resource-meta-from-json v))
     :revision (.get data "revision" 0)
     :audit (tuple (.get data "audit" []))
     :audit-seq (.get data "auditSeq" 0)
@@ -1251,7 +1270,7 @@
 (defn #^ dict state-view [#^ ClusterState state #^ int now #^ ClusterTiming timing]
   {"now" now
    "jobs" (lfor j state.jobs (| (job-to-json j)
-                                {"resourceVersion" (.get (.get state.meta (+ "Service/" j.spec.name) {}) "resourceVersion")}))
+                                {"resourceVersion" (resource-version-of state (+ "Service/" j.spec.name))}))
    ;; live = heartbeat が lease の内・draining = 期限の内の drain(担い手の名簿の読み ReadRunners の正本 — 2026-09-26)。
    "workers" (dfor #(n w) (.items state.workers)
                    n {"provides" (list w.provides) "exclusive" (list w.exclusive) "derived" (list w.derived) "node" w.node "capacity" w.capacity "silentMs" (- now w.last-seen-ms)

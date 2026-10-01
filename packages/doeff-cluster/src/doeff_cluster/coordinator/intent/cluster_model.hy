@@ -117,6 +117,19 @@
   (#^ int put-ms))
 
 
+(defrecord ResourceMeta
+  "資源 1 つの版の記録(ClusterState.meta の値 — 鍵 = <種類>/<名>): resource-version = 版(書くたびに cluster の版を振る)・generation =
+   spec の世代(spec が変わった時だけ進む)・created-by / created-ms・updated-by / updated-ms = 作った・最後に書いた送り手と時刻。#2447 で
+   JSON の dict をこの型にした。保存の JSON の形 {resourceVersion generation createdBy createdMs updatedBy updatedMs} は cluster_policy の
+   resource-meta-to-json / resource-meta-from-json。"
+  (#^ int resource-version)
+  (#^ int generation)
+  (#^ str created-by)
+  (#^ int created-ms)
+  (#^ str updated-by)
+  (#^ int updated-ms))
+
+
 (defrecord RefusedJob
   "受け付けない Service の行(2026-09-27・改訂 1 の C)。旧い宣言の形の行を読み直した時と、読めない行を、coordinator を落とさずに
    持っておく: name = Service の名・row = 元の行(保存と表示のため JSON のまま)・reason = 理由。置き先・Rollout・drain・計器は

@@ -220,7 +220,7 @@
   (setv sim (Sim))
   (sim.rollout "to-worker" FORWARD)
   (sim.run-until "to-worker" #("Observing"))
-  (setv version (get sim.state.meta "Rollout/to-worker" "resourceVersion"))
+  (setv version (. (get sim.state.meta "Rollout/to-worker") resource-version))
   (sim.call "PUT" "/resources/Rollout/to-worker" {"spec" (| FORWARD {"abort" True}) "resourceVersion" version})
   (assert (= (sim.run-until "to-worker" #("Complete" "RolledBack")) "RolledBack"))
   (assert (= (get sim.kube.deployments DEP "specReplicas") 1))
@@ -329,7 +329,7 @@
   (setv sim (Sim :window 120 :first-report-ms 20000))
   (setv spec {"revision" "r1" "needs" ["net"] "run" SAMPLE-RUN "replicas" 1 "readiness" {"windowSeconds" 120}})
   ;; dry-run の書き手を動かし、Ready の報告を出させる
-  (sim.call "PUT" "/resources/Service/writer-a" {"spec" spec "resourceVersion" (get sim.state.meta "Service/writer-a" "resourceVersion")})
+  (sim.call "PUT" "/resources/Service/writer-a" {"spec" spec "resourceVersion" (. (get sim.state.meta "Service/writer-a") resource-version)})
   (for [_ (range 30)] (sim.step))
   (assert (is-not sim.proc None) "dry-run の書き手が動いている")
   (setv dry-instance (get sim.proc "instance"))
@@ -337,7 +337,7 @@
   ;; 設定だけを変えて(Program の引数 = 同一性だけが変わる・版は同じ)止める(05:10:53)
   (sim.call "PUT" "/resources/Service/writer-a"
             {"spec" (| spec {"run" (run (program-run "m:f" "--apply")) "replicas" 0})
-             "resourceVersion" (get sim.state.meta "Service/writer-a" "resourceVersion")})
+             "resourceVersion" (. (get sim.state.meta "Service/writer-a") resource-version)})
   (for [_ (range 17)] (sim.step))
   (assert (is sim.proc None) sim.proc)
   ;; Rollout を作る(05:11:10)

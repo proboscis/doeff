@@ -74,7 +74,7 @@
   (<- created tuple (call (ClusterState) "POST" "/resources/Service" {"name" "a" "spec" ROW} 1000))
   (val base (get created 0))
   (assert (= (get created 1) 201))
-  (val version (get base.meta "Service/a" "resourceVersion"))
+  (val version (. (get base.meta "Service/a") resource-version))
   (for [#(what row word) rows]
     (<- posted tuple (call (ClusterState) "POST" "/resources/Service" {"name" "b" "spec" row} 1000))
     (assert (= (get posted 1) 400) #(what posted))
@@ -255,7 +255,7 @@
    :tags {:context "doeff-cluster-test" :role "entry"}}
   "key の資源が作り直された(版の記録が generation 1・作った送り手と時刻から始まり、出来事の記録に create が在る)。"
   (val m (get state.meta key))
-  (and (= #((get m "generation") (get m "createdBy") (get m "createdMs")) #(1 actor now))
+  (and (= #(m.generation m.created-by m.created-ms) #(1 actor now))
        (in #("create" #* (.split key "/" 1)) (lfor e state.audit #((get e "verb") (get e "kind") (get e "name"))))))
 
 
@@ -293,4 +293,4 @@
   (assert (= (get made 1) 201) made)
   (assert (= (. (get made 0) refused) {}))
   (assert (in "old" (lfor j (. (get made 0) jobs) j.spec.name)))
-  (assert (= (get (get (. (get made 0) meta) "Service/old") "generation") (+ (get before "generation") 1))))
+  (assert (= (. (get (. (get made 0) meta) "Service/old") generation) (+ before.generation 1))))

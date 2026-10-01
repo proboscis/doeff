@@ -24,7 +24,7 @@
 (import doeff_cluster.coordinator.core.cluster_rules [component-versions-of])
 (import doeff_cluster.coordinator.core.cluster_json [task-record-to-json task-record-from-json handoff-watch-from-json])
 (import doeff_cluster.coordinator.core.cluster_policy [job-to-json job-from-json read-service-rows board-changes value-size warm-entry-to-json warm-entry-from-json worker-capabilities-of
-                         worker-generations-json worker-generations-from-json program-row-to-json program-row-from-json])
+                         worker-generations-json worker-generations-from-json program-row-to-json program-row-from-json resource-meta-to-json resource-meta-from-json])
 
 (setv BOARD "board/")
 (setv PLACEMENT "placement/")
@@ -73,7 +73,7 @@
     (setv seen (.get state.seen-marks w.name))
     (setv (get out (+ "worker/" w.name)) #(#(w seen) (partial worker-json w seen))))
   (for [t (.values state.tasks)] (setv (get out (+ "task/" t.id)) #(#(t) (partial task-record-to-json t))))
-  (for [#(k m) (.items state.meta)] (setv (get out (+ "meta/" k)) #(#(m) (partial as-stored m))))
+  (for [#(k m) (.items state.meta)] (setv (get out (+ "meta/" k)) #(#(m) (partial resource-meta-to-json m))))
   (for [#(k r) (.items state.rollouts)] (setv (get out (+ "rollout/" k)) #(#(r) (partial as-stored r))))
   (for [#(k d) (.items state.drains)] (setv (get out (+ DRAIN k)) #(#(d) (partial asdict d))))
   (for [#(k a) (.items state.surges)] (setv (get out (+ SURGE k)) #(#(a) (partial asdict a))))
@@ -156,7 +156,7 @@
     :revision (.get counter "revision" 0)
     :audit-seq (.get counter "auditSeq" 0)
     :alive-ms alive-ms
-    :meta (dict (part "meta/"))
+    :meta (dfor #(k v) (part "meta/") k (resource-meta-from-json v))
     :rollouts (dict (part "rollout/"))
     :drains (dfor #(k v) (part DRAIN) k (Drain #** v))
     :surges (dfor #(k v) (part SURGE) k (Placement #** v))

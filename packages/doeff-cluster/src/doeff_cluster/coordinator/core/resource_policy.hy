@@ -15,10 +15,10 @@
 (import json)
 (import typing [NoReturn])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming BodyInvalid])
-(import doeff_cluster.coordinator.intent.cluster_model [ClusterJob ClusterState Placement HandoffPhase UnplacedKind NotReadyKind VersionState VersionVerdict LiveProcess])
+(import doeff_cluster.coordinator.intent.cluster_model [ClusterJob ClusterState Placement HandoffPhase UnplacedKind NotReadyKind VersionState VersionVerdict LiveProcess ResourceMeta])
 (import doeff_cluster.coordinator.core.cluster_json [required-field int-field])
 (import doeff_cluster.shared.core.job_rules [spec-hash] doeff_cluster.shared.intent.job_model [JobPhase])
-(import doeff_cluster.coordinator.core.cluster_policy [job-from-json job-to-json alive still-live-somewhere service-rows unplaced-kind unplaced-text task-summary])
+(import doeff_cluster.coordinator.core.cluster_policy [job-from-json job-to-json alive still-live-somewhere service-rows unplaced-kind unplaced-text task-summary resource-version-of])
 (import doeff_cluster.coordinator.core.rollout_policy [validate-rollout-spec rollout-targets target-key TERMINAL-PHASES])
 (import doeff [run])
 (import doeff_cluster.coordinator.intent.request_bodies [ReadinessBody MetricsBody ResourceBody])
@@ -438,18 +438,17 @@
     (cond
       (is new None)
         (do (.pop meta key None)
-            (setv verb "delete" from (if current (get current "resourceVersion") None) to None
-                  generation (if current (get current "generation") None)))
+            (setv verb "delete" from (if current current.resource-version None) to None
+                  generation (if current current.generation None)))
       (or (is old None) (is current None))
         (do (setv verb (if (is old None) "create" "adopt") from None to rev generation 1)
-            (setv (get meta key) {"resourceVersion" rev "generation" 1 "createdBy" actor "createdMs" now
-                                  "updatedBy" actor "updatedMs" now}))
+            (setv (get meta key) (ResourceMeta :resource-version rev :generation 1 :created-by actor :created-ms now
+                                               :updated-by actor :updated-ms now)))
       True
         (do (setv spec-changed (!= (get old "spec") (get new "spec"))
-                  verb (if spec-changed "update" "status") from (get current "resourceVersion") to rev
-                  generation (+ (get current "generation") (if spec-changed 1 0)))
-            (setv (get meta key) (| current {"resourceVersion" rev "generation" generation
-                                             "updatedBy" actor "updatedMs" now}))))
+                  verb (if spec-changed "update" "status") from current.resource-version to rev
+                  generation (+ current.generation (if spec-changed 1 0)))
+            (setv (get meta key) (replace current :resource-version rev :generation generation :updated-by actor :updated-ms now))))
     (.append audit {"seq" seq "at" now "actor" actor "verb" verb "kind" kind "name" name
                     "fromVersion" from "toVersion" to "generation" generation
                     "changes" (changed-fields old new)}))
@@ -465,7 +464,7 @@
 ;; --- 見せる形 --------------------------------------------------------------------------------
 
 (defn #^ dict resource-json [#^ ClusterState state #^ str key #^ dict snap #^ int now #^ ClusterTiming timing]
-  (setv #(kind name) (split-key key) m (.get state.meta key {}) row (get snap key))
+  (setv #(kind name) (split-key key) m (.get state.meta key) row (get snap key))
   (setv status (dict (get row "status")))
   (cond
     (= kind "Service")
@@ -485,10 +484,10 @@
                                         :if (= (.get t "kind") "Deployment")
                                         (target-key t) (.get state.deployments (+ (get t "namespace") "/" (get t "name"))))}))
   {"kind" kind "name" name
-   "resourceVersion" (.get m "resourceVersion") "generation" (.get m "generation")
+   "resourceVersion" (if m m.resource-version None) "generation" (if m m.generation None)
    "owner" (.get (get row "spec") "owner")
-   "createdBy" (.get m "createdBy") "createdMs" (.get m "createdMs")
-   "updatedBy" (.get m "updatedBy") "updatedMs" (.get m "updatedMs")
+   "createdBy" (if m m.created-by None) "createdMs" (if m m.created-ms None)
+   "updatedBy" (if m m.updated-by None) "updatedMs" (if m m.updated-ms None)
    "spec" (get row "spec") "status" status})
 
 
@@ -518,7 +517,7 @@
 ;; --- 書きの口(Service と Rollout)--------------------------------------------------------------
 
 (defn #^ None check-version [#^ ClusterState state #^ str key #^ (| int None) version #^ bool [required True]]
-  (setv current (.get (.get state.meta key {}) "resourceVersion"))
+  (setv current (resource-version-of state key))
   (cond
     (and required (is version None))
       (refuse 400 "resourceVersion が要る(読んだ時の版を付けて書く — 古い版の書きは 409 で断る)" :current current)
@@ -667,10 +666,10 @@
       (= job have) (setv (get results name) "unchanged")
       (is version None)
         (.append conflicts {"name" name "error" "resourceVersion の無い行で既存の宣言は変えられない(GET /state の行の版を付ける)"
-                            "current" (.get (.get state.meta (key-of "Service" name) {}) "resourceVersion")})
-      (!= version (.get (.get state.meta (key-of "Service" name) {}) "resourceVersion"))
+                            "current" (resource-version-of state (key-of "Service" name))})
+      (!= version (resource-version-of state (key-of "Service" name)))
         (.append conflicts {"name" name "error" "版が古い"
-                            "current" (.get (.get state.meta (key-of "Service" name) {}) "resourceVersion")})
+                            "current" (resource-version-of state (key-of "Service" name))})
       (and (!= (.get row "owner" have.owner) have.owner) (!= actor have.owner) (!= have.owner LEGACY-OWNER))
         (.append conflicts {"name" name "error" (.format "所有者を変えられるのは所有者({})だけ" have.owner)})
       True
