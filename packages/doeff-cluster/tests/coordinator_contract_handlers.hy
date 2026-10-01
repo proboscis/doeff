@@ -4,9 +4,9 @@
 ;;;                          同じ純粋な判断で答える)の上で
 ;;;   shared-http            本物: shared-http(宛先の部品の HttpRequest → coordinator の /board・/leases)
 ;;;   metrics-memory         fake: metrics-memory(list に記録)
-;;;   metrics-http           本物: metrics-http(ServiceReportClient → POST /resources/Service/<名>/metrics)
+;;;   metrics-http           本物: metrics-http(宛先の部品の HttpRequest → POST /resources/Service/<名>/metrics)
 ;;;   readiness-memory       fake: readiness-memory(list に記録)
-;;;   readiness-http         本物: readiness-http(ServiceReportClient → POST /resources/Service/<名>/readiness)
+;;;   readiness-http         本物: readiness-http(宛先の部品の HttpRequest → POST /resources/Service/<名>/readiness)
 ;;;   remote-cluster         本物: remote-cluster(TaskClient → coordinator の /programs・/tasks)と担い手(RigWorker)
 ;;;   remote-cluster-env     同じ・送り手が実行環境を宣言する(TaskClient の runtime-env = CONTRACT-ENV)
 ;;;   warm-cluster           本物: warm-cluster(WarmClient → coordinator の /warm)
@@ -53,7 +53,8 @@
 (import doeff_core_effects.http_effects [HttpRequest HttpResponse HttpFailed HttpFailureKind])
 (import doeff_cluster.shared.protocol.metrics_handlers [metrics-memory metrics-http])
 (import doeff_cluster.shared.protocol.readiness_handlers [readiness-memory readiness-http])
-(import doeff_cluster.foundation.report_client [ServiceReportClient])
+(import doeff_cluster.shared.protocol.service_report [ServiceReport])
+(import doeff_core_effects.handlers [slog-handler])
 (import doeff_cluster.shared.protocol.remote [remote-cluster TaskClient])
 (import doeff_cluster.foundation.process_versions [current-versions])
 (import doeff_cluster.shared.protocol.detached [warm-cluster WarmClient])
@@ -341,10 +342,16 @@
   answer)
 
 
-(deff report-client [transport]  ; defk にできない: 組み立ての表(INTERPRETERS)が本物の handler を作る時に呼ぶ Program の外の準備
-  {:pre [(: transport httpx.MockTransport)] :post [(: % ServiceReportClient)] :tags {:context "doeff-cluster-test" :role "foundation"}}
-  "SERVICE の報告の口(送り手の worker と版は固定)。"
-  (ServiceReportClient COORDINATOR SERVICE "w1" "r1" :transport transport))
+(deff contract-route []  ; defk にできない: 組み立ての表(INTERPRETERS)が本物の handler を作る時に呼ぶ Program の外の準備
+  {:pre [] :post [(: % RouteCell)] :tags {:context "doeff-cluster-test" :role "foundation"}}
+  "本物の handler が要求から要求へ持ち越す宛先の状態の入れ物(宛先 = MemoryCoordinator の 1 つ — 解釈器を開くたびに新しく作る)。"
+  (RouteCell (CoordinatorRoute :urls #(COORDINATOR) :active 0 :switched-at-ms 0)))
+
+
+(deff contract-report []  ; defk にできない: 組み立ての表(INTERPRETERS)が本物の handler を作る時に呼ぶ Program の外の準備
+  {:pre [] :post [(: % ServiceReport)] :tags {:context "doeff-cluster-test" :role "foundation"}}
+  "SERVICE の報告の送り手(送り手の worker と版は固定)。"
+  (ServiceReport SERVICE {"worker" "w1" "pid" 1 "revision" "r1"}))
 
 
 (deff semaphore-session []  ; defk にできない: 組み立ての表(INTERPRETERS)が handler を作る時に呼ぶ Program の外の準備
@@ -355,11 +362,11 @@
 
 (val INTERPRETERS
   {"shared-fake" (partial under-memory (fn [store reports] (board-handlers store)))
-   "shared-http" (partial under-coordinator (fn [transport] [(shared-http (RouteCell (CoordinatorRoute :urls #(COORDINATOR) :active 0 :switched-at-ms 0)) CONTRACT-ROUTE)]))
+   "shared-http" (partial under-coordinator (fn [transport] [(shared-http (contract-route) CONTRACT-ROUTE)]))
    "metrics-memory" (partial under-memory (fn [store reports] [(metrics-memory reports)]))
-   "metrics-http" (partial under-coordinator (fn [transport] [(metrics-http (report-client transport))]))
+   "metrics-http" (partial under-coordinator (fn [transport] [slog-handler (metrics-http (contract-route) CONTRACT-ROUTE (contract-report))]))
    "readiness-memory" (partial under-memory (fn [store reports] [(readiness-memory reports)]))
-   "readiness-http" (partial under-coordinator (fn [transport] [(readiness-http (report-client transport))]))
+   "readiness-http" (partial under-coordinator (fn [transport] [slog-handler (readiness-http (contract-route) CONTRACT-ROUTE (contract-report))]))
    "remote-cluster" (partial under-rig False)
    "remote-cluster-env" (partial under-rig True)
    "warm-cluster" (partial under-coordinator
@@ -371,5 +378,5 @@
    "named-semaphore-local" (partial under-clock (fn [] [(named-semaphore-local {})]))
    "cluster-semaphore" (partial under-clock (fn [] [#* (board-handlers {}) (cluster-semaphore (semaphore-session))]))
    "cluster-semaphore-http" (partial under-coordinator
-                                     (fn [transport] [(shared-http (RouteCell (CoordinatorRoute :urls #(COORDINATOR) :active 0 :switched-at-ms 0)) CONTRACT-ROUTE)
+                                     (fn [transport] [(shared-http (contract-route) CONTRACT-ROUTE)
                                                       (cluster-semaphore (semaphore-session))]))})
