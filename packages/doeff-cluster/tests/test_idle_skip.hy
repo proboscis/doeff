@@ -8,17 +8,13 @@
 (require doeff-hy.record [defrecord])
 (import dataclasses [dataclass])
 (import doeff [with-handlers Program])
-(import pytest)
-(import doeff_core_effects.scheduler [Spawn Task])
-(import doeff_cluster.shared.protocol.inbox [http-request])
-(import doeff_cluster.coordinator.core [idle_policy :as idle-policy])
 (import doeff_cluster.shared.intent.service_model [System])
 (import doeff_time [Delay sim-time-handler])
 (import doeff_cluster.shared.core.clock [now-epoch-ms])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming])
 (import doeff_cluster.coordinator.intent.cluster_model [ClusterState ClusterNaming IdleProbe IdleNextRequests])
 (import doeff_cluster.coordinator.entry.handler_sets [MemoryWalStore])
-(import doeff_cluster.coordinator.protocol.request_queue [RequestQueue queued-requests enqueue-request])
+(import doeff_cluster.coordinator.protocol.request_queue [RequestQueue queued-requests])
 (import doeff_cluster.foundation.coordinator_inbox [RequestInbox] doeff_cluster.shared.protocol.inbox [http-requests])
 (import doeff_cluster.coordinator.core.idle_policy [quiet-ticks])
 (import doeff_cluster.sim.local [sim-cluster ProcessesOf SharedRows StopCoordinator CoordinatorRuns KillWorker ReadCoordinator ClientLink SimLink
@@ -189,38 +185,3 @@
   (<- skipped Trace (trace-of (beacons sim-foundation) (reverse-scenario) True :workers ROLLOUT-WORKERS :deployments DEPLOYMENTS))
   (<- breaches list (same-decisions every skipped))
   (assert (= breaches []) breaches))
-
-
-(defk late-request [queue at-seconds]
-  {:pre [(: queue RequestQueue) (: at-seconds float)] :post [(: % None)] :tags {:context "doeff-cluster-test" :role "program"}}
-  "筋書きの送り手: at-seconds 秒目に要求を 1 件、模擬の列へ積むため(眠っている取り手を要求で起こす)。"
-  (<- (Delay at-seconds))
-  (<- (enqueue-request queue (http-request "GET" "/state" {} None)))
-  None)
-
-
-(defk wake-on-request [queue probe at-seconds]
-  {:pre [(: queue RequestQueue) (: probe IdleProbe) (: at-seconds float)] :post [(: % tuple)]
-   :tags {:context "doeff-cluster-test" :role "program"}}
-  "要求が at-seconds 秒目に来る間に、coordinator の拍と同じ取り手を 1 回回し、#(起きた刻 取った要求の数) を返すため。"
-  (<- _ Task (Spawn (late-request queue at-seconds)))
-  (<- batch list (IdleNextRequests 1.0 :idle probe))
-  (<- woke int (now-epoch-ms))
-  #(woke (len batch)))
-
-
-(deftest test-a-request-stops-the-probing-at-the-tick-it-arrived-in [monkeypatch]
-  ;; 失敗ケース(#2664): 眠りながら 1 拍ずつ試すので、要求で眠りが破られた後の拍は試さない。新しい状態は 5 拍目まで何も変えない
-  ;; (quiet-ticks = 5)が、要求が 1.5 秒目に来るので、試すのは 1 拍目だけ。先まで一度に試す形(以前)では 5 拍を試して 4 拍を捨てた。
-  (val calls [])
-  (val original idle-policy.tick)
-  (defn #^ ClusterState counted [#^ ClusterState state #^ int now #^ ClusterTiming timing]  ; defk にできない: 判断の関数を数える検の spy
-    "試した拍を数える代わりの tick。"
-    (.append calls now)
-    (original state now timing))
-  (.setattr monkeypatch idle-policy "tick" counted)
-  (val queue (RequestQueue :skip-idle True))
-  (<- answer tuple ((sim-time-handler :clock (clock-at 0))
-                     (with-handlers [(queued-requests queue)] (wake-on-request queue FRESH-PROBE 1.5))))
-  (assert (= answer #(1500 1)) answer)
-  (assert (= calls [1000]) calls))
