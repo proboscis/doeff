@@ -1,6 +1,6 @@
 ;;; 土台だけの image の約束(設計 worker-runtime-env.md 節 3.5・E13)を Dockerfile の字面で検める。
 ;;;
-;;;   hy -m doeff_cluster.image_contract <Dockerfile> …   違反があれば 1 行ずつ出して終了コード 1
+;;;   hy -m doeff_cluster.shared.entry.image_contract <Dockerfile> …   違反があれば 1 行ずつ出して終了コード 1
 ;;;
 ;;; 約束: image を作り直す理由は (1) 土台の道具の版を変える時 (2) 業務の Python の package が新しい OS の library を要する時 の
 ;;; 2 種類だけ。だから Dockerfile は
@@ -10,6 +10,8 @@
 ;;;     PYTHONPATH / VIRTUAL_ENV の ENV)
 ;;;   - npm の道具は版を固定して入れる(`名@x.y.z`)
 ;;; 業務の code と依存は宣言(RuntimeEnv)から worker が root に用意するので、image には載らない。
+(require doeff-hy.macros [val])
+(val MODULE-TAGS {:context "doeff-cluster" :role "main"})
 (import sys)
 (import pathlib [Path])
 (import doeff [run])
@@ -20,7 +22,7 @@
   "image を build する前に Dockerfile を検め、約束を破る image を作らせないための入口(違反が在れば終了コード 1)。"
   (setv paths (cut sys.argv 1 None))
   (when (not paths)
-    (print "使い方: hy -m doeff_cluster.image_contract <Dockerfile> …" :file sys.stderr)
+    (print "使い方: hy -m doeff_cluster.shared.entry.image_contract <Dockerfile> …" :file sys.stderr)
     (sys.exit 2))
   (setv failed False)
   (for [p paths]

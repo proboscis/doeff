@@ -54,7 +54,7 @@
   "declare の CLI を子 process で撃つ(cwd = package の根 — tests.fixtures を import する)。"
   (val words (lfor a argv :if (isinstance a str) a))
   (assert (= (len words) (len argv)) #("子 process の引数は文字列だけ" argv))
-  (subprocess.run [sys.executable "-m" "hy" "-m" "doeff_cluster.declare" #* words]
+  (subprocess.run [sys.executable "-m" "hy" "-m" "doeff_cluster.shared.entry.declare" #* words]
                   :cwd (str PACKAGE-ROOT) :capture-output True :text True :timeout 120))
 
 
@@ -374,7 +374,7 @@
   "work の checkout の中で declare の CLI を子 process で撃つため(import の路 = work — 系の関数の module はそこに在る)。"
   (val words (lfor a argv :if (isinstance a str) a))
   (assert (= (len words) (len argv)) #("子 process の引数は文字列だけ" argv))
-  (subprocess.run [sys.executable "-m" "hy" "-m" "doeff_cluster.declare" #* words]
+  (subprocess.run [sys.executable "-m" "hy" "-m" "doeff_cluster.shared.entry.declare" #* words]
                   :cwd (str work) :capture-output True :text True :timeout 120
                   :env (| (dict os.environ) {"PYTHONPATH" (str work)})))
 

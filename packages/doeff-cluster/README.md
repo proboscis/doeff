@@ -157,7 +157,7 @@ environ は同じ `environ-reader` を子の宣言の `:environ` の上に並べ
 ### 宣言する(declare)
 
 ```sh
-hy -m doeff_cluster.declare myapp.systems:my_system --foundation myapp.foundation:production_foundation \
+hy -m doeff_cluster.shared.entry.declare myapp.systems:my_system --foundation myapp.foundation:production_foundation \
   --revision "$(git rev-parse HEAD)" [--only a,b] [--apply $COORD --actor $ME] [--replicas 0|1]
 ```
 
@@ -373,7 +373,7 @@ worker が無い・コードを準備できない)・`DetachedUnknown`(知らな
   `boot.sh` が `WORKER_DOEFF_COMMIT` の doeff を展開して `uv sync --locked --package doeff-cluster` した venv から coordinator / worker を
   起動します(自己起動)。worker のコードを変える時は commit を変えて入れ替え、image は作り直しません。root を用意した後は、起動の
   script も root の中の同じ commit の `deploy/boot.sh` へ引き継ぐので、起動の script を直した時も image は作り直しません。作り直す理由は頭の註の 2 種類
-  だけで、それ以外の変更は `hy -m doeff_cluster.image_contract <Dockerfile>`(と `tests/test_base_image_contract.hy`)が赤にします。
+  だけで、それ以外の変更は `hy -m doeff_cluster.shared.entry.image_contract <Dockerfile>`(と `tests/test_base_image_contract.hy`)が赤にします。
   非公開の repo は `WORKER_REPOS`(url ごとの読み取り専用の deploy key)で読みます。`ROLE=access` で書かれる設定だけを確かめられます。
 
 manifest(namespace・node・Secret・Role)は配備する側の repo が持ちます。coordinator の ServiceAccount には、Rollout が扱う
