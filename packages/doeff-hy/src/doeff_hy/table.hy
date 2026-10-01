@@ -8,6 +8,8 @@
 ;;; Table を返す(写すのは差分だけ)。差分が基の 1/COMPACT-RATIO を超えたら、基と差分を合わせた新しい基を作る(その書きだけ O(n)・
 ;;; 均すと小さい)。読みは差分 → 基の 2 回引き。Table は Mapping ではない(写像として受け渡さない)— 引くのは row・keys・size だけ。
 ;;;
+;;; 1 拍の中で書いた行を読み直す書き手は、下書き(TableDraft — 下の節)で書きを貯め、拍の終わりに 1 回だけ with-writes を当てる。
+;;;
 ;;; FrozenMap(frozen.hy)との違い: FrozenMap は「鍵の集合が開いた値」を凍らせる写像で、書くたびに丸ごと写す。Table は拍ごとに
 ;;; 少しずつ変わる大きな表のための物で、写像ではない。
 (import dataclasses [dataclass])
@@ -82,3 +84,55 @@
 (defn #^ (get Table V) table-of [#^ (get tuple #((get TableWrite V) ...)) rows]
   "行の列から Table を作る(value = None の行は入れない)。"
   (Table (dfor write rows :if (is-not write.value None) write.key write.value) {} (frozenset)))
+
+
+;;; 下書き(TableDraft)— 1 拍の中で書いた行を同じ拍の中で読み直す書き手のための物。
+;;;
+;;; 何のためか: 畳み(agora の画面の投影の作業場 — agora-redesign #2254)は行を 1 つ書くたびに、同じ拍の中でその行を読み直す。
+;;;   with-writes を 1 件ずつ当てると、1 件ごとに差分(最大で基の 1/COMPACT-RATIO)を写すので、一覧の拍(数万件の書き)で
+;;;   写しが数億回になる。下書きは書きを手元に貯め(1 件 O(1))、読みは下書き → 元の表の 2 回引き、拍の終わりに freeze が
+;;;   with-writes を 1 回だけ当てて新しい Table を返す。
+;;; 下書きは書き換える物なので、作った書き手の外へ出さない(外へ渡すのは freeze の答えの Table)。元の表は下書きの書きで変わらない。
+
+(defclass TableDraft [(get Generic V)]
+  "Table への書きの下書き(上の註)。作るのは draft-of。引くのは row・keys、書きは put・remove、拍の終わりに freeze。"
+  (setv __slots__ #("_table" "_writes"))
+  (#^ (get Table V) _table)
+  (#^ (get dict #(str (| V None))) _writes)
+
+  (defn __init__ [self #^ (get Table V) table]
+    (setv self._table table
+          self._writes {}))
+
+  (defn #^ (| V None) row [self #^ str key]
+    "鍵 key の行(この下書きの書きが先・無ければ None)。"
+    (if (in key self._writes)
+        (get self._writes key)
+        (.row self._table key)))
+
+  (defn #^ (get tuple #(str ...)) keys [self]
+    "鍵の列(この下書きの書きを当てた後・並びは決めない)。"
+    (+ (tuple (gfor key (.keys self._table) :if (not-in key self._writes) key))
+       (tuple (gfor #(key value) (.items self._writes) :if (is-not value None) key))))
+
+  (defn #^ None put [self #^ str key #^ V value]
+    "鍵 key の行を value にする。"
+    (setv (get self._writes key) value))
+
+  (defn #^ None remove [self #^ str key]
+    "鍵 key の行を消す(無い鍵でもよい)。"
+    (setv (get self._writes key) None))
+
+  (defn #^ (get Table V) freeze [self]
+    "書きを当てた新しい Table(書きが無ければ元の表そのもの)。何度呼んでもよい — 下書きも元の表も変わらない。"
+    (if self._writes
+        (.with-writes self._table (tuple (gfor #(key value) (.items self._writes) (TableWrite key value))))
+        self._table))
+
+  (defn #^ str __repr__ [self]
+    (.format "TableDraft(base={!r}, writes={})" self._table (len self._writes))))
+
+
+(defn #^ (get TableDraft V) draft-of [#^ (get Table V) table]
+  "表 table への書きの下書きを作る(元の表は変わらない)。"
+  (TableDraft table))

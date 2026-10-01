@@ -81,3 +81,72 @@ def test_table_is_not_a_mapping() -> None:
 
     assert not isinstance(table_of(_rows(1)), Mapping)
     assert isinstance(table_of(_rows(1)), Table)
+
+
+# ------------------------------------------------------------------ 下書き TableDraft(agora-redesign #2254)
+
+
+def test_a_draft_reads_its_own_writes_and_leaves_the_table_alone() -> None:
+    from doeff_hy.table import draft_of
+
+    table = table_of(_rows(5))
+    draft = draft_of(table)
+    draft.put("k1", 100)
+    draft.remove("k2")
+    draft.put("x", 7)
+    assert (draft.row("k1"), draft.row("k2"), draft.row("x"), draft.row("k3")) == (100, None, 7, 3)
+    assert sorted(draft.keys()) == sorted(["k0", "k1", "k3", "k4", "x"])
+    # 元の表は下書きの書きで変わらない(古い断面を持つ読み手は古い行を読み続ける)。
+    assert (table.row("k1"), table.row("k2"), table.row("x"), table.size()) == (1, 2, None, 5)
+    frozen = draft.freeze()
+    assert (frozen.row("k1"), frozen.row("k2"), frozen.row("x"), frozen.size()) == (100, None, 7, 5)
+    assert (table.row("k1"), table.size()) == (1, 5)
+
+
+def test_a_draft_without_writes_freezes_to_the_same_table() -> None:
+    from doeff_hy.table import draft_of
+
+    table = table_of(_rows(3))
+    assert draft_of(table).freeze() is table
+
+
+def test_a_draft_takes_many_writes_in_one_freeze() -> None:
+    from doeff_hy.table import draft_of
+
+    # 一覧の拍の形: 空の表へ数万件を書き、書いた行を同じ拍の中で読み直す。
+    draft = draft_of(table_of(()))
+    for i in range(20000):
+        draft.put(f"k{i}", i)
+        assert draft.row(f"k{i}") == i
+    frozen = draft.freeze()
+    assert (frozen.size(), frozen.row("k19999"), frozen.row("k0")) == (20000, 19999, 0)
+
+
+def test_removing_then_putting_back_in_a_draft_restores_the_row() -> None:
+    from doeff_hy.table import draft_of
+
+    draft = draft_of(table_of(_rows(2)))
+    draft.remove("k0")
+    draft.remove("absent")
+    draft.put("k0", 9)
+    assert (draft.row("k0"), draft.freeze().size()) == (9, 2)
+
+
+class _ReadThroughDraft:
+    """失敗ケースの材料: 書きを貯めるが、読みは元の表へ素通りする下書き(TableDraft の形を真似るだけ)。"""
+
+    def __init__(self, table: Table[int]) -> None:
+        self._table = table
+        self._writes: dict[str, int | None] = {}
+
+    def row(self, key: str) -> int | None:
+        return self._table.row(key)
+
+    def put(self, key: str, value: int) -> None:
+        self._writes[key] = value
+
+
+def test_the_counterexample_a_read_through_draft_misses_its_own_writes() -> None:
+    draft = _ReadThroughDraft(table_of(_rows(2)))
+    draft.put("k0", 100)
+    assert draft.row("k0") == 0  # 同じ拍の中で書いた行が読めない — TableDraft はこれを起こさない(上の検)
