@@ -31,67 +31,14 @@
 ;;;   CheckoutRoot      <path> で rev-parse --show-toplevel。0 でなければ None(checkout の外)
 ;;;   SenderSourceRoot  CheckoutRoot と同じ問いを SENDER-SOURCE-DIR(この module の dir)で
 ;;;   FileSha256        StatPath が file なら ReadBytes の sha256・file でなければ None
-(require doeff-hy.macros [defk defhandler defeffect <- val var])
-(require doeff-hy.record [defrecord])
-(import dataclasses [dataclass])
-(import hashlib)
-(import os)
-(import doeff_core_effects.process_effects [ProcessOutcome RunProcess])
-(import doeff_core_effects.file_effects [PathKind PathStat FileFailed StatPath ReadBytes])
+;;;
+;;; 置き場(agora-redesign #2110): 組み立ての Program はここ(shared/core)・型と effect は doeff_cluster.shared.intent.checkout_model・
+;;; 翻訳の handler は doeff_cluster.shared.protocol.checkout_reads。
+(require doeff-hy.macros [defk <- val var])
+(val MODULE-TAGS {:context "doeff-cluster" :role "program"})
 (import doeff_cluster.shared.intent.runtime_env_model [RepoCheckout PythonProject EnvVar ToolRequirement RuntimeEnv RuntimeEnvInvalid InvalidKind])
-(import .env_prepare [FileSha256])
-
-;; 送り手自身が動いている source の dir(この module の置き場)。SenderSourceRoot はここで git に checkout の根を聞く — 模擬の git の台本も
-;; この値で「送り手の source がどの checkout に在るか」を書く。
-(val SENDER-SOURCE-DIR (os.path.dirname (os.path.abspath __file__)))
-
-
-;; --- 入力と答え ---------------------------------------------------------------------------
-
-(defrecord LocalCheckout
-  "送り手の手元の checkout 1 つ。name = 宣言の repo の名・path = 作業の dir・remote = worker が取りに行く remote の名。"
-  (#^ str name)
-  (#^ str path)
-  (setv #^ str remote "origin"))
-
-
-(defrecord ProjectOfCheckout
-  "宣言の project の、送り手が書く部分(uv.lock の sha256 は組み立てが checkout から計算する)。"
-  (#^ str repo)
-  (#^ str path)
-  (#^ str python)
-  (setv #^ tuple groups #())
-  (setv #^ tuple native #()))
-
-
-(defrecord CheckoutState
-  "checkout の読み。head = HEAD の commit・url = remote の URL・dirty = commit していない変更がある・
-   on-remote = HEAD が remote の branch のどれかに含まれる。"
-  (#^ str head)
-  (#^ str url)
-  (#^ bool dirty)
-  (#^ bool on-remote))
-
-
-;; --- effect ------------------------------------------------------------------------------
-
-(defeffect ReadCheckout
-  "checkout を読む。答え = CheckoutState。"
-  {:fields [(: path str) (: remote str)]
-   :answer CheckoutState
-   :tags {:context "runtime-env" :role "intent"}})
-
-
-(defeffect CheckoutRoot
-  "path(dir)を含む git の checkout の根。答え = 絶対 path か None(checkout の外 — git を起こせない時も)。"
-  {:fields [(: path str)]
-   :answer (| str None)
-   :tags {:context "runtime-env" :role "intent"}})
-
-(defeffect SenderSourceRoot
-  "送り手自身が動いている source(このパッケージ)の checkout の根。答え = 絶対 path か None(checkout の外 — 例: wheel で入れた)。"
-  {:answer (| str None)
-   :tags {:context "runtime-env" :role "intent"}})
+(import doeff_cluster.shared.intent.checkout_model [LocalCheckout ProjectOfCheckout CheckoutState ReadCheckout CheckoutRoot SenderSourceRoot])
+(import doeff_cluster.env_prepare [FileSha256])
 
 
 ;; --- 組み立て -----------------------------------------------------------------------------
@@ -172,60 +119,3 @@
               :project (PythonProject :repo project.repo :path project.path :lock-sha256 lock-hash :python project.python
                                       :groups project.groups :native project.native)
               :import-roots import-roots :env-vars env-vars :tools tools))
-
-
-;; --- 翻訳の handler(汎用の子 process と file の effect へ訳す) ------------------------------------------
-
-(defk git-output [path args]
-  {:pre [(: path str) (: args tuple)] :post [(: % str)]}
-  "checkout の中で git を 1 回走らせて標準出力を読むため(0 でない終わり・起こせない git は読めない checkout — 例外)。"
-  (<- outcome ProcessOutcome (RunProcess :argv (+ #("git" "-C" path) args)))
-  (when (!= outcome.exit-code 0)
-    (raise (RuntimeError (.format "git -C {} {} が exit {}: {}{}" path (.join " " args) outcome.exit-code
-                                  (.strip outcome.stderr) outcome.start-error))))
-  (.strip outcome.stdout))
-
-
-(defk checkout-state-at [path remote]
-  {:pre [(: path str) (: remote str)] :post [(: % CheckoutState)]}
-  "checkout 1 つの読み(HEAD・remote の URL・汚れ・remote の branch に在るか)を git の 4 問から作るため(頭の註の訳し方)。"
-  (<- head str (git-output path #("rev-parse" "HEAD")))
-  (<- url str (git-output path #("remote" "get-url" remote)))
-  (<- status str (git-output path #("status" "--porcelain" "--untracked-files=no")))
-  (<- containing str (git-output path #("branch" "-r" "--contains" head "--list" (.format "{}/*" remote))))
-  (CheckoutState :head head :url url :dirty (bool status) :on-remote (bool containing)))
-
-
-(defk checkout-root [path]
-  {:pre [(: path str)] :post [(: % (| str None))]}
-  "path を含む checkout の根を git に聞くため(git の外・git を起こせない時は None — 宣言の commit と比べられない)。"
-  (<- outcome ProcessOutcome (RunProcess :argv #("git" "-C" path "rev-parse" "--show-toplevel")))
-  (if (= outcome.exit-code 0) (.strip outcome.stdout) None))
-
-
-(defk file-sha256 [path]
-  {:pre [(: path str)] :post [(: % (| str None))]}
-  "path の file の中身の sha256 を読むため(file でなければ None・在る file を読めなければ例外 — 前の本物の read_bytes と同じ)。"
-  (<- stat (StatPath path))
-  (if (and (isinstance stat PathStat) (= stat.kind PathKind.FILE))
-      (do (<- content (| bytes FileFailed) (ReadBytes path))
-          (when (isinstance content FileFailed)
-            (raise (RuntimeError (.format "{} を読めない: {}" content.path content.detail))))
-          (.hexdigest (hashlib.sha256 content)))
-      None))
-
-
-(defhandler checkout-reads
-  ;; 送り手の手元の checkout の読みを、汎用の子 process(git)と file の effect へ訳す(頭の註)。本物と模擬で同じ 1 つ。
-  (ReadCheckout [path remote]
-    (<- state CheckoutState (checkout-state-at path remote))
-    (resume state))
-  (CheckoutRoot [path]
-    (<- root (| str None) (checkout-root path))
-    (resume root))
-  (SenderSourceRoot []
-    (<- root (| str None) (checkout-root SENDER-SOURCE-DIR))
-    (resume root))
-  (FileSha256 [path]
-    (<- digest (| str None) (file-sha256 path))
-    (resume digest)))
