@@ -12,7 +12,7 @@
 (import doeff_cluster.foundation.coordinator_http [CoordinatorEndpoint REPLY-SECONDS])
 (import doeff_cluster.worker.core.beat_policy [WatchKind WatchReading beat-interval-ms heartbeat-due watch-params watch-reading reply-revision
                       WATCH-RETRY-SECONDS WAKE-HOLD-SECONDS])
-(import .code_prepare [MARKER MARKER-FORMAT marker-problem scan])
+(import .code_prepare [scan] doeff_cluster.worker.core.code_plan [MARKER MARKER-FORMAT marker-problem])
 (import doeff [run])
 (import doeff_core_effects.file_effects [MakeDirectory WriteText file-done])
 (import doeff_cluster.shared.intent.protocol [PROTOCOL-FORMAT])

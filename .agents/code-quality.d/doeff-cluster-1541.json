@@ -189,7 +189,11 @@
       "typed": true
     },
     {
-      "allow": [],
+      "allow": [
+        "doeff-cluster-code-plan",
+        "doeff-cluster-code-model",
+        "doeff-cluster-code-prepare-program"
+      ],
       "layer": "runtime",
       "name": "doeff-cluster-code-prepare",
       "paths": [
@@ -559,7 +563,8 @@
         "doeff-cluster-env-marker-model",
         "doeff-cluster-worker-heartbeat",
         "doeff-cluster-worker-heartbeat-rules",
-        "doeff-cluster-ready-file"
+        "doeff-cluster-ready-file",
+        "doeff-cluster-code-plan"
       ],
       "layer": "io",
       "name": "doeff-cluster-handlers",
@@ -1374,7 +1379,10 @@
         "doeff-cluster-env-marker-model",
         "doeff-cluster-drain-model",
         "doeff-cluster-ready-file",
-        "doeff-cluster-worker-heartbeat"
+        "doeff-cluster-worker-heartbeat",
+        "doeff-cluster-code-model",
+        "doeff-cluster-code-plan",
+        "doeff-cluster-code-prepare-program"
       ],
       "exclude": [
         "packages/doeff-cluster/tests/fixtures/independence/*"
@@ -1903,6 +1911,50 @@
         "packages/doeff-cluster/src/doeff_cluster/foundation/ready_file.hy"
       ],
       "responsibility": "readinessProbe が sh で読む file を書く汎用の I/O。",
+      "typed": true
+    },
+    {
+      "allow": [
+        "doeff-cluster-code-model"
+      ],
+      "layer": "io",
+      "name": "doeff-cluster-code-plan",
+      "paths": [
+        "packages/doeff-cluster/src/doeff_cluster/worker/core/code_plan.hy"
+      ],
+      "public": [
+        "packages/doeff-cluster/src/doeff_cluster/worker/core/code_plan.hy"
+      ],
+      "responsibility": "展開したコードの木の bytecode の準備の純粋な判断(module 名・引き継ぐ組・焼く物・完成の印・import の静的な辿り)。",
+      "typed": true
+    },
+    {
+      "allow": [],
+      "layer": "domain",
+      "name": "doeff-cluster-code-model",
+      "paths": [
+        "packages/doeff-cluster/src/doeff_cluster/worker/intent/code_model.hy"
+      ],
+      "public": [
+        "packages/doeff-cluster/src/doeff_cluster/worker/intent/code_model.hy"
+      ],
+      "responsibility": "コードの木の bytecode の準備の effect(走査・引き継ぎ・焼き・閉包・完成の印・注記)。",
+      "typed": true
+    },
+    {
+      "allow": [
+        "doeff-cluster-code-plan",
+        "doeff-cluster-code-model"
+      ],
+      "layer": "io",
+      "name": "doeff-cluster-code-prepare-program",
+      "paths": [
+        "packages/doeff-cluster/src/doeff_cluster/worker/core/code_prepare.hy"
+      ],
+      "public": [
+        "packages/doeff-cluster/src/doeff_cluster/worker/core/code_prepare.hy"
+      ],
+      "responsibility": "コードの木の bytecode の準備の Program と、本物と模擬の答え手が通る判断。",
       "typed": true
     }
   ],
