@@ -592,7 +592,10 @@
   (#^ Fault fault))
 
 
-(defclass [(dataclass :frozen True)] Persist [EffectBase]
-  "1 まとまりの変化(キー → 新しい値・消えたキーは None — durable_kv.hy)を耐久の場所へ書き、fsync が終わってから戻る。
-   返事(Reply)はこの後にだけ出す: 返事を済ませた書きは coordinator が落ちても消えない。書けなければ例外(返事をせずに落ちる)。"
-  (#^ dict delta))
+(defclass [(dataclass :frozen True)] SaveState [EffectBase]
+  "調停の 1 まとまりの前の状態 before から後の状態 after への変化を耐久の場所へ写し、書き終えてから戻る(変化が無ければ何も書かない)。
+   返事(Reply)はこの後にだけ出す: 返事を済ませた書きは coordinator が落ちても消えない。書けなければ例外(返事をせずに落ちる)。
+   保存の綴り(キー → JSON の値の差分)は答え手の protocol(coordinator/protocol/store の durable-states — durable_kv)が作る。
+   #2446 で、core の調停ループが KV の差分を組んで Persist に載せていた形から、型の値の前後を渡す形にした。"
+  (#^ ClusterState before)
+  (#^ ClusterState after))

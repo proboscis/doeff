@@ -115,7 +115,7 @@
 (import doeff_time [Delay sim-time-handler async-time-handler])
 (import doeff_cluster.shared.core.clock [now-epoch-ms datetime-of-epoch-ms])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming Request Reply CoordinatorStopRequested PlainText])
-(import doeff_cluster.coordinator.intent.cluster_model [ClusterState ClusterNaming Persist ENDED-PHASES] doeff_cluster.shared.intent.protocol [NextRequests])
+(import doeff_cluster.coordinator.intent.cluster_model [ClusterState ClusterNaming ENDED-PHASES] doeff_cluster.shared.intent.protocol [NextRequests])
 (import doeff_cluster.shared.intent.process_model [AwaitProcessEnded ProcessEnded ProcessWaitExpired])
 (import doeff_cluster.coordinator.core.cluster_policy [fresh-task-prefix])
 (import doeff_cluster.coordinator.core.program [run-coordinator])
@@ -123,6 +123,7 @@
 (import doeff_cluster.foundation.coordinator_http [IDEMPOTENT-DEADLINE-SECONDS RESEND-PAUSE-SECONDS])
 (import doeff_cluster.foundation.coordinator_inbox [StopState] doeff_cluster.shared.protocol.inbox [http-request])
 (import doeff_cluster.coordinator.entry.handler_sets [MemoryWalStore emulated-handlers])
+(import doeff_cluster.coordinator.protocol.store [Persist])
 (import doeff_cluster.coordinator.protocol.request_queue [RequestQueue enqueue-request nudge-takers])
 (import doeff_cluster.shared.core.promise_wait [promise-or-timeout])
 (import doeff_cluster.coordinator.protocol.kube [KubeMemory])
@@ -1697,7 +1698,7 @@
   (<- (CoordinatorStarted now))
   (setattr parts.queue "up" True)
   (try
-    (<- (with-handlers (+ (emulated-handlers parts.queue parts.store parts.stop parts.kube) [observe-requests])
+    (<- (with-handlers (emulated-handlers parts.queue parts.store parts.stop parts.kube [observe-requests])
           (run-coordinator state plan.timing plan.naming)))
     "stopped"
     (except [error OSError]

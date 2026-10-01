@@ -7,7 +7,7 @@
 (import dataclasses [replace])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming Request])
 (import doeff_cluster.coordinator.intent.cluster_model [ClusterState RolloutRow RolloutStatus TaskRecord])
-(import doeff_cluster.coordinator.core.durable_kv [full-kv state-from-kv])
+(import doeff_cluster.coordinator.protocol.durable_kv [full-kv state-from-kv])
 (import doeff_cluster.coordinator.core.api_policy [plan-rollouts resume-after-downtime mark-alive ALIVE-MARK-MS])
 (import doeff_cluster.coordinator.protocol.request_bodies [responded])
 (import doeff_cluster.coordinator.core.rollout_policy [validate-rollout-spec rollout-step action-due retry-delay-ms shift-clocks RETRY-MAX-MS])
