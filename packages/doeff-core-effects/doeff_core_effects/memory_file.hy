@@ -14,7 +14,7 @@
 (import doeff_core_effects.file_effects [PathKind FileFailed PathStat DirEntry LockHeld MemoryFile MemoryFiles ReadMemoryFiles StatPath
                                          ReadText ReadBytes WriteText WriteBytes AppendText MakeDirectory ListDirectory WalkTree CopyFile
                                          CopyTree RenamePath RemoveTree AcquireLock ReleaseLock ReadDiskFree DiskUsage ReadDiskUsage
-                                         MeasureTree])
+                                         MeasureTree LinkFile])
 
 ;; 置き場の根と、断りの文(OSError の文と同じ形)。
 (val ROOT "/")
@@ -24,6 +24,7 @@
 (val EXISTS "[Errno 17] File exists")
 (val NOT-EMPTY "[Errno 39] Directory not empty")
 (val INVALID "[Errno 22] Invalid argument")
+(val NOT-PERMITTED "[Errno 1] Operation not permitted")
 
 
 (defk refused [reason path]
@@ -102,6 +103,26 @@
     (<- answer FileFailed (refused IS-DIRECTORY path))
     (return answer))
   (with-fields store :files (+ (tuple (gfor f store.files :if (!= f.path path) f)) #((MemoryFile :path path :content content :mode mode)))))
+
+
+(defk link-in [store source target]
+  {:pre [(: store MemoryFiles) (: source str) (: target str)] :post [(: % (| MemoryFiles FileFailed))]}
+  "source の file にもう 1 つの名 target を付けた置き場を作るため(os.link と同じ所で断る — 文は元と先の 2 つの path の形)。memory の
+   中身は書き換えない値なので、名を付けるのは中身の写し(置き換えで書く使い手には本物のリンクと違いが出ない)。"
+  (<- kind PathKind (kind-in store source))
+  (<- target-kind PathKind (kind-in store target))
+  (<- parent (parent-refusal store target))
+  (var reason None)
+  (cond
+    (= kind PathKind.MISSING) (:= reason NO-ENTRY)
+    (is-not parent None) (:= reason (if (in NOT-DIRECTORY parent.detail) NOT-DIRECTORY NO-ENTRY))
+    (!= target-kind PathKind.MISSING) (:= reason EXISTS)
+    (= kind PathKind.DIRECTORY) (:= reason NOT-PERMITTED))
+  (if (is-not reason None)
+      (do (<- answer FileFailed (refused-move reason source target)) answer)
+      (do (<- content (content-of store source))
+          (<- linked (with-file store target content None))
+          linked)))
 
 
 (defk content-of [store path]
@@ -294,6 +315,11 @@
         (resume content)
         (do (<- answer (with-file store to content None))
             (if (isinstance answer FileFailed) (resume answer) (do (:= store answer) (resume None))))))
+  (LinkFile [source target]
+    (<- from str (normal source))
+    (<- to str (normal target))
+    (<- answer (link-in store from to))
+    (if (isinstance answer FileFailed) (resume answer) (do (:= store answer) (resume None))))
   (CopyTree [source target]
     (<- from str (normal source))
     (<- to str (normal target))

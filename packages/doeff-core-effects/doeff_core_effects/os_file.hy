@@ -10,7 +10,7 @@
 (import pathlib [Path])
 (import doeff_core_effects.file_effects [PathKind FileFailed PathStat DirEntry LockHeld DiskUsage StatPath ReadText ReadBytes WriteText WriteBytes
                                          AppendText MakeDirectory ListDirectory WalkTree CopyFile CopyTree RenamePath RemoveTree
-                                         AcquireLock ReleaseLock ReadDiskFree ReadDiskUsage MeasureTree])
+                                         AcquireLock ReleaseLock ReadDiskFree ReadDiskUsage MeasureTree LinkFile])
 
 
 (defk failed [path error]
@@ -248,6 +248,9 @@
     (resume answer))
   (CopyFile [source target]
     (<- answer (guarded source (fn [] (shutil.copyfile source target))))
+    (resume answer))
+  (LinkFile [source target]
+    (<- answer (guarded source (fn [] (os.link source target))))
     (resume answer))
   (CopyTree [source target]
     (<- answer (guarded source (fn [] (shutil.copytree source target :symlinks True :dirs-exist-ok True))))

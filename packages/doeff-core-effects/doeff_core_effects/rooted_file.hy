@@ -16,12 +16,12 @@
 (import doeff [EffectBase])
 (import doeff_core_effects.file_effects [FileFailed PathStat LockHeld StatPath ReadText ReadBytes WriteText WriteBytes AppendText
                                          MakeDirectory ListDirectory WalkTree CopyFile CopyTree RenamePath RemoveTree AcquireLock
-                                         ReleaseLock ReadDiskFree DiskUsage ReadDiskUsage MeasureTree])
+                                         ReleaseLock ReadDiskFree DiskUsage ReadDiskUsage MeasureTree LinkFile])
 
 ;; path 1 つを持つ effect と、写し元と写し先の 2 つを持つ effect。
 (val PATH-EFFECTS #(StatPath ReadText ReadBytes WriteText WriteBytes AppendText MakeDirectory ListDirectory WalkTree RemoveTree
                     AcquireLock ReadDiskFree ReadDiskUsage MeasureTree))
-(val MOVE-EFFECTS #(CopyFile CopyTree RenamePath))
+(val MOVE-EFFECTS #(CopyFile LinkFile CopyTree RenamePath))
 ;; file の effect の答えの型の和(失敗・様子・錠・総量と空き・中身・一覧・空きと大きさの byte・答えの無い書き)。
 (val ANSWER (| FileFailed PathStat LockHeld DiskUsage str bytes tuple int None))
 
@@ -78,6 +78,9 @@
   ;; 引数に残す理由: root は筋書きの世界の形(どの dir を / に見せるか)で、同じ組の中で pod ごとに違う値。
   ;; 節の順: 型で当てる節を先に、:when つきの EffectBase の節を最後に置く(:when が偽の EffectBase の節は、後ろの節を試さずに外側へ通す)。
   (CopyFile [source target]
+    (<- answer (moved root effect))
+    (resume answer))
+  (LinkFile [source target]
     (<- answer (moved root effect))
     (resume answer))
   (CopyTree [source target]
