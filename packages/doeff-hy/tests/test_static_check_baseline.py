@@ -147,6 +147,33 @@ def test_split_counts_the_same_red_by_multiplicity() -> None:
     assert [d.line for d in verdict.known] == [3] and [d.line for d in verdict.new] == [9]
 
 
+def _baseline_of(tmp_path: Path, messages: list[str]) -> Baseline:
+    path = tmp_path / "base.json"
+    rows = [{"path": "a.hy", "rule": "r", "message": m, "line": i} for i, m in enumerate(messages, 1)]
+    path.write_text(json.dumps({"version": 1, "errors": rows}), encoding="utf-8")
+    return read_baseline(path)
+
+
+def test_a_shifted_hy_generated_number_is_still_the_known_red(tmp_path: Path) -> None:
+    # 定義を 1 つ足して Hy の生成名の番号が 44 → 45・28 → 29 にずれても、基点の同じ赤のまま(#2287)。
+    # 基点の行は読む時に畳むので、基点の作り直しは要らない。
+    base = _baseline_of(tmp_path, ["x is _hy_anon_44", "y of _hy_let_first_28", "z of _lazy_sent_cached_1"])
+    verdict = split(base, [Seen("a.hy", 3, "r", "x is _hy_anon_45"), Seen("a.hy", 4, "r", "y of _hy_let_first_29"), Seen("a.hy", 5, "r", "z of _lazy_sent_cached_2")])
+    assert len(verdict.known) == 3 and verdict.new == ()
+
+
+def test_folding_does_not_hide_an_added_generated_red_or_other_numbers(tmp_path: Path) -> None:
+    # 畳んだ後も個数で比べるので、生成名の赤が本当に 1 つ増えた分は新しい赤。型の名の数字は畳まない。
+    base = _baseline_of(tmp_path, ["x is _hy_anon_44", "type Int32 at 7"])
+    verdict = split(base, [
+        Seen("a.hy", 1, "r", "x is _hy_anon_9"),
+        Seen("a.hy", 2, "r", "x is _hy_anon_10"),
+        Seen("a.hy", 3, "r", "type Int64 at 7"),
+    ])
+    assert [d.line for d in verdict.known] == [1]
+    assert [d.message for d in verdict.new] == ["x is _hy_anon_10", "type Int64 at 7"]
+
+
 def test_split_follows_a_moved_file_one_to_one() -> None:
     # 基点の赤が消え、同じ規則と文言の赤が別の path に 1 つ出た = 移動。2 つ目は新しい。
     base = Baseline(Counter({Identity("old.hy", "r", "m"): 1}))

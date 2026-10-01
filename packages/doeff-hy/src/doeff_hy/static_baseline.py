@@ -6,6 +6,9 @@
 - 識別子 = `(path, 規則, 文言)` で、行番号を含めない。上に行を足しただけで同じ赤が新しい赤にならない。
 - 同じ識別子の赤は**個数で**比べる(多重集合)。型の赤は同じ文言で 1 file に何度も出るので、集合で比べると
   2 つ目の同じ赤を見逃す。基点より多い分だけが新しい赤。
+- Hy が展開で振る名(`_hy_anon_<番号>`・`_hy_let_first_<番号>` など)は番号を 1 つの印に畳んでから比べる。番号は展開の順で振られるので、
+  定義を 1 つ足すだけで後ろの番号がずれ、同じ赤の文言が変わって新しい赤に見えるため(agora-redesign #2287)。
+  畳んだ後も同じ文言の赤は個数で比べるので、匿名の名の赤が本当に増えた分は新しい赤のまま。
 - file の移動・改名: 規則と文言が同じで path だけ違い、基点のその識別子が今は減っている時、1 対 1 で同じ赤とみなす
   (linter の new_criticals と同じ)。
 
@@ -15,12 +18,17 @@
 """
 
 import json
+import re
 from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Generic, Protocol, TypeVar
 
 BASELINE_VERSION = 1
+
+# Hy と doeff-hy が展開で振る名(`_hy_anon_44`・`_hy_let_first_28`・lazy の `_lazy_sent_cached_1` など)の番号。比べの鍵では 1 つの印に畳む。
+# 行番号や型の名の数字は `_hy_` / `_lazy_` で始まらないので畳まない(vg-w39 の #2286 の形 + kn-w26 の lazy の名)。
+_HY_GENERATED_NUMBER = re.compile(r"\b(_(?:hy|lazy)_[A-Za-z0-9_]*?[A-Za-z])_\d+\b")
 
 
 class Reported(Protocol):
@@ -73,9 +81,14 @@ class BaselineUnreadable(ValueError):
     """基点の file が読めない・形が違う(呼び手は終了コード 2)。"""
 
 
+def comparable_message(message: str) -> str:
+    """比べの鍵の文言 — Hy の匿名の名の番号を畳む(定義を足して番号がずれても、同じ赤を同じ鍵で数えるため)。"""
+    return _HY_GENERATED_NUMBER.sub(r"\1_#", message)
+
+
 def identity(diagnostic: Reported) -> Identity:
-    """基点と照らす鍵を作る(行番号を落とし、行のずれで同じ赤を新しい赤にしないため)。"""
-    return Identity(diagnostic.path, diagnostic.rule, diagnostic.message)
+    """基点と照らす鍵を作る(行番号を落とし、匿名の名の番号を畳み、行や番号のずれで同じ赤を新しい赤にしないため)。"""
+    return Identity(diagnostic.path, diagnostic.rule, comparable_message(diagnostic.message))
 
 
 def errors_of(diagnostics: list[_D]) -> list[_D]:
@@ -99,7 +112,7 @@ def _identity_of_row(row: object) -> Identity:
     """基点の file の 1 行を識別子へ読む(JSON の境界 — 欄が欠けた基点を黙って空と読まないため)。"""
     match row:
         case {"path": str(path), "rule": str(rule), "message": str(message)}:
-            return Identity(path, rule, message)
+            return Identity(path, rule, comparable_message(message))
         case _:
             raise BaselineUnreadable(f"基点の赤に欄 path・rule・message が揃っていない: {row!r}")
 
