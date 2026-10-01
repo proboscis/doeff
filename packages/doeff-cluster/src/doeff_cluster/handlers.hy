@@ -2,7 +2,7 @@
 ;; どれもループを塞がない: 展開と子 process は Popen で起動し、結果は ObserveWorld で観測する。
 (require doeff-hy.macros [defhandler defk deff <- val])
 (require doeff-hy.record [defrecord])
-(import json os re shutil signal subprocess sys tempfile threading time uuid)
+(import json os re shutil subprocess sys threading time uuid)
 (import httpx)
 (import enum [Enum])
 (import typing [IO])
@@ -28,10 +28,8 @@
 (import doeff_cluster.worker.protocol.heartbeat [env-report env-heartbeat-part heartbeat-body status-report status-row])
 (import doeff_cluster.worker.core.heartbeat_rules [warm-env-of-row finished-task-id desired-when-unreachable])
 (import doeff_cluster.foundation.ready_file [write-ready-file])
-(import doeff_cluster.worker.core.launch [child-environment env-project-dir program-file CHILD-ENV-ALLOWED])
-(import doeff_cluster.worker.core.probe_rules [PROBE-SECONDS PROBE-STOP-GRACE probe-reason probe-targets probe-launches ProbeSettle probe-settle probe-results probe-command])
-(import doeff_core_effects.process_effects [EnvMode])
-(import doeff_cluster.worker.intent.worker_model [ObserveProcesses CodeState CodeView ProcessView WorldView StopStage ProbeState ProbeView
+(import doeff_cluster.worker.core.launch [program-file])
+(import doeff_cluster.worker.intent.worker_model [ObserveProcesses ObserveProbes CodeState CodeView ProcessView WorldView StopStage ProbeState ProbeView
   DesiredJobs DesiredUnreadable ReadDesired ObserveWorld WorkerStopRequested PublishStatus JobStatus EnvDisk WarmEnv
   PrepareCode PrepareEnv SweepEnvs ForgetProbes StartJob SignalJob ReapJob RetireJob ReleaseLeases ProbeEntry CodeLayout
 ] doeff_cluster.shared.intent.job_model [JobSpec JobPhase] doeff_cluster.shared.core.job_rules [spec-hash] doeff_cluster.worker.core.worker_rules [probe-args probe-refusal ENV-KEY-PREFIX])
@@ -456,168 +454,15 @@
   total)
 
 
-(defrecord ProbeRun
-  "走っている検めの束 1 本(木ごとに 1 本): shim の process(process group の先頭)・束の spec・束の対象(検める順)・実行環境の宣言・
-   起こした時刻(単調時計と epoch ms)・標準出力と標準エラーを受ける無名の一時 file(pipe は溜まると子が止まるので使わない)。"
-  (#^ subprocess.Popen process)
-  (#^ tuple specs)
-  (#^ tuple targets)
-  (#^ (| str None) runtime-env)
-  (#^ float started)
-  (#^ int started-ms)
-  (#^ (get IO bytes) out)
-  (#^ (get IO bytes) err))
-
-
-(defclass ProbeStore []
-  "入口の検め(2026-09-25): service の job の木で、worker の実行環境が入口(factory と env)を読み込めるかを子 process で試す。
-   結果は observe で拾う(ループを塞がない)。実行は ProcessHost と同じ hy・同じ PYTHONPATH(layout の import の根)・cwd = 木。
-   実行環境の job(spec.runtime-env — 2026-09-26)は子と同じ起こし方で検める: root の venv の
-   `uv run --no-sync --frozen --project <root の project> hy -c …`・環境変数は子と同じ許可表・PYTHONPATH を置かない・cwd = 空の dir
-   (probe-dir)。worker の venv で検めると、env の root に無い module を worker の venv が読めて誤って通る。
-   子と同じく bytecode を書く(PYTHONDONTWRITEBYTECODE を置かない — 置くと撃つたびに同じ Hy を source から compile し直した)。
-   前提: 入口の module の import は冪等(読むだけで外へ書かない)。束は同じ木の入口を 1 つの process で順に import する。
-
-   process の寿命(2026-09-27): 検めは job の子と同じ shim(doeff_cluster.shim)を新しい process group の先頭にして起こし、束が
-   終わったら(通った・失敗した・時間切れ・shim が先に死んだのどれでも)group ごと KILL する(以前は時間切れの時に直の子 = uv だけを
-   kill し、孫の hy が孤児として CPU を使い続けた)。worker が消えれば shim が stdin の EOF で group を止める。
-   shim は -B で起こす(2026-09-28・日次 t97 の柵の赤)— shim 自身は worker の install から import される。job の子の env は許可表で
-   しか継がないので PYTHONDONTWRITEBYTECODE が落ち、shim の import が worker の install(検では checkout)へ .pyc を書いていた。
-   並べ方(2026-09-27): 同じ木の検めは 1 本ずつ(probe-launches)。start は束に積むだけで、process は observe の頭で起こす —
-   同じ拍に来た同じ木の spec は 1 本の process にまとめ、対象ごとの結果の行から、読み込めない理由をその対象を持つ spec にだけ付ける。
-   timeout-seconds を越えた束は止め、結果の出た対象は結果どおり・進んでいた対象を持つ spec だけ時間切れの FAILED・残りの spec は
-   待ちへ戻す(probe-settle)。時間切れの spec の撃ち直しは単独の束で起こす。結果の鍵は spec-hash(同じ spec の検めは撃ち直される
-   まで答えを使い回す)。回数と前の回の失敗の理由は撃ち直しの間も持つ(状態の報告の probing)。"
-  (defn #^ None __init__ [self #^ str hy-command #^ (| int float) [timeout-seconds PROBE-SECONDS] #^ CodeLayout [layout (CodeLayout)]
-                          #^ str [uv "uv"] #^ (| str None) [probe-dir None]]
-    (setv self.hy-command hy-command self.timeout-seconds timeout-seconds self.layout layout
-          self.uv uv self.probe-dir (Path (or probe-dir "probe"))
-          ;; 束の鍵 #(木 実行環境の宣言 単独の spec-hash か None) → 待っている spec の列(dict の順 = 来た順)・木 → 走っている束・
-          ;; spec-hash → 答え。
-          self.waiting {} self.runs {} self.done {}
-          ;; spec-hash → 検めた回数・前の回の失敗の理由。timed-out = 直前の検めが時間切れだった spec-hash(次は単独で起こす)。
-          self.attempts {} self.last-failure {} self.timed-out (set)))
-
-  (defn #^ list command [self #^ str code-path #^ (| str None) runtime-env #^ list targets]
-    "検めの子の #(argv cwd 環境変数)。起こし方の判断は worker/core/probe_rules の probe-command(#2465)— ここは worker の process の値を
-     渡し、実行環境の job の probe-dir を作る I/O だけを行う。"
-    (setv allowed (dfor #(k v) (.items os.environ) :if (or (in k CHILD-ENV-ALLOWED) (.startswith k "LC_")) k v)
-          plan (run (probe-command code-path runtime-env (tuple targets) :hy-command self.hy-command :uv self.uv :layout self.layout
-                                   :allowed-env allowed :probe-dir (str self.probe-dir))))
-    (when runtime-env (.mkdir self.probe-dir :parents True :exist-ok True))
-    (setv overlay (dfor e plan.env e.name e.value))
-    [(list plan.argv) plan.cwd (if (= plan.env-mode EnvMode.EXTEND) (| (dict os.environ) overlay) overlay)])
-
-  (defn #^ bool in-flight [self #^ str key]
-    (or (any (gfor specs (.values self.waiting) spec specs (= (spec-hash spec) key)))
-        (any (gfor run (.values self.runs) spec run.specs (= (spec-hash spec) key)))))
-
-  (defn #^ None start [self #^ ProbeEntry action]
-    (setv key (spec-hash action.spec))
-    (when (.in-flight self key) (return))
-    (setv prior (.pop self.done key None))
-    (when (and (is-not prior None) (= prior.state ProbeState.FAILED))
-      (setv (get self.last-failure key) prior.detail))
-    (setv (get self.attempts key) (+ (.get self.attempts key 0) 1))
-    ;; 旧い形の service の spec は process を起こさずに失敗とする(理由つき — 計画 2.8 の入口 15)。
-    (setv refusal (probe-refusal action.spec))
-    (when (is-not refusal None)
-      (setv now-ms (int (* (time.time) 1000)))
-      (setv (get self.done key) (.view self action.spec ProbeState.FAILED now-ms :detail refusal :failed-ms now-ms))
-      (return))
-    ;; 直前が時間切れの spec は単独の束(鍵の 3 つ目 = spec-hash)。
-    (setv solo (in key self.timed-out))
-    (.discard self.timed-out key)
-    (.append (.setdefault self.waiting #(action.code-path action.spec.runtime-env (if solo key None)) []) action.spec))
-
-  (defn #^ None forget [self #^ frozenset keep]
-    "宣言から消えた spec の検めの記録を落とすため(2026-09-27 — worker_model.ForgetProbes): keep(今の宣言の spec-hash)に無い spec の
-     答え・回数・前の回の失敗の理由・時間切れの印と、待っている束の中のその spec を落とす。走っている束の process は止めない
-     (終わった後の答えは次の拍の観測に出て、その拍の ForgetProbes で落ちる)。"
-    (setv running (sfor run (.values self.runs) spec run.specs (spec-hash spec)))
-    (for [batch (list self.waiting)]
-      (setv kept (lfor spec (get self.waiting batch) :if (in (spec-hash spec) keep) spec))
-      (if kept (setv (get self.waiting batch) kept) (del (get self.waiting batch))))
-    (for [table [self.done self.attempts self.last-failure]]
-      (for [key (list table)]
-        (when (and (not-in key keep) (not-in key running)) (del (get table key)))))
-    (for [key (list self.timed-out)]
-      (when (and (not-in key keep) (not-in key running)) (.discard self.timed-out key))))
-
-  (defn #^ None launch [self #^ tuple batch #^ list specs]
-    "束 1 本を起こす: 束の spec の対象を重ねずに並べ、shim を group の先頭にして 1 つの process で検める。"
-    (setv #(code-path runtime-env _) batch
-          targets (list (dict.fromkeys (gfor spec specs target (probe-targets spec) target)))
-          #(argv cwd env) (.command self code-path runtime-env targets)
-          out (tempfile.TemporaryFile) err (tempfile.TemporaryFile))
-    (setv process (subprocess.Popen [sys.executable "-B" "-m" "doeff_cluster.shim" PROBE-STOP-GRACE "--" #* argv]
-                                    :cwd cwd :env env :stdin subprocess.PIPE :stdout out :stderr err
-                                    :start-new-session True))
-    (setv (get self.runs code-path)
-          (ProbeRun :process process :specs (tuple specs) :targets (tuple targets) :runtime-env runtime-env
-                    :started (time.monotonic) :started-ms (int (* (time.time) 1000)) :out out :err err)))
-
-  (defn #^ ProbeView view [self #^ JobSpec spec #^ ProbeState state #^ (| int None) started-ms #^ str [detail ""] #^ (| int None) [failed-ms None]]
-    (setv key (spec-hash spec))
-    (ProbeView key state :detail detail :failed-ms failed-ms :started-ms started-ms
-               :attempts (.get self.attempts key 1) :last-failure (.get self.last-failure key "")))
-
-  (defn #^ None finish [self #^ str tree #^ ProbeRun run #^ (| int None) code]
-    "束を片づけて答えを置く。code = 終了の番号(None = 時間切れ)。どの終わり方でも group ごと KILL する(本体が起こした孫・shim だけが
-     先に死んだ時の本体を残さない — ProcessHost.reap と同じ)。"
-    (try (os.killpg run.process.pid signal.SIGKILL) (except [ProcessLookupError] None))
-    (when (is code None) (.wait run.process))
-    (when (is run.process.stdin None)
-      (raise (RuntimeError "検めの shim は stdin を pipe で起こしているのに、pipe が無い")))
-    (.close run.process.stdin)
-    (.seek run.out 0)
-    (.seek run.err 0)
-    (setv stdout (.decode (.read run.out) "utf-8" "replace")
-          stderr (.decode (.read run.err) "utf-8" "replace")
-          results (probe-results stdout)
-          stuck (next (gfor t run.targets :if (not-in t results) t) None)
-          crash (if (or (is code None) (= code 0)) None (probe-reason code stderr))
-          now-ms (int (* (time.time) 1000)))
-    (.close run.out)
-    (.close run.err)
-    (del (get self.runs tree))
-    (for [spec run.specs]
-      (setv key (spec-hash spec)
-            settled (probe-settle (probe-targets spec) results (is code None) stuck crash))
-      (cond
-        (= settled.kind ProbeSettle.REQUEUE)
-          ;; 結果の出る前に束が止まった spec は、回数を増やさずに待ちへ戻す(次の束で検める)。
-          (.append (.setdefault self.waiting #(tree run.runtime-env None) []) spec)
-        (= settled.kind ProbeSettle.TIMED-OUT)
-          (do (.add self.timed-out key)
-              (setv (get self.done key)
-                    (.view self spec ProbeState.FAILED run.started-ms :failed-ms now-ms
-                           :detail (.format "入口の検めが {} 秒で終わらない(process group ごと止めた): {} の読み込みの途中"
-                                            self.timeout-seconds stuck))))
-        (is settled.reason None) (setv (get self.done key) (.view self spec ProbeState.PASSED run.started-ms))
-        True (setv (get self.done key) (.view self spec ProbeState.FAILED run.started-ms :detail settled.reason :failed-ms now-ms)))))
-
-  (defn #^ tuple observe [self]
-    ;; 待っている束を起こす(木ごとに 1 本 — 走っている木の束は、その終わりを待つ)。
-    (for [batch (probe-launches (list self.waiting) (frozenset self.runs))]
-      (.launch self batch (.pop self.waiting batch)))
-    (for [#(tree run) (list (.items self.runs))]
-      (setv code (.poll run.process))
-      (cond
-        (is-not code None) (.finish self tree run code)
-        (> (- (time.monotonic) run.started) self.timeout-seconds) (.finish self tree run None)))
-    (tuple (+ (lfor specs (.values self.waiting) spec specs (.view self spec ProbeState.QUEUED None))
-              (lfor run (.values self.runs) spec run.specs (.view self spec ProbeState.RUNNING run.started-ms))
-              (list (.values self.done))))))
-
-
-(defhandler local-host [#^ CodeStore codes #^ ProbeStore probes #^ (| EnvStore None) [envs None]]
-  ;; 引数に残す理由: 3 つとも worker の process が持つ I/O の資源(準備の process の表)で、同じ組が観測と action の両方に答える。
+(defhandler local-host [#^ CodeStore codes #^ (| EnvStore None) [envs None]]
+  ;; 引数に残す理由: 2 つとも worker の process が持つ I/O の資源(準備の process の表)で、同じ組が観測と action の両方に答える。
   ;; envs = 実行環境の root の準備(None = 実行環境の job を扱わない worker — PrepareEnv は断る)。job の子 process は
-  ;; worker/protocol/process_host の言い換え(外側に置く)が StartJob・SignalJob・ReapJob・RetireJob に答え、観測は ObserveProcesses で問う(#2464)。
+  ;; worker/protocol/process_host(#2464)、入口の検めは worker/protocol/probes(#2465)の言い換え(外側に置く)が答え、観測は
+  ;; ObserveProcesses・ObserveProbes で問う。
   (ObserveWorld []
     (<- processes tuple (ObserveProcesses))
-    (resume (WorldView (+ (.observe codes) (if (is envs None) #() (.observe envs))) processes (.observe probes)
+    (<- probed tuple (ObserveProbes))
+    (resume (WorldView (+ (.observe codes) (if (is envs None) #() (.observe envs))) processes probed
                        :env-disk (if (is envs None) None (.disk-view envs)))))
   (PrepareCode [revision] (.start codes revision) (resume None))
   (PrepareEnv [key runtime-env warm]
@@ -627,9 +472,7 @@
     (resume None))
   (SweepEnvs [pinned]
     (when (is-not envs None) (.sweep envs pinned))
-    (resume None))
-  (ProbeEntry [spec code-path] (.start probes (ProbeEntry spec code-path)) (resume None))
-  (ForgetProbes [keep] (.forget probes keep) (resume None)))
+    (resume None)))
 
 (defn #^ dict status-json [#^ tuple statuses #^ str note #^ dict timings]
   {"note" note

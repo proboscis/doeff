@@ -20,7 +20,7 @@
 (import doeff_core_effects.process_effects [EnvEntry])
 (import doeff_core_effects.scheduler [scheduled])
 (import doeff_time [async-time-handler])
-(import .handlers [CodeStore EnvStore CoordinatorLink ProbeStore coordinator-desired local-host
+(import .handlers [CodeStore EnvStore CoordinatorLink coordinator-desired local-host
                    status-file status-to-coordinator lease-release-coordinator] doeff_cluster.worker.protocol.stop [stop-flag StopState])
 (import doeff_cluster.foundation.process_versions [current-versions])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming])
@@ -28,6 +28,7 @@
 (import doeff_cluster.worker.core.program [run-worker])
 (import doeff_cluster.worker.intent.worker_model [WorkerPolicy CodeLayout])
 (import doeff_cluster.worker.protocol.process_host [HostSettings process-host])
+(import doeff_cluster.worker.protocol.probes [ProbeSettings probe-host])
 (import doeff_cluster.foundation.host_contract [HOST-CONTRACT])
 (import .job_context [worker-context-environ])
 
@@ -102,7 +103,8 @@
         ;; 実行環境(runtime env)の root の準備(別の process・worker は再起動しない)。
         envs (EnvStore (str state-dir) hy-command :repo-keys args.repo-keys :uv args.uv :min-free-bytes args.env-min-free)
         ;; 入口の検め(service の job の木を worker の実行環境で読み込めるか — 起こす前に試す)。
-        probes (ProbeStore hy-command :layout layout :uv args.uv :probe-dir (str (/ state-dir "probe")))
+        probes (ProbeSettings :python sys.executable :hy-command hy-command :uv args.uv :layout layout
+                              :probe-dir (str (/ state-dir "probe")))
         policy (WorkerPolicy :stop-grace-ms (int (* args.stop-grace 1000)))
         stop (StopState))
   (defn #^ None on-signal [#^ int signum #^ (| FrameType None) frame] (setv stop.requested True))
@@ -116,8 +118,8 @@
                               ;; には拍ごとに送る)。
                               :watch True))
   (setv program (run-worker policy))
-  ;; 並びは内側から(先頭が Program に最も近い)。process-host の session の値(子の表)は外側の session-store が持つ。
-  (for [h [(local-host codes probes envs) (process-host host) (session-store)
+  ;; 並びは内側から(先頭が Program に最も近い)。process-host と probe-host の session の値(子の表・検めの記録)は外側の session-store が持つ。
+  (for [h [(local-host codes envs) (process-host host) (probe-host probes) (session-store)
            (coordinator-desired link) (status-to-coordinator link) (lease-release-coordinator link)
            (status-file (str (/ state-dir "status.json")) codes) os-file-handler subprocess-handler
            (stop-flag stop) slog-handler (async-time-handler) (await-handler)]]

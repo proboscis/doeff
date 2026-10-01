@@ -1,18 +1,20 @@
 ;; 入口の検め(probe・2026-09-25): service の job は、木が揃った後に worker の実行環境で入口の module を読み込めるかを試し、
-;; 通るまで起こさない・入れ替えの旧を外さない。純粋な判断(worker_policy)・実の子 process(handlers.ProbeStore)。
+;; 通るまで起こさない・入れ替えの旧を外さない。純粋な判断(worker_policy)・実の子 process(検めの言い換え worker/protocol/probes)。
 ;; Program の job(2026-09-27・ADR-DOE-CLUSTER-001)は関数の参照を持たないので、検める対象は入口の module(spec.entry)だけ
 ;; (詰めた Program の版と復元は起こした子が検める — job_entry の service / probe の検は test_job_entry_program)。
 ;; 旧い形の service の spec(置き場のキー無し・--factory / --env / --config)は検めの段で理由つきに断る(計画 2.8 の入口 15)。
-(require doeff-hy.macros [deftest val <-])
+(require doeff-hy.macros [deftest defk val var <-])
 (import dataclasses [replace])
 (import os)
 (import sys)
 (import time)
 (import pathlib [Path])
 (import doeff_cluster.worker.intent.worker_model [CodeState CodeView ProcessView WorldView ProbeState ProbeView ProbeStatus JobRecord
-                        WorkerPolicy PrepareCode StartJob RetireJob ProbeEntry ForgetProbes] doeff_cluster.shared.intent.job_model [JobSpec JobPhase] doeff_cluster.shared.core.job_rules [spec-hash] doeff_cluster.worker.core.worker_rules [probed-job probe-args probe-refusal])
+                        WorkerPolicy PrepareCode StartJob RetireJob ProbeEntry ForgetProbes ObserveProbes] doeff_cluster.shared.intent.job_model [JobSpec JobPhase] doeff_cluster.shared.core.job_rules [spec-hash] doeff_cluster.worker.core.worker_rules [probed-job probe-args probe-refusal])
 (import doeff_cluster.worker.core.policy [plan statuses])
-(import doeff_cluster.handlers [ProbeStore] doeff_cluster.worker.protocol.heartbeat [status-row] doeff_cluster.worker.core.probe_rules [probe-reason])
+(import doeff [run])
+(import doeff_cluster.worker.protocol.heartbeat [status-row] doeff_cluster.worker.core.probe_rules [probe-reason])
+(import tests.probe_rig [probe-settings observed run-probes])
 (import tests.program_rows [SAMPLE-RUN SAMPLE-PROGRAM])
 (import doeff_cluster.coordinator.core.cluster_policy [JOB-ENTRY LIVE-PHASES spec-of-declaration])
 
@@ -71,7 +73,8 @@
   (assert (= (plan 31000 #(S2) ok {} POLICY) #((RetireJob "w" 10 "w#retired-1-10")))))
 
 
-;; --- 実の子 process(ProbeStore)と入口(job_entry probe)-------------------------------------------
+;; --- 実の子 process(検めの言い換え probe-host — #2465)と入口(job_entry probe)-------------------------------------------
+;; 検めの記録は probe-host の session の値なので、筋書きは 1 本の Program(defk)にして run-probes で回す(tests/probe_rig.hy)。
 
 (setv HY (str (/ (. (Path sys.executable) parent) "hy")))
 
@@ -89,39 +92,44 @@
   (JobSpec "w" target #("service" "--identity" (* "0" 16)) "rev1" :program SAMPLE-PROGRAM))
 
 
-(defn #^ ProbeView observed [#^ ProbeStore store #^ JobSpec spec]
-  "検めが終わるまで観測する(上限 60 秒)。"
-  (setv key (spec-hash spec) deadline (+ (time.monotonic) 60))
-  (while (< (time.monotonic) deadline)
-    (for [view (.observe store)]
-      (when (and (= view.spec-hash key) (not-in view.state #(ProbeState.RUNNING ProbeState.QUEUED))) (return view)))
-    (time.sleep 0.05))
-  (raise (AssertionError "検めが 60 秒で終わらない")))
+(defk entry-probe-scene [tree good broken missing]
+  {:pre [(: tree str) (: good JobSpec) (: broken JobSpec) (: missing JobSpec)] :post [(: % tuple)] :tags {:context "doeff-cluster-test" :role "program"}}
+  "3 つの入口を積み、走っている間の観測と 3 つの答えを返すため。"
+  (for [spec [good broken missing]] (<- (ProbeEntry spec tree)))
+  (<- first tuple (ObserveProbes))
+  (<- g ProbeView (observed good))
+  (<- b ProbeView (observed broken))
+  (<- m ProbeView (observed missing))
+  #(first g b m))
 
 
 (defn #^ None test-probe-store-runs-the-entry-probe-in-the-tree [#^ Path tmp-path]
-  (setv tree (probe-tree tmp-path) store (ProbeStore HY)
+  (setv tree (probe-tree tmp-path)
         good (service-spec "probe_ok:program")
         broken (service-spec "probe_broken:program")
         missing (service-spec "probe_ok:no_such_attr"))
-  (for [spec [good broken missing]] (.start store (ProbeEntry spec tree)))
+  (setv #(first g b m) (run-probes (run (probe-settings tmp-path)) (entry-probe-scene tree good broken missing)))
   ;; 走っている間は RUNNING として観測に載る。
-  (assert (any (gfor v (.observe store) (= v.state ProbeState.RUNNING))))
-  (assert (= (. (observed store good) state) ProbeState.PASSED))
-  (setv b (observed store broken))
+  (assert (any (gfor v first (= v.state ProbeState.RUNNING))))
+  (assert (= g.state ProbeState.PASSED))
   (assert (= b.state ProbeState.FAILED))
   (assert (in "NoSuchClockName" b.detail) b.detail)
   (assert (is-not b.failed-ms None))
-  (setv m (observed store missing))
   (assert (= m.state ProbeState.FAILED))
   (assert (in "no_such_attr" m.detail) m.detail))
 
 
+(defk probed-once [spec tree]
+  {:pre [(: spec JobSpec) (: tree str)] :post [(: % ProbeView)] :tags {:context "doeff-cluster-test" :role "program"}}
+  "入口を 1 つ積み、答えを返すため。"
+  (<- (ProbeEntry spec tree))
+  (<- view ProbeView (observed spec))
+  view)
+
+
 (defn #^ None test-probe-store-stops-a-probe-that-runs-too-long [#^ Path tmp-path]
-  (setv tree (probe-tree tmp-path) store (ProbeStore HY :timeout-seconds 1)
-        slow (service-spec "probe_slow:program"))
-  (.start store (ProbeEntry slow tree))
-  (setv v (observed store slow))
+  (setv tree (probe-tree tmp-path) slow (service-spec "probe_slow:program"))
+  (setv v (run-probes (run (probe-settings tmp-path :timeout-seconds 1)) (probed-once slow tree)))
   (assert (= v.state ProbeState.FAILED))
   (assert (in "終わらない" v.detail) v.detail))
 
@@ -149,11 +157,8 @@
                             "(time.sleep 60)"
                             "(defn program [] None)"])
                :encoding "utf-8")
-  (setv store (ProbeStore HY :timeout-seconds 3)
-        forks (service-spec "probe_forks:program")
-        pid-file (/ tmp-path "child.pid"))
-  (.start store (ProbeEntry forks (str tmp-path)))
-  (setv v (observed store forks))
+  (setv forks (service-spec "probe_forks:program") pid-file (/ tmp-path "child.pid"))
+  (setv v (run-probes (run (probe-settings tmp-path :timeout-seconds 3)) (probed-once forks (str tmp-path))))
   (assert (= v.state ProbeState.FAILED))
   (assert (in "終わらない" v.detail) v.detail)
   (assert (.exists pid-file) "検めが孫を起こす前に時間切れになった(検の前提が崩れた)")
@@ -164,6 +169,17 @@
     (finally
       (when (process-alive child)
         (os.kill child 9)))))
+
+
+(defk probed-all [specs tree]
+  {:pre [(: specs list) (: tree str)] :post [(: % list)] :tags {:context "doeff-cluster-test" :role "program"}}
+  "入口を全部積み、積んだ順の答えを返すため。"
+  (for [spec specs] (<- (ProbeEntry spec tree)))
+  (var views [])
+  (for [spec specs]
+    (<- view ProbeView (observed spec))
+    (:= views (+ views [view])))
+  views)
 
 
 (defn #^ None test-probes-on-the-same-tree-run-as-one-process [#^ Path tmp-path]
@@ -178,11 +194,9 @@
                               "(time.sleep 0.3)"
                               "(defn program [] None)"])
                  :encoding "utf-8"))
-  (setv store (ProbeStore HY)
-        specs (+ (lfor i (range 6) (replace (service-spec (.format "probe_m{}:program" i)) :name (.format "w{}" i)))
+  (setv specs (+ (lfor i (range 6) (replace (service-spec (.format "probe_m{}:program" i)) :name (.format "w{}" i)))
                  [(replace (service-spec "probe_broken:program") :name "w6")]))
-  (for [spec specs] (.start store (ProbeEntry spec (str tmp-path))))
-  (setv views (lfor spec specs (observed store spec)))
+  (setv views (run-probes (run (probe-settings tmp-path)) (probed-all specs (str tmp-path))))
   (assert (= (lfor v (cut views 0 6) v.state) (* [ProbeState.PASSED] 6)) views)
   (assert (= (. (get views 6) state) ProbeState.FAILED) views)
   (assert (in "NoSuchClockName" (. (get views 6) detail)) (. (get views 6) detail))
@@ -219,11 +233,21 @@
                             "(.write-text (Path \"spawned.pid\") (str child.pid))"
                             "(defn program [] None)"])
                :encoding "utf-8")
-  (setv store (ProbeStore HY :timeout-seconds 30)
-        spawns (service-spec "probe_spawns:program"))
-  (.start store (ProbeEntry spawns (str tmp-path)))
-  (assert (= (. (observed store spawns) state) ProbeState.PASSED))
+  (setv spawns (service-spec "probe_spawns:program"))
+  (setv v (run-probes (run (probe-settings tmp-path :timeout-seconds 30)) (probed-once spawns (str tmp-path))))
+  (assert (= v.state ProbeState.PASSED))
   (assert-gone (wait-pid (/ tmp-path "spawned.pid")) "通った検めの孫"))
+
+
+(defk shim-killed-scene [spec tree pid-file]
+  {:pre [(: spec JobSpec) (: tree str) (: pid-file Path)] :post [(: % tuple)] :tags {:context "doeff-cluster-test" :role "program"}}
+  "検めを起こし、本体が pid を書いたら group の先頭(shim — 本体の process group の番号)を kill -9 し、答えと本体の pid を返すため。"
+  (<- (ProbeEntry spec tree))
+  (<- (ObserveProbes))
+  (val sleeper (wait-pid pid-file))
+  (os.kill (os.getpgid sleeper) 9)
+  (<- view ProbeView (observed spec))
+  #(view sleeper))
 
 
 (defn #^ None test-a-probe-whose-shim-dies-first-leaves-no-child-process [#^ Path tmp-path]
@@ -235,51 +259,51 @@
                             "(time.sleep 20)"
                             "(defn program [] None)"])
                :encoding "utf-8")
-  (setv store (ProbeStore HY :timeout-seconds 30)
-        sleeps (service-spec "probe_sleeps:program"))
-  (.start store (ProbeEntry sleeps (str tmp-path)))
-  (.observe store)
-  (setv sleeper (wait-pid (/ tmp-path "sleeper.pid"))
-        shim (. (next (iter (.values store.runs))) process pid))
-  (os.kill shim 9)
-  (assert (= (. (observed store sleeps) state) ProbeState.FAILED))
+  (setv sleeps (service-spec "probe_sleeps:program"))
+  (setv #(v sleeper) (run-probes (run (probe-settings tmp-path :timeout-seconds 30))
+                                 (shim-killed-scene sleeps (str tmp-path) (/ tmp-path "sleeper.pid"))))
+  (assert (= v.state ProbeState.FAILED))
   (assert-gone sleeper "shim の死んだ検めの本体"))
+
+
+(defk hanging-scene [specs hang ok-specs tree]
+  {:pre [(: specs list) (: hang JobSpec) (: ok-specs list) (: tree str)] :post [(: % tuple)] :tags {:context "doeff-cluster-test" :role "program"}}
+  "固まる入口を中ほどに置いた束を検め、固まった入口の答え・ほかの答え・撃ち直しの直後の観測を返すため。撃ち直しは時間切れまで待って片づける。"
+  (for [spec specs] (<- (ProbeEntry spec tree)))
+  (<- hung ProbeView (observed hang))
+  (var oks [])
+  (for [spec ok-specs]
+    (<- v ProbeView (observed spec))
+    (:= oks (+ oks [v])))
+  ;; 撃ち直し: 時間切れだった spec は単独の束で起こす(同じ木の ok の spec は待ちに残る)。
+  (<- (ProbeEntry hang tree))
+  (<- (ProbeEntry (get ok-specs 0) tree))
+  (<- refired tuple (ObserveProbes))
+  ;; 検の後始末: 撃ち直しが時間切れになるまで待つ(group ごと止まる)。
+  (<- (observed hang))
+  #(hung oks refired))
 
 
 (defn #^ None test-a-hanging-entry-does-not-take-down-its-batch [#^ Path tmp-path]
   ;; 反例(必須 1): 同じ木の束に固まる入口が 1 つあっても、ほかの入口は結果どおり(PASSED)になり、時間切れで FAILED になるのは固まった
   ;; 入口を持つ spec だけ。撃ち直しでは、直前に時間切れになった spec を束に混ぜず単独で起こす(同じ束で全部が道連れを繰り返さない)。
   (probe-tree tmp-path)
-  (setv store (ProbeStore HY :timeout-seconds 3)
-        ok-specs (lfor i (range 6) (replace (service-spec (.format "probe_ok:program{}" i))
-                                            :name (.format "w{}" i)))
+  (setv ok-specs (lfor i (range 6) (replace (service-spec (.format "probe_ok:program{}" i)) :name (.format "w{}" i)))
         hang (replace (service-spec "probe_slow:program") :name "hang")
         ;; 固まる入口を束の中ほどに置く(前の対象は結果が出ている・後の対象は結果が出ていない)。
         specs (+ (cut ok-specs 0 3) [hang] (cut ok-specs 3 None)))
   (for [i (range 6)]
     (.write-text (/ tmp-path "probe_ok.hy")
                  (+ (.read-text (/ tmp-path "probe_ok.hy")) (.format "(defn program{} [] None)\n" i))))
-  (for [spec specs] (.start store (ProbeEntry spec (str tmp-path))))
-  (setv hung (observed store hang))
+  (setv #(hung oks refired) (run-probes (run (probe-settings tmp-path :timeout-seconds 3)) (hanging-scene specs hang ok-specs (str tmp-path))))
   (assert (= hung.state ProbeState.FAILED) hung)
   (assert (in "終わらない" hung.detail) hung.detail)
-  (for [spec ok-specs]
-    (setv v (observed store spec))
+  (for [#(spec v) (zip ok-specs oks)]
     (assert (= v.state ProbeState.PASSED) (.format "{} が固まった入口の道連れになった: {}" spec.name v))
     (assert (= v.attempts 1) v))
-  ;; 撃ち直し: 時間切れだった spec は単独の束で起こす。
-  (.start store (ProbeEntry hang (str tmp-path)))
-  (.start store (ProbeEntry (get ok-specs 0) (str tmp-path)))
-  (.observe store)
-  (setv runs (list (.values store.runs)))
-  (try
-    (assert (= (len runs) 1) runs)
-    (assert (= (. (get runs 0) specs) #(hang)) (. (get runs 0) specs))
-    (finally
-      ;; 検の後始末: 走っている撃ち直しの group を止める。
-      (for [run runs]
-        (try (os.killpg run.process.pid 9) (except [ProcessLookupError] None))
-        (.wait run.process)))))
+  (setv states (dfor v refired v.spec-hash v.state))
+  (assert (= (get states (spec-hash hang)) ProbeState.RUNNING) states)
+  (assert (= (get states (spec-hash (get ok-specs 0))) ProbeState.QUEUED) states))
 
 
 (deftest test-a-running-probe-is-shown-as-probing-with-its-reason
@@ -308,19 +332,26 @@
   (assert (in "probing" LIVE-PHASES)))
 
 
+(defk refired-scene [broken tree]
+  {:pre [(: broken JobSpec) (: tree str)] :post [(: % tuple)] :tags {:context "doeff-cluster-test" :role "program"}}
+  "失敗した検めを撃ち直し、最初の答え・撃ち直しの直後の観測・2 回目の答えを返すため。"
+  (<- (ProbeEntry broken tree))
+  (<- first ProbeView (observed broken))
+  (<- (ProbeEntry broken tree))
+  (<- views tuple (ObserveProbes))
+  (<- second ProbeView (observed broken))
+  #(first views second))
+
+
 (defn #^ None test-a-refired-probe-keeps-the-last-failure [#^ Path tmp-path]
   ;; 反例 (d) の観測の側: FAILED の後に撃ち直した検めの観測は、走っている間も直前の失敗の理由と回数を持つ。
-  (setv tree (probe-tree tmp-path) store (ProbeStore HY)
-        broken (service-spec "probe_broken:program"))
-  (.start store (ProbeEntry broken tree))
-  (setv first (observed store broken))
+  (setv tree (probe-tree tmp-path) broken (service-spec "probe_broken:program"))
+  (setv #(first views second) (run-probes (run (probe-settings tmp-path)) (refired-scene broken tree)))
   (assert (= first.state ProbeState.FAILED))
-  (.start store (ProbeEntry broken tree))
-  (setv #(running) (lfor v (.observe store) :if (= v.spec-hash (spec-hash broken)) v))
+  (setv #(running) (lfor v views :if (= v.spec-hash (spec-hash broken)) v))
   (assert (in running.state #(ProbeState.QUEUED ProbeState.RUNNING)) running)
   (assert (= running.attempts 2) running)
   (assert (= running.last-failure first.detail) running)
-  (setv second (observed store broken))
   (assert (= second.attempts 2) second))
 
 
@@ -330,7 +361,7 @@
 
 
 ;; --- 宣言から消えた spec の検めの記録(2026-09-27 — #757)--------------------------------------------------
-;; 検めの持ち主(ProbeStore)は答え・回数・前の回の失敗の理由・時間切れの印を spec-hash ごとに持ち、宣言から消えた spec の分を
+;; 検めの持ち主(以前の ProbeStore・今は検めの言い換え probe-host)は答え・回数・前の回の失敗の理由・時間切れの印を spec-hash ごとに持ち、宣言から消えた spec の分を
 ;; 落とさなかった(版を上げるたびに増え続ける)。plan が今の宣言の spec の指紋を渡し(ForgetProbes)、持ち主が集合に無い分を落とす。
 
 (deftest test-the-plan-hands-the-declared-spec-hashes-when-a-stale-probe-record-is-observed
@@ -341,37 +372,50 @@
   (assert (not (any (gfor a clean (isinstance a ForgetProbes)))) clean))
 
 
+(defk forget-scene [kept gone nap tree]
+  {:pre [(: kept JobSpec) (: gone JobSpec) (: nap JobSpec) (: tree str)] :post [(: % tuple)] :tags {:context "doeff-cluster-test" :role "program"}}
+  "宣言から消えた spec の記録を忘れる筋書き: 最初の答え・忘れた直後の観測・走っていた検めの答え・2 度目に忘れた後の観測・忘れた spec を
+   積み直した観測を返すため。"
+  (for [spec [kept gone]] (<- (ProbeEntry spec tree)))
+  (<- first ProbeView (observed kept))
+  (<- (observed gone))
+  ;; 宣言に残る spec は撃ち直して 2 回目(前の回の失敗の理由を持つ)。
+  (<- (ProbeEntry kept tree))
+  (<- (observed kept))
+  ;; 宣言から消えた spec の検めが走っている間に宣言が変わる。
+  (<- (ProbeEntry nap tree))
+  (<- (ObserveProbes))
+  (val keep (frozenset [(spec-hash kept)]))
+  (<- (ForgetProbes keep))
+  (<- after tuple (ObserveProbes))
+  (<- napped ProbeView (observed nap))
+  (<- (ForgetProbes keep))
+  (<- last tuple (ObserveProbes))
+  ;; 忘れた spec を積み直すと回数は 1 から数え直す(回数の記録も落ちた)。
+  (<- (ProbeEntry gone tree))
+  (<- again tuple (ObserveProbes))
+  (<- (observed gone))
+  #(first after napped last again))
+
+
 (defn #^ None test-probe-store-forgets-the-records-of-specs-no-longer-declared [#^ Path tmp-path]
   (setv tree (probe-tree tmp-path))
   (.write-text (/ tmp-path "probe_nap.hy") "(import time)\n(time.sleep 1)\n(defn program [] None)\n" :encoding "utf-8")
-  (setv store (ProbeStore HY :timeout-seconds 30)
-        kept (replace (service-spec "probe_broken:program") :name "kept")
+  (setv kept (replace (service-spec "probe_broken:program") :name "kept")
         gone (replace (service-spec "probe_broken:program") :name "gone")
         nap (replace (service-spec "probe_nap:program") :name "nap"))
-  (for [spec [kept gone]] (.start store (ProbeEntry spec tree)))
-  (setv first (observed store kept))
-  (observed store gone)
-  ;; 宣言に残る spec は撃ち直して 2 回目(前の回の失敗の理由を持つ)。
-  (.start store (ProbeEntry kept tree))
-  (observed store kept)
-  ;; 宣言から消えた spec の検めが走っている間に宣言が変わる。
-  (.start store (ProbeEntry nap tree))
-  (.observe store)
-  (setv keep (frozenset [(spec-hash kept)]))
-  (.forget store keep)
-  (setv views (dfor v (.observe store) v.spec-hash v))
+  (setv #(first after napped last again) (run-probes (run (probe-settings tmp-path :timeout-seconds 30)) (forget-scene kept gone nap tree)))
+  (setv views (dfor v after v.spec-hash v))
   (assert (not-in (spec-hash gone) views) views)
-  (for [table [store.done store.attempts store.last-failure]]
-    (assert (not-in (spec-hash gone) table) table))
   ;; 宣言に残る spec の失敗の理由と回数は残る。
   (setv k (get views (spec-hash kept)))
   (assert (= #(k.state k.attempts k.last-failure) #(ProbeState.FAILED 2 first.detail)) k)
   ;; 走っている検めの process は落とさない(終わった後の答えを次の片づけで落とす)。
   (assert (= (. (get views (spec-hash nap)) state) ProbeState.RUNNING) views)
-  (assert (= (. (observed store nap) state) ProbeState.PASSED))
-  (.forget store keep)
-  (assert (= (sfor v (.observe store) v.spec-hash) #{(spec-hash kept)}))
-  (assert (= (set store.attempts) #{(spec-hash kept)}) store.attempts))
+  (assert (= napped.state ProbeState.PASSED))
+  (assert (= (sfor v last v.spec-hash) #{(spec-hash kept)}) last)
+  (setv #(re) (lfor v again :if (= v.spec-hash (spec-hash gone)) v))
+  (assert (= #(re.attempts re.last-failure) #(1 "")) re))
 
 
 ;; --- 旧い形の service の spec(計画 2.8 の入口 15 — 2026-09-27)---------------------------------------------------
@@ -395,19 +439,26 @@
   (assert (is (probe-refusal (JobSpec "a" "jobs.a" #() "rev1")) None)))
 
 
-(deftest test-the-probe-store-fails-an-old-service-spec-without-a-process
-  (val store (ProbeStore HY))
-  (.start store (ProbeEntry OLD-SPEC "/nonexistent-tree"))
-  (assert (= store.runs {}) "旧い spec の検めの process を起こした")
-  (val views (.observe store))
+(defk old-spec-scene []
+  {:pre [] :post [(: % tuple)] :tags {:context "doeff-cluster-test" :role "program"}}
+  "旧い形の service の spec を積み、直後の観測と次の拍の観測を返すため。"
+  (<- (ProbeEntry OLD-SPEC "/nonexistent-tree"))
+  (<- views tuple (ObserveProbes))
+  (<- again tuple (ObserveProbes))
+  #(views again))
+
+
+(defn #^ None test-the-probe-store-fails-an-old-service-spec-without-a-process [#^ Path tmp-path]
+  (setv #(views again) (run-probes (run (probe-settings tmp-path)) (old-spec-scene)))
+  ;; process を起こさない: 待ちにも走りにも載らず、すぐ FAILED の答えになる(無い木で起こせば OSError で落ちる)。
   (assert (= (len views) 1) views)
-  (val view (get views 0))
+  (setv view (get views 0))
   (assert (= view.state ProbeState.FAILED) view)
   (assert (in "旧い service の spec の引数" view.detail) view.detail)
-  (assert (= store.runs {}))
+  (assert (= again views) again)
   ;; worker の状態の報告では probe-failed と理由(起こさない)。
-  (val w (world :probes #(view)))
+  (setv w (world :probes #(view)))
   (assert (= (plan (+ view.failed-ms 1) #(OLD-SPEC) w {} POLICY) #()))
-  (val status (get (statuses (+ view.failed-ms 1) #(OLD-SPEC) w {} POLICY) 0))
+  (setv status (get (statuses (+ view.failed-ms 1) #(OLD-SPEC) w {} POLICY) 0))
   (assert (= status.phase JobPhase.PROBE-FAILED) status)
   (assert (in "旧い service の spec の引数" status.detail) status.detail))

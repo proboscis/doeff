@@ -294,6 +294,11 @@
   (#^ JobSpec spec)
   (#^ str code-path))
 
+(defclass [(dataclass :frozen True)] ObserveProbes [EffectBase]
+  "入口の検めの観測(ProbeView の tuple — 待ち・走っている・答えの出た検め)。ObserveWorld の答え手(local-host)が、検めの言い換え
+   (worker/protocol/probes)へ問う。問われた拍に、待っている束を起こし・終わった束と時間切れの束を片づける(#2465)。")
+
+
 (defclass [(dataclass :frozen True)] ForgetProbes [EffectBase]
   "入口の検めの持ち主へ今の宣言の spec の指紋(spec-hash)の集合を渡し、集合に無い spec の検めの記録(答え・回数・前の回の失敗の
    理由・時間切れの印・待ち)を落とさせる(2026-09-27)。走っている検めの process は止めない(終わった後の答えを次の拍で落とす)。
