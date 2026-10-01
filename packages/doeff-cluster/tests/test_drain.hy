@@ -13,7 +13,7 @@
 (import doeff_cluster.coordinator.core.api_policy [respond tick])
 (import doeff_cluster.coordinator.core.durable_kv [full-kv state-from-kv DRAIN SURGE])
 (import doeff_cluster.worker.core.drain_client [await-drained worker-ready drain-outcome ready-of] doeff_cluster.worker.intent.drain_model [CoordinatorCall])
-(import doeff_cluster.handlers [CoordinatorLink write-ready-file])
+(import doeff_cluster.handlers [CoordinatorLink] doeff_cluster.foundation.ready_file [write-ready-file])
 (import tests.program_rows [SAMPLE-RUN program-placed])
 (import doeff [run])
 (import os)

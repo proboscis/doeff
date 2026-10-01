@@ -17,7 +17,7 @@
 (import doeff_cluster.coordinator.core.api_policy [respond resume-after-downtime])
 (import doeff_cluster.coordinator.core.durable_kv [durable-kv state-from-kv])
 (import doeff_cluster.coordinator.core.cluster_policy [job-from-json])
-(import doeff_cluster.handlers [status-row declared-job-spec])
+(import doeff_cluster.handlers [declared-job-spec] doeff_cluster.worker.protocol.heartbeat [status-row])
 (import doeff_cluster.shared.intent.readiness_model [handoff-timeout-ms HANDOFF-TIMEOUT-SECONDS])
 (import doeff_cluster.shared.intent.service_model [job Job CallShape])
 (import tests.fixtures.services [tally-program])
