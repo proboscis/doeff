@@ -13,7 +13,8 @@
 (import doeff_cluster.coordinator.core.api_policy [tick])
 (import doeff_cluster.coordinator.protocol.request_bodies [responded])
 (import doeff_cluster.coordinator.core.durable_kv [full-kv state-from-kv DRAIN SURGE])
-(import doeff_cluster.worker.core.drain_client [await-drained worker-ready drain-outcome ready-of] doeff_cluster.worker.intent.drain_model [CoordinatorCall])
+(import doeff_cluster.worker.core.drain_client [await-drained worker-ready drain-outcome ready-of] doeff_cluster.worker.intent.drain_model [CoordinatorCall AskDrain])
+(import doeff_cluster.worker.protocol.drain_requests [drain-request])
 (import doeff [run with-handlers])
 (import doeff_core_effects.os_file [os-file-handler])
 (import doeff_cluster.worker.protocol.coordinator_link [ready-file-written])
@@ -381,9 +382,14 @@
 ;; --- preStop と readinessProbe の Program(drain_client)----------------------------------------------
 
 (defhandler scripted-coordinator [#^ list answers #^ list calls]
-  ;; 答えの台本を前から 1 つずつ返す(尽きたら最後の答えを繰り返す)。送られた要求を calls に積む。
+  ;; 答えの台本を前から 1 つずつ返す(尽きたら最後の答えを繰り返す)。送られた要求を calls に積む。drain の頼み(AskDrain)は
+  ;; 本番の答え手と同じ綴り(drain_requests.drain-request)で要求の形にしてから積む。
   (CoordinatorCall [method path body]
     (.append calls #(method path body))
+    (resume (if (> (len answers) 1) (.pop answers 0) (get answers 0))))
+  (AskDrain [name ttl-seconds own-boot]
+    (val request (drain-request name ttl-seconds own-boot))
+    (.append calls #((get request 0) (get request 1) (get request 3)))
     (resume (if (> (len answers) 1) (.pop answers 0) (get answers 0)))))
 
 (defn #^ dict drained [#^ bool flag] {"status" 200 "body" {"ready" False "drain" {"drained" flag}}})
@@ -398,6 +404,20 @@
   ;; 頼み直すたびに期限つき(上限 + 余裕)で頼む。間は 2 秒(仮想の時計)。
   (assert (all (gfor #(m p b) calls (and (= m "POST") (= p "/workers/atlas/drain") (= (get b "ttlSeconds") 150.0)))))
   (assert (= (get result "elapsed") 6.0) result))
+
+;; ⚠ core の Program は要求の形(method・path・本文)を組まず、型のある頼み AskDrain だけを出す(#2541 — 形は答え手
+;;   worker/protocol/drain_requests.hy だけが知る)。core が CoordinatorCall を直に組む形へ戻すと、この検の答え手に AskDrain が
+;;   来ず赤。
+(defhandler asks-of [#^ list asks]
+  (AskDrain [name ttl-seconds own-boot]
+    (.append asks #(name ttl-seconds own-boot))
+    (resume (drained True))))
+
+(deftest test-await-drained-asks-with-a-typed-request-not-a-wire-shape
+  (setv asks [])
+  (<- result dict ((sim-time-handler :clock (SimClock)) ((asks-of asks) (await-drained "atlas" 90.0 2.0 "b7"))))
+  (assert (= (get result "outcome") "drained") result)
+  (assert (= asks [#("atlas" 150.0 "b7")]) asks))
 
 (deftest test-await-drained-gives-up-at-the-deadline-and-stops-on-unknown-worker
   (<- result dict ((sim-time-handler :clock (SimClock))
@@ -423,6 +443,11 @@
   ;; 読みの要求を Coord の純粋な判断へそのまま渡す(状態は変えない)。
   (CoordinatorCall [method path body]
     (setv #(_ status reply) (responded coord.state (http-request method path {} body :actor "drain@atlas") coord.now T))
+    (resume {"status" status "body" reply}))
+  (AskDrain [name ttl-seconds own-boot]
+    (val request (drain-request name ttl-seconds own-boot))
+    (setv #(_ status reply) (responded coord.state (http-request (get request 0) (get request 1) {} (get request 3) :actor "drain@atlas")
+                                       coord.now T))
     (resume {"status" status "body" reply})))
 
 (deftest test-worker-ready-reads-the-coordinator-view

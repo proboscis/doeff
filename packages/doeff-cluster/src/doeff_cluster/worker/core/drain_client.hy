@@ -7,10 +7,10 @@
 ;;;   = 子を止めて lease を返す、に落ちるだけ)。
 ;;; - readinessProbe(worker-ready): 自分が coordinator から見て生きていて drain 中でないか(新しい Pod が heartbeat を送り始め、
 ;;;   前の Pod の drain が解けた後にだけ Ready — DaemonSet は Ready を待って次の node の Pod を入れ替える)。
-(require doeff-hy.macros [defk deff <- val])
+(require doeff-hy.macros [defk <- val])
 (val MODULE-TAGS {:context "worker" :role "program"})
 (import doeff_time [Delay GetMonotonic])
-(import doeff_cluster.worker.intent.drain_model [CoordinatorCall])
+(import doeff_cluster.worker.intent.drain_model [CoordinatorCall AskDrain])
 
 ;; preStop の既定(秒)。上限は cluster.yaml の terminationGracePeriodSeconds より、worker の子の停止(stop-grace 10 秒 + KILL の
 ;; 猶予 5 秒)の分以上短くする。drain の期限は上限より長く取り、諦めた後もしばらく空けたままにする(次の世代の heartbeat で解ける)。
@@ -23,13 +23,6 @@
   "worker の名は node の名(k8s の DNS の名 — 英小文字・数字・- と .)なので、そのまま path に置ける。"
   (+ "/workers/" name))
 
-
-(deff drain-request [#^ str name #^ float ttl-seconds #^ (| str None) own-boot]  ; defk にできない: preStop の Program と手元の sim-cluster の宿(local.hy)が同じ形を作る純粋な判断
-  {:pre [(: name str) (: ttl-seconds float) (: own-boot (| str None))] :post [(: % tuple) (= (len %) 4)]
-   :tags {:context "doeff-cluster" :role "protocol"}}
-  "drain の頼みを要求 #(method path query 本文) にするため。ttl-seconds = drain の期限・own-boot = 頼み手の worker の process の世代
-   (在れば、同じ名の別の世代には drain を付けない — drain_policy.request-drain)。"
-  #("POST" (+ (worker-path name) "/drain") {} (| {"ttlSeconds" ttl-seconds} (if own-boot {"boot" own-boot} {}))))
 
 
 (defn #^ (| str None) drain-outcome [#^ dict answer #^ float elapsed #^ float deadline]
@@ -52,9 +45,9 @@
   ;; own-boot = この Pod の worker の process の世代(ready-of と同じ file)。頼みに載せると、同じ名の新しい Pod の worker が名乗った
   ;; 後の頼み(退いた世代の頼み)は新しい世代に drain を付けず、この世代に置いた task が終わるのを待つ答えになる(2026-09-27)。
   (<- started float (GetMonotonic))
-  (val request (drain-request name (float (+ deadline DRAIN-TTL-MARGIN-SECONDS)) own-boot))
+  (val ask (AskDrain name (float (+ deadline DRAIN-TTL-MARGIN-SECONDS)) own-boot))
   (while True
-    (<- answer dict (CoordinatorCall (get request 0) (get request 1) (get request 3)))
+    (<- answer dict ask)
     (<- at float (GetMonotonic))
     (setv outcome (drain-outcome answer (- at started) deadline))
     (when (is-not outcome None)
