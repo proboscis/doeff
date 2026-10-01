@@ -26,7 +26,8 @@
 (import doeff_cluster.shared.protocol.checkout_reads [checkout-reads])
 (import doeff_cluster.worker.intent.env_prepare_model [ROOTS-PTH] doeff_cluster.shared.intent.env_marker_model [ENV-MARKER])
 (import doeff_cluster.shared.intent.service_model [resolve])
-(import doeff_cluster.handlers [TOOL task-spec write-program-file])
+(import doeff_cluster.handlers [task-spec write-program-file])
+(import doeff_cluster.worker.protocol.code_store [PREPARE-TOOL])
 (import doeff_cluster.worker.protocol.env_store [EnvSettings env-host env-root])
 (import doeff_cluster.worker.protocol.process_host [HostSettings])
 (import tests.host_rig [host-settings job-ended run-on-host])
@@ -143,7 +144,7 @@
   (<- host (host-settings state :hy-command HY :extra-env {"DOEFF_WORKER_NAME" "careful" "PYTHONDONTWRITEBYTECODE" "1"}
                          :uv (str wrapper)))
   (Rig :base base :state state :fake fake :app app :lib lib
-       :envs (EnvSettings :state (str state) :hy-command HY :platform (current-platform) :code-prepare TOOL :repo-keys (str keys)
+       :envs (EnvSettings :state (str state) :hy-command HY :platform (current-platform) :code-prepare PREPARE-TOOL :repo-keys (str keys)
                           :uv (str wrapper) :min-free-bytes min-free-bytes)
        :host host))
 

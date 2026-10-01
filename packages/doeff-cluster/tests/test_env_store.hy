@@ -11,7 +11,8 @@
 (import doeff_core_effects.os_file [os-file-handler])
 (import doeff_core_effects.os_process [subprocess-handler])
 (import doeff_time [sync-time-handler])
-(import doeff_cluster.handlers [TOOL CoordinatorLink coordinator-desired])
+(import doeff_cluster.handlers [CoordinatorLink coordinator-desired])
+(import doeff_cluster.worker.protocol.code_store [PREPARE-TOOL])
 (import doeff_cluster.shared.intent.env_marker_model [ENV-MARKER])
 (import doeff_cluster.worker.intent.worker_model [CodeState ObserveEnvs EnvReport ReadDesired])
 (import doeff_cluster.worker.protocol.env_store [EnvSettings env-host])
@@ -28,7 +29,7 @@
   (.write-text (/ roots READY-NAME ENV-MARKER) (json.dumps {"env" {"project" {}}}))
   (.mkdir (/ roots HALF-NAME))
   (.mkdir (/ roots ".old.broken.1"))
-  (EnvSettings :state (str (/ tmp "state")) :hy-command "hy" :platform "test" :code-prepare TOOL))
+  (EnvSettings :state (str (/ tmp "state")) :hy-command "hy" :platform "test" :code-prepare PREPARE-TOOL))
 
 
 (defn #^ object on-envs [#^ EnvSettings settings #^ object program #^ list [inner []]]  ; defk にできない: 検が Program の外から本物の答え手の組で 1 回走らせる入口

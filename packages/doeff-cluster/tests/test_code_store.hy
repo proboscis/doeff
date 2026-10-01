@@ -14,7 +14,7 @@
 (import doeff_core_effects.os_process [subprocess-handler])
 (import doeff_time [SimClock sim-time-handler sync-time-handler])
 (import doeff_cluster.worker.intent.code_model [ScanTree LinkPycs CompileSources WriteMarker Note] doeff_cluster.worker.core.code_plan [MARKER tree-problem marker-problem marker-content cache-rel] doeff_cluster.worker.core.code_prepare [prepare-tree] doeff_core_effects.python_bytecode [compiled-pyc])
-(import doeff_cluster.handlers [TOOL])
+(import doeff_cluster.worker.protocol.code_store [PREPARE-TOOL])
 (import doeff_cluster.worker.intent.worker_model [CodeLayout CodeState CodeView PrepareCode ObserveCode])
 (import doeff_cluster.worker.protocol.code_store [CodeSettings code-host])
 
@@ -96,7 +96,7 @@
 
 
 (defn #^ CodeSettings code-settings [#^ Path repo #^ Path cache #^ (| str None) hy-command]
-  (CodeSettings :repo (str repo) :cache (str cache) :hy-command hy-command :tool TOOL :layout (CodeLayout)))
+  (CodeSettings :repo (str repo) :cache (str cache) :hy-command hy-command :tool PREPARE-TOOL :layout (CodeLayout)))
 
 
 (defn #^ object run-codes [#^ CodeSettings settings #^ object program]  ; defk にできない: 検が Program の外から本物の答え手の組で 1 回走らせる入口
