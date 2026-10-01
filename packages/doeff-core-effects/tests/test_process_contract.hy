@@ -4,6 +4,7 @@
 ;;;
 ;;;   * returncode は丸めない(signal で終わった子は負)・stdout / stderr は別々に text で
 ;;;   * stdin は子へ渡る
+;;;   * utf-8 でない bytes は可逆の文字列(utf-8 と surrogateescape)で行き来する — 子の出力も stdin も encode し直すと元の bytes
 ;;;   * 子の環境: env None = 呼び手の環境を継ぐ・REPLACE(既定)= 渡した組が全部・EXTEND = 継いで足す(同じ名は足した方が勝つ)・
 ;;;     env-drop は EXTEND で継ぐ名から外す。ReadEnvironment は在る名だけを names の順で
 ;;;   * cwd の dir で子が走る
@@ -17,7 +18,7 @@
 (import os)
 (import doeff_core_effects.file_effects [MakeDirectory PathKind PathStat ReadText StatPath WriteText])
 (import doeff_core_effects.process_effects [EnvEntry EnvMode ExecutableAt ProcessOutcome ReadEnvironment RunProcess WorkingDirectory])
-(import process_contract_handlers [CAT ContractRoot ENV-PROBE KILLED OUT-ERR OUT-ERR-EXIT PWD])
+(import process_contract_handlers [CAT ContractRoot ENV-PROBE KILLED NOT-UTF-8 NOT-UTF-8-BYTES OUT-ERR OUT-ERR-EXIT PWD])
 
 (val MISSING-COMMAND "/nonexistent/doeff-command")
 (val GIVEN-ENV #((EnvEntry :name "DOEFF_SHADOWED" :value "足した") (EnvEntry :name "DOEFF_ADDED" :value "足した")))
@@ -48,6 +49,19 @@
   {:interpreters ["subprocess" "scripted-process"]}
   (<- echoed ProcessOutcome (shell CAT :stdin "入力\n2行目"))
   (assert (= echoed (ProcessOutcome :exit-code 0 :stdout "入力\n2行目" :stderr "")) echoed))
+
+
+(deftest test-bytes-that-are-not-utf-8-survive-the-round-trip
+  {:interpreters ["subprocess" "scripted-process"]}
+  ;; 子が出した utf-8 でない bytes は可逆の文字列で返る(壊れた bytes は surrogate の文字)— encode し直すと元の bytes(git の diff を
+  ;; patch-id へ渡す使い手が bytes を保てる — agora-redesign #2160)。
+  (<- printed ProcessOutcome (shell NOT-UTF-8))
+  (assert (= printed.exit-code 0) printed)
+  (assert (= (.encode printed.stdout "utf-8" "surrogateescape") NOT-UTF-8-BYTES) (.format "子の出力の bytes {!r}" printed.stdout))
+  ;; stdin に置いた可逆の文字列は、元の bytes のまま子へ渡り、そのまま戻る(有効な utf-8 と NUL も混ぜる)。
+  (val given (.decode b"\xfe\x00\xff\xe3\x81\x82\n" "utf-8" "surrogateescape"))
+  (<- echoed ProcessOutcome (shell CAT :stdin given))
+  (assert (= echoed (ProcessOutcome :exit-code 0 :stdout given :stderr "")) echoed))
 
 
 (deftest test-the-child-environment-follows-the-env-mode

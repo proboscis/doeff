@@ -1,5 +1,7 @@
 ;;; 汎用の子 process の effect(process_effects.hy)の本物の答え手 subprocess-handler(agora-redesign #802 便 1)。subprocess と os.environ を
 ;;; 呼んで値を詰め替えるだけで、判断を持たない。doeff-agents の driver-io-handler も RunProcess に同じ run-subprocess で答える(実装は 1 つ)。
+;;; 子の標準入力・標準出力・標準エラーと output-path は utf-8 と surrogateescape で読み書きする(可逆 — process_effects.hy の頭の註・
+;;; agora-redesign #2160)。
 (require doeff-hy.macros [defhandler defk <- val])
 (import fnmatch)
 (import os)
@@ -25,18 +27,18 @@
 
 (defk decoded [value]
   {:pre [(: value (| str bytes None))] :post [(: % str)]}
-  "TimeoutExpired が持つ部分出力は bytes のことがある — text にそろえるため。"
+  "TimeoutExpired が持つ部分出力は bytes のことがある — 答えの全部と同じ可逆の text(utf-8 と surrogateescape)にそろえるため。"
   (cond
     (is value None) ""
-    (isinstance value bytes) (.decode value "utf-8" "replace")
+    (isinstance value bytes) (.decode value "utf-8" "surrogateescape")
     True (str value)))
 
 
 (defk append-output [output-path stdout stderr]
   {:pre [(: output-path (| str None)) (: stdout str) (: stderr str)] :post [(: % None)]}
-  "子の出力を output-path の末尾へ足すため(None なら何もしない)。"
+  "子の出力を output-path の末尾へ足すため(None なら何もしない)。surrogateescape で書くので、file には子が出した bytes がそのまま入る。"
   (when (is-not output-path None)
-    (with [handle (open output-path "a" :encoding "utf-8")]
+    (with [handle (open output-path "a" :encoding "utf-8" :errors "surrogateescape")]
       (.write handle stdout)
       (.write handle stderr)))
   None)
@@ -67,6 +69,7 @@
                                :capture-output True
                                :text True
                                :encoding "utf-8"
+                               :errors "surrogateescape"
                                :timeout timeout
                                :cwd cwd
                                :env child-env

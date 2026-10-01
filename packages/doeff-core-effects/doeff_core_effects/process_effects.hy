@@ -16,6 +16,11 @@
 ;;;   ProcessOutcome の started(False = 起こせなかった — OSError を値で)・start-error(その理由)。exit-code は子の returncode を丸めずに
 ;;;   持つ(負の値 = signal・137 など)。時間切れは timed-out True(exit-code 124)、起こせない時は exit-code 127。
 ;;;
+;;; 文字列と bytes の約束(agora-redesign #2160): RunProcess の stdin と ProcessOutcome の stdout / stderr は、子の bytes を utf-8 と
+;;; surrogateescape で読み書きした文字列(可逆 — Python の os.fsdecode と同じ作法)。有効な utf-8 はふつうの文字列のまま、壊れた bytes は
+;;; surrogate の文字(U+DC80〜U+DCFF)で表す。bytes が要る使い手(git の diff を patch-id へ渡す等)は `.encode "utf-8" "surrogateescape"`
+;;; で元の bytes に戻し、bytes を渡す時は同じ作法で文字列にして stdin に置く。表に出す時(JSON・log)は呼び手が置き換えて読む。
+;;;
 ;;;   RunProcess        子 process を 1 回走らせて終わりを待つ。答え = ProcessOutcome。
 ;;;   ExecutableAt      その path に実行できる file が在るか。答え = bool。symlink は辿った先で判じ、dir・無い path・file でない物は実行の bit が
 ;;;                     あっても False(判断は executable-file-answer の 1 か所 — 本物と I/O なしの答え手が同じ関数を呼ぶ)。
@@ -49,7 +54,8 @@
 
 
 (defclass [(dataclass :frozen True :kw-only True)] ProcessOutcome []
-  "子 process 1 回の結果。判断(成否の解釈)は呼び手が持つので raise しない(頭の註)。"
+  "子 process 1 回の結果。判断(成否の解釈)は呼び手が持つので raise しない(頭の註)。stdout / stderr は子の bytes の可逆の文字列
+   (utf-8 と surrogateescape — 頭の註の文字列と bytes の約束)。"
   #^ int exit-code
   #^ str stdout
   #^ str stderr

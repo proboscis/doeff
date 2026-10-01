@@ -36,6 +36,9 @@
 (val CAT "cat")
 (val PWD "pwd")
 (val ENV-PROBE "printf '%s|%s|%s' \"$DOEFF_INHERITED\" \"$DOEFF_SHADOWED\" \"$DOEFF_ADDED\"")
+;; utf-8 でない bytes(0xff)を挟んだ出力 — 子の bytes が可逆の文字列で返る契約を見る(agora-redesign #2160)。
+(val NOT-UTF-8 "printf 'ok\\377\\n'")
+(val NOT-UTF-8-BYTES b"ok\xff\n")
 (val PROBED-NAMES #("DOEFF_INHERITED" "DOEFF_SHADOWED" "DOEFF_ADDED"))
 
 
@@ -97,13 +100,21 @@
   (ProcessOutcome :exit-code 0 :stdout (.join "|" (gfor name PROBED-NAMES (.get env name ""))) :stderr ""))
 
 
+(defk print-not-utf-8 [request]
+  {:pre [(: request RunProcess)] :post [(: % ProcessOutcome)] :tags {:context "process-test" :role "judgment"}}
+  "本物の sh の NOT-UTF-8 の答え(子の bytes NOT-UTF-8-BYTES を utf-8 と surrogateescape で読んだ文字列)— 台本も本物と同じ可逆の文字列で
+   答えることを契約で確かめるため。"
+  (ProcessOutcome :exit-code 0 :stdout (.decode NOT-UTF-8-BYTES "utf-8" "surrogateescape") :stderr ""))
+
+
 ;; 台本の sh が `-c <文>` の文ごとに答える物(本物の sh ならこう答える)。
 (val SHELL-ANSWERS {OUT-ERR-EXIT exit-3-with-output
                     OUT-ERR exit-0-with-output
                     KILLED killed-by-signal-9
                     CAT echo-stdin
                     PWD print-cwd
-                    ENV-PROBE print-probed-env})
+                    ENV-PROBE print-probed-env
+                    NOT-UTF-8 print-not-utf-8})
 
 
 (defk shell-script [commands request]
