@@ -31,7 +31,6 @@
 検 = tests/test_linter_snapshot.py(同時の 3 本が 1 度だけ組む・作業木の変更を読まない・sha を名乗らない linter を置かない)。
 """
 
-from __future__ import annotations
 
 import fcntl
 import os
