@@ -255,7 +255,7 @@
   {:pre [(: transport httpx.MockTransport)] :post [(: % tuple)]}
   "本物の warm-cluster(送り直しの期限を短くした — 仮想の時計の秒)の下で、温める頼みと読みを 1 回ずつ出す。"
   (<- env RuntimeEnv (env-of "app-1" "lib-1" LOCK))
-  (<- answers tuple (with-handlers [(sim-time-handler :clock (SimClock)) (transport-http transport) (warm-cluster (route-cell) TEST-ROUTE 0.2)]
+  (<- answers tuple (with-handlers [(sim-time-handler :clock (SimClock)) (transport-http transport) (warm-cluster (route-cell) (replace TEST-ROUTE :resend-deadline-seconds 0.2))]
                       (warm-and-read env)))
   answers)
 

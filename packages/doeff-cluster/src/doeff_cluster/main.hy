@@ -25,7 +25,7 @@
 (import doeff_cluster.worker.protocol.stop [stop-flag StopState])
 (import doeff_cluster.worker.protocol.coordinator_link [LinkState coordinator-link])
 (import doeff_core_effects.http_handlers [http-production-handler])
-(import doeff_cluster.foundation.coordinator_http [REPLY-SECONDS CONNECT-SECONDS PREFERRED-RECHECK-SECONDS])
+(import doeff_cluster.foundation.coordinator_http [REPLY-SECONDS CONNECT-SECONDS PREFERRED-RECHECK-SECONDS IDEMPOTENT-DEADLINE-SECONDS RESEND-PAUSE-SECONDS])
 (import doeff_cluster.shared.protocol.coordinator_route [RouteCell RouteOptions route-of])
 (import doeff_cluster.worker.protocol.lease_release [lease-release])
 (import doeff_cluster.foundation.process_versions [current-versions])
@@ -144,7 +144,7 @@
                         ;; heartbeat を拍から切り離し、desired の変化は名指しの待ちで受ける(#1933 — 待つ口の無い coordinator
                         ;; には拍ごとに送る)。
                         :watch True)
-        link-options (RouteOptions :reply-seconds REPLY-SECONDS :connect-seconds CONNECT-SECONDS :connect-retries 0
+        link-options (RouteOptions :reply-seconds REPLY-SECONDS :connect-seconds CONNECT-SECONDS :resend-deadline-seconds IDEMPOTENT-DEADLINE-SECONDS :resend-pause-seconds RESEND-PAUSE-SECONDS :connect-retries 0
                                    :recheck-ms (int (* PREFERRED-RECHECK-SECONDS 1000)) :actor args.name)
         link-cell (RouteCell (run (route-of args.coordinator started-ms)))
         watch-cell (RouteCell (run (route-of args.coordinator started-ms)))

@@ -39,7 +39,7 @@
 (import .job_context [RunContext context-from-env runtime-env-of-context])
 (import doeff_cluster.shared.protocol.task_result [delivered-task-result])
 (import doeff_cluster.shared.protocol.coordinator_route [RouteOptions])
-(import doeff_cluster.foundation.coordinator_http [REPLY-SECONDS CONNECT-SECONDS PREFERRED-RECHECK-SECONDS default-actor])
+(import doeff_cluster.foundation.coordinator_http [REPLY-SECONDS CONNECT-SECONDS PREFERRED-RECHECK-SECONDS IDEMPOTENT-DEADLINE-SECONDS RESEND-PAUSE-SECONDS default-actor])
 (import doeff [with-handlers])
 (import doeff_core_effects.handlers [await-handler slog-handler])
 (import doeff_core_effects.http_handlers [http-production-handler])
@@ -136,7 +136,7 @@
   (run (scheduled (with-handlers [(await-handler) slog-handler (http-production-handler) (sync-time-handler)]
                                  (delivered-task-result ctx.coordinator-url ctx.job ctx.worker ctx.instance encoded
                                                         ;; 送り直しは接続の段の一巡し直し 1 回だけ(子の終わりを長く止めない)。
-                                                        (RouteOptions :reply-seconds REPLY-SECONDS :connect-seconds CONNECT-SECONDS
+                                                        (RouteOptions :reply-seconds REPLY-SECONDS :connect-seconds CONNECT-SECONDS :resend-deadline-seconds IDEMPOTENT-DEADLINE-SECONDS :resend-pause-seconds RESEND-PAUSE-SECONDS
                                                                       :connect-retries 1 :recheck-ms (int (* PREFERRED-RECHECK-SECONDS 1000))
                                                                       :actor (default-actor))))))
   (print (.format "task: {} → {}" ctx.job (. (type outcome) __name__)) :file sys.stderr :flush True))

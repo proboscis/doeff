@@ -37,13 +37,18 @@
 (defrecord RouteOptions
   "送り方。reply-seconds = 1 回の要求の上限(秒)・connect-seconds = 接続の段だけの上限(秒 — tailnet の SYN の取り落としは待つより
    次の宛先へ)・connect-retries = 全部の宛先に届かない時に一巡し直す回数・recheck-ms = 先頭以外に
-   いる間、先頭を試し直す間隔・actor = 書きの送り手(header X-Actor — coordinator は出来事の記録に残す)。"
+   いる間、先頭を試し直す間隔・actor = 書きの送り手(header X-Actor — coordinator は出来事の記録に残す)・
+   resend-deadline-seconds = 何度送っても同じ意味の要求を通信の失敗を越えて送り直す上限(秒)・resend-pause-seconds = 送り直しの間(秒)。
+   送り直しの 2 つの値は組み立てる側(entry・平たい組み立ての module)が foundation/coordinator_http の値を渡す — 層 protocol は
+   foundation を読めない(#2565)。"
   {:tags {:context "doeff-cluster" :role "protocol"}}
   (#^ float reply-seconds)
   (#^ float connect-seconds)
   (#^ int connect-retries)
   (#^ int recheck-ms)
-  (#^ str actor))
+  (#^ str actor)
+  (#^ float resend-deadline-seconds)
+  (#^ float resend-pause-seconds))
 
 
 (defrecord RouteTurn

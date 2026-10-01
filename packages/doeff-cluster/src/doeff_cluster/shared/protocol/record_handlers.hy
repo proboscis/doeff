@@ -26,7 +26,7 @@
 (import doeff.do [do])
 (import doeff.program [handler :as program-handler])
 (import collections.abc [Callable Generator])
-(import typing [Literal Protocol TypeVar])
+(import typing [Literal Protocol TypeVar runtime-checkable])
 (import doeff [Program])
 (import doeff_vm [GetBoundaries K WithHandler WithObserve Callable :as VmCallable])
 (import doeff_core_effects.scheduler [Spawn Wait CreatePromise CompletePromise Promise PRIORITY-IDLE])
@@ -36,7 +36,6 @@
                                          codec-of mode-of args-of subject-of])
 (import doeff_cluster.shared.core.record_model [ROOT ReplayFinished ReplayDiverged Entry Recording match-step diff-row summarize])
 (import doeff_core_effects.effects [Ask])
-(import doeff_cluster.foundation.host_contract [HOST-CONTRACT])
 (import doeff_cluster.job_context [RunContext])
 
 
@@ -673,7 +672,7 @@
 ;; 受けてしまう)。
 ;;
 ;;   (defk job-program [foundation]                     ; 土台 = 本体を受けて自分の handler の下で走らせる関数(計画 10.1)
-;;     (<- answer (foundation (do! (<- recorder list (boundary-recorder))       ; off / record / replay を Ask で選ぶ
+;;     (<- answer (foundation (do! (<- recorder list (boundary-recorder HOST-CONTRACT))  ; off / record / replay を Ask で選ぶ
 ;;                                 (<- translation list (translation-handlers))
 ;;                                 (<- r (with-handlers [#* recorder #* translation] (loop)))
 ;;                                 r)))
@@ -702,17 +701,24 @@
    "revision" ctx.revision "program" sha "versions" versions})
 
 
-(defk boundary-recorder []
-  {:pre [] :post [(: % list)] :tags {:context "doeff-cluster" :role "protocol"}}
+(defclass [runtime-checkable] HostKeys [Protocol]
+  "宿が答える Ask の鍵の形(foundation/host_contract の HostContract — 層 protocol は foundation を読めないので、組み立てる側が
+   HOST-CONTRACT を渡す・#2565)。"
+  (setv #^ str run-context-key "" #^ str program-key "" #^ str versions-key ""))
+
+
+(defk boundary-recorder [contract]
+  {:pre [(: contract HostKeys)] :post [(: % list)] :tags {:context "doeff-cluster" :role "protocol"}}
   "境目の記録係の組(0 か 1 つ)を作る — Ask RECORD-MODE-KEY で off / record / replay を選ぶ。業務の Program が翻訳の handler と
-   土台の handler の間に並べる(ADR-DOE-CLUSTER-001 R5)。"
+   土台の handler の間に並べる(ADR-DOE-CLUSTER-001 R5)。contract = 宿の契約の鍵(record の header の run-context・Program の path・版を
+   Ask で読む鍵)。"
   (<- mode str (Ask RECORD-MODE-KEY))
   (match mode
     "off" []
     "record" (do (<- url str (Ask RECORD-OTLP-KEY))
-                 (<- ctx RunContext (Ask HOST-CONTRACT.run-context-key))
-                 (<- program-path str (Ask HOST-CONTRACT.program-key))
-                 (<- versions dict (Ask HOST-CONTRACT.versions-key))
+                 (<- ctx RunContext (Ask contract.run-context-key))
+                 (<- program-path str (Ask contract.program-key))
+                 (<- versions dict (Ask contract.versions-key))
                  (<- header dict (recording-header ctx program-path versions))
                  [(recording-handler {"otlp" url} ctx.job header)])
     "replay" (do (<- state ReplayState (Ask REPLAY-STATE-KEY))

@@ -19,9 +19,10 @@
 (import doeff_cluster.worker.protocol.coordinator_link [LinkState coordinator-link accepted-tasks fetched-programs status-rows])
 (import doeff_cluster.worker.core.launch [program-file program-file-text])
 (import tests.transport_http [transport-http])
+(import doeff_cluster.foundation.coordinator_http [IDEMPOTENT-DEADLINE-SECONDS RESEND-PAUSE-SECONDS])
 
 ;; 口の送り方(本番の組み立てと同じく一巡し直さない — 届かない拍は次の拍で送り直す)。
-(val LINK-ROUTE (RouteOptions :reply-seconds 15.0 :connect-seconds 2.0 :connect-retries 0 :recheck-ms 60000 :actor "test-worker"))
+(val LINK-ROUTE (RouteOptions :reply-seconds 15.0 :connect-seconds 2.0 :resend-deadline-seconds IDEMPOTENT-DEADLINE-SECONDS :resend-pause-seconds RESEND-PAUSE-SECONDS :connect-retries 0 :recheck-ms 60000 :actor "test-worker"))
 
 
 (defn #^ RouteCell cell-of [#^ str url]  ; defk にできない: 組み立て(Program を走らせる前)が handler の引数を作る準備

@@ -13,7 +13,7 @@
 (import doeff_core_effects.effects [Ask])
 (import doeff_core_effects.handlers [state])
 (import doeff_core_effects.scheduler [scheduled])
-(import doeff_cluster.foundation.host_contract [host-reader environ-reader])
+(import doeff_cluster.foundation.host_contract [HOST-CONTRACT host-reader environ-reader])
 (import doeff_cluster.shared.intent.shared_model [ReadShared WriteShared])
 (import doeff_time [SimClock sim-time-handler])
 (import tests.board_fake [board-handlers])
@@ -100,7 +100,7 @@
 (defk ledger-inside [translation names]
   {:pre [(: translation Callable) (: names tuple)] :post [(: % dict)] :tags {:context "doeff-cluster-test" :role "entry"}}
   "土台の下で境目の記録係の組を選び、翻訳の handler の外側(土台との間)に置いて業務の本体を走らせる。"
-  (<- recorder list (boundary-recorder))
+  (<- recorder list (boundary-recorder HOST-CONTRACT))
   (<- inner list (translation))
   (<- totals dict (with-handlers [#* recorder #* inner] (ledger-body names)))
   totals)

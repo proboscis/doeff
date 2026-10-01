@@ -20,10 +20,11 @@
 (import doeff_cluster.shared.intent.protocol [BodyInvalid])
 (import doeff_cluster.shared.protocol.coordinator_route [CoordinatorRoute RouteCell RouteOptions])
 (import doeff_cluster.shared_handlers [shared-http])
+(import doeff_cluster.foundation.coordinator_http [IDEMPOTENT-DEADLINE-SECONDS RESEND-PAUSE-SECONDS])
 
 ;; fake の盤の宛先(この URL で始まる要求だけに答える — ほかの HttpRequest は外側へ通す)と、shared-http の送り方。
 (val BOARD-URL "http://board-fake")
-(val BOARD-ROUTE (RouteOptions :reply-seconds 15.0 :connect-seconds 2.0 :connect-retries 0 :recheck-ms 60000 :actor "board-fake"))
+(val BOARD-ROUTE (RouteOptions :reply-seconds 15.0 :connect-seconds 2.0 :resend-deadline-seconds IDEMPOTENT-DEADLINE-SECONDS :resend-pause-seconds RESEND-PAUSE-SECONDS :connect-retries 0 :recheck-ms 60000 :actor "board-fake"))
 
 
 (defrecord BoardReply

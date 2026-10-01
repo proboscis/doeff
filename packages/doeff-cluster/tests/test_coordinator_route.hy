@@ -9,11 +9,12 @@
 (import doeff_cluster.shared.protocol.coordinator_route [CoordinatorRoute RouteOptions RoutedReply route-of route-order route-used
                                                          routed-request resent-request])
 (import tests.clock_fixtures [clock-at clock-ms count-delays])
+(import doeff_cluster.foundation.coordinator_http [IDEMPOTENT-DEADLINE-SECONDS RESEND-PAUSE-SECONDS])
 
 (val LAN "http://lan:8080")
 (val NET "http://tailnet:8080")
 (val START-MS 1790000000000)
-(val OPTIONS (RouteOptions :reply-seconds 15.0 :connect-seconds 2.0 :connect-retries 2 :recheck-ms 60000 :actor "job@w1/1"))
+(val OPTIONS (RouteOptions :reply-seconds 15.0 :connect-seconds 2.0 :resend-deadline-seconds IDEMPOTENT-DEADLINE-SECONDS :resend-pause-seconds RESEND-PAUSE-SECONDS :connect-retries 2 :recheck-ms 60000 :actor "job@w1/1"))
 
 
 (defn #^ HttpResponse ok [#^ str url]

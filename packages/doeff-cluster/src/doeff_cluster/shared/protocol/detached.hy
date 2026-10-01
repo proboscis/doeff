@@ -22,7 +22,6 @@
 (import json)
 (import doeff_time [Delay])
 (import doeff_core_effects.http_effects [HttpResponse HttpFailed])
-(import doeff_cluster.foundation.coordinator_http [IDEMPOTENT-DEADLINE-SECONDS RESEND-PAUSE-SECONDS])
 (import doeff_cluster.shared.protocol.coordinator_route [RouteCell RouteOptions RoutedReply routed-request resent-request
                                                          answer-json])
 (import doeff_cluster.shared.protocol.remote [program-put])
@@ -232,7 +231,7 @@
    :post [(: % (| HttpResponse HttpFailed None))] :tags {:context "doeff-cluster" :role "protocol"}}
   "何度送っても同じ意味の要求 1 つを、通信の失敗を越えて deadline-seconds まで送り直し、答え(返事か最後の失敗)を返すため。
    宛先の状態は cell に書き戻す(切り離した task の口は、置き・送り・読み・取り消し・解放がどれも key で冪等)。"
-  (<- reply RoutedReply (resent-request cell.route method path options params body deadline-seconds RESEND-PAUSE-SECONDS))
+  (<- reply RoutedReply (resent-request cell.route method path options params body deadline-seconds options.resend-pause-seconds))
   (setv cell.route reply.route)
   reply.answer)
 
@@ -471,10 +470,10 @@
 
 ;; 本物の温める表: coordinator の /warm へ、汎用の HttpRequest で話す(#2337 の 4c — httpx を直に持っていた WarmClient を替えた)。
 ;; 答えは WarmAnswer(coordinator に届かなければ WarmUnreachable — 例外で呼び手を落とさない)。書きの送り手の名は options の actor。
-(defhandler warm-cluster [#^ RouteCell cell #^ RouteOptions options #^ float [deadline-seconds IDEMPOTENT-DEADLINE-SECONDS]]
+(defhandler warm-cluster [#^ RouteCell cell #^ RouteOptions options]
   (WarmRuntimeEnv [env needs ttl-seconds holder]
-    (<- state (warm-written cell options deadline-seconds env needs (float ttl-seconds) holder))
+    (<- state (warm-written cell options options.resend-deadline-seconds env needs (float ttl-seconds) holder))
     (resume state))
   (ReadWarmState [key]
-    (<- state (warm-read cell options deadline-seconds key))
+    (<- state (warm-read cell options options.resend-deadline-seconds key))
     (resume state)))
