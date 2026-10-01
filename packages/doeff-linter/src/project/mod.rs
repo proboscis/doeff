@@ -6,6 +6,7 @@
 //! 流れ: 母集団の file を集める → file ごとに事実を読む(`facts.rs`)→ 規則ごとに違反の下書きを作る →
 //! law と登録簿の鍵を当てて重さを決める(`finish`)。
 
+pub mod affected_tests;
 pub mod architecture;
 pub mod explain;
 pub mod facts_cache;

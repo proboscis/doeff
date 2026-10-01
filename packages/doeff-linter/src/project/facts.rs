@@ -165,6 +165,61 @@ pub fn read_facts(language: Language, source: &str, module: &str, reading: &TagR
     }
 }
 
+/// module が依る先 1 つの種類 — `Import` は実行時の import、`Require` は Hy のマクロ(展開の時)の依存。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize)]
+pub enum DependencyKind {
+    Import,
+    Require,
+}
+
+/// module が依る先 1 つ(import の先は `import` の読みと同じ綴り — 名を並べた import は `module.名`)。
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize)]
+pub struct Dependency {
+    pub target: String,
+    pub kind: DependencyKind,
+}
+
+/// module 1 つの依存の読み(import と Hy の require)。読めなかった理由が在っても、読めた分の依存は残す。
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct ModuleDependencies {
+    pub dependencies: Vec<Dependency>,
+    pub error: Option<String>,
+}
+
+/// source の import(層の規則と同じ読み — `collect_imports`・`python_imports`)と、Hy の `(require …)` の module だけを読む
+/// (逆依存の索引のため — タグや定義は読まない)。module は相対 import を解く基準の綴り。
+pub fn module_dependencies(language: Language, source: &str, module: &str) -> ModuleDependencies {
+    let as_dependencies = |targets: Vec<String>, kind: DependencyKind| targets.into_iter().map(move |target| Dependency { target, kind });
+    match language {
+        Language::Hy => {
+            let mut reader = Reader::new(source, 0, source.len());
+            let forms = reader.read_all();
+            let hy = HySource { src: source };
+            let mut imports = Vec::new();
+            let mut requires = Vec::new();
+            for form in &forms {
+                hy.collect_imports(form, module, &mut imports);
+                hy.visit_headed(form, "require", &mut |args| hy.require_targets(args, module, &mut requires));
+            }
+            ModuleDependencies {
+                dependencies: as_dependencies(imports.into_iter().map(|i| i.target).collect(), DependencyKind::Import)
+                    .chain(as_dependencies(requires, DependencyKind::Require))
+                    .collect(),
+                error: (!reader.issues.is_empty()).then(|| format!("括弧か文字列が閉じていない所が {} か所ある", reader.issues.len())),
+            }
+        }
+        Language::Python => match parse(source, Mode::Module, "<module>") {
+            Ok(Mod::Module(parsed)) => {
+                let mut imports = Vec::new();
+                python_imports(&parsed.body, module, &mut imports);
+                ModuleDependencies { dependencies: as_dependencies(imports.into_iter().map(|i| i.target).collect(), DependencyKind::Import).collect(), error: None }
+            }
+            Ok(_) => ModuleDependencies { dependencies: Vec::new(), error: None },
+            Err(error) => ModuleDependencies { dependencies: Vec::new(), error: Some(format!("Python の構文として読めない: {}", error)) },
+        },
+    }
+}
+
 /// Hy の読んだ form から、import の束縛(名 → module の綴り)だけを取り出す(defk の見出しの型を定義へ結ぶため — 他の事実は読まない)。
 pub fn form_bindings(forms: &[Form], source: &str, module: &str) -> std::collections::BTreeMap<String, String> {
     let hy = HySource { src: source };
@@ -652,29 +707,48 @@ impl<'a> HySource<'a> {
 
     /// form の中の `(import …)` の式を全部読む(関数の中や入口の節の中の import も数える)。
     fn collect_imports(&self, form: &Form, module: &str, out: &mut Vec<ImportTarget>) {
+        self.visit_headed(form, "import", &mut |args| self.import_targets(args, module, out));
+    }
+
+    /// form の木の中の、頭が `head` の式を全部訪ねて引数の列を渡す(関数の中・入口の節の中・quote の中も — import の読みの範囲)。
+    /// 訪ねた式の中へは降りない。
+    fn visit_headed(&self, form: &Form, head: &str, visit: &mut dyn FnMut(&[&Form])) {
         match &form.node {
             Node::Seq { delim: Delim::Paren, items } => {
                 let live = live_items(items);
-                if live.first().and_then(|head| self.symbol(head)) == Some("import") {
-                    self.import_targets(&live[1..], module, out);
+                if live.first().and_then(|first| self.symbol(first)) == Some(head) {
+                    visit(&live[1..]);
                 } else {
                     for item in live {
-                        self.collect_imports(item, module, out);
+                        self.visit_headed(item, head, visit);
                     }
                 }
             }
             Node::Seq { delim: Delim::Bracket, items } => {
                 for item in live_items(items) {
-                    self.collect_imports(item, module, out);
+                    self.visit_headed(item, head, visit);
                 }
             }
-            Node::Prefixed { inner: Some(inner), .. } | Node::Tagged { inner: Some(inner) } => self.collect_imports(inner, module, out),
+            Node::Prefixed { inner: Some(inner), .. } | Node::Tagged { inner: Some(inner) } => self.visit_headed(inner, head, visit),
             Node::Annotated { annotation, target } => {
                 for part in [annotation, target].into_iter().flatten() {
-                    self.collect_imports(part, module, out);
+                    self.visit_headed(part, head, visit);
                 }
             }
             _ => {}
+        }
+    }
+
+    /// `(require …)` の式の引数から module の綴りを読む: `mod [a b]`・`mod *`・`mod :as m`・`mod :macros [..] :readers [..]`。
+    /// 名の列・`*`・keyword とその値は module ではない。
+    fn require_targets(&self, items: &[&Form], module: &str, out: &mut Vec<String>) {
+        let mut after_keyword = false;
+        for item in items {
+            match (self.symbol(item), after_keyword) {
+                (Some(spelled), false) if spelled != "*" => out.push(absolute_module(module, &hy_mangle(spelled))),
+                _ => {}
+            }
+            after_keyword = matches!(item.node, Node::Keyword);
         }
     }
 
