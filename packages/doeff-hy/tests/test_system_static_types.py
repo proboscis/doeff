@@ -90,3 +90,33 @@ def test_a_system_field_used_as_the_wrong_type_is_red(probe: Path) -> None:
     # 系の関数の答えが System と読めるので、str の欄 name に 1 を足す(16 行目)と型の取り違えで赤。
     errors = _check(probe).errors()
     assert [e for e in errors if e[1] == 16 and e[0] == "reportOperatorIssue"], errors
+
+
+#: 空の :needs と空でない :needs の系(agora-redesign #2396)。空の #{} は展開で frozenset([]) になる。frozenset([]) を変数に
+#: 置けば frozenset[Unknown] だが、展開は job の名の引数 needs に直に渡すので、service_model.pyi の注記
+#: (frozenset[str] | set[str] | …)から双方向の推論で frozenset[str] と読まれる。注記が消えるか、展開が値を一度変数に置く形に
+#: 変われば、書き手に直せない赤になる — その退行をここで止める。
+EMPTY_NEEDS = """\
+(require doeff-hy.macros [defk defsystem])
+
+(defclass Ping []
+  "土台の型の見本")
+
+(defk tally [step]
+  {:pre [(: step int)] :post [(: % int)]}
+  step)
+
+(defsystem lab [#^ Ping foundation]
+  "空の :needs の系"
+  (quiet (tally 1) :needs #{})
+  (noisy (tally 2) :needs #{"net" "pg"}))
+"""
+
+
+@needs_pyright
+def test_an_empty_needs_set_reads_as_a_set_of_names(tmp_path: Path) -> None:
+    (tmp_path / "probe.hy").write_text(EMPTY_NEEDS, encoding="utf-8")
+    errors = _check(tmp_path).errors()
+    assert not [e for e in errors if "Unknown" in e[2] or e[0].startswith("reportUnknown")], errors
+    # 系の宣言の行(10〜13 行目)には赤が 1 つも無い。
+    assert not [e for e in errors if 10 <= e[1] <= 13], errors
