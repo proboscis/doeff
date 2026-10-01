@@ -27,7 +27,7 @@
 (import doeff_cluster.process_versions [current-versions])
 (import doeff_cluster.shared.intent.service_model [system-of])
 (import doeff_cluster.worker_model [DesiredJobs])
-(import doeff_cluster.local [sim-cluster SimWorker])
+(import doeff_cluster.sim.local [sim-cluster SimWorker])
 (import tests.detached_rig [MemoryCoordinator RIG-PROVIDES])
 (import tests.fixtures.entry_programs [environ-read environ-resolved-read])
 

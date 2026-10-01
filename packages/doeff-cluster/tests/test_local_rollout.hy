@@ -3,7 +3,7 @@
 (import pytest)
 (import doeff_time [Delay])
 (import doeff_cluster.coordinator.core.api_policy :as api-policy)
-(import doeff_cluster.local [sim-cluster SimWorker DeclareRollout KubeCalls SettleDeployment
+(import doeff_cluster.sim.local [sim-cluster SimWorker DeclareRollout KubeCalls SettleDeployment
                              ReadCoordinator ProcessesOf StartWorker StopCoordinator])
 (import doeff_cluster.shared.intent.remote_model [RemoteJobFailed])
 (import tests.fixtures.envs [sim-foundation])

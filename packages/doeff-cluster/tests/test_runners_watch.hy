@@ -10,7 +10,7 @@
 (import doeff_cluster.shared.core.clock [now-epoch-ms])
 (import doeff_cluster.detached [DetachedClient])
 (import doeff_cluster.shared.intent.detached_model [AwaitRunnersChange RunnersChange RunnersWatchMissing RunnersUnreachable])
-(import doeff_cluster.local [sim-cluster SimWorker ReadCoordinator DrainWorker FailRoute KillWorker StartWorker])
+(import doeff_cluster.sim.local [sim-cluster SimWorker ReadCoordinator DrainWorker FailRoute KillWorker StartWorker])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming])
 (import tests.fixtures.envs [sim-foundation])
 (import tests.fixtures.sim_programs [beacons NET])

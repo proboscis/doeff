@@ -2,7 +2,7 @@
 ;;; 載った型だけを外へ通す(載っていなければ本番の子と同じ未処理で落ちる)。
 (require doeff-hy.macros [deftest defk <- val])
 (import doeff_time [Delay])
-(import doeff_cluster.local [sim-cluster SimOutside SimWorker ProcessOutside ProcessesOf KillWorker])
+(import doeff_cluster.sim.local [sim-cluster SimOutside SimWorker ProcessOutside ProcessesOf KillWorker])
 (import tests.fixtures.envs [sim-foundation])
 (import tests.fixtures.outside_programs [shared-store last-words memory-store signed-puts StorePut StoreGet])
 

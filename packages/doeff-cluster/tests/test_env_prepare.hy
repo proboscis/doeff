@@ -24,7 +24,7 @@
                                          RuntimeEnvInvalid InvalidKind EnvFailure EnvFailureKind env-key key-material
                                          runtime-env->json runtime-env-of-json])
 (import doeff_cluster.env_prepare [PrepareRequest KnownRoot EnvReady prepare-env ENV-MARKER ROOTS-PTH])
-(import doeff_cluster.env_world [env-world EnvWorld EnvWorldLog WorldRemote WorldCommit WorldFile read-world-log world-files
+(import doeff_cluster.sim.env_world [env-world EnvWorld EnvWorldLog WorldRemote WorldCommit WorldFile read-world-log world-files
                                 set-uv-failure set-unreachable UvFailure UvFault])
 
 (setv PLATFORM "linux-x86_64")

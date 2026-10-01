@@ -1,4 +1,4 @@
-;;; sim-cluster(doeff_cluster.local)の検(test_local.hy・test_remote.hy)の service と task の Program の見本。
+;;; sim-cluster(doeff_cluster.sim.local)の検(test_local.hy・test_remote.hy)の service と task の Program の見本。
 ;;;
 ;;; どの Program も土台(tests.fixtures.envs の sim-foundation — scheduler と時計を含まない sim の土台)で本体を包む。service どうしは
 ;;; 盤(ReadShared / WriteShared)でだけつながり、宿の契約の environ は Ask で読む。
@@ -10,7 +10,7 @@
 (import doeff_core_effects.scheduler [Spawn Task Wait])
 (import doeff_time [Delay])
 (import doeff_cluster.shared.core.clock [now-epoch-ms])
-(import doeff_cluster.local [ProcessesOf])
+(import doeff_cluster.sim.local [ProcessesOf])
 (import doeff_cluster.shared.intent.metrics_model [ReportMetrics])
 (import doeff_cluster.shared.intent.readiness_model [ReportReady])
 (import doeff_cluster.shared.intent.remote_model [RemoteJob])

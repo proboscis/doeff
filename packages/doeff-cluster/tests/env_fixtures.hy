@@ -3,7 +3,7 @@
 (require doeff-hy.macros [defk <- val var])
 (import hashlib)
 (import doeff_cluster.shared.intent.runtime_env_model [RepoCheckout NativeWheel PythonProject RuntimeEnv])
-(import doeff_cluster.env_world [EnvWorld WorldRemote WorldCommit WorldFile])
+(import doeff_cluster.sim.env_world [EnvWorld WorldRemote WorldCommit WorldFile])
 
 (val LOCK "httpx==0.28.1 top=httpx\nhy==1.1.0 top=hy\nclick==8.1.8 top=click\n")
 (val APP-URL "file:///remotes/app.git")

@@ -89,10 +89,10 @@
       "layer": "pure",
       "name": "doeff-cluster-checkout-git-script",
       "paths": [
-        "packages/doeff-cluster/src/doeff_cluster/checkout_git_script.hy"
+        "packages/doeff-cluster/src/doeff_cluster/sim/checkout_git_script.hy"
       ],
       "public": [
-        "packages/doeff-cluster/src/doeff_cluster/checkout_git_script.hy"
+        "packages/doeff-cluster/src/doeff_cluster/sim/checkout_git_script.hy"
       ],
       "responsibility": "送り手の手元の checkout の読み(runtime_env の翻訳の handler checkout-reads が出す git の問い)に答える、git の台本(2026-09-27)。",
       "typed": true
@@ -493,10 +493,10 @@
       "layer": "io",
       "name": "doeff-cluster-env-world",
       "paths": [
-        "packages/doeff-cluster/src/doeff_cluster/env_world.hy"
+        "packages/doeff-cluster/src/doeff_cluster/sim/env_world.hy"
       ],
       "public": [
-        "packages/doeff-cluster/src/doeff_cluster/env_world.hy"
+        "packages/doeff-cluster/src/doeff_cluster/sim/env_world.hy"
       ],
       "responsibility": "実行環境の準備の速い模擬の世界(2026-09-27)— 翻訳 env-translation(本番と同じ 1 つ)の下で、土台の偽物だけが答える:子 process    doeff の scripted-process-handler に渡す台本 git・tar・cp・uv(この module の ScriptedCommand)file system  doeff の memory-file-handler(置き場の中身と空き)時計          呼び手が外側に置く仮想の時計(uv の sync と native の build は台本の中で眠る)準備の判断(env_prepare の prepare-env)も翻訳も本物のまま走る。",
       "typed": true
@@ -731,10 +731,10 @@
       "layer": "io",
       "name": "doeff-cluster-local",
       "paths": [
-        "packages/doeff-cluster/src/doeff_cluster/local.hy"
+        "packages/doeff-cluster/src/doeff_cluster/sim/local.hy"
       ],
       "public": [
-        "packages/doeff-cluster/src/doeff_cluster/local.hy"
+        "packages/doeff-cluster/src/doeff_cluster/sim/local.hy"
       ],
       "responsibility": "手元の runner sim-cluster — 系(defsystem の関数を sim の土台で呼んだ System の値)を、本物の coordinator と本物の worker の上で、1 process・仮想の時計で走らせる(ADR-DOE-CLUSTER-001・計画 2.6・10.2・段 5・5b)。",
       "typed": true

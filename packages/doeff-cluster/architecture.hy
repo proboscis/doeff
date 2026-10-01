@@ -48,7 +48,11 @@
              :roles [system process main]
              :imports [core intent protocol foundation entry])]
   :shared "shared"
-  :foundation foundation)
+  :foundation foundation
+  ;; 本物の coordinator と worker を 1 process・仮想の時計で走らせる模擬の環境(sim-cluster の local・環境の世界 env_world・git の台本
+  ;; checkout_git_script)。全 service の core と entry を読むので、どの service にも属さない(DOEFF114・115 の外・ほかの規則は当たる)。
+  ;; 本番の code はこの dir を import しない。
+  :verification-environment "sim")
 
 (defservice coordinator "worker へ job を割り当てる coordinator(資源と盤の置き場・調停のループ)"
   {:layers [core intent protocol entry]

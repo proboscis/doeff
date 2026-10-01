@@ -16,7 +16,7 @@
 (import doeff_cluster.coordinator.entry.handler_sets [RequestQueue MemoryWalStore queued-requests])
 (import doeff_cluster.foundation.coordinator_inbox [RequestInbox http-requests])
 (import doeff_cluster.coordinator.core.idle_policy [quiet-ticks])
-(import doeff_cluster.local [sim-cluster ProcessesOf SharedRows StopCoordinator CoordinatorRuns KillWorker ReadCoordinator ClientLink SimLink
+(import doeff_cluster.sim.local [sim-cluster ProcessesOf SharedRows StopCoordinator CoordinatorRuns KillWorker ReadCoordinator ClientLink SimLink
                              SimWorker])
 (import doeff_cluster.worker_model [WorkerPolicy])
 (import tests.fixtures.envs [sim-foundation])

@@ -216,7 +216,7 @@ worker は業務の repo の commit を 1 つ展開して子 process の cwd に
 
 ## 手元で確かめる(sim-cluster)
 
-`doeff_cluster.local.sim-cluster` は、sim の土台で作った系の値を、本物の coordinator と本物の worker の上で 1 process・仮想の時計で
+`doeff_cluster.sim.local.sim-cluster` は、sim の土台で作った系の値を、本物の coordinator と本物の worker の上で 1 process・仮想の時計で
 走らせます。起動し直しの間隔・readiness の窓・handoff の期限・置き方・lease・fence は本物が決めます。
 
 ```hy
