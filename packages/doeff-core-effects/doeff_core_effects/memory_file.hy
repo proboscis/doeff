@@ -13,7 +13,8 @@
 (import doeff_core_effects.scheduler [CreatePromise CompletePromise Wait])
 (import doeff_core_effects.file_effects [PathKind FileFailed PathStat DirEntry LockHeld MemoryFile MemoryFiles ReadMemoryFiles StatPath
                                          ReadText ReadBytes WriteText WriteBytes AppendText MakeDirectory ListDirectory WalkTree CopyFile
-                                         CopyTree RenamePath RemoveTree AcquireLock ReleaseLock ReadDiskFree])
+                                         CopyTree RenamePath RemoveTree AcquireLock ReleaseLock ReadDiskFree DiskUsage ReadDiskUsage
+                                         MeasureTree])
 
 ;; 置き場の根と、断りの文(OSError の文と同じ形)。
 (val ROOT "/")
@@ -334,6 +335,14 @@
             (resume None))))
   (ReadDiskFree [path]
     (resume store.free))
+  (ReadDiskUsage [path]
+    (resume (DiskUsage :total store.total :free store.free)))
+  (MeasureTree [path]
+    (<- at str (normal path))
+    (<- refusal (dir-refusal store at))
+    (if (is-not refusal None)
+        (resume refusal)
+        (resume (sum (gfor f store.files :if (under? f.path at) (len f.content))))))
   (ReadMemoryFiles []
     (resume store)))
 

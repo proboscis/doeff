@@ -8,9 +8,9 @@
 (import stat)
 (import tempfile)
 (import pathlib [Path])
-(import doeff_core_effects.file_effects [PathKind FileFailed PathStat DirEntry LockHeld StatPath ReadText ReadBytes WriteText WriteBytes
+(import doeff_core_effects.file_effects [PathKind FileFailed PathStat DirEntry LockHeld DiskUsage StatPath ReadText ReadBytes WriteText WriteBytes
                                          AppendText MakeDirectory ListDirectory WalkTree CopyFile CopyTree RenamePath RemoveTree
-                                         AcquireLock ReleaseLock ReadDiskFree])
+                                         AcquireLock ReleaseLock ReadDiskFree ReadDiskUsage MeasureTree])
 
 
 (defk failed [path error]
@@ -192,6 +192,31 @@
        (except [error OSError] (FileFailed :path path :detail (str error)))))
 
 
+(defk disk-usage [path]
+  {:pre [(: path str)] :post [(: % (| DiskUsage FileFailed))]}
+  "path を含む file system の総量と空きを読むため(無い path は在る親で測る)。"
+  (var probe (Path path))
+  (while (not (.exists probe)) (:= probe probe.parent))
+  (try (let [usage (shutil.disk-usage probe)] (DiskUsage :total usage.total :free usage.free))
+       (except [error OSError] (FileFailed :path path :detail (str error)))))
+
+
+(defk measure-tree [path]
+  {:pre [(: path str)] :post [(: % (| int FileFailed))]}
+  "dir の下の file の大きさの合計を測るため(symlink は辿らずリンク自身の大きさ・hardlink は重ねて数える・測る間に消えた file は数えない)。"
+  (try
+    (when (not (os.path.isdir path))
+      (raise (NotADirectoryError 20 "Not a directory" path)))
+    (var total 0)
+    (for [#(root _ files) (os.walk path)]
+      (for [name files]
+        (:= total (+ total (try (. (os.lstat (os.path.join root name)) st-size) (except [OSError] 0))))))
+    total
+    (except [error OSError]
+      (<- answer FileFailed (failed path error))
+      answer)))
+
+
 (defhandler os-file-handler
   ;; 本物の file system(頭の註)。
   (StatPath [path follow-symlinks]
@@ -241,4 +266,10 @@
     (resume answer))
   (ReadDiskFree [path]
     (<- answer (disk-free path))
+    (resume answer))
+  (ReadDiskUsage [path]
+    (<- answer (disk-usage path))
+    (resume answer))
+  (MeasureTree [path]
+    (<- answer (measure-tree path))
     (resume answer)))

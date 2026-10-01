@@ -52,6 +52,11 @@ class LockHeld:
     path: str
     token: int
 
+@dataclass(frozen=True, kw_only=True)
+class DiskUsage:
+    total: int
+    free: int
+
 # --- effect ---
 
 @dataclass(frozen=True)
@@ -134,6 +139,14 @@ class ReleaseLock(EffectBase[FileFailed | None]):
 class ReadDiskFree(EffectBase[int | FileFailed]):
     path: str
 
+@dataclass(frozen=True)
+class ReadDiskUsage(EffectBase[DiskUsage | FileFailed]):
+    path: str
+
+@dataclass(frozen=True)
+class MeasureTree(EffectBase[int | FileFailed]):
+    path: str
+
 # --- memory の置き場の語彙 ---
 
 @dataclass(frozen=True, kw_only=True)
@@ -148,6 +161,7 @@ class MemoryFiles:
     dirs: tuple[str, ...] = ()
     locks: tuple[str, ...] = ()
     free: int = ...
+    total: int = ...
 
 def file_done(request: EffectBase[_A | FileFailed]) -> Program[_A, Any]: ...
 @dataclass(frozen=True)

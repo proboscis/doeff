@@ -23,6 +23,8 @@
 ;;;   AcquireLock    錠の file を排他で取る(取れるまで待つ)。答え = LockHeld
 ;;;   ReleaseLock    取った錠を放す。答え = None
 ;;;   ReadDiskFree   path を含む file system の空き(byte・無い path は在る親で測る — agora-redesign #831)。答え = int
+;;;   ReadDiskUsage  path を含む file system の総量と空き(byte・無い path は在る親で測る — #2504)。答え = DiskUsage
+;;;   MeasureTree    dir の下の file の大きさの合計(byte・symlink は辿らずリンク自身の大きさ・hardlink は重ねて数える — #2504)。答え = int
 ;;;
 ;;; memory の置き場の語彙(本物の file system には無い): MemoryFile / MemoryFiles = 置き場の初めの形と今の中身・ReadMemoryFiles = 今の中身を
 ;;; 読む effect(検と筋書きが置き場を覗くため — memory-file-handler だけが答える)。
@@ -54,6 +56,12 @@
   "dir の中の 1 つ。name = 名(WalkTree では dir からの相対 path)・kind = 種類(symlink は辿らずに SYMLINK)。"
   (#^ str name)
   (#^ PathKind kind))
+
+
+(defrecord DiskUsage
+  "file system の総量と空き(byte — ReadDiskUsage の答え)。"
+  (#^ int total)
+  (#^ int free))
 
 
 (defrecord LockHeld
@@ -158,6 +166,16 @@
   (#^ str path))
 
 
+(defclass [(dataclass :frozen True)] ReadDiskUsage [EffectBase]
+  "path を含む file system の総量と空きを読む(頭の註)。"
+  (#^ str path))
+
+
+(defclass [(dataclass :frozen True)] MeasureTree [EffectBase]
+  "dir の下の file の大きさの合計を測る(頭の註)。"
+  (#^ str path))
+
+
 (defrecord MemoryFile
   "memory の置き場の file 1 つ(path = 絶対 path・content = 中身の bytes・mode = 与えた mode か None)。"
   (#^ str path)
@@ -167,15 +185,16 @@
 
 (defrecord MemoryFiles
   "memory の置き場の中身(files = file の列・dirs = dir の絶対 path の列 — 根 / は暗に在る・locks = 取られている錠の path・free = ReadDiskFree
-   に答える空きの byte)。"
+   に答える空きの byte・total = ReadDiskUsage に答える総量の byte)。"
   (setv #^ (get tuple #(MemoryFile ...)) files #())
   (setv #^ (get tuple #(str ...)) dirs #())
   (setv #^ (get tuple #(str ...)) locks #())
-  (setv #^ int free (** 2 40)))
+  (setv #^ int free (** 2 40))
+  (setv #^ int total (** 2 41)))
 
 
 (defk file-done [request]
-  {:pre [(: request EffectBase)] :post [(: % (| PathStat LockHeld str bytes tuple int None))] :tags {:context "file-system" :role "foundation"}}
+  {:pre [(: request EffectBase)] :post [(: % (| PathStat LockHeld DiskUsage str bytes tuple int None))] :tags {:context "file-system" :role "foundation"}}
   "file system の effect を 1 つ出し、断り(FileFailed)は OSError で上げて成功の答えだけを返すため(失敗したら続けられない書き手・
    読み手が、os の呼び出しを直に書いていた時と同じ例外の型で落ちる)。"
   (<- answer request)
