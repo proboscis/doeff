@@ -2,20 +2,21 @@
 ;;; HTTP の要求 1 件への返事も、状態と要求と時刻から (次の状態 status 本文) を返す純粋な関数にする。I/O はしない。
 ;;; 割り当ては安定させる: 担い手が移し替えの期限内に生きていれば動かさない。
 (require doeff-hy.macros [defk deff val])
+(val MODULE-TAGS {:context "coordinator" :role "judgment"})
 (import dataclasses [replace asdict])
 (import functools)
 (import hashlib)
 (import json)
 (import re)
 
-(import .worker_model [JobSpec])
-(import .cluster_model [ClusterJob WorkerInfo GenerationOrder Placement ClusterTiming ClusterState TaskRecord Request Drain EnvFailed WarmEntry HandoffPhase RefusedJob UnplacedKind
+(import doeff_cluster.worker_model [JobSpec])
+(import doeff_cluster.cluster_model [ClusterJob WorkerInfo GenerationOrder Placement ClusterTiming ClusterState TaskRecord Request Drain EnvFailed WarmEntry HandoffPhase RefusedJob UnplacedKind
                         capabilities-of component-versions-of task-record-to-json task-record-from-json ACCEPTED-FORMATS format-refusal
                         PLACED-PHASES handoff-watch-from-json environ-pairs BodyInvalid required-field int-field])
-(import .semaphore_model [SEMAPHORE-PREFIX lease-op semaphore-write-refusal semaphore-key])
+(import doeff_cluster.semaphore_model [SEMAPHORE-PREFIX lease-op semaphore-write-refusal semaphore-key])
 (import doeff [run])
-(import .runtime_env_model [runtime-env-of-json RuntimeEnvInvalid env-key child-environ-refusal])
-(import .readiness_model [readiness-refusal])
+(import doeff_cluster.runtime_env_model [runtime-env-of-json RuntimeEnvInvalid env-key child-environ-refusal])
+(import doeff_cluster.readiness_model [readiness-refusal])
 
 (setv JOB-ENTRY "doeff_cluster.job_entry")
 (setv MAX-EVENTS 200)

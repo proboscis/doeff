@@ -7,7 +7,7 @@
 (import dataclasses [replace])
 (import doeff [run])
 (import .cluster_model [ClusterState ClusterTiming WarmEntry])
-(import .cluster_policy [alive placeable request-needs tools-cover root-key-on draining-workers BOARD-MAX-TTL-SECONDS])
+(import doeff_cluster.coordinator.core.cluster_policy [alive placeable request-needs tools-cover root-key-on draining-workers BOARD-MAX-TTL-SECONDS])
 (import .runtime_env_model [runtime-env-of-json RuntimeEnvInvalid])
 (import .warm_model [WarmState WarmFailure warm-key warm-state->json])
 

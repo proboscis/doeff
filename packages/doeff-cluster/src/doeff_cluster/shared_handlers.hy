@@ -7,7 +7,7 @@
 (import httpx)
 (import doeff_cluster.clock [now-epoch-ms])
 (import .shared_model [ReadShared WriteShared ANY AnyExpect JsonValue cas-allows json-snapshot])
-(import .cluster_policy [board-ttl-refusal])
+(import doeff_cluster.coordinator.core.cluster_policy [board-ttl-refusal])
 (import .semaphore_model [LeaseOp lease-op semaphore-key])
 (import .coordinator_http [CoordinatorEndpoint send-idempotent REPLY-SECONDS])
 

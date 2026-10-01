@@ -31,7 +31,9 @@ doeff-time = { workspace = true }
 # doeff-linter の設定 — この dir で linter を走らせた時だけ読む(linter は今の dir から上へ [tool.doeff-linter] を探す。
 # doeff の根で走る hook と make lint-doeff は根の pyproject.toml を読む)。service と不変条件の宣言は同じ dir の architecture.hy。
 # DOEFF013 は根の設定と同じ理由で外す(Optional / None を意図して使う)。この package は層の dir を持たず src/doeff_cluster/ に平たく
-# 置くので、層の置き場の規則 DOEFF114・115 は対象外(分けるかは別に決める。critical を登録簿に載せて通す形にはしない)。
+# 置いてきたので、層の置き場の規則 DOEFF114・115 は対象外 — agora-redesign #1988 で service → 層(core / intent / protocol / entry)と
+# shared・foundation に分けると決めた(移し方 = #2021・#1976)。移しの子(#2022〜#2030・#2105〜#2113)が終わった後、#2095 で外す
+# (critical を登録簿に載せて通す形にはしない)。移した file の検出が 0 である事は CLI の --enable DOEFF114,DOEFF115 で確かめる。
 # root = "src": module の名を import の名(doeff_cluster.x)に揃える(この dir を根にすると src.doeff_cluster.x になる)。
 [tool.doeff-linter]
 root = "src"

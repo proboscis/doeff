@@ -117,8 +117,9 @@
 (import .cluster_model [ClusterState ClusterTiming ClusterNaming Request NextRequests Reply Persist CoordinatorStopRequested
                         PlainText ENDED-PHASES])
 (import .process_model [AwaitProcessEnded ProcessEnded ProcessWaitExpired])
-(import .cluster_policy [fresh-task-prefix])
-(import .coordinator [run-coordinator load-state])
+(import doeff_cluster.coordinator.core.cluster_policy [fresh-task-prefix])
+(import doeff_cluster.coordinator.core.program [run-coordinator])
+(import doeff_cluster.coordinator.entry.main [load-state])
 (import .coordinator_http [IDEMPOTENT-DEADLINE-SECONDS RESEND-PAUSE-SECONDS])
 (import .coordinator_inbox [StopState http-request])
 (import .coordinator_handler_sets [RequestQueue MemoryWalStore emulated-handlers enqueue-request nudge-takers])

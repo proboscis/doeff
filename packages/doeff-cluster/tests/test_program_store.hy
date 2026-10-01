@@ -7,9 +7,9 @@
 (import hashlib)
 (import doeff_cluster.cluster_model [ClusterTiming ClusterState])
 (import doeff_cluster.coordinator_inbox [http-request])
-(import doeff_cluster.cluster_policy [state-to-json state-from-json])
+(import doeff_cluster.coordinator.core.cluster_policy [state-to-json state-from-json])
 (import doeff_cluster.durable_kv [full-kv state-from-kv])
-(import doeff_cluster.api_policy [respond])
+(import doeff_cluster.coordinator.core.api_policy [respond])
 (import doeff_cluster.program_policy [sweep-programs PROGRAM-GRACE-MS PROGRAM-MAX-BYTES])
 (import tests.program_rows [SAMPLE-RUN])
 

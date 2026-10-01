@@ -17,8 +17,8 @@
 (import dataclasses [replace])
 (import math)
 (import .cluster_model [ClusterState ClusterTiming PLACED-PHASES])
-(import .resource_policy [refuse running-process current-report keep-report report-fields service-readiness])
-(import .cluster_policy [unplaced-jobs board-usage])
+(import doeff_cluster.coordinator.core.resource_policy [refuse running-process current-report keep-report report-fields service-readiness])
+(import doeff_cluster.coordinator.core.cluster_policy [unplaced-jobs board-usage])
 
 (setv METRICS-STALE-MS 180000)   ; これより古い報告は出さない(書き手の拍は 5〜15 秒 + 読みの時間)
 (setv MAX-NAMES 1000)            ; 1 回の報告の名の数の上限(大きすぎる報告を断る)

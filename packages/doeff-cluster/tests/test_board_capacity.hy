@@ -3,9 +3,9 @@
 (import dataclasses [replace])
 (import doeff_cluster.cluster_model [ClusterState ClusterTiming WorkerInfo TaskRecord])
 (import doeff_cluster.coordinator_inbox [http-request])
-(import doeff_cluster.api_policy [respond tick])
+(import doeff_cluster.coordinator.core.api_policy [respond tick])
 (import doeff_cluster.durable_kv [durable-kv full-kv kv-delta state-from-kv])
-(import doeff_cluster.cluster_policy [BOARD-MAX-VALUE-BYTES BOARD-MAX-ROWS BOARD-MAX-BYTES TASK-MAX-OPEN WORKER-FORGET-MS
+(import doeff_cluster.coordinator.core.cluster_policy [BOARD-MAX-VALUE-BYTES BOARD-MAX-ROWS BOARD-MAX-BYTES TASK-MAX-OPEN WORKER-FORGET-MS
                           board-usage value-size])
 (import doeff_cluster.metrics_policy [metrics-text])
 (import tests.program_rows [SAMPLE-RUN SAMPLE-TASK-PROGRAM program-placed])

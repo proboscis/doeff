@@ -28,22 +28,24 @@
 ;;;                        切り離した task(呼び手と寿命を切り離した task — 送る・読む・取り消す・保持を解く。detached_policy)
 ;;; 書きには header X-Actor(依頼の主体の id・作業係の名・worker の名)が要る。盤と task は無ければ送り元の番地で記録する。
 ;;; 旧い口(PUT /jobs・/heartbeat・/board・/tasks)は残す。PUT /jobs は資源ごとの compare-and-set に写す(resource_policy)。
+(require doeff-hy.macros [val])
+(val MODULE-TAGS {:context "coordinator" :role "judgment"})
 (import dataclasses [replace])
 (import traceback [extract-tb])
-(import .cluster_model [ClusterState ClusterTiming ClusterNaming Request PlainText BodyInvalid Fault format-refusal text-field list-field])
-(import .metrics_policy [record-metrics metrics-text])
-(import .cluster_policy [reconcile register-heartbeat heartbeat-reply state-view submit-task poll-task absorb-task-result board-write note-liveness
+(import doeff_cluster.cluster_model [ClusterState ClusterTiming ClusterNaming Request PlainText BodyInvalid Fault format-refusal text-field list-field])
+(import doeff_cluster.metrics_policy [record-metrics metrics-text])
+(import doeff_cluster.coordinator.core.cluster_policy [reconcile register-heartbeat heartbeat-reply state-view submit-task poll-task absorb-task-result board-write note-liveness
                          lease-write other-generation-boot])
-(import .resource_policy [Refused refuse stamp require-actor valid-actor service-readiness service-stopped record-readiness
+(import doeff_cluster.coordinator.core.resource_policy [Refused refuse stamp require-actor valid-actor service-readiness service-stopped record-readiness
                           running-process list-resources get-resource events-view create-resource update-resource delete-resource
                           legacy-put-jobs COORDINATOR])
-(import .drain_policy [advance-drains request-drain cancel-drain worker-view superseded-worker-view drains-view])
-(import .handoff_policy [watch-handoffs])
-(import .cluster_model [HandoffPhase])
-(import .detached_policy [Reply submit-detached detached-read cancel-detached release-detached])
-(import .rollout_policy [rollout-step target-key deployment-owners drift-status action-due shift-clocks TERMINAL-PHASES])
-(import .warm_policy [warm-write warm-read])
-(import .program_policy [program-write program-read sweep-programs])
+(import doeff_cluster.drain_policy [advance-drains request-drain cancel-drain worker-view superseded-worker-view drains-view])
+(import doeff_cluster.handoff_policy [watch-handoffs])
+(import doeff_cluster.cluster_model [HandoffPhase])
+(import doeff_cluster.detached_policy [Reply submit-detached detached-read cancel-detached release-detached])
+(import doeff_cluster.rollout_policy [rollout-step target-key deployment-owners drift-status action-due shift-clocks TERMINAL-PHASES])
+(import doeff_cluster.warm_policy [warm-write warm-read])
+(import doeff_cluster.program_policy [program-write program-read sweep-programs])
 
 (setv OBSERVATION-STALE-MS 15000)   ; これより古い k8s の観測は Unknown
 (setv ROLLOUT-ACTOR "rollout-controller")

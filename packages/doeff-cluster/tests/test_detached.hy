@@ -6,7 +6,7 @@
 ;;                 (2026-09-28 まで同じ VM の模擬 detached-local の組だった — 呼び手の外側の handler を継ぐので消した)
 ;;   coordinator … 本物の coordinator の判断(api_policy.respond / tick)を httpx.MockTransport の後ろに置き、本物の DetachedClient と
 ;;                 本物の CoordinatorLink(heartbeat・task の file・結果の報告)で話す。担い手は同じ VM で Program を走らせる・仮想の時計
-;;   served      … 本物の coordinator の process(hy -m doeff_cluster.coordinator・HTTP・追記の log。conftest の served_coordinator が
+;;   served      … 本物の coordinator の process(hy -m doeff_cluster.coordinator.entry.main・HTTP・追記の log。conftest の served_coordinator が
 ;;                 検の間で 1 つを共有する)・同じ担い手・実時間
 ;; 筋書き: 送って待つ / 同じ key の送り直し / 呼び手が消えても続き再接続 / 結果の後の担い手の死 / 走っている間の担い手の死 /
 ;;         lease は担い手が延ばす / 取り消し / Program の例外 / 知らない key と解放 / timeout / 版の不一致 / key の衝突。
@@ -28,7 +28,7 @@
 (import doeff_cluster.cluster_model [ClusterState ClusterTiming ComponentVersion])
 (import doeff_cluster.coordinator_inbox [http-request])
 (import doeff_cluster.detached_policy [Reply submit-detached])
-(import doeff_cluster.api_policy [respond tick])
+(import doeff_cluster.coordinator.core.api_policy [respond tick])
 (import doeff_cluster.handlers [CoordinatorLink])
 
 (import doeff_cluster.worker_model [DesiredJobs JobStatus JobPhase])
@@ -519,8 +519,8 @@
 ;; --- coordinator の判断(純粋な関数)と worker の途絶 -------------------------------------------------------------
 
 (import doeff_cluster.durable_kv [full-kv state-from-kv])
-(import doeff_cluster.cluster_policy [state-to-json state-from-json])
-(import doeff_cluster.coordinator [load-state])
+(import doeff_cluster.coordinator.core.cluster_policy [state-to-json state-from-json])
+(import doeff_cluster.coordinator.entry.main [load-state])
 (import doeff_cluster.wal_store [WalStore])
 (import doeff_cluster.worker_model [JobSpec])
 (import doeff_cluster.worker_policy [kept-when-cut-off])

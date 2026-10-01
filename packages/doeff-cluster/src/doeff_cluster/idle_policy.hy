@@ -12,9 +12,9 @@
 (require doeff-hy.macros [defk <- val var])
 (import dataclasses [replace])
 (import .cluster_model [ClusterState ClusterTiming ClusterNaming IdleProbe])
-(import .cluster_policy [nodes-to-read with-derived-capabilities])
-(import .resource_policy [stamp])
-(import .api_policy [tick plan-rollouts deployments-to-observe mark-alive ROLLOUT-ACTOR ROLLOUT-TICK-MS TICK-MS])
+(import doeff_cluster.coordinator.core.cluster_policy [nodes-to-read with-derived-capabilities])
+(import doeff_cluster.coordinator.core.resource_policy [stamp])
+(import doeff_cluster.coordinator.core.api_policy [tick plan-rollouts deployments-to-observe mark-alive ROLLOUT-ACTOR ROLLOUT-TICK-MS TICK-MS])
 
 (setv MAX-QUIET-TICKS 60)    ; 一度に飛ばす拍の上限(生きていた時刻の印 ALIVE-MARK-MS が先に来るので、ふだんは 5 拍で止まる)
 

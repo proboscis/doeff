@@ -21,7 +21,7 @@
   "本物の coordinator の process を起こし、GET /state に答えるまで待つ。返り値 = #(URL process)。止めるのは呼び手。"
   (setv port (free-port) url f"http://127.0.0.1:{port}"
         log (open (/ tmp-path "coordinator.log") "w"))
-  (setv process (subprocess.Popen [HY "-m" "doeff_cluster.coordinator" "--state-file" (str (/ tmp-path "state.json"))
+  (setv process (subprocess.Popen [HY "-m" "doeff_cluster.coordinator.entry.main" "--state-file" (str (/ tmp-path "state.json"))
                                    "--port" (str port)]
                                   :cwd (str ROOT) :stdout log :stderr subprocess.STDOUT))
   (setv deadline (+ (time.monotonic) 60))
