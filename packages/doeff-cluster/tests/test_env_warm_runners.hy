@@ -11,7 +11,8 @@
 (import doeff_cluster.shared.intent.runtime_env_model [RuntimeEnv])
 (import doeff_cluster.sim.local [sim-cluster SimWorker DrainWorker])
 (import doeff_cluster.shared.entry.service_build [system-of])
-(import doeff_cluster.shared.intent.warm_model [WarmRuntimeEnv ReadWarmState WarmState])
+(import doeff_cluster.shared.intent.warm_model [ReadWarmState WarmState])
+(import doeff_cluster.shared.core.warm_rules [warm-runtime-env])
 (import tests.env_fixtures [LOCK env-of])
 
 ;; gpu-1 は gpu を専用の能力に持つ(gpu を要らない行を受けない)・cpu-1 は一般の担い手。
@@ -33,7 +34,7 @@
 (defk warm-until-ready [env needs]
   {:pre [(: env RuntimeEnv) (: needs frozenset)] :post [(: % WarmState)] :tags {:context "doeff-cluster-test" :role "program"}}
   "温めるよう頼み、1 台以上で準備済みになるか SETTLE-SECONDS 仮想秒まで 1 秒ごとに読み直すため。答え = 最後の行の姿。"
-  (<- first WarmState (WarmRuntimeEnv env needs 600.0 "tests"))
+  (<- first WarmState (warm-runtime-env env needs 600.0 "tests"))
   (var current first)
   (var waited 0)
   (while (and (not current.ready) (< waited SETTLE-SECONDS))

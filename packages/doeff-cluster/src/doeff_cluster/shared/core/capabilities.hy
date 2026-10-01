@@ -44,10 +44,11 @@
   (tuple (sorted (set value))))
 
 
-(deff effect-needs-problem [needs]  ; defk にできない: effect の構成子(dataclass の __post_init__)が呼ぶ純粋な判断
+(defk effect-needs-problem [needs]
   {:pre [(: needs (| frozenset tuple list set dict str None))] :post [(: % (| str None))] :tags {:context "doeff-cluster" :role "judgment"}}
-  "effect(RemoteJob・SubmitDetached・WarmRuntimeEnv)の needs が受けられない理由(受けられれば None)— 3 つの構成子が同じ規則で
-   断るため: 能力の名の空でない frozenset(旧い Requirement の tuple・label の組・空は断る — 改訂 1 の I)。"
+  "effect(RemoteJob・SubmitDetached・WarmRuntimeEnv)の needs が受けられない理由(受けられれば None)— 3 つの構築関数(remote_rules.remote-job・
+   detached_rules.submit-detached-task・warm_rules.warm-runtime-env)が同じ規則で断るため: 能力の名の空でない frozenset(旧い Requirement の
+   tuple・label の組・空は断る — 改訂 1 の I)。"
   (cond
     (not (isinstance needs frozenset)) (.format "needs は能力の名の frozenset: {!r}" needs)
     (not needs) "needs が空 — 要る能力の名を 1 つ以上書く"

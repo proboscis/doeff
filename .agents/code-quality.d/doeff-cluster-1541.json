@@ -363,8 +363,7 @@
       "allow": [
         "doeff-cluster-cluster-model",
         "doeff-cluster-remote-model",
-        "doeff-cluster-runtime-env-model",
-        "doeff-cluster-shared-capabilities"
+        "doeff-cluster-runtime-env-model"
       ],
       "layer": "domain",
       "name": "doeff-cluster-detached-model",
@@ -1134,7 +1133,6 @@
       "allow": [
         "doeff-cluster-cluster-model",
         "doeff-cluster-runtime-env-model",
-        "doeff-cluster-shared-capabilities",
         "doeff-cluster-runtime-env-rules"
       ],
       "layer": "domain",
@@ -1492,7 +1490,8 @@
         "doeff-cluster-readiness-rules",
         "doeff-cluster-remote-rules",
         "doeff-cluster-runtime-env-rules",
-        "doeff-cluster-warm-rules"
+        "doeff-cluster-warm-rules",
+        "doeff-cluster-detached-rules"
       ],
       "exclude": [
         "packages/doeff-cluster/tests/fixtures/independence/*"
@@ -1527,8 +1526,7 @@
     {
       "allow": [
         "doeff-cluster-cluster-model",
-        "doeff-cluster-runtime-env-model",
-        "doeff-cluster-shared-capabilities"
+        "doeff-cluster-runtime-env-model"
       ],
       "layer": "domain",
       "name": "doeff-cluster-warm-model",
@@ -2431,7 +2429,8 @@
     },
     {
       "allow": [
-        "doeff-cluster-remote-model"
+        "doeff-cluster-remote-model",
+        "doeff-cluster-shared-capabilities"
       ],
       "layer": "domain",
       "name": "doeff-cluster-remote-rules",
@@ -2441,7 +2440,24 @@
       "public": [
         "packages/doeff-cluster/src/doeff_cluster/shared/core/remote_rules.hy"
       ],
-      "responsibility": "task の純粋な判断 — 送り手と受け側の版の突き合わせ・詰めた Program の置き場のキー・例外から失敗の値。",
+      "responsibility": "task の純粋な判断 — RemoteJob の構築関数(needs の検め)・送り手と受け側の版の突き合わせ・詰めた Program の置き場のキー・例外から失敗の値。",
+      "typed": true
+    },
+    {
+      "allow": [
+        "doeff-cluster-detached-model",
+        "doeff-cluster-runtime-env-model",
+        "doeff-cluster-shared-capabilities"
+      ],
+      "layer": "domain",
+      "name": "doeff-cluster-detached-rules",
+      "paths": [
+        "packages/doeff-cluster/src/doeff_cluster/shared/core/detached_rules.hy"
+      ],
+      "public": [
+        "packages/doeff-cluster/src/doeff_cluster/shared/core/detached_rules.hy"
+      ],
+      "responsibility": "切り離した task の純粋な判断 — SubmitDetached の構築関数(needs の検め — intent の型は core を読まないので型の外に置く・#2564)。",
       "typed": true
     },
     {
@@ -2515,7 +2531,8 @@
       "allow": [
         "doeff-cluster-runtime-env-model",
         "doeff-cluster-runtime-env-rules",
-        "doeff-cluster-warm-model"
+        "doeff-cluster-warm-model",
+        "doeff-cluster-shared-capabilities"
       ],
       "layer": "domain",
       "name": "doeff-cluster-warm-rules",
@@ -2525,7 +2542,7 @@
       "public": [
         "packages/doeff-cluster/src/doeff_cluster/shared/core/warm_rules.hy"
       ],
-      "responsibility": "実行環境の先読みの純粋な判断 — 温める表の行のキーと、行の今の姿と通信の本文との往復。",
+      "responsibility": "実行環境の先読みの純粋な判断 — WarmRuntimeEnv の構築関数(needs の検め)・温める表の行のキーと、行の今の姿と通信の本文との往復。",
       "typed": true
     }
   ],

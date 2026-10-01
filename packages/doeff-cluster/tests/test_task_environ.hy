@@ -42,6 +42,8 @@
 (import doeff_cluster.shared.intent.service_model [CallShape])
 (import doeff_cluster.worker.intent.worker_model [DesiredJobs] doeff_cluster.shared.intent.job_model [JobSpec])
 (import doeff_cluster.sim.local [sim-cluster SimWorker])
+(import doeff_cluster.shared.core.remote_rules [remote-job])
+(import doeff_cluster.shared.core.detached_rules [submit-detached-task])
 (import tests.detached_rig [MemoryCoordinator RIG-PROVIDES])
 (import tests.program_rows [program-placed])
 (import tests.fixtures.entry_programs [environ-read based-add])
@@ -77,17 +79,20 @@
 (deftest test-the-task-effects-refuse-reserved-and-secret-names-like-a-service
   ;; 予約の名(DOEFF_・PYTHON・PATH)・秘密の中身の名(_TOKEN ほか)・形の違う名・文字列でない値は、送る前に構成子が断る。
   ;; 置き場を名指す名(_TOKEN_FILE・_KEY_DIR)は通る。既定は空。
+  ;; 作り手は構築関数(remote-job・submit-detached-task — core)を通す。断る検はその口で確かめる。既定と通る値の欄の読みだけは
+  ;; 型(intent)の値を直に作って読む — 構築関数は作った effect をその場で出して答えを返すので(defk は effect を値として返せない)、
+  ;; 欄を読むには型そのものが要る。environ の検めは型が作る時に走るので、直に作っても同じ規則を通る。
   (val program (based-add 1))
   (assert (= (. (RemoteJob program :needs NET) environ) {}))
   (assert (= (. (SubmitDetached program "k" :needs NET) environ) #()))
   (for [bad [{"DOEFF_WORKER_JOB" "x"} {"PYTHONPATH" "/x"} {"PATH" "/bin"} {"ROWS_TOKEN" "t"} {"API_KEY" "k"}
              {"DB_PASSWORD" "p"} {"HOOK_SECRET" "s"} {"lower_case" "x"} {"ROWS_URL" 1}]]
     (with [raised (pytest.raises TypeError)]
-      (RemoteJob program :needs NET :environ bad))
+      (<- (remote-job program :needs NET :environ bad)))
     (assert (in "RemoteJob.environ" (str raised.value)) raised.value)
     ;; SubmitDetached は EnvVar の tuple で受ける(#2179)— 名と値の規則は EnvVar を作る所で同じく断る。
     (with [(pytest.raises #(TypeError RuntimeEnvInvalid))]
-      (SubmitDetached program "k" :needs NET :environ (tuple (gfor #(k v) (.items bad) (EnvVar :name k :value v))))))
+      (<- (submit-detached-task program "k" :needs NET :environ (tuple (gfor #(k v) (.items bad) (EnvVar :name k :value v)))))))
   (val fine {"ROWS_TOKEN_FILE" "/etc/rows/token" "ROWS_KEY_DIR" "/etc/rows" URL-NAME URL})
   (val fine-vars (tuple (gfor k (sorted fine) (EnvVar :name k :value (get fine k)))))
   (assert (= (. (RemoteJob program :needs NET :environ fine) environ) fine))
@@ -99,10 +104,10 @@
   ;; 断る(本文の写像に綴ると片方が黙って消える)。
   (val program (based-add 1))
   (with [raised (pytest.raises TypeError)]
-    (SubmitDetached program "k" :needs NET :environ {URL-NAME URL}))
+    (<- (submit-detached-task program "k" :needs NET :environ {URL-NAME URL})))
   (assert (in "EnvVar の tuple" (str raised.value)) raised.value)
   (with [raised (pytest.raises TypeError)]
-    (SubmitDetached program "k" :needs NET :environ #((EnvVar :name URL-NAME :value URL) (EnvVar :name URL-NAME :value "other"))))
+    (<- (submit-detached-task program "k" :needs NET :environ #((EnvVar :name URL-NAME :value URL) (EnvVar :name URL-NAME :value "other")))))
   (assert (in "名が重なる" (str raised.value)) raised.value))
 
 
@@ -260,8 +265,8 @@
 (defk sim-environ-scenario []
   {:pre [] :post [(: % tuple)] :tags {:context "doeff-cluster-test" :role "program"}}
   "筋書き: 同じ Program((environ-reader) で名を読む)を RemoteJob と SubmitDetached で :environ つきで送り、答えを返す。"
-  (<- remote str (RemoteJob (environ-read URL-NAME) :needs LOCAL :environ {URL-NAME URL}))
-  (<- submitted DetachedSubmitted (SubmitDetached (environ-read URL-NAME) :key "sim-env" :needs LOCAL
+  (<- remote str (remote-job (environ-read URL-NAME) :needs LOCAL :environ {URL-NAME URL}))
+  (<- submitted DetachedSubmitted (submit-detached-task (environ-read URL-NAME) :key "sim-env" :needs LOCAL
                                                   :environ #((EnvVar :name URL-NAME :value "http://detached.invalid"))))
   (<- awaited (AwaitDetached "sim-env"))
   #(remote submitted awaited))

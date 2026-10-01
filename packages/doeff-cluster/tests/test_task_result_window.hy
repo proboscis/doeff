@@ -13,8 +13,9 @@
 (import doeff_cluster.shared.core.clock [now-epoch-ms])
 (import doeff_cluster.sim.local [sim-cluster SimWorker ProcessesOf KillWorker StartWorker ReadCoordinator])
 (import doeff_cluster.shared.intent.process_model [AwaitProcessEnded])
-(import doeff_cluster.shared.intent.remote_model [RemoteJob])
-(import doeff_cluster.shared.intent.detached_model [SubmitDetached AwaitDetached DetachedSucceeded])
+(import doeff_cluster.shared.intent.detached_model [AwaitDetached DetachedSucceeded])
+(import doeff_cluster.shared.core.remote_rules [remote-job])
+(import doeff_cluster.shared.core.detached_rules [submit-detached-task])
 (import tests.fixtures.envs [sim-foundation])
 (import tests.fixtures.sim_programs [pulses slow-task sim-task-foundation NET])
 
@@ -37,7 +38,7 @@
 (defk remote-caller [name]
   {:pre [(: name str)] :post [(: % float)] :tags {:context "doeff-cluster-test" :role "program"}}
   "筋書きの部品: 呼び手として TASK-SECONDS 秒眠る task を name で 1 本出し、答えを待つ。"
-  (<- answer float (RemoteJob (slow-task sim-task-foundation TASK-SECONDS) :needs NET :name name))
+  (<- answer float (remote-job (slow-task sim-task-foundation TASK-SECONDS) :needs NET :name name))
   answer)
 
 
@@ -80,7 +81,7 @@
   {:pre [(: key str)] :post [(: % WindowRun)] :tags {:context "doeff-cluster-test" :role "program"}}
   "筋書き: 切り離した task を key で出し、task の process が 0 で終わった刻に worker を殺して起こし直し、待ちの答えと task の
    process の記録を読む。"
-  (<- (SubmitDetached (slow-task sim-task-foundation TASK-SECONDS) :key key :needs NET :name "once-detached"))
+  (<- (submit-detached-task (slow-task sim-task-foundation TASK-SECONDS) :key key :needs NET :name "once-detached"))
   (<- (Delay 0.1))
   (<- id str (task-id-named "once-detached"))
   (<- times tuple (kill-after-exit (+ "task/" id)))

@@ -19,7 +19,7 @@
 (import doeff [with-handlers])
 (import doeff_cluster.shared.intent.runtime_env_model [RuntimeEnv EnvFailure EnvFailureKind])
 (import doeff_cluster.shared.core.runtime_env_rules [runtime-env->json env-key current-platform])
-(import doeff_cluster.shared.intent.detached_model [SubmitDetached AwaitDetached DetachedSucceeded DetachedEnvUnavailable
+(import doeff_cluster.shared.intent.detached_model [AwaitDetached DetachedSucceeded DetachedEnvUnavailable
                                                     DetachedVersionMismatch])
 (import doeff_cluster.shared.protocol.detached [outcome-of-view])
 (import doeff_cluster.sim.local [sim-cluster SimWorker SimLink ClientLink coordinator-answers ReadCoordinator ProcessesOf PreparationsOf])
@@ -36,6 +36,7 @@
                                     PrepareCode] doeff_cluster.shared.intent.job_model [JobSpec JobPhase] doeff_cluster.worker.core.worker_rules [code-key])
 (import doeff_cluster.worker.core.policy [plan statuses])
 (import doeff_cluster.worker.protocol.declared [task-spec] doeff_cluster.worker.protocol.heartbeat [status-row])
+(import doeff_cluster.shared.core.detached_rules [submit-detached-task])
 (import tests.env_fixtures [LOCK APP-URL LIB-URL env-of])
 (import tests.detached_rig [slow-add])
 (import tests.program_rows [SAMPLE-TASK-PROGRAM program-placed task-body-of])
@@ -62,7 +63,7 @@
   {:pre [(: keys tuple) (: n int)] :post [(: % dict)] :tags {:context "doeff-cluster-test" :role "program"}}
   "keys の task(slow-add — 答え = 100 + n + 順番)を全部送ってから、全部の答えを待つため(答え = key → 答え)。"
   (for [#(i key) (enumerate keys)]
-    (<- (SubmitDetached (slow-add 0.0 (+ n i)) :needs LOCAL :key key)))
+    (<- (submit-detached-task (slow-add 0.0 (+ n i)) :needs LOCAL :key key)))
   (var got {})
   (for [key keys]
     (<- outcome (AwaitDetached key))
