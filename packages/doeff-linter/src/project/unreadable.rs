@@ -11,7 +11,7 @@ use doeff_indexer::hy_index::reader::{ReadIssue, Reader};
 
 use super::explain::Explanation;
 use super::rule::ProjectRule;
-use super::{Finding, FindingOrigin};
+use super::report::{Finding, FindingOrigin};
 use crate::models::Severity;
 use crate::position::LineIndex;
 
@@ -55,7 +55,7 @@ pub fn finding(rel: &str, path: &Path, source: &str) -> Option<Finding> {
         hint: rule.hint().to_string(),
         registered: false,
         base_severity: Severity::Error,
-        standing: super::Standing::New,
+        standing: super::report::Standing::New,
         explanation: Explanation {
             subject: format!("{} の {} 行目 — {}", rel, line, what),
             reason: "doeff-linter の Hy の読み取り器がこの file を最後まで読めなかった。読めた所までしか規則を判じないので、この file の違反は欠けている(空に見えても合格ではない)。Hy 本体が読めるなら読み取り器の誤りなので doeff-linter に知らせ、Hy も読めないなら括弧か文字列を直す。".to_string(),

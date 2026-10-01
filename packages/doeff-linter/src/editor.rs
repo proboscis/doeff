@@ -17,7 +17,7 @@ use crate::position::{line_range, Range};
 use crate::project::explain::Explanation;
 use crate::project::rule::{ProjectRule, RuleFamily};
 use crate::project::settings::{ProjectRuleOrExternal, ProjectSettings};
-use crate::project::ProjectReport;
+use crate::project::report::ProjectReport;
 use crate::rule_info::get_rule_info;
 
 /// 契約の版。形を変える時は契約と一緒に上げる。版 2 = defk / deff の見出し `signatures` と束縛の型 `bindings` を足した
@@ -60,13 +60,13 @@ pub struct EditorViolation {
     /// 登録簿と照合中で下げる前の、規則そのものの重さ(`severity` はこれを下げた後)。エディタが「手つかずの重い破れ」を数える材料。
     pub base_severity: EditorSeverity,
     /// 新しい破れ(new)・登録簿に載った既知の破れ(registered)・照合中で下げた(reconciling)。
-    pub standing: crate::project::Standing,
+    pub standing: crate::project::report::Standing,
     /// 規則の重大さ(repo の宣言 `rules.<ID>.level`、無ければ base_severity から)。登録簿で下げない。
     pub level: crate::project::settings::RuleLevel,
     /// これは何か・なぜ違反か・law の文(層の規則だけ。Python の文ごとの規則は null)。
     pub explanation: Option<Explanation>,
     /// 判定の出どころ(linter = 決定的な規則・jev = Jev の意味の判定)。
-    pub source: crate::project::FindingOrigin,
+    pub source: crate::project::report::FindingOrigin,
     /// Jev の判定の確率(Jev の違反だけ・他は null)。
     pub probability: Option<f64>,
 }
@@ -209,10 +209,10 @@ pub fn build(input: &EditorInput) -> EditorReport {
                 key: None,
                 registered: false,
                 base_severity: violation.severity.into(),
-                standing: crate::project::Standing::New,
+                standing: crate::project::report::Standing::New,
                 level: input.settings.level_of(&violation.rule_id, violation.severity),
                 explanation: None,
-                source: crate::project::FindingOrigin::Linter,
+                source: crate::project::report::FindingOrigin::Linter,
                 probability: None,
             });
         }
@@ -398,7 +398,7 @@ pub fn absolute(path: &Path) -> PathBuf {
 mod tests {
     use super::*;
     use crate::project::settings::LawSpec;
-    use crate::project::ProjectReport;
+    use crate::project::report::ProjectReport;
 
     /// `rule_list` を呼ぶための最小の `EditorInput` を組み立てる。
     fn build_input<'a>(
