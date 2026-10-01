@@ -16,7 +16,9 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import shutil
 import subprocess
+import tempfile
 import tomllib
 from pathlib import Path
 
@@ -35,10 +37,29 @@ PROSE_EXTRA = frozenset({"docs/index.md"})
 WORD = re.compile(r"[A-Za-z]+")
 
 
+def listed_files(root: Path) -> list[str]:
+    """root の照らす file の path の一覧を返すため(作業樹の外の物・無視する物を照らさない)。
+
+    git の作業樹なら git が追跡している file。.git の無い写し(日次の全体検証は remote_check.py --tree . で .git を運ばずに
+    同期して撃つ — agora-redesign #1201)では、空の git の dir を一時に作って写しを作業樹に指し、写しの .gitignore に従う
+    「無視しない file」を数える。写しは元の作業樹の追跡する file と無視しない未追跡の file だけを持つので、同じ集合になる
+    (写しの .venv などの生成物は .gitignore が外す)。root の外の親の repo の index は読まない。
+    """
+    if (root / ".git").exists():
+        listed = subprocess.run(["git", "ls-files"], cwd=root, capture_output=True, text=True, check=True)
+    else:
+        with tempfile.TemporaryDirectory(prefix="no-real-name-git-") as scratch:
+            subprocess.run(["git", "init", "--quiet", scratch], capture_output=True, text=True, check=True)
+            listed = subprocess.run(
+                ["git", "--git-dir", str(Path(scratch) / ".git"), "--work-tree", str(root),
+                 "ls-files", "--others", "--exclude-standard"],
+                cwd=root, capture_output=True, text=True, check=True)
+    return sorted(line for line in listed.stdout.splitlines() if line)
+
+
 def tracked_files() -> list[str]:
-    """git が追跡している file の path の一覧を返すため(作業樹の外の物・無視する物を照らさない)。"""
-    listed = subprocess.run(["git", "ls-files"], cwd=ROOT, capture_output=True, text=True, check=True)
-    return [line for line in listed.stdout.splitlines() if line]
+    """この repo の照らす file の path の一覧を返すため(listed_files を repo の root で)。"""
+    return listed_files(ROOT)
 
 
 def author_entries(path: str) -> list[object]:
@@ -79,6 +100,28 @@ def test_prose_files_do_not_carry_the_real_name() -> None:
             if any(hashlib.sha256(word.lower().encode()).hexdigest() in FORBIDDEN_TOKEN_HASHES for word in WORD.findall(line)):
                 found.append(f"{path}:{number}")
     assert found == [], "実名の姓の語が在る行(名は出さない):\n" + "\n".join(found)
+
+
+def test_the_listing_reads_a_copy_without_git() -> None:
+    # 失敗ケース(#1201): 日次の全体検証は .git を運ばない写しで撃つ。写しでも元の作業樹の git ls-files と同じ集合を数え、
+    # .gitignore が外す生成物(写しで作られる .venv の中の README)は数えない。直す前の形(写しで git ls-files)は
+    # 「not a git repository」(status 128)で落ちる。
+    with tempfile.TemporaryDirectory(prefix="no-real-name-") as scratch:
+        source = Path(scratch) / "source"
+        for path, text in {".gitignore": ".venv/\n", "README.md": "doc\n", "packages/a/LICENSE": "license\n",
+                           "packages/a/pyproject.toml": "[project]\n"}.items():
+            (source / path).parent.mkdir(parents=True, exist_ok=True)
+            (source / path).write_text(text, encoding="utf-8")
+        subprocess.run(["git", "init", "--quiet", str(source)], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(source), "add", "--all"], capture_output=True, check=True)
+        copy = Path(scratch) / "copy"
+        shutil.copytree(source, copy, ignore=shutil.ignore_patterns(".git"))
+        (copy / ".venv" / "lib").mkdir(parents=True)
+        (copy / ".venv" / "lib" / "README.md").write_text("vendored\n", encoding="utf-8")
+        assert not (copy / ".git").exists()
+        expected = [".gitignore", "README.md", "packages/a/LICENSE", "packages/a/pyproject.toml"]
+        assert listed_files(source) == expected
+        assert listed_files(copy) == expected
 
 
 def test_the_name_check_catches_a_planted_name() -> None:
