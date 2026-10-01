@@ -12,7 +12,14 @@ from typing import Any, Protocol, TypeVar
 from doeff_vm import WithHandler
 
 from doeff import Program
-from doeff_core_effects.file_effects import DirEntry, FileFailed, MemoryFiles, PathKind, PathStat
+from doeff_core_effects.file_effects import (
+    DirEntry,
+    FileFailed,
+    MemoryFiles,
+    PathKind,
+    PathStat,
+    SourceNotCompiled,
+)
 
 _A = TypeVar("_A")
 
@@ -23,6 +30,7 @@ IS_DIRECTORY: str
 EXISTS: str
 NOT_EMPTY: str
 INVALID: str
+NOT_PERMITTED: str
 
 def refused(reason: str, path: str) -> Program[FileFailed, Any]: ...
 def refused_move(reason: str, source: str, target: str) -> Program[FileFailed, Any]: ...
@@ -33,6 +41,12 @@ def with_dirs(store: MemoryFiles, path: str) -> Program[MemoryFiles | FileFailed
 def with_file(
     store: MemoryFiles, path: str, content: bytes, mode: int | None
 ) -> Program[MemoryFiles | FileFailed, Any]: ...
+def link_in(
+    store: MemoryFiles, source: str, target: str
+) -> Program[MemoryFiles | FileFailed, Any]: ...
+def compile_in_store(
+    store: MemoryFiles, tree: str, items: tuple[tuple[str, str], ...]
+) -> Program[tuple[MemoryFiles, tuple[SourceNotCompiled, ...]], Any]: ...
 def content_of(store: MemoryFiles, path: str) -> Program[bytes | FileFailed, Any]: ...
 def dir_refusal(store: MemoryFiles, path: str) -> Program[FileFailed | None, Any]: ...
 def entries_below(store: MemoryFiles, path: str) -> Program[tuple[DirEntry, ...], Any]: ...

@@ -54,7 +54,8 @@
                                          ListDirectory WalkTree RemoveTree
                                          RenamePath CopyFile CopyTree
                                          AcquireLock ReleaseLock ReadDiskFree
-                                         ReadMemoryFiles])
+                                         ReadDiskUsage MeasureTree LinkFile
+                                         CompilePythonSources ReadMemoryFiles])
 (import doeff_core_effects.os-file [os-file-handler])
 (import doeff_core_effects.memory-file [memory-file-handler])
 (import doeff_core_effects.rooted-file [rooted-file-handler])
@@ -75,7 +76,8 @@
 (import doeff_core_effects.process-effects [RunProcess ExecutableAt
                                             ReadEnvironment WorkingDirectory
                                             ProcessAlive ReadInterpreter ResolveModule
-                                            StartProcess PollProcess StopProcess])
+                                            StartProcess PollProcess StopProcess
+                                            SignalProcess])
 (import doeff_core_effects.os-process [subprocess-handler offloaded-subprocess-handler])
 (import doeff_core_effects.scripted-process [scripted-process-handler])
 (import doeff_core_effects.channel-effects [CreateChannel PutChannel TakeChannel])
@@ -254,6 +256,7 @@
   :effects [StatPath ReadText ReadBytes WriteText WriteBytes AppendText
             MakeDirectory ListDirectory WalkTree RemoveTree RenamePath
             CopyFile CopyTree AcquireLock ReleaseLock ReadDiskFree
+            ReadDiskUsage MeasureTree LinkFile CompilePythonSources
             ReadMemoryFiles]
   :handlers [os-file-handler memory-file-handler rooted-file-handler]
   :adrs ["ADR-DOE-DOMAIN-001"]
@@ -282,10 +285,10 @@
   :title "Process 語彙 — 子 process と自分の環境"
   :effects [RunProcess ExecutableAt ReadEnvironment WorkingDirectory
             ProcessAlive ReadInterpreter ResolveModule
-            StartProcess PollProcess StopProcess]
+            StartProcess PollProcess StopProcess SignalProcess]
   :handlers [subprocess-handler offloaded-subprocess-handler scripted-process-handler]
   :adrs ["ADR-DOE-DOMAIN-001"]
-  :docs "subprocess-handler(本物)・offloaded-subprocess-handler(本物)と scripted-process-handler(I/O なし・台本)が 10 effect 全てに答える。")
+  :docs "subprocess-handler(本物)・offloaded-subprocess-handler(本物)と scripted-process-handler(I/O なし・台本)が 11 effect 全てに答える。")
 
 
 (defdomain doeff-channel
