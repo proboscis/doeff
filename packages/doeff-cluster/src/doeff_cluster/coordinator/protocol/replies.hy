@@ -8,7 +8,7 @@
 (import dataclasses [asdict])
 (import json)
 (import doeff_cluster.shared.intent.job_model [JobSpec])
-(import doeff_cluster.coordinator.intent.cluster_model [EventsView StateReply StateView HeartbeatReply TaskOffer])
+(import doeff_cluster.coordinator.intent.cluster_model [EventsView StateReply StateView HeartbeatReply TaskOffer DrainPhase DrainProgress WorkerDrainView])
 (import doeff_cluster.coordinator.core.cluster_policy [job-to-json task-summary status-row-to-json])
 (import doeff_cluster.coordinator.protocol.state_json [audit-event-to-json])
 
@@ -63,14 +63,36 @@
    "revision" view.revision})
 
 
+(defn #^ dict drain-progress-json [#^ DrainProgress drain]
+  "drain の進み → JSON の形(#2595 の前に drain_policy.drain-view・superseded-worker-view が組んでいた形と同じ — 頼みの記録は退いた世代の
+   答えに無く、superseded は退いた世代の答えにだけ書く)。"
+  (| {"worker" drain.worker}
+     (if drain.superseded
+         {"boot" drain.boot "superseded" True}
+         {"sinceMs" drain.since-ms "untilMs" drain.until-ms "boot" drain.boot "actor" drain.actor})
+     {"phase" drain.phase.value "drained" (= drain.phase DrainPhase.DRAINED) "remaining" (list drain.remaining)
+      "moving" (dict drain.moving) "blocked" (dict drain.blocked) "movingReady" (dict drain.moving-ready)}))
+
+
+(defn #^ dict worker-drain-view-json [#^ WorkerDrainView view]
+  "worker 1 つの画面 → JSON の形(#2595 の前に drain_policy.worker-view・superseded-worker-view が組んでいた形と同じ)。"
+  (setv w view.info)
+  (| {"name" w.name "alive" view.alive "silentMs" view.silent-ms "boot" w.boot "provides" (list w.provides) "exclusive" (list w.exclusive)
+      "derived" (list w.derived) "node" w.node "draining" (is-not view.drain None)}
+     (if view.superseded {"superseded" True} {})
+     {"drain" (if (is view.drain None) None (drain-progress-json view.drain)) "ready" view.ready}))
+
+
 (defn #^ object reply-json [#^ object body]  ; defk にできない: 返事の答え手と検の入口 responded(Program の外)が呼ぶ純粋な綴り
   "返事の本文の型の値を、外へ見せる JSON の形にする(#2595 の前に core が組んでいた形と同じ)。型にしていない本文はそのまま返す。"
   (cond
     (isinstance body EventsView)
       {"revision" body.revision "seq" body.seq "events" (lfor e body.events (audit-event-to-json e))}
     (isinstance body StateReply)
-      (| (state-view-json body.view) {"audit" (lfor e body.audit (audit-event-to-json e)) "drains" body.drains})
+      (| (state-view-json body.view) {"audit" (lfor e body.audit (audit-event-to-json e))
+                                        "drains" (dfor #(n d) (.items body.drains) n (drain-progress-json d))})
     (isinstance body HeartbeatReply) (heartbeat-reply-json body)
+    (isinstance body WorkerDrainView) (worker-drain-view-json body)
     True body))
 
 

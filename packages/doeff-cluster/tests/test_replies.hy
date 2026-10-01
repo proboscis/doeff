@@ -1,9 +1,10 @@
-;; 返事の本文の型と綴り(#2595): core の判断(api_policy.respond)は GET /events と GET /state の答えを型の値(EventsView・StateReply)で返し、
+;; 返事の本文の型と綴り(#2595): core の判断(api_policy.respond)は GET /events・GET /state・GET /workers/<名> の答えを型の値(EventsView・StateReply・WorkerDrainView)で返し、
 ;; JSON の形は coordinator/protocol/replies が綴る。検の入口 responded と、本番と模擬の組の返事の答え手 reply-bodies は同じ綴りを通る。
 (require doeff-hy.macros [deftest val])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming])
-(import doeff_cluster.coordinator.intent.cluster_model [ClusterState EventsView StateReply HeartbeatReply])
+(import doeff_cluster.coordinator.intent.cluster_model [ClusterState EventsView StateReply HeartbeatReply WorkerInfo WorkerDrainView])
 (import doeff_cluster.coordinator.core.cluster_policy [heartbeat-reply])
+(import doeff_cluster.coordinator.core.drain_policy [superseded-worker-view])
 (import doeff_cluster.shared.protocol.inbox [http-request])
 (import doeff_cluster.coordinator.core.api_policy [respond])
 (import doeff_cluster.coordinator.protocol.request_bodies [responded])
@@ -52,3 +53,20 @@
   (val body (reply-json reply))
   (assert (= (sorted body) ["draining" "formats" "jobs" "revision" "tasks" "timing" "warm"]) body)
   (assert (= #((get body "revision") (get body "jobs") (get body "tasks") (get body "warm")) #(3 [] [] [])) body))
+
+
+(deftest test-the-worker-view-is-typed-and-spelled-in-the-old-shape
+  ;; worker 1 つの画面は型の値(WorkerDrainView)で、JSON の欄は前と同じ — 退いた世代の待ちの答えだけが superseded を書き、
+  ;; その drain には頼みの記録(sinceMs・untilMs・actor)が無い。
+  (setv s (ClusterState :workers {"w1" (WorkerInfo :name "w1" :provides #("cpu") :capacity 1 :last-seen-ms 1000 :boot "b2")}))
+  (setv #(_ _ answer) (respond s (http-request "GET" "/workers/w1" {} None) 2000 T {}))
+  (assert (isinstance answer WorkerDrainView) answer)
+  (setv body (reply-json answer))
+  (assert (= (sorted body) ["alive" "boot" "derived" "drain" "draining" "exclusive" "name" "node" "provides" "ready" "silentMs"]) body)
+  (assert (= #((get body "drain") (get body "draining") (get body "ready") (get body "silentMs")) #(None False True 1000)) body)
+  (setv old (reply-json (superseded-worker-view s "w1" "b1" 2000 T)))
+  (assert (= #((get old "superseded") (get old "draining") (get old "ready")) #(True True False)) old)
+  (assert (= (sorted (get old "drain"))
+             ["blocked" "boot" "drained" "moving" "movingReady" "phase" "remaining" "superseded" "worker"])
+          old)
+  (assert (= #((get old "drain" "phase") (get old "drain" "drained") (get old "drain" "boot")) #("Drained" True "b1")) old))
