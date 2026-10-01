@@ -12,13 +12,19 @@
 ;;;   * 時間切れは答え(exit-code 124・timed-out True)・時間内なら普通の答え
 ;;;   * output-path の末尾へ stdout・stderr の順に足す(答えも出力を持つ)。足せない output-path は OSError が上がる
 ;;;   * ExecutableAt は起こせる命令と起こせない命令を分ける・dir(命令と同じ名でも)と無い path は False・WorkingDirectory は在る dir の絶対 path
+;;;   * ProcessAlive は生きている pid(init = 1)と終わった子の pid を分ける・0 以下の pid は生きていない(agora-redesign #2184)
+;;;   * process-group は、時間内に終わった後に背景へ回った孫を止め、時間切れでは孫ごと group を止める。stream-output の output-path は、
+;;;     時間切れで止めた子が出した分も持つ(agora-redesign #2184)
+;;;   * 本物を thread で回す offloaded-subprocess-handler も、本物と同じ答えを返す(同じ deftest を通る)
 ;;; 本物だけの性質(WorkingDirectory が自分の process の作業 dir)と fake だけの性質(job ごとの作業 dir・台本から台本を走らせる・
 ;;; 台本が env None を None で受ける)は test_process_file_effects.hy。
 (require doeff-hy.macros [defk deftest <- val var])
 (import os)
 (import doeff_core_effects.file_effects [MakeDirectory PathKind PathStat ReadText StatPath WriteText])
-(import doeff_core_effects.process_effects [EnvEntry EnvMode ExecutableAt ProcessOutcome ReadEnvironment RunProcess WorkingDirectory])
-(import process_contract_handlers [CAT ContractRoot ENV-PROBE KILLED NOT-UTF-8 NOT-UTF-8-BYTES OUT-ERR OUT-ERR-EXIT PWD])
+(import doeff_core_effects.process_effects [EnvEntry EnvMode ExecutableAt ProcessAlive ProcessOutcome ReadEnvironment RunProcess
+                                            WorkingDirectory])
+(import process_contract_handlers [CAT ContractRoot ENV-PROBE FIRST-THEN-WAIT KILLED LEFT-BEHIND LEFT-BEHIND-THEN-WAIT NOT-UTF-8
+                                   NOT-UTF-8-BYTES OUT-ERR OUT-ERR-EXIT OWN-PID PWD TWO-LINES])
 
 (val MISSING-COMMAND "/nonexistent/doeff-command")
 (val GIVEN-ENV #((EnvEntry :name "DOEFF_SHADOWED" :value "足した") (EnvEntry :name "DOEFF_ADDED" :value "足した")))
@@ -38,7 +44,7 @@
 
 
 (deftest test-the-exit-code-and-the-output-are-kept-raw
-  {:interpreters ["subprocess" "scripted-process"]}
+  {:interpreters ["subprocess" "offloaded-subprocess" "scripted-process"]}
   (<- failed ProcessOutcome (shell OUT-ERR-EXIT))
   (<- killed ProcessOutcome (shell KILLED))
   (assert (= failed (ProcessOutcome :exit-code 3 :stdout "out\n" :stderr "err\n")) failed)
@@ -46,13 +52,13 @@
 
 
 (deftest test-stdin-is-given-to-the-child
-  {:interpreters ["subprocess" "scripted-process"]}
+  {:interpreters ["subprocess" "offloaded-subprocess" "scripted-process"]}
   (<- echoed ProcessOutcome (shell CAT :stdin "入力\n2行目"))
   (assert (= echoed (ProcessOutcome :exit-code 0 :stdout "入力\n2行目" :stderr "")) echoed))
 
 
 (deftest test-bytes-that-are-not-utf-8-survive-the-round-trip
-  {:interpreters ["subprocess" "scripted-process"]}
+  {:interpreters ["subprocess" "offloaded-subprocess" "scripted-process"]}
   ;; 子が出した utf-8 でない bytes は可逆の文字列で返る(壊れた bytes は surrogate の文字)— encode し直すと元の bytes(git の diff を
   ;; patch-id へ渡す使い手が bytes を保てる — agora-redesign #2160)。
   (<- printed ProcessOutcome (shell NOT-UTF-8))
@@ -65,7 +71,7 @@
 
 
 (deftest test-the-child-environment-follows-the-env-mode
-  {:interpreters ["subprocess" "scripted-process"]}
+  {:interpreters ["subprocess" "offloaded-subprocess" "scripted-process"]}
   (<- inherited ProcessOutcome (shell ENV-PROBE))
   (<- replaced ProcessOutcome (shell ENV-PROBE :env GIVEN-ENV))
   (<- extended ProcessOutcome (shell ENV-PROBE :env GIVEN-ENV :env-mode EnvMode.EXTEND))
@@ -78,20 +84,20 @@
 
 
 (deftest test-the-own-environment-is-read-by-name
-  {:interpreters ["subprocess" "scripted-process"]}
+  {:interpreters ["subprocess" "offloaded-subprocess" "scripted-process"]}
   (<- seen tuple (ReadEnvironment #("DOEFF_MISSING" "DOEFF_SHADOWED" "DOEFF_INHERITED")))
   (assert (= seen #((EnvEntry :name "DOEFF_SHADOWED" :value "親") (EnvEntry :name "DOEFF_INHERITED" :value "継いだ"))) seen))
 
 
 (deftest test-the-child-runs-in-the-given-directory
-  {:interpreters ["subprocess" "scripted-process"]}
+  {:interpreters ["subprocess" "offloaded-subprocess" "scripted-process"]}
   (<- root str (ContractRoot))
   (<- shown ProcessOutcome (shell PWD :cwd root))
   (assert (= shown (ProcessOutcome :exit-code 0 :stdout (+ root "\n") :stderr "")) shown))
 
 
 (deftest test-a-child-that-cannot-start-is-an-answer
-  {:interpreters ["subprocess" "scripted-process"]}
+  {:interpreters ["subprocess" "offloaded-subprocess" "scripted-process"]}
   (<- root str (ContractRoot))
   (<- (WriteText (+ root "/file") "dir でない"))
   (<- no-command ProcessOutcome (RunProcess :argv #(MISSING-COMMAND)))
@@ -109,7 +115,7 @@
 
 
 (deftest test-a-timeout-is-an-answer
-  {:interpreters ["subprocess" "scripted-process"]}
+  {:interpreters ["subprocess" "offloaded-subprocess" "scripted-process"]}
   (<- slow ProcessOutcome (RunProcess :argv #("sleep" "5") :timeout 0.2))
   (<- quick ProcessOutcome (RunProcess :argv #("sleep" "0") :timeout 5.0))
   (assert (= slow (ProcessOutcome :exit-code 124 :stdout "" :stderr "" :timed-out True)) (.format "時間切れの答え {}" slow))
@@ -117,7 +123,7 @@
 
 
 (deftest test-the-output-is-appended-to-the-output-path
-  {:interpreters ["subprocess" "scripted-process"]}
+  {:interpreters ["subprocess" "offloaded-subprocess" "scripted-process"]}
   (<- root str (ContractRoot))
   (val log (+ root "/out.log"))
   (<- first ProcessOutcome (shell OUT-ERR :output-path log))
@@ -129,7 +135,7 @@
 
 
 (deftest test-an-output-path-that-cannot-be-written-raises
-  {:interpreters ["subprocess" "scripted-process"]}
+  {:interpreters ["subprocess" "offloaded-subprocess" "scripted-process"]}
   (<- root str (ContractRoot))
   (val log (+ root "/none/out.log"))
   (var raised None)
@@ -142,7 +148,7 @@
 
 
 (deftest test-executables-are-told-apart
-  {:interpreters ["subprocess" "scripted-process"]}
+  {:interpreters ["subprocess" "offloaded-subprocess" "scripted-process"]}
   (<- runnable bool (ExecutableAt :path "/bin/sh"))
   (<- missing bool (ExecutableAt :path MISSING-COMMAND))
   (assert runnable "/bin/sh が起こせない")
@@ -150,7 +156,7 @@
 
 
 (deftest test-a-directory-or-a-missing-path-is-not-executable
-  {:interpreters ["subprocess" "scripted-process"]}
+  {:interpreters ["subprocess" "offloaded-subprocess" "scripted-process"]}
   ;; dir は実行の bit があっても起こせる file ではない — 命令と同じ名の dir も、置き場の根も False。置き場の無い path も False。
   (<- root str (ContractRoot))
   (val named-dir (+ root "/sh"))
@@ -163,8 +169,64 @@
 
 
 (deftest test-the-own-working-directory-is-an-existing-directory
-  {:interpreters ["subprocess" "scripted-process"]}
+  {:interpreters ["subprocess" "offloaded-subprocess" "scripted-process"]}
   (<- here str (WorkingDirectory))
   (<- seen PathStat (StatPath here))
   (assert (os.path.isabs here) here)
   (assert (= seen.kind PathKind.DIRECTORY) (.format "作業 dir {} の種類 {}" here seen.kind)))
+
+
+(defk gone-soon [pid]
+  {:pre [(: pid int)] :post [(: % bool)] :tags {:context "process-test" :role "program"}}
+  "pid の process が 2 秒の内に死んだか — 止めた孫は init が拾うまでの間だけ生きて見える(zombie にも signal 0 は届く)ので、0.05 秒ずつ
+   見直す。"
+  (var alive True)
+  (var tries 0)
+  (while (and alive (< tries 40))
+    (<- seen bool (ProcessAlive pid))
+    (:= alive seen)
+    (when alive
+      (<- (RunProcess :argv #("sleep" "0.05")))
+      (:= tries (+ tries 1))))
+  (not alive))
+
+
+(deftest test-whether-a-process-is-alive-is-told
+  {:interpreters ["subprocess" "offloaded-subprocess" "scripted-process"]}
+  (<- init bool (ProcessAlive 1))
+  (<- finished ProcessOutcome (shell OWN-PID))
+  (<- gone bool (ProcessAlive (int (.strip finished.stdout))))
+  (<- zero bool (ProcessAlive 0))
+  (<- negative bool (ProcessAlive -1))
+  (assert init "init(pid 1)が生きていない答え")
+  (assert (not gone) (.format "終わった sh(pid {})が生きている答え" (.strip finished.stdout)))
+  (assert (= #(zero negative) #(False False)) (.format "0 以下の pid の答え {}" #(zero negative))))
+
+
+(deftest test-a-group-stops-what-the-child-left-behind
+  {:interpreters ["subprocess" "offloaded-subprocess" "scripted-process"]}
+  (<- finished ProcessOutcome (shell LEFT-BEHIND :process-group True))
+  (assert (= finished.exit-code 0) finished)
+  (<- stopped bool (gone-soon (int (.strip finished.stdout))))
+  (assert stopped (.format "背景に回した孫(pid {})が、group の後始末の後も生きている" (.strip finished.stdout))))
+
+
+(deftest test-a-timeout-stops-the-whole-group
+  {:interpreters ["subprocess" "offloaded-subprocess" "scripted-process"]}
+  (<- slow ProcessOutcome (shell LEFT-BEHIND-THEN-WAIT :process-group True :timeout 0.5 :stop-grace 2.0))
+  (assert (and slow.timed-out (= slow.exit-code 124)) (.format "時間切れの答え {}" slow))
+  (<- stopped bool (gone-soon (int (.strip slow.stdout))))
+  (assert stopped (.format "時間切れで止めた group の孫(pid {})が生きている" (.strip slow.stdout))))
+
+
+(deftest test-the-streamed-output-path-keeps-what-a-stopped-child-printed
+  {:interpreters ["subprocess" "offloaded-subprocess" "scripted-process"]}
+  (<- root str (ContractRoot))
+  (val log (+ root "/streamed.log"))
+  (<- whole ProcessOutcome (shell TWO-LINES :output-path log :stream-output True))
+  (<- stopped ProcessOutcome (shell FIRST-THEN-WAIT :output-path log :stream-output True :process-group True :timeout 0.5
+                                    :stop-grace 2.0))
+  (<- logged str (ReadText log))
+  (assert (= whole (ProcessOutcome :exit-code 0 :stdout "one\ntwo\n" :stderr "")) whole)
+  (assert (= stopped (ProcessOutcome :exit-code 124 :stdout "first\n" :stderr "" :timed-out True)) (.format "時間切れの答え {}" stopped))
+  (assert (= logged "one\ntwo\nfirst\n") (.format "流しながら書いた output-path {!r}" logged)))

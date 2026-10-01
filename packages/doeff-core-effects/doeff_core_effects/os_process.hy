@@ -2,14 +2,28 @@
 ;;; 呼んで値を詰め替えるだけで、判断を持たない。doeff-agents の driver-io-handler も RunProcess に同じ run-subprocess で答える(実装は 1 つ)。
 ;;; 子の標準入力・標準出力・標準エラーと output-path は utf-8 と surrogateescape で読み書きする(可逆 — process_effects.hy の頭の註・
 ;;; agora-redesign #2160)。
-(require doeff-hy.macros [defhandler defk <- val])
+;;;
+;;; process-group・stream-output(agora-redesign #2184)を使う呼びだけ、子を Popen で起こし、標準出力と標準エラーを thread 2 本で行ごとに
+;;; 読みながら待つ(run-watched)。使わない呼びは前と同じ subprocess.run の道(run-subprocess の頭の枝)を通る。
+;;; offloaded-subprocess-handler は同じ実装を、呼び 1 つに thread 1 本(offloaded_call.hy の ThreadPerCall)で回す — 子を待つ間も
+;;; scheduler の他の task が回る。外側に scheduled が要る。待っている task が取り消されても、走り出した子は止めない(答えは捨てる)。
+(require doeff-hy.macros [defhandler defk <- val var])
+(import contextlib)
 (import fnmatch)
+(import io)
 (import os)
+(import signal)
 (import subprocess)
+(import threading)
+(import time)
 (import doeff_core_effects.file_effects [FileFailed PathKind PathStat])
 (import doeff_core_effects.os_file [stat-path])
+(import doeff_core_effects.offloaded_call [ThreadPerCall offloaded run-detached keep-nothing])
 (import doeff_core_effects.process_effects [EnvEntry EnvMode ProcessOutcome RunProcess ExecutableAt ReadEnvironment WorkingDirectory
-                                            timed-out-outcome not-started-outcome executable-file-answer])
+                                            ProcessAlive timed-out-outcome not-started-outcome executable-file-answer])
+
+;; offloaded-subprocess-handler の thread(呼び 1 つに 1 本 — 同時の数の上限は呼び手が並べる数)。
+(val PROCESS-THREADS (ThreadPerCall))
 
 
 (defk os-executable-at [path]
@@ -23,6 +37,18 @@
               (FileFailed) PathKind.MISSING))
   (<- answer bool (executable-file-answer kind (os.access path os.X-OK)))
   answer)
+
+
+(defk os-process-alive [pid]
+  {:pre [(: pid int)] :post [(: % bool)] :tags {:context "process" :role "foundation"}}
+  "pid の process が生きているかを signal 0 で確かめるため(着地の列の窓が、死んだ走者の行を見分ける — agora-redesign #2184)。送る権限が
+   無いだけの process は生きている。0 以下の pid は group への signal になるので送らずに生きていないと答える。"
+  (if (<= pid 0)
+      False
+      (try
+        (do (os.kill pid 0) True)
+        (except [ProcessLookupError] False)
+        (except [PermissionError] True))))
 
 
 (defk decoded [value]
@@ -55,42 +81,180 @@
     _ given))
 
 
-(defk run-subprocess [argv stdin timeout cwd env env-mode output-path env-drop]
-  {:pre [(: argv tuple) (: stdin (| str None)) (: timeout (| int float None)) (: cwd (| str None)) (: env (| tuple None))
-         (: env-mode EnvMode) (: output-path (| str None)) (: env-drop tuple)]
-   :post [(: % ProcessOutcome)]}
-  "子 process を 1 回走らせて ProcessOutcome にするため(env と env-mode の読み方は child-environment)。
-   exit-code は returncode を丸めない。時間切れと起こせない形は値で返す(process_effects.hy の頭の註)。"
-  (<- child-env (| dict None) (child-environment env env-mode env-drop))
+(defk signal-group [pgid sig]
+  {:pre [(: pgid int) (: sig int)] :post [(: % None)] :tags {:context "process" :role "foundation"}}
+  "子の process group へ signal を 1 回送るため — 消えた group と、送る権限の無い group は触らない。"
+  (with [(contextlib.suppress ProcessLookupError PermissionError)]
+    (os.killpg pgid sig))
+  None)
+
+
+(defclass ChildPipes []
+  "子 1 つの標準入力を thread で渡し、標準出力と標準エラーを thread 2 本で行ごとに読んで、それぞれの全文を溜めながら sink(開いた
+   output-path — None なら書かない)へ届いた順に書くため(run-watched の部品 — 書きは 1 つの錠の下)。sink に書けない時は、写しを失う
+   だけで読みは続ける(子の出力を止めない)。"
+  (defn __init__ [self child sink]
+    (setv self.child child)
+    (setv self.sink sink)
+    (setv self.lock (threading.Lock))
+    (setv self.out (io.StringIO))
+    (setv self.err (io.StringIO))
+    (setv self.readers (tuple (gfor #(buffer stream) #(#(self.out child.stdout) #(self.err child.stderr))
+                                (threading.Thread :target self.take :args #(buffer stream) :daemon True)))))
+
+  (defn take [self buffer stream]
+    "1 本の流れを EOF まで行ごとに読む(読み手の thread の本体)。"
+    (for [line (iter stream.readline "")]
+      (with [self.lock]
+        (.write buffer line)
+        (when self.sink
+          (with [(contextlib.suppress OSError)]
+            (.write self.sink line)
+            (.flush self.sink))))))
+
+  (defn give [self text]
+    "標準入力に text を書いて閉じる(書き手の thread の本体 — 子が読まずに終わっても止まらない)。"
+    (with [(contextlib.suppress BrokenPipeError OSError)]
+      (.write self.child.stdin text)
+      (.close self.child.stdin)))
+
+  (defn start [self stdin]
+    "読み手を立て、stdin が在れば書き手も立てる。"
+    (for [reader self.readers]
+      (.start reader))
+    (when (is-not stdin None)
+      (.start (threading.Thread :target self.give :args #(stdin) :daemon True))))
+
+  (defn drained [self until]
+    "読み手を期限(monotonic の秒・None = 待ち切る)まで待つ。答え = 両方とも EOF まで読み終えたか。"
+    (for [reader self.readers]
+      (.join reader (if (is until None) None (max 0.0 (- until (time.monotonic))))))
+    (not (any (gfor reader self.readers (.is-alive reader)))))
+
+  (defn texts [self]
+    "溜めた標準出力と標準エラーの全文。"
+    (with [self.lock]
+      #((.getvalue self.out) (.getvalue self.err)))))
+
+
+(defk stop-child [child pipes process-group stop-grace]
+  {:pre [(: child subprocess.Popen) (: pipes ChildPipes) (: process-group bool) (: stop-grace float)] :post [(: % None)]
+   :tags {:context "process" :role "foundation"}}
+  "時間切れの子を止めるため: process-group なら group へ SIGTERM → 猶予 → SIGKILL(孫も止まる)、そうでなければ子だけを kill する
+   (subprocess.run と同じ)。止めた後は出力の EOF と子の終わりを猶予の間だけ待つ。"
+  (if process-group
+      (do
+        (<- (signal-group child.pid signal.SIGTERM))
+        (when (not (.drained pipes (+ (time.monotonic) stop-grace)))
+          (<- (signal-group child.pid signal.SIGKILL))
+          (.drained pipes (+ (time.monotonic) stop-grace)))
+        (try
+          (.wait child :timeout stop-grace)
+          (except [subprocess.TimeoutExpired]
+            (<- (signal-group child.pid signal.SIGKILL))
+            (.wait child))))
+      (do
+        (.kill child)
+        (.drained pipes (+ (time.monotonic) stop-grace))
+        (.wait child)))
+  None)
+
+
+(defk run-watched [argv stdin timeout cwd child-env output-path process-group stop-grace stream-output]
+  {:pre [(: argv tuple) (: stdin (| str None)) (: timeout (| int float None)) (: cwd (| str None)) (: child-env (| dict None))
+         (: output-path (| str None)) (: process-group bool) (: stop-grace float) (: stream-output bool)]
+   :post [(: % ProcessOutcome)] :tags {:context "process" :role "foundation"}}
+  "子を Popen で起こし、出力を thread で読みながら待つため(process-group か stream-output を使う呼び — 頭の註)。待ち方は communicate と
+   同じ = 子の終了に加えて出力の EOF。時間内に終われば、process-group なら group に残った孫へ SIGTERM を送る。時間切れは stop-child で
+   止め、それまでの出力を持つ時間切れの答えにする。stream-output なら output-path を先に開き、届いた行をその場で書く(開けなければ子を
+   起こさずに OSError が上がる — 子の後に足せない時と同じ)。"
+  (val sink (if (and stream-output (is-not output-path None))
+                (open output-path "a" :encoding "utf-8" :errors "surrogateescape")
+                None))
   (var outcome None)
   (try
-    (val done (subprocess.run (list argv)
-                               :input stdin
-                               :capture-output True
-                               :text True
-                               :encoding "utf-8"
-                               :errors "surrogateescape"
-                               :timeout timeout
-                               :cwd cwd
-                               :env child-env
-                               :check False))
-    (:= outcome (ProcessOutcome :exit-code done.returncode :stdout (or done.stdout "") :stderr (or done.stderr "")))
-    (except [error subprocess.TimeoutExpired]
-      (<- partial-out str (decoded error.stdout))
-      (<- partial-err str (decoded error.stderr))
-      (<- timed-out ProcessOutcome (timed-out-outcome partial-out partial-err))
-      (:= outcome timed-out))
-    (except [error OSError]
-      (<- refused ProcessOutcome (not-started-outcome (str error)))
-      (:= outcome refused)))
-  (<- (append-output output-path outcome.stdout outcome.stderr))
+    (var child None)
+    (try
+      (:= child (subprocess.Popen (list argv)
+                                  :stdin (if (is stdin None) None subprocess.PIPE)
+                                  :stdout subprocess.PIPE
+                                  :stderr subprocess.PIPE
+                                  :text True
+                                  :encoding "utf-8"
+                                  :errors "surrogateescape"
+                                  :cwd cwd
+                                  :env child-env
+                                  :start-new-session process-group))
+      (except [error OSError]
+        (<- refused ProcessOutcome (not-started-outcome (str error)))
+        (:= outcome refused)))
+    (when (is-not child None)
+      (val pipes (ChildPipes child sink))
+      (.start pipes stdin)
+      (val until (if (is timeout None) None (+ (time.monotonic) timeout)))
+      (val finished (try
+                      (do (.wait child :timeout (if (is until None) None (max 0.0 (- until (time.monotonic)))))
+                          (.drained pipes until))
+                      (except [subprocess.TimeoutExpired] False)))
+      (if finished
+          (do
+            (when process-group
+              (<- (signal-group child.pid signal.SIGTERM)))
+            (val texts (.texts pipes))
+            (:= outcome (ProcessOutcome :exit-code child.returncode :stdout (get texts 0) :stderr (get texts 1))))
+          (do
+            (<- (stop-child child pipes process-group (float stop-grace)))
+            (val partial (.texts pipes))
+            (<- timed-out ProcessOutcome (timed-out-outcome (get partial 0) (get partial 1)))
+            (:= outcome timed-out))))
+    (finally
+      (when sink
+        (.close sink))))
+  outcome)
+
+
+(defk run-subprocess [argv stdin timeout cwd env env-mode output-path env-drop process-group stop-grace stream-output]
+  {:pre [(: argv tuple) (: stdin (| str None)) (: timeout (| int float None)) (: cwd (| str None)) (: env (| tuple None))
+         (: env-mode EnvMode) (: output-path (| str None)) (: env-drop tuple) (: process-group bool) (: stop-grace (| int float))
+         (: stream-output bool)]
+   :post [(: % ProcessOutcome)]}
+  "子 process を 1 回走らせて ProcessOutcome にするため(env と env-mode の読み方は child-environment)。
+   exit-code は returncode を丸めない。時間切れと起こせない形は値で返す(process_effects.hy の頭の註)。process-group か stream-output を
+   使う呼びは run-watched、使わない呼びは前と同じ subprocess.run。stream-output で書いた output-path には後から足さない。"
+  (<- child-env (| dict None) (child-environment env env-mode env-drop))
+  (var outcome None)
+  (if (or process-group stream-output)
+      (do (<- watched ProcessOutcome (run-watched argv stdin timeout cwd child-env output-path process-group (float stop-grace) stream-output))
+          (:= outcome watched))
+      (try
+        (val done (subprocess.run (list argv)
+                                   :input stdin
+                                   :capture-output True
+                                   :text True
+                                   :encoding "utf-8"
+                                   :errors "surrogateescape"
+                                   :timeout timeout
+                                   :cwd cwd
+                                   :env child-env
+                                   :check False))
+        (:= outcome (ProcessOutcome :exit-code done.returncode :stdout (or done.stdout "") :stderr (or done.stderr "")))
+        (except [error subprocess.TimeoutExpired]
+          (<- partial-out str (decoded error.stdout))
+          (<- partial-err str (decoded error.stderr))
+          (<- timed-out ProcessOutcome (timed-out-outcome partial-out partial-err))
+          (:= outcome timed-out))
+        (except [error OSError]
+          (<- refused ProcessOutcome (not-started-outcome (str error)))
+          (:= outcome refused))))
+  (when (not stream-output)
+    (<- (append-output output-path outcome.stdout outcome.stderr)))
   outcome)
 
 
 (defhandler subprocess-handler
   ;; 本物の子 process と自分の process の環境(頭の註)。
-  (RunProcess [argv stdin timeout cwd env env-mode output-path env-drop]
-    (<- outcome (run-subprocess argv stdin timeout cwd env env-mode output-path env-drop))
+  (RunProcess [argv stdin timeout cwd env env-mode output-path env-drop process-group stop-grace stream-output]
+    (<- outcome (run-subprocess argv stdin timeout cwd env env-mode output-path env-drop process-group stop-grace stream-output))
     (resume outcome))
   (ExecutableAt [path]
     (<- found (os-executable-at path))
@@ -98,4 +262,27 @@
   (ReadEnvironment [names]
     (resume (tuple (gfor name names :if (in name os.environ) (EnvEntry :name name :value (get os.environ name))))))
   (WorkingDirectory []
-    (resume (os.getcwd))))
+    (resume (os.getcwd)))
+  (ProcessAlive [pid]
+    (<- alive (os-process-alive pid))
+    (resume alive)))
+
+
+(defhandler offloaded-subprocess-handler
+  ;; 本物の子 process(subprocess-handler と同じ実装)を、呼び 1 つに thread 1 本で回す(頭の註)。外側に scheduled が要る。
+  (RunProcess [argv stdin timeout cwd env env-mode output-path env-drop process-group stop-grace stream-output]
+    (<- outcome (offloaded PROCESS-THREADS
+                           (fn [] (run-detached (run-subprocess argv stdin timeout cwd env env-mode output-path env-drop
+                                                                process-group stop-grace stream-output)))
+                           keep-nothing))
+    (resume outcome))
+  (ExecutableAt [path]
+    (<- found (os-executable-at path))
+    (resume found))
+  (ReadEnvironment [names]
+    (resume (tuple (gfor name names :if (in name os.environ) (EnvEntry :name name :value (get os.environ name))))))
+  (WorkingDirectory []
+    (resume (os.getcwd)))
+  (ProcessAlive [pid]
+    (<- alive (os-process-alive pid))
+    (resume alive)))

@@ -19,7 +19,7 @@
 (import time)
 (import pathlib [Path])
 
-(import doeff [run])
+(import doeff [Program run])
 (import doeff_core_effects.os_process [run-subprocess os-executable-at])
 (import doeff_agents.io_effects [
   ProcessOutcome
@@ -156,9 +156,9 @@
                 (tuple (sorted (gfor entry (.glob root pattern) (str entry))))
                 #())))
 
-  (RunProcess [argv stdin timeout cwd env env-mode output-path env-drop]
-    ;; 実装は汎用の subprocess-handler と同じ 1 つ(doeff_core_effects.os_process の run-subprocess — agora-redesign #802 便 1)。
-    (<- outcome (run-subprocess argv stdin timeout cwd env env-mode output-path env-drop))
+  (RunProcess [argv stdin timeout cwd env env-mode output-path env-drop process-group stop-grace stream-output]
+    ;; 実装は汎用の subprocess-handler と同じ 1 つ(doeff_core_effects.os_process の run-subprocess — agora-redesign #802 便 1・#2184)。
+    (<- outcome (run-subprocess argv stdin timeout cwd env env-mode output-path env-drop process-group stop-grace stream-output))
     (resume outcome))
 
   (SpawnDetached [argv log-path cwd]
@@ -183,6 +183,6 @@
     (resume None)))
 
 
-(defn run-driver-io [program]
-  "composition root: driver 層の program を本番の I/O で回す。"
+(defn #^ object run-driver-io [#^ Program program]
+  "composition root: driver 層の program を本番の I/O で回す(答えは program の答え — 型は渡す program ごとに違う)。"
   (run (driver-io-handler program)))

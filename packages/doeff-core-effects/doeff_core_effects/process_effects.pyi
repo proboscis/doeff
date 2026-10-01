@@ -36,6 +36,9 @@ class RunProcess(EffectBase):
     env_mode: EnvMode = EnvMode.REPLACE
     env_drop: tuple[str, ...] = ()
     output_path: str | None = None
+    process_group: bool = False
+    stop_grace: float = 10.0
+    stream_output: bool = False
 
 @dataclass(frozen=True, kw_only=True)
 class ExecutableAt(EffectBase):
@@ -47,6 +50,10 @@ class ReadEnvironment(EffectBase):
 
 @dataclass(frozen=True)
 class WorkingDirectory(EffectBase): ...
+
+@dataclass(frozen=True)
+class ProcessAlive(EffectBase):
+    pid: int
 
 def timed_out_outcome(stdout: str, stderr: str) -> Program[ProcessOutcome, Any]: ...
 def not_started_outcome(detail: str) -> Program[ProcessOutcome, Any]: ...

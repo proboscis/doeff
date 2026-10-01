@@ -6,7 +6,11 @@
 ;;;                     (process_effects.hy の not-started-outcome・start-refusal)。output-path は台本の出力をその file の末尾へ足し、足せなければ
 ;;;                     本物と同じく OSError を上げる。timeout は台本に任せる(台本が timed-out-outcome の答えを返してよい)。
 ;;;                     env が None の時は台本も None を受ける(呼び手の環境を継ぐ印 — 継いだ中身を読むのは台本の側)。
+;;;                     process-group・stop-grace・stream-output(agora-redesign #2184)は台本の要求にそのまま渡す(group と時間の経過は台本の
+;;;                     世界に無い — 止め方を答えに表すのは台本の側)。stream-output の output-path は、台本が終わってから出力を足す
+;;;                     (届いた順に書く本物と、終わった後の file の中身は同じ)。
 ;;;                     本物との契約は tests/test_process_contract.hy。
+;;;   ProcessAlive      ProcessScript の alive(生きている pid の表)に在るか。0 以下の pid は本物と同じく生きていない。
 ;;;   ExecutableAt      種類は置き場(file の答え手)の StatPath — 置き場に無い path は台本に名(basename)が在れば実行できる file、無ければ無い物。
 ;;;                     実行の許しは台本に名が在ること。判断は本物と同じ executable-file-answer(dir は名が台本に在っても False)。
 ;;;   ReadEnvironment   ProcessScript の env から。
@@ -21,7 +25,7 @@
 (import collections.abc [Callable])
 (import dataclasses [dataclass])
 (import doeff_core_effects.process_effects [EnvEntry EnvMode ProcessOutcome RunProcess ExecutableAt ReadEnvironment WorkingDirectory
-                                            not-started-outcome start-refusal executable-file-answer])
+                                            ProcessAlive not-started-outcome start-refusal executable-file-answer])
 (import doeff_core_effects.file_effects [PathKind PathStat StatPath MakeDirectory AppendText FileFailed])
 
 
@@ -34,10 +38,11 @@
 
 (defrecord ProcessScript
   "scripted-process-handler に渡す世界(commands = ScriptedCommand の tuple・env = 自分の process の環境変数・work-root = job ごとの作業 dir を
-   作る親)。"
+   作る親・alive = 生きている pid の表 — ProcessAlive の答え)。"
   (#^ (get tuple #(ScriptedCommand ...)) commands)
   (setv #^ (get tuple #(EnvEntry ...)) env #())
-  (setv #^ str work-root "/work/jobs"))
+  (setv #^ str work-root "/work/jobs")
+  (setv #^ frozenset alive (frozenset)))
 
 
 (defk scripted-child-env [inherited env env-mode env-drop]
@@ -96,11 +101,12 @@
 (defhandler scripted-process-handler [#^ ProcessScript script]
   ;; 引数に残す理由: 台本の表と環境は筋書きごとに違う値(設定ではなく模擬の世界そのもの)。
   (session var jobs 0)
-  (RunProcess [argv stdin timeout cwd env env-mode output-path env-drop]
+  (RunProcess [argv stdin timeout cwd env env-mode output-path env-drop process-group stop-grace stream-output]
     ;; 台本が見る env は子の環境変数の全部にそろえる(EXTEND は台本の世界の環境 script.env から env-drop を外して足す — 本物の subprocess-handler と同じ)。
     (<- child-env (| tuple None) (scripted-child-env script.env env env-mode env-drop))
     (<- outcome ProcessOutcome (run-scripted script.commands (RunProcess :argv argv :stdin stdin :timeout timeout :cwd cwd :env child-env
-                                                                          :output-path output-path)))
+                                                                          :output-path output-path :process-group process-group
+                                                                          :stop-grace stop-grace :stream-output stream-output)))
     ;; 足せない output-path は本物と同じく例外で上げる(本物は子の後の open が OSError を上げ、答えは返らない)。
     (when (is-not output-path None)
       (<- appended (AppendText output-path (+ outcome.stdout outcome.stderr)))
@@ -118,4 +124,6 @@
     (<- made (MakeDirectory work))
     (when (isinstance made FileFailed)
       (raise (RuntimeError (.format "作業 dir を作れない: {}" made.detail))))
-    (resume work)))
+    (resume work))
+  (ProcessAlive [pid]
+    (resume (and (> pid 0) (in pid script.alive)))))

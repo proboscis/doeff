@@ -1,7 +1,10 @@
 ;;; 汎用の子 process の effect(agora-redesign #802 便 1・消費者 = #796 日次の全体検証・#795 webapp の組み立て・doeff-agents の driver 層)。
 ;;; 業務の語を持たない土台の語彙で、HttpRequest(http_effects.hy)と同じ段。答え手は仕組みごとに差し替える:
-;;;   subprocess-handler         本物の子 process と os.environ(os_process.hy)。doeff-agents の driver-io-handler も同じ実装を呼ぶ
-;;;   scripted-process-handler   I/O なし — 命令の名ごとの台本と、決めた環境変数・job ごとの作業 dir(scripted_process.hy)
+;;;   subprocess-handler            本物の子 process と os.environ(os_process.hy)。doeff-agents の driver-io-handler も同じ実装を呼ぶ
+;;;   offloaded-subprocess-handler  本物と同じ実装を、呼び 1 つに thread 1 本で回す(os_process.hy・agora-redesign #2184)— 子を待つ間も
+;;;                                 scheduler の他の task が回る(並べた RunProcess を Spawn / Gather で同時に走らせる・子の間も拍を回す)。
+;;;                                 外側に scheduled が要る
+;;;   scripted-process-handler      I/O なし — 命令の名ごとの台本と、決めた環境変数・job ごとの作業 dir(scripted_process.hy)
 ;;;
 ;;; RunProcess・ExecutableAt・ProcessOutcome は doeff-agents の io_effects から移した(定義は 1 つ — io_effects は同じ型を re-export する)。移す時に
 ;;; 足した欄は全部既定値つきで、今の使い手の振る舞いは変わらない:
@@ -15,6 +18,15 @@
 ;;;   = 外さない。REPLACE と env None の時は読まない(REPLACE は継がないので外す物が無い)。子に呼び手の venv や道具の設定を持ち込ませない時に使う。
 ;;;   ProcessOutcome の started(False = 起こせなかった — OSError を値で)・start-error(その理由)。exit-code は子の returncode を丸めずに
 ;;;   持つ(負の値 = signal・137 など)。時間切れは timed-out True(exit-code 124)、起こせない時は exit-code 127。
+;;;   RunProcess の process-group・stop-grace・stream-output(agora-redesign #2184 — 着地の列の窓の門の命令の走らせ方):
+;;;     process-group  True = 子を新しい session(自分の process group)で走らせる。時間切れでは group へ SIGTERM → stop-grace 秒待つ →
+;;;                    SIGKILL(子が起こした孫も止まる)。時間内に終わった後も、group に残った子(背景に回った孫)へ SIGTERM を送る。
+;;;                    既定 False = 前からの振る舞い(時間切れで子だけを止める)
+;;;     stop-grace     process-group の止め方の猶予の秒(既定 10.0)
+;;;     stream-output  True = 子の出力を、届いた順に output-path へ書きながら走らせる(時間切れで止めた子の出力も file に残る — 走者の log が
+;;;                    指す赤の証拠)。既定 False = 子が終わってから stdout・stderr の順に足す(前からの振る舞い)。output-path が None なら読まない
+;;;   待ち方はどれも subprocess の communicate と同じ = 子の終了に加えて出力の EOF(背景の孫が出力を抱えたままなら期限まで待つ)。
+;;;   ProcessAlive(agora-redesign #2184)= pid の process が生きているか。0 以下の pid は生きていない(group への signal にしない)。
 ;;;
 ;;; 文字列と bytes の約束(agora-redesign #2160): RunProcess の stdin と ProcessOutcome の stdout / stderr は、子の bytes を utf-8 と
 ;;; surrogateescape で読み書きした文字列(可逆 — Python の os.fsdecode と同じ作法)。有効な utf-8 はふつうの文字列のまま、壊れた bytes は
@@ -26,6 +38,7 @@
 ;;;                     あっても False(判断は executable-file-answer の 1 か所 — 本物と I/O なしの答え手が同じ関数を呼ぶ)。
 ;;;   ReadEnvironment   自分の process の環境変数のうち names の分。答え = 在る分だけの EnvEntry の tuple(names の順)。
 ;;;   WorkingDirectory  自分の process の作業 dir(絶対 path)。
+;;;   ProcessAlive      pid の process が生きているか。答え = bool(本物 = signal 0 を送れるか・送る権限が無いだけの process は生きている)。
 ;;;
 ;;; 時間切れと起こせない形の答え(timed-out-outcome・not-started-outcome)と、起こせない理由の文(start-refusal — OSError の文と同じ形)は
 ;;; ここで 1 度だけ作る。本物(os_process.hy)と I/O なし(scripted_process.hy)の答え手は同じ関数を呼ぶ(同じ形で答える — 契約テスト
@@ -83,7 +96,13 @@
   #^ (get tuple #(str ...)) env-drop
   (setv env-drop #())
   #^ (| str None) output-path
-  (setv output-path None))
+  (setv output-path None)
+  #^ bool process-group
+  (setv process-group False)
+  #^ float stop-grace
+  (setv stop-grace 10.0)
+  #^ bool stream-output
+  (setv stream-output False))
 
 
 (defclass [(dataclass :frozen True :kw-only True)] ExecutableAt [EffectBase]
@@ -98,6 +117,11 @@
 
 (defclass [(dataclass :frozen True)] WorkingDirectory [EffectBase]
   "自分の process の作業 dir(頭の註)。")
+
+
+(defclass [(dataclass :frozen True)] ProcessAlive [EffectBase]
+  "pid の process が生きているか(頭の註)。"
+  (#^ int pid))
 
 
 (defk timed-out-outcome [stdout stderr]
