@@ -25,9 +25,9 @@
 (import doeff_cluster.handlers [status-row])
 (import doeff_cluster.coordinator.core.metrics_policy [metrics-text])
 (import doeff_cluster.coordinator.core.cluster_policy [still-live-somewhere])
-(import doeff_cluster.worker_model [JobSpec CodeView CodeState ProcessView WorldView WorkerPolicy JobRecord
+(import doeff_cluster.worker_model [CodeView CodeState ProcessView WorldView WorkerPolicy JobRecord
                         PrepareCode StartJob SignalJob ReapJob RetireJob ReleaseLeases StopStage ProbeEntry ProbeView ProbeState
-                        ForgetProbes Action spec-hash])
+                        ForgetProbes Action] doeff_cluster.shared.intent.job_model [JobSpec] doeff_cluster.shared.core.job_rules [spec-hash])
 (import tests.program_rows [SAMPLE-RUN])
 (import doeff_cluster.worker_policy [plan records-after statuses])
 

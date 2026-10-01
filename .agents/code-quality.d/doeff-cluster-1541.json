@@ -38,7 +38,10 @@
     "packages/doeff-cluster/src/doeff_cluster/shared/entry/declare.hy",
     "packages/doeff-cluster/src/doeff_cluster/shared/entry/image_contract.hy",
     "packages/doeff-cluster/src/doeff_cluster/shared/protocol/declaration_requests.hy",
-    "packages/doeff-cluster/src/doeff_cluster/shared/core/declaring.hy"
+    "packages/doeff-cluster/src/doeff_cluster/shared/core/declaring.hy",
+    "packages/doeff-cluster/src/doeff_cluster/sim/*.hy",
+    "packages/doeff-cluster/src/doeff_cluster/worker/core/program.hy",
+    "packages/doeff-cluster/src/doeff_cluster/shared/core/job_rules.hy"
   ],
   "modules": [
     {
@@ -137,6 +140,7 @@
     },
     {
       "allow": [
+        "doeff-cluster-job-model",
         "doeff-cluster-shared-protocol",
         "doeff-cluster-worker-model"
       ],
@@ -157,6 +161,7 @@
         "doeff-cluster-cluster-json",
         "doeff-cluster-cluster-model",
         "doeff-cluster-cluster-rules",
+        "doeff-cluster-job-model",
         "doeff-cluster-lease-rules",
         "doeff-cluster-readiness-model",
         "doeff-cluster-runtime-env-model",
@@ -524,6 +529,8 @@
         "doeff-cluster-env-upkeep",
         "doeff-cluster-host-contract",
         "doeff-cluster-job-context",
+        "doeff-cluster-job-model",
+        "doeff-cluster-job-rules",
         "doeff-cluster-lease-rules",
         "doeff-cluster-remote-model",
         "doeff-cluster-runtime-env-model",
@@ -548,6 +555,7 @@
       "allow": [
         "doeff-cluster-cluster-model",
         "doeff-cluster-cluster-policy",
+        "doeff-cluster-job-rules",
         "doeff-cluster-readiness-model",
         "doeff-cluster-resource-policy",
         "doeff-cluster-shared-protocol",
@@ -628,6 +636,8 @@
     },
     {
       "allow": [
+        "doeff-cluster-job-model",
+        "doeff-cluster-job-rules",
         "doeff-cluster-runtime-env-model",
         "doeff-cluster-worker-model"
       ],
@@ -707,6 +717,8 @@
         "doeff-cluster-host-contract",
         "doeff-cluster-job-context",
         "doeff-cluster-job-entry",
+        "doeff-cluster-job-model",
+        "doeff-cluster-job-rules",
         "doeff-cluster-kube-handlers",
         "doeff-cluster-lease-rules",
         "doeff-cluster-metrics-model",
@@ -1063,6 +1075,8 @@
         "doeff-cluster-cluster-json",
         "doeff-cluster-cluster-model",
         "doeff-cluster-cluster-policy",
+        "doeff-cluster-job-model",
+        "doeff-cluster-job-rules",
         "doeff-cluster-readiness-model",
         "doeff-cluster-rollout-policy",
         "doeff-cluster-shared-protocol",
@@ -1275,6 +1289,8 @@
         "doeff-cluster-image-rules",
         "doeff-cluster-job-context",
         "doeff-cluster-job-entry",
+        "doeff-cluster-job-model",
+        "doeff-cluster-job-rules",
         "doeff-cluster-kube-handlers",
         "doeff-cluster-lease-rules",
         "doeff-cluster-local",
@@ -1402,22 +1418,24 @@
     {
       "allow": [
         "doeff-cluster-clock",
+        "doeff-cluster-job-model",
         "doeff-cluster-worker-model",
         "doeff-cluster-worker-policy"
       ],
       "layer": "pure",
       "name": "doeff-cluster-worker",
       "paths": [
-        "packages/doeff-cluster/src/doeff_cluster/worker.hy"
+        "packages/doeff-cluster/src/doeff_cluster/worker/core/program.hy"
       ],
       "public": [
-        "packages/doeff-cluster/src/doeff_cluster/worker.hy"
+        "packages/doeff-cluster/src/doeff_cluster/worker/core/program.hy"
       ],
       "responsibility": "worker の調整ループ。",
       "typed": true
     },
     {
       "allow": [
+        "doeff-cluster-job-model",
         "doeff-cluster-runtime-env-model"
       ],
       "layer": "domain",
@@ -1433,6 +1451,8 @@
     },
     {
       "allow": [
+        "doeff-cluster-job-model",
+        "doeff-cluster-job-rules",
         "doeff-cluster-worker-model"
       ],
       "layer": "pure",
@@ -1627,6 +1647,34 @@
         "packages/doeff-cluster/src/doeff_cluster/shared/core/declaring.hy"
       ],
       "responsibility": "宣言してよいかの検めの判断。",
+      "typed": true
+    },
+    {
+      "allow": [],
+      "layer": "domain",
+      "name": "doeff-cluster-job-model",
+      "paths": [
+        "packages/doeff-cluster/src/doeff_cluster/shared/intent/job_model.hy"
+      ],
+      "public": [
+        "packages/doeff-cluster/src/doeff_cluster/shared/intent/job_model.hy"
+      ],
+      "responsibility": "job 1 本の宣言(JobSpec)と job の段階(JobPhase)— coordinator と worker と SDK の模擬の環境が読む共有の型。",
+      "typed": true
+    },
+    {
+      "allow": [
+        "doeff-cluster-job-model"
+      ],
+      "layer": "domain",
+      "name": "doeff-cluster-job-rules",
+      "paths": [
+        "packages/doeff-cluster/src/doeff_cluster/shared/core/job_rules.hy"
+      ],
+      "public": [
+        "packages/doeff-cluster/src/doeff_cluster/shared/core/job_rules.hy"
+      ],
+      "responsibility": "job の宣言の指紋 spec-hash — worker と coordinator が同じ関数で計算して比べる。",
       "typed": true
     }
   ],

@@ -27,7 +27,7 @@
 (import doeff_cluster.coordinator.core.cluster_policy [job-to-json LIVE-PHASES])
 (import doeff_cluster.coordinator.core.resource_policy [service-readiness])
 (import doeff_cluster.shared.intent.readiness_model [handoff-timeout-ms])
-(import doeff_cluster.worker_model [spec-hash])
+(import doeff_cluster.shared.core.job_rules [spec-hash])
 
 
 (defn #^ str declaration-fingerprint [#^ ClusterJob job]  ; defk にできない: coordinator の純粋な判断(Program の外 — api_policy.settle)が呼ぶ

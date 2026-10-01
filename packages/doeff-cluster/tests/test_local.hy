@@ -14,7 +14,7 @@
 (import doeff_cluster.coordinator.entry.handler_sets [RequestQueue MemoryWalStore])
 (import doeff_cluster.job_context [RunContext])
 (import doeff_cluster.shared.intent.remote_model [UnsendableProgram TaskFailed decode-outcome])
-(import doeff_cluster.worker_model [JobSpec])
+(import doeff_cluster.shared.intent.job_model [JobSpec])
 (import doeff_cluster.sim.local [sim-cluster sim-process SimChild SimLink EndProcess SimWorker SimProcess SimReport SimReadiness
                              SimCoordinatorRun Crash Redeclare ReportsOf ReadinessOf ProcessesOf SharedRows ReadCoordinator
                              StopCoordinator CrashCoordinator CoordinatorRuns KillWorker StopWorker StartWorker CutWorker DrainWorker])

@@ -19,7 +19,7 @@
 (import enum [StrEnum])
 (import typing [NamedTuple])
 (import doeff [EffectBase])
-(import doeff_cluster.worker_model [JobSpec])
+(import doeff_cluster.shared.intent.job_model [JobSpec])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming Request])
 
 

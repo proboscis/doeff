@@ -136,10 +136,16 @@
       "doeff_cluster.record_model" "doeff_cluster.shared.core.record_model"
       "doeff_cluster.record_handlers" "doeff_cluster.shared.protocol.record_handlers"}))
 
+;; module の一部の型だけを別の module へ移した時の旧い名(module:qualname)→ 今の名。module ごと移した物は MOVED-MODULES。
+;; worker_model の JobSpec・JobPhase は coordinator と共有の型なので shared/intent/job_model へ(agora-redesign #2025)。
+(setv MOVED-TYPES
+  (dfor name #("JobSpec" "JobPhase")
+        (+ "doeff_cluster.worker_model:" name) (+ "doeff_cluster.shared.intent.job_model:" name)))
+
 (defn #^ (| type None) resolve-type [#^ str name]
   "型の名 → class。import できないか、名が class を指さなければ None(呼び手は class として呼ぶので module や関数を返さない)。
-  置き場を移した module の旧い名は MOVED-MODULES で今の名へ引く。"
-  (setv #(written qualname) (.split name ":" 1))
+  置き場を移した型の旧い名は MOVED-TYPES、module の旧い名は MOVED-MODULES で今の名へ引く。"
+  (setv #(written qualname) (.split (.get MOVED-TYPES name name) ":" 1))
   (setv module (.get MOVED-MODULES written written))
   (try
     (setv obj (importlib.import-module module))

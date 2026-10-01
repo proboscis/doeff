@@ -23,7 +23,7 @@
 (import .process_versions [current-versions])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming])
 (import doeff_cluster.shared.core.capabilities [capabilities-of])
-(import .worker [run-worker])
+(import doeff_cluster.worker.core.program [run-worker])
 (import .worker_model [WorkerPolicy CodeLayout])
 (import .job_context [worker-context-environ])
 

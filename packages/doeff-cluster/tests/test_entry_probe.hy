@@ -9,8 +9,8 @@
 (import sys)
 (import time)
 (import pathlib [Path])
-(import doeff_cluster.worker_model [JobSpec CodeState CodeView ProcessView WorldView ProbeState ProbeView ProbeStatus JobPhase JobRecord
-                        WorkerPolicy PrepareCode StartJob RetireJob ProbeEntry ForgetProbes spec-hash probed-job probe-args probe-refusal])
+(import doeff_cluster.worker_model [CodeState CodeView ProcessView WorldView ProbeState ProbeView ProbeStatus JobRecord
+                        WorkerPolicy PrepareCode StartJob RetireJob ProbeEntry ForgetProbes probed-job probe-args probe-refusal] doeff_cluster.shared.intent.job_model [JobSpec JobPhase] doeff_cluster.shared.core.job_rules [spec-hash])
 (import doeff_cluster.worker_policy [plan statuses])
 (import doeff_cluster.handlers [ProbeStore probe-reason status-row])
 (import tests.program_rows [SAMPLE-RUN SAMPLE-PROGRAM])

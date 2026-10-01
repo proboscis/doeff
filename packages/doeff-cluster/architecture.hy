@@ -61,8 +61,10 @@
 
 ;; worker の条は W1(入れ替えの間も書き手が居続ける)。消す順などの条は後から足す。:entry-modules は層に分ける前の今の入口
 ;; (doeff_cluster.main)。層に分けた後は :entry-modules を外し、entry 層の dir の定義で「code を持つ service」を数える形に移る。
+;; 層は移しの進みに合わせて足す: 今は core(調整ループ worker/core/program — agora-redesign #2025 の 1 本目)。
 (defservice worker "coordinator から job と task を受けて子 process として走らせる worker"
-  {:entry-modules ["doeff_cluster.main"]
+  {:layers [core]
+   :entry-modules ["doeff_cluster.main"]
    :invariants ["doeff_cluster.worker_invariants:handoff-keeps-a-ready-writer"]})
 
 ;; record-store の条は R1(保持は run を丸ごと)。「追記して fsync してから返事」は file system の性質で、memory の置き場では確かめられない

@@ -24,7 +24,7 @@
 (import tests.fixtures.envs [plain-foundation])
 (import tests.program_rows [SAMPLE-RUN])
 (import doeff_cluster.worker_model [CodeView CodeState ProcessView WorldView WorkerPolicy PrepareCode StartJob SignalJob ReapJob
-                                    RetireJob ProbeEntry ProbeView ProbeState ForgetProbes Action spec-hash])
+                                    RetireJob ProbeEntry ProbeView ProbeState ForgetProbes Action] doeff_cluster.shared.core.job_rules [spec-hash])
 (import doeff_cluster.worker_policy [plan records-after statuses])
 
 (val T (ClusterTiming))

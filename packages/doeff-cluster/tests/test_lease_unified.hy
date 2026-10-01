@@ -24,7 +24,7 @@
 (import doeff_cluster.coordinator.intent.cluster_model [ClusterState])
 (import doeff_cluster.foundation.coordinator_inbox [http-request])
 (import doeff_cluster.coordinator.core.api_policy [respond])
-(import doeff_cluster.worker_model [JobSpec])
+(import doeff_cluster.shared.intent.job_model [JobSpec])
 (import doeff_cluster.worker_policy [kept-when-cut-off])
 (import doeff_cluster.handlers [CoordinatorLink release-leases])
 (import doeff_cluster.worker_model [DesiredJobs DesiredUnreadable])

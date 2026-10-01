@@ -26,7 +26,7 @@
 (import doeff_cluster.shared.intent.remote_model [encode-program])
 (import doeff_cluster.process_versions [current-versions])
 (import doeff_cluster.shared.intent.runtime_env_model [EnvVar RuntimeEnvInvalid])
-(import doeff_cluster.worker_model [spec-hash])
+(import doeff_cluster.shared.core.job_rules [spec-hash])
 (import tests.fixtures.services [lab lab-pair lab-record tally-program greeter-program holding-program tally-on PairFoundation
                                  LooseFoundation])
 (import tests.fixtures.envs [plain-foundation greeting-foundation])

@@ -74,7 +74,7 @@
   (import os)
   (import time)
   (import doeff_cluster.handlers [ProcessHost])
-  (import doeff_cluster.worker_model [JobSpec StartJob])
+  (import doeff_cluster.worker_model [StartJob] doeff_cluster.shared.intent.job_model [JobSpec])
   (setv tree (/ tmp-path "tree") out (/ tmp-path "seen"))
   (.mkdir tree)
   (.write-text (/ tree "probe_entry.py")

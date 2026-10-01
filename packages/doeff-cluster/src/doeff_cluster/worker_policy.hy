@@ -12,9 +12,9 @@
 ;; 直前の失敗の理由を載せる(2026-09-27 — 以前は 17 分 starting のままで、理由は FAILED から撃ち直すまでの 30 秒しか見えなかった)。
 ;; 同じ木の検めを 1 本にまとめる・時間切れで process group ごと止めるのは検めの process の持ち主(handlers.ProbeStore)。
 (import dataclasses [replace])
-(import .worker_model [Action JobSpec CodeState CodeView ProcessView WorldView StopStage StopProgress ProbeState ProbeView ProbeStatus
-  Outcome JobRecord WorkerPolicy JobPhase JobStatus PrepareCode PrepareEnv SweepEnvs StartJob SignalJob ReapJob RetireJob ReleaseLeases
-  ProbeEntry ForgetProbes spec-hash code-key probed-job retired-name ready-path RETIRED-MARK ENV-KEY-PREFIX])
+(import .worker_model [Action CodeState CodeView ProcessView WorldView StopStage StopProgress ProbeState ProbeView ProbeStatus
+  Outcome JobRecord WorkerPolicy JobStatus PrepareCode PrepareEnv SweepEnvs StartJob SignalJob ReapJob RetireJob ReleaseLeases
+  ProbeEntry ForgetProbes code-key probed-job retired-name ready-path RETIRED-MARK ENV-KEY-PREFIX] doeff_cluster.shared.intent.job_model [JobSpec JobPhase] doeff_cluster.shared.core.job_rules [spec-hash])
 
 ;; 自己停止(2026-09-25): coordinator との連絡が fence(ClusterTiming.fence-ms)を越えて途絶えた worker は、自分の job を止めてきた
 ;; (coordinator は 45 秒で他へ移すので、同じ job が 2 つ動かないように)。ただし書き手(入れ替え handoff を宣言した job)は、旧と新が
