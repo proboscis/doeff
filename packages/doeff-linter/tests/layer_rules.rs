@@ -2784,7 +2784,10 @@ fn services_without_a_declared_system_are_red() {
                 + &job("bare-job", None)
                 + "(defsystem orders-system [foundation programs]\n  (orders (orders-job foundation)))\n\
                    (defsystem orders-plain [foundation]\n  (plain (plain-job foundation)))\n\
-                   (defsystem orders-bare [foundation]\n  (bare (bare-job foundation)))\n",
+                   (defsystem orders-bare [foundation]\n  (bare (bare-job foundation)))\n\
+                   (defsystem orders-typed [#^ OrdersFoundation foundation]\n  (typed (bare-job foundation)))\n\
+                   (defsystem orders-typed-callable [#^ Callable foundation]\n  (callable (orders-job foundation)))\n\
+                   (defsystem orders-typed-two [#^ OrdersFoundation foundation programs]\n  (two (orders-job foundation)))\n",
         ),
         ("app/orders/entry/main.hy", tags("orders", "entry") + "(defk take [] 3)\n"),
         ("app/stock/entry/main.hy", tags("stock", "entry") + "(defk count-all [] 4)\n"),
@@ -2807,7 +2810,8 @@ fn services_without_a_declared_system_are_red() {
         .replace("{:layers [core entry]})", "{:layers [core entry] :system \"app.billing.entry.system:billing-system\"})")
         + "(defservice ledger \"台帳\" {:layers [core entry]})\n\
            (defservice orders \"注文\" {:layers [core entry] :system [\"app.orders.entry.system:orders-system\" \"app.orders.entry.system:orders-plain\"\n\
-             \"app.orders.entry.system:orders-bare\" \"app.orders.entry.main:take\" \"app.orders.entry.system:gone\"]})\n\
+             \"app.orders.entry.system:orders-bare\" \"app.orders.entry.main:take\" \"app.orders.entry.system:gone\"\n\
+             \"app.orders.entry.system:orders-typed\" \"app.orders.entry.system:orders-typed-callable\" \"app.orders.entry.system:orders-typed-two\"]})\n\
            (defservice stock \"在庫\" {:layers [core entry] :system \"app.sim.systems:stock-system\"})\n\
            (defservice archive \"保管\" {:layers [core entry] :system {:exempt \"\"}})\n\
            (defservice reports \"報告\" {:layers [core entry] :system {:exempt \"旧い経路に残す — 機体ごとの起動で cluster の系に載せない\"}})\n\
@@ -2831,6 +2835,8 @@ fn services_without_a_declared_system_are_red() {
             "architecture.hy::DOEFF173::orders::app.orders.entry.system:orders-bare::bare-job",
             "architecture.hy::DOEFF173::orders::app.orders.entry.system:orders-plain::plain-job",
             "architecture.hy::DOEFF173::orders::app.orders.entry.system:orders-system::params",
+            "architecture.hy::DOEFF173::orders::app.orders.entry.system:orders-typed-callable::orders-typed-callable",
+            "architecture.hy::DOEFF173::orders::app.orders.entry.system:orders-typed-two::params",
             "architecture.hy::DOEFF173::stock::app.sim.systems:stock-system",
             "architecture.hy::DOEFF173::tasks::app.billing.entry.system:billing-system",
         ],
