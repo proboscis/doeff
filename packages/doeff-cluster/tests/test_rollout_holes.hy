@@ -6,7 +6,7 @@
 (require doeff-hy.macros [deftest val var])
 (import dataclasses [replace])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming Request])
-(import doeff_cluster.coordinator.intent.cluster_model [ClusterState TaskRecord])
+(import doeff_cluster.coordinator.intent.cluster_model [ClusterState RolloutRow TaskRecord])
 (import doeff_cluster.coordinator.core.durable_kv [full-kv state-from-kv])
 (import doeff_cluster.coordinator.core.api_policy [plan-rollouts resume-after-downtime mark-alive ALIVE-MARK-MS])
 (import doeff_cluster.coordinator.protocol.request_bodies [responded])
@@ -34,15 +34,15 @@
   (sim.rollout "to-worker" FORWARD)
   (sim.run-until "to-worker" #("Observing"))
   (for [_ (range 30)] (sim.step))
-  (setv since (get sim.state.rollouts "to-worker" "status" "phaseSinceMs"))
+  (setv since (get (. (get sim.state.rollouts "to-worker") status) "phaseSinceMs"))
   (setv gap (restart-after sim 600))
   (assert (>= gap 600000))
-  (assert (= (get sim.state.rollouts "to-worker" "status" "phaseSinceMs") (+ since gap)))
+  (assert (= (get (. (get sim.state.rollouts "to-worker") status) "phaseSinceMs") (+ since gap)))
   (sim.step)
   (assert (= (sim.phase "to-worker") "Observing"))
   (assert (= (sim.run-until "to-worker" #("Complete" "RolledBack")) "Complete"))
   ;; 完了は起き直した後に 90 秒ほど見てから(止まっていた 10 分は数えていない)
-  (setv done (get sim.state.rollouts "to-worker" "status" "completedMs"))
+  (setv done (get (. (get sim.state.rollouts "to-worker") status) "completedMs"))
   (assert (>= (- done (+ since gap)) (* 1000 (get FORWARD "observeSeconds")))))
 
 
@@ -141,5 +141,5 @@
   (setv #(again _) (rollout-step SPEC s old-down READY 700000))
   (assert (= (get again "stuck") (get s "stuck")))         ; 印は付けた拍だけ変わる
   ;; 計器に出る
-  (setv state (ClusterState :rollouts {"r" {"spec" SPEC "status" s}}))
+  (setv state (ClusterState :rollouts {"r" (RolloutRow :spec SPEC :status s)}))
   (assert (in "doeff_worker_rollout_stuck{rollout=\"r\"} 1" (metrics-text state 700000 T))))

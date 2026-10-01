@@ -63,7 +63,7 @@
   (defn #^ ClusterState rollout [self #^ str name #^ dict spec]
     (self.call "POST" "/resources/Rollout" {"name" name "spec" spec}))
 
-  (defn #^ str phase [self #^ str name] (get self.state.rollouts name "status" "phase"))
+  (defn #^ str phase [self #^ str name] (get (. (get self.state.rollouts name) status) "phase"))
 
   (defn #^ None advance-pods [self]
     (setv want (get self.kube.deployments DEP "specReplicas")
@@ -140,7 +140,7 @@
     (for [_ (range limit)]
       (self.step)
       (when (in (self.phase name) phases) (return (self.phase name))))
-    (raise (AssertionError (.format "{} が {} にならない: {}" name phases (get self.state.rollouts name "status")))))
+    (raise (AssertionError (.format "{} が {} にならない: {}" name phases (. (get self.state.rollouts name) status)))))
 
   (defn #^ None restart-coordinator [self]
     "coordinator の作り直し: 保存した形から読み直す(worker の報告・readiness・k8s の観測は失う)。"
@@ -149,7 +149,7 @@
 
 (defn #^ None assert-old-restored-before-new-stopped [#^ Sim sim #^ str name]
   "戻しの順: 新の Service を 0 にした出来事は、旧が Ready に戻った(restoredOldMs)後で、その時 k8s の Pod が ready だった。"
-  (setv status (get sim.state.rollouts name "status"))
+  (setv status (. (get sim.state.rollouts name) status))
   (setv stops (lfor e sim.state.audit
                     :if (and (= e.kind "Service") (= (.get e.changes "spec.replicas") [1 0])) e))
   (assert stops "新を止めていない")
@@ -160,7 +160,7 @@
 
 
 (defn #^ list phases-of [#^ Sim sim #^ str name]
-  (lfor h (get sim.state.rollouts name "status" "history") (get h "phase")))
+  (lfor h (get (. (get sim.state.rollouts name) status) "history") (get h "phase")))
 
 
 (deftest test-forward-rollout-stops-the-deployment-only-after-the-service-is-ready
@@ -182,7 +182,7 @@
   (setv sim (Sim) sim.healthy False)
   (sim.rollout "to-worker" FORWARD)
   (assert (= (sim.run-until "to-worker" #("Complete" "RolledBack")) "RolledBack"))
-  (assert (in "Ready にならなかった" (get sim.state.rollouts "to-worker" "status" "failure")))
+  (assert (in "Ready にならなかった" (get (. (get sim.state.rollouts "to-worker") status) "failure")))
   (assert (= (get sim.kube.deployments DEP "specReplicas") 1))
   (assert (= (lfor c sim.kube.calls :if (= (get c "op") "scale") c) []))   ; 旧は一度も止めていない
   (assert (= (. (get sim.state.jobs 0) replicas) 0))                        ; 新は止めた
@@ -209,7 +209,7 @@
   (assert (= (len sim.pods) 0))
   (setv sim.healthy False)
   (assert (= (sim.run-until "to-worker" #("Complete" "RolledBack")) "RolledBack"))
-  (assert (in "観察の間に" (get sim.state.rollouts "to-worker" "status" "failure")))
+  (assert (in "観察の間に" (get (. (get sim.state.rollouts "to-worker") status) "failure")))
   (assert (= (get sim.kube.deployments DEP "specReplicas") 1))
   (assert (= (. (get sim.state.jobs 0) replicas) 0))
   (assert-old-restored-before-new-stopped sim "to-worker")
@@ -234,7 +234,7 @@
   (sim.rollout "to-worker" FORWARD)
   (sim.run-until "to-worker" #("StoppingOld"))
   (sim.restart-coordinator)
-  (setv after-restart (get sim.state.rollouts "to-worker" "status" "phase"))
+  (setv after-restart (get (. (get sim.state.rollouts "to-worker") status) "phase"))
   (assert (= after-restart "StoppingOld"))
   (sim.run-until "to-worker" #("Observing"))
   (sim.restart-coordinator)                     ; 観察の途中でもう一度(報告が揃うまで Unknown = 失敗と数えない)
@@ -251,14 +251,14 @@
   ;; 本番の配備の流れが Deployment の manifest(replicas: 1)を当て直す
   (setv (get sim.kube.deployments DEP "specReplicas") 1)
   (for [_ (range 12)] (sim.step))
-  (setv drift (get sim.state.rollouts "to-worker" "status" "drift"))
+  (setv drift (get (. (get sim.state.rollouts "to-worker") status) "drift"))
   (assert (= #((get drift "expected") (get drift "observed")) #(0 1)) drift)
   ;; 直さない(配備の流れと取り合わない)
   (assert (= (get sim.kube.deployments DEP "specReplicas") 1))
   ;; 戻ると消える
   (setv (get sim.kube.deployments DEP "specReplicas") 0)
   (for [_ (range 12)] (sim.step))
-  (assert (is (get sim.state.rollouts "to-worker" "status" "drift") None)))
+  (assert (is (get (. (get sim.state.rollouts "to-worker") status) "drift") None)))
 
 
 (deftest test-reverse-rollout-brings-the-deployment-back-before-stopping-the-service
@@ -273,7 +273,7 @@
   (assert (= sim.gaps 0) sim.log)
   ;; 台数の持ち主は後の Rollout(back)へ移り、期待は 1。古い to-worker は食い違いを出さない
   (for [_ (range 12)] (sim.step))
-  (assert (is (.get (get sim.state.rollouts "to-worker" "status") "drift") None) (get sim.state.rollouts "to-worker" "status")))
+  (assert (is (.get (. (get sim.state.rollouts "to-worker") status) "drift") None) (. (get sim.state.rollouts "to-worker") status)))
 
 
 (deftest test-dry-run-deployment-is-never-scaled-for-real
@@ -283,7 +283,7 @@
   (assert (= (sim.run-until "dry" #("Complete" "RolledBack")) "Complete"))
   (assert (= (get sim.kube.deployments DEP "specReplicas") 1))           ; 本物の台数は変わらない
   (assert (= (lfor c sim.kube.calls #((get c "replicas") (get c "dryRun"))) [#(0 True)]))
-  (assert (= (get sim.state.rollouts "dry" "status" "simulated") {"Deployment:prod/app-writer" 0}))
+  (assert (= (get (. (get sim.state.rollouts "dry") status) "simulated") {"Deployment:prod/app-writer" 0}))
   ;; 逆向きも dry-run で往復できる
   (sim.rollout "dry-back" (| REVERSE {"to" (| (get REVERSE "to") {"dryRun" True})}))
   (assert (= (sim.run-until "dry-back" #("Complete" "RolledBack")) "Complete"))
@@ -316,7 +316,7 @@
   (setv (get sim.kube.deployments DEP "specReplicas") 1)
   (for [_ (range 3)] (sim.step))
   (assert (= (sim.phase "to-worker") "Observing"))
-  (setv drift (get sim.state.rollouts "to-worker" "status" "drift"))
+  (setv drift (get (. (get sim.state.rollouts "to-worker") status) "drift"))
   (assert (= #((get drift "expected") (get drift "observed")) #(0 1)) drift))
 
 
