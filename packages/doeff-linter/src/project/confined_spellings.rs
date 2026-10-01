@@ -57,7 +57,7 @@ pub fn find(root: &Path, groups: &[ConfinedSpelling], architecture_rel: &str, fo
         }
         for rel in population
             .iter()
-            .filter(|rel| !group.except.iter().any(|p| super::glob_matches(p, rel)))
+            .filter(|rel| !group.except.iter().any(|p| super::paths::glob_matches(p, rel)))
             .filter(|rel| focus.is_none_or(|only| only.iter().any(|p| root.join(rel.as_str()).starts_with(p))))
         {
             let source = match std::fs::read_to_string(root.join(rel)) {

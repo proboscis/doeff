@@ -573,7 +573,7 @@ pub fn find(
             let (Some(target), Some(owner)) = (call.target.as_ref(), call.caller) else { continue };
             model.tops[top_of[first + owner]].refs.insert(target.clone());
         }
-        if production && decl.sets.iter().any(|s| super::glob_matches(s, rel)) {
+        if production && decl.sets.iter().any(|s| super::paths::glob_matches(s, rel)) {
             model.set_files.insert(rel.to_string());
         }
     }

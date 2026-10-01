@@ -10,7 +10,8 @@ use std::path::{Path, PathBuf};
 
 use super::explain::Explanation;
 use super::rule::ProjectRule;
-use super::{relative_path, Finding, FindingOrigin};
+use super::paths::relative_path;
+use super::{Finding, FindingOrigin};
 use crate::models::Severity;
 use crate::position::{line_range, Range};
 
@@ -159,7 +160,7 @@ pub fn findings(notices: &[ConfigNotice], root: &Path) -> Vec<Finding> {
                     subject,
                     reason: format!(
                         "この linter(doeff {} から組んだ)は{}を知らない。linter が設定より古い(開発版の置き場の binary は doeff の本線から自動で組み直される — それを待つ)か、書き違い",
-                        crate::BUILD_COMMIT,
+                        crate::build_info::BUILD_COMMIT,
                         what
                     ),
                     law_statement: None,

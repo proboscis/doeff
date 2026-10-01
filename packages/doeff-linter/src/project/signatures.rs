@@ -351,7 +351,7 @@ impl World {
         let files: Vec<(String, std::path::PathBuf)> =
             super::hy_files::collect(root)
                 .into_iter()
-                .filter_map(|path| super::relative_path(root, &path).map(|rel| (rel, path)))
+                .filter_map(|path| super::paths::relative_path(root, &path).map(|rel| (rel, path)))
                 .collect();
         // 書いた file(overlay)は disk でなく渡された中身から作るので、cache の母集団から外す。
         let on_disk: Vec<(String, std::path::PathBuf)> =

@@ -14,7 +14,7 @@ use std::path::Path;
 use walkdir::WalkDir;
 
 use super::architecture::TestForms;
-use super::{glob_matches, relative_path};
+use super::paths::{glob_matches, relative_path};
 
 /// 見つけた形 1 つ。
 #[derive(Debug, Clone, PartialEq, Eq)]
