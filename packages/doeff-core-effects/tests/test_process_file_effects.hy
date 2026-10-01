@@ -17,7 +17,7 @@
 (import doeff_core_effects.process_effects [EnvEntry ProcessOutcome RunProcess ExecutableAt WorkingDirectory])
 (import doeff_core_effects.file_effects [PathKind FileFailed PathStat DirEntry LockHeld MemoryFile MemoryFiles ReadMemoryFiles StatPath ReadDiskFree
                                          ReadText ReadBytes WriteText WriteBytes AppendText MakeDirectory ListDirectory WalkTree CopyFile
-                                         CopyTree RenamePath RemoveTree AcquireLock ReleaseLock])
+                                         CopyTree RenamePath RemoveTree AcquireLock ReleaseLock DiskUsage ReadDiskUsage MeasureTree])
 (import doeff_core_effects.os_process [subprocess-handler])
 (import doeff_core_effects.os_file [os-file-handler])
 (import doeff_core_effects.memory_file [memory-file-handler])
@@ -246,3 +246,31 @@
                              :work-root "/work/jobs"))
   (<- answers tuple (with_handlers [(state) (memory-file-handler (MemoryFiles)) (scripted-process-handler script)] (scripted-journey)))
   (assert (= answers #("/work/jobs/job-1" "/work/jobs/job-2" (ProcessOutcome :exit-code 0 :stdout "a b\n" :stderr "") "a b")) answers))
+
+
+(defk tree-journey [root]
+  {:pre [(: root str)] :post [(: % tuple)] :tags {:context "file-system" :role "program"}}
+  "木を作って大きさの合計を測る筋(dir の下の全部・下の dir だけ・file を測る断り)。"
+  (<- (MakeDirectory (+ root "/t/sub")))
+  (<- (WriteText (+ root "/t/a") "あい"))
+  (<- (WriteText (+ root "/t/sub/b") "xyz"))
+  (<- whole (MeasureTree (+ root "/t")))
+  (<- below (MeasureTree (+ root "/t/sub")))
+  (<- refused (MeasureTree (+ root "/t/a")))
+  #(whole below (if (isinstance refused FileFailed) (FileFailed :path (.replace refused.path root "") :detail "") refused)))
+
+
+(defn test-disk-usage-and-tree-size-answer-the-same-on-the-real-and-memory-file-systems []
+  ;; #2504: ReadDiskUsage(総量と空き — 無い path は在る親で測る)と MeasureTree(dir の下の file の大きさの合計)。
+  (with [tmp (tempfile.TemporaryDirectory)]
+    (setv root (os.path.realpath tmp))
+    (setv real (on [os-file-handler] (tree-journey root)))
+    (setv usage (on [os-file-handler] (ReadDiskUsage (+ root "/missing/deeper"))))
+    (assert (isinstance usage DiskUsage) usage)
+    (assert (<= 0 usage.free usage.total) usage)
+    (assert (> usage.total 0) usage))
+  (setv memory (on [(state) (memory-file-handler (MemoryFiles :dirs #("/m") :free 7 :total 9))] (tree-journey "/m")))
+  (assert (= real memory) #(real memory))
+  (assert (= (get real 0) (+ (len (.encode "あい" "utf-8")) 3)) real)
+  (assert (isinstance (get real 2) FileFailed) real)
+  (assert (= (on [(state) (memory-file-handler (MemoryFiles :free 7 :total 9))] (ReadDiskUsage "/none")) (DiskUsage :total 9 :free 7))))
