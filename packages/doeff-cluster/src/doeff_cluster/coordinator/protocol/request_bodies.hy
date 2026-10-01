@@ -6,7 +6,7 @@
 (import doeff_hy.wire [parse Malformed])
 (import doeff_cluster.shared.intent.protocol [Request ClusterTiming])
 (import doeff_cluster.coordinator.intent.cluster_model [ClusterState])
-(import doeff_cluster.coordinator.intent.request_bodies [LeaseBody TaskResultBody DrainBody ReadinessBody MetricsBody ProgramBody BoardWireBody BoardWrite BodyMalformed ReadBody RequestBody])
+(import doeff_cluster.coordinator.intent.request_bodies [LeaseBody TaskResultBody DrainBody ReadinessBody MetricsBody ProgramBody BoardWireBody BoardWrite HeartbeatBody BodyMalformed ReadBody RequestBody])
 (import doeff_cluster.coordinator.core.api_policy [respond])
 
 
@@ -22,6 +22,7 @@
       MetricsBody
     (and (= method "PUT") (= (len parts) 2) (= (get parts 0) "programs")) ProgramBody
     (and (= method "PUT") (> (len parts) 1) (= (get parts 0) "board")) BoardWireBody
+    (and (= method "POST") (= parts #("heartbeat"))) HeartbeatBody
     True None))
 
 

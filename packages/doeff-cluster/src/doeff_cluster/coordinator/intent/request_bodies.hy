@@ -7,6 +7,7 @@
 ;;;   ReadinessBody   POST /resources/Service/<名>/readiness   service の process の準備できたの報告
 ;;;   MetricsBody     POST /resources/Service/<名>/metrics     service の process の計器の報告
 ;;;   ProgramBody     PUT /programs/<sha>         詰めた Program の置き
+;;;   HeartbeatBody   POST /heartbeat             worker の生存・能力・版・状態の報告・実行環境の root の名乗り
 ;;;   BoardWrite      PUT /board/<鍵>             盤の行 1 つの compare-and-set(本文の型 BoardWireBody と、欄が在ったかの印)
 ;;; 知らない欄は読み捨てる(前の直の読みと同じ — 送り手の版が新しい欄を足しても断らない)。
 (require doeff-hy.macros [val])
@@ -117,6 +118,48 @@
   (#^ bool expect-given))
 
 
+(defwire EnvFailedRow
+  "heartbeat の root の名乗りの失敗の行 1 つ: key = env のキー・kind = 失敗の種類・detail = 理由・retryable = やり直してよいか。"
+  {:tags {:context "doeff-cluster" :role "type"} :names :camel :unknown :ignore}
+  (#^ str key)
+  (#^ str kind)
+  (setv #^ str detail "")
+  (setv #^ bool retryable False))
+
+
+(defwire EnvsReport
+  "heartbeat の実行環境の root の名乗り: ready・preparing = env のキーの列・failed = 失敗の行の列(worker/protocol/heartbeat の
+   env-heartbeat-part と同じ形)。"
+  {:tags {:context "doeff-cluster" :role "type"} :names :camel :unknown :ignore}
+  (setv #^ (get tuple #(str ...)) ready #())
+  (setv #^ (get tuple #(str ...)) preparing #())
+  (setv #^ (get tuple #(EnvFailedRow ...)) failed #()))
+
+
+(defwire HeartbeatBody
+  "POST /heartbeat の本文(worker/protocol/heartbeat の heartbeat-body と env-heartbeat-part と同じ形): name = worker の名(空でない)・
+   provides / exclusive = 能力の名の列(labels = 旧い形の名乗り — 判断が断る)・node・capacity・versions / tools = 名 → 版・platform・
+   envs = root の名乗り・env-capacity = disk の条件・statuses = 状態の報告の行の列(行の形は判断が読む — 状態の欄の型は #2447)・
+   endpoint・boot = process の世代・boot-at = 起動時刻(epoch ms)・format = 本文の形の版。"
+  {:tags {:context "doeff-cluster" :role "type"} :names :camel :unknown :ignore :check [(> (len name) 0)]}
+  (#^ str name)
+  (setv #^ (| (get tuple #(str ...)) None) provides None)
+  (setv #^ (| (get tuple #(str ...)) None) exclusive None)
+  (setv #^ object labels None)
+  (setv #^ str node "")
+  (setv #^ int capacity 10)
+  (setv #^ (| (get dict #(str str)) None) versions None)
+  (setv #^ (| (get dict #(str str)) None) tools None)
+  (setv #^ str platform "")
+  (setv #^ (| EnvsReport None) envs None)
+  (setv #^ str env-capacity "ok")
+  (setv #^ (get tuple #(dict ...)) statuses #())
+  (setv #^ (| str None) endpoint None)
+  (setv #^ (| str None) boot None)
+  (setv #^ (| int None) boot-at None)
+  (setv #^ int format 1))
+
+
 (defrecord BodyMalformed
   "道の本文が型の約束の形でない(欠けた欄・型の違う値・JSON の object でない本文)— 受け口は 400 と reason で断る。"
   {:tags {:context "doeff-cluster" :role "type"}}
@@ -124,7 +167,7 @@
 
 
 ;; 道の本文の答えの型の和(ReadBody の答え・判断 respond が受ける本文 — まだ型にしていない道は JSON の object)。
-(setv RequestBody (| LeaseBody TaskResultBody DrainBody ReadinessBody MetricsBody ProgramBody BoardWrite BodyMalformed dict))
+(setv RequestBody (| LeaseBody TaskResultBody DrainBody ReadinessBody MetricsBody ProgramBody BoardWrite HeartbeatBody BodyMalformed dict))
 
 
 (defclass [(dataclass :frozen True)] ReadBody [EffectBase]
