@@ -41,7 +41,7 @@ pub struct RuleSplit {
     pub whole: Vec<String>,
 }
 
-/// 純粋: 有効な規則から意味の規則(DOEFF2xx)を除き、規則が repo 全体が要ると名乗る物(rules::needs_whole_repo)を whole、残りを
+/// 純粋: 有効な規則から意味の規則(DOEFF2xx)を除き、規則が repo 全体が要ると名乗る物(config::needs_whole_repo)を whole、残りを
 /// quick に分ける(順は保つ)。以前は設定の手の一覧 whole_repo_rules で分けていて、一覧に足し忘れた規則(DOEFF149・161)の当たりが
 /// どちらの段にも掛からず main に入った(agora-redesign #2090)。
 pub fn split_rules(enabled: &[String]) -> RuleSplit {
@@ -49,7 +49,7 @@ pub fn split_rules(enabled: &[String]) -> RuleSplit {
         .iter()
         .filter(|r| !r.to_uppercase().starts_with(SEMANTIC_PREFIX))
         .cloned()
-        .partition(|r| crate::rules::needs_whole_repo(r));
+        .partition(|r| crate::config::needs_whole_repo(r));
     RuleSplit { quick, whole }
 }
 

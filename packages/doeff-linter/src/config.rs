@@ -268,7 +268,7 @@ impl Config {
             // Python の文ごとの規則(DOEFF001〜031)の設定もこの表に在るので、層の規則でも Python の規則でもない物だけ。
             if crate::project::notice::is_rule_id_shape(id)
                 && ProjectRule::parse(id).is_none()
-                && !crate::rules::get_all_rule_ids().contains(&id.to_uppercase())
+                && !get_all_rule_ids().contains(&id.to_uppercase())
             {
                 unknown_rules.push(crate::project::notice::UnknownRuleRef { key: format!("rules.{}", id), id: id.clone() });
                 continue;
@@ -500,8 +500,31 @@ pub fn load_config_checked(explicit: Option<&Path>, start: &Path) -> Result<Opti
     load_config_file(&path).map(Some)
 }
 
-// Re-export get_all_rule_ids from rules module
-pub use crate::rules::get_all_rule_ids;
+/// 規則の ID の全部 — Python の文ごとの規則(rules の get_all_rules)と層の規則(ProjectRule)。設定の有効な規則の既定と知らない規則の
+/// 判じに使う。ここに置くのは、rules/mod.rs が project を読むと依存の輪になるため(config は既に ProjectRule を読む・agora-redesign #2122)。
+pub fn get_all_rule_ids() -> Vec<String> {
+    crate::rules::get_all_rules()
+        .iter()
+        .map(|rule| rule.rule_id().to_string())
+        .chain(ProjectRule::ALL.iter().map(|rule| rule.id().to_string()))
+        .collect()
+}
+
+/// 規則の ID が、当たりを判じるのに repo 全体が要る規則か(agora-redesign #2090)。Python の文ごとの規則(DOEFF001〜031)は file 1 つで
+/// 判じるので偽。層の規則は ProjectRule::needs_whole_repo の名乗り。知らない ID は偽(有効な規則の一覧には載らない — DOEFF100 が知らせる)。
+pub fn needs_whole_repo(id: &str) -> bool {
+    ProjectRule::parse(id).is_some_and(|rule| rule.needs_whole_repo())
+}
+
+/// `--list-rules` の出力 — 全部の規則の ID と、repo 全体が要るかの名乗り(門と hook が repo 全体の比べの規則を選ぶ 1 か所)。
+pub fn rule_list_json() -> serde_json::Value {
+    serde_json::Value::Array(
+        get_all_rule_ids()
+            .into_iter()
+            .map(|id| serde_json::json!({ "id": id, "whole_repo": needs_whole_repo(&id) }))
+            .collect(),
+    )
+}
 
 /// Merge command line arguments with config file settings
 /// CLI arguments take precedence

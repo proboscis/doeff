@@ -75,30 +75,8 @@ pub fn get_rules_by_id() -> HashMap<String, Box<dyn LintRule>> {
         .collect()
 }
 
-/// Get all available rule IDs(Python の文ごとの規則と、層の規則 DOEFF101〜108)
-pub fn get_all_rule_ids() -> Vec<String> {
-    get_all_rules()
-        .iter()
-        .map(|rule| rule.rule_id().to_string())
-        .chain(crate::project::rule::ProjectRule::ALL.iter().map(|rule| rule.id().to_string()))
-        .collect()
-}
-
-/// 規則の ID が、当たりを判じるのに repo 全体が要る規則か(agora-redesign #2090)。Python の文ごとの規則(DOEFF001〜031)は file 1 つで
-/// 判じるので偽。層の規則は ProjectRule::needs_whole_repo の名乗り。知らない ID は偽(有効な規則の一覧には載らない — DOEFF100 が知らせる)。
-pub fn needs_whole_repo(id: &str) -> bool {
-    crate::project::rule::ProjectRule::parse(id).is_some_and(|rule| rule.needs_whole_repo())
-}
-
-/// `--list-rules` の出力 — 全部の規則の ID と、repo 全体が要るかの名乗り(門と hook が repo 全体の比べの規則を選ぶ 1 か所)。
-pub fn rule_list_json() -> serde_json::Value {
-    serde_json::Value::Array(
-        get_all_rule_ids()
-            .into_iter()
-            .map(|id| serde_json::json!({ "id": id, "whole_repo": needs_whole_repo(&id) }))
-            .collect(),
-    )
-}
+// 規則の ID の全部(この Python の規則と層の規則)・repo 全体が要るかの名乗り・`--list-rules` は config.rs(層の規則 project::rule を読む
+// 側)に在る — ここが project を読むと、project/settings.rs がここの get_all_rules を読むので依存の輪になる(agora-redesign #2122)。
 
 /// Get rules filtered by enabled IDs
 pub fn get_enabled_rules(enabled_ids: Option<&[String]>) -> Vec<Box<dyn LintRule>> {
