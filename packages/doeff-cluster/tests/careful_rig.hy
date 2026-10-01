@@ -18,7 +18,7 @@
 (import doeff_cluster.shared.intent.checkout_model [LocalCheckout ProjectOfCheckout])
 (import doeff_cluster.shared.core.runtime_env [runtime-env-of-checkouts])
 (import doeff_cluster.shared.protocol.checkout_reads [checkout-reads])
-(import doeff_cluster.env_prepare [ENV-MARKER ROOTS-PTH])
+(import doeff_cluster.worker.intent.env_prepare_model [ROOTS-PTH] doeff_cluster.shared.intent.env_marker_model [ENV-MARKER])
 (import doeff_cluster.shared.intent.service_model [resolve])
 (import doeff_cluster.handlers [EnvStore ProcessHost task-spec write-program-file])
 (import doeff_cluster.worker.intent.worker_model [CodeState CodeView StartJob ReapJob Outcome WorldView WorkerPolicy PrepareEnv WarmEnv

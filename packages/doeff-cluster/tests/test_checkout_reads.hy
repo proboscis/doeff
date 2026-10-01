@@ -19,7 +19,7 @@
 (import doeff_cluster.shared.protocol.checkout_reads [SENDER-SOURCE-DIR checkout-reads checkout-state-at])
 (import doeff_cluster.shared.core.runtime_env [runtime-env-of-checkouts checked-declaring-checkout])
 (import doeff_cluster.shared.intent.runtime_env_model [RepoCheckout RuntimeEnv RuntimeEnvInvalid InvalidKind])
-(import doeff_cluster.env_prepare [FileSha256])
+(import doeff_cluster.shared.intent.env_marker_model [FileSha256])
 (import doeff_cluster.sim.checkout_git_script [GitCheckout GitRemote GitRev git-command])
 (import doeff_core_effects.process_effects [ProcessOutcome RunProcess])
 

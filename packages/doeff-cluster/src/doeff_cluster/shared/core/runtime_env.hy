@@ -38,7 +38,7 @@
 (val MODULE-TAGS {:context "doeff-cluster" :role "program"})
 (import doeff_cluster.shared.intent.runtime_env_model [RepoCheckout PythonProject EnvVar ToolRequirement RuntimeEnv RuntimeEnvInvalid InvalidKind])
 (import doeff_cluster.shared.intent.checkout_model [LocalCheckout ProjectOfCheckout CheckoutState ReadCheckout CheckoutRoot SenderSourceRoot])
-(import doeff_cluster.env_prepare [FileSha256])
+(import doeff_cluster.shared.intent.env_marker_model [FileSha256])
 
 
 ;; --- 組み立て -----------------------------------------------------------------------------
@@ -119,3 +119,13 @@
               :project (PythonProject :repo project.repo :path project.path :lock-sha256 lock-hash :python project.python
                                       :groups project.groups :native project.native)
               :import-roots import-roots :env-vars env-vars :tools tools))
+
+
+;; venv を持つ project の dir — worker の準備(worker/core/env_prepare)と入口の検め(runtime_identity)が同じ path を使う
+;; (#2025 の 3 本目で env_prepare から移した)。
+(defk project-dir [env root]
+  {:pre [(: env RuntimeEnv) (: root str)] :post [(: % str)]}
+  "venv を持つ project の dir(uv の --project に渡す path)。"
+  (if (= env.project.path ".")
+      (.format "{}/{}" root env.project.repo)
+      (.format "{}/{}/{}" root env.project.repo env.project.path)))

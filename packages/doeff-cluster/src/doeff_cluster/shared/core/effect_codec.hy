@@ -138,7 +138,9 @@
       ;; worker の型(#2025 の 2 本目)— 観測・記録・effect の型と、拍と掃除の判断の型。
       "doeff_cluster.worker_model" "doeff_cluster.worker.intent.worker_model"
       "doeff_cluster.beat_policy" "doeff_cluster.worker.core.beat_policy"
-      "doeff_cluster.env_upkeep" "doeff_cluster.worker.core.env_upkeep"}))
+      "doeff_cluster.env_upkeep" "doeff_cluster.worker.core.env_upkeep"
+      ;; 実行環境の root の準備の型(#2025 の 3 本目)— FileSha256 だけは共有の置き場(MOVED-TYPES)。
+      "doeff_cluster.env_prepare" "doeff_cluster.worker.intent.env_prepare_model"}))
 
 ;; module の一部の型だけを別の module へ移した時の旧い名(module:qualname)→ 今の名。module ごと移した物は MOVED-MODULES。
 ;; worker_model の JobSpec・JobPhase は coordinator と共有の型なので shared/intent/job_model へ(#2025)。
@@ -146,11 +148,14 @@
 ;; IdleNextRequests になった(#2180)— 移しの前の記録の NextRequests は idle の欄を持つので子 class を引く。
 (setv MOVED-TYPES
   (| (dfor name #("JobSpec" "JobPhase")
-           (+ "doeff_cluster.worker.intent.worker_model:" name) (+ "doeff_cluster.shared.intent.job_model:" name))
+           (+ "doeff_cluster.worker_model:" name) (+ "doeff_cluster.shared.intent.job_model:" name))
      {"doeff_cluster.coordinator.intent.cluster_model:NextRequests" "doeff_cluster.coordinator.intent.cluster_model:IdleNextRequests"}
      ;; record-store の effect(#2030)— record_store.hy は置き場の Program と effect を一緒に持っていた。effect だけを intent へ分けた。
      (dfor name #("AppendRecordLines" "ListRecordRuns" "ReadRecordRun" "CompactRecords" "PruneRecords")
-           (+ "doeff_cluster.record_store:" name) (+ "doeff_cluster.record_store.intent.record_store_model:" name))))
+           (+ "doeff_cluster.record_store:" name) (+ "doeff_cluster.record_store.intent.record_store_model:" name))
+     ;; #2025 の 3 本目 — env_prepare の FileSha256 は送り手の宣言と入口の検めも出す共有の effect・drain_client の effect は worker/intent へ。
+     {"doeff_cluster.env_prepare:FileSha256" "doeff_cluster.shared.intent.env_marker_model:FileSha256"
+      "doeff_cluster.drain_client:CoordinatorCall" "doeff_cluster.worker.intent.drain_model:CoordinatorCall"}))
 
 (defn #^ (| type None) resolve-type [#^ str name]
   "型の名 → class。import できないか、名が class を指さなければ None(呼び手は class として呼ぶので module や関数を返さない)。

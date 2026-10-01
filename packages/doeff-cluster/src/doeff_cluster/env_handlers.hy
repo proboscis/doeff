@@ -45,10 +45,9 @@
 (import doeff_core_effects.os_file [os-file-handler])
 (import doeff_time [sync-time-handler])
 (import doeff_cluster.shared.intent.runtime_env_model [EnvFailure EnvFailureKind RuntimeEnv runtime-env-of-json])
-(import .env_prepare [StageStarted PrepareNote DiskFree RepoAllowed EnsureMirror FetchCommit MaterializeTree FileSha256 TreeHash
-                      EnsureNativeWheel SyncProject InstallWheels WriteImportRoots ReadEditableRoots CompileTree ProbeImports WriteEnvMarker
-                      MirrorReady FetchState WheelReady SyncReport BytecodeReport ProbeReport
-                      PrepareRequest KnownRoot EnvReady prepare-env env-marker->json ENV-MARKER ROOTS-PTH])
+(import doeff_cluster.worker.core.env_prepare [
+                     
+                      prepare-env env-marker->json] doeff_cluster.worker.intent.env_prepare_model [StageStarted PrepareNote DiskFree RepoAllowed EnsureMirror FetchCommit MaterializeTree TreeHash EnsureNativeWheel SyncProject InstallWheels WriteImportRoots ReadEditableRoots CompileTree ProbeImports WriteEnvMarker MirrorReady FetchState WheelReady SyncReport BytecodeReport ProbeReport PrepareRequest KnownRoot EnvReady ROOTS-PTH] doeff_cluster.shared.intent.env_marker_model [FileSha256 ENV-MARKER])
 
 (val DETAIL-CHARS 600)
 ;; 展開の複製で持ち越さない dir の名(venv は元の root の絶対 path を持ち、.pyc は元の root の Hy で作った物)。

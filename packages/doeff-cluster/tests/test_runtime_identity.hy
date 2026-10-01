@@ -14,7 +14,7 @@
 (import doeff [Program run with_handlers])
 (import doeff_core_effects.scheduler [scheduled])
 (import doeff_cluster.shared.intent.runtime_env_model [RuntimeEnv RepoCheckout PythonProject EnvVar runtime-env->json env-key])
-(import doeff_cluster.env_prepare [EnvMarker env-marker->json])
+(import doeff_cluster.worker.core.env_prepare [env-marker->json] doeff_cluster.worker.intent.env_prepare_model [EnvMarker])
 (import doeff_cluster.shared.intent.runtime_identity_model [IdentityFailureKind ModuleOrigin ProcessFacts RuntimeIdentity RuntimeIdentityMismatch RepoCommit])
 (import doeff_cluster.shared.core.runtime_identity [check-runtime-identity])
 (import doeff_cluster.shared.protocol.runtime_facts [given-runtime-facts])

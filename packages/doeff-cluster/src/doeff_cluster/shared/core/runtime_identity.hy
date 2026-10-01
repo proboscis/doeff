@@ -35,7 +35,7 @@
 (import doeff_cluster.shared.intent.runtime_env_model [RuntimeEnv runtime-env-of-json env-key])
 (import doeff_cluster.shared.intent.runtime_identity_model [IdentityFailureKind ModuleOrigin RootMarker RuntimeFacts RepoCommit
                                                            RuntimeIdentity RuntimeIdentityMismatch ProcessFacts ReadRuntimeFacts])
-(import doeff_cluster.env_prepare [ENV-MARKER-FORMAT project-dir])
+(import  doeff_cluster.shared.intent.env_marker_model [ENV-MARKER-FORMAT] doeff_cluster.shared.core.runtime_env [project-dir])
 
 
 (defk outside-origins [declared root origins]

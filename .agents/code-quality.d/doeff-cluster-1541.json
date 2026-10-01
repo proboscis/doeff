@@ -372,14 +372,16 @@
       "typed": true
     },
     {
-      "allow": [],
+      "allow": [
+        "doeff-cluster-drain-model"
+      ],
       "layer": "pure",
       "name": "doeff-cluster-drain-client",
       "paths": [
-        "packages/doeff-cluster/src/doeff_cluster/drain_client.hy"
+        "packages/doeff-cluster/src/doeff_cluster/worker/core/drain_client.hy"
       ],
       "public": [
-        "packages/doeff-cluster/src/doeff_cluster/drain_client.hy"
+        "packages/doeff-cluster/src/doeff_cluster/worker/core/drain_client.hy"
       ],
       "responsibility": "worker の Pod の側から coordinator に drain を頼み、空くのを待つ Program(2026-09-25)。",
       "typed": true
@@ -387,7 +389,8 @@
     {
       "allow": [
         "doeff-cluster-coordinator-http",
-        "doeff-cluster-drain-client"
+        "doeff-cluster-drain-client",
+        "doeff-cluster-drain-model"
       ],
       "layer": "runtime",
       "name": "doeff-cluster-drain-main",
@@ -457,7 +460,9 @@
     {
       "allow": [
         "doeff-cluster-env-prepare",
-        "doeff-cluster-runtime-env-model"
+        "doeff-cluster-runtime-env-model",
+        "doeff-cluster-env-prepare-model",
+        "doeff-cluster-env-marker-model"
       ],
       "layer": "runtime",
       "name": "doeff-cluster-env-handlers",
@@ -472,15 +477,18 @@
     },
     {
       "allow": [
-        "doeff-cluster-runtime-env-model"
+        "doeff-cluster-runtime-env-model",
+        "doeff-cluster-runtime-env",
+        "doeff-cluster-env-prepare-model",
+        "doeff-cluster-env-marker-model"
       ],
       "layer": "effects",
       "name": "doeff-cluster-env-prepare",
       "paths": [
-        "packages/doeff-cluster/src/doeff_cluster/env_prepare.hy"
+        "packages/doeff-cluster/src/doeff_cluster/worker/core/env_prepare.hy"
       ],
       "public": [
-        "packages/doeff-cluster/src/doeff_cluster/env_prepare.hy"
+        "packages/doeff-cluster/src/doeff_cluster/worker/core/env_prepare.hy"
       ],
       "responsibility": "実行環境(root)の準備の Program と、その effect(2026-09-26)。",
       "typed": true
@@ -547,7 +555,8 @@
         "doeff-cluster-shared-protocol",
         "doeff-cluster-worker-model",
         "doeff-cluster-worker-policy",
-        "doeff-cluster-worker-rules"
+        "doeff-cluster-worker-rules",
+        "doeff-cluster-env-marker-model"
       ],
       "layer": "io",
       "name": "doeff-cluster-handlers",
@@ -1129,7 +1138,8 @@
       "allow": [
         "doeff-cluster-checkout-model",
         "doeff-cluster-env-prepare",
-        "doeff-cluster-runtime-env-model"
+        "doeff-cluster-runtime-env-model",
+        "doeff-cluster-env-marker-model"
       ],
       "layer": "domain",
       "name": "doeff-cluster-runtime-env",
@@ -1159,7 +1169,9 @@
       "allow": [
         "doeff-cluster-env-prepare",
         "doeff-cluster-runtime-env-model",
-        "doeff-cluster-runtime-identity-model"
+        "doeff-cluster-runtime-identity-model",
+        "doeff-cluster-env-marker-model",
+        "doeff-cluster-runtime-env"
       ],
       "layer": "domain",
       "name": "doeff-cluster-runtime-identity",
@@ -1351,7 +1363,10 @@
         "pytest-item-collection",
         "doeff-cluster-record-store-model",
         "doeff-cluster-service-report",
-        "doeff-cluster-worker-rules"
+        "doeff-cluster-worker-rules",
+        "doeff-cluster-env-prepare-model",
+        "doeff-cluster-env-marker-model",
+        "doeff-cluster-drain-model"
       ],
       "exclude": [
         "packages/doeff-cluster/tests/fixtures/independence/*"
@@ -1597,7 +1612,8 @@
     {
       "allow": [
         "doeff-cluster-checkout-model",
-        "doeff-cluster-env-prepare"
+        "doeff-cluster-env-prepare",
+        "doeff-cluster-env-marker-model"
       ],
       "layer": "io",
       "name": "doeff-cluster-checkout-reads",
@@ -1628,7 +1644,8 @@
     {
       "allow": [
         "doeff-cluster-env-prepare",
-        "doeff-cluster-runtime-identity-model"
+        "doeff-cluster-runtime-identity-model",
+        "doeff-cluster-env-marker-model"
       ],
       "layer": "io",
       "name": "doeff-cluster-runtime-facts",
@@ -1772,6 +1789,47 @@
         "packages/doeff-cluster/src/doeff_cluster/worker/core/worker_rules.hy"
       ],
       "responsibility": "worker の job の判断の小さな関数(木の鍵・READY の木の path・退いた process の名・入口の検めの対象と断り)。",
+      "typed": true
+    },
+    {
+      "allow": [
+        "doeff-cluster-runtime-env-model"
+      ],
+      "layer": "domain",
+      "name": "doeff-cluster-env-prepare-model",
+      "paths": [
+        "packages/doeff-cluster/src/doeff_cluster/worker/intent/env_prepare_model.hy"
+      ],
+      "public": [
+        "packages/doeff-cluster/src/doeff_cluster/worker/intent/env_prepare_model.hy"
+      ],
+      "responsibility": "実行環境の root の準備の型・effect・定数 — 準備の Program が出し、worker の準備の係が答える。",
+      "typed": true
+    },
+    {
+      "allow": [],
+      "layer": "domain",
+      "name": "doeff-cluster-drain-model",
+      "paths": [
+        "packages/doeff-cluster/src/doeff_cluster/worker/intent/drain_model.hy"
+      ],
+      "public": [
+        "packages/doeff-cluster/src/doeff_cluster/worker/intent/drain_model.hy"
+      ],
+      "responsibility": "worker の drain(preStop)の問いの effect(coordinator への 1 回の呼び出し)。",
+      "typed": true
+    },
+    {
+      "allow": [],
+      "layer": "domain",
+      "name": "doeff-cluster-env-marker-model",
+      "paths": [
+        "packages/doeff-cluster/src/doeff_cluster/shared/intent/env_marker_model.hy"
+      ],
+      "public": [
+        "packages/doeff-cluster/src/doeff_cluster/shared/intent/env_marker_model.hy"
+      ],
+      "responsibility": "実行環境の root の完成の印と file の中身の指紋の effect — worker の準備と送り手の宣言・入口の検めが読む共有の約束。",
       "typed": true
     }
   ],

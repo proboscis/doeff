@@ -21,7 +21,7 @@
 (import .job_context [process-context-environ])
 (import doeff_cluster.shared.intent.remote_model [program-sha])
 (import doeff_cluster.shared.intent.runtime_env_model [runtime-env-of-json env-key current-platform EnvFailure EnvFailureKind])
-(import .env_prepare [ENV-MARKER])
+(import doeff_cluster.shared.intent.env_marker_model [ENV-MARKER])
 (import doeff_cluster.worker.core.env_upkeep [RootInfo PrepareLimits sweep-choice prepare-overdue env-capacity SWEEP-FLOOR-RATIO WHEEL-UNUSED-SECONDS])
 (import doeff_cluster.shared.intent.semaphore_model [SEMAPHORE-PREFIX])
 (import doeff_cluster.shared.core.lease_rules [drop-holders lease-holder holder-tokens-prefix])
