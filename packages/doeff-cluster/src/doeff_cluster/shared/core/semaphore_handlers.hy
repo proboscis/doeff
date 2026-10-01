@@ -5,7 +5,7 @@
 ;;;   named-semaphore-local  1 つの VM の中で、同じ名前 = 同じ手元の semaphore(テストと単一の main)。
 ;;;   cluster-semaphore      同じ名前 = cluster 全体で同じ lock。取る・延ばす・返すは LeaseOp(判断は保存の側 = coordinator の
 ;;;                          時計・2026-09-25)。時計(doeff-time の GetTime / Delay)で待つ・延ばす。この handler 自身は I/O をせず、
-;;;                          保存の handler(shared-memory / shared-http)と doeff-time の時計の handler を外側に要る。
+;;;                          保存の handler(shared-http — テストでは fake の盤の上)と doeff-time の時計の handler を外側に要る。
 ;;;
 ;;;   lease-fence            書きの effect を、名前付きの lease を持っていて期限まで余裕がある間だけ外へ通す。持っていない・
 ;;;                          失った・期限が近い時は外へ出さずに WriteFenced を投げる。問い合わせ(HeldLease)は cluster-semaphore が

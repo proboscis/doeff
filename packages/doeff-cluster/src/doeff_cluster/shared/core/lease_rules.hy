@@ -1,5 +1,5 @@
-;;; 名前付きの lease(cluster の semaphore)の行の純粋な判断 — coordinator(POST /leases/<名>・盤への直の書きの断り)・fake の保存
-;;; (shared-memory)・worker の返し・子の土台が同じ定義を使う(semaphore_model から分けた・#2107)。
+;;; 名前付きの lease(cluster の semaphore)の行の純粋な判断 — coordinator(POST /leases/<名>・盤への直の書きの断り)・テストの
+;;; fake の盤(tests/board_fake.hy)・worker の返し・子の土台が同じ定義を使う(semaphore_model から分けた・#2107)。
 ;;; 型・effect・定数(LeaseOp・SEMAPHORE-PREFIX・FENCE-MARGIN-MS・LEASE-MAX-TTL-MS …)は doeff_cluster.shared.intent.semaphore_model。
 ;;; 期限の時計と担い手の名の綴りの経緯は semaphore_model の頭の註。
 (require doeff-hy.macros [deff val])
