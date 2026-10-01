@@ -3,7 +3,7 @@ code-quality-base: {'revision': 'a492bd01916264bf40c84e3dbb05d9ed2bdae6ec', 'rep
 code-quality-stage: fast(指定範囲・変更範囲の拡張なし・速い規則だけ)— 型検査(pyright / hy / cabal / tsc)はこの段では撃たない = 型は日次(--stage full)と手の名指しだけ。この passed は型を含まない
 code-quality-registration: packages/doeff-cluster/src/doeff_cluster/job_entry.hy: 変更ソースが include/exclude により未導入。継続検査対象へ登録が必要(fast は止めない — 登録は明示的な操作か日次)
 code-quality-registration: packages/doeff-cluster/src/doeff_cluster/replay_main.hy: 変更ソースが include/exclude により未導入。継続検査対象へ登録が必要(fast は止めない — 登録は明示的な操作か日次)
-code-quality-registration: packages/doeff-cluster/src/doeff_cluster/service_model.hy: 変更ソースが include/exclude により未導入。継続検査対象へ登録が必要(fast は止めない — 登録は明示的な操作か日次)
+code-quality-registration: packages/doeff-cluster/src/doeff_cluster/shared/intent/service_model.hy: 変更ソースが include/exclude により未導入。継続検査対象へ登録が必要(fast は止めない — 登録は明示的な操作か日次)
 code-quality-registration: packages/doeff-cluster/tests/fixtures/envs.hy: 変更ソースが include/exclude により未導入。継続検査対象へ登録が必要(fast は止めない — 登録は明示的な操作か日次)
 code-quality-registration: packages/doeff-cluster/tests/fixtures/services.hy: 変更ソースが include/exclude により未導入。継続検査対象へ登録が必要(fast は止めない — 登録は明示的な操作か日次)
 code-quality-registration: packages/doeff-cluster/tests/test_service_declaration.hy: 変更ソースが include/exclude により未導入。継続検査対象へ登録が必要(fast は止めない — 登録は明示的な操作か日次)

@@ -1878,7 +1878,7 @@ the effect in the enclosing do-context.
 ;; ---------------------------------------------------------------------------
 
 (defmacro defsystem [name params #* body]
-  "系を宣言する: 土台を引数に受け、名前 → Program と約束の組(doeff_cluster.service_model.System)を返す関数を定義する。
+  "系を宣言する: 土台を引数に受け、名前 → Program と約束の組(doeff_cluster.shared.intent.service_model.System)を返す関数を定義する。
 
    (defsystem agora-land [foundation]
      \"着地の報せの系\"

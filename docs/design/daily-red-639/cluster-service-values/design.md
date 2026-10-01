@@ -117,7 +117,7 @@ doeff の本線の sha は `83937cd7` → `ac38f799`・`1ba7fcf7` → `2595d452`
 - **原因**: 「どの関数が service の本体か」は M1 の実行時の値が持つのに、M5 は字面から組み直し、「宣言は本体と同じ module にある」と
   仮定していた。macro `defservice` は本体と宣言を 1 つの form に置いていたので、この仮定は macro が暗黙に守っていた。
   **置き換えの表(`design-before-blind.md`)にこの責務の行が抜けていた** — 抜けた責務は持ち主を失った。
-- **修正** agora-controllers `f08f0fab`: `service-body-report root bases` は、宣言を作りうる module(`doeff_cluster.service_model` を
+- **修正** agora-controllers `f08f0fab`: `service-body-report root bases` は、宣言を作りうる module(`doeff_cluster.shared.intent.service_model` を
   import する module と、それを import する module の閉包)を import し、生きている `ServiceDef` から本体の関数・定義の file・
   最上位の form を引く(form の範囲は今までどおり Hy の reader)。import できない宣言の module と、最上位の `defk` として読めない本体は
   `UncheckedDeclaration` に残り、repo の検が赤にする(読めない物を数から黙って落とさない)。ADR に R6 と law の反例を足した。
@@ -216,7 +216,7 @@ module の id で書くため、ここで id を付けた。責務の中身は�
 
 | 物 | 場所 | 正常例 | 違反例 |
 | --- | --- | --- | --- |
-| `program-arguments`・`check-program-arguments`・`:env-config`・上書きの検め | doeff `packages/doeff-cluster/src/doeff_cluster/service_model.hy` | 同じ宣言が main と実行先で同じ答え・env の設定は env だけ(`test_service_declaration.hy`) | `record` の引数・鍵の食い違い・持ち主の重なり・宣言に無い上書きが TypeError(同) |
+| `program-arguments`・`check-program-arguments`・`:env-config`・上書きの検め | doeff `packages/doeff-cluster/src/doeff_cluster/shared/intent/service_model.hy` | 同じ宣言が main と実行先で同じ答え・env の設定は env だけ(`test_service_declaration.hy`) | `record` の引数・鍵の食い違い・持ち主の重なり・宣言に無い上書きが TypeError(同) |
 | semgrep 規則 | doeff `.semgrep.yaml` | 修正後の src で 0 件 | 修正前の src で 2 件・検体で 8・12 行 |
 | M5 の書き換え | agora-controllers ADR | effect だけの本体が 4 形とも緑 | 直の I/O の本体が 4 形とも赤・盲検 B の差分が赤・読めない宣言が赤 |
 

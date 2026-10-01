@@ -147,7 +147,7 @@
 (import .report_client [report-request task-result-request task-id-of-job])
 (import doeff_cluster.shared.intent.runtime_env_model [RuntimeEnv EnvFailure runtime-env->json current-platform])
 (import .semaphore_model [LeaseOp SEMAPHORE-PREFIX drop-holders lease-holder holder-tokens-prefix])
-(import .service_model [System Declaration system-declaration])
+(import doeff_cluster.shared.intent.service_model [System Declaration system-declaration])
 (import .shared_handlers [board-read-request board-write-request lease-request])
 (import .shared_model [ReadShared WriteShared])
 (import doeff_cluster.shared.intent.warm_model [WarmRuntimeEnv ReadWarmState WarmState WarmAnswer warm-state-of-json])

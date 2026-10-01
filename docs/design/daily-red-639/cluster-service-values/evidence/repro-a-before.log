@@ -2,7 +2,7 @@
 
 doeff Traceback (most recent call last):
 
-  system_main_program()  ~/.worktrees/doeff-wt-639-cluster-no-macros/packages/doeff-cluster/src/doeff_cluster/service_model.hy:129
+  system_main_program()  ~/.worktrees/doeff-wt-639-cluster-no-macros/packages/doeff-cluster/src/doeff_cluster/shared/intent/service_model.hy:129
     (<- results list (Gather #* tasks))
     handlers:
       _scheduled_python ↗

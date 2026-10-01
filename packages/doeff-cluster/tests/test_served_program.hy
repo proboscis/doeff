@@ -12,7 +12,7 @@
 (import time)
 (import pathlib [Path])
 (import httpx)
-(import doeff_cluster.service_model [system-declaration Declaration])
+(import doeff_cluster.shared.intent.service_model [system-declaration Declaration])
 (import doeff_cluster.declare [apply-declaration])
 (import doeff_cluster.handlers [CoordinatorLink program-file])
 (import doeff_cluster.process_versions [current-versions])

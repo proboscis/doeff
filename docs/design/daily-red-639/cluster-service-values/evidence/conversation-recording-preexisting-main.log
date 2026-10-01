@@ -1,6 +1,6 @@
 # 対象版: agora-controllers origin/main f08f0fabc25b47780626f08e204df09aba35ae5d(git archive で /tmp/wt639/ac-main へ展開)・doeff-cluster = 611f47cb の source(この依頼の盲検の後の doeff の変更を含まない)・acp_controller = agent-control-plane/sdk/python(PYTHONPATH=/tmp/wt639/main-cluster/packages/doeff-cluster/src:/home/kento/repos/agent-control-plane/sdk/python)
 # 命令: cd /tmp/wt639/ac-main; PYTHONPATH=$PP <doeff の venv>/bin/python -m pytest -q controllers/worker/tests/test_conversation_writer.hy::test_writer_recording_covers_every_effect_and_replays_identically
-# 読んだ service_model = /tmp/wt639/main-cluster/packages/doeff-cluster/src/doeff_cluster/service_model.hy
+# 読んだ service_model = /tmp/wt639/main-cluster/packages/doeff-cluster/src/doeff_cluster/shared/intent/service_model.hy
 # 読んだ acp_controller = /home/kento/repos/agent-control-plane/sdk/python/acp_controller/__init__.py
 01:32:45
     (setv #(lines program) (record-writer 2))

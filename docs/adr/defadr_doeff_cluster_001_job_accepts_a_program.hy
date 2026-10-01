@@ -51,7 +51,7 @@
   :title "doeff-cluster の job(service も task も同じ API)が受け取るのは Program の値 1 つ(defk の関数を呼んだ結果)だけ。handler は Program の中の with-handlers で与え、実行器 job_entry は既定の handler を 1 つも足さない(scheduled と env の関数の包みも外す)。service の :env・:config・:env-config をやめ、設定は Program の中の Ask と os.environ を読む handler で読む。宣言が process へ渡す環境変数は宣言の値として持つ"
   :status "accepted"
   :scope ["packages/doeff-cluster/src/doeff_cluster/job_entry.hy"
-          "packages/doeff-cluster/src/doeff_cluster/service_model.hy"
+          "packages/doeff-cluster/src/doeff_cluster/shared/intent/service_model.hy"
           "packages/doeff-cluster/src/doeff_cluster/shared/intent/remote_model.hy"
           "docs/adr/defadr_doeff_cluster_001_job_accepts_a_program.hy"]
   :problem
@@ -63,7 +63,7 @@
        :evidence "packages/doeff-cluster/src/doeff_cluster/job_entry.hy(run-service・task-outcome・env-handlers・recording-layer)")
      (fact
        "service の宣言は :env(env の関数の import path)・:config(本体の引数)・:env-config(env だけが読む設定)を持ち、coordinator へは 2 つを重ねた平たい run.config が渡る。"
-       :evidence "packages/doeff-cluster/src/doeff_cluster/service_model.hy(ServiceDef の env・config・env-config)")
+       :evidence "packages/doeff-cluster/src/doeff_cluster/shared/intent/service_model.hy(ServiceDef の env・config・env-config)")
      (fact
        "operator 裁定 2026-09-27(記録係・逐語 2 つ): \"hmm, it maybe useful, but would it be handler matter, or vm instrument? does algebraic effect handlers support such uses in general?\" / \"then why are we not using handler to do what you want?\""
        :evidence "Claude Code の会話(2026-09-27・agora-redesign #829)— coordinator 経由")

@@ -4,7 +4,7 @@
 (import json subprocess sys)
 (import doeff [run])
 (import doeff_core_effects.scheduler [scheduled])
-(import doeff_cluster.service_model [service System system-main system-declaration])
+(import doeff_cluster.shared.intent.service_model [service System system-main system-declaration])
 (import cluster_a_fixture [ledger-program tally-program RECORD])
 
 (defn outcome [thunk]

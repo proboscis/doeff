@@ -26,7 +26,7 @@
 (import doeff_cluster.detached [detached-cluster DetachedClient])
 (import doeff_cluster.local [sim-cluster SimWorker KillWorker DrainWorker StopWorker StartWorker StopCoordinator ProcessesOf
                              ReadCoordinator])
-(import doeff_cluster.service_model [system-of])
+(import doeff_cluster.shared.intent.service_model [system-of])
 (import tests.detached_rig [slow-add RigWorker MemoryCoordinator worker-tick worker-loop])
 
 (val RUNNERS #((RunnerFact :name "a" :provides #("x-tool") :exclusive #() :live True :draining False)

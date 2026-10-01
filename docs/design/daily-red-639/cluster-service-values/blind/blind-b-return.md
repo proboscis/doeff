@@ -10,7 +10,7 @@ M5(service の本体の検査)は「宣言と本体が同じ module にある」
 
 ## 1. 機能の要求と差分
 
-**要求**: 会話の手番がすべて done になったら要約を `digest/<会話>` に置く service「digest-keeper」を新しく作り、k3s の controller として出す。起こし直した後も前回の続きから進めたい。配備の値(env・requires・設定)は宣言用の module に集め、業務の module は `doeff_cluster.service_model` に依らない形にする(lab の `agora.hy` が System を別の module で束ねているのと同じ向き)。
+**要求**: 会話の手番がすべて done になったら要約を `digest/<会話>` に置く service「digest-keeper」を新しく作り、k3s の controller として出す。起こし直した後も前回の続きから進めたい。配備の値(env・requires・設定)は宣言用の module に集め、業務の module は `doeff_cluster.shared.intent.service_model` に依らない形にする(lab の `agora.hy` が System を別の module で束ねているのと同じ向き)。
 
 agora-controllers に新しいファイルを足すだけです(`controllers/digest/__init__.py` は空)。
 
@@ -38,7 +38,7 @@ agora-controllers に新しいファイルを足すだけです(`controllers/dig
 
 `controllers/digest/cluster.hy`(宣言と System)
 ```hy
-(import doeff_cluster.service_model [service System])
+(import doeff_cluster.shared.intent.service_model [service System])
 (import controllers.digest.keeper [digest-keeper-program])
 (setv digest-keeper (service "digest-keeper" digest-keeper-program
                              :env "controllers.digest.envs:digest_env" :requires {"role" "controller"}

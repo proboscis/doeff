@@ -19,7 +19,7 @@
 (import doeff_cluster.coordinator.core.cluster_policy [job-from-json])
 (import doeff_cluster.handlers [status-row declared-job-spec])
 (import doeff_cluster.shared.intent.readiness_model [handoff-timeout-ms HANDOFF-TIMEOUT-SECONDS])
-(import doeff_cluster.service_model [job Job CallShape])
+(import doeff_cluster.shared.intent.service_model [job Job CallShape])
 (import tests.fixtures.services [tally-program])
 (import tests.fixtures.envs [plain-foundation])
 (import tests.program_rows [SAMPLE-RUN])

@@ -7,7 +7,7 @@
 (import sys shutil importlib)
 (import pathlib [Path])
 (import doeff [run])
-(import doeff_cluster.service_model [ServiceDef System])
+(import doeff_cluster.shared.intent.service_model [ServiceDef System])
 (import controllers.worker.adr.defadr_worker_business_code_touches_io_only_through_effects :as adr)
 
 (setv work (Path (get sys.argv 1)))

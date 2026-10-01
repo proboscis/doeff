@@ -3,7 +3,7 @@
 (import pathlib [Path])
 (import hy)
 (import hy.models [Expression Symbol])
-(import doeff_cluster.service_model [ServiceDef])
+(import doeff_cluster.shared.intent.service_model [ServiceDef])
 (setv root (Path.cwd) bases ["controllers" "services"])
 (setv HY-IMPORT (re.compile r"\(import\s+([^\[\]()]*)"))
 (setv PY-IMPORT (re.compile r"(?m)^\s*(?:from\s+(\.*[\w.]+)\s+import|import\s+([\w.]+))"))
@@ -30,7 +30,7 @@
       (for [m (.finditer PY-IMPORT text)]
         (.add found (resolve-rel name (or (.group m 1) (.group m 2))))))
   (setv (get imports name) found))
-(setv closure (sfor #(n i) (.items imports) :if (in "doeff_cluster.service_model" i) n))
+(setv closure (sfor #(n i) (.items imports) :if (in "doeff_cluster.shared.intent.service_model" i) n))
 (setv grew True)
 (while grew
   (setv more (sfor #(n i) (.items imports) :if (and (not-in n closure) (& i closure)) n))

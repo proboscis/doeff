@@ -6,7 +6,7 @@
 (import doeff [run with_handlers])
 (import doeff_core_effects.handlers [reader])
 (import doeff_core_effects.scheduler [scheduled])
-(import doeff_cluster.service_model [service System system-main system-declaration])
+(import doeff_cluster.shared.intent.service_model [service System system-main system-declaration])
 (import scenarios_fixture [tally-program greeter-program keeper-program flagged-program])
 
 (defn outcome [thunk]

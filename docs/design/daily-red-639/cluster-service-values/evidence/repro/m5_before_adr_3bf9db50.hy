@@ -79,7 +79,7 @@
 (setv GOOD-EXAMPLES
   [#("controllers/worker/lab/good_service.hy"
      (+ "(require doeff-hy.macros [defk <-])\n"
-        "(import doeff_cluster.service_model [service])\n"
+        "(import doeff_cluster.shared.intent.service_model [service])\n"
         "(import doeff_cluster.shared_model [ReadShared WriteShared])\n"
         "(import doeff_cluster.semaphore_model [CreateNamedSemaphore])\n"
         "(import doeff_core_effects.scheduler [AcquireSemaphore ReleaseSemaphore])\n"

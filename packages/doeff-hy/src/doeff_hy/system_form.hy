@@ -104,7 +104,7 @@
         (.extend named [(String (hy.mangle (cut (str head) 1 None))) (.pop rest 0)])
         (.append positional head)))
   ;; CallShape は defrecord(構成子は名の引数だけを受ける)。
-  `(doeff_cluster.service_model.CallShape :function ~(get program 0) :args [~@positional] :kwargs {~@named}))
+  `(doeff_cluster.shared.intent.service_model.CallShape :function ~(get program 0) :args [~@positional] :kwargs {~@named}))
 
 
 (defn param-parts [param #^ str system]  ; defk にできない: macro の展開の時に呼ぶ関数
@@ -123,7 +123,7 @@
 
 
 (defn defsystem-form [name params body]  ; defk にできない: macro の展開の時に呼ぶ関数
-  "defsystem の展開: 土台を受けて doeff_cluster.service_model.system-of を呼ぶ関数と、静的な記述 __doeff_system__・
+  "defsystem の展開: 土台を受けて doeff_cluster.shared.intent.service_model.system-of を呼ぶ関数と、静的な記述 __doeff_system__・
    __doeff_tags__(役 entry)を置く form を作るため。引数に型の注記が在れば、記述の param_types(名 → 型の module:qualname)に残す。"
   (setv system (str name))
   (when (not (isinstance params List))
@@ -144,7 +144,7 @@
       (raise (SyntaxError (.format "defsystem {}: job の名 {} が 2 回ある" system n)))))
   (setv job-forms
         (lfor #(job-name program values _) jobs
-              `(doeff_cluster.service_model.job
+              `(doeff_cluster.shared.intent.service_model.job
                  ~(String job-name) ~program
                  :call ~(call-shape-form program)
                  ~@(sum (lfor #(k v) (.items values) [(Keyword (hy.mangle (cut k 1 None))) v]) []))))
@@ -158,10 +158,10 @@
                 {"param_types" {~@(sum (lfor #(n t) typed [(String n) `(+ (. ~t __module__) ":" (. ~t __qualname__))]) [])}})
             (hy.models.as-model static)))
   `(do
-     (import doeff_cluster.service_model)
+     (import doeff_cluster.shared.intent.service_model)
      (import doeff_hy.declarations)
      (defn ~name [~@params]
        ~@(if (is doc None) [] [doc])
-       (doeff_cluster.service_model.system-of ~(String system) #(~@job-forms)))
+       (doeff_cluster.shared.intent.service_model.system-of ~(String system) #(~@job-forms)))
      (setattr ~name "__doeff_system__" ~description)
      (setattr ~name "__doeff_tags__" (doeff_hy.declarations.DefinitionTags :context ~(String system) :role "entry"))))

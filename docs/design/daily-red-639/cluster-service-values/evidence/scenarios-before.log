@@ -1,11 +1,11 @@
 # 対象版: doeff-cluster の source = a492bd01(修正前・PYTHONPATH の先頭 /tmp/wt639/old-cluster/packages/doeff-cluster/src)・他の package は同じ venv・命令: 同上
-# 読んだ service_model = /tmp/wt639/old-cluster/packages/doeff-cluster/src/doeff_cluster/service_model.hy
+# 読んだ service_model = /tmp/wt639/old-cluster/packages/doeff-cluster/src/doeff_cluster/shared/intent/service_model.hy
 == S-DIST 正常例: 同じ宣言をテスト用の main と実行先で走らせる(record を宣言に書く)
   宣言: OK
 
 doeff Traceback (most recent call last):
 
-  system_main_program()  /tmp/wt639/old-cluster/packages/doeff-cluster/src/doeff_cluster/service_model.hy:129
+  system_main_program()  /tmp/wt639/old-cluster/packages/doeff-cluster/src/doeff_cluster/shared/intent/service_model.hy:129
     (<- results list (Gather #* tasks))
     handlers:
       reader ↗
@@ -36,7 +36,7 @@ TypeError: tally_program() got an unexpected keyword argument 'record'
 
 doeff Traceback (most recent call last):
 
-  system_main_program()  /tmp/wt639/old-cluster/packages/doeff-cluster/src/doeff_cluster/service_model.hy:129
+  system_main_program()  /tmp/wt639/old-cluster/packages/doeff-cluster/src/doeff_cluster/shared/intent/service_model.hy:129
     (<- results list (Gather #* tasks))
     handlers:
       reader ↗
@@ -56,7 +56,7 @@ TypeError: greeter_program() got an unexpected keyword argument 'greeting'
 
 doeff Traceback (most recent call last):
 
-  system_main_program()  /tmp/wt639/old-cluster/packages/doeff-cluster/src/doeff_cluster/service_model.hy:129
+  system_main_program()  /tmp/wt639/old-cluster/packages/doeff-cluster/src/doeff_cluster/shared/intent/service_model.hy:129
     (<- results list (Gather #* tasks))
     handlers:
       reader ↗
@@ -70,7 +70,7 @@ TypeError: keeper_program() got an unexpected keyword argument 'cycle'. Did you 
 
 doeff Traceback (most recent call last):
 
-  system_main_program()  /tmp/wt639/old-cluster/packages/doeff-cluster/src/doeff_cluster/service_model.hy:129
+  system_main_program()  /tmp/wt639/old-cluster/packages/doeff-cluster/src/doeff_cluster/shared/intent/service_model.hy:129
     (<- results list (Gather #* tasks))
     handlers:
       reader ↗

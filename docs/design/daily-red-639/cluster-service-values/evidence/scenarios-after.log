@@ -31,11 +31,11 @@
 
 doeff Traceback (most recent call last):
 
-  system_main_program()  ~/.worktrees/doeff-wt-639-cluster-no-macros/packages/doeff-cluster/src/doeff_cluster/service_model.hy:206
+  system_main_program()  ~/.worktrees/doeff-wt-639-cluster-no-macros/packages/doeff-cluster/src/doeff_cluster/shared/intent/service_model.hy:206
     (<- task Task (Spawn (service-program service (.get overrides service.name))))
-  service_program()  ~/.worktrees/doeff-wt-639-cluster-no-macros/packages/doeff-cluster/src/doeff_cluster/service_model.hy:191
+  service_program()  ~/.worktrees/doeff-wt-639-cluster-no-macros/packages/doeff-cluster/src/doeff_cluster/shared/intent/service_model.hy:191
     (factory #** (program-arguments factory (config-of service overrides))))
-  config_of()  ~/.worktrees/doeff-wt-639-cluster-no-macros/packages/doeff-cluster/src/doeff_cluster/service_model.hy:184
+  config_of()  ~/.worktrees/doeff-wt-639-cluster-no-macros/packages/doeff-cluster/src/doeff_cluster/shared/intent/service_model.hy:184
     (raise (TypeError (.format "service {} の上書きに宣言に無い設定の鍵がある: {}" service.name (.join "・" unknown)))))
     handlers:
       reader ↗

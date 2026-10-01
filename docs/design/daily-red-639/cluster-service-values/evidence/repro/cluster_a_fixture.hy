@@ -2,7 +2,7 @@
 ;;;   ledger = 宣言の :config に組み立て側の欄 record を書く。本体は record を知らない。
 ;;;   tally  = 本体が業務の引数に record という名を使う。
 (require doeff-hy.macros [defk])
-(import doeff_cluster.service_model [service System])
+(import doeff_cluster.shared.intent.service_model [service System])
 
 (defn plain-env [config ctx]
   "handler を 1 つも足さない env(外の I/O をしない)。"

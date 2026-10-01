@@ -8,7 +8,7 @@
 (require doeff-hy.record [defrecord])
 (import dataclasses [dataclass])
 (import doeff [with-handlers Program])
-(import doeff_cluster.service_model [System])
+(import doeff_cluster.shared.intent.service_model [System])
 (import doeff_time [Delay sim-time-handler])
 (import doeff_cluster.clock [now-epoch-ms])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming])

@@ -1,6 +1,6 @@
-"""defsystem の展開と doeff_cluster.service_model の型(service_model.pyi)の失敗ケース(agora-redesign #2291・#2279 の対)。
+"""defsystem の展開と doeff_cluster.shared.intent.service_model の型(service_model.pyi)の失敗ケース(agora-redesign #2291・#2279 の対)。
 
-defsystem は `doeff_cluster.service_model.system_of` / `job` / `CallShape` を呼ぶ関数に展開する。service_model.hy は Hy の
+defsystem は `doeff_cluster.shared.intent.service_model.system_of` / `job` / `CallShape` を呼ぶ関数に展開する。service_model.hy は Hy の
 module で、型の宣言(service_model.pyi)が無いと pyright はこれらを Unknown として読み、系の関数の戻りまで Unknown に
 引きずられる(書き手に直せない赤)。また、引数に型の注記を持つ系の展開が、置いた後の関数の属性 `__doeff_system__` を
 読み直していた所は reportFunctionMemberAccess になっていた。宣言と展開の直しが在れば:

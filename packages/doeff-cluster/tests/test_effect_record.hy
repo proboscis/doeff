@@ -151,4 +151,4 @@
   (assert (is (resolve-type (type-name SubmitDetached)) SubmitDetached))
   ;; 表に無い旧い名は引けない(黙って別の型へ倒れない)
   (assert (is (resolve-type "doeff_cluster.no_such_model:SubmitDetached") None))
-  (assert (= (len MOVED-MODULES) 7)))
+  (assert (= (len MOVED-MODULES) 8)))

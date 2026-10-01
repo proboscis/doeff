@@ -22,13 +22,6 @@
       "subject": "importlib.import_module"
     },
     {
-      "count": 2,
-      "path": "packages/doeff-cluster/src/doeff_cluster/service_model.hy",
-      "reason": "registered-with-legacy",
-      "rule": "dynamic-boundary",
-      "subject": "importlib.import_module"
-    },
-    {
       "count": 1,
       "path": "packages/doeff-cluster/tests/test_env_detached.hy",
       "reason": "registered-with-legacy",

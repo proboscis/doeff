@@ -4,7 +4,7 @@
 (import hy)
 (import hy.models [Expression Dict String])
 (import doeff [run])
-(import doeff_cluster.service_model [ServiceDef])
+(import doeff_cluster.shared.intent.service_model [ServiceDef])
 (import controllers.worker.adr.defadr_worker_business_code_touches_io_only_through_effects :as adr)
 (setv root (Path.cwd))
 (for [name (run (adr.declaring-modules root #("controllers" "services")))]

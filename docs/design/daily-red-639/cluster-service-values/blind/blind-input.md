@@ -60,7 +60,7 @@ macro `defservice` / `defsystem` がしていたことを 1 つずつ挙げ、�
 対象の版は固定済み。次の 2 つの checkout はこの版のまま置いてある。**書き換えないこと**(試す時は /tmp へ写してから)。
 
 - doeff `611f47cb15aa8b454fe312a546194b633297b088`: `/home/kento/.worktrees/doeff-wt-639-cluster-no-macros`
-  - `packages/doeff-cluster/src/doeff_cluster/service_model.hy`(M1・M2)
+  - `packages/doeff-cluster/src/doeff_cluster/shared/intent/service_model.hy`(M1・M2)
   - `packages/doeff-cluster/src/doeff_cluster/job_entry.hy`(M3 の worker の入口 `run-service`)
   - `packages/doeff-cluster/tests/test_service_declaration.hy`・`packages/doeff-cluster/tests/fixtures/services.hy`(M1・M2 の検)
   - `packages/doeff-cluster/README.md`(宣言の書き方)
