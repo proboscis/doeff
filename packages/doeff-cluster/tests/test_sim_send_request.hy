@@ -5,8 +5,10 @@
 ;;
 ;; 前の形(返事を上限なしで待つ)は、2 本目で 20 秒後の 200 をそのまま受けて赤になる。上限なしの待ちは、拍の判断が落ち続ける
 ;; coordinator の前で worker の拍と止めの手順を止め、模擬が仮想の時計を回し続けた(使い手の検が 60 秒の上限に当たった・#2596)。
-(require doeff-hy.macros [deftest defk <- val])
+(require doeff-hy.macros [deftest defk defhandler <- val])
 (import doeff_core_effects.scheduler [Spawn Task Wait CompletePromise])
+(import doeff_core_effects.effects [Get Put])
+(import doeff_core_effects.handlers [state])
 (import doeff_time [Delay sim-time-handler])
 (import doeff_cluster.shared.core.clock [now-epoch-ms])
 (import doeff_cluster.coordinator.protocol.request_queue [RequestQueue])
@@ -42,6 +44,40 @@
   read)
 
 
+(val SPAWNS-KEY "spawns")
+
+
+(defhandler count-spawns
+  ;; 送り手が起こす task を数えるため — Spawn の daemon の印を外側の状態(SPAWNS-KEY の tuple)へ足し、元の継続のまま外側の scheduler へ渡す。
+  (Spawn []
+    (<- seen tuple (Get SPAWNS-KEY))
+    (<- (Put SPAWNS-KEY (+ seen #(effect.daemon))))
+    (reperform effect)))
+
+
+(defk send-counting [reply-seconds]
+  {:pre [(: reply-seconds float)] :post [(: % tuple)] :tags {:context "doeff-cluster-test" :role "program"}}
+  "send-against と同じ筋書きで、送り手(send-and-read)が起こす task だけを数えるため。答え = #(送り手の読み 起こした task の daemon の印の tuple)。"
+  (val queue (RequestQueue))
+  (setv queue.up True)
+  (val link (SimLink :queue queue :actor "worker-1" :revision "sim" :peer "worker-1"))
+  (<- counted tuple ((state {SPAWNS-KEY #()})
+                     ((sim-time-handler :clock (clock-at 0)) (send-counted-beside-answer link queue reply-seconds))))
+  counted)
+
+
+(defk send-counted-beside-answer [link queue reply-seconds]
+  {:pre [(: link SimLink) (: queue RequestQueue) (: reply-seconds float)] :post [(: % tuple)]
+   :tags {:context "doeff-cluster-test" :role "program"}}
+  "数える handler を送り手にだけ被せて、遅れて答える代役と並べて回すため。答え = #(送り手の読み 起こした task の daemon の印)。"
+  (<- sending Task (Spawn (count-spawns (send-and-read link))))
+  (<- answering Task (Spawn (answer-after queue reply-seconds)))
+  (<- got tuple (Wait sending))
+  (<- (Wait answering))
+  (<- spawns tuple (Get SPAWNS-KEY))
+  #(got spawns))
+
+
 (defk send-beside-answer [link queue reply-seconds]
   {:pre [(: link SimLink) (: queue RequestQueue) (: reply-seconds float)] :post [(: % tuple)]
    :tags {:context "doeff-cluster-test" :role "program"}}
@@ -67,3 +103,14 @@
   (assert (is (get answer 0) None) read)
   (assert (in "返事が" (get (get answer 1) "error")) read)
   (assert (= at (int (* REPLY-SECONDS 1000))) read))
+
+
+(deftest test-a-send-starts-only-one-daemon-timer
+  ;; 送り 1 件が起こす task は期限の鳴らしの 1 つ(daemon)だけ — 模擬の 1 本の検で送りは数千回あり、待ち 1 回の費用が検の時間に効く
+  ;; (#2596: 片付けの task を起こして待つ promise-or-timeout の形では、使い手の模擬の検 2 本が時間の上限を越えた)。
+  ;; 前の形(promise-or-timeout)では起こす task が 2 つ(期限の鳴らしと片付け・どちらも daemon でない)で赤になる。
+  (<- counted tuple (send-counting 2.0))
+  (val read (get counted 0))
+  (val spawns (get counted 1))
+  (assert (= read #(#(200 {"ok" True}) 2000)) read)
+  (assert (= spawns #(True)) spawns))
