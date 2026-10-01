@@ -556,7 +556,10 @@
         "doeff-cluster-worker-model",
         "doeff-cluster-worker-policy",
         "doeff-cluster-worker-rules",
-        "doeff-cluster-env-marker-model"
+        "doeff-cluster-env-marker-model",
+        "doeff-cluster-worker-heartbeat",
+        "doeff-cluster-worker-heartbeat-rules",
+        "doeff-cluster-ready-file"
       ],
       "layer": "io",
       "name": "doeff-cluster-handlers",
@@ -758,7 +761,9 @@
         "doeff-cluster-warm-model",
         "doeff-cluster-worker",
         "doeff-cluster-worker-model",
-        "doeff-cluster-service-report"
+        "doeff-cluster-service-report",
+        "doeff-cluster-worker-heartbeat",
+        "doeff-cluster-worker-heartbeat-rules"
       ],
       "layer": "io",
       "name": "doeff-cluster-local",
@@ -781,7 +786,8 @@
         "doeff-cluster-shared-capabilities",
         "doeff-cluster-shared-protocol",
         "doeff-cluster-worker",
-        "doeff-cluster-worker-model"
+        "doeff-cluster-worker-model",
+        "doeff-cluster-worker-stop"
       ],
       "layer": "runtime",
       "name": "doeff-cluster-main",
@@ -1366,7 +1372,9 @@
         "doeff-cluster-worker-rules",
         "doeff-cluster-env-prepare-model",
         "doeff-cluster-env-marker-model",
-        "doeff-cluster-drain-model"
+        "doeff-cluster-drain-model",
+        "doeff-cluster-ready-file",
+        "doeff-cluster-worker-heartbeat"
       ],
       "exclude": [
         "packages/doeff-cluster/tests/fixtures/independence/*"
@@ -1830,6 +1838,71 @@
         "packages/doeff-cluster/src/doeff_cluster/shared/intent/env_marker_model.hy"
       ],
       "responsibility": "実行環境の root の完成の印と file の中身の指紋の effect — worker の準備と送り手の宣言・入口の検めが読む共有の約束。",
+      "typed": true
+    },
+    {
+      "allow": [
+        "doeff-cluster-shared-protocol",
+        "doeff-cluster-worker-model",
+        "doeff-cluster-worker-rules",
+        "doeff-cluster-worker-heartbeat-rules"
+      ],
+      "layer": "io",
+      "name": "doeff-cluster-worker-heartbeat",
+      "paths": [
+        "packages/doeff-cluster/src/doeff_cluster/worker/protocol/heartbeat.hy"
+      ],
+      "public": [
+        "packages/doeff-cluster/src/doeff_cluster/worker/protocol/heartbeat.hy"
+      ],
+      "responsibility": "worker が coordinator へ送る heartbeat の本文の形(本番の CoordinatorLink と sim の宿が同じ関数で作る)。",
+      "typed": true
+    },
+    {
+      "allow": [
+        "doeff-cluster-job-model",
+        "doeff-cluster-runtime-env-model",
+        "doeff-cluster-worker-model",
+        "doeff-cluster-worker-rules",
+        "doeff-cluster-worker-policy"
+      ],
+      "layer": "domain",
+      "name": "doeff-cluster-worker-heartbeat-rules",
+      "paths": [
+        "packages/doeff-cluster/src/doeff_cluster/worker/core/heartbeat_rules.hy"
+      ],
+      "public": [
+        "packages/doeff-cluster/src/doeff_cluster/worker/core/heartbeat_rules.hy"
+      ],
+      "responsibility": "heartbeat の返事と途絶の判断(温める表の行・終わった task・届かない拍の宣言)。",
+      "typed": true
+    },
+    {
+      "allow": [
+        "doeff-cluster-worker-model"
+      ],
+      "layer": "io",
+      "name": "doeff-cluster-worker-stop",
+      "paths": [
+        "packages/doeff-cluster/src/doeff_cluster/worker/protocol/stop.hy"
+      ],
+      "public": [
+        "packages/doeff-cluster/src/doeff_cluster/worker/protocol/stop.hy"
+      ],
+      "responsibility": "worker の止めの印(信号の handler が立て、stop-flag が WorkerStopRequested に答える)。",
+      "typed": true
+    },
+    {
+      "allow": [],
+      "layer": "io",
+      "name": "doeff-cluster-ready-file",
+      "paths": [
+        "packages/doeff-cluster/src/doeff_cluster/foundation/ready_file.hy"
+      ],
+      "public": [
+        "packages/doeff-cluster/src/doeff_cluster/foundation/ready_file.hy"
+      ],
+      "responsibility": "readinessProbe が sh で読む file を書く汎用の I/O。",
       "typed": true
     }
   ],

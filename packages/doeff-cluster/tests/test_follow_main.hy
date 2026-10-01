@@ -22,7 +22,7 @@
 (import doeff_cluster.coordinator.core.api_policy [respond ready-instances])
 (import doeff_cluster.coordinator.core.program [rollout-tick])
 (import doeff_cluster.foundation.kube_handlers [KubeMemory kube-memory])
-(import doeff_cluster.handlers [status-row])
+(import doeff_cluster.worker.protocol.heartbeat [status-row])
 (import doeff_cluster.coordinator.core.metrics_policy [metrics-text])
 (import doeff_cluster.coordinator.core.cluster_policy [still-live-somewhere])
 (import doeff_cluster.worker.intent.worker_model [CodeView CodeState ProcessView WorldView WorkerPolicy JobRecord

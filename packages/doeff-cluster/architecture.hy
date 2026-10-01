@@ -61,10 +61,11 @@
 
 ;; worker の条は W1(入れ替えの間も書き手が居続ける)。消す順などの条は後から足す。:entry-modules は層に分ける前の今の入口
 ;; (doeff_cluster.main)。層に分けた後は :entry-modules を外し、entry 層の dir の定義で「code を持つ service」を数える形に移る。
-;; 層は移しの進みに合わせて足す: core(調整ループ・判断 — worker/core)と intent(観測・記録・effect の型 — worker/intent/worker_model)。
-;; #2025 の 1 本目・2 本目。
+;; 層は移しの進みに合わせて足す: core(調整ループ・判断 — worker/core)・intent(観測・記録・effect の型 — worker/intent)・
+;; protocol(heartbeat の本文の形と止めの印 — worker/protocol・#2026)。
+;; #2025・#2026。
 (defservice worker "coordinator から job と task を受けて子 process として走らせる worker"
-  {:layers [core intent]
+  {:layers [core intent protocol]
    :entry-modules ["doeff_cluster.main"]
    :invariants ["doeff_cluster.worker_invariants:handoff-keeps-a-ready-writer"]})
 

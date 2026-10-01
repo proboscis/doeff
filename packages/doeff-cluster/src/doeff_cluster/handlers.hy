@@ -25,7 +25,9 @@
 (import doeff_cluster.worker.core.env_upkeep [RootInfo PrepareLimits sweep-choice prepare-overdue env-capacity SWEEP-FLOOR-RATIO WHEEL-UNUSED-SECONDS])
 (import doeff_cluster.shared.intent.semaphore_model [SEMAPHORE-PREFIX])
 (import doeff_cluster.shared.core.lease_rules [drop-holders lease-holder holder-tokens-prefix])
-(import doeff_cluster.worker.core.policy [kept-when-cut-off])
+(import doeff_cluster.worker.protocol.heartbeat [env-report env-heartbeat-part heartbeat-body status-report status-row])
+(import doeff_cluster.worker.core.heartbeat_rules [warm-env-of-row finished-task-id desired-when-unreachable])
+(import doeff_cluster.foundation.ready_file [write-ready-file])
 (import doeff_cluster.worker.intent.worker_model [CodeState CodeView ProcessView WorldView StopStage ProbeState ProbeView
   DesiredJobs DesiredUnreadable ReadDesired ObserveWorld WorkerStopRequested PublishStatus JobStatus EnvDisk WarmEnv
   PrepareCode PrepareEnv SweepEnvs ForgetProbes StartJob SignalJob ReapJob RetireJob ReleaseLeases ProbeEntry CodeLayout
@@ -1190,102 +1192,11 @@
                                   (+ self.last-jobs self.last-tasks) self.last-warm (repr error))))))
 
 
-;; --- heartbeat の形(本番の CoordinatorLink と手元の sim-cluster の偽の宿 local.hy が同じ関数を使う — 本文を写さない)-------------
-
-(deff env-report [#^ tuple views #^ str capacity]  ; defk にできない: worker の I/O の道具(EnvStore)と sim の宿が同じ形を作る純粋な判断
-  {:pre [(: views tuple) (: capacity str)] :post [(: % dict)] :tags {:context "doeff-cluster" :role "protocol"}}
-  "実行環境の root の観測(CodeView — 鍵が env- で始まる物だけを読む)と disk の条件を、heartbeat で名乗る root の姿(準備済み・準備中・
-   失敗のキーを env- を外して・disk の条件)にするため。"
-  (let [roots (lfor v views :if (.startswith v.revision ENV-KEY-PREFIX) v)
-        bare (fn [k] (cut k (len ENV-KEY-PREFIX) None))]
-    {"ready" (sorted (gfor v roots :if (= v.state CodeState.READY) (bare v.revision)))
-     "preparing" (sorted (gfor v roots :if (= v.state CodeState.PREPARING) (bare v.revision)))
-     "failed" (lfor v roots :if (and (= v.state CodeState.FAILED) (is-not v.failure None))
-                    {"key" (bare v.revision) "kind" v.failure.kind.value "detail" v.failure.detail
-                     "retryable" v.failure.retryable})
-     "capacity" capacity}))
-
-
-(deff env-heartbeat-part [#^ dict report #^ str platform]  ; defk にできない: worker の I/O の道具(CoordinatorLink)と sim の宿が同じ形を作る純粋な判断
-  {:pre [(: report dict) (: platform str)] :post [(: % dict)] :tags {:context "doeff-cluster" :role "protocol"}}
-  "root の姿(env-report)を heartbeat の本文に足す欄(platform・envs・envCapacity)にするため。"
-  {"platform" platform
-   "envs" {"ready" (get report "ready") "preparing" (get report "preparing") "failed" (get report "failed")}
-   "envCapacity" (get report "capacity")})
-
-
-(deff warm-env-of-row [#^ dict row #^ str platform]  ; defk にできない: worker の I/O の道具(CoordinatorLink)と sim の宿が同じ判断で返事を読む
-  {:pre [(: row dict) (: platform str)] :post [(: % WarmEnv)] :tags {:context "doeff-cluster" :role "judgment"}}
-  "heartbeat の返事の温める表の行 1 つを、この worker の root のキー(platform で計算した env のキーに env- を付けた物)の WarmEnv に
-   するため。"
-  (WarmEnv :key (+ ENV-KEY-PREFIX (run (env-key (run (runtime-env-of-json (get row "runtimeEnv"))) platform)))
-           :runtime-env (json.dumps (get row "runtimeEnv") :sort-keys True :ensure-ascii False)))
-
-
-(deff heartbeat-body [* #^ str name #^ tuple provides #^ tuple exclusive #^ str node #^ int capacity #^ dict versions
-                      #^ list statuses #^ str endpoint #^ str boot #^ int boot-at #^ dict tools]  ; defk にできない: worker の I/O の道具(CoordinatorLink)と sim の宿が同じ形を作る純粋な判断
-  {:pre [(: name str) (: provides tuple) (: exclusive tuple) (: node str) (: capacity int) (: versions dict) (: statuses list)
-         (: endpoint str) (: boot str) (: boot-at int) (: tools dict)] :post [(: % dict)]
-   :tags {:context "doeff-cluster" :role "protocol"}}
-  "POST /heartbeat の本文(生存・能力・版・状態の報告・世代)を作るため。実行環境の root の名乗り(env-body)は本番の worker だけが足す。"
-  {"name" name "provides" (list provides) "exclusive" (list exclusive) "node" node "capacity" capacity "versions" versions
-   "statuses" statuses "endpoint" endpoint "boot" boot "bootAt" boot-at
-   "format" PROTOCOL-FORMAT
-   "tools" tools})
-
-
-(deff finished-task-id [s]  ; defk にできない: worker の I/O の道具(CoordinatorLink)と sim の宿が状態の行を読む純粋な判断
-  {:pre [(: s JobStatus)] :post [(: % (| str None))] :tags {:context "doeff-cluster" :role "judgment"}}
-  "終わった task の状態の行なら task の id(結果を添える相手)、それ以外は None — 結果の file を読む・世界の結果を引く所を 1 つにするため。"
-  (if (and (.startswith s.name "task/") (= s.phase JobPhase.FINISHED)) (cut s.name 5 None) None))
-
-
-(deff status-report [#^ tuple statuses #^ dict task-echo #^ dict results]  ; defk にできない: worker の I/O の道具(CoordinatorLink)と sim の宿が同じ形を作る純粋な判断
-  {:pre [(: statuses tuple) (: task-echo dict) (: results dict)] :post [(: % list)] :tags {:context "doeff-cluster" :role "protocol"}}
-  "状態の行の列を heartbeat の statuses にするため。終わった task には結果(results の task の id → 詰めた結果の文字列 か None =
-   結果なし)を、切り離した task には置かれた時の返事の行(task-echo の id → 行 — 欄 task)を添える。"
-  (lfor s statuses
-    :setv row (status-row s)
-    :setv echo (if (.startswith s.name "task/") (.get task-echo (cut s.name 5 None)) None)
-    :setv row (if (is echo None) row (| row {"task" echo}))
-    :setv done (finished-task-id s)
-    (if (is done None) row (| row {"result" (.get results done)}))))
-
-
-(deff desired-when-unreachable [#^ int silent-ms #^ int fence-ms #^ tuple last #^ tuple warm #^ str reason]  ; defk にできない: worker の I/O の道具(CoordinatorLink)と sim の宿が同じ判断を使う
-  {:pre [(: silent-ms int) (: fence-ms int) (: last tuple) (: warm tuple) (: reason str)] :post [(: % (| DesiredJobs DesiredUnreadable))]
-   :tags {:context "doeff-cluster" :role "judgment"}}
-  "coordinator に届かなかった拍の宣言を決めるため。連絡が fence を超えて途絶えたら、lease を持たない job と task を止める(coordinator は
-   後で他へ移す)。書き手(入れ替えを宣言した job)と切り離した task は動かし続ける — 書きは lease の柵だけが守り、切り離した task の
-   lease はこの worker の heartbeat が延ばす(worker_policy.kept-when-cut-off・2026-09-25)。fence の内なら「読めない」(直前の宣言を
-   使い続ける)。"
-  (if (> silent-ms fence-ms)
-      (DesiredJobs (kept-when-cut-off last) :warm warm)
-      (DesiredUnreadable f"coordinator に届かない({silent-ms} ms): {reason}")))
-
-(defn #^ None write-ready-file [#^ (| str None) path #^ bool draining]
-  "readinessProbe が sh で読む file(2026-09-25)へ、heartbeat が届いた拍ごとに「ready」か「draining」を書く(mtime = 最後に届いた時刻)。
-   probe は中身が ready で新しい時だけ Ready — hy を起こさない(込んだ node で 10 秒の timeout を越えて両方の Pod が NotReady に
-   なり、DaemonSet が 2 台を同時に消した実弾)。file は Pod の中(container の /tmp)— 同じ node の前の Pod の物と混ざらない。"
-  (when path
-    (setv tmp (Path (+ path ".tmp")))
-    (.write-text tmp (if draining "draining\n" "ready\n") :encoding "utf-8")
-    (os.replace tmp path)))
 
 
 (defhandler coordinator-desired [#^ CoordinatorLink link]
   (ReadDesired [] (resume (.poll link))))
 
-(defn #^ dict status-row [#^ JobStatus s]
-  {"name" s.name "phase" s.phase.value "desiredRevision" s.desired-revision
-   "runningRevision" s.running-revision "pid" s.pid "attempts" s.attempts "detail" s.detail
-   ;; 動いている process の世代(coordinator の readiness と計器はこれと一致する報告だけを数える)。
-   "instance" s.instance "specHash" s.spec-hash "placement" s.placement "retiredFrom" s.retired-from
-   ;; 実行環境の準備の失敗(ENV-FAILED の行だけ): coordinator が置き直すか・答えの型を決める。
-   #** (if (is s.failure None) {} {"failureKind" s.failure.kind.value "retryable" s.failure.retryable})
-   ;; 入口の検めの姿(検めが通っていない間だけ — 2026-09-27): 状態・今の検めの経過の秒・回数・直前の失敗の理由。
-   #** (if (is s.probe None) {} {"probe" {"state" s.probe.state "elapsedSeconds" s.probe.elapsed-seconds
-                                          "attempts" s.probe.attempts "lastFailure" s.probe.last-failure}})})
 
 (defhandler status-to-coordinator [#^ CoordinatorLink link]
   ;; 状態は次の heartbeat で送る。file にも書くので、外側の status-file へ渡す。
@@ -1334,9 +1245,4 @@
 (defhandler lease-release-coordinator [#^ CoordinatorLink link]
   (ReleaseLeases [job instance] (release-leases link job instance) (resume None)))
 
-(defclass StopState []
-  "worker の止めの印(main の信号の handler が立て、stop-flag が WorkerStopRequested に答える)。"
-  (defn #^ None __init__ [self] (setv self.requested False)))
 
-(defhandler stop-flag [#^ StopState state]
-  (WorkerStopRequested [] (resume state.requested)))
