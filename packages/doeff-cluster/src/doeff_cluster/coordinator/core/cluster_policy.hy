@@ -12,7 +12,7 @@
 (import doeff_cluster.shared.intent.job_model [JobSpec])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming Request BodyInvalid])
 (import doeff_cluster.shared.core.capabilities [capabilities-of environ-pairs])
-(import doeff_cluster.coordinator.intent.cluster_model [ClusterJob WorkerInfo WorkerReport GenerationOrder Placement ClusterState TaskRecord Drain EnvFailed WarmEntry HandoffPhase RefusedJob UnplacedKind ACCEPTED-FORMATS PLACED-PHASES ProgramRow ResourceMeta])
+(import doeff_cluster.coordinator.intent.cluster_model [ClusterJob WorkerInfo AuditEvent WorkerReport GenerationOrder Placement ClusterState TaskRecord Drain EnvFailed WarmEntry HandoffPhase RefusedJob UnplacedKind ACCEPTED-FORMATS PLACED-PHASES ProgramRow ResourceMeta])
 (import doeff_cluster.coordinator.core.cluster_rules [component-versions-of format-version-refusal])
 (import doeff_cluster.coordinator.intent.request_bodies [LeaseBody TaskResultBody BoardWrite HeartbeatBody EnvsReport StatusRow TaskBody])
 (import doeff_cluster.coordinator.core.cluster_json [task-record-to-json task-record-from-json handoff-watch-from-json required-field int-field])
@@ -233,7 +233,7 @@
    "taskPrefix" state.task-prefix
    "meta" (dfor #(k m) (.items state.meta) k (resource-meta-to-json m))
    "revision" state.revision
-   "audit" (list state.audit)
+   "audit" (lfor e state.audit (audit-event-to-json e))
    "auditSeq" state.audit-seq
    "rollouts" state.rollouts
    "drains" (dfor #(k v) (.items state.drains) k (asdict v))
@@ -273,6 +273,20 @@
   (ResourceMeta :resource-version (int (get data "resourceVersion")) :generation (int (get data "generation"))
                 :created-by (str (.get data "createdBy" "")) :created-ms (int (.get data "createdMs" 0))
                 :updated-by (str (.get data "updatedBy" "")) :updated-ms (int (.get data "updatedMs" 0))))
+
+
+(defn #^ dict audit-event-to-json [#^ AuditEvent event]
+  "出来事の記録 1 件 → 保存と見せる JSON の形(state file・durable の KV・GET /events と /state — #2447 の前の形と同じ)。"
+  {"seq" event.seq "at" event.at "actor" event.actor "verb" event.verb "kind" event.kind "name" event.name
+   "fromVersion" event.from-version "toVersion" event.to-version "generation" event.generation "changes" event.changes})
+
+
+(defn #^ AuditEvent audit-event-from-json [#^ dict data]
+  "保存の JSON の形 → 出来事の記録 1 件(audit-event-to-json の逆)。"
+  (AuditEvent :seq (int (get data "seq")) :at (int (get data "at")) :actor (str (get data "actor")) :verb (str (get data "verb"))
+              :kind (str (get data "kind")) :name (str (get data "name"))
+              :from-version (.get data "fromVersion") :to-version (.get data "toVersion") :generation (.get data "generation")
+              :changes (dict (.get data "changes" {}))))
 
 
 (defn #^ (| int None) resource-version-of [#^ ClusterState state #^ str key]
@@ -351,7 +365,7 @@
     :board-sizes (dfor #(k v) (.items (if (is board None) (.get data "board" {}) board)) k (value-size v))
     :meta (dfor #(k v) (.items (.get data "meta" {})) k (resource-meta-from-json v))
     :revision (.get data "revision" 0)
-    :audit (tuple (.get data "audit" []))
+    :audit (tuple (gfor e (.get data "audit" []) (audit-event-from-json e)))
     :audit-seq (.get data "auditSeq" 0)
     :rollouts (.get data "rollouts" {})
     ;; drain の欄(2026-09-25)は、それより前の file には無い(空として読む)。

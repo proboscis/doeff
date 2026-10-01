@@ -106,8 +106,8 @@
   (:= s (get reply-11 0))
   (:= status (get reply-11 1))
   (assert (= status 200))
-  (assert (= (get (get s.audit -1) "actor") "coordinator"))   ; 置き先の決め(調停)
-  (assert (in "anonymous@10.0.0.9" (lfor e s.audit (get e "actor")))))
+  (assert (= (. (get s.audit -1) actor) "coordinator"))   ; 置き先の決め(調停)
+  (assert (in "anonymous@10.0.0.9" (lfor e s.audit e.actor))))
 
 
 (deftest test-only-the-owner-or-an-explicit-force-delete-removes-a-declaration
@@ -123,7 +123,7 @@
   (:= status (get reply-13 1))
   (assert (= status 200))
   (assert (= (len s3.jobs) 0))
-  (assert (= (get (get s3.audit -1) "verb") "delete"))
+  (assert (= (. (get s3.audit -1) verb) "delete"))
   (val reply-14 (call s "DELETE" "/resources/Service/shadow" :actor "c-shadow-owner"))
   (val s4 (get reply-14 0))
   (:= status (get reply-14 1))
@@ -169,7 +169,7 @@
   (setv s (adopt-legacy (state-from-json legacy 1000) 1000 T))
   (assert (= (. (get s.jobs 0) owner) LEGACY-OWNER))
   (assert (is-not (rv s "Service" "turn-runner") None))
-  (assert (= (get (get s.audit -1) "actor") "migration"))
+  (assert (= (. (get s.audit -1) actor) "migration"))
   (assert (= s.board-versions {"k" 1}))
   ;; 新しい形で書き直した物に盤は入らない(盤は行ごとの file)
   (assert (not-in "board" (state-to-json s)))

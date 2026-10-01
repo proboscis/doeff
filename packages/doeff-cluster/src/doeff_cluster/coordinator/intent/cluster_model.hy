@@ -131,6 +131,24 @@
   (#^ int updated-ms))
 
 
+(defrecord AuditEvent
+  "出来事の記録 1 件(ClusterState.audit の要素 — resource_policy.stamp が資源の版を進めるたびに 1 件): seq = 通し番号・at = 時刻・
+   actor = 送り手・verb = create / adopt / update / status / delete・kind / name = 資源・from-version / to-version = 前と後の版
+   (作った時は前が None・消した時は後が None)・generation = spec の世代・changes = 変わった欄(\"spec.<欄>\" か \"status.<欄>\" →
+   [前 後] — 長い値は切る)。#2447 で JSON の dict をこの型にした。保存と見せる JSON の形 {seq at actor verb kind name fromVersion
+   toVersion generation changes} は cluster_policy の audit-event-to-json / audit-event-from-json。"
+  (#^ int seq)
+  (#^ int at)
+  (#^ str actor)
+  (#^ str verb)
+  (#^ str kind)
+  (#^ str name)
+  (#^ (| int None) from-version)
+  (#^ (| int None) to-version)
+  (#^ (| int None) generation)
+  (#^ dict changes))
+
+
 (defrecord WorkerReport
   "worker 1 つの最新の状態の報告(ClusterState.statuses の値 — 鍵 = worker の名・保存しない): at = 受けた時刻(epoch ms)・endpoint =
    worker が名乗った宛先(名乗らない旧い worker は None)・jobs = job の行の列(heartbeat の statuses の行 StatusRow から、結果の
@@ -341,7 +359,7 @@
   ;; --- 資源(2026-09-24) ---
   (setv #^ dict meta (field :default-factory dict))      ; "Kind/名" → 資源の版の欄(resourceVersion・generation・作った / 書いた送り手と時刻)
   (setv #^ int revision 0)                              ; coordinator 全体の版の番号(書きのたびに 1 進む)
-  (setv #^ tuple audit #())                             ; 出来事の記録(kind ごとに件数の上限つき・保存する)
+  (setv #^ tuple audit #())                             ; 出来事の記録 AuditEvent の列(kind ごとに件数の上限つき・保存する)
   (setv #^ int audit-seq 0)
   (setv #^ dict rollouts (field :default-factory dict))  ; Rollout の名 → {"spec" … "status" …}
   (setv #^ dict board-versions (field :default-factory dict)) ; 盤の行 → その行の版(行ごとに 1 から増える・行の file と一緒に保存)

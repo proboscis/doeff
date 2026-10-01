@@ -248,7 +248,7 @@
   (c.advance 6)
   (assert (not-in "zeus" c.state.drains))
   ;; 出来事の記録に誰が drain を頼んだかが残る(Worker の資源の status.drain)。
-  (assert (any (gfor e c.state.audit (and (= (get e "kind") "Worker") (= (get e "actor") "drain@zeus"))))))
+  (assert (any (gfor e c.state.audit (and (= e.kind "Worker") (= e.actor "drain@zeus"))))))
 
 
 (deftest test-the-old-pod-drain-does-not-drain-the-new-generation-of-the-same-name

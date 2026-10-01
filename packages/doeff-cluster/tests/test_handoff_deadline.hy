@@ -153,8 +153,8 @@
           (isinstance v dict) (get v "phase")
           True (next (gfor p ["WaitingReady" "Abandoned"] :if (in p v) p))))
   (lfor e sim.state.audit
-        :if (and (= (get e "kind") "Service") (in "status.handoff" (get e "changes")))
-        (tuple (gfor v (get e "changes" "status.handoff") (phase-of v)))))
+        :if (and (= e.kind "Service") (in "status.handoff" e.changes))
+        (tuple (gfor v (get e.changes "status.handoff") (phase-of v)))))
 
 
 (defn #^ bool gapless [#^ Sim sim]  ; defk にできない: 検の読みの道具

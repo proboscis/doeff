@@ -15,10 +15,10 @@
 (import json)
 (import typing [NoReturn])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming BodyInvalid])
-(import doeff_cluster.coordinator.intent.cluster_model [ClusterJob ClusterState Placement HandoffPhase UnplacedKind NotReadyKind VersionState VersionVerdict LiveProcess ResourceMeta])
+(import doeff_cluster.coordinator.intent.cluster_model [ClusterJob ClusterState Placement HandoffPhase UnplacedKind NotReadyKind VersionState VersionVerdict LiveProcess ResourceMeta AuditEvent])
 (import doeff_cluster.coordinator.core.cluster_json [required-field int-field])
 (import doeff_cluster.shared.core.job_rules [spec-hash] doeff_cluster.shared.intent.job_model [JobPhase])
-(import doeff_cluster.coordinator.core.cluster_policy [job-from-json job-to-json status-row-to-json alive still-live-somewhere service-rows unplaced-kind unplaced-text task-summary resource-version-of])
+(import doeff_cluster.coordinator.core.cluster_policy [job-from-json job-to-json status-row-to-json audit-event-to-json alive still-live-somewhere service-rows unplaced-kind unplaced-text task-summary resource-version-of])
 (import doeff_cluster.coordinator.core.rollout_policy [validate-rollout-spec rollout-targets target-key TERMINAL-PHASES])
 (import doeff [run])
 (import doeff_cluster.coordinator.intent.request_bodies [ReadinessBody MetricsBody ResourceBody StatusRow])
@@ -409,11 +409,11 @@
   out)
 
 
-(defn #^ tuple trim-audit [#^ list audit]
+(defn #^ tuple trim-audit [#^ list audit]  ; audit = AuditEvent の列
   "kind ごとに直近 AUDIT-PER-KIND 件だけ残す(順は保つ)。"
   (setv counts {} keep [])
   (for [event (reversed audit)]
-    (setv kind (get event "kind") n (.get counts kind 0))
+    (setv kind event.kind n (.get counts kind 0))
     (when (< n AUDIT-PER-KIND)
       (setv (get counts kind) (+ n 1))
       (.append keep event)))
@@ -449,9 +449,9 @@
                   verb (if spec-changed "update" "status") from current.resource-version to rev
                   generation (+ current.generation (if spec-changed 1 0)))
             (setv (get meta key) (replace current :resource-version rev :generation generation :updated-by actor :updated-ms now))))
-    (.append audit {"seq" seq "at" now "actor" actor "verb" verb "kind" kind "name" name
-                    "fromVersion" from "toVersion" to "generation" generation
-                    "changes" (changed-fields old new)}))
+    (.append audit (AuditEvent :seq seq :at now :actor actor :verb verb :kind kind :name name
+                               :from-version from :to-version to :generation generation
+                               :changes (changed-fields old new))))
   (replace after :meta meta :revision rev :audit (trim-audit audit) :audit-seq seq))
 
 
@@ -510,8 +510,8 @@
   (setv kind (.get query "kind") name (.get query "name") since (int-field query "since" 0)
         limit (min (int-field query "limit" 200) 2000))
   (setv rows (lfor e state.audit
-                   :if (and (> (get e "seq") since) (or (not kind) (= (get e "kind") kind)) (or (not name) (= (get e "name") name)))
-                   e))
+                   :if (and (> e.seq since) (or (not kind) (= e.kind kind)) (or (not name) (= e.name name)))
+                   (audit-event-to-json e)))
   {"revision" state.revision "seq" state.audit-seq "events" (cut rows (- limit) None)})
 
 

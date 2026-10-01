@@ -23,7 +23,7 @@
 (import doeff_cluster.coordinator.intent.cluster_model [ClusterState WorkerInfo Placement Drain])
 (import doeff_cluster.coordinator.core.cluster_rules [component-versions-of])
 (import doeff_cluster.coordinator.core.cluster_json [task-record-to-json task-record-from-json handoff-watch-from-json])
-(import doeff_cluster.coordinator.core.cluster_policy [job-to-json job-from-json read-service-rows board-changes value-size warm-entry-to-json warm-entry-from-json worker-capabilities-of
+(import doeff_cluster.coordinator.core.cluster_policy [job-to-json job-from-json audit-event-to-json audit-event-from-json read-service-rows board-changes value-size warm-entry-to-json warm-entry-from-json worker-capabilities-of
                          worker-generations-json worker-generations-from-json program-row-to-json program-row-from-json resource-meta-to-json resource-meta-from-json])
 
 (setv BOARD "board/")
@@ -57,7 +57,7 @@
 
 
 (defn #^ object as-stored [#^ object value]
-  "そのまま保存する値(JSON の形で持っている行・meta・Rollout・Program・監査の行)の直列化 = 値そのもの。"
+  "そのまま保存する値(JSON の形で持っている行・Rollout)の直列化 = 値そのもの。"
   value)
 
 
@@ -80,7 +80,7 @@
   (for [#(k w) (.items state.warms)] (setv (get out (+ WARM k)) #(#(w) (partial warm-entry-to-json w))))
   (for [#(k p) (.items state.programs)] (setv (get out (+ PROGRAM k)) #(#(p) (partial program-row-to-json p))))
   (for [#(k w) (.items state.handoffs)] (setv (get out (+ HANDOFF k)) #(#(w) w.to-json)))
-  (for [e state.audit] (setv (get out (.format "audit/{:010d}" (get e "seq"))) #(#(e) (partial as-stored e))))
+  (for [e state.audit] (setv (get out (.format "audit/{:010d}" e.seq)) #(#(e) (partial audit-event-to-json e))))
   out)
 
 
@@ -163,7 +163,7 @@
     :warms (dfor #(k v) (part WARM) :setv entry (warm-entry-from-json v) :if (is-not entry None) k entry)
     :programs (dfor #(k v) (part PROGRAM) k (program-row-from-json v))
     :handoffs (dfor #(k v) (part HANDOFF) k (handoff-watch-from-json v))
-    :audit (tuple (gfor #(_ e) (part "audit/") e))
+    :audit (tuple (gfor #(_ e) (part "audit/") (audit-event-from-json e)))
     :board (dfor #(k v) (part BOARD) k (get v "value"))
     :board-versions (dfor #(k v) (part BOARD) k (get v "resourceVersion"))
     :board-expiry (dfor #(k v) (part BOARD) :if (is-not (.get v "expiresMs") None) k (get v "expiresMs"))

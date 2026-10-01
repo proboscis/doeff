@@ -256,7 +256,7 @@
   "key の資源が作り直された(版の記録が generation 1・作った送り手と時刻から始まり、出来事の記録に create が在る)。"
   (val m (get state.meta key))
   (and (= #(m.generation m.created-by m.created-ms) #(1 actor now))
-       (in #("create" #* (.split key "/" 1)) (lfor e state.audit #((get e "verb") (get e "kind") (get e "name"))))))
+       (in #("create" #* (.split key "/" 1)) (lfor e state.audit #(e.verb e.kind e.name)))))
 
 
 (deftest test-a-worker-dropped-by-the-reload-registers-again-under-the-same-name

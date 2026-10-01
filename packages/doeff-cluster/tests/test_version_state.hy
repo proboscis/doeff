@@ -235,8 +235,8 @@
   (assert (= (version-of current) {"state" "Current" "reason" "" "running" [{"revision" "r1" "retired" False}]}))
   ;; state は snapshot に入る(変わった時に出来事と resourceVersion が進む)。reason と running は snapshot に入れない。
   (assert (= (get (snapshot current START T) "Service/w" "status" "version") {"state" "Current"}))
-  (assert (any (gfor e current.audit (= (.get (get e "changes") "status.version") [{"state" "Updating"} {"state" "Current"}])))
-          (lfor e current.audit (get e "changes")))
+  (assert (any (gfor e current.audit (= (.get e.changes "status.version") [{"state" "Updating"} {"state" "Current"}])))
+          (lfor e current.audit e.changes))
   ;; 既存の欄は今までどおり(ready・process)。
   (val body (get (responded current (http-request "GET" "/resources/Service/w" {} None :actor None) START T) 2))
   (assert (= (get body "status" "ready") "Ready"))
