@@ -15,6 +15,7 @@ class HttpRequest(EffectBase):
     follow_redirects: bool
     failures_as_values: bool
     log_each_request: bool
+    connect_timeout_seconds: float | None
 
     def __init__(
         self,
@@ -29,6 +30,7 @@ class HttpRequest(EffectBase):
         follow_redirects: bool = ...,
         failures_as_values: bool = ...,
         log_each_request: bool = ...,
+        connect_timeout_seconds: float | None = ...,
     ) -> None: ...
 
     def __repr__(self) -> str: ...

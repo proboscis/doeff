@@ -5,13 +5,14 @@
 (require doeff-hy.macros [defhandler defk deff <- val])
 (import json)
 (import urllib.parse [quote :as url-quote])
-(import httpx)
 (import doeff_cluster.shared.core.clock [now-epoch-ms])
 (import doeff_cluster.shared.intent.shared_model [ReadShared WriteShared ANY AnyExpect JsonValue])
 (import doeff_cluster.shared.intent.semaphore_model [LeaseOp])
 (import doeff_cluster.shared.core.board_rules [board-ttl-refusal cas-allows])
 (import doeff_cluster.shared.core.lease_rules [lease-op semaphore-key])
-(import doeff_cluster.foundation.coordinator_http [CoordinatorEndpoint send-idempotent REPLY-SECONDS])
+(import doeff_cluster.foundation.coordinator_http [IDEMPOTENT-DEADLINE-SECONDS RESEND-PAUSE-SECONDS])
+(import doeff_cluster.shared.protocol.coordinator_route [RouteCell RouteOptions RoutedReply routed-request resent-request
+                                                         answer-json write-accepted])
 
 
 (defk json-snapshot [value]
@@ -24,7 +25,7 @@
 
 (deff board-read-request [#^ str prefix]  ; defk にできない: 本番の client(Program の外の I/O の道具)と sim の宿が同じ形を作る純粋な判断
   {:pre [(: prefix str)] :post [(: % tuple) (= (len %) 4)] :tags {:context "doeff-cluster" :role "protocol"}}
-  "ReadShared を coordinator の盤の読みの要求 #(method path query 本文) にするため(本番の SharedClient と sim の宿で同じ形)。"
+  "ReadShared を coordinator の盤の読みの要求 #(method path query 本文) にするため(本番の shared-http と sim の宿で同じ形)。"
   #("GET" "/board" {"prefix" prefix} None))
 
 
@@ -43,7 +44,7 @@
 (deff lease-request [#^ str name #^ str op #^ str token #^ int permits #^ int ttl-ms]  ; defk にできない: 本番の client と sim の宿が同じ形を作る純粋な判断
   {:pre [(: name str) (: op str) (: token str) (: permits int) (: ttl-ms int)] :post [(: % tuple) (= (len %) 4)]
    :tags {:context "doeff-cluster" :role "protocol"}}
-  "LeaseOp を coordinator の lease の口の要求 #(method path query 本文) にするため(本番の SharedClient と sim の宿で同じ形)。"
+  "LeaseOp を coordinator の lease の口の要求 #(method path query 本文) にするため(本番の shared-http と sim の宿で同じ形)。"
   #("POST" (+ "/leases/" (url-quote name :safe "")) {} {"op" op "token" token "permits" permits "ttlMs" ttl-ms}))
 
 
@@ -71,37 +72,31 @@
     (resume answer)))
 
 
-(defclass SharedClient []
-  "coordinator の /board との連絡(I/O)。"
-  (defn #^ None __init__ [self #^ str url #^ float [timeout REPLY-SECONDS] #^ (| httpx.BaseTransport None) [transport None]]
-    ;; url = 宛先を `,` で並べた物(前ほど優先)。接続は使い回し、接続できない時は次の宛先へ・書きでも送り直す
-    ;; (要求が届いていない)— coordinator_http の説明。
-    (setv self.endpoint (CoordinatorEndpoint url timeout 4 :transport transport)))
-
-  (defn #^ dict read [self #^ str prefix]
-    ;; 読みは何度送っても同じなので、tailnet の数秒の途絶は期限まで送り直して越える(1 回の失敗で service を落とさない)。
+;; 本物の保存: coordinator の /board と /leases へ、汎用の HttpRequest で話す(#2337 の 2 本目)。宛先の順・切り替え・
+;; 送り直しは宛先の部品(shared/protocol/coordinator_route.hy)— 宛先の状態は組み立てが渡す入れ物(RouteCell)で要求から要求へ持ち越す。
+;; 出す HttpRequest に答える本物の I/O の答え手(http-production-handler)は、process の組み立ての根が外側に積む(業務の HttpRequest と同じ
+;; 答え手 — 接続の段の上限は要求の connect-timeout-seconds が運ぶ)。
+;;   読み(ReadShared)・claim と renew の lease = 何度送っても同じ意味なので、失敗は期限まで送り直す(resent-request)。
+;;   書き(WriteShared)・release と drop の lease = 接続の段だけ送り直す(routed-request — 返事を読む前に切れた書きは届いたか分からない)。
+;; 断り(4xx・5xx)は RouteRefused、返事の無い失敗は RouteUnreachable を業務の Program へ投げる(前の httpx の例外と同じく service を落とす)。
+(defhandler shared-http [#^ RouteCell cell #^ RouteOptions options]
+  (ReadShared [prefix]
     (setv #(method path query _) (board-read-request prefix))
-    (setv response (send-idempotent (fn [] (.request self.endpoint method path :params query))))
-    (.raise-for-status response)
-    (.json response))
-
-  (defn #^ bool write [self #^ str key #^ JsonValue value #^ (| JsonValue AnyExpect) expect #^ (| int float None) [ttl-seconds None]]
+    (<- reply RoutedReply (resent-request cell.route method path options query None IDEMPOTENT-DEADLINE-SECONDS RESEND-PAUSE-SECONDS))
+    (setv cell.route reply.route)
+    (<- rows dict (answer-json reply.answer))
+    (resume rows))
+  (WriteShared [key value expect ttl-seconds]
     (setv #(method path _ body) (board-write-request key value expect ttl-seconds))
-    (setv response (.request self.endpoint method path :json body))
-    (when (= response.status-code 409) (return False))
-    (.raise-for-status response)
-    True)
-
-  (defn #^ dict lease [self #^ str name #^ str op #^ str token #^ int permits #^ int ttl-ms]
-    ;; claim と renew は同じ token で何度送っても同じ意味なので、途中で切れても期限まで送り直す。release・drop は 1 回だけ。
-    (setv #(method path _ body) (lease-request name op token permits ttl-ms)
-          send (fn [] (.request self.endpoint method path :json body))
-          response (if (in op #("claim" "renew")) (send-idempotent send) (send)))
-    (.raise-for-status response)
-    (.json response)))
-
-
-(defhandler shared-http [#^ SharedClient client]
-  (ReadShared [prefix] (resume (.read client prefix)))
-  (WriteShared [key value expect ttl-seconds] (resume (.write client key value expect ttl-seconds)))
-  (LeaseOp [name op token permits ttl-ms] (resume (.lease client name op token permits ttl-ms))))
+    (<- reply RoutedReply (routed-request cell.route method path options None body))
+    (setv cell.route reply.route)
+    (<- ok bool (write-accepted reply.answer))
+    (resume ok))
+  (LeaseOp [name op token permits ttl-ms]
+    (setv #(method path _ body) (lease-request name op token permits ttl-ms))
+    (<- reply RoutedReply (match (in op #("claim" "renew"))
+                            True (resent-request cell.route method path options None body IDEMPOTENT-DEADLINE-SECONDS RESEND-PAUSE-SECONDS)
+                            False (routed-request cell.route method path options None body)))
+    (setv cell.route reply.route)
+    (<- answer dict (answer-json reply.answer))
+    (resume answer)))
