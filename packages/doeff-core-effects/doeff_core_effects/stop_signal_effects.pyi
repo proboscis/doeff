@@ -8,5 +8,8 @@ from doeff import EffectBase
 class StopRequested(EffectBase): ...
 
 @dataclass(frozen=True)
+class AwaitStop(EffectBase): ...
+
+@dataclass(frozen=True)
 class RaiseStop(EffectBase):
     reason: str
