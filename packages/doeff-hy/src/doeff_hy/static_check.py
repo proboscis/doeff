@@ -1,12 +1,18 @@
 """doeff-hy-check — Hy の source を本物の macro で展開し、pyright で型を検め、赤を .hy の行で返す。
 
     doeff-hy-check [PATH ...] [--root DIR] [--import-root DIR ...] [--pyright CMD] [--python EXE] [--json]
+                   [--strict] [--baseline JSON | --write-baseline JSON] [--cache-dir DIR | --no-cache]
 
 - PATH: 検める .hy の file か dir(既定 = --root)。dir は下の .hy を全部。
 - --root: repo の根(既定 = 今の dir)。import の根で、macro の `require` もここから解く。
 - --import-root: 根の下の別の import の根(例 `clients/hy`)。根の pyright の設定の
   `extraPaths` も import の根として読む。
-- 赤があれば exit 1、無ければ 0、道具として走れなければ 2。
+- --strict: pyright の typeCheckingMode を strict にする。
+- --write-baseline / --baseline: 今の赤を基点として書く / 基点に無い赤だけを止める(doeff_hy/static_baseline.py)。
+  --json の診断には、基点に在る赤かを欄 `known` で付ける。
+- --cache-dir / --no-cache: 依存の .hy の展開を source の指紋ごとに保存して引く(doeff_hy/static_cache.py・
+  既定の置き場 = $XDG_CACHE_HOME/doeff-hy-check か ~/.cache/doeff-hy-check)。
+- 新しい赤(基点が無ければ全部の赤)があれば exit 1、無ければ 0、道具として走れなければ 2。
 
 仕組み:
 1. 各 .hy を Hy の compiler で展開する(doeff-hy の macro は「型検査のための展開」=
@@ -43,6 +49,24 @@ from hy.compiler import hy_compile
 from hy.errors import HyLanguageError
 
 from doeff_hy.binding_forms import Finding, module_findings
+from doeff_hy.static_baseline import (
+    BaselineUnreadable,
+    Split,
+    baseline_json,
+    errors_of,
+    read_baseline,
+    split,
+)
+from doeff_hy.static_cache import (
+    CachedFinding,
+    CachedProjection,
+    CachedSpan,
+    CacheMiss,
+    cache_key,
+    default_cache_dir,
+    load,
+    store,
+)
 from doeff_hy.static_view import STATIC_HELPER_IMPORTS, collect_findings, static_view
 
 _SKIP_DIRS = frozenset({".git", ".venv", "venv", "__pycache__", "node_modules", ".exp"})
@@ -167,13 +191,132 @@ def _span(generated: ast.AST, original: ast.AST) -> Span | None:
     return Span((g_line - 1, g_col), (g_end_line - 1, g_end_col), h_line, max(h_col, 1))
 
 
+#: 定義の記帳(実行時の内観のための属性 — 型の意味を持たない)だけが使う module。展開の後に使い手が残らなければ
+#: import を外す(pyright strict で doeff_hy.quoted_forms の stub 無し・doeff_hy.declarations の重複の import に
+#: なっていた — agora の画面の core の 3 file で 241 件・agora-redesign #2153)。
+BOOKKEEPING_MODULES: frozenset[str] = frozenset(
+    {"doeff_hy.declarations", "doeff_hy.quoted_forms", "doeff_hy.record"}
+)
+
+
+def _bookkeeping_statement(statement: ast.stmt) -> bool:
+    """型検査に見せない module の直下の文か: 定義の記帳 `setattr(名, '__doeff_…__', …)` と、
+    Hy が `(require …)` を compile した残り `hy.macros.require(…)`(macro の取り込みは展開の時に済んでいる)。"""
+    match statement:
+        case ast.Expr(
+            value=ast.Call(func=ast.Name(id="setattr"), args=[_, ast.Constant(value=str(attribute)), *_])
+        ):
+            return attribute.startswith("__doeff_")
+        case ast.Expr(
+            value=ast.Call(
+                func=ast.Attribute(
+                    value=ast.Attribute(value=ast.Name(id="hy"), attr="macros"), attr="require"
+                )
+            )
+        ):
+            return True
+        case _:
+            return False
+
+
+def _referenced_roots(statements: list[ast.stmt]) -> frozenset[str]:
+    """文の中で読まれている名(属性の連なりは根の名)— 外してよい import を決めるため。"""
+    return frozenset(
+        node.id
+        for statement in statements
+        for node in ast.walk(statement)
+        if isinstance(node, ast.Name)
+    )
+
+
+def _bound_name(alias: ast.alias) -> str:
+    """import が束縛する名(`import a.b` は `a`・`as` があればその名)。"""
+    return alias.asname or alias.name.split(".")[0]
+
+
+def _bookkeeping_import(statement: ast.stmt, used: frozenset[str]) -> bool:
+    """記帳だけが使う module の import で、束縛する名がもう読まれていない物か。"""
+    match statement:
+        case ast.Import(names=names):
+            return all(
+                alias.name in BOOKKEEPING_MODULES and _bound_name(alias) not in used for alias in names
+            )
+        case ast.ImportFrom(module=str(module), level=0, names=names):
+            return module in BOOKKEEPING_MODULES and all(
+                _bound_name(alias) not in used for alias in names
+            )
+        case _:
+            return False
+
+
+def _doeff_hy_import(statement: ast.stmt) -> bool:
+    """doeff-hy 自身の module の import か(macro が定義ごとに合成する物 — 利用者の重複の import は赤のまま残すため、
+    重ねを 1 つにするのはこれだけ)。"""
+    match statement:
+        case ast.Import(names=names):
+            return all(alias.name.split(".")[0] == "doeff_hy" for alias in names)
+        case ast.ImportFrom(module=str(module), level=0):
+            return module.split(".")[0] == "doeff_hy"
+        case _:
+            return False
+
+
+def without_bookkeeping(tree: ast.Module) -> ast.Module:
+    """型検査のための展開から、型の意味を持たない記帳を外す(pyright strict の誤検出の元を展開の側で絶つ)。
+
+    - 定義の記帳と `hy.macros.require` の残り(_bookkeeping_statement)を外す。
+    - module の直下で同じ doeff-hy の import の文が繰り返されたら最初の 1 つだけを残す(macro が定義ごとに出す import)。
+    - 記帳だけが使う module(BOOKKEEPING_MODULES)の import と Hy の `import hy` で、もう読まれない物を外す。
+    消費 repo の利用者が書いた式は外さない(外すのは macro が合成した文の形だけ)。"""
+    kept = [statement for statement in tree.body if not _bookkeeping_statement(statement)]
+    imports = (ast.Import, ast.ImportFrom)
+    seen_keys = [ast.dump(s) if _doeff_hy_import(s) else None for s in kept]
+    first = [
+        statement
+        for index, statement in enumerate(kept)
+        if seen_keys[index] is None or seen_keys[index] not in seen_keys[:index]
+    ]
+    used = _referenced_roots([s for s in first if not isinstance(s, imports)])
+    tree.body = [
+        s for s in first if not (_bookkeeping_import(s, used) or _unused_hy_import(s, used))
+    ]
+    return tree
+
+
+def _unused_hy_import(statement: ast.stmt, used: frozenset[str]) -> bool:
+    """Hy の compiler が module ごとに置く `import hy` で、記帳を外した後に読まれなくなった物か
+    (`hy.macros.require` の残りだけが読んでいた — strict の reportUnusedImport の元)。"""
+    match statement:
+        case ast.Import(names=[ast.alias(name="hy", asname=None)]):
+            return "hy" not in used
+        case _:
+            return False
+
+
 def with_static_helpers(tree: ast.Module) -> ast.Module:
     """静的な展開の macro が参照する補助の名の import を、module の頭(`from __future__` の後)に 1 度だけ置く。
 
     macro は静的な展開では defk / defhandler / `<-` ごとの import を出さない(static_view.STATIC_HELPER_IMPORTS の註 —
     1 つの名の宣言が 64 を超えると pyright が型の推論をやめる)。置く文は Hy の source に無いので位置を持たせない
-    (_span が組にしない — 補助の import に赤は出ない)。"""
-    helpers: list[ast.stmt] = ast.parse(STATIC_HELPER_IMPORTS).body
+    (_span が組にしない — 補助の import に赤は出ない)。module が読む補助の名だけを置く(strict の
+    reportUnusedImport を出さないため)。`hy.models`(Hy の keyword の literal が compile される先)を読む module には
+    `import hy.models` を足す(`import hy` だけでは pyright が属性 models を知らない)。"""
+    used = _referenced_roots(tree.body)
+    reads_models = any(
+        isinstance(node, ast.Attribute)
+        and node.attr == "models"
+        and isinstance(node.value, ast.Name)
+        and node.value.id == "hy"
+        for node in ast.walk(tree)
+    )
+    declared: list[ast.stmt] = ast.parse(
+        STATIC_HELPER_IMPORTS + ("import hy.models\n" if reads_models else "")
+    ).body
+    helpers: list[ast.stmt] = [
+        statement
+        for statement in (_only_used(s, used) for s in declared)
+        if statement is not None
+    ]
     for statement in helpers:
         for node in ast.walk(statement):
             for field in ("lineno", "col_offset", "end_lineno", "end_col_offset"):
@@ -186,6 +329,17 @@ def with_static_helpers(tree: ast.Module) -> ast.Module:
         head += 1
     tree.body[head:head] = helpers
     return tree
+
+
+def _only_used(statement: ast.stmt, used: frozenset[str]) -> ast.stmt | None:
+    """補助の import の文から、module が読む名だけを残す(1 つも読まなければ文ごと要らない = None)。
+    `import hy.models` は `hy` を束縛するので、読む時だけ置く呼び手の判断に任せてそのまま返す。"""
+    match statement:
+        case ast.ImportFrom(module=module, names=names, level=level):
+            kept = [alias for alias in names if _bound_name(alias) in used]
+            return ast.ImportFrom(module=module, names=kept, level=level) if kept else None
+        case _:
+            return statement
 
 
 def project(root: Path, roots: list[Path], source: Path) -> Projection | CompileFailure:
@@ -203,7 +357,7 @@ def project(root: Path, roots: list[Path], source: Path) -> Projection | Compile
         # hy_compile は get_expr=True の時だけ (Module, Expression) の組を返す。
         if not isinstance(compiled, ast.Module):
             raise TypeError(f"hy_compile が module を返さなかった: {type(compiled).__name__}")
-        tree = with_static_helpers(compiled)
+        tree = with_static_helpers(without_bookkeeping(compiled))
     except HyLanguageError as error:
         line = error.lineno if isinstance(error.lineno, int) else 1
         column = error.offset if isinstance(error.offset, int) else 1
@@ -281,8 +435,56 @@ def imported_modules(projection: Projection) -> set[str]:
     return expanded
 
 
-def project_closure(root: Path, roots: list[Path], targets: list[Path]) -> Closure:
-    """検める file と、それが import する根の下の .hy を全部展開する。"""
+def _from_cache(source: Path, module: str, cached: CachedProjection) -> Projection:
+    """保存した展開を、この実行の Projection に戻す(展開し直さずに済ませるため)。"""
+    return Projection(
+        source,
+        module,
+        cached.text,
+        tuple(Span(s.start, s.end, s.hy_line, s.hy_column) for s in cached.spans),
+        tuple(
+            Diagnostic(f.path, f.line, f.column, f.severity, f.rule, f.message)
+            for f in cached.findings
+        ),
+    )
+
+
+def _to_cache(projection: Projection) -> CachedProjection:
+    """展開の結果を保存の形にする(次の実行で依存を展開し直さないため)。"""
+    return CachedProjection(
+        projection.text,
+        tuple(CachedSpan(s.start, s.end, s.hy_line, s.hy_column) for s in projection.spans),
+        tuple(
+            CachedFinding(f.path, f.line, f.column, f.severity, f.rule, f.message)
+            for f in projection.findings
+        ),
+    )
+
+
+def project_cached(
+    root: Path, roots: list[Path], source: Path, cache_dir: Path | None
+) -> Projection | CompileFailure:
+    """展開の cache(static_cache)を引き、無ければ展開して保存する。cache_dir が None なら毎回展開する。
+
+    展開に失敗した source は保存しない(直した時に作り直す・失敗の文言は展開の度に出す)。"""
+    if cache_dir is None:
+        return project(root, roots, source)
+    module = module_name(roots, source)
+    key = cache_key(tuple(roots), source, module, str(source.relative_to(root)))
+    match load(cache_dir, key):
+        case CachedProjection() as cached:
+            return _from_cache(source, module, cached)
+        case CacheMiss():
+            result = project(root, roots, source)
+            if isinstance(result, Projection):
+                store(cache_dir, key, _to_cache(result))
+            return result
+
+
+def project_closure(
+    root: Path, roots: list[Path], targets: list[Path], cache_dir: Path | None = None
+) -> Closure:
+    """検める file と、それが import する根の下の .hy を全部展開する(cache_dir があれば変わらない物は引く)。"""
     projections: dict[Path, Projection] = {}
     failures: list[CompileFailure] = []
     pending = list(targets)
@@ -292,7 +494,7 @@ def project_closure(root: Path, roots: list[Path], targets: list[Path]) -> Closu
         if source in seen:
             continue
         seen.add(source)
-        result = project(root, roots, source)
+        result = project_cached(root, roots, source, cache_dir)
         if isinstance(result, CompileFailure):
             failures.append(result)
             continue
@@ -447,6 +649,13 @@ _GUARD_MESSAGE = (
     " [ADR-DOE-HY-001]"
 )
 _UNKNOWN_TYPES = frozenset({"Unknown", "Any"})
+#: 型検査のための展開が module の頭に置く補助の名(static_view.STATIC_HELPER_IMPORTS から読む — 名の並びを 2 か所に持たない)。
+_STATIC_HELPER_NAMES: frozenset[str] = frozenset(
+    _bound_name(alias)
+    for statement in ast.parse(STATIC_HELPER_IMPORTS).body
+    if isinstance(statement, ast.ImportFrom)
+    for alias in statement.names
+)
 
 
 def _revealed(diagnostic: Diagnostic) -> str | None:
@@ -483,6 +692,10 @@ def settle(diagnostics: list[Diagnostic]) -> Checked:
         quoted = diagnostic.message.split('"')
         module = quoted[1] if len(quoted) >= 2 else ""
         if diagnostic.rule == "reportMissingModuleSource" and _hy_backed(module):
+            continue
+        # 補助の名(_doeff_do・_doeff_perform ほか)は doeff-hy が展開に置く名で、利用者は書かない — strict の
+        # 「private な名を module の外で使った」は展開の都合なので出さない。
+        if diagnostic.rule == "reportPrivateUsage" and module in _STATIC_HELPER_NAMES:
             continue
         if diagnostic.rule == "reportMissingImports" and _hy_backed(module):
             notes.append(f"{diagnostic.path}:{diagnostic.line}: {module} は .hy なので型が見えない")
@@ -521,9 +734,40 @@ def main(argv: list[str] | None = None) -> int:
         default=[],
         help="根の下の import の根を足す(繰り返せる・pyright の extraPaths にも足す)",
     )
+    parser.add_argument(
+        "--baseline",
+        type=Path,
+        help="基点の赤の file(--write-baseline で書いた物)。基点に無い赤だけを exit 1 にする",
+    )
+    parser.add_argument(
+        "--write-baseline",
+        type=Path,
+        help="この実行の赤を基点の file として書き出す(書いた時は exit 0)",
+    )
+    parser.add_argument(
+        "--cache-dir",
+        type=Path,
+        default=None,
+        help="展開の cache の置き場(既定 = $XDG_CACHE_HOME/doeff-hy-check か ~/.cache/doeff-hy-check)",
+    )
+    parser.add_argument(
+        "--no-cache", action="store_true", help="展開の cache を使わず毎回全部展開する"
+    )
+    parser.add_argument(
+        "--strict",
+        action="store_true",
+        help="pyright の typeCheckingMode を strict にする(根の設定より優先)",
+    )
     args = parser.parse_args(argv)
+    try:
+        baseline = read_baseline(args.baseline) if args.baseline else None
+    except BaselineUnreadable as error:
+        print(f"doeff-hy-check: 走れなかった: {error}", file=sys.stderr)
+        return 2
     root: Path = _absolute(args.root)
     settings = pyright_settings(root)
+    if args.strict:
+        settings["typeCheckingMode"] = "strict"
     if args.import_root:
         present = settings.get("extraPaths")
         extra = [str(e) for e in present] if isinstance(present, list) else []
@@ -535,7 +779,8 @@ def main(argv: list[str] | None = None) -> int:
     report = hy_files([p if p.is_absolute() else Path.cwd() / p for p in (args.paths or [root])])
     report = [path for path in report if path.is_relative_to(root)]
     try:
-        closure = project_closure(root, roots, report)
+        cache_dir = None if args.no_cache else (args.cache_dir or default_cache_dir())
+        closure = project_closure(root, roots, report, cache_dir)
         checked = run_pyright(
             root, settings, closure.projections, report, args.pyright, args.python
         )
@@ -555,20 +800,34 @@ def main(argv: list[str] | None = None) -> int:
     )
     diagnostics = settled.diagnostics
     notes = checked.notes + settled.notes
-    if args.json:
-        print(json.dumps([vars(d) for d in diagnostics], ensure_ascii=False, indent=1))
-    else:
-        for diagnostic in diagnostics:
-            print(diagnostic.render())
-        for note in notes:
-            print(f"note: {note}", file=sys.stderr)
-        errors = sum(1 for d in diagnostics if d.severity == "error")
-        warnings = sum(1 for d in diagnostics if d.severity == "warning")
+    if args.write_baseline:
+        args.write_baseline.write_text(baseline_json(list(diagnostics)), encoding="utf-8")
         print(
-            f"{len(report)} 個の .hy を検めた: error {errors} 件・warning {warnings} 件",
+            f"doeff-hy-check: 基点を {args.write_baseline} に書いた(error {len(errors_of(diagnostics))} 件)",
             file=sys.stderr,
         )
-    return 1 if any(d.severity == "error" for d in diagnostics) else 0
+        return 0
+    verdict = split(baseline, diagnostics) if baseline is not None else Split((), tuple(errors_of(diagnostics)))
+    known = {id(d) for d in verdict.known}
+    if args.json:
+        print(
+            json.dumps(
+                [vars(d) | {"known": id(d) in known} for d in diagnostics], ensure_ascii=False, indent=1
+            )
+        )
+    else:
+        for diagnostic in diagnostics:
+            if id(diagnostic) not in known:
+                print(diagnostic.render())
+        for note in notes:
+            print(f"note: {note}", file=sys.stderr)
+        warnings = sum(1 for d in diagnostics if d.severity == "warning")
+        print(
+            f"{len(report)} 個の .hy を検めた: 新しい error {len(verdict.new)} 件・"
+            f"基点に在る error {len(verdict.known)} 件・warning {warnings} 件",
+            file=sys.stderr,
+        )
+    return 1 if verdict.new else 0
 
 
 if __name__ == "__main__":
