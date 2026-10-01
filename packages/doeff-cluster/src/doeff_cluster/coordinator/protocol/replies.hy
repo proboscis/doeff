@@ -8,7 +8,8 @@
 (import dataclasses [asdict])
 (import json)
 (import doeff_cluster.shared.intent.job_model [JobSpec])
-(import doeff_cluster.coordinator.intent.cluster_model [EventsView StateReply StateView HeartbeatReply TaskOffer DrainPhase DrainProgress WorkerDrainView])
+(import doeff_cluster.coordinator.intent.cluster_model [EventsView StateReply StateView HeartbeatReply TaskOffer DrainPhase DrainProgress WorkerDrainView
+                                                       ServiceObserved WorkerObserved TaskObserved RolloutObserved ResourceView ResourceList VersionVerdict])
 (import doeff_cluster.coordinator.core.cluster_policy [job-to-json task-summary status-row-to-json])
 (import doeff_cluster.coordinator.protocol.state_json [audit-event-to-json])
 
@@ -83,6 +84,37 @@
      {"drain" (if (is view.drain None) None (drain-progress-json view.drain)) "ready" view.ready}))
 
 
+(defn #^ dict version-json [#^ VersionVerdict verdict #^ tuple live]
+  "status.version の JSON の形(資源の口の境界): {state reason running: [{revision retired}]}。"
+  {"state" verdict.state.value "reason" verdict.reason
+   "running" (lfor p live {"revision" p.revision "retired" p.retired})})
+
+
+(defn #^ dict observed-json [#^ (| ServiceObserved WorkerObserved TaskObserved RolloutObserved None) observed]
+  "資源の種類ごとの観測 → status に足す JSON の欄(#2595 の前に resource_policy.resource-json が足していた欄と同じ)。"
+  (cond
+    (isinstance observed ServiceObserved)
+      {"readyReason" observed.ready-reason
+       "lastReadiness" observed.last-readiness
+       "process" (if (is observed.process None) None (status-row-to-json observed.process))
+       "version" (version-json observed.version observed.running)}
+    (isinstance observed WorkerObserved) {"silentMs" observed.silent-ms "alive" observed.alive}
+    (isinstance observed TaskObserved) (task-summary observed.task)
+    (isinstance observed RolloutObserved) {"observed" (dict observed.observed)}
+    True {}))
+
+
+(defn #^ dict resource-view-json [#^ ResourceView view]
+  "資源 1 つの画面 → JSON の形(#2595 の前に resource_policy.resource-json が組んでいた形と同じ — status は比べる単位の status に観測を足した物)。"
+  (setv m view.meta)
+  {"kind" view.kind "name" view.name
+   "resourceVersion" (if m m.resource-version None) "generation" (if m m.generation None)
+   "owner" (.get view.spec "owner")
+   "createdBy" (if m m.created-by None) "createdMs" (if m m.created-ms None)
+   "updatedBy" (if m m.updated-by None) "updatedMs" (if m m.updated-ms None)
+   "spec" view.spec "status" (| view.status (observed-json view.observed))})
+
+
 (defn #^ object reply-json [#^ object body]  ; defk にできない: 返事の答え手と検の入口 responded(Program の外)が呼ぶ純粋な綴り
   "返事の本文の型の値を、外へ見せる JSON の形にする(#2595 の前に core が組んでいた形と同じ)。型にしていない本文はそのまま返す。"
   (cond
@@ -93,6 +125,9 @@
                                         "drains" (dfor #(n d) (.items body.drains) n (drain-progress-json d))})
     (isinstance body HeartbeatReply) (heartbeat-reply-json body)
     (isinstance body WorkerDrainView) (worker-drain-view-json body)
+    (isinstance body ResourceView) (resource-view-json body)
+    (isinstance body ResourceList)
+      {"kind" body.kind "revision" body.revision "items" (lfor v body.items (resource-view-json v))}
     True body))
 
 

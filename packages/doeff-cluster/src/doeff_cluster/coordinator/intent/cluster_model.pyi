@@ -352,6 +352,42 @@ class LiveProcess:
     revision: str | None
     retired: bool
 
+@dataclass(frozen=True, kw_only=True)
+class ServiceObserved:
+    ready_reason: str
+    last_readiness: dict[str, object] | None
+    process: object | None
+    version: VersionVerdict
+    running: tuple[LiveProcess, ...]
+
+@dataclass(frozen=True, kw_only=True)
+class WorkerObserved:
+    silent_ms: int
+    alive: bool
+
+@dataclass(frozen=True, kw_only=True)
+class TaskObserved:
+    task: TaskRecord
+
+@dataclass(frozen=True, kw_only=True)
+class RolloutObserved:
+    observed: dict[str, dict[str, object] | None]
+
+@dataclass(frozen=True, kw_only=True)
+class ResourceView:
+    kind: str
+    name: str
+    meta: ResourceMeta | None
+    spec: dict[str, object]
+    status: dict[str, object]
+    observed: ServiceObserved | WorkerObserved | TaskObserved | RolloutObserved | None
+
+@dataclass(frozen=True, kw_only=True)
+class ResourceList:
+    kind: str
+    revision: int
+    items: tuple[ResourceView, ...]
+
 @dataclass(frozen=True)
 class ClusterNaming:
     owner_annotation: str = "doeff-cluster/replicas-owned-by"
