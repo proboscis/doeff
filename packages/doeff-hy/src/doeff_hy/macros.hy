@@ -581,6 +581,32 @@ defk {name}: :post type annotation cannot be an empty string.
       `(setv (annotate ~(_result-symbol last-form) ~(hy.models.String return-source))
              ~last-form)))
 
+(defn _writes-yield? [form]
+  "form の中のどこかに yield / yield-from の式が在るか(入れ子の fn の中も数える — 注記を外す側に倒す判定)。"
+  (match form
+    (hy.models.Expression)
+      (or (and (> (len form) 0) (isinstance (get form 0) hy.models.Symbol)
+               (in (str (get form 0)) #{"yield" "yield-from"}))
+          (any (gfor item form (_writes-yield? item))))
+    (| (hy.models.List) (hy.models.Tuple) (hy.models.Set) (hy.models.Dict))
+      (any (gfor item form (_writes-yield? item)))
+    _ False))
+
+(defn _annotates-return? [kleisli? return-source body]
+  "関数の頭(返り値の注記)に契約の `(: % T)` の T を書くか。
+
+   - deff(普通の関数): 契約に型が在れば書く(実行時も型検査の時も・今までどおり)。
+   - defk: 型検査のための展開(`_static-view?`)の時だけ書く。その展開では `<-` と `(! …)` が `_doeff_perform` に
+     なり本体に yield が無いので、関数は答え T を返す普通の関数で、`do` の型(static_types.pyi)が
+     `Expand[T, Never]` にする。注記が無いと、自分を呼び直す defk では pyright が答えの型を推せず(推論の途中の
+     自分の呼びは Unknown)、呼び直しの答えを束ねた名と返り値が Unknown の strict の赤になった(agora-redesign #2308)。
+     書き手が本体に yield を直に書いた defk は生成器なので書かない(T は生成器の返り値の注記にならない)。
+     実行時の展開は今までどおり書かない — 実行時の defk は生成器で、T の注記は食い違う。"
+  (cond
+    (is return-source None) False
+    (not kleisli?) True
+    True (and (_static-view?) (not (any (gfor form body (_writes-yield? form)))))))
+
 (defn _build-fn-with-contracts [decorators name params pre-checks post-checks real-body]
   "Build a defn form with pre/post assertion wrappers.
    Works for both plain functions (deff) and generator/kleisli functions (defk).
@@ -600,11 +626,12 @@ defk {name}: :post type annotation cannot be an empty string.
   ;; 注記せず、結果を入れる局所変数 `_contract_result` に T を注記する(`_result-binding`)
   ;; — 生成器かどうか(本体に yield が在るか)を macro が判定せずに、最後の式の型を T と
   ;; 突き合わせられる。局所変数の注記は実行時に評価されない。
+  ;; 型検査のための展開の defk は生成器でないので、戻り値にも T を注記する(`_annotates-return?` — agora-redesign #2308)。
   (setv params (_annotate-params params (_contract-types pre-checks))
         return-source (.get (_contract-types post-checks) "%"))
-  (setv head (if (or kleisli? (is return-source None))
-                 name
-                 `(annotate ~name ~(hy.models.String return-source))))
+  (setv head (if (_annotates-return? kleisli? return-source real-body)
+                 `(annotate ~name ~(hy.models.String return-source))
+                 name))
   (setv guard-stmt
     (if kleisli?
         `(_guard-performed _contract_result ~(str name))

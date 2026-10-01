@@ -21,6 +21,9 @@
   typed_resume / typed_transfer が代わるので使わない)
 - deftest の関数: 引数に fixture の型の注記(DEFTEST_FIXTURE_TYPES)・返り値 None・decorator の pytest は
   `_doeff_pytest`(agora-redesign #2214 — 実行時の展開は注記なしで interpreter の答えを返す)
+- defk の返り値: `:post` の `(: % T)` の T を注記する(agora-redesign #2308 — この展開の defk は yield の無い
+  普通の関数なので、自分を呼び直す defk でも答えの型を推論に頼らず読める。実行時の defk は生成器なので付けない・
+  macros.hy の `_annotates-return?`)
 
 所見の受け渡し(ADR-DOE-HY-006): val / var の検査のうち展開を止めない物(setv の使用・同じ名前の
 束縛し直し・defhandler の旧い lazy-val / set!)は、macro が `report_findings` に渡す。doeff-hy-check が
