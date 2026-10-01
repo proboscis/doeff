@@ -397,6 +397,17 @@ defk {name}: :post must include a return type check (: % Type).
           `(annotate ~p ~(hy.models.String (get types (str (get p 0)))))
         True p))))
 
+(defn _static-pre-type-check? [target phase]
+  "型検査のための展開(`_static-view?`)で、引数の型の契約 `(: x T)`(:pre の x が名)の isinstance を出さない所か(agora-redesign #2512)。
+   引数の型は契約から書く注記(_annotate-params・defeffect の欄の注記)が運ぶので、型検査には isinstance が要らない。出すと、要素の型
+   つきの総称型を含む型の別名(例 `JsonBody = Mapping[str, JsonBody] | tuple[JsonBody, ...] | …` を型検査の時だけ書く形 —
+   doeff_hy/json_value.py と同じ)が『isinstance の第 2 引数は型でない』の赤になり、別名に要素の型を書けなかった。実行の時の展開は
+   変えない(今までどおり isinstance で断る)。:post の `(: % T)` は本体の答えを絞る形に頼る書き手が在るので出したままにする。"
+  (and (_static-view?)
+       (in phase #("pre-condition" ":pre"))
+       (isinstance target hy.models.Symbol)
+       (!= (str target) "%")))
+
 (defn _expand-check [check fn-name phase]
   "Expand a single contract check into an assert form.
    (: x T) → isinstance assert with clear type error message.
@@ -405,7 +416,8 @@ defk {name}: :post must include a return type check (: % Type).
   (if (_is-type-check check)
       (let [target (get check 1)
             tp (get check 2)]
-        (if (isinstance tp hy.models.String)
+        (cond
+          (isinstance tp hy.models.String)
             ;; String literal — documentation-only, no runtime check
             (do
               (when (not (.strip (str tp)))
@@ -418,6 +430,9 @@ defk {name}: :post type annotation cannot be an empty string.
     (: % \"list of matched handler results\")
 " :name fn-name))))
               '(do))
+          (_static-pre-type-check? target phase)
+            '(do)
+          True
             (let [target-label (if (= (str target) "%") "return value" (str target))]
               `(assert (isinstance ~target ~(_runtime-type tp))
                        (+ ~(+ (str fn-name) ": " phase " type error: `" target-label "` expected " (str tp) ", got ")
