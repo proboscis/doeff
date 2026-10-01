@@ -4793,19 +4793,21 @@ fn environment_branches_hit_only_in_the_declared_business_layers() {
 
 /// agora-redesign #2036: match の class pattern の keyword の欄の名に `-` が在れば、層の置き場のどの Hy の file でも critical で当てる
 /// (Hy が keyword を属性名へ mangle しないので決して当たらない節)。`_` で書いた欄・位置引数の pattern・節の本体の keyword は当てない。
+/// defk の form の中は doeff-hy が欄の名を属性名へ直す(doeff_hy/match_fields.py)ので当てない。
 #[test]
 fn hyphenated_fields_in_match_class_patterns_hit_in_every_layer() {
     let files = [
-        ("app/billing/core/rules.hy", tags("billing", "judgment") + "(defk kind-of [r] (match r (Rec :ended-reason None) 0 _ 1))\n"),
-        ("app/billing/entry/wiring.hy", tags("billing", "entry") + "(defk choose [r] (match r (Rec :a-b 1) 0 _ 1))\n"),
-        ("app/billing/core/fixed.hy", tags("billing", "judgment") + "(defk kind-of [r] (match r (Rec :ended_reason None) 0 (Rec None 1) 2 _ (Rec :a-b 1)))\n"),
+        ("app/billing/core/rules.hy", tags("billing", "judgment") + "(deff kind-of [r] (match r (Rec :ended-reason None) 0 _ 1))\n"),
+        ("app/billing/entry/wiring.hy", tags("billing", "entry") + "(defhandler choose (Pick [r] (resume (match r (Rec :a-b 1) 0 _ 1))))\n"),
+        ("app/billing/core/fixed.hy", tags("billing", "judgment") + "(deff kind-of [r] (match r (Rec :ended_reason None) 0 (Rec None 1) 2 _ (Rec :a-b 1)))\n"),
+        ("app/billing/core/inside_defk.hy", tags("billing", "judgment") + "(defk kind-of [r] (match r (Rec :ended-reason None) 0 _ 1))\n"),
     ];
     let dir = world_repo_with(&files, "", "[\"DOEFF169\"]");
     let (_, report) = editor(dir.path());
     assert_eq!(
         keys(&report, "DOEFF169"),
         vec!["app/billing/core/rules.hy::DOEFF169::Rec:ended-reason", "app/billing/entry/wiring.hy::DOEFF169::Rec:a-b"],
-        "`-` の在る欄の名は層を問わず当て、`_` の欄・位置引数・節の本体は当てない: {}",
+        "`-` の在る欄の名は層を問わず defk の外で当て、`_` の欄・位置引数・節の本体・defk の中は当てない: {}",
         report
     );
     let hit = violation(&report, "app/billing/core/rules.hy::DOEFF169::Rec:ended-reason");

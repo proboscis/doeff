@@ -2,12 +2,15 @@
 //!
 //! Hy 1.3.1 の `match` は class pattern の keyword を属性名へ mangle しないまま Python の `case` に出す:
 //! `(match r (Rec :ended-reason None) …)` は `case Rec(ended-reason=None):` になり、属性 `ended-reason` はどの値にも無いので、
-//! その節は defk の中でも外でも、値が何でも当たらない(黙って次の節 — 多くは既定の `_` — に倒れる)。欄の名を `:ended_reason` と
-//! `_` で書けば当たる。当てる形(Hy の form の木):
+//! その節は値が何でも当たらない(黙って次の節 — 多くは既定の `_` — に倒れる)。欄の名を `:ended_reason` と `_` で書けば当たる。
+//! 当てる形(Hy の form の木):
 //!   * `(match 主語 型 本体 …)` の各節の型(`:if` の守りは型に数えない)の中の class pattern — 頭が記号(`|` を除く)の丸括弧の form —
 //!     の keyword の引数で、名(`:` の後)に `-` を含む物。型の中の入れ子(`[…]`・`#(…)`・`{…}`・class pattern の引数)も辿る。
 //! 位置引数の pattern・`_` で書いた keyword・型の外の keyword(本体・守り・呼び)は当たらない。註・`#_` で読み捨てた form・quote した
 //! form も数えない。
+//! `(defk …)` の form の中(引数・契約・本体)も当てない — defk は展開の時に、中の match の class pattern の欄の名を `hy.mangle` で
+//! 属性名へ直す(doeff-hy の doeff_hy/match_fields.py — Hy は直さない回避・ADR-DOE-HY-008)ので、そこでは `:ended-reason` が
+//! 正しい綴りとして当たる。この規則は defk の外(deff・defn・deftest・defhandler・module の直下など)を守る。
 
 use doeff_indexer::hy_index::reader::{Form, Node, Prefix, Reader};
 
@@ -41,12 +44,15 @@ struct Judge<'a> {
 }
 
 impl Judge<'_> {
-    /// form の木を歩き、`match` の節の型を判じる(quote した form と読み捨てた form には入らない)。
+    /// form の木を歩き、`match` の節の型を判じる(quote した form・読み捨てた form・defk の form には入らない)。
     fn walk(&self, form: &Form, out: &mut Vec<HyphenFieldHit>) {
         if let Some(items) = form.paren_items() {
             let head = items.first().filter(|f| matches!(f.node, Node::Symbol)).map(|f| self.text(f));
-            if head == Some("match") {
-                self.judge_match(&items[1..], out);
+            match head {
+                // defk の中は doeff-hy が欄の名を属性名へ直す(doeff_hy/match_fields.py)ので、`-` の綴りで当たる。
+                Some("defk") => return,
+                Some("match") => self.judge_match(&items[1..], out),
+                _ => {}
             }
         }
         match &form.node {
@@ -106,19 +112,32 @@ mod tests {
 
     #[test]
     fn hyphenated_keyword_fields_in_class_patterns_hit() {
-        assert_eq!(fields("(defk f [r] (match r (Rec :ended-reason None :usage None) 0 _ 1))\n"), vec!["Rec:ended-reason"]);
-        assert_eq!(fields("(defk f [r] (match r [(Rec :a-b 1) x] 0 _ 1))\n"), vec!["Rec:a-b"], "入れ子の型の中も当たる");
-        assert_eq!(fields("(defk f [r] (match r (Outer :inner (Inner :x-y 2)) 0 _ 1))\n"), vec!["Inner:x-y"], "class pattern の引数の中も当たる");
-        assert_eq!(fields("(defk f [r] (match r x :if (> x 1) 0 (mod.Rec :a-b 1) 1))\n"), vec!["mod.Rec:a-b"], ":if の守りの後の節の型も当たる");
-        assert_eq!(fields("(defk f [r] (match r (| (A :a-b 1) (B :c 2)) 0 _ 1))\n"), vec!["A:a-b"], "| の中の class pattern も当たる");
+        assert_eq!(fields("(deff f [r] (match r (Rec :ended-reason None :usage None) 0 _ 1))\n"), vec!["Rec:ended-reason"]);
+        assert_eq!(fields("(defn f [r] (match r [(Rec :a-b 1) x] 0 _ 1))\n"), vec!["Rec:a-b"], "入れ子の型の中も当たる");
+        assert_eq!(fields("(deftest t (match r (Outer :inner (Inner :x-y 2)) 0 _ 1))\n"), vec!["Inner:x-y"], "class pattern の引数の中も当たる");
+        assert_eq!(fields("(defhandler h (E [r] (match r x :if (> x 1) 0 (mod.Rec :a-b 1) 1)))\n"), vec!["mod.Rec:a-b"], ":if の守りの後の節の型も当たる");
+        assert_eq!(fields("(setv kind (match r (| (A :a-b 1) (B :c 2)) 0 _ 1))\n"), vec!["A:a-b"], "| の中の class pattern も当たる");
     }
 
     #[test]
     fn underscore_fields_positional_patterns_and_keywords_outside_patterns_do_not_hit() {
-        assert!(fields("(defk f [r] (match r (Rec :ended_reason None) 0 _ 1))\n").is_empty(), "_ で書いた欄は当たらない");
-        assert!(fields("(defk f [r] (match r (Rec None 1) 0 _ 1))\n").is_empty(), "位置引数の pattern は当たらない");
-        assert!(fields("(defk f [r] (match r _ (Rec :a-b 1)))\n").is_empty(), "節の本体の keyword(呼び)は当たらない");
-        assert!(fields("(defk f [r] (match r x :if (g :a-b 1) 0 _ 1))\n").is_empty(), "守りの keyword は当たらない");
-        assert!(fields("(defk f [] (Rec :a-b 1))\n;; (match r (Rec :a-b 1) 0)\n'(match r (Rec :a-b 1) 0)\n#_(match r (Rec :a-b 1) 0)\n").is_empty(), "match の外・註・quote・読み捨ては当たらない");
+        assert!(fields("(deff f [r] (match r (Rec :ended_reason None) 0 _ 1))\n").is_empty(), "_ で書いた欄は当たらない");
+        assert!(fields("(deff f [r] (match r (Rec None 1) 0 _ 1))\n").is_empty(), "位置引数の pattern は当たらない");
+        assert!(fields("(deff f [r] (match r _ (Rec :a-b 1)))\n").is_empty(), "節の本体の keyword(呼び)は当たらない");
+        assert!(fields("(deff f [r] (match r x :if (g :a-b 1) 0 _ 1))\n").is_empty(), "守りの keyword は当たらない");
+        assert!(fields("(deff f [] (Rec :a-b 1))\n;; (match r (Rec :a-b 1) 0)\n'(match r (Rec :a-b 1) 0)\n#_(match r (Rec :a-b 1) 0)\n").is_empty(), "match の外・註・quote・読み捨ては当たらない");
+    }
+
+    /// defk の form の中は doeff-hy が欄の名を属性名へ直すので当てない(入れ子の defk・defk の中の fnk も)。defk の外は当てる。
+    #[test]
+    fn match_inside_defk_is_left_to_the_doeff_hy_workaround() {
+        assert!(fields("(defk f [r] (match r (Rec :ended-reason None :usage None) 0 _ 1))\n").is_empty(), "defk の本体の match は当てない");
+        assert!(fields("(defk f [r] {:pre [(match r (Rec :a-b 1) True _ False)] :post [(: % int)]} 0)\n").is_empty(), "defk の契約の match も当てない");
+        assert!(fields("(defn outer [] (defk inner [r] (fnk [x] (match x (Rec :a-b 1) 0 _ 1))))\n").is_empty(), "defn の中の defk の中の fnk も当てない");
+        assert_eq!(
+            fields("(defk f [r] (match r (Rec :a-b 1) 0 _ 1))\n(deff g [r] (match r (Rec :c-d 1) 0 _ 1))\n"),
+            vec!["Rec:c-d"],
+            "同じ file でも defk の外の match は当てる"
+        );
     }
 }

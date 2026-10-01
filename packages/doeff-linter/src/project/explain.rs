@@ -351,7 +351,7 @@ impl<'a> Narrator<'a> {
             ),
             Explain::MatchFieldHyphen { placement, class, field } => (
                 format!("match の class pattern ({} :{} …) — {}", class, field, self.file_subject(placement)),
-                "Hy の match は class pattern の keyword を属性名へ mangle しないまま Python の case に出す(`:a-b` は `case Class(a-b=…)`)。属性 `a-b` はどの値にも無いので、その節は値が何でも当たらず、黙って次の節(多くは既定の `_`)に倒れる。".to_string(),
+                "Hy の match は class pattern の keyword を属性名へ mangle しないまま Python の case に出す(`:a-b` は `case Class(a-b=…)`)。属性 `a-b` はどの値にも無いので、その節は値が何でも当たらず、黙って次の節(多くは既定の `_`)に倒れる。defk の中の match は doeff-hy が欄の名を属性名へ直すので当てない(この当たりは defk の外)。".to_string(),
             ),
             Explain::EnvironmentBranch { placement, hit } => (
                 match hit {
@@ -983,7 +983,7 @@ impl<'a> Narrator<'a> {
                 instead
             )),
             Explain::RetiredCall { instead, .. } => Some(format!("{} に置き換える", instead)),
-            Explain::MatchFieldHyphen { field, .. } => Some(format!(":{} を :{} と書く — 直すと今まで当たらなかった節が当たるようになるので、その定義の検を撃つ", field, field.replace('-', "_"))),
+            Explain::MatchFieldHyphen { field, .. } => Some(format!(":{} を :{} と書くか、その match を defk の中へ移す(defk は欄の名を属性名へ直す)— 直すと今まで当たらなかった節が当たるようになるので、その定義の検を実行する", field, field.replace('-', "_"))),
             Explain::EnvironmentBranch { .. } => Some("環境で変わる振る舞いを effect にして、環境ごとの handler(本番・模擬・dry-run)に答えさせる — 業務の層の定義は環境の名も dry-run の印も読まない".to_string()),
             Explain::PlacedDependency { owner_rel, .. } => Some(format!("{} を層の置き場(<root>/<service>/<層>/)へ移すか、要る型を intent へ移して読む — 直せない既存の当たりは登録簿に載せる", owner_rel)),
             Explain::MixedConcerns { .. } => Some("形の検めは protocol の境目で defwire の型に parse し(形が合わなければ解く所で失敗)、この定義は型のある値を受けて判断だけをする".to_string()),
