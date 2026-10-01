@@ -26,7 +26,7 @@
 
 (require doeff-hy.macros [deftest defk deff <- defhandler])
 
-(import sessionhost_launch_deftests [LaunchWorld fake-launch-substrate])
+(import sessionhost_launch_deftests [LaunchWorld fake-launch-substrate under-world])
 (import sessionhost_resume_deftests [seed-source resume-params run-resume])
 (import doeff_agents.sessionhost.effects [
   FsLinkArtifact
@@ -56,7 +56,7 @@
 (defk run-resume-with-refusing-container [world params]
   {:pre [(: world LaunchWorld) (: params dict)]
    :post [(: % "SessionRow(成功時)")]}
-  (<- row ((fake-launch-substrate world)
+  (<- row (under-world world
            ((refusing-link-artifact)
             ((codex-impl "/opt/doeff-sessionhost")
              ((claude-code-impl "/opt/doeff-sessionhost")
@@ -77,7 +77,7 @@
 (defk run-resume-with-vanishing-source [world params]
   {:pre [(: world LaunchWorld) (: params dict)]
    :post [(: % "SessionRow(成功時)")]}
-  (<- row ((fake-launch-substrate world)
+  (<- row (under-world world
            ((vanishing-link-artifact)
             ((codex-impl "/opt/doeff-sessionhost")
              ((claude-code-impl "/opt/doeff-sessionhost")
