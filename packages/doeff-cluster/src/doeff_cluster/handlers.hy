@@ -28,6 +28,7 @@
 (import doeff_cluster.worker.protocol.heartbeat [env-report env-heartbeat-part heartbeat-body status-report status-row])
 (import doeff_cluster.worker.core.heartbeat_rules [warm-env-of-row finished-task-id desired-when-unreachable])
 (import doeff_cluster.foundation.ready_file [write-ready-file])
+(import doeff_cluster.worker.core.launch [job-launch child-environment env-project-dir])
 (import doeff_cluster.worker.intent.worker_model [CodeState CodeView ProcessView WorldView StopStage ProbeState ProbeView
   DesiredJobs DesiredUnreadable ReadDesired ObserveWorld WorkerStopRequested PublishStatus JobStatus EnvDisk WarmEnv
   PrepareCode PrepareEnv SweepEnvs ForgetProbes StartJob SignalJob ReapJob RetireJob ReleaseLeases ProbeEntry CodeLayout
@@ -459,27 +460,6 @@
   total)
 
 
-;; 子 process へ継ぐ worker の環境変数の許可表(実行環境の job — 2026-09-26)。これ以外(PYTHON*・HY_*・UV_* の他・LD_*・VIRTUAL_ENV・
-;; 資格を運ぶ変数)は継がない。宣言の env-vars と worker が組む DOEFF_WORKER_*・DOEFF_RUNTIME_ENV* を足す。
-(setv CHILD-ENV-ALLOWED (frozenset #("PATH" "HOME" "USER" "LOGNAME" "SHELL" "LANG" "LANGUAGE" "TZ" "TMPDIR" "TERM"
-                                     "SSL_CERT_FILE" "SSL_CERT_DIR" "UV_CACHE_DIR" "UV_PYTHON_INSTALL_DIR")))
-
-
-(defn #^ dict child-environment [#^ dict base #^ dict extra #^ dict declared #^ dict worker]  ; defk にできない: ProcessHost(Program の外の I/O の道具)が呼ぶ
-  "実行環境の job の子の環境変数: base(worker の環境)のうち許可表の物と LC_* だけ → worker の文脈(extra)→ 宣言の env-vars(declared)
-   → worker が組む DOEFF_*(worker)の順に重ねる。PYTHONPATH は置かない(import の解け先は root の venv と .pth だけ)。"
-  (| (dfor #(k v) (.items base) :if (or (in k CHILD-ENV-ALLOWED) (.startswith k "LC_")) k v)
-     extra declared worker))
-
-
-(defn #^ str env-project-dir [#^ str root #^ dict declared]  ; defk にできない: ProcessHost(Program の外の I/O の道具)が呼ぶ
-  "root と宣言の JSON → uv の --project に渡す project の dir(env_prepare.project-dir と同じ規則)。"
-  (setv project (get declared "project"))
-  (if (= (get project "path") ".")
-      (.format "{}/{}" root (get project "repo"))
-      (.format "{}/{}/{}" root (get project "repo") (get project "path"))))
-
-
 ;; 入口の検め 1 回(同じ木の束 1 本)の時間の上限(2026-09-27 に 60 → 300)。上限は import の速さを測る物ではなく、import の途中で
 ;; 固まった入口(module の直下の待ち等)を止めるための物。bytecode の無い冷えた root では、込んでいない Pod でも doeff と業務の Hy の
 ;; compile に壁時計 60 秒前後かかる(本番の実測 = CPU 60 秒)ので、60 秒は冷えた root で必ず切れて撃ち直しを繰り返した。検めは木ごとに
@@ -758,31 +738,21 @@
     (/ self.jobs-dir (.replace name "/" "_")))
 
   (defn #^ tuple launch [self #^ JobSpec spec #^ str code-path #^ str instance #^ int attempt]
-    "子の #(argv cwd 環境変数)。実行環境の job は root の venv の uv run、それ以外は今の形(木の PYTHONPATH)。"
-    ;; 子の文脈の環境変数は sim の宿(local.run-context-of)と同じ関数 process-context-environ で作る(実行環境の job だけが
-    ;; DOEFF_RUNTIME_ENV・DOEFF_RUNTIME_ENV_KEY を受ける)。pid は本番の子だけが読む欄。
-    (setv worker-env (| (run (process-context-environ spec instance attempt)) {"DOEFF_WORKER_PID" (str (os.getpid))})
-          ;; Program の job(改訂 1 の F・H): 詰めた Program の file を引数と環境変数(宿の契約 HOST-CONTRACT)で渡す。
-          program-args (if spec.program #("--program" (str (program-file self.program-dir spec.program))) #())
-          environ (dict spec.environ))
-    (when spec.program
-      (setv (get worker-env HOST-CONTRACT.program-env) (str (program-file self.program-dir spec.program))))
-    (if spec.runtime-env
-        (do (setv declared (json.loads spec.runtime-env)
-                  work (self.work-dir spec.name))
-            ;; 使った印(掃除は最後に使った時刻の古い root から消す — env_upkeep.sweep-choice)。
-            (.touch (/ (Path code-path) ".last-used"))
-            (when (.exists work) (shutil.rmtree work))
-            (.mkdir work :parents True)
-            #([sys.executable "-B" "-m" "doeff_cluster.shim" "10" "--" self.uv "run" "--no-sync" "--frozen"
-               "--project" (env-project-dir code-path declared) "hy" "-m" spec.entry #* spec.args #* program-args]
-              (str work)
-              (child-environment (dict os.environ) self.extra-env
-                                 (| (dfor v (.get declared "envVars" []) (get v "name") (get v "value")) environ)
-                                 worker-env)))
-        #([sys.executable "-B" "-m" "doeff_cluster.shim" "10" "--" self.hy-command "-m" spec.entry #* spec.args #* program-args]
-          code-path
-          (| (dict os.environ) self.extra-env environ {"PYTHONPATH" (.pythonpath self.layout code-path)} worker-env))))
+    "子の #(argv cwd 環境変数)。起こし方の判断は worker/core/launch の job-launch(#2464)— ここは worker の process の値を渡し、
+     実行環境の job の使った印と空の作業 dir を作る I/O だけを行う。"
+    (setv program-path (if spec.program (str (program-file self.program-dir spec.program)) None)
+          plan (run (job-launch spec code-path instance attempt :python sys.executable :hy-command self.hy-command :uv self.uv
+                                :extra-env self.extra-env :layout self.layout :base-env (dict os.environ) :worker-pid (os.getpid)
+                                :program-path program-path :program-env HOST-CONTRACT.program-env
+                                :work-dir (str (self.work-dir spec.name)))))
+    (when plan.last-used
+      ;; 使った印(掃除は最後に使った時刻の古い root から消す — env_upkeep.sweep-choice)。
+      (.touch (Path plan.last-used)))
+    (when plan.work-dir
+      (setv work (Path plan.work-dir))
+      (when (.exists work) (shutil.rmtree work))
+      (.mkdir work :parents True))
+    #((list plan.argv) plan.cwd (dfor e plan.env e.name e.value)))
 
   (defn #^ None start [self #^ StartJob action]
     (setv spec action.spec)

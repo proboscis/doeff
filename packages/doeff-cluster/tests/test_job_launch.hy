@@ -1,0 +1,41 @@
+;; worker の job の子 process の起こし方の判断 job-launch(worker/core/launch — #2464)を、子 process を起こさずに確かめる。
+;;   木の job      … worker の環境(base-env)の上に文脈・宣言の environ・PYTHONPATH を重ね、cwd = 木。
+;;   実行環境の job … worker の環境から許可表の名と LC_* だけを継ぎ、宣言の env-vars を重ね、PYTHONPATH を置かず、cwd = 空の作業 dir。
+;;   Program の job … 詰めた Program の file を引数(--program)と宿の契約の環境変数で渡す。
+(require doeff-hy.macros [deftest <- val])
+(import json)
+(import doeff_core_effects.process_effects [EnvEntry])
+(import doeff_cluster.shared.intent.job_model [JobSpec])
+(import doeff_cluster.worker.intent.worker_model [CodeLayout])
+(import doeff_cluster.worker.core.launch [job-launch JobLaunch])
+
+(val BASE {"PATH" "/usr/bin" "HOME" "/home/w" "LC_ALL" "C.UTF-8" "SECRET_TOKEN" "x" "VIRTUAL_ENV" "/venv"})
+(val RUNTIME (json.dumps {"project" {"repo" "app" "path" "."} "envVars" [{"name" "DECLARED" "value" "1"}]}))
+
+
+(deftest test-a-tree-job-runs-on-the-worker-environment-with-the-tree-on-the-path
+  (val spec (JobSpec "svc" "app.main" #("service") "rev1" :environ #(#("MODE" "fast"))))
+  (<- plan JobLaunch (job-launch spec "/cache/rev1" "1-abc" 1 :python "/py" :hy-command "/bin/hy" :uv "uv" :extra-env {"DOEFF_WORKER_NAME" "w1"}
+                                 :layout (CodeLayout) :base-env BASE :worker-pid 42 :program-path None :program-env "DOEFF_PROGRAM_FILE"
+                                 :work-dir "/jobs/svc"))
+  (val env (dfor e plan.env e.name e.value))
+  (assert (= plan.argv #("/py" "-B" "-m" "doeff_cluster.shim" "10" "--" "/bin/hy" "-m" "app.main" "service")) plan.argv)
+  (assert (= plan.cwd "/cache/rev1") plan.cwd)
+  (assert (= #((get env "SECRET_TOKEN") (get env "PYTHONPATH") (get env "MODE") (get env "DOEFF_WORKER_PID")) #("x" "/cache/rev1" "fast" "42")) env)
+  (assert (= #(plan.work-dir plan.last-used) #(None None)) plan))
+
+
+(deftest test-a-runtime-env-job-inherits-only-the-allowed-worker-environment
+  (val spec (JobSpec "task/t1" "doeff_cluster.job_entry" #("task") "rev1" :runtime-env RUNTIME :env-key "k1"))
+  (<- plan JobLaunch (job-launch spec "/roots/env-k1" "1-abc" 1 :python "/py" :hy-command "/bin/hy" :uv "uv" :extra-env {}
+                                 :layout (CodeLayout) :base-env BASE :worker-pid 42 :program-path "/state/programs/s.json"
+                                 :program-env "DOEFF_PROGRAM_FILE" :work-dir "/jobs/task_t1"))
+  (val env (dfor e plan.env e.name e.value))
+  ;; 許可表の名と LC_* だけを継ぎ、資格を運びうる名・venv の名・PYTHONPATH は置かない。宣言の env-vars と Program の file を足す。
+  (assert (= #((get env "PATH") (get env "LC_ALL") (get env "DECLARED") (get env "DOEFF_PROGRAM_FILE")) #("/usr/bin" "C.UTF-8" "1" "/state/programs/s.json")) env)
+  (assert (not (& (set env) #{"SECRET_TOKEN" "VIRTUAL_ENV" "PYTHONPATH"})) env)
+  (assert (= (cut plan.argv 6 None) #("uv" "run" "--no-sync" "--frozen" "--project" "/roots/env-k1/app" "hy" "-m" "doeff_cluster.job_entry"
+                                      "task" "--program" "/state/programs/s.json")) plan.argv)
+  (assert (= #(plan.cwd plan.work-dir plan.last-used) #("/jobs/task_t1" "/jobs/task_t1" "/roots/env-k1/.last-used")) plan)
+  ;; 環境変数は名の順(StartProcess の env にそのまま渡せる形)。
+  (assert (= (lfor e plan.env e.name) (sorted env)) plan.env))

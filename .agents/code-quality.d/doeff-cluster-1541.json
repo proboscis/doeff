@@ -564,7 +564,8 @@
         "doeff-cluster-worker-heartbeat",
         "doeff-cluster-worker-heartbeat-rules",
         "doeff-cluster-ready-file",
-        "doeff-cluster-code-plan"
+        "doeff-cluster-code-plan",
+        "doeff-cluster-worker-launch"
       ],
       "layer": "io",
       "name": "doeff-cluster-handlers",
@@ -1382,7 +1383,8 @@
         "doeff-cluster-worker-heartbeat",
         "doeff-cluster-code-model",
         "doeff-cluster-code-plan",
-        "doeff-cluster-code-prepare-program"
+        "doeff-cluster-code-prepare-program",
+        "doeff-cluster-worker-launch"
       ],
       "exclude": [
         "packages/doeff-cluster/tests/fixtures/independence/*"
@@ -1955,6 +1957,23 @@
         "packages/doeff-cluster/src/doeff_cluster/worker/core/code_prepare.hy"
       ],
       "responsibility": "コードの木の bytecode の準備の Program と、本物と模擬の答え手が通る判断。",
+      "typed": true
+    },
+    {
+      "allow": [
+        "doeff-cluster-job-context",
+        "doeff-cluster-job-model",
+        "doeff-cluster-worker-model"
+      ],
+      "layer": "io",
+      "name": "doeff-cluster-worker-launch",
+      "paths": [
+        "packages/doeff-cluster/src/doeff_cluster/worker/core/launch.hy"
+      ],
+      "public": [
+        "packages/doeff-cluster/src/doeff_cluster/worker/core/launch.hy"
+      ],
+      "responsibility": "worker が job の子 process を起こす形の判断(命令の並び・cwd・子の環境変数・作業 dir と使った印)。",
       "typed": true
     }
   ],
