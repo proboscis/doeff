@@ -129,6 +129,7 @@
 (import .detached [detached-path detached-submit-body detached-refusal submit-unreachable awaited-answer runner-facts-of-view
                    runners-unreachable warm-request-body warm-path absent-warm-state SERVER-ERROR warm-unconnected
                    warm-server-failure runners-change-of watch-query])
+(import doeff_cluster.shared.core.capabilities [env-mapping])
 (import doeff_cluster.shared.intent.detached_model [SubmitDetached AwaitDetached CancelDetached ReleaseDetached ReadRunners DetachedSubmitted
                          DetachedSubmitAnswer DetachedAwaited RunnersUnreachable WARMING-PHASE AwaitRunnersChange RunnersChangeAnswer])
 (import .drain_client [drain-request DRAIN-DEADLINE-SECONDS DRAIN-TTL-MARGIN-SECONDS])
@@ -1166,7 +1167,9 @@
     (<- outcome (remote-outcome link program needs name environ))
     (resume (settled-value outcome)))
   (SubmitDetached [program key needs name lease-seconds retain-seconds environ]
-    (<- submitted (submit-detached link program key needs name (float lease-seconds) (float retain-seconds) environ))
+    ;; 本番の detached-cluster と同じく、effect の EnvVar の tuple を本文の形(名 → 値の object)へ綴ってから送る(#2179)。
+    (<- environ-body dict (env-mapping environ))
+    (<- submitted (submit-detached link program key needs name (float lease-seconds) (float retain-seconds) environ-body))
     (resume submitted))
   (AwaitDetached [key timeout-seconds]
     (<- awaited (await-detached link key timeout-seconds))

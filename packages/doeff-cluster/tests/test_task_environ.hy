@@ -71,18 +71,31 @@
   ;; 置き場を名指す名(_TOKEN_FILE・_KEY_DIR)は通る。既定は空。
   (val program (based-add 1))
   (assert (= (. (RemoteJob program :needs NET) environ) {}))
-  (assert (= (. (SubmitDetached program "k" :needs NET) environ) {}))
+  (assert (= (. (SubmitDetached program "k" :needs NET) environ) #()))
   (for [bad [{"DOEFF_WORKER_JOB" "x"} {"PYTHONPATH" "/x"} {"PATH" "/bin"} {"ROWS_TOKEN" "t"} {"API_KEY" "k"}
              {"DB_PASSWORD" "p"} {"HOOK_SECRET" "s"} {"lower_case" "x"} {"ROWS_URL" 1}]]
     (with [raised (pytest.raises TypeError)]
       (RemoteJob program :needs NET :environ bad))
     (assert (in "RemoteJob.environ" (str raised.value)) raised.value)
-    (with [raised (pytest.raises TypeError)]
-      (SubmitDetached program "k" :needs NET :environ bad))
-    (assert (in "SubmitDetached.environ" (str raised.value)) raised.value))
+    ;; SubmitDetached は EnvVar の tuple で受ける(#2179)— 名と値の規則は EnvVar を作る所で同じく断る。
+    (with [(pytest.raises #(TypeError RuntimeEnvInvalid))]
+      (SubmitDetached program "k" :needs NET :environ (tuple (gfor #(k v) (.items bad) (EnvVar :name k :value v))))))
   (val fine {"ROWS_TOKEN_FILE" "/etc/rows/token" "ROWS_KEY_DIR" "/etc/rows" URL-NAME URL})
+  (val fine-vars (tuple (gfor k (sorted fine) (EnvVar :name k :value (get fine k)))))
   (assert (= (. (RemoteJob program :needs NET :environ fine) environ) fine))
-  (assert (= (. (SubmitDetached program "k" :needs NET :environ fine) environ) fine)))
+  (assert (= (. (SubmitDetached program "k" :needs NET :environ fine-vars) environ) fine-vars)))
+
+
+(deftest test-submit-detached-refuses-a-mapping-and-a-repeated-name
+  ;; 失敗ケース(#2179): SubmitDetached.environ に名 → 値の写像をそのまま渡すと作る時に断る(型の組だけを受ける)。名が重なる組も
+  ;; 断る(本文の写像に綴ると片方が黙って消える)。
+  (val program (based-add 1))
+  (with [raised (pytest.raises TypeError)]
+    (SubmitDetached program "k" :needs NET :environ {URL-NAME URL}))
+  (assert (in "EnvVar の tuple" (str raised.value)) raised.value)
+  (with [raised (pytest.raises TypeError)]
+    (SubmitDetached program "k" :needs NET :environ #((EnvVar :name URL-NAME :value URL) (EnvVar :name URL-NAME :value "other"))))
+  (assert (in "名が重なる" (str raised.value)) raised.value))
 
 
 (deftest test-the-secret-name-rule-is-the-one-of-env-var-and-the-service-environ
@@ -238,7 +251,7 @@
   "筋書き: 同じ Program((environ-reader) で名を読む)を RemoteJob と SubmitDetached で :environ つきで送り、答えを返す。"
   (<- remote str (RemoteJob (environ-read URL-NAME) :needs LOCAL :environ {URL-NAME URL}))
   (<- submitted DetachedSubmitted (SubmitDetached (environ-read URL-NAME) :key "sim-env" :needs LOCAL
-                                                  :environ {URL-NAME "http://detached.invalid"}))
+                                                  :environ #((EnvVar :name URL-NAME :value "http://detached.invalid"))))
   (<- awaited (AwaitDetached "sim-env"))
   #(remote submitted awaited))
 
