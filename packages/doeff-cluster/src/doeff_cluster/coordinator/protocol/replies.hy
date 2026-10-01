@@ -9,7 +9,11 @@
 (import json)
 (import doeff_cluster.shared.intent.job_model [JobSpec])
 (import doeff_cluster.coordinator.intent.cluster_model [EventsView StateReply StateView HeartbeatReply TaskOffer DrainPhase DrainProgress WorkerDrainView
-                                                       ServiceObserved WorkerObserved TaskObserved RolloutObserved ResourceView ResourceList VersionVerdict ErrorReply RowConflict])
+                                                       ServiceObserved WorkerObserved TaskObserved RolloutObserved ResourceView ResourceList VersionVerdict ErrorReply RowConflict
+                                                       BoardUsage BoardRead BoardWritten BoardConflict BoardRefused])
+(import doeff [run])
+(import doeff_hy.wire [dump])
+(import doeff_cluster.shared.intent.semaphore_model [LeaseAnswer])
 (import doeff_cluster.coordinator.core.cluster_policy [job-to-json task-summary status-row-to-json])
 (import doeff_cluster.coordinator.protocol.state_json [audit-event-to-json])
 
@@ -130,6 +134,26 @@
      (if reply.fault {"fault" True} {})))
 
 
+(defn #^ dict board-usage-json [#^ BoardUsage usage]
+  "盤の使い方と上限 → JSON の形(容量で断った答えの usage — #2614 の前に cluster_policy.board-usage が組んでいた形と同じ)。"
+  {"rows" usage.rows "bytes" usage.bytes "expiring" usage.expiring
+   "maxRows" usage.max-rows "maxBytes" usage.max-bytes "maxValueBytes" usage.max-value-bytes})
+
+
+(defn #^ dict board-answer-json [#^ (| BoardRead BoardWritten BoardConflict BoardRefused) answer]
+  "盤の口の答え → JSON の形(#2614 の前に api_policy.respond-board と cluster_policy.board-write が組んでいた形と同じ)。"
+  (cond
+    (isinstance answer BoardRead)
+      (dfor e answer.entries e.key (if answer.with-versions {"value" e.value "resourceVersion" e.version} e.value))
+    (isinstance answer BoardWritten) {"ok" True "resourceVersion" answer.version}
+    (isinstance answer BoardConflict)
+      (| {"ok" False "current" answer.current "resourceVersion" answer.version}
+         (if (is answer.reason None) {} {"error" answer.reason}))
+    True
+      (| {"ok" False "error" answer.reason}
+         (if (is answer.usage None) {} {"usage" (board-usage-json answer.usage)}))))
+
+
 (defn #^ object reply-json [#^ object body]  ; defk にできない: 返事の答え手と検の入口 responded(Program の外)が呼ぶ純粋な綴り
   "返事の本文の型の値を、外へ見せる JSON の形にする(#2595 の前に core が組んでいた形と同じ)。型にしていない本文はそのまま返す。"
   (cond
@@ -141,6 +165,9 @@
     (isinstance body HeartbeatReply) (heartbeat-reply-json body)
     (isinstance body WorkerDrainView) (worker-drain-view-json body)
     (isinstance body ErrorReply) (error-reply-json body)
+    (isinstance body #(BoardRead BoardWritten BoardConflict BoardRefused)) (board-answer-json body)
+    ;; lease の答えは wire の型(4 つの欄をいつも書く — semaphore_model.LeaseAnswer の註)。
+    (isinstance body LeaseAnswer) (run (dump body))
     (isinstance body ResourceView) (resource-view-json body)
     (isinstance body ResourceList)
       {"kind" body.kind "revision" body.revision "items" (lfor v body.items (resource-view-json v))}

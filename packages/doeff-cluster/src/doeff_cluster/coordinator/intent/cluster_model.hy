@@ -563,6 +563,50 @@
   (setv #^ bool fault False))
 
 
+(defrecord BoardUsage
+  "盤の使い方と上限(cluster_policy.board-usage — #2614): rows = 行の数・bytes = 値の合計の byte 数・expiring = 期限つきの行の数・
+   max-rows / max-bytes / max-value-bytes = 上限。容量の判断・計器・容量で断った答えが読む。"
+  (#^ int rows)
+  (#^ int bytes)
+  (#^ int expiring)
+  (#^ int max-rows)
+  (#^ int max-bytes)
+  (#^ int max-value-bytes))
+
+
+(defrecord BoardEntryView
+  "GET /board の答えの行 1 つ: key・value = 書かれた値(JSON の値のまま)・version = 行の版。"
+  (#^ str key)
+  (#^ object value)
+  (#^ int version))
+
+
+(defrecord BoardRead
+  "GET /board の答え(#2614): entries = 前置きに合う行(鍵の順)・with-versions = 版も見せるか(問いの withVersions)。JSON の形
+   (鍵 → 値、または鍵 → {value resourceVersion})は coordinator/protocol/replies が綴る。"
+  (#^ (get tuple #(BoardEntryView ...)) entries)
+  (#^ bool with-versions))
+
+
+(defrecord BoardWritten
+  "盤の書きが通った答え(cluster_policy.board-write — #2614): version = 行の新しい版(消した時は None)。"
+  (#^ (| int None) version))
+
+
+(defrecord BoardConflict
+  "盤の compare-and-set が合わなかった答え(409): current = いまの値・version = いまの版・reason = lease の行を追い出せない理由
+   (lease の行への直の書きの時だけ)。"
+  (#^ object current)
+  (#^ int version)
+  (setv #^ (| str None) reason None))
+
+
+(defrecord BoardRefused
+  "盤の書きを断った答え: reason = 理由・usage = 盤の使い方(容量で断った時だけ — 507)。期限の誤りは 400。"
+  (#^ str reason)
+  (setv #^ (| BoardUsage None) usage None))
+
+
 (defclass [(dataclass :frozen True)] ClusterNaming []
   "クラスタが外の系(k8s の Deployment・Node)と取り交わす名。どれも配備する側(composition root の引数)が決める。
    owner-annotation = Rollout が台数を持つ Deployment に付ける annotation の鍵。

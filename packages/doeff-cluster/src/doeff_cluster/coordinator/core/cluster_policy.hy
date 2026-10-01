@@ -12,7 +12,7 @@
 (import doeff_cluster.shared.intent.job_model [JobSpec])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming Request BodyInvalid])
 (import doeff_cluster.shared.core.capabilities [capabilities-of environ-pairs])
-(import doeff_cluster.coordinator.intent.cluster_model [ClusterJob ErrorReply WorkerInfo TaskOffer WarmOffer HeartbeatReply ServiceView WorkerView StatusView StateView BoardRow WorkerReport GenerationOrder Placement ClusterState TaskRecord EnvFailed HandoffPhase UnplacedKind ACCEPTED-FORMATS PLACED-PHASES])
+(import doeff_cluster.coordinator.intent.cluster_model [ClusterJob ErrorReply BoardUsage BoardWritten BoardConflict BoardRefused WorkerInfo TaskOffer WarmOffer HeartbeatReply ServiceView WorkerView StatusView StateView BoardRow WorkerReport GenerationOrder Placement ClusterState TaskRecord EnvFailed HandoffPhase UnplacedKind ACCEPTED-FORMATS PLACED-PHASES])
 (import doeff_cluster.coordinator.core.cluster_rules [component-versions-of format-version-refusal])
 (import doeff_cluster.coordinator.intent.request_bodies [LeaseBody TaskResultBody BoardWrite HeartbeatBody EnvsReport StatusRow TaskBody])
 (import doeff_cluster.coordinator.core.cluster_rules [required-field int-field])
@@ -20,7 +20,6 @@
 (import doeff_cluster.shared.core.lease_rules [lease-op semaphore-write-refusal semaphore-key])
 (import doeff_cluster.shared.core.board_rules [board-allows board-ttl-refusal])
 (import doeff [run])
-(import doeff_hy.wire [dump])
 (import doeff_cluster.shared.intent.runtime_env_model [RuntimeEnvInvalid])
 (import doeff_cluster.shared.core.runtime_env_rules [runtime-env-of-json env-key child-environ-refusal])
 (import doeff_cluster.shared.core.readiness_rules [readiness-refusal])
@@ -1177,8 +1176,8 @@
   ;; 本文の欄の欠け・型の誤りは本文を解く所(coordinator/protocol/request_bodies)が 400 で断る(#1024・#2445)。
   (setv key (semaphore-key name) entry (.get state.board key) current (if (is entry None) None entry.value)
         #(row verdict) (lease-op current body.op body.token body.permits body.ttl-ms now)
-        ;; 返事の本文は LeaseAnswer の wire の形(4 つの欄をいつも書く — semaphore_model.LeaseAnswer の註)。
-        answer (run (dump verdict)))
+        ;; 返事の本文は LeaseAnswer の値(JSON の wire の形は coordinator/protocol/replies が綴る — #2614)。
+        answer verdict)
   (if (or (is row current) (is row None))
       #(state 200 answer)
       (do (setv version (if (is entry None) 0 entry.version))
@@ -1191,10 +1190,11 @@
   (len (.encode (json.dumps value :ensure-ascii False :separators #("," ":")) "utf-8")))
 
 
-(defn #^ dict board-usage [#^ ClusterState state]
-  {"rows" (len state.board) "bytes" (sum (gfor row (.values state.board) row.size))
-   "expiring" (len (lfor row (.values state.board) :if (is-not row.expires-ms None) row))
-   "maxRows" BOARD-MAX-ROWS "maxBytes" BOARD-MAX-BYTES "maxValueBytes" BOARD-MAX-VALUE-BYTES})
+(defn #^ BoardUsage board-usage [#^ ClusterState state]
+  "盤の使い方と上限 — 容量の判断・計器・容量で断った答えが同じ数を読むため。"
+  (BoardUsage :rows (len state.board) :bytes (sum (gfor row (.values state.board) row.size))
+              :expiring (len (lfor row (.values state.board) :if (is-not row.expires-ms None) row))
+              :max-rows BOARD-MAX-ROWS :max-bytes BOARD-MAX-BYTES :max-value-bytes BOARD-MAX-VALUE-BYTES))
 
 
 (defn #^ (| str None) board-capacity-refusal [#^ ClusterState state #^ str key #^ int size]
@@ -1205,7 +1205,7 @@
   (cond
     (> size BOARD-MAX-VALUE-BYTES) (.format "値が {} byte で、1 行の上限 {} byte を越える" size BOARD-MAX-VALUE-BYTES)
     (and (not-in key state.board) (>= (len state.board) BOARD-MAX-ROWS))
-      (.format "盤の行が上限 {} 行に達している(期限つきの行 {} 行)" BOARD-MAX-ROWS (get (board-usage state) "expiring"))
+      (.format "盤の行が上限 {} 行に達している(期限つきの行 {} 行)" BOARD-MAX-ROWS (. (board-usage state) expiring))
     (and (> size old) (> (+ (- total old) size) BOARD-MAX-BYTES))
       (.format "盤の値の合計が {} byte になり、上限 {} byte を越える" (+ (- total old) size) BOARD-MAX-BYTES)
     True None))
@@ -1226,7 +1226,7 @@
   (setv body write.body ttl write.body.ttl-seconds)
   (setv ttl-refusal (run (board-ttl-refusal ttl)))
   (when (is-not ttl-refusal None)
-    (return #(state 400 {"ok" False "error" ttl-refusal})))
+    (return #(state 400 (BoardRefused :reason ttl-refusal))))
   (setv entry (.get state.board key)
         present (is-not entry None)
         current (if present entry.value None)
@@ -1234,25 +1234,25 @@
         ok (and (board-allows current present write.expect-given body.expect)
                 (or (is body.expect-version None) (= body.expect-version version))))
   (cond
-    (not ok) #(state 409 {"ok" False "current" current "resourceVersion" version})
+    (not ok) #(state 409 (BoardConflict :current current :version version))
     ;; lease の行への直の書き(旧い版の process)は、coordinator の時計でまだ切れていない担い手を追い出せない(2026-09-25)。
     ;; 409 = 旧い版は compare-and-set の競合として読み直す。
     (and (.startswith key SEMAPHORE-PREFIX) (not body.delete)
          (is-not (semaphore-write-refusal current (written-value write) now) None))
-      #(state 409 {"ok" False "current" current "resourceVersion" version
-                   "error" (semaphore-write-refusal current (written-value write) now)})
+      #(state 409 (BoardConflict :current current :version version
+                                 :reason (semaphore-write-refusal current (written-value write) now)))
     body.delete
       #((replace state :board (dfor #(k row) (.items state.board) :if (!= k key) k row))
-        200 {"ok" True "resourceVersion" None})
+        200 (BoardWritten :version None))
     True
       (do (setv size (value-size (written-value write))
                 refusal (board-capacity-refusal state key size))
           (if (is-not refusal None)
-              #(state 507 {"ok" False "error" refusal "usage" (board-usage state)})
+              #(state 507 (BoardRefused :reason refusal :usage (board-usage state)))
               #((replace state :board (| state.board {key (BoardRow :value (written-value write) :version (+ version 1)
                                                                     :expires-ms (if (is ttl None) None (+ now (int (* 1000 ttl))))
                                                                     :size size)}))
-                200 {"ok" True "resourceVersion" (+ version 1)})))))
+                200 (BoardWritten :version (+ version 1)))))))
 
 
 ;; --- node の label から導く能力(ADR-DOE-CLUSTER-001 R4b・改訂 1 の I)------------------------------------------

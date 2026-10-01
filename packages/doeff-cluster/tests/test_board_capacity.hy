@@ -98,7 +98,7 @@
   (setv #(s _ _) (put (ClusterState) "a" {"k" "日本語"}))
   (setv back (state-from-kv (full-kv s) 2000))
   (assert (= (board-usage back) (board-usage s)))
-  (assert (= (get (board-usage back) "bytes") (value-size {"k" "日本語"})))
+  (assert (= (. (board-usage back) bytes) (value-size {"k" "日本語"})))
   (setv text (metrics-text back 2000 T))
   (assert (in (.format "doeff_worker_board_bytes {}" (float (value-size {"k" "日本語"}))) text))
   (assert (in "doeff_worker_board_max_bytes" text)))

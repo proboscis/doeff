@@ -34,7 +34,7 @@
 (import traceback [extract-tb])
 (import doeff_cluster.coordinator.intent.request_bodies [BodyMalformed])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming Request PlainText BodyInvalid])
-(import doeff_cluster.coordinator.intent.cluster_model [ClusterState ErrorReply ClusterNaming Fault RolloutStatus RolloutTarget StateReply])
+(import doeff_cluster.coordinator.intent.cluster_model [ClusterState ErrorReply BoardRead BoardEntryView ClusterNaming Fault RolloutStatus RolloutTarget StateReply])
 (import doeff_cluster.coordinator.core.cluster_rules [format-version-refusal])
 (import doeff_cluster.coordinator.core.metrics_policy [record-metrics metrics-text])
 (import doeff_cluster.coordinator.core.cluster_policy [reconcile register-heartbeat heartbeat-reply state-view submit-task poll-task absorb-task-result board-write note-liveness
@@ -344,10 +344,9 @@
   (cond
     (and (= method "GET") (= parts ["board"]))
       (do (setv prefix (.get request.query "prefix" ""))
-          #(state 200 (if (.get request.query "withVersions")
-                          (dfor #(k row) (sorted (.items state.board)) :if (.startswith k prefix)
-                                k {"value" row.value "resourceVersion" row.version})
-                          (dfor #(k row) (sorted (.items state.board)) :if (.startswith k prefix) k row.value))))
+          #(state 200 (BoardRead :entries (tuple (gfor #(k row) (sorted (.items state.board)) :if (.startswith k prefix)
+                                                       (BoardEntryView :key k :value row.value :version row.version)))
+                                 :with-versions (bool (.get request.query "withVersions")))))
     (and (= method "POST") (= head "leases") (= (len parts) 2))
       (lease-write state (get parts 1) body now)
     (and (= method "PUT") (= head "board") (> (len parts) 1))

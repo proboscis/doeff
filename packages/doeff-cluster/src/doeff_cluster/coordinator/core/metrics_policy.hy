@@ -155,10 +155,10 @@
                 (/ (max 0 (- now w.last-seen-ms)) 1000.0)))
   ;; 盤の容量(2026-09-25): 行の数・値の合計と、その上限(cluster_policy の BOARD-MAX-*)。alert は合計が上限の 8 割を越えた時。
   (setv usage (board-usage state))
-  (for [#(metric field) #(#("doeff_worker_board_rows" "rows") #("doeff_worker_board_max_rows" "maxRows")
-                          #("doeff_worker_board_bytes" "bytes") #("doeff_worker_board_max_bytes" "maxBytes")
-                          #("doeff_worker_board_expiring_rows" "expiring"))]
-    (add-sample families metric "gauge" metric {} (float (get usage field))))
+  (for [#(metric amount) #(#("doeff_worker_board_rows" usage.rows) #("doeff_worker_board_max_rows" usage.max-rows)
+                           #("doeff_worker_board_bytes" usage.bytes) #("doeff_worker_board_max_bytes" usage.max-bytes)
+                           #("doeff_worker_board_expiring_rows" usage.expiring))]
+    (add-sample families metric "gauge" metric {} (float amount)))
   (add-sample families "doeff_worker_open_tasks" "gauge" "doeff_worker_open_tasks" {}
               (float (len (lfor t (.values state.tasks) :if (or (= t.phase "queued") (in t.phase PLACED-PHASES)) t))))
   ;; 冷たい起動(2026-09-26): 実行環境の task を、その env を準備済みの worker が 1 つも無いまま置いた回数(置き先の worker が準備してから

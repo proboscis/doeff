@@ -2685,7 +2685,9 @@
         "doeff-cluster-cluster-model",
         "doeff-cluster-state-json",
         "doeff-cluster-job-model",
-        "doeff-cluster-cluster-policy"
+        "doeff-cluster-cluster-policy",
+        "doeff-hy-wire",
+        "doeff-cluster-semaphore-model"
       ],
       "layer": "pure",
       "name": "doeff-cluster-coordinator-replies",
