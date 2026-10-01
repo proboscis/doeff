@@ -276,7 +276,7 @@
 (defrecord SimLink
   "coordinator へ話す送り手の口 1 つ(クラスタの約束の答え coordinator-answers の引数)。queue = coordinator の受け口(要求の列)・
    actor = 書きの送り手(X-Actor)・revision = 送り手の版(task の revision)・peer = 送り手の居る所(網の切断は worker の名で数える)・
-   runtime-env = 送る task(RemoteJob と切り離した task)の実行環境の宣言(本番の TaskClient・DetachedClient の runtime-env — None =
+   runtime-env = 送る task(RemoteJob と切り離した task)の実行環境の宣言(本番の TaskSender・DetachedClient の runtime-env — None =
    送り手の版のコードだけ)。"
   (#^ RequestQueue queue)
   (#^ str actor)
@@ -880,7 +880,7 @@
   "RemoteJob を本番の remote-cluster と同じ手順で coordinator へ出し、結果を待つため: 詰めた Program を PUT /programs/<sha> で置き、
    POST /tasks(task-submit-body)で出し、問い合わせ(lease を延ばす)を終わるまで続け、抜ける時は task を落とす。送れない値は送る前に
    断る(encode-program の UnsendableProgram)。版は送り手の版(link.revision)・実行環境の宣言は送り手の宣言(link.runtime-env —
-   本番の TaskClient の runtime-env と同じく本文の runtimeEnv に載せる)。"
+   本番の TaskSender の runtime-env と同じく本文の runtimeEnv に載せる)。"
   (val blob (encode-program program))
   (val sha (program-sha blob))
   (<- put tuple (send-resent link "PUT" (+ "/programs/" sha) {} {"blob" blob "versions" (current-versions)}))
@@ -1463,7 +1463,7 @@
                                  :spec-hash (spec-hash spec) :started-ms now)))
     ;; 節の中から Spawn する — 新しい task は節の外側の handler(世界・時計)だけを持ち、run-worker の中の handler を持たない。
     (<- program-path str (program-path-of spec.program))
-    ;; 子の送り手の口は本番の子の TaskClient・DetachedClient と同じく run-context の実行環境の宣言を持つ(cluster_foundation の組)。
+    ;; 子の送り手の口は本番の子の TaskSender・DetachedClient と同じく run-context の実行環境の宣言を持つ(cluster_foundation の組)。
     (<- child-env (| RuntimeEnv None) (runtime-env-of-context ctx))
     (val link (SimLink :queue parts.queue :actor spec.name :revision spec.revision :peer worker.name :runtime-env child-env))
     (<- plan SimPlan (PlanOf))

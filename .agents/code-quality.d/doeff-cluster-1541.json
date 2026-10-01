@@ -1015,7 +1015,8 @@
         "doeff-cluster-coordinator-http",
         "doeff-cluster-remote-model",
         "doeff-cluster-runtime-env-model",
-        "doeff-cluster-shared-protocol"
+        "doeff-cluster-shared-protocol",
+        "doeff-cluster-coordinator-route"
       ],
       "layer": "io",
       "name": "doeff-cluster-remote",
