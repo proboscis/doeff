@@ -16,6 +16,7 @@
 (import types)
 (import concurrent.futures [ProcessPoolExecutor])
 (import doeff [run])
+(import doeff_hy_bytecode_guard [source-to-code-as-import])
 (import doeff_core_effects.file_effects [SourceNotCompiled])
 
 
@@ -37,10 +38,11 @@
   {:pre [(: rel str) (: name str) (: path str) (: data bytes)] :post [(: % (| bytes SourceNotCompiled))]}
   "source の中身 1 つを、import が検める方式(PEP 552 の checked hash)の .pyc の中身にするため。焼けない時は SourceNotCompiled
    (import の時に同じ誤りが出るので、ここでは記録だけ)。rel = 木の中の相対 path・name = module 名・path = source の在処(Hy の source かの
-   見分けと、誤りの文に出る名)。"
+   見分けと、誤りの文に出る名)。Hy の source は import と同じく module を置いた中で compile し、展開が依った macro の記録を付ける —
+   記録の無い .pyc は import の時に doeff-hy の古さの検めが compile し直すので、焼いた分が無駄になる(agora-redesign #2598)。"
   (try
     (val loader (importlib.machinery.SourceFileLoader name path))
-    (val code (.source-to-code loader data path))
+    (val code (source-to-code-as-import loader data path))
     (<- pyc bytes (checked-hash-pyc code data))
     pyc
     (except [error Exception]

@@ -72,6 +72,36 @@ def macro_dependencies(module: ModuleType, path: str) -> "list[MacroDependency]"
     ]
 
 
+def source_to_code_as_import(
+    loader: importlib.machinery.SourceFileLoader, data: bytes, path: str
+) -> CodeType:
+    """import の外で source を compile する口(bytecode を前もって作る道具が使う)— Hy の source は import と同じく、その module を
+    ``sys.modules`` に置いた中で compile し、展開が依った macro の記録を code に足す。
+
+    import の外で ``source_to_code`` を直に呼ぶと、Hy は仮の module を作って compile の直後に消すので、compile の口の包みが
+    module を見られず記録を足さない。記録の無い .pyc は import の時に古いかもしれない物として compile し直されるので、前もって
+    作った bytecode が無駄になり、起動の時に macro の展開を全部やり直していた(agora-redesign #2598 — 預かり所の job の起動の
+    CPU 約 46 秒のうち約 43 秒)。Hy 以外の source は ``source_to_code`` をそのまま呼ぶ。"""
+    install()
+    if not is_hy_source(path):
+        return loader.source_to_code(data, path)
+    name = loader.name
+    present = sys.modules.get(name)
+    if present is not None and vars(present).get("__file__") == path:
+        return loader.source_to_code(data, path)  # 読み込み済みの module の中で compile する(import の途中と同じ)
+    spec = importlib.util.spec_from_file_location(name, path, loader=loader)
+    if spec is None:
+        raise ImportError(f"{path} の module の spec を作れない", name=name, path=path)
+    sys.modules[name] = importlib.util.module_from_spec(spec)
+    try:
+        return loader.source_to_code(data, path)
+    finally:
+        if present is None:
+            sys.modules.pop(name, None)
+        else:
+            sys.modules[name] = present
+
+
 def file_sha256(path: str) -> str | None:
     """file の中身の sha256(読めなければ None)— 記録を作る側と照合する側が同じ 1 つを使うため。"""
     import hashlib  # 起動時に読まない
@@ -113,7 +143,8 @@ def _recording_source_to_code(previous: SourceToCode):
         if module is None:
             # module の外での compile(py_compile・image の組み立ての warm・runpy)— 何の macro を require したかが
             # 見えないので記録を足さない。記録の無い bytecode は、Python が source と突き合わせる形なら次の読みで
-            # compile し直される(get_code)。突き合わせない形(image の hash 方式)はそのまま信じる。
+            # compile し直される(get_code)。突き合わせない形(image の hash 方式)はそのまま信じる。bytecode を前もって
+            # 作る道具は source_to_code_as_import で module の中で compile し、記録を付ける。
             return code
         from doeff_hy_bytecode_guard import records  # Hy の source に当たった時だけ読む
 
@@ -145,7 +176,11 @@ def _checking_get_code(previous: GetCode):
         from doeff_hy_bytecode_guard import records  # Hy の source に当たった時だけ読む
 
         record = records.record_of(code)
-        if record is not None and records.record_is_current(record, _hy_version(), file_sha256):
+        # 記録の path は作った木の絶対 path。別の木で作った .pyc(実行環境の準備が前の root から hardlink で引き継ぐ物)の記録を
+        # そのまま照らすと、作った木の macro が残っている限り、今の木の macro が変わっても古い展開を使う(agora-redesign #2598)。
+        # 共有の置き場の code と同じく、提供元の file を module 名から今の環境で引き直して照らす。
+        current = None if record is None else records.rebased_record(record, _current_file_of)
+        if current is not None and records.record_is_current(current, _hy_version(), file_sha256):
             return code
         header = _bytecode_header(self, path)
         if header is not None and not records.python_checks_source(

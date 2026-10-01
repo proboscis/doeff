@@ -9,8 +9,12 @@ Python 標準の ``importlib.machinery.SourceFileLoader`` の 2 つの口を包�
 
 - ``source_to_code``(compile の口): Hy の module を compile した直後に、その module の macro の提供元の file と
   sha256 の一覧を、code object の定数の末尾に 1 つ足す。.pyc は標準の形のまま(隣に別の file を書かない)。
-- ``get_code``(読みの口): .pyc から読んだ Hy の module の code に載った一覧を今の file と突き合わせ、1 つでも
-  変わっていれば source から compile し直して .pyc を書き直す。
+- ``get_code``(読みの口): .pyc から読んだ Hy の module の code に載った一覧を、提供元の module 名から今の環境で
+  引いた file と突き合わせ、1 つでも変わっていれば source から compile し直して .pyc を書き直す(記録の path は作った木の
+  物なので、別の木から引き継いだ .pyc も今の木の macro で照らす — agora-redesign #2598)。
+
+import の外で bytecode を前もって作る道具は :func:`source_to_code_as_import` で compile する(import と同じく module を
+置いた中で compile し、記録を付ける — 記録の無い .pyc は読みの口が compile し直す)。
 
 入れる所は venv の起動時(doeff-hy が配る ``doeff_hy_bytecode_guard.pth``)と ``import doeff_hy`` の 2 か所。
 どちらも :func:`install` を呼ぶだけで、何度呼んでも 1 度しか包まない。Hy の import の前でも後でも効く
@@ -25,3 +29,6 @@ from doeff_hy_bytecode_guard.loader_hooks import file_sha256 as file_sha256
 from doeff_hy_bytecode_guard.loader_hooks import install as install
 from doeff_hy_bytecode_guard.loader_hooks import installed as installed
 from doeff_hy_bytecode_guard.loader_hooks import macro_dependencies as macro_dependencies
+from doeff_hy_bytecode_guard.loader_hooks import (
+    source_to_code_as_import as source_to_code_as_import,
+)
