@@ -191,14 +191,6 @@
    "why": "os.environ の DOEFF_WORKER_PROGRAM"
   },
   {
-   "handler": "doeff_cluster.runtime_identity_process:process-runtime-facts",
-   "touches": [
-    "env",
-    "file"
-   ],
-   "why": "os.environ・os.getpid・完成の印の file"
-  },
-  {
    "handler": "doeff_cluster.shared.protocol.record_handlers:recording-handler",
    "touches": [
     "http",
