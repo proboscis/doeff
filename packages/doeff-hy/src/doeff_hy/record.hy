@@ -194,10 +194,22 @@
   (setv header (get rest 0)
         fields (cut rest 1 None)
         where (+ "defrecord " (str name)))
-  (refuse-unknown-keys header #(":tags" ":check" ":failure") where)
+  (refuse-unknown-keys header #(":tags" ":check" ":failure" ":class-vars") where)
   (setv checks (declared-value header ":check")
         tags (declared-value header ":tags")
-        failure (declared-value header ":failure"))
+        failure (declared-value header ":failure")
+        class-vars (declared-value header ":class-vars"))
+  ;; :class-vars = defwire の展開だけが渡す内部の口: class の本体に置く ClassVar の注記 `#^ (get ClassVar T) 名` の list。
+  ;; 型検査に属性の型を見せるための注記で、欄の列(fields)と別に運ぶので欄の読み・:check の名・dataclass / pydantic の欄・
+  ;; __match_args__・構築子の引数には混ざらない(dataclass は ClassVar の注記を欄にしない)。
+  (when (and (is-not class-vars None)
+             (not (and (isinstance class-vars List)
+                       (all (gfor form class-vars
+                                  (and (isinstance form Expression) (= (len form) 3)
+                                       (= (str (get form 0)) "annotate") (isinstance (get form 1) Symbol)
+                                       (isinstance (get form 2) Expression) (= (str (get (get form 2) 0)) "get")
+                                       (.endswith (hy.repr (get (get form 2) 1)) "ClassVar")))))))
+    (raise (SyntaxError (.format "{}: :class-vars は ClassVar の注記 #^ (get ClassVar 型) 名 の list: {}" where (hy.repr class-vars)))))
   (when (and (is-not failure None) (not (and (isinstance failure Symbol) (in (str failure) #("True" "False")))))
     (raise (SyntaxError (.format "{}: :failure は字面の True か False(失敗の型の印): {}" where (hy.repr failure)))))
   (when (and (is-not checks None) (not (isinstance checks List)))
@@ -243,6 +255,7 @@
      (import doeff_hy.declarations doeff_hy.record)
      (defclass [(dataclass :frozen True :kw-only True)] ~name []
        ~@(if (is docstring None) [] [docstring])
+       ~@(or class-vars [])
        ~@fields
        ~@post-init)
      (setattr ~name "__doeff_tags__" ~(tags-form tags where))
@@ -331,13 +344,22 @@
       (raise (SyntaxError (.format "{}: 欄 {} と {} が同じ wire の名 {!r} になる" where (hy.unmangle (get seen wire)) (hy.unmangle field) wire))))
     (setv (get seen wire) field))
   ;; defrecord へ渡す頭の辞書(:tags と :check だけ — :names と :unknown は wire の形)。
-  (setv record-header (Dict (sum (lfor key #(":tags" ":check")
-                                       :if (is-not (declared-value header key) None)
-                                       [(Keyword (cut key 1 None)) (declared-value header key)])
-                                 [])))
+  ;; :class-vars は型の本体に `__doeff_wire__: ClassVar[WireShape]` の注記を置く(下の setattr が置く値の型を型検査に見せる —
+  ;; dump の引数 WireValue を defwire の型が満たすと読める。setattr は記帳として型検査の展開から外れる・agora-redesign #2296)。
+  (setv record-header (Dict (+ (sum (lfor key #(":tags" ":check")
+                                          :if (is-not (declared-value header key) None)
+                                          [(Keyword (cut key 1 None)) (declared-value header key)])
+                                    [])
+                               [(Keyword "class-vars")
+                                `[#^ (get _doeff-ClassVar doeff_hy.wire.WireShape) __doeff-wire__]])))
   `(do
-     (hy.R.doeff_hy/record.defrecord ~name ~@(if (is docstring None) [] [docstring]) ~record-header ~@fields)
+     ;; 注記が読む名(Python 3.13 までは class の本体で注記を評価する)を型を建てる前に読む。ClassVar は from-import の別名で読む:
+     ;; pyright は dataclass の欄から外す ClassVar を `ClassVar` の名か `typing.ClassVar` の形でだけ見分け(module の再公開の
+     ;; 名では見分けない)、`import typing` を defwire ごとに出すと strict が同じ import の重ね(reportDuplicateImport)を赤にする。
+     ;; 別名は `__` で始めない(class の本体で名が private の形に書き換わり実行時に読めない)。
+     (import typing [ClassVar :as _doeff-ClassVar])
      (import doeff_hy.wire)
+     (hy.R.doeff_hy/record.defrecord ~name ~@(if (is docstring None) [] [docstring]) ~record-header ~@fields)
      (setattr ~name "__pydantic_config__" (doeff_hy.wire.wire-config ~(Dict (sum (lfor #(k v) (.items wire-names) [(String k) (String v)]) [])) ~unknown))
      (setattr ~name "__doeff_wire__" (doeff_hy.wire.wire-shape ~name ~(Dict (sum (lfor #(k v) (.items wire-names) [(String k) (String v)]) [])) ~unknown))))
 
