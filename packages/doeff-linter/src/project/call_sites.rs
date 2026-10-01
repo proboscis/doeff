@@ -20,7 +20,8 @@ use doeff_indexer::hy_index::reader::{Delim, Form, Node, Reader};
 use doeff_indexer::hy_index::Range;
 
 use super::architecture::{CallSite, CallSiteSite};
-use super::{glob_matches, relative_path, top_level};
+use super::paths::{glob_matches, relative_path};
+use super::top_level;
 use crate::position::LineIndex;
 
 /// 当たりの種類(閉じた 6 つ)。

@@ -2,6 +2,7 @@
   "include": [
     "packages/doeff-linter/build.rs",
     "packages/doeff-linter/src/baseline.rs",
+    "packages/doeff-linter/src/build_info.rs",
     "packages/doeff-linter/src/commit_hook.rs",
     "packages/doeff-linter/src/config.rs",
     "packages/doeff-linter/src/editor.rs",
@@ -40,6 +41,7 @@
     "packages/doeff-linter/src/project/names.rs",
     "packages/doeff-linter/src/project/notice.rs",
     "packages/doeff-linter/src/project/param_calls.rs",
+    "packages/doeff-linter/src/project/paths.rs",
     "packages/doeff-linter/src/project/python_env.rs",
     "packages/doeff-linter/src/project/python_reach.rs",
     "packages/doeff-linter/src/project/record_stubs.rs",
@@ -111,6 +113,7 @@
       "name": "doeff-linter-cli",
       "paths": [
         "packages/doeff-linter/src/baseline.rs",
+        "packages/doeff-linter/src/build_info.rs",
         "packages/doeff-linter/src/commit_hook.rs",
         "packages/doeff-linter/src/config.rs",
         "packages/doeff-linter/src/editor.rs",
@@ -127,6 +130,7 @@
       ],
       "public": [
         "packages/doeff-linter/src/baseline.rs",
+        "packages/doeff-linter/src/build_info.rs",
         "packages/doeff-linter/src/commit_hook.rs",
         "packages/doeff-linter/src/config.rs",
         "packages/doeff-linter/src/editor.rs",
@@ -181,6 +185,7 @@
         "packages/doeff-linter/src/project/names.rs",
         "packages/doeff-linter/src/project/notice.rs",
         "packages/doeff-linter/src/project/param_calls.rs",
+        "packages/doeff-linter/src/project/paths.rs",
         "packages/doeff-linter/src/project/python_env.rs",
         "packages/doeff-linter/src/project/python_reach.rs",
         "packages/doeff-linter/src/project/record_stubs.rs",
@@ -229,6 +234,7 @@
         "packages/doeff-linter/src/project/names.rs",
         "packages/doeff-linter/src/project/notice.rs",
         "packages/doeff-linter/src/project/param_calls.rs",
+        "packages/doeff-linter/src/project/paths.rs",
         "packages/doeff-linter/src/project/python_env.rs",
         "packages/doeff-linter/src/project/python_reach.rs",
         "packages/doeff-linter/src/project/record_stubs.rs",
