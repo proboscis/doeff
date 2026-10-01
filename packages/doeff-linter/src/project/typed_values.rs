@@ -793,24 +793,103 @@ fn wire_free_type_problem(node: &Hy) -> Option<String> {
                 return None;
             }
             let base = items[1].name()?;
-            let args = type_args(items);
-            if BARE_MAPPINGS.contains(&base) || WIRE_FREE_MAPPINGS.contains(&base) {
-                return Some(format!("写像 {}[…](中身の型が在ってもデータを引く写像は渡さない)", base));
-            }
-            if BARE_TUPLES.contains(&base) {
-                if args.len() >= 2 && !hy_ellipsis(args[args.len() - 1]) {
-                    return Some(format!("長さの決まった組 {}[A, B]", base));
-                }
-                if args.first().is_some_and(|a| hy_open(a)) {
-                    return Some(format!("要素の型が開いた組 {}[object/Any, ...]", base));
-                }
-            }
-            if BARE_TUPLES.contains(&base) || BARE_LISTS.contains(&base) || CONTAINERS.contains(&base) {
-                return args.iter().filter(|a| !hy_ellipsis(a)).find_map(|a| wire_free_type_problem(a));
-            }
-            None
+            wire_free_generic(base, &type_args(items), &wire_free_type_problem, &hy_open, &hy_ellipsis)
         }
     }
+}
+
+/// 総称型 base[args] 1 つ → 赤の理由(Hy と Python の注記で同じ判定 — agora-redesign #2203)。写像は中身の型が在っても鳴る。
+fn wire_free_generic<T>(base: &str, args: &[&T], problem: &dyn Fn(&T) -> Option<String>, open: &dyn Fn(&T) -> bool, ellipsis: &dyn Fn(&T) -> bool) -> Option<String> {
+    if BARE_MAPPINGS.contains(&base) || WIRE_FREE_MAPPINGS.contains(&base) {
+        return Some(format!("写像 {}[…](中身の型が在ってもデータを引く写像は渡さない)", base));
+    }
+    if BARE_TUPLES.contains(&base) {
+        if args.len() >= 2 && !ellipsis(args[args.len() - 1]) {
+            return Some(format!("長さの決まった組 {}[A, B]", base));
+        }
+        if args.first().is_some_and(|a| open(a)) {
+            return Some(format!("要素の型が開いた組 {}[object/Any, ...]", base));
+        }
+    }
+    if BARE_TUPLES.contains(&base) || BARE_LISTS.contains(&base) || CONTAINERS.contains(&base) {
+        return args.iter().filter(|a| !ellipsis(a)).find_map(|a| problem(a));
+    }
+    None
+}
+
+/// Python の型の注記 1 つ → 赤の理由(wire_free_type_problem の Python 版 — 文字列の注記は式として読み直す)。
+fn py_wire_free_type_problem(node: &Expr) -> Option<String> {
+    match node {
+        Expr::Name(_) | Expr::Attribute(_) => wire_free_name_problem(&py_dotted(node)),
+        Expr::Constant(constant) => match &constant.value {
+            Constant::Str(text) => match parse(text, Mode::Expression, "<annotation>") {
+                Ok(Mod::Expression(expression)) => py_wire_free_type_problem(&expression.body),
+                _ => text.split('|').find_map(|part| wire_free_name_problem(part.trim())),
+            },
+            _ => None,
+        },
+        Expr::Subscript(subscript) => {
+            let args: Vec<&Expr> = match subscript.slice.as_ref() {
+                Expr::Tuple(tuple) => tuple.elts.iter().collect(),
+                other => vec![other],
+            };
+            wire_free_generic(&py_dotted(&subscript.value), &args, &py_wire_free_type_problem, &py_open, &py_ellipsis)
+        }
+        _ => is_bit_or(node).and_then(|(l, r)| py_wire_free_type_problem(l).or_else(|| py_wire_free_type_problem(r))),
+    }
+}
+
+/// Python の file 1 つの class の欄の注記(`Class.欄`・注記)の列 — 名が _ で始まる欄・ClassVar も含めて全部(欄は値の受け渡しの形)。
+fn py_field_sites(module: &[Stmt]) -> Vec<(String, &Expr)> {
+    module
+        .iter()
+        .filter_map(|statement| match statement {
+            Stmt::ClassDef(class) => Some(class),
+            _ => None,
+        })
+        .flat_map(|class| {
+            class.body.iter().filter_map(move |item| match item {
+                Stmt::AnnAssign(assign) => match assign.target.as_ref() {
+                    Expr::Name(target) => Some((format!("{}.{}", class.name, target.id), assign.annotation.as_ref())),
+                    _ => None,
+                },
+                _ => None,
+            })
+        })
+        .collect()
+}
+
+/// 値を型だけで渡す層の Python の file 1 つを判じる(DOEFF171 の欄の型 — dataclass・TypedDict・class の欄の注記・agora-redesign #2203)。
+/// Python には defwire も :pre / :post も無いので、見るのは欄だけ。読めなければ理由。
+pub fn py_wire_free_hits(source: &str, rel: &str) -> Result<Vec<WireFreeHit>, String> {
+    let module = parse(source, Mode::Module, rel).map_err(|error| format!("構文木にならない: {}", error))?;
+    let Mod::Module(module) = module else { return Ok(Vec::new()) };
+    let mut out: Vec<WireFreeHit> = py_field_sites(&module.body)
+        .into_iter()
+        .filter_map(|(name, node)| {
+            let problem = py_wire_free_type_problem(node)?;
+            let range = node.range();
+            Some(WireFreeHit { start: range.start().to_usize(), end: range.end().to_usize(), name, what: WireFreeWhat::Field, problem })
+        })
+        .collect();
+    out.sort_by(|a, b| (a.start, a.detail()).cmp(&(b.start, b.detail())));
+    Ok(out)
+}
+
+/// 値を型だけで渡す層の外の Python の file 1 つの欄の写像(DOEFF172 の欄の臭い — agora-redesign #2203)。読めなければ理由。
+pub fn py_dict_smell_hits(source: &str, rel: &str) -> Result<Vec<DictSmellHit>, String> {
+    let module = parse(source, Mode::Module, rel).map_err(|error| format!("構文木にならない: {}", error))?;
+    let Mod::Module(module) = module else { return Ok(Vec::new()) };
+    let mut out: Vec<DictSmellHit> = py_field_sites(&module.body)
+        .into_iter()
+        .filter_map(|(name, node)| {
+            let problem = py_wire_free_type_problem(node).filter(|problem| problem.starts_with("写像"))?;
+            let range = node.range();
+            Some(DictSmellHit { start: range.start().to_usize(), end: range.end().to_usize(), name, what: DictSmellWhat::Field, problem })
+        })
+        .collect();
+    out.sort_by(|a, b| (a.start, a.detail()).cmp(&(b.start, b.detail())));
+    Ok(out)
 }
 
 /// defk・deff の :pre [(: 引数 T) …] の (引数・T) の列。
@@ -1048,6 +1127,19 @@ mod tests {
         // 当たらない例: 型つきの defrecord・同じ型の列・str の引数・並べ替えのキーの組。
         let source = "(defrecord Row (#^ str name) (#^ (of tuple str ...) tags))\n(defk names [rows]\n  {:pre [(: rows (of list Row))] :post [(: % (of tuple str ...))]}\n  #())\n";
         assert!(wire_free(source).is_empty(), "{:?}", wire_free(source));
+    }
+
+    #[test]
+    fn python_fields_in_the_wire_free_layer() {
+        // agora-redesign #2203: .py の class の欄 — 型つきの写像・文字列の注記・Optional の中・中身の型の無い組・凍った写像は鳴り、
+        // 名と欄の型を持つ型と同じ型の列は鳴らない。名が _ で始まる欄も欄なので見る(DOEFF144 の公開面の絞りとは違う)。
+        let source = "from typing import Mapping, Optional\n\nclass View:\n    rows: Mapping[str, 'Row']\n    meta: 'dict[str, int]'\n    \
+                      maybe: Optional[dict]\n    pair: tuple\n    _cache: FrozenMap\n    ids: tuple[str, ...]\n    row: Row\n    \
+                      def method(self) -> dict:\n        return {}\n";
+        let found: Vec<String> = py_wire_free_hits(source, "core/view.py").expect("読める").into_iter().map(|h| h.detail()).collect();
+        assert_eq!(found, vec!["field:View.rows", "field:View.meta", "field:View.maybe", "field:View.pair", "field:View._cache"]);
+        let smells: Vec<String> = py_dict_smell_hits(source, "entry/view.py").expect("読める").into_iter().map(|h| h.detail()).collect();
+        assert_eq!(smells, vec!["field:View.rows", "field:View.meta", "field:View.maybe", "field:View._cache"], "172 は写像の欄だけ(組は数えない)");
     }
 
     /// (細目・理由の頭)の列。

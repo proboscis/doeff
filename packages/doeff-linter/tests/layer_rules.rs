@@ -5022,6 +5022,35 @@ fn wire_free_layer_forbids_defwire_and_maps() {
     assert!(keys(&report, "DOEFF170").is_empty() && keys(&report, "DOEFF171").is_empty(), "{}", report);
 }
 
+/// agora-redesign #2203: 値を型だけで渡す層の Python の file の欄(dataclass の欄の注記)も DOEFF171 が当てる(以前は Hy の file だけを数え、
+/// core の .py の Mapping[ の欄を黙って見逃していた)。失敗ケース 3 つ: core の .py の写像の欄は鳴る / 同じ欄を名と欄の型を持つ class に
+/// 起こした .py は鳴らない / entry の層(宣言の無い層)の .py の同じ欄は DOEFF171 では鳴らず、DOEFF172 が数える。
+#[test]
+fn wire_free_layer_judges_python_dataclass_fields() {
+    let dataclass = |body: &str| format!("from collections.abc import Mapping\nfrom dataclasses import dataclass\n\n\n@dataclass(frozen=True)\n{}", body);
+    let files = [
+        ("app/billing/core/views.py", dataclass("class Totals:\n    counts: Mapping[str, int]\n    lines: tuple\n    ids: tuple[str, ...]\n")),
+        (
+            "app/billing/core/typed.py",
+            dataclass("class Count:\n    key: str\n    value: int\n\n\n@dataclass(frozen=True)\nclass Totals:\n    counts: tuple[Count, ...]\n"),
+        ),
+        ("app/billing/entry/page.py", dataclass("class Page:\n    counts: Mapping[str, int]\n")),
+    ];
+    let dir = world_repo_with(&files, "", "[\"DOEFF171\", \"DOEFF172\"]");
+    let path = dir.path().join("architecture.hy");
+    let declared = std::fs::read_to_string(&path).unwrap();
+    std::fs::write(&path, declared.replace("(layer core :roles [judgment] :imports [core])", "(layer core :roles [judgment] :imports [core] :wire-free True)")).unwrap();
+    let (_, report) = editor(dir.path());
+    assert_eq!(
+        keys(&report, "DOEFF171"),
+        vec!["app/billing/core/views.py::DOEFF171::field:Totals.counts", "app/billing/core/views.py::DOEFF171::field:Totals.lines"],
+        "core の .py の写像の欄と中身の型の無い組は当て、型つきの組・型に起こした欄・entry の .py は当てない: {}",
+        report
+    );
+    assert_eq!(violation(&report, "app/billing/core/views.py::DOEFF171::field:Totals.counts")["level"], "critical", "{}", report);
+    assert_eq!(keys(&report, "DOEFF172"), vec!["app/billing/entry/page.py::DOEFF172::field:Page.counts"], "{}", report);
+}
+
 /// agora-redesign #2143 の (2): 写像の置き場の臭い(DOEFF172・major・warning — 数えるだけ)。handler の外の定義の本体で写像を組む所と、
 /// 値を型だけで渡す層の外の欄の写像を当てる。defhandler の中・:post が写像の綴りの 1 点・契約の辞書・値を型だけで渡す層の欄(DOEFF171 の
 /// 持ち場)は当てない。

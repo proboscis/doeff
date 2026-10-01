@@ -1228,13 +1228,14 @@ fn judge_layer_file(
     if enabled.contains(&ProjectRule::MatchFieldHyphen) && file.file.language == Language::Hy {
         drafts.extend(judge.match_field_hyphens());
     }
-    // DOEFF170・171: 値を型だけで渡す層(architecture.hy の層の :wire-free True — agora の core)の Hy の file(agora-redesign #2143)。
+    // DOEFF170・171: 値を型だけで渡す層(architecture.hy の層の :wire-free True — agora の core)の Hy と Python の file(agora-redesign
+    // #2143・Python の欄は #2203 — .py の dataclass の欄の写像を黙って見逃していた)。
     let wire_free_rules = [ProjectRule::WireInWireFreeLayer, ProjectRule::BareMapInWireFreeLayer];
-    if spec.wire_free && file.file.language == Language::Hy && wire_free_rules.iter().any(|r| enabled.contains(r)) {
+    if spec.wire_free && wire_free_rules.iter().any(|r| enabled.contains(r)) {
         drafts.extend(judge.wire_free(enabled));
     }
-    // DOEFF172: 写像の置き場の臭い — 層の置き場の Hy の file の全部(欄は値を型だけで渡す層の外だけ — そこは DOEFF171・#2143 の (2))。
-    if enabled.contains(&ProjectRule::DictOutsideItsPlace) && file.file.language == Language::Hy {
+    // DOEFF172: 写像の置き場の臭い — 層の置き場の Hy と Python の file の全部(欄は値を型だけで渡す層の外だけ — そこは DOEFF171・#2143 の (2))。
+    if enabled.contains(&ProjectRule::DictOutsideItsPlace) {
         drafts.extend(judge.dict_smells(!spec.wire_free));
     }
     // DOEFF168: 宣言の :layers の層の Hy の file だけ(業務の層 — 層の分からない置き場は層の規則の外・agora-redesign #1906)。
@@ -1437,7 +1438,11 @@ impl<'a> LayerJudge<'a> {
     /// DOEFF170・171: 値を型だけで渡す層の defwire と、:pre / :post / 欄の型の写像・型の無い組(鍵の細目は `<種類>:<名>`)。読めない
     /// file は DOEFF128 が知らせるので、ここは何も出さない。
     fn wire_free(&self, enabled: &BTreeSet<ProjectRule>) -> Vec<Draft> {
-        let Ok(hits) = typed_values::wire_free_hits(self.source) else { return Vec::new() };
+        let read = match self.file.file.language {
+            Language::Hy => typed_values::wire_free_hits(self.source),
+            Language::Python => typed_values::py_wire_free_hits(self.source, &self.file.file.rel),
+        };
+        let Ok(hits) = read else { return Vec::new() };
         let layer = self.layer_name(self.layer);
         hits.into_iter()
             .filter_map(|hit| {
@@ -1465,7 +1470,13 @@ impl<'a> LayerJudge<'a> {
 
     /// DOEFF172: handler の外で写像を組む定義と、欄の写像(数えるだけ — 重さ warning)。読めない file は DOEFF128 が知らせる。
     fn dict_smells(&self, fields: bool) -> Vec<Draft> {
-        let Ok(hits) = typed_values::dict_smell_hits(self.source, fields) else { return Vec::new() };
+        // Python には handler の外で写像を組む所の数え方が無い(Hy の形だけ)— Python は欄だけを数える。
+        let read = match self.file.file.language {
+            Language::Hy => typed_values::dict_smell_hits(self.source, fields),
+            Language::Python if fields => typed_values::py_dict_smell_hits(self.source, &self.file.file.rel),
+            Language::Python => Ok(Vec::new()),
+        };
+        let Ok(hits) = read else { return Vec::new() };
         hits.into_iter()
             .map(|hit| {
                 let field = hit.what == typed_values::DictSmellWhat::Field;
