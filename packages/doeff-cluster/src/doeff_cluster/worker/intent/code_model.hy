@@ -1,5 +1,5 @@
 ;;; 展開したコードの木の bytecode の準備の effect — 走査・引き継ぎ・焼き・import の閉包・完成の印・経過の注記(焼きの Program
-;;; worker/core/code_prepare が出し、本物の local-tree と模擬の files-tree が答える)。code_prepare.hy から分けた(#2027)。
+;;; worker/core/code_prepare が出し、言い換え worker/protocol/tree_files の tree-files が汎用の file の効果へ出し直す — #2468)。code_prepare.hy から分けた(#2027)。
 (require doeff-hy.macros [val])
 (val MODULE-TAGS {:context "doeff-cluster" :role "intent"})
 (import dataclasses [dataclass])

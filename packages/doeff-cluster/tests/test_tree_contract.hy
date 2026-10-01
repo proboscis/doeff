@@ -1,5 +1,5 @@
-;;; コードの木の答え手の契約テスト — 本物(local-tree: os・hardlink・焼き)と fake(files-tree: file system の effect の上 + memory の置き場)が
-;;; 同じ deftest を通る。解釈器の組み立ては tree_contract_handlers.hy。
+;;; コードの木の言い換え(worker/protocol/tree_files の tree-files — #2468)の契約テスト — 本物の file system(os-file-handler)と fake
+;;; (memory の置き場)の上で同じ deftest を通る。解釈器の組み立ては tree_contract_handlers.hy。
 ;;;
 ;;;   * 走査: __pycache__ の外の .py / .hy を source・__pycache__ の直下の .pyc を .pyc と数える(隠し file と隠し dir の下は数えない)・
 ;;;     無い木は空
@@ -7,8 +7,7 @@
 ;;;     印に載せ、完成の印(読む時の検め marker-problem が通る物)を木の根に置く
 ;;;   * 引き継ぎ: 変わっていない source の .pyc は前の木から同じ中身で引き継ぎ、変わった source だけを焼き直す
 ;;;   * 閉包: entries の import(Hy の import / require・Python の import・相対の名)を辿った source だけ
-;;; 本物だけの性質(契約の外): 引き継ぎが hardlink であること(fake は写す — 中身は同じ)・焼きの並列(jobs)・焼く間の import の路・
-;;; Note の行き先(stderr)。焼けない物の理由の文は source の在処(一時 dir と memory の置き場)を含むので、例外の型の名だけを比べる。
+;;; 本物だけの性質(契約の外): 引き継ぎが hardlink であること(memory は写す — 中身は同じ)・焼きの並列(jobs)・焼く間の import の路。焼けない物の理由の文は source の在処(一時 dir と memory の置き場)を含むので、例外の型の名だけを比べる。
 ;;; 焼きの性質は .py の source で比べる: fake は Hy の source を焼けない(doeff-hy の _could_be_hy_src が Hy の source かを os.path.isfile で
 ;;; 見るので、disk に無い memory の置き場の source は Python として読まれ SyntaxError になる)— 契約が見つけた食い違いで、直すのは
 ;;; doeff-hy の見分けの側(この契約の外)。
@@ -34,7 +33,7 @@
 
 
 (deftest test-a-scan-lists-sources-and-cached-pycs-and-skips-hidden-files
-  {:interpreters ["local-tree" "files-tree"]}
+  {:interpreters ["os-files-tree" "memory-files-tree"]}
   (<- root str (FilesRoot))
   (val tree (+ root "/t"))
   (val pyc (cache-rel "a/m.py"))
@@ -48,7 +47,7 @@
 
 
 (deftest test-prepare-compiles-the-tree-and-writes-a-marker-that-passes-the-check
-  {:interpreters ["local-tree" "files-tree"]}
+  {:interpreters ["os-files-tree" "memory-files-tree"]}
   (<- root str (FilesRoot))
   (val tree (+ root "/rev1"))
   (<- (plant tree (+ PACKAGE #(#("pkg/bad.py" "def (:\n")))))
@@ -67,7 +66,7 @@
 
 
 (deftest test-a-new-tree-carries-unchanged-pycs-and-compiles-only-the-changed-source
-  {:interpreters ["local-tree" "files-tree"]}
+  {:interpreters ["os-files-tree" "memory-files-tree"]}
   (<- root str (FilesRoot))
   (val old (+ root "/rev1"))
   (val new (+ root "/rev2"))
@@ -84,7 +83,7 @@
 
 
 (deftest test-the-compile-scope-is-the-import-closure-of-the-entries
-  {:interpreters ["local-tree" "files-tree"]}
+  {:interpreters ["os-files-tree" "memory-files-tree"]}
   (<- root str (FilesRoot))
   (val tree (+ root "/t"))
   (val files #(#("pkg/__init__.py" "")

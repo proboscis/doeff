@@ -1,6 +1,6 @@
-;;; 展開したコードの木の bytecode の準備の Program(prepare-tree)と、本物の答え手 local-tree と模擬の答え手 files-tree が同じく通る判断
-;;; (走査の列・PEP 552 の checked hash の .pyc・完成の印の text・import の閉包)。code_prepare.hy から分けた(#2027)。起動される道具の
-;;; script(main・local-tree・files-tree)は doeff_cluster/code_prepare.hy に残る(worker 自身のコードから file の path で起動する)。
+;;; 展開したコードの木の bytecode の準備の Program(prepare-tree)と、木の言い換え(worker/protocol/tree_files の tree-files — #2468)が通る判断
+;;; (走査の列・完成の印の text・import の閉包)。code_prepare.hy から分けた(#2027)。起動される道具の script(main)は
+;;; doeff_cluster/code_prepare.hy に残る(worker 自身のコードから file の path で起動する)。
 (require doeff-hy.macros [defk <- val var])
 (val MODULE-TAGS {:context "doeff-cluster" :role "program"})
 (import json)

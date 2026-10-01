@@ -192,7 +192,8 @@
       "allow": [
         "doeff-cluster-code-plan",
         "doeff-cluster-code-model",
-        "doeff-cluster-code-prepare-program"
+        "doeff-cluster-code-prepare-program",
+        "doeff-cluster-worker-tree-files"
       ],
       "layer": "runtime",
       "name": "doeff-cluster-code-prepare",
@@ -1402,7 +1403,8 @@
         "doeff-cluster-worker-code-store",
         "doeff-cluster-worker-status-file",
         "doeff-cluster-worker-env-rules",
-        "doeff-cluster-worker-env-store"
+        "doeff-cluster-worker-env-store",
+        "doeff-cluster-worker-tree-files"
       ],
       "exclude": [
         "packages/doeff-cluster/tests/fixtures/independence/*"
@@ -2135,6 +2137,23 @@
         "packages/doeff-cluster/src/doeff_cluster/worker/protocol/env_store.hy"
       ],
       "responsibility": "worker の実行環境の root の準備・掃除・観測と heartbeat の名乗りを、汎用の子 process と file system の効果へ言い換える(#2467)",
+      "typed": true
+    },
+    {
+      "allow": [
+        "doeff-cluster-code-plan",
+        "doeff-cluster-code-model",
+        "doeff-cluster-code-prepare-program"
+      ],
+      "layer": "io",
+      "name": "doeff-cluster-worker-tree-files",
+      "paths": [
+        "packages/doeff-cluster/src/doeff_cluster/worker/protocol/tree_files.hy"
+      ],
+      "public": [
+        "packages/doeff-cluster/src/doeff_cluster/worker/protocol/tree_files.hy"
+      ],
+      "responsibility": "コードの木の効果(走査・引き継ぎ・閉包・焼き・印・Note)を汎用の file の効果と slog へ言い換える(#2468)",
       "typed": true
     }
   ],
