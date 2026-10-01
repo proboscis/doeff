@@ -2,7 +2,7 @@
 ;; JSON の形は coordinator/protocol/replies が綴る。検の入口 responded と、本番と模擬の組の返事の答え手 reply-bodies は同じ綴りを通る。
 (require doeff-hy.macros [deftest val])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming])
-(import doeff_cluster.coordinator.intent.cluster_model [ClusterState EventsView StateReply HeartbeatReply WorkerInfo WorkerDrainView ResourceList ResourceView])
+(import doeff_cluster.coordinator.intent.cluster_model [ClusterState EventsView StateReply HeartbeatReply WorkerInfo WorkerDrainView ResourceList ResourceView ErrorReply RowConflict])
 (import doeff_cluster.coordinator.core.cluster_policy [heartbeat-reply])
 (import doeff_cluster.coordinator.core.drain_policy [superseded-worker-view])
 (import doeff_cluster.shared.protocol.inbox [http-request])
@@ -87,3 +87,14 @@
   (assert (= #((get item "name") (get item "status" "live") (get item "status" "alive") (get item "status" "silentMs"))
              #("w1" True True 1000))
           item))
+
+
+(deftest test-a-refusal-is-typed-and-spelled-in-the-old-shape
+  ;; 断りの答えは型の値(ErrorReply)で、JSON は {error …} — 付け足しの欄(current・conflicts・open・fault)は在る時だけ書く。
+  (setv #(_ status answer) (respond (ClusterState) (http-request "GET" "/nowhere" {} None) 1000 T {}))
+  (assert (= status 404))
+  (assert (isinstance answer ErrorReply) answer)
+  (assert (= (sorted (reply-json answer)) ["error"]) (reply-json answer))
+  (assert (= (reply-json (ErrorReply :message "版が古い" :current 3 :conflicts #((RowConflict :name "a" :message "x" :current 2)
+                                                                               (RowConflict :name "b" :message "y"))))
+             {"error" "版が古い" "current" 3 "conflicts" [{"name" "a" "error" "x" "current" 2} {"name" "b" "error" "y"}]})))

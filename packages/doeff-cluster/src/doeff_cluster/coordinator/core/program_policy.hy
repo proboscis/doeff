@@ -11,7 +11,7 @@
 (require doeff-hy.macros [deff])
 (import dataclasses [replace])
 (import re)
-(import doeff_cluster.coordinator.intent.cluster_model [ClusterState ProgramRow])
+(import doeff_cluster.coordinator.intent.cluster_model [ClusterState ProgramRow ErrorReply])
 (import doeff_cluster.shared.core.remote_rules [program-sha])
 (import doeff_cluster.coordinator.intent.request_bodies [ProgramBody])
 
@@ -27,10 +27,10 @@
    延びる。本文の欄の型は解く所(coordinator/protocol/request_bodies — #2445)が検めた。"
   (setv blob body.blob versions (or body.versions {}))
   (cond
-    (not (PROGRAM-KEY.fullmatch sha)) #(state 400 {"error" (.format "キーは 64 桁の sha256: {!r}" sha)})
-    (> (len blob) PROGRAM-MAX-BYTES) #(state 413 {"error" (.format "詰めた Program が上限 {} byte を越える" PROGRAM-MAX-BYTES)})
+    (not (PROGRAM-KEY.fullmatch sha)) #(state 400 (ErrorReply :message (.format "キーは 64 桁の sha256: {!r}" sha)))
+    (> (len blob) PROGRAM-MAX-BYTES) #(state 413 (ErrorReply :message (.format "詰めた Program が上限 {} byte を越える" PROGRAM-MAX-BYTES)))
     (!= (program-sha blob) sha)
-      #(state 400 {"error" "blob の sha256 がキーと合わない"})
+      #(state 400 (ErrorReply :message "blob の sha256 がキーと合わない"))
     True #((replace state :programs (| state.programs {sha (ProgramRow :blob blob :versions versions :put-ms now)}))
            200 {"program" sha})))
 
@@ -40,7 +40,7 @@
   "GET /programs/<sha>: 置いた Program(無ければ 404)。"
   (setv row (.get state.programs sha))
   (if (is row None)
-      #(state 404 {"error" (.format "Program {} は置かれていない(宣言・task の前に送り手が置く)" sha)})
+      #(state 404 (ErrorReply :message (.format "Program {} は置かれていない(宣言・task の前に送り手が置く)" sha)))
       #(state 200 {"blob" row.blob "versions" row.versions})))
 
 

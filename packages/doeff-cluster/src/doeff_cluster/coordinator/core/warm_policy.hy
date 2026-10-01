@@ -9,7 +9,7 @@
 (import dataclasses [replace])
 (import doeff [run])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming])
-(import doeff_cluster.coordinator.intent.cluster_model [ClusterState WarmEntry])
+(import doeff_cluster.coordinator.intent.cluster_model [ClusterState WarmEntry ErrorReply])
 (import doeff_cluster.coordinator.core.cluster_policy [alive placeable needs-named tools-cover root-key-on draining-workers])
 (import doeff_cluster.coordinator.intent.request_bodies [WarmBody])
 (import doeff_cluster.shared.core.board_rules [BOARD-MAX-TTL-SECONDS])
@@ -41,17 +41,17 @@
   "POST /warm: 行を書いて #(次の状態 status 本文) を返す。宣言の誤り・期限の範囲の外は 400。"
   (setv declared body.runtime-env ttl body.ttl-seconds)
   (when (not (isinstance declared dict))
-    (return #(state 400 {"error" "runtimeEnv は JSON の object"})))
+    (return #(state 400 (ErrorReply :message "runtimeEnv は JSON の object"))))
   (when (not (and (isinstance ttl #(int float)) (< 0 ttl (+ BOARD-MAX-TTL-SECONDS 1))))
-    (return #(state 400 {"error" (.format "ttlSeconds は 0 より大きく {} 以下: {!r}" BOARD-MAX-TTL-SECONDS ttl)})))
+    (return #(state 400 (ErrorReply :message (.format "ttlSeconds は 0 より大きく {} 以下: {!r}" BOARD-MAX-TTL-SECONDS ttl)))))
   (try
     (setv env (run (runtime-env-of-json declared)))
     (except [error RuntimeEnvInvalid]
-      (return #(state 400 {"error" (.format "runtimeEnv が誤っている: {}" error)}))))
+      (return #(state 400 (ErrorReply :message (.format "runtimeEnv が誤っている: {}" error))))))
   (try
     (setv needs (needs-named body.needs body.requires "温める頼みの needs"))
     (except [error ValueError]
-      (return #(state 400 {"error" (str error)}))))
+      (return #(state 400 (ErrorReply :message (str error))))))
   (setv key (run (warm-key env needs))
         entry (WarmEntry key declared needs (+ now (int (* 1000 ttl))) (or body.holder actor))
         after (replace state :warms (| state.warms {key entry})))
@@ -62,5 +62,5 @@
   "GET /warm/<キー>: 行の今の姿。表に無い(期限で消えた)行は 404。"
   (setv entry (.get state.warms key))
   (if (is entry None)
-      #(state 404 {"error" (.format "温める表に行 {} が無い(期限で消えたか、書かれていない)" key)})
+      #(state 404 (ErrorReply :message (.format "温める表に行 {} が無い(期限で消えたか、書かれていない)" key)))
       #(state 200 (run (warm-state->json (warm-view state entry now timing))))))

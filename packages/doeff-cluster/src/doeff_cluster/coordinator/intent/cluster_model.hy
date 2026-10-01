@@ -544,6 +544,25 @@
   (#^ (get tuple #(ResourceView ...)) items))
 
 
+(defrecord RowConflict
+  "旧い一括の宣言(PUT /jobs)で書けなかった行 1 つ(resource_policy.legacy-put-jobs — #2614): name・message = 理由・current = いまの版
+   (版の食い違いの時だけ)。"
+  (#^ str name)
+  (#^ str message)
+  (setv #^ (| int None) current None))
+
+
+(defrecord ErrorReply
+  "断った要求の答えの本文(#2614): message = 理由の文・current = いまの版(版の食い違いの時だけ)・conflicts = 書けなかった行・open = 終わって
+   いない task の本数(上限の時だけ)・fault = coordinator の中の欠陥か(送り手の誤りでないことを名乗る)。JSON の形({error …})は
+   coordinator/protocol/replies が綴り、付け足しの欄は在る時だけ書く。"
+  (#^ str message)
+  (setv #^ (| int None) current None)
+  (setv #^ (| (get tuple #(RowConflict ...)) None) conflicts None)
+  (setv #^ (| int None) open None)
+  (setv #^ bool fault False))
+
+
 (defclass [(dataclass :frozen True)] ClusterNaming []
   "クラスタが外の系(k8s の Deployment・Node)と取り交わす名。どれも配備する側(composition root の引数)が決める。
    owner-annotation = Rollout が台数を持つ Deployment に付ける annotation の鍵。

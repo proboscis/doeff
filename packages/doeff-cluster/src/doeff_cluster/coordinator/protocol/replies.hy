@@ -9,7 +9,7 @@
 (import json)
 (import doeff_cluster.shared.intent.job_model [JobSpec])
 (import doeff_cluster.coordinator.intent.cluster_model [EventsView StateReply StateView HeartbeatReply TaskOffer DrainPhase DrainProgress WorkerDrainView
-                                                       ServiceObserved WorkerObserved TaskObserved RolloutObserved ResourceView ResourceList VersionVerdict])
+                                                       ServiceObserved WorkerObserved TaskObserved RolloutObserved ResourceView ResourceList VersionVerdict ErrorReply RowConflict])
 (import doeff_cluster.coordinator.core.cluster_policy [job-to-json task-summary status-row-to-json])
 (import doeff_cluster.coordinator.protocol.state_json [audit-event-to-json])
 
@@ -115,6 +115,21 @@
    "spec" view.spec "status" (| view.status (observed-json view.observed))})
 
 
+(defn #^ dict row-conflict-json [#^ RowConflict conflict]
+  "旧い一括の宣言で書けなかった行 1 つ → JSON の形({name error current?} — #2614 の前に core が組んでいた形と同じ)。"
+  (| {"name" conflict.name "error" conflict.message}
+     (if (is conflict.current None) {} {"current" conflict.current})))
+
+
+(defn #^ dict error-reply-json [#^ ErrorReply reply]
+  "断った要求の答え → JSON の形({error …} — #2614 の前に core が組んでいた形と同じ。付け足しの欄は在る時だけ書く)。"
+  (| {"error" reply.message}
+     (if (is reply.current None) {} {"current" reply.current})
+     (if (is reply.conflicts None) {} {"conflicts" (lfor c reply.conflicts (row-conflict-json c))})
+     (if (is reply.open None) {} {"open" reply.open})
+     (if reply.fault {"fault" True} {})))
+
+
 (defn #^ object reply-json [#^ object body]  ; defk にできない: 返事の答え手と検の入口 responded(Program の外)が呼ぶ純粋な綴り
   "返事の本文の型の値を、外へ見せる JSON の形にする(#2595 の前に core が組んでいた形と同じ)。型にしていない本文はそのまま返す。"
   (cond
@@ -125,6 +140,7 @@
                                         "drains" (dfor #(n d) (.items body.drains) n (drain-progress-json d))})
     (isinstance body HeartbeatReply) (heartbeat-reply-json body)
     (isinstance body WorkerDrainView) (worker-drain-view-json body)
+    (isinstance body ErrorReply) (error-reply-json body)
     (isinstance body ResourceView) (resource-view-json body)
     (isinstance body ResourceList)
       {"kind" body.kind "revision" body.revision "items" (lfor v body.items (resource-view-json v))}

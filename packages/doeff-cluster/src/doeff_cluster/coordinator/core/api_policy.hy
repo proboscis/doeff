@@ -34,7 +34,7 @@
 (import traceback [extract-tb])
 (import doeff_cluster.coordinator.intent.request_bodies [BodyMalformed])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming Request PlainText BodyInvalid])
-(import doeff_cluster.coordinator.intent.cluster_model [ClusterState ClusterNaming Fault RolloutStatus RolloutTarget StateReply])
+(import doeff_cluster.coordinator.intent.cluster_model [ClusterState ErrorReply ClusterNaming Fault RolloutStatus RolloutTarget StateReply])
 (import doeff_cluster.coordinator.core.cluster_rules [format-version-refusal])
 (import doeff_cluster.coordinator.core.metrics_policy [record-metrics metrics-text])
 (import doeff_cluster.coordinator.core.cluster_policy [reconcile register-heartbeat heartbeat-reply state-view submit-task poll-task absorb-task-result board-write note-liveness
@@ -246,7 +246,7 @@
 
 (defn #^ tuple unknown-request [#^ ClusterState state #^ Request request]
   "知らない要求に 404 で答えるため(状態は変えない)。"
-  #(state 404 {"error" (.format "知らない要求: {} {}" request.method request.path)}))
+  #(state 404 (ErrorReply :message (.format "知らない要求: {} {}" request.method request.path))))
 
 
 (defn #^ tuple respond-resources [#^ ClusterState state #^ Request request #^ object body #^ list parts #^ int now #^ ClusterTiming timing]
@@ -303,7 +303,7 @@
           (setv #(after status reply) (legacy-put-jobs state body.rows actor))
           #((if (is after state) state (settle state after actor now timing)) status reply))
     (and (= method "POST") (= parts ["heartbeat"]) (is-not (format-version-refusal body.format) None))
-      #(state 400 {"error" (format-version-refusal body.format)})
+      #(state 400 (ErrorReply :message (format-version-refusal body.format)))
     (and (= method "POST") (= parts ["heartbeat"]))
       (do (setv name body.name)
           (setv after (settle state (register-heartbeat state body now) name now timing))
@@ -426,7 +426,7 @@
     (except [refused Refused]
       #(state refused.status refused.body))
     (except [invalid BodyInvalid]
-      #(state 400 {"error" (str invalid)}))
+      #(state 400 (ErrorReply :message (str invalid))))
     ;; 送り手の誤りの型(Refused・BodyInvalid)でない例外は coordinator の中の欠陥 — 400 に畳まず 500 の Fault で返す。状態は受ける前の
     ;; まま(途中まで進めた変化を残さない)。log の 1 行は coordinator-step が CoordinatorFault で出す(#1024)。
     ;; where = 例外が上がった一番内側の所(file:行 関数)。

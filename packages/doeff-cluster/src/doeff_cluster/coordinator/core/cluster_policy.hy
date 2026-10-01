@@ -12,7 +12,7 @@
 (import doeff_cluster.shared.intent.job_model [JobSpec])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming Request BodyInvalid])
 (import doeff_cluster.shared.core.capabilities [capabilities-of environ-pairs])
-(import doeff_cluster.coordinator.intent.cluster_model [ClusterJob WorkerInfo TaskOffer WarmOffer HeartbeatReply ServiceView WorkerView StatusView StateView BoardRow WorkerReport GenerationOrder Placement ClusterState TaskRecord EnvFailed HandoffPhase UnplacedKind ACCEPTED-FORMATS PLACED-PHASES])
+(import doeff_cluster.coordinator.intent.cluster_model [ClusterJob ErrorReply WorkerInfo TaskOffer WarmOffer HeartbeatReply ServiceView WorkerView StatusView StateView BoardRow WorkerReport GenerationOrder Placement ClusterState TaskRecord EnvFailed HandoffPhase UnplacedKind ACCEPTED-FORMATS PLACED-PHASES])
 (import doeff_cluster.coordinator.core.cluster_rules [component-versions-of format-version-refusal])
 (import doeff_cluster.coordinator.intent.request_bodies [LeaseBody TaskResultBody BoardWrite HeartbeatBody EnvsReport StatusRow TaskBody])
 (import doeff_cluster.coordinator.core.cluster_rules [required-field int-field])
@@ -789,16 +789,16 @@
    渡らない(tasks-for)ので、同じ名の worker の子が届ける結果はその task を走らせた process の物。"
   ;; 欄の欠けと型の誤りは本文を解く所(coordinator/protocol/request_bodies)が 400 で断る。ここで見るのは形の版だけ。
   (setv refusal (format-version-refusal body.format))
-  (when refusal (return #(state 400 {"error" refusal})))
+  (when refusal (return #(state 400 (ErrorReply :message refusal))))
   (setv worker body.worker result body.result)
   (setv task (.get state.tasks id))
   (cond
     (is task None)
-      #(state 404 {"error" (.format "task {} を知らない(呼び手が落とした・lease が切れた)" id)})
+      #(state 404 (ErrorReply :message (.format "task {} を知らない(呼び手が落とした・lease が切れた)" id)))
     (not-in task.phase PLACED-PHASES)
       #(state 200 {"accepted" False "phase" task.phase})
     (!= task.worker worker)
-      #(state 409 {"error" (.format "task {} は worker {} に置いてある(送り手 {})" id task.worker worker)})
+      #(state 409 (ErrorReply :message (.format "task {} は worker {} に置いてある(送り手 {})" id task.worker worker)))
     True
       #((replace state :tasks (| state.tasks {id (task-finished task now (.format "子 process {} が終わる前に届けた"
                                                                                  body.instance) result)}))
@@ -1137,18 +1137,18 @@
 (defn #^ tuple submit-task [#^ ClusterState state #^ TaskBody body #^ int now #^ (| str None) [owner None]]
   "POST /tasks: 呼び手の問い合わせに寿命を縛られた task の行を作る。本文は置き場に置いた Program の sha を運ぶ(task-body-refusal)。"
   (setv refusal (or (format-version-refusal body.format) (runtime-env-value-refusal body.runtime-env) (task-body-refusal state body)))
-  (when refusal (return #(state 400 {"error" refusal})))
+  (when refusal (return #(state 400 (ErrorReply :message refusal))))
   ;; 数に読めない leaseSeconds は送り手の誤り(float() の ValueError / TypeError を受け口へ漏らさない — #1024)。
   (setv lease-value (if (is body.lease-seconds None) 15.0 body.lease-seconds))
   (try
     (setv lease-seconds (float lease-value))
     (except [[ValueError TypeError]]
-      (return #(state 400 {"error" (.format "leaseSeconds は 0 より大きく {} 以下の数: {!r}" TASK-MAX-LEASE-SECONDS lease-value)}))))
+      (return #(state 400 (ErrorReply :message (.format "leaseSeconds は 0 より大きく {} 以下の数: {!r}" TASK-MAX-LEASE-SECONDS lease-value))))))
   (setv open-count (len (lfor t (.values state.tasks) :if (or (= t.phase "queued") (in t.phase PLACED-PHASES)) t)))
   (when (not (< 0 lease-seconds (+ TASK-MAX-LEASE-SECONDS 1)))
-    (return #(state 400 {"error" (.format "leaseSeconds は 0 より大きく {} 以下: {}" TASK-MAX-LEASE-SECONDS lease-seconds)})))
+    (return #(state 400 (ErrorReply :message (.format "leaseSeconds は 0 より大きく {} 以下: {}" TASK-MAX-LEASE-SECONDS lease-seconds)))))
   (when (>= open-count TASK-MAX-OPEN)
-    (return #(state 429 {"error" (.format "終わっていない task が上限 {} 本に達している" TASK-MAX-OPEN) "open" open-count})))
+    (return #(state 429 (ErrorReply :message (.format "終わっていない task が上限 {} 本に達している" TASK-MAX-OPEN) :open open-count))))
   (setv id (task-id state)
         lease-ms (int (* 1000 lease-seconds))
         task (TaskRecord id body.name body.program body.revision

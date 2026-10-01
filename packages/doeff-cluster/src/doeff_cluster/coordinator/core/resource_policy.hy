@@ -15,7 +15,7 @@
 (import json)
 (import typing [NoReturn])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming BodyInvalid])
-(import doeff_cluster.coordinator.intent.cluster_model [ClusterJob ClusterState Placement HandoffPhase UnplacedKind NotReadyKind VersionState VersionVerdict LiveProcess ResourceMeta AuditEvent EventsView ServiceBody ServiceObserved WorkerObserved TaskObserved RolloutObserved ResourceView ResourceList LegacyJobRow RolloutRow RolloutStatus RolloutTarget])
+(import doeff_cluster.coordinator.intent.cluster_model [ClusterJob ClusterState ErrorReply RowConflict Placement HandoffPhase UnplacedKind NotReadyKind VersionState VersionVerdict LiveProcess ResourceMeta AuditEvent EventsView ServiceBody ServiceObserved WorkerObserved TaskObserved RolloutObserved ResourceView ResourceList LegacyJobRow RolloutRow RolloutStatus RolloutTarget])
 (import doeff_cluster.coordinator.core.cluster_rules [int-field])
 (import doeff_cluster.shared.core.job_rules [spec-hash] doeff_cluster.shared.intent.job_model [JobPhase])
 (import doeff_cluster.coordinator.core.cluster_policy [job-to-json alive still-live-somewhere service-rows unplaced-kind unplaced-text resource-version-of])
@@ -33,14 +33,15 @@
 
 
 (defclass Refused [Exception]
-  "要求を断る(HTTP の status と本文を持つ)。"
-  (defn #^ None __init__ [self #^ int status #^ dict body]
-    (.__init__ (super) (.get body "error" ""))
+  "要求を断る(HTTP の status と本文 ErrorReply を持つ — JSON は coordinator/protocol/replies が綴る・#2614)。"
+  (defn #^ None __init__ [self #^ int status #^ ErrorReply body]
+    (.__init__ (super) body.message)
     (setv self.status status self.body body)))
 
 
-(defn #^ NoReturn refuse [#^ int status #^ str message #^ (| str None) #** extra]
-  (raise (Refused status (| {"error" message} extra))))
+(defn #^ NoReturn refuse [#^ int status #^ str message #^ (| int None) [current None]]
+  "status と理由の文で要求を断る。current = いまの版(版の食い違いの時だけ — 答えの本文に載る)。"
+  (raise (Refused status (ErrorReply :message message :current current))))
 
 
 (defn #^ str key-of [#^ str kind #^ str name] (+ kind "/" name))
@@ -653,22 +654,22 @@
     (cond
       (is have None)
         (if (is-not version None)
-            (.append conflicts {"name" name "error" "版が付いているが、その Service は無い(消された)"})
+            (.append conflicts (RowConflict :name name :message "版が付いているが、その Service は無い(消された)"))
             (do (.append jobs job) (setv (get results name) "created")))
       (= job have) (setv (get results name) "unchanged")
       (is version None)
-        (.append conflicts {"name" name "error" "resourceVersion の無い行で既存の宣言は変えられない(GET /state の行の版を付ける)"
-                            "current" (resource-version-of state (key-of "Service" name))})
+        (.append conflicts (RowConflict :name name :message "resourceVersion の無い行で既存の宣言は変えられない(GET /state の行の版を付ける)"
+                                         :current (resource-version-of state (key-of "Service" name))))
       (!= version (resource-version-of state (key-of "Service" name)))
-        (.append conflicts {"name" name "error" "版が古い"
-                            "current" (resource-version-of state (key-of "Service" name))})
+        (.append conflicts (RowConflict :name name :message "版が古い"
+                                         :current (resource-version-of state (key-of "Service" name))))
       (and (is-not row.owner None) (!= row.owner have.owner) (!= actor have.owner) (!= have.owner LEGACY-OWNER))
-        (.append conflicts {"name" name "error" (.format "所有者を変えられるのは所有者({})だけ" have.owner)})
+        (.append conflicts (RowConflict :name name :message (.format "所有者を変えられるのは所有者({})だけ" have.owner)))
       True
         (do (setv jobs (lfor j jobs (if (= j.spec.name name) job j)))
             (setv (get results name) "updated"))))
   (setv untouched (lfor n (sorted current) :if (not-in n (sfor r rows r.name)) n))
   (if conflicts
-      #(state 409 {"error" "競合した行がある(何も書いていない)" "conflicts" conflicts})
+      #(state 409 (ErrorReply :message "競合した行がある(何も書いていない)" :conflicts (tuple conflicts)))
       #((replace state :jobs (tuple jobs)) 200 {"jobs" (len rows) "results" results "untouched" untouched
                                                 "note" "一覧に無い Service は消していない(消すのは DELETE /resources/Service/<名>)"})))
