@@ -7,8 +7,8 @@
 ;;;   metrics-http           本物: metrics-http(宛先の部品の HttpRequest → POST /resources/Service/<名>/metrics)
 ;;;   readiness-memory       fake: readiness-memory(list に記録)
 ;;;   readiness-http         本物: readiness-http(宛先の部品の HttpRequest → POST /resources/Service/<名>/readiness)
-;;;   remote-cluster         本物: remote-cluster(TaskClient → coordinator の /programs・/tasks)と担い手(RigWorker)
-;;;   remote-cluster-env     同じ・送り手が実行環境を宣言する(TaskClient の runtime-env = CONTRACT-ENV)
+;;;   remote-cluster         本物: remote-cluster(宛先の部品の HttpRequest → coordinator の /programs・/tasks)と担い手(RigWorker)
+;;;   remote-cluster-env     同じ・送り手が実行環境を宣言する(TaskSender の runtime-env = CONTRACT-ENV)
 ;;;   warm-cluster           本物: warm-cluster(WarmClient → coordinator の /warm)
 ;;;   sim-cluster            fake: 手元の runner sim-cluster(筋書きの送り手の口 coordinator-answers が RemoteJob・WarmRuntimeEnv・
 ;;;                          ReadWarmState に答える — 本物の coordinator の調停ループと本物の run-worker・偽の宿)
@@ -55,7 +55,7 @@
 (import doeff_cluster.shared.protocol.readiness_handlers [readiness-memory readiness-http])
 (import doeff_cluster.shared.protocol.service_report [ServiceReport])
 (import doeff_core_effects.handlers [slog-handler])
-(import doeff_cluster.shared.protocol.remote [remote-cluster TaskClient])
+(import doeff_cluster.shared.protocol.remote [remote-cluster TaskSender])
 (import doeff_cluster.foundation.process_versions [current-versions])
 (import doeff_cluster.shared.protocol.detached [warm-cluster WarmClient])
 (import doeff_cluster.sim.local [sim-cluster SimWorker SimLink ClientLink PartsOf SimParts StopCoordinator coordinator-answers])
@@ -75,7 +75,7 @@
 (val REFUSED "[Errno 111] Connection refused")
 (val METRICS "metrics")
 (val READINESS "readiness")
-;; task の送り手の版(本物の TaskClient の revision — sim の送り手は sim の宣言の版)。
+;; task の送り手の版(本物の TaskSender の revision — sim の送り手は sim の宣言の版)。
 (val SENDER-REVISION "r1")
 ;; 担い手の問い合わせの間隔(仮想の秒)と、本物の温める頼みの送り直しの期限(実時間の秒 — 届かない時の答えを待たせない)。
 (val WORKER-POLL-SECONDS 0.5)
@@ -291,7 +291,7 @@
 (defk under-rig [with-env program]
   {:pre [(: with-env bool) (: program Program)] :post [(: % "契約の Program の答え(型は Program ごと)")]
    :tags {:context "doeff-cluster-test" :role "foundation"}}
-  "本物の remote-cluster(TaskClient — with-env なら実行環境を宣言する送り手)の下で、MemoryCoordinator と担い手 RigWorker(名 w1・能力
+  "本物の remote-cluster(TaskSender — with-env なら実行環境を宣言する送り手)の下で、MemoryCoordinator と担い手 RigWorker(名 w1・能力
    local — sim-cluster の担い手と同じ)を並べて program を走らせる。担い手の task の file の置き場は一時の dir(終われば消す)。"
   (var env None)
   (when with-env
@@ -303,9 +303,10 @@
   (val transport (httpx.MockTransport (partial line-answer coordinator line)))
   (val task-dir (Path (tempfile.mkdtemp :prefix "remote-contract-")))
   (val worker (RigWorker COORDINATOR task-dir (current-versions) :transport transport))
-  (val client (TaskClient COORDINATOR SENDER-REVISION (current-versions) :runtime-env env :transport transport))
+  (val sender (TaskSender :revision SENDER-REVISION :versions (current-versions) :runtime-env env))
   (try
-    (<- answer (with_handlers [(sim-time-handler :clock clock) (coordinator-side coordinator line) (remote-cluster client)]
+    (<- answer (with_handlers [(sim-time-handler :clock clock) (coordinator-side coordinator line) (coordinator-over-http coordinator line)
+                              (remote-cluster (contract-route) CONTRACT-ROUTE sender)]
                  (beside-worker worker program)))
     answer
     (finally
@@ -315,7 +316,7 @@
 (defk sim-sender [with-env program]
   {:pre [(: with-env bool) (: program Program)] :post [(: % "program の答え")] :tags {:context "doeff-cluster-test" :role "program"}}
   "sim-cluster の筋書きとして program を走らせるため: 真実の口 sim-side の下で、with-env なら送り手の口を実行環境を宣言する口
-   (本番の TaskClient の runtime-env と同じ — SimLink の runtime-env)に替える。"
+   (本番の TaskSender の runtime-env と同じ — SimLink の runtime-env)に替える。"
   (<- link SimLink (ClientLink))
   (var sender link)
   (when with-env

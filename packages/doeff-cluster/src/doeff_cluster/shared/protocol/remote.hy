@@ -8,23 +8,23 @@
 ;;; task の本文の形(task-submit-body)と問い合わせの答えの読み(outcome-of・settled-value)は、この handler と sim-cluster の偽の宿が
 ;;; 同じ関数を使う(本文を写さない)。
 (require doeff-hy.macros [defhandler defk deff <- val])
-(import json)
-(import time)
-(import httpx)
-(import doeff_cluster.foundation.coordinator_http [CoordinatorEndpoint send-idempotent put-program REPLY-SECONDS IDEMPOTENT-DEADLINE-SECONDS])
+(require doeff-hy.record [defrecord])
+(import dataclasses [dataclass])  ; defrecord の展開が名指す
+(import doeff_cluster.foundation.coordinator_http [IDEMPOTENT-DEADLINE-SECONDS RESEND-PAUSE-SECONDS])
+(import doeff_cluster.shared.protocol.coordinator_route [RouteCell RouteOptions RoutedReply routed-request resent-request answer-json])
 (import doeff_time [Delay])
 (import doeff [run])
 (import doeff_cluster.shared.intent.protocol [PROTOCOL-FORMAT])
 (import doeff_cluster.shared.intent.runtime_env_model [RuntimeEnv runtime-env->json])
 (import doeff_cluster.shared.intent.remote_model [RemoteJob RemoteJobFailed EnvUnavailable TaskSucceeded TaskFailed
-                       encode-program decode-outcome])
+                       encode-program decode-outcome program-sha])
 
 
 (deff task-submit-body [#^ str sha #^ str revision #^ frozenset needs #^ str name #^ float lease-seconds
                         #^ (| RuntimeEnv None) runtime-env #^ dict environ]  ; defk にできない: 本番の client(Program の外の I/O の道具)と sim の宿が同じ形を作る純粋な判断
   {:pre [(: sha str) (: revision str) (: needs frozenset) (: name str) (: lease-seconds float) (: runtime-env (| RuntimeEnv None)) (: environ dict)] :post [(: % dict)]
    :tags {:context "doeff-cluster" :role "protocol"}}
-  "POST /tasks の本文を作るため(本番の TaskClient と sim の宿で同じ形)。詰めた Program は先に PUT /programs/<sha> で置き、本文は
+  "POST /tasks の本文を作るため(本番の remote-cluster と sim の宿で同じ形)。詰めた Program は先に PUT /programs/<sha> で置き、本文は
    sha だけを運ぶ(service の宣言と同じ運び方 — ADR-DOE-CLUSTER-001 R3b)。environ = 子の環境変数(RemoteJob.environ — 空なら欄を置かない)。"
   (| {"program" sha "revision" revision
       "needs" (sorted needs) "name" name "leaseSeconds" lease-seconds "format" PROTOCOL-FORMAT}
@@ -32,36 +32,62 @@
      (if environ {"environ" (dict environ)} {})))
 
 
-(defclass TaskClient []
-  "coordinator の /tasks との連絡(I/O)。revision = 送り手の commit(受け側はこの版のコードを準備してから復元する)。
-   runtime-env = 実行環境の宣言(在れば worker は env の root を準備して、その中の子 process で走らせる — revision は使わない)。
-   transport = httpx の transport(DetachedClient・WarmClient と同じ — 検が coordinator の模擬を後ろに置く。既定 None = 網)。"
-  (defn #^ None __init__ [self #^ str url #^ str revision #^ dict versions #^ float [timeout REPLY-SECONDS]
-                  #^ (| RuntimeEnv None) [runtime-env None] #^ (| httpx.BaseTransport None) [transport None]]
-    ;; versions = 送り手の版の識別(blob に添える — 組み立てが宿の契約の Ask versions-key で読んで渡す・この層は読まない #2345)。
-    (setv self.revision revision self.versions versions self.runtime-env runtime-env
-          self.endpoint (CoordinatorEndpoint url timeout 4 :transport transport)))
+(defrecord TaskSender
+  "task の送り手: revision = 送り手の commit(受け側はこの版のコードを準備してから復元する)・versions = 送り手の版の識別(blob に添える —
+   組み立てが宿の契約の Ask versions-key で読んで渡す・この層は読まない #2345)・runtime-env = 実行環境の宣言(在れば worker は env の
+   root を準備して、その中の子 process で走らせる — revision は使わない)。"
+  {:tags {:context "doeff-cluster" :role "protocol"}}
+  (#^ str revision)
+  (#^ dict versions)
+  (#^ (| RuntimeEnv None) runtime-env))
 
-  (defn #^ str submit [self #^ str blob #^ frozenset needs #^ dict versions #^ str name #^ float lease-seconds #^ (| dict None) [environ None]]
-    "task を 1 本出す: 詰めた Program を版と一緒に置き場 /programs/<sha> に先に置き、本文は sha だけを運ぶ(service の宣言と同じ運び方 —
-     ADR-DOE-CLUSTER-001 R3b)。答え = coordinator の振った task の id。"
-    (setv #(sha put) (put-program self.endpoint blob versions IDEMPOTENT-DEADLINE-SECONDS))
-    (.raise-for-status put)
-    (setv response (.request self.endpoint "POST" "/tasks"
-      :json (task-submit-body sha self.revision needs name lease-seconds self.runtime-env (or environ {}))))
-    (.raise-for-status response)
-    (get (.json response) "task"))
 
-  (defn #^ dict poll [self #^ str task]
-    ;; 問い合わせが lease を延ばす。呼び手が止まれば問い合わせも止まり、coordinator が task を落とす。
-    (setv response (send-idempotent (fn [] (.request self.endpoint "GET" (+ "/tasks/" task)))))
-    (.raise-for-status response)
-    (.json response))
+(defk program-put [cell options blob versions]
+  {:pre [(: cell RouteCell) (: options RouteOptions) (: blob str) (: versions dict)] :post [(: % str)]
+   :tags {:context "doeff-cluster" :role "protocol"}}
+  "task を送る前に、詰めた Program を coordinator の置き場 PUT /programs/<sha> に版と一緒に置くため(task の本文は sha だけを運ぶ —
+   service の宣言と同じ運び方・ADR-DOE-CLUSTER-001 R3b)。同じ中身は同じキーの同じ行なので、何度送っても同じ意味 — 失敗は期限まで
+   送り直す(resent-request)。答え = sha。断りは RouteRefused・届かないは RouteUnreachable(answer-json)。"
+  (val sha (program-sha blob))
+  (<- reply RoutedReply (resent-request cell.route "PUT" (+ "/programs/" sha) options None {"blob" blob "versions" versions}
+                                        IDEMPOTENT-DEADLINE-SECONDS RESEND-PAUSE-SECONDS))
+  (setv cell.route reply.route)
+  (<- _stored (answer-json reply.answer))
+  sha)
 
-  (defn #^ None drop [self #^ str task]
-    (try (.request self.endpoint "DELETE" (+ "/tasks/" task))
-         (except [Exception] None))
-    None))
+
+(defk task-submitted [cell options sender blob needs name lease-seconds environ]
+  {:pre [(: cell RouteCell) (: options RouteOptions) (: sender TaskSender) (: blob str) (: needs frozenset) (: name str)
+         (: lease-seconds float) (: environ dict)]
+   :post [(: % str)] :tags {:context "doeff-cluster" :role "protocol"}}
+  "task を 1 本出すため: 詰めた Program を置き場に先に置き(program-put)、本文は sha だけを運ぶ POST /tasks を送る。書きなので送り直しは
+   接続の段だけ(routed-request)。答え = coordinator の振った task の id。"
+  (<- sha str (program-put cell options blob sender.versions))
+  (val body (task-submit-body sha sender.revision needs name lease-seconds sender.runtime-env environ))
+  (<- reply RoutedReply (routed-request cell.route "POST" "/tasks" options None body))
+  (setv cell.route reply.route)
+  (<- answer dict (answer-json reply.answer))
+  (get answer "task"))
+
+
+(defk task-view [cell options task]
+  {:pre [(: cell RouteCell) (: options RouteOptions) (: task str)] :post [(: % dict)] :tags {:context "doeff-cluster" :role "protocol"}}
+  "task の今の様子を問い合わせるため(GET /tasks/<id> — 問い合わせが lease を延ばす。呼び手が止まれば問い合わせも止まり、coordinator が
+   task を落とす)。読みなので失敗は期限まで送り直す。"
+  (<- reply RoutedReply (resent-request cell.route "GET" (+ "/tasks/" task) options None None
+                                        IDEMPOTENT-DEADLINE-SECONDS RESEND-PAUSE-SECONDS))
+  (setv cell.route reply.route)
+  (<- view dict (answer-json reply.answer))
+  view)
+
+
+(defk task-dropped [cell options task]
+  {:pre [(: cell RouteCell) (: options RouteOptions) (: task str)] :post [(: % None)] :tags {:context "doeff-cluster" :role "protocol"}}
+  "task を落とすため(DELETE /tasks/<id> — 落とせば担い手は次の拍で子 process を止める)。答えは読まない: 届かなければ問い合わせが
+   途絶えて lease が切れた時に coordinator が落とす。"
+  (<- reply RoutedReply (routed-request cell.route "DELETE" (+ "/tasks/" task) options None None))
+  (setv cell.route reply.route)
+  None)
 
 
 (defn #^ (| TaskSucceeded TaskFailed None) outcome-of [#^ dict view #^ str task #^ str revision]
@@ -95,24 +121,28 @@
                             (RemoteJobFailed (.format "{}: {}\n{}" outcome.kind outcome.message outcome.traceback))))))
 
 
-(defk wait-outcome [client task poll-seconds]
-  {:pre [(: client TaskClient) (: task str) (: poll-seconds float)] :post [(: % (| TaskSucceeded TaskFailed))]}
-  ;; 終わるまで問い合わせる。眠りは Delay(外側の doeff-time の handler)なので同じ VM の他の task を塞がない。
-  ;; 抜ける時は、結果でも失敗でも取り消し(呼び手の Cancel)でも task を落とす — 落とせば担い手は次の拍で子 process を止める。
-  ;; 落とす前に呼び手の process ごと消えた時は、問い合わせが途絶えて lease が切れた時に coordinator が落とす。
+(defk wait-outcome [cell options sender task poll-seconds]
+  {:pre [(: cell RouteCell) (: options RouteOptions) (: sender TaskSender) (: task str) (: poll-seconds float)]
+   :post [(: % (| TaskSucceeded TaskFailed))] :tags {:context "doeff-cluster" :role "protocol"}}
+  "出した task が終わるまで問い合わせて、結果を返すため。眠りは Delay(外側の doeff-time の handler)なので同じ VM の他の task を
+   塞がない。抜ける時は、結果でも失敗でも取り消し(呼び手の Cancel)でも task を落とす。"
   (try
     (while True
       (<- (Delay poll-seconds))
-      (val outcome (outcome-of (.poll client task) task client.revision))
+      (<- view dict (task-view cell options task))
+      (val outcome (outcome-of view task sender.revision))
       (when (is-not outcome None) (return outcome)))
     (finally
-      (.drop client task))))
+      (<- (task-dropped cell options task)))))
 
 
-(defhandler remote-cluster [#^ TaskClient client #^ float [poll-seconds 1.0] #^ float [lease-seconds 15.0]]
+;; 本物の RemoteJob: coordinator の /programs と /tasks へ、汎用の HttpRequest で話す(#2337 の 4b — httpx を直に持っていた TaskClient を
+;; 替えた)。宛先の順・切り替え・送り直しは宛先の部品(coordinator_route.hy)— 宛先の状態は組み立てが渡す入れ物(RouteCell)。
+;; 出す HttpRequest に答える本物の I/O の答え手は、process の組み立ての根が外側に積む。
+(defhandler remote-cluster [#^ RouteCell cell #^ RouteOptions options #^ TaskSender sender #^ float [poll-seconds 1.0] #^ float [lease-seconds 15.0]]
   (RemoteJob [program needs name environ]
     ;; 送れない値は送る前に断る(encode-program が UnsendableProgram を投げ、呼び手へ届く)。
     (val blob (encode-program program))
-    (val task (.submit client blob needs client.versions name lease-seconds environ))
-    (<- outcome (wait-outcome client task poll-seconds))
+    (<- task str (task-submitted cell options sender blob needs name lease-seconds (or environ {})))
+    (<- outcome (wait-outcome cell options sender task poll-seconds))
     (resume (settled-value outcome))))

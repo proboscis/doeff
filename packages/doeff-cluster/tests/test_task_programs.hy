@@ -1,7 +1,7 @@
 ;;; task の Program も置き場 /programs/<sha> で運ぶ(ADR-DOE-CLUSTER-001 R3b — service と task で運び方を分けない・operator 逐語
 ;;; "i dont find any reason to have different api for services")。
 ;;;
-;;;   送り手  … TaskClient・DetachedClient は詰めた Program を先に PUT /programs/<sha>(本文 {"blob" "versions"})で置き、task の本文
+;;;   送り手  … remote-cluster(remote.hy の program-put)・DetachedClient は詰めた Program を先に PUT /programs/<sha>(本文 {"blob" "versions"})で置き、task の本文
 ;;;             (POST /tasks・PUT /detached/<key>)は program に sha を書く。本文の blob・versions は 400(理由つき)。
 ;;;   coordinator … 置き場に sha が在る時だけ task を受け、task の版は置き場の版。heartbeat の返事は sha だけを運ぶ。掃除は task の行
 ;;;             (終わって結果を保持している行も)が参照する sha を残し、行が消えたら猶予の後に消す。状態を失った coordinator は worker の
@@ -25,7 +25,13 @@
 (import doeff_cluster.coordinator.core.program_policy [PROGRAM-GRACE-MS])
 (import doeff_cluster.handlers [CoordinatorLink ProcessHost program-file write-program-file])
 (import doeff_cluster.foundation.host_contract [HOST-CONTRACT])
-(import doeff_cluster.shared.protocol.remote [TaskClient])
+(import doeff [Program with-handlers])
+(import doeff_core_effects.handlers [await-handler slog-handler])
+(import doeff_core_effects.http_handlers [http-production-handler])
+(import doeff_core_effects.scheduler [scheduled])
+(import doeff_time [async-time-handler])
+(import doeff_cluster.shared.protocol.coordinator_route [CoordinatorRoute RouteCell RouteOptions route-of])
+(import doeff_cluster.shared.protocol.remote [TaskSender task-submitted task-view task-dropped])
 (import doeff_cluster.shared.intent.remote_model [TaskSucceeded encode-program decode-outcome program-sha])
 (import doeff_cluster.foundation.process_versions [current-versions])
 (import doeff_cluster.worker_model [DesiredJobs JobStatus] doeff_cluster.shared.intent.job_model [JobSpec JobPhase])
@@ -249,7 +255,7 @@
   (assert (.exists (program-file link.program-dir SERVICE-SHA))))
 
 
-;; --- 通しの検: 本物の coordinator の process・TaskClient・CoordinatorLink・job_entry の子 process ------------------------
+;; --- 通しの検: 本物の coordinator の process・本物の送り手(remote.hy の task-submitted ほか)・CoordinatorLink・job_entry の子 process ----
 
 ;; 共有の coordinator の上で他の検の worker に置かれないよう、この検だけの能力を要る(名も他の検と重ならない)。
 (val NEED "served-task-program-e2e")
@@ -270,30 +276,43 @@
   found)
 
 
-(defk finished-view [client link id]
-  {:pre [(: client TaskClient) (: link CoordinatorLink) (: id str)] :post [(: % dict)] :tags {:context "doeff-cluster-test" :role "entry"}}
+(val SEND-OPTIONS (RouteOptions :reply-seconds 15.0 :connect-seconds 2.0 :connect-retries 4 :recheck-ms 60000 :actor "served-task-program"))
+
+
+(defk over-network [program]
+  {:pre [(: program Program)] :post [(: % "program の答え")] :tags {:context "doeff-cluster-test" :role "foundation"}}
+  "送り手の Program を本物の網の上で走らせるため(本番の土台と同じ HTTP の答え手・await・壁の時計・log の答え手)。"
+  (<- answer (scheduled (with-handlers [(await-handler) slog-handler (http-production-handler) (async-time-handler)] program)))
+  answer)
+
+
+(defk finished-view [cell link id]
+  {:pre [(: cell RouteCell) (: link CoordinatorLink) (: id str)] :post [(: % dict)] :tags {:context "doeff-cluster-test" :role "entry"}}
   "担い手が終わりの報告を送り、呼び手の問い合わせが finished を返すまで待つ(その答え・30 秒で断念)。"
   (val deadline (+ (time.monotonic) 30))
   (var view {})
   (while (and (!= (.get view "phase") "finished") (< (time.monotonic) deadline))
     (.poll link)
-    (:= view (.poll client id))
+    (<- seen dict (over-network (task-view cell SEND-OPTIONS id)))
+    (:= view seen)
     (when (!= (.get view "phase") "finished") (time.sleep 0.2)))
   view)
 
 
 (deftest test-a-task-program-reaches-the-worker-and-job-entry-writes-its-result [served-coordinator tmp-path]
-  ;; 送り手(TaskClient)が Program を置き場に置いて sha だけの task を出し、worker(本物の CoordinatorLink)が返事の sha の Program を
+  ;; 送り手(task-submitted)が Program を置き場に置いて sha だけの task を出し、worker(本物の CoordinatorLink)が返事の sha の Program を
   ;; cache へ取り、job_entry の task 入口の子 process が走らせて結果の file を書き、終わりの報告で呼び手に結果が届く。
   ;; fixture の値は検査器から型が見えない(repo の fixture は object)— conftest の served_coordinator の答え(str)をここで確かめる(test_served_program.hy と同じ)。
   (assert (isinstance served-coordinator str) served-coordinator)
   (val link (CoordinatorLink served-coordinator WORKER #(NEED) 10 60000
                              :task-dir (str (/ tmp-path "state" "tasks")) :versions (current-versions)))
-  (val client (TaskClient served-coordinator "r-served" (current-versions)))
+  (val sender (TaskSender :revision "r-served" :versions (current-versions) :runtime-env None))
+  (<- route CoordinatorRoute (route-of served-coordinator (int (* (time.time) 1000))))
+  (val cell (RouteCell route))
   ;; 担い手を先に名乗らせる(置ける worker の無い task は置かれずに失敗する)。
   (.poll link)
   (val blob (encode-program (based-add 3)))
-  (val id (.submit client blob (frozenset [NEED]) (current-versions) "served-task" 60.0))
+  (<- id str (over-network (task-submitted cell SEND-OPTIONS sender blob (frozenset [NEED]) "served-task" 60.0 {})))
   (try
     (do
       (<- spec JobSpec (assigned-task link id))
@@ -308,9 +327,9 @@
       (assert (= done.returncode 0) done.stderr)
       (assert (in "TaskSucceeded" done.stderr) done.stderr)
       (setv link.statuses (.report link #((JobStatus spec.name JobPhase.FINISHED "r-served" "r-served" None 1))))
-      (<- view dict (finished-view client link id))
+      (<- view dict (finished-view cell link id))
       (assert (= (get view "phase") "finished") view)
       (val outcome (decode-outcome (get view "result")))
       (assert (= outcome (TaskSucceeded 103)) outcome))
     (finally
-      (.drop client id))))
+      (<- (over-network (task-dropped cell SEND-OPTIONS id))))))

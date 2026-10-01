@@ -125,7 +125,7 @@
 
 (deftest test-a-sender-with-a-runtime-env-puts-the-declaration-on-the-task
   {:interpreters ["remote-cluster-env" "sim-cluster-env"]}
-  ;; 送り手の実行環境の宣言(本番の TaskClient の runtime-env)は task の行に載り、coordinator はその env の root を準備した担い手へ置く
+  ;; 送り手の実行環境の宣言(本番の TaskSender の runtime-env)は task の行に載り、coordinator はその env の root を準備した担い手へ置く
   ;; (置く・走らせるは組ごとに違う — 本物の側の担い手 RigWorker は env を準備しない)。行を読んだら取り消す。
   (<- env RuntimeEnv (contract-env))
   (<- declared dict (runtime-env->json env))
