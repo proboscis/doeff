@@ -12,6 +12,8 @@
 (val MODULE-TAGS {:context "doeff-cluster" :role "intent"})
 (import dataclasses [dataclass])
 (import doeff [EffectBase])
+(import typing [ClassVar])
+(import doeff_cluster.shared.intent.record_spec [RecordSpec RecordMode Unexecuted])
 
 
 (setv ROLE-ACTIVE "active" ROLE-STANDBY "standby")
@@ -36,6 +38,7 @@
    role(2026-09-24)= active(本当に仕事をしている)か standby(名前付きの lease を他が持つ間、書きを捨てて拍を回している待機)。
    coordinator は standby の Ready も Service の Ready に数える(入れ替えで旧を止める合図)が、書き手の計器
    doeff_worker_service_ready_replicas は active の Ready だけを数える(alert の材料)。"
+  (setv #^ (get ClassVar RecordSpec) __record-spec__ (RecordSpec :mode RecordMode.OUTPUT :unexecuted Unexecuted.NOTHING))
   (#^ bool ready)
   (setv #^ str reason "")
   (setv #^ str role ROLE-ACTIVE))

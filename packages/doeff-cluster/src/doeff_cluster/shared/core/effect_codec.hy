@@ -2,8 +2,13 @@
 ;;;
 ;;; 記録は何日も残る長期保存なので cloudpickle ではなく JSON にする。値の符号化(encode-value / decode-value)は
 ;;; JSON の値・tuple・bytes・時刻(timezone つきの datetime)・dataclass・例外・handle(Task / Semaphore / Promise)を型を落とさずに往復させ、知らない物は
-;;; 黙って落とさず UnencodableValue を投げる。effect の型は EFFECT-CODECS に 1 行ずつ登録し、登録の無い型は
-;;; UnrecordableEffect(記録の側はそこから先を記録できないと印を置く — record_handlers.hy)。
+;;; 黙って落とさず UnencodableValue を投げる。effect の型の扱いは 2 つの置き場の順に引く(codec-of):
+;;;   1. 登録表 — register の 1 行(引数の形を関数で作る型・汎用の型)。
+;;;   2. 型の宣言 — 既定の形で足りる型は、class の本体に ClassVar `__record_spec__`(shared/intent/record_spec.hy の RecordSpec)を置く。
+;;;      codec は宣言の値を欄の名(SPEC-FIELDS)で読む(RecordSpec を import しない)。
+;;;      codec は型そのものの __dict__ だけを読み(子 class には継がない)、初めて見た時に宣言から登録を作って表に入れる(#2578)。
+;;; どちらにも無い型は UnrecordableEffect(記録の側はそこから先を記録できないと印を置く — record_handlers.hy)。
+;;; 記録できる型かは can-record が答える(使い手の repo の登録漏れの検の材料)。
 ;;;
 ;;; 登録の 1 行が決めること:
 ;;;   mode       再生での扱い。read = 記録の答えを返す(問いは型・引数・順番まで記録と同じでなければ「分岐」で止める)・
@@ -45,10 +50,7 @@
                                       CreateSemaphore AcquireSemaphore ReleaseSemaphore Task Promise Future Semaphore])
 (import doeff_time [GetTimeEffect GetMonotonicEffect DelayEffect])
 (import doeff_hy.json_value [OpaqueJson])
-(import doeff_cluster.shared.intent.shared_model [ReadShared WriteShared ANY])
-(import doeff_cluster.shared.intent.semaphore_model [CreateNamedSemaphore HeldLease LeaseStanding])
-(import doeff_cluster.shared.intent.readiness_model [ReportReady])
-(import doeff_cluster.shared.intent.metrics_model [ReportMetrics])
+(import doeff_cluster.shared.intent.shared_model [WriteShared ANY])
 
 (setv FORMAT-VERSION 2)
 ;; 読める形の版(1 = 差分・2 = 内容参照と問いと答えの 1 行)。
@@ -72,7 +74,10 @@
   "記録の形(JSON)にできない値。記録を黙って落とさないために投げる。")
 
 (defclass UnrecordableEffect [TypeError]
-  "EFFECT-CODECS に登録の無い effect の型。")
+  "登録表にも型の宣言(__record_spec__)にも記録の形の無い effect の型。")
+
+(defclass MalformedRecordSpec [TypeError]
+  "型の宣言(__record_spec__)の値が記録の形の宣言として読めない(知らない mode・binds・unexecuted、args に無い欄の名など)。")
 
 (defclass _Diverge []
   (defn #^ str __repr__ [self] "DIVERGE"))
@@ -401,15 +406,19 @@
 (defclass EffectCodec []
   ;; unexecuted = 記録に対の無い書きへ返す答え(True・None)か DIVERGE(返さずに分岐として止める)。
   ;; recorded = 記録の行の引数(args の答えの形)を今の版の比べる形へ揃える関数 — 引数の形を変えた型が旧い記録を読むため(None = そのまま)。
+  ;; arg-names = args の関数を持たない型の、記録の引数に載せる欄の名(型の宣言の args — None = dataclass の全部の欄)。
   (defn #^ None __init__ [self #^ type cls #^ (| str Callable) mode #^ (| Callable None) [args None] #^ (| Callable None) [subject None]
                   #^ (| _Diverge bool None) [unexecuted DIVERGE] #^ (| str None) [binds None] #^ bool [watch False]
-                  #^ (| Callable None) [recorded None]]
+                  #^ (| Callable None) [recorded None] #^ (| tuple None) [arg-names None]]
     (setv self.cls cls self.name (type-name cls) self.mode mode self.args-fn args self.subject-fn subject
-          self.unexecuted unexecuted self.binds binds self.watch watch self.recorded-fn recorded)))
+          self.unexecuted unexecuted self.binds binds self.watch watch self.recorded-fn recorded self.arg-names arg-names)))
 
 
 (defn _fields-args [effect handles]
-  (dfor f (dataclasses.fields effect) f.name (encode-value (getattr effect f.name) handles)))
+  ;; 欄の名は登録の arg-names(型の宣言の args)か、無ければ dataclass の全部の欄。
+  (setv names (. (codec-of effect) arg-names))
+  (dfor name (if (is names None) (gfor f (dataclasses.fields effect) f.name) names)
+        name (encode-value (getattr effect name) handles)))
 
 (defn _loose-value [v handles]
   "live の effect の引数・答えは順番の突き合わせと報告にしか使わないので、JSON にできない値は repr の印にする。"
@@ -443,11 +452,26 @@
      {"value" (_recorded-board-json (.get args "value"))
       "expect" (if (or (is expect None) (= expect {"$any" 1})) expect (_recorded-board-json expect))}))
 
+;; 宣言の属性の名(effect の class の ClassVar — shared/intent/record_spec.hy)。
+(setv SPEC-ATTRIBUTE "__record_spec__")
+;; codec が読む宣言の欄の名(RecordSpec の欄と同じ — 一致は tests/test_effect_record.hy が縛る)。
+(setv SPEC-FIELDS #("mode" "binds" "subject" "args" "unexecuted"))
+;; 宣言の欄の値の綴り(StrEnum の値)→ 登録の値。DIVERGE はこの codec の印なので、宣言の語彙からここで写す。
+(setv _SPEC-MODES #(READ LIVE DECISION OUTPUT))
+(setv _SPEC-BINDS #("named-sem" "sem" "task" "promise"))
+(setv _SPEC-UNEXECUTED {"diverge" DIVERGE "landed" True "nothing" None})
+
 (setv _REGISTRY {})
-;; 記録の型の名(今の名)→ 登録。記録の行を読む時は型を import せずに名で引く(recorded-args)。
+;; 型の宣言から作った登録(型 → 登録)。登録表(register)とは分けて持つ — registered-types は register の行だけを答える。
+(setv _DECLARED {})
+;; 記録の型の名(今の名)→ 登録。記録の行の引数を今の版の比べる形へ揃える時に、行の型の名で引く(recorded-args — 旧い名は
+;; MOVED-TYPES・MOVED-MODULES で今の名へ揃える)。宣言から作った登録は初めて見た時に入る。
 (setv _BY-NAME {})
 
 (defn #^ EffectCodec register [#^ EffectCodec codec]
+  ;; 登録表と型の宣言の両方を持つ型は、どちらが効くかを読み手が取り違えるので登録の時に止める。
+  (when (in SPEC-ATTRIBUTE (vars codec.cls))
+    (raise (MalformedRecordSpec (.format "{} は記録の宣言(__record_spec__)を持つので登録表に足さない(片方だけにする)" codec.name))))
   (setv (get _REGISTRY codec.cls) codec)
   (setv (get _BY-NAME codec.name) codec)
   codec)
@@ -459,12 +483,76 @@
   (setv codec (.get _BY-NAME (.format "{}:{}" (.get MOVED-MODULES written written) qualname)))
   (if (or (is codec None) (is codec.recorded-fn None)) args (codec.recorded-fn args)))
 
+;; --- 型の宣言(__record_spec__)を読む ----------------------------------------------------------------
+;; 宣言の値は欄の名(SPEC-FIELDS)と値の綴り(StrEnum の値)で読む(RecordSpec を import しない)。
+
+(deff _spec-subject [#^ str field]  ; defk にできない: 記録係・再生係が登録の subject として呼ぶ callback を作る
+  {:pre [(: field str)] :post [(: % Callable)] :tags {:context "doeff-cluster" :role "judgment"}}
+  "宣言の subject(記録の引数の欄の名)→ 対の鍵を作る関数(その欄の値の文字列)。"
+  (fn [args] (str (.get args field))))
+
+(deff _codec-from-spec [#^ type cls]  ; defk にできない: codec-of(記録係・再生係が Program の外で呼ぶ純粋な関数)が呼ぶ
+  {:pre [(: cls type)] :post [(: % EffectCodec)] :tags {:context "doeff-cluster" :role "judgment"}}
+  "型の宣言の値 → 登録。宣言の欄を検め、読めない値は MalformedRecordSpec で型の名と欄を名指す(黙って既定の扱いへ倒さない)。"
+  (setv where (type-name cls)
+        spec (get (vars cls) SPEC-ATTRIBUTE))
+  (setv missing (lfor name SPEC-FIELDS :if (not (hasattr spec name)) name))
+  (when missing
+    (raise (MalformedRecordSpec (.format "{} の記録の宣言に欄 {} が無い" where missing))))
+  (setv mode (str spec.mode)
+        binds spec.binds
+        subject spec.subject
+        args spec.args
+        unexecuted (str spec.unexecuted))
+  (when (not-in mode _SPEC-MODES)
+    (raise (MalformedRecordSpec (.format "{} の記録の宣言の mode が読めない: {!r}" where mode))))
+  (when (and (is-not binds None) (not-in (str binds) _SPEC-BINDS))
+    (raise (MalformedRecordSpec (.format "{} の記録の宣言の binds が読めない: {!r}" where binds))))
+  (when (not-in unexecuted _SPEC-UNEXECUTED)
+    (raise (MalformedRecordSpec (.format "{} の記録の宣言の unexecuted が読めない: {!r}" where unexecuted))))
+  (when (not (or (is args None) (and (isinstance args tuple) (all (gfor n args (isinstance n str))))))
+    (raise (MalformedRecordSpec (.format "{} の記録の宣言の args は欄の名の tuple か None: {!r}" where args))))
+  (when (and (is args None) (not (dataclasses.is-dataclass cls)))
+    (raise (MalformedRecordSpec (.format "{} は dataclass でないので、記録の宣言に args(欄の名)が要る" where))))
+  (setv names (if (is args None) (tuple (gfor f (dataclasses.fields cls) f.name)) args))
+  (when (and (is-not subject None) (not-in subject names))
+    (raise (MalformedRecordSpec (.format "{} の記録の宣言の subject {!r} が記録の引数の欄 {} に無い" where subject names))))
+  (EffectCodec cls mode
+               :arg-names args
+               :subject (if (is subject None) None (_spec-subject subject))
+               :unexecuted (get _SPEC-UNEXECUTED unexecuted)
+               :binds (if (is binds None) None (str binds))))
+
+(deff _declared-codec [#^ type cls]  ; defk にできない: codec-of と can-record(Program の外の純粋な関数)が呼ぶ
+  {:pre [(: cls type)] :post [(: % (| EffectCodec None))] :tags {:context "doeff-cluster" :role "judgment"}}
+  "型そのものの宣言(__dict__ の __record_spec__ — 親の宣言は継がない)から作った登録。初めて見た時に作って表に入れる。宣言が無ければ None。"
+  (setv codec (.get _DECLARED cls))
+  (when (is-not codec None)
+    (return codec))
+  (setv spec (.get (vars cls) SPEC-ATTRIBUTE))
+  (when (is spec None)
+    (return None))
+  (setv codec (_codec-from-spec cls))
+  (setv (get _DECLARED cls) codec)
+  (setv (get _BY-NAME codec.name) codec)
+  codec)
+
+(deff can-record [#^ type cls]  ; defk にできない: 使い手の repo の登録漏れの検が Program の外で型ごとに問う
+  {:pre [(: cls type)] :post [(: % bool)] :tags {:context "doeff-cluster" :role "judgment"}}
+  "その effect の型を記録できるか(登録表に在るか、型そのものが記録の形の宣言を持つか — 子 class は親の宣言では記録できない)。
+   宣言が読めなければ MalformedRecordSpec(記録できるとも、できないとも答えない)。"
+  (or (in cls _REGISTRY) (is-not (_declared-codec cls) None)))
+
 ;; effect はどの値でもよい(登録の無い型は UnrecordableEffect で断る)。
 (defn #^ EffectCodec codec-of [#^ object effect]
-  "effect の登録。型そのもので引く(子 class を親の登録で黙って扱わない)。無ければ UnrecordableEffect。"
-  (setv codec (.get _REGISTRY (type effect)))
+  "effect の登録。登録表 → 型の宣言の順に、型そのもので引く(子 class を親の登録・宣言で黙って扱わない)。無ければ UnrecordableEffect。"
+  (setv cls (type effect))
+  (setv codec (or (.get _REGISTRY cls) (_declared-codec cls)))
   (when (is codec None)
-    (raise (UnrecordableEffect (.format "effect の型 {} は記録の登録(effect_codec.EFFECT-CODECS)に無い" (type-name (type effect))))))
+    ;; 親が宣言を持つなら、継がないことを添える(子の扱いは子の宣言が決める)。
+    (setv parents (lfor base (cut cls.__mro__ 1 None) :if (in SPEC-ATTRIBUTE (vars base)) (type-name base)))
+    (raise (UnrecordableEffect (.format "effect の型 {} は記録の登録表にも型の宣言(__record_spec__)にも無い{}" (type-name cls)
+                                        (if parents (.format "(親 {} の宣言は子 class に継がない)" (get parents 0)) "")))))
   codec)
 
 (defn #^ str mode-of [#^ object effect #^ HandleTable handles]
@@ -488,10 +576,6 @@
 ;; 時計は doeff-time の 3 つ(GetTime / GetMonotonic / Delay)。再生では記録の答え(時刻・秒・None)を返し、眠らない。
 (for [cls [GetTimeEffect GetMonotonicEffect DelayEffect]]
   (register (EffectCodec cls READ)))
-(register (EffectCodec ReadShared READ))
-(register (EffectCodec HeldLease READ))
-(register (EffectCodec LeaseStanding READ))
-(register (EffectCodec CreateNamedSemaphore READ :args (fn [e h] {"name" e.name "permits" e.permits}) :binds "named-sem"))
 (register (EffectCodec AcquireSemaphore (_handle-mode "semaphore") :args (fn [e h] {"semaphore" (_loose-value e.semaphore h)})))
 (register (EffectCodec ReleaseSemaphore (_handle-mode "semaphore") :args (fn [e h] {"semaphore" (_loose-value e.semaphore h)})))
 (register (EffectCodec CreateSemaphore LIVE :args (fn [e h] {"permits" e.permits}) :binds "sem"))
@@ -503,8 +587,6 @@
 (register (EffectCodec CreatePromise LIVE :args (fn [e h] {}) :binds "promise"))
 (register (EffectCodec CompletePromise LIVE :args (fn [e h] {"promise" (_loose-value e.promise h) "value" (_loose-value e.value h)})))
 (register (EffectCodec FailPromise LIVE :args (fn [e h] {"promise" (_loose-value e.promise h) "error" (_loose-value e.error h)})))
-(register (EffectCodec ReportReady OUTPUT :unexecuted None))
-(register (EffectCodec ReportMetrics OUTPUT :unexecuted None))
 ;; 盤の書き: 値と expect の値は OpaqueJson(#2543)。記録の比べる形は盤が持つ JSON の値の綴り(_board-json)で、OpaqueJson の
 ;; dataclass の綴りにしない — 値が素の JSON の値だった旧い記録の行も、読む時に同じ綴りへ揃える(_recorded-write-args)。
 (register (EffectCodec WriteShared OUTPUT :subject _key-subject :unexecuted True
@@ -514,12 +596,12 @@
                                                        True (_board-json e.expect h))})
                        :recorded _recorded-write-args))
 
-;; process の memory の gauge(metrics_model.ReadProcessGauges)は読み。
-(import doeff_cluster.shared.intent.metrics_model [ReadProcessGauges])
-(register (EffectCodec ReadProcessGauges READ))
+;; 盤の読み・lease の問い・名前付きの semaphore・readiness と計器の報告・process の gauge の読み(shared/intent の 7 型)は、型の宣言
+;; (__record_spec__)で記録する(#2578 — 登録表の行は持たない)。
 
 ;; --- 業務コードの effect ------------------------------------------------------------------------------
 ;; 業務の effect の型は、業務の側の module が import の時に register で足す(この package は業務の型を知らない)。
 ;; 記録係と再生係は job の Program の中の境目に在り(record_handlers.boundary-recorder — ADR-DOE-CLUSTER-001 R5)、子の入口(job_entry)と
 ;; 再生の道具(replay_main)は詰めた Program を解く時に、Program が参照する業務の module を import する。その module(か、それが import
-;; する module)で登録すれば、記録と再生の両方に届く。登録の無い型は UnrecordableEffect。
+;; する module)で登録すれば、記録と再生の両方に届く。既定の形で足りる型は、登録の代わりに型の宣言(__record_spec__)を置けばよい。
+;; 登録も宣言も無い型は UnrecordableEffect。

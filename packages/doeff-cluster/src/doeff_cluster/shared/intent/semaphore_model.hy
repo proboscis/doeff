@@ -33,6 +33,8 @@
 (val MODULE-TAGS {:context "doeff-cluster" :role "intent"})
 (import dataclasses [dataclass])
 (import doeff [EffectBase])
+(import typing [ClassVar])
+(import doeff_cluster.shared.intent.record_spec [RecordSpec RecordMode HandleKind])
 (import doeff_core_effects.scheduler [CreateSemaphore Semaphore])
 
 (setv SEMAPHORE-PREFIX "semaphore/")
@@ -40,6 +42,9 @@
 
 (defclass CreateNamedSemaphore [CreateSemaphore]
   "名前付きの semaphore を作る。cluster の handler の下では、同じ名前 = cluster 全体で同じ lock。"
+  ;; 記録の引数は名前と数(答えの handle は記録の中の名で名付ける)。
+  (setv #^ (get ClassVar RecordSpec) __record-spec__
+        (RecordSpec :mode RecordMode.READ :args #("name" "permits") :binds HandleKind.NAMED-SEM))
   (defn #^ None __init__ [self #^ str name #^ int [permits 1]]
     (.__init__ (super) permits)
     (when (or (not (isinstance name str)) (not name) (in "/" name))
@@ -67,6 +72,7 @@
 ;; 答え = {"token": 持っている token, "expiresMs": 最後に保存へ書けた期限(epoch ミリ秒)}。持っていない・失った = None。
 ;; 期限は「保存に書けたと確かめた値」だけ(書けたか分からない延長は数えない)ので、手元の見積もりは保存の値より遅くならない。
 (defclass [(dataclass :frozen True)] HeldLease [EffectBase]
+  (setv #^ (get ClassVar RecordSpec) __record-spec__ (RecordSpec :mode RecordMode.READ))
   (#^ str name))
 
 ;; 柵の余裕(2026-09-25): 柵は書きを「出す前」にだけ確かめるので、出した書きが相手(業務の書き先)に着くのは確かめた時刻より後になる。
@@ -105,6 +111,7 @@
 ;; 答え = "standby"(一度も持っていない — 取りに行っている間の待機)・"held"(いま持っている)・"lost"(持っていたが失った)。
 ;; 待機の process の書きは外へ出さない(semaphore_handlers.standby-divert)。失った process の書きは柵が断る(lease-fence)。
 (defclass [(dataclass :frozen True)] LeaseStanding [EffectBase]
+  (setv #^ (get ClassVar RecordSpec) __record-spec__ (RecordSpec :mode RecordMode.READ))
   (#^ str name))
 
 (setv STANDBY "standby" HELD "held" LOST "lost")

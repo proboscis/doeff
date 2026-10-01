@@ -5,8 +5,11 @@
 ;;   3. 業務の書き手の記録と再生は業務の側の検が持つ
 ;;   4. 判断を 1 か所変えた版 → 違いはその profile の書きだけ
 ;;   5. 読み方を変えた版 → 分岐として止まる(推測で答えを作らない)
-(require doeff-hy.macros [deftest defk defhandler <- var])
+(require doeff-hy.macros [deftest defk defhandler <- val var])
 (import json)
+(import dataclasses)
+(import dataclasses [dataclass])
+(import typing [ClassVar])
 (import datetime [datetime timedelta timezone])
 (import doeff [EffectBase Pass with_handlers Program])
 (import doeff_core_effects.handlers [reader])
@@ -19,7 +22,13 @@
 (import doeff_cluster.shared.intent.shared_model [ReadShared WriteShared ANY])
 (import tests.board_fake [board-handlers])
 (import doeff_cluster.shared.core.effect_codec [BlobMemory intern-json resolve-refs encode-value decode-value encode-error decode-error delta-of apply-delta canonical
-                                         UnrecordableEffect RecordedError HandleTable args-of type-name])
+                                         UnrecordableEffect RecordedError HandleTable args-of type-name
+                                         EffectCodec MalformedRecordSpec READ LIVE OUTPUT DECISION SPEC-FIELDS codec-of mode-of subject-of can-record
+                                         register registered-types])
+(import doeff_cluster.shared.intent.record_spec [RecordSpec RecordMode Unexecuted])
+(import doeff_cluster.shared.intent.semaphore_model [CreateNamedSemaphore HeldLease LeaseStanding])
+(import doeff_cluster.shared.intent.readiness_model [ReportReady])
+(import doeff_cluster.shared.intent.metrics_model [ReportMetrics ReadProcessGauges])
 (import doeff_cluster.shared.core.record_model [read-recording ReplayFinished ReplayDiverged])
 (import doeff_cluster.shared.protocol.record_handlers [MemorySink EffectLog effect-recorder ReplayState effect-replayer replay-report])
 
@@ -220,3 +229,162 @@
   (assert (is (resolve-type "doeff_cluster.env_prepare:FileSha256") FileSha256))
   (assert (is (resolve-type "doeff_cluster.drain_client:CoordinatorCall") CoordinatorCall))
   (assert (= (len MOVED-MODULES) 17)))
+
+
+;; ---- 型の宣言(__record_spec__)で記録する(#2578)--------------------------------------------------------------
+;; 既定の形で足りる型は、登録表の行の代わりに class の本体に記録の形の宣言を置く。codec は登録表 → 型そのものの宣言の順に引き、
+;; 親の宣言を子 class に継がない。登録も宣言も無い型・読めない宣言・登録表と宣言の両方を持つ型は、型の名を挙げて止める。
+
+(defclass [(dataclass :frozen True)] DeclaredWrite [EffectBase]
+  (setv #^ (get ClassVar RecordSpec) __record-spec__
+        (RecordSpec :mode RecordMode.DECISION :subject "key" :args #("key" "value") :unexecuted Unexecuted.LANDED))
+  (#^ str key)
+  (#^ tuple value)
+  (setv #^ int tries 0))
+
+;; 宣言を持つ型の子(自分の宣言を持たない)。
+(defclass [(dataclass :frozen True)] DeclaredWriteChild [DeclaredWrite])
+
+;; 登録も宣言も無い型。
+(defclass [(dataclass :frozen True)] UndeclaredProbe [EffectBase]
+  (#^ str key))
+
+;; 読めない宣言(語彙の外の mode)。
+(defclass [(dataclass :frozen True)] MisdeclaredProbe [EffectBase]
+  (setv #^ (get ClassVar RecordSpec) __record-spec__ (RecordSpec :mode "sometimes"))
+  (#^ str key))
+
+;; 対の鍵の欄が型に無い宣言。
+(defclass [(dataclass :frozen True)] StraySubjectProbe [EffectBase]
+  (setv #^ (get ClassVar RecordSpec) __record-spec__ (RecordSpec :mode RecordMode.OUTPUT :subject "row" :unexecuted Unexecuted.NOTHING))
+  (#^ str key))
+
+;; 宣言を持つのに登録表にも足そうとする型。
+(defclass [(dataclass :frozen True)] DoublyDeclaredProbe [EffectBase]
+  (setv #^ (get ClassVar RecordSpec) __record-spec__ (RecordSpec :mode RecordMode.READ))
+  (#^ str key))
+
+
+(deftest test-the-codec-reads-exactly-the-fields-of-the-record-spec
+  ;; codec は RecordSpec を import せずに欄の名で読む — 欄の名の 2 つの置き場が食い違えば赤。
+  (assert (= (set SPEC-FIELDS) (sfor f (dataclasses.fields RecordSpec) f.name)) #(SPEC-FIELDS (dataclasses.fields RecordSpec)))
+  ;; 語彙の綴り(StrEnum の値)は記録の行の綴りと同じ
+  (assert (= (sorted (map str RecordMode)) (sorted [READ LIVE DECISION OUTPUT]))))
+
+
+(deftest test-a-declared-type-is-recordable-without-a-registry-row
+  (val effect (DeclaredWrite "row/a" #(1 "two") 3))
+  (val handles (HandleTable))
+  (assert (not-in (type-name DeclaredWrite) (registered-types)))
+  (assert (can-record DeclaredWrite))
+  (assert (= (mode-of effect handles) DECISION))
+  ;; args は宣言の欄だけ(tries は載せない)・値は encode-value の綴り
+  (val args (args-of effect handles))
+  (assert (= args {"key" "row/a" "value" {"$t" [1 "two"]}}) args)
+  (assert (= (subject-of effect args) "row/a"))
+  (val codec (codec-of effect))
+  (assert (is codec.unexecuted True))
+  (assert (is codec.binds None))
+  ;; 2 度目は同じ登録(初めて見た時に表へ入れた物)
+  (assert (is (codec-of effect) codec)))
+
+
+(deftest test-a-child-class-does-not-inherit-the-record-declaration
+  (assert (can-record DeclaredWrite))
+  (assert (not (can-record DeclaredWriteChild)))
+  (var message None)
+  (try (codec-of (DeclaredWriteChild "row/a" #()))
+       (except [e UnrecordableEffect] (:= message (str e))))
+  (assert (is-not message None) "親の宣言で子を黙って記録しない")
+  (assert (in (type-name DeclaredWriteChild) message) message)
+  (assert (in (type-name DeclaredWrite) message) message))
+
+
+(deftest test-an-effect-without-a-registry-row-or-a-declaration-is-refused-by-name
+  (assert (not (can-record UndeclaredProbe)))
+  (var message None)
+  (try (args-of (UndeclaredProbe "k") (HandleTable))
+       (except [e UnrecordableEffect] (:= message (str e))))
+  (assert (is-not message None) "登録も宣言も無い型を黙って通さない")
+  (assert (in (type-name UndeclaredProbe) message) message))
+
+
+(deftest test-a-malformed-declaration-is-refused-by-name
+  (for [#(probe word) [#(MisdeclaredProbe "sometimes") #(StraySubjectProbe "row")]]
+    (var message None)
+    (try (can-record probe)
+         (except [e MalformedRecordSpec] (:= message (str e))))
+    (assert (and (is-not message None) (in (type-name probe) message) (in word message)) #(probe message))))
+
+
+(deftest test-a-type-is-not-both-registered-and-declared
+  (var message None)
+  (try (register (EffectCodec DoublyDeclaredProbe READ))
+       (except [e MalformedRecordSpec] (:= message (str e))))
+  (assert (and (is-not message None) (in (type-name DoublyDeclaredProbe) message)) message)
+  (assert (not-in (type-name DoublyDeclaredProbe) (registered-types))))
+
+
+;; 移す前の登録表の行(#2578 で消した 7 行)— 宣言から作った登録が同じ記録を作ることの比べの元。
+(val PREVIOUS-ROWS
+  {ReadShared (EffectCodec ReadShared READ)
+   HeldLease (EffectCodec HeldLease READ)
+   LeaseStanding (EffectCodec LeaseStanding READ)
+   CreateNamedSemaphore (EffectCodec CreateNamedSemaphore READ :args (fn [e h] {"name" e.name "permits" e.permits}) :binds "named-sem")
+   ReportReady (EffectCodec ReportReady OUTPUT :unexecuted None)
+   ReportMetrics (EffectCodec ReportMetrics OUTPUT :unexecuted None)
+   ReadProcessGauges (EffectCodec ReadProcessGauges READ)})
+
+(deftest test-the-seven-declared-types-spell-their-records-as-the-previous-rows-did
+  (val samples [(ReadShared "row/") (HeldLease "lock") (LeaseStanding "lock") (CreateNamedSemaphore "lock" 2) (CreateNamedSemaphore "solo")
+                (ReportReady True "ok" "standby") (ReportReady False) (ReportMetrics {"counters" {"a" 1.0} "gauges" {} "durations" {"d" {"sum" 0.5 "count" 2}}})
+                (ReadProcessGauges)])
+  (assert (= (set (gfor s samples (type s))) (set PREVIOUS-ROWS)))
+  (for [effect samples]
+    (val previous (get PREVIOUS-ROWS (type effect)))
+    (val handles (HandleTable))
+    (val codec (codec-of effect))
+    ;; 登録表の行ではなく宣言から作った登録
+    (assert (not-in (type-name (type effect)) (registered-types)) (type effect))
+    (assert (can-record (type effect)))
+    (val args (args-of effect handles))
+    (val old-args (if (is previous.args-fn None)
+                      (dfor f (dataclasses.fields effect) f.name (encode-value (getattr effect f.name) handles))
+                      (previous.args-fn effect handles)))
+    (assert (= (canonical args) (canonical old-args)) #(effect args old-args))
+    (assert (= (mode-of effect handles) previous.mode) effect)
+    (assert (is (type (mode-of effect handles)) str) "記録の行の m は素の文字列")
+    (assert (is (subject-of effect args) None) effect)
+    (assert (is codec.unexecuted previous.unexecuted) #(effect codec.unexecuted previous.unexecuted))
+    (assert (= codec.binds previous.binds) effect)
+    (assert (or (is codec.binds None) (is (type codec.binds) str)) "handle の印は素の文字列")
+    (assert (= #(codec.name codec.watch codec.recorded-fn) #(previous.name previous.watch previous.recorded-fn)) effect)))
+
+
+(defk read-after-writes []
+  {:pre [] :post [(: % dict)]}
+  ;; 読みの答えが内容参照の閾値(INTERN-MIN-CHARS)を超える量の行を書いてから 2 度読む(2 度目の答えは同じ中身の参照 1 つ)。
+  (for [i (range 12)]
+    (<- (WriteShared (.format "row/{:02d}" i) (OpaqueJson.of {"n" i "text" (* "x" 40)}))))
+  (<- rows dict (ReadShared "row/"))
+  (<- again dict (ReadShared "row/"))
+  (assert (= rows again))
+  rows)
+
+(deftest test-a-declared-read-is-recorded-and-replayed
+  ;; ReadShared は登録表の行を持たず宣言だけで記録され、再生は記録の答えを返して違い 0。記録は本番の書き手(EffectLog と置き場)の
+  ;; 行の形のまま(区切りの _chunk・問いと答えの行・大きな答えの内容参照 $ref と blob の行)。
+  (val sink (MemorySink))
+  (val log (EffectLog sink {"service" "s" "run" "r1"} :strict True :wall-ms (fn [] 0)))
+  (<- rows dict (with-handlers-list [(sim-time-handler :clock (clock-at 1000000)) #* (board-handlers {}) (effect-recorder log)]
+                                    (read-after-writes)))
+  (assert (= (len rows) 12) rows)
+  (val reads (lfor l sink.lines :if (= (.get l "ty") (type-name ReadShared)) l))
+  (assert (and reads (all (gfor l reads (= (get l "m") "read")))) sink.lines)
+  (assert (all (gfor l sink.lines (in "_chunk" l))) sink.lines)
+  (assert (in "blob" (sfor l sink.lines (get l "k"))) (sfor l sink.lines (get l "k")))
+  (assert (in "\"$ref\"" (json.dumps sink.lines)))
+  (val state (ReplayState (read-recording sink.lines)))
+  (<- replayed dict (with-handlers-list [(effect-replayer state)] (read-after-writes)))
+  (assert (= replayed rows) #(replayed rows))
+  (assert (get (replay-report state "program-returned") "identical")))

@@ -14,6 +14,8 @@
 (val MODULE-TAGS {:context "doeff-cluster" :role "intent"})
 (import dataclasses [dataclass])
 (import doeff [EffectBase])
+(import typing [ClassVar])
+(import doeff_cluster.shared.intent.record_spec [RecordSpec RecordMode])
 (import doeff_hy.json_value [OpaqueJson])
 
 
@@ -25,6 +27,7 @@
 (setv ANY (AnyExpect))
 
 (defclass [(dataclass :frozen True)] ReadShared [EffectBase]
+  (setv #^ (get ClassVar RecordSpec) __record-spec__ (RecordSpec :mode RecordMode.READ))
   (#^ str prefix))
 
 
