@@ -24,6 +24,7 @@
 (import doeff_time [Delay])
 (import .coordinator_http [CoordinatorEndpoint send-idempotent put-program REPLY-SECONDS IDEMPOTENT-DEADLINE-SECONDS])
 (import doeff_cluster.shared.intent.protocol [PROTOCOL-FORMAT])
+(import doeff_cluster.shared.core.capabilities [env-mapping])
 (import doeff_cluster.shared.intent.runtime_env_model [RuntimeEnv runtime-env->json])
 (import doeff_cluster.shared.intent.remote_model [encode-program])
 (import .process_versions [current-versions])
@@ -314,7 +315,9 @@
   (SubmitDetached [program key needs name lease-seconds retain-seconds environ]
     ;; 送れない値は送る前に断る(encode-program が UnsendableProgram を投げ、呼び手へ届く)。
     (setv blob (encode-program program))
-    (resume (try (DetachedSubmitted key (get (.submit client key blob needs name (float lease-seconds) (float retain-seconds) environ) "created"))
+    ;; effect の EnvVar の tuple を、coordinator への本文の形(名 → 値の object)へ綴る(#2179)。
+    (<- environ-body dict (env-mapping environ))
+    (resume (try (DetachedSubmitted key (get (.submit client key blob needs name (float lease-seconds) (float retain-seconds) environ-body) "created"))
                  (except [error httpx.TransportError]
                    (submit-unreachable (str error))))))
   (AwaitDetached [key timeout-seconds]

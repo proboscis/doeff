@@ -305,6 +305,7 @@
         "doeff-cluster-process-versions",
         "doeff-cluster-remote-model",
         "doeff-cluster-runtime-env-model",
+        "doeff-cluster-shared-capabilities",
         "doeff-cluster-shared-protocol",
         "doeff-cluster-warm-model"
       ],
@@ -719,6 +720,7 @@
         "doeff-cluster-runtime-env-model",
         "doeff-cluster-semaphore-model",
         "doeff-cluster-service-model",
+        "doeff-cluster-shared-capabilities",
         "doeff-cluster-shared-handlers",
         "doeff-cluster-shared-model",
         "doeff-cluster-shared-protocol",
@@ -1475,6 +1477,7 @@
     },
     {
       "allow": [
+        "doeff-cluster-runtime-env-model",
         "doeff-cluster-shared-protocol"
       ],
       "layer": "domain",

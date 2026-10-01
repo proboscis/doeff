@@ -1,6 +1,6 @@
 ;;; 切り離した task(呼び手と寿命を切り離した task)の effect と、答えの型(2026-09-25)。
 ;;;
-;;;   (<- submitted (SubmitDetached (summarize foundation rows) :key job-id :needs (frozenset ["gpu"]) :environ {"ROWS_URL" url}))
+;;;   (<- submitted (SubmitDetached (summarize foundation rows) :key job-id :needs (frozenset ["gpu"]) :environ #((EnvVar :name "ROWS_URL" :value url))))
 ;;;   ... 呼び手の process が消えてもよい ...
 ;;;   (<- outcome (AwaitDetached job-id))          ; 別の process からでも、同じ key で待てる
 ;;;
@@ -21,7 +21,7 @@
 (import doeff [EffectBase Program])
 (import .remote_model [TaskSucceeded TaskFailed decode-outcome])
 (import doeff_cluster.shared.core.capabilities [effect-needs-problem])
-(import .runtime_env_model [child-environ-refusal])
+(import .runtime_env_model [EnvVar])
 
 (setv DETACHED-DEFAULT-LEASE-SECONDS 60.0)       ; 担い手の worker が沈黙してから消失とみなすまで
 (setv DETACHED-DEFAULT-RETAIN-SECONDS 86400.0)   ; 終わった後に結果を持っておく長さ
@@ -40,15 +40,21 @@
   (setv #^ str name "")
   (setv #^ float lease-seconds DETACHED-DEFAULT-LEASE-SECONDS)
   (setv #^ float retain-seconds DETACHED-DEFAULT-RETAIN-SECONDS)
-  ;; 子の環境変数(名 → 文字列・既定は空 — RemoteJob.environ と同じ意味と規則)。同じ key の送り直しで違えば別の仕事(409)。
-  (setv #^ dict environ (field :default-factory dict))
+  ;; 子の環境変数(EnvVar の tuple・既定は空 — 名と値の規則は service の :environ と同じ EnvVar 1 つ)。同じ key の送り直しで違えば
+  ;; 別の仕事(409)。名 → 値の写像では受けない(呼び手は境目で env-vars-of を通す・coordinator への本文は handler が env-mapping で綴る・#2179)。
+  (setv #^ (get tuple #(EnvVar ...)) environ #())
   (defn #^ None __post-init__ [self]
-    "needs が能力の名の frozenset であること・environ が service の :environ と同じ規則を通ることを作る時に検める(旧い Requirement の
-     tuple・予約の名・秘密の名を黙って受けない)。"
+    "needs が能力の名の frozenset であること・environ が EnvVar の重ならない tuple であることを作る時に検める(旧い Requirement の
+     tuple・名 → 値の写像・名の重なりを黙って受けない。予約の名・秘密の名は EnvVar が作る時に断る)。"
     (setv problem (effect-needs-problem self.needs))
     (when problem (raise (TypeError (+ "SubmitDetached.needs: " problem))))
-    (setv problem (child-environ-refusal self.environ))
-    (when problem (raise (TypeError (+ "SubmitDetached.environ: " problem))))))
+    (when (not (and (isinstance self.environ tuple) (all (gfor v self.environ (isinstance v EnvVar)))))
+      (raise (TypeError (.format "SubmitDetached.environ: EnvVar の tuple(名 → 文字列の写像ではない — env-vars-of で組む): {!r}"
+                                 self.environ))))
+    (setv names (lfor v self.environ v.name))
+    (setv twice (sorted (sfor n names :if (> (.count names n) 1) n)))
+    (when twice
+      (raise (TypeError (+ "SubmitDetached.environ: 名が重なる(写像に戻すと片方が黙って消える): " (.join "・" twice)))))))
 
 
 (defclass [(dataclass :frozen True)] AwaitDetached [EffectBase]
