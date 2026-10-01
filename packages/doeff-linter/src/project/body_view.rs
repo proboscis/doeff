@@ -1588,11 +1588,25 @@ fn last_segment(name: &str) -> &str {
 
 #[cfg(test)]
 mod tests {
-    use super::super::signatures::{file_signatures, FileSignatures};
+    use super::super::signatures::read_file;
     use super::*;
 
+    /// 検が見る分(束縛と本体)— 1 file の読みの組み立て(`file_view.rs`)を読まず、見出しの読みの上に本体だけを足す。
+    struct Read {
+        bindings: Vec<Binding>,
+        bodies: Vec<Body>,
+    }
+
+    /// 1 file の束縛と本体を読む。
+    fn file_signatures(world: &World, root: &std::path::Path, rel: &str, source: &str) -> Read {
+        read_file(world, root, rel, source, |reader, forms, heads| {
+            let bodies = file_bodies(world, reader, forms, &heads.bindings);
+            Read { bindings: heads.bindings, bodies }
+        })
+    }
+
     /// 根の file を並べて表を作り、1 file の見出しと本体を読む。
-    fn read(files: &[(&str, &str)], target: &str) -> FileSignatures {
+    fn read(files: &[(&str, &str)], target: &str) -> Read {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path().canonicalize().unwrap();
         for (rel, text) in files {
@@ -1607,7 +1621,7 @@ mod tests {
 
     /// 見本の fixture(agora-controllers d89796e67 の controllers/messaging/core/conversation_input.hy の 1〜94 行を行の番号ごと
     /// そのまま写した物と、撃つ effect の定義だけの intent)を読む。
-    fn sample() -> (String, FileSignatures) {
+    fn sample() -> (String, Read) {
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/body_view");
         let root = root.canonicalize().unwrap();
         let rel = "controllers/messaging/core/conversation_input.hy";
@@ -1624,12 +1638,12 @@ mod tests {
     }
 
     /// 定義の本体の行を (1 始まりの source の行, 綴り) で。
-    fn rendered(read: &FileSignatures, name: &str) -> Vec<(u32, String)> {
+    fn rendered(read: &Read, name: &str) -> Vec<(u32, String)> {
         let body = read.bodies.iter().find(|b| b.name == name).unwrap_or_else(|| panic!("{} の本体が無い", name));
         body.lines.iter().map(|l| (l.line + 1, render(l))).collect()
     }
 
-    fn line_at<'b>(read: &'b FileSignatures, name: &str, line: u32) -> &'b BodyLine {
+    fn line_at<'b>(read: &'b Read, name: &str, line: u32) -> &'b BodyLine {
         let body = read.bodies.iter().find(|b| b.name == name).unwrap();
         body.lines.iter().find(|l| l.line + 1 == line).unwrap_or_else(|| panic!("{} の {} 行が無い", name, line))
     }
@@ -1751,7 +1765,7 @@ mod tests {
 "#;
 
     /// 1 つの defk の本体を読み、行の綴りを返す。
-    fn body(lines: &str) -> (FileSignatures, Vec<String>) {
+    fn body(lines: &str) -> (Read, Vec<String>) {
         let core = format!(
             r#"(require doeff-hy.macros [defk <- val var])
 (import demo.intent [Row Missing ReadRow Emit])

@@ -169,7 +169,7 @@ pub struct EditorInput<'a> {
     /// 違反を出す file を絞る(None なら全部)。
     pub only: Option<&'a [PathBuf]>,
     /// `--stdin` の Hy の file の見出しと束縛(版 2)。
-    pub signatures: Option<&'a crate::project::signatures::FileSignatures>,
+    pub signatures: Option<&'a crate::project::file_view::FileSignatures>,
 }
 
 /// 出力を組み立てる。

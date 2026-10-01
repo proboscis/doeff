@@ -887,7 +887,7 @@ fn fill_texts(reader: &FileReader, rewrites: &mut [Rewrite]) {
 
 #[cfg(test)]
 mod tests {
-    use super::super::signatures::{file_signatures, World};
+    use super::super::signatures::{read_file, World};
     use super::*;
 
     /// 根に file を並べ、1 file の置き換えを読む。
@@ -901,7 +901,7 @@ mod tests {
         }
         let source = files.iter().find(|(rel, _)| *rel == target).unwrap().1;
         let world = World::build(&root, Some((target, source)));
-        file_signatures(&world, &root, target, source).rewrites
+        read_file(&world, &root, target, source, |reader, forms, _| file_rewrites(&world, reader, forms))
     }
 
     /// 外側の置き換え(parent が無い物)の `元 → 表示` の対。
