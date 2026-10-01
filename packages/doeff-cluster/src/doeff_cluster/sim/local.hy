@@ -30,7 +30,7 @@
 ;;;     返す。process の中で Spawn した task は柵が tracked-child で包み直して(元の継続のまま — 子の task は柵より内の handler を持ち
 ;;;     運ぶ)把手を世界に覚えさせ、process の終わり(値・例外・止めの合図・Crash・worker の死)で一緒に取り消す(本番は子 process ごと
 ;;;     消える)。task の process は終わりを書く前に、結果を coordinator へ直に届ける(本番の job_entry.run-task と同じ要求 —
-;;;     report_client.task-result-request・#1387。届かなければ worker の heartbeat が運ぶ)。
+;;;     task_result.task-result-request・#1387。届かなければ worker の heartbeat が運ぶ)。
 ;;;   - 宿の答え(host-answers — process ごと)= host_contract.HOST-CONTRACT の 3 つ(run-context・Program の path・宣言の environ の名の
 ;;;     Ask — environ は本番の土台と同じ読みの定義 host_contract.environ-reader を子の spec.environ の上に並べる:
 ;;;     値は字面どおり)と ReportReady・ReportMetrics。クラスタの約束の答え(coordinator-answers — 送り手の口 SimLink ごと)= ReadShared / WriteShared・
@@ -145,7 +145,7 @@
 (import doeff_cluster.shared.protocol.remote [task-submit-body outcome-of settled-value])
 (import doeff_cluster.shared.intent.remote_model [RemoteJob RemoteJobFailed TaskSucceeded TaskFailed encode-program encode-outcome failed-from program-sha])
 (import doeff_cluster.foundation.process_versions [current-versions])
-(import doeff_cluster.foundation.report_client [task-result-request task-id-of-job])
+(import doeff_cluster.shared.protocol.task_result [task-result-request task-id-of-job])
 (import doeff_cluster.shared.protocol.service_report [report-request])
 (import doeff_cluster.shared.intent.runtime_env_model [RuntimeEnv EnvFailure runtime-env->json current-platform])
 (import doeff_cluster.shared.intent.semaphore_model [LeaseOp SEMAPHORE-PREFIX])
@@ -1251,9 +1251,9 @@
 
 (defk deliver-task-result [child result]
   {:pre [(: child SimChild) (: result str)] :post [(: % None)] :tags {:context "doeff-cluster" :role "protocol"}}
-  "本番の task の子 process が終わる前に結果を coordinator へ直に届けるのと同じ要求(report_client.task-result-request)を、子の送り手の
+  "本番の task の子 process が終わる前に結果を coordinator へ直に届けるのと同じ要求(task_result.task-result-request)を、子の送り手の
    口で 1 回送るため(#1387)。答えは読まない — 届かなければ、世界に書いた結果を worker の heartbeat が運ぶ(本番の file の路と同じ)。
-   届ける相手の task の id は本番の子と同じ判断(report_client.task-id-of-job)で子の文脈の job の名から読み、読めなければ送らない。"
+   届ける相手の task の id は本番の子と同じ判断(task_result.task-id-of-job)で子の文脈の job の名から読み、読めなければ送らない。"
   (val task (task-id-of-job child.ctx.job))
   (when (is-not task None)
     (<- (send-shaped child.link (task-result-request task child.ctx.worker child.ctx.instance result))))

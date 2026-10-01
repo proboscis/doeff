@@ -886,7 +886,7 @@
 (defn #^ tuple absorb-task-result [#^ ClusterState state #^ str id #^ dict body #^ int now]
   "POST /tasks/<id>/result: task の子 process が終わる前に直に届けた結果を task の記録へ写す(#1387 — 結果の運び手を worker の
    heartbeat だけにすると、子の exit 0 から次の heartbeat までに worker が死んだ時に結果が届かず、起き直した worker が同じ task を
-   もう 1 度走らせた)。本文 = {worker instance result format}(report_client.task-result-request)。返り値 #(次の状態 status 答え)。
+   もう 1 度走らせた)。本文 = {worker instance result format}(shared/protocol/task_result の task-result-request)。返り値 #(次の状態 status 答え)。
    - 置いた worker からの、まだ終わっていない task の結果 → 結果を持って終える(task-finished)。200。
    - 終わった task(heartbeat が先に運んだ・同じ結果の 2 度目の届け)→ 状態を変えない。200(冪等 — heartbeat の報告も終わった task には
      何もしない: absorb-task-reports)。

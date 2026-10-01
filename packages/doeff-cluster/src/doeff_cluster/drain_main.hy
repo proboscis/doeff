@@ -4,15 +4,20 @@
 ;;;       preStop: drain を頼み、自分の上の job が他へ移るか上限まで待つ。いつも 0 で終わる(結末は stderr の 1 行)。
 ;;;   hy -m doeff_cluster.drain_main ready --coordinator URL --name NAME
 ;;;       readinessProbe: coordinator から見て生きていて drain 中でなければ 0、それ以外は 1。
-(require doeff-hy.macros [defhandler])
+(require doeff-hy.macros [defhandler defk <- val])
 (import argparse)
 (import json)
 (import sys)
+(import time)
 (import pathlib [Path])
-(import httpx)
-(import doeff [run])
+(import doeff [run with-handlers])
+(import doeff_core_effects.handlers [await-handler])
+(import doeff_core_effects.http_effects [HttpResponse HttpFailed])
+(import doeff_core_effects.http_handlers [http-production-handler])
+(import doeff_core_effects.scheduler [scheduled])
 (import doeff_time [sync-time-handler])
-(import doeff_cluster.foundation.coordinator_http [CoordinatorEndpoint])
+(import doeff_cluster.foundation.coordinator_http [CONNECT-SECONDS PREFERRED-RECHECK-SECONDS])
+(import doeff_cluster.shared.protocol.coordinator_route [RouteCell RouteOptions RoutedReply route-of routed-request])
 (import doeff_cluster.worker.core.drain_client [await-drained worker-ready DRAIN-DEADLINE-SECONDS DRAIN-INTERVAL-SECONDS] doeff_cluster.worker.intent.drain_model [CoordinatorCall])
 
 ;; 要求 1 つの返事を待つ上限(秒)。coordinator の fsync の詰まり(最長 13 秒 — coordinator_http.REPLY-SECONDS)より短くはしない。
@@ -20,19 +25,25 @@
 (setv CALL-SECONDS 15.0 PROBE-CALL-SECONDS 5.0)
 
 
-(defn #^ dict call [#^ CoordinatorEndpoint endpoint #^ str method #^ str path #^ (| dict None) body]
-  (try
-    (setv response (if (is body None)
-                       (.request endpoint method path)
-                       (.request endpoint method path :json body)))
-    (setv parsed (try (.json response) (except [ValueError] {})))
-    {"status" response.status-code "body" (if (isinstance parsed dict) parsed {})}
-    (except [error httpx.HTTPError]
-      {"error" (repr error)})))
+(defk call-answer [answer]
+  {:pre [(: answer (| HttpResponse HttpFailed None))] :post [(: % dict)] :tags {:context "doeff-cluster" :role "protocol"}}
+  "要求の答えを drain の Program が読む形にするため: 返事 = {\"status\" 番号 \"body\" 本文の JSON の dict(dict でなければ空)}・
+   届かない = {\"error\" 理由}。"
+  (match answer
+    (HttpResponse) (do (val parsed (try (json.loads answer.text) (except [ValueError] {})))
+                       {"status" answer.status "body" (if (isinstance parsed dict) parsed {})})
+    (HttpFailed) {"error" (.format "{}: {}" answer.url answer.detail)}
+    _ {"error" "coordinator の宛先が無い"}))
 
 
-(defhandler coordinator-calls [#^ CoordinatorEndpoint endpoint]
-  (CoordinatorCall [method path body] (resume (call endpoint method path body))))
+(defhandler coordinator-calls [#^ RouteCell cell #^ RouteOptions options]
+  ;; 引数に残す理由: 宛先の状態(cell)は要求から要求へ持ち越す入れ物・送り方は CLI の mode ごとの値(#2427 — 前は CoordinatorEndpoint)。
+  ;; 送り直しは接続の段の宛先の回りだけ(一巡し直しは options の connect-retries)— drain の Program が間を置いて問い直す。
+  (CoordinatorCall [method path body]
+    (<- reply RoutedReply (routed-request cell.route method path options None body))
+    (setv cell.route reply.route)
+    (<- answer dict (call-answer reply.answer))
+    (resume answer)))
 
 
 (defn #^ (| str None) read-boot [#^ (| str None) path]
@@ -55,16 +66,15 @@
                  :help (+ "この Pod の worker が起動の時に世代を書く file。ready: 無い・読めない = まだ起動していない = Ready でない。"
                           "drain: 頼みに世代を載せる(同じ名の新しい Pod の worker が名乗った後は、この世代の task だけを待つ)"))
   (setv args (.parse-args parser))
-  (setv endpoint (CoordinatorEndpoint args.coordinator (if (= args.mode "ready") PROBE-CALL-SECONDS CALL-SECONDS) 0
-                                      :actor (.format "drain@{}" args.name)))
-  (setv handlers [(coordinator-calls endpoint) (sync-time-handler)])
+  (setv cell (RouteCell (run (route-of args.coordinator (int (* 1000 (time.time))))))
+        options (RouteOptions :reply-seconds (if (= args.mode "ready") PROBE-CALL-SECONDS CALL-SECONDS) :connect-seconds CONNECT-SECONDS
+                              :connect-retries 0 :recheck-ms (int (* PREFERRED-RECHECK-SECONDS 1000)) :actor (.format "drain@{}" args.name)))
+  (defn #^ (| dict bool) on-coordinator [#^ object program]
+    ;; 並びは外側から: 待ち・本物の HTTP の答え手・時計・coordinator への口。
+    (run (scheduled (with-handlers [(await-handler) (http-production-handler) (sync-time-handler) (coordinator-calls cell options)] program))))
   (if (= args.mode "ready")
-      (do (setv program (worker-ready args.name (read-boot args.boot-file)))
-          (for [h handlers] (setv program (h program)))
-          (sys.exit (if (run program) 0 1)))
-      (do (setv program (await-drained args.name args.deadline args.interval (read-boot args.boot-file)))
-          (for [h handlers] (setv program (h program)))
-          (setv result (run program))
+      (sys.exit (if (on-coordinator (worker-ready args.name (read-boot args.boot-file))) 0 1))
+      (do (setv result (on-coordinator (await-drained args.name args.deadline args.interval (read-boot args.boot-file))))
           (print (+ "drain: " (json.dumps result :ensure-ascii False)) :file sys.stderr :flush True)
           (sys.exit 0))))
 

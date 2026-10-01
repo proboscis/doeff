@@ -395,7 +395,8 @@
       "allow": [
         "doeff-cluster-coordinator-http",
         "doeff-cluster-drain-client",
-        "doeff-cluster-drain-model"
+        "doeff-cluster-drain-model",
+        "doeff-cluster-coordinator-route"
       ],
       "layer": "runtime",
       "name": "doeff-cluster-drain-main",
@@ -689,7 +690,10 @@
         "doeff-cluster-job-context",
         "doeff-cluster-process-versions",
         "doeff-cluster-remote-model",
-        "doeff-cluster-report-client"
+        "doeff-cluster-report-client",
+        "doeff-cluster-task-result",
+        "doeff-cluster-coordinator-route",
+        "doeff-cluster-coordinator-http"
       ],
       "layer": "runtime",
       "name": "doeff-cluster-job-entry",
@@ -773,7 +777,8 @@
         "doeff-cluster-worker-model",
         "doeff-cluster-service-report",
         "doeff-cluster-worker-heartbeat",
-        "doeff-cluster-worker-heartbeat-rules"
+        "doeff-cluster-worker-heartbeat-rules",
+        "doeff-cluster-task-result"
       ],
       "layer": "io",
       "name": "doeff-cluster-local",
@@ -1106,7 +1111,9 @@
         "doeff-cluster-coordinator-http",
         "doeff-cluster-job-context",
         "doeff-cluster-shared-protocol",
-        "doeff-cluster-service-report"
+        "doeff-cluster-service-report",
+        "doeff-cluster-clock",
+        "doeff-cluster-coordinator-route"
       ],
       "layer": "io",
       "name": "doeff-cluster-report-client",
@@ -1406,7 +1413,8 @@
         "doeff-cluster-worker-env-rules",
         "doeff-cluster-worker-env-store",
         "doeff-cluster-worker-tree-files",
-        "doeff-cluster-worker-world"
+        "doeff-cluster-worker-world",
+        "doeff-cluster-task-result"
       ],
       "exclude": [
         "packages/doeff-cluster/tests/fixtures/independence/*"
@@ -2171,6 +2179,24 @@
         "packages/doeff-cluster/src/doeff_cluster/worker/protocol/world.hy"
       ],
       "responsibility": "worker の世界の観測のまとめ(ObserveWorld に各言い換えの観測を問うて WorldView で答える — #2469)",
+      "typed": true
+    },
+    {
+      "allow": [
+        "doeff-cluster-shared-protocol",
+        "doeff-cluster-coordinator-http",
+        "doeff-cluster-clock",
+        "doeff-cluster-coordinator-route"
+      ],
+      "layer": "io",
+      "name": "doeff-cluster-task-result",
+      "paths": [
+        "packages/doeff-cluster/src/doeff_cluster/shared/protocol/task_result.hy"
+      ],
+      "public": [
+        "packages/doeff-cluster/src/doeff_cluster/shared/protocol/task_result.hy"
+      ],
+      "responsibility": "task の子 process が終わる前に結果を coordinator へ直に届ける口(宛先の部品の上の HttpRequest — #1387・#2427)",
       "typed": true
     }
   ],
