@@ -640,6 +640,8 @@ defk {name}: :post type annotation cannot be an empty string.
 ;; 旧い lazy)は doeff-hy-check が集める(static_view.report-findings)。
 
 (import doeff-hy.binding-forms [rewrite-body BodyKind ModuleBindings ModuleNames module-declaration])
+;; match の class pattern の欄の名を Python の属性の名へ直す(Hy 1.3.1 の欠陥の回避・defk が使う — agora-redesign #2036)
+(import doeff-hy.match-fields [mangle-match-fields])
 (import doeff-hy.static-view [report-findings])
 ;; pytest の item の記録の口(agora-redesign #1211 — 記録の形の定義元は pytest_items.py)
 (import doeff-hy.pytest-items [record-function :as _record-test-function
@@ -845,11 +847,22 @@ deff {name}: {{:post [...]}} is required.
    (defk my-fn [x y]
      {:pre [(: x int) (: y int)]
       :post [(: % int)]}
-     (k1 (! (k2 x)) (! (k3 y))))"
+     (k1 (! (k2 x)) (! (k3 y))))
+
+   match の class pattern の欄の名は Hy の綴りのまま `-` で書ける — defk が属性の名へ直す
+   (Hy 1.3.1 の match は直さないので、defk の外の (Rec :ended-reason None) は決して当たらない — doeff_hy/match_fields.py):
+   (match write (RecordWrite :ended-reason None :usage None) \"open\" _ \"other\")"
   ;; Warn if defk is used in .hyp file
   (_warn-defk-in-hyp _hy-compiler "defk" name)
   ;; Reject handler-like signatures early — these should use defhandler
   (_reject-handler-signature name params)
+  ;; 本体・契約・引数の match の class pattern の keyword の欄の名を hy.mangle で属性の名へ直す — Hy 1.3.1 の match は
+  ;; 欄の名を mangle せずに case へ出すので、(Rec :ended-reason None) の節は決して当たらず黙って次の節へ倒れる
+  ;; (agora-redesign #2036・Hy は直さない = ADR-DOE-HY-008)。defk の外の match は doeff-linter の DOEFF169 が止める
+  ;; (規則は defk の form の中を当てない)。__doeff_body__ には書いたままの本体を残す(written-forms)。
+  (setv written-forms body
+        body (lfor form body (mangle-match-fields form))
+        params (mangle-match-fields params))
   (setv #(pre-checks post-checks real-body) (_extract-contracts body CONTRACT-KEYS (+ "defk " (str name))))
   (when (is pre-checks None)
     (raise (SyntaxError (.format "
@@ -887,7 +900,7 @@ defk {name}: {{:post [...]}} is required.
   (_validate-post-type-check name post-checks)
   ;; val / var / lazy val / lazy var / := の書き換えと、旧い lazy / lazy-val / lazy-var / set! の拒否
   ;; (ADR-DOE-HY-006)。__doeff_body__ には書いたままの本体を残す。
-  (setv written-body real-body)
+  (setv written-body (get (_find-contract written-forms) 1))
   (setv real-body (_rewrite-bindings real-body (+ "defk " (str name)) BodyKind.DEFK
                                      (_extract-param-names params)
                                      :module (_module-names _hy-compiler)))
