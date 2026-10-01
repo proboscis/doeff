@@ -14,7 +14,7 @@
   "doeff_cluster.worker.protocol.env_store:env-host": "実行環境の root を子 process と file system の effect へ出し直すだけ — 実 I/O は subprocess-handler・os-file-handler(#2467)",
   "doeff_cluster.worker.protocol.coordinator_link:coordinator-link": "heartbeat・Program の取り寄せ・名指しの待ちを宛先の部品の上の HttpRequest と file の effect へ出し直すだけ — 実 I/O は http-production-handler・os-file-handler(#2427)",
   "doeff_cluster.worker.protocol.lease_release:lease-release": "lease の返しを宛先の部品の上の HttpRequest へ出し直すだけ(#2427)",
-  "doeff_cluster.drain_main:coordinator-calls": "drain の問いを宛先の部品の上の HttpRequest へ出し直すだけ(#2427)"
+  "doeff_cluster.worker.entry.drain_main:coordinator-calls": "drain の問いを宛先の部品の上の HttpRequest へ出し直すだけ(#2427)"
  },
  "handlers": [
   {

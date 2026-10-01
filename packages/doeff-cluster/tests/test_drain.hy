@@ -22,7 +22,7 @@
 (import doeff [run])
 (import os)
 (import subprocess)
-(import doeff_cluster.drain_main [read-boot])
+(import doeff_cluster.worker.entry.drain_main [read-boot])
 (import pathlib [Path])
 (import pytest)
 
@@ -496,7 +496,7 @@
   (setv path (/ tmp-path "doeff-worker-boot"))
   (assert (is (read-boot (str path)) None) "起動の前(file が無い)は世代を知らない")
   ;; 書く口は worker の入口 main の write-boot-file(起動の時に世代を 1 度だけ決めて書く — #2427 で CoordinatorLink から移した)。
-  (import doeff_cluster.main [write-boot-file])
+  (import doeff_cluster.worker.entry.main [write-boot-file])
   (write-boot-file (str path) "b-1234")
   (assert (= (read-boot (str path)) "b-1234")))
 

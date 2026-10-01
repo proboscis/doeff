@@ -6,7 +6,7 @@
 (import doeff [run with-handlers])
 (import doeff_core_effects.scheduler [scheduled])
 (import doeff_time [SimClock sim-time-handler])
-(import doeff_cluster.drain_main [coordinator-calls])
+(import doeff_cluster.worker.entry.drain_main [coordinator-calls])
 (import doeff_cluster.shared.protocol.coordinator_route [CoordinatorRoute RouteCell])
 (import doeff_cluster.worker.intent.drain_model [CoordinatorCall])
 (import tests.transport_http [transport-http TEST-ROUTE])
