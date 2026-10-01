@@ -21,7 +21,9 @@
 (import doeff_cluster.shared.intent.runtime_env_model [RuntimeEnv runtime-env->json runtime-env-of-json env-key current-platform])
 (import doeff_cluster.shared.intent.detached_model [SubmitDetached AwaitDetached DetachedSucceeded])
 (import httpx)
-(import doeff_cluster.shared.protocol.detached [WarmClient warm-cluster])
+(import doeff_cluster.shared.protocol.detached [warm-cluster])
+(import doeff_time [SimClock sim-time-handler])
+(import tests.transport_http [transport-http route-cell TEST-ROUTE])
 (import doeff_cluster.sim.local [sim-cluster SimWorker SimLink ClientLink coordinator-answers ReadCoordinator ProcessesOf PreparationsOf
                              FailRoute])
 (import doeff_cluster.shared.intent.service_model [system-of])
@@ -46,7 +48,7 @@
 ;; sim の worker は実行環境の root の準備に PREPARE-SECONDS かかる(sim の宿の SimWorker の prepare-seconds)。温める表の行は本物の
 ;; coordinator が worker の heartbeat の返事に配り、本物の run-worker が先読み(PrepareEnv :warm)を撃ち、task の置き先(温まった worker・
 ;; 冷たい起動の計器)は本物の coordinator が決める。送る task の実行環境の宣言は送り手の口(ClientLink を置き換えた SimLink の
-;; runtime-env — 本番の DetachedClient の runtime-env)が運ぶ。
+;; runtime-env — 本番の DetachedSender の runtime-env)が運ぶ。
 
 (val PREPARE-SECONDS 5.0)
 (val WARM-WORKERS #((SimWorker :name "w1" :provides (frozenset ["local"]) :prepare-seconds PREPARE-SECONDS)))
@@ -249,10 +251,10 @@
 
 (defk warm-through [transport]
   {:pre [(: transport httpx.MockTransport)] :post [(: % tuple)]}
-  "本物の WarmClient(送り直しの期限を短くした)と warm-cluster の下で、温める頼みと読みを 1 回ずつ出す。"
+  "本物の warm-cluster(送り直しの期限を短くした — 仮想の時計の秒)の下で、温める頼みと読みを 1 回ずつ出す。"
   (<- env RuntimeEnv (env-of "app-1" "lib-1" LOCK))
-  (val client (WarmClient "http://coordinator" :transport transport :deadline-seconds 0.2))
-  (<- answers tuple ((warm-cluster client) (warm-and-read env)))
+  (<- answers tuple (with-handlers [(sim-time-handler :clock (SimClock)) (transport-http transport) (warm-cluster (route-cell) TEST-ROUTE 0.2)]
+                      (warm-and-read env)))
   answers)
 
 

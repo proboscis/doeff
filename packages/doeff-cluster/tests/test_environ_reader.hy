@@ -22,7 +22,9 @@
 (import doeff_time [SimClock])
 (import doeff_cluster.foundation.host_contract [HOST-CONTRACT])
 (import doeff_cluster.handlers [CoordinatorLink ProcessHost program-file])
-(import doeff_cluster.shared.protocol.detached [DetachedClient])
+(import doeff_cluster.shared.protocol.detached [detached-submitted])
+(import doeff_time [sim-time-handler])
+(import tests.transport_http [transport-http route-cell detached-sender TEST-ROUTE])
 (import doeff_cluster.shared.intent.remote_model [RemoteJob TaskSucceeded TaskFailed encode-program decode-outcome])
 (import doeff_cluster.foundation.process_versions [current-versions])
 (import doeff_cluster.shared.intent.service_model [system-of])
@@ -55,7 +57,7 @@
 (defk production-child-outcome [tmp-path program key]
   {:pre [(: tmp-path Path) (: program Program) (: key str)] :post [(: % (| TaskSucceeded TaskFailed))]
    :tags {:context "doeff-cluster-test" :role "entry"}}
-  "本番の形の通しで program を切り離した task として 1 回走らせ、その結末を返すため: DetachedClient が :environ {NAME POLICY} つきで
+  "本番の形の通しで program を切り離した task として 1 回走らせ、その結末を返すため: 本物の送り手(detached-submitted)が :environ {NAME POLICY} つきで
    送り、本物の coordinator の判断(MemoryCoordinator)が返事に載せ、本物の CoordinatorLink が Program を cache へ取り、ProcessHost が
    組んだ子の環境で job_entry の task 入口の子 process が走る。"
   (val base (/ tmp-path key))
@@ -64,9 +66,10 @@
   (val link (CoordinatorLink "http://coordinator" "w1" RIG-PROVIDES 10 60000 :task-dir (str (/ base "state" "tasks"))
                              :versions (current-versions) :transport transport))
   (.poll link)
-  (val client (DetachedClient "http://coordinator" "r" (current-versions) :transport transport))
-  (val submitted (.submit client key (encode-program program) LOCAL "env" 60.0 600.0 {NAME POLICY}))
-  (assert (get submitted "created") submitted)
+  (<- submitted (with-handlers [(sim-time-handler :clock (SimClock)) (transport-http transport)]
+                  (detached-submitted (route-cell) TEST-ROUTE (detached-sender "r") key (encode-program program) LOCAL "env" 60.0 600.0
+                                      {NAME POLICY})))
+  (assert submitted.created submitted)
   (val desired (.poll link))
   (assert (isinstance desired DesiredJobs) desired)
   (val spec (next (gfor j desired.jobs :if (.startswith j.name "task/") j)))

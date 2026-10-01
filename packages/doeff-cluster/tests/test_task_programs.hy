@@ -1,7 +1,7 @@
 ;;; task の Program も置き場 /programs/<sha> で運ぶ(ADR-DOE-CLUSTER-001 R3b — service と task で運び方を分けない・operator 逐語
 ;;; "i dont find any reason to have different api for services")。
 ;;;
-;;;   送り手  … remote-cluster(remote.hy の program-put)・DetachedClient は詰めた Program を先に PUT /programs/<sha>(本文 {"blob" "versions"})で置き、task の本文
+;;;   送り手  … remote-cluster(remote.hy の program-put)・DetachedSender は詰めた Program を先に PUT /programs/<sha>(本文 {"blob" "versions"})で置き、task の本文
 ;;;             (POST /tasks・PUT /detached/<key>)は program に sha を書く。本文の blob・versions は 400(理由つき)。
 ;;;   coordinator … 置き場に sha が在る時だけ task を受け、task の版は置き場の版。heartbeat の返事は sha だけを運ぶ。掃除は task の行
 ;;;             (終わって結果を保持している行も)が参照する sha を残し、行が消えたら猶予の後に消す。状態を失った coordinator は worker の

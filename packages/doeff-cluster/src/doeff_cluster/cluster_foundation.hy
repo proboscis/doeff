@@ -26,11 +26,11 @@
 (import .shared_handlers [shared-http])
 (import doeff_cluster.shared.core.clock [now-epoch-ms])
 (import doeff_cluster.shared.protocol.coordinator_route [CoordinatorRoute RouteCell RouteOptions route-of])
-(import doeff_cluster.foundation.coordinator_http [REPLY-SECONDS CONNECT-SECONDS PREFERRED-RECHECK-SECONDS default-actor])
+(import doeff_cluster.foundation.coordinator_http [REPLY-SECONDS CONNECT-SECONDS PREFERRED-RECHECK-SECONDS IDEMPOTENT-DEADLINE-SECONDS default-actor])
 (import doeff_cluster.shared.core.semaphore_handlers [cluster-semaphore SemaphoreSession])
 (import doeff_cluster.shared.core.lease_rules [lease-holder])
 (import doeff_cluster.shared.protocol.remote [remote-cluster TaskSender])
-(import doeff_cluster.shared.protocol.detached [detached-cluster DetachedClient warm-cluster WarmClient])
+(import doeff_cluster.shared.protocol.detached [detached-cluster DetachedSender warm-cluster])
 
 
 (defk lease-holder-of [ctx]
@@ -68,8 +68,9 @@
    (metrics-http cell report-options report)
    (shared-http cell options)
    (remote-cluster cell options (TaskSender :revision ctx.revision :versions versions :runtime-env env))
-   (detached-cluster (DetachedClient ctx.coordinator-url ctx.revision versions :runtime-env env))
-   (warm-cluster (WarmClient ctx.coordinator-url :actor ctx.job))
+   (detached-cluster cell options (DetachedSender :revision ctx.revision :versions versions :runtime-env env
+                                                 :deadline-seconds IDEMPOTENT-DEADLINE-SECONDS))
+   (warm-cluster cell (replace options :actor ctx.job))
    (cluster-semaphore (SemaphoreSession holder))])
 
 

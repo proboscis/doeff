@@ -316,7 +316,7 @@ worker が無い・コードを準備できない)・`DetachedUnknown`(知らな
 - **途絶**: worker は coordinator と途絶えても切り離した task を止めません(途絶が lease より長ければ coordinator が消失とし、再接続の
   返事から外れた時に止めます)。
 - **drain**: drain は worker の上の切り離した task が 0 になるまで `Drained` になりません(task は移せないので終わるのを待つ)。
-- handler: `detached-cluster`(coordinator の `/detached` の口と話す — `DetachedClient`)。手元では `sim-cluster` の偽の実行先が同じ
+- handler: `detached-cluster`(coordinator の `/detached` の口と、宛先の部品の上の汎用の `HttpRequest` で話す)。手元では `sim-cluster` の偽の実行先が同じ
   要求の形で本物の coordinator へ送り、本物の worker が task を走らせます。担い手の死・停止・網の切断・drain・coordinator の停止は
   テストの effect(`KillWorker`・`StopWorker`・`StartWorker`・`CutWorker`・`DrainWorker`・`StopCoordinator`・`CrashCoordinator`)で再現します。
 

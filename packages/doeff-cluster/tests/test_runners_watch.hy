@@ -1,4 +1,4 @@
-;; 名簿の変化の待ち AwaitRunnersChange(detached_model・本番の DetachedClient.runners-change・sim の宿 — #1934)。
+;; 名簿の変化の待ち AwaitRunnersChange(detached_model・本番の detached.runners-changed・sim の宿 — #1934)。
 ;;
 ;; - 版が after から変わった刻ちょうどに RunnersChange(changed 真・次の after)で返る。変わらなければ上限の後の拍で changed 偽。
 ;; - 待つ口の無い coordinator(/watch が 404)には RunnersWatchMissing(呼び手が周回に戻る)。
@@ -9,8 +9,12 @@
 (import doeff_time [Delay])
 (import doeff_cluster.shared.core.clock [now-epoch-ms])
 (import doeff_cluster.foundation.process_versions [current-versions])
-(import doeff_cluster.shared.protocol.detached [DetachedClient])
-(import doeff_cluster.shared.intent.detached_model [AwaitRunnersChange RunnersChange RunnersWatchMissing RunnersUnreachable])
+(import doeff [with-handlers])
+(import doeff_time [SimClock sim-time-handler])
+(import doeff_cluster.shared.protocol.detached [runners-changed])
+(import tests.transport_http [transport-http route-cell TEST-ROUTE])
+(import collections.abc [Callable])
+(import doeff_cluster.shared.intent.detached_model [AwaitRunnersChange RunnersChange RunnersWatchMissing RunnersUnreachable RunnersChangeAnswer])
 (import doeff_cluster.sim.local [sim-cluster SimWorker ReadCoordinator DrainWorker FailRoute KillWorker StartWorker])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming])
 (import tests.fixtures.envs [sim-foundation])
@@ -71,13 +75,21 @@
   (assert (isinstance answer RunnersWatchMissing) answer))
 
 
+(defk watched-through [answer]
+  {:pre [(: answer Callable)] :post [(: % RunnersChangeAnswer)] :tags {:context "doeff-cluster-test" :role "foundation"}}
+  "本番の待ち(runners-changed)を、answer(要求 → httpx の返事か例外)で答える coordinator の上で 1 回出すため。"
+  (<- got (with-handlers [(sim-time-handler :clock (SimClock)) (transport-http (httpx.MockTransport answer))]
+            (runners-changed (route-cell "http://coord") TEST-ROUTE 3 1.0)))
+  got)
+
+
 (deftest test-the-production-client-reads-the-watch-the-same-way
-  (val changed (DetachedClient "http://coord" "r" (current-versions) :transport (httpx.MockTransport (fn [request] (httpx.Response 200 :json {"revision" 9 "changed" True})))))
-  (assert (= (.runners-change changed 3 1.0) (RunnersChange :revision 9 :changed True)))
-  (val missing (DetachedClient "http://coord" "r" (current-versions) :transport (httpx.MockTransport (fn [request] (httpx.Response 404 :json {"error" "知らない"})))))
-  (assert (isinstance (.runners-change missing 3 1.0) RunnersWatchMissing))
-  (val cut (DetachedClient "http://coord" "r" (current-versions) :transport (httpx.MockTransport (fn [request] (raise (httpx.ConnectError "切れた" :request request))))))
-  (assert (isinstance (.runners-change cut 3 1.0) RunnersUnreachable)))
+  (<- changed (watched-through (fn [request] (httpx.Response 200 :json {"revision" 9 "changed" True}))))
+  (assert (= changed (RunnersChange :revision 9 :changed True)) changed)
+  (<- missing (watched-through (fn [request] (httpx.Response 404 :json {"error" "知らない"}))))
+  (assert (isinstance missing RunnersWatchMissing) missing)
+  (<- cut (watched-through (fn [request] (raise (httpx.ConnectError "切れた" :request request)))))
+  (assert (isinstance cut RunnersUnreachable) cut))
 
 
 ;; --- worker の生死は版に入る(#1934 の決め直し — Worker の status の live)-------------------------------------------
