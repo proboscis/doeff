@@ -12,7 +12,7 @@
 (import doeff_cluster.shared.intent.job_model [JobSpec])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming Request BodyInvalid])
 (import doeff_cluster.shared.core.capabilities [capabilities-of environ-pairs])
-(import doeff_cluster.coordinator.intent.cluster_model [ClusterJob WorkerInfo GenerationOrder Placement ClusterState TaskRecord Drain EnvFailed WarmEntry HandoffPhase RefusedJob UnplacedKind ACCEPTED-FORMATS PLACED-PHASES])
+(import doeff_cluster.coordinator.intent.cluster_model [ClusterJob WorkerInfo GenerationOrder Placement ClusterState TaskRecord Drain EnvFailed WarmEntry HandoffPhase RefusedJob UnplacedKind ACCEPTED-FORMATS PLACED-PHASES ProgramRow])
 (import doeff_cluster.coordinator.core.cluster_rules [component-versions-of format-version-refusal])
 (import doeff_cluster.coordinator.intent.request_bodies [LeaseBody TaskResultBody BoardWrite HeartbeatBody EnvsReport TaskBody])
 (import doeff_cluster.coordinator.core.cluster_json [task-record-to-json task-record-from-json handoff-watch-from-json required-field int-field])
@@ -222,7 +222,7 @@
   "資源の状態の保存の形。盤は入れない(盤は行ごとに別の file — SaveBoardRow)。"
   {"formatVersion" 2
    "jobs" (+ (lfor j state.jobs (job-to-json j)) (lfor r (.values state.refused) r.row))
-   "programs" state.programs
+   "programs" (dfor #(k p) (.items state.programs) k (program-row-to-json p))
    "placements" (dfor #(k v) (.items state.placements) k (asdict v))
    "workers" (lfor w (.values state.workers)
                    (| {"name" w.name "provides" (list w.provides) "exclusive" (list w.exclusive) "node" w.node "capacity" w.capacity
@@ -262,6 +262,16 @@
   (if (and (isinstance value int) (not (isinstance value bool))) value None))
 
 
+(defn #^ dict program-row-to-json [#^ ProgramRow row]
+  "置き場の Program の行 → 保存の JSON の形 {blob versions putMs}(state file と durable の KV が使う — #2447 の前の形と同じ)。"
+  {"blob" row.blob "versions" row.versions "putMs" row.put-ms})
+
+
+(defn #^ ProgramRow program-row-from-json [#^ dict data]
+  "保存の JSON の形 → 置き場の Program の行(program-row-to-json の逆)。"
+  (ProgramRow :blob (get data "blob") :versions (dict (.get data "versions" {})) :put-ms (int (get data "putMs"))))
+
+
 (defn #^ dict warm-entry-to-json [#^ WarmEntry entry]
   "温める表の行 → 保存の JSON の形(state file と durable の KV が使う)。"
   (| (asdict entry) {"needs" (list entry.needs)}))
@@ -288,7 +298,7 @@
   (ClusterState
     :jobs jobs
     :refused refused
-    :programs (.get data "programs" {})
+    :programs (dfor #(k v) (.items (.get data "programs" {})) k (program-row-from-json v))
     ;; 旧い形(labels だけ — 2026-09-27 より前)の worker の行は読まない。能力を知らない worker に置かないため(次の heartbeat で
     ;; 新しい形の名乗りから作り直す)。
     :workers (dfor w (.get data "workers" [])
@@ -416,7 +426,7 @@
   {:pre [(: state ClusterState) (: sha str)] :post [(: % tuple)] :tags {:context "doeff-cluster" :role "judgment"}}
   "置き場に置いた Program の送り手の版(名の順の tuple)— task の版は詰めた Program と一緒に置いた版 1 つから取る(本文に版の写しを
    運ばせない・置く worker の版と比べる — can-run-task)。呼ぶ前に task-body-refusal が置き場に在ることを確かめる。"
-  (component-versions-of (get state.programs sha "versions")))
+  (component-versions-of (. (get state.programs sha) versions)))
 
 
 (deff needs-refusal [#^ (| dict list tuple str int float bool None) needs #^ (| dict list tuple str int float bool None) requires]  ; defk にできない: HTTP の本文を読む境界(Program の外)が呼ぶ純粋な判断

@@ -24,7 +24,7 @@
 (import doeff_cluster.coordinator.core.cluster_rules [component-versions-of])
 (import doeff_cluster.coordinator.core.cluster_json [task-record-to-json task-record-from-json handoff-watch-from-json])
 (import doeff_cluster.coordinator.core.cluster_policy [job-to-json job-from-json read-service-rows board-changes value-size warm-entry-to-json warm-entry-from-json worker-capabilities-of
-                         worker-generations-json worker-generations-from-json])
+                         worker-generations-json worker-generations-from-json program-row-to-json program-row-from-json])
 
 (setv BOARD "board/")
 (setv PLACEMENT "placement/")
@@ -78,7 +78,7 @@
   (for [#(k d) (.items state.drains)] (setv (get out (+ DRAIN k)) #(#(d) (partial asdict d))))
   (for [#(k a) (.items state.surges)] (setv (get out (+ SURGE k)) #(#(a) (partial asdict a))))
   (for [#(k w) (.items state.warms)] (setv (get out (+ WARM k)) #(#(w) (partial warm-entry-to-json w))))
-  (for [#(k p) (.items state.programs)] (setv (get out (+ PROGRAM k)) #(#(p) (partial as-stored p))))
+  (for [#(k p) (.items state.programs)] (setv (get out (+ PROGRAM k)) #(#(p) (partial program-row-to-json p))))
   (for [#(k w) (.items state.handoffs)] (setv (get out (+ HANDOFF k)) #(#(w) w.to-json)))
   (for [e state.audit] (setv (get out (.format "audit/{:010d}" (get e "seq"))) #(#(e) (partial as-stored e))))
   out)
@@ -161,7 +161,7 @@
     :drains (dfor #(k v) (part DRAIN) k (Drain #** v))
     :surges (dfor #(k v) (part SURGE) k (Placement #** v))
     :warms (dfor #(k v) (part WARM) :setv entry (warm-entry-from-json v) :if (is-not entry None) k entry)
-    :programs (dfor #(k v) (part PROGRAM) k v)
+    :programs (dfor #(k v) (part PROGRAM) k (program-row-from-json v))
     :handoffs (dfor #(k v) (part HANDOFF) k (handoff-watch-from-json v))
     :audit (tuple (gfor #(_ e) (part "audit/") e))
     :board (dfor #(k v) (part BOARD) k (get v "value"))

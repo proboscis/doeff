@@ -11,7 +11,7 @@
 (require doeff-hy.macros [deff])
 (import dataclasses [replace])
 (import re)
-(import doeff_cluster.coordinator.intent.cluster_model [ClusterState])
+(import doeff_cluster.coordinator.intent.cluster_model [ClusterState ProgramRow])
 (import doeff_cluster.shared.intent.remote_model [program-sha])
 (import doeff_cluster.coordinator.intent.request_bodies [ProgramBody])
 
@@ -31,7 +31,7 @@
     (> (len blob) PROGRAM-MAX-BYTES) #(state 413 {"error" (.format "詰めた Program が上限 {} byte を越える" PROGRAM-MAX-BYTES)})
     (!= (program-sha blob) sha)
       #(state 400 {"error" "blob の sha256 がキーと合わない"})
-    True #((replace state :programs (| state.programs {sha {"blob" blob "versions" versions "putMs" now}}))
+    True #((replace state :programs (| state.programs {sha (ProgramRow :blob blob :versions versions :put-ms now)}))
            200 {"program" sha})))
 
 
@@ -41,7 +41,7 @@
   (setv row (.get state.programs sha))
   (if (is row None)
       #(state 404 {"error" (.format "Program {} は置かれていない(宣言・task の前に送り手が置く)" sha)})
-      #(state 200 {"blob" (get row "blob") "versions" (get row "versions")})))
+      #(state 200 {"blob" row.blob "versions" row.versions})))
 
 
 (deff program-refs [#^ ClusterState state]  ; defk にできない: coordinator の調停(Program の外の純粋な判断)が呼ぶ
@@ -57,6 +57,6 @@
   "受け付けた Service と task の行のどれも参照せず、置いてから PROGRAM-GRACE-MS を過ぎた Program を消す。"
   (let [used (program-refs state)
         kept (dfor #(sha row) (.items state.programs)
-                   :if (or (in sha used) (<= (- now (get row "putMs")) PROGRAM-GRACE-MS))
+                   :if (or (in sha used) (<= (- now row.put-ms) PROGRAM-GRACE-MS))
                    sha row)]
     (if (= (len kept) (len state.programs)) state (replace state :programs kept))))

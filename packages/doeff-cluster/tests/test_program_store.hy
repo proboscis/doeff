@@ -6,7 +6,7 @@
 (require doeff-hy.macros [deftest defk <- val])
 (import hashlib)
 (import doeff_cluster.shared.intent.protocol [ClusterTiming])
-(import doeff_cluster.coordinator.intent.cluster_model [ClusterState])
+(import doeff_cluster.coordinator.intent.cluster_model [ClusterState ProgramRow])
 (import doeff_cluster.foundation.coordinator_inbox [http-request])
 (import doeff_cluster.coordinator.core.cluster_policy [state-to-json state-from-json])
 (import doeff_cluster.coordinator.core.durable_kv [full-kv state-from-kv])
@@ -51,7 +51,7 @@
   (<- again tuple (call s "PUT" (+ "/programs/" sha) {"blob" BLOB "versions" VERSIONS} 5000))
   (assert (= (get again 1) 200))
   (assert (= (list (. (get again 0) programs)) [sha]))
-  (assert (= (get (. (get again 0) programs) sha "putMs") 5000)))
+  (assert (= (. (get (. (get again 0) programs) sha) put-ms) 5000)))
 
 
 (deftest test-a-wrong-sha-a-bad-key-or-a-bad-body-is-refused-with-400
@@ -111,7 +111,7 @@
 (deftest test-programs-survive-a-restart-from-the-state-file-and-the-durable-kv
   (<- sha str (sha-of BLOB))
   (<- s ClusterState (stored BLOB 1000))
-  (val want {sha {"blob" BLOB "versions" VERSIONS "putMs" 1000}})
+  (val want {sha (ProgramRow :blob BLOB :versions VERSIONS :put-ms 1000)})
   (assert (= s.programs want))
   (assert (= (. (state-from-json (state-to-json s) 2000) programs) want))
   (val kv (full-kv s))

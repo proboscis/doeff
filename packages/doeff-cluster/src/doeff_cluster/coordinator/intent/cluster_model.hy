@@ -108,6 +108,15 @@
   (#^ str holder))
 
 
+(defrecord ProgramRow
+  "置き場に置いた詰めた Program 1 つ(PUT /programs/<sha> — 改訂 1 の F): blob = 詰めた Program(base64 の文字列)・versions = 詰めた
+   送り手の版(名 → 版)・put-ms = 置いた時刻(参照の無い Program を猶予の後に消す — program_policy.sweep-programs)。#2447 で JSON の dict を
+   この型にした。保存の JSON の形 {blob versions putMs} は cluster_policy の program-row-to-json / program-row-from-json。"
+  (#^ str blob)
+  (#^ dict versions)
+  (#^ int put-ms))
+
+
 (defrecord RefusedJob
   "受け付けない Service の行(2026-09-27・改訂 1 の C)。旧い宣言の形の行を読み直した時と、読めない行を、coordinator を落とさずに
    持っておく: name = Service の名・row = 元の行(保存と表示のため JSON のまま)・reason = 理由。置き先・Rollout・drain・計器は
