@@ -899,19 +899,6 @@ impl Architecture {
         }
     }
 
-    /// 目録の doeff の実 I/O の handler の完全修飾名 → (綴り, それを :wraps に挙げた名簿の定義の綴りの列, 触れる先)。
-    pub fn world_targets(&self, catalog: &super::world_catalog::WorldCatalog) -> BTreeMap<String, (String, Vec<String>, Vec<WorldTouch>)> {
-        let wrapped = self.wrapped_targets();
-        catalog
-            .handlers
-            .iter()
-            .map(|(target, handler)| {
-                let by = wrapped.get(target).map(|(_, by)| by.clone()).unwrap_or_default();
-                (target.clone(), (handler.definition.spelling(), by, handler.touches.clone()))
-            })
-            .collect()
-    }
-
     /// 許可名簿の定義の完全修飾名 → 綴り。
     pub fn world_definition_targets(&self) -> BTreeMap<String, String> {
         self.world_handlers.iter().map(|h| (h.definition.target(), h.definition.spelling())).collect()

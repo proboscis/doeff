@@ -13,7 +13,7 @@ use std::sync::OnceLock;
 
 use serde::Deserialize;
 
-use super::architecture::{DefinitionRef, WorldTouch};
+use super::architecture::{Architecture, DefinitionRef, WorldTouch};
 use doeff_indexer::hy_index::RawCategory;
 
 #[derive(Deserialize)]
@@ -60,6 +60,19 @@ pub struct WorldCatalog {
 }
 
 impl WorldCatalog {
+    /// 目録の doeff の実 I/O の handler の完全修飾名 → (綴り, それを宣言の :wraps に挙げた名簿の定義の綴りの列, 触れる先)。
+    /// 宣言(architecture)と目録を突き合わせるのは目録の側 — 宣言は目録を読まない(agora-redesign #2124)。
+    pub fn world_targets(&self, architecture: &Architecture) -> BTreeMap<String, (String, Vec<String>, Vec<WorldTouch>)> {
+        let wrapped = architecture.wrapped_targets();
+        self.handlers
+            .iter()
+            .map(|(target, handler)| {
+                let by = wrapped.get(target).map(|(_, by)| by.clone()).unwrap_or_default();
+                (target.clone(), (handler.definition.spelling(), by, handler.touches.clone()))
+            })
+            .collect()
+    }
+
     /// JSON の中身を目録にする(読めない要素は理由の列)。
     pub fn parse(text: &str) -> Result<WorldCatalog, Vec<String>> {
         let file: CatalogFile = serde_json::from_str(text).map_err(|e| vec![format!("world_handlers.json を読めない: {}", e)])?;
