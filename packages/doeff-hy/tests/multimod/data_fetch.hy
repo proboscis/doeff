@@ -1,7 +1,7 @@
 ;;; Data fetching layer — uses FetchPrice, FetchNews
 (require doeff-hy.macros [defk <-])
 (import doeff [do :as _doeff-do])
-(import tests.multimod.effects [FetchPrice FetchNews])
+(import multimod.effects [FetchPrice FetchNews])
 
 (defk fetch-price-data [ticker start end]
   {:pre [(: ticker str) (: start str) (: end str)] :post [(: % list)]}

@@ -10,8 +10,8 @@
 (print "Part 1: Multi-module effect collection")
 (print (* "=" 60))
 
-(import tests.multimod.data_fetch [fetch-price-data fetch-news-for-day fetch-all-data])
-(import tests.multimod.signal [generate-signal generate-and-notify])
+(import multimod.data_fetch [fetch-price-data fetch-news-for-day fetch-all-data])
+(import multimod.signal [generate-signal generate-and-notify])
 
 (print)
 (print "--- fetch-price-data effects ---")
@@ -125,27 +125,18 @@
 (print "Part 3: Compile and run transformed program")
 (print (* "=" 60))
 
-(import doeff [run Pure Resume Pass])
+(import doeff [run])
 (import doeff [do :as _doeff-do])
-(import doeff [EffectBase K])
 (import doeff_core_effects.scheduler [scheduled])
-(require doeff-hy.macros [defk <-])
-(import tests.multimod.effects [FetchPrice FetchNews])
+(require doeff-hy.macros [defk defhandler <-])
+(import multimod.effects [FetchPrice FetchNews])
 
-;; Mock handlers — return type varies by effect chain
-(setv HandlerResult object)
+;; Mock handlers — 節の外の effect は defhandler が外の handler へ渡す
+(defhandler mock-price-handler
+  (FetchPrice [ticker] (resume [100 101 102])))
 
-(defk mock-price-handler [effect k]
-  {:pre [(: effect EffectBase) (: k K)] :post [(: % HandlerResult)]}
-  (if (isinstance effect FetchPrice)
-    (yield (Resume k [100 101 102]))
-    (yield (Pass effect k))))
-
-(defk mock-news-handler [effect k]
-  {:pre [(: effect EffectBase) (: k K)] :post [(: % HandlerResult)]}
-  (if (isinstance effect FetchNews)
-    (yield (Resume k ["news-article-1" "news-article-2"]))
-    (yield (Pass effect k))))
+(defhandler mock-news-handler
+  (FetchNews [day] (resume ["news-article-1" "news-article-2"])))
 
 ;; Compile transformed body into executable
 (import hy)
@@ -154,7 +145,7 @@
   `(do
      (require doeff-hy.macros [defk <-])
      (import doeff [do :as _doeff-do])
-     (import tests.multimod.effects [FetchPrice FetchNews])
+     (import multimod.effects [FetchPrice FetchNews])
      (defk _compiled [ticker day]
        {:pre [(: ticker str) (: day str)] :post [(: % dict)]}
        ~@transformed)

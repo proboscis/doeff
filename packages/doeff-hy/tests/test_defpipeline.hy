@@ -1,7 +1,7 @@
 ;;; Test defpipeline macro
-(require doeff-hy.macros [defk defp <- defpipeline])
+(require doeff-hy.macros [defk defp defhandler <- defpipeline])
 (import doeff [do :as _doeff-do])
-(import doeff [EffectBase K run Resume Pass])
+(import doeff [EffectBase run])
 (import doeff_core_effects.scheduler [scheduled])
 (import dataclasses [dataclass])
 
@@ -54,26 +54,15 @@
 (print)
 (print "=== Part 2: Run individual stages ===")
 
-;; Mock handlers — return type varies by effect chain
-(setv HandlerResult object)
+;; Mock handlers — 節の外の effect は defhandler が外の handler へ渡す
+(defhandler mock-ohlc
+  (FetchOhlc [ticker] (resume [100 101 102])))
 
-(defk mock-ohlc [effect k]
-  {:pre [(: effect EffectBase) (: k K)] :post [(: % HandlerResult)]}
-  (if (isinstance effect FetchOhlc)
-    (yield (Resume k [100 101 102]))
-    (yield (Pass effect k))))
+(defhandler mock-news
+  (FetchNews [day] (resume ["article-1" "article-2"])))
 
-(defk mock-news [effect k]
-  {:pre [(: effect EffectBase) (: k K)] :post [(: % HandlerResult)]}
-  (if (isinstance effect FetchNews)
-    (yield (Resume k ["article-1" "article-2"]))
-    (yield (Pass effect k))))
-
-(defk mock-llm [effect k]
-  {:pre [(: effect EffectBase) (: k K)] :post [(: % HandlerResult)]}
-  (if (isinstance effect LLMRank)
-    (yield (Resume k {"rank" "bullish"}))
-    (yield (Pass effect k))))
+(defhandler mock-llm
+  (LLMRank [prompt] (resume {"rank" "bullish"})))
 
 (defn run-with-mocks [program]
   (run (scheduled

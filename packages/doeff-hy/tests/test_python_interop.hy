@@ -1,8 +1,8 @@
 ;;; Test: what happens when defk calls a Python @do function?
 (require doeff-hy.macros [defk <-])
 (import doeff [do :as _doeff-do])
-(import tests.multimod.effects [FetchPrice])
-(import tests.multimod.python_layer [python-risk-check ComputeRisk])
+(import multimod.effects [FetchPrice])
+(import multimod.python_layer [python-risk-check ComputeRisk])
 (import doeff_hy.sexpr [body-of collect-effects effect-tree
                         print-effect-tree classify-call])
 

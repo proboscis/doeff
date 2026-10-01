@@ -1,7 +1,7 @@
 ;;; Test stage-of: partial pipeline reuse
-(require doeff-hy.macros [defk defp <-])
+(require doeff-hy.macros [defk defp defhandler <-])
 (import doeff [do :as _doeff-do])
-(import doeff [EffectBase K run Resume Pass])
+(import doeff [EffectBase run])
 (import doeff_core_effects.scheduler [scheduled])
 (import dataclasses [dataclass])
 
@@ -42,20 +42,12 @@
 
 
 ;; === Mock handlers ===
-;; Handler return type varies by effect chain — use semantic alias
-(setv HandlerResult object)
+;; 節の外の effect は defhandler が外の handler へ渡す
+(defhandler mock-ohlc
+  (FetchOhlc [ticker] (resume [100 101 102])))
 
-(defk mock-ohlc [effect k]
-  {:pre [(: effect EffectBase) (: k K)] :post [(: % HandlerResult)]}
-  (if (isinstance effect FetchOhlc)
-    (yield (Resume k [100 101 102]))
-    (yield (Pass effect k))))
-
-(defk mock-news [effect k]
-  {:pre [(: effect EffectBase) (: k K)] :post [(: % HandlerResult)]}
-  (if (isinstance effect FetchNews)
-    (yield (Resume k ["article-1" "article-2"]))
-    (yield (Pass effect k))))
+(defhandler mock-news
+  (FetchNews [day] (resume ["article-1" "article-2"])))
 
 (defn run-with-mocks [program]
   (run (scheduled

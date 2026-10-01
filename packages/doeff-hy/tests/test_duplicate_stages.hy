@@ -1,7 +1,7 @@
 ;;; Test: duplicate bind names + index-based stage-of
-(require doeff-hy.macros [defk defp <-])
+(require doeff-hy.macros [defk defp defhandler <-])
 (import doeff [do :as _doeff-do])
-(import doeff [EffectBase K run Resume Pass Pure])
+(import doeff [EffectBase run])
 (import doeff_core_effects.scheduler [scheduled])
 (import dataclasses [dataclass])
 
@@ -17,17 +17,10 @@
   (<- signal {"signal" data})
   signal)
 
-;; Mock handlers — return type varies by effect chain
-(setv HandlerResult object)
-
-(defk mock [effect k]
-  {:pre [(: effect EffectBase) (: k K)] :post [(: % HandlerResult)]}
-  (cond
-    (isinstance effect FetchRaw)
-      (yield (Resume k "raw-data"))
-    (isinstance effect Enrich)
-      (yield (Resume k (+ "enriched:" (str effect.data))))
-    True (yield (Pass effect k))))
+;; Mock handlers — 節の外の effect は defhandler が外の handler へ渡す
+(defhandler mock
+  (FetchRaw [] (resume "raw-data"))
+  (Enrich [data] (resume (+ "enriched:" (str data)))))
 
 (defn run-mock [p] (run (scheduled (mock p))))
 
