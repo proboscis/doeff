@@ -440,7 +440,7 @@ intent の層は Tach の interfaces に当たる — 別の service が読ん�
 | 規則 | 問い(英語のまま・`src/project/semantic.rs` の 1 か所) | 当てる層(設定) | 既定の閾値 | 既定の重大さ(3 節) |
 |---|---|---|---|---|
 | DOEFF201 | 要求を相手の話し方へ言い換えるのを越えて、業務の判断(誰に許すか・業務の決まり・宛先・業務の結果)をしているか(jev-lint の J2) | `semantic.business_decision.layers` | warning p ≥ 0.8・info p ≥ 0.6 | critical |
-| DOEFF202 | 通信の手段(URL や query・HTTP の method や status・JSON の wire・SQL・宛先の address)を知っているか(jev-lint の J3) | `semantic.transport_knowledge.layers` | warning p ≥ 0.6・info p ≥ 0.4 | critical |
+| DOEFF202 | 通信の手段(URL や query・HTTP の method や status・JSON の wire・SQL・宛先の address)か、外の data の型の無い形(dict・JSON の値を欄名で読む・組む — json.loads の有無に関わらず)を知っているか(jev-lint の J3・2 つを同じ重さで問う — agora-redesign #2059) | `semantic.transport_knowledge.layers` | warning p ≥ 0.6・info p ≥ 0.4 | critical |
 | DOEFF203 | deff の理由の註が受け入れる理由に当たるか(11 節) | `semantic.plain_callable` | warning_min 0.4・info_min 0.4 | 重さから |
 | DOEFF204 | 処理を持つ method のある class が value / external-world / stateful / other のどれか(12 節) | `semantic.class_role` | warning_min 0.7・info_min 0.5 | 重さから |
 | DOEFF205 | judgment / program の定義が形の検めと判断を混ぜているか(14 節) | `semantic.mixed_concerns` | warning_min 0.7・info_min 0.5 | critical |
@@ -463,8 +463,9 @@ intent の層は Tach の interfaces に当たる — 別の service が読ん�
   `src/project/semantic.rs` の 1 か所 — 線引きが一般の説明と違えば線引きに従う・鳴る例に似た code は違反の側 = DOEFF201・202 は true・DOEFF205 は
   mixed・例の `why` の理由で判じ、code の見た目の近さで判じない)。
   **線引きを入れた問いの `instructions` は、1 つの鍵の object を宣言の順に並べた列で送る**(#1995): `[{"question": …}, 一般の例か注 …,
-  {"lines_note": …}, {"lines": […]}]` — DOEFF201 = question・business_decision_examples・not_business_decision_examples、DOEFF202 = question
-  (前の文字列の `instructions`)、DOEFF205 = question・note の後に lines_note・lines。鍵の object で送ると鍵の名の順に並び、DOEFF205 では一般の注が
+  {"lines_note": …}, {"lines": […]}]` — DOEFF201 = question・business_decision_examples・not_business_decision_examples、DOEFF202 = question・note・
+  transport_knowledge_examples・not_transport_knowledge_examples(#2059 — 前は question だけで、`instructions` は文字列だった)、DOEFF205 = question・note
+  の後に lines_note・lines。鍵の object で送ると鍵の名の順に並び、DOEFF205 では一般の注が
   線引きの後ろに来て「上の注と違えば線引きに従え」が逆さに読めた。TypeSafe の `instructions` は string・object・array のどれも受ける
   (https://docs.typesafe.ai/api — 2026-10-01 に読んだ)。例の code は定義の source と同じく申告の `:tags` を消して渡す。線引きの文と why は
   日本語のまま入れ、問いの文は英語のまま。線引きの当たらない問い・宣言の無い repo の問いは今のまま(鍵の object・cache のキーも変わらない)。

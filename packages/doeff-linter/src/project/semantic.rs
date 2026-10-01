@@ -111,7 +111,7 @@ impl SemanticQuestion {
     }
 
     /// 線引きを入れる問い(LINED)の instructions の部品を宣言の順に(鍵・中身 — 問いの文は英語でここ 1 か所)。wire() は部品を鍵の object に
-    /// して送り(部品が問いの文 1 つだけの DOEFF202 は文そのもの — 線引きを足す前と同じ問いと cache のキー)、wire_with はこの順の列で送る。
+    /// して送り、wire_with はこの順の列で送る。
     /// 線引きを入れない問い(DOEFF203・204)の instructions は wire() の 1 か所に在り、ここは空。
     fn instruction_parts(self) -> Vec<(&'static str, Value)> {
         match self {
@@ -136,10 +136,34 @@ impl SemanticQuestion {
                     ]),
                 ),
             ],
-            SemanticQuestion::TransportKnowledge => vec![(
-                "question",
-                json!("Does the code in `definition.source` know how communication is carried out: URLs or URL paths and query strings, HTTP methods, status codes or headers, JSON wire field names or JSON encoding and decoding, SQL, or network endpoint addresses?"),
-            )],
+            // 枠は 2 つを同じ重さで問う(agora-redesign #2059): 通信の手段と、外の data の型の無い形(dict・JSON の値を欄名で読む・組む)。前の枠は
+            // 通信の手段だけで、json.loads を書かない欄名の読みを repo の線引きと例で足しても、似た形の別の定義へ広がらなかった(#2044・#2052)。
+            // 欄の既定値は「欄名で読む」の内に数えるだけで、既定に倒すのが誰の仕事かは言わない(それは DOEFF201 の判断の問い)。
+            SemanticQuestion::TransportKnowledge => vec![
+                (
+                    "question",
+                    json!("Does the code in `definition.source` know either of these two things, which belong outside the core: (a) how communication is carried out: URLs or URL paths and query strings, HTTP methods, status codes or headers, JSON encoding and decoding, SQL, or network endpoint addresses; or (b) the untyped shape of outside data: reading fields of an untyped dict or JSON value by field name, parsing such a value into typed values, or building a dict by field names to become a JSON value?"),
+                ),
+                (
+                    "note",
+                    json!("(b) weighs the same as (a). Reading, parsing and building untyped dicts or JSON values by field name is shape checking, the protocol side's job; the core receives and returns only typed values. (b) counts whether or not the code calls json.loads or json.dumps: the value may have been decoded elsewhere and passed in as a dict, or be encoded elsewhere after the code builds it. A default for a missing field does not make the read typed; the code still reads the field by name. TOML, YAML and other document formats count the same as JSON. A dict that is not outside data does not count: a constant table in the code, or a tally the definition builds from typed values."),
+                ),
+                (
+                    "transport_knowledge_examples",
+                    json!([
+                        "sending an HTTP request: a URL built from a base and a route, headers, and a body encoded with json.dumps",
+                        "taking a dict that was decoded elsewhere (no json.loads in the code) and reading `payload[\"body\"]`, `(.get payload \"from\" \"\")` or `(get row \"accountKey\")` to build a typed value or to choose one",
+                        "building `{\"name\" name \"state\" state}` by field names and passing it on to be stored or sent as JSON"
+                    ]),
+                ),
+                (
+                    "not_transport_knowledge_examples",
+                    json!([
+                        "a core function that receives typed values (records, enums, tuples of records), decides by their attributes with a business rule, and returns a typed value; the protocol side turned the outside data into those values and turns the result back",
+                        "asking an outside system through a business-level effect or port, such as `(<- reply (SendMail draft))`, without its URL, field names or encoding"
+                    ]),
+                ),
+            ],
             // 注は線引き 4(agora-controllers の architecture.hy)の例外と同じ文(#1995 — 前の注は isinstance と dict の読みを例外なしに形の確認と
             // 言い、線引きと食い違った: union の枝分けの _on-text・模擬の世界の dict の list-nodes・任せた確認の答えで断る open-chat-room が高く出た)。
             SemanticQuestion::MixedConcerns => vec![
@@ -153,12 +177,9 @@ impl SemanticQuestion {
         }
     }
 
-    /// 部品を鍵の object にした instructions(部品が問いの文 1 つだけなら文そのもの)。
+    /// 部品を鍵の object にした instructions。
     fn instructions_of(parts: Vec<(&'static str, Value)>) -> Value {
-        match parts.as_slice() {
-            [("question", text)] => text.clone(),
-            _ => Value::Object(parts.into_iter().map(|(name, content)| (name.to_string(), content)).collect()),
-        }
+        Value::Object(parts.into_iter().map(|(name, content)| (name.to_string(), content)).collect())
     }
 
     /// 線引きの読み方と答えの向き(問いの文は英語でここ 1 か所)。線引きを入れない問いは None。
@@ -239,8 +260,8 @@ impl SemanticQuestion {
                 "type": "noul",
                 "instructions": Self::instructions_of(self.instruction_parts()),
                 "criteria": {
-                    "true": "The code builds, parses or holds such transport details, for example a URL, a query string, an HTTP request or status code, json.loads or json.dumps of a wire body, or an endpoint URL field.",
-                    "false": "The code only works with typed business values and business-level request effects; naming an outside system without its transport details does not count."
+                    "true": "The code knows (a) or (b): for example a URL, a query string, an HTTP request or status code, json.loads or json.dumps of a wire body, an endpoint URL field, or fields of an untyped dict or JSON value read or built by field name, with or without json.loads.",
+                    "false": "The code only receives, decides with and returns typed values and business-level request effects; naming an outside system without its transport details or its field names does not count."
                 }
             }),
         }
@@ -250,7 +271,7 @@ impl SemanticQuestion {
     pub fn meaning(self) -> &'static str {
         match self {
             SemanticQuestion::BusinessDecision => "要求の言い換えを越えて、業務の判断(誰に許すか・業務の決まり・宛先・業務の結果)をしている",
-            SemanticQuestion::TransportKnowledge => "通信の手段(URL や query・HTTP の method や status・JSON の wire・SQL・宛先の address)を知っている",
+            SemanticQuestion::TransportKnowledge => "通信の手段(URL や query・HTTP の method や status・JSON の wire・SQL・宛先の address)か、外の data の型の無い形(dict・JSON の値を欄名で読む・組む)を知っている",
             SemanticQuestion::PlainCallable => "名乗った理由の種類では、素の関数でなければならない理由にならない見込み",
             SemanticQuestion::ClassRole => "処理を持つ method のある class が、外の世界の窓口か状態を持つ物の見込み",
             SemanticQuestion::MixedConcerns => "判断の定義が、入力の形の検めと業務の判断を混ぜている見込み",
@@ -1669,9 +1690,10 @@ mod tests {
         assert_eq!((gateway_env.wire, gateway_env.model.as_str()), (Wire::Direct, DIRECT_MODEL));
     }
 
-    /// architecture.hy に :semantic-lines の無い repo では、問いは wire() のまま。DOEFF201・202 の cache のキーは線引きを足す前(agora-redesign
+    /// architecture.hy に :semantic-lines の無い repo では、問いは wire() のまま。DOEFF201 の cache のキーは線引きを足す前(agora-redesign
     /// #1909 の前)と同じ — キーの値は線引きを足す前の code で組んだ物(変われば、その repo の全部の定義が「答えなし」に戻る)。DOEFF205 のキーは
-    /// #1995 で一般の注を線引き 4 の例外と揃えたので変わった(値は #1995 の code で組んだ物)。
+    /// #1995 で一般の注を線引き 4 の例外と揃えたので変わった(値は #1995 の code で組んだ物)。DOEFF202 のキーは #2059 で枠に外の data の
+    /// 型の無い形を足したので変わった(値は #2059 の code で組んだ物)。
     #[test]
     fn without_lines_the_questions_and_keys_stay_as_before() {
         let settings = SemanticSettings::validate(&SemanticSection::default(), &mut |_, _| None, &mut Vec::new());
@@ -1694,7 +1716,7 @@ mod tests {
             [decision.key.as_str(), transport.key.as_str(), mixed.key.as_str()],
             [
                 "2801ee2d98aaee9974cea9bc225c176e997ab2a3743765c359bc9e5ef6a1b1d6",
-                "109f1a4aec9b6fc0f116e3c42cd0b5c3f850e72e40ed64226df98342ebe404cd",
+                "c1ab2a63e708828c1272dc662d53b45b6fd17191cc2832b77f3b7252506684fb",
                 "d87343a27410d6d05620233e1bb7ca2998b286adb57c69b148c9d903c16a9050"
             ]
         );
@@ -1743,7 +1765,7 @@ mod tests {
         assert!(part(&decision, "lines_note").as_str().is_some_and(|note| note.contains("answer true") && note.contains("`why`")));
         let transport = TransportKnowledge.wire_with(&lines);
         assert_eq!(names(&transport), ["二"]);
-        assert_eq!(part(&transport, "question"), &TransportKnowledge.wire()["instructions"]);
+        assert_eq!(part(&transport, "question"), &TransportKnowledge.wire()["instructions"]["question"]);
         let mixed = MixedConcerns.wire_with(&lines);
         assert_eq!(names(&mixed), ["五"]);
         assert!(part(&mixed, "lines_note").as_str().is_some_and(|note| note.contains("is `mixed`")));
@@ -1771,7 +1793,7 @@ mod tests {
         let lines = vec![sample_line("一", vec![BusinessDecision, TransportKnowledge, MixedConcerns])];
         for (question, keys) in [
             (BusinessDecision, vec!["question", "business_decision_examples", "not_business_decision_examples", "lines_note", "lines"]),
-            (TransportKnowledge, vec!["question", "lines_note", "lines"]),
+            (TransportKnowledge, vec!["question", "note", "transport_knowledge_examples", "not_transport_knowledge_examples", "lines_note", "lines"]),
             (MixedConcerns, vec!["question", "note", "lines_note", "lines"]),
         ] {
             let wired = question.wire_with(&lines);
@@ -1791,6 +1813,29 @@ mod tests {
         for needle in ["untyped input that came from outside", "branching on the cases of a typed union", "did not come from outside", "the shape check was left to"] {
             assert!(note.contains(needle), "注に {:?} が無い: {}", needle, note);
         }
+    }
+
+    /// agora-redesign #2059: DOEFF202 の枠は、通信の手段(a)と外の data の型の無い形(b — dict・JSON の値を欄名で読む・組む)を同じ重さで問う。
+    /// 前の枠は通信の手段だけで、json.loads を書かない欄名の読みは repo の線引きと例を足しても広がらなかった。true の例に json.loads を
+    /// 含まない欄名の読みが在り、false の例に型の値だけで判じる core が在る。
+    #[test]
+    fn the_transport_knowledge_frame_weighs_untyped_field_reads_like_transport() {
+        let wired = SemanticQuestion::TransportKnowledge.wire();
+        let instructions = &wired["instructions"];
+        let question = instructions["question"].as_str().unwrap_or_default();
+        for needle in ["(a) how communication is carried out", "(b) the untyped shape of outside data", "by field name"] {
+            assert!(question.contains(needle), "問いの文に {:?} が無い: {}", needle, question);
+        }
+        let note = instructions["note"].as_str().unwrap_or_default();
+        for needle in ["(b) weighs the same as (a)", "whether or not the code calls json.loads", "the protocol side's job"] {
+            assert!(note.contains(needle), "注に {:?} が無い: {}", needle, note);
+        }
+        let texts = |key: &str| -> Vec<String> {
+            instructions[key].as_array().map(|all| all.iter().filter_map(|t| t.as_str().map(str::to_string)).collect()).unwrap_or_default()
+        };
+        assert!(texts("transport_knowledge_examples").iter().any(|t| t.contains("no json.loads in the code")), "true の例に json.loads を含まない欄名の読みが無い");
+        assert!(texts("not_transport_knowledge_examples").iter().any(|t| t.contains("receives typed values")), "false の例に型の値だけで判じる core が無い");
+        assert!(wired["criteria"]["true"].as_str().is_some_and(|t| t.contains("with or without json.loads")));
     }
 
     #[test]
