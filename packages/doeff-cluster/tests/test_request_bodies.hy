@@ -76,3 +76,18 @@
   (assert (= (get again 1) 409) again)
   (val empty (responded state (http-request "PUT" "/board/k" {} {"ttlSeconds" 5}) 1000 T))
   (assert (= (get empty 1) 400) empty))
+
+
+(deftest test-a-heartbeat-body-is-read-into-its-type-and-refused-before-the-decision
+  ;; heartbeat の本文の形の検め(前は判断の中の手書きの検め)は解く所で: 空の名・欠けた失敗の行の kind・文字列の容量は 400。旧い labels は判断が断る。
+  (<- beat (body-of (http-request "POST" "/heartbeat" {} {"name" "w" "provides" ["net"] "envs" {"ready" ["k1"]} "statuses" [{"name" "a"}]})))
+  (assert (= #(beat.name beat.provides beat.envs.ready beat.capacity (len beat.statuses)) #("w" #("net") #("k1") 10 1)) beat)
+  (<- nameless (body-of (http-request "POST" "/heartbeat" {} {"name" "" "provides" ["net"]})))
+  (assert (isinstance nameless BodyMalformed) nameless)
+  (<- kindless (body-of (http-request "POST" "/heartbeat" {} {"name" "w" "envs" {"failed" [{"key" "k"}]}})))
+  (assert (in "kind" kindless.reason) kindless)
+  (<- wordy (body-of (http-request "POST" "/heartbeat" {} {"name" "w" "capacity" "10"})))
+  (assert (in "capacity" wordy.reason) wordy)
+  (val old (responded (ClusterState) (http-request "POST" "/heartbeat" {} {"name" "w" "labels" {"kind" "mac"}}) 1000 T))
+  (assert (= (get old 1) 400) old)
+  (assert (in "labels" (get old 2 "error")) old))

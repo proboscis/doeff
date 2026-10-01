@@ -183,6 +183,7 @@
 (require doeff-hy.macros [defk <- val var])
 (import doeff [with_handlers])
 (import doeff_cluster.coordinator.intent.cluster_model [ClusterNaming])
+(import tests.program_rows [heartbeat-of])
 (import doeff_cluster.coordinator.core.cluster_policy [register-heartbeat with-derived-capabilities NODE-LABELS-TTL-MS])
 (import doeff_cluster.coordinator.core.program [rollout-tick])
 (import doeff_cluster.foundation.kube_handlers [KubeMemory kube-memory])
@@ -199,7 +200,7 @@
   {:pre [(: state ClusterState) (: name str) (: node str) (: now int)] :post [(: % ClusterState)]}
   "worker name が node の上から company-machine を名乗る heartbeat を 1 つ受けた後の状態。"
   (<- body dict (named name node))
-  (register-heartbeat state body now))
+  (register-heartbeat state (heartbeat-of body) now))
 
 (defk company-state [now]
   {:pre [(: now int)] :post [(: % ClusterState)]}

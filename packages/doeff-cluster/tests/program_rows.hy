@@ -7,7 +7,11 @@
 (require doeff-hy.macros [defk val])
 (import doeff_cluster.coordinator.intent.cluster_model [ClusterState])
 (import doeff_cluster.coordinator.core.program_policy [program-write])
-(import doeff_cluster.coordinator.intent.request_bodies [ProgramBody])
+(import doeff [run])
+(import doeff_cluster.coordinator.intent.request_bodies [ProgramBody HeartbeatBody BodyMalformed])
+(import doeff_cluster.coordinator.protocol.request_bodies [body-of])
+(import doeff_cluster.foundation.coordinator_inbox [http-request])
+(import doeff_cluster.shared.intent.protocol [BodyInvalid])
 (import doeff_cluster.shared.intent.remote_model [program-sha])
 
 ;; 置き場のキーの見本(64 桁の sha256 の形 — coordinator は /programs に在るかを Service の行の受け付けでは確かめない)。
@@ -44,3 +48,11 @@
   (val placed (program-write state sha (ProgramBody :blob blob :versions versions) now))
   (assert (= (get placed 1) 200) placed)
   #((get placed 0) sha))
+
+
+(defn #^ HeartbeatBody heartbeat-of [#^ dict body]  ; defk にできない: 判断を直に呼ぶ検(Program の外)が呼ぶ
+  "heartbeat の本文の JSON を、受け口と同じ解き(coordinator/protocol/request_bodies)で本文の型にする(形が合わなければ BodyInvalid)。"
+  (setv parsed (run (body-of (http-request "POST" "/heartbeat" {} body))))
+  (when (isinstance parsed BodyMalformed)
+    (raise (BodyInvalid parsed.reason)))
+  parsed)
