@@ -61,7 +61,8 @@
         "doeff-cluster-resource-policy",
         "doeff-cluster-rollout-policy",
         "doeff-cluster-shared-protocol",
-        "doeff-cluster-warm-policy"
+        "doeff-cluster-warm-policy",
+        "doeff-cluster-coordinator-request-bodies-model"
       ],
       "layer": "pure",
       "name": "doeff-cluster-api-policy",
@@ -175,7 +176,8 @@
         "doeff-cluster-semaphore-model",
         "doeff-cluster-shared-capabilities",
         "doeff-cluster-shared-protocol",
-        "doeff-cluster-worker-model"
+        "doeff-cluster-worker-model",
+        "doeff-cluster-coordinator-request-bodies-model"
       ],
       "layer": "pure",
       "name": "doeff-cluster-cluster-policy",
@@ -221,7 +223,8 @@
         "doeff-cluster-resource-policy",
         "doeff-cluster-shared-protocol",
         "doeff-cluster-wal-store",
-        "doeff-cluster-watch-policy"
+        "doeff-cluster-watch-policy",
+        "doeff-cluster-coordinator-request-bodies-model"
       ],
       "layer": "runtime",
       "name": "doeff-cluster-coordinator",
@@ -248,7 +251,8 @@
         "doeff-cluster-kube-handlers",
         "doeff-cluster-promise-wait",
         "doeff-cluster-shared-protocol",
-        "doeff-cluster-wal-store"
+        "doeff-cluster-wal-store",
+        "doeff-cluster-coordinator-request-bodies"
       ],
       "layer": "io",
       "name": "doeff-cluster-coordinator-handler-sets",
@@ -414,7 +418,8 @@
         "doeff-cluster-cluster-model",
         "doeff-cluster-cluster-policy",
         "doeff-cluster-resource-policy",
-        "doeff-cluster-shared-protocol"
+        "doeff-cluster-shared-protocol",
+        "doeff-cluster-coordinator-request-bodies-model"
       ],
       "layer": "pure",
       "name": "doeff-cluster-drain-policy",
@@ -1422,7 +1427,9 @@
         "doeff-cluster-task-result",
         "doeff-cluster-worker-lease-release",
         "doeff-cluster-worker-coordinator-link",
-        "doeff-cluster-worker-observations"
+        "doeff-cluster-worker-observations",
+        "doeff-cluster-coordinator-request-bodies",
+        "doeff-cluster-coordinator-request-bodies-model"
       ],
       "exclude": [
         "packages/doeff-cluster/tests/fixtures/independence/*"
@@ -2284,6 +2291,38 @@
         "packages/doeff-cluster/src/doeff_cluster/worker/protocol/observations.hy"
       ],
       "responsibility": "worker の言い換えどうしの問いの効果(コードの木・root・子 process・入口の検めの観測と焼きの秒 — #2031)",
+      "typed": true
+    },
+    {
+      "allow": [],
+      "layer": "domain",
+      "name": "doeff-cluster-coordinator-request-bodies-model",
+      "paths": [
+        "packages/doeff-cluster/src/doeff_cluster/coordinator/intent/request_bodies.hy"
+      ],
+      "public": [
+        "packages/doeff-cluster/src/doeff_cluster/coordinator/intent/request_bodies.hy"
+      ],
+      "responsibility": "coordinator の受け口の要求の本文の道ごとの型と ReadBody(#2445)",
+      "typed": true
+    },
+    {
+      "allow": [
+        "doeff-cluster-shared-protocol",
+        "doeff-cluster-cluster-model",
+        "doeff-cluster-coordinator-request-bodies-model",
+        "doeff-cluster-api-policy",
+        "doeff-hy-wire"
+      ],
+      "layer": "io",
+      "name": "doeff-cluster-coordinator-request-bodies",
+      "paths": [
+        "packages/doeff-cluster/src/doeff_cluster/coordinator/protocol/request_bodies.hy"
+      ],
+      "public": [
+        "packages/doeff-cluster/src/doeff_cluster/coordinator/protocol/request_bodies.hy"
+      ],
+      "responsibility": "coordinator の受け口の要求の本文を道ごとの型に解く 1 点(#2445)",
       "typed": true
     }
   ],

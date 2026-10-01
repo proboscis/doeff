@@ -6,7 +6,8 @@
 (import doeff_cluster.foundation.coordinator_inbox [http-request])
 (import doeff_cluster.coordinator.core.cluster_policy [state-to-json state-from-json board-changes job-from-json])
 (import doeff_cluster.shared.core.job_rules [spec-hash])
-(import doeff_cluster.coordinator.core.api_policy [respond tick plan-rollouts])
+(import doeff_cluster.coordinator.core.api_policy [tick plan-rollouts])
+(import doeff_cluster.coordinator.protocol.request_bodies [responded])
 (import doeff_cluster.coordinator.core.resource_policy [LEGACY-OWNER adopt-legacy])
 (import tests.program_rows [SAMPLE-RUN program-placed program-run])
 (import doeff [run])
@@ -20,7 +21,7 @@
 
 (defn #^ tuple call [#^ ClusterState state #^ str method #^ str path #^ (| dict None) [body None] #^ (| dict None) [query None]
             #^ (| str None) [actor "c-me"] #^ int [now 1000]]
-  (respond state (req method path body query actor) now T))
+  (responded state (req method path body query actor) now T))
 
 (defn #^ ClusterState beat [#^ ClusterState state #^ str name #^ int now #^ (| list None) [statuses None]]
   (get (call state "POST" "/heartbeat" {"name" name "provides" ["net"] "capacity" 10 "versions" V "statuses" (or statuses [])}

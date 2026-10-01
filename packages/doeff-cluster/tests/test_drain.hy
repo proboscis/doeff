@@ -10,7 +10,8 @@
 (import doeff_cluster.foundation.coordinator_inbox [http-request])
 (import doeff_cluster.coordinator.core.cluster_policy [jobs-for])
 (import doeff_cluster.shared.core.job_rules [spec-hash])
-(import doeff_cluster.coordinator.core.api_policy [respond tick])
+(import doeff_cluster.coordinator.core.api_policy [tick])
+(import doeff_cluster.coordinator.protocol.request_bodies [responded])
 (import doeff_cluster.coordinator.core.durable_kv [full-kv state-from-kv DRAIN SURGE])
 (import doeff_cluster.worker.core.drain_client [await-drained worker-ready drain-outcome ready-of] doeff_cluster.worker.intent.drain_model [CoordinatorCall])
 (import doeff [run with-handlers])
@@ -42,7 +43,7 @@
   (defn #^ dict call [self #^ str method #^ str path #^ (| dict None) [body None] #^ (| str None) [actor "c-test"]
             #^ (| int None) [expect 200]]
     "答えの本文は JSON の object(dict)と確かめてから返す — 読む側が添字で引く。"
-    (setv #(state status reply) (respond self.state (http-request method path {} body :actor actor) self.now T))
+    (setv #(state status reply) (responded self.state (http-request method path {} body :actor actor) self.now T))
     (when (is-not expect None) (assert (= status expect) #(method path status reply)))
     (setv self.state state)
     (assert (isinstance reply dict) #(method path status reply))
@@ -421,7 +422,7 @@
 (defhandler coordinator-of [#^ Coord coord]
   ;; 読みの要求を Coord の純粋な判断へそのまま渡す(状態は変えない)。
   (CoordinatorCall [method path body]
-    (setv #(_ status reply) (respond coord.state (http-request method path {} body :actor "drain@atlas") coord.now T))
+    (setv #(_ status reply) (responded coord.state (http-request method path {} body :actor "drain@atlas") coord.now T))
     (resume {"status" status "body" reply})))
 
 (deftest test-worker-ready-reads-the-coordinator-view

@@ -16,7 +16,7 @@
 (import doeff_cluster.foundation.coordinator_inbox [http-request])
 (import doeff_cluster.coordinator.core.cluster_policy [state-to-json state-from-json])
 (import doeff_cluster.coordinator.core.durable_kv [full-kv state-from-kv])
-(import doeff_cluster.coordinator.core.api_policy [respond])
+(import doeff_cluster.coordinator.protocol.request_bodies [responded])
 (import doeff_cluster.shared.intent.runtime_env_model [RepoCheckout PythonProject RuntimeEnv EnvVar runtime-env->json])
 (import tests.program_rows [SAMPLE-RUN program-run])
 
@@ -33,7 +33,7 @@
   {:pre [(: state ClusterState) (: method str) (: path str) (: body (| dict None)) (: now int)] :post [(: % tuple)]
    :tags {:context "doeff-cluster-test" :role "entry"}}
   "coordinator の純粋な振り分け 1 件(送り手 c-me)→ #(次の状態 status 本文)。"
-  (respond state (http-request method path {} body :actor "c-me" :peer "10.0.0.9") now T))
+  (responded state (http-request method path {} body :actor "c-me" :peer "10.0.0.9") now T))
 
 
 (defk declared-env-json []

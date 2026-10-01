@@ -32,6 +32,7 @@
 (val MODULE-TAGS {:context "coordinator" :role "judgment"})
 (import dataclasses [replace])
 (import traceback [extract-tb])
+(import doeff_cluster.coordinator.intent.request_bodies [BodyMalformed])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming Request PlainText BodyInvalid])
 (import doeff_cluster.coordinator.intent.cluster_model [ClusterState ClusterNaming Fault])
 (import doeff_cluster.coordinator.core.cluster_rules [format-refusal])
@@ -244,22 +245,12 @@
   #((if (is reply.state state) state (settle state reply.state (loose-actor request) now timing)) reply.status reply.body))
 
 
-(defn #^ dict request-object [#^ Request request]
-  "要求の本文(JSON の値)→ JSON の object。本文が無ければ空の object。object でない本文は 400 で断る
-   (口はどれも object の本文を読む — 型の外の本文を読み進めない)。"
-  (setv raw request.body)
-  (cond
-    (not raw) {}
-    (isinstance raw dict) raw
-    True (raise (Refused 400 {"error" (.format "本文は JSON の object: {}" (. (type raw) __name__))}))))
-
-
 (defn #^ tuple unknown-request [#^ ClusterState state #^ Request request]
   "知らない要求に 404 で答えるため(状態は変えない)。"
   #(state 404 {"error" (.format "知らない要求: {} {}" request.method request.path)}))
 
 
-(defn #^ tuple respond-resources [#^ ClusterState state #^ Request request #^ dict body #^ list parts #^ int now #^ ClusterTiming timing]
+(defn #^ tuple respond-resources [#^ ClusterState state #^ Request request #^ object body #^ list parts #^ int now #^ ClusterTiming timing]
   "資源の口(/resources の下)の要求に答えるため。#(次の状態 status 本文) を返し、知らない形は 404(respond の振り分けの 1 群 — 1 つの cond では型検査が解析をあきらめた・#1690)。"
   (setv method request.method
         head (get parts 0))
@@ -291,7 +282,7 @@
     True (unknown-request state request)))
 
 
-(defn #^ tuple respond-observations [#^ ClusterState state #^ Request request #^ dict body #^ list parts #^ int now #^ ClusterTiming timing]
+(defn #^ tuple respond-observations [#^ ClusterState state #^ Request request #^ object body #^ list parts #^ int now #^ ClusterTiming timing]
   "計器(/metrics)と出来事(/events)の読みに答えるため。#(次の状態 status 本文) を返し、知らない形は 404(respond の振り分けの 1 群 — 1 つの cond では型検査が解析をあきらめた・#1690)。"
   (setv method request.method
         head (get parts 0))
@@ -302,7 +293,7 @@
     True (unknown-request state request)))
 
 
-(defn #^ tuple respond-legacy [#^ ClusterState state #^ Request request #^ dict body #^ list parts #^ int now #^ ClusterTiming timing]
+(defn #^ tuple respond-legacy [#^ ClusterState state #^ Request request #^ object body #^ list parts #^ int now #^ ClusterTiming timing]
   "旧い口(/jobs・/heartbeat・/state)の要求に答えるため。#(次の状態 status 本文) を返し、知らない形は 404(respond の振り分けの 1 群 — 1 つの cond では型検査が解析をあきらめた・#1690)。"
   (setv method request.method
         head (get parts 0))
@@ -325,7 +316,7 @@
     True (unknown-request state request)))
 
 
-(defn #^ tuple respond-workers [#^ ClusterState state #^ Request request #^ dict body #^ list parts #^ int now #^ ClusterTiming timing]
+(defn #^ tuple respond-workers [#^ ClusterState state #^ Request request #^ object body #^ list parts #^ int now #^ ClusterTiming timing]
   "worker の読みと drain の頼み(/workers の下・drain_policy)に答えるため。#(次の状態 status 本文) を返し、知らない形は 404(respond の振り分けの 1 群 — 1 つの cond では型検査が解析をあきらめた・#1690)。"
   (setv method request.method
         head (get parts 0))
@@ -337,8 +328,8 @@
       (do (setv actor (require-actor request.actor))
           (setv after (settle state (request-drain state (get parts 1) body actor now) actor now timing))
           ;; 今の世代でない頼み(退いた世代・見ていない世代の preStop)には、その世代の待ちの答え(drain_policy.superseded-worker-view)。
-          #(after 200 (if (other-generation-boot after (get parts 1) (.get body "boot"))
-                          (superseded-worker-view after (get parts 1) (get body "boot") now timing)
+          #(after 200 (if (other-generation-boot after (get parts 1) body.boot)
+                          (superseded-worker-view after (get parts 1) body.boot now timing)
                           (worker-view after (get parts 1) now timing))))
     (and (= head "workers") (= (len parts) 3) (= (get parts 2) "drain") (= method "DELETE"))
       (do (setv actor (require-actor request.actor))
@@ -347,7 +338,7 @@
     True (unknown-request state request)))
 
 
-(defn #^ tuple respond-board [#^ ClusterState state #^ Request request #^ dict body #^ list parts #^ int now #^ ClusterTiming timing]
+(defn #^ tuple respond-board [#^ ClusterState state #^ Request request #^ object body #^ list parts #^ int now #^ ClusterTiming timing]
   "盤の読み書き(/board)と lease の書き(/leases)に答えるため。#(次の状態 status 本文) を返し、知らない形は 404(respond の振り分けの 1 群 — 1 つの cond では型検査が解析をあきらめた・#1690)。"
   (setv method request.method
         head (get parts 0))
@@ -365,7 +356,7 @@
     True (unknown-request state request)))
 
 
-(defn #^ tuple respond-tasks [#^ ClusterState state #^ Request request #^ dict body #^ list parts #^ int now #^ ClusterTiming timing]
+(defn #^ tuple respond-tasks [#^ ClusterState state #^ Request request #^ object body #^ list parts #^ int now #^ ClusterTiming timing]
   "task の頼み・問い・結果・取り下げ(/tasks の下)に答えるため。#(次の状態 status 本文) を返し、知らない形は 404(respond の振り分けの 1 群 — 1 つの cond では型検査が解析をあきらめた・#1690)。"
   (setv method request.method
         head (get parts 0))
@@ -386,7 +377,7 @@
     True (unknown-request state request)))
 
 
-(defn #^ tuple respond-stores [#^ ClusterState state #^ Request request #^ dict body #^ list parts #^ int now #^ ClusterTiming timing]
+(defn #^ tuple respond-stores [#^ ClusterState state #^ Request request #^ object body #^ list parts #^ int now #^ ClusterTiming timing]
   "温める表(/warm)・詰めた Program の置き場(/programs)・切り離した task(/detached)の要求に答えるため。#(次の状態 status 本文) を返し、知らない形は 404(respond の振り分けの 1 群 — 1 つの cond では型検査が解析をあきらめた・#1690)。"
   (setv method request.method
         head (get parts 0))
@@ -415,13 +406,15 @@
     True (unknown-request state request)))
 
 
-(defn #^ tuple respond [#^ ClusterState state #^ Request request #^ int now #^ ClusterTiming timing]
-  "要求 1 件 → #(次の状態 status 本文)。"
+(defn #^ tuple respond [#^ ClusterState state #^ Request request #^ int now #^ ClusterTiming timing #^ object body]
+  "要求 1 件と、その本文を道の型に解いた値(coordinator/protocol/request_bodies の body-of — 型の値・まだ型にしていない道は JSON の
+   object・形が合わなければ BodyMalformed)→ #(次の状態 status 本文)。"
   (setv method request.method
         parts (list request.parts)
         head (get parts 0))
   (try
-    (setv body (request-object request))
+    (when (isinstance body BodyMalformed)
+      (raise (BodyInvalid body.reason)))
     (match head
       "resources" (respond-resources state request body parts now timing)
       (| "metrics" "events") (respond-observations state request body parts now timing)

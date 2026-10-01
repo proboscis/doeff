@@ -20,6 +20,7 @@
 (import dataclasses [replace])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming])
 (import doeff_cluster.coordinator.intent.cluster_model [ClusterJob ClusterState Drain Placement])
+(import doeff_cluster.coordinator.intent.request_bodies [DrainBody])
 (import doeff_cluster.coordinator.core.cluster_policy [alive eligible can-take draining-workers load-of other-generation-boot LIVE-PHASES MAX-EVENTS])
 (import doeff_cluster.coordinator.core.resource_policy [refuse service-readiness])
 
@@ -29,16 +30,14 @@
 
 ;; --- 頼む・取り消す -------------------------------------------------------------------------
 
-(defn #^ ClusterState request-drain [#^ ClusterState state #^ str name #^ dict body #^ str actor #^ int now]
+(defn #^ ClusterState request-drain [#^ ClusterState state #^ str name #^ DrainBody body #^ str actor #^ int now]
   "POST /workers/<名>/drain {\"ttlSeconds\"?}。何度頼んでも同じ意味(始めた時刻と世代は最初の頼みのまま・期限だけ延びる)。"
   (setv worker (.get state.workers name)
-        ttl (.get body "ttlSeconds" DRAIN-DEFAULT-TTL-SECONDS)
-        boot (.get body "boot"))
+        ttl (if (is body.ttl-seconds None) DRAIN-DEFAULT-TTL-SECONDS body.ttl-seconds)
+        boot body.boot)
   (when (is worker None) (refuse 404 (+ "知らない worker: " name)))
   (when (not (and (isinstance ttl #(int float)) (not (isinstance ttl bool)) (< 0 ttl (+ DRAIN-MAX-TTL-SECONDS 1))))
     (refuse 400 (.format "ttlSeconds は 0 より大きく {} 以下: {!r}" DRAIN-MAX-TTL-SECONDS ttl)))
-  (when (not (or (is boot None) (isinstance boot str)))
-    (refuse 400 (.format "boot は頼み手の worker の process の世代の文字列: {!r}" boot)))
   ;; 今の世代でない頼み(退いた世代 = 旧い Pod の preStop・一度も見ていない世代 = 最初の heartbeat の前に消された新しい Pod の
   ;; preStop)は、同じ名の今の世代に drain を付けない(2026-09-27)。答えは superseded-worker-view(その世代に置いた task が
   ;; 終わるまで待たせる — 見ていない世代には task が無いので drained)。boot の無い頼み(旧い版の preStop・手の頼み)だけ今の世代に付ける。
