@@ -10,13 +10,13 @@ import hy  # noqa: F401  # .hy の module の import hook
 from doeff_hy.table import COMPACT_RATIO, MIN_DELTA, Table, TableWrite, table_of
 
 
-def _rows(n: int) -> tuple[TableWrite[int], ...]:
-    """検の材料の行の列を作るため(鍵 k0.. → 値 0..)。"""
-    return tuple(TableWrite(key=f"k{i}", value=i) for i in range(n))
+def _table(n: int) -> Table[int]:
+    """検の材料の表を作るため(鍵 k0.. → 値 0..)。"""
+    return table_of(tuple(TableWrite(key=f"k{i}", value=i) for i in range(n)))
 
 
 def test_an_old_table_keeps_reading_old_rows_after_writes() -> None:
-    old = table_of(_rows(10))
+    old = _table(10)
     new = old.with_writes((TableWrite(key="k1", value=100), TableWrite(key="k2", value=None), TableWrite(key="x", value=7)))
     assert (old.row("k1"), old.row("k2"), old.row("x"), old.size()) == (1, 2, None, 10)
     assert (new.row("k1"), new.row("k2"), new.row("x"), new.size()) == (100, None, 7, 10)
@@ -25,7 +25,7 @@ def test_an_old_table_keeps_reading_old_rows_after_writes() -> None:
 
 def test_old_tables_survive_the_rebuild_of_the_base() -> None:
     base_rows = 1000
-    old = table_of(_rows(base_rows))
+    old = _table(base_rows)
     # 差分の上限(max(MIN_DELTA, 基 / COMPACT_RATIO))を越えるまで 1 行ずつ書き、途中の表を全部持っておく。
     steps = range(max(MIN_DELTA, base_rows // COMPACT_RATIO) + 5)
     kept = tuple(accumulate(steps, lambda table, i: table.with_writes((TableWrite(key=f"k{i}", value=-i),)), initial=old))[1:]
@@ -37,14 +37,14 @@ def test_old_tables_survive_the_rebuild_of_the_base() -> None:
 
 
 def test_writing_back_a_removed_key_restores_it() -> None:
-    table = table_of(_rows(3)).with_writes((TableWrite(key="k0", value=None),))
+    table = _table(3).with_writes((TableWrite(key="k0", value=None),))
     back = table.with_writes((TableWrite(key="k0", value=9),))
     assert (table.row("k0"), table.size()) == (None, 2)
     assert (back.row("k0"), back.size()) == (9, 3)
 
 
 def test_a_table_cannot_be_changed() -> None:
-    table = table_of(_rows(1))
+    table = _table(1)
     try:
         setattr(table, "_base", {})
     except AttributeError:
@@ -79,8 +79,8 @@ def test_the_counterexample_an_in_place_table_leaks_new_rows_to_old_readers() ->
 def test_table_is_not_a_mapping() -> None:
     from collections.abc import Mapping
 
-    assert not isinstance(table_of(_rows(1)), Mapping)
-    assert isinstance(table_of(_rows(1)), Table)
+    assert not isinstance(_table(1), Mapping)
+    assert isinstance(_table(1), Table)
 
 
 # ------------------------------------------------------------------ 下書き TableDraft(agora-redesign #2254)
@@ -89,7 +89,7 @@ def test_table_is_not_a_mapping() -> None:
 def test_a_draft_reads_its_own_writes_and_leaves_the_table_alone() -> None:
     from doeff_hy.table import draft_of
 
-    table = table_of(_rows(5))
+    table = _table(5)
     draft = draft_of(table)
     draft.put("k1", 100)
     draft.remove("k2")
@@ -106,7 +106,7 @@ def test_a_draft_reads_its_own_writes_and_leaves_the_table_alone() -> None:
 def test_a_draft_without_writes_freezes_to_the_same_table() -> None:
     from doeff_hy.table import draft_of
 
-    table = table_of(_rows(3))
+    table = _table(3)
     assert draft_of(table).freeze() is table
 
 
@@ -125,7 +125,7 @@ def test_a_draft_takes_many_writes_in_one_freeze() -> None:
 def test_removing_then_putting_back_in_a_draft_restores_the_row() -> None:
     from doeff_hy.table import draft_of
 
-    draft = draft_of(table_of(_rows(2)))
+    draft = draft_of(_table(2))
     draft.remove("k0")
     draft.remove("absent")
     draft.put("k0", 9)
@@ -147,7 +147,7 @@ class _ReadThroughDraft:
 
 
 def test_the_counterexample_a_read_through_draft_misses_its_own_writes() -> None:
-    draft = _ReadThroughDraft(table_of(_rows(2)))
+    draft = _ReadThroughDraft(_table(2))
     draft.put("k0", 100)
     assert draft.row("k0") == 0  # 同じ拍の中で書いた行が読めない — TableDraft はこれを起こさない(上の検)
 
@@ -158,7 +158,7 @@ def test_the_counterexample_a_read_through_draft_misses_its_own_writes() -> None
 def test_rows_follow_the_keys_after_writes_and_removals() -> None:
     from doeff_hy.table import draft_of
 
-    table = table_of(_rows(5)).with_writes((TableWrite(key="k1", value=100), TableWrite(key="k2", value=None), TableWrite(key="x", value=7)))
+    table = _table(5).with_writes((TableWrite(key="k1", value=100), TableWrite(key="k2", value=None), TableWrite(key="x", value=7)))
     assert sorted(table.rows()) == sorted([0, 100, 3, 4, 7])
     assert [table.row(key) for key in table.keys()] == list(table.rows())
     draft = draft_of(table)
@@ -177,7 +177,7 @@ def test_rows_follow_the_keys_after_writes_and_removals() -> None:
 def test_tables_compare_by_rows_not_by_layout() -> None:
     import copy
 
-    written = table_of(_rows(3)).with_writes((TableWrite(key="k1", value=10),))
+    written = _table(3).with_writes((TableWrite(key="k1", value=10),))
     built = table_of((TableWrite(key="k0", value=0), TableWrite(key="k1", value=10), TableWrite(key="k2", value=2)))
     # 基と差分の分け方が違っても、行が同じなら等しい。
     assert written == built
@@ -193,6 +193,54 @@ def test_the_counterexample_an_identity_compared_table_breaks_the_snapshot_check
     import copy
 
     # 失敗ケースの照らし: 比べが同一性(既定の object.__eq__)なら、中身の同じ写しが「違う」と読まれ、畳みの前後の断面の検が赤になる。
-    table = table_of(_rows(2))
+    table = _table(2)
     assert object.__eq__(copy.deepcopy(table), table) is NotImplemented
     assert copy.deepcopy(table) == table
+
+
+def _reference(base: dict[str, int], writes: list[tuple[str, int | None]]) -> dict[str, int]:
+    """書きを列の順に 1 件ずつ当てた dict(比べの元)— 1 度に当てる形が、同じ鍵の置く・消すの順の意味を変えていない事を確かめるため。"""
+    out = dict(base)
+    for key, value in writes:
+        if value is None:
+            out.pop(key, None)
+        else:
+            out[key] = value
+    return out
+
+
+def _random_writes(seed: int, keys: int, count: int) -> list[tuple[str, int | None]]:
+    """同じ鍵に置く・消すを混ぜた無作為の書きの列を作るため(鍵は基に在る物と無い物の両方)。"""
+    import random
+
+    rng = random.Random(seed)
+    return [(f"k{rng.randrange(keys)}", None if rng.random() < 0.3 else rng.randrange(1000)) for _ in range(count)]
+
+
+def test_writes_applied_at_once_match_writes_applied_one_by_one() -> None:
+    # agora-redesign #2412: with-writes と下書きの freeze は書きを 1 度に当てる。基の大きさ・書きの数を変え(作り直しの前と後の両方)、
+    # どの表も、列の順に 1 件ずつ当てた dict と同じ行を持つ。
+    from doeff_hy.table import draft_of
+
+    for seed in range(20):
+        for base_rows, count in ((0, 10), (40, 30), (1000, 50), (200, 400)):
+            base = {f"k{i}": i for i in range(base_rows)}
+            # 前の書き(差分の上限より少ない — 表は基と差分の 2 層のまま)を当てた表に重ねて書く。差分に在る行を消す書きも混ざる。
+            earlier = _random_writes(seed + 100, base_rows + 20, 8)
+            writes = _random_writes(seed, base_rows + 20, count)
+            expected = _reference(_reference(base, earlier), writes)
+            table = table_of(tuple(TableWrite(key=k, value=v) for k, v in base.items())).with_writes(
+                tuple(TableWrite(key=k, value=v) for k, v in earlier)
+            )
+            written = table.with_writes(tuple(TableWrite(key=k, value=v) for k, v in writes))
+            draft = draft_of(table)
+            for key, value in writes:
+                if value is None:
+                    draft.remove(key)
+                else:
+                    draft.put(key, value)
+            frozen = draft.freeze()
+            for got in (written, frozen):
+                assert dict(zip(got.keys(), got.rows())) == expected, (seed, base_rows, count)
+                assert got.size() == len(expected), (seed, base_rows, count)
+                assert all(got.row(k) == expected.get(k) for k in {k for k, _ in writes} | set(base)), (seed, base_rows, count)

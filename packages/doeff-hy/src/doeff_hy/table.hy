@@ -41,8 +41,9 @@
     (object.__setattr__ self "_base" base)
     (object.__setattr__ self "_delta" delta)
     (object.__setattr__ self "_removed" removed)
-    (object.__setattr__ self "_size" (+ (- (len base) (sum (gfor key removed :if (in key base) 1)))
-                                        (sum (gfor key delta :if (not-in key base) 1)))))
+    ;; 行の数 = 基の行 − 消した基の行 + 基に無い差分の行(鍵の集合の演算で数える — 1 件ずつ Hy で数えない・agora-redesign #2412)。
+    (object.__setattr__ self "_size" (+ (- (len base) (len (& removed (.keys base))))
+                                        (len (- (.keys delta) (.keys base))))))
 
   (defn #^ (| V None) row [self #^ str key]
     "鍵 key の行(無ければ None)。"
@@ -65,19 +66,8 @@
     self._size)
 
   (defn #^ "Table[V]" with-writes [self #^ (get tuple #((get TableWrite V) ...)) writes]
-    "書きの列を当てた新しい Table(この Table は変わらない)。"
-    (setv delta (dict self._delta)
-          removed (set self._removed))
-    (for [write writes]
-      (if (is write.value None)
-          (do (.pop delta write.key None)
-              (when (in write.key self._base)
-                (.add removed write.key)))
-          (do (setv (get delta write.key) write.value)
-              (.discard removed write.key))))
-    (if (> (+ (len delta) (len removed)) (max MIN-DELTA (// (len self._base) COMPACT-RATIO)))
-        (Table (| (dfor #(key value) (.items self._base) :if (not-in key removed) key value) delta) {} (frozenset))
-        (Table self._base delta (frozenset removed))))
+    "書きの列を当てた新しい Table(この Table は変わらない)。同じ鍵の書きが列に 2 度あれば後の方が残る。"
+    (_with-pending self (dfor write writes write.key write.value)))
 
   (defn #^ str __repr__ [self]
     (.format "Table(size={})" self._size))
@@ -98,6 +88,20 @@
 
   (defn __setattr__ [self #^ str name #^ object value]
     (raise (AttributeError (.format "Table は変えられない(欄 {!r} を書こうとした)" name)))))
+
+
+(defn #^ (get Table V) _with-pending [#^ (get Table V) table #^ (get dict #(str (| V None))) pending]
+  "鍵 → 行(None は行を消す)の書きを 1 度に当てた新しい Table(table も pending も変わらない)— Table.with-writes と TableDraft.freeze が
+   通る 1 点(この module の中だけ — 写像を受け渡す口を公開しない)。書き 1 件ごとに TableWrite を組んで Hy の繰り返しで当てると、
+   下書きの freeze(数万件の書き)が dict の写しの約 4 倍重かった(agora-redesign #2412)ので、書きを dict の一括の操作(内包・集合の
+   差と和・| の合わせ)で当てる。"
+  (setv puts (dfor #(key value) (.items pending) :if (is-not value None) key value)
+        drops (frozenset (gfor #(key value) (.items pending) :if (is value None) key))
+        delta (| (dfor #(key value) (.items table._delta) :if (not-in key drops) key value) puts)
+        removed (| (- table._removed (.keys puts)) (& drops (.keys table._base))))
+  (if (> (+ (len delta) (len removed)) (max MIN-DELTA (// (len table._base) COMPACT-RATIO)))
+      (Table (| (dfor #(key value) (.items table._base) :if (not-in key removed) key value) delta) {} (frozenset))
+      (Table table._base delta (frozenset removed))))
 
 
 (defn #^ (get Table V) table-of [#^ (get tuple #((get TableWrite V) ...)) rows]
@@ -150,7 +154,7 @@
   (defn #^ (get Table V) freeze [self]
     "書きを当てた新しい Table(書きが無ければ元の表そのもの)。何度呼んでもよい — 下書きも元の表も変わらない。"
     (if self._writes
-        (.with-writes self._table (tuple (gfor #(key value) (.items self._writes) (TableWrite key value))))
+        (_with-pending self._table self._writes)
         self._table))
 
   (defn #^ str __repr__ [self]
