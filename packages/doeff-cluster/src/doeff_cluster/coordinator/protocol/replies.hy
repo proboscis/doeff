@@ -8,7 +8,8 @@
 (import dataclasses [asdict])
 (import json)
 (import doeff_cluster.shared.intent.job_model [JobSpec])
-(import doeff_cluster.coordinator.intent.cluster_model [EventsView StateReply HeartbeatReply TaskOffer])
+(import doeff_cluster.coordinator.intent.cluster_model [EventsView StateReply StateView HeartbeatReply TaskOffer])
+(import doeff_cluster.coordinator.core.cluster_policy [job-to-json task-summary status-row-to-json])
 (import doeff_cluster.coordinator.protocol.state_json [audit-event-to-json])
 
 
@@ -42,13 +43,33 @@
      (if reply.superseded {"superseded" True} {})))
 
 
+(defn #^ dict state-view-json [#^ StateView view]
+  "状態の画面 → JSON の形(#2595 の前に cluster_policy.state-view が組んでいた形と同じ)。"
+  {"now" view.now
+   "jobs" (lfor s view.services (| (job-to-json s.job) {"resourceVersion" s.resource-version}))
+   "workers" (dfor w view.workers
+                   w.info.name {"provides" (list w.info.provides) "exclusive" (list w.info.exclusive) "derived" (list w.info.derived)
+                                "node" w.info.node "capacity" w.info.capacity "silentMs" w.silent-ms
+                                "versions" (dict w.info.versions) "live" w.live "draining" w.draining})
+   "placements" (dfor #(k v) (.items view.placements) k (asdict v))
+   "unplaced" view.unplaced
+   "statuses" (dfor #(n s) (.items view.statuses)
+                    n {"at" s.report.at "endpoint" s.report.endpoint "jobs" (lfor row s.report.jobs (status-row-to-json row))
+                       "stale" s.stale})
+   "tasks" (lfor t view.tasks (task-summary t))
+   "boardKeys" view.board-keys
+   "surges" (dfor #(k v) (.items view.surges) k (asdict v))
+   "events" (list view.events)
+   "revision" view.revision})
+
+
 (defn #^ object reply-json [#^ object body]  ; defk にできない: 返事の答え手と検の入口 responded(Program の外)が呼ぶ純粋な綴り
   "返事の本文の型の値を、外へ見せる JSON の形にする(#2595 の前に core が組んでいた形と同じ)。型にしていない本文はそのまま返す。"
   (cond
     (isinstance body EventsView)
       {"revision" body.revision "seq" body.seq "events" (lfor e body.events (audit-event-to-json e))}
     (isinstance body StateReply)
-      (| body.view {"audit" (lfor e body.audit (audit-event-to-json e)) "drains" body.drains})
+      (| (state-view-json body.view) {"audit" (lfor e body.audit (audit-event-to-json e)) "drains" body.drains})
     (isinstance body HeartbeatReply) (heartbeat-reply-json body)
     True body))
 

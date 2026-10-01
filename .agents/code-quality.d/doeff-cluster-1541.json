@@ -2683,7 +2683,8 @@
         "doeff-cluster-shared-protocol",
         "doeff-cluster-cluster-model",
         "doeff-cluster-state-json",
-        "doeff-cluster-job-model"
+        "doeff-cluster-job-model",
+        "doeff-cluster-cluster-policy"
       ],
       "layer": "pure",
       "name": "doeff-cluster-coordinator-replies",

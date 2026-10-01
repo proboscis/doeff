@@ -3,7 +3,7 @@
 ;;; 割り当ては安定させる: 担い手が移し替えの期限内に生きていれば動かさない。
 (require doeff-hy.macros [defk deff val])
 (val MODULE-TAGS {:context "coordinator" :role "judgment"})
-(import dataclasses [replace asdict])
+(import dataclasses [replace])
 (import functools)
 (import hashlib)
 (import json)
@@ -12,7 +12,7 @@
 (import doeff_cluster.shared.intent.job_model [JobSpec])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming Request BodyInvalid])
 (import doeff_cluster.shared.core.capabilities [capabilities-of environ-pairs])
-(import doeff_cluster.coordinator.intent.cluster_model [ClusterJob WorkerInfo TaskOffer WarmOffer HeartbeatReply BoardRow WorkerReport GenerationOrder Placement ClusterState TaskRecord EnvFailed HandoffPhase UnplacedKind ACCEPTED-FORMATS PLACED-PHASES])
+(import doeff_cluster.coordinator.intent.cluster_model [ClusterJob WorkerInfo TaskOffer WarmOffer HeartbeatReply ServiceView WorkerView StatusView StateView BoardRow WorkerReport GenerationOrder Placement ClusterState TaskRecord EnvFailed HandoffPhase UnplacedKind ACCEPTED-FORMATS PLACED-PHASES])
 (import doeff_cluster.coordinator.core.cluster_rules [component-versions-of format-version-refusal])
 (import doeff_cluster.coordinator.intent.request_bodies [LeaseBody TaskResultBody BoardWrite HeartbeatBody EnvsReport StatusRow TaskBody])
 (import doeff_cluster.coordinator.core.cluster_rules [required-field int-field])
@@ -1102,25 +1102,22 @@
                   :revision state.revision))
 
 
-(defn #^ dict state-view [#^ ClusterState state #^ int now #^ ClusterTiming timing]
-  {"now" now
-   "jobs" (lfor j state.jobs (| (job-to-json j)
-                                {"resourceVersion" (resource-version-of state (+ "Service/" j.spec.name))}))
-   ;; live = heartbeat が lease の内・draining = 期限の内の drain(担い手の名簿の読み ReadRunners の正本 — 2026-09-26)。
-   "workers" (dfor #(n w) (.items state.workers)
-                   n {"provides" (list w.provides) "exclusive" (list w.exclusive) "derived" (list w.derived) "node" w.node "capacity" w.capacity "silentMs" (- now w.last-seen-ms)
-                      "versions" (dict w.versions) "live" (alive now w timing.lease-ms)
-                      "draining" (in n (draining-workers state now))})
-   "placements" (dfor #(k v) (.items state.placements) k (asdict v))
-   "unplaced" (unplaced-jobs now state timing)
-   ;; 沈黙した worker の最後の報告は「いま動いている」の証拠にならない。古さを付けて返す。
-   "statuses" (dfor #(n st) (.items state.statuses) n {"at" st.at "endpoint" st.endpoint "jobs" (lfor row st.jobs (status-row-to-json row))
-                                                       "stale" (> (- now st.at) timing.lease-ms)})
-   "tasks" (lfor t (sorted (.values state.tasks) :key (fn [t] t.id)) (task-summary t))
-   "boardKeys" (len state.board)
-   "surges" (dfor #(k v) (.items state.surges) k (asdict v))
-   "events" (list (cut state.events -50 None))
-   "revision" state.revision})
+(defn #^ StateView state-view [#^ ClusterState state #^ int now #^ ClusterTiming timing]
+  "GET /state の状態の画面(JSON は coordinator/protocol/replies が綴る — #2595)。"
+  (setv draining (draining-workers state now))
+  (StateView :now now
+             :services (tuple (gfor j state.jobs (ServiceView :job j :resource-version (resource-version-of state (+ "Service/" j.spec.name)))))
+             :workers (tuple (gfor #(n w) (.items state.workers)
+                                   (WorkerView :info w :silent-ms (- now w.last-seen-ms) :live (alive now w timing.lease-ms)
+                                               :draining (in n draining))))
+             :placements (dict state.placements)
+             :unplaced (unplaced-jobs now state timing)
+             :statuses (dfor #(n st) (.items state.statuses) n (StatusView :report st :stale (> (- now st.at) timing.lease-ms)))
+             :tasks (tuple (sorted (.values state.tasks) :key (fn [t] t.id)))
+             :board-keys (len state.board)
+             :surges (dict state.surges)
+             :events (tuple (cut state.events -50 None))
+             :revision state.revision))
 
 
 (defn #^ (| str None) runtime-env-refusal [#^ dict body]

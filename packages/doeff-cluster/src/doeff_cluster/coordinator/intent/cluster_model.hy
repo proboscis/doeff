@@ -263,11 +263,50 @@
   (#^ (get tuple #(AuditEvent ...)) events))
 
 
+(defrecord ServiceView
+  "状態の画面の Service 1 つ: job = 宣言・resource-version = 資源の版(版の記録が無ければ None)。"
+  (#^ ClusterJob job)
+  (#^ (| int None) resource-version))
+
+
+(defrecord WorkerView
+  "状態の画面の worker 1 つ: info = 名乗り・silent-ms = 最後の連絡からの長さ・live = heartbeat が lease の内か・draining = 期限の内の drain
+   か(担い手の名簿の読み ReadRunners の正本 — 2026-09-26)。"
+  (#^ WorkerInfo info)
+  (#^ int silent-ms)
+  (#^ bool live)
+  (#^ bool draining))
+
+
+(defrecord StatusView
+  "状態の画面の worker の最後の報告 1 つ: report = 報告・stale = lease より古いか(沈黙した worker の最後の報告は「いま動いている」の
+   証拠にならないので古さを付けて見せる)。"
+  (#^ WorkerReport report)
+  (#^ bool stale))
+
+
+(defrecord StateView
+  "GET /state の状態の画面(cluster_policy.state-view — #2595): now・services・workers・placements(job の名 → Placement)・unplaced(job の名 →
+   置き先が無い理由)・statuses(worker の名 → StatusView)・tasks・board-keys = 盤の行の数・surges(job の名 → Placement)・events = 直近
+   50 件の割り当ての移り変わり・revision。JSON の形は coordinator/protocol/replies が綴る。"
+  (#^ int now)
+  (#^ (get tuple #(ServiceView ...)) services)
+  (#^ (get tuple #(WorkerView ...)) workers)
+  (#^ (get dict #(str Placement)) placements)
+  (#^ (get dict #(str str)) unplaced)
+  (#^ (get dict #(str StatusView)) statuses)
+  (#^ (get tuple #(TaskRecord ...)) tasks)
+  (#^ int board-keys)
+  (#^ (get dict #(str Placement)) surges)
+  (#^ tuple events)
+  (#^ int revision))
+
+
 (defrecord StateReply
-  "GET /state の答え(#2595): view = 状態の画面(cluster_policy.state-view の JSON の object — 型は続きの切り出し)・audit = 直近の出来事
+  "GET /state の答え(#2595): view = 状態の画面(StateView)・audit = 直近の出来事
    (30 件)・drains = drain の画面(drain_policy.drains-view)。JSON の形(view に audit と drains を足した object)は coordinator/protocol/replies
    が綴る。"
-  (#^ dict view)
+  (#^ StateView view)
   (#^ (get tuple #(AuditEvent ...)) audit)
   (#^ dict drains))
 

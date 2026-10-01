@@ -19,7 +19,7 @@
 (import doeff_cluster.coordinator.core.program [run-coordinator])
 (import doeff_cluster.coordinator.protocol.request_bodies [request-bodies])
 (import doeff_cluster.coordinator.protocol.store [Persist durable-states])
-(import doeff_cluster.coordinator.protocol.replies [reply-bodies])
+(import doeff_cluster.coordinator.protocol.replies [reply-bodies state-view-json])
 (import doeff_cluster.foundation.wal_store [WalStore])
 (import doeff_cluster.coordinator.protocol.durable_kv [LEGACY-PLACEMENT PLACEMENT])
 
@@ -95,7 +95,7 @@
   (assert (= #((get view "phase") (get view "result")) #("finished" "R")))
   ;; 結果は状態の報告(/state)には載せない
   (assert (is (. (get (. (get (. s statuses) "w") jobs) 0) result) None))
-  (assert (not-in "result" (get (state-view s 400 T) "statuses" "w" "jobs" 0))))
+  (assert (not-in "result" (get (state-view-json (state-view s 400 T)) "statuses" "w" "jobs" 0))))
 
 
 (deftest test-task-is-dropped-when-the-caller-stops-asking
