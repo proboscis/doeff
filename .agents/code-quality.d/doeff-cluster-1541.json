@@ -1144,22 +1144,6 @@
     },
     {
       "allow": [
-        "doeff-cluster-env-prepare",
-        "doeff-cluster-runtime-identity-model"
-      ],
-      "layer": "io",
-      "name": "doeff-cluster-runtime-identity-process",
-      "paths": [
-        "packages/doeff-cluster/src/doeff_cluster/runtime_identity_process.hy"
-      ],
-      "public": [
-        "packages/doeff-cluster/src/doeff_cluster/runtime_identity_process.hy"
-      ],
-      "responsibility": "入口の検め(runtime_identity.hy)の ReadRuntimeFacts に、この process を読んで答える handler — 環境変数・sys.prefix・root の完成の印・module の置き場・pid を読み、文字列のまま答える(宣言の型への読み戻しと判断は runtime_identity.hy の Program の側)。",
-      "typed": true
-    },
-    {
-      "allow": [
         "doeff-cluster-clock",
         "doeff-cluster-lease-rules",
         "doeff-cluster-semaphore-model"
@@ -1317,7 +1301,6 @@
         "doeff-cluster-runtime-facts",
         "doeff-cluster-runtime-identity",
         "doeff-cluster-runtime-identity-model",
-        "doeff-cluster-runtime-identity-process",
         "doeff-cluster-semaphore-handlers",
         "doeff-cluster-semaphore-model",
         "doeff-cluster-service-model",
@@ -1601,6 +1584,7 @@
     },
     {
       "allow": [
+        "doeff-cluster-env-prepare",
         "doeff-cluster-runtime-identity-model"
       ],
       "layer": "io",

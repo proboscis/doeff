@@ -22,7 +22,7 @@
 ;;; 宣言そのものが読めない(DOEFF_RUNTIME_ENV が壊れた JSON・宣言の型の検査で断られる)のは worker の誤りで、kind ではなく
 ;;; 例外(RuntimeEnvInvalid・JSONDecodeError)で落ちる(黙って続けないことは同じ)。
 ;;;
-;;; I/O は ReadRuntimeFacts 1 つ(答えは文字列のまま)。handler = runtime_identity_process.hy の process-runtime-facts(この process の
+;;; I/O は ReadRuntimeFacts 1 つ(答えは文字列のまま)。handler = shared/protocol/runtime_facts.hy の process-runtime-facts(この process の
 ;;; 環境変数・sys.prefix・印の file・module の置き場・pid を読む)と、下の given-runtime-facts(渡した材料をそのまま答える — 検と模擬)。
 ;;; 宣言の型への読み戻しと判断(judge-identity)は Program の側。印の形式の読み戻しはここ(書き手 = env_prepare の env-marker->json)。
 ;;; 形式の版(ENV-MARKER-FORMAT)が違えば読まずに marker-mismatch で名乗る。

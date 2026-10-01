@@ -1,6 +1,7 @@
 ;;; 実行環境の事実(ReadRuntimeFacts)の契約テストの解釈器(composition root)— 同じ契約の Program を、事実の答え手だけ替えて走らせる。
 ;;;
-;;;   process-runtime-facts  本物: process-runtime-facts(この検の process の環境変数・sys.prefix・印の file・module の置き場・pid を読む)
+;;;   process-runtime-facts  本物: process-runtime-facts(汎用の効果への言い換え)+ 本物の汎用の答え手 subprocess-handler・os-file-handler
+;;;                          (この検の process の環境変数・sys.prefix・印の file・module の置き場・pid を読む — agora-redesign #2344)
 ;;;   given-runtime-facts    fake: given-runtime-facts(渡した ProcessFacts で答える)
 ;;;
 ;;; 契約の世界(FactsWorld)は両方とも同じ make-world が走るたびに新しい一時 dir に作る: 宣言の root(完成の印・宣言の repo の dir の下に
@@ -30,8 +31,9 @@
 (import doeff_cluster.shared.intent.runtime_env_model [RuntimeEnv RepoCheckout PythonProject runtime-env->json env-key])
 (import doeff_cluster.env_prepare [ENV-MARKER EnvMarker env-marker->json])
 (import doeff_cluster.shared.intent.runtime_identity_model [ModuleOrigin ProcessFacts ReadRuntimeFacts])
-(import doeff_cluster.shared.protocol.runtime_facts [given-runtime-facts])
-(import doeff_cluster.runtime_identity_process [process-runtime-facts])
+(import doeff_cluster.shared.protocol.runtime_facts [given-runtime-facts process-runtime-facts])
+(import doeff_core_effects.os_process [subprocess-handler])
+(import doeff_core_effects.os_file [os-file-handler])
 
 (val PROCESS-RUNTIME-FACTS "process-runtime-facts")
 (val GIVEN-RUNTIME-FACTS "given-runtime-facts")
@@ -213,7 +215,7 @@
     (importlib.invalidate-caches)
     (try
       (<- (place-scene world Scene.DECLARED))
-      (<- ran (with_handlers [(process-scene world) process-runtime-facts] program))
+      (<- ran (with_handlers [(process-scene world) subprocess-handler os-file-handler process-runtime-facts] program))
       (:= answer ran)
       (finally
         (<- (restore-environment saved))
