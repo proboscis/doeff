@@ -474,7 +474,8 @@
         "doeff-cluster-metrics-model",
         "doeff-cluster-readiness-model",
         "doeff-cluster-semaphore-model",
-        "doeff-cluster-shared-model"
+        "doeff-cluster-shared-model",
+        "doeff-hy-json-value"
       ],
       "layer": "pure",
       "name": "doeff-cluster-effect-codec",
@@ -1324,7 +1325,9 @@
       "typed": true
     },
     {
-      "allow": [],
+      "allow": [
+        "doeff-hy-json-value"
+      ],
       "layer": "domain",
       "name": "doeff-cluster-shared-model",
       "paths": [
@@ -1468,7 +1471,8 @@
         "doeff-cluster-remote-rules",
         "doeff-cluster-runtime-env-rules",
         "doeff-cluster-warm-rules",
-        "doeff-cluster-detached-rules"
+        "doeff-cluster-detached-rules",
+        "doeff-hy-json-value"
       ],
       "exclude": [
         "packages/doeff-cluster/tests/fixtures/independence/*"

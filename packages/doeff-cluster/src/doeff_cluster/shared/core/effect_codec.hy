@@ -28,7 +28,7 @@
 ;;;
 ;;; 大きな値の差分(delta-of / apply-delta): 形の版 1 の記録が使った(同じ問いの前の答えとの差)。版 1 の記録を読むためと、
 ;;; backtest の報告(記録 → 再生の差)のために残す。
-(require doeff-hy.macros [val])
+(require doeff-hy.macros [deff val])
 (val MODULE-TAGS {:context "doeff-cluster" :role "judgment"})
 (import base64)
 (import collections [OrderedDict])
@@ -44,6 +44,7 @@
 (import doeff_core_effects.scheduler [Spawn Wait Gather Race Cancel CreatePromise CompletePromise FailPromise
                                       CreateSemaphore AcquireSemaphore ReleaseSemaphore Task Promise Future Semaphore])
 (import doeff_time [GetTimeEffect GetMonotonicEffect DelayEffect])
+(import doeff_hy.json_value [OpaqueJson])
 (import doeff_cluster.shared.intent.shared_model [ReadShared WriteShared ANY])
 (import doeff_cluster.shared.intent.semaphore_model [CreateNamedSemaphore HeldLease LeaseStanding])
 (import doeff_cluster.shared.intent.readiness_model [ReportReady])
@@ -399,10 +400,12 @@
 
 (defclass EffectCodec []
   ;; unexecuted = 記録に対の無い書きへ返す答え(True・None)か DIVERGE(返さずに分岐として止める)。
+  ;; recorded = 記録の行の引数(args の答えの形)を今の版の比べる形へ揃える関数 — 引数の形を変えた型が旧い記録を読むため(None = そのまま)。
   (defn #^ None __init__ [self #^ type cls #^ (| str Callable) mode #^ (| Callable None) [args None] #^ (| Callable None) [subject None]
-                  #^ (| _Diverge bool None) [unexecuted DIVERGE] #^ (| str None) [binds None] #^ bool [watch False]]
+                  #^ (| _Diverge bool None) [unexecuted DIVERGE] #^ (| str None) [binds None] #^ bool [watch False]
+                  #^ (| Callable None) [recorded None]]
     (setv self.cls cls self.name (type-name cls) self.mode mode self.args-fn args self.subject-fn subject
-          self.unexecuted unexecuted self.binds binds self.watch watch)))
+          self.unexecuted unexecuted self.binds binds self.watch watch self.recorded-fn recorded)))
 
 
 (defn _fields-args [effect handles]
@@ -420,11 +423,41 @@
 
 (defn _key-subject [args] (str (.get args "key")))
 
+(defn #^ object _board-json [#^ OpaqueJson opaque #^ (| HandleTable None) handles]
+  "盤の書きの値(OpaqueJson)を記録の比べる形にするため: 盤が持つ JSON の値を encode-value で綴る(#2543)。値が素の JSON の値だった
+   旧い記録の行と同じ綴りになり、記録と再生の突き合わせが書きの形の違いを「違う」と数えない。"
+  (encode-value (json.loads opaque.text) handles))
+
+(defn #^ object _recorded-board-json [#^ object j]
+  "記録の行の盤の書きの値を新しい形(盤が持つ JSON の値の綴り)へ揃えるため: 旧い形は素の値を encode-value で綴った物で、tuple は
+   $t・文字列でない鍵は $d を持つ — 盤へ JSON で運べば list・文字列の鍵になるので、その JSON の値に直して綴り直す。新しい形の行は
+   そのままの綴りに戻る(同じ JSON の値を 2 度綴るだけ)。"
+  (_board-json (OpaqueJson.of (decode-value j)) None))
+
+(deff _recorded-write-args [#^ dict args]  ; defk にできない: 記録の読み(read-recording — Program の外の純粋な関数)が型の登録から呼ぶ callback
+  {:pre [(: args dict)] :post [(: % dict)] :tags {:context "doeff-cluster" :role "judgment"}}
+  "WriteShared の記録の行の引数を、新旧どちらの形で書かれていても同じ綴りで読むため(#2543)。expect の ANY({\"$any\": 1})と
+   None(行が無い時だけ)は値ではないので揃えない。"
+  (setv expect (.get args "expect"))
+  (| args
+     {"value" (_recorded-board-json (.get args "value"))
+      "expect" (if (or (is expect None) (= expect {"$any" 1})) expect (_recorded-board-json expect))}))
+
 (setv _REGISTRY {})
+;; 記録の型の名(今の名)→ 登録。記録の行を読む時は型を import せずに名で引く(recorded-args)。
+(setv _BY-NAME {})
 
 (defn #^ EffectCodec register [#^ EffectCodec codec]
   (setv (get _REGISTRY codec.cls) codec)
+  (setv (get _BY-NAME codec.name) codec)
   codec)
+
+(defn #^ dict recorded-args [#^ str name #^ dict args]
+  "記録の行の問いの引数を、今の版の比べる形で読むため: 型の登録が旧い記録の形を読む関数(recorded)を持てば通す(#2543 —
+   WriteShared の値が OpaqueJson になる前の記録)。型の名は置き場を移す前の名でもよい(MOVED-TYPES・MOVED-MODULES で今の名へ引く)。"
+  (setv #(written qualname) (.split (.get MOVED-TYPES name name) ":" 1))
+  (setv codec (.get _BY-NAME (.format "{}:{}" (.get MOVED-MODULES written written) qualname)))
+  (if (or (is codec None) (is codec.recorded-fn None)) args (codec.recorded-fn args)))
 
 ;; effect はどの値でもよい(登録の無い型は UnrecordableEffect で断る)。
 (defn #^ EffectCodec codec-of [#^ object effect]
@@ -472,9 +505,14 @@
 (register (EffectCodec FailPromise LIVE :args (fn [e h] {"promise" (_loose-value e.promise h) "error" (_loose-value e.error h)})))
 (register (EffectCodec ReportReady OUTPUT :unexecuted None))
 (register (EffectCodec ReportMetrics OUTPUT :unexecuted None))
+;; 盤の書き: 値と expect の値は OpaqueJson(#2543)。記録の比べる形は盤が持つ JSON の値の綴り(_board-json)で、OpaqueJson の
+;; dataclass の綴りにしない — 値が素の JSON の値だった旧い記録の行も、読む時に同じ綴りへ揃える(_recorded-write-args)。
 (register (EffectCodec WriteShared OUTPUT :subject _key-subject :unexecuted True
-                       :args (fn [e h] {"key" e.key "value" (encode-value e.value h)
-                                        "expect" (if (is e.expect ANY) {"$any" 1} (encode-value e.expect h))})))
+                       :args (fn [e h] {"key" e.key "value" (_board-json e.value h)
+                                        "expect" (cond (is e.expect ANY) {"$any" 1}
+                                                       (is e.expect None) None
+                                                       True (_board-json e.expect h))})
+                       :recorded _recorded-write-args))
 
 ;; process の memory の gauge(metrics_model.ReadProcessGauges)は読み。
 (import doeff_cluster.shared.intent.metrics_model [ReadProcessGauges])

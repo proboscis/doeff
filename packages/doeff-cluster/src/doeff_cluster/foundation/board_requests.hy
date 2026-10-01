@@ -5,8 +5,9 @@
 ;;; 「条件を付けるか」の真偽に訳して渡す。
 (require doeff-hy.macros [deff val])
 (val MODULE-TAGS {:context "doeff-cluster" :role "foundation"})
+(import json)
 (import urllib.parse [quote :as url-quote])
-(import doeff_hy.json_value [JsonValue])
+(import doeff_hy.json_value [OpaqueJson])
 
 
 (deff board-read-request [#^ str prefix]  ; defk にできない: 本番の client(Program の外の I/O の道具)と sim の宿が同じ形を作る純粋な判断
@@ -15,15 +16,17 @@
   #("GET" "/board" {"prefix" prefix} None))
 
 
-(deff board-write-request [#^ str key value #^ bool conditioned expect #^ (| int float None) ttl-seconds]  ; defk にできない: 本番の client と sim の宿が同じ形を作る純粋な判断
-  {:pre [(: key str) (: value JsonValue) (: conditioned bool) (: expect JsonValue)
+(deff board-write-request [#^ str key #^ OpaqueJson value #^ bool conditioned #^ (| OpaqueJson None) expect #^ (| int float None) ttl-seconds]  ; defk にできない: 本番の client と sim の宿が同じ形を作る純粋な判断
+  {:pre [(: key str) (: value OpaqueJson) (: conditioned bool) (: expect (| OpaqueJson None))
          (: ttl-seconds (| int float None))]
    :post [(: % tuple) (= (len %) 4)] :tags {:context "doeff-cluster" :role "foundation" :spells "http"}}
-  "WriteShared を盤の compare-and-set の要求 #(method path query 本文) にするため。expect の 3 値を JSON で運ぶ: 欄が無い(conditioned が偽 —
-   WriteShared の expect が ANY)= 無条件・null = 行が無い時だけ・値 = その値の時だけ。答えの読みは 409 = 偽(合わなかった)・300 未満 = 真。"
+  "WriteShared を盤の compare-and-set の要求 #(method path query 本文) にするため。値と expect の値は OpaqueJson で受け、ここで JSON の値へ
+   戻して本文に置く(#2543 — 盤は解いた値で比べるので、欄の順が違うだけの expect も合う)。expect の 3 値を JSON で運ぶ: 欄が無い
+   (conditioned が偽 — WriteShared の expect が ANY)= 無条件・null(expect が None)= 行が無い時だけ・値 = その値の時だけ。
+   答えの読みは 409 = 偽(合わなかった)・300 未満 = 真。"
   #("PUT" (+ "/board/" key) {}
-    (| {"value" value}
-       (if conditioned {"expect" expect} {})
+    (| {"value" (json.loads value.text)}
+       (if conditioned {"expect" (if (is expect None) None (json.loads expect.text))} {})
        (if (is ttl-seconds None) {} {"ttlSeconds" ttl-seconds}))))
 
 

@@ -13,6 +13,7 @@
 ;;; tests/board_fake.hy の頭の註。
 (require doeff-hy.macros [defk deftest <- val])
 (import doeff_time [Delay])
+(import doeff_hy.json_value [OpaqueJson])
 (import doeff_cluster.shared.intent.shared_model [ReadShared WriteShared ANY])
 (import doeff_cluster.shared.intent.semaphore_model [LeaseOp LeaseAnswer])
 (import doeff_cluster.shared.core.lease_rules [semaphore-key])
@@ -32,9 +33,9 @@
              "app/e" False
              "app/f" None})
   (for [#(key value) (.items rows)]
-    (<- written bool (WriteShared key value))
+    (<- written bool (WriteShared key (OpaqueJson.of value)))
     (assert written key))
-  (<- (WriteShared "other/x" 1))
+  (<- (WriteShared "other/x" (OpaqueJson.of 1)))
   (<- read dict (ReadShared "app/"))
   (<- nothing dict (ReadShared "missing/"))
   (<- board dict (BoardSeen))
@@ -46,7 +47,7 @@
 (deftest test-written-and-read-values-are-copies
   {:interpreters ["shared-fake" "shared-http"]}
   (val value {"items" [1]})
-  (<- (WriteShared "copy/row" value))
+  (<- (WriteShared "copy/row" (OpaqueJson.of value)))
   (.append (get value "items") 2)
   (<- first dict (ReadShared "copy/"))
   (.append (get first "copy/row" "items") 3)
@@ -58,20 +59,20 @@
 (deftest test-values-come-back-in-json-form
   {:interpreters ["shared-fake" "shared-http"]}
   ;; 本物は値を JSON で運ぶので、dict の鍵は文字列・tuple は list で戻る。期待の値も同じ形で比べる。
-  (<- (WriteShared "form/row" {1 #(1 2)}))
+  (<- (WriteShared "form/row" (OpaqueJson.of {1 #(1 2)})))
   (<- read dict (ReadShared "form/"))
-  (<- matched bool (WriteShared "form/row" "next" {"1" #(1 2)}))
+  (<- matched bool (WriteShared "form/row" (OpaqueJson.of "next") (OpaqueJson.of {"1" #(1 2)})))
   (assert (= read {"form/row" {"1" [1 2]}}) read)
   (assert matched "JSON の形で等しい期待の値が合わなかった"))
 
 
 (deftest test-a-row-lifetime-out-of-range-is-refused-and-changes-nothing
   {:interpreters ["shared-fake" "shared-http"]}
-  (<- (WriteShared "life/row" "kept"))
+  (<- (WriteShared "life/row" (OpaqueJson.of "kept")))
   (val refused [])
   (for [ttl [0 -1 "60" (* 31 24 3600)]]
     (try
-      (<- (WriteShared "life/row" "replaced" :ttl-seconds ttl))
+      (<- (WriteShared "life/row" (OpaqueJson.of "replaced") :ttl-seconds ttl))
       (except [Exception]
         (.append refused ttl))))
   (<- read dict (ReadShared "life/"))
@@ -81,16 +82,32 @@
 
 (deftest test-compare-and-set-writes-only-when-the-expectation-holds
   {:interpreters ["shared-fake" "shared-http"]}
-  (<- absent-only bool (WriteShared "cas/k" "v1" None))
-  (<- absent-again bool (WriteShared "cas/k" "v2" None))
-  (<- stale bool (WriteShared "cas/k" "v3" "v0"))
+  (<- absent-only bool (WriteShared "cas/k" (OpaqueJson.of "v1") None))
+  (<- absent-again bool (WriteShared "cas/k" (OpaqueJson.of "v2") None))
+  (<- stale bool (WriteShared "cas/k" (OpaqueJson.of "v3") (OpaqueJson.of "v0")))
   (<- after-refusals dict (ReadShared "cas/"))
-  (<- matched bool (WriteShared "cas/k" "v4" "v1"))
-  (<- unconditional bool (WriteShared "cas/k" "v5" ANY))
+  (<- matched bool (WriteShared "cas/k" (OpaqueJson.of "v4") (OpaqueJson.of "v1")))
+  (<- unconditional bool (WriteShared "cas/k" (OpaqueJson.of "v5") ANY))
   (<- board dict (BoardSeen))
   (assert (= #(absent-only absent-again stale matched unconditional) #(True False False True True)))
   (assert (= after-refusals {"cas/k" "v1"}) (.format "合わない書きが値を変えた: {}" after-refusals))
   (assert (= (get board "cas/k") "v5") board))
+
+
+(deftest test-compare-and-set-compares-the-decoded-values-not-their-spelling
+  ;; 盤の値は OpaqueJson(中を読まずに運ぶ JSON の文字列)で渡るが、compare-and-set は盤が解いた値で比べる(#2543)。
+  ;; 欄の順だけが違う 2 つの値は等しい・中身が違えば違う。OpaqueJson の文字列の等しさ(欄の順まで見る)で比べる形に変えると赤になる。
+  {:interpreters ["shared-fake" "shared-http"]}
+  (val written (OpaqueJson.of {"a" 1 "b" [1 2]}))
+  (val reordered (OpaqueJson.from-text "{\"b\": [1, 2], \"a\": 1}"))
+  (assert (!= written reordered) "前提: 欄の順の違う 2 つの OpaqueJson は文字列としては違う")
+  (<- (WriteShared "order/k" written))
+  (<- same-content bool (WriteShared "order/k" (OpaqueJson.of "v2") reordered))
+  (<- other-content bool (WriteShared "order/k" (OpaqueJson.of "v3") (OpaqueJson.of {"a" 1 "b" [2 1]})))
+  (<- read dict (ReadShared "order/"))
+  (assert same-content "欄の順だけが違う期待の値が合わなかった")
+  (assert (not other-content) "中身の違う期待の値で書けた")
+  (assert (= read {"order/k" "v2"}) read))
 
 
 (defk lease [op token]
