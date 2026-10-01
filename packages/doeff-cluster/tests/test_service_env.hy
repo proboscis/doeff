@@ -209,7 +209,7 @@
   (val declaration (system-declaration (system-of "lab" #(declared)) "rev" :versions (current-versions) :runtime-env env))
   (val row (get declaration.rows 0))
   (val spec (declared-job-spec (spec-json (. (job-from-json row) spec))))
-  ;; worker が /programs/<sha> から取って置くのと同じ file(CoordinatorLink.accept-programs の形)を子 process の言い換えが読む cache に置く。
+  ;; worker が /programs/<sha> から取って置くのと同じ file(coordinator への口の fetched-programs の形)を子 process の言い換えが読む cache に置く。
   (assert (is-not spec.program None) spec)
   (val cached (program-file (Path rig.host.program-dir) spec.program))
   (.mkdir cached.parent :parents True :exist-ok True)

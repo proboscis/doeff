@@ -1,15 +1,16 @@
 ;; worker が詰めた Program を受け取って子へ渡す所(ADR-DOE-CLUSTER-001 改訂 1 の F・G・H — 2026-09-27)。
 ;;
-;; - CoordinatorLink.accept-programs: 宣言の job の置き場のキー(spec.program)の Program を coordinator の GET /programs/<sha> から取り、
+;; - coordinator への口の fetched-programs: 宣言の job の置き場のキー(spec.program)の Program を coordinator の GET /programs/<sha> から取り、
 ;;   state dir の programs/<sha>.json に書く。中身の sha256 がキーと合わない物・取れない物は書かない。在る物は取り直さない。
 ;; - 子 process の言い換えの起こし方(job-launch): 子の引数に `--program <その file>`、子の環境に HOST-CONTRACT の program-env と宣言の environ を足す。
-;;   CoordinatorLink と子 process の言い換えは main の置き方(state dir の logs・tasks)で同じ programs の dir を指す。
+;;   coordinator への口と子 process の言い換えは main の置き方(state dir の logs・tasks)で同じ programs の dir を指す。
 (require doeff-hy.macros [deftest defk deff <- val])
 (import hashlib)
 (import json)
 (import pathlib [Path])
 (import httpx)
-(import doeff_cluster.handlers [CoordinatorLink] doeff_cluster.worker.core.launch [program-file])
+(import tests.link_rig [LinkRig])
+(import doeff_cluster.worker.core.launch [program-file])
 (import tests.host_rig [host-settings launched])
 (import doeff_cluster.foundation.host_contract [HOST-CONTRACT])
 (import doeff_cluster.shared.intent.job_model [JobSpec])
@@ -44,7 +45,7 @@
 (deftest test-the-link-fetches-only-programs-whose-content-matches-the-key [tmp-path]
   (val seen [])
   (<- transport (served-programs seen))
-  (val link (CoordinatorLink "http://coord" "zeus" #("net") 1 60000 :task-dir (str (/ tmp-path "tasks")) :transport transport))
+  (val link (LinkRig "http://coord" "zeus" #("net") 1 60000 :task-dir (str (/ tmp-path "tasks")) :transport transport))
   (<- good (service-spec "good" SHA))
   (<- forged (service-spec "forged" FORGED))
   (<- absent (service-spec "absent" ABSENT))
@@ -66,8 +67,8 @@
   (val state-dir (/ tmp-path "state"))
   ;; main と同じ置き方(state dir の logs・tasks)で、取る側と渡す側が同じ programs の dir を指す。
   (<- host (host-settings state-dir))
-  (val link (CoordinatorLink "http://coord" "zeus" #("net") 1 60000 :task-dir (str (/ state-dir "tasks"))))
-  (assert (= (Path host.program-dir) link.program-dir (/ state-dir "programs")))
+  (val link (LinkRig "http://coord" "zeus" #("net") 1 60000 :task-dir (str (/ state-dir "tasks"))))
+  (assert (= (Path host.program-dir) (.program-dir link) (/ state-dir "programs")))
   (<- spec JobSpec (service-spec "svc" SHA))
   (<- planned tuple (launched host spec (str tmp-path) "1-1" 1))
   (val argv (get planned 0))

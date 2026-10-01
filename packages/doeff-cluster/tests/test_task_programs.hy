@@ -24,7 +24,8 @@
 (import doeff_cluster.coordinator.core.api_policy [respond tick])
 (import doeff_cluster.coordinator.core.program_policy [PROGRAM-GRACE-MS])
 (import tests.host_rig [host-settings launched])
-(import doeff_cluster.handlers [CoordinatorLink write-program-file] doeff_cluster.worker.core.launch [program-file])
+(import tests.link_rig [LinkRig])
+(import doeff_cluster.handlers [write-program-file] doeff_cluster.worker.core.launch [program-file])
 (import doeff_cluster.foundation.host_contract [HOST-CONTRACT])
 (import doeff [Program with-handlers])
 (import doeff_core_effects.handlers [await-handler slog-handler])
@@ -159,7 +160,7 @@
   (<- put tuple (call (get placed 0) "PUT" "/detached/job-c" {"program" (get placed 1) "revision" "r" "needs" ["net"]} 10))
   (val id (get put 2 "task"))
   (<- reply tuple (beat (get put 0) 20 []))
-  (val link (CoordinatorLink "http://127.0.0.1:9" "w" #() 10 60000 :task-dir (str (/ tmp-path "tasks"))))
+  (val link (LinkRig "http://127.0.0.1:9" "w" #() 10 60000 :task-dir (str (/ tmp-path "tasks"))))
   (.accept-tasks link (get reply 2 "tasks"))
   (val row (get (.report link #((JobStatus (+ "task/" id) JobPhase.RUNNING "r" "r" 42 1))) 0))
   (assert (= (get row "task" "program") (get placed 1)) row)
@@ -223,14 +224,14 @@
   (val seen [])
   (<- transport httpx.MockTransport (served-programs seen))
   (val state-dir (/ tmp-path "state"))
-  (val link (CoordinatorLink "http://coord" "w" #("net") 10 60000 :task-dir (str (/ state-dir "tasks")) :transport transport))
+  (val link (LinkRig "http://coord" "w" #("net") 10 60000 :task-dir (str (/ state-dir "tasks")) :transport transport))
   (<- host (host-settings state-dir))
   (val service (JobSpec "svc" JOB-ENTRY #("service" "--identity" (* "0" 16)) "rev1" :program SERVICE-SHA))
   (val tasks (.accept-tasks link [{"id" "t1" "name" "n" "revision" "r" "versions" V "program" TASK-SHA}]))
   (.accept-programs link (+ #(service) tasks))
   ;; service と同じく cache の file({"blob" "versions"})に取る(返事の行は Program を運ばない)。
   (assert (= (sorted seen) (sorted [(+ "/programs/" TASK-SHA) (+ "/programs/" SERVICE-SHA)])) seen)
-  (val cached (program-file link.program-dir TASK-SHA))
+  (val cached (program-file (.program-dir link) TASK-SHA))
   (assert (= (json.loads (.read-text cached :encoding "utf-8")) {"blob" TASK-BLOB "versions" V}))
   ;; 子の入口は `task --result <file> --program <cache の file>`(宿の契約の Program の path も同じ file)。
   (<- planned tuple (launched host (get tasks 0) (str tmp-path) "1-1" 1))
@@ -246,17 +247,17 @@
   (.accept-tasks link [])
   (.accept-programs link #(service))
   (assert (not (.exists cached)) "返事から外れた task の Program の cache が残った")
-  (assert (.exists (program-file link.program-dir SERVICE-SHA)) "service の job の Program の cache が消えた")
+  (assert (.exists (program-file (.program-dir link) SERVICE-SHA)) "service の job の Program の cache が消えた")
   (assert (= (list (.iterdir (/ state-dir "tasks"))) []))
   ;; service の job と同じ Program を指す task は、task が外れても今の job が参照するので残す。
   (val shared (.accept-tasks link [{"id" "t2" "name" "n" "revision" "r" "versions" V "program" SERVICE-SHA}]))
   (.accept-programs link (+ #(service) shared))
   (.accept-tasks link [])
   (.accept-programs link #(service))
-  (assert (.exists (program-file link.program-dir SERVICE-SHA))))
+  (assert (.exists (program-file (.program-dir link) SERVICE-SHA))))
 
 
-;; --- 通しの検: 本物の coordinator の process・本物の送り手(remote.hy の task-submitted ほか)・CoordinatorLink・job_entry の子 process ----
+;; --- 通しの検: 本物の coordinator の process・本物の送り手(remote.hy の task-submitted ほか)・coordinator への口・job_entry の子 process ----
 
 ;; 共有の coordinator の上で他の検の worker に置かれないよう、この検だけの能力を要る(名も他の検と重ならない)。
 (val NEED "served-task-program-e2e")
@@ -264,7 +265,7 @@
 
 
 (defk assigned-task [link id]
-  {:pre [(: link CoordinatorLink) (: id str)] :post [(: % JobSpec)] :tags {:context "doeff-cluster-test" :role "entry"}}
+  {:pre [(: link LinkRig) (: id str)] :post [(: % JobSpec)] :tags {:context "doeff-cluster-test" :role "entry"}}
   "heartbeat を送り、返事にこの task が載るまで待つ(載った JobSpec・30 秒で断念)。"
   (val deadline (+ (time.monotonic) 30))
   (var found None)
@@ -288,7 +289,7 @@
 
 
 (defk finished-view [cell link id]
-  {:pre [(: cell RouteCell) (: link CoordinatorLink) (: id str)] :post [(: % dict)] :tags {:context "doeff-cluster-test" :role "entry"}}
+  {:pre [(: cell RouteCell) (: link LinkRig) (: id str)] :post [(: % dict)] :tags {:context "doeff-cluster-test" :role "entry"}}
   "担い手が終わりの報告を送り、呼び手の問い合わせが finished を返すまで待つ(その答え・30 秒で断念)。"
   (val deadline (+ (time.monotonic) 30))
   (var view {})
@@ -301,11 +302,11 @@
 
 
 (deftest test-a-task-program-reaches-the-worker-and-job-entry-writes-its-result [served-coordinator tmp-path]
-  ;; 送り手(task-submitted)が Program を置き場に置いて sha だけの task を出し、worker(本物の CoordinatorLink)が返事の sha の Program を
+  ;; 送り手(task-submitted)が Program を置き場に置いて sha だけの task を出し、worker(本物の coordinator への口)が返事の sha の Program を
   ;; cache へ取り、job_entry の task 入口の子 process が走らせて結果の file を書き、終わりの報告で呼び手に結果が届く。
   ;; fixture の値は検査器から型が見えない(repo の fixture は object)— conftest の served_coordinator の答え(str)をここで確かめる(test_served_program.hy と同じ)。
   (assert (isinstance served-coordinator str) served-coordinator)
-  (val link (CoordinatorLink served-coordinator WORKER #(NEED) 10 60000
+  (val link (LinkRig served-coordinator WORKER #(NEED) 10 60000
                              :task-dir (str (/ tmp-path "state" "tasks")) :versions (current-versions)))
   (val sender (TaskSender :revision "r-served" :versions (current-versions) :runtime-env None))
   (<- route CoordinatorRoute (route-of served-coordinator (int (* (time.time) 1000))))
@@ -319,7 +320,7 @@
       (<- spec JobSpec (assigned-task link id))
       (assert (= spec.program (program-sha blob)) spec)
       (assert (is-not spec.program None) spec)
-      (val cached (program-file link.program-dir spec.program))
+      (val cached (program-file (.program-dir link) spec.program))
       (assert (= (json.loads (.read-text cached :encoding "utf-8")) {"blob" blob "versions" (current-versions)}))
       ;; 子 process: worker と同じ引数(task --result <file>)に cache の file を --program で渡す(ProcessHost が足すのと同じ)。
       (val done (subprocess.run [sys.executable "-m" "hy" "-m" spec.entry #* spec.args "--program" (str cached)]
@@ -327,7 +328,7 @@
                                 :env (| (dict os.environ) {"PYTHONPATH" (str PACKAGE-ROOT) "DOEFF_WORKER_JOB" spec.name})))
       (assert (= done.returncode 0) done.stderr)
       (assert (in "TaskSucceeded" done.stderr) done.stderr)
-      (setv link.statuses (.report link #((JobStatus spec.name JobPhase.FINISHED "r-served" "r-served" None 1))))
+      (setv link.state.statuses (.report link #((JobStatus spec.name JobPhase.FINISHED "r-served" "r-served" None 1))))
       (<- view dict (finished-view cell link id))
       (assert (= (get view "phase") "finished") view)
       (val outcome (decode-outcome (get view "result")))

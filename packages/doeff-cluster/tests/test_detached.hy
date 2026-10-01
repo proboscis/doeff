@@ -5,7 +5,7 @@
 ;;                 走らせる — 筋書きは検の側の呼び手として sim の送り手の口で話す)・仮想の時計。担い手の死は KillWorker
 ;;                 (2026-09-28 まで同じ VM の模擬 detached-local の組だった — 呼び手の外側の handler を継ぐので消した)
 ;;   coordinator … 本物の coordinator の判断(api_policy.respond / tick)を httpx.MockTransport の後ろに置き、本物の detached-cluster と
-;;                 本物の CoordinatorLink(heartbeat・task の file・結果の報告)で話す。担い手は同じ VM で Program を走らせる・仮想の時計
+;;                 本物の coordinator への口(heartbeat・task の file・結果の報告)で話す。担い手は同じ VM で Program を走らせる・仮想の時計
 ;;   served      … 本物の coordinator の process(hy -m doeff_cluster.coordinator.entry.main・HTTP・追記の log。conftest の served_coordinator が
 ;;                 検の間で 1 つを共有する)・同じ担い手・実時間
 ;; 筋書き: 送って待つ / 同じ key の送り直し / 呼び手が消えても続き再接続 / 結果の後の担い手の死 / 走っている間の担い手の死 /
@@ -30,7 +30,7 @@
 (import doeff_cluster.foundation.coordinator_inbox [http-request])
 (import doeff_cluster.coordinator.core.detached_policy [Reply submit-detached])
 (import doeff_cluster.coordinator.core.api_policy [respond tick])
-(import doeff_cluster.handlers [CoordinatorLink])
+(import tests.link_rig [LinkRig])
 
 (import doeff_cluster.worker.intent.worker_model [DesiredJobs JobStatus] doeff_cluster.shared.intent.job_model [JobPhase])
 (import doeff_cluster.shared.intent.remote_model [TaskSucceeded decode-program encode-outcome failed-from])
@@ -805,7 +805,7 @@
   (val reply-43 (beat s "w" 100 :boot-at 1000))
   (:= s (get reply-43 0))
   (var body (get reply-43 2))
-  (setv link (CoordinatorLink "http://127.0.0.1:9" "w" #() 10 60000 :task-dir (str (/ tmp-path "tasks"))))
+  (setv link (LinkRig "http://127.0.0.1:9" "w" #() 10 60000 :task-dir (str (/ tmp-path "tasks"))))
   (setv #(before) (.accept-tasks link (get body "tasks")))
   (setv rows (.report link #((JobStatus (+ "task/" id) JobPhase.RUNNING "r" "r" 42 1))))
   ;; 置き場を失った coordinator が起きる: 走っている task を同じ行で引き取り、同じ heartbeat の返事に載せる。
@@ -854,7 +854,7 @@
                                                         "leaseSeconds" 10.0 "retainSeconds" 100.0}))
   (setv id (get reply "task"))
   (setv #(s _ body) (beat s "w" 100 :boot-at 1000 :provides caps))
-  (setv link (CoordinatorLink "http://127.0.0.1:9" "w" #() 10 60000 :task-dir (str (/ tmp-path "tasks"))))
+  (setv link (LinkRig "http://127.0.0.1:9" "w" #() 10 60000 :task-dir (str (/ tmp-path "tasks"))))
   (setv #(spec) (.accept-tasks link (get body "tasks")))
   #(s id link spec))
 
@@ -950,7 +950,7 @@
 
 
 (deftest test-an-amnesic-coordinator-does-not-stop-the-running-detached-task [tmp-path]
-  ;; 本物の CoordinatorLink と本物の coordinator の判断で: 置き場を失った coordinator が起きても、担い手の worker は走っている
+  ;; 本物の coordinator への口 と本物の coordinator の判断で: 置き場を失った coordinator が起きても、担い手の worker は走っている
   ;; 切り離した task を止めず、呼び手は同じ key で結果を受け取る。
   (setv clock (SimClock)
         coordinator (MemoryCoordinator clock)
@@ -1061,9 +1061,9 @@
         writer (JobSpec "svc" "doeff_cluster.job_entry" #() "r" :handoff True)
         plain (JobSpec "plain" "doeff_cluster.job_entry" #() "r"))
   (assert (= (kept-when-cut-off #(detached remote writer plain)) #(detached writer)))
-  ;; CoordinatorLink: 途絶が fence を越えたら、最後に受け取った宣言のうち切り離した task を動かし続ける
-  (setv link (CoordinatorLink "http://127.0.0.1:9" "w" #() 1 60000))
-  (setv link.last-tasks #(detached remote) link.fence-ms 0 link.last-ok (- (time.monotonic) 1))
+  ;; coordinator への口: 途絶が fence を越えたら、最後に受け取った宣言のうち切り離した task を動かし続ける
+  (setv link (LinkRig "http://127.0.0.1:9" "w" #() 1 60000))
+  (setv link.state.last-tasks #(detached remote) link.state.fence-ms 0 link.state.last-ok-ms (- (int (* 1000 (time.time))) (int (* 1000 1))))
   (assert (= (.poll link) (DesiredJobs #(detached)))))
 
 

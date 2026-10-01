@@ -21,7 +21,8 @@
 (import doeff_core_effects.handlers [env-var-ask])
 (import doeff_time [SimClock])
 (import doeff_cluster.foundation.host_contract [HOST-CONTRACT])
-(import doeff_cluster.handlers [CoordinatorLink] doeff_cluster.worker.core.launch [program-file])
+(import tests.link_rig [LinkRig])
+(import doeff_cluster.worker.core.launch [program-file])
 (import tests.host_rig [host-settings launched])
 (import doeff_cluster.shared.protocol.detached [detached-submitted])
 (import doeff_time [sim-time-handler])
@@ -59,12 +60,12 @@
   {:pre [(: tmp-path Path) (: program Program) (: key str)] :post [(: % (| TaskSucceeded TaskFailed))]
    :tags {:context "doeff-cluster-test" :role "entry"}}
   "本番の形の通しで program を切り離した task として 1 回走らせ、その結末を返すため: 本物の送り手(detached-submitted)が :environ {NAME POLICY} つきで
-   送り、本物の coordinator の判断(MemoryCoordinator)が返事に載せ、本物の CoordinatorLink が Program を cache へ取り、ProcessHost が
+   送り、本物の coordinator の判断(MemoryCoordinator)が返事に載せ、本物の coordinator への口 が Program を cache へ取り、ProcessHost が
    組んだ子の環境で job_entry の task 入口の子 process が走る。"
   (val base (/ tmp-path key))
   (val coordinator (MemoryCoordinator (SimClock)))
   (val transport (httpx.MockTransport coordinator.handle))
-  (val link (CoordinatorLink "http://coordinator" "w1" RIG-PROVIDES 10 60000 :task-dir (str (/ base "state" "tasks"))
+  (val link (LinkRig "http://coordinator" "w1" RIG-PROVIDES 10 60000 :task-dir (str (/ base "state" "tasks"))
                              :versions (current-versions) :transport transport))
   (.poll link)
   (<- submitted (with-handlers [(sim-time-handler :clock (SimClock)) (transport-http transport)]
@@ -80,7 +81,7 @@
   (<- planned tuple (launched settings spec (str base) "1-1" 1))
   (val env (| (get planned 2) {"PYTHONPATH" (str ROOT)}))
   (assert (not-in NAME os.environ))
-  (val done (subprocess.run [HY "-m" spec.entry #* spec.args "--program" (str (program-file link.program-dir spec.program))]
+  (val done (subprocess.run [HY "-m" spec.entry #* spec.args "--program" (str (program-file (.program-dir link) spec.program))]
                             :cwd (str ROOT) :env env :capture-output True :text True :timeout 120))
   (assert (= done.returncode 0) done.stderr)
   (decode-outcome (.read-text (Path (get spec.args 2)) :encoding "ascii")))

@@ -1,7 +1,7 @@
 ;; 切り離した task の検が共有する組の部品(検の module ではない — 検どうしで import すると pytest の assert の書き換えが .hy の検を
 ;; Python として読もうとするので、共有する物はここに置く)。使い手 = test_detached.hy・test_detached_runners.hy。
 ;;   slow-add                … 送る Program(自分で並べた base = 100 の reader の上で n を足す — 実行先は handler を足さない)
-;;   RigWorker ほか           … 担い手: 本物の CoordinatorLink で heartbeat を送り、割り当てられた task を同じ VM で走らせる
+;;   RigWorker ほか           … 担い手: 本物の coordinator への口 で heartbeat を送り、割り当てられた task を同じ VM で走らせる
 ;;   MemoryCoordinator       … 本物の coordinator の判断(api_policy.respond / tick)を httpx.MockTransport の後ろに置く
 ;;   RIG-PROVIDES            … 担い手の既定の能力(sim-cluster の組の worker も同じ能力を名乗る — 同じ needs の筋書きを回すため)
 (require doeff-hy.macros [defk <- val var])
@@ -19,7 +19,8 @@
 (import doeff_cluster.coordinator.intent.cluster_model [ClusterState])
 (import doeff_cluster.foundation.coordinator_inbox [http-request])
 (import doeff_cluster.coordinator.core.api_policy [respond tick])
-(import doeff_cluster.handlers [CoordinatorLink] doeff_cluster.worker.core.launch [program-file])
+(import tests.link_rig [LinkRig])
+(import doeff_cluster.worker.core.launch [program-file])
 (import doeff_cluster.foundation.host_contract [environ-reader])
 (import doeff_cluster.job_entry [read-program])
 (import doeff_cluster.worker.intent.worker_model [DesiredJobs JobStatus] doeff_cluster.shared.intent.job_model [JobPhase JobSpec])
@@ -47,7 +48,7 @@
 
 
 ;; --- 担い手(coordinator の組・served の組が共有する)--------------------------------------------------------
-;; 本物の CoordinatorLink で heartbeat を送り、割り当てられた task の Program を置き場から cache へ受け、同じ VM の scheduler の task として
+;; 本物の coordinator への口 で heartbeat を送り、割り当てられた task の Program を置き場から cache へ受け、同じ VM の scheduler の task として
 ;; そのまま走らせ(handler を足さない — Program が自分で並べる)、結果の file を書いて報告する(子 process の入口 job_entry task と同じ手順 — 子 process そのものは
 ;; test_remote.hy が通す)。
 
@@ -56,7 +57,7 @@
                   #^ tuple [provides RIG-PROVIDES] #^ tuple [exclusive #()]]
     ;; name / provides / exclusive = worker の名乗り(既定 = sim の組の worker と同じ能力 local の w1 — sim と coordinator の組で同じ
     ;; needs の筋書きを回すため。担い手を 2 つ以上並べる検 test_detached_runners.hy が名指す)。
-    (setv self.link (CoordinatorLink url name provides 10 20000 :task-dir (str task-dir) :versions versions :transport transport
+    (setv self.link (LinkRig url name provides 10 20000 :task-dir (str task-dir) :versions versions :transport transport
                                      :exclusive exclusive)
           self.handles {} self.dead False)
     ;; heartbeat のループの task(走らせるまでは None)。
@@ -72,11 +73,11 @@
 
 (defk run-rig-task [worker spec]
   {:pre [(: worker RigWorker) (: spec JobSpec)] :post [(: % bool)]}
-  "担い手の子 process の入口 job_entry task と同じ手順を同じ VM で: CoordinatorLink が /programs/<sha> から取った cache の file を
+  "担い手の子 process の入口 job_entry task と同じ手順を同じ VM で: coordinator への口が /programs/<sha> から取った cache の file を
    job_entry と同じ read-program で読み(版 → 復元)、走らせ、結果の file を書く。task の :environ は、本番の worker が子の環境変数に
    置いて子の土台の (environ-reader) が読む物を、同じ読みの定義 environ-reader に spec.environ を渡して答える(他の名は外側へ)。"
   (assert (is-not spec.program None) f"task の job は Program の置き場のキーを持つ: {spec}")
-  (val read (read-program (str (program-file worker.link.program-dir spec.program)) ""))
+  (val read (read-program (str (program-file (.program-dir worker.link) spec.program)) ""))
   (var outcome None)
   (if (is-not (get read 1) None)
       (:= outcome (failed-from (get read 1)))
@@ -106,7 +107,7 @@
       (when (not-in name specs)
         (<- (Cancel (.pop worker.handles name)))
         (.discard worker.done name))))
-  (setv worker.link.statuses
+  (setv worker.link.state.statuses
         (.report worker.link (tuple (gfor name worker.handles
                                           (JobStatus name (if (in name worker.done) JobPhase.FINISHED JobPhase.RUNNING)
                                                      "r" "r" None 1)))))

@@ -87,7 +87,7 @@
    - 接続できない時だけ次の宛先へ回る。読みや返事の途中の失敗では回らない(宛先の問題と限らない)。
    - 回った後も PREFERRED-RECHECK-SECONDS ごとに先頭の宛先を先に試し、届けば戻る。
    - 全部の宛先に届かなければ connect-retries 回まで間を置いて一巡し直し、最後の接続の失敗を投げる。
-   heartbeat の連続性(自己停止の数え方)は使い手(CoordinatorLink)が宛先と無関係に持つので、宛先を替えても壊れない。"
+   heartbeat の連続性(自己停止の数え方)は使い手(coordinator への口)が宛先と無関係に持つので、宛先を替えても壊れない。"
   (defn #^ None __init__ [self #^ str spec #^ float timeout #^ int connect-retries
                   #^ (| httpx.BaseTransport None) [transport None] #^ Callable [clock time.monotonic]
                   #^ Callable [pause (fn [seconds] (time.sleep seconds))]

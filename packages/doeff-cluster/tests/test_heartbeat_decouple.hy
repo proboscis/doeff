@@ -1,4 +1,4 @@
-;; heartbeat を worker の拍から切り離す(beat_policy・handlers.CoordinatorLink・local.hy の宿 — #1933)。模擬の世界(sim-cluster)の検。
+;; heartbeat を worker の拍から切り離す(beat_policy・worker/protocol/coordinator_link・local.hy の宿 — #1933)。模擬の世界(sim-cluster)の検。
 ;;
 ;; - desired の変化(宣言し直し)は名指しの待ちで受け、worker は拍 1 つの内に起きる(反例: 待ちが届かない worker は間隔まで気づかない)。
 ;; - 生存の窓(lease-ms 10 秒)の中で heartbeat が届き、worker は生きていると数えられ続ける(反例: 間隔を窓より長くすると死んだと数える)。
