@@ -105,3 +105,17 @@
   (assert (in "name" numbered.reason) numbered)
   (<- worded (body-of (http-request "PUT" "/resources/Service/web" {} {"resourceVersion" "3"})))
   (assert (in "resourceVersion" worded.reason) worded))
+
+
+(deftest test-task-and-warm-bodies-are-read-into-their-types
+  ;; task と切り離した task は同じ本文の型・温める表は別の型。旧い形の欄(blob)は判断が理由つきで断る。
+  (<- task (body-of (http-request "POST" "/tasks" {} {"program" "p" "revision" "r" "needs" ["net"] "leaseSeconds" 5})))
+  (<- detached (body-of (http-request "PUT" "/detached/k" {} {"program" "p" "revision" "r" "needs" ["net"]})))
+  (assert (= #(task.program task.lease-seconds detached.lease-seconds) #("p" 5 None)) #(task detached))
+  (<- warm (body-of (http-request "POST" "/warm" {} {"runtimeEnv" {} "ttlSeconds" 60 "needs" ["net"] "holder" "h"})))
+  (assert (= #(warm.ttl-seconds warm.holder) #(60 "h")) warm)
+  (<- named (body-of (http-request "POST" "/warm" {} {"holder" 7})))
+  (assert (in "holder" named.reason) named)
+  (val old (responded (ClusterState) (http-request "POST" "/tasks" {} {"blob" "x" "revision" "r" "needs" ["net"]}) 1000 T))
+  (assert (= (get old 1) 400) old)
+  (assert (in "blob" (get old 2 "error")) old))
