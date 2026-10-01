@@ -1,7 +1,7 @@
 ;;; coordinator の盤(/board)と lease の口(/leases)へ送る要求の形 #(method path query 本文)。本番の client(shared_handlers.hy の
 ;;; shared-http)と手元の sim-cluster の偽の宿(sim/local.hy)が同じ関数で作る(本文を写さない)。
 ;;; 盤の行の値は形を書き手が決める JSON なので、本文へ組むこの module が JSON の値を扱う送受信の口になる(DOEFF120 の :wire-modules —
-;;; agora-redesign #2527。前は shared_handlers.hy の中に在った)。書きの条件の印 ANY(intent の語彙)はここへ持ち込まず、呼び手が
+;;; 前は shared_handlers.hy の中に在った)。書きの条件の印 ANY(intent の語彙)はここへ持ち込まず、呼び手が
 ;;; 「条件を付けるか」の真偽に訳して渡す。
 (require doeff-hy.macros [deff val])
 (val MODULE-TAGS {:context "doeff-cluster" :role "foundation"})

@@ -1,4 +1,4 @@
-"""principals.hy の公開面の型(型検査のための宣言 — 実行時は principals.hy を読む・agora-redesign #2405)。
+"""principals.hy の公開面の型(型検査のための宣言 — 実行時は principals.hy を読む)。
 
 principals.hy は Hy の module なので、型の宣言が無いと pyright は中を読めず、名簿 Roster と身元 Principal / Unauthorized が
 Unknown になる(service.pyi の RecordsService の欄・respond の身元の読みが Unknown に連なる)。ここで型を宣言する。

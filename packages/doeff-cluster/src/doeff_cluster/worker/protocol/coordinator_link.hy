@@ -76,7 +76,7 @@
 
 
 
-(deff watch-params [#^ int after #^ str worker #^ str boot #^ bool confirmed]  ; defk にできない: この口と sim の宿が同じ問いを作る(worker/core/beat_policy から移した — 役 protocol・agora-redesign #2541)
+(deff watch-params [#^ int after #^ str worker #^ str boot #^ bool confirmed]  ; defk にできない: この口と sim の宿が同じ問いを作る(worker/core/beat_policy から移した — 役 protocol)
   {:pre [(: after int) (: worker str) (: boot str) (: confirmed bool)] :post [(: % dict)] :tags {:context "doeff-cluster" :role "protocol"}}
   "名指しの待ちの問い(GET /watch の query)を作るため。まだ口を確かめていない最初の待ちは 0 秒(すぐ答える — 待つ口の有無を確かめ、
    確かめるまで毎拍の heartbeat を続ける)、その後は上限まで待つ。"

@@ -1,7 +1,7 @@
-"""service.hy の公開面の型(型検査のための宣言 — 実行時は service.hy を読む・agora-redesign #2405)。
+"""service.hy の公開面の型(型検査のための宣言 — 実行時は service.hy を読む)。
 
 service.hy は Hy の module なので、型の宣言が無いと pyright は中を読めず、HTTP の口の組 RecordsService と入口 respond が
-Unknown になる(使い手 — agora の模擬の記録の service の相手役 — の strict の型検査で、書き手に直せない赤が連なる)。ここで型を宣言する。
+Unknown になる(使い手 — 模擬の記録の service の相手役 — の strict の型検査で、書き手に直せない赤が連なる)。ここで型を宣言する。
 
 - `(defclass [(dataclass :frozen True)] …)` は位置でも渡せる frozen の dataclass。
 - handler-for は「書き手の名 → その書き手の記録の handler」。handler の形は置き場ごとに違う(memory は defhandler・PG は defk の組み立て)

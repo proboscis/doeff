@@ -1,4 +1,4 @@
-"""系の宣言の 3 つの module の型の宣言(.pyi)と実装の食い違いの失敗ケース(agora-redesign #2540)。
+"""系の宣言の 3 つの module の型の宣言(.pyi)と実装の食い違いの失敗ケース。
 
 service_model.hy の判断と構成子を、層に合わせて core/service_rules.hy と entry/service_build.hy へ分けた。型の宣言は手書きなので、
 関数を移す・引数を変えると、宣言だけが古い置き場に黙って残る(使い手の strict では Unknown か、実行時に無い名を型が通す)。

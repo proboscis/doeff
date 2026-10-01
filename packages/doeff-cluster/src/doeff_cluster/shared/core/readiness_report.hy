@@ -1,6 +1,6 @@
 ;;; 報告の readiness(ready・reason・role)を coordinator が残す形に揃える純粋な判断 — coordinator(record-readiness)と fake
 ;;; (readiness-memory)が同じ形で残す。型・定数(ROLE-ACTIVE・ROLE-STANDBY・REASON-KEPT-CHARS・JsonField)は
-;;; doeff_cluster.shared.intent.readiness_model。intent の層から移した(判断は core — DOEFF105・agora-redesign #2541)。
+;;; doeff_cluster.shared.intent.readiness_model。intent の層から移した(判断は core — DOEFF105)。
 (require doeff-hy.macros [defk val])
 (val MODULE-TAGS {:context "doeff-cluster" :role "judgment"})
 (import doeff_cluster.shared.intent.readiness_model [ROLE-ACTIVE ROLE-STANDBY REASON-KEPT-CHARS JsonField])

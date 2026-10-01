@@ -12,7 +12,7 @@ doeff_records の module は Hy なので、型の宣言(.pyi)が無いと pyrig
   int を足す)が赤になる。
 - HTTP の口の層(service.pyi・principals.pyi)の失敗ケース: 2 つを外した写しでは、口の組 RecordsService・入口 respond と、
   respond の答えの `.status` が Unknown の赤になり、置くと消える。置いた側では答えの欄の取り違え(int の status に文字列を足す)が赤に
-  なる(agora の模擬の記録の service の相手役が RecordsService を受け、respond の答えを読む形 — agora-redesign #2405)。
+  なる(使い手の模擬の記録の service の相手役が RecordsService を受け、respond の答えを読む形)。
 - 一致: stub が宣言する名は実行時の module に在り、dataclass の欄の名・順・既定値の有無・__init__ に載るか、関数の引数の名、答えの union の
   型の並びが実装と同じ(宣言だけが先へ行かない)。
 """

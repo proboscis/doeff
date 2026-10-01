@@ -1,6 +1,6 @@
 ;;; worker の drain の問い(worker/intent/drain_model の CoordinatorCall・AskDrain)を coordinator への HTTP の要求に言い換えて送る
 ;;; 答え手 coordinator-calls(drain_main.hy から移した)。要求の形はここだけが知る(worker/core/drain_client.hy から移した — core が HTTP の形を組んでいた・
-;;; DOEFF105・agora-redesign #2541)。並べるのは入口(drain_main.hy)。
+;;; DOEFF105)。並べるのは入口(drain_main.hy)。
 (require doeff-hy.macros [defhandler defk deff <- val])
 (val MODULE-TAGS {:context "doeff-cluster" :role "protocol"})
 (import json)

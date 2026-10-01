@@ -180,7 +180,11 @@ class DesiredUnreadable:
 # --- effect ----------------------------------------------------------------------
 
 @dataclass(frozen=True)
-class ReadDesired(EffectBase[DesiredJobs | DesiredUnreadable]): ...
+class ReadDesired(EffectBase[DesiredJobs | DesiredUnreadable]):
+    env_report: dict[str, object] | None = None
+
+@dataclass(frozen=True)
+class EnvReport(EffectBase[dict[str, object] | None]): ...
 
 @dataclass(frozen=True)
 class ObserveWorld(EffectBase[WorldView]): ...
