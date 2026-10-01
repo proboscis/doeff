@@ -16,7 +16,7 @@
 (import doeff_cluster.shared.protocol.inbox [http-request])
 (import doeff_cluster.coordinator.core.api_policy [resume-after-downtime])
 (import doeff_cluster.coordinator.protocol.request_bodies [responded])
-(import doeff_cluster.coordinator.core.durable_kv [durable-kv state-from-kv])
+(import doeff_cluster.coordinator.protocol.durable_kv [durable-kv state-from-kv])
 (import doeff_cluster.coordinator.core.cluster_policy [job-from-json])
 (import doeff_cluster.worker.protocol.declared [declared-job-spec] doeff_cluster.worker.protocol.heartbeat [status-row])
 (import doeff_cluster.shared.intent.readiness_model [HANDOFF-TIMEOUT-SECONDS])

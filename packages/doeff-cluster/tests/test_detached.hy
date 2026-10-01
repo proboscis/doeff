@@ -510,7 +510,7 @@
 
 ;; --- coordinator の判断(純粋な関数)と worker の途絶 -------------------------------------------------------------
 
-(import doeff_cluster.coordinator.core.durable_kv [full-kv state-from-kv])
+(import doeff_cluster.coordinator.protocol.durable_kv [full-kv state-from-kv])
 (import doeff_cluster.coordinator.core.cluster_policy [state-to-json state-from-json])
 (import doeff_cluster.coordinator.entry.main [load-state])
 (import doeff_cluster.foundation.wal_store [WalStore])

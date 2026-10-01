@@ -381,5 +381,6 @@ class CoordinatorFault(EffectBase[None]):
     fault: Fault
 
 @dataclass(frozen=True)
-class Persist(EffectBase[None]):
-    delta: dict[str, object]
+class SaveState(EffectBase[None]):
+    before: ClusterState
+    after: ClusterState
