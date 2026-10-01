@@ -55,6 +55,10 @@
 ;;;                     ProcessNotChild(この答え手が立てた子でない pid)。
 ;;;   StopProcess       立てた子を止めて回収する: process-group なら group へ、そうでなければ子へ SIGTERM → stop-grace 秒待つ → SIGKILL。
 ;;;                     答え = ProcessExited か ProcessNotChild(他人の process には signal を送らない)。終わっていた子はそのまま回収する。
+;;;   SignalProcess     立てた子へ signal(ProcessSignal の TERM か KILL)を 1 度だけ送り、待たずに返す(#2461 — 消費者 = doeff-cluster の
+;;;                     worker の子の止め方: 拍ごとに TERM を送り、止まらなければ次の段で KILL を送り、終わりは PollProcess で確かめる)。
+;;;                     process-group で立てた子は group へ、そうでなければ子へ送る(StopProcess と同じ)。答え = ProcessSignalled(delivered =
+;;;                     送ったか — 既に終わっていた子には送らず、回収は PollProcess)か ProcessNotChild(他人の process には送らない)。
 ;;;   本物の答え手は、立てた子の表を process に 1 つ持つ(子は OS の process ごとの資源 — 答え手を積み直しても同じ子を問える)。
 ;;;
 ;;; 時間切れと起こせない形の答え(timed-out-outcome・not-started-outcome)と、起こせない理由の文(start-refusal — OSError の文と同じ形)は
@@ -198,6 +202,23 @@
   #^ int pid
   #^ float stop-grace
   (setv stop-grace 10.0))
+
+
+;; SignalProcess で送る signal の閉じた型(#2461): TERM = 止まってくれと頼む(子は後始末をして終われる)・KILL = 強いて止める。
+(defenum ProcessSignal TERM KILL)
+
+
+(defclass [(dataclass :frozen True :kw-only True)] SignalProcess [EffectBase]
+  "StartProcess で立てた子へ signal を 1 度だけ送り、待たずに返す(頭の註)。答え = ProcessSignalled か ProcessNotChild。"
+  #^ int pid
+  #^ ProcessSignal signal)
+
+
+(defrecord ProcessSignalled
+  "SignalProcess の答え: delivered = 走っている子へ送った(True)・既に終わっていた子なので送らなかった(False — 終わりは PollProcess が
+   答えて回収する)。送った後に子が終わったかは PollProcess で問う。"
+  (#^ int pid)
+  (#^ bool delivered))
 
 
 (defrecord ProcessStarted

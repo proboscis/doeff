@@ -18,6 +18,8 @@
 ;;;   PollProcess       表に無い pid = ProcessNotChild・走り続ける子 = ProcessRunning・終わった子 = ProcessExited(表から外す)。
 ;;;   StopProcess       表に無い pid = ProcessNotChild・走り続ける子は SIGTERM で終わった形(SCRIPTED-STOPPED-CODE = -15)・終わった子はその
 ;;;                     終了 code。どれも表から外す。group と猶予は台本の世界に無い。
+;;;   SignalProcess     表に無い pid = ProcessNotChild・走り続ける子はその signal で終わった形にする(TERM = -15・KILL = -9 — 本物と同じ負の
+;;;                     値。終わりは PollProcess が答えて回収する)・終わっていた子には送らない(delivered False)(#2461)。
 ;;;   ExecutableAt      種類は置き場(file の答え手)の StatPath — 置き場に無い path は台本に名(basename)が在れば実行できる file、無ければ無い物。
 ;;;                     実行の許しは台本に名が在ること。判断は本物と同じ executable-file-answer(dir は名が台本に在っても False)。
 ;;;   ReadEnvironment   ProcessScript の env から。
@@ -35,7 +37,7 @@
 (import dataclasses [dataclass])
 (import doeff_core_effects.process_effects [EnvEntry EnvMode ProcessOutcome RunProcess ExecutableAt ReadEnvironment WorkingDirectory
                                             ProcessAlive StartProcess PollProcess StopProcess ProcessStarted ProcessNotStarted
-                                            ProcessRunning ProcessExited ProcessNotChild
+                                            ProcessRunning ProcessExited ProcessNotChild SignalProcess ProcessSignal ProcessSignalled
                                             ReadInterpreter ResolveModule InterpreterFacts ModuleFound ModuleNotFound
                                             not-started-outcome start-refusal executable-file-answer])
 (import doeff_core_effects.file_effects [PathKind PathStat StatPath MakeDirectory AppendText FileFailed])
@@ -210,4 +212,10 @@
     (match (.get started pid)
       None (resume (ProcessNotChild :pid pid))
       state (do (del (get started pid))
-                (resume (ProcessExited :pid pid :exit-code (if (= state SCRIPTED-RUNNING) SCRIPTED-STOPPED-CODE state)))))))
+                (resume (ProcessExited :pid pid :exit-code (if (= state SCRIPTED-RUNNING) SCRIPTED-STOPPED-CODE state))))))
+  (SignalProcess [pid signal]
+    (match (.get started pid)
+      None (resume (ProcessNotChild :pid pid))
+      state :if (= state SCRIPTED-RUNNING) (do (setv (get started pid) (match signal ProcessSignal.TERM -15 ProcessSignal.KILL -9))  ; 本物の子が signal で終わった時と同じ負の値
+                                              (resume (ProcessSignalled :pid pid :delivered True)))
+      _ (resume (ProcessSignalled :pid pid :delivered False)))))

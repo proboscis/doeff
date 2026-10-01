@@ -7,8 +7,9 @@
 ;;; 読みながら待つ(run-watched)。使わない呼びは前と同じ subprocess.run の道(run-subprocess の頭の枝)を通る。
 ;;; offloaded-subprocess-handler は同じ実装を、呼び 1 つに thread 1 本(offloaded_call.hy の ThreadPerCall)で回す — 子を待つ間も
 ;;; scheduler の他の task が回る。外側に scheduled が要る。待っている task が取り消されても、走り出した子は止めない(答えは捨てる)。
-;;; StartProcess・PollProcess・StopProcess(agora-redesign #2223)は、立てた子を process に 1 つの表 STARTED-CHILDREN で持つ。立てる・問うは
-;;; 待たないので、どちらの答え手もその場で答える。止めるは猶予の間だけ待つので、offloaded-subprocess-handler では thread で回す。
+;;; StartProcess・PollProcess・StopProcess(agora-redesign #2223)・SignalProcess(#2461)は、立てた子を process に 1 つの表 STARTED-CHILDREN で
+;;; 持つ。立てる・問う・signal を送るは待たないので、どちらの答え手もその場で答える。止めるは猶予の間だけ待つので、offloaded-subprocess-handler
+;;; では thread で回す。
 (require doeff-hy.macros [defhandler defk <- val var])
 (import contextlib)
 (import fnmatch)
@@ -25,7 +26,7 @@
 (import doeff_core_effects.offloaded_call [ThreadPerCall offloaded run-detached keep-nothing])
 (import doeff_core_effects.process_effects [EnvEntry EnvMode ProcessOutcome RunProcess ExecutableAt ReadEnvironment WorkingDirectory
                                             ProcessAlive StartProcess PollProcess StopProcess ProcessStarted ProcessNotStarted
-                                            ProcessRunning ProcessExited ProcessNotChild
+                                            ProcessRunning ProcessExited ProcessNotChild SignalProcess ProcessSignal ProcessSignalled
                                             ReadInterpreter ResolveModule InterpreterFacts ModuleFound ModuleNotFound
                                             timed-out-outcome not-started-outcome executable-file-answer])
 
@@ -367,6 +368,25 @@
         (ProcessExited :pid pid :exit-code child.returncode))))
 
 
+(defk signal-child-process [pid sent]
+  {:pre [(: pid int) (: sent ProcessSignal)] :post [(: % (| ProcessSignalled ProcessNotChild))] :tags {:context "process" :role "foundation"}}
+  "SignalProcess に本物の子で答えるため: 表に無い pid は ProcessNotChild(他人の process に signal を送らない)。既に終わっていた子には
+   送らず delivered False(表に残し、終わりは PollProcess が答えて回収する)。走っていれば、process-group で立てた子は group へ・そうでなければ
+   子へ signal を 1 度だけ送り、待たずに delivered True。"
+  (val found (.find STARTED-CHILDREN pid))
+  (if (is found None)
+      (ProcessNotChild :pid pid)
+      (do
+        (val child (get found 0))
+        (val number (match sent ProcessSignal.TERM signal.SIGTERM ProcessSignal.KILL signal.SIGKILL))
+        (if (is-not (.poll child) None)
+            (ProcessSignalled :pid pid :delivered False)
+            (do (if (get found 1)
+                    (<- (signal-group child.pid number))
+                    (with [(contextlib.suppress ProcessLookupError)] (.send-signal child number)))
+                (ProcessSignalled :pid pid :delivered True))))))
+
+
 (defhandler subprocess-handler
   ;; 本物の子 process と自分の process の環境(頭の註)。
   (RunProcess [argv stdin timeout cwd env env-mode output-path env-drop process-group stop-grace stream-output]
@@ -394,6 +414,9 @@
   (PollProcess [pid]
     (<- seen (poll-child-process pid))
     (resume seen))
+  (SignalProcess [pid signal]
+    (<- answer (signal-child-process pid signal))
+    (resume answer))
   (StopProcess [pid stop-grace]
     (<- stopped (stop-child-process pid (float stop-grace)))
     (resume stopped)))
@@ -430,6 +453,9 @@
   (PollProcess [pid]
     (<- seen (poll-child-process pid))
     (resume seen))
+  (SignalProcess [pid signal]
+    (<- answer (signal-child-process pid signal))
+    (resume answer))
   (StopProcess [pid stop-grace]
     (<- stopped (offloaded PROCESS-THREADS (fn [] (run-detached (stop-child-process pid (float stop-grace)))) keep-nothing))
     (resume stopped)))

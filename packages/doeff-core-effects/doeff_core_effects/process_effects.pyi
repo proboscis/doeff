@@ -97,6 +97,20 @@ class StopProcess(EffectBase):
     pid: int
     stop_grace: float = 10.0
 
+class ProcessSignal(StrEnum):
+    TERM = "term"
+    KILL = "kill"
+
+@dataclass(frozen=True, kw_only=True)
+class SignalProcess(EffectBase):
+    pid: int
+    signal: ProcessSignal
+
+@dataclass(frozen=True, kw_only=True)
+class ProcessSignalled:
+    pid: int
+    delivered: bool
+
 @dataclass(frozen=True, kw_only=True)
 class ProcessStarted:
     pid: int
