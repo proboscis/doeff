@@ -27,7 +27,8 @@
 (import doeff_cluster.process_versions [current-versions])
 (import doeff_cluster.runtime_env_model [EnvVar RuntimeEnvInvalid])
 (import doeff_cluster.worker_model [spec-hash])
-(import tests.fixtures.services [lab lab-pair tally-program greeter-program holding-program])
+(import tests.fixtures.services [lab lab-pair lab-record tally-program greeter-program holding-program tally-on PairFoundation
+                                 LooseFoundation])
 (import tests.fixtures.envs [plain-foundation greeting-foundation])
 
 (val PACKAGE-ROOT (. (Path (os.path.abspath __file__)) parent parent))   ; 子 process の cwd(tests.fixtures を import する)
@@ -152,6 +153,53 @@
   ;; 呼んだ関数そのものが入れ子でも同じ。
   (with [(pytest.raises TypeError)]
     (job "inner-call" (inner-foundation) :call (CallShape :function inner-foundation :args [] :kwargs {}) :needs #{"net"})))
+
+
+;; --- 土台の record --------------------------------------------------------------------------------
+;; 土台を欄の名と型を持つ record 1 つで系に渡せる(汎用の模擬のテストが土台の型から模擬の土台を組むため)。identity は
+;; {"record": "module:qualname", "fields": {欄: 正規の値}} — 欄は名で整列し、値は関数の参照・JSON の値の規則のまま。
+
+(val PAIR (PairFoundation :main plain-foundation :side greeting-foundation :step 2))
+
+
+(deftest test-a-foundation-record-is-a-system-argument-with-a-record-identity
+  (val declaration (system-declaration (lab-record PAIR) "rev1" :versions (current-versions)))
+  (val identity (get declaration.rows 0 "run" "identity"))
+  (assert (= identity {"function" "tests.fixtures.services:tally_on"
+                       "args" [{"record" "tests.fixtures.services:PairFoundation"
+                                "fields" {"main" {"ref" "tests.fixtures.envs:plain_foundation"}
+                                          "side" {"ref" "tests.fixtures.envs:greeting_foundation"}
+                                          "step" 2}}]
+                       "kwargs" {}})
+          identity)
+  (assert (= (get declaration.rows 0 "run" "describe")
+             "tests.fixtures.services:tally_on(tests.fixtures.services:PairFoundation(main=tests.fixtures.envs:plain_foundation, side=tests.fixtures.envs:greeting_foundation, step=2))")
+          (get declaration.rows 0 "run" "describe")))
+
+
+(deftest test-the-same-record-spells-the-same-identity-and-a-changed-field-changes-it
+  ;; 同じ欄の値の record を 2 度作って宣言する — 正規の綴り(鍵を整列した JSON)も同一性の指紋も 1 字も違わない。欄が 1 つ違えば変わる。
+  (val first (get (. (system-declaration (lab-record PAIR) "rev1" :versions (current-versions)) rows) 0 "run"))
+  (val again (get (. (system-declaration (lab-record (PairFoundation :main plain-foundation :side greeting-foundation :step 2)) "rev1"
+                                         :versions (current-versions)) rows) 0 "run"))
+  (assert (= (json.dumps (get first "identity") :sort-keys True) (json.dumps (get again "identity") :sort-keys True)))
+  (assert (= (identity-hash first) (identity-hash again)))
+  (val other (get (. (system-declaration (lab-record (PairFoundation :main plain-foundation :side greeting-foundation :step 3)) "rev1"
+                                         :versions (current-versions)) rows) 0 "run"))
+  (assert (!= (identity-hash first) (identity-hash other))))
+
+
+(deftest test-a-record-that-cannot-be-identified-is-refused
+  ;; 凍っていない record・欄に handler の値を持つ record は、identity が値を表せないので宣言の前に断る。
+  (with [raised (pytest.raises TypeError)]
+    (job "loose" (tally-program plain-foundation 1)
+         :call (CallShape :function tally-program :args [(LooseFoundation :main plain-foundation)] :kwargs {}) :needs #{"net"}))
+  (assert (in "凍っていない" (str raised.value)))
+  (with [raised (pytest.raises TypeError)]
+    (job "handler-field" (tally-program plain-foundation 1)
+         :call (CallShape :function tally-program :args [(PairFoundation :main host-reader :side plain-foundation :step 1)] :kwargs {})
+         :needs #{"net"}))
+  (assert (in "handler の値" (str raised.value))))
 
 
 ;; --- 宣言の行 -----------------------------------------------------------------------------------
