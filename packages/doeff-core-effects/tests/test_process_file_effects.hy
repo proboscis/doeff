@@ -17,7 +17,7 @@
 (import doeff_core_effects.process_effects [EnvEntry ProcessOutcome RunProcess ExecutableAt WorkingDirectory])
 (import doeff_core_effects.file_effects [PathKind FileFailed PathStat DirEntry LockHeld MemoryFile MemoryFiles ReadMemoryFiles StatPath ReadDiskFree
                                          ReadText ReadBytes WriteText WriteBytes AppendText MakeDirectory ListDirectory WalkTree CopyFile
-                                         CopyTree RenamePath RemoveTree AcquireLock ReleaseLock DiskUsage ReadDiskUsage MeasureTree])
+                                         CopyTree RenamePath RemoveTree AcquireLock ReleaseLock DiskUsage ReadDiskUsage MeasureTree LinkFile])
 (import doeff_core_effects.os_process [subprocess-handler])
 (import doeff_core_effects.os_file [os-file-handler])
 (import doeff_core_effects.memory_file [memory-file-handler])
@@ -274,3 +274,38 @@
   (assert (= (get real 0) (+ (len (.encode "あい" "utf-8")) 3)) real)
   (assert (isinstance (get real 2) FileFailed) real)
   (assert (= (on [(state) (memory-file-handler (MemoryFiles :free 7 :total 9))] (ReadDiskUsage "/none")) (DiskUsage :total 9 :free 7))))
+
+
+(defk link-journey [root]
+  {:pre [(: root str)] :post [(: % tuple)] :tags {:context "file-system" :role "program"}}
+  "file に名を付け(#2462)、付けた名から読み、断りの 4 つ(在る先・無い元・dir の元・無い親)を返す筋。断りは元と先の path を root の外して。"
+  (<- (MakeDirectory (+ root "/l/sub")))
+  (<- (WriteText (+ root "/l/a.pyc") "焼いた"))
+  (<- linked (LinkFile (+ root "/l/a.pyc") (+ root "/l/sub/a.pyc")))
+  (<- read (ReadText (+ root "/l/sub/a.pyc")))
+  (<- exists (LinkFile (+ root "/l/a.pyc") (+ root "/l/sub/a.pyc")))
+  (<- missing (LinkFile (+ root "/l/none") (+ root "/l/b")))
+  (<- directory (LinkFile (+ root "/l/sub") (+ root "/l/c")))
+  (<- no-parent (LinkFile (+ root "/l/a.pyc") (+ root "/l/none/d")))
+  (val shown (lfor answer [exists missing directory no-parent]
+                   (if (isinstance answer FileFailed)
+                       #((.replace answer.path root "") (.replace answer.detail root ""))
+                       answer)))
+  #(linked read #* shown))
+
+
+(defn test-link-file-answers-the-same-on-the-real-and-memory-file-systems []
+  (with [tmp (tempfile.TemporaryDirectory)]
+    (setv root (os.path.realpath tmp))
+    (setv real (on [os-file-handler] (link-journey root)))
+    ;; 本物は同じ inode を指す(写しではない)。
+    (assert (= (. (os.stat (+ root "/l/a.pyc")) st-ino) (. (os.stat (+ root "/l/sub/a.pyc")) st-ino))))
+  (setv memory (on [(state) (memory-file-handler (MemoryFiles :dirs #("/m")))] (link-journey "/m")))
+  (assert (= (cut real 0 2) #(None "焼いた")) real)
+  (assert (= (cut real 0 3) (cut memory 0 3)) #(real memory))
+  ;; 断りは同じ path(元の側)で答える。文の errno の番号は OS で違う物が在る(dir の元は Linux と macOS で同じ EPERM)。
+  (for [i (range 2 6)]
+    (assert (= (get (get real i) 0) (get (get memory i) 0)) #(i real memory)))
+  (assert (in "File exists" (get real 2 1)) real)
+  (assert (in "No such file" (get real 3 1)) real)
+  (assert (in "No such file" (get real 5 1)) real))
