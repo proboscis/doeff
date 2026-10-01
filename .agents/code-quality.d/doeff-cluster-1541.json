@@ -1298,6 +1298,7 @@
         "doeff-cluster-rollout-policy",
         "doeff-cluster-runtime-env",
         "doeff-cluster-runtime-env-model",
+        "doeff-cluster-runtime-env-model",
         "doeff-cluster-runtime-facts",
         "doeff-cluster-runtime-identity",
         "doeff-cluster-runtime-identity-model",
