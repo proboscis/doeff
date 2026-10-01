@@ -14,22 +14,23 @@
 ;;; 再生は、問いと答えの出来事の番号の順に task を並べる: 番号がまだ来ていない task は promise を待って止まり(仮想の時計の
 ;;; handler と同じく scheduler の effect で待つ)、番号が進むとその番号の持ち主を起こす。他の task が全部止まった時だけ動く係
 ;;; (低優先度の daemon)が、それでも番号が進まない = 記録の問いを誰も出さない、を分岐として止める。
-(require doeff-hy.macros [defhandler defk <- val var])
+(require doeff-hy.macros [defhandler defk deff <- val var])
+(require doeff-hy.record [defrecord])
 (val MODULE-TAGS {:context "doeff-cluster" :role "foundation"})
-(import atexit)
 (import copy)
+(import dataclasses [dataclass])
 (import json)
 (import os)
 (import sys)
 (import time)
-(import urllib.request [Request urlopen])
-(import doeff [EffectBase Pass])
+(import doeff [EffectBase Pass with-handlers])
+(import doeff_core_effects.http_effects [HttpRequest HttpResponse HttpFailed])
 (import doeff.do [do])
 (import doeff.program [handler :as program-handler])
 (import collections.abc [Callable Generator])
 (import typing [Literal Protocol TypeVar])
 (import doeff [Program])
-(import doeff_vm [GetBoundaries K WithHandler WithObserve Callable :as VmCallable])
+(import doeff_vm [GetBoundaries K WithObserve Callable :as VmCallable])
 (import doeff_core_effects.scheduler [Spawn Wait CreatePromise CompletePromise Promise PRIORITY-IDLE])
 (import doeff_cluster.foundation.record_codec [READ LIVE DECISION OUTPUT LOOSE DIVERGE INTERN-MIN-CHARS BLOB-MEMORY-MAX FORMAT-VERSION BlobMemory
                                          EffectCodec HandleTable UnencodableValue UnrecordableEffect RestoredValue
@@ -100,50 +101,63 @@
 
 
 ;; --- 記録の置き場 ------------------------------------------------------------------------------
+;;
+;; 置き場への送りは HTTP の effect(HttpRequest)で出す — 置き場の口は「何を送るか」(SinkPost)を作って送った結果を受けるだけで、
+;; socket に触れない。答えるのは記録係より外側の handler: 本番は土台が積む http-production-handler、模擬は置き場の代役の handler
+;; (送られた行を貯める — sim/test_recording_on_sim.hy)。送りの手順は send-records(記録係が effect ごとに・終わりに 1 度呼ぶ)。
+
+(defrecord SinkPost
+  "置き場への 1 回の送り。request = 出す HttpRequest・count = この送りで buffer の先頭から外せる項の数。"
+  (#^ HttpRequest request)
+  (#^ int count))
+
 
 (defclass RecordSink [Protocol]
-  "記録の係(EffectLog)が置き場に求める口 — 行を書く・溜めた行を送る・届かずに捨てた行の数。実体は MemorySink(検)と
+  "記録の係(EffectLog)が置き場に求める口 — 行を書く・送る分を作る・送った結果を受ける・届かずに捨てた行の数。実体は MemorySink(検)と
    BufferedSink の族(HttpSink・OtlpSink)。EffectLog の欄 sink をこの型で宣言する(#1675 — 以前は object で
-   宣言していて、write・flush・lost の読みが型検査で絞れなかった)。"
+   宣言していて、write・lost の読みが型検査で絞れなかった)。送り(I/O)は口の外 — send-records が HttpRequest で出す。"
   #^ int lost
-  ;; 本体は説明の文と None(Hy は最後の式を返すので、`...` や文だけだとその値を返し、返りの型 None と食い違う)。
+  ;; 本体は説明の文と値(Hy は最後の式を返すので、`...` や文だけだとその値を返し、返りの型と食い違う)。
   (defn #^ None write [self #^ int chunk #^ dict line] "行 line を区切り chunk に書く。" None)
-  (defn #^ None flush [self] "溜めた行を送る。" None))
+  (defn #^ bool begin-send [self #^ bool force] "いま送るか(送るなら送りの最中の印を立てる)。force = 期限を待たずに送る。" False)
+  (defn #^ (| SinkPost None) next-post [self] "次の 1 回の送り(送る物が無ければ None)。" None)
+  (defn #^ None delivered [self #^ SinkPost post] "post が届いた: その分を buffer から外す。" None)
+  (defn #^ None undelivered [self #^ str reason] "送れなかった: 貯めたまま次を待つ(理由を出す)。" None)
+  (defn #^ None end-send [self] "送りの最中の印を下ろす。" None)
+  (defn #^ None trim [self] "送りの最中でなければ、貯めすぎた行を捨てて lost に数える。" None))
 
 
 (defclass MemorySink []
-  "テストの置き場。lines = 書いた行(dict)。"
+  "テストの置き場。lines = 書いた行(dict)。送る物は無い(書いた時に持つ)。"
   (defn #^ None __init__ [self] (setv self.lines [] self.lost 0))
   (defn #^ None write [self #^ int chunk #^ dict line]
     ;; JSON を通して持つ(本物の置き場と同じく、JSON にできない物が紛れたらここで落ちる)。chunk は行に添えて残す。
     (.append self.lines (| (json.loads (json.dumps line :ensure-ascii False)) {"_chunk" chunk})))
-  (defn #^ None flush [self] None))
+  (defn #^ bool begin-send [self #^ bool force] False)
+  (defn #^ (| SinkPost None) next-post [self] None)
+  (defn #^ None delivered [self #^ SinkPost post] None)
+  (defn #^ None undelivered [self #^ str reason] None)
+  (defn #^ None end-send [self] None)
+  (defn #^ None trim [self] None))
 
 
 (defclass BufferedSink []
   "行を貯めて flush-seconds か max-lines ごとに送る置き場の口の共通部分。届かない間は貯め続け(retry-seconds ごとに試す)、
-   max-buffer 行を超えたら捨てて lost を数える(記録は途切れる — 本番を止めない)。送り方(post)は子 class が決める。
-   buffer の 1 項 = #(区切り 行の dict 行の JSON の文字列)。"
+   max-buffer 行を超えたら捨てて lost を数える(記録は途切れる — 本番を止めない)。送りの中身(post-request)は子 class が決める。
+   buffer の 1 項 = #(区切り 行の dict 行の JSON の文字列)。送りそのものは send-records が HttpRequest で出す。"
   (defn #^ None __init__ [self #^ float [flush-seconds 2.0] #^ int [max-lines 500] #^ int [max-buffer 200000] #^ float [timeout 10.0]
                           #^ float [retry-seconds 10.0] #^ int [max-post-bytes 4000000]]
     (setv self.flush-seconds flush-seconds self.max-post-bytes max-post-bytes
           self.max-lines max-lines self.max-buffer max-buffer self.timeout timeout self.retry-seconds retry-seconds
-          self.buffer [] self.last-flush (time.monotonic) self.retry-at 0.0 self.lost 0 self.sent 0 self.failures 0))
+          self.buffer [] self.last-flush (time.monotonic) self.retry-at 0.0 self.lost 0 self.sent 0 self.failures 0 self.sending False))
 
   (defn #^ None write [self #^ int chunk #^ dict line]
     (.append self.buffer #(chunk line (json.dumps line :ensure-ascii False :separators #("," ":"))))
-    (setv now (time.monotonic))
-    (when (and (>= now self.retry-at)
-               (or (>= (len self.buffer) self.max-lines) (>= (- now self.last-flush) self.flush-seconds)))
-      (.flush self))
-    (when (> (len self.buffer) self.max-buffer)
-      (+= self.lost (len self.buffer))
-      (setv self.buffer []))
     None)
 
-  (defn #^ int post [self #^ list items]
-    "items(buffer の先頭の項)を置き場へ送り、送れた項の数を返す。送り方は子 class が決める(ここは宣言だけ)。"
-    (raise (NotImplementedError (.format "{} は post を定めていない" (. (type self) __name__)))))
+  (defn #^ SinkPost post-request [self #^ list items]
+    "items(buffer の先頭の項)を置き場へ送る 1 回の送り。中身は子 class が決める(ここは宣言だけ)。"
+    (raise (NotImplementedError (.format "{} は post-request を定めていない" (. (type self) __name__)))))
 
   (defn #^ int batch-size [self]
     "次の 1 回の送りに載せる行の数(先頭から max-post-bytes まで・最低 1 行)。"
@@ -154,21 +168,42 @@
       (+= size (len text)))
     n)
 
-  (defn #^ None flush [self]
-    (setv self.last-flush (time.monotonic))
-    (when (not self.buffer) (return None))
-    (try
-      ;; 送れた分だけ buffer から外す(途中で失敗したら残りだけを次に送る)。
-      (while self.buffer
-        (setv n (.post self (cut self.buffer 0 (.batch-size self))))
-        (+= self.sent n)
-        (setv self.buffer (cut self.buffer n None)))
-      (except [e Exception]
-        ;; 送れなかった: 貯めたまま次を待つ(同じ行を 2 度送りうる — 読む側は行の e と内容の hash で重なりを捨てる)。
-        (+= self.failures 1)
-        (setv self.retry-at (+ (time.monotonic) self.retry-seconds))
-        (print (.format "recorder: 記録の置き場に送れない({} 行を貯めている): {}: {}" (len self.buffer) (. (type e) __name__) e)
-               :file sys.stderr :flush True)))
+  (defn #^ bool begin-send [self #^ bool force]
+    ;; 送る時 = max-lines 行貯まった・flush-seconds 経った(届かなかった後は retry-seconds を待つ)・終わりの送り(force)。
+    ;; 別の task が送りの最中なら送らない(同じ先頭の行を 2 度送らず、届いた分を外す位置も狂わせない)。
+    (setv now (time.monotonic))
+    (when (or self.sending
+              (not (or force (and (>= now self.retry-at)
+                                  (or (>= (len self.buffer) self.max-lines) (>= (- now self.last-flush) self.flush-seconds))))))
+      (return False))
+    (setv self.last-flush now self.sending True)
+    True)
+
+  (defn #^ (| SinkPost None) next-post [self]
+    (if self.buffer (.post-request self (cut self.buffer 0 (.batch-size self))) None))
+
+  (defn #^ None delivered [self #^ SinkPost post]
+    ;; 送れた分だけ buffer から外す(途中で失敗したら残りだけを次に送る)。
+    (+= self.sent post.count)
+    (setv self.buffer (cut self.buffer post.count None))
+    None)
+
+  (defn #^ None undelivered [self #^ str reason]
+    ;; 送れなかった: 貯めたまま次を待つ(同じ行を 2 度送りうる — 読む側は行の e と内容の hash で重なりを捨てる)。
+    (+= self.failures 1)
+    (setv self.retry-at (+ (time.monotonic) self.retry-seconds))
+    (print (.format "recorder: 記録の置き場に送れない({} 行を貯めている): {}" (len self.buffer) reason)
+           :file sys.stderr :flush True)
+    None)
+
+  (defn #^ None end-send [self]
+    (setv self.sending False)
+    None)
+
+  (defn #^ None trim [self]
+    (when (and (not self.sending) (> (len self.buffer) self.max-buffer))
+      (+= self.lost (len self.buffer))
+      (setv self.buffer []))
     None))
 
 
@@ -179,17 +214,17 @@
     (.__init__ (super) :flush-seconds flush-seconds :max-buffer max-buffer)
     (setv self.url (.rstrip url "/") self.service service self.run run))
 
-  (defn #^ int post [self #^ list items]
+  (defn #^ SinkPost post-request [self #^ list items]
     (setv chunk (get (get items 0) 0) texts [])
     (for [#(c _l text) items]
       (when (!= c chunk) (break))
       (.append texts text))
-    (setv body (.encode (json.dumps {"service" self.service "run" self.run "chunk" chunk "lines" texts}) "utf-8"))
-    (setv request (Request (+ self.url "/append") :data body :method "POST"
-                           :headers {"Content-Type" "application/json" "X-Actor" (+ "recorder:" self.service)}))
-    (with [response (urlopen request :timeout self.timeout)]
-      (.read response))
-    (len texts)))
+    ;; 本文は JSON の境界の dict(HTTP の答え手が JSON に綴る)。
+    (SinkPost :request (HttpRequest "POST" (+ self.url "/append")
+                                    :headers {"Content-Type" "application/json" "X-Actor" (+ "recorder:" self.service)}
+                                    :body {"service" self.service "run" self.run "chunk" chunk "lines" texts}
+                                    :timeout-seconds self.timeout :max-retries 0 :failures-as-values True)
+              :count (len texts))))
 
 
 (defn #^ dict otlp-log-record [#^ str run #^ int chunk #^ dict line #^ str text #^ int now-ms]
@@ -213,17 +248,51 @@
     (.__init__ (super) :flush-seconds flush-seconds :max-buffer max-buffer)
     (setv self.url (.rstrip url "/") self.service service self.run run))
 
-  (defn #^ int post [self #^ list items]
+  (defn #^ SinkPost post-request [self #^ list items]
     (setv now-ms (int (* 1000 (time.time))))
-    (setv body {"resourceLogs"
-                [{"resource" {"attributes" [{"key" "service.name" "value" {"stringValue" self.service}}]}
-                  "scopeLogs" [{"scope" {"name" "doeff.effect-record" "version" (str FORMAT-VERSION)}
-                                "logRecords" (lfor #(c line text) items (otlp-log-record self.run c line text now-ms))}]}]})
-    (setv request (Request (+ self.url "/v1/logs") :data (.encode (json.dumps body :ensure-ascii False) "utf-8") :method "POST"
-                           :headers {"Content-Type" "application/json"}))
-    (with [response (urlopen request :timeout self.timeout)]
-      (.read response))
-    (len items)))
+    ;; 本文は JSON の境界の dict(HTTP の答え手が JSON に綴る)。
+    (SinkPost :request (HttpRequest "POST" (+ self.url "/v1/logs")
+                                    :headers {"Content-Type" "application/json"}
+                                    :body {"resourceLogs"
+                                           [{"resource" {"attributes" [{"key" "service.name" "value" {"stringValue" self.service}}]}
+                                             "scopeLogs" [{"scope" {"name" "doeff.effect-record" "version" (str FORMAT-VERSION)}
+                                                           "logRecords" (lfor #(c line text) items (otlp-log-record self.run c line text now-ms))}]}]}
+                                    :timeout-seconds self.timeout :max-retries 0 :failures-as-values True)
+              :count (len items))))
+
+
+(defk post-records [post]
+  {:pre [(: post SinkPost)] :post [(: % (| str None))] :tags {:context "doeff-cluster" :role "foundation"}}
+  "1 回の送り post を HttpRequest で出し、届かなかった理由を返す(届いたら None)。答え手が何を投げても理由にする(業務は止めない)。"
+  (try
+    (<- answer (| HttpResponse HttpFailed) post.request)
+    (match answer
+      (HttpFailed) answer.detail
+      (HttpResponse) :if (>= answer.status 400) (.format "HttpError: HTTP {} {}" answer.status answer.url)
+      (HttpResponse) None
+      _ (.format "HTTP の答えでない: {!r}" answer))
+    (except [e Exception]
+      (.format "{}: {}" (. (type e) __name__) e))))
+
+
+(defk send-records [sink force]
+  {:pre [(: sink (| MemorySink BufferedSink)) (: force bool)] :post [(: % (type None))] :tags {:context "doeff-cluster" :role "foundation"}}
+  "置き場の口 sink が送る時なら(force = 期限を待たずに)、貯めた行を先頭から送り切るか、届かなくなるまで送る。その後、貯めすぎた
+   行を捨てる(max-buffer — 記録は途切れる)。"
+  (when (.begin-send sink force)
+    (try
+      (var post (.next-post sink))
+      (while (is-not post None)
+        (<- reason (| str None) (post-records post))
+        (if (is reason None)
+            (do (.delivered sink post)
+                (:= post (.next-post sink)))
+            (do (.undelivered sink reason)
+                (:= post None))))
+      (finally
+        (.end-send sink))))
+  (.trim sink)
+  None)
 
 
 ;; --- 記録 -------------------------------------------------------------------------------------
@@ -260,13 +329,6 @@
     (when (is-not self.held None)
       (setv #(chunk line) self.held self.held None)
       (.write self.sink chunk line)))
-
-  (defn #^ None close [self]
-    "process の終わり: 手元に持っている問いを書き、置き場に貯めた行を送る。置き場の口(BufferedSink)は flush-seconds か max-lines に
-     達した write の時にしか送らないので、これが無いと短い job の記録は 1 行も届かず、長く動く process も終わる直前の行を失う
-     (recording-handler が process の終わりの処理 atexit に登録する)。届かなければ置き場の口が理由を出して捨てる(業務は止めない)。"
-    (.release-held self)
-    (.flush self.sink))
 
   (defn #^ None emit [self #^ dict line #^ bool [numbered True]]
     "行を書く(持っている問いがあれば先に書く)。"
@@ -399,7 +461,40 @@
                   (if (is error None) (.answer log s effect answer args child) (.failed log s error))
                   (except [e [UnrecordableEffect UnencodableValue]]
                     (if log.strict (:= error e) (.break log (.format "答え: {}: {}" (. (type e) __name__) e)))))
+                ;; 送る時なら貯めた行を置き場へ送る(HttpRequest — この handler より外側の答え手が答える)。届かなくても業務は止めない。
+                (<- (send-records log.sink False))
+                (.check-lost log)
                 (if (is error None) (resume answer) (raise error))))))))
+
+
+(defk close-log [log]
+  {:pre [(: log EffectLog)] :post [(: % (type None))] :tags {:context "doeff-cluster" :role "foundation"}}
+  "記録の終わり: 手元に持っている問いを書き、置き場に貯めた行を期限を待たずに送る。置き場の口(BufferedSink)は flush-seconds か
+   max-lines に達した時にしか送らないので、これが無いと短い job の記録は 1 行も届かず、長く動く Program も終わる直前の行を失う
+   (recorded-run が記録する Program の終わりに呼ぶ)。届かなければ置き場の口が理由を出して貯めたまま(業務は止めない)。"
+  (.release-held log)
+  (<- (send-records log.sink True))
+  None)
+
+
+(defk recorded-run [log body]
+  {:pre [(: log EffectLog) (: body (| Program EffectBase))] :post [(: % "body の答え")] :tags {:context "doeff-cluster" :role "foundation"}}
+  "body を記録係(effect-recorder)の下で走らせ、終わった時(例外でも)に残りの行を送る(close-log)。"
+  (try
+    (<- answer (with-handlers [(effect-recorder log)] body))
+    answer
+    (finally
+      (<- (close-log log)))))
+
+
+(defclass RecordingInstaller []
+  "記録係を body に被せる口(with-handlers の list に置く物)— body を recorded-run で包む。記録の終わりの送りを Program の中で
+   出すため、effect の handler(effect-recorder)そのものではなく body を包む関数にする(http-production-handler の client の寿命と同じ形)。"
+  (setv _doeff_is_handler_fn True)
+  (defn #^ None __init__ [self #^ EffectLog log] (setv self.log log))
+  (deff __call__ [self body]  ; defk にできない: with-handlers が body を渡して呼ぶ素の口
+    {:pre [(: self RecordingInstaller) (: body (| Program EffectBase))] :post [(: % Program)] :tags {:context "doeff-cluster" :role "foundation"}}
+    (recorded-run self.log body)))
 
 
 ;; --- 再生 -------------------------------------------------------------------------------------
@@ -646,11 +741,12 @@
   (.format "{}-{}-{}" (time.strftime "%Y%m%dT%H%M%SZ" (time.gmtime (/ started-ms 1000))) (or worker "local")
            (or instance (str (os.getpid)))))
 
-(defn #^ (get Callable #([Program] WithHandler)) recording-handler [#^ dict record #^ str service #^ dict header]
+(defn #^ RecordingInstaller recording-handler [#^ dict record #^ str service #^ dict header]
   "記録の置き場の設定 record → 記録係(境目の記録係 boundary-recorder の record の枝と、cluster の外の process が使う)。
    record = {\"otlp\": collector の URL(か \"store\": 旧い置き場の URL)・
    \"chunkSeconds\"・\"flushSeconds\"}。
-   header = run の行に載せる欄(版・設定・process の世代 …)。置き場に届かなくても業務は止めない(HttpSink の説明)。"
+   header = run の行に載せる欄(版・設定・process の世代 …)。置き場に届かなくても業務は止めない(HttpSink の説明)。
+   置き場への送りは HttpRequest(send-records)— 答える handler(本番は http-production-handler)を記録係より外側に置く。"
   (setv started (int (* 1000 (time.time))))
   (setv run (run-name started (.get header "worker" "") (.get header "instance" "")))
   (setv options {"flush_seconds" (float (.get record "flushSeconds" 2.0)) "max_buffer" (int (.get record "maxBufferLines" 200000))})
@@ -661,10 +757,9 @@
   (setv log (EffectLog sink (| header {"service" service "run" run})
                        :chunk-seconds (float (.get record "chunkSeconds" 3600.0))
                        :wall-ms (fn [] (int (* 1000 (time.time))))))
-  ;; process の終わりに残りの行を送る(EffectLog.close の説明)。
-  (atexit.register log.close)
   (print (.format "recorder: {} の effect を記録します(run {}・置き場 {})" service run (or (.get record "otlp") (.get record "store"))) :file sys.stderr :flush True)
-  (effect-recorder log))
+  ;; 記録する Program の終わりに残りの行を送る(close-log の説明)。
+  (RecordingInstaller log))
 
 
 ;; --- 境目の記録係(ADR-DOE-CLUSTER-001 R5・R5b)----------------------------------------------------------

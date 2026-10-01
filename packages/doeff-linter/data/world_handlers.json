@@ -6,7 +6,7 @@
   "doeff_cluster.worker.protocol.status_file:status-file": "file system の effect(MakeDirectory・WriteText)を出し直すだけ — 実 I/O は外側の os-file-handler(#2466)",
   "doeff_cluster.record_store.protocol.record_files:record-files": "file system の effect を出し直すだけ — 実 I/O は外側の os-file-handler(record_store.entry.main)",
   "doeff_cluster.worker.protocol.tree_files:tree-files": "木の effect を file system の effect と slog へ出し直すだけ — 本番は os-file-handler・模擬の世界は memory-file-handler が答える(#2468 で本物の答え手を退役)",
-  "doeff_cluster.foundation.record_handlers:effect-recorder": "sink が注入(MemorySink なら値だけ)— 実 I/O は recording-handler が組む sink",
+  "doeff_cluster.foundation.record_handlers:effect-recorder": "sink が注入(MemorySink なら値だけ)— 置き場への送りは HttpRequest を出し直すだけ(実 I/O は外側の http-production-handler・#2583)",
   "doeff_records.pg:pg-records-handler": "SqlQuery の出し直しだけ(実 DB は postgres-sql-handler)",
   "doeff_core_effects.scheduler:scheduled": "共同の scheduler(模擬を含む全部の Program の下に敷く)— 環境変数は実装の選択・time.monotonic は停滞の見張りだけで、外の世界から effect に答えない",
   "doeff_cluster.worker.protocol.world:local-host": "ObserveWorld に各言い換えの観測を問うてまとめるだけ(#2469)",
@@ -199,10 +199,9 @@
   {
    "handler": "doeff_cluster.foundation.record_handlers:recording-handler",
    "touches": [
-    "http",
     "clock"
    ],
-   "why": "OTLP / HTTP の sink を urlopen で組む"
+   "why": "run の名と行の時刻を実時計(time.time)で作る — 置き場への送りは HttpRequest を出し直すだけ(実 I/O は外側の http-production-handler・#2583)"
   },
   {
    "handler": "doeff_cluster.foundation.kube_handlers:kube-api",
