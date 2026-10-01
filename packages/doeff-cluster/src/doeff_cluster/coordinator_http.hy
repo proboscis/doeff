@@ -20,7 +20,7 @@
 (import typing [TypedDict Unpack])
 (import httpx)
 (import doeff_cluster.shared.intent.protocol [ClusterTiming])
-(import .remote_model [program-sha])
+(import doeff_cluster.shared.intent.remote_model [program-sha])
 
 ;; 返事を待つ上限(秒)。coordinator は書きを永続化してから返事をする(group commit)ので、返事は fsync の時間だけ遅れる。longhorn の
 ;; volume の実測(2026-09-24): fsync p50 0.1 秒、ただし 30 分に 1 回ほど 10.4 秒の詰まり(その間の返事は最長 13 秒)。上限はそれより

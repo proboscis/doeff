@@ -17,8 +17,8 @@
 (import doeff_cluster.coordinator.core.cluster_json [task-record-to-json task-record-from-json handoff-watch-from-json required-field int-field])
 (import doeff_cluster.semaphore_model [SEMAPHORE-PREFIX lease-op semaphore-write-refusal semaphore-key])
 (import doeff [run])
-(import doeff_cluster.runtime_env_model [runtime-env-of-json RuntimeEnvInvalid env-key child-environ-refusal])
-(import doeff_cluster.readiness_model [readiness-refusal])
+(import doeff_cluster.shared.intent.runtime_env_model [runtime-env-of-json RuntimeEnvInvalid env-key child-environ-refusal])
+(import doeff_cluster.shared.intent.readiness_model [readiness-refusal])
 
 (setv JOB-ENTRY "doeff_cluster.job_entry")
 (setv MAX-EVENTS 200)

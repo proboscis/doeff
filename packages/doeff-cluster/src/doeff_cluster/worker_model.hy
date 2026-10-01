@@ -11,7 +11,7 @@
 (import hashlib)
 (import json)
 (import doeff [EffectBase])
-(import .runtime_env_model [EnvFailure])
+(import doeff_cluster.shared.intent.runtime_env_model [EnvFailure])
 
 
 (defclass [(dataclass :frozen True)] JobSpec []

@@ -8,10 +8,10 @@
     (assert (= recorded 2))
     (setv kinds (set (gfor l lines :if (in (.get l "k") #("req" "call")) (get l "ty"))))
     (for [t ["controllers.conversation.effects:WriteConversation" "controllers.conversation.effects:ProposeTitle"
-             "controllers.conversation.effects:ReadRequest" "doeff_cluster.metrics_model:ReadProcessGauges"]]
+             "controllers.conversation.effects:ReadRequest" "doeff_cluster.shared.intent.metrics_model:ReadProcessGauges"]]
 >     (assert (in t kinds) (sorted kinds)))
                 ^^^^^^^^^
-E     AssertionError: ['doeff_cluster.metrics_model:ReadProcessGauges', 'doeff_cluster.metrics_model:ReportMetrics', 'doeff_cluster.readiness_model:ReportReady', 'doeff_cluster.semaphore_model:CreateNamedSemaphore', 'doeff_cluster.semaphore_model:HeldLease', 'doeff_cluster.shared_model:WriteShared', 'doeff_core_effects.effects:Ask', 'doeff_core_effects.scheduler:AcquireSemaphore', 'doeff_core_effects.scheduler:Spawn', 'doeff_core_effects.scheduler:Wait', 'doeff_time.effects.time:DelayEffect', 'doeff_time.effects.time:GetMonotonicEffect', 'doeff_time.effects.time:GetTimeEffect']
+E     AssertionError: ['doeff_cluster.shared.intent.metrics_model:ReadProcessGauges', 'doeff_cluster.shared.intent.metrics_model:ReportMetrics', 'doeff_cluster.shared.intent.readiness_model:ReportReady', 'doeff_cluster.semaphore_model:CreateNamedSemaphore', 'doeff_cluster.semaphore_model:HeldLease', 'doeff_cluster.shared_model:WriteShared', 'doeff_core_effects.effects:Ask', 'doeff_core_effects.scheduler:AcquireSemaphore', 'doeff_core_effects.scheduler:Spawn', 'doeff_core_effects.scheduler:Wait', 'doeff_time.effects.time:DelayEffect', 'doeff_time.effects.time:GetMonotonicEffect', 'doeff_time.effects.time:GetTimeEffect']
 controllers/worker/tests/test_conversation_writer.hy:316: AssertionError
 ----------------------------- Captured stderr call -----------------------------
 doeff Traceback (most recent call last):
@@ -35,7 +35,7 @@ doeff Traceback (most recent call last):
       readiness_memory ↗
       SimTimeRuntime.handle ↗
       _scheduled_python ↗
-AssertionError: ['doeff_cluster.metrics_model:ReadProcessGauges', 'doeff_cluster.metrics_model:ReportMetrics', 'doeff_cluster.readiness_model:ReportReady', 'doeff_cluster.semaphore_model:CreateNamedSemaphore', 'doeff_cluster.semaphore_model:HeldLease', 'doeff_cluster.shared_model:WriteShared', 'doeff_core_effects.effects:Ask', 'doeff_core_effects.scheduler:AcquireSemaphore', 'doeff_core_effects.scheduler:Spawn', 'doeff_core_effects.scheduler:Wait', 'doeff_time.effects.time:DelayEffect', 'doeff_time.effects.time:GetMonotonicEffect', 'doeff_time.effects.time:GetTimeEffect']
+AssertionError: ['doeff_cluster.shared.intent.metrics_model:ReadProcessGauges', 'doeff_cluster.shared.intent.metrics_model:ReportMetrics', 'doeff_cluster.shared.intent.readiness_model:ReportReady', 'doeff_cluster.semaphore_model:CreateNamedSemaphore', 'doeff_cluster.semaphore_model:HeldLease', 'doeff_cluster.shared_model:WriteShared', 'doeff_core_effects.effects:Ask', 'doeff_core_effects.scheduler:AcquireSemaphore', 'doeff_core_effects.scheduler:Spawn', 'doeff_core_effects.scheduler:Wait', 'doeff_time.effects.time:DelayEffect', 'doeff_time.effects.time:GetMonotonicEffect', 'doeff_time.effects.time:GetTimeEffect']
 =============================== warnings summary ===============================
 ../../../home/kento/.worktrees/doeff-wt-639-cluster-no-macros/packages/doeff-adr/src/doeff_adr/pytest_plugin.py:156
   /home/kento/.worktrees/doeff-wt-639-cluster-no-macros/packages/doeff-adr/src/doeff_adr/pytest_plugin.py:156: PytestWarning: doeff-adr wiring verification warning: executable ADR files exist but were not collected:

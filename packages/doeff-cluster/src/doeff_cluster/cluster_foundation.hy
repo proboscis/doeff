@@ -17,7 +17,7 @@
 (import doeff_core_effects.effects [Ask])
 (import .host_contract [HOST-CONTRACT])
 (import .job_context [RunContext runtime-env-of-context])
-(import .runtime_env_model [RuntimeEnv])
+(import doeff_cluster.shared.intent.runtime_env_model [RuntimeEnv])
 (import .report_client [report-client])
 (import .readiness_handlers [readiness-http])
 (import .metrics_handlers [metrics-http])

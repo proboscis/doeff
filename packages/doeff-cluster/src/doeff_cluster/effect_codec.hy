@@ -44,8 +44,8 @@
 (import doeff_time [GetTimeEffect GetMonotonicEffect DelayEffect])
 (import doeff_cluster.shared_model [ReadShared WriteShared ANY])
 (import doeff_cluster.semaphore_model [CreateNamedSemaphore HeldLease LeaseStanding])
-(import doeff_cluster.readiness_model [ReportReady])
-(import doeff_cluster.metrics_model [ReportMetrics])
+(import doeff_cluster.shared.intent.readiness_model [ReportReady])
+(import doeff_cluster.shared.intent.metrics_model [ReportMetrics])
 
 (setv FORMAT-VERSION 2)
 ;; 読める形の版(1 = 差分・2 = 内容参照と問いと答えの 1 行)。
@@ -123,9 +123,17 @@
 (defn #^ str type-name [cls]
   (.format "{}:{}" cls.__module__ cls.__qualname__))
 
+;; 置き場を移した module の旧い名 → 今の名(agora-redesign #2021 の決め 2a・#2105)。記録は移しの前に書いた型の名(module:qualname)を
+;; 持つので、読みだけがこの表で今の置き場を引く。書くのは今の名だけ(type-name)。旧い module に再輸出は残さない。
+(setv MOVED-MODULES
+  (dfor name #("runtime_env_model" "readiness_model" "metrics_model" "process_model" "remote_model" "warm_model" "detached_model")
+        (+ "doeff_cluster." name) (+ "doeff_cluster.shared.intent." name)))
+
 (defn #^ (| type None) resolve-type [#^ str name]
-  "型の名 → class。import できないか、名が class を指さなければ None(呼び手は class として呼ぶので module や関数を返さない)。"
-  (setv #(module qualname) (.split name ":" 1))
+  "型の名 → class。import できないか、名が class を指さなければ None(呼び手は class として呼ぶので module や関数を返さない)。
+  置き場を移した module の旧い名は MOVED-MODULES で今の名へ引く。"
+  (setv #(written qualname) (.split name ":" 1))
+  (setv module (.get MOVED-MODULES written written))
   (try
     (setv obj (importlib.import-module module))
     (for [part (.split qualname ".")]
@@ -441,7 +449,7 @@
                                         "expect" (if (is e.expect ANY) {"$any" 1} (encode-value e.expect h))})))
 
 ;; process の memory の gauge(metrics_model.ReadProcessGauges)は読み。
-(import doeff_cluster.metrics_model [ReadProcessGauges])
+(import doeff_cluster.shared.intent.metrics_model [ReadProcessGauges])
 (register (EffectCodec ReadProcessGauges READ))
 
 ;; --- 業務コードの effect ------------------------------------------------------------------------------

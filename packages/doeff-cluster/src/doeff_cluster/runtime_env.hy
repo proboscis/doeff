@@ -38,7 +38,7 @@
 (import os)
 (import doeff_core_effects.process_effects [ProcessOutcome RunProcess])
 (import doeff_core_effects.file_effects [PathKind PathStat FileFailed StatPath ReadBytes])
-(import .runtime_env_model [RepoCheckout PythonProject EnvVar ToolRequirement RuntimeEnv RuntimeEnvInvalid InvalidKind])
+(import doeff_cluster.shared.intent.runtime_env_model [RepoCheckout PythonProject EnvVar ToolRequirement RuntimeEnv RuntimeEnvInvalid InvalidKind])
 (import .env_prepare [FileSha256])
 
 ;; 送り手自身が動いている source の dir(この module の置き場)。SenderSourceRoot はここで git に checkout の根を聞く — 模擬の git の台本も

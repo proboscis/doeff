@@ -12,7 +12,7 @@
 (import dataclasses [replace])
 (import re)
 (import doeff_cluster.coordinator.intent.cluster_model [ClusterState])
-(import doeff_cluster.remote_model [program-sha])
+(import doeff_cluster.shared.intent.remote_model [program-sha])
 
 (setv PROGRAM-KEY (re.compile r"[0-9a-f]{64}"))
 (setv PROGRAM-MAX-BYTES (* 4 1024 1024))       ; 詰めた Program 1 つの上限(base64 の文字列の長さ)

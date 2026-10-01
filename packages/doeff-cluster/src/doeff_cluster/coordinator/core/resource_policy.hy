@@ -21,7 +21,7 @@
 (import doeff_cluster.coordinator.core.cluster_policy [job-from-json job-to-json alive still-live-somewhere service-rows unplaced-kind unplaced-text task-summary])
 (import doeff_cluster.coordinator.core.rollout_policy [validate-rollout-spec rollout-targets target-key TERMINAL-PHASES])
 (import doeff [run])
-(import doeff_cluster.readiness_model [handoff-timeout-ms reported-readiness])
+(import doeff_cluster.shared.intent.readiness_model [handoff-timeout-ms reported-readiness])
 
 (setv LEGACY-OWNER "legacy:jobs")        ; 旧い PUT /jobs の頃からの宣言の所有者(誰でも 1 度だけ引き取れる)
 (setv COORDINATOR "coordinator")          ; 調停(割り当て・task の置き先)の送り手

@@ -310,10 +310,10 @@
       "layer": "domain",
       "name": "doeff-cluster-detached-model",
       "paths": [
-        "packages/doeff-cluster/src/doeff_cluster/detached_model.hy"
+        "packages/doeff-cluster/src/doeff_cluster/shared/intent/detached_model.hy"
       ],
       "public": [
-        "packages/doeff-cluster/src/doeff_cluster/detached_model.hy"
+        "packages/doeff-cluster/src/doeff_cluster/shared/intent/detached_model.hy"
       ],
       "responsibility": "切り離した task(呼び手と寿命を切り離した task)の effect と、答えの型(2026-09-25)。",
       "typed": true
@@ -761,10 +761,10 @@
       "layer": "domain",
       "name": "doeff-cluster-metrics-model",
       "paths": [
-        "packages/doeff-cluster/src/doeff_cluster/metrics_model.hy"
+        "packages/doeff-cluster/src/doeff_cluster/shared/intent/metrics_model.hy"
       ],
       "public": [
-        "packages/doeff-cluster/src/doeff_cluster/metrics_model.hy"
+        "packages/doeff-cluster/src/doeff_cluster/shared/intent/metrics_model.hy"
       ],
       "responsibility": "service が自分の計器(Prometheus の counter・gauge・秒の合計と回数)を報告する effect。",
       "typed": true
@@ -792,10 +792,10 @@
       "layer": "domain",
       "name": "doeff-cluster-process-model",
       "paths": [
-        "packages/doeff-cluster/src/doeff_cluster/process_model.hy"
+        "packages/doeff-cluster/src/doeff_cluster/shared/intent/process_model.hy"
       ],
       "public": [
-        "packages/doeff-cluster/src/doeff_cluster/process_model.hy"
+        "packages/doeff-cluster/src/doeff_cluster/shared/intent/process_model.hy"
       ],
       "responsibility": "job の process の終わりを待つ effect と、答えの型(2026-09-29・proboscis/doeff#631)。",
       "typed": true
@@ -865,10 +865,10 @@
       "layer": "domain",
       "name": "doeff-cluster-readiness-model",
       "paths": [
-        "packages/doeff-cluster/src/doeff_cluster/readiness_model.hy"
+        "packages/doeff-cluster/src/doeff_cluster/shared/intent/readiness_model.hy"
       ],
       "public": [
-        "packages/doeff-cluster/src/doeff_cluster/readiness_model.hy"
+        "packages/doeff-cluster/src/doeff_cluster/shared/intent/readiness_model.hy"
       ],
       "responsibility": "service が「準備できた」を報告する effect(process の生存とは別の、業務の条件つきの readiness)。",
       "typed": true
@@ -991,10 +991,10 @@
       "layer": "domain",
       "name": "doeff-cluster-remote-model",
       "paths": [
-        "packages/doeff-cluster/src/doeff_cluster/remote_model.hy"
+        "packages/doeff-cluster/src/doeff_cluster/shared/intent/remote_model.hy"
       ],
       "public": [
-        "packages/doeff-cluster/src/doeff_cluster/remote_model.hy"
+        "packages/doeff-cluster/src/doeff_cluster/shared/intent/remote_model.hy"
       ],
       "responsibility": "task(呼んだ側に寿命が縛られる短い仕事)の effect と、送る形・戻す形。",
       "typed": true
@@ -1092,10 +1092,10 @@
       "layer": "domain",
       "name": "doeff-cluster-runtime-env-model",
       "paths": [
-        "packages/doeff-cluster/src/doeff_cluster/runtime_env_model.hy"
+        "packages/doeff-cluster/src/doeff_cluster/shared/intent/runtime_env_model.hy"
       ],
       "public": [
-        "packages/doeff-cluster/src/doeff_cluster/runtime_env_model.hy"
+        "packages/doeff-cluster/src/doeff_cluster/shared/intent/runtime_env_model.hy"
       ],
       "responsibility": "実行環境の宣言(runtime env)の型・キー・JSON の往復・準備の失敗の型(2026-09-26)。",
       "typed": true
@@ -1340,10 +1340,10 @@
       "layer": "domain",
       "name": "doeff-cluster-warm-model",
       "paths": [
-        "packages/doeff-cluster/src/doeff_cluster/warm_model.hy"
+        "packages/doeff-cluster/src/doeff_cluster/shared/intent/warm_model.hy"
       ],
       "public": [
-        "packages/doeff-cluster/src/doeff_cluster/warm_model.hy"
+        "packages/doeff-cluster/src/doeff_cluster/shared/intent/warm_model.hy"
       ],
       "responsibility": "実行環境の先読み(warm)の effect と型(2026-09-26・設計 worker-runtime-env.md 節 3.2・決定 D9)。",
       "typed": true

@@ -1,7 +1,7 @@
 ;;; ReportReady の handler 2 つ。readiness-http = coordinator の POST /resources/Service/<名>/readiness へ送る(クラスタ)・
 ;;; readiness-memory = list に記録する(テスト)。HTTP の client は report_client.hy に閉じる(報告には送り手の process の世代が載る)。
 (require doeff-hy.macros [defhandler <-])
-(import .readiness_model [ReportReady reported-readiness])
+(import doeff_cluster.shared.intent.readiness_model [ReportReady reported-readiness])
 (import .report_client [ServiceReportClient report-client])
 
 

@@ -116,7 +116,7 @@
 (import doeff_cluster.clock [now-epoch-ms datetime-of-epoch-ms])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming Request Reply CoordinatorStopRequested PlainText])
 (import doeff_cluster.coordinator.intent.cluster_model [ClusterState ClusterNaming NextRequests Persist ENDED-PHASES])
-(import .process_model [AwaitProcessEnded ProcessEnded ProcessWaitExpired])
+(import doeff_cluster.shared.intent.process_model [AwaitProcessEnded ProcessEnded ProcessWaitExpired])
 (import doeff_cluster.coordinator.core.cluster_policy [fresh-task-prefix])
 (import doeff_cluster.coordinator.core.program [run-coordinator])
 (import doeff_cluster.coordinator.entry.main [load-state])
@@ -129,7 +129,7 @@
 (import .detached [detached-path detached-submit-body detached-refusal submit-unreachable awaited-answer runner-facts-of-view
                    runners-unreachable warm-request-body warm-path absent-warm-state SERVER-ERROR warm-unconnected
                    warm-server-failure runners-change-of watch-query])
-(import .detached_model [SubmitDetached AwaitDetached CancelDetached ReleaseDetached ReadRunners DetachedSubmitted
+(import doeff_cluster.shared.intent.detached_model [SubmitDetached AwaitDetached CancelDetached ReleaseDetached ReadRunners DetachedSubmitted
                          DetachedSubmitAnswer DetachedAwaited RunnersUnreachable WARMING-PHASE AwaitRunnersChange RunnersChangeAnswer])
 (import .drain_client [drain-request DRAIN-DEADLINE-SECONDS DRAIN-TTL-MARGIN-SECONDS])
 (import .handlers [declared-job-spec task-spec heartbeat-body status-report desired-when-unreachable env-report env-heartbeat-part
@@ -139,18 +139,18 @@
 (import .host_contract [HOST-CONTRACT SIM-PASSABLE environ-reader])
 (import .job_context [RunContext worker-context-environ process-context-environ context-of-environ runtime-env-of-context])
 (import .job_entry [decoded-program])
-(import .metrics_model [ReportMetrics])
-(import .readiness_model [ReportReady])
+(import doeff_cluster.shared.intent.metrics_model [ReportMetrics])
+(import doeff_cluster.shared.intent.readiness_model [ReportReady])
 (import .remote [task-submit-body outcome-of settled-value])
-(import .remote_model [RemoteJob RemoteJobFailed TaskSucceeded TaskFailed encode-program encode-outcome failed-from program-sha])
+(import doeff_cluster.shared.intent.remote_model [RemoteJob RemoteJobFailed TaskSucceeded TaskFailed encode-program encode-outcome failed-from program-sha])
 (import .process_versions [current-versions])
 (import .report_client [report-request task-result-request task-id-of-job])
-(import .runtime_env_model [RuntimeEnv EnvFailure runtime-env->json current-platform])
+(import doeff_cluster.shared.intent.runtime_env_model [RuntimeEnv EnvFailure runtime-env->json current-platform])
 (import .semaphore_model [LeaseOp SEMAPHORE-PREFIX drop-holders lease-holder holder-tokens-prefix])
 (import .service_model [System Declaration system-declaration])
 (import .shared_handlers [board-read-request board-write-request lease-request])
 (import .shared_model [ReadShared WriteShared])
-(import .warm_model [WarmRuntimeEnv ReadWarmState WarmState WarmAnswer warm-state-of-json])
+(import doeff_cluster.shared.intent.warm_model [WarmRuntimeEnv ReadWarmState WarmState WarmAnswer warm-state-of-json])
 (import .worker [run-worker])
 (import .worker_model [JobSpec WorkerPolicy WorkerState WorldView CodeView CodeState ProcessView ProbeView ProbeState
                        DesiredJobs DesiredUnreadable ReadDesired ObserveWorld WorkerStopRequested PublishStatus

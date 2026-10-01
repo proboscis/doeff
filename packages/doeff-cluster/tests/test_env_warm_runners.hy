@@ -8,10 +8,10 @@
 (require doeff-hy.record [defrecord])
 (import dataclasses [dataclass])
 (import doeff_time [Delay])
-(import doeff_cluster.runtime_env_model [RuntimeEnv])
+(import doeff_cluster.shared.intent.runtime_env_model [RuntimeEnv])
 (import doeff_cluster.local [sim-cluster SimWorker DrainWorker])
 (import doeff_cluster.service_model [system-of])
-(import doeff_cluster.warm_model [WarmRuntimeEnv ReadWarmState WarmState])
+(import doeff_cluster.shared.intent.warm_model [WarmRuntimeEnv ReadWarmState WarmState])
 (import tests.env_fixtures [LOCK env-of])
 
 ;; gpu-1 は gpu を専用の能力に持つ(gpu を要らない行を受けない)・cpu-1 は一般の担い手。

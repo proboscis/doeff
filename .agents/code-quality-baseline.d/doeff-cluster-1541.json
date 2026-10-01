@@ -22,13 +22,6 @@
       "subject": "importlib.import_module"
     },
     {
-      "count": 1,
-      "path": "packages/doeff-cluster/src/doeff_cluster/remote_model.hy",
-      "reason": "registered-with-legacy",
-      "rule": "dynamic-boundary",
-      "subject": "importlib.import_module"
-    },
-    {
       "count": 2,
       "path": "packages/doeff-cluster/src/doeff_cluster/service_model.hy",
       "reason": "registered-with-legacy",
@@ -191,20 +184,6 @@
     },
     {
       "count": 1,
-      "path": "packages/doeff-cluster/src/doeff_cluster/remote_model.hy",
-      "reason": "registered-with-legacy",
-      "rule": "pure-io-import",
-      "subject": "os"
-    },
-    {
-      "count": 1,
-      "path": "packages/doeff-cluster/src/doeff_cluster/remote_model.hy",
-      "reason": "registered-with-legacy",
-      "rule": "pure-io-import",
-      "subject": "pathlib"
-    },
-    {
-      "count": 1,
       "path": "packages/doeff-cluster/src/doeff_cluster/code_prepare.hy",
       "reason": "path 起動の道具 — 案 C で layer を足すまで(agora-redesign #1695: worker が業務の環境で path 起動するので doeff_cluster の module を import できない)",
       "rule": "read-model-in-controller",
@@ -237,34 +216,6 @@
       "reason": "registered-with-legacy",
       "rule": "transitive-io-dependency",
       "subject": "packages/doeff-cluster/src/doeff_cluster/api_policy.hy -> urllib.parse"
-    },
-    {
-      "count": 1,
-      "path": "packages/doeff-cluster/src/doeff_cluster/coordinator/core/program_policy.hy",
-      "reason": "registered-with-legacy",
-      "rule": "transitive-io-dependency",
-      "subject": "packages/doeff-cluster/src/doeff_cluster/remote_model.hy -> os"
-    },
-    {
-      "count": 1,
-      "path": "packages/doeff-cluster/src/doeff_cluster/coordinator/core/program_policy.hy",
-      "reason": "registered-with-legacy",
-      "rule": "transitive-io-dependency",
-      "subject": "packages/doeff-cluster/src/doeff_cluster/remote_model.hy -> pathlib"
-    },
-    {
-      "count": 1,
-      "path": "packages/doeff-cluster/src/doeff_cluster/service_model.hy",
-      "reason": "registered-with-legacy",
-      "rule": "transitive-io-dependency",
-      "subject": "packages/doeff-cluster/src/doeff_cluster/remote_model.hy -> os"
-    },
-    {
-      "count": 1,
-      "path": "packages/doeff-cluster/src/doeff_cluster/service_model.hy",
-      "reason": "registered-with-legacy",
-      "rule": "transitive-io-dependency",
-      "subject": "packages/doeff-cluster/src/doeff_cluster/remote_model.hy -> pathlib"
     },
     {
       "count": 2,

@@ -3,7 +3,7 @@
 10 passed, 1 warning in 1.47s
 exit=0
 ## controllers/worker/tests/test_conversation_writer.hy 01:10:25
-E     AssertionError: ['doeff_cluster.metrics_model:ReadProcessGauges', 'doeff_cluster.metrics_model:ReportMetrics', 'doeff_cluster.readiness_model:ReportReady', 'doeff_cluster.semaphore_model:CreateNamedSemaphore', 'doeff_cluster.semaphore_model:HeldLease', 'doeff_cluster.shared_model:WriteShared', 'doeff_core_effects.effects:Ask', 'doeff_core_effects.scheduler:AcquireSemaphore', 'doeff_core_effects.scheduler:Spawn', 'doeff_core_effects.scheduler:Wait', 'doeff_time.effects.time:DelayEffect', 'doeff_time.effects.time:GetMonotonicEffect', 'doeff_time.effects.time:GetTimeEffect']
+E     AssertionError: ['doeff_cluster.shared.intent.metrics_model:ReadProcessGauges', 'doeff_cluster.shared.intent.metrics_model:ReportMetrics', 'doeff_cluster.shared.intent.readiness_model:ReportReady', 'doeff_cluster.semaphore_model:CreateNamedSemaphore', 'doeff_cluster.semaphore_model:HeldLease', 'doeff_cluster.shared_model:WriteShared', 'doeff_core_effects.effects:Ask', 'doeff_core_effects.scheduler:AcquireSemaphore', 'doeff_core_effects.scheduler:Spawn', 'doeff_core_effects.scheduler:Wait', 'doeff_time.effects.time:DelayEffect', 'doeff_time.effects.time:GetMonotonicEffect', 'doeff_time.effects.time:GetTimeEffect']
 FAILED controllers/worker/tests/test_conversation_writer.hy::test_writer_recording_covers_every_effect_and_replays_identically
 1 failed, 7 passed, 1 warning in 1.42s
 exit=1

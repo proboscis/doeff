@@ -26,7 +26,7 @@
 (import sys)
 (import time)
 (import pathlib [Path])
-(import doeff_cluster.runtime_env_model [RepoCheckout NativeWheel PythonProject RuntimeEnv EnvFailureKind
+(import doeff_cluster.shared.intent.runtime_env_model [RepoCheckout NativeWheel PythonProject RuntimeEnv EnvFailureKind
                                          runtime-env->json env-key current-platform])
 (import doeff_cluster.runtime_env [LocalCheckout ProjectOfCheckout runtime-env-of-checkouts checkout-reads])
 (import doeff_core_effects.os_process [subprocess-handler])
@@ -36,7 +36,7 @@
 (import doeff_cluster.worker_model [CodeState CodeView StartJob ReapJob Outcome WorldView WorkerPolicy PrepareEnv WarmEnv
                                     code-key JobSpec])
 (import doeff_cluster.worker_policy [plan])
-(import doeff_cluster.remote_model [encode-program decode-outcome TaskSucceeded TaskFailed])
+(import doeff_cluster.shared.intent.remote_model [encode-program decode-outcome TaskSucceeded TaskFailed])
 (import doeff_cluster.process_versions [current-versions])
 
 
@@ -287,7 +287,7 @@
   (assert (any (gfor p (get results "leaky") (in "PYTHONPATH" p))) "子に PYTHONPATH を残すと筋書き 1 が赤")
   (assert (any (gfor p (get results "restarting") (in "worker の pid" p))) "worker の再起動で走らせると筋書き 2 が赤")
   ;; 送り手の版の doeff を 1 つずらす → 子が復元を断り、欄の名と env のキーが載る
-  (import doeff_cluster.detached_model [outcome-from-task-outcome DetachedVersionMismatch])
+  (import doeff_cluster.shared.intent.detached_model [outcome-from-task-outcome DetachedVersionMismatch])
   (<- key str (env-key env (current-platform)))
   (val shifted (| (current-versions) {"doeff" "0.0.0-shifted"}))
   (<- refused (run-task rig env "shifted" :versions shifted))

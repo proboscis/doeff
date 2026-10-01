@@ -13,7 +13,7 @@
 (import json)
 (import doeff [Program run with_handlers])
 (import doeff_core_effects.scheduler [scheduled])
-(import doeff_cluster.runtime_env_model [RuntimeEnv RepoCheckout PythonProject EnvVar runtime-env->json env-key])
+(import doeff_cluster.shared.intent.runtime_env_model [RuntimeEnv RepoCheckout PythonProject EnvVar runtime-env->json env-key])
 (import doeff_cluster.env_prepare [EnvMarker env-marker->json])
 (import doeff_cluster.runtime_identity [IdentityFailureKind ModuleOrigin ProcessFacts RuntimeIdentity RuntimeIdentityMismatch
                                           RepoCommit check-runtime-identity given-runtime-facts])

@@ -27,7 +27,7 @@
 (import doeff [EffectBase Program with_handlers])
 (import doeff_core_effects.handlers [state])
 (import doeff_cluster)
-(import doeff_cluster.runtime_env_model [RuntimeEnv RepoCheckout PythonProject runtime-env->json env-key])
+(import doeff_cluster.shared.intent.runtime_env_model [RuntimeEnv RepoCheckout PythonProject runtime-env->json env-key])
 (import doeff_cluster.env_prepare [ENV-MARKER EnvMarker env-marker->json])
 (import doeff_cluster.runtime_identity [ModuleOrigin ProcessFacts ReadRuntimeFacts given-runtime-facts])
 (import doeff_cluster.runtime_identity_process [process-runtime-facts])

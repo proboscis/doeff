@@ -11,8 +11,8 @@
 (import doeff_cluster.shared.intent.protocol [ClusterTiming])
 (import doeff_cluster.coordinator.intent.cluster_model [ClusterState WarmEntry])
 (import doeff_cluster.coordinator.core.cluster_policy [alive placeable request-needs tools-cover root-key-on draining-workers BOARD-MAX-TTL-SECONDS])
-(import doeff_cluster.runtime_env_model [runtime-env-of-json RuntimeEnvInvalid])
-(import doeff_cluster.warm_model [WarmState WarmFailure warm-key warm-state->json])
+(import doeff_cluster.shared.intent.runtime_env_model [runtime-env-of-json RuntimeEnvInvalid])
+(import doeff_cluster.shared.intent.warm_model [WarmState WarmFailure warm-key warm-state->json])
 
 
 (defn #^ WarmState warm-view [#^ ClusterState state #^ WarmEntry entry #^ int now #^ ClusterTiming timing]

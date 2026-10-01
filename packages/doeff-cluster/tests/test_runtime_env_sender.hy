@@ -10,7 +10,7 @@
 (import pathlib [Path])
 (import pytest)
 (import doeff [Program])
-(import doeff_cluster.runtime_env_model [RuntimeEnv RuntimeEnvInvalid InvalidKind])
+(import doeff_cluster.shared.intent.runtime_env_model [RuntimeEnv RuntimeEnvInvalid InvalidKind])
 (import doeff_cluster.runtime_env [LocalCheckout ProjectOfCheckout SenderSourceRoot runtime-env-of-checkouts checkout-reads])
 (import doeff_core_effects.os_process [subprocess-handler])
 (import doeff_core_effects.os_file [os-file-handler])

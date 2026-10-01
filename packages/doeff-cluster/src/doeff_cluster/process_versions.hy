@@ -13,7 +13,7 @@
 (import sys)
 (import types [MappingProxyType ModuleType])
 (import doeff.do)
-(import doeff_cluster.remote_model [RemoteJobFailed])
+(import doeff_cluster.shared.intent.remote_model [RemoteJobFailed])
 
 
 (defn #^ str _source-fingerprint [#^ ModuleType module]

@@ -20,7 +20,7 @@
 (import doeff_core_effects.handlers [state])
 (import doeff_core_effects.scheduler [Spawn Task Gather])
 (import doeff_time [SimClock sim-time-handler GetMonotonic])
-(import doeff_cluster.runtime_env_model [RepoCheckout NativeWheel PythonProject ToolRequirement EnvVar RuntimeEnv
+(import doeff_cluster.shared.intent.runtime_env_model [RepoCheckout NativeWheel PythonProject ToolRequirement EnvVar RuntimeEnv
                                          RuntimeEnvInvalid InvalidKind EnvFailure EnvFailureKind env-key key-material
                                          runtime-env->json runtime-env-of-json])
 (import doeff_cluster.env_prepare [PrepareRequest KnownRoot EnvReady prepare-env ENV-MARKER ROOTS-PTH])

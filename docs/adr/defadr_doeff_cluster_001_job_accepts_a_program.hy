@@ -52,7 +52,7 @@
   :status "accepted"
   :scope ["packages/doeff-cluster/src/doeff_cluster/job_entry.hy"
           "packages/doeff-cluster/src/doeff_cluster/service_model.hy"
-          "packages/doeff-cluster/src/doeff_cluster/remote_model.hy"
+          "packages/doeff-cluster/src/doeff_cluster/shared/intent/remote_model.hy"
           "docs/adr/defadr_doeff_cluster_001_job_accepts_a_program.hy"]
   :problem
     [(fact
@@ -75,7 +75,7 @@
        :evidence "Claude Code の会話(2026-09-27・agora-redesign #829)— coordinator 経由")
      (fact
        "task は Program の値を encode-program で詰めた文字列(--blob の file)で運び、実行先が decode-program で解く。service は関数の参照(module:attr)と本体の引数の JSON(:config)で運び、実行先が関数を呼んで Program を作る — 同じ job なのに運び方が 2 つある。"
-       :evidence "packages/doeff-cluster/src/doeff_cluster/remote_model.hy(encode-program・decode-program)・job_entry.hy(run-service・task-outcome)")
+       :evidence "packages/doeff-cluster/src/doeff_cluster/shared/intent/remote_model.hy(encode-program・decode-program)・job_entry.hy(run-service・task-outcome)")
      (fact
        "operator 裁定 2026-09-27(置き場所・逐語 2 つ): \"hmm, but specifying such 'kind:k3s' sounds... not right\" / \"declaring what a program require is okay, but it shouldnt be 'k3s' right? we want a program to declare required capability rather than runner location\""
        :evidence "Claude Code の会話(2026-09-27・agora-redesign #829)— coordinator 経由")

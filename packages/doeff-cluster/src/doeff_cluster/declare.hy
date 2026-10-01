@@ -28,7 +28,7 @@
 (import doeff_core_effects.scheduler [scheduled])
 (import .process_versions [current-versions])
 (import .runtime_env [checkout-reads checked-declaring-checkout])
-(import .runtime_env_model [RepoCheckout RuntimeEnvInvalid])
+(import doeff_cluster.shared.intent.runtime_env_model [RepoCheckout RuntimeEnvInvalid])
 (import .service_model [resolve resolve-value system-declaration environ-overlay-refusal foundation-needs-refusal System Declaration])
 
 

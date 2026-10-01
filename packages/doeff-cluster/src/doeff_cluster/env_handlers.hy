@@ -44,7 +44,7 @@
 (import doeff_core_effects.os_process [subprocess-handler])
 (import doeff_core_effects.os_file [os-file-handler])
 (import doeff_time [sync-time-handler])
-(import .runtime_env_model [EnvFailure EnvFailureKind RuntimeEnv runtime-env-of-json])
+(import doeff_cluster.shared.intent.runtime_env_model [EnvFailure EnvFailureKind RuntimeEnv runtime-env-of-json])
 (import .env_prepare [StageStarted PrepareNote DiskFree RepoAllowed EnsureMirror FetchCommit MaterializeTree FileSha256 TreeHash
                       EnsureNativeWheel SyncProject InstallWheels WriteImportRoots ReadEditableRoots CompileTree ProbeImports WriteEnvMarker
                       MirrorReady FetchState WheelReady SyncReport BytecodeReport ProbeReport
@@ -71,7 +71,7 @@
 (val PROBE-PROGRAM (.join "\n" [
   "(import importlib.util json os sys)"
   "(setv protocol 0)"
-  "(try (do (import doeff_cluster.runtime_env_model [CHILD-PROTOCOL]) (setv protocol CHILD-PROTOCOL)) (except [Exception] None))"
+  "(try (do (import doeff_cluster.shared.intent.runtime_env_model [CHILD-PROTOCOL]) (setv protocol CHILD-PROTOCOL)) (except [Exception] None))"
   "(defn has-source [d] (any (gfor #(p ds fs) (os.walk d) f fs (.endswith f #(\".py\" \".hy\")))))"
   "(setv misplaced [])"
   "(for [root (cut sys.argv 1 None)]"

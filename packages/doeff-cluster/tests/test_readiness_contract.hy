@@ -6,7 +6,7 @@
 ;;;   * coordinator へ届かない間も答えは None(業務を止めない)・届くようになった後の報告は残る
 ;;; 報告の送り手の世代と、Ready の数え方(window)は本物だけの性質なので契約の外(test_resources.hy)。
 (require doeff-hy.macros [deftest <-])
-(import doeff_cluster.readiness_model [ReportReady ROLE-ACTIVE ROLE-STANDBY])
+(import doeff_cluster.shared.intent.readiness_model [ReportReady ROLE-ACTIVE ROLE-STANDBY])
 (import tests.coordinator_contract_handlers [ReportSeen SetReachable READINESS])
 
 
