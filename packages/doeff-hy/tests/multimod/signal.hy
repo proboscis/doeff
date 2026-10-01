@@ -1,8 +1,8 @@
 ;;; Signal generation — uses LLMRank + calls data_fetch
 (require doeff-hy.macros [defk <-])
 (import doeff [do :as _doeff-do])
-(import tests.multimod.effects [LLMRank SendSlack])
-(import tests.multimod.data_fetch [fetch-all-data])
+(import multimod.effects [LLMRank SendSlack])
+(import multimod.data_fetch [fetch-all-data])
 
 (defk generate-signal [ticker day]
   {:pre [(: ticker str) (: day str)] :post [(: % dict)]}
