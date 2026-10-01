@@ -54,12 +54,6 @@
   (or (not watching) (not fresh) woken statuses-changed (>= silent-ms interval-ms)))
 
 
-(deff watch-params [#^ int after #^ str worker #^ str boot #^ bool confirmed]  ; defk にできない: worker の coordinator への口(worker/protocol/coordinator_link)と sim の宿が同じ問いを作る
-  {:pre [(: after int) (: worker str) (: boot str) (: confirmed bool)] :post [(: % dict)] :tags {:context "doeff-cluster" :role "protocol"}}
-  "名指しの待ちの問い(GET /watch の query)を作るため。まだ口を確かめていない最初の待ちは 0 秒(すぐ答える — 待つ口の有無を確かめ、
-   確かめるまで毎拍の heartbeat を続ける)、その後は上限まで待つ。"
-  {"after" (str after) "timeoutSeconds" (str (if confirmed WATCH-MAX-SECONDS 0.0)) "worker" worker "boot" boot})
-
 
 (deff watch-reading [#^ (| int None) status #^ (| dict list str int float bool None) body]  ; defk にできない: worker の coordinator への口(worker/protocol/coordinator_link)と sim の宿が同じ読みを使う
   {:pre [(: status (| int None)) (: body (| dict list str int float bool None))] :post [(: % WatchReading)]

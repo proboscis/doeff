@@ -136,8 +136,9 @@
 (import doeff_cluster.worker.core.drain_client [drain-request DRAIN-DEADLINE-SECONDS DRAIN-TTL-MARGIN-SECONDS])
 (import doeff_cluster.handlers [declared-job-spec task-spec
 ] doeff_cluster.worker.protocol.heartbeat [heartbeat-body status-report env-report env-heartbeat-part] doeff_cluster.worker.core.heartbeat_rules [desired-when-unreachable warm-env-of-row])
-(import doeff_cluster.worker.core.beat_policy [WatchKind WatchReading beat-interval-ms heartbeat-due watch-params watch-reading reply-revision
+(import doeff_cluster.worker.core.beat_policy [WatchKind WatchReading beat-interval-ms heartbeat-due watch-reading reply-revision
                       WATCH-RETRY-SECONDS WAKE-HOLD-SECONDS])
+(import doeff_cluster.worker.protocol.coordinator_link [watch-params])
 (import doeff_cluster.foundation.host_contract [HOST-CONTRACT SIM-PASSABLE environ-reader])
 (import doeff_cluster.job_context [RunContext worker-context-environ process-context-environ context-of-environ runtime-env-of-context])
 (import doeff_cluster.job_entry [decoded-program])

@@ -10,7 +10,7 @@
 ;;;     cache に無い詰めた Program を取り寄せる(中身の sha256 がキーと合わない物は書かない)。
 ;;;   * 届かなければ desired-when-unreachable(途絶が fence を越えたら lease を持たない job と task を止める)。
 ;;;   * 名指しの待ち(#1933)は背景の task(Spawn の daemon)で送り続け、「変わった」と答えたら次の拍で heartbeat を送らせる。
-(require doeff-hy.macros [defhandler defk <- val var])
+(require doeff-hy.macros [defhandler defk deff <- val var])
 (val MODULE-TAGS {:context "doeff-cluster" :role "protocol"})
 (import json)
 (import os)
@@ -24,8 +24,9 @@
 (import doeff_cluster.shared.intent.remote_model [program-sha])
 (import doeff_cluster.shared.intent.runtime_env_model [current-platform])
 (import doeff_cluster.shared.protocol.coordinator_route [CoordinatorRoute RouteCell RouteOptions RoutedReply routed-request answer-json])
-(import doeff_cluster.worker.core.beat_policy [WatchKind WatchReading beat-interval-ms heartbeat-due watch-params watch-reading reply-revision
+(import doeff_cluster.worker.core.beat_policy [WatchKind WatchReading beat-interval-ms heartbeat-due watch-reading reply-revision
                                                WATCH-RETRY-SECONDS WAKE-HOLD-SECONDS])
+(import doeff_cluster.shared.intent.protocol [WATCH-MAX-SECONDS])
 (import doeff_cluster.worker.core.heartbeat_rules [warm-env-of-row finished-task-id desired-when-unreachable])
 (import doeff_cluster.worker.core.launch [program-file program-file-text])
 (import doeff_cluster.worker.intent.worker_model [DesiredJobs DesiredUnreadable ReadDesired PublishStatus])
@@ -73,6 +74,13 @@
           self.watch-enabled watch self.watch (WatchCell)
           self.last-desired None self.sent-statuses None self.beat-interval-ms (beat-interval-ms None {}))))
 
+
+
+(deff watch-params [#^ int after #^ str worker #^ str boot #^ bool confirmed]  ; defk にできない: この口と sim の宿が同じ問いを作る(worker/core/beat_policy から移した — 役 protocol・agora-redesign #2541)
+  {:pre [(: after int) (: worker str) (: boot str) (: confirmed bool)] :post [(: % dict)] :tags {:context "doeff-cluster" :role "protocol"}}
+  "名指しの待ちの問い(GET /watch の query)を作るため。まだ口を確かめていない最初の待ちは 0 秒(すぐ答える — 待つ口の有無を確かめ、
+   確かめるまで毎拍の heartbeat を続ける)、その後は上限まで待つ。"
+  {"after" (str after) "timeoutSeconds" (str (if confirmed WATCH-MAX-SECONDS 0.0)) "worker" worker "boot" boot})
 
 (defk told-once [state outcome line]
   {:pre [(: state LinkState) (: outcome str) (: line str)] :post [(: % None)]}
