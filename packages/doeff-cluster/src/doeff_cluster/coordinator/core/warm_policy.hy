@@ -4,12 +4,14 @@
 ;;;   GET  /warm/<キー>                                        → WarmState(表に無ければ 404)
 ;;;
 ;;; 行を worker に配るのは cluster_policy.heartbeat-reply(warms-for)、期限を過ぎた行を消すのは cluster_policy.reconcile(sweep-warms)。
+(require doeff-hy.macros [val])
+(val MODULE-TAGS {:context "coordinator" :role "judgment"})
 (import dataclasses [replace])
 (import doeff [run])
-(import .cluster_model [ClusterState ClusterTiming WarmEntry])
+(import doeff_cluster.cluster_model [ClusterState ClusterTiming WarmEntry])
 (import doeff_cluster.coordinator.core.cluster_policy [alive placeable request-needs tools-cover root-key-on draining-workers BOARD-MAX-TTL-SECONDS])
-(import .runtime_env_model [runtime-env-of-json RuntimeEnvInvalid])
-(import .warm_model [WarmState WarmFailure warm-key warm-state->json])
+(import doeff_cluster.runtime_env_model [runtime-env-of-json RuntimeEnvInvalid])
+(import doeff_cluster.warm_model [WarmState WarmFailure warm-key warm-state->json])
 
 
 (defn #^ WarmState warm-view [#^ ClusterState state #^ WarmEntry entry #^ int now #^ ClusterTiming timing]

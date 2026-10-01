@@ -226,28 +226,28 @@
     },
     {
       "count": 1,
-      "path": "packages/doeff-cluster/src/doeff_cluster/idle_policy.hy",
+      "path": "packages/doeff-cluster/src/doeff_cluster/coordinator/core/idle_policy.hy",
       "reason": "registered-with-legacy",
       "rule": "transitive-io-dependency",
       "subject": "packages/doeff-cluster/src/doeff_cluster/api_policy.hy -> os.path"
     },
     {
       "count": 1,
-      "path": "packages/doeff-cluster/src/doeff_cluster/idle_policy.hy",
+      "path": "packages/doeff-cluster/src/doeff_cluster/coordinator/core/idle_policy.hy",
       "reason": "registered-with-legacy",
       "rule": "transitive-io-dependency",
       "subject": "packages/doeff-cluster/src/doeff_cluster/api_policy.hy -> urllib.parse"
     },
     {
       "count": 1,
-      "path": "packages/doeff-cluster/src/doeff_cluster/program_policy.hy",
+      "path": "packages/doeff-cluster/src/doeff_cluster/coordinator/core/program_policy.hy",
       "reason": "registered-with-legacy",
       "rule": "transitive-io-dependency",
       "subject": "packages/doeff-cluster/src/doeff_cluster/remote_model.hy -> os"
     },
     {
       "count": 1,
-      "path": "packages/doeff-cluster/src/doeff_cluster/program_policy.hy",
+      "path": "packages/doeff-cluster/src/doeff_cluster/coordinator/core/program_policy.hy",
       "reason": "registered-with-legacy",
       "rule": "transitive-io-dependency",
       "subject": "packages/doeff-cluster/src/doeff_cluster/remote_model.hy -> pathlib"

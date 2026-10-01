@@ -5,7 +5,7 @@
 (import pathlib [Path])
 (import typing [TypedDict Unpack])
 (import httpx)
-(import .kube_model [ReadDeployment ScaleDeployment AnnotateDeployment ReadNodeLabels KubeUnavailable])
+(import doeff_cluster.coordinator.intent.kube_model [ReadDeployment ScaleDeployment AnnotateDeployment ReadNodeLabels KubeUnavailable])
 
 
 (defclass KubeRequestOptions [TypedDict :total False]

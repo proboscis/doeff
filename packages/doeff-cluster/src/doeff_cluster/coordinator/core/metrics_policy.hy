@@ -14,9 +14,11 @@
 ;;;   doeff_worker_service_ready_replicas{service}(仕事をしている Ready だけ)・doeff_worker_service_standby{service}(lease を待つ待機の Ready)・
 ;;;   doeff_worker_service_unplaced{service}・doeff_worker_service_last_metrics_age_seconds{service}(どの process の物でも最新の計器の報告の古さ)・
 ;;;   doeff_worker_worker_heartbeat_age_seconds{worker}(worker ごとの最後の heartbeat の古さ — coordinator 自身の alert の材料)。
+(require doeff-hy.macros [val])
+(val MODULE-TAGS {:context "coordinator" :role "judgment"})
 (import dataclasses [replace])
 (import math)
-(import .cluster_model [ClusterState ClusterTiming PLACED-PHASES])
+(import doeff_cluster.cluster_model [ClusterState ClusterTiming PLACED-PHASES])
 (import doeff_cluster.coordinator.core.resource_policy [refuse running-process current-report keep-report report-fields service-readiness])
 (import doeff_cluster.coordinator.core.cluster_policy [unplaced-jobs board-usage])
 

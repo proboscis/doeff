@@ -18,7 +18,7 @@
                         LiveProcess BodyInvalid required-field int-field])
 (import doeff_cluster.worker_model [spec-hash JobPhase])
 (import doeff_cluster.coordinator.core.cluster_policy [job-from-json job-to-json alive still-live-somewhere service-rows unplaced-kind unplaced-text task-summary])
-(import doeff_cluster.rollout_policy [validate-rollout-spec rollout-targets target-key TERMINAL-PHASES])
+(import doeff_cluster.coordinator.core.rollout_policy [validate-rollout-spec rollout-targets target-key TERMINAL-PHASES])
 (import doeff [run])
 (import doeff_cluster.readiness_model [handoff-timeout-ms reported-readiness])
 

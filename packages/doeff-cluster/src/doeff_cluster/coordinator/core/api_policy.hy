@@ -33,19 +33,19 @@
 (import dataclasses [replace])
 (import traceback [extract-tb])
 (import doeff_cluster.cluster_model [ClusterState ClusterTiming ClusterNaming Request PlainText BodyInvalid Fault format-refusal text-field list-field])
-(import doeff_cluster.metrics_policy [record-metrics metrics-text])
+(import doeff_cluster.coordinator.core.metrics_policy [record-metrics metrics-text])
 (import doeff_cluster.coordinator.core.cluster_policy [reconcile register-heartbeat heartbeat-reply state-view submit-task poll-task absorb-task-result board-write note-liveness
                          lease-write other-generation-boot])
 (import doeff_cluster.coordinator.core.resource_policy [Refused refuse stamp require-actor valid-actor service-readiness service-stopped record-readiness
                           running-process list-resources get-resource events-view create-resource update-resource delete-resource
                           legacy-put-jobs COORDINATOR])
-(import doeff_cluster.drain_policy [advance-drains request-drain cancel-drain worker-view superseded-worker-view drains-view])
-(import doeff_cluster.handoff_policy [watch-handoffs])
+(import doeff_cluster.coordinator.core.drain_policy [advance-drains request-drain cancel-drain worker-view superseded-worker-view drains-view])
+(import doeff_cluster.coordinator.core.handoff_policy [watch-handoffs])
 (import doeff_cluster.cluster_model [HandoffPhase])
-(import doeff_cluster.detached_policy [Reply submit-detached detached-read cancel-detached release-detached])
-(import doeff_cluster.rollout_policy [rollout-step target-key deployment-owners drift-status action-due shift-clocks TERMINAL-PHASES])
-(import doeff_cluster.warm_policy [warm-write warm-read])
-(import doeff_cluster.program_policy [program-write program-read sweep-programs])
+(import doeff_cluster.coordinator.core.detached_policy [Reply submit-detached detached-read cancel-detached release-detached])
+(import doeff_cluster.coordinator.core.rollout_policy [rollout-step target-key deployment-owners drift-status action-due shift-clocks TERMINAL-PHASES])
+(import doeff_cluster.coordinator.core.warm_policy [warm-write warm-read])
+(import doeff_cluster.coordinator.core.program_policy [program-write program-read sweep-programs])
 
 (setv OBSERVATION-STALE-MS 15000)   ; これより古い k8s の観測は Unknown
 (setv ROLLOUT-ACTOR "rollout-controller")
