@@ -184,6 +184,18 @@ class AuditEvent:
     changes: dict[str, object]
 
 @dataclass(frozen=True, kw_only=True)
+class EventsView:
+    revision: int
+    seq: int
+    events: tuple[AuditEvent, ...]
+
+@dataclass(frozen=True, kw_only=True)
+class StateReply:
+    view: dict[str, object]
+    audit: tuple[AuditEvent, ...]
+    drains: dict[str, object]
+
+@dataclass(frozen=True, kw_only=True)
 class WorkerReport:
     at: int
     endpoint: str | None

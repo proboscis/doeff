@@ -19,6 +19,7 @@
 (import doeff_cluster.coordinator.core.program [run-coordinator])
 (import doeff_cluster.coordinator.protocol.request_bodies [request-bodies])
 (import doeff_cluster.coordinator.protocol.store [Persist durable-states])
+(import doeff_cluster.coordinator.protocol.replies [reply-bodies])
 (import doeff_cluster.foundation.wal_store [WalStore])
 (import doeff_cluster.coordinator.protocol.durable_kv [LEGACY-PLACEMENT PLACEMENT])
 
@@ -175,7 +176,7 @@
 
 (defn #^ Callable scripted [#^ Script script]
   "台本の外側に仮想の時計(script の SimClock)を被せる。"
-  (fn [program] ((sim-time-handler :clock script.clock) ((scripted-requests script) (request-bodies (durable-states program))))))
+  (fn [program] ((sim-time-handler :clock script.clock) ((scripted-requests script) (request-bodies (durable-states (reply-bodies program)))))))
 
 (deftest test-coordinator-loop-answers-after-persisting
   (setv script (Script [(req "POST" "/heartbeat" {"name" "w" "provides" ["net"] "capacity" 10 "versions" V})

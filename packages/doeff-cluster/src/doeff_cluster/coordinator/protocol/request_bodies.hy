@@ -10,6 +10,7 @@
 (import doeff_cluster.coordinator.core.cluster_rules [required-field])
 (import doeff_cluster.coordinator.intent.request_bodies [LeaseBody TaskResultBody DrainBody ReadinessBody MetricsBody ProgramBody BoardWireBody BoardWrite HeartbeatBody ResourceBody TaskBody WarmBody LegacyJobsBody BodyMalformed ReadBody RequestBody])
 (import doeff_cluster.coordinator.core.api_policy [respond])
+(import doeff_cluster.coordinator.protocol.replies [reply-json])
 
 
 (defn #^ (| type None) body-type-of [#^ str method #^ tuple parts]  ; defk にできない: 道の振り分けの純粋な表(内包と条件の中で読む)
@@ -97,5 +98,7 @@
 
 
 (defn #^ tuple responded [#^ ClusterState state #^ Request request #^ int now #^ ClusterTiming timing]  ; defk にできない: 判断を直に呼ぶ検と模擬の世界(Program の外)が呼ぶ
-  "要求 1 件の本文を道の型に解いてから判断(api_policy.respond)に答えさせる — 本番の調停ループの ReadBody と同じ解き。"
-  (respond state request now timing (run (body-of request))))
+  "要求 1 件の本文を道の型に解いてから判断(api_policy.respond)に答えさせ、返事の本文を JSON の形に綴る — 本番の調停ループの ReadBody と
+   返事の答え手 reply-bodies と同じ解きと綴り。"
+  (setv #(after status body) (respond state request now timing (run (body-of request))))
+  #(after status (reply-json body)))
