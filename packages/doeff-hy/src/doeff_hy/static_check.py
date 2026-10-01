@@ -193,20 +193,32 @@ def _span(generated: ast.AST, original: ast.AST) -> Span | None:
 
 #: 定義の記帳(実行時の内観のための属性 — 型の意味を持たない)だけが使う module。展開の後に使い手が残らなければ
 #: import を外す(pyright strict で doeff_hy.quoted_forms の stub 無し・doeff_hy.declarations の重複の import に
-#: なっていた — agora の画面の core の 3 file で 241 件・agora-redesign #2153)。
+#: なっていた — agora の画面の core の 3 file で 241 件・agora-redesign #2153)。doeff_hy.pytest_items は pytest の
+#: item の記録(deftest・defadr・defsemgrep・pytestmark が足す — 収集のための記帳)だけが使う(stub 無しの赤 — #2214)。
 BOOKKEEPING_MODULES: frozenset[str] = frozenset(
-    {"doeff_hy.declarations", "doeff_hy.quoted_forms", "doeff_hy.record"}
+    {"doeff_hy.declarations", "doeff_hy.quoted_forms", "doeff_hy.record", "doeff_hy.pytest_items"}
 )
 
 
 def _bookkeeping_statement(statement: ast.stmt) -> bool:
-    """型検査に見せない module の直下の文か: 定義の記帳 `setattr(名, '__doeff_…__', …)` と、
-    Hy が `(require …)` を compile した残り `hy.macros.require(…)`(macro の取り込みは展開の時に済んでいる)。"""
+    """型検査に見せない module の直下の文か: 定義の記帳 `setattr(名, '__doeff_…__', …)`、pytest の item の記録
+    `doeff_hy.pytest_items.record_at_import(globals(), …)`(doeff_hy/pytest_items.py の `_record_form` が足す — 収集の
+    ための記帳・agora-redesign #2214)と、Hy が `(require …)` を compile した残り `hy.macros.require(…)`
+    (macro の取り込みは展開の時に済んでいる)。"""
     match statement:
         case ast.Expr(
             value=ast.Call(func=ast.Name(id="setattr"), args=[_, ast.Constant(value=str(attribute)), *_])
         ):
             return attribute.startswith("__doeff_")
+        case ast.Expr(
+            value=ast.Call(
+                func=ast.Attribute(
+                    value=ast.Attribute(value=ast.Name(id="doeff_hy"), attr="pytest_items"),
+                    attr="record_at_import",
+                )
+            )
+        ):
+            return True
         case ast.Expr(
             value=ast.Call(
                 func=ast.Attribute(
@@ -333,11 +345,15 @@ def with_static_helpers(tree: ast.Module) -> ast.Module:
 
 def _only_used(statement: ast.stmt, used: frozenset[str]) -> ast.stmt | None:
     """補助の import の文から、module が読む名だけを残す(1 つも読まなければ文ごと要らない = None)。
-    `import hy.models` は `hy` を束縛するので、読む時だけ置く呼び手の判断に任せてそのまま返す。"""
+    `import pytest as _doeff_pytest`(deftest の decorator が引く)も読む時だけ置く。`import hy.models` は `hy` を
+    束縛し、読む時だけ置く呼び手が足すので、この判じでも残る。"""
     match statement:
         case ast.ImportFrom(module=module, names=names, level=level):
             kept = [alias for alias in names if _bound_name(alias) in used]
             return ast.ImportFrom(module=module, names=kept, level=level) if kept else None
+        case ast.Import(names=names):
+            kept = [alias for alias in names if _bound_name(alias) in used]
+            return ast.Import(names=kept) if kept else None
         case _:
             return statement
 

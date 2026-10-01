@@ -45,6 +45,8 @@ macro の展開が型のために持つ形:
 | `defhandler` の `(resume v)` / `(transfer v)` | `Resume(k, v)` / `Transfer(k, v)` | core の `typed_resume(effect, k, v)` / `typed_transfer`(v を effect の答えの型と突き合わせる) |
 | 文の位置の式 | `_guard_statement_value(form, …)` | `_guard_statement_value(reveal_type(form), …)` |
 | 関数への属性 | `setattr(f, '__doeff_body__', …)` | 同じ |
+| `deftest` の関数 | `def test_x(doeff_interpreter, tmp_path):` + `return doeff_interpreter(…)` | `def test_x(doeff_interpreter: _doeff_DeftestInterpreter, tmp_path: _doeff_TmpPath) -> None:`(fixture の名 → 型の表 = `static_view.py` の `DEFTEST_FIXTURE_TYPES`・型 = `static_types.pyi`。表に無い名は書き手の `#^ T 名` を写し、無ければ `object`)。decorator の pytest は module の頭の `_doeff_pytest`(agora-redesign #2214) |
+| pytest の item の記録 | `doeff_hy.pytest_items.record_at_import(globals(), …)` | 記帳として外す(`static_check.without_bookkeeping`) |
 
 ## 捕まえるもの(2026-09-23 の測定)
 

@@ -14,6 +14,8 @@
   (呼んだ結果が core の `Expand[T, E]` = 答えの型 T を持つ Program になる)
 - defhandler の `resume` / `transfer`: core の `typed_resume` / `typed_transfer`
   (答えの値を effect の `EffectBase[T]` の T と突き合わせる)
+- deftest の関数: 引数に fixture の型の注記(DEFTEST_FIXTURE_TYPES)・返り値 None・decorator の pytest は
+  `_doeff_pytest`(agora-redesign #2214 — 実行時の展開は注記なしで interpreter の答えを返す)
 
 所見の受け渡し(ADR-DOE-HY-006): val / var の検査のうち展開を止めない物(setv の使用・同じ名前の
 束縛し直し・defhandler の旧い lazy-val / set!)は、macro が `report_findings` に渡す。doeff-hy-check が
@@ -27,10 +29,60 @@
 from collections.abc import Iterable, Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar
+from dataclasses import dataclass
 
 from doeff_hy.binding_forms import Finding
 
 _STATIC_VIEW: ContextVar[bool] = ContextVar("doeff_hy_static_view", default=False)
+
+
+@dataclass(frozen=True)
+class FixtureType:
+    """pytest の fixture の名 1 つと、その値の型(doeff_hy/static_types.pyi の型の名)。"""
+
+    fixture: str
+    type_name: str
+
+
+#: deftest が作る検の関数の引数の型(agora-redesign #2214)— fixture の名と static_types.pyi の型の名の組の唯一の定義元。
+#: 型検査のための展開では、deftest(macros.hy)が `deftest_fixture_annotation` で引数に注記 `_doeff_<型の名>` を付け、
+#: doeff-hy-check がその名を module の頭で static_types から import する(STATIC_HELPER_IMPORTS)。ここに無い名
+#: (利用者が conftest で定義した fixture・:params の引数)は、書き手の `#^ T 名` の注記をそのまま、無ければ `object` を付ける。
+#: pytest の組み込みのうち tmpdir は型(py.path.local)が pytest の公開の名に無いので載せない(object になる)。
+DEFTEST_FIXTURE_TYPES: tuple[FixtureType, ...] = (
+    FixtureType("doeff_interpreter", "DeftestInterpreter"),
+    FixtureType("tmp_path", "TmpPath"),
+    FixtureType("tmp_path_factory", "TmpPathFactory"),
+    FixtureType("tmpdir_factory", "TmpdirFactory"),
+    FixtureType("monkeypatch", "MonkeyPatch"),
+    FixtureType("capsys", "CaptureStr"),
+    FixtureType("capteesys", "CaptureStr"),
+    FixtureType("capfd", "CaptureStr"),
+    FixtureType("capsysbinary", "CaptureBytes"),
+    FixtureType("capfdbinary", "CaptureBytes"),
+    FixtureType("caplog", "LogCapture"),
+    FixtureType("request", "FixtureRequest"),
+    FixtureType("pytestconfig", "PytestConfig"),
+    FixtureType("recwarn", "WarningsRecorder"),
+    FixtureType("cache", "PytestCache"),
+    FixtureType("subtests", "Subtests"),
+    FixtureType("record_property", "RecordProperty"),
+    FixtureType("record_xml_attribute", "RecordProperty"),
+    FixtureType("record_testsuite_property", "RecordProperty"),
+    FixtureType("doctest_namespace", "DoctestNamespace"),
+)
+
+
+def deftest_annotation_name(type_name: str) -> str:
+    """static_types の型の名を、展開の中で使う名(module の頭の import の別名)にする。"""
+    return f"_doeff_{type_name}"
+
+
+def deftest_fixture_annotation(fixture: str) -> str:
+    """deftest の引数(mangle した名)に、型検査のための展開で付ける注記の名(表に無い名は `object`)。"""
+    found = [entry.type_name for entry in DEFTEST_FIXTURE_TYPES if entry.fixture == fixture]
+    return deftest_annotation_name(found[0]) if found else "object"
+
 
 #: 型検査のための展開で、macro が参照する補助の名の import(module の頭に 1 度だけ — doeff-hy-check が置く)。
 #: 実行時の展開は defk / defhandler / `<-` ごとに同じ import を出すが、静的な展開で同じことをすると、1 つの名に
@@ -39,9 +91,16 @@ _STATIC_VIEW: ContextVar[bool] = ContextVar("doeff_hy_static_view", default=Fals
 #: (doeff-cluster の local.hy の `(Spawn (defk の呼び))` 4 か所 — agora-redesign #1686)。静的な展開の macro は
 #: この import を出さない(macros.hy の `_helper-imports`・`_bind-yield`、handle.hy の `_do-import`)。
 STATIC_HELPER_IMPORTS: str = (
-    "from doeff_hy.static_types import do as _doeff_do, _doeff_perform\n"
+    "from doeff_hy.static_types import do as _doeff_do, _doeff_perform"
+    + "".join(
+        f", {name} as {deftest_annotation_name(name)}"
+        for name in sorted({entry.type_name for entry in DEFTEST_FIXTURE_TYPES})
+    )
+    + "\n"
     "from doeff_hy.macros import _install_guard_globals, _guard_performed, _guard_statement_value, "
     "_doeff_check_program_return\n"
+    # deftest の decorator(@pytest.mark.…)が引く pytest(deftest ごとの import が書き手の import と重ならないように)
+    "import pytest as _doeff_pytest\n"
 )
 
 

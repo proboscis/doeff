@@ -1665,6 +1665,24 @@ the effect in the enclosing do-context.
         (setv skip-reason v))))
   #(interpreters params-dict env-dict marks skip-if-expr skip-reason real-body))
 
+(import doeff-hy.static-view [deftest-fixture-annotation])
+
+(defn _deftest-param [param]
+  "deftest の引数 1 つを #(名 書き手の注記か None) にする。Hy の reader は `#^ T 名` を `(annotate 名 T)` に読む。
+   展開の時に呼ぶ helper なので defn(defk にできない)。"
+  (match param
+    [head param-name written] :if (and (isinstance param hy.models.Expression) (= head 'annotate))
+      #(param-name written)
+    _ #(param None)))
+
+(defn _deftest-annotation [param-name written]
+  "型検査のための展開で deftest の引数に付ける注記(agora-redesign #2214)。書き手の `#^ T 名` があればそれを、
+   無ければ fixture の名の表(doeff_hy/static_view.py の DEFTEST_FIXTURE_TYPES)の型を、表に無い名(利用者の
+   fixture・:params の引数)は `object` を付ける — Unknown のまま strict の赤にせず、型も逃がさない。"
+  (if (is-not written None)
+      written
+      (hy.models.Symbol (deftest-fixture-annotation (hy.mangle (str param-name))))))
+
 (defmacro deftest [_hy-compiler name #* args]
   "Define an effectful test that expands to a pytest-compatible function.
    The test body uses <- for effect binding, same as defk/defp.
@@ -1706,6 +1724,10 @@ the effect in the enclosing do-context.
      (<- result (fetch-prices))
      (assert result))
 
+   A fixture may carry its type for the static check — `(deftest test-x [#^ str label] …)`;
+   pytest's built-in fixtures (tmp_path, monkeypatch, capsys, …) and doeff_interpreter are typed
+   by doeff-hy-check without it, any other unannotated fixture is `object` (agora-redesign #2214).
+
    Expansion: generates def test_*(doeff_interpreter, ...fixtures...)
    that creates a DoExpr program and passes it to the interpreter."
   (import doeff-hy.outcome-forms [bind-form :as _bind-form])
@@ -1715,6 +1737,9 @@ the effect in the enclosing do-context.
   (when (and (> (len args) 0) (isinstance (get args 0) hy.models.List))
     (setv fixture-params (list (get args 0))
           body (cut args 1 None)))
+  ;; 書き手の注記 `#^ T 名` は型検査のための展開でだけ使い、名の並びは実行時の展開・記録・束縛の書き換えが読む
+  (setv fixture-annotations (lfor p fixture-params (_deftest-param p))
+        fixture-params (lfor #(param-name _) fixture-annotations param-name))
 
   ;; Parse optional metadata dict
   (setv #(interpreters params-dict env-dict marks skip-if-expr skip-reason real-body)
@@ -1745,13 +1770,25 @@ the effect in the enclosing do-context.
   (setv fn-params (+ [(hy.models.Symbol "doeff_interpreter")] fixture-params))
 
   ;; Build the program creation + interpreter call
-  (setv fn-body
+  (setv run-form
     (if (is-not env-dict None)
       `(doeff_interpreter
          ((_doeff_do (fn [] ~@gen-body)))
          :env ~env-dict)
       `(doeff_interpreter
          ((_doeff_do (fn [] ~@gen-body))))))
+
+  ;; 型検査のための展開(agora-redesign #2214): 引数に fixture の型の注記を付け、返り値は None(検の関数は値を
+  ;; 返さない — interpreter の答えは文として捨てる)。実行時の展開は今までどおり注記なしで答えを返す
+  ;; (Python 3.13 以前は注記を定義の時に評価するので、型検査だけの名を実行時に置かない)。
+  (setv #(fn-name fn-signature fn-body)
+    (if (_static-view?)
+      #(`(annotate ~name None)
+        (+ [`(annotate doeff_interpreter ~(_deftest-annotation (hy.models.Symbol "doeff_interpreter") None))]
+           (lfor #(param-name written) fixture-annotations
+             `(annotate ~param-name ~(_deftest-annotation param-name written))))
+        `(do ~run-form None))
+      #(name fn-params run-form)))
 
   ;; The pytest decorators, in source order, as #(kind first second) — the one list that both the
   ;; decorator forms below and the item record (doeff-hy.pytest-items, agora-redesign #1211) are made from.
@@ -1775,12 +1812,17 @@ the effect in the enclosing do-context.
   (when (is-not skip-if-expr None)
     (.append item-decorators #("skipif" None None)))
 
+  ;; 型検査のための展開では、decorator の pytest を doeff-hy-check が module の頭に 1 度だけ置く別名
+  ;; `_doeff_pytest`(doeff_hy/static_view.py の STATIC_HELPER_IMPORTS)で引く — deftest ごとの `import pytest` が
+  ;; 書き手の import と重なって strict の reportDuplicateImport になっていた(agora-redesign #2214)。
+  (setv #(pytest-name pytest-import)
+    (if (_static-view?) #('_doeff_pytest '(do)) #('pytest '(import pytest))))
   (setv decorators
     (lfor #(kind first second) item-decorators
       (match kind
-        "parametrize" `(.parametrize (. pytest mark) ~(hy.models.String first) ~second)
-        "mark" `(. (. pytest mark) ~(hy.models.Symbol first))
-        "skipif" `(.skipif (. pytest mark) ~skip-if-expr
+        "parametrize" `(.parametrize (. ~pytest-name mark) ~(hy.models.String first) ~second)
+        "mark" `(. (. ~pytest-name mark) ~(hy.models.Symbol first))
+        "skipif" `(.skipif (. ~pytest-name mark) ~skip-if-expr
                     :reason ~(if (is-not skip-reason None) skip-reason
                                  (hy.models.String "skip condition met"))))))
 
@@ -1790,14 +1832,14 @@ the effect in the enclosing do-context.
   ;; Assemble the function definition with decorators
   (locate-synthesized (if decorators
     `(do
-       (import pytest)
+       ~pytest-import
        ~(_helper-imports)
-       (defn [~@decorators] ~name [~@fn-params] ~fn-body)
+       (defn [~@decorators] ~fn-name [~@fn-signature] ~fn-body)
        (_install-guard-globals ~name {"_doeff_do" _doeff_do})
        ~item-record)
     `(do
        ~(_helper-imports)
-       (defn ~name [~@fn-params] ~fn-body)
+       (defn ~fn-name [~@fn-signature] ~fn-body)
        (_install-guard-globals ~name {"_doeff_do" _doeff_do})
        ~item-record))))
 
