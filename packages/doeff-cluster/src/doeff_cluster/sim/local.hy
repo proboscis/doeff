@@ -36,7 +36,7 @@
 ;;;     値は字面どおり)と ReportReady・ReportMetrics。クラスタの約束の答え(coordinator-answers — 送り手の口 SimLink ごと)= ReadShared / WriteShared・
 ;;;     LeaseOp・RemoteJob・SubmitDetached / AwaitDetached / CancelDetached / ReleaseDetached / ReadRunners / AwaitRunnersChange・WarmRuntimeEnv /
 ;;;     ReadWarmState。
-;;;     本番では土台の HTTP の handler が coordinator へ送る物で、要求の形は本番の送り手と同じ関数(report_client.report-request・
+;;;     本番では土台の HTTP の handler が coordinator へ送る物で、要求の形は本番の送り手と同じ関数(service_report.report-request・
 ;;;     shared_handlers.board-*-request / lease-request・remote.task-submit-body / outcome-of / settled-value・detached.detached-path /
 ;;;     detached-submit-body / detached-refusal / awaited-answer / warm-request-body)。何度送っても同じ意味の要求(読み・lease の claim と
 ;;;     renew・切り離した task の口・温める表)は、本番の send-idempotent と同じ期限と間で、sim の時計で送り直す。どちらの答えも柵の内側に
@@ -145,7 +145,8 @@
 (import doeff_cluster.shared.protocol.remote [task-submit-body outcome-of settled-value])
 (import doeff_cluster.shared.intent.remote_model [RemoteJob RemoteJobFailed TaskSucceeded TaskFailed encode-program encode-outcome failed-from program-sha])
 (import doeff_cluster.foundation.process_versions [current-versions])
-(import doeff_cluster.foundation.report_client [report-request task-result-request task-id-of-job])
+(import doeff_cluster.foundation.report_client [task-result-request task-id-of-job])
+(import doeff_cluster.shared.protocol.service_report [report-request])
 (import doeff_cluster.shared.intent.runtime_env_model [RuntimeEnv EnvFailure runtime-env->json current-platform])
 (import doeff_cluster.shared.intent.semaphore_model [LeaseOp SEMAPHORE-PREFIX])
 (import doeff_cluster.shared.core.lease_rules [drop-holders lease-holder holder-tokens-prefix])
@@ -1122,10 +1123,10 @@
 (defk send-report [child kind payload]
   {:pre [(: child SimChild) (: kind str) (: payload dict)] :post [(: % None)]
    :tags {:context "doeff-cluster" :role "protocol"}}
-  "service の報告を本番の ServiceReportClient と同じ形で送るため。届かなくても業務を止めない(報告は観測)。"
+  "service の報告を本番の sent-report(shared/protocol/service_report.hy)と同じ形で送るため。届かなくても業務を止めない(報告は観測)。"
   (val ctx child.ctx)
-  (<- (send-shaped child.link (report-request ctx.job (| {"worker" ctx.worker "pid" child.pid "revision" ctx.revision} (.identity ctx))
-                                              kind payload)))
+  (<- shape tuple (report-request ctx.job (| {"worker" ctx.worker "pid" child.pid "revision" ctx.revision} (.identity ctx)) kind payload))
+  (<- (send-shaped child.link shape))
   None)
 
 
