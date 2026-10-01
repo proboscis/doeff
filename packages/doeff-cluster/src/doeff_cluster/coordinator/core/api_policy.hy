@@ -263,7 +263,7 @@
     (and (= head "resources") (= (len parts) 2) (= method "POST"))
       (do (setv actor (require-actor request.actor))
           (setv after (settle state (create-resource state (get parts 1) body actor now) actor now timing))
-          #(after 201 (get-resource after (get parts 1) (get body "name") now timing)))
+          #(after 201 (get-resource after (get parts 1) body.name now timing)))
     (and (= head "resources") (= (len parts) 3) (= method "PUT"))
       (do (setv actor (require-actor request.actor))
           (setv after (settle state (update-resource state (get parts 1) (get parts 2) body actor) actor now timing))

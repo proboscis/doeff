@@ -8,6 +8,7 @@
 ;;;   MetricsBody     POST /resources/Service/<名>/metrics     service の process の計器の報告
 ;;;   ProgramBody     PUT /programs/<sha>         詰めた Program の置き
 ;;;   HeartbeatBody   POST /heartbeat             worker の生存・能力・版・状態の報告・実行環境の root の名乗り
+;;;   ResourceBody    POST /resources/<種類>・PUT /resources/<種類>/<名>   資源の宣言の包み(name・spec・resourceVersion)
 ;;;   BoardWrite      PUT /board/<鍵>             盤の行 1 つの compare-and-set(本文の型 BoardWireBody と、欄が在ったかの印)
 ;;; 知らない欄は読み捨てる(前の直の読みと同じ — 送り手の版が新しい欄を足しても断らない)。
 (require doeff-hy.macros [val])
@@ -160,6 +161,16 @@
   (setv #^ int format 1))
 
 
+(defwire ResourceBody
+  "資源の宣言(POST /resources/<種類> と PUT /resources/<種類>/<名>)の包み: name = 資源の名(POST だけ — 形の検めは resource_policy)・
+   spec = 宣言の中身(JSON の object — Service の行は job-from-json・Rollout は validate-rollout-spec が読む。行の型は #2447)・
+   resource-version = 読んだ時の版(PUT — 古い版の書きは 409)。"
+  {:tags {:context "doeff-cluster" :role "type"} :names :camel :unknown :ignore}
+  (setv #^ (| str None) name None)
+  (setv #^ (| dict None) spec None)
+  (setv #^ (| int None) resource-version None))
+
+
 (defrecord BodyMalformed
   "道の本文が型の約束の形でない(欠けた欄・型の違う値・JSON の object でない本文)— 受け口は 400 と reason で断る。"
   {:tags {:context "doeff-cluster" :role "type"}}
@@ -167,7 +178,7 @@
 
 
 ;; 道の本文の答えの型の和(ReadBody の答え・判断 respond が受ける本文 — まだ型にしていない道は JSON の object)。
-(setv RequestBody (| LeaseBody TaskResultBody DrainBody ReadinessBody MetricsBody ProgramBody BoardWrite HeartbeatBody BodyMalformed dict))
+(setv RequestBody (| LeaseBody TaskResultBody DrainBody ReadinessBody MetricsBody ProgramBody BoardWrite HeartbeatBody ResourceBody BodyMalformed dict))
 
 
 (defclass [(dataclass :frozen True)] ReadBody [EffectBase]

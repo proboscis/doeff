@@ -91,3 +91,17 @@
   (val old (responded (ClusterState) (http-request "POST" "/heartbeat" {} {"name" "w" "labels" {"kind" "mac"}}) 1000 T))
   (assert (= (get old 1) 400) old)
   (assert (in "labels" (get old 2 "error")) old))
+
+
+(deftest test-a-resource-declaration-envelope-is-read-into-its-type
+  ;; 資源の宣言の包み(name・spec・resourceVersion)— object でない spec・数の名・文字列の版は判断の前に 400。spec の中身は判断が読む。
+  (<- made (body-of (http-request "POST" "/resources/Service" {} {"name" "web" "spec" {"revision" "r"}})))
+  (assert (= #(made.name made.spec made.resource-version) #("web" {"revision" "r"} None)) made)
+  (<- edited (body-of (http-request "PUT" "/resources/Service/web" {} {"spec" {} "resourceVersion" 3})))
+  (assert (= edited.resource-version 3) edited)
+  (<- listed (body-of (http-request "POST" "/resources/Service" {} {"name" "web" "spec" ["r"]})))
+  (assert (in "spec" listed.reason) listed)
+  (<- numbered (body-of (http-request "POST" "/resources/Service" {} {"name" 7})))
+  (assert (in "name" numbered.reason) numbered)
+  (<- worded (body-of (http-request "PUT" "/resources/Service/web" {} {"resourceVersion" "3"})))
+  (assert (in "resourceVersion" worded.reason) worded))

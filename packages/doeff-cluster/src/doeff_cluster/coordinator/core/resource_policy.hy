@@ -21,7 +21,7 @@
 (import doeff_cluster.coordinator.core.cluster_policy [job-from-json job-to-json alive still-live-somewhere service-rows unplaced-kind unplaced-text task-summary])
 (import doeff_cluster.coordinator.core.rollout_policy [validate-rollout-spec rollout-targets target-key TERMINAL-PHASES])
 (import doeff [run])
-(import doeff_cluster.coordinator.intent.request_bodies [ReadinessBody MetricsBody])
+(import doeff_cluster.coordinator.intent.request_bodies [ReadinessBody MetricsBody ResourceBody])
 (import doeff_cluster.shared.intent.readiness_model [handoff-timeout-ms])
 (import doeff_cluster.shared.core.readiness_report [reported-readiness])
 
@@ -533,18 +533,10 @@
                name)))
 
 
-(defn #^ dict spec-of-body [#^ dict body]
-  ;; defk にできない: 資源の書きの口(Program の外の純粋な判断)が呼ぶ
-  "書きの本文の spec(無ければ空)を JSON の object として読むため — object でない spec は BodyInvalid(送り手の誤り・400 — #1024)。"
-  (setv spec (.get body "spec" {}))
-  (when (not (isinstance spec dict))
-    (raise (BodyInvalid (.format "spec は JSON の object: {!r}" spec))))
-  (dict spec))
-
-
-(defn #^ ClusterState create-resource [#^ ClusterState state #^ str kind #^ dict body #^ str actor #^ int now]
-  (setv name (required-field body "name") spec (spec-of-body body))
-  (when (not (and (isinstance name str) name (not-in "/" name))) (refuse 400 (.format "名前が正しくない: {!r}" name)))
+(defn #^ ClusterState create-resource [#^ ClusterState state #^ str kind #^ ResourceBody body #^ str actor #^ int now]
+  ;; 包みの形(name は文字列・spec は object)は本文を解く所(coordinator/protocol/request_bodies — #2445)が検めた。
+  (setv name body.name spec (dict (or body.spec {})))
+  (when (not (and name (not-in "/" name))) (refuse 400 (.format "名前が正しくない: {!r}" name)))
   (setv owner (or (valid-actor (.get spec "owner")) actor))
   (cond
     (= kind "Service")
@@ -569,27 +561,27 @@
     (refuse 403 (.format "所有者を変えられるのは所有者({})だけ" current-owner))))
 
 
-(defn #^ ClusterState update-resource [#^ ClusterState state #^ str kind #^ str name #^ dict body #^ str actor]
-  (setv key (key-of kind name) spec (spec-of-body body))
+(defn #^ ClusterState update-resource [#^ ClusterState state #^ str kind #^ str name #^ ResourceBody body #^ str actor]
+  (setv key (key-of kind name) spec (dict (or body.spec {})))
   (cond
     (= kind "Service")
       (do (setv current (next (gfor j state.jobs :if (= j.spec.name name) j) None))
           ;; 受け付けない行(RefusedJob)は、新しい形の宣言の PUT で受け付けた job に置き換える(改訂 1 の C)。
           (when (and (is current None) (in name state.refused))
-            (check-version state key (.get body "resourceVersion"))
+            (check-version state key body.resource-version)
             (setv job (job-from-json (| spec {"name" name "owner" (or (valid-actor (.get spec "owner"))
                                                                     (.get (. (get state.refused name) row) "owner") actor)})))
             (return (replace state :jobs (+ state.jobs #(job))
                                    :refused (dfor #(k v) (.items state.refused) :if (!= k name) k v))))
           (when (is current None) (refuse 404 (+ "無い Service: " name)))
-          (check-version state key (.get body "resourceVersion"))
+          (check-version state key body.resource-version)
           (check-owner-change current.owner (.get spec "owner") actor)
           (setv job (job-from-json (| spec {"name" name "owner" (or (valid-actor (.get spec "owner")) current.owner)})))
           (replace state :jobs (tuple (gfor j state.jobs (if (= j.spec.name name) job j)))))
     (= kind "Rollout")
       (do (setv current (.get state.rollouts name))
           (when (is current None) (refuse 404 (+ "無い Rollout: " name)))
-          (check-version state key (.get body "resourceVersion"))
+          (check-version state key body.resource-version)
           (setv old (get current "spec"))
           ;; spec は作った後に変えない。変えてよいのは中止(abort)だけ(旧を先に戻してから新を止める)。
           ;; 送られた spec は作る時と同じ形に揃えてから比べる({"abort": true} だけを送ってもよい)。
