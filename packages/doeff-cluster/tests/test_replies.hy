@@ -2,7 +2,7 @@
 ;; JSON の形は coordinator/protocol/replies が綴る。検の入口 responded と、本番と模擬の組の返事の答え手 reply-bodies は同じ綴りを通る。
 (require doeff-hy.macros [deftest val])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming])
-(import doeff_cluster.coordinator.intent.cluster_model [ClusterState EventsView StateReply HeartbeatReply WorkerInfo WorkerDrainView ResourceList ResourceView ErrorReply RowConflict BoardWritten BoardConflict BoardRead TaskAccepted TaskProgress TaskMissing TaskResultTaken TaskDropped])
+(import doeff_cluster.coordinator.intent.cluster_model [ClusterState EventsView StateReply HeartbeatReply WorkerInfo WorkerDrainView ResourceList ResourceView ErrorReply RowConflict BoardWritten BoardConflict BoardRead TaskAccepted TaskProgress TaskMissing TaskResultTaken TaskDropped DetachedUnknown DetachedWarming DetachedSubmitted DetachedCancelled DetachedReleased])
 (import doeff_cluster.coordinator.core.cluster_policy [heartbeat-reply])
 (import doeff_cluster.coordinator.core.drain_policy [superseded-worker-view])
 (import doeff_cluster.shared.protocol.inbox [http-request])
@@ -125,3 +125,17 @@
   (assert (= (reply-json (TaskDropped :id "t1")) {"dropped" True}))
   (assert (= (sorted (reply-json (TaskProgress :phase "queued" :worker None :detail "" :result None :failure-kind "" :retryable False)))
              ["detail" "failureKind" "phase" "result" "retryable" "worker"])))
+
+
+(deftest test-the-detached-answers-are-typed-and-spelled-in-the-old-shape
+  ;; 切り離した task の口の答えは型の値で、JSON は前と同じ形(行の無い key は {key phase: unknown}・起きた直後は 503 の warming)。
+  (setv #(_ unknown-status unknown) (respond (ClusterState :started-ms -100000) (http-request "GET" "/detached/k1" {} None) 1000 T {}))
+  (assert (and (= unknown-status 200) (isinstance unknown DetachedUnknown)) unknown)
+  (assert (= (reply-json unknown) {"key" "k1" "phase" "unknown"}))
+  (setv #(_ warming-status warming) (respond (ClusterState :started-ms 900) (http-request "GET" "/detached/k1" {} None) 1000 T {}))
+  (assert (and (= warming-status 503) (isinstance warming DetachedWarming)) warming)
+  (assert (= (sorted (reply-json warming)) ["error" "key" "phase"]))
+  (assert (= (reply-json (DetachedSubmitted :key "k" :id "t1" :created True :phase "queued"))
+             {"key" "k" "task" "t1" "created" True "phase" "queued"}))
+  (assert (= (reply-json (DetachedCancelled :key "k" :cancelled False :phase "unknown")) {"key" "k" "cancelled" False "phase" "unknown"}))
+  (assert (= (reply-json (DetachedReleased :key "k" :released True)) {"key" "k" "released" True})))

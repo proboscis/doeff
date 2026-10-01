@@ -463,6 +463,45 @@ class TaskResultTaken:
 class TaskDropped:
     id: str
 
+@dataclass(frozen=True, kw_only=True)
+class DetachedSubmitted:
+    key: str
+    id: str
+    created: bool
+    phase: str
+
+@dataclass(frozen=True, kw_only=True)
+class DetachedProgress:
+    key: str
+    id: str
+    phase: str
+    detail: str
+    result: str | None
+    worker: str | None
+    failure_kind: str
+    retryable: bool
+
+@dataclass(frozen=True, kw_only=True)
+class DetachedUnknown:
+    key: str
+
+@dataclass(frozen=True, kw_only=True)
+class DetachedWarming:
+    key: str
+    phase: str
+    reason: str
+
+@dataclass(frozen=True, kw_only=True)
+class DetachedCancelled:
+    key: str
+    cancelled: bool
+    phase: str
+
+@dataclass(frozen=True, kw_only=True)
+class DetachedReleased:
+    key: str
+    released: bool
+
 @dataclass(frozen=True)
 class ClusterNaming:
     owner_annotation: str = "doeff-cluster/replicas-owned-by"
