@@ -36,7 +36,7 @@
 (val MODULE-TAGS {:context "coordinator" :role "judgment"})
 (import doeff_cluster.shared.intent.protocol [BodyInvalid])
 (import dataclasses [replace])
-(import doeff_cluster.coordinator.intent.cluster_model [RolloutDrift RolloutHistory RolloutSpec RolloutStatus RolloutStuck RolloutTarget])
+(import doeff_cluster.coordinator.intent.cluster_model [RolloutDrift RolloutHistory RolloutSpec RolloutStatus RolloutStuck RolloutTarget TargetView])
 
 (setv TERMINAL-PHASES #{"Complete" "RolledBack"})
 ;; 秒の欄の既定の値(欄が無い本文・この欄が無かった頃に作った Rollout の保存の行)。
@@ -167,13 +167,13 @@
   {"op" "scale" "target" target "replicas" replicas})
 
 
-(defn #^ list ensure-replicas [#^ RolloutTarget target #^ dict view #^ int replicas]
+(defn #^ list ensure-replicas [#^ RolloutTarget target #^ TargetView view #^ int replicas]
   "観測の宣言の台数が replicas でなければ、そうする action(観測が無ければ何もしない)。"
-  (setv current (.get view "specReplicas"))
+  (setv current view.spec-replicas)
   (if (or (is current None) (= current replicas)) [] [(scale target replicas)]))
 
 
-(defn #^ tuple rollout-step [#^ RolloutSpec spec #^ RolloutStatus status #^ dict from-view #^ dict to-view #^ int now]
+(defn #^ tuple rollout-step [#^ RolloutSpec spec #^ RolloutStatus status #^ TargetView from-view #^ TargetView to-view #^ int now]
   "1 拍。返り値 #(次の status action の list)。"
   (setv phase status.phase since (if (is status.phase-since-ms None) now status.phase-since-ms)
         old spec.from-target new spec.to-target)
@@ -187,7 +187,7 @@
   (cond
     (= phase "Pending")
       ;; 旧の今の台数を控える(戻す時の台数)。旧が Deployment で観測が無ければ、spec の replicas か 1。
-      (do (setv observed (.get from-view "specReplicas")
+      (do (setv observed from-view.spec-replicas
                 restore (cond (= old.kind "Service") 1
                               old.replicas old.replicas
                               (and observed (> observed 0)) observed
@@ -199,28 +199,28 @@
                             from-view to-view now)))
     (= phase "WaitingNewReady")
       (cond
-        (= (get to-view "ready") "Ready")
+        (= to-view.ready "Ready")
           (rollout-step spec (enter status "StoppingOld" now "新が Ready になった") from-view to-view now)
         (> (- now since) (* 1000 spec.ready-timeout-seconds))
-          (fail (.format "新が {} 秒で Ready にならなかった: {}" spec.ready-timeout-seconds (.get to-view "reason" "")))
+          (fail (.format "新が {} 秒で Ready にならなかった: {}" spec.ready-timeout-seconds to-view.reason))
         True #((replace status :reason "新の Ready を待つ")
                (ensure-replicas new to-view (new-replicas new))))
     (= phase "StoppingOld")
       (cond
-        (= (get to-view "ready") "NotReady")
-          (fail (+ "旧を止める途中で新が Ready でなくなった: " (.get to-view "reason" "")))
-        (.get from-view "stopped")
+        (= to-view.ready "NotReady")
+          (fail (+ "旧を止める途中で新が Ready でなくなった: " to-view.reason))
+        from-view.stopped
           (rollout-step spec (enter status "Observing" now "旧が止まった" :stopped-old-ms now) from-view to-view now)
         ;; 新の観測が Unknown(担い手の heartbeat が途絶えた・coordinator が起動した直後)の間は、旧を止める命令を新しく出さない。
         ;; 失敗とも数えない(時間切れだけは数える)。新が本当に落ちていたら、旧を止めた後で書き手が 0 になるため(2026-09-25)。
-        (= (get to-view "ready") "Unknown")
+        (= to-view.ready "Unknown")
           #((replace status :reason "新の観測が Unknown の間は旧を止める命令を控える") [])
         (> (- now since) (* 1000 spec.stop-timeout-seconds))
-          (fail (.format "旧が {} 秒で止まらなかった: {}" spec.stop-timeout-seconds (.get from-view "reason" "")))
+          (fail (.format "旧が {} 秒で止まらなかった: {}" spec.stop-timeout-seconds from-view.reason))
         True #((replace status :reason "旧が止まるのを待つ")
                (ensure-replicas old from-view 0)))
     (= phase "Observing")
-      (do (setv state (get to-view "ready") down status.not-ready-since-ms blind status.unknown-since-ms)
+      (do (setv state to-view.ready down status.not-ready-since-ms blind status.unknown-since-ms)
           ;; 観測が Unknown の間は観察の時間に数えない(完了も失敗もしない)。入った時刻だけを控える(status は入った拍だけ変わる)。
           (when (= state "Unknown")
             (return #((if (is blind None)
@@ -236,7 +236,7 @@
             (= state "NotReady") (setv down (or down now)))
           (cond
             (and down (> (- now down) (* 1000 spec.fail-after-seconds)))
-              (fail (.format "観察の間に新が {} 秒 Ready でなかった: {}" (// (- now down) 1000) (.get to-view "reason" "")))
+              (fail (.format "観察の間に新が {} 秒 Ready でなかった: {}" (// (- now down) 1000) to-view.reason))
             (and (= state "Ready") (>= (- now since) (* 1000 spec.observe-seconds)))
               #((enter (replace status :not-ready-since-ms None) "Complete" now "観察の期間を終えた" :completed-ms now) [])
             True #((replace status :not-ready-since-ms down :reason "観察中")
@@ -255,12 +255,12 @@
             #((replace status :reason reason :stuck stuck) actions))
           (cond
             (= step "restoreOld")
-              (if (= (get from-view "ready") "Ready")
+              (if (= from-view.ready "Ready")
                   (rollout-step spec (replace status :rollback-step "stopNew" :restored-old-ms now) from-view to-view now)
                   (waiting "戻し: 旧を元の台数へ戻し Ready を待つ" "旧が Ready に戻らない(新は動かしたまま)"
                            (ensure-replicas old from-view restore)))
             (= step "stopNew")
-              (if (.get to-view "stopped")
+              (if to-view.stopped
                   #((enter status "RolledBack" now (+ "戻した: " (or status.failure "")) :completed-ms now
                            #** (if status.stuck {"stuck" None "stuck_cleared_ms" now} {}))
                     [])

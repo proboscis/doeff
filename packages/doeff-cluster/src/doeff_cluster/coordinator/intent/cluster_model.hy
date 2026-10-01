@@ -680,6 +680,15 @@
   (#^ str phase))
 
 
+(defrecord TargetView
+  "Rollout の相手 1 つの観測(api_policy.target-view が作り rollout_policy.rollout-step が読む — #2614): ready = Ready | NotReady | Unknown・
+   stopped = 止まっているか(観測が無い・古い時は None)・spec-replicas = 宣言の台数(知らなければ None)・reason = 人が読む理由。"
+  (#^ str ready)
+  (#^ (| bool None) stopped)
+  (#^ (| int None) spec-replicas)
+  (#^ str reason))
+
+
 (defrecord ProgramStored
   "PUT /programs/<sha> の答え(program_policy.program-write — #2614): sha = 置いた Program のキー。"
   (#^ str sha))

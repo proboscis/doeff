@@ -6,7 +6,7 @@
 (require doeff-hy.macros [deftest val var])
 (import dataclasses [replace])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming Request])
-(import doeff_cluster.coordinator.intent.cluster_model [ClusterState RolloutRow RolloutStatus TaskRecord])
+(import doeff_cluster.coordinator.intent.cluster_model [ClusterState RolloutRow RolloutStatus TaskRecord TargetView])
 (import doeff_cluster.coordinator.protocol.durable_kv [full-kv state-from-kv])
 (import doeff_cluster.coordinator.core.api_policy [plan-rollouts resume-after-downtime mark-alive ALIVE-MARK-MS])
 (import doeff_cluster.coordinator.protocol.request_bodies [responded])
@@ -73,10 +73,10 @@
                                    "to" {"kind" "Service" "name" "new"}
                                    "readyTimeoutSeconds" 300 "stopTimeoutSeconds" 180 "observeSeconds" 60 "failAfterSeconds" 30
                                    "rollbackTimeoutSeconds" 600 "markDeployment" False "abort" False}))
-(setv STOPPED {"ready" "NotReady" "stopped" True "specReplicas" 0 "reason" "止まっている"})
-(setv READY {"ready" "Ready" "stopped" False "specReplicas" 1 "reason" ""})
-(setv UNKNOWN {"ready" "Unknown" "stopped" None "specReplicas" None "reason" "担い手の報告が古い"})
-(setv NOT-READY {"ready" "NotReady" "stopped" False "specReplicas" 1 "reason" "拍が落ちた"})
+(setv STOPPED (TargetView :ready "NotReady" :stopped True :spec-replicas 0 :reason "止まっている"))
+(setv READY (TargetView :ready "Ready" :stopped False :spec-replicas 1 :reason ""))
+(setv UNKNOWN (TargetView :ready "Unknown" :stopped None :spec-replicas None :reason "担い手の報告が古い"))
+(setv NOT-READY (TargetView :ready "NotReady" :stopped False :spec-replicas 1 :reason "拍が落ちた"))
 
 
 (defn #^ RolloutStatus observing [#^ int since] (RolloutStatus :phase "Observing" :phase-since-ms since))
@@ -108,7 +108,7 @@
 
 (deftest test-unknown-new-while-stopping-old-holds-the-stop
   (setv status (RolloutStatus :phase "StoppingOld" :phase-since-ms 0))
-  (setv running-old {"ready" "Ready" "stopped" False "specReplicas" 1 "reason" ""})
+  (setv running-old (TargetView :ready "Ready" :stopped False :spec-replicas 1 :reason ""))
   (setv #(after actions) (rollout-step SPEC status running-old UNKNOWN 1000))
   (assert (= after.phase "StoppingOld"))
   (assert (= actions [])))
@@ -128,7 +128,7 @@
 
 (deftest test-a-rollback-that-does-not-finish-is-marked-stuck-and-keeps-the-new
   (setv status (RolloutStatus :phase "RollingBack" :phase-since-ms 0 :rollback-step "restoreOld" :from-replicas 1))
-  (setv old-down {"ready" "NotReady" "stopped" False "specReplicas" 1 "reason" "Pod が起きない"})
+  (setv old-down (TargetView :ready "NotReady" :stopped False :spec-replicas 1 :reason "Pod が起きない"))
   (val reply-7 (rollout-step SPEC status old-down READY 1000))
   (var s (get reply-7 0))
   (var actions (get reply-7 1))

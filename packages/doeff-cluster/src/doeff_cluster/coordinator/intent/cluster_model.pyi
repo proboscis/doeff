@@ -661,3 +661,10 @@ class CoordinatorFault(EffectBase[None]):
 class SaveState(EffectBase[None]):
     before: ClusterState
     after: ClusterState
+
+@dataclass(frozen=True, kw_only=True)
+class TargetView:
+    ready: str
+    stopped: bool | None
+    spec_replicas: int | None
+    reason: str
