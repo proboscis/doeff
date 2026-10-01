@@ -10,8 +10,9 @@
 ;;
 ;; 記録の検め方: 3 は record の枝そのもの(boundary-recorder → recording-handler → OtlpSink → OTLP/HTTP)を通す。置き場を memory の sink に
 ;; 差し替える口は boundary-recorder に無い(置き場は Ask RECORD-OTLP-KEY の URL だけ)ので、差し替えのために src に口を足さず、OTLP の
-;; 受け口の fake をこの検の process の thread に立てて受ける。子の process で走らせるのは、置き場の口が残りの行を送るのが process の終わり
-;; (EffectLog.close — atexit)だからで、本番の worker の子と同じ終わり方で記録が届くことも一緒に確かめる。1 の replay の枝の検は、
+;; 受け口の fake をこの検の process の thread に立てて受ける(送りは記録係が出す HttpRequest に、土台の http-production-handler が答える)。
+;; 子の process で走らせるのは、本番の worker の子と同じ終わり方(Program の終わりに残りの行を送る close-log)で記録が届くことも一緒に
+;; 確かめるため。HTTP の答え手を差し替えて置き場を模擬する検は src/doeff_cluster/sim/test_recording_on_sim.hy。1 の replay の枝の検は、
 ;; 渡す状態を作るためだけに test_effect_record と同じ形(EffectLog + MemorySink)で記録を作る(record の枝の検ではない)。
 (require doeff-hy.macros [deftest defk deff <- val var])
 (require doeff-hy.record [defrecord])
@@ -27,7 +28,8 @@
 (import pathlib [Path])
 (import doeff [Program with-handlers])
 (import doeff_vm [UnhandledEffect])
-(import doeff_core_effects.handlers [reader])
+(import doeff_core_effects.handlers [reader await-handler])
+(import doeff_core_effects.http_handlers [http-production-handler])
 (import doeff_cluster.foundation.host_contract [HOST-CONTRACT environ-reader])
 (import doeff_cluster.job_context [RunContext])
 (import doeff_cluster.shared.protocol.program_codec [encode-program])
@@ -187,7 +189,10 @@
                                    (boundary-recorder HOST-CONTRACT)))
   (assert (= (len handlers) 1) handlers)
   ;; 置き場の口は 500 行たまると送る — 600 の読みで送りを 1 度は試みて断られ、業務の答えはそのまま返る(記録は貯め続ける)。
-  (<- total int (with-handlers [(sim-time-handler :clock (SimClock)) #* (board-handlers {"row/0" 1 "row/1" 2}) #* handlers] (read-rows 600)))
+  ;; 送りは記録係が出す HttpRequest で、本番の土台と同じ HTTP の答え手が答える(接続を断られた = 届かない)。
+  (<- total int (with-handlers [(await-handler) (http-production-handler) (sim-time-handler :clock (SimClock))
+                                #* (board-handlers {"row/0" 1 "row/1" 2}) #* handlers]
+                               (read-rows 600)))
   (assert (= total 400) total)
   (val err (. (.readouterr capsys) err))
   (assert (in "recorder: job-a の effect を記録します" err) err)
