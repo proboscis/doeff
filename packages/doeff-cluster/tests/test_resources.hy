@@ -28,7 +28,7 @@
              :actor None :now now) 0))
 
 (defn #^ int rv [#^ ClusterState state #^ str kind #^ str name]
-  (get (. state meta) (+ kind "/" name) "resourceVersion"))
+  (. (get (. state meta) (+ kind "/" name)) resource-version))
 
 
 (deftest test-service-writes-are-compare-and-set-per-resource

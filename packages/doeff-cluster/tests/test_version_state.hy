@@ -128,7 +128,7 @@
   "w を replicas 0 に書き換えた後、atlas が rows(w の process がまだ生きている行・空なら止め終えた)を報告した状態。"
   (setv s (reporting) row (row-of s))
   (setv s (call s "PUT" "/resources/Service/w" {"spec" (| SPEC {"replicas" 0})
-                                                 "resourceVersion" (get s.meta "Service/w" "resourceVersion")}))
+                                                 "resourceVersion" (. (get s.meta "Service/w") resource-version)}))
   (beat s "atlas" (if (is rows None) [row] rows)))
 
 
