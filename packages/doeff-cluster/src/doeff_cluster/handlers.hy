@@ -1,5 +1,5 @@
 ;; worker の宣言の読みの口(worker/protocol/declared)を、前の置き場の名でも読めるように読み直す所と、詰めた Program の cache の file を
-;; Program の外から書く道具 write-program-file(検・agora の模擬の世界が使う)。coordinator への口(heartbeat・名指しの待ち・task と Program の
+;; Program の外から書く道具 write-program-file(検・使い手の repo の模擬の世界が使う)。coordinator への口(heartbeat・名指しの待ち・task と Program の
 ;; 受け取り)は worker/protocol/coordinator_link・lease の返しは worker/protocol/lease_release へ移した(#2427)。
 (require doeff-hy.macros [deff])
 (import os)

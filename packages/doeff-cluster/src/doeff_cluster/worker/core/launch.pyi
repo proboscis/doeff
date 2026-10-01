@@ -2,7 +2,7 @@
 
 launch.hy は Hy の module なので、pyright は中を読めず、`doeff_cluster.worker.core.launch` の名が全部 Unknown になる。詰めた Program の
 cache の file の置き場と中身(program-file・program-file-text)を検の道具で使う使い手に、書き手に直せない赤(Type of "program_file" is
-unknown ほか)が出た(agora-redesign #2427 — doeff の handlers.hy の write-program-file を退役させる前の付け替え)。ここで型を宣言する
+unknown ほか)が出た(#2427 — doeff の handlers.hy の write-program-file を退役させる前の付け替え)。ここで型を宣言する
 (job_context.pyi と同じ形)。
 
 - defn(child-environment・env-project-dir・program-file・program-file-text)は普通の関数。defk(job-launch)は呼ぶと Program を返す。

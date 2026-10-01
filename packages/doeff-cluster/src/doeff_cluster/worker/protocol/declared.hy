@@ -1,5 +1,5 @@
 ;;; coordinator の heartbeat の返事の job と task の行を、worker が起こす JobSpec へ読む口(handlers.hy から移した・#2427)。
-;;; worker の拍(coordinator への口)と、検・agora の模擬の世界が同じ読みを使う(handlers.hy は同じ名を読み直して残す)。
+;;; worker の拍(coordinator への口)と、検・使い手の repo の模擬の世界が同じ読みを使う(handlers.hy は同じ名を読み直して残す)。
 (require doeff-hy.macros [val])
 (val MODULE-TAGS {:context "doeff-cluster" :role "protocol"})
 (import json)

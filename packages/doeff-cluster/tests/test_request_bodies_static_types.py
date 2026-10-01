@@ -1,7 +1,7 @@
 """coordinator/protocol/request_bodies.hy の型の宣言(request_bodies.pyi)の失敗ケース。
 
 request_bodies.hy は Hy の module で型の宣言が無かったので、判断を直に呼ぶ検(responded)と調停ループの組(request-bodies)を使う
-使い手の strict に、書き手に直せない Unknown の赤(Type of "responded" is unknown ほか)が出ていた(agora-redesign #2445)。
+使い手の strict に、書き手に直せない Unknown の赤(Type of "responded" is unknown ほか)が出ていた(#2445)。
 → request_bodies.pyi で宣言する。宣言を外すと 1 本目が赤になり、宣言が実装から離れると 2 本目が赤になる。
 """
 

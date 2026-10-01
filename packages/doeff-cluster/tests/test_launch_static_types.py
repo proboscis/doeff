@@ -1,7 +1,7 @@
 """worker/core/launch.hy の型の宣言(launch.pyi)の失敗ケース。
 
 launch.hy は Hy の module で型の宣言が無かったので、詰めた Program の cache の file(program-file・program-file-text)を検の道具で使う
-使い手の strict に、書き手に直せない Unknown の赤(Type of "program_file" is unknown ほか)が出ていた(agora-redesign #2427)。
+使い手の strict に、書き手に直せない Unknown の赤(Type of "program_file" is unknown ほか)が出ていた(#2427)。
 → launch.pyi で宣言する。宣言を外すと 1 本目が赤になり、宣言が実装から離れると 2 本目が赤になる。
 """
 
