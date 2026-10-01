@@ -91,7 +91,7 @@
    :post [(: % MeterSnapshot)] :tags {:context "meter" :role "judgment"}}
   "counter の name に amount を足した新しい断面(元の断面は変えない)。"
   (val counters snapshot.counters)
-  (MeterSnapshot :counters (FrozenMap (| (dict counters) {name (+ (float (.get counters name 0.0)) amount)}))
+  (MeterSnapshot :counters (.updated counters {name (+ (float (.get counters name 0.0)) amount)})
                  :gauges snapshot.gauges :durations snapshot.durations))
 
 
@@ -99,7 +99,7 @@
   {:pre [(: snapshot MeterSnapshot) (: name str) (: value float)]
    :post [(: % MeterSnapshot)] :tags {:context "meter" :role "judgment"}}
   "gauge の name を value に置き換えた新しい断面。"
-  (MeterSnapshot :counters snapshot.counters :gauges (FrozenMap (| (dict snapshot.gauges) {name value}))
+  (MeterSnapshot :counters snapshot.counters :gauges (.updated snapshot.gauges {name value})
                  :durations snapshot.durations))
 
 
@@ -112,9 +112,10 @@
                         (+ (lfor bucket settings.buckets :if (<= seconds bucket.ceiling) (+ name "_" bucket.label))
                            [(+ name "_" settings.inf-label)])
                         []))
-  (val counters (dict snapshot.counters))
-  (for [counter bucket-names]
-    (setv (get counters counter) (+ (float (.get counters counter 0.0)) 1.0)))
-  (MeterSnapshot :counters (FrozenMap counters) :gauges snapshot.gauges
-                 :durations (FrozenMap (| (dict snapshot.durations)
-                                          {name (SecondsTotal :total (+ row.total seconds) :count (+ row.count 1))}))))
+  ;; 写像は断面ごとに作り直すが、写すのは中の dict を 1 度だけ(FrozenMap の updated — 観測のたびに全部の counter を
+  ;; Python の 1 項ずつで写していた・agora-redesign #2593)。
+  (val counters snapshot.counters)
+  (MeterSnapshot :counters (.updated counters (dfor counter bucket-names counter (+ (float (.get counters counter 0.0)) 1.0)))
+                 :gauges snapshot.gauges
+                 :durations (.updated snapshot.durations
+                                      {name (SecondsTotal :total (+ row.total seconds) :count (+ row.count 1))})))

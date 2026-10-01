@@ -33,3 +33,20 @@ def test_thaw_returns_fresh_mutable_values() -> None:
     assert isinstance(thawed["b"], list) and isinstance(thawed["b"][1], dict)
     thawed["b"].append(3)
     assert thaw_json(frozen) == SOURCE
+
+
+def test_updated_returns_a_new_map_with_the_changes_and_leaves_the_source_alone() -> None:
+    # 写像を 1 項ずつ育てる所(計器の断面)が、毎回 dict(写像) で全部を Python の 1 項ずつで写さずに済むため(agora-redesign #2593)。
+    source = FrozenMap({"a": 1.0, "b": 2.0})
+    grown = source.updated({"b": 3.0, "c": 4.0})
+    assert grown == {"a": 1.0, "b": 3.0, "c": 4.0}
+    assert isinstance(grown, FrozenMap)
+    assert source == {"a": 1.0, "b": 2.0}
+    assert source.updated({}) == source
+
+
+def test_updated_refuses_a_key_that_is_not_a_string() -> None:
+    import pytest
+
+    with pytest.raises(TypeError):
+        FrozenMap({"a": 1}).updated({1: 2})  # pyright: ignore[reportArgumentType] - the refusal of a non-string key is what this test checks

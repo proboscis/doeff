@@ -46,6 +46,18 @@
   (defn #^ int __len__ [self]
     (len self._entries))
 
+  (defn #^ "FrozenMap" updated [self #^ (get Mapping #(str V)) changes]
+    "changes の鍵を置き換え・足した新しい写像(元は変えない)。中の dict を 1 度に写し、鍵の確かめは changes の鍵だけ — dict(写像) で写すと
+     Mapping の __getitem__ を鍵ごとに Python で撃つので、写像を 1 項ずつ育てる所(計器の断面 — 観測のたびに全部を写していた・
+     agora-redesign #2593 の実測で 12,176 回の観測に 268 万回の __getitem__)が鍵の数に比例して遅くなる。"
+    (setv added (dict changes))
+    (for [key added]
+      (when (not (isinstance key str))
+        (raise (TypeError (.format "FrozenMap の鍵は文字列: {!r}" key)))))
+    (setv made (FrozenMap))
+    (object.__setattr__ made "_entries" (| self._entries added))
+    made)
+
   (defn #^ int __hash__ [self]
     (setv cached self._hash)
     (when (is cached None)

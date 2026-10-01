@@ -138,3 +138,22 @@ def test_direct_and_program_paths_have_identical_results_and_traceback(
     direct = compare_path(False, monkeypatch)
     assert legacy == direct
     assert direct[:4] == (7, 31, 38, ("outer", "outer"))
+
+
+def test_rewrapping_an_installed_handler_returns_it_without_walking_the_protocol(monkeypatch: pytest.MonkeyPatch) -> None:
+    """doeff-traverse re-wraps every inner handler per item — the installed marker is read as an attribute, not by an
+    ``isinstance`` against the runtime-checkable Protocol (its member walk via ``inspect.getattr_static`` — agora-redesign
+    #2593: 181k such checks in one screen test)."""
+    import typing
+
+    installed = handler(Answers(7).plain)
+    checked: list[type] = []
+    original = typing._ProtocolMeta.__instancecheck__  # pyright: ignore[reportAttributeAccessIssue] - the private metaclass hook is what this test counts
+
+    def counting(cls: type, instance: object) -> bool:
+        checked.append(cls)
+        return original(cls, instance)
+
+    monkeypatch.setattr(typing._ProtocolMeta, "__instancecheck__", counting)  # pyright: ignore[reportAttributeAccessIssue] - same private hook
+    assert handler(installed) is installed
+    assert checked == []

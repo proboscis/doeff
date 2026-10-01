@@ -89,8 +89,13 @@ def handler(raw_handler: Callable[..., object]) -> ProgramHandler:
         raise TypeError(
             f"handler: raw_handler must be callable, got {type(raw_handler).__name__}"
         )
-    if isinstance(raw_handler, _InstalledHandler) and raw_handler._doeff_is_handler_fn is True:
-        return raw_handler
+    # The installer marker is read as a plain attribute: ``isinstance`` against the
+    # runtime-checkable Protocol walks every member with ``inspect.getattr_static``
+    # and doeff-traverse re-wraps every inner handler per item, so the Protocol
+    # check dominated the wrap (agora-redesign #2593: 181k checks, ~9% of a
+    # screen server test).
+    if getattr(raw_handler, "_doeff_is_handler_fn", False) is True:
+        return cast(_InstalledHandler, raw_handler)
 
     def install(body: object) -> WithHandlerType:
         return WithHandlerType(raw_handler, body)
