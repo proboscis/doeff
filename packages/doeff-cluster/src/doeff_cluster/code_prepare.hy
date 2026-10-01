@@ -29,22 +29,17 @@
 (import ast)
 (import math)
 (import dataclasses [dataclass])
-(import importlib.machinery)
-(import importlib.util)
 (import json)
-(import multiprocessing)
 (import os)
 (import sys)
-(import concurrent.futures [ProcessPoolExecutor])
-(import marshal)
-(import types)
 (import collections.abc [Callable])
 (import pathlib [Path PurePosixPath])
 (import doeff [EffectBase run])
 (import doeff_time [GetMonotonic sync-time-handler])
-(import doeff_core_effects.file_effects [PathKind PathStat StatPath ReadText ReadBytes WriteText WriteBytes MakeDirectory WalkTree CopyFile
+(import doeff_core_effects.file_effects [PathKind PathStat StatPath ReadText WriteText MakeDirectory WalkTree CopyFile CompilePythonSources
                                          file-done])
-(import doeff_cluster.worker.core.code_plan [MARKER cache-rel])
+(import doeff_core_effects.python_bytecode [compile-python-sources prepare-compile-path])
+(import doeff_cluster.worker.core.code_plan [MARKER])
 (import doeff_cluster.worker.intent.code_model [ScanTree LinkPycs CompileSources ImportClosure WriteMarker Note])
 (import doeff_cluster.worker.core.code_prepare [prepare-tree tree-listing marker-text closure-of])
 
@@ -63,59 +58,9 @@
 ;; --- 本物(local-tree)と fake(files-tree)が同じく通る判断 ------------------------------------------
 
 
-;; --- 焼き(本物の local-tree と模擬の files-tree が同じく通る — source を compile して PEP 552 の checked hash の .pyc を組む)--------
-
-(defk compiled-pyc [rel name path data]
-  {:pre [(: rel str) (: name str) (: path str) (: data bytes)] :post [(: % (| bytes tuple))] :tags {:context "doeff-cluster" :role "judgment"}}
-  "source の中身 1 つを、import が検める方式(PEP 552 の checked hash)の .pyc の中身にするため。焼けない時は #(相対 path 理由)
-   (import の時に同じ誤りが出るので、ここでは記録だけ)。path = source の在処(Hy の source かの見分けと、誤りの文に出る名)。"
-  (try
-    (val loader (importlib.machinery.SourceFileLoader name path))
-    (val code (.source-to-code loader data path))
-    (<- pyc bytes (checked-hash-pyc code data))
-    pyc
-    (except [error Exception]
-      #(rel (.format "{}: {}" (. (type error) __name__) (cut (str error) 0 200))))))
-
-
-;; PEP 552 の hash 方式の .pyc の頭の flags: bit 0 = hash 方式・bit 1 = import の時に source の hash を検める(checked)。
-(val CHECKED-HASH-FLAGS 0b11)
-
-
-(defk checked-hash-pyc [code data]
-  {:pre [(: code types.CodeType) (: data bytes)] :post [(: % bytes)] :tags {:context "doeff-cluster" :role "judgment"}}
-  "焼いた code を、import が source の hash で検める .pyc の中身にするため(PEP 552 — 頭 = magic・flags・source の hash 8 byte、
-   続けて marshal した code)。標準の私的な実装 importlib._bootstrap_external._code_to_hash_pyc と同じ並びを公開の API で組む。"
-  (+ importlib.util.MAGIC-NUMBER
-     (.to-bytes CHECKED-HASH-FLAGS 4 "little")
-     (importlib.util.source-hash data)
-     (marshal.dumps code)))
-
-
 ;; --- 本物の file system の答え手の部品 ------------------------------------------------------------------
-
-(defn #^ (| tuple None) compile-one [#^ str tree #^ str rel #^ str name]
-  "1 file を焼く。焼けない時は #(相対 path 理由) を返す(焼きの判断は compiled-pyc — fake と同じ関数)。"
-  (setv source (/ (Path tree) rel) data (.read-bytes source))
-  (setv compiled (run (compiled-pyc rel name (str source) data)))
-  (when (isinstance compiled tuple) (return compiled))
-  (setv cache (Path (importlib.util.cache-from-source (str source))))
-  (.mkdir cache.parent :parents True :exist-ok True)
-  (setv tmp (.with-suffix cache (.format ".{}.tmp" (os.getpid))))
-  (.write-bytes tmp compiled)
-  (os.replace tmp cache)
-  None)
-
-
-(defn _init-pool [#^ str tree #^ tuple roots]
-  (setv sys.dont-write-bytecode True)
-  (for [root (reversed roots)]
-    (.insert sys.path 0 (str (/ (Path tree) root)))))
-
-
-(defn _compile-task [item]
-  (compile-one #* item))
-
+;; 焼きの部品(compiled-pyc・checked hash の .pyc・process の pool)は doeff_core_effects.python_bytecode(汎用の効果 CompilePythonSources の
+;; 答え手が使う — #2463)。
 
 (defk scan [tree]
   {:pre [(: tree str)] :post [(: % tuple)] :tags {:context "doeff-cluster" :role "foundation"}}
@@ -169,19 +114,6 @@
   count)
 
 
-(defn #^ list compile-sources [#^ str tree #^ tuple items #^ int jobs #^ tuple roots]
-  (setv work (lfor #(rel name) items #(tree rel name)))
-  (setv results
-    (if (or (<= jobs 1) (<= (len work) 1))
-        (lfor item work (_compile-task item))
-        ;; 焼きは 1 file ずつ独立で CPU だけを使うので、process に分ける(Hy の macro 展開が大半)。
-        ;; fork にする: spawn では子が Hy の module を import し直す前に関数を解けない。
-        (with [pool (ProcessPoolExecutor :max-workers jobs :mp-context (multiprocessing.get-context "fork")
-                                         :initializer _init-pool :initargs #(tree roots))]
-          (list (.map pool _compile-task work :chunksize 4)))))
-  (lfor r results :if (is-not r None) r))
-
-
 (defk write-marker [tree content]
   {:pre [(: tree str) (: content dict)] :post [(: % None)] :tags {:context "doeff-cluster" :role "foundation"}}
   "完成の印を本物の木の根へ置くため(別の file へ書いて置き換える — 書きかけの印を読ませない)。"
@@ -202,7 +134,8 @@
   (ImportClosure [tree sources entries roots]
     (<- closure frozenset (import-closure tree sources entries roots))
     (resume closure))
-  (CompileSources [tree items jobs roots] (resume (compile-sources tree items jobs roots)))
+  (CompileSources [tree items jobs roots]
+    (resume (lfor f (compile-python-sources tree items jobs roots) #(f.path f.reason))))
   (WriteMarker [tree content]
     (<- (write-marker tree content))
     (resume None))
@@ -212,7 +145,7 @@
 ;; --- fake: file system の effect の上の木(files-tree)--------------------------------------------------
 ;; 木の効果に、汎用の file system の effect(doeff_core_effects.file_effects)で答える。模擬の世界では memory-file-handler を外側に
 ;; 被せて、I/O なしで焼きの Program(prepare-tree)を走らせる。走査・閉包・焼き・印の中身の判断は本物と同じ関数(tree-listing・
-;; closure-of・compiled-pyc・marker-text)を通る。本物との違い: hardlink の代わりに写す(中身は同じ)・焼きは並列にしない
+;; closure-of・marker-text)を通り、焼きは汎用の効果 CompilePythonSources(本物と同じ compiled-pyc)へ出す。本物との違い: hardlink の代わりに写す(中身は同じ)・memory の焼きは並列にしない
 ;; (jobs を読まない)・焼きの間の import の路を足さない(焼く source の macro が木の中の別の module を require する時は本物だけが解ける)・
 ;; Note は捨てる(模擬の世界に stderr は無い)・Hy の source は焼けない(doeff-hy の _could_be_hy_src が os.path.isfile で Hy の source かを
 ;; 見るので、disk に無い source は Python として読まれ SyntaxError の失敗になる — 契約テスト test_tree_contract.hy の頭の註)。
@@ -251,32 +184,6 @@
   texts)
 
 
-(defk place-compiled [tree rel name data]
-  {:pre [(: tree str) (: rel str) (: name str) (: data bytes)] :post [(: % (| tuple None))] :tags {:context "doeff-cluster" :role "foundation"}}
-  "source 1 つの中身を compiled-pyc で焼いて __pycache__ へ置くため(焼けなければ置かずに #(相対 path 理由) を返す)。"
-  (<- compiled (compiled-pyc rel name (os.path.join tree rel) data))
-  (match compiled
-    (bytes) (do (val cache (os.path.join tree (cache-rel rel)))
-                (<- (file-done (MakeDirectory (os.path.dirname cache))))
-                (<- (file-done (WriteBytes cache compiled :replace True)))
-                None)
-    failure failure))
-
-
-(defk compile-in-files [tree items]
-  {:pre [(: tree str) (: items tuple)] :post [(: % list)] :tags {:context "doeff-cluster" :role "foundation"}}
-  "焼く物を読んで place-compiled で焼き、焼けなかった物の #(相対 path 理由) の list を返すため。"
-  (val failures [])
-  (for [#(rel name) items]
-    (<- data (file-done (ReadBytes (os.path.join tree rel))))
-    (match data
-      (bytes) (do (<- failure (place-compiled tree rel name data))
-                  (when (is-not failure None)
-                    (.append failures failure)))
-      other (raise (TypeError (.format "ReadBytes の答えが bytes でない: {!r}" other)))))
-  failures)
-
-
 (defhandler files-tree
   ;; fake(上の註): 木の効果を file system の effect へ出し直す。
   (ScanTree [tree]
@@ -291,8 +198,8 @@
     (<- closure frozenset (closure-of sources entries roots (fn [rel] (get texts rel))))
     (resume closure))
   (CompileSources [tree items jobs roots]
-    (<- failures list (compile-in-files tree items))
-    (resume failures))
+    (<- failures tuple (CompilePythonSources tree items jobs roots))
+    (resume (lfor f failures #(f.path f.reason))))
   (WriteMarker [tree content]
     (<- text str (marker-text content))
     (<- (file-done (WriteText (os.path.join tree MARKER) text :replace True)))
@@ -319,7 +226,7 @@
   ;; 焼く木の module 名がそこで解けてしまわないよう外す。
   (setv here (. (.resolve (Path __file__)) parent))
   (setv (cut sys.path) (lfor p sys.path :if (not (and p (= (.resolve (Path p)) here))) p))
-  (_init-pool tree roots)
+  (prepare-compile-path tree roots)
   (setv changed (frozenset (if args.changed (.split (.read-text (Path args.changed))) [])))
   (setv old (if args.old (str (.resolve (Path args.old))) None))
   (setv entries (tuple (gfor e (.split args.entries ",") :if e e)))
