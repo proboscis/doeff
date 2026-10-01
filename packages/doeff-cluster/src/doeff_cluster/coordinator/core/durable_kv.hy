@@ -20,7 +20,7 @@
 (val MODULE-TAGS {:context "coordinator" :role "judgment"})
 (import dataclasses [asdict replace])
 (import functools [partial])
-(import doeff_cluster.coordinator.intent.cluster_model [ClusterState WorkerInfo Placement Drain])
+(import doeff_cluster.coordinator.intent.cluster_model [ClusterState WorkerInfo Placement Drain BoardRow])
 (import doeff_cluster.coordinator.core.cluster_rules [component-versions-of])
 (import doeff_cluster.coordinator.core.cluster_json [task-record-to-json task-record-from-json handoff-watch-from-json])
 (import doeff_cluster.coordinator.core.cluster_policy [job-to-json job-from-json rollout-row-to-json rollout-row-from-json audit-event-to-json audit-event-from-json read-service-rows board-changes value-size warm-entry-to-json warm-entry-from-json worker-capabilities-of
@@ -36,9 +36,9 @@
 
 (defn #^ dict board-entry [#^ ClusterState state #^ str key]
   "盤の行 1 つの耐久の形 {value resourceVersion [expiresMs]}。期限の無い行は expiresMs を持たない(2026-09-25 より前の形と同じ)。"
-  (setv expires (.get state.board-expiry key))
-  (| {"value" (get state.board key) "resourceVersion" (.get state.board-versions key 1)}
-     (if (is expires None) {} {"expiresMs" expires})))
+  (setv row (get state.board key))
+  (| {"value" row.value "resourceVersion" row.version}
+     (if (is row.expires-ms None) {} {"expiresMs" row.expires-ms})))
 
 
 (defn #^ dict counter-json [#^ ClusterState state]
@@ -164,10 +164,8 @@
     :programs (dfor #(k v) (part PROGRAM) k (program-row-from-json v))
     :handoffs (dfor #(k v) (part HANDOFF) k (handoff-watch-from-json v))
     :audit (tuple (gfor #(_ e) (part "audit/") (audit-event-from-json e)))
-    :board (dfor #(k v) (part BOARD) k (get v "value"))
-    :board-versions (dfor #(k v) (part BOARD) k (get v "resourceVersion"))
-    :board-expiry (dfor #(k v) (part BOARD) :if (is-not (.get v "expiresMs") None) k (get v "expiresMs"))
-    :board-sizes (dfor #(k v) (part BOARD) k (value-size (get v "value")))
+    :board (dfor #(k v) (part BOARD) k (BoardRow :value (get v "value") :version (get v "resourceVersion")
+                                                 :expires-ms (.get v "expiresMs") :size (value-size (get v "value"))))
     :started-ms now))
 
 

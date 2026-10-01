@@ -2,13 +2,13 @@
 (require doeff-hy.macros [deftest <- val var])
 (import dataclasses [replace])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming])
-(import doeff_cluster.coordinator.intent.cluster_model [ClusterState WorkerInfo TaskRecord])
+(import doeff_cluster.coordinator.intent.cluster_model [BoardRow ClusterState WorkerInfo TaskRecord])
 (import doeff_cluster.foundation.coordinator_inbox [http-request])
 (import doeff_cluster.coordinator.core.api_policy [tick])
 (import doeff_cluster.coordinator.protocol.request_bodies [responded])
 (import doeff_cluster.coordinator.core.durable_kv [durable-kv full-kv durable-delta state-from-kv])
 (import doeff_cluster.coordinator.core.cluster_policy [BOARD-MAX-VALUE-BYTES BOARD-MAX-ROWS BOARD-MAX-BYTES TASK-MAX-OPEN WORKER-FORGET-MS
-                          board-usage value-size])
+                          board-rows-of board-usage value-size])
 (import doeff_cluster.coordinator.core.metrics_policy [metrics-text])
 (import tests.program_rows [SAMPLE-RUN SAMPLE-TASK-PROGRAM program-placed])
 
@@ -17,6 +17,11 @@
 
 (defn #^ tuple call [#^ ClusterState state #^ str method #^ str path #^ (| dict list str int float bool None) [body None] #^ int [now 1000]]
   (responded state (http-request method path {} body :actor "c-test") now T))
+
+
+(defn #^ dict expiry-of [#^ ClusterState state]
+  "盤の行のうち期限つきの物の鍵 → 期限。"
+  (dfor #(k row) (.items state.board) :if (is-not row.expires-ms None) k row.expires-ms))
 
 
 (defn #^ tuple put [#^ ClusterState state #^ str key #^ object value #^ int [now 1000] #^ object [ttlSeconds None]]
@@ -30,10 +35,10 @@
   (assert (= status 200))
   (val reply-2 (put s "w/cycle" {"n" 2} 1000))
   (:= s (get reply-2 0))
-  (assert (= s.board-expiry {"w/process/atlas/7" 61000}))
+  (assert (= (expiry-of s) {"w/process/atlas/7" 61000}))
   ;; 期限は行と一緒に保存し、読み直しで戻る
   (setv back (state-from-kv (full-kv s) 2000))
-  (assert (= back.board-expiry {"w/process/atlas/7" 61000}))
+  (assert (= (expiry-of back) {"w/process/atlas/7" 61000}))
   ;; 期限の前は残り、過ぎた後の最初の調停(要求の無い拍でも)で消える
   (setv #(s1 _ _) (call s "GET" "/state" None 60000))
   (setv #(s2 _ _) (call s "POST" "/heartbeat" {"name" "atlas" "provides" ["net"] "capacity" 1 "statuses" []} 61000))
@@ -49,7 +54,7 @@
   (var s (get reply-3 0))
   (val reply-4 (put s "k" 2 2000))
   (:= s (get reply-4 0))
-  (assert (= s.board-expiry {})))
+  (assert (= (expiry-of s) {})))
 
 
 ;; 書けない期限(数でない・0 以下・30 日を越える)の断りは tests/test_shared_contract.hy が本物の client と fake の両方で見る。
@@ -65,8 +70,7 @@
   (assert (in "1 行の上限" (get body "error")))
   ;; 合計の上限: 上限の直前まで埋まった盤に、大きくする書きは断り、小さくする書きと消す書きは通す
   (setv half (* "y" (- (// BOARD-MAX-VALUE-BYTES 2) 10)))
-  (setv full (replace (ClusterState) :board {"a" half} :board-versions {"a" 1}
-                      :board-sizes {"a" (- BOARD-MAX-BYTES 100)}))
+  (setv full (replace (ClusterState) :board {"a" (BoardRow :value half :version 1 :expires-ms None :size (- BOARD-MAX-BYTES 100))}))
   (val reply-6 (put full "b" "zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz"))
   (:= status (get reply-6 1))
   (:= body (get reply-6 2))
@@ -76,13 +80,12 @@
   (val shrunk (get reply-7 0))
   (:= status (get reply-7 1))
   (assert (= status 200))
-  (assert (= (get shrunk.board-sizes "a") (value-size "small")))
+  (assert (= (. (get shrunk.board "a") size) (value-size "small")))
   (val reply-8 (call full "PUT" "/board/a" {"value" None "delete" True}))
   (:= status (get reply-8 1))
   (assert (= status 200))
   ;; 行の数の上限
-  (setv many (replace (ClusterState) :board (dfor i (range BOARD-MAX-ROWS) (str i) 1)
-                      :board-sizes (dfor i (range BOARD-MAX-ROWS) (str i) 1)))
+  (setv many (replace (ClusterState) :board (board-rows-of (dfor i (range BOARD-MAX-ROWS) (str i) 1) {})))
   (val reply-9 (put many "new" 1))
   (:= status (get reply-9 1))
   (assert (= status 507))

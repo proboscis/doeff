@@ -131,6 +131,18 @@
   (#^ int updated-ms))
 
 
+(defrecord BoardRow
+  "盤の行 1 つ(ClusterState.board の値 — 鍵 = 盤の鍵): value = 書かれた値(JSON の値 — 業務の系の物なので中を読まない。null も値)・
+   version = 行の版(行ごとに 1 から増える)・expires-ms = 期限(epoch ミリ秒 — PUT の ttlSeconds で付き、過ぎた行は調停が消す・
+   無ければ None)・size = 値の JSON の byte 数(容量の上限の判断と計器に使う・保存しない — 読み直しの時に測り直す)。
+   #2447 で、鍵ごとの 4 つの表(値・版・期限・大きさ)をこの型 1 つにまとめた。耐久の形 {value resourceVersion [expiresMs]} は
+   durable_kv.board-entry。"
+  (#^ object value)
+  (#^ int version)
+  (#^ (| int None) expires-ms)
+  (#^ int size))
+
+
 (defrecord RolloutRow
   "Rollout 1 つ(ClusterState.rollouts の値 — 鍵 = Rollout の名・保存する): spec = 宣言(rollout_policy.validate-rollout-spec が揃えた
    形 — from / to の相手・owner・abort ほか)・status = 進み具合(phase・history・lastAction・drift ほか — rollout_policy.rollout-step が
@@ -362,7 +374,7 @@
   ;; coordinator は起動ごとに違う頭を振る(cluster_policy.fresh-task-prefix)— 前の coordinator が振った id(worker に blob が
   ;; 残り、子 process が走っているかもしれない)を振り直さない。保存する(counter の taskPrefix)。
   (setv #^ str task-prefix "t")
-  (setv #^ dict board (field :default-factory dict))
+  (setv #^ dict board (field :default-factory dict))    ; 盤の鍵 → BoardRow(行と一緒に保存)
   (setv #^ dict statuses (field :default-factory dict))  ; worker 名 → WorkerReport(保存しない)
   (setv #^ tuple events #())                            ; 割り当ての移り変わり(直近 200 件・保存しない)
   ;; --- 資源(2026-09-24) ---
@@ -371,11 +383,6 @@
   (setv #^ tuple audit #())                             ; 出来事の記録 AuditEvent の列(kind ごとに件数の上限つき・保存する)
   (setv #^ int audit-seq 0)
   (setv #^ dict rollouts (field :default-factory dict))  ; Rollout の名 → RolloutRow
-  (setv #^ dict board-versions (field :default-factory dict)) ; 盤の行 → その行の版(行ごとに 1 から増える・行の file と一緒に保存)
-  ;; 盤の行 → 期限(epoch ミリ秒)。PUT の ttlSeconds で付き、期限を過ぎた行は調停が消す(2026-09-25・行と一緒に保存)。
-  (setv #^ dict board-expiry (field :default-factory dict))
-  ;; 盤の行 → 値の JSON の byte 数(保存しない — 読み直しの時に測り直す)。盤の容量の上限の判断と計器に使う。
-  (setv #^ dict board-sizes (field :default-factory dict))
   ;; --- 保存しない観測 ---
   ;; Service の名 → 直近の ReportReady の報告(process の世代ごとに最新 1 つ・古い順の tuple)
   ;; {worker pid revision instance attempt specHash placement ready reason at}

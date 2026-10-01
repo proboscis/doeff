@@ -12,7 +12,7 @@
 (import doeff_cluster.shared.intent.job_model [JobSpec])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming Request BodyInvalid])
 (import doeff_cluster.shared.core.capabilities [capabilities-of environ-pairs])
-(import doeff_cluster.coordinator.intent.cluster_model [ClusterJob WorkerInfo AuditEvent RolloutRow WorkerReport GenerationOrder Placement ClusterState TaskRecord Drain EnvFailed WarmEntry HandoffPhase RefusedJob UnplacedKind ACCEPTED-FORMATS PLACED-PHASES ProgramRow ResourceMeta])
+(import doeff_cluster.coordinator.intent.cluster_model [ClusterJob WorkerInfo AuditEvent RolloutRow BoardRow WorkerReport GenerationOrder Placement ClusterState TaskRecord Drain EnvFailed WarmEntry HandoffPhase RefusedJob UnplacedKind ACCEPTED-FORMATS PLACED-PHASES ProgramRow ResourceMeta])
 (import doeff_cluster.coordinator.core.cluster_rules [component-versions-of format-version-refusal])
 (import doeff_cluster.coordinator.intent.request_bodies [LeaseBody TaskResultBody BoardWrite HeartbeatBody EnvsReport StatusRow TaskBody])
 (import doeff_cluster.coordinator.core.cluster_json [task-record-to-json task-record-from-json handoff-watch-from-json required-field int-field])
@@ -343,6 +343,11 @@
   (WarmEntry #** fields))
 
 
+(defn #^ dict board-rows-of [#^ dict values #^ dict versions]
+  "読み直した盤の値(鍵 → 値)と版(鍵 → 版・無い鍵は 1)→ 盤の行の表(期限なし・大きさは測り直す)。"
+  (dfor #(k v) (.items values) k (BoardRow :value v :version (.get versions k 1) :expires-ms None :size (value-size v))))
+
+
 (defn #^ ClusterState state-from-json [#^ dict data #^ int now #^ (| dict None) [board None] #^ (| dict None) [board-versions None]]
   "保存した状態から作り直す。知っていた worker は全員「いま生きていた」とみなす。生存を捨てると、最初に heartbeat を
    送った worker へ全 job が移り、元の担い手がまだ動いていれば二重に動く(実測 2026-09-23)。戻らない worker の job は、
@@ -371,9 +376,7 @@
                  (task-record-from-json t))
     :next-task (.get data "nextTask" 1)
     :task-prefix (.get data "taskPrefix" "t")
-    :board (if (is board None) (.get data "board" {}) board)
-    :board-versions (or board-versions (dfor k (.get data "board" {}) k 1))
-    :board-sizes (dfor #(k v) (.items (if (is board None) (.get data "board" {}) board)) k (value-size v))
+    :board (board-rows-of (if (is board None) (.get data "board" {}) board) (or board-versions {}))
     :meta (dfor #(k v) (.items (.get data "meta" {})) k (resource-meta-from-json v))
     :revision (.get data "revision" 0)
     :audit (tuple (gfor e (.get data "audit" []) (audit-event-from-json e)))
@@ -1006,15 +1009,10 @@
 
 (defn #^ ClusterState sweep-board [#^ ClusterState state #^ int now]
   "純粋: 期限を過ぎた盤の行を消した状態(期限つきの行が無ければ同じ object)。"
-  (setv gone (lfor #(k at) (.items state.board-expiry) :if (<= at now) k))
+  (setv gone (sfor #(k row) (.items state.board) :if (and (is-not row.expires-ms None) (<= row.expires-ms now)) k))
   (if (not gone)
       state
-      (do (setv drop (set gone))
-          (replace state
-                   :board (dfor #(k v) (.items state.board) :if (not-in k drop) k v)
-                   :board-versions (dfor #(k v) (.items state.board-versions) :if (not-in k drop) k v)
-                   :board-expiry (dfor #(k v) (.items state.board-expiry) :if (not-in k drop) k v)
-                   :board-sizes (dfor #(k v) (.items state.board-sizes) :if (not-in k drop) k v)))))
+      (replace state :board (dfor #(k row) (.items state.board) :if (not-in k gone) k row))))
 
 
 (defn #^ ClusterState forget-silent-workers [#^ ClusterState state #^ int now]
@@ -1378,17 +1376,14 @@
   "POST /leases/<名>: lease の操作 1 つを coordinator の時計で当てる(lease_rules.lease-op)。行が変われば盤へ書く
    (版を 1 進める・盤の書きと同じく永続化してから返事をする)。返り値 #(次の状態 status 答え)。"
   ;; 本文の欄の欠け・型の誤りは本文を解く所(coordinator/protocol/request_bodies)が 400 で断る(#1024・#2445)。
-  (setv key (semaphore-key name) current (.get state.board key)
+  (setv key (semaphore-key name) entry (.get state.board key) current (if (is entry None) None entry.value)
         #(row verdict) (lease-op current body.op body.token body.permits body.ttl-ms now)
         ;; 返事の本文は LeaseAnswer の wire の形(4 つの欄をいつも書く — semaphore_model.LeaseAnswer の註)。
         answer (run (dump verdict)))
   (if (or (is row current) (is row None))
       #(state 200 answer)
-      (do (setv version (.get state.board-versions key (if (is current None) 0 1)))
-          #((replace state :board (| state.board {key row})
-                           :board-versions (| state.board-versions {key (+ version 1)})
-                           :board-expiry (dfor #(k v) (.items state.board-expiry) :if (!= k key) k v)
-                           :board-sizes (| state.board-sizes {key (value-size row)}))
+      (do (setv version (if (is entry None) 0 entry.version))
+          #((replace state :board (| state.board {key (BoardRow :value row :version (+ version 1) :expires-ms None :size (value-size row))}))
             200 answer))))
 
 
@@ -1398,18 +1393,20 @@
 
 
 (defn #^ dict board-usage [#^ ClusterState state]
-  {"rows" (len state.board) "bytes" (sum (.values state.board-sizes)) "expiring" (len state.board-expiry)
+  {"rows" (len state.board) "bytes" (sum (gfor row (.values state.board) row.size))
+   "expiring" (len (lfor row (.values state.board) :if (is-not row.expires-ms None) row))
    "maxRows" BOARD-MAX-ROWS "maxBytes" BOARD-MAX-BYTES "maxValueBytes" BOARD-MAX-VALUE-BYTES})
 
 
 (defn #^ (| str None) board-capacity-refusal [#^ ClusterState state #^ str key #^ int size]
   "純粋: key へ size byte の値を書くと上限を越えるなら理由の文。越えないなら None。小さくする書きは(合計が上限の上でも)通す。"
-  (setv old (.get state.board-sizes key 0)
-        total (sum (.values state.board-sizes)))
+  (setv entry (.get state.board key)
+        old (if (is entry None) 0 entry.size)
+        total (sum (gfor row (.values state.board) row.size)))
   (cond
     (> size BOARD-MAX-VALUE-BYTES) (.format "値が {} byte で、1 行の上限 {} byte を越える" size BOARD-MAX-VALUE-BYTES)
     (and (not-in key state.board) (>= (len state.board) BOARD-MAX-ROWS))
-      (.format "盤の行が上限 {} 行に達している(期限つきの行 {} 行)" BOARD-MAX-ROWS (len state.board-expiry))
+      (.format "盤の行が上限 {} 行に達している(期限つきの行 {} 行)" BOARD-MAX-ROWS (get (board-usage state) "expiring"))
     (and (> size old) (> (+ (- total old) size) BOARD-MAX-BYTES))
       (.format "盤の値の合計が {} byte になり、上限 {} byte を越える" (+ (- total old) size) BOARD-MAX-BYTES)
     True None))
@@ -1431,35 +1428,31 @@
   (setv ttl-refusal (run (board-ttl-refusal ttl)))
   (when (is-not ttl-refusal None)
     (return #(state 400 {"ok" False "error" ttl-refusal})))
-  (setv present (in key state.board)
-        version (.get state.board-versions key (if present 1 0))
-        ok (and (board-allows (.get state.board key) present write.expect-given body.expect)
+  (setv entry (.get state.board key)
+        present (is-not entry None)
+        current (if present entry.value None)
+        version (if present entry.version 0)
+        ok (and (board-allows current present write.expect-given body.expect)
                 (or (is body.expect-version None) (= body.expect-version version))))
   (cond
-    (not ok) #(state 409 {"ok" False "current" (.get state.board key) "resourceVersion" version})
+    (not ok) #(state 409 {"ok" False "current" current "resourceVersion" version})
     ;; lease の行への直の書き(旧い版の process)は、coordinator の時計でまだ切れていない担い手を追い出せない(2026-09-25)。
     ;; 409 = 旧い版は compare-and-set の競合として読み直す。
     (and (.startswith key SEMAPHORE-PREFIX) (not body.delete)
-         (is-not (semaphore-write-refusal (.get state.board key) (written-value write) now) None))
-      #(state 409 {"ok" False "current" (.get state.board key) "resourceVersion" version
-                   "error" (semaphore-write-refusal (.get state.board key) (written-value write) now)})
+         (is-not (semaphore-write-refusal current (written-value write) now) None))
+      #(state 409 {"ok" False "current" current "resourceVersion" version
+                   "error" (semaphore-write-refusal current (written-value write) now)})
     body.delete
-      #((replace state :board (dfor #(k v) (.items state.board) :if (!= k key) k v)
-                       :board-versions (dfor #(k v) (.items state.board-versions) :if (!= k key) k v)
-                       :board-expiry (dfor #(k v) (.items state.board-expiry) :if (!= k key) k v)
-                       :board-sizes (dfor #(k v) (.items state.board-sizes) :if (!= k key) k v))
+      #((replace state :board (dfor #(k row) (.items state.board) :if (!= k key) k row))
         200 {"ok" True "resourceVersion" None})
     True
       (do (setv size (value-size (written-value write))
                 refusal (board-capacity-refusal state key size))
           (if (is-not refusal None)
               #(state 507 {"ok" False "error" refusal "usage" (board-usage state)})
-              #((replace state :board (| state.board {key (written-value write)})
-                               :board-versions (| state.board-versions {key (+ version 1)})
-                               :board-expiry (if (is ttl None)
-                                                 (dfor #(k v) (.items state.board-expiry) :if (!= k key) k v)
-                                                 (| state.board-expiry {key (+ now (int (* 1000 ttl)))}))
-                               :board-sizes (| state.board-sizes {key size}))
+              #((replace state :board (| state.board {key (BoardRow :value (written-value write) :version (+ version 1)
+                                                                    :expires-ms (if (is ttl None) None (+ now (int (* 1000 ttl))))
+                                                                    :size size)}))
                 200 {"ok" True "resourceVersion" (+ version 1)})))))
 
 
