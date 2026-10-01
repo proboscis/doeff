@@ -12,7 +12,7 @@
 (import doeff_cluster.shared.intent.job_model [JobSpec])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming Request BodyInvalid])
 (import doeff_cluster.shared.core.capabilities [capabilities-of environ-pairs])
-(import doeff_cluster.coordinator.intent.cluster_model [ClusterJob WorkerInfo GenerationOrder Placement ClusterState TaskRecord Drain EnvFailed WarmEntry HandoffPhase RefusedJob UnplacedKind ACCEPTED-FORMATS PLACED-PHASES ProgramRow ResourceMeta])
+(import doeff_cluster.coordinator.intent.cluster_model [ClusterJob WorkerInfo WorkerReport GenerationOrder Placement ClusterState TaskRecord Drain EnvFailed WarmEntry HandoffPhase RefusedJob UnplacedKind ACCEPTED-FORMATS PLACED-PHASES ProgramRow ResourceMeta])
 (import doeff_cluster.coordinator.core.cluster_rules [component-versions-of format-version-refusal])
 (import doeff_cluster.coordinator.intent.request_bodies [LeaseBody TaskResultBody BoardWrite HeartbeatBody EnvsReport TaskBody])
 (import doeff_cluster.coordinator.core.cluster_json [task-record-to-json task-record-from-json handoff-watch-from-json required-field int-field])
@@ -475,7 +475,7 @@
   (tuple (gfor #(wname st) (sorted (.items state.statuses))
                :setv w (.get state.workers wname)
                :if (and (is-not w None) (alive now w timing.lease-ms))
-               row (.get st "jobs" [])
+               row st.jobs
                :if (or (= (.get row "name") name) (= (.get row "retiredFrom") name))
                row)))
 
@@ -1115,9 +1115,9 @@
                          :derived (if (and (is-not previous None) (= previous.node node)) previous.derived #()))
         state (replace (absorb-boot state name boot)
                 :workers (| state.workers {name info})
-                :statuses (| state.statuses {name {"at" now "endpoint" body.endpoint
-                                                  "jobs" (lfor s statuses (dfor #(k v) (.items s)
-                                                                                :if (not-in k #("result" "task")) k v))}})))
+                :statuses (| state.statuses {name (WorkerReport :at now :endpoint body.endpoint
+                                                               :jobs (tuple (gfor s statuses (dfor #(k v) (.items s)
+                                                                                                   :if (not-in k #("result" "task")) k v))))})))
   (replace state :tasks (promote-prepared (renew-detached (absorb-task-reports state name statuses now boot) name boot now)
                                          info)))
 
@@ -1279,7 +1279,8 @@
    "placements" (dfor #(k v) (.items state.placements) k (asdict v))
    "unplaced" (unplaced-jobs now state timing)
    ;; 沈黙した worker の最後の報告は「いま動いている」の証拠にならない。古さを付けて返す。
-   "statuses" (dfor #(n st) (.items state.statuses) n (| st {"stale" (> (- now (get st "at")) timing.lease-ms)}))
+   "statuses" (dfor #(n st) (.items state.statuses) n {"at" st.at "endpoint" st.endpoint "jobs" (list st.jobs)
+                                                       "stale" (> (- now st.at) timing.lease-ms)})
    "tasks" (lfor t (sorted (.values state.tasks) :key (fn [t] t.id)) (task-summary t))
    "boardKeys" (len state.board)
    "surges" (dfor #(k v) (.items state.surges) k (asdict v))
