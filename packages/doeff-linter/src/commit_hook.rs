@@ -150,6 +150,53 @@ pub fn effective_rules(config: Option<&Config>, cli_enable: &[String], cli_disab
     crate::config::merge_config(config, cli_enable, cli_disable, &[]).0.unwrap_or_else(crate::config::get_all_rule_ids)
 }
 
+/// 宣言の file と dir(repo の根からの path)— 設定 file・architecture.hy・登録簿の表。ここを変えた commit は、file 1 つで判じる規則の
+/// 当たりも変更の外の file に付けうる(層に禁じた module を足すと、触っていない core の file が赤になる — agora-redesign #2127)。
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Declarations {
+    pub files: Vec<String>,
+    pub dirs: Vec<String>,
+}
+
+/// 設定から宣言の file と dir を集める。architecture.hy の置き場は linter のふだんの実行と同じ決め方(設定の architecture か、根の
+/// architecture.hy)。登録簿の dir・file は根から、設定の登録簿の file は設定 file の dir から。
+pub fn declarations_of(root: &Path, config: Option<(&Config, &Path)>) -> Declarations {
+    let rel = |path: &Path| crate::project::paths::declared_rel(root, path);
+    let config_dir = config.and_then(|(_, path)| path.parent().map(Path::to_path_buf)).unwrap_or_else(|| root.to_path_buf());
+    let architecture = match config.and_then(|(c, _)| c.architecture.clone()) {
+        Some(path) => config_dir.join(path),
+        None => root.join("architecture.hy"),
+    };
+    let registry = config.and_then(|(c, _)| c.registry.as_ref());
+    let files = config
+        .map(|(_, path)| rel(path))
+        .into_iter()
+        .chain(std::iter::once(rel(&architecture)))
+        .chain(registry.into_iter().flat_map(|r| r.files.iter().cloned()))
+        .chain(registry.into_iter().flat_map(|r| r.config_files.iter().map(|f| rel(&config_dir.join(f)))))
+        .collect();
+    let dirs = registry.map(|r| r.dirs.iter().map(|d| d.trim_end_matches('/').to_string()).collect()).unwrap_or_default();
+    Declarations { files, dirs }
+}
+
+/// 純粋: 変えた path(根から)に宣言の file か宣言の dir の下の file が在るか。
+pub fn touches_declaration(changed: &[String], declarations: &Declarations) -> bool {
+    changed.iter().any(|path| {
+        declarations.files.iter().any(|f| f == path) || declarations.dirs.iter().any(|d| path.starts_with(&format!("{}/", d)))
+    })
+}
+
+/// 純粋: 変更に当てる規則の分け — 門と commit の hook が共有する 1 か所(agora-redesign #2127)。ふだんは規則の名乗り(split_rules)で
+/// 分け、宣言の file を変えた変更では file 1 つで判じる規則も repo 全体の比べに入れる(quick は空)。手の一覧は持たない。
+pub fn split_for_change(enabled: &[String], changed: &[String], declarations: &Declarations) -> RuleSplit {
+    let split = split_rules(enabled);
+    if !touches_declaration(changed, declarations) {
+        return split;
+    }
+    let whole = enabled.iter().filter(|r| split.quick.contains(r) || split.whole.contains(r)).cloned().collect();
+    RuleSplit { quick: Vec::new(), whole }
+}
+
 /// hook の 1 回の実行の前提。
 #[derive(Debug, Clone)]
 pub struct CommitHookOptions {
@@ -157,7 +204,9 @@ pub struct CommitHookOptions {
     pub root: PathBuf,
     /// 設定 file(絶対 path・無ければ子は設定を探す)。
     pub config: Option<PathBuf>,
-    pub rules: RuleSplit,
+    /// 有効な規則(分けは stage した path を見て split_for_change が決める)。
+    pub enabled: Vec<String>,
+    pub declarations: Declarations,
     pub timeout: Duration,
     /// 子として撃つ linter(ふつうは今の binary)。
     pub linter: PathBuf,
@@ -172,7 +221,8 @@ impl CommitHookOptions {
             eprintln!("{}{}", PREFIX, note);
         }
         CommitHookOptions {
-            rules: split_rules(&enabled),
+            declarations: declarations_of(&root, config.as_ref().map(|(c, path)| (*c, path.as_path()))),
+            enabled,
             timeout: resolve_timeout(section, cli_timeout),
             config: config.map(|(_, path)| path),
             root,
@@ -402,7 +452,9 @@ fn judge(options: &CommitHookOptions) -> Result<Blocking, Stop> {
     if staged.is_empty() {
         return Ok(blocking);
     }
-    let RuleSplit { quick, whole } = &options.rules;
+    // 宣言の file を変えた commit は、file 1 つで判じる規則も repo 全体の比べに当てる(門と同じ判定 split_for_change・#2127)。
+    let split = split_for_change(&options.enabled, &staged, &options.declarations);
+    let RuleSplit { quick, whole } = &split;
     let paths = if quick.is_empty() { Vec::new() } else { linted_paths(&staged, |p| root.join(p).exists()) };
     if paths.is_empty() && whole.is_empty() {
         return Ok(blocking);
@@ -465,6 +517,22 @@ mod tests {
         // repo 全体の比べは規則が名乗る列 — 手の一覧に無かった DOEFF149 も入る(agora-redesign #2090)。列の DOEFF166 が行の名指す規則を
         // 同じ実行で当てる(agora-redesign #1999・#2033)。
         assert_eq!(split.whole, ids(&["DOEFF163", "DOEFF149", "doeff166"]));
+    }
+
+    #[test]
+    fn commit_hook_a_declaration_change_moves_every_rule_to_the_whole_repo() {
+        let declarations = Declarations { files: ids(&["pyproject.toml", "architecture.hy"]), dirs: ids(&["scripts/doeff_lint/REG"]) };
+        let enabled = ids(&["DOEFF016", "DOEFF102", "DOEFF201", "DOEFF149"]);
+        // 宣言に触れない変更は規則の名乗りの分けのまま。
+        let plain = split_for_change(&enabled, &ids(&["app/core/x.hy"]), &declarations);
+        assert_eq!(plain, RuleSplit { quick: ids(&["DOEFF016", "DOEFF102"]), whole: ids(&["DOEFF149"]) });
+        // 宣言の file・登録簿の dir の下の file を変えた変更は、file 1 つで判じる規則も whole へ(意味の規則は除いたまま・順は enable)。
+        for changed in [ids(&["architecture.hy"]), ids(&["pyproject.toml", "app/core/x.hy"]), ids(&["scripts/doeff_lint/REG/k.txt"])] {
+            let moved = split_for_change(&enabled, &changed, &declarations);
+            assert_eq!(moved, RuleSplit { quick: Vec::new(), whole: ids(&["DOEFF016", "DOEFF102", "DOEFF149"]) }, "{:?}", changed);
+        }
+        // 名の前方一致だけでは触れない(dir の名を頭に持つ別の dir)。
+        assert!(!touches_declaration(&ids(&["scripts/doeff_lint/REGISTRY-OTHER/k.txt", "architecture.hy.bak"]), &declarations));
     }
 
     #[test]

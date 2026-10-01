@@ -122,6 +122,12 @@ struct Args {
     #[arg(long)]
     list_rules: bool,
 
+    /// 変えた path(path の引数・repo の根から)に当てる規則の分けを JSON で出して終わる — {"quick", "whole", "declaration_changed"}。
+    /// commit の hook と同じ 1 か所の判定(宣言の file を変えた変更は file 1 つで判じる規則も whole へ — agora-redesign #2127)を、
+    /// マージの門が読む口
+    #[arg(long)]
+    split_rules: bool,
+
     /// Only lint git-modified files (tracked and untracked)
     #[arg(long)]
     modified: bool,
@@ -599,7 +605,7 @@ fn main() -> ExitCode {
         return ExitCode::SUCCESS;
     }
 
-    if args.commit_hook {
+    if args.commit_hook || args.split_rules {
         return run_commit_hook(&args);
     }
 
@@ -624,7 +630,8 @@ fn main() -> ExitCode {
     }
 }
 
-/// `--commit-hook` — git の作業木の根(`--root` が勝つ)と設定を決め、本体(doeff_linter::commit_hook)を撃つ。
+/// `--commit-hook` — git の作業木の根(`--root` が勝つ)と設定を決め、本体(doeff_linter::commit_hook)を撃つ。`--split-rules` も同じ
+/// 根と設定から、変えた path に当てる規則の分けだけを出す(門と hook が同じ判定を使う)。
 /// 終了コード 0 = 通す(測れなかった時を含む)・1 = 止める・2 = 設定・git・linter の誤り。
 fn run_commit_hook(args: &Args) -> ExitCode {
     let fail = |reason: String| {
@@ -660,6 +667,14 @@ fn run_commit_hook(args: &Args) -> ExitCode {
     };
     let config = loaded.as_ref().map(|l| (&l.config, l.path.canonicalize().unwrap_or_else(|_| l.path.clone())));
     let options = doeff_linter::commit_hook::CommitHookOptions::new(root, config, &args.enable, &args.disable, args.commit_hook_timeout_s, linter);
+    if args.split_rules {
+        // 門の口: path の引数を変えた path として、hook と同じ判定の分けを出す(既定の . は変えた path ではない)。
+        let changed: Vec<String> = args.paths.iter().filter(|p| p.as_str() != ".").cloned().collect();
+        let split = doeff_linter::commit_hook::split_for_change(&options.enabled, &changed, &options.declarations);
+        let changed_declaration = doeff_linter::commit_hook::touches_declaration(&changed, &options.declarations);
+        println!("{}", serde_json::json!({ "quick": split.quick, "whole": split.whole, "declaration_changed": changed_declaration }));
+        return ExitCode::SUCCESS;
+    }
     ExitCode::from(doeff_linter::commit_hook::run(&options))
 }
 

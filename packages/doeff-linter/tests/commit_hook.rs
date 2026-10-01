@@ -238,6 +238,49 @@ fn list_rules_names_which_rules_need_the_whole_repo() {
     }
 }
 
+/// 失敗ケース(agora-redesign #2127): file 1 つで判じる規則(DOEFF102 — 層に禁じた module の import)でも、宣言(architecture.hy)だけを
+/// 変えた commit で、stage していない file に新しい当たりが付く。宣言の file を変えた commit は全部の規則を repo 全体の比べに当てて
+/// 止める。宣言を戻せば通る。
+#[test]
+fn a_declaration_change_blocks_a_new_hit_in_an_unstaged_file() {
+    let dir = baseline_repo();
+    let root = dir.path();
+    write(root, "pyproject.toml", &PYPROJECT.replace("enable = [\"DOEFF163\", \"DOEFF016\"]", "enable = [\"DOEFF163\", \"DOEFF016\", \"DOEFF102\"]"));
+    write(root, "app/queue/core/rule.hy", &format!("(val MODULE-TAGS {{:context \"queue\" :role \"judgment\"}})\n(import json)\n(defk parse [text]\n  {}\n  #())\n", JUDGED));
+    git(root, &["add", "-A"]);
+    git(root, &["commit", "-q", "-m", "json を読む core の基点"]);
+    let forbidding = ARCHITECTURE.replace("(layer core :roles [judgment] :imports [core])", "(layer core :roles [judgment] :imports [core] :forbid-modules [json])");
+    write(root, "architecture.hy", &forbidding);
+    git(root, &["add", "architecture.hy"]);
+    let (code, stderr) = hook(root, &[]);
+    assert_eq!(code, 1, "{}", stderr);
+    assert!(stderr.contains("app/queue/core/rule.hy") && stderr.contains("DOEFF102"), "{}", stderr);
+    write(root, "architecture.hy", ARCHITECTURE);
+    git(root, &["add", "architecture.hy"]);
+    let (code, stderr) = hook(root, &[]);
+    assert_eq!(code, 0, "{}", stderr);
+}
+
+/// 門の口 `--split-rules <変えた path>` は hook と同じ判定の分けを出す — architecture.hy を名指せば file 1 つで判じる規則(DOEFF016)も
+/// whole、source だけなら quick のまま(agora-redesign #2127)。
+#[test]
+fn split_rules_tells_the_gate_the_same_split_as_the_hook() {
+    let dir = baseline_repo();
+    let split = |changed: &[&str]| -> Value {
+        let output = Command::new(env!("CARGO_BIN_EXE_doeff-linter")).arg("--split-rules").args(changed).current_dir(dir.path()).output().unwrap();
+        assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+        serde_json::from_slice(&output.stdout).unwrap()
+    };
+    let declared = split(&["architecture.hy"]);
+    assert_eq!(declared["declaration_changed"], true, "{}", declared);
+    assert_eq!(declared["quick"], serde_json::json!([]), "{}", declared);
+    assert_eq!(declared["whole"], serde_json::json!(["DOEFF163", "DOEFF016"]), "{}", declared);
+    let plain = split(&["app/queue/main.hy"]);
+    assert_eq!(plain["declaration_changed"], false, "{}", plain);
+    assert_eq!(plain["quick"], serde_json::json!(["DOEFF016"]), "{}", plain);
+    assert_eq!(plain["whole"], serde_json::json!(["DOEFF163"]), "{}", plain);
+}
+
 /// 何も stage していなければ linter を撃たずに 0。
 #[test]
 fn nothing_staged_passes() {
