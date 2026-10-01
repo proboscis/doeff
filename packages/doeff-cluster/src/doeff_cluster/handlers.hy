@@ -1,6 +1,7 @@
-;; worker の coordinator との連絡(CoordinatorLink — heartbeat・名指しの待ち・task と Program の受け取り・lease の返し)と、宣言の job と task を
-;; JobSpec へ読む口。コードの木・実行環境の root・子 process・入口の検め・状態の file・世界の観測のまとめは worker/protocol の言い換えへ移した
-;; (#2464〜#2469)。CoordinatorLink の移しは #2427。
+;; worker の coordinator との連絡(CoordinatorLink — heartbeat・名指しの待ち・task と Program の受け取り)。宣言の job と task を JobSpec へ
+;; 読む口は worker/protocol/declared(同じ名をここでも読み直す — 使い手の import を変えない)・lease の返しは worker/protocol/lease_release。
+;; コードの木・実行環境の root・子 process・入口の検め・状態の file・世界の観測のまとめは worker/protocol の言い換え(#2464〜#2469)。
+;; CoordinatorLink の移しは #2427。
 (require doeff-hy.macros [defhandler defk deff <- val])
 (require doeff-hy.record [defrecord])
 (import json os re sys threading time uuid)
@@ -9,44 +10,17 @@
 (import doeff_cluster.foundation.coordinator_http [CoordinatorEndpoint REPLY-SECONDS])
 (import doeff_cluster.worker.core.beat_policy [WatchKind WatchReading beat-interval-ms heartbeat-due watch-params watch-reading reply-revision
                       WATCH-RETRY-SECONDS WAKE-HOLD-SECONDS])
-(import doeff [run])
 (import doeff_cluster.shared.intent.protocol [PROTOCOL-FORMAT])
-(import doeff_cluster.shared.core.capabilities [environ-pairs])
 (import doeff_cluster.foundation.host_contract [HOST-CONTRACT])
 (import .job_context [process-context-environ])
 (import doeff_cluster.shared.intent.remote_model [program-sha])
-(import doeff_cluster.shared.intent.runtime_env_model [runtime-env-of-json env-key current-platform])
+(import doeff_cluster.shared.intent.runtime_env_model [current-platform])
 (import doeff_cluster.worker.protocol.heartbeat [env-heartbeat-part heartbeat-body status-report status-row])
 (import doeff_cluster.worker.core.heartbeat_rules [warm-env-of-row finished-task-id desired-when-unreachable])
 (import doeff_cluster.foundation.ready_file [write-ready-file])
 (import doeff_cluster.worker.core.launch [program-file])
-(import doeff_cluster.worker.intent.worker_model [EnvReport DesiredJobs DesiredUnreadable ReadDesired PublishStatus WarmEnv]
-        doeff_cluster.shared.intent.job_model [JobSpec] doeff_cluster.worker.core.worker_rules [ENV-KEY-PREFIX])
-
-(defn #^ tuple env-placement [#^ (| dict None) declared #^ str revision]  ; defk にできない: 宣言の読み(Program の外の I/O の道具)が呼ぶ
-  "job の宣言の runtimeEnv(在れば)と版 → #(版 宣言の JSON の正規化した文字列 env のキー)。実行環境の job(task も service も —
-   2026-09-26)は、env のキー(この worker の platform で計算)を root の置き場の鍵にする。版は宣言のまま運ぶ — coordinator が同じ
-   宣言から計算する版と指紋に合わせるため(版を持たない task だけは \"env-<キー>\" を版の代わりにする)。無ければ版のまま。"
-  (if (is declared None)
-      #(revision None None)
-      (do (setv key (run (env-key (run (runtime-env-of-json declared)) (current-platform))))
-          #((or revision (+ ENV-KEY-PREFIX key)) (json.dumps declared :sort-keys True :ensure-ascii False) key))))
-
-
-(defn #^ JobSpec declared-job-spec [#^ dict job]  ; defk にできない: 宣言の読み(Program の外の I/O の道具)が呼ぶ
-  "heartbeat の返事の job 1 本 → worker が起動する形(runtimeEnv を持つ service は env の root で起こす)。worker が job を受けるのは
-   coordinator からだけ(宣言の file を直に読む口は無い — ADR-DOE-CLUSTER-001 R1)。"
-  (setv #(revision runtime key) (env-placement (.get job "runtimeEnv") (get job "revision")))
-  (JobSpec (get job "name") (get job "entry") (tuple (.get job "args" [])) revision
-           :once (.get job "once" False) :placement (.get job "placement")
-           :handoff (bool (.get job "handoff" False))
-           :ready-instance (.get job "readyInstance") :runtime-env runtime :env-key key
-           ;; 入れ替えの諦め(coordinator の期限 — 返事の handoff の job だけが持つ・無ければ偽)。
-           :handoff-abandoned (bool (.get job "handoffAbandoned" False))
-           ;; Program の job(改訂 1 の F・G): 詰めた Program の置き場のキーと、子の環境変数。
-           :program (.get job "program")
-           :environ (environ-pairs (.get job "environ" {}))))
-
+(import doeff_cluster.worker.protocol.declared [env-placement declared-job-spec task-spec JOB-ENTRY])
+(import doeff_cluster.worker.intent.worker_model [EnvReport DesiredJobs DesiredUnreadable ReadDesired PublishStatus WarmEnv])
 
 (deff write-program-file [#^ Path program-dir #^ str sha #^ str blob #^ dict versions]  ; defk にできない: worker の I/O の道具(CoordinatorLink)が呼ぶ
   {:pre [(: program-dir Path) (: sha str) (: blob str) (: versions dict)] :post [(: % Path)] :tags {:context "doeff-cluster" :role "foundation"}}
@@ -58,24 +32,6 @@
     (.write-text tmp (json.dumps {"blob" blob "versions" versions}) :encoding "utf-8")
     (os.replace tmp path)
     path))
-
-(setv JOB-ENTRY "doeff_cluster.job_entry")
-
-
-(defn #^ JobSpec task-spec [#^ dict task #^ Path task-dir]
-  "coordinator が割り当てた task 1 本 → 1 度だけ走らせる job。結果はこの worker の file(名前は task の id で決まる)。詰めた Program は
-   service の job と同じく置き場のキー program(sha)で持ち、CoordinatorLink.accept-programs が /programs/<sha> から cache へ取り、
-   ProcessHost が `--program <cache の file>` を足す(入口は `task --result <file> --program <file>` — 版は file の中の versions)。
-   実行環境の task(runtimeEnv を持つ)は、env のキー(この worker の platform で計算)を root の置き場の鍵にする(env-placement)。"
-  (setv id (get task "id"))
-  (setv #(revision runtime key) (env-placement (.get task "runtimeEnv") (get task "revision")))
-  (JobSpec (+ "task/" id) JOB-ENTRY
-           #("task" "--result" (str (/ task-dir f"{id}.result")))
-           revision :once True :detached (bool (.get task "detached" False)) :runtime-env runtime :env-key key
-           :program (get task "program")
-           ;; 子の環境変数(service の job と同じ欄・同じ路 — ProcessHost.launch が宣言の env-vars の上に重ねる)。
-           :environ (environ-pairs (.get task "environ" {}))))
-
 
 (defclass WatchState []
   "背景の待ちの thread と拍(CoordinatorLink.poll)が分ける状態(#1933 — beat_policy)。after = 次の待ちの版(前の heartbeat の返事の
