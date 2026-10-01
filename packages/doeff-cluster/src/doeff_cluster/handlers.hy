@@ -23,7 +23,8 @@
 (import doeff_cluster.shared.intent.runtime_env_model [runtime-env-of-json env-key current-platform EnvFailure EnvFailureKind])
 (import .env_prepare [ENV-MARKER])
 (import .env_upkeep [RootInfo PrepareLimits sweep-choice prepare-overdue env-capacity SWEEP-FLOOR-RATIO WHEEL-UNUSED-SECONDS])
-(import .semaphore_model [SEMAPHORE-PREFIX drop-holders lease-holder holder-tokens-prefix])
+(import doeff_cluster.shared.intent.semaphore_model [SEMAPHORE-PREFIX])
+(import doeff_cluster.shared.core.lease_rules [drop-holders lease-holder holder-tokens-prefix])
 (import .worker_policy [kept-when-cut-off])
 (import .worker_model [JobSpec CodeState CodeView ProcessView WorldView StopStage ProbeState ProbeView
   DesiredJobs DesiredUnreadable ReadDesired ObserveWorld WorkerStopRequested PublishStatus JobPhase JobStatus EnvDisk WarmEnv
@@ -1295,7 +1296,7 @@
 
 (defn #^ None release-leases [#^ CoordinatorLink link #^ str job #^ str instance]
   "終わった process(job の名 job・世代の名 instance)が持っていた lease を返す。token の頭は子が名乗った担い手と同じ定義
-   (semaphore_model.lease-holder と holder-tokens-prefix — <job>/<世代の名>/)。外すのは coordinator(POST /leases/<名> の drop —
+   (lease_rules.lease-holder と holder-tokens-prefix — <job>/<世代の名>/)。外すのは coordinator(POST /leases/<名> の drop —
    2026-09-25)。drop の口を持たない旧い coordinator には、盤の行の compare-and-set で外す(以前の形)。届かない・競合が続く時は
    あきらめる(期限で切れる)。"
   (setv prefix (holder-tokens-prefix (lease-holder job instance)))

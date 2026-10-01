@@ -14,7 +14,7 @@
 ;;;   GET    /metrics                            Prometheus の text: 今動いている process の計器(label service・worker)
 ;;;   GET    /events?kind=&name=&since=&limit=   出来事の記録(誰が・いつ・何を・前後の版)
 ;;;   POST   /leases/<名>  {"op" claim|renew|release|drop, "token", "permits", "ttlMs"}  名前付きの lease の操作(期限は coordinator の
-;;;                        時計で書き・判じる — semaphore_model.lease-op・2026-09-25)。答え {"ok" "reason" "ttlMs"}
+;;;                        時計で書き・判じる — lease_rules.lease-op・2026-09-25)。答え {"ok" "reason" "ttlMs"}
 ;;;   GET    /workers/<名>                      worker の生存・世代・drain の進み(ready = 生きていて drain 中でない)
 ;;;   POST   /workers/<名>/drain {"ttlSeconds"? "boot"?}  drain を頼む(何度でも同じ意味・期限だけ延びる)。DELETE で取り消す(drain_policy)。
 ;;;                                      boot = 頼み手の process の世代。退いた世代の頼みは今の世代に drain を付けない(2026-09-27)

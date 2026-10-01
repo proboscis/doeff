@@ -411,7 +411,7 @@
 (defclass [(dataclass :frozen True)] ReleaseLeases [EffectBase]
   "終了を確かめた process(job の名 job・世代の名 instance)が持っていた名前付きの lease を返す。process はもう書けないので、期限(TTL)を
    待たずに次の担い手が取れるようにする。届かなければ何もしない(期限で切れる)。job は子が名乗った名(起こした spec の名 — 退いた
-   process も元の名)で、担い手の名は子の名乗りと同じ定義 semaphore_model.lease-holder で作る。"
+   process も元の名)で、担い手の名は子の名乗りと同じ定義 lease_rules.lease-holder で作る。"
   (#^ str job)
   (#^ str instance))
 

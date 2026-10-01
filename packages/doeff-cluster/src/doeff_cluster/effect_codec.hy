@@ -42,8 +42,8 @@
 (import doeff_core_effects.scheduler [Spawn Wait Gather Race Cancel CreatePromise CompletePromise FailPromise
                                       CreateSemaphore AcquireSemaphore ReleaseSemaphore Task Promise Future Semaphore])
 (import doeff_time [GetTimeEffect GetMonotonicEffect DelayEffect])
-(import doeff_cluster.shared_model [ReadShared WriteShared ANY])
-(import doeff_cluster.semaphore_model [CreateNamedSemaphore HeldLease LeaseStanding])
+(import doeff_cluster.shared.intent.shared_model [ReadShared WriteShared ANY])
+(import doeff_cluster.shared.intent.semaphore_model [CreateNamedSemaphore HeldLease LeaseStanding])
 (import doeff_cluster.shared.intent.readiness_model [ReportReady])
 (import doeff_cluster.shared.intent.metrics_model [ReportMetrics])
 
@@ -123,10 +123,11 @@
 (defn #^ str type-name [cls]
   (.format "{}:{}" cls.__module__ cls.__qualname__))
 
-;; 置き場を移した module の旧い名 → 今の名(agora-redesign #2021 の決め 2a・#2105・#2106)。記録は移しの前に書いた型の名(module:qualname)を
+;; 置き場を移した module の旧い名 → 今の名(agora-redesign #2021 の決め 2a・#2105・#2106・#2107)。記録は移しの前に書いた型の名(module:qualname)を
 ;; 持つので、読みだけがこの表で今の置き場を引く。書くのは今の名だけ(type-name)。旧い module に再輸出は残さない。
 (setv MOVED-MODULES
-  (dfor name #("runtime_env_model" "readiness_model" "metrics_model" "process_model" "remote_model" "warm_model" "detached_model" "service_model")
+  (dfor name #("runtime_env_model" "readiness_model" "metrics_model" "process_model" "remote_model" "warm_model" "detached_model" "service_model"
+                         "semaphore_model" "shared_model")
         (+ "doeff_cluster." name) (+ "doeff_cluster.shared.intent." name)))
 
 (defn #^ (| type None) resolve-type [#^ str name]

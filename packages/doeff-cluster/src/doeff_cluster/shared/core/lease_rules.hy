@@ -1,37 +1,11 @@
-;;; lock は doeff の scheduler の Semaphore の effect(CreateSemaphore / AcquireSemaphore / ReleaseSemaphore)で扱う。
-;;; 業務コードは threading・multiprocessing・fcntl の lock を直に触らない(規則 = repo の root の .semgrep.yaml)。
-;;;
-;;; 足したのは名前だけ: CreateNamedSemaphore = CreateSemaphore の子 class に名前の欄を 1 つ足した物。
-;;;   * scheduler の CreateSemaphore は permits しか持たず、作るたびに新しい id を振る。cluster の別の worker で
-;;;     「同じ lock」を指す手段が引数に無いので、名前を運ぶ最小の形として子 class にした(新しい effect の族は作らない)。
-;;;   * 子 class なので、scheduled の handler だけの下では普通の手元の semaphore として解かれる(isinstance で拾われる)。
-;;;     Acquire / Release は scheduler の effect をそのまま使う。
-;;;   * cluster で効かせる時は semaphore_handlers.cluster-semaphore を scheduled の**内側**に被せる。名前付きの
-;;;     semaphore を ClusterSemaphore(scheduler の Semaphore の子)として返し、その Acquire / Release だけを
-;;;     共有の保存(ReadShared / WriteShared)の lease へ写す。それ以外の semaphore は scheduled へ素通し。
-;;;
-;;; 共有の保存の行: semaphore/<名前> = {"permits": n, "holders": {token: 期限の epoch ミリ秒}}
-;;;
-;;; 期限の時計(2026-09-25 に改めた — docs/decision-2026-09-25-coordinator-review-fixes.md の「lease」):
-;;;   以前は取る側・延ばす側の worker が自分の時計で期限を計算して行を compare-and-set で書き、奪う側も自分の時計で「切れた」と
-;;;   判じた。時計が進んだ worker は、持ち主の期限より前に奪えた(古い持ち主の柵はまだ開いている = 2 つが同時に書ける)。
-;;;   いまは取る・延ばす・返すを 1 つの effect LeaseOp にし、coordinator が自分の時計だけで期限を書き・切れたかを判じる
-;;;   (POST /leases/<名前>)。持ち主の柵は「要求を送る前に読んだ自分の時計 + TTL」を期限とする — coordinator が期限を書いた
-;;;   瞬間は送った瞬間より後なので、柵が締まるのは coordinator の期限より必ず前(時計の進み方の差だけを前提にする・ずれは問わない)。
-;;;   盤への直の書き(旧い版の process)で、coordinator の時計でまだ切れていない担い手を追い出して自分を足す書きは断る
-;;;   (semaphore-write-refusal)。どちらの時計も doeff-time の GetTime で読む。
-;;;
-;;; 担い手の名と token の綴り(2026-09-29 に 1 つにした): 担い手 = lease-holder(<job>/<process の世代の名> — cluster で一意・同じ job の
-;;; 新旧の世代を分ける)・token = <担い手>/<番号>。子の土台(cluster_foundation.lease-holder-of → SemaphoreSession.next-token)が名乗り、
-;;; worker の返し(handlers.release-leases・sim の local.release-leases)が同じ定義で頭を作って外す。以前は名乗りが <job>/<世代>、外しが
-;;; <worker>/<世代>/ の頭で食い違い、終わった process の lease が期限まで残った(入れ替えの新しい版が期限まで置けなかった)。
-(require doeff-hy.macros [deff])
-(import dataclasses [dataclass])
-(import doeff [EffectBase])
-(import doeff_core_effects.scheduler [CreateSemaphore Semaphore])
+;;; 名前付きの lease(cluster の semaphore)の行の純粋な判断 — coordinator(POST /leases/<名>・盤への直の書きの断り)・fake の保存
+;;; (shared-memory)・worker の返し・子の土台が同じ定義を使う(semaphore_model から分けた・agora-redesign #2107)。
+;;; 型・effect・定数(LeaseOp・SEMAPHORE-PREFIX・FENCE-MARGIN-MS・LEASE-MAX-TTL-MS …)は doeff_cluster.shared.intent.semaphore_model。
+;;; 期限の時計と担い手の名の綴りの経緯は semaphore_model の頭の註。
+(require doeff-hy.macros [deff val])
+(val MODULE-TAGS {:context "doeff-cluster" :role "judgment"})
 (import doeff_cluster.shared.intent.protocol [BodyInvalid])
-
-(setv SEMAPHORE-PREFIX "semaphore/")
+(import doeff_cluster.shared.intent.semaphore_model [SEMAPHORE-PREFIX FENCE-MARGIN-MS LEASE-OPS LEASE-MAX-TTL-MS])
 
 
 (deff lease-holder [#^ str job #^ str instance]  ; defk にできない: worker の返し(Program の外の本番の手続き handlers.release-leases)も呼ぶ純粋な判断
@@ -45,43 +19,6 @@
   "担い手 holder の token の頭(<担い手>/)を、token を作る側(SemaphoreSession.next-token)と担い手の token を全部外す側(release-leases)が
    同じ綴りで作るため。"
   (+ holder "/"))
-
-
-(defclass CreateNamedSemaphore [CreateSemaphore]
-  "名前付きの semaphore を作る。cluster の handler の下では、同じ名前 = cluster 全体で同じ lock。"
-  (defn #^ None __init__ [self #^ str name #^ int [permits 1]]
-    (.__init__ (super) permits)
-    (when (or (not (isinstance name str)) (not name) (in "/" name))
-      (raise (ValueError (+ "semaphore の名前は空でない文字列で、/ を含まない: " (repr name)))))
-    (setv self.name name))
-  (defn #^ str __repr__ [self] (.format "CreateNamedSemaphore({!r}, permits={})" self.name self.permits)))
-
-
-(defclass ClusterSemaphore [Semaphore]
-  "cluster の handler が返す handle。scheduler の Semaphore の子なので、業務コードの型は変わらない。"
-  (defn #^ None __init__ [self #^ str name #^ int permits]
-    (.__init__ (super) (+ "cluster:" name))
-    (setv self.name name self.permits permits))
-  (defn #^ str __repr__ [self] (.format "ClusterSemaphore({!r}, permits={})" self.name self.permits)))
-
-
-(defclass LeaseLost [RuntimeError]
-  "持っていたはずの lease が、期限切れの後に他の担い手へ移っていた(Release の時に知らせる)。")
-
-
-(defclass WriteFenced [RuntimeError]
-  "lease を持っていない(失った・期限が近い)ので、書きの effect を外へ出さずに断った(lease-fence)。")
-
-;; いま持っている名前付きの lease を問う(cluster-semaphore が答える)。
-;; 答え = {"token": 持っている token, "expiresMs": 最後に保存へ書けた期限(epoch ミリ秒)}。持っていない・失った = None。
-;; 期限は「保存に書けたと確かめた値」だけ(書けたか分からない延長は数えない)ので、手元の見積もりは保存の値より遅くならない。
-(defclass [(dataclass :frozen True)] HeldLease [EffectBase]
-  (#^ str name))
-
-;; 柵の余裕(2026-09-25): 柵は書きを「出す前」にだけ確かめるので、出した書きが相手(業務の書き先)に着くのは確かめた時刻より後になる。
-;; 着くまでの最長(書き先の client の 1 回の要求の上限 = 10 秒を想定)より余裕が短いと、期限の直前に出した書きが
-;; 期限の後(= 次の持ち主が書き始めた後)に着く。以前の余裕 2 秒はこの穴を開けていた。余裕 = 書きの上限 10 秒 + 時計の進みの差 2 秒。
-(setv FENCE-MARGIN-MS 12000)
 
 (defn #^ (| str None) lease-timing-refusal [#^ (| int float) ttl-seconds #^ int margin-ms]
   "純粋: TTL と柵の余裕の組が成り立たないなら理由の文。延長は TTL の 1/3 ごとなので、余裕が TTL の半分を越えると 1 回の延長の
@@ -101,20 +38,6 @@
     (>= (+ now-ms margin-ms) (get hold "expiresMs"))
       (.format "lease の期限が近いか過ぎた(いま {} ・期限 {} ・余裕 {} ms)" now-ms (get hold "expiresMs") margin-ms)
     True None))
-
-;; lease の操作 1 つ(coordinator の時計で判じる)。op = claim(取る・持っていれば延ばす)| renew(延ばす)| release(返す)|
-;; drop(token が prefix で始まる担い手を外す — worker が終わった process の lease を返す)。
-;; 答え = {"ok": bool, "reason": str | None, "ttlMs": int}(drop は "dropped" の数も)。
-(defclass [(dataclass :frozen True)] LeaseOp [EffectBase]
-  (#^ str name)
-  (#^ str op)
-  (#^ str token)
-  (setv #^ int permits 1)
-  (setv #^ int ttl-ms 0))
-
-(setv LEASE-OPS #("claim" "renew" "release" "drop"))
-;; 1 回の取る・延ばすで与える期限の上限(coordinator が断る)。
-(setv LEASE-MAX-TTL-MS (* 10 60 1000))
 
 (defn #^ tuple lease-op [#^ (| dict None) row #^ str op #^ str token #^ int permits #^ int ttl-ms #^ int now-ms]
   "純粋: lease の行と操作 → #(次の行 答え)。行が変わらなければ同じ row を返す。時刻 now-ms は coordinator の時計。
@@ -210,12 +133,3 @@
   (if (= (len kept) (len (get row "holders")))
       None
       (| row {"holders" kept})))
-
-
-;; この process の名前付きの lease の立場を問う(cluster-semaphore が答える)。
-;; 答え = "standby"(一度も持っていない — 取りに行っている間の待機)・"held"(いま持っている)・"lost"(持っていたが失った)。
-;; 待機の process の書きは外へ出さない(semaphore_handlers.standby-divert)。失った process の書きは柵が断る(lease-fence)。
-(defclass [(dataclass :frozen True)] LeaseStanding [EffectBase]
-  (#^ str name))
-
-(setv STANDBY "standby" HELD "held" LOST "lost")

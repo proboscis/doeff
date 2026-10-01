@@ -15,7 +15,9 @@
 (import doeff_cluster.coordinator.intent.cluster_model [ClusterJob WorkerInfo GenerationOrder Placement ClusterState TaskRecord Drain EnvFailed WarmEntry HandoffPhase RefusedJob UnplacedKind ACCEPTED-FORMATS PLACED-PHASES])
 (import doeff_cluster.coordinator.core.cluster_rules [component-versions-of format-refusal])
 (import doeff_cluster.coordinator.core.cluster_json [task-record-to-json task-record-from-json handoff-watch-from-json required-field int-field])
-(import doeff_cluster.semaphore_model [SEMAPHORE-PREFIX lease-op semaphore-write-refusal semaphore-key])
+(import doeff_cluster.shared.intent.semaphore_model [SEMAPHORE-PREFIX])
+(import doeff_cluster.shared.core.lease_rules [lease-op semaphore-write-refusal semaphore-key])
+(import doeff_cluster.shared.core.board_rules [board-allows board-ttl-refusal])
 (import doeff [run])
 (import doeff_cluster.shared.intent.runtime_env_model [runtime-env-of-json RuntimeEnvInvalid env-key child-environ-refusal])
 (import doeff_cluster.shared.intent.readiness_model [readiness-refusal])
@@ -30,7 +32,6 @@
 (setv BOARD-MAX-VALUE-BYTES (* 1 1024 1024))    ; 1 行の値
 (setv BOARD-MAX-ROWS 20000)                       ; 行の数
 (setv BOARD-MAX-BYTES (* 64 1024 1024))           ; 値の合計
-(setv BOARD-MAX-TTL-SECONDS (* 30 24 3600))       ; 期限つきの行の期限の上限
 ;; task: 呼び手が問い合わせを止めると lease-ms の後に落ちる(終わった task もそれで回収する)。lease は 1 時間まで・終わっていない
 ;; task は 2000 本まで(越えたら 429)。
 (setv TASK-MAX-LEASE-SECONDS 3600)
@@ -913,17 +914,6 @@
                t)))
 
 
-;; --- 盤 --------------------------------------------------------------------------------
-
-;; current / expect は盤の値そのもの(どの JSON の値にもなる — 等しいかだけを見る)。
-(defn #^ bool board-allows [#^ object current #^ bool present #^ bool has-expect #^ object expect]
-  "compare-and-set: expect が無ければ無条件・None なら行が無い時だけ・値ならいまの値がそれと等しい時だけ書いてよい。"
-  (cond
-    (not has-expect) True
-    (is expect None) (not present)
-    True (and present (= current expect))))
-
-
 ;; --- 1 拍の調停 ------------------------------------------------------------------------
 
 (defn #^ ClusterState sweep-board [#^ ClusterState state #^ int now]
@@ -1322,7 +1312,7 @@
 
 
 (defn #^ tuple lease-write [#^ ClusterState state #^ str name #^ dict body #^ int now]
-  "POST /leases/<名>: lease の操作 1 つを coordinator の時計で当てる(semaphore_model.lease-op)。行が変われば盤へ書く
+  "POST /leases/<名>: lease の操作 1 つを coordinator の時計で当てる(lease_rules.lease-op)。行が変われば盤へ書く
    (版を 1 進める・盤の書きと同じく永続化してから返事をする)。返り値 #(次の状態 status 答え)。"
   ;; 本文の欄の欠け・型の誤りは送り手の誤り(BodyInvalid・400)— KeyError や int() の例外を受け口へ漏らさない(#1024)。
   (setv op (required-field body "op") token (required-field body "token"))
@@ -1361,16 +1351,6 @@
     (and (> size old) (> (+ (- total old) size) BOARD-MAX-BYTES))
       (.format "盤の値の合計が {} byte になり、上限 {} byte を越える" (+ (- total old) size) BOARD-MAX-BYTES)
     True None))
-
-
-(defk board-ttl-refusal [ttl]
-  ;; ttl は要求の本文の欄の素の JSON の値 — 数かどうかを検めるのがこの関数の役目なので、型は JSON の値の全部。
-  {:pre [(: ttl (| dict list str int float bool None))] :post [(: % (| str None))] :tags {:context "doeff-cluster" :role "judgment"}}
-  "盤の行の期限(秒・None = 期限なし)が書けない値なら理由の文、書けるなら None。coordinator の盤(board-write の 400)と
-   fake の保存(shared-memory)が同じ規則で断るため(定義点はここ 1 つ — 契約テスト tests/test_shared_contract.hy)。"
-  (if (or (is ttl None) (and (isinstance ttl #(int float)) (< 0 ttl (+ BOARD-MAX-TTL-SECONDS 1))))
-      None
-      (.format "ttlSeconds は 0 より大きく {} 以下: {!r}" BOARD-MAX-TTL-SECONDS ttl)))
 
 
 (defn #^ tuple board-write [#^ ClusterState state #^ str key #^ dict body #^ int [now 0]]

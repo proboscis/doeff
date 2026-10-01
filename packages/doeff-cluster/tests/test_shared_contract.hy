@@ -12,8 +12,9 @@
 ;;; 消えること(fake は期限を持たず行が残る — shared_handlers.hy の shared-memory の註)。
 (require doeff-hy.macros [defk deftest <- val])
 (import doeff_time [Delay])
-(import doeff_cluster.shared_model [ReadShared WriteShared ANY])
-(import doeff_cluster.semaphore_model [LeaseOp semaphore-key])
+(import doeff_cluster.shared.intent.shared_model [ReadShared WriteShared ANY])
+(import doeff_cluster.shared.intent.semaphore_model [LeaseOp])
+(import doeff_cluster.shared.core.lease_rules [semaphore-key])
 (import doeff_cluster.clock [now-epoch-ms])
 (import tests.coordinator_contract_handlers [BoardSeen])
 

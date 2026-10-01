@@ -15,8 +15,8 @@
 (import doeff_cluster.clock [now-epoch-ms])
 (import tests.clock_fixtures [clock-at clock-ms])
 (import doeff_cluster.shared_handlers [shared-memory])
-(import doeff_cluster.semaphore_model [CreateNamedSemaphore ClusterSemaphore LeaseLost
-                                            semaphore-key claim renew release])
+(import doeff_cluster.shared.intent.semaphore_model [CreateNamedSemaphore ClusterSemaphore LeaseLost])
+(import doeff_cluster.shared.core.lease_rules [semaphore-key claim renew release])
 (import doeff_cluster.semaphore_handlers [named-semaphore-local cluster-semaphore SemaphoreSession])
 
 
@@ -222,8 +222,9 @@
 (import dataclasses [dataclass])
 (import doeff [EffectBase])
 (require doeff-hy.macros [defhandler])
-(import doeff_cluster.shared_model [ReadShared WriteShared])
-(import doeff_cluster.semaphore_model [HeldLease WriteFenced LeaseOp fence-verdict])
+(import doeff_cluster.shared.intent.shared_model [ReadShared WriteShared])
+(import doeff_cluster.shared.intent.semaphore_model [HeldLease WriteFenced LeaseOp])
+(import doeff_cluster.shared.core.lease_rules [fence-verdict])
 (import doeff_cluster.semaphore_handlers [lease-fence])
 
 (defclass [(dataclass :frozen True)] FakeWrite [EffectBase]
@@ -347,7 +348,7 @@
 
 ;; --- lease の立場(待機の process の書きを捨てる — 2026-09-24)---------------------------------------------
 
-(import doeff_cluster.semaphore_model [LeaseStanding STANDBY HELD LOST])
+(import doeff_cluster.shared.intent.semaphore_model [LeaseStanding STANDBY HELD LOST])
 
 (defk standing-story [log]
   {:pre [(: log list)] :post [(: % (type None))]}

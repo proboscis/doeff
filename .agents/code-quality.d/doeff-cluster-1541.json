@@ -23,6 +23,8 @@
     "packages/doeff-cluster/src/doeff_cluster/foundation/*.hy",
     "packages/doeff-cluster/src/doeff_cluster/coordinator/entry/handler_sets.hy",
     "packages/doeff-cluster/src/doeff_cluster/shared/core/capabilities.hy",
+    "packages/doeff-cluster/src/doeff_cluster/shared/core/board_rules.hy",
+    "packages/doeff-cluster/src/doeff_cluster/shared/core/lease_rules.hy",
     "packages/doeff-cluster/src/doeff_cluster/coordinator/core/cluster_json.hy",
     "packages/doeff-cluster/src/doeff_cluster/coordinator/core/cluster_rules.hy"
   ],
@@ -101,13 +103,13 @@
         "doeff-cluster-detached",
         "doeff-cluster-host-contract",
         "doeff-cluster-job-context",
+        "doeff-cluster-lease-rules",
         "doeff-cluster-metrics-handlers",
         "doeff-cluster-readiness-handlers",
         "doeff-cluster-remote",
         "doeff-cluster-report-client",
         "doeff-cluster-runtime-env-model",
         "doeff-cluster-semaphore-handlers",
-        "doeff-cluster-semaphore-model",
         "doeff-cluster-shared-handlers"
       ],
       "layer": "io",
@@ -139,9 +141,11 @@
     },
     {
       "allow": [
+        "doeff-cluster-board-rules",
         "doeff-cluster-cluster-json",
         "doeff-cluster-cluster-model",
         "doeff-cluster-cluster-rules",
+        "doeff-cluster-lease-rules",
         "doeff-cluster-readiness-model",
         "doeff-cluster-runtime-env-model",
         "doeff-cluster-semaphore-model",
@@ -506,6 +510,7 @@
         "doeff-cluster-env-upkeep",
         "doeff-cluster-host-contract",
         "doeff-cluster-job-context",
+        "doeff-cluster-lease-rules",
         "doeff-cluster-remote-model",
         "doeff-cluster-runtime-env-model",
         "doeff-cluster-semaphore-model",
@@ -688,6 +693,7 @@
         "doeff-cluster-job-context",
         "doeff-cluster-job-entry",
         "doeff-cluster-kube-handlers",
+        "doeff-cluster-lease-rules",
         "doeff-cluster-metrics-model",
         "doeff-cluster-process-model",
         "doeff-cluster-process-versions",
@@ -1137,8 +1143,8 @@
     {
       "allow": [
         "doeff-cluster-clock",
-        "doeff-cluster-semaphore-model",
-        "doeff-cluster-shared-model"
+        "doeff-cluster-lease-rules",
+        "doeff-cluster-semaphore-model"
       ],
       "layer": "io",
       "name": "doeff-cluster-semaphore-handlers",
@@ -1152,17 +1158,14 @@
       "typed": true
     },
     {
-      "allow": [
-        "doeff-cluster-cluster-model",
-        "doeff-cluster-shared-protocol"
-      ],
+      "allow": [],
       "layer": "domain",
       "name": "doeff-cluster-semaphore-model",
       "paths": [
-        "packages/doeff-cluster/src/doeff_cluster/semaphore_model.hy"
+        "packages/doeff-cluster/src/doeff_cluster/shared/intent/semaphore_model.hy"
       ],
       "public": [
-        "packages/doeff-cluster/src/doeff_cluster/semaphore_model.hy"
+        "packages/doeff-cluster/src/doeff_cluster/shared/intent/semaphore_model.hy"
       ],
       "responsibility": "lock は doeff の scheduler の Semaphore の effect(CreateSemaphore / AcquireSemaphore / ReleaseSemaphore)で扱う。",
       "typed": true
@@ -1188,9 +1191,10 @@
     },
     {
       "allow": [
+        "doeff-cluster-board-rules",
         "doeff-cluster-clock",
-        "doeff-cluster-cluster-policy",
         "doeff-cluster-coordinator-http",
+        "doeff-cluster-lease-rules",
         "doeff-cluster-semaphore-model",
         "doeff-cluster-shared-model"
       ],
@@ -1206,16 +1210,14 @@
       "typed": true
     },
     {
-      "allow": [
-        "doeff-cluster-cluster-policy"
-      ],
+      "allow": [],
       "layer": "domain",
       "name": "doeff-cluster-shared-model",
       "paths": [
-        "packages/doeff-cluster/src/doeff_cluster/shared_model.hy"
+        "packages/doeff-cluster/src/doeff_cluster/shared/intent/shared_model.hy"
       ],
       "public": [
-        "packages/doeff-cluster/src/doeff_cluster/shared_model.hy"
+        "packages/doeff-cluster/src/doeff_cluster/shared/intent/shared_model.hy"
       ],
       "responsibility": "共有の保存(cluster のどの worker で走っても同じ意味になる読み書き)の effect。",
       "typed": true
@@ -1237,6 +1239,7 @@
       "allow": [
         "doeff-cluster-api-policy",
         "doeff-cluster-beat-policy",
+        "doeff-cluster-board-rules",
         "doeff-cluster-checkout-git-script",
         "doeff-cluster-clock",
         "doeff-cluster-cluster-foundation",
@@ -1268,6 +1271,7 @@
         "doeff-cluster-job-context",
         "doeff-cluster-job-entry",
         "doeff-cluster-kube-handlers",
+        "doeff-cluster-lease-rules",
         "doeff-cluster-local",
         "doeff-cluster-main",
         "doeff-cluster-metrics-handlers",
@@ -1294,9 +1298,9 @@
         "doeff-cluster-semaphore-handlers",
         "doeff-cluster-semaphore-model",
         "doeff-cluster-service-model",
+        "doeff-cluster-shared-capabilities",
         "doeff-cluster-shared-handlers",
         "doeff-cluster-shared-model",
-        "doeff-cluster-shared-capabilities",
         "doeff-cluster-shared-protocol",
         "doeff-cluster-wal-store",
         "doeff-cluster-warm-model",
@@ -1352,6 +1356,7 @@
     },
     {
       "allow": [
+        "doeff-cluster-board-rules",
         "doeff-cluster-cluster-model",
         "doeff-cluster-cluster-policy",
         "doeff-cluster-runtime-env-model",
@@ -1493,6 +1498,37 @@
         "packages/doeff-cluster/src/doeff_cluster/coordinator/core/cluster_rules.hy"
       ],
       "responsibility": "coordinator の小さな純粋な判断 — 本文の版の検め・版の組の並べ。",
+      "typed": true
+    },
+    {
+      "allow": [
+        "doeff-cluster-shared-model"
+      ],
+      "layer": "domain",
+      "name": "doeff-cluster-board-rules",
+      "paths": [
+        "packages/doeff-cluster/src/doeff_cluster/shared/core/board_rules.hy"
+      ],
+      "public": [
+        "packages/doeff-cluster/src/doeff_cluster/shared/core/board_rules.hy"
+      ],
+      "responsibility": "盤(共有の保存)の書きの規則 — coordinator の /board と fake の保存が同じ定義で判じる。",
+      "typed": true
+    },
+    {
+      "allow": [
+        "doeff-cluster-semaphore-model",
+        "doeff-cluster-shared-protocol"
+      ],
+      "layer": "domain",
+      "name": "doeff-cluster-lease-rules",
+      "paths": [
+        "packages/doeff-cluster/src/doeff_cluster/shared/core/lease_rules.hy"
+      ],
+      "public": [
+        "packages/doeff-cluster/src/doeff_cluster/shared/core/lease_rules.hy"
+      ],
+      "responsibility": "名前付きの lease(cluster の semaphore)の行の純粋な判断。",
       "typed": true
     }
   ],

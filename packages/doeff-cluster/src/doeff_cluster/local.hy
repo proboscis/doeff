@@ -146,10 +146,11 @@
 (import .process_versions [current-versions])
 (import .report_client [report-request task-result-request task-id-of-job])
 (import doeff_cluster.shared.intent.runtime_env_model [RuntimeEnv EnvFailure runtime-env->json current-platform])
-(import .semaphore_model [LeaseOp SEMAPHORE-PREFIX drop-holders lease-holder holder-tokens-prefix])
+(import doeff_cluster.shared.intent.semaphore_model [LeaseOp SEMAPHORE-PREFIX])
+(import doeff_cluster.shared.core.lease_rules [drop-holders lease-holder holder-tokens-prefix])
 (import doeff_cluster.shared.intent.service_model [System Declaration system-declaration])
 (import .shared_handlers [board-read-request board-write-request lease-request])
-(import .shared_model [ReadShared WriteShared])
+(import doeff_cluster.shared.intent.shared_model [ReadShared WriteShared])
 (import doeff_cluster.shared.intent.warm_model [WarmRuntimeEnv ReadWarmState WarmState WarmAnswer warm-state-of-json])
 (import .worker [run-worker])
 (import .worker_model [JobSpec WorkerPolicy WorkerState WorldView CodeView CodeState ProcessView ProbeView ProbeState

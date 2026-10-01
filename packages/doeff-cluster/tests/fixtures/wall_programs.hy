@@ -21,7 +21,7 @@
 (import doeff_cluster.clock [now-epoch-ms])
 (import doeff_cluster.local [SharedRows])
 (import doeff_cluster.shared.intent.readiness_model [ReportReady])
-(import doeff_cluster.shared_model [ReadShared WriteShared])
+(import doeff_cluster.shared.intent.shared_model [ReadShared WriteShared])
 (import doeff_cluster.shared.intent.detached_model [SubmitDetached AwaitDetached DetachedSubmitted DetachedSucceeded])
 (import tests.fixtures.sim_programs [sim-task-foundation])
 
