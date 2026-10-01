@@ -157,8 +157,8 @@ test-e2e:
 
 # Run tests in all subpackages that have tests/ directories
 # - tests/ に Python の検が 1 本も無い package(doeff-indexer / doeff-linter — 検は Rust の cargo test、
-#   tests/fixtures の test_*.py は検体)は pytest に渡さない。検は test_*.py か test_*.hy(Hy の deftest — package の
-#   tests/conftest.py が集める。doeff-cluster)。渡すと「収集 0 件」の rc 5 で loop が止まり、
+#   tests/fixtures の test_*.py は検体)は pytest に渡さない。検は test_*.py か test_*.hy(Hy の deftest か上から順に
+#   実行する script — root の ini の doeff_hy_test_files で doeff-adr の plugin が集める・agora-redesign #2591)。渡すと「収集 0 件」の rc 5 で loop が止まり、
 #   後ろの package が 1 本も走らない(2026-09-24 実測)。
 # - 実 API / 実 CLI を撃つ e2e は日次の門(.agents/land-queue.toml gate.full)と同じく除く(-m "not e2e")。
 # - PACKAGE_UV_RUN: 日次の門は make sync の直後に `uv run --no-sync` で呼ぶ(素の uv run の暗黙の再 sync で

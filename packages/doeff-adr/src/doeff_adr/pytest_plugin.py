@@ -128,6 +128,8 @@ _INDEXED_FILES_KEY = pytest.StashKey[list[Path]]()
 _IMPORTED_FILES_KEY = pytest.StashKey[list[tuple[Path, str]]]()
 _DEPENDENCY_CHECKS_KEY = pytest.StashKey[DependencyChecks]()
 _SESSION_PATHS_KEY = pytest.StashKey["SessionPaths"]()
+# ini の doeff_hy_test_skips を起動の時に読んだ物(agora-redesign #2591)。
+_HY_TEST_SKIPS_KEY = pytest.StashKey["HyTestSkips"]()
 
 
 class DoeffAdrHookspecs:
@@ -186,6 +188,8 @@ def pytest_configure(config: pytest.Config) -> None:
     ここで先頭に入れれば書き換えより先に .hy を引き受けられる。"""
     if _HY_SOURCE_FINDER not in sys.meta_path:
         sys.meta_path.insert(0, _HY_SOURCE_FINDER)
+    # 外す一覧は起動の時に 1 度だけ読む — 理由の無い行はここで run を止める(収集の file ごとに読み直さない)。
+    config.stash[_HY_TEST_SKIPS_KEY] = parse_hy_test_skips(config.getini("doeff_hy_test_skips"))
 
 
 def pytest_unconfigure(config: pytest.Config) -> None:
@@ -198,6 +202,20 @@ def pytest_addoption(parser: pytest.Parser) -> None:
     parser.addini(
         "doeff_adr_hy_files",
         "Glob patterns for executable ADR Hy files collected by doeff-adr.",
+        type="linelist",
+        default=[],
+    )
+    parser.addini(
+        "doeff_hy_test_files",
+        "Glob patterns for Hy test files (deftest modules, or top-to-bottom scripts run as one test each) "
+        "collected by doeff-adr's Hy file collector everywhere under rootdir (empty = none).",
+        type="linelist",
+        default=[],
+    )
+    parser.addini(
+        "doeff_hy_test_skips",
+        "Hy test files reported as skipped without importing them, one per line: "
+        "'<rootdir-relative path> | <reason>'.",
         type="linelist",
         default=[],
     )
@@ -311,12 +329,20 @@ def session_paths(config: pytest.Config) -> SessionPaths:
 
 
 def pytest_collect_file(file_path: Path, parent: pytest.Collector) -> pytest.Collector | None:
+    """Hy の file の集め手の 1 点 — executable ADR の pattern と、ini の doeff_hy_test_files の pattern(検の file)。
+
+    検の file を package ごとの conftest.py の ``pytest_collect_file`` で集めていた時は、conftest の無い dir の
+    test_*.hy が 1 本も集められないまま、日次の母集団の検には数えられていた(packages/doeff-hy/tests の 6 本・
+    agora-redesign #2591)。集める条件は root の ini の 1 点に置き、日次の母集団の検も同じ ini を読む。
+    """
     path = file_path
     if path.suffix != ".hy":
         return None
-    if not _should_collect_hy_file(path, parent.config):
-        return None
-    return DoeffAdrHyFile.from_parent(parent, path=path)
+    if _should_collect_hy_file(path, parent.config):
+        return DoeffAdrHyFile.from_parent(parent, path=path)
+    if _is_hy_test_file(path, parent.config):
+        return HyTestFile.from_parent(parent, path=path)
+    return None
 
 
 @pytest.hookimpl(wrapper=True)
@@ -512,6 +538,105 @@ class DoeffAdrHyFile(pytest.Module):
             self._mut_real_module = real
         if item.obj is not getattr(real, item.originalname, None):
             swap_in_real_function(item, real)
+
+
+@dataclass(frozen=True)
+class HyTestSkip:
+    """ini の doeff_hy_test_skips の 1 行 — import せずに skip として報告する Hy の検の file と、その理由。"""
+
+    path: str
+    reason: str
+
+
+@dataclass(frozen=True)
+class HyTestSkips:
+    """外す一覧(ini の doeff_hy_test_skips)の全行 — 集め手と日次の母集団の検が同じこの読みを使う。"""
+
+    rows: tuple[HyTestSkip, ...]
+
+    def reason_for(self, relative: str) -> str | None:
+        """rootdir からの path の file が一覧に載れば、その理由(載らなければ None)— 外すかを決めるため。"""
+        return next((row.reason for row in self.rows if row.path == relative), None)
+
+
+def parse_hy_test_skips(lines: Sequence[str]) -> HyTestSkips:
+    """doeff_hy_test_skips の行(`<rootdir からの path> | <理由>`)を読む。理由の欠けた行は設定の誤りとして止める。"""
+    return HyTestSkips(tuple(_parse_hy_test_skip(line) for line in lines if line.strip()))
+
+
+def _parse_hy_test_skip(line: str) -> HyTestSkip:
+    """1 行を path と理由に分ける — 理由の無い除外を黙って受けないため。"""
+    path, separator, reason = line.partition("|")
+    if not separator or not path.strip() or not reason.strip():
+        raise pytest.UsageError(
+            f"doeff_hy_test_skips の行は '<rootdir からの path> | <理由>' の形: {line!r}"
+        )
+    return HyTestSkip(path.strip(), reason.strip())
+
+
+def _is_hy_test_file(path: Path, config: pytest.Config) -> bool:
+    """この .hy を Hy の検の file として集めるか(ini の doeff_hy_test_files — 空なら集めない・下流の repo の既定)。"""
+    patterns = tuple(config.getini("doeff_hy_test_files"))
+    if not patterns:
+        return False
+    return _matcher(str(session_paths(config).root), patterns).matches(path)
+
+
+def _hy_test_skip_reason(path: Path, config: pytest.Config) -> str | None:
+    """外す一覧(ini の doeff_hy_test_skips)に載る file なら、その理由を返す(載らなければ None)。"""
+    relative = session_paths(config).matcher.relative_posix(str(path))
+    return config.stash[_HY_TEST_SKIPS_KEY].reason_for(relative)
+
+
+class HyTestFile(DoeffAdrHyFile):
+    """ini の doeff_hy_test_files に当たる Hy の検の file。
+
+    deftest(や test_ の関数)を持つ file は ``DoeffAdrHyFile`` と同じく関数ごとの item に、持たない「上から順に
+    実行する script」は file ごと 1 つの item(``HyScriptItem`` — 実行して例外が出なければ緑・出れば赤)にする。
+    どちらの形かは file を読んだ結果(集めた item が 0 本か)で決め、名や中身の字面では決めない — 字面で決めると、
+    deftest を包む別の macro で検を作る file を script と取り違え、検を 1 本も走らせずに緑にする。
+
+    ini の doeff_hy_test_skips に載る file は import せず、理由つきの skip の item 1 つにする(日次を赤にしないために
+    外した file を、走らせた数の報告に毎回出す — agora-redesign #2591)。
+    """
+
+    def collect(self) -> Iterable[pytest.Item | pytest.Collector]:
+        """外す一覧に載れば skip の item 1 つ・test を定義すればその item・定義しなければ script の item 1 つ。"""
+        reason = _hy_test_skip_reason(self.path, self.config)
+        if reason is not None:
+            skipped = HyScriptItem.from_parent(self, name=HyScriptItem.NAME)
+            skipped.add_marker(pytest.mark.skip(reason=reason))
+            return [skipped]
+        collected = list(super().collect())
+        return collected or [HyScriptItem.from_parent(self, name=HyScriptItem.NAME)]
+
+
+class HyScriptItem(pytest.Item):
+    """test を 1 本も定義しない Hy の検の file(上から順に実行する script)を 1 つの検として走らせる item。
+
+    file の実行は module の import そのもの。記録(キャッシュ)から収集した時は、この item の実行で初めて import する。
+    記録が無く収集の中で import した時は、そこで既に実行し終えている(例外ならその時点で file の収集が赤になる)。
+    """
+
+    NAME = "script"
+
+    def runtest(self) -> None:
+        """file を上から順に実行する(= module を import する)— 例外が出れば、この検が赤になる。"""
+        parent = self.parent
+        if not isinstance(parent, HyTestFile):
+            raise TypeError(
+                f"HyScriptItem の親は HyTestFile でなければならない: {type(parent).__name__}"
+            )
+        if parent._mut_real_module is not None:
+            return
+        real = self.config.hook.pytest_doeff_import_hy_module(collector=parent)
+        # 記録が「test の無い file」と言ったのに、実物が test を定義していれば記録が古い — 黙って script として緑にしない。
+        check_no_unrecorded_items([], real, parent._pytest_collects, parent.nodeid)
+        parent._mut_real_module = real
+
+    def reportinfo(self) -> tuple[Path, int, str]:
+        """報告の行に file の名を出す(pytest の Item の契約 — skip の報告は行の番号を要るので file の頭の 0)。"""
+        return self.path, 0, f"{self.path.name} (Hy script)"
 
 
 def items_cache_dir(config: pytest.Config) -> Path:

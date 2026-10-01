@@ -11,6 +11,9 @@ test-adr-doe-enforce-001-daily-populations-are-separate-stages が持ち、こ�
   要約の行から逐語で取り、repo の根から pytest へそのまま渡す)。
 - 検の file(`.py` と `.hy` — 定義は `_test_file_patterns` の 1 点)はどれかの母集団の根の下か、
   理由つきの除外の表に在る。
+- 検のつもりの名(test_*.py・test_*.hy)の file は、どれかの集め手の pattern(root の ini の python_files・
+  doeff_hy_test_files・executable ADR の pattern)に当たり、Hy の集め手を conftest.py に写さない。外す一覧
+  (doeff_hy_test_skips)の行は今の Hy の検の file を名指す(agora-redesign #2591)。
 - package は自分の pytest の設定を持たない(持つと root の ini と conftest が効かなくなる)。
 
 反例の実弾: 2026-09-24 の日次(断面 f271ae39)は root の赤 3 本で `&&` が止まり、package と
@@ -34,30 +37,33 @@ from typing import Any
 import pytest
 import tomllib
 from doeff_adr.pytest_plugin import DEFAULT_FILE_PATTERNS as ADR_FILE_PATTERNS
+from doeff_adr.pytest_plugin import parse_hy_test_skips
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
 # pytest の既定の python_files(root の ini が python_files を書けば、そちらを読む)。
 _PYTEST_PYTHON_FILES = ("test_*.py", "*_test.py")
-# Hy の deftest の file。各 package の conftest.py の pytest_collect_file が DoeffAdrHyFile で集める条件
-# (`file_path.suffix == ".hy" and file_path.name.startswith("test_")`)と同じ。
-_HY_TEST_FILES = ("test_*.hy",)
+# 「検のつもりの名」の file — どれかの集め手に集められなければ、日次で 1 本も走らない(agora-redesign #2591)。
+_TEST_NAMED_SOURCES = ("test_*.py", "test_*.hy")
 
 
 def _test_file_patterns(repo: Path) -> tuple[str, ...]:
-    """「何が検の file か」の定義の 1 点 — pytest が集める 3 つの経路の名の規則。
+    """「何が検の file か」の定義の 1 点 — pytest が集める 3 つの経路の名の規則。どれも集め手そのものが読む値。
 
     - Python の検: root の ini の python_files(既定は pytest の既定)。
-    - Hy の deftest の file: test_*.hy(各 conftest.py の収集の条件)。
+    - Hy の検の file: root の ini の doeff_hy_test_files(doeff-adr の plugin の集め手が同じ値を読む・deftest の
+      file も上から順に実行する script も集める — agora-redesign #2591)。
     - executable ADR: doeff-adr の plugin の既定の pattern と root の ini の doeff_adr_hy_files。
 
     `.py` だけを数えていた時は、母集団の外の `.hy` の検が日次で走らなくても赤にならなかった
     (#2542 の packages/doeff-cluster/src/doeff_cluster/sim/test_entries_on_sim.hy・agora-redesign #2577)。
+    Hy の条件を検の側に `test_*.hy` と写していた時は、集める conftest の無い dir の test_*.hy(packages/doeff-hy/tests
+    の 6 本)を「検の file」と数えながら、どの集め手も集めていなかった(agora-redesign #2591)。
     """
     ini = _root_ini(repo)
     return (
         *ini.get("python_files", _PYTEST_PYTHON_FILES),
-        *_HY_TEST_FILES,
+        *ini.get("doeff_hy_test_files", ()),
         *ADR_FILE_PATTERNS,
         *ini.get("doeff_adr_hy_files", ()),
     )
@@ -209,6 +215,28 @@ def _assert_every_test_file_belongs_to_a_daily_population(repo: Path, roots: lis
         " — 母集団の根の下へ置くか(package の tests/ の外の根は Makefile の PACKAGE_EXTRA_TEST_ROOTS へ足す)、"
         "tests/test_daily_test_population.py の EXCLUDED に理由つきで載せる(呼び手の無い木の緑は日次に見えない)"
         "— ADR-DOE-ENFORCE-001 R8"
+    )
+
+
+def _assert_every_test_named_source_is_collected(repo: Path) -> None:
+    """検のつもりの名(test_*.py・test_*.hy)の file は、どれかの集め手の pattern に当たる(fixtures の下を除く)。
+
+    当たらない file は、母集団の根の下に在っても pytest に集められず、日次で 1 本も走らない(agora-redesign #2591 —
+    packages/doeff-hy/tests の 6 本は、集める conftest の無い dir の test_*.hy だった)。
+    """
+    patterns = _test_file_patterns(repo)
+    uncollected = sorted(
+        rel
+        for current, _dirs, files in _walk(repo)
+        for rel in (Path(current, name).relative_to(repo).as_posix() for name in files)
+        if _is_test_file(rel, _TEST_NAMED_SOURCES)
+        and not _is_test_file(rel, patterns)
+        and "fixtures" not in rel.split("/")
+    )
+    assert not uncollected, (
+        f"どの集め手にも集められない検の file が {len(uncollected)} 本: {uncollected} — 集め手の pattern"
+        "(root の ini の python_files・doeff_hy_test_files・doeff-adr の executable ADR の pattern)に当たる名にするか、"
+        "集め手の pattern を ini に足す(package ごとの conftest.py に集め手を写さない)— ADR-DOE-ENFORCE-001 R8"
     )
 
 
@@ -377,7 +405,8 @@ def test_hy_test_outside_every_population_is_red_until_its_root_is_declared(
     `.py` だけを数えていた時の規則では、この `.hy` は検の file に数えられず、母集団の外でも緑だった。
     """
     (tmp_path / "pyproject.toml").write_text(
-        '[tool.pytest.ini_options]\ntestpaths = ["tests"]\n', encoding="utf-8"
+        '[tool.pytest.ini_options]\ntestpaths = ["tests"]\ndoeff_hy_test_files = ["test_*.hy"]\n',
+        encoding="utf-8",
     )
     (tmp_path / "tests").mkdir()
     (tmp_path / "tests" / "test_ok.py").write_text("def test_ok():\n    pass\n", encoding="utf-8")
@@ -395,6 +424,73 @@ def test_hy_test_outside_every_population_is_red_until_its_root_is_declared(
     declared = _population_roots(tmp_path, (f"PACKAGE_EXTRA_TEST_ROOTS={sim}",))
     assert sim in declared
     _assert_every_test_file_belongs_to_a_daily_population(tmp_path, declared)
+
+
+def test_every_test_named_file_is_collected_by_some_collector() -> None:
+    """test_*.py・test_*.hy の file はどれも、どれかの集め手の pattern に当たる(agora-redesign #2591)。"""
+    _assert_every_test_named_source_is_collected(REPO_ROOT)
+
+
+def test_hy_test_without_a_collector_is_red_until_the_collector_is_declared(tmp_path: Path) -> None:
+    """失敗ケース: 母集団の根(root の testpaths)の下に、どの集め手にも集められない test_*.hy を 1 本置くと赤、
+    root の ini の doeff_hy_test_files で集め手に当てると緑(agora-redesign #2591)。
+
+    検の側に Hy の条件を `test_*.hy` と写していた #2577 の形では、ini に集め手が無くてもこの file は「検の file」と
+    数えられ、母集団の根の下なので緑だった — packages/doeff-hy/tests の 6 本と同じ形。
+    """
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "tests" / "test_ok.py").write_text("def test_ok():\n    pass\n", encoding="utf-8")
+    script = tmp_path / "tests" / "test_script.hy"
+    script.write_text("(assert (= (+ 1 1) 2))\n", encoding="utf-8")
+    pyproject = tmp_path / "pyproject.toml"
+    pyproject.write_text('[tool.pytest.ini_options]\ntestpaths = ["tests"]\n', encoding="utf-8")
+
+    # 母集団の根の下に在る — 置き場の検は緑のまま(集められるかは別の事柄)。
+    _assert_every_test_file_belongs_to_a_daily_population(tmp_path, _population_roots(tmp_path))
+    with pytest.raises(AssertionError, match=re.escape("tests/test_script.hy")):
+        _assert_every_test_named_source_is_collected(tmp_path)
+
+    pyproject.write_text(
+        '[tool.pytest.ini_options]\ntestpaths = ["tests"]\ndoeff_hy_test_files = ["test_*.hy"]\n',
+        encoding="utf-8",
+    )
+    _assert_every_test_named_source_is_collected(tmp_path)
+
+
+def test_hy_test_skips_name_hy_test_files_with_a_reason() -> None:
+    """外す一覧(root の ini の doeff_hy_test_skips)の各行は、今の木の Hy の検の file を名指し、理由を持つ。
+
+    一覧の読み方は集め手(doeff-adr の plugin)と同じ関数 — 理由の無い行はそこで止まる。直した file の行が
+    残ると、その file は緑なのに日次で走らないまま skip に数えられる。
+    """
+    rows = parse_hy_test_skips(_root_ini(REPO_ROOT).get("doeff_hy_test_skips", ()))
+    patterns = tuple(_root_ini(REPO_ROOT).get("doeff_hy_test_files", ()))
+    stale = [
+        row.path
+        for row in rows.rows
+        if not (REPO_ROOT / row.path).is_file() or not _is_test_file(row.path, patterns)
+    ]
+    assert not stale, (
+        f"doeff_hy_test_skips に Hy の検の file でない行: {stale} — 消すか path を直す — ADR-DOE-ENFORCE-001 R8"
+    )
+
+
+def test_no_conftest_copies_the_hy_test_collector() -> None:
+    """Hy の検の file の集め手は root の ini の doeff_hy_test_files の 1 点 — conftest.py に写さない。
+
+    写しが残ると、その dir の外の test_*.hy は集められないまま母集団の検に数えられる(agora-redesign #2591 の前は
+    7 つの conftest.py が同じ条件を書き、conftest の無い packages/doeff-hy/tests の 6 本が日次で走らなかった)。
+    """
+    copies = sorted(
+        Path(current, "conftest.py").relative_to(REPO_ROOT).as_posix()
+        for current, _dirs, files in _walk(REPO_ROOT)
+        if "conftest.py" in files
+        and "DoeffAdrHyFile" in Path(current, "conftest.py").read_text(encoding="utf-8")
+    )
+    assert not copies, (
+        f"Hy の検の file を自前で集める conftest.py: {copies} — 集める条件は root の ini の doeff_hy_test_files へ"
+        " — ADR-DOE-ENFORCE-001 R8"
+    )
 
 
 def test_exclusion_table_has_no_stale_rows() -> None:

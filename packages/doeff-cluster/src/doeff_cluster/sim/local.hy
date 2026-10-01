@@ -164,7 +164,7 @@
 (import doeff_cluster.shared.intent.shared_model [ReadShared WriteShared ANY])
 (import doeff_cluster.shared.intent.warm_model [WarmRuntimeEnv ReadWarmState WarmState WarmAnswer])
 (import doeff_cluster.shared.core.warm_rules [warm-state-of-json])
-;; worker の世代は入口の組み立て(doeff_cluster.main の worker-on)を偽の宿の組の上で回す(本番の main と同じ口 — agora-redesign #2542)。
+;; worker の世代は入口の組み立て(doeff_cluster.main の worker-on)を偽の宿の組の上で回す(本番の main と同じ口)。
 (import doeff_cluster.main [worker-on])
 (import doeff_cluster.worker.intent.worker_model [WorkerPolicy WorkerState WorldView CodeView CodeState ProcessView ProbeView ProbeState
                        DesiredJobs DesiredUnreadable ReadDesired ObserveWorld WorkerStopRequested PublishStatus

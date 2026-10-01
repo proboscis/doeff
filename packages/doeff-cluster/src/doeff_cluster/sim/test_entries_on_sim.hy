@@ -1,4 +1,4 @@
-;;; 模擬の環境で各 service の入口の組み立てを 1 回ずつ回す検(agora-redesign #2542・doeff-linter DOEFF136)。本番の組み立て(入口の
+;;; 模擬の環境で各 service の入口の組み立てを 1 回ずつ回す検(doeff-linter DOEFF136)。本番の組み立て(入口の
 ;;; Program を handler の組の上で回す口)はそのままに、handler の組だけを模擬の物へ差し替える:
 ;;;
 ;;;   coordinator   sim-cluster の coordinator の Pod(coordinator.entry.main の load-state と handler_sets の emulated-handlers)
