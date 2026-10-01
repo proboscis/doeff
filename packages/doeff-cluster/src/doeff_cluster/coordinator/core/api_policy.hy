@@ -34,7 +34,7 @@
 (import traceback [extract-tb])
 (import doeff_cluster.coordinator.intent.request_bodies [BodyMalformed])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming Request PlainText BodyInvalid])
-(import doeff_cluster.coordinator.intent.cluster_model [ClusterState ClusterNaming Fault])
+(import doeff_cluster.coordinator.intent.cluster_model [ClusterState ClusterNaming Fault RolloutTarget])
 (import doeff_cluster.coordinator.core.cluster_rules [format-version-refusal])
 (import doeff_cluster.coordinator.core.metrics_policy [record-metrics metrics-text])
 (import doeff_cluster.coordinator.core.cluster_policy [audit-event-to-json reconcile register-heartbeat heartbeat-reply state-view submit-task poll-task absorb-task-result board-write note-liveness
@@ -46,7 +46,7 @@
 (import doeff_cluster.coordinator.core.handoff_policy [watch-handoffs])
 (import doeff_cluster.coordinator.intent.cluster_model [HandoffPhase])
 (import doeff_cluster.coordinator.core.detached_policy [Reply submit-detached detached-read cancel-detached release-detached])
-(import doeff_cluster.coordinator.core.rollout_policy [rollout-step target-key deployment-owners drift-status action-due shift-clocks TERMINAL-PHASES])
+(import doeff_cluster.coordinator.core.rollout_policy [rollout-step rollout-targets target-key deployment-owners drift-status action-due shift-clocks TERMINAL-PHASES])
 (import doeff_cluster.coordinator.core.warm_policy [warm-write warm-read])
 (import doeff_cluster.coordinator.core.program_policy [program-write program-read sweep-programs])
 
@@ -109,21 +109,21 @@
 
 ;; --- Rollout の相手の観測 ----------------------------------------------------------------------
 
-(defn #^ dict target-view [#^ ClusterState state #^ dict target #^ dict status #^ int now #^ ClusterTiming timing]
-  (if (= (get target "kind") "Service")
+(defn #^ dict target-view [#^ ClusterState state #^ RolloutTarget target #^ dict status #^ int now #^ ClusterTiming timing]
+  (if (= target.kind "Service")
       ;; 止まっているかは版の判定(resource_policy.version-state の Stopped)と同じ述語 service-stopped で読む(条件を 2 か所に書かない)。
-      (do (setv name (get target "name")
+      (do (setv name target.name
                 job (next (gfor j state.jobs :if (= j.spec.name name) j) None)
                 verdict (service-readiness state name now timing)
                 stopped (service-stopped state name now timing))
           {"ready" (get verdict "state") "stopped" stopped "specReplicas" (if job job.replicas None)
            "reason" (if stopped "止まっている" (get verdict "reason"))})
-      (do (setv key (+ (get target "namespace") "/" (get target "name"))
+      (do (setv key (+ target.namespace "/" target.name)
                 obs (.get state.deployments key))
           (when (or (is obs None) (in "error" obs) (> (- now (.get obs "at" 0)) OBSERVATION-STALE-MS))
             (return {"ready" "Unknown" "stopped" None "specReplicas" None
                      "reason" (if obs (.get obs "error" "観測が古い") "まだ観測していない")}))
-          (setv dry (get target "dryRun")
+          (setv dry target.dry-run
                 simulated (.get (.get status "simulated" {}) (target-key target))
                 want (if (and dry (is-not simulated None)) simulated (get obs "specReplicas"))
                 ready-n (get obs "readyReplicas")
@@ -159,9 +159,9 @@
   (setv keys [])
   (for [r (.values state.rollouts)]
     (when (not-in (.get r.status "phase") TERMINAL-PHASES)
-      (for [t #((get r.spec "from") (get r.spec "to"))]
-        (when (= (get t "kind") "Deployment")
-          (.append keys (+ (get t "namespace") "/" (get t "name")))))))
+      (for [t (rollout-targets r.spec)]
+        (when (= t.kind "Deployment")
+          (.append keys (+ t.namespace "/" t.name))))))
   (for [key (deployment-owners state.rollouts)]
     (when (> (- now (.get (.get state.deployments key {}) "at" 0)) 10000)
       (.append keys key)))
@@ -176,8 +176,8 @@
   (for [#(name r) (sorted (.items state.rollouts))]
     (setv spec r.spec status r.status)
     (when (not-in (.get status "phase") TERMINAL-PHASES)
-      (setv #(status acts) (rollout-step spec status (target-view state (get spec "from") status now timing)
-                                         (target-view state (get spec "to") status now timing) now))
+      (setv #(status acts) (rollout-step spec status (target-view state spec.from-target status now timing)
+                                         (target-view state spec.to-target status now timing) now))
       (setv (get rollouts name) (replace r :status status))
       ;; 失敗が続く action は間を空けて出す(action-due — 1 秒から倍々・上限 60 秒)。
       (.extend actions (gfor a acts :if (action-due status a now) (| a {"rollout" name})))))
@@ -186,8 +186,8 @@
   ;; Observing の Rollout は旧を止め終えて台数を持つ側なので、ここでは「進行中」に数えない(2026-09-24 の実弾: 数えていたので
   ;; 観察の間に本番の配備の流れが replicas を 1 へ戻したのを食い違いとして出せなかった)。
   (setv busy (sfor r (.values rollouts) :if (not-in (.get r.status "phase") (| TERMINAL-PHASES #{"Observing"}))
-                   t #((get r.spec "from") (get r.spec "to")) :if (= (get t "kind") "Deployment")
-                   (+ (get t "namespace") "/" (get t "name")))
+                   t (rollout-targets r.spec) :if (= t.kind "Deployment")
+                   (+ t.namespace "/" t.name))
         owners (dfor #(k v) (.items (deployment-owners rollouts)) :if (not-in k busy) k v)
         owning (sfor v (.values owners) (get v 0)))
   (for [#(name r) (.items rollouts)]
@@ -197,7 +197,7 @@
     (setv r (get rollouts name) status r.status)
     (setv status (drift-status status key expected (.get state.deployments key) now))
     (setv (get rollouts name) (replace r :status status))
-    (when (and (get r.spec "markDeployment") (!= (.get status "markedDeployment") key))
+    (when (and r.spec.mark-deployment (!= (.get status "markedDeployment") key))
       (setv #(ns dep) (.split key "/" 1))
       (.append actions {"rollout" name "op" "annotate" "namespace" ns "name" dep
                         "annotations" {naming.owner-annotation (.format "{}/Rollout/{} replicas={}" naming.owner-scope name expected)}})))
@@ -224,7 +224,7 @@
                          (dfor #(k v) (.items entry) :if (not-in k #("at" "count")) k v)))
     (setv entry (| previous {"count" (+ (.get previous "count" 1) 1)})))
   (setv (get status "lastAction") entry)
-  (when (and ok target (= (get target "kind") "Deployment") (get target "dryRun"))
+  (when (and ok target (= target.kind "Deployment") target.dry-run)
     (setv (get status "simulated") (| (.get status "simulated" {}) {(target-key target) (if (is result None) (get action "replicas") result)})))
   (when (and ok (= (get action "op") "annotate"))
     (setv (get status "markedDeployment") (+ (get action "namespace") "/" (get action "name"))))

@@ -35,11 +35,12 @@
 (require doeff-hy.macros [val])
 (val MODULE-TAGS {:context "coordinator" :role "judgment"})
 (import doeff_cluster.shared.intent.protocol [BodyInvalid])
+(import doeff_cluster.coordinator.intent.cluster_model [RolloutSpec RolloutTarget])
 
 (setv TERMINAL-PHASES #{"Complete" "RolledBack"})
+;; 秒の欄の既定の値(欄が無い本文・この欄が無かった頃に作った Rollout の保存の行)。
 (setv DEFAULTS {"readyTimeoutSeconds" 300 "stopTimeoutSeconds" 180 "observeSeconds" 1800 "failAfterSeconds" 30
-                "rollbackTimeoutSeconds" 600 "markDeployment" False "abort" False})
-(setv TIMEOUT-KEYS #("readyTimeoutSeconds" "stopTimeoutSeconds" "observeSeconds" "failAfterSeconds" "rollbackTimeoutSeconds"))
+                "rollbackTimeoutSeconds" 600})
 ;; 段の時刻の起点(coordinator が止まっていた時間を除く時にずらす欄)。
 (setv CLOCK-FIELDS #("phaseSinceMs" "notReadySinceMs" "unknownSinceMs"))
 (setv RETRY-FIRST-MS 1000 RETRY-MAX-MS 60000)
@@ -47,50 +48,73 @@
 
 
 ;; target は本文の値そのもの(dict かを確かめる)。
-(defn #^ dict validate-target [#^ object target #^ str label]
+(defn #^ RolloutTarget validate-target [#^ object target #^ str label]
   (when (not (isinstance target dict)) (raise (BodyInvalid (+ label " は dict"))))
   (setv kind (.get target "kind"))
   (cond
     (= kind "Service")
       (do (when (not (isinstance (.get target "name") str)) (raise (BodyInvalid (+ label ".name が要る"))))
-          {"kind" "Service" "name" (get target "name")})
+          (RolloutTarget :kind "Service" :name (get target "name")))
     (= kind "Deployment")
       (do (for [k #("namespace" "name")]
             (when (not (isinstance (.get target k) str)) (raise (BodyInvalid (.format "{}.{} が要る" label k)))))
           (setv replicas (.get target "replicas"))
           (when (and (is-not replicas None) (not (and (isinstance replicas int) (>= replicas 1))))
             (raise (BodyInvalid (+ label ".replicas は 1 以上"))))
-          {"kind" "Deployment" "namespace" (get target "namespace") "name" (get target "name")
-           "replicas" replicas "dryRun" (bool (.get target "dryRun" False))})
+          (RolloutTarget :kind "Deployment" :namespace (get target "namespace") :name (get target "name")
+                         :replicas replicas :dry-run (bool (.get target "dryRun" False))))
     True (raise (BodyInvalid (.format "{}.kind は Service か Deployment: {!r}" label kind)))))
 
 
-(defn #^ str target-key [#^ dict target]
-  (if (= (get target "kind") "Service")
-      (+ "Service:" (get target "name"))
-      (.format "Deployment:{}/{}" (get target "namespace") (get target "name"))))
+(defn #^ dict target-to-json [#^ RolloutTarget target]
+  "相手 → JSON の形(Service は {kind name}・Deployment は {kind namespace name replicas dryRun} — #2447 の前の形と同じ)。"
+  (if (= target.kind "Service")
+      {"kind" "Service" "name" target.name}
+      {"kind" "Deployment" "namespace" target.namespace "name" target.name "replicas" target.replicas "dryRun" target.dry-run}))
 
 
-(defn #^ dict validate-rollout-spec [#^ dict spec]
+(defn #^ str target-key [#^ RolloutTarget target]
+  (if (= target.kind "Service")
+      (+ "Service:" target.name)
+      (.format "Deployment:{}/{}" target.namespace target.name)))
+
+
+(defn #^ (| int float) spec-seconds [#^ dict spec #^ str key]
+  "本文(か保存の行)の秒の欄(無ければ既定の値)。0 以上の数でなければ送り手の誤り。"
+  (setv v (.get spec key (get DEFAULTS key)))
+  (when (not (and (isinstance v #(int float)) (>= v 0))) (raise (BodyInvalid (+ key " は 0 以上の数"))))
+  v)
+
+
+(defn #^ RolloutSpec validate-rollout-spec [#^ dict spec]
+  "送り手の本文(か保存の行)の spec → 宣言の型(欠けた秒の欄は既定の値・形の誤りは BodyInvalid)。"
   (setv from (validate-target (.get spec "from") "from") to (validate-target (.get spec "to") "to"))
   (when (= (target-key from) (target-key to)) (raise (BodyInvalid "from と to が同じ")))
-  (setv out (| DEFAULTS {"from" from "to" to "owner" (.get spec "owner")}))
-  (for [k TIMEOUT-KEYS]
-    (setv v (.get spec k (get DEFAULTS k)))
-    (when (not (and (isinstance v #(int float)) (>= v 0))) (raise (BodyInvalid (+ k " は 0 以上の数"))))
-    (setv (get out k) v))
-  (setv (get out "markDeployment") (bool (.get spec "markDeployment" False))
-        (get out "abort") (bool (.get spec "abort" False)))
-  out)
+  (RolloutSpec :from-target from :to-target to :owner (.get spec "owner")
+               :ready-timeout-seconds (spec-seconds spec "readyTimeoutSeconds")
+               :stop-timeout-seconds (spec-seconds spec "stopTimeoutSeconds")
+               :observe-seconds (spec-seconds spec "observeSeconds")
+               :fail-after-seconds (spec-seconds spec "failAfterSeconds")
+               :rollback-timeout-seconds (spec-seconds spec "rollbackTimeoutSeconds")
+               :mark-deployment (bool (.get spec "markDeployment" False))
+               :abort (bool (.get spec "abort" False))))
 
 
-(defn #^ list rollout-targets [#^ dict spec]
-  [(get spec "from") (get spec "to")])
+(defn #^ dict rollout-spec-to-json [#^ RolloutSpec spec]
+  "宣言 → JSON の形(保存・GET /resources・出来事の記録の差分が読む — #2447 の前の形と同じ欄)。"
+  {"readyTimeoutSeconds" spec.ready-timeout-seconds "stopTimeoutSeconds" spec.stop-timeout-seconds
+   "observeSeconds" spec.observe-seconds "failAfterSeconds" spec.fail-after-seconds
+   "rollbackTimeoutSeconds" spec.rollback-timeout-seconds "markDeployment" spec.mark-deployment "abort" spec.abort
+   "from" (target-to-json spec.from-target) "to" (target-to-json spec.to-target) "owner" spec.owner})
 
 
-(defn #^ int new-replicas [#^ dict target]
+(defn #^ list rollout-targets [#^ RolloutSpec spec]
+  [spec.from-target spec.to-target])
+
+
+(defn #^ int new-replicas [#^ RolloutTarget target]
   "新として起こす台数。Service は 1(1 つだけ動かす)・Deployment は宣言の replicas(既定 1)。"
-  (if (= (get target "kind") "Service") 1 (or (.get target "replicas") 1)))
+  (if (= target.kind "Service") 1 (or target.replicas 1)))
 
 
 ;; extra = status に足す欄(rollbackStep・failure の文字列・startedMs などの時刻と台数)。
@@ -101,27 +125,22 @@
   (| kept {"phase" phase "phaseSinceMs" now "reason" reason "history" (cut history (- HISTORY-LIMIT) None)} extra))
 
 
-(defn #^ (| int float) spec-seconds [#^ dict spec #^ str key]
-  "spec の秒の欄(この欄が無かった頃に作った Rollout は既定の値)。"
-  (.get spec key (get DEFAULTS key)))
-
-
-(defn #^ dict scale [#^ dict target #^ int replicas]
+(defn #^ dict scale [#^ RolloutTarget target #^ int replicas]
   {"op" "scale" "target" target "replicas" replicas})
 
 
-(defn #^ list ensure-replicas [#^ dict target #^ dict view #^ int replicas]
+(defn #^ list ensure-replicas [#^ RolloutTarget target #^ dict view #^ int replicas]
   "観測の宣言の台数が replicas でなければ、そうする action(観測が無ければ何もしない)。"
   (setv current (.get view "specReplicas"))
   (if (or (is current None) (= current replicas)) [] [(scale target replicas)]))
 
 
-(defn #^ tuple rollout-step [#^ dict spec #^ dict status #^ dict from-view #^ dict to-view #^ int now]
+(defn #^ tuple rollout-step [#^ RolloutSpec spec #^ dict status #^ dict from-view #^ dict to-view #^ int now]
   "1 拍。返り値 #(次の status action の list)。"
   (setv phase (.get status "phase" "Pending") since (.get status "phaseSinceMs" now)
-        old (get spec "from") new (get spec "to"))
+        old spec.from-target new spec.to-target)
   (when (in phase TERMINAL-PHASES) (return #(status [])))
-  (when (and (get spec "abort") (!= phase "RollingBack"))
+  (when (and spec.abort (!= phase "RollingBack"))
     (return (rollout-step spec (enter status "RollingBack" now "中止の指示(abort)" :rollbackStep "restoreOld"
                                       :failure "中止の指示(abort)")
                           from-view to-view now)))
@@ -131,8 +150,8 @@
     (= phase "Pending")
       ;; 旧の今の台数を控える(戻す時の台数)。旧が Deployment で観測が無ければ、spec の replicas か 1。
       (do (setv observed (.get from-view "specReplicas")
-                restore (cond (= (get old "kind") "Service") 1
-                              (.get old "replicas") (get old "replicas")
+                restore (cond (= old.kind "Service") 1
+                              old.replicas old.replicas
                               (and observed (> observed 0)) observed
                               (is observed None) None
                               True 1))
@@ -144,8 +163,8 @@
       (cond
         (= (get to-view "ready") "Ready")
           (rollout-step spec (enter status "StoppingOld" now "新が Ready になった") from-view to-view now)
-        (> (- now since) (* 1000 (spec-seconds spec "readyTimeoutSeconds")))
-          (fail (.format "新が {} 秒で Ready にならなかった: {}" (get spec "readyTimeoutSeconds") (.get to-view "reason" "")))
+        (> (- now since) (* 1000 spec.ready-timeout-seconds))
+          (fail (.format "新が {} 秒で Ready にならなかった: {}" spec.ready-timeout-seconds (.get to-view "reason" "")))
         True #((| status {"reason" "新の Ready を待つ"})
                (ensure-replicas new to-view (new-replicas new))))
     (= phase "StoppingOld")
@@ -158,8 +177,8 @@
         ;; 失敗とも数えない(時間切れだけは数える)。新が本当に落ちていたら、旧を止めた後で書き手が 0 になるため(2026-09-25)。
         (= (get to-view "ready") "Unknown")
           #((| status {"reason" "新の観測が Unknown の間は旧を止める命令を控える"}) [])
-        (> (- now since) (* 1000 (spec-seconds spec "stopTimeoutSeconds")))
-          (fail (.format "旧が {} 秒で止まらなかった: {}" (get spec "stopTimeoutSeconds") (.get from-view "reason" "")))
+        (> (- now since) (* 1000 spec.stop-timeout-seconds))
+          (fail (.format "旧が {} 秒で止まらなかった: {}" spec.stop-timeout-seconds (.get from-view "reason" "")))
         True #((| status {"reason" "旧が止まるのを待つ"})
                (ensure-replicas old from-view 0)))
     (= phase "Observing")
@@ -178,16 +197,16 @@
             (= state "Ready") (setv down None)
             (= state "NotReady") (setv down (or down now)))
           (cond
-            (and down (> (- now down) (* 1000 (spec-seconds spec "failAfterSeconds"))))
+            (and down (> (- now down) (* 1000 spec.fail-after-seconds)))
               (fail (.format "観察の間に新が {} 秒 Ready でなかった: {}" (// (- now down) 1000) (.get to-view "reason" "")))
-            (and (= state "Ready") (>= (- now since) (* 1000 (spec-seconds spec "observeSeconds"))))
+            (and (= state "Ready") (>= (- now since) (* 1000 spec.observe-seconds)))
               #((enter (| status {"notReadySinceMs" None}) "Complete" now "観察の期間を終えた" :completedMs now) [])
             True #((| status {"notReadySinceMs" down
                               "reason" "観察中"})
                    [])))
     (= phase "RollingBack")
       (do (setv step (.get status "rollbackStep" "restoreOld") restore (or (.get status "fromReplicas") 1)
-                limit (spec-seconds spec "rollbackTimeoutSeconds")
+                limit spec.rollback-timeout-seconds
                 late (> (- now since) (* 1000 limit)))
           (defn #^ tuple waiting [#^ str reason #^ str stuck-reason #^ list actions]
             ;; 時間切れの後も同じ action を出し続ける(新は止めない)。stuck は印を付けた拍と step が変わった拍だけ変わる。
@@ -219,7 +238,7 @@
   (setv target (.get action "target"))
   (| (dfor #(k v) (.items action) :if (not-in k #("rollout" "target" "ok" "error" "at" "count")) k v)
      ;; lastAction の target は既に「Kind:名」の文字列(record-action が畳んだ形)。
-     (cond (isinstance target dict) {"target" (target-key target)}
+     (cond (isinstance target RolloutTarget) {"target" (target-key target)}
            target {"target" target}
            True {})))
 
@@ -257,9 +276,9 @@
   (for [#(name r) (sorted (.items rollouts))]
     (setv spec r.spec status r.status)
     (when (in (.get status "phase") #("Observing" "Complete"))
-      (for [#(side target) #(#("from" (get spec "from")) #("to" (get spec "to")))]
-        (when (and (= (get target "kind") "Deployment") (not (get target "dryRun")))
-          (setv key (+ (get target "namespace") "/" (get target "name"))
+      (for [#(side target) #(#("from" spec.from-target) #("to" spec.to-target))]
+        (when (and (= target.kind "Deployment") (not target.dry-run))
+          (setv key (+ target.namespace "/" target.name)
                 expected (if (= side "from") 0 (new-replicas target))
                 at (.get status "stoppedOldMs" 0))
           (when (or (not-in key best) (> at (get (get best key) 2)))
