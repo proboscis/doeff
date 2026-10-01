@@ -1,5 +1,5 @@
 ;;; worker の版ごとのコードの木の準備の判断 — 展開・bytecode の準備・完成の印の確かめ・rename を 1 本の sh の script に組む
-;;; (handlers.hy の CodeStore.script から分けた・#2466)。I/O は呼び手(CodeStore — 後に worker/protocol の言い換え)が行う。
+;;; (handlers.hy の CodeStore.script から分けた・#2466)。I/O は呼び手(worker/protocol/code_store の code-host)が行う。
 (require doeff-hy.macros [defk val])
 (val MODULE-TAGS {:context "doeff-cluster" :role "judgment"})
 (import doeff_cluster.worker.intent.worker_model [CodeLayout])
