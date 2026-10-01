@@ -7,6 +7,8 @@
 ;;; 読みながら待つ(run-watched)。使わない呼びは前と同じ subprocess.run の道(run-subprocess の頭の枝)を通る。
 ;;; offloaded-subprocess-handler は同じ実装を、呼び 1 つに thread 1 本(offloaded_call.hy の ThreadPerCall)で回す — 子を待つ間も
 ;;; scheduler の他の task が回る。外側に scheduled が要る。待っている task が取り消されても、走り出した子は止めない(答えは捨てる)。
+;;; StartProcess・PollProcess・StopProcess(agora-redesign #2223)は、立てた子を process に 1 つの表 STARTED-CHILDREN で持つ。立てる・問うは
+;;; 待たないので、どちらの答え手もその場で答える。止めるは猶予の間だけ待つので、offloaded-subprocess-handler では thread で回す。
 (require doeff-hy.macros [defhandler defk <- val var])
 (import contextlib)
 (import fnmatch)
@@ -20,10 +22,40 @@
 (import doeff_core_effects.os_file [stat-path])
 (import doeff_core_effects.offloaded_call [ThreadPerCall offloaded run-detached keep-nothing])
 (import doeff_core_effects.process_effects [EnvEntry EnvMode ProcessOutcome RunProcess ExecutableAt ReadEnvironment WorkingDirectory
-                                            ProcessAlive timed-out-outcome not-started-outcome executable-file-answer])
+                                            ProcessAlive StartProcess PollProcess StopProcess ProcessStarted ProcessNotStarted
+                                            ProcessRunning ProcessExited ProcessNotChild
+                                            timed-out-outcome not-started-outcome executable-file-answer])
 
 ;; offloaded-subprocess-handler の thread(呼び 1 つに 1 本 — 同時の数の上限は呼び手が並べる数)。
 (val PROCESS-THREADS (ThreadPerCall))
+
+
+(defclass StartedChildren []
+  "StartProcess で立てた子の表(pid → #(Popen process-group))を process に 1 つ持つため(agora-redesign #2223 — 子は OS の process ごとの資源で、
+   答え手を積み直しても同じ子を問える)。Popen を捨てると subprocess の後始末が子を回収して終了 code を奪うので、終わりを答えるまで表で持つ。
+   表の読み書きは 1 つの錠の下(offloaded の thread と本体が並んで触る)。"
+  (defn __init__ [self]
+    (setv self.lock (threading.Lock))
+    (setv self.children {}))
+
+  (defn add [self child process-group]
+    "立てた子を表に置く。"
+    (with [self.lock]
+      (setv (get self.children child.pid) #(child process-group))))
+
+  (defn find [self pid]
+    "pid の子の #(Popen process-group)— 立てていない pid は None。"
+    (with [self.lock]
+      (.get self.children pid)))
+
+  (defn forget [self pid]
+    "終わりを答えた子を表から外す(この後その pid は ProcessNotChild)。"
+    (with [self.lock]
+      (.pop self.children pid None))))
+
+
+;; StartProcess で立てた子の表(process に 1 つ — StartedChildren の註)。
+(val STARTED-CHILDREN (StartedChildren))
 
 
 (defk os-executable-at [path]
@@ -251,6 +283,65 @@
   outcome)
 
 
+(defk start-child-process [argv cwd env env-mode env-drop stdout-path stderr-path process-group]
+  {:pre [(: argv tuple) (: cwd (| str None)) (: env (| tuple None)) (: env-mode EnvMode) (: env-drop tuple) (: stdout-path (| str None))
+         (: stderr-path (| str None)) (: process-group bool)]
+   :post [(: % (| ProcessStarted ProcessNotStarted))] :tags {:context "process" :role "foundation"}}
+  "StartProcess に本物の子で答えるため: 出力の file を末尾へ足す形で先に開き(開けなければ立てない)、標準入力の無い子を Popen で立てて
+   STARTED-CHILDREN に置き、終わりを待たずに pid を返す。立てられない理由は OSError の文のまま(RunProcess の起こせない形と同じ)。"
+  (<- child-env (| dict None) (child-environment env env-mode env-drop))
+  (try
+    (with [streams (contextlib.ExitStack)]
+      (val out (if (is stdout-path None) subprocess.DEVNULL (.enter-context streams (open stdout-path "ab"))))
+      (val err (if (is stderr-path None) subprocess.DEVNULL (.enter-context streams (open stderr-path "ab"))))
+      (val child (subprocess.Popen (list argv) :stdin subprocess.DEVNULL :stdout out :stderr err :cwd cwd :env child-env
+                                   :start-new-session process-group))
+      (.add STARTED-CHILDREN child process-group)
+      (ProcessStarted :pid child.pid))
+    (except [error OSError]
+      (ProcessNotStarted :detail (str error)))))
+
+
+(defk poll-child-process [pid]
+  {:pre [(: pid int)] :post [(: % (| ProcessRunning ProcessExited ProcessNotChild))] :tags {:context "process" :role "foundation"}}
+  "PollProcess に本物の子で答えるため: 表に無い pid は ProcessNotChild、まだ走っていれば ProcessRunning、終わっていれば表から外して
+   ProcessExited(待たない — Popen.poll)。"
+  (val found (.find STARTED-CHILDREN pid))
+  (if (is found None)
+      (ProcessNotChild :pid pid)
+      (do
+        (val code (.poll (get found 0)))
+        (if (is code None)
+            (ProcessRunning :pid pid)
+            (do (.forget STARTED-CHILDREN pid)
+                (ProcessExited :pid pid :exit-code code))))))
+
+
+(defk stop-child-process [pid stop-grace]
+  {:pre [(: pid int) (: stop-grace float)] :post [(: % (| ProcessExited ProcessNotChild))] :tags {:context "process" :role "foundation"}}
+  "StopProcess に本物の子で答えるため: 表に無い pid は ProcessNotChild(他人の process に signal を送らない)。走っていれば、process-group
+   なら group へ・そうでなければ子へ SIGTERM → stop-grace 秒待つ → SIGKILL で止め、回収して表から外す。終わっていた子はそのまま回収する。"
+  (val found (.find STARTED-CHILDREN pid))
+  (if (is found None)
+      (ProcessNotChild :pid pid)
+      (do
+        (val child (get found 0))
+        (val process-group (get found 1))
+        (when (is (.poll child) None)
+          (if process-group
+              (<- (signal-group child.pid signal.SIGTERM))
+              (with [(contextlib.suppress ProcessLookupError)] (.terminate child)))
+          (try
+            (.wait child :timeout stop-grace)
+            (except [subprocess.TimeoutExpired]
+              (if process-group
+                  (<- (signal-group child.pid signal.SIGKILL))
+                  (with [(contextlib.suppress ProcessLookupError)] (.kill child)))
+              (.wait child))))
+        (.forget STARTED-CHILDREN pid)
+        (ProcessExited :pid pid :exit-code child.returncode))))
+
+
 (defhandler subprocess-handler
   ;; 本物の子 process と自分の process の環境(頭の註)。
   (RunProcess [argv stdin timeout cwd env env-mode output-path env-drop process-group stop-grace stream-output]
@@ -265,7 +356,16 @@
     (resume (os.getcwd)))
   (ProcessAlive [pid]
     (<- alive (os-process-alive pid))
-    (resume alive)))
+    (resume alive))
+  (StartProcess [argv cwd env env-mode env-drop stdout-path stderr-path process-group]
+    (<- started (start-child-process argv cwd env env-mode env-drop stdout-path stderr-path process-group))
+    (resume started))
+  (PollProcess [pid]
+    (<- seen (poll-child-process pid))
+    (resume seen))
+  (StopProcess [pid stop-grace]
+    (<- stopped (stop-child-process pid (float stop-grace)))
+    (resume stopped)))
 
 
 (defhandler offloaded-subprocess-handler
@@ -285,4 +385,14 @@
     (resume (os.getcwd)))
   (ProcessAlive [pid]
     (<- alive (os-process-alive pid))
-    (resume alive)))
+    (resume alive))
+  ;; 立てる・問うは待たないのでその場で答える。止めるは猶予の間だけ待つので thread で回す。
+  (StartProcess [argv cwd env env-mode env-drop stdout-path stderr-path process-group]
+    (<- started (start-child-process argv cwd env env-mode env-drop stdout-path stderr-path process-group))
+    (resume started))
+  (PollProcess [pid]
+    (<- seen (poll-child-process pid))
+    (resume seen))
+  (StopProcess [pid stop-grace]
+    (<- stopped (offloaded PROCESS-THREADS (fn [] (run-detached (stop-child-process pid (float stop-grace)))) keep-nothing))
+    (resume stopped)))

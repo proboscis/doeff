@@ -40,6 +40,17 @@
 ;;;   WorkingDirectory  自分の process の作業 dir(絶対 path)。
 ;;;   ProcessAlive      pid の process が生きているか。答え = bool(本物 = signal 0 を送れるか・送る権限が無いだけの process は生きている)。
 ;;;
+;;; 立てたらすぐ返す子(agora-redesign #2223 — 消費者 = merge-queue の controller の配りの腕。拍は子を待たない):
+;;;   StartProcess      子を立てて、終わりを待たずに返す。答え = ProcessStarted(pid)か ProcessNotStarted(理由の文 — 出力の file が開けない・
+;;;                     cwd が無い・命令が無い。RunProcess の起こせない形と同じ文で、出力の file を先に確かめる)。子の標準入力は無し、標準出力と
+;;;                     標準エラーは stdout-path・stderr-path の file の末尾へ(None = 捨てる)。pipe にしない — 読まずにおくと約 64 KB で子が
+;;;                     止まる。env・env-mode・env-drop・cwd・process-group は RunProcess と同じ。
+;;;   PollProcess       立てた子を待たずに 1 度だけ問う。答え = ProcessRunning・ProcessExited(終了 code — 答えた時に回収し、その pid を忘れる)・
+;;;                     ProcessNotChild(この答え手が立てた子でない pid)。
+;;;   StopProcess       立てた子を止めて回収する: process-group なら group へ、そうでなければ子へ SIGTERM → stop-grace 秒待つ → SIGKILL。
+;;;                     答え = ProcessExited か ProcessNotChild(他人の process には signal を送らない)。終わっていた子はそのまま回収する。
+;;;   本物の答え手は、立てた子の表を process に 1 つ持つ(子は OS の process ごとの資源 — 答え手を積み直しても同じ子を問える)。
+;;;
 ;;; 時間切れと起こせない形の答え(timed-out-outcome・not-started-outcome)と、起こせない理由の文(start-refusal — OSError の文と同じ形)は
 ;;; ここで 1 度だけ作る。本物(os_process.hy)と I/O なし(scripted_process.hy)の答え手は同じ関数を呼ぶ(同じ形で答える — 契約テスト
 ;;; tests/test_process_contract.hy)。
@@ -121,6 +132,63 @@
 
 (defclass [(dataclass :frozen True)] ProcessAlive [EffectBase]
   "pid の process が生きているか(頭の註)。"
+  (#^ int pid))
+
+
+(defclass [(dataclass :frozen True :kw-only True)] StartProcess [EffectBase]
+  "子 process を立てて、終わりを待たずに返す(頭の註)。答え = ProcessStarted か ProcessNotStarted。"
+  #^ tuple argv
+  #^ (| str None) cwd
+  (setv cwd None)
+  #^ (| tuple None) env
+  (setv env None)
+  #^ EnvMode env-mode
+  (setv env-mode EnvMode.REPLACE)
+  #^ (get tuple #(str ...)) env-drop
+  (setv env-drop #())
+  #^ (| str None) stdout-path
+  (setv stdout-path None)
+  #^ (| str None) stderr-path
+  (setv stderr-path None)
+  #^ bool process-group
+  (setv process-group False))
+
+
+(defclass [(dataclass :frozen True)] PollProcess [EffectBase]
+  "StartProcess で立てた子の様子を、待たずに 1 度だけ問う(頭の註)。答え = ProcessRunning か ProcessExited か ProcessNotChild。"
+  (#^ int pid))
+
+
+(defclass [(dataclass :frozen True :kw-only True)] StopProcess [EffectBase]
+  "StartProcess で立てた子を止めて回収する(頭の註)。答え = ProcessExited か ProcessNotChild。"
+  #^ int pid
+  #^ float stop-grace
+  (setv stop-grace 10.0))
+
+
+(defrecord ProcessStarted
+  "子を立てた(pid = PollProcess と StopProcess で問う子の印)。"
+  (#^ int pid))
+
+
+(defrecord ProcessNotStarted
+  "子を立てられなかった(detail = OSError の文と同じ形の理由 — 出力の file が開けない・cwd が無い・命令が無い)。"
+  (#^ str detail))
+
+
+(defrecord ProcessRunning
+  "子はまだ走っている。"
+  (#^ int pid))
+
+
+(defrecord ProcessExited
+  "子は終わり、回収した(exit-code = returncode を丸めない — 負の値 = signal)。この後その pid は ProcessNotChild。"
+  (#^ int pid)
+  (#^ int exit-code))
+
+
+(defrecord ProcessNotChild
+  "この答え手が立てた子でない pid(立てていない・既に終わりを答えて回収した)— 他人の process に signal を送らないため。"
   (#^ int pid))
 
 

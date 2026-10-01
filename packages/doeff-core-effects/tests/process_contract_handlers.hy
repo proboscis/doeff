@@ -50,6 +50,10 @@
 (val LEFT-BEHIND-THEN-WAIT "sleep 30 >/dev/null 2>&1 & echo $!; sleep 30")
 (val TWO-LINES "echo one; echo two")
 (val FIRST-THEN-WAIT "echo first; sleep 30")
+;; pipe の容量(約 64 KB)を大きく超える出力(2,000,000 byte = "a\n" の 100 万回)— 立てたらすぐ返す子の出力が file へ流れ、子が止まらない
+;; ことを見る(agora-redesign #2223)。
+(val BIG-OUTPUT "yes a | head -c 2000000")
+(val BIG-OUTPUT-TEXT (* "a\n" 1000000))
 ;; 台本の世界の pid(台本の sh が答える — 生きている表 ALIVE に無いので死んでいる)と、生きている pid の表(1 = init — 本物でも生きている)。
 (val SCRIPTED-OWN-PID 4242)
 (val SCRIPTED-LEFT-BEHIND 4343)
@@ -163,6 +167,12 @@
   answer)
 
 
+(defk print-big-output [request]
+  {:pre [(: request RunProcess)] :post [(: % ProcessOutcome)] :tags {:context "process-test" :role "judgment"}}
+  "本物の sh の BIG-OUTPUT の答え(2,000,000 byte の出力)。"
+  (ProcessOutcome :exit-code 0 :stdout BIG-OUTPUT-TEXT :stderr ""))
+
+
 ;; 台本の sh が `-c <文>` の文ごとに答える物(本物の sh ならこう答える)。
 (val SHELL-ANSWERS {OUT-ERR-EXIT exit-3-with-output
                     OUT-ERR exit-0-with-output
@@ -175,7 +185,8 @@
                     LEFT-BEHIND print-left-behind
                     LEFT-BEHIND-THEN-WAIT print-and-outlive
                     TWO-LINES print-two-lines
-                    FIRST-THEN-WAIT print-first-and-outlive})
+                    FIRST-THEN-WAIT print-first-and-outlive
+                    BIG-OUTPUT print-big-output})
 
 
 (defk shell-script [commands request]

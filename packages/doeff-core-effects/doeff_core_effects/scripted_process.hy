@@ -11,6 +11,13 @@
 ;;;                     (届いた順に書く本物と、終わった後の file の中身は同じ)。
 ;;;                     本物との契約は tests/test_process_contract.hy。
 ;;;   ProcessAlive      ProcessScript の alive(生きている pid の表)に在るか。0 以下の pid は本物と同じく生きていない。
+;;;   StartProcess      出力の file を先に開き(空を足す — 開けなければ本物と同じ文の ProcessNotStarted)、台本を timeout 0 で 1 回走らせる
+;;;                     (agora-redesign #2223)。起こせない形の答えは ProcessNotStarted。時間切れの答え = 止めるまで走り続ける子、それ以外 =
+;;;                     すぐ終わった子(終了 code を表に置く)。台本の出力(時間切れならそれまでの分)をそれぞれの file の末尾へ足し、
+;;;                     SCRIPTED-FIRST-PID からの pid を配る。
+;;;   PollProcess       表に無い pid = ProcessNotChild・走り続ける子 = ProcessRunning・終わった子 = ProcessExited(表から外す)。
+;;;   StopProcess       表に無い pid = ProcessNotChild・走り続ける子は SIGTERM で終わった形(SCRIPTED-STOPPED-CODE = -15)・終わった子はその
+;;;                     終了 code。どれも表から外す。group と猶予は台本の世界に無い。
 ;;;   ExecutableAt      種類は置き場(file の答え手)の StatPath — 置き場に無い path は台本に名(basename)が在れば実行できる file、無ければ無い物。
 ;;;                     実行の許しは台本に名が在ること。判断は本物と同じ executable-file-answer(dir は名が台本に在っても False)。
 ;;;   ReadEnvironment   ProcessScript の env から。
@@ -25,7 +32,9 @@
 (import collections.abc [Callable])
 (import dataclasses [dataclass])
 (import doeff_core_effects.process_effects [EnvEntry EnvMode ProcessOutcome RunProcess ExecutableAt ReadEnvironment WorkingDirectory
-                                            ProcessAlive not-started-outcome start-refusal executable-file-answer])
+                                            ProcessAlive StartProcess PollProcess StopProcess ProcessStarted ProcessNotStarted
+                                            ProcessRunning ProcessExited ProcessNotChild
+                                            not-started-outcome start-refusal executable-file-answer])
 (import doeff_core_effects.file_effects [PathKind PathStat StatPath MakeDirectory AppendText FileFailed])
 
 
@@ -84,6 +93,38 @@
   outcome)
 
 
+;; 台本の世界で立てた子の pid の始まり(本物の pid と混ざらない大きさ)と、止めた子の終了 code(SIGTERM で終わった子 — 本物と同じ負の値)。
+(val SCRIPTED-FIRST-PID 50000)
+(val SCRIPTED-STOPPED-CODE -15)
+;; 台本の世界で、止めるまで走り続ける子の印(立てた子の表の値 — 終わった子は終了 code)。
+(val SCRIPTED-RUNNING "running")
+
+
+(defk scripted-open-outputs [paths]
+  {:pre [(: paths tuple)] :post [(: % (| ProcessNotStarted None))] :tags {:context "process" :role "program"}}
+  "StartProcess の出力の file を、子を立てる前に末尾へ足す形で開く(空を足す)ため — 本物は Popen の前に開き、開けなければ立てない。
+   答え = 開けなかった最初の file の理由(本物の OSError と同じ文)か None。"
+  (var refused None)
+  (for [path paths]
+    (when (and (is refused None) (is-not path None))
+      (<- appended (AppendText path ""))
+      (when (isinstance appended FileFailed)
+        (:= refused (ProcessNotStarted :detail appended.detail)))))
+  refused)
+
+
+(defk scripted-append-outputs [stdout-path stderr-path outcome]
+  {:pre [(: stdout-path (| str None)) (: stderr-path (| str None)) (: outcome ProcessOutcome)] :post [(: % None)]
+   :tags {:context "process" :role "program"}}
+  "台本の子の標準出力と標準エラーを、それぞれの file の末尾へ足すため(None は捨てる — 本物の DEVNULL)。"
+  (for [#(path text) #(#(stdout-path outcome.stdout) #(stderr-path outcome.stderr))]
+    (when (and (is-not path None) text)
+      (<- appended (AppendText path text))
+      (when (isinstance appended FileFailed)
+        (raise (OSError appended.detail)))))
+  None)
+
+
 (defk scripted-executable-at [commands path]
   {:pre [(: commands tuple) (: path str)] :post [(: % bool)] :tags {:context "process" :role "judgment"}}
   "ExecutableAt に台本の世界で答えるため: 種類は置き場(外側の file の答え手)の StatPath — 置き場に無い path は、台本に名(basename)が在れば
@@ -101,6 +142,9 @@
 (defhandler scripted-process-handler [#^ ProcessScript script]
   ;; 引数に残す理由: 台本の表と環境は筋書きごとに違う値(設定ではなく模擬の世界そのもの)。
   (session var jobs 0)
+  ;; 立てたらすぐ返す子(StartProcess)の表(pid → 終了 code か SCRIPTED-RUNNING)と、次に配る pid。
+  (session val started {})
+  (session var next-pid SCRIPTED-FIRST-PID)
   (RunProcess [argv stdin timeout cwd env env-mode output-path env-drop process-group stop-grace stream-output]
     ;; 台本が見る env は子の環境変数の全部にそろえる(EXTEND は台本の世界の環境 script.env から env-drop を外して足す — 本物の subprocess-handler と同じ)。
     (<- child-env (| tuple None) (scripted-child-env script.env env env-mode env-drop))
@@ -126,4 +170,32 @@
       (raise (RuntimeError (.format "作業 dir を作れない: {}" made.detail))))
     (resume work))
   (ProcessAlive [pid]
-    (resume (and (> pid 0) (in pid script.alive)))))
+    (resume (and (> pid 0) (in pid script.alive))))
+  (StartProcess [argv cwd env env-mode env-drop stdout-path stderr-path process-group]
+    (<- refused (| ProcessNotStarted None) (scripted-open-outputs #(stdout-path stderr-path)))
+    (if (is-not refused None)
+        (resume refused)
+        (do
+          (<- child-env (| tuple None) (scripted-child-env script.env env env-mode env-drop))
+          ;; 台本を timeout 0 で 1 回走らせる: 時間切れの答え = 止めるまで走り続ける子・それ以外 = すぐ終わった子。
+          (<- outcome ProcessOutcome (run-scripted script.commands (RunProcess :argv argv :cwd cwd :env child-env :timeout 0.0
+                                                                                :process-group process-group)))
+          (if (not outcome.started)
+              (resume (ProcessNotStarted :detail outcome.start-error))
+              (do
+                (<- (scripted-append-outputs stdout-path stderr-path outcome))
+                (val pid next-pid)
+                (:= next-pid (+ next-pid 1))
+                (setv (get started pid) (if outcome.timed-out SCRIPTED-RUNNING outcome.exit-code))
+                (resume (ProcessStarted :pid pid)))))))
+  (PollProcess [pid]
+    (match (.get started pid)
+      None (resume (ProcessNotChild :pid pid))
+      state :if (= state SCRIPTED-RUNNING) (resume (ProcessRunning :pid pid))
+      code (do (del (get started pid))
+               (resume (ProcessExited :pid pid :exit-code code)))))
+  (StopProcess [pid stop-grace]
+    (match (.get started pid)
+      None (resume (ProcessNotChild :pid pid))
+      state (do (del (get started pid))
+                (resume (ProcessExited :pid pid :exit-code (if (= state SCRIPTED-RUNNING) SCRIPTED-STOPPED-CODE state)))))))

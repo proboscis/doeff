@@ -15,6 +15,9 @@
 ;;;   * ProcessAlive は生きている pid(init = 1)と終わった子の pid を分ける・0 以下の pid は生きていない(agora-redesign #2184)
 ;;;   * process-group は、時間内に終わった後に背景へ回った孫を止め、時間切れでは孫ごと group を止める。stream-output の output-path は、
 ;;;     時間切れで止めた子が出した分も持つ(agora-redesign #2184)
+;;;   * 立てたらすぐ返す子(agora-redesign #2223): StartProcess は待たずに pid を返し、PollProcess で終わるまで問える(終わりを答えた子は
+;;;     忘れる)・StopProcess は走る子を SIGTERM で止める(-15)・group を止めると孫も止まる・立てられない形は ProcessNotStarted(出力の
+;;;     file・cwd・命令)・立てていない pid には触らない・出力は file へ流れるので pipe の容量を超えても子は止まらない
 ;;;   * 本物を thread で回す offloaded-subprocess-handler も、本物と同じ答えを返す(同じ deftest を通る)
 ;;; 本物だけの性質(WorkingDirectory が自分の process の作業 dir)と fake だけの性質(job ごとの作業 dir・台本から台本を走らせる・
 ;;; 台本が env None を None で受ける)は test_process_file_effects.hy。
@@ -22,8 +25,9 @@
 (import os)
 (import doeff_core_effects.file_effects [MakeDirectory PathKind PathStat ReadText StatPath WriteText])
 (import doeff_core_effects.process_effects [EnvEntry EnvMode ExecutableAt ProcessAlive ProcessOutcome ReadEnvironment RunProcess
-                                            WorkingDirectory])
-(import process_contract_handlers [CAT ContractRoot ENV-PROBE FIRST-THEN-WAIT KILLED LEFT-BEHIND LEFT-BEHIND-THEN-WAIT NOT-UTF-8
+                                            WorkingDirectory StartProcess PollProcess StopProcess ProcessStarted ProcessNotStarted
+                                            ProcessRunning ProcessExited ProcessNotChild])
+(import process_contract_handlers [BIG-OUTPUT BIG-OUTPUT-TEXT CAT ContractRoot ENV-PROBE FIRST-THEN-WAIT KILLED LEFT-BEHIND LEFT-BEHIND-THEN-WAIT NOT-UTF-8
                                    NOT-UTF-8-BYTES OUT-ERR OUT-ERR-EXIT OWN-PID PWD TWO-LINES])
 
 (val MISSING-COMMAND "/nonexistent/doeff-command")
@@ -230,3 +234,106 @@
   (assert (= whole (ProcessOutcome :exit-code 0 :stdout "one\ntwo\n" :stderr "")) whole)
   (assert (= stopped (ProcessOutcome :exit-code 124 :stdout "first\n" :stderr "" :timed-out True)) (.format "時間切れの答え {}" stopped))
   (assert (= logged "one\ntwo\nfirst\n") (.format "流しながら書いた output-path {!r}" logged)))
+
+
+;; ---- 立てたらすぐ返す子(StartProcess・PollProcess・StopProcess — agora-redesign #2223)---------------------------------------------
+
+(defk exited-soon [pid]
+  {:pre [(: pid int)] :post [(: % (| ProcessExited ProcessRunning ProcessNotChild))] :tags {:context "process-test" :role "program"}}
+  "立てた子を 5 秒の内に終わるまで 0.05 秒ずつ問う — 立てた直後の本物の子はまだ走っていることがあるので。答え = 最後の PollProcess の答え。"
+  (var seen (ProcessRunning :pid pid))
+  (var tries 0)
+  (while (and (isinstance seen ProcessRunning) (< tries 100))
+    (<- polled (PollProcess pid))
+    (:= seen polled)
+    (when (isinstance seen ProcessRunning)
+      (<- (RunProcess :argv #("sleep" "0.05")))
+      (:= tries (+ tries 1))))
+  seen)
+
+
+(defk first-line-of [path]
+  {:pre [(: path str)] :post [(: % str)] :tags {:context "process-test" :role "program"}}
+  "file に 1 行目が書かれるまで 2 秒の内 0.05 秒ずつ読み直し、その行を返す — 立てたらすぐ返す子の出力は、返った時にはまだ無いことがある。"
+  (var text "")
+  (var tries 0)
+  (while (and (not-in "\n" text) (< tries 40))
+    (<- read str (ReadText path))
+    (:= text read)
+    (when (not-in "\n" text)
+      (<- (RunProcess :argv #("sleep" "0.05")))
+      (:= tries (+ tries 1))))
+  (get (.split text "\n") 0))
+
+
+(deftest test-a-started-child-is-polled-until-it-exits
+  {:interpreters ["subprocess" "offloaded-subprocess" "scripted-process"]}
+  (<- root str (ContractRoot))
+  (<- started (StartProcess :argv #("/bin/sh" "-c" OUT-ERR-EXIT) :stdout-path (+ root "/out") :stderr-path (+ root "/err")))
+  (assert (isinstance started ProcessStarted) started)
+  (<- exited (exited-soon started.pid))
+  (<- out str (ReadText (+ root "/out")))
+  (<- err str (ReadText (+ root "/err")))
+  (<- again (PollProcess started.pid))
+  (assert (= exited (ProcessExited :pid started.pid :exit-code 3)) exited)
+  (assert (= #(out err) #("out\n" "err\n")) (.format "子の出力の file {!r}" #(out err)))
+  ;; 終わりを答えた子は回収して忘れる — もう一度問うと立てた子でない。
+  (assert (= again (ProcessNotChild :pid started.pid)) again))
+
+
+(deftest test-a-running-child-is-stopped
+  {:interpreters ["subprocess" "offloaded-subprocess" "scripted-process"]}
+  (<- started (StartProcess :argv #("sleep" "30")))
+  (assert (isinstance started ProcessStarted) started)
+  (<- running (PollProcess started.pid))
+  (<- stopped (StopProcess :pid started.pid :stop-grace 2.0))
+  (<- again (StopProcess :pid started.pid :stop-grace 2.0))
+  (assert (= running (ProcessRunning :pid started.pid)) running)
+  (assert (= stopped (ProcessExited :pid started.pid :exit-code -15)) (.format "SIGTERM で止めた子の答え {}" stopped))
+  (assert (= again (ProcessNotChild :pid started.pid)) again))
+
+
+(deftest test-stopping-a-group-stops-what-the-child-left-behind
+  {:interpreters ["subprocess" "offloaded-subprocess" "scripted-process"]}
+  (<- root str (ContractRoot))
+  (val out (+ root "/pid"))
+  (<- started (StartProcess :argv #("/bin/sh" "-c" LEFT-BEHIND-THEN-WAIT) :stdout-path out :process-group True))
+  (assert (isinstance started ProcessStarted) started)
+  (<- grandchild str (first-line-of out))
+  (<- stopped (StopProcess :pid started.pid :stop-grace 2.0))
+  (assert (= stopped (ProcessExited :pid started.pid :exit-code -15)) (.format "group を止めた子の答え {}" stopped))
+  (<- gone bool (gone-soon (int grandchild)))
+  (assert gone (.format "group を止めた後も、子が背景に回した孫(pid {})が生きている" grandchild)))
+
+
+(deftest test-a-child-that-cannot-be-started-is-an-answer
+  {:interpreters ["subprocess" "offloaded-subprocess" "scripted-process"]}
+  (<- root str (ContractRoot))
+  (<- no-command (StartProcess :argv #(MISSING-COMMAND)))
+  (<- no-cwd (StartProcess :argv #("/bin/sh" "-c" PWD) :cwd (+ root "/none")))
+  (<- no-output (StartProcess :argv #("/bin/sh" "-c" OUT-ERR) :stdout-path (+ root "/none/out")))
+  (assert (= no-command (ProcessNotStarted :detail (.format "[Errno 2] No such file or directory: {!r}" MISSING-COMMAND))) no-command)
+  (assert (= no-cwd (ProcessNotStarted :detail (.format "[Errno 2] No such file or directory: {!r}" (+ root "/none")))) no-cwd)
+  (assert (= no-output (ProcessNotStarted :detail (.format "[Errno 2] No such file or directory: {!r}" (+ root "/none/out")))) no-output))
+
+
+(deftest test-a-pid-that-is-not-a-started-child-is-not-touched
+  {:interpreters ["subprocess" "offloaded-subprocess" "scripted-process"]}
+  ;; 立てていない pid(init = 1)には signal を送らずに答える — 他人の process を止めない。
+  (<- polled (PollProcess 1))
+  (<- stopped (StopProcess :pid 1 :stop-grace 0.1))
+  (<- init bool (ProcessAlive 1))
+  (assert (= #(polled stopped) #((ProcessNotChild :pid 1) (ProcessNotChild :pid 1))) #(polled stopped))
+  (assert init "init(pid 1)が生きていない答え"))
+
+
+(deftest test-a-large-output-does-not-stop-the-child
+  {:interpreters ["subprocess" "offloaded-subprocess" "scripted-process"]}
+  ;; 出力は file へ流れるので、pipe の容量を大きく超えても子は止まらずに終わる。
+  (<- root str (ContractRoot))
+  (<- started (StartProcess :argv #("/bin/sh" "-c" BIG-OUTPUT) :stdout-path (+ root "/big")))
+  (assert (isinstance started ProcessStarted) started)
+  (<- exited (exited-soon started.pid))
+  (<- big str (ReadText (+ root "/big")))
+  (assert (= exited (ProcessExited :pid started.pid :exit-code 0)) exited)
+  (assert (= (len big) (len BIG-OUTPUT-TEXT)) (.format "子の出力の長さ {}" (len big))))
