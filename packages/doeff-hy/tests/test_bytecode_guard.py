@@ -282,6 +282,27 @@ def test_a_new_tree_with_a_different_macro_does_not_reuse_the_other_trees_expans
     assert _expansions(other) == 1
 
 
+def test_a_pyc_carried_from_another_tree_is_checked_against_the_current_trees_macro(
+    tmp_path: Path,
+) -> None:
+    """実行環境の準備は、前の root の .pyc を source の hash が同じ file について hardlink で引き継ぐ。引き継いだ .pyc の記録は
+    前の root の macro の file を名指すので、前の root の macro が変わらず残っていても、今の木の macro が違えば作り直す
+    (agora-redesign #2598)。記録の path のまま照らすと、前の root の展開(11)を使い続ける。"""
+    first, second = tmp_path / "first", tmp_path / "second"
+    first.mkdir()
+    second.mkdir()
+    _write_counting_package(first, 1)
+    _write_counting_package(second, 5)
+    assert _run_on_pypi_hy(first, "before-hy", tmp_path / "store-first") == 11
+    carried = _user_pyc(first)
+    _rewrite_as_hash_based(carried, first / "pkg" / "user.hy", checked=True)
+    cache = second / "pkg" / "__pycache__"
+    cache.mkdir()
+    os.link(carried, cache / carried.name)
+    assert _run_on_pypi_hy(second, "before-hy", tmp_path / "store-second") == 15
+    assert _expansions(second) == 1
+
+
 def test_the_venv_installs_the_guard_at_startup_before_hy() -> None:
     """doeff-hy を入れた venv では、どの Python も起動の時点(Hy の import より前)で包みが入っている(.pth)。"""
     completed = subprocess.run(
