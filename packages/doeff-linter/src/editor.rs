@@ -16,7 +16,8 @@ use crate::models::{LintResult, Severity};
 use crate::position::{line_range, Range};
 use crate::project::explain::Explanation;
 use crate::project::rule::{ProjectRule, RuleFamily};
-use crate::project::settings::{ProjectRuleOrExternal, ProjectSettings};
+use crate::project::law::ProjectRuleOrExternal;
+use crate::project::settings::ProjectSettings;
 use crate::project::report::ProjectReport;
 use crate::rule_info::get_rule_info;
 
@@ -62,7 +63,7 @@ pub struct EditorViolation {
     /// 新しい破れ(new)・登録簿に載った既知の破れ(registered)・照合中で下げた(reconciling)。
     pub standing: crate::project::report::Standing,
     /// 規則の重大さ(repo の宣言 `rules.<ID>.level`、無ければ base_severity から)。登録簿で下げない。
-    pub level: crate::project::settings::RuleLevel,
+    pub level: crate::project::rule::RuleLevel,
     /// これは何か・なぜ違反か・law の文(層の規則だけ。Python の文ごとの規則は null)。
     pub explanation: Option<Explanation>,
     /// 判定の出どころ(linter = 決定的な規則・jev = Jev の意味の判定)。
@@ -363,7 +364,7 @@ fn rule_list(input: &EditorInput) -> Vec<EditorRule> {
 }
 
 /// law の文(statement が空なら law の名)。
-fn law_statement(law: &crate::project::settings::LawSpec) -> String {
+fn law_statement(law: &crate::project::law::LawSpec) -> String {
     if law.statement.is_empty() {
         law.name.clone()
     } else {
@@ -397,7 +398,7 @@ pub fn absolute(path: &Path) -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::project::settings::LawSpec;
+    use crate::project::law::LawSpec;
     use crate::project::report::ProjectReport;
 
     /// `rule_list` を呼ぶための最小の `EditorInput` を組み立てる。

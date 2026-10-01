@@ -3,7 +3,8 @@
 //! 自動のテストは Jev の宛先を手元の偽の HTTP(127.0.0.1)にし、問いに線引きの文と例が入る事と、問いを組んで答えを受けるまでを確かめる。
 //! 本物の Jev に 10 例を 1 回だけ問うテストは #[ignore](手で走らせる — 下の ask_jev_the_line_examples_once)。
 
-use doeff_linter::project::architecture::{Architecture, LineExample, SemanticLine};
+use doeff_linter::project::architecture::Architecture;
+use doeff_linter::project::semantic::{LineExample, SemanticLine};
 use doeff_linter::project::semantic::{self, Gateway, SemanticQuestion};
 use rayon::prelude::*;
 use serde_json::{json, Value};
@@ -302,7 +303,7 @@ fn ask_jev_the_line_examples_once() {
     let range = doeff_indexer::hy_index::Range { start: at, end: at };
     let layer_of = |name: &str| {
         let index = layers.order.iter().position(|l| l == name).expect("層が宣言に無い");
-        (doeff_linter::project::settings::LayerId(index), layers.describe[name].clone())
+        (doeff_linter::project::layers::LayerId(index), layers.describe[name].clone())
     };
     let ask = |definition: &Value| -> Value {
         let text = |key: &str| definition[key].as_str().unwrap_or_else(|| panic!("定義の {} が無い: {}", key, definition)).to_string();

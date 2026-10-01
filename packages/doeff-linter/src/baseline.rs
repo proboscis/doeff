@@ -9,7 +9,7 @@ use std::collections::BTreeSet;
 use serde_json::Value;
 
 use crate::editor::EditorViolation;
-use crate::project::settings::RuleLevel;
+use crate::project::rule::RuleLevel;
 
 /// 違反の識別子 — `<path>::<規則>::<名>`(行番号を含めない)。鍵を持つ違反(層の規則ほか)は鍵そのもの、鍵の無い違反
 /// (Python の文ごとの規則)は名の代わりに message を使う。
