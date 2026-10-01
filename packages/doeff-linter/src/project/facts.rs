@@ -11,7 +11,7 @@ use rustpython_ast::{Constant, Expr, Mod, Stmt};
 use rustpython_parser::{parse, Mode};
 
 use super::names::{absolute_module, hy_mangle};
-use super::settings::TagReading;
+use super::layers::TagReading;
 
 /// source の中の byte の範囲 `[start, end)`。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -1074,23 +1074,11 @@ fn text_span(range: rustpython_parser::text_size::TextRange) -> ByteSpan {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::project::settings::{LayersSection, ProjectSections, ProjectSettings};
+    use crate::project::layers::tag_reading;
 
     /// 既定のタグの読み方(設定の節が空の時の値)。
     fn reading() -> TagReading {
-        let layers = LayersSection { order: vec!["core".into()], paths: [("core".to_string(), crate::project::settings::PathPatterns::One("c".to_string()))].into(), ..Default::default() };
-        let sections = ProjectSections {
-            layers: Some(&layers),
-            tags: None,
-            roles: None,
-            environment_names: None,
-            raw_side_effects: None,
-            laws: &[],
-            registry: None,
-            services: None,
-            definitions: None,
-        };
-        ProjectSettings::validate(&sections).unwrap().layers.unwrap().tags
+        tag_reading(None, None)
     }
 
     #[test]

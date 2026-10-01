@@ -371,7 +371,7 @@ impl ProjectRule {
     /// (error = major・warning = minor・info = info)。責務の境界の違反は常に critical(operator 2026-09-29 "responsibility boundary
     /// violations are always CRITICAL to make our doeff code testable")— repo ごとに写すと片方が黙って古くなるので、既定はここ 1 か所。
     /// 新しい規則はどちらかに置く(網羅の match — 決めずに足せない)。
-    pub fn default_level(self) -> Option<super::settings::RuleLevel> {
+    pub fn default_level(self) -> Option<RuleLevel> {
         match self {
             // 責務の境界: 層の向き・層で禁じた module・型だけの層・生の副作用・service の境界と依存・翻訳が業務の intent を出す・
             // Jev の判定(翻訳の層の業務の判断・判断の層の通信の手段・形の検めと判断の混ざり)。
@@ -436,7 +436,7 @@ impl ProjectRule {
             | ProjectRule::UndeclaredPlace
             | ProjectRule::UndeclaredDirectory
             | ProjectRule::DefkCalledBare
-            | ProjectRule::UnreadableFile => Some(super::settings::RuleLevel::Critical),
+            | ProjectRule::UnreadableFile => Some(RuleLevel::Critical),
             // Jev の判定(翻訳の層の業務の判断・判断の層の通信の手段・形の検めと判断の混ざり)は、較正が済んで信頼できるまで critical に
             // しない(operator の決定 B・2026-09-30 — agora-redesign #1762 / #1801。#942 で critical にしたのを戻す)。当たりの重さは
             // warning なので、宣言が無いと minor になる — 責務の境界の読みとして見落とさないよう major に置く。
@@ -444,7 +444,7 @@ impl ProjectRule {
             | ProjectRule::SemanticTransportKnowledge
             | ProjectRule::SemanticMixedConcerns
             // 写像の置き場の臭い(#2143 の (2) — 数えるだけ・当たりの重さは warning なので宣言が無いと minor になる)。
-            | ProjectRule::DictOutsideItsPlace => Some(super::settings::RuleLevel::Major),
+            | ProjectRule::DictOutsideItsPlace => Some(RuleLevel::Major),
             ProjectRule::UnknownConfigKey
             | ProjectRule::ModuleDeclaresTags
             | ProjectRule::RoleMatchesLayer
@@ -1049,6 +1049,39 @@ impl ProjectRule {
     }
 }
 
+/// 規則の重大さ(repo が `[tool.doeff-linter.rules.<ID>] level` で宣言する方針)。重さ(severity)とは別の軸で、
+/// 登録簿で重さを下げても重大さは下げない — エディタが「手つかずの critical が何件残るか」を数えるため。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, serde::Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum RuleLevel {
+    Critical,
+    Major,
+    Minor,
+    Info,
+}
+
+impl RuleLevel {
+    /// 設定の綴りを読む(閉じた集合の外は None)。
+    pub fn parse(text: &str) -> Option<RuleLevel> {
+        match text {
+            "critical" => Some(RuleLevel::Critical),
+            "major" => Some(RuleLevel::Major),
+            "minor" => Some(RuleLevel::Minor),
+            "info" => Some(RuleLevel::Info),
+            _ => None,
+        }
+    }
+
+    /// 宣言の無い規則の重大さ — 規則そのものの重さ(登録簿で下げる前)から決める。critical は宣言だけが付ける。
+    pub fn default_for(base: crate::models::Severity) -> RuleLevel {
+        match base {
+            crate::models::Severity::Error => RuleLevel::Major,
+            crate::models::Severity::Warning => RuleLevel::Minor,
+            crate::models::Severity::Info => RuleLevel::Info,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1138,7 +1171,7 @@ mod tests {
     #[test]
     fn jev_rules_are_not_critical_until_calibrated() {
         // 決定 B(#1762 / #1801): Jev の 201・202・205 は major。反例 = 責務の境界の規則(DOEFF101・130)は今までどおり critical。
-        use super::super::settings::RuleLevel;
+        use super::RuleLevel;
         for id in ["DOEFF201", "DOEFF202", "DOEFF205"] {
             let rule = ProjectRule::parse(id).unwrap_or_else(|| panic!("{} は ProjectRule に無い", id));
             assert_eq!(rule.default_level(), Some(RuleLevel::Major), "{} の既定の重大さ", id);

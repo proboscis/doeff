@@ -33,8 +33,35 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 
-use super::architecture::{LineExample, SemanticLine};
-use super::settings::{LayerDescription, LayerId};
+use super::layers::{LayerDescription, LayerId};
+
+/// Jev に問う規則の線引き 1 つ(`:semantic-lines` の `(line "名" :rules [DOEFF201 …] :text "…" :fires [例 …] :silent [例 …])` —
+/// agora-redesign #1909)。どこからが違反かの文と、鳴る例・鳴らない例を、その規則の問いの instructions に入れる。文と例は repo の宣言に
+/// だけ在り、linter は持たない(定義元は architecture.hy の 1 か所)。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SemanticLine {
+    /// 線引きの名(問いに名として載る — 例 「線引き 1」)。
+    pub name: String,
+    /// この線引きを入れる問い(DOEFF201・202・205 のどれか — 閉じた集合は SemanticQuestion::LINED)。
+    pub rules: Vec<SemanticQuestion>,
+    /// 線引きの文(空にしない)。
+    pub text: String,
+    /// この線引きで違反になる例(省いてよい)。
+    pub fires: Vec<LineExample>,
+    /// この線引きで違反にならない例(省いてよい)。
+    pub silent: Vec<LineExample>,
+}
+
+/// 線引きの例 1 つ(`"<code>"` か `{:code "<code>" :why "…"}` — agora-redesign #1995)。why = その例がなぜ鳴る / 鳴らないかの 1 文で、問いに
+/// code と組で載る。例が code だけだと線引きの文の文言に負けた(send-task・list-limit-of・join-chat は自分自身が鳴らない例として問いに
+/// 載りながら高く出た・#1944)。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LineExample {
+    /// 例の code(空にしない)。
+    pub code: String,
+    /// なぜ鳴る / 鳴らないかの 1 文(書かなければ None — 空の文は設定の誤り)。
+    pub why: Option<String>,
+}
 
 /// 意味の問いの種類(閉じた集合)。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]

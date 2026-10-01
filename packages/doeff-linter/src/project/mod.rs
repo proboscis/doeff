@@ -22,6 +22,9 @@ pub mod semantic;
 pub mod smells;
 pub mod unreadable;
 pub mod settings;
+pub mod layers;
+pub mod law;
+pub mod raw_settings;
 pub mod signatures;
 pub mod call_view;
 pub mod body_view;
@@ -78,7 +81,9 @@ pub use contract_breach::ContractTestBreach;
 pub use report::{Finding, FindingOrigin, ModuleSummary, ProjectReport, Standing};
 use paths::segments_match;
 use spans::innermost_definition;
-use settings::{EnvironmentSettings, LawSpec, LayerId, LayerSettings, ProjectSettings};
+use law::LawSpec;
+use layers::{LayerId, LayerSettings};
+use settings::{EnvironmentSettings, ProjectSettings};
 
 /// 何を判じるか — repo 全体か、保存前の内容の 1 file。
 pub enum Target<'a> {
@@ -1710,7 +1715,7 @@ impl<'a> LayerJudge<'a> {
         for _ in self.file.file.rel.split('/') {
             repo.pop();
         }
-        let root_module = settings::normalize_dir(&architecture.root).replace('/', ".");
+        let root_module = layers::normalize_dir(&architecture.root).replace('/', ".");
         let mut first: BTreeMap<String, (ByteSpan, String)> = BTreeMap::new();
         for import in &facts.imports {
             if resolve_target(&import.target, index).is_some() {
@@ -1767,7 +1772,7 @@ impl<'a> LayerJudge<'a> {
     /// DOEFF106: 定義の中の生の副作用の直接の証拠(強い証拠は error、弱い証拠は warning)。入れ子の定義と外の定義で
     /// 同じ証拠が重なる時は、いちばん内側の定義に 1 度だけ数える。
     /// `.py` の file の環境変数の読みを DOEFF106 の知らせにするため(python_env.rs の env_reads — Hy の raw_direct と同じ文の形)。
-    fn python_env_direct(&self, raw: &settings::RawSettingsSpec) -> Vec<Draft> {
+    fn python_env_direct(&self, raw: &raw_settings::RawSettingsSpec) -> Vec<Draft> {
         let allowed = match &raw.world_modules {
             Some(_) => "生の副作用に触ってよいのは architecture.hy の :world-handlers(外の世界に触れてよい定義の許可名簿)の定義の module だけ".to_string(),
             None => format!("生の副作用に触ってよい層は {}", raw.allowed.iter().map(|id| self.layer_name(*id)).collect::<Vec<_>>().join("・")),
@@ -1802,7 +1807,7 @@ impl<'a> LayerJudge<'a> {
             .collect()
     }
 
-    fn raw_direct(&self, hy_file: &HyFileIndex, raw: &settings::RawSettingsSpec, module: &str) -> Vec<Draft> {
+    fn raw_direct(&self, hy_file: &HyFileIndex, raw: &raw_settings::RawSettingsSpec, module: &str) -> Vec<Draft> {
         let definitions = &hy_file.definitions;
         let allowed = match &raw.world_modules {
             Some(_) => "生の副作用に触ってよいのは architecture.hy の :world-handlers(外の世界に触れてよい定義の許可名簿)の定義の module だけ".to_string(),
@@ -2019,14 +2024,14 @@ enum PlaceScope {
 
 /// root の下の module か(拡張子が層の設定に在り、除く区切りを含まない)。
 fn is_architecture_file(rel: &str, architecture: &architecture::Architecture, layers: &LayerSettings) -> bool {
-    let root = settings::normalize_dir(&architecture.root);
+    let root = layers::normalize_dir(&architecture.root);
     let extension_ok = Path::new(rel).extension().and_then(|e| e.to_str()).is_some_and(|e| layers.extensions.contains(e));
     extension_ok && rel.starts_with(&format!("{}/", root)) && !rel.split('/').any(|part| layers.exclude.contains(part))
 }
 
 /// root の下の module を全部集める(path の順)。
 fn collect_architecture_files(root: &Path, architecture: &architecture::Architecture, layers: &LayerSettings) -> Vec<SourceFile> {
-    let mut files: Vec<SourceFile> = walk_files(&root.join(settings::normalize_dir(&architecture.root)))
+    let mut files: Vec<SourceFile> = walk_files(&root.join(layers::normalize_dir(&architecture.root)))
         .into_iter()
         .filter_map(|path| {
             let rel = relative_path(root, &path)?;
@@ -2047,7 +2052,7 @@ enum PlaceVerdict {
 
 /// file 1 つを宣言に照らす。
 fn place_verdict(rel: &str, architecture: &architecture::Architecture) -> PlaceVerdict {
-    let root = settings::normalize_dir(&architecture.root);
+    let root = layers::normalize_dir(&architecture.root);
     let rest = rel.strip_prefix(&format!("{}/", root)).unwrap_or(rel);
     // package の印(`__init__.py`・`__init__.hy`)は置き場の module ではない。
     if Path::new(rel).file_stem().is_some_and(|stem| stem == "__init__") {
@@ -2124,7 +2129,7 @@ fn judge_places(
         // :role のタグをすべて許す層がちょうど 1 つの時にその層。
         let roles: Vec<String> = facts.tag_sets().iter().filter_map(|t| t.role.clone()).filter(|r| !r.is_empty()).collect();
         let by_roles = || {
-            let fitting: Vec<&settings::LayerSpec> = layers
+            let fitting: Vec<&layers::LayerSpec> = layers
                 .layers
                 .iter()
                 .filter(|l| !roles.is_empty() && roles.iter().all(|role| l.roles.as_ref().is_some_and(|allowed| allowed.contains(role))))
@@ -2137,7 +2142,7 @@ fn judge_places(
         // 層は定義の :role から推し(置き場所が誤っているから DOEFF114 が出る — 今の path の段は案にならない)、推せない時だけ path の段の層の名。
         let layer = by_roles().or(by_path).unwrap_or_else(|| "<層>".to_string());
         let name = parts.last().copied().unwrap_or("");
-        let root_dir = settings::normalize_dir(&architecture.root);
+        let root_dir = layers::normalize_dir(&architecture.root);
         match architecture.foundation.as_deref() == Some(layer.as_str()) {
             true => format!("{}/{}/{}", root_dir, layer, name),
             false => format!("{}/{}/{}/{}", root_dir, service, layer, name),
@@ -2240,7 +2245,7 @@ fn judge_unused_dependencies(root: &Path, architecture: &architecture::Architect
 fn judge_world_handler_places(
     root: &Path,
     architecture: &architecture::Architecture,
-    layers: &settings::LayerSettings,
+    layers: &layers::LayerSettings,
     layer_files: &[LayerFile],
     hy: &HashMap<String, HyFileIndex>,
 ) -> Vec<Draft> {
@@ -3048,7 +3053,7 @@ fn judge_business_fakes(
             // 出す側の根は検の file の deftest だけ(検の helper から届くだけの定義を「テストした」に数えない — DOEFF157 の検の根とは別)。
             let deftest_roots: Vec<usize> = test_roots.iter().copied().filter(|&n| definition(n).kind == DefinitionKind::Deftest).collect();
             let deftested = reach(&deftest_roots);
-            let service_root = settings::normalize_dir(&architecture.root);
+            let service_root = layers::normalize_dir(&architecture.root);
             let services: Vec<(String, String)> =
                 architecture.services.iter().map(|s| (s.name.clone(), format!("{}/{}", service_root, s.dir))).collect();
             let answerers = |effect: &str, reached: &[bool]| -> Vec<String> {
@@ -3188,7 +3193,7 @@ fn judge_business_fakes(
 /// 1 本も届かなければ、その defservice を出す(agora-redesign #1106 の R5)。entry の層を持たない service は数えない。
 fn judge_untested_services(architecture: &architecture::Architecture, hy: &HashMap<String, HyFileIndex>) -> Vec<Draft> {
     let Some(place) = architecture.verification_environment.as_deref() else { return Vec::new() };
-    let root = settings::normalize_dir(&architecture.root);
+    let root = layers::normalize_dir(&architecture.root);
     let sim = format!("{}/{}", root, place);
     let graph = definition_graph(architecture, hy);
     let definition = |node: usize| {
@@ -3312,7 +3317,7 @@ fn judge_counterexample_coverage(
     produced: &[bool],
     counterexamples: &BTreeMap<String, String>,
 ) -> Vec<Draft> {
-    let root = settings::normalize_dir(&architecture.root);
+    let root = layers::normalize_dir(&architecture.root);
     let service_dir = |service: &architecture::ArchService| format!("{}/{}", root, service.dir);
     let mut keys = BTreeSet::new();
     let mut cases = Vec::new();
@@ -3376,7 +3381,7 @@ fn judge_clause_coverage(
     counterexamples: &BTreeMap<String, String>,
     claims: &clause_coverage::ClauseClaims,
 ) -> (Vec<Draft>, Vec<String>) {
-    let root = settings::normalize_dir(&architecture.root);
+    let root = layers::normalize_dir(&architecture.root);
     let mut keys = BTreeSet::new();
     let mut cases = Vec::new();
     for (i, clause) in clauses.iter().enumerate() {
@@ -3440,7 +3445,7 @@ fn judge_clause_coverage(
 /// 生の副作用の直接の証拠のうち、入れ子で重なる物はいちばん内側の定義に 1 度だけ(DOEFF106 の母集団)。
 /// agora-redesign #1797: 境目の部品(architecture.hy の :boundary-parts)の module の中で、触れる先が宣言に入る生の副作用の証拠か
 /// (DOEFF106 が当たりにしない)。種類の外の証拠と、宣言の無い module の証拠は今どおり当たる。
-fn boundary_allows(raw: &settings::RawSettingsSpec, module: &str, category: hy_index::RawCategory) -> bool {
+fn boundary_allows(raw: &raw_settings::RawSettingsSpec, module: &str, category: hy_index::RawCategory) -> bool {
     raw.boundary
         .get(&architecture::mangle_dotted(module))
         .is_some_and(|touches| touches.contains(&world_catalog::touch_of_raw(category)))
@@ -3512,14 +3517,14 @@ fn world_handler_spots(hy_file: &HyFileIndex, architecture: &architecture::Archi
 fn judge_unplaced_world(
     root: &Path,
     architecture: &architecture::Architecture,
-    raw: &settings::RawSettingsSpec,
+    raw: &raw_settings::RawSettingsSpec,
     placed: &BTreeSet<&str>,
     hy: &HashMap<String, HyFileIndex>,
     enabled: &BTreeSet<ProjectRule>,
 ) -> Vec<Draft> {
     let roots: Vec<String> = match &architecture.raw_io_roots {
-        Some(roots) => roots.iter().map(|r| settings::normalize_dir(r)).collect(),
-        None => vec![settings::normalize_dir(&architecture.root)],
+        Some(roots) => roots.iter().map(|r| layers::normalize_dir(r)).collect(),
+        None => vec![layers::normalize_dir(&architecture.root)],
     };
     let modules = raw.world_modules.clone().unwrap_or_default();
     let mut rels: Vec<&String> = hy.keys().filter(|rel| !placed.contains(rel.as_str())).collect();
@@ -3629,7 +3634,7 @@ struct PlainCallableInput<'a> {
     accepted: Vec<architecture::ReasonKind>,
     rejected: Vec<architecture::ReasonKind>,
     marker: String,
-    tags: Option<settings::TagReading>,
+    tags: Option<layers::TagReading>,
     indexes: &'a HashMap<String, HyFileIndex>,
 }
 
@@ -4227,7 +4232,7 @@ fn line_and_previous(source: &str, offset: usize) -> (String, String) {
 
 /// DOEFF122 の失敗の型の宣言を repo の Hy の file から集める(規則が有効な時だけ — 無ければ空)。`:failure` / `:absent` の綴りを
 /// 含む file だけを読み、宣言の型は file の import と module で module まで含めた名に解く。読めない file は飛ばす。
-fn failure_types_for(root: &Path, enabled: &BTreeSet<ProjectRule>, reading: &settings::TagReading) -> smells::FailureTypes {
+fn failure_types_for(root: &Path, enabled: &BTreeSet<ProjectRule>, reading: &layers::TagReading) -> smells::FailureTypes {
     let mut all = smells::FailureTypes::default();
     if !enabled.contains(&ProjectRule::FailureRethrow) {
         return all;
@@ -4774,7 +4779,7 @@ fn json_value_allowance(rel: &str, module: &str, architecture: &architecture::Ar
         true => JsonValueAllowance::Allowed,
         false => JsonValueAllowance::Refused(explain::JsonValueRefusal::ListedOutsideFoundation {
             pattern: pattern.clone(),
-            foundation_dir: architecture.foundation.as_ref().map(|f| format!("{}/{}", settings::normalize_dir(&architecture.root), f)),
+            foundation_dir: architecture.foundation.as_ref().map(|f| format!("{}/{}", layers::normalize_dir(&architecture.root), f)),
         }),
     }
 }
@@ -4985,8 +4990,8 @@ fn named_rules_of(key: &str, settings: &ProjectSettings) -> Vec<ProjectRule> {
             .filter(|law| law.name == segment)
             .flat_map(|law| law.rules.iter())
             .filter_map(|rule| match rule {
-                settings::ProjectRuleOrExternal::Project(rule) => Some(*rule),
-                settings::ProjectRuleOrExternal::External(_) => None,
+                law::ProjectRuleOrExternal::Project(rule) => Some(*rule),
+                law::ProjectRuleOrExternal::External(_) => None,
             })
             .collect(),
     };

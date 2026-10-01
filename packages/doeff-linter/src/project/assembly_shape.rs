@@ -532,7 +532,7 @@ pub fn find(
         None => BTreeMap::new(),
     };
     let GraphInputs { rels, base, nodes, callees, clauses, layers } = graph;
-    let arch_root = super::settings::normalize_dir(&architecture.root);
+    let arch_root = super::layers::normalize_dir(&architecture.root);
     // 節ごとに最上位の定義(同じ file の、範囲がほかの定義に含まれない定義)へ畳む。
     let mut top_of: Vec<usize> = vec![0; nodes];
     let mut model = Model { shared: architecture.shared.clone(), ..Model::default() };

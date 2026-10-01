@@ -13,7 +13,7 @@ use std::collections::HashMap;
 use doeff_indexer::hy_index::HyFileIndex;
 
 use super::architecture::{ArchService, Architecture, DefinitionRef};
-use super::settings::normalize_dir;
+use super::layers::normalize_dir;
 
 /// 不変条件の役(定義の :tags の :role)。
 pub const JUDGMENT_ROLE: &str = "judgment";

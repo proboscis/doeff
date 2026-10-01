@@ -2,9 +2,9 @@
 //!
 //! Loads configuration from pyproject.toml [tool.doeff-linter] section
 
+use crate::project::layers::{LayersSection, RolesSection, TagsSection};
 use crate::project::settings::{
-    EnvironmentNamesSection, LawEntry, LayersSection, ProjectSections, ProjectSettings, RawSideEffectsSection, RegistrySection,
-    RolesSection, ServicesSection, TagsSection, DefinitionsSection,
+    EnvironmentNamesSection, LawEntry, ProjectSections, ProjectSettings, RawSideEffectsSection, RegistrySection, ServicesSection, DefinitionsSection,
 };
 use crate::models::Severity;
 use crate::project::architecture::Architecture;
@@ -176,7 +176,7 @@ impl Config {
         // 許可名簿を書いた repo では、生の副作用を許す所 = 名簿の定義の module(TOML の raw_side_effects の節が無くても判じる)。
         if let Some(arch) = settings.architecture.as_ref().filter(|a| !a.world_handlers.is_empty()) {
             let modules = arch.world_modules();
-            let raw = settings.raw.get_or_insert_with(|| crate::project::settings::RawSettingsSpec {
+            let raw = settings.raw.get_or_insert_with(|| crate::project::raw_settings::RawSettingsSpec {
                 allowed: std::collections::BTreeSet::new(),
                 catalog_extra: None,
                 world_modules: None,
@@ -187,7 +187,7 @@ impl Config {
         }
         // 宣言した置き場所の外の module(層が先の dir など)は、:role のタグから層を推して層の規則をかける。
         if let (Some(arch), Some(layers)) = (&settings.architecture, settings.layers.as_mut()) {
-            layers.infer_root = Some(crate::project::settings::normalize_dir(&arch.root));
+            layers.infer_root = Some(crate::project::layers::normalize_dir(&arch.root));
         }
         if let Some(section) = &self.smells {
             let names: Vec<String> = settings.layers.as_ref().map(|l| l.layers.iter().map(|s| s.name.clone()).collect()).unwrap_or_default();
@@ -196,7 +196,7 @@ impl Config {
             for name in &section.shape_check_layers {
                 match names.iter().position(|n| n == name) {
                     Some(index) => {
-                        layers.insert(crate::project::settings::LayerId(index));
+                        layers.insert(crate::project::layers::LayerId(index));
                     }
                     None => unknown.push(format!("smells.shape_check_layers: 層 {} は宣言した層に無い", name)),
                 }
@@ -212,12 +212,12 @@ impl Config {
             let explicit = self.translation_effects.is_some();
             let section = self.translation_effects.clone().unwrap_or_default();
             let mut unknown = Vec::new();
-            let mut resolve = |list: &[String], key: &str| -> std::collections::BTreeSet<crate::project::settings::LayerId> {
+            let mut resolve = |list: &[String], key: &str| -> std::collections::BTreeSet<crate::project::layers::LayerId> {
                 let mut found = std::collections::BTreeSet::new();
                 for name in list {
                     match names.iter().position(|n| n == name) {
                         Some(index) => {
-                            found.insert(crate::project::settings::LayerId(index));
+                            found.insert(crate::project::layers::LayerId(index));
                         }
                         None => unknown.push(format!("translation_effects.{}: 層 {} は宣言した層に無い", key, name)),
                     }
@@ -237,7 +237,7 @@ impl Config {
             let names: Vec<String> = settings.layers.as_ref().map(|l| l.layers.iter().map(|s| s.name.clone()).collect()).unwrap_or_default();
             let mut unknown = Vec::new();
             let mut find = |name: &str, what: &str| {
-                let found = names.iter().position(|n| n == name).map(crate::project::settings::LayerId);
+                let found = names.iter().position(|n| n == name).map(crate::project::layers::LayerId);
                 if found.is_none() {
                     unknown.push(format!("{}: 層 {} は宣言した層に無い", what, name));
                 }
@@ -288,7 +288,7 @@ impl Config {
                 }
             }
             if let Some(text) = &rule.level {
-                match crate::project::settings::RuleLevel::parse(text) {
+                match crate::project::rule::RuleLevel::parse(text) {
                     Some(parsed) => {
                         level.insert(id.to_uppercase(), parsed);
                     }
@@ -726,5 +726,115 @@ max_mutable_attributes = 5
     }
 }
 
+#[cfg(test)]
+mod project_settings_tests {
+    use crate::project::law::ProjectRuleOrExternal;
+    use crate::project::layers::LayerId;
+    use crate::project::rule::ProjectRule;
+    use crate::project::settings::*;
+    use super::Config;
 
+    /// 設定の文字列を読んで検める。
+    fn validate(text: &str) -> Result<ProjectSettings, Vec<String>> {
+        let config: Config = toml::from_str(text).unwrap();
+        config.project_settings()
+    }
 
+    #[test]
+    fn reads_layers_roles_laws_and_registry() {
+        let settings = validate(
+            r#"
+[layers]
+order = ["core", "foundation"]
+paths = { core = "./app/core/", foundation = "app/foundation" }
+types_only = []
+[layers.allow_imports]
+core = ["core"]
+[roles.by_layer]
+core = ["judgment"]
+[raw_side_effects]
+allowed_layers = ["foundation"]
+[[laws]]
+name = "core-law"
+rules = ["doeff101", "DOEFF016"]
+layers = ["core"]
+[registry]
+reconciling = ["DOEFF104"]
+"#,
+        )
+        .unwrap();
+        let layers = settings.layers.as_ref().unwrap();
+        assert_eq!(layers.layers[0].places[0].text, "app/core");
+        assert_eq!(layers.layers[0].allowed.as_ref().unwrap().len(), 1);
+        assert!(layers.layers[1].allowed.is_none(), "書かない層は制限しない");
+        assert_eq!(settings.law_for(ProjectRule::LayerImportDirection, Some(LayerId(0))).map(|l| l.name.as_str()), Some("core-law"));
+        assert!(settings.law_for(ProjectRule::LayerImportDirection, Some(LayerId(1))).is_none());
+        assert_eq!(settings.law_for_external("doeff016").map(|l| l.name.as_str()), Some("core-law"));
+        assert!(settings.registry.reconciling.contains(&ProjectRule::ModuleDeclaresTags));
+        assert!(settings.raw.unwrap().allowed.contains(&LayerId(1)));
+    }
+
+    #[test]
+    fn rejects_empty_absolute_and_nested_layer_dirs() {
+        let problems = validate(
+            "[layers]\norder = [\"a\", \"b\", \"c\", \"d\"]\npaths = { a = \"./\", b = \"/abs\", c = \"app\", d = \"app/inner\" }\n[roles]\n",
+        )
+        .unwrap_err()
+        .join("\n");
+        assert!(problems.contains("layers.paths.a"), "{}", problems);
+        assert!(problems.contains("layers.paths.b"), "{}", problems);
+        assert!(problems.contains("入れ子"), "{}", problems);
+        let without_layers = validate("[roles]\nnames = []\n").unwrap_err().join("\n");
+        assert!(without_layers.contains("roles"), "{}", without_layers);
+    }
+
+    #[test]
+    fn reports_every_name_mismatch() {
+        let problems = validate(
+            r#"
+[layers]
+order = ["core", "core"]
+paths = { core = "c", ghost = "g" }
+[layers.allow_imports]
+core = ["nowhere"]
+[roles]
+names = ["judgment"]
+[roles.by_layer]
+core = ["translation"]
+[registry]
+reconciling = ["DOEFF999"]
+[[laws]]
+name = "typo"
+rules = ["DOEFF1O1"]
+[[laws]]
+name = "env-by-layer"
+rules = ["DOEFF108"]
+layers = ["core"]
+"#,
+        )
+        .unwrap_err();
+        let text = problems.join("\n");
+        for needle in ["2 度", "ghost", "nowhere", "translation", "DOEFF1O1", "env-by-layer"] {
+            assert!(text.contains(needle), "{} が無い: {}", needle, text);
+        }
+        // 形の正しい知らない ID(この binary より新しい規則)は誤りにしない — DOEFF100 の知らせに回す(agora-redesign #848)。
+        assert!(!text.contains("DOEFF999"), "新しい規則の ID を誤りにした: {}", text);
+    }
+
+    #[test]
+    fn newer_rule_ids_are_kept_as_unknown_references() {
+        let settings = validate(
+            r#"
+[registry]
+reconciling = ["DOEFF999"]
+[[laws]]
+name = "future"
+rules = ["DOEFF998", "DOEFF110"]
+"#,
+        )
+        .expect("新しい規則の ID で設定を読めなくした");
+        let refs: Vec<(&str, &str)> = settings.unknown_rules.iter().map(|u| (u.key.as_str(), u.id.as_str())).collect();
+        assert_eq!(refs, vec![("laws.future.rules", "DOEFF998"), ("registry.reconciling", "DOEFF999")]);
+        assert_eq!(settings.laws[0].rules, vec![ProjectRuleOrExternal::Project(ProjectRule::DefnForbidden)], "読める参照まで捨てた");
+    }
+}

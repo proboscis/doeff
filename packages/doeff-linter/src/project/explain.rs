@@ -6,7 +6,9 @@
 
 use serde::Serialize;
 
-use super::settings::{LawSpec, LayerId, LayerSettings, RawSettingsSpec};
+use super::law::LawSpec;
+use super::layers::{LayerId, LayerSettings};
+use super::raw_settings::RawSettingsSpec;
 
 /// file がどの層に在るかと、その根拠(path の置き場所と、タグで名乗った役)。
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1256,14 +1258,14 @@ fn smell_text(smell: &super::smells::Smell) -> (String, String) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::project::settings::{LayerDescription, LayerSpec, TagReading};
+    use crate::project::layers::{LayerDescription, LayerSpec, TagReading};
     use std::collections::{BTreeMap, BTreeSet};
 
     /// 層 2 つ(core に説明あり・foundation は説明なし)の設定。
     fn layers() -> LayerSettings {
         let spec = |name: &str, dir: &str, roles: &[&str], description: LayerDescription| LayerSpec {
             name: name.to_string(),
-            places: vec![crate::project::settings::PlacePattern::parse(dir).unwrap()],
+            places: vec![crate::project::layers::PlacePattern::parse(dir).unwrap()],
             allowed: Some([LayerId(0)].into_iter().collect()),
             forbid_modules: BTreeSet::new(),
             types_only: false,
