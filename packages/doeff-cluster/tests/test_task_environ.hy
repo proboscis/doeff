@@ -25,7 +25,7 @@
 (import doeff_cluster.coordinator.core.cluster_policy [adopted-task])
 (import doeff_cluster.coordinator.protocol.request_bodies [responded])
 (import tests.link_rig [LinkRig])
-(import doeff_cluster.handlers [task-spec] doeff_cluster.worker.core.launch [program-file])
+(import doeff_cluster.worker.protocol.declared [task-spec] doeff_cluster.worker.core.launch [program-file])
 (import tests.host_rig [host-settings launched])
 (import doeff_cluster.shared.protocol.detached [detached-submitted detached-submit-body])
 (import doeff [with-handlers])

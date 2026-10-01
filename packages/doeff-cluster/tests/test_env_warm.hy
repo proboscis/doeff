@@ -38,7 +38,7 @@
 (import doeff_cluster.worker.intent.worker_model [CodeView CodeState WorldView WorkerPolicy PrepareEnv StartJob SweepEnvs WarmEnv
                                     EnvDisk] doeff_cluster.shared.intent.job_model [JobSpec] doeff_cluster.worker.core.worker_rules [code-key])
 (import doeff_cluster.worker.core.policy [plan pinned-env-keys])
-(import doeff_cluster.handlers [task-spec])
+(import doeff_cluster.worker.protocol.declared [task-spec])
 (import doeff_cluster.code_prepare [cpu-limit-of])
 (import tests.env_fixtures [LOCK env-of])
 (import tests.detached_rig [slow-add])

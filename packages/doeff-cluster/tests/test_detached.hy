@@ -530,7 +530,7 @@
 (import doeff_cluster.foundation.wal_store [WalStore])
 (import doeff_cluster.shared.intent.job_model [JobSpec])
 (import doeff_cluster.worker.core.policy [kept-when-cut-off])
-(import doeff_cluster.handlers [task-spec])
+(import doeff_cluster.worker.protocol.declared [task-spec])
 
 (setv T (ClusterTiming) V {"python" "3.14.0" "doeff" "1"})
 

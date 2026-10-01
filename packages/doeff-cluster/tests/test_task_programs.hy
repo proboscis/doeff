@@ -26,7 +26,7 @@
 (import doeff_cluster.coordinator.core.program_policy [PROGRAM-GRACE-MS])
 (import tests.host_rig [host-settings launched])
 (import tests.link_rig [LinkRig])
-(import doeff_cluster.handlers [write-program-file] doeff_cluster.worker.core.launch [program-file])
+(import tests.link_rig [write-program-file] doeff_cluster.worker.core.launch [program-file])
 (import doeff_cluster.foundation.host_contract [HOST-CONTRACT])
 (import doeff [Program with-handlers])
 (import doeff_core_effects.handlers [await-handler slog-handler])

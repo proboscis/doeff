@@ -25,7 +25,7 @@
 
 (import pathlib [Path])
 (import doeff_cluster.worker.intent.worker_model [JobStatus] doeff_cluster.shared.intent.job_model [JobPhase])
-(import doeff_cluster.handlers [task-spec])
+(import doeff_cluster.worker.protocol.declared [task-spec])
 (import doeff_cluster.worker.core.code_plan [module-name carry-pairs compile-plan cache-rel])
 
 (deftest test-task-files-are-written-reported-and-cleaned [tmp-path]

@@ -26,7 +26,7 @@
 (import doeff_cluster.shared.protocol.checkout_reads [checkout-reads])
 (import doeff_cluster.worker.intent.env_prepare_model [ROOTS-PTH] doeff_cluster.shared.intent.env_marker_model [ENV-MARKER])
 (import doeff_cluster.shared.intent.service_model [resolve])
-(import doeff_cluster.handlers [task-spec write-program-file])
+(import doeff_cluster.worker.protocol.declared [task-spec] tests.link_rig [write-program-file])
 (import doeff_cluster.worker.protocol.code_store [PREPARE-TOOL])
 (import doeff_cluster.worker.protocol.env_store [EnvSettings env-host env-root])
 (import doeff_cluster.worker.protocol.process_host [HostSettings])
