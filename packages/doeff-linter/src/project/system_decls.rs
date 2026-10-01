@@ -128,11 +128,31 @@ fn items_of(form: &Form, want: Delim) -> Option<&[Form]> {
     }
 }
 
-/// defsystem 1 つの形(索引は defsystem の引数を持たないので source から読む): 引数の名と、
-/// 引数 1 つ目(土台)の記号を受ける job の呼び出しの (関数の綴り, 位置)。
+/// 型の注記を剥がした form(`#^ T 名` の名)。
+fn bare(form: &Form) -> &Form {
+    match &form.node {
+        Node::Annotated { target: Some(target), .. } => bare(target),
+        _ => form,
+    }
+}
+
+/// 型の注記の綴り(`#^ T 名` の T)。注記が無ければ None。
+fn annotation_text(source: &str, form: &Form) -> Option<String> {
+    match &form.node {
+        Node::Annotated { annotation: Some(annotation), .. } => {
+            source.get(annotation.span.start..annotation.span.end).map(str::to_string)
+        }
+        _ => None,
+    }
+}
+
+/// defsystem 1 つの形(索引は defsystem の引数を持たないので source から読む): 引数の名(`#^ T 名` は名)と、
+/// 引数 1 つ目(土台)の型の注記(doeff L983 の `[#^ T foundation]` — 無ければ None)と、
+/// その記号を受ける job の呼び出しの (関数の綴り, 位置)。
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct SystemShape {
     params: Vec<String>,
+    foundation_type: Option<String>,
     foundation_calls: Vec<(String, usize)>,
 }
 
@@ -143,13 +163,14 @@ fn read_system(source: &str, system: &str) -> Option<SystemShape> {
         let items = items_of(form, Delim::Paren)?;
         (items.len() >= 3 && symbol(source, &items[0]) == Some("defsystem") && symbol(source, &items[1]) == Some(system)).then_some(items)
     })?;
-    let params: Vec<String> =
-        items_of(&body[2], Delim::Bracket)?.iter().filter_map(|p| symbol(source, p)).map(str::to_string).collect();
+    let declared = items_of(&body[2], Delim::Bracket)?;
+    let params: Vec<String> = declared.iter().filter_map(|p| symbol(source, bare(p))).map(str::to_string).collect();
+    let foundation_type = declared.first().and_then(|p| annotation_text(source, p));
     let foundation_calls = match params.first() {
         Some(foundation) => foundation_calls(source, body, foundation),
         None => Vec::new(),
     };
-    Some(SystemShape { params, foundation_calls })
+    Some(SystemShape { params, foundation_type, foundation_calls })
 }
 
 /// defsystem の job の行から、土台の記号を受ける呼び出しの (関数の綴り, 位置) を集める。
@@ -230,6 +251,13 @@ fn system_gaps(
         out.push(SystemGap::NotOneFoundation { system: system.clone(), params: shape.params });
         return out;
     }
+    // 土台の型を defsystem の引数に書いた系(doeff L983 の `[#^ T foundation]`)は、その注記で判じる(job の関数の :pre より先)。
+    if let Some(text) = shape.foundation_type {
+        if UNTYPED_FOUNDATION_HEADS.contains(&type_head(&text)) {
+            out.push(SystemGap::UntypedFoundation { system: system.clone(), job: definition.name.clone(), type_text: Some(text) });
+        }
+        return out;
+    }
     let calls = shape.foundation_calls;
     let judged: Vec<SystemGap> = calls
         .iter()
@@ -285,11 +313,28 @@ mod tests {
             read_system(source, "s"),
             Some(SystemShape {
                 params: vec!["foundation".to_string()],
+                foundation_type: None,
                 foundation_calls: vec![("job-a".to_string(), 0), ("job-b".to_string(), 1)]
             })
         );
         assert_eq!(read_system(source, "two").map(|s| s.params), Some(vec!["foundation".to_string(), "programs".to_string()]));
         assert_eq!(read_system(source, "other"), None);
+    }
+
+    #[test]
+    fn read_system_reads_an_annotated_foundation_by_its_name() {
+        // doeff L983(agora-redesign #2213)の `[#^ T foundation]` — 注記の付いた引数を落とさず名で数え、注記を土台の型として持つ(#2215)。
+        let source = "(defsystem typed [#^ AgoraHost foundation]\n  (a (job-a foundation)))\n\
+                      (defsystem typed-two [#^ AgoraHost foundation programs]\n  (b (job-b foundation programs)))\n";
+        assert_eq!(
+            read_system(source, "typed"),
+            Some(SystemShape {
+                params: vec!["foundation".to_string()],
+                foundation_type: Some("AgoraHost".to_string()),
+                foundation_calls: vec![("job-a".to_string(), 0)]
+            })
+        );
+        assert_eq!(read_system(source, "typed-two").map(|s| s.params), Some(vec!["foundation".to_string(), "programs".to_string()]));
     }
 
     #[test]
