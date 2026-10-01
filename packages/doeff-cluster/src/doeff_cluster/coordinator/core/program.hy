@@ -34,12 +34,12 @@
 (import dataclasses [replace])
 (import doeff_cluster.clock [now-epoch-ms])
 (import doeff_cluster.cluster_model [ClusterState ClusterTiming ClusterNaming IdleProbe NextRequests Reply Persist CoordinatorStopRequested Fault CoordinatorFault Request Watcher WatchRefusal WatchAnswer WatchStep])
-(import doeff_cluster.watch_policy [watch-of settle-watch earliest-deadline])
+(import doeff_cluster.coordinator.core.watch_policy [watch-of settle-watch earliest-deadline])
 (import doeff_cluster.coordinator.core.cluster_policy [nodes-to-read with-derived-capabilities])
-(import doeff_cluster.durable_kv [durable-kv kv-delta])
+(import doeff_cluster.coordinator.core.durable_kv [durable-kv kv-delta])
 (import doeff_cluster.coordinator.core.api_policy [respond tick plan-rollouts deployments-to-observe scale-service record-action mark-alive ROLLOUT-ACTOR ROLLOUT-TICK-MS TICK-MS])
 (import doeff_cluster.coordinator.core.resource_policy [stamp])
-(import doeff_cluster.kube_model [ReadDeployment ScaleDeployment AnnotateDeployment ReadNodeLabels KubeUnavailable])
+(import doeff_cluster.coordinator.intent.kube_model [ReadDeployment ScaleDeployment AnnotateDeployment ReadNodeLabels KubeUnavailable])
 
 
 

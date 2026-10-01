@@ -307,10 +307,10 @@
       "layer": "pure",
       "name": "doeff-cluster-detached-policy",
       "paths": [
-        "packages/doeff-cluster/src/doeff_cluster/detached_policy.hy"
+        "packages/doeff-cluster/src/doeff_cluster/coordinator/core/detached_policy.hy"
       ],
       "public": [
-        "packages/doeff-cluster/src/doeff_cluster/detached_policy.hy"
+        "packages/doeff-cluster/src/doeff_cluster/coordinator/core/detached_policy.hy"
       ],
       "responsibility": "切り離した task の HTTP の口の純粋な判断(2026-09-25・effect は detached_model.hy)。",
       "typed": true
@@ -353,10 +353,10 @@
       "layer": "pure",
       "name": "doeff-cluster-drain-policy",
       "paths": [
-        "packages/doeff-cluster/src/doeff_cluster/drain_policy.hy"
+        "packages/doeff-cluster/src/doeff_cluster/coordinator/core/drain_policy.hy"
       ],
       "public": [
-        "packages/doeff-cluster/src/doeff_cluster/drain_policy.hy"
+        "packages/doeff-cluster/src/doeff_cluster/coordinator/core/drain_policy.hy"
       ],
       "responsibility": "worker の drain の純粋な判断(2026-09-25)。",
       "typed": true
@@ -369,10 +369,10 @@
       "layer": "pure",
       "name": "doeff-cluster-durable-kv",
       "paths": [
-        "packages/doeff-cluster/src/doeff_cluster/durable_kv.hy"
+        "packages/doeff-cluster/src/doeff_cluster/coordinator/core/durable_kv.hy"
       ],
       "public": [
-        "packages/doeff-cluster/src/doeff_cluster/durable_kv.hy"
+        "packages/doeff-cluster/src/doeff_cluster/coordinator/core/durable_kv.hy"
       ],
       "responsibility": "coordinator の耐久の状態を「キー → JSON の値」の表として見る形(純粋な関数)。",
       "typed": true
@@ -506,10 +506,10 @@
       "layer": "pure",
       "name": "doeff-cluster-handoff-policy",
       "paths": [
-        "packages/doeff-cluster/src/doeff_cluster/handoff_policy.hy"
+        "packages/doeff-cluster/src/doeff_cluster/coordinator/core/handoff_policy.hy"
       ],
       "public": [
-        "packages/doeff-cluster/src/doeff_cluster/handoff_policy.hy"
+        "packages/doeff-cluster/src/doeff_cluster/coordinator/core/handoff_policy.hy"
       ],
       "responsibility": "入れ替え(update = handoff)の期限の純粋な判断(2026-09-26)。",
       "typed": true
@@ -539,10 +539,10 @@
       "layer": "pure",
       "name": "doeff-cluster-idle-policy",
       "paths": [
-        "packages/doeff-cluster/src/doeff_cluster/idle_policy.hy"
+        "packages/doeff-cluster/src/doeff_cluster/coordinator/core/idle_policy.hy"
       ],
       "public": [
-        "packages/doeff-cluster/src/doeff_cluster/idle_policy.hy"
+        "packages/doeff-cluster/src/doeff_cluster/coordinator/core/idle_policy.hy"
       ],
       "responsibility": "要求の無い拍を何拍飛ばしても調停が何も変えないか(純粋な判断・I/O はしない)。",
       "typed": true
@@ -629,10 +629,10 @@
       "layer": "domain",
       "name": "doeff-cluster-kube-model",
       "paths": [
-        "packages/doeff-cluster/src/doeff_cluster/kube_model.hy"
+        "packages/doeff-cluster/src/doeff_cluster/coordinator/intent/kube_model.hy"
       ],
       "public": [
-        "packages/doeff-cluster/src/doeff_cluster/kube_model.hy"
+        "packages/doeff-cluster/src/doeff_cluster/coordinator/intent/kube_model.hy"
       ],
       "responsibility": "k8s の Deployment を読む・台数を変える effect(Rollout の reconciler が旧 / 新の片方として本番の Deployment を扱う口)。",
       "typed": true
@@ -745,10 +745,10 @@
       "layer": "pure",
       "name": "doeff-cluster-metrics-policy",
       "paths": [
-        "packages/doeff-cluster/src/doeff_cluster/metrics_policy.hy"
+        "packages/doeff-cluster/src/doeff_cluster/coordinator/core/metrics_policy.hy"
       ],
       "public": [
-        "packages/doeff-cluster/src/doeff_cluster/metrics_policy.hy"
+        "packages/doeff-cluster/src/doeff_cluster/coordinator/core/metrics_policy.hy"
       ],
       "responsibility": "worker の service の計器を coordinator が Prometheus の形で出す、純粋な判断。",
       "typed": true
@@ -789,10 +789,10 @@
       "layer": "pure",
       "name": "doeff-cluster-program-policy",
       "paths": [
-        "packages/doeff-cluster/src/doeff_cluster/program_policy.hy"
+        "packages/doeff-cluster/src/doeff_cluster/coordinator/core/program_policy.hy"
       ],
       "public": [
-        "packages/doeff-cluster/src/doeff_cluster/program_policy.hy"
+        "packages/doeff-cluster/src/doeff_cluster/coordinator/core/program_policy.hy"
       ],
       "responsibility": "coordinator の詰めた Program の置き場(ADR-DOE-CLUSTER-001 R3b・改訂 1 の F — 純粋な判断・I/O はしない)。",
       "typed": true
@@ -1021,10 +1021,10 @@
       "layer": "pure",
       "name": "doeff-cluster-rollout-policy",
       "paths": [
-        "packages/doeff-cluster/src/doeff_cluster/rollout_policy.hy"
+        "packages/doeff-cluster/src/doeff_cluster/coordinator/core/rollout_policy.hy"
       ],
       "public": [
-        "packages/doeff-cluster/src/doeff_cluster/rollout_policy.hy"
+        "packages/doeff-cluster/src/doeff_cluster/coordinator/core/rollout_policy.hy"
       ],
       "responsibility": "Rollout の純粋な判断(旧 → 新の切り替えを宣言で表す)。",
       "typed": true
@@ -1310,10 +1310,10 @@
       "layer": "pure",
       "name": "doeff-cluster-warm-policy",
       "paths": [
-        "packages/doeff-cluster/src/doeff_cluster/warm_policy.hy"
+        "packages/doeff-cluster/src/doeff_cluster/coordinator/core/warm_policy.hy"
       ],
       "public": [
-        "packages/doeff-cluster/src/doeff_cluster/warm_policy.hy"
+        "packages/doeff-cluster/src/doeff_cluster/coordinator/core/warm_policy.hy"
       ],
       "responsibility": "coordinator の温める表の口の純粋な判断(2026-09-26 — 効果 WarmRuntimeEnv・ReadWarmState の本番の答え)。",
       "typed": true
@@ -1327,10 +1327,10 @@
       "layer": "pure",
       "name": "doeff-cluster-watch-policy",
       "paths": [
-        "packages/doeff-cluster/src/doeff_cluster/watch_policy.hy"
+        "packages/doeff-cluster/src/doeff_cluster/coordinator/core/watch_policy.hy"
       ],
       "public": [
-        "packages/doeff-cluster/src/doeff_cluster/watch_policy.hy"
+        "packages/doeff-cluster/src/doeff_cluster/coordinator/core/watch_policy.hy"
       ],
       "responsibility": "版の変化を待つ読み(GET /watch)の判断(純粋・I/O はしない — 待ちを起こす条件・期限・worker ごとの見え方)。",
       "typed": true

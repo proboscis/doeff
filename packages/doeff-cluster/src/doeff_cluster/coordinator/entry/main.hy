@@ -14,7 +14,7 @@
 (import doeff_core_effects.scheduler [scheduled])
 (import doeff_cluster.cluster_model [ClusterState ClusterTiming naming-from-json])
 (import doeff_cluster.coordinator.core.cluster_policy [state-from-json fresh-task-prefix])
-(import doeff_cluster.durable_kv [full-kv state-from-kv legacy-key-moves resume-writes])
+(import doeff_cluster.coordinator.core.durable_kv [full-kv state-from-kv legacy-key-moves resume-writes])
 (import doeff_cluster.wal_store [WalStore])
 (import doeff_cluster.coordinator.core.api_policy [resume-after-downtime])
 (import doeff_cluster.coordinator.core.resource_policy [adopt-legacy])

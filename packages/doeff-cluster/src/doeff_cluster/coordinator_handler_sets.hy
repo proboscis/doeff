@@ -18,7 +18,7 @@
 (import doeff_cluster.clock [now-epoch-ms])
 (import doeff_time [Delay])
 ;; 模擬の列は、要求の無い間に眠る長さを本番の判断の関数で試す(idle_policy — 判断の層を読むのはこのためだけ)。
-(import .idle_policy [quiet-ticks])
+(import doeff_cluster.coordinator.core.idle_policy [quiet-ticks])
 (import doeff_cluster.coordinator.core.api_policy [TICK-MS])
 (import doeff_core_effects.handlers [await-handler])
 (import doeff_core_effects.scheduler [CreatePromise CompletePromise Promise])

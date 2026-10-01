@@ -2,6 +2,8 @@
 ;;;
 ;;; 触るのは台数(scale の subresource)だけ。kubectl ではなく k8s の API を handler(kube_handlers.hy)経由で叩く。
 ;;; 権限は coordinator の ServiceAccount に、対象の Deployment の get と scale だけを許す Role で与える(deploy/cluster.yaml)。
+(require doeff-hy.macros [val])
+(val MODULE-TAGS {:context "coordinator" :role "intent"})
 (import dataclasses [dataclass])
 (import doeff [EffectBase])
 

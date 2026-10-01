@@ -27,7 +27,7 @@
 (import tests.clock_fixtures [clock-ms])
 (import doeff_cluster.cluster_model [ClusterState ClusterTiming ComponentVersion])
 (import doeff_cluster.coordinator_inbox [http-request])
-(import doeff_cluster.detached_policy [Reply submit-detached])
+(import doeff_cluster.coordinator.core.detached_policy [Reply submit-detached])
 (import doeff_cluster.coordinator.core.api_policy [respond tick])
 (import doeff_cluster.handlers [CoordinatorLink])
 
@@ -518,7 +518,7 @@
 
 ;; --- coordinator の判断(純粋な関数)と worker の途絶 -------------------------------------------------------------
 
-(import doeff_cluster.durable_kv [full-kv state-from-kv])
+(import doeff_cluster.coordinator.core.durable_kv [full-kv state-from-kv])
 (import doeff_cluster.coordinator.core.cluster_policy [state-to-json state-from-json])
 (import doeff_cluster.coordinator.entry.main [load-state])
 (import doeff_cluster.wal_store [WalStore])

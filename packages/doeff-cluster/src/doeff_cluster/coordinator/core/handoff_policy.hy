@@ -17,14 +17,16 @@
 ;;;
 ;;; 見張りは coordinator の状態(ClusterState.handoffs)に保存し、Service の資源の status.handoff に段と理由を出す(resource_policy.snapshot)。
 ;;; 期限の無い recreate の Service と、期限の内に Ready になった handoff の Service は見張りを残さない(今までと同じ振る舞い)。
+(require doeff-hy.macros [val])
+(val MODULE-TAGS {:context "coordinator" :role "judgment"})
 (import dataclasses [replace])
 (import hashlib)
 (import json)
-(import .cluster_model [ClusterJob ClusterState ClusterTiming HandoffWatch HandoffPhase])
+(import doeff_cluster.cluster_model [ClusterJob ClusterState ClusterTiming HandoffWatch HandoffPhase])
 (import doeff_cluster.coordinator.core.cluster_policy [job-to-json LIVE-PHASES])
 (import doeff_cluster.coordinator.core.resource_policy [service-readiness])
-(import .readiness_model [handoff-timeout-ms])
-(import .worker_model [spec-hash])
+(import doeff_cluster.readiness_model [handoff-timeout-ms])
+(import doeff_cluster.worker_model [spec-hash])
 
 
 (defn #^ str declaration-fingerprint [#^ ClusterJob job]  ; defk にできない: coordinator の純粋な判断(Program の外 — api_policy.settle)が呼ぶ
