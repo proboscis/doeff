@@ -1,4 +1,4 @@
-;;; coordinator への宛先の部品(shared/protocol/coordinator_route.hy・agora-redesign #2337 の 1 本目)の検。
+;;; coordinator への宛先の部品(shared/protocol/coordinator_route.hy・#2337 の 1 本目)の検。
 ;;; 宛先の相手は HttpRequest に筋書きで答える fake(宛先ごとの答えの列)・時計は doeff-time の仮想の時計(sim-time-handler)。
 ;;; 失敗ケース: 接続できない時だけ次の宛先へ回る(途中の時間切れでは回らない)・先頭の試し直し・全部に届かない時の一巡し直しの間・
 ;;; 何度送っても同じ要求の期限までの送り直し。
@@ -13,7 +13,7 @@
 (val LAN "http://lan:8080")
 (val NET "http://tailnet:8080")
 (val START-MS 1790000000000)
-(val OPTIONS (RouteOptions :reply-seconds 15.0 :connect-retries 2 :recheck-ms 60000 :actor "job@w1/1"))
+(val OPTIONS (RouteOptions :reply-seconds 15.0 :connect-seconds 2.0 :connect-retries 2 :recheck-ms 60000 :actor "job@w1/1"))
 
 
 (defn #^ HttpResponse ok [#^ str url]

@@ -7,7 +7,7 @@
 ;;;
 ;;;   (defk my-foundation [body]
 ;;;     …
-;;;     (<- answer (scheduled (with-handlers [(await-handler) (state) (environ-reader) host-reader (async-time-handler)]
+;;;     (<- answer (scheduled (with-handlers [(await-handler) slog-handler (http-production-handler) (state) (environ-reader) host-reader (async-time-handler)]
 ;;;                             (with-cluster-handlers body))))
 ;;;     answer)
 ;;;
@@ -21,7 +21,10 @@
 (import doeff_cluster.foundation.report_client [report-client])
 (import doeff_cluster.shared.protocol.readiness_handlers [readiness-http])
 (import doeff_cluster.shared.protocol.metrics_handlers [metrics-http])
-(import .shared_handlers [shared-http SharedClient])
+(import .shared_handlers [shared-http])
+(import doeff_cluster.shared.core.clock [now-epoch-ms])
+(import doeff_cluster.shared.protocol.coordinator_route [CoordinatorRoute RouteCell RouteOptions route-of])
+(import doeff_cluster.foundation.coordinator_http [REPLY-SECONDS CONNECT-SECONDS PREFERRED-RECHECK-SECONDS default-actor])
 (import doeff_cluster.shared.core.semaphore_handlers [cluster-semaphore SemaphoreSession])
 (import doeff_cluster.shared.core.lease_rules [lease-holder])
 (import doeff_cluster.shared.protocol.remote [remote-cluster TaskClient])
@@ -35,6 +38,13 @@
   (lease-holder ctx.job (or ctx.instance ctx.worker)))
 
 
+(defk coordinator-route-options []
+  {:pre [] :post [(: % RouteOptions)] :tags {:context "doeff-cluster" :role "foundation"}}
+  "coordinator への宛先の部品の送り方(返事の上限・一巡し直す回数・先頭を試し直す間・書きの送り手)を、この process の値で作るため。"
+  (RouteOptions :reply-seconds REPLY-SECONDS :connect-seconds CONNECT-SECONDS :connect-retries 4 :recheck-ms (int (* PREFERRED-RECHECK-SECONDS 1000))
+                :actor (default-actor)))
+
+
 (defk cluster-handlers []
   {:pre [] :post [(: % list)] :tags {:context "doeff-cluster" :role "foundation"}}
   "本番の土台が並べる、coordinator に話す handler の組(外側が先)を、宿の run-context から client を作って返す。
@@ -45,9 +55,12 @@
   (<- holder str (lease-holder-of ctx))
   (<- versions dict (Ask HOST-CONTRACT.versions-key))
   (val report (report-client ctx))
+  (<- options RouteOptions (coordinator-route-options))
+  (<- now int (now-epoch-ms))
+  (<- route CoordinatorRoute (route-of ctx.coordinator-url now))
   [(readiness-http report)
    (metrics-http report)
-   (shared-http (SharedClient ctx.coordinator-url))
+   (shared-http (RouteCell route) options)
    (remote-cluster (TaskClient ctx.coordinator-url ctx.revision versions :runtime-env env))
    (detached-cluster (DetachedClient ctx.coordinator-url ctx.revision versions :runtime-env env))
    (warm-cluster (WarmClient ctx.coordinator-url :actor ctx.job))

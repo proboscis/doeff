@@ -10,6 +10,7 @@
 ;;;   * kind は既定値を持たない(作り手が書き忘れたら作る時に落ちる — 黙って「期限切れでない」にならない)
 ;;; 届かない相手は httpx 自身の MockTransport(library の持ち主の相手役)で作る。
 
+(import datetime)
 (import httpx)
 (import doeff_core_effects.handlers [await-handler])
 (import doeff_core_effects.http_effects [HttpFailed HttpFailureKind HttpRequest HttpResponse])
@@ -67,3 +68,34 @@
     (HttpFailed :url "https://api.test/x" :detail "ReadTimeout: timed out")
     (assert False "kind の無い HttpFailed が作れた")
     (except [TypeError])))
+
+
+(defclass TimeoutSpy []
+  "要求ごとの timeout の引数を控えて、200 の返事を返す client(接続の段の上限の検 — 本物の transport は時間を数えない)。"
+  (defn __init__ [self] (setv self.timeouts []))
+  (defn :async request [self #** kwargs]
+    (.append self.timeouts (get kwargs "timeout"))
+    (setv response (httpx.Response 200 :content b"ok" :request (httpx.Request (get kwargs "method") (get kwargs "url"))))
+    (setattr response "elapsed" (datetime.timedelta 0))
+    response)
+  (defn :async aclose [self] None))
+
+
+(defk ask-with-connect-limit []
+  {:pre [] :post [(: % tuple)] :tags {:context "http" :role "program"}}
+  "接続の段の上限を付けた要求と付けない要求を 1 つずつ出すため。"
+  (<- limited HttpResponse (HttpRequest "GET" "https://api.test/a" :timeout-seconds 15.0 :connect-timeout-seconds 2.0 :max-retries 0))
+  (<- plain HttpResponse (HttpRequest "GET" "https://api.test/b" :timeout-seconds 15.0 :max-retries 0))
+  #(limited plain))
+
+
+(deftest test-a-connect-limit-is-passed-to-the-client-only-for-the-connection
+  ;; 失敗ケース(#2337): connect-timeout-seconds は接続の段だけの上限として client に渡り(全体の上限は timeout-seconds のまま)、
+  ;; 付けない要求は今までどおり全体の上限だけを渡す。
+  (val spy (TimeoutSpy))
+  (<- answers tuple (with-handler [(await-handler) (http-production-handler :client-factory (fn [] spy))] (ask-with-connect-limit)))
+  (assert (= (tuple (gfor a answers a.status)) #(200 200)) answers)
+  (val limited (get spy.timeouts 0))
+  (val plain (get spy.timeouts 1))
+  (assert (and (isinstance limited httpx.Timeout) (= limited.connect 2.0) (= limited.read 15.0)) limited)
+  (assert (= plain 15.0) plain))

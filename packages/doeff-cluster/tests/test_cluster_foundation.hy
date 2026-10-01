@@ -2,6 +2,7 @@
 (require doeff-hy.macros [deftest <- val])
 (import doeff [with-handlers])
 (import doeff_core_effects.handlers [reader])
+(import doeff_time [SimClock sim-time-handler])
 (import doeff_cluster.foundation.host_contract [HOST-CONTRACT])
 (import doeff_cluster.job_context [RunContext])
 (import doeff_cluster.cluster_foundation [cluster-handlers lease-holder-of])
@@ -11,7 +12,9 @@
 
 (deftest test-the-cluster-handlers-are-made-from-the-run-context
   (val ctx (RunContext "http://coordinator:8080" "w1" "abc" "beacon" :instance "w1-p3"))
-  (<- handlers list (with-handlers [(reader {HOST-CONTRACT.run-context-key ctx HOST-CONTRACT.versions-key {"doeff" "9.9.9"}})] (cluster-handlers)))
+  (<- handlers list (with-handlers [(sim-time-handler :clock (SimClock))
+                                   (reader {HOST-CONTRACT.run-context-key ctx HOST-CONTRACT.versions-key {"doeff" "9.9.9"}})]
+                                  (cluster-handlers)))
   (assert (= (len handlers) 7) handlers)
   (<- holder str (lease-holder-of ctx))
   (assert (= holder "beacon/w1-p3")))

@@ -17,11 +17,15 @@
 
    log-each-request = True asks the handler to slog one \"http_request\" line per attempt (method, url, status, elapsed).
    Off by default: a caller that polls (a node agent that PATCHes every minute) should not add a log line per request.
-   Added for agora-redesign #823 (item 2)."
+   Added for agora-redesign #823 (item 2).
+
+   connect-timeout-seconds = a shorter limit for making the connection only (None = timeout-seconds covers every phase). A caller that
+   can send the request elsewhere when no connection was made (CONNECT-FAILED) sets it short, so an address that drops the handshake
+   is given up quickly while a slow answer still has timeout-seconds (#2337)."
 
   (defn __init__ [self method url * [headers None] [params None] [body None]
                   [timeout-seconds 30.0] [max-retries 3] [follow-redirects True] [failures-as-values False]
-                  [log-each-request False]]
+                  [log-each-request False] [connect-timeout-seconds None]]
     (.__init__ (super))
     (setv normalized-method (.upper method))
     (when (not-in normalized-method _HTTP-METHODS)
@@ -38,7 +42,8 @@
           self.max-retries max-retries
           self.follow-redirects follow-redirects
           self.failures-as-values failures-as-values
-          self.log-each-request log-each-request))
+          self.log-each-request log-each-request
+          self.connect-timeout-seconds connect-timeout-seconds))
 
   (defn __repr__ [self]
     (+ "HttpRequest(" self.method " " (repr self.url) ")")))

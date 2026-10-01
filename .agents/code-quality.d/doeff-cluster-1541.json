@@ -127,7 +127,10 @@
         "doeff-cluster-report-client",
         "doeff-cluster-runtime-env-model",
         "doeff-cluster-semaphore-handlers",
-        "doeff-cluster-shared-handlers"
+        "doeff-cluster-shared-handlers",
+        "doeff-cluster-clock",
+        "doeff-cluster-coordinator-route",
+        "doeff-cluster-coordinator-http"
       ],
       "layer": "io",
       "name": "doeff-cluster-cluster-foundation",
@@ -1215,7 +1218,8 @@
         "doeff-cluster-coordinator-http",
         "doeff-cluster-lease-rules",
         "doeff-cluster-semaphore-model",
-        "doeff-cluster-shared-model"
+        "doeff-cluster-shared-model",
+        "doeff-cluster-coordinator-route"
       ],
       "layer": "io",
       "name": "doeff-cluster-shared-handlers",

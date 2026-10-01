@@ -869,7 +869,7 @@
 
 (deff board-written [#^ tuple answer]  ; defk にできない: 答えの節が返事を Program への答えに変える純粋な判断
   {:pre [(: answer tuple)] :post [(: % bool)] :tags {:context "doeff-cluster" :role "judgment"}}
-  "盤の compare-and-set の返事を WriteShared の答えにするため(409 = 合わなかった = 偽 — 本番の SharedClient.write と同じ読み)。"
+  "盤の compare-and-set の返事を WriteShared の答えにするため(409 = 合わなかった = 偽 — 本番の shared-http(write-accepted)と同じ読み)。"
   (if (= (get answer 0) 409) False (do (answered-body answer "盤に書けない") True)))
 
 
@@ -1162,7 +1162,7 @@
     (<- answer tuple (send-shaped link (board-write-request key value expect ttl-seconds)))
     (resume (board-written answer)))
   (LeaseOp [name op token permits ttl-ms]
-    ;; claim と renew は同じ token で何度送っても同じ意味(本番の SharedClient.lease と同じく送り直す)。release・drop は 1 回だけ。
+    ;; claim と renew は同じ token で何度送っても同じ意味(本番の shared-http と同じく送り直す)。release・drop は 1 回だけ。
     (val shape (lease-request name op token permits ttl-ms))
     (<- answer tuple (if (in op #("claim" "renew")) (send-shaped-resent link shape) (send-shaped link shape)))
     (resume (answered-body answer (.format "lease {} の {}" name op))))

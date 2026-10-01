@@ -7,7 +7,7 @@
 (import httpx)
 (import pathlib [Path])
 
-(import doeff_core_effects.effects [Await HttpRequest HttpResponse slog])
+(import doeff_core_effects.effects [Await HttpRequest HttpResponse SlogEffect slog])
 (import doeff_core_effects.http_effects [HttpFailed HttpFailureKind])
 
 
@@ -43,6 +43,11 @@
   (setv client (client-factory))
   (setv handler (_http-production-handler client sleep))
   (_with-client-lifecycle handler client))
+
+;; 節を静的に読めない(client の寿命を包む関数を返す)ので、答える効果と節が出す効果を宣言する(doeff-effect-analyzer の
+;; __doeff_handles__ / __doeff_effects__ — 本番の土台の閉じ具合の検が「読めない handler」と数えないため・#2337)。
+(setv http-production-handler.__doeff_handles__ #(HttpRequest)
+      http-production-handler.__doeff_effects__ #(Await SlogEffect))
 
 
 (defn http-fixture-handler [fixture-path * mode [client-factory _default-client-factory]
@@ -140,7 +145,9 @@
                          :headers headers
                          :params request.params
                          :content content
-                         :timeout request.timeout-seconds
+                         :timeout (if (is request.connect-timeout-seconds None)
+                                      request.timeout-seconds
+                                      (httpx.Timeout request.timeout-seconds :connect request.connect-timeout-seconds))
                          :follow-redirects request.follow-redirects)))
     (HttpResponse :status response.status-code
                   :headers (dict response.headers)

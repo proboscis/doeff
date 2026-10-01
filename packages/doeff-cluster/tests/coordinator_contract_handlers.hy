@@ -1,7 +1,7 @@
 ;;; coordinator に話す effect の族の契約テストの解釈器(composition root)— 同じ契約の Program を、handler だけ替えて走らせる。
 ;;;
 ;;;   shared-memory          fake: shared-memory(同じ process の dict)
-;;;   shared-http            本物: shared-http(SharedClient → coordinator の /board・/leases)
+;;;   shared-http            本物: shared-http(宛先の部品の HttpRequest → coordinator の /board・/leases)
 ;;;   metrics-memory         fake: metrics-memory(list に記録)
 ;;;   metrics-http           本物: metrics-http(ServiceReportClient → POST /resources/Service/<名>/metrics)
 ;;;   readiness-memory       fake: readiness-memory(list に記録)
@@ -47,7 +47,9 @@
 (import doeff_cluster.shared.core.clock [now-epoch-ms])
 (import doeff_cluster.coordinator.intent.cluster_model [ClusterState])
 (import doeff_cluster.coordinator.core.durable_kv [state-from-kv])
-(import doeff_cluster.shared_handlers [shared-memory shared-http SharedClient])
+(import doeff_cluster.shared_handlers [shared-memory shared-http])
+(import doeff_cluster.shared.protocol.coordinator_route [CoordinatorRoute RouteCell RouteOptions])
+(import doeff_core_effects.http_effects [HttpRequest HttpResponse HttpFailed HttpFailureKind])
 (import doeff_cluster.shared.protocol.metrics_handlers [metrics-memory metrics-http])
 (import doeff_cluster.shared.protocol.readiness_handlers [readiness-memory readiness-http])
 (import doeff_cluster.foundation.report_client [ServiceReportClient])
@@ -216,6 +218,23 @@
       (raise (httpx.ConnectError REFUSED :request request))))
 
 
+(defhandler coordinator-over-http [#^ MemoryCoordinator coordinator #^ dict line]
+  ;; 引数に残す理由: 真実は MemoryCoordinator と線そのもの(組み立てが 1 つ作って coordinator-side と共有する)。
+  ;; coordinator へ送る要求(shared-http が宛先の部品から出す HttpRequest)に、線(line-answer)の答えで同期に答える: 届く間は
+  ;; MemoryCoordinator の返事・切れている間は接続できない失敗(HttpFailed の CONNECT-FAILED — 本物の答え手が ConnectError を写す形)。
+  (HttpRequest [method url headers params body]
+    (val request (httpx.Request method url :params params :json body :headers headers))
+    (val answer (try (line-answer coordinator line request)
+                     (except [refused httpx.ConnectError]
+                       (HttpFailed :url url :detail (+ "ConnectError: " (str refused)) :kind HttpFailureKind.CONNECT-FAILED))))
+    (resume (if (isinstance answer HttpFailed)
+                answer
+                (HttpResponse answer.status-code (dict answer.headers) answer.content answer.text url 0.0)))))
+
+
+(val CONTRACT-ROUTE (RouteOptions :reply-seconds 15.0 :connect-seconds 2.0 :connect-retries 4 :recheck-ms 60000 :actor "c-contract"))
+
+
 (deff declared-coordinator [#^ SimClock clock]  ; defk にできない: 組み立て(Program を走らせる前)が呼ぶ Program の外の準備
   {:pre [(: clock SimClock)] :post [(: % MemoryCoordinator)] :tags {:context "doeff-cluster-test" :role "foundation"}}
   "Service SERVICE を宣言した MemoryCoordinator(時計 = clock)。宣言は運用者と同じ口(POST /resources/Service)で送る。"
@@ -247,7 +266,8 @@
   (val coordinator (declared-coordinator clock))
   (val line {"up" True})
   (val transport (httpx.MockTransport (partial line-answer coordinator line)))
-  (<- answer (with_handlers [(sim-time-handler :clock clock) (coordinator-side coordinator line) #* (make-handlers transport)] program))
+  (<- answer (with_handlers [(sim-time-handler :clock clock) (coordinator-side coordinator line) (coordinator-over-http coordinator line)
+                             #* (make-handlers transport)] program))
   answer)
 
 
@@ -333,7 +353,7 @@
 
 (val INTERPRETERS
   {"shared-memory" (partial under-memory (fn [store reports] [(shared-memory store)]))
-   "shared-http" (partial under-coordinator (fn [transport] [(shared-http (SharedClient COORDINATOR :transport transport))]))
+   "shared-http" (partial under-coordinator (fn [transport] [(shared-http (RouteCell (CoordinatorRoute :urls #(COORDINATOR) :active 0 :switched-at-ms 0)) CONTRACT-ROUTE)]))
    "metrics-memory" (partial under-memory (fn [store reports] [(metrics-memory reports)]))
    "metrics-http" (partial under-coordinator (fn [transport] [(metrics-http (report-client transport))]))
    "readiness-memory" (partial under-memory (fn [store reports] [(readiness-memory reports)]))
@@ -349,5 +369,5 @@
    "named-semaphore-local" (partial under-clock (fn [] [(named-semaphore-local {})]))
    "cluster-semaphore" (partial under-clock (fn [] [(shared-memory {}) (cluster-semaphore (semaphore-session))]))
    "cluster-semaphore-http" (partial under-coordinator
-                                     (fn [transport] [(shared-http (SharedClient COORDINATOR :transport transport))
+                                     (fn [transport] [(shared-http (RouteCell (CoordinatorRoute :urls #(COORDINATOR) :active 0 :switched-at-ms 0)) CONTRACT-ROUTE)
                                                       (cluster-semaphore (semaphore-session))]))})

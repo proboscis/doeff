@@ -1,5 +1,5 @@
 ;;; coordinator への宛先の部品 — 宛先の順・切り替え・送り直しを、汎用の効果(doeff-core-effects の HttpRequest を failures-as-values で・
-;;; doeff-time の GetTime / Delay)だけで書く(agora-redesign #2337 の 1 本目)。
+;;; doeff-time の GetTime / Delay)だけで書く(#2337 の 1 本目)。
 ;;;
 ;;; 振る舞いは foundation/coordinator_http.hy の CoordinatorEndpoint・send-idempotent と同じ(2026-09-23 の tailnet の経路の揺れの実測と
 ;;; 直しの理由はそちらの頭の註):
@@ -14,6 +14,7 @@
 (require doeff-hy.macros [defk <- val var])
 (require doeff-hy.record [defrecord])
 (import dataclasses [dataclass replace])  ; defrecord の展開が名指す
+(import json)
 (import doeff_core_effects.http_effects [HttpRequest HttpResponse HttpFailed HttpFailureKind])
 (import doeff_time [Delay])
 (import doeff_cluster.shared.core.clock [now-epoch-ms])
@@ -34,10 +35,12 @@
 
 
 (defrecord RouteOptions
-  "送り方。reply-seconds = 1 回の要求の上限(秒)・connect-retries = 全部の宛先に届かない時に一巡し直す回数・recheck-ms = 先頭以外に
+  "送り方。reply-seconds = 1 回の要求の上限(秒)・connect-seconds = 接続の段だけの上限(秒 — tailnet の SYN の取り落としは待つより
+   次の宛先へ)・connect-retries = 全部の宛先に届かない時に一巡し直す回数・recheck-ms = 先頭以外に
    いる間、先頭を試し直す間隔・actor = 書きの送り手(header X-Actor — coordinator は出来事の記録に残す)。"
   {:tags {:context "doeff-cluster" :role "protocol"}}
   (#^ float reply-seconds)
+  (#^ float connect-seconds)
   (#^ int connect-retries)
   (#^ int recheck-ms)
   (#^ str actor))
@@ -48,6 +51,13 @@
   {:tags {:context "doeff-cluster" :role "protocol"}}
   (#^ (get tuple #(int ...)) indices)
   (#^ CoordinatorRoute route))
+
+
+(defclass RouteCell []
+  "handler が要求から要求へ持ち越す宛先の状態の入れ物(handler の引数 — 組み立てが route-of で作った初めの状態を入れて渡す)。
+   宛先の部品そのものは値を返すだけで、これを書き換えるのは使い手の handler の節だけ。"
+  (defn #^ None __init__ [self #^ CoordinatorRoute route]
+    (setv self.route route)))
 
 
 (defrecord RoutedReply
@@ -110,7 +120,8 @@
     (for [index turn.indices]
       (<- answer (HttpRequest method (+ (get current.urls index) path)
                               :headers {"X-Actor" options.actor} :params params :body body
-                              :timeout-seconds options.reply-seconds :max-retries 0 :failures-as-values True))
+                              :timeout-seconds options.reply-seconds :connect-timeout-seconds options.connect-seconds
+                              :max-retries 0 :failures-as-values True))
       (match answer
         (HttpFailed :kind HttpFailureKind.CONNECT-FAILED) (:= last answer)
         _ (do (<- now int (now-epoch-ms))
@@ -134,3 +145,41 @@
     (match #((isinstance got.answer HttpFailed) (> (+ (- now started) (* pause-seconds 1000)) (* deadline-seconds 1000)))
       #(True False) (<- (Delay pause-seconds))
       _ (return got))))
+
+
+(defclass RouteRefused [Exception]
+  "coordinator が要求を断った(4xx・5xx)— status と coordinator の返した本文(先頭 500 字)。断りの理由(coordinator の {\"error\": …})を
+   worker の log と状態の note に出すため本文を持つ(foundation/coordinator_http.hy の CoordinatorRefused と同じ読み)。"
+  (defn #^ None __init__ [self #^ int status #^ str body]
+    (.__init__ (super) status body)
+    (setv self.status status self.body body))
+  (defn #^ str __repr__ [self]
+    (.format "coordinator が断った({}): {}" self.status self.body)))
+
+
+(defclass RouteUnreachable [Exception]
+  "どの宛先からも返事が無かった(接続できない・途中で切れた・時間切れ)— 失敗の値 HttpFailed を持つ。"
+  (defn #^ None __init__ [self #^ HttpFailed failed]
+    (.__init__ (super) failed.url failed.detail)
+    (setv self.failed failed))
+  (defn #^ str __repr__ [self]
+    (.format "coordinator に届かない({}): {}" self.failed.url self.failed.detail)))
+
+
+(defk answer-json [answer]
+  {:pre [(: answer (| HttpResponse HttpFailed None))] :post [(: % (| dict list str int float bool None))] :tags {:context "doeff-cluster" :role "protocol"}}
+  "答えを本文の JSON の値にするため: 300 未満の返事 = 本文の JSON・断り(400 以上)= RouteRefused・返事の無い失敗 = RouteUnreachable。"
+  (match answer
+    (HttpResponse) (match (>= answer.status 400)
+                     True (raise (RouteRefused answer.status (cut answer.text 0 500)))
+                     False (json.loads answer.text))
+    (HttpFailed) (raise (RouteUnreachable answer))
+    _ (raise (RuntimeError "coordinator の宛先が無いので送れなかった"))))
+
+
+(defk write-accepted [answer]
+  {:pre [(: answer (| HttpResponse HttpFailed None))] :post [(: % bool)] :tags {:context "doeff-cluster" :role "protocol"}}
+  "compare-and-set の書きの答えを読むため: 409 = 合わなかった = 偽・300 未満 = 真・ほかの断りと返事の無い失敗は answer-json と同じく投げる。"
+  (match answer
+    (HttpResponse :status 409) False
+    _ (do (<- _body (answer-json answer)) True)))
