@@ -374,7 +374,7 @@
     (setv view (target-view state target {} START T) by-view (len calls))
     (.clear calls)
     (setv verdict (version-state state "w" START T) by-version (len calls))
-    #((get view "stopped") by-view verdict.state by-version))
+    #(view.stopped by-view verdict.state by-version))
   ;; 止めている途中: replicas 0 だが atlas の上で w がまだ動いている。
   (setv #(stopped by-view state by-version) (both (scaled-to-zero None)))
   (assert (= #(stopped state) #(False VersionState.UPDATING)))
