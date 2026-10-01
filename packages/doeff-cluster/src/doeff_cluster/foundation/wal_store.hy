@@ -12,6 +12,8 @@
 ;;;   後ろに別の行が続く行の破損・checksum の不一致・seq の飛び/逆行・壊れた snapshot は WalCorrupted で起動を断る(黙って
 ;;;   切り詰めると、返事を済ませた書き — 版の番号と lease の行を含む — が巻き戻った状態で起動してしまう)。
 ;;; I/O はこの module の中だけ(調停ループの Program は Persist の effect しか知らない)。scheduler の外の thread は作らない。
+(require doeff-hy.macros [val])
+(val MODULE-TAGS {:context "doeff-cluster" :role "foundation"})
 (require doeff-hy.macros [defhandler])
 (import json)
 (import os)

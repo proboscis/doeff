@@ -11,6 +11,8 @@
 ;;;   detached-cluster(detached.hy)… 本番: coordinator の GET /state の worker の状態の行を poll-seconds ごとに読む(本番の coordinator は
 ;;;                                   長い待ちの読みを持たない — 契約の答えとして置く)。
 ;;;   sim-cluster(local.hy)        … 模擬: sim の世界が process の終わりを書いた時に待ち手の Promise を満たす(読み直さない)。
+(require doeff-hy.macros [val])
+(val MODULE-TAGS {:context "doeff-cluster" :role "intent"})
 (require doeff-hy.macros [defeffect])
 (require doeff-hy.record [defrecord])
 (import dataclasses [dataclass])

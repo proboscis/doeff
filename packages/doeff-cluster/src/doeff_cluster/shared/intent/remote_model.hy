@@ -20,6 +20,7 @@
 ;;; 詰めた Program は task の本文に載せず、coordinator の置き場 /programs/<sha>(program-sha)に版と一緒に先に置き、本文は sha だけを運ぶ
 ;;; (service の宣言と同じ運び方 — ADR-DOE-CLUSTER-001 R3b)。
 (require doeff-hy.macros [deff val])
+(val MODULE-TAGS {:context "doeff-cluster" :role "intent"})
 (import base64)
 (import collections)
 (import collections.abc)

@@ -15,6 +15,7 @@
 ;;;
 ;;; handler: 本番 = detached.hy の warm-cluster(POST /warm・GET /warm/<キー>)。手元では sim-cluster(local.hy)の宿が同じ要求の形で答える。
 (require doeff-hy.macros [defk <- val var])
+(val MODULE-TAGS {:context "doeff-cluster" :role "intent"})
 (require doeff-hy.record [defrecord])
 (import dataclasses [dataclass])
 (import hashlib)

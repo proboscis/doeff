@@ -8,6 +8,7 @@
 ;;; task の本文の形(task-submit-body)と問い合わせの答えの読み(outcome-of・settled-value)は、この handler と sim-cluster の偽の宿が
 ;;; 同じ関数を使う(本文を写さない)。
 (require doeff-hy.macros [defhandler defk deff <- val])
+(val MODULE-TAGS {:context "doeff-cluster" :role "protocol"})
 (require doeff-hy.record [defrecord])
 (import dataclasses [dataclass])  ; defrecord の展開が名指す
 (import doeff_cluster.foundation.coordinator_http [IDEMPOTENT-DEADLINE-SECONDS RESEND-PAUSE-SECONDS])

@@ -5,6 +5,8 @@
 ;;; source の file・環境変数)なので、送る形と判断を置く remote_model.hy(domain)から分けた(#1630 — 純粋な層の
 ;;; module が remote_model 経由で os・pathlib を読んでいた)。呼ぶのは送り手と受け側の入口と io の handler だけで、
 ;;; 宣言の組み立て(service_model.system-declaration)には呼び手がこの値を渡す。
+(require doeff-hy.macros [val])
+(val MODULE-TAGS {:context "doeff-cluster" :role "foundation"})
 (import functools [cache])
 (import hashlib)
 (import importlib.metadata)
