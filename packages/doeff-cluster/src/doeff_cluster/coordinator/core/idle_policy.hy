@@ -11,6 +11,7 @@
 ;;; 変えないので、起きる刻と、そこでの判断は 1 秒ごとの拍と同じになる(同値の検 = tests/test_idle_skip.hy)。
 (require doeff-hy.macros [defk <- val var])
 (import dataclasses [replace])
+(import math [ceil])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming])
 (import doeff_cluster.coordinator.intent.cluster_model [ClusterState ClusterNaming IdleProbe])
 (import doeff_cluster.coordinator.core.cluster_policy [nodes-to-read with-derived-capabilities])
@@ -57,3 +58,10 @@
             (:= ticks (+ ticks 1)))
         (:= found ticks)))
   (if (is found None) MAX-QUIET-TICKS found))
+
+
+(defk rest-to-tick [elapsed-ms quiet-ms]
+  {:pre [(: elapsed-ms int) (: quiet-ms int)] :post [(: % int)] :tags {:context "doeff-cluster" :role "judgment"}}
+  "要求ではない出来事で起こされた取り手が、本番の 1 秒の拍がその出来事に気づく刻(眠り始めから整数秒・1 秒以上・飛ばしてよい長さ
+   まで)まで、あと何 ms 眠るかを知るため。"
+  (- (min quiet-ms (max TICK-MS (* TICK-MS (ceil (/ elapsed-ms TICK-MS))))) elapsed-ms))

@@ -437,7 +437,7 @@
 
 (defclass [(dataclass :frozen True)] CoordinatorFault [EffectBase]
   "coordinator の中の欠陥(Fault)を log に 1 行出す。結果は None。本番の受け口(coordinator_inbox.http-requests)は stderr へ、
-   模擬の受け口(coordinator_handler_sets.queued-requests)は列の faults へ書く。"
+   模擬の受け口(coordinator.protocol.request_queue.queued-requests)は列の faults へ書く。"
   (#^ Fault fault))
 
 

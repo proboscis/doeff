@@ -21,7 +21,7 @@
 (import doeff_cluster.foundation.host_contract [HOST-CONTRACT environ-reader host-reader])
 (import doeff_cluster.job_context [RunContext])
 (import doeff_cluster.sim.local [SimChild SimLink host-answers])
-(import doeff_cluster.coordinator.entry.handler_sets [RequestQueue])
+(import doeff_cluster.coordinator.protocol.request_queue [RequestQueue])
 
 (val HOST-PROCESS "host-process")
 (val SIM-HOST "sim-host")

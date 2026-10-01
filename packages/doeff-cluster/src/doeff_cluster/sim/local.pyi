@@ -45,7 +45,7 @@ _Answer = TypeVar("_Answer")
 # --- 型の宣言の無い module の値の、この module が読む欄 ----------------------------------------------------
 
 class _RequestQueueView(Protocol):
-    """coordinator の受け口(handler_sets.RequestQueue)— up = 受け付けているか。"""
+    """coordinator の受け口(protocol.request_queue.RequestQueue)— up = 受け付けているか。"""
 
     @property
     def up(self) -> bool: ...

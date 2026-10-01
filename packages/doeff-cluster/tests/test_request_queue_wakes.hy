@@ -1,4 +1,4 @@
-;; 模擬の coordinator の要求の列(coordinator_handler_sets.RequestQueue と queued-requests)の待ちは読み直さず、列への書き
+;; 模擬の coordinator の要求の列(coordinator.protocol.request_queue の RequestQueue と queued-requests)の待ちは読み直さず、列への書き
 ;; (enqueue-request)で起きる。
 ;;
 ;; - 列に書く前は取り手が起きない(期限まで眠る — 期限で起きた時は空のまとまり)。
@@ -16,7 +16,7 @@
 (import doeff_cluster.shared.core.clock [now-epoch-ms])
 (import doeff_cluster.shared.intent.protocol [NextRequests])
 (import doeff_cluster.foundation.coordinator_inbox [http-request])
-(import doeff_cluster.coordinator.entry.handler_sets [RequestQueue queued-requests enqueue-request])
+(import doeff_cluster.coordinator.protocol.request_queue [RequestQueue queued-requests enqueue-request])
 (import tests.clock_fixtures [clock-at count-delays])
 
 
