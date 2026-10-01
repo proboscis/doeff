@@ -12,7 +12,7 @@
 (import doeff [with_handlers Program])
 (import doeff_core_effects.scheduler [Spawn Gather AcquireSemaphore ReleaseSemaphore Semaphore Task])
 (import doeff_time [Delay SimClock sim-time-handler])
-(import doeff_cluster.clock [now-epoch-ms])
+(import doeff_cluster.shared.core.clock [now-epoch-ms])
 (import tests.clock_fixtures [clock-at clock-ms])
 (import doeff_cluster.shared_handlers [shared-memory])
 (import doeff_cluster.shared.intent.semaphore_model [CreateNamedSemaphore ClusterSemaphore LeaseLost])

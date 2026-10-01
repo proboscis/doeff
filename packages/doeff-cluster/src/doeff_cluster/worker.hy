@@ -2,7 +2,7 @@
 ;; 子 process もコードの準備も観測で追うので、どの job の処理もループ(停止の経路)を塞がない。
 (require doeff-hy.macros [defk <- val var])
 (import doeff_time [Delay])
-(import doeff_cluster.clock [now-epoch-ms])
+(import doeff_cluster.shared.core.clock [now-epoch-ms])
 (import .worker_model [WorkerPolicy WorkerState WorldView DesiredJobs DesiredUnreadable
   ReadDesired ObserveWorld WorkerStopRequested PublishStatus JobPhase])
 (import .worker_policy [plan records-after statuses])

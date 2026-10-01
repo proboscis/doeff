@@ -13,7 +13,7 @@
 (import sys)
 (import pathlib [Path])
 (import doeff [run])
-(import doeff_cluster.image_rules [image-contract-violations])
+(import doeff_cluster.shared.core.image_rules [image-contract-violations])
 
 
 (defn #^ None main []

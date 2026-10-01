@@ -12,7 +12,7 @@
 (import doeff_cluster.local [sim-cluster ProcessesOf SimProcess SimWorker AwaitProcessStarted StartWorker])
 (import doeff_core_effects.scheduler [Spawn Task Wait])
 (import doeff_time [Delay])
-(import doeff_cluster.clock [now-epoch-ms])
+(import doeff_cluster.shared.core.clock [now-epoch-ms])
 (import doeff_cluster.shared.intent.process_model [AwaitProcessEnded ProcessEnded ProcessWaitExpired])
 (import doeff_cluster.shared.intent.detached_model [SubmitDetached AwaitDetached DetachedSucceeded DetachedPending])
 (import doeff_cluster.detached [process-watch-step ProcessWatch])

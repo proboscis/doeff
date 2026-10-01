@@ -10,7 +10,7 @@
 (import doeff [with-handlers Program])
 (import doeff_cluster.shared.intent.service_model [System])
 (import doeff_time [Delay sim-time-handler])
-(import doeff_cluster.clock [now-epoch-ms])
+(import doeff_cluster.shared.core.clock [now-epoch-ms])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming])
 (import doeff_cluster.coordinator.intent.cluster_model [ClusterState ClusterNaming IdleProbe NextRequests])
 (import doeff_cluster.coordinator.entry.handler_sets [RequestQueue MemoryWalStore queued-requests])

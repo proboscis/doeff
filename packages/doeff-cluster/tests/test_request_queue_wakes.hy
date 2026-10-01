@@ -13,7 +13,7 @@
 (import doeff [with-handlers Program])
 (import doeff_core_effects.scheduler [Spawn Task Wait])
 (import doeff_time [Delay sim-time-handler])
-(import doeff_cluster.clock [now-epoch-ms])
+(import doeff_cluster.shared.core.clock [now-epoch-ms])
 (import doeff_cluster.coordinator.intent.cluster_model [NextRequests])
 (import doeff_cluster.foundation.coordinator_inbox [http-request])
 (import doeff_cluster.coordinator.entry.handler_sets [RequestQueue queued-requests enqueue-request])

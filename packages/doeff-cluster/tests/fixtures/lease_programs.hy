@@ -11,7 +11,7 @@
 (import doeff_core_effects.handlers [state])
 (import doeff_core_effects.scheduler [AcquireSemaphore Semaphore])
 (import doeff_time [Delay])
-(import doeff_cluster.clock [now-epoch-ms])
+(import doeff_cluster.shared.core.clock [now-epoch-ms])
 (import doeff_cluster.cluster_foundation [lease-holder-of])
 (import doeff_cluster.host_contract [HOST-CONTRACT])
 (import doeff_cluster.job_context [RunContext])

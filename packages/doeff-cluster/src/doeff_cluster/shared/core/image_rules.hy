@@ -3,6 +3,7 @@
 ;;; 入口(Dockerfile を読んで違反を出す main)は image_contract.hy。ここは file も process も触らない(#1695 — 頭の註の表の読み
 ;;; declared-packages などの射影は runtime の module に置かない)。約束の中身は image_contract.hy の頭の註。
 (require doeff-hy.macros [defk <- val var])
+(val MODULE-TAGS {:context "doeff-cluster" :role "judgment"})
 (require doeff-hy.record [defrecord])
 (import dataclasses [dataclass])
 (import re)
