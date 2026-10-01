@@ -122,9 +122,53 @@ class RolloutSpec:
     abort: bool
 
 @dataclass(frozen=True, kw_only=True)
+class RolloutHistory:
+    phase: str
+    at: int
+    reason: str
+
+@dataclass(frozen=True, kw_only=True)
+class RolloutStuck:
+    step: str
+    reason: str
+    since_ms: int
+
+@dataclass(frozen=True, kw_only=True)
+class RolloutDrift:
+    deployment: str
+    expected: int
+    observed: int
+    since_ms: int
+    note: str
+
+@dataclass(frozen=True, kw_only=True)
+class RolloutStatus:
+    phase: str = "Pending"
+    phase_since_ms: int | None = None
+    reason: str | None = None
+    history: tuple[RolloutHistory, ...] = ()
+    created_ms: int | None = None
+    started_ms: int | None = None
+    from_replicas: int | None = None
+    stopped_old_ms: int | None = None
+    not_ready_since_ms: int | None = None
+    unknown_since_ms: int | None = None
+    completed_ms: int | None = None
+    rollback_step: str | None = None
+    failure: str | None = None
+    restored_old_ms: int | None = None
+    stuck: RolloutStuck | None = None
+    stuck_cleared_ms: int | None = None
+    last_action: dict[str, object] | None = None
+    simulated: dict[str, int] | None = None
+    marked_deployment: str | None = None
+    drift: RolloutDrift | None = None
+    drift_resolved_ms: int | None = None
+
+@dataclass(frozen=True, kw_only=True)
 class RolloutRow:
     spec: RolloutSpec
-    status: dict[str, object]
+    status: RolloutStatus
 
 @dataclass(frozen=True, kw_only=True)
 class AuditEvent:

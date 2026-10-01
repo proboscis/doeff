@@ -6,7 +6,7 @@
 (require doeff-hy.macros [deftest val var])
 (import dataclasses [replace])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming Request])
-(import doeff_cluster.coordinator.intent.cluster_model [ClusterState RolloutRow TaskRecord])
+(import doeff_cluster.coordinator.intent.cluster_model [ClusterState RolloutRow RolloutStatus TaskRecord])
 (import doeff_cluster.coordinator.core.durable_kv [full-kv state-from-kv])
 (import doeff_cluster.coordinator.core.api_policy [plan-rollouts resume-after-downtime mark-alive ALIVE-MARK-MS])
 (import doeff_cluster.coordinator.protocol.request_bodies [responded])
@@ -34,15 +34,15 @@
   (sim.rollout "to-worker" FORWARD)
   (sim.run-until "to-worker" #("Observing"))
   (for [_ (range 30)] (sim.step))
-  (setv since (get (. (get sim.state.rollouts "to-worker") status) "phaseSinceMs"))
+  (setv since (. (get sim.state.rollouts "to-worker") status phase-since-ms))
   (setv gap (restart-after sim 600))
   (assert (>= gap 600000))
-  (assert (= (get (. (get sim.state.rollouts "to-worker") status) "phaseSinceMs") (+ since gap)))
+  (assert (= (. (get sim.state.rollouts "to-worker") status phase-since-ms) (+ since gap)))
   (sim.step)
   (assert (= (sim.phase "to-worker") "Observing"))
   (assert (= (sim.run-until "to-worker" #("Complete" "RolledBack")) "Complete"))
   ;; 完了は起き直した後に 90 秒ほど見てから(止まっていた 10 分は数えていない)
-  (setv done (get (. (get sim.state.rollouts "to-worker") status) "completedMs"))
+  (setv done (. (get sim.state.rollouts "to-worker") status completed-ms))
   (assert (>= (- done (+ since gap)) (* 1000 (get FORWARD "observeSeconds")))))
 
 
@@ -79,7 +79,7 @@
 (setv NOT-READY {"ready" "NotReady" "stopped" False "specReplicas" 1 "reason" "拍が落ちた"})
 
 
-(defn #^ dict observing [#^ int since] {"phase" "Observing" "phaseSinceMs" since "history" []})
+(defn #^ RolloutStatus observing [#^ int since] (RolloutStatus :phase "Observing" :phase-since-ms since))
 
 
 (deftest test-unknown-while-observing-neither-completes-nor-fails
@@ -88,58 +88,58 @@
   (var status (get reply-3 0))
   (val reply-4 (rollout-step SPEC status STOPPED UNKNOWN 11000))
   (:= status (get reply-4 0))
-  (assert (= (get status "unknownSinceMs") 11000))
+  (assert (= status.unknown-since-ms 11000))
   (setv #(again _) (rollout-step SPEC status STOPPED UNKNOWN 70000))
-  (assert (= (get again "phase") "Observing"))
+  (assert (= again.phase "Observing"))
   (assert (is again status))                                ; Unknown の間は status を変えない(版が拍ごとに進まない)
   (val reply-5 (rollout-step SPEC status STOPPED READY 61000))
   (:= status (get reply-5 0))
-  (assert (= (get status "phase") "Observing"))
-  (assert (= (get status "phaseSinceMs") 50000))            ; Unknown の 50 秒だけずらした
+  (assert (= status.phase "Observing"))
+  (assert (= status.phase-since-ms 50000))            ; Unknown の 50 秒だけずらした
   (val reply-6 (rollout-step SPEC status STOPPED READY 111000))
   (:= status (get reply-6 0))
-  (assert (= (get status "phase") "Complete")))
+  (assert (= status.phase "Complete")))
 
 
 (deftest test-complete-needs-a-ready-observation
   (setv #(status _) (rollout-step SPEC (observing 0) STOPPED NOT-READY 61000))
-  (assert (= (get status "phase") "Observing")))
+  (assert (= status.phase "Observing")))
 
 
 (deftest test-unknown-new-while-stopping-old-holds-the-stop
-  (setv status {"phase" "StoppingOld" "phaseSinceMs" 0 "history" []})
+  (setv status (RolloutStatus :phase "StoppingOld" :phase-since-ms 0))
   (setv running-old {"ready" "Ready" "stopped" False "specReplicas" 1 "reason" ""})
   (setv #(after actions) (rollout-step SPEC status running-old UNKNOWN 1000))
-  (assert (= (get after "phase") "StoppingOld"))
+  (assert (= after.phase "StoppingOld"))
   (assert (= actions [])))
 
 
 (deftest test-a-failing-action-is-retried-with-growing-gaps
   (setv action {"op" "scale" "target" SPEC.from-target "replicas" 0})
-  (setv failed {"lastAction" {"op" "scale" "target" "Deployment:ns/old" "replicas" 0 "ok" False "error" "403" "at" 1000 "count" 3}})
+  (setv failed (RolloutStatus :last-action {"op" "scale" "target" "Deployment:ns/old" "replicas" 0 "ok" False "error" "403" "at" 1000 "count" 3}))
   (assert (= (retry-delay-ms 3) 4000))
   (assert (not (action-due failed action 4999)))
   (assert (action-due failed action 5000))
   (assert (= (retry-delay-ms 30) RETRY-MAX-MS))
   ;; 違う action・成功した直後はすぐ出す
   (assert (action-due failed (| action {"replicas" 1}) 1001))
-  (assert (action-due {"lastAction" (| (get failed "lastAction") {"ok" True})} action 1001)))
+  (assert (action-due (RolloutStatus :last-action (| failed.last-action {"ok" True})) action 1001)))
 
 
 (deftest test-a-rollback-that-does-not-finish-is-marked-stuck-and-keeps-the-new
-  (setv status {"phase" "RollingBack" "phaseSinceMs" 0 "rollbackStep" "restoreOld" "fromReplicas" 1 "history" []})
+  (setv status (RolloutStatus :phase "RollingBack" :phase-since-ms 0 :rollback-step "restoreOld" :from-replicas 1))
   (setv old-down {"ready" "NotReady" "stopped" False "specReplicas" 1 "reason" "Pod が起きない"})
   (val reply-7 (rollout-step SPEC status old-down READY 1000))
   (var s (get reply-7 0))
   (var actions (get reply-7 1))
-  (assert (is (.get s "stuck") None))
+  (assert (is s.stuck None))
   (val reply-8 (rollout-step SPEC s old-down READY 601000))
   (:= s (get reply-8 0))
   (:= actions (get reply-8 1))
-  (assert (= (get s "stuck" "step") "restoreOld"))
+  (assert (= s.stuck.step "restoreOld"))
   (assert (= actions []))                                   ; 旧の台数は既に 1(命令は出さない)・新は止めない
   (setv #(again _) (rollout-step SPEC s old-down READY 700000))
-  (assert (= (get again "stuck") (get s "stuck")))         ; 印は付けた拍だけ変わる
+  (assert (= again.stuck s.stuck))         ; 印は付けた拍だけ変わる
   ;; 計器に出る
   (setv state (ClusterState :rollouts {"r" (RolloutRow :spec SPEC :status s)}))
   (assert (in "doeff_worker_rollout_stuck{rollout=\"r\"} 1" (metrics-text state 700000 T))))
