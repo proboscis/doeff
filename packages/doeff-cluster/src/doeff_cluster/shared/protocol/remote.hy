@@ -16,9 +16,11 @@
 (import doeff_time [Delay])
 (import doeff [run])
 (import doeff_cluster.shared.intent.protocol [PROTOCOL-FORMAT])
-(import doeff_cluster.shared.intent.runtime_env_model [RuntimeEnv runtime-env->json])
-(import doeff_cluster.shared.intent.remote_model [RemoteJob RemoteJobFailed EnvUnavailable TaskSucceeded TaskFailed
-                       encode-program decode-outcome program-sha])
+(import doeff_cluster.shared.intent.runtime_env_model [RuntimeEnv])
+(import doeff_cluster.shared.core.runtime_env_rules [runtime-env->json])
+(import doeff_cluster.shared.intent.remote_model [RemoteJob RemoteJobFailed EnvUnavailable TaskSucceeded TaskFailed])
+(import doeff_cluster.shared.protocol.program_codec [encode-program decode-outcome])
+(import doeff_cluster.shared.core.remote_rules [program-sha])
 
 
 (deff task-submit-body [#^ str sha #^ str revision #^ frozenset needs #^ str name #^ float lease-seconds

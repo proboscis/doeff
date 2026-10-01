@@ -15,7 +15,7 @@
   {:pre [(: task str) (: worker str) (: instance str) (: result str)] :post [(: % tuple) (= (len %) 4)]
    :tags {:context "doeff-cluster" :role "protocol"}}
   "終わった task の結果 1 つ → #(method path query 本文)。task = coordinator の振った task の id・worker / instance = 送り手の子 process の
-   担い手の名と世代の名・result = 詰めた結果(remote_model.encode-outcome)。本番の子 process(job_entry.run-task)と sim の宿が同じ要求を
+   担い手の名と世代の名・result = 詰めた結果(program_codec.encode-outcome)。本番の子 process(job_entry.run-task)と sim の宿が同じ要求を
    coordinator へ送るため(定義点はここ 1 つ — 受けるのは cluster_policy.absorb-task-result)。"
   #("POST" (.format "/tasks/{}/result" (url-quote task :safe "")) {}
     {"worker" worker "instance" instance "result" result "format" PROTOCOL-FORMAT}))

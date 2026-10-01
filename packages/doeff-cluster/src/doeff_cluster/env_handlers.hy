@@ -44,7 +44,8 @@
 (import doeff_core_effects.os_process [subprocess-handler])
 (import doeff_core_effects.os_file [os-file-handler])
 (import doeff_time [sync-time-handler])
-(import doeff_cluster.shared.intent.runtime_env_model [EnvFailure EnvFailureKind RuntimeEnv runtime-env-of-json])
+(import doeff_cluster.shared.intent.runtime_env_model [EnvFailure EnvFailureKind RuntimeEnv])
+(import doeff_cluster.shared.core.runtime_env_rules [runtime-env-of-json])
 (import doeff_cluster.worker.core.env_prepare [
                      
                       prepare-env env-marker->json] doeff_cluster.worker.intent.env_prepare_model [StageStarted PrepareNote DiskFree RepoAllowed EnsureMirror FetchCommit MaterializeTree TreeHash EnsureNativeWheel SyncProject InstallWheels WriteImportRoots ReadEditableRoots CompileTree ProbeImports WriteEnvMarker MirrorReady FetchState WheelReady SyncReport BytecodeReport ProbeReport PrepareRequest KnownRoot EnvReady ROOTS-PTH] doeff_cluster.shared.intent.env_marker_model [FileSha256 ENV-MARKER])

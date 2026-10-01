@@ -34,7 +34,9 @@
 (import tests.link_rig [LinkRig])
 
 (import doeff_cluster.worker.intent.worker_model [DesiredJobs JobStatus] doeff_cluster.shared.intent.job_model [JobPhase])
-(import doeff_cluster.shared.intent.remote_model [TaskSucceeded decode-program encode-outcome failed-from])
+(import doeff_cluster.shared.intent.remote_model [TaskSucceeded])
+(import doeff_cluster.shared.protocol.program_codec [decode-program encode-outcome])
+(import doeff_cluster.shared.core.remote_rules [failed-from])
 (import doeff_cluster.foundation.process_versions [current-versions])
 (import doeff_cluster.shared.intent.detached_model [SubmitDetached AwaitDetached CancelDetached ReleaseDetached
                                       DetachedSubmitted DetachedSucceeded DetachedFailed DetachedLost DetachedCancelled
@@ -1112,7 +1114,8 @@
   ;; 要る能力を書かない本文(needs が無い・空)と旧い形の requires の本文は、POST /tasks・PUT /detached・POST /warm のどれでも
   ;; 400 で理由を返し、状態を変えない(ADR-DOE-CLUSTER-001 R4b — どこにでも置ける仕事は無い・label の照合は受け付けない)。
   (import tests.env_fixtures [LOCK env-of])
-  (import doeff_cluster.shared.intent.runtime_env_model [runtime-env->json RuntimeEnv])
+  (import doeff_cluster.shared.intent.runtime_env_model [RuntimeEnv])
+  (import doeff_cluster.shared.core.runtime_env_rules [runtime-env->json])
   (<- env RuntimeEnv (env-of "app-1" "lib-1" LOCK))
   (<- declared (runtime-env->json env))
   (val reply-86 (beat (ClusterState) "w" 0))

@@ -13,8 +13,10 @@
 (import doeff_time [Delay])
 (import doeff_cluster.shared.core.clock [now-epoch-ms])
 (import doeff_cluster.shared.intent.detached_model [DetachedRefused])
-(import doeff_cluster.shared.intent.runtime_env_model [RuntimeEnv runtime-env->json])
-(import doeff_cluster.shared.intent.warm_model [WarmRuntimeEnv ReadWarmState WarmState WarmUnreachable warm-key])
+(import doeff_cluster.shared.intent.runtime_env_model [RuntimeEnv])
+(import doeff_cluster.shared.core.runtime_env_rules [runtime-env->json])
+(import doeff_cluster.shared.intent.warm_model [WarmRuntimeEnv ReadWarmState WarmState WarmUnreachable])
+(import doeff_cluster.shared.core.warm_rules [warm-key])
 (import tests.coordinator_contract_handlers [WarmsSeen WarmSeen SetReachable contract-env])
 
 ;; どの担い手も提供しない能力(両方の組で「合う担い手が居ない」行 — 準備済みの数は契約の外)。

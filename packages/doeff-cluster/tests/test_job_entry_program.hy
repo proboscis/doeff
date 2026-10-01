@@ -14,7 +14,7 @@
 (import sys)
 (import pathlib [Path])
 (import doeff [Program])
-(import doeff_cluster.shared.intent.remote_model [encode-program])
+(import doeff_cluster.shared.protocol.program_codec [encode-program])
 (import doeff_cluster.foundation.process_versions [current-versions])
 (import tests.fixtures.envs [plain-foundation])
 (import tests.fixtures.services [tally-program bare-program self-contained-program])

@@ -19,8 +19,8 @@
 (import doeff_core_effects.os_file [os-file-handler])
 (import doeff_core_effects.os_process [subprocess-handler])
 (import doeff_time [sync-time-handler])
-(import doeff_cluster.shared.intent.runtime_env_model [RepoCheckout NativeWheel PythonProject RuntimeEnv EnvFailureKind
-                                         runtime-env->json env-key current-platform])
+(import doeff_cluster.shared.intent.runtime_env_model [RepoCheckout NativeWheel PythonProject RuntimeEnv EnvFailureKind])
+(import doeff_cluster.shared.core.runtime_env_rules [runtime-env->json env-key current-platform])
 (import doeff_cluster.shared.intent.checkout_model [LocalCheckout ProjectOfCheckout])
 (import doeff_cluster.shared.core.runtime_env [runtime-env-of-checkouts])
 (import doeff_cluster.shared.protocol.checkout_reads [checkout-reads])
@@ -35,7 +35,9 @@
 ] doeff_cluster.worker.core.worker_rules [code-key])
 (import doeff_cluster.worker.protocol.observations [ObserveEnvs])
 (import doeff_cluster.worker.core.policy [plan])
-(import doeff_cluster.shared.intent.remote_model [encode-program decode-outcome program-sha TaskSucceeded TaskFailed])
+(import doeff_cluster.shared.intent.remote_model [TaskSucceeded TaskFailed])
+(import doeff_cluster.shared.protocol.program_codec [encode-program decode-outcome])
+(import doeff_cluster.shared.core.remote_rules [program-sha])
 (import doeff_cluster.foundation.process_versions [current-versions])
 
 (val FIXTURES (/ (. (Path __file__) (resolve) parent) "fixtures"))

@@ -14,14 +14,13 @@
 ;;; 使い方(いつ温め、いつ Ready を出すか)は送り手の方針で、ここは仕組みだけ。
 ;;;
 ;;; handler: 本番 = detached.hy の warm-cluster(POST /warm・GET /warm/<キー>)。手元では sim-cluster(local.hy)の宿が同じ要求の形で答える。
-(require doeff-hy.macros [defk <- val var])
+;;; ここは型だけ。行のキー(warm-key)と通信の本文との往復(warm-state->json・warm-state-of-json)は doeff_cluster.shared.core.warm_rules。
+(require doeff-hy.macros [val])
 (val MODULE-TAGS {:context "doeff-cluster" :role "intent"})
 (require doeff-hy.record [defrecord])
 (import dataclasses [dataclass])
-(import hashlib)
-(import json)
 (import doeff [EffectBase])
-(import .runtime_env_model [RuntimeEnv env-key])
+(import .runtime_env_model [RuntimeEnv])
 (import doeff_cluster.shared.core.capabilities [effect-needs-problem])
 
 (val WARM-KEY-LENGTH 24)
@@ -74,29 +73,3 @@
   "温める表の行 key の今の姿を読む。答え = WarmAnswer(WarmState — 表に無い行は ready も preparing も空・until-ms = 0 — か、
    coordinator に届かなかった WarmUnreachable)。"
   (#^ str key))
-
-
-(defk warm-key [env needs]
-  {:pre [(: env RuntimeEnv) (: needs tuple)] :post [(: % str) (= (len %) WARM-KEY-LENGTH)]}
-  "温める表の行のキー(定義点はここ 1 つ)= 宣言のキー(platform を含まない)と needs の組の sha256 の頭 24 桁。
-   worker の root のキーは platform を含むので別の物(coordinator は worker の platform ごとに root のキーを計算して照らす)。"
-  (<- declared str (env-key env ""))
-  (val text (json.dumps {"env" declared "needs" (sorted needs)} :sort-keys True :separators #("," ":")))
-  (cut (.hexdigest (hashlib.sha256 (.encode text "utf-8"))) 0 WARM-KEY-LENGTH))
-
-
-(defk warm-state->json [state]
-  {:pre [(: state WarmState)] :post [(: % dict)]}
-  "WarmState → 通信の本文。"
-  {"key" state.key "ready" (list state.ready) "preparing" (list state.preparing)
-   "failed" (lfor f state.failed {"worker" f.worker "kind" f.kind "detail" f.detail "retryable" f.retryable})
-   "untilMs" state.until-ms})
-
-
-(defn #^ WarmState warm-state-of-json [#^ dict value]  ; defk にできない: coordinator の純粋な判断と HTTP の handler の境界で読む
-  "通信の本文 → WarmState。"
-  (WarmState :key (get value "key") :ready (tuple (get value "ready")) :preparing (tuple (get value "preparing"))
-             :failed (tuple (gfor f (get value "failed")
-                                  (WarmFailure :worker (get f "worker") :kind (get f "kind") :detail (get f "detail")
-                                               :retryable (bool (get f "retryable")))))
-             :until-ms (int (get value "untilMs"))))
