@@ -231,8 +231,7 @@
         "doeff-cluster-wal-store",
         "doeff-cluster-watch-policy",
         "doeff-cluster-coordinator-request-bodies-model",
-        "doeff-cluster-state-json",
-        "doeff-cluster-read-door-policy"
+        "doeff-cluster-state-json"
       ],
       "layer": "runtime",
       "name": "doeff-cluster-coordinator",
@@ -1492,8 +1491,7 @@
         "doeff-cluster-coordinator-replies",
         "doeff-cluster-record-spec",
         "doeff-cluster-drain-policy",
-        "doeff-cluster-promise-wait",
-        "doeff-cluster-read-door-policy"
+        "doeff-cluster-promise-wait"
       ],
       "exclude": [
         "packages/doeff-cluster/tests/fixtures/independence/*"
@@ -1581,22 +1579,6 @@
         "packages/doeff-cluster/src/doeff_cluster/coordinator/core/watch_policy.hy"
       ],
       "responsibility": "版の変化を待つ読み(GET /watch)の判断(純粋・I/O はしない — 待ちを起こす条件・期限・worker ごとの見え方)。",
-      "typed": true
-    },
-    {
-      "allow": [
-        "doeff-cluster-cluster-model",
-        "doeff-cluster-shared-protocol"
-      ],
-      "layer": "pure",
-      "name": "doeff-cluster-read-door-policy",
-      "paths": [
-        "packages/doeff-cluster/src/doeff_cluster/coordinator/core/read_door_policy.hy"
-      ],
-      "public": [
-        "packages/doeff-cluster/src/doeff_cluster/coordinator/core/read_door_policy.hy"
-      ],
-      "responsibility": "coordinator の読みだけの口(--read-port)で許す経路の表と、届いた要求を断るかの判断(純粋・I/O はしない — 表に無い経路は既定で断る・#2742)。",
       "typed": true
     },
     {

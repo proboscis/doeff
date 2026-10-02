@@ -23,8 +23,6 @@
 ;;;                           切り離した task を送る(job id で冪等)・読む(lease に触らない)・取り消す・保持を解く(detached_policy)
 ;;;   GET    /livez · /readyz   k8s の probe。調停ループを通さず、HTTP の受付(handler)が「ループが最後に要求を取りに来た時刻」だけで
 ;;;                             答える(probe-verdict)。fsync・k8s の API の読みでループが数秒遅れても落ちない(2026-09-25)。
-;;;   読みだけの口(--read-port・既定は立てない — #2742): 同じ列に並ぶが、許す経路の表(read_door_policy.READ-ROUTES — 今は
-;;;                             GET /resources/Service/<名> だけ)に無い要求は振り分けの前に 403 で断る。probe にも答えない。
 ;;;
 ;;; 形: 調停ループは doeff の Program(run-coordinator)。並んでいる要求をまとめて受け(NextRequests)、純粋な判断
 ;;; (api_policy.respond / tick / plan-rollouts)で 1 件ずつ次の状態と返事を導き、まとまりの変化を 1 回で永続化してから
@@ -35,8 +33,7 @@
 (val MODULE-TAGS {:context "coordinator" :role "program"})
 (import dataclasses [replace])
 (import doeff_cluster.shared.core.clock [now-epoch-ms])
-(import doeff_cluster.shared.intent.protocol [ClusterTiming Reply CoordinatorStopRequested Request RequestDoor])
-(import doeff_cluster.coordinator.core.read_door_policy [read-door-refusal])
+(import doeff_cluster.shared.intent.protocol [ClusterTiming Reply CoordinatorStopRequested Request])
 (import doeff_hy.table [Table TableWrite])
 (import doeff_cluster.coordinator.intent.cluster_model [ClusterState ErrorReply ClusterNaming IdleProbe IdleNextRequests SaveState Fault CoordinatorFault Watcher WatchRefusal WatchAnswer WatchStep
                                                        DeploymentReading DeploymentSeen DeploymentUnreadable NodeLabelsSeen NodeLabelsUnreadable])
@@ -164,13 +161,6 @@
   (var replies #())
   (var waiting watchers)
   (for [request batch]
-    ;; 読みだけの口の要求は、許す経路の表に無ければ振り分けの前に 403 で断る(状態にも待ちにも触らない — read_door_policy・#2742)。
-    ;; 全部の経路の口の要求(heartbeat を含むほぼ全部)は判断を呼ばずに通す(1 歩の費用を増やさない)。
-    (when (is request.door RequestDoor.READ)
-      (<- refusal (| ErrorReply None) (read-door-refusal request))
-      (when (is-not refusal None)
-        (:= replies (+ replies #(#(request 403 refusal))))
-        (continue)))
     (<- watch (| Watcher WatchRefusal None) (watch-of request now))
     (match watch
       (Watcher) (:= waiting (+ waiting #(watch)))
