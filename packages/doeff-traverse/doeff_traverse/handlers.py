@@ -30,9 +30,14 @@ def sequential():  # noqa: PLR0915 - baseline cleanup keeps existing control flo
     Inspect: returns ItemResult list.
 
     Unhandled Fail inside Traverse marks the item as failed.
+
+    An item's failure is caught by this handler's own ``try`` around the item program,
+    not by a ``Try`` effect per item: the ``Try`` round (two try_handler installs, a
+    GetHandlers, two ``@do`` functions and a Transfer per item) was ~29 µs of the ~46 µs
+    an item cost (agora-redesign #2871). try_handler stays installed around each item,
+    so a ``Try`` the item performs is still answered without an outer try_handler.
     """
-    from doeff_core_effects.effects import Try
-    from doeff_vm import Err, Ok
+    from doeff_core_effects.handlers import try_handler
 
     from doeff.handler_utils import get_inner_handlers
     @do
@@ -42,6 +47,8 @@ def sequential():  # noqa: PLR0915 - baseline cleanup keeps existing control flo
 
         if isinstance(effect, Traverse):
             inner_hs = yield get_inner_handlers(k)
+            # One installer per inner handler for the whole Traverse, not one per item.
+            inner_installs = [_program_handler(h) for h in inner_hs]
             results = []
 
             # Iterate: Collection (from previous traverse) or raw iterable/generator
@@ -61,43 +68,39 @@ def sequential():  # noqa: PLR0915 - baseline cleanup keeps existing control flo
 
                 # Build fresh program for this item
                 prog = effect.f(item.value)
-                # Reinstall inner handlers + this handler for nested Traverse
-                for h in inner_hs:
-                    prog = _program_handler(h)(prog)
-                prog = _program_handler(handler)(prog)
+                # Reinstall inner handlers + this handler for nested Traverse,
+                # and try_handler outermost (where the per-item Try used to put it)
+                for install in inner_installs:
+                    prog = install(prog)
+                prog = try_handler(install_self(prog))
 
-                # Wrap in Try to catch unhandled failures per item
-                @do
-                def attempt(prog=prog):
-                    from doeff_core_effects.handlers import try_handler
-                    value = yield try_handler(Try(prog))
-                    return value
-
-                result = yield attempt()
-                if isinstance(result, Ok):
-                    if result.value is _SKIPPED:
-                        results.append(ItemResult(
-                            index=item.index,
-                            value=item.value,
-                            failed=True,
-                            history=item.history + [HistoryEntry(stage=effect.label, event="skipped")],
-                        ))
-                    else:
-                        results.append(ItemResult(
-                            index=item.index,
-                            value=result.value,
-                            history=item.history + [HistoryEntry(stage=effect.label, event="ok")],
-                        ))
-                elif isinstance(result, Err):
+                # Catch unhandled failures per item
+                try:
+                    value = yield prog
+                except Exception as error:
                     results.append(ItemResult(
                         index=item.index,
-                        value=result.error,
+                        value=error,
                         failed=True,
                         history=item.history + [HistoryEntry(
                             stage=effect.label,
                             event="failed",
-                            detail=str(result.error),
+                            detail=str(error),
                         )],
+                    ))
+                    continue
+                if value is _SKIPPED:
+                    results.append(ItemResult(
+                        index=item.index,
+                        value=item.value,
+                        failed=True,
+                        history=item.history + [HistoryEntry(stage=effect.label, event="skipped")],
+                    ))
+                else:
+                    results.append(ItemResult(
+                        index=item.index,
+                        value=value,
+                        history=item.history + [HistoryEntry(stage=effect.label, event="ok")],
                     ))
 
             return (yield Resume(k, Collection(results)))
@@ -171,7 +174,9 @@ def sequential():  # noqa: PLR0915 - baseline cleanup keeps existing control flo
 
         yield Pass(effect, k)
 
-    return _program_handler(handler)
+    # Built once: the Traverse branch reinstalls this handler around every item.
+    install_self = _program_handler(handler)
+    return install_self
 
 
 def parallel(concurrency=10):  # noqa: PLR0915 - baseline cleanup keeps existing control flow unchanged
