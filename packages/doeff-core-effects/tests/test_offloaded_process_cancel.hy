@@ -20,6 +20,7 @@
 (import os)
 (import threading)
 (import time)
+(import collections.abc [Callable])
 (import concurrent.futures [Future])
 (import pytest)
 (import doeff [Program with_handlers])
@@ -27,7 +28,7 @@
 (import doeff_core_effects.os_process [offloaded-subprocess-handler])
 (import doeff_core_effects.offloaded_call [ThreadPerCall run-detached])
 (import doeff_core_effects.process_effects [ProcessAlive ProcessOutcome RunProcess])
-(import doeff_core_effects.scheduler [scheduled CreateExternalPromise Wait Spawn Cancel TaskCancelledError])
+(import doeff_core_effects.scheduler [scheduled CreateExternalPromise ExternalPromise Task Wait Spawn Cancel TaskCancelledError])
 
 ;; 筋書き 1 つの上限(秒)。普段は 1 秒の内に終わる。過ぎたら scheduler の thread が固まったと見て落とす。
 (val SCENARIO-LIMIT 5.0)
@@ -70,7 +71,7 @@
    (set_running_or_notify_cancel の答え — 取り消された Future は False)を decided へ渡す。"
 
   (deff __init__ [self gate submitted decided]  ; defk にできない: 検の殻の資源の初期化
-    {:pre [(: self GatedStart) (: gate threading.Event) (: submitted "scheduler の ExternalPromise") (: decided "scheduler の ExternalPromise")]
+    {:pre [(: self GatedStart) (: gate threading.Event) (: submitted (get ExternalPromise Future)) (: decided (get ExternalPromise bool))]
      :post [(: % None)]}
     "gate と、知らせを受ける promise 2 つを持つため。"
     (setv self.gate gate
@@ -78,7 +79,7 @@
           self.decided decided))
 
   (deff submit [self call #* args]  ; defk にできない: Executor の口(concurrent.futures の約束 — VM の外)
-    {:pre [(: self GatedStart) (: call "(引数) → 値 の callable") (: args tuple)] :post [(: % Future)]}
+    {:pre [(: self GatedStart) (: call Callable) (: args tuple)] :post [(: % Future)]}
     "call を新しい thread で gate が開いた後に回す Future を返し、その Future を submitted へ渡すため。"
     (setv future (Future))
     (.complete self.submitted future)
@@ -86,7 +87,7 @@
     future)
 
   (deff start-after-gate [self future call args]  ; defk にできない: 仕事の thread の本体(VM の外)
-    {:pre [(: self GatedStart) (: future Future) (: call "(引数) → 値 の callable") (: args tuple)] :post [(: % None)]}
+    {:pre [(: self GatedStart) (: future Future) (: call Callable) (: args tuple)] :post [(: % None)]}
     "gate が開く(SCENARIO-LIMIT 秒まで)のを待ち、Future が取り消されていなければ call を回して答えを Future へ置くため。"
     (.wait self.gate SCENARIO-LIMIT)
     (setv started (.set-running-or-notify-cancel future))
@@ -99,7 +100,7 @@
 
 
 (deff report-pid [fifo promise]  ; defk にできない: 検の殻の thread の本体(VM の外で FIFO の書き手を待つ)
-  {:pre [(: fifo str) (: promise "scheduler の ExternalPromise")] :post [(: % None)]}
+  {:pre [(: fifo str) (: promise (get ExternalPromise int))] :post [(: % None)]}
   "子が FIFO へ書いた自分の pid を読んで promise へ渡すため(子は読み手が開くまで書きを待つので、走り出した子の pid を問い直さずに知る)。"
   (try
     (with [reader (open fifo :encoding "utf-8")]
@@ -109,7 +110,7 @@
 
 
 (defk ended-by-cancel [task]
-  {:pre [(: task "scheduler の Task")] :post [(: % bool)]
+  {:pre [(: task (get Task ProcessOutcome))] :post [(: % bool)]
    :tags {:context "process-test" :role "program"}}
   "取り消した task を待ち、取り消しで終わったかを答えるため。"
   (try

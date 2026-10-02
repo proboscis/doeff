@@ -8,7 +8,8 @@
 (import threading)
 (import concurrent.futures [ThreadPoolExecutor])
 (import dataclasses [dataclass])
-(import doeff [run with_handlers EffectBase])
+(import typing [TypeVar])
+(import doeff [run with_handlers EffectBase Program])
 (import doeff_core_effects.scheduler [scheduled Spawn Gather])
 (import doeff_core_effects.compute_effects [Compute Computed ComputeFailed])
 (import doeff_core_effects.inline_compute [inline-compute-handler])
@@ -52,12 +53,16 @@
   #(value failed escaped))
 
 
-(defn on [handlers program]
+;; on が回す program の答えの型(筋書きごとに違う)。
+(val T (TypeVar "T"))
+
+
+(defn #^ T on [#^ list handlers #^ (get Program T) program]
   "handler の列の下で program を scheduler つきで 1 回回すため。"
   (run (scheduled (with_handlers handlers program))))
 
 
-(defn check-three [answers]
+(defn #^ None check-three [#^ tuple answers]
   "3 つの筋書きの答えの形を確かめるため(本物と I/O なしで同じ)。"
   (setv #(value failed escaped) answers)
   (assert (= value (Computed :value 42)) value)
@@ -65,16 +70,16 @@
   (assert (isinstance escaped ComputeFailed) escaped))
 
 
-(defn test-inline-answers-values-and-failures-as-values []
+(defn #^ None test-inline-answers-values-and-failures-as-values []
   (check-three (on [outside-answers inline-compute-handler] (three-answers))))
 
 
-(defn test-thread-pool-answers-the-same-as-inline []
+(defn #^ None test-thread-pool-answers-the-same-as-inline []
   (with [pool (ThreadPoolExecutor :max-workers 2)]
     (check-three (on [outside-answers (thread-pool-compute-handler pool)] (three-answers)))))
 
 
-(defn gate-race [handlers]
+(defn #^ list gate-race [#^ list handlers]
   "計算が別の task の開ける門を待つ筋書きを handlers の下で撃つため。scheduler が計算の間に止まるなら門は待ちの上限まで開かず、計算は
    False を返す。"
   (setv gate (threading.Event))
@@ -97,18 +102,18 @@
   (list (on handlers (both))))
 
 
-(defn test-thread-pool-keeps-other-tasks-running-while-computing []
+(defn #^ None test-thread-pool-keeps-other-tasks-running-while-computing []
   (with [pool (ThreadPoolExecutor :max-workers 1)]
     (setv answers (gate-race [(thread-pool-compute-handler pool)])))
   (assert (= answers [(Computed :value True) "開けた"]) answers))
 
 
-(defn test-inline-blocks-other-tasks-while-computing []
+(defn #^ None test-inline-blocks-other-tasks-while-computing []
   ;; 反例: その場で回す答え手では計算の間に門の task が進まない — 上の検が違いを見分けていることの確かめ。
   (assert (= (gate-race [inline-compute-handler]) [(Computed :value False) "開けた"])))
 
 
-(defn test-thread-pool-runs-as-many-at-once-as-the-pool-allows []
+(defn #^ None test-thread-pool-runs-as-many-at-once-as-the-pool-allows []
   (setv lock (threading.Lock)
         running [0]
         peak [0])
