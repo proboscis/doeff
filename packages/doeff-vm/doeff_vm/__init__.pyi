@@ -1,5 +1,5 @@
 from collections.abc import Callable as _CallableT
-from collections.abc import Generator
+from collections.abc import Generator, Sequence
 from typing import Any, Generic, Protocol, SupportsIndex, overload
 
 from typing_extensions import Never, Self, TypeVar
@@ -42,6 +42,25 @@ class K:
 
 class Callable:
     def __init__(self, callable_: Any) -> None: ...
+
+class HandlerSpec:
+    """What the VM captures when it installs a handler (``doeff_vm._effect_types.handler_spec``)."""
+
+    def __init__(
+        self,
+        effect_types: tuple[type, ...] | None,
+        generator_function: object,
+        tail_resume_lines: Sequence[int],
+        passed: tuple[tuple[type, ...], tuple[type, ...]] | None,
+    ) -> None: ...
+    @property
+    def effect_types(self) -> tuple[type, ...] | None: ...
+    @property
+    def generator_function(self) -> object: ...
+    @property
+    def tail_resume_lines(self) -> tuple[int, ...]: ...
+    @property
+    def passed(self) -> tuple[tuple[type, ...], tuple[type, ...]] | None: ...
 
 class IRStream:
     def __init__(self, generator: Any, tail_resume_lines: Any | None = None) -> None: ...

@@ -7,6 +7,7 @@ _ext = import_module("doeff_vm.doeff_vm")
 PyVM = _ext.PyVM
 K = _ext.K
 Callable = _ext.Callable
+HandlerSpec = _ext.HandlerSpec
 EffectBase = _ext.EffectBase
 IRStream = _ext.IRStream
 UnhandledEffect = _ext.UnhandledEffect

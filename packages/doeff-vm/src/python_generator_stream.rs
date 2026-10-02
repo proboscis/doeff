@@ -6,7 +6,7 @@
 //! The key operation: generator.send(value) → classify the yielded Python object → DoCtrl.
 
 use crate::gc::visit_py_field;
-use pyo3::exceptions::PyStopIteration;
+use pyo3::exceptions::{PyStopIteration, PyTypeError};
 use pyo3::prelude::*;
 use pyo3::pyclass::{PyTraverseError, PyVisit};
 use pyo3::types::PyString;
@@ -82,22 +82,10 @@ impl PyEffectBase {
 #[derive(Debug)]
 pub struct PythonCallable {
     pub callable: Py<PyAny>,
-    /// Effect types the handler declares on its effect parameter
-    /// (`doeff_vm._effect_types.handler_effect_types`). `None` = every
-    /// effect. Captured once when the handler is installed (WithHandler);
-    /// plain `Callable(...)` values used with Apply never carry a filter.
-    effect_types: Option<Py<pyo3::types::PyTuple>>,
-    /// Effects the handler passes on untouched (`doeff_vm._effect_types.PassedEffects`):
-    /// an instance of the first tuple that is not an instance of the second. `None` =
-    /// no such declaration. Captured with `effect_types` at install.
-    passed: Option<(Py<pyo3::types::PyTuple>, Py<pyo3::types::PyTuple>)>,
-    /// For a `@do` handler: the undecorated generator function and its
-    /// tail-resume lines. `call_handler` calls it directly and runs the
-    /// generator as the handler stream — the same end state as evaluating the
-    /// `Expand(Apply(Pure(Callable(thunk)), []))` the wrapper builds, without
-    /// building and classifying those nodes on every effect.
-    generator_function: Option<Py<PyAny>>,
-    tail_resume_lines: Vec<u32>,
+    /// The handler's install-time spec (`PyHandlerSpec`), captured once when the
+    /// handler is installed (WithHandler). `None` for plain `Callable(...)` values
+    /// used with Apply: no filter, no passed effects, no generator function.
+    spec: Option<Py<PyHandlerSpec>>,
 }
 
 #[pymethods]
@@ -106,10 +94,7 @@ impl PythonCallable {
     pub fn new(callable: Py<PyAny>) -> Self {
         Self {
             callable,
-            effect_types: None,
-            passed: None,
-            generator_function: None,
-            tail_resume_lines: Vec::new(),
+            spec: None,
         }
     }
 
@@ -120,15 +105,8 @@ impl PythonCallable {
 
     fn __traverse__(&self, visit: PyVisit<'_>) -> Result<(), PyTraverseError> {
         visit_py_field(&visit, &self.callable)?;
-        if let Some(types) = &self.effect_types {
-            visit_py_field(&visit, types)?;
-        }
-        if let Some((passes, keeps)) = &self.passed {
-            visit_py_field(&visit, passes)?;
-            visit_py_field(&visit, keeps)?;
-        }
-        if let Some(function) = &self.generator_function {
-            visit_py_field(&visit, function)?;
+        if let Some(spec) = &self.spec {
+            visit_py_field(&visit, spec)?;
         }
         Ok(())
     }
@@ -138,62 +116,27 @@ impl PythonCallable {
         // garbage at this point; any buggy post-clear use fails loudly
         // ("'NoneType' object is not callable").
         self.callable = py.None();
-        self.effect_types = None;
-        self.passed = None;
-        self.generator_function = None;
+        self.spec = None;
     }
 }
 
 impl PythonCallable {
     /// A handler callable with its install-time spec
-    /// (`doeff_vm._effect_types.handler_spec`).
+    /// (`doeff_vm._effect_types.handler_spec`): the one a plain function keeps in its
+    /// `__dict__`, read in place, or else the rule's answer.
     fn handler(py: Python<'_>, handler: &Bound<'_, PyAny>) -> Result<Self, String> {
-        let spec = handler_spec(py, handler)?;
-        let spec = spec.bind(py);
-        let field = |index: usize| {
-            spec.get_item(index)
-                .map_err(|e| format!("WithHandler: malformed handler spec: {e}"))
-        };
-        let types = field(0)?;
-        let effect_types = if types.is_none() {
-            None
-        } else {
-            Some(
-                types
-                    .downcast::<pyo3::types::PyTuple>()
-                    .map_err(|_| "WithHandler: effect types must be a tuple or None".to_string())?
-                    .clone()
-                    .unbind(),
-            )
-        };
-        let function = field(1)?;
-        let generator_function = if function.is_none() {
-            None
-        } else {
-            Some(function.unbind())
-        };
-        let tail_resume_lines = field(2)?
-            .extract::<Vec<u32>>()
-            .map_err(|e| format!("WithHandler: malformed tail-resume lines: {e}"))?;
-        let passed = field(3)?;
-        let passed = if passed.is_none() {
-            None
-        } else {
-            let tuple = |index: usize| {
-                passed
-                    .get_item(index)
-                    .and_then(|item| Ok(item.downcast_into::<pyo3::types::PyTuple>()?.unbind()))
-                    .map_err(|e| format!("WithHandler: malformed passed effects: {e}"))
-            };
-            Some((tuple(0)?, tuple(1)?))
+        let spec = match kept_handler_spec(py, handler)? {
+            Some(spec) => spec,
+            None => resolved_handler_spec(py, handler)?,
         };
         Ok(Self {
             callable: handler.clone().unbind(),
-            effect_types,
-            passed,
-            generator_function,
-            tail_resume_lines,
+            spec: Some(spec),
         })
+    }
+
+    fn spec(&self) -> Option<&PyHandlerSpec> {
+        self.spec.as_ref().map(Py::get)
     }
 
     /// Run a `@do` handler's generator function directly as the handler stream.
@@ -201,9 +144,10 @@ impl PythonCallable {
         &self,
         py: Python<'_>,
         function: &Py<PyAny>,
+        tail_resume_lines: &[u32],
         args: Bound<'_, pyo3::types::PyTuple>,
     ) -> Result<DoCtrl, doeff_vm_core::VMError> {
-        let stream = generator_function_stream(py, function, &args, None, &self.tail_resume_lines)?;
+        let stream = generator_function_stream(py, function, &args, None, tail_resume_lines)?;
         Ok(DoCtrl::Expand {
             expr: Box::new(DoCtrl::Pure { value: stream }),
         })
@@ -310,23 +254,191 @@ impl doeff_vm_core::value::Callable for CallRaised {
     }
 }
 
-static HANDLER_SPEC: pyo3::sync::PyOnceLock<Py<PyAny>> = pyo3::sync::PyOnceLock::new();
+/// What the VM captures when it installs a handler (WithHandler): the answer of the
+/// single Python-side rule `doeff_vm._effect_types.handler_spec`, in the VM's own form
+/// so an install takes it without reading fields one by one (agora-redesign #2927).
+///
+/// `effect_types`: the runtime filter (`handler_effect_types`; `None` = every effect).
+/// `generator_function` / `tail_resume_lines`: for a `@do` handler, the undecorated
+/// generator function the VM runs directly as the handler's stream (instead of
+/// evaluating the `Expand` the `@do` wrapper would build for every effect — same end
+/// state), and the lines of its tail-position resumes. `passed`: the effects the
+/// handler passes on untouched (`PassedEffects(passes, keeps)`: an instance of
+/// `passes` that is not an instance of `keeps`), or `None`. The fields are checked
+/// once, when the spec is made.
+#[pyclass(frozen, name = "HandlerSpec", module = "doeff_vm.doeff_vm")]
+#[derive(Debug)]
+pub struct PyHandlerSpec {
+    effect_types: Option<Py<pyo3::types::PyTuple>>,
+    generator_function: Option<Py<PyAny>>,
+    tail_resume_lines: Vec<u32>,
+    passed: Option<(Py<pyo3::types::PyTuple>, Py<pyo3::types::PyTuple>)>,
+    /// `passed` as it was given (the `PassedEffects` value), for Python readers.
+    passed_value: Py<PyAny>,
+}
+
+#[pymethods]
+impl PyHandlerSpec {
+    #[new]
+    fn new(
+        effect_types: &Bound<'_, PyAny>,
+        generator_function: &Bound<'_, PyAny>,
+        tail_resume_lines: &Bound<'_, PyAny>,
+        passed: &Bound<'_, PyAny>,
+    ) -> PyResult<Self> {
+        let types = if effect_types.is_none() {
+            None
+        } else {
+            Some(
+                effect_types
+                    .downcast::<pyo3::types::PyTuple>()
+                    .map_err(|_| {
+                        PyTypeError::new_err("HandlerSpec: effect_types must be a tuple or None")
+                    })?
+                    .clone()
+                    .unbind(),
+            )
+        };
+        let lines = tail_resume_lines.extract::<Vec<u32>>().map_err(|e| {
+            PyTypeError::new_err(format!(
+                "HandlerSpec: tail_resume_lines must be line numbers: {e}"
+            ))
+        })?;
+        let pair = if passed.is_none() {
+            None
+        } else {
+            let tuple = |index: usize| {
+                passed
+                    .get_item(index)
+                    .and_then(|item| Ok(item.downcast_into::<pyo3::types::PyTuple>()?.unbind()))
+                    .map_err(|e| {
+                        PyTypeError::new_err(format!(
+                            "HandlerSpec: passed must be None or (passes, keeps) of type tuples: {e}"
+                        ))
+                    })
+            };
+            Some((tuple(0)?, tuple(1)?))
+        };
+        Ok(Self {
+            effect_types: types,
+            generator_function: (!generator_function.is_none())
+                .then(|| generator_function.clone().unbind()),
+            tail_resume_lines: lines,
+            passed: pair,
+            passed_value: passed.clone().unbind(),
+        })
+    }
+
+    #[getter]
+    fn effect_types(&self, py: Python<'_>) -> Option<Py<pyo3::types::PyTuple>> {
+        self.effect_types.as_ref().map(|types| types.clone_ref(py))
+    }
+
+    #[getter]
+    fn generator_function(&self, py: Python<'_>) -> Option<Py<PyAny>> {
+        self.generator_function
+            .as_ref()
+            .map(|function| function.clone_ref(py))
+    }
+
+    #[getter]
+    fn tail_resume_lines<'py>(
+        &self,
+        py: Python<'py>,
+    ) -> PyResult<Bound<'py, pyo3::types::PyTuple>> {
+        pyo3::types::PyTuple::new(py, &self.tail_resume_lines)
+    }
+
+    #[getter]
+    fn passed(&self, py: Python<'_>) -> Py<PyAny> {
+        self.passed_value.clone_ref(py)
+    }
+
+    fn __traverse__(&self, visit: PyVisit<'_>) -> Result<(), PyTraverseError> {
+        if let Some(types) = &self.effect_types {
+            visit_py_field(&visit, types)?;
+        }
+        if let Some(function) = &self.generator_function {
+            visit_py_field(&visit, function)?;
+        }
+        if let Some((passes, keeps)) = &self.passed {
+            visit_py_field(&visit, passes)?;
+            visit_py_field(&visit, keeps)?;
+        }
+        visit_py_field(&visit, &self.passed_value)
+    }
+}
+
+/// The Python-side rule for handler specs, loaded once: the resolver
+/// (`doeff_vm._effect_types.handler_spec`) and the `__dict__` key under which it keeps
+/// a plain function's spec (`_SPEC_ATTR`).
+struct SpecRule {
+    resolve: Py<PyAny>,
+    kept_under: Py<PyString>,
+}
+
+static SPEC_RULE: pyo3::sync::PyOnceLock<SpecRule> = pyo3::sync::PyOnceLock::new();
 static RETURNING: pyo3::sync::PyOnceLock<Py<PyAny>> = pyo3::sync::PyOnceLock::new();
 
-/// A handler's install-time spec through the single Python-side rule
-/// (`doeff_vm._effect_types.handler_spec`): effect types (annotation filter)
-/// and, for `@do` handlers, the generator function. Cached per function.
-fn handler_spec(py: Python<'_>, handler: &Bound<'_, PyAny>) -> Result<Py<PyAny>, String> {
-    let resolver = HANDLER_SPEC
+fn spec_rule(py: Python<'_>) -> Result<&SpecRule, String> {
+    SPEC_RULE
         .get_or_try_init(py, || {
-            py.import("doeff_vm._effect_types")
-                .and_then(|m| m.getattr("handler_spec"))
-                .map(|f| f.unbind())
+            let module = py.import("doeff_vm._effect_types")?;
+            Ok::<_, PyErr>(SpecRule {
+                resolve: module.getattr("handler_spec")?.unbind(),
+                kept_under: module
+                    .getattr("_SPEC_ATTR")?
+                    .downcast_into::<PyString>()?
+                    .unbind(),
+            })
         })
-        .map_err(|e| format!("WithHandler: cannot load the handler-spec resolver: {e}"))?;
-    resolver
-        .call1(py, (handler,))
-        .map_err(|e| format!("WithHandler: resolving the handler spec failed: {e}"))
+        .map_err(|e| format!("WithHandler: cannot load the handler-spec resolver: {e}"))
+}
+
+/// The spec a plain function keeps in its `__dict__` (put there by the rule the first
+/// time it is installed), read without calling Python; `None` for anything else or a
+/// function not installed yet. The rule keeps a spec only on exact functions, never on
+/// bound methods (a method's spec binds its own `self`).
+fn kept_handler_spec(
+    py: Python<'_>,
+    handler: &Bound<'_, PyAny>,
+) -> Result<Option<Py<PyHandlerSpec>>, String> {
+    if !handler.is_exact_instance_of::<pyo3::types::PyFunction>() {
+        return Ok(None);
+    }
+    let rule = spec_rule(py)?;
+    let kept = handler
+        .getattr(pyo3::intern!(py, "__dict__"))
+        .and_then(|namespace| Ok(namespace.downcast_into::<pyo3::types::PyDict>()?))
+        .and_then(|namespace| namespace.get_item(rule.kept_under.bind(py)))
+        .map_err(|e| format!("WithHandler: reading the kept handler spec failed: {e}"))?;
+    Ok(kept
+        .and_then(|spec| spec.downcast_into::<PyHandlerSpec>().ok())
+        .map(Bound::unbind))
+}
+
+/// A handler's install-time spec through the single Python-side rule
+/// (`doeff_vm._effect_types.handler_spec`): effect types (annotation filter),
+/// passed effects and, for `@do` handlers, the generator function.
+fn resolved_handler_spec(
+    py: Python<'_>,
+    handler: &Bound<'_, PyAny>,
+) -> Result<Py<PyHandlerSpec>, String> {
+    let answer = spec_rule(py)?
+        .resolve
+        .bind(py)
+        .call1((handler,))
+        .map_err(|e| format!("WithHandler: resolving the handler spec failed: {e}"))?;
+    let kind = answer
+        .get_type()
+        .name()
+        .map_or_else(|_| "?".to_string(), |name| name.to_string());
+    answer
+        .downcast_into::<PyHandlerSpec>()
+        .map(Bound::unbind)
+        .map_err(|_| {
+            format!("WithHandler: the handler-spec resolver answered {kind}, not a HandlerSpec")
+        })
 }
 
 fn returning_stream<'py>(
@@ -383,7 +495,10 @@ impl doeff_vm_core::value::Callable for PythonCallable {
     }
 
     fn accepts(&self, effect: &Value) -> bool {
-        if self.effect_types.is_none() && self.passed.is_none() {
+        let Some(spec) = self.spec() else {
+            return true;
+        };
+        if spec.effect_types.is_none() && spec.passed.is_none() {
             return true;
         }
         let Value::Opaque(obj) = effect else {
@@ -394,14 +509,14 @@ impl doeff_vm_core::value::Callable for PythonCallable {
             // __instancecheck__) must not hide the effect: deliver it and let
             // the handler body decide, as without a filter.
             let effect = obj.bind(py);
-            if let Some((passes, keeps)) = &self.passed {
+            if let Some((passes, keeps)) = &spec.passed {
                 let passed = effect.is_instance(passes.bind(py)).unwrap_or(false)
                     && !effect.is_instance(keeps.bind(py)).unwrap_or(true);
                 if passed {
                     return false;
                 }
             }
-            match &self.effect_types {
+            match &spec.effect_types {
                 Some(types) => effect.is_instance(types.bind(py)).unwrap_or(true),
                 None => true,
             }
@@ -424,8 +539,15 @@ impl doeff_vm_core::value::Callable for PythonCallable {
             let py_tuple = pyo3::types::PyTuple::new(py, &py_args)
                 .map_err(|e| doeff_vm_core::VMError::python_error(format!("{e}")))?;
 
-            if let Some(function) = &self.generator_function {
-                return self.call_generator_function(py, function, py_tuple);
+            if let Some(spec) = self.spec() {
+                if let Some(function) = &spec.generator_function {
+                    return self.call_generator_function(
+                        py,
+                        function,
+                        &spec.tail_resume_lines,
+                        py_tuple,
+                    );
+                }
             }
 
             match self.callable.call(py, py_tuple, None) {
