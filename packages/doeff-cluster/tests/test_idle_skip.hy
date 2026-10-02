@@ -22,7 +22,7 @@
 (import doeff_cluster.coordinator.protocol.request_queue [RequestQueue queued-requests enqueue-request])
 (import doeff_cluster.foundation.coordinator_inbox [RequestInbox] doeff_cluster.shared.protocol.inbox [http-requests http-request])
 (import doeff_cluster.sim.local [sim-cluster ProcessesOf SharedRows StopCoordinator CoordinatorRuns KillWorker ReadCoordinator ClientLink SimLink
-                             SimWorker Redeclare])
+                             SimWorker Redeclare HostTruthOf HostTruth])
 (import doeff_cluster.worker.intent.worker_model [WorkerPolicy])
 (import doeff_cluster.shared.intent.detached_model [AwaitDetached DetachedAwaited DetachedSucceeded])
 (import doeff_cluster.shared.core.detached_rules [submit-detached-task])
@@ -280,3 +280,74 @@
   (<- skipped Trace (trace-of (quitters sim-foundation) (quiet-for-minutes 20) True :workers TWO-WORKERS :policy QUIET-POLICY))
   (<- started Trace (trace-of (quitters sim-foundation) (quiet-for-minutes 1) True :workers TWO-WORKERS :policy QUIET-POLICY))
   (assert (< (- skipped.takes started.takes) 20) #(skipped.takes started.takes)))
+
+
+;; --- 届いた仮の拍の覚えの一生(#2769) ------------------------------------------------------------------------------
+;; 列は、調停ループへ渡した(届いた)仮の拍を、眠っている宿が写すまで覚える(request_queue の consumed)。宿は預けの拍を刻の順に写し、
+;; 写し終えた刻より後の拍だけを問うので、覚えるのは「届いたが宿がまだ写していない拍」だけ。反例 — 既に写した拍(区間の試しで写した
+;; 拍)や起きた宿が残りとしてまとめて写した拍を覚えると、外す者が無く走りの長さに比例して伸びる(2026-10-02 の実測: worker 2 台・
+;; 拍 10 秒の静かな系で、仮想の 5 分 17 個・10 分 44 個・20 分 100 個。宿の拍ごとの問いと外しがその長さを舐め、使い手の模擬の検の
+;; 時間が窓の長さのほぼ 2 乗になった)。
+
+(defrecord HostHeard
+  "宿 1 つの読み: name = worker の名・beats = 宿の真実の届いた heartbeat の数・last-ok-ms = 最後に届いた刻・consumed = 列が覚えている
+   その宿の届いた仮の拍(ProvisionalBeat の tuple)。"
+  (#^ str name)
+  (#^ int beats)
+  (#^ int last-ok-ms)
+  (#^ tuple consumed))
+
+
+(defrecord HeardLedger
+  "列の届いた拍の覚えの読み: hosts = 宿ごとの読み(HostHeard の tuple — TWO-WORKERS の順)・remembered = 列が覚えている拍の数(どの宿の
+   拍も含む)・queue = 列そのもの(走りが終わって宿が全部起きた後の覚えを読む)。"
+  (#^ tuple hosts)
+  (#^ int remembered)
+  (#^ RequestQueue queue))
+
+
+(defk heard-ledger []
+  {:pre [] :post [(: % HeardLedger)] :tags {:context "doeff-cluster-test" :role "program"}}
+  "列が覚えている届いた仮の拍を宿ごとに、その宿の真実の届いた heartbeat の数・最後に届いた刻と並べて読むため。"
+  (<- link SimLink (ClientLink))
+  (val consumed (tuple link.queue.consumed))
+  (var hosts #())
+  (for [worker TWO-WORKERS]
+    (<- truth HostTruth (HostTruthOf worker.name))
+    (:= hosts (+ hosts #((HostHeard :name worker.name :beats truth.beats :last-ok-ms truth.last-ok-ms
+                                    :consumed (tuple (gfor beat consumed :if (= beat.name worker.name) beat)))))))
+  (HeardLedger :hosts hosts :remembered (len consumed) :queue link.queue))
+
+
+(defk quiet-then-read [minutes]
+  {:pre [(: minutes int)] :post [(: % tuple)] :tags {:context "doeff-cluster-test" :role "program"}}
+  "筋書き: 何も起きない仮想の minutes 分を待ち(宿は静かな拍を眠っている)、列の覚えと宿の真実を読むため(答え = その読み 1 つの tuple
+   — 走りの答えの形 ended-with-takes に合わせる)。"
+  (<- (Delay (* 60.0 minutes)))
+  (<- read HeardLedger (heard-ledger))
+  #(read))
+
+
+(deftest test-the-queue-remembers-only-heard-beats-the-host-has-not-written
+  ;; 静かな 5 分の後、眠っている宿の覚えの拍はどれも、その宿がまだ写していない刻(最後に届いた刻より後)。走りが終わって(止めの合図が
+  ;; 眠っている宿を全部起こす)宿が残りを写した後は、覚えが空。宿が写した heartbeat と置き場の書きの列は 1 拍ずつの走りと同じ。
+  (<- every Trace (trace-of (quitters sim-foundation) (quiet-then-read 5) False :workers TWO-WORKERS :policy QUIET-POLICY))
+  (<- skipped Trace (trace-of (quitters sim-foundation) (quiet-then-read 5) True :workers TWO-WORKERS :policy QUIET-POLICY))
+  (val resting (get skipped.answer 0))
+  (val reference-hosts (. (get every.answer 0) hosts))
+  (val written (lfor host resting.hosts
+                     :if (any (gfor beat host.consumed (<= beat.at host.last-ok-ms)))
+                     #(host.name host.last-ok-ms (tuple (gfor beat host.consumed beat.at)))))
+  (assert (= written []) written)
+  (assert (= resting.remembered (sum (gfor host resting.hosts (len host.consumed)))) resting)
+  (assert (= (len resting.queue.consumed) 0) (tuple (gfor beat resting.queue.consumed #(beat.name beat.at))))
+  ;; 写した heartbeat は、1 拍ずつの走りが届けた heartbeat の列の頭と同じ数・同じ刻(拍 10 秒の 5 分 — 1 拍ずつの走りは 31 回)。
+  ;; 眠っている宿は、列がまだ判じていない拍を写さずに次の拍か起きた時まで待つので、読む刻には数拍遅れていることがある。
+  (val tick-ms (int (* 1000 QUIET-POLICY.tick-seconds)))
+  (val apart (lfor #(host reference) (zip resting.hosts reference-hosts)
+                   :if (or (< host.beats 25) (> host.last-ok-ms reference.last-ok-ms)
+                           (!= (- reference.beats host.beats) (// (- reference.last-ok-ms host.last-ok-ms) tick-ms)))
+                   #(host reference)))
+  (assert (= apart []) apart)
+  (<- breaches list (same-decisions every (Trace :deltas skipped.deltas :answer every.answer :takes skipped.takes)))
+  (assert (= breaches []) breaches))
