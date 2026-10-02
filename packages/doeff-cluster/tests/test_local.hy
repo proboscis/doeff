@@ -28,7 +28,7 @@
 (import doeff_cluster.shared.intent.runtime_env_model [RuntimeEnv])
 (import doeff_cluster.shared.core.runtime_env_rules [runtime-env->json])
 (import doeff_cluster.coordinator.core.coordinator_invariants [acknowledged-writes-survive])
-(import doeff_cluster.worker_invariants [handoff-keeps-a-ready-writer])
+(import doeff_cluster.worker.core.invariants [handoff-keeps-a-ready-writer])
 (import tests.env_fixtures [LOCK env-of])
 
 

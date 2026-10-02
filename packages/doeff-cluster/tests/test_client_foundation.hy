@@ -13,7 +13,7 @@
 (import doeff_core_effects.scheduler [Spawn Cancel Task])
 (import doeff_time [SimClock sim-time-handler])
 (import doeff_cluster.coordinator.intent.cluster_model [TaskRecord])
-(import doeff_cluster.client_foundation [with-detached-client])
+(import doeff_cluster.shared.entry.client_foundation [with-detached-client])
 (import os)
 (import doeff_cluster.foundation.process_versions [process-versions])
 (import doeff_cluster.shared.intent.runtime_env_model [RuntimeEnv RepoCheckout PythonProject])

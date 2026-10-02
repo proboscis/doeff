@@ -1,4 +1,4 @@
-"""手元の道具の口の型の宣言(doeff_cluster/client_foundation.pyi)の失敗ケース(#2782)。
+"""手元の道具の口の型の宣言(doeff_cluster/shared/entry/client_foundation.pyi)の失敗ケース(#2782)。
 
 口を組む部品(detached-cluster・DetachedSender・RouteCell・route-of・coordinator-route-options ほか)には型の宣言が無く、使い手の repo が
 直に組むと strict の型検査が「型の分からない import」23 件で止めた。→ 部品を組んだ口 1 つ with-detached-client を .pyi で宣言する。
@@ -17,13 +17,13 @@ from types import ModuleType
 import hy  # noqa: F401  # .hy の module の import hook(検だけを単独で走らせても読めるように)
 import pytest
 
-from doeff_cluster import client_foundation
+from doeff_cluster.shared.entry import client_foundation
 
 needs_pyright = pytest.mark.skipif(shutil.which("pyright") is None, reason="pyright が無い")
 
 MODULE = """\
 (require doeff-hy.macros [defk <-])
-(import doeff_cluster.client_foundation [with-detached-client])
+(import doeff_cluster.shared.entry.client_foundation [with-detached-client])
 (import doeff_cluster.shared.intent.runtime_env_model [RuntimeEnv])
 (import doeff_cluster.shared.intent.detached_model [AwaitDetached DetachedAwaited])
 

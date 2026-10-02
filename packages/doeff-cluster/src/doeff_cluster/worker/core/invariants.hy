@@ -10,7 +10,7 @@
 
 
 (defk handoff-keeps-a-ready-writer [lifetimes]
-  {:pre [(: lifetimes tuple)] :post [(: % tuple)] :tags {:context "doeff-cluster" :role "judgment"}}
+  {:pre [(: lifetimes tuple)] :post [(: % tuple)] :tags {:context "worker" :role "judgment"}}
   "条 W1: 世代ごとの #(最初の Ready の時刻 終わった時刻) の列(Ready を一度も報告しなかった世代は最初が None・まだ動く世代は終わりが
    None)から、最初の Ready から最後の終わりまでの間で Ready の生きた process が 1 つも無い区間 #(始め 終わり) の列を返す(空なら緑)。
    入れ替えの worker が新の準備の間に旧を止めて書き手の空白を作らないことを、筋書きの記録から判じるため。"

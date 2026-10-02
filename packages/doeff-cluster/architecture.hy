@@ -41,7 +41,7 @@
 ;;;   tests/test_cluster_timing.hy の test-the-production-timing-outlasts-the-self-stop(本番の定数から内訳を作って判断に渡す — 数を検に
 ;;;   写さない)。失敗ケースは同じ file の、定数を 1 つずつ動かすと破りを名指す検(移し替えを 45 秒に戻す・返事の上限を延ばす・停止の猶予を
 ;;;   延ばす)。worker の入口(worker/entry/main.hy の timing-checked)は同じ判断で、破る起動を job を走らせる前に名指しで断る。
-;;;   W1 handoff-keeps-a-ready-writer(doeff_cluster.worker_invariants:handoff-keeps-a-ready-writer)— 入れ替え(handoff)を宣言した Service
+;;;   W1 handoff-keeps-a-ready-writer(doeff_cluster.worker.core.invariants:handoff-keeps-a-ready-writer)— 入れ替え(handoff)を宣言した Service
 ;;;   は、入れ替えの間も Ready の書き手が途切れない(旧は新が Ready になった後にだけ止める)。確かめるのは tests/test_local.hy の
 ;;;   test-redeclaring-a-handoff-service-stops-the-old-process-only-after-the-new-one-is-ready(世代ごとの最初の Ready と終わりを判断に渡す)。
 ;;;   失敗ケースは同じ file の test-a-counterexample-worker-that-stops-the-old-process-on-retire-breaks-w1(sim の宿の RetireJob の handler を
@@ -104,7 +104,7 @@
   {:system {:exempt "cluster そのものの process — cluster に置く job ではなく、自分の image の k8s Deployment として動く(operator 2026-10-01 の補足「doeff-cluster の coordinator と worker の image は残る」)。defsystem にすると cluster が自分を job として置く循環になる"}
    :layers [core intent protocol entry]
    :entry-modules ["doeff_cluster.worker.entry.main"]
-   :invariants ["doeff_cluster.worker_invariants:handoff-keeps-a-ready-writer"]})
+   :invariants ["doeff_cluster.worker.core.invariants:handoff-keeps-a-ready-writer"]})
 
 ;; record-store の条は R1(保持は run を丸ごと)。「追記して fsync してから返事」は file system の性質で、memory の置き場では確かめられない
 ;; ので条にしていない。層の dir(#2030): intent = effect の型・core = 置き場の Program と条・protocol = file の I/O の
