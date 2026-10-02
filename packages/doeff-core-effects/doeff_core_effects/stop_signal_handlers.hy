@@ -17,11 +17,11 @@
 (import types)
 
 (import doeff_core_effects.stop_signal_effects [AwaitStop RaiseStop StopRequested])
-(import doeff_core_effects.scheduler [CompletePromise CreateExternalPromise CreatePromise Wait])
+(import doeff_core_effects.scheduler [CompletePromise CreateExternalPromise CreatePromise ExternalPromise Wait])
 
 
 ;; Signals that mean "stop" for a service.
-(setv STOP-SIGNALS #(signal.SIGINT signal.SIGTERM))
+(setv #^ (get tuple #(signal.Signals ...)) STOP-SIGNALS #(signal.SIGINT signal.SIGTERM))
 
 
 (defclass StopBox []
@@ -29,16 +29,19 @@
    Keeps the first reason only. waiters = the external promises of the AwaitStop waits still parked: the first
    signal completes them (ExternalPromise.complete is safe from the signal receiver), so the waits wake at once."
 
+  (#^ (| str None) reason)
+  (#^ (get tuple #((get ExternalPromise str) ...)) waiters)
+
   (defn __init__ [self]
     (setv self.reason None
           self.waiters #()))
 
-  (defn #^ None park [self waiter]
+  (defn #^ None park [self #^ (get ExternalPromise str) waiter]
     "Keep waiter until the stop (or until its wait is cancelled — forget)."
     (setv self.waiters (+ self.waiters #(waiter)))
     None)
 
-  (defn #^ None forget [self waiter]
+  (defn #^ None forget [self #^ (get ExternalPromise str) waiter]
     "Drop a waiter whose wait was cancelled (a loop raced AwaitStop against its own wait and the other side won)."
     (setv self.waiters (tuple (gfor w self.waiters :if (is-not w waiter) w)))
     None)

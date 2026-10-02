@@ -1,22 +1,20 @@
-"""memory_meter.hy の公開面の型(計器の I/O なしの答え手 — 型検査のための宣言・実行時は memory_meter.hy を読む)。
+# doeff_hy.static_stub が作った型の宣言 — 手で直さない(元 = memory_meter.hy・作り直し = python -m doeff_hy.static_stub --write <この .pyi の隣の .hy>)
 
-- memory-meter-handler(Python の名 memory_meter_handler)は計器の設定 MeterSettings を受け、本文の Program に被せる関数を返す
-  (defhandler の展開と同じ形: 本文の答えの型をそのまま運ぶ WithHandler)。
-- 実装との食い違いは packages/doeff-core-effects/tests/test_hy_module_stubs.py が検める。
-"""
+from doeff_hy.static_types import Handler as _Handler
+from doeff_core_effects.meter_effects import CountMetric as CountMetric
+from doeff_core_effects.meter_effects import EMPTY_METER as EMPTY_METER
+from doeff_core_effects.meter_effects import MeterSettings as MeterSettings
+from doeff_core_effects.meter_effects import MeterSnapshot as MeterSnapshot
+from doeff_core_effects.meter_effects import ObserveSeconds as ObserveSeconds
+from doeff_core_effects.meter_effects import ReadMeter as ReadMeter
+from doeff_core_effects.meter_effects import SetGauge as SetGauge
+from doeff_core_effects.meter_effects import counted as counted
+from doeff_core_effects.meter_effects import gauged as gauged
+from doeff_core_effects.meter_effects import observed as observed
+from doeff import Pass as Pass
+from doeff_vm import WithHandler as WithHandler
+from doeff import Some as Some
+from doeff_core_effects.effects import Put as Put
 
-from typing import Protocol, TypeVar
-
-from doeff_vm import WithHandler
-
-from doeff import Program
-from doeff_core_effects.meter_effects import MeterSettings
-
-_A = TypeVar("_A")
-
-class _MemoryMeterHandler(Protocol):
-    """本文の Program に handler を被せる関数(答えの型は本文のまま)。"""
-
-    def __call__(self, body: Program[_A, object], /) -> WithHandler[_A]: ...
-
-def memory_meter_handler(settings: MeterSettings) -> _MemoryMeterHandler: ...
+def memory_meter_handler(settings: MeterSettings) -> _Handler:
+    ...
