@@ -289,6 +289,20 @@ impl PyDoFunction {
         self.tail_resume_lines.clone()
     }
 
+    /// The `Call` of this definition with `args` and `kwargs` — what calling the `@do`
+    /// wrapper builds (`doeff.do.program_factory`). A method, called with vectorcall,
+    /// rather than the `Call(...)` constructor: no argument tuple for the constructor,
+    /// no `tp_new` dispatch and no constructor argument parsing per call
+    /// (agora-redesign #2817).
+    fn make_call(
+        slf: &Bound<'_, Self>,
+        args: Py<pyo3::types::PyTuple>,
+        kwargs: Py<pyo3::types::PyDict>,
+    ) -> PyResult<Py<PyCall>> {
+        let py = slf.py();
+        Py::new(py, PyCall::new(py, slf.clone().unbind(), args, kwargs))
+    }
+
     fn __repr__(&self, py: Python<'_>) -> PyResult<String> {
         let f = self.function.bind(py).repr()?;
         Ok(format!("DoFunction({})", f))
