@@ -43,11 +43,13 @@
 (import doeff_cluster.foundation.process_versions [process-versions])
 (import doeff_cluster.shared.intent.detached_model [SubmitDetached AwaitDetached CancelDetached ReleaseDetached
                                       DetachedSubmitted DetachedSucceeded DetachedFailed DetachedLost DetachedCancelled
-                                      DetachedVersionMismatch DetachedUnknown DetachedPending DetachedRefused])
+                                      DetachedVersionMismatch DetachedUnknown DetachedPending DetachedRefused
+                                      DetachedUnreachable DetachedAwaited])
 (import doeff_cluster.shared.protocol.detached [detached-cluster])
 (import doeff_core_effects.http_handlers [http-production-handler])
 (import tests.transport_http [transport-http route-cell detached-sender TEST-ROUTE])
 (import doeff_cluster.sim.local [sim-cluster SimWorker KillWorker ReadCoordinator])
+(import doeff_cluster.sim.local [ProcessesOf])
 (import doeff_cluster.shared.entry.service_build [system-of])
 (import tests.detached_rig [slow-add RigWorker MemoryCoordinator worker-tick worker-loop RIG-PROVIDES])
 (import tests.program_rows [SAMPLE-TASK-PROGRAM program-placed task-body-of])
@@ -88,11 +90,13 @@
 
 (defclass Rig []
   "筋書きを回す組。handlers = 筋書きに被せる handler の組(外側が先 — sim は使わない)・worker = 担い手(sim は None)・
-   sim-workers = sim の組の worker(SimWorker の tuple — 他の組は None)・slow / lease / poll = 時間の尺度。"
+   sim-workers = sim の組の worker(SimWorker の tuple — 他の組は None)・slow / lease / poll = 時間の尺度・runs / ids = key の task を
+   coordinator が作った数 / id の列(sim の組は coordinator の GET /state を読むので None)。"
   (defn #^ None __init__ [self #^ str kind #^ list handlers #^ (| RigWorker None) worker #^ float slow #^ float lease #^ float poll
-                  #^ (| Callable None) [runs None] #^ (| Callable None) [close None] #^ (| tuple None) [sim-workers None]]
+                  #^ (| Callable None) [runs None] #^ (| Callable None) [close None] #^ (| tuple None) [sim-workers None]
+                  #^ (| Callable None) [ids None]]
     (setv self.kind kind self.handlers handlers self.worker worker self.slow slow self.lease lease self.poll poll
-          self.runs runs self.close (or close (fn [] None)) self.sim-workers sim-workers)))
+          self.runs runs self.close (or close (fn [] None)) self.sim-workers sim-workers self.ids ids)))
 
 
 (deff sim-rig [runner-versions]  ; defk にできない: pytest の params が渡す組を開く関数(open-sim-rig)が Program の外で呼ぶ
@@ -113,18 +117,21 @@
   (Rig "coordinator" [(sim-time-handler :clock clock) (transport-http transport) (rig-runner-loss worker)
                       (detached-cluster (route-cell) TEST-ROUTE sender :poll-seconds 0.5)]
        worker 3.0 5.0 0.5
-       :runs (fn [key] (len (lfor t (.values coordinator.state.tasks) :if (= t.key key) t)))))
+       :runs (fn [key] (len (lfor t (.values coordinator.state.tasks) :if (= t.key key) t)))
+       :ids (fn [key] (lfor #(i t) (.items coordinator.state.tasks) :if (= t.key key) i))))
 
 
 (defn #^ Rig served-rig [#^ str url #^ Path tmp-path #^ (| dict None) [runner-versions None]]
   (setv worker (RigWorker url (/ tmp-path "tasks") (or runner-versions (run (process-versions os.environ))))
         sender (detached-sender "r"))
+  (defn #^ list ids [#^ str key]
+    (lfor t (get (.json (httpx.get (+ url "/state"))) "tasks") :if (= (.get t "key") key) (get t "id")))
   (defn #^ int runs [#^ str key]
-    (len (lfor t (get (.json (httpx.get (+ url "/state"))) "tasks") :if (= (.get t "key") key) t)))
+    (len (ids key)))
   ;; 実時間: lease は heartbeat の間隔(0.2 秒)の十倍以上に取る(込んだ機体で heartbeat が遅れても消失と取り違えない)。
   (Rig "served" [(await-handler) (async-time-handler) (http-production-handler) (rig-runner-loss worker)
                  (detached-cluster (route-cell url) TEST-ROUTE sender :poll-seconds 0.2)]
-       worker 1.0 2.5 0.2 :runs runs))
+       worker 1.0 2.5 0.2 :runs runs :ids ids))
 
 
 (defn #^ Rig open-sim-rig [#^ Path tmp-path #^ pytest.FixtureRequest request #^ (| dict None) [runner-versions None]]
@@ -195,6 +202,65 @@
                            (len (lfor t (get state "tasks") :if (= (.get t "key") key) t)))
     (is rig.runs None) (raise (ValueError (.format "組 {} は作った数を数えられない" rig.kind)))
     True (rig.runs key)))
+
+
+(defk task-ids-of [rig key]
+  {:pre [(: rig Rig) (: key str)] :post [(: % list)] :tags {:context "doeff-cluster-test" :role "program"}}
+  "key の task の id の列(担い手の job の名 task/<id> を引くため — sim の組は coordinator の GET /state を読む)。"
+  (cond
+    (= rig.kind "sim") (do (<- state dict (ReadCoordinator "/state"))
+                           (lfor t (get state "tasks") :if (= (.get t "key") key) (get t "id")))
+    (is rig.ids None) (raise (ValueError (.format "組 {} は task の id を引けない" rig.kind)))
+    True (rig.ids key)))
+
+
+(defk runner-holds [rig key]
+  {:pre [(: rig Rig) (: key str)] :post [(: % bool)] :tags {:context "doeff-cluster-test" :role "program"}}
+  "担い手が key の task を起こし、まだ終えていないか(KillWorker が「消えた task」として数える物 — sim の組は宿の process・他の組は
+   担い手の把手)。"
+  (<- ids list (task-ids-of rig key))
+  (val names (lfor i ids (+ "task/" i)))
+  (if (= rig.kind "sim")
+      (do (var held False)
+          (for [name names]
+            (<- processes tuple (ProcessesOf name))
+            (when (any (gfor p processes (is p.ended-ms None)))
+              (:= held True)))
+          held)
+      (any (gfor name names (and (in name rig.worker.handles) (not-in name rig.worker.done))))))
+
+
+(defk await-observed [rig key probe what]
+  {:pre [(: rig Rig) (: key str) (: probe Callable) (: what str)] :post [(: % (| DetachedAwaited bool))]
+   :tags {:context "doeff-cluster-test" :role "program"}}
+  "probe(rig key)が None でない答えを返すまで rig.poll ごとに問い、その答えを返すため — 筋書きの次の一歩を、実時間の長さ(混んだ機体で
+   伸びる)でなく出来事の観測で並べる(#2849)。lease の 4 倍の間に起きなければ what を名指して赤。"
+  (var seen None)
+  (var waited 0.0)
+  (<- first (probe rig key))
+  (:= seen first)
+  (while (is seen None)
+    (when (> waited (* rig.lease 4))
+      (raise (AssertionError (.format "{} が {} 秒の内に起きない: key {}" what (* rig.lease 4) key))))
+    (<- (Delay rig.poll))
+    (:= waited (+ waited rig.poll))
+    (<- again (probe rig key))
+    (:= seen again))
+  seen)
+
+
+(defk assigned-or-none [rig key]
+  {:pre [(: rig Rig) (: key str)] :post [(: % (| DetachedPending None))] :tags {:context "doeff-cluster-test" :role "program"}}
+  "送りが coordinator に届き、task が担い手に割り当てられていればその答え(DetachedPending)— まだなら None。"
+  (<- answer (AwaitDetached key :timeout-seconds 0.0))
+  (if (and (isinstance answer DetachedPending) (= answer.phase "assigned")) answer None))
+
+
+(defk held-or-none [rig key]
+  {:pre [(: rig Rig) (: key str)] :post [(: % (| bool None))] :tags {:context "doeff-cluster-test" :role "program"}}
+  "担い手が key の task を起こしていれば True — まだなら None。"
+  (<- held bool (runner-holds rig key))
+  (if held True None))
 
 
 
@@ -269,9 +335,10 @@
 
 (defk caller-vanishes-and-reconnects [rig]
   {:pre [(: rig Rig)] :post [(: % bool)]}
-  ;; 呼び手(送って待つ task)を取り消す = 呼び手が消えた。task は続き、別の呼び手が同じ key で結果を受け取る。
+  ;; 呼び手(送って待つ task)を取り消す = 呼び手が消えた。task は続き、別の呼び手が同じ key で結果を受け取る。取り消すのは送りが
+  ;; coordinator に届いて担い手に割り当てられた後(実時間の長さで代えない — 混んだ機体で送りが遅れると DetachedUnknown で揺れた・#2849)。
   (<- caller Task (Spawn (submit-then-wait "k-vanish" rig.slow rig.lease)))
-  (<- (Delay (* rig.slow 0.3)))
+  (<- (await-observed rig "k-vanish" assigned-or-none "送りの到着と割り当て"))
   (<- (Cancel caller))
   (<- early DetachedPending (AwaitDetached "k-vanish" :timeout-seconds 0.0))
   (assert (= #(early.key early.phase) #("k-vanish" "assigned")) early)   ; runner は組ごとの担い手の名
@@ -285,6 +352,44 @@
   (assert (isinstance rig-name str) rig-name)
   (<- rig Rig (open-named rig-name tmp-path request None))
   (<- ok (run-scenario rig caller-vanishes-and-reconnects))
+  (assert ok))
+
+
+(defk submit-after-a-pause [key seconds lease]
+  {:pre [(: key str) (: seconds float) (: lease float)] :post [(: % DetachedSucceeded)]}
+  "送る前に seconds の間を置く呼び手(その間に取り消されれば送りは出ない — 失敗ケースが送りの前の取り消しを確かに作るため)。"
+  (<- (Delay seconds))
+  (<- outcome DetachedSucceeded (submit-then-wait key seconds lease))
+  outcome)
+
+
+(defk settled-or-none [rig key]
+  {:pre [(: rig Rig) (: key str)] :post [(: % (| DetachedAwaited None))] :tags {:context "doeff-cluster-test" :role "program"}}
+  "coordinator が key について答えられればその答え — 起きた直後で「知らない」と言えない間(DetachedUnreachable)は None。"
+  (<- answer (AwaitDetached key :timeout-seconds 0.0))
+  (if (isinstance answer DetachedUnreachable) None answer))
+
+
+(defk caller-vanishes-before-the-submit-arrives [rig]
+  {:pre [(: rig Rig)] :post [(: % bool)]}
+  ;; 失敗ケース(#2849): 呼び手を、送りが coordinator に届く前に取り消す(呼び手は送る前の間に居る)。送りは届かず、key は知られない
+  ;; (DetachedUnknown)・task は作られない。上の筋書きの「届いた後に取り消す」が、時間でなく割り当ての観測で並んでいる証拠
+  ;; (この順を実時間の長さで代えると、混んだ機体ではこちらの答えになる)。
+  (<- caller Task (Spawn (submit-after-a-pause "k-early" rig.slow rig.lease)))
+  (<- (Cancel caller))
+  ;; 届くなら届くだけの間(送る前の間・担い手の起こし・task の長さ)を置いてから、coordinator が答えられるまで待って問う。
+  (<- (Delay (* rig.slow 3)))
+  (<- early (await-observed rig "k-early" settled-or-none "coordinator の答え"))
+  (assert (isinstance early DetachedUnknown) early)
+  (<- made int (runs-of rig "k-early"))
+  (assert (= made 0) made)
+  True)
+
+(deftest test-a-caller-cancelled-before-its-submit-arrives-leaves-no-task [rig-name tmp-path request]
+  {:params {"rig_name" RIGS}}
+  (assert (isinstance rig-name str) rig-name)
+  (<- rig Rig (open-named rig-name tmp-path request None))
+  (<- ok (run-scenario rig caller-vanishes-before-the-submit-arrives))
   (assert ok))
 
 
@@ -312,7 +417,8 @@
 (defk runner-dies-mid-run [rig]
   {:pre [(: rig Rig)] :post [(: % bool)]}
   (<- (submit-detached-task (slow-add (* rig.slow 10) 5) :needs LOCAL :key "k-lost" :lease-seconds rig.lease))
-  (<- (Delay (* rig.slow 0.3)))
+  ;; 担い手を殺すのは、担い手が task を起こした後(実時間の長さで代えない — 混んだ機体で起こすのが遅れると lost が 0 で揺れた・#2849)。
+  (<- (await-observed rig "k-lost" held-or-none "担い手の task の起こし"))
   (<- lost int (KillWorker RUNNER))
   (assert (= lost 1))
   (<- outcome (AwaitDetached "k-lost"))
