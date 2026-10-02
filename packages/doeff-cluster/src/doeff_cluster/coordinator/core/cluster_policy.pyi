@@ -297,7 +297,7 @@ def sweep_warms(state: ClusterState, now: int) -> ClusterState:
 def cold_starts(before: dict, after: dict) -> int:
     ...
 
-def reconcile(now: int, state: ClusterState, timing: ClusterTiming) -> ClusterState:
+def reconcile(now: int, given: ClusterState, timing: ClusterTiming) -> _Program[ClusterState, object]:
     ...
 
 def durable_changed(before: ClusterState, after: ClusterState) -> bool:

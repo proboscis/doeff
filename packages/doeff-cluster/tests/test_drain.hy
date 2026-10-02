@@ -83,7 +83,7 @@
 
   (defn #^ None advance [self #^ int [seconds 1]]
     (+= self.now (* 1000 seconds))
-    (setv self.state (tick self.state self.now T))
+    (setv self.state (run (tick self.state self.now T)))
     None)
 
   (defn #^ dict task-body [self #^ list needs #^ (| dict None) [extra None]]  ; defk にできない: 模擬の世界の method(置き場の状態を進めて本文を返す)

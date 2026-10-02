@@ -89,7 +89,7 @@
                               :nodes (.with-writes seen.nodes node-writes)))
   (val before (with-derived-capabilities (replace state :observations observed) naming.node-capabilities))
   ;; 2. 純粋な判断で段を進め、action を出す。
-  (setv #(planned actions) (plan-rollouts before now timing naming))
+  (setv #(planned actions) (! (plan-rollouts before now timing naming)))
   (var current (stamp before planned ROLLOUT-ACTOR now timing))
   ;; 3. action を実行する。Service の台数は状態の書き換え(送り手 = rollout/<名>)、Deployment は k8s の API。
   (for [action actions]
@@ -142,7 +142,7 @@
   ;; 本文は道の型に解いてから判断に渡す(答え手 = coordinator/protocol/request_bodies — #2445)。
   (<- read-body (readable-body request))
   ;; settled = state が同じ now で調停済み(coordinator-step が拍の頭の tick の答えのままの時に渡す)— 静かな heartbeat の早道の前提(#2655)。
-  (val result (respond state request now timing read-body :settled settled))
+  (<- result tuple (respond state request now timing read-body :settled settled))
   (val body (get result 2))
   (if (isinstance body Fault)
       (do (<- fault-body ErrorReply (fault-reply body))
@@ -180,7 +180,7 @@
   ;; 期限の経過(worker の沈黙・task の lease・readiness の window)は、まとまりの有無と無関係に毎拍調停する(2026-09-25)。
   ;; 以前は要求の無い拍だけだったので、読みの要求(GET)が 1 秒より短い間隔で続く間は調停が走らず、担い手の死んだ切り離した task が
   ;; lost にならなかった(読みは状態を変えないので調停しない)。書きの要求は今までどおり要求ごとに調停する(api_policy.settle)。
-  (val tick-answer (tick base now timing))
+  (<- tick-answer ClusterState (tick base now timing))
   (var next tick-answer)
   (var replies #())
   (var waiting held)

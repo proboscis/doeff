@@ -10,7 +10,7 @@
 (import urllib.parse [urlsplit parse-qsl])
 (import pathlib [Path])
 (import httpx)
-(import doeff [with_handlers])
+(import doeff [run with_handlers])
 (import doeff_core_effects.effects [Ask])
 (import doeff_core_effects.handlers [reader])
 (import doeff_core_effects.scheduler [Spawn Cancel Task TaskCancelledError])
@@ -138,7 +138,7 @@
     (setv now (clock-ms self.clock)
           split (urlsplit (str request.url))
           body (if request.content (json.loads request.content) None))
-    (setv self.state (tick self.state now self.timing))
+    (setv self.state (run (tick self.state now self.timing)))
     (setv #(state status reply) (responded self.state (http-request request.method split.path (dict (parse-qsl split.query)) body
                                                              :actor (.get request.headers "x-actor"))
                                          now self.timing))
