@@ -155,6 +155,34 @@
   (assert ok))
 
 
+;; 反例(2026-10-02 の本番 — #2730): project の lock の dev の組に、worker が読めない private の repo の git の依存
+;; (custody-scripted・ssh)が在った。worker は dev の組を入れない(--no-default-groups)のに、準備の sync が lock を解き直す形
+;; (--locked)だったので、入れない組の git の依存まで取りに行き、Host key verification failed で準備が全部止まった。lock の中身は宣言の
+;; lock-sha256 で縛ってあるので、準備は lock をそのまま使う(--frozen)— 入れる組の行だけを取りに行く。
+(val PRIVATE-URL "ssh://git@github.com/example/private.git")
+(val DEV-GIT-LOCK (+ LOCK (.format "private-scripted==0.1 group=dev git={}\n" PRIVATE-URL)))
+
+
+(defk dev-git-scenario []
+  {:pre [] :post [(: % bool)]}
+  "入れない dev の組に届かない git の依存が在る lock でも、準備が通り、その依存を取りに行かない事を確かめるため。"
+  (<- env RuntimeEnv (env-of "app-dev-git" "lib-1" DEV-GIT-LOCK))
+  (<- ready (prepare env #()))
+  (assert (isinstance ready EnvReady) ready)
+  (assert (= ready.downloaded 3) "取りに行くのは本体の依存 3 つだけ(dev の組の行は入れない)")
+  True)
+
+
+(deftest test-a-private-git-dependency-in-an-uninstalled-group-does-not-stop-the-prepare
+  (<- base EnvWorld (base-world))
+  (<- dev WorldCommit (app-commit "app-dev-git" DEV-GIT-LOCK "V = 5\n"))
+  (val world (replace base
+                      :remotes (tuple (gfor r base.remotes (if (= r.url APP-URL) (replace r :commits (+ r.commits #(dev))) r)))
+                      :unreachable #(PRIVATE-URL)))
+  (<- ok bool (run-in-world world (dev-git-scenario)))
+  (assert ok))
+
+
 ;; 反例(2026-09-27 の本番): 宣言の import の根は業務の repo だけで、venv に editable で入る依存の package(lib の木の中)は焼かれず、
 ;; 子と入口の検めが毎回 source から compile した(Hy の macro の展開で import が壁時計 240 秒)。editable の .pth が root の中の
 ;; repo を指すなら、その dir も焼く範囲に入る。

@@ -15,6 +15,9 @@
 ;;; 模擬の uv.lock の書き方: 1 行 1 package で `名==版`、第三者の package の最上位の import の名は ` top=a,b` で添える
 ;;; (処理ステージ 10 の名前の影を起こすため)。editable で入る package は ` editable=<project の dir からの相対 path>` を添える
 ;;; (sync が venv の site-packages に本物の uv と同じ形の .pth — 中身は dir の絶対 path 1 行 — を置く)。`#` で始まる行は読まない。
+;;; 依存の組の行は ` group=<組の名>`(無ければ本体の依存)、git から取る行は ` git=<url>` を添える。sync は --group で選んだ組と
+;;; 本体の行だけを入れる。本物の uv と同じく、--locked は入れない組の行の git の先にも届こうとし(lock を解き直すため)、
+;;; --frozen は入れる行の先にだけ届こうとする — 届かない先(unreachable)なら sync が終わる。
 ;;;
 ;;; 世界の移ろう物は全部 memory の置き場の /world の下の file に置く(台本は状態を持たない):
 ;;;   log.json        clone・fetch・展開・複製・sync・download・build・bytecode の回数(read-world-log で読む)
@@ -158,6 +161,26 @@
         (when (.startswith p "editable=")
           (.append out #((get (.split (get parts 0) "==") 0) (cut p (len "editable=") None)))))))
   (tuple out))
+
+
+(defrecord LockEntry
+  "模擬の uv.lock の行 1 つの、入れる組と取りに行く先(name = `名==版`・group = 依存の組の名 — None は本体の依存・
+   git = git の取りに行く先の url — None は index から取る)。"
+  (#^ str name)
+  (#^ (| str None) group)
+  (#^ (| str None) git))
+
+
+(defk lock-attributes [text]
+  {:pre [(: text str)] :post [(: % (get tuple #(LockEntry ...)))]}
+  "模擬の uv.lock の行 → LockEntry の列(入れる組と、git の取りに行く先に届くかを数えるため)。"
+  (tuple (gfor line (.splitlines text)
+               :setv body (.strip line)
+               :if (and body (not (.startswith body "#")))
+               :setv parts (.split body)
+               (LockEntry :name (get parts 0)
+                          :group (next (gfor p (cut parts 1 None) :if (.startswith p "group=") (cut p (len "group=") None)) None)
+                          :git (next (gfor p (cut parts 1 None) :if (.startswith p "git=") (cut p (len "git=") None)) None)))))
 
 
 (defk commit-of [world sha]
@@ -406,18 +429,37 @@
 
 (defk uv-sync [world args]
   {:pre [(: world EnvWorld) (: args tuple)] :post [(: % ProcessOutcome)]}
-  "uv sync --locked に答える: lock の package のうち cache に無い物を取りに行き(冷たい秒)、venv と editable の .pth を置く。"
+  "uv sync(--frozen か --locked)に答える: 入れる組の package のうち cache に無い物を取りに行き(冷たい秒)、venv と editable の .pth を置く。
+   本物の uv と同じく、--locked は lock が pyproject と合うかを解き直すので、入れない組の行の git の取りに行く先にも届こうとする
+   (届かなければ sync が終わる)。--frozen は入れる組の行の先にだけ届こうとする。"
   (<- pdir str (required-option-of args "--project"))
   (<- python str (required-option-of args "--python"))
   (<- no-install tuple (options-of args "--no-install-package"))
+  (<- selected tuple (options-of args "--group"))
+  (val locked (in "--locked" args))
   (<- failure (| UvFailure None) (uv-failure-now))
-  (if (and failure (in failure.fault SYNC-FAULTS))
+  (<- lock str (read-or-empty (posixpath.join pdir "uv.lock")))
+  (<- entries tuple (lock-attributes lock))
+  (<- unreachable tuple (unreachable-now))
+  (val blocked (next (gfor e entries
+                           :if (and e.git (or locked (is e.group None) (in e.group selected)) (in e.git unreachable))
+                           e)
+                     None))
+  (cond
+    (and failure (in failure.fault SYNC-FAULTS))
       (do (<- text str (sync-failure-text failure))
           (ProcessOutcome :stdout "" :stderr (+ text failure.detail "\n") :exit-code 1))
-      (do (<- lock str (read-or-empty (posixpath.join pdir "uv.lock")))
-          (<- lines tuple (lock-lines lock))
+    blocked
+      (ProcessOutcome :stdout ""
+                      :stderr (.format "error: Failed to download and build `{} @ git+{}`\n  Caused by: Git operation failed\n{}"
+                                       blocked.name blocked.git UNREACHABLE-TEXT)
+                      :exit-code 1)
+    True
+      (do (<- lines tuple (lock-lines lock))
           (<- cached list (read-json CACHE-PATH []))
-          (val wanted (lfor #(name _) lines :if (not-in (get (.split name "==") 0) no-install) name))
+          ;; 入れない組(--group で選ばれていない組)の行は取りに行かない(--no-default-groups の下の本物の uv と同じ)。
+          (val skipped (sfor e entries :if (and e.group (not-in e.group selected)) e.name))
+          (val wanted (lfor #(name _) lines :if (and (not-in (get (.split name "==") 0) no-install) (not-in name skipped)) name))
           (val missing (lfor name wanted :if (not-in name cached) name))
           (<- (write-json CACHE-PATH (+ cached missing)))
           (<- (Delay (if missing world.cold-seconds world.warm-seconds)))
