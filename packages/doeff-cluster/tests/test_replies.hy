@@ -28,7 +28,7 @@
   (assert (isinstance answer EventsView) answer)
   (setv #(_ _ body) (responded s (http-request "GET" "/events" {} None) 3000 T))
   (assert (= (sorted body) ["events" "revision" "seq"]) body)
-  (assert (= body (reply-json answer)) body)
+  (assert (= body (! (reply-json answer))) body)
   (assert (all (gfor e (get body "events") (and (isinstance e dict) (in "seq" e) (in "fromVersion" e)))) body))
 
 
@@ -44,14 +44,14 @@
 
 (deftest test-a-body-that-is-not-a-reply-type-passes-unchanged
   (val raw {"ok" True})
-  (assert (is (reply-json raw) raw)))
+  (assert (is (! (reply-json raw)) raw)))
 
 
 (deftest test-the-heartbeat-reply-is-typed-and-spelled-in-the-old-shape
   ;; heartbeat の返事は型の値(HeartbeatReply)で、JSON の欄は前と同じ — superseded は退いた世代への返事の時だけ書く。
   (val reply (heartbeat-reply (ClusterState :revision 3) "w1" T))
   (assert (isinstance reply HeartbeatReply) reply)
-  (val body (reply-json reply))
+  (val body (! (reply-json reply)))
   (assert (= (sorted body) ["draining" "formats" "jobs" "revision" "tasks" "timing" "warm"]) body)
   (assert (= #((get body "revision") (get body "jobs") (get body "tasks") (get body "warm")) #(3 [] [] [])) body))
 
@@ -62,10 +62,10 @@
   (setv s (ClusterState :workers {"w1" (WorkerInfo :name "w1" :provides #("cpu") :capacity 1 :last-seen-ms 1000 :boot "b2")}))
   (setv #(_ _ answer) (respond s (http-request "GET" "/workers/w1" {} None) 2000 T {}))
   (assert (isinstance answer WorkerDrainView) answer)
-  (setv body (reply-json answer))
+  (setv body (! (reply-json answer)))
   (assert (= (sorted body) ["alive" "boot" "derived" "drain" "draining" "exclusive" "name" "node" "provides" "ready" "silentMs"]) body)
   (assert (= #((get body "drain") (get body "draining") (get body "ready") (get body "silentMs")) #(None False True 1000)) body)
-  (setv old (reply-json (superseded-worker-view s "w1" "b1" 2000 T)))
+  (setv old (! (reply-json (superseded-worker-view s "w1" "b1" 2000 T))))
   (assert (= #((get old "superseded") (get old "draining") (get old "ready")) #(True True False)) old)
   (assert (= (sorted (get old "drain"))
              ["blocked" "boot" "drained" "moving" "movingReady" "phase" "remaining" "superseded" "worker"])
@@ -79,7 +79,7 @@
   (setv #(_ _ answer) (respond s (http-request "GET" "/resources/Worker" {} None) 2000 T {}))
   (assert (isinstance answer ResourceList) answer)
   (assert (all (gfor v answer.items (isinstance v ResourceView))) answer)
-  (setv body (reply-json answer))
+  (setv body (! (reply-json answer)))
   (assert (= (sorted body) ["items" "kind" "revision"]) body)
   (setv item (get body "items" 0))
   (assert (= (sorted item) ["createdBy" "createdMs" "generation" "kind" "name" "owner" "resourceVersion" "spec" "status" "updatedBy"
@@ -95,9 +95,9 @@
   (setv #(_ status answer) (respond (ClusterState) (http-request "GET" "/nowhere" {} None) 1000 T {}))
   (assert (= status 404))
   (assert (isinstance answer ErrorReply) answer)
-  (assert (= (sorted (reply-json answer)) ["error"]) (reply-json answer))
-  (assert (= (reply-json (ErrorReply :message "版が古い" :current 3 :conflicts #((RowConflict :name "a" :message "x" :current 2)
-                                                                               (RowConflict :name "b" :message "y"))))
+  (assert (= (sorted (! (reply-json answer))) ["error"]) (! (reply-json answer)))
+  (assert (= (! (reply-json (ErrorReply :message "版が古い" :current 3 :conflicts #((RowConflict :name "a" :message "x" :current 2)
+                                                                               (RowConflict :name "b" :message "y")))))
              {"error" "版が古い" "current" 3 "conflicts" [{"name" "a" "error" "x" "current" 2} {"name" "b" "error" "y"}]})))
 
 
@@ -109,22 +109,22 @@
   (assert (= #(clash-status clash) #(409 {"ok" False "current" 1 "resourceVersion" 1})) clash)
   (setv #(_ _ plain) (respond s (http-request "GET" "/board" {} None) 1000 T {}))
   (assert (isinstance plain BoardRead) plain)
-  (assert (= (reply-json plain) {"a" 1}))
+  (assert (= (! (reply-json plain)) {"a" 1}))
   (setv #(_ _ versioned) (respond s (http-request "GET" "/board" {"withVersions" "1"} None) 1000 T {}))
-  (assert (= (reply-json versioned) {"a" {"value" 1 "resourceVersion" 1}}))
-  (assert (= (reply-json (BoardWritten :version None)) {"ok" True "resourceVersion" None}))
-  (assert (= (reply-json (BoardConflict :current 1 :version 1 :reason "x")) {"ok" False "current" 1 "resourceVersion" 1 "error" "x"})))
+  (assert (= (! (reply-json versioned)) {"a" {"value" 1 "resourceVersion" 1}}))
+  (assert (= (! (reply-json (BoardWritten :version None))) {"ok" True "resourceVersion" None}))
+  (assert (= (! (reply-json (BoardConflict :current 1 :version 1 :reason "x"))) {"ok" False "current" 1 "resourceVersion" 1 "error" "x"})))
 
 
 (deftest test-the-task-answers-are-typed-and-spelled-in-the-old-shape
   ;; task の口の答えは型の値で、JSON は前と同じ形(知らない task の問いは {phase: missing})。
   (setv #(_ _ missing) (respond (ClusterState) (http-request "GET" "/tasks/t9" {} None) 1000 T {}))
   (assert (isinstance missing TaskMissing) missing)
-  (assert (= (reply-json missing) {"phase" "missing"}))
-  (assert (= (reply-json (TaskAccepted :id "t1")) {"task" "t1"}))
-  (assert (= (reply-json (TaskResultTaken :accepted False :phase "finished")) {"accepted" False "phase" "finished"}))
-  (assert (= (reply-json (TaskDropped :id "t1")) {"dropped" True}))
-  (assert (= (sorted (reply-json (TaskProgress :phase "queued" :worker None :detail "" :result None :failure-kind "" :retryable False)))
+  (assert (= (! (reply-json missing)) {"phase" "missing"}))
+  (assert (= (! (reply-json (TaskAccepted :id "t1"))) {"task" "t1"}))
+  (assert (= (! (reply-json (TaskResultTaken :accepted False :phase "finished"))) {"accepted" False "phase" "finished"}))
+  (assert (= (! (reply-json (TaskDropped :id "t1"))) {"dropped" True}))
+  (assert (= (sorted (! (reply-json (TaskProgress :phase "queued" :worker None :detail "" :result None :failure-kind "" :retryable False))))
              ["detail" "failureKind" "phase" "result" "retryable" "worker"])))
 
 
@@ -132,21 +132,21 @@
   ;; 切り離した task の口の答えは型の値で、JSON は前と同じ形(行の無い key は {key phase: unknown}・起きた直後は 503 の warming)。
   (setv #(_ unknown-status unknown) (respond (ClusterState :started-ms -100000) (http-request "GET" "/detached/k1" {} None) 1000 T {}))
   (assert (and (= unknown-status 200) (isinstance unknown DetachedUnknown)) unknown)
-  (assert (= (reply-json unknown) {"key" "k1" "phase" "unknown"}))
+  (assert (= (! (reply-json unknown)) {"key" "k1" "phase" "unknown"}))
   (setv #(_ warming-status warming) (respond (ClusterState :started-ms 900) (http-request "GET" "/detached/k1" {} None) 1000 T {}))
   (assert (and (= warming-status 503) (isinstance warming DetachedWarming)) warming)
-  (assert (= (sorted (reply-json warming)) ["error" "key" "phase"]))
-  (assert (= (reply-json (DetachedSubmitted :key "k" :id "t1" :created True :phase "queued"))
+  (assert (= (sorted (! (reply-json warming))) ["error" "key" "phase"]))
+  (assert (= (! (reply-json (DetachedSubmitted :key "k" :id "t1" :created True :phase "queued")))
              {"key" "k" "task" "t1" "created" True "phase" "queued"}))
-  (assert (= (reply-json (DetachedCancelled :key "k" :cancelled False :phase "unknown")) {"key" "k" "cancelled" False "phase" "unknown"}))
-  (assert (= (reply-json (DetachedReleased :key "k" :released True)) {"key" "k" "released" True})))
+  (assert (= (! (reply-json (DetachedCancelled :key "k" :cancelled False :phase "unknown"))) {"key" "k" "cancelled" False "phase" "unknown"}))
+  (assert (= (! (reply-json (DetachedReleased :key "k" :released True))) {"key" "k" "released" True})))
 
 
 (deftest test-the-program-and-warm-answers-are-typed-and-spelled-in-the-old-shape
   ;; Program の置き場の答えは型の値(ProgramStored・置いた行 ProgramRow)、温める表の答えは WarmState で、JSON は前と同じ形。
-  (assert (= (reply-json (ProgramStored :sha "ab")) {"program" "ab"}))
-  (assert (= (reply-json (ProgramRow :blob "b" :versions {"doeff" "1"} :put-ms 5)) {"blob" "b" "versions" {"doeff" "1"}}))
-  (setv warm (reply-json (WarmState :key "k" :ready #("w1") :preparing #() :failed #() :until-ms 9)))
+  (assert (= (! (reply-json (ProgramStored :sha "ab"))) {"program" "ab"}))
+  (assert (= (! (reply-json (ProgramRow :blob "b" :versions {"doeff" "1"} :put-ms 5))) {"blob" "b" "versions" {"doeff" "1"}}))
+  (setv warm (! (reply-json (WarmState :key "k" :ready #("w1") :preparing #() :failed #() :until-ms 9))))
   (assert (and (isinstance warm dict) (= (get warm "key") "k")) warm))
 
 

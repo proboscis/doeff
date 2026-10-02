@@ -2,12 +2,13 @@
 ;;; にする。返事の型にまだしていない道の本文(JSON の object のまま)は、そのまま通す。
 ;;;   reply-json    返事の本文 → JSON の形(byte にするのは shared/protocol/inbox の encoded-reply)
 ;;;   reply-bodies  Reply の答え手: 本文を reply-json で綴って Reply を出し直す(本番と模擬の組のいちばん内側に置く)
-(require doeff-hy.macros [defhandler defk deff <- val])
+;;; 綴りはどれも defk で、呼び手は <- / ! で受ける(ADR-DOE-HY-004 R10 — 検と模擬の入口 responded は request_bodies.hy で run する)。
+(require doeff-hy.macros [defhandler defk <- val var])
 (val MODULE-TAGS {:context "coordinator" :role "protocol"})
 (import doeff_cluster.shared.intent.protocol [Reply PlainText])
 (import dataclasses [asdict])
 (import json)
-(import collections.abc [Mapping])
+(import collections.abc [Callable Iterable Mapping])
 (import doeff_cluster.shared.intent.job_model [JobSpec])
 (import doeff_cluster.coordinator.intent.cluster_model [EventsView StateReply StateView HeartbeatReply TaskOffer DrainPhase DrainProgress WorkerDrainView
                                                        ServiceObserved WorkerObserved TaskObserved RolloutObserved ResourceView ResourceList VersionVerdict ErrorReply RowConflict
@@ -17,14 +18,23 @@
                                                        ProgramRow ProgramStored DeploymentSeen DeploymentUnreadable])
 (import doeff_cluster.shared.intent.warm_model [WarmState])
 (import doeff_cluster.shared.core.warm_rules [warm-state->json])
-(import doeff [run])
 (import doeff_hy.wire [dump])
 (import doeff_cluster.shared.intent.semaphore_model [LeaseAnswer])
 (import doeff_cluster.coordinator.core.cluster_policy [job-to-json status-row-to-json])
 (import doeff_cluster.coordinator.protocol.state_json [audit-event-to-json])
 
 
-(deff task-summary [#^ TaskRecord task]  ; defk にできない: 返事の綴り reply-json の中で呼ぶ純粋な綴り(返事の答え手 reply-bodies と検の入口 responded は Program の外)
+(defk spelled-each [#^ Callable spell #^ Iterable items]
+  {:pre [(: spell Callable) (: items Iterable)] :post [(: % list)] :tags {:context "coordinator" :role "protocol" :spells "json"}}
+  "列の 1 つずつを綴りの defk spell で JSON の形にした列(返事の中の列 — jobs・tasks・conflicts・items など — を綴る 1 点)。
+   綴りは Program を返すので内包表記では呼べない: for と ! で順に綴り、tuple に組んでから JSON の配列の形(list)で返す。"
+  (var spelled #())
+  (for [item items]
+    (:= spelled #(#* spelled (! (spell item)))))
+  (list spelled))
+
+
+(defk task-summary [#^ TaskRecord task]
   {:pre [(: task TaskRecord)] :post [(: % dict)] :tags {:context "coordinator" :role "protocol" :spells "json"}}
   "task の行 → 状態の画面と資源の画面の JSON の形(結果は大きいので載せない — #2614 で core から移した)。切り離した task だけ呼び手の job id を足す
    (RemoteJob の task の形は以前と同じ)。"
@@ -34,7 +44,7 @@
      (if task.detached {"detached" True "key" task.key} {})))
 
 
-(deff spec-json [#^ JobSpec spec]  ; defk にできない: 返事の綴り reply-json の中で呼ぶ純粋な綴り(返事の答え手 reply-bodies と検の入口 responded は Program の外)
+(defk spec-json [#^ JobSpec spec]
   {:pre [(: spec JobSpec)] :post [(: % dict)] :tags {:context "coordinator" :role "protocol" :spells "json"}}
   "worker へ渡す job の宣言 → heartbeat の返事の jobs の 1 つの JSON の形(Program・環境変数・置き場・実行環境・入れ替えの欄は在る時だけ)。"
   (| {"name" spec.name "entry" spec.entry "args" (list spec.args) "revision" spec.revision "once" spec.once}
@@ -50,7 +60,7 @@
      (if (and spec.handoff spec.handoff-abandoned) {"handoffAbandoned" True} {})))
 
 
-(deff task-offer-json [#^ TaskOffer offer]  ; defk にできない: 返事の綴り reply-json の中で呼ぶ純粋な綴り(返事の答え手 reply-bodies と検の入口 responded は Program の外)
+(defk task-offer-json [#^ TaskOffer offer]
   {:pre [(: offer TaskOffer)] :post [(: % dict)] :tags {:context "coordinator" :role "protocol" :spells "json"}}
   "返事の task 1 つ → JSON の形(#2595 の前に cluster_policy.tasks-for が組んでいた形と同じ — 切り離した task の欄・実行環境・環境変数は在る時だけ)。"
   (| {"id" offer.id "name" offer.name "revision" offer.revision "versions" (dict offer.versions) "program" offer.program}
@@ -59,16 +69,16 @@
      (if offer.environ {"environ" (dict offer.environ)} {})))
 
 
-(deff heartbeat-reply-json [#^ HeartbeatReply reply]  ; defk にできない: 返事の綴り reply-json の中で呼ぶ純粋な綴り(返事の答え手 reply-bodies と検の入口 responded は Program の外)
+(defk heartbeat-reply-json [#^ HeartbeatReply reply]
   {:pre [(: reply HeartbeatReply)] :post [(: % dict)] :tags {:context "coordinator" :role "protocol" :spells "json"}}
   "heartbeat の返事 → JSON の形(superseded は退いた世代への返事の時だけ書く)。"
-  (| {"jobs" (lfor s reply.jobs (spec-json s)) "tasks" (lfor t reply.tasks (task-offer-json t))
+  (| {"jobs" (! (spelled-each spec-json reply.jobs)) "tasks" (! (spelled-each task-offer-json reply.tasks))
       "warm" (lfor w reply.warm {"key" w.key "runtimeEnv" w.runtime-env}) "timing" (asdict reply.timing)
       "draining" reply.draining "formats" (list reply.formats) "revision" reply.revision}
      (if reply.superseded {"superseded" True} {})))
 
 
-(deff state-view-json [#^ StateView view]  ; defk にできない: 返事の綴り reply-json の中で呼ぶ純粋な綴り(返事の答え手 reply-bodies と検の入口 responded は Program の外)
+(defk state-view-json [#^ StateView view]
   {:pre [(: view StateView)] :post [(: % dict)] :tags {:context "coordinator" :role "protocol" :spells "json"}}
   "状態の画面 → JSON の形(#2595 の前に cluster_policy.state-view が組んでいた形と同じ)。"
   {"now" view.now
@@ -82,14 +92,14 @@
    "statuses" (dfor #(n s) (.items view.statuses)
                     n {"at" s.report.at "endpoint" s.report.endpoint "jobs" (lfor row s.report.jobs (status-row-to-json row))
                        "stale" s.stale})
-   "tasks" (lfor t view.tasks (task-summary t))
+   "tasks" (! (spelled-each task-summary view.tasks))
    "boardKeys" view.board-keys
    "surges" (dfor #(k v) (.items view.surges) k (asdict v))
    "events" (list view.events)
    "revision" view.revision})
 
 
-(deff drain-progress-json [#^ DrainProgress drain]  ; defk にできない: 返事の綴り reply-json の中で呼ぶ純粋な綴り(返事の答え手 reply-bodies と検の入口 responded は Program の外)
+(defk drain-progress-json [#^ DrainProgress drain]
   {:pre [(: drain DrainProgress)] :post [(: % dict)] :tags {:context "coordinator" :role "protocol" :spells "json"}}
   "drain の進み → JSON の形(#2595 の前に drain_policy.drain-view・superseded-worker-view が組んでいた形と同じ — 頼みの記録は退いた世代の
    答えに無く、superseded は退いた世代の答えにだけ書く)。"
@@ -101,17 +111,17 @@
       "moving" (dict drain.moving) "blocked" (dict drain.blocked) "movingReady" (dict drain.moving-ready)}))
 
 
-(deff worker-drain-view-json [#^ WorkerDrainView view]  ; defk にできない: 返事の綴り reply-json の中で呼ぶ純粋な綴り(返事の答え手 reply-bodies と検の入口 responded は Program の外)
+(defk worker-drain-view-json [#^ WorkerDrainView view]
   {:pre [(: view WorkerDrainView)] :post [(: % dict)] :tags {:context "coordinator" :role "protocol" :spells "json"}}
   "worker 1 つの画面 → JSON の形(#2595 の前に drain_policy.worker-view・superseded-worker-view が組んでいた形と同じ)。"
-  (setv w view.info)
+  (val w view.info)
   (| {"name" w.name "alive" view.alive "silentMs" view.silent-ms "boot" w.boot "provides" (list w.provides) "exclusive" (list w.exclusive)
       "derived" (list w.derived) "node" w.node "draining" (is-not view.drain None)}
      (if view.superseded {"superseded" True} {})
-     {"drain" (if (is view.drain None) None (drain-progress-json view.drain)) "ready" view.ready}))
+     {"drain" (if (is view.drain None) None (! (drain-progress-json view.drain))) "ready" view.ready}))
 
 
-(deff version-json [#^ VersionVerdict verdict #^ tuple live]  ; defk にできない: 返事の綴り reply-json の中で呼ぶ純粋な綴り(返事の答え手 reply-bodies と検の入口 responded は Program の外)
+(defk version-json [#^ VersionVerdict verdict #^ tuple live]
   {:pre [(: verdict VersionVerdict) (: live tuple)] :post [(: % dict)] :tags {:context "coordinator" :role "protocol" :spells "json"}}
   "status.version の JSON の形(資源の口の境界): {state reason running: [{revision retired}]}。"
   {"state" verdict.state.value "reason" verdict.reason
@@ -135,7 +145,7 @@
     _ None))
 
 
-(deff observed-json [#^ (| ServiceObserved WorkerObserved TaskObserved RolloutObserved None) observed]  ; defk にできない: 返事の綴り reply-json の中で呼ぶ純粋な綴り(返事の答え手 reply-bodies と検の入口 responded は Program の外)
+(defk observed-json [#^ (| ServiceObserved WorkerObserved TaskObserved RolloutObserved None) observed]
   {:pre [(: observed (| ServiceObserved WorkerObserved TaskObserved RolloutObserved None))] :post [(: % dict)] :tags {:context "coordinator" :role "protocol" :spells "json"}}
   "資源の種類ごとの観測 → status に足す JSON の欄(#2595 の前に resource_policy.resource-json が足していた欄と同じ)。"
   (cond
@@ -143,52 +153,53 @@
       {"readyReason" observed.ready-reason
        "lastReadiness" observed.last-readiness
        "process" (if (is observed.process None) None (status-row-to-json observed.process))
-       "version" (version-json observed.version observed.running)}
+       "version" (! (version-json observed.version observed.running))}
     (isinstance observed WorkerObserved) {"silentMs" observed.silent-ms "alive" observed.alive}
-    (isinstance observed TaskObserved) (task-summary observed.task)
+    (isinstance observed TaskObserved) (! (task-summary observed.task))
     ;; Rollout の相手の Deployment ごとの最後の観測(鍵 = 相手の鍵・値の形は deployment-observation-json)。
     (isinstance observed RolloutObserved)
-      {"observed" (dfor row observed.observed row.key (run (deployment-observation-json row.seen)))}
+      {"observed" (dict (zip (gfor row observed.observed row.key)
+                             (! (spelled-each deployment-observation-json (gfor row observed.observed row.seen)))))}
     True {}))
 
 
-(deff resource-view-json [#^ ResourceView view]  ; defk にできない: 返事の綴り reply-json の中で呼ぶ純粋な綴り(返事の答え手 reply-bodies と検の入口 responded は Program の外)
+(defk resource-view-json [#^ ResourceView view]
   {:pre [(: view ResourceView)] :post [(: % dict)] :tags {:context "coordinator" :role "protocol" :spells "json"}}
   "資源 1 つの画面 → JSON の形(#2595 の前に resource_policy.resource-json が組んでいた形と同じ — status は比べる単位の status に観測を足した物)。"
-  (setv m view.meta)
+  (val m view.meta)
   {"kind" view.kind "name" view.name
    "resourceVersion" (if m m.resource-version None) "generation" (if m m.generation None)
    "owner" (.get view.spec "owner")
    "createdBy" (if m m.created-by None) "createdMs" (if m m.created-ms None)
    "updatedBy" (if m m.updated-by None) "updatedMs" (if m m.updated-ms None)
-   "spec" view.spec "status" (| view.status (observed-json view.observed))})
+   "spec" view.spec "status" (| view.status (! (observed-json view.observed)))})
 
 
-(deff row-conflict-json [#^ RowConflict conflict]  ; defk にできない: 返事の綴り reply-json の中で呼ぶ純粋な綴り(返事の答え手 reply-bodies と検の入口 responded は Program の外)
+(defk row-conflict-json [#^ RowConflict conflict]
   {:pre [(: conflict RowConflict)] :post [(: % dict)] :tags {:context "coordinator" :role "protocol" :spells "json"}}
   "旧い一括の宣言で書けなかった行 1 つ → JSON の形({name error current?} — #2614 の前に core が組んでいた形と同じ)。"
   (| {"name" conflict.name "error" conflict.message}
      (if (is conflict.current None) {} {"current" conflict.current})))
 
 
-(deff error-reply-json [#^ ErrorReply reply]  ; defk にできない: 返事の綴り reply-json の中で呼ぶ純粋な綴り(返事の答え手 reply-bodies と検の入口 responded は Program の外)
+(defk error-reply-json [#^ ErrorReply reply]
   {:pre [(: reply ErrorReply)] :post [(: % dict)] :tags {:context "coordinator" :role "protocol" :spells "json"}}
   "断った要求の答え → JSON の形({error …} — #2614 の前に core が組んでいた形と同じ。付け足しの欄は在る時だけ書く)。"
   (| {"error" reply.message}
      (if (is reply.current None) {} {"current" reply.current})
-     (if (is reply.conflicts None) {} {"conflicts" (lfor c reply.conflicts (row-conflict-json c))})
+     (if (is reply.conflicts None) {} {"conflicts" (! (spelled-each row-conflict-json reply.conflicts))})
      (if (is reply.open None) {} {"open" reply.open})
      (if reply.fault {"fault" True} {})))
 
 
-(deff board-usage-json [#^ BoardUsage usage]  ; defk にできない: 返事の綴り reply-json の中で呼ぶ純粋な綴り(返事の答え手 reply-bodies と検の入口 responded は Program の外)
+(defk board-usage-json [#^ BoardUsage usage]
   {:pre [(: usage BoardUsage)] :post [(: % dict)] :tags {:context "coordinator" :role "protocol" :spells "json"}}
   "盤の使い方と上限 → JSON の形(容量で断った答えの usage — #2614 の前に cluster_policy.board-usage が組んでいた形と同じ)。"
   {"rows" usage.rows "bytes" usage.bytes "expiring" usage.expiring
    "maxRows" usage.max-rows "maxBytes" usage.max-bytes "maxValueBytes" usage.max-value-bytes})
 
 
-(deff board-answer-json [#^ (| BoardRead BoardWritten BoardConflict BoardRefused) answer]  ; defk にできない: 返事の綴り reply-json の中で呼ぶ純粋な綴り(返事の答え手 reply-bodies と検の入口 responded は Program の外)
+(defk board-answer-json [#^ (| BoardRead BoardWritten BoardConflict BoardRefused) answer]
   {:pre [(: answer (| BoardRead BoardWritten BoardConflict BoardRefused))] :post [(: % dict)] :tags {:context "coordinator" :role "protocol" :spells "json"}}
   "盤の口の答え → JSON の形(#2614 の前に api_policy.respond-board と cluster_policy.board-write が組んでいた形と同じ)。"
   (cond
@@ -200,10 +211,10 @@
          (if (is answer.reason None) {} {"error" answer.reason}))
     True
       (| {"ok" False "error" answer.reason}
-         (if (is answer.usage None) {} {"usage" (board-usage-json answer.usage)}))))
+         (if (is answer.usage None) {} {"usage" (! (board-usage-json answer.usage))}))))
 
 
-(deff task-answer-json [#^ (| TaskAccepted TaskProgress TaskMissing TaskResultTaken TaskDropped) answer]  ; defk にできない: 返事の綴り reply-json の中で呼ぶ純粋な綴り(返事の答え手 reply-bodies と検の入口 responded は Program の外)
+(defk task-answer-json [#^ (| TaskAccepted TaskProgress TaskMissing TaskResultTaken TaskDropped) answer]
   {:pre [(: answer (| TaskAccepted TaskProgress TaskMissing TaskResultTaken TaskDropped))] :post [(: % dict)] :tags {:context "coordinator" :role "protocol" :spells "json"}}
   "task の口の答え → JSON の形(#2614 の前に cluster_policy の submit-task・poll-task・absorb-task-result と api_policy が組んでいた形と同じ)。"
   (cond
@@ -216,7 +227,7 @@
     True {"dropped" True}))
 
 
-(deff detached-answer-json [#^ (| DetachedSubmitted DetachedProgress DetachedUnknown DetachedWarming DetachedCancelled DetachedReleased) answer]  ; defk にできない: 返事の綴り reply-json の中で呼ぶ純粋な綴り(返事の答え手 reply-bodies と検の入口 responded は Program の外)
+(defk detached-answer-json [#^ (| DetachedSubmitted DetachedProgress DetachedUnknown DetachedWarming DetachedCancelled DetachedReleased) answer]
   {:pre [(: answer (| DetachedSubmitted DetachedProgress DetachedUnknown DetachedWarming DetachedCancelled DetachedReleased))] :post [(: % dict)] :tags {:context "coordinator" :role "protocol" :spells "json"}}
   "切り離した task の口の答え → JSON の形(#2614 の前に detached_policy が組んでいた形と同じ)。"
   (cond
@@ -230,7 +241,7 @@
     True {"key" answer.key "released" answer.released}))
 
 
-(deff reply-json [body]  ; defk にできない: 返事の答え手と検の入口 responded(Program の外)が呼ぶ純粋な綴り
+(defk reply-json [body]
   {:pre [(: body (| EventsView StateReply HeartbeatReply WorkerDrainView ErrorReply BoardRead BoardWritten BoardConflict BoardRefused
                     LeaseAnswer WarmState ProgramStored ProgramRow TaskAccepted TaskProgress TaskMissing TaskResultTaken TaskDropped
                     DetachedSubmitted DetachedProgress DetachedUnknown DetachedWarming DetachedCancelled DetachedReleased ResourceView
@@ -242,27 +253,29 @@
     (isinstance body EventsView)
       {"revision" body.revision "seq" body.seq "events" (lfor e body.events (audit-event-to-json e))}
     (isinstance body StateReply)
-      (| (state-view-json body.view) {"audit" (lfor e body.audit (audit-event-to-json e))
-                                        "drains" (dfor #(n d) (.items body.drains) n (drain-progress-json d))})
-    (isinstance body HeartbeatReply) (heartbeat-reply-json body)
-    (isinstance body WorkerDrainView) (worker-drain-view-json body)
-    (isinstance body ErrorReply) (error-reply-json body)
-    (isinstance body #(BoardRead BoardWritten BoardConflict BoardRefused)) (board-answer-json body)
+      (| (! (state-view-json body.view)) {"audit" (lfor e body.audit (audit-event-to-json e))
+                                        "drains" (dict (zip (.keys body.drains)
+                                                            (! (spelled-each drain-progress-json (.values body.drains)))))})
+    (isinstance body HeartbeatReply) (! (heartbeat-reply-json body))
+    (isinstance body WorkerDrainView) (! (worker-drain-view-json body))
+    (isinstance body ErrorReply) (! (error-reply-json body))
+    (isinstance body #(BoardRead BoardWritten BoardConflict BoardRefused)) (! (board-answer-json body))
     ;; lease の答えは wire の型(4 つの欄をいつも書く — semaphore_model.LeaseAnswer の註)。
-    (isinstance body LeaseAnswer) (run (dump body))
-    (isinstance body WarmState) (run (warm-state->json body))
+    (isinstance body LeaseAnswer) (! (dump body))
+    (isinstance body WarmState) (! (warm-state->json body))
     (isinstance body ProgramStored) {"program" body.sha}
     (isinstance body ProgramRow) {"blob" body.blob "versions" body.versions}
-    (isinstance body #(TaskAccepted TaskProgress TaskMissing TaskResultTaken TaskDropped)) (task-answer-json body)
-    (isinstance body #(DetachedSubmitted DetachedProgress DetachedUnknown DetachedWarming DetachedCancelled DetachedReleased)) (detached-answer-json body)
-    (isinstance body ResourceView) (resource-view-json body)
+    (isinstance body #(TaskAccepted TaskProgress TaskMissing TaskResultTaken TaskDropped)) (! (task-answer-json body))
+    (isinstance body #(DetachedSubmitted DetachedProgress DetachedUnknown DetachedWarming DetachedCancelled DetachedReleased)) (! (detached-answer-json body))
+    (isinstance body ResourceView) (! (resource-view-json body))
     (isinstance body ResourceList)
-      {"kind" body.kind "revision" body.revision "items" (lfor v body.items (resource-view-json v))}
+      {"kind" body.kind "revision" body.revision "items" (! (spelled-each resource-view-json body.items))}
     True body))
 
 
 (defhandler reply-bodies
   ;; 引数なし: 返事の本文の型だけから綴る(返事を送るのは外側の Reply の答え手)。
   (Reply [request status body]
-    (<- (Reply request status (reply-json body)))
+    (<- spelled (reply-json body))
+    (<- (Reply request status spelled))
     (resume None)))

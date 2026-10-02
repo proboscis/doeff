@@ -97,9 +97,9 @@
   (assert (= (json.loads job.spec.runtime-env) env-json) job.spec)
   (assert (= (get (job-to-json job) "runtimeEnv") env-json) "coordinator の状態に残る(読み戻しで同じ宣言)")
   (assert (= (job-from-json (job-to-json job)) job) "読み戻しで同じ job")
-  (val wire (spec-json job.spec))
+  (val wire (! (spec-json job.spec)))
   (assert (= (get wire "runtimeEnv") env-json) wire)
-  (assert (not-in "runtimeEnv" (spec-json (. (job-from-json (| row {"runtimeEnv" None})) spec))) "env の無い job の返事は今の形")
+  (assert (not-in "runtimeEnv" (! (spec-json (. (job-from-json (| row {"runtimeEnv" None})) spec)))) "env の無い job の返事は今の形")
   (with [(pytest.raises ValueError)]
     (job-from-json (| row {"baseFrom" {"kind" "Deployment" "namespace" "n" "name" "d"}})))
   (with [(pytest.raises ValueError)]
@@ -133,7 +133,7 @@
   (<- handoff System (quiet-system "handoff" {"windowSeconds" 30} {"POLL" "5.0"}))
   (val row (get (. (system-declaration handoff "rev-1" :versions (current-versions) :runtime-env declared-env) rows) 0))
   (val coordinator-spec (. (job-from-json row) spec))
-  (val worker-spec (declared-job-spec (spec-json coordinator-spec)))
+  (val worker-spec (declared-job-spec (! (spec-json coordinator-spec))))
   (assert (= worker-spec.revision coordinator-spec.revision) #(worker-spec coordinator-spec))
   (assert (= (spec-hash worker-spec) (spec-hash coordinator-spec)) "指紋が同じ(coordinator が worker の報告を今の宣言の物と数える)")
   (assert (= worker-spec coordinator-spec) "比べる欄が同じ(worker が同じ宣言で process を起こし直さない)"))
@@ -211,7 +211,7 @@
                      :needs #{"net"}))
   (val declaration (system-declaration (system-of "lab" #(declared)) "rev" :versions (current-versions) :runtime-env env))
   (val row (get declaration.rows 0))
-  (val spec (declared-job-spec (spec-json (. (job-from-json row) spec))))
+  (val spec (declared-job-spec (! (spec-json (. (job-from-json row) spec)))))
   ;; worker が /programs/<sha> から取って置くのと同じ file(coordinator への口の fetched-programs の形)を子 process の言い換えが読む cache に置く。
   (assert (is-not spec.program None) spec)
   (val cached (program-file (Path rig.host.program-dir) spec.program))

@@ -95,7 +95,7 @@
   (assert (= #((get view "phase") (get view "result")) #("finished" "R")))
   ;; 結果は状態の報告(/state)には載せない
   (assert (is (. (get (. (get (. s statuses) "w") jobs) 0) result) None))
-  (assert (not-in "result" (get (state-view-json (state-view s 400 T)) "statuses" "w" "jobs" 0))))
+  (assert (not-in "result" (get (! (state-view-json (state-view s 400 T))) "statuses" "w" "jobs" 0))))
 
 
 (deftest test-task-is-dropped-when-the-caller-stops-asking

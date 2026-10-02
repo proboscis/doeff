@@ -103,4 +103,4 @@
   "要求 1 件の本文を道の型に解いてから判断(api_policy.respond)に答えさせ、返事の本文を JSON の形に綴る — 本番の調停ループの ReadBody と
    返事の答え手 reply-bodies と同じ解きと綴り。"
   (setv #(after status body) (respond state request now timing (run (body-of request))))
-  #(after status (reply-json body)))
+  #(after status (run (reply-json body))))
