@@ -1094,7 +1094,11 @@
                          :exclusive (get caps 1)
                          ;; node の label から導いた能力は、同じ node の間だけ前の観測を引き継ぐ(次の調停で読み直す)。
                          :node node
-                         :derived (if (and (is-not previous None) (= previous.node node)) previous.derived #()))
+                         :derived (if (and (is-not previous None) (= previous.node node)) previous.derived #())
+                         ;; 生存の印(保存の lastSeenMs)は印の拍(api_policy.mark-alive)だけが進める — heartbeat は前の印を運ぶ(運ばないと
+                         ;; heartbeat ごとに worker/<名> の行から lastSeenMs が消え、書きが印の拍ごとでなくなる・#2903)。世代を問わない
+                         ;; (#2903 の前の ClusterState.seen-marks も名ごとで、heartbeat が触らなかった)。
+                         :seen-mark (if (is previous None) None previous.seen-mark))
         state (replace (absorb-boot state name boot)
                 :workers (| state.workers {name info})
                 :statuses (| state.statuses {name (WorkerReport :at now :endpoint body.endpoint

@@ -8,7 +8,7 @@
 ;;; 次の期限を別に見積もらない: 1 拍ずつの走りと同じ刻(直前の歩 + 1 拍)の歩を、本番の歩と同じ判断の関数(api_policy.tick・
 ;;; rollout-quiet・mark-alive、watch_policy.settle-watch)で 1 歩ずつ試し、状態が変わる・k8s を読む・action を出す・待ちに「変わった」と
 ;;; 答える最初の歩で区間を切る。期限の求め忘れは起こり得ない(判断そのものを試すので)。静かな歩に許す変化は 2 つだけ(#2790):
-;;; - 生存の印(mark-alive の alive-ms と seen-marks)と Rollout の拍の刻 — 歩の後の状態を QuietStep に持ち、調停ループが起きた時に
+;;; - 生存の印(mark-alive の alive-ms と WorkerInfo.seen-mark)と Rollout の拍の刻 — 歩の後の状態を QuietStep に持ち、調停ループが起きた時に
 ;;;   同じ順・同じ値で保存する(置き場の書きの列は 1 拍ずつの走りと同じ)。
 ;;; - 期限の来た名指しの待ちへの「変わっていない」の返事と、送り手(worker の宿の待ち)の送り直し — 同じ問いを同じ刻に送り直すので、
 ;;;   待ちの期限と見え方をその刻で引き直して吸う(同値の検 = tests/test_idle_skip.hy)。
